@@ -11,6 +11,7 @@ import {
   enterElementEdit,
   groupSelected,
   newBlankDocument,
+  runManualSave,
   selectAll,
   ungroupSelected,
 } from '@/store/actions'
@@ -52,7 +53,8 @@ const ui = () => useUiStore.getState()
 
 const COMMANDS: Command[] = [
   { id: 'export', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
-  { id: 'save-layout', shortcut: `${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
+  { id: 'save-document', shortcut: `${MOD}S`, run: () => void runManualSave() },
+  { id: 'save-layout', shortcut: `⇧${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
   { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
   { id: 'versions', run: () => ui().setVersionsOpen(true) },
   { id: 'styles', run: () => ui().setStylesOpen(true) },

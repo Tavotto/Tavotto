@@ -48,6 +48,7 @@ from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    atomicio as engine_atomicio,
     bootstrap as engine_bootstrap,
     brand as engine_brand,
     cli as engine_cli,
@@ -56,6 +57,7 @@ from .engine import (
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     discover as engine_discover,
+    documents as engine_documents,
     enginesession as engine_enginesession,
     handoff as engine_handoff,
     locate as engine_locate,
@@ -66,6 +68,7 @@ from .engine import (
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
+    project_refresh as engine_refresh,
     projectenv as engine_projectenv,
     registry as engine_registry,
     runcodes as engine_runcodes,
@@ -79,11 +82,12 @@ from .engine import (
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 site-packages 不可写）
 
-# tavottofile/ 是项目内的 Tavotto 数据收纳目录（画布/导出/版本历史）：
-# 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图
-EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git", "tavottofile"}
-PDF_EXT = {".pdf"}
-IMG_EXT = {".png", ".jpg", ".jpeg"}
+# 素材边界的**唯一出处**在 `engine/project_refresh.py`：列给用户的素材
+# （`/api/panels`）与"素材变了没有"（统一刷新的 inventory）必须是同一把尺。
+# 这里只是别名，别在本文件里另写一份集合。
+EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
+PDF_EXT = engine_refresh.PDF_EXT
+IMG_EXT = engine_refresh.IMG_EXT
 
 MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
@@ -327,11 +331,8 @@ def _baked_path(ctx: "ProjectCtx") -> Path:
 
 
 def _write_baked(path: Path, data: dict) -> None:
-    """临时文件 + replace 原子落盘，读者不会撞见半个文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    """写回基线的原子落盘（唯一实现见 engine/atomicio.py）。"""
+    engine_atomicio.write_json(path, data, indent=1)
 
 
 def _migrate_global_baked(ctx: "ProjectCtx", path: Path) -> None:
@@ -495,19 +496,13 @@ def scan_panels() -> list[dict]:
     baked = load_baked(ctx)  # 本项目的写回基线，局部变量（绝不跨项目共享）
     panels = []
     root = ctx.path.resolve()
-    # os.walk 而不是 rglob：隐藏目录当场剪枝，不下探。图库里常有 .venv、
-    # .git、工具留下的 .rendered/.qa_* 快照——它们既是噪音（素材库里塞满
-    # page-1.png），爬进去还很慢。以 . 开头的文件同理（.DS_Store）。
-    files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
-        files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
-    files.sort()
-    LOG.info("素材扫描: %s → %d 个文件", root, len(files))
+    # 「哪些文件算素材」的判据在 `engine/project_refresh.iter_assets()`（剪枝、
+    # 隐藏文件、同名 PDF 盖过位图都在那儿）——统一刷新的 inventory 用的是同一
+    # 个函数。这里只负责 probe 出尺寸并挂上注册表信息。
+    assets = engine_refresh.iter_assets(root)
+    LOG.info("素材扫描: %s → %d 个素材", root, len(assets))
 
-    pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
-
-    for p in files:
+    for p, kind in assets:
         ext = p.suffix.lower()
         rel = str(p.relative_to(root))
         folder = str(p.parent.relative_to(root)) or "."
@@ -518,22 +513,14 @@ def scan_panels() -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if ext in PDF_EXT:
+            if kind == "pdf":
                 probe = pdfbackend.probe_asset(p, "pdf")
                 entry.update(
                     kind="pdf",
                     native_w_mm=round(probe["w_pt"] * MM_PER_PT, 3),
                     native_h_mm=round(probe["h_pt"] * MM_PER_PT, 3),
                 )
-                info = current_registry().for_stem(p.stem)
-                if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
-                    entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem, baked)
-                    if baseline:
-                        entry["baked_overrides"] = baseline
-            elif ext in IMG_EXT:
-                if (p.parent, p.stem) in pdf_stems:
-                    continue  # 有矢量版就不重复列出位图
+            else:
                 probe = pdfbackend.probe_asset(p, "raster")
                 # matplotlib 输出 PNG 为 600ppi；照片等按 300ppi 给个初始物理尺寸
                 ppi = 600 if ext == ".png" else 300
@@ -544,14 +531,12 @@ def scan_panels() -> list[dict]:
                     native_w_mm=round(probe["px_w"] / ppi * 25.4, 3),
                     native_h_mm=round(probe["px_h"] / ppi * 25.4, 3),
                 )
-                info = current_registry().for_stem(p.stem)
-                if info is not None:  # fig1 等纯 PNG 素材脚本
-                    entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem, baked)
-                    if baseline:
-                        entry["baked_overrides"] = baseline
-            else:
-                continue
+            info = current_registry().for_stem(p.stem)
+            if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
+                entry.update(script=info["script"], cost=info["cost"])
+                baseline = _baseline_patches(p.stem, baked)
+                if baseline:
+                    entry["baked_overrides"] = baseline
         except Exception:
             # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
             # app.log 里要能看到是哪个文件、为什么
@@ -579,6 +564,36 @@ def scan_panels() -> list[dict]:
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
+
+
+@app.errorhandler(engine_documents.DocumentError)
+def _document_error(exc):
+    """文档结构不合法（含「来自更新版本的 Tavotto」「名称已被占用」）。"""
+    return jsonify(exc.as_payload()), exc.status
+
+
+@app.errorhandler(engine_atomicio.AtomicWriteError)
+def _atomic_write_error(exc):
+    """原子写失败。
+
+    载荷本身有问题（非有限数）是 **400**——重试一百次也是同样的结果，
+    前端该提示用户而不是静默重排队；磁盘/权限类是 **500**，那是可重试的。
+    两类都保留 code，`tests/test_error_codes.py` 逐行扫这个文件。
+    """
+    if exc.code == "non_finite_number":
+        return jsonify(exc.as_payload()), 400
+    LOG.error("原子写失败: %s %s: %s", request.method, request.path, exc.message)
+    return jsonify(exc.as_payload()), 500
+
+
+@app.errorhandler(engine_refresh.RefreshError)
+def _refresh_error(exc):
+    """项目刷新失败。**400 而不是 500**：这一族的成因是用户图库里的东西
+    （注册表被手改坏了、目录读不动），重试一百次也是同样的结果，用户要看到
+    的是"你的注册表怎么了"，不是一句"服务器错误"。内存里的注册表原封不动，
+    已打开的项目照常能用（`engine/project_refresh.py` 的失败语义）。"""
+    LOG.warning("项目刷新失败: %s %s: %s", request.method, request.path, exc.message)
+    return jsonify(exc.as_payload()), 400
 
 
 def _worker_error_payload(exc) -> dict:
@@ -1227,6 +1242,10 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
         reg = engine_registry.open_registry(path)
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
+    # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的
+    # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
+    # 一张图（`engine/project_refresh.seed_state`）。
+    engine_refresh.seed_state(ctx)
     with _PROJECT_LOCK:
         PROJECTS[pid] = ctx
         if make_default or DEFAULT_PROJECT is None:
@@ -1289,14 +1308,45 @@ def reset_projects(wait: bool = False) -> None:
         engine_pool.shutdown_all(wait=True)  # 兜底：不属于任何项目的残留
 
 
-def reload_registry(ctx: "ProjectCtx") -> None:
-    """注册表改过之后重装并重挂 watcher（新脚本要被盯上才会自动作废会话）。"""
-    try:
-        ctx.registry.load(ctx.path)
-    except (FileNotFoundError, RuntimeError):
-        return
-    engine_pool.start_watcher(
-        str(ctx.path), ctx.registry.all_scripts(), _script_change_handler(ctx)
+def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:
+    """统一刷新服务的两个副作用出口：发 SSE、重挂 watcher。
+
+    引擎侧不知道 SSE 长什么样，也不知道 watcher 回调要带哪个 pj——这两件事
+    都是 app 层的。注入而不是 import 回来，是为了让 `engine/project_refresh.py`
+    保持"能被 Flask 父进程安全 import 的纯标准库模块"。
+    """
+    return engine_refresh.RefreshSink(
+        publish=sse_publish,
+        watch=lambda scripts: engine_pool.start_watcher(
+            str(ctx.path), list(scripts), _script_change_handler(ctx)
+        ),
+    )
+
+
+def refresh_project(
+    ctx: "ProjectCtx",
+    *,
+    reason: str,
+    allow_static_merge: bool = True,
+    changed_paths: list[str] | None = None,
+    publish: bool = True,
+) -> dict:
+    """**app 层唯一的刷新入口**（手动刷新 / scan / probe / 手工登记 / 以后的
+    watcher / Codex / AI 都走这里）。
+
+    改造前这条链路在本文件里有三份：各自 reload、各自 `start_watcher`、各自
+    发一条措辞不同的 `registry.changed`，而"哪些 worker 该作废"根本没人管。
+    真正的编排在 `engine/project_refresh.refresh_project_index()`，这里只负责
+    把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
+    watcher 也调这个函数，不许自己 merge、自己发事件）。
+    """
+    return engine_refresh.refresh_project_index(
+        ctx,
+        reason=reason,
+        changed_paths=changed_paths,
+        allow_static_merge=allow_static_merge,
+        publish=publish,
+        sink=_refresh_sink(ctx),
     )
 
 
@@ -1679,6 +1729,23 @@ def api_projects_remove():
     return jsonify({"ok": engine_config.remove_recent(str(body.get("path") or ""))})
 
 
+@app.post("/api/project/refresh")
+def api_project_refresh():
+    """显式刷新当前项目的派生事实：registry 合并重载 + 素材快照 + 结构化 diff。
+
+    **不执行任何用户脚本**（共享规则 §4）：静态 merge 只读 AST，素材 inventory
+    只 `stat()`。要跑脚本请走显式的 `/api/registry/probe`。
+
+    请求体只有一个 `reason`，且只认闭集里的值（未知归成 `manual`）——它进
+    日志、进事件、以后还会进遥测维度，透传客户端字符串等于让外面往我们的
+    指标里写自由文本。**项目由现有的 pj 认证决定**（`current_ctx()`），
+    不接受客户端传路径。
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    ctx = current_ctx()
+    return jsonify(refresh_project(ctx, reason=str(body.get("reason") or "")))
+
+
 def _drive_roots() -> list[dict]:
     """Windows 的盘符根。
 
@@ -1825,18 +1892,22 @@ def api_registry():
 
 @app.post("/api/registry/scan")
 def api_registry_scan():
-    """重跑静态扫描并合并进 tavotto_registry.json（现有条目永远优先）。"""
+    """重跑静态扫描并合并进 tavotto_registry.json（现有条目永远优先）。
+
+    内核就是统一刷新服务（`reason="registry"`）：这个端点只负责把结果翻译回
+    它一直以来的那三个字段。**旧响应逐字保留**——RegistryDialog 读的是
+    `changes.added_scripts.length`，换个形状等于让存量前端当场坏掉；新的
+    结构化 diff 挂在 `refresh` 里另给。
+    """
     ctx = current_ctx()
-    try:
-        cfg, rep, changes = engine_discover.merge(ctx.path)
-        engine_discover.write_config(ctx.path, cfg)
-    except (OSError, ValueError, RuntimeError) as exc:
-        return jsonify(
-            {"error": f"扫描失败: {exc}", "code": "scan_failed", "params": {"reason": str(exc)}}
-        ), 400
-    reload_registry(ctx)
+    result = refresh_project(ctx, reason="registry")
     return jsonify(
-        {"changes": changes, "conflicts": rep["conflicts"], "scripts": ctx.registry.entries()}
+        {
+            "changes": result["merge"],
+            "conflicts": result["registry"]["conflicts"] or {},
+            "scripts": ctx.registry.entries(),
+            "refresh": result,
+        }
     )
 
 
@@ -1920,11 +1991,15 @@ def api_registry_probe():
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
     if result.get("registered"):
-        reload_registry(ctx)
         # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
         # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+        # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
+        # 清单与预览，那时 cache 里得已经有东西。
         _materialize_runtime(script, result.get("entry") or "", result.get("descriptors") or [])
-        sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": result["stems"]})
+        # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
+        # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
+        # 裁决好的归属重新掀一遍。
+        refresh_project(ctx, reason="probe", allow_static_merge=False)
     return jsonify(result)
 
 
@@ -2061,12 +2136,13 @@ def api_registry_write():
             cost=str(body.get("cost") or "medium"),
             notes=str(body.get("notes") or ""),
         )
-        reload_registry(ctx)
     except (OSError, RuntimeError) as exc:
         return jsonify(
             {"error": str(exc), "code": "registry_update_failed", "params": {"reason": str(exc)}}
         ), 400
-    sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": stems})
+    # 手工裁决就是权威，写完只要重装 + 发事件；再跑一遍静态扫描会把用户刚
+    # 裁决完的归属重新掀一遍（那正是他点这个按钮要解决的事）。
+    refresh_project(ctx, reason="registry", allow_static_merge=False)
     return jsonify({"scripts": ctx.registry.entries()})
 
 
@@ -4163,17 +4239,25 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     name = re.sub(r"[^\w\-一-鿿]+", "_", name)
     if not name:
         abort(400)
+    # 净化之后仍可能撞上收纳目录里 Tavotto 自己的文件名——那条路既能读出
+    # 样式表，也能用一份画布把它盖掉。
+    engine_documents.require_user_document_stem(name)
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
 @app.get("/api/layouts")
 def api_layouts():
-    # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准
+    # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准。
+    # 收纳目录里还躺着 Tavotto 自己的文件（`_styles.json`），它们不是用户
+    # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
+    # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
     for d in _layout_read_dirs():
         if not d.is_dir():
             continue
         for p in d.glob("*.json"):
+            if not engine_documents.is_user_document_stem(p.stem):
+                continue
             if p.stem not in seen:
                 seen[p.stem] = p.stat().st_mtime
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
@@ -4191,11 +4275,21 @@ def api_layout_get(name):
 
 @app.post("/api/layouts/<name>")
 def api_layout_save(name):
-    d = project_layout_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    layout_path(name, d).write_text(
-        json.dumps(request.get_json(force=True), ensure_ascii=False, indent=1),
-        encoding="utf-8",
+    """用户的「另存为」。
+
+    2026-08-29 之前这里是 `write_text` 直接盖：写到一半失败（磁盘满、断电、
+    进程被杀）留下的是一个**截断的文件**，而它已经把上一份好文件顶掉了——
+    产品里最显眼的一次保存，恰恰是唯一一处不原子的写入。
+
+    **载荷这里不做 schema 校验。** 已经在用这条路的调用方不止前端：
+    `scripts/ci/upgrade_acceptance.py` 发的是 `{"doc": ...}` 包一层的形状。
+    在这个 PR 里收紧会让 N-1 升级验收的两个检查悄悄换一种坏法（见
+    docs/implementation/product-ux-reliability/STATUS.md 的 R-18），
+    那属于修调用方，不属于修落盘。非有限数仍然挡（`atomicio` 里），
+    因为那种文档写出去谁都读不回来。
+    """
+    engine_atomicio.write_json(
+        layout_path(name, project_layout_dir()), request.get_json(force=True), indent=1
     )
     return jsonify({"ok": True})
 
@@ -4203,7 +4297,7 @@ def api_layout_save(name):
 # ------------------------- 文档自动保存（磁盘） ------------------------------
 # 文档主体的可靠落盘：localStorage 只留轻量索引与崩溃兜底副本。
 # 原子写（tmp + replace），按前端 documentId 一档。
-AUTOSAVE_DIR = LAYOUT_DIR / "_autosave"
+AUTOSAVE_DIR = LAYOUT_DIR / engine_documents.AUTOSAVE_DIRNAME
 
 
 def _autosave_path(doc_id: str) -> Path:
@@ -4213,13 +4307,50 @@ def _autosave_path(doc_id: str) -> Path:
     return AUTOSAVE_DIR / f"{doc_id}.json"
 
 
+#: 自动保存的「读修订号 → 判冲突 → 写」必须是一个原子段。
+#:
+#: 判据本身是对的（`_revision_conflict` 两条边都钉住了），但**判完到写完之间
+#: 没有互斥**，于是它只在请求串行时成立：两个标签页同时保存同一份文档时，
+#: 双方都能在对方落盘之前读到旧的修订号、双方都判「没冲突」，后写的那个把先写
+#: 的整份盖掉——**而两边都收到 200**。这正是 `absent` 哨兵要挡的那个场景
+#: （两个标签页同时新建同一份文档），只是被交错执行绕了过去。
+#:
+#: 用**固定条数的锁带**而不是「doc_id → 锁」的表：锁表要自己治理生命周期
+#: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
+#: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
+_AUTOSAVE_LOCKS = [threading.Lock() for _ in range(64)]
+
+
+def _autosave_lock(path: Path) -> threading.Lock:
+    """按**落盘路径**取锁，不按 doc_id：`_autosave_path` 会把非法字符归一成
+    `_`，于是两个不同的 id 可能指向同一个文件——按 id 分锁的话，那两个请求
+    以为自己各写各的。"""
+    return _AUTOSAVE_LOCKS[hash(str(path)) % len(_AUTOSAVE_LOCKS)]
+
+
 @app.get("/api/autosave/<doc_id>")
 def api_autosave_get(doc_id):
     p = _autosave_path(doc_id)
     if not p.is_file():
         abort(404)
-    resp = send_file(p, mimetype="application/json")
+    # 读失败（权限、坏扇区）**照旧往上抛成 500**，不折成 404：「读不动」不是
+    # 「没有」——报成 404 的话前端会当成这份自动保存不存在，下一次写就以
+    # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
+    data = p.read_bytes()
+    # **读一次，发这一份，也 hash 这一份。** 以前是 `send_file(p)` 再单独
+    # `content_revision(p)` 读第二遍，两个毛病：
+    #
+    # * 两次读之间文件可能被改过 —— 前端拿这个 header 当**后续写入的基线**，
+    #   它描述的却是另一份内容，于是外部修改检测会放行一次真正的覆盖；
+    # * `send_file` 把文件句柄留在响应里，直到响应被消费完才关。Windows 上
+    #   `os.replace` 撞见一个还开着的目标文件就是 `[WinError 5] Access is
+    #   denied` —— 用户读过一次这份自动保存之后，下一次保存就写不进去了
+    #   （POSIX 上换掉一个开着的文件完全合法，所以这条只在 Windows 上现形）。
+    resp = app.response_class(data, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
+    # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
+    # 跟着一路进 localStorage 兜底副本和版本快照。
+    resp.headers["X-Tavotto-Revision"] = engine_atomicio.revision_of(data)
     return resp
 
 
@@ -4247,28 +4378,118 @@ def _autosave_newer_than(p: Path, base) -> int | None:
     return None
 
 
+def document_summary(path: Path) -> dict | None:
+    """磁盘上这一份的结构化摘要 —— 冲突时回答「那边现在是什么」。
+
+    **不做文本 diff**（Prompt 03 §七 明说不需要）：用户在冲突面板上要判断的是
+    「磁盘上那份是不是我想要的」，对象数、画布数、schema、两个时间就够了。
+    逐行 diff 对一份布局 JSON 也没有意义——里面全是坐标。
+
+    两个时间是**两个维度**，都给：`updatedAt` 是文档自报的编辑时刻（外部工具
+    改完可能一动不动），`mtime` 是文件系统记的最后写入时刻（`touch` 一下就变）。
+    只报一个，另一类外部修改就在摘要里隐形。
+
+    读不出来（文件不在 / 不是 JSON / 不是对象）返回 `None`：那是「磁盘上没有
+    可比较的东西」，不是「摘要里各项为 0」——后者会让前端把一个空壳画成
+    「对方把文档清空了」。
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        mtime = int(path.stat().st_mtime * 1000)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    canvases = raw.get("canvases")
+    return {
+        "schema": raw.get("schema"),
+        "canvases": len(canvases) if isinstance(canvases, list) else 1,
+        "objects": len(_doc_objects(raw)),
+        "updatedAt": raw.get("updatedAt"),
+        "mtime": mtime,
+        "name": (raw.get("project") or {}).get("name")
+        if isinstance(raw.get("project"), dict)
+        else None,
+        "revision": engine_atomicio.content_revision(path),
+    }
+
+
+#: `base_revision` 的哨兵：调用方**读过**，磁盘上当时没有这份文件。
+#: 没有它，判据就只钉住了一条边——两个标签页同时新建同一份文档时双方都没有
+#: hash 可带，后写的那个把先写的那份整份盖掉，而这正是这条判据要挡的事。
+REVISION_ABSENT = "absent"
+
+
+def _revision_conflict(base_revision: str, current: str | None) -> bool:
+    """带着这个基线来写，会不会盖掉别人的内容？
+
+    两侧**故意不对称**：
+
+    - 基线是 `absent`（我以为没有文件）而磁盘上有 → 冲突。那份内容不是我的，
+      整份 PUT 就是把它删掉。
+    - 基线是某个 hash 而磁盘上没有文件（被外部删了）→ **放行**。这条判据挡的
+      是「覆盖别人的内容」，不是「重建一个被删掉的文件」；此时磁盘上没有任何
+      内容会因为这次写入而消失，而内存里那份是用户真实的工作。
+    - 基线是某个 hash 而磁盘上是另一个 hash → 冲突。
+    """
+    if base_revision == REVISION_ABSENT:
+        return current is not None
+    return current is not None and current != base_revision
+
+
 @app.put("/api/autosave/<doc_id>")
 def api_autosave_put(doc_id):
-    body = request.get_json(force=True)
-    if not isinstance(body, dict) or body.get("schema") not in (2, 3):
-        return jsonify(
-            {"error": "无效的文档（需要 schema 2 或 3）", "code": "invalid_document"}
-        ), 400
+    body = engine_documents.validate_document(request.get_json(force=True))
     p = _autosave_path(doc_id)
-    theirs = _autosave_newer_than(p, request.args.get("base"))
-    if theirs is not None:
-        return jsonify(
-            {
-                "error": "该文档已在其他窗口保存了更新的版本",
-                "code": "stale_write",
-                "theirs": theirs,
-            }
-        ), 409
-    AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(p)
-    return jsonify({"ok": True, "saved_at": int(time.time() * 1000)})
+    # 外部修改检测（R-08）：`base_revision` 是调用方最后一次**读到或写成功**的
+    # 那一份的内容 hash。磁盘上现在的 hash 与它不同 = 这中间有人动过这个文件，
+    # 而那个人不一定是另一个 Tavotto 标签页——脚本、同步盘、编辑器都算。
+    #
+    # 它**强于** `base`（updatedAt 比较）：外部工具改完文档往往一个字节的
+    # updatedAt 都不动，甚至写回一个更小的值，那种改动 `base` 一律放行。
+    # 所以带了 `base_revision` 就以它为准，`base` 只服务不发修订号的旧前端。
+    base_revision = request.args.get("base_revision")
+    # 判据与写入之间不能有缝：中间放开一瞬，两个标签页就能双双判「没冲突」
+    # 然后一前一后落盘，后写的把先写的整份盖掉。锁按落盘路径取（见
+    # `_autosave_lock`），不同文档互不阻塞。
+    with _autosave_lock(p):
+        if base_revision:
+            current = engine_atomicio.content_revision(p)
+            if _revision_conflict(base_revision, current):
+                return jsonify(
+                    {
+                        "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+                        "code": "external_change",
+                        "revision": current,
+                        "summary": document_summary(p),
+                    }
+                ), 409
+        else:
+            theirs = _autosave_newer_than(p, request.args.get("base"))
+            if theirs is not None:
+                return jsonify(
+                    {
+                        "error": "该文档已在其他窗口保存了更新的版本",
+                        "code": "stale_write",
+                        "theirs": theirs,
+                    }
+                ), 409
+        engine_atomicio.write_json(p, body)
+        # revision = 落盘后的内容 hash。外部修改检测拿它当下一次写入的基线：
+        # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
+        # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
+        # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
+        revision = engine_atomicio.content_revision(p)
+    return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
+
+
+@app.get("/api/autosave/<doc_id>/summary")
+def api_autosave_summary(doc_id):
+    """磁盘上那一份的结构化摘要（冲突面板用）。文件不在就是 404。"""
+    summary = document_summary(_autosave_path(doc_id))
+    if summary is None:
+        abort(404)
+    return jsonify(summary)
 
 
 @app.delete("/api/autosave/<doc_id>")
@@ -4286,7 +4507,9 @@ def api_autosave_delete(doc_id):
 # 与「写回原始文件」的版本历史（baked_overrides/<项目>.json，作用于单张图的源文件）
 # 是两件事：这里保存的是**整份布局文档**的快照，按前端 documentId 分文件存放，
 # 恢复只改前端文档内容，绝不触碰 figures 里的任何文件。
-VERSIONS_DIR = LAYOUT_DIR / "_versions"  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
+VERSIONS_DIR = (
+    LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
+)  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
 _VERSIONS_LOCK = threading.Lock()
 VERSION_KEEP_AUTO = 40  # 自动检查点保留数
 VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
@@ -4325,11 +4548,7 @@ def _load_versions(doc_id: str) -> list[dict]:
 
 
 def _save_versions(doc_id: str, versions: list[dict]) -> None:
-    p = _versions_path(doc_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps({"versions": versions}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(p)
+    engine_atomicio.write_json(_versions_path(doc_id), {"versions": versions})
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
@@ -4342,7 +4561,7 @@ def _prune_versions(versions: list[dict]) -> list[dict]:
 
 def _version_meta(v: dict) -> dict:
     doc = v.get("doc") or {}
-    return {
+    meta = {
         "id": v["id"],
         "name": v.get("name", ""),
         "ts": v.get("ts", 0),
@@ -4351,6 +4570,16 @@ def _version_meta(v: dict) -> dict:
         "objects": len(_doc_objects(doc)),
         "page": doc.get("page"),
     }
+    # 检查点存的是**某一张画布**的内容，却按 documentId（= 整个项目）归档。
+    # 不记下是哪一张，恢复时就只能往「当前激活的那张」上盖——在画布 B 上产生
+    # 的检查点会把 B 的内容和名字盖到 A 头上（R-03）。
+    # 旧检查点没有这两个字段：**不填默认值**。`canvasId` 缺席的含义是
+    # 「不知道它来自哪张画布」，填一个 "" 或当前画布 id 都是在替它编一个身份。
+    if v.get("canvasId"):
+        meta["canvasId"] = v["canvasId"]
+    if v.get("canvasName"):
+        meta["canvasName"] = v["canvasName"]
+    return meta
 
 
 @app.get("/api/versions/<doc_id>")
@@ -4369,11 +4598,7 @@ def api_versions_get(doc_id, vid):
 @app.post("/api/versions/<doc_id>")
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
-    doc = body.get("doc")
-    if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify(
-            {"error": "无效的文档快照（需要 schema 2 或 3）", "code": "invalid_document"}
-        ), 400
+    doc = engine_documents.validate_document(body.get("doc"))
     ver = {
         "id": _new_version_id(),
         "name": str(body.get("name") or "").strip() or time.strftime("%m-%d %H:%M"),
@@ -4382,12 +4607,23 @@ def api_versions_create(doc_id):
         "description": str(body.get("description") or ""),
         "doc": doc,
     }
+    # 画布身份（R-03）：只在调用方真的给了的时候记；给了空串等于没给。
+    if body.get("canvasId"):
+        ver["canvasId"] = str(body["canvasId"])
+    if body.get("canvasName"):
+        ver["canvasName"] = str(body["canvasName"])
     with _VERSIONS_LOCK:
         versions = _load_versions(doc_id)
         # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）
         if ver["auto"] and versions:
             last = versions[-1]
-            if json.dumps(last.get("doc"), sort_keys=True) == json.dumps(doc, sort_keys=True):
+            # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
+            # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
+            # 于是那张画布在时间线上一个检查点都没有。
+            same_canvas = last.get("canvasId") == ver.get("canvasId")
+            if same_canvas and json.dumps(last.get("doc"), sort_keys=True) == json.dumps(
+                doc, sort_keys=True
+            ):
                 return jsonify({"skipped": True, "version": _version_meta(last)})
         versions.append(ver)
         versions = _prune_versions(versions)
@@ -4447,7 +4683,7 @@ def api_versions_delete(doc_id, vid):
 # 命名样式（字体/字号/线宽/刻度/图例/页面预设），跨文档共享，存在 layouts 下。
 # 样式只在前端映射成 override / 标注属性，应用是文档操作（可撤销），
 # 不经它写回任何源文件。
-STYLES_PATH = LAYOUT_DIR / "_styles.json"
+STYLES_PATH = LAYOUT_DIR / engine_documents.STYLES_FILENAME
 _STYLES_LOCK = threading.Lock()
 
 
@@ -4460,10 +4696,7 @@ def _load_styles() -> list[dict]:
 
 
 def _save_styles(styles: list[dict]) -> None:
-    LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STYLES_PATH.with_name(STYLES_PATH.name + ".tmp")
-    tmp.write_text(json.dumps({"styles": styles}, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(STYLES_PATH)
+    engine_atomicio.write_json(STYLES_PATH, {"styles": styles}, indent=1)
 
 
 @app.get("/api/styles")

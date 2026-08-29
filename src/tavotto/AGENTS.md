@@ -690,6 +690,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
+- **文档类落盘只有一份实现：`engine/atomicio.py`（ADR 0023，2026-08-29 定版）**。
+  tmp → flush → **fsync 文件** → `os.replace` → fsync 目录 → 失败清 tmp +
+  抛 `AtomicWriteError(code, …)`；序列化走 `allow_nan=False`，
+  **NaN/∞ 在碰磁盘之前就被拒**（写出去的 `NaN` 不是 JSON，浏览器
+  `JSON.parse` 读不动，表现为"这份文档打不开"而文件看着好端端的）。
+  新增写入点一律调它，**再抄一遍 tmp+replace 视为回退**。
+  schema 判据同理只有 `engine/documents.py` 一份。
+  收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
+  `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
+  画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 项目系统（后端侧）

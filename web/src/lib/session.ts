@@ -56,12 +56,34 @@ export function setCurrentProjectId(id: string | null): void {
 
 /** 给任意 API 路径挂上 pj（已有查询串时追加）。 */
 export function apiUrl(path: string): string {
-  if (!current) return path
-  return `${path}${path.includes('?') ? '&' : '?'}pj=${encodeURIComponent(current)}`
+  return apiUrlFor(path, current)
 }
 
 /** 给 fetch 的 init 补上项目请求头，保留调用方自己的 headers。 */
 export function withProject(init?: RequestInit): RequestInit | undefined {
-  if (!current) return init
-  return { ...init, headers: { ...(init?.headers ?? {}), 'X-Tavotto-Project': current } }
+  return withProjectFor(init, current)
+}
+
+/* --------------------------------------------------------------------------
+ * 显式指定项目的两个变体。
+ *
+ * 一次写入属于**排队那一刻**的那个项目，不属于"socket 打开那一刻碰巧是哪个"。
+ * 两者之间可以隔着一次项目切换：`dropProject()` 先冲刷再忘掉 pj，而冲刷排出去
+ * 的那次 PUT 若在 await 之后才真的发出，读到的 `current` 已经是 null——这份
+ * 自动保存就落进了后端的默认项目。落错项目的文档在原项目里表现为"没保存"。
+ *
+ * 所以凡是「排队 → 稍后发出」的写入都走这两个，把项目跟着载荷一起带走。
+ * -------------------------------------------------------------------------- */
+
+export function apiUrlFor(path: string, pj: string | null): string {
+  if (!pj) return path
+  return `${path}${path.includes('?') ? '&' : '?'}pj=${encodeURIComponent(pj)}`
+}
+
+export function withProjectFor(
+  init: RequestInit | undefined,
+  pj: string | null,
+): RequestInit | undefined {
+  if (!pj) return init
+  return { ...init, headers: { ...(init?.headers ?? {}), 'X-Tavotto-Project': pj } }
 }

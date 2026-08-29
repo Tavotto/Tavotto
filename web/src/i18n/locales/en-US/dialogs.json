@@ -212,6 +212,10 @@
         "keywords": "ruler guides measure",
         "label": "Show / hide rulers"
       },
+      "save-document": {
+        "keywords": "save document write disk",
+        "label": "Save this document"
+      },
       "save-layout": {
         "keywords": "save layout canvas file",
         "label": "Save as canvas file…"
@@ -882,6 +886,8 @@
     "duplicate": "Duplicate version",
     "emptyHint": "Use “Save version”, or keep editing and checkpoints appear automatically after a few minutes.",
     "emptyTitle": "No versions yet",
+    "fromCanvas": "From canvas “{{name}}”",
+    "fromUnknownCanvas": "Older checkpoint — canvas unknown",
     "intro": "Server-side snapshots of the whole layout. Restoring creates a new version, is undoable, and never touches a source file.",
     "keep": "Keep",
     "keepTitle": "Automatic checkpoints are cleaned up over time; promoting one keeps it like a manual version",
@@ -896,6 +902,12 @@
     "rename": "Rename version",
     "restore": "Restore as a new version",
     "restoreHistory": "Restore layout version “{{name}}”",
+    "restoreMissingCanvasBody": "This checkpoint came from canvas “{{from}}”, which has been deleted. Continuing writes into the current canvas “{{to}}”, replacing what is there.",
+    "restoreMissingCanvasTitle": "Original canvas is gone",
+    "restoreOtherCanvasBody": "This checkpoint was taken on canvas “{{from}}” while you are on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
+    "restoreOtherCanvasTitle": "Restore into canvas “{{name}}”?",
+    "restoreUnknownCanvasBody": "It was left by an older version and does not record which canvas it came from. Continuing writes into the current canvas “{{to}}”, replacing what is there.",
+    "restoreUnknownCanvasTitle": "This checkpoint has no canvas identity",
     "restored": "Restored layout version “{{name}}” (undoable; no source file was touched)",
     "save": "Save version",
     "saved": "Saved the current layout as a new version",

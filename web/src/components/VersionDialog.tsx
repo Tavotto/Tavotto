@@ -15,6 +15,7 @@ import {
   type LayoutVersionMeta,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { resolveRestoreTarget } from '@/lib/versionTarget'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useAssetStore } from '@/store/assetStore'
@@ -28,7 +29,7 @@ import {
 } from '@/diagnostics'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { FigureDocument, PanelObject } from '@/types/document'
-import { objectLabel } from '@/types/document'
+import { canvasToDoc, objectLabel } from '@/types/document'
 import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
@@ -48,6 +49,21 @@ import { Tip } from './ui/Tooltip'
 /** 本抽屉的文案在 dialogs:versions.* 下 */
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/**
+ * 「当前这一份检查点拍的是谁」—— doc + 画布身份，**一起取，一次取**。
+ *
+ * 分开取的话总有一天会有人只取 doc（改造前全仓就是这样），于是检查点在
+ * 时间线上看着好好的，恢复时才发现它不知道自己来自哪张画布（R-03）。
+ */
+function activeCanvasIdentity() {
+  const { doc, activeCanvasId, canvases } = useDocumentStore.getState()
+  return {
+    doc,
+    canvasId: activeCanvasId,
+    canvasName: canvases.find((c) => c.id === activeCanvasId)?.name ?? doc.name,
+  }
+}
 
 export function VersionDrawer() {
   useTranslation(['dialogs', 'common'])
@@ -111,7 +127,7 @@ export function VersionDrawer() {
     try {
       const created = await createVersion(docId, {
         name: saveName.trim() || undefined,
-        doc: useDocumentStore.getState().doc,
+        ...activeCanvasIdentity(),
       })
       recordDiagnosticEvent({
         type: 'layout_version.save',
@@ -224,6 +240,13 @@ export function VersionDrawer() {
                     {vd('metaObjects', { time: formatTime(v.ts), count: v.objects })}
                     {v.page ? vd('metaPage', { w: v.page.w, h: v.page.h }) : ''}
                   </span>
+                  {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
+                      **照实说"不知道"**，不猜成当前画布。 */}
+                  <span className="truncate text-xs text-ink-faint">
+                    {v.canvasId
+                      ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                      : vd('fromUnknownCanvas')}
+                  </span>
                 </button>
                 {v.id === selected && meta && (
                   <VersionDetail
@@ -245,6 +268,46 @@ export function VersionDrawer() {
   )
 }
 
+/**
+ * 恢复落点的四条岔路（R-03）。返回 false = 用户取消，一个字节都不写。
+ *
+ * 判据本身在 `lib/versionTarget.ts`；这里只负责"每一条该说什么话"。
+ * 会覆盖当前画布的那两条（原画布已删除 / 检查点没有画布身份）措辞最重，
+ * 因为它们是唯一会盖掉**别的画布**内容的路径。
+ */
+async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
+  const s = useDocumentStore.getState()
+  const here = s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? s.doc.name
+  const target = resolveRestoreTarget(meta, s)
+  if (target.kind === 'same') return true
+  if (target.kind === 'other') {
+    return askConfirm({
+      title: msg('versions.restoreOtherCanvasTitle', { name: target.name }, 'dialogs'),
+      body: msg(
+        'versions.restoreOtherCanvasBody',
+        { from: target.name, to: here },
+        'dialogs',
+      ),
+      confirmLabel: msg('actions.continue', undefined, 'common'),
+    })
+  }
+  return askConfirm({
+    title: msg(
+      target.kind === 'missing'
+        ? 'versions.restoreMissingCanvasTitle'
+        : 'versions.restoreUnknownCanvasTitle',
+      undefined,
+      'dialogs',
+    ),
+    body:
+      target.kind === 'missing'
+        ? msg('versions.restoreMissingCanvasBody', { from: target.from, to: here }, 'dialogs')
+        : msg('versions.restoreUnknownCanvasBody', { to: here }, 'dialogs'),
+    confirmLabel: msg('actions.continue', undefined, 'common'),
+    danger: true,
+  })
+}
+
 /* ------------------------------- 详情面板 --------------------------------- */
 
 function VersionDetail({
@@ -263,7 +326,19 @@ function VersionDetail({
   setBusy: (v: boolean) => void
 }) {
   useTranslation(['dialogs', 'common'])
-  const currentDoc = useDocumentStore((s) => s.doc)
+  const activeDoc = useDocumentStore((s) => s.doc)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  /**
+   * 「当前」指的是**这个检查点所属画布**的当前内容，不是恰好激活的那张。
+   * 拿激活画布去和另一张画布的检查点做 diff，差异栏里全是无中生有的
+   * "新增 12 个对象"，而用户以为自己在看这一版改了什么（R-03）。
+   */
+  const currentDoc = useMemo(() => {
+    if (!meta.canvasId || meta.canvasId === activeCanvasId) return activeDoc
+    const c = canvases.find((x) => x.id === meta.canvasId)
+    return c ? canvasToDoc(c) : activeDoc
+  }, [meta.canvasId, activeCanvasId, activeDoc, canvases])
   const [view, setView] = useState<'version' | 'current'>('version')
   const [compareOpen, setCompareOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -296,6 +371,13 @@ function VersionDetail({
     // 收尾也保证了自动存档存下去的是**真正的当前状态**，而不是一个
     // 事务开着、值还没落定的中间态（issue #131）。
     finishActiveGesture()
+    // 落点由**检查点自己的画布身份**决定，不是"恰好激活的那张"（R-03）。
+    // 三条岔路各自要用户点头，因为它们盖掉的东西不一样。
+    if (!(await confirmRestoreTarget(meta))) return
+    // 原画布还在 → 切过去再写（自动存档因此拍的是**即将被覆盖的那张**）；
+    // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
+    const target = resolveRestoreTarget(meta, useDocumentStore.getState())
+    if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
     setBusy(true)
     const hashBefore = documentDigest(useDocumentStore.getState().doc)
     recordDiagnosticEvent({
@@ -311,7 +393,7 @@ function VersionDetail({
       await createVersion(docId, {
         name: vd('beforeRestore', { time: formatTime(Date.now()) }),
         auto: true,
-        doc: useDocumentStore.getState().doc,
+        ...activeCanvasIdentity(),
       })
       backupCreated = true
       useDocumentStore

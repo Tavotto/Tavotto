@@ -389,6 +389,10 @@ export default interface Resources {
           "keywords": "ruler bc biaochi",
           "label": "显示 / 隐藏标尺"
         },
+        "save-document": {
+          "keywords": "save document bc baocun cunpan",
+          "label": "保存当前文档"
+        },
         "save-layout": {
           "keywords": "save layout bc baocun",
           "label": "保存为画布文件…"
@@ -1046,6 +1050,8 @@ export default interface Resources {
       "duplicate": "复制版本",
       "emptyHint": "手动「存版本」，或编辑几分钟后自动出现检查点。",
       "emptyTitle": "还没有版本",
+      "fromCanvas": "来自画布「{{name}}」",
+      "fromUnknownCanvas": "旧检查点，不知道来自哪张画布",
       "intro": "整份布局的服务器快照；恢复产生新版本、可撤销，不改动任何源文件。",
       "keep": "保留",
       "keepTitle": "自动检查点会滚动清理；转正后按手动版本保留",
@@ -1059,6 +1065,12 @@ export default interface Resources {
       "rename": "重命名版本",
       "restore": "恢复为新版本",
       "restoreHistory": "恢复布局版本「{{name}}」",
+      "restoreMissingCanvasBody": "这个检查点来自画布「{{from}}」，它已被删除。继续会把内容写进当前画布「{{to}}」，覆盖它现在的内容。",
+      "restoreMissingCanvasTitle": "原画布已不存在",
+      "restoreOtherCanvasBody": "这个检查点拍的是画布「{{from}}」，当前在「{{to}}」。恢复会切到「{{from}}」再写入，不动当前画布。",
+      "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
+      "restoreUnknownCanvasBody": "它是旧版本留下的，不知道来自哪张画布。继续会把内容写进当前画布「{{to}}」，覆盖它现在的内容。",
+      "restoreUnknownCanvasTitle": "这个检查点没有画布身份",
       "restored": "已恢复布局版本「{{name}}」（可撤销；未改动任何源文件）",
       "save": "存版本",
       "saved": "已保存当前布局为新版本",
@@ -1082,6 +1094,7 @@ export default interface Resources {
       "ai_start_failed": "AI 任务启动失败：{{reason}}",
       "annotations_need_pdf": "该素材只有位图、没有矢量 PDF，暂不支持把标注写回原图",
       "desktop_updater_disabled": "桌面版内不支持 pip 自升级，请更新桌面应用",
+      "dir_fsync_failed": "内容已写入，但系统没能确认它已牢固落盘，请重试一次再关闭：{{reason}}",
       "dir_missing": "目录不存在：{{path}}",
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "接口保存失败：{{reason}}",
@@ -1090,6 +1103,7 @@ export default interface Resources {
       "execution_cancelled": "试运行被中断（会话在执行期间被终止）",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
+      "external_change": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过，本次保存没有写入",
       "file_locked": "文件被其他程序占用，请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试",
       "internal_error": "服务器内部错误：{{reason}}",
       "interpreter_no_matplotlib": "{{path}} 里 import 不到 matplotlib",
@@ -1121,6 +1135,7 @@ export default interface Resources {
       "native_session_offline": "这张图来自已结束的 Tavotto Run 会话。重新运行原命令后可继续对象级编辑。",
       "native_session_unknown": "没有这个 Tavotto Run 会话。",
       "no_project": "尚未打开项目",
+      "non_finite_number": "文档里含有无法保存的数值（NaN 或 ∞），磁盘上那份一个字节都没动：{{reason}}",
       "not_parameterizable": "该面板不可参数化（没有对应脚本）",
       "open_project_failed": "打不开这个项目：{{reason}}",
       "package_file_missing": "缺少上传文件",
@@ -1136,7 +1151,9 @@ export default interface Resources {
       "project_env_unusable": "找到的项目环境无法启动",
       "python_missing": "这台机器上没找到可用的 Python，请先安装 Python 3.10 以上再重试",
       "read_failed": "无法读取：{{reason}}",
+      "registry_reload_failed": "脚本注册表读不回来，项目仍在使用上一次成功加载的那份：{{reason}}",
       "registry_update_failed": "注册表更新失败：{{reason}}",
+      "replace_failed": "保存的最后一步（换名）失败，原文件未被破坏，可以重试：{{reason}}",
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回（磁盘上有同名产物时请从素材库的那一份写回）",
       "runtime_asset_unknown": "运行时素材未登记：{{id}}（脚本注册表里找不到它，重新运行脚本即可重新登记）",
@@ -1158,7 +1175,8 @@ export default interface Resources {
       "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
       "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
       "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
-      "write_back_warnings": "写回被阻止：引擎在重放时报告了警告"
+      "write_back_warnings": "写回被阻止：引擎在重放时报告了警告",
+      "write_failed": "写入磁盘失败，本机副本仍在，可以重试：{{reason}}"
     },
     "engine": {
       "apply": "应用",
@@ -2433,6 +2451,7 @@ export default interface Resources {
       "nudge": "微调 0.5mm / 5mm",
       "palette": "命令面板",
       "pan": "平移画布",
+      "saveDocument": "保存当前文档",
       "saveLayout": "保存为画布文件",
       "script": "上标 / 下标（属性面板的文字输入框内）",
       "selectAll": "全选",
@@ -2556,6 +2575,24 @@ export default interface Resources {
       "blank": "打开空白文档",
       "body": "文档已自动保存在本机，刷新后可从最后一次快照继续。如果一刷新就再次出错，改用「打开空白文档」——文档不会被删除，仍可从顶栏「最近文档」取回。",
       "title": "界面出错了"
+    },
+    "docBanner": {
+      "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
+      "conflictDiskUnknown": "读不到磁盘上那份的内容摘要",
+      "conflictExternal": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过，本窗口的编辑没有写进去",
+      "conflictStale": "该文档已在其他窗口保存了更新的版本，本窗口的编辑没有写进去",
+      "dismiss": "知道了",
+      "keepMain": "保留主版本",
+      "overwrite": "用我的版本覆盖",
+      "recover": "恢复",
+      "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
+      "recoveryTitle": "发现未恢复的编辑",
+      "reload": "重新加载磁盘那份",
+      "retry": "重试保存",
+      "saveAs": "另存为…",
+      "saveErrorBody": "改动暂存在浏览器里，还没写进磁盘",
+      "tooNewBody": "Tavotto 没有打开它，磁盘上的文件一个字节都没动。升级后再试。",
+      "tooNewTitle": "这份文档来自更新的 Tavotto（schema {{schema}}）"
     },
     "drawer": {
       "pin": "钉住侧栏",
@@ -2776,6 +2813,11 @@ export default interface Resources {
       "placeholder": "由脚本生成的图",
       "placeholderHint": "双击进入编辑即运行 {{script}} 重新生成"
     },
+    "save": {
+      "conflict": "磁盘上的这份文档已被别处改过，请先处理冲突",
+      "done": "已保存到磁盘",
+      "failed": "保存失败：改动仍在，请检查磁盘空间后重试"
+    },
     "scrim": {
       "collapse": "收起侧栏"
     },
@@ -2874,6 +2916,7 @@ export default interface Resources {
       "pastedWithSkips_other": "已粘贴 {{count}} 个对象（跳过 {{skipped}} 个缺失素材的面板；{{undo}} 可撤销）",
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
       "recentMissing": "该文档的本机副本已不存在",
+      "recentTooNew": "该文档来自更新的 Tavotto，本版本读不了它（磁盘上的文件没有改动）",
       "redone": "重做：{{label}}",
       "relinkNone": "未重链接任何面板；缺失素材的面板保持原样",
       "relinked_other": "已重新链接 {{count}} 个素材（{{undo}} 可撤销）",
@@ -2915,7 +2958,6 @@ export default interface Resources {
     "topbar": {
       "addSubLabels": "添加序号标签",
       "annotate": "标注",
-      "autosaveTitle": "改动会自动保存到本机磁盘；要留一个命名版本请用「保存为画布文件」",
       "canvasFiles": "画布文件",
       "canvasSettings": "画布设置",
       "commandPalette": "命令面板",
@@ -2940,8 +2982,14 @@ export default interface Resources {
       "redoWith": "重做 {{label}}",
       "renameDocument": "重命名文档…",
       "saveAsCanvasFile": "保存为画布文件…",
-      "savedAt": "已自动保存 {{time}}",
-      "saving": "保存中…",
+      "saveClean": "已保存 {{time}}",
+      "saveCleanNoTime": "已保存",
+      "saveConflict": "外部冲突",
+      "saveDirty": "有未保存修改",
+      "saveError": "保存失败",
+      "saveSaved": "已保存",
+      "saveSaving": "正在保存…",
+      "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
       "undo": "撤销",

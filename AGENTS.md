@@ -29,6 +29,7 @@
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
   | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
+  | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
   共读，绝不硬编码第二份）。

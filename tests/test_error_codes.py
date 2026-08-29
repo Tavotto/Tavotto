@@ -27,7 +27,20 @@ LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 #: 会返回用户可见 JSON 错误的模块。`engine/ai_bridge.py` 在列，是因为编码
 #: Agent 的失败以 `AgentError("<code>")` 抛出、由 app.py 的一个漏斗转成 JSON
 #: ——只扫 app.py 的话这批 code 一个都看不见，而看不见的门禁 = 没有门禁。
-_SOURCE_FILES = ("app.py", "security.py", "desktop.py", "engine/ai_bridge.py")
+#: `engine/project_refresh.py` 与 `engine/atomicio.py` 在列，是因为它们的失败
+#: 以 `RefreshError("<code>")` / `AtomicWriteError("<code>")` 抛出、由 app.py
+#: 的漏斗转成 JSON——只扫 app.py 的话这批 code 一个都看不见，而看不见的门禁
+#: = 没有门禁。atomicio 是 2026-08-29 补进来的：它的 `write_failed` /
+#: `replace_failed` / `non_finite_number` 早就会落到用户界面上，却一直没人
+#: 要求它们有英文文案。
+_SOURCE_FILES = (
+    "app.py",
+    "security.py",
+    "desktop.py",
+    "engine/ai_bridge.py",
+    "engine/project_refresh.py",
+    "engine/atomicio.py",
+)
 
 
 def _all_error_sources() -> str:
@@ -38,7 +51,12 @@ def _all_error_sources() -> str:
 
 
 #: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
-_CODE_PATTERNS = (r'"code":\s*"([a-z0-9_]+)"', r'AgentError\(\s*"([a-z0-9_]+)"')
+_CODE_PATTERNS = (
+    r'"code":\s*"([a-z0-9_]+)"',
+    r'AgentError\(\s*"([a-z0-9_]+)"',
+    r'RefreshError\(\s*"([a-z0-9_]+)"',
+    r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
+)
 
 
 def _declared_codes(text: str) -> set[str]:
@@ -119,6 +137,16 @@ USER_VISIBLE_CODES = {
     "script_changed": set(),
     "source_changed": set(),
     "stale_write": set(),
+    # --- Prompt 03（R-08）：磁盘上那份被 Tavotto 之外的改动覆盖过 ---
+    "external_change": set(),
+    # --- Prompt 04：统一项目刷新（engine/project_refresh.py）---
+    "registry_reload_failed": {"reason"},
+    # --- 原子写（engine/atomicio.py，ADR 0023）：一直会落到界面上，
+    #     直到 2026-08-29 才进扫描范围 ---
+    "non_finite_number": {"reason"},
+    "write_failed": {"reason"},
+    "replace_failed": {"reason"},
+    "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
 }
@@ -169,14 +197,47 @@ def test_error_field_is_still_there_as_the_fallback():
     for code in USER_VISIBLE_CODES:
         needle = f'"code": "{code}"'
         if needle not in src:
-            # 经 AgentError 抛出的那批：原文由 app.py 的唯一漏斗补上，
-            # 这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
-            assert f'AgentError("{code}"' in src, f"{code} 既没有响应也没有异常"
+            # 经 AgentError / RefreshError 抛出的那批：原文由 app.py 的唯一
+            # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
+            raised = any(
+                re.search(rf'{name}\(\s*"{code}"', src)
+                for name in ("AgentError", "RefreshError", "AtomicWriteError")
+            )
+            assert raised, f"{code} 既没有响应也没有异常"
             continue
         idx = src.index(needle)
         # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
         start = src.rindex("jsonify({", 0, idx)
         assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+
+
+def test_the_atomic_write_funnel_still_carries_the_original_text():
+    """`AtomicWriteError` 那批同样只有一个漏斗（`_atomic_write_error`）。"""
+    app = APP.read_text(encoding="utf-8")
+    start = app.index("def _atomic_write_error(")
+    assert "exc.as_payload()" in app[start : start + 800]
+    atomicio = (SRC_DIR / "engine" / "atomicio.py").read_text(encoding="utf-8")
+    start = atomicio.index("    def as_payload(")
+    block = atomicio[start : start + 300]
+    for key in ('"error"', '"code"'):
+        assert key in block, f"AtomicWriteError.as_payload() 少了 {key}"
+
+
+def test_the_refresh_error_funnel_still_carries_the_original_text():
+    """`RefreshError` 那批（统一项目刷新）同样只有一个漏斗，单独钉死它。
+
+    漏斗给的是 `exc.as_payload()`，所以真正要守的是 `as_payload()` 里那三样
+    ——只断言 app.py 那一行的话，把 `as_payload` 改成只回 `{"code": ...}`
+    照样绿，而英文界面上会冒出一个原样的 code。
+    """
+    app = APP.read_text(encoding="utf-8")
+    start = app.index("def _refresh_error(")
+    assert "exc.as_payload()" in app[start : start + 600]
+    refresh = (SRC_DIR / "engine" / "project_refresh.py").read_text(encoding="utf-8")
+    start = refresh.index("    def as_payload(")
+    block = refresh[start : start + 300]
+    for key in ('"error"', '"code"', '"params"'):
+        assert key in block, f"RefreshError.as_payload() 少了 {key}"
 
 
 def test_the_agent_error_funnel_still_carries_the_original_text():

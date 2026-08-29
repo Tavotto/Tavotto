@@ -52,7 +52,10 @@ const BUDGETS: Budget[] = [
   ['workspace', 'topbar.redo', 12, '顶栏图标按钮的无障碍名'],
   ['workspace', 'topbar.more', 12, '顶栏「更多」菜单触发器'],
   ['workspace', 'topbar.fitCanvas', 20, '缩放区的按钮'],
-  ['workspace', 'topbar.saving', 16, '文档名旁的自动保存状态'],
+  ['workspace', 'topbar.saveSaving', 16, '文档名旁的保存状态'],
+  ['workspace', 'topbar.saveDirty', 20, '文档名旁的保存状态'],
+  ['workspace', 'topbar.saveError', 16, '文档名旁的保存状态'],
+  ['workspace', 'topbar.saveConflict', 20, '文档名旁的保存状态'],
   // 右栏三个标签页并排，宽度 296–320px
   ['inspector', 'tab.properties', 14, '右栏标签页'],
   ['inspector', 'tab.canvas', 14, '右栏标签页'],

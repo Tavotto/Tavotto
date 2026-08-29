@@ -321,8 +321,16 @@ export interface CanvasData {
   profile?: DocumentProfile
 }
 
+/**
+ * 本构建能写出来的 schema 版本。**比它更高的文档一律不打开**——旧构建对新
+ * 字段的语义一无所知，「尽力打开」等于用旧规则重写用户的新数据。
+ *
+ * 严格同源：`src/tavotto/engine/documents.py` 的 `SCHEMA_CURRENT`。
+ */
+export const SCHEMA_CURRENT = 3
+
 export interface ProjectDocument {
-  schema: 3
+  schema: typeof SCHEMA_CURRENT
   project: { id: string; name: string }
   /** 数组序 = 画布显示顺序 */
   canvases: CanvasData[]

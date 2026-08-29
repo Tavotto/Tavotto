@@ -109,6 +109,24 @@
     "body": "文档已自动保存在本机，刷新后可从最后一次快照继续。如果一刷新就再次出错，改用「打开空白文档」——文档不会被删除，仍可从顶栏「最近文档」取回。",
     "title": "界面出错了"
   },
+  "docBanner": {
+    "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
+    "conflictDiskUnknown": "读不到磁盘上那份的内容摘要",
+    "conflictExternal": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过，本窗口的编辑没有写进去",
+    "conflictStale": "该文档已在其他窗口保存了更新的版本，本窗口的编辑没有写进去",
+    "dismiss": "知道了",
+    "keepMain": "保留主版本",
+    "overwrite": "用我的版本覆盖",
+    "recover": "恢复",
+    "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
+    "recoveryTitle": "发现未恢复的编辑",
+    "reload": "重新加载磁盘那份",
+    "retry": "重试保存",
+    "saveAs": "另存为…",
+    "saveErrorBody": "改动暂存在浏览器里，还没写进磁盘",
+    "tooNewBody": "Tavotto 没有打开它，磁盘上的文件一个字节都没动。升级后再试。",
+    "tooNewTitle": "这份文档来自更新的 Tavotto（schema {{schema}}）"
+  },
   "drawer": {
     "pin": "钉住侧栏",
     "pinHint": "钉住：选中对象时不自动收起",
@@ -282,6 +300,8 @@
     "cold": "冷启动中，可能需要几分钟…",
     "error": "渲染失败",
     "firstBuild": "首次构建中…",
+    "memoryEfficientPreview": "低内存编辑预览",
+    "memoryEfficientPreviewHint": "当前图形较复杂，Tavotto 已切换为低内存编辑预览。最终导出质量不会受到影响。",
     "nativeOffline": "会话已结束，重新运行原命令可继续编辑",
     "nativeRunning": "脚本正在运行，停下来才能编辑",
     "rendering": "渲染中…",
@@ -290,9 +310,7 @@
     "runtimeNeedsRerun": "尚未在本机运行，进入编辑即重新生成",
     "runtimePossiblyStale": "脚本或执行环境可能已变化，建议重新运行",
     "runtimeRerunFailed": "重新运行失败",
-    "stale": "脚本已更新",
-    "memoryEfficientPreview": "低内存编辑预览",
-    "memoryEfficientPreviewHint": "当前图形较复杂，Tavotto 已切换为低内存编辑预览。最终导出质量不会受到影响。"
+    "stale": "脚本已更新"
   },
   "quickEdit": {
     "aria": "快捷编辑",
@@ -327,6 +345,11 @@
   "runtimePanel": {
     "placeholder": "由脚本生成的图",
     "placeholderHint": "双击进入编辑即运行 {{script}} 重新生成"
+  },
+  "save": {
+    "conflict": "磁盘上的这份文档已被别处改过，请先处理冲突",
+    "done": "已保存到磁盘",
+    "failed": "保存失败：改动仍在，请检查磁盘空间后重试"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -426,6 +449,7 @@
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象（跳过 {{skipped}} 个缺失素材的面板；{{undo}} 可撤销）",
     "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
     "recentMissing": "该文档的本机副本已不存在",
+    "recentTooNew": "该文档来自更新的 Tavotto，本版本读不了它（磁盘上的文件没有改动）",
     "redone": "重做：{{label}}",
     "relinkNone": "未重链接任何面板；缺失素材的面板保持原样",
     "relinked_other": "已重新链接 {{count}} 个素材（{{undo}} 可撤销）",
@@ -467,7 +491,6 @@
   "topbar": {
     "addSubLabels": "添加序号标签",
     "annotate": "标注",
-    "autosaveTitle": "改动会自动保存到本机磁盘；要留一个命名版本请用「保存为画布文件」",
     "canvasFiles": "画布文件",
     "canvasSettings": "画布设置",
     "commandPalette": "命令面板",
@@ -492,8 +515,14 @@
     "redoWith": "重做 {{label}}",
     "renameDocument": "重命名文档…",
     "saveAsCanvasFile": "保存为画布文件…",
-    "savedAt": "已自动保存 {{time}}",
-    "saving": "保存中…",
+    "saveClean": "已保存 {{time}}",
+    "saveCleanNoTime": "已保存",
+    "saveConflict": "外部冲突",
+    "saveDirty": "有未保存修改",
+    "saveError": "保存失败",
+    "saveSaved": "已保存",
+    "saveSaving": "正在保存…",
+    "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
     "shortcutHelp": "快捷键帮助",
     "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
     "undo": "撤销",

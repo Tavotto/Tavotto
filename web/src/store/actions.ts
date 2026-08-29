@@ -22,7 +22,7 @@ import type {
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
-import { readAutosaveDoc, useDocumentStore } from './documentStore'
+import { readAutosaveDoc, saveNow, useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
 import { useSelectionStore } from './selectionStore'
@@ -414,6 +414,31 @@ function afterSwitch(): void {
   useViewportStore.getState().fit(page.w, page.h)
 }
 
+/**
+ * ⌘S / Ctrl+S 的实际动作：**真的保存**，然后按结果说一句话。
+ *
+ * 改造前这个组合键打开的是「保存为画布文件」对话框，而快捷键帮助里写的就是
+ * 「保存为画布文件」——两边一致，但用户按 ⌘S 想要的从来不是"另存一份"。
+ * 现在 ⌘S 存当前文档（目标已知，直接写），⇧⌘S 才是另存为。
+ *
+ * 保存是离散动作：先把还开着的那一轮连续编辑收干净，否则存下去的是一个
+ * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
+ */
+export async function runManualSave(): Promise<void> {
+  finishActiveGesture()
+  const ui = useUiStore.getState()
+  const state = await saveNow()
+  if (state === 'saved' || state === 'clean') {
+    ui.setStatus(msg('save.done', undefined, 'workspace'))
+  } else if (state === 'conflict') {
+    ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
+  } else if (state === 'save_error') {
+    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error')
+  }
+  // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
+  // 顶栏的状态会继续往下走，这里不再多说一句话。
+}
+
 export async function newBlankDocument(): Promise<void> {
   const next = emptyProject()
   if (!(await useDocumentStore.getState().switchDocument(next, newId('d'), confirmLoss))) return
@@ -431,13 +456,16 @@ export async function openLayoutDocument(doc: FigureDocument | ProjectDocument):
 
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
 export async function openRecentDocument(id: string): Promise<void> {
-  const pd = await readAutosaveDoc(id)
+  const { doc: pd, notice } = await readAutosaveDoc(id)
   if (!pd) {
-    status(note('recentMissing'), 'error')
+    // schema 太新是「读不了」而不是「不见了」：文件好好的，说清楚是哪一种
+    status(note(notice?.kind === 'schema_too_new' ? 'recentTooNew' : 'recentMissing'), 'error')
     return
   }
   if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return
   afterSwitch()
+  // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
+  if (notice) useDocumentStore.setState({ docNotice: notice })
   status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }))
 }
 

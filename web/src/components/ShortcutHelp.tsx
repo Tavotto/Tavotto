@@ -30,7 +30,8 @@ const GROUPS: { id: string; rows: Row[] }[] = [
     rows: [
       { keys: `${MOD}K`, desc: 'palette' },
       { keys: `${MOD}Z / ⇧${MOD}Z`, desc: 'undoRedo' },
-      { keys: `${MOD}S`, desc: 'saveLayout' },
+      { keys: `${MOD}S`, desc: 'saveDocument' },
+      { keys: `⇧${MOD}S`, desc: 'saveLayout' },
       { keys: `${MOD}E`, desc: 'export' },
       { keys: '?', desc: 'help' },
     ],

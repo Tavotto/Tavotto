@@ -16,6 +16,7 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
+import { DocumentBanner } from '@/components/DocumentBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
@@ -166,6 +167,7 @@ function Workspace() {
         <TopBar />
         <CanvasTabs />
         {outdated && <UpdateBanner />}
+        <DocumentBanner />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
