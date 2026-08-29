@@ -333,30 +333,74 @@ def _vertices_in_paths(paths) -> tuple[int, bool]:
     return round(total / len(sample) * n), False
 
 
-def _shares_geometry(coll, n_paths: int, n_instances: int, verts_first: int) -> bool:
-    """SVG 后端会不会把几何收进 `<defs>`、每个实例只出一个 `<use>`。
+def _single_shape_blit(coll, paths) -> bool:
+    """`Collection.draw` 的**单形状快路**：一条几何写一遍、blit 很多次。
 
-    **抄的是 `RendererSVG.draw_path_collection` 开头那个取舍式**（matplotlib
-    3.10.8 / 3.11.1 逐字相同）：
+    抄的是 `Collection.draw` 里 `do_single_path_optimization` 那串条件（公开
+    getter 逐条对应，一个私有名都没用）。命中时它走 `renderer.draw_markers`，
+    SVG 后端把 marker 收进 `<defs>`、每个 offset 出一个 `<use>`——**与
+    `draw_path_collection` 的成本取舍式无关，根本不走那条路**。
 
-        uses_per_path = ceil(N / Npath_ids)
-        len_path + 9 * uses_per_path + 3 < (len_path + 5) * uses_per_path
+    这条比取舍式重要得多：**`scatter(x, y, s=<数组>)` 一落到逐点大小上就掉出
+    这条快路**（`get_transforms()` 变成每点一个），于是 500 个 marker 各自内联
+    ——实测顶点数 26 → **13 000，五百倍**。只按取舍式建模会把这两种散点算成
+    同一个成本（第一版就是这么错的，对拍加了那三格散点才抓出来）。
 
-    以及 `_iter_collection_uses_per_path` 的那条前置——**面色与边色都空时它
-    回 0**，取舍式当场不成立。
-
-    这条只影响 `vertex_count`（共享时几何在 defs 里只出现一次，内联时每个实例
-    各出一遍）。`primitive_count` 两边一样，所以万一将来 matplotlib 改了这个
-    取舍式，失准的是估值、不是保护。
+    唯一没抄的是最后那半句「marker 的包围盒要小于整张图」：算它要先有
+    `_prepare_points()` 的变换，而那是热路径上不该付的钱。marker 大到跟整张图
+    一样是退化情形，真出现时我们会**低估**——记在模块头的已知盲区表里。
     """
-    if n_paths <= 0 or n_instances <= 0:
+    if len(paths) != 1:
+        return False
+    try:
+        return (
+            len(coll.get_transforms()) <= 1
+            and len(coll.get_facecolor()) == 1
+            and len(coll.get_edgecolor()) == 1
+            and len(coll.get_linewidth()) == 1
+            and all(ls[1] is None for ls in coll.get_linestyle())
+            and len(coll.get_antialiased()) == 1
+            and len(coll.get_urls()) == 1
+            and coll.get_hatch() is None
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _shares_geometry(coll, paths, n_path_ids: int, n_instances: int, verts_first: int) -> bool:
+    """SVG 后端会不会把几何只写一遍、每个实例只出一个 `<use>`。
+
+    两条路，**顺序与 matplotlib 自己的一致**：
+
+    1. `Collection.draw` 的单形状快路（`_single_shape_blit`）→ `draw_markers`
+       → 恒共享；
+    2. 否则 `RendererSVG.draw_path_collection` 开头那个成本取舍式（3.10.8 /
+       3.11.1 逐字相同）：
+
+           uses_per_path = ceil(N / Npath_ids)
+           len_path + 9 * uses_per_path + 3 < (len_path + 5) * uses_per_path
+
+       以及 `_iter_collection_uses_per_path` 的前置——**面色与边色都空时它回 0**，
+       取舍式当场不成立。
+
+    实测三种散点各落在不同的分支上，对拍用例里那三格就是它们：
+    `s=标量` 走 1；`c=数组`（面色 500 个）掉出 1、在 2 里仍然共享；
+    `s=数组` 掉出 1、在 2 里 `uses` 被压成 1，于是**逐个内联**。
+
+    这条只决定 `vertex_count`。`primitive_count` 两边一样（内联的 `<path>` 与
+    共享的 `<use>` 都是一个 DOM 节点），所以万一将来 matplotlib 改了这套取舍，
+    失准的是估值、不是保护。
+    """
+    if _single_shape_blit(coll, paths):
+        return True
+    if n_path_ids <= 0 or n_instances <= 0:
         return False
     try:
         if not (_len0(coll.get_facecolor()) or _len0(coll.get_edgecolor())):
             return False
     except Exception:  # noqa: BLE001
         return False
-    uses = -(-n_instances // n_paths)  # ceil
+    uses = -(-n_instances // n_path_ids)  # ceil
     return verts_first + 9 * uses + 3 < (verts_first + 5) * uses
 
 
@@ -398,15 +442,26 @@ def _cost_collection(coll, family: str, paths) -> ArtistPreviewCost:
         n_offsets = _len0(coll.get_offsets())
     except Exception:  # noqa: BLE001
         n_offsets = 0
+    try:
+        n_transforms = _len0(coll.get_transforms())
+    except Exception:  # noqa: BLE001
+        n_transforms = 0
     verts_in_paths, exact = _vertices_in_paths(paths)
-    n_instances = max(n_paths, n_offsets)
+    # `RendererBase._iter_collection` 画的次数：
+    #     Npath_ids = max(len(paths), len(all_transforms))
+    #     N         = max(Npath_ids, len(offsets))
+    # **`all_transforms` 这一项不能省**：`scatter(x, y, s=<数组>)` 只有一条
+    # marker path，却有每点一个的变换——漏掉它，一个逐点大小的散点会被算成
+    # 「一个 primitive」。
+    n_path_ids = max(n_paths, n_transforms)
+    n_instances = max(n_path_ids, n_offsets)
     verts_first = 0
     if n_paths:
         try:
             verts_first = len(paths[0].vertices)
         except Exception:  # noqa: BLE001
             verts_first = 0
-    if _shares_geometry(coll, n_paths, n_instances, verts_first):
+    if _shares_geometry(coll, paths, n_path_ids, n_instances, verts_first):
         # 几何进 defs：`scatter` 十二万个点在 SVG 文本里只有一份 marker 几何。
         vertices = verts_in_paths
     elif n_paths:
