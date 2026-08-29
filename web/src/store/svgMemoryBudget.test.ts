@@ -393,7 +393,9 @@ describe('判据真的进了控制流：渲染成功那一刻就收账', () => {
 })
 
 describe('真实巨型 payload：不是声明出来的字节数', () => {
-  it('四版各 12 MiB 的真字符串进出之后，驻留字节仍在预算之内', async () => {
+  /** 四版各 12 MiB 的**真字符串**过一遍 render()，回报驻留情况 */
+  async function stress(pinAll: boolean) {
+    useRenderStore.getState().clear()
     const filler = 'x'.repeat(12 * MiB)
     let rev = 0
     engineRender.mockImplementation(async (_id: string, patches: unknown[]) => ({
@@ -403,21 +405,44 @@ describe('真实巨型 payload：不是声明出来的字节数', () => {
       // 不带 preview：走 svg.length 那条路，量的是**真的这么长**的字符串
       svg: `<svg id="${JSON.stringify(patches).length}">${filler}</svg>`,
     }))
-    for (let i = 1; i <= 4; i++) await store().render('Fig1.pdf', v(i))
-
-    const after = resident()
-    // 没有预算的话是 4 × 12 MiB ≈ 48 MiB
-    expect(after.byFile['Fig1.pdf']).toBeLessThanOrEqual(SVG_RECENT_BUDGET_PER_FILE)
-    expect(after.byFile['Fig1.pdf']).toBeGreaterThan(11 * MiB) // 最后那份还在
-    // 四条语义状态一条不少
-    expect(Object.keys(useRenderStore.getState().byKey)).toHaveLength(4)
+    const keys: string[] = []
     for (let i = 1; i <= 4; i++) {
-      expect(useRenderStore.getState().byKey[renderKey('Fig1.pdf', v(i))].manifest).not.toBeNull()
+      keys.push(renderKey('Fig1.pdf', v(i)))
+      // 对照那一侧：每一版都还挂在画布上（四个副本各调各的），于是**每一份
+      // 都被 pin 住**，一份都驱逐不掉——这正是 Session 04 之前的驻留形状。
+      // 走的是同一条 render() 代码路径，只是输入不同：不是另写一个模型。
+      if (pinAll) useRenderStore.getState().prune(new Set(keys))
+      await store().render('Fig1.pdf', v(i))
     }
-    // 真的只剩一份字符串挂在堆上
-    const alive = Object.values(useRenderStore.getState().byKey).filter((e) => e.svg != null)
-    expect(alive).toHaveLength(1)
-    expect(alive[0].lastPatches).toBe(JSON.stringify(v(4)))
+    const s = useRenderStore.getState()
+    return {
+      resident: residentSvgBytes(s).byFile['Fig1.pdf'] ?? 0,
+      entries: Object.keys(s.byKey).length,
+      withManifest: Object.values(s.byKey).filter((e) => e.manifest != null).length,
+      withSvg: Object.values(s.byKey).filter((e) => e.svg != null),
+    }
+  }
+
+  it('可驱逐时收进预算，全被 pin 住时如实留着——**同一次运行里交替**', async () => {
+    // 两侧必须在同一个进程、紧挨着跑：不同时刻的两次跑是两个样本，不是对照。
+    const control = await stress(true)
+    const budgeted = await stress(false)
+
+    // 对照侧：四份 12 MiB 全留着（= 本 Session 之前的驻留形状）
+    expect(control.withSvg).toHaveLength(4)
+    expect(control.resident).toBeGreaterThan(47 * MiB)
+
+    // 预算侧：只剩最后那一份
+    expect(budgeted.resident).toBeLessThanOrEqual(SVG_RECENT_BUDGET_PER_FILE)
+    expect(budgeted.withSvg).toHaveLength(1)
+    expect(budgeted.withSvg[0].lastPatches).toBe(JSON.stringify(v(4)))
+    expect(budgeted.resident * 3).toBeLessThan(control.resident)
+
+    // **两侧的语义状态完全相同**——省下来的只有 SVG 源 payload
+    expect(budgeted.entries).toBe(control.entries)
+    expect(budgeted.withManifest).toBe(control.withManifest)
+    expect(budgeted.entries).toBe(4)
+    expect(budgeted.withManifest).toBe(4)
   })
 })
 

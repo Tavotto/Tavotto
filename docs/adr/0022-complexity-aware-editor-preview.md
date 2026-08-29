@@ -322,14 +322,18 @@ manifest, rev, lastPatches …               svg: string
 同时 `useEngineSync` 会为它**重排一次渲染**：桌面/playground 有引擎位图顶着，
 内嵌画布没有第二条路，重画是那里唯一的出路。
 
-合成压力（4 版 × 12 MiB 的真字符串，同一文件）：
+合成压力（4 版 × 12 MiB 的真字符串，同一文件，**同一次运行里交替**）：
 
-| | 无预算 | Session 04 |
+| | 全被 pin（= 本 Session 之前） | 预算可以动手 |
 |---|---:|---:|
 | 驻留 SVG payload | 48 MiB | **12 MiB** |
 | `byKey` 条目 | 4 | 4 |
 | 保留 manifest 的条目 | 4 | 4 |
-| 几何权威可用的老变体 | 4 | 4 |
+
+两把独立的尺子（自己的记账 / V8 的 `heapUsed`）读数一致，详见
+[perf-baseline 的 Session 04 一节](../perf-baseline.md#前端-svg-payload-的驻留字节issue-181session-04)
+——那一节也记着第一次量错的形状：`--expose-gc` 传不到 vitest worker 时，
+heapUsed 量的是「分配了多少」而不是「留下了多少」，两侧因此恒等。
 
 ---
 
