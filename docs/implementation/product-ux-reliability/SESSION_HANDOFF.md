@@ -5,98 +5,114 @@
 
 ---
 
-## 最近一次：Session 01 + 02（2026-08-29）
+## 最近一次：Session 03（2026-08-29）
 
 ### 目标
 
-01 = 全仓基线审计 + 产品合同 + 交接骨架；02 = 文档 schema / 稳定 ID /
-迁移 / **原子写入基础设施**。
+保存状态机 / autosave / 崩溃恢复 / 编辑历史。优先啃三条 P1：
+**R-06**（没有显式保存状态机）、**R-08**（没有外部修改冲突检测）、
+**R-03**（版本检查点没有画布身份）。
 
 ### 实际完成
 
-**01（全部完成）**
+裁决全文在 **`docs/adr/0024-save-lifecycle-and-external-change.md`**。
 
-- 建立 `docs/implementation/product-ux-reliability/`：`00_SHARED_RULES.md`
-  （从 Prompt 套件复制）、`STATUS.md`、`ARCHITECTURE.md`、`DECISIONS.md`、
-  `TEST_MATRIX.md`、`UX_CONTRACTS.md`、本文件。
-- 跑通四条真实基线（结果见 `STATUS.md`），**零失败**。
-- 18 条风险登记到 `STATUS.md` 并逐条分配到阶段，其中 5 条是**实测**出来的
-  （标 ✔），不是读代码推断的。
+**R-06 保存状态机。** `documentStore` 新增两个字段：
 
-**02（完成，落成 ADR 0023）**
+- `saveState`：`clean | dirty | saving | saved | save_error | conflict`；
+- `saveIssue`：保存卡住的原因（`io` / `stale` / `external`）+ 磁盘那份的摘要。
 
-- 新增 `src/tavotto/engine/atomicio.py` —— Flask 父进程一侧文档类写入的
-  **唯一实现**：tmp → flush → fsync 文件 → `os.replace` → fsync 目录 →
-  失败清 tmp + 结构化错误；`dumps_json` 用 `allow_nan=False` 在序列化那一步
-  挡下 NaN/∞；`content_revision()` 给出内容修订号。
-- 新增 `src/tavotto/engine/documents.py` —— 文档格式判据的唯一实现：
-  schema 版本、骨架校验、收纳目录里谁不是用户文档（**枚举**，不是 `_` 前缀）。
-- `app.py`：四处手写 tmp+replace 并入 `atomicio`；
-  **`POST /api/layouts/<name>` 从非原子的 `write_text` 改成原子写**（R-01）；
-  autosave / versions 的 schema 校验并入 `documents.validate_document`；
-  `/api/layouts` 列表与 `layout_path` 挡住 Tavotto 自己的文件（R-04）；
-  新增两个 errorhandler 把 `DocumentError` / `AtomicWriteError` 映射成
-  带 `code` 的 400 / 409 / 500。
-- 新增 `tests/test_document_persistence.py`（18 条），**十条变异逐一反证**
-  （记录见 `TEST_MATRIX.md` 末尾）——其中一条第一版是空判据，已修。
+外加**一根正交的轴** `docNotice`（`recovery` / `schema_too_new`）。
+Prompt 03 §二 把 `recovery_available` / `read_only` 与那六个并列，我们**没有**
+照抄——它们与保存进度是两根互不相干的轴，塞进同一个枚举会互相顶掉（实现过程中
+真的撞见：一次成功的自动保存把刚设上的 `recovery_available` 覆盖掉，而副本还在
+本机躺着）。理由写在 `DECISIONS.md` T-10。
 
-### 关键 API / 类型 / 格式（Prompt 03 可以直接调用）
+状态的唯一写入口是 `setSaveState()` / `setDocNotice()`，别在别处 `setState`。
 
-```python
-# src/tavotto/engine/atomicio.py
-write_json(path, obj, *, indent=None) -> None      # 原子写；失败抛 AtomicWriteError
-write_bytes(path, data) -> None
-dumps_json(obj, *, indent=None) -> bytes           # allow_nan=False
-content_revision(path) -> str | None               # 内容 hash（不掺 mtime）
-class AtomicWriteError(OSError):  code / message / path / as_payload()
+**R-08 外部修改检测。** `PUT /api/autosave/<id>` 新增 `?base_revision=`
+（内容 hash，02 备好的 `content_revision`），强于既有的 `?base=`（updatedAt）。
+判据**两条边都钉住**：哨兵 `base_revision=absent` 表示「我读过，磁盘上没有」。
+基线缺席时一律先 GET 确认一次，**没有例外**。冲突未决时只写本机副本，一次都
+不再撞磁盘；三个出口 = 重新加载 / 明确覆盖 / 另存为。
 
-# src/tavotto/engine/documents.py
-SCHEMA_FIGURE = 2; SCHEMA_PROJECT = 3; SCHEMA_CURRENT = 3
-SUPPORTED_SCHEMAS = (2, 3)
-validate_document(raw) -> dict                     # 失败抛 DocumentError
-is_user_document_stem(stem) -> bool
-require_user_document_stem(stem) -> None           # 撞上保留名 → DocumentError(409)
-STYLES_FILENAME / AUTOSAVE_DIRNAME / VERSIONS_DIRNAME
-class DocumentError(ValueError): code / message / status / as_payload()
+**崩溃恢复。** 改造前 `readAutosaveDoc` 按 `updatedAt` 挑赢家并立刻推回磁盘
+（= Prompt 明令禁止的「启动时自动覆盖主文档」）。现在主文档照常打开，本机副本
+**挪**进 `tavotto.recovery.<id>` 等裁决；恢复只进内存并置 `dirty`，用户确认保存
+后才覆盖主文档。
+
+**R-03 检查点的画布身份。** 检查点记 `canvasId` + `canvasName`，落点判据在
+`web/src/lib/versionTarget.ts` 一处（`same` / `other` / `missing` / `unknown`
+四条分支，后三条都要用户点头）。自动检查点的去重判据也加上画布身份。
+
+**顺带修掉三处**（都是这次改动直接照出来的）：
+
+1. `⌘S` 原本打开「保存为画布文件」对话框。现在 `⌘S` = 真的保存并**等到磁盘
+   写完**，`⇧⌘S` = 另存为；`⌘S` 在输入框/对话框里也拦（否则浏览器弹「保存网页」）。
+2. `beforeunload` 只在有未落盘工作时拦，且**先读状态再冲刷**——反过来
+   `flushAutosave()` 会把状态推成 `saving`，于是干净文档每次刷新都拦一次。
+3. 排队中的写入带走**排队那一刻**的 `pj`：`dropProject()` 先冲刷再忘掉 pj，
+   而 PUT 要过几个 await 才发出，读全局的话这份自动保存落进后端的默认项目。
+
+### 关键 API（Prompt 04 及之后可以直接用）
+
+```ts
+// web/src/store/documentStore.ts
+type SaveState = 'clean'|'dirty'|'saving'|'saved'|'save_error'|'conflict'
+type DocNotice = {kind:'recovery', docId, summary} | {kind:'schema_too_new', docId, schema}
+useDocumentStore: { saveState, saveIssue, docNotice, ... }
+
+saveNow(): Promise<SaveState>          // 真实保存，等到磁盘写完
+hasUnsavedWork(state): boolean         // 关闭保护、切文档提示都问它
+reloadFromDisk(): Promise<boolean>     // 加载前把内存版本挪进恢复槽位
+overwriteDisk(): Promise<SaveState>    // 拿 409 回的 hash 当基线，不是清空基线
+recoverLocalCopy() / discardLocalCopy() / dismissDocNotice()
+readAutosaveDoc(id): Promise<{ doc, notice }>   // ← 返回结构变了
+
+// web/src/lib/versionTarget.ts
+resolveRestoreTarget(meta, {activeCanvasId, canvases}): RestoreTarget
+
+// web/src/lib/session.ts
+apiUrlFor(path, pj) / withProjectFor(init, pj)   // 排队稍后才发出的写入用这两个
 ```
 
-HTTP 层的新增契约：
+后端：
 
-| 端点 | 变化 |
-| --- | --- |
-| `PUT /api/autosave/<id>` | 响应多一个 `revision`（内容 hash）；`schema_too_new` 是新 code |
-| `GET /api/autosave/<id>` | 响应头多一个 `X-Tavotto-Revision` |
-| `POST /api/layouts/<name>` | 原子写；保留名回 409 `reserved_name`；非有限数回 400 `non_finite_number` |
-| `GET /api/layouts` | 不再列出 `_styles` |
+```python
+# src/tavotto/app.py
+REVISION_ABSENT = "absent"
+_revision_conflict(base_revision, current) -> bool   # 两侧故意不对称
+document_summary(path) -> dict | None                # 读不出来回 None，不回空壳
+GET /api/autosave/<id>/summary                       # 冲突面板用
+```
 
-**错误 code**（一旦发布不能改名）：`invalid_document`、`schema_too_new`、
-`reserved_name`、`non_finite_number`、`mkdir_failed`、`write_failed`、`replace_failed`。
+新增错误 code：**`external_change`**（已登记进 `USER_VISIBLE_CODES` + 双语文案）。
 
 ### 迁移
 
-**没有数据迁移。** 磁盘格式一个字节没动：schema 2/3 的语义、
-`_autosave/` `_versions/` `_styles.json` 的位置、`tavottofile/` 的布局全部照旧。
-改的只是**写入方式**与**校验时机**。旧文档、旧位置、旧扁平布局照常打开。
-
-唯一的行为变化是三条：`_styles` 不再出现在画布列表里（它本来就不该在）、
-非有限数的载荷现在会被拒绝（此前会写出一份没人能读的文件）、
-更高 schema 的文档回 `schema_too_new` 而不是笼统的 `invalid_document`。
+**没有数据迁移，磁盘格式一个字节没动。** 新增的只有 localStorage 里的
+`tavotto.recovery.<id>` 键（旧版本没有它，缺席 = 没有待恢复副本）。
+旧前端不发 `base_revision`，后端照常走 `base` 那条判据。
 
 ### 修改的文件
 
 ```text
-新增  src/tavotto/engine/atomicio.py
-新增  src/tavotto/engine/documents.py
-新增  tests/test_document_persistence.py
-新增  docs/adr/0023-document-persistence-authority.md
-新增  docs/implementation/product-ux-reliability/{00_SHARED_RULES,STATUS,ARCHITECTURE,
-      DECISIONS,TEST_MATRIX,UX_CONTRACTS,SESSION_HANDOFF}.md
-改动  src/tavotto/app.py（导入、两个 errorhandler、五处写入、两处校验、两处列表/路径守卫）
+新增  web/src/components/DocumentBanner.tsx     冲突/恢复/只读的常驻提示条
+新增  web/src/lib/versionTarget.ts              恢复落点判据（+ 用例）
+新增  web/src/store/saveStateMachine.test.ts    22 条
+新增  web/src/hooks/useVersionCheckpoints.test.ts
+新增  docs/adr/0024-save-lifecycle-and-external-change.md
+改动  web/src/store/documentStore.ts            状态机 + 恢复 + 冲突（大头）
+改动  web/src/lib/api.ts / session.ts           base_revision、显式 pj
+改动  web/src/components/{TopBar,VersionDialog,CommandPalette,ShortcutHelp,App}.tsx
+改动  web/src/hooks/{useKeyboard,useVersionCheckpoints}.ts
+改动  web/src/store/actions.ts                  runManualSave + openRecentDocument
+改动  web/src/types/document.ts                 SCHEMA_CURRENT（严格同源对）
+改动  src/tavotto/app.py                        外部修改检测、摘要端点、画布身份
+改动  tests/test_document_persistence.py        +11
+改动  AGENTS.md                                 登记 schema 同源对
+重建  codex-plugin/mcp/widget/canvas.html       改了 web/src 就要重建
 ```
-
-**前端一行没改。** Prompt 02 §九 的「前端模型接线」在起始仓库已经具备
-（`ProjectDocument` 类型 + `documentStore` 的持久化边界 + `migrateToProject`）；
-`revision` 的前端消费属于 Prompt 03 的冲突检测，不在这里提前接。
 
 ### 测试命令与真实结果
 
@@ -104,65 +120,73 @@ HTTP 层的新增契约：
 # 后端全量（worktree 里必须带 PYTHONPATH，否则 import 到主工作区）
 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
 # 前端
-cd web && pnpm test && pnpm build && pnpm i18n:check
+cd web && pnpm test && pnpm build && pnpm i18n:check && pnpm lint
 # 格式（与 CI 那一格逐字相同）
 ruff check . && ruff format --check .
+# 改了 web/src 之后
+python scripts/build_mcp_widget.py
 ```
 
-结果见 `STATUS.md` 的基线表与本次结论段。
+结果见 `STATUS.md` 的「Session 03 之后」表：后端 3053 passed、前端 1370 passed，
+六条命令全部 exit 0。**24 条变异逐一反证，全部被打红**（记录见 `TEST_MATRIX.md`）。
+
+### 这一轮变异反证抓到的两件事（值得下一个 Session 记住）
+
+1. **变异跑之前先提交。** 脚本用 `git checkout -- <file>` 还原，会吃掉中途按
+   变异结论改好的修复。本轮 `rememberRevision` 的修复就这么被还原掉一次，
+   靠「锚点找不到」才发现。
+2. **变异证伪过一次实现，不只是判据。** 「读到了但拿不到修订号」既不能当成
+   「磁盘上没有」（后端 409），也不能当成「没确认过」（每次都探、每次判冲突），
+   两条捷径都把文档锁成永远存不上。`diskRevision` 因此有第三档 `null`。
 
 ### 尚存限制
 
-1. **`/api/layouts/<name>` 的载荷仍不做 schema 校验**（ADR 0023 §5a）：
-   已有调用方发的是 `{"doc": …}` 包一层的形状。收紧的前置是修 R-18。
-2. **`engine/` 里另外五处手写原子写没并**（config / runspec / runtimeasset /
-   locate / session_client / nativehandoff）：它们写的不是文档，生命周期各不相同，
-   合并要逐个看过，不该在这个改动里顺手做。
-3. **没有 index.json**：Prompt 02 §八 设想的项目文档 index 现状不存在，
-   `/api/layouts` 靠三个目录的 `glob` 现算。要不要引入 index 是 Prompt 03 的
-   决定（引入就多一份可能与磁盘不一致的真相，得先说清它坏了怎么重建）。
-4. **autosave 仍在数据目录**（`LAYOUT_DIR/_autosave`）而不是项目内（R-07）：
-   搬家会改变"项目拷到另一台电脑带不带工作副本"的语义，属于 Prompt 03。
+1. **「编辑历史」入口还在文档菜单里**，不是 Prompt 03 §六 要的左上区域独立入口。
+   左栏形态由 Prompt 08 定，同一块区域不该两个 Session 各摆一次。
+   抽屉本身已经区分 undo 栈 / 检查点 / 恢复，内容层面达标。
+2. **autosave 仍在数据目录**（R-07）：搬进项目会改变「项目拷到另一台电脑带不带
+   工作副本」的语义，单独处置。
+3. **`/api/layouts/<name>` 仍不做 schema 校验**（ADR 0023 §5a），前置是修 R-18。
+4. **没有 index.json**：`/api/layouts` 仍靠 glob 现算。
+5. `engine/` 里另外五处手写原子写仍未并入 `atomicio`（R-05）。
 
 ### 工作树状态
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
-- 两个独立 commit（01 = 交接文档，02 = 落盘权威 + ADR 0023 + 用例），
+- 四个独立 commit（01 交接文档 / 02 落盘权威 / 03 保存状态机 / 03 的修订号第三档），
   **未 push、未开 PR** —— 攒够几个 Session 再一次发出去
-- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
-  提交一致）。本机 `~/.gitconfig` 现在是 `1259959884@qq.com`，两者不一致会让
-  cla-check 在同一个仓库里数出两个贡献者；提交时用
-  `git -c user.email=… commit`，**别改共享的 `.git/config`**（不带
-  `--worktree` 的 `git config` 会影响所有 worktree 和所有会话）
-- `web/node_modules` 已在 worktree 内真装（软链过不了 pnpm 的依赖检查）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个提交
+  一致）。本机 `~/.gitconfig` 是 `1259959884@qq.com`，两者不一致会让 cla-check
+  在同一个仓库里数出两个贡献者；提交时用 `git -c user.email=… commit`，
+  **别改共享的 `.git/config`**
+- `web/node_modules` 已在 worktree 内真装
 
 ---
 
-## 下一阶段入口（Prompt 03：保存状态机、autosave、恢复、历史）
+## 下一阶段入口（Prompt 04：后端统一 refresh）
 
-**从这里开始读**：`web/src/store/documentStore.ts` 的
-`flushAutosave` / `scheduleDiskWrite` / `readAutosaveDoc` / `restoreSession`
-（第 700–960 行），以及 `app.py` 的 `api_autosave_*` / `api_versions_*`。
+**从这里开始读**：`src/tavotto/app.py` 的 `/api/panels` 与 `sse_publish`
+（`ARCHITECTURE.md` §3 记了现状链路），以及 `web/src/store/assetStore.ts`。
+
+**Session 03 留给它的接口**：派生元数据的同步**绝不能污染 dirty / 历史**。
+文档里已经有现成的两个出口，别造第三个：
+
+- `documentStore.silent(recipe)` —— 不进历史、不置 dirty 的写入（渲染反推的
+  派生值走这条）；
+- `applyProject(pd, id, {dirty})` —— 「内容换了但会话没换」的装载，会 bump
+  `loadSeq`，因此 `startAutosave` 的订阅**不会**把它当成一次编辑。
 
 **必须保留的不变式**（改动前先确认还成立）：
 
-1. `loadSeq` 把「载入」与「编辑」分开——载入不得触发回写
-   （否则刚打开一份文档就会带着新的 `updatedAt` 去和别的标签页抢）。
-2. `dirty` 同时盯 `doc` 与 `canvases`——只改非激活画布的结构性操作也算编辑。
-3. 收到 409 `stale_write` 后**基线故意不推进**，本机兜底副本**不清**。
+1. `loadSeq` 把「载入」与「编辑」分开——载入不得触发回写。
+2. `dirty` 同时盯 `doc` 与 `canvases`。
+3. 收到 409 后**基线故意不推进**，本机兜底副本**不清**。
 4. `HistoryEntry.label` 存 `UiMessage` 描述符，绝不存翻译后的字符串。
-5. 派生数据的写入只走 `documentStore.silent()`，不进历史、不置 dirty。
-6. 落盘一律走 `engine/atomicio`（ADR 0023），不再手写 tmp+replace。
+5. 落盘一律走 `engine/atomicio`（ADR 0023），不再手写 tmp+replace。
+6. 保存状态只经 `setSaveState()` / `setDocNotice()` 改（ADR 0024）。
+7. 排队稍后才发出的写入必须带走**排队那一刻**的 `pj`。
 
-**Prompt 03 该优先处理的三条风险**（都在 `STATUS.md`）：
-
-- **R-03（P1）版本检查点没有画布身份**——检查点存的是激活画布，却按项目归档；
-  在画布 B 上产生的检查点，在画布 A 上恢复会把 B 的内容和名字盖到 A 上。
-- **R-06（P1）没有显式保存状态机**——`saving`/`save_error`/`conflict` 都不是
-  文档状态，错误只是一个 `window` 事件，刷新即丢。
-- **R-08（P1）没有外部修改冲突检测**——`revision` 已经在 02 备好了，
-  前端拿它当基线即可。
-
-**别做的事**：不要为了状态机重写 `documentStore` 的事务/撤销；
-不要引入第二套持久化路径；不要把 autosave 变成"最后一个可靠检查点"的替代。
+**别做的事**：不要为了 refresh 重写 `documentStore` 的事务/撤销；
+不要引入第二套持久化路径；watcher 不得把 Tavotto 自己的 autosave 写入当成
+素材变化（那会让每一次自动保存都触发一轮刷新）。

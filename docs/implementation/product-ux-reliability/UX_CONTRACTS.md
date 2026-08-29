@@ -17,33 +17,75 @@
 
 ## 1. 文档状态合同
 
-目标状态机：
+**已落地（Session 03，ADR 0024）。**
 
 ```text
-clean → dirty → saving → saved(=clean)
-                    ↘ save_error
-                    ↘ conflict
-(任意态) ← recovery_available
+clean ──编辑──▶ dirty ──flush──▶ saving ──成功且期间没再编辑──▶ saved ──▶ clean
+                  ▲                 │                └──期间又编辑了──▶ dirty
+                  │                 ├──写盘失败──▶ save_error ──重试──▶ saving
+                  └────编辑─────────┴──409────────▶ conflict ──裁决──▶ dirty/clean
 ```
 
-**现状对照**（`web/src/store/documentStore.ts`）：
+另有一根**正交**的轴 `docNotice`（同一时刻至多一件，与保存进度并存）：
 
-| 合同状态 | 现状等价物 | 差距 |
+| 值 | 含义 | 出口 |
 | --- | --- | --- |
-| `clean` / `dirty` | `state.dirty: boolean` | 有 |
-| `saving` | 无显式状态（`diskBusy` 是模块内私有变量） | 缺：界面无法显示"正在保存" |
-| `saved` | `state.lastPersisted: number \| null` | 有（时间戳而非状态） |
-| `save_error` | `window` 上的 `tavotto:autosave-error` 事件 | 缺：不是文档状态，刷新即丢 |
-| `conflict` | 同一事件的 `reason: 'stale'` | 缺：没有独立的冲突态与合并出口 |
-| `recovery_available` | 无 | 缺：本机兜底副本转正是静默发生的 |
+| `recovery` | 本机还留着一份没人裁决的副本 | 恢复 / 保留主版本 |
+| `schema_too_new` | 那份文档来自更新的 Tavotto，**没有打开** | 知道了 |
 
-**验收**：状态是 store 里可读的单一字段（不是散落的事件），且
-`save_error` / `conflict` 不会被下一次成功保存以外的任何东西清掉。
+为什么不合成一个枚举：见 `DECISIONS.md` 的 T-10。
+
+**验收**（全部有用例，见 `TEST_MATRIX.md`）：
+
+- 状态是 store 里可读的单一字段 `saveState`，不是散落的事件；
+- `save_error` / `conflict` 不会被"下一次成功保存"以外的任何东西清掉
+  （冲突期间继续编辑不顶掉冲突态）；
+- 保存期间继续编辑，写成功后**仍是 `dirty`**，绝不显示成已保存；
+- `⌘S` 真的保存并等到磁盘写完；`⇧⌘S` 才是另存为画布文件；
+- `beforeunload` 只在 `dirty` / `saving` / `save_error` / `conflict` 时拦；
+- 冲突时磁盘一个字节不被覆盖，三个出口都在（重新加载 / 明确覆盖 / 另存为），
+  且"重新加载"之前当前内存版本已经变成可恢复副本；
+- 恢复动作只进内存并置 `dirty`（`saveState` 与 store 的 `dirty` 两根轴都置），
+  **用户确认保存后才覆盖主文档**。
 
 **不变式**：`dirty` 必须覆盖**所有**用户修改，包括只改非激活画布的结构性操作
 （重命名 / 删除 / 复制 / 重排画布）——这条现状已经守住了
-（`startAutosave` 同时盯 `doc` 与 `canvases`，见 `documentStore.ts:892` 的注释），
-后续改动不得回退。
+（`startAutosave` 同时盯 `doc` 与 `canvases`），后续改动不得回退。
+
+---
+
+## 1b. 外部修改合同（Session 03）
+
+**Tavotto 绝不静默覆盖磁盘上它没读过的内容。**
+
+- 写入基线是**内容 hash**（`base_revision`），不是文档自报的 `updatedAt`：
+  编辑器外的工具改完往往一个字节的 `updatedAt` 都不动。
+- 「我以为磁盘上没有这份文件」也是一个基线（哨兵 `absent`），因此
+  两个标签页同时新建同一份文档不会互相盖掉。
+- 本会话没确认过磁盘状况时，**写之前先确认一次**，没有例外。
+- 反方向不过严：hash 基线遇上文件被外部删掉照常重建——挡的是"覆盖别人的
+  内容"，不是"重建一个被删掉的文件"。
+
+**验收**：外部改动后的整份 PUT 回 409 `external_change`，磁盘内容逐字节不变，
+错误体带结构化摘要（schema / 画布数 / 对象数 / `updatedAt` 与 `mtime` 两个
+时间维度 / 当下的修订号）。
+
+---
+
+## 1c. 版本检查点合同（Session 03）
+
+**检查点恢复到它自己那张画布，不是"恰好激活的那张"。**
+
+| 落点 | 行为 |
+| --- | --- |
+| 同一张画布 | 直接恢复，不打扰 |
+| 另一张仍存在的画布 | 说清会切过去写，当前画布不动 |
+| 原画布已删除 | 说清会覆盖当前画布（danger 确认） |
+| 旧检查点无画布身份 | 同上；**不补默认身份** |
+
+**验收**：检查点带 `canvasId`/`canvasName`；恢复前的自动存档拍的是**即将被
+覆盖的那张**；自动检查点去重按画布分（复制画布后两张内容相同，第二张仍能
+留下检查点）。
 
 ---
 
