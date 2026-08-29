@@ -29,6 +29,7 @@ import {
   residentSvgBytes,
   useRenderStore,
 } from './renderStore'
+import { clearDiagnosticTrace, readDiagnosticTrace } from '@/diagnostics'
 import type { PanelObject } from '@/types/document'
 
 const engineRender = vi.fn()
@@ -370,6 +371,27 @@ describe('svgBytes 的来路', () => {
     expect(e.svgBytes).toBe(0)
     expect(e.svgEvicted).toBe(false) // 它不是被驱逐的，是引擎压根没交出来
     expect(resident().total).toBe(0)
+  })
+})
+
+describe('诊断：驱逐这件事在 trace 里说得出口', () => {
+  it('每丢一份记一条 render.svg_evicted，且过得了 allowlist 序列化', async () => {
+    // Session 05 的回归看护要靠这条事件才看得见「预算在现场动过手」。
+    // 事件本身也是隐私边界的一部分：文件名与 overrides 一律 hash 之后才进包
+    // （ADR 0016 §4，后端 `diagnostics_frontend.EVENT_FIELDS` 逐事件比对）。
+    clearDiagnosticTrace()
+    declarePayload(12 * MiB)
+    await store().render('Fig1.pdf', v(1))
+    await store().render('Fig1.pdf', v(2))
+
+    const evicted = readDiagnosticTrace().filter((e) => e.type === 'render.svg_evicted')
+    expect(evicted).toHaveLength(1)
+    expect(evicted[0].scope).toBe('file')
+    expect(evicted[0].bytes).toBe(12 * MiB)
+    // 文件名与变体串一个字都不进包
+    expect(JSON.stringify(evicted[0])).not.toContain('Fig1')
+    expect(evicted[0].file).toMatch(/^file:[0-9a-f]+$/)
+    expect(evicted[0].variant).toMatch(/^var:[0-9a-f]+$/)
   })
 })
 
