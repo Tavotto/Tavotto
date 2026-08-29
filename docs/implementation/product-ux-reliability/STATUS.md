@@ -271,6 +271,33 @@ desktop…」。
 > 上表是**把所有前端改动做完、两个产物都重建并 `--check` 通过之后**重跑一遍
 > 完整套件的结果，不是拼起来的。
 
+### Session 09 之后（改动后实跑，**冻结前端之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3217** passed / 34 skipped / 0 failed（Session 08 的 3200 + 本轮新增的 17 条 = 3217，数字对得上） |
+| `cd web && pnpm test` | ✅ exit 0 —— **134** files / **1618** tests passed（比 08 的 131/1557 +3 文件 / +61 条：workspace 19 + originalSpec 25 + fastEditStage 8 + overflow 预算 9） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2632 / en-US 2717；新增 `fastEdit.*` 与 `assets.open*`，删掉死掉的 `assets.addAria`） |
+| `cd web && pnpm lint` | ✅ exit 0（只有既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（279 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `dc25a773a91b099b`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `2541bd56c77053d9`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 26 条 | ✅ 全部被打红（**第一轮有 2 条活了下来**，两条都是「判据没被执行到它该看的那个点上」，成因与处置见 `TEST_MATRIX.md`） |
+| `cd web && pnpm e2e` | ⛔ **没跑**（Playwright 要真实后端与浏览器，本机沙箱起不来）。本轮改了 8 个 spec，只确认 `playwright test --list` 收得到全部 110 条 —— **收得到 ≠ 跑得过**，记在风险表 R-19 |
+
+> **「产物比源码早」这一轮踩了三次。** 每次都是同一个形状：重建 `canvas.html`
+> 之后又改了 `web/src`（哪怕只是一行注释——指纹算的是内容，不是语义），
+> 于是 `test_widget_artifact_is_in_sync_with_the_frontend` 与
+> `test_maintenance_scripts_report_under_cp1252_stdout` 两条一起红，而红的原因
+> 与它们看护的事毫无关系。
+> **上表是把前端整个冻结、两个产物重建并 `--check` 通过之后重跑的一遍完整套件**，
+> 不是拼起来的。下一轮的纪律：**改完所有 `web/src` 再重建，重建之后一个字都不动**
+> ——`i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
+
+---
+
 > 单跑某个前端用例文件时**必须自己带上**
 > `NODE_OPTIONS=--no-experimental-webstorage`（它在 `package.json` 的 `test`
 > 脚本里）：没有它 Node 自带的 `localStorage` 会盖住 jsdom 那份且不可用，

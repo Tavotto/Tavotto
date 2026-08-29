@@ -179,7 +179,15 @@ python scripts/build_mcp_widget.py && python scripts/build_browser_playground.py
 ruff check . && ruff format --check .
 ```
 
-（实跑数字见 `STATUS.md` 的「Session 09 之后」表。）
+后端全量 **exit 0 —— 3217 passed / 34 skipped / 0 failed**
+（Session 08 的 3200 + 本轮新增的 17 条 = 3217，数字对得上）；
+前端 **134 files / 1618 passed**，`build` / `i18n:check` / `lint` 三条 exit 0。
+完整表格见 `STATUS.md` 的「Session 09 之后」。
+
+> `pytest -q` 在**没有失败**的那一遍里，这台机器上把结尾那行计数吞掉了
+> （有失败时照常打印）。上面这两个数是从进度流里逐字符数出来的
+> （`.` 3217、`s` 34、`F` 0），不是估的——**「看不到计数」不等于「没跑」，
+> 但也不等于可以直接写一个数上去**。
 
 **变异反证 26 条全部被打红**；第一轮活下来 2 条，成因与处置见
 `TEST_MATRIX.md`。两条都不是"判据写错了"，而是**判据没被执行到它该看的那个
