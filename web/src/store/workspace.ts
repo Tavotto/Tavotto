@@ -237,13 +237,21 @@ interface Persisted {
   panelId: string | null
 }
 
-function readPersisted(documentId: string): Persisted | null {
+/**
+ * 本机那一档说「上次停在哪个面板上」。**只有一处判据**：模式不是
+ * `fast_edit`、没有 panelId、blob 坏了，都是同一个答案——没有目标。
+ *
+ * 曾经这里先校验一遍 `mode` 的取值、`restoreWorkspace` 再判一次是不是
+ * `fast_edit`，两句话说的是同一件事，于是把前一句改成恒真也没有任何用例会
+ * 红（变异反证里它活了下来）。冗余的保证杀不死，处置是合成一处，不是造个
+ * 输入去覆盖它。
+ */
+function readFastEditTarget(documentId: string): string | null {
   try {
     const raw = localStorage.getItem(KEY_PREFIX + documentId)
     if (!raw) return null
     const v = JSON.parse(raw) as Partial<Persisted>
-    if (v.mode !== 'fast_edit' && v.mode !== 'layout') return null
-    return { mode: v.mode, panelId: typeof v.panelId === 'string' ? v.panelId : null }
+    return v.mode === 'fast_edit' && typeof v.panelId === 'string' ? v.panelId : null
   } catch {
     return null
   }
@@ -255,13 +263,9 @@ function readPersisted(documentId: string): Persisted | null {
  * 的快速编辑，用户看到的是一个空工作区，而且退不出来。
  */
 export function restoreWorkspace(documentId: string, objects: readonly CanvasObject[]): void {
-  const saved = readPersisted(documentId)
   const store = useWorkspaceStore.getState()
-  if (!saved || saved.mode !== 'fast_edit' || !saved.panelId) {
-    store.clear()
-    return
-  }
-  const o = objects.find((x) => x.id === saved.panelId)
+  const panelId = readFastEditTarget(documentId)
+  const o = panelId ? objects.find((x) => x.id === panelId) : undefined
   if (o?.type !== 'panel' || o.hidden) {
     store.clear()
     return

@@ -229,6 +229,28 @@ describe('刷新之后回到哪里', () => {
     expect(ws().mode).toBe('layout')
   })
 
+  it('上次停在画布排版就还是画布排版——不许"顺手"打开一张图', () => {
+    addFigureToLayout('a.pdf')
+    const id = panelOf('a.pdf').id
+    localStorage.setItem(
+      'tavotto.workspace.d_test',
+      JSON.stringify({ mode: 'layout', panelId: id }),
+    )
+    restoreWorkspace('d_test', s().doc.objects)
+    expect(ws().mode).toBe('layout')
+    expect(ws().activePanelId).toBeNull()
+  })
+
+  it('本机存着一个不认识的模式值（旧版本 / 手改过）时回排版模式', () => {
+    addFigureToLayout('a.pdf')
+    localStorage.setItem(
+      'tavotto.workspace.d_test',
+      JSON.stringify({ mode: 'zen', panelId: panelOf('a.pdf').id }),
+    )
+    restoreWorkspace('d_test', s().doc.objects)
+    expect(ws().mode).toBe('layout')
+  })
+
   it('坏掉的 blob 不让工作区卡住', () => {
     localStorage.setItem('tavotto.workspace.d_test', '{{{')
     restoreWorkspace('d_test', s().doc.objects)
