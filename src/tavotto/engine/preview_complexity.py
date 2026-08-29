@@ -108,6 +108,7 @@ __all__ = [
     "FAMILY_LINECOLL",
     "FAMILY_MESH",
     "FAMILY_POLY",
+    "FAMILY_RASTERIZED",
     "FAMILY_SCATTER",
     "FAMILY_UNKNOWN",
     "FAMILY_UNMEASURED",
@@ -146,6 +147,9 @@ FAMILY_IMAGE = "image"
 FAMILY_UNMEASURED = "collection_unmeasured"
 #: 完全不认识：第三方库的、matplotlib 新版本的、用户自己继承出来的。
 FAMILY_UNKNOWN = "unknown"
+#: 这一版**已经是位图**（`rasterized=True`）：在 SVG 里是一个 `<image>`。
+#: 色条色带天生如此；Session 03 给 mesh 层设上之后它们也会落到这一族。
+FAMILY_RASTERIZED = "rasterized"
 
 FAMILIES = (
     FAMILY_MESH,
@@ -158,6 +162,7 @@ FAMILIES = (
     FAMILY_IMAGE,
     FAMILY_UNMEASURED,
     FAMILY_UNKNOWN,
+    FAMILY_RASTERIZED,
 )
 
 #: hybrid 允许把哪些 family 临时 rasterize。**这是策略，不是能力**：
@@ -242,6 +247,28 @@ def _len0(x) -> int:
         return len(x)
     except Exception:  # noqa: BLE001
         return 0
+
+
+def _already_rasterized(artist) -> bool:
+    """这个 artist 这一版**本来就是位图**了吗。
+
+    `rasterized=True` 的 artist 在 SVG 里是**一个 `<image>`**，不是 N 个
+    `<path>`（实测：24×24 的 `pcolormesh` 从 576 个 `<path>` / 2880 个顶点
+    变成 1 个 `<image>` / 0 个顶点）。按它的 family 定价就是给 DOM 记一笔
+    根本不存在的账。
+
+    这不是边角情形：**色条的色带（`cb.solids`）就是 matplotlib 自己设成
+    `rasterized=True` 的 `QuadMesh`**——不认这一条，每张带色条的图都会凭空
+    多背 256 个 primitive（#181 的 fixture 上模型算 662 959、后端实际
+    662 773 + 1 个 `<image>`，差的就是它）。
+
+    Session 03 给 mesh 层设上 `rasterized` 之后，再分析一次同一张图会走到
+    这里——**那正是 hybrid 落地之后该看到的账**，不用另写一套。
+    """
+    try:
+        return bool(artist.get_rasterized())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _mesh_cells(coll) -> int | None:
@@ -502,6 +529,13 @@ def _collection_family(coll) -> str:
 
 def _classify(artist) -> ArtistPreviewCost:
     """一个 artist → 一笔账。**不认识也要回一笔**（family=unknown，不是丢掉）。"""
+    if _already_rasterized(artist):
+        return ArtistPreviewCost(
+            artist=artist,
+            family=FAMILY_RASTERIZED,
+            primitive_count=1,
+            vertex_count=0,
+        )
     if isinstance(artist, Collection):
         cells = _mesh_cells(artist)
         if cells is not None:

@@ -327,11 +327,12 @@ def _fig_blank():
     return _bare_axes()[0]
 
 
-def _cross_mesh(n: int):
+def _cross_mesh(n: int, rasterized: bool = False):
     rng = np.random.default_rng(181)
     edges = np.linspace(0, 1, n + 1)
     fig, ax = _bare_axes()
-    ax.pcolormesh(edges, edges, rng.standard_normal((n, n)), shading="flat")
+    mesh = ax.pcolormesh(edges, edges, rng.standard_normal((n, n)), shading="flat")
+    mesh.set_rasterized(rasterized)
     return fig
 
 
@@ -429,6 +430,8 @@ _CROSSCHECK = {
         lambda: _cross_scatter(500, s=6, c=np.random.default_rng(12).random(500)),
         _fig_blank,
     ),
+    # 已经是位图的 artist：SVG 里是 **1 个 `<image>`**，不是 576 个 `<path>`
+    "mesh_prerasterized": (lambda: _cross_mesh(24, rasterized=True), _fig_blank),
     "polycollection": (lambda: _fig_polys(300), _fig_blank),
     "linecoll": (lambda: _fig_linecoll(400), _fig_blank),
     "contour": (_cross_contour, _fig_blank),
@@ -446,7 +449,9 @@ def _crosscheck() -> list[dict]:
     rows = []
     for name, (build_with, build_without) in _CROSSCHECK.items():
         fig_with = build_with()
-        costs = [c for c in pc.analyze_preview_complexity(fig_with).costs if c.rasterizable]
+        # 只算数据层那几笔（对照图里的 axes patch 之类两侧都有，差分自然抵消）
+        skip = {pc.FAMILY_LINE, pc.FAMILY_UNKNOWN, pc.FAMILY_UNMEASURED}
+        costs = [c for c in pc.analyze_preview_complexity(fig_with).costs if c.family not in skip]
         model_primitives = sum(c.primitive_count for c in costs)
         model_vertices = sum(c.vertex_count for c in costs)
         with_counts = _svg_tag_counts(fig_with)
@@ -461,6 +466,7 @@ def _crosscheck() -> list[dict]:
                 "model_vertices": model_vertices,
                 "svg_delta_path": with_counts["path"] - without_counts["path"],
                 "svg_delta_use": with_counts["use"] - without_counts["use"],
+                "svg_delta_image": with_counts["image"] - without_counts["image"],
                 "svg_delta_vertices": with_counts["vertices"] - without_counts["vertices"],
                 "svg_delta_bytes": with_counts["bytes"] - without_counts["bytes"],
                 # 出现了换算表里没有的指令 = 上面那个数不可信，别让它静默通过

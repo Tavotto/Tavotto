@@ -183,8 +183,11 @@ def test_model_matches_what_the_svg_backend_actually_emits(probe):
     """
     for row in probe["crosscheck"]:
         model = row["model_primitives"]
-        path, use = row["svg_delta_path"], row["svg_delta_use"]
-        if use:
+        path, use, image = row["svg_delta_path"], row["svg_delta_use"], row["svg_delta_image"]
+        if image:
+            # 已经是位图的 artist：整个摊成**一个** `<image>`。
+            assert (image, path, use) == (model, 0, 0), f"{row['case']}: {(image, path, use)}"
+        elif use:
             # 几何进了 `<defs>`：每个实例一个 `<use>`，几何本身只写一遍。
             # 这同时验了 `_shares_geometry`——它要是判反了，这里会是
             # use=0 而 path=model。
@@ -218,6 +221,10 @@ def test_vertex_model_tracks_what_the_backend_writes(probe):
     for row in probe["crosscheck"]:
         assert row["unknown_cmds"] == [], f"{row['case']}: 出现了换算表外的指令，这个数不可信"
         model, real = row["model_vertices"], row["svg_delta_vertices"]
+        if row["svg_delta_image"]:
+            # 已经是位图：两侧都该是 0 个顶点，比值没有意义
+            assert (model, real) == (0, 0), f"{row['case']}: {(model, real)}"
+            continue
         assert real > 0, f"{row['case']}: 对拍那一侧没量到东西，判据是空的"
         assert lo <= model / real <= hi, (
             f"{row['case']}: 模型 {model} vs 后端实际 {real}（比 {model / real:.3f}）"
@@ -271,6 +278,28 @@ def test_unbuilt_lazy_collection_is_reported_not_priced_as_zero(cases):
     built = cases["trimesh_gouraud"]
     assert built["unknown_families"] == []
     assert built["estimated_primitives"] > 0
+
+
+def test_already_rasterized_artists_cost_one_image_not_n_paths(cases):
+    """`rasterized=True` 的 artist 在 SVG 里是**一个 `<image>`**。
+
+    按它的 family 定价就是给 DOM 记一笔不存在的账：色条的色带是 matplotlib
+    自己设成 rasterized 的 `QuadMesh`，不认这一条，每张带色条的图都凭空多背
+    256 个 primitive（#181 fixture 上模型算 662 959、后端实际 662 773 个
+    `<path>` + 1 个 `<image>`，差的就是它）。
+
+    这也是 Session 03 落地之后该看到的账：它给 mesh 层设上 `rasterized`，
+    再分析同一张图就会走到这一族——不用另写一套。
+    """
+    solids = [
+        c
+        for c in cases["imshow_colorbar"]["costs"]
+        if c["family"] == "rasterized" and c["type"] == "QuadMesh"
+    ]
+    assert len(solids) == 1, cases["imshow_colorbar"]["costs"]
+    assert solids[0]["primitive_count"] == 1
+    assert solids[0]["vertex_count"] == 0
+    assert not solids[0]["rasterizable"], "已经是位图了，没有什么可再 rasterize 的"
 
 
 def test_analyzer_is_deterministic(cases):
@@ -332,7 +361,12 @@ def test_plan_for_state_skips_colorbar_internals(probe):
     assert row["colorbar_axes_count"] == 1
     with_internals = row["with_colorbar_internals"]
     without = row["skipping_colorbar_axes"]
-    assert "mesh" in with_internals["families"], "对照那一侧本来就该看得见色带"
+    # 对照那一侧本来就该看得见色带（QuadMesh，matplotlib 自己设成了
+    # rasterized）与分隔线（LineCollection）——少了这一半，下面那条断言在
+    # 「这张图压根没有色条」的情况下也会绿。
+    types = {(c["family"], c["type"]) for c in with_internals["costs"]}
+    assert ("rasterized", "QuadMesh") in types, types
+    assert ("linecoll", "LineCollection") in types, types
     assert without["families"] == ["image"], f"色条内部件没被跳过：{without['families']}"
     assert without["estimated_primitives"] < with_internals["estimated_primitives"]
 
