@@ -911,14 +911,28 @@ const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null }>()
 const diskBaseline = new Map<string, number>()
 
 /**
- * 外部修改基线（R-08）：本标签页最后一次**读到或写成功**的那份的内容 hash，
- * 或哨兵 `REVISION_ABSENT`（"我读过，磁盘上没有这份文件"）。
+ * 外部修改基线（R-08）。三种取值**含义各不相同，不许合并**：
+ *
+ * | 值 | 含义 | 写入时带什么 |
+ * | --- | --- | --- |
+ * | 内容 hash | 我最后读到/写出的就是这一份 | 那个 hash |
+ * | `REVISION_ABSENT` | 我读过，磁盘上没有这份文件 | `absent` 哨兵 |
+ * | `null` | 我读过，但**拿不到**内容 hash（旧后端、代理吃了响应头） | 什么都不带 |
+ *
+ * **条目缺席**是第四种，与上面三种都不同：本会话从没确认过这份文档的磁盘
+ * 状况，写之前得先去问一次（`ensureDiskKnown`）。
+ *
+ * `null` 这一档不是多余的：把它并进「缺席」，`ensureDiskKnown` 每次都会去探，
+ * 探到一份「我从没读过的文档」（其实读过，只是没 hash）→ 判成冲突 → 这份文档
+ * **永远存不上**；把它并进 `REVISION_ABSENT`，一个明明存在的文件被说成不存在
+ * → 后端 409 → 同样永远存不上。两条捷径都通向同一个死结。
  *
  * 与 `diskBaseline` 是**两个维度**而不是同一件事的两种精度：updatedAt 由
  * 文档自己声明，编辑器外的工具改完 `tavottofile/*.json` 往往一动不动；
- * 内容 hash 由字节决定，谁改都瞒不过。所以带得了 hash 就以 hash 为准。
+ * 内容 hash 由字节决定，谁改都瞒不过。所以带得了 hash 就以 hash 为准，
+ * 带不了就退回 updatedAt 那条判据——弱一档，但不会把用户锁死。
  */
-const diskRevision = new Map<string, string>()
+const diskRevision = new Map<string, string | null>()
 
 const isStaleWrite = (err: unknown) =>
   err instanceof ApiError && err.status === 409 && err.body.code === 'stale_write'
@@ -939,21 +953,10 @@ function whenDiskIdle(): Promise<void> {
   return new Promise<void>((resolve) => idleWaiters.push(resolve))
 }
 
-/**
- * 记下这次读到的修订号。
- *
- * 三种取值分得很清楚，**不许合并**：
- * - 404（`fetched` 为 null）→ `REVISION_ABSENT`，"磁盘上确实没有这份文件"；
- * - 读到了且有修订号 → 那个 hash；
- * - 读到了但**没有**修订号（旧后端 / 代理把响应头吃了）→ **删掉条目**，
- *   即"说不出所以然"。这里若图省事写成 `revision ?? REVISION_ABSENT`，
- *   一个明明存在的文件就会被记成"不存在"，下一次写入必然 409——判据把
- *   自己锁死，而用户看到的是一个永远存不上的文档。
- */
+/** 记下这次读到的磁盘状况；三档的含义见 `diskRevision` 上的表。 */
 function rememberRevision(id: string, fetched: { revision: string | null } | null): void {
   if (!fetched) diskRevision.set(id, REVISION_ABSENT)
-  else if (fetched.revision) diskRevision.set(id, fetched.revision)
-  else diskRevision.delete(id)
+  else diskRevision.set(id, fetched.revision || null)
 }
 
 /** 迟到的写入结果不该去改**别的文档**的状态（切文档、恢复都会换 id） */
@@ -989,7 +992,9 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
   void ensureDiskKnown(id, pj)
     .then((issue) => {
       if (issue) throw new PendingConflict(issue)
-      return putAutosave(id, pd, diskBaseline.get(id), diskRevision.get(id), pj)
+      // `null`（确认过但拿不到 hash）与「缺席」在这里都变成 undefined = 不带，
+      // 但两者在 `ensureDiskKnown` 那里是两回事：前者不再探，后者要探。
+      return putAutosave(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
     })
     .then((res) => {
       diskBaseline.set(id, pd.updatedAt)

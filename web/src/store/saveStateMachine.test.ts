@@ -333,6 +333,37 @@ describe('外部修改冲突（R-08）', () => {
     expect(s().saveState).toBe('conflict')
   })
 
+  it('读到了却没有修订号：说不出所以然，**不猜成「磁盘上没有」**', async () => {
+    // 旧后端 / 代理把响应头吃了。这时若图省事记成 `absent`，一个明明存在的
+    // 文件就被记成「不存在」，下一次写入必然 409——判据把自己锁死，而用户
+    // 看到的是一个永远存不上的文档。
+    const noHeader = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/autosave/') && init?.method !== 'PUT'
+          && !String(url).includes('/summary')) {
+        const v = disk.get('d_norev')
+        return new Response(v ?? '{}', { status: v ? 200 : 404 }) // 没有 X-Tavotto-Revision
+      }
+      return fakeFetch(url as RequestInfo, init)
+    }) as typeof fetch
+
+    disk.set('d_norev', JSON.stringify(seeded(100, 'main', 2)))
+    globalThis.fetch = noHeader
+    const { doc } = await readAutosaveDoc('d_norev')
+    expect(doc!.project.name).toBe('main')
+
+    puts.length = 0
+    await s().switchDocument(doc!, 'd_norev')
+    await saveNow()
+    globalThis.fetch = fakeFetch
+    // 读之后的**第一次**写：带不出 hash 就不带，退回 updatedAt 那条判据。
+    // 不是带 `absent`（那会被后端当成"你以为没有文件但有" → 409），
+    // 也不是当作"没确认过"（那会再探一次、探到一份"没读过的" → 冲突）。
+    // 两条捷径都会把这份文档锁成永远存不上。
+    expect(puts[0].rev).toBeNull()
+    expect(puts[0].base).toBe('100') // updatedAt 基线照常带上
+    expect(s().saveState).toBe('saved')
+  })
+
   it('从没读过磁盘就写：先确认，发现有一份没读过的 → 冲突而不是覆盖', async () => {
     // 另一个进程刚在这个 id 上写了一份，本窗口从没读过它
     disk.set('d_unseen', JSON.stringify(seeded(500, 'someone-else', 4)))
@@ -366,6 +397,10 @@ describe('崩溃恢复', () => {
     expect(s().projectMeta.name).toBe('crashed')
     expect(s().doc.objects).toHaveLength(5)
     expect(s().saveState).toBe('dirty')
+    // 两根轴都要置上：`dirty` 是「有改动尚未写入本机自动保存」，恢复进来的
+    // 内容此刻只在恢复槽位里，而那个槽位马上就要被丢掉。只置 saveState 的话
+    // 画布标签上的未保存圆点不亮，顶栏却说「有未保存修改」。
+    expect(s().dirty).toBe(true)
     expect(s().docNotice).toBeNull()
     // 关键：此刻磁盘上还是主版本
     expect(JSON.parse(disk.get('d_rec2')!).project.name).toBe('main')
