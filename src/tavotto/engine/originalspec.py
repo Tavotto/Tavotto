@@ -41,8 +41,11 @@ MM_PER_PT = 25.4 / 72.0
 ASSUMED_DPI: dict[str, float] = {".png": 600.0}
 ASSUMED_DPI_DEFAULT = 300.0
 
-#: `dpi_source` 的闭集（后端只发前两个；`derived` / `unknown` 由前端在
-#: 「源已不可用、只剩文档里那份」时使用，见 `web/src/lib/originalSpec.ts`）。
+#: `dpi_source` 的闭集。本模块发 `metadata`（文件写了）、`assumed`（位图没写，
+#: 按格式假定）、`unknown`（矢量源，密度这一维不适用）；`derived`（由已知 mm
+#: 与像素反算）只在「源已不可用、只剩文档里那份」时由前端产生
+#: （`web/src/lib/originalSpec.ts`）。**跨进程的闭集**：前端多一个取值就少说
+#: 一句提示，看护在 `test_frontend_and_backend_agree_on_the_dpi_source_set`。
 DPI_SOURCES = ("metadata", "assumed", "derived", "unknown")
 
 #: 素材形态的闭集。`figure`（可编辑 Figure 的真实图幅）不由本模块产出——

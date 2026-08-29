@@ -59,7 +59,13 @@ export interface AssetOriginalSpec {
   px_w: number | null
   px_h: number | null
   dpi: number | null
-  /** 后端只发前两个；`derived` / `unknown` 由前端在只剩文档那份时使用 */
+  /**
+   * 后端发 `metadata`（文件写了）/ `assumed`（位图没写，按格式假定）/
+   * `unknown`（矢量源，密度这一维不适用）。`derived`（由已知 mm 与像素反算）
+   * 只在**只剩文档那份**时由前端产生，见 `lib/originalSpec.ts`。
+   * 闭集与后端 `engine/originalspec.DPI_SOURCES` 同源，
+   * `test_frontend_and_backend_agree_on_the_dpi_source_set` 看着。
+   */
   dpi_source: 'metadata' | 'assumed' | 'derived' | 'unknown'
   /** 矢量视口（pt）；位图为 null */
   viewport_pt: [number, number] | null
