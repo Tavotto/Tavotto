@@ -202,7 +202,7 @@ through_today` 在 hybrid 落地那一刻当场红，逼着一起改，而不是
 | 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 完成 |
 | 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 完成 |
 | 04 | renderStore 的 SVG 内存预算 | 完成 |
-| 05 | Diagnostics 与回归看护 | **待做** |
+| 05 | Diagnostics 与回归看护 | 完成 |
 | 06 | 集成与 issue 收尾 | 复核完成，**issue 不可关闭**（见 §9） |
 
 **顺序不能换。** 01 是止血：hybrid 还没有的时候，超限图至少不能再把浏览器
@@ -389,6 +389,19 @@ heapUsed 量的是「分配了多少」而不是「留下了多少」，两侧�
   **条目与语义状态一条不少**、pin（live/latest/在途）、驱逐次序的两维、
   clear/reset/prune 之后不留残账、`evicted` 那一档的显示与几何权威；
   配套 `web/src/hooks/useEngineSync.test.ts` 的「重排一次渲染」一组；
+* `web/e2e/large-figure.spec.ts` —— **浏览器侧的结构性门禁**（Session 05）：
+  真浏览器 + 真后端 + 真 matplotlib，断言这张图落到 hybrid/raster、DOM 节点数
+  在预算之内、`<path>` 比纯矢量画法低两个数量级、命中层与属性面板照常工作。
+  判据**只看结构不看计时**：节点数是确定的，wall time 与内存不是，按后者做闸
+  只会得到一个随机红的门禁；
+* `web/src/diagnostics/snapshot.test.ts` 的「五种状态必须分得开」一组 +
+  `tests/test_diagnostics_bundle.py` 的三条 —— 诊断包能区分普通 vector /
+  复杂度触发的 hybrid / 硬闸兜底的 raster / JS 侧大 payload 驻留 / 被预算清掉
+  的 evicted；后端 `_SNAPSHOT_SHAPE` 与前端类型两侧同步（**只改 TypeScript
+  interface 的话字段会被静默丢掉**）；
+* `scripts/bench_large_preview_windows.ps1` —— Windows WebView2 的内存基准。
+  **不是门禁**（绝对内存在托管 runner 上会飘），挂在 `windows-exe-smoke` 上
+  出 JSON 产物。**它还没在 Windows 上跑过一次**，见脚本头的 NOTES；
 * `docs/perf-baseline.md` 的「大图预览基线」—— 前后对照的唯一出处。
 
 ---

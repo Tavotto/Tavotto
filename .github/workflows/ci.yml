@@ -833,6 +833,38 @@ jobs:
           pnpm exec playwright install --with-deps chromium webkit
           pnpm e2e
 
+      # 大图预览的 Windows 内存基准（issue #181 / ADR 0022 / Session 05 §5-§7）。
+      #
+      # **刻意不是门禁**：绝对内存在托管 runner 上会飘，按字节做一条闸只会得到
+      # 一个随机红的检查——而随机红的检查最后一定会被人忽略掉，比没有检查更坏
+      # （Session 05 §6）。结构性那条闸在上一步的 `pnpm e2e`
+      # （`web/e2e/large-figure.spec.ts` 断言 DOM 节点数与 `<path>` 数），
+      # 它是真门禁；这一步只出数据。
+      #
+      # `continue-on-error` + 脚本自身恒退 0：采样拿不到计数器时报
+      # `available:false` 而不是让这个 job 红——一个量不到内存的基准是坏基准，
+      # 一个因此把发布挡住的基准是 bug。
+      - name: 大图预览内存基准（不阻塞）
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          pwsh -File scripts/bench_large_preview_windows.ps1 `
+            -Exe "dist\Tavotto\Tavotto.exe" `
+            -Cycles 5 -MeshN 470 `
+            -Out "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+          Get-Content "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+
+      - name: 上传内存基准
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-large-preview-windows
+          path: ${{ runner.temp }}/bench-large-preview-windows.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: 失败时收集日志与操作轨迹
         if: failure()
         uses: actions/upload-artifact@v4
