@@ -1292,10 +1292,22 @@ export async function reloadFromDisk(): Promise<boolean> {
  * 基线换成后端在 409 里回的那个 hash —— 也就是"我现在知道磁盘上是什么了，
  * 我要盖掉它"。**不是**清空基线：清空等于此后每一次写都不再校验，用户按一次
  * 「覆盖」就把这份文档的外部修改检测永久关掉了。
+ *
+ * 拿不到 hash 时**去补一次**（`stale_write` 那条 409 比的是 updatedAt，body
+ * 里没有磁盘修订号；旧后端 / 剥掉响应头的代理也会走到这里）。不补的话这一下
+ * 只是把 `diskRevision` 删掉，而下一次写之前的 `ensureDiskKnown` 会探到磁盘上
+ * 那份「我从没读过的文档」→ 又是一次冲突：按钮写着「覆盖」，实际效果是**再
+ * 弹一次同样的框**。补不到才退回删除——那时至少下一轮会重新确认，而不是拿
+ * 一个猜出来的基线去盖。
  */
 export async function overwriteDisk(): Promise<SaveState> {
   const { documentId, saveIssue } = useDocumentStore.getState()
-  const revision = saveIssue?.disk?.revision
+  let revision = saveIssue?.disk?.revision
+  if (!revision) {
+    // `fetchAutosaveSummary` 自己把失败吞成 null（摘要读不出来 = 磁盘上没有
+    // 可比较的东西），所以这里不用再包一层 catch。
+    revision = (await fetchAutosaveSummary(documentId, currentProjectId()))?.revision ?? undefined
+  }
   if (revision) diskRevision.set(documentId, revision)
   else diskRevision.delete(documentId)
   diskBaseline.delete(documentId)

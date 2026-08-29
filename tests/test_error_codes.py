@@ -27,15 +27,19 @@ LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 #: 会返回用户可见 JSON 错误的模块。`engine/ai_bridge.py` 在列，是因为编码
 #: Agent 的失败以 `AgentError("<code>")` 抛出、由 app.py 的一个漏斗转成 JSON
 #: ——只扫 app.py 的话这批 code 一个都看不见，而看不见的门禁 = 没有门禁。
-#: `engine/project_refresh.py` 在列，是因为统一刷新的失败（Prompt 04）以
-#: `RefreshError("<code>")` 抛出、由 app.py 的一个漏斗转成 JSON——只扫 app.py
-#: 的话这批 code 一个都看不见，而看不见的门禁 = 没有门禁。
+#: `engine/project_refresh.py` 与 `engine/atomicio.py` 在列，是因为它们的失败
+#: 以 `RefreshError("<code>")` / `AtomicWriteError("<code>")` 抛出、由 app.py
+#: 的漏斗转成 JSON——只扫 app.py 的话这批 code 一个都看不见，而看不见的门禁
+#: = 没有门禁。atomicio 是 2026-08-29 补进来的：它的 `write_failed` /
+#: `replace_failed` / `non_finite_number` 早就会落到用户界面上，却一直没人
+#: 要求它们有英文文案。
 _SOURCE_FILES = (
     "app.py",
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
     "engine/project_refresh.py",
+    "engine/atomicio.py",
 )
 
 
@@ -51,6 +55,7 @@ _CODE_PATTERNS = (
     r'"code":\s*"([a-z0-9_]+)"',
     r'AgentError\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
+    r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
 )
 
 
@@ -136,6 +141,12 @@ USER_VISIBLE_CODES = {
     "external_change": set(),
     # --- Prompt 04：统一项目刷新（engine/project_refresh.py）---
     "registry_reload_failed": {"reason"},
+    # --- 原子写（engine/atomicio.py，ADR 0023）：一直会落到界面上，
+    #     直到 2026-08-29 才进扫描范围 ---
+    "non_finite_number": {"reason"},
+    "write_failed": {"reason"},
+    "replace_failed": {"reason"},
+    "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
 }
@@ -189,7 +200,8 @@ def test_error_field_is_still_there_as_the_fallback():
             # 经 AgentError / RefreshError 抛出的那批：原文由 app.py 的唯一
             # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
             raised = any(
-                re.search(rf'{name}\(\s*"{code}"', src) for name in ("AgentError", "RefreshError")
+                re.search(rf'{name}\(\s*"{code}"', src)
+                for name in ("AgentError", "RefreshError", "AtomicWriteError")
             )
             assert raised, f"{code} 既没有响应也没有异常"
             continue
@@ -197,6 +209,18 @@ def test_error_field_is_still_there_as_the_fallback():
         # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
         start = src.rindex("jsonify({", 0, idx)
         assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+
+
+def test_the_atomic_write_funnel_still_carries_the_original_text():
+    """`AtomicWriteError` 那批同样只有一个漏斗（`_atomic_write_error`）。"""
+    app = APP.read_text(encoding="utf-8")
+    start = app.index("def _atomic_write_error(")
+    assert "exc.as_payload()" in app[start : start + 800]
+    atomicio = (SRC_DIR / "engine" / "atomicio.py").read_text(encoding="utf-8")
+    start = atomicio.index("    def as_payload(")
+    block = atomicio[start : start + 300]
+    for key in ('"error"', '"code"'):
+        assert key in block, f"AtomicWriteError.as_payload() 少了 {key}"
 
 
 def test_the_refresh_error_funnel_still_carries_the_original_text():

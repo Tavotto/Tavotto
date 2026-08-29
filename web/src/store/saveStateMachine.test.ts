@@ -50,8 +50,8 @@ const recoveryKey = (id: string) => `tavotto.recovery.${id}`
 const disk = new Map<string, string>()
 const revOf = (body: string) => `r${body.length}:${body.slice(0, 12).replace(/\W/g, '')}`
 
-/** 下一次 PUT 的处置：正常写 / 409 外部修改 / 500 IO 失败 */
-let putMode: 'ok' | 'external' | 'io' = 'ok'
+/** 下一次 PUT 的处置：正常写 / 409 外部修改 / 409 陈旧写 / 500 IO 失败 */
+let putMode: 'ok' | 'external' | 'stale' | 'io' = 'ok'
 /** PUT 的门：非空时 PUT 挂起，releasePuts() 放行 */
 let gatePuts = false
 const gates: (() => void)[] = []
@@ -83,6 +83,10 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
     puts.push({ id, rev: q.get('base_revision'), base: q.get('base') })
     if (gatePuts) await new Promise<void>((r) => gates.push(r))
     if (putMode === 'io') return new Response('{"error":"disk full"}', { status: 500 })
+    // `stale_write` 比的是 updatedAt，**body 里没有磁盘修订号也没有摘要**
+    if (putMode === 'stale') {
+      return new Response(JSON.stringify({ code: 'stale_write', theirs: 999 }), { status: 409 })
+    }
     if (putMode === 'external') {
       const v = disk.get(id)
       return new Response(
@@ -362,6 +366,46 @@ describe('外部修改冲突（R-08）', () => {
     expect(puts[0].rev).toBeNull()
     expect(puts[0].base).toBe('100') // updatedAt 基线照常带上
     expect(s().saveState).toBe('saved')
+  })
+
+  it('没有修订号时「覆盖」也只要点一次：去补一个基线，而不是再弹一次框', async () => {
+    // 拿不到 hash（旧后端 / 代理吃掉响应头）→ 写入退回 updatedAt 判据 →
+    // 撞上 `stale_write`，而那条 409 **不带磁盘修订号**。
+    // 以前「覆盖」在这里只是把 diskRevision 删掉，于是下一次写之前的确认
+    // 又探到一份「我从没读过的文档」→ 再来一次冲突：按钮写着「覆盖」，
+    // 实际效果是**原样再弹一次同一个框**。
+    const noHeader = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/autosave/') && init?.method !== 'PUT'
+          && !String(url).includes('/summary')) {
+        const v = disk.get('d_stale')
+        return new Response(v ?? '{}', { status: v ? 200 : 404 }) // 没有 X-Tavotto-Revision
+      }
+      return fakeFetch(url as RequestInfo, init)
+    }) as typeof fetch
+
+    disk.set('d_stale', JSON.stringify(seeded(100, 'theirs', 3)))
+    globalThis.fetch = noHeader
+    const { doc } = await readAutosaveDoc('d_stale')
+    await s().switchDocument(doc!, 'd_stale')
+
+    putMode = 'stale'
+    s().commit(literal('我的改动'), (d) => {
+      d.objects.push(text('mine', 'M'))
+    })
+    await saveNow()
+    expect(s().saveState).toBe('conflict')
+
+    putMode = 'ok'
+    puts.length = 0
+    const onDisk = disk.get('d_stale')!
+    expect(await overwriteDisk()).toBe('saved') // **一次**，不是"再弹一次框"
+    // 基线是去摘要那里补来的、磁盘上那份的真 hash——不是空着（那等于此后
+    // 每一次写都不再校验，按一次「覆盖」把外部修改检测永久关掉）
+    expect(puts[0].rev).toBe(revOf(onDisk))
+    // 我的那笔改动真的落到磁盘上了
+    const saved = JSON.parse(disk.get('d_stale')!) as ProjectDocument
+    expect(saved.canvases[0].objects.some((o) => o.id === 'mine')).toBe(true)
+    globalThis.fetch = fakeFetch
   })
 
   it('从没读过磁盘就写：先确认，发现有一份没读过的 → 冲突而不是覆盖', async () => {

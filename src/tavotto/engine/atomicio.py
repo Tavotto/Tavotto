@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -78,16 +79,38 @@ def _discard(tmp: Path) -> None:
         pass
 
 
+#: 「这个平台/文件系统没有目录 fsync 这一步」的 errno。**只有这一类可以忽略。**
+#: 有些文件系统（部分网络盘、旧的 FAT 家族）对目录 fd 的 fsync 直接回
+#: EINVAL/ENOTSUP —— 那是「这一步在这里不存在」，不是「这一步失败了」。
+_DIR_FSYNC_UNSUPPORTED = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
+
+
 def _fsync_dir(directory: Path) -> None:
-    """目录项落盘。Windows 上打不开目录（`O_RDONLY` 一个目录直接报错），忽略。"""
+    """目录项落盘。
+
+    两个 `except` 挡的**不是同一件事**，所以处置也不同：
+
+    * `os.open` 失败 —— Windows 上 `O_RDONLY` 打开一个目录直接报错，那里
+      根本没有这一步，忽略；
+    * `os.fsync` 失败 —— 真正的 I/O 错误意味着「这个名字现在指向新 inode」
+      这件事**可能撑不过一次掉电**。以前这里一并 `pass` 掉了：调用方于是
+      收到一个成功，而前端拿到成功就会把本机兜底副本删掉——用户手上从此
+      只剩这一份可能没落盘的文件。ADR 0023 与 `src/tavotto/AGENTS.md` 写的
+      是「失败清 tmp + 抛 `AtomicWriteError`」，这里要照做。
+
+    注意此刻 `os.replace` **已经成功**：文件内容对任何读者都已经可见，抛出去
+    是在说「落得不够牢」，不是「没写进去」。宁可让用户看到一次可重试的失败，
+    也不要在一份可能丢的文件上说"已保存"（共享规则 §2 的第一条优先级）。
+    """
     try:
         fd = os.open(directory, os.O_RDONLY)
     except OSError:
         return
     try:
         os.fsync(fd)
-    except OSError:
-        pass
+    except OSError as exc:
+        if exc.errno not in _DIR_FSYNC_UNSUPPORTED:
+            raise AtomicWriteError("dir_fsync_failed", f"目录项落盘失败：{exc}", directory) from exc
     finally:
         os.close(fd)
 

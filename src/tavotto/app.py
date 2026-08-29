@@ -4307,6 +4307,27 @@ def _autosave_path(doc_id: str) -> Path:
     return AUTOSAVE_DIR / f"{doc_id}.json"
 
 
+#: 自动保存的「读修订号 → 判冲突 → 写」必须是一个原子段。
+#:
+#: 判据本身是对的（`_revision_conflict` 两条边都钉住了），但**判完到写完之间
+#: 没有互斥**，于是它只在请求串行时成立：两个标签页同时保存同一份文档时，
+#: 双方都能在对方落盘之前读到旧的修订号、双方都判「没冲突」，后写的那个把先写
+#: 的整份盖掉——**而两边都收到 200**。这正是 `absent` 哨兵要挡的那个场景
+#: （两个标签页同时新建同一份文档），只是被交错执行绕了过去。
+#:
+#: 用**固定条数的锁带**而不是「doc_id → 锁」的表：锁表要自己治理生命周期
+#: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
+#: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
+_AUTOSAVE_LOCKS = [threading.Lock() for _ in range(64)]
+
+
+def _autosave_lock(path: Path) -> threading.Lock:
+    """按**落盘路径**取锁，不按 doc_id：`_autosave_path` 会把非法字符归一成
+    `_`，于是两个不同的 id 可能指向同一个文件——按 id 分锁的话，那两个请求
+    以为自己各写各的。"""
+    return _AUTOSAVE_LOCKS[hash(str(path)) % len(_AUTOSAVE_LOCKS)]
+
+
 @app.get("/api/autosave/<doc_id>")
 def api_autosave_get(doc_id):
     p = _autosave_path(doc_id)
@@ -4418,37 +4439,38 @@ def api_autosave_put(doc_id):
     # updatedAt 都不动，甚至写回一个更小的值，那种改动 `base` 一律放行。
     # 所以带了 `base_revision` 就以它为准，`base` 只服务不发修订号的旧前端。
     base_revision = request.args.get("base_revision")
-    if base_revision:
-        current = engine_atomicio.content_revision(p)
-        if _revision_conflict(base_revision, current):
-            return jsonify(
-                {
-                    "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
-                    "code": "external_change",
-                    "revision": current,
-                    "summary": document_summary(p),
-                }
-            ), 409
-    else:
-        theirs = _autosave_newer_than(p, request.args.get("base"))
-        if theirs is not None:
-            return jsonify(
-                {
-                    "error": "该文档已在其他窗口保存了更新的版本",
-                    "code": "stale_write",
-                    "theirs": theirs,
-                }
-            ), 409
-    engine_atomicio.write_json(p, body)
-    # revision = 落盘后的内容 hash。外部修改检测拿它当下一次写入的基线：
-    # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
-    return jsonify(
-        {
-            "ok": True,
-            "saved_at": int(time.time() * 1000),
-            "revision": engine_atomicio.content_revision(p),
-        }
-    )
+    # 判据与写入之间不能有缝：中间放开一瞬，两个标签页就能双双判「没冲突」
+    # 然后一前一后落盘，后写的把先写的整份盖掉。锁按落盘路径取（见
+    # `_autosave_lock`），不同文档互不阻塞。
+    with _autosave_lock(p):
+        if base_revision:
+            current = engine_atomicio.content_revision(p)
+            if _revision_conflict(base_revision, current):
+                return jsonify(
+                    {
+                        "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+                        "code": "external_change",
+                        "revision": current,
+                        "summary": document_summary(p),
+                    }
+                ), 409
+        else:
+            theirs = _autosave_newer_than(p, request.args.get("base"))
+            if theirs is not None:
+                return jsonify(
+                    {
+                        "error": "该文档已在其他窗口保存了更新的版本",
+                        "code": "stale_write",
+                        "theirs": theirs,
+                    }
+                ), 409
+        engine_atomicio.write_json(p, body)
+        # revision = 落盘后的内容 hash。外部修改检测拿它当下一次写入的基线：
+        # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
+        # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
+        # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
+        revision = engine_atomicio.content_revision(p)
+    return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
 
 
 @app.get("/api/autosave/<doc_id>/summary")

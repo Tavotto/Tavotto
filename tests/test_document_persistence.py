@@ -388,6 +388,96 @@ def test_auto_checkpoint_dedup_is_per_canvas(client):
     assert other_canvas["version"]["canvasId"] == "c2"
 
 
+# ------------------- 评审 P1/P2（PR #201）：判据与写入之间的缝 -------------
+
+
+def test_directory_fsync_failure_is_not_swallowed(tmp_path, monkeypatch):
+    """目录项落不了盘要**响亮地失败**。
+
+    以前这里连同 Windows「打不开目录」一起 `pass` 掉了：调用方于是收到一个
+    成功，而前端拿到成功就会把本机兜底副本删掉——用户手上从此只剩这一份
+    可能撑不过掉电的文件。ADR 0023 与 `src/tavotto/AGENTS.md` 写的是
+    「失败清 tmp + 抛 AtomicWriteError」。
+    """
+    import errno
+
+    real_fsync = os.fsync
+    target = tmp_path / "doc.json"
+
+    def boom(fd):
+        # 只让**目录** fd 的 fsync 失败：文件那一步照常，否则测的就成了另一件事
+        if os.fstat(fd).st_mode & stat.S_IFDIR:
+            raise OSError(errno.EIO, "模拟目录项落盘时的 I/O 错误")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", boom)
+    with pytest.raises(atomicio.AtomicWriteError) as exc:
+        atomicio.write_json(target, {"a": 1})
+    assert exc.value.code == "dir_fsync_failed"
+
+
+def test_directory_fsync_unsupported_is_still_ignored(tmp_path, monkeypatch):
+    """「这个文件系统没有目录 fsync 这一步」不是失败。
+
+    部分网络盘 / 旧 FAT 家族对目录 fd 直接回 EINVAL。把它也当成 I/O 错误的话，
+    那些机器上**每一次保存都会报错**——判据比它要守的东西宽了。
+    """
+    import errno
+
+    real_fsync = os.fsync
+    target = tmp_path / "doc.json"
+
+    def unsupported(fd):
+        if os.fstat(fd).st_mode & stat.S_IFDIR:
+            raise OSError(errno.EINVAL, "该文件系统不支持目录 fsync")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", unsupported)
+    atomicio.write_json(target, {"a": 1})  # 不抛
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_two_concurrent_creates_cannot_both_win(client, monkeypatch):
+    """两个标签页同时**新建**同一份文档：只有一个能落盘，另一个必须拿到 409。
+
+    `absent` 哨兵本来就是为这个场景加的，但判据与写入之间放开一瞬就绕过去了
+    ——双方都在对方落盘之前读到「磁盘上没有」，双方都判「没冲突」，后写的把
+    先写的整份盖掉，**而两边都收到 200**。
+
+    判据把缝**撑开**：让第一个请求在读完修订号之后、写之前停住，等第二个请求
+    整个跑完。串行执行下这个交错根本不会发生，所以不撑开就等于没测。
+    """
+    import threading
+
+    first_checked, second_done = threading.Event(), threading.Event()
+    real_revision = m.engine_atomicio.content_revision
+    calls = {"n": 0}
+
+    def slow_revision(path):
+        value = real_revision(path)
+        calls["n"] += 1
+        if calls["n"] == 1:  # 只掰开第一个请求的那条缝
+            first_checked.set()
+            second_done.wait(10)
+        return value
+
+    monkeypatch.setattr(m.engine_atomicio, "content_revision", slow_revision)
+
+    results: list[int] = []
+
+    def put(doc):
+        results.append(client.put("/api/autosave/race?base_revision=absent", json=doc).status_code)
+
+    a = threading.Thread(target=put, args=({**PD, "updatedAt": 1},), daemon=True)
+    a.start()
+    assert first_checked.wait(5), "第一个请求没能停在读完修订号之后"
+    put({**PD, "updatedAt": 2})  # 第二个请求整个跑完
+    second_done.set()
+    a.join(10)
+
+    assert sorted(results) == [200, 409], f"两个新建都成功了 = 有一份被静默盖掉：{results}"
+
+
 # ------------------------- 严格同源：schema 版本 -----------------------------
 
 
