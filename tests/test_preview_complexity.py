@@ -614,24 +614,46 @@ def test_plan_for_state_skips_colorbar_internals(probe):
     assert without["estimated_primitives"] < with_internals["estimated_primitives"]
 
 
+#: 分析器耗时上限的两项：固定开销 + 按 artist 摊的线性项。
+#:
+#: `PER_ARTIST` 取慢 runner 实测单价（40 000 个 artist / 201.6 ms = 5.04 µs）
+#: 的 4 倍。**余量写在这里而不是藏在一个魔数里**——上一版是单个 200 ms，它
+#: 在同一台机器上红在 0.8% 的余量上，而那 0.8% 是运行器的速度。
+_ANALYZE_BASE_MS = 50.0
+_ANALYZE_PER_ARTIST_MS = 0.020
+
+
 def test_analyzer_cost_is_negligible_next_to_the_render_it_guards(cases):
     """分析器进 render 热路径，它必须比它要省下的那件事便宜好几个数量级。
 
     这条是**粗闸**，不是性能基准（真实数字记在 `docs/perf-baseline.md` 的
     「复杂度分析器开销」一节，实测 #181 fixture 0.03 ms）。
 
-    上限从 50 ms 放宽到 200 ms，理由不是「它总红」：4 万条 `plot()` 的图实测
-    52.6 ms，撑破它的是 **artist 数量**（4 万个 × 1.3 µs），不是每个 artist
-    变贵了。对着那张图自己 1 250 ms 的 `savefig` 仍然是 1 : 24。
+    **上限不是一个常数，是一条按 artist 数摊的线**——这是这条判据的第三版，
+    前两版各错在一个维度上：
 
-    **试过把它改成「按 artist 摊薄的单价」，没做成**：不同 family 的工作量
-    模型不同（`large_polycollection` 是 1 个 artist 却要遍历几千条 path，
-    单价 181 µs），分母换成 primitive 数又会被 mesh 的估算撑大、把真实回归
-    掩盖掉。造一个自己都说不清的维度不如不造。
+    * 「按 artist 摊薄的单价」不成立：不同 family 的工作量模型不同
+      （`large_polycollection` 是 1 个 artist 却要遍历几千条 path，单价
+      181 µs），分母换成 primitive 数又会被 mesh 的估算撑大。
+    * **单一绝对毫秒数也不成立**：它量的是「机器多快 × 图多大」两件事之和。
+      200 ms 那一版在 4 万条 `plot()` 上实测本机 52.6 ms、慢 runner 201.6 ms
+      ——**红在 0.8% 的余量上**，而那是 runner 的速度，不是代码的退化。
+      一条会因为运行器忙而随机红的闸，最后一定会被人忽略掉。
 
-    **真正挡住那类回归的不是这条**，是
-    `test_quadmesh_paths_are_never_built`——它读的是 `_paths is not None` 这个
-    结构性事实，不受机器快慢与规模影响。这一条只挡「大到离谱」。
+    现在的形状 `BASE + PER_ARTIST × artist 数` 把这两件事分开：常数项管固定
+    开销，线性项管规模。`PER_ARTIST = 20 µs` 是慢 runner 实测单价（5.04 µs）
+    的 4 倍——**余量是明写的**，不是碰巧够用。
+
+    代价也明写：4 倍余量下，一个「每个 artist 贵了三倍」的回归钻得过去。
+    **真正挡住那类回归的从来不是这条**，是 `test_quadmesh_paths_are_never_built`
+    ——它读的是 `_paths is not None` 这个结构性事实，不受机器快慢与规模影响。
+    这一条只挡「大到离谱」。
     """
     for name, plan in cases.items():
-        assert plan["analyze_ms"] < 200.0, f"{name}: 分析耗时 {plan['analyze_ms']} ms"
+        # `costs` 是全量不是样本（`_plan_json` 逐个序列化，没有截断），所以
+        # `len()` 就是这张图的 artist 数
+        ceiling = _ANALYZE_BASE_MS + _ANALYZE_PER_ARTIST_MS * len(plan["costs"])
+        assert plan["analyze_ms"] < ceiling, (
+            f"{name}: 分析耗时 {plan['analyze_ms']} ms，"
+            f"{len(plan['costs'])} 个 artist 的上限是 {ceiling:.1f} ms"
+        )
