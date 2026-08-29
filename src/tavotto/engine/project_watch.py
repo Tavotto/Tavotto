@@ -144,7 +144,7 @@ def take_snapshot(root: Path) -> Snapshot | None:
         # 用 `iter_all_scripts`（含基础设施脚本）而不是 `iter_scripts`——
         # `paper_style.py` 正在被 SKIP 挡在起草之外，而它恰恰是最需要盯的
         # 那一个。
-        for path in discover.iter_all_scripts(root):
+        for path in discover.iter_all_scripts(root, strict=True):
             sig = _sig(path)
             if sig is not None:
                 snap.scripts[discover.rel_key(path, root)] = sig
@@ -157,12 +157,15 @@ def take_snapshot(root: Path) -> Snapshot | None:
         # 素材走 `project_refresh.iter_assets` —— 「哪些文件算素材」的唯一
         # 出处（`/api/panels` 与刷新 diff 共用）。watcher 另写一份的话，
         # 表现会是「用户看得见的图改了却不刷新」或者反过来。
-        for path, _kind in project_refresh.iter_assets(root):
+        for path, _kind in project_refresh.iter_assets(root, strict=True):
             sig = _sig(path)
             if sig is not None:
                 snap.assets[str(path.relative_to(root))] = sig
     except OSError as exc:
-        # 遍历中途出错（目录被删、权限变了）：这一轮作废，线程继续。
+        # 遍历中途出错（目录被删、权限变了、网盘上的子目录掉线）：这一轮作废，
+        # 线程继续。**两处遍历都必须 `strict=True`**——它们的默认行为是静默
+        # 跳过读不动的那棵子树，于是这个 except 一次都不会执行，而 `snap` 会
+        # 是一张少了一截的表：上面那段 docstring 承诺挡住的正是它。
         LOG.debug("项目快照遍历失败，跳过这一轮: %s", exc)
         return None
     return snap

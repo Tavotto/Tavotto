@@ -152,16 +152,29 @@ class RefreshSink:
 # ---------------------------------------------------------------------------
 # 快照
 # ---------------------------------------------------------------------------
-def iter_assets(root: Path) -> list[tuple[Path, str]]:
+def _reraise(exc: OSError) -> None:
+    """`os.walk` 的 onerror：把「这棵子树读不动」抬成异常。
+
+    默认的 `onerror=None` 是**静默跳过**——一个临时读不动的子目录会让
+    `os.walk` 少给几行而不报任何错，调用方拿到的是一张看起来完整的半张表。
+    """
+    raise exc
+
+
+def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
     * 隐藏目录与 `EXCLUDE_DIRS` **当场剪枝，不下探**：图库里常有 .venv、.git、
       工具留下的 .rendered/.qa_* 快照，爬进去既是噪音又很慢；
     * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。
+
+    `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
+    `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
+    watcher 则必须严格——半张表与「用户删了这些文件」在 diff 里没有区别。
     """
     root = Path(root)
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_reraise if strict else None):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
         files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
     files.sort()

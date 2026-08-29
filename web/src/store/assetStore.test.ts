@@ -74,7 +74,7 @@ beforeEach(() => {
 })
 
 describe('合并', () => {
-  it('同一批事件里的多次 load 只发一个请求，且都拿到同一份权威数据', async () => {
+  it('同一批事件里的多次 load 只发一个**在途**请求，且都拿到权威数据', async () => {
     const g = gate(resp(['a.pdf']))
     mockFetch.mockReturnValue(g.promise)
 
@@ -85,9 +85,55 @@ describe('合并', () => {
     g.settle()
     const [r1, r2] = await Promise.all([first, second])
     expect(r1?.panels.map((p) => p.id)).toEqual(['a.pdf'])
-    expect(r2).toBe(r1)
+    expect(r2?.panels.map((p) => p.id)).toEqual(['a.pdf'])
     expect(s().panels.map((p) => p.id)).toEqual(['a.pdf'])
     expect(s().loaded).toBe(true)
+  })
+
+  it('在途期间来的调用会在本次落地之后补问一遍（合并的是请求，不是问题）', async () => {
+    // 服务端读完目录的那一刻 b.pdf 还不存在；它是第二条事件带来的。
+    // 把在途那一份原样还给第二个调用方 = 让它错过自己的那条事件。
+    const g = gate(resp(['a.pdf']))
+    mockFetch.mockReturnValueOnce(g.promise).mockResolvedValueOnce(resp(['a.pdf', 'b.pdf']))
+
+    const first = s().load()
+    const second = s().load()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    g.settle()
+    expect((await first)?.panels.map((p) => p.id)).toEqual(['a.pdf'])
+
+    expect((await second)?.panels.map((p) => p.id)).toEqual(['a.pdf', 'b.pdf'])
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(s().panels.map((p) => p.id)).toEqual(['a.pdf', 'b.pdf'])
+  })
+
+  it('在途期间来几次都只补问一次（补问本身也要合并）', async () => {
+    const g = gate(resp(['a.pdf']))
+    mockFetch.mockReturnValueOnce(g.promise).mockResolvedValue(resp(['a.pdf', 'b.pdf']))
+
+    const first = s().load()
+    const rest = [s().load(), s().load(), s().load()]
+    g.settle()
+    await Promise.all([first, ...rest])
+
+    // 1 次在途 + 1 次补问；三个后来者共用同一次补问
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('补问期间换了项目就不补：那份清单属于别人的图库', async () => {
+    const g = gate(resp(['p1.pdf']))
+    mockFetch.mockReturnValueOnce(g.promise).mockResolvedValue(resp(['p2.pdf']))
+
+    const first = s().load()
+    const second = s().load()
+    project = 'p2' // 用户在响应落地之前切了图库
+    g.settle()
+
+    expect(await first).toBeNull()
+    expect(await second).toBeNull()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(s().panels).toEqual([])
   })
 
   it('上一次结束之后来的新事件会另发一次（合并不是吞掉）', async () => {

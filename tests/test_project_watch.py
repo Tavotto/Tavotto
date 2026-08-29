@@ -286,6 +286,88 @@ class TestSnapshot:
         assert engine_watch.take_snapshot(figs) is not None
         assert engine_watch.take_snapshot(tmp_path / "gone") is None
 
+    def test_an_unreadable_script_subtree_voids_the_whole_snapshot(self, tmp_path, monkeypatch):
+        """**半张表比没有表更坏**：它在 diff 里与「用户删了这些文件」一模一样。
+
+        量的不是「`take_snapshot` 有没有 try/except」——那个 except 一直都在，
+        只是**从来没被执行过**：两处遍历默认都静默跳过读不动的子树，快照少了
+        一截而没有任何人报错。所以判据钉在 OS 边界上（一个具体的子目录读不动），
+        不钉在被测函数自己身上。
+        """
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _script(figs, "panels/fig2.py", "Fig2")
+        _pdf(figs / "Fig1.pdf")
+        # 先证明观测有效：不动任何东西时它是拍得出来的
+        assert engine_watch.take_snapshot(figs) is not None
+
+        blocked = figs / "panels"
+        real_iterdir = Path.iterdir
+
+        def fake_iterdir(self):
+            if self == blocked:
+                raise PermissionError(13, "网盘子目录掉线")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+        assert engine_watch.take_snapshot(figs) is None
+
+    def test_an_unreadable_asset_subtree_voids_the_whole_snapshot(self, tmp_path, monkeypatch):
+        """素材那一半同样：`os.walk` 的默认 `onerror=None` 就是静默跳过。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        sub = figs / "sub"
+        sub.mkdir()
+        _pdf(sub / "Fig2.pdf")
+        assert engine_watch.take_snapshot(figs) is not None
+
+        real_scandir = os.scandir
+
+        def fake_scandir(path=".", *args, **kwargs):
+            if Path(path) == sub:
+                raise PermissionError(13, "网盘子目录掉线")
+            return real_scandir(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "scandir", fake_scandir)
+        assert engine_watch.take_snapshot(figs) is None
+
+    def test_the_product_views_stay_forgiving(self, tmp_path, monkeypatch):
+        """严格**只给 watcher**：素材面板与脚本清单照旧宽容。
+
+        判据宽过它要守的东西是缺陷，窄过也是——把 `/api/panels` 一起改严，
+        一个读不动的子目录就会让整个素材面板空掉，而磁盘上那些图好好的。
+        """
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        sub = figs / "sub"
+        sub.mkdir()
+        _script(figs, "sub/fig2.py", "Fig2")
+        _pdf(sub / "Fig2.pdf")
+
+        real_scandir = os.scandir
+        real_iterdir = Path.iterdir
+
+        def fake_scandir(path=".", *args, **kwargs):
+            if Path(path) == sub:
+                raise PermissionError(13, "网盘子目录掉线")
+            return real_scandir(path, *args, **kwargs)
+
+        def fake_iterdir(self):
+            if self == sub:
+                raise PermissionError(13, "网盘子目录掉线")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(os, "scandir", fake_scandir)
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+
+        assert [p.name for p, _ in engine_refresh.iter_assets(figs)] == ["Fig1.pdf"]
+        assert [p.name for p in engine_discover.iter_all_scripts(figs)] == ["fig1.py"]
+        with pytest.raises(OSError):
+            engine_refresh.iter_assets(figs, strict=True)
+        with pytest.raises(OSError):
+            engine_discover.iter_all_scripts(figs, strict=True)
+
 
 # ---------------------------------------------------------------------------
 # 变化类型

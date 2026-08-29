@@ -23,7 +23,7 @@ function readUsed(): Record<string, number> {
 /*  SSE 重连恢复。一次统一刷新会连着发 registry.changed + assets.changed 两条  */
 /*  事件，所以「同一批事件里被调好几次」是常态而不是异常。                     */
 /*                                                                            */
-/*  两件事必须挡住：                                                          */
+/*  三件事必须挡住：                                                          */
 /*                                                                            */
 /*   1. **较慢的旧响应覆盖较新的**。判据是请求序号，不是「谁最后返回」——      */
 /*      后者恰恰是缺陷本身。序号比 AbortController 稳：被 abort 的请求在       */
@@ -33,10 +33,15 @@ function readUsed(): Record<string, number> {
 /*      与 documentStore 排队落盘带走 pj 是同一条纪律。`null`（跟随后端默认    */
 /*      项目）与某个具体 id 是**两个不同的取值**，不合并：合并的话切项目之后   */
 /*      旧项目的素材会落进新项目。                                            */
+/*   3. **在途期间发生的改动被合并吞掉**。合并的是「请求」不是「问题」：后来    */
+/*      者复用在途那一份，而那一份可能在它的事件发生之前就读完了目录。所以在    */
+/*      途期间来的非 force 调用共用一次**补问**（`trailing`），在本次落地之后   */
+/*      再发一次。补一次就够——同一批里来多少次都只补这一次。                   */
 /*                                                                            */
-/*  合并：同项目的在途请求会被后来者复用（`inflight`），一批事件只发一次       */
-/*  /api/panels。但 `force` 永远另起一次——手动刷新按钮要是被一次早就发出的     */
-/*  在途请求吞掉，用户按了没反应，而"没反应"正是他按它的原因。                 */
+/*  合并：同项目的在途请求会被后来者复用（`inflight`），一批事件最多两次        */
+/*  /api/panels（在途那次 + 一次补问）。但 `force` 永远另起一次——手动刷新按钮   */
+/*  要是被一次早就发出的在途请求吞掉，用户按了没反应，而"没反应"正是他按它的     */
+/*  原因。                                                                     */
 /* -------------------------------------------------------------------------- */
 
 /** 已经发出的请求数；每次请求取一个递增号 */
@@ -44,7 +49,19 @@ let seq = 0
 /** 已经落地的那次请求的号；比它小的响应一律丢弃 */
 let applied = 0
 /** 同项目可复用的在途请求；`force` 不看它，也不写它 */
-let inflight: { pj: string | null; promise: Promise<PanelsResponse | null> } | null = null
+let inflight: {
+  pj: string | null
+  promise: Promise<PanelsResponse | null>
+  /**
+   * 在途期间又来了一次非 force 的 `load()` 时创建：本次落地之后**补跑一次**。
+   *
+   * 合并仍然成立——在途期间来多少次都只补**这一次**。但补这一次是必须的：
+   * 服务端读完目录到响应落地之间还有一段时间，那段时间里发生的改动不在这份
+   * 响应里，而 `inflight` 一清就再没有人去问第二遍——那个改动要一直等到下一
+   * 条事件、重连或者用户手动刷新才看得见。
+   */
+  trailing: Promise<PanelsResponse | null> | null
+} | null = null
 
 interface AssetState {
   panels: PanelInfo[]
@@ -78,7 +95,17 @@ export const useAssetStore = create<AssetState>((set, get) => ({
   recentlyUsed: readUsed(),
 
   load: (opts) => {
-    if (!opts?.force && inflight && inflight.pj === currentProjectId()) return inflight.promise
+    if (!opts?.force && inflight && inflight.pj === currentProjectId()) {
+      const cur = inflight
+      // **不能直接把在途那份还给调用方**：它可能是在本次事件发生之前就读完
+      // 目录的，那份数据里没有刚刚这一下改动。合并的是「请求」，不是「问题」
+      // ——本次落地之后补问一遍，同一批里的多个调用共用这同一次补问。
+      cur.trailing ??= cur.promise.then(() =>
+        // 补问期间换了项目：那份清单属于别人的图库，一个字节都不许落地
+        currentProjectId() === cur.pj ? get().load() : null,
+      )
+      return cur.trailing
+    }
 
     const mine = ++seq
     const pj = currentProjectId()
@@ -113,7 +140,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
         if (mine === seq) set({ loading: false })
       })
 
-    if (!opts?.force) inflight = { pj, promise }
+    if (!opts?.force) inflight = { pj, promise, trailing: null }
     return promise
   },
 

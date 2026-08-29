@@ -199,7 +199,7 @@ describe('panel.file_changed', () => {
 })
 
 describe('一批事件', () => {
-  it('registry.changed + assets.changed 合并成一次请求、一条提示', async () => {
+  it('registry.changed + assets.changed 合并成一次在途请求 + 一次补问，只写一次文档', async () => {
     seed([panelObj('o1', 'Fig1.pdf', { script: null })])
     mockPanels.mockResolvedValue(panels([info('Fig1.pdf', { script: 'fig1.py' })]))
 
@@ -209,9 +209,12 @@ describe('一批事件', () => {
     )
     await tick()
 
-    expect(mockPanels).toHaveBeenCalledTimes(1)
+    // 一次在途 + 一次补问。**补问不是没合并**：第二条事件是在第一次请求发出
+    // 之后到的，那份响应完全可能读目录读在它前面，把它原样还回去等于让这条
+    // 事件的改动一直看不见。来几条事件都只补这一次（assetStore 那份用例）。
+    expect(mockPanels).toHaveBeenCalledTimes(2)
     expect(statusKey()).toBe('status.sourceLinked')
-    // 第二条事件的同步是零差异，因此没有第二次写文档
+    // 补问那一轮的同步是零差异，因此没有第二次写文档
     expect(useDocumentStore.getState().derivedSeq).toBe(1)
   })
 })
