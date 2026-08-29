@@ -36,7 +36,7 @@
 | 02 | 文档 schema、稳定 ID、迁移、原子写入 | ✅ 完成（本次，ADR 0023） |
 | 03 | 保存状态机、autosave、恢复、历史 | ✅ 完成（本次，ADR 0024） |
 | 04 | 后端统一 refresh | ✅ 完成（本次，ADR 0025） |
-| 05 | 项目 watcher、批次合并、SSE | ⬜ |
+| 05 | 项目 watcher、批次合并、SSE | ✅ 完成（本次，ADR 0026） |
 | 06 | 前端事件消费与派生元数据同步 | ⬜ |
 | 07 | Readiness 后端事实模型 | ⬜ |
 | 08 | Readiness 前端与常驻左栏 | ⬜ |
@@ -61,7 +61,7 @@
 | Gate | 覆盖 | 状态 |
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
-| 2 项目实时状态 | 04–08 | 🟡 04 完成（后端刷新核心），05–08 未开始 |
+| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新核心）+ 05（项目 watcher）完成，06–08 未开始 |
 | 3 核心工作流与输出 | 09–12 | ⬜ |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
@@ -87,7 +87,7 @@
 | R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
 | R-11 | **最小字号有两个数**：`absolute_min_font_size_pt: 8.0` 与 `legend_policy.min_font_size_pt: 8.5` | `profiles/publication.json:43,65` | P2 | 10 |
 | R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
-| R-13 | 🟡 **部分（04）** **没有 watcher 事件批次合并**：统一刷新已经是一次刷新至多两条事件（无差异零条）；**脚本 watcher 那条路仍逐条 `sse_publish`**（队列 maxsize 200） | `app.py sse_publish`、`pool.py:2003` | P2 | 05 |
+| R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
 | R-16 | **E2E 只有 Windows 腿** | 既有 issue #30 | P2 | 23 |
@@ -165,8 +165,7 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 | --- | --- | --- |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| R-13 | 脚本 watcher 仍逐条发事件；项目 watcher 还不存在 | 05 |
-| — | 前端还没消费 `assets.changed` / `refreshProject()`（有类型、无 handler） | 06 |
+| — | 前端还没消费 `assets.changed` / `project.error` / `refreshProject()`（有类型、无 handler） | 06 |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
 | — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六） | 08（左栏改造） |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
@@ -176,6 +175,9 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 
 ## 下一阶段
 
-**Prompt 05（项目 watcher、批次合并、SSE）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。watcher 调 `app.refresh_project(ctx, reason="watcher", …)`，
-**不得自己 merge、自己发事件**。
+**Prompt 06（前端事件消费与派生元数据同步）**，入口见 `SESSION_HANDOFF.md` 的
+「下一阶段入口」。后端从此会自己把变化推上来：前端要消费的是
+`registry.changed` / `assets.changed` / `panel.file_changed` / `project.error`
+四条（前两条与 `project.error` 今天**有类型、没有 handler**），
+显式刷新入口是 `POST /api/project/refresh`（`refreshProject()` 已实现，
+界面上还没有入口）。**派生数据刷新不得把文档标脏、不得进撤销历史**。
