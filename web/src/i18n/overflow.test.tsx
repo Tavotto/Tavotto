@@ -103,6 +103,9 @@ const BUDGETS: Budget[] = [
   ['workspace', 'fastEdit.toLayout', 16, '快速编辑浮动条上的返回出口'],
   ['workspace', 'fastEdit.connectSource', 24, '降级说明条上的下一步'],
   ['workspace', 'assets.openFigure', 8, '素材卡悬停时右下角那个就近入口'],
+  ['workspace', 'fastEdit.sizeStale', 14, '原图尺寸旁的来源标记'],
+  ['workspace', 'fastEdit.sizeAssumed', 16, '原图尺寸旁的来源标记'],
+  ['workspace', 'fastEdit.sizeUnknown', 16, '原图尺寸旁的来源标记'],
   ['workspace', 'rail.readiness', 20, '左侧轨道按钮'],
 ]
 
