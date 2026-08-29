@@ -261,3 +261,25 @@ class TestPanelsProjection:
         entry = client.get("/api/panels").get_json()["panels"][0]
         assert entry["native_w_mm"] == pytest.approx(1200 / 600 * 25.4, abs=1e-3)
         assert entry["original_spec"]["dpi_source"] == "assumed"
+
+
+# ---------------------------------------------------------------------------
+# 四、两侧对「密度的出处有哪几种」必须说同一句话
+# ---------------------------------------------------------------------------
+def test_frontend_and_backend_agree_on_the_dpi_source_set():
+    """`originalspec.DPI_SOURCES` ↔ `web/src/lib/api.ts` 的 `dpi_source` 联合。
+
+    这是个**闭集跨进程**：后端发一个前端不认识的取值，界面上的表现是那条
+    「这个数是假定的」提示**安静地不出现**——不是报错，是少说一句话。少说的
+    那句正是这条闭集存在的理由，所以看护放在这里，不靠人记得。
+
+    只比集合不比顺序：顺序在两边都不承载语义。
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "api.ts"
+    match = re.search(r"dpi_source: ((?:'[a-z_]+'(?:\s*\|\s*)?)+)", src.read_text(encoding="utf-8"))
+    assert match, "web/src/lib/api.ts 里找不到 AssetOriginalSpec.dpi_source"
+    front = {v.strip().strip("'") for v in match.group(1).split("|")}
+    assert front == set(originalspec.DPI_SOURCES)

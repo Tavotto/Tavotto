@@ -129,7 +129,7 @@ ASSUMED_DPI / ASSUMED_DPI_DEFAULT         # 明确 fallback（值与改造前相
 
 ```text
 新增  src/tavotto/engine/originalspec.py         原图规格事实层（+16 条用例）
-新增  tests/test_original_spec.py
+新增  tests/test_original_spec.py               （含两侧 dpi_source 闭集的同源看护）
 新增  web/src/store/workspace.ts                 两条工作流（+19 条用例）
 新增  web/src/store/workspace.test.ts
 新增  web/src/lib/originalSpec.ts                原图规格唯一服务（+25 条用例）
@@ -156,6 +156,7 @@ ASSUMED_DPI / ASSUMED_DPI_DEFAULT         # 明确 fallback（值与改造前相
                                                  删掉死掉的 assets.addAria
 改动  web/src/i18n/overflow.test.tsx             +6 条字数预算
 改动  web/src/components/left/AssetBrowser.runtime.test.tsx  主动作改名跟着改
+改动  AGENTS.md                                  +一行严格同源对（dpi_source 闭集）
 改动  src/tavotto/AGENTS.md / web/AGENTS.md      长期规则的家
 重建  codex-plugin/mcp/widget/canvas.html        指纹 e8a2c128a5200354
 重建  web/dist-playground/                       指纹 73719cc4290353e6（不进 git）
@@ -176,7 +177,7 @@ ruff check . && ruff format --check .
 
 （实跑数字见 `STATUS.md` 的「Session 09 之后」表。）
 
-**变异反证 25 条全部被打红**；第一轮活下来 2 条，成因与处置见
+**变异反证 26 条全部被打红**；第一轮活下来 2 条，成因与处置见
 `TEST_MATRIX.md`。两条都不是"判据写错了"，而是**判据没被执行到它该看的那个
 点上**：一条是 T-36 的形状（两条判据说同一件事），合并之后露出了一个从来没被
 量过的维度（"上次停在画布排版"）；另一条是三条界面用例里没有一条让素材从清单

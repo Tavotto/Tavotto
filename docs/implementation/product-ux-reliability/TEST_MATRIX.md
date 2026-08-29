@@ -713,7 +713,7 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 
 ---
 
-## Session 09 新增用例（后端 16 / 前端 53）
+## Session 09 新增用例（后端 17 / 前端 53）
 
 ### 后端 `tests/test_original_spec.py`（16 条）
 
@@ -722,6 +722,7 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 | `TestRasterDpi` | 10 | 密度先量后猜：PNG `pHYs` / JPEG JFIF / Exif（英寸与厘米）读得到就报 `metadata`；单位字节为 0 的 pHYs 与 unit=1 的 Exif 只是长宽比，不是密度；**「没写」与「写着 96」是两个答案**；JFIF 压过 Exif；读不动文件退到 `assumed` 而不是崩；alpha 照实报 |
 | `TestVectorSpec` | 2 | 矢量报视口不编像素；没测量的维度报 `unknown` / `None` |
 | `TestPanelsProjection` | 2 | `/api/panels` 的 `native_*_mm` 是 `original_spec` 的**投影**；没有密度元数据时尺寸与改造前**逐位相同** |
+| `test_frontend_and_backend_agree_on_the_dpi_source_set` | 1 | **闭集跨进程**：`DPI_SOURCES` ↔ `web/src/lib/api.ts` 的 `dpi_source` 联合（已登记进根 `AGENTS.md` 的严格同源对表）。对不上的表现不是报错，是「这个数是假定的」那句提示**安静地不出现** |
 | （构造工具） | — | PNG / JPEG / Exif 都自己拼字节——只有这样才控制得住"写没写密度"这一维 |
 
 ### 前端
@@ -734,7 +735,7 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 | `web/src/i18n/overflow.test.tsx` | +9 | 新文案的英文字数预算（模式标签 / 两个出口 / 降级说明条 / 素材卡「打开」） |
 | `web/src/components/left/AssetBrowser.runtime.test.tsx` | 改 1 | 素材卡主动作换成「打开」之后，落面板那一步仍然把描述符交给 `addRuntimePanel`（反证 #2 原样成立） |
 
-## Session 09 的变异反证（25 条，全部被打红）
+## Session 09 的变异反证（26 条，全部被打红）
 
 脚本：`scratchpad/mutate.py`（一次性工具，不进仓库）。跑法与前几轮相同——
 **先提交再变异**（`git checkout --` 才不会吃掉未提交的修复），Python 侧每条
@@ -768,6 +769,7 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 | 「上次已知」标记不显示 | 同上 | 红 ✔（**第一轮活下来的第二条**，见下） |
 | 「尺寸未知」时照样显示那个编出来的尺寸 | 同上 | 红 ✔ |
 | 三个来源标记全关掉 | 同上 | 红 ✔ |
+| 后端的 `DPI_SOURCES` 少两个取值 | `test_original_spec.py` | 红 ✔ |
 
 ### 第一轮活下来的那一条：又是一条杀不死的冗余
 
