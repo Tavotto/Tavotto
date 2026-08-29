@@ -208,6 +208,16 @@ export interface RenderStaleEvent {
   variant_count: number
 }
 
+export interface RenderSvgEvictedEvent {
+  type: 'render.svg_evicted'
+  file: string
+  variant: string
+  /** 每文件预算还是全局预算把它挤下去的 */
+  scope: 'file' | 'global'
+  /** 丢掉的这份 payload 有多大 */
+  bytes: number
+}
+
 export interface DisplaySourceChangedEvent {
   type: 'display.source_changed'
   panel: string
@@ -410,6 +420,7 @@ export type DiagnosticEvent =
   | RenderSuccessEvent
   | RenderErrorEvent
   | RenderStaleEvent
+  | RenderSvgEvictedEvent
   | DisplaySourceChangedEvent
   | AuthorityEvent
   | DragBeginEvent

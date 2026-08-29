@@ -200,7 +200,7 @@ through_today` 在 hybrid 落地那一刻当场红，逼着一起改，而不是
 | 01 | Large SVG Safety Guard（不变量 3 + raster 档 + 前端二道闸） | 完成 |
 | 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 完成 |
 | 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 完成 |
-| 04 | renderStore 的 SVG 内存预算 | 待做 |
+| 04 | renderStore 的 SVG 内存预算 | 完成 |
 | 05 | Diagnostics 与回归看护 | 待做 |
 | 06 | 集成与 issue 收尾 | 待做 |
 
@@ -269,6 +269,68 @@ request 上 rasterize 的话，用户**第一次打开** #181 那张图仍然要
 矢量化 mesh、不动 manifest 的 gid 语义——前端在 `findGidNode` 返回 null 时
 安静退出、覆盖层接管，几何权威照旧是 exact manifest（§7 的「代价」第三条）。
 
+### Session 04 落地了什么（2026-08-29）
+
+01–03 管住的是**单次预览**：一份 SVG 有多大、要不要读、要不要 rasterize。
+剩下的第二类内存放大在前端的保留策略里：
+
+> **条目数不是字节预算。** `renderStore` 的 `RECENT_VARIANTS = 4` 是撤销 /
+> 版本恢复的落点，它对「留了多少字节」一无所知。hybrid 之后仍有 8～12 MiB
+> 的预览 SVG × 4 档 × 几个文件 = 几百 MB 常驻在 JS 堆里，而每一份都是合法
+> 缓存，`prune` 一个都不该清。
+
+所以在**保留条目数**之外再加一条**保留字节数**的策略（`web/src/store/
+renderStore.ts`）：
+
+```text
+entry-count policy   RECENT_VARIANTS = 4        留几档语义状态
+byte-budget policy   SVG_RECENT_BUDGET_PER_FILE = 16 MiB
+                     SVG_RECENT_BUDGET_GLOBAL   = 64 MiB
+```
+
+两个数量的是 **JS 侧驻留的 SVG 源文本 payload**，**不是 Chromium 渲染进程的
+DOM 内存预算**——那一侧由硬闸与 hybrid 负责，两者不可互相冒充。
+
+**超预算时丢掉的只有 `svg` 字符串**（`dropSvgPayload`）。manifest / rev /
+lastPatches / wantPatches / timings / preview / status / stale 一个字都不动：
+
+```text
+语义状态           ≠           SVG 源 payload
+manifest, rev, lastPatches …               svg: string
+撤销、版本恢复、几何权威靠它               画布上那张图靠它
+必须留                                     可以重新生成
+```
+
+「budget exceeded → delete PanelRender」是这一节最容易滑进去的错误：它会连
+撤销落点、版本恢复与几何权威一起丢掉，换来的字节其实只有 `svg` 那一份。
+
+**驱逐次序**两维：先「不在 `recent` 里的」（脚本变更后作废的、掉出档数的
+——没人会撤销回去），再按 payload 落地序号丢最久没更新的。只按第二维排的
+纯 LRU 会先丢真正的撤销落点。
+
+**三条 pin**（清了就没画面的那几份）：画布上现存面板的变体键、每个文件的
+`latest`（显示退路）、在途/渲染中。全被 pin 住时**宁可超预算**——预算管的是
+可驱逐的历史 payload，不是显示所需的那一份。这一条对 Codex 内嵌画布是硬要求：
+那里 `panelSrc()` 恒 null、`previewPngUrl()` 只对 raster 档有缓存位图，
+**当前那份 SVG 就是唯一能显示的东西**，清掉 = 画布空白。
+
+被丢掉 payload 的那一版在 `panelDisplayView` 里是**独立的一档 `evicted`**，
+不是 `fallback`：画布挂的**就是这一版**，只是画法换成位图（与 raster 同一条
+既有链路）。这是 §8 的「诚实 display strategy」——掉进 `fallback` 的话诊断会
+说画布挂着另一个变体的图，而几何权威仍是这一版（issue #131 同款错配）；而
+把它当成渲染失败，就是把一个主动的保护决定说成故障（不变量 5 的老问题）。
+同时 `useEngineSync` 会为它**重排一次渲染**：桌面/playground 有引擎位图顶着，
+内嵌画布没有第二条路，重画是那里唯一的出路。
+
+合成压力（4 版 × 12 MiB 的真字符串，同一文件）：
+
+| | 无预算 | Session 04 |
+|---|---:|---:|
+| 驻留 SVG payload | 48 MiB | **12 MiB** |
+| `byKey` 条目 | 4 | 4 |
+| 保留 manifest 的条目 | 4 | 4 |
+| 几何权威可用的老变体 | 4 | 4 |
+
 ---
 
 ## 6. 不做什么
@@ -318,4 +380,8 @@ request 上 rasterize 的话，用户**第一次打开** #181 那张图仍然要
   （SVG 生在内存里，判据挪到「交给 JS 之前」）；
 * `web/src/canvas/panelPreviewMode.test.tsx` / `web/src/lib/previewBudget.test.ts`
   —— 三档显示行为、raster 下命中层仍在、前端二道闸；
+* `web/src/store/svgMemoryBudget.test.ts` —— 字节预算：驻留字节收得住、
+  **条目与语义状态一条不少**、pin（live/latest/在途）、驱逐次序的两维、
+  clear/reset/prune 之后不留残账、`evicted` 那一档的显示与几何权威；
+  配套 `web/src/hooks/useEngineSync.test.ts` 的「重排一次渲染」一组；
 * `docs/perf-baseline.md` 的「大图预览基线」—— 前后对照的唯一出处。
