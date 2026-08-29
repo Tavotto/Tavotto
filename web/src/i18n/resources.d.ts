@@ -1094,6 +1094,7 @@ export default interface Resources {
       "ai_start_failed": "AI 任务启动失败：{{reason}}",
       "annotations_need_pdf": "该素材只有位图、没有矢量 PDF，暂不支持把标注写回原图",
       "desktop_updater_disabled": "桌面版内不支持 pip 自升级，请更新桌面应用",
+      "dir_fsync_failed": "内容已写入，但系统没能确认它已牢固落盘，请重试一次再关闭：{{reason}}",
       "dir_missing": "目录不存在：{{path}}",
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "接口保存失败：{{reason}}",
@@ -1134,6 +1135,7 @@ export default interface Resources {
       "native_session_offline": "这张图来自已结束的 Tavotto Run 会话。重新运行原命令后可继续对象级编辑。",
       "native_session_unknown": "没有这个 Tavotto Run 会话。",
       "no_project": "尚未打开项目",
+      "non_finite_number": "文档里含有无法保存的数值（NaN 或 ∞），磁盘上那份一个字节都没动：{{reason}}",
       "not_parameterizable": "该面板不可参数化（没有对应脚本）",
       "open_project_failed": "打不开这个项目：{{reason}}",
       "package_file_missing": "缺少上传文件",
@@ -1151,6 +1153,7 @@ export default interface Resources {
       "read_failed": "无法读取：{{reason}}",
       "registry_reload_failed": "脚本注册表读不回来，项目仍在使用上一次成功加载的那份：{{reason}}",
       "registry_update_failed": "注册表更新失败：{{reason}}",
+      "replace_failed": "保存的最后一步（换名）失败，原文件未被破坏，可以重试：{{reason}}",
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回（磁盘上有同名产物时请从素材库的那一份写回）",
       "runtime_asset_unknown": "运行时素材未登记：{{id}}（脚本注册表里找不到它，重新运行脚本即可重新登记）",
@@ -1172,7 +1175,8 @@ export default interface Resources {
       "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
       "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
       "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
-      "write_back_warnings": "写回被阻止：引擎在重放时报告了警告"
+      "write_back_warnings": "写回被阻止：引擎在重放时报告了警告",
+      "write_failed": "写入磁盘失败，本机副本仍在，可以重试：{{reason}}"
     },
     "engine": {
       "apply": "应用",
