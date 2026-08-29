@@ -148,6 +148,14 @@ describe('快速编辑这一屏', () => {
     expect(container.textContent).toContain('假定密度')
   })
 
+  it('源文件不在了：显示的是上一次已知的规格，并且说出来', async () => {
+    act(() => openFastEdit('a.pdf'))
+    // 素材从清单里消失（文件被删 / 网盘掉线）——文档里那个面板一个字节没动
+    useAssetStore.setState({ panels: [], byId: {} })
+    await mount()
+    expect(container.textContent).toContain('上次已知')
+  })
+
   it('一个来源都没有时不显示一个编出来的尺寸，而是说"尺寸未知"', async () => {
     // 素材清单里有这张图（所以打得开），但它一个尺寸维度都没有
     const blank = { ...info('x.pdf', 'fig.py'), native_w_mm: 0, native_h_mm: 0 }
