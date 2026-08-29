@@ -404,7 +404,8 @@ heapUsed 量的是「分配了多少」而不是「留下了多少」，两侧�
 | Chromium `Nodes` | not measured（挂进去就是症状本身） | **2 887** |
 | JS 堆 | not measured | **2.47 MB** |
 | 渲染进程 RSS（macOS headless Chromium） | not measured | **107–125 MB** |
-| 一次挂载 | not measured | **70–91 ms** |
+| 解析 + 插入（`parseMs`） | not measured | 70–84 ms |
+| **到画出来（`renderedMs`）** | not measured | **80–92 ms** |
 
 开关 5 次每轮回到 6 个节点 / 0.63 MB；RSS 五轮共涨 17–18 MB，是 allocator
 retention，不是线性增长。数据与复现命令见
@@ -420,21 +421,24 @@ retention，不是线性增长。数据与复现命令见
 节点走，而没有一条闸量它**——两者在 `pcolormesh` 上重合（所以 fixture 修好了），
 在细小的不可 rasterize primitive 上分开：
 
-| 图 | 裁决 | `svg_bytes` | DOM 节点 | 渲染进程 RSS |
+| shape（`large_preview_svg.py --shape`） | 裁决 | `svg_bytes` | DOM 节点 | 渲染进程 RSS |
 |---|---|---:|---:|---:|
-| #181 fixture n=470 | `hybrid` | 1 838 682 | 2 887 | 107–125 MB |
-| **40 000 次 `plot()`（每条 3 点）** | **`vector` / `normal`——无闸触发** | 9 544 236 | **201 977** | **333–362 MB** |
+| `mesh --n 470`（#181 fixture） | `hybrid` | 1 838 682 | 2 887 | 107–125 MB |
+| **`lines --n 40000`（每条 3 点）** | **`vector` / `normal`——无闸触发** | 9 334 177 | **200 531** | **317–359 MB** |
 
 第二行**可达**：`estimated_primitives = 40 000` 在
-`TOTAL_VECTOR_PRIMITIVE_BUDGET`（50 000）之内、9.10 MiB 在硬闸之下，而 `line`
-按契约不可 rasterize，`escalate_plan` 返回 `None`。40 000 次 `plot()` 是普通
-matplotlib 写法；多面板画布把它乘上面板数，而**每个 live 面板都被 pin 住、
-按设计永不驱逐**（Session 04 §7）。四面板的形状对照已实测到 641 464 个节点 /
-1 197–1 584 MB——回到了 #181 的原始量级。
+`TOTAL_VECTOR_PRIMITIVE_BUDGET`（50 000）之内；8.90 MiB 越过 8 MiB 软闸，但
+`line` 按契约不可 rasterize，`escalate_plan` 返回 `None`；16 MiB 硬闸也没到。
+40 000 次 `plot()` 是普通 matplotlib 写法；多面板画布把它乘上面板数，而
+**每个 live 面板都被 pin 住、按设计永不驱逐**（Session 04 §7）。四面板的形状
+对照（`paths --copies 4`，102 MB / 16 万个元素）实测**直接把渲染进程打死**
+——那正是 #181 报告的那个结局。
 
-**字节数不是节点数的代理**：560 条 × 2000 点是 15.7 MiB 却只有 4 506 个节点
-（字节在 path 的 `d` 属性里）。贵的是**大量细小的、不可 rasterize 的
-primitive**，不是大量字节。
+**字节数不是节点数的代理，两个方向都成立**：560 条 × 2000 点是 21.4 MiB 却
+只有 3 336 个节点（字节在 path 的 `d` 属性里），而**那一条字节闸看得见**
+（越过 16 MiB 硬闸 → `raster`）；折线海只有 8.90 MiB 却有 20 万个节点，
+**字节闸看不见它**。贵的是**大量细小的、不可 rasterize 的 primitive**，
+不是大量字节。
 
 修法不必大——图级补一条**节点数**预算，或让高节点数而收不动的图也降进
 `raster`。但它是一条新的判据，要按「新增核心不变式测试提交前必须手工反证一次」的纪律配变异验证，
