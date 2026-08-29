@@ -128,6 +128,40 @@ Layout   : 加入多张图 → 排列   → 按画布规格导出
 
 ---
 
+## 3b. 项目刷新合同（Session 04，ADR 0025）
+
+**「项目里的东西变了」在后端只有一条链路。**
+
+```text
+app.refresh_project(ctx, reason=…) → engine/project_refresh.refresh_project_index()
+```
+
+**验收**（全部有用例，见 `TEST_MATRIX.md`）：
+
+- **绝不执行用户脚本**：刷新只读 AST 与 `stat()`。判据是双份的——桩住 probe /
+  worker 池的入口，**外加**脚本真跑起来会在图库里留下的那个文件不存在；
+- **无差异 = 零事件**：一次什么都没发现的刷新不发事件、不重写注册表、
+  不重挂 watcher、不作废任何 worker；
+- **批量是一条事件不是十几条**：一次发现四个新脚本 → 一条 `registry.changed`；
+  恰好一个脚本变时照旧带 `{script, stems}`（老客户端）；
+- **项目隔离**：事件带 `pj`；作废 worker 限本项目（两个项目里同名的
+  `fig1.py`，刷新 A 不动 B）；
+- **并发**：同一项目的刷新串行，不同项目可并行（锁是每项目一把）；
+- **失败不伤现状**：注册表读不回来时内存里那份原封不动，项目照常能用，
+  事件一条不发，错误带稳定 `code`；
+- **派生刷新不碰文档**：不设 dirty、不进撤销历史、不读写 autosave / 版本目录
+  （这条在 04 是**结构性**的：服务模块不 import `engine/documents`）。
+
+**不变式 C**：`reason` 是闭集（`manual` / `watcher` / `registry` / `probe` /
+`codex` / `ai` / `open` / `external`），表外的值一律归成 `manual`。它进日志、
+进事件、以后还会进遥测维度——透传客户端字符串等于让外面往指标里写自由文本。
+
+**不变式 D**：「哪些文件算素材」只有 `project_refresh.iter_assets()` 一处判据，
+`/api/panels` 与刷新共用。两份判据分叉的表现是"刷新说有一张新图、素材库里
+找不到"。
+
+---
+
 ## 4. Style / Spec / Validation / Export 分层合同
 
 ```text

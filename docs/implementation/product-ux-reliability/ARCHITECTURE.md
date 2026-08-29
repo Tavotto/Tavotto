@@ -150,7 +150,26 @@ Tauri 壳 (src-tauri/)  ──┐
 | worker 池 | `engine/pool.py`（2000+ 行），单 worker 协议 `engine/worker.py` + `wireproto.py` |
 | Rust supervisor | `workerd/`，客户端 `engine/workerd_client.py`（默认关，`TAVOTTO_WORKERD`） |
 | watcher | `engine/pool.py:2003 _watchers`（**每项目一个**），`start_watcher/stop_watcher`；mtime 轮询，约 2 秒窗口 |
-| watcher 回调 | `app.py:1169 _script_change_handler()` → `sse_publish("panel.file_changed", {...,"pj": ctx.id})` |
+| watcher 回调 | `app.py _script_change_handler()` → `sse_publish("panel.file_changed", {...,"pj": ctx.id})` |
+| **统一刷新（`← 04`，ADR 0025）** | `engine/project_refresh.py`，app 层入口 `app.refresh_project()`，HTTP：`POST /api/project/refresh` |
+
+### 3.1 统一刷新（`← 04`，ADR 0025）
+
+```text
+app.refresh_project(ctx, reason=…)          ← app 层唯一入口（注入 SSE / watcher 出口）
+  → engine/project_refresh.refresh_project_index()
+      项目锁 → registry 前快照 → 静态 merge（内容变了才写盘）→ reload
+      → registry 后快照 → 结构化 diff → 素材清单（与**上一轮**比）
+      → 作废关系变了的 worker（限本项目）→ 被盯的脚本集变了才重挂 watcher
+      → 有差异才发 `registry.changed` / `assets.changed`
+```
+
+已接进来的调用方：`POST /api/project/refresh`（新）、`POST /api/registry/scan`、
+probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）。
+**Prompt 05 的项目 watcher 也调它**，不得自己 merge、自己发第二套事件。
+
+`app.py` 里原来的 `reload_registry()` 已删——它的两件事（重装 + 重挂 watcher）
+都在服务里，而它还漏了第三件（作废过期 worker）。
 
 **「不静默执行用户脚本」在现状里的落实方式**：扫描 / 注册表 / watcher 都只做
 静态读取与 mtime 比较；真正跑用户代码的只有显式的 probe、渲染请求
@@ -168,9 +187,14 @@ Tauri 壳 (src-tauri/)  ──┐
 | 前端消费 | `web/src/store/assetStore.ts`、`renderStore.ts`、`nativeSessionStore.ts`、`scriptRunStore.ts` |
 | 事件按项目隔离 | 事件体里的 `pj` 字段；前端按当前项目过滤 |
 
-现状**没有**独立的「项目 watcher + 批次合并」层：watcher 事件一条一条
-直接 `sse_publish`，批次合并/防抖在前端各 store 里各做各的。Prompt 04–06 的
-统一 refresh 服务要落在这里，而不是再加一条并行通道。
+**04 之后**：registry / 素材两类事件由统一刷新服务批量发布（一次刷新至多
+各一条，无差异一条不发），payload 见 ADR 0025 §2 与 `web/src/lib/api.ts` 的
+`ServerEvent`。`panel.file_changed` 仍由脚本 watcher 单独发，语义不变
+（「已登记脚本内容变化，需要重建 Figure」）。
+
+仍**没有**独立的「项目 watcher + 批次合并」层：脚本 watcher 的事件仍是一条
+一条直接 `sse_publish`，前端各 store 各做各的防抖。那是 Prompt 05–06 的事，
+入口已经在（`app.refresh_project()`），**不要再加一条并行通道**。
 
 ---
 

@@ -2,6 +2,7 @@
 merge 时现有注册表优先。全部纯 AST，不执行任何脚本。"""
 
 import json
+import os
 
 import pytest
 
@@ -294,20 +295,23 @@ def test_registry_write_is_atomic(figs, monkeypatch):
     下次打开这个项目只会看到「注册表不是合法 JSON」。桌面壳强退、OOM、
     断电，Windows 上杀毒软件在写入期间短暂锁定，都会走到这条路径。
 
-    故障注入打在 `Path.replace` 上，而不是某个具体的写文件调用：那样这条
+    故障注入打在 `os.replace` 上，而不是某个具体的写文件调用：那样这条
     用例就不绑死在「用 write_text 还是 fdopen」上。**如果实现哪天退回直写，
     这里会以「DID NOT RAISE」变红**——直写根本不会调用 replace。
-    """
-    from pathlib import Path
 
+    2026-08-29 换成 `os.replace`：写入实现并进 `engine/atomicio`（ADR 0023，
+    Prompt 04 顺手清掉的一处手写 tmp+replace），而它调的是 `os.replace`。
+    钉在 `Path.replace` 上的话故障注入根本打不中，这条用例会**恒绿**——
+    "没红" 只说明桩没挂上，不说明失败路径是对的。
+    """
     path = registry.registry_path(figs)
     original = json.dumps({"version": 1, "scripts": {}}, ensure_ascii=False, indent=1)
     path.write_text(original, encoding="utf-8")
 
-    def boom(self, target):
+    def boom(src, target):
         raise OSError("模拟换名那一刻掉电")
 
-    monkeypatch.setattr(Path, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
     with pytest.raises(OSError):
         discover.write_config(
             figs,
@@ -334,16 +338,14 @@ def test_concurrent_registry_writes_do_not_share_a_temp_file(figs, monkeypatch):
     先 replace 的把它搬走、后一个当场 FileNotFoundError；更坏的是两份内容交错，
     读者拿到一个谁也没打算写出来的文件——原子写反倒成了摆设。
     """
-    from pathlib import Path
-
     seen: list[str] = []
-    real_replace = Path.replace
+    real_replace = os.replace
 
-    def spy(self, target):
-        seen.append(str(self))
-        return real_replace(self, target)
+    def spy(src, target):
+        seen.append(str(src))
+        return real_replace(src, target)
 
-    monkeypatch.setattr(Path, "replace", spy)
+    monkeypatch.setattr(os, "replace", spy)
     for stem in ("A", "B"):
         discover.write_config(
             figs,

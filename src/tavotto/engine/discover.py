@@ -28,12 +28,10 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import os
 import re
-import tempfile
 from pathlib import Path, PurePosixPath
 
-from . import figcapture, registry
+from . import atomicio, figcapture, registry
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -920,32 +918,24 @@ def build_draft(figures_dir: str | Path) -> tuple[dict, dict]:
 
 
 def write_config(figures_dir: str | Path, cfg: dict) -> Path:
-    """临时文件 + replace 原子落盘（同 `app._write_baked`）。
+    """注册表落盘 —— 走 `engine/atomicio`（ADR 0023 的唯一写入实现）。
 
     直写会在进程被杀的那一刻把 `tavotto_registry.json` 截断成非法 JSON——桌面壳
     强退、OOM、断电，Windows 上杀毒软件写入期间短暂锁定也够。下次打开同一
     项目时 `registry.load()` 抛「注册表不是合法 JSON」，而**注册表随图库走**，
     坏掉的是用户目录里的文件，重装应用也修不回来。
     这是 tavotto_registry.json 唯一的写入函数，三条路径（首次打开起草、
-    /api/registry/scan 合并、手工裁决登记）都经过它。
+    统一刷新的静态合并、手工裁决登记）都经过它。
+
+    2026-08-29 之前这里是本仓库九处手写 `tmp + replace` 中的一处：临时文件名
+    每次不同（并发写不会互相搬走对方），但**没有 fsync**——`os.replace` 只保证
+    「要么旧要么新」，不保证新内容已经离开页缓存，掉电时 replace 出来的是一个
+    空文件。`atomicio.write_bytes()` 把六步序列（同目录临时文件 → flush →
+    fsync 文件 → replace → fsync 目录 → 失败清理）收成一份，顺带让写失败带上
+    结构化 `code`，不再是一个裸 OSError。
     """
     path = registry.registry_path(figures_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # 临时文件名**每次调用都不同**。用固定的 `<name>.tmp` 的话，两个并发写
-    # （Flask 是多线程的：/api/registry/scan 与 open_project 起草、MCP 那侧的
-    # 登记都会走到这儿）会写同一个路径：先 replace 的那个把它搬走，后一个
-    # 的 replace 直接 FileNotFoundError；更坏的情况是两份内容交错，读者拿到
-    # 一个谁也没打算写出来的文件——原子写反倒成了摆设。
-    # 同目录是硬要求：跨设备的 replace 不是原子操作。
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)  # 半成品不留在用户的图库目录里
-        raise
+    atomicio.write_json(path, cfg, indent=1)
     return path
 
 

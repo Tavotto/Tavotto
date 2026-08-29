@@ -1347,6 +1347,57 @@ export const aiRevert = (sid: string) =>
 export const aiCancel = (sid: string) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' })
 
+/* ------------------------- 项目刷新（统一入口） ---------------------------- */
+
+/**
+ * 刷新的来由。**闭集**，与后端 `engine/project_refresh.REASONS` 同源——它进
+ * 日志、进事件、以后还会进遥测维度，后端对表外的值一律归成 `manual`。
+ */
+export type RefreshReason =
+  | 'manual'
+  | 'watcher'
+  | 'registry'
+  | 'probe'
+  | 'codex'
+  | 'ai'
+  | 'open'
+  | 'external'
+
+export interface ProjectRefreshResult {
+  reason: RefreshReason
+  registry: {
+    added_scripts: string[]
+    removed_scripts: string[]
+    changed_scripts: string[]
+    /** 脚本 → 变了哪几个字段（entry / cost / notes / stems） */
+    script_changes: Record<string, string[]>
+    added_stems: string[]
+    removed_stems: string[]
+    moved_stems: { stem: string; from: string; to: string }[]
+    /** `null` = 这一轮没跑静态扫描，**不是**"没有冲突" */
+    conflicts: Record<string, string[]> | null
+    conflicts_changed: boolean
+  }
+  assets: {
+    added: string[]
+    removed: string[]
+    changed: string[]
+    /** true = 这一轮在**建基线**（项目刚打开），不是"什么都没变" */
+    baseline: boolean
+  }
+  scripts: Record<string, RegistryEntry>
+  changed_paths: string[]
+  /** 本次实际发出的事件名；无差异时是空数组 */
+  published: string[]
+}
+
+/** 显式刷新当前项目的派生事实。**绝不执行用户脚本**（要跑脚本走 probe）。 */
+export const refreshProject = (reason: RefreshReason = 'manual') =>
+  jsonFetch<ProjectRefreshResult>('/api/project/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+
 /* ------------------------------ SSE 事件 ---------------------------------- */
 
 /** ai.delta 的内容分类：流式增量 / 正文终稿 / 思考 / 动作 */
@@ -1362,7 +1413,33 @@ export type ServerEvent =
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
   | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
-  | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
+  /**
+   * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个
+   * 脚本发十几条）：`scripts` / `stems` 是本次全部受影响的；`script` 只在
+   * **恰好一个脚本变**时才有——那正是 probe 与手工登记这两条老路径的形状，
+   * 保留它是为了老客户端。`conflicts` 缺席 = 这一轮没跑静态扫描，
+   * **不是**"没有冲突"。
+   */
+  | ({
+      kind: 'registry.changed'
+      reason?: RefreshReason
+      scripts?: string[]
+      stems?: string[]
+      added_scripts?: string[]
+      removed_scripts?: string[]
+      changed_scripts?: string[]
+      conflicts?: Record<string, string[]>
+      script?: string
+    } & ProjectScoped)
+  /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
+  | ({
+      kind: 'assets.changed'
+      reason?: RefreshReason
+      ids: string[]
+      added: string[]
+      removed: string[]
+      changed: string[]
+    } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | ({
       kind: 'native.session'
@@ -1390,6 +1467,7 @@ const EVENT_KINDS = [
   'render.failed',
   'panel.file_changed',
   'registry.changed',
+  'assets.changed',
   'probe.started',
   'native.session',
   'engine.bootstrap',

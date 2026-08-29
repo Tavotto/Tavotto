@@ -74,6 +74,7 @@
     "runtime_cache_missing": "No preview has been generated for this runtime figure yet (it is created when the script runs)",
     "runtime_source_writeback_unsupported": "Writing edits back into the script source is not supported (edits on runtime figures live in the document only)",
     "scan_failed": "Scan failed: {{reason}}",
+    "registry_reload_failed": "Could not reload the script registry; the project is still using the last version that loaded successfully: {{reason}}",
     "script_changed": "Write-back blocked: the script changed during this session. Re-render and try again.",
     "script_error": "The script failed while building the figure: {{error}}",
     "script_name_missing": "A script name is required",

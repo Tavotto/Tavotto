@@ -1149,6 +1149,7 @@ export default interface Resources {
       "project_env_unusable": "找到的项目环境无法启动",
       "python_missing": "这台机器上没找到可用的 Python，请先安装 Python 3.10 以上再重试",
       "read_failed": "无法读取：{{reason}}",
+      "registry_reload_failed": "脚本注册表读不回来，项目仍在使用上一次成功加载的那份：{{reason}}",
       "registry_update_failed": "注册表更新失败：{{reason}}",
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回（磁盘上有同名产物时请从素材库的那一份写回）",

@@ -74,6 +74,7 @@
     "runtime_cache_missing": "该运行时素材尚未生成预览（重新运行脚本后自动生成）",
     "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码（运行时素材的编辑只保存在文档里）",
     "scan_failed": "扫描失败：{{reason}}",
+    "registry_reload_failed": "脚本注册表读不回来，项目仍在使用上一次成功加载的那份：{{reason}}",
     "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
     "script_error": "脚本执行失败: {{error}}",
     "script_name_missing": "缺少脚本名",

@@ -178,3 +178,87 @@ hash，后写的整份盖掉先写的——而这正是这条判据要挡的事�
 **理由**：补出来的身份恰好总是「允许直接覆盖」。同一形状在本次还出现两次：
 修订号「读到了但没有 hash」不能并进「磁盘上没有」，摘要「读不出来」不能并进
 「各项为 0」——每一次图省事的合并，都把一个「不知道」说成了一个具体的断言。
+
+---
+
+## T-13（Session 04）刷新的编排只有一份，副作用出口靠注入
+
+**权威**：`docs/adr/0025`、`engine/project_refresh.py`、`app.refresh_project()`。
+
+**决定**：registry 合并 / 重载 / diff / worker 失效 / 事件发布的编排只在
+`refresh_project_index()` 里；SSE 与 watcher 重挂由 app 层作为 `RefreshSink`
+注入。`app.py` 的 `reload_registry()` 删除，三个老调用点全部改走统一入口。
+
+**理由**：改造前这条链路在 `app.py` 里有三份，而它们的**答案不一样**——
+三份里没有一份作废过 worker（改了 entry、挪了 stem，热会话手里还是老的），
+没有一份说得出"什么变了"，素材根本不在视野里。第四条路径（Prompt 05 的
+watcher）照着任意一份再抄一遍，分叉就有四份。
+
+**注入而不是回头 import**：`engine/project_refresh.py` 要能被 Flask 父进程
+安全 import（`.venv` 没有 matplotlib），而 SSE / watcher 回调是 app 层的东西。
+它连 `engine/documents` 都不 import——"派生刷新不碰文档"因此是结构性的，
+不是一条注释。
+
+---
+
+## T-14（Session 04）恒等成立的 diff 与"没变化"长得一模一样
+
+**权威**：`engine/project_refresh.refresh_project_index()` 里那段注释、
+`RefreshState.assets`。
+
+**决定**：素材 diff 与**上一轮的清单**比（基线存在 `RefreshState`，项目打开时
+`seed_state()` 落一份），不与同一次调用里的"刷新前快照"比。
+
+**理由**：Prompt 04 §四 的流程写的是"刷新前素材快照 → …… → 刷新后素材快照"。
+照着实现，这条 diff **永远是空的**：刷新会改注册表，所以 registry 的前/后有
+内容；素材它一个字节都不碰，同一次调用里的两张快照必然逐项相同。
+
+这是"对拍的尺子量不了那个维度"那一族——判据没错，它只是恒等成立，而恒等
+成立的 diff **看起来和"什么都没变"一模一样**，没有任何信号提醒你它坏了。
+本次是靠一条真的加了图片的用例红出来的（先写用例、后发现设计错）。
+
+**顺带**：没有基线的那一轮报 `assets.baseline=true`，不报"没变化"——第一次
+刷新报空比不报还糟，它是一句**错的断言**而不是"我还不知道"（同 T-12）。
+
+---
+
+## T-15（Session 04）"没跑过"与"跑了没发现"是两档
+
+**权威**：`refresh_project_index()` 的 `registry.conflicts`。
+
+**决定**：没跑静态扫描的那些刷新（probe / 手工登记，`allow_static_merge=False`）
+返回 `conflicts=null`；跑了且没有冲突返回 `{}`。
+
+**理由**：合并成 `{}` 的话，调用方会把"不知道"读成"已确认没有冲突"，而
+RegistryDialog 正是靠这个字段决定要不要显示冲突区。同一形状 Session 03 已经
+踩过三次（T-12），这次在写之前就分开了。
+
+---
+
+## T-16（Session 04）watcher 认自己写的那一下靠内容，不靠时间窗口
+
+**权威**：`project_refresh.is_self_written()`、`RefreshState.registry_revision`。
+
+**决定**：Prompt 05 的 watcher 用**内容修订号**判"这份注册表我已经消化过"，
+不用"写完之后忽略 registry 事件 N 秒"。修订号在**装载成功之后**更新。
+
+**理由**：时间窗口两头都错——慢磁盘上 N 不够，快机器上 N 会吞掉用户真实的
+外部修改。内容比较两头都对：用户把文件改回原样 = 内容没变 = 确实不用刷新。
+
+**顺带把源头也堵上**：无变化的刷新**不回写**注册表（按字节比）。以前
+`/api/registry/scan` 无条件重写，文件内容一样、mtime 变了——而 mtime 一变，
+watcher 就会看到一次"外部修改"，于是刷新自己触发下一次刷新。
+
+---
+
+## T-17（Session 04）挂不上的桩会让用例恒绿
+
+**权威**：`tests/test_discover.py::test_registry_write_is_atomic`。
+
+**决定**：`discover.write_config()` 并进 `atomicio` 的同时，把那两条看护用例的
+故障注入点从 `Path.replace` 挪到 `os.replace`。
+
+**理由**：`atomicio` 调的是 `os.replace`。注入点不挪的话，故障根本打不中，
+用例会**恒绿**——而"没红"只说明桩没挂上，不说明失败路径是对的。这次它是以
+`DID NOT RAISE` 红出来的（那条用例的注释早就写明了这个红法），换一条形状
+（比如只断言"文件没坏"）就会静默变成一条空门禁。

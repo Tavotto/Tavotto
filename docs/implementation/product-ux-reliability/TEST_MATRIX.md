@@ -44,8 +44,8 @@
 | 脚本探测（显式动作） | 已有 | `tests/test_script_probe.py` | — |
 | 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py` | — |
 | 素材竞态 / 派生 metadata 不污染 undo | 部分 | `web/src/store/assetStore` 无专门用例 | 06 |
-| 统一 refresh 服务 | 未开始 | — | 04 |
-| watcher 事件批次合并 | 未开始 | 现状一条一条 `sse_publish` | 05 |
+| 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（36 条） | — |
+| watcher 事件批次合并 | 部分（04 做了刷新侧） | 刷新一次至多两条事件；脚本 watcher 仍逐条 | 05 |
 | watcher 不监控 Tavotto 自己的 autosave/history | 未开始 | — | 05 |
 | Readiness 事实模型 / capability API | 未开始 | — | 07 |
 | 左栏常驻 / 折叠 / 素材状态 | 未开始 | — | 08 |
@@ -186,3 +186,46 @@
 > 变异脚本本身也有一处教训：`git checkout -- <file>` 还原会**吃掉未提交的
 > 修复**。中途按变异结论改好的 `rememberRevision` 被下一轮还原掉了，靠
 > 「锚点找不到」才发现。**跑变异前先提交**。
+
+## Session 04 新增用例
+
+全部在 `tests/test_project_refresh.py`（36 条），除最后两行。
+
+| 场景 | 覆盖的是 |
+| --- | --- |
+| 无变化刷新 = 空 diff + 零事件 | 无差异不产生事件风暴 |
+| 新增静态可识别脚本 → `added_scripts` + 磁盘那份也更新 | 静态合并 |
+| 注册表里删掉脚本 → `removed_scripts` / `removed_stems` | 外部改动 |
+| 同一脚本 stems 增 / 删 | 「只比脚本名不够」的第一维 |
+| entry / cost / notes 变了（脚本清单一个字没变） | 第二维——这三条任一变了，热 worker 手里那份就不对了 |
+| stem 换主人 → `moved_stems`，两边都进 `changed_scripts` | 第三维；且它不是"新增/删除" |
+| stems 纯重排 **不算**变化 | 顺序无语义，按列表比会白白作废一批 worker |
+| 手工条目优先于静态草稿 | 现有条目永远优先 |
+| 冲突报出来、谁都不给、也不写进注册表 | 冲突不被自动裁决 |
+| 没跑静态扫描时 `conflicts is None`，跑了没冲突才是 `{}` | T-15：不知道自己占一档 |
+| 素材新增 / 内容变 / 删除 | 跨轮比（T-14） |
+| `/api/panels` 与刷新 inventory 的 id 集合逐字相同 | 同一把尺（不变式 D） |
+| **刷新不执行用户脚本**：桩住 probe/worker 入口 **+** 脚本真跑会留下的文件不存在 | 双份证据，缺一不可 |
+| `/api/project/refresh` 返回结构化 diff | 新端点 |
+| 未知 `reason` 归成 `manual`（含非字符串、空串、注入串） | 不变式 C |
+| HTTP 上的 `changed_paths` 被忽略 | 不接受客户端传路径 |
+| 没打开项目 → 409 `no_project` | 既有守卫 |
+| 指名项目 B 刷新：事件 pj 是 B，A 的注册表一个字没动 | 项目隔离 |
+| `/api/registry/scan` 旧响应三个字段逐字保留 + 新 diff 另给 | 存量前端不坏 |
+| 扫描失败仍是 `scan_failed`；刷新失败是 400 + 稳定 code | 稳定错误码 |
+| 手工登记 / probe 成功后的事件 `reason` = `registry` / `probe` | 它们走了统一入口的**结构性证据** |
+| 一次四个新脚本 = **一条** `registry.changed`，且不带单脚本字段 | 不为十几个脚本发十几条 |
+| 只有素材变时不发 `registry.changed` | 两类事件各管各的 |
+| `publish=False` 仍返回完整 diff | 调用方可以只要事实不要广播 |
+| 两个项目里同名 `shared.py`：刷新 A 只作废 A 的 worker | worker 失效的项目隔离 |
+| 新增一张不相干的图片不作废任何 worker | 不为无关变化打掉热会话 |
+| 两个项目并行刷新（A 的锁被别人拿着时 B 照常刷完） | 锁不是全局的 |
+| 同一项目并发刷新串行且注册表不损坏（barrier 判据，不靠 sleep） | 项目级串行 |
+| 刷新失败：注册表内容与事件都原封不动 | 失败语义 |
+| 注册表文件被删：内存里那份不清空 | 同上 |
+| 无变化的刷新**不回写**注册表（mtime 不动） | 不给 watcher 制造假的外部修改 |
+| 自写识别按内容修订号，用户改一个字就认得出来 | T-16 |
+| watcher 只在被盯的脚本集合变了时重挂 | entry 变了不重挂 |
+| 快照不是活视图（`reg.load()` 之后仍代表刷新前） | 共享 list 会让 diff 永远是空的 |
+| `write_config` 失败注入打在 `os.replace` 上 | `tests/test_discover.py`（T-17：挂不上的桩会恒绿） |
+| `RefreshError` 的 code 进码表、双语文案、漏斗带原文 | `tests/test_error_codes.py` |

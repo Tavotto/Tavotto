@@ -68,6 +68,7 @@ from .engine import (
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
+    project_refresh as engine_refresh,
     projectenv as engine_projectenv,
     registry as engine_registry,
     runcodes as engine_runcodes,
@@ -81,11 +82,12 @@ from .engine import (
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 site-packages 不可写）
 
-# tavottofile/ 是项目内的 Tavotto 数据收纳目录（画布/导出/版本历史）：
-# 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图
-EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git", "tavottofile"}
-PDF_EXT = {".pdf"}
-IMG_EXT = {".png", ".jpg", ".jpeg"}
+# 素材边界的**唯一出处**在 `engine/project_refresh.py`：列给用户的素材
+# （`/api/panels`）与"素材变了没有"（统一刷新的 inventory）必须是同一把尺。
+# 这里只是别名，别在本文件里另写一份集合。
+EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
+PDF_EXT = engine_refresh.PDF_EXT
+IMG_EXT = engine_refresh.IMG_EXT
 
 MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
@@ -494,19 +496,13 @@ def scan_panels() -> list[dict]:
     baked = load_baked(ctx)  # 本项目的写回基线，局部变量（绝不跨项目共享）
     panels = []
     root = ctx.path.resolve()
-    # os.walk 而不是 rglob：隐藏目录当场剪枝，不下探。图库里常有 .venv、
-    # .git、工具留下的 .rendered/.qa_* 快照——它们既是噪音（素材库里塞满
-    # page-1.png），爬进去还很慢。以 . 开头的文件同理（.DS_Store）。
-    files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
-        files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
-    files.sort()
-    LOG.info("素材扫描: %s → %d 个文件", root, len(files))
+    # 「哪些文件算素材」的判据在 `engine/project_refresh.iter_assets()`（剪枝、
+    # 隐藏文件、同名 PDF 盖过位图都在那儿）——统一刷新的 inventory 用的是同一
+    # 个函数。这里只负责 probe 出尺寸并挂上注册表信息。
+    assets = engine_refresh.iter_assets(root)
+    LOG.info("素材扫描: %s → %d 个素材", root, len(assets))
 
-    pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
-
-    for p in files:
+    for p, kind in assets:
         ext = p.suffix.lower()
         rel = str(p.relative_to(root))
         folder = str(p.parent.relative_to(root)) or "."
@@ -517,22 +513,14 @@ def scan_panels() -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if ext in PDF_EXT:
+            if kind == "pdf":
                 probe = pdfbackend.probe_asset(p, "pdf")
                 entry.update(
                     kind="pdf",
                     native_w_mm=round(probe["w_pt"] * MM_PER_PT, 3),
                     native_h_mm=round(probe["h_pt"] * MM_PER_PT, 3),
                 )
-                info = current_registry().for_stem(p.stem)
-                if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
-                    entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem, baked)
-                    if baseline:
-                        entry["baked_overrides"] = baseline
-            elif ext in IMG_EXT:
-                if (p.parent, p.stem) in pdf_stems:
-                    continue  # 有矢量版就不重复列出位图
+            else:
                 probe = pdfbackend.probe_asset(p, "raster")
                 # matplotlib 输出 PNG 为 600ppi；照片等按 300ppi 给个初始物理尺寸
                 ppi = 600 if ext == ".png" else 300
@@ -543,14 +531,12 @@ def scan_panels() -> list[dict]:
                     native_w_mm=round(probe["px_w"] / ppi * 25.4, 3),
                     native_h_mm=round(probe["px_h"] / ppi * 25.4, 3),
                 )
-                info = current_registry().for_stem(p.stem)
-                if info is not None:  # fig1 等纯 PNG 素材脚本
-                    entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem, baked)
-                    if baseline:
-                        entry["baked_overrides"] = baseline
-            else:
-                continue
+            info = current_registry().for_stem(p.stem)
+            if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
+                entry.update(script=info["script"], cost=info["cost"])
+                baseline = _baseline_patches(p.stem, baked)
+                if baseline:
+                    entry["baked_overrides"] = baseline
         except Exception:
             # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
             # app.log 里要能看到是哪个文件、为什么
@@ -598,6 +584,16 @@ def _atomic_write_error(exc):
         return jsonify(exc.as_payload()), 400
     LOG.error("原子写失败: %s %s: %s", request.method, request.path, exc.message)
     return jsonify(exc.as_payload()), 500
+
+
+@app.errorhandler(engine_refresh.RefreshError)
+def _refresh_error(exc):
+    """项目刷新失败。**400 而不是 500**：这一族的成因是用户图库里的东西
+    （注册表被手改坏了、目录读不动），重试一百次也是同样的结果，用户要看到
+    的是"你的注册表怎么了"，不是一句"服务器错误"。内存里的注册表原封不动，
+    已打开的项目照常能用（`engine/project_refresh.py` 的失败语义）。"""
+    LOG.warning("项目刷新失败: %s %s: %s", request.method, request.path, exc.message)
+    return jsonify(exc.as_payload()), 400
 
 
 def _worker_error_payload(exc) -> dict:
@@ -1246,6 +1242,10 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
         reg = engine_registry.open_registry(path)
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
+    # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的
+    # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
+    # 一张图（`engine/project_refresh.seed_state`）。
+    engine_refresh.seed_state(ctx)
     with _PROJECT_LOCK:
         PROJECTS[pid] = ctx
         if make_default or DEFAULT_PROJECT is None:
@@ -1308,14 +1308,45 @@ def reset_projects(wait: bool = False) -> None:
         engine_pool.shutdown_all(wait=True)  # 兜底：不属于任何项目的残留
 
 
-def reload_registry(ctx: "ProjectCtx") -> None:
-    """注册表改过之后重装并重挂 watcher（新脚本要被盯上才会自动作废会话）。"""
-    try:
-        ctx.registry.load(ctx.path)
-    except (FileNotFoundError, RuntimeError):
-        return
-    engine_pool.start_watcher(
-        str(ctx.path), ctx.registry.all_scripts(), _script_change_handler(ctx)
+def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:
+    """统一刷新服务的两个副作用出口：发 SSE、重挂 watcher。
+
+    引擎侧不知道 SSE 长什么样，也不知道 watcher 回调要带哪个 pj——这两件事
+    都是 app 层的。注入而不是 import 回来，是为了让 `engine/project_refresh.py`
+    保持"能被 Flask 父进程安全 import 的纯标准库模块"。
+    """
+    return engine_refresh.RefreshSink(
+        publish=sse_publish,
+        watch=lambda scripts: engine_pool.start_watcher(
+            str(ctx.path), list(scripts), _script_change_handler(ctx)
+        ),
+    )
+
+
+def refresh_project(
+    ctx: "ProjectCtx",
+    *,
+    reason: str,
+    allow_static_merge: bool = True,
+    changed_paths: list[str] | None = None,
+    publish: bool = True,
+) -> dict:
+    """**app 层唯一的刷新入口**（手动刷新 / scan / probe / 手工登记 / 以后的
+    watcher / Codex / AI 都走这里）。
+
+    改造前这条链路在本文件里有三份：各自 reload、各自 `start_watcher`、各自
+    发一条措辞不同的 `registry.changed`，而"哪些 worker 该作废"根本没人管。
+    真正的编排在 `engine/project_refresh.refresh_project_index()`，这里只负责
+    把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
+    watcher 也调这个函数，不许自己 merge、自己发事件）。
+    """
+    return engine_refresh.refresh_project_index(
+        ctx,
+        reason=reason,
+        changed_paths=changed_paths,
+        allow_static_merge=allow_static_merge,
+        publish=publish,
+        sink=_refresh_sink(ctx),
     )
 
 
@@ -1698,6 +1729,23 @@ def api_projects_remove():
     return jsonify({"ok": engine_config.remove_recent(str(body.get("path") or ""))})
 
 
+@app.post("/api/project/refresh")
+def api_project_refresh():
+    """显式刷新当前项目的派生事实：registry 合并重载 + 素材快照 + 结构化 diff。
+
+    **不执行任何用户脚本**（共享规则 §4）：静态 merge 只读 AST，素材 inventory
+    只 `stat()`。要跑脚本请走显式的 `/api/registry/probe`。
+
+    请求体只有一个 `reason`，且只认闭集里的值（未知归成 `manual`）——它进
+    日志、进事件、以后还会进遥测维度，透传客户端字符串等于让外面往我们的
+    指标里写自由文本。**项目由现有的 pj 认证决定**（`current_ctx()`），
+    不接受客户端传路径。
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    ctx = current_ctx()
+    return jsonify(refresh_project(ctx, reason=str(body.get("reason") or "")))
+
+
 def _drive_roots() -> list[dict]:
     """Windows 的盘符根。
 
@@ -1844,18 +1892,22 @@ def api_registry():
 
 @app.post("/api/registry/scan")
 def api_registry_scan():
-    """重跑静态扫描并合并进 tavotto_registry.json（现有条目永远优先）。"""
+    """重跑静态扫描并合并进 tavotto_registry.json（现有条目永远优先）。
+
+    内核就是统一刷新服务（`reason="registry"`）：这个端点只负责把结果翻译回
+    它一直以来的那三个字段。**旧响应逐字保留**——RegistryDialog 读的是
+    `changes.added_scripts.length`，换个形状等于让存量前端当场坏掉；新的
+    结构化 diff 挂在 `refresh` 里另给。
+    """
     ctx = current_ctx()
-    try:
-        cfg, rep, changes = engine_discover.merge(ctx.path)
-        engine_discover.write_config(ctx.path, cfg)
-    except (OSError, ValueError, RuntimeError) as exc:
-        return jsonify(
-            {"error": f"扫描失败: {exc}", "code": "scan_failed", "params": {"reason": str(exc)}}
-        ), 400
-    reload_registry(ctx)
+    result = refresh_project(ctx, reason="registry")
     return jsonify(
-        {"changes": changes, "conflicts": rep["conflicts"], "scripts": ctx.registry.entries()}
+        {
+            "changes": result["merge"],
+            "conflicts": result["registry"]["conflicts"] or {},
+            "scripts": ctx.registry.entries(),
+            "refresh": result,
+        }
     )
 
 
@@ -1939,11 +1991,15 @@ def api_registry_probe():
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
     if result.get("registered"):
-        reload_registry(ctx)
         # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
         # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+        # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
+        # 清单与预览，那时 cache 里得已经有东西。
         _materialize_runtime(script, result.get("entry") or "", result.get("descriptors") or [])
-        sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": result["stems"]})
+        # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
+        # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
+        # 裁决好的归属重新掀一遍。
+        refresh_project(ctx, reason="probe", allow_static_merge=False)
     return jsonify(result)
 
 
@@ -2080,12 +2136,13 @@ def api_registry_write():
             cost=str(body.get("cost") or "medium"),
             notes=str(body.get("notes") or ""),
         )
-        reload_registry(ctx)
     except (OSError, RuntimeError) as exc:
         return jsonify(
             {"error": str(exc), "code": "registry_update_failed", "params": {"reason": str(exc)}}
         ), 400
-    sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": stems})
+    # 手工裁决就是权威，写完只要重装 + 发事件；再跑一遍静态扫描会把用户刚
+    # 裁决完的归属重新掀一遍（那正是他点这个按钮要解决的事）。
+    refresh_project(ctx, reason="registry", allow_static_merge=False)
     return jsonify({"scripts": ctx.registry.entries()})
 
 
