@@ -188,6 +188,12 @@
     "layoutOnly": "No source script is linked, so this figure can be laid out but not edited inside.",
     "mode": "Quick edit",
     "originalSize": "Original {{w}} × {{h}} mm",
+    "sizeAssumed": "Assumed DPI",
+    "sizeAssumedTitle": "This bitmap carries no physical density; the size assumes {{dpi}} dpi.",
+    "sizeStale": "Last known",
+    "sizeStaleTitle": "The source file is unavailable; showing the last known original spec.",
+    "sizeUnknown": "Size unknown",
+    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm.",
     "toLayout": "Canvas layout"
   },
   "history": {

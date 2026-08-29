@@ -126,6 +126,37 @@ describe('快速编辑这一屏', () => {
     expect(useDocumentStore.getState().past.length).toBe(past)
   })
 
+  it('位图没写物理密度时，尺寸旁边说出来它是假定的', async () => {
+    const r = {
+      ...info('r.png'),
+      kind: 'raster' as const,
+      original_spec: {
+        source_kind: 'raster' as const,
+        logical_w_mm: 50.8,
+        logical_h_mm: 25.4,
+        px_w: 1200,
+        px_h: 600,
+        dpi: 600,
+        dpi_source: 'assumed' as const,
+        viewport_pt: null,
+        transparent: false,
+      },
+    }
+    useAssetStore.setState({ panels: [r], byId: { 'r.png': r } })
+    act(() => openFastEdit('r.png'))
+    await mount()
+    expect(container.textContent).toContain('假定密度')
+  })
+
+  it('一个来源都没有时不显示一个编出来的尺寸，而是说"尺寸未知"', async () => {
+    // 素材清单里有这张图（所以打得开），但它一个尺寸维度都没有
+    const blank = { ...info('x.pdf', 'fig.py'), native_w_mm: 0, native_h_mm: 0 }
+    useAssetStore.setState({ panels: [blank], byId: { 'x.pdf': blank } })
+    act(() => openFastEdit('x.pdf'))
+    await mount()
+    expect(container.textContent).toContain('尺寸未知')
+  })
+
   it('没有源脚本的图：说清原因并给出下一步，不画成错误', async () => {
     const c = info('c.pdf')
     useAssetStore.setState({ panels: [c], byId: { 'c.pdf': c } })

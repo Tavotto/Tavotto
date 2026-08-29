@@ -2681,6 +2681,12 @@ export default interface Resources {
       "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
       "mode": "快速编辑",
       "originalSize": "原图 {{w}} × {{h}} mm",
+      "sizeAssumed": "假定密度",
+      "sizeAssumedTitle": "这张位图没有写物理密度，毫米尺寸按假定的 {{dpi}} dpi 算。",
+      "sizeStale": "上次已知",
+      "sizeStaleTitle": "源文件此刻不可用，显示的是上一次已知的原图规格。",
+      "sizeUnknown": "尺寸未知",
+      "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。",
       "toLayout": "画布排版"
     },
     "history": {

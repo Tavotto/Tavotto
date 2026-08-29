@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { LayoutGrid, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { formatMm } from '@/lib/units'
-import { getOriginalOutputSpec } from '@/lib/originalSpec'
+import { getOriginalOutputSpec, type OriginalOutputSpec } from '@/lib/originalSpec'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -42,14 +42,7 @@ export function FastEditBar() {
           <span className="min-w-0 truncate text-xs font-medium text-ink" title={name}>
             {name}
           </span>
-          {spec && (
-            <span className="shrink-0 font-mono text-xs text-ink-3">
-              {t('fastEdit.originalSize', {
-                w: formatMm(spec.widthMm),
-                h: formatMm(spec.heightMm),
-              })}
-            </span>
-          )}
+          {spec && <OriginalSize spec={spec} />}
           <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
           <Button size="sm" variant="outline" onClick={() => void addFigureToLayout(panel.fileId)}>
             <Plus size={12} />
@@ -80,5 +73,49 @@ export function FastEditBar() {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * 原图规格那一格。**规格不确定时必须说出来**（UX_CONTRACTS §6b）：
+ *
+ * * `fallback` —— 一个来源都没有，显示的是占位值，不是这张图的尺寸；
+ * * `stale` —— 源文件此刻不可用，这是上一次已知的规格；
+ * * `dpiSource === 'assumed'` —— 位图没写物理密度，毫米数是按假定密度算的。
+ *
+ * 三种都只加一个短标记 + 一句 `title`，不铺解释——用户此刻要做的是改图，
+ * 不是读一段关于 dpi 的说明。
+ */
+function OriginalSize({ spec }: { spec: OriginalOutputSpec }) {
+  const { t } = useTranslation('workspace')
+  const size = t('fastEdit.originalSize', {
+    w: formatMm(spec.widthMm),
+    h: formatMm(spec.heightMm),
+  })
+  const mark = spec.fallback
+    ? t('fastEdit.sizeUnknown')
+    : spec.stale
+      ? t('fastEdit.sizeStale')
+      : spec.dpiSource === 'assumed'
+        ? t('fastEdit.sizeAssumed')
+        : null
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 font-mono text-xs text-ink-3"
+      title={
+        spec.fallback
+          ? t('fastEdit.sizeUnknownTitle', { size })
+          : spec.stale
+            ? t('fastEdit.sizeStaleTitle')
+            : spec.dpiSource === 'assumed'
+              ? t('fastEdit.sizeAssumedTitle', { dpi: spec.dpi ?? 0 })
+              : undefined
+      }
+    >
+      {spec.fallback ? null : size}
+      {mark && (
+        <span className="rounded-sm bg-ink/[.055] px-1 font-sans text-ink-2">{mark}</span>
+      )}
+    </span>
   )
 }
