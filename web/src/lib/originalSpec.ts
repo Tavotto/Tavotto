@@ -230,6 +230,13 @@ function densityOf(
   if (asset && !stale && asset.dpi != null) {
     return { dpi: asset.dpi, dpiSource: asset.dpi_source }
   }
+  // **量过了而且量出「没有单一密度」，是一个答案，不是没有答案。** 两轴密度
+  // 不同的 PNG/JPEG（300×150）后端刻意回 `dpi: null` + `dpi_source:
+  // 'metadata'`：毫米数上面已经按各自的轴算过了，再除一个单值出来等于替文件
+  // 回答一个它明确拒绝回答的问题，而界面会把这个数当成读到的元数据。
+  if (asset && !stale && asset.dpi_source === 'metadata') {
+    return { dpi: null, dpiSource: 'metadata' }
+  }
   if (pxW && widthMm > 0) {
     return { dpi: Math.round((pxW / widthMm) * 25.4 * 10) / 10, dpiSource: 'derived' }
   }

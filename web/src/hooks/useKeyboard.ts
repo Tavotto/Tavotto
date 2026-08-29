@@ -19,6 +19,16 @@ import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspace'
+
+/**
+ * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
+ *
+ * 版面动作在这一屏上没有可见的对应物——推 x/y 看不见、画一个矩形也看不见，
+ * 而两者都会进文档、进历史、跟着导出。顶栏把这组按钮藏了起来，快捷键必须
+ * 走同一条判据，否则藏的只是入口不是能力。
+ */
+const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: 'select',
@@ -250,6 +260,11 @@ export function useKeyboard() {
       if (e.key.startsWith('Arrow')) {
         if (!useSelectionStore.getState().ids.length) return
         e.preventDefault()
+        // 快速编辑这一屏上**没有版面**：方向键推的是面板在版上的 x/y，而这里
+        // 除了这张图什么都不显示。用户既看不见它动，也不知道自己动了它——
+        // 退出快速编辑之后才发现图挪了位置。吃掉这个键（不让它冒出去滚界面），
+        // 但什么都不改。
+        if (inFastEdit()) return
         const d = e.shiftKey ? 5 : 0.5
         nudgeSelected(
           e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0,
@@ -266,6 +281,12 @@ export function useKeyboard() {
 
       const tool = TOOL_KEYS[e.key.toLowerCase()]
       if (tool) {
+        // 快速编辑里没有画布标注。`openFastEdit()` 进来时把工具收回 `select`
+        // 正是因为这一屏上根本没有它们的位置；顶栏也把这组按钮藏了起来。
+        // **只藏按钮不挡快捷键等于没挡**：按一下 R，`CanvasStage` 照样
+        // `startDraw()`，用户在一个只显示这张图的画面里画出一个看不见的矩形，
+        // 而它进了文档、进了历史、还会跟着导出。
+        if (tool !== 'select' && inFastEdit()) return
         e.preventDefault()
         ui.setTool(tool)
       }

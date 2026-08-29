@@ -88,14 +88,20 @@ async function resetForNewProject() {
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
   useProjectReadinessStore.getState().clear()
-  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
-  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）
-  useWorkspaceStore.getState().clear()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },
     newId('d'),
   )
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
+  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
+  //
+  // **必须排在 `switchDocument` 之后。** 排在前面的话，
+  // `startWorkspacePersistence` 的那个订阅此刻认的还是**旧**文档 id：它会把
+  // `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，把用户在那份文档里停
+  // 的那张图抹掉——上面这句"切回去仍然作数"就成了一句假话。派生状态不许覆盖
+  // 用户偏好，切项目这件事更不是用户在表达"我不要快速编辑了"。
+  useWorkspaceStore.getState().clear()
   // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()
   void useProjectReadinessStore.getState().load()

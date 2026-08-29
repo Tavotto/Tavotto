@@ -114,6 +114,28 @@ describe('矢量 / 位图 / 可编辑 Figure 各报各的维度', () => {
     expect(spec.viewportPt).toBeNull()
   })
 
+  it('两轴密度不同的位图：量过了，答案就是"没有单一密度"', () => {
+    // 后端对 300×150 dpi 的 PNG 刻意回 `dpi: null` + `dpi_source: metadata`
+    // ——毫米数上面已经按各自的轴算过了，没有哪一个数能描述这张图。
+    // 掉进反算那条路的话，界面会报一个 `derived` 的 300，而**素材就在场**：
+    // 那是替文件回答一个它明确拒绝回答的问题。
+    const spec = resolveOriginalSpec({
+      figureId: 'figs/aniso.png',
+      panel: panel({ fileKind: 'raster', nativeW: 50.8, nativeH: 50.8, pxW: 600, pxH: 300 }),
+      asset: rasterAsset({ dpi: null, dpi_source: 'metadata' }),
+    })
+    expect([spec.dpi, spec.dpiSource]).toEqual([null, 'metadata'])
+  })
+
+  it('对照组：素材不在场时才反算——那时"没有单一密度"这句话没人说过', () => {
+    const spec = resolveOriginalSpec({
+      figureId: 'figs/aniso.png',
+      panel: panel({ fileKind: 'raster', nativeW: 50.8, nativeH: 25.4, pxW: 600, pxH: 300 }),
+      assetPresent: false,
+    })
+    expect([spec.dpi, spec.dpiSource]).toEqual([300, 'derived'])
+  })
+
   it('缺 DPI 元数据时如实标 assumed，不冒充 metadata', () => {
     const spec = resolveOriginalSpec({
       figureId: 'figs/a.png',
