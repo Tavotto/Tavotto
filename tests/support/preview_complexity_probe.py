@@ -43,6 +43,13 @@ import figcapture  # noqa: E402
 import figsession  # noqa: E402
 import preview_complexity as pc  # noqa: E402
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），而这个
+# 探针把**带中文的 JSON** 打给父进程——第一次 print 就 UnicodeEncodeError，
+# 退出码变成 1，于是所有用例只看得见「returned non-zero exit status 1」。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 #: 用例里的 mesh 边长。40 000 个 cell/格，是 `MESH_CELL_BUDGET` 的两倍——
 #: 够越线，又比基线那个 470 快一个数量级（用例不该为了越线跑十几秒）。
 DEFAULT_ISSUE181_N = 200

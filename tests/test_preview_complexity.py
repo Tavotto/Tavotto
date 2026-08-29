@@ -49,8 +49,20 @@ def probe(request):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        check=True,
+        errors="replace",
+        check=False,
     )
+    # **不用 `check=True`**：它抛的 `CalledProcessError` 里没有子进程的 stderr，
+    # 于是探针挂掉时日志上只有一句 "returned non-zero exit status 1"，27 条用例
+    # 一起 ERROR 而没人说得出为什么。实测在 Windows 上撞过一次（探针把带中文的
+    # JSON 打到 cp1252 的管道），从日志里查不出真因，只能本地拿
+    # `PYTHONIOENCODING=cp1252` 重现。判据要说得出自己看见了什么。
+    if out.returncode != 0:
+        raise AssertionError(
+            f"探针退出码 {out.returncode}\n"
+            f"--- stderr ---\n{out.stderr[-4000:]}\n"
+            f"--- stdout 尾部 ---\n{out.stdout[-1000:]}"
+        )
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 

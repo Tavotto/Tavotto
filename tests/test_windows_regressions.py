@@ -443,6 +443,42 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
         )
 
 
+def test_support_probes_reconfigure_stdout_to_utf8():
+    """`tests/support/` 里每一个**子进程入口**都要钉 UTF-8 stdout。
+
+    这些探针无一例外是被 `subprocess.run(capture_output=True)` 调起来的——也就
+    是说 stdout 永远是管道，而 Windows 上管道会退回系统区域编码（cp1252/cp936）。
+    它们打的又都是**带中文的 JSON**（`plan.detail`、报错说明），于是第一次
+    `print` 就 UnicodeEncodeError，退出码 1。
+
+    **父进程看不见这件事**：`check=True` 抛的 `CalledProcessError` 里没有子进程
+    的 stderr，日志上只有一句 "returned non-zero exit status 1"。实测
+    `backend-platforms (windows-latest)` 上 27 条用例一起 ERROR，而它是
+    merge_group 才跑的一档——PR 上一路绿灯，进了合并队列才炸。
+
+    **名单是扫出来的，不是手写的**（上面那条打包脚本的门禁是手写枚举，
+    加一个脚本就要记得回来补一行；靠「记得」维持的纪律等于没有）。判据只问一
+    件事：这个文件有 `__main__` 吗——有就意味着它会被 spawn，就得钉。
+    """
+    support = Path(__file__).resolve().parent / "support"
+    entry_points = [
+        p
+        for p in sorted(support.glob("*.py"))
+        if '__name__ == "__main__"' in p.read_text(encoding="utf-8")
+    ]
+    # 判据本身要证明它看得见东西：一个都没扫到时上面那个循环恒真
+    assert len(entry_points) >= 5, f"只扫到 {len(entry_points)} 个入口——glob 坏了？"
+    missing = [
+        p.name
+        for p in entry_points
+        if 'reconfigure(encoding="utf-8"' not in p.read_text(encoding="utf-8")
+    ]
+    assert not missing, (
+        f"这些探针没钉 UTF-8 stdout：{missing}——Windows 管道下第一条中文输出就会"
+        "把它们打死，而父进程只看得见 exit status 1"
+    )
+
+
 def test_codex_handoff_json_survives_cp1252_stdout():
     """Codex 插件的交接脚本在非 UTF-8 stdout 下必须照样吐出那行 JSON。
 
