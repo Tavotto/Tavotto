@@ -302,7 +302,7 @@ python3 skills/tavotto-figure/scripts/handoff.py figures/fig_removal_rate.py
 | 单栏 / 双栏宽 | 80 mm / 150 mm（容差 0.5 mm） |
 | 允许比例 | 16:9、4:3、1:1 |
 | 默认字号 | 9 pt |
-| 最终有效字号下限 | **8.5 pt**（严格）；**必须大于 8 pt**（绝对下限） |
+| 最终有效字号下限 | **必须大于 8 pt**（ADR 0029 起只有这一个数） |
 | 位图最低 DPI | 300 |
 | 矢量格式 | PDF、SVG |
 | 拉丁字体 | Times New Roman（+ 明确的中文 fallback） |

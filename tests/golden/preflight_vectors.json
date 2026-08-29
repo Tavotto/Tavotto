@@ -567,27 +567,6 @@
    },
    "expected": [
     {
-     "id": "font-too-small",
-     "severity": "error",
-     "message": {
-      "key": "fontTooSmall",
-      "params": {
-       "effective": "8.20",
-       "min": "8.5"
-      }
-     },
-     "object_ids": [
-      "p1"
-     ],
-     "gids": [
-      "axes_0.xticks"
-     ],
-     "detail": {
-      "effective_pt": 8.2,
-      "min_pt": 8.5
-     }
-    },
-    {
      "id": "font-below-absolute-floor",
      "severity": "error",
      "message": {
@@ -944,7 +923,7 @@
       "key": "legendFontSize",
       "params": {
        "effective": "7.20",
-       "min": "8.5",
+       "min": "8",
        "max": "9"
       }
      },
@@ -1462,27 +1441,6 @@
       "axes_0.legend"
      ],
      "detail": {}
-    },
-    {
-     "id": "legend-font-size",
-     "severity": "warn",
-     "message": {
-      "key": "legendFontSize",
-      "params": {
-       "effective": "8.00",
-       "min": "8.5",
-       "max": "9"
-      }
-     },
-     "object_ids": [
-      "p1"
-     ],
-     "gids": [
-      "axes_0.legend"
-     ],
-     "detail": {
-      "effective_pt": 8.0
-     }
     },
     {
      "id": "line-width-off-preset",
@@ -2425,7 +2383,7 @@
       "key": "legendFontSize",
       "params": {
        "effective": "6.75",
-       "min": "8.5",
+       "min": "8",
        "max": "9"
       }
      },
@@ -4276,7 +4234,7 @@
       "key": "fontTooSmall",
       "params": {
        "effective": "4.00",
-       "min": "8.5"
+       "min": "8"
       }
      },
      "object_ids": [
@@ -4287,7 +4245,7 @@
      ],
      "detail": {
       "effective_pt": 4.0,
-      "min_pt": 8.5
+      "min_pt": 8.0
      }
     }
    ]

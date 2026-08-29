@@ -25,8 +25,10 @@ describe('规范文件', () => {
     expect(p.widths_mm.single).toBe(80)
     expect(p.widths_mm.double).toBe(150)
     expect(p.default_font_size_pt).toBe(9)
-    expect(p.min_effective_font_size_pt).toBe(8.5)
+    // 最小字号只有一个数（ADR 0029）：8.5 那条比它守护的规范更严，删掉了
+    expect(p.min_effective_font_size_pt).toBe(8)
     expect(p.absolute_min_font_size_pt).toBe(8)
+    expect(p.legend_policy.min_font_size_pt).toBe(8)
     expect(p.min_raster_dpi).toBe(300)
     expect(p.line_widths_pt).toEqual([0.5, 0.75, 1.0, 1.5])
     expect(p.axis_policy.tick_direction).toBe('in')

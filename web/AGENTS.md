@@ -573,6 +573,16 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 - **Python 不决定界面语言**：用户可见的失败带稳定 `code` + `params`
   （约定写在 `app.py` 的 API 段首），前端 `backendErrorText()` 按 code 翻，
   `error` 原文留作回退。**code 一旦发布不能改名**。
+- **Style / Spec / Export 三层各有唯一出处**（ADR 0029）：Style 是
+  `lib/stylePresets.ts`（应用 = 一次可撤销的文档修改，走 `applyStylePlan`）、
+  Spec 是 `lib/specBinding.ts`（**「这个项目按哪套规范检查」只在这里判**）、
+  Export 是 `lib/exportDefaults.ts` + `exportPayload.ts`。清单的持有者只有
+  `store/profileStore.ts`，**组件里不许有 fetch，更不许有磁盘格式的知识**。
+  文档里存的是**绑定 + 规则全文快照**，「有没有新版」的判据是**内容不等**
+  （`sameRules`），不是版本号。profile 在界面上叫什么只有
+  `lib/profileText.ts` 一处（内置跟界面语言走、用户起的名字不翻译，
+  **默认视图不出现 id 与版本号**）。字号下限一个字都不许写进求值器或界面，
+  缺键兜底只有 `lib/profile.FALLBACK_MIN_FONT_SIZE_PT`（Python 侧同名，严格同源对）。
 - **出版规范预检的文案在前端**：`web/src/lib/preflight.ts` 的 `PreflightIssue`
   存的是描述符（`message: UiMessage`），`id` 才是稳定身份——golden vectors
   （`tests/golden/preflight_vectors.json`）与 proof report 认的都是 id，

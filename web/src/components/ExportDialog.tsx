@@ -23,20 +23,16 @@ import {
   summarize,
   type PreflightIssue,
 } from '@/lib/preflight'
-import {
-  columnOf,
-  listProfiles,
-  loadProfile,
-  type JournalOverride,
-  type PublicationProfile,
-  type Severity,
-} from '@/lib/profile'
+import { columnOf, type JournalOverride, type PublicationProfile, type Severity } from '@/lib/profile'
+import { profileName, profileTechnicalDetail } from '@/lib/profileText'
+import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { revealObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { useProfileStore } from '@/store/profileStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -140,14 +136,36 @@ export function ExportDialog() {
   const [confirmed, setConfirmed] = useState(false)
 
   /* ------------------------------ 出版规范 ------------------------------- */
-  const profiles = useMemo(() => listProfiles(), [])
+  // 清单来自 profileStore（内置 + 用户自建）。后端不在时它退回内置那两条，
+  // 所以浏览器演练场里这一段照样能用。
+  const specRecords = useProfileStore((s) => s.specs)
+  const catalog = useMemo<SpecCatalogEntry[]>(
+    () =>
+      specRecords.map((r) => ({
+        id: r.id,
+        display_name: profileName(r),
+        name_key: r.name_key || undefined,
+        version: r.version,
+        built_in: r.built_in,
+        data: r.data,
+      })),
+    [specRecords],
+  )
   // 规范绑定优先看文档自己的；旧文档没有该字段时用「上次用过的」，再退默认
   const docProfileId = doc.profile?.id
   const [profileId, setProfileId] = useState(
     () => docProfileId ?? readExportDefaults().profileId,
   )
-  const journal = doc.profile?.journal as JournalOverride | undefined
-  const profile = useMemo(() => loadProfile(profileId, journal), [profileId, journal])
+  /**
+   * **实际生效的规范只解析一次**（ADR 0029）：有快照就按快照，没有才按全局
+   * 现值。导出面板不许自己再挑一遍——那正是「预检说合规、导出按另一套规矩」
+   * 的来源。
+   */
+  const resolved = useMemo(
+    () => resolveDocumentSpec(doc.profile ?? { id: profileId }, catalog),
+    [doc.profile, profileId, catalog],
+  )
+  const profile = resolved.profile
   const column = columnOf(profile, doc.page.w)
   // 期刊自定义宽度：文档里存的是覆盖值，缺省显示 profile 的双栏宽
   const [journalWidth, setJournalWidth] = useState<number | null>(
@@ -156,6 +174,8 @@ export function ExportDialog() {
 
   useEffect(() => {
     if (!open) return
+    // 规范清单在这里拉一次：用户可能刚在设置里建了一条自定义规范
+    void useProfileStore.getState().load()
     setStem(doc.name)
     setResult(null)
     setPackResult(null)
@@ -218,19 +238,32 @@ export function ExportDialog() {
   const proofOn = withProof || proofRequired
   const blocked = needsConfirm && !confirmed
 
+  /**
+   * 选规范 = 写一条**带快照的绑定**进文档（可撤销、正确 dirty）。
+   *
+   * 快照让「项目结果稳定」成立：以后全局那套规范改了，这张图的结论一个字
+   * 不变；界面提示有新版，由用户点「同步」明确确认（那一步同样进历史）。
+   */
   const applyProfile = (id: string, width: number | null) => {
     setProfileId(id)
     writeExportDefaults({ profileId: id })
-    const nextJournal: JournalOverride | undefined =
+    const entry = catalog.find((e) => e.id === id)
+    if (!entry) return
+    const nextJournal =
       width != null && Number.isFinite(width) && width > 0
         ? { widths_mm: { double: width } }
         : undefined
-    // 规范绑定写进文档（可撤销）：proof 与下次打开都按同一套规矩
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
-      d.profile = {
-        id,
-        ...(nextJournal ? { journal: nextJournal as Record<string, unknown> } : {}),
-      }
+      d.profile = bindingFor(entry, { journal: nextJournal })
+    })
+  }
+
+  /** 把文档里的快照同步到全局那一版。**用户明确点过才发生**，并进文档历史。 */
+  const syncProfile = () => {
+    const entry = catalog.find((e) => e.id === (doc.profile?.id ?? profileId))
+    if (!entry) return
+    commit(msg('history.syncPublicationProfile', undefined, 'workspace'), (d) => {
+      d.profile = bindingFor(entry, { journal: doc.profile?.journal })
     })
   }
 
@@ -398,20 +431,35 @@ export function ExportDialog() {
 
         <Row label={ex('profileLabel')} labelWidth={52}>
           <Select
-            value={profileId}
+            value={doc.profile?.id ?? profileId}
             onChange={(v) => applyProfile(v, journalWidth)}
-            options={profiles.map((p) => ({
-              value: p.profile_id,
-              label: p.label,
-              hint: `v${p.version}`,
-            }))}
+            options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
             ariaLabel={ex('profileAria')}
             className="w-44"
           />
-          <span className="shrink-0 font-mono text-xs text-ink-3">
-            {ex('profileStamp', { id: profile.profile_id, version: profile.version })}
+          {/* 内部 id 与版本号**不进默认视图**：对用户没有意义，摆出来只会让人
+              以为那是要记住的东西。它们留在这一行的 title 里（技术详情）。 */}
+          <span
+            className="shrink-0 text-xs text-ink-3"
+            title={profileTechnicalDetail({ id: profile.profile_id, version: profile.version })}
+          >
+            {resolved.source === 'snapshot' ? ex('profilePinned') : ''}
           </span>
         </Row>
+
+        {resolved.updateAvailable && (
+          <p className="flex items-center gap-2 pl-[60px] text-xs leading-relaxed text-ink-2">
+            {ex('profileUpdateAvailable')}
+            <Button variant="outline" size="sm" onClick={syncProfile}>
+              {ex('profileSync')}
+            </Button>
+          </p>
+        )}
+        {resolved.globalMissing && (
+          <p className="pl-[60px] text-xs leading-relaxed text-ink-3">
+            {resolved.source === 'snapshot' ? ex('profileMissingPinned') : ex('profileMissing')}
+          </p>
+        )}
 
         <ProfileFacts
           pageW={doc.page.w}

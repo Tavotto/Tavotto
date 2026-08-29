@@ -326,8 +326,12 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
         return
     pid = panel.get("id", "")
     scale = _num_or(panel.get("scale"), 1.0)
-    strict = _num_or(profile.get("min_effective_font_size_pt"), 8.5)
-    floor = _num_or(profile.get("absolute_min_font_size_pt"), 8.0)
+    strict = _num_or(
+        profile.get("min_effective_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
+    )
+    floor = _num_or(
+        profile.get("absolute_min_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
+    )
     biggest = _num_or(profile.get("max_font_size_pt"), 72.0)
     fam = profile.get("font_family") or {}
     accepted = {str(x).lower() for x in (fam.get("latin_accepted") or [])}
@@ -725,8 +729,12 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
 
 
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
-    strict = _num_or(profile.get("min_effective_font_size_pt"), 8.5)
-    floor = _num_or(profile.get("absolute_min_font_size_pt"), 8.0)
+    strict = _num_or(
+        profile.get("min_effective_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
+    )
+    floor = _num_or(
+        profile.get("absolute_min_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
+    )
     cjk = profile.get("cjk_fallback") or {}
     for t in spec.get("texts") or []:
         if t.get("hidden"):

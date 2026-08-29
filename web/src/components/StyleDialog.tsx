@@ -4,12 +4,13 @@ import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
   Paintbrush,
 } from 'lucide-react'
-import { backendErrorText, deleteStyle, fetchStyles, saveStyle } from '@/lib/api'
 import {
+  draftToData,
   extractFromManifest,
   extractPalette,
   planStyle,
   presetEntries,
+  profileToDraft,
   styleRoleLabel,
   styleScopeLabel,
   targetPanels,
@@ -19,6 +20,8 @@ import {
 import { cn, modKey } from '@/lib/utils'
 import { applyStylePlan } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useProfileStore } from '@/store/profileStore'
+import { profileName } from '@/lib/profileText'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
@@ -47,19 +50,33 @@ export function StyleDialog() {
   const open = useUiStore((s) => s.stylesOpen)
   const setOpen = useUiStore((s) => s.setStylesOpen)
 
-  const [saved, setSaved] = useState<StylePreset[]>([])
+  // 清单的唯一持有者是 profileStore（磁盘细节全在后端 engine/profilestore.py）。
+  // 这里只把它翻译成"编辑草稿"，并且**只在打开时拉一次**。
+  const records = useProfileStore((s) => s.styles)
+  const storeError = useProfileStore((s) => s.error)
+  const saved = useMemo(() => records.map(profileToDraft), [records])
+  const readOnlyIds = useMemo(
+    () => new Set(records.filter((r) => r.read_only).map((r) => r.id)),
+    [records],
+  )
+  const nameOf = (preset: StylePreset) => {
+    const rec = records.find((r) => r.id === preset.id)
+    return rec ? profileName(rec) : preset.name
+  }
+
   const [draft, setDraft] = useState<StylePreset>(EMPTY)
   const [scope, setScope] = useState<StyleScope>('panel')
   const [withAnnotations, setWithAnnotations] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 本对话框自己的报错优先，其次是清单那一层的（拉取失败 / 并发撞车）。 */
+  const shownError = error ?? storeError?.message ?? null
 
   useEffect(() => {
     if (!open) return
     setError(null)
-    fetchStyles()
-      .then(setSaved)
-      .catch((e) => setError(backendErrorText(e)))
+    useProfileStore.getState().clearError()
+    void useProfileStore.getState().load()
   }, [open])
 
   const doc = useDocumentStore((s) => s.doc)
@@ -106,23 +123,32 @@ export function StyleDialog() {
     }))
   }
 
+  /**
+   * 存盘。**内置样式只读**——在它上面按保存时另存为一份用户样式（这正是
+   * 「改内置」的正确出口），而不是弹一句"不能改"把用户挡在原地。
+   */
   const save = async () => {
-    if (!draft.name.trim()) {
+    const name = draft.name.trim()
+    if (!name) {
       setError(sd('nameRequired'))
       return
     }
     setBusy(true)
-    try {
-      const stored = await saveStyle({ ...draft, name: draft.name.trim() })
-      setDraft(stored)
-      setSaved(await fetchStyles())
-      setError(null)
-      useUiStore.getState().setStatus(msg('style.saved', { name: stored.name }, 'dialogs'))
-    } catch (e) {
-      setError(backendErrorText(e))
-    } finally {
-      setBusy(false)
+    setError(null)
+    const api = useProfileStore.getState()
+    const editable = !!draft.id && !readOnlyIds.has(draft.id)
+    const stored = editable
+      ? ((await api.save('style', draft.id!, draftToData({ ...draft, name }))) &&
+        (await api.rename('style', draft.id!, name)))
+      : await api.create('style', name, draftToData({ ...draft, name }))
+    setBusy(false)
+    if (!stored) {
+      const err = useProfileStore.getState().error
+      setError(err ? err.message : sd('saveFailed'))
+      return
     }
+    setDraft(profileToDraft(stored))
+    useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'))
   }
 
   const apply = async () => {
@@ -183,7 +209,7 @@ export function StyleDialog() {
         }
       >
         <p className="text-xs leading-relaxed text-ink-2">{sd('emptyBody')}</p>
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
       </Dialog>
     )
   }
@@ -232,12 +258,17 @@ export function StyleDialog() {
                     draft.id === s.id ? 'bg-accent-subtle text-accent' : 'text-ink hover:bg-ink/[.04]',
                   )}
                 >
-                  {s.name}
+                  {nameOf(s)}
                 </button>
                 <Button
                   size="icon-sm"
-                  className="mr-0.5 h-5 w-5 opacity-0 group-hover:opacity-100"
-                  aria-label={sd('deleteStyleAria', { name: s.name })}
+                  className={cn(
+                    'mr-0.5 h-5 w-5 opacity-0 group-hover:opacity-100',
+                    // 内置只读：删除按钮**不渲染**，而不是渲染成禁用的——
+                    // 禁用的按钮仍然邀请用户去点，然后什么都不发生
+                    s.id && readOnlyIds.has(s.id) && 'hidden',
+                  )}
+                  aria-label={sd('deleteStyleAria', { name: nameOf(s) })}
                   onClick={async () => {
                     if (
                       !(await askConfirm({
@@ -249,8 +280,7 @@ export function StyleDialog() {
                     ) {
                       return
                     }
-                    if (s.id) await deleteStyle(s.id)
-                    setSaved(await fetchStyles())
+                    if (s.id) await useProfileStore.getState().remove('style', s.id)
                     if (draft.id === s.id) setDraft(EMPTY)
                   }}
                 >
@@ -497,7 +527,7 @@ export function StyleDialog() {
           </div>
         </div>
       </div>
-      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+      {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
     </Dialog>
   )
 }

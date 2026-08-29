@@ -31,9 +31,14 @@
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
   | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
   | `engine/originalspec.py` `DPI_SOURCES` ↔ `web/src/lib/api.ts` `dpi_source` 联合 | `test_frontend_and_backend_agree_on_the_dpi_source_set` |
+  | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
-  共读，绝不硬编码第二份）。
+  共读，绝不硬编码第二份）。**用户自建的样式 / 规范**在用户数据目录
+  `<data_dir>/profiles/`，磁盘入口只有 `engine/profilestore.py`；「任意 id →
+  规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**
+  （ADR 0029，「项目结果稳定」优先于「规范升级自动生效」）。默认规范的字号下限
+  **只有一个数 8 pt**。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
   `Path.unlink` 守卫不放松；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
   import pymupdf 的模块。

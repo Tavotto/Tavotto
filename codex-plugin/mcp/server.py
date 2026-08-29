@@ -80,7 +80,7 @@ DESKTOP_ONLY_HINT = (
 #: 对拍，改 bridge 的 import 必须同步这里。
 _BRIDGE_IMPORT = (
     "from tavotto.engine import config, handoff, patchspec, "
-    "pool, preflight, previewbudget, profiles, registry, telemetry"
+    "pool, preflight, previewbudget, profiles, profilestore, registry, telemetry"
 )
 
 

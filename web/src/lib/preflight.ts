@@ -2,7 +2,13 @@ import type { PanelInfo } from './api'
 import { panelRender, type PanelRender } from '@/store/renderStore'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
-import { profileStamp, severityOf, type PublicationProfile, type Severity } from './profile'
+import {
+  FALLBACK_MIN_FONT_SIZE_PT,
+  profileStamp,
+  severityOf,
+  type PublicationProfile,
+  type Severity,
+} from './profile'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -311,8 +317,8 @@ function checkPanelFonts(
   if (!manifest) return
   const pid = panel.id
   const scale = num(panel.scale) ?? 1
-  const strict = profile.min_effective_font_size_pt
-  const floor = profile.absolute_min_font_size_pt
+  const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
+  const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const biggest = profile.max_font_size_pt
   const fam = profile.font_family
   const accepted = new Set((fam.latin_accepted ?? []).map((s) => s.toLowerCase()))
@@ -633,8 +639,8 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
 }
 
 function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
-  const strict = profile.min_effective_font_size_pt
-  const floor = profile.absolute_min_font_size_pt
+  const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
+  const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const cjk = profile.cjk_fallback
   for (const t of spec.texts) {
     if (t.hidden) continue

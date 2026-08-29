@@ -37,6 +37,17 @@ DEFAULT_SEVERITY = "warn"
 #: 显式确认并写进 proof；suggestion 只是建议。
 SEVERITIES = ("error", "warn", "not_verifiable", "suggestion")
 
+#: profile 里**没写**字号下限时的兜底（pt）。与默认规范里那个数同值，而且
+#: 全仓库只有这一处 —— 两个求值器都从这里取，界面一个字都不许自己写。
+#: 严格同源对：`web/src/lib/profile.ts` 的同名常量，看护
+#: `tests/test_profile_store.py::test_font_floor_fallback_is_one_number_on_both_sides`。
+#:
+#: **它不是「规范的下限」**：规范的下限在 profile 里（`min_effective_font_size_pt`
+#: 与 `absolute_min_font_size_pt`）。这一条只在那两个键缺席时兜底，而缺席的
+#: profile 走不过 `_REQUIRED` —— 也就是说它只可能被**没过校验的外来 spec**
+#: 用到（MCP 直接喂进来的 dict）。那时宁可按默认规范判，也不许当作"没有下限"。
+FALLBACK_MIN_FONT_SIZE_PT = 8.0
+
 #: journal 覆盖里允许深合并的子对象（其余键整体替换）
 _DEEP_KEYS = (
     "widths_mm",
@@ -57,6 +68,7 @@ _REQUIRED = (
     "cjk_fallback",
     "default_font_size_pt",
     "min_effective_font_size_pt",
+    "absolute_min_font_size_pt",
     "min_raster_dpi",
     "preferred_formats",
     "line_widths_pt",
@@ -121,6 +133,28 @@ def _validate(profile: dict, pid: str) -> None:
     for key in ("single", "double"):
         if not isinstance(widths.get(key), (int, float)) or widths[key] <= 0:
             raise ProfileError(f"profile {pid} 的 widths_mm.{key} 必须是正数")
+
+
+def validate_spec(profile: object, pid: str | None = None) -> dict:
+    """校验一份**任意来源**的规范（用户自建 / 导入 / 期刊覆盖后的结果）。
+
+    内置规范走 `load()` 时已经过同一条判据；这里是给 `profilestore` 用的
+    公开入口——用户自己编的规范必须过**同一套**校验，否则「内置严、自建松」
+    会让同一张图在两条路上得到不同结论。
+    """
+    if not isinstance(profile, dict):
+        raise ProfileError("规范必须是对象")
+    got = profile.get("profile_id")
+    target = pid if pid is not None else (got if isinstance(got, str) and got else "custom")
+    if not isinstance(got, str) or not got:
+        profile = {**profile, "profile_id": target}
+    _validate(profile, target)
+    return profile
+
+
+def merge_journal(base: dict, journal: dict) -> dict:
+    """期刊覆盖的**唯一合并实现**（浅合并 + 白名单子对象深合并）。"""
+    return _deep_merge(base, journal)
 
 
 def list_profiles() -> list[dict]:
