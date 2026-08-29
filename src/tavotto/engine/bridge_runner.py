@@ -87,8 +87,24 @@ _boot_spec.loader.exec_module(bridgeboot)
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
 _PHASE1 = ("figcapture", "patchspec")
-#: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy，而那时用户早就 import 过了。
-_PHASE2 = ("pathgeom", "overrides", "manifest", "figsession", "wireproto")
+#: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
+#: import 过了；外加只被它们平铺 import 到的纯标准库模块。
+#:
+#: **平铺 import 进来的那一层也要列在这里。** `bridgeboot._TOPLEVEL_TO_RESTORE`
+#: 只保证「顶层名字还得回去」，保证不了「该进私有包的都进了」——漏掉的那个
+#: 会以真·顶层模块的身份装在用户进程里，`__name__` 不带包前缀、私有包里也取
+#: 不到它，第二个消费者还会再装一份（`load_engine_modules` 注释里警告的「两份
+#: figcapture」同款）。
+_PHASE2 = (
+    "pathgeom",
+    "overrides",
+    "manifest",
+    "previewbudget",
+    "preview_complexity",
+    "preview_hybrid",
+    "figsession",
+    "wireproto",
+)
 
 _PKG = bridgeboot.load_engine_modules(_HERE, _PHASE1)
 figcapture = _PKG.figcapture

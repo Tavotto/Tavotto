@@ -54,6 +54,8 @@ ENGINE_FILES = [
     "overrides.py",
     "patchspec.py",
     "pathgeom.py",
+    "preview_complexity.py",
+    "preview_hybrid.py",
     "previewbudget.py",
 ]
 

@@ -92,7 +92,14 @@ ENGINE_SIBLINGS = ("figcapture", "patchspec", "pathgeom", "overrides", "manifest
 #: 比对（与 `test_runtime_build.py` 对 PyInstaller spec 的判据同一形状）。
 #: 2026-08-28 加 `previewbudget` 时这张表漏过一次，是评审抓的不是门禁抓的
 #: ——那条门禁当时只查 `ENGINE_SIBLINGS`，查不到 figsession 平铺进来的这一层。
-_TOPLEVEL_TO_RESTORE = (*ENGINE_SIBLINGS, "figsession", "wireproto", "previewbudget")
+_TOPLEVEL_TO_RESTORE = (
+    *ENGINE_SIBLINGS,
+    "figsession",
+    "wireproto",
+    "previewbudget",
+    "preview_complexity",
+    "preview_hybrid",
+)
 
 
 def drop_script_dir_from_sys_path(here: str) -> bool:

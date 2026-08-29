@@ -169,7 +169,7 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 
 | 常量 | 初值 | 语义 |
 |---|---|---|
-| `EDITOR_SVG_SOFT_LIMIT_BYTES` | 8 MiB | **hybrid 的触发线**（Session 02/03 落地） |
+| `EDITOR_SVG_SOFT_LIMIT_BYTES` | 8 MiB | **hybrid 的第二把尺子**：产物越过它且名单没收满 ⇒ 全收、重画一遍 |
 | `EDITOR_SVG_HARD_LIMIT_BYTES` | 16 MiB | **raster 的硬闸**：超过就不读 |
 
 两个数字都是**可调的策略**，不是物理常数；调它们要带上新的测量。选这两个初值
@@ -177,9 +177,18 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 面板最坏 827 KB——8 MiB 比它们高一个数量级以上，正常图一张都不会被碰到；
 而 #181 那张是 126 MB，比硬闸高 7.8 倍，怎么调都在闸外。
 
-**软闸在 hybrid 落地之前不改变任何行为**（8–16 MiB 的图照旧内联 SVG）。这个
-缺口是刻意留的、有用例钉住的——Session 02 实现 hybrid 时那条用例会当场红，
-逼着一起改，而不是靠谁记得回来。
+**两条闸量的是两个时刻的两样东西，这正是留着两条的理由**：复杂度那几个数量
+的是**原料**（artist 图上有多少 primitive，`savefig` 之前就答得出来），字节
+那两条量的是**产物**（`savefig` 之后才知道）。模型估低了的时候，只有产物那
+一侧看得见——同源的两把尺子只是自己验自己。
+
+Session 03 之后软闸真的生效：产物越过 8 MiB、而可 rasterize 的数据层还没收满
+⇒ 把剩下的全部收进来**重画一遍**（最多第二遍，还超就交给硬闸）。正常科研图
+的预览 SVG 是几十到几百 KB，那第二遍一次都不会付。
+
+（此前它是一个**刻意留的、有用例钉住的缺口**：`test_soft_band_still_passes_
+through_today` 在 hybrid 落地那一刻当场红，逼着一起改，而不是靠谁记得回来。
+它做到了——2026-08-29 Session 03 接线时它是第一条红的用例。）
 
 ---
 
@@ -190,7 +199,7 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 | 00 | 合成复现 + before 基线 + 本 ADR | 完成 |
 | 01 | Large SVG Safety Guard（不变量 3 + raster 档 + 前端二道闸） | 完成 |
 | 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 完成 |
-| 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 待做 |
+| 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 完成 |
 | 04 | renderStore 的 SVG 内存预算 | 待做 |
 | 05 | Diagnostics 与回归看护 | 待做 |
 | 06 | 集成与 issue 收尾 | 待做 |
@@ -228,6 +237,38 @@ contour 层照样占一个 `<path>` 节点；`scatter(x, y, s=<数组>)` 掉出�
 **软闸仍然不改变任何行为**：分析器产出的是名单，把名单变成 `set_rasterized`
 是 Session 03。`test_soft_band_still_passes_through_today` 照旧钉着那个缺口。
 
+### Session 03 落地了什么（2026-08-29）
+
+`src/tavotto/engine/preview_hybrid.py`：把名单变成 **`savefig` 那一瞬**的
+`set_rasterized`，出窗口时逐个还回原值。三条纪律写在模块头——先读后写、
+还原不许半途而废、还原失败要吵（`RestoreFailed`）。
+
+**接线点是 `figsession.render()` 一处**，因此冷 build（`instrument_all()`）与
+热 render（`do_render()`）落在同一条策略上。这不是实现细节：只在 render
+request 上 rasterize 的话，用户**第一次打开** #181 那张图仍然要先等十几秒——
+那不叫修好。playground 走 `browser._render()`，与桌面共用同一个
+`preview_hybrid.save_preview_svg`。
+
+合成 fixture（n=200，三块 4 万 cell 的 mesh）上的实测，A/B **在同一进程同一次
+运行里交替**（同一张图、同一个会话、紧挨着的两次，只把预算抬走）：
+
+| | 纯矢量 | hybrid | |
+|---|---:|---:|---|
+| 预览 SVG 字节 | 22 902 252 | **599 747** | 2.6% |
+| `<path>` | 120 072 | **72** | 0.06% |
+| `<image>` | 1 | 4 | 三块 mesh 各一张 + 色条色带 |
+| `savefig` | 2 174 ms | **165 ms** | 13× |
+| manifest | 逐字节相同 | 逐字节相同 | 不变量 1 |
+| 导出 SVG | 120 072 个 `<path>` | 120 072 个 `<path>` | 不变量 2 |
+
+默认规模（n=470）的前后对照见
+[perf-baseline 的 Session 03 一节](../perf-baseline.md#大图预览hybrid-之后issue-181session-03)。
+
+**gid 丢失是允许的**：rasterize 掉的 artist 在 SVG DOM 里没有自己的节点了
+（`<g id="axes_0.collections_0">` 整个不出现）。不为此造隐藏占位节点、不重新
+矢量化 mesh、不动 manifest 的 gid 语义——前端在 `findGidNode` 返回 null 时
+安静退出、覆盖层接管，几何权威照旧是 exact manifest（§7 的「代价」第三条）。
+
 ---
 
 ## 6. 不做什么
@@ -252,7 +293,14 @@ contour 层照样占一个 `<path>` 节点；`scatter(x, y, s=<数组>)` 掉出�
 * 多一条要维护的表示法分支，以及一份要与 Python 侧对齐的前端常量。
 * raster 档下 SVG 局部样式预览（`svgPreviewStore` 的假实时那一套）用不上——
   DOM 里根本没有 gid 节点。既有实现在找不到节点时已经是**安静退出 + 覆盖层
-  接管**，行为不变，但覆盖层的能力边界要在 Session 03 一并交代。
+  接管**，行为不变。
+* **hybrid 档下同一件事发生在被 rasterize 的那几层上**（Session 03 实测）：
+  它们在 SVG 里是 `<image>`，`findGidNode` 对它们返回 null，于是拖动那几层
+  时没有 DOM 假实时，落点由后端权威渲染回来补上；文字 / 坐标轴 / 图例 /
+  标注 / 普通曲线的 gid **一个都没少**，假实时在它们身上照常工作。
+  边界因此是一句可验证的话：**假实时覆盖的是矢量层，不是数据层**
+  （看护 `tests/test_preview_hybrid.py::test_rasterized_layers_may_lose_their_gid_node`
+  与 `::test_text_axes_legend_and_ordinary_curves_stay_vector`）。
 
 ## 8. 看护
 
@@ -263,6 +311,9 @@ contour 层照样占一个 `<path>` 节点；`scatter(x, y, s=<数组>)` 掉出�
 * `tests/test_preview_complexity.py` —— 分析器的裁决、**成本模型与 SVG 后端
   的对拍**、以及「它什么都没改」（`rasterized` 前后逐个比对、`QuadMesh` 的
   paths 一次都没被建过）；
+* `tests/test_preview_hybrid.py` —— 冷 build / 热 render 同策略、**精确还原**
+  （含「原值是 True 的还回 True」与 `savefig` 抛异常那一路）、manifest 逐字节
+  不变、导出保真、hybrid 产物上硬闸照旧生效、软闸那第二遍；
 * `tests/test_browser_session.py` —— playground 那条入口上的同一条闸
   （SVG 生在内存里，判据挪到「交给 JS 之前」）；
 * `web/src/canvas/panelPreviewMode.test.tsx` / `web/src/lib/previewBudget.test.ts`

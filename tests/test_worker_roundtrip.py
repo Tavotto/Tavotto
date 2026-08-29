@@ -1480,10 +1480,13 @@ def test_v1_timings_have_the_documented_shape(worker):
 
     resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []}, rid="r-t2"))
     t = resp["timings"]
-    assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms"}
+    assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms", "preview_plan_ms"}
     assert "svg_ms" not in t
     assert all(isinstance(v, float) and v >= 0 for v in t.values())
     assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
+    # 复杂度分析（ADR 0022 / Session 03）进的是热路径，它必须比它省下的那件事
+    # 便宜几个数量级——量它就是为了让「它其实很贵」这件事没法悄悄发生
+    assert t["preview_plan_ms"] < t["canvas_draw_ms"]
 
     pdf = tmp / "timed_export.pdf"
     resp = _ok(

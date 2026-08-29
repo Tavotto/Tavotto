@@ -100,19 +100,24 @@ def _load_phases() -> tuple[str, ...]:
     return tuple(out)
 
 
-def test_restore_list_covers_the_whole_flat_import_closure():
-    """`_TOPLEVEL_TO_RESTORE` 必须盖住 bridge 会装的模块的**整条传递闭包**。
+def test_load_and_restore_lists_cover_the_whole_flat_import_closure():
+    """bridge 会平铺 import 到的**整条传递闭包**，两张表都要盖住。
 
     与 `test_runtime_build.py::test_spec_ships_every_module_the_worker_imports`
-    同一个判据形状，同一个理由：**这张表不能靠人记得改**。
+    同一个判据形状，同一个理由：**这两张表不能靠人记得改**。
 
-    漏一个的两种下场都很难查——用户项目里恰好有同名模块时我们拿到的是他那份
-    （一个指向完全错误方向的 AttributeError）；他没有同名模块时，Tavotto 那份
-    会**留在他的顶层 `sys.modules` 里**，他之后再也 import 不到自己那份。
+    **两个维度，缺一不可**：
 
-    2026-08-28 实测漏过一次：`figsession` 新增了 `import previewbudget`，而
-    这张表没跟上。**当时的门禁没抓住**——它只查 `ENGINE_SIBLINGS`，查不到
-    figsession 平铺进来的这一层。抓住它的是人工评审，那不该是常态。
+    | 表 | 它保证的事 | 漏了会怎样 |
+    |---|---|---|
+    | `_PHASE1` + `_PHASE2` | 该进私有包的都进了 | 那个模块以**真·顶层模块**的身份装在用户进程里：`__name__` 不带包前缀、`pkg.<name>` 取不到它、第二个消费者会再装一份（`load_engine_modules` 注释里那个「两份 figcapture」） |
+    | `_TOPLEVEL_TO_RESTORE` | 顶层名字还得回去 | 用户项目里有同名模块时我们拿到**他那份**（一个指向完全错误方向的 AttributeError）；他没有时，Tavotto 那份留在他的顶层 `sys.modules` 里，他之后再也 import 不到自己那份 |
+
+    2026-08-28 `figsession` 新增 `import previewbudget` 时**两张表都漏了**，
+    而当时的门禁只查第二个维度里的一半（`ENGINE_SIBLINGS`），第一个维度它
+    根本没问——抓住它的是人工评审。2026-08-29 补第一个维度时，原先那句
+    「闭包比装载清单大」的前提当场变假：那句话本身就是**第一个维度被违反**
+    的表现，它当初被写成了用例的前提（[[gate-pinned-on-one-side-only]]）。
     """
     import ast
 
@@ -145,10 +150,22 @@ def test_restore_list_covers_the_whole_flat_import_closure():
         closure.add(name)
         todo += list(flat_imports(name))
 
-    # 用例前提：闭包确实比装载清单深一层（否则这条在测一个恒真式）
-    assert "pathgeom" in closure, "用例前提：manifest 确实平铺 import 了 pathgeom"
-    assert closure - set(_load_phases()), "用例前提：闭包比 _PHASE1+_PHASE2 大"
+    # 用例前提：AST 反推真的穿过了模块之间的边（否则下面两条在测一个恒真式：
+    # 闭包 == 根集合，两条 issubset 自动成立）。两条边都取自实际发生过的漏项。
+    assert "pathgeom" in flat_imports("manifest"), "用例前提：manifest 平铺 import pathgeom"
+    assert "previewbudget" in flat_imports("figsession"), (
+        "用例前提：figsession 平铺 import previewbudget（2026-08-28 漏的就是这条边）"
+    )
 
+    # 维度一：**该进私有包的都进了**
+    unloaded = closure - set(_load_phases())
+    assert not unloaded, (
+        f"bridge_runner._PHASE1/_PHASE2 漏了引擎会平铺 import 的模块: "
+        f"{sorted(unloaded)}——它们会以真·顶层模块的身份装在用户进程里，"
+        f"私有包里取不到，第二个消费者还会再装一份"
+    )
+
+    # 维度二：**顶层名字还得回去**
     missing = closure - set(boot._TOPLEVEL_TO_RESTORE)
     assert not missing, (
         f"bridgeboot._TOPLEVEL_TO_RESTORE 漏了引擎会平铺 import 的模块: "

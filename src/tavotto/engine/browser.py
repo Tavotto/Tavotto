@@ -60,6 +60,7 @@ import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 import patchspec  # noqa: E402
+import preview_hybrid  # noqa: E402
 import previewbudget  # noqa: E402
 
 #: 源文件上限。JS 侧在读文件时就拦，这里再守一道——两侧都必须拦：
@@ -471,18 +472,39 @@ class BrowserSession:
         `json.dumps` 一份、postMessage 过 Worker 边界再一份，然后展开成几十万
         个 DOM 节点。所以判据挪到「交给 JS 之前」，量的是同一个东西
         （字节数），用的是同一份常量。
+
+        hybrid 也在这条路上：名单、设/还原、升档策略与桌面共用
+        `preview_hybrid.save_preview_svg`——抄一份过来的代价是同一个脚本在两个
+        入口里预览表示法不一样。
         """
         man = manifest_mod.build_manifest(state, stem)
+        # **manifest 先建完再 rasterize**——语义保真（不变量 1）靠的是这个顺序，
+        # 与桌面那条入口逐字相同（`figsession.render`）。
         buf = io.BytesIO()
-        with _real_output():
-            _REAL_SAVEFIG(state.fig, buf, format="svg", dpi=preview_dpi or PREVIEW_DPI)
+
+        def _save(_plan) -> int:
+            nonlocal buf
+            buf = io.BytesIO()
+            with _real_output():
+                _REAL_SAVEFIG(state.fig, buf, format="svg", dpi=preview_dpi or PREVIEW_DPI)
+            return buf.tell()
+
+        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save)
         # manifest 走一遍 JSON 序列化再解回来：worker 是「落盘再读」，这里
         # 等价地把 numpy 标量在**这一层**就规约成纯 JSON 值——交给 JS 的
         # 结构里绝不能混着 numpy 类型
         man = json.loads(json.dumps(man, ensure_ascii=False, default=_json_default))
-        svg_bytes = buf.tell()
-        mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
-        preview = previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason)
+        mode, reason = previewbudget.resolve_mode(
+            svg_bytes=svg_bytes, rasterized_artist_count=plan.rasterized_artist_count
+        )
+        preview = previewbudget.metadata(
+            svg_bytes=svg_bytes,
+            mode=mode,
+            reason=reason,
+            rasterized_artist_count=plan.rasterized_artist_count,
+            estimated_primitives=plan.estimated_primitives,
+            estimated_vertices=plan.estimated_vertices,
+        )
         if mode == previewbudget.MODE_RASTER:
             return man, None, preview
         return man, buf.getvalue().decode("utf-8"), preview
