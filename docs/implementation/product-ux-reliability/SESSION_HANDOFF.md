@@ -153,8 +153,15 @@ ruff check . && ruff format --check .
 python scripts/build_mcp_widget.py
 ```
 
-结果见 `STATUS.md` 的「Session 04 之后」表。**29 条变异逐一反证，全部被打红**
-（记录见 `TEST_MATRIX.md`）。
+结果见 `STATUS.md` 的「Session 04 之后」表：后端 **3093 passed**（9 分 15 秒）、
+前端 1370 passed，七条命令全部 exit 0。**29 条变异逐一反证，全部被打红**
+（记录见 `TEST_MATRIX.md`；其中三条第一轮活了下来，判据已加固）。
+
+两个跑法上的坑：
+
+> **别再多加一个 `-q`。** `pytest.ini` 的 `addopts` 里已经有一个，叠成 `-qq`
+> 会把最后那行统计**整个吞掉**——退出码还在，数字没了。本轮为了拿这一行
+> 多跑了一遍全量（每遍 9 分钟）。
 
 > `pnpm i18n:check` 会因为 `resources.d.ts` 过期而红：加了 errors 的 key 之后
 > 跑一次 `pnpm exec i18next-cli types` 并提交生成结果。

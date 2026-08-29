@@ -124,6 +124,24 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 > （`python scripts/build_mcp_widget.py`），否则 `test_mcp_server.py` 与
 > `test_windows_regressions.py` 两条会红，而红的原因与改动本身无关。
 
+### Session 04 之后（改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3093** passed / 34 skipped / 2 deselected（比 03 +40 = 新增的 `tests/test_project_refresh.py` 38 条 + `test_error_codes.py` 2 条），9 分 15 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— 118 files / 1370 tests passed（前端只改了类型，用例数不变） |
+| `cd web && pnpm build` | ✅ exit 0 |
+| `cd web && pnpm i18n:check` | ✅ exit 0（新 code 的双语文案 + 重新生成 `resources.d.ts`） |
+| `cd web && pnpm lint` | ✅ 无新增告警（只有既有的 fast-refresh 提示） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（273 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（改了 `web/src/lib/api.ts`） |
+| 变异反证 29 条 | ✅ 全部 KILLED（记录见 `TEST_MATRIX.md`；**其中 3 条第一轮活了下来**，判据已加固） |
+
+> 跑全量时**别再多加一个 `-q`**：`pytest.ini` 的 `addopts` 里已经有一个，
+> 叠成 `-qq` 会把最后那行统计**整个吞掉**——于是"跑过了"只剩一个退出码，
+> 数字无从核对。
+
 ---
 
 ## 遗留（Session 04 之后仍开着的）
