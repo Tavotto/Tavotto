@@ -40,7 +40,10 @@ matplotlib API  →  artist 图  →  artist family  →  Tavotto policy
 还是 `<defs>` + `<use>`，由 `RendererSVG.draw_path_collection` 开头那个取舍式
 决定（`_shares_geometry` 抄的就是它）。两者合起来解释了为什么
 
-* `scatter` 十二万个点 → **1** 个 marker path 进 defs + 12 万个 `<use>`；
+* `scatter(x, y, s=6)` 十二万个点 → **1** 个 marker path 进 defs + 12 万个
+  `<use>`；而同一个 `PathCollection` 换成 `s=<数组>` 就掉出 `Collection.draw`
+  的单形状快路，**12 万个 marker 各自内联**（500 点的对拍上顶点数 26 → 13 000）。
+  同一个 API、同一个类，成本差三个数量级——这就是为什么定价要问 artist 的实况；
 * `pcolormesh` 22 万个 cell → **22 万个各带几何的 `<path>`**（`uses_per_path`
   恒为 1，取舍式恒不成立）。
 
@@ -66,6 +69,20 @@ analyzer 里随意把 unknown 判成 raster」。两句话不矛盾，因为它�
 * **也不替它做 hybrid**：hybrid 的动作是「对这个 artist 设 rasterized」，
   而我们不知道一个不认识的 artist 被 rasterize 之后长什么样。名单里不敢放
   的东西，兜底的是 Session 01 那道按字节数的硬闸——**它不需要认识任何人**。
+
+## 已知盲区（都是**有意**留的，且都有兜底）
+
+兜底一律是 Session 01 那道按字节数的硬闸——**它不需要认识任何人**，所以每一条
+盲区最坏的后果是「本该 hybrid 的图走了 raster」，不是崩。
+
+| 盲区 | 后果 | 为什么先不做 |
+|---|---|---|
+| `ax.patches` / `ax.texts` 不计入 | 一个顶点数极多的 `Polygon` 不出现在账上 | 一个 patch 是一个 DOM 节点，撑不爆 DOM；而遍历它们要付 `get_path()` 的重算 |
+| `Line2D` 计入但**不可 rasterize** | 一条百万点的曲线留在矢量层 | 那是策略：hybrid 承诺普通曲线保持矢量（#181 fixture 第四格） |
+| `_single_shape_blit` 没算「marker 包围盒 < 整张图」那半句 | marker 大到跟整张图一样时**低估** | 算它要先有 `_prepare_points()` 的变换，热路径上不该付；这是退化情形 |
+| gouraud `TriMesh` 按 path 数定价 | 低估——SVG 后端给每个三角形写渐变，比一条普通 path 贵 | `draw_gouraud_triangles` 的 SVG 成本还没实测，没有数据不写进模型 |
+| `Collection._paths` 是私有名 | 改名后整族退成「量不出来」，不再推荐 hybrid | 失效方向是少一层保护，不是崩；见 `_materialised_paths` |
+| contour 顶点估值偏低约 9% | 估值位数，不影响裁决 | 见 `_vertices_in_paths` 的实测表 |
 
 纯标准库之外只依赖 matplotlib；与 `worker.py` 同一条 sys.path 纪律，平铺 import。
 """

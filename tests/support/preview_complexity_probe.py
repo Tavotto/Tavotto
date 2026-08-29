@@ -335,10 +335,15 @@ def _cross_mesh(n: int):
     return fig
 
 
-def _cross_scatter(n: int):
+def _cross_scatter(n: int, **kw):
+    """三种散点**落在后端三条不同的分支上**，而它们在 pyplot 层只差一个参数。
+
+    这正是「不按 API 特判、按 artist 实况定价」要证的东西：同一个
+    `PathCollection`，`s=标量` 共享几何、`s=数组` 逐个内联（顶点数差 500 倍）。
+    """
     rng = np.random.default_rng(3)
     fig, ax = _bare_axes()
-    ax.scatter(rng.standard_normal(n), rng.standard_normal(n), s=6)
+    ax.scatter(rng.standard_normal(n), rng.standard_normal(n), **kw)
     return fig
 
 
@@ -406,7 +411,18 @@ def _svg_tag_counts(fig) -> dict:
 _CROSSCHECK = {
     # 名字 -> (带这个 artist 的图, 除它之外完全相同的对照图)
     "mesh": (lambda: _cross_mesh(24), _fig_blank),
-    "scatter": (lambda: _cross_scatter(500), _fig_blank),
+    # 单形状快路（`draw_markers`）：几何进 defs 写一遍
+    "scatter_uniform": (lambda: _cross_scatter(500, s=6), _fig_blank),
+    # 逐点大小 → 掉出快路，且取舍式把 uses 压成 1 → **每个 marker 各自内联**
+    "scatter_sized": (
+        lambda: _cross_scatter(500, s=np.random.default_rng(11).uniform(5, 40, 500)),
+        _fig_blank,
+    ),
+    # 逐点颜色 → 也掉出快路，但取舍式仍然判共享
+    "scatter_mapped": (
+        lambda: _cross_scatter(500, s=6, c=np.random.default_rng(12).random(500)),
+        _fig_blank,
+    ),
     "polycollection": (lambda: _fig_polys(300), _fig_blank),
     "linecoll": (lambda: _fig_linecoll(400), _fig_blank),
     "contour": (_cross_contour, _fig_blank),
