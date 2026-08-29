@@ -181,7 +181,15 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
   for (const panel of renderTargets(objects, editingId, store.tracked, store.latest)) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
-    if (state && (state.lastPatches === want || state.wantPatches === want)) continue
+    // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
+    // manifest 与几何权威都在），但它的 SVG payload 被内存预算清掉了。撤销
+    // 回到这一档时**不重画就没有矢量图可挂**——桌面 / playground 还能走引擎
+    // 位图顶一阵，Codex 内嵌画布里连那条路都没有（`previewPngUrl` 只对 raster
+    // 档有缓存位图），画面会直接空掉。ADR 0022 §8 允许「重新请求」，这就是它。
+    // 重画成功后 `svgEvicted` 归 false，而那一版此刻已经 live，被 pin 住不会
+    // 再被驱逐——不会来回拉锯。
+    if (state && !state.svgEvicted && (state.lastPatches === want || state.wantPatches === want))
+      continue
     // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
     requestRender(panel, !state)
   }

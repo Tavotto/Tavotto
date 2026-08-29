@@ -3,7 +3,7 @@ import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import type { UiMessage } from '@/i18n'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { renderKey, useRenderStore } from '@/store/renderStore'
+import { renderKey, svgPayloadBytes, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { newId } from '@/lib/id'
 import type { PanelObject } from '@/types/document'
@@ -107,6 +107,12 @@ export function seedEmbeddedSession(
         rev: fig.renderRevision ?? 1,
         manifest: fig.manifest,
         svg: fig.svg ? prepareEmbeddedSvg(fig.svg) : null,
+        // 种子这一份也要记账：内嵌画布的第一帧同样是驻留的 SVG payload，
+        // 漏记的话它对预算隐形（而它恰恰是**唯一**能显示的那一份，见
+        // renderStore 的 pin 规则——latest 指着它，所以它永远不会被驱逐）
+        svgBytes: fig.svg ? svgPayloadBytes(fig.svg, fig.preview ?? VECTOR_PREVIEW) : 0,
+        svgEvicted: false,
+        svgSeq: 0,
         preview: fig.preview ?? VECTOR_PREVIEW,
         status: 'ready',
         error: null,

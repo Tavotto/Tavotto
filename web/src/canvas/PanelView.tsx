@@ -96,11 +96,18 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // `render?.preview.mode` 只保护 `render`——那时它不是"按 vector 解读"，
   // 是当场 TypeError。实测撞见过。
   const rasterPreview = render?.preview?.mode === 'raster'
+  // **这一版没有可显示的矢量 payload**——两个成因，同一条显示策略（位图）：
+  //   * `raster`  引擎按硬闸决定不把那份 SVG 读进内存（ADR 0022 不变量 3）；
+  //   * `evicted` 这一版画出来过，但它的 SVG 被 renderStore 的字节预算清掉了
+  //     （`SVG_RECENT_BUDGET_*`，issue #181 Session 04）。
+  // 两种都**不是渲染失败**：manifest 在，命中层在，几何权威仍是 exact manifest。
+  // `evicted` 走 displayView 而不是 `render`，因为它只在「这一版就是几何权威」
+  // 时成立——退回显示别的变体时那条路是 fallback，与本档无关。
+  const bitmapOnly = rasterPreview || displayView?.kind === 'evicted'
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）。
-  // **raster 档下编辑态也走位图**：那一版根本没有 SVG——引擎按硬闸决定不把
-  // 它读进内存（issue #181）。命中层不受影响，见下面的 ElementHitLayer：
-  // 位图只是画法，几何权威仍是 exact manifest（不变量 4）。
-  const svgHtml = editing && !rasterPreview ? (render?.svg ?? null) : null
+  // 命中层不受影响，见下面的 ElementHitLayer：位图只是画法，几何权威仍是
+  // exact manifest（不变量 4）。
+  const svgHtml = editing && !bitmapOnly ? (render?.svg ?? null) : null
 
   // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
   // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
@@ -137,7 +144,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = (rasterPreview ? editing || needsEngine : !editing && needsEngine) &&
+  const useEnginePng = (bitmapOnly ? editing || needsEngine : !editing && needsEngine) &&
     (render?.rev ?? 0) > 0
   const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
@@ -173,9 +180,10 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
   // `panelSrc()` 本来就回 null（iframe 里没有 HTTP 服务）。旧写法在这里
   // 解出空串，用户看到的是**图整个消失**。
-  // raster 档除外：那一版**刻意没有** SVG，这条兜底不许把上一版的矢量图
-  // 拿来冒充（那正是这道闸要拦的 payload）。
-  const inlineSvg = svgHtml ?? (src || rasterPreview ? null : (render?.svg ?? null))
+  // 没有矢量 payload 的那两档除外：`raster` 刻意没有 SVG，`evicted` 的那份刚被
+  // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
+  // 拦的 payload，后者会让画布显示另一个变体的图）。
+  const inlineSvg = svgHtml ?? (src || bitmapOnly ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
 
   return (

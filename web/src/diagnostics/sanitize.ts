@@ -143,6 +143,12 @@ export const EVENT_SCHEMA: Record<DiagnosticEventType, Record<string, FieldKind>
   },
   'render.error': { file: HASH, variant: HASH, duration_ms: INT, code: KEY },
   'render.stale': { file: HASH, variant_count: INT },
+  'render.svg_evicted': {
+    file: HASH,
+    variant: HASH,
+    scope: ENUM('file', 'global'),
+    bytes: INT,
+  },
   'display.source_changed': {
     panel: HASH,
     file: HASH,

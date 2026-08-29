@@ -150,6 +150,58 @@ describe('prune：没人引用的变体不留在内存里', () => {
   })
 })
 
+describe('SVG payload 被内存预算清掉的那一版：重新排一次渲染', () => {
+  // 重画走的是**防抖**那一路（用户可能按着撤销不放，一档一档往回退），
+  // 所以要把计时器推过去才看得到那次请求
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('画出来过、几何权威也在，但没有矢量图 → 不许跳过（ADR 0022 §8）', () => {
+    const p = panel('a', 'Fig1.pdf', 1)
+    const want = JSON.stringify(p.overrides)
+    // 这一版确实画成功过：lastPatches 对得上、manifest 在，只是 svg 被
+    // `SVG_RECENT_BUDGET_*` 收走了（撤销回到它的那一刻正是这个状态）
+    useRenderStore.getState().patch(renderKeyOf(p), {
+      fileId: 'Fig1.pdf',
+      manifest: { stem: 'Fig1', elements: [] } as unknown as Manifest,
+      status: 'ready',
+      lastPatches: want,
+      wantPatches: want,
+      svg: null,
+      svgBytes: 0,
+      svgEvicted: true,
+    })
+
+    syncEngine([p], 'a')
+    vi.advanceTimersByTime(400)
+
+    // 不重画的话 Codex 内嵌画布里连一条取像素的路都没有（previewPngUrl 只对
+    // raster 档有缓存位图），画面会直接空掉
+    expect(calls).toHaveLength(1)
+    expect(calls[0].patches).toEqual(p.overrides)
+  })
+
+  it('payload 还在的那一版照旧跳过（不因为多了个字段就白跑引擎）', () => {
+    const p = panel('a', 'Fig1.pdf', 1)
+    const want = JSON.stringify(p.overrides)
+    useRenderStore.getState().patch(renderKeyOf(p), {
+      fileId: 'Fig1.pdf',
+      manifest: { stem: 'Fig1', elements: [] } as unknown as Manifest,
+      status: 'ready',
+      lastPatches: want,
+      wantPatches: want,
+      svg: '<svg/>',
+      svgBytes: 6,
+      svgEvicted: false,
+    })
+
+    syncEngine([p], 'a')
+    vi.advanceTimersByTime(400)
+
+    expect(calls).toHaveLength(0)
+  })
+})
+
 describe('markStale：命中该文件的全部变体', () => {
   it('每个变体都置过期、清掉排期，文件级 tracked 也置位', () => {
     const store = useRenderStore.getState()

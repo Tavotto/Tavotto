@@ -28,6 +28,40 @@ export interface PanelRender {
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
   /**
+   * `svg` 这份 payload 有多大（字节）。**`svg === null` 时恒为 0**——这一对
+   * 是驻留记账的唯一依据（`residentSvgBytes`），拆开就会算出一个谁都对不上的数。
+   *
+   * 取值优先用后端的 `preview.svg_bytes`（`stat().st_size`，与硬闸量的是同一个
+   * 东西）；老后端没给时退回 `svg.length`。**两条路都不复制字符串**——为了量
+   * 一个「太大了」的东西再复制它一遍，正是这套预算要防的那件事。
+   *
+   * 口径上的两点偏差是已知且刻意接受的：① `prepareSvg` 之后的串比原文少了
+   * `width`/`height`、多了一段 style，差几十字节；② UTF-8 字节数在纯 ASCII 的
+   * matplotlib 路径数据上等于 JS 里的驻留字节数，图内中文多的时候**高估**
+   * （UTF-8 3 字节 / JS 2 字节）。内存预算宁可高估。
+   */
+  svgBytes: number
+  /**
+   * 这一版的矢量 payload 被字节预算清掉了（`SVG_RECENT_BUDGET_*`）。
+   *
+   * **它不是「渲染失败」，也不是 raster 档**：manifest / rev / lastPatches /
+   * timings 一个字都没丢，几何权威照旧是这一版（不变量 4）。丢的只有 SVG 源文本。
+   * 三条后果，缺一不可：
+   *
+   *   1. `panelDisplayView` 报 `kind: 'evicted'`——诚实地说「挂的就是这一版，
+   *      只是画法改成位图」，而不是掉进 `fallback` 去显示**另一个变体**的图；
+   *   2. `PanelView` 与 raster 走同一条位图链路，画面不空（ADR 0022 §8）；
+   *   3. `useEngineSync` 会为它重排一次渲染——MCP 内嵌画布**没有**第二条取像素
+   *      的路（`previewPngUrl` 只在 raster 档有缓存位图），重画是那里唯一的出路。
+   */
+  svgEvicted: boolean
+  /**
+   * 这份 payload 是在第几号请求上落地的（`requestSeq`）。**驱逐顺序的唯一尺子**：
+   * 跨文件比较时 `recent` 的下标不可比，而全局预算恰恰要跨文件排序。
+   * 没有 payload 时是 0。
+   */
+  svgSeq: number
+  /**
    * 这一版该用哪种预览表示法（ADR 0022）。老后端不返回 `preview` 时是
    * `VECTOR_PREVIEW`，行为与从前逐字节一致。
    *
@@ -87,6 +121,9 @@ const EMPTY: PanelRender = {
   rev: 0,
   manifest: null,
   svg: null,
+  svgBytes: 0,
+  svgEvicted: false,
+  svgSeq: 0,
   preview: VECTOR_PREVIEW,
   status: 'idle',
   error: null,
@@ -212,6 +249,12 @@ interface RenderState {
    * （前者是 panelRender 的退路，后者是撤销的落点）。
    */
   prune: (live: Set<string>) => void
+  /**
+   * 让驻留的 SVG payload 回到预算之内（`SVG_RECENT_BUDGET_*`）。
+   * **只丢 payload，不丢条目**——语义状态一个字都不动，见 `dropSvgPayload`。
+   * 没超预算时**一个 set 都不发**。
+   */
+  evictSvgBudget: () => void
   /** 换项目：渲染态、跟踪表、在途账本一起归零 */
   clear: () => void
 }
@@ -228,6 +271,148 @@ const inflight = new Map<
  * 4 档 × 一份 SVG 是明确的内存上限，imshow 面板最坏约几 MB/文件。
  */
 const RECENT_VARIANTS = 4
+
+/* -------------------------------------------------------------------------- */
+/*  SVG payload 的字节预算（issue #181 Session 04）                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 上面那条 `RECENT_VARIANTS = 4` 是**条目数策略**，它管不住内存——
+ * **条目数不是字节预算**。普通科研图一份 SVG 是几十到几百 KB，4 档合起来
+ * 也就 1 MB 上下；而 #181 那一类图在 hybrid 之后仍可能是 8～12 MiB 一份，
+ * 4 档 × 几个文件就是几百 MB 常驻在 JS 堆里——每一份都是「用户可能撤销回去」
+ * 的合法缓存，`prune` 一个都不该清。
+ *
+ * 所以两条策略并存，各管一维：
+ *
+ * ```text
+ * entry-count policy   RECENT_VARIANTS       管「留几档语义状态」
+ * byte-budget policy   SVG_RECENT_BUDGET_*   管「留几档矢量 payload」
+ * ```
+ *
+ * **超预算时丢掉的只有 `svg` 字符串本身**，条目留着：manifest / rev /
+ * lastPatches / wantPatches / timings / preview 元数据 / status / stale
+ * 一个字都不动。语义状态 ≠ SVG 源 payload——这是本节的全部要点。
+ *
+ * ⚠️ 这两个数量的是 **JS 侧驻留的 SVG 源文本 payload**，**不是 Chromium
+ * 渲染进程的 DOM 内存预算**。同一份 SVG 展开成 DOM 之后的开销高一个数量级
+ * 以上（#181 的 126 MB 文本 = 66 万个节点），那一侧由 ADR 0022 的硬闸
+ * （`EDITOR_SVG_HARD_LIMIT_BYTES`）与 hybrid 档负责，与这里的预算无关。
+ *
+ * 数值的来路：单份 payload 的上限已经被硬闸钉在 16 MiB，所以**每文件预算取
+ * 与硬闸同值**——「一个文件最多留得下一份最大的合法 SVG」是个说得清的口径，
+ * 而普通图（几百 KB）在它之下能留满 4 档还富余一个数量级。全局取 4 倍：
+ * 拼版文档常见 4～8 个图，热点通常只有一两个。
+ */
+export const SVG_RECENT_BUDGET_PER_FILE = 16 * 1024 * 1024
+export const SVG_RECENT_BUDGET_GLOBAL = 64 * 1024 * 1024
+
+/**
+ * 这一份 payload 记多少字节。**不复制字符串**（见 `PanelRender.svgBytes`）。
+ *
+ * 优先信后端：`preview.svg_bytes` 就是 `stat().st_size`，与硬闸量的是同一个
+ * 东西，两侧口径天然一致。老后端（没有 `preview` 字段）退回 `svg.length`
+ * ——UTF-16 码元数，在 matplotlib 的路径数据上就是字节数，图内中文多时会
+ * 低估，但那条路本来就是兼容分支，且真正的保护是硬闸而不是这套预算。
+ */
+export function svgPayloadBytes(svg: string, preview: PreviewMetadata): number {
+  return preview.svg_bytes > 0 ? preview.svg_bytes : svg.length
+}
+
+/**
+ * 此刻**驻留**的 SVG payload 字节数（全局 + 按文件）。
+ *
+ * 刻意做成**每次现算**而不是维护一本账：账本是第二份权威，而它与 `byKey`
+ * 一旦分叉，没有任何信号会告诉你哪一份算数（少减一次 → 预算越收越紧、
+ * 最后每次渲染都在驱逐；少加一次 → 预算形同虚设）。条目数被 `prune` 与
+ * `RECENT_VARIANTS` 压在几十条量级，现算是几十次加法。
+ *
+ * 判据吃的是 `svg != null`，不是 `svgBytes > 0`：驱逐后忘了把 `svgBytes`
+ * 归零的实现在这里也算不出多余的字节。
+ */
+export function residentSvgBytes(state: Pick<RenderState, 'byKey'>): {
+  total: number
+  byFile: Record<string, number>
+} {
+  let total = 0
+  const byFile: Record<string, number> = {}
+  for (const v of Object.values(state.byKey)) {
+    if (v.svg == null) continue
+    total += v.svgBytes
+    byFile[v.fileId] = (byFile[v.fileId] ?? 0) + v.svgBytes
+  }
+  return { total, byFile }
+}
+
+/**
+ * 画布上现存面板的变体键。`prune(live)` 每轮同步都会把它刷新一遍。
+ *
+ * 放在模块级而不是 store 里（与 `inflight` 同一地位）：它不是 UI 状态，
+ * 写进 store 只会让每一轮同步都换掉一次 state 引用。
+ *
+ * 它的唯一用途是**驱逐时的 pin**：一个面板此刻挂着的那份 payload 绝不能被
+ * 内存预算清掉（ADR 0022 §8 / Session 04 §7）——尤其在 Codex 内嵌画布里，
+ * 那份 SVG 就是**唯一**能显示的东西，清掉 = 画布空白。
+ */
+const liveKeys = new Set<string>()
+
+/**
+ * 这份 payload 能不能被驱逐。**三条 pin**，每条都对应一种「清了就没画面」：
+ *
+ *   1. `liveKeys` —— 画布上有面板正指着它；
+ *   2. `latest[fileId]` —— 该文件的显示退路（新变体还没画出来时挂的就是它）；
+ *   3. 在途 / 正在渲染 —— 结果还没回来，此刻画面上挂的仍是它这一份。
+ */
+function pinned(
+  key: string,
+  v: PanelRender,
+  latest: Record<string, string>,
+): boolean {
+  return (
+    liveKeys.has(key) ||
+    latest[v.fileId] === key ||
+    v.status === 'rendering' ||
+    inflight.get(key)?.busy === true
+  )
+}
+
+/**
+ * 驱逐次序。数字小的先丢：
+ *
+ * ```text
+ * 0  不在 recent 里的历史 payload —— 没人会撤销到它（prune 迟早也会整条清掉）
+ * 1  recent 里的老档            —— 撤销的落点，但排在「没人要的」之后
+ * ```
+ *
+ * 同一档内按 `svgSeq` 升序，也就是**最久没更新的那份先丢**。用 `svgSeq` 而
+ * 不是 `recent` 的下标，是因为全局预算要跨文件排序，而下标在文件之间不可比。
+ */
+function evictionRank(key: string, v: PanelRender, recent: Record<string, string[]>): number {
+  return recent[v.fileId]?.includes(key) ? 1 : 0
+}
+
+/** 可驱逐的条目，按「先丢谁」排好序 */
+function evictionOrder(
+  byKey: Record<string, PanelRender>,
+  latest: Record<string, string>,
+  recent: Record<string, string[]>,
+  onlyFile?: string,
+): string[] {
+  return Object.entries(byKey)
+    .filter(([k, v]) => v.svg != null && !pinned(k, v, latest))
+    .filter(([, v]) => onlyFile == null || v.fileId === onlyFile)
+    .sort(([ka, a], [kb, b]) => {
+      const ra = evictionRank(ka, a, recent)
+      const rb = evictionRank(kb, b, recent)
+      return ra !== rb ? ra - rb : a.svgSeq - b.svgSeq
+    })
+    .map(([k]) => k)
+}
+
+/** 丢掉一份 payload：**只动 svg 三件套**，其余字段一个都不碰 */
+function dropSvgPayload(v: PanelRender): PanelRender {
+  return { ...v, svg: null, svgBytes: 0, svgEvicted: true, svgSeq: 0 }
+}
 
 /**
  * 渲染请求的全局单调序号。用途只有一个：判断一次成功回来的响应**是不是最新
@@ -367,13 +552,22 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
           const guarded = resolvePreview(res)
           next.preview = guarded.preview
+          // 这一版刚画完，无论拿没拿到 SVG，它都不再是「被预算清掉的那一版」
+          // ——留着 true 会让同步器一轮一轮地重排渲染（老后端从不返回 svg）。
+          next.svgEvicted = false
           if (guarded.svg != null) {
             next.svg = prepareSvg(guarded.svg)
+            // 记账用**原文**的字节数：`prepareSvg` 只改了 <svg> 头上那几十字节，
+            // 而后端给的 `preview.svg_bytes` 与硬闸量的是同一个东西
+            next.svgBytes = svgPayloadBytes(guarded.svg, guarded.preview)
+            next.svgSeq = seq
           } else if (guarded.preview.mode === 'raster') {
             // raster 是**这一版的裁决**：留着上一次的矢量 SVG 既占内存，
             // 又会让「画布上挂的是哪一版」说不清楚。后端没给 `svg` 而 mode
             // 仍是 vector（老服务端）时才走 else，保留上一版别刷成空白。
             next.svg = null
+            next.svgBytes = 0
+            next.svgSeq = 0
           }
           // 成功那一刻同时挪动该文件的「最近画好的那份」，并把这一档记进
           // 近期缓存。**晚到的旧请求只入库、不挪 latest**——撤销之后新变体
@@ -392,6 +586,17 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               recent: { ...s.recent, [fileId]: recent },
             }
           })
+          // 刚往堆里加了一份 payload：立刻把驻留字节收回预算之内。
+          // **在 set 之后单独走一趟**，不塞进上面那个 updater——驱逐要记诊断
+          // 事件，而 state updater 里不该有副作用。没超预算时它一个 set 都不发。
+          //
+          // **这一趟收不干净**，而且是按设计收不干净：`pinned()` 认
+          // `inflight.busy`，而此刻本键的 busy 还是 true（它要等外层 finally
+          // 才松），于是刚存进去的这一份**永远不在自己这一趟的候选里**。
+          // 最新那一版是 latest，本来就该 pin；但**晚到的旧变体**不是——它
+          // 既不在画布上也不是 latest，却同样被自己的 busy 挡住。收尾那一趟
+          // （外层 finally）才是让它收敛的那一次。
+          get().evictSvgBudget()
           recordDiagnosticEvent({
             type: 'render.success',
             file: fileHash(fileId),
@@ -454,6 +659,15 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       }
     } finally {
       slot.busy = false
+      // **松手之后再收一趟**：上面每一次成功都在自己的 busy pin 底下跑的
+      // 驱逐，漏掉的恰好是自己这一份。晚到的旧变体（12 MiB）+ 已上屏的最新
+      // 版（12 MiB）= 24 MiB 卡在 16 MiB 的每文件预算之上，而在下一次渲染
+      // 之前没有任何东西会再触发一趟——「等下次」不是收敛。
+      //
+      // 排队链（`slot.queued`）里每一轮也各漏一份，同样由这一趟兜底：busy
+      // 在整条链上一直是 true，那是对的（该键确实还在渲染），所以收敛点只能
+      // 放在链走完之后。没超预算时它一个 set 都不发，代价是一次纯读。
+      get().evictSvgBudget()
     }
   },
 
@@ -518,6 +732,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     }),
 
   prune: (live) => {
+    // pin 名单先刷新，**在早退之前**：这一轮没得清不代表画布上挂的还是上一轮
+    // 那几个变体，而驱逐正是靠它认「哪份 payload 现在有人在看」
+    liveKeys.clear()
+    for (const k of live) liveKeys.add(k)
     const s = get()
     const keep = (key: string, v: PanelRender) =>
       live.has(key) ||
@@ -544,8 +762,46 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     set({ byKey, recent })
   },
 
+  evictSvgBudget: () => {
+    const s = get()
+    let byKey = s.byKey
+    const drop = (key: string, scope: 'file' | 'global') => {
+      byKey = { ...byKey, [key]: dropSvgPayload(byKey[key]) }
+      recordDiagnosticEvent({
+        type: 'render.svg_evicted',
+        file: fileHash(byKey[key].fileId),
+        variant: variantHash(key),
+        scope,
+        bytes: s.byKey[key].svgBytes,
+      })
+    }
+    // 第一趟按文件。每文件独立收敛，否则一个大文件能把别人的近期档全挤掉。
+    for (const [fileId, bytes] of Object.entries(residentSvgBytes({ byKey }).byFile)) {
+      if (bytes <= SVG_RECENT_BUDGET_PER_FILE) continue
+      let left = bytes
+      for (const key of evictionOrder(byKey, s.latest, s.recent, fileId)) {
+        if (left <= SVG_RECENT_BUDGET_PER_FILE) break
+        left -= byKey[key].svgBytes
+        drop(key, 'file')
+      }
+    }
+    // 第二趟按全局，跨文件按同一把尺子（svgSeq）排。
+    let total = residentSvgBytes({ byKey }).total
+    if (total > SVG_RECENT_BUDGET_GLOBAL) {
+      for (const key of evictionOrder(byKey, s.latest, s.recent)) {
+        if (total <= SVG_RECENT_BUDGET_GLOBAL) break
+        total -= byKey[key].svgBytes
+        drop(key, 'global')
+      }
+    }
+    // **没驱逐就一个 set 都不发**：这个动作跟在每一次渲染成功后面，
+    // 每次都写一遍 store 等于给同步 effect 造一轮空转
+    if (byKey !== s.byKey) set({ byKey })
+  },
+
   clear: () => {
     inflight.clear()
+    liveKeys.clear()
     set({ byKey: {}, tracked: {}, latest: {}, latestSeq: {}, recent: {}, building: {} })
   },
 }))
@@ -662,6 +918,24 @@ export type PanelDisplayView =
       render: PanelRender
     }
   | {
+      /**
+       * 这一版画出来了，manifest 与几何权威都在，但它的**矢量 payload 被内存
+       * 预算清掉了**（`SVG_RECENT_BUDGET_*`）。显示上与 `raster` 同一档（位图），
+       * 区别只在成因：那个是引擎的裁决，这个是前端的保留策略。
+       *
+       * 它必须是一个**独立的档**，不能掉进 `fallback`：掉进去的话诊断里的
+       * `display_variant` 会指向另一个变体、`display_exact` 报 false，而画布上
+       * 挂的其实就是这一版——「manifest 有、画面无」和「画面是别人的」是两种
+       * 不同的错，两种都被 ADR 0022 §8 禁止。
+       */
+      kind: 'evicted'
+      currentKey: string
+      sourceKey: string
+      svg: null
+      manifest: Manifest
+      render: PanelRender
+    }
+  | {
       kind: 'fallback'
       currentKey: string
       sourceKey: string
@@ -695,6 +969,19 @@ export function panelDisplayView(
       currentKey,
       sourceKey: currentKey,
       svg: exact.svg,
+      manifest: exact.manifest!,
+      render: exact,
+    }
+  }
+  if (exact?.svgEvicted) {
+    // 这一版的 payload 被预算清掉了。**不许掉进下面的 fallback** ——那会让
+    // 画布显示另一个变体的图，而几何权威仍是这一版（issue #131 同款错配）。
+    // 显示由 PanelView 走位图链路补上；同步器会另行把这一版重画回来。
+    return {
+      kind: 'evicted',
+      currentKey,
+      sourceKey: currentKey,
+      svg: null,
       manifest: exact.manifest!,
       render: exact,
     }

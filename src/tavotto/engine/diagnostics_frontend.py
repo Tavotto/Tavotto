@@ -182,6 +182,7 @@ EVENT_FIELDS: dict[str, frozenset[str]] = {
     "render.success": frozenset(
         {"duration_ms", "element_count", "file", "rev", "size_mm", "variant", "warning_count"}
     ),
+    "render.svg_evicted": frozenset({"bytes", "file", "scope", "variant"}),
     "resize.begin": frozenset(
         {
             "anchor_from_document",

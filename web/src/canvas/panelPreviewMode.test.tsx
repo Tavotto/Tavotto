@@ -153,6 +153,22 @@ describe('PanelView：三档预览表示法', () => {
     expect(container.querySelector('[data-authority="syncing"]')).toBeNull()
   })
 
+  it('evicted：payload 被内存预算清掉，画法与 raster 同一档，命中层照旧在', async () => {
+    // 这一版画出来过（manifest / rev / lastPatches 都在），只是它的 SVG 被
+    // `SVG_RECENT_BUDGET_*` 收走了（issue #181 Session 04）。**成因不同，
+    // 显示策略相同**——绝不能出现「manifest 有、画面无」。
+    seed({ svg: null, svgBytes: 0, svgEvicted: true, preview: VECTOR_PREVIEW })
+    await mount()
+
+    expect(inlineSvg()).toBeNull()
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    expect(previewPng).toHaveBeenCalledWith('Fig1.pdf', PANEL.overrides, expect.any(Number))
+    // 几何权威一个字都不放松（不变量 4）
+    expect(hitLayer()).not.toBeNull()
+    // 诊断上诚实地说「挂的就是这一版」，而不是 fallback 到别的变体
+    expect(container.firstElementChild?.getAttribute('data-display')).toBe('evicted')
+  })
+
   it('退回窗口里表示法跟着 SVG 走：raster 面板不闪一下矢量图', async () => {
     // 用户刚改完一个值：**自己这一版还没画出来**（新键，没有 manifest），
     // 画布退回该文件最近画好的那份——而那份是 raster。
