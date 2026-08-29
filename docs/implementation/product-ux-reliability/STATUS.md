@@ -138,6 +138,21 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 | `python scripts/build_mcp_widget.py` | ✅ 已重建（改了 `web/src/lib/api.ts`） |
 | 变异反证 29 条 | ✅ 全部 KILLED（记录见 `TEST_MATRIX.md`；**其中 3 条第一轮活了下来**，判据已加固） |
 
+### 评审回合 1 之后（PR #201，改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3102** passed / 34 skipped / 2 deselected（比 04 首轮 +9），9 分 18 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— 118 files / **1371** tests passed（+1） |
+| `cd web && pnpm build` / `i18n:check` / `lint` | ✅ exit 0（`resources.d.ts` 已重新生成） |
+| `ruff check . && ruff format --check .` / `git diff --check` | ✅ exit 0 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `0433b760e29720c5`） |
+| 变异反证 6 条 | ✅ 全部 KILLED（**1 条第一轮活了下来**：修订号挪到锁外读） |
+
+> **canvas.html 要在所有 `web/src` 改动之后再重建。** 本轮先重建、后跑
+> `i18next-cli types`（它写 `web/src/i18n/resources.d.ts`），于是同步判据在
+> 全量跑到 94% 时红了——产物是对的，只是比源码早了三分钟。
+
 > 跑全量时**别再多加一个 `-q`**：`pytest.ini` 的 `addopts` 里已经有一个，
 > 叠成 `-qq` 会把最后那行统计**整个吞掉**——于是"跑过了"只剩一个退出码，
 > 数字无从核对。
