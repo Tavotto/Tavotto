@@ -210,15 +210,13 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
     timeout: 30_000,
   })
 
-  // ── 2. 把图放上画布：Tab 到素材卡，Enter 加入 ────────────────────────
+  // ── 2+3. 打开这张图：Tab 到素材卡，Enter ────────────────────────────
+  // Prompt 09 起 Enter = 打开（快速编辑工作区），**当场就在图内编辑态**；
+  // 从前要先「加入画布」、再 Tab 到属性栏点一次「编辑图内元素」。
   await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
   await tabTo(page, 'css=[data-card="Fig1_kinetics.pdf"]')
   await page.keyboard.press('Enter')
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-
-  // ── 3. 进入图内编辑：Tab 到属性栏的「编辑图内元素」，Enter ────────────
-  await tabTo(page, '编辑图内元素')
-  await page.keyboard.press('Enter')
   // **同步点显式化**（#138）：进图内编辑会触发首次构建（跑一遍脚本）。构建完成
   // 前属性栏还没渲染，页面上一个 input 都没有，webkit 的普通 Tab 因此进不了文档。
   // 在这里等到「有元素可供普通 Tab 进入」，下面那串 Tab 才是在测键盘可达性，
@@ -374,7 +372,7 @@ test('快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter �
   await page.goto(a.baseURL)
   await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
   await tabTo(page, 'css=[data-card="Fig1_kinetics.pdf"]')
-  await page.keyboard.press('Enter') // 面板上画布并被选中
+  await page.keyboard.press('Enter') // 打开这张图（快速编辑工作区）
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
   // 面板选中时 Enter 的画布捷径是「进入图内编辑」；但焦点若在顶栏按钮上，

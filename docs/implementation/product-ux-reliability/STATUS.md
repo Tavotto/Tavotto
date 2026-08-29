@@ -91,6 +91,7 @@
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
 | R-16 | **E2E 只有 Windows 腿** | 既有 issue #30 | P2 | 23 |
+| R-19 | **e2e 与 axe 两层在 05–09 里从没真跑过**：Session 08 新增两条 axe 用例、Session 09 改了 8 个 spec 的「打开」语义，两轮都只做到 `playwright test --list` 收得到。**收得到 ≠ 跑得过** | 本机沙箱起不来真实后端 + 浏览器 | P2（门禁未执行） | 23 |
 | R-17 | 前端主 chunk 1.57 MB（gzip 487 kB），构建有大小告警 | `pnpm build` 输出 | P3 | 23 |
 | R-18 ✔ | **N-1 升级验收里两个检查是空的**：① 它 PUT 给 `/api/autosave/` 的是 `{"doc":…, "updatedAt":…}`，没有 `schema`，后端从**一开始**就 400，异常被 `except` 吞成 `autosave_saved=False`，于是"自动保存读得回来"这条检查**从来没跑过**；② `"老布局可列出"` 对 `layouts`（一个字符串列表）做 `x.get("name")`，必然 `AttributeError` 被同一个 `except` 接住记成 False | `scripts/ci/upgrade_acceptance.py:344,353,455` | P1（门禁空转） | 23 |
 

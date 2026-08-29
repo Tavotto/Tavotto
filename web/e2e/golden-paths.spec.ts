@@ -65,6 +65,9 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // 双击素材把面板放上画布
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
+  // Prompt 09：双击 = 打开（快速编辑）。标注工具画的是**画布对象**，
+  // 只在画布排版模式下有落点——先回排版再用它们。
+  await page.getByRole('button', { name: '画布排版' }).first().click()
 
   // 文字工具加一段带上标的标注，验证行内标记在画布上真的渲染成上标
   await page.getByRole('button', { name: '文字' }).click()

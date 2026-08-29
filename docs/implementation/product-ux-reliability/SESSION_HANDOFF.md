@@ -156,6 +156,10 @@ ASSUMED_DPI / ASSUMED_DPI_DEFAULT         # 明确 fallback（值与改造前相
                                                  删掉死掉的 assets.addAria
 改动  web/src/i18n/overflow.test.tsx             +6 条字数预算
 改动  web/src/components/left/AssetBrowser.runtime.test.tsx  主动作改名跟着改
+改动  web/e2e/*.spec.ts（8 个）                 双击卡片已经进图内编辑态，
+                                              「编辑图内元素」那一步整批删掉；
+                                              golden-paths 用标注工具前先回排版
+                                              （**本轮没真跑过**，见尚存限制）
 改动  AGENTS.md                                  +一行严格同源对（dpi_source 闭集）
 改动  src/tavotto/AGENTS.md / web/AGENTS.md      长期规则的家
 重建  codex-plugin/mcp/widget/canvas.html        指纹 e8a2c128a5200354
@@ -229,7 +233,14 @@ ruff check . && ruff format --check .
 6. **窄屏下快速编辑浮动条没有实测过**。它是一条 flex 行，jsdom 量不出溢出；
    英文字数预算已经进了 `overflow.test.tsx`，但真实断行要等 e2e（issue #30 的
    POSIX 腿仍然缺）。
-7. 04–08 的其余遗留原样开着（R-05 五处手写原子写、R-07 autosave 位置、
+7. **e2e 这一层本轮没有真跑过**（与 Session 08 的 axe 同一条限制：Playwright
+   要真实后端与浏览器，本机沙箱里起不来）。改动是**必需的**——「打开」的语义
+   变了，8 个 spec 里「双击卡片 → 再点一次『编辑图内元素』」的那一步现在会
+   点到一个不存在的按钮。改法一致（删掉那一步；`golden-paths` 用标注工具前
+   先点「画布排版」回去），`playwright test --list` 收得到全部 110 条，
+   但**收得到 ≠ 跑得过**。23 之前必须真跑一次，这一条与 axe 那条一起记在
+   `STATUS.md` 的遗留表里。
+8. 04–08 的其余遗留原样开着（R-05 五处手写原子写、R-07 autosave 位置、
    `/api/layouts/<name>` 无 schema 校验、axe 那两条从没真跑过）。
 
 ### 工作树状态

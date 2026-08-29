@@ -734,6 +734,7 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 | `web/src/canvas/fastEditStage.test.tsx` | 8 | 快速编辑这一屏只画那一张图、没有页面纸；排版模式照旧画整张版；两个出口都在；**切进切出文档一个字节没动**（比整份 doc 的 JSON + 历史长度）；没有源脚本时说清原因并给出下一步；**规格不确定时说出来**（假定密度 / 上次已知 / 尺寸未知三档各一条） |
 | `web/src/i18n/overflow.test.tsx` | +9 | 新文案的英文字数预算（模式标签 / 两个出口 / 降级说明条 / 素材卡「打开」） |
 | `web/src/components/left/AssetBrowser.runtime.test.tsx` | 改 1 | 素材卡主动作换成「打开」之后，落面板那一步仍然把描述符交给 `addRuntimePanel`（反证 #2 原样成立） |
+| `web/e2e/*.spec.ts` | 改 8 个文件 | 「打开」的语义变了：双击卡片当场进图内编辑态，8 个 spec 里「再点一次『编辑图内元素』」那一步会点到一个不存在的按钮，整批删掉；`golden-paths` 用标注工具前先回画布排版。**本轮没有真跑过**（Playwright 要真实后端与浏览器），只确认 `playwright test --list` 收得到全部 110 条 |
 
 ## Session 09 的变异反证（26 条，全部被打红）
 
