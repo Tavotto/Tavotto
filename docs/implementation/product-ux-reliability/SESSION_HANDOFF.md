@@ -5,113 +5,139 @@
 
 ---
 
-## 最近一次：Session 03（2026-08-29）
+## 最近一次：Session 04（2026-08-29）
 
 ### 目标
 
-保存状态机 / autosave / 崩溃恢复 / 编辑历史。优先啃三条 P1：
-**R-06**（没有显式保存状态机）、**R-08**（没有外部修改冲突检测）、
-**R-03**（版本检查点没有画布身份）。
+后端统一 refresh：让手动刷新、后续 watcher、Codex MCP、内置 AI 与
+RegistryDialog 调同一条逻辑，并新增显式 `POST /api/project/refresh`。
+本阶段**只做后端刷新核心**——不实现项目 watcher（05），不改前端消费（06），
+不碰 matplotlib 解析算法。
 
 ### 实际完成
 
-裁决全文在 **`docs/adr/0024-save-lifecycle-and-external-change.md`**。
+裁决全文在 **`docs/adr/0025-unified-project-refresh.md`**。
 
-**R-06 保存状态机。** `documentStore` 新增两个字段：
+**新模块 `src/tavotto/engine/project_refresh.py`。** 编排全在
+`refresh_project_index()`：
 
-- `saveState`：`clean | dirty | saving | saved | save_error | conflict`；
-- `saveIssue`：保存卡住的原因（`io` / `stale` / `external`）+ 磁盘那份的摘要。
-
-外加**一根正交的轴** `docNotice`（`recovery` / `schema_too_new`）。
-Prompt 03 §二 把 `recovery_available` / `read_only` 与那六个并列，我们**没有**
-照抄——它们与保存进度是两根互不相干的轴，塞进同一个枚举会互相顶掉（实现过程中
-真的撞见：一次成功的自动保存把刚设上的 `recovery_available` 覆盖掉，而副本还在
-本机躺着）。理由写在 `DECISIONS.md` T-10。
-
-状态的唯一写入口是 `setSaveState()` / `setDocNotice()`，别在别处 `setState`。
-
-**R-08 外部修改检测。** `PUT /api/autosave/<id>` 新增 `?base_revision=`
-（内容 hash，02 备好的 `content_revision`），强于既有的 `?base=`（updatedAt）。
-判据**两条边都钉住**：哨兵 `base_revision=absent` 表示「我读过，磁盘上没有」。
-基线缺席时一律先 GET 确认一次，**没有例外**。冲突未决时只写本机副本，一次都
-不再撞磁盘；三个出口 = 重新加载 / 明确覆盖 / 另存为。
-
-**崩溃恢复。** 改造前 `readAutosaveDoc` 按 `updatedAt` 挑赢家并立刻推回磁盘
-（= Prompt 明令禁止的「启动时自动覆盖主文档」）。现在主文档照常打开，本机副本
-**挪**进 `tavotto.recovery.<id>` 等裁决；恢复只进内存并置 `dirty`，用户确认保存
-后才覆盖主文档。
-
-**R-03 检查点的画布身份。** 检查点记 `canvasId` + `canvasName`，落点判据在
-`web/src/lib/versionTarget.ts` 一处（`same` / `other` / `missing` / `unknown`
-四条分支，后三条都要用户点头）。自动检查点的去重判据也加上画布身份。
-
-**顺带修掉三处**（都是这次改动直接照出来的）：
-
-1. `⌘S` 原本打开「保存为画布文件」对话框。现在 `⌘S` = 真的保存并**等到磁盘
-   写完**，`⇧⌘S` = 另存为；`⌘S` 在输入框/对话框里也拦（否则浏览器弹「保存网页」）。
-2. `beforeunload` 只在有未落盘工作时拦，且**先读状态再冲刷**——反过来
-   `flushAutosave()` 会把状态推成 `saving`，于是干净文档每次刷新都拦一次。
-3. 排队中的写入带走**排队那一刻**的 `pj`：`dropProject()` 先冲刷再忘掉 pj，
-   而 PUT 要过几个 await 才发出，读全局的话这份自动保存落进后端的默认项目。
-
-### 关键 API（Prompt 04 及之后可以直接用）
-
-```ts
-// web/src/store/documentStore.ts
-type SaveState = 'clean'|'dirty'|'saving'|'saved'|'save_error'|'conflict'
-type DocNotice = {kind:'recovery', docId, summary} | {kind:'schema_too_new', docId, schema}
-useDocumentStore: { saveState, saveIssue, docNotice, ... }
-
-saveNow(): Promise<SaveState>          // 真实保存，等到磁盘写完
-hasUnsavedWork(state): boolean         // 关闭保护、切文档提示都问它
-reloadFromDisk(): Promise<boolean>     // 加载前把内存版本挪进恢复槽位
-overwriteDisk(): Promise<SaveState>    // 拿 409 回的 hash 当基线，不是清空基线
-recoverLocalCopy() / discardLocalCopy() / dismissDocNotice()
-readAutosaveDoc(id): Promise<{ doc, notice }>   // ← 返回结构变了
-
-// web/src/lib/versionTarget.ts
-resolveRestoreTarget(meta, {activeCanvasId, canvases}): RestoreTarget
-
-// web/src/lib/session.ts
-apiUrlFor(path, pj) / withProjectFor(init, pj)   // 排队稍后才发出的写入用这两个
+```text
+项目锁 → registry 前快照 → 静态 merge（内容变了才写盘）→ reload
+→ registry 后快照 → 结构化 diff → 素材清单（与**上一轮**比）
+→ 作废关系真的变了的 worker（限本项目）
+→ 被盯的脚本集合变了才重挂 watcher
+→ 有差异才发 `registry.changed` / `assets.changed`
 ```
 
-后端：
+SSE 与 watcher 两个副作用出口由 app 层**注入**（`RefreshSink`）。模块本身纯
+标准库、不 import Flask，**连 `engine/documents` 都不 import**——「派生刷新
+不碰文档」因此是结构性的，不是一条注释。
+
+**`app.py` 的 `reload_registry()` 已删。** 它的两件事（重装 + 重挂 watcher）
+都在服务里，而它还漏了第三件：作废过期 worker。三个老调用点
+（`/api/registry/scan`、probe 成功、`PUT /api/registry`）全部改走
+`app.refresh_project()`，**旧响应与旧事件形状逐字保留**。
+
+**三处判据上的裁决**（理由见 `DECISIONS.md` T-14 / T-15 / T-16）：
+
+1. **素材 diff 与上一轮比**，不与同一次调用里的前后比——刷新一个字节都不碰
+   素材，那样的 diff 恒等于空，而恒等成立的 diff 看起来和「什么都没变」
+   一模一样。基线在项目打开时 `seed_state()` 落一份；没有基线的那一轮报
+   `assets.baseline=true`，不报「没变化」。
+2. **没跑静态扫描时 `conflicts` 是 `null`**，不是 `{}`：合并成空表等于把
+   「不知道」说成「已确认没有冲突」（同 Session 03 的 T-12）。
+3. **watcher 认自己写的那一下靠内容修订号**，不靠「写完忽略两秒」。顺带把
+   源头堵上：无变化的刷新**不回写**注册表（按字节比），于是 mtime 不动。
+
+**顺手清掉 R-05 的一处**：`discover.write_config()` 并进 `engine/atomicio`
+（原来没有 fsync——`os.replace` 只保证「要么旧要么新」，掉电时 replace 出来的
+是空文件，而注册表随图库走）。看护它的两条用例原本钉在 `Path.replace` 上，
+`atomicio` 调的是 `os.replace`：**桩挂不上就会恒绿**，注入点一并挪过去。
+
+### 关键 API（Prompt 05 及之后直接用）
 
 ```python
-# src/tavotto/app.py
-REVISION_ABSENT = "absent"
-_revision_conflict(base_revision, current) -> bool   # 两侧故意不对称
-document_summary(path) -> dict | None                # 读不出来回 None，不回空壳
-GET /api/autosave/<id>/summary                       # 冲突面板用
+# src/tavotto/app.py —— app 层唯一入口，别在别处再写第二条
+refresh_project(ctx, *, reason, allow_static_merge=True,
+                changed_paths=None, publish=True) -> dict
+
+# src/tavotto/engine/project_refresh.py
+refresh_project_index(ctx, *, reason, changed_paths=None,
+                      allow_static_merge=True, publish=True, sink=None) -> dict
+RefreshSink(publish=..., watch=...)      # 两个副作用出口，app 层注入
+RefreshError(code, message, params)      # 稳定 code：scan_failed / registry_reload_failed
+RefreshState                             # 每项目一份，挂在 ProjectCtx 上随项目消亡
+seed_state(ctx)                          # 项目打开时落基线（素材 + 注册表修订号）
+state_of(ctx) -> RefreshState
+is_self_written(ctx) -> bool             # ← 05 的 watcher 用它认自己写的那一下
+iter_assets(root) -> [(Path, kind)]      # 「哪些文件算素材」的唯一判据
+asset_inventory(root) -> {id: {kind, size, mtime_ns}}
+registry_snapshot(reg) / diff_registry(a, b) / diff_assets(a, b)
+normalize_reason(raw) -> str
+REASONS = ("manual","watcher","registry","probe","codex","ai","open","external")
+EXCLUDE_DIRS / PDF_EXT / IMG_EXT         # app.py 里同名常量只是别名
 ```
 
-新增错误 code：**`external_change`**（已登记进 `USER_VISIBLE_CODES` + 双语文案）。
+返回结构（`/api/project/refresh` 原样返回；TS 类型在
+`web/src/lib/api.ts::ProjectRefreshResult`）：
+
+```jsonc
+{
+  "reason": "manual",
+  "registry": {
+    "added_scripts": [], "removed_scripts": [], "changed_scripts": [],
+    "script_changes": {"a.py": ["entry", "stems"]},
+    "added_stems": [], "removed_stems": [],
+    "moved_stems": [{"stem": "S", "from": "a.py", "to": "b.py"}],
+    "conflicts": null,           // null = 这一轮没扫，**不是**「没有冲突」
+    "conflicts_changed": false
+  },
+  "assets": {"added": [], "removed": [], "changed": [], "baseline": false},
+  "scripts": {},                 // 刷新后的完整注册表 = 「当前已登记脚本集合」
+  "changed_paths": [],           // 只认进程内调用方给的；HTTP 上忽略
+  "merge": {"added_scripts": [], "added_stems": {}},   // 旧 scan 响应的 changes
+  "registry_revision": "…",
+  "published": ["registry.changed"]                    // 真的发出去的那些
+}
+```
+
+SSE（前端类型已补齐，**没有加任何 handler**）：
+
+```jsonc
+// registry.changed —— 一次刷新至多一条，无差异一条不发
+{"pj": "…", "reason": "manual",
+ "scripts": [], "stems": [], "added_scripts": [], "removed_scripts": [],
+ "changed_scripts": [], "conflicts": {},
+ "script": "只有恰好一个脚本变时才有（老客户端）"}
+
+// assets.changed（新）
+{"pj": "…", "reason": "manual", "ids": [], "added": [], "removed": [], "changed": []}
+```
+
+新增错误 code：**`registry_reload_failed`**（`{reason}`，已进
+`USER_VISIBLE_CODES` + 双语文案）。`tests/test_error_codes.py` 的扫描范围加上
+了 `engine/project_refresh.py`——码表看不见的模块 = 没有门禁。
 
 ### 迁移
 
-**没有数据迁移，磁盘格式一个字节没动。** 新增的只有 localStorage 里的
-`tavotto.recovery.<id>` 键（旧版本没有它，缺席 = 没有待恢复副本）。
-旧前端不发 `base_revision`，后端照常走 `base` 那条判据。
+**没有数据迁移，磁盘格式一个字节没动。** `tavotto_registry.json` 的内容与
+写法都不变（只是落盘换成 `atomicio`，多了 fsync）。旧前端收到批量
+`registry.changed` 只会照旧重取清单；`assets.changed` 它不认，静默忽略。
 
 ### 修改的文件
 
 ```text
-新增  web/src/components/DocumentBanner.tsx     冲突/恢复/只读的常驻提示条
-新增  web/src/lib/versionTarget.ts              恢复落点判据（+ 用例）
-新增  web/src/store/saveStateMachine.test.ts    22 条
-新增  web/src/hooks/useVersionCheckpoints.test.ts
-新增  docs/adr/0024-save-lifecycle-and-external-change.md
-改动  web/src/store/documentStore.ts            状态机 + 恢复 + 冲突（大头）
-改动  web/src/lib/api.ts / session.ts           base_revision、显式 pj
-改动  web/src/components/{TopBar,VersionDialog,CommandPalette,ShortcutHelp,App}.tsx
-改动  web/src/hooks/{useKeyboard,useVersionCheckpoints}.ts
-改动  web/src/store/actions.ts                  runManualSave + openRecentDocument
-改动  web/src/types/document.ts                 SCHEMA_CURRENT（严格同源对）
-改动  src/tavotto/app.py                        外部修改检测、摘要端点、画布身份
-改动  tests/test_document_persistence.py        +11
-改动  AGENTS.md                                 登记 schema 同源对
-重建  codex-plugin/mcp/widget/canvas.html       改了 web/src 就要重建
+新增  src/tavotto/engine/project_refresh.py    统一刷新服务（唯一编排）
+新增  tests/test_project_refresh.py            38 条
+新增  docs/adr/0025-unified-project-refresh.md
+改动  src/tavotto/app.py                       scan_panels 共用判据、refresh_project、
+                                               新端点、错误漏斗、删 reload_registry
+改动  src/tavotto/engine/discover.py           write_config → atomicio（R-05 少一处）
+改动  tests/test_discover.py                   故障注入点 Path.replace → os.replace
+改动  tests/test_error_codes.py                扫描范围 + RefreshError 漏斗
+改动  web/src/lib/api.ts                       事件与 /api/project/refresh 的**类型**
+改动  web/src/i18n/locales/{zh-CN,en-US}/errors.json + resources.d.ts
+重建  codex-plugin/mcp/widget/canvas.html      改了 web/src 就要重建
 ```
 
 ### 测试命令与真实结果
@@ -127,35 +153,55 @@ ruff check . && ruff format --check .
 python scripts/build_mcp_widget.py
 ```
 
-结果见 `STATUS.md` 的「Session 03 之后」表：后端 3053 passed、前端 1370 passed，
-六条命令全部 exit 0。**24 条变异逐一反证，全部被打红**（记录见 `TEST_MATRIX.md`）。
+结果见 `STATUS.md` 的「Session 04 之后」表。**29 条变异逐一反证，全部被打红**
+（记录见 `TEST_MATRIX.md`）。
 
-### 这一轮变异反证抓到的两件事（值得下一个 Session 记住）
+> `pnpm i18n:check` 会因为 `resources.d.ts` 过期而红：加了 errors 的 key 之后
+> 跑一次 `pnpm exec i18next-cli types` 并提交生成结果。
 
-1. **变异跑之前先提交。** 脚本用 `git checkout -- <file>` 还原，会吃掉中途按
-   变异结论改好的修复。本轮 `rememberRevision` 的修复就这么被还原掉一次，
-   靠「锚点找不到」才发现。
-2. **变异证伪过一次实现，不只是判据。** 「读到了但拿不到修订号」既不能当成
-   「磁盘上没有」（后端 409），也不能当成「没确认过」（每次都探、每次判冲突），
-   两条捷径都把文档锁成永远存不上。`diskRevision` 因此有第三档 `null`。
+### 这一轮变异反证抓到的（值得下一个 Session 记住）
+
+**三条活下来的变异是同一个形状：判据把结论当成了前提。**
+
+1. **并行刷新**——在测试里拿住 A 的那把锁，等于假设被测代码用的正是那把；
+   换成全局大锁照样绿。改成从**里面**卡住 A（让它停在自己的临界区）。
+   补完还不够：「B 最终回来了」在两种实现下都成立（A 的等待迟早超时放行），
+   要断言的是 B 刷完的**那一刻** A 还没出来。
+2. **`changed_paths`**——只喂项目外的路径，而那些本来就会被规整器丢掉，
+   「端点认不认这个字段」根本没被量到。
+3. **registry 快照**——只量「`load_data` 之后还在」，而今天 `load_data` 把每个
+   容器都重建，浅拷贝碰巧也够；量的是 `Registry` 的实现细节，不是这个函数
+   自己的承诺。补第二维：原地改同一个 list。
+
+另外两条经验：
+
+* **恒等成立的 diff 与「什么都没变」长得一模一样。** 素材 diff 第一版照着
+  Prompt 的流程写（同一次调用里前后比），跑起来永远是空的，没有任何信号提醒
+  ——是一条真的加了图片的用例把它红出来的。
+* **桩挂不上的用例会恒绿。** `write_config` 换成 `atomicio` 之后，钉在
+  `Path.replace` 上的故障注入打不中了；那条用例是以 `DID NOT RAISE` 红出来的
+  （它的注释早写明了这个红法），换一条形状就会静默变成空门禁。
 
 ### 尚存限制
 
-1. **「编辑历史」入口还在文档菜单里**，不是 Prompt 03 §六 要的左上区域独立入口。
-   左栏形态由 Prompt 08 定，同一块区域不该两个 Session 各摆一次。
-   抽屉本身已经区分 undo 栈 / 检查点 / 恢复，内容层面达标。
-2. **autosave 仍在数据目录**（R-07）：搬进项目会改变「项目拷到另一台电脑带不带
-   工作副本」的语义，单独处置。
-3. **`/api/layouts/<name>` 仍不做 schema 校验**（ADR 0023 §5a），前置是修 R-18。
-4. **没有 index.json**：`/api/layouts` 仍靠 glob 现算。
-5. `engine/` 里另外五处手写原子写仍未并入 `atomicio`（R-05）。
+1. **项目 watcher 还没有**（R-13）：脚本 watcher 仍是 mtime 轮询、事件一条一条
+   直接 `sse_publish`。入口已经在（`app.refresh_project()`），归 Prompt 05。
+2. **前端还没消费**：`assets.changed` 有类型、有 `EVENT_KINDS` 登记，**没有
+   handler**；`refreshProject()` 有实现但界面上还没有入口。归 Prompt 06。
+3. **项目打开仍走自己的静态草稿逻辑**（`build_draft` + `write_config`），
+   没有并进统一服务——为了不让打开项目扫两遍（Prompt 04 §六 明确允许）。
+4. `engine/` 里另外**五处**手写原子写仍未并入 `atomicio`（R-05；本次清掉的是
+   `discover.write_config`，它原本不在那五处的清单里）。
+5. **autosave 仍在数据目录**（R-07）。
+6. `/api/layouts/<name>` 仍不做 schema 校验（ADR 0023 §5a），前置是修 R-18。
+7. 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（归 Prompt 08）。
 
 ### 工作树状态
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
-- 四个独立 commit（01 交接文档 / 02 落盘权威 / 03 保存状态机 / 03 的修订号第三档），
-  **未 push、未开 PR** —— 攒够几个 Session 再一次发出去
+- 七个独立 commit（01 交接 / 02 落盘权威 / 03 状态机 / 03 修订号第三档 /
+  03 轨道文档 / 04 统一刷新 / 04 的两轮判据加固），**未 push、未开 PR**
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个提交
   一致）。本机 `~/.gitconfig` 是 `1259959884@qq.com`，两者不一致会让 cla-check
   在同一个仓库里数出两个贡献者；提交时用 `git -c user.email=… commit`，
@@ -164,18 +210,20 @@ python scripts/build_mcp_widget.py
 
 ---
 
-## 下一阶段入口（Prompt 04：后端统一 refresh）
+## 下一阶段入口（Prompt 05：项目 watcher、批次合并、SSE）
 
-**从这里开始读**：`src/tavotto/app.py` 的 `/api/panels` 与 `sse_publish`
-（`ARCHITECTURE.md` §3 记了现状链路），以及 `web/src/store/assetStore.ts`。
+**从这里开始读**：`src/tavotto/engine/project_refresh.py`（整份，尤其
+`refresh_project_index` 与 `is_self_written`）、`engine/pool.py` 的
+`start_watcher/stop_watcher`（现状的脚本 watcher，mtime 轮询约 2 秒），
+以及 `app.py` 的 `_script_change_handler`。
 
-**Session 03 留给它的接口**：派生元数据的同步**绝不能污染 dirty / 历史**。
-文档里已经有现成的两个出口，别造第三个：
+**Session 04 留给它的接口**：
 
-- `documentStore.silent(recipe)` —— 不进历史、不置 dirty 的写入（渲染反推的
-  派生值走这条）；
-- `applyProject(pd, id, {dirty})` —— 「内容换了但会话没换」的装载，会 bump
-  `loadSeq`，因此 `startAutosave` 的订阅**不会**把它当成一次编辑。
+- watcher 发现变化后**调 `app.refresh_project(ctx, reason="watcher",
+  changed_paths=[...])`**，让服务去 merge、去 diff、去发事件；
+- 判「这次注册表变动是不是我们自己写的」用
+  `project_refresh.is_self_written(ctx)`——**内容修订号**，不是时间窗口；
+- `changed_paths` 会被规整成项目相对路径，项目外的自动丢掉。
 
 **必须保留的不变式**（改动前先确认还成立）：
 
@@ -186,7 +234,15 @@ python scripts/build_mcp_widget.py
 5. 落盘一律走 `engine/atomicio`（ADR 0023），不再手写 tmp+replace。
 6. 保存状态只经 `setSaveState()` / `setDocNotice()` 改（ADR 0024）。
 7. 排队稍后才发出的写入必须带走**排队那一刻**的 `pj`。
+8. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）：watcher
+   不得自己 `discover.merge`、不得自己发第二套事件、不得自己 reload 注册表。
+9. **无差异 = 零事件、零写盘、零 worker 失效、零 watcher 重挂。**
+10. 「哪些文件算素材」只有 `iter_assets()` 一处判据（`/api/panels` 与刷新共用）。
+11. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
+12. 刷新失败时内存里的注册表**原封不动**，事件一条不发。
 
-**别做的事**：不要为了 refresh 重写 `documentStore` 的事务/撤销；
-不要引入第二套持久化路径；watcher 不得把 Tavotto 自己的 autosave 写入当成
-素材变化（那会让每一次自动保存都触发一轮刷新）。
+**别做的事**：不要引入 `watchdog`（保持纯标准库轮询）；watcher **不得**把
+Tavotto 自己的写入当成素材/注册表变化（autosave 目录、`tavottofile/`、
+刷新自己写的注册表——前两个已被 `EXCLUDE_DIRS` 剪掉，第三个用
+`is_self_written()`）；不要为批次合并再造一条并行的事件通道；不要因为
+watcher 而重写 `documentStore` 的事务/撤销。
