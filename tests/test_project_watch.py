@@ -330,6 +330,22 @@ class TestChangeKinds:
         assert calls["refresh"] == [["fig_new.py"]]
         assert calls["script_changed"] == []
 
+    def test_an_unregistered_script_invalidates_nothing(self, tmp_path, monkeypatch):
+        """新建一个还没登记的 `.py`：刷新要触发，但**一个会话都不该被打掉**。
+
+        它还没有对应的 worker，而"顺手把已有的都作废一遍"是几十秒的冷启动
+        ——用户会以为是自己点坏了什么。
+        """
+        figs, ctx, w, calls = self._armed(tmp_path)
+        killed: list[str] = []
+        monkeypatch.setattr(engine_pool, "invalidate", lambda s, d: killed.append(s))
+        monkeypatch.setattr(engine_pool, "invalidate_project", lambda d: killed.append("*"))
+
+        _script(figs, "fig_new.py", "FigNew")
+        w.poll()
+        assert calls["refresh"] == [["fig_new.py"]]
+        assert killed == []
+
     def test_deleted_script_invalidates_but_does_not_ask_for_a_rerender(
         self, tmp_path, monkeypatch
     ):
@@ -684,7 +700,7 @@ class TestErrors:
         w.poll()
         assert len(calls["refresh"]) == 2
 
-    def test_a_vanished_project_dir_is_not_a_mass_delete(self, tmp_path):
+    def test_a_vanished_project_dir_is_not_a_mass_delete(self, tmp_path, monkeypatch):
         """目录暂时不见：这一轮什么都不做（不刷新、不作废），**也不空转**。
 
         「看不见」不等于「不存在」——把它当成「用户删光了」会在一次网盘抖动
@@ -705,6 +721,20 @@ class TestErrors:
             w.poll()
         assert calls["refresh"] == []
         assert calls["script_changed"] == []
+
+        # 「不高 CPU」的结构面：目录不在时**连遍历都不进**（每轮之间还有
+        # `stop_event.wait(interval)` 挡着，所以线程也不会空转）。遍历入口
+        # 一被碰就炸，于是这条不靠计时来断言。
+        def _boom(*a, **k):  # pragma: no cover - 触发即失败
+            raise AssertionError("目录不在时仍然遍历了整棵树")
+
+        with monkeypatch.context() as mp:
+            # 用 context 而不是 undo()：`monkeypatch` 是函数级 fixture，
+            # conftest 的用户配置隔离用的是**同一个实例**，undo() 会把它一起
+            # 还原掉（于是这条用例之后的代码会写到真实的用户配置目录）。
+            mp.setattr(engine_discover, "iter_all_scripts", _boom)
+            mp.setattr(engine_refresh, "iter_assets", _boom)
+            w.poll()
 
         moved.rename(figs)  # 回来了
         _pdf(figs / "New.pdf")
@@ -809,6 +839,36 @@ class TestLifecycle:
         (a / "paper_style.py").write_text("# v2\n", encoding="utf-8")
         wa.poll()
         assert whole == [str(a)]
+
+    def test_invalidate_project_only_touches_its_own_project(self, tmp_path):
+        """`pool.invalidate_project()` 的项目隔离是**结构性**的：池键是
+        `(项目, 脚本)`，所以另一个图库里同名的 `fig1.py` 不会被顺手打掉。
+
+        这条不打桩——上面那些用例桩掉了 `invalidate_project` 本身，桩不会
+        告诉你它内部的过滤条件写对了没有。
+        """
+
+        class _StubWorker:
+            script_name = "fig1.py"
+
+            def shutdown(self):
+                pass
+
+        a, b = _project(tmp_path, "a"), _project(tmp_path, "b")
+        key_a = (engine_pool.norm_dir(str(a)), "fig1.py")
+        key_b = (engine_pool.norm_dir(str(b)), "fig1.py")
+        with engine_pool._lock:
+            engine_pool._workers[key_a] = _StubWorker()
+            engine_pool._workers[key_b] = _StubWorker()
+        try:
+            engine_pool.invalidate_project(str(a))
+            with engine_pool._lock:
+                assert key_a not in engine_pool._workers
+                assert key_b in engine_pool._workers, "别的项目的会话被打掉了"
+        finally:
+            with engine_pool._lock:
+                engine_pool._workers.pop(key_a, None)
+                engine_pool._workers.pop(key_b, None)
 
     def test_restarting_the_same_path_leaves_one_thread(self, tmp_path):
         """同路径重复 start 换掉旧的，**不叠加线程**。
