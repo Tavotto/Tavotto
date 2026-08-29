@@ -28,6 +28,7 @@
  */
 import { create } from 'zustand'
 import { msg } from '@/i18n'
+import { rescueFocus } from '@/lib/focusRescue'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
@@ -200,6 +201,12 @@ export function returnToLayout(): void {
     const page = useDocumentStore.getState().doc.page
     useViewportStore.getState().fit(page.w, page.h)
   }
+  // **焦点救援**：调用方多半是快速编辑浮动条上那个按钮，而这一下正好把它
+  // 整条卸掉。焦点掉回 body 之后 WebKit 的 Tab 与 Shift+Tab 双向都不动，
+  // 键盘用户就此困在页面里（`lib/focusRescue.ts` 有实测记录）。接手者选左轨的
+  // 「图层」——它一直在（画布本身不可聚焦），而且正是回到排版之后要看的东西。
+  // 与 `enterElementEdit` 选「图内元素」是同一条理由、同一个套路。
+  rescueFocus(() => document.querySelector<HTMLElement>('[data-rail="layers"]'))
 }
 
 /**

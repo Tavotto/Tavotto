@@ -144,6 +144,7 @@ ASSUMED_DPI / ASSUMED_DPI_DEFAULT         # 明确 fallback（值与改造前相
 改动  web/src/App.tsx                            挂持久化订阅 + 快速编辑藏画布标签
 改动  web/src/hooks/usePruneSelection.ts         对象消失也退出快速编辑
 改动  web/src/store/projectStore.ts              换项目清工作区
+改动  web/src/store/workspace.ts                 returnToLayout 的焦点救援
 改动  web/src/store/actions.ts / lib/clipboard.ts / lib/migrate.ts /
       store/panelSourceSync.ts                   pxH 与 pxW 成对
 改动  web/src/lib/api.ts                         +AssetOriginalSpec / original_spec
@@ -205,7 +206,10 @@ ruff check . && ruff format --check .
 ### 尚存限制
 
 1. **导出还没有"按原图"这条路。** 本轮只给规格与合同，`/api/export` 仍然只
-   会按画布合成。Prompt 12 接。
+   会按画布合成——**在快速编辑里点顶栏「导出」，出来的仍然是整张画布**。
+   Prompt 12 接（它要做的第一件事就是让导出面板读 `getOriginalOutputSpec()`
+   并给出「按原图 / 按画布」两条路）。这一条是本轮已知的**表里不一**：
+   工作区说的是一张图，导出给的是一张版。
 2. **快速编辑里画不了画布标注。** 标注工具整组收起了——它们画的是画布对象，
    这一屏上看不见。图内标注（override）不受影响。真需要"在图上加个箭头"的
    用户，路径是"添加到画布 → 排版模式"。
