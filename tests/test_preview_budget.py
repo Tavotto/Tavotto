@@ -125,6 +125,53 @@ def test_complexity_budgets_land_in_the_same_band_as_the_byte_gates():
     assert pb.MESH_CELL_BUDGET * bytes_per_primitive < pb.EDITOR_SVG_SOFT_LIMIT_BYTES
 
 
+def test_plan_demands_raster_is_its_own_lever(cases_unused=None):
+    """分析器的 raster 裁决**与字节无关**——这正是它存在的理由。
+
+    4 万条 `plot()` 只有 9.33 MB：软闸之上、硬闸之下，两条字节闸一条都不响。
+    所以这个信号必须能在「字节完全正常」的情况下单独把 mode 拉到 raster。
+    """
+    small = 1024
+    assert pb.resolve_mode(svg_bytes=small) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
+    assert pb.resolve_mode(svg_bytes=small, plan_demands_raster=True) == (
+        pb.MODE_RASTER,
+        pb.REASON_COMPLEXITY_BUDGET,
+    )
+
+
+def test_the_hard_gate_still_outranks_the_node_verdict():
+    """顺序不能反：硬闸的 reason 更具体，它先答。
+
+    两者同时成立时报 `svg_hard_limit` 而不是 `complexity_budget`——排障时
+    「为什么是位图」的答案得指向那个真正拦住它的东西。
+    """
+    mode, reason = pb.resolve_mode(
+        svg_bytes=pb.EDITOR_SVG_HARD_LIMIT_BYTES, plan_demands_raster=True
+    )
+    assert (mode, reason) == (pb.MODE_RASTER, pb.REASON_SVG_HARD_LIMIT)
+
+
+def test_node_verdict_outranks_hybrid():
+    """收了一部分**但矢量层仍然超节点预算**时，答案是 raster 不是 hybrid。
+
+    报 hybrid 会让前端去挂一份仍然有几万个节点的 SVG——那正是要拦的东西。
+    """
+    mode, reason = pb.resolve_mode(
+        svg_bytes=1024, rasterized_artist_count=3, plan_demands_raster=True
+    )
+    assert (mode, reason) == (pb.MODE_RASTER, pb.REASON_COMPLEXITY_BUDGET)
+
+
+def test_node_budget_sits_between_the_two_measured_sides():
+    """阈值必须落在实测的两侧之间，否则它划的不是一条线。
+
+    实测（`docs/perf-baseline.md`「浏览器侧」一节）：1 万条线 = 20 000 个元素
+    / 51 650 个 DOM 节点 / 一次挂载 103 ms；2 万条线 = 40 000 个元素 /
+    101 765 个节点 / 205 ms。阈值要放行前者、拦住后者。
+    """
+    assert 20_000 <= pb.TOTAL_VECTOR_NODE_BUDGET < 40_000
+
+
 def test_metadata_shape_and_optional_fields():
     m = pb.metadata(svg_bytes=123, mode=pb.MODE_RASTER, reason=pb.REASON_SVG_HARD_LIMIT)
     assert m == {

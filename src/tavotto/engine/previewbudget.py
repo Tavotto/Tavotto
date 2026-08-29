@@ -46,6 +46,7 @@ __all__ = [
     "REASON_NORMAL",
     "REASON_SVG_HARD_LIMIT",
     "SCATTER_INSTANCE_BUDGET",
+    "TOTAL_VECTOR_NODE_BUDGET",
     "TOTAL_VECTOR_PRIMITIVE_BUDGET",
     "metadata",
     "resolve_mode",
@@ -130,6 +131,30 @@ COLLECTION_VERTEX_BUDGET = 100_000
 #: 一条在原料侧、一条在产物侧。
 TOTAL_VECTOR_PRIMITIVE_BUDGET = 50_000
 
+#: 整张图**留在矢量层**的 SVG 元素（≈ DOM 节点）总数上限。
+#:
+#: **它与上面那条量的是两个维度，不是同一条的两种写法。**
+#: `TOTAL_VECTOR_PRIMITIVE_BUDGET` 的校准锚点是**字节**（50 000 × 190 B ≈ 9.5 MB，
+#: 落在 8 MiB 软闸旁边）；这一条的锚点是**浏览器**。两者在 mesh 上重合
+#: （一个 cell = 一个 `<path>`，1:1），在 `Line2D` 上分开——一条曲线是一个
+#: `<path>` **外加一个 `<g>`**，实测 2.01 个元素/条（4 万条线 40 031 个 path、
+#: 40 234 个 g）。40 000 条 `plot()` 因此只记 40 000 个 primitive、在字节侧
+#: 只有 9.33 MB（软闸之上、硬闸之下），**三条闸一条都不响**，却往 DOM 里挂了
+#: 201 977 个节点、330–360 MB。这条预算就是为那个缺口加的。
+#:
+#: 选 24 000 的依据是实测的挂载耗时（`docs/perf-baseline.md`「浏览器侧」一节）：
+#:
+#:     SVG 元素   DOM 节点    单面板 RSS    一次挂载
+#:      20 470     51 650     147–155 MB     103 ms
+#:      40 501    101 765     209–223 MB     205 ms
+#:      80 501    201 977     333–362 MB     410 ms
+#:
+#: DOM 节点 ≈ 2.53 × SVG 元素（实测，线性）。24 000 个元素 ≈ 6 万个节点 ≈
+#: 一次 120 ms 的挂载——**100 ms 是「瞬时」的人机边界**，再往上用户就看得见
+#: 卡顿了。普通科研图的预览 SVG 是几百到几千个元素（#181 修好之后那张是
+#: **818** 个），低两个数量级，一张都碰不到。
+TOTAL_VECTOR_NODE_BUDGET = 24_000
+
 
 def wants_hybrid_escalation(svg_bytes: int) -> bool:
     """产物越过软闸了吗——**「要不要再画一遍」，不是「这一版叫什么」**。
@@ -145,7 +170,9 @@ def wants_hybrid_escalation(svg_bytes: int) -> bool:
     return svg_bytes >= EDITOR_SVG_SOFT_LIMIT_BYTES
 
 
-def resolve_mode(*, svg_bytes: int, rasterized_artist_count: int = 0) -> tuple[str, str]:
+def resolve_mode(
+    *, svg_bytes: int, rasterized_artist_count: int = 0, plan_demands_raster: bool = False
+) -> tuple[str, str]:
     """一次预览的最终裁决：`(mode, reason)`。**两个时刻合成一个答案。**
 
     * `rasterized_artist_count` 来自 `savefig` **之前**那一刻（分析器的名单）；
@@ -153,12 +180,21 @@ def resolve_mode(*, svg_bytes: int, rasterized_artist_count: int = 0) -> tuple[s
       （`os.stat().st_size` / 缓冲区的 `tell()`），刻意不吃 SVG 内容——判定必须
       能在 `read_text()` 之前做完，见模块头。
 
+    `plan_demands_raster` 同样来自 `savefig` **之前**那一刻：分析器算出「收完
+    之后矢量层还剩多少个 SVG 元素」，超 `TOTAL_VECTOR_NODE_BUDGET` 就要求降档。
+    **它与字节无关**——4 万条 `plot()` 只有 9.33 MB，字节那两条闸一条都不响。
+
     顺序不能反：硬闸先答。一版 hybrid 产物**仍然可能**超过硬闸（收不动的层
     太多、或者矢量层本身就巨大），那时它照样不许被读进内存——不变量 3 不因为
     「我们已经尽力了」而放松。
     """
     if svg_bytes >= EDITOR_SVG_HARD_LIMIT_BYTES:
         return MODE_RASTER, REASON_SVG_HARD_LIMIT
+    if plan_demands_raster:
+        # 分析器说「收完之后矢量层仍然超 `TOTAL_VECTOR_NODE_BUDGET`」。
+        # **这一档的产物完全可能很小**（4 万条线只有 9.33 MB，字节闸不会响）
+        # ——它拦的是节点数，与字节无关。
+        return MODE_RASTER, REASON_COMPLEXITY_BUDGET
     if rasterized_artist_count > 0:
         return MODE_HYBRID, REASON_COMPLEXITY_BUDGET
     return MODE_VECTOR, REASON_NORMAL
@@ -172,6 +208,7 @@ def metadata(
     rasterized_artist_count: int = 0,
     estimated_primitives: int | None = None,
     estimated_vertices: int | None = None,
+    estimated_nodes: int | None = None,
 ) -> dict:
     """一次渲染的 preview 元数据（响应里的 `preview` 字段）。
 
@@ -193,4 +230,6 @@ def metadata(
         out["estimated_primitives"] = int(estimated_primitives)
     if estimated_vertices is not None:
         out["estimated_vertices"] = int(estimated_vertices)
+    if estimated_nodes is not None:
+        out["estimated_nodes"] = int(estimated_nodes)
     return out

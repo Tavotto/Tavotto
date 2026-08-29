@@ -495,7 +495,9 @@ class BrowserSession:
         # 结构里绝不能混着 numpy 类型
         man = json.loads(json.dumps(man, ensure_ascii=False, default=_json_default))
         mode, reason = previewbudget.resolve_mode(
-            svg_bytes=svg_bytes, rasterized_artist_count=plan.rasterized_artist_count
+            svg_bytes=svg_bytes,
+            rasterized_artist_count=plan.rasterized_artist_count,
+            plan_demands_raster=plan.mode == previewbudget.MODE_RASTER,
         )
         preview = previewbudget.metadata(
             svg_bytes=svg_bytes,
@@ -504,6 +506,7 @@ class BrowserSession:
             rasterized_artist_count=plan.rasterized_artist_count,
             estimated_primitives=plan.estimated_primitives,
             estimated_vertices=plan.estimated_vertices,
+            estimated_nodes=plan.estimated_nodes,
         )
         if mode == previewbudget.MODE_RASTER:
             return man, None, preview

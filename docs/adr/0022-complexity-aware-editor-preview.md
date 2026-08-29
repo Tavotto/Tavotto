@@ -171,6 +171,7 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 |---|---|---|
 | `EDITOR_SVG_SOFT_LIMIT_BYTES` | 8 MiB | **hybrid 的第二把尺子**：产物越过它且名单没收满 ⇒ 全收、重画一遍 |
 | `EDITOR_SVG_HARD_LIMIT_BYTES` | 16 MiB | **raster 的硬闸**：超过就不读 |
+| `TOTAL_VECTOR_NODE_BUDGET` | 24 000 | **节点闸**：收完之后矢量层还剩多少个 SVG 元素，超了就降 raster |
 
 两个数字都是**可调的策略**，不是物理常数；调它们要带上新的测量。选这两个初值
 的理由：Phase E 基线里普通科研图的预览 SVG 是几十到几百 KB，含 imshow 的
@@ -415,7 +416,7 @@ retention，不是线性增长。数据与复现命令见
 导出 120 072 个 `<path>` 一个不少而预览只有 72 个；`read_text` 1 → 0；
 `ElementHitLayer` 与 `bitmapOnly` 无关；收不动时不谎报 hybrid）。
 
-### 但是：§4 的预算里没有「节点数」这一维
+### 曾经缺的那一维已经补上（`TOTAL_VECTOR_NODE_BUDGET`）
 
 四条复杂度预算量 primitive 数、两条字节闸量产物字节数。**渲染进程的代价按
 节点走，而没有一条闸量它**——两者在 `pcolormesh` 上重合（所以 fixture 修好了），
@@ -440,9 +441,21 @@ retention，不是线性增长。数据与复现命令见
 **字节闸看不见它**。贵的是**大量细小的、不可 rasterize 的 primitive**，
 不是大量字节。
 
-修法不必大——图级补一条**节点数**预算，或让高节点数而收不动的图也降进
-`raster`。但它是一条新的判据，要按「新增核心不变式测试提交前必须手工反证一次」的纪律配变异验证，
-**不该塞进本轮的复核 PR**。
+**这一条已经修掉了**（单独一个 PR，配了 12 条变异验证）：
+
+* `previewbudget.TOTAL_VECTOR_NODE_BUDGET = 24 000`——收完之后矢量层还剩多少
+  个 SVG 元素。阈值锚在实测的挂载耗时上：1 万条线 = 20 000 个元素 / 103 ms
+  放行，2 万条线 = 40 000 个元素 / 205 ms 拦下。
+* `ArtistPreviewCost.node_count`：**primitive 数不等于节点数**。`Line2D` 是
+  一个 `<path>` **外加一个 `<g>`**（对拍实测 2.01 个元素/条），逐实例着色
+  且几何共享的散点同样翻倍（500 个 `<use>` + 501 个 `<g>`）。其余族 1:1。
+* 两条图级预算**一起收敛**：能收的收满，收不动才降 raster——只看 primitive
+  的话，四格各 1.5 万 cell 的图收掉一格就「达标」，却把 45 388 个元素交给 DOM。
+* `resolve_mode` 新增 `plan_demands_raster`：**这个信号与字节无关**，4 万条
+  `plot()` 只有 9.33 MB，两条字节闸一条都不响。
+
+对拍顺带补掉一个豁免：`FAMILY_LINE` 原本被排除在成本对拍之外
+（探针的 `skip` 里），而**被豁免的那一族正好是出问题的那一族**。
 
 ### 不可关闭的四条理由
 
@@ -450,7 +463,7 @@ retention，不是线性增长。数据与复现命令见
 2. **Session 05 整个没做**：诊断包分不出 vector / hybrid / raster / evicted /
    泄漏这五种状态（`PanelSnapshot` 里没有任何表示法字段）；浏览器结构性 DOM
    预算作为 CI gate 不存在；Windows WebView2 基准 **not locally measured**。
-3. **存在实测可达的 freeze 路径**（上一节）。
+3. ~~存在实测可达的 freeze 路径~~ **已修**（上一节），但修复本身还没落 `main`。
 4. **Windows 从没执行过这套代码**：`backend-platforms` 在普通 PR 上是
    `SKIPPED`，而 `svg_bytes` 是判定量、Windows 的 `\r\n` 会让同一张图
    显得大 3.8%。

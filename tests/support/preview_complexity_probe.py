@@ -261,8 +261,27 @@ def _cases(issue181_n: int) -> dict:
         "trimesh_unbuilt": _fig_trimesh_unbuilt,
         "many_medium_meshes": _fig_many_medium_meshes,
         "imshow_colorbar": _fig_imshow_colorbar,
+        # 节点预算的两侧。`Line2D` 不可 rasterize，所以「收不动」那条路只有
+        # 它走得出来——而这正是 #181 的残余缺口（primitive 与字节两侧都不响）。
+        "many_lines_under_node_budget": lambda: _fig_many_lines(10_000),
+        "many_lines_over_node_budget": lambda: _fig_many_lines(40_000),
         "issue_181": lambda: _fig_issue181(issue181_n),
     }
+
+
+def _fig_many_lines(n: int):
+    """`n` 条独立的 `Line2D`，四格分摊——用户写 `for … : ax.plot(…)` 的形状。
+
+    每条只有 3 个点：**顶点预算与字节都不会响**（4 万条也才 9.33 MB，在
+    16 MiB 硬闸之下），响的只能是节点预算。
+    """
+    rng = np.random.default_rng(181)
+    fig, axes = plt.subplots(2, 2, figsize=(7.0, 5.0))
+    x = np.linspace(0, 1, 3)
+    for ax in axes.ravel():
+        for _ in range(n // 4):
+            ax.plot(x, rng.standard_normal(3) * 0.01, lw=0.4)
+    return fig
 
 
 # ------------------------------ 报事实 ---------------------------------------
@@ -272,8 +291,10 @@ def _plan_json(plan) -> dict:
         "reason": plan.reason,
         "estimated_primitives": plan.estimated_primitives,
         "estimated_vertices": plan.estimated_vertices,
+        "estimated_nodes": plan.estimated_nodes,
         "vector_primitives": plan.vector_primitives,
         "vector_vertices": plan.vector_vertices,
+        "vector_nodes": plan.vector_nodes,
         "rasterized_artist_count": plan.rasterized_artist_count,
         "rasterized_families": sorted({c.family for c in plan.costs if c.should_rasterize}),
         "families": sorted({c.family for c in plan.costs}),
@@ -283,6 +304,7 @@ def _plan_json(plan) -> dict:
             {
                 "family": c.family,
                 "primitive_count": c.primitive_count,
+                "node_count": c.node_count,
                 "vertex_count": c.vertex_count,
                 "vertex_count_exact": c.vertex_count_exact,
                 "rasterizable": c.rasterizable,
@@ -493,6 +515,8 @@ def _svg_tag_counts(fig) -> dict:
         "path": svg.count("<path"),
         "use": svg.count("<use"),
         "image": svg.count("<image"),
+        # `<g ` 带空格：`<glyph`/`<gradient` 之类不能算进来
+        "g": svg.count("<g "),
         "vertices": sum(joined.count(c) * k for c, k in _VERTICES_PER_CMD.items()),
         "unknown_cmds": sorted({c for c in joined if c.isalpha()} - set(_VERTICES_PER_CMD)),
         "bytes": len(svg.encode("utf-8")),
@@ -534,6 +558,11 @@ _CROSSCHECK = {
     "mesh_hidden_axes": (lambda: _fig_hidden_axes(24), _fig_blank),
     "linecoll": (lambda: _fig_linecoll(400), _fig_blank),
     "contour": (_cross_contour, _fig_blank),
+    # `line` 这一族**原本被对拍豁免掉了**（`skip` 里有 FAMILY_LINE），而
+    # #181 的残余缺口恰恰在它身上：模型记 1 个 primitive 是对的（SVG 里确实
+    # 只有一个 `<path>`），但 DOM 里是 2 个元素——matplotlib 还包一个 `<g>`。
+    # 豁免掉的那一族正好是出问题的那一族，所以这一格补上。
+    "lines": (lambda: _fig_lines(400), _fig_blank),
 }
 
 
@@ -575,6 +604,16 @@ def _vertex_sampling() -> dict:
     return out
 
 
+def _fig_lines(n: int):
+    """`n` 条独立的 `Line2D`——每条都是一次 `ax.plot()`，与用户写法一致。"""
+    fig, ax = _bare_axes()
+    rng = np.random.default_rng(7)
+    x = np.linspace(0, 1, 3)
+    for _ in range(n):
+        ax.plot(x, rng.standard_normal(3) * 0.01, lw=0.4)
+    return fig
+
+
 def _crosscheck() -> list[dict]:
     """模型说的 `primitive_count` / `vertex_count`，与**后端真的吐出来的**节点
     数、坐标对数对一次。
@@ -586,11 +625,16 @@ def _crosscheck() -> list[dict]:
     rows = []
     for name, (build_with, build_without) in _CROSSCHECK.items():
         fig_with = build_with()
-        # 只算数据层那几笔（对照图里的 axes patch 之类两侧都有，差分自然抵消）
-        skip = {pc.FAMILY_LINE, pc.FAMILY_UNKNOWN, pc.FAMILY_UNMEASURED}
+        # 只算数据层那几笔（对照图里的 axes patch 之类两侧都有，差分自然抵消）。
+        # **`line` 只在它自己那一格里算**：别的格子的对照图里也有普通曲线，
+        # 把它算进去会污染差分——而 `lines` 那一格的对照图是空的。
+        skip = {pc.FAMILY_UNKNOWN, pc.FAMILY_UNMEASURED}
+        if name != "lines":
+            skip.add(pc.FAMILY_LINE)
         costs = [c for c in pc.analyze_preview_complexity(fig_with).costs if c.family not in skip]
         model_primitives = sum(c.primitive_count for c in costs)
         model_vertices = sum(c.vertex_count for c in costs)
+        model_nodes = sum(c.node_count for c in costs)
         with_counts = _svg_tag_counts(fig_with)
         plt.close(fig_with)
         fig_without = build_without()
@@ -601,9 +645,11 @@ def _crosscheck() -> list[dict]:
                 "case": name,
                 "model_primitives": model_primitives,
                 "model_vertices": model_vertices,
+                "model_nodes": model_nodes,
                 "svg_delta_path": with_counts["path"] - without_counts["path"],
                 "svg_delta_use": with_counts["use"] - without_counts["use"],
                 "svg_delta_image": with_counts["image"] - without_counts["image"],
+                "svg_delta_g": with_counts["g"] - without_counts["g"],
                 "svg_delta_vertices": with_counts["vertices"] - without_counts["vertices"],
                 "svg_delta_bytes": with_counts["bytes"] - without_counts["bytes"],
                 # 出现了换算表里没有的指令 = 上面那个数不可信，别让它静默通过
