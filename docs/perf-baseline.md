@@ -650,6 +650,95 @@ python tests/support/preview_complexity_probe.py \
    0.0165 ms。会随规模涨的实现基本都在某处遍历了 path 或复制了数组，
    `test_quadmesh_paths_are_never_built` 与那条 50 ms 的粗闸盯的就是它。
 
+## 浏览器侧首次实测（issue #181，Session 06）
+
+日期：2026-08-29 ｜ 出处 `tests/support/browser_dom_probe.mjs` ｜
+**这是 01–04 每一节都写着「还没量」的那一项**：产物挂进真 Chromium 之后，
+DOM 有多少节点、渲染进程吃多少内存、开关几次会不会涨。
+
+### 方法（以及一个先量错了的对象）
+
+* 挂法与 `PanelView` 一致：一次 `innerHTML` 塞进去，等两帧再读数。
+* 节点数与 JS 堆取自 **Chromium 自己的** CDP `Performance.getMetrics`
+  （`Nodes` / `JSHeapUsedSize`），不是我们数标签数出来的。
+* 卸载后 `HeapProfiler.collectGarbage` 强制回收再读一次，量的才是
+  「留下了多少」而不是「分配了多少」。
+
+**渲染进程 RSS 第一版量错了对象**：按 `ps | grep -- '--type=renderer'` 全局
+求和，得到 5.7 GB——那是这台机器上**所有** Chromium（含用户自己开着的浏览器）。
+它稳定、可复现、量纲也对，唯独主语不是被测对象。正确取法是启动前快照已有的
+renderer pid、启动后取差集，只认新出现的那个。见
+`docs/adr/0022-complexity-aware-editor-preview.md` §9。
+
+### 两把尺子不能互相相除
+
+| 尺子 | #181 修复前 | hybrid 之后 |
+|---|---:|---:|
+| SVG 元素总数（数标签，与 before 基线同一把） | 663 533 | **818** |
+| Chromium `Nodes`（浏览器自己数） | not measured | **2 887** |
+
+同一批产物上两者约差 2.0–2.5 倍，且比值不是常数。**修复前那一列的
+`Nodes` 永远不会有真值**——把 126 MB 挂进 DOM 就是 #181 的症状本身，量它
+只会得到一次无响应。所以「663 533 → 2 887」这种写法是错的，两个数出自两把尺。
+
+### hybrid 产物（n=470，1 838 682 字节 / 818 个元素）
+
+| 指标 | 值 |
+|---|---:|
+| DOM 节点（CDP `Nodes`） | **2 887** |
+| JS 堆（挂着时） | **2.47 MB** |
+| 渲染进程 RSS | **107–125 MB**（空白页基线 73 MB） |
+| 一次挂载耗时 | **70–91 ms** |
+
+### 生命周期：开关 5 次
+
+| 轮次 | 挂载 nodes / heap / RSS | 卸载 + GC 后 nodes / heap / RSS |
+|---|---|---|
+| 1 | 2 897 / 6.25 MB / 107 MB | 6 / 0.62 MB / 102 MB |
+| 2 | 2 887 / 2.47 MB / 112 MB | 6 / 0.62 MB / 107 MB |
+| 3 | 2 887 / 2.47 MB / 117 MB | 6 / 0.63 MB / 112 MB |
+| 4 | 2 887 / 2.47 MB / 121 MB | 6 / 0.63 MB / 116 MB |
+| 5 | 2 887 / 2.47 MB / 125 MB | 6 / 0.63 MB / 119 MB |
+
+**DOM 与 JS 堆每一轮都完全归位**（6 个节点 / 0.63 MB）。RSS 五轮共涨
+17–18 MB——allocator retention，不是 0.8 / 1.4 / 2.0 / 2.6 / 3.2 GB 那种
+线性增长。**不要把 Chromium 正常的 retention 叫成 Tavotto 泄漏。**
+
+### 字节闸看不见节点数
+
+四条复杂度预算量 primitive 数，两条字节闸量产物字节数。**没有一条量节点数**
+——而渲染进程的代价按节点走。下表每一行都是实测：
+
+| 图 | 判据裁决 | `svg_bytes` | SVG 元素 | DOM 节点 | 渲染进程 RSS | 挂载 |
+|---|---|---:|---:|---:|---:|---:|
+| #181 fixture n=470 | `hybrid` / `complexity_budget` | 1 838 682 | 818 | 2 887 | 107–125 MB | 70–91 ms |
+| **40 000 次 `plot()`（每条 3 点）** | **`vector` / `normal`——无闸触发** | 9 544 236 | 80 561 | **201 977** | **333–362 MB** | 400–420 ms |
+| 560 条 × 2000 点密集曲线 | `vector` / `normal` | 16 463 743 | 1 610 | 4 506 | 170–196 MB | 604–621 ms |
+| 抬闸出的 14.35 MiB 小 path 海（形状对照） | — | 15 048 080 | 79 556 | 160 372 | 464–514 MB | 616–641 ms |
+| 上一行 × 4 面板（形状对照） | 每面板都合规 | 60 192 320 | 318 224 | **641 464** | **1 197–1 584 MB** | 3.0–3.6 s |
+
+**第二行是可达的**：`estimated_primitives = 40 000` 在
+`TOTAL_VECTOR_PRIMITIVE_BUDGET`（50 000）之内，9.10 MiB 在 16 MiB 硬闸之下，
+而 `line` 按契约不在 `RASTERIZABLE_FAMILIES` 里，`escalate_plan` 返回 `None`。
+40 000 次 `plot()` 是普通 matplotlib 写法。多面板画布把它乘上面板数，而
+**每个 live 面板都被 pin 住、按设计永不驱逐**（Session 04 §7）。
+最后一行 641 464 个节点已经回到 #181 的原始量级。
+
+**字节数不是节点数的代理**：第三行 15.7 MiB 只有 4 506 个节点，因为字节在
+path 的 `d` 属性里；第二行 9.10 MiB 却有 20 万个节点。贵的是**大量细小的、
+不可 rasterize 的 primitive**，不是大量字节。按字节推断「密集曲线是风险」
+是错的，实测把它否掉了。
+
+### 还没量的
+
+* **Windows WebView2 的 renderer private bytes**：本机没有 Windows 环境，
+  **not locally measured**。issue 原始报告是 6.47 GB；上面所有数字来自
+  macOS 上的 headless Chromium，**不是同一个渲染引擎、不是同一个平台**，
+  不能拿来宣称 §8 的内存验收项已满足。
+* **完整编辑器里的读数**：上面挂的是裸页面里的一份预览 SVG，量的是这一份
+  payload 的 DOM 代价本身（也就是 #181 归咎的那一步）。真实画布还有工具栏、
+  命中层、检查器，绝对值会更高。
+
 ## 复现
 
 ```bash
@@ -663,5 +752,18 @@ python scripts/bench_render.py --python .venv/bin/python --plane python \
 # 「新机器上的第一次」（含字体缓存重建，不是稳态）
 python scripts/bench_render.py --python .venv/bin/python --fresh-home
 ```
+
+### 浏览器侧（issue #181，Session 06）
+
+```bash
+# 1. 走真链路出一版预览 SVG（worker 解释器，要 matplotlib）
+python tests/support/large_preview_svg.py /tmp/hybrid.svg --n 470
+
+# 2. 挂进真 Chromium，量节点数 / JS 堆 / 渲染进程 RSS，开关 5 次
+node tests/support/browser_dom_probe.mjs /tmp/hybrid.svg 5
+```
+
+第 2 步要 `web/node_modules`（`cd web && pnpm install`）与 Playwright 的
+Chromium（`pnpm exec playwright install chromium`）。
 
 `--json` 会把每次测量的原始数字（含被中位数吃掉的那些）落盘，方便事后做前后对比。
