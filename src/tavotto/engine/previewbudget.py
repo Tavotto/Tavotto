@@ -21,14 +21,20 @@ issue #181 的教训是「**判定点在 `read_text()` 之后 = 这道闸什么�
 二道闸**（后端不返回 `preview` 时前端要维持既有行为，而返回了一个超大 `svg`
 时前端要能自己丢掉它）。两侧的数字由 `tests/test_preview_budget.py` 看住。
 
+**复杂度预算那几个数没有镜像，这是有意的**：前端从不评估复杂度（artist 图只
+在 worker 进程里），它手上只有裁决结果。凭空镜像过去就是造第二份权威。
+`test_complexity_budgets_are_deliberately_not_mirrored` 是这个不对称的说明。
+
 纯标准库；`figsession` 平铺 import 它，`tavotto.engine` 侧按包名 import。
 """
 
 from __future__ import annotations
 
 __all__ = [
+    "COLLECTION_VERTEX_BUDGET",
     "EDITOR_SVG_HARD_LIMIT_BYTES",
     "EDITOR_SVG_SOFT_LIMIT_BYTES",
+    "MESH_CELL_BUDGET",
     "MODES",
     "MODE_HYBRID",
     "MODE_RASTER",
@@ -39,6 +45,8 @@ __all__ = [
     "REASON_FALLBACK",
     "REASON_NORMAL",
     "REASON_SVG_HARD_LIMIT",
+    "SCATTER_INSTANCE_BUDGET",
+    "TOTAL_VECTOR_PRIMITIVE_BUDGET",
     "metadata",
     "mode_for_svg_bytes",
 ]
@@ -85,12 +93,53 @@ EDITOR_SVG_HARD_LIMIT_BYTES = 16 * 1024 * 1024
 RASTER_PREVIEW_WIDTH_PX = 1200
 
 
+# --------------------------- 复杂度预算（Session 02） -------------------------
+# 上面两个数量的是**产物**（SVG 有多少字节），只有 `savefig` 跑完才知道——而
+# #181 里那一步就是 11 789 ms 本身。下面这几个量的是**原料**（artist 图上有多少
+# primitive），在 `savefig` 之前就答得出来。判据实现在
+# `engine/preview_complexity.py`，阈值只在这里。
+#
+# 四个数是一组，选值的锚点是「换算回字节之后，它们要落在上面那两条闸的同一
+# 量级、且略早一点触发」——早一点是**故意**的：字节闸要先付 12 秒才知道答案，
+# 复杂度闸不必付。换算按 #181 实测的 126 132 735 字节 / 662 773 个 `<path>`
+# ≈ **190 字节一个 primitive**。
+
+#: 单块网格（`pcolormesh` / `pcolor` / `hist2d` / heatmap）的 cell 数上限。
+#: 20 000 个 cell ≈ 3.6 MB SVG，在 8 MiB 软闸之下——普通科研图的网格是几千个
+#: cell（Phase E 基线里含 imshow 的面板最坏 827 KB），一张都碰不到；而 #181
+#: 那张是每格 220 900 个，高出 11 倍。
+MESH_CELL_BUDGET = 20_000
+
+#: 单个散点系列的实例数上限。比网格宽一倍有实测理由：scatter 的几何进
+#: `<defs>` 只出现一次，每个点在 SVG 里只是一个约 60 字节的 `<use>`，而一个
+#: mesh cell 是一个自带四组坐标的 `<path>`。50 000 个 `<use>` ≈ 3 MB，同一个
+#: 量级。
+SCATTER_INSTANCE_BUDGET = 50_000
+
+#: 单个 collection 的顶点数上限——**给 contour 那一族用的**。等值线只有几十个
+#: `<path>`（一层一个），节点数判据整族看不见它，可 300×300 网格 40 层实测
+#: 232 679 个顶点、约 3 MB 文本。10 万个顶点 ≈ 1.4 MB，留出余量。
+COLLECTION_VERTEX_BUDGET = 100_000
+
+#: 整张图**留在矢量层**的 primitive 总数上限。逐族预算管不到「二十个各 4 万
+#: cell 的面板」——每个都合规，合起来 80 万个节点照样把 DOM 打死。
+#: 50 000 × 190 字节 ≈ 9.5 MB，正好落在 8 MiB 软闸旁边：两条闸说的是同一件事，
+#: 一条在原料侧、一条在产物侧。
+TOTAL_VECTOR_PRIMITIVE_BUDGET = 50_000
+
+
 def mode_for_svg_bytes(svg_bytes: int) -> tuple[str, str]:
     """光看预览 SVG 的体积能得出的裁决：`(mode, reason)`。
 
     **只吃字节数**（`os.stat().st_size`），刻意不吃 SVG 内容——判定必须能在
-    读取之前做完，见模块头。复杂度维度（primitive / vertex 估算）是 Session 02
-    的事，那时这个函数会多一个入参，而不是多一个第二判定点。
+    读取之前做完，见模块头。
+
+    复杂度那一维**不在这个函数里**：它问的是 artist 图（`savefig` 之前），
+    这个函数问的是产物（`savefig` 之后），两者是渲染流程里的两个时刻，合成
+    一个入参只会让「这一版是在哪一刻被判的」重新说不清。判据在
+    `engine/preview_complexity.analyze_preview_complexity()`，产出
+    `PreviewPlan`；把两个时刻的裁决合起来是 Session 03 的接线。**阈值仍然
+    只有这一处**——上面那几个 `*_BUDGET` 就是复杂度那一侧的常量。
     """
     if svg_bytes >= EDITOR_SVG_HARD_LIMIT_BYTES:
         return MODE_RASTER, REASON_SVG_HARD_LIMIT

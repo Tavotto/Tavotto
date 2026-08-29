@@ -189,7 +189,7 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 |---|---|---|
 | 00 | 合成复现 + before 基线 + 本 ADR | 完成 |
 | 01 | Large SVG Safety Guard（不变量 3 + raster 档 + 前端二道闸） | 完成 |
-| 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 待做 |
+| 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 完成 |
 | 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 待做 |
 | 04 | renderStore 的 SVG 内存预算 | 待做 |
 | 05 | Diagnostics 与回归看护 | 待做 |
@@ -197,6 +197,36 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 
 **顺序不能换。** 01 是止血：hybrid 还没有的时候，超限图至少不能再把浏览器
 打死。02 在 01 的安全网之下才敢真的去遍历大 figure 的 artist 树。
+
+### Session 02 落地了什么（2026-08-29）
+
+`src/tavotto/engine/preview_complexity.py`：Figure → `PreviewPlan`
+（mode / `estimated_*` / **该 rasterize 谁**）。它只算账——不 `savefig`、
+不改 artist、不建大数组、不读 SVG。开销实测
+[0.0165 ms vs `savefig` 的 10 540 ms](../perf-baseline.md#复杂度分析器开销issue-181session-02)。
+
+成本模型不是拍脑袋，是从 matplotlib 自己的绘制路径抄下来的两条：
+`Collection.draw` 的单形状快路（→ `draw_markers`，几何进 `<defs>`）与
+`RendererSVG.draw_path_collection` 的成本取舍式。**并且与后端对拍**：同一张图
+带 / 不带某个 artist 各 `savefig` 一次，差分出它真的摊出来的 `<path>` /
+`<use>` / `<image>` 与顶点数。**十二格对拍里 primitive 逐个相等。**
+
+对拍第一轮就抓出三处「我以为」——网格每 cell 是 5 个坐标对不是 4；空的
+contour 层照样占一个 `<path>` 节点；`scatter(x, y, s=<数组>)` 掉出单形状快路、
+**每个 marker 各自内联**（顶点数比 `s=标量` 多 500 倍）。三处都是模型偏低。
+
+评审又抓出两处，两处都是**判据量错了对象**，都补进了对拍（2026-08-29）：
+
+* **顶点抽样只取前 4096 条**。异构 collection（先小后大：等值面、分箱统计、
+  地理边界）的重几何全排在窗口之外。实测 4206 条 path：真值 33 006，前缀抽样
+  报 21 030（**63.7%**），改成跨全序列等距抽样后报 31 278（94.8%）。偏低方向
+  = 漏判，正是这个分析器要防的事。
+* **`visible=False` 的 artist 按全价记账**。后端对不可见的 artist 一个节点都不
+  写（对拍两格的 `svg_delta_path` 都是 0）。偏高方向 = 一块藏起来的大 mesh 凭空
+  逼出一次 hybrid，用户看到的是「明明没显示那层图，画面却糊了」。
+
+**软闸仍然不改变任何行为**：分析器产出的是名单，把名单变成 `set_rasterized`
+是 Session 03。`test_soft_band_still_passes_through_today` 照旧钉着那个缺口。
 
 ---
 
@@ -230,6 +260,9 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
   以及「它真的复现了机制」（一个 quad 一个 `<path>`）；
 * `tests/test_preview_budget.py` —— 常量、判据、两侧同源、**超限时
   `read_text()` 一次都不调**；
+* `tests/test_preview_complexity.py` —— 分析器的裁决、**成本模型与 SVG 后端
+  的对拍**、以及「它什么都没改」（`rasterized` 前后逐个比对、`QuadMesh` 的
+  paths 一次都没被建过）；
 * `tests/test_browser_session.py` —— playground 那条入口上的同一条闸
   （SVG 生在内存里，判据挪到「交给 JS 之前」）；
 * `web/src/canvas/panelPreviewMode.test.tsx` / `web/src/lib/previewBudget.test.ts`

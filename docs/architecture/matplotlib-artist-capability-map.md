@@ -237,9 +237,15 @@ artist——这是已知代价，产品侧靠「脚本 sha1 变了就重建会�
 | `overrides._AxisArrow3D` | `axis3d._get_coord_info` / `_get_axis_line_edge_points` | 3D 轴线落边每帧现算，没有公开接口 | `tests/test_worker_roundtrip.py` |
 | `manifest` / `pathgeom` | `FancyArrowPatch._posA_posB` | 端点没有公开 getter | `tests/test_manifest_geometry.py` |
 | `overrides._arrowstyle_name` | `ArrowStyle._style_list` | 反查注册名没有公开接口 | 同上 |
+| `preview_complexity._materialised_paths` | `Collection._paths` **是不是 None**（只读状态，不调方法） | 要区分「paths 已经建好」与「按需现建」。后者上调一次 `get_paths()` 就是当场造出 M×N 个 `Path`（`TriMesh` 实测 75 ms / 8 万三角形），而它的 draw 走 `draw_gouraud_triangles`、**根本不经过 paths**——那笔钱连 render 自己都不付。公开 API 里没有「便宜地问一句建没建」的办法 | `tests/test_preview_complexity.py::test_unbuilt_lazy_collection_is_reported_not_priced_as_zero` |
 
 **能力层本身一个私有 API 都没用**：`collection_caps` / `_COLLECTION_CAPS` /
 `_PATCH_CAPS` 里全是公开 getter/setter。这是刻意的——family 抽象要能扛升级。
+
+复杂度分析器（`preview_complexity`）同样只用公开 getter，上表那一条是唯一
+例外，而且它的**失效方向是选过的**：`_paths` 改名之后 `getattr` 回 None →
+整族退成「量不出来」→ 分析器不再推荐 hybrid，兜底回到按字节数的 SVG 硬闸。
+少一层保护，不是崩、也不是在热路径上白付一笔钱。
 
 ## 7. 桌面（3.11.1）与浏览器（3.10.8）的差异
 

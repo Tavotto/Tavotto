@@ -61,6 +61,38 @@ def test_soft_band_still_passes_through_today():
     assert pb.mode_for_svg_bytes(mid) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
 
 
+def test_complexity_budgets_are_positive_and_ordered():
+    """复杂度那一侧的四个数：都为正，且**逐族预算不高于图级预算**。
+
+    反了的话第二轮裁决永远轮不到——一个 artist 自己就能吃掉整张图的额度而
+    不被认出来，而那正是 `test_a_single_artist_may_not_eat_the_whole_figure_
+    budget` 守的场景（多面板大 mesh，#181 的用户环境）。
+    """
+    per_family = (pb.MESH_CELL_BUDGET, pb.SCATTER_INSTANCE_BUDGET)
+    assert all(b > 0 for b in (*per_family, pb.COLLECTION_VERTEX_BUDGET))
+    assert pb.TOTAL_VECTOR_PRIMITIVE_BUDGET > 0
+    for b in per_family:
+        assert b <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET, (
+            f"逐族预算 {b} 高过图级预算 {pb.TOTAL_VECTOR_PRIMITIVE_BUDGET}"
+        )
+
+
+def test_complexity_budgets_land_in_the_same_band_as_the_byte_gates():
+    """两侧闸说的是同一件事：一条量原料、一条量产物，**换算完要在同一量级**。
+
+    换算按 #181 实测的 126 132 735 字节 / 662 773 个 `<path>` ≈ 190 字节一个
+    primitive。图级预算换算回去要落在软闸附近——比软闸低太多会把正常图误伤，
+    高太多则等于这条闸不存在（真到那时字节闸已经先响了，而它要先付 12 秒）。
+    """
+    bytes_per_primitive = 190
+    total = pb.TOTAL_VECTOR_PRIMITIVE_BUDGET * bytes_per_primitive
+    assert 0.5 <= total / pb.EDITOR_SVG_SOFT_LIMIT_BYTES <= 2.0, (
+        f"图级预算换算成 {total} 字节，与 {pb.EDITOR_SVG_SOFT_LIMIT_BYTES} 的软闸不在同一量级"
+    )
+    # 逐族预算要**先于**软闸触发：复杂度闸的全部价值就是不必先付那 12 秒
+    assert pb.MESH_CELL_BUDGET * bytes_per_primitive < pb.EDITOR_SVG_SOFT_LIMIT_BYTES
+
+
 def test_metadata_shape_and_optional_fields():
     m = pb.metadata(svg_bytes=123, mode=pb.MODE_RASTER, reason=pb.REASON_SVG_HARD_LIMIT)
     assert m == {
@@ -111,6 +143,27 @@ def _eval_arith(node) -> int:
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
         return _eval_arith(node.left) * _eval_arith(node.right)
     raise AssertionError(f"镜像里出现了看不懂的表达式: {ast.dump(node)}")
+
+
+def test_complexity_budgets_are_deliberately_not_mirrored():
+    """复杂度预算**没有前端镜像，这是有意的**。
+
+    前端那份存在的理由只有「二道闸」：后端不返回 `preview` 时维持既有行为、
+    返回超大 `svg` 时自己丢掉。它**从不评估复杂度**——artist 图只在 worker
+    进程里，前端手上只有裁决结果（`mode`）。凭空镜像过去就是造第二份权威，
+    而两份权威一定会漂。
+
+    这条用例是那个不对称的**说明**，不是它的辩护词：哪天前端真的要自己算
+    复杂度，它会红，逼着一起把同源看护建起来。
+    """
+    src = MIRROR.read_text(encoding="utf-8")
+    for name in (
+        "MESH_CELL_BUDGET",
+        "SCATTER_INSTANCE_BUDGET",
+        "COLLECTION_VERTEX_BUDGET",
+        "TOTAL_VECTOR_PRIMITIVE_BUDGET",
+    ):
+        assert name not in src, f"{name} 出现在前端镜像里——要么删掉，要么给它建同源看护"
 
 
 def test_frontend_mirror_carries_the_same_numbers():
