@@ -190,6 +190,58 @@ describe('警告与项目绑定', () => {
     expect(text()).toContain('从未见过')
   })
 
+  it('「跟随更新」默认关着，打开是一次可撤销的文档修改', async () => {
+    await mount()
+    await act(async () => {
+      ;[...document.body.querySelectorAll('[role="radio"], button')]
+        .find((b) => b.textContent?.trim() === '规范')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // 还没绑定这套规范时根本不出现这个开关（没有可跟随的对象）
+    expect(document.body.querySelector('[aria-label="跟随更新"]')).toBeNull()
+
+    await act(async () => {
+      byText('本项目用这套规范')!.click()
+    })
+    expect(useDocumentStore.getState().doc.profile!.follow).toBeUndefined()
+
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="跟随更新"]')!
+    await act(async () => {
+      toggle.click()
+    })
+    expect(useDocumentStore.getState().doc.profile!.follow).toBe(true)
+    act(() => {
+      useDocumentStore.getState().undo()
+    })
+    expect(useDocumentStore.getState().doc.profile!.follow).toBeUndefined()
+  })
+
+  it('换一套规范不会把「跟随更新」悄悄关掉', async () => {
+    await mount()
+    await act(async () => {
+      ;[...document.body.querySelectorAll('[role="radio"], button')]
+        .find((b) => b.textContent?.trim() === '规范')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      byText('本项目用这套规范')!.click()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLElement>('[aria-label="跟随更新"]')!.click()
+    })
+    expect(useDocumentStore.getState().doc.profile!.follow).toBe(true)
+
+    // 选另一套规范：跟随的表态是**项目的**，不是那一套规范的
+    const other = buttons().find((b) => b.textContent?.includes('自由排版'))!
+    await act(async () => other.click())
+    await act(async () => {
+      byText('本项目用这套规范')!.click()
+    })
+    const bound = useDocumentStore.getState().doc.profile!
+    expect(bound.id).toBe('free-form-v1')
+    expect(bound.follow).toBe(true)
+  })
+
   it('「本项目用这套规范」写的是带快照的绑定，不是一个 id', async () => {
     await mount()
     await act(async () => {

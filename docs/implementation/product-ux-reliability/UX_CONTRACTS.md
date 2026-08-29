@@ -245,28 +245,49 @@ watcher 自己发的只有 `panel.file_changed`（"这张图的源码变了"）�
 
 ---
 
-## 4. Style / Spec / Validation / Export 分层合同
+## 4. Style / Spec / Validation / Export 分层合同（Session 10，ADR 0029）
 
 ```text
-Style      —— 图长什么样        （字体/字号/线宽/刻度/图例/页面预设）
+Style      —— 图长什么样        （字体/字号/线宽/刻度/图例/背景/页面预设）
 Spec       —— 图要满足什么要求  （出版规范：栏宽、比例、字号下限、字族）
 Validation —— 只读 Spec 求值    （不在任何页面硬编码阈值）
-Export     —— 文件怎么生成      （格式、DPI、透明、目标路径）
+Export     —— 文件怎么生成      （格式、PPI、透明、目标路径）
 ```
 
-- Spec 的唯一权威是 `src/tavotto/profiles/publication.json`；
-  两个求值器（`engine/preflight.py` / `web/src/lib/preflight.ts`）
-  **共读它**，靠 `tests/golden/preflight_vectors.json` 对齐。
-  改判据先改 profile，再让两侧同时绿。
-- 文档里只存 `profile.id` 与期刊覆盖，**规则本身一条都不冻进文档**——
-  规范升级后旧文档自动跟新规则走。
-- **当前混乱点**（归属 Prompt 10）：
-  1. Style 预设存在数据目录 `_styles.json`，与项目无关；项目级快照/绑定字段
-     在文档 schema 里**尚未预留**。
-  2. 导出偏好存 localStorage（`lib/exportDefaults.ts`），换机器即丢，
-     也不进文档。
-  3. 最小字号有两个数：`absolute_min_font_size_pt: 8.0` 与
-     `legend_policy.min_font_size_pt: 8.5`。合同要求默认只保留 8 pt。
+| 层 | 唯一出处（后端 / 前端） | 应用它算什么 |
+| --- | --- | --- |
+| **Style** | `<data_dir>/profiles/styles.json` ← `engine/profilestore.py` / `lib/stylePresets.ts` | **用户文档修改**：一条历史、⌘Z 整体撤回、正确 dirty（含画布背景） |
+| **Spec** | 内置 `src/tavotto/profiles/publication.json` + 用户自建 `<data_dir>/profiles/specs.json`；「任意 id → 规范」只有 `profilestore.resolve_spec()` / `lib/specBinding.ts` | **只检查，不改图**。除非用户明确点修复或应用 Style |
+| **Validation** | `engine/preflight.py` / `web/src/lib/preflight.ts`（golden vectors 对齐） | 只读 Spec；**阈值一个字都不写进求值器** |
+| **Export** | `lib/exportDefaults.ts`（本机偏好）+ `exportPayload.ts` | 既不进 Spec，也不写死在导出组件里 |
+
+**项目里存的是绑定 + 规则全文快照**（`CanvasData.profile`）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 绑的是哪一条（稳定来源） |
+| `snapshot` | **绑定那一刻生效的规则全文**。有它就它说了算 |
+| `snapshotVersion` | 只给人看（「你用的是 1.0.0」）；**判据一个字都不看它** |
+| `follow` | 用户明确选了「跟着全局走」。缺省不写 = 没选过 = 按快照。它是**项目对更新的姿态**，换一套规范时跟着走（T-51a） |
+
+* **默认「项目结果稳定」优先于「规范升级自动生效」**：全局那份后来变了，旧项目
+  的结论一个字不变；界面提示「有新版可同步」，由用户点一下（那一步进文档历史）。
+* **「有没有新版」的判据是内容不等**，不是版本号（T-47，两个方向的看护用例都在）。
+* **全局那份被删了 ≠ 这个项目没有规范**：快照还在，照常检查，界面另说一句话。
+* 三个字段全部可选，**磁盘 schema 不升版**；老文档没有它们 = 按 id 取全局现值。
+
+**最小字号只有一个数：8 pt**（T-48）。删掉的是那条比规范原文更严的 8.5 pt；
+8 pt 那条边的语义一个字没动（正好 8.0 仍然不算过）。两条检查仍然是两条——
+规范把两档设成不同值时（`free-form-v1` 6.0/5.0、期刊覆盖）各自出场。
+**求值器与界面都不许自己写下限**；缺键兜底只有 `FALLBACK_MIN_FONT_SIZE_PT`
+一处（两侧同名，严格同源对）。
+
+**界面上的身份**：默认视图只出现自然名称（「默认规范」/「默认样式」——内置跟
+界面语言走，用户起的名字不翻译）。id 与版本进技术详情、导入冲突与迁移，
+唯一出口 `lib/profileText.profileTechnicalDetail()`。
+
+**内置只读**：改内置的出口是「复制一份」，不是一个点了没反应的保存按钮。
+内置样式**从默认规范派生**，不是第二份数字。
 
 ---
 

@@ -66,10 +66,10 @@
       }
     },
     "profileAria": "Publication profile",
+    "profileFollowing": "Following updates",
     "profileLabel": "Profile",
     "profileMissing": "This spec is not on this computer; checking against the default spec for now.",
     "profileMissingPinned": "This spec is not on this computer; still checking against the copy saved in this project.",
-    "profilePinned": "Pinned",
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
     "proofLabel": "Record",
@@ -416,6 +416,7 @@
     "builtin.style.default": "Default style",
     "clearField": "Clear {{field}}",
     "conflict": "“{{name}}” has been changed. Reopen it before editing.",
+    "copyOf": "{{name}} copy",
     "delete": "Delete",
     "deleteBody": "Projects that already use it are unaffected — each keeps its own copy.",
     "deleteTitle": "Delete “{{name}}”?",
@@ -441,6 +442,8 @@
       "titleFont": "Title size",
       "widthTolerance": "Width tolerance"
     },
+    "follow": "Follow updates",
+    "followHelp": "Off by default: the project keeps the rules as they were when you picked them, so a change to the global spec never silently changes this figure. Turn it on to always use the latest rules and stop being asked to sync.",
     "import": "Import from a file",
     "inUse": "In use here",
     "kind": {

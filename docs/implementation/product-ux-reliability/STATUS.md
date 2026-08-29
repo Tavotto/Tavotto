@@ -41,7 +41,7 @@
 | 07 | Readiness 后端事实模型 | ✅ 完成（本次） |
 | 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
-| 10 | Style / Spec 分层 | ⬜ |
+| 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
 | 11 | 统一检查引擎与问题面板 | ⬜ |
 | 12 | 导出管线与精简导出 UI | ⬜ |
 | 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
@@ -85,7 +85,7 @@
 | R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
 | R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
 | R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
-| R-11 | **最小字号有两个数**：`absolute_min_font_size_pt: 8.0` 与 `legend_policy.min_font_size_pt: 8.5` | `profiles/publication.json:43,65` | P2 | 10 |
+| R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
 | R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
 | R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
@@ -296,6 +296,26 @@ desktop…」。
 > 不是拼起来的。下一轮的纪律：**改完所有 `web/src` 再重建，重建之后一个字都不动**
 > ——`i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
 
+### Session 10 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3271** passed / 34 skipped / 0 failed（收集 3305 条 = 09 的 3251 + 54，逐项对得上：`test_profile_store.py` 37 + `test_preflight.py` 新增 1 + `test_error_codes.py` 那条按 code 参数化的用例随 16 个新 code 一起 +16） |
+| `cd web && pnpm test` | ✅ exit 0 —— **138** files / **1659** tests passed（比 09 的 134/1618 +4 文件 / +41 条：specBinding 18 + profileStore 6 + styleAndSpec 6 + profilesSettings 11 = 41；ExportDialog / profile 里那几条只改判据，不增条数） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2713 / en-US 2798；新增 `profiles.*` / `export.profile*` / 16 条 backend 错误码，删掉死掉的 `export.profileStamp`） |
+| `cd web && pnpm lint` | ✅ exit 0（只有既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（281 files） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `2e72e0094357a576`） |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `22b775a453e77970`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 36 条 | ✅ 全部被打红，**第一轮 0 条存活**——但有**两条判据在反证之前就先改掉了**，因为它们恒等成立（内置样式派生、错误文案按语言渲染），成因与处置见 `TEST_MATRIX.md` |
+| `cd web && pnpm e2e` | ⛔ **没跑**（同 08/09 的限制：Playwright 要真实后端与浏览器）。**本轮没有改任何 e2e spec** |
+
+> **「跑全量的时候别动树」这一轮踩了两次。** 变异反证会写文件再改回来，而
+> 全量套件正在读同一批文件——两次的表现都是"跑到一半开始红，红的原因与被测
+> 的事毫无关系"。纪律：**反证与全量串行，全量开始之后一个字都不改**
+> （文档除外，套件不读 `docs/`）。
+
 ---
 
 > 单跑某个前端用例文件时**必须自己带上**
@@ -320,19 +340,22 @@ desktop…」。
 | — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
 | — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
+| — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 09（快速编辑与画布模式）**，入口见 `SESSION_HANDOFF.md` 的
+**Prompt 11（统一检查引擎与问题面板）**，入口见 `SESSION_HANDOFF.md` 的
 「下一阶段入口」。
 
-08 留给后面的两个可复用入口：
+10 留给后面的三个可复用入口：
 
-* `useProjectReadinessStore.getState().focusPanel(fileId)` —— 打开「项目接入
-  状态」并滚到那一张图。Prompt 17（多选 ContextBar）与 18（QuickEdit 右键
-  动作）直接用它，**不要在那两处重新拼一份状态判断**；
-* `lib/readinessText.ts` 的 `statusLabel()` / `reasonText()` —— 状态与句子的
-  唯一一份实现，任何新出口都从这里取词。
+* `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` —— 「这个项目
+  按哪套规范检查」的**唯一判据**（有快照按快照，没有才按全局现值）。
+  11 的检查引擎与 12 的导出面板直接用，**不要在那两处再挑一遍**；
+* `store/profileStore` 的 `specs` / `catalog()` —— 清单的唯一持有者
+  （后端不在时退回内置，组件里不许有 fetch）；
+* `lib/profileText.ts` —— profile 在界面上叫什么的唯一实现
+  （内置跟界面语言走，**默认视图不出现 id 与版本号**）。

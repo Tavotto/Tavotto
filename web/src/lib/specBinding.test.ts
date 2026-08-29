@@ -65,7 +65,17 @@ describe('快照优先：全局改了不动旧项目', () => {
 
   it('没选过跟随时字段根本不写进文档（恒为 false 的字段只会让 diff 变脏）', () => {
     expect('follow' in bindingFor(builtin())).toBe(false)
+    expect('follow' in bindingFor(builtin(), { follow: false })).toBe(false)
     expect(bindingFor(builtin(), { follow: true }).follow).toBe(true)
+  })
+
+  it('换一套规范之后跟随的表态还在（它跟着项目走，不跟着某一套规范走）', () => {
+    const a = builtin()
+    const b = { ...a, id: 'other-spec', display_name: '别的规范' }
+    const before = bindingFor(a, { follow: true })
+    const after = bindingFor(b, { follow: before.follow })
+    expect(after.follow).toBe(true)
+    expect(after.id).toBe('other-spec')
   })
 })
 

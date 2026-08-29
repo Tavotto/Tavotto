@@ -385,21 +385,40 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 
 ---
 
-## 6. Style / Spec / Validation / Export 的现状数据来源
+## 6. Style / Spec / Validation / Export（`← 10`，ADR 0029）
 
-| 层 | 现状唯一出处 | 备注 |
+| 层 | 唯一出处 | 备注 |
 | --- | --- | --- |
-| **Spec**（出版规范） | `src/tavotto/profiles/publication.json` | 两侧求值器共读；`default_profile: lab-publication-v1` |
+| **Spec（内置）** | `src/tavotto/profiles/publication.json` | 两侧求值器共读；`default_profile: lab-publication-v1`（v1.1.0） |
+| **Spec（用户自建）** | `<data_dir>/profiles/specs.json` ← `engine/profilestore.py` | 与内置**同形**；走 `profiles.validate_spec()` 同一套校验 |
+| 「任意 id → 规范」 | `profilestore.resolve_spec(id, journal)` | **唯一入口**（HTTP 与 MCP 都走它）。`profiles.load()` 仍只读内置那份 canonical JSON——不让它知道用户数据目录，避免循环 import |
 | Spec 求值器（Python） | `engine/preflight.py` | MCP / 后端走这条 |
 | Spec 求值器（TS） | `web/src/lib/preflight.ts` | 浏览器里跑不了 Python，所以有两份 |
 | 两份求值器的对齐 | `tests/golden/preflight_vectors.json` | pytest 与 vitest 各跑一遍同一份向量 |
-| 文档上的规范绑定 | `DocumentProfile { id, journal? }`，在 `CanvasData.profile` | 只存 id 与期刊覆盖，**规则本身一条都不进文档** |
-| **Style**（命名样式预设） | `LAYOUT_DIR/_styles.json`（文件名常量在 `engine/documents.STYLES_FILENAME`），`GET/POST/DELETE /api/styles` | 跨文档共享，上限 100 条；前端 `components/StyleDialog.tsx`、`lib/stylePresets.ts` |
-| **Export** | `web/src/lib/exportDefaults.ts`（localStorage）+ `exportPayload.ts` | 与 Spec 无耦合 |
+| 缺键时的字号兜底 | `profiles.FALLBACK_MIN_FONT_SIZE_PT` ↔ `lib/profile.ts` 同名常量 | **严格同源对**；求值器里一个字面量都没有 |
+| 文档上的规范绑定 | `CanvasData.profile { id, journal?, snapshot?, snapshotVersion?, follow? }` | **规则全文进文档**（快照）；解析只有 `lib/specBinding.resolveDocumentSpec()` 一处 |
+| **Style（内置）** | 从默认 Spec **派生**（`profilestore._builtin_style_record`） | 不落盘、不是第二份数字 |
+| **Style（用户）** | `<data_dir>/profiles/styles.json` | 旧位置 `layouts/_styles.json` 首次访问时一次性迁走并腾空（原件备份进 `profiles/backup/`） |
+| Style 的应用 | `lib/stylePresets.planStyle()` → `store/actions.applyStylePlan()` | 一条历史、可撤销、含画布背景 |
+| profile 的显示名 / 技术详情 | `lib/profileText.ts` | 内置跟界面语言走；**默认视图不出现 id 与版本号** |
+| 清单的前端持有者 | `store/profileStore.ts` → `/api/profiles/*` | 组件里没有 fetch，也没有磁盘格式的知识 |
+| 管理界面 | `components/settings/ProfilesSettings.tsx`（设置分区 `profiles`） | Style 与 Spec **不在同一张表单里混改** |
+| **Export** | `web/src/lib/exportDefaults.ts`（localStorage）+ `exportPayload.ts` | 与 Spec 无耦合；**PPI 不在 Style 里**（T-49） |
 
-最小字号现状：`absolute_min_font_size_pt: 8.0`，
-`legend_policy.min_font_size_pt: 8.5`（profile 里注明是"从严"的本项目补充）。
-Prompt 10 的「统一为 8 pt」要在 **profile 文件**里改，不在两个求值器里改。
+磁盘布局：
+
+```text
+<data_dir>/profiles/styles.json     用户自建样式（schema 1，每条带 revision）
+<data_dir>/profiles/specs.json      用户自建规范
+<data_dir>/profiles/backup/         坏文件与迁移前的原件（**不删**）
+```
+
+纪律：原子写（`atomicio`）、乐观并发（`expected_revision` 对不上回 409 + 磁盘
+现值）、损坏回退内置且坏文件挪进 `backup/`、比本构建新的清单**原样不动**、
+导入一律建新的一条（id 重新分配，所以不存在"导入把我的改动冲掉了"）。
+
+最小字号：**默认规范只有 8 pt 一个数**（`min_effective` = `absolute_min` =
+`legend_policy.min` = 8.0）。`eff <= floor` 的边界语义未变。
 
 ---
 

@@ -253,8 +253,10 @@ export function ExportDialog() {
       width != null && Number.isFinite(width) && width > 0
         ? { widths_mm: { double: width } }
         : undefined
+    // **跟随的表态跟着项目走，不跟着某一套规范走**：换一套规范不该把用户
+    // 说过的"以后别问我"悄悄关掉。
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
-      d.profile = bindingFor(entry, { journal: nextJournal })
+      d.profile = bindingFor(entry, { journal: nextJournal, follow: doc.profile?.follow })
     })
   }
 
@@ -263,7 +265,7 @@ export function ExportDialog() {
     const entry = catalog.find((e) => e.id === (doc.profile?.id ?? profileId))
     if (!entry) return
     commit(msg('history.syncPublicationProfile', undefined, 'workspace'), (d) => {
-      d.profile = bindingFor(entry, { journal: doc.profile?.journal })
+      d.profile = bindingFor(entry, { journal: doc.profile?.journal, follow: doc.profile?.follow })
     })
   }
 
@@ -430,20 +432,24 @@ export function ExportDialog() {
         )}
 
         <Row label={ex('profileLabel')} labelWidth={52}>
-          <Select
-            value={doc.profile?.id ?? profileId}
-            onChange={(v) => applyProfile(v, journalWidth)}
-            options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
-            ariaLabel={ex('profileAria')}
-            className="w-44"
-          />
           {/* 内部 id 与版本号**不进默认视图**：对用户没有意义，摆出来只会让人
               以为那是要记住的东西。它们留在这一行的 title 里（技术详情）。 */}
           <span
-            className="shrink-0 text-xs text-ink-3"
+            className="flex min-w-0 items-center gap-2"
             title={profileTechnicalDetail({ id: profile.profile_id, version: profile.version })}
           >
-            {resolved.source === 'snapshot' ? ex('profilePinned') : ''}
+            <Select
+              value={doc.profile?.id ?? profileId}
+              onChange={(v) => applyProfile(v, journalWidth)}
+              options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
+              ariaLabel={ex('profileAria')}
+              className="w-44"
+            />
+            {/* **只标非常态。** 「按快照」是绑定之后的常态，给它一个恒亮的角标
+                等于没有信息；真正值得说的是"这个项目选了跟着全局走"。 */}
+            {doc.profile?.follow === true && (
+              <span className="shrink-0 text-xs text-ink-3">{ex('profileFollowing')}</span>
+            )}
           </span>
         </Row>
 

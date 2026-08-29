@@ -48,19 +48,31 @@ def test_builtin_specs_come_from_the_canonical_json(data_dir):
     assert lab["data"] == profiles.load("lab-publication-v1")
 
 
-def test_builtin_style_is_derived_from_the_default_spec(data_dir):
+def test_builtin_style_is_derived_from_the_default_spec(data_dir, tmp_path, monkeypatch):
     """内置样式是**从规范派生的**，不是第二份数字。
 
-    规范说正文 9 pt / 拉丁 Times New Roman / 线宽第一档 0.5，样式就照它生成；
-    改规范时样式跟着变——两者从此不可能互相矛盾。
+    判据刻意**换一份规范来量**：两侧都取自同一份文件时，把派生换成写死的
+    9.0 / "Times New Roman" 也照样绿——那种用例什么都没量到
+    （同一个值填了两个出处 = 恒等成立）。这里给一份改过数字的规范，
+    样式必须跟着变。
     """
+    doc = json.loads(profiles.profiles_path().read_text(encoding="utf-8"))
+    lab = doc["profiles"]["lab-publication-v1"]
+    lab["default_font_size_pt"] = 11.5
+    lab["font_family"]["latin"] = "Nimbus Roman"
+    lab["line_widths_pt"] = [0.25, 2.0]
+    lab["axis_policy"]["tick_direction"] = "out"
+    other = tmp_path / "other-profiles.json"
+    other.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv(profiles.PROFILE_ENV, str(other))
+
     spec = profiles.load()
     style = store.list_profiles(store.KIND_STYLE)[0]
     el = style["data"]["element"]
-    assert el["text"]["fontsize"] == spec["default_font_size_pt"]
-    assert el["text"]["fontfamily"] == spec["font_family"]["latin"]
-    assert el["line"]["linewidth"] == spec["line_widths_pt"][0]
-    assert el["ticks"]["direction"] == spec["axis_policy"]["tick_direction"]
+    assert el["text"]["fontsize"] == spec["default_font_size_pt"] == 11.5
+    assert el["text"]["fontfamily"] == spec["font_family"]["latin"] == "Nimbus Roman"
+    assert el["line"]["linewidth"] == spec["line_widths_pt"][0] == 0.25
+    assert el["ticks"]["direction"] == spec["axis_policy"]["tick_direction"] == "out"
     assert style["read_only"] is True
 
 
@@ -443,3 +455,15 @@ def test_resolve_spec_refuses_an_unknown_id(data_dir):
     with pytest.raises(store.ProfileStoreError) as exc:
         store.resolve_spec("没有这个")
     assert exc.value.code == "profile_not_found"
+
+
+def test_a_bad_journal_says_so_instead_of_blaming_the_profile_id(data_dir):
+    """两个成因不许压成同一句话：id 不认识 vs 覆盖本身不合法。
+
+    靠捕获 `ProfileError` 来分流的写法会把「你改的这个字段不合法」说成
+    「没有这个出版规范」——用户拿着一句指错方向的话去找一个存在的东西。
+    """
+    with pytest.raises(store.ProfileStoreError) as exc:
+        store.resolve_spec("lab-publication-v1", {"widths_mm": {"single": -1}})
+    assert exc.value.code == "profile_bad_journal"
+    assert "widths_mm" in str(exc.value)

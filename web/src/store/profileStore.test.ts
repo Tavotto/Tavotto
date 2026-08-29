@@ -8,6 +8,7 @@
  * 3. 乐观并发撞车时把磁盘现值留下来，界面才说得出「已经被改过」。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { i18n } from '@/i18n'
 import { useProfileStore } from './profileStore'
 import { builtinCatalog } from '@/lib/specBinding'
 
@@ -110,10 +111,20 @@ describe('写操作', () => {
   })
 
   it('错误文案按界面语言渲染，不透传后端中文原文', async () => {
-    stub(() => json({ error: '内置配置不能直接改，请先复制一份', code: 'profile_read_only' }, 409))
-    await useProfileStore.getState().create('style', 'X', {})
-    // zh-CN 下两者恰好同义；判据是它走了 code 那条路（英文界面才看得出差别）
-    expect(useProfileStore.getState().error?.code).toBe('profile_read_only')
-    expect(useProfileStore.getState().error?.message).toContain('复制')
+    // **必须换成英文界面来量**：zh-CN 下"透传原文"与"按 code 翻"给出同一句话，
+    // 判据恒等成立。英文界面里泄漏中文正是这条要防的事（审计 P1-02）。
+    await i18n.changeLanguage('en-US')
+    try {
+      stub(() =>
+        json({ error: '内置配置不能直接改，请先复制一份', code: 'profile_read_only' }, 409),
+      )
+      await useProfileStore.getState().create('style', 'X', {})
+      const err = useProfileStore.getState().error!
+      expect(err.code).toBe('profile_read_only')
+      expect(err.message).toContain('Duplicate')
+      expect(err.message).not.toMatch(/[一-鿿]/)
+    } finally {
+      await i18n.changeLanguage('zh-CN')
+    }
   })
 })

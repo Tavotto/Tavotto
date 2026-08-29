@@ -740,10 +740,14 @@ def resolve_spec(profile_id: str | None = None, journal: dict | None = None) -> 
     ADR 0029 里——**两边的取舍不同是有意的，不是漂移**。
     """
     pid = profile_id or profiles_mod.default_profile_id()
-    try:
-        return profiles_mod.load(pid, journal)
-    except profiles_mod.ProfileError:
-        pass
+    # **先按 id 分流，不靠捕获异常分流。** `load()` 抛 ProfileError 有两个成因
+    # （id 不认识 / journal 覆盖不合法），吞掉它去查用户清单会把后者也说成
+    # 「没有这个出版规范」——用户改了一个字段，收到的是一句指错方向的话。
+    if any(b["id"] == pid for b in builtins(KIND_SPEC)):
+        try:
+            return profiles_mod.load(pid, journal)
+        except profiles_mod.ProfileError as exc:
+            raise ProfileStoreError("profile_bad_journal", str(exc)) from exc
     rec = get_profile(KIND_SPEC, pid)
     if rec is None or rec["built_in"]:
         raise ProfileStoreError("profile_not_found", f"没有这个出版规范: {pid}", status=404)

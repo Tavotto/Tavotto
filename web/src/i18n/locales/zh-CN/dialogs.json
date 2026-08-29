@@ -65,10 +65,10 @@
       }
     },
     "profileAria": "出版规范",
+    "profileFollowing": "跟随更新",
     "profileLabel": "规范",
     "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
     "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
-    "profilePinned": "已固定",
     "profileSync": "同步到新版",
     "profileUpdateAvailable": "这套规范有了新版本。",
     "proofLabel": "留档",
@@ -413,6 +413,7 @@
     "builtin.style.default": "默认样式",
     "clearField": "清除{{field}}",
     "conflict": "「{{name}}」已被改过。请重新打开这一条再改。",
+    "copyOf": "{{name}} 副本",
     "delete": "删除",
     "deleteBody": "已经用过它的项目不受影响：项目里存着自己的那一份。",
     "deleteTitle": "删除「{{name}}」？",
@@ -438,6 +439,8 @@
       "titleFont": "标题字号",
       "widthTolerance": "宽度容差"
     },
+    "follow": "跟随更新",
+    "followHelp": "默认不跟随：项目里存着选中那一刻的规则，全局改了也不会悄悄改变这张图的结论。打开之后按最新的规则算，不再提示同步。",
     "import": "从文件导入",
     "inUse": "本项目在用",
     "kind": {

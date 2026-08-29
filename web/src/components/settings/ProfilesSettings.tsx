@@ -31,6 +31,7 @@ import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { NumberField, TextInput } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
+import { Toggle } from '../ui/Toggle'
 import { SettingRow, SettingSection } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -176,15 +177,19 @@ export function ProfilesSettings() {
   }, [selected?.id, selected?.revision]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const editable = !!selected && !selected.read_only
+  // 空名字不算「改好了」：让它可保存的话，保存会静默跳过改名那一步
+  // （后端拒绝空名），用户看到的是"点了保存、名字没变、也没报错"。
   const dirty =
     !!selected &&
     !!draft &&
+    !!name.trim() &&
     (JSON.stringify(draft) !== JSON.stringify(selected.data) ||
       name.trim() !== profileName(selected))
 
   const fields = kind === 'spec' ? SPEC_FIELDS : STYLE_FIELDS
 
-  const act = async <T,>(op: () => Promise<T>): Promise<T> => {
+  /** 一次会写盘的操作：期间禁用按钮，无论成败都恢复。 */
+  const withBusy = async <T,>(op: () => Promise<T>): Promise<T> => {
     setBusy(true)
     try {
       return await op()
@@ -194,7 +199,7 @@ export function ProfilesSettings() {
   }
 
   const create = () =>
-    act(async () => {
+    withBusy(async () => {
       // 新建 = 从当前选中的那条复制（多半就是内置默认）。**空白模板没有意义**：
       // 一份什么规则都没有的规范会把所有检查静默放行。
       const base = selected ?? records[0]
@@ -204,14 +209,19 @@ export function ProfilesSettings() {
     })
 
   const duplicate = () =>
-    act(async () => {
+    withBusy(async () => {
       if (!selected) return
-      const rec = await useProfileStore.getState().duplicate(kind, selected.id)
+      // 名字**在前端拼**：后端的 `display_name` 对内置来说是中文兜底
+      // （真正的名字是 `name_key` 查出来的），让后端拼就会在英文界面里
+      // 造出一条叫「默认样式 副本」的配置。
+      const rec = await useProfileStore
+        .getState()
+        .duplicate(kind, selected.id, st('copyOf', { name: profileName(selected) }))
       if (rec) setSelectedId(rec.id)
     })
 
   const save = () =>
-    act(async () => {
+    withBusy(async () => {
       if (!selected || !draft) return
       const api = useProfileStore.getState()
       const saved = await api.save(kind, selected.id, draft)
@@ -224,7 +234,7 @@ export function ProfilesSettings() {
     })
 
   const remove = () =>
-    act(async () => {
+    withBusy(async () => {
       if (!selected || selected.read_only) return
       const ok = await askConfirm({
         title: msg('profiles.deleteTitle', { name: profileName(selected) }, 'dialogs'),
@@ -237,7 +247,7 @@ export function ProfilesSettings() {
     })
 
   const restore = () =>
-    act(async () => {
+    withBusy(async () => {
       if (!selected || selected.read_only) return
       const ok = await askConfirm({
         title: msg('profiles.restoreTitle', { name: profileName(selected) }, 'dialogs'),
@@ -248,22 +258,27 @@ export function ProfilesSettings() {
     })
 
   const exportOne = () =>
-    act(async () => {
+    withBusy(async () => {
       if (!selected) return
       const text = await useProfileStore.getState().exportOne(kind, selected.id)
       if (!text) return
-      // 浏览器里能给的只有"下载一个文件"；桌面端同样走这条（沙盒里没有别的路）
+      // 与「导出诊断包」同一条路径（`PrivacyAboutSettings.downloadDiagnostics`）：
+      // 浏览器里能给的只有"下载一个文件"，桌面端也走这条。
       const blob = new Blob([text], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${selected.id}.tavotto-profile.json`
-      a.click()
-      URL.revokeObjectURL(url)
+      try {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${selected.id}.tavotto-profile.json`
+        a.click()
+      } finally {
+        // 不撤销就是一条挂到刷新为止的引用
+        URL.revokeObjectURL(url)
+      }
     })
 
   const importOne = (file: File) =>
-    act(async () => {
+    withBusy(async () => {
       const text = await file.text()
       const rec = await useProfileStore.getState().importOne(kind, text)
       if (rec) setSelectedId(rec.id)
@@ -273,21 +288,42 @@ export function ProfilesSettings() {
   const doc = useDocumentStore((s) => s.doc)
   const commit = useDocumentStore((s) => s.commit)
 
+  const asCatalogEntry = (r: ProfileRecord) => ({
+    id: r.id,
+    display_name: r.display_name,
+    version: r.version,
+    built_in: r.built_in,
+    data: r.data,
+  })
+
   /** 「为当前项目选择规范」：写一条带快照的绑定进文档（可撤销、正确 dirty）。 */
   const useForProject = () => {
     if (!selected || kind !== 'spec') return
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
-      d.profile = bindingFor({
-        id: selected.id,
-        display_name: selected.display_name,
-        version: selected.version,
-        built_in: selected.built_in,
-        data: selected.data,
+      d.profile = bindingFor(asCatalogEntry(selected), {
+        journal: doc.profile?.journal,
+        // 跟随的表态跟着项目走：换一套规范不该把它悄悄关掉
+        follow: doc.profile?.follow,
       })
     })
     useUiStore
       .getState()
       .setStatus(msg('profiles.usedForProject', { name: profileName(selected) }, 'dialogs'))
+  }
+
+  /**
+   * 「跟随这套规范的更新」。默认**不跟随**（项目结果稳定，ADR 0029）；
+   * 打开它等于用户明确说"以后别问我，直接按最新的算"——所以它同样是一次
+   * 文档修改（可撤销、正确 dirty），而不是一个本机偏好。
+   */
+  const setFollow = (on: boolean) => {
+    if (!selected || kind !== 'spec') return
+    commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
+      d.profile = bindingFor(asCatalogEntry(selected), {
+        journal: doc.profile?.journal,
+        follow: on,
+      })
+    })
   }
 
   /** 「应用样式到当前图」：交给样式对话框——那里才看得见影响范围与冲突。 */
@@ -458,6 +494,16 @@ export function ProfilesSettings() {
                 </ul>
               )}
 
+              {kind === 'spec' && boundId === selected.id && (
+                <SettingRow label={st('follow')} help={st('followHelp')} labelWidth={92}>
+                  <Toggle
+                    checked={doc.profile?.follow === true}
+                    onChange={setFollow}
+                    aria-label={st('follow')}
+                  />
+                </SettingRow>
+              )}
+
               {!editable && <p className="text-xs text-ink-3">{st('readOnlyHint')}</p>}
               {conflict && (
                 <p className="text-xs text-danger">
@@ -507,5 +553,3 @@ export function ProfilesSettings() {
     </SettingSection>
   )
 }
-
-export type { ProfileRecord }
