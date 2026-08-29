@@ -418,6 +418,12 @@ _CROSSCHECK = {
         lambda: _cross_scatter(500, s=np.random.default_rng(11).uniform(5, 40, 500)),
         _fig_blank,
     ),
+    # **简单 marker**（`_` 只有 2 个顶点）：`draw_path_collection` 的取舍式在这里
+    # 判「逐个内联」，而单形状快路先一步把它接走了 → 仍然共享。这一格是快路
+    # 本身的**唯一现场**——`scatter_uniform` 那个圆形 marker 走取舍式也能得出
+    # 同样的答案，所以它证明不了快路存在的必要性（变异实测：把快路关掉，
+    # 只有这一格会红）。
+    "scatter_simple_marker": (lambda: _cross_scatter(500, s=20, marker="_"), _fig_blank),
     # 逐点颜色 → 也掉出快路，但取舍式仍然判共享
     "scatter_mapped": (
         lambda: _cross_scatter(500, s=6, c=np.random.default_rng(12).random(500)),
