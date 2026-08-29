@@ -467,6 +467,58 @@ raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
 * **浏览器侧仍未实测**：闸落地之后可以用「临近阈值」的受控规模在真浏览器里
   量 DOM 节点数与 WebView2 内存了，但那是 Session 05 的事。
 
+## 复杂度分析器开销（issue #181，Session 02）
+
+日期：2026-08-29 ｜ 同一台机器、同一个 fixture ｜ 判据实现
+`src/tavotto/engine/preview_complexity.py`，阈值 `engine/previewbudget.py`。
+
+分析器进 render 热路径，所以它要回答的问题不是「快不快」，而是**「与它要省下
+的那件事相比够不够便宜」**。分母因此取 `savefig(svg)`——那正是 complexity-aware
+hybrid 要砍掉的那一段。
+
+复现：
+
+```bash
+python tests/support/preview_complexity_probe.py \
+    --issue181-n 470 --bench --bench-repeat 7
+```
+
+| 图 | 分析器（7 次取中位） | `savefig(svg)` | 比 |
+|---|---|---|---|
+| 普通科研图（两条曲线 + 图例，SVG 20 KB） | **0.0055 ms** | 11.6 ms | **1 : 2 109** |
+| #181 fixture（n=470，SVG 126 MB） | **0.0165 ms** | 10 540 ms | **1 : 638 782** |
+
+抖动（min/max）：普通图 0.0051 / 0.0144，fixture 0.0160 / 0.0406——**两张图的
+分析耗时是同一个量级**，因为判据吃的是 artist 数量与 shape 元数据，不是数据量。
+一块 220 900 个 cell 的网格与一块 576 个 cell 的网格，读的都是
+`get_coordinates().shape` 那一个元组。
+
+### 分析器算出来的账 vs 后端真的画出来的
+
+| | 模型（`savefig` 之前） | 后端实测（`savefig` 之后） |
+|---|---|---|
+| primitive | **662 704** | 662 773 个 `<path>` + 1 个 `<image>` |
+| vertex | 3 314 300 | —— |
+
+差的 70 个是坐标轴、刻度、图例边框那些结构件——分析器**有意不数它们**（一个
+是一个节点，撑不爆 DOM），所以这不是误差而是口径。落在数据层上的 99.99%
+它都算到了。
+
+逐族的精确度另有对拍看护（`tests/test_preview_complexity.py::test_model_matches_what_the_svg_backend_actually_emits`）：
+同一张图带 / 不带那个 artist 各 `savefig` 一次，差分出它自己摊出来的节点数与
+顶点数。九格里 primitive **全部逐个相等**，vertex 八格相等、contour 一格 0.916。
+
+### 这几个数说明什么
+
+1. **判定可以无条件地做。** 0.0055 ms 对普通图是白送的——不需要「只在大图上
+   才分析」这种会自己制造分类错误的开关。
+2. **它指向的节省是 10.5 秒里的绝大部分**，而不是 12 秒里的 2%（对比
+   Session 01：安全闸让产物不进内存与 DOM，`canvas_draw_ms` 一分钱没省）。
+   真正兑现这笔节省是 Session 03——Session 02 只产出「该 rasterize 谁」的名单。
+3. **分析器不看数据量**：n 从 24 涨到 470（数据量 383 倍）它只从 0.013 ms 涨到
+   0.0165 ms。会随规模涨的实现基本都在某处遍历了 path 或复制了数组，
+   `test_quadmesh_paths_are_never_built` 与那条 50 ms 的粗闸盯的就是它。
+
 ## 复现
 
 ```bash

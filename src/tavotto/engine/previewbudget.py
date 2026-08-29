@@ -21,6 +21,10 @@ issue #181 的教训是「**判定点在 `read_text()` 之后 = 这道闸什么�
 二道闸**（后端不返回 `preview` 时前端要维持既有行为，而返回了一个超大 `svg`
 时前端要能自己丢掉它）。两侧的数字由 `tests/test_preview_budget.py` 看住。
 
+**复杂度预算那几个数没有镜像，这是有意的**：前端从不评估复杂度（artist 图只
+在 worker 进程里），它手上只有裁决结果。凭空镜像过去就是造第二份权威。
+`test_complexity_budgets_are_deliberately_not_mirrored` 是这个不对称的说明。
+
 纯标准库；`figsession` 平铺 import 它，`tavotto.engine` 侧按包名 import。
 """
 
