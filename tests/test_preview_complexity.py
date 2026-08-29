@@ -176,6 +176,10 @@ def test_model_matches_what_the_svg_backend_actually_emits(probe):
     这条用例第一次跑就抓到两处（都是「我以为」而不是「我量过」）：网格每个
     cell 是 **5** 个坐标对不是 4；空的 contour 层**照样**写出一个 `<path>` 节点。
     两处都是模型偏低——而偏低是错的那个方向。
+
+    差分本身也踩过一次：第一版没关坐标轴，scatter 那格量出来的 `<use>` 差是
+    476 而不是 500——**刻度文字在 SVG 里也是 `<use>`**，两侧的刻度不同就把差分
+    污染了。A/B 只有在「除了这一个 artist 之外完全相同」时才是对照。
     """
     for row in probe["crosscheck"]:
         model = row["model_primitives"]
@@ -190,21 +194,34 @@ def test_model_matches_what_the_svg_backend_actually_emits(probe):
             assert path == model, f"{row['case']}: 模型 {model} 个节点，SVG 里 {path} 个 <path>"
 
 
-def test_vertex_estimate_is_an_upper_bound_never_an_under_count(probe):
-    """顶点估值**只许偏贵**（ADR 0022 不变量 5），且偏差有上界。
+#: 顶点估值允许偏离后端实测值的带宽。五族实测：mesh / scatter / poly /
+#: linecoll 逐个**精确相等**，contour 0.916（被裁剪的等值线上后端给每个
+#: `CLOSEPOLY` 多写一条回起点的 `L`）。±15% 容得下那一条，又足够窄
+#: ——变异实测：网格顶点数写成 4（比 0.800）与 `_shares_geometry` 判反
+#: （散点比 500）都当场红。
+_VERTEX_BAND = (0.85, 1.15)
 
-    偏差的来源是已知的：带 `CLOSEPOLY` 的路径每个子路径多算一个（后端把它
-    写成 `z`，不写坐标）。实测 300 个四边形的 `PolyCollection` 模型 1500、
-    后端 1200，比 1.25。散点不在这条对拍里——它的 marker 是贝塞尔圆，
-    后端写的是 `C` 曲线指令，`M`/`L` 这把尺子量不了它。
+
+def test_vertex_model_tracks_what_the_backend_writes(probe):
+    """顶点估值必须落在后端实测值的 ±15% 带内——**散点也在这条里**。
+
+    第一版把这条写成「模型 ≥ 后端」，尺子用的是 `M`/`L` 指令数。那把尺子
+    量不了贝塞尔（一个 `C` 吃掉 3 个顶点），于是散点那一格恒等成立，而**恒等
+    成立的判据挡不住任何东西**：变异实测把 `_shares_geometry` 改成恒 False
+    （散点的顶点估值从 26 变成 13 000，500 倍），整套用例全绿。换成按指令
+    权重折算之后同一个变异当场红。
+
+    `_shares_geometry` 是这条用例真正守着的东西：它决定几何进 `<defs>` 只写
+    一遍、还是每个实例各写一遍——两者差 `n_instances` 倍。
     """
+    lo, hi = _VERTEX_BAND
     for row in probe["crosscheck"]:
-        if row["case"] == "scatter":
-            continue
-        model, real = row["model_vertices"], row["svg_delta_ml"]
+        assert row["unknown_cmds"] == [], f"{row['case']}: 出现了换算表外的指令，这个数不可信"
+        model, real = row["model_vertices"], row["svg_delta_vertices"]
         assert real > 0, f"{row['case']}: 对拍那一侧没量到东西，判据是空的"
-        assert model >= real, f"{row['case']}: 模型 {model} 低于后端实际的 {real}"
-        assert model <= real * 1.35, f"{row['case']}: 模型 {model} 比后端实际的 {real} 贵太多"
+        assert lo <= model / real <= hi, (
+            f"{row['case']}: 模型 {model} vs 后端实际 {real}（比 {model / real:.3f}）"
+        )
 
 
 # --------------------------------------------------------------------------

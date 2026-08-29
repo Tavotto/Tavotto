@@ -368,12 +368,20 @@ def _fig_linecoll(n: int):
     return fig
 
 
-def _svg_tag_counts(fig) -> dict:
-    """这张图的预览 SVG 里各出现了多少个绘制节点、多少个坐标对。
+#: 一条 SVG 路径指令吃掉几个 matplotlib 顶点。
+#:
+#: **`C` 是 3 不是 1**：一段三次贝塞尔在 `Path.vertices` 里占两个控制点 + 一个
+#: 终点。第一版按「指令数 == 顶点数」算，散点那条对拍就恒等成立——而恒等成立
+#: 的判据挡不住任何东西（变异实测：把 `_shares_geometry` 改成恒 False，
+#: 顶点估值从 26 变成 13 000，整套用例全绿）。
+_VERTICES_PER_CMD = {"M": 1, "L": 1, "C": 3, "Q": 2, "z": 1}
 
-    坐标对按 `d="…"` 里的 `M` / `L` 指令数——mpl 的折线路径就是
-    `M x y L x y …`，所以这是**后端自己写出来的那个数**，与模型的算法毫无
-    关系。对拍要的正是这个：两侧同源就等于自己验自己。
+
+def _svg_tag_counts(fig) -> dict:
+    """这张图的预览 SVG 里有多少个绘制节点、后端写进 `d="…"` 的顶点有多少个。
+
+    顶点数从**后端自己写出来的指令**反推（`M`/`L`/`C`/`Q`/`z` 各吃几个顶点），
+    与模型的算法毫无关系——对拍要的正是这个：两侧同源就等于自己验自己。
     """
     import io
     import re
@@ -382,11 +390,13 @@ def _svg_tag_counts(fig) -> dict:
     fig.savefig(buf, format="svg")
     svg = buf.getvalue()
     ds = re.findall(r'\bd="([^"]*)"', svg)
+    joined = "".join(ds)
     return {
         "path": svg.count("<path"),
         "use": svg.count("<use"),
         "image": svg.count("<image"),
-        "ml": sum(len(re.findall(r"[ML]", d)) for d in ds),
+        "vertices": sum(joined.count(c) * k for c, k in _VERTICES_PER_CMD.items()),
+        "unknown_cmds": sorted({c for c in joined if c.isalpha()} - set(_VERTICES_PER_CMD)),
         "bytes": len(svg.encode("utf-8")),
     }
 
@@ -429,8 +439,12 @@ def _crosscheck() -> list[dict]:
                 "model_vertices": model_vertices,
                 "svg_delta_path": with_counts["path"] - without_counts["path"],
                 "svg_delta_use": with_counts["use"] - without_counts["use"],
-                "svg_delta_ml": with_counts["ml"] - without_counts["ml"],
+                "svg_delta_vertices": with_counts["vertices"] - without_counts["vertices"],
                 "svg_delta_bytes": with_counts["bytes"] - without_counts["bytes"],
+                # 出现了换算表里没有的指令 = 上面那个数不可信，别让它静默通过
+                "unknown_cmds": sorted(
+                    set(with_counts["unknown_cmds"]) | set(without_counts["unknown_cmds"])
+                ),
             }
         )
     return rows

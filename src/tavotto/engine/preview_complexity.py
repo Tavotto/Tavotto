@@ -278,12 +278,23 @@ def _materialised_paths(coll):
 def _vertices_in_paths(paths) -> tuple[int, bool]:
     """(这些 path 的顶点总数, 是不是逐条数出来的)。见 `_VERTEX_SAMPLE_PATHS`。
 
-    取 `len(p.vertices)`，那是**上界**：带 `CLOSEPOLY` 的路径每个子路径会多算
-    一个（后端把它写成 `z`，不写坐标）。对拍实测 300 个四边形的
-    `PolyCollection` 模型算 1500、后端写出 1200 个 `M`/`L`（比 1.25）。
-    **偏保守是刻意选的方向**（ADR 0022 不变量 5：不认识时按贵的算），而偏差
-    有上界、能对拍——`test_preview_complexity.py::test_model_matches_what_the_
-    svg_backend_actually_emits` 钉着「模型 ≥ 后端实际写出来的，且不超过 1.35 倍」。
+    取 `len(p.vertices)`。对拍实测（把后端写出来的 `M`/`L`/`C`/`Q`/`z` 按各自
+    吃掉的顶点数折算回去）：
+
+    | 族 | 模型 | 后端实际 | 比 |
+    |---|---|---|---|
+    | mesh（24×24 pcolormesh） | 2880 | 2880 | 1.000 |
+    | scatter（500 点） | 26 | 26 | 1.000 |
+    | poly（300 个四边形） | 1500 | 1500 | 1.000 |
+    | linecoll（400 段） | 800 | 800 | 1.000 |
+    | contour（40×40 / 8 层） | 4845 | 5289 | **0.916** |
+
+    **所以它不是「上界」，是「±10% 以内的估值」**——最后一行是唯一偏离的：
+    被裁剪的等值线上，后端给每个 `CLOSEPOLY` 额外写一条回到起点的 `L`
+    （实测多出来的 444 与 `CLOSEPOLY` 计数**逐个相等**）。这点偏差在一个
+    10 万顶点的预算面前不影响任何裁决（普通图是几千），但**它偏低**，所以
+    不能把它说成保守估计。`test_preview_complexity.py::
+    test_vertex_model_tracks_what_the_backend_writes` 钉着那条实测带宽。
 
     **空 path 不过滤。** 直觉上「没有等值线的那一层画不出东西」，实测不是：
     8 层的 `contour` 有 10 个 path、其中 2 个空，而 SVG 里 **10 个 `<path>` 都
