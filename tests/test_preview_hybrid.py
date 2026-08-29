@@ -97,6 +97,21 @@ def test_preview_plan_costs_nothing_next_to_the_savefig_it_saves(life):
     assert life["timings"]["preview_plan_ms"] * 1000 < life["timings"]["canvas_draw_ms"]
 
 
+def test_each_timing_key_measures_the_span_it_claims_to(probe):
+    """**两个方向各注入一次 50 ms**：只钉一侧的判据在两段互换标签时全绿。
+
+    这两个数会进 `docs/perf-baseline.md`，而量错对象的数字看起来和真的一模
+    一样——接线的第一版把 `preview_plan_ms` 掐在「掐表到调用之间」，稳定报
+    0.007 ms（分析真实是 0.0165 ms），没有任何地方会因此报错。
+    """
+    t = probe["timing_attribution"]
+    slow_plan, slow_draw = t["slow_plan"], t["slow_savefig"]
+    assert slow_plan["preview_plan_ms"] >= 50.0, slow_plan
+    assert slow_plan["canvas_draw_ms"] < 50.0, slow_plan
+    assert slow_draw["canvas_draw_ms"] >= 50.0, slow_draw
+    assert slow_draw["preview_plan_ms"] < 50.0, slow_draw
+
+
 # --------------------------------------------------------------------------
 # 2. 相对回归门禁：数量级下降，不钉绝对值
 # --------------------------------------------------------------------------
@@ -112,6 +127,22 @@ def test_hybrid_is_an_order_of_magnitude_smaller_than_the_vector_baseline(life):
     assert vec["paths"] > 100_000, "对照组自己就没走纯矢量，这条比值恒等于 1"
     assert hyb["bytes"] <= vec["bytes"] * 0.15, (vec, hyb)
     assert hyb["paths"] <= vec["paths"] * 0.10, (vec, hyb)
+
+
+def test_the_two_ways_of_counting_the_same_svg_agree(life):
+    """基线表里那两个数出自**分块**计数——它多数一个还是少数一个不会有人报错。
+
+    所以这里用三种数法数同一份产物：整份文本一遍、1 MiB 块一遍、997 字节块
+    （小到会把 `<path` 切成两半）一遍。三者必须相等。
+    `scripts/bench_render.py` 当年缺了「减去重叠区里数得完整的那些」，#181 的
+    基线因此把 662 772 报成了 662 773——一个没有任何地方会报错的数字。
+    """
+    c = life["counter_agreement"]
+    assert c["whole_text"]["paths"] == c["chunked_1mib"]["paths"] == c["chunked_997b"]["paths"]
+    assert c["whole_text"]["images"] == c["chunked_1mib"]["images"] == c["chunked_997b"]["images"]
+    assert c["whole_text"]["bytes"] == c["chunked_997b"]["bytes"]
+    # 用例前提：小块那一遍真的切开了 needle（否则三者相等是恒真的）
+    assert c["chunked_997b"]["bytes"] > 997 * 4
 
 
 def test_the_vector_control_group_really_is_vector(life):
@@ -269,6 +300,16 @@ def test_rasterized_layers_may_lose_their_gid_node(life):
 # --------------------------------------------------------------------------
 # 7. 写回：这是表示法策略，不是用户改动
 # --------------------------------------------------------------------------
+def test_rasterized_is_not_a_property_the_override_layer_knows_about(probe):
+    """`overrides.HANDLERS` 里没有 `rasterized` 这一项——**结构性的，不是纪律性的**。
+
+    写回 payload 与 bake 进用户脚本的东西都出自 override 表。表里没有这个属性，
+    "预览的表示法漏进用户的文件"就不是一件需要谁记得避免的事。哪天有人为了
+    别的需求把它注册进去，这条会当场红，那时才需要重新想一遍。
+    """
+    assert probe["handlers_know_rasterized"] is False
+
+
 def test_the_preview_representation_never_enters_the_override_table(life):
     """hybrid 渲染之后会话的 override 快照仍然是空的。
 

@@ -120,6 +120,13 @@ def _svg_stats(url: str, timeout: float = 300) -> dict:
     `.encode()` 再一次，光量一个大小就能让基准脚本自己吃掉半个 G——而这个
     脚本要量的恰恰是「这份 payload 有多大」。分块数还有个好处：needle 跨块
     时靠重叠补回来，不必把上下文留在内存里。
+
+    **重叠区里数得完整的那些要减掉**：上一块已经数过它们了。跨界的那一个不用
+    减（上一块看到的是半截，没数上）。少了这一句，每有一个 `<path` 恰好整个
+    落在 5 字节重叠区里就多报一个——#181 那份 126 MB 的产物因此被报成
+    662 773，真值是 **662 772**（= 3 × 470² + 72，那 72 个正是 hybrid 之后
+    剩下的全部矢量 path）。判据与 `tests/support/preview_hybrid_probe.py`
+    的 `_svg_file_stats` 同一条，那边有对拍用例。
     """
     stats = {"svg_bytes": 0, **dict.fromkeys(_SVG_NEEDLES, 0)}
     overlap = b""
@@ -129,7 +136,7 @@ def _svg_stats(url: str, timeout: float = 300) -> dict:
             stats["svg_bytes"] += len(chunk)
             window = overlap + chunk
             for key, needle in _SVG_NEEDLES.items():
-                stats[key] += window.count(needle)
+                stats[key] += window.count(needle) - overlap.count(needle)
             overlap = window[-keep:] if keep else b""
     return stats
 

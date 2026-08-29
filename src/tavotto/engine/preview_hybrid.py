@@ -27,12 +27,15 @@ Figure」只有一个答案，且那个答案自带 `finally`。
 同一件事的两次实现。抄一份过去的代价不是多几行重复代码，而是**同一张图在
 两个入口里预览表示法不一样**——而这类分叉只会在大图上、在用户那边发作。
 
-纯标准库；与 `worker.py` 同一条 sys.path 纪律，平铺 import。
+自身只用标准库，但经 `preview_complexity` 传递依赖 matplotlib——所以它属于
+`bridge_runner._PHASE2`（屏障之后才装），不是 `_PHASE1`。与 `worker.py` 同一条
+sys.path 纪律，平铺 import。
 """
 
 from __future__ import annotations
 
 import contextlib
+import time
 
 import preview_complexity
 import previewbudget
@@ -75,11 +78,17 @@ def preview_rasterization(artists):
             )
 
 
-def save_preview_svg(state, save):
+def save_preview_svg(state, save, timings=None):
     """出一版 hybrid 预览 SVG，返回 `(plan, svg_bytes)`。**升档策略只有这一处。**
 
     `save(plan) -> svg_bytes` 由调用方给：桌面写盘后 `stat().st_size`，
     playground 写内存缓冲后 `tell()`。量的是同一个东西，落点不同。
+
+    `timings` 非空时填 `preview_plan_ms`（分析 + 可能的升档重判）与
+    `canvas_draw_ms`（`savefig`，升档时是**两遍之和**）。**计时收在这里，
+    因为只有这里知道那两段各自从哪到哪**——在调用方那边掐表，掐到的会是
+    「掐表到调用之间」那一段（实测 7 µs，而分析真实是 16 µs：一个看着很像
+    真的、但量错了对象的数字）。
 
     ## 为什么要第二遍
 
@@ -92,16 +101,46 @@ def save_preview_svg(state, save):
     字节的硬闸兜底。代价是这类图上多付一次 `savefig`——只有真的画出了 8 MiB
     以上的矢量 SVG 才会发生，而那本来就是一张要送进浏览器 DOM 的巨图。
     """
-    plan = preview_complexity.plan_for_state(state)
-    svg_bytes = _save_with(plan, save)
+    clock = _Clock()
+    with clock.plan():
+        plan = preview_complexity.plan_for_state(state)
+    svg_bytes = _save_with(plan, save, clock)
     if previewbudget.wants_hybrid_escalation(svg_bytes):
-        harder = preview_complexity.escalate_plan(plan)
+        with clock.plan():
+            harder = preview_complexity.escalate_plan(plan)
         if harder is not None:
             plan = harder
-            svg_bytes = _save_with(plan, save)
+            svg_bytes = _save_with(plan, save, clock)
+    if timings is not None:
+        timings["preview_plan_ms"] = round(clock.plan_ms, 3)
+        timings["canvas_draw_ms"] = round(clock.draw_ms, 3)
     return plan, svg_bytes
 
 
-def _save_with(plan, save):
-    with preview_rasterization(plan.rasterized_artists):
+class _Clock:
+    """两段各自的累计耗时。升档时 `savefig` 跑两遍——**两遍都算**，用户等的
+    就是两遍；分析同理（第一次裁决 + 一次升档重判）。"""
+
+    def __init__(self):
+        self.plan_ms = 0.0
+        self.draw_ms = 0.0
+
+    @contextlib.contextmanager
+    def _span(self, field):
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            setattr(self, field, getattr(self, field) + (time.perf_counter() - t0) * 1000.0)
+
+    def plan(self):
+        return self._span("plan_ms")
+
+    def draw(self):
+        return self._span("draw_ms")
+
+
+def _save_with(plan, save, clock):
+    # `set_rasterized` 那两下算进 draw：它们是「画这一版」的成本，不是分析的
+    with clock.draw(), preview_rasterization(plan.rasterized_artists):
         return save(plan)

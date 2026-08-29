@@ -261,12 +261,11 @@ class LiveFigureSession:
                 # 当场按最坏处理：不读，降到 raster。
                 return previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
 
-        t2 = time.perf_counter()
-        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save)
+        # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
+        # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
+        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
-            timings["preview_plan_ms"] = round((t2 - t1) * 1000.0, 3)
-            timings["canvas_draw_ms"] = ms_since(t2)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
                 svg_bytes=svg_bytes, rasterized_artist_count=plan.rasterized_artist_count

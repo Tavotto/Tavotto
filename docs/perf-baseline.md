@@ -377,9 +377,16 @@ TAVOTTO_ISSUE181_MESH_N=470 python scripts/bench_render.py \
 | 指标 | 值 | 出处 |
 |---|---|---|
 | `svg_bytes` | **126 132 735**（120.3 MiB） | `bench_render.py` |
-| `svg_path_count` | **662 773** | 同上（= 3 × 470² 个 quad + 73） |
+| `svg_path_count` | **662 772** | 同上（= 3 × 470² 个 quad + 72） |
 | `svg_image_count` | 1 | 同上（色条渐变） |
 | SVG 里的元素总数（= 插进 DOM 后的节点数） | **663 533** | 逐 tag 数了一遍 |
+
+（`svg_path_count` 2026-08-29 从 662 773 更正为 **662 772**：`bench_render.py`
+的分块计数漏了「减去重叠区里数得完整的那些」，每有一个 `<path` 恰好整个落在
+5 字节重叠区里就多报一个。判据已修，`tests/support/preview_hybrid_probe.py`
+的 `_svg_file_stats` 与它同一条，并有一条三种数法互比的用例
+（`test_the_two_ways_of_counting_the_same_svg_agree`）。那 72 个正是 hybrid
+之后剩下的全部矢量 path——两条独立路径上数出来的同一个数。）
 | `manifest_ms`（热，中位） | 206.3 | worker 自报 |
 | `canvas_draw_ms`（热，中位） | 11 789.1 | worker 自报（`savefig(svg)`，见 ADR 0003 §9） |
 | `total_ms`（热，中位） | 11 992.7 | worker 自报 |
@@ -462,10 +469,72 @@ raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
 * **`canvas_draw_ms` 一分钱没省**：12.3 秒的 `savefig(svg)` 照旧要跑一次
   ——安全闸只是不让那份产物进内存与 DOM，没有让它不产生。真正砍掉这一段是
   Session 02/03（复杂度分析器 + hybrid：mesh 层直接 rasterize，根本不生成
-  那 66 万个 `<path>`）。
-* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0022 §4。
+  那 66 万个 `<path>`）。**Session 03 已兑现，见下文。**
+* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0022 §4。**Session 03 起
+  它生效**（越过它且名单没收满 ⇒ 全收、重画一遍）。
 * **浏览器侧仍未实测**：闸落地之后可以用「临近阈值」的受控规模在真浏览器里
   量 DOM 节点数与 WebView2 内存了，但那是 Session 05 的事。
+
+## 大图预览：hybrid 之后（issue #181，Session 03）
+
+日期：2026-08-29 ｜ 同一台机器、同一个 fixture（n=470）｜出处
+`python tests/support/preview_hybrid_probe.py --n 470 --bench`。
+
+**A/B 在同一进程同一次运行里交替**：同一张 Figure、同一个会话，一次按正常
+预算渲（hybrid），紧接着把六个闸全抬走再渲一次（纯矢量对照）。**不同时刻的
+两次跑是两个样本，不是对照**——机器负载、热缓存、别的进程都会偏向其中一侧。
+热态取 3 次中位。
+
+| 指标 | 纯矢量（= 修复前） | hybrid | |
+|---|---:|---:|---|
+| 预览 SVG `svg_bytes` | 126 132 735 | **1 838 682** | **68.6×** |
+| `<path>` | 662 772 | **72** | **9205×** |
+| `<image>` | 1 | 4 | 三块 mesh 各一张 + 色条色带 |
+| 热 `canvas_draw_ms`（中位） | 11 118.0 | **320.0** | **34.7×** |
+| 热 `manifest_ms`（中位） | 185.6 | 185.7 | 不变（语义那一步没动） |
+| 热 `preview_plan_ms`（中位） | 0.039 | 0.041 | 1 : 271 000 |
+| 热 `total_ms`（中位） | 11 302.4 | **505.8** | **22.3×** |
+| **冷 build**（`instrument_all`，含首次预览） | 11 420.5 | **537.4** | **21.3×** |
+| `preview.mode` | vector | hybrid | |
+| `preview.rasterized_artist_count` | 0 | 3 | |
+
+纯矢量那一列**逐字节复现了修复前基线**（126 132 735 字节、662 772 个
+`<path>`）——同一个 fixture、同一台机器，两个月前用另一条链路（HTTP +
+`bench_render.py`）量的。对照组不是重新叙述一遍旧数字，是当场量出来的。
+
+三次独立测量的 `canvas_draw_ms`：hybrid 339.2 / 331.6 / 320.0，vector
+11 369.9 / 11 257.6 / 11 118.0；冷 build hybrid 564.5 / 556.2 / 537.4，
+vector 11 371.8 / 11 433.6 / 11 420.5。**量级是结论，末位不是。**
+（`preview_plan_ms` 含计时包装自身的开销；分析器的裸开销 0.0165 ms 见下一节。）
+
+### 这几个数字说明什么
+
+1. **省下来的正是「我们自己的表示法」那一段。** `canvas_draw_ms` 从 11.1 秒
+   降到 0.32 秒，而 `manifest_ms` 一动没动（185.6 → 185.7 ms）——后者是语义
+   那一步，它本来就不该变，不变就是不变量 1 的一个旁证。
+2. **冷 build 与热 render 同步下降**（21.3× / 34.7×）。接线点只有
+   `figsession.render()` 一处，两条路走的是同一段代码。只在 render request 上
+   rasterize 的实现会让这张表的「冷 build」一行原地不动——用户第一次打开图
+   仍然要等 11 秒，而那正是 issue #181 报的症状。
+3. **预览 dpi 这个旋钮终于有用了。** 修复前它在纯矢量 mesh 上一分钱不值
+   （dpi 72→300 耗时与体积一模一样）；hybrid 之后 mesh 层是 `<image>`，同一张
+   n=200 的图 dpi 72 是 310 KB、dpi 200 是 600 KB。手势中降 dpi 这条既有策略
+   从此在大图上真的省钱。
+4. **1.8 MB 仍然不算小**，但它比 8 MiB 软闸低一个数量级，也比 16 MiB 硬闸低
+   一个数量级——这张图从此走的是正常的内联 SVG 那条路，不再触发 raster 降级。
+5. **72 个 `<path>`** 就是这张图上「语义编辑层」的全部：坐标轴、刻度、图例、
+   第四格那两条普通曲线。**它们一个都没被 rasterize**——hybrid 的契约在数字上
+   是这一行。
+
+### 还没解决的
+
+* **浏览器侧仍未实测**（DOM 节点数、WebView2 内存、首帧时间）。现在有了
+  受控规模的产物（1.8 MB / 76 个节点），这一测终于跑得起来——Session 05。
+* **`manifest_ms` 现在是热态里最大的一段**（185.7 ms，占 37%）。它里面有一次
+  `fig.canvas.draw()`（量包围盒必须有 renderer）。Phase E 量过一次「去掉重复
+  draw」，被数据否掉；在 hybrid 之后它的占比变了，值得重新量一次。
+* **导出仍然是 22.5 秒**（单面板 PDF，dpi 600 + PyMuPDF 合成）。那是不变量 2
+  要求的：导出走的是用户原来的矢量语义，一个 `<path>` 都不少。
 
 ## 复杂度分析器开销（issue #181，Session 02）
 
@@ -497,10 +566,10 @@ python tests/support/preview_complexity_probe.py \
 
 | | 模型（`savefig` 之前） | 后端实测（`savefig` 之后） |
 |---|---|---|
-| primitive | **662 704** | 662 773 个 `<path>` + 1 个 `<image>` |
+| primitive | **662 704** | 662 772 个 `<path>` + 1 个 `<image>` |
 | vertex | 3 314 300 | —— |
 
-差的 70 个是坐标轴、刻度、图例边框那些结构件——分析器**有意不数它们**（一个
+差的 69 个是坐标轴、刻度、图例边框那些结构件——分析器**有意不数它们**（一个
 是一个节点，撑不爆 DOM），所以这不是误差而是口径。落在数据层上的 99.99%
 它都算到了。
 
@@ -517,6 +586,7 @@ python tests/support/preview_complexity_probe.py \
 2. **它指向的节省是 10.5 秒里的绝大部分**，而不是 12 秒里的 2%（对比
    Session 01：安全闸让产物不进内存与 DOM，`canvas_draw_ms` 一分钱没省）。
    真正兑现这笔节省是 Session 03——Session 02 只产出「该 rasterize 谁」的名单。
+   **兑现了**：`canvas_draw_ms` 11 118.0 → 320.0 ms，见上一节。
 3. **分析器不看数据量**：n 从 24 涨到 470（数据量 383 倍）它只从 0.013 ms 涨到
    0.0165 ms。会随规模涨的实现基本都在某处遍历了 path 或复制了数组，
    `test_quadmesh_paths_are_never_built` 与那条 50 ms 的粗闸盯的就是它。

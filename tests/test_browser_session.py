@@ -430,6 +430,46 @@ fig.savefig("B.pdf")
     assert under["preview"]["mode"] == "vector"
 
 
+def test_hybrid_preview_reaches_the_playground_too(tmp_path):
+    """两条入口共用同一条 hybrid 策略（ADR 0022 Session 03）。
+
+    桌面走 `figsession.render`，playground 走 `browser._render`，两者共用
+    `preview_hybrid.save_preview_svg`。抄一份过去的代价不是多几行重复代码，
+    而是**同一个脚本在两个入口里预览表示法不一样**——而这类分叉只会在大图上、
+    在用户那边发作。
+
+    22 500 个 cell 刚过 `MESH_CELL_BUDGET`（20 000），画得起、又真的越线。
+    """
+    src = """
+import numpy as np
+import matplotlib.pyplot as plt
+rng = np.random.default_rng(0)
+fig, ax = plt.subplots(figsize=(3.2, 2.6))
+edges = np.linspace(0, 1, 151)
+ax.pcolormesh(edges, edges, rng.standard_normal((150, 150)), shading="flat")
+ax.plot([0, 1], [0, 1], color="w", label="guide")
+ax.legend()
+ax.set_title("Hybrid")
+fig.savefig("H.pdf")
+"""
+    _, opened = drive(
+        [{"cmd": "load", "filename": "h.py", "source": src}, {"cmd": "open", "stem": "H"}], tmp_path
+    )
+    assert opened["ok"] is True, opened
+    assert opened["preview"]["mode"] == "hybrid"
+    assert opened["preview"]["reason"] == "complexity_budget"
+    assert opened["preview"]["rasterized_artist_count"] == 1
+    # **hybrid 有 SVG，它照旧内联**——只有 raster 才是「不给 SVG」那一档
+    assert opened["svg"]
+    assert opened["preview"]["svg_bytes"] == len(opened["svg"].encode("utf-8"))
+    # mesh 变成一个 `<image>`，22 500 个 `<path>` 一个都没生出来
+    assert opened["svg"].count("<image") == 1
+    assert opened["svg"].count("<path") < 100, opened["svg"].count("<path")
+    # 该留矢量的留住了：那条普通曲线与图例还在语义层里
+    roles = [e.get("role") for e in opened["manifest"]["elements"]]
+    assert "line" in roles and "legend" in roles, roles
+
+
 def test_render_also_carries_the_preview_verdict(tmp_path):
     """`render` 与 `open` 说的必须是同一件事——两条命令各写一份判定的话，
     改一处就会漂。"""

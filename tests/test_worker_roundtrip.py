@@ -1360,6 +1360,61 @@ def test_v1_render_reports_the_preview_verdict(worker):
     assert "svg" not in resp
 
 
+def test_v1_render_reports_hybrid_for_a_heavy_data_layer(tmp_path):
+    """真 worker、真 v1 信封上的 hybrid（ADR 0022 Session 03）。
+
+    上面那条钉的是 vector 与 raster 两档；这一条钉中间那档**在协议上说得出口**：
+    `mode=hybrid` + `reason=complexity_budget` + `rasterized_artist_count>0`，
+    而且 **SVG 照旧内联**——hybrid 有产物，它不是「不给 SVG」的那一档。
+
+    22 500 个 cell 刚过 `MESH_CELL_BUDGET`（20 000）：画得起，又真的越线。
+    行为的全部细节在 `tests/test_preview_hybrid.py`，这里只问信封。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_mesh.py").write_text(
+        "import numpy as np\n"
+        "import matplotlib.pyplot as plt\n"
+        "def main():\n"
+        "    rng = np.random.default_rng(0)\n"
+        "    fig, ax = plt.subplots(figsize=(3.2, 2.6))\n"
+        "    edges = np.linspace(0, 1, 151)\n"
+        '    ax.pcolormesh(edges, edges, rng.standard_normal((150, 150)), shading="flat")\n'
+        '    ax.plot([0, 1], [0, 1], color="w", label="guide")\n'
+        "    ax.legend()\n"
+        '    fig.savefig("Mesh.pdf")\n',
+        encoding="utf-8",
+    )
+    proc = _spawn(figs / "fig_mesh.py", figs, tmp_path)
+    try:
+        _ok(proc, _v1("build", rid="r-hy0"))
+        resp = _ok(
+            proc,
+            _v1(
+                "render",
+                stem="Mesh",
+                payload={"patches": [], "inline_svg": True},
+                rid="r-hy1",
+                patch_hash=patchspec.patch_hash([]),
+            ),
+        )
+        preview = resp["preview"]
+        assert preview["mode"] == "hybrid"
+        assert preview["reason"] == "complexity_budget"
+        assert preview["rasterized_artist_count"] == 1
+        assert preview["estimated_primitives"] > 20_000
+        # 有 SVG，且判定量与产物是同一个东西
+        assert preview["svg_bytes"] == (tmp_path / "out" / "Mesh.svg").stat().st_size
+        assert len(resp["svg"].encode("utf-8")) == preview["svg_bytes"]
+        # mesh 变成一个 `<image>`，22 500 个 `<path>` 一个都没生出来
+        assert resp["svg"].count("<image") == 1
+        assert resp["svg"].count("<path") < 100, resp["svg"].count("<path")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_legacy_envelope_keeps_the_old_response_shape(worker):
     """无 protocol_version 的老信封必须**一字不变**地按旧形状回应。
 

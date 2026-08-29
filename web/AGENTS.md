@@ -102,6 +102,15 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 * `PanelView` 的分档只有一句：`render.preview.mode === 'raster'` 时编辑态也走
   引擎位图（复用 `useEnginePngBlob` → `previewPngUrl`/`enginePreviewPng` 那条
   既有链路，**不写第二套 objectURL 生命周期**），否则照旧内联 SVG。
+* **`hybrid` 不是 `raster`**：它有 SVG，照旧内联。前端**没有为 hybrid 新增
+  任何分支**，这是它做对了的证据，不是漏做——混合产物就是一份 SVG，里面几个
+  数据层是 `<image>` 而已。因此 hybrid 对用户尽量无感。
+* **hybrid 下被 rasterize 的那几层在 DOM 里没有 gid 节点**（Session 03 实测：
+  `<g id="axes_0.collections_0">` 整个不出现，而 `axes_3.lines_0` /
+  `axes_3.legend` / `axes_0` 一个不少）。`svgPreviewStore` 的假实时因此**只
+  覆盖矢量层**：拖动数据层时 `findGidNode` 返回 null，既有实现安静退出、
+  覆盖层接管，落点由后端权威渲染补上。这是刻意的取舍——为了保住假实时去造
+  几千个隐藏占位节点，等于把 #181 的 DOM 节点数又搬回来。
 * **raster ≠ 只读**：`ElementHitLayer` 照常挂着，几何权威仍是
   `useExactPanelManifest`（ADR 0017 一个字不放松）。把它做成「图太大所以不能
   编辑了」是最容易滑进去的错误——#181 的用户要的恰恰是编辑这张图。

@@ -18,6 +18,7 @@ matplotlib artist 的 `set_rasterized` 是一句赋值，没有办法让它失�
 
     python tests/support/preview_hybrid_probe.py                 # 全部
     python tests/support/preview_hybrid_probe.py --n 200
+    python tests/support/preview_hybrid_probe.py --n 470 --bench  # 基线那张表
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ import numpy as np  # noqa: E402
 
 import figcapture  # noqa: E402
 import figsession  # noqa: E402
+import overrides as overrides_mod  # noqa: E402
 import preview_complexity as pc  # noqa: E402
 import preview_hybrid as ph  # noqa: E402
 import previewbudget  # noqa: E402
@@ -79,6 +81,32 @@ def _svg_stats(text: str) -> dict:
         "paths": text.count("<path"),
         "images": text.count("<image"),
     }
+
+
+def _svg_file_stats(path: Path, chunk_bytes: int = 1 << 20) -> dict:
+    """按块数，不把 126 MB 读进内存——量的东西与 `_svg_stats` 完全相同。
+
+    **重叠区里的完整匹配要减掉**：它们上一块已经数过了。跨界的那一个没被数过
+    （上一块看到的是半截），所以只能减重叠区里数得完整的那些。少了这一句，
+    每有一个 `<path` 恰好落在重叠区里就多报一个——`scripts/bench_render.py`
+    当年的实现就少了它，#181 那份 126 MB 的产物因此被报成 662 773
+    （真值 662 772 = 3 × 470² + 72）。两处的判据现在是同一条。
+
+    `chunk_bytes` 只为用例服务：拿一个小得会切开 needle 的块跑一遍，与整份
+    文本数出来的结果比对（`case_lifecycle` 的 `counter_agreement`）。
+    """
+    needles = {"paths": b"<path", "images": b"<image"}
+    overlap = max(len(v) for v in needles.values()) - 1
+    stats = {"bytes": 0, "paths": 0, "images": 0}
+    tail = b""
+    with open(path, "rb") as fh:
+        while chunk := fh.read(chunk_bytes):
+            stats["bytes"] += len(chunk)
+            window = tail + chunk
+            for key, needle in needles.items():
+                stats[key] += window.count(needle) - tail.count(needle)
+            tail = window[-overlap:]
+    return stats
 
 
 def _meshes(fig):
@@ -171,6 +199,14 @@ def case_lifecycle(n: int) -> dict:
             vres = sess.do_render(fx.STEM, [], inline_svg=True, preview=vpreview)
             out["vector_preview"] = vpreview
             out["vector"] = _svg_stats(vres["svg"])
+            # **同一份产物，两种数法**：整份文本数一遍，分块数一遍，再用一个
+            # 小得会把 needle 切两半的块数一遍。基线表里那两个数就出自分块那条
+            # 路，它多数一个还是少数一个不会有任何地方报错。
+            out["counter_agreement"] = {
+                "whole_text": _svg_stats(vres["svg"]),
+                "chunked_1mib": _svg_file_stats(Path(tmp) / f"{fx.STEM}.svg"),
+                "chunked_997b": _svg_file_stats(Path(tmp) / f"{fx.STEM}.svg", chunk_bytes=997),
+            }
             # 不变量 1：表示法换了，**语义 manifest 逐字节不变**
             out["manifest_identical"] = json.dumps(
                 vres["manifest"], sort_keys=True, ensure_ascii=False, default=str
@@ -420,6 +456,52 @@ def case_hard_guard(n: int) -> dict:
     return out
 
 
+def case_timing_attribution() -> dict:
+    """哪一段记在哪个键上。**两个方向都注入一次**——只钉一侧的判据在
+    「两段互换了标签」时全绿。
+
+    量错对象的数字看起来和真的一模一样：接线的第一版把 `preview_plan_ms`
+    掐在「掐表到调用之间」，稳定报 0.007 ms（分析真实是 0.0165 ms），
+    而它进的是性能基线那张表。
+    """
+    out: dict = {}
+    with tempfile.TemporaryDirectory(prefix="hybrid-probe-") as tmp:
+        fig, ax = plt.subplots(figsize=(3.0, 2.0))
+        ax.plot([0, 1, 2], [0, 1, 0])
+        sess = _session(tmp, fig)
+        sess.instrument_all()
+
+        real_plan = pc.plan_for_state
+
+        def slow_plan(state):
+            time.sleep(0.05)
+            return real_plan(state)
+
+        pc.plan_for_state = slow_plan
+        try:
+            t: dict = {}
+            sess.do_render(fx.STEM, [], timings=t, preview={})
+            out["slow_plan"] = t
+        finally:
+            pc.plan_for_state = real_plan
+
+        real_savefig = fig.savefig
+
+        def slow_savefig(*a, **kw):
+            time.sleep(0.05)
+            return real_savefig(*a, **kw)
+
+        fig.savefig = slow_savefig
+        try:
+            t = {}
+            sess.do_render(fx.STEM, [], timings=t, preview={})
+            out["slow_savefig"] = t
+        finally:
+            fig.savefig = real_savefig
+        plt.close(fig)
+    return out
+
+
 def case_normal_figure() -> dict:
     """普通科研图：名单是空的，产物与「根本没有 hybrid 这回事」**逐字节相同**。
 
@@ -453,10 +535,102 @@ def case_normal_figure() -> dict:
     return out
 
 
+# ------------------------------------------------------------------ 基线测量
+
+
+def _render_once(sess, out_dir: Path) -> dict:
+    timings: dict = {}
+    preview: dict = {}
+    sess.do_render(fx.STEM, [], timings=timings, inline_svg=False, preview=preview)
+    return {
+        "timings": timings,
+        "preview": {k: preview[k] for k in ("mode", "reason", "rasterized_artist_count")},
+        "svg": _svg_file_stats(out_dir / f"{fx.STEM}.svg"),
+    }
+
+
+def _median(xs):
+    xs = sorted(xs)
+    return xs[len(xs) // 2]
+
+
+def bench(n: int, repeat: int) -> dict:
+    """默认规模（n=470）的前后对照。**A/B 在同一进程里交替**，不是两次跑。
+
+    绝对 wall time 会被别的进程带偏，交替采样至少让两侧吃到同一份噪声；
+    字节数与节点数是确定的，它们才是结论。
+    """
+    rows: dict = {"hybrid": [], "vector": []}
+    with tempfile.TemporaryDirectory(prefix="hybrid-bench-") as tmp:
+        out_dir = Path(tmp)
+        fig = fx.build(n)
+        sess = _session(tmp, fig)
+        t0 = time.perf_counter()
+        sess.instrument_all()
+        cold_hybrid_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+        cold_hybrid = _svg_file_stats(out_dir / f"{fx.STEM}.svg")
+        for _ in range(repeat):
+            rows["hybrid"].append(_render_once(sess, out_dir))
+            with _budgets_off():
+                rows["vector"].append(_render_once(sess, out_dir))
+        plt.close(fig)
+
+    # 冷 build 一个会话只发生一次，所以纯矢量那一侧另起一个会话
+    with tempfile.TemporaryDirectory(prefix="hybrid-bench-") as tmp:
+        out_dir = Path(tmp)
+        fig = fx.build(n)
+        sess = _session(tmp, fig)
+        with _budgets_off():
+            t0 = time.perf_counter()
+            sess.instrument_all()
+            cold_vector_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+            cold_vector = _svg_file_stats(out_dir / f"{fx.STEM}.svg")
+        plt.close(fig)
+
+    def summary(side):
+        rs = rows[side]
+        return {
+            "mode": rs[0]["preview"]["mode"],
+            "rasterized_artist_count": rs[0]["preview"]["rasterized_artist_count"],
+            "svg": rs[0]["svg"],
+            "canvas_draw_ms": _median([r["timings"]["canvas_draw_ms"] for r in rs]),
+            "manifest_ms": _median([r["timings"]["manifest_ms"] for r in rs]),
+            "preview_plan_ms": _median([r["timings"]["preview_plan_ms"] for r in rs]),
+            "total_ms": _median(
+                [
+                    r["timings"]["canvas_draw_ms"]
+                    + r["timings"]["manifest_ms"]
+                    + r["timings"]["preview_plan_ms"]
+                    + r["timings"]["patch_apply_ms"]
+                    for r in rs
+                ]
+            ),
+        }
+
+    return {
+        "n": n,
+        "repeat": repeat,
+        "hot": {"hybrid": summary("hybrid"), "vector": summary("vector")},
+        "cold": {
+            "hybrid": {"ms": cold_hybrid_ms, "svg": cold_hybrid},
+            "vector": {"ms": cold_vector_ms, "svg": cold_vector},
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--n", type=int, default=DEFAULT_N)
+    ap.add_argument(
+        "--bench",
+        action="store_true",
+        help="只跑默认规模的前后对照（docs/perf-baseline.md 的数字出处）",
+    )
+    ap.add_argument("--bench-repeat", type=int, default=3)
     args = ap.parse_args(argv)
+    if args.bench:
+        print(json.dumps(bench(args.n, args.bench_repeat), ensure_ascii=False))
+        return 0
     payload = {
         "matplotlib": matplotlib.__version__,
         "n": args.n,
@@ -464,6 +638,11 @@ def main(argv: list[str] | None = None) -> int:
             "soft": previewbudget.EDITOR_SVG_SOFT_LIMIT_BYTES,
             "hard": previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES,
         },
+        # `rasterized` 根本不是 override 层认的属性——所以它永远进不了写回
+        # payload、也 bake 不进用户脚本。这是结构性的，不是纪律性的。
+        "handlers_know_rasterized": any(
+            prop == "rasterized" for _r, prop in overrides_mod.HANDLERS
+        ),
         "lifecycle": case_lifecycle(args.n),
         "user_rasterized": case_user_rasterized(args.n),
         "savefig_raises": case_savefig_raises(args.n),
@@ -472,6 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         "no_escalation_possible": case_no_escalation_possible(),
         "hard_guard": case_hard_guard(args.n),
         "normal_figure": case_normal_figure(),
+        "timing_attribution": case_timing_attribution(),
     }
     print(json.dumps(payload, ensure_ascii=False))
     return 0
