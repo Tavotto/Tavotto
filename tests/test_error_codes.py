@@ -173,6 +173,7 @@ USER_VISIBLE_CODES = {
     "profile_too_large": set(),
     "profile_revision_missing": set(),
     "profile_revision_conflict": set(),
+    "profile_store_unsupported_schema": set(),
 }
 
 pytestmark = pytest.mark.skipif(

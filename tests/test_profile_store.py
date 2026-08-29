@@ -194,6 +194,117 @@ def test_a_newer_store_schema_is_left_completely_alone(data_dir):
     assert path.read_text(encoding="utf-8") == payload
 
 
+def test_a_newer_store_schema_refuses_every_write(data_dir):
+    """**「读不懂」不是「一条都没有」。**
+
+    上一条只证明了读的时候不动那个文件。真正会毁数据的是**下一次写**：
+    `_read_user()` 那时回的是空清单，于是新建 / 复制 / 导入 / 旧版迁移都拿着
+    这份空清单走到 `_write_user()`，把一份 schema 1 的文件盖上去——用户在新版
+    Tavotto 里建的每一条都没了，而他只是在旧版里点了一下「新建」。
+
+    判据钉在**磁盘上那份文件一个字节都没变**，不是"函数抛了异常"：抛了而文件
+    照写才是最坏的那种。
+    """
+    path = store.store_path(store.KIND_STYLE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {
+            "schema": store.STORE_SCHEMA + 1,
+            "kind": "style",
+            "profiles": [{"id": "future-one", "data": {"element": {}}}],
+        }
+    )
+    path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(store.ProfileStoreError) as exc:
+        store.create_profile(store.KIND_STYLE, {"element": {}}, "旧版里新建的")
+    assert exc.value.code == "profile_store_unsupported_schema"
+    assert path.read_text(encoding="utf-8") == payload
+
+    # 导入与旧版迁移走的是同一个出口，一并挡住
+    with pytest.raises(store.ProfileStoreError):
+        store.import_profile(
+            json.dumps(
+                {
+                    "format": store.EXPORT_FORMAT,
+                    "schema": 1,
+                    "kind": "style",
+                    "display_name": "导进来的",
+                    "data": {"element": {}},
+                }
+            )
+        )
+    _write_legacy(data_dir, [{"name": "老样式", "element": {}}])
+    with pytest.raises(store.ProfileStoreError):
+        store.migrate_legacy_styles()
+    assert path.read_text(encoding="utf-8") == payload
+
+
+def test_the_extra_bucket_does_not_nest_itself_on_every_save(data_dir):
+    """`extra` 是收容未知字段的那只桶，**它自己不是一个未知字段**。
+
+    界面把读到的样式原样存回来时 `extra` 也在载荷里；不单独认出来的话，
+    每存一次就多包一层（`{extra:{extra:{...}}}`），警告也从
+    `unmapped_field:somethingNew` 变成 `unmapped_field:extra`——而用户什么都
+    没改。判据跑**两轮**保存：只跑一轮的话，第一层包装看起来完全正常。
+    """
+    rec = store.create_profile(
+        store.KIND_STYLE, {"element": {}, "somethingNew": {"a": 1}}, "带未来字段的"
+    )
+    assert rec["data"]["extra"] == {"somethingNew": {"a": 1}}
+
+    again = store.update_profile(
+        store.KIND_STYLE, rec["id"], {"data": rec["data"]}, rec["revision"]
+    )
+    assert again["data"]["extra"] == {"somethingNew": {"a": 1}}
+    assert again["warnings"] == ["unmapped_field:somethingNew"]
+
+    third = store.update_profile(
+        store.KIND_STYLE, again["id"], {"data": again["data"]}, again["revision"]
+    )
+    assert third["data"]["extra"] == {"somethingNew": {"a": 1}}
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"preferred_formats": "x"},
+        {"preferred_formats": {"vector": "pdf"}},
+        {"preferred_formats": {"vector": [1, 2]}},
+        {"severity": "error"},
+        {"legend_policy": []},
+        {"min_raster_dpi": "300"},
+        {"min_raster_dpi": True},
+        {"line_widths_pt": [0.5, "1.0"]},
+        {"allowed_aspect_ratios": {}},
+    ],
+)
+def test_a_custom_spec_with_a_broken_nested_shape_is_rejected(data_dir, broken):
+    """`validate_spec` 以前只查「必需键在不在」与两个宽度。
+
+    于是一份 `preferred_formats: "x"` 的规范存得进去，选中它之后
+    `buildPresets()` 上那句 `profile.preferred_formats.vector.includes(...)`
+    把导出对话框整个打崩——而载荷是用户自己导进来的一份 JSON。
+
+    **只查形状，不查取值范围**：`journal` 把 `absolute_min_font_size_pt` 覆盖
+    成 `0.0` 是「不设下限」这个合法意思（golden 向量里就有一条），要求它为正
+    会把一条真实用法判成非法。
+    """
+    data = {**profiles.load("lab-publication-v1"), **broken}
+    data.pop("profile_id", None)
+    with pytest.raises(store.ProfileStoreError) as exc:
+        store.create_profile(store.KIND_SPEC, data, "坏形状")
+    assert exc.value.code == "profile_bad_spec"
+
+
+def test_a_zero_font_floor_is_a_legal_journal_override(data_dir):
+    """对照组：判据窄过它要守的东西同样是缺陷，只是表现成假红。"""
+    data = {**profiles.load("lab-publication-v1"), "absolute_min_font_size_pt": 0.0}
+    data.pop("profile_id", None)
+    rec = store.create_profile(store.KIND_SPEC, data, "不设字号下限")
+    assert rec["data"]["absolute_min_font_size_pt"] == 0.0
+
+
 def test_one_broken_entry_does_not_take_the_whole_list_down(data_dir):
     good = store.create_profile(store.KIND_STYLE, {"element": {}}, "好的")
     path = store.store_path(store.KIND_STYLE)

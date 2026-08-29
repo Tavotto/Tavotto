@@ -1266,6 +1266,7 @@ export default interface Resources {
       "profile_read_only": "内置配置不能直接改，请先复制一份",
       "profile_revision_conflict": "这条配置已被改过，请先看看磁盘上现在是什么",
       "profile_revision_missing": "请求缺少版本号，无法判断是否有人同时改过",
+      "profile_store_unsupported_schema": "这份配置是更高版本的 Tavotto 写的，本版本只读不写——升级之后再改它",
       "profile_too_large": "导入的文件太大",
       "project_env_already_attempted": "这一轮已经自动换过一次环境了，请手动重试",
       "project_env_module_missing": "找到的项目环境里也没有这个包",

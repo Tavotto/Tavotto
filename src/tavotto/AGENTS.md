@@ -926,9 +926,18 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   `not_verifiable`（**查不了**，如位图内部文字，需人工确认并写进 proof）/ `suggestion`
   （数据语义类全在这档，**绝不替用户裁决**）。**没登记的检查项兜底为 warn**，
   刻意不是 suggestion——忘了登记会让用户以为它通过了。
-- 文档里**只存 `{id, journal}`，不存规则**（`FigureDocument.profile`，可选，schema 仍是 2）。
-  期刊自定义走覆盖（浅合并 + 几个子对象深合并），结果带 `derived_from`/`journal` 并进
-  proof report。整套换掉用 `TAVOTTO_PROFILES_FILE`。
+- 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
+  schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
+  之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套
+  判据**。规则进文档**只有 `snapshot` 这一个位置**（写入口在 `web/src/lib/
+  specBinding.ts`），「有没有新版可同步」的判据是**内容不等**而不是版本号——版本号
+  是人写的，谁都可能忘了改；同步由用户明确确认，进文档历史。
+  期刊自定义仍走覆盖（浅合并 + 几个子对象深合并），结果带 `derived_from`/`journal`
+  并进 proof report。整套换掉用 `TAVOTTO_PROFILES_FILE`。
+- 全局清单（Style / Spec 两类）落在用户数据目录，磁盘入口只有
+  `engine/profilestore.py`（原子写、乐观并发、损坏回退内置、**坏文件不删**）。
+  磁盘上那份是更高版本时**只读不写**：判据在 `_write_user()` 一处，因为
+  `_read_user()` 对「读不懂」与「一条都没有」回的是同一个空清单。
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
 

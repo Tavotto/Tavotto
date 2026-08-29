@@ -75,6 +75,7 @@
     "profile_not_found": "That profile no longer exists — it may have been deleted.",
     "profile_read_only": "Built-in profiles cannot be edited. Duplicate one first.",
     "profile_revision_conflict": "This profile has been changed. Check what is on disk before saving.",
+    "profile_store_unsupported_schema": "This profile store was written by a newer Tavotto. This version can read it but will not overwrite it — upgrade first.",
     "profile_revision_missing": "The request has no revision, so we cannot tell whether someone else changed it.",
     "profile_too_large": "The imported file is too large.",
     "project_env_already_attempted": "The environment was already switched once this round — retry manually",

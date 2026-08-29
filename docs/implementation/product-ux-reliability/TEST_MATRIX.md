@@ -900,3 +900,66 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 > **反证顺手抓到一件真事**：「清单写回包目录」那一条跑完之后，
 > `src/tavotto/profiles/styles.json` 留在了工作树里。变异本身被打红了，但
 > **它写出来的文件不会自己消失**——`git status` 是反证的最后一步，不是可选项。
+
+---
+
+## 评审回合 2（PR #206 / #207 / #208 / #209）：八条 findings 的处置
+
+拆分成四个 stacked PR 之后 Codex 各评了一轮，共 8 条（2 条 P1 + 6 条 P2）。
+**8 条全部改掉**，没有一条转 Issue。逐条的判据与变异反证在各自的提交信息里，
+这里只记**变异反证的账**——一共 17 条，16 条被打红，1 条查明是语义 no-op。
+
+### #206（05–06）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `assetStore` 的 `trailing` 补问 | KILLED ×2 | `assetStore.test.ts`：在途期间来的调用会补问一遍 / 补问本身也要合并 |
+| 去掉 `trailing` 的换项目守卫 | KILLED | 同上：补问期间换了项目就不补 |
+| watcher 两处遍历去掉 `strict=True` | KILLED ×2 | `test_project_watch.py`：脚本子树 / 素材子树读不动时整张快照作废 |
+| 把 `strict` 改成默认打开 | KILLED | 同上：产品视图（`/api/panels`、脚本清单）必须照旧宽容 |
+
+> `take_snapshot` 的那个 `except OSError` **一直都在，只是从来没被执行过**：
+> `os.walk` 的默认 `onerror=None` 与 `_iter_py` 的 `except OSError: return`
+> 都是静默跳过。判据因此钉在 OS 边界（`Path.iterdir` / `os.scandir` 对一个
+> 具体子目录抛 `PermissionError`），不钉在被测函数自己身上；每条先证明
+> 「不动任何东西时它是拍得出来的」，再制造故障。
+
+### #207（07–08）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| `append` 恒 False | KILLED ×2 | `test_script_probe.py`：接一张图不清空其它 stem / 认领走的 stem 从别人那里摘掉 |
+| `cost` 补回 `"medium"` | KILLED | 同上：请求里没提 cost = 保留磁盘上那个值 |
+| `append` 恒 True | KILLED | 同上：手工编辑整份清单仍是整条替换 |
+| `append` 时不从别的脚本摘 stem | **存活** | —— |
+
+> 存活的那条是**语义 no-op**（`Mutation may not be a mutation`）：这个脚本
+> 原先认领的 stem 本来就不可能同时挂在别人名下——重复 stem 会让
+> `registry.load` 直接报错，整个项目读不出来。那条保证由「`append` 恒 False」
+> 一条已经量到了，不是判据缺了一维。
+
+### #208（09）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `useKeyboard` 的两处 `inFastEdit()` 守卫 | KILLED ×2 | `useKeyboardFastEdit.test.tsx`：方向键不动 x/y / 绘制工具快捷键全部无效 |
+| 把 `useWorkspaceStore.clear()` 挪回 `switchDocument()` 之前 | KILLED | `projectSwitchWorkspace.test.ts`：切项目不动旧文档那一档 |
+| 去掉各向异性位图的守卫 | KILLED | `originalSpec.test.ts`：两轴密度不同时 dpi 保持 `null` |
+
+> 四条 fast-edit 用例各配一个**反向对照**（同一个键在排版模式下必须照常
+> 工作）。没有对照的话，「什么都没发生」也可能是判据自己没执行到。
+
+### #209（10）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `_write_user()` 的版本守卫 | KILLED | `test_profile_store.py`：更高版本的清单拒绝一切写入 |
+| `extra` 桶不认自己（回到旧写法） | KILLED | 同上：`extra` 不许每存一次多包一层 |
+| 去掉 `_validate` 的形状判据 | KILLED ×5+ | 同上：嵌套形状坏掉的自建规范被拒 |
+| 数字判据改回「必须为正」 | KILLED | 同上（**对照组**）：`absolute_min_font_size_pt: 0.0` 是合法的期刊覆盖 |
+
+> 最后那条对照组是这一轮里最有信息量的一个：形状判据第一版要求那四个数
+> **为正**，结果把 golden 向量里一条真实用法（journal 把绝对字号下限覆盖成
+> `0`，意思是「不设下限」）判成了非法。**判据窄过它要守的东西同样是缺陷**，
+> 只是这次的表现是假红而不是假绿。守的是「形状不对会当场打崩导出对话框」，
+> 那就只查形状，不查取值范围。

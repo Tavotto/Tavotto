@@ -277,8 +277,31 @@ def _quarantine(path: Path, why: str) -> None:
         pass
 
 
+def _schema_unsupported(kind: str) -> bool:
+    """磁盘上那份用的是**本构建读不懂的版本**吗。
+
+    「读不懂」与「一条都没有」在 `_read_user()` 的返回值里长得一模一样（都是
+    空清单），而两者的正确动作正相反：后者可以随便写，前者**一个字都不许
+    写回去**——用户在新版 Tavotto 里建的每一条 profile 都在那个文件里。
+    这一维只能单独问，合并进相邻取值就是静默删除。
+    """
+    try:
+        doc = json.loads(store_path(kind).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(doc, dict):
+        return False
+    schema = doc.get("schema")
+    return isinstance(schema, int) and schema > STORE_SCHEMA
+
+
 def _read_user(kind: str) -> list[dict]:
-    """用户自定义清单；读不出来 = 一条都没有（并把坏文件收容）。"""
+    """用户自定义清单；读不出来 = 一条都没有（并把坏文件收容）。
+
+    **它答不了「为什么是空的」**：磁盘上没有文件、文件坏了、文件是更高版本
+    ——三种都回空清单。要写盘之前必须再问一次 `_schema_unsupported()`
+    （`_write_user` 已经替所有调用方问了）。
+    """
     path = store_path(kind)
     try:
         raw = path.read_text(encoding="utf-8")
@@ -341,6 +364,19 @@ def _coerce(entry: object, kind: str) -> dict | None:
 
 
 def _write_user(kind: str, records: list[dict]) -> None:
+    """落盘。**全部写路径的唯一出口**，所以「不许写」的判据只钉在这里一处。
+
+    磁盘上那份是更高版本时一律拒绝：`_read_user()` 那时回的是空清单，任何
+    新建 / 复制 / 导入 / 旧版迁移都会拿着这份空清单走到这里，把一份 schema 1
+    的文件盖上去——用户在新版 Tavotto 里建的每一条都没了，而他只是在旧版里
+    点了一下「新建样式」。
+    """
+    if _schema_unsupported(kind):
+        raise ProfileStoreError(
+            "profile_store_unsupported_schema",
+            "这份配置是更高版本的 Tavotto 写的，本版本只读不写",
+            status=409,
+        )
     path = store_path(kind)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -465,9 +501,18 @@ def _validate_style(data: dict) -> dict:
     src = data.get("derived_from_spec")
     if isinstance(src, str):
         out["derived_from_spec"] = src[:64]
-    extra = {k: v for k, v in data.items() if k not in _STYLE_KEYS}
+    # `extra` **本身不是一个未知字段**：它是上一次收容未知字段的那只桶。
+    # 不单独认出来的话，界面把读到的样式原样存回来（`extra` 也在里面）就会
+    # 变成 `{extra: {extra: {...}}}`——每存一次多包一层，警告也从
+    # `unmapped_field:futureKey` 变成 `unmapped_field:extra`，而用户什么都没改。
+    known = (*_STYLE_KEYS, "extra")
+    extra: dict[str, Any] = {}
+    prev = data.get("extra")
+    if isinstance(prev, dict):
+        extra.update(copy.deepcopy(prev))
+    extra.update({k: copy.deepcopy(v) for k, v in data.items() if k not in known})
     if extra:
-        out["extra"] = copy.deepcopy(extra)
+        out["extra"] = extra
     return out
 
 
