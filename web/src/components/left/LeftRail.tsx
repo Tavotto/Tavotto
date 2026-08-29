@@ -1,10 +1,17 @@
 import { useTranslation } from 'react-i18next'
-import { Braces, Images, Layers, LayoutGrid, Settings } from 'lucide-react'
+import { Braces, ClipboardList, Images, Layers, LayoutGrid, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { Tip } from '../ui/Tooltip'
 
-/** 标签名走 workspace:rail.<id>，图标与顺序留在代码里 */
+/**
+ * 标签名走 workspace:rail.<id>，图标与顺序留在代码里。
+ *
+ * Prompt 11 的「问题」入口会加在这里（`{ id: 'problems', icon: … }` + 一个
+ * `LeftTab` 取值 + 一份抽屉内容）。**在它真的有内容之前不放一个占位按钮**
+ * ——按了什么都不发生的入口比没有入口更坏，用户会以为功能坏了。
+ */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   { id: 'canvases', icon: LayoutGrid },
   { id: 'assets', icon: Images },
@@ -60,8 +67,22 @@ export function LeftRail() {
         )
       })}
 
-      {/* 设置与主导航分组：贴底、上方留一条分隔线 */}
+      {/* 项目级入口与上面四个上下文分组：它开的是对话框不是抽屉，所以不进
+          ITEMS，也不参与「再点一次收起」那套语义 */}
       <span className="mt-auto h-px w-6 bg-border" aria-hidden />
+      <Tip label={t('rail.readiness')} side="right">
+        <button
+          onClick={() => useProjectReadinessStore.getState().openCenter()}
+          aria-label={t('rail.readiness')}
+          className={cn(
+            'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+            'text-ink-2 transition-colors hover:bg-ink/[.05] hover:text-ink',
+            'focus-visible:focus-ring',
+          )}
+        >
+          <ClipboardList size={16} />
+        </button>
+      </Tip>
       <Tip label={t('rail.settings')} side="right">
         <button
           onClick={() => useUiStore.getState().setSettingsOpen(true)}

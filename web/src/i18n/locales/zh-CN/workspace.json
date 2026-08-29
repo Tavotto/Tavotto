@@ -9,6 +9,7 @@
     "activeFilters": "生效中的筛选",
     "addAria": "把 {{name}} 加入画布",
     "addToCanvas": "加入画布",
+    "capabilityHeading": "{{name}} · {{status}}",
     "cardParameterizable": "可参数化",
     "cardSize": "{{w}}×{{h}} 厘米",
     "cardTitle": "{{id}}\n单击选中 · Enter 加入画布 · 空格看大图 · 也可直接拖到画布",
@@ -340,7 +341,33 @@
     "elements": "图内元素",
     "layers": "结构",
     "navLabel": "工作区侧栏",
+    "readiness": "项目接入状态",
     "settings": "设置"
+  },
+  "readiness": {
+    "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",
+    "openCenter": "查看接入状态",
+    "reason": {
+      "multiple_source_candidates": "不止一个脚本说自己生成这张图，需要你指定用哪一个。",
+      "no_source_candidate": "没有找到生成它的脚本。它仍然可以排版、裁剪、标注和导出。",
+      "project_read_only": "找到了 {{script}}，但这个项目是只读的，连接结果保存不下来。",
+      "registered_script_missing": "原来的脚本 {{script}} 已经不在了。这张图仍然可以排版、裁剪和导出。",
+      "registered_source": "由 {{script}} 生成，可以直接改图里的内容。",
+      "registry_invalid": "找到了 {{script}}，但项目里记录来源的那份文件读不回来，暂时连不上。",
+      "registry_write_failed": "找到了 {{script}}，但连接结果没能保存下来。",
+      "runtime_output_unknown": "项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件。",
+      "source_scan_unavailable": "这一轮没能读完项目里的脚本，所以还不知道它有没有源脚本。",
+      "static_unique_candidate": "已经找到 {{script}}，正在把它连上。"
+    },
+    "status": {
+      "auto_linkable": "待连接",
+      "conflict": "有冲突",
+      "editable": "可编辑",
+      "layout_only": "仅排版",
+      "needs_probe": "需试运行",
+      "source_missing": "源脚本丢失"
+    },
+    "whyNotEditable": "为什么不能编辑？"
   },
   "runtimePanel": {
     "placeholder": "由脚本生成的图",

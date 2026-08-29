@@ -282,6 +282,65 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   await expect(exportButton).toBeFocused()
 })
 
+test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+
+  // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）。轨道是 <nav>，
+  // 这样不会跟横幅上那个同名按钮撞上。
+  const railButton = page
+    .getByRole('navigation')
+    .getByRole('button', { name: /项目接入状态|Project readiness/ })
+  await railButton.focus()
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  // 每一行都在（报告取回来了才算真的打开，空壳上扫 axe 什么都证明不了）
+  await expect(dialog.getByText(/技术详情|Technical details/).first()).toBeVisible({
+    timeout: 30_000,
+  })
+
+  // 与导出对话框同一条允许：背景整片 aria-hidden，焦点进不去由下面那圈 Tab 覆盖
+  await expectAccessible(page, { allow: [dialogBackgroundIsInert] })
+
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press('Tab')
+    const inside = await page.evaluate(() => {
+      const el = document.activeElement
+      return !!el?.closest('[role="dialog"]')
+    })
+    expect(inside, `第 ${i + 1} 次 Tab 后焦点跑出了接入状态`).toBe(true)
+  }
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(railButton).toBeFocused()
+})
+
+test('素材卡的状态角标不引入嵌套交互（axe nested-interactive）', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  const card = page.getByRole('option').first()
+  await expect(card).toBeVisible({ timeout: 30_000 })
+  await card.click() // 选中之后说明条才出现——它带一个真按钮，必须在 listbox 外面
+
+  const results = await new AxeBuilder({ page })
+    .withRules(['nested-interactive', 'aria-required-children', 'aria-required-parent'])
+    .analyze()
+  expect(results.violations.map((v) => ({
+    id: v.id,
+    nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+  }))).toEqual([])
+
+  // 「查看接入状态」必须键盘到得了：它不在 option 里，所以 Tab 出列表就能落上去
+  await expect(
+    page.getByRole('button', { name: /查看接入状态|Project readiness/ }).first(),
+  ).toBeVisible()
+})
+
 test('图标按钮都有可访问名（axe button-name / 顶栏抽查）', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)

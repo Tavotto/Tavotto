@@ -112,7 +112,45 @@
 | ├ capability 逐字段等于就绪度同名字段（同源，不是第二次计算） | 已有（07） | `test_capability_comes_from_the_same_report` | — |
 | ├ editable 保留旧 `script`/`cost`；layout_only 与有候选的 panel 都不伪造 `script` | 已有（07） | ×3 | — |
 | ├ `/api/panels` 旧字段不回归 | 已有（07） | `test_the_old_panel_fields_do_not_regress` | — |
-| 左栏常驻 / 折叠 / 素材状态 | 未开始 | — | 08 |
+| ├ 报告带 `stem`（关联动作的键）；`sub/Fig.v2.pdf` → `Fig.v2` | **已有（08）** | `test_the_stem_is_reported_and_is_not_the_id_nor_the_first_dot_segment` + 同 stem 两份素材那条 | — |
+| **就绪度前端 store** | **已有（08）** | `web/src/store/projectReadinessStore.test.ts`（22 条） | — |
+| ├ 一批事件合并成一次请求；`force` 永远另起一次 | 已有（08） | `describe('取回报告')` ×3 | — |
+| ├ 旧响应不覆盖新的（请求序号）；切项目的在途响应一个字节不落地 | 已有（08） | `describe('并发：旧响应不覆盖新的')` ×2 | — |
+| ├ fingerprint 相同 = **不换报告对象引用**（fixture 每次造新对象，否则判据恒真） | 已有（08） | `describe('fingerprint')` ×2 | — |
+| ├ 后台失败保留上一次成功那份；再成功一次清 error | 已有（08） | `describe('失败')` ×2 | — |
+| ├ 横幅关闭按「项目 + fingerprint」记：落盘 / 换代重现 / 跨项目隔离 / 坏 blob 恢复 | 已有（08） | `describe('横幅的关闭状态')` ×6 | — |
+| ├ 横幅显示条件：全 editable 不显示 / 空项目不显示 / 报告未到不显示；「待连接」是四个非终态之和 | 已有（08） | `describe('横幅的显示条件')` ×4 | — |
+| ├ `focusPanel()` 打开既有开关并记聚焦；关闭清聚焦；换项目 `clear()` | 已有（08） | 后两个 describe ×3 | — |
+| **项目摘要横幅** | **已有（08）** | `web/src/components/ProjectReadinessBanner.test.tsx`（9 条） | — |
+| ├ 四个数分得开（可编辑 / 待连接 / 仅排版）；文案不含实现术语 | 已有（08） | `describe('显示条件')` ×2 | — |
+| ├ 全 editable / 空项目 / 报告未到 / 中心已开 四种沉默 | 已有（08） | 同上 ×4 | — |
+| ├ 「查看接入状态」开中心；「关闭」只关横幅、报告仍在；换代后重现 | 已有（08） | `describe('两个动作')` ×3 | — |
+| **接入中心（原 RegistryDialog）** | **已有（08）** | `web/src/components/RegistryDialog.test.tsx`（18 条） | — |
+| ├ 六个状态各有一行、各有状态名与一句自然话 | 已有（08） | `describe('六个状态')` ×1 | — |
+| ├ 普通用户可见的段落不出现 registry / stem / manifest / AST | 已有（08） | 同上 ×1 | — |
+| ├ 顶部四个数；`layout_only` 不画成错误且说清它还能干什么 | 已有（08） | 同上 ×2 | — |
+| ├ 打开对话框零 probe；试运行点了才跑且先说清会运行脚本 | 已有（08） | `describe('绝不替用户决定')` ×2 | — |
+| ├ 冲突：候选全列、不预选、不自动写；点哪个写哪个，**写的键是 stem** | 已有（08） | 同上 ×2 | — |
+| ├ 技术详情默认收起；展开才有源脚本 / 入口 / reason code | 已有（08） | `describe('技术详情')` ×2 | — |
+| ├ 聚焦：焦点落到那一行；聚焦标记当场清掉 | 已有（08） | `describe('聚焦到指定的一张图')` ×2 | — |
+| ├ 动作之后走统一刷新（就绪度 + 素材都重取）；重新扫描调既有端点 | 已有（08） | `describe('动作之后的刷新')` ×2 | — |
+| ├ 只读 / 没扫成 / 记录读不回来 三句**分开**说 | 已有（08） | `describe('项目级状态')` ×3 | — |
+| ├ 首次取不到：可重试的错误态，不是空白对话框 | 已有（08） | `describe('取不到就绪度')` | — |
+| **素材卡状态与说明条** | **已有（08）** | `web/src/components/left/AssetBrowser.readiness.test.tsx`（11 条） | — |
+| ├ 五种不可编辑各有自己的角标文字；editable 保留 `{}`、不再加角标 | 已有（08） | `describe('卡片上的状态')` ×2 | — |
+| ├ 状态进 `aria-label`；`capability` 缺席**不补默认状态** | 已有（08） | 同上 ×2 | — |
+| ├ option 内零 `<button>`、零可 Tab 控件；方向键导航不回归 | 已有（08） | `describe('无障碍：option 里不许…')` ×2 | — |
+| ├ 说明条在 listbox 外、随选中切换、editable 与 capability 缺席都沉默 | 已有（08） | `describe('选中卡片后的说明条')` ×5 | — |
+| **画布与属性栏的解释入口** | **已有（08）** | `panelReadinessEntry.test.tsx`（7 条）+ `panelCapabilityNote.test.tsx`（5 条） | — |
+| ├ 出现条件：非 editable 才有；editable / capability 缺席 / 派生同步未跑完都不出现 | 已有（08） | `describe('入口出现的条件')` ×4 | — |
+| ├ 点下去只打开中心 + 聚焦：选择不变、不进裁剪/图内编辑、文档零改动 | 已有（08） | `describe('点下去只解释，什么都不改')` ×3 | — |
+| ├ 属性栏那条：非阻塞（无 alert）、按 reason 取句子、可编辑与缺席都沉默 | 已有（08） | `panelCapabilityNote.test.tsx` ×5 | — |
+| **常驻左侧工作区外壳** | **已有（08）** | `uiStore.test.ts` 的两个新 describe（9 条）+ `drawerViewportResize.test.tsx`（5 条） | — |
+| ├ 默认展开停在素材页；用户折叠落盘；重启恢复（两个方向各一条） | 已有（08） | `describe('左侧工作区：默认常驻、可折叠、偏好跨会话')` ×4 | — |
+| ├ **响应式让位不写回偏好**：互斥断点自动收起 / 窄屏开机裁剪，本机存的仍是展开 | 已有（08） | `describe('窄窗口的自动让位不许覆盖桌面偏好')` ×3 | — |
+| ├ 用户自己关掉的那一侧照旧落盘（豁免不是"什么都不记"） | 已有（08） | 同上 ×1 | — |
+| ├ 抽屉开合 → 画布视口重算；`zoom/panX/panY` 一位不动；无差异零 `set` | 已有（08） | `drawerViewportResize.test.tsx` ×5 | — |
+| ├ 六个状态名 / 三个新按钮的中英文字数预算 | 已有（08） | `web/src/i18n/overflow.test.tsx` 的 `BUDGETS`（9 条） | — |
 
 ## FAST EDIT / LAYOUT / STYLE / SPEC / VALIDATION / EXPORT
 
@@ -591,3 +629,83 @@ keep.registry = set() or {name for name in batch.registry if …}
 再读第二遍；结构校验换成一份 JSON 解得动、`entry` 非法的注册表。这与
 Session 05 的「测恢复的那一刻」是同一族——**缺陷藏在状态翻转那一下，而用例
 最容易只跑翻转之后。**
+
+---
+
+## Session 08 的变异反证（33 条，全部被打红）
+
+跑法与 05/06/07 一样：还原走**备份文件**而不是 `git checkout --`（工作树里有
+未提交的新文件）；后端那一条带 `PYTHONDONTWRITEBYTECODE=1`。前端每条变异跑
+**整个**对应的用例文件，不缩窄选择器——选择器缩到看不见判据的那条用例上，
+变异当然是绿的（那是「变异显示绿」的第三种成因）。
+
+脚本：`scratchpad/mutate.py`（本轮一次性工具，不进仓库）。
+
+| 变异 | 打红的用例文件 | 结果 |
+| --- | --- | --- |
+| 拿掉「旧响应不覆盖新的」（请求序号） | `projectReadinessStore.test.ts` | 红 ✔ |
+| 拿掉「不落进另一个项目」（pj 判据） | 同上 | 红 ✔ |
+| 横幅忽略关闭状态 | 同上 | 红 ✔ |
+| 全部可编辑也显示横幅 | 同上 | 红 ✔ |
+| 后台失败清空报告 | 同上 | 红 ✔ |
+| 同 fingerprint 也换报告对象引用 | 同上 | 红 ✔ |
+| `persist()` 照抄当前状态（响应式让位写回偏好） | `uiStore.test.ts` | 红 ✔ |
+| `editable` 也画状态角标 | `AssetBrowser.readiness.test.tsx` | 红 ✔ |
+| 状态不进 `aria-label` | 同上 | 红 ✔ |
+| 说明条给 `capability` 缺席补一个默认状态 | 同上 | 红 ✔ |
+| `capability` 缺席也给「为什么不能编辑？」 | `panelReadinessEntry.test.tsx` | 红 ✔ |
+| 打开接入中心就跑脚本 | `RegistryDialog.test.tsx` | 红 ✔ |
+| 技术详情默认展开 | 同上 | 红 ✔ |
+| 只读项目也渲染手工关联控件 | 同上 | 红 ✔ |
+| 关联写的键改成文件名（而不是 stem） | 同上 | 红 ✔ |
+| 冲突只列第一个候选 | 同上 | 红 ✔ |
+| 视口同步顺手 `fit()`（对象跳动） | `drawerViewportResize.test.tsx` | 红 ✔ |
+| 统一刷新里不带就绪度 | `RegistryDialog.test.tsx` | 红 ✔ |
+| 一句话按 `status` 查而不是按 `reason_code` | `panelCapabilityNote.test.tsx` | 红 ✔ |
+| 报告里去掉 `stem` 字段（后端） | `tests/test_project_readiness.py` | 红 ✔（3 条） |
+| 仅排版的图不给「选择源脚本」 | `RegistryDialog.test.tsx` | 红 ✔ |
+| 入口取不到时编一个 `'main'`（前端造第二个默认） | 同上 | 红 ✔ |
+| 入口三个出处各屏蔽一个（已登记 / 候选 / 脚本清单） | 同上 | 红 ✔ ×3 |
+| 可编辑的图不给改绑 / 改绑摆到第一层 | 同上 | 红 ✔ ×2 |
+| 改绑候选里也列当前脚本 / 候选不排在前面 | 同上 | 红 ✔ ×2 |
+| 「待连接」漏掉 `source_missing` / 把 `layout_only` 也算进去 | 三个用例文件 | 红 ✔ ×2 |
+
+### 第一轮活下来的两条，成因各不相同
+
+**1. 「同 fingerprint 不换引用」——判据预设了自己的结论。**
+fixture 写的是 `mockFetch.mockResolvedValue(report())`：`report()` **只求值
+一次**，两次响应是同一个对象引用。于是 `expect(...).toBe(first)` 恒真——
+它证明的是"我摆进去的东西还在"，不是"store 复用了旧的那一份"。
+处置：改成 `mockImplementation(async () => report())`（每次造一个新的、内容
+相同的对象），并先断言这一轮**真的**有新对象进来。
+
+**2. 「说明条不给 capability 缺席补默认」——判据缺一维。**
+判据在，但没有任何一条用例**选中**过一张没有 capability 的卡片：卡片角标那条
+只看角标，说明条那三条用的卡片都带 capability。缺席这一维在说明条上从来没被
+量过。处置：补一条「选中 capability 缺席的卡片 → 说明条不出现」。
+
+两条都不是"判据写错了"，而是**判据没有被执行到自己该看的那个点上**——与
+Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
+
+**3. 「入口取自已登记的那份」第一轮也活了下来——第三种形状：两个出处给出
+同一个答案。** fixture 里 `ok.py` 的登记 entry 与静态解析出的
+`entry_candidates[0]` **写成了同一个值**，于是屏蔽掉第一个出处，第三个出处
+照样返回它，判据永远量不到自己（这正是 T-36 的形状，只不过冗余在 fixture 里
+而不在实现里）。处置：让两个值真的不同（`draw` vs `main`）——现实里它们本来
+就会分开（用户手工改过 entry、或脚本后来变了），不是为了测试硬造的形状。
+
+### 另外两条：尺子看不见那一维，与一条杀不死的冗余
+
+**「改绑候选里不含当前脚本」第一轮量不到。** 判据原本打在 Radix Select 的
+触发器文本上——而选项住在弹层里，触发器上显示的是 placeholder。**那把尺子
+根本看不见这一维**，所以无论实现怎么改它都恒真。处置：把算选项的那段抽成
+纯函数 `sourceOptions(panel, allScripts)`，判据直接打在它上面（顺带多守住
+一条「候选排前面」）。
+
+**同一条判据里还藏着一条杀不死的冗余。** 抽出来之后
+`panel.candidates.filter((s) => s !== panel.script)` 仍然杀不死——因为后端
+**结构性地**不会把已绑定的脚本放进候选（`editable` 的候选恒为空，
+`source_missing` 的候选是 `[s for s in claims[stem] if s != script]`）。
+没有任何输入能让那一句生效，也就没有任何用例能打红它。**处置是删掉它**
+（不是去造一个后端给不出来的输入来"覆盖"它）：`allScripts` 那一半的同名过滤
+是真需要的，两者不是一回事。

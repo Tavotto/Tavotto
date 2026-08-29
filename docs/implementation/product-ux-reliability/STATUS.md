@@ -39,7 +39,7 @@
 | 05 | 项目 watcher、批次合并、SSE | ✅ 完成（本次，ADR 0026） |
 | 06 | 前端事件消费与派生元数据同步 | ✅ 完成（本次） |
 | 07 | Readiness 后端事实模型 | ✅ 完成（本次） |
-| 08 | Readiness 前端与常驻左栏 | ⬜ |
+| 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ⬜ |
 | 10 | Style / Spec 分层 | ⬜ |
 | 11 | 统一检查引擎与问题面板 | ⬜ |
@@ -61,7 +61,7 @@
 | Gate | 覆盖 | 状态 |
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
-| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度后端事实模型）完成，08 未开始 |
+| 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ⬜ |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
@@ -247,29 +247,64 @@ desktop…」。
 **这不构成"它被修好了"**：本轮 `tavotto run` 那条线一个字节没改，两次绿只
 说明它是偶发的——而偶发红先当缺陷查，不当背景噪音。它仍留在遗留表里。
 
+### Session 08 之后（改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3200** passed / 34 skipped / 2 deselected，10 分 27 秒（Session 07 的 3199 + 本轮新增的 1 条后端用例 = 3200，数字对得上） |
+| `cd web && pnpm test` | ✅ exit 0 —— **131** files / **1557** tests passed（比 07 的 124/1456 +7 文件 / +101 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2612 / en-US 2697；新增 `readiness.*`，删掉 33 个死掉的 `registry.*`） |
+| `cd web && pnpm lint` | ✅ exit 0（18 条既有 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（277 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `ebea0b57749239f2`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `4dd2877615f06445`）+ `--check` 通过；不进 git，网站仓库另行 sync |
+| 变异反证 33 条 | ✅ 全部被打红（**第一轮有 5 条活了下来**，四种成因与处置见 `TEST_MATRIX.md`；其中一条查出来是**杀不死的冗余**，已删） |
+
+> **又踩了一次「产物比源码早」**：第一遍全量里
+> `test_widget_artifact_is_in_sync_with_the_frontend` 与
+> `test_maintenance_scripts_report_under_cp1252_stdout` 两条红——`canvas.html`
+> 重建之后我又改了 `web/src`。**重建必须排在所有 `web/src` 改动之后**，
+> `i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
+> 上表是**把所有前端改动做完、两个产物都重建并 `--check` 通过之后**重跑一遍
+> 完整套件的结果，不是拼起来的。
+
+> 单跑某个前端用例文件时**必须自己带上**
+> `NODE_OPTIONS=--no-experimental-webstorage`（它在 `package.json` 的 `test`
+> 脚本里）：没有它 Node 自带的 `localStorage` 会盖住 jsdom 那份且不可用，
+> 报错看起来像被测代码坏了。本轮又踩了一次。
+
 ---
 
-## 遗留（Session 07 之后仍开着的）
+## 遗留（Session 08 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次，Session 07 的两次全量都绿；属 `tavotto run` 线，与本轨道无代码路径相交） | 待查 |
+| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07 两次、08 一次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交。**三次绿仍不构成"它被修好了"**——那条线一个字节没改） | 待查 |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
-| — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六） | 08（左栏改造） |
+| — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六）。**08 没做**：本阶段的左栏改造只到「常驻外壳 + 项目状态入口」，历史入口的位置牵涉顶栏与文档菜单的分工 | 未定 |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
 | — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
-
-| — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里——它们按定义就有脚本，且 id 空间不同，混进来会破坏「id 与 `PanelInfo.id` 逐字相同」 | 08 决定要不要在 UI 上补一句 |
-| — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）：静态解不出这些脚本的产物，所以说不出"这张图来自其中哪一个"。项目里有一个动态脚本，所有没有专属候选的图都会变成 `needs_probe` | 08 的措辞要照顾到这一点 |
+| — | **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行。**本轮没有实测过大项目**（用例里最多 6 行），真实上限不知道 | 待量 |
+| — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
+| — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
+| — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
+| — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 08（Readiness 前端与常驻左栏）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。事实模型到 07 为止已经完整——**08 不得在前端重新猜状态**：
-每张图的能力事实只有 `capability.status` / `reason_code` 一个出处（`/api/panels`
-每项都带，或整份 `GET /api/project/readiness`），前端**不许**再按 `script`
-有没有值自己判一遍。reason code 是闭集，08 负责给它们配中英文文案。
+**Prompt 09（快速编辑与画布模式）**，入口见 `SESSION_HANDOFF.md` 的
+「下一阶段入口」。
+
+08 留给后面的两个可复用入口：
+
+* `useProjectReadinessStore.getState().focusPanel(fileId)` —— 打开「项目接入
+  状态」并滚到那一张图。Prompt 17（多选 ContextBar）与 18（QuickEdit 右键
+  动作）直接用它，**不要在那两处重新拼一份状态判断**；
+* `lib/readinessText.ts` 的 `statusLabel()` / `reasonText()` —— 状态与句子的
+  唯一一份实现，任何新出口都从这里取词。

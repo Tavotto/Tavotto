@@ -91,8 +91,19 @@ export interface PanelCapability {
 export interface ReadinessPanel extends PanelCapability {
   /** 与 `PanelInfo.id` 逐字相同的项目相对 id */
   id: string
+  /**
+   * 注册表的键，也是**关联动作真正的对象**。同一个 stem 可能挂着两份素材
+   * （`FigA.pdf` 与 `raster/FigA.png`），给其中一份选源脚本，另一份跟着变。
+   *
+   * 后端给出来是为了让界面**不必**自己从 id 切一次：`sub/Fig.v2.pdf` 的 stem
+   * 是 `Fig.v2`，既不是 id，也不是第一个点号之前那一段。
+   */
+  stem: string
   details: { entry?: string; cost?: string; candidate_scope?: 'panel' | 'project' }
 }
+
+/** 逐状态计数 + 总数。`total` 是素材数，不是六个状态的另一种写法 */
+export type ReadinessSummary = { total: number } & Record<ReadinessStatus, number>
 
 export interface ReadinessReport {
   project_id: string
@@ -100,7 +111,7 @@ export interface ReadinessReport {
    *  **不含** `generated_at`，也不受无关文件 mtime 影响 */
   fingerprint: string
   generated_at: number
-  summary: { total: number } & Record<ReadinessStatus, number>
+  summary: ReadinessSummary
   panels: ReadinessPanel[]
   /** `null` = 这一轮没跑静态扫描。**缺席不是零**——把没测量说成"没有冲突"，
    *  用户会一直等一个永远不来的提示 */
@@ -2216,7 +2227,13 @@ export const cancelProbe = (script: string) =>
 
 export const writeRegistryEntry = (payload: {
   script: string
-  entry: string
+  /**
+   * 入口函数名。**省掉就是让后端用它自己的默认**（`app.py` 的
+   * `str(body.get("entry") or "main")`）——前端手写一份 `'main'` 等于让
+   * 同一个默认值有两个出处，而两处迟早会分叉。只有在**确实知道**这个脚本
+   * 的入口叫什么时才传。
+   */
+  entry?: string
   stems: string[]
   cost?: string
   notes?: string

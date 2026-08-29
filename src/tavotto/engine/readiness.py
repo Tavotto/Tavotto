@@ -436,7 +436,10 @@ def compute(ctx) -> dict:
                     writable=writable,
                     blocked=blocked,
                 )
-            panels.append({"id": rel, **cap})
+            # `stem` 与 `id` 一起给出来：**关联动作的对象是 stem 不是这张图**
+            # （注册表的键就是 stem），而同一个 stem 可能挂着两份素材。界面自己
+            # 从文件名切一次的话，「哪一段算 stem」就有了第二份判据。
+            panels.append({"id": rel, "stem": stem, **cap})
 
         summary = {"total": len(panels)}
         summary.update({s: 0 for s in STATUSES})

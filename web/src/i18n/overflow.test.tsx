@@ -83,6 +83,19 @@ const BUDGETS: Budget[] = [
   ['errors', 'engine.repairPrepareAndContinue', 32, '缺依赖卡片：确认建环境并继续'],
   ['errors', 'engine.repairCancel', 12, '安装进度里的取消'],
   ['errors', 'engine.repairClose', 12, '安装结束后的关闭'],
+  // 接入状态：六个状态名同时出现在素材卡角标（卡片宽 ~150px，`truncate` 兜底）、
+  // 接入中心每一行的 badge 与素材说明条的标题里。角标是卡片上唯一的文字覆盖层，
+  // 长一点就会盖到图上——预算是硬边界。
+  ['workspace', 'readiness.status.editable', 18, '素材卡角标 / 行内状态'],
+  ['workspace', 'readiness.status.auto_linkable', 18, '素材卡角标 / 行内状态'],
+  ['workspace', 'readiness.status.needs_probe', 18, '素材卡角标 / 行内状态'],
+  ['workspace', 'readiness.status.conflict', 18, '素材卡角标 / 行内状态'],
+  ['workspace', 'readiness.status.source_missing', 18, '素材卡角标 / 行内状态'],
+  ['workspace', 'readiness.status.layout_only', 18, '素材卡角标 / 行内状态'],
+  // 横幅右端与说明条里的按钮，与「关闭」并排
+  ['workspace', 'readiness.openCenter', 20, '摘要横幅上的按钮'],
+  ['workspace', 'readiness.whyNotEditable', 26, '画布工具条上的解释入口'],
+  ['workspace', 'rail.readiness', 20, '左侧轨道按钮'],
 ]
 
 describe('紧位置的英文文案有字数上限', () => {

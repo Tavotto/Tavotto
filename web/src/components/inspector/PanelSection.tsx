@@ -33,7 +33,9 @@ import {
   setPanelOpacity,
   updateObjects,
 } from '@/store/actions'
+import { reasonText, statusLabel } from '@/lib/readinessText'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
@@ -74,6 +76,7 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
     <>
       {/* 第一层：图内编辑（参数化面板的核心动作）、几何、裁剪与适配 */}
       {one?.script && <ScriptSection panel={one} />}
+      {one && <PanelCapabilityNote panel={one} />}
       <GeometrySection objs={objs} />
       <ImageOpsSection objs={objs} />
       {/* 第二层：唯一的「更多」——旋转 / 翻转 / 不透明度 / 替换素材 */}
@@ -81,6 +84,36 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
       {/* 第三层：源文件与高级——写回 / 历史 / 质量诊断，默认折叠 */}
       <SourceSection panel={one ?? undefined} objs={objs} />
     </>
+  )
+}
+
+/**
+ * 「这张图为什么没有图内编辑」——**非阻塞**的一句话 + 一个入口。
+ *
+ * 不是错误、不是空状态：`layout_only` 的图照旧能缩放、裁剪、对齐、标注和导出，
+ * 把它画成故障只会让用户去找一个并不存在的问题。所以它是一条平铺的说明，
+ * 用中性底色，不带警告图标。
+ *
+ * 出现条件与画布上那个入口**共用同一份事实**（`PanelInfo.capability`）：
+ * 状态是 editable 时什么都不显示，`capability` 缺席时也什么都不显示
+ * （「这一轮还不知道」不是一种状态）。
+ */
+export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
+  const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
+  if (panel.script || !cap || cap.status === 'editable') return null
+  return (
+    <div className="mx-3 mb-1.5 rounded-md border border-border bg-surface-2 p-2">
+      <p className="text-xs text-ink">{statusLabel(cap.status)}</p>
+      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
+      <Button
+        size="sm"
+        className="-ml-2 mt-0.5"
+        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId)}
+      >
+        {translate('readiness.openCenter', { ns: 'workspace' })}
+      </Button>
+    </div>
   )
 }
 

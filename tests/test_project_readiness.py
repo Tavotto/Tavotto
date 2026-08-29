@@ -438,8 +438,25 @@ class TestClassification:
         png_panel = _by_id(body)[str(Path("raster/FigA.png"))]
         assert pdf_panel["status"] == png_panel["status"] == "editable"
         assert pdf_panel["script"] == png_panel["script"] == "fig_a.py"
+        # 关联动作的对象是 **stem 不是这张图**：两份素材共用同一个注册表键，
+        # 界面上给 FigA.png 选一次源脚本，FigA.pdf 跟着变。报出来是为了让界面
+        # 不必自己从文件名切一次——「哪一段算 stem」有第二份判据的话，
+        # 子目录与带点号的文件名上两边就会给出不同的答案。
+        assert pdf_panel["stem"] == png_panel["stem"] == "FigA"
         assert body["summary"]["editable"] == 2
         assert body["summary"]["total"] == 2
+
+    def test_the_stem_is_reported_and_is_not_the_id_nor_the_first_dot_segment(self, tmp_path):
+        """`sub/Fig.v2.pdf` 的 stem 是 `Fig.v2`——既不是 id，也不是第一个点号
+        之前那一段。前端照着 id 自己切的话，正是在这两处切错。"""
+        figs = _project(tmp_path)
+        (figs / "sub").mkdir()
+        _pdf(figs / "sub" / "Fig.v2.pdf")
+        _write_registry(figs, {})
+
+        body = engine_readiness.compute(_Ctx(figs))
+        panel = _by_id(body)[str(Path("sub/Fig.v2.pdf"))]
+        assert panel["stem"] == "Fig.v2"
 
     def test_the_registry_wins_over_a_static_conflict(self, tmp_path):
         """人工裁决记在注册表文件里（"勿改"）。静态报告仍然看得见那两个
@@ -973,6 +990,7 @@ class TestEndpoint:
         panel = body["panels"][0]
         assert set(panel) == {
             "id",
+            "stem",
             "status",
             "reason_code",
             "script",

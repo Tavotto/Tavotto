@@ -19,6 +19,7 @@ import { refreshProject } from '@/lib/api'
 import { msg } from '@/i18n'
 import { useAssetStore } from './assetStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
+import { useProjectReadinessStore } from './projectReadinessStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
@@ -80,6 +81,16 @@ export async function refreshAssetsAndSync(opts?: {
   force?: boolean
   affectedIds?: readonly string[]
 }): Promise<PanelSyncResult | null> {
+  // 就绪度报告与素材清单是同一份事实的两个投影（后端同一次 compute()）：
+  // 素材要重取的每一个时机，报告也一样过期了。挂在这里而不是各个事件分支上
+  // ——「前端的消费只有 liveSync 一份」是 Session 06 定下的不变式，报告
+  // 另开一条消费路径的话，第三个触发点总会漏掉其中一条。
+  //
+  // **不 await**：横幅与接入中心晚一拍出现没有关系，而画布上的面板同步
+  // 不该等一个诊断端点。合并由 store 自己的在途去重负责（一批事件一次请求），
+  // `force` 与素材那一侧同义——用户刚按过刷新 / 刚写过盘时绝不复用一个
+  // **在那之前**就发出的在途请求。
+  void useProjectReadinessStore.getState().load({ force: opts?.force })
   const data = await useAssetStore.getState().load({ force: opts?.force })
   if (!data) return null
   const result = syncPanelSourceMetadata(

@@ -245,6 +245,44 @@ GET /api/project/readiness            ← 只读诊断；不写盘、不发事�
 "同尺寸 + 同一个 mtime_ns 刻度的就地改写"，而那正是刷新自己写注册表的形状）。
 扫描失败的那一份**不进缓存**。进出都深拷贝。
 
+**`stem`（`← 08`）**：每个 panel 除 `id` 外还带 `stem`——**关联动作的对象是
+它**（注册表的键就是 stem），而同一个 stem 可能挂着两份素材。给出来是为了
+让界面不必自己从文件名切一次（`sub/Fig.v2.pdf` → `Fig.v2`，既不是 id，也不是
+第一个点号之前那一段）。`CAPABILITY_FIELDS` 一个字没改，`/api/panels` 上没有
+这个字段。
+
+### 3.4 接入就绪度的前端面（`← 08`）
+
+```text
+GET /api/project/readiness ─┐
+                            ├→ store/projectReadinessStore  ← 唯一持有者
+/api/panels 每项的 capability ┘        report / loading / error / focusId / dismissed
+     │
+     ├→ ProjectReadinessBanner       顶部一句话摘要（不阻塞画布、不自动弹框）
+     ├→ RegistryDialog               「项目接入状态」= 每张图一行 + 下一步动作
+     ├→ AssetBrowser                 卡片角标（<span>）+ listbox 外的说明条
+     ├→ ContextBar / PanelSection    「为什么不能编辑？」/ 非阻塞说明
+     └→ LeftRail                     常驻的项目级入口
+```
+
+**四条纪律**：
+
+1. **前端不判状态。** 六个状态与十个 reason code 的唯一出处是后端；界面上
+   连一个 `!!script` 的分支都没有。句子由 `lib/readinessText.ts` 一处按
+   **`reason_code`**（不是 `status`）查——同一个状态下不同 code 要说的话完全
+   不同（T-41）。
+2. **开关只有一个**：`uiStore.registryOpen`（T-38）。就绪度 store 只管
+   `focusId`；`focusPanel(id)` 是 Prompt 17/18 可以直接复用的入口。
+3. **刷新挂在 `liveSync.refreshAssetsAndSync()` 一处**（T-39），与素材清单
+   同一批事件、同一个 `force` 语义。
+4. **动作不在这里执行**：试运行走 `/api/registry/probe`（用户显式点出来）、
+   手工关联走 `PUT /api/registry`、重扫走 `POST /api/registry/scan`；每次成功
+   之后只调一次统一刷新，不手拼状态。
+
+**「没测量」三档一个都不许压扁**：`conflicts` 的 `null`、`project.registry_valid`
+的 `null`、`PanelInfo.capability` 的 `undefined`。界面对第三档的处理是
+**什么都不显示**（不是显示 `layout_only`）。
+
 ---
 
 ## 4. SSE → 前端 store

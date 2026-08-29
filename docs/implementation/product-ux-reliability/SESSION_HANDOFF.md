@@ -5,7 +5,297 @@
 
 ---
 
-## 最近一次：Session 07（2026-08-29）
+## 最近一次：Session 08（2026-08-29）
+
+### 目标
+
+把 Session 07 算好的那份事实**变成普通科研用户看得懂的产品体验**，并顺手把
+左侧工作区外壳整理成稳定的常驻结构。
+
+本阶段**不改 watcher、不增强解析器、不实现多选栏与 onboarding**，也**不在
+前端重新判一次状态**。
+
+### 实际完成
+
+**1. `web/src/store/projectReadinessStore.ts` —— 就绪度的前端唯一持有者。**
+职责只有三样：把报告取回来、记住「用户已经看过哪一版」、记住「接入中心此刻
+聚焦在哪张图」。并发治理逐条照抄 `assetStore` 的纪律（请求序号挡旧响应、
+发请求那一刻的 `pj` 挡串项目、同批合并、`force` 另起一次、失败保留上一次成功
+那份）。**fingerprint 没变时连报告对象的引用都不换**——换了引用，订阅它的每个
+组件都会白重渲染一轮。
+
+**2. 顶部摘要横幅 `ProjectReadinessBanner`**，与 `UpdateBanner` /
+`DocumentBanner` 同形（同高度、同挂载点、不阻塞画布、不自动弹框）：
+
+```text
+已找到 18 张图：8 张可编辑，5 张待连接，5 张仅排版。   [查看接入状态] [关闭]
+```
+
+关闭按 **项目 id + 报告 fingerprint** 记在本机（`tavotto.readinessDismissed`，
+只留最近 20 个项目，坏 blob 安全恢复，**不记项目绝对路径**）。事实一变就再说
+一次——它不是「永久别再提」。
+
+**3. `RegistryDialog` 重构成「项目接入状态」**（文件名与导出名保留，T-38）。
+信息架构从「一份脚本清单」翻成「一张图一行」：
+
+```text
+总计 18 · 可编辑 8 · 待连接 5 · 仅排版 5          [重新扫描]
+需要处理（5）
+  Fig3.pdf                                        [有冲突]
+  不止一个脚本说自己生成这张图，需要你指定用哪一个。
+  [用 old_version.py] [用 z_newer.py]  ▸ 技术详情
+可编辑（8） / 仅排版（5）
+▸ 全部脚本（12）        ← 高级段：每个 .py + 试运行 + 手工填图名
+```
+
+每个状态的下一步、以及**绝不做的事**：
+
+| 状态 | 动作 | 绝不 |
+| --- | --- | --- |
+| `editable` | 添加到画布 / 重新试运行 / **技术详情里改绑**（候选不含它现在连着的那个） | — |
+| `auto_linkable` | 自动连接（= 重新扫描） | — |
+| `needs_probe` | 试运行并连接（点之前先说「Tavotto 将运行这个脚本」） | 不自动跑 |
+| `conflict` | 候选**逐个列出**，点哪个写哪个 | **不猜**，一个都不预选 |
+| `source_missing` | 重新扫描 / 选择新脚本 | 不说成"文件损坏" |
+| `layout_only` | 选择源脚本 / 继续当普通素材 | **不画成错误** |
+
+聚焦（`focusPanel(id)`）：打开 → 滚到那一行 → 焦点落上去 → 短暂静态高亮 →
+**当场清掉聚焦标记**。关闭后的焦点归位**不在这里**——`ui/Dialog` 已经做了
+（`onOpenAutoFocus` 记、`onCloseAutoFocus` 还，带节点被换掉的兜底）；再记一份
+就是同一条保证有两个实现，删掉任意一个都不会有用例红（T-36 的形状）。
+
+**4. 素材卡与画布上的四个出口**，全部读同一份 `PanelInfo.capability`：
+
+* 卡片左下角一个**非交互** `<span>` 角标（`editable` 不加，那里已经有 `{}`）；
+  状态进 `aria-label`；完整解释在 `title` 与说明条里；
+* 选中卡片后，**listbox 外面**一条说明条（文件名 · 状态 / 一句原因 /
+  「查看接入状态」按钮）——`role="option"` 里不许再嵌可 Tab 的控件；
+* 画布单选没有编辑入口的图时，ContextBar 上多一个「为什么不能编辑？」；
+* 属性栏 panel 段顶部一条非阻塞说明。
+
+**5. 常驻左侧工作区外壳。** 轨道与抽屉的骨架早就在（默认展开、可折叠、可钉住、
+可拖宽、三档断点），本轮做了三件事：轨道底部加**项目接入状态**入口、在
+`ITEMS` 旁标注 Prompt 11 的「问题」入口位置（**不放占位按钮**），以及——
+
+**修掉一个真实缺陷（T-40）**：`persist()` 原来照抄当前状态，而**响应式让位也
+写在同一个 `leftOpen` 上**。把窗口拖窄一次（左栏自动让位），之后任何一次
+persist 都会把 `leftOpen: false` 当成偏好写进本机；回到大屏、重启之后常驻左栏
+再也回不来，**而用户从没关过它**。现在偏好单独记一份，只有用户自己的动作与
+产品规则写它，响应式让位一律不写。
+
+**6. 后端一处很小的改动**：就绪度报告的每个 panel 多一个 `stem`（T-37）。
+关联动作写进去的键是 stem 不是那张图，而 `sub/Fig.v2.pdf` 的 stem 是 `Fig.v2`
+——前端自己切就是第二份判据。`CAPABILITY_FIELDS` 一个字没改。
+
+### 关键 API（后面几个 Prompt 直接用）
+
+```ts
+// web/src/store/projectReadinessStore.ts
+useProjectReadinessStore   // report / loading / error / focusId / dismissed
+  .load({ force })         // 合并；force 另起一次
+  .focusPanel(fileId)      // 打开「项目接入状态」并滚到这张图  ← 17/18 复用这个
+  .openCenter() / .closeCenter() / .dismissBanner() / .clear()
+bannerReport(state)        // 横幅该不该出现（纯函数，五个条件）
+
+// web/src/lib/readinessText.ts   ← 状态、句子与「待连接」的唯一一份实现
+statusLabel(status)        // 可编辑 / 待连接 / 需试运行 / 有冲突 / 源脚本丢失 / 仅排版
+reasonText(capability)     // 按 reason_code 查，**不按 status**
+PENDING_STATUSES           // 「待连接」是哪几个状态（集合，不是显示顺序）
+pendingCount(summary)      // 由上面那个集合现算——横幅与接入中心同一个加法
+
+// web/src/lib/api.ts
+ReadinessPanel.stem        // 新增：关联动作的键
+ReadinessSummary           // 从内联类型抽出来的具名类型
+```
+
+**开关仍然是 `uiStore.registryOpen`**（T-38）——就绪度 store 里没有同义布尔值。
+
+### 迁移
+
+**没有迁移，磁盘格式一个字节没动。** 唯一新增的本机存储是
+`localStorage['tavotto.readinessDismissed']`（项目 id → fingerprint），
+读不回来就当"谁都没关过"。`tavotto.ui` 的键集没变——`leftOpen`/`rightOpen`
+写进去的值从「当前状态」改成了「用户的偏好」，老 blob 原样能读。
+
+### 修改的文件
+
+```text
+新增  web/src/store/projectReadinessStore.ts    就绪度前端持有者（+ 22 条用例）
+新增  web/src/lib/readinessText.ts              状态标签 / 一句话原因（唯一一份）
+新增  web/src/components/ProjectReadinessBanner.tsx  顶部摘要（+ 9 条用例）
+新增  web/src/canvas/drawerViewportResize.test.tsx   抽屉开合 → 画布视口（5 条）
+新增  web/src/canvas/panelReadinessEntry.test.tsx    「为什么不能编辑？」（7 条）
+新增  web/src/components/RegistryDialog.test.tsx     接入中心（25 条）
+新增  web/src/components/inspector/panelCapabilityNote.test.tsx（5 条）
+新增  web/src/components/left/AssetBrowser.readiness.test.tsx（11 条）
+改写  web/src/components/RegistryDialog.tsx     脚本清单 → 一张图一行
+改动  web/src/components/left/AssetBrowser.tsx  角标 + listbox 外的说明条
+改动  web/src/components/left/LeftRail.tsx      项目接入状态入口 + 11 的位置注记
+改动  web/src/components/inspector/PanelSection.tsx  非阻塞说明
+改动  web/src/canvas/ContextBar.tsx             「为什么不能编辑？」
+改动  web/src/store/uiStore.ts                  偏好与实际开合分开（T-40）
+改动  web/src/store/liveSync.ts                 就绪度刷新挂在统一入口（T-39）
+改动  web/src/store/projectStore.ts             换项目清就绪度 + 重取
+改动  web/src/App.tsx                           挂横幅 + 启动取一次
+改动  web/src/lib/api.ts                        +ReadinessPanel.stem、+ReadinessSummary、
+                                              writeRegistryEntry 的 entry 改成可省
+改动  web/AGENTS.md                           +「接入状态与左侧外壳」一节（长期规则的家）
+改动  web/src/i18n/locales/*                    +readiness.*，删掉 33 个死掉的 registry.*
+改动  web/src/i18n/overflow.test.tsx            +9 条字数预算
+改动  web/src/store/uiStore.test.ts             +9 条左栏外壳用例
+改动  web/e2e/golden-paths.spec.ts              跟着改名（菜单项 / 对话框名 / 按钮）
+改动  web/e2e/a11y.spec.ts                    +2 条 axe 用例（**本轮没真跑过**，见尚存限制）
+改动  web/src/i18n/locales/*/errors.json      三条指向「脚本注册表」的后端错误文案跟着改
+改动  src/tavotto/engine/readiness.py           panels 多一个 stem
+改动  tests/test_project_readiness.py           +2 条、shape 用例的键集 +1
+重建  codex-plugin/mcp/widget/canvas.html       改了 web/src 就要重建（指纹 ebea0b57749239f2）
+重建  web/dist-playground/                      同上（指纹 4dd2877615f06445，不进 git）
+```
+
+### 测试命令与真实结果
+
+```sh
+# 后端全量（worktree 里必须带 PYTHONPATH，否则 import 到主工作区）
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
+# 只跑本阶段动过的那份
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_project_readiness.py
+# 前端（先 cd web）
+pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+# 单跑一个前端用例文件时**必须自己补环境变量**（package.json 的 test 脚本里有）
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/projectReadinessStore.test.ts
+# 改了 web/src 之后两个受管产物都要重建
+python scripts/build_mcp_widget.py && python scripts/build_browser_playground.py
+```
+
+后端全量 **exit 0 —— 3200 passed / 34 skipped / 2 deselected**，10 分 27 秒
+（Session 07 的 3199 + 本轮新增的 1 条 = 3200，数字对得上）。
+前端 **131 files / 1557 passed**，`build` / `i18n:check` / `lint` 三条 exit 0。
+
+**Session 06 那条偶发红本轮又是绿的**
+（`tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`）。
+**三次绿仍不构成"它被修好了"**：`tavotto run` 那条线本轮一个字节没改。
+它仍留在 `STATUS.md` 的遗留表里。
+**变异反证 33 条全部被打红**（第一轮活下来 5 条，四种成因与处置见 `TEST_MATRIX.md`——
+其中一条查出来是**杀不死的冗余**，处置是删掉那句防御，不是造输入去覆盖它）。
+
+### 这一轮踩到的坑
+
+**1. 一条测试**捏了一个**后端给不出来的输入形状**（两个不同项目、同一个
+fingerprint），于是红的不是缺陷、是幻觉。`project_id` 就在被哈希的那份 body
+里，两个项目不可能撞指纹；换项目那条路又必然先 `clear()`。**处置是改测试，
+不是给代码加一句 `project_id` 比较**——那句话没有任何用例能打红它，正是
+T-36 说的「冗余的保证杀不死」。
+
+**2. 三条变异第一轮活了下来**，没有一条是"判据写错了"，全都是**判据没被执行
+到自己该看的那个点上**：一条的 fixture 让断言恒真（`mockResolvedValue(report())`
+只求值一次，两次响应是同一个对象）；一条缺一维（没有任何用例选中过一张
+`capability` 缺席的卡片）；一条是 fixture 里两个出处给了同一个值，于是屏蔽掉
+第一个出处，第二个照样返回它。第三条是 T-36 的形状长在了 fixture 里。
+
+**3. 一条判据的尺子看不见它要量的那一维**：「改绑候选里不含当前脚本」原本
+打在 Radix Select 的触发器文本上，而选项住在弹层里、触发器上只有 placeholder
+——无论实现怎么改它都恒真。处置是把算选项那段抽成纯函数
+（`sourceOptions()`），判据直接打在它上面。
+
+**4. `npx vitest` 直接跑会漏掉 `NODE_OPTIONS=--no-experimental-webstorage`**，
+表现是 `localStorage` 是 `undefined`、报错看起来像被测代码坏了。这条在
+STATUS.md 里记过一次，本轮又踩了一次——单跑文件时记得带上。
+
+### 尚存限制
+
+1. **runtime figure 素材（ADR 0013）在接入状态里一个字不说。** 它们不在
+   `/api/panels` 的 id 空间里，拿不到 `capability`；四个出口都以「拿得到
+   capability」为前提，所以自然沉默。runtime 卡片有它自己那套角标。
+2. **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文把它
+   列进了 `editable` 与 `source_missing` 两个状态的行内动作；`source_missing`
+   那一行给了，`editable` 没给——18 行里每行都挂一个项目级动作是噪音。
+3. **冲突那一行只给两个声称者，不给「从全部脚本里挑一个」的下拉。** 正确答案
+   是第三个脚本时，出路在高级段的「全部脚本 → 手工填图名」。这么排是因为
+   两个候选按钮就是绝大多数情况下的答案，再摆一个下拉会把"选哪个"这件事
+   稀释掉。真遇到用户抱怨再加。
+4. **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行（每行一个
+   `<details>` + 若干按钮）。**本轮没有实测过大项目**——用例里最多 6 行，
+   真实上限不知道。几百张图的项目要不要分页或虚拟化，等有人拿真项目量过
+   再定。
+5. **横幅关闭记录不随项目走**（存本机 `localStorage`，按项目 id 索引）。
+   换一台电脑要重新关一次——刻意的：它是 UI 会话偏好，不该写进用户项目。
+6. **axe 那一层本轮没有真跑过。** `e2e/a11y.spec.ts` 新增了两条（接入状态
+   对话框的 axe + focus trap + Escape 归位；素材卡角标的 nested-interactive），
+   `playwright test --list` 收得到它们，但 Playwright 要真实后端与浏览器，
+   本机沙箱里起不来。单测只做了**结构性**断言（`role="option"` 内零 `<button>`、
+   零可 Tab 控件、方向键导航不回归）——那不等于 axe 跑过。**23 之前必须真跑
+   一次**，这一条记在 `STATUS.md` 的遗留表里。
+7. 04/05/06/07 的其余遗留原样开着（R-05 五处手写原子写、R-07 autosave 位置、
+   `/api/layouts/<name>` 无 schema 校验、项目打开仍走自己的静态草稿逻辑、
+   「编辑历史」入口位置）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
+- **PR #201** 已开，带的是 Session 01–04。**05 / 06 / 07 / 08 的提交还没有推**
+  ——用户定的节奏是「每个 Session 一个独立提交，攒够几个再一次推」，
+  推上去会立刻触发一轮 Codex 评审，所以由用户决定什么时候推
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是 `1259959884@qq.com`，两者不一致会让
+  cla-check 在同一个仓库里数出两个贡献者；提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+  （linked worktree 默认共享它，一条命令污染所有会话）
+- `web/node_modules` 已在 worktree 内真装
+
+---
+
+## 下一阶段入口（Prompt 09：快速编辑与画布模式）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「2. 两种工作流合同」与
+「5b. 接入状态合同」、`ARCHITECTURE.md` 的 §3.4 与 §5。
+
+**Session 08 留给它的两个可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 打开接入状态并定位到某张图 | `useProjectReadinessStore.getState().focusPanel(fileId)` | 17 / 18 直接调，**不要在那两处重新拼状态判断** |
+| 状态标签与一句话原因 | `lib/readinessText.ts` 的 `statusLabel()` / `reasonText()` | 任何新出口都从这里取词，别再写第二份 |
+
+**绝不要做的事**（07 的六条原样成立，08 再加三条）：
+
+7. **不许给 `capability` 缺席补默认值。** `undefined` 的意思是「这一轮还不
+   知道」，四个出口对它的处理一律是**什么都不显示**。补成 `layout_only`，
+   用户会看到一条描述错误的说明，而且再也等不到正确的那一条。
+8. **不许把响应式让位写回侧栏偏好**（T-40）。判据只求值一次，写状态与写偏好
+   共用它。
+9. **不许再造第二个「接入中心开关」**（T-38）。它只有 `uiStore.registryOpen`
+   一个；聚焦是另一件事，归 `projectReadinessStore.focusId`。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
+   `setDocNotice()` 改（ADR 0024）。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**
+   （就绪度也挂在它上面，T-39）；**能力事实只有 `readiness` 一份**。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端；就绪度那一侧是
+   「同 fingerprint 不换报告对象引用」）。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处判据；脚本遍历只有
+   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
+   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
+   `lib/readinessText.ts` 一处。
+7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**
+   （磁盘 CANARY + 桩两层证据钉着）；**界面也不执行**——三个动作各归各的
+   既有端点，且只由用户点出来。
+8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
+   侧栏折叠、横幅关闭、聚焦目标同样**不进文档、不进 undo**。
+9. **素材不在清单里 ≠ 脚本关系失效**（T-28）。
+10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
+11. **「没测量」三档不许压扁**：`conflicts` 的 `null`、`registry_valid` 的
+    `null`、`capability` 的 `undefined`。
+
+---
+
+## 历史：Session 07（2026-08-29）
 
 ### 目标
 

@@ -174,3 +174,109 @@ describe('选中对象时回到属性页', () => {
     expect(store.getState().rightOpen).toBe(true)
   })
 })
+
+describe('左侧工作区：默认常驻、可折叠、偏好跨会话', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('全新安装：左抽屉默认展开，停在素材页', async () => {
+    const s = await freshStore()
+    expect(s.leftOpen).toBe(true)
+    expect(s.leftTab).toBe('assets')
+  })
+
+  it('用户点同一个轨道按钮收起，偏好落进本机', async () => {
+    const s = await freshStore()
+    s.railClick('assets')
+    const store = (await import('./uiStore')).useUiStore
+    expect(store.getState().leftOpen).toBe(false)
+    expect(JSON.parse(localStorage.getItem(LS_KEY) ?? '{}').leftOpen).toBe(false)
+  })
+
+  it('重启恢复：收起过就一直是收起的', async () => {
+    const s = await freshStore()
+    s.railClick('assets')
+    const restarted = await freshStore()
+    expect(restarted.leftOpen).toBe(false)
+  })
+
+  it('重启恢复：没动过就还是展开的', async () => {
+    const s = await freshStore()
+    s.setLeftWidth(320) // 动点别的，逼一次 persist
+    const restarted = await freshStore()
+    expect(restarted.leftOpen).toBe(true)
+    expect(restarted.leftWidth).toBe(320)
+  })
+})
+
+describe('窄窗口的自动让位不许覆盖桌面偏好', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  /**
+   * 这一条是真实缺陷的看护，不是假想：`persist()` 曾经照抄当前状态，而互斥
+   * 断点上的自动收起也写在同一个 `leftOpen` 上。于是「把窗口拖窄一次 + 之后
+   * 随便改点别的」= 常驻左栏被永久关掉，**而用户从没关过它**。
+   */
+  it('缩到互斥断点自动收起左栏，本机存的仍然是「展开」', async () => {
+    const w = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { value: 1400, configurable: true })
+    try {
+      await freshStore()
+      const store = (await import('./uiStore')).useUiStore
+      store.getState().setLeftTab('assets')
+      store.getState().setRightTab('properties')
+      expect(store.getState().leftOpen).toBe(true)
+      expect(store.getState().rightOpen).toBe(true)
+
+      // 窗口缩到 medium：两侧都开着，左侧自动让位
+      store.getState().setLayout('medium')
+      expect(store.getState().leftOpen).toBe(false)
+
+      // 之后用户改了个完全无关的偏好，触发一次 persist
+      store.getState().setShowGrid(false)
+      expect(JSON.parse(localStorage.getItem(LS_KEY) ?? '{}').leftOpen).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: w, configurable: true })
+    }
+  })
+
+  it('拉回宽屏、重启之后左栏回来了', async () => {
+    const w = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { value: 1400, configurable: true })
+    try {
+      await freshStore()
+      const store = (await import('./uiStore')).useUiStore
+      store.getState().setRightTab('properties')
+      store.getState().setLeftTab('assets')
+      store.getState().setLayout('medium')
+      store.getState().setShowGrid(false)
+
+      const restarted = await freshStore()
+      expect(restarted.leftOpen).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: w, configurable: true })
+    }
+  })
+
+  it('窄屏开机不铺右栏覆盖层，但本机存的常驻偏好没被改掉', async () => {
+    const w = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { value: 900, configurable: true })
+    try {
+      const s = await freshStore()
+      expect(s.rightOpen).toBe(false)
+      s.setShowGrid(false) // 逼一次 persist
+      expect(JSON.parse(localStorage.getItem(LS_KEY) ?? '{}').rightOpen).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: w, configurable: true })
+    }
+  })
+
+  it('用户自己关掉的那一侧照旧落盘（响应式豁免不是"什么都不记"）', async () => {
+    const s = await freshStore()
+    s.toggleRight()
+    expect(JSON.parse(localStorage.getItem(LS_KEY) ?? '{}').rightOpen).toBe(false)
+  })
+})

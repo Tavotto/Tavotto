@@ -629,3 +629,136 @@ panels 再排一次。两遍各自都足以让「排序稳定」成立，于是*
 这一维上恒绿，而恒绿的门禁与没有门禁的区别只是它看起来像有。冗余要留的话，
 用例必须能分别打到每一份（Session 05 的签名两维就是那个形状：size 与
 mtime_ns 各有一条用例看着，删任意一维都有对应的用例红）。
+
+---
+
+## T-37（Session 08）就绪度报告带上 `stem`——关联动作的对象是它，不是那张图
+
+**权威**：`engine/readiness.py` 的 `panels.append({"id": rel, "stem": stem, **cap})`，
+`web/src/lib/api.ts` 的 `ReadinessPanel.stem`。
+
+**背景**：接入中心的每一行讲的是**一张图**（主语是 07 定下的那个），但
+「给它选一个源脚本」写进去的键是 **stem**——同一个 stem 可能挂着两份素材
+（`FigA.pdf` 与 `raster/FigA.png`），给其中一份选一次，另一份跟着变。
+
+**决定**：`stem` 由后端一起给出来，前端**不许**自己从 id 切。
+
+**理由**：切法有坑，而且坑在少数派上——`sub/Fig.v2.pdf` 的 stem 是 `Fig.v2`，
+既不是 id，也不是第一个点号之前那一段。前端切一次就是「哪一段算 stem」的第二
+份判据，两份在这类文件名上会给出不同答案，而表现是**用户在界面上选了源脚本，
+图却仍然连不上**。看护：
+`tests/test_project_readiness.py::test_the_stem_is_reported_and_is_not_the_id_nor_the_first_dot_segment`
+（变异删掉这个字段，三条用例红）。
+
+**`capability` 里没有它**（`CAPABILITY_FIELDS` 一个字没改）：`/api/panels` 的
+消费方要的是「这张图能不能编辑」，不是关联动作的键。
+
+---
+
+## T-38（Session 08）接入中心的开关仍然只有 `uiStore.registryOpen` 一个
+
+**权威**：`web/src/store/uiStore.ts` 的 `registryOpen`；
+`projectReadinessStore` 里**没有**同义的布尔值。
+
+**背景**：Prompt 08 把 `RegistryDialog` 改成「项目接入状态」，并要求就绪度
+store 管理「接入中心开关」。而这个对话框此刻有四个入口——项目菜单、设置页、
+素材说明条、画布上的「为什么不能编辑？」，前两个已经在用 `registryOpen`。
+
+**决定**：开关留在 `uiStore`（本仓库所有对话框的开关都在那里），就绪度 store
+只管**聚焦哪一张图**（`focusId`）。`openCenter()` / `focusPanel()` 顺手把那个
+既有标志打开。文件名与导出名也保留 `RegistryDialog`——标题改了是文案的事，
+不是身份的事。
+
+**理由**：再加一个布尔值等于给同一件事两个出处，而两个出处的失败形状是
+「从菜单进去开着、从素材面板进去也开着，关掉一个另一个还在」。改一个组件的
+用户可见标题不值得换一次身份。
+
+---
+
+## T-39（Session 08）就绪度的刷新挂在 `refreshAssetsAndSync` 一处
+
+**权威**：`web/src/store/liveSync.ts` 的第一行
+`void useProjectReadinessStore.getState().load({ force: opts?.force })`。
+
+**背景**：报告会过期的时机与素材清单**完全一样**（它们是后端同一次
+`compute()` 的两个投影）：`panel.file_changed` / `assets.changed` /
+`registry.changed`、素材面板的刷新按钮、SSE 重连恢复、接入中心里的每一次动作。
+
+**决定**：不在各个事件分支上各调一次，挂在 `refreshAssetsAndSync()` 里。
+`force` 与素材那一侧同义——用户刚按过刷新、刚写过盘时不复用在那之前发出的
+在途请求。
+
+**理由**：Session 06 定下的不变式是「前端的消费只有 `liveSync` 一份」。报告
+另开一条消费路径的话，第三个触发点总会漏掉其中一条——而漏掉的表现是
+「素材卡的角标变了，接入中心里还是旧的」，也就是 07 之前那个病换了个位置。
+**不 `await`**：诊断端点不该挡住画布上的面板同步。
+
+---
+
+## T-40（Session 08）「常驻侧栏的偏好」与「此刻开着没开」是两件事
+
+**权威**：`web/src/store/uiStore.ts` 的模块级 `prefOpen`，以及 `persist()` 里
+那句 `const snapshot = { ...state, leftOpen: prefOpen.left, rightOpen: prefOpen.right }`。
+
+**背景（真实缺陷）**：`persist()` 原来照抄当前状态，而**响应式让位也写在同一个
+`leftOpen` 上**——互斥断点上两侧都开着时自动收左栏、窄屏开机不铺右栏。于是把
+窗口拖窄一次，之后**任何一次** persist（改个网格、拖一下宽度）都会把
+`leftOpen: false` 当成用户的偏好写进本机；回到大屏、重启之后常驻的左栏再也
+回不来，**而用户从没关过它**。
+
+**决定**：偏好单独记一份，只有**用户自己的动作**与**产品规则**写它：
+
+| 写偏好 | 不写偏好 |
+| --- | --- |
+| `toggleLeft` / `toggleRight` / `railClick` / `setLeftTab` / `setRightTab` 里**他动的那一侧** | 同一次里被互斥顺手收起的**另一侧** |
+| `autoShowProperties` 的右栏、以及素材抽屉「挑完让位」那一档（宽屏一样生效 = 产品规则） | `autoShowProperties` 里由 `exclusive()` 触发的那一档 |
+| `autoHideProperties` 真的收起时 | `setLayout()` 的挤压、`readPersisted()` 的窄屏裁剪 |
+
+**理由**：窗口宽度不是用户说过的话。判据只求值一次（`autoShowProperties` 的
+`assetsYield`）并同时用于「改状态」与「写偏好」——写两遍的话两份迟早分叉，
+而分叉的表现是「关掉的抽屉过一会儿自己回来了」。看护：`uiStore.test.ts` 的
+「窄窗口的自动让位不许覆盖桌面偏好」四条（变异把 `snapshot` 换回 `state`，红）。
+
+---
+
+## T-41（Session 08）状态的句子按 `reason_code` 查，不按 `status`
+
+**权威**：`web/src/lib/readinessText.ts` 的 `reasonText()`——它只读
+`cap.reason_code`，`statusLabel()` 才读 `status`。
+
+**背景**：素材卡角标、素材说明条、接入中心每一行、属性栏那条提示，四处说的是
+同一件事。
+
+**决定**：一份实现（`lib/readinessText.ts`），且**句子按 reason code 查**。
+
+**理由**：同一个状态下不同 code 要说的话完全不同。`auto_linkable` 有四个
+code：`static_unique_candidate` 是「马上就好」，`project_read_only` /
+`registry_invalid` / `registry_write_failed` 是「不做点什么就永远不会好」。
+按状态查的话，只读项目里的用户会一直等一个永远不来的结果。看护：
+`panelCapabilityNote.test.tsx`（变异把 `reason_code` 换成写死的一个 code，红）。
+
+**术语边界**：这四处的句子里不出现 registry / stem / entry / AST / probe——
+那正是 reason code 存在的理由（后端给枚举，前端给人话）。精确名词只出现在
+接入中心每一行的「技术详情」里，那一段明确是给排障用的。
+
+---
+
+## T-42（Session 08）默认值只有一个主人：不知道入口就**不传**
+
+**权威**：`web/src/components/RegistryDialog.tsx` 的 `entryOf()` 返回
+`string | undefined`；`web/src/lib/api.ts` 的 `writeRegistryEntry` 里
+`entry?: string`；后端 `app.py::api_registry_write` 的
+`str(body.get("entry") or "main")`。
+
+**背景**：手工关联要往记录里写一条 `script → stems`，还得带上入口函数名。
+前端能从三个地方知道它：已登记的那份 → 这一轮扫出来的候选 → 脚本清单解析出
+的 `entry_candidates[0]`。三个都问不出来时怎么办？
+
+**决定**：**不传**。第一版写的是 `?? 'main'`——那是把后端已经有的默认值在前端
+再抄一份。抄的那一刻两处相等，但它们此后各改各的，而分叉的表现是
+「登记成功了，下次渲染却找不到入口」。
+
+**看护**：四条变异各屏蔽一个出处（含"编一个 `'main'`"），全部被打红。
+fixture 里三个出处的入口值**刻意互不相同、且都不是 `main`**——写成一样的话，
+屏蔽掉第一个出处，第二个照样返回同一个答案，那条判据就永远量不到自己
+（这是 T-36 的形状长在了 fixture 里，本轮真的踩到过）。

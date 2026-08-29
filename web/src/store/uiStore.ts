@@ -102,6 +102,21 @@ const DEFAULTS: Persisted = {
   showGrid: true,
 }
 
+/**
+ * 用户对「左右两侧要不要常驻」的**偏好**，与此刻实际开着没开分开记。
+ *
+ * 两者会分开正是因为界面必须响应窗口：互斥断点上打开一侧要收起另一侧、
+ * 窄屏开机不铺覆盖层。那些都是**这一刻的排布**，不是用户说过的话。
+ *
+ * 不分开的后果是真的：把窗口拖窄一次（左抽屉自动让位），此后**任何一次**
+ * persist（改个网格、拖个宽度）都会把 `leftOpen: false` 当成偏好写进本机，
+ * 于是回到大屏、重启之后，常驻的左栏再也回不来了——而用户从没关过它。
+ *
+ * 写进偏好的只有用户自己的动作与产品规则（素材抽屉挑完让位给属性栏）；
+ * 响应式让位一律不写。
+ */
+let prefOpen = { left: DEFAULTS.leftOpen, right: DEFAULTS.rightOpen }
+
 function readPersisted(): Persisted {
   let saved: Partial<Persisted> | null = null
   try {
@@ -136,6 +151,9 @@ function readPersisted(): Persisted {
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
     leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
+  // 偏好在**响应式裁剪之前**定格：下面那一刀是「这台机器此刻的窗口太窄」，
+  // 不是用户的意思。
+  prefOpen = { left: state.leftOpen, right: state.rightOpen }
   // 窄屏下右栏是盖在画布上的覆盖层，开机就铺满等于把画布藏了；常驻标记留着，
   // 拉宽窗口自然生效。
   if (typeof window !== 'undefined' && layoutFor(window.innerWidth) === 'narrow') {
@@ -179,7 +197,13 @@ interface UiState extends Persisted {
   versionsOpen: boolean
   /** 论文样式弹窗 */
   stylesOpen: boolean
-  /** 脚本注册表面板（stem↔脚本 映射：扫描 / 试运行 / 手工裁决） */
+  /**
+   * 「项目接入状态」对话框（Prompt 08 的 readiness center）。
+   *
+   * 名字留着没改：它是这个对话框**唯一**的开关，项目菜单、设置页、素材说明条
+   * 与画布上的「为什么不能编辑？」都在用它。再造一个同义标志等于给同一件事两个
+   * 出处；聚焦哪一张图由 `projectReadinessStore.focusId` 管，那是另一件事。
+   */
   registryOpen: boolean
   /** 快捷键帮助 */
   shortcutHelpOpen: boolean
@@ -232,6 +256,9 @@ interface UiState extends Persisted {
 }
 
 function persist(state: UiState) {
+  // 两侧开合写**偏好**那一份，其余照抄当前状态（宽度、吸附、网格……那些没有
+  // 响应式覆盖，当前值就是用户设的值）
+  const snapshot = { ...state, leftOpen: prefOpen.left, rightOpen: prefOpen.right }
   const keys: (keyof Persisted)[] = [
     'prefsVersion',
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
@@ -242,7 +269,7 @@ function persist(state: UiState) {
   try {
     localStorage.setItem(
       LS_KEY,
-      JSON.stringify(Object.fromEntries(keys.map((k) => [k, state[k]]))),
+      JSON.stringify(Object.fromEntries(keys.map((k) => [k, snapshot[k]]))),
     )
   } catch {
     /* 忽略存储失败 */
@@ -275,11 +302,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   confirm: null,
   layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
 
+  // 下面五个都是**用户自己按出来的**：他动的那一侧写进偏好，被互斥顺手收起的
+  // 另一侧不写（那是窗口宽度的结果，不是他说的话）。
   toggleLeft: () => {
     set((s) => {
       const leftOpen = !s.leftOpen
       return leftOpen && exclusive(s) ? { leftOpen, rightOpen: false } : { leftOpen }
     })
+    prefOpen.left = get().leftOpen
     persist(get())
   },
   toggleRight: () => {
@@ -287,6 +317,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       const rightOpen = !s.rightOpen
       return rightOpen && exclusive(s) ? { rightOpen, leftOpen: false } : { rightOpen }
     })
+    prefOpen.right = get().rightOpen
     persist(get())
   },
   railClick: (tab) => {
@@ -296,6 +327,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { leftTab: tab, leftOpen: true, rightOpen: false }
         : { leftTab: tab, leftOpen: true }
     })
+    prefOpen.left = get().leftOpen
     persist(get())
   },
   setLeftTab: (leftTab) => {
@@ -304,6 +336,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { leftTab, leftOpen: true, rightOpen: false }
         : { leftTab, leftOpen: true },
     )
+    prefOpen.left = get().leftOpen
     persist(get())
   },
   setRightTab: (rightTab) => {
@@ -312,33 +345,37 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { rightTab, rightOpen: true, leftOpen: false }
         : { rightTab, rightOpen: true },
     )
+    prefOpen.right = get().rightOpen
     persist(get())
   },
   autoShowProperties: () => {
-    set((s) => {
-      // 选中对象时一律回到属性页：属性属于「当前选中的对象」，助手属于独立
-      // 工作流——用户点了一个对象却对着助手页，是上下文错位（重构前的
-      // 「停在助手时不抢」正是这么表现的）。助手会话状态在 aiStore 里，
-      // 切走不丢，运行中在助手入口上有状态点。
-      const patch: Partial<UiState> = { rightOpen: true, rightTab: 'properties' }
-      // 素材抽屉是「进去挑一次」的模式；未钉住就让位给属性
-      if (s.leftOpen && s.leftTab === 'assets' && !(s.leftPinned && s.layout === 'wide')) {
-        patch.leftOpen = false
-      } else if (exclusive(s)) {
-        patch.leftOpen = false
-      }
-      return patch
-    })
+    const s = get()
+    // 选中对象时一律回到属性页：属性属于「当前选中的对象」，助手属于独立
+    // 工作流——用户点了一个对象却对着助手页，是上下文错位（重构前的
+    // 「停在助手时不抢」正是这么表现的）。助手会话状态在 aiStore 里，
+    // 切走不丢，运行中在助手入口上有状态点。
+    const patch: Partial<UiState> = { rightOpen: true, rightTab: 'properties' }
+    // 素材抽屉是「进去挑一次」的模式；未钉住就让位给属性。判据只求值一次，
+    // 下面写偏好时直接复用——写两遍的话两份迟早分叉，而分叉的表现是
+    // 「关掉的抽屉过一会儿自己回来了」。
+    const assetsYield =
+      s.leftOpen && s.leftTab === 'assets' && !(s.leftPinned && s.layout === 'wide')
+    if (assetsYield || exclusive(s)) patch.leftOpen = false
+    set(patch)
+    prefOpen.right = true
+    // 素材抽屉让位是**产品规则**（宽屏一样生效），属于用户这次流程的一部分；
+    // 互斥收起是**响应式**，不进偏好。
+    if (assetsYield) prefOpen.left = false
     persist(get())
   },
   autoHideProperties: () => {
-    set((s) => {
-      if (!s.rightOpen || s.rightTab !== 'properties') return s
-      // 常驻在 wide 与 medium 都生效（medium 靠互斥保证画布空间）；
-      // narrow 是覆盖层，物理上无法常驻
-      if (s.rightPinned && s.layout !== 'narrow') return s
-      return { rightOpen: false }
-    })
+    const s = get()
+    if (!s.rightOpen || s.rightTab !== 'properties') return
+    // 常驻在 wide 与 medium 都生效（medium 靠互斥保证画布空间）；
+    // narrow 是覆盖层，物理上无法常驻
+    if (s.rightPinned && s.layout !== 'narrow') return
+    set({ rightOpen: false })
+    prefOpen.right = false
     persist(get())
   },
   setLeftWidth: (px) => {
@@ -407,6 +444,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
     set({ settingsOpen, ...(settingsSection ? { settingsSection } : {}) }),
   setConfirm: (confirm) => set({ confirm }),
+  // **不 persist、不动 prefOpen**：这里改的是「窗口现在多宽」，
+  // 而窗口宽度不是用户对常驻侧栏的偏好。
   setLayout: (layout) =>
     set((s) => {
       if (s.layout === layout) return s

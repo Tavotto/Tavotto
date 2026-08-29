@@ -18,6 +18,7 @@ import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -82,13 +83,18 @@ async function resetForNewProject() {
   // seq 刻意**不重置**（见 diagnostics/store.ts）：编号缺口是「这里被清过」
   // 的唯一线索。
   clearDiagnosticTrace()
+  // 接入就绪度整份丢掉：报告、错误、聚焦目标、横幅关闭记录都属于旧项目。
+  // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
+  // 「当前项目关过哪一版」这个投影。
+  useProjectReadinessStore.getState().clear()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },
     newId('d'),
   )
-  // 4. 重载新项目素材
+  // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()
+  void useProjectReadinessStore.getState().load()
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
