@@ -299,6 +299,22 @@ describe('被清掉 payload 的那一版：诚实的显示，不丢语义', () =
     expect(m?.stem).toBe(`Fig1.pdf#${JSON.stringify(v(1))}`)
   })
 
+  it('脚本变了的那一版不许自称 evicted——它连几何权威都不是', async () => {
+    // `evicted` 这一档在类型上**带着 manifest**（写路径拿得到就一定能写）。
+    // 判据要是只看 `svgEvicted` 不看「是不是 exact」，脚本变更后作废的墨迹框
+    // 就会从这里流进几何写操作——issue #131 是同一个形状。
+    declarePayload(12 * MiB)
+    await store().render('Fig1.pdf', v(1))
+    await store().render('Fig1.pdf', v(2))
+    store().markStale(['Fig1.pdf'])
+
+    const back = panel('p1', 'Fig1.pdf', v(1))
+    const s = useRenderStore.getState()
+    expect(s.byKey[renderKey('Fig1.pdf', v(1))].svgEvicted).toBe(true)
+    expect(exactPanelManifest(s, back)).toBeNull()
+    expect(panelDisplayView(s, back).kind).not.toBe('evicted')
+  })
+
   it('重画之后 svgEvicted 归位，矢量图回得来（这道闸不是单向门）', async () => {
     declarePayload(12 * MiB)
     await store().render('Fig1.pdf', v(1))
