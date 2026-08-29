@@ -42,11 +42,20 @@
 | --- | --- | --- | --- |
 | registry 扫描 / 写入 / stem 映射 | 已有 | `tests/test_registry.py`、`test_discover.py` | — |
 | 脚本探测（显式动作） | 已有 | `tests/test_script_probe.py` | — |
-| 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py` | — |
+| 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_watch.py::TestLifecycle` | — |
 | 素材竞态 / 派生 metadata 不污染 undo | 部分 | `web/src/store/assetStore` 无专门用例 | 06 |
-| 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（36 条） | — |
-| watcher 事件批次合并 | 部分（04 做了刷新侧） | 刷新一次至多两条事件；脚本 watcher 仍逐条 | 05 |
-| watcher 不监控 Tavotto 自己的 autosave/history | 未开始 | — | 05 |
+| 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（39 条） | — |
+| **项目 watcher：整棵树的快照** | **已有（05）** | `tests/test_project_watch.py`（42 条） | — |
+| ├ 新增 / 删除 / 重命名 / 原子替换 `.py` | 已有（05） | `TestChangeKinds`（四条各一） | — |
+| ├ 就地改写：同长度（量 mtime）/ 同 mtime（量 size） | 已有（05） | `TestSnapshot` 两条——**两维各有一条看着** | — |
+| ├ 注册表：新名 / 旧名 / 删除 / 非法 JSON 后修复 | 已有（05） | `TestChangeKinds` ×3 + `TestErrors::test_broken_registry_reports_and_recovers` | — |
+| ├ 素材：新增 PDF / 改 PNG / 删 JPG / 重命名 | 已有（05） | `TestChangeKinds` ×4 | — |
+| ├ `paper_style*` 变更作废整项目（且只作废本项目） | 已有（05） | `TestChangeKinds` + `TestLifecycle::test_style_change_only_invalidates_its_own_project` | — |
+| watcher 事件批次合并 | **已有（05）** | `TestBatching`：一批连续写入一次刷新、永不安静的目录有年龄上限、刷新期间的变化不丢、stop 取消 pending | — |
+| watcher 自写不循环 / 自写后外部再改仍触发 | **已有（05）** | `TestSelfWriteLoop` ×3（含"自写不吞掉同批里的别的变化"） | — |
+| watcher 不 probe、不执行用户脚本 | **已有（05）** | `TestNoSideEffects`（桩 + 磁盘 CANARY 两层证据） | — |
+| watcher 不监控 Tavotto 自己的 autosave/history | **已有（05）** | `TestSnapshot::test_script_scope_matches_discover`（`tavottofile/` 被剪）；autosave 不在项目树内 | — |
+| watcher 只发 `panel.file_changed`，不发第二套 registry/assets 事件 | **已有（05）** | `TestEndToEnd` ×2（含 `pj` 与 `reason`） | — |
 | Readiness 事实模型 / capability API | 未开始 | — | 07 |
 | 左栏常驻 / 折叠 / 素材状态 | 未开始 | — | 08 |
 
