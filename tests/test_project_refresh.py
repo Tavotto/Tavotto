@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -400,10 +401,17 @@ class TestEndpoint:
         """`changed_paths` 只给进程内的调用方（watcher / MCP）。HTTP 上认它
         等于让客户端把一段绝对路径写进我们的日志与事件。"""
         figs = _project(tmp_path)
+        (figs / "inside.py").write_text("x = 1\n", encoding="utf-8")
         _open(client, figs)
         body = client.post(
             "/api/project/refresh",
-            json={"reason": "manual", "changed_paths": ["/etc/passwd", str(tmp_path)]},
+            json={
+                "reason": "manual",
+                # **项目内**那条是关键：项目外的路径本来就会被规整器丢掉，
+                # 只拿它当判据的话，"端点认不认这个字段"根本没被量到
+                # （实测：那条变异活下来了）。
+                "changed_paths": [str(figs / "inside.py"), "/etc/passwd", str(tmp_path)],
+            },
         ).get_json()
         assert body["changed_paths"] == []
 
@@ -647,35 +655,43 @@ class TestWorkerInvalidation:
 # 并发与失败
 # ---------------------------------------------------------------------------
 class TestConcurrencyAndFailure:
-    def test_two_projects_refresh_in_parallel(self, client, tmp_path):
+    def test_two_projects_refresh_in_parallel(self, client, tmp_path, monkeypatch):
         """锁是**每项目一把**。一把全局大锁的表现是：另一个标签页刷新时，
-        我这边的刷新一直转圈。"""
+        我这边的刷新一直转圈。
+
+        判据从**里面**卡住 A：让 A 的刷新停在自己的临界区，然后要求 B 刷完。
+        换成"在测试里拿住 A 的那把锁"就假设了被测代码用的正是那把——换成
+        全局锁之后测试照样绿（实测：那条变异活下来了）。**判据不能预设它
+        要证明的那件事。**
+        """
         a, b = _project(tmp_path, "a"), _project(tmp_path, "b")
         ctx_a = _open(client, a)
         ctx_b = _open(client, b, default=False)
 
-        held, release, done = threading.Event(), threading.Event(), threading.Event()
+        inside_a, b_done, a_done = threading.Event(), threading.Event(), threading.Event()
+        real_merge = engine_discover.merge
 
-        def hold_a():
-            with engine_refresh.state_of(ctx_a).lock:
-                held.set()
-                release.wait(10)
+        def blocking_merge(path):
+            if Path(path) == Path(a):
+                inside_a.set()
+                b_done.wait(10)  # A 停在临界区里不出来
+            return real_merge(path)
 
-        def refresh_b():
-            m.refresh_project(ctx_b, reason="manual")
-            done.set()
+        monkeypatch.setattr(engine_refresh.discover, "merge", blocking_merge)
 
-        holder = threading.Thread(target=hold_a, daemon=True)
+        def refresh_a():
+            m.refresh_project(ctx_a, reason="manual")
+            a_done.set()
+
+        holder = threading.Thread(target=refresh_a, daemon=True)
         holder.start()
-        assert held.wait(5)
-        worker = threading.Thread(target=refresh_b, daemon=True)
-        worker.start()
+        assert inside_a.wait(5), "A 的刷新没能进到临界区"
         try:
-            assert done.wait(5), "B 的刷新被 A 的锁挡住了 = 全局大锁"
+            m.refresh_project(ctx_b, reason="manual")  # 全局大锁的话这里会卡死
         finally:
-            release.set()
-            holder.join(5)
-            worker.join(5)
+            b_done.set()
+            holder.join(10)
+        assert a_done.is_set()
 
     def test_the_same_project_serializes_and_the_registry_survives(self, client, tmp_path):
         """同一项目的刷新必须串行。
@@ -816,13 +832,30 @@ class TestWatcherHandoff:
 
 
 def test_registry_snapshot_is_not_a_live_view(tmp_path):
-    """快照要在 `reg.load()` 之后仍然代表**刷新前**的事实。共享同一个 list
-    的话，diff 永远是空的——而"永远是空的"看起来和"什么都没变"一模一样。"""
+    """快照要在装载之后仍然代表**刷新前**的事实。共享同一个 list 的话，
+    diff 永远是空的——而"永远是空的"看起来和"什么都没变"一模一样。
+
+    两个维度都要量：
+
+    1. `load_data()` 之后——今天它把每个容器都重建，所以浅拷贝碰巧也够；
+    2. **原地改同一个 list** 之后——这一维今天没有代码会走到，量的是
+       "哪天 Registry 多一个原地写入的方法时，快照仍然是快照"。
+
+    只量第一维的话，把 `registry_snapshot()` 换成 `reg.entries()` 照样绿
+    （实测：那条变异活下来了）——判据量到的是 `Registry` 的实现细节，
+    不是这个函数的承诺。
+    """
     reg = engine_registry.Registry()
     reg.load_data({"scripts": {"a.py": {"entry": "main", "cost": "light", "stems": ["S1"]}}})
+
     before = engine_refresh.registry_snapshot(reg)
     reg.load_data({"scripts": {"a.py": {"entry": "main", "cost": "light", "stems": ["S1", "S2"]}}})
     assert before["a.py"]["stems"] == ["S1"]
     assert engine_refresh.diff_registry(before, engine_refresh.registry_snapshot(reg))[
         "added_stems"
     ] == ["S2"]
+
+    # 第二维：直接改注册表自己那个 list（模拟将来的原地写入）
+    snapshot = engine_refresh.registry_snapshot(reg)
+    reg.entries()["a.py"]["stems"].append("S3")
+    assert snapshot["a.py"]["stems"] == ["S1", "S2"], "快照跟着注册表一起变了 = 它是活视图"
