@@ -589,6 +589,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 刚往堆里加了一份 payload：立刻把驻留字节收回预算之内。
           // **在 set 之后单独走一趟**，不塞进上面那个 updater——驱逐要记诊断
           // 事件，而 state updater 里不该有副作用。没超预算时它一个 set 都不发。
+          //
+          // **这一趟收不干净**，而且是按设计收不干净：`pinned()` 认
+          // `inflight.busy`，而此刻本键的 busy 还是 true（它要等外层 finally
+          // 才松），于是刚存进去的这一份**永远不在自己这一趟的候选里**。
+          // 最新那一版是 latest，本来就该 pin；但**晚到的旧变体**不是——它
+          // 既不在画布上也不是 latest，却同样被自己的 busy 挡住。收尾那一趟
+          // （外层 finally）才是让它收敛的那一次。
           get().evictSvgBudget()
           recordDiagnosticEvent({
             type: 'render.success',
@@ -652,6 +659,15 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       }
     } finally {
       slot.busy = false
+      // **松手之后再收一趟**：上面每一次成功都在自己的 busy pin 底下跑的
+      // 驱逐，漏掉的恰好是自己这一份。晚到的旧变体（12 MiB）+ 已上屏的最新
+      // 版（12 MiB）= 24 MiB 卡在 16 MiB 的每文件预算之上，而在下一次渲染
+      // 之前没有任何东西会再触发一趟——「等下次」不是收敛。
+      //
+      // 排队链（`slot.queued`）里每一轮也各漏一份，同样由这一趟兜底：busy
+      // 在整条链上一直是 true，那是对的（该键确实还在渲染），所以收敛点只能
+      // 放在链走完之后。没超预算时它一个 set 都不发，代价是一次纯读。
+      get().evictSvgBudget()
     }
   },
 

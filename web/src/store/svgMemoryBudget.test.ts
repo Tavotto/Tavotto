@@ -468,6 +468,57 @@ describe('真实巨型 payload：不是声明出来的字节数', () => {
   })
 })
 
+describe('乱序返回：晚到的旧变体不许赖在预算之上', () => {
+  it('旧响应在自己的 busy pin 底下入库，收尾那一趟才是收敛点', async () => {
+    // **这一条守的是时序，不是算术。** 每一次成功都会顺手驱逐一趟，但那一趟
+    // 跑在自己的 `inflight.busy` 底下——`pinned()` 认 busy，于是刚存进去的
+    // 那一份**不在自己这一趟的候选里**。最新那版是 latest，本来就该 pin；
+    // 晚到的旧变体不是，它既不上屏也不是 latest，却同样被自己的 busy 挡住。
+    let releaseSecond!: () => void
+    const secondGate = new Promise<void>((r) => {
+      releaseSecond = r
+    })
+    let rev = 0
+    engineRender.mockImplementation(async (id: string, patches: unknown[]) => {
+      // 第 2 版挂住，让第 3 版先回来——乱序的那一刻正是本用例的题面
+      if (JSON.stringify(patches) === JSON.stringify(v(2))) await secondGate
+      return {
+        rev: ++rev,
+        manifest: manifest(`${id}#${JSON.stringify(patches)}`),
+        warnings: [],
+        timings: { canvas_draw_ms: 42 },
+        svg: `<svg id="${JSON.stringify(patches)}"/>`,
+        preview: {
+          mode: 'vector',
+          reason: 'normal',
+          svg_bytes: 12 * MiB,
+          rasterized_artist_count: 0,
+        },
+      }
+    })
+
+    await store().render('Fig1.pdf', v(1)) // seq 1
+    const late = store().render('Fig1.pdf', v(2)) // seq 2 —— 挂在网络上
+    await store().render('Fig1.pdf', v(3)) // seq 3 —— 先回来，成为 latest
+    releaseSecond()
+    await late
+
+    // 少了收尾那一趟：key1 被丢掉之后候选就空了（key3 是 latest、key2 是
+    // 自己），停在 24 MiB，而且**在下一次渲染之前没有任何东西会再触发一趟**。
+    expect(resident().byFile['Fig1.pdf']).toBeLessThanOrEqual(SVG_RECENT_BUDGET_PER_FILE)
+
+    // 上屏的那一版没被误伤：收敛不能靠丢掉正在看的图换来
+    const shown = useRenderStore.getState().byKey[renderKey('Fig1.pdf', v(3))]
+    expect(shown.svg, 'latest 的 payload').not.toBeNull()
+    expect(shown.svgEvicted).toBe(false)
+
+    // 晚到的那一版**条目还在**（撤销落点），只是 payload 被收走了
+    const stale = useRenderStore.getState().byKey[renderKey('Fig1.pdf', v(2))]
+    expect(stale.manifest, '晚到那版的语义状态').not.toBeNull()
+    expect(stale.status).toBe('ready')
+  })
+})
+
 describe('renderKeyOf 与预算无关（回归护栏）', () => {
   it('驱逐不改变任何键', async () => {
     declarePayload(12 * MiB)
