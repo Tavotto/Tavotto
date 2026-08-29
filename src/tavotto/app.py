@@ -71,6 +71,7 @@ from .engine import (
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectenv as engine_projectenv,
+    readiness as engine_readiness,
     registry as engine_registry,
     runcodes as engine_runcodes,
     runtime as engine_runtime,
@@ -501,6 +502,10 @@ def scan_panels() -> list[dict]:
     # 隐藏文件、同名 PDF 盖过位图都在那儿）——统一刷新的 inventory 用的是同一
     # 个函数。这里只负责 probe 出尺寸并挂上注册表信息。
     assets = engine_refresh.iter_assets(root)
+    # 「这张图能不能进图内编辑」的事实只有一份（`engine/readiness.py`）：
+    # 这里挂的 capability 与 `/api/project/readiness` 是同一次计算的投影，
+    # `/api/panels` 不自己再判一遍。
+    caps = engine_readiness.capability_map(ctx)
     LOG.info("素材扫描: %s → %d 个素材", root, len(assets))
 
     for p, kind in assets:
@@ -538,6 +543,14 @@ def scan_panels() -> list[dict]:
                 baseline = _baseline_patches(p.stem, baked)
                 if baseline:
                     entry["baked_overrides"] = baseline
+            # 增强信息，**不动上面那三个老字段**：旧前端照旧只看 `script`
+            # （它的语义仍然是"注册表声明了映射"，一个字没改）；新前端看
+            # capability.status 才分得出「脚本还在」与「脚本已经不在了」。
+            # 就绪度扫描与本次遍历之间新出现的素材没有 capability——那一项
+            # 就不挂，**不编一个**（下一次请求它自然就有了）。
+            cap = caps.get(rel)
+            if cap is not None:
+                entry["capability"] = cap
         except Exception:
             # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
             # app.log 里要能看到是哪个文件、为什么
@@ -1758,6 +1771,26 @@ def api_project_refresh():
     body = request.get_json(force=True, silent=True) or {}
     ctx = current_ctx()
     return jsonify(refresh_project(ctx, reason=str(body.get("reason") or "")))
+
+
+@app.get("/api/project/readiness")
+def api_project_readiness():
+    """当前项目每个素材的**接入状态**：能不能进图内编辑、卡在哪一步。
+
+    只组合已有事实（注册表 + 静态 AST 报告 + 文件存在性 + 目录可写性），
+    **不执行任何用户脚本、不 probe、不写盘、不发事件**（`engine/readiness.py`
+    的边界）。项目由现有的 pj 认证决定（`current_ctx()`），未打开项目沿用
+    `no_project`。
+
+    注册表被手改坏、目录读不动这类情况**不是 500**：素材照常全部列出，
+    状态降到 `layout_only` + `source_scan_unavailable`，项目级 `issues` 说
+    发生了什么。丢掉所有素材才是真的帮倒忙——用户至少还能排版和导出。
+    """
+    ctx = current_ctx()
+    resp = jsonify({**engine_readiness.compute(ctx), "generated_at": time.time()})
+    # 就绪度按 fingerprint 判"变了没有"，别再让 HTTP 缓存插一脚
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _drive_roots() -> list[dict]:

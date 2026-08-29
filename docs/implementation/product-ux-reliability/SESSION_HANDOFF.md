@@ -5,259 +5,247 @@
 
 ---
 
-## 最近一次：Session 06（2026-08-29）
+## 最近一次：Session 07（2026-08-29）
 
 ### 目标
 
-把 04/05 建起来的后端刷新与 watcher 接到**用户看得见的地方**：
+把「这张图能不能进图内编辑」变成**一句可以直接显示的事实**，主语固定为
+`/api/panels` 的那一个素材。
 
-```text
-外部修改 → SSE → 前端素材元数据刷新 → 当前画布 PanelObject 原地更新
-        → 受影响 Figure 局部重建
-```
+本阶段**只做后端事实模型与 API**——不做界面（08）、不增强解析器、不跑用户
+脚本、不 probe。前端只加了类型与一个 fetch 函数，一个组件都没动。
 
-本阶段**只做前端事件消费与派生元数据同步**——不做 Readiness UI（07/08）、
-不做多选栏、不做 onboarding、不增强解析器。后端一行没改。
+### 为什么需要它（真实的起始状态，不是 prompt 假设的那个）
+
+「这张图能不能编辑」在 07 之前由三处各答一次，而**三处的主语都不一样**：
+
+| 出处 | 主语 | 它能回答的 |
+| --- | --- | --- |
+| `/api/panels` 给不给 `script` | **素材** | 注册表映射了没有 |
+| `/api/registry` 的 `candidates` | **stem** | 静态扫描认领了没有 |
+| `probe.script_inventory()` 的 `reason` | **脚本** | 这个 .py 处于什么状态 |
+
+同一张图于是在素材面板里「不可编辑」、在注册表对话框里「有候选脚本」、在
+脚本清单里「可试运行」——三句话都对，合起来却没有一句回答了用户的问题。
+决策写在 `DECISIONS.md` 的 T-31。
 
 ### 实际完成
 
-**1. 事件字段解码（`web/src/lib/api.ts`）。** `ServerEvent` 的四条形状
-Session 04/05 已经补齐，本轮补的是三个纯函数：
+**1. 新模块 `src/tavotto/engine/readiness.py`（纯标准库，Flask 父进程 import）。**
+六个互斥状态 + 稳定 reason code，判定表如下（分支从上往下，每张图只落一个）：
 
-```ts
-affectedScriptsOf(event)   // registry.changed 的批量 scripts ∪ 单脚本兼容字段 script
-affectedStemsOf(event)     // registry.changed / panel.file_changed 的 stems
-affectedAssetIdsOf(event)  // assets.changed 的 ids ∪ added ∪ removed ∪ changed
+| # | 条件 | status | reason_code |
+| ---: | --- | --- | --- |
+| 1 | 注册表映射了这个 stem，脚本文件**在** | `editable` | `registered_source` |
+| 2 | 注册表映射了，脚本文件**不在** | `source_missing` | `registered_script_missing` |
+| 3 | 这一轮静态扫描**没跑成** | `layout_only` | `source_scan_unavailable` |
+| 4 | **多个**脚本认领同一个 stem | `conflict` | `multiple_source_candidates` |
+| 5 | **恰好一个**脚本认领 | `auto_linkable` | 见下 |
+| 6 | 项目里有产图但输出名要跑才知道的脚本 | `needs_probe` | `runtime_output_unknown` |
+| 7 | 其余 | `layout_only` | `no_source_candidate` |
+
+第 5 行的 reason 说的是**卡在哪一步**，优先级从「刷多少次都没用」往「下一次
+刷新就好了」排：
+
+```text
+registry_invalid  >  project_read_only  >  registry_write_failed  >  static_unique_candidate
 ```
 
-理由是**可选字段与兼容字段**：不收口的话每个 handler 都要自己写一遍「先看
-批量、没有再看单条」，写三遍就会有一遍漏掉 `script`——而那正是 probe 与手工
-登记这两条最常见路径的形状。三个函数都容忍畸形载荷（payload 是 `JSON.parse`
-出来的，类型声明不是运行时保证），非数组、混了非字符串一律当"这一维没有
-信息"，不抛。**没有用 `any`。**
+**注册表优先于静态报告**（第 1 行在第 4 行之上，T-34）：注册表文件就是人工
+裁决的落处（`src/tavotto/AGENTS.md`：「归属有歧义的 stem，裁决结果记在各图库
+自己的注册表文件里，**勿改**」）。静态冲突照旧出现在项目级 `conflicts` 里，
+带上 `resolved_by`。
 
-**2. `assetStore` 的并发治理。** `load()` 今天有七个触发点，而一次统一刷新
-连发 `registry.changed` + `assets.changed` 两条事件——「同一批里被调好几次」
-是常态。
+**2. `GET /api/project/readiness`。** 下面这份是**真的跑出来的**（一个含
+`sub/fig_a.py`→`FigA`、两个脚本抢 `Dup`、一个动态输出名脚本的项目；只有
+`generated_at` 换成了固定值，其余逐字照抄，fingerprint 也是真的）：
 
-```ts
-load(opts?: { force?: boolean }): Promise<PanelsResponse | null>
-refresh(): Promise<PanelsResponse | null>     // 事件驱动的入口，与 load() 同一条路
-```
-
-* **合并**：同项目的在途请求被后来者复用，一批事件只发一个 `/api/panels`；
-* **旧响应不覆盖新响应**：判据是**请求序号**，不是"谁最后返回"（后者正是
-  缺陷本身）。序号比 AbortController 稳——被 abort 的请求在 jsdom 与真浏览器
-  里抛的东西不一样，而要挡的行为（旧值落地）两边一模一样；
-* **项目隔离**：发请求那一刻这个标签页认领的 pj，与落地那一刻的比。
-  `null`（跟随后端默认项目）与某个具体 id 是**两个取值，不合并**；
-* **`force` 永远另起一次**：手动刷新被一次早就发出的在途请求吞掉的话，
-  用户按了没反应，而"没反应"正是他按它的原因；
-* **失败不清空**：`panels` / `byId` 一个都不动，只多一条非阻塞错误；
-  首次加载失败时 `loaded` 仍是 false，界面照旧显示 EmptyState；
-* **返回本次生效的响应**（被丢弃或失败时 `null`）——调用方据此决定要不要
-  拿它去同步文档。
-
-模块级账本有 `resetAssetLoadBookkeeping()` 供用例清零（它们活得比一次
-`setState` 长）。
-
-**3. PanelObject 派生元数据同步（新模块 `web/src/store/panelSourceSync.ts`）。**
-
-```ts
-syncPanelSourceMetadata(
-  panelsById: Record<string, PanelInfo>,
-  options?: { affectedIds?: readonly string[] },   // 素材 id；不给 = 全量比对
-): PanelSyncResult
-```
-
-```ts
-interface PanelSyncResult {
-  upgraded: string[]        // 对象 id：不可编辑 → 可编辑
-  downgraded: string[]      // 对象 id：可编辑 → 不可编辑
-  changed: string[]         // 对象 id：任意派生字段变了（前两者是它的子集）
-  missing: string[]         // 对象 id：文档引用了、本次清单里没有
-  staleFileIds: string[]    // 素材 id：要按新脚本重建（渲染层按文件粒度工作）
-  droppedFileIds: string[]  // 素材 id：刚失去脚本，失效的 manifest / 缓存按它清
+```json
+{
+  "project_id": "3f9c1a2b7d04",
+  "fingerprint": "70b70db1f41d093425be7c0349362c76",
+  "generated_at": 1756468800.42,
+  "summary": {
+    "total": 3, "editable": 1, "auto_linkable": 0, "needs_probe": 1,
+    "conflict": 1, "source_missing": 0, "layout_only": 0
+  },
+  "panels": [
+    { "id": "Dup.pdf", "status": "conflict",
+      "reason_code": "multiple_source_candidates", "script": null,
+      "candidates": ["old_version.py", "z_newer.py"],
+      "can_probe": true, "can_manual_link": true,
+      "details": { "candidate_scope": "panel" } },
+    { "id": "FigA.pdf", "status": "editable",
+      "reason_code": "registered_source", "script": "sub/fig_a.py",
+      "candidates": [], "can_probe": false, "can_manual_link": true,
+      "details": { "entry": "main", "cost": "light" } },
+    { "id": "Mystery.pdf", "status": "needs_probe",
+      "reason_code": "runtime_output_unknown", "script": null,
+      "candidates": ["dyn.py"], "can_probe": true, "can_manual_link": true,
+      "details": { "candidate_scope": "project" } }
+  ],
+  "conflicts": [
+    { "stem": "Dup", "candidates": ["old_version.py", "z_newer.py"],
+      "resolved_by": null }
+  ],
+  "project": { "writable": true, "registry_valid": true,
+               "scan_ok": true, "can_rescan": true },
+  "issues": []
 }
 ```
 
-素材粒度的处置有**三档**：有脚本 → 重建；刚失去 → 清缓存；**从来没有脚本
-→ 两样都不做**。第三档单列的理由是一张普通位图的 `pxW` 也会变，把它标成
-`tracked` 等于告诉显示层"这张图要走引擎产物"，而它根本没有脚本可跑。
+注意 `Dup.pdf` 那一条：`z_newer.py` 的名字更像"新版本"，`old_version.py` 的
+名字更像"旧的"——**机器一个都不选**（`tests/…::test_two_scripts_claiming_one_stem_is_a_conflict_and_is_never_auto_resolved`
+连 mtime 更新的那一个也不许赢）。
 
-```ts
+三个字段的取值是**三档不是两档**，08 不要把它们压扁：
+
+* `conflicts`：`null` = 这一轮没跑静态扫描；`[]` = 扫过了、没有冲突；
+* `project.registry_valid`：`null` = 项目里根本没有注册表文件（还没起草过）；
+  `false` = 有、但读不回来；
+* `details.candidate_scope`：`"panel"` = 这张图的候选；`"project"` = 项目里
+  这几个脚本的产物静态解不出来，跑一个才知道是不是它。
+
+**3. `/api/panels` 每项多一个 `capability`**（六个字段，`CAPABILITY_FIELDS`）。
+它是**同一次 `compute()` 的投影**，`/api/panels` 不自己再判一遍——两处各算
+一遍的话，「素材面板说可编辑、就绪度面板说要试运行」只是时间问题。
+
+**老字段一个没动。** `script` 的语义仍然是「注册表声明了映射」，`editable`
+时照旧有值；`auto_linkable` / `conflict` 有候选，但候选**不塞进 `script`**
+（塞了的话旧前端会当场给它画上 ⚡）。`source_missing` 仍带 `script` ——那是
+注册表里真实记着的那一条，不是伪造；要分辨「脚本还在」与「指着的文件没了」
+就看 `capability.status`。
+
+**4. fingerprint = 报告自身的内容哈希**（T-32）：规范化 JSON（**键排序**）
+的 SHA-256 前 32 位，输入是 body 去掉 `generated_at` 与 `fingerprint`。
+于是要求里那四条自动成立，不用逐条去防——时间戳不在 body 里所以进不来；
+素材 / 脚本的 mtime 没有进报告所以变了它不动；绝对路径本来就一个都不在；
+键序由 `sort_keys` 排掉。
+
+**5. 项目级缓存**（挂在 `RefreshState.readiness`，随项目消亡）：两层，键都是
+**输入的内容签名**——贵的那层是 `discover.discover()`（逐脚本 `ast.parse`），
+外层是整份报告。**扫描失败的那一份不进缓存**（缓存一次失败等于让一次瞬时
+错误把就绪度永久钉死）。**进出都深拷贝**（缓存里那份是唯一权威）。
+
+**6. 三处很小的既有代码改动**（都在同一条链路上，不是顺手重构）：
+
+* `discover.claims_of()` —— 从 `discover()` 里抽出的纯函数（「stem 被谁认领」
+  的唯一判据）。`discover()` 的输出**一字未变**，它现在是这个函数的第一个
+  消费者，就绪度是第二个；
+* `RefreshState.registry_write_failed` —— 静态合并**写**注册表失败时置位、
+  成功时清零。对外的 `scan_failed` code **没改**（老 `/api/registry/scan` 的
+  契约），区分只留在状态里给就绪度用；
+* `RefreshState.readiness` —— 缓存槽位。刷新在**确认事实真的动了之后**把它
+  清成 `None`（`project_refresh` 不 import `readiness`，否则依赖成环）。
+  这是签名之外的**第二道**判据：签名盖不住「同尺寸 + 同一个 mtime_ns 刻度里
+  的就地改写」，而那正是刷新自己写注册表时的形状。
+
+### 关键 API（Prompt 08 直接用）
+
+```python
+# src/tavotto/engine/readiness.py
+compute(ctx) -> dict            # 报告本体（**不含** generated_at）；ctx 只要 path/id/registry
+capability_map(ctx) -> dict     # 素材 id → capability 子集（/api/panels 用的就是它）
+invalidate(ctx) -> None         # 丢掉缓存（用例与非刷新路径用）
+fingerprint(body) -> str        # 报告 → 内容哈希
+STATUSES, REASONS_BY_STATUS, CAPABILITY_FIELDS   # 枚举与判定表的机器可读版本
 ```
 
-**同步**：`script`、`cost`、`fileKind`、`pxW`。
-**绝不碰**：`x/y/w/h`、`nativeW/nativeH`、`crop`、`rotation`、`overrides`、
-`groupId`、布局组、`locked`、`hidden`、`name`、`opacity`、`flipH/flipV`、
-`lockedGids`、选择、文档名。图幅为什么也在这一列见 DECISIONS 的 T-27
-（它是几何，且权威在变体自己的 manifest 而不是磁盘文件）。
-**runtime 面板整个跳过**（`runtime:` 前缀的 id 永远不在 `/api/panels` 里，
-不跳过的话每轮都会被判成"素材不见了"）。
-
-非激活画布同样同步；**激活画布只算一遍**（`canvases[active]` 只是快照，
-权威在 `doc`）。
-
-**4. 保存链路的第三档（`documentStore`）。** 新增状态字段 `derivedSeq` 与
-导出入口 `applyDerivedUpdate({ doc?, canvases? })`。自动保存的订阅现在按
-两个代次认三种性质：
-
-| 性质 | `dirty` | `saveState` | 撤销历史 | 落盘 |
-| --- | --- | --- | --- | --- |
-| 载入（`loadSeq` +1） | 由载入方声明 | 由载入方声明 | 清空 | 不排队 |
-| 用户编辑 | 置位 | 推成 `dirty` | 进 | 排队 |
-| 派生同步（`derivedSeq` +1） | 置位 | **不动** | **不进** | **排队** |
-
-「不标脏」与「必须可靠落盘」不矛盾，理由全文在 DECISIONS 的 T-26：`script`
-是**存进文档的字段**（不落盘的话下次打开又回到不可编辑），但一次外部文件
-改动不是用户的编辑（推 `saveState` 会让关闭保护弹一句用户没做过的事）。
-写盘本身照常走完整状态机——`saving` / `save_error` / `conflict` 一个不吞。
-
-**5. 编排（新模块 `web/src/store/liveSync.ts`）。** SSE 事件、手动刷新按钮、
-SSE 重连恢复**三个入口共用一条路径**：
-
 ```ts
-refreshAssetsAndSync(opts?: { force?: boolean; affectedIds?: readonly string[] })
-refreshProjectNow()         // 手动刷新：POST /api/project/refresh，再走上面那条
-syncLoadedDocument()        // 项目打开：拿手里的清单对一次账，**不发请求**
-recoverAfterReconnect()     // 3 秒节流，**不调**后端静态刷新
-```
-
-**项目打开也要对账**（`App.tsx`：素材清单与 `restoreSession()` 都到齐之后调
-`syncLoadedDocument()`）。理由是它是七个触发点里唯一「文档比清单晚到」的那个
-——Tavotto 关着的时候用户完全可能在外面改脚本，而项目打开那一轮 watcher
-**只建基线、一条事件都不发**。不对这一次账的话那些改动要等到下一次外部修改
-或手动刷新才生效，而用户看到的现象是"我明明加了脚本，它就是不认"。
-
-降级的处置（§七）：退出该面板的图内编辑 → 清 `selectedGids` → **画布选择
-保持不变** → `overrides` 一条不删 → `renderStore.reset(fileId)` 清掉失效的
-manifest 与渲染缓存 → 提示「这张图的源脚本关系已失效，已返回画布。图片和
-排版没有被删除。」升级则**不**自动进编辑态，只给一条轻提示。
-
-**6. 手动刷新入口（`AssetBrowser`）。** 按钮从 `assetStore.load()` 改成
-`POST /api/project/refresh` + 合并刷新；忙碌态覆盖**整条**（后端那一步才是
-最慢的，只看 `assetStore.loading` 的话按钮在那一步是不转的）；失败弹常驻
-错误。文案从「重新扫描 / 重新扫描素材目录」改成「刷新项目 / 检查项目里的
-新文件与脚本改动 / 正在检查新文件…」——普通用户看不到 registry、stem 这类词。
-与 RegistryDialog 的手工扫描是两件事（那条是冲突裁决用的高级入口）。
-
-### 关键 API（Prompt 07 及之后直接用）
-
-```ts
-// web/src/store/assetStore.ts
-load(opts?: { force?: boolean }): Promise<PanelsResponse | null>
-refresh(): Promise<PanelsResponse | null>
-resetAssetLoadBookkeeping()            // 只给用例：清模块级并发账本
-
-// web/src/store/panelSourceSync.ts
-syncPanelSourceMetadata(panelsById, options?): PanelSyncResult
-
-// web/src/store/documentStore.ts
-applyDerivedUpdate({ doc?, canvases? })   // 外部派生数据的唯一写入口
-derivedSeq                                 // 状态字段：派生同步的代次
-
-// web/src/store/liveSync.ts
-refreshAssetsAndSync(opts?)                // 事件 / 手动刷新 / 重连共用
-refreshProjectNow() / syncLoadedDocument() / recoverAfterReconnect()
-resetReconnectThrottle()                   // 只给用例：节流是模块级状态
-
 // web/src/lib/api.ts
-affectedScriptsOf / affectedStemsOf / affectedAssetIdsOf
-
-// web/src/hooks/useServerEvents.ts
-handleServerEvent(ev)                      // 导出给用例驱动（同 syncEngine 的先例）
+fetchReadiness(): Promise<ReadinessReport>
+PanelInfo.capability?: PanelCapability
+type ReadinessStatus   // 六个状态的闭集
+type ReadinessReason   // 十个 reason code 的闭集
 ```
 
 ### 迁移
 
-**没有数据迁移，磁盘格式一个字节没动。** `derivedSeq` 是运行时状态，不进
-文档。唯一的接口变化是 `assetStore.load()` 从 `Promise<void>` 变成
-`Promise<PanelsResponse | null>`——既有调用方全部忽略返回值，不受影响。
+**没有迁移，磁盘格式一个字节没动。** 就绪度不写盘。唯一的接口变化是
+`/api/panels` 每项**多**了一个可选 `capability`——旧前端忽略未知字段。
 
 ### 修改的文件
 
 ```text
-新增  web/src/store/panelSourceSync.ts         派生元数据同步（唯一写入口）
-新增  web/src/store/liveSync.ts                事件 / 手动刷新 / 重连的共同路径
-新增  web/src/lib/serverEventFields.test.ts    13 条
-新增  web/src/store/assetStore.test.ts         14 条
-新增  web/src/store/panelSourceSync.test.ts    19 条
-新增  web/src/store/derivedAutosave.test.ts     8 条
-新增  web/src/hooks/useServerEvents.test.ts    26 条
-新增  web/src/components/left/AssetBrowser.refresh.test.tsx   5 条
-改动  web/src/lib/api.ts                       +三个事件解码纯函数
-改动  web/src/store/assetStore.ts              并发治理；load 返回权威数据
-改动  web/src/store/documentStore.ts           +derivedSeq、+applyDerivedUpdate、订阅认第三档
-改动  web/src/hooks/useServerEvents.ts         +assets.changed/project.error handler；重连恢复
-改动  web/src/components/left/AssetBrowser.tsx 刷新按钮改走统一刷新 + 忙碌态 + 错误可见
-改动  web/src/App.tsx                       启动时清单与文档都到齐之后对一次账
-改动  web/src/i18n/locales/*/workspace.json    assets.rescan* → assets.refresh*；status 新增四条
-改动  web/src/i18n/resources.d.ts              i18next-cli types 重新生成
-重建  codex-plugin/mcp/widget/canvas.html      改了 web/src 就要重建
+新增  src/tavotto/engine/readiness.py         事实模型（纯诊断，不执行、不写盘）
+新增  tests/test_project_readiness.py         53 条
+改动  src/tavotto/engine/discover.py          抽出 claims_of()（discover() 输出不变）
+改动  src/tavotto/engine/project_refresh.py   +registry_write_failed、+readiness 缓存槽、
+                                              _static_merge 记账、有差异才失效缓存
+改动  src/tavotto/app.py                      +GET /api/project/readiness；
+                                              scan_panels 挂 capability（同源投影）
+改动  web/src/lib/api.ts                      +六状态/十 reason 的类型、+fetchReadiness、
+                                              PanelInfo.capability
+重建  codex-plugin/mcp/widget/canvas.html     改了 web/src 就要重建（指纹 47aee0ca4eee6e47）
 ```
 
 ### 测试命令与真实结果
 
 ```sh
-# 前端（先 cd web）
-pnpm test && pnpm build && pnpm i18n:check && pnpm lint
-# 单跑某个文件时**必须自己补上环境变量**（它在 package.json 的 test 脚本里）
-NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/assetStore.test.ts
 # 后端全量（worktree 里必须带 PYTHONPATH，否则 import 到主工作区）
 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
+# 只跑本阶段
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_project_readiness.py
 # 格式（与 CI 那一格逐字相同）
 ruff check . && ruff format --check .
-# 改了 web/src 之后（排在所有前端改动**与** i18next-cli types **之后**）
+# 前端（先 cd web）
+pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+# 改了 web/src 之后
 python scripts/build_mcp_widget.py
 ```
 
-数字见 `STATUS.md` 的表：前端 **124 files / 1456 passed**（比 05 的 1371
-+85），`build` / `i18n:check` / `lint` 三条 exit 0。**变异反证 55 条全部被
-打红**（清单与五条第一轮活下来的分析见 `TEST_MATRIX.md`——其中一条查出来是个
-多余的守卫，处置是删掉它）。
+后端全量 **exit 0 —— 3199 passed / 34 skipped / 2 deselected**，9 分 57 秒
+（Session 06 的 3145 passed + 53 新增 + 1 = 3199，数字对得上）。
+前端 **124 files / 1456 passed**，`build` / `i18n:check` / `lint` 三条 exit 0。
+**变异反证 35 条全部被打红**（第一轮活下来 7 条，两种成因与处置见 `TEST_MATRIX.md`）。
 
-**后端全量 exit 1**，唯一那条红是
-`tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`
-——本轮 `src/tavotto/**` 一个字节没改，那条用例走的是 Python CLI，不加载
-`web/src/**` 的任何东西。四组范围实测与「不处置成绿」的理由写在 `STATUS.md`
-的「全量套件里的那条红」。**不要因为它在你这一轮也红就当成背景噪音**：它今天
-早些时候（Session 05）还是绿的。
+**Session 06 那条红本轮两次全量都绿**
+（`tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`）。
+本轮 `tavotto run` 那条线一个字节没改，所以两次绿**不构成"它被修好了"**——
+它是偶发的，仍留在 `STATUS.md` 的遗留表里。
 
-### 这一轮踩到的两个环境坑
+### 这一轮踩到的坑
 
-1. **`npx vitest` 会漏掉 `NODE_OPTIONS=--no-experimental-webstorage`。**
-   没有它，Node 自带的 `localStorage` 全局会盖住 jsdom 那份**并且不可用**，
-   任何碰 localStorage 的用例报的是 `Cannot read properties of undefined`
-   ——看起来像被测代码坏了，其实是跑法不对。
-2. **`npx` 会在仓库根建一个空的 `node_modules/.vite`**，而 `.gitignore` 只
-   忽略 `web/node_modules/`。跑完记得删，否则它会出现在 `git status` 里。
+**七条变异第一轮活了下来**，两种成因，都值得下一个 Session 记住：
+
+1. **同一条保证有两个实现，谁也杀不死谁（2 条）。** 排序做了两遍
+   （素材清单一次、报告 panels 一次），删掉任意一处都还有另一处兜着。
+   这不是"多一层保险"，是**判据量不到自己**。处置：删掉冗余的那一处
+   （T-36），顺序的契约只留一份。
+2. **用例只跑了「方便的那个时刻」（5 条）。** 只读项目、非法注册表、内存
+   注册表、深拷贝出口、结构校验——五条的形状完全一样：用例把状态**摆好之后
+   才第一次读**，于是缓存里根本没有旧值可以过期，"缓存键含这一维"就量不到。
+   处置：先热一遍缓存，再改条件，再读第二遍。
+
+变异脚本带 `PYTHONDONTWRITEBYTECODE=1`，还原走**备份文件**而不是
+`git checkout --`（工作树里有未提交的新文件）。
 
 ### 尚存限制
 
-1. **`affectedScriptsOf` 还没有生产调用方**（另外两个有）。它是 §三 明确要求
-   的解码收口，有单测；自然的第一个消费者是 07 的就绪度（脚本 → 就绪状态）。
-   这件事写在这里，不假装它已经在用。
-2. **`assets.changed` 里 `removed` 的素材不清渲染缓存**：面板继续显示最后
-   一次成功的那张图，由 `preflight` 的 `missing-asset` 报出来。清掉的话画布会
-   当场变成占位框，而文件很可能只是暂时不见（T-28 的同一条取舍）。
-3. **升级会触发一次引擎重建**（`markStale` 置 `tracked`）。这与
-   `panel.file_changed` 的既有行为同源（那条路径 Session 05 之前就这么做），
-   代价是一张一直静静躺着的 PDF 在获得脚本的那一刻会跑一次 worker。要改成
-   "等用户双击才跑"的话，需要给 `markStale` 分出"只作废、不跟踪"的第二档
-   ——本阶段没做，因为 Prompt 06 §十明确要求"registry 升级后新 `script`
-   能触发引擎构建"。
-4. **没有 SSE 事件名的同源门禁**（Session 05 遗留第 10 条，仍然开着）：后端
-   `sse_publish` 的事件名与前端 `EVENT_KINDS` 写错一个字，后端全绿而前端
-   永远收不到。本轮四条事件都有端到端用例钉住，但门禁本身还没做。
-5. 04/05 的其余遗留（R-05 五处手写原子写、R-07 autosave 位置、
-   `/api/layouts/<name>` 无 schema 校验、「编辑历史」入口位置）原样开着。
+1. **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材
+   （ADR 0013，`runtime:` 前缀）不在报告里——它们按定义就有脚本，且 id 空间
+   不同，混进来会破坏「id 与 `PanelInfo.id` 逐字相同」这条。
+2. **`needs_probe` 的候选是项目级的**：静态解不出那些脚本的产物，所以说不出
+   「这张图来自其中哪一个」。项目里有一个动态脚本，所有没有专属候选的图都会
+   变成 `needs_probe`——`details.candidate_scope: "project"` 就是为了让 08 能
+   如实措辞（「跑一个就知道了」，而不是「这张图来自其中之一」）。
+3. **`/api/panels` 的 `capability` 可能缺席**：就绪度扫描与素材遍历之间新出现
+   的素材这一轮没有它。`undefined` 的意思是「这一轮还不知道」，**不是**
+   `layout_only`——08 不要给它补默认值。
+4. **签名的分辨率与 watcher 同级**（`(size, mtime_ns)`）：「同尺寸 + 同一个
+   mtime_ns 刻度里的就地改写」两边都发现不了。刻意不在就绪度这一侧单独收紧
+   ——收紧一侧只会让两个模块对「变了没有」给出不同答案。刷新那一侧的显式
+   失效是第二道判据。
+5. **项目打开仍走自己的静态草稿逻辑**，没并进统一服务（为了不扫两遍）。
+6. 04/05/06 的其余遗留（R-05 五处手写原子写、R-07 autosave 位置、
+   `/api/layouts/<name>` 无 schema 校验、没有 SSE 事件名的同源门禁、
+   「编辑历史」入口位置）原样开着。
 
 ### 工作树状态
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
-- **PR #201** 已开，带的是 Session 01–04。**05 与 06 的提交还没有推**
+- **PR #201** 已开，带的是 Session 01–04。**05 / 06 / 07 的提交还没有推**
   ——用户定的节奏是「每个 Session 一个独立提交，攒够几个再一次推」，
   推上去会立刻触发一轮 Codex 评审，所以由用户决定什么时候推
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
@@ -269,53 +257,57 @@ python scripts/build_mcp_widget.py
 
 ---
 
-## 下一阶段入口（Prompt 07：Readiness 后端事实模型）
+## 下一阶段入口（Prompt 08：Readiness 前端与常驻左栏）
 
-**从这里开始读**：`docs/adr/0025-…`（统一刷新的编排与 `ProjectRefreshResult`
-的形状）、`src/tavotto/engine/project_refresh.py` 的 `_events()`、
-`web/src/store/panelSourceSync.ts`（前端手里现在有哪些派生事实）。
+**从这里开始读**：`src/tavotto/engine/readiness.py` 的模块文档（判定表与三档
+取值都在里面）、`web/src/lib/api.ts` 的 `ReadinessStatus` / `ReadinessReason` /
+`ReadinessReport`、`DECISIONS.md` 的 T-31~T-36。
 
-**Session 06 留给它的**：一份**稳定**的前端数据面。
+**Session 07 留给它的**：一份**已经算好**的事实面。
 
-| 东西 | 位置 | 07 可以直接依赖的性质 |
+| 东西 | 位置 | 08 可以直接依赖的性质 |
 | --- | --- | --- |
-| 素材清单 | `assetStore.byId` | 不会被旧响应覆盖、不会串项目、后台失败时是"上一次成功的那份"而不是空 |
-| 画布上每个面板的派生字段 | `PanelObject.script/cost/fileKind/pxW` | 与 `/api/panels` 一致（事件、手动刷新、SSE 重连三条路都会把它拉平） |
-| 一次同步的差异 | `PanelSyncResult` | upgraded / downgraded / changed / missing 四类 + 两组素材 id |
-| 显式刷新 | `POST /api/project/refresh` → `refreshProjectNow()` | 界面上已经有入口（素材面板的刷新按钮） |
+| 每张图的能力 | `PanelInfo.capability`（`/api/panels` 每项都带） | 与整份就绪度**同一次计算**，不会互相矛盾 |
+| 整份报告 | `GET /api/project/readiness` → `fetchReadiness()` | 带 summary、conflicts、项目级 issues |
+| 「变了没有」 | `fingerprint` | 同一份事实下不变；`generated_at` 与无关文件的 mtime 都进不来 |
+| 状态与文案的对应 | `REASONS_BY_STATUS`（后端）/ `ReadinessReason`（前端类型） | 闭集，且有用例钉住「不许冒出没备案的组合」 |
+| 动作能力 | `can_probe` / `can_manual_link` / `can_rescan` | 只说"界面可以提供"，执行仍归既有端点 |
 
 **绝不要做的事**：
 
-1. **不得重新实现刷新。** 就绪度是在这份数据之上**再算一层事实**，不是第二个
-   刷新器。素材清单的唯一取法是 `assetStore.load()`，文档里派生字段的唯一写
-   入口是 `syncPanelSourceMetadata()`，事件与手动刷新的唯一路径是
-   `store/liveSync.ts`。
-2. **不要为就绪度再开一条事件通道**（SSE 已经是唯一通道）。
-3. **不要在组件里直接改 `documentStore` 的文档字段**（走 actions / 派生入口）。
-4. **`conflicts` 缺席 = 这一轮没跑静态扫描，不是"没有冲突"**——就绪度最容易
-   在这里把"没测量"当成"测量结果是零"。
+1. **不许在前端重新猜状态。** 按 `script` 有没有值自己判一遍，就是把改造前
+   那三个互相矛盾的答案又请回来一个。能力事实只有 `capability.status` /
+   `reason_code` 一个出处。
+2. **不许另起同义状态。** 六个就是六个；界面上要分得更细的话，回后端加
+   reason code（并在 `REASONS_BY_STATUS` 里备案），不要在组件里再分一层。
+3. **不许把三档压成两档**（`conflicts` 的 `null`、`registry_valid` 的 `null`、
+   `capability` 的 `undefined`）。「没测量」不是「测量结果是零」，把它补成
+   默认值，用户会一直等一个永远不来的提示。
+4. **不许把 reason code 翻译成的句子存进文档或 history**（存 message key +
+   结构化参数——`HistoryEntry.label` 的既有约定）。
+5. **不许让就绪度界面去执行动作。** 试运行走 `/api/registry/probe`（用户显式
+   触发、可取消、有进度），手工关联走 `PUT /api/registry`，重扫走
+   `POST /api/project/refresh` → `refreshProjectNow()`（素材面板的刷新按钮
+   已经在用这一条）。
+6. **不许在 UI 上暴露实现术语**（stem / registry / AST / manifest）——这正是
+   reason code 存在的理由：后端给枚举，前端给人话。
 
 **必须保留的不变式**（改动前先确认还成立）：
 
-1. `loadSeq` 把「载入」与「编辑」分开；`derivedSeq` 把「派生同步」从这两者里
-   再分出来（三档表见上）。
-2. `dirty` 同时盯 `doc` 与 `canvases`。
-3. 收到 409 后**基线故意不推进**，本机兜底副本**不清**。
-4. `HistoryEntry.label` 存 `UiMessage` 描述符，绝不存翻译后的字符串。
-5. 落盘一律走 `engine/atomicio`（ADR 0023）。
-6. 保存状态只经 `setSaveState()` / `setDocNotice()` 改（ADR 0024）。
-7. 排队稍后才发出的写入必须带走**排队那一刻**的 `pj`；前端的每一次
-   `/api/panels` 同样带走发请求那一刻的 `pj`。
-8. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
-   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**。
-9. **无差异 = 零事件、零写盘、零 worker 失效**（后端）；
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
+   `setDocNotice()` 改（ADR 0024）。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（本轮新增）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
    **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
-10. 「哪些文件算素材」只有 `iter_assets()` 一处判据；脚本遍历只有
-    `discover.iter_all_scripts()` 一处。
-11. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
-12. 刷新失败时内存里的注册表**原封不动**，事件一条不发；前端同理——
-    刷新失败就**不拿旧清单去同步文档**，也不弹提示。
-13. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史**
-    （UX_CONTRACTS 不变式 A / §1a）。
-14. **素材不在清单里 ≠ 脚本关系失效**：前者保留对象与 `script`，走既有缺失
-    素材语义；只有后端明确说"这个素材没有脚本"才算降级（T-28）。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处判据；脚本遍历只有
+   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
+   stem」只有 `discover.claims_of()` 一处。
+7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**
+   （磁盘 CANARY + 桩两层证据钉着）。
+8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
+9. **素材不在清单里 ≠ 脚本关系失效**（T-28）。
+10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。

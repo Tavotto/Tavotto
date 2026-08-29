@@ -153,6 +153,7 @@ Tauri 壳 (src-tauri/)  ──┐
 | **项目 watcher（`← 05`，ADR 0026）** | `engine/project_watch.py`（**每项目一个**），`start()/stop()/watched_dirs()`；整棵树的快照轮询，默认 2 秒 |
 | watcher 出口 | `app._watch_sink(ctx)`：`refresh` → `app.refresh_project(reason="watcher")`；`script_changed` → `panel.file_changed`；`error` → `project.error` |
 | **统一刷新（`← 04`，ADR 0025）** | `engine/project_refresh.py`，app 层入口 `app.refresh_project()`，HTTP：`POST /api/project/refresh` |
+| **接入就绪度（`← 07`）** | `engine/readiness.py`（纯诊断），HTTP：`GET /api/project/readiness`；`/api/panels` 每项的 `capability` 是同一次计算的投影 |
 
 ### 3.1 统一刷新（`← 04`，ADR 0025）
 
@@ -195,10 +196,54 @@ probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）、
 脚本**内容**变了与 `paper_style*` 归 watcher——刷新看不见后者（改脚本内容
 常常不改注册表结构）。
 
-**「不静默执行用户脚本」在现状里的落实方式**：扫描 / 注册表 / watcher 都只做
-静态读取与 `stat()`；真正跑用户代码的只有显式的 probe、渲染请求
-（`POST /api/engine/render`）与 native 会话（`docs/adr/0014`、`0020`，
+**「不静默执行用户脚本」在现状里的落实方式**：扫描 / 注册表 / watcher /
+**就绪度** 都只做静态读取与 `stat()`；真正跑用户代码的只有显式的 probe、
+渲染请求（`POST /api/engine/render`）与 native 会话（`docs/adr/0014`、`0020`，
 `/api/native/*` 全部要用户批准，`engine/nativeperm.py`）。
+
+### 3.3 接入就绪度（`← 07`）
+
+```text
+GET /api/project/readiness            ← 只读诊断；不写盘、不发事件、不跑脚本
+  → engine/readiness.compute(ctx)
+      项目锁（与刷新同一把）
+      → 注册表 entries（内存里那份，引擎实际在用的）
+      → 素材清单 iter_assets()          ← 与 /api/panels 同一把尺
+      → 目录可写性 os.access(W_OK) + 磁盘注册表合法性（新实例校验，不碰 ctx 的）
+      → 上一次刷新写注册表失败了没有（RefreshState.registry_write_failed）
+      → 脚本签名（.py 集合 + (size, mtime_ns)）→ 命中就复用缓存的 discover 报告
+      → 逐 stem 判定 → summary → conflicts → fingerprint（= 报告自身的内容哈希）
+```
+
+**判定表**（分支互斥，从上往下，每张图只落一个）：
+
+| # | 条件 | status | reason_code |
+| ---: | --- | --- | --- |
+| 1 | 注册表映射了这个 stem，脚本文件在 | `editable` | `registered_source` |
+| 2 | 注册表映射了，脚本文件不在 | `source_missing` | `registered_script_missing` |
+| 3 | 这一轮静态扫描没跑成 | `layout_only` | `source_scan_unavailable` |
+| 4 | 多个脚本认领同一个 stem | `conflict` | `multiple_source_candidates` |
+| 5 | 恰好一个脚本认领 | `auto_linkable` | 下表 |
+| 6 | 项目里有产图但输出名要跑才知道的脚本 | `needs_probe` | `runtime_output_unknown` |
+| 7 | 其余 | `layout_only` | `no_source_candidate` |
+
+第 5 行的 reason 说的是**卡在哪一步**，优先级从"刷多少次都没用"往"下一次
+刷新就好了"排：`registry_invalid` > `project_read_only` >
+`registry_write_failed` > `static_unique_candidate`。
+
+**注册表优先于静态报告**（第 1 行在第 4 行之上）：注册表文件就是人工裁决的
+落处（"一脚本多产物 / 归属有歧义的 stem，裁决结果记在各图库自己的注册表
+文件里，勿改"）。冲突照旧出现在项目级 `conflicts` 里，附 `resolved_by`。
+
+**动作能力**：`can_probe` = 手里有具体候选；`can_manual_link` = 项目可写；
+`can_rescan` 在项目级。三者都只说"界面可以提供这个动作"——**就绪度自己一个
+都不执行**，动作仍归 `/api/registry/probe`、`PUT /api/registry`、
+`POST /api/project/refresh`。
+
+**缓存**（项目级，挂在 `RefreshState.readiness`，随项目消亡）：两层，键都是
+输入的内容签名；统一刷新在**确认事实真的动了之后**额外清一次（签名盖不住
+"同尺寸 + 同一个 mtime_ns 刻度的就地改写"，而那正是刷新自己写注册表的形状）。
+扫描失败的那一份**不进缓存**。进出都深拷贝。
 
 ---
 

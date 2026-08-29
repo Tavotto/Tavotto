@@ -83,7 +83,35 @@
 | watcher 不 probe、不执行用户脚本 | **已有（05）** | `TestNoSideEffects`（桩 + 磁盘 CANARY 两层证据） | — |
 | watcher 不监控 Tavotto 自己的 autosave/history | **已有（05）** | `TestSnapshot::test_script_scope_matches_discover`（`tavottofile/` 被剪）；autosave 不在项目树内 | — |
 | watcher 只发 `panel.file_changed`，不发第二套 registry/assets 事件 | **已有（05）** | `TestEndToEnd` ×2（含 `pj` 与 `reason`） | — |
-| Readiness 事实模型 / capability API | 未开始 | — | 07 |
+| **Readiness 事实模型 / capability API** | **已有（07）** | `tests/test_project_readiness.py`（53 条） | — |
+| ├ 六个状态各一条：registered→editable / 静态唯一→auto_linkable / 动态输出→needs_probe / 双认领→conflict / 脚本丢失→source_missing / 无候选→layout_only | 已有（07） | `TestClassification` 前六条 | — |
+| ├ 冲突**绝不自动裁决**（更新的 mtime + 更像的文件名都不许赢） | 已有（07） | `test_two_scripts_claiming_one_stem_is_a_conflict_and_is_never_auto_resolved` | — |
+| ├ 注册表优先于静态冲突，`resolved_by` 带出裁决人 | 已有（07） | `test_the_registry_wins_over_a_static_conflict` | — |
+| ├ `source_missing` 仍给出新认领者作为候选（改名/重构） | 已有（07） | `test_source_missing_offers_a_new_claimant_as_a_candidate` | — |
+| ├ 只读项目 / 非法注册表 / 写失败：三种 `auto_linkable` 成因分得开 | 已有（07） | `TestClassification` ×3（+ 一条真走失败刷新记账） | — |
+| ├ legacy `mm_registry.json` / 没有注册表文件（`registry_valid: null`） | 已有（07） | ×2 | — |
+| ├ 子目录脚本 / 同脚本多 stem / 同 stem 多格式（各计一次、共享一条来源） | 已有（07） | ×3 | — |
+| ├ 状态 × reason 的组合必须在 `REASONS_BY_STATUS` 里备案；表里无死行 | 已有（07） | `TestEnums` ×2 | — |
+| ├ **不执行用户脚本**：磁盘 CANARY + probe/pool 入口全桩两层证据 | 已有（07） | `TestNeverRunsUserCode::test_readiness_never_probes…` | — |
+| ├ 不改注册表（磁盘字节 + 内存索引）、不写项目任何文件、不发 SSE | 已有（07） | ×3 | — |
+| ├ 报告里不出现绝对路径、脚本源码、注册表原文 | 已有（07） | `test_no_absolute_path_and_no_file_content_leaks_into_the_report` | — |
+| ├ summary 每项只计一次、总数相等、空项目全零 | 已有（07） | `TestSummaryAndFingerprint` ×2 | — |
+| ├ 排序按 **id 字符串**（`a.pdf` / `a/z.pdf` 把两种顺序分开） | 已有（07） | `test_panel_order_is_stable` | — |
+| ├ fingerprint：同事实不变 / 状态变则变 / `generated_at` 无关 / 无关文件与 touch 无关 | 已有（07） | ×4 | — |
+| **就绪度缓存** | **已有（07）** | `TestCache`（12 条） | — |
+| ├ 第二次请求不重扫（判据是 `discover()` 真跑了几遍，不是对象身份） | 已有（07） | `test_a_second_request_does_not_rescan` | — |
+| ├ 进出都深拷贝：第一个与第二个调用方各改一次都污染不了缓存 | 已有（07） | `test_the_returned_report_is_never_the_cached_object` | — |
+| ├ 签名两维各一条：同尺寸改写（mtime 维）/ 同 mtime 改写（size 维） | 已有（07） | ×2 | — |
+| ├ 缓存键含内存里那份注册表（磁盘没动、索引变了也要跟上） | 已有（07） | `test_the_in_memory_registry_is_part_of_the_cache_key` | — |
+| ├ 新脚本 / 新素材 / 可写性翻转 / 注册表合法性翻转都失效 | 已有（07） | ×4 | — |
+| ├ 刷新改了事实才失效；无差异不动缓存 | 已有（07） | ×2 | — |
+| ├ 多项目缓存隔离；扫描失败不进缓存且能恢复；并发读只扫一遍 | 已有（07） | ×3 | — |
+| **`/api/project/readiness` 与 `/api/panels` 集成** | **已有（07）** | `TestEndpoint`（5 条）+ `TestPanelsIntegration`（5 条） | — |
+| ├ 未打开项目 409 `no_project`；响应字段集固定；项目隔离 | 已有（07） | ×3 | — |
+| ├ 非法注册表**不是 500**，素材一张不少 | 已有（07） | `test_an_invalid_registry_is_not_a_500_and_keeps_every_asset` | — |
+| ├ capability 逐字段等于就绪度同名字段（同源，不是第二次计算） | 已有（07） | `test_capability_comes_from_the_same_report` | — |
+| ├ editable 保留旧 `script`/`cost`；layout_only 与有候选的 panel 都不伪造 `script` | 已有（07） | ×3 | — |
+| ├ `/api/panels` 旧字段不回归 | 已有（07） | `test_the_old_panel_fields_do_not_regress` | — |
 | 左栏常驻 / 折叠 / 素材状态 | 未开始 | — | 08 |
 
 ## FAST EDIT / LAYOUT / STYLE / SPEC / VALIDATION / EXPORT
@@ -499,3 +527,67 @@ keep.registry = set() or {name for name in batch.registry if …}
 全仓只有 `embedded/session.ts` 会直接 `setState` 素材，而它 `loaded: true`
 一起写。所以那个组合不存在。**删掉之后两条变异（不对账 / 拿错清单）都是红的**
 ——真正在守东西的是那一句 `applyPanelSync(syncPanelSourceMetadata(byId))` 本身。
+
+---
+
+## Session 07 的变异反证（35 条，全部被打红）
+
+跑法与 05/06 一样：还原走**备份文件**而不是 `git checkout --`（工作树里有
+未提交的新文件），并且带 `PYTHONDONTWRITEBYTECODE=1`——没有它，同尺寸 +
+同一秒写入会命中旧 `.pyc`，变异跑出来是假绿。**选择器不缩窄**：每条变异都跑
+整个 `tests/test_project_readiness.py`（改 `project_refresh.py` 的那四条再带上
+`tests/test_project_refresh.py`）。
+
+| 变异 | 结果 |
+| --- | --- |
+| `editable` 不看脚本文件在不在 | 红 ✔ |
+| `source_missing` 降成 `layout_only` | 红 ✔ |
+| `conflict` 自动挑第一个候选 | 红 ✔ |
+| 阻塞成因一律不报 / 只读不报 / 写失败与「还没登记」合并 | 红 ✔ ×3 |
+| 扫描失败报成 `no_source_candidate` | 红 ✔ |
+| 扫描失败时 `conflicts` 给 `[]` 而不是 `null` | 红 ✔ |
+| 扫描失败的报告也进缓存（永远恢复不了） | 红 ✔ |
+| `can_probe` 恒 true / `can_manual_link` 不看可写性 | 红 ✔ ×2 |
+| 静态冲突推翻注册表裁决 | 红 ✔ |
+| fingerprint 掺进时间 | 红 ✔ |
+| summary 不预置六个零（空项目缺键） | 红 ✔ |
+| panels 不按 id 排序 | 红 ✔ |
+| 脚本签名丢掉 mtime 维 / 丢掉 size 维 | 红 ✔ ×2 |
+| 缓存键不含注册表内容 / 素材集合 / 可写性 / 注册表合法性 | 红 ✔ ×4 |
+| 缓存出口不深拷贝 / 入口不深拷贝 | 红 ✔ ×2 |
+| 「没有注册表文件」与「注册表坏了」合并成一个 false | 红 ✔ |
+| 注册表结构校验被跳过（只看 JSON 解得动） | 红 ✔ |
+| dynamic 候选不算数（`needs_probe` 塌成 `layout_only`） | 红 ✔ |
+| `capability_map` 吞掉 `candidates` | 红 ✔ |
+| `issues` 不报注册表非法 | 红 ✔ |
+| 刷新：写失败不记账 / 写成功不清账 | 红 ✔ ×2 |
+| 刷新：永不失效就绪度缓存 / 无条件失效 | 红 ✔ ×2 |
+| `/api/panels` 拿候选冒充 `script` | 红 ✔ |
+| `/api/panels` 自己另算一遍 capability（不同源） | 红 ✔ |
+| 就绪度端点少了 `Cache-Control: no-store` | 红 ✔ |
+
+### 第一轮活下来的七条，两种成因
+
+**成因一：同一条保证有两个实现，谁也杀不死谁（2 条）。**
+「panels 不按 id 排序」与「素材清单不排序」两条**都存活**——因为排序做了两遍
+（`assets.sort()` 一次、`sorted(panels, key=id)` 一次），删掉任意一处都还有
+另一处兜着。这不是"多一层保险"，是**判据量不到自己**：那一维在变异下恒绿，
+而恒绿的门禁与没有门禁的区别只是它看起来像有。处置是**删掉冗余的那一处**
+（决策 T-36），顺序的契约只留 `panels` 那一份；再跑，变异当场被打红。
+
+**成因二：用例只跑了「方便的那个时刻」（5 条）。**
+剩下五条的形状完全一样——判据在，但用例把状态**摆好之后才第一次读**，于是
+缓存里根本没有旧值可以过期：
+
+* 只读项目：`_Ctx` 是 `chmod` **之后**才建的 → 「可写性在缓存键里」量不到；
+* 非法注册表：改坏**之后**才第一次 `compute()` → 同上；
+* 内存注册表：全程没有"磁盘没动、只有索引变了"这一刻；
+* 深拷贝出口：只改了第一个调用方拿到的那份（它本来就不是缓存本体），
+  没有人去改**命中缓存**交出来的那一份；
+* 结构校验：三处非法注册表用的都是 `"{ 坏了"`——`json.loads` 那一步就挂了，
+  `Registry.load_data()` 那一层从来没被走到。
+
+五条的处置都是**把用例挪到"恢复/失效的那一刻"**：先热一遍缓存，再改条件，
+再读第二遍；结构校验换成一份 JSON 解得动、`entry` 非法的注册表。这与
+Session 05 的「测恢复的那一刻」是同一族——**缺陷藏在状态翻转那一下，而用例
+最容易只跑翻转之后。**

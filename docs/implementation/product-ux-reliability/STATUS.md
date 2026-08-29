@@ -38,7 +38,7 @@
 | 04 | 后端统一 refresh | ✅ 完成（本次，ADR 0025） |
 | 05 | 项目 watcher、批次合并、SSE | ✅ 完成（本次，ADR 0026） |
 | 06 | 前端事件消费与派生元数据同步 | ✅ 完成（本次） |
-| 07 | Readiness 后端事实模型 | ⬜ |
+| 07 | Readiness 后端事实模型 | ✅ 完成（本次） |
 | 08 | Readiness 前端与常驻左栏 | ⬜ |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ⬜ |
 | 10 | Style / Spec 分层 | ⬜ |
@@ -61,7 +61,7 @@
 | Gate | 覆盖 | 状态 |
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
-| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）完成，07–08 未开始 |
+| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度后端事实模型）完成，08 未开始 |
 | 3 核心工作流与输出 | 09–12 | ⬜ |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
@@ -225,25 +225,51 @@ desktop…」。
 按「全量里红、窄范围绿」这个形状去查（多半在控制通道的关闭/唤醒那一族——
 参见 compat-bridge 轨道踩过的「`close()` 不唤醒阻塞的 `recv`」）。
 
-## 遗留（Session 06 之后仍开着的）
+### Session 07 之后（改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3199** passed / 34 skipped / 2 deselected，9 分 57 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— 124 files / 1456 tests passed（本轮前端只加类型，用例数不变） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`，2777 modules） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（没有新增 key——就绪度的文案归 08） |
+| `cd web && pnpm lint` | ✅ exit 0（18 条既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（277 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `47aee0ca4eee6e47`，改了 `web/src/lib/api.ts`） |
+| 变异反证 35 条 | ✅ 全部被打红（**第一轮有 7 条活了下来**，两种成因与处置见 `TEST_MATRIX.md`） |
+
+**数字对得上**：Session 06 那一次全量是 3145 passed + 1 failed；本轮
+3145 + 53（新增的 `tests/test_project_readiness.py`）+ 1 = **3199**。
+
+**Session 06 那条红本轮两次全量都绿**
+（`tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`）。
+**这不构成"它被修好了"**：本轮 `tavotto run` 那条线一个字节没改，两次绿只
+说明它是偶发的——而偶发红先当缺陷查，不当背景噪音。它仍留在遗留表里。
+
+---
+
+## 遗留（Session 07 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **全量 pytest 里 `test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 红**（窄范围全绿；与本阶段无关，属 `tavotto run` 线） | 待查 |
+| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次，Session 07 的两次全量都绿；属 `tavotto run` 线，与本轨道无代码路径相交） | 待查 |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
 | — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六） | 08（左栏改造） |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
 | — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
 
+| — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里——它们按定义就有脚本，且 id 空间不同，混进来会破坏「id 与 `PanelInfo.id` 逐字相同」 | 08 决定要不要在 UI 上补一句 |
+| — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）：静态解不出这些脚本的产物，所以说不出"这张图来自其中哪一个"。项目里有一个动态脚本，所有没有专属候选的图都会变成 `needs_probe` | 08 的措辞要照顾到这一点 |
+
 ---
 
 ## 下一阶段
 
-**Prompt 07（Readiness 后端事实模型）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。刷新闭环到 06 为止已经完整——**07 不得重新实现刷新**：
-素材清单的权威是 `assetStore.load()`（带并发治理，返回本次生效的响应），
-文档里派生字段的唯一写入口是 `syncPanelSourceMetadata()`，事件与手动刷新
-共用 `store/liveSync.ts` 这一条路径。就绪度是**在这份稳定数据之上再算一层
-事实**，不是第二个刷新器。
+**Prompt 08（Readiness 前端与常驻左栏）**，入口见 `SESSION_HANDOFF.md` 的
+「下一阶段入口」。事实模型到 07 为止已经完整——**08 不得在前端重新猜状态**：
+每张图的能力事实只有 `capability.status` / `reason_code` 一个出处（`/api/panels`
+每项都带，或整份 `GET /api/project/readiness`），前端**不许**再按 `script`
+有没有值自己判一遍。reason code 是闭集，08 负责给它们配中英文文案。

@@ -103,6 +103,18 @@ class RefreshState:
     #: 拿它认自己写的那一下（见模块末尾 `is_self_written()`）。
     registry_revision: str | None = None
 
+    #: 上一次静态合并**写**注册表时失败了没有（磁盘满、文件本身只读、
+    #: Windows 上被杀毒软件锁住）。就绪度（`engine/readiness.py`）拿它区分
+    #: 「还没登记」的两种成因：一种再刷新一次就好了，另一种刷多少次都一样。
+    #: 只在真的走到写那一步时更新——`allow_static_merge=False` 的刷新
+    #: （probe / 手工登记之后）压根没写，不该把上一次的结论抹掉。
+    registry_write_failed: bool = False
+
+    #: 就绪度报告的项目级缓存。形状归 `engine/readiness.py` 自己管，本模块
+    #: 只负责在刷新**真的**改动了事实之后把它清成 `None`。
+    #: **不 import readiness**：依赖方向是 readiness → refresh，反过来成环。
+    readiness: object | None = None
+
 
 _STATE_LOCK = threading.Lock()
 
@@ -337,7 +349,7 @@ def _normalize_changed_paths(root: Path, raw: Iterable[str] | None) -> list[str]
     return sorted(set(out))
 
 
-def _static_merge(root: Path) -> tuple[dict[str, list[str]], dict]:
+def _static_merge(root: Path, state: RefreshState) -> tuple[dict[str, list[str]], dict]:
     """静态扫描 + 合并 + （必要时）落盘。返回 (冲突, 旧口径的 changes)。
 
     **只在内容真的会变时才写**。以前 `/api/registry/scan` 无条件回写：一次
@@ -361,8 +373,14 @@ def _static_merge(root: Path) -> tuple[dict[str, list[str]], dict]:
     if atomicio.dumps_json(cfg, indent=1) != current:
         try:
             discover.write_config(root, cfg)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError) as exc:  # AtomicWriteError 是 OSError 的子类
+            # 写不下去与扫描失败对用户是两件事（一个是"你的注册表存不了"，
+            # 另一个是"你的脚本读不动"），但**对外的 code 不能改**——
+            # `scan_failed` 是老 `/api/registry/scan` 的契约，换名字等于让装着
+            # 旧前端的用户看到一句英文 key。区分留在状态里给就绪度用。
+            state.registry_write_failed = True
             raise RefreshError("scan_failed", f"扫描失败: {exc}", {"reason": str(exc)}) from exc
+    state.registry_write_failed = False
     return {k: list(v) for k, v in report["conflicts"].items()}, changes
 
 
@@ -458,7 +476,7 @@ def refresh_project_index(
         conflicts: dict[str, list[str]] | None = None
         merge_changes: dict = {"added_scripts": [], "added_stems": {}}
         if allow_static_merge:
-            conflicts, merge_changes = _static_merge(root)
+            conflicts, merge_changes = _static_merge(root, state)
 
         _reload(ctx, state)
 
@@ -495,6 +513,14 @@ def refresh_project_index(
         # 冷启动，用户会以为是自己点坏了什么。
         for script in registry_diff["removed_scripts"] + registry_diff["changed_scripts"]:
             pool.invalidate(script, str(root))
+
+        # 就绪度缓存：**只在事实真的动了的时候**清。它的键本来就是内容签名
+        # （见 `readiness._inputs_signature`），所以这一句是**第二道**判据而
+        # 不是唯一那道——签名盖不住的是「同尺寸 + 同一个 mtime_ns 刻度里的
+        # 就地改写」，而那正好是刷新自己写注册表时最容易撞上的形状。
+        # 无差异的刷新一句都不动（不变式：无差异 = 零事件、零写盘、零失效）。
+        if _registry_touched(registry_diff) or conflicts_changed or _assets_touched(asset_diff):
+            state.readiness = None
 
         result = {
             "reason": reason,

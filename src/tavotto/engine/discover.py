@@ -902,6 +902,21 @@ def analyze_script(path: Path, figures_dir: Path) -> dict | None:
     }
 
 
+def claims_of(scripts: dict[str, dict]) -> dict[str, list[str]]:
+    """报告的 scripts 表 → stem 被谁声称产出（脚本按报告顺序，未排序）。
+
+    「谁认领了这个 stem」的**唯一**判据。`discover()` 拿它算冲突（长度 > 1），
+    就绪度（`engine/readiness.py`）拿它算某张图的候选脚本——两处各写一遍
+    循环的话，迟早出现「冲突面板说有两个候选、就绪度说只有一个」这种
+    自相矛盾，而两句话都出自后端。
+    """
+    out: dict[str, list[str]] = {}
+    for script, info in scripts.items():
+        for s in info["stems"]:
+            out.setdefault(s, []).append(script)
+    return out
+
+
 def discover(figures_dir: str | Path) -> dict:
     """扫描图库（含子目录）里的候选脚本，返回原始报告。"""
     figures_dir = Path(figures_dir)
@@ -910,11 +925,7 @@ def discover(figures_dir: str | Path) -> dict:
         info = analyze_script(p, figures_dir)
         if info is not None:
             scripts[_rel_key(p, figures_dir)] = info
-    claims: dict[str, list[str]] = {}
-    for script, info in scripts.items():
-        for s in info["stems"]:
-            claims.setdefault(s, []).append(script)
-    conflicts = {s: sorted(cs) for s, cs in claims.items() if len(cs) > 1}
+    conflicts = {s: sorted(cs) for s, cs in claims_of(scripts).items() if len(cs) > 1}
     return {"scripts": scripts, "conflicts": conflicts}
 
 

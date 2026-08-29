@@ -514,3 +514,118 @@ promise），差异层挡的是并不成一个请求的那些（第二条事件�
 
 `overrides` 反过来**一条都不删**：那是用户的编辑，源关系恢复之后还要用。
 清的是缓存，不是数据。
+
+---
+
+## T-31（Session 07）状态的主语必须是用户指着的那个东西
+
+**权威**：`engine/readiness.py` 的 `STATUSES` / `REASONS_BY_STATUS`。
+
+**背景**：「这张图能不能进图内编辑」在起始状态下由三处各答一次，而**三处的
+主语都不一样**：`/api/panels` 给不给 `script`（按**素材**）、`/api/registry`
+的 candidates（按 **stem**）、`probe.script_inventory()` 的 reason（按**脚本**）。
+于是同一张图在素材面板里「不可编辑」、在注册表对话框里「有候选脚本」、在
+脚本清单里「可试运行」——三句话都对，合起来却没有一句回答了用户的问题。
+
+**决定**：新增一层事实模型，主语固定为 `/api/panels` 的那一个素材 id，输出
+**六个互斥状态**（`editable` / `auto_linkable` / `needs_probe` / `conflict` /
+`source_missing` / `layout_only`）加一个稳定 `reason_code`。三份原始事实
+（注册表 / 静态 AST 报告 / 文件存在性）仍在各自的位置，就绪度只**组合**它们。
+
+**理由**：这是本仓库反复付学费的那一族——[[name-the-subject-of-the-predicate]]
+的同一形状。三个主语不同的判据合不出一句话，而界面必须说一句话；不定主语的
+话，说那句话的责任就落到了前端，而前端手里只有其中一份事实。
+
+**禁止的替代实现**：在别的 API 或前端里另起同义状态；前端按 `script` 有没有
+值自己再猜一遍（Prompt 08 只翻译这份事实，不重新判定）。
+
+---
+
+## T-32（Session 07）fingerprint 是**报告**的哈希，不是**输入**的哈希
+
+**权威**：`readiness.fingerprint()`。
+
+**决定**：fingerprint = 规范化 JSON（键排序）的 SHA-256 前 32 位，输入是
+**这份报告本身**（不含 `generated_at`、不含 `fingerprint` 自己）。
+
+**理由**：需求里那四条（时间戳不能进、无关文件 mtime 不能进、绝对路径不能进、
+dict 顺序不能进）如果按"哈希输入"来做，就要逐条去防，而每加一个输入维度就
+得重新审一遍这四条。按"哈希输出"做，四条**自动成立**：`generated_at` 不在
+body 里所以进不来；素材 mtime、脚本 mtime 这些没有进报告的东西变了它不动；
+绝对路径本来就一个都不在报告里。反过来，任何一个会被用户看见的事实变了它必
+然变——因为那个事实就在被哈希的字节里。
+
+**代价**：输入变了而输出没变时会白算一遍（缓存键另算，它才是按输入的）。
+这正是要的：前端据 fingerprint 判"要不要重画"，白算一遍它不该看见。
+
+---
+
+## T-33（Session 07）「没测量」不是「测量结果是零」
+
+**权威**：`REASON_SCAN_UNAVAILABLE`、`conflicts: null`、`project.scan_ok`。
+
+**背景**：Session 06 的交接把这条写成了下一阶段的头号陷阱：「`conflicts`
+缺席 = 这一轮没跑静态扫描，不是"没有冲突"」。
+
+**决定**：静态扫描失败时**不报** `no_source_candidate`——那是一句错的断言。
+状态给 `layout_only`（那是此刻唯一还成立的能力陈述：这张图还能排版），
+reason 给 `source_scan_unavailable`，`conflicts` 给 `null` 而不是 `[]`，
+项目级 `scan_ok: false` + 一条 issue。**这一份报告不进缓存**——缓存一次失败
+等于让一次瞬时的目录读错误把就绪度永久钉死，而用户看到的现象是"我修好了它
+还是说不行"。
+
+**同一族的另外两处**：`registry_valid` 的 `null` 是"项目里根本没有注册表
+文件"（与"有、但坏了"是两回事，合并的话界面会对着一个新项目喊"你的注册表
+损坏了"）；`RefreshState.conflicts` 的 `None`（Session 04 的 T-15）。
+
+---
+
+## T-34（Session 07）注册表优先于静态报告
+
+**权威**：`readiness._capability()` 的分支顺序（注册表那一支在冲突之上）。
+
+**决定**：一个 stem 在注册表里有映射时，就绪度**不看**静态报告怎么说。
+静态冲突照旧出现在项目级 `conflicts` 里，但带上 `resolved_by`。
+
+**理由**：注册表文件就是人工裁决的落处（`src/tavotto/AGENTS.md`：「一脚本多
+产物 / 归属有歧义的 stem，裁决结果记在各图库自己的注册表文件里，勿改」）。
+让静态报告推翻它，等于每刷新一次就把用户的决定重新掀一遍——而用户能看到的
+现象是"我明明指定过了，它每次都又问我一遍"。
+
+**`source_missing` 的候选是这条规则的补充而不是例外**：注册表指着的脚本没了、
+另一份此刻正好认领同一个 stem（改名/重构最常见的形状），状态照旧是
+`source_missing`（注册表说的还是那个不存在的文件），但候选要给出来——否则
+用户手里只有一句"它不见了"。
+
+---
+
+## T-35（Session 07）就绪度只报告，动作仍归原来的端点
+
+**权威**：`readiness` 模块不 import `engine/probe.py`、不 import `pool`。
+
+**决定**：`can_probe` / `can_manual_link` / `can_rescan` 只表示"界面可以提供
+这个动作"。执行仍分别归 `POST /api/registry/probe`、`PUT /api/registry`、
+`POST /api/project/refresh`。就绪度**不返回任何可执行的 shell 命令**。
+
+**边界靠依赖方向守着**：`readiness` 只 import `discover` / `registry` /
+`project_refresh` 三个纯读模块。反过来 `project_refresh` 也**不** import
+`readiness`（会成环）——它清缓存的方式是把 `RefreshState.readiness` 置回
+`None`，那个槽位的形状归 readiness 自己管。
+
+---
+
+## T-36（Session 07）同一条保证只留一个实现，否则变异永远杀不死它
+
+**权威**：`compute()` 里唯一那处 `sorted(panels, key=…)`。
+
+**背景**：第一版里排序做了两遍——素材清单排一次（`assets.sort()`），报告的
+panels 再排一次。两遍各自都足以让「排序稳定」成立，于是**删掉任意一处都还
+有另一处兜着**：两条变异全部存活，而用例是绿的。
+
+**决定**：顺序的契约只有 `panels` 那一处；`iter_assets()` 的遍历顺序是它自己
+的事，本模块不依赖也不复述。
+
+**理由**：这不是"多一层保险"，是**判据量不到自己**。第二份实现让变异反证在
+这一维上恒绿，而恒绿的门禁与没有门禁的区别只是它看起来像有。冗余要留的话，
+用例必须能分别打到每一份（Session 05 的签名两维就是那个形状：size 与
+mtime_ns 各有一条用例看着，删任意一维都有对应的用例红）。
