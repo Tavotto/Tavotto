@@ -311,6 +311,39 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
   `tavotto:autosave-error` 事件 → 常驻错误 toast。
+- **`doc` / `canvases` 的变化有三种性质**，`startAutosave` 的订阅按两个代次
+  区分，**改这段之前先想清楚新写入属于哪一档**：
+
+  | 性质 | 判据 | `dirty` | `saveState` | 撤销历史 | 落盘 |
+  | --- | --- | --- | --- | --- | --- |
+  | 载入 | `loadSeq` 变了 | 由载入方声明 | 由载入方声明 | 清空 | 不排队 |
+  | 用户编辑 | 两个代次都没变 | 置位 | 推成 `dirty` | 进 | 排队 |
+  | 外部派生同步 | `derivedSeq` 变了 | 置位 | **不动** | **不进** | 排队 |
+
+  第三档的唯一写入口是 `documentStore.applyDerivedUpdate()`，唯一调用方是
+  `store/panelSourceSync.ts`。「不动 `saveState`」是因为一次外部文件改动不是
+  用户的编辑（`hasUnsavedWork()` 读的正是它，推了会让关闭保护拦一件用户没做
+  过的事）；「照样排队落盘」是因为 `script` 是**存进文档的字段**，只改内存的话
+  下次打开面板又回到不可编辑。写盘本身照常走状态机，`save_error` 一个不吞。
+- **外部修改 → 画布的闭环只有一条路径**（Prompt 06）：SSE 事件、素材面板的
+  「刷新项目」按钮、SSE 重连恢复，三个入口都走 `store/liveSync.ts` 的
+  `refreshAssetsAndSync()`。合并做在两层——`assetStore.load()` 复用同项目的
+  在途请求（一批事件一个 `/api/panels`），`syncPanelSourceMetadata()` 无差异
+  零改动（并不成一个请求的那些也不会重复置 dirty / 重复弹提示）。
+  `assetStore` 的三条并发纪律：**请求序号**挡旧响应覆盖新响应（不是"谁最后
+  返回"）、**发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）、
+  **失败不清空** `panels`/`byId`。`force: true` 永远另起一次（手动刷新不许被
+  在途请求吞掉）。
+- **派生字段 vs 用户数据**（`panelSourceSync.ts` 的表）：只有
+  `script` / `cost` / `fileKind` / `pxW` 由 `/api/panels` 说了算；
+  几何、`nativeW/nativeH`、crop、rotation、overrides、成组、锁定、选择一律
+  不碰。**图幅不是派生字段**——它是几何（`useEngineSync` 盯着它调 `h`），
+  而且权威在这个变体自己渲染回来的 manifest 上，不在磁盘文件上。runtime 面板
+  整个跳过（`runtime:` 前缀的 id 永远不在 `/api/panels` 里）。
+  **素材不在清单里 ≠ 脚本关系失效**：前者只记 `missing`、对象一个字节不动
+  （网盘抖一下不该让一批面板永久失去编辑入口），后者才降级并清掉失效的
+  manifest / 渲染缓存（`renderStore.reset`）——只置 `script = null` 是不够的，
+  留着的 manifest 会让元素树与检查器继续按"可参数化"办事。
 - **标注**：任意角度 `rotationDeg`（面板除外；导出走 PyMuPDF morph，
   CSS 顺时针 = Matrix(deg)）；形状 triangle/diamond/polygon/brace + 圆角/
   虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段

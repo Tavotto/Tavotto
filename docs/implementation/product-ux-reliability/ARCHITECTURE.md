@@ -32,21 +32,22 @@ Tauri 壳 (src-tauri/)  ──┐
 
 | 环节 | 位置 |
 | --- | --- |
-| 打开（复用已开的） | `app.py:1198 open_project()` |
-| 项目上下文对象 | `app.py:413 class ProjectCtx`、`app.py:429 _project_id()` |
-| 每请求解析当前项目 | `app.py:442 _request_ctx()` / `464 current_ctx()` |
-| 关闭一个项目 | `app.py:1245 close_project()`（停它的 watcher + 收它的 worker） |
-| 全部关闭 | `app.py:1271 reset_projects()` |
+| 打开（复用已开的） | `app.py:1214 open_project()`（顺带 `seed_state` + 挂 watcher） |
+| 项目上下文对象 | `app.py:415 class ProjectCtx`、`app.py:431 _project_id()` |
+| 每请求解析当前项目 | `app.py:444 _request_ctx()` / `466 current_ctx()` |
+| 关闭一个项目 | `app.py:1265 close_project()`（停它的 watcher + 收它的 worker） |
+| 全部关闭 | `app.py:1291 reset_projects()` |
 | HTTP 入口 | `POST /api/projects/open` `…/close` `…/remove`，`GET /api/projects`、`/api/projects/recent`、`/api/projects/browse` |
-| 项目内收纳目录 | `app.py:1303 project_store_dir()` → `<项目>/tavottofile/`（常量 `engine/config.py:240 PROJECT_STORE_DIRNAME`） |
-| 导出 / 备份目录 | `app.py:1312 project_export_dir()`、`1322 project_backup_dir()` |
+| 项目内收纳目录 | `app.py:1367 project_store_dir()` → `<项目>/tavottofile/`（常量 `engine/config.py:240 PROJECT_STORE_DIRNAME`） |
+| 导出 / 备份目录 | `app.py:1376 project_export_dir()`、`1386 project_backup_dir()` |
 | 前端 | `web/src/store/projectStore.ts`、`components/ProjectPicker.tsx`、`ProjectSwitcher.tsx` |
 
 **项目身份**按路径归一化（`engine/config.py path_is_case_insensitive()`），
 大小写不敏感卷上同一目录的两种写法归为一个项目。
 
 **多项目隔离是既有不变量**：watcher、worker 池、`baked_overrides/<项目id>.json`
-全部按 `ctx.id` 分键；SSE 事件带 `pj` 字段（`app.py:1169 _script_change_handler`）。
+全部按 `ctx.id` 分键；SSE 事件带 `pj` 字段（`app.py:1185 _script_change_handler`、
+`app.py:1322 _watch_sink`——三个回调都闭包着同一个 `ctx`，事件因此必然带对 pj）。
 
 ---
 
@@ -149,8 +150,8 @@ Tauri 壳 (src-tauri/)  ──┐
 | 探测（**显式动作**） | `POST /api/registry/probe`（`app.py:1852`）/ `…/probe/cancel` |
 | worker 池 | `engine/pool.py`（2000+ 行），单 worker 协议 `engine/worker.py` + `wireproto.py` |
 | Rust supervisor | `workerd/`，客户端 `engine/workerd_client.py`（默认关，`TAVOTTO_WORKERD`） |
-| watcher | `engine/pool.py:2003 _watchers`（**每项目一个**），`start_watcher/stop_watcher`；mtime 轮询，约 2 秒窗口 |
-| watcher 回调 | `app.py _script_change_handler()` → `sse_publish("panel.file_changed", {...,"pj": ctx.id})` |
+| **项目 watcher（`← 05`，ADR 0026）** | `engine/project_watch.py`（**每项目一个**），`start()/stop()/watched_dirs()`；整棵树的快照轮询，默认 2 秒 |
+| watcher 出口 | `app._watch_sink(ctx)`：`refresh` → `app.refresh_project(reason="watcher")`；`script_changed` → `panel.file_changed`；`error` → `project.error` |
 | **统一刷新（`← 04`，ADR 0025）** | `engine/project_refresh.py`，app 层入口 `app.refresh_project()`，HTTP：`POST /api/project/refresh` |
 
 ### 3.1 统一刷新（`← 04`，ADR 0025）
@@ -160,19 +161,42 @@ app.refresh_project(ctx, reason=…)          ← app 层唯一入口（注入 S
   → engine/project_refresh.refresh_project_index()
       项目锁 → registry 前快照 → 静态 merge（内容变了才写盘）→ reload
       → registry 后快照 → 结构化 diff → 素材清单（与**上一轮**比）
-      → 作废关系变了的 worker（限本项目）→ 被盯的脚本集变了才重挂 watcher
+      → 作废关系变了的 worker（限本项目）
       → 有差异才发 `registry.changed` / `assets.changed`
 ```
 
 已接进来的调用方：`POST /api/project/refresh`（新）、`POST /api/registry/scan`、
-probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）。
-**Prompt 05 的项目 watcher 也调它**，不得自己 merge、自己发第二套事件。
+probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）、
+**项目 watcher（`reason="watcher"`，`← 05`）**——五个入口一条编排，谁都不许
+自己 merge、自己 reload、自己发第二套事件。
 
 `app.py` 里原来的 `reload_registry()` 已删——它的两件事（重装 + 重挂 watcher）
-都在服务里，而它还漏了第三件（作废过期 worker）。
+都在服务里，而它还漏了第三件（作废过期 worker）。`RefreshSink.watch` 这个
+「重挂 watcher」的钩子在 05 一并删除：项目 watcher 盯的是整棵树，没有
+「盯谁」这个状态（ADR 0026 §9）。
+
+### 3.2 项目 watcher（`← 05`，ADR 0026）
+
+```text
+每 interval（默认 2 s）：
+  take_snapshot(root)                        ← 目录不可用返回 None，这一轮不动
+    scripts  : discover.iter_all_scripts()   ← 与静态起草同一份剪枝/深度规则
+    registry : tavotto_registry.json + mm_registry.json
+    assets   : project_refresh.iter_assets() ← 与 /api/panels 同一把尺
+    每个文件的签名 = (size, mtime_ns)         ← 两维缺一都会静默漏
+  → 与上一张比，差异并进 pending，快照**立刻**换新（刷新期间的写入进下一批）
+  → 安静 0.5 s（或批次已满 5 s）→ 结算这一批：
+       作废 worker（内容变了的已登记脚本；paper_style* → 整项目）
+       → 摘掉自己刚写的注册表（内容修订号）→ 还剩东西就调一次统一刷新
+       → panel.file_changed（还在磁盘上的已登记脚本）
+```
+
+**worker 失效在两边各管一半**：注册表**关系**变了归刷新（ADR 0025），
+脚本**内容**变了与 `paper_style*` 归 watcher——刷新看不见后者（改脚本内容
+常常不改注册表结构）。
 
 **「不静默执行用户脚本」在现状里的落实方式**：扫描 / 注册表 / watcher 都只做
-静态读取与 mtime 比较；真正跑用户代码的只有显式的 probe、渲染请求
+静态读取与 `stat()`；真正跑用户代码的只有显式的 probe、渲染请求
 （`POST /api/engine/render`）与 native 会话（`docs/adr/0014`、`0020`，
 `/api/native/*` 全部要用户批准，`engine/nativeperm.py`）。
 
@@ -182,19 +206,46 @@ probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）。
 
 | 环节 | 位置 |
 | --- | --- |
-| 发布 | `app.py:1133 sse_publish()`（进程内 `queue.Queue`，maxsize 200） |
-| 端点 | `GET /api/events`（`app.py:1142`），15s 心跳注释行 |
+| 发布 | `app.py:1149 sse_publish()`（进程内 `queue.Queue`，maxsize 200） |
+| 端点 | `GET /api/events`（`app.py:1158`），15s 心跳注释行 |
 | 前端消费 | `web/src/store/assetStore.ts`、`renderStore.ts`、`nativeSessionStore.ts`、`scriptRunStore.ts` |
 | 事件按项目隔离 | 事件体里的 `pj` 字段；前端按当前项目过滤 |
 
 **04 之后**：registry / 素材两类事件由统一刷新服务批量发布（一次刷新至多
 各一条，无差异一条不发），payload 见 ADR 0025 §2 与 `web/src/lib/api.ts` 的
-`ServerEvent`。`panel.file_changed` 仍由脚本 watcher 单独发，语义不变
+`ServerEvent`。`panel.file_changed` 由项目 watcher 单独发，语义不变
 （「已登记脚本内容变化，需要重建 Figure」）。
 
-仍**没有**独立的「项目 watcher + 批次合并」层：脚本 watcher 的事件仍是一条
-一条直接 `sse_publish`，前端各 store 各做各的防抖。那是 Prompt 05–06 的事，
-入口已经在（`app.refresh_project()`），**不要再加一条并行通道**。
+**05 之后**：项目 watcher 把一批连续写入合并成**一次**刷新，于是「一个编辑器
+保存动作 → 最多一次刷新 → 最多一组 registry/assets 事件」是后端保证的，
+不再靠前端各 store 各做各的防抖。新增 `project.error`（后台刷新失败，可恢复；
+`{pj, reason, code, params}`，`code` 走 `errors:*` 那张双语码表）。
+
+**06 之后**：四条事件全部有 handler，闭环是
+
+```text
+外部修改 → watcher → 统一刷新 → SSE
+  → store/liveSync.refreshAssetsAndSync()
+      ├ assetStore.load()                    合并请求 + 序号防旧覆盖 + 项目隔离
+      ├ syncPanelSourceMetadata(byId)        PanelObject 派生字段原地同步
+      └ applyPanelSync(result)               markStale / reset / 退出图内编辑 / 一条提示
+```
+
+| 事件 | handler 做什么 |
+| --- | --- |
+| `panel.file_changed` | 先同步 `markStale`（**不等**素材刷新：脚本变了而 PDF 还没重生成时 mtime 一动不动），再走合并刷新 |
+| `registry.changed` | 脚本清单 / runtime 清单重取**已取过的**；合并刷新 + 全量派生同步 |
+| `assets.changed` | 合并刷新（`affectedIds` = 事件里的素材 id）；`mtime` 换代顺带让静态图片 URL 失效 |
+| `project.error` | 一条常驻错误提示（`errors:*` 码表，未知 code 有通用回退）；**不是模态框** |
+
+`web/src/lib/api.ts` 另有三个纯函数解码事件的可选/兼容字段：
+`affectedScriptsOf` / `affectedStemsOf` / `affectedAssetIdsOf`。
+**同一批事件只发一次 `/api/panels`**（`assetStore` 的 in-flight 合并），
+**无差异零改动**（`syncPanelSourceMetadata` 算不出差异就一个 `set()` 都不发）
+——两层合起来保证一批事件至多一条提示、至多一次落盘。
+
+SSE 重连（`subscribeEvents` 的 `onOpen`）补一次合并刷新 + 派生同步，
+3 秒节流，**不调后端的静态刷新**。
 
 ---
 

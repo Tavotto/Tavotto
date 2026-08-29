@@ -8,14 +8,22 @@ import { Braces, ListFilter, Plus, RotateCw, Search, X,
   TriangleAlert,
   Zap,
 } from 'lucide-react'
-import { renderUrl, runtimePreviewUrl, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
+import {
+  backendErrorMsg,
+  renderUrl,
+  runtimePreviewUrl,
+  type PanelInfo,
+  type RuntimeAssetInfo,
+} from '@/lib/api'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addPanel, addRuntimePanel } from '@/store/actions'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
+import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Dialog } from '../ui/Dialog'
@@ -86,9 +94,15 @@ export function AssetBrowser() {
   const objects = useDocumentStore((s) => s.doc.objects)
 
   const [query, setQuery] = useState('')
+  // 「刷新项目」按钮自己的忙碌态：它等的是 POST /api/project/refresh 走完
+  // （静态扫描 + 合并注册表），而 assetStore 的 `loading` 只覆盖后半段的
+  //  /api/panels。只看后者的话，按钮在最慢的那一步上是**不转**的。
+  const [refreshing, setRefreshing] = useState(false)
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState<LibraryItem | null>(null)
+  /** 后端刷新与素材重取合起来才是用户眼里的「正在刷新」 */
+  const busy = refreshing || loading
 
   const gridRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(1)
@@ -247,16 +261,28 @@ export function AssetBrowser() {
             activeCount={chips.length}
             onChange={setFilters}
           />
-          <Tip label={ab('rescanTip')}>
+          <Tip label={ab('refreshTip')}>
             <Button
               size="icon-sm"
+              disabled={refreshing}
               onClick={() => {
-                void useAssetStore.getState().load()
+                // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
+                // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
+                // 事件与手动刷新共用它。
+                setRefreshing(true)
+                void refreshProjectNow()
+                  .catch((e: unknown) =>
+                    useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
+                  )
+                  .finally(() => setRefreshing(false))
+                // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
                 void useRuntimeAssetStore.getState().loadAssets()
               }}
-              aria-label={ab('rescan')}
+              aria-label={ab('refresh')}
             >
-              <RotateCw size={12} className={loading ? 'animate-spin text-ink-3' : 'text-ink-2'} />
+              {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
+                  Loader2，28px 的图标按钮里挤两个图标就是布局跳变 */}
+              <RotateCw size={12} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
             </Button>
           </Tip>
         </div>
@@ -281,11 +307,13 @@ export function AssetBrowser() {
         )}
       </div>
 
-      {loading && loaded && (
-        <p className="px-3 py-1 text-xs text-ink-3">{ab('rescanning')}</p>
+      {busy && loaded && (
+        <p className="px-3 py-1 text-xs text-ink-3" aria-live="polite">
+          {ab('refreshing')}
+        </p>
       )}
       {error && loaded && (
-        <p className="bg-danger-subtle px-3 py-1.5 text-xs text-danger">
+        <p className="bg-danger-subtle px-3 py-1.5 text-xs text-danger" role="status">
           {ab('refreshFailed', { error })}
         </p>
       )}
@@ -299,7 +327,12 @@ export function AssetBrowser() {
               icon={TriangleAlert}
               title={ab('loadFailed')}
               hint={error}
-              action={{ label: ab('retry'), onClick: () => void useAssetStore.getState().load() }}
+              action={{
+                label: ab('retry'),
+                // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
+                // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
+                onClick: () => void useAssetStore.getState().load({ force: true }),
+              }}
             />
           )}
 

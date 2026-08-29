@@ -32,8 +32,8 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 
 - Flask 跑在 `.venv`（只有 flask + pymupdf，**没有 matplotlib**）。
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
-  `engine/updater.py`、`engine/runtime.py` 被 Flask import，
-  **必须保持纯标准库**。
+  `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
+  `engine/project_watch.py` 被 Flask import，**必须保持纯标准库**。
 - `engine/worker.py`、`engine/manifest.py`、`engine/overrides.py`、
   `engine/figsession.py`、`engine/wireproto.py`、`engine/preview_complexity.py`
   只在执行侧子进程里跑，解释器由 `pool.find_worker_python()` 探测
@@ -719,7 +719,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   stop_watcher + shutdown_all + interrupt_all）；关项目走 `close_project()`。
   registry 因此不能再是模块全局：`engine/registry.Registry` 可实例化，
   模块级函数代理到默认实例（老调用方式与测试不动）。worker 池键与
-  watcher 也都带项目路径（`pool._norm_dir`）。
+  watcher 也都带项目路径（`pool.norm_dir`，三处同一把尺）。
   **写回基线（baked overrides）同样按项目分键**：`baked_overrides/<项目id>.json`，
   `load_baked(ctx)` / `append_baked(stem, patches, ctx)` 默认取 `current_ctx()`；
   旧的全局 `baked_overrides.json` 只作一次性迁移源（按 `ctx.registry.for_stem`
@@ -727,6 +727,17 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   哪怕是空 dict）。`scan_panels` 里的 baked 表是**局部变量**，绝不再做模块级
   缓存——那就是「A 项目扫一遍素材，B 项目的基线全被换掉」。
   SSE 事件带 `pj`，前端只处理属于本标签页项目的那些。
+- **派生状态刷新只有一条编排**（ADR 0025 + 0026）：`app.refresh_project()`
+  → `engine/project_refresh.refresh_project_index()`。四个调用方
+  （`/api/project/refresh`、`/api/registry/scan`、probe 成功、手工登记）
+  加上项目 watcher 全部走它，**谁都不许自己 `discover.merge`、自己 reload
+  注册表、自己发第二套 `registry.changed` / `assets.changed`**。
+  `engine/project_watch.py` 只负责**发现**：整棵树的轻量快照
+  （文件集合 + `(size, mtime_ns)`）、防抖批次、调刷新。它自己发的事件只有
+  `panel.file_changed`（这张图的源码变了，请重渲染）与 `project.error`。
+  worker 失效在两边各管一半：注册表**关系**变了归刷新，脚本**内容**变了
+  与 `paper_style*` 归 watcher。「哪些文件算素材」只有 `iter_assets()`
+  一处判据，脚本遍历只有 `discover.iter_all_scripts()` 一处。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
 
@@ -750,7 +761,8 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
   cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
-  `ai.done` 推送；revert 恢复快照。脚本被改后 mtime watcher 自动作废渲染会话。
+  `ai.done` 推送；revert 恢复快照。脚本被改后由项目 watcher
+  （`engine/project_watch.py`，ADR 0026）作废渲染会话并触发一次统一刷新。
 - **「支持哪些 Agent」的唯一权威是 `engine/ai_agents.py` 的 `AGENT_REGISTRY`**
   （ADR 0015，改动前先读）。候选探测、启动验证、无副作用就绪检查、命令构造、
   流式输出分类、一键安装包名，全部由各自的 `AgentDefinition` 适配器给出。

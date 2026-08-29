@@ -34,7 +34,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import ai_agents, ai_bridge, pool, workerd_client
+from tavotto.engine import ai_agents, ai_bridge, pool, project_watch, workerd_client
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def client():
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    pool.stop_watcher()
+    project_watch.stop()
 
 
 def _figs(tmp_path, name="figs"):

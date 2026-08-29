@@ -772,7 +772,9 @@ def is_infrastructure_name(name: str) -> bool:
 # --------------------------------------------------------------------------
 # 扫描
 # --------------------------------------------------------------------------
-def _iter_py(figures_dir: Path, *, include_infrastructure: bool) -> list[Path]:
+def _iter_py(
+    figures_dir: Path, *, include_infrastructure: bool, strict: bool = False
+) -> list[Path]:
     """图库里的 .py：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
 
     只扫顶层曾经是个隐性假设——把面板脚本放 panels/ 子目录的图库（论文的
@@ -781,6 +783,12 @@ def _iter_py(figures_dir: Path, *, include_infrastructure: bool) -> list[Path]:
     walk 规则（PRUNE_DIRS / MAX_DEPTH / 隐藏项跳过）只有这一个实现，
     静态起草与「列给用户挑」的清单是它的两个视图——差别只在要不要把
     基础设施脚本（`is_infrastructure_name`）也列进来。
+
+    `strict=True` 时**中途读不动就抛**，不返回半张表。给 watcher 用
+    （`project_watch.take_snapshot`）：一张少了半棵子树的清单在 diff 里与
+    「用户把这些文件删了」长得一模一样，照它行事会把一批 worker 作废、发一
+    串假的 `assets.changed`。列给用户挑的那两个视图仍然宽容——网盘上一个读
+    不动的子目录不该让整份脚本清单从界面上消失。
     """
     out: list[Path] = []
     root = Path(figures_dir)
@@ -789,6 +797,8 @@ def _iter_py(figures_dir: Path, *, include_infrastructure: bool) -> list[Path]:
         try:
             children = sorted(d.iterdir())
         except OSError:
+            if strict:
+                raise
             return
         for child in children:
             if child.name.startswith("."):
@@ -812,12 +822,14 @@ def iter_scripts(figures_dir: Path) -> list[Path]:
     return _iter_py(Path(figures_dir), include_infrastructure=False)
 
 
-def iter_all_scripts(figures_dir: Path) -> list[Path]:
+def iter_all_scripts(figures_dir: Path, *, strict: bool = False) -> list[Path]:
     """项目内**全部**合理 .py（含基础设施脚本；被 prune 的目录仍然不列）。
 
     供「列给用户挑」的清单（probe.script_inventory）用：普通 .py 不该因为
-    静态分析解不出产物就从产品里消失。"""
-    return _iter_py(Path(figures_dir), include_infrastructure=True)
+    静态分析解不出产物就从产品里消失。
+
+    `strict=True`：遍历中途读不动就抛 `OSError`（见 `_iter_py`）。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True, strict=strict)
 
 
 def rel_key(path: Path, root: Path) -> str:

@@ -24,6 +24,7 @@ from tavotto.engine import (
     pool as engine_pool,
     probe as engine_probe,
     project_refresh as engine_refresh,
+    project_watch as engine_watch,
     registry as engine_registry,
 )
 
@@ -46,7 +47,7 @@ def client():
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 @pytest.fixture
@@ -806,33 +807,34 @@ class TestWatcherHandoff:
         (figs / "tavotto_registry.json").write_text(json.dumps(cfg), encoding="utf-8")
         assert engine_refresh.is_self_written(ctx) is False
 
-    def test_the_watcher_is_rehooked_only_when_the_tracked_set_changes(
-        self, client, tmp_path, monkeypatch
-    ):
-        """watcher 按脚本名跟踪 mtime：entry 改了不影响它盯谁，重挂只会把
-        mtime 基线白白重置一遍。"""
+    def test_refresh_no_longer_re_arms_a_watcher(self, client, tmp_path):
+        """刷新**不再有** watcher 重挂这个动作。
+
+        老的脚本 watcher 按注册表里那张清单逐个盯 mtime，清单一变就得重挂；
+        项目 watcher（`engine/project_watch.py`）盯的是整棵树，没有"盯谁"
+        这个状态。这条量的是那个钩子确实没了——留着一个没人调的形状，下一个
+        人会以为它还在守什么。
+
+        它换来的能力（**新建**一个还没登记的脚本也能被发现）在
+        `tests/test_project_watch.py` 里量，那正是重挂机制永远做不到的事。
+        """
+        assert not hasattr(engine_refresh.RefreshSink(), "watch")
         figs = _project(tmp_path)
         _write_registry(figs, {"a.py": {"entry": "main", "cost": "medium", "stems": ["S"]}})
         ctx = _open(client, figs)
 
-        started: list[list[str]] = []
-        monkeypatch.setattr(
-            engine_pool, "start_watcher", lambda d, scripts, cb, **kw: started.append(list(scripts))
-        )
-
-        _write_registry(figs, {"a.py": {"entry": "render", "cost": "medium", "stems": ["S"]}})
-        m.refresh_project(ctx, reason="external", allow_static_merge=False)
-        assert started == []
-
+        before = engine_watch.watched_dirs()
         _write_registry(
             figs,
             {
-                "a.py": {"entry": "render", "cost": "medium", "stems": ["S"]},
+                "a.py": {"entry": "main", "cost": "medium", "stems": ["S"]},
                 "b.py": {"entry": "main", "cost": "medium", "stems": ["T"]},
             },
         )
         m.refresh_project(ctx, reason="external", allow_static_merge=False)
-        assert started == [["a.py", "b.py"]]
+        # 项目 watcher 是打开项目时挂上的那一个，刷新不换、也不添第二个
+        assert engine_watch.watched_dirs() == before
+        assert len(engine_watch.watched_dirs()) == 1
 
 
 def test_registry_snapshot_is_not_a_live_view(tmp_path):

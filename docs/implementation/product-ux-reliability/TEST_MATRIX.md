@@ -42,11 +42,47 @@
 | --- | --- | --- | --- |
 | registry 扫描 / 写入 / stem 映射 | 已有 | `tests/test_registry.py`、`test_discover.py` | — |
 | 脚本探测（显式动作） | 已有 | `tests/test_script_probe.py` | — |
-| 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py` | — |
-| 素材竞态 / 派生 metadata 不污染 undo | 部分 | `web/src/store/assetStore` 无专门用例 | 06 |
-| 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（36 条） | — |
-| watcher 事件批次合并 | 部分（04 做了刷新侧） | 刷新一次至多两条事件；脚本 watcher 仍逐条 | 05 |
-| watcher 不监控 Tavotto 自己的 autosave/history | 未开始 | — | 05 |
+| 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_watch.py::TestLifecycle` | — |
+| **素材清单的并发治理** | **已有（06）** | `web/src/store/assetStore.test.ts`（14 条） | — |
+| ├ 合并 / 结束后的新事件另发 / force 不被吞 | 已有（06） | `describe('合并')` ×3 | — |
+| ├ 旧响应不覆盖新响应（成功与失败两条路径） | 已有（06） | `describe('旧响应不覆盖新响应')` ×2 | — |
+| ├ 换项目：成功与失败的响应都作废；`null` 与具体 id 不合并 | 已有（06） | `describe('项目隔离')` ×4 | — |
+| ├ 后台失败保留最后成功数据 / 首次失败仍是「没加载过」 | 已有（06） | `describe('失败的处置')` ×3 | — |
+| **PanelObject 派生元数据原地同步** | **已有（06）** | `web/src/store/panelSourceSync.test.ts`（19 条） | — |
+| ├ `script: null → 有值` / `有值 → null` / cost / 位图尺寸 / 载体类型 | 已有（06） | 升级 + 降级 + 其它派生字段三组 | — |
+| ├ 同 fileId 多实例（含非激活画布）；激活画布只算一遍 | 已有（06） | `describe('同 fileId 的多个实例')` ×2 | — |
+| ├ 几何 / crop / 旋转 / overrides / 成组 / 锁定 / 名称不变 | 已有（06） | `describe('绝不修改的东西')` ×2（含 runtime 面板整个跳过） | — |
+| ├ 图幅（nativeW/H）**不是**派生字段 | 已有（06） | `不是派生字段：图幅的权威是渲染回来的 manifest` | — |
+| ├ 缺失素材保留对象、不抹 script；只有缺失时零改动 | 已有（06） | `describe('缺失素材')` ×2 | — |
+| ├ 返回 upgraded / downgraded / changed / missing 差异 | 已有（06） | 各 describe 都断言了返回值 | — |
+| ├ 素材粒度**三档**：有脚本→重建 / 刚失去→清缓存 / 从来没有→都不做 | 已有（06） | `从来没有脚本的面板…` + 升级/降级两组 | — |
+| **派生同步与保存链路** | **已有（06）** | `web/src/store/derivedAutosave.test.ts`（8 条） | — |
+| ├ 置 dirty + 排落盘，但不推 `saveState`、不进历史 | 已有（06） | 前三条 | — |
+| ├ 崩溃兜底副本里带着最新的派生元数据 | 已有（06） | `防抖窗口过去之后…` | — |
+| ├ 冲突未决时只写本机副本；无差异不排落盘；空载荷是 no-op | 已有（06） | 后三条 | — |
+| **SSE 事件 → 画布** | **已有（06）** | `web/src/hooks/useServerEvents.test.ts`（26 条） | — |
+| ├ registry / assets / panel.file_changed 三条的消费 | 已有（06） | 前三个 describe | — |
+| ├ 一批事件合并成一次请求、一条提示 | 已有（06） | `describe('一批事件')` | — |
+| ├ `pj` 不匹配忽略 / 切项目途中的旧响应作废 | 已有（06） | `describe('项目隔离')` ×2 | — |
+| ├ 升级标 stale、不自动进编辑态；降级退出编辑、清缓存、保画布选择 | 已有（06） | `describe('降级')` ×6 | — |
+| ├ 刷新失败不拿旧清单去同步、不弹提示 | 已有（06） | `describe('刷新失败')` | — |
+| ├ `project.error` 走 `errors:*` 码表，未知 code 有回退 | 已有（06） | `describe('project.error')` ×2 | — |
+| ├ SSE 重连恢复：补一次、节流、没开项目不做 | 已有（06） | `describe('SSE 重连恢复')` ×3 | — |
+| **事件字段解码（三个纯函数）** | **已有（06）** | `web/src/lib/serverEventFields.test.ts`（13 条） | — |
+| **手动刷新入口** | **已有（06）** | `AssetBrowser.refresh.test.tsx`（5 条）+ `useServerEvents.test.ts::手动刷新`（2 条） | — |
+| ├ 调 `POST /api/project/refresh`、loading、失败可见、无障碍名不含内部术语 | 已有（06） | 同上 | — |
+| 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（39 条） | — |
+| **项目 watcher：整棵树的快照** | **已有（05）** | `tests/test_project_watch.py`（44 条） | — |
+| ├ 新增 / 删除 / 重命名 / 原子替换 `.py` | 已有（05） | `TestChangeKinds`（四条各一） | — |
+| ├ 就地改写：同长度（量 mtime）/ 同 mtime（量 size） | 已有（05） | `TestSnapshot` 两条——**两维各有一条看着** | — |
+| ├ 注册表：新名 / 旧名 / 删除 / 非法 JSON 后修复 | 已有（05） | `TestChangeKinds` ×3 + `TestErrors::test_broken_registry_reports_and_recovers` | — |
+| ├ 素材：新增 PDF / 改 PNG / 删 JPG / 重命名 | 已有（05） | `TestChangeKinds` ×4 | — |
+| ├ `paper_style*` 变更作废整项目（且只作废本项目） | 已有（05） | `TestChangeKinds` + `TestLifecycle::test_style_change_only_invalidates_its_own_project` | — |
+| watcher 事件批次合并 | **已有（05）** | `TestBatching`：一批连续写入一次刷新、永不安静的目录有年龄上限、刷新期间的变化不丢、stop 取消 pending | — |
+| watcher 自写不循环 / 自写后外部再改仍触发 | **已有（05）** | `TestSelfWriteLoop` ×3（含"自写不吞掉同批里的别的变化"） | — |
+| watcher 不 probe、不执行用户脚本 | **已有（05）** | `TestNoSideEffects`（桩 + 磁盘 CANARY 两层证据） | — |
+| watcher 不监控 Tavotto 自己的 autosave/history | **已有（05）** | `TestSnapshot::test_script_scope_matches_discover`（`tavottofile/` 被剪）；autosave 不在项目树内 | — |
+| watcher 只发 `panel.file_changed`，不发第二套 registry/assets 事件 | **已有（05）** | `TestEndToEnd` ×2（含 `pj` 与 `reason`） | — |
 | Readiness 事实模型 / capability API | 未开始 | — | 07 |
 | 左栏常驻 / 折叠 / 素材状态 | 未开始 | — | 08 |
 
@@ -299,3 +335,167 @@ Codex 在 `7efe8e0` 上报了 1 条 P1 + 2 条 P2，**三条都成立**，都已
 > 同一个文件里**还没提交的修复**一起吃掉了——第三条变异因此在"没有修复"的
 > 代码上跑，锚点找不到、`s.replace` 静默 no-op，结果看起来像"变异活下来了"。
 > 这条纪律在 Session 03 就记过一次，这次是同一个形状的第二次。
+
+## Session 05 的变异反证（31 条，全部 KILLED）
+
+每条变异都钉着**它应该打红的那条用例**（不是"跑全量看红不红"——那样一条
+不相干的用例红了也算过）。
+
+| 变异 | 结果 |
+| --- | --- |
+| 签名丢掉 size 这一维 / 丢掉 mtime 这一维 | 红 ✔ ×2 —— **两维各有一条守着** |
+| 目录不可用返回空快照而不是 `None` | 红 ✔ |
+| 脚本只盯起草候选（漏掉 `paper_style` 等基础设施脚本） | 红 ✔ |
+| 不盯旧名注册表 / 不盯素材 | 红 ✔ ×2 |
+| diff 只看两边都在的键（漏掉新增与删除） | 红 ✔ |
+| 快照在 dispatch **之后**才换（刷新期间的写入会丢） | 红 ✔ |
+| 没有批次年龄上限（永不安静的目录永远不刷新） | 红 ✔ |
+| 不防抖，每轮都结算 | 红 ✔ |
+| 已删除的脚本也发 `panel.file_changed` | 红 ✔ |
+| 作废不限于已登记脚本 | 红 ✔ |
+| 样式模块变更只作废它自己 | 红 ✔ |
+| 注册表变化**一律不**刷新 / **一律**刷新（同一行的两个方向） | 红 ✔ ×2 |
+| 不认自写（每次刷新触发下一次） | 红 ✔ |
+| 自写时把整批都丢掉 | 红 ✔ |
+| 刷新失败不发项目级错误 / 直接抛出去 | 红 ✔ ×2 |
+| 回调抛出不再被吞 | 红 ✔ |
+| `stop()` 不取消 pending 批次 / stop 之后仍结算已取走的那一批 | 红 ✔ ×2 —— 见下「抽掉不红」 |
+| 同路径重复 start 不停旧的（两个线程同时跑） | 红 ✔ |
+| `run()` 的一轮异常不再兜底 | 红 ✔ |
+| `prime()` 不建基线 | 红 ✔ |
+| watcher 的刷新 `reason` 不是 `watcher` | 红 ✔ |
+| `close_project` 不停 watcher / `open_project` 不挂 watcher | 红 ✔ ×2 |
+| `invalidate_project` 不按项目过滤 | 红 ✔ |
+| `panel.file_changed` 不带 stems | 红 ✔ |
+| watcher 自己再发一条 `registry.changed` | 红 ✔ |
+
+### 这一轮学到的：变异自己可能不是变异
+
+第一版的「注册表变化一律不刷新」写成了
+
+```python
+keep.registry = set() or {name for name in batch.registry if …}
+```
+
+——`set()` 是假值，`or` 于是原样求值到后面那个推导式。**代码文本变了，行为
+一个字节没变**，跑完全绿。
+
+这是"变异显示绿"的**第四种**成因：不是判据弱（Session 03/04 各撞过一次），
+不是那条分支从没被执行过，也不是 `__pycache__` 命中旧 `.pyc`，而是
+**这条变异根本不是一次变异**。变异脚本里"先证明产物真的变了"那一步只比
+文本，挡得住 `s.replace()` 的静默 no-op，挡不住语义 no-op。
+
+**处置**：改成整段替换（`keep.registry = set()`），并**顺手补上反方向的那一条**
+（`keep.registry = set(batch.registry)`，即自写也不摘）——一行判据的两个越界
+方向各来一次，比只钉一侧可靠（同 Session 04 的 EINVAL 教训）。
+
+### 第二件：一条守卫把另一条判据的行为面盖住了
+
+`_dispatch()` 开头补上 `stop_event` 检查（"这一批可能已经被线程取走了"）之后，
+**「`stop()` 不清 pending」这条变异活了下来**——新守卫把它的行为面整个盖住。
+
+这是「抽掉不红」的两种成因之一，而**删错了会把刚防住的东西放回去**。逐条问：
+
+* 这一句还有没有独立价值？**有**——一个停掉的 watcher 抱着一批永远不会结算
+  的变化，是个会在下一个人手里变成 bug 的状态；
+* 那为什么量不到？因为它的维度是**状态**，而那条用例断言的是**行为**。
+
+处置不是删代码、也不是放宽判据，而是**换一把量得到那个维度的尺**：
+`assert not w._pending`。顺带补一句**前提断言**（`assert w._pending`）——
+否则"这一批本来就没攒上"会让后半句恒真（同 04 的「恒等成立的 diff」）。
+
+> 三条老纪律这一轮全部生效：脚本在脏树上**拒跑**（Session 03/04 各踩过一次
+> "`git checkout --` 吃掉未提交的修复"）；每轮清 `src/**/__pycache__`；
+> 锚点计数必须恰好 1。
+
+
+---
+
+## Session 06 的变异反证（55 条，全部被打红）
+
+前端这一轮没有 `__pycache__` 那类陷阱，但换了两个新的：**`npx vitest` 会漏掉
+`NODE_OPTIONS=--no-experimental-webstorage`**（localStorage 全局是 undefined，
+用例报的是"读不到属性"而不是"断言不成立"），以及 `npx` 会在仓库根建一个空的
+`node_modules/.vite`——跑完记得删，`.gitignore` 只忽略 `web/node_modules/`。
+
+变异脚本还原走**备份文件**而不是 `git checkout --`：工作树里此刻有一堆未提交
+的新文件，后者会把它们一起吃掉（Session 03/04 各踩过一次）。
+
+| 变异 | 结果 |
+| --- | --- |
+| `affectedScriptsOf` 漏掉单脚本兼容字段 `script` | 红 ✔ |
+| `strings()` 不过滤非字符串 / `union()` 不去重 | 红 ✔ ×2 |
+| `affectedAssetIdsOf` 只看并集字段（丢三个细分） | 红 ✔ |
+| `affectedStemsOf` 只认一种事件 | 红 ✔ |
+| assetStore：旧响应照样落地（去掉序号判据） | 红 ✔ |
+| assetStore：成功路径 / 失败路径不看项目 | 红 ✔ ×2 |
+| assetStore：`null` 项目被当成"随便哪个项目都行" | 红 ✔ |
+| assetStore：`force` 也被在途请求吞掉 | 红 ✔ |
+| assetStore：根本不合并（每次都发新请求） | 红 ✔ |
+| assetStore：失败时清空 `panels` / `loading` 不看在途请求 | 红 ✔ ×2 |
+| sync：`script` 缺席与 `null` 不归一（每轮都判成"变了"） | 红 ✔ |
+| sync：顺手把图幅（`nativeW`）也同步了 —— 几何！ | 红 ✔ |
+| sync：素材不见了就当降级 | 红 ✔ |
+| sync：runtime 面板不跳过 | 红 ✔ |
+| sync：激活画布被数两遍 | 红 ✔ |
+| sync：无差异也换一份新 `doc` | 红 ✔ |
+| sync：降级的面板也进重建名单 | 红 ✔ |
+| sync：`affectedIds` 过滤失效 | 红 ✔ |
+| documentStore：派生同步照样推成「未保存」 | 红 ✔ |
+| documentStore：派生同步不排落盘 | 红 ✔ |
+| documentStore：派生写入清空撤销栈 / 不升代次 / 空守卫被抽掉 | 红 ✔ ×3 |
+| liveSync：升级的面板不转入引擎跟踪 | 红 ✔ |
+| liveSync：降级不清渲染缓存（manifest 残留 → 界面还显示"可编辑"） | 红 ✔ |
+| liveSync：降级不退出图内编辑 / 顺手把画布选择也清了 | 红 ✔ ×2 |
+| liveSync：降级提示不分「正在编辑那张」 / 升降级同批时说反了 | 红 ✔ ×2 |
+| liveSync：丢弃的响应也拿去同步文档 | 红 ✔ |
+| liveSync：手动刷新只重取素材、不走统一刷新 | 红 ✔ |
+| liveSync：后端刷新失败就不再取素材 | 红 ✔ |
+| liveSync：重连顺手扫一遍磁盘 / 不节流 / 没开项目也去恢复 | 红 ✔ ×3 |
+| events：`assets.changed` 没人消费 | 红 ✔ |
+| events：`registry.changed` / `panel.file_changed` 不刷新素材 | 红 ✔ ×2 |
+| events：`panel.file_changed` 等刷新回来才 markStale | 红 ✔ |
+| events：项目隔离守卫被抽掉 | 红 ✔ |
+| events：`project.error` 一律用通用文案 / 弹成普通提示 | 红 ✔ ×2 |
+| events：stems 取不到（面板认领失效） | 红 ✔ |
+| UI：刷新按钮退回只调 `assetStore.load()` | 红 ✔ |
+| UI：刷新期间不挡重复点击 / 失败静默吞掉 / 无障碍名回到内部术语 | 红 ✔ ×3 |
+| liveSync：打开项目时不对账 / 对账拿的不是当前清单 | 红 ✔ ×2 |
+| sync：素材粒度的三档塌成两档（降级的进重建 / 没脚本的进重建 / 没脚本的算降级） | 红 ✔ ×3 |
+
+### 五条第一轮活下来的，三种成因
+
+**成因一：变异没问对问题（两条）。**
+
+* 「`null` 项目与具体 id 合并」——锚点落在**失败分支**上，而那条用例走的是
+  成功分支。同一句话在两条路径上各有一份判据，改错哪一份都测不到想测的
+  那一维。处置：拆成两条变异（失败路径的项目守卫、合并入口的项目守卫），
+  并补一条"换项目之后旧项目那次**失败**不许把错误记到新项目头上"。
+* 「无差异也写一次文档」——`applyDerivedUpdate({})` 被写入口**自己的空守卫**
+  接住了，于是这条变异是个语义 no-op（Session 05 撞过的同一族）。处置：拆成
+  两条各自可观测的变异（写入口的空守卫、调用方的差异条件），并补一条直接
+  调 `applyDerivedUpdate({})` 的用例——那个守卫是它自己契约的一部分，
+  下一个调用方（07 的就绪度）不一定会先算差异。
+
+**成因二：判据缺一维（两条）。**
+
+* 「升降级同批时优先级反了」——所有用例要么只有升级、要么只有降级，
+  两者同时发生的那一格空着。而它正是最该说清楚的一格：**得而复失里用户
+  必须知道的是"失"**，得到的那份下次双击自然会发现，失去的那份不说就变成
+  "点进去什么都没有"。补了一条同批升+降的用例。
+* 「丢弃的响应也拿去同步文档」——用例里被丢弃时 `byId` 恰好是空的，于是
+  "拿旧数据同步"与"不同步"看起来一样。补的那条把 `byId` 预置成**上一轮
+  成功刷新留下的、此刻已经不新鲜的**清单，两种行为这才分得开。
+
+**成因三：那个守卫本来就是多余的（一条）。**
+
+`syncLoadedDocument()` 第一版写了 `if (!useAssetStore.getState().loaded) return`，
+抽掉它**不红**。逐条问下来这次的答案是"删"而不是"补用例"：清单还没取回来时
+`byId` 是空的，每个面板都会走「素材不在清单里」那一支，而那一支
+**在结构上就一个字节都不改**（T-28，已有用例钉着）。也就是说这个守卫没有
+任何一个用例能分辨的行为面——它不是缺一维，它是重复了一遍下游已经保证的事。
+
+判「删」之前先证伪了唯一一个可能的反例：`byId` 非空而 `loaded` 为假。
+全仓只有 `embedded/session.ts` 会直接 `setState` 素材，而它 `loaded: true`
+一起写。所以那个组合不存在。**删掉之后两条变异（不对账 / 拿错清单）都是红的**
+——真正在守东西的是那一句 `applyPanelSync(syncPanelSourceMetadata(byId))` 本身。

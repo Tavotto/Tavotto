@@ -103,6 +103,26 @@ interface DocumentState {
    * 的声明，订阅不该把它翻回来。
    */
   loadSeq: number
+  /**
+   * 「外部派生元数据同步」的代次，每次 `applyDerivedUpdate()` +1。
+   *
+   * 与 `loadSeq` 是同一类东西——都是给自动保存的订阅回答「刚才那次 doc 变化
+   * 是什么性质」。三种性质各有各的处置：
+   *
+   * | 性质 | dirty | saveState | 历史 | 落盘 |
+   * | --- | --- | --- | --- | --- |
+   * | 载入（loadSeq+1） | 由载入方声明 | 由载入方声明 | 清空 | 不排队 |
+   * | 用户编辑 | 置位 | 推成 dirty | 进 | 排队 |
+   * | 派生同步（derivedSeq+1） | 置位 | **不动** | 不进 | 排队 |
+   *
+   * 派生同步那一行的两个「不」是有代价地选出来的：`script` 是**存进文档的
+   * 字段**，只改内存不落盘的话，用户下次打开这份文档，面板又回到不可编辑
+   * ——所以必须排队落盘。但外部编辑器改了一个脚本不是用户在 Tavotto 里的
+   * 编辑，把状态推成「未保存」会让关闭保护无端拦人，而那句拦人的话说的是
+   * 一件用户没做过的事。写盘本身照常走状态机（`saving` / `save_error` 一个
+   * 不吞）——那是"这次写成了没有"，用户必须看得见。
+   */
+  derivedSeq: number
   /** 上次写入本机自动保存的时间戳 */
   lastPersisted: number | null
   /** 本机自动保存过的文档（含当前文档），按最近保存时间倒序 */
@@ -268,6 +288,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   saveIssue: null,
   docNotice: null,
   loadSeq: 0,
+  derivedSeq: 0,
   lastPersisted: null,
   recentDocs: [],
   past: [],
@@ -1429,6 +1450,31 @@ function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean })
   })
 }
 
+/**
+ * 外部派生元数据的写入口（Prompt 06）。
+ *
+ * 「外部」= 磁盘 / registry 说了算的那几个字段（`script` / `cost` /
+ * `fileKind` / `pxW`），不是用户在 Tavotto 里做的编辑。调用方（
+ * `store/panelSourceSync.ts`）自己算好新的 `doc` 与 `canvases`——**没有算出
+ * 差异就不该调这里**：无差异还调一次会白白置 dirty、白白排一次落盘，而那
+ * 一次落盘会带上一个新的 `updatedAt` 去和别的标签页抢乐观并发的基线。
+ *
+ * 三个「不」：不进 `past` / `future`（外部事实不该占用户的撤销步数）、
+ * 不清空历史（撤销栈对这个面板的几何仍然有效）、不推 `saveState`。
+ * 一个「要」：`derivedSeq` 一定要 +1，自动保存的订阅靠它认出这次变化的性质。
+ */
+export function applyDerivedUpdate(next: {
+  doc?: FigureDocument
+  canvases?: CanvasData[]
+}): void {
+  if (!next.doc && !next.canvases) return
+  useDocumentStore.setState((s) => ({
+    ...(next.doc ? { doc: next.doc } : {}),
+    ...(next.canvases ? { canvases: next.canvases } : {}),
+    derivedSeq: s.derivedSeq + 1,
+  }))
+}
+
 /** 启动时恢复上次的当前文档（含旧单槽自动保存的一次性迁移） */
 /**
  * 崩溃逃生开关：界面因某个文档反复崩溃时，「刷新」只会把同一份文档再读回来，
@@ -1512,10 +1558,14 @@ export function startAutosave(): () => void {
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
     if (state.loadSeq !== prev.loadSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
+    // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
+    // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
+    // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
+    const derived = state.derivedSeq !== prev.derivedSeq
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     // 冲突未决时不覆盖状态：它要用户裁决，被一次编辑顶掉就等于替用户按了
     // 「算了」，而下一次防抖写盘又会去撞同一堵墙。编辑照常进本机副本。
-    if (!blocksDiskWrite(state.saveState)) setSaveState('dirty')
+    if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
     cancelPendingAutosave()
     autosaveTimer = window.setTimeout(flushAutosave, DEBOUNCE_MS)
   })

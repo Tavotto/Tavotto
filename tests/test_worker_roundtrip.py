@@ -19,7 +19,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from tavotto.engine import patchspec, pool
+from tavotto.engine import patchspec, pool, project_watch
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -1858,7 +1858,7 @@ def write_back(tmp_path, monkeypatch):
     finally:
         m.reset_projects()
         pool.shutdown_all(figures_dir=str(ctx[2]), wait=True)
-        pool.stop_watcher()
+        project_watch.stop()
 
 
 @pytest.fixture
@@ -2197,7 +2197,7 @@ def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypa
     finally:
         m.reset_projects()
         pool.shutdown_all(figures_dir=str(figs), wait=True)
-        pool.stop_watcher()
+        project_watch.stop()
         workerd_client.reset_client()
 
 

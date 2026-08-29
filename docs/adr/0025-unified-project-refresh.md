@@ -21,7 +21,7 @@
 | 没跑静态扫描时的冲突 | `conflicts=null`（不知道），**不是** `{}`（确认没有） |
 | registry diff 的维度 | 脚本增删 + entry/cost/notes/stems + stem 归属迁移；stems 按**集合**比 |
 | worker 失效范围 | 只作废 `removed + changed` 的脚本，且**限本项目**；无差异一个都不动 |
-| watcher 重挂时机 | 只在**被盯的脚本集合**变了时；entry/cost 变了不重挂 |
+| watcher 重挂时机 | ~~只在**被盯的脚本集合**变了时~~ —— **已作废，见 [ADR 0026](0026-project-file-watcher.md) §9**：项目 watcher 盯的是整棵树，没有「盯谁」这个状态，`RefreshSink.watch` 这个钩子随之删除 |
 | 事件 | 一次刷新至多一条 `registry.changed` + 一条 `assets.changed`；**无差异一条不发** |
 | 老客户端兼容 | 恰好一个脚本变时照旧给 `{script, stems}` |
 | watcher 认自己写的那一下 | **内容修订号**比较，不是"写完忽略两秒"的时间窗口 |

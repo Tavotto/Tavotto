@@ -1,11 +1,16 @@
 import { useEffect } from 'react'
-import { msg, t } from '@/i18n'
-import { subscribeEvents, type ServerEvent } from '@/lib/api'
+import { i18n, msg, t } from '@/i18n'
+import {
+  affectedAssetIdsOf,
+  affectedStemsOf,
+  subscribeEvents,
+  type ServerEvent,
+} from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
-import { useAssetStore } from '@/store/assetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
+import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -23,8 +28,12 @@ const costHint = (cost: string): string =>
     ? t(`status.coldHint.${cost}`, { ns: 'workspace' })
     : ''
 
-/** 单条事件的处理；抽成具名函数，免得 subscribeEvents 的两个参数挤成一坨 */
-function handleEvent(ev: ServerEvent) {
+/**
+ * 单条事件的处理。**导出是为了让用例驱动同一份判断**——与 `useEngineSync`
+ * 导出 `syncEngine` 同一条纪律：经 `EventSource` 去测的话，测的是 jsdom 的
+ * SSE 实现，而这里要钉的是「收到这条事件之后 store 变成什么样」。
+ */
+export function handleServerEvent(ev: ServerEvent) {
   const setStatus = useUiStore.getState().setStatus
   const render = useRenderStore.getState()
 
@@ -80,7 +89,7 @@ function handleEvent(ev: ServerEvent) {
       break
 
     case 'panel.file_changed': {
-      const stems = new Set(ev.stems ?? [])
+      const stems = new Set(affectedStemsOf(ev))
       // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
       // runtime 面板按持久化描述块的 stem 认领（id 是不透明标识，不反解）
       const affected = useDocumentStore
@@ -100,10 +109,39 @@ function handleEvent(ev: ServerEvent) {
       // stale 判定一并作废，下次查询按新脚本重新判
       render.markStale([...new Set(affected)])
       useRuntimeAssetStore.getState().invalidate([...new Set(affected)])
-      useAssetStore.getState().load()
+      // 重建**不等**素材刷新：脚本变了而它产出的 PDF 还没重新生成时，
+      // /api/panels 里的 mtime 一动不动，等它等不来。派生元数据的同步照常
+      // 跟在刷新后面（走合并入口，与同一批里的其它事件共用一个请求）。
+      void refreshAssetsAndSync()
       if (affected.length) {
         setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
+      break
+    }
+
+    case 'assets.changed': {
+      // 素材本身变了（脚本重新产出了 PDF / 用户在外面换了张图 / 删了一张）。
+      // 刷新之后：`mtime` 换代 → 静态图片 URL 跟着换（`panelSrc` 带 `m=`），
+      // 浏览器不会继续吃旧缓存；派生元数据（位图像素尺寸、cost）原地同步。
+      //
+      // **删掉的素材不动文档对象**：面板留在画布上，经既有的缺失素材语义
+      // （preflight 的 `missing-asset` + 重新链接）交给用户处置。自动删对象
+      // 就是拿一次网盘掉线换用户的排版。
+      void refreshAssetsAndSync({ affectedIds: affectedAssetIdsOf(ev) })
+      break
+    }
+
+    case 'project.error': {
+      // 后台刷新失败，**可恢复**：内存里的注册表原封不动，watcher 继续跑，
+      // 文件修好之后下一轮自动重试。所以它是一条常驻的状态提示，不是模态框
+      // ——没有需要用户当场做的决定。
+      const known = i18n.exists(`backend.${ev.code}`, { ns: 'errors' })
+      setStatus(
+        known
+          ? msg(`backend.${ev.code}`, ev.params ?? {}, 'errors')
+          : msg('status.projectBackgroundError', undefined, 'workspace'),
+        'error',
+      )
       break
     }
 
@@ -120,13 +158,18 @@ function handleEvent(ev: ServerEvent) {
       break
 
     case 'registry.changed': {
-      // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决）：
-      // 脚本清单与 runtime 素材清单都要重取——但只重取**已经取过的**，
-      // 没打开过素材面板的标签页不必为别人的登记发请求
+      // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决 /
+      // 外部编辑器新增或删除脚本）：脚本清单与 runtime 素材清单都要重取
+      // ——但只重取**已经取过的**，没打开过素材面板的标签页不必为别人的
+      // 登记发请求
       const lib = useScriptLibraryStore.getState()
       if (lib.loaded) void lib.load()
       const runtime = useRuntimeAssetStore.getState()
       if (runtime.assets !== null) void runtime.loadAssets()
+      // 素材清单 + 画布上已有面板的派生元数据（`script` 就在这一步原地变的）。
+      // 这里**不看 `conflicts`**：缺席 = 这一轮没跑静态扫描，不是"没有冲突"，
+      // 拿它去改界面等于把"没测量"当成"测量结果是零"。
+      void refreshAssetsAndSync()
       break
     }
 
@@ -166,10 +209,12 @@ function handleEvent(ev: ServerEvent) {
 export function useServerEvents() {
   useEffect(
     () =>
-      subscribeEvents(handleEvent, () =>
+      subscribeEvents(handleServerEvent, () => {
         // 后端重启后 SSE 会重连，借这个时机让版本自检立刻复查一次
-        window.dispatchEvent(new Event('mm:sse-open')),
-      ),
+        window.dispatchEvent(new Event('mm:sse-open'))
+        // 断线期间发生的事件全都没收到：补一次素材刷新 + 派生同步（节流）
+        recoverAfterReconnect()
+      }),
     [],
   )
 }

@@ -14,7 +14,12 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import patchspec, pool as engine_pool, previewbudget
+from tavotto.engine import (
+    patchspec,
+    pool as engine_pool,
+    previewbudget,
+    project_watch as engine_watch,
+)
 
 
 @pytest.fixture
@@ -23,7 +28,7 @@ def client(monkeypatch):
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 def _figs(tmp_path, name="variants"):

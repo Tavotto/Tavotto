@@ -25,7 +25,13 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import discover, figcapture, pool as engine_pool, probe as engine_probe
+from tavotto.engine import (
+    discover,
+    figcapture,
+    pool as engine_pool,
+    probe as engine_probe,
+    project_watch as engine_watch,
+)
 
 try:
     WORKER_PY = engine_pool.find_worker_python()
@@ -66,7 +72,7 @@ def client():
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 # ===========================================================================
