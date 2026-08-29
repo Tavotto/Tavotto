@@ -7,6 +7,7 @@
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -391,6 +392,17 @@ def test_auto_checkpoint_dedup_is_per_canvas(client):
 # ------------------- 评审 P1/P2（PR #201）：判据与写入之间的缝 -------------
 
 
+#: 目录 fsync 这一步在 **Windows 上根本不存在**：`os.open(目录, O_RDONLY)` 直接
+#: 报错，`_fsync_dir` 当场返回。下面两条注入的都是「目录 fd 的 fsync 失败 /
+#: 不被支持」，在那里**一条都执行不到**——不标出来的话正向那条会红
+#: （DID NOT RAISE），反向那条会**恒真地绿**，而绿得毫无内容比红更坏。
+#: Windows 上真正该被钉住的是「打不开目录就跳过」，那条单独在下面量。
+posix_dir_fsync = pytest.mark.skipif(
+    os.name == "nt", reason="Windows 打不开目录 fd，没有目录 fsync 这一步"
+)
+
+
+@posix_dir_fsync
 def test_directory_fsync_failure_is_not_swallowed(tmp_path, monkeypatch):
     """目录项落不了盘要**响亮地失败**。
 
@@ -416,6 +428,7 @@ def test_directory_fsync_failure_is_not_swallowed(tmp_path, monkeypatch):
     assert exc.value.code == "dir_fsync_failed"
 
 
+@posix_dir_fsync
 def test_directory_fsync_unsupported_is_still_ignored(tmp_path, monkeypatch):
     """「这个文件系统没有目录 fsync 这一步」不是失败。
 
@@ -435,6 +448,72 @@ def test_directory_fsync_unsupported_is_still_ignored(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "fsync", unsupported)
     atomicio.write_json(target, {"a": 1})  # 不抛
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_a_directory_that_cannot_be_opened_is_not_a_failure(tmp_path, monkeypatch):
+    """**打不开目录 fd ≠ 落盘失败**，两个平台都要成立。
+
+    Windows 上这是常态（`os.open(目录)` 直接报错），上面那两条在那里一条都跑
+    不到；这一条是它们在 Windows 上唯一的替身，所以它不许带平台标记。
+    """
+    real_open = os.open
+    target = tmp_path / "doc.json"
+
+    def refuse(path, flags, *args, **kwargs):
+        if Path(path).is_dir():
+            raise OSError(13, "这个平台不让打开目录 fd")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", refuse)
+    atomicio.write_json(target, {"a": 1})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+
+
+def test_autosave_get_does_not_hand_out_an_open_file_handle(client):
+    """自动保存的 GET **不许把文件句柄交出去**。
+
+    `send_file` 的响应是 direct passthrough：句柄要等响应被消费完才关。POSIX
+    上换掉一个开着的文件完全合法，所以这条只在别人电脑上现形——Windows 的
+    `os.replace` 撞见一个还开着的目标就是 `[WinError 5] Access is denied`，
+    用户读过一次这份自动保存之后，**下一次保存写不进去**。
+
+    同一类问题仓库里早有一份处方（`_publish_render_cache` 的退让重试 +
+    `tests/test_windows_regressions.py`），但那条处方只适合渲染缓存：同键的
+    字节逐字节相同，退让是安全的。用户的文档不能退让——那就别拿句柄。
+
+    判据直接看**原始响应**（经过测试客户端一层包装之后这一维就看不见了）：
+    这是「测那段逻辑本身」而不是假装在 Windows 上跑。
+    """
+    client.put("/api/autosave/dw", json=PD)
+    with m.app.test_request_context():
+        resp = m.api_autosave_get("dw")
+    assert resp.status_code == 200
+    assert not resp.direct_passthrough
+
+
+def test_the_revision_header_describes_the_bytes_it_just_served(client, monkeypatch):
+    """`X-Tavotto-Revision` 是**前端下一次写入的基线**，它必须描述 body 里这一份。
+
+    端点读一次文件、再单独读第二遍去算 hash 的话，两次读之间被别人改过时
+    header 描述的是**另一份内容**——前端拿着它去写，外部修改检测会放行一次
+    真正的覆盖。判据把那道缝撑开：第一次读完之后当场改掉磁盘上那份。
+    """
+    client.put("/api/autosave/dh", json=PD)
+    target = m._autosave_path("dh")
+    real_read = Path.read_bytes
+    raced = {"done": False}
+
+    def racing(self):
+        data = real_read(self)
+        if self == target and not raced["done"]:
+            raced["done"] = True
+            atomicio.write_json(target, {**PD, "updatedAt": 999})
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", racing)
+    resp = client.get("/api/autosave/dh")
+    assert raced["done"], "判据没撑开那道缝：端点根本没读这个文件"
+    assert resp.headers["X-Tavotto-Revision"] == atomicio.revision_of(resp.data)
 
 
 def test_two_concurrent_creates_cannot_both_win(client, monkeypatch):
@@ -516,7 +595,6 @@ def test_frontend_and_backend_agree_on_the_current_schema():
     或者前端会默默打开一份自己读不懂的。看护放在这里而不是靠人记得。
     """
     import re
-    from pathlib import Path
 
     src = Path(__file__).resolve().parents[1] / "web" / "src" / "types" / "document.ts"
     match = re.search(r"export const SCHEMA_CURRENT = (\d+)", src.read_text(encoding="utf-8"))

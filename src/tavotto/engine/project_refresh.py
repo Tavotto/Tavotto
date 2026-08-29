@@ -299,6 +299,11 @@ def _normalize_changed_paths(root: Path, raw: Iterable[str] | None) -> list[str]
 
     这个入参**只给进程内的调用方**（watcher / MCP）；HTTP 端点不接受它，
     否则等于让客户端指定一段绝对路径进日志。
+
+    分隔符统一成 POSIX（与 `discover.rel_key` 同一种写法）。它是一个**回声
+    字段**：进刷新结果、进日志、给人看，没有任何一处拿它去匹配素材 id
+    （那些**刻意**保留本机分隔符，因为文档里的 `fileId` 就是那个串）。
+    回声字段跨平台长得不一样，只会让同一件事在两个平台上读起来像两件事。
     """
     if not raw:
         return []
@@ -310,7 +315,7 @@ def _normalize_changed_paths(root: Path, raw: Iterable[str] | None) -> list[str]
         try:
             p = Path(item)
             resolved = (p if p.is_absolute() else root / p).resolve()
-            out.append(str(resolved.relative_to(root)))
+            out.append(resolved.relative_to(root).as_posix())
         except (OSError, ValueError):
             continue
     return sorted(set(out))

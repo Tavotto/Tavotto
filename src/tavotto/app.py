@@ -4333,14 +4333,24 @@ def api_autosave_get(doc_id):
     p = _autosave_path(doc_id)
     if not p.is_file():
         abort(404)
-    resp = send_file(p, mimetype="application/json")
+    # 读失败（权限、坏扇区）**照旧往上抛成 500**，不折成 404：「读不动」不是
+    # 「没有」——报成 404 的话前端会当成这份自动保存不存在，下一次写就以
+    # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
+    data = p.read_bytes()
+    # **读一次，发这一份，也 hash 这一份。** 以前是 `send_file(p)` 再单独
+    # `content_revision(p)` 读第二遍，两个毛病：
+    #
+    # * 两次读之间文件可能被改过 —— 前端拿这个 header 当**后续写入的基线**，
+    #   它描述的却是另一份内容，于是外部修改检测会放行一次真正的覆盖；
+    # * `send_file` 把文件句柄留在响应里，直到响应被消费完才关。Windows 上
+    #   `os.replace` 撞见一个还开着的目标文件就是 `[WinError 5] Access is
+    #   denied` —— 用户读过一次这份自动保存之后，下一次保存就写不进去了
+    #   （POSIX 上换掉一个开着的文件完全合法，所以这条只在 Windows 上现形）。
+    resp = app.response_class(data, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
-    # 读到的这一份的内容 hash：前端拿它做后续写入的基线（Prompt 03）。
-    # 放 header 而不是塞进 body——body 就是文档本身，多一个字段会跟着
-    # 一路进 localStorage 兜底副本和版本快照。
-    revision = engine_atomicio.content_revision(p)
-    if revision:
-        resp.headers["X-Tavotto-Revision"] = revision
+    # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
+    # 跟着一路进 localStorage 兜底副本和版本快照。
+    resp.headers["X-Tavotto-Revision"] = engine_atomicio.revision_of(data)
     return resp
 
 

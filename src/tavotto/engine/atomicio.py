@@ -164,6 +164,12 @@ def write_json(path: Path, obj: Any, *, indent: int | None = None) -> None:
     write_bytes(Path(path), dumps_json(obj, indent=indent))
 
 
+def revision_of(data: bytes) -> str:
+    """这段字节的修订号。**hash 只有这一个实现**——路径版与字节版分头写一遍，
+    迟早会有一处改了另一处没改，而那时两个修订号会静默地对不上。"""
+    return hashlib.sha256(data).hexdigest()[:32]
+
+
 def content_revision(path: Path) -> str | None:
     """文件的内容修订号；文件不存在或读不出来返回 `None`。
 
@@ -177,4 +183,4 @@ def content_revision(path: Path) -> str | None:
         data = Path(path).read_bytes()
     except OSError:
         return None
-    return hashlib.sha256(data).hexdigest()[:32]
+    return revision_of(data)
