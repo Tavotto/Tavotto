@@ -331,6 +331,30 @@ def test_collectible_layers_are_collected_further_not_downgraded(cases):
     assert plan["vector_primitives"] <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET
 
 
+def test_only_the_binding_budget_decides_who_gets_collected(cases):
+    """**排序键只能是此刻还在超的那条预算。**
+
+    这张图 31 769 个 primitive（图级 50 000 之内，那条不响）、44 769 个节点
+    （图级 24 000 之外，只有这条响）。两个 artist 都在各自族预算之内：
+
+        mesh    18 769 个 primitive → 18 769 个节点
+        散点    13 000 个 primitive → **26 000** 个节点（逐实例着色，每个
+                `<use>` 外面再包一个 `<g>`）
+
+    按 primitive 排先收 mesh，收完还差 2 001 个节点，于是散点也被收走——两层
+    都成了位图。**只收散点就够**（44 769 − 25 999 = 18 770 ≤ 24 000），mesh
+    本可以留在矢量层继续可编辑。多收的那一层是白丢的语义细节，而它之所以被
+    多收，是因为挑人的尺子量的是一条**已经达标**的预算。
+    """
+    plan = cases["mesh_plus_mapped_scatter"]
+    assert plan["mode"] == pb.MODE_HYBRID, plan["detail"]
+    assert plan["vector_nodes"] <= pb.TOTAL_VECTOR_NODE_BUDGET, plan["detail"]
+    assert plan["vector_primitives"] <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET
+    # 收一层就够，而且收的必须是节点最贵的那一层
+    assert plan["rasterized_artist_count"] == 1, f"多收了：{plan['detail']}"
+    assert plan["rasterized_families"] == ["scatter"], plan["detail"]
+
+
 #: 顶点估值允许偏离后端实测值的带宽。五族实测：mesh / scatter / poly /
 #: linecoll 逐个**精确相等**，contour 0.916（被裁剪的等值线上后端给每个
 #: `CLOSEPOLY` 多写一条回起点的 `L`）。±15% 容得下那一条，又足够窄

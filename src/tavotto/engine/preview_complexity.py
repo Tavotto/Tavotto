@@ -710,9 +710,10 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
 
     1. **逐个**超出本族预算的 → 进名单（一个 22 万 cell 的 mesh 自己就该走
        位图，与图上还有什么无关）；
-    2. 剩下的**加起来**仍然超 `TOTAL_VECTOR_PRIMITIVE_BUDGET` → 按开销从大到
-       小继续收，直到装得下。少了这一轮，「二十个各 4 万 cell 的面板」每个都
-       在族预算之内、合起来 80 万个节点照样把 DOM 打死。
+    2. 剩下的**加起来**仍然超图级预算（primitive 那条或 node 那条）→ 继续收，
+       直到两条都装得下。少了这一轮，「二十个各 4 万 cell 的面板」每个都在族
+       预算之内、合起来 80 万个节点照样把 DOM 打死。**每收一层重挑一次下一
+       层**，排序键只看此刻还在超的那条（见 `_rasterize_priority`）。
 
     收不动的（认不出来、或按契约不该 rasterize 的普通曲线）**留在矢量层**，
     由 Session 01 那道按字节的硬闸兜底——它不需要认识任何人。
@@ -722,13 +723,6 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         if cost.rasterizable and _over_own_budget(cost):
             cost.should_rasterize = True
 
-    # 第二轮按 (primitive, vertex, 树序) 降序收——树序在最后，是为了让两个
-    # 一模一样贵的 artist 有个确定的先后（同一张图两次分析出同一份名单）。
-    order = sorted(
-        range(len(costs)),
-        key=lambda i: (costs[i].primitive_count, costs[i].vertex_count, -i),
-        reverse=True,
-    )
     # **两条图级预算一起收敛**：primitive 那条按字节校准、node 那条按浏览器
     # 校准，谁没满足都要继续收。只看 primitive 的话，四格各 1.5 万 cell 的图
     # 收掉一格就「达标」了，却把 45 388 个元素交给 DOM——那正是这条节点预算
@@ -738,15 +732,23 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
     residual_nodes = sum(c.node_count for c in costs if not c.should_rasterize) + sum(
         1 for c in costs if c.should_rasterize
     )
-    for i in order:
-        if (
-            residual <= previewbudget.TOTAL_VECTOR_PRIMITIVE_BUDGET
-            and residual_nodes <= previewbudget.TOTAL_VECTOR_NODE_BUDGET
-        ):
+    # 候选每轮重挑，**不排一个静态序**。
+    #
+    # 上一版按 `(primitive, vertex, 树序)` 排好就照着走，于是「只有节点预算
+    # 超标」时它按一把量错了的尺子挑：13 000 点的逐实例着色散点是 26 000 个
+    # 节点 / 13 000 个 primitive，19 000 格的 mesh 是 19 000 / 19 000——两个
+    # 都在各自族预算之内，合起来只超节点那条。按 primitive 排先收 mesh，收完
+    # 还差 2 001 个节点，于是散点也收；而**只收散点**就够了，mesh 本可以留在
+    # 矢量层。多收的那一层是白丢的可编辑细节。
+    candidates = [i for i, c in enumerate(costs) if c.rasterizable and not c.should_rasterize]
+    while candidates:
+        over_p = residual - previewbudget.TOTAL_VECTOR_PRIMITIVE_BUDGET
+        over_n = residual_nodes - previewbudget.TOTAL_VECTOR_NODE_BUDGET
+        if over_p <= 0 and over_n <= 0:
             break
+        i = max(candidates, key=lambda i: _rasterize_priority(costs[i], over_p, over_n, i))
+        candidates.remove(i)
         cost = costs[i]
-        if cost.should_rasterize or not cost.rasterizable:
-            continue
         cost.should_rasterize = True
         residual -= cost.primitive_count
         # 收走的那一层塌成一个 `<image>`——是一，不是零。
@@ -760,6 +762,33 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         residual_nodes -= cost.node_count - 1
 
     return _plan_from_costs(costs)
+
+
+def _rasterize_priority(cost: ArtistPreviewCost, over_p: int, over_n: int, index: int):
+    """这一层现在该排多前面。数字大的先收。
+
+    **只按此刻还没满足的那条预算算**——那是这个函数存在的全部理由。一条预算
+    已经达标之后，它对「还该收谁」不该再有发言权，否则就是拿一把量错了对象
+    的尺子在挑。
+
+    两条都超时按**各自的超额归一化再相加**：`primitive_count` 与 `node_count`
+    是两个量纲，直接相加等于把两把尺子互相相除（ADR 0022 §9 记着这条纪律）。
+    归一化之后每一项都是「这一层把还差的那一段削掉了几成」，截到 1——削过头
+    不比刚好削平更值钱，否则一个巨大的层会仅凭体量压过两个正好够用的。
+
+    这是贪心，**不是最优解**：覆盖问题的最优解要枚举子集，而候选数在真实图上
+    是个位数到几十，收益不值那个复杂度。它保证的是「不再对正在超的那一维视而
+    不见」，不是「收得最少」。
+
+    `(vertex_count, -index)` 是确定性尾巴：同一张图两次分析出同一份名单。
+    """
+    score = 0.0
+    if over_p > 0:
+        score += min(cost.primitive_count, over_p) / over_p
+    if over_n > 0:
+        # 与 `residual_nodes` 的记账口径一致：收走之后它还留一个 `<image>`
+        score += min(cost.node_count - 1, over_n) / over_n
+    return (score, cost.vertex_count, -index)
 
 
 def _plan_from_costs(costs, *, trigger: str = "复杂度预算") -> PreviewPlan:

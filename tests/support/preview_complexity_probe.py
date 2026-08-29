@@ -229,6 +229,26 @@ def _fig_many_medium_meshes():
     return fig
 
 
+def _fig_mesh_plus_mapped_scatter():
+    """**只有节点预算超标**的那张图——排序键量错对象时它会多收一层。
+
+    18 769 格的 mesh：18 769 个 primitive = 18 769 个节点（族预算 20 000 之内）。
+    13 000 点的逐实例着色散点：13 000 个 primitive，但**26 000 个节点**
+    （几何共享 + `c=<数组>` ⇒ 每个 `<use>` 外面再包一个 `<g>`）。
+
+    合计 31 769 个 primitive（图级 50 000 之内，那条不响）、44 769 个节点
+    （图级 24 000 之外，只有这条响）。按 primitive 排序会先收 mesh，收完还差
+    2 001 个节点于是把散点也收了；**只收散点就够**，mesh 本可以留在矢量层。
+    """
+    rng = np.random.default_rng(11)
+    n = 137  # 137² = 18 769
+    edges = np.linspace(0, 1, n + 1)
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.pcolormesh(edges, edges, rng.standard_normal((n, n)), shading="flat")
+    ax.scatter(rng.random(13_000), rng.random(13_000), c=rng.random(13_000), s=6.0, lw=0.0)
+    return fig
+
+
 def _fig_imshow_colorbar():
     rng = np.random.default_rng(10)
     fig, ax = plt.subplots(figsize=(3.4, 2.8))
@@ -260,6 +280,7 @@ def _cases(issue181_n: int) -> dict:
         "trimesh_built": _fig_trimesh_built,
         "trimesh_unbuilt": _fig_trimesh_unbuilt,
         "many_medium_meshes": _fig_many_medium_meshes,
+        "mesh_plus_mapped_scatter": _fig_mesh_plus_mapped_scatter,
         "imshow_colorbar": _fig_imshow_colorbar,
         # 节点预算的两侧。`Line2D` 不可 rasterize，所以「收不动」那条路只有
         # 它走得出来——而这正是 #181 的残余缺口（primitive 与字节两侧都不响）。
