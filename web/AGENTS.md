@@ -173,8 +173,10 @@ byte-budget policy   SVG_RECENT_BUDGET_PER_FILE = 16 MiB
   内嵌画布没有第二条路。重画成功后那一版已经 live、被 pin 住，不会来回拉锯。
 * 诊断事件 `render.svg_evicted`（file / variant / scope / bytes，全部按 ADR
   0016 的 allowlist 序列化）。
-* 看护：`store/svgMemoryBudget.test.ts`（21 条）、`canvas/panelPreviewMode.
-  test.tsx` 的 evicted 一条、`hooks/useEngineSync.test.ts` 的重排一组。
+* 看护：`store/svgMemoryBudget.test.ts`、`canvas/panelPreviewMode.test.tsx`
+  的 evicted 一条、`hooks/useEngineSync.test.ts` 的重排一组、
+  `embedded/session.test.ts` 的种子记账两条。**新增判据前先跑一次变异**——
+  本节 20 条错误实现逐条反证过，其中「种子那一帧不记账」最初是全绿的。
 
 ## 假实时预览：预览平面与历史平面严格分开（2026-08-18，Phase G）
 
