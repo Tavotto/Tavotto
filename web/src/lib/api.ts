@@ -2235,6 +2235,14 @@ export const writeRegistryEntry = (payload: {
    */
   entry?: string
   stems: string[]
+  /**
+   * `true` = 把 `stems` **并进**这个脚本已有的归属；缺省是整条替换。
+   *
+   * 「把这一张图接到这个脚本上」必须传它：一个脚本产出多张图是常态，整条
+   * 替换会让同一个脚本的其它图当场失去编辑入口，而用户只点了一张。并集由
+   * **后端**在写回去的那份文件上算——前端手里那份视图可能是旧的。
+   */
+  append?: boolean
   cost?: string
   notes?: string
 }) =>

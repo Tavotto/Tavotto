@@ -169,7 +169,16 @@ function ReadinessBody() {
 
   const link = (panel: ReadinessPanel, script: string) =>
     run(`link:${panel.id}`, async () => {
-      await writeRegistryEntry({ script, entry: entryOf(view, script), stems: [panel.stem] })
+      // **并进去，不是换掉**：这个脚本很可能已经认领了别的图（一个脚本产出
+      // 多张是常态）。整条替换的话，用户点一下「接到这个脚本」就让同一个
+      // 脚本的其它图全部失去编辑入口——而他只是想接上眼前这一张。
+      // `cost` / `notes` 一个字都不传：不提 = 保留磁盘上原来那个值。
+      await writeRegistryEntry({
+        script,
+        entry: entryOf(view, script),
+        stems: [panel.stem],
+        append: true,
+      })
       useUiStore
         .getState()
         .setStatus(msg('readiness.linked', { name: fileName(panel.id) }, 'dialogs'))

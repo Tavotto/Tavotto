@@ -284,9 +284,12 @@ describe('绝不替用户决定', () => {
   it('冲突：点了哪个就写哪个（写的对象是 stem，不是这张图的文件名）', async () => {
     await open(reportOf(SIX))
     await clickIn(rowOf('Dup.pdf'), 'new.py')
-    // 入口取自这一轮扫出来的候选（`plot`），不是写死的 `main`
+    // 入口取自这一轮扫出来的候选（`plot`），不是写死的 `main`。
+    // `append: true` 是这条路的必需项——一个脚本产出多张图是常态，整条替换
+    // 会让 new.py 已经认领的其它图当场失去编辑入口，而用户只点了这一张。
+    // `cost` / `notes` 一个字都不传：不提 = 保留磁盘上原来那个值。
     expect(mockWrite).toHaveBeenCalledWith({
-      script: 'new.py', entry: 'plot', stems: ['Dup'],
+      script: 'new.py', entry: 'plot', stems: ['Dup'], append: true,
     })
   })
 
@@ -294,7 +297,7 @@ describe('绝不替用户决定', () => {
     await open(reportOf(SIX))
     await clickIn(rowOf('Dup.pdf'), 'old.py')
     expect(mockWrite).toHaveBeenCalledWith({
-      script: 'old.py', entry: undefined, stems: ['Dup'],
+      script: 'old.py', entry: undefined, stems: ['Dup'], append: true,
     })
   })
 })

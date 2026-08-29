@@ -2174,14 +2174,22 @@ def api_registry_write():
             {"error": f"entry 非法: {entry}", "code": "invalid_entry", "params": {"entry": entry}}
         ), 400
     stems = [str(s).strip() for s in (body.get("stems") or []) if str(s).strip()]
+    # `append`：把这几个 stem **并进**这个脚本已有的归属，而不是整条换掉。
+    # 「把这一张图接到这个脚本上」必须走它——一个脚本产出多张图是常态，
+    # 整条替换会让同一个脚本的其它图当场失去编辑入口，而用户只点了一张。
+    append = bool(body.get("append"))
     try:
         engine_discover.register(
             ctx.path,
             script,
             stems,
             entry=entry,
-            cost=str(body.get("cost") or "medium"),
+            # **空串不是 "medium"**：`register` 拿空串时保留磁盘上原来那个值。
+            # 在这里补一个默认，等于每次改归属都把用户设过的 light/heavy
+            # 悄悄改回 medium（而请求里根本没提 cost 这件事）。
+            cost=str(body.get("cost") or ""),
             notes=str(body.get("notes") or ""),
+            append=append,
         )
     except (OSError, RuntimeError) as exc:
         return jsonify(

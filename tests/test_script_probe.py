@@ -197,6 +197,95 @@ def _make_project(tmp_path, name="figs"):
 
 
 class TestRegistryApi:
+    def test_linking_one_stem_keeps_the_scripts_other_stems(self, client, tmp_path):
+        """一个脚本产出多张图是常态：接上第二张不能把第一张挤掉。
+
+        `PUT /api/registry` 走的是 `discover.register()`，而它对同名脚本
+        **整条替换**（探测结果是权威的，那条语义没动）。界面上「把这张图接到
+        这个脚本」是另一件事——只提一张图的请求整条替换掉归属，用户点一下就
+        让同一个脚本的其它图全部失去编辑入口，而他只是想接上眼前这一张。
+        """
+        figs = _make_project(tmp_path)
+        write(figs, "multi.py", SHOW_ONLY)
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "multi.py": {
+                            "entry": "main",
+                            "cost": "heavy",
+                            "notes": "跑得慢",
+                            "stems": ["FigA"],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+
+        resp = client.put(
+            "/api/registry", json={"script": "multi.py", "stems": ["FigB"], "append": True}
+        )
+        assert resp.status_code == 200
+        entry = resp.get_json()["scripts"]["multi.py"]
+        assert entry["stems"] == ["FigA", "FigB"]
+        # **请求里没提 cost / notes = 保留**，不是"回到默认"。补一个默认等于
+        # 每次改归属都把用户设过的 heavy 悄悄改回 medium。
+        assert entry["cost"] == "heavy"
+        assert entry["notes"] == "跑得慢"
+
+    def test_the_full_set_write_still_replaces(self, client, tmp_path):
+        """不带 `append` 的那条路一个字没动：「手工编辑整份 stem 清单」就是
+        整条替换——把它也改成并集，用户在清单里删掉一个 stem 会删不掉。"""
+        figs = _make_project(tmp_path)
+        write(figs, "multi.py", SHOW_ONLY)
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "multi.py": {"entry": "main", "cost": "light", "stems": ["FigA", "FigB"]}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+
+        resp = client.put("/api/registry", json={"script": "multi.py", "stems": ["FigA"]})
+        assert resp.status_code == 200
+        assert resp.get_json()["scripts"]["multi.py"]["stems"] == ["FigA"]
+
+    def test_append_takes_the_stem_away_from_whoever_had_it(self, client, tmp_path):
+        """并集只对**这个脚本自己**成立：被认领走的 stem 仍要从别的脚本摘掉，
+        否则 `registry.load` 会因重复 stem 直接报错（整个项目读不出来）。"""
+        figs = _make_project(tmp_path)
+        write(figs, "a.py", SHOW_ONLY)
+        write(figs, "b.py", SHOW_ONLY)
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "a.py": {"entry": "main", "stems": ["FigA"]},
+                        "b.py": {"entry": "main", "stems": ["FigB"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+
+        resp = client.put(
+            "/api/registry", json={"script": "a.py", "stems": ["FigB"], "append": True}
+        )
+        assert resp.status_code == 200
+        scripts = resp.get_json()["scripts"]
+        assert scripts["a.py"]["stems"] == ["FigA", "FigB"]
+        assert scripts["b.py"]["stems"] == []
+
     def test_all_scripts_reaches_the_product_api(self, client, tmp_path):
         figs = _make_project(tmp_path)
         write(figs, "show_only.py", SHOW_ONLY)

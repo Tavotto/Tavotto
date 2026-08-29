@@ -1015,11 +1015,19 @@ def register(
     entry: str = "main",
     cost: str = "medium",
     notes: str = "",
+    *,
+    append: bool = False,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
 
     同名脚本整条替换（探测结果是权威的），其它脚本里被本次认领走的 stem
     一并摘掉——否则 registry.load 会因重复 stem 直接报错。
+
+    `append=True` 时**并进去而不是换掉**：本次的 stem 与磁盘上那条已有的
+    合并。给「把这一张图接到这个脚本上」用——一个脚本产出多张图是常态，
+    整条替换会让同一个脚本的其它图当场失去编辑入口。并集在**这里**算而不是
+    让调用方先读一遍再传全集：调用方手里那份可能是旧的，而这里读的就是马上
+    要写回去的那份文件。
     """
     path = registry.existing_registry_path(figures_dir)
     try:
@@ -1029,15 +1037,18 @@ def register(
     if not cfg:
         cfg = {"version": 1, "scripts": {}}
     scripts = cfg.setdefault("scripts", {})
+    prev_entry = scripts.get(script) if isinstance(scripts.get(script), dict) else {}
     claimed = set(stems)
+    if append:
+        claimed |= {str(x) for x in (prev_entry or {}).get("stems", [])}
     for name, entry_cfg in list(scripts.items()):
         if name == script or not isinstance(entry_cfg, dict):
             continue
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
-    if stems:
-        prev = scripts.get(script) if isinstance(scripts.get(script), dict) else {}
+    if claimed:
+        prev = prev_entry or {}
         scripts[script] = {
             "entry": entry,
             "cost": cost or prev.get("cost", "medium"),
