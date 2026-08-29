@@ -35,8 +35,9 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `engine/updater.py`、`engine/runtime.py` 被 Flask import，
   **必须保持纯标准库**。
 - `engine/worker.py`、`engine/manifest.py`、`engine/overrides.py`、
-  `engine/figsession.py`、`engine/wireproto.py` 只在执行侧子进程里跑，
-  解释器由 `pool.find_worker_python()` 探测（需科学栈；可用 `TAVOTTO_WORKER_PYTHON` 覆盖）。
+  `engine/figsession.py`、`engine/wireproto.py`、`engine/preview_complexity.py`
+  只在执行侧子进程里跑，解释器由 `pool.find_worker_python()` 探测
+  （需科学栈；可用 `TAVOTTO_WORKER_PYTHON` 覆盖）。
 - `engine/bridge_runner.py` 与 `engine/bridgeboot.py` 跑在**用户自己的解释器**里
   （native bridge，ADR 0020）：**纯标准库、必须在 3.10 上跑得起来、启动阶段
   绝不 import matplotlib**——用户环境的版本我们说了不算，而提前 import
@@ -498,6 +499,21 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **不按 artist 类型特判**。#181 的表面成因是 `pcolormesh`，成本的真实来源是
   primitive 数量——`scatter` 十万点、`contourf` 上千条等值线是同一个问题。
   判据问「有多少 primitive」，不问「你是谁」。
+- **复杂度分析器 `engine/preview_complexity.py`（Session 02）只算账**：
+  Figure → `PreviewPlan`（mode / 估算 / 该 rasterize 谁）。**不 savefig、
+  不改 artist、不建大数组、不读 SVG**——它进 render 热路径（实测 0.0165 ms，
+  对面是 `savefig` 的 10 540 ms）。改了 artist 就等于把预览的表示法写进常驻
+  Figure，而常驻 Figure 是导出读的那一份（不变量 2）。真正设 / 还原
+  `rasterized` 是 Session 03，且必须在 `finally` 里还原。
+- **成本模型抄的是 matplotlib 自己的绘制路径，不是「数据点数 == SVG path 数」**：
+  `Collection.draw` 的单形状快路（→ `draw_markers`，几何进 `<defs>`）与
+  `RendererSVG.draw_path_collection` 的成本取舍式。同一个 `PathCollection`，
+  `s=标量` 共享几何、`s=<数组>` **每个 marker 各自内联**（顶点数差 500 倍）。
+  **改这个模型必须重跑对拍**（`test_model_matches_what_the_svg_backend_actually_emits`）：
+  同一张图带 / 不带那个 artist 各 `savefig` 一次，差分出后端真的写出来的节点
+  与顶点。它抓出过三处「我以为」，每一处都是模型偏低。
+- **`rasterized=True` 的 artist 只值一个 `<image>`**，不按 family 摊成 N 个
+  `<path>`——色条色带就是 matplotlib 自己设成 rasterized 的 `QuadMesh`。
 - 合成复现在 `tests/fixtures/large_figures/`，摊成可用图库用
   `tests/support/large_figures.py`。**跑出来的 SVG/PDF 绝不提交**
   （默认规模下 SVG 一百多 MB）。
