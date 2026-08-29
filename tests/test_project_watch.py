@@ -561,6 +561,23 @@ class TestBatching:
         w.poll()
         assert calls["refresh"][1] == ["DuringRefresh.pdf"]
 
+    def test_a_batch_already_taken_out_is_still_dropped_after_stop(self, tmp_path):
+        """`stop()` 清 pending 还不够：**这一批可能已经被取走了**。
+
+        线程刚把它从 `_pending` 里换出来、还没走到 `_dispatch`，`stop()` 才
+        落下——只靠清 pending 的话那一批照旧会发出去，而它的 `pj` 对前端
+        已经不存在了。这里直接钉 `stop_event`（不走 `stop()`，那会顺手把
+        pending 清掉，于是这条用例量的就成了另一件事）。
+        """
+        figs, w, (clock, calls) = self._armed(tmp_path, debounce=0.0)
+        w.stop_event.set()
+
+        _script(figs, "fig1.py", "Fig1")
+        clock.advance(1.0)
+        w.poll()
+        assert calls["refresh"] == []
+        assert calls["script_changed"] == []
+
     def test_stop_cancels_the_pending_batch(self, tmp_path):
         """项目关掉之后不许再发事件：那个 pj 对前端已经不存在了。"""
         figs, w, (clock, calls) = self._armed(tmp_path)

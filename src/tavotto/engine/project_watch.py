@@ -324,6 +324,11 @@ class ProjectWatcher:
         的话，前端收到「这张图变了」立刻重渲染，而池子里还是那个装着旧代码
         的热 worker——用户看到的是「改了没生效」，再点一次却好了。
         """
+        # 停了就别再动。`stop()` 会清掉 pending，但**这一批可能已经被取走**
+        # 了——线程刚把它从 `_pending` 里换出来，`stop()` 才落下。只靠清
+        # pending 的话，那一批照旧会发出去，而它的 `pj` 对前端已经不存在。
+        if self.stop_event.is_set():
+            return
         registered = set(self.ctx.registry.all_scripts())
         touched_scripts = sorted(batch.scripts & registered)
         style_changed = any(_is_style_module(rel) for rel in batch.scripts)
