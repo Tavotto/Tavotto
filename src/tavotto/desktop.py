@@ -42,7 +42,7 @@ from pathlib import Path
 from werkzeug.serving import make_server
 
 from . import security
-from .engine import ai_bridge as engine_ai, pool as engine_pool
+from .engine import ai_bridge as engine_ai, pool as engine_pool, project_watch as engine_watch
 
 LOG = logging.getLogger("tavotto.desktop")
 
@@ -210,7 +210,7 @@ class SidecarServer:
     def _cleanup(self) -> None:
         """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。"""
         try:
-            engine_pool.stop_watcher()  # None = 停掉全部项目的 watcher
+            engine_watch.stop()  # None = 停掉全部项目的 watcher
             engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
             engine_ai.interrupt_all()
         except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死

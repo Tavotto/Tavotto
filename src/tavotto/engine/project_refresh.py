@@ -135,15 +135,18 @@ def seed_state(ctx) -> RefreshState:
 
 @dataclass(frozen=True)
 class RefreshSink:
-    """刷新的两个副作用出口，由 app 层注入。
+    """刷新的副作用出口，由 app 层注入。
 
-    模块本身不 import Flask、也不知道 SSE 长什么样；`watch` 同理——重挂
-    watcher 需要的那个回调（事件里要带 pj）是 app 层的东西。两个都缺省为
-    `None`，于是纯引擎侧的调用（测试、CLI）什么都不发。
+    模块本身不 import Flask、也不知道 SSE 长什么样。缺省 `None`，于是纯引擎
+    侧的调用（测试、CLI）什么都不发。
+
+    这里**曾经还有一个 `watch`**：老的脚本 watcher 按注册表里那张清单逐个盯
+    mtime，所以清单变了就得重挂一次。项目 watcher（`engine/project_watch.py`）
+    盯的是整棵树，没有"盯谁"这个状态——那个钩子于是没有了对应的动作，
+    留着它只会是一个没人调的形状。
     """
 
     publish: Callable[[str, dict], None] | None = None
-    watch: Callable[[list[str]], None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -479,12 +482,6 @@ def refresh_project_index(
         # 冷启动，用户会以为是自己点坏了什么。
         for script in registry_diff["removed_scripts"] + registry_diff["changed_scripts"]:
             pool.invalidate(script, str(root))
-
-        # watcher 只在**盯的对象**变了时重挂：它按脚本名跟踪 mtime，
-        # entry/cost 变了不影响它盯谁。无差异重挂会把 mtime 基线重置一遍。
-        if sink is not None and sink.watch is not None:
-            if registry_diff["added_scripts"] or registry_diff["removed_scripts"]:
-                sink.watch(list(after_registry))
 
         result = {
             "reason": reason,

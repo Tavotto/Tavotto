@@ -27,7 +27,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from tavotto.engine import pool
+from tavotto.engine import pool, project_watch
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -791,7 +791,7 @@ def project(tmp_path, monkeypatch, library):
     finally:
         m.reset_projects()
         pool.shutdown_all(figures_dir=str(ctx[2]), wait=True)
-        pool.stop_watcher()
+        project_watch.stop()
 
 
 def _render(client, stem, patches, **extra):

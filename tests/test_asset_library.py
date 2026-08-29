@@ -28,6 +28,7 @@ from tavotto import app as m
 from tavotto.engine import (
     pool as engine_pool,
     probe as engine_probe,
+    project_watch as engine_watch,
     registry as engine_registry,
     runtimeasset,
 )
@@ -88,7 +89,7 @@ def client():
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 # ===========================================================================

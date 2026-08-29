@@ -271,6 +271,12 @@ def _norm_dir(figures_dir: str | Path) -> str:
     return config.normalize_path_identity(p)
 
 
+#: 公开别名。`engine/project_watch.py` 的 watcher 注册表用同一个键——三处
+#: （池、watcher、`app._project_id`）分头判断的话，一个认为是同一个项目、
+#: 另一个认为是两个。
+norm_dir = _norm_dir
+
+
 def _next_generation(key: tuple[str, str]) -> int:
     """该池键的下一代序号（从 1 开始，每重建一次 +1，进程内单调）。"""
     with _gen_lock:
@@ -1935,6 +1941,24 @@ def invalidate(script_name: str, figures_dir: str | None = None) -> None:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
 
+def invalidate_project(figures_dir: str | Path) -> None:
+    """作废**一个项目**的全部会话（共享样式模块变更走这条路）。
+
+    与 `shutdown_all(figures_dir)` 的差别在语义而不在实现：那个是"这个项目
+    要关了"，这个是"它们装着的代码过期了，下次请求自动重建"。差别会在日志
+    和以后的指标上显出来，别把两件事合成一个函数。
+
+    `_workers` 的键是 `(项目, 脚本)`，所以"只动本项目"是结构性的——
+    另一个图库里同名的 `fig1.py` 不会被顺手打掉。
+    """
+    target = _norm_dir(figures_dir)
+    with _lock:
+        keys = [k for k in _workers if k[0] == target]
+        victims = [_workers.pop(k) for k in keys]
+    for w in victims:
+        threading.Thread(target=w.shutdown, daemon=True).start()
+
+
 def force_cancel(script_name: str, figures_dir: str) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
@@ -1998,70 +2022,3 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
             workerd_client.reset_client()
         except Exception:  # noqa: BLE001 — 退出路径不许因为收尾动作抛出而中断
             pass
-
-
-# 每个项目一个 watcher：多标签页各开各的项目时，两个图库都要被盯着。
-_watchers: dict[str, threading.Event] = {}
-
-
-def stop_watcher(figures_dir: str | None = None) -> None:
-    """停掉 watcher 线程；不给目录则全停（进程退出）。"""
-    with _lock:
-        if figures_dir is None:
-            events = list(_watchers.values())
-            _watchers.clear()
-        else:
-            ev = _watchers.pop(_norm_dir(figures_dir), None)
-            events = [ev] if ev is not None else []
-    for ev in events:
-        ev.set()
-
-
-def watched_dirs() -> list[str]:
-    with _lock:
-        return list(_watchers)
-
-
-def start_watcher(figures_dir: str, scripts: list[str], on_change, interval: float = 2.0) -> None:
-    """轮询脚本 mtime；变更即作废会话并回调（paper_style 变更作废全部）。
-    同一目录重复调用自动替换旧 watcher（注册表变了要重新盯新脚本）。"""
-    key = _norm_dir(figures_dir)
-    stop_watcher(figures_dir)
-    stop = threading.Event()
-    with _lock:
-        _watchers[key] = stop
-    fig_dir = Path(figures_dir)
-    tracked: dict[str, float | None] = {}
-    for s in [*scripts, "paper_style.py"]:
-        try:
-            tracked[s] = (fig_dir / s).stat().st_mtime
-        except OSError:
-            tracked[s] = None
-
-    def loop():
-        while not stop.wait(interval):
-            changed = []
-            for s in tracked:
-                try:
-                    mt = (fig_dir / s).stat().st_mtime
-                except OSError:
-                    continue
-                if tracked[s] is not None and mt != tracked[s]:
-                    changed.append(s)
-                tracked[s] = mt
-            if not changed:
-                continue
-            LOG.info("脚本变更: %s，作废会话", changed)
-            if "paper_style.py" in changed:  # 共享样式变了，本项目全作废
-                with _lock:
-                    victims = [k[1] for k in _workers if k[0] == key]
-            else:
-                victims = changed
-            for name in victims:
-                invalidate(name, figures_dir)  # 只动本项目的会话
-            try:
-                on_change(changed)
-            except Exception:  # noqa: BLE001 — watcher 不允许因回调挂掉
-                pass
-
-    threading.Thread(target=loop, daemon=True, name=f"mm-script-watcher-{key[-24:]}").start()

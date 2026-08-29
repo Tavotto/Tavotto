@@ -32,6 +32,7 @@ from tavotto.engine import (
     discover,
     figcapture,
     pool as engine_pool,
+    project_watch as engine_watch,
     registry as engine_registry,
     runtimeasset,
 )
@@ -108,7 +109,7 @@ def client():
     m.reset_projects()
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 # ===========================================================================

@@ -69,6 +69,7 @@ from .engine import (
     pool as engine_pool,
     probe as engine_probe,
     project_refresh as engine_refresh,
+    project_watch as engine_watch,
     projectenv as engine_projectenv,
     registry as engine_registry,
     runcodes as engine_runcodes,
@@ -1250,7 +1251,7 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
         PROJECTS[pid] = ctx
         if make_default or DEFAULT_PROJECT is None:
             DEFAULT_PROJECT = pid
-    engine_pool.start_watcher(str(path), reg.all_scripts(), _script_change_handler(ctx))
+    engine_watch.start(ctx, sink=_watch_sink(ctx))
     engine_config.touch_recent(str(path))
     LOG.info(
         "项目已打开: %s（%d 个脚本%s）",
@@ -1276,7 +1277,7 @@ def close_project(pid: str, wait: bool = False) -> bool:
             DEFAULT_PROJECT = next(iter(PROJECTS), None)
     if ctx is None:
         return False
-    engine_pool.stop_watcher(str(ctx.path))
+    engine_watch.stop(str(ctx.path))
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -1309,16 +1310,29 @@ def reset_projects(wait: bool = False) -> None:
 
 
 def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:
-    """统一刷新服务的两个副作用出口：发 SSE、重挂 watcher。
+    """统一刷新服务的副作用出口：发 SSE。
 
-    引擎侧不知道 SSE 长什么样，也不知道 watcher 回调要带哪个 pj——这两件事
-    都是 app 层的。注入而不是 import 回来，是为了让 `engine/project_refresh.py`
-    保持"能被 Flask 父进程安全 import 的纯标准库模块"。
+    引擎侧不知道 SSE 长什么样，也不知道事件里要带哪个 pj——那是 app 层的事。
+    注入而不是 import 回来，是为了让 `engine/project_refresh.py` 保持
+    "能被 Flask 父进程安全 import 的纯标准库模块"。
     """
-    return engine_refresh.RefreshSink(
-        publish=sse_publish,
-        watch=lambda scripts: engine_pool.start_watcher(
-            str(ctx.path), list(scripts), _script_change_handler(ctx)
+    return engine_refresh.RefreshSink(publish=sse_publish)
+
+
+def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
+    """项目 watcher 的三个出口。
+
+    **watcher 只调 `refresh_project()`**，不自己 merge、不自己发
+    `registry.changed` / `assets.changed`（ADR 0025 的唯一编排）。它自己发的
+    只有两样：已登记脚本内容变了（`panel.file_changed`，那是"重渲染这张图"
+    的信号，不是派生数据变化），以及后台刷新失败时的项目级错误。
+    """
+    return engine_watch.WatchSink(
+        refresh=lambda paths: refresh_project(ctx, reason="watcher", changed_paths=paths),
+        script_changed=_script_change_handler(ctx),
+        error=lambda code, params: sse_publish(
+            "project.error",
+            {"pj": ctx.id, "reason": "watcher", "code": code, "params": params},
         ),
     )
 

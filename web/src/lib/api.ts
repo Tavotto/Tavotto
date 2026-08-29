@@ -1440,6 +1440,19 @@ export type ServerEvent =
       removed: string[]
       changed: string[]
     } & ProjectScoped)
+  /**
+   * 项目级的后台失败（今天只有一个来源：文件 watcher 触发的刷新没成功）。
+   *
+   * **它是可恢复的**：内存里的注册表原封不动，watcher 线程继续跑，用户把
+   * 注册表改回合法 JSON 之后下一轮自动重试。`code` 走 `errors:*` 那张码表
+   * （两种语言都有文案），`params` 是它的插值。
+   */
+  | ({
+      kind: 'project.error'
+      reason?: RefreshReason
+      code: string
+      params?: Record<string, string>
+    } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | ({
       kind: 'native.session'
@@ -1468,6 +1481,7 @@ const EVENT_KINDS = [
   'panel.file_changed',
   'registry.changed',
   'assets.changed',
+  'project.error',
   'probe.started',
   'native.session',
   'engine.bootstrap',

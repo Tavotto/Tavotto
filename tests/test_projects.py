@@ -7,7 +7,12 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import config as engine_config, pool as engine_pool
+from tavotto.engine import (
+    config as engine_config,
+    pool as engine_pool,
+    project_watch as engine_watch,
+    registry as engine_registry,
+)
 
 
 @pytest.fixture
@@ -16,7 +21,7 @@ def client(monkeypatch):
     m.reset_projects()  # 测试间互不污染：进来就是「一个项目都没开」
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 def _make_figs(tmp_path, name="figs"):
@@ -27,6 +32,19 @@ def _make_figs(tmp_path, name="figs"):
     doc.save(figs / "p1.pdf")
     doc.close()
     return figs
+
+
+class _FakeCtx:
+    """watcher 只要 ctx 的三样东西：path / id / registry。"""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.id = self.path.name
+        self.registry = engine_registry.Registry()
+
+
+def _fake_ctx(path):
+    return _FakeCtx(path)
 
 
 # ---------------- engine/config.py ------------------------------------------
@@ -133,24 +151,29 @@ def test_remove_recent_keeps_disk(client, tmp_path):
 
 def test_watcher_replacement_stops_old(tmp_path):
     """同一目录重开 watcher 换掉旧的；**不同目录的 watcher 各自独立**——
-    多标签页各开各的项目时，两个图库都得继续被盯着。"""
+    多标签页各开各的项目时，两个图库都得继续被盯着。
+
+    「换掉」要量到旧那一个**真的停了**（stop_event 被 set），不只是表里少了
+    一条：只从注册表里摘掉的话，那个线程还在跑、还在拍快照、还会继续发事件。
+    """
     figs = _make_figs(tmp_path, "w1")
     other = _make_figs(tmp_path, "w2")
-    engine_pool.start_watcher(str(figs), [], lambda c: None, interval=0.05)
-    first = engine_pool._watchers[engine_pool._norm_dir(str(figs))]
-    assert not first.is_set()
+    a1 = engine_watch.start(_fake_ctx(figs), interval=0.05)
+    assert not a1.stop_event.is_set()
 
-    engine_pool.start_watcher(str(other), [], lambda c: None, interval=0.05)
-    assert not first.is_set()  # 另一个项目的 watcher 不受影响
-    assert len(engine_pool.watched_dirs()) == 2
+    engine_watch.start(_fake_ctx(other), interval=0.05)
+    assert not a1.stop_event.is_set()  # 另一个项目的 watcher 不受影响
+    assert len(engine_watch.watched_dirs()) == 2
 
-    engine_pool.start_watcher(str(figs), [], lambda c: None, interval=0.05)
-    assert first.is_set()  # 同目录的旧 watcher 已被叫停
+    a2 = engine_watch.start(_fake_ctx(figs), interval=0.05)
+    assert a1.stop_event.is_set()  # 同目录的旧 watcher 已被叫停
+    assert a2 is engine_watch.watcher_of(figs)
 
-    engine_pool.stop_watcher(str(figs))
-    assert engine_pool.watched_dirs() == [engine_pool._norm_dir(str(other))]
-    engine_pool.stop_watcher()
-    assert engine_pool.watched_dirs() == []
+    engine_watch.stop(str(figs))
+    assert a2.stop_event.is_set()
+    assert engine_watch.watched_dirs() == [engine_pool.norm_dir(str(other))]
+    engine_watch.stop()
+    assert engine_watch.watched_dirs() == []
 
 
 def test_ai_interrupt_all_marks_running_sessions():

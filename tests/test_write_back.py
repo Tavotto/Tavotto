@@ -32,7 +32,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import patchspec, pool as engine_pool
+from tavotto.engine import patchspec, pool as engine_pool, project_watch as engine_watch
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
     yield m.app.test_client()
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 def _figs(tmp_path, with_png: bool = True) -> Path:

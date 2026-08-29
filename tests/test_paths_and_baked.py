@@ -87,14 +87,14 @@ def baked(tmp_path, monkeypatch):
     旧的全局 baked_overrides.json 只作为一次性迁移源，测试里也指到临时文件，
     绝不碰真实数据目录。
     """
-    from tavotto.engine import pool as engine_pool
+    from tavotto.engine import project_watch as engine_watch
 
     m.reset_projects()
     monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
     monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
     yield tmp_path / "_legacy_baked.json"
     m.reset_projects()
-    engine_pool.stop_watcher()
+    engine_watch.stop()
 
 
 def test_load_baked_missing_file(baked, tmp_path):
