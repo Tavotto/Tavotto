@@ -370,6 +370,42 @@ def _fig_polys(n: int):
     return fig
 
 
+def _fig_polys_tail_heavy(n_small: int, n_big: int, big_verts: int):
+    """**异构** collection：前面一堆四边形，后面少数几个顶点极多的多边形。
+
+    前缀抽样在这个形状上必然偏低——重几何全排在取样窗口之外。真实世界里
+    `PolyCollection` 先小后大很常见（等值面、分箱统计、地理边界）。
+    """
+    rng = np.random.default_rng(5)
+    xy = rng.random((n_small, 2))
+    verts = [[(x, y), (x + 0.005, y), (x + 0.005, y + 0.005), (x, y + 0.005)] for x, y in xy]
+    t = np.linspace(0, 2 * np.pi, big_verts, endpoint=False)
+    for k in range(n_big):
+        r = 0.2 + 0.02 * k
+        verts.append(list(zip(0.5 + r * np.cos(t), 0.5 + r * np.sin(t))))
+    fig, ax = _bare_axes()
+    ax.add_collection(PolyCollection(verts, facecolors="#4477aa"))
+    return fig
+
+
+def _fig_hidden_mesh(n: int):
+    """一块 `visible=False` 的大网格：**后端一个节点都不写**。
+
+    按全价记进账的话，一块藏起来的图层就能凭空逼出一次 hybrid——用户看到的是
+    「明明没显示那层，画面却糊了」。
+    """
+    fig = _cross_mesh(n)
+    fig.axes[0].collections[0].set_visible(False)
+    return fig
+
+
+def _fig_hidden_axes(n: int):
+    """整个 axes 隐掉：它的孩子一起不画。"""
+    fig = _cross_mesh(n)
+    fig.axes[0].set_visible(False)
+    return fig
+
+
 def _fig_linecoll(n: int):
     from matplotlib.collections import LineCollection
 
@@ -439,9 +475,42 @@ _CROSSCHECK = {
     # 已经是位图的 artist：SVG 里是 **1 个 `<image>`**，不是 576 个 `<path>`
     "mesh_prerasterized": (lambda: _cross_mesh(24, rasterized=True), _fig_blank),
     "polycollection": (lambda: _fig_polys(300), _fig_blank),
+    # 异构、且 path 数**超过取样上限**：前缀抽样在这一格上会把顶点数估到零头
+    "poly_tail_heavy": (lambda: _fig_polys_tail_heavy(4200, 6, 2000), _fig_blank),
+    # 不可见的那两格：后端一个节点都不写，模型也必须报 0
+    "mesh_hidden": (lambda: _fig_hidden_mesh(24), _fig_blank),
+    "mesh_hidden_axes": (lambda: _fig_hidden_axes(24), _fig_blank),
     "linecoll": (lambda: _fig_linecoll(400), _fig_blank),
     "contour": (_cross_contour, _fig_blank),
 }
+
+
+def _vertex_sampling() -> dict:
+    """同一个异构 collection 上，三种数法各得多少个顶点。
+
+    `exact` 是逐条数出来的真值，`stride` 是模型现在用的等距抽样，`prefix` 是
+    **旧实现**（取前 N 条再等比放大）。三个数摆在一起，「前缀抽样会系统性
+    偏低」这句话才是可证的，而不是一句解释。
+
+    数是**这里现算**的，不调模型的私有函数——两侧同源就等于自己验自己。
+    """
+    fig = _fig_polys_tail_heavy(4200, 6, 2000)
+    paths = fig.axes[0].collections[0].get_paths()
+    n = len(paths)
+    cap = pc._VERTEX_SAMPLE_PATHS
+    exact = sum(len(q.vertices) for q in paths)
+    prefix_sample = paths[:cap]
+    prefix = round(sum(len(q.vertices) for q in prefix_sample) / len(prefix_sample) * n)
+    cost = next(c for c in pc.analyze_preview_complexity(fig).costs if c.family == pc.FAMILY_POLY)
+    plt.close(fig)
+    return {
+        "paths": n,
+        "sample_cap": cap,
+        "exact": exact,
+        "prefix": prefix,
+        "stride": cost.vertex_count,
+        "exact_flag": cost.vertex_count_exact,
+    }
 
 
 def _crosscheck() -> list[dict]:
@@ -544,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         "cases": {n: _run_case(n, b) for n, b in _cases(args.issue181_n).items()},
         "state_case": _run_state_case(args.issue181_n),
         "crosscheck": _crosscheck(),
+        "vertex_sampling": _vertex_sampling(),
     }
     if args.bench:
         payload["bench"] = _bench(args.issue181_n, args.bench_repeat)

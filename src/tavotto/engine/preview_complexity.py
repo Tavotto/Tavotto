@@ -186,7 +186,17 @@ RASTERIZABLE_FAMILIES = frozenset(
 #: 别的判据上出局了）。为什么必须这样：60 000 条线段逐条 `len(p.vertices)`
 #: 实测 1.9 ms，22 万个就是 7 ms——那是热路径上白付的钱。
 #:
-#: 抽样是**确定性**的（永远取前 N 个，不随机），所以同一张图两次分析出同一个数。
+#: 抽样**跨全序列等距取**，不取前 N 个：前缀抽样在**异构** collection 上会
+#: 系统性偏低——重几何排在后面的那一半（`PolyCollection` 里先小后大是常见
+#: 形态：等值面、分箱统计、地理边界）整个看不见，于是一个真有几十万顶点的层
+#: 被估成便宜的、停在 vector，而那正是这个分析器存在的理由。实测 4206 条 path
+#: 的异构 collection：真值 33 006，前缀抽样报 21 030（63.7%），等距抽样报
+#: 31 278（94.8%）。等距同样是**确定性**的（同一张图两次分析出同一个数），
+#: 代价是零：取样条数一个不多。
+#:
+#: 它仍然只是**估值**，不是上界——极端对抗形状（顶点全挤在没被取到的那些
+#: path 上）照样骗得过它。那一层由软闸兜底：产物真的超过 8 MiB 时字节这把
+#: 尺子会看见（ADR 0022 Session 03 的升档）。
 _VERTEX_SAMPLE_PATHS = 4096
 
 
@@ -204,7 +214,7 @@ class ArtistPreviewCost:
     primitive_count: int
     #: 会被序列化进 SVG 文本的坐标对数。
     vertex_count: int
-    #: 顶点数是逐条数出来的（True）还是按前 `_VERTEX_SAMPLE_PATHS` 个等比放大的。
+    #: 顶点数是逐条数出来的（True）还是按等距取的 `_VERTEX_SAMPLE_PATHS` 条放大的。
     vertex_count_exact: bool = True
     #: hybrid **允许**对它 rasterize 吗（见 `RASTERIZABLE_FAMILIES`：这是策略）。
     rasterizable: bool = False
@@ -352,7 +362,14 @@ def _vertices_in_paths(paths) -> tuple[int, bool]:
     n = len(paths)
     if n == 0:
         return 0, True
-    sample = paths[:_VERTEX_SAMPLE_PATHS] if n > _VERTEX_SAMPLE_PATHS else paths
+    if n <= _VERTEX_SAMPLE_PATHS:
+        sample = paths
+    else:
+        # **等距跨全序列**，不是前缀（见 `_VERTEX_SAMPLE_PATHS`）。用浮点步长
+        # 取整而不是 `paths[::step]`：整数步长在 n 不是整倍数时取样条数会飘，
+        # 而条数一飘，下面那个 `total / len(sample) * n` 的放大系数就跟着飘。
+        step = n / _VERTEX_SAMPLE_PATHS
+        sample = [paths[min(n - 1, int(i * step))] for i in range(_VERTEX_SAMPLE_PATHS)]
     total = 0
     for p in sample:
         try:
@@ -574,25 +591,44 @@ def _classify(artist) -> ArtistPreviewCost:
     )
 
 
+def _visible(artist) -> bool:
+    """这个 artist 会被画出来吗。**问不出来就当会**。
+
+    方向是选过的：`visible=False` 的 artist 后端一个字节都不写，把它当成会画
+    只是**高估**（多一次不必要的 rasterize，画质降级）；反过来把一个真会画的
+    大 mesh 当成不画，就是漏判，那正是这个分析器要防的事。所以未知 → 会画。
+    """
+    try:
+        return bool(artist.get_visible())
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _iter_artists(fig, skip_axes):
-    """要算账的 artist，**确定性树序**。
+    """要算账的 artist，**确定性树序**，且**只算后端真会画的那些**。
 
     遍历的 axes 集合借 `manifest._ordered_axes`：`ax.inset_axes()` 与
     `secondary_[xy]axis()` 建出来的子 axes **不在 `fig.axes` 里**，插图里的
     大 mesh 漏掉了就是「分析器说这张图很小」。哪些 axes 存在只有一个答案，
     这里不另立一份。
 
+    **`visible=False` 的整段跳过**（axes 隐了，它的孩子一起不画）。成本模型抄
+    的是「SVG 后端会写出什么」，而后端对不可见的 artist 一个节点都不写——按全价
+    记进账的话，一块藏起来的大 mesh 就能凭空逼出一次 hybrid，用户看到的是
+    「明明没显示那层图，画面却糊了」。这不是保守，是量错了对象。
+
     `ax.patches` / `ax.texts` 有意不算：一个 patch 是一个节点，它们撑不爆
     DOM；漏掉的那点顶点由 Session 01 按字节的硬闸兜底（见模块头「已知盲区」）。
     """
     for ax in _ordered_axes(fig)[0]:
-        if ax in skip_axes:
+        if ax in skip_axes or not _visible(ax):
             continue
-        yield from ax.collections
-        yield from ax.images
-        yield from ax.lines
-        yield from ax.artists
-    yield from fig.artists
+        for artist in (*ax.collections, *ax.images, *ax.lines, *ax.artists):
+            if _visible(artist):
+                yield artist
+    for artist in fig.artists:
+        if _visible(artist):
+            yield artist
 
 
 # ------------------------------ 裁决 ---------------------------------------

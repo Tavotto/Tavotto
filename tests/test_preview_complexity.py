@@ -230,10 +230,62 @@ def test_vertex_model_tracks_what_the_backend_writes(probe):
             # 已经是位图：两侧都该是 0 个顶点，比值没有意义
             assert (model, real) == (0, 0), f"{row['case']}: {(model, real)}"
             continue
+        if row["case"].startswith("mesh_hidden"):
+            # 不可见那两格：后端一个顶点都不写，模型也必须报 0。这里比的是
+            # 「两侧都是 0」，不是比值——0/0 没有意义，而**恒等成立的判据挡不住
+            # 任何东西**，所以它必须走一条自己的断言，不能混进带宽那条里。
+            assert (model, real) == (0, 0), f"{row['case']}: {(model, real)}"
+            continue
         assert real > 0, f"{row['case']}: 对拍那一侧没量到东西，判据是空的"
         assert lo <= model / real <= hi, (
             f"{row['case']}: 模型 {model} vs 后端实际 {real}（比 {model / real:.3f}）"
         )
+
+
+def test_vertex_sampling_covers_the_whole_collection_not_just_the_prefix(probe):
+    """**异构 collection 上的顶点抽样不许只看开头。**
+
+    重几何排在后面的形状（`PolyCollection` 先小后大：等值面、分箱统计、地理
+    边界都是这样）在前缀抽样下会被系统性低估，于是一个真有几十万顶点的层被
+    估成便宜的、停在 `vector`——而那正是这个分析器存在的理由。
+
+    三个数摆在一起才说得清（探针现算，不调模型的私有函数）：4206 条 path、
+    取样上限 4096，真值 33 006，**旧的前缀抽样只报 21 030（63.7%）**，等距抽样
+    报 31 278（94.8%）。上界那条同样要钉：抽样不许把估值抬到真值之上去「保守」。
+
+    评审 P2（PR #199）。修的是实例，判据钉的是这一族形状。
+    """
+    v = probe["vertex_sampling"]
+    assert v["paths"] > v["sample_cap"], "用例前提：path 数确实超过取样上限，才谈得上抽样"
+    assert v["exact_flag"] is False, "用例前提：这一格走的是抽样那一支"
+    lo, hi = _VERTEX_BAND
+    assert lo <= v["stride"] / v["exact"] <= hi, (
+        f"等距抽样 {v['stride']} vs 真值 {v['exact']}（比 {v['stride'] / v['exact']:.3f}）"
+    )
+    # **前缀抽样必须明显更差**——否则这张图区分不开两种数法，上面那条是恒真的
+    assert v["prefix"] / v["exact"] < lo, (
+        f"用例前提：前缀抽样在这张图上应当明显偏低，实得比 {v['prefix'] / v['exact']:.3f}"
+    )
+
+
+def test_invisible_artists_are_not_priced(probe):
+    """`visible=False` 的 artist 与 axes **一分钱都不该记**。
+
+    后端对不可见的 artist 一个节点都不写（对拍两格的 `svg_delta_path` 都是 0）。
+    按全价记进账的话，一块藏起来的大 mesh 就能凭空逼出一次 hybrid——用户看到
+    的是「明明没显示那层图，画面却糊了」。这不是保守，是量错了对象。
+
+    判据取自与后端的 A/B 差分，不是「读一遍代码觉得对」。评审 P2（PR #199）。
+    """
+    rows = {r["case"]: r for r in probe["crosscheck"]}
+    for case in ("mesh_hidden", "mesh_hidden_axes"):
+        row = rows[case]
+        assert row["svg_delta_path"] == 0, f"{case}: 用例前提——后端确实什么都没画"
+        assert row["model_primitives"] == 0, f"{case}: 模型仍然在给不可见的层记账"
+        assert row["model_vertices"] == 0, case
+    # 对照：**同一块网格显示出来时两侧都不是 0**，否则上面那两条恒成立
+    visible = rows["mesh"]
+    assert visible["svg_delta_path"] > 0 and visible["model_primitives"] > 0
 
 
 # --------------------------------------------------------------------------

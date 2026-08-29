@@ -506,7 +506,9 @@ python tests/support/preview_complexity_probe.py \
 
 逐族的精确度另有对拍看护（`tests/test_preview_complexity.py::test_model_matches_what_the_svg_backend_actually_emits`）：
 同一张图带 / 不带那个 artist 各 `savefig` 一次，差分出它自己摊出来的节点数与
-顶点数。九格里 primitive **全部逐个相等**，vertex 八格相等、contour 一格 0.916。
+顶点数。**十二格里 primitive 全部逐个相等**；vertex 七格精确相等、
+`poly_tail_heavy` 0.948、contour 0.916，另三格（已是位图 / 两格不可见）两侧
+都是 0——那三格比的是「都为 0」，不是比值，0/0 的判据挡不住任何东西。
 
 ### 这几个数说明什么
 

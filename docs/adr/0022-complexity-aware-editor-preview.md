@@ -209,11 +209,21 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 `Collection.draw` 的单形状快路（→ `draw_markers`，几何进 `<defs>`）与
 `RendererSVG.draw_path_collection` 的成本取舍式。**并且与后端对拍**：同一张图
 带 / 不带某个 artist 各 `savefig` 一次，差分出它真的摊出来的 `<path>` /
-`<use>` / `<image>` 与顶点数。九格对拍里 primitive 逐个相等。
+`<use>` / `<image>` 与顶点数。**十二格对拍里 primitive 逐个相等。**
 
 对拍第一轮就抓出三处「我以为」——网格每 cell 是 5 个坐标对不是 4；空的
 contour 层照样占一个 `<path>` 节点；`scatter(x, y, s=<数组>)` 掉出单形状快路、
 **每个 marker 各自内联**（顶点数比 `s=标量` 多 500 倍）。三处都是模型偏低。
+
+评审又抓出两处，两处都是**判据量错了对象**，都补进了对拍（2026-08-29）：
+
+* **顶点抽样只取前 4096 条**。异构 collection（先小后大：等值面、分箱统计、
+  地理边界）的重几何全排在窗口之外。实测 4206 条 path：真值 33 006，前缀抽样
+  报 21 030（**63.7%**），改成跨全序列等距抽样后报 31 278（94.8%）。偏低方向
+  = 漏判，正是这个分析器要防的事。
+* **`visible=False` 的 artist 按全价记账**。后端对不可见的 artist 一个节点都不
+  写（对拍两格的 `svg_delta_path` 都是 0）。偏高方向 = 一块藏起来的大 mesh 凭空
+  逼出一次 hybrid，用户看到的是「明明没显示那层图，画面却糊了」。
 
 **软闸仍然不改变任何行为**：分析器产出的是名单，把名单变成 `set_rasterized`
 是 Session 03。`test_soft_band_still_passes_through_today` 照旧钉着那个缺口。

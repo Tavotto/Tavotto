@@ -511,7 +511,13 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `s=标量` 共享几何、`s=<数组>` **每个 marker 各自内联**（顶点数差 500 倍）。
   **改这个模型必须重跑对拍**（`test_model_matches_what_the_svg_backend_actually_emits`）：
   同一张图带 / 不带那个 artist 各 `savefig` 一次，差分出后端真的写出来的节点
-  与顶点。它抓出过三处「我以为」，每一处都是模型偏低。
+  与顶点。它抓出过五处「我以为」，**两个方向的偏都出现过**——三处模型偏低
+  （网格每 cell 5 个坐标对、空 contour 层也占节点、`s=<数组>` 的散点逐个内联），
+  一处偏低一处偏高是评审抓的：**顶点抽样只取前 4096 条**（异构 collection 上
+  实测只报出真值的 63.7%，改成跨全序列等距抽样）与 **`visible=False` 的 artist
+  按全价记账**（后端一个节点都不写，记了就会凭空逼出一次 hybrid）。
+  两条判据的共同形状是「量错了对象」：一个量的是开头那一段而不是整条，一个
+  量的是 artist 图而不是后端会写出什么。
 - **`rasterized=True` 的 artist 只值一个 `<image>`**，不按 family 摊成 N 个
   `<path>`——色条色带就是 matplotlib 自己设成 rasterized 的 `QuadMesh`。
 - 合成复现在 `tests/fixtures/large_figures/`，摊成可用图库用
