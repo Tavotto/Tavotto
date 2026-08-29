@@ -687,11 +687,15 @@ class TestConcurrencyAndFailure:
         holder.start()
         assert inside_a.wait(5), "A 的刷新没能进到临界区"
         try:
-            m.refresh_project(ctx_b, reason="manual")  # 全局大锁的话这里会卡死
+            m.refresh_project(ctx_b, reason="manual")
+            # 关键在这一句：B 刷完的**那一刻**，A 还停在自己的临界区里。
+            # 只断言"B 最终回来了"是不够的——A 的等待迟早会超时放行，于是
+            # 全局大锁下 B 也会回来，只是慢了十秒（实测：那条变异活了下来）。
+            assert not a_done.is_set(), "B 只能等 A 出来 = 全局大锁"
         finally:
             b_done.set()
             holder.join(10)
-        assert a_done.is_set()
+        assert a_done.wait(5), "A 的刷新没能收尾"
 
     def test_the_same_project_serializes_and_the_registry_survives(self, client, tmp_path):
         """同一项目的刷新必须串行。
