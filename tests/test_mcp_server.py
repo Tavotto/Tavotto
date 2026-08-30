@@ -848,7 +848,7 @@ def test_widget_artifact_is_in_sync_with_the_frontend():
     )
 
 
-def test_widget_check_tells_missing_apart_from_stale(tmp_path, monkeypatch):
+def test_widget_check_tells_missing_apart_from_stale(tmp_path, monkeypatch, capsys):
     """`--check` 的三档必须分得开：**不存在** ≠ **过期**。
 
     上一版把两者并成一句「产物过期……产物里是 None」。措辞不是重点，**处置
@@ -868,6 +868,17 @@ def test_widget_check_tells_missing_apart_from_stale(tmp_path, monkeypatch):
     # 存在但指纹对不上 → 1
     out.write_text(f"{build_mcp_widget.STAMP}deadbeefdeadbeef -->\n", encoding="utf-8")
     assert build_mcp_widget.main(["--check"]) == 1, "指纹不符是「过期」，退 1"
+
+    # **存在但指纹读不出来 → 也是 1，不是 2**：截断的产物、或早于打戳那一版的
+    # 旧产物，`current_fingerprint()` 同样回 None。拿那个返回值当「文件在不在」
+    # 的代理，就会对着一个明明躺在磁盘上的文件说「它不存在」，并让调用方按
+    # 「还没构建」处置——而正确动作是重建。评审 P2 抓的就是这一条。
+    out.write_text("<!-- 截断了", encoding="utf-8")
+    capsys.readouterr()  # 先清空：前两步的 stderr 还在缓冲里，不清就是量错对象
+    rc = build_mcp_widget.main(["--check"])
+    assert rc == 1, f"存在但读不出指纹是「过期」，退 1；实得 {rc}"
+    err = capsys.readouterr().err
+    assert "不存在" not in err, f"文件明明在，不许说它不存在：{err}"
 
     # 指纹对上 → 0
     out.write_text(

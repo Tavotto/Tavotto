@@ -154,6 +154,13 @@ def build() -> str:
 
 
 def current_fingerprint() -> str | None:
+    """产物里那枚指纹；**文件不在与指纹读不出来都回 `None`**。
+
+    两种 `None` 的**处置不同**，所以判「在不在」要另问 `OUT.is_file()`，别拿这个
+    返回值当代理：一份存在但被截断、或早于打戳那一版的产物，指纹读不出来——那是
+    「过期」（重建一次就好），不是「还没构建」。合在一起会对着一个明明躺在磁盘上
+    的文件说「它不存在」。
+    """
     if not OUT.is_file():
         return None
     head = OUT.read_text(encoding="utf-8")[:200]
@@ -183,8 +190,11 @@ def main(argv: list[str] | None = None) -> int:
         # 分开的理由不是措辞：**处置不同**。刚 clone 下来还没跑过构建的人看到
         # 「过期」会去找自己改坏了什么；而在发布链上「不存在」意味着打出去的
         # 插件没有画布，是致命的。调用方按退出码分流，不靠读那句中文。
-        missing = have is None
-        ok = (not missing) and have == want
+        # **「在不在」问文件，不问指纹。** `current_fingerprint()` 对「文件不在」
+        # 和「指纹读不出来」都回 None——后者是一份**确实存在**的坏产物，属于
+        # 「过期」那一档。拿返回值当代理就会对着磁盘上的文件说「它不存在」。
+        missing = not OUT.is_file()
+        ok = (not missing) and have is not None and have == want
         status = "ok" if ok else ("missing" if missing else "stale")
         report = {"ok": ok, "status": status, "expected": want, "found": have, "path": str(OUT)}
         if args.json:
@@ -197,8 +207,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         else:
+            found = have if have is not None else "读不出指纹（截断或旧格式）"
             print(
-                f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
+                f"画布产物过期：源码指纹 {want}，产物里是 {found}。"
                 f"跑一次 python scripts/build_mcp_widget.py",
                 file=sys.stderr,
             )
