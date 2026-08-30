@@ -24,6 +24,11 @@ from __future__ import annotations
 import json
 import re
 
+# 表示法枚举的**唯一出处**。这里按包名 import（Flask 侧的写法）；worker 侧
+# 那几个模块是平铺 import 它——同一个文件，两条 sys.path 纪律，见
+# `previewbudget` 模块头。它是纯标准库，不会把科学栈拖进 Flask 进程。
+from tavotto.engine import previewbudget
+
 #: **逐事件的字段名 allowlist**：每种事件只允许自己的那些字段。
 #:
 #: 一开始这里是一张**扁平**的名字集合（不管哪个事件，只问「这个名字在不在册」），
@@ -231,6 +236,11 @@ EVENT_TYPES: frozenset[str] = frozenset(EVENT_FIELDS)
 #: 取值是闭集的字段。开集的标识（label_key / prop / code / operation / mode）
 #: 靠形状规则 + 上面那张逐事件表约束「哪个事件允许放什么」。
 _ENUM_FIELDS: dict[str, frozenset[str]] = {
+    # **值取自 `previewbudget`，不手写第二份**：这里手写一遍的话，哪天加一档
+    # 表示法，诊断会把它整条 reject 成 None，而没有任何地方会报错——读包的人
+    # 看到的是「这个面板没有 preview_mode」，一个指向完全错误方向的线索。
+    "preview_mode": frozenset(previewbudget.MODES),
+    "preview_reason": frozenset(previewbudget.REASONS),
     "policy": frozenset({"immediate", "defer", "none", "sync"}),
     "render_status": frozenset({"idle", "rendering", "ready", "error"}),
     "selection_kind": frozenset({"none", "element", "object", "mixed"}),
@@ -516,6 +526,18 @@ _SNAPSHOT_SHAPE = {
         "settled": "scalar",
         "history_mode": "enum",
     },
+    # issue #181 Session 05：JS 侧驻留的 SVG payload 与三档表示法的分布。
+    # 全是计数与常量，没有一个字段带用户内容。
+    "preview_memory": {
+        "resident_svg_bytes": "int",
+        "resident_svg_count": "int",
+        "vector_panel_count": "int",
+        "hybrid_panel_count": "int",
+        "raster_panel_count": "int",
+        "evicted_panel_count": "int",
+        "budget_per_file": "int",
+        "budget_global": "int",
+    },
 }
 
 _PANEL_SHAPE = {
@@ -531,6 +553,14 @@ _PANEL_SHAPE = {
     "render_status": "enum",
     "stale": "scalar",
     "element_count": "int",
+    "preview_mode": "enum",
+    "preview_reason": "enum",
+    "preview_svg_bytes": "int",
+    "estimated_primitives": "int_or_none",
+    "estimated_nodes": "int_or_none",
+    "rasterized_artist_count": "int",
+    "svg_resident": "scalar",
+    "svg_evicted": "scalar",
 }
 
 
@@ -546,6 +576,12 @@ def _pull(src, shape, redact):
             if spec == "int":
                 value = _scalar(raw, redact)
                 out[key] = value if isinstance(value, int) and not isinstance(value, bool) else 0
+            elif spec == "int_or_none":
+                # **`None` 与 `0` 在这里不是一回事**：老后端没估过是 None，
+                # 估出来是零个才是 0。`int` 那条会把 None 压成 0，于是「没估过」
+                # 被读成「估出来是零」——正好是最误导人的那个方向。
+                value = _scalar(raw, redact)
+                out[key] = value if isinstance(value, int) and not isinstance(value, bool) else None
             elif spec == "hash":
                 out[key] = _hash_or_none(raw)
             elif spec == "enum":

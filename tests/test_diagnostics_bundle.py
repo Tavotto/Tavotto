@@ -85,6 +85,16 @@ def snapshot(**extra):
             "object_count": 0,
         },
         "preview": {"active_sessions": 0, "settled": None, "history_mode": "gesture"},
+        "preview_memory": {
+            "resident_svg_bytes": 12_582_912,
+            "resident_svg_count": 2,
+            "vector_panel_count": 1,
+            "hybrid_panel_count": 1,
+            "raster_panel_count": 0,
+            "evicted_panel_count": 0,
+            "budget_per_file": 16 * 1024 * 1024,
+            "budget_global": 64 * 1024 * 1024,
+        },
         "panels": [
             {
                 "panel": "panel:aaaaaaaaaaaa",
@@ -99,6 +109,14 @@ def snapshot(**extra):
                 "render_status": "rendering",
                 "stale": False,
                 "element_count": 12,
+                "preview_mode": "hybrid",
+                "preview_reason": "complexity_budget",
+                "preview_svg_bytes": 1_838_682,
+                "estimated_primitives": 662_702,
+                "estimated_nodes": 9,
+                "rasterized_artist_count": 3,
+                "svg_resident": True,
+                "svg_evicted": False,
             }
         ],
     }
@@ -361,6 +379,8 @@ def test_a_field_legal_on_one_event_is_illegal_on_another():
         ("history_mode", SECRET_TITLE),
         ("render_status", SECRET_TITLE),
         ("kind", SECRET_TITLE),
+        ("preview_mode", SECRET_TITLE),
+        ("preview_reason", SECRET_TITLE),
     ],
 )
 def test_closed_set_fields_reject_content_shaped_tokens(field, bad):
@@ -371,8 +391,66 @@ def test_closed_set_fields_reject_content_shaped_tokens(field, bad):
     snap["preview"]["history_mode"] = bad if field == "history_mode" else "gesture"
     snap["panels"][0]["render_status"] = bad if field == "render_status" else "ready"
     snap["panels"][0]["kind"] = bad if field == "kind" else "matplotlib"
+    snap["panels"][0]["preview_mode"] = bad if field == "preview_mode" else "hybrid"
+    snap["panels"][0]["preview_reason"] = bad if field == "preview_reason" else "normal"
     out = dfe.sanitize_snapshot(snap, _redact)
     assert SECRET_TITLE not in json.dumps(out, ensure_ascii=False)
+
+
+def test_preview_representation_survives_the_backend_sanitiser():
+    """**「不要只改 TypeScript interface」**（Session 05 §2）。
+
+    后端按 `_SNAPSHOT_SHAPE` / `_PANEL_SHAPE` **拉取**，不遍历输入的键——前端
+    加了字段而这两张表没加，字段会被**静默丢掉**，而没有任何地方会报错。
+    读包的人看到的是「这个面板没有 preview_mode」，一个指向完全错误方向的线索。
+    """
+    out = dfe.sanitize_snapshot(snapshot(), _redact)
+    panel = out["panels"][0]
+    assert panel["preview_mode"] == "hybrid"
+    assert panel["preview_reason"] == "complexity_budget"
+    assert panel["preview_svg_bytes"] == 1_838_682
+    assert panel["estimated_primitives"] == 662_702
+    assert panel["estimated_nodes"] == 9
+    assert panel["rasterized_artist_count"] == 3
+    assert panel["svg_resident"] is True
+    assert panel["svg_evicted"] is False
+
+    mem = out["preview_memory"]
+    assert mem["resident_svg_bytes"] == 12_582_912
+    assert mem["resident_svg_count"] == 2
+    assert mem["vector_panel_count"] == 1
+    assert mem["hybrid_panel_count"] == 1
+    assert mem["budget_per_file"] == 16 * 1024 * 1024
+
+
+def test_never_estimated_stays_none_instead_of_becoming_zero():
+    """**`None` 与 `0` 在这里不是一回事**。
+
+    老后端（没有分析器那一版）不返回 `estimated_*`，前端如实报 `null`。
+    `int` 那条 spec 会把它压成 0，于是「没估过」被读成「估出来是零个」
+    ——正好是最误导人的那个方向，所以这两个字段走 `int_or_none`。
+    """
+    snap = snapshot()
+    snap["panels"][0]["estimated_primitives"] = None
+    snap["panels"][0]["estimated_nodes"] = None
+    panel = dfe.sanitize_snapshot(snap, _redact)["panels"][0]
+    assert panel["estimated_primitives"] is None
+    assert panel["estimated_nodes"] is None
+    # 真的是 0 的时候照样报 0——两者必须区分得开
+    snap["panels"][0]["estimated_primitives"] = 0
+    assert dfe.sanitize_snapshot(snap, _redact)["panels"][0]["estimated_primitives"] == 0
+
+
+def test_preview_enums_come_from_previewbudget_not_a_second_list():
+    """枚举值的唯一出处是 `previewbudget`。
+
+    手写第二份的话，哪天加一档表示法，诊断会把它整条 reject 成 None
+    ——而 `previewbudget.MODES` 里已经有它了。
+    """
+    from tavotto.engine import previewbudget
+
+    assert dfe._ENUM_FIELDS["preview_mode"] == frozenset(previewbudget.MODES)
+    assert dfe._ENUM_FIELDS["preview_reason"] == frozenset(previewbudget.REASONS)
 
 
 def test_unknown_event_type_is_dropped():

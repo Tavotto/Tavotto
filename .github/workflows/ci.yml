@@ -833,6 +833,51 @@ jobs:
           pnpm exec playwright install --with-deps chromium webkit
           pnpm e2e
 
+      # 大图预览的 Windows 内存基准（issue #181 / ADR 0022 / Session 05 §5-§7）。
+      #
+      # **刻意不是门禁**：绝对内存在托管 runner 上会飘，按字节做一条闸只会得到
+      # 一个随机红的检查——而随机红的检查最后一定会被人忽略掉，比没有检查更坏
+      # （Session 05 §6）。结构性那条闸在上一步的 `pnpm e2e`
+      # （`web/e2e/large-figure.spec.ts` 断言 DOM 节点数与 `<path>` 数），
+      # 它是真门禁；这一步只出数据。
+      #
+      # `continue-on-error` + 脚本自身恒退 0：采样拿不到计数器时报
+      # `available:false` 而不是让这个 job 红——一个量不到内存的基准是坏基准，
+      # 一个因此把发布挡住的基准是 bug。
+      # 走的是**跨平台那两条命令**，不是一份 Windows 专用脚本。
+      #
+      # 上一版是 `scripts/bench_large_preview_windows.ps1`：它起
+      # `Tavotto.exe --no-browser`（打包的 Python sidecar）再 POST
+      # `/api/engine/render`。那条路上**进程树里根本不会出现 WebView2**，
+      # `Measure-Renderer` 只可能报 `no_webview2_descendant`——一个结构上就
+      # 量不到自己主语的基准。另外它既没走会话鉴权（`/api/panels` 回 401），
+      # 也没把 fixture 的产物现跑出来（素材列表是空的）。三条一起，等于
+      # `continue-on-error` 底下常年安静地什么都不产出。
+      #
+      # 现在直接量该量的那一步：**产物挂进真浏览器**。第一条命令走真链路出
+      # 预览 SVG（上一步已经 `pip install matplotlib`），第二条把它挂进
+      # **Windows 自带的 Edge**——与 WebView2 同一个 Chromium 引擎、同一个
+      # 平台。它仍不是 WebView2 本身，产物里 `browserChannel` 如实写着。
+      - name: 大图预览内存基准（不阻塞）
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          $svg = "$env:RUNNER_TEMP\issue181-preview.svg"
+          python tests/support/large_preview_svg.py $svg --shape mesh --n 470
+          node tests/support/browser_dom_probe.mjs $svg --cycles 5 --browser msedge `
+            > "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+          Get-Content "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+
+      - name: 上传内存基准
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-large-preview-windows
+          path: ${{ runner.temp }}/bench-large-preview-windows.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: 失败时收集日志与操作轨迹
         if: failure()
         uses: actions/upload-artifact@v4

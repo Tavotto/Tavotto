@@ -97,7 +97,7 @@ describe('frontend state snapshot', () => {
 
     const snap = buildFrontendDiagnosticSnapshot()
 
-    expect(snap.schema_version).toBe(1)
+    expect(snap.schema_version).toBe(2)
     expect(snap.document.object_count).toBe(1)
     expect(snap.document.panel_count).toBe(1)
     expect(snap.document.history).toEqual({
@@ -221,12 +221,115 @@ describe('undo 竞态：align → 渲染在途 → undo → 迟到的渲染成�
   })
 })
 
+describe('预览表示法与 SVG 驻留：五种状态必须分得开（issue #181 Session 05）', () => {
+  const withPreview = (mode: string, reason: string, extra: Partial<PanelRender> = {}) =>
+    ({
+      ...ready([]),
+      preview: {
+        mode,
+        reason,
+        svg_bytes: 1_838_682,
+        rasterized_artist_count: mode === 'hybrid' ? 3 : 0,
+        estimated_primitives: 662_702,
+        estimated_nodes: 9,
+      },
+      ...extra,
+    }) as PanelRender
+
+  const snapOf = (render: PanelRender) => {
+    const panel = panelWith([])
+    useDocumentStore.setState({
+      doc: { ...useDocumentStore.getState().doc, objects: [panel] },
+    })
+    const key = renderKey('Fig1.pdf', [])
+    useRenderStore.setState({ byKey: { [key]: render }, latest: { 'Fig1.pdf': key } })
+    return buildFrontendDiagnosticSnapshot()
+  }
+
+  it('普通 vector：三档计数指向 vector，估算字段照实报', () => {
+    const snap = snapOf(withPreview('vector', 'normal'))
+    expect(snap.panels[0].preview_mode).toBe('vector')
+    expect(snap.panels[0].preview_reason).toBe('normal')
+    expect(snap.preview_memory.vector_panel_count).toBe(1)
+    expect(snap.preview_memory.hybrid_panel_count).toBe(0)
+    expect(snap.preview_memory.raster_panel_count).toBe(0)
+  })
+
+  it('复杂度触发的 hybrid：reason 说得出是复杂度而不是字节', () => {
+    const snap = snapOf(withPreview('hybrid', 'complexity_budget'))
+    expect(snap.panels[0].preview_mode).toBe('hybrid')
+    expect(snap.panels[0].preview_reason).toBe('complexity_budget')
+    expect(snap.panels[0].rasterized_artist_count).toBe(3)
+    expect(snap.preview_memory.hybrid_panel_count).toBe(1)
+  })
+
+  it('硬闸兜底的 raster：与复杂度那一档 reason 不同', () => {
+    const snap = snapOf(withPreview('raster', 'svg_hard_limit', { svg: null, svgBytes: 0 }))
+    expect(snap.panels[0].preview_mode).toBe('raster')
+    expect(snap.panels[0].preview_reason).toBe('svg_hard_limit')
+    // **raster 没有 payload**，驻留账上不该有它
+    expect(snap.panels[0].svg_resident).toBe(false)
+    expect(snap.preview_memory.resident_svg_count).toBe(0)
+  })
+
+  it('JS 侧大 payload 驻留：字节数与预算并排放着，读包的人不必去猜阈值', () => {
+    const big = { ...ready([]), svgBytes: 12 * 1024 * 1024 } as PanelRender
+    const snap = snapOf(big)
+    expect(snap.preview_memory.resident_svg_bytes).toBe(12 * 1024 * 1024)
+    expect(snap.preview_memory.resident_svg_count).toBe(1)
+    expect(snap.preview_memory.budget_per_file).toBe(16 * 1024 * 1024)
+    expect(snap.preview_memory.budget_global).toBe(64 * 1024 * 1024)
+  })
+
+  it('被预算清掉的那一版：evicted 单独一档，不冒充渲染失败', () => {
+    const snap = snapOf({
+      ...withPreview('vector', 'normal'),
+      svg: null,
+      svgBytes: 0,
+      svgEvicted: true,
+    } as PanelRender)
+    expect(snap.panels[0].svg_evicted).toBe(true)
+    expect(snap.panels[0].svg_resident).toBe(false)
+    // **status 仍然是 ready**——它不是渲染失败，语义状态一个字没丢
+    expect(snap.panels[0].render_status).toBe('ready')
+    expect(snap.preview_memory.evicted_panel_count).toBe(1)
+  })
+
+  it('老后端没估过时报 null，不是 0', () => {
+    const snap = snapOf({
+      ...ready([]),
+      preview: { mode: 'vector', reason: 'normal', svg_bytes: 0, rasterized_artist_count: 0 },
+    } as PanelRender)
+    // 0 会被读成「估出来是零个」——那是最误导人的那个方向
+    expect(snap.panels[0].estimated_primitives).toBeNull()
+    expect(snap.panels[0].estimated_nodes).toBeNull()
+  })
+
+  it('报的是文档这一版自己的表示法，不是显示退路那一版的', () => {
+    const panel = panelWith([{ gid: 'axes_0.title', prop: 'fontsize', value: 12 }])
+    useDocumentStore.setState({
+      doc: { ...useDocumentStore.getState().doc, objects: [panel] },
+    })
+    // 画好的是「没有 override」那一版（raster），文档这一版还没画
+    const other = renderKey('Fig1.pdf', [])
+    useRenderStore.setState({
+      byKey: { [other]: withPreview('raster', 'svg_hard_limit') },
+      latest: { 'Fig1.pdf': other },
+    })
+    const snap = buildFrontendDiagnosticSnapshot()
+    // 退路那一版是 raster，但**文档这一版**还没画过 ⇒ 按 vector 报。
+    // 报成 raster 的话，诊断说的是另一个变体的表示法（issue #131 同款错配）。
+    expect(snap.panels[0].preview_mode).toBe('vector')
+    expect(snap.panels[0].display_exact).toBe(false)
+  })
+})
+
 describe('导出载荷', () => {
   it('带上 diagnostics.export 作为时间锚点，并且是脱敏后的形状', () => {
     const payload = buildDiagnosticPayload()
     const last = payload.interaction_trace.at(-1)!
     expect(last.type).toBe('diagnostics.export')
-    expect(payload.frontend_state.schema_version).toBe(1)
+    expect(payload.frontend_state.schema_version).toBe(2)
     for (const ev of payload.interaction_trace) {
       expect(typeof ev.seq).toBe('number')
       expect(typeof ev.ts).toBe('number')

@@ -19,8 +19,14 @@
 
 /** 诊断包整体的 schema（老三件 + 新三件那一版是 2） */
 export const BUNDLE_SCHEMA_VERSION = 2
-/** frontend-state.json 的 schema */
-export const SNAPSHOT_SCHEMA_VERSION = 1
+/**
+ * frontend-state.json 的 schema。
+ *
+ * 2 = 加上预览表示法与 SVG 驻留那一组（issue #181 Session 05）。读包的人靠
+ * 它区分五种状态：普通 vector / 复杂度触发的 hybrid / 硬闸兜底的 raster /
+ * JS 侧大 payload 驻留 / 可能的 renderer 生命周期泄漏。
+ */
+export const SNAPSHOT_SCHEMA_VERSION = 2
 /** interaction-trace.jsonl 每一行的 schema */
 export const TRACE_SCHEMA_VERSION = 1
 
@@ -448,6 +454,15 @@ export type RecordedEvent = DiagnosticEventBase & Record<string, unknown>
 /*  frontend-state.json                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 这一版预览的表示法（ADR 0022）。**与 `lib/previewBudget.ts` 的 `PreviewMode`
+ * 同一套词表**，这里重述一遍而不是 import，是为了让 `types.ts` 保持零 import
+ * ——它是隐私的类型层防线，多一条边就多一个把非诊断类型拖进来的口子。
+ * 两侧由 `snapshot.test.ts` 的一条编译期赋值钉住。
+ */
+export type PreviewModeLabel = 'vector' | 'hybrid' | 'raster'
+export type PreviewReasonLabel = 'normal' | 'complexity_budget' | 'svg_hard_limit' | 'fallback'
+
 export interface PanelSnapshot {
   panel: string
   file: string
@@ -462,6 +477,21 @@ export interface PanelSnapshot {
   render_status: RenderStatusLabel
   stale: boolean
   element_count: number
+  /* ---- 预览表示法与 SVG 驻留（issue #181 / ADR 0022）---- */
+  /** 引擎对这一版的裁决。老后端不返回 `preview` 时是 `vector`（与运行时同一条退路） */
+  preview_mode: PreviewModeLabel
+  /** 为什么是这一档——`complexity_budget` 与 `svg_hard_limit` 指向完全不同的成因 */
+  preview_reason: PreviewReasonLabel
+  /** 后端报的 `stat().st_size`；老后端没给就是 0 */
+  preview_svg_bytes: number
+  /** 分析器的估算，**老后端没有这两个字段，那时是 null 而不是 0** */
+  estimated_primitives: number | null
+  estimated_nodes: number | null
+  rasterized_artist_count: number
+  /** 这一版的 SVG 源文本此刻还在 JS 堆里吗 */
+  svg_resident: boolean
+  /** 它被 `SVG_RECENT_BUDGET_*` 清掉了吗（Session 04）——**不是渲染失败** */
+  svg_evicted: boolean
 }
 
 export interface FrontendDiagnosticSnapshot {
@@ -490,6 +520,29 @@ export interface FrontendDiagnosticSnapshot {
     active_sessions: number
     settled: boolean | null
     history_mode: HistoryModeLabel
+  }
+  /**
+   * JS 侧驻留的 SVG payload 与三档表示法的分布（issue #181 Session 05）。
+   *
+   * **这一节量的是「JS 堆里留了多少 SVG 源文本」，不是渲染进程的 DOM 内存。**
+   * 同一份 SVG 展开成 DOM 之后高一个数量级以上，那一侧由硬闸与 hybrid 负责。
+   * 两者不可互相冒充——诊断包里把它们并排放着，正是为了让读包的人分得清
+   * 「JS 侧大 payload 驻留」与「renderer 生命周期泄漏」是两回事。
+   */
+  preview_memory: {
+    /** 此刻 `byKey` 里所有还带着 `svg` 的条目的字节和（`residentSvgBytes`） */
+    resident_svg_bytes: number
+    /** 有几条还带着 payload */
+    resident_svg_count: number
+    /** 画布上的面板按表示法分布——三个数加上 evicted 就是「现在到底是哪一档」 */
+    vector_panel_count: number
+    hybrid_panel_count: number
+    raster_panel_count: number
+    /** payload 被字节预算清掉、正等着重画的那些 */
+    evicted_panel_count: number
+    /** 当时生效的预算（常量，放进来让读包的人不必去猜那一版的阈值） */
+    budget_per_file: number
+    budget_global: number
   }
   panels: PanelSnapshot[]
 }

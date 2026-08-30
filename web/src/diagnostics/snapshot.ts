@@ -16,7 +16,11 @@ import {
   panelDisplayView,
   panelRender,
   renderKeyOf,
+  residentSvgBytes,
+  SVG_RECENT_BUDGET_GLOBAL,
+  SVG_RECENT_BUDGET_PER_FILE,
   useRenderStore,
+  type PanelRender,
 } from '@/store/renderStore'
 import { getHistoryMode, previewSession } from '@/store/svgPreviewStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
@@ -28,6 +32,8 @@ import {
   SNAPSHOT_SCHEMA_VERSION,
   type FrontendDiagnosticSnapshot,
   type PanelSnapshot,
+  type PreviewModeLabel,
+  type PreviewReasonLabel,
   type SelectionKind,
 } from './types'
 
@@ -71,6 +77,27 @@ export function panelSnapshot(panel: PanelObject): PanelSnapshot {
     render_status: rs.byKey[documentVariant]?.status ?? 'idle',
     stale: !!rs.byKey[documentVariant]?.stale,
     element_count: render?.manifest?.elements.length ?? 0,
+    // **读文档这一版自己的条目，不是 `panelRender` 的退路**：后者在这一版还
+    // 没画出来时会回退到别的变体，那时报的表示法是**另一个变体**的
+    // ——诊断里那种错配正是 issue #131 的形状。没有条目就报 vector（老后端
+    // 与「还没画」都走这条退路，与运行时逐字一致）。
+    ...previewFacts(rs.byKey[documentVariant]),
+  }
+}
+
+/** 一条渲染态 → 诊断里的预览事实。`undefined` = 还没画过，按 vector 报 */
+function previewFacts(v: PanelRender | undefined) {
+  const preview = v?.preview
+  return {
+    preview_mode: (preview?.mode ?? 'vector') as PreviewModeLabel,
+    preview_reason: (preview?.reason ?? 'normal') as PreviewReasonLabel,
+    preview_svg_bytes: preview?.svg_bytes ?? 0,
+    // **老后端没估过时是 null，不是 0**——0 会被读成「估出来是零个」
+    estimated_primitives: preview?.estimated_primitives ?? null,
+    estimated_nodes: preview?.estimated_nodes ?? null,
+    rasterized_artist_count: preview?.rasterized_artist_count ?? 0,
+    svg_resident: v?.svg != null,
+    svg_evicted: !!v?.svgEvicted,
   }
 }
 
@@ -122,7 +149,32 @@ export function buildFrontendDiagnosticSnapshot(): FrontendDiagnosticSnapshot {
       settled: session ? session.settled : null,
       history_mode: getHistoryMode(),
     },
+    preview_memory: previewMemory(panels),
     panels: panels.map(panelSnapshot),
+  }
+}
+
+/**
+ * JS 侧驻留的 SVG payload 与三档表示法的分布。
+ *
+ * 记账**复用 `residentSvgBytes`**，不在这里另算一遍：那是驱逐判据自己用的
+ * 那本账，诊断报的必须就是它——两份实现一旦分叉，诊断会说「没超预算」而
+ * 驱逐照跑（或者反过来），而没有任何地方会报错。
+ */
+function previewMemory(panels: PanelObject[]): FrontendDiagnosticSnapshot['preview_memory'] {
+  const rs = useRenderStore.getState()
+  const resident = residentSvgBytes(rs)
+  const modes = panels.map((p) => previewFacts(rs.byKey[renderKeyOf(p)]))
+  const count = (m: PreviewModeLabel) => modes.filter((x) => x.preview_mode === m).length
+  return {
+    resident_svg_bytes: resident.total,
+    resident_svg_count: Object.values(rs.byKey).filter((v) => v.svg != null).length,
+    vector_panel_count: count('vector'),
+    hybrid_panel_count: count('hybrid'),
+    raster_panel_count: count('raster'),
+    evicted_panel_count: modes.filter((x) => x.svg_evicted).length,
+    budget_per_file: SVG_RECENT_BUDGET_PER_FILE,
+    budget_global: SVG_RECENT_BUDGET_GLOBAL,
   }
 }
 
