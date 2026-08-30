@@ -180,6 +180,19 @@ RASTERIZABLE_FAMILIES = frozenset(
     {FAMILY_MESH, FAMILY_SCATTER, FAMILY_CONTOUR, FAMILY_POLY, FAMILY_LINECOLL, FAMILY_COLLECTION}
 )
 
+#: 一个 primitive 在 SVG 里摊出几个**元素**（≈ DOM 节点）。默认 1；只有
+#: `Line2D` 不是——matplotlib 给每条曲线额外包一个 `<g>`，实测 2.01 个元素/条
+#: （4 万条：40 031 个 `<path>` + 40 234 个 `<g>`；2 500 条时 2.17，大 n 收敛到
+#: 2.0）。取整数 2 是**偏高**的那一侧，与不变量 5 的方向一致。
+#:
+#: **为什么必须有这张表**：`primitive_count` 的校准锚点是字节（190 B 一个），
+#: 而浏览器的代价按节点走。两者在 mesh 上重合（一个 cell 一个 `<path>`，
+#: 没有额外的 `<g>`），在 line 上差一倍——4 万条 `plot()` 的 primitive 数
+#: （40 000）在图级预算之内、字节数（9.33 MB）在硬闸之下，**三条闸一条都不
+#: 响**，DOM 里却是 201 977 个节点。系数由
+#: `test_node_model_matches_what_the_svg_backend_actually_emits` 与后端对拍。
+NODES_PER_PRIMITIVE = {FAMILY_LINE: 2}
+
 #: 逐条数顶点最多数这么多个 path，再往上按均值等比放大。
 #:
 #: 为什么可以这样：`primitive_count` 才是判据里更硬的那一半，而顶点数在超过
@@ -221,6 +234,14 @@ class ArtistPreviewCost:
     rasterizable: bool = False
     #: 这一版预览里该不该真的 rasterize 它。`analyze_preview_complexity` 填。
     should_rasterize: bool = False
+    #: 会摊成多少个 **SVG 元素**（≈ DOM 节点）。负数 = 没显式给，按
+    #: `NODES_PER_PRIMITIVE` 的族系数算。**这不是 `primitive_count` 的同义词**，
+    #: 见那张表的说明。
+    node_count: int = -1
+
+    def __post_init__(self):
+        if self.node_count < 0:
+            self.node_count = self.primitive_count * NODES_PER_PRIMITIVE.get(self.family, 1)
 
 
 @dataclass
@@ -232,9 +253,13 @@ class PreviewPlan:
     #: 纯矢量画法下整张图的开销（= 所有认得出的 artist 之和）。
     estimated_primitives: int
     estimated_vertices: int
+    #: 纯矢量画法下整张图摊出的 SVG 元素数（≈ DOM 节点）。
+    estimated_nodes: int
     #: 按这份 plan 画完之后**还留在矢量层**的开销。hybrid 下它才是浏览器要吃的量。
     vector_primitives: int
     vector_vertices: int
+    #: 收完之后**还要交给 DOM** 的元素数——`TOTAL_VECTOR_NODE_BUDGET` 判的就是它。
+    vector_nodes: int
     #: 要在预览里临时 rasterize 的 artist（worker 内部引用，不发前端）。
     rasterized_artists: list = field(default_factory=list)
     #: 全部逐条账目，含没被选中的。诊断（Session 05）与用例读它。
@@ -480,6 +505,23 @@ def _cost_mesh(coll, cells: int) -> ArtistPreviewCost:
     )
 
 
+def _is_colormapped(coll) -> bool:
+    """每个实例的样式各不相同吗——**决定它在 DOM 里是一个节点还是两个**。
+
+    `c=<数组>` 的散点后端要给每个实例单独写一次 style，于是每个 `<use>` 外面
+    再包一个 `<g>`：对拍实测 500 个点 = 500 个 `<use>` + 501 个 `<g>`，节点数
+    是实例数的**两倍**，而 `s=<数组>` / 纯色散点只有 1–2 个容器 `<g>`。
+
+    判据用 `get_array()` 而不是 `get_facecolors()`：后者在 draw 之前回的是
+    长度 1 的数组（颜色还没从 cmap 解析出来），拿它判会把 mapped 判成 uniform。
+    """
+    try:
+        arr = coll.get_array()
+    except Exception:  # noqa: BLE001
+        return False
+    return arr is not None and _len0(arr) > 1
+
+
 def _cost_collection(coll, family: str, paths) -> ArtistPreviewCost:
     """通用 Collection：`N = max(len(paths), len(offsets))` —— 与 family 无关的那条。
 
@@ -510,7 +552,8 @@ def _cost_collection(coll, family: str, paths) -> ArtistPreviewCost:
             verts_first = len(paths[0].vertices)
         except Exception:  # noqa: BLE001
             verts_first = 0
-    if _shares_geometry(coll, paths, n_path_ids, n_instances, verts_first):
+    shares = _shares_geometry(coll, paths, n_path_ids, n_instances, verts_first)
+    if shares:
         # 几何进 defs：`scatter` 十二万个点在 SVG 文本里只有一份 marker 几何。
         vertices = verts_in_paths
     elif n_paths:
@@ -526,6 +569,13 @@ def _cost_collection(coll, family: str, paths) -> ArtistPreviewCost:
         vertex_count=vertices,
         vertex_count_exact=exact,
         rasterizable=family in RASTERIZABLE_FAMILIES,
+        # 逐实例着色**且几何共享**的那种，每个实例外面还包一个 `<g>`——DOM
+        # 节点数是实例数的两倍，而字节数几乎不变（`<g>` 很短）。又一处
+        # 「primitive 数不等于节点数」，对拍抓出来的。
+        # **`shares` 这一半不能省**：contour 也有 `get_array()`，但它每层本来
+        # 就是独立的 `<path>`、自己带 style，不需要外面那个 `<g>`。少了这个
+        # 条件，contour 整族的节点数凭空翻倍（对拍当场从 1.00 变成 1.82）。
+        node_count=n_instances * 2 if (shares and _is_colormapped(coll)) else n_instances,
     )
 
 
@@ -575,8 +625,11 @@ def _classify(artist) -> ArtistPreviewCost:
             )
         return _cost_collection(artist, _collection_family(artist), paths)
     if isinstance(artist, Line2D):
-        # 一条曲线 = 一个 `<path>`。顶点数走 `get_xdata()`（回的是内部数组的
-        # 引用，不复制），`get_path()` 会触发 recache——热路径上不必付。
+        # 一条曲线 = 一个 `<path>`，但在 DOM 里是 **2 个元素**——matplotlib 还给
+        # 它包一个 `<g>`（`NODES_PER_PRIMITIVE` 里那条系数，与后端对拍过）。
+        # 「一个 path」与「一个节点」在这一族上不是同一句话，#181 的残余缺口
+        # 就藏在这个差别里。顶点数走 `get_xdata()`（回的是内部数组的引用，
+        # 不复制），`get_path()` 会触发 recache——热路径上不必付。
         return ArtistPreviewCost(
             artist=artist,
             family=FAMILY_LINE,
@@ -657,9 +710,10 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
 
     1. **逐个**超出本族预算的 → 进名单（一个 22 万 cell 的 mesh 自己就该走
        位图，与图上还有什么无关）；
-    2. 剩下的**加起来**仍然超 `TOTAL_VECTOR_PRIMITIVE_BUDGET` → 按开销从大到
-       小继续收，直到装得下。少了这一轮，「二十个各 4 万 cell 的面板」每个都
-       在族预算之内、合起来 80 万个节点照样把 DOM 打死。
+    2. 剩下的**加起来**仍然超图级预算（primitive 那条或 node 那条）→ 继续收，
+       直到两条都装得下。少了这一轮，「二十个各 4 万 cell 的面板」每个都在族
+       预算之内、合起来 80 万个节点照样把 DOM 打死。**每收一层重挑一次下一
+       层**，排序键只看此刻还在超的那条（见 `_rasterize_priority`）。
 
     收不动的（认不出来、或按契约不该 rasterize 的普通曲线）**留在矢量层**，
     由 Session 01 那道按字节的硬闸兜底——它不需要认识任何人。
@@ -669,24 +723,72 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         if cost.rasterizable and _over_own_budget(cost):
             cost.should_rasterize = True
 
-    # 第二轮按 (primitive, vertex, 树序) 降序收——树序在最后，是为了让两个
-    # 一模一样贵的 artist 有个确定的先后（同一张图两次分析出同一份名单）。
-    order = sorted(
-        range(len(costs)),
-        key=lambda i: (costs[i].primitive_count, costs[i].vertex_count, -i),
-        reverse=True,
-    )
+    # **两条图级预算一起收敛**：primitive 那条按字节校准、node 那条按浏览器
+    # 校准，谁没满足都要继续收。只看 primitive 的话，四格各 1.5 万 cell 的图
+    # 收掉一格就「达标」了，却把 45 388 个元素交给 DOM——那正是这条节点预算
+    # 要拦的量级，而它们**本来就是可以收的**。收不动才降 raster，不是收一半
+    # 就降。
     residual = sum(c.primitive_count for c in costs if not c.should_rasterize)
-    for i in order:
-        if residual <= previewbudget.TOTAL_VECTOR_PRIMITIVE_BUDGET:
+    residual_nodes = sum(c.node_count for c in costs if not c.should_rasterize) + sum(
+        1 for c in costs if c.should_rasterize
+    )
+    # 候选每轮重挑，**不排一个静态序**。
+    #
+    # 上一版按 `(primitive, vertex, 树序)` 排好就照着走，于是「只有节点预算
+    # 超标」时它按一把量错了的尺子挑：13 000 点的逐实例着色散点是 26 000 个
+    # 节点 / 13 000 个 primitive，19 000 格的 mesh 是 19 000 / 19 000——两个
+    # 都在各自族预算之内，合起来只超节点那条。按 primitive 排先收 mesh，收完
+    # 还差 2 001 个节点，于是散点也收；而**只收散点**就够了，mesh 本可以留在
+    # 矢量层。多收的那一层是白丢的可编辑细节。
+    candidates = [i for i, c in enumerate(costs) if c.rasterizable and not c.should_rasterize]
+    while candidates:
+        over_p = residual - previewbudget.TOTAL_VECTOR_PRIMITIVE_BUDGET
+        over_n = residual_nodes - previewbudget.TOTAL_VECTOR_NODE_BUDGET
+        if over_p <= 0 and over_n <= 0:
             break
+        i = max(candidates, key=lambda i: _rasterize_priority(costs[i], over_p, over_n, i))
+        candidates.remove(i)
         cost = costs[i]
-        if cost.should_rasterize or not cost.rasterizable:
-            continue
         cost.should_rasterize = True
         residual -= cost.primitive_count
+        # 收走的那一层塌成一个 `<image>`——是一，不是零。
+        #
+        # **这个 `- 1` 的变异是绿的，而且它该是绿的**：18 个 case 上裁决逐字段
+        # 相同。它影响的量是「已收层数」（个位数），而每个 case 的收敛点离预算
+        # 边界都远得多；误差方向也安全（residual 偏小 ⇒ 少收一层 ⇒ 最终那条
+        # `vector_nodes` 判据照样把它降 raster）。为它造一条卡在边界上的用例
+        # 只会得到一条阈值一动就失效的脆用例——判据的分辨率就是层数级，如实
+        # 写在这里比假装钉住了它诚实。
+        residual_nodes -= cost.node_count - 1
 
     return _plan_from_costs(costs)
+
+
+def _rasterize_priority(cost: ArtistPreviewCost, over_p: int, over_n: int, index: int):
+    """这一层现在该排多前面。数字大的先收。
+
+    **只按此刻还没满足的那条预算算**——那是这个函数存在的全部理由。一条预算
+    已经达标之后，它对「还该收谁」不该再有发言权，否则就是拿一把量错了对象
+    的尺子在挑。
+
+    两条都超时按**各自的超额归一化再相加**：`primitive_count` 与 `node_count`
+    是两个量纲，直接相加等于把两把尺子互相相除（ADR 0022 §9 记着这条纪律）。
+    归一化之后每一项都是「这一层把还差的那一段削掉了几成」，截到 1——削过头
+    不比刚好削平更值钱，否则一个巨大的层会仅凭体量压过两个正好够用的。
+
+    这是贪心，**不是最优解**：覆盖问题的最优解要枚举子集，而候选数在真实图上
+    是个位数到几十，收益不值那个复杂度。它保证的是「不再对正在超的那一维视而
+    不见」，不是「收得最少」。
+
+    `(vertex_count, -index)` 是确定性尾巴：同一张图两次分析出同一份名单。
+    """
+    score = 0.0
+    if over_p > 0:
+        score += min(cost.primitive_count, over_p) / over_p
+    if over_n > 0:
+        # 与 `residual_nodes` 的记账口径一致：收走之后它还留一个 `<image>`
+        score += min(cost.node_count - 1, over_n) / over_n
+    return (score, cost.vertex_count, -index)
 
 
 def _plan_from_costs(costs, *, trigger: str = "复杂度预算") -> PreviewPlan:
@@ -698,8 +800,11 @@ def _plan_from_costs(costs, *, trigger: str = "复杂度预算") -> PreviewPlan:
     picked = [c for c in costs if c.should_rasterize]
     total_primitives = sum(c.primitive_count for c in costs)
     total_vertices = sum(c.vertex_count for c in costs)
+    total_nodes = sum(c.node_count for c in costs)
     vector_primitives = total_primitives - sum(c.primitive_count for c in picked)
     vector_vertices = total_vertices - sum(c.vertex_count for c in picked)
+    # 被 rasterize 的那几层各自塌成一个 `<image>`——不是零，是一
+    vector_nodes = total_nodes - sum(c.node_count - 1 for c in picked)
 
     if picked:
         mode = previewbudget.MODE_HYBRID
@@ -716,19 +821,35 @@ def _plan_from_costs(costs, *, trigger: str = "复杂度预算") -> PreviewPlan:
         if vector_primitives > previewbudget.TOTAL_VECTOR_PRIMITIVE_BUDGET:
             # 超了预算却一个都收不动：全是认不出来的、或按契约不该 rasterize 的。
             # **不谎报 hybrid**——报一个我们做不到的 mode 比暂时不报更坏（前端会
-            # 去等一份永远不来的混合产物）。兜底交给按字节的硬闸。
+            # 去等一份永远不来的混合产物）。下面那条节点预算会把它降到 raster。
             blocked = sum(1 for c in costs if not c.rasterizable)
             detail = (
                 f"{total_primitives} 个 primitive 超出矢量预算，但没有可安全 rasterize 的层"
-                f"（{blocked} 个不可 rasterize）——保持 vector，由 SVG 硬闸兜底"
+                f"（{blocked} 个不可 rasterize）"
             )
+
+    # **节点预算是最后一道，且不管前面判成了什么。** hybrid 收完之后矢量层仍然
+    # 可能是几万个节点（一张图上 mesh 与 4 万条曲线同时存在），vector 档更是
+    # ——而字节那两条闸在这种图上不响（4 万条 `plot()` 只有 9.33 MB）。
+    # 降到 raster 不等于停止编辑：命中层与 exact manifest 照常在（不变量 4），
+    # 这正是不变量 5 说的「最坏降到低内存 raster preview，不得 freeze」。
+    if vector_nodes > previewbudget.TOTAL_VECTOR_NODE_BUDGET:
+        mode = previewbudget.MODE_RASTER
+        reason = previewbudget.REASON_COMPLEXITY_BUDGET
+        detail = (
+            f"矢量层收完仍有 {vector_nodes} 个 SVG 元素（预算 "
+            f"{previewbudget.TOTAL_VECTOR_NODE_BUDGET}）——降到 raster；"
+            f"命中层与 exact manifest 不受影响。{detail}"
+        )
     return PreviewPlan(
         mode=mode,
         reason=reason,
         estimated_primitives=total_primitives,
         estimated_vertices=total_vertices,
+        estimated_nodes=total_nodes,
         vector_primitives=vector_primitives,
         vector_vertices=vector_vertices,
+        vector_nodes=vector_nodes,
         rasterized_artists=[c.artist for c in picked],
         costs=costs,
         detail=detail,

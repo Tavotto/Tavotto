@@ -57,6 +57,8 @@ export interface PreviewMetadata {
   svg_bytes: number
   estimated_primitives?: number
   estimated_vertices?: number
+  /** 收完之后还要交给 DOM 的 SVG 元素数（≈ DOM 节点）。前端只显示/诊断，不做判据。 */
+  estimated_nodes?: number
   rasterized_artist_count: number
 }
 

@@ -9,7 +9,7 @@
 不是直接 `savefig`：#181 的用户第一次打开图走的恰恰是冷 build，而 hybrid 的
 接线点在 `figsession.render()` 一处，两条路必须落到同一条策略上。
 
-`--vector` 把六个闸全抬走，出纯矢量对照——**它不是「今天会发生的事」**，是
+`--vector` 把每一条闸都抬走，出纯矢量对照——**它不是「今天会发生的事」**，是
 「如果闸不存在会是什么样」。拿它量出来的数只能当形状对照，不能当裁决证据。
 
 `--shape` 选的是**哪一类图**。`docs/perf-baseline.md` 的「字节闸看不见节点数」
@@ -72,21 +72,17 @@ for _stream in (sys.stdout, sys.stderr):
 #: 整数比较，塞 `None` 会变成一个 TypeError 而不是「闸不生效」。
 _NO_LIMIT = 1 << 62
 
-#: 会被 `--vector` 抬走的六个闸。**列表写在这里而不是散在调用点**：漏掉一个
-#: 就会得到一份「半抬闸」的产物，而它看起来和纯矢量一模一样。
-_BUDGET_NAMES = (
-    "MESH_CELL_BUDGET",
-    "SCATTER_INSTANCE_BUDGET",
-    "COLLECTION_VERTEX_BUDGET",
-    "TOTAL_VECTOR_PRIMITIVE_BUDGET",
-    "EDITOR_SVG_SOFT_LIMIT_BYTES",
-    "EDITOR_SVG_HARD_LIMIT_BYTES",
+#: 会被 `--vector` 抬走的闸，**从 `previewbudget` 枚举出来而不是手写**：
+#: 手写的名单漏掉一条就会给出一份「半抬闸」的产物，而它看起来和纯矢量
+#: 一模一样。`TOTAL_VECTOR_NODE_BUDGET` 加进去时，探针里那份手写名单就漏了。
+_BUDGET_NAMES = tuple(
+    n for n in previewbudget.__all__ if n.endswith("_BUDGET") or n.endswith("_LIMIT_BYTES")
 )
 
 
 @contextlib.contextmanager
 def budgets_off():
-    """六个闸全抬走，出去时逐个还回原值。"""
+    """每一条闸都抬走，出去时逐个还回原值。"""
     saved = {k: getattr(previewbudget, k) for k in _BUDGET_NAMES}
     for k in saved:
         setattr(previewbudget, k, _NO_LIMIT)
@@ -190,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--vector",
         action="store_true",
-        help="把六个闸全抬走出纯矢量对照（形状对照用，不是今天会发生的事）",
+        help="把每一条闸都抬走出纯矢量对照（形状对照用，不是今天会发生的事）",
     )
     ap.add_argument("--preview-dpi", type=int, default=200)
     args = ap.parse_args(argv)

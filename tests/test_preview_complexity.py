@@ -214,6 +214,147 @@ def test_model_matches_what_the_svg_backend_actually_emits(probe):
             assert path == model, f"{row['case']}: 模型 {model} 个节点，SVG 里 {path} 个 <path>"
 
 
+#: 节点估值允许偏离后端实测值的带宽。十格实测最大偏差 9.1%（contour 那格
+#: 10 vs 11——差的就是一个容器 `<g>`，而它只有 10 个 primitive，常数占比大）。
+#: ±15% 容得下那个常数，又足够窄：`line` 记 1 而不是 2 会是 0.500、
+#: colormapped 散点少记一倍会是 0.499，两个变异都当场红。
+_NODE_BAND = (0.85, 1.15)
+
+
+def test_node_model_matches_what_the_svg_backend_actually_emits(probe):
+    """`node_count` 与后端**真的吐出来的元素数**对一次。
+
+    **`primitive_count` 那条对拍证明不了这一条**：两者在 mesh 上恰好相等
+    （一个 cell 一个 `<path>`），在 `Line2D` 上差一倍（一个 `<path>` **外加
+    一个 `<g>`**）。#181 的残余缺口就藏在这个差别里——4 万条 `plot()` 的
+    primitive 数在图级预算之内、字节数在硬闸之下，三条闸一条都不响，DOM 里
+    却是 20 万个节点。
+
+    `line` 这一族**原本被对拍豁免掉了**（探针的 `skip` 里有 `FAMILY_LINE`），
+    被豁免的那一族正好是出问题的那一族——所以这一轮把它补进了对拍。
+    """
+    for row in probe["crosscheck"]:
+        model = row["model_nodes"]
+        actual = (
+            row["svg_delta_path"]
+            + row["svg_delta_use"]
+            + row["svg_delta_image"]
+            + row["svg_delta_g"]
+        )
+        if actual <= 0:
+            # **后端没为这个 artist 写任何数据层节点的那几格**（不可见 artist：
+            # `_iter_artists` 过滤掉它，后端也一个都不写）。带宽判据在这里问的
+            # 是另一个问题——0/0 会除零，而隐藏整个 axes 那一格差分还会是
+            # **-1**（带 artist 的图比对照图少一个容器 `<g>`）。两种都表示
+            # 「没有数据层节点」，判据要说的话是「模型也不该记账」。
+            assert model == 0, f"{row['case']}: 后端写出 {actual} 个，模型却记了 {model} 个"
+            continue
+        ratio = model / actual
+        assert _NODE_BAND[0] <= ratio <= _NODE_BAND[1], (
+            f"{row['case']}: 模型 {model} 个节点，后端写出 {actual} 个（{ratio:.3f}×）"
+        )
+
+
+def test_a_line_costs_two_dom_nodes_not_one(probe):
+    """`Line2D`：**一个 `<path>` 是对的，一个节点是错的。**
+
+    对拍实测 400 条线 = 400 个 `<path>` + 400 个 `<g>`。这条与上面那条带宽
+    判据不同——它要的是**精确的 2 倍**，因为整条修复就架在这个系数上。
+    """
+    row = next(r for r in probe["crosscheck"] if r["case"] == "lines")
+    assert row["svg_delta_path"] == 400, row
+    assert row["svg_delta_g"] == 400, f"每条线应当各带一个 <g>: {row}"
+    assert row["model_nodes"] == 800 == row["svg_delta_path"] + row["svg_delta_g"]
+    assert row["model_primitives"] == 400, "primitive 仍然是一条线一个——变的是节点口径"
+
+
+def test_colormapped_scatter_costs_two_nodes_per_instance(probe):
+    """逐实例着色的散点同样是 2 倍——**而 contour 不是**。
+
+    `c=<数组>` 时后端要给每个实例单独写 style，于是每个 `<use>` 外面再包一个
+    `<g>`（实测 500 个 `<use>` + 501 个 `<g>`）。判据必须同时要求「几何共享」：
+    contour 也有 `get_array()`，但它每层本来就是独立 `<path>`、自带 style，
+    不需要那个 `<g>`——少了这半个条件，contour 整族的节点数凭空翻倍。
+    """
+    mapped = next(r for r in probe["crosscheck"] if r["case"] == "scatter_mapped")
+    assert mapped["model_nodes"] == 1000 == mapped["model_primitives"] * 2
+    assert mapped["svg_delta_use"] == 500 and mapped["svg_delta_g"] == 501
+
+    uniform = next(r for r in probe["crosscheck"] if r["case"] == "scatter_uniform")
+    assert uniform["model_nodes"] == uniform["model_primitives"] == 500, "纯色散点不该翻倍"
+
+    contour = next(r for r in probe["crosscheck"] if r["case"] == "contour")
+    assert contour["model_nodes"] == contour["model_primitives"], "contour 不该翻倍"
+
+
+def test_many_plain_lines_fall_back_to_raster(cases):
+    """**#181 的残余缺口，这条是它的看护。**
+
+    4 万次 `ax.plot()` 是普通 matplotlib 写法。它的 primitive 数（40 000）在
+    `TOTAL_VECTOR_PRIMITIVE_BUDGET`（50 000）之内、字节数 9.33 MB 在 16 MiB
+    硬闸之下——**原有三条闸一条都不响**，而实测它往 DOM 里挂 201 977 个节点、
+    330–360 MB、一次挂载 410 ms。`Line2D` 按契约不可 rasterize，收不动，
+    所以唯一正确的出路是降到 raster（不变量 5）。
+    """
+    plan = cases["many_lines_over_node_budget"]
+    assert plan["mode"] == pb.MODE_RASTER, plan["detail"]
+    assert plan["reason"] == pb.REASON_COMPLEXITY_BUDGET
+    # 用例前提：另外两条闸确实都不响，否则这条测的是别人
+    assert plan["estimated_primitives"] <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET
+    assert plan["vector_nodes"] > pb.TOTAL_VECTOR_NODE_BUDGET
+    assert plan["rasterized_artist_count"] == 0, "线一条都收不动，这正是降档的理由"
+
+
+def test_lines_under_the_node_budget_stay_vector(cases):
+    """**分界线的另一侧**：1 万条线（20 000 个节点）照旧内联。
+
+    只有两侧都钉住，这条预算才是一条线而不是一个方向。实测 1 万条 =
+    51 650 个 DOM 节点、一次挂载 103 ms——100 ms 是「瞬时」的人机边界，
+    阈值就是照着它选的。
+    """
+    plan = cases["many_lines_under_node_budget"]
+    assert plan["mode"] == pb.MODE_VECTOR, plan["detail"]
+    assert plan["vector_nodes"] <= pb.TOTAL_VECTOR_NODE_BUDGET
+
+
+def test_collectible_layers_are_collected_further_not_downgraded(cases):
+    """**能收就收满，不是收一半就降档。**
+
+    四格各 15 129 个 cell：只看 primitive 预算的话收掉一格就「达标」了
+    （45 387 ≤ 50 000），却把 45 388 个元素交给 DOM——正是节点预算要拦的
+    量级，而那些 mesh **本来就是可以收的**。两条图级预算必须一起收敛。
+    """
+    plan = cases["many_medium_meshes"]
+    assert plan["mode"] == pb.MODE_HYBRID, plan["detail"]
+    assert plan["rasterized_artist_count"] == 3, "收一格是不够的"
+    assert plan["vector_nodes"] <= pb.TOTAL_VECTOR_NODE_BUDGET
+    assert plan["vector_primitives"] <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET
+
+
+def test_only_the_binding_budget_decides_who_gets_collected(cases):
+    """**排序键只能是此刻还在超的那条预算。**
+
+    这张图 31 769 个 primitive（图级 50 000 之内，那条不响）、44 769 个节点
+    （图级 24 000 之外，只有这条响）。两个 artist 都在各自族预算之内：
+
+        mesh    18 769 个 primitive → 18 769 个节点
+        散点    13 000 个 primitive → **26 000** 个节点（逐实例着色，每个
+                `<use>` 外面再包一个 `<g>`）
+
+    按 primitive 排先收 mesh，收完还差 2 001 个节点，于是散点也被收走——两层
+    都成了位图。**只收散点就够**（44 769 − 25 999 = 18 770 ≤ 24 000），mesh
+    本可以留在矢量层继续可编辑。多收的那一层是白丢的语义细节，而它之所以被
+    多收，是因为挑人的尺子量的是一条**已经达标**的预算。
+    """
+    plan = cases["mesh_plus_mapped_scatter"]
+    assert plan["mode"] == pb.MODE_HYBRID, plan["detail"]
+    assert plan["vector_nodes"] <= pb.TOTAL_VECTOR_NODE_BUDGET, plan["detail"]
+    assert plan["vector_primitives"] <= pb.TOTAL_VECTOR_PRIMITIVE_BUDGET
+    # 收一层就够，而且收的必须是节点最贵的那一层
+    assert plan["rasterized_artist_count"] == 1, f"多收了：{plan['detail']}"
+    assert plan["rasterized_families"] == ["scatter"], plan["detail"]
+
+
 #: 顶点估值允许偏离后端实测值的带宽。五族实测：mesh / scatter / poly /
 #: linecoll 逐个**精确相等**，contour 0.916（被裁剪的等值线上后端给每个
 #: `CLOSEPOLY` 多写一条回起点的 `L`）。±15% 容得下那一条，又足够窄
@@ -473,13 +614,46 @@ def test_plan_for_state_skips_colorbar_internals(probe):
     assert without["estimated_primitives"] < with_internals["estimated_primitives"]
 
 
+#: 分析器耗时上限的两项：固定开销 + 按 artist 摊的线性项。
+#:
+#: `PER_ARTIST` 取慢 runner 实测单价（40 000 个 artist / 201.6 ms = 5.04 µs）
+#: 的 4 倍。**余量写在这里而不是藏在一个魔数里**——上一版是单个 200 ms，它
+#: 在同一台机器上红在 0.8% 的余量上，而那 0.8% 是运行器的速度。
+_ANALYZE_BASE_MS = 50.0
+_ANALYZE_PER_ARTIST_MS = 0.020
+
+
 def test_analyzer_cost_is_negligible_next_to_the_render_it_guards(cases):
     """分析器进 render 热路径，它必须比它要省下的那件事便宜好几个数量级。
 
     这条是**粗闸**，不是性能基准（真实数字记在 `docs/perf-baseline.md` 的
-    「复杂度分析器开销」一节，实测 #181 fixture 0.03 ms）。50 ms 留了三个数量
-    级的余量，它挡的是一整类回归：谁在热路径上调了 `QuadMesh.get_paths()`
-    （三格 40 000 cell ≈ 110 ms）或者顺手复制了一次数据数组。
+    「复杂度分析器开销」一节，实测 #181 fixture 0.03 ms）。
+
+    **上限不是一个常数，是一条按 artist 数摊的线**——这是这条判据的第三版，
+    前两版各错在一个维度上：
+
+    * 「按 artist 摊薄的单价」不成立：不同 family 的工作量模型不同
+      （`large_polycollection` 是 1 个 artist 却要遍历几千条 path，单价
+      181 µs），分母换成 primitive 数又会被 mesh 的估算撑大。
+    * **单一绝对毫秒数也不成立**：它量的是「机器多快 × 图多大」两件事之和。
+      200 ms 那一版在 4 万条 `plot()` 上实测本机 52.6 ms、慢 runner 201.6 ms
+      ——**红在 0.8% 的余量上**，而那是 runner 的速度，不是代码的退化。
+      一条会因为运行器忙而随机红的闸，最后一定会被人忽略掉。
+
+    现在的形状 `BASE + PER_ARTIST × artist 数` 把这两件事分开：常数项管固定
+    开销，线性项管规模。`PER_ARTIST = 20 µs` 是慢 runner 实测单价（5.04 µs）
+    的 4 倍——**余量是明写的**，不是碰巧够用。
+
+    代价也明写：4 倍余量下，一个「每个 artist 贵了三倍」的回归钻得过去。
+    **真正挡住那类回归的从来不是这条**，是 `test_quadmesh_paths_are_never_built`
+    ——它读的是 `_paths is not None` 这个结构性事实，不受机器快慢与规模影响。
+    这一条只挡「大到离谱」。
     """
     for name, plan in cases.items():
-        assert plan["analyze_ms"] < 50.0, f"{name}: 分析耗时 {plan['analyze_ms']} ms"
+        # `costs` 是全量不是样本（`_plan_json` 逐个序列化，没有截断），所以
+        # `len()` 就是这张图的 artist 数
+        ceiling = _ANALYZE_BASE_MS + _ANALYZE_PER_ARTIST_MS * len(plan["costs"])
+        assert plan["analyze_ms"] < ceiling, (
+            f"{name}: 分析耗时 {plan['analyze_ms']} ms，"
+            f"{len(plan['costs'])} 个 artist 的上限是 {ceiling:.1f} ms"
+        )

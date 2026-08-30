@@ -127,21 +127,24 @@ def _gids(man: dict, role: str) -> list[str]:
 
 @contextlib.contextmanager
 def _budgets_off():
-    """把**六个**闸全抬走 = 纯矢量对照组。
+    """把**每一条**闸抬走 = 纯矢量对照组。
 
     只抬 `MESH_CELL_BUDGET` 是不够的：同一块 mesh 还会撞上顶点预算、图级预算，
     而 22.9 MB 的产物又会撞上软闸（触发升档）与硬闸（不给 SVG）。漏一个的
-    表现是「对照组自己也变成了 hybrid」——那时 A/B 两侧一模一样，比值恒等于 1，
-    尺子量不到它要量的那一维（[[crosscheck-ruler-must-see-the-dimension]]）。
+    表现是「对照组自己也变成了 hybrid / raster」——那时 A/B 两侧一模一样，
+    比值恒等于 1，尺子量不到它要量的那一维
+    （[[crosscheck-ruler-must-see-the-dimension]]）。
+
+    **名单从 `previewbudget` 枚举出来，不手写。** 原来手写六个，
+    `TOTAL_VECTOR_NODE_BUDGET` 一加进去这里就漏了一条，对照组当场变成 raster、
+    整套用例在 `KeyError: 'svg'` 上炸——而炸在探针里已经算走运，它同样可能
+    悄悄给出一份「半抬闸」的对照组。靠人记得回来改的名单等于没有名单
+    （[[make-the-discipline-structural]]）。
     """
-    names = (
-        "MESH_CELL_BUDGET",
-        "SCATTER_INSTANCE_BUDGET",
-        "COLLECTION_VERTEX_BUDGET",
-        "TOTAL_VECTOR_PRIMITIVE_BUDGET",
-        "EDITOR_SVG_SOFT_LIMIT_BYTES",
-        "EDITOR_SVG_HARD_LIMIT_BYTES",
+    names = tuple(
+        n for n in previewbudget.__all__ if n.endswith("_BUDGET") or n.endswith("_LIMIT_BYTES")
     )
+    assert len(names) >= 6, f"抬闸名单只枚举到 {names}——命名规律变了？"
     saved = {n: getattr(previewbudget, n) for n in names}
     for n in names:
         setattr(previewbudget, n, 10**15)

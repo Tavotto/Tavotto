@@ -268,7 +268,9 @@ class LiveFigureSession:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
-                svg_bytes=svg_bytes, rasterized_artist_count=plan.rasterized_artist_count
+                svg_bytes=svg_bytes,
+                rasterized_artist_count=plan.rasterized_artist_count,
+                plan_demands_raster=plan.mode == previewbudget.MODE_RASTER,
             )
             preview.update(
                 previewbudget.metadata(
@@ -278,6 +280,7 @@ class LiveFigureSession:
                     rasterized_artist_count=plan.rasterized_artist_count,
                     estimated_primitives=plan.estimated_primitives,
                     estimated_vertices=plan.estimated_vertices,
+                    estimated_nodes=plan.estimated_nodes,
                 )
             )
         (self.out_dir / f"{stem}.json").write_text(
