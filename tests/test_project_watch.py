@@ -195,6 +195,21 @@ def _touch(path: Path, *, ns: int) -> None:
     os.utime(path, ns=(ns, ns))
 
 
+def _bump_mtime(path: Path) -> None:
+    """把 mtime 往前推一秒。
+
+    **不能指望时钟在两次写之间走动。** Windows 的系统时钟粒度约 15.6ms，
+    相隔微秒的两次写会拿到**同一个** mtime；如果这两次写长度还恰好相同
+    （`# v1` → `# v2`、`x = 1` → `x = 2` 都是），那么 `(size, mtime_ns)`
+    两把尺子一把都没动，用例在那里量的就成了「同 size 同 mtime 会不会被发现」
+    ——答案当然是不会。实测在合并队列的 windows-latest 上红了两条。
+
+    真实场景里两次保存相隔以秒计，这个坑只有把两次写挤在一起的用例踩得到；
+    所以处置是把用例的前提**钉明白**，而不是给产品加一把更贵的尺子。
+    """
+    _touch(path, ns=path.stat().st_mtime_ns + 1_000_000_000)
+
+
 # ---------------------------------------------------------------------------
 # 快照与签名
 # ---------------------------------------------------------------------------
@@ -210,7 +225,9 @@ class TestSnapshot:
         before = engine_watch.take_snapshot(figs)
 
         p.write_text("x = 2\n", encoding="utf-8")  # 逐字节等长
+        _bump_mtime(p)  # 两次写挤在一起时时钟可能没走动，见 `_bump_mtime`
         assert p.stat().st_size == before.scripts["a.py"][0]
+        assert p.stat().st_mtime_ns != before.scripts["a.py"][1]  # 先证明观测有效
         assert engine_watch.diff_snapshots(before, engine_watch.take_snapshot(figs)).scripts == {
             "a.py"
         }
@@ -946,7 +963,8 @@ class TestLifecycle:
         sink, _ = _recording_sink()
         wa = _watcher(ctx_a, sink)
 
-        (a / "paper_style.py").write_text("# v2\n", encoding="utf-8")
+        (a / "paper_style.py").write_text("# v2\n", encoding="utf-8")  # 与 v1 逐字节等长
+        _bump_mtime(a / "paper_style.py")
         wa.poll()
         assert whole == [str(a)]
 
