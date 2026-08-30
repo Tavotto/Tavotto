@@ -29,6 +29,12 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
     { timeout: 30_000 },
   )
   await tabA.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  // Prompt 09 起双击 = 进**快速编辑**，那一屏只渲染这一张图。而工作区模式按
+  // documentId 存在本机、**同一个浏览器上下文的两个标签页共用它**：标签 B
+  // 会跟着进快速编辑，粘贴进文档的那个对象存在但根本不画出来，`[data-object-id]`
+  // 永远是 1——判据量错了对象（不是「粘贴没成功」，是「这一屏不显示它」）。
+  // 这条用例测的是画布上的跨标签粘贴，所以回到画布排版再往下走。
+  await tabA.getByRole('button', { name: '画布排版' }).click()
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   await tabA.keyboard.press('ControlOrMeta+c')
   await expect(tabA.getByRole('status')).toHaveText(/已复制/)

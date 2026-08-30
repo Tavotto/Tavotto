@@ -227,7 +227,13 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 元素，树是 #37 要求的等价路径。
   // 次数是**步数预算**，不再兼任超时预算：同步点已经在上面等过了。
   await tabTo(page, '图内元素', 120)
-  await page.keyboard.press('Enter')
+  // 轨道按钮是**开关**：Prompt 09 起进快速编辑时左栏本来就可能停在「图内元素」
+  // 上，那时再按一次 Enter 是**把它关掉**——后面方向键漫游会在焦点掉回 body
+  // 上红出来（实测就是这么红的，而且 `toBeVisible` 还会在关闭动画里侥幸绿一下）。
+  // Tab 到它照旧（「键盘到得了」是这条用例要守的），只在它没开着时才按。
+  if (!(await page.locator('[role="treeitem"]').count())) {
+    await page.keyboard.press('Enter')
+  }
   // 首次进入要跑一遍脚本构建 figure——等元素树真的长出条目，
   // 只等 [role=tree] 容器可见的话，构建中的空树会放测试往下走
   await expect(page.locator('[role="treeitem"]').first()).toBeVisible({

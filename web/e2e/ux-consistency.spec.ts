@@ -25,7 +25,13 @@ async function openFigure(page: Page, a: RunningApp) {
 
 /** 打开左侧元素树并展开全部分组（分组头点行即展开，元素行点行首小三角） */
 async function openTree(page: Page) {
-  await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  // **轨道按钮是开关，不是「打开」。** Prompt 09 起双击素材卡直接进快速编辑，
+  // 左栏本来就停在「图内元素」上（实测 `aria-expanded=true`、6 个 treeitem）；
+  // 再点一次是**关掉它**，后面每一条断言都会在「找不到 treeitem」上超时。
+  // 所以先看它开着没有——已经开着就什么都不做。
+  if (!(await page.locator('[role="treeitem"]').count())) {
+    await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  }
   await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
   for (let i = 0; i < 20; i++) {
     const rows = page.locator('[role="treeitem"][aria-expanded="false"]')
