@@ -84,12 +84,10 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
   await expect(card).toBeVisible({ timeout: 30_000 })
   await expect(card.getByText('运行时图')).toBeVisible()
 
-  // 加入画布（双击卡片 = 主动作）
+  // 打开（双击卡片 = 主动作）。Prompt 09 起它落在快速编辑工作区，
+  // **当场就在图内编辑态**——不再需要先加入画布再点一次「编辑图内元素」。
   await card.dblclick()
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-
-  // 进入图内编辑（面板刚被选中，右栏有入口）
-  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
 
   // 左侧元素树 → 标题 → 改字号
@@ -164,8 +162,8 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await card.dblclick()
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
-  // 对象级编辑：标题字号 + 曲线线宽（与黄金路径同一套控件）
-  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
+  // 对象级编辑：标题字号 + 曲线线宽（与黄金路径同一套控件）。
+  // Prompt 09：双击卡片已经进了图内编辑态
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
   await openElementsTab(page)
   const panel = page.getByLabel('右侧面板', { exact: true })
@@ -228,7 +226,9 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   const obj = page.locator('[data-object-id]').first()
   await expect(obj).toBeVisible()
 
-  // lazy rehydrate → 重新运行 → override 恢复（字号 13 还在）
+  // lazy rehydrate → 重新运行 → override 恢复（字号 13 还在）。
+  // **这一条走的是画布上的对象**（重开项目后从版上点进去），不是素材卡——
+  // 那条路径 Prompt 09 一个字没改，右栏入口照旧。
   await obj.click()
   await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })

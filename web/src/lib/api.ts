@@ -35,6 +35,42 @@ export interface PanelInfo {
    * `layout_only`。
    */
   capability?: PanelCapability
+  /**
+   * 这张素材文件**自己**说它有多大（后端 `engine/originalspec.py`，ADR 0028）。
+   *
+   * 与 `native_w_mm` / `native_h_mm` 不是两份数据：那两个老字段就是
+   * `logical_w_mm` / `logical_h_mm` 的投影（后端同一次计算）。留着它们是因为
+   * 老前端只认它们；新代码一律走 `lib/originalSpec.ts`。
+   *
+   * 可选：老后端不发这一块，`undefined` 的意思是"这个后端没有这份事实"，
+   * **不是**"这张图没有规格"——解析时退到文档里那份，见 originalSpec.ts。
+   */
+  original_spec?: AssetOriginalSpec
+}
+
+/**
+ * 素材的原图规格（后端事实层）。**没测量的维度一律 `null`**，不许合并进
+ * 相邻取值：`dpi: null` 与 `dpi: 96` 是两个不同的答案。
+ */
+export interface AssetOriginalSpec {
+  source_kind: 'vector' | 'raster'
+  logical_w_mm: number
+  logical_h_mm: number
+  px_w: number | null
+  px_h: number | null
+  dpi: number | null
+  /**
+   * 后端发 `metadata`（文件写了）/ `assumed`（位图没写，按格式假定）/
+   * `unknown`（矢量源，密度这一维不适用）。`derived`（由已知 mm 与像素反算）
+   * 只在**只剩文档那份**时由前端产生，见 `lib/originalSpec.ts`。
+   * 闭集与后端 `engine/originalspec.DPI_SOURCES` 同源，
+   * `test_frontend_and_backend_agree_on_the_dpi_source_set` 看着。
+   */
+  dpi_source: 'metadata' | 'assumed' | 'derived' | 'unknown'
+  /** 矢量视口（pt）；位图为 null */
+  viewport_pt: [number, number] | null
+  /** 透明背景；没测量为 null */
+  transparent: boolean | null
 }
 
 /**

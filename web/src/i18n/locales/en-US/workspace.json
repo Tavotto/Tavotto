@@ -7,7 +7,6 @@
   },
   "assets": {
     "activeFilters": "Active filters",
-    "addAria": "Add {{name}} to the canvas",
     "addToCanvas": "Add to canvas",
     "capabilityHeading": "{{name}} · {{status}}",
     "cardParameterizable": "parameterizable",
@@ -28,6 +27,8 @@
     "listLabel": "Asset panels",
     "loadFailed": "Could not read the asset library",
     "noMatch": "No panel matches these filters",
+    "openAria": "Open {{name}} for quick editing",
+    "openFigure": "Open",
     "refresh": "Refresh project",
     "refreshFailed": "Refresh failed: {{error}}",
     "refreshTip": "Check the project for new files and script changes",
@@ -175,6 +176,25 @@
     "unhide": "Show again",
     "unlock": "Unlock",
     "unsupportedTip": "{{title}} is not supported yet: {{reason}}"
+  },
+  "fastEdit": {
+    "addToCanvas": "Add to canvas",
+    "added": "{{name}} added to the canvas",
+    "alreadyOnCanvas": "{{name}} is already on the canvas",
+    "connectSource": "Link a source script",
+    "crumbTitle": "Back to canvas layout",
+    "figureMissing": "{{name}} is not in this project",
+    "layoutMode": "Canvas layout",
+    "layoutOnly": "No source script is linked, so this figure can be laid out but not edited inside.",
+    "mode": "Quick edit",
+    "originalSize": "Original {{w}} × {{h}} mm",
+    "sizeAssumed": "Assumed DPI",
+    "sizeAssumedTitle": "This bitmap carries no physical density; the size assumes {{dpi}} dpi.",
+    "sizeStale": "Last known",
+    "sizeStaleTitle": "The source file is unavailable; showing the last known original spec.",
+    "sizeUnknown": "Size unknown",
+    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm.",
+    "toLayout": "Canvas layout"
   },
   "history": {
     "addArrow": "Add arrow",

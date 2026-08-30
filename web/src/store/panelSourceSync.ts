@@ -11,7 +11,7 @@
  *
  * | 来源 | 字段 | 谁说了算 |
  * | --- | --- | --- |
- * | 磁盘 / registry | `script` `cost` `fileKind` `pxW` | `/api/panels` |
+ * | 磁盘 / registry | `script` `cost` `fileKind` `pxW` `pxH` | `/api/panels` |
  * | 用户 | `x` `y` `w` `h` `crop` `rotation` `overrides` `groupId` `locked` `hidden` `name` `opacity` `flipH` `flipV` `lockedGids` `aspectLocked` `layoutPinned` | 只有用户 |
  *
  * **`nativeW` / `nativeH` 刻意不在第一列**，尽管 `/api/panels` 也报图幅：
@@ -74,6 +74,7 @@ function derivedPatchOf(o: PanelObject, info: PanelInfo): Partial<PanelObject> |
   if (o.cost !== info.cost) patch.cost = info.cost
   if (o.fileKind !== info.kind) patch.fileKind = info.kind
   if (o.pxW !== info.px_w) patch.pxW = info.px_w
+  if (o.pxH !== info.px_h) patch.pxH = info.px_h
   return Object.keys(patch).length ? patch : null
 }
 

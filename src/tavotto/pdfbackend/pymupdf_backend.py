@@ -103,7 +103,16 @@ def probe_asset(path: Path, kind: str) -> dict:
             r = doc[0].rect
         return {"kind": "pdf", "w_pt": r.width, "h_pt": r.height}
     pix = pymupdf.Pixmap(str(path))
-    return {"kind": "raster", "px_w": pix.width, "px_h": pix.height}
+    # `alpha` 是「这张位图带不带透明通道」，原图规格要报它（`engine/originalspec`）。
+    # **物理密度不从这里取**：MuPDF 的 `xres` 对「没写 pHYs」与「写着 96 dpi」
+    # 一律回 96，两个不同的答案被压成同一个值——那一维由 originalspec 自己
+    # 按格式解析。
+    return {
+        "kind": "raster",
+        "px_w": pix.width,
+        "px_h": pix.height,
+        "alpha": bool(pix.alpha),
+    }
 
 
 def render_preview_png(path: Path, width_px: int, out: Path) -> None:

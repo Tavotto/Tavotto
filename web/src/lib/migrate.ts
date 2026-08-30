@@ -35,6 +35,7 @@ function migrateObject(raw: Unknown): CanvasObject | null {
       nativeW: num(raw.nativeW, base.w),
       nativeH: num(raw.nativeH, base.h),
       pxW: num(raw.pxW, 0) || undefined,
+      pxH: num(raw.pxH, 0) || undefined,
       script: typeof raw.script === 'string' ? raw.script : null,
       overrides: Array.isArray(raw.overrides) ? (raw.overrides as PanelObject['overrides']) : [],
       name: typeof raw.name === 'string' ? raw.name : undefined,

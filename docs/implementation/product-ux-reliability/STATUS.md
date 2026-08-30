@@ -40,7 +40,7 @@
 | 06 | 前端事件消费与派生元数据同步 | ✅ 完成（本次） |
 | 07 | Readiness 后端事实模型 | ✅ 完成（本次） |
 | 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
-| 09 | 快速编辑 / 画布双工作流、原图输出合同 | ⬜ |
+| 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
 | 10 | Style / Spec 分层 | ⬜ |
 | 11 | 统一检查引擎与问题面板 | ⬜ |
 | 12 | 导出管线与精简导出 UI | ⬜ |
@@ -62,7 +62,7 @@
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
-| 3 核心工作流与输出 | 09–12 | ⬜ |
+| 3 核心工作流与输出 | 09–12 | 🟡 09（双工作流 + 原图规格合同）完成；10–12 未开始 |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
@@ -83,7 +83,7 @@
 | R-06 | ✅ **已修（03）** **没有显式的保存状态机**：`saving` / `save_error` / `conflict` / `recovery_available` 都不是文档状态（错误只是一个 `window` 事件，刷新即丢） | `documentStore.ts` 无对应字段 | P1 | 03 |
 | R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | `app.py:4206` | P2 | 03 |
 | R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
-| R-09 | **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
+| R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
 | R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
 | R-11 | **最小字号有两个数**：`absolute_min_font_size_pt: 8.0` 与 `legend_policy.min_font_size_pt: 8.5` | `profiles/publication.json:43,65` | P2 | 10 |
 | R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
@@ -91,6 +91,7 @@
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
 | R-16 | **E2E 只有 Windows 腿** | 既有 issue #30 | P2 | 23 |
+| R-19 | **e2e 与 axe 两层在 05–09 里从没真跑过**：Session 08 新增两条 axe 用例、Session 09 改了 8 个 spec 的「打开」语义，两轮都只做到 `playwright test --list` 收得到。**收得到 ≠ 跑得过** | 本机沙箱起不来真实后端 + 浏览器 | P2（门禁未执行） | 23 |
 | R-17 | 前端主 chunk 1.57 MB（gzip 487 kB），构建有大小告警 | `pnpm build` 输出 | P3 | 23 |
 | R-18 ✔ | **N-1 升级验收里两个检查是空的**：① 它 PUT 给 `/api/autosave/` 的是 `{"doc":…, "updatedAt":…}`，没有 `schema`，后端从**一开始**就 400，异常被 `except` 吞成 `autosave_saved=False`，于是"自动保存读得回来"这条检查**从来没跑过**；② `"老布局可列出"` 对 `layouts`（一个字符串列表）做 `x.get("name")`，必然 `AttributeError` 被同一个 `except` 接住记成 False | `scripts/ci/upgrade_acceptance.py:344,353,455` | P1（门禁空转） | 23 |
 
@@ -269,6 +270,33 @@ desktop…」。
 > `i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
 > 上表是**把所有前端改动做完、两个产物都重建并 `--check` 通过之后**重跑一遍
 > 完整套件的结果，不是拼起来的。
+
+### Session 09 之后（改动后实跑，**冻结前端之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3217** passed / 34 skipped / 0 failed（Session 08 的 3200 + 本轮新增的 17 条 = 3217，数字对得上） |
+| `cd web && pnpm test` | ✅ exit 0 —— **134** files / **1618** tests passed（比 08 的 131/1557 +3 文件 / +61 条：workspace 19 + originalSpec 25 + fastEditStage 8 + overflow 预算 9） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2632 / en-US 2717；新增 `fastEdit.*` 与 `assets.open*`，删掉死掉的 `assets.addAria`） |
+| `cd web && pnpm lint` | ✅ exit 0（只有既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（279 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `dc25a773a91b099b`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `2541bd56c77053d9`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 26 条 | ✅ 全部被打红（**第一轮有 2 条活了下来**，两条都是「判据没被执行到它该看的那个点上」，成因与处置见 `TEST_MATRIX.md`） |
+| `cd web && pnpm e2e` | ⛔ **没跑**（Playwright 要真实后端与浏览器，本机沙箱起不来）。本轮改了 8 个 spec，只确认 `playwright test --list` 收得到全部 110 条 —— **收得到 ≠ 跑得过**，记在风险表 R-19 |
+
+> **「产物比源码早」这一轮踩了三次。** 每次都是同一个形状：重建 `canvas.html`
+> 之后又改了 `web/src`（哪怕只是一行注释——指纹算的是内容，不是语义），
+> 于是 `test_widget_artifact_is_in_sync_with_the_frontend` 与
+> `test_maintenance_scripts_report_under_cp1252_stdout` 两条一起红，而红的原因
+> 与它们看护的事毫无关系。
+> **上表是把前端整个冻结、两个产物重建并 `--check` 通过之后重跑的一遍完整套件**，
+> 不是拼起来的。下一轮的纪律：**改完所有 `web/src` 再重建，重建之后一个字都不动**
+> ——`i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
+
+---
 
 > 单跑某个前端用例文件时**必须自己带上**
 > `NODE_OPTIONS=--no-experimental-webstorage`（它在 `package.json` 的 `test`

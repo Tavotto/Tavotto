@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Braces, ListFilter, Plus, RotateCw, Search, X,
+import { Braces, ListFilter, PenLine, Plus, RotateCw, Search, X,
   SearchX,
   ImageOff,
   Play,
@@ -17,7 +17,8 @@ import {
 } from '@/lib/api'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
-import { addPanel, addRuntimePanel } from '@/store/actions'
+import { addRuntimePanel } from '@/store/actions'
+import { addFigureToLayout, openFastEdit } from '@/store/workspace'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -368,7 +369,7 @@ export function AssetBrowser() {
                     selected={activeId === it.panel.id}
                     tabbable={focusId === it.panel.id}
                     onSelect={() => setActiveId(it.panel.id)}
-                    onAdd={() => addPanel(it.panel)}
+                    onOpen={() => openFastEdit(it.panel.id)}
                     onZoom={() => setZoomed(it)}
                     onMove={(d) => move(it.panel.id, d)}
                     columns={columns}
@@ -420,7 +421,7 @@ export function AssetBrowser() {
             size="md"
             disabled={zoomed?.kind === 'runtime' && !zoomed.asset.descriptor}
             onClick={() => {
-              if (zoomed?.kind === 'file') addPanel(zoomed.panel)
+              if (zoomed?.kind === 'file') addFigureToLayout(zoomed.panel.id)
               else if (zoomed?.kind === 'runtime' && zoomed.asset.descriptor)
                 addRuntimePanel(zoomed.asset.descriptor)
               setZoomed(null)
@@ -555,7 +556,12 @@ function GridSkeleton({ columns }: { columns: number }) {
 
 /**
  * 一张素材卡：图片占绝大部分面积，识别靠图不靠文件名。
- * 单击选中、Enter 加入、Space 看大图、方向键在网格里走；双击与拖拽保留为快捷方式。
+ * 单击选中、Enter **打开**（进快速编辑工作区）、Space 看大图、方向键在网格里走；
+ * 双击与拖拽保留为快捷方式（拖到画布上仍然是"加到这张版上"）。
+ *
+ * 主动作从"加入画布"换成"打开"是 Prompt 09 的产品决定：普通用户要做的事
+ * 是"改这张图"，先摆到一张版上再双击进图内编辑是多绕的一步。加入画布仍有
+ * 三条路——快速编辑条上的按钮、拖拽到画布、看大图弹窗的主按钮。
  */
 function AssetCard({
   panel,
@@ -563,7 +569,7 @@ function AssetCard({
   selected,
   tabbable,
   onSelect,
-  onAdd,
+  onOpen,
   onZoom,
   onMove,
   columns,
@@ -573,7 +579,7 @@ function AssetCard({
   selected: boolean
   tabbable: boolean
   onSelect: () => void
-  onAdd: () => void
+  onOpen: () => void
   onZoom: () => void
   onMove: (delta: number) => void
   columns: number
@@ -610,7 +616,7 @@ function AssetCard({
         e.dataTransfer.effectAllowed = 'copy'
       }}
       onClick={onSelect}
-      onDoubleClick={onAdd}
+      onDoubleClick={onOpen}
       onFocus={onSelect}
       onKeyDown={(e) => {
         const step: Record<string, number> = {
@@ -621,7 +627,7 @@ function AssetCard({
         }
         if (e.key === 'Enter') {
           e.preventDefault()
-          onAdd()
+          onOpen()
         } else if (e.key === ' ') {
           e.preventDefault()
           onZoom()
@@ -690,12 +696,12 @@ function AssetCard({
         {/* 不是 <button>：option 里不许再嵌交互控件（axe nested-interactive，
             serious）——哪怕 tabIndex=-1 也算。它只是鼠标用户的就近入口，
             键盘/读屏用户在 option 上按 Enter 走的就是同一个 onAdd（可达名
-            由 addAria 落在 option 的 aria-keyshortcuts 语境里，能力没少）。 */}
+            由 openAria 落在 option 的 aria-keyshortcuts 语境里，能力没少）。 */}
         <span
-          title={ab('addAria', { name })}
+          title={ab('openAria', { name })}
           onClick={(e) => {
             e.stopPropagation()
-            onAdd()
+            onOpen()
           }}
           className={cn(
             'absolute bottom-1 right-1 flex h-6 cursor-pointer items-center gap-1 rounded-sm',
@@ -705,8 +711,8 @@ function AssetCard({
             selected && 'opacity-100',
           )}
         >
-          <Plus size={11} />
-          {ab('addToCanvas')}
+          <PenLine size={11} />
+          {ab('openFigure')}
         </span>
       </div>
 
@@ -761,7 +767,9 @@ function RuntimeAssetCard({
   const busy = !!run && isBusyPhase(run.phase)
 
   const primary = () => {
-    if (asset.descriptor) addRuntimePanel(asset.descriptor)
+    // 跑过的运行时图与磁盘素材同一条路：打开 → 快速编辑。还没跑过的那一档
+    // 主动作仍然是"运行并发现图"——尺寸与内容只有运行后才知道。
+    if (asset.descriptor) openFastEdit(asset.id)
     else if (!busy) void useScriptRunStore.getState().run(asset.script)
   }
   const rerun = () => {
@@ -861,12 +869,12 @@ function RuntimeAssetCard({
           </span>
         )}
 
-        {/* 主动作（与文件卡同款的就近入口，非嵌套控件）：有描述符 = 加入
-            画布；没有 = 运行并发现图 */}
+        {/* 主动作（与文件卡同款的就近入口，非嵌套控件）：有描述符 = 打开
+            （快速编辑）；没有 = 运行并发现图 */}
         <span
           title={
             asset.descriptor
-              ? ab('addAria', { name: asset.stem })
+              ? ab('openAria', { name: asset.stem })
               : ab('runtimeRunAria', { script: asset.script })
           }
           onClick={(e) => {
@@ -881,11 +889,11 @@ function RuntimeAssetCard({
             selected && 'opacity-100',
           )}
         >
-          {asset.descriptor ? <Plus size={11} /> : <Play size={11} />}
+          {asset.descriptor ? <PenLine size={11} /> : <Play size={11} />}
           {busy
             ? translate('scripts.running', { ns: 'workspace' })
             : asset.descriptor
-              ? ab('addToCanvas')
+              ? ab('openFigure')
               : translate('scripts.run', { ns: 'workspace' })}
         </span>
       </div>

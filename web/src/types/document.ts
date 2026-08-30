@@ -102,6 +102,12 @@ export interface PanelObject extends ObjectBase {
   nativeW: number
   nativeH: number
   pxW?: number
+  /**
+   * 像素高。与 `pxW` 成对，只有位图源有；**源文件消失之后原图规格还要报得出
+   * 像素网格**，所以它跟 `pxW` 一样存进文档（可选字段，老文档没有它 =
+   * 那一维未知，不许补默认值）。
+   */
+  pxH?: number
   script?: string | null
   cost?: string
   /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */

@@ -26,6 +26,7 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 
 /**
  * 当前项目状态。'loading' 只出现在启动探测阶段；'none' = 后端没有打开的
@@ -92,6 +93,15 @@ async function resetForNewProject() {
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },
     newId('d'),
   )
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
+  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
+  //
+  // **必须排在 `switchDocument` 之后。** 排在前面的话，
+  // `startWorkspacePersistence` 的那个订阅此刻认的还是**旧**文档 id：它会把
+  // `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，把用户在那份文档里停
+  // 的那张图抹掉——上面这句"切回去仍然作数"就成了一句假话。派生状态不许覆盖
+  // 用户偏好，切项目这件事更不是用户在表达"我不要快速编辑了"。
+  useWorkspaceStore.getState().clear()
   // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()
   void useProjectReadinessStore.getState().load()

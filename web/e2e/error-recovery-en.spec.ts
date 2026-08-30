@@ -49,9 +49,9 @@ async function openFigures(page: Page, baseURL: string): Promise<void> {
 
 /** 把面板放上画布并进入图内编辑（错误场景大多在 build 阶段暴露）。 */
 async function placeAndEdit(page: Page): Promise<void> {
+  // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
+  // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.getByText(/Canvas is empty|画布是空的/)).toHaveCount(0)
-  await page.getByRole('button', { name: /Edit figure elements/i }).first().click()
 }
 
 test('无可用渲染环境：英文的环境缺件卡片 + 可点的修复出口', async ({ app, page }) => {

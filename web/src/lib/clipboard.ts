@@ -217,6 +217,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.nativeW = info.native_w_mm
       o.nativeH = info.native_h_mm
       o.pxW = info.px_w
+      o.pxH = info.px_h
       o.script = info.script ?? null
       o.cost = info.cost
       o.name = info.name
@@ -336,6 +337,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
           copy.nativeW = info.native_w_mm
           copy.nativeH = info.native_h_mm
           copy.pxW = info.px_w
+          copy.pxH = info.px_h
           copy.script = info.script ?? null
           copy.cost = info.cost
           copy.name = info.name

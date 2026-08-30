@@ -84,6 +84,7 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
     nativeW: info.native_w_mm,
     nativeH: info.native_h_mm,
     pxW: info.px_w,
+    pxH: info.px_h,
     script: info.script ?? null,
     cost: info.cost,
     // 继承「写回原始文件」的基线，这样编辑态看到的就是文件当前的样子
@@ -1528,6 +1529,7 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     o.nativeW = info.native_w_mm
     o.nativeH = info.native_h_mm
     o.pxW = info.px_w
+    o.pxH = info.px_h
     o.script = info.script ?? null
     o.cost = info.cost
     o.name = info.name
