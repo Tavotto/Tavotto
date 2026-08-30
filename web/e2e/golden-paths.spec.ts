@@ -108,9 +108,13 @@ test('还没连上源脚本时，界面给得出「重新扫描 / 试运行」�
   // 静态解不出文件名的脚本，必须提供「试运行并连接」这条路（Prompt 08 起，
   // 这个动作挂在**那张图**那一行上，不再挂在一份脚本清单上）
   await expect(readiness.getByRole('button', { name: /试运行并连接/ }).first()).toBeVisible()
-  // 高级段仍然列得出项目里的每个 .py
-  await readiness.getByText(/全部脚本/).click()
-  await expect(readiness.getByText('render_map.py').first()).toBeVisible()
+  // 高级段仍然列得出项目里的每个 .py。
+  // **断言收在那一段里面**：图那一行的「技术详情」（收起的 <details>）里也写着
+  // 同一个脚本名，全局 `.first()` 会先命中那个隐藏节点，然后报「hidden」——
+  // 量错了对象，而不是功能坏了。
+  const allScripts = readiness.locator('details', { hasText: '全部脚本' })
+  await allScripts.getByText(/全部脚本/).click()
+  await expect(allScripts.getByText('render_map.py').first()).toBeVisible()
 })
 
 test('没装 Python 时给出引导，而不是闪退', async ({ app, page }) => {
