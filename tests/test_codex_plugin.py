@@ -1197,6 +1197,35 @@ def test_the_plugin_is_not_shipped_in_the_wheel():
     assert "codex-plugin" in exclude and "codex-plugin/**" in exclude
 
 
+def test_plugin_zip_refuses_to_ship_without_the_widget(tmp_path):
+    """画布产物不在时**打包必须当场失败**，不许打出一个没有 UI 的插件。
+
+    产物进版本库，所以正常情况下 checkout 就有——但它能以任何理由缺席（被
+    clean 掉、一次半途而废的重建、某个步骤把插件目录当临时目录用过）。缺了
+    之后没有任何东西会喊：`build_zip` 照打不误，而 MCP server 会**如实降级成
+    widget_missing、零报错**。正因为它安静，这条路上必须有一道闸——发布是
+    单向的，发出去才发现就晚了。
+    """
+    import shutil
+
+    src = tmp_path / "codex-plugin"
+    shutil.copytree(PLUGIN, src, ignore=shutil.ignore_patterns("__pycache__"))
+    canvas = src / "mcp" / "widget" / "canvas.html"
+    if not canvas.is_file():  # 本机还没构建过：放个占位，本条测的是「缺了会不会拦」
+        canvas.parent.mkdir(parents=True, exist_ok=True)
+        canvas.write_text("<!-- placeholder -->\n", encoding="utf-8")
+    # 先证明有产物时它是通的——否则下面那条断言在「打包本来就坏了」时也会绿
+    ok_zip = _manifest_module().build_zip(tmp_path / "ok.zip", source=src)
+    assert ok_zip.is_file()
+
+    canvas.unlink()
+    with pytest.raises(SystemExit) as e:
+        _manifest_module().build_zip(tmp_path / "nope.zip", source=src)
+    assert "canvas.html" in str(e.value)
+    assert "build_mcp_widget" in str(e.value), "报错要说清楚怎么补"
+    assert not (tmp_path / "nope.zip").exists(), "拦住了就不该留下半个 zip"
+
+
 def test_widget_artifact_is_committed_next_to_the_server():
     """产物不在仓库里 = 用户装完插件只有一个空目录（server 会如实降级）。"""
     canvas = PLUGIN / "mcp" / "widget" / "canvas.html"

@@ -78,6 +78,18 @@ def build_manifest(tag: str, version: str, *, published_at: str | None = None) -
     return out
 
 
+#: zip 里**必须**有的东西。
+#:
+#: `canvas.html` 是构建产物（`scripts/build_mcp_widget.py`）。它进版本库，所以
+#: 正常情况下 checkout 就有——但它**能以任何理由缺席**：有人 clean 掉、有人在
+#: 一次半途而废的重建里删了它、某个 CI 步骤把插件目录当临时目录用过。
+#:
+#: 缺了之后没有任何东西会喊：`build_zip` 照打不误，用户装到一个没有 UI 的插件，
+#: 而 MCP server 会**如实降级成 widget_missing、零报错**。正因为它安静，这条
+#: 路上必须有一道闸——发布是单向的，发出去才发现就晚了。
+_REQUIRED_IN_ZIP = ("mcp/widget/canvas.html",)
+
+
 def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
     """把插件目录打成 zip（顶层目录固定叫 codex-plugin）。"""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +97,12 @@ def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
     kept = [p for p in files if not ZIP_SKIP & set(p.relative_to(source).parts)]
     if not kept:
         raise SystemExit(f"{source} 里没有文件可打包")
+    have = {p.relative_to(source).as_posix() for p in kept}
+    missing = [rel for rel in _REQUIRED_IN_ZIP if rel not in have]
+    if missing:
+        raise SystemExit(
+            f"插件 zip 缺少构建产物 {missing}——先跑 python scripts/build_mcp_widget.py"
+        )
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in kept:
             zf.write(path, str(Path("codex-plugin") / path.relative_to(source)))

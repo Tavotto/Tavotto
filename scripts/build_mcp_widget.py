@@ -2,7 +2,7 @@
 """构建 Codex 内嵌画布（MCP App UI）的单文件 HTML。
 
     python scripts/build_mcp_widget.py            # 构建并写入插件目录
-    python scripts/build_mcp_widget.py --check    # 只校验产物是否与源码同步
+    python scripts/build_mcp_widget.py --check    # 校验：0 一致 / 1 过期 / 2 还没构建
 
 产物：`codex-plugin/mcp/widget/canvas.html`（**进 git**）。
 
@@ -154,6 +154,13 @@ def build() -> str:
 
 
 def current_fingerprint() -> str | None:
+    """产物里那枚指纹；**文件不在与指纹读不出来都回 `None`**。
+
+    两种 `None` 的**处置不同**，所以判「在不在」要另问 `OUT.is_file()`，别拿这个
+    返回值当代理：一份存在但被截断、或早于打戳那一版的产物，指纹读不出来——那是
+    「过期」（重建一次就好），不是「还没构建」。合在一起会对着一个明明躺在磁盘上
+    的文件说「它不存在」。
+    """
     if not OUT.is_file():
         return None
     head = OUT.read_text(encoding="utf-8")[:200]
@@ -173,20 +180,40 @@ def main(argv: list[str] | None = None) -> int:
     want = source_fingerprint()
     have = current_fingerprint()
     if args.check:
-        ok = have == want
-        report = {"ok": ok, "expected": want, "found": have, "path": str(OUT)}
-        print(
-            json.dumps(report, ensure_ascii=False)
-            if args.json
-            else (
-                f"画布产物与源码一致（{want}）"
-                if ok
-                else f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
-                f"跑一次 python scripts/build_mcp_widget.py"
-            ),
-            file=sys.stdout if ok else sys.stderr,
-        )
-        return 0 if ok else 1
+        # **三档，不是两档。**「产物不存在」与「产物过期」是两件事，上一版把
+        # 前者并进后者、报同一句「产物过期……产物里是 None」：
+        #
+        #   0  一致        —— 没事
+        #   1  过期        —— 有人改了 web/src 却没重建（真错）
+        #   2  产物不存在  —— 还没构建过
+        #
+        # 分开的理由不是措辞：**处置不同**。刚 clone 下来还没跑过构建的人看到
+        # 「过期」会去找自己改坏了什么；而在发布链上「不存在」意味着打出去的
+        # 插件没有画布，是致命的。调用方按退出码分流，不靠读那句中文。
+        # **「在不在」问文件，不问指纹。** `current_fingerprint()` 对「文件不在」
+        # 和「指纹读不出来」都回 None——后者是一份**确实存在**的坏产物，属于
+        # 「过期」那一档。拿返回值当代理就会对着磁盘上的文件说「它不存在」。
+        missing = not OUT.is_file()
+        ok = (not missing) and have is not None and have == want
+        status = "ok" if ok else ("missing" if missing else "stale")
+        report = {"ok": ok, "status": status, "expected": want, "found": have, "path": str(OUT)}
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False), file=sys.stdout if ok else sys.stderr)
+        elif ok:
+            print(f"画布产物与源码一致（{want}）")
+        elif missing:
+            print(
+                f"画布产物还没构建：{OUT} 不存在。跑一次 python scripts/build_mcp_widget.py",
+                file=sys.stderr,
+            )
+        else:
+            found = have if have is not None else "读不出指纹（截断或旧格式）"
+            print(
+                f"画布产物过期：源码指纹 {want}，产物里是 {found}。"
+                f"跑一次 python scripts/build_mcp_widget.py",
+                file=sys.stderr,
+            )
+        return 0 if ok else (2 if missing else 1)
 
     html = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)
