@@ -41,7 +41,7 @@
 | 07 | Readiness 后端事实模型 | ✅ 完成（本次） |
 | 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
-| 10 | Style / Spec 分层 | ⬜ |
+| 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
 | 11 | 统一检查引擎与问题面板 | ⬜ |
 | 12 | 导出管线与精简导出 UI | ⬜ |
 | 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
@@ -85,13 +85,13 @@
 | R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
 | R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
 | R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
-| R-11 | **最小字号有两个数**：`absolute_min_font_size_pt: 8.0` 与 `legend_policy.min_font_size_pt: 8.5` | `profiles/publication.json:43,65` | P2 | 10 |
+| R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
 | R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
 | R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
 | R-16 | **E2E 只有 Windows 腿** | 既有 issue #30 | P2 | 23 |
-| R-19 | **e2e 与 axe 两层在 05–09 里从没真跑过**：Session 08 新增两条 axe 用例、Session 09 改了 8 个 spec 的「打开」语义，两轮都只做到 `playwright test --list` 收得到。**收得到 ≠ 跑得过** | 本机沙箱起不来真实后端 + 浏览器 | P2（门禁未执行） | 23 |
+| R-19 ✔ | ✅ **已兑现（2026-08-30）** **e2e 与 axe 两层在 05–09 里从没真跑过**。真跑起来之后共 8 条红：#207 三条（两条**夹具跟不上契约**、一条**自算对比度尺子的假红**）、#208 五条（三条是「轨道按钮是开关不是打开」、一条跨标签页共享工作区模式、一条只有**合并态**才红）。全部已修，本机全量 111 passed。**本行原来的理由被证伪**：E2E 在本机跑得起来——`TAVOTTO_PYTHON` 指主仓库 venv + `PYTHONPATH=<worktree>/src` + 先跑一次 `scripts/build_frontend.py`，单条 2.6 秒、全量 ~10 分钟。剩余的「有模态/无模态下自算对比度结论不一致」记 issue #210 | 见下方「E2E 本机跑法」 | P2（门禁未执行） | ✅ 09/10 |
 | R-17 | 前端主 chunk 1.57 MB（gzip 487 kB），构建有大小告警 | `pnpm build` 输出 | P3 | 23 |
 | R-18 ✔ | **N-1 升级验收里两个检查是空的**：① 它 PUT 给 `/api/autosave/` 的是 `{"doc":…, "updatedAt":…}`，没有 `schema`，后端从**一开始**就 400，异常被 `except` 吞成 `autosave_saved=False`，于是"自动保存读得回来"这条检查**从来没跑过**；② `"老布局可列出"` 对 `layouts`（一个字符串列表）做 `x.get("name")`，必然 `AttributeError` 被同一个 `except` 接住记成 False | `scripts/ci/upgrade_acceptance.py:344,353,455` | P1（门禁空转） | 23 |
 
@@ -285,7 +285,7 @@ desktop…」。
 | `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `dc25a773a91b099b`）+ `--check` 通过 |
 | `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `2541bd56c77053d9`）+ 不进 git，网站仓库另行 sync |
 | 变异反证 26 条 | ✅ 全部被打红（**第一轮有 2 条活了下来**，两条都是「判据没被执行到它该看的那个点上」，成因与处置见 `TEST_MATRIX.md`） |
-| `cd web && pnpm e2e` | ⛔ **没跑**（Playwright 要真实后端与浏览器，本机沙箱起不来）。本轮改了 8 个 spec，只确认 `playwright test --list` 收得到全部 110 条 —— **收得到 ≠ 跑得过**，记在风险表 R-19 |
+| `cd web && pnpm e2e` | ⚠️ **本轮（Session 09 当时）没跑**，只确认 `playwright test --list` 收得到全部 110 条 —— **收得到 ≠ 跑得过**。**2026-08-30 补跑并修完**：5 条红，见 R-19 与下方「E2E 本机跑法」 |
 
 > **「产物比源码早」这一轮踩了三次。** 每次都是同一个形状：重建 `canvas.html`
 > 之后又改了 `web/src`（哪怕只是一行注释——指纹算的是内容，不是语义），
@@ -295,6 +295,26 @@ desktop…」。
 > **上表是把前端整个冻结、两个产物重建并 `--check` 通过之后重跑的一遍完整套件**，
 > 不是拼起来的。下一轮的纪律：**改完所有 `web/src` 再重建，重建之后一个字都不动**
 > ——`i18next-cli types` 写的 `resources.d.ts` 也算一次改动。
+
+### Session 10 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3271** passed / 34 skipped / 0 failed（收集 3305 条 = 09 的 3251 + 54，逐项对得上：`test_profile_store.py` 37 + `test_preflight.py` 新增 1 + `test_error_codes.py` 那条按 code 参数化的用例随 16 个新 code 一起 +16） |
+| `cd web && pnpm test` | ✅ exit 0 —— **138** files / **1659** tests passed（比 09 的 134/1618 +4 文件 / +41 条：specBinding 18 + profileStore 6 + styleAndSpec 6 + profilesSettings 11 = 41；ExportDialog / profile 里那几条只改判据，不增条数） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2713 / en-US 2798；新增 `profiles.*` / `export.profile*` / 16 条 backend 错误码，删掉死掉的 `export.profileStamp`） |
+| `cd web && pnpm lint` | ✅ exit 0（只有既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（281 files） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `2e72e0094357a576`） |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `22b775a453e77970`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 36 条 | ✅ 全部被打红，**第一轮 0 条存活**——但有**两条判据在反证之前就先改掉了**，因为它们恒等成立（内置样式派生、错误文案按语言渲染），成因与处置见 `TEST_MATRIX.md` |
+| `cd web && pnpm e2e` | ⛔ **没跑**（同 08/09 的限制：Playwright 要真实后端与浏览器）。**本轮没有改任何 e2e spec** |
+
+> **「跑全量的时候别动树」这一轮踩了两次。** 变异反证会写文件再改回来，而
+> 全量套件正在读同一批文件——两次的表现都是"跑到一半开始红，红的原因与被测
+> 的事毫无关系"。纪律：**反证与全量串行，全量开始之后一个字都不改**
+> （文档除外，套件不读 `docs/`）。
 
 ---
 
@@ -320,19 +340,58 @@ desktop…」。
 | — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
 | — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
+| — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 09（快速编辑与画布模式）**，入口见 `SESSION_HANDOFF.md` 的
+**Prompt 11（统一检查引擎与问题面板）**，入口见 `SESSION_HANDOFF.md` 的
 「下一阶段入口」。
 
-08 留给后面的两个可复用入口：
+10 留给后面的三个可复用入口：
 
-* `useProjectReadinessStore.getState().focusPanel(fileId)` —— 打开「项目接入
-  状态」并滚到那一张图。Prompt 17（多选 ContextBar）与 18（QuickEdit 右键
-  动作）直接用它，**不要在那两处重新拼一份状态判断**；
-* `lib/readinessText.ts` 的 `statusLabel()` / `reasonText()` —— 状态与句子的
-  唯一一份实现，任何新出口都从这里取词。
+* `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` —— 「这个项目
+  按哪套规范检查」的**唯一判据**（有快照按快照，没有才按全局现值）。
+  11 的检查引擎与 12 的导出面板直接用，**不要在那两处再挑一遍**；
+* `store/profileStore` 的 `specs` / `catalog()` —— 清单的唯一持有者
+  （后端不在时退回内置，组件里不许有 fetch）；
+* `lib/profileText.ts` —— profile 在界面上叫什么的唯一实现
+  （内置跟界面语言走，**默认视图不出现 id 与版本号**）。
+
+---
+
+## E2E 本机跑法（2026-08-30 实测，推翻 R-19 原来的理由）
+
+R-19 原文写着「本机沙箱起不来真实后端 + 浏览器」，所以 Session 08 / 09 两轮都
+只做到 `--list`。**实测不成立**：
+
+```bash
+cd <worktree>
+PYTHONPATH=$PWD/src <主仓库>/.venv/bin/python scripts/build_frontend.py   # 包内前端就位
+cd web
+TAVOTTO_PYTHON=<主仓库>/.venv/bin/python PYTHONPATH=<worktree>/src \
+  npx playwright test e2e/xxx.spec.ts --project=chromium -g "用例名"
+```
+
+* 单条约 **2.6 秒**，全量（三个浏览器 project、112 条）约 **10 分钟**；
+* **`PYTHONPATH` 那一项别漏**：`.venv` 是对**主工作区**的 editable 安装，不带
+  的话跑的是另一棵树上的代码（实测撞过：菜单项还显示着上个版本的文案，白查
+  十分钟才发现测错了树）；
+* `build_frontend.py` 的产物 `src/tavotto/web/` **本来就不进版本库**，所以
+  「先构建再跑」在 E2E 这条路上早就是既定事实。
+
+**代价是真金白银的**：#207 那三条红本来 3 分钟就能在本机看见，实际是等了一轮
+45 分钟的合并组才亮出来，而且当时 main 上还排着别的 PR。#208 改成先在本机跑，
+5 条红全部在推之前查清。
+
+### 顺带确立的两条纪律
+
+1. **验合并态的树，不只是分支产物。** #208 有一条红只在 `main + #208` 上出现
+   （#205 刚落地的 `large-figure.spec.ts` 无条件点「编辑图内元素」，而 Prompt 09
+   之后那颗按钮不存在）。两边**各自单跑都是绿的**。推之前跑一遍合并态全量。
+2. **先跑「什么都不做」的对照组。** 查 #208 那三条时我先看到「点一下树就没了」，
+   就去翻 `ElementTree` 找破坏性写法——是对照组把我拉回来的：完全不点，树同样
+   500ms 后消失（关掉的是抽屉不是树）。差一点去修一个不存在的缺陷。
+

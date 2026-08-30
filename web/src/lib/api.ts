@@ -675,24 +675,104 @@ export const deleteVersion = (docId: string, vid: string) =>
     { method: 'DELETE' },
   )
 
-/* --------------------------- 论文样式预设 ---------------------------------- */
+/* ----------------------- Style / Spec profile ------------------------------ */
+/**
+ * 全局样式与出版规范的清单。**磁盘细节一个字都不在前端**（用户数据目录、
+ * 原子写、乐观并发都在 `engine/profilestore.py`）；React 组件里更不许有。
+ *
+ * `revision` 是乐观并发的凭据：改一条必须带上手里那一版的号，对不上后端回
+ * 409 + 磁盘现值，界面据此告诉用户「这条已经被改过」。**不传 = 放弃这条
+ * 保证**，而放弃它的表现是「我改的东西不见了」且没有任何报错。
+ */
+export type ProfileKind = 'style' | 'spec'
 
-import type { StylePreset } from './stylePresets'
+export interface ProfileRecord {
+  id: string
+  kind: ProfileKind
+  schema_version: number
+  revision: number
+  display_name: string
+  /** 内置才有：显示名跟界面语言走。用户起的名字不翻译 */
+  name_key: string
+  version: string
+  created_at: number
+  updated_at: number
+  built_in: boolean
+  read_only: boolean
+  is_default: boolean
+  derived_from: string
+  /** 导入 / 迁移时没能映射的字段（保留在 data.extra 里，没有丢） */
+  warnings: string[]
+  data: Record<string, unknown>
+}
 
-export const fetchStyles = () =>
-  jsonFetch<{ styles: StylePreset[] }>('/api/styles').then((r) => r.styles)
+/** 导出文件的信封（导入时逐字段核对，不认别的格式）。 */
+export interface ProfileExport {
+  format: string
+  schema: number
+  kind: ProfileKind
+  display_name: string
+  version: string
+  exported_at: number
+  data: Record<string, unknown>
+}
 
-export const saveStyle = (style: StylePreset) =>
-  jsonFetch<{ style: StylePreset }>('/api/styles', {
+const profilesUrl = (kind: ProfileKind, rest = '') => `/api/profiles/${kind}${rest}`
+
+export const fetchProfiles = (kind: ProfileKind) =>
+  jsonFetch<{ profiles: ProfileRecord[] }>(profilesUrl(kind)).then((r) => r.profiles)
+
+export const createProfile = (
+  kind: ProfileKind,
+  displayName: string,
+  data: Record<string, unknown>,
+  derivedFrom?: string,
+) =>
+  jsonFetch<{ profile: ProfileRecord }>(profilesUrl(kind), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(style),
-  }).then((r) => r.style)
+    body: JSON.stringify({ display_name: displayName, data, derived_from: derivedFrom ?? '' }),
+  }).then((r) => r.profile)
 
-export const deleteStyle = (id: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/styles/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
+export const duplicateProfile = (kind: ProfileKind, id: string, displayName?: string) =>
+  jsonFetch<{ profile: ProfileRecord }>(
+    profilesUrl(kind, `/${encodeURIComponent(id)}/duplicate`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(displayName ? { display_name: displayName } : {}),
+    },
+  ).then((r) => r.profile)
+
+export const updateProfile = (
+  kind: ProfileKind,
+  id: string,
+  patch: { display_name?: string; data?: Record<string, unknown> },
+  expectedRevision: number,
+) =>
+  jsonFetch<{ profile: ProfileRecord }>(profilesUrl(kind, `/${encodeURIComponent(id)}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...patch, expected_revision: expectedRevision }),
+  }).then((r) => r.profile)
+
+export const deleteProfile = (kind: ProfileKind, id: string) =>
+  jsonFetch<{ ok: boolean }>(profilesUrl(kind, `/${encodeURIComponent(id)}`), { method: 'DELETE' })
+
+export const resetProfile = (kind: ProfileKind, id: string) =>
+  jsonFetch<{ profile: ProfileRecord }>(profilesUrl(kind, `/${encodeURIComponent(id)}/reset`), {
+    method: 'POST',
+  }).then((r) => r.profile)
+
+export const exportProfile = (kind: ProfileKind, id: string) =>
+  jsonFetch<ProfileExport>(profilesUrl(kind, `/${encodeURIComponent(id)}/export`))
+
+export const importProfile = (kind: ProfileKind, payload: string) =>
+  jsonFetch<{ profile: ProfileRecord }>(profilesUrl(kind, '/import'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload,
+  }).then((r) => r.profile)
 
 /* ------------------------------- 导出 ------------------------------------- */
 

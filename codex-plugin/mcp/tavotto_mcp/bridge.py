@@ -38,6 +38,7 @@ from tavotto.engine import (
     preflight as engine_preflight,
     previewbudget,
     profiles as engine_profiles,
+    profilestore as engine_profilestore,
     registry as engine_registry,
     telemetry as engine_telemetry,
 )
@@ -418,9 +419,11 @@ def open_figure(
     # `run_preflight` 那条路早就把 ProfileError 翻成了 `unknown_profile`，
     # 这条入口漏了——同一个坏 profile_id，从 open 进来是一条泛化的 JSON-RPC
     # internal error（调用方分诊不了），从 preflight 进来才是可读的 code。
+    # 用户自建的规范也要认得（`profilestore.resolve_spec` 是「任意 id → 规范」
+    # 的唯一入口；`engine_profiles.load` 只读内置那份 canonical JSON）。
     try:
-        profile = engine_profiles.load(profile_id, journal)
-    except engine_profiles.ProfileError as exc:
+        profile = engine_profilestore.resolve_spec(profile_id, journal)
+    except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
     session = Session(
@@ -585,8 +588,10 @@ def resolve_profile(session: Session, profile_id: str | None, journal: dict | No
     if profile_id is None and journal is None:
         return session.profile
     try:
-        return engine_profiles.load(profile_id or session.profile["profile_id"], journal)
-    except engine_profiles.ProfileError as exc:
+        return engine_profilestore.resolve_spec(
+            profile_id or session.profile["profile_id"], journal
+        )
+    except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
 

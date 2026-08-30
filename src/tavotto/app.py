@@ -69,6 +69,7 @@ from .engine import (
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
+    profilestore as engine_profilestore,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectenv as engine_projectenv,
@@ -4731,58 +4732,123 @@ def api_versions_delete(doc_id, vid):
     return jsonify({"ok": True})
 
 
-# ------------------------- 论文样式预设 -------------------------------------
-# 命名样式（字体/字号/线宽/刻度/图例/页面预设），跨文档共享，存在 layouts 下。
-# 样式只在前端映射成 override / 标注属性，应用是文档操作（可撤销），
-# 不经它写回任何源文件。
-STYLES_PATH = LAYOUT_DIR / engine_documents.STYLES_FILENAME
-_STYLES_LOCK = threading.Lock()
+# ------------------------- Style / Spec profile ------------------------------
+# 全局样式与出版规范的清单。**磁盘细节一律在 engine/profilestore.py**（用户
+# 数据目录、原子写、乐观并发、损坏回退），这里只做 HTTP 形状与错误码映射。
+#
+# 旧位置 `LAYOUT_DIR/_styles.json` 在第一次访问时一次性迁进 store 并腾空
+# （幂等；原件先整份备份进 `profiles/backup/`）。**不留两份权威**——一边改
+# 样式另一边不知道时，下次读哪份全看读取顺序。
 
 
-def _load_styles() -> list[dict]:
+def _profiles_error(exc: engine_profilestore.ProfileStoreError):
+    body = {"error": str(exc), "code": exc.code}
+    if isinstance(exc, engine_profilestore.RevisionConflict):
+        body["current"] = exc.current
+    return jsonify(body), exc.status
+
+
+@app.get("/api/profiles/<kind>")
+def api_profiles_list(kind):
     try:
-        data = json.loads(STYLES_PATH.read_text(encoding="utf-8"))
-        return data.get("styles", []) if isinstance(data, dict) else []
-    except (OSError, ValueError):
-        return []
+        engine_profilestore.migrate_legacy_styles()
+        return jsonify({"profiles": engine_profilestore.list_profiles(kind)})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
 
 
-def _save_styles(styles: list[dict]) -> None:
-    engine_atomicio.write_json(STYLES_PATH, {"styles": styles}, indent=1)
+@app.post("/api/profiles/<kind>")
+def api_profiles_create(kind):
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "请求体必须是对象", "code": "profile_bad_payload"}), 400
+    name = body.get("display_name")
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({"error": "配置需要一个名称", "code": "name_missing"}), 400
+    try:
+        engine_profilestore.migrate_legacy_styles()
+        rec = engine_profilestore.create_profile(
+            kind,
+            body.get("data") or {},
+            name,
+            derived_from=str(body.get("derived_from") or ""),
+        )
+        return jsonify({"profile": rec})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
 
 
-@app.get("/api/styles")
-def api_styles_list():
-    return jsonify({"styles": _load_styles()})
+@app.post("/api/profiles/<kind>/<pid>/duplicate")
+def api_profiles_duplicate(kind, pid):
+    body = request.get_json(force=True, silent=True) or {}
+    name = body.get("display_name") if isinstance(body, dict) else None
+    try:
+        engine_profilestore.migrate_legacy_styles()
+        rec = engine_profilestore.duplicate_profile(
+            kind, pid, name if isinstance(name, str) and name.strip() else None
+        )
+        return jsonify({"profile": rec})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
 
 
-@app.post("/api/styles")
-def api_styles_save():
-    body = request.get_json(force=True)
-    if not isinstance(body, dict) or not str(body.get("name") or "").strip():
-        return jsonify({"error": "样式需要一个名称", "code": "name_missing"}), 400
-    with _STYLES_LOCK:
-        styles = _load_styles()
-        sid = body.get("id") or f"s{int(time.time() * 1000):x}"
-        body = {**body, "id": sid, "name": str(body["name"]).strip()}
-        idx = next((i for i, s in enumerate(styles) if s.get("id") == sid), None)
-        if idx is None:
-            styles.append(body)
-        else:
-            styles[idx] = body
-        _save_styles(styles[-100:])
-    return jsonify({"style": body})
+@app.patch("/api/profiles/<kind>/<pid>")
+def api_profiles_update(kind, pid):
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "请求体必须是对象", "code": "profile_bad_payload"}), 400
+    rev = body.get("expected_revision")
+    if not isinstance(rev, int):
+        # **界面必须带**：不带等于放弃「别人改过我就该知道」这条保证，
+        # 而放弃它的表现是「我改的东西不见了」，没有任何报错。
+        return jsonify({"error": "缺少 expected_revision", "code": "profile_revision_missing"}), 400
+    patch = {k: body[k] for k in ("display_name", "data") if k in body}
+    try:
+        rec = engine_profilestore.update_profile(kind, pid, patch, rev)
+        return jsonify({"profile": rec})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
 
 
-@app.delete("/api/styles/<sid>")
-def api_styles_delete(sid):
-    with _STYLES_LOCK:
-        styles = _load_styles()
-        kept = [s for s in styles if s.get("id") != sid]
-        if len(kept) == len(styles):
-            abort(404)
-        _save_styles(kept)
-    return jsonify({"ok": True})
+@app.delete("/api/profiles/<kind>/<pid>")
+def api_profiles_delete(kind, pid):
+    try:
+        engine_profilestore.delete_profile(kind, pid)
+        return jsonify({"ok": True})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
+
+
+@app.post("/api/profiles/<kind>/<pid>/reset")
+def api_profiles_reset(kind, pid):
+    try:
+        return jsonify({"profile": engine_profilestore.reset_profile(kind, pid)})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
+
+
+@app.get("/api/profiles/<kind>/<pid>/export")
+def api_profiles_export(kind, pid):
+    try:
+        engine_profilestore.migrate_legacy_styles()
+        return jsonify(engine_profilestore.export_profile(kind, pid))
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
+
+
+@app.post("/api/profiles/<kind>/import")
+def api_profiles_import(kind):
+    """导入**建成一条新的**用户配置，绝不覆盖既有的——所以不存在「导入把我的
+    改动冲掉了」。载荷严格校验，只取白名单字段，不执行其中任何东西。"""
+    raw = request.get_data(cache=False, as_text=False) or b""
+    if len(raw) > engine_profilestore.MAX_IMPORT_BYTES:
+        return jsonify({"error": "导入文件过大", "code": "profile_too_large"}), 413
+    try:
+        engine_profilestore.migrate_legacy_styles()
+        rec = engine_profilestore.import_profile(raw, kind=kind)
+        return jsonify({"profile": rec})
+    except engine_profilestore.ProfileStoreError as exc:
+        return _profiles_error(exc)
 
 
 def port_is_free(port: int) -> bool:

@@ -73,7 +73,7 @@ mpl.rcParams.update({
     "font.family": "serif",
     # 有中文就把中文字体也加进来，否则导出 PDF 里是方框
     "font.serif": ["Times New Roman", "DejaVu Serif"],
-    # 全部 ≥ 8.5pt：8pt 的图例/刻度会被预检当阻断项拦下
+    # 全部 > 8pt：正好 8pt 的图例/刻度会被预检当阻断项拦下
     "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9,
     "legend.fontsize": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
     # 轴标题默认加粗（用户特殊要求才改）

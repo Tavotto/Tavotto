@@ -265,6 +265,7 @@
     "showObject": "Show object",
     "spacingX": "Set horizontal spacing",
     "spacingY": "Set vertical spacing",
+    "syncPublicationProfile": "Sync spec to the new version",
     "ungroup": "Ungroup",
     "unhideElement": "Restore hidden element",
     "unlockAspect": "Unlock aspect ratio",

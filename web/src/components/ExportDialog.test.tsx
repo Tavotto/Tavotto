@@ -167,7 +167,10 @@ describe('规范信息来自 profile', () => {
   it('页宽判定与字号下限都按 profile 显示，不是写死的 85/150', async () => {
     await setup(9)
     expect(text()).toContain('单栏 80mm')
-    expect(text()).toContain('lab-publication-v1')
+    // 规范在界面上叫「默认规范」——内部 id 与版本号**不进默认视图**
+    // （ADR 0029；它们留在那一行的 title 里）
+    expect(text()).toContain('默认规范')
+    expect(text()).not.toContain('lab-publication-v1')
     // 预设的页宽也来自 profile（提示文字在 title 上）
     const hints = [...document.body.querySelectorAll('button')]
       .map((b) => b.getAttribute('title') ?? '')
@@ -183,9 +186,11 @@ describe('规范信息来自 profile', () => {
   })
 
   it('最小有效字号直接摆在面板上', async () => {
-    await setup(8.2)
+    // 7.8 而不是 8.2：统一为 8 pt 之后 8.2 是合规的，用它当"有问题的字号"
+    // 样例会让这条用例在实现坏掉时照样绿
+    await setup(7.8)
     expect(text()).toContain('最小有效字号')
-    expect(text()).toContain('8.2pt')
+    expect(text()).toContain('7.8pt')
   })
 })
 

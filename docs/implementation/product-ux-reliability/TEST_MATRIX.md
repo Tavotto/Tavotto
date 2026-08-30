@@ -797,3 +797,169 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 
 与前面那条合起来是同一句话的两个例子：**变异活下来时，先问"这条判据被执行到
 它该看的那个点上了吗"，再怀疑判据本身写错了。** 本轮两条活的都是前者。
+
+---
+
+## Session 10 新增用例（后端 38 / 前端 41）
+
+### 后端 `tests/test_profile_store.py`（33 个函数 / **37 条**，一条五路参数化）
+
+| 组 | 判据 |
+| --- | --- |
+| 内置 | 规范来自 canonical JSON（不是复制）；**样式从默认规范派生**（判据换一份改过数字的规范来量，否则恒等成立）；样式里没有 PPI 字段 |
+| 增删改复制 | create/update/delete/duplicate；重名加后缀不合并；内置只读但可复制；乐观并发撞车不覆盖且带回磁盘现值；恢复默认值内容回去、**身份留下**；用户自建规范走与内置同一套校验 |
+| 落盘 | 位置是 `<data_dir>/profiles/`（包目录里零字节）；无 `.tmp` 残留；坏文件回退内置且**挪进 backup 不删**；更高 schema **原样不动**；单条坏不拖垮整份 |
+| 导入导出 | 往返建的是**新的一条**；五种非法载荷各自的 code；超限**先卡再解析**；未识别字段进 `extra` 并记结构化 warning |
+| 旧位置迁移 | 内容进 store、旧位置腾空、原件逐字节备份、幂等（第二次动作数 0）、warning、没有旧文件时什么都不做 |
+| 8 pt | 默认规范只有一个数；**代码搜索式回归看护**（求值器/导出面板/设置页里不许出现 8.5 或 8.0 字面量，注释行除外）；两侧兜底常量同源；**显式存下的 8.5 仍然生效** |
+| HTTP | CRUD + 409 冲突体带 `current`；PATCH 不带 revision 是 400；首次读触发迁移；未知 kind 是 400 不是 500 |
+| resolve_spec | 内置与用户自建都找得到、复制出来的有自己的身份、journal 只覆盖点名的键；未知 id **抛错**（与前端刻意不同，T-51）；**journal 不合法时说的是 journal 不合法**，不是"没有这个规范" |
+
+### 后端 `tests/test_preflight.py`（改 2 条 + 新 1 条）
+
+* `test_the_default_spec_has_exactly_one_minimum_font_size` —— 8.2 通过、正好
+  8.0 仍不算过、**且不同时报两条**；
+* `test_the_strict_threshold_and_the_absolute_floor_are_still_two_checks` ——
+  换 `free-form-v1`（6.0/5.0）来量：统一成一个数是**默认规范的取值**，
+  不是把其中一条检查删掉了；
+* `test_summarize_blocks_only_on_errors` 的样例从 8.2 换成 8.0 —— 8.2 现在是
+  合规的，**留着它会让这条用例在实现坏掉时照样绿**。
+
+### 前端
+
+| 文件 | 条数 | 判据 |
+| --- | ---: | --- |
+| `lib/specBinding.test.ts` | 18 | 快照优先 / 明确同步 / 跟随（换规范后表态还在）/ 老文档 / 全局被删 / 期刊覆盖；**内容判据本身**（版本号没动而规则改了 → 提示；版本号跳了而规则没改 → 不提示） |
+| `store/profileStore.test.ts` | 6 | 后端不在退内置且**不当错误**；200 但形状不对不抹清单；并发撞车留现值且**本地那条不被换掉**；错误文案**在英文界面下**按 code 翻 |
+| `store/styleAndSpec.test.ts` | 6 | 应用样式一条历史可撤销（含背景）；「样式没管背景」≠「设成白色」；选规范正确 dirty 且带快照；同步是另一条历史；快照序列化后还在 |
+| `components/settings/profilesSettings.test.tsx` | 11 | 默认视图不出现 id/版本（只在 `title` 里）；内置名字跟界面语言走、用户名字不翻译；内置只读且出口是复制；Style/Spec 字段整组换；warning 说得出；「本项目用这套规范」写的是带快照的绑定；「跟随更新」默认关着、打开可撤销、**换一套规范后表态还在**；`aria-current` 与可达名 |
+| `components/ExportDialog.test.tsx` | 改 2 | 规范显示成「默认规范」且**断言不含 `lab-publication-v1`**；最小字号样例 8.2 → 7.8 |
+| `lib/profile.test.ts` | 改 1 | 三个数收敛成 8 |
+
+---
+
+## Session 10 的变异反证（36 条，全部被打红）
+
+**第一轮 0 条存活。** 两条差点变成空门禁的，在反证之前就先改掉了判据——
+理由与 [[fixture-makes-the-predicate-vacuous]] 是同一个形状：
+
+1. **「内置样式派生自规范」原来是恒等成立的。** 判据两侧
+   （`el["text"]["fontsize"]` 与 `spec["default_font_size_pt"]`）取自同一份
+   文件，把派生换成写死的 `9.0` 也照样绿。处置：用 `TAVOTTO_PROFILES_FILE`
+   换一份**改过数字**的规范来量（11.5 / Nimbus Roman / 0.25 / out），
+   派生断了当场红。
+2. **「错误文案按界面语言渲染」在 zh-CN 下恒等成立。** 透传后端原文与按 code
+   翻给出同一句话。处置：切到 en-US 量，并加一条「不含中文」。
+
+### 后端 17 条
+
+| 变异 | 被打红的判据 |
+| --- | --- |
+| 乐观并发形同虚设（`if False`） | `test_revision_conflict_does_not_silently_overwrite` |
+| 坏文件直接删掉而不是挪走 | `test_damaged_store_falls_back_to_builtins_and_keeps_the_bad_file` |
+| 更高 schema 的清单也被收容 | `test_a_newer_store_schema_is_left_completely_alone` |
+| 清单写回包目录 | `test_the_store_lives_in_the_user_data_dir` |
+| 迁移后旧文件留着（两份权威） | `test_migration_is_idempotent` |
+| 迁移不备份原件 | `test_legacy_styles_move_into_the_store_and_the_old_slot_is_emptied` |
+| 未识别字段被丢掉 | `test_unmapped_fields_survive_the_import_and_are_reported` |
+| 导入按名字覆盖既有配置 | `test_export_import_roundtrip_creates_a_new_profile` |
+| 复制出来的规范沿用源 id | `test_resolve_spec_finds_both_builtin_and_user_specs` |
+| 内置样式写死数字而不是派生 | `test_builtin_style_is_derived_from_the_default_spec` |
+| 默认规范退回 8.5 | `test_the_default_spec_carries_exactly_one_minimum_font_size` |
+| 求值器里重新写死 8.5 / 8.0 | `test_no_evaluator_or_ui_hardcodes_a_minimum_font_size` |
+| 两侧兜底常量分叉（8.0 → 9.0） | `test_font_floor_fallback_is_one_number_on_both_sides` |
+| PATCH 不再要求 revision | `test_http_refuses_a_patch_without_a_revision` |
+| 两条字号检查合成一条（`elif False`） | `test_the_strict_threshold_and_the_absolute_floor_are_still_two_checks` |
+| 绝对下限改成不含等号（`<=` → `<`） | `test_the_default_spec_has_exactly_one_minimum_font_size` |
+| `resolve_spec` 靠捕获异常分流（两个成因压成一句话） | `test_a_bad_journal_says_so_instead_of_blaming_the_profile_id` |
+
+### 前端 19 条
+
+| 变异 | 被打红的文件 |
+| --- | --- |
+| 全局现值压过项目快照 | `specBinding.test.ts` |
+| 「有没有新版」改看版本号 | 同上 |
+| 绑定只存 id、不存快照 | 同上 |
+| 跟随全局的表态被忽略 | 同上 |
+| 全局没了还报「有新版」 | 同上 |
+| 响应形状不对也照单全收 | `profileStore.test.ts` |
+| 后端不在时不退内置 | 同上 |
+| 并发撞车时把本地那条换成对方的 | 同上 |
+| 错误透传后端中文原文 | 同上 |
+| 应用样式时不动背景 | `styleAndSpec.test.ts` |
+| 样式计划里丢掉背景 | 同上 |
+| 列表把内部 id 摆到正文里 | `profilesSettings.test.tsx` |
+| 内置的名字不跟界面语言走 | 同上 |
+| 内置也让改（保存按钮可点） | 同上 |
+| Style 与 Spec 共用同一组字段 | 同上 |
+| 「本项目用这套规范」只写 id | 同上 |
+| 跟随开关写成本机偏好而不是文档修改 | 同上 |
+| 没绑定这套规范时也显示跟随开关 | 同上 |
+| 设置页换一套规范时丢掉跟随的表态 | 同上 |
+
+> **反证顺手抓到一件真事**：「清单写回包目录」那一条跑完之后，
+> `src/tavotto/profiles/styles.json` 留在了工作树里。变异本身被打红了，但
+> **它写出来的文件不会自己消失**——`git status` 是反证的最后一步，不是可选项。
+
+---
+
+## 评审回合 2（PR #206 / #207 / #208 / #209）：八条 findings 的处置
+
+拆分成四个 stacked PR 之后 Codex 各评了一轮，共 8 条（2 条 P1 + 6 条 P2）。
+**8 条全部改掉**，没有一条转 Issue。逐条的判据与变异反证在各自的提交信息里，
+这里只记**变异反证的账**——一共 17 条，16 条被打红，1 条查明是语义 no-op。
+
+### #206（05–06）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `assetStore` 的 `trailing` 补问 | KILLED ×2 | `assetStore.test.ts`：在途期间来的调用会补问一遍 / 补问本身也要合并 |
+| 去掉 `trailing` 的换项目守卫 | KILLED | 同上：补问期间换了项目就不补 |
+| watcher 两处遍历去掉 `strict=True` | KILLED ×2 | `test_project_watch.py`：脚本子树 / 素材子树读不动时整张快照作废 |
+| 把 `strict` 改成默认打开 | KILLED | 同上：产品视图（`/api/panels`、脚本清单）必须照旧宽容 |
+
+> `take_snapshot` 的那个 `except OSError` **一直都在，只是从来没被执行过**：
+> `os.walk` 的默认 `onerror=None` 与 `_iter_py` 的 `except OSError: return`
+> 都是静默跳过。判据因此钉在 OS 边界（`Path.iterdir` / `os.scandir` 对一个
+> 具体子目录抛 `PermissionError`），不钉在被测函数自己身上；每条先证明
+> 「不动任何东西时它是拍得出来的」，再制造故障。
+
+### #207（07–08）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| `append` 恒 False | KILLED ×2 | `test_script_probe.py`：接一张图不清空其它 stem / 认领走的 stem 从别人那里摘掉 |
+| `cost` 补回 `"medium"` | KILLED | 同上：请求里没提 cost = 保留磁盘上那个值 |
+| `append` 恒 True | KILLED | 同上：手工编辑整份清单仍是整条替换 |
+| `append` 时不从别的脚本摘 stem | **存活** | —— |
+
+> 存活的那条是**语义 no-op**（`Mutation may not be a mutation`）：这个脚本
+> 原先认领的 stem 本来就不可能同时挂在别人名下——重复 stem 会让
+> `registry.load` 直接报错，整个项目读不出来。那条保证由「`append` 恒 False」
+> 一条已经量到了，不是判据缺了一维。
+
+### #208（09）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `useKeyboard` 的两处 `inFastEdit()` 守卫 | KILLED ×2 | `useKeyboardFastEdit.test.tsx`：方向键不动 x/y / 绘制工具快捷键全部无效 |
+| 把 `useWorkspaceStore.clear()` 挪回 `switchDocument()` 之前 | KILLED | `projectSwitchWorkspace.test.ts`：切项目不动旧文档那一档 |
+| 去掉各向异性位图的守卫 | KILLED | `originalSpec.test.ts`：两轴密度不同时 dpi 保持 `null` |
+
+> 四条 fast-edit 用例各配一个**反向对照**（同一个键在排版模式下必须照常
+> 工作）。没有对照的话，「什么都没发生」也可能是判据自己没执行到。
+
+### #209（10）
+
+| 变异 | 结果 | 被打红的判据 |
+| --- | --- | --- |
+| 去掉 `_write_user()` 的版本守卫 | KILLED | `test_profile_store.py`：更高版本的清单拒绝一切写入 |
+| `extra` 桶不认自己（回到旧写法） | KILLED | 同上：`extra` 不许每存一次多包一层 |
+| 去掉 `_validate` 的形状判据 | KILLED ×5+ | 同上：嵌套形状坏掉的自建规范被拒 |
+| 数字判据改回「必须为正」 | KILLED | 同上（**对照组**）：`absolute_min_font_size_pt: 0.0` 是合法的期刊覆盖 |
+
+> 最后那条对照组是这一轮里最有信息量的一个：形状判据第一版要求那四个数
+> **为正**，结果把 golden 向量里一条真实用法（journal 把绝对字号下限覆盖成
+> `0`，意思是「不设下限」）判成了非法。**判据窄过它要守的东西同样是缺陷**，
+> 只是这次的表现是假红而不是假绿。守的是「形状不对会当场打崩导出对话框」，
+> 那就只查形状，不查取值范围。

@@ -20,7 +20,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "LAYOUT_DIR", tmp_path)
     monkeypatch.setattr(m, "AUTOSAVE_DIR", tmp_path / documents.AUTOSAVE_DIRNAME)
     monkeypatch.setattr(m, "VERSIONS_DIR", tmp_path / documents.VERSIONS_DIRNAME)
-    monkeypatch.setattr(m, "STYLES_PATH", tmp_path / documents.STYLES_FILENAME)
+    # 样式/规范清单已经搬去用户数据目录（ADR 0029）：把数据目录也指到
+    # tmp_path，免得用例写到真实的 ~/Library/Application Support/Tavotto
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "userdata"))
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -206,10 +208,11 @@ def test_layout_save_rejects_non_finite(client, tmp_path):
     assert not (tmp_path / "坏图.json").exists()
 
 
-def test_styles_file_is_not_listed_as_a_document(client):
-    """样式预设存在 `LAYOUT_DIR/_styles.json`，而画布列表是对同一个目录
-    `glob("*.json")`——不剔掉的话「打开画布」里会多出一条叫 `_styles` 的东西。"""
-    assert client.post("/api/styles", json={"name": "S1"}).status_code == 200
+def test_legacy_styles_file_is_not_listed_as_a_document(client, tmp_path):
+    """老装机的 `LAYOUT_DIR/_styles.json` 可能还躺在那儿（ADR 0029 之后新装
+    机不再往这里写），而画布列表是对同一个目录 `glob("*.json")`——不剔掉的话
+    「打开画布」里会多出一条叫 `_styles` 的东西。"""
+    (tmp_path / documents.STYLES_FILENAME).write_text('{"styles": []}', encoding="utf-8")
     assert client.post("/api/layouts/主图", json={"schema": 2}).status_code == 200
 
     names = client.get("/api/layouts").get_json()["layouts"]
@@ -217,15 +220,16 @@ def test_styles_file_is_not_listed_as_a_document(client):
     assert "_styles" not in names
 
 
-def test_reserved_name_is_not_reachable_through_the_document_api(client):
-    """否则一份画布能把样式表整个盖掉。"""
-    assert client.post("/api/styles", json={"name": "S1"}).status_code == 200
-    styles_before = client.get("/api/styles").get_json()
+def test_reserved_name_is_not_reachable_through_the_document_api(client, tmp_path):
+    """否则一份画布能把老装机上那份样式表整个盖掉。"""
+    legacy = tmp_path / documents.STYLES_FILENAME
+    legacy.write_text('{"styles": [{"id": "s1", "name": "S1"}]}', encoding="utf-8")
+    before = legacy.read_text(encoding="utf-8")
 
     resp = client.post("/api/layouts/_styles", json={"schema": 2, "objects": []})
     assert resp.status_code == 409 and resp.get_json()["code"] == "reserved_name"
     assert client.get("/api/layouts/_styles").status_code == 409
-    assert client.get("/api/styles").get_json() == styles_before
+    assert legacy.read_text(encoding="utf-8") == before
 
 
 # ------------------- 外部修改检测（Prompt 03 / R-08） ------------------------

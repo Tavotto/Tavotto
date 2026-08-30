@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
 import { CodingAgentsSection } from './settings/CodingAgentsSection'
+import { ProfilesSettings } from './settings/ProfilesSettings'
 import { CanvasSettings } from './settings/CanvasSettings'
 import { ExportSettings } from './settings/ExportSettings'
 import { GeneralSettings } from './settings/GeneralSettings'
@@ -26,6 +27,7 @@ type SectionId =
   | 'general'
   | 'project'
   | 'canvas'
+  | 'profiles'
   | 'sidebars'
   // 分区 **id** 仍是 'ai'（AiPanel 的「打开设置」按它跳转，改名等于断掉那条
   // 路径）；显示名换成了「编码 Agent / Coding Agents」，在 dialogs.json 里。
@@ -43,6 +45,7 @@ const SECTIONS: SectionId[] = [
   'general',
   'project',
   'canvas',
+  'profiles',
   'sidebars',
   'ai',
   'export',
@@ -94,6 +97,7 @@ export function SettingsDialog() {
           {section === 'general' && <GeneralSettings />}
           {section === 'project' && <ProjectSettings />}
           {section === 'canvas' && <CanvasSettings close={close} />}
+          {section === 'profiles' && <ProfilesSettings />}
           {section === 'sidebars' && <SidebarSettings />}
           {section === 'ai' && <CodingAgentsSection />}
           {section === 'export' && <ExportSettings />}

@@ -5,7 +5,347 @@
 
 ---
 
-## 最近一次：Session 09（2026-08-29）
+## 最近一次：Session 10（2026-08-30）
+
+### 目标
+
+把混在设置、规范文件、导出组件和硬编码里的配置拆成三个稳定层，并让**规范
+进项目时带着它自己那份规则**：
+
+```text
+Style   图实际长什么样      Spec   图必须满足什么      Export  文件如何生成
+```
+
+本阶段**不做统一检查引擎与问题面板**（Prompt 11）、**不做导出面板**
+（Prompt 12），也**不把设置整合进稳定 Shell**（Prompt 19）。
+
+### 开始前实测到的三件事（不是假设）
+
+1. **Spec 只有内置两条，用户加不了。** `profiles/publication.json` 是两侧
+   求值器共读的唯一权威，但没有任何"用户自建一份"的路；文档里只存
+   `{id, journal}`，注释写着「规范升级后旧文档自动跟新规则走」。
+2. **Style 已经在数据目录，但和用户的画布混在一个文件夹里**
+   （`<data_dir>/layouts/_styles.json`）——正因为如此才需要一张
+   `RESERVED_DOCUMENT_FILENAMES` 表把它从「打开画布」里挡掉。没有 schema
+   版本、没有 revision、不能导入导出。
+3. **最小字号有三个数**：`min_effective_font_size_pt: 8.5`、
+   `absolute_min_font_size_pt: 8.0`、`legend_policy.min_font_size_pt: 8.5`，
+   外加两个求值器里各自写死的兜底 `_num_or(..., 8.5)` / `8.0`（TS 侧则**根本
+   没有兜底**：缺键时比较对象是 `NaN`，`x < NaN` 恒假 = **静默放行**）。
+
+### 实际完成
+
+**1. `src/tavotto/engine/profilestore.py` —— 全局清单的唯一服务。**
+
+```text
+<data_dir>/profiles/styles.json   用户自建样式（schema 1，每条带 revision）
+<data_dir>/profiles/specs.json    用户自建规范
+<data_dir>/profiles/backup/       坏文件与迁移前的原件（**不删**）
+```
+
+内置**不落盘**：规范来自 canonical JSON，样式**从默认规范派生**（规范说正文
+9 pt / 拉丁 Times New Roman / 线宽第一档，样式照它生成——改规范时样式跟着变，
+两者从此不可能互相矛盾）。原子写、乐观并发（`expected_revision` 对不上回 409
+带磁盘现值）、损坏回退内置且坏文件挪进 `backup/`、比本构建**新**的清单原样
+不动、导入一律建新的一条（id 重新分配）。
+
+**2. 项目里存的是绑定 + 规则全文快照**（T-46，ADR 0029）。
+`CanvasData.profile` 新增三个**可选**字段 `snapshot` / `snapshotVersion` /
+`follow`，磁盘 schema 一个字节没升版。默认**「项目结果稳定」优先于「规范升级
+自动生效」**：全局那份后来变了，旧项目的结论一个字不变，界面提示「有新版可
+同步」，由用户点一下（那一步进文档历史）。
+
+**「有没有新版」的判据是内容不等，不是版本号**（T-47）。版本号是人写的，
+两个方向都会错：版本号没动而规则改了 → 该提示的没提示；版本号跳了而规则没改
+→ 点进去什么都没变。看护用例两条对称。
+
+**3. 最小字号统一为 8 pt**（T-48）。删掉的是那条 8.5 pt 的严格下限——规范
+文件自己的 `source` 里写着它是「本项目补充（原文示例里有 8 pt 图例/刻度，
+这里从严）」，**比它想守护的规范更严**。**8 pt 那条边的语义一个字没动**
+（`eff <= floor`，正好 8.0 仍然不算过，ADR 0006 的「必须大于 8pt」原样有效）。
+两条检查仍然是两条：`free-form-v1`（6.0/5.0）与期刊覆盖照样各自出场。
+两个求值器里的兜底收成一个 `profiles.FALLBACK_MIN_FONT_SIZE_PT`（TS 侧同名，
+**登记进根 `AGENTS.md` 的严格同源对表**）。
+
+**4. 界面：设置里新增「样式与规范」分区**（`components/settings/
+ProfilesSettings.tsx`）。列表 + 新建 / 复制 / 重命名 / 删除 / 恢复默认值 /
+导入 / 导出；Style 与 Spec **不在同一张表单里混改**（切换后字段整组换掉）；
+两个明确出口：「应用样式到当前图」（交给样式对话框，那里才看得见影响范围与
+冲突）与「本项目用这套规范」+「跟随更新」开关。
+
+**默认视图不出现 `lab-publication-v1 · v1.0.0`**：内置的名字跟界面语言走
+（「默认规范」/「默认样式」），用户起的名字不翻译；id 与版本只在那一行的
+`title` 里。措辞的唯一实现是 `lib/profileText.ts`（与 `readinessText.ts`
+同一条纪律）。
+
+**5. 旧位置一次性迁移并腾空。** `layouts/_styles.json` 首次访问时迁进 store，
+原件**逐字节**备份进 `backup/`，然后删掉旧文件——与 `config._migrate_ai_agents()`
+同一条纪律：两份权威并存的话，下次读哪份全看读取顺序。备份写不出来就整个不迁。
+没能映射的字段进 `data.extra` 并记结构化 warning（`unmapped_field:<键名>`）。
+
+### 关键 API（后面几个 Prompt 直接用）
+
+```python
+# src/tavotto/engine/profilestore.py
+KIND_STYLE / KIND_SPEC
+list_profiles(kind) / get_profile(kind, id) / require_profile(kind, id)
+create_profile(kind, data, display_name, *, derived_from="")
+duplicate_profile(kind, id, name=None)
+update_profile(kind, id, patch, expected_revision)   # 抛 RevisionConflict
+delete_profile(kind, id) / reset_profile(kind, id)
+export_profile(kind, id) / import_profile(payload, *, kind=None)
+migrate_legacy_styles() -> {"migrated","skipped","warnings","backup"}
+resolve_spec(profile_id=None, journal=None)   # ← 「任意 id → 规范」唯一入口
+
+# src/tavotto/engine/profiles.py（新增的公开面）
+FALLBACK_MIN_FONT_SIZE_PT      # 缺键兜底；严格同源对，求值器不许再写字面量
+validate_spec(profile, pid=None)
+merge_journal(base, journal)
+```
+
+```ts
+// web/src/lib/specBinding.ts   ← Prompt 11 的检查、12 的导出都从这里取现值
+resolveDocumentSpec(binding, catalog): ResolvedSpec
+  // { profile, source: 'snapshot'|'global'|'builtin',
+  //   updateAvailable, globalMissing, globalVersion, snapshotVersion }
+bindingFor(entry, { journal?, follow? }): SpecBinding   // 快照**只在这里生成**
+sameRules(a, b)          // 「有没有新版」的判据
+builtinCatalog()         // 没有后端时也拿得到（演练场 / MCP 内嵌画布）
+
+// web/src/store/profileStore.ts   清单的唯一持有者（组件里不许有 fetch）
+useProfileStore  // styles / specs / loaded / error / conflict
+load() / list(kind) / get(kind,id) / catalog()
+create / duplicate / rename / save / remove / restoreDefaults / exportOne / importOne
+
+// web/src/lib/profileText.ts     profile 在界面上叫什么，只有这一处
+profileName(record) / profileTechnicalDetail(record) / profileWarningText(w)
+```
+
+HTTP：`GET|POST /api/profiles/<kind>`、`POST …/<id>/duplicate`、
+`PATCH|DELETE …/<id>`、`POST …/<id>/reset`、`GET …/<id>/export`、
+`POST …/import`。**`/api/styles` 三个端点已删除**（前端是唯一消费方）。
+
+### 迁移
+
+* **磁盘文档格式没升版。** `DocumentProfile` 的三个新字段全部可选：老文档
+  没有它们 = 从没绑过快照 = 按 id 取全局现值（这正是 Prompt 10 要的
+  「未显式保存的旧默认迁到 8 pt」）。
+* **`layouts/_styles.json` → `<data_dir>/profiles/styles.json`**：首次访问
+  `/api/profiles/*` 时迁移，幂等，原件备份，旧位置腾空。
+  `RESERVED_DOCUMENT_FILENAMES` 里的 `_styles.json` **保留**——老装机上那份
+  文件可能还在，而「画布列表 = 对目录 glob("*.json")」。
+* **显式存下的 8.5 仍然生效**：期刊覆盖 `journal.min_effective_font_size_pt`
+  照常合并（有看护用例）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/profilestore.py        全局清单唯一服务
+新增  tests/test_profile_store.py               （33 个函数 / 37 条）
+新增  web/src/lib/specBinding.ts                「按哪套规范检查」的唯一判据
+新增  web/src/lib/specBinding.test.ts           （18 条）
+新增  web/src/lib/profileText.ts                profile 的措辞唯一实现
+新增  web/src/store/profileStore.ts             清单的前端持有者
+新增  web/src/store/profileStore.test.ts        （6 条）
+新增  web/src/store/styleAndSpec.test.ts        （6 条）
+新增  web/src/components/settings/ProfilesSettings.tsx
+新增  web/src/components/settings/profilesSettings.test.tsx  （11 条）
+新增  docs/adr/0029-style-spec-profiles.md
+改动  src/tavotto/profiles/publication.json     8.5→8.0 两处；version 1.0.0→1.1.0
+改动  src/tavotto/engine/profiles.py            +FALLBACK_MIN_FONT_SIZE_PT /
+                                                validate_spec / merge_journal；
+                                                absolute_min 进 _REQUIRED
+改动  src/tavotto/engine/preflight.py           四处字面量 → 那一个常量
+改动  src/tavotto/app.py                        /api/styles → /api/profiles/*
+改动  src/tavotto/engine/documents.py           _styles.json 的注释改成"旧位置"
+改动  codex-plugin/mcp/tavotto_mcp/bridge.py    走 profilestore.resolve_spec
+改动  codex-plugin/mcp/server.py                _BRIDGE_IMPORT +profilestore
+改动  web/src/components/ExportDialog.tsx       规范一次解析 + 同步提示，
+                                                去掉 id·版本那一格
+改动  web/src/components/StyleDialog.tsx        清单改走 profileStore
+改动  web/src/components/SettingsDialog.tsx     +profiles 分区
+改动  web/src/lib/api.ts                        /api/styles → profiles CRUD
+改动  web/src/lib/profile.ts                    +FALLBACK / mergeJournalInto
+改动  web/src/lib/preflight.ts                  两处 ×2 用兜底常量
+改动  web/src/lib/stylePresets.ts               StyleProfileData / 草稿互转 /
+                                                角色白名单扩到 manifest 真有的
+                                                prop（weight/style/linestyle/
+                                                marker/markersize）/ background
+改动  web/src/store/actions.ts                  应用样式一并写画布背景
+改动  web/src/types/document.ts                 DocumentProfile +3 个可选字段
+改动  web/src/i18n/locales/*                    +profiles.* / export.profile* /
+                                                16 条 backend 错误码；删掉
+                                                死掉的 export.profileStamp
+改动  tests/test_preflight.py                   两条改判据 + 一条换样例
+改动  tests/test_error_codes.py                 +16 个 code、扫描范围 +profilestore
+改动  tests/test_document_persistence.py        fixture 改指 TAVOTTO_DATA_DIR；
+                                                两条改成量"老装机残留文件"
+改动  tests/golden/preflight_vectors.json       重新生成（8.2 不再报、图例 8pt 放行）
+改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md   同源对 + 三层边界
+改动  docs/adr/0006-…                           8.5 那条标注为已删除（指向 0029）
+改动  README.md / README.zh-CN.md / codex-plugin/README.md /
+      codex-plugin/skills/tavotto-figure/references/*.md   8.5 的口径全部更新
+重建  codex-plugin/mcp/widget/canvas.html       指纹 2e72e0094357a576
+重建  web/dist-playground/                      指纹 22b775a453e77970（不进 git）
+```
+
+### 测试命令与真实结果
+
+```sh
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_profile_store.py
+cd web && pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+# 单跑一个前端用例文件要自己补环境变量（package.json 的 test 脚本里有）
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/lib/specBinding.test.ts
+# 改了 web/src 之后两个受管产物都要重建（重建之后一个字都别再动）
+python scripts/build_mcp_widget.py && python scripts/build_browser_playground.py
+ruff check . && ruff format --check .
+```
+
+后端全量 **exit 0 —— 3271 passed / 34 skipped / 0 failed**（收集 3305 条 =
+Session 09 的 3251 + 54，逐项对得上：`test_profile_store.py` 37 +
+`test_preflight.py` 新增 1 + `test_error_codes.py` 那条按 code 参数化的用例
+随 16 个新错误码一起 +16）；前端 **138 files / 1659 passed**，
+`build` / `i18n:check` / `lint` 三条 exit 0。完整表格见 `STATUS.md`。
+
+> `pytest -q` 在**没有失败**的那一遍里，这台机器上仍然把结尾那行计数吞掉
+> （与 Session 09 同一现象）。上面两个数是从进度流里逐字符数出来的
+> （`.` 3271、`s` 34、`F`/`E` 0），不是估的。
+
+**变异反证 36 条全部被打红**，
+第一轮 0 条存活——但有两条判据在反证之前就先改掉了，因为它们**恒等成立**
+（内置样式派生、错误文案按语言渲染），成因与处置见 `TEST_MATRIX.md`。
+
+### 这一轮踩到的坑
+
+**1. 一个 200 但没有 `profiles` 的响应会把内置规范一起抹掉。** 前端用例里
+`fetch` 打的桩对任何 URL 都回 `{figures_dir, panels: []}`，于是
+`fetchProfiles()` "成功"返回 `undefined`，`specs` 被写成 `undefined`，
+八条既有用例一起红在 `specRecords.map`。**这不是测试的问题，是实现的问题**：
+代理、离线页、别的服务占了端口都会产生这种响应，而界面上看起来只是"这台
+机器上没有规范"。处置是在 `load()` 里加形状判据——**形状不对 = 没拿到，
+不是拿到了空的**。
+
+**2. 两条判据恒等成立，反证之前就得改。**
+`el["text"]["fontsize"] == spec["default_font_size_pt"]` 的两侧取自同一份
+文件，把"派生"换成写死的 `9.0` 也照样绿；`errorOf` 那条在 zh-CN 下透传原文
+与按 code 翻给出同一句话。处置分别是**换一份改过数字的规范**（`TAVOTTO_
+PROFILES_FILE`）和**切到 en-US 量**。同一个形状本轮出现两次。
+
+**3. 变异跑完要看 `git status`。** 「清单写回包目录」那条被打红了，但它写出来
+的 `src/tavotto/profiles/styles.json` 留在了工作树里——变异被杀死不等于它没有
+副作用。
+
+**4. `profile_too_many` 撞上了 i18next 的复数后缀。** `_many` 是 i18next 的
+plural 形态之一，于是 `pnpm i18n:check` 把它当成 `profile_too` 的一个变体，
+报"缺 `_other`、多出 `_many`"。改名 `profile_limit_reached`。**错误码的名字
+不能以复数后缀结尾**。
+
+**5. `npx vitest` 仍然会漏 `NODE_OPTIONS=--no-experimental-webstorage`**
+（连续第四轮）。
+
+### 尚存限制
+
+1. **规范编辑只覆盖数值字段。** 设置里能改的是字号下限 / 栏宽 / DPI 这一类
+   数字（`SPEC_FIELDS` 表）。severity 表、字体白名单、配色策略、坐标轴策略
+   **改不了**——它们要的是各自的控件，而这一屏的定位是「最小编辑入口」
+   （Prompt 19 会把设置整合进稳定 Shell，那时再谈）。改不了的字段**原样保留**，
+   复制 / 导入 / 恢复默认值都不会丢。
+2. **`follow: true` 不会把快照写回文档。** 它的语义是"解析时优先看全局现值"，
+   所以打开项目**不写盘**。代价：关掉跟随时用的是**上一次绑定那一刻**的快照，
+   不是"跟随期间见过的最后一份"。
+3. **每张画布各存一份完整快照**（约 4 KB）。多画布项目会重复几份，没有做
+   去重——去重要引入一层间接，而那正是"改一处影响另一处"的来源。
+4. **README 里两张预检截图仍然是旧规范拍的**（alt 文本如实描述图里的
+   「低于 8.5 pt」）。改 alt 文本会让它不再描述那张图；重拍要跑真实应用，
+   本轮没做。记在 `STATUS.md` 的遗留表。
+5. **导出面板仍然只按画布合成**（Session 09 的限制 1 原样成立），Prompt 12 接。
+6. **e2e 本轮没跑**（与 08 的 axe、09 的 spec 改动同一条限制）。本轮**没有改
+   任何 e2e spec**：`mcp-canvas.spec.ts` 里那条 `lab-publication-v1 v1.0.0`
+   断言量的是 widget 渲染 mock 会话里的字段，与真实 profile 版本无关。
+7. 04–09 的其余遗留原样开着（R-05 五处手写原子写、R-07 autosave 位置、
+   `/api/layouts/<name>` 无 schema 校验、axe 那两条从没真跑过、接入中心无
+   虚拟滚动）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
+- **PR #201 带的仍然是 Session 01–04；05–10 的提交还没有推**——节奏由用户定
+  （一推就触发一轮 Codex 评审）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 11：统一检查引擎与问题面板）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「4. Style / Spec / Validation / Export
+分层合同」（本轮整段重写）与「5. 问题定位合同」、`ARCHITECTURE.md` 的 §6。
+
+**Session 10 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 这个项目按哪套规范检查 | `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` | **唯一判据**。11 的检查引擎、12 的导出面板都从这里取现值，**不许自己再挑一遍** |
+| 规范清单 | `store/profileStore` 的 `specs` / `catalog()` | 后端不在时退内置；组件里不许有 fetch |
+| 任意 id → 规范（后端） | `profilestore.resolve_spec(id, journal)` | MCP 与 HTTP 共用 |
+| profile 叫什么 / 技术详情 | `lib/profileText.ts` | 默认视图不出现 id 与版本号 |
+| 定位到画布上的某个面板 | `store/workspace.focusLayoutPanel(panelId)` | 11 的问题面板直接调（Session 09 留的） |
+| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | 12 的导出面板从它取尺寸（Session 09 留的） |
+
+**Prompt 11 的已知缺口**（`UX_CONTRACTS.md` §5 记着）：`PreflightIssue` 没有
+`documentId` / `canvasId` 维度，多画布项目里跳不到"另一张画布上的那个对象"。
+**那是 11 要补的，别在 10 的 profile 层里绕过去。**
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条原样成立，10 再加五条）：
+
+14. **不许在文档里存 profile 的"引用"而不是快照。** 引用意味着"改一处影响
+    另一处"，而本阶段的整个裁决就是反过来（T-46）。
+15. **不许用版本号判"有没有新版"**（T-47）。两个方向都会错，看护用例两条都在。
+16. **不许把「统一为 8 pt」理解成"把 8 pt 那条边放宽"**（T-48）。
+    `eff <= floor` 一个字都不能动；要改就先改 ADR。
+17. **不许在求值器、导出面板、设置页里写字号下限的字面量。** 有一条代码搜索
+    式的看护用例盯着这四个文件。缺键兜底只有 `FALLBACK_MIN_FONT_SIZE_PT`。
+18. **不许在 React 组件里做磁盘操作或懂磁盘格式。** 清单只经 `profileStore`
+    → `/api/profiles/*` → `engine/profilestore.py`。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
+   `setDocNotice()` 改（ADR 0024）。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
+   `lib/originalSpec.ts` 一份**（ADR 0028）；**「按哪套规范检查」的判据只有
+   `lib/specBinding.ts` 一份，全局清单的磁盘入口只有 `profilestore.py` 一份**
+   （ADR 0029）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处；脚本遍历只有
+   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
+   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
+   `lib/readinessText.ts` 一处；「文档里有没有这张图」只有 `findFigurePanel()`
+   一处；**「profile 叫什么」只有 `lib/profileText.ts` 一处**。
+7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**；
+   界面也不执行。**profile 的读写同样不碰任何用户脚本与项目文件。**
+8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
+   侧栏折叠、横幅关闭、聚焦目标、工作区模式同样不进文档、不进 undo。
+   **但选规范 / 同步快照 / 切换跟随 / 应用样式都是文档修改**——它们进 undo、
+   进 dirty，这是有意的区别。
+9. **素材不在清单里 ≠ 脚本关系失效**（T-28）；**也 ≠ 这张图没有规格**；
+   **全局规范被删了 ≠ 这个项目没有规范**（快照还在，另说一句话）。
+10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
+11. **「没测量」不许压扁**：`conflicts` 的 `null`、`registry_valid` 的 `null`、
+    `capability` 的 `undefined`、`dpi` 的 `null` 与 `dpi_source` 的四档、
+    **`follow` 的"没选过"与样式字段的"这份样式没管这一项"**。
+
+---
+
+## 历史：Session 09（2026-08-29）
 
 ### 目标
 
@@ -260,68 +600,6 @@ ruff check . && ruff format --check .
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**
-
----
-
-## 下一阶段入口（Prompt 10：Style / Spec 分层）
-
-**从这里开始读**：`UX_CONTRACTS.md` 的「4. Style / Spec / Validation / Export
-分层合同」与新增的「6b. 原图规格合同」、`ARCHITECTURE.md` 的 §6。
-
-**Session 09 留给它的可复用入口**：
-
-| 东西 | 位置 | 性质 |
-| --- | --- | --- |
-| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | **唯一服务**；12 的导出面板、10 的"规范说尺寸该是多少"都从它取现值 |
-| 画布上设了但原图导出忽略的变换 | 同文件 `spec.ignored` | 界面照此说明；别在导出面板里重新算一遍 |
-| 定位到画布上的某个面板 | `store/workspace.focusLayoutPanel(panelId)` | 11 的问题面板直接调 |
-| 打开一张图 / 加入画布 | `openFastEdit` / `addFigureToLayout` | 18 的 QuickEdit、21 的 onboarding 直接调 |
-
-**文档 / profile 上可以绑的字段**（Prompt 10 需要的那几个）：
-`CanvasData.profile: DocumentProfile { id, journal? }` 已经在文档里（每张画布
-各自一份，规则本身一条都不进文档）；最小字号的两个数仍在
-`src/tavotto/profiles/publication.json`（`absolute_min_font_size_pt: 8.0` 与
-`legend_policy.min_font_size_pt: 8.5`，R-11），**统一为 8 pt 要在 profile
-文件里改，不在两个求值器里改**。
-
-**绝不要做的事**（07 的六条、08 的三条原样成立，09 再加四条）：
-
-10. **不许给快速编辑建第二个容器**（隐藏画布、文档顶层 `figures[]`、
-    per-figure override 表都算）。两个容器 = 两份 `overrides` = 一条迟早会漏
-    的同步规则，而漏掉的表现是"我在那边改的东西这边没有"。
-11. **不许在快速编辑里写 x/y/w/h。** 「返回后布局不变」靠的是没动过；
-    改成"回来时恢复一下"的那一刻，旋转 / 成组 / 布局组重排里就会有一条路径漏掉。
-12. **不许在导出那一刻现算尺寸。** 来源优先级写在 ADR 0028 里，实现只有
-    `lib/originalSpec.ts` 一份；要加一档就改 ADR。
-13. **不许把 `dpi_source` 压成两档。** `assumed`（文件没写）与 `derived`
-    （反算出来的）不是同一件事，`unknown`（这一维没测量）更不是。
-
-**必须保留的不变式**（改动前先确认还成立）：
-
-1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
-2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
-3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
-   `setDocNotice()` 改（ADR 0024）。
-4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
-   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
-   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
-   `lib/originalSpec.ts` 一份**（ADR 0028）。
-5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
-   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
-6. 「哪些文件算素材」只有 `iter_assets()` 一处；脚本遍历只有
-   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
-   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
-   `lib/readinessText.ts` 一处；**「文档里有没有这张图」只有
-   `findFigurePanel()` 一处**。
-7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**；
-   界面也不执行。
-8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
-   侧栏折叠、横幅关闭、聚焦目标、**工作区模式**同样不进文档、不进 undo。
-9. **素材不在清单里 ≠ 脚本关系失效**（T-28）；**也 ≠ 这张图没有规格**
-   （原图规格退到文档里那份并标 `stale`）。
-10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
-11. **「没测量」不许压扁**：`conflicts` 的 `null`、`registry_valid` 的 `null`、
-    `capability` 的 `undefined`、**`dpi` 的 `null` 与 `dpi_source` 的四档**。
 
 ---
 

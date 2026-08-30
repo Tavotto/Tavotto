@@ -40,6 +40,7 @@ _SOURCE_FILES = (
     "engine/ai_bridge.py",
     "engine/project_refresh.py",
     "engine/atomicio.py",
+    "engine/profilestore.py",
 )
 
 
@@ -56,6 +57,10 @@ _CODE_PATTERNS = (
     r'AgentError\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
     r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
+    # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
+    # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
+    # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
+    r'ProfileStoreError(?:\.__init__)?\(\s*(?:self,\s*)?"([a-z0-9_]+)"',
 )
 
 
@@ -149,6 +154,26 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    # --- Prompt 10（ADR 0029）：全局 Style / Spec 清单（engine/profilestore.py）。
+    #     全部经 app._profiles_error 一个漏斗转成 JSON；`name_missing` 复用上面
+    #     那条（同一件事只该有一个 code）---
+    "profile_bad_kind": set(),
+    "profile_bad_payload": set(),
+    "profile_bad_data": set(),
+    "profile_bad_spec": set(),
+    "profile_bad_style": set(),
+    "profile_bad_json": set(),
+    "profile_bad_format": set(),
+    "profile_bad_schema": set(),
+    "profile_bad_journal": set(),
+    "profile_not_found": set(),
+    "profile_read_only": set(),
+    "profile_no_origin": set(),
+    "profile_limit_reached": set(),
+    "profile_too_large": set(),
+    "profile_revision_missing": set(),
+    "profile_revision_conflict": set(),
+    "profile_store_unsupported_schema": set(),
 }
 
 pytestmark = pytest.mark.skipif(
@@ -200,8 +225,8 @@ def test_error_field_is_still_there_as_the_fallback():
             # 经 AgentError / RefreshError 抛出的那批：原文由 app.py 的唯一
             # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
             raised = any(
-                re.search(rf'{name}\(\s*"{code}"', src)
-                for name in ("AgentError", "RefreshError", "AtomicWriteError")
+                re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
+                for name in ("AgentError", "RefreshError", "AtomicWriteError", "ProfileStoreError")
             )
             assert raised, f"{code} 既没有响应也没有异常"
             continue

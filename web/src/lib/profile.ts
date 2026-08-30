@@ -19,6 +19,19 @@ export const SEVERITIES: Severity[] = ['error', 'warn', 'not_verifiable', 'sugge
  *  刻意不是 suggestion：新加的检查忘了登记，用户会以为它通过了。 */
 export const DEFAULT_SEVERITY: Severity = 'warn'
 
+/**
+ * profile 里**没写**字号下限时的兜底（pt）。与默认规范里那个数同值，而且
+ * 前端只有这一处 —— 求值器、导出面板、设置页一个字都不许自己写。
+ *
+ * 严格同源对：`src/tavotto/engine/profiles.py` 的 `FALLBACK_MIN_FONT_SIZE_PT`，
+ * 看护 `tests/test_profile_store.py::test_font_floor_fallback_is_one_number_on_both_sides`。
+ *
+ * **它不是「规范的下限」**：规范的下限在 profile 自己身上。这一条只在那两个键
+ * 缺席时兜底（文档里带着的旧快照、外部导入的 spec）——那时宁可按默认规范判，
+ * 也不许算出 NaN 然后**静默放行**（`x < NaN` 恒假，那是最坏的那种"通过"）。
+ */
+export const FALLBACK_MIN_FONT_SIZE_PT = 8.0
+
 export interface AspectRatio {
   id: string
   w: number
@@ -145,6 +158,18 @@ export function loadProfile(
   journal?: JournalOverride | null,
 ): PublicationProfile {
   const base = (profileId && DOC.profiles[profileId]) || DOC.profiles[DEFAULT_PROFILE_ID]
+  return mergeJournalInto(base as PublicationProfile, journal)
+}
+
+/**
+ * journal 覆盖的**唯一合并实现**（前端侧）。`base` 可以是内置规范、用户自建
+ * 规范，也可以是文档里那份快照——三者形状相同，合并规则就该只有一份。
+ * Python 侧的同一件事在 `engine/profiles.merge_journal()`。
+ */
+export function mergeJournalInto(
+  base: PublicationProfile,
+  journal?: JournalOverride | null,
+): PublicationProfile {
   const cloned = structuredClone(base) as PublicationProfile
   if (!journal || Object.keys(journal).length === 0) return cloned
   const merged = { ...cloned } as Record<string, unknown>

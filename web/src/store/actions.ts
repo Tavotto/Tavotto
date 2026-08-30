@@ -849,7 +849,13 @@ export function enterElementEdit(panelId: string) {
  */
 export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
   const touched = plan.panels.filter((p) => p.patches.length)
-  if (!touched.length && !plan.annotationIds.length && !plan.subLabelIds.length && !plan.page) {
+  if (
+    !touched.length &&
+    !plan.annotationIds.length &&
+    !plan.subLabelIds.length &&
+    !plan.page &&
+    !plan.background
+  ) {
     status(note('styleEmpty'), 'error')
     return
   }
@@ -883,6 +889,9 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
       d.page.w = clamp(plan.page.w, 10, 1000)
       d.page.h = clamp(plan.page.h, 10, 1000)
     }
+    // 背景是**样式的一部分**（图长什么样），所以和其余项一起进同一条历史。
+    // `undefined` = 这份样式没管背景，与「设成白色」是两个不同的答案。
+    if (plan.background) d.page.bg = plan.background
   })
   for (const { panel } of touched) {
     const next = findObject(panel.id)

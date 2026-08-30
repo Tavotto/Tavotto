@@ -56,8 +56,11 @@ def test_lab_profile_matches_the_agreed_numbers():
     assert p["widths_mm"]["single"] == 80.0
     assert p["widths_mm"]["double"] == 150.0
     assert p["default_font_size_pt"] == 9.0
-    assert p["min_effective_font_size_pt"] == 8.5
+    # 最小字号**只有一个数**（ADR 0029）。曾经是 8.5（严格）+ 8.0（绝对），
+    # 而规范原文里本来就有 8 pt 的图例/刻度——比被守护的规范更严的那条删了。
+    assert p["min_effective_font_size_pt"] == 8.0
     assert p["absolute_min_font_size_pt"] == 8.0
+    assert p["legend_policy"]["min_font_size_pt"] == 8.0
     assert p["min_raster_dpi"] == 300
     assert p["line_widths_pt"] == [0.5, 0.75, 1.0, 1.5]
     assert p["axis_policy"]["tick_direction"] == "in"
@@ -207,13 +210,35 @@ def test_effective_font_size_follows_the_final_physical_size():
     assert issues["font-below-absolute-floor"]["detail"]["effective_pt"] == 7.2
 
 
-def test_the_strict_threshold_and_the_absolute_floor_are_different_checks():
+def test_the_default_spec_has_exactly_one_minimum_font_size():
+    """统一为 8 pt（ADR 0029）。
+
+    **8 pt 那条边一个字都没动**：正好 8.0 仍然不算过（`eff <= floor`）。变的是
+    「比 8 pt 更严的那条规则」——8.2 pt 从阻断项变成了通过。
+    """
     p = profiles.load("lab-publication-v1")
-    at_8_2 = preflight.spec_from_manifest(_manifest(tick_pt=8.2))
-    at_8_0 = preflight.spec_from_manifest(_manifest(tick_pt=8.0))
-    assert "font-too-small" in _ids(preflight.run(at_8_2, p))
-    # 「大于 8pt」是硬要求：正好 8.0 不算过
-    assert "font-below-absolute-floor" in _ids(preflight.run(at_8_0, p))
+    at_8_2 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.2)), p))
+    assert "font-too-small" not in at_8_2
+    assert "font-below-absolute-floor" not in at_8_2
+    at_8_0 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.0)), p))
+    assert "font-below-absolute-floor" in at_8_0
+    # 两档同值时只报下面那条，不报两条：同一件事说两遍等于让用户找两次
+    assert "font-too-small" not in at_8_0
+
+
+def test_the_strict_threshold_and_the_absolute_floor_are_still_two_checks():
+    """统一成一个数是**默认规范的取值**，不是把其中一条检查删掉了。
+
+    规范只要把两档设成不同的值（`free-form-v1` 是 6.0 / 5.0），两条判据就
+    各自出场——期刊覆盖也走同一条路。
+    """
+    p = profiles.load("free-form-v1")
+    assert p["min_effective_font_size_pt"] != p["absolute_min_font_size_pt"]
+    at_5_5 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=5.5)), p))
+    assert "font-too-small" in at_5_5
+    assert "font-below-absolute-floor" not in at_5_5
+    at_5_0 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=5.0)), p))
+    assert "font-below-absolute-floor" in at_5_0
 
 
 def test_font_substitution_is_reported():
@@ -271,7 +296,9 @@ def test_data_semantics_are_only_suggestions():
 
 def test_summarize_blocks_only_on_errors():
     p = profiles.load("lab-publication-v1")
-    spec = preflight.spec_from_manifest(_manifest(tick_pt=8.2))
+    # 8.0 而不是 8.2：统一为 8 pt 之后 8.2 是合规的，用它当"有阻断项"的样例
+    # 会让这条用例在实现坏掉时照样绿（判据挑了个不会触发的输入）
+    spec = preflight.spec_from_manifest(_manifest(tick_pt=8.0))
     summary = preflight.summarize(preflight.run(spec, p))
     assert summary["blocking"] is True
     assert summary["counts"]["error"] >= 1
