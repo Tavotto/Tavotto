@@ -61,7 +61,7 @@
     "opened": "Open",
     "readOnlySuffix": " · read-only",
     "recent": "Recent",
-    "registry": "Script registry…",
+    "registry": "Project readiness…",
     "scriptCount_one": "{{count}} parameterizable script",
     "scriptCount_other": "{{count}} parameterizable scripts",
     "trigger": "Current project {{name}} — click to switch"

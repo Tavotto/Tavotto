@@ -22,6 +22,108 @@ export interface PanelInfo {
    * 否则进编辑态会看到「脚本原始状态」而不是文件当前的样子。
    */
   baked_overrides?: { gid: string; prop: string; value: unknown }[]
+  /**
+   * 这张图的**接入状态**（后端 `engine/readiness.py`，与
+   * `GET /api/project/readiness` 同一次计算的投影）。
+   *
+   * 与上面的 `script` 是两回事，别用它去替换：`script` 只回答"注册表声明了
+   * 映射没有"，`capability.status` 才分得出「脚本还在」（`editable`）与
+   * 「注册表指着的那个文件已经不在了」（`source_missing`）。
+   *
+   * 可选：就绪度扫描与素材遍历之间新出现的素材这一轮没有 capability，
+   * 后端**不编一个**——`undefined` 的意思是"这一轮还不知道"，不是
+   * `layout_only`。
+   */
+  capability?: PanelCapability
+}
+
+/**
+ * 素材与源脚本关系的**闭集**。后端 `engine/readiness.py` 的 `STATUSES` 是
+ * 唯一出处；前端不许另起同义状态，也不许自己按 `script` 有没有值再猜一遍
+ * （那正是改造前三个界面给出三种答案的成因）。
+ */
+export type ReadinessStatus =
+  /** 已连接源脚本，可进图内编辑 */
+  | 'editable'
+  /** 静态已能唯一确定脚本，但还没登记成功（只读项目 / 注册表坏了 / 写失败） */
+  | 'auto_linkable'
+  /** 有产图脚本，但输出文件名要用户主动跑一遍才知道 */
+  | 'needs_probe'
+  /** 同一个 stem 被多个脚本认领——机器不裁决 */
+  | 'conflict'
+  /** 注册表声明了映射，脚本文件已不在。图仍可排版，**不是**文件损坏 */
+  | 'source_missing'
+  /** 没有可靠源脚本；缩放/裁剪/对齐/标注/导出照旧 */
+  | 'layout_only'
+
+/**
+ * 稳定 reason code，供前端查自己的文案。**后端不返回翻译好的句子**
+ * （它不知道用户选了哪门语言，约定见 `src/tavotto/app.py` 顶部）。
+ */
+export type ReadinessReason =
+  | 'registered_source'
+  | 'static_unique_candidate'
+  | 'runtime_output_unknown'
+  | 'multiple_source_candidates'
+  | 'registered_script_missing'
+  | 'no_source_candidate'
+  | 'project_read_only'
+  | 'registry_invalid'
+  | 'registry_write_failed'
+  /** 这一轮**没跑成**静态扫描。与 `no_source_candidate`（量过了、没有候选）
+   *  是两件事——合并的话，一次瞬时错误会让整个项目看起来"确实没有可编辑的图"。 */
+  | 'source_scan_unavailable'
+
+export interface PanelCapability {
+  status: ReadinessStatus
+  reason_code: ReadinessReason
+  /** 已绑定的源脚本（项目相对路径）；未绑定时为 `null`，**绝不拿候选顶替** */
+  script: string | null
+  /** 待确认的候选脚本（项目相对路径）。`details.candidate_scope` 说明它是
+   *  这张图的候选（`panel`）还是项目级的一份清单（`project`） */
+  candidates: string[]
+  /** 界面可以提供「试运行确认」——有具体候选才为 true。**不代表后端会去跑** */
+  can_probe: boolean
+  /** 界面可以提供「手工关联」；只读项目上为 false（登记要落盘） */
+  can_manual_link: boolean
+}
+
+export interface ReadinessPanel extends PanelCapability {
+  /** 与 `PanelInfo.id` 逐字相同的项目相对 id */
+  id: string
+  /**
+   * 注册表的键，也是**关联动作真正的对象**。同一个 stem 可能挂着两份素材
+   * （`FigA.pdf` 与 `raster/FigA.png`），给其中一份选源脚本，另一份跟着变。
+   *
+   * 后端给出来是为了让界面**不必**自己从 id 切一次：`sub/Fig.v2.pdf` 的 stem
+   * 是 `Fig.v2`，既不是 id，也不是第一个点号之前那一段。
+   */
+  stem: string
+  details: { entry?: string; cost?: string; candidate_scope?: 'panel' | 'project' }
+}
+
+/** 逐状态计数 + 总数。`total` 是素材数，不是六个状态的另一种写法 */
+export type ReadinessSummary = { total: number } & Record<ReadinessStatus, number>
+
+export interface ReadinessReport {
+  project_id: string
+  /** 报告内容的哈希：同一份事实下不变，任一被用户看见的事实变了它必变。
+   *  **不含** `generated_at`，也不受无关文件 mtime 影响 */
+  fingerprint: string
+  generated_at: number
+  summary: ReadinessSummary
+  panels: ReadinessPanel[]
+  /** `null` = 这一轮没跑静态扫描。**缺席不是零**——把没测量说成"没有冲突"，
+   *  用户会一直等一个永远不来的提示 */
+  conflicts: { stem: string; candidates: string[]; resolved_by: string | null }[] | null
+  project: {
+    writable: boolean
+    /** `null` = 项目里根本没有注册表文件（还没起草过），与"有、但坏了"不同 */
+    registry_valid: boolean | null
+    scan_ok: boolean
+    can_rescan: boolean
+  }
+  issues: { code: ReadinessReason; params: Record<string, string> }[]
 }
 
 export interface PanelsResponse {
@@ -187,6 +289,14 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
 }
 
 export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
+
+/**
+ * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
+ *
+ * Prompt 08 的界面直接翻译这份事实，**不许在前端重新猜状态**——每张图的
+ * capability 也可以从 `/api/panels` 拿（同一次计算的投影），两处必然一致。
+ */
+export const fetchReadiness = () => jsonFetch<ReadinessReport>('/api/project/readiness')
 
 /* ----------------------------- 项目（Project） ------------------------------ */
 /** 层级见 docs/adr/0001-project-canvas-tab-object.md；未打开项目时后端回 409。 */
@@ -2117,8 +2227,22 @@ export const cancelProbe = (script: string) =>
 
 export const writeRegistryEntry = (payload: {
   script: string
-  entry: string
+  /**
+   * 入口函数名。**省掉就是让后端用它自己的默认**（`app.py` 的
+   * `str(body.get("entry") or "main")`）——前端手写一份 `'main'` 等于让
+   * 同一个默认值有两个出处，而两处迟早会分叉。只有在**确实知道**这个脚本
+   * 的入口叫什么时才传。
+   */
+  entry?: string
   stems: string[]
+  /**
+   * `true` = 把 `stems` **并进**这个脚本已有的归属；缺省是整条替换。
+   *
+   * 「把这一张图接到这个脚本上」必须传它：一个脚本产出多张图是常态，整条
+   * 替换会让同一个脚本的其它图当场失去编辑入口，而用户只点了一张。并集由
+   * **后端**在写回去的那份文件上算——前端手里那份视图可能是旧的。
+   */
+  append?: boolean
   cost?: string
   notes?: string
 }) =>

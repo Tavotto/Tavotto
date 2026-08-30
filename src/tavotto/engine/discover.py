@@ -902,6 +902,21 @@ def analyze_script(path: Path, figures_dir: Path) -> dict | None:
     }
 
 
+def claims_of(scripts: dict[str, dict]) -> dict[str, list[str]]:
+    """报告的 scripts 表 → stem 被谁声称产出（脚本按报告顺序，未排序）。
+
+    「谁认领了这个 stem」的**唯一**判据。`discover()` 拿它算冲突（长度 > 1），
+    就绪度（`engine/readiness.py`）拿它算某张图的候选脚本——两处各写一遍
+    循环的话，迟早出现「冲突面板说有两个候选、就绪度说只有一个」这种
+    自相矛盾，而两句话都出自后端。
+    """
+    out: dict[str, list[str]] = {}
+    for script, info in scripts.items():
+        for s in info["stems"]:
+            out.setdefault(s, []).append(script)
+    return out
+
+
 def discover(figures_dir: str | Path) -> dict:
     """扫描图库（含子目录）里的候选脚本，返回原始报告。"""
     figures_dir = Path(figures_dir)
@@ -910,11 +925,7 @@ def discover(figures_dir: str | Path) -> dict:
         info = analyze_script(p, figures_dir)
         if info is not None:
             scripts[_rel_key(p, figures_dir)] = info
-    claims: dict[str, list[str]] = {}
-    for script, info in scripts.items():
-        for s in info["stems"]:
-            claims.setdefault(s, []).append(script)
-    conflicts = {s: sorted(cs) for s, cs in claims.items() if len(cs) > 1}
+    conflicts = {s: sorted(cs) for s, cs in claims_of(scripts).items() if len(cs) > 1}
     return {"scripts": scripts, "conflicts": conflicts}
 
 
@@ -1004,11 +1015,19 @@ def register(
     entry: str = "main",
     cost: str = "medium",
     notes: str = "",
+    *,
+    append: bool = False,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
 
     同名脚本整条替换（探测结果是权威的），其它脚本里被本次认领走的 stem
     一并摘掉——否则 registry.load 会因重复 stem 直接报错。
+
+    `append=True` 时**并进去而不是换掉**：本次的 stem 与磁盘上那条已有的
+    合并。给「把这一张图接到这个脚本上」用——一个脚本产出多张图是常态，
+    整条替换会让同一个脚本的其它图当场失去编辑入口。并集在**这里**算而不是
+    让调用方先读一遍再传全集：调用方手里那份可能是旧的，而这里读的就是马上
+    要写回去的那份文件。
     """
     path = registry.existing_registry_path(figures_dir)
     try:
@@ -1018,15 +1037,18 @@ def register(
     if not cfg:
         cfg = {"version": 1, "scripts": {}}
     scripts = cfg.setdefault("scripts", {})
+    prev_entry = scripts.get(script) if isinstance(scripts.get(script), dict) else {}
     claimed = set(stems)
+    if append:
+        claimed |= {str(x) for x in (prev_entry or {}).get("stems", [])}
     for name, entry_cfg in list(scripts.items()):
         if name == script or not isinstance(entry_cfg, dict):
             continue
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
-    if stems:
-        prev = scripts.get(script) if isinstance(scripts.get(script), dict) else {}
+    if claimed:
+        prev = prev_entry or {}
         scripts[script] = {
             "entry": entry,
             "cost": cost or prev.get("cost", "medium"),

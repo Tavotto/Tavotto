@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
-import { Bold, Crop, Minimize2, Pencil, SlidersHorizontal } from 'lucide-react'
+import { Bold, CircleHelp, Crop, Minimize2, Pencil, SlidersHorizontal } from 'lucide-react'
 import { t as translate } from '@/i18n'
 import { msg, type UiMessage } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
@@ -17,7 +17,9 @@ import { ColorField, NumberField } from '@/components/ui/Input'
 import { Popover } from '@/components/ui/Popover'
 import { Tip } from '@/components/ui/Tooltip'
 import { enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -272,12 +274,32 @@ function TextObjectActions({ obj }: { obj: TextObject }) {
 }
 
 function PanelObjectActions({ obj }: { obj: PanelObject }) {
+  // 这张图在**项目里**的接入状态（`/api/panels` 的投影，与就绪度同一次计算）。
+  // runtime 面板不在就绪度的 id 空间里（ADR 0013），拿不到也不该有。
+  const cap = useAssetStore((s) => s.byId[obj.fileId]?.capability)
+  // 两个条件问的是两件事，缺一不可：`!obj.script` = 这张图**此刻**没有图内
+  // 编辑入口（文档记着的），`cap.status !== 'editable'` = 项目里它确实还没连上
+  // （后端说的）。只看后者的话，派生同步还没跑完的那一瞬间会同时出现
+  // 「编辑图内元素」与「为什么不能编辑？」两个按钮。
+  const explainable = !obj.script && !!cap && cap.status !== 'editable'
   return (
     <>
       {obj.script && (
         <Button size="sm" className="gap-1 px-1.5" onClick={() => enterElementEdit(obj.id)}>
           <Pencil size={12} />
           {translate('panel.editElements', { ns: 'inspector' })}
+        </Button>
+      )}
+      {/* 只是**入口**：打开接入状态并滚到这张图。选择一个字不动、脚本一行不跑、
+          不切裁剪态——用户点的是一个问题，不是一个动作 */}
+      {explainable && (
+        <Button
+          size="sm"
+          className="gap-1 px-1.5"
+          onClick={() => useProjectReadinessStore.getState().focusPanel(obj.fileId)}
+        >
+          <CircleHelp size={12} />
+          {translate('readiness.whyNotEditable', { ns: 'workspace' })}
         </Button>
       )}
       <Tip label={translate('panel.cropTip', { ns: 'inspector' })} side="bottom">

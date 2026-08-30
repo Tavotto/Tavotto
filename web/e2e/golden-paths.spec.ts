@@ -88,7 +88,7 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
 })
 
-test('注册表为空时，界面给得出「扫描 / 试运行」而不是让用户对着空列表猜', async ({
+test('还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜', async ({
   app,
   page,
 }) => {
@@ -99,15 +99,22 @@ test('注册表为空时，界面给得出「扫描 / 试运行」而不是让�
   await page.goto(a.baseURL)
 
   await page.getByRole('button', { name: /当前项目/ }).click()
-  await page.getByRole('menuitem', { name: '脚本注册表…' }).click()
+  await page.getByRole('menuitem', { name: '项目接入状态…' }).click()
 
   // 断言收在对话框里：素材库脚本区现在也合法列出 render_map.py（Session 5），
-  // 全页 getByText 会歧义（strict mode 三处命中）——这里测的对象是注册表。
-  const registry = page.getByRole('dialog', { name: '脚本注册表' })
-  await expect(registry).toBeVisible()
-  await expect(registry.getByText('render_map.py').first()).toBeVisible()
-  // 静态解不出文件名的脚本，必须提供「试运行并登记」这条路
-  await expect(registry.getByRole('button', { name: /试运行并登记/ })).toBeVisible()
+  // 全页 getByText 会歧义（strict mode 三处命中）——这里测的对象是接入状态。
+  const readiness = page.getByRole('dialog', { name: '项目接入状态' })
+  await expect(readiness).toBeVisible()
+  // 静态解不出文件名的脚本，必须提供「试运行并连接」这条路（Prompt 08 起，
+  // 这个动作挂在**那张图**那一行上，不再挂在一份脚本清单上）
+  await expect(readiness.getByRole('button', { name: /试运行并连接/ }).first()).toBeVisible()
+  // 高级段仍然列得出项目里的每个 .py。
+  // **断言收在那一段里面**：图那一行的「技术详情」（收起的 <details>）里也写着
+  // 同一个脚本名，全局 `.first()` 会先命中那个隐藏节点，然后报「hidden」——
+  // 量错了对象，而不是功能坏了。
+  const allScripts = readiness.locator('details', { hasText: '全部脚本' })
+  await allScripts.getByText(/全部脚本/).click()
+  await expect(allScripts.getByText('render_map.py').first()).toBeVisible()
 })
 
 test('没装 Python 时给出引导，而不是闪退', async ({ app, page }) => {

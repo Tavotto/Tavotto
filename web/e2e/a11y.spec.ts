@@ -16,7 +16,9 @@
  */
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import os from 'node:os'
+import path from 'node:path'
+import { expect, test, writeRuntimeNamedProject } from './fixtures'
 import { lowContrastNodes } from './contrast'
 
 /**
@@ -262,9 +264,13 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
-  // 这个场景**唯一**允许的「查不了」：对话框背景整片 aria-hidden。逐节点核对过，
-  // 而且「焦点确实困在对话框里」由紧接着那圈 Tab 断言覆盖。
-  await expectAccessible(page, { allow: [dialogBackgroundIsInert] })
+  // 两条允许，各自带真核对：背景整片 aria-hidden（「焦点确实困在对话框里」由
+  // 紧接着那圈 Tab 断言覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个
+  // 核对——`color-contrast` 进不进 incomplete 随卡片数量与浏览器而变（这条
+  // 用例实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler],
+  })
 
   // 焦点 trap：连按 Tab 一整圈，焦点永远落在对话框里
   for (let i = 0; i < 25; i++) {
@@ -280,6 +286,83 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   await expect(dialog).toHaveCount(0)
   // 关闭后焦点回到触发它的控件（Radix 的承诺，这里钉死成回归门禁）
   await expect(exportButton).toBeFocused()
+})
+
+test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+
+  // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）。轨道是 <nav>，
+  // 这样不会跟横幅上那个同名按钮撞上。
+  const railButton = page
+    .getByRole('navigation')
+    .getByRole('button', { name: /项目接入状态|Project readiness/ })
+  await railButton.focus()
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  // 每一行都在（报告取回来了才算真的打开，空壳上扫 axe 什么都证明不了）
+  await expect(dialog.getByText(/技术详情|Technical details/).first()).toBeVisible({
+    timeout: 30_000,
+  })
+
+  // 两条允许，各自带真核对：背景整片 aria-hidden（焦点进不去由下面那圈 Tab
+  // 覆盖）；覆盖层下 axe 算不出背景色的那几个节点由本文件的自算对比度尺子逐个
+  // 核对。后者是这个对话框第一次在真浏览器里跑出来的——`--list` 收得到 ≠ 跑得过。
+  // **判据收在对话框里**（`root`）：这条用例的对象是接入状态这一屏。模态打开时
+  // 全页扫描会把背后的工作台一并量进来，而工作台自己的对比度由上面那条
+  // 「工作台」用例在**没有模态**的状态下守——两处都量、结论还不一致的话，
+  // 红的是哪一屏就说不清了（实测确实不一致，已记 issue）。
+  //
+  // 两条「查不了」的允许各自带真核对：背景整片 aria-hidden（焦点进不去由下面
+  // 那圈 Tab 覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个核对。
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler],
+    root: '[role="dialog"]',
+  })
+
+  for (let i = 0; i < 25; i++) {
+    await page.keyboard.press('Tab')
+    const inside = await page.evaluate(() => {
+      const el = document.activeElement
+      return !!el?.closest('[role="dialog"]')
+    })
+    expect(inside, `第 ${i + 1} 次 Tab 后焦点跑出了接入状态`).toBe(true)
+  }
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(railButton).toBeFocused()
+})
+
+test('素材卡的状态角标不引入嵌套交互（axe nested-interactive）', async ({ app, page }) => {
+  // **必须是一张「不能编辑」的图**：角标与那条带按钮的说明条只在这种卡上出现。
+  // 默认夹具里三张图全都已连上脚本（editable），卡上既没有角标也没有说明条，
+  // 于是这条用例什么都没量到——直到它在 windows-exe-smoke 上第一次真跑起来，
+  // 才在「按钮找不到」上红出来。运行期命名的那份夹具给的是 needs_probe。
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-a11y-${Date.now()}`)
+  writeRuntimeNamedProject(dir)
+  const a = await app({ figures: dir })
+  await page.goto(a.baseURL)
+  const card = page.getByRole('option').first()
+  await expect(card).toBeVisible({ timeout: 30_000 })
+  await card.click() // 选中之后说明条才出现——它带一个真按钮，必须在 listbox 外面
+
+  const results = await new AxeBuilder({ page })
+    .withRules(['nested-interactive', 'aria-required-children', 'aria-required-parent'])
+    .analyze()
+  expect(results.violations.map((v) => ({
+    id: v.id,
+    nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+  }))).toEqual([])
+
+  // 「查看接入状态」必须键盘到得了：它不在 option 里，所以 Tab 出列表就能落上去
+  await expect(
+    page.getByRole('button', { name: /查看接入状态|Project readiness/ }).first(),
+  ).toBeVisible()
 })
 
 test('图标按钮都有可访问名（axe button-name / 顶栏抽查）', async ({ app, page }) => {

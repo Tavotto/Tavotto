@@ -33,7 +33,8 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - Flask 跑在 `.venv`（只有 flask + pymupdf，**没有 matplotlib**）。
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
-  `engine/project_watch.py` 被 Flask import，**必须保持纯标准库**。
+  `engine/project_watch.py`、`engine/readiness.py` 被 Flask import，
+  **必须保持纯标准库**。
 - `engine/worker.py`、`engine/manifest.py`、`engine/overrides.py`、
   `engine/figsession.py`、`engine/wireproto.py`、`engine/preview_complexity.py`
   只在执行侧子进程里跑，解释器由 `pool.find_worker_python()` 探测
@@ -737,7 +738,31 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `panel.file_changed`（这张图的源码变了，请重渲染）与 `project.error`。
   worker 失效在两边各管一半：注册表**关系**变了归刷新，脚本**内容**变了
   与 `paper_style*` 归 watcher。「哪些文件算素材」只有 `iter_assets()`
-  一处判据，脚本遍历只有 `discover.iter_all_scripts()` 一处。
+  一处判据，脚本遍历只有 `discover.iter_all_scripts()` 一处，
+  「谁认领了这个 stem」只有 `discover.claims_of()` 一处。
+- **「这张图能不能进图内编辑」只有一处判据（ADR 0027，2026-08-29）**：
+  `engine/readiness.py`，主语固定为 `/api/panels` 的那一个**素材 id**。
+  六个互斥状态（`editable` / `auto_linkable` / `needs_probe` / `conflict` /
+  `source_missing` / `layout_only`）+ 稳定 `reason_code`（十个，闭集），
+  判定表的机器可读版本是 `REASONS_BY_STATUS`。HTTP：
+  `GET /api/project/readiness`；`/api/panels` 每项的 `capability` 是**同一次
+  计算的投影**，不是第二次判定。
+  * **别处不许另起同义状态**，前端也不许按 `script` 有没有值自己再判一遍
+    ——改造前那三处（`/api/panels` 的 `script`、`/api/registry` 的
+    `candidates`、`probe.script_inventory()` 的 `reason`）主语各不相同
+    （素材 / stem / 脚本），三句话都对却合不成一句。
+  * **只组合已有事实，不新增解析能力**：内存里的注册表 + `discover` 静态
+    报告 + 文件存在性 + 目录可写性。**注册表优先于静态报告**（注册表文件
+    就是人工裁决的落处）；**冲突绝不自动裁决**（不看文件名、不看 mtime）。
+  * **只报告不动手**：`can_probe` / `can_manual_link` / `can_rescan` 只说
+    "界面可以提供这个动作"，执行仍归 `/api/registry/probe`、`PUT /api/registry`、
+    `POST /api/project/refresh`。不执行用户脚本、不写盘、不改注册表、不发
+    SSE、不返回绝对路径。
+  * **「没测量」不是「测量结果是零」**：`conflicts: null` = 这一轮没跑静态
+    扫描；`registry_valid: null` = 项目里没有注册表文件；`capability` 缺席
+    = 这一轮还不知道。三档都不许压成两档。
+  * 缓存挂在 `RefreshState.readiness`，键是输入的内容签名；刷新在事实真的
+    动了之后额外清一次（依赖方向是 readiness → refresh，**反过来会成环**）。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
 

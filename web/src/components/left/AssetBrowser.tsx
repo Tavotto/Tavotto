@@ -18,9 +18,11 @@ import {
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addPanel, addRuntimePanel } from '@/store/actions'
+import { reasonText, statusLabel } from '@/lib/readinessText'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
@@ -394,6 +396,10 @@ export function AssetBrowser() {
         <ScriptLibrary query={query} />
       </div>
 
+      {/* 选中卡片的接入说明。**在 listbox 之外**：option 里不许再嵌可 Tab 的
+          控件（axe nested-interactive，serious），而这条说明需要一个真按钮 */}
+      <AssetCapabilityNotice panel={panels.find((p) => p.id === activeId)} />
+
       {figuresDir && <FolderInfo dir={figuresDir} shown={items.length} total={panels.length + (runtimeAssets?.length ?? 0)} />}
 
       <Dialog
@@ -574,10 +580,14 @@ function AssetCard({
 }) {
   useTranslation('workspace')
   const name = fileName(panel.id)
+  const cap = panel.capability
   const label = [
     name,
     formatOf(panel),
-    panel.script ? ab('cardParameterizable') : null,
+    // 状态进可达名。`capability` 缺席 = **这一轮还不知道**（就绪度扫描与素材
+    // 遍历之间新出现的那一档），不是 `layout_only`——那时照旧只说老那句
+    // 「可参数化」，绝不替后端补一个默认状态。
+    cap ? statusLabel(cap.status) : panel.script ? ab('cardParameterizable') : null,
     ab('cardSize', {
       w: formatCm(panel.native_w_mm),
       h: formatCm(panel.native_h_mm),
@@ -640,16 +650,30 @@ function AssetCard({
           className="max-h-full max-w-full object-contain p-1"
         />
 
-        <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-1">
-          <span className="rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
+        <span className="pointer-events-none absolute left-1 top-1 flex max-w-[calc(100%-2.25rem)] items-center gap-1">
+          <span className="shrink-0 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
             {formatOf(panel)}
           </span>
           {panel.script && (
             <span
-              className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
               title={ab('scriptBadgeTitle')}
             >
               <Braces size={10} />
+            </span>
+          )}
+          {/* 接入状态角标。**只在需要说话时说话**：`editable` 已经有 `{}` 那个
+              紧凑标记了，再写一遍「可编辑」是纯噪音。
+              与格式角标同一行、同一种底色：不引入新的高饱和色块，也不会跟
+              悬停时右下角那个「添加到画布」撞上。整组留出右上角 ×N 的位置。
+              它是 `<span>` 不是按钮——option 里不许再嵌可 Tab 的控件；完整解释
+              在 `title` 与卡片外的说明条里，两条路都到得了。 */}
+          {cap && cap.status !== 'editable' && (
+            <span
+              className="min-w-0 truncate rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white"
+              title={reasonText(cap)}
+            >
+              {statusLabel(cap.status)}
             </span>
           )}
         </span>
@@ -901,6 +925,43 @@ function RuntimeAssetCard({
         )}
       </div>
     </li>
+  )
+}
+
+/**
+ * 选中卡片的接入说明条。
+ *
+ * **住在 listbox 外面**，因为它里面有一个真按钮：`role="option"` 的卡片里再
+ * 嵌可 Tab 的控件是 axe 的 nested-interactive（serious），而键盘用户又必须
+ * 到得了「查看接入状态」。放在列表下方，两个约束同时成立——鼠标用户点卡片
+ * 就看见，键盘用户 Tab 出列表就落在它上面。
+ *
+ * `editable` 不显示：那一档没有需要说的话，常驻一条只会挤掉缩略图。
+ * `capability` 缺席同样不显示——「这一轮还不知道」不是一种状态，编一句出来
+ * 就是替后端撒谎。
+ */
+function AssetCapabilityNotice({ panel }: { panel?: PanelInfo }) {
+  useTranslation('workspace')
+  const cap = panel?.capability
+  if (!panel || !cap || cap.status === 'editable') return null
+  return (
+    <div
+      role="status"
+      data-capability-notice
+      className="shrink-0 border-t border-border bg-surface-2 px-3 py-1.5"
+    >
+      <p className="truncate text-xs text-ink" title={panel.id}>
+        {ab('capabilityHeading', { name: fileName(panel.id), status: statusLabel(cap.status) })}
+      </p>
+      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
+      <Button
+        size="sm"
+        className="-ml-2 mt-0.5"
+        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id)}
+      >
+        {translate('readiness.openCenter', { ns: 'workspace' })}
+      </Button>
+    </div>
   )
 }
 

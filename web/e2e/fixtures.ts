@@ -1,6 +1,6 @@
 import { test as base, expect } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -146,9 +146,24 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
   }
 }
 
-/** 造一个「文件名只有运行时才知道」的图库，用来测脚本注册表那条路径。 */
+/**
+ * 造一个「文件名只有运行时才知道」的图库，用来测**接入状态**那条路径。
+ *
+ * 里面必须**有一张真图**：Prompt 08 起「试运行并连接」挂在**那张图那一行**上，
+ * 不再挂在一份脚本清单上。只放脚本不放图的话，接入状态是一句诚实的「这个项目
+ * 里还没有图」——界面没错，是这份夹具跟不上被测的那个契约了。
+ * （实测：这条用例在合并队列的 windows-exe-smoke 上第一次真跑起来就红在这里。）
+ *
+ * 图的 stem 静态解不出来（脚本里的文件名来自运行期变量），项目里又确实有一个
+ * 产图脚本，所以它的状态是 `needs_probe`——正是这条用例要的那一行。
+ */
 export function writeRuntimeNamedProject(dir: string): void {
   mkdirSync(dir, { recursive: true })
+  // 真图一张：拿现成的样例 PDF 改个名，省得在 TS 里手搓 PDF
+  copyFileSync(
+    path.join(REPO, 'examples', 'figures', 'Fig1_kinetics.pdf'),
+    path.join(dir, 'Runtime_map.pdf'),
+  )
   writeFileSync(
     path.join(dir, 'render_map.py'),
     [

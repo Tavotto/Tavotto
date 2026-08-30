@@ -17,6 +17,7 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
+import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
@@ -35,6 +36,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { syncLoadedDocument } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -105,6 +107,9 @@ function Workspace() {
 
   useEffect(() => {
     const assets = useAssetStore.getState().load()
+    // 项目接入就绪度：与素材清单同一次后端计算的两个投影，一起取回来。
+    // **只读诊断**——后端不跑用户脚本、不 probe、不写盘。
+    void useProjectReadinessStore.getState().load()
     // 启动那次静默：探测失败不该在用户还没进设置页时弹东西
     void useAiStore.getState().loadCaps().catch(() => {})
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
@@ -173,6 +178,7 @@ function Workspace() {
         <CanvasTabs />
         {outdated && <UpdateBanner />}
         <DocumentBanner />
+        <ProjectReadinessBanner />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
