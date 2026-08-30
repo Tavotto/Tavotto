@@ -848,6 +848,35 @@ def test_widget_artifact_is_in_sync_with_the_frontend():
     )
 
 
+def test_widget_check_tells_missing_apart_from_stale(tmp_path, monkeypatch):
+    """`--check` 的三档必须分得开：**不存在** ≠ **过期**。
+
+    上一版把两者并成一句「产物过期……产物里是 None」。措辞不是重点，**处置
+    不同才是**：刚 clone 下来还没跑过构建的人看到「过期」会去找自己改坏了
+    什么；而在发布链上「不存在」意味着打出去的插件没有画布，是致命的。
+    调用方按退出码分流（0 / 1 / 2），不靠读那句中文。
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_mcp_widget
+
+    out = tmp_path / "canvas.html"
+    monkeypatch.setattr(build_mcp_widget, "OUT", out)
+
+    # 不存在 → 2，而且那句话要说「还没构建」，不是「过期」
+    assert build_mcp_widget.main(["--check"]) == 2, "产物不存在时必须是 2，不能与过期共用 1"
+
+    # 存在但指纹对不上 → 1
+    out.write_text(f"{build_mcp_widget.STAMP}deadbeefdeadbeef -->\n", encoding="utf-8")
+    assert build_mcp_widget.main(["--check"]) == 1, "指纹不符是「过期」，退 1"
+
+    # 指纹对上 → 0
+    out.write_text(
+        f"{build_mcp_widget.STAMP}{build_mcp_widget.source_fingerprint()} -->\n",
+        encoding="utf-8",
+    )
+    assert build_mcp_widget.main(["--check"]) == 0
+
+
 def test_widget_resource_is_self_contained():
     """CSP 声明的是空 connectDomains：画布不许发任何跨源请求。"""
     if not widget.available():
