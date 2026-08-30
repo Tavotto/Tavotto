@@ -337,7 +337,7 @@ codex-plugin/
 │   │   ├── server.py                  #   initialize / tools / resources
 │   │   ├── bridge.py                  #   会话、路径范围、渲染、预检、导出
 │   │   └── widget.py                  #   ui:// 资源
-│   └── widget/canvas.html             # 内嵌画布（构建产物，见下）
+│   └── widget/canvas.html             # 内嵌画布（构建产物，**不进 git**，现建）
 └── skills/tavotto-figure/
     ├── SKILL.md                       # 会话入口状态机 + 核心契约 + 工具顺序
     ├── agents/openai.yaml             # 显示名 / 默认提示 / MCP 依赖声明

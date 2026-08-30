@@ -13,8 +13,6 @@
 # `pnpm i18n:check` 的第一步就是 `i18next-cli types --ci`
 web/src/i18n/resources.d.ts text eol=lf
 
-# `python scripts/build_mcp_widget.py --check` 比的是 web/src 的源码指纹
-codex-plugin/mcp/widget/canvas.html text eol=lf
 
 # CLA 正文的 SHA-256 记在 .github/cla-policy.json 里，判据逐字节核对
 # （tests/test_legal_contribution_policy.py 的 test_recorded_hash_matches_the_document）。

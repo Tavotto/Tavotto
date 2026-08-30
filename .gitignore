@@ -71,9 +71,20 @@ tools/*/target/
 /Magplot Brand System.html
 /Tavotto Brand System.html
 
-# MCP App 画布的中间产物（最终单文件在 codex-plugin/mcp/widget/canvas.html，那个进 git）
+# MCP App 画布：中间产物与**最终单文件都不进 git**。
+#
+# 它曾经是「受管构建物（进 git）」，2026-08-30 改掉了。原因不是纪律没执行，
+# 是那条纪律与合并队列冲突：任何碰 `web/src` 的 PR 都会重建这份近 1 MB 的
+# 产物，而队列的 `max_entries_to_build = 2` 会把两个 PR 打包成一组一起验
+# ——两个前端 PR 前后脚排队 = 整组建不出来、**双双被踢**，而且表现是
+# 「掉出队列但没合并」，看起来像自己那个 PR 有问题。一晚上撞了四次。
+#
+# 照 `/src/tavotto/web/` 与 `web/dist-playground/` 的既有形态：按需构建。
+# 换来的新风险是「发布链忘了构建 → 插件 zip 里没有画布」，那一条由
+# `scripts/make_plugin_manifest.py` 打包时的断言看着。
 web/dist-mcp/
 web/dist-playground/
+codex-plugin/mcp/widget/canvas.html
 
 # 冒烟 / 手工跑示例项目时，导出与画布布局落在项目自己的 tavottofile/ 里
 # （engine/config.project_export_dir）。`git add -A` 会顺手把它收进提交。

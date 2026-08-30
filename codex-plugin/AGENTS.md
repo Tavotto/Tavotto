@@ -120,9 +120,16 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   文件，挂 UI 只会让画布不停重建）；CSP 的 `connectDomains` **是空的**（sidecar 端口动态，
   写不进白名单，这也是必须走 `tools/call` 的原因）；**绝不用「开浏览器」冒充内嵌画布**；
   iframe 的 `localStorage`/`widgetState` **不存业务数据**。
-- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**受管构建物**（进 git）：
-  `python scripts/build_mcp_widget.py`，`--check` 在 CI 的 frontend job 与 pytest 里各看一道。
-  **改了 `web/src` 就得重跑**，否则用户装到的是上一版画布（功能全在、只是旧、零报错）。
+- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**构建产物，不进 git**
+  （2026-08-30 改的，见根 `.gitignore` 里的原因）：`python scripts/build_mcp_widget.py`。
+  checkout 之后要现建一次，否则读它的东西会跳过或降级。
+  - `--check` 分三档：一致 `0` / 过期 `1` / **还没构建 `2`**。「不存在」在新克隆上是
+    正常状态，在发布链上是致命错误——所以是两个退出码，调用方按码分流。
+  - 「产物必须在」由 `scripts/make_plugin_manifest.py` 打 zip 时断言；
+    pytest 与 E2E 那边缺了就 skip（并说清怎么补），两件事分开写。
+  - 它曾经进 git，改掉的原因不是纪律没执行：任何碰 `web/src` 的 PR 都会重建这份近
+    1 MB 的产物，而合并队列会把两个 PR 打包成一组一起验——两个前端 PR 前后脚排队
+    就整组建不出来、**双双被踢**，表现还是「掉出队列但没合并」。一晚撞了四次。
 - **协议绿灯不能冒充 Codex Desktop iframe 证据**。真实验收必须按
   `docs/acceptance/codex-desktop-canvas.md`：新任务、真实 capability JSON、先取消
   证明 fail-closed、再人工批准精确路径、同一任务里出现并实际交互画布，且保留截图与
@@ -135,6 +142,6 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
 ```sh
 .venv/bin/python -m pytest tests/test_mcp_server.py tests/test_mcp_roundtrip.py \
   tests/test_codex_plugin.py tests/test_preflight.py tests/test_install_locate.py
-python scripts/build_mcp_widget.py --check     # 改了 web/src 就得重建
+python scripts/build_mcp_widget.py             # 产物不进 git，checkout 后现建一次
 python codex-plugin/mcp/server.py --self-check # MCP 手动冒烟
 ```

@@ -243,6 +243,17 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      # 画布产物不进版本库（2026-08-30）。**只有这个 job 有 node/pnpm**，
+      # 而要它的是下游的 validate_artifacts（打插件 zip）——所以在这里建、
+      # 当 artifact 传过去，而不是在那边重新装一套前端工具链。
+      - name: 构建 MCP 画布产物
+        run: python scripts/build_mcp_widget.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcp-widget
+          path: codex-plugin/mcp/widget/canvas.html
+          if-no-files-found: error
+
       - name: 打 wheel 与 sdist
         run: |
           python -m pip install --upgrade pip build twine
@@ -396,6 +407,12 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: dist, path: dist }
+      # 画布产物不进版本库：checkout 之后插件目录里没有它，直接打 zip 会得到
+      # 一个**没有 UI 的插件**（MCP server 如实降级，零报错）。这个 job 没有
+      # node/pnpm，所以取 build job 建好的那份。忘了这一步的话
+      # `make_plugin_manifest.build_zip` 里的断言会当场拦住，不会静默发出去。
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: mcp-widget, path: codex-plugin/mcp/widget }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: desktop

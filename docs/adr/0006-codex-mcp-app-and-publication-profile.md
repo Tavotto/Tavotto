@@ -187,6 +187,14 @@ Tavotto 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同�
   `scripts/build_mcp_widget.py` 生成，`--check` 在 CI 里看着）——插件从仓库本体分发，
   产物不进 git 用户就只有一个空目录。
 
+  > **2026-08-30 修订：这一条的「进 git」已推翻。** 理由不是当时判断错了，是当时
+  > 还没有合并队列：队列的 `max_entries_to_build = 2` 会把两个 PR 打包成一组一起
+  > 验，而任何碰 `web/src` 的 PR 都带着重建过的这份近 1 MB 产物——两个前端 PR 前后
+  > 脚排队就整组建不出来、双双被踢（一晚撞四次）。产物改为不进 git、按需构建。
+  > 「用户只有一个空目录」那个顾虑仍然成立，换成由发布链兜住：`build` job 建好当
+  > artifact 传给 `validate_artifacts`，`make_plugin_manifest.build_zip` 断言 zip 里
+  > 必须有它。见根 `.gitignore` 与 `codex-plugin/AGENTS.md`。
+
 ## 代价与已知边界
 
 * **画布产物 ~580 KiB 进仓库**，且**任何 `web/src` 改动都会让指纹失效**（widget 打包了

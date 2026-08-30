@@ -2,11 +2,17 @@
 """构建 Codex 内嵌画布（MCP App UI）的单文件 HTML。
 
     python scripts/build_mcp_widget.py            # 构建并写入插件目录
-    python scripts/build_mcp_widget.py --check    # 只校验产物是否与源码同步
+    python scripts/build_mcp_widget.py --check    # 校验：0 一致 / 1 过期 / 2 还没构建
 
-产物：`codex-plugin/mcp/widget/canvas.html`（**进 git**）。
+产物：`codex-plugin/mcp/widget/canvas.html`（**不进 git**，checkout 后现建）。
 
-为什么要单文件、为什么要提交进仓库：
+它 2026-08-30 之前是进 git 的。改掉的原因与「产物该不该受管」无关，是它与合并
+队列冲突：任何碰 `web/src` 的 PR 都会重建这份近 1 MB 的文件，而队列会把两个 PR
+打包成一组一起验——两个前端 PR 前后脚排队就整组建不出来、**双双被踢**。
+换来的新风险（发布链忘了建 → 插件里没有画布）由
+`scripts/make_plugin_manifest.py` 打 zip 时的断言看着。见根 `.gitignore`。
+
+为什么要单文件：
 
 * MCP 资源的内容就是一段 HTML 文本，host 把它直接塞进 iframe——外链的
   JS/CSS 没有可寻址的来源，`_meta.ui.csp` 声明的 `resourceDomains` 我们也刻意
@@ -173,20 +179,36 @@ def main(argv: list[str] | None = None) -> int:
     want = source_fingerprint()
     have = current_fingerprint()
     if args.check:
-        ok = have == want
-        report = {"ok": ok, "expected": want, "found": have, "path": str(OUT)}
-        print(
-            json.dumps(report, ensure_ascii=False)
-            if args.json
-            else (
-                f"画布产物与源码一致（{want}）"
-                if ok
-                else f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
-                f"跑一次 python scripts/build_mcp_widget.py"
-            ),
-            file=sys.stdout if ok else sys.stderr,
-        )
-        return 0 if ok else 1
+        # **三档，不是两档。** 产物不存在与产物过期是两件事：
+        #
+        #   0  一致          —— 没事
+        #   1  过期          —— 有人改了 web/src 却没重建（真错）
+        #   2  产物不存在    —— 还没构建过
+        #
+        # 产物不进版本库之后（见 `.gitignore`），「不存在」在**新克隆上是正常
+        # 状态**，而在**打包链上是致命错误**。合成一档的话，同一句「产物过期」
+        # 要么在开发机上误报成错误，要么在发布链上把「插件里没有画布」说成
+        # 一个可以忽略的提示。调用方按退出码分流，不靠读那句中文。
+        missing = have is None
+        ok = (not missing) and have == want
+        status = "ok" if ok else ("missing" if missing else "stale")
+        report = {"ok": ok, "status": status, "expected": want, "found": have, "path": str(OUT)}
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False), file=sys.stdout if ok else sys.stderr)
+        elif ok:
+            print(f"画布产物与源码一致（{want}）")
+        elif missing:
+            print(
+                f"画布产物还没构建：{OUT} 不存在。跑一次 python scripts/build_mcp_widget.py",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
+                f"跑一次 python scripts/build_mcp_widget.py",
+                file=sys.stderr,
+            )
+        return 0 if ok else (2 if missing else 1)
 
     html = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,13 +74,39 @@ class TestRealConfig:
         d = _domains()
         assert "mcp-widget" in d and "ci-control-plane" in d
 
-    def test_web_src_and_canvas_html_share_the_widget_domain(self):
-        """本仓库最热的冲突：web/src 的改动经 build_mcp_widget.py 落进
-        canvas.html。两端必须在同一个域里，否则检查对它视而不见。"""
-        d = _domains()
-        spec = d["mcp-widget"]
+    def test_the_widget_bundle_is_not_tracked_so_it_declares_no_generated(self):
+        """本仓库曾经最热的冲突已经从根上消掉了，这条守着它别回来。
+
+        老形态：`web/src` 的改动经 `build_mcp_widget.py` 落进 `canvas.html`，
+        而那份近 1 MB 的产物**进版本库**。于是两个 PR 各改 web/src 的不同文件、
+        谁都没带上它，合并时各自重建的仍是同一个 bundle——判定器据此报
+        「生成物重叠」，合并队列则直接把两个打包成一组、整组建不出来、双双被踢
+        （2026-08-29 一晚撞了四次）。
+
+        2026-08-30 起产物不进版本库（现建）。**两条断言缺一不可**：
+          1. 它真的不在索引里——否则下面那条只是「配置写了什么」，不是事实；
+          2. 域不再声明 generated——否则判定器仍会对每两个前端 PR 报间接重叠，
+             那是一条对着已经不存在的机制喊的警报。
+        """
+        repo = Path(__file__).resolve().parent.parent
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "codex-plugin/mcp/widget/canvas.html"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert tracked.returncode != 0, (
+            "canvas.html 又被提交进版本库了——它是构建产物，进 git 会让每两个"
+            "碰 web/src 的 PR 在合并队列里同组必撞（见 .gitignore 里的说明）"
+        )
+        spec = _domains()["mcp-widget"]
         assert CD.matches("web/src/canvas/ContextBar.tsx", spec["sources"])
-        assert CD.matches("codex-plugin/mcp/widget/canvas.html", spec["generated"])
+        assert not spec.get("generated"), (
+            "产物已不进版本库，域不该再声明 generated：判定器会对每两个前端 PR "
+            "报「生成物重叠」，而那条间接重叠已经不存在了"
+        )
 
     def test_every_declared_path_style_matches_something_plausible(self):
         d = _domains()
@@ -178,30 +205,53 @@ class TestGlob:
 
 
 # ============================================================ 重叠判定
+#: 一个**合成**的域配置，专门给「判定器的机制对不对」那几条用。
+#:
+#: 机制用例**不该拿真实域当夹具**：2026-08-30 把 `canvas.html` 移出版本库、
+#: `mcp-widget` 随之不再声明 generated，两条测机制的用例当场红了——而它们要
+#: 看护的判定逻辑一个字都没变。夹具与被测对象绑在一起，改配置就会误伤判据。
+_SYNTHETIC_DOMAINS = {
+    "domains": {
+        "synth-generated": {
+            "sources": ["fake/src/**"],
+            "generated": ["fake/out/bundle.js"],
+            "policy": "stack-or-train",
+        },
+        "synth-plain": {"files": ["fake/plain/**"], "policy": "serialize"},
+    }
+}
+
+
 class TestOverlaps:
-    def _run(self, my_pr, prs, **kw):
+    def _run(self, my_pr, prs, config=None, **kw):
         fake = FakeGitHub(prs, **kw)
-        rc = CD.run(REPO, my_pr, CONFIG, token=None, fetch=fake)
+        rc = CD.run(REPO, my_pr, config or CONFIG, token=None, fetch=fake)
         return rc, fake
 
-    def test_two_prs_both_touching_canvas_html(self, capsys):
+    def _synthetic(self, tmp_path):
+        cfg = tmp_path / "domains.json"
+        cfg.write_text(json.dumps(_SYNTHETIC_DOMAINS, ensure_ascii=False), encoding="utf-8")
+        return cfg
+
+    def test_two_prs_both_touching_the_same_generated_file(self, capsys, tmp_path):
+        """同一个生成物出现在两个 PR 的 diff 里——最直白的一档。"""
         rc, _ = self._run(
             1,
-            {
-                1: ["codex-plugin/mcp/widget/canvas.html"],
-                2: ["codex-plugin/mcp/widget/canvas.html"],
-            },
+            {1: ["fake/out/bundle.js"], 2: ["fake/out/bundle.js"]},
+            config=self._synthetic(tmp_path),
         )
         out = capsys.readouterr().out
         assert rc == 0
-        assert "::warning::" in out and "mcp-widget" in out
+        assert "::warning::" in out and "synth-generated" in out
         payload = json.loads(out.strip().splitlines()[-1])
         assert payload["overlapping_prs"] == [2]
 
-    def test_source_change_vs_generated_change_is_an_indirect_overlap(self, capsys):
-        """一个改 web/src、一个带 canvas.html——文件毫无交集，仍然要报。"""
+    def test_source_change_vs_generated_change_is_an_indirect_overlap(self, capsys, tmp_path):
+        """一个改 sources、一个带 generated——文件毫无交集，仍然要报。"""
         rc, _ = self._run(
-            1, {1: ["web/src/canvas/ContextBar.tsx"], 2: ["codex-plugin/mcp/widget/canvas.html"]}
+            1,
+            {1: ["fake/src/a.ts"], 2: ["fake/out/bundle.js"]},
+            config=self._synthetic(tmp_path),
         )
         out = capsys.readouterr().out
         assert "生成物重叠" in out

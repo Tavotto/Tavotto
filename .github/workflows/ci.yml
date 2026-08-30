@@ -503,12 +503,15 @@ jobs:
       # 根 tsconfig 是 `files: []` + references 的方案文件，--noEmit 不走项目引用、
       # 什么都不编，恒绿——一个报平安的空门禁比没有门禁更坏。
       - run: pnpm build
-      # Codex 内嵌画布是 web/src 打出来的单文件产物，随插件一起提交进仓库。
-      # 改了前端却没重跑它，用户在 Codex 里装到的画布就是上一版——功能全在、
-      # 只是旧，零报错。指纹算法纯 Python，这一步不需要 Node。
-      - name: MCP 画布产物与前端源码同步
+      # Codex 内嵌画布是 web/src 打出来的单文件产物。它**不进版本库**
+      # （2026-08-30，见根 `.gitignore`），所以这里**真构建**而不是 `--check`：
+      # 没有「入库那份过不过期」这个问题了，只有「构建脚本还活着吗」。
+      #
+      # 这一步同时是 `e2e/mcp-canvas.spec.ts` 的前置——它要读这份产物，缺了会
+      # 整条 spec skip（不是红，但也就不看护任何东西了）。
+      - name: 构建 MCP 画布产物（不进版本库，现建）
         working-directory: .
-        run: python3 scripts/build_mcp_widget.py --check
+        run: python3 scripts/build_mcp_widget.py
       # 浏览器 playground（网站 /try，ADR 0007）：产物由本仓库构建、由网站仓库
       # 提交。这里真跑一遍构建（vite + engine.zip + 指纹 manifest），保证构建
       # 脚本随前端一起是活的；「网站上那份是不是过期」的门禁在网站仓库——
@@ -828,6 +831,11 @@ jobs:
           $env:TAVOTTO_WORKER_PYTHON = $null
           $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
           pnpm install --frozen-lockfile
+          # MCP 画布产物不进版本库（2026-08-30）：`e2e/mcp-canvas.spec.ts` 要读
+          # 它，缺了整条 spec 会 skip——**不红，但也就不看护任何东西了**，
+          # 而这条腿正是「只在别人电脑上发生」那类问题的唯一验证点。
+          # 放在 pnpm install 之后：构建脚本要 web/node_modules。
+          python ../scripts/build_mcp_widget.py
           # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：
           # 黄金路径与可访问性在它上面各跑一遍
           pnpm exec playwright install --with-deps chromium webkit
@@ -1200,8 +1208,10 @@ jobs:
               sys.exit("\n".join(bad))
           print("workflow YAML 全部可解析")
           PY
-      - name: 受管生成物一致性（MCP 画布指纹，纯 Python，不需要 Node）
-        run: python3 scripts/build_mcp_widget.py --check
+      # 这里曾经有一步 `build_mcp_widget.py --check`：它问的是「入库那份产物
+      # 过期没有」。产物 2026-08-30 起不进版本库，这个问题不存在了——而这个
+      # job 既没有 Node 也没有产物，留着只会恒定报「还没构建」。
+      # 「产物必须在」那条闸移到了 `scripts/make_plugin_manifest.py`（打 zip 时）。
       - name: CI 结构契约（不依赖科学栈的那部分）
         # 这些测试只读文件与脚本、纯标准库：Gate 闭集、merge_group 触发、
         # 并发不取消队列、发布编排契约、Ruleset 迁移工具、冲突域检查。

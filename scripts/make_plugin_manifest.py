@@ -78,6 +78,15 @@ def build_manifest(tag: str, version: str, *, published_at: str | None = None) -
     return out
 
 
+#: zip 里**必须**有的东西。它们不进版本库（构建产物），所以「打包前忘了构建」
+#: 是一条真实且安静的失败路径——用户装到的插件目录里没有画布，MCP server 会
+#: 如实降级成「没有 UI」，零报错。
+#:
+#: 这道闸是 `canvas.html` 移出版本库（2026-08-30）换来的那个新风险的唯一兜底：
+#: 老形态里「产物过期」由 `--check` 看着，新形态里「产物根本不在」由这里看着。
+_REQUIRED_IN_ZIP = ("mcp/widget/canvas.html",)
+
+
 def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
     """把插件目录打成 zip（顶层目录固定叫 codex-plugin）。"""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +94,13 @@ def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
     kept = [p for p in files if not ZIP_SKIP & set(p.relative_to(source).parts)]
     if not kept:
         raise SystemExit(f"{source} 里没有文件可打包")
+    have = {str(p.relative_to(source).as_posix()) for p in kept}
+    missing = [rel for rel in _REQUIRED_IN_ZIP if rel not in have]
+    if missing:
+        raise SystemExit(
+            f"插件 zip 缺少构建产物 {missing}——先跑 python scripts/build_mcp_widget.py。"
+            "（它不进版本库，所以 checkout 之后必须现建一次）"
+        )
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in kept:
             zf.write(path, str(Path("codex-plugin") / path.relative_to(source)))

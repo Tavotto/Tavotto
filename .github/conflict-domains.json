@@ -16,8 +16,8 @@
   "domains": {
     "mcp-widget": {
       "sources": ["web/src/**", "scripts/build_mcp_widget.py"],
-      "generated": ["codex-plugin/mcp/widget/canvas.html"],
-      "policy": "stack-or-train"
+      "policy": "stack-or-train",
+      "note": "canvas.html 曾经是这个域的 generated 成员：两个 PR 各改 web/src 的不同文件、谁都没带上它，合并时各自重建的却是同一个 bundle——判定器据此报「生成物重叠」。2026-08-30 起它不再进版本库（现建，见根 .gitignore），这条间接重叠随之消失，所以不再声明 generated。域本身留着，管的是 web/src 的直接重叠。"
     },
     "browser-playground": {
       "sources": ["web/src/**", "src/tavotto/engine/browser.py", "scripts/build_browser_playground.py"],

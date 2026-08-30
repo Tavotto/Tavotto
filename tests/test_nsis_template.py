@@ -311,7 +311,9 @@ def test_cli_version_pinned_and_in_sync():
 def test_installer_bitmaps_match_the_generator():
     """提交在仓库里的安装器位图必须与生成脚本的当前输出一致。
 
-    这两张 BMP 是受管构建物（与 canvas.html 同一条纪律）：改名 Magplot →
+    这两张 BMP 是**进 git 的**受管构建物（`canvas.html` 2026-08-30 起改成不进
+    git 现建了，这两张没有：它们只在改品牌时变，不会像前端产物那样每个 PR 都
+    重建，所以不吃合并队列同组必撞那个亏）：改名 Magplot →
     Tavotto 时脚本改了、产物没重新生成，0.8.0 起发出去的每一个 Windows
     安装包侧栏都还写着 "Magplot"（2026-08-25 用户报告）。逐字节比对会被
     渲染器（PyMuPDF）版本的抗锯齿差异误伤，所以按**强差异像素占比**判：

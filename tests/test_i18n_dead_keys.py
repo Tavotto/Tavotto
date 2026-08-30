@@ -24,7 +24,7 @@
 
 * `web/src/i18n/resources.d.ts` 是**从 locales 生成的**，里面含全部键——把它算进
   扫描范围，这道门禁就恒绿（一开始就是这么写的，自检时当场发现）；
-* `codex-plugin/mcp/widget/canvas.html` 是受管产物，同理。
+* `codex-plugin/mcp/widget/canvas.html` 是构建产物（不进 git），同理。
 
 反过来，`codex-plugin/mcp/tavotto_mcp/` **必须**在范围内：MCP server 是
 `errors:preflight.*` 的第二个发射点（`exportRasterDpi` 只在那儿发）。少扫一个真

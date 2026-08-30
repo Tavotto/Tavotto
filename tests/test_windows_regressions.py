@@ -527,7 +527,15 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Python 实现一致" in r.stdout
 
-    # 画布同步门禁：--check 不需要 Node，纯指纹比对
+    # 画布同步门禁：--check 不需要 Node，纯指纹比对。
+    #
+    # **这条用例的主语是 stdout 编码，不是产物在不在。** 画布产物不进版本库
+    # （2026-08-30），所以新克隆上 `--check` 退 2「还没构建」是正常状态；
+    # 断言写死 `returncode == 0` 的话，这条门禁会在一台干净机器上永远红，
+    # 而红的原因与它要看护的事毫无关系——正是本函数 docstring 骂的那件事。
+    #
+    # 所以判据是：**三档结论都不许死在 UnicodeEncodeError 上**，而且那句中文
+    # 真的写出来了。退出码只用来分流该在哪条流里找那句话。
     r = subprocess.run(
         [sys.executable, str(repo / "scripts/build_mcp_widget.py"), "--check"],
         capture_output=True,
@@ -537,8 +545,15 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
         timeout=120,
         env=env,
     )
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "画布产物与源码一致" in r.stdout
+    assert "UnicodeEncodeError" not in r.stderr, r.stderr
+    assert r.returncode in (0, 1, 2), r.stdout + r.stderr
+    said = {
+        0: "画布产物与源码一致",
+        1: "画布产物过期",
+        2: "画布产物还没构建",
+    }[r.returncode]
+    where = r.stdout if r.returncode == 0 else r.stderr
+    assert said in where, f"退出码 {r.returncode} 该说「{said}」，实际：{r.stdout + r.stderr}"
 
 
 def test_widget_fingerprint_is_the_same_on_windows_and_posix():
@@ -1372,8 +1387,6 @@ def _byte_compared_generated_files() -> list[str]:
     return [
         # `pnpm i18n:check` 的第一步就是 `i18next-cli types --ci`
         "web/src/i18n/resources.d.ts",
-        # `python scripts/build_mcp_widget.py --check` 比的是源码指纹
-        "codex-plugin/mcp/widget/canvas.html",
         # CLA 正文：SHA-256 记在 .github/cla-policy.json，判据逐字节核对。
         # 不是生成物，是人写的法律文本——但同样「字节必须确定」，而且
         # 2026-08-28 就是在 Windows 那条腿上红过（policy 是 LF 哈希、

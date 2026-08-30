@@ -1,5 +1,5 @@
 import { test, expect, type FrameLocator, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -21,6 +21,17 @@ import path from 'node:path'
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 const WIDGET = path.join(REPO, 'codex-plugin', 'mcp', 'widget', 'canvas.html')
 const ORIGIN = 'http://tavotto-mcp.test'
+
+/**
+ * 画布产物**不进版本库**（2026-08-30，见根 `.gitignore`）：由
+ * `python scripts/build_mcp_widget.py` 现建，与 `src/tavotto/web/`
+ * （`build_frontend.py` 的产物，E2E 早就是「先构建再跑」）同一条路。
+ *
+ * 缺文件时**跳过并说清怎么补**，而不是让 `readFileSync` 抛在 `boot()` 里
+ * ——那会红成一堆看不出所以然的用例失败。「产物必须在」那条闸不在这儿，
+ * 在 `scripts/make_plugin_manifest.py` 打 zip 的时候。
+ */
+test.skip(!existsSync(WIDGET), '画布产物未构建：先跑 python scripts/build_mcp_widget.py')
 
 /** 一张最小但真实的 manifest：figure + axes + 可拖的标题 + 图例 */
 function makeManifest(titlePt: number, titleAt: [number, number]) {

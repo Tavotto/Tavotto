@@ -1010,11 +1010,37 @@ def test_plugin_manifest_min_tavotto_version_is_real(tmp_path):
     assert mod.MIN_TAVOTTO_VERSION == required
 
 
+def _plugin_dir_with_built_widget(tmp_path):
+    """插件目录的一份副本，画布产物**一定在**（缺就放一个占位）。
+
+    画布不进版本库（2026-08-30），而 `build_zip` 现在断言它必须在——那条断言
+    是对的（发布链忘了构建 = 用户装到一个没有 UI 的插件）。但**它不该把打包
+    形态的用例连坐**：那些用例问的是「zip 里有没有技能本体」，跟画布内容无关，
+    在一台没跑过前端构建的机器上不该红，也不该 skip（skip 掉就没人看着 zip
+    的内容了，而这个 job 本来就没有 Node，等于永远 skip）。
+    """
+    import shutil
+
+    src = ROOT / "codex-plugin"
+    dst = tmp_path / "codex-plugin"
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
+    canvas = dst / "mcp" / "widget" / "canvas.html"
+    if not canvas.is_file():
+        canvas.parent.mkdir(parents=True, exist_ok=True)
+        canvas.write_text(
+            '<!-- tavotto-mcp-widget 0000000000000000 -->\n<div id="root"></div>\n',
+            encoding="utf-8",
+        )
+    return dst
+
+
 def test_plugin_zip_contains_the_skill(tmp_path):
     """安装包里要有技能本体，不能只有清单。"""
     import zipfile
 
-    target = _manifest_module().build_zip(tmp_path / "p.zip")
+    target = _manifest_module().build_zip(
+        tmp_path / "p.zip", source=_plugin_dir_with_built_widget(tmp_path)
+    )
     names = zipfile.ZipFile(target).namelist()
     for needed in (
         "codex-plugin/.codex-plugin/plugin.json",
@@ -1197,8 +1223,32 @@ def test_the_plugin_is_not_shipped_in_the_wheel():
     assert "codex-plugin" in exclude and "codex-plugin/**" in exclude
 
 
-def test_widget_artifact_is_committed_next_to_the_server():
-    """产物不在仓库里 = 用户装完插件只有一个空目录（server 会如实降级）。"""
+def test_plugin_zip_refuses_to_ship_without_the_widget(tmp_path):
+    """画布产物不在时**打包必须当场失败**，不许打出一个没有 UI 的插件。
+
+    这是 `canvas.html` 移出版本库（2026-08-30）换来的那个新风险的唯一兜底：
+    老形态里「产物过期」由 `--check` 看着，新形态里「产物根本不在」由这里看着。
+    MCP server 缺产物时会**如实降级成没有 UI、零报错**——正因为它安静，
+    这条闸才必须响。
+    """
+    src = _plugin_dir_with_built_widget(tmp_path)
+    (src / "mcp" / "widget" / "canvas.html").unlink()
+    with pytest.raises(SystemExit) as e:
+        _manifest_module().build_zip(tmp_path / "nope.zip", source=src)
+    assert "canvas.html" in str(e.value)
+    assert "build_mcp_widget" in str(e.value), "报错要说清楚怎么补"
+    assert not (tmp_path / "nope.zip").exists(), "拦住了就不该留下半个 zip"
+
+
+def test_widget_artifact_has_the_shape_the_server_expects():
+    """构建出来的产物必须是 server 认得的那个形状。
+
+    它**不进版本库**（2026-08-30，见 `.gitignore`），所以这里 skip 掉「还没
+    构建」是对的——那是新克隆上的正常状态，不是错误。**「产物必须在」这条
+    另有其人**：`scripts/make_plugin_manifest.py` 打 zip 时断言它在，因为
+    「发布链忘了构建 = 用户装到一个没有画布的插件」才是真的失败路径。
+    两件事分开写，混成一条就会得到一个「不在也算过」的空门禁。
+    """
     canvas = PLUGIN / "mcp" / "widget" / "canvas.html"
     if not canvas.is_file():
         pytest.skip("画布产物未构建（跑一次 scripts/build_mcp_widget.py）")

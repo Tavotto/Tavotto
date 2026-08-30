@@ -517,8 +517,16 @@ class TestLandingAudit:
         不打包、不跑冒烟。"""
         block = _code(_job(CI, "main-landing-audit"))
         assert re.search(r"(?m)^\s+if: github\.event_name == 'push'$", block)
-        assert "build_mcp_widget.py --check" in block, "受管生成物一致性掉了"
         assert "pytest" in block, "结构契约那一步掉了"
+        # 这里曾经还有一条 `build_mcp_widget.py --check`。它问的是「入库那份画布
+        # 产物过期没有」——2026-08-30 起产物不进版本库（现建），这个问题不存在了，
+        # 而这个 job 既没有 Node 也没有产物，留着只会恒定报「还没构建」。
+        # **判据跟着一起退休，而不是留一条永远红的**。「产物必须在」那条闸换了
+        # 位置：`scripts/make_plugin_manifest.py` 打 zip 时断言，由
+        # `test_plugin_zip_refuses_to_ship_without_the_widget` 看着。
+        assert "build_mcp_widget" not in block, (
+            "画布产物已不进版本库，这个 job 里不该再有它的检查——那会恒定红"
+        )
         for heavy_marker in ("pyinstaller", "smoke_app.py", "python -m build", "matplotlib"):
             assert heavy_marker not in block, f"landing audit 里混进了重活：{heavy_marker}"
 

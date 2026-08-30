@@ -106,7 +106,7 @@ import matplotlib.container as c
 
 ```bash
 python scripts/build_browser_playground.py     # web/dist-playground/
-python scripts/build_mcp_widget.py --check     # 只有动过 web/src 才需要重建
+python scripts/build_mcp_widget.py             # 产物不进 git，动过 web/src 就重建
 ```
 
 然后到网站仓库 `pnpm sync-playground`。
