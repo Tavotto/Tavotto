@@ -118,12 +118,24 @@ async function openLargePanel(
     .getByText("Issue181_large_pcolormesh.pdf")
     .dblclick({ timeout: 60_000 });
   await expect(page.getByText("画布是空的")).toHaveCount(0);
-  // **双击只是把面板放上画布，那时画的是 `/api/render` 的 PNG，引擎一次都没跑。**
-  // 走引擎（`/api/engine/render`，带 manifest 与 preview 裁决）的是**图内编辑态**
-  // ——少了这一下，`waitForResponse` 等的是一个永远不会来的响应，最后红在
-  // 150s 超时上。右栏与上下文工具条各有一个入口，取右栏那个
-  // （与 `element-path-selection.spec.ts` 同一条路）。
-  await page.getByRole("button", { name: "编辑图内元素" }).first().click();
+  // 走引擎（`/api/engine/render`，带 manifest 与 preview 裁决）的是**图内编辑
+  // 态**；没进那个态的话，上面的 `waitForResponse` 等的是一个永远不会来的响应。
+  //
+  // **进入的方式随「打开」的语义变过一次**：Prompt 09 之前双击只是把面板放上
+  // 画布（画的是 `/api/render` 的 PNG，引擎一次都没跑），要再点一下右栏的
+  // 「编辑图内元素」；Prompt 09 之后双击当场就进图内编辑态，那颗按钮**不存在**
+  // （它变成了「退出图内编辑」）。所以这里不写死走哪一条，而是先等到「二者之
+  // 一出现」，只有按钮真在时才点它——无条件点会红在「找不到按钮」的超时上，
+  // 而那个红长得跟「大图把浏览器打死了」一模一样。
+  const inElementEdit = page.locator("[data-element-svg], [data-display]").first();
+  const enterElementEdit = page.getByRole("button", { name: "编辑图内元素" });
+  await expect
+    .poll(
+      async () => (await inElementEdit.count()) > 0 || (await enterElementEdit.count()) > 0,
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+  if (await enterElementEdit.count()) await enterElementEdit.first().click();
   // 冷 build（含首次预览）在大图上是最慢的一步
   const panel = page.locator("[data-element-svg], [data-display]").first();
   await expect(panel).toBeVisible({ timeout: 150_000 });
