@@ -38,6 +38,7 @@ from __future__ import annotations
 import shutil
 import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -371,6 +372,20 @@ LEGACY_REPORT_SUFFIX = "_proof.json"
 _RESERVED: dict[str, str] = {}
 
 
+def _export_url(name: str) -> str:
+    """产出的下载链接。**文件名要按 URL 路径段转义。**
+
+    `check_filename()` 放行的名字里有一批对 URL 有特殊含义：`Fig#1` 拼出来的
+    `/exports/Fig#1.pdf` 会被当成"路径 `/exports/Fig` + 锚点 `1.pdf`"，
+    `Fig%20` 则会被解码成另一个路径——链接指向的不是刚写出去的那个文件
+    （PR #214 第六轮评审）。
+
+    `safe=""` 连 `/` 一起转义：名字里本来就不该有分隔符（`check_filename()`
+    挡着），真出现时也不许它变成一层目录。
+    """
+    return "/exports/" + urllib.parse.quote(name, safe="")
+
+
 def _plan_names(job: ExportJob) -> dict[str, str]:
     """这次作业会写出哪几个最终文件名。**覆盖策略只在这里落地。**
 
@@ -439,12 +454,18 @@ def _dedupe_report(base: str, taken) -> str:
     raise exportreq.ExportRequestError("name_exhausted", "无法为报告找到可用的编号", {})
 
 
-def _claim(job: ExportJob, names: dict[str, str], *, check: bool) -> tuple[list[str], list[str]]:
-    """**一次持锁**完成「撞没撞上」与「占住」两件事。回 `(撞上的名字, 已占住的键)`。
+def _plan_and_claim(job: ExportJob, *, check: bool) -> tuple[dict[str, str], list[str], list[str]]:
+    """**一次持锁**完成「取名」「撞没撞上」「占住」三件事。
 
-    分成两次持锁就等于中间还留着一个窗口：A 查完发现没撞，还没占住，B 也查完
-    发现没撞——两个作业都往下走了。合并成一次之后，两者之间不存在"查过但还
-    没占"的时刻。
+    回 `(名字表, 撞上的名字, 已占住的键)`。
+
+    三件事必须在同一把锁里，少一件都留着一个窗口：
+
+    * 取名与预留分开 —— 两个 `rename` 作业会**各自选中同一个 `Fig.pdf`**
+      （两边取名时它都还空着），先占住的那个赢，后一个被报成 `conflict`，
+      而它请求的明明是"另存一份"（PR #214 第六轮评审）；
+    * 检查与预留分开 —— A 查完发现没撞、还没占住，B 也查完发现没撞，
+      两个作业都往下走了（第一轮评审）。
 
     `check=False`（`replace` / `rename` / 旧契约）时不报撞名，但**照样预留**：
     预留在这两条路上防的是另一件事——两个 `replace` 同时指向同一个路径，
@@ -453,26 +474,20 @@ def _claim(job: ExportJob, names: dict[str, str], *, check: bool) -> tuple[list[
     collisions: list[str] = []
     mine: list[str] = []
     with _LOCK:
-        if check:
-            for name in names.values():
-                path = job.export_dir / name
-                reserved_by = _RESERVED.get(str(path))
-                if path.exists() or (reserved_by is not None and reserved_by != job.id):
-                    collisions.append(name)
-            if collisions:
-                return collisions, []
-        else:
-            for name in names.values():
-                reserved_by = _RESERVED.get(str(job.export_dir / name))
-                if reserved_by is not None and reserved_by != job.id:
-                    collisions.append(name)
-            if collisions:
-                return collisions, []
+        names = _plan_names(job)
+        for name in names.values():
+            path = job.export_dir / name
+            reserved_by = _RESERVED.get(str(path))
+            taken_by_other = reserved_by is not None and reserved_by != job.id
+            if taken_by_other or (check and path.exists()):
+                collisions.append(name)
+        if collisions:
+            return names, collisions, []
         for name in names.values():
             key = str(job.export_dir / name)
             _RESERVED[key] = job.id
             mine.append(key)
-    return [], mine
+    return names, [], mine
 
 
 def _release(keys: list[str], job_id: str) -> None:
@@ -513,18 +528,15 @@ def run(
     except OSError as exc:
         return _fail(job, "export_dir_unwritable", {"error": str(exc)}, publish, recoverable=True)
 
-    # 名字**在渲染之前**一次决定完（含样式检查报告），然后立刻预留。
+    # 名字**在渲染之前**一次决定完（含样式检查报告），并在**同一把锁里**预留。
     # `ask` 撞名就什么都不做地回来——先问再动手，别渲染半分钟再告诉用户
-    # "这个名字已经有了"；预留则关掉「两个作业同时通过存在性检查」那个窗口。
+    # "这个名字已经有了"。
     try:
-        names = _plan_names(job)
+        names, conflicts, reserved = _plan_and_claim(
+            job, check=req.overwrite == exportreq.OVERWRITE_ASK and not req.legacy_naming
+        )
     except exportreq.ExportRequestError as exc:
         return _fail(job, exc.code, exc.params, publish, recoverable=True)
-    conflicts, reserved = _claim(
-        job,
-        names,
-        check=req.overwrite == exportreq.OVERWRITE_ASK and not req.legacy_naming,
-    )
     if conflicts:
         job.conflicts = conflicts
         job.status = STATUS_CONFLICT
@@ -534,12 +546,17 @@ def run(
         return job.to_payload()
 
     tmp_dir = job.export_dir / f"{TMP_PREFIX}{job.id}"
+    # **先登记再创建。** 反过来的话，`mkdir()` 成功与赋值之间那一瞬里，
+    # 另一次导出的 `sweep_stale_tmp_dirs()` 会在磁盘上看见这个目录、在存活集合
+    # 里找不到它，于是把它当成上一次进程留下的垃圾删掉——而本作业正要往里写
+    # （PR #214 第六轮评审）。创建失败再摘掉。
+    job._tmp_dir = tmp_dir
     try:
         tmp_dir.mkdir(parents=True, exist_ok=False)
     except OSError as exc:
+        job._tmp_dir = None
         _release(reserved, job.id)
         return _fail(job, "tmp_dir_failed", {"error": str(exc)}, publish, recoverable=True)
-    job._tmp_dir = tmp_dir
 
     try:
         job.phase = "rendering"
@@ -588,7 +605,7 @@ def run(
                 Output(
                     format=p.format,
                     name=name,
-                    url=f"/exports/{name}",
+                    url=_export_url(name),
                     bytes=size,
                     width_px=p.width_px,
                     height_px=p.height_px,
@@ -693,7 +710,7 @@ def _write_report(
     return Output(
         format=REPORT_KEY,
         name=name,
-        url=f"/exports/{name}",
+        url=_export_url(name),
         bytes=len(data),
         status=STATUS_DONE,
     )

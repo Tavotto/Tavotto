@@ -110,6 +110,34 @@ afterEach(async () => {
   setLocale('zh-CN')
 })
 
+describe('「还没查」不许掉进绿色空态', () => {
+  it('`ready=false, running=false` 是防抖窗口里的常态，那一刻不许说「没有问题」', async () => {
+    // 换文档之后 `resetValidation()` 与那一轮真正开跑之间有 250ms 防抖窗口
+    useValidationStore.setState({
+      results: [],
+      issues: [],
+      ready: false,
+      failed: false,
+      running: false,
+    })
+    await mount(<ProblemPanel />)
+    expect(text(), '这一刻根本还没查过，却报了一屏静悄悄的绿').not.toContain('未发现问题')
+    expect(text()).toContain('正在检查')
+  })
+
+  it('查完了确实没问题时，才说没问题', async () => {
+    useValidationStore.setState({
+      results: [],
+      issues: [],
+      ready: true,
+      failed: false,
+      running: false,
+    })
+    await mount(<ProblemPanel />)
+    expect(text()).toContain('未发现问题')
+  })
+})
+
 describe('普通界面不出现内部标识', () => {
   it('列的是人话主语（「X 刻度文字」），不是 gid', async () => {
     await seed()

@@ -49,7 +49,6 @@ export function ProblemPanel() {
   const issues = useValidationStore((s) => s.issues)
   const ready = useValidationStore((s) => s.ready)
   const failed = useValidationStore((s) => s.failed)
-  const running = useValidationStore((s) => s.running)
   const filter = useUiStore((s) => s.problemFilter)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const listRef = useRef<HTMLUListElement>(null)
@@ -114,7 +113,12 @@ export function ProblemPanel() {
           hint={pr(ready ? 'failedKeptHint' : 'failedHint')}
           action={{ label: pr('retry'), onClick: () => schedule() }}
         />
-      ) : !ready && running ? (
+      ) : !ready ? (
+        /* **判据是 `!ready`，不是 `!ready && running`。** 换文档之后
+           `resetValidation()` 与那一轮真正开跑之间有 250ms 防抖窗口，
+           那段时间里 `ready=false, running=false, issues=[]` —— 挂着
+           `running` 的话会**掉进下面那个绿色的"没有问题"**，而这一刻
+           根本还没查过（T-54，PR #214 第六轮评审）。 */
         <p className="px-3 py-6 text-center text-xs text-ink-3">{pr('running')}</p>
       ) : shown.length === 0 ? (
         <EmptyState

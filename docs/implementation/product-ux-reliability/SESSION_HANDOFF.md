@@ -156,7 +156,7 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 628720e1c5a15125（第五轮评审后）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 f22a72331cc5617d（第六轮评审后）
 重建  web/dist-playground/                     指纹 e539f57cec7a516e（不进 git）
 ```
 
@@ -268,6 +268,18 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 `start()` 没有"，第五轮是"两边都有、但少了一条"。处置不是补那一条，是收敛成
 一个 `canStart`。
 
+### 第六轮评审（`13ec3b69`）：四条 P2 全改
+
+**0 P1。** 四条都在 20 行以内、都落在本 PR 已动过的文件里，其中一条还是本 PR
+自己声明的不变式（T-54）被违反，修比开 Issue 便宜。两条留给后面阶段：
+
+**1. 「先看一眼再动手」的那一眼和那一手必须同锁**（T-75）。本轨道这是**第三次**
+撞见同一个形状（查撞/预留、查提交点/置取消、取名/预留）。每加一件"动手之前先
+看的事"，就要重新问一遍它在不在锁里。
+
+**2. 判据要落在被修的那个性质上**（T-76）。这一轮变异反证有一条存活：我写的
+行为用例盖不住"取名在不在锁里"——两种实现下结果一样。改成直接量同步性质。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -293,7 +305,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
-  开出）→ **PR #214**（11 与 12 一起，四个提交 + 五个评审回合，23 条 findings 全改）
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 六个评审回合，27 条 findings 全改）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

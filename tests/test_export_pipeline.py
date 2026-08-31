@@ -1045,3 +1045,116 @@ def test_two_concurrent_override_renders_do_not_share_one_intermediate_file(env,
     for p in seen:
         assert exportjob.TMP_PREFIX in str(p), f"中间 PDF 不在作业私有的临时目录里：{p}"
         assert not p.exists(), f"作业结束后中间产物还在：{p}"
+
+
+# ================= PR #214 第六轮评审（四条 P2） =============================
+def test_export_urls_are_url_encoded(env):
+    """`check_filename()` 放行的名字里有一批对 URL 有特殊含义。
+
+    `Fig#1` 拼出来的 `/exports/Fig#1.pdf` 会被当成"路径 `/exports/Fig` +
+    锚点 `1.pdf`"——链接指向的不是刚写出去的那个文件。
+    """
+    client, _ = env
+    assert exportreq.check_filename("Fig#1") is None, "这个名字本来就是合法的"
+    _, body = _post(
+        client,
+        _canvas(
+            filename="Fig#1", include_style_check_report=True, style_check_report={"checks": []}
+        ),
+    )
+    assert body["status"] == "done"
+    pdf = _out(body, "pdf")
+    assert pdf["name"] == "Fig#1.pdf"
+    assert "#" not in pdf["url"], f"URL 里还留着裸的 # ：{pdf['url']}"
+    assert pdf["url"] == "/exports/Fig%231.pdf"
+    # 报告那条链接同样要转义（两处各拼一遍的话总有一处漏）
+    report = next(o for o in body["outputs"] if o["format"] == "report")
+    assert "#" not in report["url"]
+    # 链接真的取得回那个文件
+    assert client.get(pdf["url"]).status_code == 200
+
+
+def test_two_concurrent_renames_each_get_their_own_number(env, monkeypatch):
+    """两个 `rename` 作业同时要同一个空名字：**各拿各的编号**，不许一个被报冲突。
+
+    取名与预留分成两次持锁的话，两边取名时 `Fig 1.pdf` 都还空着——先占住的
+    那个赢，后一个被报成 `conflict`，而它请求的明明是"另存一份"。
+    """
+    client, _ = env
+    gate = threading.Event()
+    real = m._export_produce
+
+    def slow(job, tmp_dir):
+        gate.wait(5)
+        return real(job, tmp_dir)
+
+    monkeypatch.setattr(m, "_export_produce", slow)
+    _, a = _post(client, _canvas(overwrite="rename"), path="/api/export/start")
+    for _ in range(200):
+        if exportjob.get(a["job_id"]) and exportjob.get(a["job_id"])._tmp_dir:
+            break
+        time.sleep(0.02)
+
+    monkeypatch.setattr(m, "_export_produce", real)
+    _, b = _post(client, _canvas(overwrite="rename"))
+    assert b["status"] != "conflict", "rename 请求被报成了冲突"
+    assert _out(b, "pdf")["name"] == "Fig 1 (2).pdf"
+
+    gate.set()
+    for _ in range(200):
+        done = client.get(f"/api/export/state?job_id={a['job_id']}").get_json()
+        if done["status"] in ("done", "partial", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    assert done["status"] == "done"
+    assert _out(done, "pdf")["name"] == "Fig 1.pdf"
+
+
+def test_naming_happens_inside_the_reservation_lock(env, monkeypatch):
+    """取名必须**在预留那把锁里**发生。
+
+    这条判据量的是同步性质本身，不是某一次时序：两个 `rename` 作业各自取名
+    时那个空名字都还在，谁也发现不了冲突——先占住的赢，后一个被报成
+    `conflict`，而它请求的明明是"另存一份"。这种交错要靠 sleep 去撞的话，
+    红不红取决于机器。
+
+    `_LOCK.locked()` 在单线程用例里只可能是我们自己持的——它回答的正是
+    「此刻取名的这个调用，是不是被那把锁保护着」。
+    """
+    client, _ = env
+    real = exportjob._plan_names
+    inside: list[bool] = []
+
+    def spy(job):
+        inside.append(exportjob._LOCK.locked())
+        return real(job)
+
+    monkeypatch.setattr(exportjob, "_plan_names", spy)
+    _, body = _post(client, _canvas(overwrite="rename"))
+    assert body["status"] == "done"
+    assert inside == [True], f"取名没有在预留那把锁里发生：{inside}"
+
+
+def test_a_live_temp_dir_is_never_swept_by_another_job(env, monkeypatch):
+    """临时目录**先登记再创建**：别的作业的清扫看得见它。
+
+    反过来的话，`mkdir()` 成功与赋值之间那一瞬里，另一次导出的清扫会在磁盘上
+    看见这个目录、在存活集合里找不到它，于是把它当垃圾删掉——而本作业正要
+    往里写。
+    """
+    client, _ = env
+    seen: list[bool] = []
+    real_mkdir = Path.mkdir
+
+    def mkdir_then_sweep(self, *a, **kw):
+        result = real_mkdir(self, *a, **kw)
+        if exportjob.TMP_PREFIX in self.name:
+            # 就在这一瞬间，另一次导出开始清扫
+            exportjob.sweep_stale_tmp_dirs(self.parent)
+            seen.append(self.is_dir())
+        return result
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_then_sweep)
+    _, body = _post(client, _canvas())
+    assert seen and seen[0], "临时目录在创建的那一瞬被另一次清扫删掉了"
+    assert body["status"] == "done"
