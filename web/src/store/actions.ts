@@ -790,10 +790,21 @@ export function applyMixedAlign(
 
 /* ------------------------ 「写回原始文件」基线的继承 --------------------------- */
 
-/** 该面板的 overrides 是否恰好等于资产基线（即文件上已经烙好、没再动过） */
+/**
+ * 该面板的 overrides 是否恰好等于资产基线（即文件上已经烙好、没再动过）。
+ *
+ * 「文件上已经烙好」是**两个**条件：overrides 与基线逐字相等，**且**磁盘文件
+ * 自写回之后没被外部改写（`baked_current`，后端按写回时记录的文件身份判）。
+ * 只查前者的话，用户在 Tavotto 外重跑自己的构建脚本把产物刷回脚本原值后，
+ * 预览会一直挂磁盘原图（脚本原值）而编辑态显示 script+overrides——永久分叉
+ * 且互不报错。消费点（renderTargets 跳过渲染、PanelView 显示走 /api/render、
+ * 写回候选熄灭）全部经由本判据，别在消费点各补一刀。
+ */
 export function isJustBakedBaseline(panel: PanelObject): boolean {
-  const baked = useAssetStore.getState().byId[panel.fileId]?.baked_overrides
+  const asset = useAssetStore.getState().byId[panel.fileId]
+  const baked = asset?.baked_overrides
   if (!baked?.length) return false
+  if (asset.baked_current === false) return false
   return JSON.stringify(panel.overrides) === JSON.stringify(baked)
 }
 

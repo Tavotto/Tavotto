@@ -146,7 +146,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 不另写第二套。
   const useEnginePng = (bitmapOnly ? editing || needsEngine : !editing && needsEngine) &&
     (render?.rev ?? 0) > 0
-  const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
+  const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
+  const variantNow = JSON.stringify(obj.overrides)
+  // 位图这一格挂什么：当前变体的那张最好；**上一变体的那张只在新图还在路上时
+  // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
+  // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
+  const enginePng =
+    pngBlob.url && (pngBlob.variant === variantNow || !pngBlob.failed) ? pngBlob.url : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
   useEffect(() => {
@@ -175,6 +181,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
         : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
+  // 引擎位图还没落地（首次渲染刚回来、blob 在路上）或取图失败时，**优先挂
+  // 引擎 SVG，而不是退回磁盘原图**：store 里那份 SVG 就是按 overrides 画出来
+  // 的（自己这版，或 Phase F 的 latest 退路），磁盘原图才是「脚本原值」——
+  // 面板有图内修改时拿它当预览，就是用户报的「预览没有使用 override」。
+  // `bitmapOnly`（raster / evicted）没有矢量 payload，不在此列。
+  const engineSvgStandby =
+    needsEngine && !bitmapOnly && !(useEnginePng && enginePng) ? (render?.svg ?? null) : null
   // 一个可寻址地址都拿不到时**退回这一版的权威 SVG**，绝不留一个空 src。
   // Codex 内嵌画布退出图内编辑后正好落在这一格：会话把文件标成 tracked
   // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
@@ -183,8 +196,15 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 没有矢量 payload 的那两档除外：`raster` 刻意没有 SVG，`evicted` 的那份刚被
   // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
   // 拦的 payload，后者会让画布显示另一个变体的图）。
-  const inlineSvg = svgHtml ?? (src || bitmapOnly ? null : (render?.svg ?? null))
+  const inlineSvg =
+    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
+  // 面板需要引擎产物（有图内修改 / 脚本领先 / runtime），画布上挂的却是磁盘
+  // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
+  // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
+  // runtime 面板另有自己的 stale 语义角标，不在此重复。
+  const approxPreview =
+    !runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc
 
   return (
     <div
@@ -238,7 +258,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} />}
       </div>
 
-      <RenderStatusBadge obj={obj} />
+      <RenderStatusBadge obj={obj} approx={approxPreview} />
     </div>
   )
 }
@@ -258,8 +278,16 @@ function useEnginePngBlob(
   bucket: number,
   enabled: boolean,
   rev: number,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null)
+): { url: string | null; variant: string | null; failed: boolean } {
+  // `variant` 记的是 `url` 那张图**按哪组 overrides**出的：消费方靠它分辨
+  // 「暂挂的上一张」与「就是当前这版」。`failed` = 最近一次取图以失败告终
+  // （被新请求顶掉的中断不算）——此后上一张不再冒充当前变体，退位给 SVG /
+  // 「近似预览」角标，而不是安静地一直挂着。
+  const [state, setState] = useState<{
+    url: string | null
+    variant: string | null
+    failed: boolean
+  }>({ url: null, variant: null, failed: false })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
   const variant = JSON.stringify(obj.overrides)
@@ -280,10 +308,12 @@ function useEnginePngBlob(
         landed = true
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next
-        setUrl(next)
+        setState({ url: next, variant, failed: false })
       })
       .catch(() => {
-        /* 失败保留上一张：渲染失败由角标表达，不该让画布空掉 */
+        // 失败保留上一张（画布别空掉），但要记下「失败」：中断（deps 变了 /
+        // 卸载，signal.aborted）不是失败，真失败才置位
+        if (!ctrl.signal.aborted) setState((s) => ({ ...s, failed: true }))
       })
     return () => {
       if (!landed) ctrl.abort()
@@ -297,7 +327,7 @@ function useEnginePngBlob(
     if (urlRef.current) URL.revokeObjectURL(urlRef.current)
   }, [])
 
-  return url
+  return state
 }
 
 /**
@@ -651,7 +681,7 @@ type BadgeInfo = {
   hint?: string
 }
 
-function RenderStatusBadge({ obj }: { obj: PanelObject }) {
+function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?: boolean }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
   // 「这一份变体正在渲染」才是变体级的
@@ -675,7 +705,8 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
     render?.stale ||
     !!runtimeBadge ||
     !!nativeState ||
-    rasterEditing
+    rasterEditing ||
+    approx
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
     if (render?.status === 'rendering' || building) {
@@ -712,6 +743,18 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       }
     }
     if (render?.stale) return { tone: 'stale', cold: false, text: badge('stale') }
+    // 画布上挂的还是磁盘原图，而这个面板的图内修改要求引擎产物（引擎图没
+    // 落地 / 取图失败）——与布局版本预览的「近似预览」同一等级的诚实表达：
+    // 不吵、可忽略，但**必须说出来**，否则用户以为看到的就是自己的修改。
+    // 渲染中 / 失败已被上面的 busy / error 压过，这里只兜「静默挂着原图」那档。
+    if (approx) {
+      return {
+        tone: 'info',
+        cold: false,
+        text: badge('approxPreview'),
+        hint: badge('approxPreviewHint'),
+      }
+    }
     // **不弹对话框、不责怪用户**：这是我们主动做出的一个显示决定，用户什么
     // 都没做错，而且导出质量一点没变（不变量 2）——所以是一枚可以忽略的
     // 角标 + 一句 tooltip，不是一次打断。
@@ -728,7 +771,7 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

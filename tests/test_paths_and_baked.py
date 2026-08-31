@@ -208,6 +208,106 @@ def test_legacy_migration_writes_empty_file_when_nothing_matches(baked, tmp_path
     assert json.loads(m._baked_path(ctx).read_text(encoding="utf-8")) == {}
 
 
+def _real_pdf(path, text=None):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=100, height=50)
+    if text:
+        page.insert_text((10, 20), text)
+    doc.save(path)
+    doc.close()
+
+
+def _identity_of(path) -> dict:
+    st = path.stat()
+    return {"sha1": m._sha1_of(path), "mtime_ns": st.st_mtime_ns, "size": st.st_size}
+
+
+def test_baked_matches_file_by_recorded_identity(tmp_path):
+    """基线绑定写回时的文件身份：内容变了 → 失效；touch（mtime 变、内容没变）
+    → sha1 兜底仍有效——误判失效的代价是 heavy 脚本白跑几分钟。"""
+    p = tmp_path / "Fig1.pdf"
+    _real_pdf(p, text="baked")
+    version = {
+        "ts": "2026-08-31 12:00:00",
+        "patches": [{"gid": "g"}],
+        "files": {p.name: _identity_of(p)},
+    }
+
+    assert m._baked_matches_file(version, p) is True
+
+    # touch：mtime 变、内容没变 → sha1 兜底，仍有效
+    import os
+
+    os.utime(p, (9999999999, 9999999999))
+    assert m._baked_matches_file(version, p) is True
+
+    # 外部重写（内容变了）→ 失效
+    _real_pdf(p, text="rebuilt by user script")
+    assert m._baked_matches_file(version, p) is False
+
+    # 文件整个不见了 → 失效
+    p.unlink()
+    assert m._baked_matches_file(version, p) is False
+
+
+def test_baked_matches_file_legacy_entry_falls_back_to_ts(tmp_path):
+    """旧条目没记文件身份：退回「文件 mtime 是否晚于写回时刻」的保守判据；
+    ts 解析不动就维持旧行为（有效），不拿猜出来的结论触发 heavy 重渲染。"""
+    import os
+    import time as _time
+
+    p = tmp_path / "Fig1.pdf"
+    _real_pdf(p)
+
+    now = _time.time()
+    fresh_ts = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(now))
+    stale_ts = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(now - 3600))
+
+    # 写回刚发生（文件 mtime ≈ ts）：有效
+    assert m._baked_matches_file({"ts": fresh_ts, "patches": []}, p) is True
+    # 文件 mtime 晚于写回时刻一小时：写回之后被外部改写过 → 失效
+    assert m._baked_matches_file({"ts": stale_ts, "patches": []}, p) is False
+    # ts 缺失 / 解析不动：维持旧行为
+    assert m._baked_matches_file({"patches": []}, p) is True
+    assert m._baked_matches_file({"ts": "not-a-date", "patches": []}, p) is True
+    # 旧条目 + 文件不见了：失效（stat 都 stat 不动）
+    os.remove(p)
+    assert m._baked_matches_file({"ts": fresh_ts, "patches": []}, p) is False
+
+
+def test_scan_panels_reports_stale_baked_baseline(baked, tmp_path):
+    """外部重跑构建脚本刷回产物之后，/api/panels 必须报 `baked_current: false`。
+
+    这是「预览显示磁盘原图（脚本原值）、编辑态显示 script+overrides」分叉缺陷
+    的判据出处：前端 isJustBakedBaseline 吃这个字段决定要不要按普通 overrides
+    面板重新走引擎。基线本身照发——失效的是「文件长这样」，不是用户的修改。
+    """
+    ctx = _make_project(tmp_path, "pa", ["Fig1"])
+    p = ctx.path / "Fig1.pdf"
+    _real_pdf(p, text="baked look")
+    patches = [{"gid": "axes_0.title", "prop": "text", "value": "改过的标题"}]
+    m.append_baked("Fig1", patches, ctx, files={p.name: _identity_of(p)})
+
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+
+    def entry():
+        panels = client.get("/api/panels").get_json()["panels"]
+        return next(e for e in panels if e["id"] == "Fig1.pdf")
+
+    e = entry()
+    assert e["baked_overrides"] == patches
+    assert e["baked_current"] is True
+
+    # 用户在 Tavotto 之外重跑构建脚本：产物刷回脚本原值
+    _real_pdf(p, text="script original")
+    e = entry()
+    assert e["baked_overrides"] == patches, "基线仍可继承"
+    assert e["baked_current"] is False, "文件已不是基线的样子，必须报失效"
+
+
 def test_crop_clip_maps_normalized_rect():
     import pymupdf
 
