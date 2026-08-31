@@ -117,6 +117,26 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
     })
   })
 
+  it('双生轴标签「子图 N（右轴）」两种语言都拆得开，同侧序号原样带过去', async () => {
+    await inLocale(locale, () => {
+      const plain = engineLabel('子图 2（右轴）')
+      const ordinal = engineLabel('子图 1（右轴 2）')
+      const top = engineLabel('子图 3（上轴）')
+      if (locale === 'en-US') {
+        expect(plain).not.toMatch(HAN)
+        expect(plain).toContain('2')
+        expect(plain).toContain('right axis')
+        expect(ordinal).toContain('right axis 2')
+        expect(top).toContain('top axis')
+      } else {
+        // 中文界面下是恒等映射：引擎原串就是译文
+        expect(plain).toBe('子图 2（右轴）')
+        expect(ordinal).toBe('子图 1（右轴 2）')
+        expect(top).toBe('子图 3（上轴）')
+      }
+    })
+  })
+
   it('新角色 patch 有名字', async () => {
     await inLocale(locale, () => {
       const name = roleName('patch')

@@ -2745,6 +2745,18 @@ def main():
     c2.plot(x, -x)
     c2.twinx().plot(x, x ** 2)
     fig3.savefig("ChildNone.pdf")
+
+    # 双生轴全家福：twiny（上）、twinx（右）、同侧第二条 twinx（右 2）
+    fig4, dx = plt.subplots(figsize=(3.8, 2.6))
+    dx.plot(x, x)
+    ty = dx.twiny()
+    ty.plot(x * 2.0, x)
+    t1 = dx.twinx()
+    t1.plot(x, x ** 1.5)
+    t2 = dx.twinx()
+    t2.plot(x, np.sqrt(x))
+    t2.spines["right"].set_position(("outward", 28))
+    fig4.savefig("ChildTwins.pdf")
 """
 
 
@@ -2918,12 +2930,59 @@ def test_existing_gid_numbering_is_untouched(tmp_path):
         man = w.override("ChildNone", [])["manifest"]
         axes_gids = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
         assert axes_gids == ["axes_0", "axes_1", "axes_2"], axes_gids
-        assert [_el_of(man, g)["label"] for g in axes_gids] == ["子图 1", "子图 2", "子图 3"], (
-            "没有子 axes 的图不该出现插图/次坐标轴标签"
-        )
+        # twinx 的 twin 改的是**显示名**（宿主序号 + 轴侧，元素树里才分得清
+        # 左右两条纵轴），gid 照旧是遍历序的 axes_2——标签不是身份。
+        assert [_el_of(man, g)["label"] for g in axes_gids] == [
+            "子图 1",
+            "子图 2",
+            "子图 2（右轴）",
+        ], "没有子 axes 的图不该出现插图/次坐标轴标签；twin 轴按宿主序号 + 轴侧构词"
         for g in axes_gids:
             assert "position" in _props_of(man, g)
             assert _el_of(man, g)["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_twin_axes_get_side_labels(tmp_path):
+    """twinx/twiny 的 twin 在元素树里必须**分得清是谁的哪一侧**。
+
+    改造前它按遍历序叫「子图 4」——六宫格图上第 2 格的右轴叫「子图 7」，
+    与宿主毫不相干，用户根本猜不到该点哪一条（用户实测材料 figure2 的
+    axes_6 就是这么丢的）。现在按「宿主序号 + 轴侧」构词，轴侧读 twin
+    自己的实况（`get_label_position`），同侧第二条带序号。
+
+    亲缘判据与 follow_map 的「拖动时一起走」共用同一份
+    （`overrides.coincident_shared_axes_pairs`，公开 API：共享 x/y +
+    position 基本重合）——标着（右轴）的与跟着宿主走的必须是同一批。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildTwins", [])["manifest"]
+        labels = {e["gid"]: e["label"] for e in man["elements"] if e["role"] == "axes"}
+        assert labels == {
+            "axes_0": "子图 1",
+            "axes_1": "子图 1（上轴）",
+            "axes_2": "子图 1（右轴）",
+            "axes_3": "子图 1（右轴 2）",
+        }, labels
+    finally:
+        pool.discard(w)
+
+
+def test_twin_hidden_axis_emits_no_phantom_ticks(tmp_path):
+    """twinx 会把 twin 的 x 轴整个设成不可见（`ax2.xaxis.set_visible(False)`），
+    但 `get_xticklabels()` 照样回一整排带文字的 Text——不过滤的话 manifest 里
+    会多出一套与宿主逐像素重叠的幽灵 X 刻度：可点、可改、图上却什么都不变。
+    「画没画」的判据只有 `drawn_tick_label_entries` 一份。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildNone", [])["manifest"]
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_2.yticks" in gids, "twin 自己的 Y 刻度组必须在"
+        phantoms = [g for g in gids if g.startswith("axes_2.xtick")]
+        assert not phantoms, f"twin 的隐形 x 轴登记出了幽灵刻度：{phantoms}"
     finally:
         pool.discard(w)
 
