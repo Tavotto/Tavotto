@@ -388,7 +388,7 @@ desktop…」。
 | — | **MCP 内嵌画布保留自己的等级图标表**：它消费的是 MCP 聚合载荷、且是另一个尺寸敏感的 bundle。图标一致的看护覆盖应用内两处 | 已处置 |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07 两次、08 一次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交。**三次绿仍不构成"它被修好了"**——那条线一个字节没改） | 待查 |
+| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07/08 三次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交）。**Session 12 新证据：它对机器负载敏感。** 本轨道第 12 次全量里红了一次——而那一遍我把 pytest 全量与 Playwright e2e **同时**开着；单跑 0.7–2.9 秒，同一棵树串行全量 8 次全绿。它等的是「SIGINT 之后 `tavotto run` 在 90 秒内退出」，重载下这个预算不够。**但这解释不了 Session 06 那次**（那一遍是串行的），所以问题没关：判据把"进程反应有多快"当成了产品性质，而它其实是机器性质 | 待查（多一条证据） |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
 | — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六）。**08 没做**：本阶段的左栏改造只到「常驻外壳 + 项目状态入口」，历史入口的位置牵涉顶栏与文档菜单的分工 | 未定 |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
