@@ -58,6 +58,14 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const zoom = useViewportStore((s) => s.zoom)
   // 「写回原始文件」后 mtime 变化 → URL 变化 → 画布上已放置的同源面板自动重取
   const mtime = useAssetStore((s) => s.byId[obj.fileId]?.mtime)
+  // 基线有效性在会话中翻转也要能唤醒本组件：下面 `needsEngine` 读的
+  // `isJustBakedBaseline` 走 getState（不是订阅），而 `/api/panels` 的 mtime
+  // 是**整数秒**——外部重写落在同一秒（或保留 mtime 的同步工具）时上面那条
+  // 订阅接不到；该变体若已有 exact 渲染，useEngineSync 那一轮 syncEngine 又
+  // 零 state 变更。缺这条订阅，画布会把被重写的磁盘原图当基线继续挂着。
+  // 只为触发重渲染取值；判据本体仍只有 isJustBakedBaseline 一份。
+  const bakedCurrent = useAssetStore((s) => s.byId[obj.fileId]?.baked_current)
+  void bakedCurrent
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
   // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
   const render = usePanelRender(obj)

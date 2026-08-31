@@ -16,8 +16,9 @@ import { renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderSto
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
+import { useAssetStore } from '@/store/assetStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
-import type { Manifest } from '@/lib/api'
+import type { Manifest, PanelInfo } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 
 const previewPng = vi.fn()
@@ -304,6 +305,45 @@ describe('PanelView：三档预览表示法', () => {
 describe('非编辑态：画布不许静默挂磁盘原图', () => {
   beforeEach(() => {
     useUiStore.setState({ elementPanelId: null }) // 非编辑态：缺陷只在这里显现
+  })
+
+  afterEach(() => {
+    useAssetStore.setState({ byId: {}, panels: [] })
+  })
+
+  it('baked 基线在会话中被判失效（mtime 同秒不变）：面板必须切到引擎产物', async () => {
+    // PR #215 评审 P2：`needsEngine` 读的 isJustBakedBaseline 走 getState 而非
+    // 订阅；`/api/panels` 的 mtime 是整数秒，外部重写落在同一秒时 mtime 订阅
+    // 接不到；该变体已有 exact 渲染时 syncEngine 那一轮又零 state 变更——三条
+    // 唤醒通道全哑，画布把被重写的磁盘原图当基线继续挂着。本条钉的是
+    // PanelView 对 `baked_current` 的直接订阅。
+    const asset = {
+      id: PANEL.fileId,
+      mtime: 100, // 刻意全程不变：mtime 订阅在这个场景里就是接不到
+      baked_overrides: structuredClone(PANEL.overrides),
+      baked_current: true,
+    } as unknown as PanelInfo
+    useAssetStore.setState({ byId: { [PANEL.fileId]: asset } })
+    seed({ svg: '<svg id="exact"/>' }) // 该变体已有 exact 渲染（评审设定的前提）
+    await mount()
+
+    // 基线有效：文件已是那个样子，画布走磁盘原图（不取引擎位图、不内联 SVG）
+    const before = container.querySelector('img')?.getAttribute('src') ?? ''
+    expect(before).not.toBe('blob:mock/1')
+    expect(inlineSvg()).toBeNull()
+
+    // 外部重写产物（同一整数秒）：后端刷新后只有 baked_current 翻 false
+    await act(async () => {
+      useAssetStore.setState({
+        byId: { [PANEL.fileId]: { ...asset, baked_current: false } as PanelInfo },
+      })
+    })
+
+    // 面板必须当场切到引擎产物——blob 落地前是这一版的 SVG，落地后是位图；
+    // 无论哪一档，都不再是磁盘原图
+    const now = container.querySelector('img')?.getAttribute('src')
+    expect(now === 'blob:mock/1' || inlineSvg() != null).toBe(true)
+    expect(now).not.toBe(before)
   })
 
   it('引擎位图还在路上：挂这一版自己的 SVG，而不是磁盘原图', async () => {
