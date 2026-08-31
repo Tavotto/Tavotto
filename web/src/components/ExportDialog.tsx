@@ -662,7 +662,9 @@ function ScopeNote({
       {!available && (
         <span className="flex items-start gap-1.5 text-danger">
           <TriangleAlert size={11} className="mt-0.5 shrink-0" aria-hidden />
-          {ex(`scopeUnavailable.${reason === 'unknown_figure' ? reason : 'no_figure'}`)}
+          {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
+              「先选中一张图」，用户照做之后按钮还是灰的 */}
+          {ex(`scopeUnavailable.${reason}`)}
         </span>
       )}
       {scope === 'canvas' ? (
@@ -675,8 +677,7 @@ function ScopeNote({
               : ex('scopeOriginalNoteUnknown')}
           </span>
           {fallback && <span className="text-warn">{ex('scopeOriginalFallback')}</span>}
-          {reason === 'source_stale' && <span>{ex('scopeOriginalStale')}</span>}
-          {ignored.length > 0 && (
+              {ignored.length > 0 && (
             <span>
               {ex('scopeIgnored', {
                 list: ignored.map((k) => ex(`ignored.${k}`)).join('、'),
@@ -822,6 +823,21 @@ function ResultBlock({
   useTranslation(['dialogs', 'errors'])
   if (job.status === 'cancelled') {
     return <p className="text-xs text-ink-3">{ex('cancelledNote')}</p>
+  }
+  if (job.status === 'unknown') {
+    // 后端重启 / 作业过期。**这与"失败"是两件事**：我们不知道那些文件写出来
+    // 没有，所以既不说"已保存到"，也不说"导出失败"
+    return (
+      <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 p-2">
+        <p className="flex items-start gap-1.5 text-xs text-ink-2">
+          <TriangleAlert size={12} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+          {ex('jobLost')}
+        </p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          {ex('retry')}
+        </Button>
+      </div>
+    )
   }
   if (job.status === 'failed' && !job.outputs.length) {
     return (

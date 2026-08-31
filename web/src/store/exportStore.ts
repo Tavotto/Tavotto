@@ -40,8 +40,15 @@ import { filenameProblem } from '@/lib/exportRequest'
 /** 轮询间隔。SSE 通的时候它几乎不出场；不通的时候它是唯一的通道 */
 const POLL_MS = 600
 
-/** 终局状态：到了这里就不再轮询，晚到的推送也不再改状态 */
-const TERMINAL = new Set(['done', 'partial', 'failed', 'cancelled', 'conflict'])
+/**
+ * 终局状态：到了这里就不再轮询，晚到的推送也不再改状态。
+ *
+ * **`unknown` 必须在这里面。** 后端重启或作业过期之后 `/api/export/state`
+ * 回的就是它；不当终局的话 `running` 永远是 true、轮询每 600ms 问一次一个
+ * 不存在的作业，而对话框停在"进行中"再也出不来（PR #214 评审）。
+ * 它与 `failed` 是两件事——**我们不知道那些文件写出来没有**，界面得这么说。
+ */
+const TERMINAL = new Set(['done', 'partial', 'failed', 'cancelled', 'conflict', 'unknown'])
 
 export interface PreparedExport {
   request: ReturnType<typeof buildExportRequest>['request']

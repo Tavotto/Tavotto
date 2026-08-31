@@ -315,29 +315,134 @@ def _drop_tmp(job: ExportJob) -> None:
         job._tmp_dir = None
 
 
-def _final_names(job: ExportJob, produced: list[Produced]) -> dict[str, str]:
-    """产出 → 最终文件名。覆盖策略在这里落地，**只有这一处**。"""
+#: 样式检查报告在命名与覆盖策略里的「格式」名。它不是一个输出格式，但**它
+#: 是一个会被写到最终目录里的文件**——不把它当成计划中的产物，`ask` 会静默
+#: 盖掉上一次的报告，`rename` 会给图编号却仍然覆盖报告（PR #214 评审）。
+REPORT_KEY = "report"
+REPORT_SUFFIX = "_style-check.json"
+LEGACY_REPORT_SUFFIX = "_proof.json"
+
+#: 已经被某个在跑的作业**预定**的最终路径 → 作业 id。
+#:
+#: 只查磁盘不够：两个标签页同时导出同一个新文件名时，两边都能通过存在性检查
+#: （那一刻磁盘上确实没有），渲染半分钟之后**后完成的那个静默盖掉先完成的**
+#: ——而两边的用户都看到了"导出成功"。预留表把这个窗口关上：名字在决定的
+#: 那一刻就被占住，第二个作业当场报 conflict（PR #214 评审）。
+#:
+#: 它只保**本进程**。别的进程/别的程序在渲染途中创建同名文件，我们仍然会
+#: 覆盖它——那超出我们能许诺的范围，所以不假装能挡。
+_RESERVED: dict[str, str] = {}
+
+
+def _plan_names(job: ExportJob) -> dict[str, str]:
+    """这次作业会写出哪几个最终文件名。**覆盖策略只在这里落地。**
+
+    在**渲染之前**一次决定完（含样式检查报告），理由有两个：先问再动手，
+    别渲染半分钟再告诉用户"这个名字已经有了"；以及名字一旦决定就能立刻
+    预留，把并发窗口关掉。
+    """
     req = job.request
+    keys = list(req.formats) + ([REPORT_KEY] if req.include_report else [])
     if req.legacy_naming:
         # 旧契约：`<stem>_<MMDD_HHMMSS>.<ext>`。时间戳让它天生撞不了车，
         # 所以老标签页与 CI 脚本从来不需要覆盖策略，行为一个字节不变。
         ts = time.strftime("%m%d_%H%M%S")
-        return {p.format: f"{req.filename}_{ts}.{p.format}" for p in produced}
+        return {
+            k: (
+                f"{req.filename}_{ts}{LEGACY_REPORT_SUFFIX}"
+                if k == REPORT_KEY
+                else f"{req.filename}_{ts}.{k}"
+            )
+            for k in keys
+        }
 
-    taken_in_batch: set[str] = set()
+    batch: set[str] = set()
 
     def taken(name: str) -> bool:
-        return name in taken_in_batch or (job.export_dir / name).exists()
+        if name in batch:
+            return True
+        if str(job.export_dir / name) in _RESERVED:
+            return True
+        return (job.export_dir / name).exists()
+
+    def plain(key: str) -> str:
+        return (
+            f"{req.filename}{REPORT_SUFFIX}"
+            if key == REPORT_KEY
+            else exportreq.output_name(req.filename, key)
+        )
 
     names: dict[str, str] = {}
-    for p in produced:
+    for key in keys:
         if req.overwrite == exportreq.OVERWRITE_RENAME:
-            name = exportreq.dedupe_name(req.filename, p.format, taken)
+            name = (
+                _dedupe_report(req.filename, taken)
+                if key == REPORT_KEY
+                else exportreq.dedupe_name(req.filename, key, taken)
+            )
         else:
-            name = exportreq.output_name(req.filename, p.format)
-        taken_in_batch.add(name)
-        names[p.format] = name
+            name = plain(key)
+        batch.add(name)
+        names[key] = name
     return names
+
+
+def _dedupe_report(base: str, taken) -> str:
+    """报告的去重名。编号规则与 `exportreq.dedupe_name()` 逐字相同
+    （`Fig 1 (2)_style-check.json`），只是后缀不是一个格式扩展名。"""
+    first = f"{base}{REPORT_SUFFIX}"
+    if not taken(first):
+        return first
+    n = 2
+    while n <= 9999:
+        candidate = f"{base} ({n}){REPORT_SUFFIX}"
+        if not taken(candidate):
+            return candidate
+        n += 1
+    raise exportreq.ExportRequestError("name_exhausted", "无法为报告找到可用的编号", {})
+
+
+def _claim(job: ExportJob, names: dict[str, str], *, check: bool) -> tuple[list[str], list[str]]:
+    """**一次持锁**完成「撞没撞上」与「占住」两件事。回 `(撞上的名字, 已占住的键)`。
+
+    分成两次持锁就等于中间还留着一个窗口：A 查完发现没撞，还没占住，B 也查完
+    发现没撞——两个作业都往下走了。合并成一次之后，两者之间不存在"查过但还
+    没占"的时刻。
+
+    `check=False`（`replace` / `rename` / 旧契约）时不报撞名，但**照样预留**：
+    预留在这两条路上防的是另一件事——两个 `replace` 同时指向同一个路径，
+    后完成的那个会盖掉先完成的，而两边的用户都看到了"导出成功"。
+    """
+    collisions: list[str] = []
+    mine: list[str] = []
+    with _LOCK:
+        if check:
+            for name in names.values():
+                path = job.export_dir / name
+                reserved_by = _RESERVED.get(str(path))
+                if path.exists() or (reserved_by is not None and reserved_by != job.id):
+                    collisions.append(name)
+            if collisions:
+                return collisions, []
+        else:
+            for name in names.values():
+                reserved_by = _RESERVED.get(str(job.export_dir / name))
+                if reserved_by is not None and reserved_by != job.id:
+                    collisions.append(name)
+            if collisions:
+                return collisions, []
+        for name in names.values():
+            key = str(job.export_dir / name)
+            _RESERVED[key] = job.id
+            mine.append(key)
+    return [], mine
+
+
+def _release(keys: list[str], job_id: str) -> None:
+    with _LOCK:
+        for key in keys:
+            if _RESERVED.get(key) == job_id:
+                _RESERVED.pop(key, None)
 
 
 def run(
@@ -345,7 +450,7 @@ def run(
     produce: Callable[[ExportJob, Path], list[Produced]],
     *,
     publish: Callable[[dict], None] | None = None,
-    report: Callable[[ExportJob, list[Output]], tuple[bytes, str] | None] | None = None,
+    report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
 ) -> dict:
     """执行一个作业。同步；`run_async` 是它的线程包装。
 
@@ -366,31 +471,36 @@ def run(
     job.phase = "preparing"
     _emit(job, publish)
 
-    # `ask` 策略：撞名就**什么都不做**地回来。先问再动手，别先渲染半分钟
-    # 再告诉用户"这个名字已经有了"
-    if req.overwrite == exportreq.OVERWRITE_ASK and not req.legacy_naming:
-        conflicts = [
-            exportreq.output_name(req.filename, f)
-            for f in req.formats
-            if (job.export_dir / exportreq.output_name(req.filename, f)).exists()
-        ]
-        if conflicts:
-            job.conflicts = conflicts
-            job.status = STATUS_CONFLICT
-            job.finished_at = time.time()
-            job.phase = "conflict"
-            _emit(job, publish)
-            return job.to_payload()
-
     try:
         job.export_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return _fail(job, "export_dir_unwritable", {"error": str(exc)}, publish, recoverable=True)
 
+    # 名字**在渲染之前**一次决定完（含样式检查报告），然后立刻预留。
+    # `ask` 撞名就什么都不做地回来——先问再动手，别渲染半分钟再告诉用户
+    # "这个名字已经有了"；预留则关掉「两个作业同时通过存在性检查」那个窗口。
+    try:
+        names = _plan_names(job)
+    except exportreq.ExportRequestError as exc:
+        return _fail(job, exc.code, exc.params, publish, recoverable=True)
+    conflicts, reserved = _claim(
+        job,
+        names,
+        check=req.overwrite == exportreq.OVERWRITE_ASK and not req.legacy_naming,
+    )
+    if conflicts:
+        job.conflicts = conflicts
+        job.status = STATUS_CONFLICT
+        job.finished_at = time.time()
+        job.phase = "conflict"
+        _emit(job, publish)
+        return job.to_payload()
+
     tmp_dir = job.export_dir / f"{TMP_PREFIX}{job.id}"
     try:
         tmp_dir.mkdir(parents=True, exist_ok=False)
     except OSError as exc:
+        _release(reserved, job.id)
         return _fail(job, "tmp_dir_failed", {"error": str(exc)}, publish, recoverable=True)
     job._tmp_dir = tmp_dir
 
@@ -402,7 +512,6 @@ def run(
 
         job.phase = "writing"
         _emit(job, publish)
-        names = _final_names(job, [p for p in produced if p.tmp_path is not None])
         outputs: list[Output] = []
         for p in produced:
             if p.error_code is not None or p.tmp_path is None:
@@ -455,7 +564,7 @@ def run(
         if req.include_report and report is not None:
             job.phase = "report"
             _emit(job, publish)
-            job.report = _write_report(job, outputs, report, tmp_dir)
+            job.report = _write_report(job, outputs, report, tmp_dir, names[REPORT_KEY])
             job.step += 1
 
         ok = [o for o in outputs if o.status == STATUS_DONE]
@@ -483,6 +592,7 @@ def run(
         job.error_params = {"error": str(exc)[:400]}
     finally:
         _drop_tmp(job)
+        _release(reserved, job.id)
         job.finished_at = time.time()
         job.phase = job.status
         _emit(job, publish)
@@ -492,40 +602,41 @@ def run(
 def _write_report(
     job: ExportJob,
     outputs: list[Output],
-    report: Callable[[ExportJob, list[Output]], tuple[bytes, str] | None],
+    report: Callable[[ExportJob, list[Output]], bytes | None],
     tmp_dir: Path,
+    planned_name: str,
 ) -> Output | None:
-    """样式检查报告。**它自己的失败只算它自己的**。"""
+    """样式检查报告。**它自己的失败只算它自己的**。
+
+    名字由 `_plan_names()` 给——报告是一个会被写到最终目录里的文件，
+    覆盖策略对它同样成立。自己在这里拼名字的话，`ask` 会静默盖掉上一次的
+    报告，`rename` 会给图编号却仍然覆盖报告（PR #214 评审）。
+    """
     try:
-        made = report(job, outputs)
+        data = report(job, outputs)
     except Exception as exc:  # noqa: BLE001
         return Output(
-            format="report",
+            format=REPORT_KEY,
             status=STATUS_FAILED,
             error_code="report_failed",
             error_params={"error": str(exc)[:200]},
         )
-    if made is None:
+    if data is None:
         return None
-    data, suffix = made
-    name = (
-        f"{job.request.filename}_{time.strftime('%m%d_%H%M%S')}{suffix}"
-        if job.request.legacy_naming
-        else f"{job.request.filename}{suffix}"
-    )
-    tmp = tmp_dir / f"report{suffix}"
+    name = planned_name
+    tmp = tmp_dir / "report.json"
     try:
         tmp.write_bytes(data)
         atomicio.publish_file(tmp, job.export_dir / name)
     except (OSError, atomicio.AtomicWriteError) as exc:
         return Output(
-            format="report",
+            format=REPORT_KEY,
             status=STATUS_FAILED,
             error_code=getattr(exc, "code", "report_write_failed"),
             error_params={"error": str(exc)[:200]},
         )
     return Output(
-        format="report",
+        format=REPORT_KEY,
         name=name,
         url=f"/exports/{name}",
         bytes=len(data),
@@ -565,7 +676,7 @@ def run_async(
     produce: Callable[[ExportJob, Path], list[Produced]],
     *,
     publish: Callable[[dict], None] | None = None,
-    report: Callable[[ExportJob, list[Output]], tuple[bytes, str] | None] | None = None,
+    report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
 ) -> None:
     """在后台线程里跑。**关掉对话框不取消它**——那是 §九 明写的行为。"""
     t = threading.Thread(

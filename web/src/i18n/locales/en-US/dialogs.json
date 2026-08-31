@@ -35,22 +35,24 @@
       "flip": "flipping",
       "opacity": "opacity"
     },
+    "jobLost": "This export job is no longer on the server (it may have restarted). It's unclear whether the files were written — check the export folder, or just try again.",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "Open problems panel",
     "operationFailed": "Operation failed: {{error}}",
     "outputFailed": "{{format}} couldn't be produced: {{reason}}",
     "pdfHint": "Vector",
     "phase": {
-      "queued": "Queued…",
-      "preparing": "Preparing…",
-      "rendering": "Composing…",
-      "writing": "Writing files ({{step}}/{{total}})…",
-      "report": "Generating the style check report…",
+      "cancelled": "Cancelled",
       "conflict": "Waiting for you to decide about the existing files",
       "done": "Finished",
-      "partial": "Partly finished",
       "failed": "Failed",
-      "cancelled": "Cancelled"
+      "partial": "Partly finished",
+      "preparing": "Preparing…",
+      "queued": "Queued…",
+      "rendering": "Composing…",
+      "report": "Generating the style check report…",
+      "unknown": "The job is no longer on the server",
+      "writing": "Writing files ({{step}}/{{total}})…"
     },
     "pngHint": "Raster",
     "ppiLabel": "Resolution",
@@ -79,9 +81,9 @@
     "scopeOriginalFallback": "This figure's size can't be read right now, so a placeholder is being used — check the result.",
     "scopeOriginalNote": "Exports this figure at its own size: {{w}} × {{h}} mm.",
     "scopeOriginalNoteUnknown": "Exports this figure at its own size.",
-    "scopeOriginalStale": "The source file isn't available; the last known size is being used.",
     "scopeUnavailable": {
       "no_figure": "Select a figure first to export it at its original size.",
+      "source_stale": "This figure's source file can't be found right now, so only the canvas can be exported.",
       "unknown_figure": "This figure's details can't be found, so only the canvas can be exported."
     },
     "severityCount": "{{count}} {{label}}",

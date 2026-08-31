@@ -355,17 +355,18 @@ desktop…」。
 
 | 命令 | 结果 |
 | --- | --- |
-| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3448** passed / 34 skipped / 2 deselected / 0 failed，10 分 29 秒（比 11 的 3370 +78：新增 52 条导出用例 + 26 条参数化的错误码） |
-| `cd web && pnpm test` | ✅ exit 0 —— **150** files / **1893** tests passed（比 11 的 147/1805 +3 文件 / +88 条） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3452** passed / 34 skipped / 2 deselected / 0 failed，10 分 05 秒（比 11 的 3370 +82：56 条导出用例 + 26 条参数化的错误码） |
+| `cd web && pnpm test` | ✅ exit 0 —— **150** files / **1898** tests passed（比 11 的 147/1805 +3 文件 / +93 条） |
 | `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
 | `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2841 / en-US 2931；`dialogs:export.*` 删 21 组 / 加 27 组，`errors:backend.*` +27 条，`workspace:topbar.exportPackage` + `status.packaged*`） |
 | `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
 | `ruff check . && ruff format --check .` | ✅ exit 0（293 files） |
 | `git diff --check` | ✅ 无空白问题 |
 | `python scripts/gen_filename_vectors.py` | ✅ 向量与实现一致（无参 = 校对模式） |
-| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `6747d7846530d19c`）+ `--check` 通过 |
-| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `8cb45ddcf6ac7975`）+ 不进 git，网站仓库另行 sync |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `27fad295d1c942bb`，评审回合后）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `32a6a5f66f78265c`，评审回合后）+ 不进 git，网站仓库另行 sync |
 | 变异反证 23 条 | ✅ 全部被打红（第一轮 20/23，三条存活的成因与处置见 `TEST_MATRIX.md`） |
+| **评审回合 3（PR #214）之后** | ✅ 3 P1 + 3 P2 **全部成立、全部改**；变异反证扩到后端 17 / 前端 14，全红。处置见 `TEST_MATRIX.md`「评审回合 3」 |
 | `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
 
 > **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面
@@ -395,7 +396,8 @@ desktop…」。
 | — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
 | — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
-| — | **「按另一个像素网格导出位图」界面上没有开关**：`original_png(native_grid=)` 支持它，但默认永远保源网格，用户改不了 | 未定 |
+| — | **「按另一个像素网格导出位图」这个能力不存在**：评审回合 3 把那条没有调用点的 `native_grid=False` 分支删了（它用的密度常量还是错的）。要加这个能力时，密度得从 `engine/originalspec` 来，像素网格由调用方算好传进来 | 未定 |
+| — | **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画：`_resolve_panel_source()` 的 `safe_resolve()` 排在查注册表之前。界面已经如实说出来（不给必然失败的按钮），但**能力本身是缺的**。改它要动画布导出共用的那条路 | 未定（评审回合 3 记录） |
 | — | **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败） | 择机 |
 | — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
 | — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |

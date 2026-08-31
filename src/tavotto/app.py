@@ -1006,13 +1006,14 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
             "source_missing", "这张图的源文件现在不可用", {"figure": src.figure_id}
         )
     raster_source = source_path.suffix.lower() != ".pdf"
+    page_pt = _original_page_pt(source_path, src) if raster_source else None
     produced: list = []
     for fmt in req.formats:
         job.check_cancelled()
         tmp = tmp_dir / f"out.{fmt}"
         try:
             if fmt == engine_exportreq.FORMAT_PDF:
-                facts = pdfbackend.original_pdf(source_path, tmp)
+                facts = pdfbackend.original_pdf(source_path, tmp, page_pt)
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
@@ -1025,9 +1026,9 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
                     )
                 )
             else:
-                # 位图源默认**保持源像素网格**：按导出 ppi 重采样一遍会把
+                # 位图源**保持源像素网格**：按导出 ppi 重采样一遍会把
                 # 一张 300×200 的图放大成糊图，而用户要的恰恰是"原图"
-                facts = pdfbackend.original_png(source_path, tmp, dpi, native_grid=raster_source)
+                facts = pdfbackend.original_png(source_path, tmp, dpi)
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
@@ -1049,6 +1050,29 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
                 )
             )
     return produced
+
+
+def _original_page_pt(source_path: Path, src) -> tuple[float, float]:
+    """位图源装进 PDF 时**那一页有多大**（pt）。
+
+    优先用请求里已经解析好的物理尺寸——它来自 `OriginalOutputSpec`
+    （ADR 0028 的四档来源：渲染 manifest → 文档 → 素材清单 → 明确 fallback），
+    也正是界面上显示的那个数。**文件与界面必须说同一句话。**
+
+    请求里没有（老客户端 / MCP 那条入口）时才现算，而且只从
+    `engine/originalspec` 取：密度的解析全产品只有那一处（pHYs / JFIF / Exif，
+    读不到才按扩展名假定 PNG 600 / 其余 300）。**这里绝不写第三个密度常量**
+    ——PR #214 的评审抓到的正是那个：`pdfbackend` 里写死的 96 dpi 让一张
+    300 dpi 的图被摆进一个大三倍多的页面。
+    """
+    if src.w_mm and src.h_mm and src.w_mm > 0 and src.h_mm > 0:
+        return (pdfbackend.mm2pt(src.w_mm), pdfbackend.mm2pt(src.h_mm))
+    probe = pdfbackend.probe_asset(source_path, "raster")
+    spec = engine_originalspec.asset_spec(source_path, "raster", probe)
+    return (
+        pdfbackend.mm2pt(float(spec["logical_w_mm"])),
+        pdfbackend.mm2pt(float(spec["logical_h_mm"])),
+    )
 
 
 def _export_produce(job, tmp_dir: Path) -> list:
@@ -1097,8 +1121,10 @@ def _style_check_report(spec: dict):
             "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "tavotto_version": engine_updater.current_version(),
         }
-        suffix = "_proof.json" if job.request.legacy_naming else "_style-check.json"
-        return engine_atomicio.dumps_json(body, indent=1), suffix
+        # **只回字节**：文件叫什么由 `exportjob._plan_names()` 决定——报告和图
+        # 一样是会被写进最终目录的产物，覆盖策略对它同样成立，名字的规则不能
+        # 在这里再写一遍（PR #214 评审）
+        return engine_atomicio.dumps_json(body, indent=1)
 
     return make
 

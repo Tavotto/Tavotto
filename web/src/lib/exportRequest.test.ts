@@ -15,6 +15,7 @@ import {
 } from './exportRequest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
+import { renderKey, useRenderStore } from '@/store/renderStore'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
 
@@ -128,6 +129,39 @@ describe('scope', () => {
       reason: 'unknown_figure',
     })
     expect(originalAvailability('Fig1.pdf').ok).toBe(true)
+  })
+
+  it('源文件不在素材清单里 → **不可用**（不是给一个按下去必然失败的按钮）', () => {
+    // 面板还在文档里（规格取自它的 nativeW/H），但素材清单里没有这个 id：
+    // 后端解析面板源的第一步就是 safe_resolve()，文件不在就 404 ——
+    // 「引擎能重新画一张」这个指望在那条路上兑现不了
+    useAssetStore.setState({ byId: {} } as never)
+    const a = originalAvailability('Fig1.pdf')
+    expect(a.spec).toBeTruthy() // 规格还在（上一次已知的那份），只是导不出来
+    expect(a.ok).toBe(false)
+    expect(a.reason).toBe('source_stale')
+  })
+
+  it('判据是「够不够得着」而不是 `spec.stale`', () => {
+    // 刚渲染过的图：manifest 还在手上，`stale` 是 false，而磁盘文件可能早没了。
+    // 拿 `stale` 当判据的话这张图会拿到一个按下去必然失败的按钮
+    useRenderStore.setState({
+      byKey: {
+        [renderKey('Fig1.pdf', [])]: {
+          fileId: 'Fig1.pdf',
+          manifest: { stem: 'Fig1', size_mm: [80, 60], elements: [] },
+          status: 'ready',
+        },
+      },
+      latest: { 'Fig1.pdf': renderKey('Fig1.pdf', []) },
+      tracked: {},
+      building: {},
+    } as never)
+    useAssetStore.setState({ byId: {} } as never)
+    const a = originalAvailability('Fig1.pdf')
+    expect(a.spec?.stale, '这张图的规格是新鲜的（origin=render_metadata）').toBe(false)
+    expect(a.ok, '规格新鲜 ≠ 源文件够得着').toBe(false)
+    expect(a.reason).toBe('source_stale')
   })
 })
 

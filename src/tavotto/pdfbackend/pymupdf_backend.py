@@ -702,20 +702,26 @@ def compose(page_w_mm: float, page_h_mm: float, transparent: bool = False) -> Ca
 # ---------------------------------------------------------------------------
 # 按原图导出（scope=original，ADR 0031）
 # ---------------------------------------------------------------------------
-#: 位图源在没有可信密度时按这个数换算 mm。与 `engine/originalspec.ASSUMED_DPI`
-#: 同一个数字不是巧合——那是同一个假设，改一处必须改另一处。
-_ORIGINAL_ASSUMED_DPI = 96.0
-
-
-def original_pdf(src: Path, out: Path) -> dict:
+def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = None) -> dict:
     """把一张图**按它自己的尺寸**写成 PDF。
 
     * **矢量源**（PDF）：整页原样搬过去。不是重画，是 `insert_pdf`——页面尺寸、
       字形、路径、色彩空间一个字节没动，出来的仍然是真矢量。这正是
       `scope=original` 的全部意义：画布上的缩放/裁剪/旋转在这条路上根本没有
-      出场机会。
-    * **位图源**：新建一页，页面尺寸 = 像素数 ÷ 密度，图整页铺满。这是"把位图
-      装进 PDF 容器"，**不声称它变成了矢量**（返回的 `vector` 是 False）。
+      出场机会。`page_pt` 对它没有意义（页面尺寸在文件里）。
+    * **位图源**：新建一页，**页面尺寸由 `page_pt` 给定**，图整页铺满。这是
+      "把位图装进 PDF 容器"，**不声称它变成了矢量**（返回的 `vector` 是 False）。
+
+    ### 为什么 `page_pt` 是参数而不是这里算
+
+    「这张位图有多少毫米」= 像素数 ÷ 物理密度，而**密度的解析只有
+    `engine/originalspec.py` 一处**（pHYs / JFIF / Exif，读不到时按扩展名假定
+    PNG 600 / 其余 300）。这个模块是 PDF 后端的边界层，它连素材的元数据都
+    不该认识——在这里再写一个密度常量，等于给同一个问题准备第二个答案。
+
+    第一版就是这么错的：这里写死 96 dpi，于是一张带 300 dpi 元数据的图被摆进
+    一个大三倍多的页面，而界面上显示的尺寸来自 `OriginalOutputSpec`——**文件
+    与界面各说各的**。评审（PR #214）当场指出来。
 
     回 `{w_pt, h_pt, px_w, px_h, vector, pages}`。
     """
@@ -741,8 +747,9 @@ def original_pdf(src: Path, out: Path) -> dict:
         }
 
     pix = pymupdf.Pixmap(str(src))
-    w_pt = pix.width / _ORIGINAL_ASSUMED_DPI * 72.0
-    h_pt = pix.height / _ORIGINAL_ASSUMED_DPI * 72.0
+    if page_pt is None or page_pt[0] <= 0 or page_pt[1] <= 0:
+        raise ValueError("位图源装进 PDF 必须给页面尺寸（见 engine/originalspec）")
+    w_pt, h_pt = float(page_pt[0]), float(page_pt[1])
     with pymupdf.open() as dest:
         page = dest.new_page(width=w_pt, height=h_pt)
         page.insert_image(page.rect, filename=str(src))
@@ -757,18 +764,26 @@ def original_pdf(src: Path, out: Path) -> dict:
     }
 
 
-def original_png(src: Path, out: Path, ppi: int | None, native_grid: bool = True) -> dict:
+def original_png(src: Path, out: Path, ppi: int | None) -> dict:
     """把一张图**按它自己的尺寸**写成 PNG。
 
     * **矢量源**：按 `ppi` 栅格化。矢量没有像素网格，所以这里必须有一个 ppi；
       调用方给 `None` 是个契约错误。
-    * **位图源**且 `native_grid=True`：**原样复制**。不重采样是这条路的重点
-      ——"按原图导出"最容易被悄悄破坏的地方就是顺手按导出 ppi 缩一遍，
-      那会把一张 300×200 的图变成 2500×1667 的糊图（共享规则 §8）。
-    * **位图源**且 `native_grid=False`：用户明确要了另一个像素网格，按 ppi
-      与源密度的比值重采样。
+    * **位图源**：**原样复制，永远保源像素网格**，`ppi` 在这条路上不出场。
+      不重采样是这条路的重点——"按原图导出"最容易被悄悄破坏的地方就是顺手
+      按导出 ppi 缩一遍，那会把一张 300×200 的图变成 2500×1667 的糊图
+      （共享规则 §8）。
 
-    回 `{px_w, px_h, resampled}`。
+    ### 为什么没有「按另一个像素网格导出」这个开关
+
+    第一版有过一个 `native_grid=False` 分支，按 `ppi ÷ 假定密度` 重采样。
+    它**在产品里没有任何调用点**（界面上没有这个选项），而它用的那个"假定
+    密度"是本模块自己写的第三个数字——一段没人执行、又与唯一权威分叉的代码。
+    删掉它比留着更诚实：要加这个能力时，密度得从 `engine/originalspec` 来，
+    像素网格由调用方算好传进来。
+
+    回 `{px_w, px_h, resampled}`（`resampled` 恒 False，保留是为了让调用方
+    在将来真的加上重采样时不必改读取端）。
     """
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -782,18 +797,9 @@ def original_png(src: Path, out: Path, ppi: int | None, native_grid: bool = True
             pix.save(str(out))
             return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
 
-    if native_grid or not ppi:
-        shutil.copyfile(src, out)
-        pix = pymupdf.Pixmap(str(out))
-        return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
-
-    pix = pymupdf.Pixmap(str(src))
-    scale = ppi / _ORIGINAL_ASSUMED_DPI
-    target_w = max(1, round(pix.width * scale))
-    target_h = max(1, round(pix.height * scale))
-    scaled = pymupdf.Pixmap(pix, target_w, target_h, None)
-    scaled.save(str(out))
-    return {"px_w": scaled.width, "px_h": scaled.height, "resampled": True}
+    shutil.copyfile(src, out)
+    pix = pymupdf.Pixmap(str(out))
+    return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
 
 
 def annotate_asset(

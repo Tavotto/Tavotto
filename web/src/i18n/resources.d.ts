@@ -214,6 +214,7 @@ export default interface Resources {
         "rotation": "旋转",
         "scale": "缩放"
       },
+      "jobLost": "这次导出的作业在服务器上找不到了（服务可能重启过）。文件有没有写出来不确定——去导出目录看一眼，或者直接重试。",
       "mmSize": "{{w}} × {{h}} mm",
       "openProblems": "在问题面板中查看",
       "operationFailed": "操作失败：{{error}}",
@@ -229,6 +230,7 @@ export default interface Resources {
         "queued": "排队中…",
         "rendering": "正在合成…",
         "report": "正在生成样式检查报告…",
+        "unknown": "作业在服务器上找不到了",
         "writing": "正在写出文件（{{step}}/{{total}}）…"
       },
       "pngHint": "位图",
@@ -258,9 +260,9 @@ export default interface Resources {
       "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是一个占位值——导出后请核对一下。",
       "scopeOriginalNote": "按这张图自己的尺寸出图：{{w}} × {{h}} mm。",
       "scopeOriginalNoteUnknown": "按这张图自己的尺寸出图。",
-      "scopeOriginalStale": "源文件现在不可用，用的是上一次已知的尺寸。",
       "scopeUnavailable": {
         "no_figure": "先选中一张图，才能按原图尺寸导出。",
+        "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "severityCount": "{{count}} {{label}}",

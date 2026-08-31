@@ -24,6 +24,8 @@
 import type { ExportObject, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
+import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
 import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
@@ -67,7 +69,7 @@ export type OriginalBlockReason =
   | 'no_figure'
   /** 文档与素材清单都不认识它：不发明一张不存在的图 */
   | 'unknown_figure'
-  /** 源文件此刻不可用（掉线 / 被删）；规格是上一次已知的那份 */
+  /** 源文件此刻不可用（掉线 / 被删）。规格还在（上一次已知的那份），但导不出来 */
   | 'source_stale'
 
 export interface OriginalAvailability {
@@ -87,10 +89,31 @@ export function originalAvailability(figureId: string | null): OriginalAvailabil
   if (!figureId) return { ok: false, reason: 'no_figure', spec: null }
   const spec = getOriginalOutputSpec(figureId)
   if (!spec) return { ok: false, reason: 'unknown_figure', spec: null }
-  // `stale` = 源没了但规格还在。**仍然可以导**（引擎重渲染那条路不需要磁盘
-  // 原件），界面照常提示这是"上次已知的规格"
-  if (spec.stale) return { ok: true, reason: 'source_stale', spec }
+  /*
+   * 源文件够不够得着。**判据是"素材清单里还有没有它"，不是 `spec.stale`。**
+   *
+   * 后端解析面板源的第一步就是 `safe_resolve()`，文件不在就 404 —— 它排在
+   * "去注册表找脚本重渲染"之前，所以"引擎能重新画一张"这个指望在这条路上
+   * 兑现不了（`app._resolve_panel_source`）。
+   *
+   * `spec.stale` 答的是另一个问题（"这份规格是不是上一次已知的"）：一张刚
+   * 渲染过、manifest 还在手上的图，`stale` 是 **false**，而它的磁盘文件可能
+   * 早就没了。拿它当"能不能导"的判据，那张图会得到一个按下去必然失败的按钮。
+   * **能不能做与做了会怎样，判据必须是同一个**（PR #214 评审）。
+   *
+   * runtime 素材（ADR 0013）从来不在 `/api/panels` 里，它走 worker 那条路，
+   * 不需要磁盘原件——所以单独放行。
+   */
+  if (!sourceReachable(figureId)) return { ok: false, reason: 'source_stale', spec }
   return { ok: true, reason: 'none', spec }
+}
+
+/** 这张图此刻够不够得着（与后端 `_resolve_panel_source` 的前提逐条对应）。 */
+function sourceReachable(figureId: string): boolean {
+  if (figureId.startsWith('runtime:')) {
+    return (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === figureId)
+  }
+  return useAssetStore.getState().byId[figureId] != null
 }
 
 export interface ExportRequestInput {

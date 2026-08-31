@@ -123,6 +123,22 @@ describe('晚到的快照', () => {
   })
 })
 
+describe('作业在服务器上没了', () => {
+  it('`unknown` 是终局：停止轮询，界面不再停在"进行中"', async () => {
+    await runExport(inputOf())
+    // 后端重启：/state 回 unknown
+    applyExportJob(job({ status: 'unknown', outputs: [] }))
+    // 已经进过终局的作业挡掉晚到快照，所以先重置再单独验 unknown 这一档
+    resetExportState()
+    useExportStore.setState({ running: true, startedRevision: 'x', lastInput: inputOf() })
+    applyExportJob(job({ status: 'unknown', outputs: [] }))
+    expect(useExportStore.getState().running, 'unknown 不当终局的话轮询会一直问下去').toBe(
+      false,
+    )
+    expect(useExportStore.getState().job?.status).toBe('unknown')
+  })
+})
+
 describe('导出期间文档又被改过', () => {
   it('判据用**此刻的文档**，不是导出开始时冻住的那一份', async () => {
     const input = inputOf()

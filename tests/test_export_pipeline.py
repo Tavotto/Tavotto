@@ -15,7 +15,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import exportjob, exportreq
+from tavotto.engine import exportjob, exportreq, originalspec as engine_originalspec
 
 # 源图：200 × 150 pt 的矢量 PDF。**这个尺寸是判据的一部分**——原图导出必须
 # 出来 200 × 150，无论它在画布上被摆成多大
@@ -570,3 +570,161 @@ def test_a_background_job_stays_in_the_project_that_started_it(tmp_path, monkeyp
     assert b.name in str(out)
     with pymupdf.open(out) as doc:
         assert (round(doc[0].rect.width), round(doc[0].rect.height)) == (300, 200)
+
+
+# ================= PR #214 评审的六条（每条一组用例） =========================
+def test_raster_original_pdf_honours_the_resolved_physical_size(env, tmp_path):
+    """位图源装进 PDF 时，**页面尺寸用已经解析好的那个**，不是现猜一个密度。
+
+    界面上显示的尺寸来自 `OriginalOutputSpec`；文件里的页面尺寸要是另算一遍，
+    两者就各说各的。第一版 `pdfbackend` 里写死 96 dpi，于是一张 120×80 的图
+    出来是 90×60 pt，而请求里明明白白写着 10.16 × 6.77 mm（= 300 dpi）。
+    """
+    client, _ = env
+    _, body = _post(
+        client,
+        _original(
+            filename="R",
+            formats=["pdf"],
+            original={
+                "figure_id": "r1.png",
+                "source_kind": "raster",
+                "px_w": 120,
+                "px_h": 80,
+                # 120px @ 300dpi = 10.16mm；@ 96dpi 会是 31.75mm
+                "w_mm": 10.16,
+                "h_mm": 6.77,
+            },
+        ),
+    )
+    pdf = _out(body, "pdf")
+    assert pdf["status"] == "done", body
+    assert pdf["vector"] is False, "位图装进 PDF 不许声称是矢量"
+    with pymupdf.open(_dir(body) / pdf["name"]) as doc:
+        w_pt, h_pt = doc[0].rect.width, doc[0].rect.height
+    assert abs(w_pt - 10.16 / 25.4 * 72) < 0.5, f"页面宽 {w_pt}pt 与请求里的 10.16mm 不符"
+    assert abs(h_pt - 6.77 / 25.4 * 72) < 0.5
+    # 96 dpi 那个错答案要能被这条用例分辨出来
+    assert abs(w_pt - 120 / 96 * 72) > 5
+
+
+def _strip_phys(src: Path, dst: Path) -> None:
+    """复制一份去掉 pHYs 块的 PNG —— 「文件没写物理密度」那一档。"""
+    data = src.read_bytes()
+    out = bytearray(data[:8])  # 签名
+    i = 8
+    while i < len(data):
+        length = int.from_bytes(data[i : i + 4], "big")
+        ctype = data[i + 4 : i + 8]
+        end = i + 12 + length
+        if ctype != b"pHYs":
+            out += data[i:end]
+        i = end
+    dst.write_bytes(bytes(out))
+
+
+def test_raster_page_size_follows_the_file_not_a_constant(env):
+    """请求没带尺寸时（老客户端 / MCP），密度**只从 `engine/originalspec` 取**。
+
+    判据是「两个只有密度不同的文件出来的页面尺寸也不同」，不是「等于某个数」
+    ——后者拿实现里那个常量当期望值，等于自己验自己。写死任何一个常量都会让
+    这两张图出来一样大，当场红。
+    """
+    client, figs = env
+    # ① pymupdf 存出来的 PNG 自带 pHYs=96；② 去掉 pHYs 那一份走 assumed（PNG 600）
+    _strip_phys(figs / "r1.png", figs / "r_nophys.png")
+
+    _, tagged = _post(
+        client, _original(filename="T", formats=["pdf"], original={"figure_id": "r1.png"})
+    )
+    _, plain = _post(
+        client, _original(filename="P", formats=["pdf"], original={"figure_id": "r_nophys.png"})
+    )
+    with pymupdf.open(_dir(tagged) / _out(tagged, "pdf")["name"]) as doc:
+        w_tagged = doc[0].rect.width
+    with pymupdf.open(_dir(plain) / _out(plain, "pdf")["name"]) as doc:
+        w_plain = doc[0].rect.width
+
+    spec_tagged = engine_originalspec.asset_spec(
+        figs / "r1.png", "raster", m.pdfbackend.probe_asset(figs / "r1.png", "raster")
+    )
+    assert spec_tagged["dpi_source"] == "metadata"
+    spec_plain = engine_originalspec.asset_spec(
+        figs / "r_nophys.png",
+        "raster",
+        m.pdfbackend.probe_asset(figs / "r_nophys.png", "raster"),
+    )
+    assert spec_plain["dpi_source"] == "assumed"
+    # 两张图像素数完全一样，只有密度不同 → 页面尺寸必须不同
+    assert abs(w_tagged - w_plain) > 1, "页面尺寸没跟着文件里的密度走（是不是写死了一个常量？）"
+    assert abs(w_tagged - spec_tagged["logical_w_mm"] / 25.4 * 72) < 0.5
+    assert abs(w_plain - spec_plain["logical_w_mm"] / 25.4 * 72) < 0.5
+
+
+def test_the_style_check_report_obeys_the_overwrite_policy(env):
+    """报告也是会写进最终目录的产物，覆盖策略对它同样成立。
+
+    三种情形各验一次：`ask` 撞到**只有报告在**时也要停下来；`rename` 给报告
+    编号而不是覆盖；`replace` 才允许盖。
+    """
+    client, _ = env
+    spec = dict(_canvas(include_style_check_report=True, style_check_report={"checks": []}))
+    _, first = _post(client, spec)
+    assert first["status"] == "done"
+    out = _dir(first)
+    report = next(o for o in first["outputs"] if o["format"] == "report")
+    assert report["name"] == "Fig 1_style-check.json"
+
+    # 图删掉、只留报告：`ask` 仍然要停下来（第一版会静默盖掉它）
+    (out / "Fig 1.pdf").unlink()
+    _, second = _post(client, spec)
+    assert second["status"] == "conflict"
+    assert second["conflicts"] == ["Fig 1_style-check.json"]
+
+    # `rename`：报告跟着编号
+    _, third = _post(client, {**spec, "overwrite": "rename"})
+    assert third["status"] == "done"
+    named = next(o for o in third["outputs"] if o["format"] == "report")
+    assert named["name"] == "Fig 1 (2)_style-check.json"
+    assert (out / "Fig 1_style-check.json").is_file(), "原报告不该被动"
+
+
+def test_two_concurrent_asks_do_not_silently_clobber_each_other(env, monkeypatch):
+    """两个作业同时导同一个新文件名：**后完成的不许静默盖掉先完成的**。
+
+    只查磁盘挡不住——两边都能通过存在性检查（那一刻磁盘上确实没有），
+    渲染半分钟之后两边都 `os.replace`，而两边的用户都看到了"导出成功"。
+    """
+    client, _ = env
+    started = threading.Event()
+    hold = threading.Event()
+    real = m._export_produce
+
+    def slow(job, tmp_dir):
+        started.set()
+        hold.wait(5)
+        return real(job, tmp_dir)
+
+    monkeypatch.setattr(m, "_export_produce", slow)
+    _, a = _post(client, _canvas(), path="/api/export/start")
+    assert started.wait(5)
+
+    # A 还在渲染（名字已经被它预定），B 现在来导同一个名字
+    monkeypatch.setattr(m, "_export_produce", real)
+    _, b = _post(client, _canvas())
+    assert b["status"] == "conflict", "并发的第二个 ask 必须报冲突而不是排队覆盖"
+    assert b["conflicts"] == ["Fig 1.pdf"]
+
+    hold.set()
+    for _ in range(200):
+        done = client.get(f"/api/export/state?job_id={a['job_id']}").get_json()
+        if done["status"] in ("done", "partial", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    assert done["status"] == "done"
+    # 预留在作业结束时释放：下一次 ask 看到的是磁盘上那份，不是幽灵预留
+    _, c = _post(client, _canvas())
+    assert c["status"] == "conflict"
+    assert c["conflicts"] == ["Fig 1.pdf"]
+    _, d = _post(client, _canvas(filename="别的名字"))
+    assert d["status"] == "done", "别的名字不该被上一次的预留挡住"

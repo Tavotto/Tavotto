@@ -1124,3 +1124,42 @@ PPI 恒有值 / 原图尺寸改用画布落位 / 快照指纹恒等 / 「期间�
 了"。新界面在文件名下方**摆了一行文件名预览**（`Fig 1.pdf`），于是那条判据
 在按导出**之前**就成立——不按也绿。改成断言结果区的「已保存到」+ 一个真正
 指向 `/exports/` 的链接。
+
+---
+
+## 评审回合 3（PR #214）：六条 findings 的处置
+
+Codex 评审报了 **3 P1 + 3 P2**，**六条全部成立、全部改**，无一转 Issue。
+
+| # | 级 | 现象 | 处置 |
+| --- | --- | --- | --- |
+| 1 | P1 | `pdfbackend.original_pdf()` 写死 96 dpi：一张带 300 dpi 元数据的图被摆进大三倍多的 PDF 页面，而界面显示的尺寸来自 `OriginalOutputSpec`——文件与界面各说各的 | 页面尺寸改成**参数**；`app.py` 优先用请求里已解析的 `w_mm/h_mm`，缺席时只从 `engine/originalspec` 现算。**`pdfbackend` 从此不认识任何密度常量**；顺带删掉没有调用点、又用同一个错常量的 `original_png(native_grid=False)` 分支 |
+| 2 | P1 | 样式检查报告不进覆盖策略：只有旧报告在时 `ask` 静默盖掉它，`rename` 给图编号却仍然覆盖报告 | 报告进 `_plan_names()`，与图共用同一套命名与去重；`app` 侧的生成器**只回字节**，名字由作业决定 |
+| 3 | P1 | 并发的两个 `ask` 都能通过存在性检查，渲染完两边都 `os.replace`——后完成的静默盖掉先完成的，两边用户都看到"导出成功" | 名字在渲染**之前**一次决定完并预留（`_RESERVED`）；检查与预留**一次持锁**完成（分两次 = 中间还留着同一个窗口） |
+| 4 | P2 | `unknown` 不在终局集合里：后端重启后轮询每 600ms 问一个不存在的作业，对话框永远停在"进行中" | 补进 `TERMINAL`；界面单独一档（**不是 failed**——我们不知道文件写出来没有） |
+| 5 | P2 | 用 `spec.stale` 判原图能不能导，而它答的是另一个问题；刚渲染过的图 `stale=false` 而磁盘文件可能早没了 → 一个按下去必然失败的按钮 | 判据换成"素材清单里还有没有它"（runtime 单独放行），与后端 `_resolve_panel_source()` 的前提逐条对应（T-65） |
+| 6 | P2 | `resetExportState()` 只有用例在调；切项目后旧结果留着，`/exports/…` 被补上**新**项目的 pj | 接进 `resetForNewProject()`；**只清前端状态，不取消后端作业** |
+
+### 新增用例（后端 4 / 前端 4）
+
+| 用例 | 钉住的是 |
+| --- | --- |
+| `test_raster_original_pdf_honours_the_resolved_physical_size` | 请求里写着 10.16mm（300 dpi）时页面就是 10.16mm；顺带断言 96 dpi 那个错答案能被分辨出来 |
+| `test_raster_page_size_follows_the_file_not_a_constant` | **两侧独立**：两张只有 pHYs 不同的同尺寸 PNG（96 / 无 pHYs→assumed 600）出来的页面必须不同。写死任何常量都会让它们一样大 |
+| `test_the_style_check_report_obeys_the_overwrite_policy` | `ask` 撞到"只有报告在"也停下来、`rename` 给报告编号、原报告不被动 |
+| `test_two_concurrent_asks_do_not_silently_clobber_each_other` | A 还在渲染时 B 报 conflict；A 结束后预留释放；**别的名字不被上一次的预留挡住** |
+| `exportRequest.test.ts` ×2 | stale 源不可用 + **判据是"够不够得着"而不是 `spec.stale`**（刚渲染过的图 `stale=false` 仍然不可用） |
+| `exportStore.test.ts` | `unknown` 是终局，`running` 落回 false |
+| `ExportDialog.test.tsx` | 源文件不见了时说的是"源文件现在找不到了"，**不是**"先选中一张图" |
+| `projectSwitchWorkspace.test.ts` | 切项目把导出结果丢掉 |
+
+### 变异反证（后端 17 / 前端 14，全部被打红）
+
+评审那六条各配一条变异：位图 PDF 退回写死 96 dpi / 报告不进覆盖策略 /
+报告自己拼名字 / 并发 ask 不看预留表 / `unknown` 不当终局 / 判据退回
+`spec.stale` / 三个不可用原因折成两句 / 切项目不清导出状态。
+
+**第一轮三条锚点找不到**——不是判据坏了，是重构把那几行挪了位置
+（`_final_names` → `_plan_names`、`made` → `data`、if 条件挪进函数参数）。
+改锚点后 17/17 + 14/14 全红。**「锚点找不到」与「存活」必须分开报**：
+合成一档的话，一次重构就能把整套变异悄悄变成空转。

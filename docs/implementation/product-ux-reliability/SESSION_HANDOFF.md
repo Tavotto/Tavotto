@@ -156,8 +156,8 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 6747d7846530d19c
-重建  web/dist-playground/                     指纹 8cb45ddcf6ac7975（不进 git）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 27fad295d1c942bb（评审回合后）
+重建  web/dist-playground/                     指纹 32a6a5f66f78265c（不进 git）
 ```
 
 ### 界面上删掉的（§五 逐项）
@@ -198,6 +198,22 @@ diff 与"没变化"长得一模一样。改成现取 `useDocumentStore.getState(
 **6. `dot_only` 排在 `trailing_dot` 后面就永远够不着。** `.` 与 `..` 都以点
 结尾，第一版里那条规则是死的。变异反证顺手抓到（把它删掉不红）。
 
+### 评审回合 3（PR #214）：六条全改
+
+Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`；这里只记
+三件会影响后面阶段的：
+
+**1. `pdfbackend` 里不许有密度常量。** 第一版写死 96 dpi 把位图装进 PDF，
+而 `engine/originalspec.ASSUMED_DPI` 是 PNG 600 / 其余 300 —— 更糟的是那行
+上面挂着一句注释声称两者"是同一个假设"。**注释是断言**（T-66）。现在
+`original_pdf(src, out, page_pt)` 收页面尺寸，密度只从唯一权威来。
+
+**2. 「能不能做」的判据要去问真正会执行的那条路的前提**（T-65）。用
+`spec.stale` 判原图能不能导是错的——它答的是"这份规格是不是上一次已知的"。
+真正的前提在 `_resolve_panel_source()` 的第一步 `safe_resolve()`。
+
+**3. 报告是产物，不是附属品。** 覆盖策略、去重、冲突检测对它一视同仁。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -210,14 +226,20 @@ diff 与"没变化"长得一模一样。改成现取 `useDocumentStore.getState(
 5. **透明背景对 PDF 是"不画白底"**，不是 PDF 的透明组；位图源装进 PDF 时
    `vector: false`，界面没有单独说这一句。
 6. **e2e 只跑了四条 spec 的 chromium project**（a11y / asset-library /
-   keyboard-golden-path / i18n，27 passed）。webkit / chromium-en 与其余 spec
-   本轮没跑。
-7. 04–11 的其余遗留原样开着。
+   keyboard-golden-path / i18n，27 passed；评审回合之后复跑仍 27 passed）。
+   webkit / chromium-en 与其余 spec 本轮没跑。
+7. **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画
+   （`safe_resolve()` 排在查注册表之前）。界面已经如实说出来，但**能力本身
+   是缺的**——改它要动画布导出共用的那条路。
+8. **「按另一个像素网格导出位图」这个能力不存在**（评审回合 3 删掉了那条
+   没有调用点、又用着错误常量的分支）。
+9. 04–11 的其余遗留原样开着。
 
 ### 工作树状态
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
-- 分支：`verify-main`（从 `origin/main` 的 `dd7c5b5` 开出，**尚未推送**）
+- 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 一个评审回合）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

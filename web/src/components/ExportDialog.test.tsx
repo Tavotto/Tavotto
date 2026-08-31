@@ -271,6 +271,24 @@ describe('输出范围', () => {
     expect(original.hasAttribute('disabled')).toBe(true)
     expect(text()).toContain('先选中一张图')
   })
+
+  it('源文件不见了：禁用 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
+    await setup(9)
+    // 面板还在，素材清单里没有了（掉线 / 被删）
+    useAssetStore.setState({ byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
+    expect(original.hasAttribute('disabled')).toBe(true)
+    expect(text()).toContain('源文件现在找不到了')
+    // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
+    expect(text()).not.toContain('先选中一张图')
+  })
 })
 
 describe('阻断与确认', () => {
