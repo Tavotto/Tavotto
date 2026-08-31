@@ -271,6 +271,7 @@
     "unappliedOverride": "{{count}} figure edits on this panel have not been applied to the render, so the output will not match the canvas"
   },
   "problems": {
+    "ariaLocate": "locate this object",
     "ariaValues": "currently {{current}}, requires {{expected}}",
     "clearFilter": "Show all",
     "cmp": {

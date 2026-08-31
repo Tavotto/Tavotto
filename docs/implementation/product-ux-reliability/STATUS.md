@@ -42,7 +42,7 @@
 | 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
 | 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
-| 11 | 统一检查引擎与问题面板 | ⬜ |
+| 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
 | 12 | 导出管线与精简导出 UI | ⬜ |
 | 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
 | 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
@@ -62,7 +62,7 @@
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
-| 3 核心工作流与输出 | 09–12 | 🟡 09（双工作流 + 原图规格合同）完成；10–12 未开始 |
+| 3 核心工作流与输出 | 09–12 | 🟡 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）完成；**12（导出管线与精简导出 UI）未开始** |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
@@ -86,7 +86,7 @@
 | R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
 | R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
 | R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
-| R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
+| R-12 | ✅ **已修（11）** **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位。`ValidationIssue.objectRef` 带 `documentId` / `canvasId`，定位会切画布 | `lib/preflight.ts` | P2 | ✅ 11 |
 | R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
@@ -316,6 +316,34 @@ desktop…」。
 > 的事毫无关系"。纪律：**反证与全量串行，全量开始之后一个字都不改**
 > （文档除外，套件不读 `docs/`）。
 
+### Session 11 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3370** passed / 34 skipped / 2 deselected / 0 failed，9 分 49 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— **147** files / **1805** tests passed（比 10 的 138/1659 +9 文件 / +146 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2808 / en-US 2898；新增 `errors:problems.*`（含 32 条规则短标题）、`workspace:rail.problems` / `history.fixIssue*`、`dialogs:export.openProblems` / `preflightFailed*`） |
+| `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0（288 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `2b28899feb865bf1`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `71b114bf1a448afc`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 44 条 | ✅ 全部被打红（第一轮 38/44，六条存活的成因与处置见 `TEST_MATRIX.md`） |
+| `npx playwright test e2e/a11y.spec.ts --project=chromium` | ✅ **8 passed**（新增「问题面板」一条，见下） |
+| `npx playwright test e2e/asset-library e2e/keyboard-golden-path --project=chromium` | ✅ **7 passed**（这三条 spec 断言导出对话框里的预检块，本轮重写过它） |
+
+> **后端 3370 与 Session 10 的 3271 之间的差额不是本轮的。** 本轮只加了 1 条
+> 后端用例（导出上下文跨语言同源）；其余来自 Session 10 之后合进 `main` 的
+> PR（基线是 `main@dd7c5b5`，不是 Session 10 收工那一刻）。
+
+> **a11y 那条真跑起来当场红了一次，而且红得对**：问题面板里「技术详情」的
+> `<summary>` 用了 `text-ink-faint`（2.54:1，axe serious）。`ink-faint` 按 UI
+> 纪律只给装饰与禁用态，而 summary 是个真控件、上面是要读的字。改成 `ink-3`
+> 之后 8/8 绿。**这正是 08/09 两轮只做到 `--list` 时漏掉的那一类**。
+
+---
+
 ---
 
 > 单跑某个前端用例文件时**必须自己带上**
@@ -325,10 +353,15 @@ desktop…」。
 
 ---
 
-## 遗留（Session 08 之后仍开着的）
+## 遗留（Session 11 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
+| — | **不渲染的面板会成批报「无法核验」**：渲染只对激活画布上「编辑中 / 有 override / 脚本领先磁盘」的面板发起（`renderTargets`），所以多画布项目里 `panel-text-not-verifiable` 数量可观。它是 `not_verifiable` 这一档、有自己的分组，**而且是真话**——但数量上是噪音。改法要么按需渲染、要么把这一档折叠成每画布一条 | 未定 |
+| — | **批量修复不跨画布**（撤销栈按画布换入换出，跨画布的"一个批事务"在这套模型里不存在）。界面只在当前画布上给「全部修复」，别的画布上的一条一条修 | 已处置（说明写在按钮文案里） |
+| — | **问题面板没有虚拟滚动**：有多少条渲染多少行。本轮用例里最多几十条，真实上限没量过（与接入中心同一条遗留） | 待量 |
+| — | **`user_choice` 目前只有页宽一条规则**。这一档不是为它而设——它是 `applyIssueFix(id, choice?)` 这个签名成立的前提 | 已处置 |
+| — | **MCP 内嵌画布保留自己的等级图标表**：它消费的是 MCP 聚合载荷、且是另一个尺寸敏感的 bundle。图标一致的看护覆盖应用内两处 | 已处置 |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
 | — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07 两次、08 一次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交。**三次绿仍不构成"它被修好了"**——那条线一个字节没改） | 待查 |
@@ -347,18 +380,27 @@ desktop…」。
 
 ## 下一阶段
 
-**Prompt 11（统一检查引擎与问题面板）**，入口见 `SESSION_HANDOFF.md` 的
+**Prompt 12（导出管线与精简导出 UI）**，入口见 `SESSION_HANDOFF.md` 的
 「下一阶段入口」。
 
-10 留给后面的三个可复用入口：
+11 留给 12 的可复用入口：
 
-* `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` —— 「这个项目
-  按哪套规范检查」的**唯一判据**（有快照按快照，没有才按全局现值）。
-  11 的检查引擎与 12 的导出面板直接用，**不要在那两处再挑一遍**；
-* `store/profileStore` 的 `specs` / `catalog()` —— 清单的唯一持有者
-  （后端不在时退回内置，组件里不许有 fetch）；
-* `lib/profileText.ts` —— profile 在界面上叫什么的唯一实现
-  （内置跟界面语言走，**默认视图不出现 id 与版本号**）。
+* `store/validationStore.getValidationSummary(scope, extra?)` —— 检查结果的
+  **唯一摘要来源**（带 `ready` / `failed`）。导出面板已经在用，**不要再跑第二
+  遍求值器**；
+* `store/validationStore.rawIssuesFor(canvasId)` —— proof 留档要的**聚合投影**
+  （同一次求值的另一份投影，格式一个字节没动）；
+* `lib/validation.exportContextRaw / exportContextIssues` —— 导出上下文那条规则
+  （与 MCP 的 `bridge.export_raster_issues()` 严格同源）。**新的导出上下文规则
+  加在这里**，不要加进组件；
+* `lib/issueFocus.openProblems(filter?)` / `focusIssue(issue)` —— 把用户交回
+  问题面板 / 直接跳到那个对象；
+* `lib/validationText.ts` —— 问题在界面上怎么说（短标题、当前值→要求、
+  人话主语、等级图标表）。导出摘要与问题面板已经共用它。
+
+以及 10 留下的三个（原样有效）：`lib/specBinding.resolveDocumentSpec()`、
+`store/profileStore` 的 `specs` / `catalog()`（**订阅 `specs`，不要订阅
+`catalog()`**——后者每次调用都新建数组）、`lib/profileText.ts`。
 
 ---
 

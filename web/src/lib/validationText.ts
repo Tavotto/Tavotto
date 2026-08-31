@@ -141,7 +141,11 @@ export function technicalDetailLines(issue: ValidationIssue): string[] {
 export const fixLabel = (issue: ValidationIssue): string =>
   pr(issue.fixKind === 'user_choice' ? 'fixChoose' : 'fix')
 
-/** 屏幕阅读器读到的一整句：等级 + 对象 + 要求 + 可做的动作。 */
+/**
+ * 屏幕阅读器读到的一整句：**等级 + 对象 + 问题 + 要求 + 这颗按钮会做什么**。
+ * 最后一段不能省——这一行是个按钮，光念完问题不说动作，用户不知道按下去会
+ * 发生什么（读屏用户看不到那个悬停才出现的「定位」字样）。
+ */
 export function issueAriaLabel(issue: ValidationIssue): string {
   const v = issueValues(issue)
   return [
@@ -149,6 +153,7 @@ export function issueAriaLabel(issue: ValidationIssue): string {
     subjectName(issue),
     issueTitle(issue),
     v.current && v.expected ? pr('ariaValues', { current: v.current, expected: v.expected }) : null,
+    pr('ariaLocate'),
   ]
     .filter(Boolean)
     .join('，')

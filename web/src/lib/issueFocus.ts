@@ -58,6 +58,12 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
 export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
   const s0 = useDocumentStore.getState()
   if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
+  // **多项目隔离**：对象 id 在两个项目里可以相同（都是 `o_…` 形状）。不比一次
+  // documentId 的话，一条上一份项目残留的问题会照着 id 在**这个**项目里选中
+  // 一个毫不相干的对象——而界面看起来一切正常。
+  if (ref.documentId && ref.documentId !== s0.documentId) {
+    return { ok: false, reason: 'document_not_loaded' }
+  }
   if (ref.canvasId && ref.canvasId !== s0.activeCanvasId) {
     // **只判一次：切完之后到了没有。** 曾经这里先查一遍"这张画布还在不在"、
     // 切完再查一遍"到了没有"，两句话说的是同一件事——于是把前一句改成恒真

@@ -1465,6 +1465,7 @@ export default interface Resources {
       "unappliedOverride": "面板有 {{count}} 条图内修改尚未应用到渲染上，成图会与画布不一致"
     },
     "problems": {
+      "ariaLocate": "定位到这个对象",
       "ariaValues": "当前 {{current}}，要求 {{expected}}",
       "clearFilter": "显示全部",
       "cmp": {

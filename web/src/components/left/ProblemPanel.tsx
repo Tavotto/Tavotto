@@ -278,7 +278,9 @@ function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
   const lines = technicalDetailLines(issue)
   return (
     <details className="group ml-5 mt-0.5">
-      <summary className="flex cursor-default list-none items-center gap-0.5 text-[11px] text-ink-faint outline-none focus-visible:focus-ring">
+      {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
+          用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
+      <summary className="flex cursor-default list-none items-center gap-0.5 text-[11px] text-ink-3 outline-none focus-visible:focus-ring">
         <ChevronRight
           size={10}
           aria-hidden
@@ -288,7 +290,7 @@ function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
       </summary>
       <ul className="mt-0.5 flex flex-col gap-0.5">
         {lines.map((line) => (
-          <li key={line} className="break-all font-mono text-[10px] leading-relaxed text-ink-faint">
+          <li key={line} className="break-all font-mono text-[10px] leading-relaxed text-ink-3">
             {line}
           </li>
         ))}

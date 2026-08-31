@@ -963,3 +963,79 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 > `0`，意思是「不设下限」）判成了非法。**判据窄过它要守的东西同样是缺陷**，
 > 只是这次的表现是假红而不是假绿。守的是「形状不对会当场打崩导出对话框」，
 > 那就只查形状，不查取值范围。
+
+## Session 11 新增用例（后端 1 / 前端 78）
+
+### 后端
+
+| 文件 | 条数 | 盯的是 |
+| --- | ---: | --- |
+| `tests/test_preflight.py`（新增 1） | 1 | 导出上下文那条规则在两条入口上是**同一条规则**（同 rule code / 同 message key / 同规范键）；改名当场红 |
+| `tests/test_profile_store.py`（改 1） | — | 「求值器与界面不许写字号字面量」的看护范围 **+4 个消费点**（`validation.ts` / `issueFix.ts` / `validationText.ts` / `ProblemPanel.tsx`）——共享判据修一处不算修完 |
+| `tests/test_i18n_dead_keys.py`（改 1 + 自检 +2） | — | 匹配器认识 i18next 的**复数后缀**（`fixAll_one` 在源码里永远找不到，后缀是运行时补的）；自检里加了两条：剥离不是万能钥匙、基名有发射点的不许被报成死键 |
+
+### 前端
+
+| 文件 | 条数 | 盯的是 |
+| --- | ---: | --- |
+| `lib/validation.test.ts` | 21 | 规则目录不漏 code、聚合投影原样留着、逐条命中说自己的数字、gid 查不到时不拿 gid 顶替、一次多个对象逐个入账、画布维度、指纹五维、检查不改文档、导出上下文、摘要透传 `ready`/`failed`、筛选 |
+| `lib/validationText.test.ts` | 13 | 主语说人话（元素名压过面板名）、当前值→要求（**「大于」与「≥」不是一句话**）、短标题查不到时不吐 code、gid 只在技术详情里、四个等级各有图标与标签、切语言跟着换 |
+| `lib/issueFocus.test.ts` | 14 | 排版模式的五步、图内元素的模式切换、属性字段真的被聚焦（`data-prop`）、跨画布、四种失败各有原因、页面级问题、`openProblems` |
+| `lib/issueFix.test.ts` | 12 | **修完真的能过**、按缩放反算、画布标注不乘缩放、枚举类修复、不确定的一律不给计划、`user_choice` 两层各自守住、一个事务 / 一个批事务 / 走 commit、跨画布 |
+| `store/validationStore.test.ts` | 12 | 防抖、代次丢弃、按画布增量（**沿用 = 同一个对象引用**）、画布改名跟上、失败不清空、换项目才清空、不写文档、摘要与聚合投影、订阅装卸 |
+| `components/left/problemPanel.test.tsx` | 15 | 行里不出现 gid / 对象 id、技术详情默认收起、短标题 + 当前值→要求、空态 / 「查不了」 / 筛选空、等级 chip 的 `aria-pressed`、无障碍名、方向键漫游、**修复不是行的子节点**、修复可撤销、轨道角标、常驻入口、英文界面 |
+| `i18n/overflow.test.tsx`（+9 条预算） | 9 | 等级 chip / 行内按钮 / 重试 / 取消筛选 / 轨道名的英文字数上限 |
+
+前端合计 **147 files / 1798 passed**（Session 10 是 138 / 1659）。
+
+## Session 11 的变异反证（44 条，全部被打红）
+
+**先踩了一次「判据自己是空的」**：第一版反证脚本拿 `vitest ... | tail -3` 的
+文本找 `failed`，而 vitest 的统计行**不在最后三行里**——于是 44 条全部显示
+「存活」。判据没有进控制流（用的是文本而不是退出码），它把一整套好用例报成了
+坏用例。改成看退出码 + 先跑一遍基线自检（没有变异时必须绿）之后，第一轮
+38/44 被打红。
+
+### 第一轮活下来的六条，四种成因
+
+| 变异 | 为什么没被打红 | 处置 |
+| --- | --- | --- |
+| `subject` 把 gid 当可读标签（`el?.label ?? occ.gid`） | 样例里的元素**都有 label**，`??` 永远不触发——**语义 no-op** | 补一条真实形状：`tick-label-count` 报的 gid 是**轴前缀**，根本不是一个元素，此时 `elementLabel` 必须是 undefined |
+| `summaryFor` 把 `ready` 写死成 true | 用例测的是 `summarizeIssues()`（底层），没有一条经过 `summaryFor`——**判据没落在被改的那条路上** | 加一条直接量 `summaryFor` 的透传 |
+| `Sink` 只记第一条命中（`pairs.slice(0,1)`） | 字号那类规则一次只交一个 gid，切片是 no-op | 加一条「两个对象同时越界 = 两条问题」——`out-of-page` 一次交上来一串对象 id |
+| 「画布不在了」的守卫改成恒真 | **两道守卫说同一件事**（切之前查成员、切之后查到没到）——冗余的保证杀不死 | **合并成一处**（T-57），不造输入去覆盖它 |
+| `planPageWidth` 不要求 choice | 调用方那道闸（`applyIssueFix` 的 `needs_choice`）先拦住了，纯函数自己的契约没被量过 | 加一条直接量 `planFix` 的 |
+| `subjectName` 先说面板名 | 样例里**只有** `elementLabel`，优先级换过来照样绿 | 加一条两者都在的样例 |
+
+第二轮：**6/6 全部被打红**。累计 44/44。
+
+四种成因里三种是**老面孔**：语义 no-op（Session 05 撞过）、判据没落在被改的
+那条路上（Session 09 两条）、冗余的保证（Session 07 的 T-36、Session 09 一条、
+本轮 T-57）。第四种「只测了调用方，没测被调用方的契约」是本轮新增的一种。
+
+### Session 11 的 e2e（真跑，不是 `--list`）
+
+| 命令 | 结果 |
+| --- | --- |
+| `npx playwright test e2e/a11y.spec.ts --project=chromium` | **8 passed**（新增「问题面板：axe 无违规 + 修复不是定位的子节点」一条） |
+| `npx playwright test e2e/asset-library.spec.ts e2e/error-recovery-en.spec.ts e2e/keyboard-golden-path.spec.ts --project=chromium` | **7 passed**（`error-recovery-en` 由 `chromium-en` project 跑，基础 project 显式 testIgnore 它，所以这里是 4+3） |
+
+**a11y 那条第一次跑就红了，而且红得对**：问题面板里「技术详情」的
+`<summary>` 用了 `text-ink-faint`（2.54:1，axe serious）。单测里那几条
+「有 aria-label / 可键盘到达 / 不嵌套交互」一条都没红——**结构性断言看不见
+对比度**，这正是 08/09 两轮只做到 `--list` 时漏掉的那一类。改成 `ink-3` 之后
+8/8 绿。
+
+### Session 11 的性能预算
+
+负载 12 画布 × 8 面板 × 60 元素 = **5760 个元素 / 约 5800 条问题**，
+本机一遍全量检查 **22ms**，预算定 **300ms**（十几倍余量，CI 更慢 + jsdom 抖动）。
+
+两个坑各踩一次：
+
+1. **第一版量到的是一张画布。** `addCanvas` 建的是空画布，只在激活画布上摆
+   对象的话「12 画布」是假的（2.66ms 显得很好看）。用例里现在有一条自检：
+   逐张核对每张画布上确实有 8 个面板。
+2. **`vi.useFakeTimers()` 默认接管 `performance.now`**，那样 `spent` 恒为 0，
+   预算判据什么都量不到。用例里先 `expect(spent).toBeGreaterThan(0)` 证明尺子
+   是活的，再谈它落没落在预算里。

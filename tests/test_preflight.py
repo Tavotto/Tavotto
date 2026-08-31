@@ -394,9 +394,7 @@ def test_the_export_context_rule_is_one_rule_on_both_sides():
     判据落在源码文本上（两侧语言不同，没有共用的运行时），所以**改名会当场红**
     ——那正是这条看护要拦的事。
     """
-    py = (ROOT / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py").read_text(
-        encoding="utf-8"
-    )
+    py = (ROOT / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py").read_text(encoding="utf-8")
     ts = (ROOT / "web" / "src" / "lib" / "validation.ts").read_text(encoding="utf-8")
     assert "def export_raster_issues(" in py
     assert "export function exportContextRaw(" in ts

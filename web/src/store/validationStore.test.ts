@@ -234,6 +234,90 @@ describe('对外 API', () => {
   })
 })
 
+describe('性能预算', () => {
+  /**
+   * **预算是回归闸门，不是审美标准。** 负载是 12 张画布 × 8 个面板 ×
+   * 60 个元素 = 5760 个元素、约 5800 条问题；**本机实测 22ms**，预算 300ms
+   * 留了十几倍余量（CI 机器更慢、jsdom 有抖动）。真需要更多时间就连同重新
+   * 实测的数字一起把预算改上去，别偷偷放宽。
+   *
+   * 它守的是"复杂度不许悄悄从线性变成平方"：逐条命中、指纹、fixKind 三层
+   * 里任何一层在元素上套一层循环，这里都会当场炸开。
+   */
+  const BUDGET_MS = 300
+
+  it('12 画布 × 8 面板 × 60 元素跑得完，且落在预算里', async () => {
+    await seedProject()
+    const big = {
+      stem: 'Fig1',
+      size_mm: [80, 60],
+      elements: Array.from({ length: 60 }, (_, i) => ({
+        gid: `axes_0.el_${i}`,
+        role: i % 2 ? 'ticks' : 'axis_label',
+        label: `元素 ${i}`,
+        bbox: [0.1, 0.1, 0.5, 0.1],
+        draggable: false,
+        editable: [{ prop: 'fontsize', type: 'number', value: 6 }],
+      })),
+    }
+    const objects = Array.from({ length: 8 }, (_, i) => ({ ...panel, id: `p${i}` }))
+    for (const o of objects) seedExactRender(o as never, big as never)
+    // **每张画布都要真的装上面板。** `addCanvas` 建的是空画布——只在激活画布上
+    // 摆对象的话，"12 画布"这个数字是假的，量到的其实是一张画布
+    // （[[simulated-input-shape-lies]]：第一版就是这么写的，2.66ms 显得很好看）。
+    const fill = () =>
+      useDocumentStore.getState().commit(literal('大文档'), (d) => {
+        d.objects = objects.map((o) => ({ ...o }))
+      })
+    fill()
+    for (let i = 0; i < 11; i++) {
+      useDocumentStore.getState().addCanvas(`画布 ${i + 2}`)
+      fill()
+    }
+    const canvases = useDocumentStore.getState().canvases
+    expect(canvases).toHaveLength(12)
+    // 尺子先自检：12 张画布上确实各有 8 个面板
+    const s0 = useDocumentStore.getState()
+    for (const c of canvases) {
+      const objs = c.id === s0.activeCanvasId ? s0.doc.objects : c.objects
+      expect(objs).toHaveLength(8)
+    }
+
+    // **先证明尺子是活的。** `vi.useFakeTimers()` 默认会把 `performance.now`
+    // 也接管掉，那样 `spent` 恒为 0——预算判据看起来永远通过，而它其实什么都
+    // 没量到。
+    vi.useRealTimers()
+    const t0 = performance.now()
+    runValidation()
+    const spent = performance.now() - t0
+    expect(spent, '计时器是假的，这条预算量不到任何东西').toBeGreaterThan(0)
+
+    const s = useValidationStore.getState()
+    expect(s.results).toHaveLength(12)
+    expect(s.issues.length).toBeGreaterThan(1000)
+    expect(spent, `一遍全量检查用了 ${spent.toFixed(0)}ms，超出 ${BUDGET_MS}ms 预算`)
+      .toBeLessThan(BUDGET_MS)
+    // store 自己记的那一份要与实测同量级（诊断时看的就是它）
+    expect(s.lastDurationMs).not.toBeNull()
+    expect(s.lastDurationMs!).toBeLessThan(BUDGET_MS)
+  })
+})
+
+describe('修复之后自动重查', () => {
+  it('文档一改就排一次——修复不必自己调检查', async () => {
+    await seedProject()
+    const stop = startValidation()
+    act(() => void vi.advanceTimersByTime(VALIDATION_DEBOUNCE_MS))
+    const gen = useValidationStore.getState().generation
+    useDocumentStore.getState().commit(literal('改一下'), (d) => {
+      d.page = { w: 90, h: 60 }
+    })
+    // 排队即推进代次；不排的话「修完还是红的」会一直挂在面板上
+    expect(useValidationStore.getState().generation).toBeGreaterThan(gen)
+    stop()
+  })
+})
+
 describe('订阅', () => {
   it('装配之后排一次；卸载之后不再排', async () => {
     await seedProject()

@@ -904,7 +904,7 @@ function IssueRow({
           {issueTitle(issue)}
           <span className="ml-1 text-ink-3">{subjectName(issue)}</span>
           {values.current && (
-            <span className="ml-1 font-mono text-[10px] text-ink-faint">
+            <span className="ml-1 font-mono text-[10px] text-ink-3">
               {values.expected
                 ? `${values.current} → ${values.expected}`
                 : values.current}

@@ -182,6 +182,15 @@ describe('失败的四条各有各的原因', () => {
     expect(focusObject(refFor())).toEqual({ ok: false, reason: 'object_deleted' })
   })
 
+  it('多项目隔离：属于另一份文档的问题不许照着 id 在这个项目里乱选', async () => {
+    await seed()
+    useSelectionStore.getState().clear()
+    const out = focusObject(refFor({ documentId: 'd_another_project' }))
+    expect(out).toEqual({ ok: false, reason: 'document_not_loaded' })
+    // 对象 id 在两个项目里可以相同——没有这道闸的话它会选中一个毫不相干的对象
+    expect(useSelectionStore.getState().ids).toEqual([])
+  })
+
   it('文档还没载入', async () => {
     await seed()
     useDocumentStore.setState({ documentId: '' })
