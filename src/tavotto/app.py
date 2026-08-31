@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -59,6 +60,8 @@ from .engine import (
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
+    exportjob as engine_exportjob,
+    exportreq as engine_exportreq,
     handoff as engine_handoff,
     locate as engine_locate,
     managedenv as engine_managedenv,
@@ -444,12 +447,36 @@ def _project_id(path: Path) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
 
 
+#: 后台工作线程显式绑定的项目。**只在 `bound_project()` 里被设过**。
+_BOUND_CTX = threading.local()
+
+
+@contextmanager
+def bound_project(ctx: "ProjectCtx"):
+    """把当前线程钉在某个项目上。
+
+    后台线程（导出作业）没有请求上下文，而 `_request_ctx()` 的兜底是**默认
+    项目**——同时开着两个项目时，为项目 B 起的导出会去项目 A 的目录里解析
+    面板，出来的图是另一个图库的。兜底本身没错（watcher 与启动流程确实该落
+    到默认项目），错的是让一个"知道自己在为谁干活"的线程去走兜底。
+    """
+    previous = getattr(_BOUND_CTX, "ctx", None)
+    _BOUND_CTX.ctx = ctx
+    try:
+        yield ctx
+    finally:
+        _BOUND_CTX.ctx = previous
+
+
 def _request_ctx() -> "ProjectCtx | None":
-    """本次请求作用于哪个项目：显式 pj > 默认项目。
+    """本次请求作用于哪个项目：显式绑定 > 显式 pj > 默认项目。
 
     pj 走查询参数或请求头两条路：`fetch` 统一加请求头，但 `<img src>` 和
     EventSource 加不了头，只能用查询参数——两条都认才不会有一半 API 串项目。
     """
+    bound = getattr(_BOUND_CTX, "ctx", None)
+    if bound is not None:
+        return bound
     # 后台线程（watcher 回调、启动流程）没有请求上下文，落到默认项目
     pid = (
         (request.args.get("pj") or request.headers.get("X-Tavotto-Project") or "").strip()
@@ -883,106 +910,368 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     return path
 
 
-@app.post("/api/export")
-def api_export():
-    """按布局合成最终图：PDF 走 show_pdf_page 保持真矢量，PNG 由该 PDF 渲染。
+# --------------------------- 统一导出管线（ADR 0031）-------------------------
+def _export_produce_canvas(job, tmp_dir: Path) -> list:
+    """`scope=canvas`：按画布合成。**忠实于画布**——页面尺寸、布局、裁切照搬。
 
-    新契约：objects[] 为统一 z 序列表（panel/text/arrow/shape，从底到顶），
-    hidden 对象后端再过滤一道；旧契约 items[]+texts[] 保留兼容（texts 恒在最上）。
+    多格式共享**同一页**（`Canvas` 只建一次），所以 PDF 与 PNG 不可能出自两个
+    不同的语义状态：PNG 是那一页渲出来的，不是第二次合成。
     """
-    spec = request.get_json(force=True)
-    page_w = float(spec["page_w_mm"])
-    page_h = float(spec["page_h_mm"])
-    dpi = int(spec.get("dpi", 600))
-    formats = spec.get("formats", ["png", "pdf"])
-    stem = re.sub(r"[^\w\-一-鿿]+", "_", spec.get("stem") or "composed") or "composed"
-
-    objects = spec.get("objects")
-    if objects is None:  # 旧契约（老 bundle 标签页）
-        objects = [{"type": "panel", **it} for it in spec.get("items", [])] + [
-            {"type": "text", **t} for t in spec.get("texts", [])
-        ]
-
-    t0 = time.time()
-    canvas = pdfbackend.compose(page_w, page_h)
-
-    # 面板重渲染时 worker 报的 warning（元素不存在 / 属性不支持 / 应用失败）：
-    # 随响应透出，不阻断导出
-    warnings: list[str] = []
+    req = job.request
+    src = req.canvas
+    transparent = req.background == engine_exportreq.BACKGROUND_TRANSPARENT
+    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    canvas = pdfbackend.compose(src.page_w_mm, src.page_h_mm, transparent)
 
     def resolve(obj: dict, out_dpi: int) -> Path:
-        return _resolve_panel_source(obj, out_dpi, warnings)
+        return _resolve_panel_source(obj, out_dpi, job.warnings)
 
-    for o in objects:
-        if o.get("hidden"):
-            continue
-        try:
-            canvas.place(o, dpi, resolve)
-        except engine_pool.WorkerError as exc:
-            canvas.close()
-            kind = o.get("type")
-            LOG.error("导出失败: %s 重渲染出错: %s", o.get("id", kind), exc)
-            return jsonify(
-                {
-                    "error": f"{o.get('id', kind)} 重渲染失败: {exc}",
-                    "code": "export_render_failed",
-                    "params": {"id": str(o.get("id", kind)), "reason": str(exc)},
-                    "traceback": exc.traceback_text,
-                }
-            ), 500
+    produced: list = []
+    try:
+        for o in src.objects:
+            job.check_cancelled()
+            if o.get("hidden"):
+                continue
+            try:
+                canvas.place(o, dpi, resolve)
+            except engine_pool.WorkerError as exc:
+                LOG.error("导出失败: %s 重渲染出错: %s", o.get("id", o.get("type")), exc)
+                raise engine_exportreq.ExportRequestError(
+                    "export_render_failed",
+                    f"{o.get('id', o.get('type'))} 重渲染失败: {exc}",
+                    {"id": str(o.get("id", o.get("type"))), "reason": str(exc)},
+                ) from exc
+        w_pt, h_pt = canvas.size_pt
+        for fmt in req.formats:
+            job.check_cancelled()
+            tmp = tmp_dir / f"out.{fmt}"
+            try:
+                if fmt == engine_exportreq.FORMAT_PDF:
+                    canvas.save_pdf(tmp)
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=fmt,
+                            tmp_path=tmp,
+                            width_mm=round(src.page_w_mm, 3),
+                            height_mm=round(src.page_h_mm, 3),
+                            vector=True,
+                        )
+                    )
+                else:
+                    canvas.save_png(tmp, dpi)
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=fmt,
+                            tmp_path=tmp,
+                            width_px=round(w_pt / 72.0 * dpi),
+                            height_px=round(h_pt / 72.0 * dpi),
+                            width_mm=round(src.page_w_mm, 3),
+                            height_mm=round(src.page_h_mm, 3),
+                            vector=False,
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 —— 一个格式挂了不牵连另一个
+                LOG.warning("导出 %s 失败: %s", fmt, exc)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code="format_failed",
+                        error_params={"error": str(exc)[:200]},
+                    )
+                )
+    finally:
+        canvas.close()
+    return produced
 
-    out_dir = project_export_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_files = []
-    ts = time.strftime("%m%d_%H%M%S")
-    if "pdf" in formats:
-        name = f"{stem}_{ts}.pdf"
-        canvas.save_pdf(out_dir / name)
-        out_files.append({"name": name, "url": f"/exports/{name}"})
-    if "png" in formats:
-        name = f"{stem}_{ts}.png"
-        canvas.save_png(out_dir / name, dpi)
-        out_files.append({"name": name, "url": f"/exports/{name}"})
-    canvas.close()
-    # 可选的导出 proof report：预检结果与设置随成图落盘，作为投稿留档
-    proof = spec.get("proof")
-    if isinstance(proof, dict):
-        name = f"{stem}_{ts}_proof.json"
-        proof = {
-            **proof,
-            "files": [f["name"] for f in out_files],
-            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        (out_dir / name).write_text(
-            json.dumps(proof, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
-        out_files.append({"name": name, "url": f"/exports/{name}"})
-    LOG.info(
-        "导出: %s（%d 对象, %s, %.0fms）%s",
-        [f["name"] for f in out_files],
-        len(objects),
-        formats,
-        (time.time() - t0) * 1000,
-        f"，{len(warnings)} 条警告" if warnings else "",
+
+def _export_produce_original(job, tmp_dir: Path) -> list:
+    """`scope=original`：这张图**按它自己的尺寸**出。
+
+    这里**没有一行**读得到 x/y/w/h、页面尺寸或裁切——不是"记得别用"，是那些
+    字段根本不在 `OriginalSource` 里（ADR 0028 §忽略清单）。想套用画布缩放
+    得先改契约，而改契约会当场撞上 `tests/test_export_original.py`。
+
+    两种格式共用**同一个源文件**（有 override 的图先由引擎全质量重渲染一次，
+    结果被两个格式共享），所以 PDF 与 PNG 同样出自一份快照。
+    """
+    req = job.request
+    src = req.original
+    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    job.check_cancelled()
+    source_path = _resolve_panel_source(
+        {"id": src.figure_id, "overrides": src.overrides}, dpi, job.warnings
     )
-    if warnings:
-        LOG.warning("导出警告: %s", warnings)
-    # 激活事件：**文件真的写完之后**才记，且只记形状不记内容——没有 stem、
-    # 没有导出目录、没有画布名、没有项目信息。埋点在服务端而不是前端，是因为
-    # 前端记的是「用户点了导出」，点了之后还可能失败；这里记的是「导出成功了」。
-    # capture() 自己吞掉一切失败，这一行不可能影响上面这个响应。
+    if not source_path.is_file():
+        raise engine_exportreq.ExportRequestError(
+            "source_missing", "这张图的源文件现在不可用", {"figure": src.figure_id}
+        )
+    raster_source = source_path.suffix.lower() != ".pdf"
+    produced: list = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        tmp = tmp_dir / f"out.{fmt}"
+        try:
+            if fmt == engine_exportreq.FORMAT_PDF:
+                facts = pdfbackend.original_pdf(source_path, tmp)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=tmp,
+                        width_px=facts["px_w"],
+                        height_px=facts["px_h"],
+                        width_mm=round(facts["w_pt"] * 25.4 / 72.0, 3),
+                        height_mm=round(facts["h_pt"] * 25.4 / 72.0, 3),
+                        vector=bool(facts["vector"]),
+                    )
+                )
+            else:
+                # 位图源默认**保持源像素网格**：按导出 ppi 重采样一遍会把
+                # 一张 300×200 的图放大成糊图，而用户要的恰恰是"原图"
+                facts = pdfbackend.original_png(source_path, tmp, dpi, native_grid=raster_source)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=tmp,
+                        width_px=facts["px_w"],
+                        height_px=facts["px_h"],
+                        width_mm=src.w_mm,
+                        height_mm=src.h_mm,
+                        vector=False,
+                    )
+                )
+        except engine_exportreq.ExportRequestError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("原图导出 %s 失败: %s", fmt, exc)
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
+                )
+            )
+    return produced
+
+
+def _export_produce(job, tmp_dir: Path) -> list:
+    if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
+        return _export_produce_original(job, tmp_dir)
+    return _export_produce_canvas(job, tmp_dir)
+
+
+def _style_check_report(spec: dict):
+    """样式检查报告的生成器（`include_style_check_report` 打开时才被调用）。
+
+    前端把**检查结果那半份**随请求发来（求值发生在前端，ADR 0030），服务端
+    在这里补上只有它知道的那半份：Tavotto 版本、导出时间、真正落盘的文件名
+    与尺寸、这次的 scope。
+
+    **不写进报告的**：绝对路径、科研数据、图中文字、Agent 信息（§七）。
+    """
+    payload = spec.get("style_check_report") or spec.get("proof")
+    if not isinstance(payload, dict):
+        return None
+
+    def make(job, outputs):
+        files = [
+            {
+                "name": o.name,
+                "format": o.format,
+                "bytes": o.bytes,
+                "px": [o.width_px, o.height_px] if o.width_px and o.height_px else None,
+                "mm": [o.width_mm, o.height_mm] if o.width_mm and o.height_mm else None,
+                "vector": o.vector,
+            }
+            for o in outputs
+            if o.status == engine_exportjob.STATUS_DONE
+        ]
+        body = {
+            **payload,
+            "version": 3,
+            "scope": job.request.scope,
+            "formats": list(job.request.formats),
+            "ppi": job.request.ppi,
+            "background": job.request.background,
+            "files": files,
+            "ignored_transforms": (
+                list(job.request.original.ignored) if job.request.original else []
+            ),
+            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "tavotto_version": engine_updater.current_version(),
+        }
+        suffix = "_proof.json" if job.request.legacy_naming else "_style-check.json"
+        return engine_atomicio.dumps_json(body, indent=1), suffix
+
+    return make
+
+
+def _export_telemetry(job) -> None:
+    """**文件真的写完之后**才记，且只记形状不记内容——没有文件名、没有导出
+    目录、没有画布名、没有项目信息。埋点在服务端而不是前端，是因为前端记的是
+    「用户点了导出」，点了之后还可能失败。`capture()` 自己吞掉一切失败。"""
+    if job.status not in (engine_exportjob.STATUS_DONE, engine_exportjob.STATUS_PARTIAL):
+        return
+    done = {o.format for o in job.outputs if o.status == engine_exportjob.STATUS_DONE}
+    panels = 0
+    if job.request.canvas is not None:
+        panels = sum(
+            1
+            for o in job.request.canvas.objects
+            if o.get("type") == "panel" and not o.get("hidden")
+        )
+    elif job.request.original is not None:
+        panels = 1
     engine_telemetry.capture(
         "export_completed",
         {
-            "pdf": "pdf" in formats,
-            "png": "png" in formats,
-            "with_proof": isinstance(spec.get("proof"), dict),
-            "panel_count": min(
-                sum(1 for o in objects if o.get("type") == "panel" and not o.get("hidden")), 1000
-            ),
+            "pdf": engine_exportreq.FORMAT_PDF in done,
+            "png": engine_exportreq.FORMAT_PNG in done,
+            "with_proof": job.report is not None
+            and job.report.status == engine_exportjob.STATUS_DONE,
+            "panel_count": min(panels, 1000),
         },
     )
-    return jsonify({"files": out_files, "export_dir": str(out_dir), "warnings": warnings})
+
+
+def _legacy_export_response(job) -> tuple:
+    """旧契约的回执形状（`files[] / export_dir / warnings`）。
+
+    老标签页、CI 脚本与 `codex-plugin` 拿的都是这个形状；新界面读的是
+    `job.to_payload()`。**两份不是两套实现**——它们是同一个作业的两种投影。
+    """
+    payload = job.to_payload()
+    files = [
+        {"name": o["name"], "url": o["url"]}
+        for o in payload["outputs"]
+        if o["status"] == engine_exportjob.STATUS_DONE and o["name"]
+    ]
+    if job.status == engine_exportjob.STATUS_FAILED:
+        code = job.error_code or "export_failed"
+        status = 409 if code in ("bad_filename", "export_dir_unwritable") else 500
+        return jsonify(
+            {
+                "error": job.error_params.get("error") or f"导出失败（{code}）",
+                "code": code,
+                "params": job.error_params,
+                **payload,
+            }
+        ), status
+    return jsonify({**payload, "files": files, "warnings": job.warnings}), 200
+
+
+def _prepare_export_job(spec: dict):
+    """请求 → 作业。请求不合法时回 (None, 响应)。"""
+    out_dir = project_export_dir()
+    try:
+        job = engine_exportjob.prepare(spec, out_dir)
+    except engine_exportreq.ExportRequestError as exc:
+        return None, (
+            jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
+            400,
+        )
+    # 上一次进程被 kill 时留下的临时目录：**在这里顺手扫掉**，
+    # 不然它们会一直躺在用户的导出目录里，看起来像是我们弄脏的
+    engine_exportjob.sweep_stale_tmp_dirs(out_dir)
+    return job, None
+
+
+@app.post("/api/export")
+def api_export():
+    """按统一 ExportRequest 出图（同步）。
+
+    `scope=canvas` 走布局合成（PDF 走 show_pdf_page 保持真矢量，PNG 由同一页
+    渲染）；`scope=original` 走原图管线（矢量整页搬运，位图保持源像素网格）。
+
+    **旧契约仍然成立**：没有 `filename` 的请求（`stem` + `dpi`，或更老的
+    `items[]`+`texts[]`）由 `exportreq.normalize()` 抬成同一个作业，文件名照旧
+    带时间戳后缀——老标签页与 CI 脚本一个字节都不用改。
+    """
+    spec = request.get_json(force=True)
+    job, err = _prepare_export_job(spec)
+    if job is None:
+        return err
+    t0 = time.time()
+    engine_exportjob.run(job, _export_produce, report=_style_check_report(spec))
+    LOG.info(
+        "导出[%s]: %s（scope=%s, %s, %.0fms）%s",
+        job.status,
+        [o.name for o in job.outputs if o.name],
+        job.request.scope,
+        list(job.request.formats),
+        (time.time() - t0) * 1000,
+        f"，{len(job.warnings)} 条警告" if job.warnings else "",
+    )
+    if job.warnings:
+        LOG.warning("导出警告: %s", job.warnings)
+    _export_telemetry(job)
+    return _legacy_export_response(job)
+
+
+@app.post("/api/export/start")
+def api_export_start():
+    """开一个后台导出作业，立刻回 `job_id`。
+
+    进度经 SSE `export.progress` 推送；断线之后用 `/api/export/state` 补拉。
+    **关掉导出对话框不取消它**——用户要取消得点「取消」（§九）。
+    """
+    spec = request.get_json(force=True)
+    job, err = _prepare_export_job(spec)
+    if job is None:
+        return err
+    report = _style_check_report(spec)
+    # 项目 id 在**请求上下文里**取好带走：后台线程没有 request context，
+    # 到那边再问一次拿到的是"没有项目"
+    pj = current_ctx().id
+
+    def publish(payload: dict) -> None:
+        sse_publish("export.progress", {**payload, "pj": pj})
+        if payload.get("status") in (
+            engine_exportjob.STATUS_DONE,
+            engine_exportjob.STATUS_PARTIAL,
+        ):
+            _export_telemetry(job)
+
+    ctx = current_ctx()
+
+    def produce(j, tmp_dir):
+        # 后台线程把自己钉在**起这次导出的那个项目**上：不钉的话
+        # `_resolve_panel_source` 会落到默认项目，出来的是另一个图库的图
+        with bound_project(ctx):
+            return _export_produce(j, tmp_dir)
+
+    engine_exportjob.run_async(job, produce, publish=publish, report=report)
+    return jsonify(job.to_payload())
+
+
+@app.get("/api/export/state")
+def api_export_state():
+    """某个作业的当前状态（SSE 断了之后的补拉）。"""
+    resp = jsonify(engine_exportjob.progress(request.args.get("job_id", "")))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/export/cancel")
+def api_export_cancel():
+    """取消一个作业。回的是「有没有这个作业可取消」，**不是「已经取消了」**
+    ——真正的清理发生在执行线程回到检查点的那一刻。"""
+    body = request.get_json(force=True) or {}
+    ok = engine_exportjob.cancel(str(body.get("job_id") or ""))
+    return jsonify({"cancelling": bool(ok)})
+
+
+@app.post("/api/export/validate")
+def api_export_validate():
+    """这次导出**在真的开始之前**能看出来的问题：重名、目录写不写得了、
+    PPI 在这次格式组合下有没有意义。不出任何文件。"""
+    spec = request.get_json(force=True)
+    out_dir = project_export_dir()
+    try:
+        req = engine_exportreq.normalize(spec)
+    except engine_exportreq.ExportRequestError as exc:
+        return jsonify(
+            {"ok": False, "error": {"code": exc.code, "params": exc.params, "message": exc.message}}
+        ), 200
+    probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
+    return jsonify({"ok": True, **engine_exportjob.validate(probe)})
 
 
 @app.get("/exports/<path:name>")

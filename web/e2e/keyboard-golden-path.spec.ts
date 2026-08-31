@@ -333,8 +333,11 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   expect(await onExportBtn(), 'Tab 一整圈也到不了「导出」主按钮').toBe(true)
   await page.keyboard.press('Enter')
 
-  // 导出完成：结果区出现文件（PDF 默认勾选）
-  await expect(dialog.getByText(/\.pdf/)).toBeVisible({ timeout: 120_000 })
+  // 导出完成：**结果区**出现「已保存到」+ 文件名。
+  // 不能只找 `/\.pdf/`——文件名那一行在按导出**之前**就把 `Fig 1.pdf` 摆在
+  // 那里当预览了，拿它当判据的话这一步不按也绿（空门禁）。
+  await expect(dialog.getByText(/已保存到/)).toBeVisible({ timeout: 120_000 })
+  await expect(dialog.getByRole('link', { name: /\.pdf$/ })).toBeVisible()
 
   // ── 8. 关闭对话框，焦点回到可见控件 ─────────────────────────────────
   await page.keyboard.press('Escape')

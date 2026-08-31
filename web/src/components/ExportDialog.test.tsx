@@ -1,12 +1,12 @@
 /**
- * 导出对话框：**规范从 profile 读，阻断项默认拦住导出**。
+ * 导出面板（ADR 0031）。四组纪律各一组用例：
  *
- * 三条纪律各一组用例：
- *
- * 1. 页宽 / 字号 / DPI 的口径全部来自 profile —— 以前 85/150/180mm 是写死的，
- *    规范一改那三个数字就开始撒谎；
- * 2. error 默认阻止导出，用户显式确认后才放行，且**确认要写进 proof**；
- * 3. warn 与 not_verifiable 必须看得见（不是折在一句「有几个问题」后面）。
+ * 1. **信息架构**：文件名在最上方；必须删掉的东西一个都不许回来
+ *    （预设、期刊宽、facts 大方格、PyMuPDF/Codex 说明、profile id/版本、
+ *    「打包项目」、「留档」这个词）；
+ * 2. **输出范围**：默认跟工作流走、可切换、**不可用时说出原因而不是隐藏**；
+ * 3. error 默认阻止导出，用户显式确认后才放行，且**确认要写进样式检查报告**；
+ * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
 import { literal } from '@/i18n'
@@ -28,6 +28,8 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
+import { resetExportState } from '@/store/exportStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 declare global {
@@ -73,15 +75,40 @@ let container: HTMLDivElement
 let root: Root
 let exportBodies: Record<string, unknown>[]
 
+/** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
+let jobStatus: 'done' | 'conflict' = 'done'
+
 function stubFetch() {
   exportBodies = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
-    if (url.includes('/api/export')) {
+    if (url.includes('/api/export/start') || url.endsWith('/api/export')) {
       exportBodies.push(JSON.parse(String(init?.body ?? '{}')))
       return new Response(
-        JSON.stringify({ files: [{ name: 'a.pdf', url: '/exports/a.pdf' }],
-                         export_dir: '/out', warnings: [] }),
+        JSON.stringify({
+          job_id: 'j1',
+          status: jobStatus,
+          outputs:
+            jobStatus === 'done'
+              ? [
+                  {
+                    format: 'pdf',
+                    name: 'a.pdf',
+                    url: '/exports/a.pdf',
+                    bytes: 1234,
+                    dimensions: { px: null, mm: [80, 60] },
+                    vector: true,
+                    status: 'done',
+                    replaced: false,
+                    error: null,
+                  },
+                ]
+              : [],
+          warnings: [],
+          conflicts: jobStatus === 'conflict' ? ['a.pdf'] : [],
+          export_dir: '/out',
+          error: null,
+        }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
@@ -151,6 +178,9 @@ const click = async (el: Element) => {
 
 beforeEach(() => {
   localStorage.clear()
+  jobStatus = 'done'
+  resetExportState()
+  useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   stubFetch()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -163,48 +193,94 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('规范信息来自 profile', () => {
-  it('页宽判定与字号下限都按 profile 显示，不是写死的 85/150', async () => {
+describe('信息架构：删掉的东西不许回来', () => {
+  it('文件名在最上方，且预览出这次会写哪几个文件', async () => {
     await setup(9)
-    expect(text()).toContain('单栏 80mm')
-    // 规范在界面上叫「默认规范」——内部 id 与版本号**不进默认视图**
-    // （ADR 0029；它们留在那一行的 title 里）
-    expect(text()).toContain('默认规范')
-    expect(text()).not.toContain('lab-publication-v1')
-    // 预设的页宽也来自 profile（提示文字在 title 上）
-    const hints = [...document.body.querySelectorAll('button')]
-      .map((b) => b.getAttribute('title') ?? '')
-      .join('|')
-    expect(hints).toContain('80mm 单栏')
-    expect(hints).toContain('150mm 通栏')
-    expect(hints).not.toContain('85mm')
+    const inputs = [...document.body.querySelectorAll('input')].filter(
+      (i) => i.type !== 'checkbox',
+    )
+    // 第一个可输入的控件就是文件名（`d_export` 文档名）
+    expect((inputs[0] as HTMLInputElement).value).toBe(useDocumentStore.getState().doc.name)
+    expect(text()).toContain('.pdf')
   })
 
-  it('页宽不符时如实说不符，并列出规范里的两个宽度', async () => {
-    await setup(9, { w: 123, h: 92 })
-    expect(text()).toContain('不符（规范 80/150mm）')
+  it('§五的删除清单逐条不在界面上', async () => {
+    await setup(9)
+    const body = text()
+    for (const gone of [
+      '预设',            // 无作用的预设整行
+      '期刊宽',          // 与规范设置重复
+      '栏位',            // facts 大方格
+      '最小有效字号',
+      'PyMuPDF',         // 内部实现名
+      'Codex',
+      '打包项目',        // 搬到了文档菜单
+      '留档',            // 含义不清的标签
+      '_时间戳',
+      'lab-publication-v1', // profile 内部 id
+      'axes_0',          // 内部对象标签
+    ]) {
+      expect(body, `「${gone}」不该出现在导出面板上`).not.toContain(gone)
+    }
+    // 规范仍在，只是只出现自然名称
+    expect(body).toContain('默认规范')
   })
 
-  it('最小有效字号直接摆在面板上', async () => {
-    // 7.8 而不是 8.2：统一为 8 pt 之后 8.2 是合规的，用它当"有问题的字号"
-    // 样例会让这条用例在实现坏掉时照样绿
-    await setup(7.8)
-    expect(text()).toContain('最小有效字号')
-    expect(text()).toContain('7.8pt')
+  it('样式检查报告在「高级选项」里，默认收起', async () => {
+    await setup(9)
+    const details = document.body.querySelector('details') as HTMLDetailsElement
+    expect(details, '缺少高级选项').toBeTruthy()
+    expect(details.open).toBe(false)
+    expect(text()).toContain('样式检查报告')
+  })
+})
+
+describe('输出范围', () => {
+  it('画布模式默认按画布；两个选项都在，不隐藏', async () => {
+    await setup(9)
+    const radios = [...document.body.querySelectorAll('[role="radio"]')]
+    expect(radios.map((r) => r.textContent)).toEqual(['原图尺寸', '当前画布'])
+    expect(radios[1].getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('快速编辑默认按原图，并说出这次忽略了画布上的哪些变换', async () => {
+    await setup(9)
+    // 面板在画布上被缩小过 → 原图导出不套用这个缩放，界面必须说出来
+    useDocumentStore.getState().commit(literal('缩小'), (d) => {
+      const p0 = d.objects[0] as PanelObject
+      p0.w = 40
+      p0.h = 30
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    // 关掉再打开：`scope` 的默认值在**打开那一刻**取，两次 act 才是两次渲染
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    const radios = [...document.body.querySelectorAll('[role="radio"]')]
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('缩放')
+  })
+
+  it('没有当前图时「原图尺寸」禁用，并**说出原因**（不隐藏、不静默改画布）', async () => {
+    await setup(9)
+    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
+    expect(original.hasAttribute('disabled')).toBe(true)
+    expect(text()).toContain('先选中一张图')
   })
 })
 
 describe('阻断与确认', () => {
-  it('有 error 时默认拦住导出，勾选确认后才放行，并写进 proof', async () => {
+  it('有 error 时默认拦住导出，勾选确认后才放行，并写进样式检查报告', async () => {
     await setup(8) // 8pt = 撞绝对下限 → error
     expect(text()).toContain('阻断')
 
     const go = button('开始导出')!
     expect(go.hasAttribute('disabled')).toBe(true)
 
-    // 打开 proof 留档 + 勾确认
-    const proofToggle = document.body.querySelector('[role="switch"]')
-    if (proofToggle) await click(proofToggle)
     const check = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
     expect(check, '缺少显式确认勾选框').toBeTruthy()
     await act(async () => {
@@ -215,44 +291,118 @@ describe('阻断与确认', () => {
     await click(button('开始导出')!)
 
     expect(exportBodies).toHaveLength(1)
-    const proof = exportBodies[0].proof as Record<string, unknown>
-    expect(proof).toBeTruthy()
-    expect((proof.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
-    expect((proof.profile as Record<string, string>).profile_version).toBeTruthy()
-    expect(proof.forced).toBe(true)
-    expect(proof.acknowledged).toContain('font-below-absolute-floor')
-    const checks = proof.checks as { id: string; severity: string }[]
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    // 勾了确认就**必须**留档：确认框上写着这次确认会被记录，
+    // 而报告开关是个记住的偏好，用户可能早就关掉了
+    expect(report, '确认之后必须生成样式检查报告').toBeTruthy()
+    expect((report.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
+    expect(report.forced).toBe(true)
+    expect(report.acknowledged).toContain('font-below-absolute-floor')
+    const checks = report.checks as { id: string; severity: string }[]
     expect(checks.some((c) => c.id === 'font-below-absolute-floor' && c.severity === 'error')).toBe(
       true,
     )
   })
 
-  it('没有阻断项时直接可导出，proof 里 forced 为 false', async () => {
+  it('没有阻断项时直接可导出，默认不生成报告', async () => {
     await setup(9)
-    const proofToggle = document.body.querySelector('[role="switch"]')
-    if (proofToggle) await click(proofToggle)
     const go = button('开始导出')!
     expect(go.hasAttribute('disabled')).toBe(false)
     await click(go)
-    const proof = exportBodies[0].proof as Record<string, unknown>
-    expect(proof.forced).toBe(false)
-    expect(proof.acknowledged).toEqual([])
+    expect(exportBodies[0].include_style_check_report).toBe(false)
+    expect(exportBodies[0].style_check_report).toBeUndefined()
   })
 })
 
-describe('warn 与 not_verifiable 必须看得见', () => {
-  it('展开后逐条列出，并标出等级', async () => {
-    // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn（没有阻断项，
-    // 所以摘要默认是收起的，点开才看得到明细——这正是要验的那一下）
+describe('统一 ExportRequest', () => {
+  it('画布导出发的是 canvas 段，没有 original 段', async () => {
+    await setup(9)
+    await click(button('开始导出')!)
+    const body = exportBodies[0]
+    expect(body.scope).toBe('canvas')
+    expect(body.canvas).toBeTruthy()
+    expect(body.original).toBeUndefined()
+    expect(body.filename).toBe(useDocumentStore.getState().doc.name)
+  })
+
+  it('只出 PDF 时 ppi 是 null，分辨率那一行**不出现**', async () => {
+    await setup(9)
+    await click(button('PNG')!)          // 取消 PNG，只剩 PDF
+    expect(text()).not.toContain('分辨率')
+    await click(button('开始导出')!)
+    expect(exportBodies[0].ppi).toBeNull()
+    expect(exportBodies[0].formats).toEqual(['pdf'])
+  })
+
+  it('选了位图才出现分辨率，且发的是数字', async () => {
+    await setup(9)
+    expect(text()).toContain('分辨率')
+    await click(button('开始导出')!)
+    expect(exportBodies[0].ppi).toBe(600)
+  })
+})
+
+describe('文件名的跨平台校验', () => {
+  it('非法字符就地报错并挡住导出，不等一次网络往返', async () => {
+    await setup(9)
+    const input = [...document.body.querySelectorAll('input')].find(
+      (i) => i.type !== 'checkbox',
+    ) as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!
+      setter.call(input, 'Fig?1')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(text()).toContain('< > : " / \\ | ? *')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
+  })
+
+  it('顺手打上的扩展名被剥掉，不会出 `.pdf.pdf`', async () => {
+    await setup(9)
+    const input = [...document.body.querySelectorAll('input')].find(
+      (i) => i.type !== 'checkbox',
+    ) as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!
+      setter.call(input, 'Fig 1.pdf')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies[0].filename).toBe('Fig 1')
+  })
+})
+
+describe('已有同名文件', () => {
+  it('默认先问一句，给出「覆盖」与「另存一份」两条明确出路', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(exportBodies[0].overwrite).toBe('ask')
+    expect(text()).toContain('已经有 a.pdf')
+    await click(button('覆盖')!)
+    expect(exportBodies[1].overwrite).toBe('replace')
+    await click(button('另存一份')!)
+    expect(exportBodies[2].overwrite).toBe('rename')
+  })
+})
+
+describe('检查摘要只给数量，完整清单在问题面板', () => {
+  it('摘要里有计数与入口，不列第二套清单', async () => {
+    // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    const toggle = [...document.body.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('预检：'),
-    )
-    expect(toggle, '缺少预检摘要').toBeTruthy()
     expect(text()).toContain('1 警告')
-    await click(toggle!)
-    expect(text()).toContain('页面比例')
-    expect(text()).toContain('警告')
+    expect(text()).not.toContain('页面比例')   // 明细归问题面板
+    const open = button('在问题面板中查看')!
+    await click(open)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().exportOpen).toBe(false)
   })
 })
 

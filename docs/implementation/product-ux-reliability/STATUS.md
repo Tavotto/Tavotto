@@ -43,7 +43,7 @@
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
 | 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
 | 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
-| 12 | 导出管线与精简导出 UI | ⬜ |
+| 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
 | 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
 | 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
 | 15 | 图例绑定与控件 | ⬜ |
@@ -62,7 +62,7 @@
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
-| 3 核心工作流与输出 | 09–12 | 🟡 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）完成；**12（导出管线与精简导出 UI）未开始** |
+| 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
@@ -84,7 +84,7 @@
 | R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | `app.py:4206` | P2 | 03 |
 | R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
 | R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
-| R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
+| R-10 | ~~**导出偏好只在 localStorage**~~ **已处置（Session 12，重新定性）**：Prompt 12 §六明写「最近导出目录属于 UI preference，不进入项目 undo」——格式 / PPI / 报告开关同属这一档，**它们本来就该是本机偏好**（换机器丢掉一个 600 ppi 的选择不构成数据损失）。真正属于项目的那一项（用哪套规范）在 Session 10 就已经写进文档（`doc.profile` 带快照）。**这一行的原始定性是错的**，不是没做 | `lib/exportDefaults.ts` + ADR 0029 的 `doc.profile` | P2 | ✅ 12（重新定性） |
 | R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
 | R-12 | ✅ **已修（11）** **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位。`ValidationIssue.objectRef` 带 `documentId` / `canvasId`，定位会切画布 | `lib/preflight.ts` | P2 | ✅ 11 |
 | R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
@@ -351,9 +351,30 @@ desktop…」。
 > 脚本里）：没有它 Node 自带的 `localStorage` 会盖住 jsdom 那份且不可用，
 > 报错看起来像被测代码坏了。本轮又踩了一次。
 
+### Session 12 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3448** passed / 34 skipped / 2 deselected / 0 failed，10 分 29 秒（比 11 的 3370 +78：新增 52 条导出用例 + 26 条参数化的错误码） |
+| `cd web && pnpm test` | ✅ exit 0 —— **150** files / **1893** tests passed（比 11 的 147/1805 +3 文件 / +88 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2841 / en-US 2931；`dialogs:export.*` 删 21 组 / 加 27 组，`errors:backend.*` +27 条，`workspace:topbar.exportPackage` + `status.packaged*`） |
+| `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0（293 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/gen_filename_vectors.py` | ✅ 向量与实现一致（无参 = 校对模式） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `6747d7846530d19c`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `8cb45ddcf6ac7975`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 23 条 | ✅ 全部被打红（第一轮 20/23，三条存活的成因与处置见 `TEST_MATRIX.md`） |
+| `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
+
+> **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面
+> 尺寸 / 可提取文字 / 图片数 / 绘制数 / xobject 数 / 渲染像素 sha1 + PNG 尺寸
+> 与 sha1）。整条管线重写之后**逐字节相同**——旧契约那条路一个像素没变。
+
 ---
 
-## 遗留（Session 11 之后仍开着的）
+## 遗留（Session 12 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -373,6 +394,11 @@ desktop…」。
 | — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
 | — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
+| — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
+| — | **「按另一个像素网格导出位图」界面上没有开关**：`original_png(native_grid=)` 支持它，但默认永远保源网格，用户改不了 | 未定 |
+| — | **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败） | 择机 |
+| — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
+| — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
 | — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
@@ -380,27 +406,23 @@ desktop…」。
 
 ## 下一阶段
 
-**Prompt 12（导出管线与精简导出 UI）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。
+**Prompt 13（统一属性系统、文字控件、标注字体）**，入口见
+`SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-11 留给 12 的可复用入口：
+12 留给 13 的可复用入口：
 
-* `store/validationStore.getValidationSummary(scope, extra?)` —— 检查结果的
-  **唯一摘要来源**（带 `ready` / `failed`）。导出面板已经在用，**不要再跑第二
-  遍求值器**；
-* `store/validationStore.rawIssuesFor(canvasId)` —— proof 留档要的**聚合投影**
-  （同一次求值的另一份投影，格式一个字节没动）；
-* `lib/validation.exportContextRaw / exportContextIssues` —— 导出上下文那条规则
-  （与 MCP 的 `bridge.export_raster_issues()` 严格同源）。**新的导出上下文规则
-  加在这里**，不要加进组件；
-* `lib/issueFocus.openProblems(filter?)` / `focusIssue(issue)` —— 把用户交回
-  问题面板 / 直接跳到那个对象；
-* `lib/validationText.ts` —— 问题在界面上怎么说（短标题、当前值→要求、
-  人话主语、等级图标表）。导出摘要与问题面板已经共用它。
+* `lib/exportRequest.buildExportRequest(input)` —— 导出载荷的**唯一构造**。
+  13–16 改属性之后**不需要动它**：属性改的是 `doc.objects` 与
+  `panel.overrides`，载荷在导出那一刻从那里现取；
+* `lib/exportPayload.toExportObjects()` —— 画布对象 → 载荷的唯一投影
+  （顺序即 z 序、隐藏对象不发）。**新属性加在这一处**；
+* `lib/exportName.checkFilename()` —— 文件名合不合法（八条闭集原因，与
+  `engine/exportreq.py` 严格同源，改一边必须重生成向量）；
+* `store/exportStore.ts` —— 起 / 取消 / 跟进度。作业活在 store 不活在对话框。
 
-以及 10 留下的三个（原样有效）：`lib/specBinding.resolveDocumentSpec()`、
-`store/profileStore` 的 `specs` / `catalog()`（**订阅 `specs`，不要订阅
-`catalog()`**——后者每次调用都新建数组）、`lib/profileText.ts`。
+以及 09–11 留下的四个（原样有效）：`lib/originalSpec.getOriginalOutputSpec()`、
+`lib/specBinding.resolveDocumentSpec()`、
+`store/validationStore.getValidationSummary()`、`lib/issueFocus.focusIssue()`。
 
 ---
 

@@ -41,7 +41,16 @@ _SOURCE_FILES = (
     "engine/project_refresh.py",
     "engine/atomicio.py",
     "engine/profilestore.py",
+    "engine/exportreq.py",
+    "engine/exportjob.py",
 )
+
+#: 「自己报得出全部 code」的模块（ADR 0031 的导出管线）。
+#:
+#: 正则扫源码在这两个模块上**看不见东西**：`exportreq._one_of()` 收的 code 是
+#: 一个变量，`exportjob` 是 `job.error_code = …` 的赋值。所以它们各自导出一个
+#: `ERROR_CODES` 元组，门禁直接读那个元组——比正则强，因为它不可能与实现漂移。
+_CODE_REGISTRIES = ("tavotto.engine.exportreq", "tavotto.engine.exportjob")
 
 
 def _all_error_sources() -> str:
@@ -49,6 +58,15 @@ def _all_error_sources() -> str:
     return "\n".join(
         (root / n).read_text(encoding="utf-8") for n in _SOURCE_FILES if (root / n).is_file()
     )
+
+
+def _registry_codes() -> set[str]:
+    import importlib
+
+    out: set[str] = set()
+    for name in _CODE_REGISTRIES:
+        out.update(importlib.import_module(name).ERROR_CODES)
+    return out
 
 
 #: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
@@ -61,6 +79,10 @@ _CODE_PATTERNS = (
     # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
     # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
     r'ProfileStoreError(?:\.__init__)?\(\s*(?:self,\s*)?"([a-z0-9_]+)"',
+    # 导出管线（ADR 0031）：请求层的结构化异常 + 作业层的逐项失败
+    r'ExportRequestError\(\s*"([a-z0-9_]+)"',
+    r'error_code\s*=\s*"([a-z0-9_]+)"',
+    r'_fail\(\s*job,\s*"([a-z0-9_]+)"',
 )
 
 
@@ -174,6 +196,36 @@ USER_VISIBLE_CODES = {
     "profile_revision_missing": set(),
     "profile_revision_conflict": set(),
     "profile_store_unsupported_schema": set(),
+    # --- Prompt 12（ADR 0031）：统一导出管线。请求层 `engine/exportreq.py`
+    #     与作业层 `engine/exportjob.py` 各自导出 ERROR_CODES，门禁读那个
+    #     元组而不是正则扫源码（`_one_of()` 的 code 是变量，正则看不见）---
+    "bad_request": set(),
+    "bad_scope": {"value"},
+    "bad_overwrite": {"value"},
+    "bad_background": {"value"},
+    "bad_policy": {"value"},
+    "bad_formats": set(),
+    "no_format": set(),
+    "unsupported_format": {"format"},
+    "bad_ppi": {"value"},
+    "ppi_out_of_range": {"value", "min", "max"},
+    "bad_geometry": {"field"},
+    "bad_filename": {"reason"},
+    "bad_validation": set(),
+    "bad_objects": set(),
+    "missing_original": set(),
+    "missing_figure": set(),
+    "bad_overrides": set(),
+    "name_exhausted": set(),
+    "export_dir_unwritable": {"error"},
+    "tmp_dir_failed": {"error"},
+    "export_failed": {"error"},
+    "format_failed": {"error"},
+    "no_output": set(),
+    "publish_failed": {"error"},
+    "report_failed": {"error"},
+    "report_write_failed": {"error"},
+    "source_missing": {"figure"},
 }
 
 pytestmark = pytest.mark.skipif(
@@ -188,7 +240,8 @@ def _errors(locale: str) -> dict:
 
 @pytest.mark.parametrize("code", sorted(USER_VISIBLE_CODES))
 def test_backend_emits_the_code(code: str):
-    assert code in _declared_codes(_all_error_sources()), f"后端源码里没有发出 {code}"
+    declared = _declared_codes(_all_error_sources()) | _registry_codes()
+    assert code in declared, f"后端源码里没有发出 {code}"
 
 
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
@@ -226,14 +279,44 @@ def test_error_field_is_still_there_as_the_fallback():
             # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
             raised = any(
                 re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
-                for name in ("AgentError", "RefreshError", "AtomicWriteError", "ProfileStoreError")
+                for name in (
+                    "AgentError",
+                    "RefreshError",
+                    "AtomicWriteError",
+                    "ProfileStoreError",
+                    "ExportRequestError",
+                )
             )
+            # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗
+            # 转成 JSON，它自己带 error 原文（下面那条用例盯着）
+            raised = raised or code in _registry_codes()
             assert raised, f"{code} 既没有响应也没有异常"
             continue
         idx = src.index(needle)
         # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
         start = src.rindex("jsonify({", 0, idx)
         assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+
+
+def test_the_export_funnel_still_carries_the_original_text():
+    """导出管线（ADR 0031）的两个漏斗：请求层与作业层各一个，都要带 error 原文。
+
+    只断言"有个 code"是不够的——两个漏斗都少写一个 `"error"`，装着旧前端的
+    用户就会看到一个空白的失败提示，而 code 只在开发者工具里躺着。
+    """
+    app = APP.read_text(encoding="utf-8")
+    # ① 请求层：`_prepare_export_job()` 把 ExportRequestError 转成 JSON
+    start = app.index("def _prepare_export_job(")
+    block = app[start : start + 900]
+    for key in ('"error": exc.message', '"code": exc.code', '"params": exc.params'):
+        assert key in block, f"_prepare_export_job() 少了 {key}"
+    # ② 作业层：`_legacy_export_response()` 把作业失败转成 JSON
+    start = app.index("def _legacy_export_response(")
+    block = app[start : start + 1200]
+    assert '"error": job.error_params.get("error")' in block, (
+        "_legacy_export_response() 少了 error 原文"
+    )
+    assert '"code": code' in block, "_legacy_export_response() 少了 code"
 
 
 def test_the_atomic_write_funnel_still_carries_the_original_text():

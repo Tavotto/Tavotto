@@ -211,13 +211,32 @@ def _at(src: str, pattern: str) -> int:
 
 
 def test_export_is_captured_after_the_files_are_written():
-    """源码级看护：`export_completed` 必须出现在 `canvas.save_*` 之后、
-    `return jsonify` 之前。挪到函数开头的话失败的导出也会被记成成功。"""
-    src = inspect.getsource(m.api_export)
+    """源码级看护：`export_completed` 只在**文件真的写完之后**记。
+
+    ADR 0031 之后埋点从 `api_export()` 挪进了 `_export_telemetry(job)`（同步与
+    后台两条路共用一份），所以这条门禁跟着改了扫描面——但**没有放松**：
+
+    * 埋点函数自己先按 `job.status` 挡掉非终局与失败的作业（挪到函数开头的话
+      失败的导出会被记成成功，那正是这条用例当初要防的）；
+    * 两条入口都必须在**作业跑完之后**才调它。
+
+    只钉「函数里有个 capture」是不够的：那样把 `if job.status not in (...)`
+    这道闸删掉照样绿。
+    """
+    src = inspect.getsource(m._export_telemetry)
     at_capture = _at(src, r'engine_telemetry\.capture\(\s*"export_completed"')
-    assert src.index("canvas.save_pdf") < at_capture
-    assert src.index("canvas.save_png") < at_capture
-    assert at_capture < src.rindex("return jsonify")
+    at_guard = _at(src, r"if job\.status not in \(")
+    assert at_guard < at_capture, "状态闸必须在埋点之前"
+    assert "STATUS_DONE" in src and "STATUS_PARTIAL" in src, "闸放行的必须是终局的成功态"
+
+    # 同步入口：先 run 完再埋点
+    sync = inspect.getsource(m.api_export)
+    assert sync.index("engine_exportjob.run(") < _at(sync, r"_export_telemetry\(job\)")
+
+    # 后台入口：埋点挂在进度推送里，且只在终局状态上放行
+    started = inspect.getsource(m.api_export_start)
+    at_status = _at(started, r'payload\.get\("status"\) in \(')
+    assert at_status < _at(started, r"_export_telemetry\(job\)")
 
 
 def test_ai_is_captured_after_the_session_exists():

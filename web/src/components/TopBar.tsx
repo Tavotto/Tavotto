@@ -26,7 +26,7 @@ import {
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { openPackage } from '@/lib/api'
+import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
@@ -105,6 +105,31 @@ export function TopBar() {
       </div>
     </header>
   )
+}
+
+/**
+ * 导出可复现项目包（.tavotto）：布局 + 引用素材 + 源脚本 + 清单。
+ *
+ * **它从导出对话框搬到了这里**（Prompt 12 §五）：打包出的是一个"项目"，
+ * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
+ * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
+ */
+async function exportPackage() {
+  const ui = useUiStore.getState()
+  const doc = useDocumentStore.getState()
+  try {
+    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
+    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'))
+  } catch (e) {
+    ui.setStatus(
+      msg(
+        'status.packageFailed',
+        { error: e instanceof Error ? e.message : String(e) },
+        'workspace',
+      ),
+      'error',
+    )
+  }
 }
 
 /**
@@ -273,6 +298,7 @@ function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
         {t('topbar.versionTimeline')}
       </MenuItem>
+      <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
 
       <MenuSeparator />

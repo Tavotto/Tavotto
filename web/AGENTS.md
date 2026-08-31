@@ -243,8 +243,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
 ```
 
 * **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
-  与 `rawIssuesFor(canvasId)`（proof 留档要的聚合投影，**同一次求值的另一份
+  与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
   投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份。
+  它也**不列第二套清单**（ADR 0031 §四）：只给数量 + 「查看问题」，
+  完整清单、筛选与修复都在左侧问题面板。
 * **`ready` / `failed` 不许压扁成「没问题」**：`total === 0` 单独看不足以说
   「检查通过」。打开导出对话框时**当场同步跑一遍**，就是为了不让那 250ms 防抖
   窗口里说出一句假话。
@@ -533,6 +535,37 @@ descriptor 文件读。
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏
   describe；e2e `a11y.spec.ts` 的接入状态两条 + `golden-paths.spec.ts`。
+
+## 统一导出管线（2026-08-31，Prompt 12；ADR 0031）
+
+```text
+prepareExport(input)   请求成形 + 就地校验（**不发网络**，输入框每敲一个字都能调）
+validateExport(input)  真的开始之前能看出来的：重名 / 目录写不写得了
+runExport(input)       起作业 → SSE + 轮询跟进度 → 落终局
+cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动过）
+```
+
+- **载荷的构造只有 `lib/exportRequest.buildExportRequest()` 一处**。组件不许
+  自己拼那个对象，也不许在第二个 API 上把同一批参数再抄一遍——那正是
+  「预检按一套规矩、导出按另一套」的来源。
+- **`scope=original` 的载荷里没有 x/y/w/h，也没有页面尺寸**。不是"记得别填"，
+  是那几个键不在类型上。尺寸来自 `lib/originalSpec.getOriginalOutputSpec()`，
+  被忽略的变换逐项进 `ignored` 并**说给用户听**。
+- **PPI 只在有位图格式时是数字**，否则 `null`。压成一个默认值的话，界面就会
+  去显示一个不影响任何东西的设置（T-49 同一个形状）。
+- **作业活在 `store/exportStore.ts`，不活在对话框里**：关掉弹窗不取消作业。
+  进度经 SSE `export.progress`，**外加一条轮询**——SSE 是加速器不是唯一通道
+  （浏览器演练场、断线、代理下必须照样拿得到终局）。两条路进同一个
+  `applyExportJob()`，晚到的旧快照按 job_id + 终局状态挡掉。
+- **「导出期间又被编辑过」用此刻的文档重算指纹**，不是拿 `lastInput.doc`
+  跟自己比（那份是开始时冻住的引用，比出来永远相等，而空的 diff 与"没变化"
+  长得一模一样）。指纹量的是**载荷**：改画布名、折叠侧栏、撤销又重做，
+  导出结果一样就不该冒这句话。
+- **文件名规则是严格同源对**（`engine/exportreq.py`），八条闭集原因 +
+  `tests/golden/filename_vectors.json`。首尾空白的字符集**写死一份**，
+  不许退回 `String.trim()`（它与 Python 的 `str.strip()` 认的集合不同）。
+- **原图不可用时说出原因，不隐藏选项、不静默改成画布**：一个消失的按钮
+  无法解释自己，一次悄悄换掉的范围会让用户拿到一张他没要的图。
 
 ## 两条工作流与原图规格（2026-08-29，Prompt 09；ADR 0028）
 

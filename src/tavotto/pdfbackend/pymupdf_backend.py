@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -639,19 +640,25 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
 # 合成画布
 # ---------------------------------------------------------------------------
 class Canvas:
-    """一页白底合成画布。用法：
+    """一页合成画布。用法：
 
     with compose(page_w_mm, page_h_mm) as canvas:
         for o in objects:
             canvas.place(o, dpi=dpi, resolve_panel=resolve)
         canvas.save_pdf(path)      # 真矢量
         canvas.save_png(path, dpi) # 由同一页渲染，保证两份完全一致
+
+    `transparent=True` 时**不画白底矩形**，PNG 也带 alpha 通道。透明背景是
+    位图才有的能力；PDF 上"透明"只是没有底色，两者都由这同一页出，所以两份
+    产物的几何仍然逐点一致。
     """
 
-    def __init__(self, page_w_mm: float, page_h_mm: float):
+    def __init__(self, page_w_mm: float, page_h_mm: float, transparent: bool = False):
         self._doc = pymupdf.open()
         self._page = self._doc.new_page(width=mm2pt(page_w_mm), height=mm2pt(page_h_mm))
-        self._page.draw_rect(self._page.rect, color=None, fill=(1, 1, 1))  # 白底
+        self._transparent = bool(transparent)
+        if not self._transparent:
+            self._page.draw_rect(self._page.rect, color=None, fill=(1, 1, 1))  # 白底
 
     def place(self, o: dict, dpi: int, resolve_panel: Callable[[dict, int], Path]) -> None:
         """按对象类型落一个元素。panel 的源文件路径由 resolve_panel 回调给出
@@ -671,8 +678,12 @@ class Canvas:
 
     def save_png(self, path: Path, dpi: int) -> None:
         zoom = dpi / 72.0
-        pix = self._page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+        pix = self._page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=self._transparent)
         pix.save(str(path))
+
+    @property
+    def size_pt(self) -> tuple[float, float]:
+        return (self._page.rect.width, self._page.rect.height)
 
     def close(self) -> None:
         self._doc.close()
@@ -684,8 +695,105 @@ class Canvas:
         self.close()
 
 
-def compose(page_w_mm: float, page_h_mm: float) -> Canvas:
-    return Canvas(page_w_mm, page_h_mm)
+def compose(page_w_mm: float, page_h_mm: float, transparent: bool = False) -> Canvas:
+    return Canvas(page_w_mm, page_h_mm, transparent)
+
+
+# ---------------------------------------------------------------------------
+# 按原图导出（scope=original，ADR 0031）
+# ---------------------------------------------------------------------------
+#: 位图源在没有可信密度时按这个数换算 mm。与 `engine/originalspec.ASSUMED_DPI`
+#: 同一个数字不是巧合——那是同一个假设，改一处必须改另一处。
+_ORIGINAL_ASSUMED_DPI = 96.0
+
+
+def original_pdf(src: Path, out: Path) -> dict:
+    """把一张图**按它自己的尺寸**写成 PDF。
+
+    * **矢量源**（PDF）：整页原样搬过去。不是重画，是 `insert_pdf`——页面尺寸、
+      字形、路径、色彩空间一个字节没动，出来的仍然是真矢量。这正是
+      `scope=original` 的全部意义：画布上的缩放/裁剪/旋转在这条路上根本没有
+      出场机会。
+    * **位图源**：新建一页，页面尺寸 = 像素数 ÷ 密度，图整页铺满。这是"把位图
+      装进 PDF 容器"，**不声称它变成了矢量**（返回的 `vector` 是 False）。
+
+    回 `{w_pt, h_pt, px_w, px_h, vector, pages}`。
+    """
+    src, out = Path(src), Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if src.suffix.lower() == ".pdf":
+        with pymupdf.open(src) as doc:
+            rect = doc[0].rect
+            pages = doc.page_count
+            with pymupdf.open() as dest:
+                # 只搬第一页：一张「图」在本产品里恒等于一页（`_place_panel`
+                # 也只取 doc[0]）。多页 PDF 被当素材放进来时，画布上看到的是
+                # 第一页，导出必须与看到的一致
+                dest.insert_pdf(doc, from_page=0, to_page=0)
+                dest.save(str(out), deflate=True)
+        return {
+            "w_pt": rect.width,
+            "h_pt": rect.height,
+            "px_w": None,
+            "px_h": None,
+            "vector": True,
+            "pages": pages,
+        }
+
+    pix = pymupdf.Pixmap(str(src))
+    w_pt = pix.width / _ORIGINAL_ASSUMED_DPI * 72.0
+    h_pt = pix.height / _ORIGINAL_ASSUMED_DPI * 72.0
+    with pymupdf.open() as dest:
+        page = dest.new_page(width=w_pt, height=h_pt)
+        page.insert_image(page.rect, filename=str(src))
+        dest.save(str(out), deflate=True)
+    return {
+        "w_pt": w_pt,
+        "h_pt": h_pt,
+        "px_w": pix.width,
+        "px_h": pix.height,
+        "vector": False,
+        "pages": 1,
+    }
+
+
+def original_png(src: Path, out: Path, ppi: int | None, native_grid: bool = True) -> dict:
+    """把一张图**按它自己的尺寸**写成 PNG。
+
+    * **矢量源**：按 `ppi` 栅格化。矢量没有像素网格，所以这里必须有一个 ppi；
+      调用方给 `None` 是个契约错误。
+    * **位图源**且 `native_grid=True`：**原样复制**。不重采样是这条路的重点
+      ——"按原图导出"最容易被悄悄破坏的地方就是顺手按导出 ppi 缩一遍，
+      那会把一张 300×200 的图变成 2500×1667 的糊图（共享规则 §8）。
+    * **位图源**且 `native_grid=False`：用户明确要了另一个像素网格，按 ppi
+      与源密度的比值重采样。
+
+    回 `{px_w, px_h, resampled}`。
+    """
+    src, out = Path(src), Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if src.suffix.lower() == ".pdf":
+        if not ppi:
+            raise ValueError("矢量源栅格化必须给 ppi")
+        with pymupdf.open(src) as doc:
+            page = doc[0]
+            zoom = ppi / 72.0
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+            pix.save(str(out))
+            return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
+
+    if native_grid or not ppi:
+        shutil.copyfile(src, out)
+        pix = pymupdf.Pixmap(str(out))
+        return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
+
+    pix = pymupdf.Pixmap(str(src))
+    scale = ppi / _ORIGINAL_ASSUMED_DPI
+    target_w = max(1, round(pix.width * scale))
+    target_h = max(1, round(pix.height * scale))
+    scaled = pymupdf.Pixmap(pix, target_w, target_h, None)
+    scaled.save(str(out))
+    return {"px_w": scaled.width, "px_h": scaled.height, "resampled": True}
 
 
 def annotate_asset(

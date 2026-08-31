@@ -5,7 +5,308 @@
 
 ---
 
-## 最近一次：Session 11（2026-08-31）
+## 最近一次：Session 12（2026-08-31）
+
+### 目标
+
+把导出**底层与界面**同时重做：原图与画布收敛成**同一个 `ExportRequest` 的
+两个 scope**，作业获得原子落盘 / 取消 / 部分失败可见 / 明确的覆盖策略，
+导出面板按用户做决定的顺序重排并删掉六类噪音。
+
+本阶段**不做**属性系统改造（Prompt 13）、**不做**科学文本与字体回退
+（Prompt 14）、**不动** MCP 那条导出入口（另一个 bundle、另一份载荷）。
+
+### 开始前实测到的四件事（不是假设）
+
+1. **「按原图导出」这条路根本不存在。** ADR 0028 定义了 `OriginalOutputSpec`，
+   Prompt 09 让快速编辑跑起来了，但导出那一端只有画布合成——用户在快速编辑里
+   改完一张图点导出，拿到的是**那张图在画布上的落位**。
+2. **「导出什么」有四份构造**：`ExportDialog.tsx` / `app.api_export()` /
+   codex-plugin bridge / `/api/package`，默认值并不一样。
+3. **导出目录里的文件全都带 `_MMDD_HHMMSS`**：撞名问题解决了，代价是用户
+   永远拿不到自己起的那个名字。
+4. **合成是直写目标路径的**：`canvas.save_pdf(out_dir / name)` 没有临时文件，
+   中途失败留下半个 PDF；`proof` 也是 `write_text` 直写。
+
+### 实际完成
+
+**1. `engine/exportreq.py` —— 「这次导出要什么」只有这一份定义。**
+
+```text
+scope ∈ {original, canvas}   formats   filename   ppi: int|None
+background   overwrite ∈ {ask, replace, rename}   validation{policy, acknowledged}
+include_style_check_report   document_id / document_revision
+canvas{page_w_mm, page_h_mm, objects[]} | original{figure_id, overrides[], w/h/px, ignored[]}
+```
+
+`OriginalSource` 上**没有** x/y/w/h、页面尺寸、crop（T-59）。缺省值只有这一处；
+旧契约（`stem` / `items[]`+`texts[]`）由 `normalize()` 抬成同一个作业，
+`legacy_naming=True` 让它继续拿到带时间戳的名字。
+
+**2. `engine/exportjob.py` —— 一次导出的生命周期只有这一份实现。**
+`prepare / validate / run / cancel / progress`；临时目录 → 全部产出完成 →
+`atomicio.publish_file()` 逐个原子 replace；`partial` 是独立一档；
+取消清临时目录；`sweep_stale_tmp_dirs()` 扫掉上一次进程被 kill 留下的。
+
+**3. `atomicio.publish_file(tmp, dest)`** —— 「字节从来没经过我们的手」那条
+路上的同一套纪律（fsync 文件 → replace → fsync 目录 → 失败清 tmp）。
+
+**4. `pdfbackend` 新增两个原图产出 + 透明背景。**
+`original_pdf()`（矢量整页 `insert_pdf` 搬运，不重画）/ `original_png()`
+（位图**保源像素网格**）/ `compose(w, h, transparent)`。
+
+**5. 五个端点、一个服务。** `POST /api/export`（同步，旧契约照旧）、
+`/api/export/start`（后台作业 + SSE `export.progress`）、`/state`、`/cancel`、
+`/validate`。后台线程经 `app.bound_project(ctx)` 钉在起它的那个项目上（T-63）。
+
+**6. 前端三个新模块。** `lib/exportName.ts`（文件名规则，**严格同源对**）、
+`lib/exportRequest.ts`（载荷构造 + scope 默认值 + 原图可用性 + 快照指纹）、
+`store/exportStore.ts`（作业编排：SSE + 轮询、晚到快照挡掉、失败保留设置）。
+
+**7. 导出面板整屏重做。** 文件名 → 输出范围 → 格式 → 分辨率（仅位图）→
+规范 → 检查 → 高级选项。删除清单逐项见下；「打包项目」**搬到 TopBar 文档菜单**
+与「导入项目包」并排（移走不等于砍掉）。
+
+**8. 「留档」→「样式检查报告」**，进高级选项，格式升 v3（+ 版本 / 时间 /
+产物事实 / scope / ignored）。文件名 `<基名>_style-check.json`；旧路径仍写
+`<stem>_<时间戳>_proof.json`，`kind` 不变。
+
+### 关键 API（Prompt 13 直接用）
+
+```python
+# src/tavotto/engine/exportreq.py
+normalize(spec) -> ExportRequest        # 缺省值唯一出处
+check_filename(name) -> str | None      # 八条闭集原因；顺序是判据的一部分
+strip_output_extension / output_name / dedupe_name
+SCOPES / FORMATS / OVERWRITE_POLICIES / BACKGROUNDS / VALIDATION_POLICIES
+PPI_MIN / PPI_MAX / PPI_DEFAULT / FILENAME_MAX / ERROR_CODES
+
+# src/tavotto/engine/exportjob.py
+prepare(spec, export_dir) -> ExportJob   validate(job) -> dict
+run(job, produce, *, publish=None, report=None) -> dict    run_async(...)
+cancel(job_id) / progress(job_id) / sweep_stale_tmp_dirs(dir) / ERROR_CODES
+Produced / Output / Cancelled / STATUS_*
+
+# src/tavotto/app.py
+bound_project(ctx)                       # 后台线程钉项目（**必须**）
+_export_produce(job, tmp_dir)            # canvas / original 的分歧只在这里
+```
+
+```ts
+// web/src/lib/exportName.ts   —— 与 exportreq.py 严格同源
+checkFilename / stripOutputExtension / outputName / outputNames / dedupeCheck / FILENAME_MAX
+
+// web/src/lib/exportRequest.ts  —— 载荷构造**唯一一处**
+buildExportRequest(input): { request, names, revision }
+defaultScope(mode) / originalAvailability(figureId) / filenameProblem(raw, formats)
+snapshotRevision(request) / hasRaster(formats) / PPI_MIN / PPI_MAX / PPI_DEFAULT
+
+// web/src/store/exportStore.ts
+prepareExport(input)          // 不发网络，输入框每敲一个字都能调
+validateExportRequest(input)  // 重名 / 目录写不写得了
+runExport(input) / cancelCurrentExport() / applyExportJob(job) / resetExportState()
+liveRevision(input)           // 用**此刻的文档**重算指纹
+useExportStore                // job / running / startError / lastInput / editedDuringExport
+```
+
+### 迁移
+
+**没有磁盘格式改动**，除了两处**新增**：
+* 样式检查报告 v3（新路径的新文件名；旧路径的 `_proof.json` 一个字节没动，
+  `kind` 仍是 `tavotto-proof`）；
+* 新路径的导出文件名不再带时间戳（旧路径带）。
+
+`tests/golden/filename_vectors.json` 是新增的跨语言向量；生成器
+`scripts/gen_filename_vectors.py`（`--write` 重生成，无参校对）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/exportreq.py          ExportRequest / 文件名规则 / 覆盖策略
+新增  src/tavotto/engine/exportjob.py          作业生命周期 / 原子发布 / 取消 / 部分失败
+新增  scripts/gen_filename_vectors.py          跨语言向量的生成与校对
+新增  tests/golden/filename_vectors.json       37 check + 10 strip + 2 name + 5 dedupe
+新增  tests/test_export_request.py             （22 条）
+新增  tests/test_export_pipeline.py            （29 条）
+新增  web/src/lib/exportName.ts                文件名规则（TS 侧同源）
+新增  web/src/lib/exportName.golden.test.ts    （62 条）
+新增  web/src/lib/exportRequest.ts             载荷构造唯一一处
+新增  web/src/lib/exportRequest.test.ts        （10 条）
+新增  web/src/store/exportStore.ts             作业编排（SSE + 轮询）
+新增  web/src/store/exportStore.test.ts        （7 条）
+新增  docs/adr/0031-unified-export-pipeline.md
+改动  src/tavotto/engine/atomicio.py           +publish_file()
+改动  src/tavotto/pdfbackend/pymupdf_backend.py +original_pdf/original_png/透明背景
+改动  src/tavotto/pdfbackend/__init__.py       边界契约 +2
+改动  src/tavotto/app.py                       导出端点整段重写 + bound_project()
+改动  web/src/lib/api.ts                       ExportRequest/ExportJob/ExportOutput +4 端点
+                                               +'export.progress' 事件
+改动  web/src/hooks/useServerEvents.ts         +export.progress → applyExportJob
+改动  web/src/components/ExportDialog.tsx      **整屏重做**（956 → 970 行）。界面项少了
+                                               六类，行数没少是因为结果区 / 进度 / 冲突条 /
+                                               范围说明各拆成了具名子组件
+改动  web/src/components/TopBar.tsx            +「导出项目包」（从导出面板搬来）
+改动  web/src/components/ExportDialog.test.tsx 重写（17 条）
+改动  web/src/i18n/locales/*/dialogs.json      export.* 删 21 组 / 加 27 组
+改动  web/src/i18n/locales/*/errors.json       +27 条后端 code 文案
+改动  web/src/i18n/locales/*/workspace.json    +topbar.exportPackage / status.packaged*
+改动  web/e2e/asset-library.spec.ts            预检摘要的措辞变了
+改动  web/e2e/keyboard-golden-path.spec.ts     **修掉一处空门禁**（见下）
+改动  tests/test_error_codes.py                扫描面 +2 模块 +3 正则 + ERROR_CODES 注册表
+改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
+改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
+改动  docs/implementation/product-ux-reliability/*
+重建  codex-plugin/mcp/widget/canvas.html      指纹 6747d7846530d19c
+重建  web/dist-playground/                     指纹 8cb45ddcf6ac7975（不进 git）
+```
+
+### 界面上删掉的（§五 逐项）
+
+预设整行 / 重复的期刊宽 / profile 的 id 与版本号 / 页面·栏位·字号·DPI·矢量·
+位图的大方格 / 「合成走 PyMuPDF」「Codex 插件的 tavotto_export」那句说明 /
+行内的内部对象标签 / 三点菜单里的「打包项目」/「留档」这个标签 /
+`_时间戳` 后缀 / 导出摘要那一行（页面·N 面板·N 文字·N 标注）/
+弹窗里可展开的第二套问题清单。
+
+### 这一轮踩到的坑
+
+**1. 变异反证抓出三条空判据，三种成因。**
+① 「透明背景」量的是 `pix.alpha == 1`（有没有 alpha 通道），而变异改的是
+"底下有没有铺白" —— **主语对了，维度错了**；② 「后台线程不绑定项目」在只开
+一个项目的用例里量不出来 —— **判据看不见那个维度**；③ 「原图尺寸用 spec
+还是用落位」在夹具里两个数字相等（都是 80×60）—— **夹具让判据恒真**。
+三条都补了判据，第二轮 23/23 全红。
+
+**2. `editedDuringExport` 第一版是恒等成立的。** 它拿 `lastInput.doc` 重算
+指纹再跟自己比 —— 那份是导出开始时冻住的引用，**比出来永远相等**，而空的
+diff 与"没变化"长得一模一样。改成现取 `useDocumentStore.getState().doc`。
+
+**3. 一处 e2e 空门禁是新界面制造的。** `keyboard-golden-path` 用
+`dialog.getByText(/\.pdf/)` 判"导出完成"，而新界面在文件名下方摆了一行
+**文件名预览**（`Fig 1.pdf`）——那条判据在按导出**之前**就成立。改成断言
+结果区的「已保存到」+ 一个真正指向 `/exports/` 的链接。
+
+**4. 错误码门禁的前提变了。** 它靠正则扫源码找 `"code": "..."`，而
+`exportreq._one_of()` 收的 code 是**变量**、`exportjob` 是 `job.error_code =`
+的赋值——两个模块整体对它隐形。处置是**升级枚举面**（两个模块各导出一个
+`ERROR_CODES` 元组，门禁直接读它）而不是给新代码开白名单。
+
+**5. `str.strip()` 与 `String.trim()` 认的空白字符集不一样。** U+FEFF 只有 JS
+认，`\x1c`–`\x1f` 只有 Python 认。文件名的首尾空白判定要是各用各的内建函数，
+两侧对 `"﻿Fig"` 会给出不同答案。写死一份共用集合，向量里专门留了几条用例。
+
+**6. `dot_only` 排在 `trailing_dot` 后面就永远够不着。** `.` 与 `..` 都以点
+结尾，第一版里那条规则是死的。变异反证顺手抓到（把它删掉不红）。
+
+### 尚存限制
+
+1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
+   仍写 `_proof.json`）。它是另一个进程、另一份载荷、另一条分发路径，
+   并进来要连 widget 一起改，本轮刻意没动。
+2. **PPI 的重采样只在原图位图源上有开关**（`native_grid`），界面没有暴露
+   「按另一个像素网格导出位图」这个选项——默认永远保源网格。
+3. **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败）。
+4. **进度只有阶段与步数**，没有百分比：合成那一步的耗时占大头而它不可分。
+5. **透明背景对 PDF 是"不画白底"**，不是 PDF 的透明组；位图源装进 PDF 时
+   `vector: false`，界面没有单独说这一句。
+6. **e2e 只跑了四条 spec 的 chromium project**（a11y / asset-library /
+   keyboard-golden-path / i18n，27 passed）。webkit / chromium-en 与其余 spec
+   本轮没跑。
+7. 04–11 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`verify-main`（从 `origin/main` 的 `dd7c5b5` 开出，**尚未推送**）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 13：统一属性系统、文字控件、标注字体）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「6. 输出一致性合同」（本轮整段重写）
+与「4. Style / Spec / Validation / Export 分层」、`ARCHITECTURE.md` 的 §5.3
+（本轮整段重写）与 §6/§6b、`docs/adr/0031-unified-export-pipeline.md`。
+
+**Session 12 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 这次导出要什么 | `lib/exportRequest.buildExportRequest(input)` | **唯一构造**。13–16 改属性之后不需要动它——属性改的是 `doc.objects`，载荷从那里现取 |
+| 文件名合不合法 | `lib/exportName.checkFilename()` | 八条闭集原因；与 Python 侧同源，改一边必须改另一边 + 重生成向量 |
+| 起 / 取消 / 跟进度 | `store/exportStore.ts` | 作业活在 store，不活在对话框 |
+| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | Session 09 留的（12 的 `scope=original` 就是它的消费端） |
+| 按哪套规范 | `lib/specBinding.resolveDocumentSpec(binding, catalog)` | Session 10 留的 |
+| 检查结果摘要 | `store/validationStore.getValidationSummary(scope, extra?)` | Session 11 留的，**不要再跑第二遍求值器** |
+
+**属性/文本改动怎么自动进同一条导出管线**（Prompt 13–16 的关注点）：
+
+```text
+用户改一个属性 → documentStore.commit → doc.objects 变
+    ↓（导出时现取，没有第二份缓存）
+buildExportRequest({ doc })
+    ↓ scope=canvas  → canvas.objects[]  → pdfbackend.compose().place()
+    ↓ scope=original→ original.overrides[] → worker.export() 全质量重渲染
+```
+
+**属性系统只要改 `doc.objects` 与 `panel.overrides`，导出这一端一行都不用动。**
+`toExportObjects()` 是画布对象 → 载荷的唯一投影（顺序即 z 序、隐藏对象不发），
+新属性加在那里一处；原图那一端连投影都没有——它直接把 `overrides` 交给引擎。
+文字与字体（14）同理：图内文字走 override → worker，画布文字走
+`pdfbackend._draw_text`（几何与 `TextView` 严格同源）。
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条原样
+成立，12 再加五条）：
+
+24. **不许在组件里拼导出载荷。** 构造只有 `buildExportRequest()` 一处；
+    要新字段就加进 `ExportRequest`（两侧同时），不要在第二个 API 上抄一遍。
+25. **不许往 `OriginalSource` 上加布局字段**（T-59）。x/y/w/h、页面尺寸、
+    crop 一个都不进那个类型——那是「原图导出不套用画布缩放」唯一的结构性保证。
+26. **不许把「不适用」压成一个默认值**（T-60）。`ppi: null` 与 `ppi: 600`
+    是两个答案；同族的还有 `dpi_source: unknown`、`ready: false`。
+27. **不许把部分失败报成全部成功，也不许因为一项失败就丢掉另一项**（T-62）。
+28. **不许让后台线程走「落到默认项目」那条兜底**（T-63）。起线程之前
+    `bound_project(ctx)`；它不会报错，只会成功地导出另一个图库的图。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）——**导出产物也是**
+   （`publish_file()`）；保存状态只经 `setSaveState()` / `setDocNotice()` 改。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
+   `lib/originalSpec.ts` 一份**（ADR 0028）；**「按哪套规范检查」只有
+   `lib/specBinding.ts` 一份**（ADR 0029）；**「这份项目有什么问题」只有
+   `lib/validation.ts` + `store/validationStore.ts` 一条链**（ADR 0030）；
+   **「这次导出要什么」只有 `ExportRequest` 一个结构、「怎么落盘」只有
+   `engine/exportjob.py` 一份**（ADR 0031）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。**检查本身零写入**。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处；「谁认领了这个 stem」只有
+   `discover.claims_of()` 一处；「状态说成什么话」只有 `lib/readinessText.ts`
+   一处；「文档里有没有这张图」只有 `findFigurePanel()` 一处；「profile 叫
+   什么」只有 `lib/profileText.ts` 一处；**「文件名合不合法」只有
+   `check_filename()` / `checkFilename()` 这一对**。
+7. **就绪度与检查都不执行用户脚本、不 probe、不写盘**；**导出会执行**
+   （有 override 的图要重渲染），但**只在用户明确点导出之后**。
+8. **派生数据刷新不得把文档标脏，也不得进普通撤销历史。** 导出设置
+   （格式 / PPI / 报告开关 / 最近的规范）是**本机 UI 偏好**，不进文档、
+   不进 undo；选规范是文档修改。
+9. **素材不在清单里 ≠ 脚本关系失效**；**≠ 这张图没有规格**；**查不了 ≠ 没问题**；
+   **原图不可用 ≠ 悄悄改成画布导出**。
+10. `reason` 是闭集：定位失败的原因、**文件名不合法的原因**（八条）、
+    **覆盖策略**（三条）、**作业状态**（七档）都不接受自由文本。
+11. **「没测量 / 不适用」不许压扁**：`conflicts` 的 `null`、`registry_valid`
+    的 `null`、`capability` 的 `undefined`、`dpi` 的 `null` 与 `dpi_source`
+    的四档、`follow` 的"没选过"、检查的 `ready: false`、**导出的 `ppi: null`**。
+
+---
+
+## 历史：Session 11（2026-08-31）
 
 ### 目标
 
@@ -229,7 +530,7 @@ lint 基线跑的，当场 `git stash pop` 全部取回。**别为了取个基�
 
 ---
 
-## 下一阶段入口（Prompt 12：导出管线与精简导出 UI）
+### Session 11 当时留给 12 的入口（已被 12 消费，保留备查）
 
 **从这里开始读**：`UX_CONTRACTS.md` 的「5. 问题定位合同」（本轮整段重写）与
 「6 / 6b 输出一致性 / 原图规格」、`ARCHITECTURE.md` 的 §5.3 与 §6b、

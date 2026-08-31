@@ -159,6 +159,46 @@ def write_bytes(path: Path, data: bytes) -> None:
     _fsync_dir(path.parent)
 
 
+def publish_file(tmp: Path, dest: Path) -> None:
+    """把一个**已经写好**的临时文件原子地放到最终位置。
+
+    `write_bytes` 管的是"内容在内存里"的情况；导出不是——PDF/PNG 是渲染后端
+    直接 `save()` 到一个路径上的，字节从来没经过我们的手。那条路径上仍然要有
+    同一份纪律：先 fsync 文件本身（`os.replace` 只保证"要么旧要么新"，不保证
+    新内容已经离开页缓存），再 replace，再 fsync 目录。
+
+    临时文件必须与目标**同一个目录**（跨设备 rename 不是原子的）。失败时临时
+    文件被清掉——导出目录里绝不留半个文件（共享规则 §8：输出失败不得留下
+    半文件）。
+    """
+    tmp = Path(tmp)
+    dest = Path(dest)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("mkdir_failed", f"无法创建目录：{exc}", dest) from exc
+    try:
+        fd = os.open(tmp, os.O_RDONLY)
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("write_failed", f"临时文件读不出来：{exc}", dest) from exc
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        os.close(fd)
+        _discard(tmp)
+        raise AtomicWriteError("write_failed", f"临时文件落盘失败：{exc}", dest) from exc
+    else:
+        os.close(fd)
+    try:
+        os.replace(tmp, dest)
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("replace_failed", f"替换失败：{exc}", dest) from exc
+    _fsync_dir(dest.parent)
+
+
 def write_json(path: Path, obj: Any, *, indent: int | None = None) -> None:
     """原子写 JSON。序列化在**碰磁盘之前**完成——载荷有问题时原文件一字未动。"""
     write_bytes(Path(path), dumps_json(obj, indent=indent))
