@@ -245,12 +245,16 @@ def _crop_clip(src_rect: pymupdf.Rect, crop: dict | None) -> pymupdf.Rect | None
 
 def _obj_morph(o: dict):
     """任意角度旋转（度，顺时针，绕包围盒中心）→ TextWriter/Shape 的 morph 参数。
-    CSS rotate() 顺时针 = 页面坐标（y 向下）里 pymupdf.Matrix(deg) 的旋转方向。"""
+
+    实测结论（PyMuPDF 1.28.2，get_text/get_drawings 几何级验证）：Shape.finish 与
+    TextWriter.write_text 都只把 fixpoint 换算进 PDF 坐标（y 向上），morph 矩阵本身
+    原样作用在 y 向上空间——因此 Matrix(deg) 在页面上是**逆**时针，两条路径同向。
+    CSS rotate(deg)（顺时针、y 向下）是权威语义，这里必须取负。"""
     deg = float(o.get("rotation_deg") or 0) % 360
     if not deg:
         return None
     center = pymupdf.Point(mm2pt(o["x_mm"] + o["w_mm"] / 2), mm2pt(o["y_mm"] + o["h_mm"] / 2))
-    return center, pymupdf.Matrix(deg)
+    return center, pymupdf.Matrix(-deg)
 
 
 def _flip_pixmap_rows(pix: pymupdf.Pixmap) -> pymupdf.Pixmap:
