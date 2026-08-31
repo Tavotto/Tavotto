@@ -31,6 +31,14 @@ describe('主语说人话', () => {
     expect(subjectName(issue())).toBe('X 轴标题')
   })
 
+  it('元素名压过面板名：两者都在时说的是元素', () => {
+    // 只给 elementLabel 的样例证明不了优先级——把顺序换过来照样绿
+    const both = issue({
+      subject: { kind: 'element', objectName: '图 1', elementLabel: 'X 轴标题' },
+    })
+    expect(subjectName(both)).toBe('X 轴标题')
+  })
+
   it('拿不到标签就退到角色名——任何一档都不吐 gid', () => {
     const s = subjectName(issue({ subject: { kind: 'element', elementRole: 'legend' } }))
     expect(s).not.toContain('axes_0')

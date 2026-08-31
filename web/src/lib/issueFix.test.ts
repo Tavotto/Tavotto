@@ -196,6 +196,9 @@ describe('user_choice：两个同样合理的答案不许替用户挑', () => {
     const issue = issuesNow().find((i) => i.ruleCode === 'page-width')!
     expect(issue.fixKind).toBe('user_choice')
     expect(fixOptions(issue, profile).map((o) => o.choice)).toEqual(['single', 'double'])
+    // 纯计算这一层自己也要守住：没给 choice 就算不出计划（调用方那道闸是
+    // 第二层，两层各自负责——只测调用方的话，把这里改成默认单栏也不会红）
+    expect(planFix(issue, profile, useDocumentStore.getState().doc)).toBeNull()
     expect(applyIssueFix(issue, profile)).toEqual({ ok: false, reason: 'needs_choice' })
     expect(applyIssueFix(issue, profile, 'single')).toEqual({ ok: true, applied: 1 })
     expect(useDocumentStore.getState().doc.page.w).toBe(profile.widths_mm.single)

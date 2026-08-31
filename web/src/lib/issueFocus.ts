@@ -59,9 +59,11 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
   const s0 = useDocumentStore.getState()
   if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
   if (ref.canvasId && ref.canvasId !== s0.activeCanvasId) {
-    if (!s0.canvases.some((c) => c.id === ref.canvasId)) {
-      return { ok: false, reason: 'canvas_missing' }
-    }
+    // **只判一次：切完之后到了没有。** 曾经这里先查一遍"这张画布还在不在"、
+    // 切完再查一遍"到了没有"，两句话说的是同一件事——于是把前一句改成恒真
+    // 也没有任何用例会红（变异反证里它活了下来）。`activateCanvas` 对不存在
+    // 的 id 本来就是 no-op（`switchCanvas` 自己查成员），所以合成一处不放松
+    // 任何东西。**冗余的保证杀不死，处置是合并，不是造个输入去覆盖它。**
     activateCanvas(ref.canvasId)
     if (useDocumentStore.getState().activeCanvasId !== ref.canvasId) {
       return { ok: false, reason: 'canvas_missing' }

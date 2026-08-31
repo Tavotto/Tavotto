@@ -19,6 +19,7 @@ import {
   mergeExportIssues,
   ruleEntry,
   summarizeIssues,
+  summaryFor,
   validateCanvas,
   validateProject,
 } from './validation'
@@ -152,6 +153,25 @@ describe('逐条命中：一行一个真实对象，各说自己的数字', () =
     expect(JSON.stringify(one.message.values ?? {})).not.toContain('axes_0')
   })
 
+  it('gid 在 manifest 里查不到时**不拿 gid 顶替可读标签**', () => {
+    // 真实存在的形状：`tick-label-count` 报的 gid 是**轴前缀**（`axes_0.xaxis`），
+    // 它根本不是一个元素。拿它当"人话主语"就等于把内部标识说给用户听
+    const many = manifestWith(
+      Array.from({ length: 40 }, (_, i) => ({
+        gid: `axes_0.xaxis_${i}`,
+        role: 'ticklabel',
+        label: `刻度 ${i}`,
+        pt: 10,
+      })),
+    )
+    const one = runOne(doc, renderFor(p, many)).issues.find(
+      (i) => i.ruleCode === 'tick-label-count',
+    )!
+    expect(one.objectRef.gid).toContain('axes_0.xaxis')
+    expect(one.subject.elementLabel).toBeUndefined()
+    expect(one.subject.elementRole).toBeUndefined()
+  })
+
   it('命中的属性名进 propertyPath——定位靠它落到字段上', () => {
     const one = runOne(doc, render).issues.find((i) => i.objectRef.gid === 'axes_0.title')!
     expect(one.propertyPath).toBe('fontsize')
@@ -166,6 +186,19 @@ describe('逐条命中：一行一个真实对象，各说自己的数字', () =
       expect([...gids].sort()).toEqual([...item.gids].sort())
       if (item.objectIds.length) expect([...objs].sort()).toEqual([...item.objectIds].sort())
     }
+  })
+})
+
+describe('一次交上来多个对象时逐个入账', () => {
+  it('两个对象同时越界 = 两条问题，各指一个对象', () => {
+    const a = panel({ id: 'p1', x: -50 })
+    const b = panel({ id: 'p2', x: 200 })
+    const doc = docWith([a, b])
+    const out = runOne(doc, renderFor(a, manifestWith([]))).issues.filter(
+      (i) => i.ruleCode === 'out-of-page',
+    )
+    expect(out).toHaveLength(2)
+    expect(out.map((i) => i.objectRef.objectId).sort()).toEqual(['p1', 'p2'])
   })
 })
 
@@ -280,6 +313,14 @@ describe('汇总与筛选', () => {
     expect(notYet.ready).toBe(false)
     const passed = summarizeIssues([], { ready: true, failed: false })
     expect(passed.ready).toBe(true)
+  })
+
+  it('组装摘要时 ready / failed 原样透传，不许在路上被写死', () => {
+    // 导出对话框读的就是这两位：写死成 true 的话，防抖那 250ms 里它会先说
+    // 一句「检查通过」——那是这套服务能犯的最坏的错
+    expect(summaryFor([], { ready: false, failed: false }).ready).toBe(false)
+    expect(summaryFor([], { ready: true, failed: true }).failed).toBe(true)
+    expect(summaryFor([], { ready: true, failed: false }).ready).toBe(true)
   })
 
   it('筛选按等级 / 画布 / 规则各自生效', () => {
