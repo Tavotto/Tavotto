@@ -347,6 +347,52 @@ def test_async_job_reaches_a_terminal_state(env):
 
 
 # -------------------------------- 样式检查报告 --------------------------------
+def test_a_failed_check_is_recorded_in_the_report(env):
+    """「检查没跑成、用户确认了继续」在报告里必须与「干干净净跑过一遍」分得开。
+
+    只看 `forced`（有 error 才为真）与 `acknowledged`（要有规则码才非空）的话，
+    那两种情形长得一模一样——而确认框上写着这次确认会被记进报告
+    （PR #214 第三轮评审）。
+    """
+    client, _ = env
+    _, body = _post(
+        client,
+        _canvas(
+            include_style_check_report=True,
+            style_check_report={
+                "checks": [],
+                "forced": False,
+                "acknowledged": [],
+                "check_failed": True,
+                "acknowledged_check_failed": True,
+            },
+        ),
+    )
+    report = next(o for o in body["outputs"] if o["format"] == "report")
+    data = json.loads((_dir(body) / report["name"]).read_text(encoding="utf-8"))
+    assert data["check_failed"] is True
+    assert data["acknowledged_check_failed"] is True
+
+    _, clean = _post(
+        client,
+        _canvas(
+            filename="Clean",
+            include_style_check_report=True,
+            style_check_report={
+                "checks": [],
+                "forced": False,
+                "acknowledged": [],
+                "check_failed": False,
+                "acknowledged_check_failed": False,
+            },
+        ),
+    )
+    clean_report = next(o for o in clean["outputs"] if o["format"] == "report")
+    clean_data = json.loads((_dir(clean) / clean_report["name"]).read_text(encoding="utf-8"))
+    assert clean_data["check_failed"] is False
+    assert clean_data != data, "两种情形在报告里必须分得出来"
+
+
 def test_style_check_report_carries_the_server_side_facts(env):
     """报告里必须有只有服务端知道的那半份：版本、时间、真正落盘的产物。"""
     client, _ = env
@@ -843,3 +889,37 @@ def test_cancel_is_refused_once_publication_has_begun(env, monkeypatch):
     assert job is not None and job._committed is True
     job.status = exportjob.STATUS_RUNNING  # 假装它还在跑
     assert exportjob.cancel(job_id) is False, "提交点之后不许再接受取消"
+
+
+def test_cancel_and_the_commit_point_are_serialized(env):
+    """「还没提交」与「置上取消位」必须**原子**地一起发生。
+
+    只用一个布尔挡不住：`cancel()` 读到 `False` 之后、`_cancel.set()` 之前，
+    执行线程完全可能跑完最后一次检查并把 `_committed` 置上——于是 `cancel()`
+    回了 `True` 而作业照常报 `done`，正是提交点想消掉的那个行为。
+
+    判据钉在**锁本身**上：把锁攥在手里，`cancel()` 必须阻塞而不是抢先读到
+    一个陈旧的 `False`。
+    """
+    client, _ = env
+    _, started = _post(client, _canvas(), path="/api/export/start")
+    for _ in range(200):
+        body = client.get(f"/api/export/state?job_id={started['job_id']}").get_json()
+        if body["status"] in ("done", "partial", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    job = exportjob.get(started["job_id"])
+    assert job is not None and job._committed is True
+
+    # 提交点与取消共用一把锁：持锁时 cancel() 进不来
+    job.status = exportjob.STATUS_RUNNING
+    job._committed = False
+    verdicts: list = []
+    with job._commit_lock:
+        t = threading.Thread(target=lambda: verdicts.append(exportjob.cancel(job.id)))
+        t.start()
+        t.join(0.3)
+        assert t.is_alive(), "cancel() 没有等锁 = 它读到的可能是陈旧的 _committed"
+        job._committed = True
+    t.join(2)
+    assert verdicts == [False], "锁放开之后 cancel() 必须看到已提交并如实回 False"

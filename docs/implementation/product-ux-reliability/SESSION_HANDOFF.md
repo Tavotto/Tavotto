@@ -156,8 +156,8 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 01238bd42a928109（复审回合后）
-重建  web/dist-playground/                     指纹 5e2310cf416f035c（不进 git）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 a4f385e6e29683fd（第三轮评审后）
+重建  web/dist-playground/                     指纹 002514b06fa14d8d（不进 git）
 ```
 
 ### 界面上删掉的（§五 逐项）
@@ -227,6 +227,21 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 **3. 「照抄源文件」的前提是容器对得上。** JPEG 源不能逐字节搬进 `.png`。
 
+### 第三轮评审（`8c1f7d4`）：又四条全改
+
+1 P1 + 3 P2，逐条见 `TEST_MATRIX.md`。两条对 13–18 直接有用：
+
+**1. 确认是对「这一批问题」的**（T-67）。任何"用户点过头"的状态都要绑在
+**被确认的那个集合的指纹**上，不是绑在动作上——不然它会替用户签一个他没签过
+的字，而那个签名会进留档。
+
+**2. 「每条规则各自的最优解」拼不出「所有规则的可行解」**（T-68）。属性系统
+（13）里同一个属性被多条规则约束会更常见：要么带上约束一起合并，要么就别
+声称同时满足。
+
+另：变异反证脚本自己有一处空转（「锚点找不到」与「存活」混报），已修——
+**把纪律写进文档而不写进工具，下一次照样会踩**（T-69）。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -252,7 +267,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
-  开出）→ **PR #214**（11 与 12 一起，四个提交 + 两个评审回合）
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 三个评审回合，16 条 findings 全改）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

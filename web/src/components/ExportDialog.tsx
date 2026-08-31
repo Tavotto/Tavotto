@@ -245,6 +245,29 @@ export function ExportDialog() {
    * 查不成时那份清单可能是更早留下的，不能当成"这一版的结论"。
    */
   const needsConfirm = errors.length > 0 || notVerifiable.length > 0 || summary.failed
+  /**
+   * **用户确认的是"这一批"问题，不是"以后任何一批"。**
+   *
+   * 改了格式 / PPI、文档被编辑、或者上一次导出之后问题集合变了，那个勾必须
+   * 掉——否则新出现的阻断项会**不经确认**被导出，而 `start()` 还会把它们的
+   * 规则码写进样式检查报告，写成一句"用户知悉过"（PR #214 第三轮评审）。
+   *
+   * 指纹取自**要确认的那批问题的 issueId** + 「这次没查成」这一档。
+   */
+  const confirmKey = useMemo(
+    () =>
+      [
+        summary.failed ? 'failed' : '',
+        ...errors.map((i) => i.issueId),
+        ...notVerifiable.map((i) => i.issueId),
+      ]
+        .sort()
+        .join('|'),
+    [errors, notVerifiable, summary.failed],
+  )
+  useEffect(() => {
+    setConfirmed(false)
+  }, [confirmKey])
   // 勾了确认框就**必须**留档：确认框上写着"这次确认会记录在报告里"，
   // 而用户可能早就把报告关掉了——那样承诺的记录一份都不会产生
   const reportRequired = needsConfirm && confirmed
@@ -323,11 +346,18 @@ export function ExportDialog() {
               acknowledged: needsConfirm
                 ? [...new Set([...errors, ...notVerifiable].map((i) => i.ruleCode))]
                 : [],
+              // 「这一次没查成，用户自己确认了继续」是**独立的一档**：
+              // 只看 forced / acknowledged 的话，它与"干干净净跑过一遍"
+              // 在报告里长得一模一样，而确认框上写着这次确认会被记下来
+              checkFailed: summary.failed || !summary.ready,
+              acknowledgedCheckFailed: (summary.failed || !summary.ready) && confirmed,
             },
           )
         : undefined
       writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport })
       await runExport(inputOf({ overwrite, report: report as Record<string, unknown> | undefined }))
+      // **每次导出尝试之后都要重新确认**：一次点头只对那一次导出有效
+      setConfirmed(false)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [

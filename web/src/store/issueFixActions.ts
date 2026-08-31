@@ -17,7 +17,12 @@ import { activateCanvas } from './canvasSession'
 import { useDocumentStore } from './documentStore'
 
 export type FixOutcome =
-  | { ok: true; applied: number }
+  | {
+      ok: true
+      applied: number
+      /** 同一个属性上互相矛盾、整组没修的条数（`applied` 里**不含**它们） */
+      skipped?: number
+    }
   | { ok: false; reason: 'no_plan' | 'canvas_missing' | 'object_missing' | 'needs_choice' }
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -63,14 +68,100 @@ export function applyIssueFixes(
   const here = issues.filter(
     (i) => i.objectRef.canvasId === s.activeCanvasId && i.fixKind === 'safe_auto',
   )
-  const plans: FixPlan[] = []
+  const raw: FixPlan[] = []
   for (const i of here) {
     const plan = planFix(i, profile, doc)
-    if (plan) plans.push(plan)
+    if (plan) raw.push(plan)
   }
+  const { plans, skipped } = mergePlans(raw)
   if (!plans.length) return { ok: false, reason: 'no_plan' }
   applyFixPlans(plans, hist('fixIssues', { count: plans.length }))
-  return { ok: true, applied: plans.length }
+  return { ok: true, applied: plans.length, skipped: skipped || undefined }
+}
+
+/** 一条计划写的是哪个属性。同一个键上有两条 = 后写的会盖掉先写的。 */
+function targetKey(plan: FixPlan): string | null {
+  if (plan.kind === 'textSize') return `${plan.objectId}|textSize`
+  if (plan.kind === 'override' && plan.patches.length === 1) {
+    const p = plan.patches[0]
+    return `${plan.objectId}|${p.gid}|${p.prop}`
+  }
+  return null
+}
+
+function planValue(plan: FixPlan): number | null {
+  if (plan.kind === 'textSize') return plan.sizePt
+  if (plan.kind === 'override' && plan.patches.length === 1) {
+    const v = plan.patches[0].value
+    return typeof v === 'number' ? v : null
+  }
+  return null
+}
+
+function withValue(plan: FixPlan, value: number): FixPlan {
+  if (plan.kind === 'textSize') return { ...plan, sizePt: value }
+  if (plan.kind === 'override') {
+    return { ...plan, patches: [{ ...plan.patches[0], value }] }
+  }
+  return plan
+}
+
+/**
+ * **同一个属性上的多条计划要合并成一条，不能挨个写。**
+ *
+ * 一条计划算出的目标值只是"对我这条规则最省事的那个数"。两条规则各写一遍时
+ * 后写的赢，而它可能违反前一条：默认规范上一条 6pt 图例文字同时命中
+ * `font-below-absolute-floor`（算出 8.5）与 `legend-font-size`（算出 8.0），
+ * 8.0 后写、把 8.5 盖掉，而 8.0 仍然过不了绝对下限（判据是 `eff <= floor`）
+ * ——「全部修复」报了两条修好，问题面板里那条 error 还在（PR #214 第三轮评审）。
+ *
+ * 合并办法：取各条**可接受区间的交集**，再把提议值夹进去。由构造保证结果同时
+ * 满足每一条规则。给不出区间、或者交集为空（两条规则互相矛盾）时**整组不修**
+ * ——报一个修不了，比报"修好了"而它没好要诚实。
+ */
+export function mergePlans(raw: FixPlan[]): { plans: FixPlan[]; skipped: number } {
+  const groups = new Map<string, FixPlan[]>()
+  const out: FixPlan[] = []
+  for (const plan of raw) {
+    const key = targetKey(plan)
+    if (key == null) {
+      out.push(plan)
+      continue
+    }
+    const list = groups.get(key)
+    if (list) list.push(plan)
+    else groups.set(key, [plan])
+  }
+  let skipped = 0
+  for (const list of groups.values()) {
+    if (list.length === 1) {
+      out.push(list[0])
+      continue
+    }
+    let lo = Number.NEGATIVE_INFINITY
+    let hi = Number.POSITIVE_INFINITY
+    let usable = true
+    let best = Number.NEGATIVE_INFINITY
+    for (const plan of list) {
+      const bound = plan.kind === 'pageWidth' ? undefined : plan.bound
+      const value = planValue(plan)
+      if (!bound || value == null) {
+        usable = false
+        break
+      }
+      if (bound.min != null) lo = Math.max(lo, bound.min)
+      if (bound.max != null) hi = Math.min(hi, bound.max)
+      best = Math.max(best, value)
+    }
+    if (!usable || lo > hi) {
+      skipped += list.length
+      continue
+    }
+    const merged = Math.min(Math.max(best, lo), hi)
+    out.push(withValue(list[0], merged))
+    // 合并掉的那几条**不算白干**：它们与留下的这一条一起被这个值满足了
+  }
+  return { plans: out, skipped }
 }
 
 /** 切到问题所在的画布；已经在那儿就什么都不做。 */

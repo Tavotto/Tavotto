@@ -29,6 +29,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
+import { runValidation } from '@/store/validationStore'
 import { resetExportState } from '@/store/exportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -383,6 +384,62 @@ describe('阻断与确认', () => {
     await click(go)
     expect(exportBodies[0].include_style_check_report).toBe(false)
     expect(exportBodies[0].style_check_report).toBeUndefined()
+  })
+})
+
+describe('确认只对"这一批"问题有效', () => {
+  it('问题集合变了，那个勾必须掉（否则新问题会不经确认被导出）', async () => {
+    await setup(8) // 8pt 刻度 → 一条阻断项
+    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    await act(async () => {
+      check().click()
+    })
+    expect(check().checked).toBe(true)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+
+    const before = text()
+
+    // 文档被编辑，冒出**第二条**阻断项：确认过的那一批已经不是现在这一批
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
+        d.objects = [
+          ...d.objects,
+          {
+            id: 't-small',
+            type: 'text',
+            text: '太小的说明文字',
+            sizePt: 5,
+            bold: false,
+            italic: false,
+            color: '#000000',
+            align: 'left',
+            x: 0,
+            y: 70,
+            w: 60,
+            h: 6,
+          } as never,
+        ]
+      })
+      // 真实应用里这一步由 validationStore 的订阅在 250ms 防抖后跑；
+      // 用例不等那 250ms，直接触发同一个入口
+      runValidation()
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(text(), '这一步得真的改变问题集合，不然这条用例是空的').not.toBe(before)
+    const after = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement | null
+    expect(after, '还应该要确认').toBeTruthy()
+    expect(after!.checked, '问题集合变了，勾还留着 = 新问题不经确认就放行').toBe(false)
+  })
+
+  it('导出一次之后要重新确认（一次点头只对那一次有效）', async () => {
+    await setup(8)
+    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    await act(async () => {
+      check().click()
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(check().checked, '导出之后那个勾还留着 = 下一次不经确认就放行').toBe(false)
   })
 })
 

@@ -31,13 +31,31 @@ const num = (v: unknown): number | null =>
 export type FixChoice = string
 
 /** 一次修复要写的东西。**只描述，不执行**——执行在 `applyFixPlans()`。 */
+/**
+ * 这条规则**能接受的取值区间**（与计划里的 `value` 同一个单位）。
+ *
+ * 有它才能把「同一个属性上的两条计划」合并对：一条规则算出的目标值只是
+ * "对我这条最省事的那个数"，两条规则各写一遍时后写的赢，而它可能违反前一条
+ * （默认规范上一条 6pt 图例文字同时命中 `font-below-absolute-floor`→8.5 与
+ * `legend-font-size`→8.0，后者盖掉前者，8.0 仍然过不了绝对下限——PR #214
+ * 第三轮评审）。取区间的交集就不会有这个问题。
+ *
+ * 只有能给出区间的计划参与合并；给不出的一律**整组不修**，不假装修好了。
+ */
+export interface FixBound {
+  min?: number
+  max?: number
+}
+
 export type FixPlan =
   | {
       kind: 'override'
       objectId: string
       patches: { gid: string; prop: string; value: unknown }[]
+      /** 数值型属性才有；与 `patches[0].value` 同单位（已按面板缩放换算过） */
+      bound?: FixBound
     }
-  | { kind: 'textSize'; objectId: string; sizePt: number }
+  | { kind: 'textSize'; objectId: string; sizePt: number; bound?: FixBound }
   | { kind: 'pageWidth'; widthMm: number }
 
 /** `user_choice` 规则的可选项（界面据此出菜单）。 */
@@ -139,7 +157,9 @@ function planFontUp(
   let target = up(Math.max(strict, floor))
   if (target <= floor) target += GRID
   if (max != null && target > max) return null
-  return writeFontSize(issue, doc, target, 'up')
+  // 区间下界就是 `target`：`eff <= floor` 才算违规，所以正好等于 floor 的
+  // 那一档过不了——下界是**调整过严格性之后**的那个数，不是 floor 本身
+  return writeFontSize(issue, doc, target, 'up', { min: target, max: max ?? undefined })
 }
 
 function planFontDown(
@@ -152,7 +172,8 @@ function planFontDown(
   if (max == null) return null
   const target = down(max)
   if (target <= floor) return null
-  return writeFontSize(issue, doc, target, 'down')
+  // 上界是 max，下界是"比 floor 大的第一档"（`eff <= floor` 才算违规）
+  return writeFontSize(issue, doc, target, 'down', { min: floor + GRID, max })
 }
 
 function planLegendFont(
@@ -165,8 +186,9 @@ function planLegendFont(
   const eff = num(issue.technicalDetails.effective_pt)
   if (lo == null || hi == null || eff == null || lo > hi) return null
   // 区间两端是**闭**的（判据用 `< lo` / `> hi`），所以端点本身就是合法目标
-  if (eff < lo) return writeFontSize(issue, doc, Math.min(up(lo), hi), 'up')
-  if (eff > hi) return writeFontSize(issue, doc, Math.max(down(hi), lo), 'down')
+  const bound: FixBound = { min: lo, max: hi }
+  if (eff < lo) return writeFontSize(issue, doc, Math.min(up(lo), hi), 'up', bound)
+  if (eff > hi) return writeFontSize(issue, doc, Math.max(down(hi), lo), 'down', bound)
   return null
 }
 
@@ -182,6 +204,8 @@ function writeFontSize(
   doc: FigureDocument,
   targetEff: number,
   dir: 'up' | 'down',
+  /** 这条规则能接受的**有效 pt** 区间；跟着 value 一起换算进脚本坐标系 */
+  boundEff?: FixBound,
 ): FixPlan | null {
   const ref = issue.objectRef
   if (!ref.objectId) return null
@@ -189,7 +213,7 @@ function writeFontSize(
   if (obj?.type === 'text') {
     // 画布标注的 sizePt 已经是页面上的绝对 pt，不乘 scale
     if (obj.sizePt === targetEff) return null
-    return { kind: 'textSize', objectId: obj.id, sizePt: targetEff }
+    return { kind: 'textSize', objectId: obj.id, sizePt: targetEff, bound: boundEff }
   }
   const panel = panelOf(doc, ref.objectId)
   if (!panel || !ref.gid || !issue.propertyPath) return null
@@ -203,6 +227,11 @@ function writeFontSize(
     kind: 'override',
     objectId: panel.id,
     patches: [{ gid: ref.gid, prop: issue.propertyPath, value }],
+    // 区间与 value 同单位：合并时两条计划的数才比得起来
+    bound: boundEff && {
+      min: boundEff.min == null ? undefined : boundEff.min / scale,
+      max: boundEff.max == null ? undefined : boundEff.max / scale,
+    },
   }
 }
 

@@ -156,7 +156,15 @@ class ExportJob:
     _tmp_dir: Path | None = field(default=None, repr=False)
     #: 已经开始往最终目录落盘。**过了这个点取消不再被接受**——第一个
     #: `os.replace` 之后就没有"一个字节没动过"可言了。
+    #: 读写它一律持 `_commit_lock`（见下）。
     _committed: bool = field(default=False, repr=False)
+    #: 把「置提交点」与「接受取消」串起来的锁。
+    #:
+    #: 只用一个布尔挡不住：`cancel()` 读到 `False` 之后、`_cancel.set()` 之前，
+    #: 执行线程完全可能跑完最后一次检查并把 `_committed` 置上——于是
+    #: `cancel()` 回了 `True` 而作业照常报 `done`，正是提交点想消掉的那个行为
+    #: （PR #214 第三轮评审）。两边在同一把锁里做「检查 + 改状态」才没有缝。
+    _commit_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: 冲突时告诉界面是哪几个名字撞了（`overwrite=ask`）
     conflicts: list[str] = field(default_factory=list)
     validation_summary: dict = field(default_factory=dict)
@@ -260,10 +268,14 @@ def cancel(job_id: str) -> bool:
     `cancel()` 如实回 `False`。
     """
     job = get(job_id)
-    if job is None or job.status in _TERMINAL_STATUSES or job._committed:
+    if job is None or job.status in _TERMINAL_STATUSES:
         return False
-    job._cancel.set()
-    return True
+    # 「还没提交」与「置上取消位」必须**原子**地一起发生
+    with job._commit_lock:
+        if job._committed:
+            return False
+        job._cancel.set()
+        return True
 
 
 def sweep_stale_tmp_dirs(export_dir: Path) -> int:
@@ -534,10 +546,13 @@ def run(
         produced = produce(job, tmp_dir)
         job.check_cancelled()
 
-        # 落盘之前**最后一次**问取消；过了这一行就是提交点，后面不再问
-        job.check_cancelled()
+        # 落盘之前**最后一次**问取消，并在**同一把锁里**置提交点：
+        # 分开做的话，两者之间那一瞬进来的 `cancel()` 会拿到一个 True，
+        # 而作业已经越过检查点、照常跑完
+        with job._commit_lock:
+            job.check_cancelled()
+            job._committed = True
         job.phase = "writing"
-        job._committed = True
         _emit(job, publish)
         outputs: list[Output] = []
         for p in produced:

@@ -926,8 +926,21 @@ export function buildProofPayload(
   issues: PreflightIssue[],
   settings: { dpi: number; formats: string[]; stem: string },
   profile: PublicationProfile,
-  /** 有 error 却仍然导出时，用户按下的那次显式确认 */
-  forced?: { forced: boolean; acknowledged: string[] },
+  /**
+   * 用户按下的那次显式确认。
+   *
+   * `checkFailed` / `acknowledgedCheckFailed` 是**独立的一档**：检查根本没跑成
+   * 而用户确认了继续，与"干干净净跑过一遍"在报告里必须分得出来——只看
+   * `forced`（有 error 才为真）与 `acknowledged`（要有规则码才非空）的话，
+   * 那两种情形长得一模一样，而确认框上写着这次确认会被记进报告
+   * （PR #214 第三轮评审）。
+   */
+  forced?: {
+    forced: boolean
+    acknowledged: string[]
+    checkFailed?: boolean
+    acknowledgedCheckFailed?: boolean
+  },
 ) {
   const sum = summarize(issues)
   return {
@@ -957,6 +970,9 @@ export function buildProofPayload(
     })),
     forced: forced?.forced ?? false,
     acknowledged: forced?.acknowledged ?? [],
+    // 「查不了」与「没问题」是两个答案，留档里同样不许压扁（T-54）
+    check_failed: forced?.checkFailed ?? false,
+    acknowledged_check_failed: forced?.acknowledgedCheckFailed ?? false,
     objects: doc.objects
       .filter((o) => !o.hidden)
       .map((o) =>
