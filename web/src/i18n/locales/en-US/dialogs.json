@@ -90,6 +90,7 @@
     "start": "Export",
     "title": "Export",
     "transparent": "Transparent background (PNG only)",
+    "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
   },
   "layout": {

@@ -355,18 +355,19 @@ desktop…」。
 
 | 命令 | 结果 |
 | --- | --- |
-| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3452** passed / 34 skipped / 2 deselected / 0 failed，10 分 05 秒（比 11 的 3370 +82：56 条导出用例 + 26 条参数化的错误码） |
-| `cd web && pnpm test` | ✅ exit 0 —— **150** files / **1898** tests passed（比 11 的 147/1805 +3 文件 / +93 条） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3457** passed / 34 skipped / 2 deselected / 0 failed，约 10 分（比 11 的 3370 +87：61 条导出用例 + 26 条参数化的错误码） |
+| `cd web && pnpm test` | ✅ exit 0 —— **150** files / **1900** tests passed（比 11 的 147/1805 +3 文件 / +95 条） |
 | `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
 | `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2841 / en-US 2931；`dialogs:export.*` 删 21 组 / 加 27 组，`errors:backend.*` +27 条，`workspace:topbar.exportPackage` + `status.packaged*`） |
 | `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
 | `ruff check . && ruff format --check .` | ✅ exit 0（293 files） |
 | `git diff --check` | ✅ 无空白问题 |
 | `python scripts/gen_filename_vectors.py` | ✅ 向量与实现一致（无参 = 校对模式） |
-| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `27fad295d1c942bb`，评审回合后）+ `--check` 通过 |
-| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `32a6a5f66f78265c`，评审回合后）+ 不进 git，网站仓库另行 sync |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `01238bd42a928109`，复审回合后）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `5e2310cf416f035c`，复审回合后）+ 不进 git，网站仓库另行 sync |
 | 变异反证 23 条 | ✅ 全部被打红（第一轮 20/23，三条存活的成因与处置见 `TEST_MATRIX.md`） |
-| **评审回合 3（PR #214）之后** | ✅ 3 P1 + 3 P2 **全部成立、全部改**；变异反证扩到后端 17 / 前端 14，全红。处置见 `TEST_MATRIX.md`「评审回合 3」 |
+| **评审回合 3（PR #214，`0031649`）** | ✅ 3 P1 + 3 P2 **全部成立、全部改**。处置见 `TEST_MATRIX.md`「评审回合 3」 |
+| **复审回合（PR #214，`0c92c5a`）** | ✅ 1 P1 + 5 P2 **全部成立、全部改**；变异反证扩到**后端 21 / 前端 16，全红**。处置见 `TEST_MATRIX.md`「复审回合」 |
 | `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
 
 > **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面

@@ -269,6 +269,7 @@ export default interface Resources {
       "start": "开始导出",
       "title": "导出",
       "transparent": "透明背景（仅 PNG）",
+      "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
       "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
     },
     "layout": {

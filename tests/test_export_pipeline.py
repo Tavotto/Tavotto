@@ -41,6 +41,13 @@ def env(tmp_path, monkeypatch):
     pix.save(figs / "r1.png")
     raster.close()
 
+    # JPEG 源：原图 PNG 导出必须**转码**，不能把 JPEG 字节塞进 .png
+    jpeg = pymupdf.open()
+    jp = jpeg.new_page(width=90, height=60)
+    jp.draw_rect(pymupdf.Rect(0, 0, 45, 60), color=None, fill=(0.9, 0.1, 0.1))
+    jp.get_pixmap(alpha=False).save(figs / "j1.jpg")
+    jpeg.close()
+
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path / "exports")
     m.open_project(str(figs))
     exportjob.reset_for_tests()
@@ -728,3 +735,111 @@ def test_two_concurrent_asks_do_not_silently_clobber_each_other(env, monkeypatch
     assert c["conflicts"] == ["Fig 1.pdf"]
     _, d = _post(client, _canvas(filename="别的名字"))
     assert d["status"] == "done", "别的名字不该被上一次的预留挡住"
+
+
+# ============== PR #214 复审的六条（每条一组用例） ===========================
+def test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name(env):
+    """把 JPEG 字节塞进一个叫 `.png` 的文件 = 交出一个坏文件。
+
+    签名是 JPEG、扩展名与 MIME 是 PNG，严格的读取端直接判它损坏。转码只换
+    容器，**像素数一个不变**。
+    """
+    client, figs = env
+    src = figs / "j1.jpg"
+    assert src.read_bytes()[:3] == b"\xff\xd8\xff", "夹具本身得是真 JPEG"
+    _, body = _post(
+        client,
+        _original(formats=["png"], original={"figure_id": "j1.jpg", "source_kind": "raster"}),
+    )
+    out = _dir(body) / _out(body, "png")["name"]
+    assert out.suffix == ".png"
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", "叫 .png 的文件必须真的是 PNG"
+    # 像素网格照抄源文件（转码不是重采样）
+    src_pix = pymupdf.Pixmap(str(src))
+    assert _out(body, "png")["dimensions"]["px"] == [src_pix.width, src_pix.height]
+
+
+def test_a_png_source_is_copied_byte_for_byte(env):
+    """源本来就是 PNG 时逐字节复制——元数据（pHYs 之类）一起留住。"""
+    client, figs = env
+    _, body = _post(
+        client,
+        _original(formats=["png"], original={"figure_id": "r1.png", "source_kind": "raster"}),
+    )
+    out = _dir(body) / _out(body, "png")["name"]
+    assert out.read_bytes() == (figs / "r1.png").read_bytes()
+
+
+def test_transparent_background_reaches_the_original_vector_path(env):
+    """原图 + 矢量源 + PNG：勾了透明就得真的透明。
+
+    第一版这条路上根本收不到 background，永远 `alpha=False`——界面上那个
+    开关**说了而不做**。
+    """
+    client, _ = env
+    _, body = _post(client, _original(formats=["png"], ppi=150, background="transparent"))
+    assert _corner_alpha(_dir(body) / _out(body, "png")["name"]) == 0
+    _, opaque = _post(client, _original(filename="O", formats=["png"], ppi=150))
+    assert pymupdf.Pixmap(str(_dir(opaque) / _out(opaque, "png")["name"])).alpha == 0
+
+
+def test_a_running_job_is_never_swept_by_the_ttl(env, monkeypatch):
+    """跑超过 TTL 的作业**不许被当成过期清掉**。
+
+    第一版按 `max(created_at, finished_at)` 判，而在跑的作业 `finished_at`
+    是 0：临时目录被删、作业从表里消失，发起它的客户端拿到 `unknown`，
+    而生产者还在往一个已经不存在的目录里写。
+    """
+    client, _ = env
+    gate = threading.Event()
+    real = m._export_produce
+
+    def slow(job, tmp_dir):
+        gate.wait(5)
+        return real(job, tmp_dir)
+
+    monkeypatch.setattr(m, "_export_produce", slow)
+    _, started = _post(client, _canvas(), path="/api/export/start")
+    job = exportjob.get(started["job_id"])
+    assert job is not None
+    # 把它伪装成"很久以前建的"，然后触发一次 prepare（`_sweep` 挂在那里）
+    job.created_at = time.time() - 10 * exportjob._TTL_S
+    client.post("/api/export/validate", json=_canvas(filename="别的"))
+    _post(client, _canvas(filename="别的"), path="/api/export/start")
+
+    assert exportjob.get(started["job_id"]) is not None, "在跑的作业被 TTL 清掉了"
+    assert job._tmp_dir is not None and job._tmp_dir.is_dir(), "在跑的作业的临时目录被删了"
+    gate.set()
+    for _ in range(200):
+        body = client.get(f"/api/export/state?job_id={started['job_id']}").get_json()
+        if body["status"] in ("done", "partial", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    assert body["status"] == "done"
+
+
+def test_cancel_is_refused_once_publication_has_begun(env, monkeypatch):
+    """落盘一开始就没得取消了——**回 `False`，别许一个做不到的承诺**。
+
+    第一个 `os.replace` 之后，上一版文件的内容已经不在了；回
+    `cancelling: true` 然后让作业照常报 `done`，界面上就是"我点了取消，
+    它还是导出了"。
+    """
+    client, _ = env
+    _, started = _post(client, _canvas(), path="/api/export/start")
+    job_id = started["job_id"]
+    for _ in range(200):
+        body = client.get(f"/api/export/state?job_id={job_id}").get_json()
+        if body["status"] in ("done", "partial", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    assert body["status"] == "done"
+    assert client.post("/api/export/cancel", json={"job_id": job_id}).get_json() == {
+        "cancelling": False
+    }
+
+    # 提交点本身：置上之后即使作业还没结束，cancel 也要如实回 False
+    job = exportjob.get(job_id)
+    assert job is not None and job._committed is True
+    job.status = exportjob.STATUS_RUNNING  # 假装它还在跑
+    assert exportjob.cancel(job_id) is False, "提交点之后不许再接受取消"

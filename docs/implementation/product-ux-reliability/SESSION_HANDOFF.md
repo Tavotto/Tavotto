@@ -156,8 +156,8 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 27fad295d1c942bb（评审回合后）
-重建  web/dist-playground/                     指纹 32a6a5f66f78265c（不进 git）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 01238bd42a928109（复审回合后）
+重建  web/dist-playground/                     指纹 5e2310cf416f035c（不进 git）
 ```
 
 ### 界面上删掉的（§五 逐项）
@@ -214,6 +214,19 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 **3. 报告是产物，不是附属品。** 覆盖策略、去重、冲突检测对它一视同仁。
 
+### 复审回合（`0c92c5a`）：又六条全改
+
+1 P1 + 5 P2，逐条见 `TEST_MATRIX.md`。三条会影响后面阶段：
+
+**1. 落盘是提交点。** 第一个 `os.replace` 之后没有"一个字节没动过"可言，
+所以 `cancel()` 从那一刻起如实回 `False`——**别许一个做不到的承诺**。
+
+**2. 读 store 快照的 memo，依赖里要放触发重算的信号。** `originalAvailability`
+/ `findFigurePanel` 都是"问 store 当前状态"的绑定层函数，只挂 id 的话对话框
+开着时状态变了不会重算。带理由的 `exhaustive-deps` 豁免。
+
+**3. 「照抄源文件」的前提是容器对得上。** JPEG 源不能逐字节搬进 `.png`。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -239,7 +252,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
-  开出）→ **PR #214**（11 与 12 一起，四个提交 + 一个评审回合）
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 两个评审回合）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

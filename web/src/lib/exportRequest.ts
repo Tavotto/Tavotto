@@ -21,6 +21,7 @@
  * 而改它会当场撞上 `exportRequest.test.ts` 与 `tests/test_export_original.py`。
  * 被忽略的变换逐项进 `ignored`：**忽略而不说等于骗人**（ADR 0028）。
  */
+import { t as translate } from '@/i18n'
 import type { ExportObject, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
@@ -233,4 +234,29 @@ function fnv1a(text: string, seed: number): string {
     h = Math.imul(h, 0x01000193) >>> 0
   }
   return h.toString(16).padStart(8, '0')
+}
+
+/**
+ * 「出来多少像素」——**按这次的范围算**。
+ *
+ * * 画布范围：页面 mm × ppi；
+ * * 原图 + 位图源：**源像素网格**（我们照抄那张图，ppi 不出场）；
+ * * 原图 + 矢量源：图幅 mm × ppi；
+ * * 规格还没解析出来：不报一个编出来的数（回空串）。
+ */
+export function pixelPreview(
+  scope: ExportScope,
+  ppi: number,
+  page: { w: number; h: number },
+  spec: OriginalOutputSpec | null,
+): string {
+  const px = (mm: number) => Math.round((mm / 25.4) * ppi)
+  if (scope === 'canvas') {
+    return translate('measure.pxSize', { w: px(page.w), h: px(page.h) })
+  }
+  if (!spec) return ''
+  if (spec.pixelWidth && spec.pixelHeight) {
+    return translate('measure.pxSize', { w: spec.pixelWidth, h: spec.pixelHeight })
+  }
+  return translate('measure.pxSize', { w: px(spec.widthMm), h: px(spec.heightMm) })
 }

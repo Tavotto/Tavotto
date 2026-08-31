@@ -44,6 +44,7 @@ import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
   originalAvailability,
+  pixelPreview,
   PPI_DEFAULT,
   hasRaster,
   type ExportScope,
@@ -58,6 +59,7 @@ import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import {
   cancelCurrentExport,
   prepareExport,
@@ -158,10 +160,26 @@ export function ExportDialog() {
     const o = doc.objects.find((x) => x.id === panelId)
     return o?.type === 'panel' ? o.fileId : null
   }, [activePanelId, doc.objects])
-  const availability = useMemo(() => originalAvailability(figureId), [figureId])
+  /*
+   * 这两个 memo 读的是 store 的**当前快照**（`originalAvailability` 问素材
+   * 清单与 runtime 清单，`findFigurePanel` 问文档），所以依赖里必须带上那几份
+   * 状态——只挂 `figureId` 的话，对话框开着时素材被删/掉线，组件重渲染了而
+   * memo 还是旧值：那颗按钮继续亮着，按下去后端报 `source_missing`
+   * （PR #214 复审）。
+   */
+  const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
+  const availability = useMemo(
+    () => originalAvailability(figureId),
+    // `assets` / `runtimeAssets` 是**触发重算的信号**，不是入参：
+    // `originalAvailability()` 读的是 store 的当前快照，linter 看不见那一层
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [figureId, assets, runtimeAssets],
+  )
   const panel = useMemo(
     () => (figureId ? (findFigurePanel(figureId)?.panel ?? null) : null),
-    [figureId],
+    // 同上：`findFigurePanel()` 问的是 documentStore 的当前快照
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [figureId, doc.objects],
   )
 
   useEffect(() => {
@@ -233,6 +251,10 @@ export function ExportDialog() {
   const reportOn = withReport || reportRequired
   const blocked = needsConfirm && !confirmed
 
+  /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
+  const transparentApplies =
+    raster && !(scope === 'original' && availability.spec?.sourceKind === 'raster')
+
   /* ------------------------------ 文件名校验 ------------------------------ */
   const filenameIssue = useMemo(
     () => prepareExport(inputOf()).filenameProblem,
@@ -246,7 +268,7 @@ export function ExportDialog() {
       formats,
       filename,
       ppi: Number(ppi) || PPI_DEFAULT,
-      background: transparent && raster ? 'transparent' : 'white',
+      background: transparent && transparentApplies ? 'transparent' : 'white',
       includeReport: reportOn,
       acknowledged: needsConfirm && confirmed ? [...new Set(errors.map((i) => i.ruleCode))] : [],
       documentId,
@@ -457,11 +479,12 @@ export function ExportDialog() {
               ariaLabel={ex('ppiSelectLabel')}
               className="w-28"
             />
+            {/* 出来多少像素**按这次的范围算**。原图范围下拿画布页面尺寸乘一遍
+                是在报另一张图的数字（一张 70.6mm 的图摆在 180mm 画布上，
+                600ppi 会显示成 4252px，而真实产物约 1668px）；位图原图更是
+                照抄源像素网格，与 ppi 无关。 */}
             <span className="shrink-0 font-mono text-xs text-ink-3">
-              {translate('measure.pxSize', {
-                w: Math.round((doc.page.w / 25.4) * Number(ppi)),
-                h: Math.round((doc.page.h / 25.4) * Number(ppi)),
-              })}
+              {pixelPreview(scope, Number(ppi), doc.page, availability.spec)}
             </span>
           </Row>
         )}
@@ -549,15 +572,25 @@ export function ExportDialog() {
               <Toggle checked={reportOn} onChange={setWithReport} disabled={reportRequired} />
               {ex('reportToggle')}
             </label>
+            {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
+                原图 + 位图源出来的就是那张图本身（我们只换容器不换像素），
+                背景是它自己的——开着一个不起作用的开关就是说了而不做 */}
             <label
               className={cn(
                 'flex items-center gap-1.5 text-xs',
-                raster ? 'text-ink-2' : 'text-ink-3',
+                transparentApplies ? 'text-ink-2' : 'text-ink-3',
               )}
             >
-              <Toggle checked={transparent && raster} onChange={setTransparent} disabled={!raster} />
+              <Toggle
+                checked={transparent && transparentApplies}
+                onChange={setTransparent}
+                disabled={!transparentApplies}
+              />
               {ex('transparent')}
             </label>
+            {raster && !transparentApplies && (
+              <p className="pl-1 text-xs text-ink-3">{ex('transparentNotForRaster')}</p>
+            )}
           </div>
         </details>
 

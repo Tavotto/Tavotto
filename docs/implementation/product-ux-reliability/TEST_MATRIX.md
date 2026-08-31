@@ -1163,3 +1163,42 @@ Codex 评审报了 **3 P1 + 3 P2**，**六条全部成立、全部改**，无一
 （`_final_names` → `_plan_names`、`made` → `data`、if 条件挪进函数参数）。
 改锚点后 17/17 + 14/14 全红。**「锚点找不到」与「存活」必须分开报**：
 合成一档的话，一次重构就能把整套变异悄悄变成空转。
+
+---
+
+## 复审回合（PR #214，`0c92c5a`）：六条 findings 的处置
+
+Codex 复审在改完的那版上又报 **1 P1 + 5 P2**，**六条全部成立、全部改**。
+
+| # | 级 | 现象 | 处置 |
+| --- | --- | --- | --- |
+| 1 | P1 | JPEG 源被**逐字节复制**进一个叫 `.png` 的文件：签名是 JPEG、扩展名与 MIME 是 PNG，严格的读取端判它损坏 | `.png` 源继续逐字节复制（连 pHYs 一起留住），其余容器**转码**——只换容器，像素数一个不变 |
+| 2 | P2 | `produce()` 之后的落盘循环不问取消：`cancel()` 回 `cancelling: true`，作业照常报 `done`；第一个 `os.replace` 之后也不再有"最终目录一个字节没动过" | 立**提交点**：落盘前最后问一次取消，`_committed` 置上之后 `cancel()` 如实回 `False`。**别许一个做不到的承诺** |
+| 3 | P2 | `originalAvailability` 的 memo 只挂 `figureId`，而它读的是 store 快照：对话框开着时素材被删，组件重渲染了而 memo 还是旧值，按钮继续亮着 | 依赖补上 `assets` / `runtimeAssets`（`panel` 那个 memo 同族，补 `doc.objects`）。依赖是**触发重算的信号**，注释说明了这一点 |
+| 4 | P2 | 像素预览在原图范围下仍按画布页面尺寸算：70.6mm 的图摆在 180mm 画布上、600ppi 显示 4252px，而真实产物约 1668px | 抽出纯函数 `pixelPreview(scope, ppi, page, spec)`：画布按页面、原图矢量按图幅、**原图位图直接报源像素网格**（与 ppi 无关）、规格没解析出来回空串 |
+| 5 | P2 | `_sweep()` 按 `max(created_at, finished_at)` 判过期，而在跑的作业 `finished_at` 是 0：跑超 15 分钟的作业被删掉临时目录并移出表，客户端拿到 `unknown` 而生产者还在往不存在的目录里写 | TTL **只清进过终局的**作业 |
+| 6 | P2 | 原图 + 矢量源 + PNG 时 `background=transparent` 收不到，永远 `alpha=False`——界面上那个开关**说了而不做** | background 传进 `original_png()`；原图 + 位图源那条路上透明本来就没有意义（照抄源文件），界面把开关**禁用并说出原因** |
+
+### 新增用例（后端 5 / 前端 2）
+
+`test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name`（断言产物真的是
+PNG 签名 + 像素数照抄源）、`test_a_png_source_is_copied_byte_for_byte`、
+`test_transparent_background_reaches_the_original_vector_path`、
+`test_a_running_job_is_never_swept_by_the_ttl`（把作业伪装成很久以前建的，
+再触发一次 `_sweep`）、`test_cancel_is_refused_once_publication_has_begun`
+（连提交点本身一起钉：把状态改回 running，`cancel()` 仍须回 `False`）；
+前端 `pixelPreview` 四档 + 「对话框开着时素材没了，按钮当场灰掉」。
+
+### 变异反证扩到 后端 21 / 前端 16，全部被打红
+
+复审那六条各配一条变异。这一轮又有一条报「锚点找不到」——`original_png` 的
+位图分支被拆成了 PNG / 非 PNG 两支，锚点跟着变。**同一个教训第二次出现**：
+锚点是变异脚本自己的判据，它也会随重构失效，所以「锚点找不到」必须与「存活」
+分开报。
+
+### 顺带清掉的 lint 噪音
+
+`pixelPreview` 挪进 `lib/exportRequest.ts`（纯计算不该从组件文件导出，会打断
+fast refresh）；两个 memo 的依赖加了带理由的 `exhaustive-deps` 豁免——那几个
+依赖是**触发重算的信号**而不是入参，linter 看不见函数体里对 store 的读取。
+前端 lint 回到既有的 19 条 fast-refresh 提示，**无新增**。

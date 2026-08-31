@@ -16,7 +16,9 @@ AGPL-3.0-only。把「读页面尺寸 / 栅格化 / 按布局合成」这三件�
   original_pdf(src, out, page_pt)   → 按原图尺寸出 PDF（矢量源整页搬运，不重画；
                                        位图源的页面尺寸由调用方给——密度的解析
                                        只有 engine/originalspec 一处）
-  original_png(src, out, ppi)       → 按原图出 PNG（位图**永远**保源像素网格）
+  original_png(src, out, ppi, transparent)
+                                    → 按原图出 PNG（位图**永远**保源像素网格；
+                                       JPEG 源换容器不换像素）
   annotate_asset(pdf, png, objs)    → 把画布标注画进单图文件（写回原图带标注）
   BACKEND_NAME / BACKEND_VERSION    → 后端身份（进渲染缓存键：换实现/换版本
                                        出来的像素可能就不一样了）

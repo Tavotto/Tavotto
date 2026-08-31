@@ -764,15 +764,22 @@ def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = Non
     }
 
 
-def original_png(src: Path, out: Path, ppi: int | None) -> dict:
+def original_png(src: Path, out: Path, ppi: int | None, transparent: bool = False) -> dict:
     """把一张图**按它自己的尺寸**写成 PNG。
 
-    * **矢量源**：按 `ppi` 栅格化。矢量没有像素网格，所以这里必须有一个 ppi；
-      调用方给 `None` 是个契约错误。
-    * **位图源**：**原样复制，永远保源像素网格**，`ppi` 在这条路上不出场。
-      不重采样是这条路的重点——"按原图导出"最容易被悄悄破坏的地方就是顺手
-      按导出 ppi 缩一遍，那会把一张 300×200 的图变成 2500×1667 的糊图
-      （共享规则 §8）。
+    * **矢量源**：按 `ppi` 栅格化；`transparent=True` 时带 alpha 通道（不画底）。
+      矢量没有像素网格，所以这里必须有一个 ppi；调用方给 `None` 是个契约错误。
+    * **位图源**：**保源像素网格**，`ppi` 与 `transparent` 在这条路上都不出场
+      ——出来的就是那张图本身，背景是它自己的背景。不重采样是这条路的重点：
+      "按原图导出"最容易被悄悄破坏的地方就是顺手按导出 ppi 缩一遍，那会把
+      一张 300×200 的图变成 2500×1667 的糊图（共享规则 §8）。
+
+    ### 位图源里 PNG 与 JPEG 走的不是同一条
+
+    源本来就是 PNG 时**逐字节复制**——连 pHYs 这些元数据一起留住，比重新
+    编码一遍更保真。源是 JPEG 时**必须转码**：把 JPEG 的字节原样搬进一个叫
+    `.png` 的文件，出来的东西签名是 JPEG、扩展名与 MIME 是 PNG，严格的读取端
+    直接判它是坏文件（PR #214 复审）。转码只换容器，像素数一个不变。
 
     ### 为什么没有「按另一个像素网格导出」这个开关
 
@@ -782,8 +789,8 @@ def original_png(src: Path, out: Path, ppi: int | None) -> dict:
     删掉它比留着更诚实：要加这个能力时，密度得从 `engine/originalspec` 来，
     像素网格由调用方算好传进来。
 
-    回 `{px_w, px_h, resampled}`（`resampled` 恒 False，保留是为了让调用方
-    在将来真的加上重采样时不必改读取端）。
+    回 `{px_w, px_h, resampled, transcoded}`（`resampled` 恒 False——像素网格
+    从不改；`transcoded` 说的是换过容器编码没有）。
     """
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -793,13 +800,25 @@ def original_png(src: Path, out: Path, ppi: int | None) -> dict:
         with pymupdf.open(src) as doc:
             page = doc[0]
             zoom = ppi / 72.0
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=bool(transparent))
             pix.save(str(out))
-            return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
+            return {
+                "px_w": pix.width,
+                "px_h": pix.height,
+                "resampled": False,
+                "transcoded": True,
+            }
 
-    shutil.copyfile(src, out)
-    pix = pymupdf.Pixmap(str(out))
-    return {"px_w": pix.width, "px_h": pix.height, "resampled": False}
+    if src.suffix.lower() == ".png":
+        # 逐字节复制：元数据（pHYs 之类）一起留住，比重新编码更保真
+        shutil.copyfile(src, out)
+        pix = pymupdf.Pixmap(str(out))
+        return {"px_w": pix.width, "px_h": pix.height, "resampled": False, "transcoded": False}
+
+    # JPEG（或将来别的位图容器）：换容器，**不换像素**
+    pix = pymupdf.Pixmap(str(src))
+    pix.save(str(out))
+    return {"px_w": pix.width, "px_h": pix.height, "resampled": False, "transcoded": True}
 
 
 def annotate_asset(

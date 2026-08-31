@@ -1027,8 +1027,15 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
                 )
             else:
                 # 位图源**保持源像素网格**：按导出 ppi 重采样一遍会把
-                # 一张 300×200 的图放大成糊图，而用户要的恰恰是"原图"
-                facts = pdfbackend.original_png(source_path, tmp, dpi)
+                # 一张 300×200 的图放大成糊图，而用户要的恰恰是"原图"。
+                # 透明背景只对"矢量源栅格化"那一档有意义——位图源出来的就是
+                # 那张图本身，背景是它自己的（界面上那个开关跟着这条纪律禁用）
+                facts = pdfbackend.original_png(
+                    source_path,
+                    tmp,
+                    dpi,
+                    transparent=req.background == engine_exportreq.BACKGROUND_TRANSPARENT,
+                )
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,

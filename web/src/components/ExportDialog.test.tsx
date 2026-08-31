@@ -21,6 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import { ExportDialog } from '@/components/ExportDialog'
+import { pixelPreview } from '@/lib/exportRequest'
 import { postTelemetryEvent } from '@/lib/api'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -288,6 +289,59 @@ describe('输出范围', () => {
     expect(text()).toContain('源文件现在找不到了')
     // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
     expect(text()).not.toContain('先选中一张图')
+  })
+})
+
+describe('像素预览按范围算', () => {
+  it('画布范围按页面尺寸；原图范围按那张图自己的（位图直接报源像素网格）', async () => {
+    const page = { w: 180, h: 120 }
+    // 画布：180mm @ 600ppi ≈ 4252px
+    expect(pixelPreview('canvas', 600, page, null)).toContain('4252')
+    // 原图 + 矢量源：图幅 70.6mm @ 600ppi ≈ 1668px —— **不是** 4252
+    const vector = {
+      widthMm: 70.6,
+      heightMm: 52.9,
+      pixelWidth: null,
+      pixelHeight: null,
+      sourceKind: 'vector',
+    } as never
+    const shown = pixelPreview('original', 600, page, vector)
+    expect(shown).toContain('1668')
+    expect(shown, '原图范围下拿画布页面尺寸算 = 报另一张图的数字').not.toContain('4252')
+    // 原图 + 位图源：照抄源像素网格，与 ppi 无关
+    const raster = {
+      widthMm: 10.16,
+      heightMm: 6.77,
+      pixelWidth: 120,
+      pixelHeight: 80,
+      sourceKind: 'raster',
+    } as never
+    expect(pixelPreview('original', 600, page, raster)).toContain('120')
+    expect(pixelPreview('original', 300, page, raster)).toContain('120')
+    // 规格还没解析出来时不报一个编出来的数
+    expect(pixelPreview('original', 600, page, null)).toBe('')
+  })
+})
+
+describe('对话框开着时素材没了', () => {
+  it('可用性跟着素材清单变，不是只挂在 figureId 上', async () => {
+    await setup(9)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    const radio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
+    expect(radio().hasAttribute('disabled')).toBe(false)
+
+    // 对话框开着，素材被删 / 掉线：那颗按钮必须当场灰掉
+    await act(async () => {
+      useAssetStore.setState({ byId: {} } as never)
+    })
+    expect(radio().hasAttribute('disabled'), 'memo 只挂 figureId 的话这里还是亮的').toBe(true)
+    expect(text()).toContain('源文件现在找不到了')
   })
 })
 

@@ -154,6 +154,9 @@ class ExportJob:
     total: int = 1
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     _tmp_dir: Path | None = field(default=None, repr=False)
+    #: 已经开始往最终目录落盘。**过了这个点取消不再被接受**——第一个
+    #: `os.replace` 之后就没有"一个字节没动过"可言了。
+    _committed: bool = field(default=False, repr=False)
     #: 冲突时告诉界面是哪几个名字撞了（`overwrite=ask`）
     conflicts: list[str] = field(default_factory=list)
     validation_summary: dict = field(default_factory=dict)
@@ -210,11 +213,25 @@ _JOBS: dict[str, ExportJob] = {}
 _LOCK = threading.Lock()
 
 
+#: 已经走完的状态。TTL 只清这些——**还在跑的作业不许被清**。
+_TERMINAL_STATUSES = frozenset(
+    {STATUS_DONE, STATUS_PARTIAL, STATUS_FAILED, STATUS_CANCELLED, STATUS_CONFLICT}
+)
+
+
 def _sweep() -> None:
     """过期作业清出去。**顺便清掉它可能留下的临时目录**——进程被 kill 时
-    `run()` 的 finally 跑不到，那些目录会一直躺在用户的导出目录里。"""
+    `run()` 的 finally 跑不到，那些目录会一直躺在用户的导出目录里。
+
+    **只清进过终局的**。第一版按 `max(created_at, finished_at)` 判，而在跑的
+    作业 `finished_at` 是 0——一次跑超过 15 分钟的导出会在下一次 `prepare()`
+    时被当成过期：临时目录被删、作业从表里消失，于是发起它的客户端拿到
+    `unknown`，而它的生产者还在往一个已经不存在的目录里写（PR #214 复审）。
+    """
     now = time.time()
     for jid, job in list(_JOBS.items()):
+        if job.status not in _TERMINAL_STATUSES:
+            continue
         if now - max(job.created_at, job.finished_at) > _TTL_S:
             _drop_tmp(job)
             _JOBS.pop(jid, None)
@@ -234,9 +251,16 @@ def progress(job_id: str) -> dict:
 
 def cancel(job_id: str) -> bool:
     """请求取消。回「有没有这个作业可取消」——**不是「已经取消了」**：
-    真正的清理发生在执行线程回到检查点的那一刻。"""
+    真正的清理发生在执行线程回到检查点的那一刻。
+
+    **落盘一开始就没得取消了。** 第一个 `os.replace` 之后，上一版文件的内容
+    已经不在了，"最终目录一个字节没动过"这句承诺兑现不了；而回一个
+    `cancelling: true` 然后让作业照常报 `done`，是**说了一句做不到的话**
+    （PR #214 复审）。所以有一个明确的提交点：`_committed` 置上之后
+    `cancel()` 如实回 `False`。
+    """
     job = get(job_id)
-    if job is None or job.status in (STATUS_DONE, STATUS_PARTIAL, STATUS_FAILED, STATUS_CANCELLED):
+    if job is None or job.status in _TERMINAL_STATUSES or job._committed:
         return False
     job._cancel.set()
     return True
@@ -510,7 +534,10 @@ def run(
         produced = produce(job, tmp_dir)
         job.check_cancelled()
 
+        # 落盘之前**最后一次**问取消；过了这一行就是提交点，后面不再问
+        job.check_cancelled()
         job.phase = "writing"
+        job._committed = True
         _emit(job, publish)
         outputs: list[Output] = []
         for p in produced:
