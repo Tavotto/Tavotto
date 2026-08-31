@@ -173,62 +173,65 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         {/* 与图内文字同一套行组件：可见的「字号」「颜色」「对齐」标签。
             画布文字没有字体族（统一走文档字体），所以没有「字体」行——
             不摆假控件。 */}
-        <FontSizeRow
-          value={sizePt ?? 10}
-          mixed={sizePt === undefined}
-          step={0.5}
-          min={3}
-          max={96}
-          onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
-        >
-          <Button
-            size="icon"
-            active={bold === true}
-            onClick={() => patch(hist('toggleBold'), (o) => (o.bold = !bold))}
-            aria-label={tx('bold')}
+        {/* `data-prop` 是定位服务的落点：画布标注的字号问题要落在这里 */}
+        <div data-prop="sizePt">
+          <FontSizeRow
+            value={sizePt ?? 10}
+            mixed={sizePt === undefined}
+            step={0.5}
+            min={3}
+            max={96}
+            onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
           >
-            <Bold size={13} />
-          </Button>
-          <Button
-            size="icon"
-            active={italic === true}
-            onClick={() => patch(hist('toggleItalic'), (o) => (o.italic = !italic))}
-            aria-label={tx('italic')}
-          >
-            <Italic size={13} />
-          </Button>
-          <Button
-            size="icon"
-            active={underline === true}
-            onClick={() =>
-              patch(hist('toggleUnderline'), (o) => {
-                if (underline) delete o.underline
-                else o.underline = true
-              })
-            }
-            aria-label={tx('underline')}
-          >
-            <Underline size={13} />
-          </Button>
-          <Button
-            size="icon"
-            disabled={!one}
-            onClick={() => wrapScript('sup')}
-            aria-label={tx('superscript')}
-            title={tx('superscriptTitle', { key: modKey('↑') })}
-          >
-            <Superscript size={13} />
-          </Button>
-          <Button
-            size="icon"
-            disabled={!one}
-            onClick={() => wrapScript('sub')}
-            aria-label={tx('subscript')}
-            title={tx('subscriptTitle', { key: modKey('↓') })}
-          >
-            <Subscript size={13} />
-          </Button>
-        </FontSizeRow>
+            <Button
+              size="icon"
+              active={bold === true}
+              onClick={() => patch(hist('toggleBold'), (o) => (o.bold = !bold))}
+              aria-label={tx('bold')}
+            >
+              <Bold size={13} />
+            </Button>
+            <Button
+              size="icon"
+              active={italic === true}
+              onClick={() => patch(hist('toggleItalic'), (o) => (o.italic = !italic))}
+              aria-label={tx('italic')}
+            >
+              <Italic size={13} />
+            </Button>
+            <Button
+              size="icon"
+              active={underline === true}
+              onClick={() =>
+                patch(hist('toggleUnderline'), (o) => {
+                  if (underline) delete o.underline
+                  else o.underline = true
+                })
+              }
+              aria-label={tx('underline')}
+            >
+              <Underline size={13} />
+            </Button>
+            <Button
+              size="icon"
+              disabled={!one}
+              onClick={() => wrapScript('sup')}
+              aria-label={tx('superscript')}
+              title={tx('superscriptTitle', { key: modKey('↑') })}
+            >
+              <Superscript size={13} />
+            </Button>
+            <Button
+              size="icon"
+              disabled={!one}
+              onClick={() => wrapScript('sub')}
+              aria-label={tx('subscript')}
+              title={tx('subscriptTitle', { key: modKey('↓') })}
+            >
+              <Subscript size={13} />
+            </Button>
+          </FontSizeRow>
+        </div>
         <TextColorRow
           value={color ?? '#000000'}
           onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}

@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import type { UiMessage } from '@/i18n'
+import type { Severity } from '@/lib/profile'
 
-export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements'
+export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
@@ -189,6 +190,20 @@ interface UiState extends Persisted {
   elementPanelId: string | null
   /** 图内选中的元素 gid（末位为主选；axes 可 shift 多选做对齐） */
   selectedGids: string[]
+  /**
+   * 定位之后那一下**短暂高亮**（`lib/issueFocus.ts` 写，`OverlaySvg` 画）。
+   *
+   * 与选中态分开：选中是用户的状态，高亮只是"我把你带到这儿了"的一次提示，
+   * 到时自己消失。`token` 让连着定位同一个对象两次也能重新播一遍。
+   * 高亮同时用**加粗虚线轮廓**表达，不只靠颜色（`reduced motion` 下不闪，
+   * 静静地显示同样长的时间）。
+   */
+  issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
+  /**
+   * 问题面板的等级筛选（null = 不筛）。**UI 会话状态**：不进文档、不进
+   * 撤销、不跨会话记——它是"我现在想看哪几类"，不是用户的长期偏好。
+   */
+  problemFilter: Severity[] | null
   /** 当前绘制工具，画完自动回到 select */
   tool: Tool
   exportOpen: boolean
@@ -237,6 +252,8 @@ interface UiState extends Persisted {
   setShowGrid: (v: boolean) => void
   setStatus: (msg: UiMessage | null, tone?: 'info' | 'error') => void
   setEditingText: (id: string | null) => void
+  setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setProblemFilter: (v: Severity[] | null) => void
   setCropTarget: (id: string | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
@@ -289,6 +306,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   cropTargetId: null,
   elementPanelId: null,
   selectedGids: [],
+  issueHighlight: null,
+  problemFilter: null,
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
@@ -416,6 +435,13 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
   },
 
+  setIssueHighlight: (v) =>
+    set((s) => ({
+      issueHighlight: v
+        ? { ...v, token: (s.issueHighlight?.token ?? 0) + 1 }
+        : null,
+    })),
+  setProblemFilter: (problemFilter) => set({ problemFilter }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId) => set({ cropTargetId }),
   setElementPanel: (elementPanelId) =>

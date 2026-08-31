@@ -446,6 +446,12 @@ def test_no_evaluator_or_ui_hardcodes_a_minimum_font_size():
         ROOT / "web" / "src" / "lib" / "preflight.ts",
         ROOT / "web" / "src" / "components" / "ExportDialog.tsx",
         ROOT / "web" / "src" / "components" / "settings" / "ProfilesSettings.tsx",
+        # 统一检查服务（ADR 0030）：判据、修复计划、措辞与面板同样不许自己写下限
+        # ——「共享判据修一处不算修完」，新消费点要一并点名。
+        ROOT / "web" / "src" / "lib" / "validation.ts",
+        ROOT / "web" / "src" / "lib" / "issueFix.ts",
+        ROOT / "web" / "src" / "lib" / "validationText.ts",
+        ROOT / "web" / "src" / "components" / "left" / "ProblemPanel.tsx",
     ]
     for path in watched:
         if not path.is_file():

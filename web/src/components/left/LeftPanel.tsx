@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useValidationStore } from '@/store/validationStore'
 import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Tip } from '../ui/Tooltip'
@@ -12,6 +13,7 @@ import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
+import { ProblemPanel } from './ProblemPanel'
 
 /**
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
@@ -55,6 +57,7 @@ export function LeftPanel({
           <span className="font-mono text-xs text-ink-3">{objectCount}</span>
         )}
         {tab === 'elements' && <ElementCount />}
+        {tab === 'problems' && <ProblemCount />}
         <span className="flex-1" />
         {wide && (
           <Tip label={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')} side="bottom">
@@ -76,6 +79,8 @@ export function LeftPanel({
         <AssetBrowser />
       ) : tab === 'layers' ? (
         <LayerTree />
+      ) : tab === 'problems' ? (
+        <ProblemPanel />
       ) : (
         <ElementTree />
       )}
@@ -83,6 +88,13 @@ export function LeftPanel({
       <WidthHandle />
     </aside>
   )
+}
+
+/** 问题计数进标题：抽屉展开时不必再看轨道角标 */
+function ProblemCount() {
+  const n = useValidationStore((s) => s.issues.length)
+  if (!n) return null
+  return <span className="font-mono text-xs text-ink-3">{n}</span>
 }
 
 /** 元素计数进标题：树里不再重复统计行 */

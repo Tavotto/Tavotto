@@ -1,0 +1,165 @@
+/**
+ * 真实定位（ADR 0030）。**跨模块唯一的一个 focus 动作**。
+ *
+ * ```text
+ * issue → 画布 → 工作流模式 → 对象 → 视口 → 选中 → Inspector → 属性字段
+ * ```
+ *
+ * 问题面板、就绪度、QuickEdit、onboarding 与将来的搜索都调这一个；
+ * 各写一遍的后果是同一句「定位」在不同入口跳到不同的地方，而且其中几处
+ * 会在对象已删、模式不对、画布不是当前这张时**静默什么都不做**。
+ *
+ * ### 定位失败必须有反馈
+ *
+ * 返回结构化原因，绝不 `return` 一个 `false` 让调用方自己编话。四种成因各有
+ * 各的下一步：对象已删（刷新问题）、画布没了（回项目）、图内编辑进不去
+ * （连接源脚本 / 看项目状态）、文档还没载入（等一下再点）。
+ *
+ * ### 不做的事
+ *
+ * 定位**一个字都不写文档**：不建对象、不改属性、不置 dirty、不进撤销历史。
+ * 视口、选中、模式、面板开合全是会话状态（`UX_CONTRACTS.md` §3）。
+ */
+import { msg } from '@/i18n'
+import { enterElementEdit } from '@/store/actions'
+import { activateCanvas } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspace'
+import type { Severity } from './profile'
+import type { ObjectRef, ValidationIssue } from './validation'
+import type { CanvasObject } from '@/types/document'
+
+/** 定位失败的成因。**闭集**——界面按它查下一步的说法，不按自由文本。 */
+export type FocusFailure =
+  | 'canvas_missing'
+  | 'object_deleted'
+  | 'not_editable'
+  | 'document_not_loaded'
+
+export type FocusOutcome =
+  | { ok: true; mode: 'layout' | 'fast_edit'; focusedField: boolean }
+  | { ok: false; reason: FocusFailure }
+
+/** 高亮持续多久（ms）。够看见，短到不碍事。 */
+export const HIGHLIGHT_MS = 1400
+
+let clearTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 定位到一个对象引用。
+ *
+ * `gid` 非空 = 目标在某张图**里面**：先进快速编辑（那一屏就是为看一张图设计
+ * 的），再进图内元素编辑，再选中那个元素。没有源脚本进不去图内编辑——那不是
+ * 崩溃，是一个说得出原因的失败（`not_editable`）。
+ */
+export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
+  const s0 = useDocumentStore.getState()
+  if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
+  if (ref.canvasId && ref.canvasId !== s0.activeCanvasId) {
+    if (!s0.canvases.some((c) => c.id === ref.canvasId)) {
+      return { ok: false, reason: 'canvas_missing' }
+    }
+    activateCanvas(ref.canvasId)
+    if (useDocumentStore.getState().activeCanvasId !== ref.canvasId) {
+      return { ok: false, reason: 'canvas_missing' }
+    }
+  }
+  const ui = useUiStore.getState()
+  if (!ref.objectId) {
+    // 页面级问题（页宽、比例）：没有对象可选，把属性页切到「画布」那一栏
+    ui.setRightTab('canvas')
+    useWorkspaceStore.getState().exitToLayout()
+    return { ok: true, mode: 'layout', focusedField: false }
+  }
+  const obj = useDocumentStore.getState().doc.objects.find((o) => o.id === ref.objectId)
+  if (!obj) return { ok: false, reason: 'object_deleted' }
+
+  if (ref.gid) {
+    if (obj.type !== 'panel' || !obj.script) return { ok: false, reason: 'not_editable' }
+    // 图内元素：快速编辑那一屏才是"看一张图"的工作流（ADR 0028）
+    useWorkspaceStore.getState().enterFastEdit(obj.id)
+    ui.setTool('select')
+    useSelectionStore.getState().set([obj.id])
+    reveal(obj)
+    enterElementEdit(obj.id)
+    useUiStore.getState().setSelectedGid(ref.gid)
+    useUiStore.getState().setRightTab('properties')
+    flash(ref)
+    return { ok: true, mode: 'fast_edit', focusedField: focusField(propertyPath) }
+  }
+
+  // 画布对象：排版模式（越界、重叠、页边距这些只在版面上说得清）
+  useWorkspaceStore.getState().exitToLayout()
+  ui.setElementPanel(null)
+  ui.setTool('select')
+  useSelectionStore.getState().set([obj.id])
+  reveal(obj)
+  useUiStore.getState().setRightTab('properties')
+  flash(ref)
+  return { ok: true, mode: 'layout', focusedField: focusField(propertyPath) }
+}
+
+/** 定位到一条问题（面板整行点击与「定位」按钮共用）。 */
+export function focusIssue(issue: ValidationIssue): FocusOutcome {
+  return focusObject(issue.objectRef, issue.propertyPath)
+}
+
+/** 只动视口，不动文档。 */
+function reveal(o: CanvasObject): void {
+  useViewportStore.getState().revealRect({ x: o.x, y: o.y, w: o.w, h: o.h })
+}
+
+/** 短暂高亮；到点自己撤掉。连着定位同一个对象两次会重新播一遍（token 变了）。 */
+function flash(ref: ObjectRef): void {
+  useUiStore.getState().setIssueHighlight({ objectId: ref.objectId, gid: ref.gid })
+  if (clearTimer) clearTimeout(clearTimer)
+  clearTimer = setTimeout(() => {
+    clearTimer = null
+    useUiStore.getState().setIssueHighlight(null)
+  }, HIGHLIGHT_MS)
+}
+
+/**
+ * 把焦点落到属性页里对应的那个字段上。
+ *
+ * 选择器用 `data-prop`（属性名是稳定的机器标识），**不用 aria-label**
+ * ——那是本地化文案，换个语言就选不中了（`focusRescue.ts` 踩过同一个坑）。
+ *
+ * DOM 这时候还没重排完（切模式 / 进图内编辑都会换掉整棵属性页），所以推到
+ * 下一帧再找；找不到就如实回 false，调用方据此不宣称"已定位到字段"。
+ */
+function focusField(propertyPath?: string | null): boolean {
+  if (!propertyPath || typeof document === 'undefined') return false
+  const run = () => {
+    const host = document.querySelector<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
+    if (!host) return
+    const control = host.querySelector<HTMLElement>('input, select, textarea, button')
+    const target = control ?? host
+    // 两个方法都可选调用：jsdom 没有 scrollIntoView，而"定位"这一步失手
+    // 不该把整条动作炸掉——用户要的是焦点落到字段上，滚动只是顺带
+    target.scrollIntoView?.({ block: 'nearest' })
+    target.focus?.()
+  }
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+  else run()
+  return true
+}
+
+/** 属性名里只可能出现 `[A-Za-z0-9_.]`，但选择器仍然要转义（`.` 是类选择器）。 */
+const cssEscape = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, (c) => `\\${c}`)
+
+/**
+ * 打开左侧「问题」面板（可带筛选）。**Prompt 12 的导出面板用它把用户
+ * 交回问题清单**，而不是在弹窗里再列一遍。
+ */
+export function openProblems(filter?: { severities?: Severity[] }): void {
+  useUiStore.getState().setProblemFilter(filter?.severities ?? null)
+  useUiStore.getState().setLeftTab('problems')
+}
+
+/** 定位失败时说什么。四个成因各有各的下一步，不共用一句"定位失败"。 */
+export const focusFailureMessage = (reason: FocusFailure) =>
+  msg(`problems.focusFailed.${reason}`, undefined, 'workspace')

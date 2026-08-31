@@ -49,6 +49,7 @@ import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { startValidation } from '@/store/validationStore'
 import { startWorkspacePersistence, useWorkspaceStore } from '@/store/workspace'
 import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
@@ -133,6 +134,9 @@ function Workspace() {
     // 工作区模式（快速编辑 / 画布排版）按 documentId 存本机一档：一个订阅
     // 负责恢复与写入，恢复前先验那个对象还在不在
     const stopWorkspace = startWorkspacePersistence()
+    // 统一检查（ADR 0030）：**唯一的驱动点**。防抖 + 代次在 store 里，
+    // 组件一个都不许自己跑一遍求值器
+    const stopValidation = startValidation()
     // 诊断（ADR 0016）：只读订阅 + 开发态调试入口。**纯内存、不落盘、不上传**，
     // 只有用户点「导出诊断包」时这些事件才会进一个 zip
     const stopDiagnostics = installDiagnosticsWiring()
@@ -172,6 +176,7 @@ function Workspace() {
       stopCheckpoints()
       stopReflow()
       stopWorkspace()
+      stopValidation()
       stopDiagnostics()
       window.removeEventListener('mm:sse-open', syncNative)
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)

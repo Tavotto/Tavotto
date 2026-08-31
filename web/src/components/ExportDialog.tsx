@@ -6,9 +6,7 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
-  Lightbulb,
   MoreHorizontal,
-  ShieldQuestion,
   TriangleAlert,
 } from 'lucide-react'
 import { backendErrorText, createPackage, exportFigure, type ExportResponse } from '@/lib/api'
@@ -16,13 +14,23 @@ import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { toExportObjects } from '@/lib/exportPayload'
+import { buildProofPayload } from '@/lib/preflight'
+import { focusFailureMessage, focusIssue, openProblems } from '@/lib/issueFocus'
 import {
-  buildProofPayload,
-  issueText,
-  runPreflight,
-  summarize,
-  type PreflightIssue,
-} from '@/lib/preflight'
+  exportContextIssues,
+  exportContextRaw,
+  summaryFor,
+  type ValidationIssue,
+  type ValidationSummary,
+} from '@/lib/validation'
+import {
+  issueDetailText,
+  issueTitle,
+  issueValues,
+  severityLabel,
+  SEVERITY_ICON,
+  subjectName,
+} from '@/lib/validationText'
 import { columnOf, type JournalOverride, type PublicationProfile, type Severity } from '@/lib/profile'
 import { profileName, profileTechnicalDetail } from '@/lib/profileText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
@@ -30,13 +38,17 @@ import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
-import { revealObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
+import {
+  getValidationSummary,
+  rawIssuesFor,
+  runValidation,
+  useValidationStore,
+} from '@/store/validationStore'
 import type { PanelObject, TextObject } from '@/types/document'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
@@ -95,17 +107,6 @@ function buildPresets(profile: PublicationProfile) {
   ]
 }
 
-/** 等级标签按 severity 查 `dialogs:export.severity.<等级>` */
-const severityLabel = (s: Severity): string =>
-  ex(`severity.${s === 'not_verifiable' ? 'notVerifiable' : s}`)
-
-const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
-  error: TriangleAlert,
-  warn: TriangleAlert,
-  not_verifiable: ShieldQuestion,
-  suggestion: Lightbulb,
-}
-
 export function ExportDialog() {
   // 订阅语言变化：预设、体检数字这些都是模块级 ex() 拼出来的，
   // 没有这一句切语言后这个对话框会停在旧语言上
@@ -114,9 +115,14 @@ export function ExportDialog() {
   const setOpen = useUiStore((s) => s.setExportOpen)
   const doc = useDocumentStore((s) => s.doc)
   const commit = useDocumentStore((s) => s.commit)
-  const byKey = useRenderStore((s) => s.byKey)
-  const latest = useRenderStore((s) => s.latest)
+  const documentId = useDocumentStore((s) => s.documentId)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const assets = useAssetStore((s) => s.byId)
+  // 订阅**值**而不是订阅一个现算的摘要：摘要的组装只有 `summaryFor()` 一份，
+  // 问题面板与这里读的是同一份 store 状态、走的是同一条组装
+  const validationIssues = useValidationStore((s) => s.issues)
+  const validationReady = useValidationStore((s) => s.ready)
+  const validationFailed = useValidationStore((s) => s.failed)
 
   // 初始值来自「设置 → 导出默认值」；对话框内的改动只影响本次
   const [formats, setFormats] = useState<string[]>(() => readExportDefaults().formats)
@@ -176,6 +182,26 @@ export function ExportDialog() {
     if (!open) return
     // 规范清单在这里拉一次：用户可能刚在设置里建了一条自定义规范
     void useProfileStore.getState().load()
+    // **当场同步跑一遍检查**：防抖那 250ms 里对话框会说"检查通过"，而那句话
+    // 在检查跑完之前是假的。纯计算，没有请求
+    runValidation()
+    /*
+     * 匿名用量统计：**预检真的算完之后**记一次，每次打开导出对话框一条。
+     *
+     * 计数在这里**现取**而不是读渲染闭包里的 `summary`——上一次渲染发生在
+     * `runValidation()` 之前，闭包里的那份是空的（改造时踩过：埋点稳定报 0）。
+     *
+     * 发出去的只有**四个计数 + 一个布尔**：检查项的文案、字体名、对象 id、
+     * 文件名一个都不发（白名单里也没有这些属性）。
+     */
+    const fresh = getValidationSummary('activeCanvas')
+    captureTelemetry('preflight_completed', {
+      errors: boundedCount(fresh.counts.error),
+      warnings: boundedCount(fresh.counts.warn),
+      not_verifiable: boundedCount(fresh.counts.not_verifiable),
+      suggestions: boundedCount(fresh.counts.suggestion),
+      passed: fresh.counts.error === 0 && fresh.counts.warn === 0,
+    })
     setStem(doc.name)
     setResult(null)
     setPackResult(null)
@@ -193,44 +219,66 @@ export function ExportDialog() {
   const pxW = Math.round((doc.page.w / 25.4) * Number(dpi))
   const pxH = Math.round((doc.page.h / 25.4) * Number(dpi))
 
-  const issues = useMemo(
-    () => (open ? runPreflight(doc, assets, { byKey, latest }, profile) : []),
-    [open, doc, assets, byKey, latest, profile],
+  /**
+   * 检查结果**从统一服务取**（ADR 0030）。这个对话框**不再自己跑一遍求值器**
+   * ——跑两遍的代价不是性能，是两处判据迟早分叉，而分叉的表现是「问题面板
+   * 说过了、导出对话框说没过」。
+   *
+   * 导出上下文那一条（这次的 PPI 与格式）只在这里补：它离开这个对话框就无从
+   * 判断。与文档问题**按指纹去重**，不重复报同一件事。
+   */
+  const exportIssues = useMemo(
+    () =>
+      exportContextIssues(
+        { formats, dpi: Number(dpi) },
+        profile,
+        { documentId, canvasId: activeCanvasId },
+      ),
+    [formats, dpi, profile, documentId, activeCanvasId],
   )
-  const sum = useMemo(() => summarize(issues), [issues])
+  const summary = useMemo(
+    () =>
+      summaryFor(validationIssues, {
+        canvasId: activeCanvasId,
+        extra: exportIssues,
+        ready: validationReady,
+        failed: validationFailed,
+      }),
+    [validationIssues, activeCanvasId, exportIssues, validationReady, validationFailed],
+  )
+  const issues = summary.issues
+  /** proof 留档要的那一份（同一次求值的聚合投影） */
+  const exportRaw = useMemo(
+    () => exportContextRaw({ formats, dpi: Number(dpi) }, profile),
+    [formats, dpi, profile],
+  )
+  const openPanel = () => {
+    setOpen(false)
+    openProblems()
+  }
+  const errors = useMemo(() => issues.filter((i) => i.severity === 'error'), [issues])
+  const notVerifiable = useMemo(
+    () => issues.filter((i) => i.severity === 'not_verifiable'),
+    [issues],
+  )
   /** 最小的最终有效字号（体检里最有信息量的那个数字，直接摆在面板上） */
   const minEffectivePt = useMemo(() => {
     let min: number | null = null
     for (const i of issues) {
-      const v = i.detail?.effective_pt
+      const v = i.technicalDetails.effective_pt
       if (typeof v === 'number' && (min == null || v < min)) min = v
     }
     return min
   }, [issues])
-
-  /** 需要用户点头才放行的东西：阻断项 + 无法核验项 */
-  const needsConfirm = sum.errors.length > 0 || sum.notVerifiable.length > 0
+  /** 导出 PPI 那条闸**不再在这里现算**：有没有过由统一服务说了算 */
+  const dpiIssue = exportIssues.some((i) => i.propertyPath === 'export.dpi')
 
   /**
-   * 匿名用量统计：**预检真的算完之后**记一次，每次打开导出对话框一条。
-   *
-   * 这一条刻意记在前端而不是后端：画布这一侧的预检求值器就是
-   * `lib/preflight.ts`（两个求值器的分工见 CLAUDE.md），Flask 没有对应端点。
-   * 发出去的只有**四个计数 + 一个布尔**——检查项的文案、字体名、对象 id、
-   * 文件名一个都不发（白名单里也没有这些属性）。
+   * 需要用户点头才放行的东西：阻断项 + 无法核验项 + **这一次没查成**。
+   * 查不成时那份清单可能是更早留下的，不能当成"这一版的结论"。
    */
-  useEffect(() => {
-    if (!open) return
-    captureTelemetry('preflight_completed', {
-      errors: boundedCount(sum.counts.error),
-      warnings: boundedCount(sum.counts.warn),
-      not_verifiable: boundedCount(sum.counts.not_verifiable),
-      suggestions: boundedCount(sum.counts.suggestion),
-      passed: sum.counts.error === 0 && sum.counts.warn === 0,
-    })
-    // 依赖里**只有 open**：把 sum 放进去的话，用户在对话框里换一次期刊规范
-    // 就会再发一条，而那不是一次新的体检行为
-  }, [open])                                    // eslint-disable-line
+  const needsConfirm = errors.length > 0 || notVerifiable.length > 0 || summary.failed
+
   // 勾了确认框就**必须**留档。确认框上写着「这次确认会记录在留档里」，而
   // 用户可能早就把留档关掉了（这是个记住的偏好）——那样承诺的记录一份都
   // 不会产生，导出对话框在骗人。所以确认一旦成立，留档不再是可选项。
@@ -286,9 +334,12 @@ export function ExportDialog() {
     setFormats((prev) => (prev.includes(f) ? prev.filter((v) => v !== f) : [...prev, f]))
   }
 
-  const locate = (ids: string[]) => {
+  /** 定位走**跨模块唯一的那个 focus 服务**：切画布 / 切模式 / 选中 / 聚焦字段
+   *  一处实现，失败有结构化原因（`lib/issueFocus.ts`）。 */
+  const locate = (issue: ValidationIssue) => {
     setOpen(false)
-    revealObjects(ids)
+    const outcome = focusIssue(issue)
+    if (!outcome.ok) useUiStore.getState().setStatus(focusFailureMessage(outcome.reason), 'error')
   }
 
   const run = async () => {
@@ -306,13 +357,22 @@ export function ExportDialog() {
         stem: settings.stem,
         objects: toExportObjects(doc.objects),
         // proof 里必须带 profile 身份与全部检查结果，含 not_verifiable
+        // 留档写的是**聚合投影**（proof report v2 的形状一个字节没动），
+        // 而它来自同一次求值——不是为了写留档再查一遍
         proof: proofOn
-          ? buildProofPayload(doc, assets, issues, settings, profile, {
-              forced: sum.errors.length > 0 && confirmed,
-              acknowledged: needsConfirm
-                ? [...sum.errors, ...sum.notVerifiable].map((i) => i.id)
-                : [],
-            })
+          ? buildProofPayload(
+              doc,
+              assets,
+              [...rawIssuesFor(activeCanvasId), ...exportRaw],
+              settings,
+              profile,
+              {
+                forced: errors.length > 0 && confirmed,
+                acknowledged: needsConfirm
+                  ? [...new Set([...errors, ...notVerifiable].map((i) => i.ruleCode))]
+                  : [],
+              },
+            )
           : undefined,
       })
       setResult(res)
@@ -477,6 +537,7 @@ export function ExportDialog() {
           minEffectivePt={minEffectivePt}
           minDpi={profile.min_raster_dpi}
           dpi={Number(dpi)}
+          dpiBad={dpiIssue}
           vector={profile.preferred_formats.vector}
           raster={profile.preferred_formats.raster}
         />
@@ -514,7 +575,7 @@ export function ExportDialog() {
           </Row>
         )}
 
-        <PreflightBlock issues={issues} onLocate={locate} />
+        <PreflightBlock summary={summary} onLocate={locate} onOpenPanel={openPanel} />
 
         {needsConfirm && (
           <label className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
@@ -527,14 +588,16 @@ export function ExportDialog() {
             {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
                 英文的从句位置不一样，拼出来的句子读着就是机翻 */}
             <span className="min-w-0 flex-1">
-              {sum.errors.length > 0 && sum.notVerifiable.length > 0
+              {errors.length > 0 && notVerifiable.length > 0
                 ? ex('confirmBoth', {
-                    errors: sum.errors.length,
-                    notVerifiable: sum.notVerifiable.length,
+                    errors: errors.length,
+                    notVerifiable: notVerifiable.length,
                   })
-                : sum.errors.length > 0
-                  ? ex('confirmErrors', { errors: sum.errors.length })
-                  : ex('confirmNotVerifiable', { notVerifiable: sum.notVerifiable.length })}
+                : errors.length > 0
+                  ? ex('confirmErrors', { errors: errors.length })
+                  : notVerifiable.length > 0
+                    ? ex('confirmNotVerifiable', { notVerifiable: notVerifiable.length })
+                    : ex('confirmCheckFailed')}
             </span>
           </label>
         )}
@@ -670,6 +733,7 @@ function ProfileFacts({
   minEffectivePt,
   minDpi,
   dpi,
+  dpiBad,
   vector,
   raster,
 }: {
@@ -681,6 +745,8 @@ function ProfileFacts({
   minPt: number
   minEffectivePt: number | null
   minDpi: number
+  /** 「这个 PPI 够不够」由统一检查服务判，不在这一格现算（ADR 0030） */
+  dpiBad: boolean
   dpi: number
   vector: string[]
   raster: string[]
@@ -713,7 +779,7 @@ function ProfileFacts({
       <Fact
         label={ex('facts.dpi')}
         value={ex('facts.dpiValue', { dpi, min: minDpi })}
-        bad={dpi < minDpi}
+        bad={dpiBad}
       />
       <Fact label={ex('facts.vector')} value={vector.join(' / ').toUpperCase()} />
       <Fact label={ex('facts.raster')} value={raster.join(' / ').toUpperCase()} />
@@ -732,18 +798,32 @@ function Fact({ label, value, bad = false }: { label: string; value: string; bad
   )
 }
 
-/** 预检：先一句摘要，问题明细按需展开；有阻断项时默认展开 */
+/**
+ * 预检摘要。**只消费统一检查服务的结果**（ADR 0030）——这个对话框不再自己
+ * 跑一遍求值器，也不再在这里显示 gid（那是内部标识，归问题面板的技术详情）。
+ * 明细按需展开，有阻断项时默认展开；完整清单在左侧「问题」面板。
+ */
 function PreflightBlock({
-  issues,
+  summary,
   onLocate,
+  onOpenPanel,
 }: {
-  issues: PreflightIssue[]
-  onLocate: (ids: string[]) => void
+  summary: ValidationSummary
+  onLocate: (issue: ValidationIssue) => void
+  onOpenPanel: () => void
 }) {
-  useTranslation('dialogs')
-  const sum = summarize(issues)
-  const [expanded, setExpanded] = useState(sum.errors.length > 0)
-  if (issues.length === 0) {
+  useTranslation(['dialogs', 'errors'])
+  const [expanded, setExpanded] = useState(summary.blocking)
+  if (summary.failed || !summary.ready) {
+    // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
+    return (
+      <p className="flex items-center gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs text-danger">
+        <TriangleAlert size={12} className="shrink-0" aria-hidden />
+        {ex(summary.total ? 'preflightFailedKept' : 'preflightFailed')}
+      </p>
+    )
+  }
+  if (summary.total === 0) {
     return (
       <p className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
         <Check size={12} className="shrink-0 text-accent" />
@@ -752,31 +832,40 @@ function PreflightBlock({
     )
   }
   const parts = (['error', 'warn', 'not_verifiable', 'suggestion'] as Severity[])
-    .filter((s) => sum.counts[s] > 0)
-    .map((s) => ex('severityCount', { count: sum.counts[s], label: severityLabel(s) }))
+    .filter((s) => summary.counts[s] > 0)
+    .map((s) => ex('severityCount', { count: summary.counts[s], label: severityLabel(s) }))
   return (
     <div className="rounded-sm bg-surface-2 px-2 py-1.5">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs outline-none focus-visible:focus-ring"
-      >
-        <TriangleAlert
-          size={12}
-          className={sum.blocking ? 'shrink-0 text-danger' : 'shrink-0 text-ink-3'}
-        />
-        <span className={cn('min-w-0 flex-1', sum.blocking ? 'text-danger' : 'text-ink-2')}>
-          {ex('preflightParts', { parts: parts.join(' · ') })}
-        </span>
-        <ChevronRight
-          size={11}
-          className={cn('shrink-0 text-ink-3 transition-transform', expanded && 'rotate-90')}
-        />
-      </button>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-xs outline-none focus-visible:focus-ring"
+        >
+          <TriangleAlert
+            size={12}
+            className={summary.blocking ? 'shrink-0 text-danger' : 'shrink-0 text-ink-3'}
+          />
+          <span className={cn('min-w-0 flex-1', summary.blocking ? 'text-danger' : 'text-ink-2')}>
+            {ex('preflightParts', { parts: parts.join(' · ') })}
+          </span>
+          <ChevronRight
+            size={11}
+            className={cn('shrink-0 text-ink-3 transition-transform', expanded && 'rotate-90')}
+          />
+        </button>
+        {/* 完整清单、筛选与修复都在问题面板；这里不做第二套 */}
+        <button
+          onClick={onOpenPanel}
+          className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+        >
+          {ex('openProblems')}
+        </button>
+      </div>
       {expanded && (
         <ul className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5">
-          {issues.map((it) => (
-            <IssueRow key={it.id} issue={it} onLocate={onLocate} />
+          {summary.issues.map((it) => (
+            <IssueRow key={it.issueId} issue={it} onLocate={onLocate} />
           ))}
         </ul>
       )}
@@ -788,11 +877,12 @@ function IssueRow({
   issue,
   onLocate,
 }: {
-  issue: PreflightIssue
-  onLocate: (ids: string[]) => void
+  issue: ValidationIssue
+  onLocate: (issue: ValidationIssue) => void
 }) {
-  useTranslation('dialogs')
+  useTranslation(['dialogs', 'errors'])
   const Icon = SEVERITY_ICON[issue.severity]
+  const values = issueValues(issue)
   const tone =
     issue.severity === 'error'
       ? 'text-danger'
@@ -802,27 +892,26 @@ function IssueRow({
   return (
     <li>
       <button
-        onClick={() => onLocate(issue.objectIds)}
-        disabled={!issue.objectIds.length}
-        className="group flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 hover:text-ink disabled:cursor-default"
+        onClick={() => onLocate(issue)}
+        title={issueDetailText(issue)}
+        className="group flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 hover:text-ink"
       >
-        <Icon size={12} className={cn('mt-px shrink-0', tone)} />
+        <Icon size={12} className={cn('mt-px shrink-0', tone)} aria-hidden />
         <span className="min-w-0 flex-1">
           <span className="mr-1 rounded-[3px] bg-surface px-1 font-mono text-[10px] text-ink-3">
             {severityLabel(issue.severity)}
           </span>
-          {issueText(issue)}
-          {issue.objectIds.length > 1 && ex('issueOccurrences', { count: issue.objectIds.length })}
-          {!!issue.gids.length && (
+          {issueTitle(issue)}
+          <span className="ml-1 text-ink-3">{subjectName(issue)}</span>
+          {values.current && (
             <span className="ml-1 font-mono text-[10px] text-ink-faint">
-              {issue.gids.slice(0, 3).join(' ')}
-              {issue.gids.length > 3 && ' …'}
+              {values.expected
+                ? `${values.current} → ${values.expected}`
+                : values.current}
             </span>
           )}
         </span>
-        {!!issue.objectIds.length && (
-          <span className="shrink-0 text-ink-3 group-hover:text-accent">{ex('locate')}</span>
-        )}
+        <span className="shrink-0 text-ink-3 group-hover:text-accent">{ex('locate')}</span>
       </button>
     </li>
   )

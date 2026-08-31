@@ -379,3 +379,37 @@ def test_every_message_key_is_registered_in_both_locales():
         )["preflight"]
         missing = keys - set(table)
         assert not missing, f"{locale} 缺 preflight 文案 key：{sorted(missing)}"
+
+
+# ----------------------- 导出上下文那条规则的跨语言同源 -----------------------
+def test_the_export_context_rule_is_one_rule_on_both_sides():
+    """「这次导出的 PPI 够不够」在两条入口上必须是**同一条规则**。
+
+    MCP 那条在 `codex-plugin/mcp/tavotto_mcp/bridge.py::export_raster_issues()`，
+    画布这条在 `web/src/lib/validation.ts::exportContextRaw()`（ADR 0030）。
+    两侧必须共用同一个 **rule code**（`raster-dpi`）与同一个 **message key**
+    （`exportRasterDpi`）：另起一个 code 的话，期刊覆盖里把 `raster-dpi` 调成
+    warn 对其中一条路就不生效，同一份规范在两条入口上说不同的话。
+
+    判据落在源码文本上（两侧语言不同，没有共用的运行时），所以**改名会当场红**
+    ——那正是这条看护要拦的事。
+    """
+    py = (ROOT / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py").read_text(
+        encoding="utf-8"
+    )
+    ts = (ROOT / "web" / "src" / "lib" / "validation.ts").read_text(encoding="utf-8")
+    assert "def export_raster_issues(" in py
+    assert "export function exportContextRaw(" in ts
+    for token, where in (
+        ('"raster-dpi"', "Python 侧的 rule code"),
+        ('"exportRasterDpi"', "Python 侧的 message key"),
+        ('"min_raster_dpi"', "Python 侧读的规范键"),
+    ):
+        assert token in py, f"{where}变了"
+    for token, where in (
+        ("'raster-dpi'", "TS 侧的 rule code"),
+        ("'preflight.exportRasterDpi'", "TS 侧的 message key"),
+        ("min_raster_dpi", "TS 侧读的规范键"),
+        ("preferred_formats.raster", "TS 侧读的格式清单"),
+    ):
+        assert token in ts, f"{where}变了"

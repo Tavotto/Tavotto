@@ -551,7 +551,10 @@ function FieldBlock({
   const propRe = new RegExp(`(^|[^A-Za-z_])${field.prop}([^A-Za-z_0-9]|$)`)
   const warning = warnings.find((w) => propRe.test(w))
   return (
-    <div>
+    /* `data-prop` 是**定位服务的落点**（`lib/issueFocus.ts`）：问题面板要把
+       焦点落到出问题的那个字段上，而选择器只能用稳定的机器标识——
+       aria-label 是本地化文案，换个语言就选不中了（focusRescue 同一条理由）。 */
+    <div data-prop={field.prop} data-gid={element.gid}>
       <FieldRow panel={panel} element={element} field={field} />
       {warning && (
         <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>

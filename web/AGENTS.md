@@ -230,6 +230,45 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   `components/inspector/elementStylePreview.test.tsx`、
   `e2e/fake-realtime.spec.ts`（真浏览器，顺带产出 perf-baseline 的 Phase G 数字）。
 
+## 统一检查与问题定位（2026-08-31，ADR 0030）
+
+完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
+**「这份项目有什么问题」只有一条链**：
+
+```text
+preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐）
+  → lib/validation.ts    接成可定位问题：画布维度、逐条命中、指纹、fixKind
+  → store/validationStore.ts  编排：防抖 250ms + 代次、按画布增量、失败不清空
+  → components/left/ProblemPanel.tsx  左侧「问题」抽屉（常驻入口 + 角标）
+```
+
+* **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
+  与 `rawIssuesFor(canvasId)`（proof 留档要的聚合投影，**同一次求值的另一份
+  投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份。
+* **`ready` / `failed` 不许压扁成「没问题」**：`total === 0` 单独看不足以说
+  「检查通过」。打开导出对话框时**当场同步跑一遍**，就是为了不让那 250ms 防抖
+  窗口里说出一句假话。
+* **逐条命中**（`PreflightOccurrence`）是 TS 侧的展开层，**不进跨语言合同**：
+  golden vectors 比的仍是聚合投影。看护用例盯着两者一致（命中的 objectId /
+  gid 并起来必须与聚合项逐字相等）。
+* **定位只有 `lib/issueFocus.focusObject()` 一处**：切画布 → 切工作流模式 →
+  选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
+  （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
+  绝不静默不动。属性字段的落点是 `data-prop`（稳定机器标识），**不是
+  aria-label**——那是本地化文案，换语言就选不中。
+* **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
+  主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
+  「技术详情」里。
+* **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
+  所以"提到正好 8 pt"不算修好）、不动科研数据（字体 / 色图 / 裁剪一律不自动）。
+  落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
+  一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
+* **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
+  Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。

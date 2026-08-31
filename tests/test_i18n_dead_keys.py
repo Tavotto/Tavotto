@@ -120,6 +120,19 @@ def _sources() -> str:
     return "\n".join(parts)
 
 
+#: i18next 的复数形态后缀。带 count 的 key 由 i18next **在运行时**补上后缀，
+#: 源码里出现的是**基名**（`pr('fixAll', { count })` 发的是 `fixAll_other`）。
+#: 剥掉后缀再找一次基名——这不是放宽，基名本身仍然必须有真发射点。
+_PLURAL_SUFFIXES = ("_zero", "_one", "_two", "_few", "_many", "_other")
+
+
+def _stem(leaf: str) -> str:
+    for suffix in _PLURAL_SUFFIXES:
+        if leaf.endswith(suffix) and len(leaf) > len(suffix):
+            return leaf[: -len(suffix)]
+    return leaf
+
+
 def _has_emitter(path: str, blob: str) -> bool:
     """这个键在源码里有发射点吗？
 
@@ -134,15 +147,18 @@ def _has_emitter(path: str, blob: str) -> bool:
     刻意**不**接受「剥掉第一段之后的裸子串」：那样 `backend.checkFailed` 会被
     `errors:update.checkFailed` 里的 `checkFailed` 喂活，一个死键就能靠另一个
     命名空间的活键蒙混过关（Codex 在 PR #158 上指出，成立）。
+
+    **复数形态例外**：`fixAll_one` / `fixAll_other` 在源码里永远找不到——后缀
+    是 i18next 按 `count` 在运行时补的。所以带这类后缀的叶子额外用**基名**
+    再找一次；基名没有发射点的话照样报死键。
     """
     leaf = path.rsplit(".", 1)[-1]
-    return (
-        f'"{leaf}"' in blob
-        or f"'{leaf}'" in blob
-        or f"`{leaf}`" in blob
-        or f"`{leaf}." in blob
-        or path in blob
-    )
+    candidates = {leaf, _stem(leaf)}
+    stem_path = path.rsplit(".", 1)[0] + "." + _stem(leaf) if "." in path else _stem(leaf)
+    for name in candidates:
+        if f'"{name}"' in blob or f"'{name}'" in blob or f"`{name}`" in blob or f"`{name}." in blob:
+            return True
+    return path in blob or stem_path in blob
 
 
 def _all_paths() -> list[str]:
@@ -192,6 +208,9 @@ def test_the_scan_range_is_not_quietly_hollow():
     )
     assert _has_emitter("backend.no_project", blob), "连真发射点都找不到，判据坏了"
     assert not _has_emitter("backend.zzz_no_such_error_code_xyz", blob)
+    # 复数后缀的剥离**不是万能钥匙**：基名没有发射点的照样是死键
+    assert not _has_emitter("backend.zzz_no_such_error_code_xyz_other", blob)
+    assert _has_emitter("problems.fixAll_other", blob), "复数形态的基名有发射点却被报成死键"
 
 
 def test_every_exemption_carries_a_reason():
