@@ -10,6 +10,7 @@ import {
   defaultScope,
   filenameProblem,
   originalAvailability,
+  pixelPreview,
   snapshotRevision,
   type ExportRequestInput,
 } from './exportRequest'
@@ -214,5 +215,30 @@ describe('快照指纹', () => {
       buildExportRequest(inputOf({ doc, scope: 'original', figureId: 'Fig1.pdf' })).request,
     )
     expect(original).not.toBe(canvas)
+  })
+})
+
+describe('像素预览：照抄源文件才报源像素网格', () => {
+  const page = { w: 180, h: 120 }
+  const raster = {
+    widthMm: 10.16,
+    heightMm: 6.77,
+    pixelWidth: 120,
+    pixelHeight: 80,
+    sourceKind: 'raster',
+  } as never
+
+  it('照抄源位图时报源像素网格，与 ppi 无关', () => {
+    expect(pixelPreview('original', 600, page, raster, true)).toContain('120')
+    expect(pixelPreview('original', 300, page, raster, true)).toContain('120')
+  })
+
+  it('**带 override 的位图会被引擎重画**：这时 ppi 说了算，不许报源像素网格', () => {
+    const shown = pixelPreview('original', 600, page, raster, false)
+    expect(shown, '对着一张即将被重画的图报源像素网格 = 界面与文件各说各的').not.toContain(
+      '120 × 80',
+    )
+    // 10.16mm @ 600ppi ≈ 240px
+    expect(shown).toContain('240')
   })
 })

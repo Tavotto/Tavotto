@@ -113,6 +113,7 @@
     "replace_failed": "The final step of saving (the rename) failed. The original file is intact — try again: {{reason}}",
     "replay_divergence": "Write-back blocked: the live session and a full replay disagree. This is an engine-level problem — please report it.",
     "report_failed": "The style check report couldn't be generated: {{error}}. Your image files are unaffected.",
+    "report_missing_payload": "A style check report was requested but there was nothing to write into it. Your image files are unaffected.",
     "report_write_failed": "The style check report couldn't be written: {{error}}. Your image files are unaffected.",
     "runtime_asset_has_no_original_artifact": "This runtime figure has no original file to write back to (if a file with the same name exists on disk, write back from that library asset instead)",
     "runtime_asset_unknown": "This runtime figure is not on record: {{id}} — run that script again to re-establish the link",

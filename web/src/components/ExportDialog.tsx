@@ -274,9 +274,21 @@ export function ExportDialog() {
   const reportOn = withReport || reportRequired
   const blocked = needsConfirm && !confirmed
 
+  /**
+   * 这次导出会不会**照抄源位图**（而不是让引擎重画一张）。
+   *
+   * 判据里那个 `overrides.length` 不是细节：面板带 override 时后端会先让
+   * worker 全质量重渲染一次，**拿到的是一份 PDF**——像素网格不复存在，
+   * PPI 重新变得有意义。少了这一条，界面会对着一张即将被重画的图报源像素
+   * 网格、还说 PPI 无关（PR #214 第四轮评审）。
+   */
+  const copiesSourceVerbatim =
+    scope === 'original' &&
+    availability.spec?.sourceKind === 'raster' &&
+    !(panel?.overrides?.length ?? 0)
+
   /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
-  const transparentApplies =
-    raster && !(scope === 'original' && availability.spec?.sourceKind === 'raster')
+  const transparentApplies = raster && !copiesSourceVerbatim
 
   /* ------------------------------ 文件名校验 ------------------------------ */
   const filenameIssue = useMemo(
@@ -331,6 +343,18 @@ export function ExportDialog() {
 
   const start = useCallback(
     async (overwrite: OverwritePolicy) => {
+      /*
+       * **阻断闸放在这一个咽喉上，不挂在按钮上。**
+       *
+       * 「覆盖 / 另存一份 / 重试」都直接调 `start()`，它们没有经过主按钮的
+       * `disabled`——于是一次已确认的导出撞名之后，点「覆盖」会把同一批阻断项
+       * **不经确认**再导一次，而且 `acknowledged` 是空的（确认刚被清掉）、
+       * 报告也不再被强制生成（PR #214 第四轮评审）。
+       *
+       * 逐颗按钮加 `disabled` 是治标：下一颗新按钮照样会漏。闸在这里，
+       * 任何调用点都绕不过去。
+       */
+      if (blocked || filenameIssue || !formats.length) return
       const report = reportOn
         ? buildProofPayload(
             doc,
@@ -355,9 +379,17 @@ export function ExportDialog() {
           )
         : undefined
       writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport })
-      await runExport(inputOf({ overwrite, report: report as Record<string, unknown> | undefined }))
-      // **每次导出尝试之后都要重新确认**：一次点头只对那一次导出有效
-      setConfirmed(false)
+      const job = await runExport(
+        inputOf({ overwrite, report: report as Record<string, unknown> | undefined }),
+      )
+      /*
+       * **每次真的导过之后都要重新确认**：一次点头只对那一次导出有效。
+       *
+       * 撞名（`conflict`）除外——那一次**什么都没写**，界面正在问的是同一次
+       * 导出的另一个问题（覆盖还是另存），不是一次新的导出。在这里清掉的话，
+       * 用户得为同一批问题点两次头，而第二次点头没有增加任何信息。
+       */
+      if (job?.status !== 'conflict') setConfirmed(false)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -379,6 +411,8 @@ export function ExportDialog() {
       figureId,
       panel,
       availability.spec,
+      blocked,
+      filenameIssue,
     ],
   )
 
@@ -514,7 +548,7 @@ export function ExportDialog() {
                 600ppi 会显示成 4252px，而真实产物约 1668px）；位图原图更是
                 照抄源像素网格，与 ppi 无关。 */}
             <span className="shrink-0 font-mono text-xs text-ink-3">
-              {pixelPreview(scope, Number(ppi), doc.page, availability.spec)}
+              {pixelPreview(scope, Number(ppi), doc.page, availability.spec, copiesSourceVerbatim)}
             </span>
           </Row>
         )}

@@ -156,8 +156,8 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 a4f385e6e29683fd（第三轮评审后）
-重建  web/dist-playground/                     指纹 002514b06fa14d8d（不进 git）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 47db1a1ef25cdf59（第四轮评审后）
+重建  web/dist-playground/                     指纹 e539f57cec7a516e（不进 git）
 ```
 
 ### 界面上删掉的（§五 逐项）
@@ -242,6 +242,19 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 另：变异反证脚本自己有一处空转（「锚点找不到」与「存活」混报），已修——
 **把纪律写进文档而不写进工具，下一次照样会踩**（T-69）。
 
+### 第四轮评审（`07fc7c2`）：又四条全改
+
+2 P1 + 2 P2，**其中一条 P1 是第三轮的修复制造出来的**。三条对后面阶段有用：
+
+**1. 闸放在咽喉上，不放在按钮上**（T-70）。一个安全判据如果能被"再加一个入口"
+绕过，它就不在正确的位置上。
+
+**2. 广播事件必须有归属判据**（T-71）。「我能不能收」问的是**所有权**，
+不是"我现在有没有空"。
+
+**3. 判据要打在真正会出事的那条路上**（T-72）。这一轮变异反证有两条存活，
+成因相同：一条点了一颗本来就 `disabled` 的按钮，一条测了纯函数却漏了调用方。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -267,7 +280,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
-  开出）→ **PR #214**（11 与 12 一起，四个提交 + 三个评审回合，16 条 findings 全改）
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 四个评审回合，20 条 findings 全改）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

@@ -1238,3 +1238,38 @@ fast refresh）；两个 memo 的依赖加了带理由的 `exhaustive-deps` 豁�
 
 > 教训本身不新：**把纪律写进文档而不写进工具，下一次照样会踩。**
 > 与「把纪律做进结构」同一条。
+
+---
+
+## 第四轮评审（PR #214，`07fc7c2`）：四条 findings 的处置
+
+**其中一条 P1 是上一轮我自己修出来的**——「每次导出尝试之后撤销确认」那条改动
+制造了它。
+
+| # | 级 | 现象 | 处置 |
+| --- | --- | --- | --- |
+| 1 | P1 | 撞名之后「覆盖 / 另存一份 / 重试」**直接调 `start()`**，绕过主按钮的 `disabled`。上一次已确认的导出撞名之后，点「覆盖」会把同一批阻断项不经确认再导一次，且 `acknowledged` 是空的（确认刚被清掉）、报告也不再被强制生成 | ① 闸放进 `start()` 这个**唯一咽喉**（逐颗按钮加 `disabled` 是治标，下一颗新按钮照样漏）；② 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题，所以**不清确认** |
+| 2 | P1 | 带 override 的位图面板经 `_resolve_panel_source()` 会被 worker 重画成 **PDF**，走矢量那条路按 ppi 栅格化；而界面仍报 `sourceKind: 'raster'` 的源像素网格、还说 PPI 无关 | 「照抄源位图」的判据加上 `!overrides.length`——**有 override = 引擎重画**，ppi 重新有意义。`pixelPreview` 收一个显式的 `copiesVerbatim` |
+| 3 | P2 | `export.progress` 是**项目级广播**：本标签页空闲或上一个作业终局时，会收下另一个标签页的快照；`resetExportState()` 之后一个在飞的轮询也能把状态填回去 | 加 `ownedJobId`：**只收自己认领过的那个作业**的快照；`resetExportState()` 一并清掉归属（只停轮询停不掉已经发出去的请求） |
+| 4 | P2 | 请求 `include_style_check_report: true` 却没带载荷时，报告生成**整段跳过**，作业仍报 `done`，进度永远差一格 | 记一条失败的报告产出（`report_missing_payload`），作业进 `partial` |
+
+### 新增用例（后端 2 / 前端 5）
+
+`test_a_requested_report_with_no_payload_fails_loudly`（连**进度补齐**一起断言）、
+`test_a_raster_panel_with_overrides_is_re_rendered_not_copied`；前端：撞名之后
+问题集合变了「覆盖」也被闸挡住、带 override 的位图不报源像素网格（**A/B 两个
+夹具**：同一张图有/无 override 各渲一次）、只收自己那个作业的快照 ×2、
+`pixelPreview` 的 `copiesVerbatim` 两支。
+
+### 变异反证：后端 24 / 前端 24，全部被打红
+
+**第一轮三条没过**，而且这次三种成因分得清清楚楚（脚本上一轮刚改成分开报）：
+
+| 条目 | 分类 | 成因 |
+| --- | --- | --- |
+| `start()` 里没有阻断闸 | **存活** | 用例点的是主按钮，而它本来就 `disabled` ——点了等于没点，闸有没有都绿。改成走「撞名 → 问题集合变化 → 点覆盖」这条真的绕过 `disabled` 的路 |
+| 带 override 的位图仍报源像素网格 | **存活** | 只测了纯函数 `pixelPreview` 的两个分支，没测**对话框算不算得对那个标志**。补了 A/B 夹具 |
+| 导出之后不撤销确认 | **锚点找不到** | 这一轮把那行改成了 `if (job?.status !== 'conflict') setConfirmed(false)`，锚点跟着变 |
+
+前两条都是**判据没打在真正会出事的那条路上**：一个点了一颗按不动的按钮，
+一个测了纯函数却漏了调用方。

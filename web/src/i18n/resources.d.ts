@@ -1305,6 +1305,7 @@ export default interface Resources {
       "replace_failed": "保存的最后一步（换名）失败，原文件未被破坏，可以重试：{{reason}}",
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
       "report_failed": "样式检查报告没能生成：{{error}}。图文件不受影响。",
+      "report_missing_payload": "请求里要了样式检查报告，但没有可写的内容。图文件不受影响。",
       "report_write_failed": "样式检查报告没能写入：{{error}}。图文件不受影响。",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回（磁盘上有同名产物时请从素材库的那一份写回）",
       "runtime_asset_unknown": "运行时素材没有记录在案：{{id}}（重新运行那个脚本即可重新建立关系）",

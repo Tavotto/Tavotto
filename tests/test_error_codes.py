@@ -225,6 +225,7 @@ USER_VISIBLE_CODES = {
     "publish_failed": {"error"},
     "report_failed": {"error"},
     "report_write_failed": {"error"},
+    "report_missing_payload": set(),
     "source_missing": {"figure"},
 }
 

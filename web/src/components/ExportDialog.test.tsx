@@ -168,6 +168,59 @@ async function setup(tickPt: number, page = { w: 80, h: 60 }, panelH = 60) {
 
 const text = () => document.body.textContent ?? ''
 
+/** 位图素材 + 快速编辑（原图范围）的夹具；`overrides` 决定走"照抄"还是"重画" */
+async function setupRaster(overrides: { gid: string; prop: string; value: unknown }[]) {
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_raster')
+  useDocumentStore.getState().commit(literal('准备'), (d) => {
+    d.page = { w: 180, h: 120 }
+    d.objects = [
+      {
+        ...panel,
+        id: 'r1',
+        fileId: 'r1.png',
+        fileKind: 'raster',
+        nativeW: 10.16,
+        nativeH: 6.77,
+        pxW: 120,
+        pxH: 80,
+        overrides,
+      } as never,
+    ]
+  })
+  useAssetStore.setState({
+    byId: {
+      'r1.png': {
+        id: 'r1.png',
+        mtime: 1,
+        original_spec: {
+          source_kind: 'raster',
+          logical_w_mm: 10.16,
+          logical_h_mm: 6.77,
+          px_w: 120,
+          px_h: 80,
+          dpi: 300,
+          dpi_source: 'metadata',
+          viewport_pt: null,
+          transparent: false,
+        },
+      },
+    },
+  } as never)
+  useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+  useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'r1' })
+  useUiStore.getState().setExportOpen(false)
+  await act(async () => {
+    root.render(
+      <TooltipProvider>
+        <ExportDialog />
+      </TooltipProvider>,
+    )
+  })
+  await act(async () => {
+    useUiStore.getState().setExportOpen(true)
+  })
+}
+
 const button = (label: string) =>
   [...document.body.querySelectorAll('button')].find((b) => b.textContent?.includes(label))
 
@@ -309,7 +362,8 @@ describe('像素预览按范围算', () => {
     const shown = pixelPreview('original', 600, page, vector)
     expect(shown).toContain('1668')
     expect(shown, '原图范围下拿画布页面尺寸算 = 报另一张图的数字').not.toContain('4252')
-    // 原图 + 位图源：照抄源像素网格，与 ppi 无关
+    // 原图 + **照抄的**位图源：源像素网格，与 ppi 无关
+    // （「带 override 会被重画」那一支在 lib/exportRequest.test.ts）
     const raster = {
       widthMm: 10.16,
       heightMm: 6.77,
@@ -317,8 +371,8 @@ describe('像素预览按范围算', () => {
       pixelHeight: 80,
       sourceKind: 'raster',
     } as never
-    expect(pixelPreview('original', 600, page, raster)).toContain('120')
-    expect(pixelPreview('original', 300, page, raster)).toContain('120')
+    expect(pixelPreview('original', 600, page, raster, true)).toContain('120')
+    expect(pixelPreview('original', 300, page, raster, true)).toContain('120')
     // 规格还没解析出来时不报一个编出来的数
     expect(pixelPreview('original', 600, page, null)).toBe('')
   })
@@ -505,6 +559,88 @@ describe('文件名的跨平台校验', () => {
     })
     await click(button('开始导出')!)
     expect(exportBodies[0].filename).toBe('Fig 1')
+  })
+})
+
+describe('阻断闸没有第二条路绕过去', () => {
+  it('撞名之后点「覆盖」，不许把同一批阻断项不经确认再导一次', async () => {
+    jobStatus = 'conflict'
+    await setup(8) // 一条阻断项
+    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    await act(async () => {
+      check().click()
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].validation).toMatchObject({ policy: 'acknowledged' })
+
+    // 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题 ——
+    // 确认不该被清掉，「覆盖」也就照常可用
+    await click(button('覆盖')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(
+      (exportBodies[1].validation as Record<string, unknown>).acknowledged,
+      '第二次带着空的 acknowledged = 替用户签了一个他没签过的字',
+    ).toEqual((exportBodies[0].validation as Record<string, unknown>).acknowledged)
+    expect(exportBodies[1].include_style_check_report).toBe(true)
+  })
+
+  it('撞名之后问题集合变了 → 「覆盖」这条路也必须被闸挡住', async () => {
+    jobStatus = 'conflict'
+    await setup(8)
+    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    await act(async () => {
+      check().click()
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(button('覆盖'), '这一步得真的停在冲突条上').toBeTruthy()
+
+    // 文档被编辑，冒出**另一条**阻断项：确认过的那一批已经不是现在这一批，
+    // 那个勾会被撤销 —— 而「覆盖」按钮没有经过主按钮的 disabled
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
+        d.objects = [
+          ...d.objects,
+          {
+            id: 't-small',
+            type: 'text',
+            text: '太小的说明文字',
+            sizePt: 5,
+            bold: false,
+            italic: false,
+            color: '#000000',
+            align: 'left',
+            x: 0,
+            y: 70,
+            w: 60,
+            h: 6,
+          } as never,
+        ]
+      })
+      runValidation()
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(check().checked, '问题集合变了，勾应该已经掉了').toBe(false)
+
+    await click(button('覆盖')!)
+    expect(
+      exportBodies,
+      '「覆盖」绕过了主按钮的 disabled —— 闸必须在 start() 里',
+    ).toHaveLength(1)
+  })
+})
+
+describe('照抄源位图 vs 引擎重画', () => {
+  it('带 override 的位图面板不许报源像素网格（它会被重画）', async () => {
+    await setupRaster([])
+    expect(text(), '照抄源文件时报的就是源像素网格').toContain('120 × 80')
+
+    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }])
+    expect(
+      text(),
+      '带 override = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
+    ).not.toContain('120 × 80')
   })
 })
 

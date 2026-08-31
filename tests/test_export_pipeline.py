@@ -923,3 +923,62 @@ def test_cancel_and_the_commit_point_are_serialized(env):
         job._committed = True
     t.join(2)
     assert verdicts == [False], "锁放开之后 cancel() 必须看到已提交并如实回 False"
+
+
+def test_a_requested_report_with_no_payload_fails_loudly(env):
+    """要了报告却没有可写的内容：**报失败，作业进 `partial`**。
+
+    静默跳过是最坏的处置——作业报 `done`、产出清单里没有报告、进度还差一格
+    永远补不上，而请求方以为拿到了留档（PR #214 第四轮评审）。
+    """
+    client, _ = env
+    _, body = _post(client, _canvas(include_style_check_report=True))  # 没带 style_check_report
+    assert body["status"] == "partial"
+    assert _out(body, "pdf")["status"] == "done"
+    report = next(o for o in body["outputs"] if o["format"] == "report")
+    assert report["status"] == "failed"
+    assert report["error"]["code"] == "report_missing_payload"
+    # 进度不许停在"还差一格"
+    assert body["progress"]["step"] == body["progress"]["total"]
+    assert sorted(p.name for p in _dir(body).iterdir()) == ["Fig 1.pdf"]
+
+
+def test_a_raster_panel_with_overrides_is_re_rendered_not_copied(env, tmp_path, monkeypatch):
+    """带 override 的位图面板会被引擎**重画**，拿到的是一份 PDF。
+
+    这条用例钉的是后端行为本身（`_resolve_panel_source` 回的是 worker 出的
+    临时 PDF，于是走矢量那条路、ppi 说了算）。界面那一半在
+    `exportRequest.test.ts`：**它不许对着一张即将被重画的图报源像素网格**
+    （PR #214 第四轮评审）。
+    """
+    client, figs = env
+    rendered = tmp_path / "worker-out.pdf"
+    doc = pymupdf.open()
+    doc.new_page(width=SRC_W_PT, height=SRC_H_PT)
+    doc.save(rendered)
+    doc.close()
+
+    def fake_resolve(o, dpi, sink=None):
+        assert o["id"] == "r1.png" and o["overrides"], "这条用例要走的是「带 override」那一支"
+        return rendered
+
+    monkeypatch.setattr(m, "_resolve_panel_source", fake_resolve)
+    _, body = _post(
+        client,
+        _original(
+            formats=["png"],
+            ppi=150,
+            original={
+                "figure_id": "r1.png",
+                "source_kind": "raster",
+                "px_w": 120,
+                "px_h": 80,
+                "overrides": [{"gid": "axes_0", "prop": "fontsize", "value": 9}],
+            },
+        ),
+    )
+    png = _out(body, "png")
+    assert png["status"] == "done"
+    # 重画出来的是矢量，按 ppi 栅格化——**不是**源文件那 120×80
+    assert png["dimensions"]["px"] != [120, 80]
+    assert abs(png["dimensions"]["px"][0] - SRC_W_PT / 72.0 * 150) <= 1

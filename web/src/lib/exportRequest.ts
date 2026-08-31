@@ -240,22 +240,28 @@ function fnv1a(text: string, seed: number): string {
  * 「出来多少像素」——**按这次的范围算**。
  *
  * * 画布范围：页面 mm × ppi；
- * * 原图 + 位图源：**源像素网格**（我们照抄那张图，ppi 不出场）；
- * * 原图 + 矢量源：图幅 mm × ppi；
+ * * 原图 + **照抄源位图**：源像素网格（ppi 不出场）；
+ * * 原图 + 矢量源，**或位图源但带 override**（引擎会重画一张，拿到的是 PDF）：
+ *   图幅 mm × ppi；
  * * 规格还没解析出来：不报一个编出来的数（回空串）。
+ *
+ * `copiesVerbatim` 必须由调用方给：这个模块看不见面板有没有 override，而
+ * "是不是照抄"恰恰取决于它——单看 `sourceKind === 'raster'` 的话，一张带
+ * override 的位图会被报成源像素网格，而它其实要被重画（PR #214 第四轮评审）。
  */
 export function pixelPreview(
   scope: ExportScope,
   ppi: number,
   page: { w: number; h: number },
   spec: OriginalOutputSpec | null,
+  copiesVerbatim = false,
 ): string {
   const px = (mm: number) => Math.round((mm / 25.4) * ppi)
   if (scope === 'canvas') {
     return translate('measure.pxSize', { w: px(page.w), h: px(page.h) })
   }
   if (!spec) return ''
-  if (spec.pixelWidth && spec.pixelHeight) {
+  if (copiesVerbatim && spec.pixelWidth && spec.pixelHeight) {
     return translate('measure.pxSize', { w: spec.pixelWidth, h: spec.pixelHeight })
   }
   return translate('measure.pxSize', { w: px(spec.widthMm), h: px(spec.heightMm) })

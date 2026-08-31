@@ -67,6 +67,7 @@ ERROR_CODES = (
     "publish_failed",
     "report_failed",
     "report_write_failed",
+    "report_missing_payload",
 )
 
 #: 作业保留多久（秒）。界面拿 job_id 补拉状态要在这个窗口内。
@@ -603,10 +604,22 @@ def run(
 
         job.outputs = outputs
 
-        if req.include_report and report is not None:
+        if req.include_report:
             job.phase = "report"
             _emit(job, publish)
-            job.report = _write_report(job, outputs, report, tmp_dir, names[REPORT_KEY])
+            if report is None:
+                # 请求要了报告，却没有可写的内容（客户端漏发 / 载荷不合形状）。
+                # **静默跳过是最坏的处置**：作业报 `done`、产出清单里没有报告、
+                # 进度还差一格永远补不上——请求方以为拿到了留档
+                # （PR #214 第四轮评审）
+                job.report = Output(
+                    format=REPORT_KEY,
+                    status=STATUS_FAILED,
+                    error_code="report_missing_payload",
+                    error_params={},
+                )
+            else:
+                job.report = _write_report(job, outputs, report, tmp_dir, names[REPORT_KEY])
             job.step += 1
 
         ok = [o for o in outputs if o.status == STATUS_DONE]

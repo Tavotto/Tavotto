@@ -74,6 +74,17 @@ interface ExportState {
   startedRevision: string | null
   /** 完成时文档已经不是导出时那一份了 */
   editedDuringExport: boolean
+  /**
+   * **这个标签页自己起的那个作业**。
+   *
+   * `export.progress` 是**项目级广播**：同一个项目的另一个标签页在导出时，
+   * 它的快照也会推到这里来。没有归属判据的话，本标签页会把别人的进度与结果
+   * 显示成自己的；`resetExportState()` 之后一个在飞的轮询也能把状态再填回去
+   * （PR #214 第四轮评审）。
+   *
+   * `null` = 这个标签页此刻没有自己的作业，**任何快照都不收**。
+   */
+  ownedJobId: string | null
 }
 
 export const useExportStore = create<ExportState>(() => ({
@@ -83,6 +94,7 @@ export const useExportStore = create<ExportState>(() => ({
   lastInput: null,
   startedRevision: null,
   editedDuringExport: false,
+  ownedJobId: null,
 }))
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
@@ -120,8 +132,11 @@ function stopPolling() {
  */
 export function applyExportJob(job: ExportJob): void {
   const s = useExportStore.getState()
+  // **只收自己那个作业的快照。** 判据是归属（job_id 对不对得上），不是
+  // 「我现在闲着就收下」——后者会让别的标签页的进度、以及切项目之后一个
+  // 迟到的轮询，把这里的状态填回去
+  if (s.ownedJobId == null || job.job_id !== s.ownedJobId) return
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
-  if (s.job && s.job.job_id !== job.job_id && s.running) return
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
   useExportStore.setState({
@@ -180,6 +195,8 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     lastInput: input,
     startedRevision: prepared.revision,
     editedDuringExport: false,
+    // 起之前先清空归属：这一刻起，旧作业的迟到快照一律不收
+    ownedJobId: null,
   })
   let job: ExportJob
   try {
@@ -191,6 +208,10 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     })
     return null
   }
+  // 认领：从这一刻起只收它的快照。**这里不顺手把 `job` 也写进去**——写了的话
+  // 下面那句 `applyExportJob()` 会撞上自己刚放进去的终局快照，被「已经进过
+  // 终局」那道守卫挡掉，`running` 于是永远停在 true
+  useExportStore.setState({ ownedJobId: job.job_id })
   // **终局也走 applyExportJob()**：同步跑完的作业（小图、桌面本机）与轮询
   // 回来的走同一条落点，否则"导出期间文档又被改过"这条判断只在慢路径上存在
   applyExportJob(job)
@@ -226,7 +247,12 @@ export async function cancelCurrentExport(): Promise<boolean> {
   }
 }
 
-/** 换个页面 / 换个文档：把作业状态清掉（**不取消正在跑的那个**）。 */
+/**
+ * 换个页面 / 换个文档：把作业状态清掉（**不取消正在跑的那个**）。
+ *
+ * `ownedJobId` 一并清掉，所以此刻还在飞的那个轮询回来之后什么都不会写——
+ * 只停轮询是不够的，请求已经发出去了。
+ */
 export function resetExportState(): void {
   stopPolling()
   useExportStore.setState({
@@ -236,5 +262,6 @@ export function resetExportState(): void {
     lastInput: null,
     startedRevision: null,
     editedDuringExport: false,
+    ownedJobId: null,
   })
 }

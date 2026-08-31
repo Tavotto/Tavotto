@@ -355,20 +355,21 @@ desktop…」。
 
 | 命令 | 结果 |
 | --- | --- |
-| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3459** passed / 34 skipped / 2 deselected / 0 failed，约 10 分（比 11 的 3370 +89：63 条导出用例 + 26 条参数化的错误码） |
-| `cd web && pnpm test` | ✅ exit 0 —— **151** files / **1908** tests passed（比 11 的 147/1805 +4 文件 / +103 条） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3462** passed / 34 skipped / 2 deselected / 0 failed，约 11 分（比 11 的 3370 +92：65 条导出用例 + 27 条参数化的错误码） |
+| `cd web && pnpm test` | ✅ exit 0 —— **151** files / **1915** tests passed（比 11 的 147/1805 +4 文件 / +110 条） |
 | `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
 | `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2841 / en-US 2931；`dialogs:export.*` 删 21 组 / 加 27 组，`errors:backend.*` +27 条，`workspace:topbar.exportPackage` + `status.packaged*`） |
 | `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
 | `ruff check . && ruff format --check .` | ✅ exit 0（293 files） |
 | `git diff --check` | ✅ 无空白问题 |
 | `python scripts/gen_filename_vectors.py` | ✅ 向量与实现一致（无参 = 校对模式） |
-| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `a4f385e6e29683fd`，第三轮评审后）+ `--check` 通过 |
-| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `002514b06fa14d8d`，第三轮评审后）+ 不进 git，网站仓库另行 sync |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `47db1a1ef25cdf59`，第四轮评审后）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `e539f57cec7a516e`，第四轮评审后）+ 不进 git，网站仓库另行 sync |
 | 变异反证 23 条 | ✅ 全部被打红（第一轮 20/23，三条存活的成因与处置见 `TEST_MATRIX.md`） |
 | **评审回合 3（PR #214，`0031649`）** | ✅ 3 P1 + 3 P2 **全部成立、全部改**。处置见 `TEST_MATRIX.md`「评审回合 3」 |
 | **复审回合（PR #214，`0c92c5a`）** | ✅ 1 P1 + 5 P2 **全部成立、全部改**。处置见 `TEST_MATRIX.md`「复审回合」 |
-| **第三轮评审（PR #214，`8c1f7d4`）** | ✅ 1 P1 + 3 P2 **全部成立、全部改**；变异反证扩到**后端 23 / 前端 20，全红**，并修掉变异脚本自己把「锚点找不到」与「存活」混报的空转。处置见 `TEST_MATRIX.md`「第三轮评审」 |
+| **第三轮评审（PR #214，`8c1f7d4`）** | ✅ 1 P1 + 3 P2 **全部成立、全部改**，并修掉变异脚本自己把「锚点找不到」与「存活」混报的空转。处置见 `TEST_MATRIX.md`「第三轮评审」 |
+| **第四轮评审（PR #214，`07fc7c2`）** | ✅ 2 P1 + 2 P2 **全部成立、全部改**（其中一条 P1 是第三轮的修复制造出来的）；变异反证扩到**后端 24 / 前端 24，全红**。处置见 `TEST_MATRIX.md`「第四轮评审」 |
 | `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
 
 > **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面

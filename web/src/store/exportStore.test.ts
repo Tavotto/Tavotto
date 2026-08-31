@@ -130,12 +130,38 @@ describe('作业在服务器上没了', () => {
     applyExportJob(job({ status: 'unknown', outputs: [] }))
     // 已经进过终局的作业挡掉晚到快照，所以先重置再单独验 unknown 这一档
     resetExportState()
-    useExportStore.setState({ running: true, startedRevision: 'x', lastInput: inputOf() })
+    useExportStore.setState({
+      running: true,
+      startedRevision: 'x',
+      lastInput: inputOf(),
+      ownedJobId: 'j1', // 只有自己认领过的作业才收快照
+    })
     applyExportJob(job({ status: 'unknown', outputs: [] }))
     expect(useExportStore.getState().running, 'unknown 不当终局的话轮询会一直问下去').toBe(
       false,
     )
     expect(useExportStore.getState().job?.status).toBe('unknown')
+  })
+})
+
+describe('只收自己那个作业的快照', () => {
+  it('别的标签页的进度推过来时一律不收', async () => {
+    await runExport(inputOf())
+    const mine = useExportStore.getState().job
+    expect(mine?.job_id).toBe('j1')
+
+    // `export.progress` 是项目级广播：同一个项目的另一个标签页也会推过来
+    applyExportJob(job({ job_id: 'other-tab', status: 'running', outputs: [] }))
+    expect(useExportStore.getState().job?.job_id, '把别人的作业显示成了自己的').toBe('j1')
+    expect(useExportStore.getState().running).toBe(false)
+  })
+
+  it('`resetExportState()` 之后，还在飞的那个轮询回来什么都不写', async () => {
+    await runExport(inputOf())
+    resetExportState()
+    // 请求早就发出去了，停轮询停不掉它
+    applyExportJob(job({ job_id: 'j1', status: 'done', outputs: [doneOutput] }))
+    expect(useExportStore.getState().job, '切项目之后旧作业的迟到快照把状态填回去了').toBeNull()
   })
 })
 
