@@ -315,6 +315,20 @@ export function ExportDialog() {
     }
   }
 
+  /**
+   * 「这次能不能导」**只有这一份判断**。
+   *
+   * 主按钮的 `disabled` 与 `start()` 里的闸读的是同一个值——各写一遍的话，
+   * 少写一条的那一侧就成了绕过去的路：第四轮评审那条 P1 是"按钮有闸、
+   * `start()` 没有"，第五轮又抓到"两边都有，但 `start()` 那份少了一条"。
+   * 一份判断、两个消费点，就没有"少写一条"这回事了。
+   */
+  const canStart =
+    formats.length > 0 &&
+    !blocked &&
+    !filenameIssue &&
+    (scope !== 'original' || availability.ok)
+
   const names = useMemo(
     () => prepareExport(inputOf()).names,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,7 +368,10 @@ export function ExportDialog() {
        * 逐颗按钮加 `disabled` 是治标：下一颗新按钮照样会漏。闸在这里，
        * 任何调用点都绕不过去。
        */
-      if (blocked || filenameIssue || !formats.length) return
+      // 条件要与主按钮的 `disabled` **逐条相同**：少一条就等于那颗按钮上的
+      // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
+      // 闸与主按钮读**同一个** `canStart`
+      if (!canStart) return
       const report = reportOn
         ? buildProofPayload(
             doc,
@@ -411,8 +428,7 @@ export function ExportDialog() {
       figureId,
       panel,
       availability.spec,
-      blocked,
-      filenameIssue,
+      canStart,
     ],
   )
 
@@ -456,7 +472,7 @@ export function ExportDialog() {
             <Button
               variant="primary"
               size="md"
-              disabled={!formats.length || blocked || !!filenameIssue || !availabilityOk()}
+              disabled={!canStart}
               onClick={() => void start('ask')}
               title={blocked ? ex('blockedTitle') : undefined}
             >
@@ -685,9 +701,6 @@ export function ExportDialog() {
     setFormats((prev) => (prev.includes(f) ? prev.filter((v) => v !== f) : [...prev, f]))
   }
 
-  function availabilityOk() {
-    return scope !== 'original' || availability.ok
-  }
 }
 
 /* --------------------------------- 子组件 ---------------------------------- */

@@ -631,6 +631,34 @@ describe('阻断闸没有第二条路绕过去', () => {
   })
 })
 
+describe('「能不能导」只有一份判断', () => {
+  it('原图不可用时，「重试」这条路也发不出请求', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+
+    // 停在冲突条上时源没了：主按钮会变灰，而「覆盖」不经过它
+    await act(async () => {
+      useAssetStore.setState({ byId: {} } as never)
+    })
+    expect(text()).toContain('源文件现在找不到了')
+    await click(button('覆盖')!)
+    expect(
+      exportBodies,
+      '咽喉闸少了「原图可不可用」这一条 = 起一个界面刚说不可用的导出',
+    ).toHaveLength(1)
+  })
+})
+
 describe('照抄源位图 vs 引擎重画', () => {
   it('带 override 的位图面板不许报源像素网格（它会被重画）', async () => {
     await setupRaster([])

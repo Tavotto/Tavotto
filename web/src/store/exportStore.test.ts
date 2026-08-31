@@ -165,6 +165,33 @@ describe('只收自己那个作业的快照', () => {
   })
 })
 
+describe('作废的回执', () => {
+  it('`startExport()` 还在飞的时候换了项目：那份回执一个字都不写', async () => {
+    let release: (() => void) | null = null
+    globalThis.fetch = (async () => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return new Response(JSON.stringify(job({ status: 'done', outputs: [doneOutput] })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    const pending = runExport(inputOf())
+    await new Promise<void>((r) => setTimeout(r, 0))
+    // 用户在回执回来之前切了项目
+    resetExportState()
+    release!()
+    expect(await pending).toBeNull()
+    expect(
+      useExportStore.getState().job,
+      '作废的回执把旧项目的结果填进了新项目',
+    ).toBeNull()
+    expect(useExportStore.getState().running).toBe(false)
+  })
+})
+
 describe('导出期间文档又被改过', () => {
   it('判据用**此刻的文档**，不是导出开始时冻住的那一份', async () => {
     const input = inputOf()

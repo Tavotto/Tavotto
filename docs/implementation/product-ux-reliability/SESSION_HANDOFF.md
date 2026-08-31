@@ -156,7 +156,7 @@ useExportStore                // job / running / startError / lastInput / edited
 改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 改动  docs/implementation/product-ux-reliability/*
-重建  codex-plugin/mcp/widget/canvas.html      指纹 47db1a1ef25cdf59（第四轮评审后）
+重建  codex-plugin/mcp/widget/canvas.html      指纹 628720e1c5a15125（第五轮评审后）
 重建  web/dist-playground/                     指纹 e539f57cec7a516e（不进 git）
 ```
 
@@ -255,6 +255,19 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 **3. 判据要打在真正会出事的那条路上**（T-72）。这一轮变异反证有两条存活，
 成因相同：一条点了一颗本来就 `disabled` 的按钮，一条测了纯函数却漏了调用方。
 
+### 第五轮评审（`c8479335`）：又三条全改
+
+1 P1 + 2 P2。用户口径是「P1 必修，P2 视情况」——两条 P2 都在十行以内，
+其中一条还是第四轮那个咽喉闸漏了一个条件，比开 Issue 便宜，所以全修。
+
+**1. 原子性要盖到中间产物**（T-73）：重渲染出来的那份 PDF 原来落在按图名共享
+的路径上，两次导出打同一张图时后一次会覆盖前一次正在读的文件——**不报错，
+只是悄悄给错图**。「这一步是串行的」推不出「这一步的产物是我的」。
+
+**2. 同一件事写两遍，两遍都对也会分叉**（T-74）：第四轮是"按钮有闸、
+`start()` 没有"，第五轮是"两边都有、但少了一条"。处置不是补那一条，是收敛成
+一个 `canStart`。
+
 ### 尚存限制
 
 1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
@@ -280,7 +293,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
-  开出）→ **PR #214**（11 与 12 一起，四个提交 + 四个评审回合，20 条 findings 全改）
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 五个评审回合，23 条 findings 全改）
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**

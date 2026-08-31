@@ -117,6 +117,20 @@ export async function validateExportRequest(
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * 代次。**每一次「这个标签页换了个上下文」都 +1**：起一次新导出、
+ * 或者 `resetExportState()`（换项目 / 换文档）。
+ *
+ * `ownedJobId` 挡得住"别人的作业"，挡不住**一个还在 await 里的
+ * `/api/export/start`**：用户在它返回之前切了项目，`resetExportState()` 清了
+ * 归属，而那个 continuation 回来之后会**无条件地重新认领**旧项目的作业，
+ * 于是新项目里显示着旧项目的结果，链接还被补上了新项目的 pj
+ * （PR #214 第五轮评审）。
+ *
+ * 代次在 await **之前**取，回来一比就知道自己是不是已经作废了。
+ */
+let generation = 0
+
 function stopPolling() {
   if (pollTimer) {
     clearTimeout(pollTimer)
@@ -198,16 +212,20 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     // 起之前先清空归属：这一刻起，旧作业的迟到快照一律不收
     ownedJobId: null,
   })
+  const mine = ++generation
   let job: ExportJob
   try {
     job = await startExport(prepared.request)
   } catch (err) {
+    if (mine !== generation) return null
     useExportStore.setState({
       running: false,
       startError: { code: 'start_failed', message: String(err) },
     })
     return null
   }
+  // await 期间换过项目 / 又起了一次导出：这一份回执已经作废，**一个字都不写**
+  if (mine !== generation) return null
   // 认领：从这一刻起只收它的快照。**这里不顺手把 `job` 也写进去**——写了的话
   // 下面那句 `applyExportJob()` 会撞上自己刚放进去的终局快照，被「已经进过
   // 终局」那道守卫挡掉，`running` 于是永远停在 true
@@ -255,6 +273,8 @@ export async function cancelCurrentExport(): Promise<boolean> {
  */
 export function resetExportState(): void {
   stopPolling()
+  // 代次 +1：此刻还在 await 里的那次 `startExport()` 回来之后什么都不写
+  generation += 1
   useExportStore.setState({
     job: null,
     running: false,

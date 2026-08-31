@@ -958,8 +958,9 @@ def test_a_raster_panel_with_overrides_is_re_rendered_not_copied(env, tmp_path, 
     doc.save(rendered)
     doc.close()
 
-    def fake_resolve(o, dpi, sink=None):
+    def fake_resolve(o, dpi, sink=None, out_dir=None):
         assert o["id"] == "r1.png" and o["overrides"], "这条用例要走的是「带 override」那一支"
+        assert out_dir is not None, "导出路径必须把作业私有的临时目录传下来"
         return rendered
 
     monkeypatch.setattr(m, "_resolve_panel_source", fake_resolve)
@@ -982,3 +983,65 @@ def test_a_raster_panel_with_overrides_is_re_rendered_not_copied(env, tmp_path, 
     # 重画出来的是矢量，按 ppi 栅格化——**不是**源文件那 120×80
     assert png["dimensions"]["px"] != [120, 80]
     assert abs(png["dimensions"]["px"][0] - SRC_W_PT / 72.0 * 150) <= 1
+
+
+def test_two_concurrent_override_renders_do_not_share_one_intermediate_file(env, monkeypatch):
+    """两次导出打同一张图时，中间那份重渲染 PDF **不许是同一个路径**。
+
+    worker 调用本身是串行的，但锁在调用返回时就放开了，而调用方还要接着去
+    打开/栅格化那个文件——共享路径下，后一次会在前一次读它的过程中把它覆盖，
+    第一次于是**静默拿到了别人那套 override 的图**（PR #214 第五轮评审）。
+
+    判据是**路径互不相同**，不是"有没有报错"：共享路径下这件事不报错，它只是
+    悄悄给错图。
+    """
+    client, figs = env
+    seen: list[Path] = []
+    real_worker_export = {}
+
+    class FakeWorker:
+        export_dir = figs
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            seen.append(Path(path))
+            doc = pymupdf.open()
+            doc.new_page(width=SRC_W_PT, height=SRC_H_PT)
+            doc.save(path)
+            doc.close()
+            return {"warnings": []}
+
+    monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
+    monkeypatch.setattr(
+        m,
+        "current_registry",
+        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+    )
+    del real_worker_export
+
+    spec = _original(
+        formats=["pdf"],
+        original={
+            "figure_id": "r1.png",
+            "source_kind": "raster",
+            "overrides": [{"gid": "axes_0", "prop": "fontsize", "value": 9}],
+        },
+    )
+    _post(client, {**spec, "filename": "A"})
+    _post(
+        client,
+        {
+            **spec,
+            "filename": "B",
+            "original": {
+                **spec["original"],
+                "overrides": [{"gid": "axes_0", "prop": "fontsize", "value": 11}],
+            },
+        },
+    )
+
+    assert len(seen) == 2, f"两次导出都该触发一次重渲染：{seen}"
+    assert seen[0] != seen[1], "两次导出共用了同一个中间路径 —— 后一次会覆盖前一次正在读的文件"
+    # 中间产物落在作业自己的临时目录里，而且**作业结束后一个都不留**
+    for p in seen:
+        assert exportjob.TMP_PREFIX in str(p), f"中间 PDF 不在作业私有的临时目录里：{p}"
+        assert not p.exists(), f"作业结束后中间产物还在：{p}"

@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 import webbrowser
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
@@ -867,7 +868,9 @@ def api_file():
     return resp
 
 
-def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
+def _resolve_panel_source(
+    o: dict, dpi: int, sink: list | None = None, out_dir: Path | None = None
+) -> Path:
     """面板对象 → 待嵌入的源文件路径。带 override 的 ⚡ 面板先由引擎按全质量
     重渲染成临时 PDF，导出的永远是矢量而不是画布上的预览位图。
 
@@ -878,6 +881,17 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     runtime 面板（ADR 0013）**永远由当次权威 worker 渲染**：没有磁盘原件可
     嵌，也**绝不拿 materialized cache 的旧文件冒充最新结果**——worker 起不
     来就让错误如实抛出（先重新运行，而不是拿旧图交差）。
+
+    ### `out_dir`：中间那份 PDF 必须是**这次作业私有**的
+
+    重渲染出来的 PDF 原来落在 `worker.export_dir/<stem>.pdf` —— 一个**按图名
+    共享**的路径。worker 调用本身是串行的，但锁在调用返回时就放开了，而调用方
+    还要接着去打开/栅格化那个文件：两次导出（两个标签页、两套 override）打同
+    一张图时，后一次的 worker 会在前一次读它的过程中把它覆盖掉，于是第一次
+    **静默拿到了别人那套 override 的图**（PR #214 第五轮评审）。
+
+    给了 `out_dir`（导出作业自己的临时目录）就写进去，各写各的。**不给就退回
+    共享路径**：那是老调用点的行为，一个字节没动。
     """
     rel_id = str(o.get("id", ""))
     if engine_runtimeasset.is_runtime_id(rel_id):
@@ -885,7 +899,7 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
         # 直接 `pool.get()`，于是同一张 native 图「预览是 native 的、画布导出
         # 是 safe 的」——两张不一样的图，而界面上什么都没说。
         worker, stem = _engine_worker(rel_id)
-        tmp = worker.export_dir / f"{stem}.pdf"
+        tmp = _panel_render_target(worker, stem, out_dir)
         resp = worker.export(stem, o.get("overrides") or [], str(tmp), "pdf", dpi)
         if sink is not None:
             for w in resp.get("warnings") or []:
@@ -899,7 +913,7 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
         info = current_registry().for_stem(path.stem)
         if info is not None:
             worker = _safe_worker(info["script"], info["entry"], path.stem)
-            tmp = worker.export_dir / f"{path.stem}.pdf"
+            tmp = _panel_render_target(worker, path.stem, out_dir)
             resp = worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
             if sink is not None:
                 for w in resp.get("warnings") or []:
@@ -908,6 +922,20 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
                         sink.append(msg)
             path = tmp
     return path
+
+
+def _panel_render_target(worker, stem: str, out_dir: Path | None) -> Path:
+    """重渲染那份中间 PDF 写到哪。
+
+    **同一次作业里同一张图也可能出现两次**（画布上放了两份、各带一套
+    override），所以 `out_dir` 里的名字还要再唯一一层——只按 stem 命名的话，
+    同一次合成的第二个实例会盖掉第一个。
+    """
+    if out_dir is None:
+        return worker.export_dir / f"{stem}.pdf"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w\-]+", "_", stem) or "panel"
+    return out_dir / f"src-{safe}-{uuid.uuid4().hex[:8]}.pdf"
 
 
 # --------------------------- 统一导出管线（ADR 0031）-------------------------
@@ -924,7 +952,8 @@ def _export_produce_canvas(job, tmp_dir: Path) -> list:
     canvas = pdfbackend.compose(src.page_w_mm, src.page_h_mm, transparent)
 
     def resolve(obj: dict, out_dpi: int) -> Path:
-        return _resolve_panel_source(obj, out_dpi, job.warnings)
+        # 中间那份重渲染 PDF 落进**这次作业自己的**临时目录
+        return _resolve_panel_source(obj, out_dpi, job.warnings, tmp_dir)
 
     produced: list = []
     try:
@@ -999,7 +1028,7 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     job.check_cancelled()
     source_path = _resolve_panel_source(
-        {"id": src.figure_id, "overrides": src.overrides}, dpi, job.warnings
+        {"id": src.figure_id, "overrides": src.overrides}, dpi, job.warnings, tmp_dir
     )
     if not source_path.is_file():
         raise engine_exportreq.ExportRequestError(
