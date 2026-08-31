@@ -727,6 +727,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   过滤搬入，**不删旧文件**——别的项目还要迁；迁过一次分键文件即唯一权威，
   哪怕是空 dict）。`scan_panels` 里的 baked 表是**局部变量**，绝不再做模块级
   缓存——那就是「A 项目扫一遍素材，B 项目的基线全被换掉」。
+  **基线绑定文件身份（2026-08-31）**：写回 commit 时随版本条目记
+  `files: {名字: {sha1, mtime_ns, size}}`，「文件还是不是写回时那份」的唯一
+  判据是 `_baked_matches_file`（size 异→失效；mtime_ns 同→有效零 IO；
+  mtime 变 size 同→读 sha1 定夺，touch/网盘同步不误判），`scan_panels`
+  据此随 `baked_overrides` 下发 `baked_current`。**失效时基线照发**——
+  失效的是「文件长这样」这个假设，不是用户的那组修改；前端
+  `isJustBakedBaseline` 读 `baked_current` 决定要不要重新走引擎渲染。
+  用户在 Tavotto 之外重跑自己的构建脚本刷新产物，就是这条判据存在的理由：
+  没有它，画布预览会永久停在「脚本原值」而图内编辑显示 script+overrides
+  （两边都不报错）。旧条目无 `files` 时退回「mtime 晚于写回 ts+120s → 失效」。
   SSE 事件带 `pj`，前端只处理属于本标签页项目的那些。
 - **派生状态刷新只有一条编排**（ADR 0025 + 0026）：`app.refresh_project()`
   → `engine/project_refresh.refresh_project_index()`。四个调用方

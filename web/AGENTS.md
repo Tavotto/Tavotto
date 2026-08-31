@@ -43,8 +43,16 @@ manifest 只能看不能写**，见下一节；④ 连续调整期间
 （**条目数策略；字节那一维另有预算，见「SVG payload 的字节预算」一节**），
 只留在用的与每个文件最近成功的那份；⑥ SSE 的 render.started/done 只带
 fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了的话另一个
-副本会永远转圈）。看护：`web/src/store/renderStore.test.ts`、
-`web/src/hooks/useEngineSync.test.ts`、`tests/test_engine_variants.py`。
+副本会永远转圈）；⑦ **磁盘原图冒充不了 overrides 渲染结果（2026-08-31）**：
+非编辑态需要引擎产物而位图未落地/取图失败时，优先挂这一版（或 latest 退路）
+的引擎 SVG，**确实只能退磁盘原图时必须出「近似预览」角标**（与布局版本
+预览的「近似预览」同一措辞），失败不吞、上一变体的位图不许冒充当前变体；
+「只带基线、还没动过」的面板跳过渲染的前提是后端 `baked_current` 没说
+基线已失效（判据出处见 `src/tavotto/AGENTS.md` 的「基线绑定文件身份」，
+前端唯一消费点 `isJustBakedBaseline`，`useEngineSync` 订阅素材表让失效
+发生在会话中时也能重新裁决）。看护：`web/src/store/renderStore.test.ts`、
+`web/src/hooks/useEngineSync.test.ts`、`web/src/canvas/panelPreviewMode.test.tsx`、
+`tests/test_engine_variants.py`、`tests/test_paths_and_baked.py`。
 
 ## 显示回退 ≠ 几何权威（2026-08-26，issue #131；ADR 0017）
 
@@ -345,7 +353,9 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   manifest / 渲染缓存（`renderStore.reset`）——只置 `script = null` 是不够的，
   留着的 manifest 会让元素树与检查器继续按"可参数化"办事。
 - **标注**：任意角度 `rotationDeg`（面板除外；导出走 PyMuPDF morph，
-  CSS 顺时针 = Matrix(deg)）；形状 triangle/diamond/polygon/brace + 圆角/
+  CSS 顺时针 = **Matrix(-deg)**——morph 矩阵作用在 PDF y 向上空间、正角是
+  逆时针，实测结论见 `_obj_morph` 注释与旋转方向看护用例）；形状
+  triangle/diamond/polygon/brace + 圆角/
   虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
   兼容推导）；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
   （shapeGeometry.ts ↔ pdfbackend/pymupdf_backend.py `_polygon_points`/`_dash_pattern`

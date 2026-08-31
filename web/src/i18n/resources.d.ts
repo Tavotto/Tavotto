@@ -1731,6 +1731,7 @@ export default interface Resources {
       "annotationArrow": "标注箭头",
       "arrow": "箭头 {{value}}",
       "axes": "子图 {{value}}",
+      "axesTwin": "子图 {{value}}（{{side}}{{ord}}）",
       "axisLabelNamed": "{{axis}} 轴 “{{value}}”",
       "bar": "柱 {{value}}",
       "barSeries": "柱形系列 {{value}}",
@@ -1752,7 +1753,13 @@ export default interface Resources {
       "textNamed": "文字 “{{value}}”",
       "tickLabels": "{{axis}} 刻度文字",
       "tickNamed": "刻度 “{{value}}”",
-      "titleNamed": "标题 “{{value}}”"
+      "titleNamed": "标题 “{{value}}”",
+      "twinSide": {
+        "bottom": "下轴",
+        "left": "左轴",
+        "right": "右轴",
+        "top": "上轴"
+      }
     },
     "enum": {
       "arrowstyle": {
@@ -2911,6 +2918,8 @@ export default interface Resources {
       }
     },
     "panelBadge": {
+      "approxPreview": "近似预览",
+      "approxPreviewHint": "画布暂以磁盘原图占位，尚未反映当前的图内修改；引擎渲染完成后会自动更新。",
       "cold": "冷启动中，可能需要几分钟…",
       "error": "渲染失败",
       "firstBuild": "首次构建中…",
