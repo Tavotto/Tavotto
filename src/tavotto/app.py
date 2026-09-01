@@ -382,33 +382,93 @@ def load_baked(ctx: "ProjectCtx | None" = None) -> dict:
     return data
 
 
-def append_baked(stem: str, patches: list, ctx: "ProjectCtx | None" = None) -> None:
+def append_baked(
+    stem: str,
+    patches: list,
+    ctx: "ProjectCtx | None" = None,
+    *,
+    files: dict | None = None,
+) -> None:
     """读-改-写全程持锁（同一项目内），落盘走 `_write_baked` 的原子替换。
 
     每条版本都带 `patch_hash`（`patchspec` 的权威实现）：写回响应里回的是同一个
     值，用户/排障时能把「磁盘上这张图」与「哪一版 patches」对上。旧条目没有这个
     键，读取端一律按缺失兼容。
+
+    `files` 是写回 commit 之后各目标文件的身份（`{名字: {sha1, mtime_ns, size}}`，
+    出自 `_write_source_files` 的 `file_identity`）：「磁盘文件已经是这个基线的
+    样子」这句话只在文件身份没变时成立，`_baked_matches_file` 靠它判基线失效。
     """
     ctx = ctx if ctx is not None else current_ctx()
     with _BAKED_LOCK:
         data = load_baked(ctx)
         entry = data.setdefault(stem, {"versions": []})
-        entry["versions"].append(
-            {
-                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "patches": patches,
-                "patch_hash": engine_patchspec.patch_hash(patches),
-            }
-        )
+        version: dict = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "patches": patches,
+            "patch_hash": engine_patchspec.patch_hash(patches),
+        }
+        if files:
+            version["files"] = files
+        entry["versions"].append(version)
         entry["versions"] = entry["versions"][-50:]
         _write_baked(_baked_path(ctx), data)
 
 
-def _baseline_patches(stem: str, baked: dict) -> list:
+def _baseline_version(stem: str, baked: dict) -> dict | None:
     """baked 表由调用方传进来——它曾经是个模块级缓存，多项目下那就是
     「A 项目扫一遍素材，B 项目的基线全被换掉」。"""
     versions = (baked.get(stem) or {}).get("versions") or []
-    return versions[-1]["patches"] if versions else []
+    return versions[-1] if versions else None
+
+
+def _baseline_patches(stem: str, baked: dict) -> list:
+    version = _baseline_version(stem, baked)
+    return version["patches"] if version else []
+
+
+#: 旧 baked 条目（没记文件身份）退回「mtime 是否晚于写回时刻」判基线失效时的
+#: 宽限：commit 与 append_baked 在同一次请求里、间隔秒级，120s 足够宽；
+#: 更宽只会把「写回后马上被外部重写」误判成仍有效。
+_BAKED_TS_GRACE_S = 120
+
+
+def _baked_matches_file(version: dict, path: Path) -> bool:
+    """写回基线是否**仍烙在这份磁盘文件上**——基线有效性判据的唯一出处。
+
+    用户在 Tavotto 之外重跑自己的构建脚本会把产物刷回脚本原值，此后
+    「文件已是基线那个样子」静默失效：预览挂磁盘原图（脚本原值）、编辑态
+    显示 script+overrides，两者永久分叉且互不报错。所以基线必须绑定文件身份：
+
+    - `size` 不同 → 失效（不读内容）；
+    - `mtime_ns` 相同 → 有效（常态路径，零额外 IO）；
+    - mtime 变了但 size 相同 → 读一次 sha1 定夺——touch / 网盘同步会换 mtime
+      不换内容，误判失效的代价是 heavy 脚本白跑几分钟。
+
+    旧条目没有 `files`：退回「文件 mtime 是否晚于写回时刻 + 宽限」的保守判据；
+    `ts` 解析不动就维持旧行为（当作有效）——不拿猜出来的结论触发 heavy 重渲染。
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    files = version.get("files")
+    if isinstance(files, dict) and isinstance(files.get(path.name), dict):
+        ident = files[path.name]
+        if ident.get("size") != st.st_size:
+            return False
+        if ident.get("mtime_ns") == st.st_mtime_ns:
+            return True
+        try:
+            return _sha1_of(path) == ident.get("sha1")
+        except OSError:
+            return False
+    ts = str(version.get("ts") or "")
+    try:
+        baked_at = time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, OverflowError):
+        return True
+    return st.st_mtime <= baked_at + _BAKED_TS_GRACE_S
 
 
 class NoProjectError(Exception):
@@ -538,9 +598,15 @@ def scan_panels() -> list[dict]:
             info = current_registry().for_stem(p.stem)
             if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                 entry.update(script=info["script"], cost=info["cost"])
-                baseline = _baseline_patches(p.stem, baked)
-                if baseline:
-                    entry["baked_overrides"] = baseline
+                baseline_v = _baseline_version(p.stem, baked)
+                if baseline_v and baseline_v["patches"]:
+                    entry["baked_overrides"] = baseline_v["patches"]
+                    # 基线仍烙在文件上吗？文件被外部改写（用户重跑自己的构建
+                    # 脚本）后必须报 False——前端 isJustBakedBaseline 据此不再
+                    # 按「文件已是那个样子」跳过引擎渲染。基线仍可继承
+                    # （baked_overrides 照发）：失效的是「文件长这样」，
+                    # 不是用户的那组修改。
+                    entry["baked_current"] = _baked_matches_file(baseline_v, p)
             # 增强信息，**不动上面那三个老字段**：旧前端照旧只看 `script`
             # （它的语义仍然是"注册表声明了映射"，一个字没改）；新前端看
             # capability.status 才分得出「脚本还在」与「脚本已经不在了」。
@@ -2854,8 +2920,9 @@ def api_engine_update_source():
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
-    # 新拖入的同名面板自动继承，双击进编辑态能接着改
-    append_baked(src.stem, patches)
+    # 新拖入的同名面板自动继承，双击进编辑态能接着改。
+    # 带上 commit 后的文件身份——外部重写产物后基线要能被判失效
+    append_baked(src.stem, patches, files=result["file_identity"])
     return jsonify(_write_back_response(result, baked=bool(patches)))
 
 
@@ -3312,11 +3379,23 @@ def _write_source_files(
         # 能走到这儿 = 几何与像素两道门都过了（任一分歧早已抛出）；
         # "hot_rebuilt" = 像素门没比成（热会话中途被重开），如实报告
         verification["pixels"] = pixel_state
+    # commit 之后各目标的身份，随基线一起入账（`_baked_matches_file` 的依据）。
+    # sha1 与响应里的 `source_sha1` 是同一次计算，绝不各算一份。
+    source_sha1 = {t.name: _sha1_of(t) for t in done}
+    file_identity = {}
+    for t in done:
+        st = t.stat()
+        file_identity[t.name] = {
+            "sha1": source_sha1[t.name],
+            "mtime_ns": st.st_mtime_ns,
+            "size": st.st_size,
+        }
     return {
         "updated": updated,
         "backup_dir": backup_dir,
         "patch_hash": engine_patchspec.patch_hash(patches),
-        "source_sha1": {t.name: _sha1_of(t) for t in done},
+        "source_sha1": source_sha1,
+        "file_identity": file_identity,
         "manifest_hash": _manifest_hash(man_fresh),
         "verification": verification,
         "post_check": _post_check_size(done, man_fresh),
@@ -3615,7 +3694,7 @@ def api_engine_history_restore():
         FileLockedError,
     ) as exc:
         return _write_back_error_response(exc)
-    append_baked(stem, patches)
+    append_baked(stem, patches, files=result["file_identity"])
     return jsonify(_write_back_response(result, patches=patches))
 
 

@@ -16,17 +16,20 @@ import { renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderSto
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
+import { useAssetStore } from '@/store/assetStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
-import type { Manifest } from '@/lib/api'
+import type { Manifest, PanelInfo } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 
 const previewPng = vi.fn()
+/** 每条用例可换的取图实现；默认立即成功（与从前逐字节相同） */
+let previewPngImpl: () => Promise<Blob> = () => Promise.resolve(new Blob(['png']))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   enginePreviewPng: (id: string, patches: unknown[], bucket: number) => {
     previewPng(id, patches, bucket)
-    return Promise.resolve(new Blob(['png']))
+    return previewPngImpl()
   },
 }))
 
@@ -81,6 +84,7 @@ let root: Root
 
 beforeEach(() => {
   previewPng.mockClear()
+  previewPngImpl = () => Promise.resolve(new Blob(['png']))
   URL.createObjectURL = vi.fn(() => 'blob:mock/1')
   URL.revokeObjectURL = vi.fn()
   useRenderStore.getState().clear()
@@ -283,6 +287,146 @@ describe('PanelView：三档预览表示法', () => {
     await mount()
 
     expect(inlineSvg()?.innerHTML).toContain('id="legacy"')
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/*  非编辑态：画布不许静默挂磁盘原图（预览与编辑结果不一致缺陷家族）              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 用户报的缺陷形状：面板有图内修改，画布预览却显示磁盘原图（脚本原值），
+ * 双击进编辑显示的才是 override 之后的样子——两者不一致，而且**不吵**。
+ * 这里钉三件事：
+ *   1. 引擎位图没落地时优先挂这一版自己的 SVG，不退磁盘原图；
+ *   2. 确实只能挂磁盘原图时，「近似预览」角标必须出现；
+ *   3. 取图失败后，上一变体的位图不许继续冒充当前变体。
+ */
+describe('非编辑态：画布不许静默挂磁盘原图', () => {
+  beforeEach(() => {
+    useUiStore.setState({ elementPanelId: null }) // 非编辑态：缺陷只在这里显现
+  })
+
+  afterEach(() => {
+    useAssetStore.setState({ byId: {}, panels: [] })
+  })
+
+  it('baked 基线在会话中被判失效（mtime 同秒不变）：面板必须切到引擎产物', async () => {
+    // PR #215 评审 P2：`needsEngine` 读的 isJustBakedBaseline 走 getState 而非
+    // 订阅；`/api/panels` 的 mtime 是整数秒，外部重写落在同一秒时 mtime 订阅
+    // 接不到；该变体已有 exact 渲染时 syncEngine 那一轮又零 state 变更——三条
+    // 唤醒通道全哑，画布把被重写的磁盘原图当基线继续挂着。本条钉的是
+    // PanelView 对 `baked_current` 的直接订阅。
+    const asset = {
+      id: PANEL.fileId,
+      mtime: 100, // 刻意全程不变：mtime 订阅在这个场景里就是接不到
+      baked_overrides: structuredClone(PANEL.overrides),
+      baked_current: true,
+    } as unknown as PanelInfo
+    useAssetStore.setState({ byId: { [PANEL.fileId]: asset } })
+    seed({ svg: '<svg id="exact"/>' }) // 该变体已有 exact 渲染（评审设定的前提）
+    await mount()
+
+    // 基线有效：文件已是那个样子，画布走磁盘原图（不取引擎位图、不内联 SVG）
+    const before = container.querySelector('img')?.getAttribute('src') ?? ''
+    expect(before).not.toBe('blob:mock/1')
+    expect(inlineSvg()).toBeNull()
+
+    // 外部重写产物（同一整数秒）：后端刷新后只有 baked_current 翻 false
+    await act(async () => {
+      useAssetStore.setState({
+        byId: { [PANEL.fileId]: { ...asset, baked_current: false } as PanelInfo },
+      })
+    })
+
+    // 面板必须当场切到引擎产物——blob 落地前是这一版的 SVG，落地后是位图；
+    // 无论哪一档，都不再是磁盘原图
+    const now = container.querySelector('img')?.getAttribute('src')
+    expect(now === 'blob:mock/1' || inlineSvg() != null).toBe(true)
+    expect(now).not.toBe(before)
+  })
+
+  it('引擎位图还在路上：挂这一版自己的 SVG，而不是磁盘原图', async () => {
+    previewPngImpl = () => new Promise<Blob>(() => {}) // 永不落地
+    seed({ svg: '<svg id="own"/>' })
+    await mount()
+
+    expect(inlineSvg()?.innerHTML).toContain('id="own"')
+    // 磁盘原图（/api/render 那条 URL）一张都不挂
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('引擎位图落地后换位图（SVG 只是待位，不是常驻）', async () => {
+    seed({ svg: '<svg id="own"/>' })
+    await mount()
+
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    expect(inlineSvg()).toBeNull()
+  })
+
+  it('什么引擎产物都没有（rev=0）：挂磁盘原图，但「近似预览」角标必须在', async () => {
+    // 渲染还没排上 / 排上了还没回来的第一帧：显示可以退磁盘原图（Phase F
+    // 的诚实回退），但不许一声不吭——用户会把脚本原值当成自己的修改结果
+    await mount()
+
+    expect(inlineSvg()).toBeNull()
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+    expect(img?.getAttribute('src')).not.toBe('blob:mock/1')
+    expect(container.textContent).toContain('近似预览')
+  })
+
+  it('正在渲染时轮不到「近似预览」说话：busy 角标压过它', async () => {
+    useRenderStore.getState().patch(renderKeyOf(PANEL), {
+      fileId: PANEL.fileId,
+      status: 'rendering',
+      wantPatches: JSON.stringify(PANEL.overrides),
+    })
+    await mount()
+
+    expect(container.textContent).toContain('渲染中')
+    expect(container.textContent).not.toContain('近似预览')
+  })
+
+  it('取图失败且这一版没有矢量 payload：退磁盘原图 + 「近似预览」，不吞', async () => {
+    previewPngImpl = () => Promise.reject(new Error('boom'))
+    seed({ svg: null, preview: RASTER })
+    await mount()
+
+    expect(inlineSvg()).toBeNull()
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).not.toBe('blob:mock/1')
+    expect(container.textContent).toContain('近似预览')
+  })
+
+  it('取图失败后，上一变体的位图不许冒充当前变体（退位给这一版的 SVG）', async () => {
+    // 第一变体的位图成功落地
+    seed({ svg: '<svg id="v1"/>' })
+    await mount()
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+
+    // 用户又改了一个值：新变体渲染成功（SVG 在），但取位图失败
+    previewPngImpl = () => Promise.reject(new Error('boom'))
+    const changed = {
+      ...PANEL,
+      overrides: [{ gid: 'title', prop: 'fontsize', value: 11 }],
+    } as unknown as PanelObject
+    useRenderStore.getState().patch(renderKeyOf(changed), {
+      fileId: PANEL.fileId,
+      manifest: MANIFEST,
+      rev: 4,
+      status: 'ready',
+      lastPatches: JSON.stringify(changed.overrides),
+      svg: '<svg id="v2"/>',
+      preview: VECTOR_PREVIEW,
+    })
+    await act(async () => {
+      root.render(<PanelView obj={changed} />)
+    })
+
+    // 挂的是新变体自己的 SVG——绝不是 v1 的位图继续顶着
+    expect(inlineSvg()?.innerHTML).toContain('id="v2"')
+    expect(container.querySelector('img')).toBeNull()
   })
 })
 

@@ -286,8 +286,10 @@ def test_the_late_manifest_import_resolves_inside_the_private_package(
     """`overrides` 的 late import 在**用户代码之后**才执行——裸名会命中用户的文件。
 
     走到它的路径是刻意挑的：先把刻度定位改成 fixed 并给一串新值，再在**同一次
-    全量 apply 里**改第 13 条刻度的文字。那条 gid 还不在 index 里（build 时只
-    instrument 了 11 条），`FigState.resolve()` 于是现解，而现解要
+    全量 apply 里**改第 13 条刻度的文字。那条 gid 还不在 index 里（前提断言
+    按**性质**钉住：`axes_0.xticklabels_12` 不在 build 时 instrument 的集合里，
+    不数总条数——manifest 只登记画着的刻度之后，总数随 locator/视区走，
+    抄一个数只会静默过期），`FigState.resolve()` 于是现解，而现解要
     `manifest._ordered_axes`。用户项目里正好有一个 `manifest.py`——裸
     `import manifest` 命中的就是它，`_ordered_axes` 不存在，apply 当场抛。
 
@@ -316,8 +318,18 @@ def test_the_late_manifest_import_resolves_inside_the_private_package(
         stem = next(iter(build["stems"]))
         man = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
         ticks = next(e for e in man["elements"] if e["gid"] == "axes_0.xticks")
-        instrumented = [e for e in man["elements"] if e["gid"].startswith("axes_0.xticklabels_")]
-        assert len(instrumented) == 11, "用例前提：build 时只 instrument 了 11 条刻度文字"
+        instrumented = {
+            e["gid"] for e in man["elements"] if e["gid"].startswith("axes_0.xticklabels_")
+        }
+        # 前提是性质不是总数：现解那条路要求「第 13 条」在 build 时**没被**
+        # instrument（否则 override 直接走 index，根本不经过 late import），
+        # 同时 instrument 真的发生过（空集合说明刻度登记整个坏了，那是另一个
+        # 缺陷，不该被本用例的 warnings 断言含混地接住）。
+        assert instrumented, "用例前提：build 时一条刻度文字都没 instrument——刻度登记坏了"
+        assert "axes_0.xticklabels_12" not in instrumented, (
+            "用例前提：第 13 条刻度文字不能在 build 时就被 instrument，"
+            "否则 override 不会走 FigState.resolve 的现解路径"
+        )
         lo, hi = 1.0, 3.0  # 都落在数据范围里——越界的刻度 matplotlib 根本不画
         values = [lo + (hi - lo) * i / 14.0 for i in range(15)]
 

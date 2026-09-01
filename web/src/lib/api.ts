@@ -23,6 +23,14 @@ export interface PanelInfo {
    */
   baked_overrides?: { gid: string; prop: string; value: unknown }[]
   /**
+   * 上面那份基线**此刻仍烙在磁盘文件上**吗（后端按写回时记录的文件身份判，
+   * `_baked_matches_file`）。`false` = 文件在写回之后被外部改写过（用户重跑
+   * 了自己的构建脚本），「文件已是基线那个样子」不再成立——继承照旧，但
+   * `isJustBakedBaseline` 必须回 false，让面板按普通 overrides 走引擎渲染。
+   * 老后端不发这个字段：`undefined` 维持旧行为（当作有效），不是 `false`。
+   */
+  baked_current?: boolean
+  /**
    * 这张图的**接入状态**（后端 `engine/readiness.py`，与
    * `GET /api/project/readiness` 同一次计算的投影）。
    *

@@ -243,7 +243,29 @@ def test_semantic_manifest_does_not_change_with_the_representation(life):
     索引一切，那是数据级错位，且只在大图上、在用户那边发作。
     """
     assert life["manifest_identical"]
-    assert life["manifest_elements"] == 95
+    # 「manifest 齐全」按**可推导的构成**判，不抄总数：旧断言 `== 95` 在
+    # 「manifest 只登记画着的刻度」落地时静默过期（幽灵刻度被过滤），而 95
+    # 里哪几条该消失、它一个字都说不出。拆成两半：非刻度部分逐类对上
+    # fixture 的结构；刻度文字与「真的画在图上的」逐位相等——总数成为
+    # 这两者的推论，不再是魔法数。
+    assert life["manifest_roles_excl_ticklabels"] == {
+        "figure": 1,  # 整张图
+        "axes": 5,  # 2×2 子图 + 1 条色条轴
+        "collection": 3,  # 三块 pcolormesh
+        "colorbar": 1,  # fig.colorbar(...)
+        "line": 2,  # 第四格的两条衰减曲线
+        "legend": 1,  # 第四格的图例
+        "legend_text": 2,  # 图例两条文字
+        "text": 1,  # suptitle（fig.texts_0）
+        "title": 4,  # 四格各自的标题
+        "axis_label": 9,  # 4 格 × (xlabel+ylabel) + 色条的 label
+        "ticks": 9,  # 4 格 × (X+Y 刻度组) + 色条轴的 Y 刻度组
+    }
+    # 幽灵一条不许有、画着的一条不许丢
+    assert life["manifest_tick_counts"] == life["drawn_tick_counts"], (
+        life["manifest_tick_counts"],
+        life["drawn_tick_counts"],
+    )
 
 
 def test_export_inherits_nothing_from_the_preview(life):
@@ -256,7 +278,7 @@ def test_export_inherits_nothing_from_the_preview(life):
     assert life["export"]["bytes"] > 20_000_000
 
 
-def test_the_hard_gate_still_bites_on_a_hybrid_product(probe):
+def test_the_hard_gate_still_bites_on_a_hybrid_product(probe, life):
     """不变量 3 不因为"我们已经尽力了"而放松。
 
     hybrid 产物照样可能超硬闸（收不动的层太多、或者矢量层本身就巨大）。
@@ -267,8 +289,10 @@ def test_the_hard_gate_still_bites_on_a_hybrid_product(probe):
     assert g["preview"]["reason"] == pb.REASON_SVG_HARD_LIMIT
     assert not g["has_svg_in_response"]
     assert g["svg_read_text_calls"] == 0
-    # 仍然是一次**成功的**渲染：manifest 齐全
-    assert g["manifest_elements"] == 95
+    # 仍然是一次**成功的**渲染：manifest 齐全——判据是与 hybrid 生命周期那次
+    # 渲染的元素数逐位相等（同一张图、同一规模：表示法换成 raster 也不许
+    # 多一个或少一个元素），不是一个会静默过期的绝对总数。
+    assert g["manifest_elements"] == life["manifest_elements"]
     # 名单照旧报出来——降到 raster 不代表这一版没 rasterize 过任何东西
     assert g["preview"]["rasterized_artist_count"] == 3
 

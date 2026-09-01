@@ -512,6 +512,16 @@ def test_write_back_success_carries_the_full_transaction_receipt(client, tmp_pat
     assert m._baseline_patches("Fig1", baked)[0]["gid"] == "g"
     # 版本条目带上权威 patch_hash，与响应里的是同一个值
     assert baked["Fig1"]["versions"][-1]["patch_hash"] == body["patch_hash"]
+    # 基线绑定 commit 后的文件身份（sha1 / mtime_ns / size）：外部重写产物后
+    # `_baked_matches_file` 靠它把「文件已是那个样子」判成失效
+    files = baked["Fig1"]["versions"][-1]["files"]
+    assert set(files) == {"Fig1.pdf", "Fig1.png"}
+    for name, ident in files.items():
+        st = (figs / name).stat()
+        assert ident["sha1"] == m._sha1_of(figs / name)
+        assert ident["mtime_ns"] == st.st_mtime_ns
+        assert ident["size"] == st.st_size
+    assert m._baked_matches_file(baked["Fig1"]["versions"][-1], figs / "Fig1.pdf") is True
 
 
 def test_post_check_reports_a_size_mismatch_without_rolling_back(client, tmp_path, monkeypatch):

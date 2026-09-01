@@ -199,6 +199,56 @@ class ColorbarProxy:
         """宿主轴已有 axes_i gid；伪元素靠 manifest bbox 命中。"""
 
 
+def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> list[tuple]:
+    """**真的画在图上**的刻度标签 → [(它在 `get_[which]ticklabels()` 里的下标, Text)]。
+
+    这是刻度伪元素几何与登记的唯一判据。`get_[xy]ticklabels()` 回的是 locator
+    产出的**全部**刻度的标签——matplotlib 在 `_update_ticks` 里给每一条都填了
+    文字与位置，却只画视区之内的那些。对数轴上这两者差得最远：LogLocator 按
+    整十年铺位（floor(log vmin) 到 ceil(log vmax) 再加余量），数据跨一两个量级
+    时**大半标签落在子图外**。不过滤就登记，表现是「Y 刻度文字」的包围盒比
+    图还高 1.8 倍、点着一条画着的刻度命中的却是图外的幽灵——用户报的
+    「log 之后刻度线与刻度数字不对齐」就是它。线性轴同病只是量轻（AutoLocator
+    只在两端各多出一条）。
+
+    取舍全部**跟渲染器走**（`Axis._update_ticks` 是 `Axis.draw` / mplot3d
+    `axis3d.Axis.draw` 共同的那一步），不自算第二份视区判据：
+      * 整条轴不可见（twinx 的隐形 x 轴）→ 一条都不在图上；
+      * 单条 tick 被 tick_params 关掉（`tick.get_visible()`）→ 不画；
+      * 位置在视区外（`_update_ticks` 的变换 + 容差取舍）→ 不画。
+
+    下标身份**保持原口径**（labels1+labels2 拼接序，见 TickLabel）：过滤只决定
+    「登不登记 / 量不量几何」，第 j 条指的还是同一条——冻结整条轴时
+    `_freeze_tick_texts` 按同一个 j 对位。逐位重建对不上、或私有 API 缺席时
+    **放弃过滤退回全量**（宁多勿错删；`test_manifest_geometry` 有版本金丝雀）。
+    """
+    axis = _axis_of(ax, which)
+    get = getattr(ax, f"get_{which}ticklabels")
+    try:
+        raw = list(get(minor=True)) if minor else list(get())
+    except (TypeError, AttributeError):  # 该轴不支持 minor 参数
+        return []
+    entries = list(enumerate(raw))
+    if not entries:
+        return []
+    try:
+        if not axis.get_visible() or not ax.get_visible():
+            return []
+        to_draw = {id(t) for t in axis._update_ticks()}  # noqa: SLF001 — 渲染器自己的取舍
+        ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+        # `get_ticklabels()` 的口径：label1 可见的在前、label2 可见的接后。
+        # 逐位按身份对拍，拼不回同一个列表就说明口径变了——放弃过滤。
+        side1 = [t for t in ticks if t.label1.get_visible()]
+        side2 = [t for t in ticks if t.label2.get_visible()]
+        rebuilt = [t.label1 for t in side1] + [t.label2 for t in side2]
+        if len(rebuilt) != len(raw) or any(a is not b for a, b in zip(rebuilt, raw)):
+            return entries
+        flags = [t.get_visible() and id(t) in to_draw for t in (*side1, *side2)]
+        return [e for e, ok in zip(entries, flags) if ok]
+    except Exception:  # noqa: BLE001 — matplotlib 内部形状变了：退回全量，别丢刻度
+        return entries
+
+
 class TickSet:
     """一条坐标轴全部刻度标签的伪元素（tick label 会随 draw 重建，
     属性必须走 tick_params 才能持久）。3D 轴多一条 "z"。"""
@@ -217,14 +267,13 @@ class TickSet:
         次刻度也算进来，是因为它们在用户眼里就是「X 刻度文字」的一部分——
         开了 `minor_format` 之后不算的话，刻度组的包围盒会漏掉下面那一排，
         点它选不中、对齐也对不准。单条编辑仍然只对主刻度开放（冻结整条轴
-        是主刻度的机制，见 TickLabel）。
+        是主刻度的机制，见 TickLabel）。「画着」的判据只有
+        `drawn_tick_label_entries` 一份——包围盒圈的必须是真的画出来的那排字。
         """
-        get = getattr(self.ax, f"get_{self.which}ticklabels")
-        out = [t for t in get() if t.get_text()]
-        try:
-            out += [t for t in get(minor=True) if t.get_text()]
-        except (TypeError, AttributeError):  # 该轴不支持 minor 参数
-            pass
+        out = [t for _, t in drawn_tick_label_entries(self.ax, self.which) if t.get_text()]
+        out += [
+            t for _, t in drawn_tick_label_entries(self.ax, self.which, minor=True) if t.get_text()
+        ]
         return out
 
     def _first(self, getter, default):
@@ -1490,7 +1539,21 @@ def _freeze_tick_texts(ax: Axes, which: str, edits: dict) -> None:
         if not (0 <= int(idx) < len(texts)):
             raise ValueError(f"刻度 #{int(idx)} 已不存在（当前只有 {len(texts)} 个主刻度）")
         texts[int(idx)] = str(val)
+    # `set_ticks` 有个副作用：把**整组共享轴**的视区扩到 min/max(locs)
+    # （`_set_tick_locations` 逐个 `set_view_interval`），而 locs 里常带着
+    # 视区外的刻度位（AutoLocator 两端各多一条、LogLocator 多出整套十年）。
+    # 冻结改的是**文字**，不该动数据范围——不还原的话视区留在扩过的状态，
+    # 撤销之后热会话比全量重放多画两条端头刻度（HOT([]) ≠ REPLAY([])）。
+    # 还原按 matplotlib 自己扩的那个范围逐轴还回去（含共享组），
+    # `ignore=True` 精确回写、保持反向轴的方向。
+    try:
+        shared = list(axis._get_shared_axis())  # noqa: SLF001 — 与 _set_tick_locations 同一份名单
+    except Exception:  # noqa: BLE001 — 私有 API 缺席时至少还原本轴
+        shared = [axis]
+    views = [(a, tuple(a.get_view_interval())) for a in shared]
     getattr(ax, f"set_{which}ticks")(locs, texts)
+    for a, (lo, hi) in views:
+        a.set_view_interval(lo, hi, ignore=True)
 
 
 def _set_ticklabel_text(tl: "TickLabel", value, state: "FigState") -> None:
@@ -2404,7 +2467,9 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
 
     共享 ≠ 孪生。`subplots(sharex=True)` 同样共享 x 轴，但那是并排的另一个
     子图——只看共享关系会把整行子图一起拖走，所以判据必须再加「position
-    基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`。
+    基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`；
+    判据本身只有 `coincident_shared_axes_pairs` 一份（manifest 的孪生轴
+    标签也吃它，别再写第二份）。
     """
     # **编号与遍历都必须用 `_ordered_axes`**（由调用方传进来）。用 `fig.axes`
     # 的话，插图宿主不在里面 → `gid_of_ax.get(host)` 是 None → `link()` 直接
@@ -2430,6 +2495,27 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
     for cbax, host in host_of_cbax.items():
         link(host, cbax)
 
+    for ax, other in coincident_shared_axes_pairs(ordered, cbar_of_ax):
+        link(ax, other)
+
+    return follow
+
+
+def coincident_shared_axes_pairs(ordered, cbar_of_ax) -> list[tuple]:
+    """「孪生轴」判据的**唯一出处**：共享 x 或 y + position 基本重合。
+
+    两个消费方：`follow_map`（拖动宿主时孪生轴一起走）与 manifest 的
+    `_twin_axes_labels`（「子图 N（右轴）」的可区分标签）。判据只有这一份
+    ——分开写的话，「拖动时跟着走的」与「标着（右轴）的」迟早不是同一批。
+    用公开的 `get_shared_[xy]_axes()`，不碰 `_twinned_axes`（follow_map
+    定下的裁决），顺带把 `fig.add_axes(同位置, sharex=…)` 手搓出来的孪生
+    也认进来——它们与 `twinx()` 在用户眼里是同一个东西。
+
+    对 (ax, other) 双向各出现一次；按 `ordered`（`_ordered_axes` 的遍历序）
+    枚举而不是遍历 siblings 集合：集合序不稳定，manifest 要逐字节可复现
+    （写回校验拿它比对）。
+    """
+    pairs: list[tuple] = []
     for ax in ordered:
         if ax in cbar_of_ax:
             continue
@@ -2440,15 +2526,12 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
                 siblings.update(grouper.get_siblings(ax))
         except Exception:  # noqa: BLE001 — 关联判定失败只是少一条联动，不拦渲染
             continue
-        # 按 fig.axes 顺序遍历而不是遍历 siblings 集合：集合序不稳定，
-        # manifest 要逐字节可复现（写回校验拿它比对）
         for other in ordered:
             if other is ax or other in cbar_of_ax or other not in siblings:
                 continue
             if all(abs(a - b) < 1e-6 for a, b in zip(pos, other.get_position().bounds)):
-                link(ax, other)
-
-    return follow
+                pairs.append((ax, other))
+    return pairs
 
 
 def _refresh_axes_follow(state: "FigState") -> None:

@@ -2,9 +2,10 @@ import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushRender, renderTargets, requestRender, syncEngine } from './useEngineSync'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
-import type { Manifest } from '@/lib/api'
+import type { Manifest, PanelInfo } from '@/lib/api'
 
 function panel(id: string, fileId: string, overrides: number): PanelObject {
   return {
@@ -72,6 +73,43 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
   it('没有脚本的面板永远不进队列', () => {
     const raster = { ...panel('a', 'photo.png', 3), script: undefined } as PanelObject
     expect(renderTargets([raster], 'a', {})).toEqual([])
+  })
+})
+
+describe('baked 基线的有效性（isJustBakedBaseline 经由 renderTargets）', () => {
+  // panel() 造出来的 overrides 形状与这里的 baked 逐字相同（同一段生成逻辑）
+  const bakedOf = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ gid: `g${i}`, prop: 'color', value: '#000' }))
+  const seedAsset = (extra: Partial<PanelInfo>) =>
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', ...extra } as PanelInfo },
+    })
+
+  afterEach(() => {
+    useAssetStore.setState({ byId: {}, panels: [] })
+  })
+
+  it('overrides 恰好等于有效基线：不进队列（文件已是那个样子）', () => {
+    seedAsset({ baked_overrides: bakedOf(2), baked_current: true })
+    expect(renderTargets([panel('a', 'Fig1.pdf', 2)], null, {})).toEqual([])
+  })
+
+  it('老后端没有 baked_current 字段：维持旧行为，不进队列', () => {
+    seedAsset({ baked_overrides: bakedOf(2) })
+    expect(renderTargets([panel('a', 'Fig1.pdf', 2)], null, {})).toEqual([])
+  })
+
+  it('基线已失效（文件被外部改写，baked_current=false）：必须重新走引擎', () => {
+    // 用户在 Tavotto 外重跑构建脚本把产物刷回脚本原值：预览若继续按
+    // 「文件已是基线的样子」跳过渲染，画布挂的就是脚本原值，而编辑态
+    // 显示 script+overrides——正是用户报的「预览没有使用 override」
+    seedAsset({ baked_overrides: bakedOf(2), baked_current: false })
+    expect(renderTargets([panel('a', 'Fig1.pdf', 2)], null, {})).toHaveLength(1)
+  })
+
+  it('overrides 与基线不同：无论基线是否有效都进队列', () => {
+    seedAsset({ baked_overrides: bakedOf(2), baked_current: true })
+    expect(renderTargets([panel('a', 'Fig1.pdf', 3)], null, {})).toHaveLength(1)
   })
 })
 

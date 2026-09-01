@@ -160,6 +160,9 @@ const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
   { re: /^文字 “(.*)”$/s, key: 'textNamed' },
   { re: /^刻度 “(.*)”$/s, key: 'tickNamed' },
   { re: /^子图 (\d+)$/, key: 'axes' },
+  // twinx/twiny 的双生轴：「子图 2（右轴）」，同侧第二条带序号「（右轴 2）」。
+  // 引擎侧的构词出处是 engine/manifest.py 的 _TWIN_SIDE_NAMES。
+  { re: /^子图 (\d+)（(左轴|右轴|上轴|下轴)( \d+)?）$/, key: 'axesTwin' },
   { re: /^柱 (\d+)$/, key: 'bar' },
   { re: /^误差棒 (\d+)$/, key: 'errorbar' },
   { re: /^图像 (\d+)$/, key: 'image' },
@@ -170,6 +173,14 @@ const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
   { re: /^([XYZ]) 刻度文字$/, key: 'tickLabels' },
 ]
 
+/** 双生轴的轴侧字面量（引擎协议中文）→ twinSide 翻译键。 */
+const TWIN_SIDE_KEYS: Record<string, string> = {
+  左轴: 'left',
+  右轴: 'right',
+  上轴: 'top',
+  下轴: 'bottom',
+}
+
 /**
  * 引擎元素名 → 当前语言。中文界面下是恒等映射（key 的中文译文与引擎原串
  * 一致），英文界面下重组成英文。
@@ -178,6 +189,11 @@ export function engineLabel(label: string): string {
   for (const { re, key } of ENGINE_LABEL_PATTERNS) {
     const m = re.exec(label)
     if (!m) continue
+    if (key === 'axesTwin') {
+      // (宿主序号, 轴侧, 可选“ 序号”) 三个组：轴侧翻成当前语言，序号原样拼上
+      const side = t(`engineLabel.twinSide.${TWIN_SIDE_KEYS[m[2]]}`, { ns: 'inspector' })
+      return t('engineLabel.axesTwin', { ns: 'inspector', value: m[1], side, ord: m[3] ?? '' })
+    }
     // 单捕获组统一喂给 {{value}}；轴标签那条是 (轴名, 文字) 两个组
     const values =
       m.length === 3

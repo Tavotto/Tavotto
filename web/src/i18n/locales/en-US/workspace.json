@@ -332,6 +332,8 @@
     }
   },
   "panelBadge": {
+    "approxPreview": "Approximate preview",
+    "approxPreviewHint": "The canvas is temporarily showing the on-disk original; your in-figure edits are not reflected yet. It updates automatically once the engine render lands.",
     "cold": "Cold start — this can take a few minutes…",
     "error": "Render failed",
     "firstBuild": "First build…",

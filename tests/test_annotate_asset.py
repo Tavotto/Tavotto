@@ -102,3 +102,38 @@ def test_annotate_regenerates_png_from_annotated_pdf(tmp_path):
     cy = round((30 + 10) / 80 * pix.height)
     r, g, b = pix.pixel(cx, cy)[:3]
     assert r + g + b < 200, (r, g, b)
+
+
+def test_annotate_rotated_text_direction_is_css_clockwise(tmp_path):
+    """写回路径与导出合成同一组 _draw_*：旋转方向也必须同一。
+
+    CSS rotate() 顺时针是权威语义：90° 阅读方向朝下（dir=(0,1)）、270° 朝上。
+    两侧都钉，防判据只钉一条边。"""
+    for deg, want_dy in ((90, 1.0), (270, -1.0)):
+        pdf = tmp_path / f"fig{deg}.pdf"
+        _make_pdf(pdf)
+        pdfbackend.annotate_asset(
+            pdf,
+            None,
+            [
+                {
+                    "type": "text",
+                    "x_mm": 20,
+                    "y_mm": 36,
+                    "w_mm": 60,
+                    "h_mm": 8,
+                    "text": "HEADxxxxxxtail",
+                    "size_pt": 9,
+                    "bold": False,
+                    "color": "#000000",
+                    "align": "left",
+                    "rotation_deg": deg,
+                }
+            ],
+        )
+        doc = pymupdf.open(pdf)
+        lines = [ln for b in doc[0].get_text("rawdict")["blocks"] for ln in b["lines"]]
+        doc.close()
+        assert len(lines) == 1, [ln["dir"] for ln in lines]
+        d = lines[0]["dir"]
+        assert abs(d[0]) < 1e-6 and abs(d[1] - want_dy) < 1e-6, (deg, d)

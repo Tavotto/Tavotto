@@ -319,6 +319,8 @@
     }
   },
   "panelBadge": {
+    "approxPreview": "近似预览",
+    "approxPreviewHint": "画布暂以磁盘原图占位，尚未反映当前的图内修改；引擎渲染完成后会自动更新。",
     "cold": "冷启动中，可能需要几分钟…",
     "error": "渲染失败",
     "firstBuild": "首次构建中…",

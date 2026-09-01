@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { isJustBakedBaseline } from '@/store/actions'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { sampleDisplayState } from '@/diagnostics'
@@ -210,12 +211,17 @@ export function useEngineSync() {
   const editingId = useUiStore((s) => s.elementPanelId)
   const byKey = useRenderStore((s) => s.byKey)
   const tracked = useRenderStore((s) => s.tracked)
+  // renderTargets 的判据里有 isJustBakedBaseline，它读素材表（baked_overrides /
+  // baked_current）。素材表变了（写回完成、SSE 报文件被外部改写后 load()）
+  // 判据结论可能翻转——不订阅的话，「磁盘产物被外部刷回脚本原值」那一刻
+  // 没有任何东西会让同步器重新看一眼，面板就此停在磁盘原图上。
+  const assets = useAssetStore((s) => s.byId)
 
   useEffect(() => {
     syncEngine(objects, editingId)
-    // byKey / tracked 进依赖表是为了「渲染回来了 → 再看一眼还有没有要发的」，
-    // 判断本身在 syncEngine 里读的是最新 state
-  }, [objects, editingId, byKey, tracked])
+    // byKey / tracked / assets 进依赖表是为了「渲染回来了 / 素材事实变了 →
+    // 再看一眼还有没有要发的」，判断本身在 syncEngine 里读的是最新 state
+  }, [objects, editingId, byKey, tracked, assets])
 
   // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度。
   // 按**面板自己那份变体**取尺寸：size_mm 本身就是可以被 override 的，

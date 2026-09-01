@@ -189,6 +189,36 @@ def case_lifecycle(n: int) -> dict:
 
         man = res["manifest"]
         out["manifest_elements"] = len(man["elements"])
+        # 「manifest 齐全」的性质化读数（判据前提，不是被测不变量）：
+        # ① 非刻度部分按角色计数——构成可以从 fixture 的结构逐类推导；
+        # ② 刻度文字部分按 (轴, 方向) 计数，与「真的画在图上的」
+        #    （overrides.drawn_tick_label_entries，产品同一份判据）逐位比对。
+        # 绝对总数（旧断言里的 95）对图幅/布局/locator 敏感，抄下来只会在
+        # 下一次刻度行为变化时静默过期。
+        roles: dict[str, int] = {}
+        man_ticks: dict[str, int] = {}
+        for e in man["elements"]:
+            roles[e["role"]] = roles.get(e["role"], 0) + 1
+            if e["role"] == "ticklabel":
+                ax_gid, tail = e["gid"].rsplit(".", 1)
+                key = f"{ax_gid}.{'x' if tail.startswith('xticklabels') else 'y'}"
+                man_ticks[key] = man_ticks.get(key, 0) + 1
+        roles.pop("ticklabel", None)
+        out["manifest_roles_excl_ticklabels"] = roles
+        out["manifest_tick_counts"] = man_ticks
+        drawn: dict[str, int] = {}
+        for i, ax in enumerate(fig.axes):
+            for which in ("x", "y"):
+                n_drawn = len(
+                    [
+                        t
+                        for _, t in overrides_mod.drawn_tick_label_entries(ax, which)
+                        if t.get_text()
+                    ]
+                )
+                if n_drawn:
+                    drawn[f"axes_{i}.{which}"] = n_drawn
+        out["drawn_tick_counts"] = drawn
         mesh_gids = _gids(man, "collection")
         vector_gids = _gids(man, "line") + _gids(man, "legend") + _gids(man, "axes")[:1]
         out["mesh_gids"] = mesh_gids
