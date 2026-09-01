@@ -372,6 +372,8 @@ desktop…」。
 | **第四轮评审（PR #214，`07fc7c2`）** | ✅ 2 P1 + 2 P2 **全部成立、全部改**（其中一条 P1 是第三轮的修复制造出来的）。处置见 `TEST_MATRIX.md`「第四轮评审」 |
 | **第五轮评审（PR #214，`c8479335`）** | ✅ 1 P1 + 2 P2 **全部成立、全部改**（两条 P2 都在十行以内，比开 Issue 便宜）。处置见 `TEST_MATRIX.md`「第五轮评审」 |
 | **第六轮评审（PR #214，`13ec3b69`）** | ✅ **0 P1 + 4 P2**，全部成立、全部改（都在 20 行以内、都在本 PR 已动过的文件里，其中一条是本 PR 自己声明的不变式被违反）；变异反证扩到**后端 28 / 前端 27，全红**。处置见 `TEST_MATRIX.md`「第六轮评审」 |
+| **合并 main（`#215`）** | ✅ 唯一冲突是 `codex-plugin/mcp/widget/canvas.html`——**生成物，在合并态重建**（挑一边留下都会得到一份与源码不对应的产物）。#215 同时动了 `app.py` / `pymupdf_backend.py` / `overrides.py`，与本 PR 同模块不同区域，**文本干净不等于语义干净**，所以全量套件在合并态重跑了一遍 |
+| **第七轮评审（PR #214，`4f5f1855`）** | ✅ **0 P1 + 3 P2**，全部成立、全部改。第一条虽挂 P2，后果是「新导出永远停在进行中」——**按后果处置不按标签处置**。变异反证 5 条：第一轮 4 红 1 存活，存活的那条是「判据只钉了一条边」（补了 `.then` 没补 `.catch`），补齐后 5/5 全红。处置见 `TEST_MATRIX.md`「第七轮评审」 |
 | `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
 
 > **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面
@@ -398,7 +400,7 @@ desktop…」。
 | — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
 | — | **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行。**本轮没有实测过大项目**（用例里最多 6 行），真实上限不知道 | 待量 |
 | — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
-| — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
+| — | ~~就绪度前端的 axe 覆盖靠 e2e，本轮没跑过 Playwright~~ **已跑**：第七轮合并 main 之后在本机跑了**完整** 115 条（114 passed / 1 skipped）。「本机沙箱里起不来」是错的判断（见 R-19）；worktree 里要带 `TAVOTTO_PYTHON=<主工作区>/.venv/bin/python`，且**必须先 `python scripts/build_frontend.py`**——包内 `src/tavotto/web/` 优先于 `web/dist`，不重建的话测的是上一次的界面，而且一路绿 | ✅ 已闭合 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
 | — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
 | — | **「按另一个像素网格导出位图」这个能力不存在**：评审回合 3 把那条没有调用点的 `native_grid=False` 分支删了（它用的密度常量还是错的）。要加这个能力时，密度得从 `engine/originalspec` 来，像素网格由调用方算好传进来 | 未定 |

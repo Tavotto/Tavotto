@@ -190,9 +190,22 @@ test('导出目录不可写：导出失败给英文报错，且不丢项目', as
   }
   await start.click()
 
-  const err = dialog.getByText(/Operation failed/i).first()
+  /*
+   * 导出失败现在带**具体的错误码**（`errors:backend.*`，这里是
+   * `tmp_dir_failed`）；`Operation failed` 只是查不到对应译文时的兜底。
+   * 只钉兜底那一句等于要求产品**永远说不出具体原因**——这条用例要的是
+   * 「有一句英文报错 + 有一条恢复出口」，不是某一句特定的话（ADR 0031）。
+   *
+   * 这条用例带 `test.skip(win32)`，**在 CI 里从来没跑过**（issue #30）：
+   * 断言陈旧了没有任何门禁会说话，只有本机全量跑才看得见。
+   */
+  const err = dialog
+    .getByText(/Couldn't create a temporary file in the export folder|Operation failed/i)
+    .first()
   await expect(err).toBeVisible({ timeout: 120_000 })
   await expectNoCjk(err, '导出失败错误')
+  // 失败必须留一条出去的路，否则用户只能关掉对话框重来
+  await expect(dialog.getByRole('button', { name: /Try again/i })).toBeVisible()
 
   // 不丢项目：关掉对话框画布还在
   await page.keyboard.press('Escape')
