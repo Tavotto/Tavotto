@@ -1780,6 +1780,15 @@ export default interface Resources {
       "alignTitleObjects_other": "已选 {{count}} 个对象",
       "alignVdist": "垂直等距（≥3）",
       "axesOnlySuffix": "{{tip}} · 仅限子图",
+      "axis": {
+        "height": "高",
+        "indexed": "第 {{n}} 项",
+        "max": "最大",
+        "min": "最小",
+        "width": "宽",
+        "x": "X",
+        "y": "Y"
+      },
       "backToScript": "回到脚本值",
       "backToScriptPartial_other": "回到脚本值（{{count}} 个改过）",
       "batchEdit": "批量修改{{label}}",

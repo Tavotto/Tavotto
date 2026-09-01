@@ -238,7 +238,16 @@
     "textBatchTitle_other": "{{count}} 个文字元素的公共样式",
     "traceback": "traceback",
     "useAssistant": "用改图助手完成",
-    "waiting": "等待引擎渲染…"
+    "waiting": "等待引擎渲染…",
+    "axis": {
+      "x": "X",
+      "y": "Y",
+      "width": "宽",
+      "height": "高",
+      "min": "最小",
+      "max": "最大",
+      "indexed": "第 {{n}} 项"
+    }
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",

@@ -2131,6 +2131,14 @@ def test_preview_svg_is_written_without_newline_translation():
     )
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "这条是**在 POSIX 上模拟 Windows 语义**的用例，靠 `fcntl` 读 fd 的访问模式，"
+        "而 Windows 上根本没有 `fcntl`。真 Windows 上这条性质由 `os.fsync()` 本身兑现——"
+        "整套件走的就是真的那条路，不需要也不可能在这里再模拟一遍。"
+    ),
+)
 def test_publish_file_fsyncs_through_a_writable_handle(tmp_path, monkeypatch):
     """Windows 的 `os.fsync()` 只接受**可写**句柄。
 
