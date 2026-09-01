@@ -541,6 +541,11 @@ def _g_fixed_ticks_and_label_text(getbase):
     # 刻度文字刻意用 ASCII：这条用例最后要从写回的 PDF 里把它读出来，而中文
     # 得先有 CJK 字体（s6 为此专门做了字体探测）。要验的是「文字留住了没有」，
     # 不是字体，别把两件事绑在一起。
+    #
+    # 两条 text 编辑的 gid **都从 base 取**（构造上必不相同）。以前一条硬编码
+    # `xticklabels_1`：manifest 只登记画着的刻度之后，base 的第一条就是 _1
+    # （_0 是视区外的幽灵），硬编码那条与 xticks[0] 撞成同一个 gid，后到的
+    # 编辑把先到的盖掉——用例失去了「两条互不相扰」的那一半验证面。
     xticks = [
         e["gid"]
         for e in getbase()["elements"]
@@ -549,7 +554,7 @@ def _g_fixed_ticks_and_label_text(getbase):
     return _cumulative(
         {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
         {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.5, 1.5, 2.5, 3.5]},
-        {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "mid-tick"},
+        {"gid": xticks[1], "prop": "text", "value": "mid-tick"},
         {"gid": xticks[0], "prop": "text", "value": "start"},
     )
 

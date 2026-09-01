@@ -368,3 +368,49 @@ def test_export_captures_nothing_without_consent(client, tmp_path, monkeypatch):
     assert telemetry.flush(5.0)
     assert box == []
     telemetry.reset_for_tests()
+
+
+def _square_panel_dir(tmp_path):
+    """左上象限有黑块的正方形面板：旋转方向（±90°）像素级可辨。"""
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    doc = pymupdf.open()
+    page = doc.new_page(width=100, height=100)
+    page.draw_rect(pymupdf.Rect(0, 0, 50, 50), color=None, fill=(0, 0, 0))
+    doc.save(figs / "sq.pdf")
+    doc.close()
+    return figs
+
+
+def test_export_panel_rotation_is_css_clockwise(client, tmp_path, monkeypatch):
+    """面板 rotation 与前端 CSS rotate() 同向（顺时针）：90° 左上黑块转到右上、
+    270° 转到左下。两侧都钉——flip 系列用例量的是镜像，看不见旋转方向这一维。"""
+    m.open_project(str(_square_panel_dir(tmp_path)))
+    # opacity=1 走 show_pdf_page，opacity<1 走位图 insert_image——两条路各有
+    # 一个 rotate 参数，方向要分别钉住。
+    cases = [(rot, dark_q, op) for rot, dark_q in ((90, "TR"), (270, "BL")) for op in (None, 0.5)]
+    for rot, dark_q, opacity in cases:
+        panel = {
+            "type": "panel",
+            "id": "sq.pdf",
+            "x_mm": 25,
+            "y_mm": 0,
+            "w_mm": 50,
+            "h_mm": 50,
+            "rotation": rot,
+        }
+        if opacity is not None:
+            panel["opacity"] = opacity
+        doc = _export(client, tmp_path, {"stem": f"rot{rot}o{opacity}", "objects": [panel]})
+        pix = doc[0].get_pixmap()
+
+        def lum(mx, my):
+            return sum(pix.pixel(int(pb.mm2pt(mx)), int(pb.mm2pt(my))))
+
+        q = {
+            "TL": lum(37.5, 12.5),
+            "TR": lum(62.5, 12.5),
+            "BL": lum(37.5, 37.5),
+            "BR": lum(62.5, 37.5),
+        }
+        assert min(q, key=q.get) == dark_q, (rot, opacity, q)

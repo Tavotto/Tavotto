@@ -686,6 +686,34 @@ def test_scale_change_does_not_leave_the_linear_locator_behind(library):
     assert _tick_texts(man), "对数轴上一个刻度都没有 = locator 用错了"
 
 
+def test_log_scale_registers_only_drawn_tick_labels(library):
+    """对数轴只登记**真的画在图上**的刻度（判据唯一出处
+    `overrides.drawn_tick_label_entries`）。
+
+    LogLocator 按整十年铺位、连视区外的一起给，matplotlib 给每一条都填了
+    文字与位置却只画视区内的。不过滤的话「Y 刻度文字」的包围盒比子图还高、
+    manifest 里一半条目是图外的幽灵——用户报的「log 之后刻度线与刻度数字
+    不对齐 / 点不中」就是它。判据两侧都要钉：登记的每条都在子图纵向范围里
+    （防幽灵），且**至少一条**（防把画着的也错删）。
+    """
+    man = _render(library, [{"gid": "axes_0", "prop": "yscale", "value": "log"}])
+    ax_bb = _el(man, "axes_0")["bbox"]
+    y0, y1 = ax_bb[1], ax_bb[1] + ax_bb[3]
+    ylabels = [
+        e for e in man["elements"] if e["role"] == "ticklabel" and ".yticklabels_" in e["gid"]
+    ]
+    assert ylabels, "对数轴一条刻度标签都没登记——过滤把画着的也删了"
+    for e in ylabels:
+        cy = e["bbox"][1] + e["bbox"][3] / 2.0
+        assert y0 - 0.05 <= cy <= y1 + 0.05, (
+            f"{e['gid']} 的 bbox 落在子图纵向范围之外（幽灵刻度）：{e['bbox']}，子图 {ax_bb}"
+        )
+    grp = _el(man, "axes_0.yticks")["bbox"]
+    assert grp[3] <= ax_bb[3] + 0.1, (
+        f"「Y 刻度文字」的包围盒比子图还高（圈进了图外的幽灵刻度）：{grp} vs {ax_bb}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 单条刻度文字
 # ---------------------------------------------------------------------------
@@ -711,6 +739,24 @@ def test_single_tick_label_edit_and_undo(library):
         assert _tick_texts(back["manifest"]) == _tick_texts(base)
     finally:
         pool.discard(w)
+
+
+def test_tick_text_freeze_leaves_the_view_interval_alone(library):
+    """冻结整条轴（改单条刻度文字）**不许动数据范围**。
+
+    `set_ticks` 有个副作用：把整组共享轴的视区扩到 min/max(locs)，而 locs
+    里常带着视区外的刻度位（AutoLocator 两端各多一条）。不还原的话，改一个
+    字的代价是 xlim 悄悄变宽；撤销之后视区回不去，热会话比全量重放多画两条
+    端头刻度（HOT([]) ≠ REPLAY([])）。判据两条：xlim 逐位不变 + 画着的刻度
+    条目集合不变。
+    """
+    base = _render(library)
+    gids = _xtick_gids(base)
+    man = _render(library, [{"gid": gids[1], "prop": "text", "value": "mid"}])
+    assert _field(man, "axes_0", "xlim") == _field(base, "axes_0", "xlim"), (
+        "改刻度文字把 xlim 改宽了——set_ticks 的视区扩张没被还原"
+    )
+    assert _xtick_gids(man) == gids, "冻结前后画着的刻度条目集合必须一致"
 
 
 def test_two_tick_labels_on_one_axis_do_not_clobber_each_other(library):

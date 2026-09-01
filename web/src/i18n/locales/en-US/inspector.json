@@ -262,6 +262,7 @@
     "annotationArrow": "Annotation arrow",
     "arrow": "Arrow {{value}}",
     "axes": "Axes {{value}}",
+    "axesTwin": "Axes {{value}} ({{side}}{{ord}})",
     "axisLabelNamed": "{{axis}} axis “{{value}}”",
     "bar": "Bar {{value}}",
     "barSeries": "Bar series {{value}}",
@@ -283,7 +284,13 @@
     "textNamed": "Text “{{value}}”",
     "tickLabels": "{{axis}} tick labels",
     "tickNamed": "Tick “{{value}}”",
-    "titleNamed": "Title “{{value}}”"
+    "titleNamed": "Title “{{value}}”",
+    "twinSide": {
+      "bottom": "bottom axis",
+      "left": "left axis",
+      "right": "right axis",
+      "top": "top axis"
+    }
   },
   "enum": {
     "arrowstyle": {

@@ -52,10 +52,12 @@ from overrides import (
     _stroke_state,
     _tick0,
     axes_position_eaten_by_layout,
+    coincident_shared_axes_pairs,
     collection_caps,
     colorbar_host_count,
     colorbar_mapping_is_live,
     colorbar_maps,
+    drawn_tick_label_entries,
     figure_layout_engine_eats_position,
     follow_map,
     gradient_base_hex,
@@ -191,6 +193,86 @@ def _is_secondary_axis(ax) -> bool:
     return isinstance(ax, SecondaryAxis)
 
 
+#: 双生轴的轴侧 → 中文标签片段。twinx 的 twin 挂在左右（几乎总是右），
+#: twiny 的挂在上下。这里的中文是**引擎协议字面量**（与「子图 N」同一性质），
+#: 前端 `roles/registry.ts` 按 pattern 翻成当前语言。
+_TWIN_SIDE_NAMES = {"left": "左轴", "right": "右轴", "top": "上轴", "bottom": "下轴"}
+
+
+def _twin_axes_labels(all_axes: list, child_ids: set, cbar_of_ax: dict) -> dict[int, str]:
+    """id(twin Axes) → 可区分标签（「子图 N（右轴）」）。
+
+    twinx/twiny 的 twin 是 `fig.axes` 里一个**独立的** Axes，与宿主逐像素
+    重叠，默认按遍历序拿到「子图 7」这类与宿主毫不相干的名字——六宫格图上
+    第 2 格的右轴叫「子图 7」，元素树里根本猜不到它是谁，这正是「双纵轴
+    无法分侧调整」的第一半根因（另一半是画布命中：两个同尺寸 bbox 评分
+    打平，先登记的恒胜，twin 容器在画布上永远点不中——记录在案，元素树是
+    它的入口）。gid 一个字节不动（存量文档的 axes_i 是数据），只改显示名。
+
+    亲缘判据**只有 `overrides.coincident_shared_axes_pairs` 一份**（共享
+    x/y + position 基本重合，公开 API）——`follow_map` 的「拖动时一起走」
+    吃的是同一份，所以「标着（右轴）的」与「跟着宿主走的」永远是同一批。
+    **轴侧按实况读**（`get_label_position()`），不按「twinx 必在右」的直觉
+    ——脚本随后 `yaxis.set_label_position("left")` 的话，标出「右轴」就是
+    说谎。宿主取簇内 `fig.axes` 序最小的**非子 axes**（insets 上开 twin 的
+    极端形态挑不出宿主序号，放弃改名退回原标签，不猜）。同侧第二条带序号
+    （「右轴 2」）。
+    """
+    pairs = coincident_shared_axes_pairs(all_axes, cbar_of_ax)
+    if not pairs:
+        return {}
+    pos = {id(a): i for i, a in enumerate(all_axes)}
+    adj: dict[int, set[int]] = {}
+    by_id: dict[int, object] = {}
+    for a, b in pairs:
+        adj.setdefault(id(a), set()).add(id(b))
+        adj.setdefault(id(b), set()).add(id(a))
+        by_id[id(a)] = a
+        by_id[id(b)] = b
+    out: dict[int, str] = {}
+    seen: set[int] = set()
+    for ax in all_axes:  # 按遍历序起簇，结果确定
+        if id(ax) not in adj or id(ax) in seen:
+            continue
+        # 连通分量 = 一簇孪生（base + twinx + twiny 经 base 连成一片）
+        comp: list[int] = []
+        stack = [id(ax)]
+        while stack:
+            i = stack.pop()
+            if i in seen:
+                continue
+            seen.add(i)
+            comp.append(i)
+            stack.extend(adj[i] - seen)
+        members = sorted((by_id[i] for i in comp), key=lambda s: pos[id(s)])
+        base = next((s for s in members if id(s) not in child_ids), None)
+        if base is None:
+            continue
+        side_count: dict[str, int] = {}
+        for twin in members:
+            if twin is base:
+                continue
+            try:
+                # twinx 共 x 轴、各自的 y 在左右；twiny 反之。判「共了哪根轴」
+                # 走公开的 shared grouper，轴侧读 twin 自己的实况。
+                if twin.get_shared_x_axes().joined(twin, base):
+                    side = str(twin.yaxis.get_label_position())
+                elif twin.get_shared_y_axes().joined(twin, base):
+                    side = str(twin.xaxis.get_label_position())
+                else:
+                    continue
+            except Exception:  # noqa: BLE001 — 读不出轴侧就保持原标签
+                continue
+            name = _TWIN_SIDE_NAMES.get(side)
+            if name is None:
+                continue
+            n = side_count.get(side, 0) + 1
+            side_count[side] = n
+            suffix = name if n == 1 else f"{name} {n}"
+            out[id(twin)] = f"子图 {pos[id(base)] + 1}（{suffix}）"
+    return out
+
+
 #: Collection 的显示名。`isinstance` 链**只影响这行中文**，不影响能力——
 #: 能改什么由 `collection_caps()` 按真实 getter 实况说了算。认不出来的类回落到
 #: 类名本身：显示 "QuadMesh 3" 比显示「集合 3」有用得多，也不会假装认识它。
@@ -275,19 +357,22 @@ def _alias_consumed_member(state: FigState, ax, ax_gid: str, artist) -> None:
 
 
 def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
-    """该轴上每个**有文字**的主刻度 → (gid, TickLabel 伪元素, 显示名)。
+    """该轴上每个**画着字**的主刻度 → (gid, TickLabel 伪元素, 显示名)。
 
     序号 j 是 `get_[xyz]ticklabels()` 里的下标——`TickLabel.live()` 也按它取，
     两边必须是同一个口径，否则「第 j 个刻度」在登记与应用时指的不是同一条。
+    只登记真的画出来的那些（判据唯一出处 `drawn_tick_label_entries`）：
+    对数轴的 locator 会给出视区外的整套十年刻度，不过滤的话那些幽灵条目
+    可点、可编辑，改完却在图上找不到自己——而它们的 bbox 落在子图外，
+    正是「刻度点不中 / 对不齐」的来源。下标 j 保持原口径，过滤不挪身份。
     """
-    raw = getattr(ax, f"get_{which}ticklabels")()
     return [
         (
             f"{ax_gid}.{which}ticklabels_{j}",
             TickLabel(ax, which, j),
             f"刻度 “{_snippet(t.get_text())}”",
         )
-        for j, t in enumerate(raw)
+        for j, t in drawn_tick_label_entries(ax, which)
         if t.get_text()
     ]
 
@@ -377,6 +462,8 @@ def instrument(state: FigState) -> None:
     # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
     # 上出现「次坐标轴 2」，因为前面那个 1 被插图占掉了。
     child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
+    # twinx/twiny 的 twin 轴 → 「子图 N（右轴）」这类可区分标签，整轮算一次
+    twin_labels = _twin_axes_labels(all_axes, child_ids, cbar_of_ax)
     # 图级判据，整轮只算一次
     tight_layout_engine = figure_layout_engine_eats_position(fig)
 
@@ -409,7 +496,7 @@ def instrument(state: FigState) -> None:
                 else f"插图 {child_ordinal['inset']}"
             )
         else:
-            label = "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}"
+            label = "色条轴" if ax in cbar_of_ax else twin_labels.get(id(ax)) or f"子图 {i + 1}"
         # **脚本原样的轴方向要在这一刻采**：`ax.invert_yaxis()` 不关自动缩放，
         # 所以 lim 的 originals 里只会是 `_AUTOSCALE` 哨兵，方向那一半信息
         # 端点序里根本没有。晚一步采到的就是某次 override 之后的方向了。
