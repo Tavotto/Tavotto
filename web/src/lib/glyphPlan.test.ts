@@ -53,6 +53,14 @@ describe('missing 与 substituted 是两句话', () => {
   it('画不出来的不算 substituted', () => {
     expect(substitutedChars('T؟')).toEqual([])
   })
+
+  it('中日韩不算 substituted——它只有一张脸，说了用户也改不动', () => {
+    // 这是能力限制，不是这一次编辑的结果。为一个恒定的、改不动的限制在每
+    // 一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。
+    expect(layerOf('样'.codePointAt(0) as number)).toBe('cjk')
+    expect(substitutedChars('样品 A')).toEqual([])
+    expect(substitutedChars('样品 ×10⁵')).toEqual(['⁵'])
+  })
 })
 
 describe('textDiagnostics 量的是渲染表示', () => {

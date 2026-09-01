@@ -117,16 +117,19 @@ export function missingChars(text: string): string[] {
 }
 
 /**
- * **不是**用请求的那个族画出来的字符（去重、保出现顺序）。
+ * 落在 **`fallback`** 层的字符：渲染器自己挑了一张脸把它画出来了。
  *
  * 与 `missingChars` 分开：那一档是「画不出来」，这一档是「画出来了，但不是
  * 你选的那张脸」——压成一句就等于把「方框」和「字体不一致」说成同一件事。
+ *
+ * **`cjk` 层不算在内。** 中日韩在这条路上只有一张脸（能力限制，界面上已经说
+ * 清楚），它不随用户的任何选择变化；为一个恒定的、改不动的限制在每一条中文
+ * 标注上挂一条建议，只会训练用户忽略整个问题面板。
  */
 export function substitutedChars(text: string): string[] {
   const out: string[] = []
   for (const ch of text) {
-    const layer = layerOf(ch.codePointAt(0) as number)
-    if (layer !== 'primary' && layer !== 'missing' && !out.includes(ch)) out.push(ch)
+    if (layerOf(ch.codePointAt(0) as number) === 'fallback' && !out.includes(ch)) out.push(ch)
   }
   return out
 }

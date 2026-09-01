@@ -6245,32 +6245,6 @@
    },
    "expected": [
     {
-     "id": "glyph-substituted",
-     "severity": "suggestion",
-     "message": {
-      "key": "textGlyphSubstituted",
-      "params": {
-       "chars": "图反应动力学",
-       "count": "6"
-      }
-     },
-     "object_ids": [
-      "t-cn"
-     ],
-     "gids": [],
-     "detail": {
-      "chars": [
-       "图",
-       "反",
-       "应",
-       "动",
-       "力",
-       "学"
-      ],
-      "family": "serif"
-     }
-    },
-    {
      "id": "cjk-fallback-missing",
      "severity": "warn",
      "message": {

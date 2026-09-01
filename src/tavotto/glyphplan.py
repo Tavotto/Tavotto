@@ -103,15 +103,21 @@ def missing_chars(text: str, cov: Coverage) -> list[str]:
 
 
 def substituted_chars(text: str, cov: Coverage) -> list[str]:
-    """**不是**用请求的那个族画出来的字符（去重、保出现顺序）。
+    """落在 **`fallback`** 层的字符：渲染器自己挑了一张脸把它画出来了。
 
-    与 `missing_chars` 分开：那一档是「画不出来」，这一档是「画出来了，
-    但不是你选的那张脸」——两句话对用户的意思不一样，压成一句就等于
-    把「方框」和「字体不一致」说成同一件事。
+    与 `missing_chars` 分开：那一档是「画不出来」，这一档是「画出来了，但
+    不是你选的那张脸」——压成一句就等于把「方框」和「字体不一致」说成同
+    一件事。
+
+    **`cjk` 层不算在内。** 中日韩在这条路上只有一张脸（能力限制，界面上已经
+    说清楚），它**不随用户的任何选择变化**：为一个恒定的、改不动的限制在每
+    一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。真正值得说的是
+    `fallback`——那张脸是渲染器**自己挑的**，与请求的族和字重都无关，所以
+    一个符号会让整段文字里冒出另一种字体。
     """
     seen: dict[str, None] = {}
     for ch in text:
-        if layer_of(ord(ch), cov) not in ("primary", "missing"):
+        if layer_of(ord(ch), cov) == "fallback":
             seen.setdefault(ch, None)
     return list(seen)
 
