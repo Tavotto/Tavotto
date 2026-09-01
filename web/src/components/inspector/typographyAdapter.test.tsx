@@ -145,11 +145,13 @@ describe('写入：事务与历史', () => {
     expect(byId('t1').fontFamily).toBe('sans-serif')
   })
 
-  it('连续输入（拖字号）合并成一条历史，收尾之后才结算', async () => {
+  it('连续输入合并成一条历史——**不先喊 beginGesture 也要合并**', async () => {
     await mount([textObj({ sizePt: 9 })])
     const before = s().past.length
+    // 这条路是「在字号框里打字」：NumberField 只有 onChange，没有
+    // onScrubStart。第一版用例自己先调了 beginGesture，于是把「write 会不会
+    // 自己开一轮」这件事挡在了判据外面——变异反证里那条改动活了下来。
     act(() => {
-      adapter.beginGesture()
       for (const v of [10, 11, 12, 13, 14]) adapter.write('sizePt', v)
     })
     expect(byId('t1').sizePt).toBe(14)
@@ -158,6 +160,17 @@ describe('写入：事务与历史', () => {
     expect(s().past.length).toBe(before + 1)
     act(() => s().undo())
     expect(byId('t1').sizePt).toBe(9)
+  })
+
+  it('拖字号（onScrubStart 已经开了一轮）也是一条历史，不会开出两条', async () => {
+    await mount([textObj({ sizePt: 9 })])
+    const before = s().past.length
+    act(() => {
+      adapter.beginGesture()
+      for (const v of [10, 11, 12]) adapter.write('sizePt', v)
+      adapter.endGesture()
+    })
+    expect(s().past.length).toBe(before + 1)
   })
 
   it('别处的离散动作会先把这一轮收干净（不会被静默并进上一条历史）', async () => {
