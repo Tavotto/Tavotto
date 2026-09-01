@@ -237,18 +237,35 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
   return job
 }
 
+/**
+ * 排下一次轮询。
+ *
+ * **续不续，要先问这一轮还是不是当下那个作业的。** `stopPolling()` 清得掉
+ * 定时器，清不掉一个**已经发出去的** `/api/export/state`：它的 continuation
+ * 迟到回来时，`applyExportJob()` 会按归属把快照挡掉——挡得对——但紧接着那句
+ * 无条件的 `schedulePoll(旧作业)` 会先 `stopPolling()` **把新作业的定时器
+ * 掐掉**，再去轮询那个旧作业。SSE 不通的场合（浏览器演练场、断线）轮询是唯一
+ * 通道，于是新导出早就完成了，界面还永远停在"进行中"（PR #214 第七轮评审）。
+ *
+ * 判据取**排这一轮的那一刻**的代次 + 作业归属，两个都要：代次管"换项目/又起
+ * 了一次"，归属管"这个 id 还是不是我认领的那个"。拒收路径同样要问——那条路
+ * 恰恰是陈旧快照必经的路。
+ */
 function schedulePoll(jobId: string): void {
   stopPolling()
+  const mine = generation
+  const stillMine = () => mine === generation && useExportStore.getState().ownedJobId === jobId
   pollTimer = setTimeout(() => {
     void exportState(jobId)
       .then((fresh) => {
         applyExportJob(fresh)
-        if (!TERMINAL.has(fresh.status)) schedulePoll(jobId)
+        if (stillMine() && !TERMINAL.has(fresh.status)) schedulePoll(jobId)
       })
       .catch(() => {
         // 一次拉不到不等于作业没了（后端重启、网络抖动）。继续拉；
-        // 真的没了的话下一次会回 `status: 'unknown'`，那才是结论
-        schedulePoll(jobId)
+        // 真的没了的话下一次会回 `status: 'unknown'`，那才是结论。
+        // **但也只在这一轮仍属于当下作业时才继续**
+        if (stillMine()) schedulePoll(jobId)
       })
   }, POLL_MS)
 }

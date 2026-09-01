@@ -53,6 +53,13 @@ export function ProblemPanel() {
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const listRef = useRef<HTMLUListElement>(null)
 
+  /**
+   * 这一轮检查失败了，**但上一轮的结果被留着**（`validationStore` 刻意保留，
+   * 见 web/AGENTS.md）。这时候清单要照常列——它们仍然算在计数条与导出摘要里，
+   * 藏起来等于让用户看得见数字却找不到东西。
+   */
+  const retained = failed && ready && issues.length > 0
+
   const counts = useMemo(() => {
     const out: Record<Severity, number> = { error: 0, warn: 0, not_verifiable: 0, suggestion: 0 }
     for (const i of issues) out[i.severity] += 1
@@ -104,7 +111,26 @@ export function ProblemPanel() {
         )}
       </div>
 
-      {failed ? (
+      {/*
+        这一轮查砸了、但上一轮的结果**留着**（`ready && issues.length`）：
+        那就把失败说出来，**同时把留下来的问题继续列出来**。整屏换成一张错误
+        空态的话，那些问题仍然被计进上面的计数条、也仍然进导出摘要，却在**唯一
+        一份完整问题清单**里翻不到、点不到、跳不过去（PR #214 第七轮评审）。
+      */}
+      {retained && (
+        <div
+          role="status"
+          className="mx-3 mb-2 flex shrink-0 items-center gap-2 rounded-sm border border-warn/30 bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-ink-2"
+        >
+          <ShieldAlert size={12} className="shrink-0 text-warn" aria-hidden />
+          <span className="flex-1">{pr('failedKeptHint')}</span>
+          <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => schedule()}>
+            {pr('retry')}
+          </Button>
+        </div>
+      )}
+
+      {failed && !retained ? (
         <EmptyState
           icon={ShieldAlert}
           title={pr('failedTitle')}

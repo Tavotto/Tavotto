@@ -234,3 +234,85 @@ describe('prepareExport 不发网络', () => {
     expect(bodies).toHaveLength(0)
   })
 })
+
+describe('陈旧的轮询不许改排当下的轮询', () => {
+  const res = (o: unknown) =>
+    new Response(JSON.stringify(o), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  /**
+   * 摆出那个赛跑：jA 的 `/state` **卡在网络上**（`stopPolling()` 撤不回它），
+   * 这期间用户又起了 jB；然后让 jA 那一次按 `finishA` 收场。
+   *
+   * 两条收场路径都要量：**回来了**走 `.then`，**报错了**走 `.catch`。
+   * 只量一条的话另一条上的无条件重排活得好好的。
+   */
+  const raceStaleAgainst = async (
+    finishA: (resolve: (r: Response) => void, reject: (e: unknown) => void) => void,
+  ) => {
+    const polled: string[] = []
+    let startId = 'jA'
+    let resolveA!: (r: Response) => void
+    let rejectA!: (e: unknown) => void
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/export/start')) return res(job({ job_id: startId }))
+      if (url.includes('/api/export/state')) {
+        const id = new URL(url, 'http://x').searchParams.get('job_id') as string
+        polled.push(id)
+        if (id === 'jA')
+          return new Promise<Response>((resolve, reject) => {
+            resolveA = resolve
+            rejectA = reject
+          })
+        return res(job({ job_id: id, status: 'done', outputs: [doneOutput] }))
+      }
+      return res({})
+    }) as typeof fetch
+
+    await runExport(inputOf())
+    await vi.runOnlyPendingTimersAsync()
+    expect(polled).toEqual(['jA'])
+
+    // 用户又起了一次导出：代次 +1，归属换成 jB，jB 自己排了一轮
+    startId = 'jB'
+    await runExport(inputOf())
+    expect(useExportStore.getState().ownedJobId).toBe('jB')
+
+    // 现在 jA 那一次才收场
+    finishA(resolveA, rejectA)
+    await vi.advanceTimersByTimeAsync(0)
+
+    await vi.runOnlyPendingTimersAsync()
+    return polled
+  }
+
+  it('迟到的**非终局回执**不许掐掉新作业的轮询（SSE 不通时轮询是唯一通道）', async () => {
+    vi.useFakeTimers()
+    try {
+      const polled = await raceStaleAgainst((resolve) =>
+        resolve(res(job({ job_id: 'jA', status: 'running' }))),
+      )
+      expect(polled, '迟到的 jA 回执把定时器抢回去了，jB 再也不会被轮询').toEqual(['jA', 'jB'])
+      expect(useExportStore.getState().job?.job_id).toBe('jB')
+      expect(useExportStore.getState().running, 'jB 已完成，界面却还停在进行中').toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('迟到的**失败**同样不许——拒收路径正是陈旧快照必经的那条', async () => {
+    vi.useFakeTimers()
+    try {
+      const polled = await raceStaleAgainst((_resolve, reject) => reject(new Error('断线')))
+      expect(polled, 'jA 那次失败重试把定时器抢回去了，jB 再也不会被轮询').toEqual(['jA', 'jB'])
+      expect(useExportStore.getState().job?.job_id).toBe('jB')
+      expect(useExportStore.getState().running).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

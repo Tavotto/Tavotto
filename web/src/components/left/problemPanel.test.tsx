@@ -292,3 +292,32 @@ describe('英文界面', () => {
     expect(text()).not.toContain('字号低于绝对下限')
   })
 })
+
+describe('这一轮查砸了、上一轮的结果还留着', () => {
+  const list = () => container.querySelector('ul[aria-label]')
+
+  it('失败提示与**那份留下来的清单**同时在场，不是二选一', async () => {
+    await seed() // ready=true，issues 非空
+    const kept = useValidationStore.getState().issues.length
+    expect(kept).toBeGreaterThan(0)
+    // 下一轮查砸了，`validationStore` 刻意把上一轮的结果留着
+    useValidationStore.setState({ failed: true })
+    await mount(<ProblemPanel />)
+
+    // 失败要说出来——那句话本身就承诺了「下面列的是上一次的结果」
+    expect(text()).toContain('下面列的是上一次查出来的结果')
+    // ……那就真的得列出来。它们仍算在计数条与导出摘要里，
+    // 藏起来就成了「看得见数字、找不到东西」
+    expect(list(), '整屏被换成错误空态，留下来的问题在唯一一份清单里翻不到').toBeTruthy()
+    expect(list()!.children.length).toBe(kept)
+    expect(text()).toContain('X 刻度文字')
+  })
+
+  it('上一轮什么都没有时仍然只出错误空态，不摆一条没有清单的横幅', async () => {
+    useValidationStore.setState({ ready: true, failed: true, issues: [], results: [] })
+    await mount(<ProblemPanel />)
+    expect(text()).toContain('这一次没查成')
+    expect(text()).not.toContain('未发现问题')
+    expect(list()).toBeNull()
+  })
+})

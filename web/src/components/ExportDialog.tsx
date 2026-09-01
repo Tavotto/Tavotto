@@ -201,13 +201,29 @@ export function ExportDialog() {
       suggestions: boundedCount(fresh.counts.suggestion),
       passed: fresh.counts.error === 0 && fresh.counts.warn === 0,
     })
-    setFilename(doc.name)
+    /*
+     * 这几个初值现取，**不从渲染闭包里拿**：下面那行依赖里没有 `doc`，
+     * linter 看不见这一层，但闭包里的 `doc` 在 effect 真正跑的时候就是当下
+     * 那一份（effect 只在 `open` / `documentId` 变化时跑，两者变化都会带来
+     * 一次重渲染）。现取只是把这件事写明白，顺便挡住以后加依赖时的走样
+     */
+    const snap = useDocumentStore.getState().doc
+    setFilename(snap.name)
     setConfirmed(false)
-    setProfileId(doc.profile?.id ?? readExportDefaults().profileId)
+    setProfileId(snap.profile?.id ?? readExportDefaults().profileId)
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
     // 那样用户会拿到一张他没要的图。可用性由下面那一行说出来
     setScope(defaultScope(useWorkspaceStore.getState().mode))
-  }, [open, doc.name, doc.profile])
+    /*
+     * **依赖只有「打开」与「换文档」，没有 `doc.profile`。**
+     * 在对话框里挑一套出版规范会 `commit()` 一个新的 `d.profile`，把它列进
+     * 依赖的话这个初始化 effect 当场重跑：用户刚敲进去的文件名被冲回
+     * `doc.name`、确认态被清、输出范围被改回默认——一串他没要求的重置，而且
+     * 没有任何提示（PR #214 第七轮评审）。
+     * `doc.name` 同理：改名不该顺手把导出名冲掉。
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, documentId])
 
   /* -------------------------------- 检查 --------------------------------- */
   const raster = hasRaster(formats)

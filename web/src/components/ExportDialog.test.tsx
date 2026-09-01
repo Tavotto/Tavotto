@@ -30,6 +30,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { runValidation } from '@/store/validationStore'
+import { bindingFor } from '@/lib/specBinding'
+import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { resetExportState } from '@/store/exportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -733,5 +735,52 @@ describe('预检的匿名用量统计', () => {
     setTelemetryEnabled(false)
     await setup(9)
     expect(posted).not.toHaveBeenCalled()
+  })
+})
+
+describe('对话框里改规范，不许连带重置用户填过的东西', () => {
+  const filenameInput = () =>
+    [...document.body.querySelectorAll('input')].find(
+      (i) => i.type !== 'checkbox',
+    ) as HTMLInputElement
+
+  const type = async (value: string) => {
+    const input = filenameInput()
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  /** 选一套规范 = `applyProfile()` 提交一个新的 `d.profile`（对象身份变了） */
+  const pickProfile = async () => {
+    const entry = toCatalog(useProfileStore.getState().specs)[0]
+    expect(entry, '夹具里没有可选的规范，这条用例什么都量不到').toBeTruthy()
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('换规范'), (d) => {
+        d.profile = bindingFor(entry)
+      })
+    })
+  }
+
+  it('挑一套规范之后，用户敲进去的导出名还在', async () => {
+    await setup(9)
+    await type('我的图名')
+    expect(filenameInput().value).toBe('我的图名')
+    await pickProfile()
+    expect(filenameInput().value, '选规范把导出名冲回了文档名').toBe('我的图名')
+  })
+
+  it('**换文档仍然重置**——修的是"选规范时别重跑"，不是"再也不重置"', async () => {
+    await setup(9)
+    await type('我的图名')
+    await act(async () => {
+      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_another')
+    })
+    expect(filenameInput().value, '换了文档还留着上一份的导出名').not.toBe('我的图名')
   })
 })
