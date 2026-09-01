@@ -14,6 +14,7 @@ import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
+import { canvasFieldOf, coerceTypography } from '@/lib/typography'
 import { TypographyControls } from './controls/TypographyControls'
 import { useCanvasTypography } from './typographyAdapter'
 import { shared } from './common'
@@ -166,40 +167,45 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           写入经 `useCanvasTypography` → `updateObjects` → `documentStore.commit`，
           与图内那条路各走各的 writer，界面语言却是同一套。
         */}
-        <TypographyControls adapter={typography} labelWidth={72} />
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            size="icon"
-            active={underline === true}
-            onClick={() =>
-              patch(hist('toggleUnderline'), (o) => {
-                if (underline) delete o.underline
-                else o.underline = true
-              })
-            }
-            aria-label={tx('underline')}
-          >
-            <Underline size={13} />
-          </Button>
-          <Button
-            size="icon"
-            disabled={!one}
-            onClick={() => wrapScript('sup')}
-            aria-label={tx('superscript')}
-            title={tx('superscriptTitle', { key: modKey('↑') })}
-          >
-            <Superscript size={13} />
-          </Button>
-          <Button
-            size="icon"
-            disabled={!one}
-            onClick={() => wrapScript('sub')}
-            aria-label={tx('subscript')}
-            title={tx('subscriptTitle', { key: modKey('↓') })}
-          >
-            <Subscript size={13} />
-          </Button>
-        </div>
+        <TypographyControls
+          adapter={typography}
+          labelWidth={72}
+          sizeRowExtra={
+            <>
+              <Button
+                size="icon-sm"
+                active={underline === true}
+                onClick={() =>
+                  patch(hist('toggleUnderline'), (o) => {
+                    if (underline) delete o.underline
+                    else o.underline = true
+                  })
+                }
+                aria-label={tx('underline')}
+              >
+                <Underline size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                disabled={!one}
+                onClick={() => wrapScript('sup')}
+                aria-label={tx('superscript')}
+                title={tx('superscriptTitle', { key: modKey('↑') })}
+              >
+                <Superscript size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                disabled={!one}
+                onClick={() => wrapScript('sub')}
+                aria-label={tx('subscript')}
+                title={tx('subscriptTitle', { key: modKey('↓') })}
+              >
+                <Subscript size={12} />
+              </Button>
+            </>
+          }
+        />
         {one && (
           <MatchFigureSize
             text={one}
@@ -373,6 +379,9 @@ function MatchFigureSize({
   const scale = panelFullSize(panel).w / panel.nativeW
   const eff = round1(effectivePt(panelFullSize(panel).w, panel.nativeW))
   if (Math.abs(eff - text.sizePt) < 0.05) return null
+  // 面板缩得极小时算出来的等效字号会掉出字号的合法区间。**不给一个按了会被
+  // 挡下来的动作**——判据用属性能力层那一份，不在这里手写一个第二版区间。
+  if (!coerceTypography('sizePt', eff, canvasFieldOf('sizePt')).ok) return null
 
   return (
     <p

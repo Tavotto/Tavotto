@@ -98,9 +98,7 @@ def test_the_family_reaches_the_pdf_font_resources(tmp_path):
         canvas.place(
             _text(20.0, font_family="sans-serif"), dpi=300, resolve_panel=lambda o, d: None
         )
-        canvas.place(
-            _text(35.0, font_family="monospace"), dpi=300, resolve_panel=lambda o, d: None
-        )
+        canvas.place(_text(35.0, font_family="monospace"), dpi=300, resolve_panel=lambda o, d: None)
         canvas.save_pdf(out)
     with pymupdf.open(out) as doc:
         names = {f[3] for f in doc[0].get_fonts(full=True)}

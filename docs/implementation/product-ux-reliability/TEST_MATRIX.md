@@ -1505,3 +1505,67 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 
 > 四条的共同点：**判据本身跑通了、也给出了一个看起来合理的值**。
 > 出错的是"这个值回答的是哪个问题"。参见 [[name-the-subject-of-the-predicate]]。
+
+---
+
+## Session 13：属性能力层 / Typography 控件 / 标注字体
+
+### 新增用例（后端 15 / 前端 34）
+
+**后端 `tests/test_typography_families.py`（15 条）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._one_closed_set_on_both_sides` | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `lib/typography.ts` **逐字 + 顺序**；默认族必须是第一个 |
+| `..._maps_to_its_own_base14_face`（5 条参数化） | 三族 × 常规/粗/斜/粗斜 → base-14 的正确那张脸 |
+| `..._falls_back_to_the_default_instead_of_resolving_it`（6 条参数化） | 认不出来的名字**按默认画**，不抛异常也不去解析一个不存在的字体 |
+| `..._reaches_the_pdf_font_resources` | 族走到**产物**里（量 PDF 页面的字体资源表），不是只改了前端预览 |
+| `..._uses_the_same_family_as_writing` | 量宽与落笔同族（三个数两两不等 = 尺子看得见「族」这一维） |
+| `..._does_not_change_with_the_family` | CJK 只有一张脸——那句注释的看护（实测，不是照抄） |
+
+**前端（34 条）**
+
+| 文件 | 条数 | 守的是 |
+| --- | --- | --- |
+| `lib/typography.test.ts` | 14 | 能力表 / property path 互查 / 交集不是并集 / 四档取值 / boolean↔枚举换算 / 回到默认删字段 / 校验闭集成因且**不 clamp** / 新建默认值不含字体族 |
+| `components/inspector/typographyAdapter.test.tsx` | 14 | mixed 不冒充第一个 / inherit 不算「已修改」/ 必填字段没有恢复按钮 / 不支持说得出为什么 / 多对象一条历史 / **打字也合并**（不先喊 beginGesture）/ 拖动也是一条 / 别处的离散动作先收尾 / invalid 一个字不写 / 恢复 = 删字段 |
+| `lib/canvasTextFont.test.ts` | 3 | 载荷缺省不发（主语是**序列化之后的字节**）/ 写回带族但不缩放它 / 老文档打开后字段仍不存在 |
+| `canvas/TextView.test.tsx` | +3 | 没设过 = `--font-doc`；设过就按它画；三族在画布上互不相同 |
+| `components/inspector/TextSection.test.tsx` | +2（改 1） | 标注有「字体」行；**每条排版属性都挂着锚点**；没设过不显示「已修改」 |
+| `components/inspector/textStyleBar.test.tsx` | +2 | 图内六条属性的锚点齐全；`TEXT_BAR_PROPS` = 规范表算出来的那几条 |
+| `canvas/contextBar.test.tsx` | +3 | 工具条有斜体与字体；与属性页读同一个 selector（属性页改完当场是新值） |
+| `lib/issueFocus.test.ts` | 改 4 | `focusedField: boolean` → `field: none/focused/requested` |
+| `tests/golden/preflight_vectors.json` | +2 条向量 | 画布文字的族在两侧求值器上给出同一个答案（既有 21 条**一条没变**） |
+
+### 变异反证：15 条，第一轮 13 红 2 存活，补完 15/15 全红
+
+判定**只看退出码**；Python 侧跑前清 `__pycache__`。脚本在
+`<scratchpad>/mutate.py`（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| 画布 `overrideStateOf` 不再区分「可继承」 | 红 | 红 |
+| `inherit` 档被压成 `uniform` | 红 | 红 |
+| 连续输入不开事务 | **存活** | 红 |
+| 越界的数值不再被拒绝 | 红 | 红 |
+| 枚举不再校验 | 红 | 红 |
+| 回到默认值时写显式值而不是删字段 | 红 | 红 |
+| 控件不再挂定位锚点 | 红 | 红 |
+| `TEXT_BAR_PROPS` 改成手抄（漏了 style） | 红 | 红 |
+| 导出载荷不带 `font_family` | 红 | 红 |
+| 画布文字的族不进预检（TS 侧） | 红 | 红 |
+| 画布渲染不看对象自己的族 | **存活** | 红 |
+| 落笔忽略 family（永远画 Times） | 红 | 红 |
+| 量宽忽略 family | 红 | 红 |
+| 画布文字的族不进预检（Python 侧） | 红 | 红 |
+| 闭集少一个族 | 红 | 红 |
+
+**两条存活的成因是同一个：判据没量到那个维度。**
+
+* 「连续输入不开事务」——**用例自己先调了 `beginGesture()`**，于是「`write()`
+  会不会自己开一轮」被挡在判据外面。真实路径是「在字号框里打字」，
+  `NumberField` 那条只有 `onChange`，没有 `onScrubStart`。改法不是加一条新
+  用例，是把准备阶段换成真实调用方此刻会做的事（见 DECISIONS T-80）。
+* 「画布渲染不看对象自己的族」——`TextView.test.tsx` 里压根没有一条断言看
+  `style.fontFamily`。补三条：默认族仍是 `--font-doc`（老文档一个像素不变）、
+  设过就按它画、三族在画布上互不相同。

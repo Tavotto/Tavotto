@@ -251,6 +251,20 @@ export type TypographyValue<T = unknown> =
 export const displayValueOf = <T>(v: TypographyValue<T>): T | undefined =>
   v.kind === 'uniform' || v.kind === 'inherit' ? v.value : undefined
 
+/**
+ * 三态开关（B / I）的下一个值。
+ *
+ * mixed 点一次 = 全开（先把它们对齐，再想要不要关），全开点一次 = 全关，
+ * 全关点一次 = 全开。**没有「点一次回到 mixed」**——mixed 不是用户能选的
+ * 目标状态，它只是当前事实的描述。
+ */
+export const nextToggle = (state: TypographyValue, on: string, off: string): string =>
+  displayValueOf(state) === on ? off : on
+
+/** 三态开关当前该画成什么样。`inherit`（没设过）与 `uniform` 一样看生效值。 */
+export const toggleStateOf = (state: TypographyValue, on: string): 'on' | 'off' | 'mixed' =>
+  state.kind === 'mixed' ? 'mixed' : displayValueOf(state) === on ? 'on' : 'off'
+
 /* ------------------------------ 校验与规整 -------------------------------- */
 
 /** 校验失败的成因（闭集）。invalid 的输入**不进历史**，也不写文档。 */
@@ -403,25 +417,32 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
   }
 }
 
-/** 画布文字的字段值域（图内那一侧由 manifest 给，这一侧由我们自己定）。 */
+/**
+ * 画布文字的字段值域（图内那一侧由 manifest 给，这一侧由我们自己定）。
+ *
+ * `prop` 一律取 property path——与 manifest 那一侧的口径一致（manifest 的
+ * `prop` 就是 override 的 key），两侧的字段长得一样，控件才可能共用一份。
+ */
 export function canvasFieldOf(prop: TypographyProp): EditableField | undefined {
+  const path = propertyPathOf('canvasText', prop)
+  if (!path) return undefined
   switch (prop) {
     case 'fontFamily':
-      return { prop: 'fontFamily', type: 'enum', value: null, options: [...CANVAS_TEXT_FAMILIES] }
+      return { prop: path, type: 'enum', value: null, options: [...CANVAS_TEXT_FAMILIES] }
     case 'sizePt':
-      return { prop: 'sizePt', type: 'number', value: null, min: 3, max: 96, step: 0.5, unit: 'pt' }
+      return { prop: path, type: 'number', value: null, min: 3, max: 96, step: 0.5, unit: 'pt' }
     case 'weight':
-      return { prop: 'weight', type: 'enum', value: null, options: [...WEIGHTS] }
+      return { prop: path, type: 'enum', value: null, options: [...WEIGHTS] }
     case 'style':
-      return { prop: 'style', type: 'enum', value: null, options: [...STYLES] }
+      return { prop: path, type: 'enum', value: null, options: [...STYLES] }
     case 'color':
-      return { prop: 'color', type: 'color', value: null }
+      return { prop: path, type: 'color', value: null }
     case 'halign':
-      return { prop: 'align', type: 'enum', value: null, options: [...HALIGNS] }
+      return { prop: path, type: 'enum', value: null, options: [...HALIGNS] }
     case 'lineHeight':
-      return { prop: 'lineHeight', type: 'number', value: null, min: 0.8, max: 3, step: 0.05 }
+      return { prop: path, type: 'number', value: null, min: 0.8, max: 3, step: 0.05 }
     case 'rotationDeg':
-      return { prop: 'rotationDeg', type: 'number', value: null, min: -180, max: 180, step: 5, unit: '°' }
+      return { prop: path, type: 'number', value: null, min: -180, max: 180, step: 5, unit: '°' }
     default:
       return undefined
   }

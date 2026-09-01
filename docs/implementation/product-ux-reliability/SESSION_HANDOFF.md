@@ -5,7 +5,264 @@
 
 ---
 
-## 最近一次：Session 12（2026-08-31）
+## 最近一次：Session 13（2026-09-01）
+
+### 目标
+
+把「一段文字长什么样」收敛成**一套词汇**：一层属性能力模型 + 一份可复用的
+Typography 控件，让图标题、轴标题、刻度文字、图例文字、自由文字和**标注文字**
+共享同一套编辑能力，并修掉「标注文字不能设置字体」。
+
+本阶段**不做**科学字符管线与字体回退（Prompt 14）、**不做**图例专用同步
+（Prompt 15）、**不动**导出那一端（属性只改 `doc.objects` 与 `panel.overrides`，
+载荷在导出那一刻现取——Session 12 留的那条已经成立）。
+
+### 开始前实测到的五件事（不是假设）
+
+1. **画布文字（`TextObject`）根本没有字体族这一维。** `_draw_text` 里拉丁
+   字体写死 Times；`TextSection.tsx` 里还有一句注释解释「画布文字没有字体族
+   （统一走文档字体），所以没有『字体』行——不摆假控件」。
+2. **两套取值语义。** 图内是 `weight:'bold'` / `style:'italic'` 枚举，画布是
+   `bold: boolean` / `italic?: boolean`；字号一个叫 `fontsize` 一个叫 `sizePt`。
+3. **文字工具条把六条属性从平铺列表里摘走了，却没有把 `data-prop` 锚点一起
+   带过来。** 于是**每一条图内排版问题**（`font-too-small` /
+   `font-family-substituted` / `text-weight-policy`）点「定位」都只是选中对象，
+   焦点没落到字段上——而 `focusField()` 照样回 true。
+4. **`focusField()` 恒回 true。** 只要 `propertyPath` 非空就 true，真正的查找
+   排在 rAF 里、结果没人看得见；而它的注释写着「找不到就如实回 false」。
+5. **`ContextBar` 的文字快捷编辑是第二份实现**：只有字号 / 加粗 / 颜色，没有
+   斜体、没有字体，`o.bold = !o.bold` 与属性页的 `!bold` 在多选下会算出不同
+   的结果。
+
+顺带量到一条：`_draw_text` 的注释说「CJK 走宋体」，**实测 PyMuPDF 1.28.2 的
+`china-ss` / `china-s` / `china-ssb` / `china-sb` 四个别名回的是同一个
+`Droid Sans Fallback Regular`**——注释是断言，这条没量过。
+
+### 实际完成
+
+**1. `web/src/lib/typography.ts` —— 「一段文字长什么样」只有这一份词汇。**
+
+```text
+规范属性名（闭集）   fontFamily sizePt weight style color halign valign lineHeight rotationDeg
+取值语义            weight/style 两侧同一枚举；字号统一 pt；颜色 hex
+能力表              figureText / canvasText 各一张；图内那张只答「值不值得问引擎」
+property path       propertyPathOf(kind, prop) —— 检查报的名字 = 控件锚点 = 定位选择器
+校验/规整           coerceTypography()，闭集成因，**不 clamp**
+画布存储换算        readCanvasText / writeCanvasText（boolean ↔ 枚举只在这一对里）
+新建默认值          canvasTextDefaults()（**不含字体族**——新建的文字是「没设过」）
+科学文本能力        MathTextMode: inline_markup / engine_mathtext（只定义，管线归 14）
+```
+
+**2. `components/inspector/typographyAdapter.ts` —— 一个接口，两个适配器。**
+`useFigureTypography(panel, elements, props)` 包住既有的
+`useTextStyleAdapter`（预览 + 事务 + 定稿渲染那一套一个字没改）；
+`useCanvasTypography(objs)` 走 `updateObjects` + 自己的事务手势（画布对象
+没有预览平面，只管事务边界）。控件那侧**看不到**目标是哪一类、是一个还是三个。
+
+**3. `controls/TypographyControls.tsx`（原 `TextStyleControls`）—— 一份控件，
+四个入口共用**：属性页图内文字、图内批量、画布标注、浮动工具条。
+**每一行挂 `data-prop`**；B / I 用 `display:contents` 各挂各的锚点。
+
+**4. 标注可以设字体了。** `TextObject.fontFamily?`（三个通用族的闭集），
+全线接上：`TextView` 渲染 → `toExportObjects()` 载荷 → `pdfbackend._draw_text`
+落笔 → `annotate_asset` 写回 → `stylePresets` 的 `annotation` / `subLabel` →
+`preflight` 的 `font-family-substituted`。**磁盘格式不升版**：没设过 = 字段
+不存在 = 继承默认族，老文档发出去的字节逐字不变。
+
+**5. 闭集是一句能力承诺，不是一张偷懒的表。** 合成跑在没有 matplotlib 的
+Flask 进程里，画字只能用 PyMuPDF 的 base-14——它恰好覆盖三个通用族。
+把「Times New Roman」摆进下拉会得到「界面上选得中、导出时悄悄换一个」。
+`pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `lib/typography.CANVAS_TEXT_FAMILIES`
+**严格同源（顺序也比）**，看护 `tests/test_typography_families.py`。
+
+**6. 装不上的字体不再静默。** `manifest._text_fields()` 新增
+`options_unavailable`（脚本写死了一个本机没装的字体时），界面**保留名字 +
+一条 warning**，不换掉也不改文档。
+
+### 关键 API（Prompt 14 直接用）
+
+```ts
+// web/src/lib/typography.ts —— 与 pdfbackend 严格同源的那一条是 CANVAS_TEXT_FAMILIES
+TYPOGRAPHY_PROPS / TypographyProp / TypographyKind      // 规范词汇
+propertyPathOf(kind, prop) / propOfPath(kind, path)     // 报字段名 = 挂锚点 = 查选择器
+TYPOGRAPHY_PROPERTY_PATHS                                // 排版能产生的 path 全集（看护用）
+supportsTypography(kind, prop) / commonSupport(kinds)    // 能力表
+coerceTypography(prop, raw, field?)                      // 校验：闭集成因，不 clamp
+readCanvasText / writeCanvasText / canvasFieldOf         // 画布存储 ↔ 规范值
+effectiveCanvasFamily(o) / canvasFontStack(family)       // 「实际画成什么」
+CANVAS_TEXT_FAMILIES / CANVAS_TEXT_DEFAULT_FAMILY
+canvasTextDefaults()                                     // 新建默认值唯一出处
+mathTextModeOf(kind)                                     // 14 的入口：两类文本不是同一件事
+
+// web/src/components/inspector/typographyAdapter.ts
+useFigureTypography(panel, elements, props) / useCanvasTypography(objs)
+FIGURE_TEXT_SINGLE_PROPS / FIGURE_TEXT_BATCH_PROPS / CANVAS_TEXT_PRIMARY_PROPS
+TypographyAdapter                                        // 控件只认这个接口
+```
+
+```python
+# src/tavotto/pdfbackend/__init__.py
+CANVAS_TEXT_FAMILIES                     # 闭集（与前端同源）
+text_width(s, size_pt, bold, italic, family)   # 量宽与落笔必须同族
+
+# src/tavotto/pdfbackend/pymupdf_backend.py（实现侧）
+latin_family(name) / latin_font(bold, italic, family) / cjk_font()
+```
+
+### 迁移
+
+**没有磁盘格式改动。** `TextObject.fontFamily` 是可选字段：老文档没有它 =
+从没设过 = 继承默认族。回到默认值时**删字段**，不写一个等价的显式值。
+导出载荷里没设过就**不发** `font_family`——老后端拿到的字节与旧版逐字相同。
+
+`tests/golden/preflight_vectors.json` 从 21 条加到 23 条（**既有 21 条一条
+没变**）：新增的两条是画布文字的字体族在两侧求值器上给出同一个答案。
+
+### 修改的文件
+
+```text
+新增  web/src/lib/typography.ts                        属性能力层（词汇 / 语义 / 能力 / path / 校验）
+新增  web/src/lib/typography.test.ts                   （14 条）
+新增  web/src/lib/canvasTextFont.test.ts               载荷 / 写回 / 老文档全链路（3 条）
+新增  web/src/components/inspector/typographyAdapter.ts       一个接口两个适配器
+新增  web/src/components/inspector/typographyAdapter.test.tsx （14 条）
+新增  web/src/components/inspector/controls/TypographyControls.tsx  （原 TextStyleControls）
+删除  web/src/components/inspector/controls/TextStyleControls.tsx
+新增  tests/test_typography_families.py                闭集同源 / 落笔 / 量宽 / CJK（15 条）
+新增  docs/adr/0032-typography-capability-layer.md
+改动  web/src/types/document.ts                        TextObject +fontFamily?（可选，不升版）
+改动  web/src/lib/api.ts                               EditableField +options_unavailable；ExportObject.text +font_family
+改动  web/src/lib/exportPayload.ts                     +font_family（缺省不发）
+改动  web/src/lib/preflight.ts                         texts +font_family；画布文字的族进检查
+改动  web/src/lib/issueFocus.ts                        focusedField:boolean → field: none/focused/requested
+改动  web/src/lib/stylePresets.ts                      +StyleTextEntry（annotation/subLabel +fontFamily）
+改动  web/src/canvas/TextView.tsx                      按对象自己的族画
+改动  web/src/canvas/ContextBar.tsx                    文字快捷编辑改用同一个适配器（+斜体 +字体）
+改动  web/src/components/inspector/TextSection.tsx     换成共用控件（标注终于有「字体」行）
+改动  web/src/components/inspector/TextStyleBar.tsx    TEXT_BAR_PROPS 从规范表算出来
+改动  web/src/components/inspector/ElementInspector.tsx 批量文字样式改用同一个适配器
+改动  web/src/components/inspector/textStyleModel.ts   三态开关的两个 helper 搬进控件层
+改动  web/src/components/inspector/controls/textRows.tsx  FontFamilyRow +unavailable 警告
+改动  web/src/store/actions.ts                         新建默认值收一处；Style 应用经 writeCanvasText
+改动  src/tavotto/pdfbackend/pymupdf_backend.py        族 → base-14；CJK 注释按实测改
+改动  src/tavotto/pdfbackend/__init__.py               边界契约 +CANVAS_TEXT_FAMILIES
+改动  src/tavotto/engine/preflight.py                  画布文字的族进检查
+改动  src/tavotto/engine/manifest.py                   +options_unavailable（装不上的字体）
+改动  scripts/gen_preflight_vectors.py                 texts +font_family；新增两条向量
+改动  tests/golden/preflight_vectors.json              21 → 23 条（既有 21 条一条没变）
+改动  web/src/i18n/locales/*/{errors,inspector}.json   +6 组文案（两种语言）
+改动  web/src/i18n/resources.d.ts                      i18next-cli types 重生成
+改动  web/src/lib/issueFocus.test.ts / TextSection.test.tsx / textStyleBar.test.tsx
+      / canvas/TextView.test.tsx / canvas/contextBar.test.tsx
+重建  codex-plugin/mcp/widget/canvas.html              指纹 0e68a40ed2270718
+重建  web/dist-playground/                             指纹 e35fe7c5124ba960（不进 git）
+```
+
+### 这一轮踩到的坑
+
+**1. 变异反证 15 条，第一轮活了两条，两条都是「判据没量到那个维度」。**
+① 「连续输入合并成一条历史」——**用例自己先调了 `beginGesture()`**，于是
+`write()` 会不会自己开一轮这件事被挡在了判据外面。真实路径是「在字号框里
+打字」，`NumberField` 那条路只有 `onChange`，没有 `onScrubStart`。
+② 「画布渲染按对象自己的族」——`TextView.test.tsx` 里压根没有一条断言看
+`style.fontFamily`。两条补完第二轮 15/15 全红。
+
+**2. 「已修改」的判据不能是「有没有值」。** 第一版 `overrideStateOf` 对
+画布文字问「这个字段是不是 undefined」，而字号 / 颜色 / 对齐是 `TextObject`
+的**必填字段**——磁盘上永远有值，于是每一行都永远挂着「已修改」的点和一颗
+按了没反应的恢复按钮。只有能「没设过」的那几条（`fontFamily` / `style` /
+`lineHeight` / `rotationDeg`）才谈得上「改过」。
+
+**3. 「载荷里有没有这个字段」的主语是序列化之后的字节，不是那个 JS 对象。**
+`{ font_family: undefined }` 里键是在的，`JSON.stringify` 才是后端收到的东西。
+第一版断言写在 JS 对象上，红在一个与后端无关的性质上。
+
+**4. `pnpm vitest run` 不带 `NODE_OPTIONS=--no-experimental-webstorage` 时
+`localStorage` 是 undefined**，报错像被测代码坏了（`pnpm test` 才带）。
+
+**5. 定位锚点这条缺陷是「新守卫遮住了旧判据」的反面**：平铺列表那一份本来
+是有 `data-prop` 的，工具条把属性摘走时只搬了控件、没搬锚点。所以
+`TEXT_BAR_PROPS`（「要让出哪几条」）现在**从规范表算出来**，不手抄。
+
+### 尚存限制
+
+1. **「新建标注时套用当前 Style」没有做。** 本仓库里 Style 是一次性应用、
+   不是文档上的绑定（ADR 0029 绑的是 Spec），「当前 Style」这个概念不存在。
+   做成本机 UI 偏好会让同一个动作在两台机器上建出不同的对象，比现状更坏。
+   本轮只把新建默认值收敛成 `canvasTextDefaults()` 一处；真正的绑定要用户拍板。
+2. **画布文字的字体族只有三个通用族。** 具体字体名要么内嵌用户磁盘上的字体
+   （另一件事、另一份许可证讨论），要么就是静默替换。界面上没有「装不上的
+   具体字体」这一档——图内文字那侧才有（`options_unavailable`）。
+3. **中日韩字形不跟着族走**（PyMuPDF 这一版只有一张 CJK 脸）。界面暂时没有
+   单独说这一句；Prompt 14 的字体回退会正面处理它。
+4. **`text_weight_policy` 里的 `annotation` 一档仍然没有执行者**——现在就执行
+   会让每一份用了 (a)(b)(c) 子图标签的文档立刻多出一批警告。这是规范范围的
+   问题，留待与用户确认。
+5. **`valign` / `lineHeight` / `rotationDeg` 在能力表里，但控件只出前六条**：
+   行距与旋转仍在各自的「更多」里用原来的控件（数据已经经过能力层，控件还
+   没并进 `TypographyControls`）。
+6. **e2e 本轮没跑**（改动没有碰黄金路径的键位与文案，但这是**没跑**，不是
+   「跑过没问题」）。
+7. 04–12 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（从 `origin/main` 的 `c12c229c` 开出），
+  **尚未推送、没有 PR**
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 14：科学文本 / Unicode / 字体回退）
+
+**从这里开始读**：`docs/adr/0032-typography-capability-layer.md`（本轮）、
+`UX_CONTRACTS.md` 的「6. 输出一致性合同」、`ARCHITECTURE.md` 的 §5.3。
+
+**Session 13 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 一段文字长什么样 | `lib/typography.ts` | **唯一词汇**。加一条属性要同时回答「两类各支不支持 / path 叫什么 / 怎么校验」，三张表都在这一个文件里 |
+| 谁在改这段文字 | `typographyAdapter.ts` 的 `TypographyAdapter` | 控件只认这个接口。14 的字体回退提示挂在 `unavailableOptions()` 上 |
+| 原始文本 | `TextObject.text` / manifest 的 `text` 字段 | 上下标标记 `^{…}` / `_{…}` 仍由 `lib/richText.ts` ↔ `src/tavotto/richtext.py` 这对同源实现解析 |
+| 这段文字走哪条数学管线 | `mathTextModeOf(kind)` | `inline_markup`（画布，两侧各画一遍）/ `engine_mathtext`（图内，`$…$` 交给 matplotlib） |
+| 画布这一族画得出什么 | `pdfbackend.CANVAS_TEXT_FAMILIES` / `latin_font()` / `cjk_font()` | **落笔与量宽必须同族**；CJK 只有一张脸 |
+| 图内这个字体装没装上 | manifest 的 `options_unavailable` | 「界面说换了、字形没换」的唯一依据 |
+| 检查报的字段名 | `propertyPathOf(kind, prop)` | 新规则要能定位到字段的话，property path 从这里取 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、
+12 的五条原样成立，13 再加四条）：
+
+29. **不许在组件里按对象类型 switch 着写属性。** 写入只经
+    `TypographyAdapter`；要新属性就加进 `TYPOGRAPHY_PROPS`（三张表一起），
+    不要在第二个组件里抄一份换算。
+30. **不许把「没设过」压成一个默认值**（T-77）。`fontFamily` 缺席与
+    `fontFamily: 'serif'` 是两个答案；同族的还有 `italic` 缺席、
+    `lineHeight` 缺席、图内的「脚本值 vs override」。
+31. **不许摆一个画不出来的字体选项**（T-78）。下拉里的每一项都要有一条
+    「这个运行时画得出它」的判据；画不出来但必须显示（脚本写死的）要带
+    warning，**绝不换掉再改文档**。
+32. **不许让控件与检查各说各的字段名**（T-79）。property path 只有
+    `propertyPathOf()` 一份，锚点从它出——三处各写各的字符串时，缺的那一处
+    的表现是「点了定位什么都没发生」，而界面并不报错。
+
+**必须保留的不变式**（在 12 的十一条之上）：
+
+12. **「一段文字长什么样」只有一套词汇**（ADR 0032）：语义在
+    `lib/typography.ts`，写入经 `TypographyAdapter` 的两个适配器，控件只有
+    `controls/TypographyControls.tsx` 一份。
+13. **画布文字能选的族是闭集，且与 `pdfbackend.CANVAS_TEXT_FAMILIES` 同源**
+    （顺序也比）。前端摆得出的，后端必须画得出。
+14. **invalid 输入不开事务、不 commit、不进历史**；校验**不 clamp**。
+15. **连续输入合并成一条历史，且 `write()` 自己会开一轮**——不依赖调用方先喊
+    `beginGesture()`（打字那条路没有 `onScrubStart`）。
+
+---
+
+## 历史：Session 12（2026-08-31）
 
 ### 目标
 
@@ -312,7 +569,7 @@ Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`�
 
 ---
 
-## 下一阶段入口（Prompt 13：统一属性系统、文字控件、标注字体）
+### Session 12 留下的入口（Prompt 13 已消费）
 
 **从这里开始读**：`UX_CONTRACTS.md` 的「6. 输出一致性合同」（本轮整段重写）
 与「4. Style / Spec / Validation / Export 分层」、`ARCHITECTURE.md` 的 §5.3

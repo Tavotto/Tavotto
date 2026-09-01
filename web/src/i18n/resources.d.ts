@@ -1484,6 +1484,8 @@ export default interface Resources {
       "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图",
       "textBelowFloor": "画布文字 {{size}}pt 不大于绝对下限 {{floor}}pt",
       "textCjkFallbackMissing": "画布中文文字没有可用的中文字体 fallback",
+      "textFontFamilySubstituted": "画布文字用的是{{family}}，规范要求 {{want}}",
+      "textFontFamilySubstitutedKnown": "画布文字用的是{{family}}，规范要求 {{want}}（该字体是常见的替代品）",
       "textTooSmall": "画布文字 {{size}}pt 低于规范下限 {{min}}pt",
       "textWeightPolicy": "规范建议 {{role}} 的字重为 {{want}}（当前 {{got}}）",
       "tickDirection": "刻度朝向为 {{got}}，规范要求 {{want}}",
@@ -2101,6 +2103,7 @@ export default interface Resources {
       "flipV": "垂直翻转",
       "insertNewline": "插入换行",
       "matchFigureSize": "对齐图内字号",
+      "resetTextProp": "恢复文字属性",
       "restoreVersion": "恢复历史版本",
       "reverseArrow": "反转箭头方向",
       "rotateObject": "旋转对象",
@@ -2110,6 +2113,7 @@ export default interface Resources {
       "setDash": "修改线型",
       "setFill": "修改填充",
       "setFillOpacity": "修改填充不透明度",
+      "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
       "setHeadStart": "修改起点端型",
@@ -2527,6 +2531,8 @@ export default interface Resources {
       "align": "对齐",
       "color": "颜色",
       "font": "字体",
+      "fontMissingHint": "这台电脑没有装这个字体，图上那行字实际是别的字体画的。换一个能用的字体，或者装上它。",
+      "fontMissingTag": "（未安装）",
       "size": "字号"
     },
     "tick": {

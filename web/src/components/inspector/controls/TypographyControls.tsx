@@ -5,8 +5,9 @@ import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import {
   displayValueOf,
+  nextToggle,
+  toggleStateOf,
   type TypographyProp,
-  type TypographyValue,
 } from '@/lib/typography'
 import type { TypographyAdapter } from '../typographyAdapter'
 import { optionLabel } from '../roles/registry'
@@ -40,11 +41,20 @@ export function TypographyControls({
   adapter,
   className,
   labelWidth = 72,
+  sizeRowExtra,
 }: {
   adapter: TypographyAdapter
   className?: string
   /** 标签列宽：属性页 72（与 FieldRow 对齐），快捷编辑弹层可传 44 */
   labelWidth?: number
+  /**
+   * 跟在 B / I 后面的额外按钮（画布文字的下划线 / 上标 / 下标）。
+   *
+   * **它们不是排版属性**：下划线是 `TextObject` 自己的字段，上下标改的是
+   * 文本内容里的行内标记（Prompt 14 的管线）。放在这里只是为了让那一行的
+   * 版面与改造前逐像素一致——`布局可以按上下文不同，数据和 action 共享`。
+   */
+  sizeRowExtra?: ReactNode
 }) {
   useTranslation('inspector')
   const family = adapter.fieldOf('fontFamily')
@@ -138,6 +148,7 @@ export function TypographyControls({
                 </StyleToggle>
               </Anchor>
             )}
+            {sizeRowExtra}
           </FontSizeRow>
         </Anchor>
       )}
@@ -202,23 +213,6 @@ function Anchor({
   ) : (
     <div data-prop={path}>{children}</div>
   )
-}
-
-/**
- * 三态开关（B / I）的下一个值。
- *
- * mixed 点一次 = 全开（先把它们对齐，再想要不要关），全开点一次 = 全关，
- * 全关点一次 = 全开。**没有「点一次回到 mixed」**——mixed 不是用户能选的
- * 目标状态，它只是当前事实的描述。
- */
-export function nextToggle(state: TypographyValue, onValue: string, offValue: string): string {
-  return displayValueOf(state) === onValue ? offValue : onValue
-}
-
-/** 三态开关当前该画成什么样。`inherit`（没设过）与 `uniform` 一样看生效值。 */
-export function toggleStateOf(state: TypographyValue, onValue: string): 'on' | 'off' | 'mixed' {
-  if (state.kind === 'mixed') return 'mixed'
-  return displayValueOf(state) === onValue ? 'on' : 'off'
 }
 
 /** mixed 时色块显示的那个值：取第一个目标的真实颜色（不是硬编码黑） */

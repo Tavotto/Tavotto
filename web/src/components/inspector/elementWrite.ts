@@ -16,7 +16,7 @@ import { propLabel } from './roles/registry'
  * 只能靠「安静了这么久」判定这一轮结束。取值刻意大于渲染防抖（300ms），
  * 免得刚停手就被当成两轮。
  */
-const GESTURE_QUIET_MS = 450
+export const GESTURE_QUIET_MS = 450
 
 /**
  * 一次「连续调整」。**历史与渲染在这里彻底分开**：

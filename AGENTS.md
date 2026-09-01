@@ -34,6 +34,7 @@
   | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
   | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
+  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 | `test_typography_families.py`（闭集 + 顺序） |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
   共读，绝不硬编码第二份）。**「这份项目有什么问题」全产品只有一份服务**
@@ -51,6 +52,14 @@
   规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**
   （ADR 0029，「项目结果稳定」优先于「规范升级自动生效」）。默认规范的字号下限
   **只有一个数 8 pt**。
+  **「一段文字长什么样」全产品只有一套词汇**（ADR 0032）：规范属性名 / 取值
+  语义 / 能力表 / property path / 校验全在 `web/src/lib/typography.ts`，写入经
+  `TypographyAdapter` 的两个适配器（图内 `setOverride(s)`、画布
+  `updateObjects`），控件只有 `controls/TypographyControls.tsx` 一份。
+  `weight` / `style` 两侧同一枚举，字号一律 pt；**「不支持」「没设过」
+  「多个值」是三个不同的答案**。画布文字能选的字体族是闭集（三个通用族），
+  与 `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——**前端摆得出的，后端必须
+  画得出**。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
   `Path.unlink` 守卫不放松；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
   import pymupdf 的模块。

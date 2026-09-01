@@ -21,6 +21,10 @@ import {
   type UnsupportedReason,
 } from '@/lib/typography'
 import type { PanelObject, TextObject } from '@/types/document'
+// 「一轮」有多长**只有一个数**（原生取色对话框不保证发 blur，只能靠
+// 「安静了这么久」判定一轮结束）。抄第二份的话，同一个动作在属性页与
+// 画布标注上的撤销粒度会不一样，而两处都「看起来对」。
+import { GESTURE_QUIET_MS } from './elementWrite'
 import { useTextStyleAdapter } from './textStyleAdapter'
 import type { OverrideState } from './textStyleModel'
 
@@ -243,13 +247,6 @@ function useObjectGesture() {
   return { start, end, touch, isOpen: () => open.current }
 }
 
-/**
- * 原生取色对话框不保证发 blur，只能靠「安静了这么久」判定一轮结束。
- * 与图内那条路取同一个数（`elementWrite.GESTURE_QUIET_MS`）——两条路的
- * 「一轮」长度不一样的话，同一个动作在两个面板里的撤销粒度会不同。
- */
-const GESTURE_QUIET_MS = 450
-
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
 /**
@@ -330,7 +327,17 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
   return {
     count,
     kinds: ['canvasText'],
-    fieldOf: (prop) => (supported.has(prop) ? canvasFieldOf(prop) : undefined),
+    fieldOf: (prop) => {
+      if (!supported.has(prop)) return undefined
+      const base = canvasFieldOf(prop)
+      if (!base) return undefined
+      // `value` 是**第一个目标此刻的值**（与图内那侧同一口径：那边的合并字段
+      // 也带着 `fields[0].value`）。控件在 mixed 时拿它当色块的显示值——
+      // 不带的话会退回一个谁都不是的硬编码黑，而控件里的注释说的是
+      // 「取第一个目标的真实颜色」。
+      const first = objs.length ? readCanvasText(objs[0], prop) : undefined
+      return { ...base, value: first ?? inheritedCanvasValue(prop) ?? null }
+    },
     valueOf,
     write: (prop, value) => apply(prop, value, true),
     writeOnce: (prop, value) => {

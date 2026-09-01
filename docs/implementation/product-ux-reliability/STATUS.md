@@ -44,7 +44,7 @@
 | 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
 | 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
 | 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
-| 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
+| 13 | 统一属性系统、文字控件、标注字体 | ✅ 完成（本次，ADR 0032） |
 | 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
 | 15 | 图例绑定与控件 | ⬜ |
 | 16 | 刻度线直接操作 | ⬜ |
@@ -384,7 +384,13 @@ desktop…」。
 
 ---
 
-## 遗留（Session 12 之后仍开着的）
+### Session 13 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+<!--RESULTS-13-->
+
+---
+
+## 遗留（Session 13 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -411,16 +417,37 @@ desktop…」。
 | — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
 | — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
 | — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
+| — | **「新建标注时套用当前 Style」没有做**：本仓库里 Style 是一次性应用、不是文档上的绑定（ADR 0029 绑的是 Spec），「当前 Style」这个概念不存在。做成本机 UI 偏好会让同一个动作在两台机器上建出不同的对象，比现状更坏。13 只把新建默认值收敛成 `canvasTextDefaults()` 一处 | 待用户拍板 |
+| — | **画布文字的字体族只有三个通用族**：具体字体名要么内嵌用户磁盘上的字体（另一件事、另一份许可证讨论），要么就是静默替换。图内文字那侧才有「装不上的具体字体」这一档（`options_unavailable`） | 已处置（闭集是能力承诺） |
+| — | **中日韩字形不跟着族走**：实测 PyMuPDF 1.28.2 的四个 `china-*` 别名回同一张 `Droid Sans Fallback Regular`。界面暂时没有单独说这一句 | Prompt 14 |
+| — | **`text_weight_policy` 里的 `annotation` 一档仍然没有执行者**：规范声明「标注一律常规字重」，而 `addSubLabels()` 造出来的 (a)(b)(c) 按惯例加粗。现在执行会让每一份既有文档立刻多出一批警告——**这是规范范围的问题**，不是属性层的问题 | 待用户拍板 |
+| — | **`valign` / `lineHeight` / `rotationDeg` 在能力表里，但控件只出前六条**：行距与旋转仍在各自的「更多」里用原来的控件（数据已经经过能力层，控件还没并进 `TypographyControls`） | 择机 |
+| — | **Session 13 没跑 e2e**：改动没碰黄金路径的键位与文案，但这是**没跑**，不是「跑过没问题」 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 13（统一属性系统、文字控件、标注字体）**，入口见
+**Prompt 14（科学文本 / Unicode / 字体回退）**，入口见
 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-12 留给 13 的可复用入口：
+13 留给 14 的可复用入口：
+
+* `lib/typography.ts` —— **「一段文字长什么样」的唯一词汇**。加一条属性要
+  同时回答「两类各支不支持 / property path 叫什么 / 怎么校验」，三张表都在
+  这一个文件里；
+* `typographyAdapter.TypographyAdapter` —— 控件只认这个接口。14 的字体回退
+  提示挂在 `unavailableOptions()` 上；
+* `mathTextModeOf(kind)` —— `inline_markup`（画布，`lib/richText.ts` ↔
+  `src/tavotto/richtext.py` 两侧各画一遍）/ `engine_mathtext`（图内，`$…$`
+  交给 matplotlib，换字体时 `math_fontfamily` 要跟着换）；
+* `pdfbackend.CANVAS_TEXT_FAMILIES` / `latin_font()` / `cjk_font()` ——
+  **落笔与量宽必须同族**；CJK 只有一张脸；
+* manifest 的 `options_unavailable` —— 「界面说换了、字形没换」的唯一依据；
+* `propertyPathOf(kind, prop)` —— 新规则要能定位到字段的话，字段名从这里取。
+
+12 留给 13 的四个入口（13 已消费，对 14 原样有效）：
 
 * `lib/exportRequest.buildExportRequest(input)` —— 导出载荷的**唯一构造**。
   13–16 改属性之后**不需要动它**：属性改的是 `doc.objects` 与

@@ -366,6 +366,35 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 取景框改成那张图的包围盒），画布排版是它在页面上的落位。模式与当前图是**工作区
 状态**——不进文档、不进撤销、不置 dirty，按 documentId 存本机一档。
 
+### 5.1b 属性能力层：一段文字长什么样（`← 13`，ADR 0032）
+
+```text
+                       web/src/lib/typography.ts
+        规范属性名 · 取值语义 · 能力表 · property path · 校验/规整
+                              │
+              ┌───────────────┴───────────────┐
+   useFigureTypography                 useCanvasTypography
+   （能力问 manifest）                  （能力看 TextObject 字段）
+   setOverride / setOverrides            updateObjects
+              └───────────────┬───────────────┘
+                     TypographyAdapter（一个接口）
+                              │
+                controls/TypographyControls.tsx（一份控件）
+        属性页图内文字 · 图内批量 · 画布标注 · 浮动工具条 —— 四个入口
+```
+
+* **控件看不到目标是哪一类、是一个还是三个**，两件事都由适配器吸收；
+  写入仍各走各的 document action，**没有一条路径绕开 `documentStore.commit`**。
+* **值有四档**（`uniform` / `mixed` / `inherit` / `unsupported`），压扁任意
+  两档都是数据损坏级的误导。
+* **property path 只有 `propertyPathOf(kind, prop)` 一份**：检查报的字段名、
+  控件挂的 `data-prop`、问题面板查的选择器同源（`← 11` 的定位链最后一跳）。
+* **画布文字的字体族是闭集**（三个通用族），与
+  `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——合成跑在没有 matplotlib 的
+  Flask 进程里，画得出来的就是 PyMuPDF 的 base-14。
+* `TextObject.fontFamily` 是**可选字段**：缺席 = 没设过 = 继承默认族。
+  磁盘格式不升版，载荷缺省不发。
+
 ### 5.2 画布
 
 `web/src/canvas/CanvasStage.tsx`、`PanelView.tsx`、`ObjectView.tsx`、

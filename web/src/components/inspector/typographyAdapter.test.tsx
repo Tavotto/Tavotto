@@ -119,6 +119,17 @@ describe('读值：四档不压扁', () => {
     }
   })
 
+  it('mixed 时字段带的是**第一个目标的真实值**，不是一个谁都不是的默认值', async () => {
+    await mount([
+      textObj({ id: 't1', color: '#ff0000' }),
+      textObj({ id: 't2', color: '#0000ff' }),
+    ])
+    expect(adapter.valueOf('color')).toEqual({ kind: 'mixed' })
+    // 控件在 mixed 时拿 `fieldOf(...).value` 当色块的显示值。不带真实值的话
+    // 它会退回硬编码黑——而那块颜色谁都不是，用户会以为「它们本来是黑的」
+    expect(adapter.fieldOf('color')?.value).toBe('#ff0000')
+  })
+
   it('不支持的属性说得出为什么，而不是安静地消失', async () => {
     await mount([textObj()])
     expect(adapter.fieldOf('valign')).toBeUndefined()
