@@ -11,6 +11,7 @@
 """
 
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import pytest
 from tavotto import glyphplan, pdfbackend, richtext
 from tavotto.pdfbackend import pymupdf_backend as backend
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
 GOLDEN = Path(__file__).parent / "golden" / "glyph_plan_vectors.json"
 VECTORS = json.loads(GOLDEN.read_text(encoding="utf-8"))["vectors"]
 
@@ -202,6 +204,54 @@ def test_every_base14_face_shares_one_charset():
     for face in faces[1:]:
         assert {cp for cp in rng if face.has_glyph(cp)} == reference
         assert {cp for cp in rng if face.has_glyph(cp, fallback=True)} == ref_fallback
+
+
+# --------------------------------------------------------------------------
+# 5b. 两侧的闭集常量逐字相同（表是手写的，vectors 覆盖不到它们）
+# --------------------------------------------------------------------------
+def _ts(name: str) -> str:
+    return (ROOT_DIR / "web" / "src" / "lib" / name).read_text(encoding="utf-8")
+
+
+def _ts_table(src: str, const: str) -> dict[str, str]:
+    body = re.search(
+        rf"export const {const}: Readonly<Record<string, string>> = \{{(.*?)\n\}}", src, re.S
+    )
+    assert body, f"richText.ts 里找不到 {const}"
+    return {m.group(1): m.group(2) for m in re.finditer(r"'(.+?)':\s*'(.*?)',", body.group(1))}
+
+
+def test_the_script_character_tables_are_identical_on_both_sides():
+    """上下标字符 → 基础字符的两张表，**键与值都逐字相同**。
+
+    往一侧加一个 `⁴` 而另一侧忘了加，预览与导出就在那一个字符上分叉——
+    而 golden vectors 覆盖的是分层计划，不是这两张手写的表，所有既有用例
+    照绿。
+    """
+    src = _ts("richText.ts")
+    assert _ts_table(src, "SUPERSCRIPT_BASE") == richtext.SUPERSCRIPT_BASE
+    assert _ts_table(src, "SUBSCRIPT_BASE") == richtext.SUBSCRIPT_BASE
+
+
+def test_the_interpretation_modes_are_the_same_closed_set():
+    src = _ts("richText.ts")
+    m = re.search(r"export const TEXT_INTERPRETATIONS = \[(.*?)\] as const", src, re.S)
+    assert m, "找不到 TEXT_INTERPRETATIONS"
+    front = tuple(v.strip().strip("'\"") for v in m.group(1).split(",") if v.strip())
+    assert front == richtext.TEXT_INTERPRETATIONS
+    d = re.search(r"export const DEFAULT_INTERPRETATION: TextInterpretation = '(\w+)'", src)
+    assert d and d.group(1) == richtext.DEFAULT_INTERPRETATION
+
+
+def test_the_layer_names_and_cjk_boundary_are_the_same_on_both_sides():
+    """分层名与 CJK 段下界。**顺序也比**——它就是优先级。"""
+    src = _ts("glyphPlan.ts")
+    m = re.search(r"export const GLYPH_LAYERS = \[(.*?)\] as const", src, re.S)
+    assert m, "找不到 GLYPH_LAYERS"
+    front = tuple(v.strip().strip("'\"") for v in m.group(1).split(",") if v.strip())
+    assert front == glyphplan.GLYPH_LAYERS
+    b = re.search(r"export const CJK_START = (0x[0-9a-fA-F]+)", src)
+    assert b and int(b.group(1), 16) == glyphplan.CJK_START
 
 
 # --------------------------------------------------------------------------
