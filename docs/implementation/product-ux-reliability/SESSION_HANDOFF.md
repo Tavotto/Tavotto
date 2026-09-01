@@ -134,14 +134,14 @@ TYPOGRAPHY_PROPS 第十条 'interpretation'（figureText 不支持）
 ```text
 新增  src/tavotto/glyphplan.py                     字形归属计划（纯标准库，同源对左侧）
 新增  web/src/lib/glyphPlan.ts                     同源对右侧（oracle = 覆盖表）
-新增  web/src/lib/glyphPlan.test.ts                （16 条）
-新增  web/src/lib/glyphPlan.golden.test.ts         跨语言向量（60 条）
+新增  web/src/lib/glyphPlan.test.ts                （17 条）
+新增  web/src/lib/glyphPlan.golden.test.ts         跨语言向量（69 条）
 新增  src/tavotto/pdfbackend/canvas_coverage.json  生成物（15 KB，1114 个区间）
 新增  scripts/gen_canvas_coverage.py               覆盖表生成器 + --check
 新增  scripts/gen_glyph_plan_vectors.py            向量生成器 + 校对
-新增  tests/golden/glyph_plan_vectors.json         60 条
-新增  tests/test_glyph_plan.py                     计划 / 量宽 / 覆盖表 / 解释档（88 条）
-新增  tests/test_glyph_coverage_figure.py          图内缺字形（worker，5 条）
+新增  tests/golden/glyph_plan_vectors.json         69 条
+新增  tests/test_glyph_plan.py                     计划 / 量宽 / 覆盖表 / 解释档 / 闭集常量对拍（103 条）
+新增  tests/test_glyph_coverage_figure.py          图内缺字形（worker，6 条：含刻度 / 图例）
 新增  tests/test_font_provenance.py                字体来源门禁（7 条）
 新增  docs/adr/0033-scientific-text-and-font-fallback.md
 改动  src/tavotto/richtext.py                      +受控科学文本解释（闭集两张表）
@@ -166,8 +166,8 @@ TYPOGRAPHY_PROPS 第十条 'interpretation'（figureText 不支持）
 改动  scripts/gen_preflight_vectors.py             +4 条向量
 改动  web/src/i18n/locales/*/{errors,inspector}.json  +12 组文案（两种语言）
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md  新同源对与新纪律
-重建  codex-plugin/mcp/widget/canvas.html          指纹 90c7441a4f95b406
-重建  web/dist-playground/                         指纹 256bd5821164afb3（不进 git）
+重建  codex-plugin/mcp/widget/canvas.html          指纹 1d0ca399a046dc8c
+重建  web/dist-playground/                         指纹 9a31ab339b26ef91（不进 git）
 ```
 
 ### 这一轮踩到的坑
@@ -192,6 +192,21 @@ PyMuPDF 重新生成之后，产物会以「没变化」的样子带着旧答案
 **5. 反证时 `git checkout -- .` 吃掉了刚补的那条用例。** 补完判据没有先提交就
 再跑了一轮反证，于是那条用例被还原掉，M6 第二次仍然显示「存活」——**看起来
 像判据没用，实际是判据不在了**。反证前先提交这条纪律，本轮又付了一次学费。
+
+**6. 「所有主要文字对象都要有回归测试」这条退出条件撞出了一个真缺陷。**
+补刻度文字与图例文字的用例时才发现：**刻度文字登记的是 `TickLabel` 代理，
+不是 `Text`**（真身在 `.live()`）。按 `isinstance(artist, Text)` 判会安静地漏掉
+整整一类——而刻度恰恰是最容易出现 `×10⁵` 与中文单位的地方。那条判据甚至有一
+句注释解释「按是不是 Text 判，不按 role 列白名单」，**那句话本身是对的，错的
+是主语**。
+
+**7. `glyph-substituted` 第一版把中日韩也算进去了。** 后果是每一条中文标注都
+挂一条建议——而中日韩在画布这条路上只有一张脸（能力限制，不随用户的任何选择
+变化）。为一个恒定的、改不动的限制反复提示，正是「报一盏没有开关的红灯」的
+反面。判据收紧到 `fallback` 层。
+
+**8. `subprocess.run(..., text=True)` 少了 `encoding=`**，仓库自己的源码卫生
+门禁抓的——Windows 上按系统代码页解码，中文输出当场乱码。
 
 ### 尚存限制
 

@@ -422,18 +422,18 @@ desktop…」。
 
 | 命令 | 结果 |
 | --- | --- |
-| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ⟪PYTEST⟫ |
-| `cd web && pnpm test` | ✅ exit 0 —— **157** files / **2082** tests passed（比 13 的 155/1986 +2 文件 / +96 条） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3612** passed / 34 skipped / 0 failed（比 13 的 3498 +114：`test_glyph_plan.py` 103 条 + `test_glyph_coverage_figure.py` 6 条 + `test_font_provenance.py` 7 条 + 预检向量 4 条，减去参数化口径的变化） |
+| `cd web && pnpm test` | ✅ exit 0 —— **157** files / **2094** tests passed（比 13 的 155/1986 +2 文件 / +108 条） |
 | `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
 | `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2876 / en-US 2966；`errors:preflight.{glyphMissing,glyphSubstituted,textGlyphMissing,textGlyphSubstituted}` +4、`inspector:text.{interpretation*,glyphMissing,glyphFallback}` +7、`inspector:history.setInterpretation` +1） |
 | `cd web && pnpm lint` | ✅ **19 条既有 fast-refresh 提示，无新增**（与 13 逐条相同） |
 | `ruff check . && ruff format --check .` | ✅ exit 0（300 files） |
 | `python scripts/gen_canvas_coverage.py` | ✅ 覆盖表与当前后端一致（pymupdf 1.28.2，1114 个区间） |
-| `python scripts/gen_glyph_plan_vectors.py` | ✅ 60 条与 Python 侧一致 |
+| `python scripts/gen_glyph_plan_vectors.py` | ✅ 69 条与 Python 侧一致（含 Prompt 清单里的 plain x10 / 已有 mathtext / 中英科学混排） |
 | `python scripts/gen_preflight_vectors.py` | ✅ 23 → 27 条；**既有 23 条一条没变** |
-| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `90c7441a4f95b406`） |
-| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `256bd5821164afb3`） |
-| 变异反证 15 条 | ✅ 全部被打红（第一轮 14/15，存活的那条与处置见 `TEST_MATRIX.md`） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `1d0ca399a046dc8c`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `9a31ab339b26ef91`） |
+| 变异反证 22 条 | ✅ 21 条被打红 + 1 条**故意的无害变异存活**（缓存上限改成 1：仍然正确，只是慢——它是这套反证的正向对照）。第一轮 14/15，存活的那条与处置见 `TEST_MATRIX.md` |
 | Playwright e2e | ⚠️ **没跑**。改动没碰黄金路径的键位与文案，但这是「没跑」，不是「跑过没问题」；13 记的那六条红仍然开着 |
 
 > **图内文字那条路的判据与渲染器对拍过 9/9。** 「这套字体画不画得出这些字」

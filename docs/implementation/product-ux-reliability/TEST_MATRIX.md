@@ -1585,6 +1585,10 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 | `..._subscript_two_stays_on_the_fallback_layer` | `₂` 在中日韩脸里有、码位在 CJK 段之外——**覆盖表的裁剪条件**（差一个 `cjk` 就是一个只在下标字符上发作的两侧分歧） |
 | `..._box_drawing_is_rescued_by_the_fourth_step` | `━` 是第 4 步救回来的那 87 个码位之一 |
 | `..._unrenderable_character_is_missing_not_silently_dropped` | 真画不出来的报 `missing`，不是安静地当成画得出 |
+| `..._cjk_is_not_reported_as_a_substitution` | 中日韩落在 `cjk` 层但**不进「换了脸」那张单子**——它只有一张脸，说了用户也改不动 |
+| `..._the_script_character_tables_are_identical_on_both_sides` | 两张**手写**的上下标表逐字相同（键与值都比）——vectors 比的是分层计划，覆盖不到它们 |
+| `..._the_interpretation_modes_are_the_same_closed_set` | 解释档闭集与默认档两侧一致 |
+| `..._the_layer_names_and_cjk_boundary_are_the_same_on_both_sides` | 分层名（**顺序也比**，它就是优先级）与 CJK 段下界 |
 | `..._plan_matches_the_faces_the_pdf_actually_uses`（9 条参数化） | **第二把独立的尺子**：读导出 PDF 的字体资源表，层数必须与脸数对得上 |
 | `..._fallback_face_is_the_same_regardless_of_family_and_weight` | 回退脸与族/字重无关（六种组合只回一张脸）——`glyph-substituted` 存在的理由 |
 | `..._measured_width_equals_the_advance_actually_written`（5 条参数化） | 量宽与落笔**同一份计划**（逐段按计划推进 vs `text_width`） |
@@ -1607,6 +1611,7 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 | `..._cjk_label_reports_the_characters_that_come_out_as_boxes` | 中文轴标题**逐字列出**，不是一句「有问题」 |
 | `..._named_family_without_the_glyphs_reports_them` | TNR 下 `⁻` 被报出来，且**用户选的那个族仍是 manifest 报的那个** |
 | `..._fallback_tail_keeps_the_glyphs_out_of_the_missing_list` | 回退尾巴的兑现凭据：`⁻` 落在 fallback 那张单子上，不在 missing 那张 |
+| `..._tick_labels_and_legend_text_are_measured_too` | **刻度文字与图例文字也在内**——补这一条时撞出了真缺陷（见下）。用中文而不是 `⁵` 来量，于是不依赖 Times New Roman 装没装 |
 
 **后端 `tests/test_font_provenance.py`（7 条）** —— 版本库里没有字体文件 /
 前端不下载也不内嵌 / 后端没有 `fontfile=` 与 `fontbuffer=` 入口 / 依赖里没有
@@ -1646,10 +1651,26 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 | 预览一律按 scientific 合成 | 红 | — |
 | TS 解释器不看 `isDrawable`（auto 变成一律折） | 红 | — |
 | 科学文本那一行无条件显示 | 红 | — |
+| 刻度文字不取代理的真身（`live_text = artist`） | 红 | — |
+| 载荷不带 `interpretation` | 红 | — |
+| **缓存上限改成 1（故意的无害变异）** | **存活（预期）** | — |
+| TS 上标表少一个 `⁴` | 红 | — |
+| TS 下标表值写错（`₂` → `3`） | 红 | — |
+| TS 分层名顺序反了 | 红 | — |
+| TS 解释档少一档 | 红 | — |
 
 **存活的那条是「同一条规则的第二个消费点漏了」**：「整串一起折」TS 侧
 （`richText.test.ts`）有判据，Python 侧没有。补两条（`m⁻²` 整串 + 上下标不
 合并）之后 15/15 全红。
+
+**最后那条是正向对照**：把分层缓存的上限从 10000 改成 1 仍然完全正确（只是每个
+字符都要重算一次），**它必须存活**。一套 18 条全红的反证说明不了判据强，只说明
+我挑的都是真变异；夹一条无害的进去，「全红」才有信息量。
+
+**「所有主要文字对象都要有回归测试」这条退出条件撞出了一个真缺陷**：刻度文字
+登记的是 `TickLabel` 代理而不是 `Text`，按 `isinstance(artist, Text)` 判会安静地
+漏掉整整一类。补用例之前那条判据看上去无可挑剔——它甚至有一句注释解释「按是不
+是 Text 判，不按 role 列白名单」，而那句话本身是对的，**错的是主语**。
 
 **顺带又踩了一次「反证前先提交」**：补完判据没有先提交就再跑了一轮反证，
 `git checkout -- .` 把刚补的那条用例还原掉了，于是 M6 第二次仍然显示「存活」
