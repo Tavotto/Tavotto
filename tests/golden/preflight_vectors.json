@@ -2246,6 +2246,7 @@
       "text": "(a)",
       "size_pt": 7.0,
       "bold": false,
+      "font_family": "serif",
       "rect_mm": [
        1.0,
        1.0,
@@ -2259,6 +2260,7 @@
       "text": "(a)",
       "size_pt": 8.0,
       "bold": false,
+      "font_family": "serif",
       "rect_mm": [
        2,
        2,
@@ -6206,6 +6208,7 @@
       "text": "图 1 反应动力学",
       "size_pt": 9.0,
       "bold": false,
+      "font_family": "serif",
       "rect_mm": [
        1.0,
        1.0,
@@ -6581,6 +6584,687 @@
      "detail": {
       "effective_pt": 24.0,
       "max_pt": 12.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "canvas-text-font-family",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "bitmap_embed": false,
+      "hidden": false
+     }
+    ],
+    "texts": [
+     {
+      "id": "t-serif",
+      "text": "(a)",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-sans",
+      "text": "(b)",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "sans-serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-serif",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-sans",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "font-family-substituted",
+     "severity": "warn",
+     "message": {
+      "key": "textFontFamilySubstitutedKnown",
+      "params": {
+       "family": "sans-serif",
+       "want": "Times New Roman"
+      }
+     },
+     "object_ids": [
+      "t-sans"
+     ],
+     "gids": [],
+     "detail": {
+      "family": "sans-serif"
+     }
+    }
+   ]
+  },
+  {
+   "name": "canvas-text-font-family-unknown",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "bitmap_embed": false,
+      "hidden": false
+     }
+    ],
+    "texts": [
+     {
+      "id": "t-mono",
+      "text": "(a)",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "monospace",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-mono",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "font-family-substituted",
+     "severity": "warn",
+     "message": {
+      "key": "textFontFamilySubstituted",
+      "params": {
+       "family": "monospace",
+       "want": "Times New Roman"
+      }
+     },
+     "object_ids": [
+      "t-mono"
+     ],
+     "gids": [],
+     "detail": {
+      "family": "monospace"
      }
     }
    ]

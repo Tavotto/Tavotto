@@ -41,6 +41,7 @@ figure spec（两侧同源的规范化输入）：
      "hidden": bool
   }],
   "texts":   [{"id": str, "text": str, "size_pt": float, "bold": bool,
+               "font_family": str,      # 生效的族（没设过 = 默认族，不是空串）
                "rect_mm": [x,y,w,h], "hidden": bool}],
   "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
 }
@@ -736,6 +737,9 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
         profile.get("absolute_min_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
     )
     cjk = profile.get("cjk_fallback") or {}
+    fam = profile.get("font_family") or {}
+    accepted = {str(x).lower() for x in (fam.get("latin_accepted") or [])}
+    flagged = {str(x).lower() for x in (fam.get("latin_substitutes_flagged") or [])}
     for t in spec.get("texts") or []:
         if t.get("hidden"):
             continue
@@ -759,6 +763,23 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 object_ids=[tid],
                 detail={"effective_pt": _r2(size), "min_pt": strict},
                 worse=-size,
+            )
+        # 字体族：画布文字现在也能各设各的（不再是「全文档一个字体」），
+        # 于是规范里那条族约束必须看得见它们——**新增一条能违反规则的路，
+        # 就要同时把检查的范围扩到那条路上**，否则规范窄过了它想守的东西。
+        family = str(t.get("font_family") or "")
+        if family and accepted and family.lower() not in accepted:
+            known = family.lower() in flagged
+            sink.add(
+                "font-family-substituted",
+                f"画布文字用的是 {family}，规范要求 {fam.get('latin', 'Times New Roman')}"
+                + ("（该字体是常见的替代品）" if known else ""),
+                message=(
+                    ("textFontFamilySubstitutedKnown" if known else "textFontFamilySubstituted"),
+                    {"family": family, "want": fam.get("latin")},
+                ),
+                object_ids=[tid],
+                detail={"family": family},
             )
         if has_cjk(t.get("text")) and cjk.get("required") and not cjk.get("accepted"):
             sink.add(

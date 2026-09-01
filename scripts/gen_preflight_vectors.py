@@ -135,11 +135,15 @@ def _spec(
 
 
 def _text(tid: str, size_pt: float, text: str = "(a)", **kw) -> dict:
+    # `font_family` 是**生效**的族（前端由 `effectiveCanvasFamily()` 算出来），
+    # 缺省就是衬线——所以老向量里那些没写这一维的文字与这里的缺省一致，
+    # 加这一维不改任何一条既有向量的结论。
     base = {
         "id": tid,
         "text": text,
         "size_pt": size_pt,
         "bold": False,
+        "font_family": "serif",
         "rect_mm": [1.0, 1.0, 10.0, 5.0],
         "hidden": False,
     }
@@ -444,6 +448,33 @@ def cases() -> list[dict]:
             "name": "font-too-large",
             "profile_id": "lab-publication-v1",
             "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 13e. 画布文字的字体族：规范只认衬线那一族，无衬线是「已知的替代品」、
+    #      等宽连替代品都算不上——**两条走不同的 message key**，而两侧必须
+    #      给出同一个答案。这条向量是「标注能设字体」这个新能力的跨语言看护。
+    out.append(
+        {
+            "name": "canvas-text-font-family",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[
+                    _text("t-serif", 9.0, "(a)", font_family="serif"),
+                    _text("t-sans", 9.0, "(b)", font_family="sans-serif"),
+                ],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-font-family-unknown",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-mono", 9.0, "(a)", font_family="monospace")],
+            ),
         }
     )
 

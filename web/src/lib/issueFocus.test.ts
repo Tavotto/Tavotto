@@ -80,7 +80,7 @@ describe('画布对象：排版模式', () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     const reveal = vi.spyOn(useViewportStore.getState(), 'revealRect')
     const out = focusObject(refFor({ objectId: 't1' }))
-    expect(out).toEqual({ ok: true, mode: 'layout', focusedField: false })
+    expect(out).toEqual({ ok: true, mode: 'layout', field: 'none' })
     expect(useWorkspaceStore.getState().mode).toBe('layout')
     expect(useSelectionStore.getState().ids).toEqual(['t1'])
     expect(reveal).toHaveBeenCalledWith({ x: 5, y: 5, w: 20, h: 6 })
@@ -142,15 +142,15 @@ describe('图内元素：进快速编辑', () => {
         return 1
       }) as never)
     const out = focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
-    expect(out).toMatchObject({ focusedField: true })
+    expect(out).toMatchObject({ field: 'focused' })
     expect(document.activeElement).toBe(input)
     raf.mockRestore()
   })
 
-  it('没有 propertyPath 时如实回 false，不宣称"已定位到字段"', async () => {
+  it('没有 propertyPath 时回 none，不宣称"已定位到字段"', async () => {
     await seed()
     const out = focusObject(refFor({ gid: 'axes_0.xticks' }))
-    expect(out).toMatchObject({ focusedField: false })
+    expect(out).toMatchObject({ field: 'none' })
   })
 })
 
@@ -203,7 +203,7 @@ describe('页面级问题', () => {
     await seed()
     useSelectionStore.getState().set(['p1'])
     const out = focusObject(refFor({ objectId: null }))
-    expect(out).toEqual({ ok: true, mode: 'layout', focusedField: false })
+    expect(out).toEqual({ ok: true, mode: 'layout', field: 'none' })
     expect(useUiStore.getState().rightTab).toBe('canvas')
     expect(useSelectionStore.getState().ids).toEqual(['p1'])
   })

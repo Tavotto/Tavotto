@@ -292,6 +292,8 @@
     "staleRender": "The panel's script changed but has not been rebuilt — the export would use the old figure",
     "textBelowFloor": "Canvas text at {{size}}pt is not above the absolute floor of {{floor}}pt",
     "textCjkFallbackMissing": "Canvas text in Chinese has no usable CJK font fallback",
+    "textFontFamilySubstituted": "Canvas text uses {{family}}; the profile requires {{want}}",
+    "textFontFamilySubstitutedKnown": "Canvas text uses {{family}}; the profile requires {{want}} (that font is a common substitute)",
     "textTooSmall": "Canvas text at {{size}}pt is below the profile's {{min}}pt",
     "textWeightPolicy": "The profile expects {{role}} to be {{want}} (currently {{got}})",
     "tickDirection": "Tick direction is {{got}}; the profile requires {{want}}",

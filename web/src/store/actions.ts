@@ -9,7 +9,8 @@ import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
-import type { StylePlan, StylePreset } from '@/lib/stylePresets'
+import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
+import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
 import type {
   ArrowObject,
@@ -144,6 +145,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
 
 export function addText(partial: Partial<TextObject> = {}) {
   const page = doc().page
+  const d = canvasTextDefaults()
   const obj: TextObject = {
     id: newId('t'),
     type: 'text',
@@ -152,10 +154,12 @@ export function addText(partial: Partial<TextObject> = {}) {
     y: page.h / 2 - 4,
     w: 40,
     h: 5,
-    sizePt: 10,
-    bold: false,
-    color: '#000000',
-    align: 'left',
+    // 排版默认值只有 `lib/typography.canvasTextDefaults()` 一处。
+    // `fontFamily` 刻意不填：新建的文字「没设过字体」，跟着文档默认族走。
+    sizePt: d.sizePt,
+    bold: d.weight === 'bold',
+    color: d.color,
+    align: d.halign,
     ...partial,
   }
   commit(hist('addText'), (d) => {
@@ -220,6 +224,7 @@ export function addSubLabels() {
   const created: string[] = []
   commit(hist('addSubLabels'), (d) => {
     panels.forEach((p, i) => {
+      const def = canvasTextDefaults()
       const label: TextObject = {
         id: newId('t'),
         type: 'text',
@@ -228,10 +233,12 @@ export function addSubLabels() {
         y: p.y + 1,
         w: 10,
         h: 5,
-        sizePt: 10,
+        sizePt: def.sizePt,
+        color: def.color,
+        align: def.halign,
+        // 子图序号约定是加粗的——这是这一个入口自己的取舍，
+        // 不是另一套默认值，所以它叠在共用默认值**之上**
         bold: true,
-        color: '#000000',
-        align: 'left',
       }
       created.push(label.id)
       d.objects.push(label)
@@ -879,14 +886,17 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
         o.overrides.push({ gid: p.gid, prop: p.prop, value: p.value })
       }
     }
-    const applyText = (
-      obj: TextObject,
-      s: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string },
-    ) => {
-      if (s.sizePt != null) obj.sizePt = s.sizePt
-      if (s.bold != null) obj.bold = s.bold
-      if (s.italic != null) obj.italic = s.italic || undefined
-      if (s.color != null) obj.color = s.color
+    /**
+     * 样式里的画布文字项 → 文档。**经属性能力层写**（`writeCanvasText`），
+     * 不在这里手写第二遍 `bold ? … : …`：样式应用与手动编辑必须落成同一种
+     * 形状，否则「应用样式之后再手动改一下」会得到两个不同的字段集合。
+     */
+    const applyText = (obj: TextObject, s: StyleTextEntry) => {
+      if (s.sizePt != null) writeCanvasText(obj, 'sizePt', s.sizePt)
+      if (s.bold != null) writeCanvasText(obj, 'weight', s.bold ? 'bold' : 'normal')
+      if (s.italic != null) writeCanvasText(obj, 'style', s.italic ? 'italic' : 'normal')
+      if (s.color != null) writeCanvasText(obj, 'color', s.color)
+      if (s.fontFamily != null) writeCanvasText(obj, 'fontFamily', s.fontFamily)
     }
     for (const id of plan.annotationIds) {
       const obj = d.objects.find((x) => x.id === id)

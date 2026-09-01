@@ -502,6 +502,7 @@
     "flipV": "Flip vertically",
     "insertNewline": "Insert line break",
     "matchFigureSize": "Match the figure's font size",
+    "resetTextProp": "Restore text property",
     "restoreVersion": "Restore history version",
     "reverseArrow": "Reverse arrow direction",
     "rotateObject": "Rotate object",
@@ -511,6 +512,7 @@
     "setDash": "Change dash style",
     "setFill": "Change fill",
     "setFillOpacity": "Change fill opacity",
+    "setFontFamily": "Change font",
     "setFontSize": "Change font size",
     "setHeadEnd": "Change end head",
     "setHeadStart": "Change start head",
@@ -868,6 +870,7 @@
     "clearBackground": "Clear background",
     "clearBorder": "Clear stroke",
     "color": "Colour",
+    "fontFamily": "Font",
     "fontSize": "Size",
     "insertNewline": "Line break",
     "italic": "Italic (Latin glyphs only)",
@@ -933,6 +936,8 @@
     "align": "Align",
     "color": "Color",
     "font": "Font",
+    "fontMissingHint": "This computer does not have that font, so the figure is actually drawn with a different one. Pick an available font, or install it.",
+    "fontMissingTag": " (not installed)",
     "size": "Size"
   },
   "tick": {

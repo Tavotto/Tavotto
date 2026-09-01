@@ -1,13 +1,6 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Bold,
-  CornerDownLeft,
-  Italic,
-  Subscript,
-  Superscript,
-  Underline,
-} from 'lucide-react'
+import { CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
 import { toggleScript, transformCase, type CaseMode } from '@/lib/richText'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectivePt, round1 } from '@/lib/units'
@@ -21,7 +14,8 @@ import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
-import { AlignmentRow, FontSizeRow, TextColorRow } from './controls/textRows'
+import { TypographyControls } from './controls/TypographyControls'
+import { useCanvasTypography } from './typographyAdapter'
 import { shared } from './common'
 
 /** 本组文案 inspector:text.*，历史标签 inspector:history.* */
@@ -58,12 +52,8 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
-  const bold = shared(objs, (o) => (o as TextObject).bold)
-  const italic = shared(objs, (o) => (o as TextObject).italic === true)
+  const typography = useCanvasTypography(objs)
   const underline = shared(objs, (o) => (o as TextObject).underline === true)
-  const align = shared(objs, (o) => (o as TextObject).align)
-  const sizePt = shared(objs, (o) => (o as TextObject).sizePt)
-  const color = shared(objs, (o) => (o as TextObject).color)
   const bg = shared(objs, (o) => (o as TextObject).bg ?? null)
   const borderColor = shared(objs, (o) => (o as TextObject).borderColor ?? null)
 
@@ -170,77 +160,46 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
       )}
 
       <div className="flex flex-col gap-1.5">
-        {/* 与图内文字同一套行组件：可见的「字号」「颜色」「对齐」标签。
-            画布文字没有字体族（统一走文档字体），所以没有「字体」行——
-            不摆假控件。 */}
-        {/* `data-prop` 是定位服务的落点：画布标注的字号问题要落在这里 */}
-        <div data-prop="sizePt">
-          <FontSizeRow
-            value={sizePt ?? 10}
-            mixed={sizePt === undefined}
-            step={0.5}
-            min={3}
-            max={96}
-            onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
+        {/*
+          **与图内文字同一份控件**（`TypographyControls`）：字体 / 字号 /
+          B / I / 颜色 / 对齐一条不差，标注终于能设字体了。
+          写入经 `useCanvasTypography` → `updateObjects` → `documentStore.commit`，
+          与图内那条路各走各的 writer，界面语言却是同一套。
+        */}
+        <TypographyControls adapter={typography} labelWidth={72} />
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            size="icon"
+            active={underline === true}
+            onClick={() =>
+              patch(hist('toggleUnderline'), (o) => {
+                if (underline) delete o.underline
+                else o.underline = true
+              })
+            }
+            aria-label={tx('underline')}
           >
-            <Button
-              size="icon"
-              active={bold === true}
-              onClick={() => patch(hist('toggleBold'), (o) => (o.bold = !bold))}
-              aria-label={tx('bold')}
-            >
-              <Bold size={13} />
-            </Button>
-            <Button
-              size="icon"
-              active={italic === true}
-              onClick={() => patch(hist('toggleItalic'), (o) => (o.italic = !italic))}
-              aria-label={tx('italic')}
-            >
-              <Italic size={13} />
-            </Button>
-            <Button
-              size="icon"
-              active={underline === true}
-              onClick={() =>
-                patch(hist('toggleUnderline'), (o) => {
-                  if (underline) delete o.underline
-                  else o.underline = true
-                })
-              }
-              aria-label={tx('underline')}
-            >
-              <Underline size={13} />
-            </Button>
-            <Button
-              size="icon"
-              disabled={!one}
-              onClick={() => wrapScript('sup')}
-              aria-label={tx('superscript')}
-              title={tx('superscriptTitle', { key: modKey('↑') })}
-            >
-              <Superscript size={13} />
-            </Button>
-            <Button
-              size="icon"
-              disabled={!one}
-              onClick={() => wrapScript('sub')}
-              aria-label={tx('subscript')}
-              title={tx('subscriptTitle', { key: modKey('↓') })}
-            >
-              <Subscript size={13} />
-            </Button>
-          </FontSizeRow>
+            <Underline size={13} />
+          </Button>
+          <Button
+            size="icon"
+            disabled={!one}
+            onClick={() => wrapScript('sup')}
+            aria-label={tx('superscript')}
+            title={tx('superscriptTitle', { key: modKey('↑') })}
+          >
+            <Superscript size={13} />
+          </Button>
+          <Button
+            size="icon"
+            disabled={!one}
+            onClick={() => wrapScript('sub')}
+            aria-label={tx('subscript')}
+            title={tx('subscriptTitle', { key: modKey('↓') })}
+          >
+            <Subscript size={13} />
+          </Button>
         </div>
-        <TextColorRow
-          value={color ?? '#000000'}
-          onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}
-        />
-        <AlignmentRow
-          value={align ?? null}
-          onChange={(v) => patch(hist('setAlign'), (o) => (o.align = v))}
-          labels={{ left: tx('alignLeft'), center: tx('alignCenter'), right: tx('alignRight') }}
-        />
         {one && (
           <MatchFigureSize
             text={one}

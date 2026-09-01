@@ -962,11 +962,17 @@ def _text_fields(t) -> list[dict]:
     alpha = t.get_alpha()
     fam = (t.get_fontfamily() or ["serif"])[0]
     fam_opts = _family_options()
+    fam_missing: list[str] = []
     if fam not in fam_opts:
         # 脚本自己写死了一个不在选项里的字体名。它是**当前值**，enum 必须含有
         # 自己的值，否则界面显示空白。注意这与「提供一个死选项」不是一回事：
         # 能选的只有它自己，选了也只是维持原状，不会新造一次静默失效。
+        #
+        # **但界面必须知道它是哪一种**：选项表里混着「装了、能画」与「没装、
+        # 选了也白选」两类，不标出来的话用户会以为自己刚刚换了字体。
+        # `options_unavailable` 是那条 warning 的唯一依据（`web/src/lib/api.ts`）。
         fam_opts = [fam] + fam_opts
+        fam_missing = [fam]
     patch = t.get_bbox_patch()
     if patch is not None:
         pad, rounded = _boxstyle_info(patch)
@@ -1035,7 +1041,13 @@ def _text_fields(t) -> list[dict]:
             "value": str(t.get_fontstyle()),
             "options": ["normal", "italic"],
         },
-        {"prop": "fontfamily", "type": "enum", "value": str(fam), "options": fam_opts},
+        {
+            "prop": "fontfamily",
+            "type": "enum",
+            "value": str(fam),
+            "options": fam_opts,
+            **({"options_unavailable": fam_missing} if fam_missing else {}),
+        },
         {
             "prop": "rotation",
             "type": "number",

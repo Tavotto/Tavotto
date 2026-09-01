@@ -111,6 +111,7 @@ export function FontFamilyRow({
   onReset,
   optionLabelOf,
   mixed,
+  unavailable = [],
 }: {
   value: string
   options: string[]
@@ -121,25 +122,44 @@ export function FontFamilyRow({
   optionLabelOf: (v: string) => string
   /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
   mixed?: boolean
+  /**
+   * 选项里**这个运行时画不出来**的那几个（脚本写死了一个没装的字体）。
+   * 名字仍然显示——把它换掉再改文档是最坏的处置；旁边给一条 warning，
+   * 用户于是知道图上那行字实际是别的字体画的。
+   */
+  unavailable?: readonly string[]
 }) {
   const label = tc('font')
+  const missing = new Set(unavailable)
   return (
-    <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
-      <Select
-        className="min-w-0 flex-1"
-        ariaLabel={label}
-        // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
-        value={mixed ? '' : value}
-        placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
-        onChange={onChange}
-        options={options.map((o) => ({
-          value: o,
-          // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
-          label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabelOf(o)}</span>,
-        }))}
-      />
-      {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
-    </Row>
+    <>
+      <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
+        <Select
+          className="min-w-0 flex-1"
+          ariaLabel={label}
+          // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
+          value={mixed ? '' : value}
+          placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
+          onChange={onChange}
+          options={options.map((o) => ({
+            value: o,
+            // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
+            label: (
+              <span style={{ fontFamily: fontStackOf(o) }}>
+                {optionLabelOf(o)}
+                {missing.has(o) && (
+                  <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
+                )}
+              </span>
+            ),
+          }))}
+        />
+        {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
+      </Row>
+      {!mixed && missing.has(value) && (
+        <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
+      )}
+    </>
   )
 }
 

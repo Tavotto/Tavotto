@@ -101,9 +101,9 @@ import {
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
 import { useElementWriter } from './elementWrite'
-import { TextStyleControls } from './controls/TextStyleControls'
-import { useTextStyleAdapter } from './textStyleAdapter'
-import { isTextLikeSelection, TEXT_STYLE_PROPS } from './textStyleModel'
+import { TypographyControls } from './controls/TypographyControls'
+import { isTextLikeSelection } from './textStyleModel'
+import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
 import { fontStackOf } from './controls/fontStack'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
@@ -796,7 +796,7 @@ function commonFields(els: ManifestElement[]): EditableField[] {
 }
 
 /**
- * 跨角色的公共文字样式。控件与单选**完全相同**（`TextStyleControls`）：
+ * 跨角色的公共文字样式。控件与单选**完全相同**（`TypographyControls`）：
  * 字体是带 Aa 预览的下拉、字号是数字框、B/I 是三态图标按钮、颜色是色块，
  * 不会因为选中了第二个对象就退化成 `常规 / 加粗` 的通用枚举列表。
  *
@@ -810,9 +810,9 @@ function TextStyleBatchSection({
   panel: PanelObject
   elements: ManifestElement[]
 }) {
-  const adapter = useTextStyleAdapter(panel, elements)
+  const adapter = useFigureTypography(panel, elements, FIGURE_TEXT_BATCH_PROPS)
   const roles = [...new Set(elements.map((e) => e.role))]
-  const hasAny = TEXT_STYLE_PROPS.some((p) => adapter.fieldOf(p))
+  const hasAny = FIGURE_TEXT_BATCH_PROPS.some((p) => adapter.fieldOf(p))
   return (
     <Section plainTitle title={el('textBatchTitle', { count: elements.length })}>
       {!hasAny ? (
@@ -824,7 +824,7 @@ function TextStyleBatchSection({
               ? el('textBatchHintMixed', { count: elements.length })
               : el('batchHint', { count: elements.length })}
           </p>
-          <TextStyleControls adapter={adapter} labelWidth={LABEL_W} />
+          <TypographyControls adapter={adapter} labelWidth={LABEL_W} />
         </>
       )}
     </Section>

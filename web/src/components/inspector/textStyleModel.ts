@@ -153,24 +153,8 @@ export function overrideStateOf(
   return hit.length === elements.length ? 'all' : 'some'
 }
 
-/**
- * 三态开关（B / I）的下一个值。
- *
- * mixed 点一次 = 全开（先把它们对齐，再想要不要关），全开点一次 = 全关，
- * 全关点一次 = 全开。**没有「点一次回到 mixed」**——mixed 不是用户能选的
- * 目标状态，它只是当前事实的描述。
+/*
+ * 三态开关的下一个值与显示状态**不在这里**：它们跟着规范属性名走，实现在
+ * `controls/TypographyControls.tsx`（`nextToggle` / `toggleStateOf`）——图内
+ * 文字与画布文字共用那一份，这里再留一份 manifest 口径的等于埋一次分叉。
  */
-export function nextToggleValue(
-  state: ControlValue,
-  onValue: string,
-  offValue: string,
-): string {
-  if (state.kind === 'uniform' && state.value === onValue) return offValue
-  return onValue
-}
-
-/** 三态开关当前该画成什么样 */
-export function toggleStateOf(state: ControlValue, onValue: string): 'on' | 'off' | 'mixed' {
-  if (state.kind === 'mixed') return 'mixed'
-  return state.kind === 'uniform' && state.value === onValue ? 'on' : 'off'
-}

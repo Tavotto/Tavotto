@@ -61,15 +61,50 @@ def get_font(name: str) -> pymupdf.Font:
     return _FONT_CACHE[name]
 
 
-def latin_font(bold: bool, italic: bool) -> pymupdf.Font:
-    return get_font(
-        {
-            (False, False): "times-roman",
-            (True, False): "times-bold",
-            (False, True): "times-italic",
-            (True, True): "times-bolditalic",
-        }[(bool(bold), bool(italic))]
-    )
+#: 画布文字（标注 / 自由文字）能选的字体族。**闭集，且只有这三个**：
+#: Flask 进程里没有 matplotlib（见 `src/tavotto/AGENTS.md` 的进程边界），
+#: 合成与写回只能用 PyMuPDF 自带的 base-14——它恰好覆盖这三个通用族。
+#: 具体字体名（Times New Roman / Arial…）**不进这个集合**：它们要么得内嵌
+#: 用户磁盘上的字体文件（另一件事），要么就是「界面上选得中、导出时悄悄
+#: 换一个」——那正是本轮要消灭的那类静默替换。
+#:
+#: 严格同源：`web/src/lib/typography.ts` 的 `CANVAS_TEXT_FAMILIES`
+#: （看护 `tests/test_typography_families.py`）。
+CANVAS_TEXT_FAMILIES = ("serif", "sans-serif", "monospace")
+
+#: 族 → base-14 的四个字形（常规 / 粗 / 斜 / 粗斜）。
+_LATIN_FACES: dict[str, tuple[str, str, str, str]] = {
+    "serif": ("times-roman", "times-bold", "times-italic", "times-bolditalic"),
+    "sans-serif": ("helv", "hebo", "heit", "hebi"),
+    "monospace": ("cour", "cobo", "coit", "cobi"),
+}
+
+#: 中日韩字形只有这一张脸。**实测（PyMuPDF 1.28.2）`china-ss` / `china-s` /
+#: `china-ssb` / `china-sb` 四个别名回的是同一个 `Droid Sans Fallback
+#: Regular`**——所以「衬线中文 / 无衬线中文」在这条路上不是一个真实的选择，
+#: 换族只换拉丁那一半。旧注释写的「CJK 走宋体」是没有量过的断言。
+_CJK_FACE = "china-ss"
+
+
+def latin_family(name: object) -> str:
+    """任意取值 → 闭集里的一个族。认不出来的一律回默认（衬线）。
+
+    **不认得的名字不许当成「用户指定的字体」去解析**：那条路的终点是
+    PyMuPDF 抛异常或悄悄给一张别的脸，两个结果都比「按默认画、并且界面
+    根本不让你选到这里」更坏。
+    """
+    return name if name in _LATIN_FACES else CANVAS_TEXT_FAMILIES[0]
+
+
+def latin_font(bold: bool, italic: bool, family: object = "serif") -> pymupdf.Font:
+    faces = _LATIN_FACES[latin_family(family)]
+    return get_font(faces[(1 if bold else 0) + (2 if italic else 0)])
+
+
+def cjk_font() -> pymupdf.Font:
+    """中日韩字形。**与族无关**（见 `_CJK_FACE`），所以它没有 family 形参
+    ——多一个不起作用的形参等于多一句做不到的承诺。"""
+    return get_font(_CJK_FACE)
 
 
 def _script_runs(s: str) -> list[list]:
@@ -88,9 +123,19 @@ def _mixed_width(s: str, latin: pymupdf.Font, cjk: pymupdf.Font, size: float) ->
     return sum((cjk if c else latin).text_length(seg, size) for c, seg in _script_runs(s))
 
 
-def text_width(s: str, size_pt: float, bold: bool = False, italic: bool = False) -> float:
-    """中英混排字符串宽度（pt）——边界层对外的度量接口。"""
-    return _mixed_width(s, latin_font(bold, italic), get_font("china-ss"), size_pt)
+def text_width(
+    s: str,
+    size_pt: float,
+    bold: bool = False,
+    italic: bool = False,
+    family: object = "serif",
+) -> float:
+    """中英混排字符串宽度（pt）——边界层对外的度量接口。
+
+    `family` 必须与真正落笔时用的那个族一致：等宽族比衬线族宽得多，量宽用
+    一个族、书写用另一个族的话，换行位置与画出来的字对不上。
+    """
+    return _mixed_width(s, latin_font(bold, italic, family), cjk_font(), size_pt)
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +401,9 @@ def _place_panel(page: pymupdf.Page, o: dict, dpi: int, path: Path) -> None:
 
 
 def _draw_text(page: pymupdf.Page, t: dict) -> None:
-    """中英混排分段书写：拉丁走 Times、CJK 走宋体。整框套 CJK 字体会把
+    """中英混排分段书写：拉丁走 `font_family` 选中的那个 base-14 族
+    （缺省衬线 = Times），CJK 走 PyMuPDF 自带的那一张 CJK 脸（见 `_CJK_FACE`
+    ——换族不换它）。整框套 CJK 字体会把
     拉丁字母排成全角步进（"E x p o r t"），必须按 script 切段各用各的字体。
     行高 line_height（缺省 1.25）、按框宽贪心换行（CJK 逐字、拉丁按词，
     单词自己就超宽时逐字兜底），与前端 TextView 一致；
@@ -367,8 +414,10 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
     size = float(t.get("size_pt", 9))
     line_h = float(t.get("line_height") or 1.25)
     pad = mm2pt(float(t.get("padding_mm") or 0))
-    latin = latin_font(t.get("bold", False), t.get("italic", False))
-    cjk = get_font("china-ss")
+    # `font_family` 缺席 = 老文档 / 没设过 = 继承默认（衬线）。**不许把
+    # 「没设过」压成一个新的默认值再写回文档**——那两个是不同的答案。
+    latin = latin_font(t.get("bold", False), t.get("italic", False), t.get("font_family"))
+    cjk = cjk_font()
     x0, y0 = mm2pt(t["x_mm"]) + pad, mm2pt(t["y_mm"]) + pad
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")

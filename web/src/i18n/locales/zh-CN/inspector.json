@@ -487,6 +487,7 @@
     "flipV": "垂直翻转",
     "insertNewline": "插入换行",
     "matchFigureSize": "对齐图内字号",
+    "resetTextProp": "恢复文字属性",
     "restoreVersion": "恢复历史版本",
     "reverseArrow": "反转箭头方向",
     "rotateObject": "旋转对象",
@@ -496,6 +497,7 @@
     "setDash": "修改线型",
     "setFill": "修改填充",
     "setFillOpacity": "修改填充不透明度",
+    "setFontFamily": "修改字体",
     "setFontSize": "修改字号",
     "setHeadEnd": "修改终点端型",
     "setHeadStart": "修改起点端型",
@@ -848,6 +850,7 @@
     "clearBackground": "清除背景",
     "clearBorder": "清除描边",
     "color": "颜色",
+    "fontFamily": "字体",
     "fontSize": "字号",
     "insertNewline": "插入换行",
     "italic": "斜体（仅拉丁字形）",
@@ -913,6 +916,8 @@
     "align": "对齐",
     "color": "颜色",
     "font": "字体",
+    "fontMissingHint": "这台电脑没有装这个字体，图上那行字实际是别的字体画的。换一个能用的字体，或者装上它。",
+    "fontMissingTag": "（未安装）",
     "size": "字号"
   },
   "tick": {

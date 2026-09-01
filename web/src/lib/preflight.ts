@@ -9,6 +9,7 @@ import {
   type PublicationProfile,
   type Severity,
 } from './profile'
+import { effectiveCanvasFamily } from './typography'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -142,6 +143,8 @@ export interface PreflightTextSpec {
   text: string
   size_pt: number
   bold: boolean
+  /** **生效**的字体族（没设过 = 默认族），不是空串——没量过与量到默认是两个答案 */
+  font_family: string
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -729,6 +732,9 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
   const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const cjk = profile.cjk_fallback
+  const fam = profile.font_family
+  const accepted = new Set((fam?.latin_accepted ?? []).map((s) => s.toLowerCase()))
+  const flagged = new Set((fam?.latin_substitutes_flagged ?? []).map((s) => s.toLowerCase()))
   for (const t of spec.texts) {
     if (t.hidden) continue
     const size = num(t.size_pt) ?? 0
@@ -747,6 +753,19 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         worse: -size,
         prop: 'sizePt',
       })
+    }
+    // 字体族：画布文字现在也能各设各的，规范里那条族约束必须看得见它们
+    // ——**新增一条能违反规则的路，就要同时把检查的范围扩到那条路上**。
+    const family = String(t.font_family ?? '')
+    if (family && accepted.size && !accepted.has(family.toLowerCase())) {
+      const known = flagged.has(family.toLowerCase())
+      sink.add(
+        'font-family-substituted',
+        known
+          ? pf('textFontFamilySubstitutedKnown', { family, want: fam.latin })
+          : pf('textFontFamilySubstituted', { family, want: fam.latin }),
+        { objectIds: [t.id], detail: { family }, prop: 'fontFamily' },
+      )
     }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
       sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
@@ -892,6 +911,9 @@ export function buildSpec(
         text: o.type === 'text' ? o.text : '',
         size_pt: o.type === 'text' ? o.sizePt : 0,
         bold: o.type === 'text' ? o.bold : false,
+        // 生效族，不是文档里存的那个（没设过时存的是 undefined）。缺省值
+        // 只有 `lib/typography` 一处，这里不写第二个。
+        font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

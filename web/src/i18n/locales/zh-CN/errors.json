@@ -292,6 +292,8 @@
     "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图",
     "textBelowFloor": "画布文字 {{size}}pt 不大于绝对下限 {{floor}}pt",
     "textCjkFallbackMissing": "画布中文文字没有可用的中文字体 fallback",
+    "textFontFamilySubstituted": "画布文字用的是{{family}}，规范要求 {{want}}",
+    "textFontFamilySubstitutedKnown": "画布文字用的是{{family}}，规范要求 {{want}}（该字体是常见的替代品）",
     "textTooSmall": "画布文字 {{size}}pt 低于规范下限 {{min}}pt",
     "textWeightPolicy": "规范建议 {{role}} 的字重为 {{want}}（当前 {{got}}）",
     "tickDirection": "刻度朝向为 {{got}}，规范要求 {{want}}",

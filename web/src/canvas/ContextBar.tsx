@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
-import { Bold, CircleHelp, Crop, Minimize2, Pencil, SlidersHorizontal } from 'lucide-react'
+import { Bold, CircleHelp, Crop, Italic, Minimize2, Pencil, SlidersHorizontal } from 'lucide-react'
 import { t as translate } from '@/i18n'
 import { msg, type UiMessage } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
@@ -10,11 +10,16 @@ import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
+import { fontStackOf } from '@/components/inspector/controls/fontStack'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
+import { nextToggle, toggleStateOf } from '@/components/inspector/controls/TypographyControls'
+import { useCanvasTypography } from '@/components/inspector/typographyAdapter'
+import { displayValueOf } from '@/lib/typography'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
 import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Popover } from '@/components/ui/Popover'
+import { Select } from '@/components/ui/Select'
 import { Tip } from '@/components/ui/Tooltip'
 import { enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -236,37 +241,71 @@ function ObjectQuickActions({ obj }: { obj: CanvasObject }) {
   }
 }
 
+/**
+ * 画布文字的浮动快捷编辑。
+ *
+ * **与属性页读同一个 selector、写同一个 action**（`useCanvasTypography`）：
+ * 这条工具条以前是第二份实现——没有斜体、没有字体、mixed 状态无从谈起，
+ * 而且 `o.bold = !o.bold` 与属性页的 `!bold` 在多选下会算出不同的结果。
+ * 现在两边看到的是同一个适配器，一处改另一处当场就是新值。
+ *
+ * 布局按上下文不同（这里没有标签列），**数据与 action 共享**。
+ */
 function TextObjectActions({ obj }: { obj: TextObject }) {
-  const patch = (label: UiMessage, fn: (o: TextObject) => void) =>
-    updateObjects([obj.id], label, (o) => {
-      if (o.type === 'text') fn(o)
-    })
+  const objs = useMemo(() => [obj], [obj])
+  const a = useCanvasTypography(objs)
+  const family = a.fieldOf('fontFamily')
+  const size = a.fieldOf('sizePt')
+  const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
+  const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
     <>
-      <NumberField
-        className="w-[64px] shrink-0"
-        value={obj.sizePt}
-        min={3}
-        max={96}
-        step={0.5}
-        precision={1}
-        suffix="pt"
-        title={translate('textControls.size', { ns: 'inspector' })}
-        onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
-      />
-      <Button
-        size="icon-sm"
-        active={obj.bold}
-        aria-pressed={obj.bold}
-        aria-label={translate('text.bold', { ns: 'inspector' })}
-        onClick={() => patch(hist('toggleBold'), (o) => (o.bold = !o.bold))}
+      {family && (
+        <Select
+          className="w-[92px] shrink-0"
+          ariaLabel={translate('textControls.font', { ns: 'inspector' })}
+          value={String(displayValueOf(a.valueOf('fontFamily')) ?? '')}
+          onChange={(v) => a.writeOnce('fontFamily', v)}
+          options={(family.options ?? []).map((o) => ({
+            value: o,
+            label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>,
+          }))}
+        />
+      )}
+      {size && (
+        <NumberField
+          className="w-[64px] shrink-0"
+          value={Number(displayValueOf(a.valueOf('sizePt')) ?? 10)}
+          min={size.min}
+          max={size.max}
+          step={size.step ?? 0.5}
+          precision={1}
+          suffix={size.unit}
+          title={translate('textControls.size', { ns: 'inspector' })}
+          onChange={(v) => a.write('sizePt', v)}
+          onScrubStart={a.beginGesture}
+          onScrubEnd={a.endGesture}
+        />
+      )}
+      <StyleToggle
+        state={boldState}
+        label={translate('textBar.bold', { ns: 'inspector' })}
+        onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
       >
         <Bold size={12} />
-      </Button>
+      </StyleToggle>
+      <StyleToggle
+        state={italicState}
+        label={translate('textBar.italic', { ns: 'inspector' })}
+        onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
+      >
+        <Italic size={12} />
+      </StyleToggle>
       <ColorField
         className="w-[86px] shrink-0"
-        value={obj.color}
-        onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}
+        value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
+        onChange={(v) => a.write('color', v, true)}
+        onGestureEnd={a.endGesture}
       />
       <Sep />
     </>

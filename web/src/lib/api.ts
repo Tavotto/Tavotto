@@ -815,6 +815,8 @@ export type ExportObject =
       italic: boolean
       color: string
       align: string
+      /** 三个通用族之一；缺席 = 继承默认（衬线），后端缺省与它一致 */
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
       underline?: boolean
       line_height?: number
       padding_mm?: number
@@ -1045,6 +1047,15 @@ export interface EditableField {
   step?: number
   unit?: string
   options?: string[]
+  /**
+   * `options` 里**这个运行时画不出来**的那几个。
+   *
+   * 只有字体族会用到：脚本写死了一个本机没装的字体时，引擎仍把它放进选项
+   * （enum 必须含有自己的当前值，否则界面显示空白），但它是一句**假承诺**
+   * ——选中它什么都不会变。界面据此保留名字、加一条 warning，而不是悄悄
+   * 换成别的字体再把文档改掉。
+   */
+  options_unavailable?: string[]
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }

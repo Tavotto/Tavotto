@@ -21,6 +21,8 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { emptyProject, type TextObject } from '@/types/document'
+import { propertyPathOf } from '@/lib/typography'
+import { CANVAS_TEXT_PRIMARY_PROPS } from './typographyAdapter'
 import { TextSection, scriptHotkey } from './TextSection'
 
 /** 自动保存会 PUT 到后端；这里只要不抛就行 */
@@ -226,11 +228,26 @@ describe('Mod+↑ / Mod+↓ 在文字框里', () => {
 })
 
 describe('与图内文字一致的界面结构（ADR 0010）', () => {
-  it('「字号」「颜色」「对齐」是可见标签，与图内文字同一组行组件', () => {
+  it('「字体」「字号」「颜色」「对齐」是可见标签，与图内文字同一份控件', () => {
     const text = container.textContent ?? ''
-    for (const label of ['字号', '颜色', '对齐']) expect(text, label).toContain(label)
-    // 画布文字没有字体族能力（统一走文档字体）——不摆假「字体」控件
-    expect(text).not.toContain('字体')
+    // 「字体」是 Prompt 13 补上的那一条：标注文字以前根本设不了字体
+    for (const label of ['字体', '字号', '颜色', '对齐']) expect(text, label).toContain(label)
+  })
+
+  it('每一条排版属性都挂着定位锚点，锚点名与 property path 逐字一致', () => {
+    for (const prop of CANVAS_TEXT_PRIMARY_PROPS) {
+      const path = propertyPathOf('canvasText', prop)
+      expect(path, prop).toBeTruthy()
+      // 问题面板「定位到字段」查的就是这个选择器（lib/issueFocus.ts）；
+      // 少一个锚点的表现是「点了定位什么都没发生」，而界面并不报错
+      expect(container.querySelector(`[data-prop="${path}"]`), prop).not.toBeNull()
+    }
+  })
+
+  it('没设过字体 = 继承默认族，不显示「已修改」，也不给恢复按钮', () => {
+    const text = container.textContent ?? ''
+    expect(text).toContain('衬线')
+    expect(text).not.toContain('已修改')
   })
 
   it('大小写 / 行距 / 背景住进「更多」，默认收起', () => {
