@@ -386,7 +386,35 @@ desktop…」。
 
 ### Session 13 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
 
-<!--RESULTS-13-->
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3498** passed / 34 skipped / 0 failed（比 12 的 3467 +31：新增 `test_typography_families.py` 15 条 + 预检向量 2 条 + 参数化） |
+| `cd web && pnpm test` | ✅ exit 0 —— **155** files / **1986** tests passed（比 12 的 151/1919 +4 文件 / +67 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2865 / en-US 2955；`errors:preflight.textFontFamilySubstituted*` +2、`inspector:history.{setFontFamily,resetTextProp}` +2、`inspector:textControls.font{MissingTag,MissingHint}` +2） |
+| `cd web && pnpm lint` | ✅ 19 条既有 fast-refresh 提示，**无新增**（三态开关的两个 helper 搬进 `lib/typography.ts` 之后控件文件只导出组件） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（294 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/gen_preflight_vectors.py --write` | ✅ 21 → 23 条；**既有 21 条一条没变**（新增的两条是画布文字的字体族） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `42c3a0cc7b8e1c26`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `e0a4ff5da0ef92df`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 17 条 | ✅ 全部被打红（第一轮 15/17，两条存活的成因与处置见 `TEST_MATRIX.md`） |
+| `npx playwright test e2e/a11y e2e/i18n e2e/keyboard-golden-path e2e/asset-library --project=chromium` | ⚠️ **21 passed / 6 failed**——**六条在 `origin/main`（`c12c229c`）上一模一样地红**，见下 |
+
+> **e2e 的六条红做过 A/B，不是「猜它不是我的」。** 同一台机器、同一份 fixture、
+> 同一条命令，把 `web/src` 与 `src/tavotto` 整个换成 `c12c229c`（当前
+> `origin/main`）、重跑 `scripts/build_frontend.py` 之后，`a11y.spec.ts:291`
+> 以**逐字相同**的方式失败（等 `getByRole('navigation').getByRole('button',
+> { name: /项目接入状态/ })` 超时 180 s）。两侧的 `error-context.md` 里那段
+> 无障碍快照也逐字相同：左侧轨道上只有 `画布 / 素材 / 结构 / 图内元素 / 设置`
+> 五个按钮，**「问题」与「项目接入状态」两个按钮不在 DOM 里**。六条红全是
+> 这两个入口的下游（另外三条等的是 `[data-element-svg] svg`）。
+>
+> **这与 Session 12 的记录冲突**：那一轮同样四个 spec 是 27 passed。所以在
+> `#214 → #219` 之间的 main 上、或者本机环境里，有一件事变了而没人发现——
+> `LeftRail` 里那两个按钮都是**无条件渲染**的（`ITEMS` 五项 + 轨道底部的
+> 接入状态入口），源码上找不到能让它们消失的判据。**没有查到根因就不许写成
+> 「已知问题」**，所以它以一条开着的遗留留给下一个 Session，附本轮的复现命令。
 
 ---
 
@@ -417,6 +445,7 @@ desktop…」。
 | — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
 | — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
 | — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
+| — | **左侧轨道上「问题」与「项目接入状态」两个按钮不在 DOM 里**（本机 chromium e2e，六条红的共同上游）。**在 `origin/main`（`c12c229c`）上一模一样地红**，两侧的无障碍快照逐字相同——不是本轮引入的。但 Session 12 的记录是同样四个 spec **27 passed**，而 `LeftRail` 里这两个入口都是无条件渲染的，源码上找不到能让它们消失的判据。复现：`python scripts/build_frontend.py` 之后 `cd web && TAVOTTO_PYTHON=<repo>/.venv/bin/python npx playwright test e2e/a11y.spec.ts --project=chromium -g "项目接入状态"` | **未查明，优先** |
 | — | **「新建标注时套用当前 Style」没有做**：本仓库里 Style 是一次性应用、不是文档上的绑定（ADR 0029 绑的是 Spec），「当前 Style」这个概念不存在。做成本机 UI 偏好会让同一个动作在两台机器上建出不同的对象，比现状更坏。13 只把新建默认值收敛成 `canvasTextDefaults()` 一处 | 待用户拍板 |
 | — | **画布文字的字体族只有三个通用族**：具体字体名要么内嵌用户磁盘上的字体（另一件事、另一份许可证讨论），要么就是静默替换。图内文字那侧才有「装不上的具体字体」这一档（`options_unavailable`） | 已处置（闭集是能力承诺） |
 | — | **中日韩字形不跟着族走**：实测 PyMuPDF 1.28.2 的四个 `china-*` 别名回同一张 `Droid Sans Fallback Regular`。界面暂时没有单独说这一句 | Prompt 14 |

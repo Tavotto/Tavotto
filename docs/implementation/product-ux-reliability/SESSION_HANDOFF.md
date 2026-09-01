@@ -201,8 +201,15 @@ latin_family(name) / latin_font(bold, italic, family) / cjk_font()
 5. **`valign` / `lineHeight` / `rotationDeg` 在能力表里，但控件只出前六条**：
    行距与旋转仍在各自的「更多」里用原来的控件（数据已经经过能力层，控件还
    没并进 `TypographyControls`）。
-6. **e2e 本轮没跑**（改动没有碰黄金路径的键位与文案，但这是**没跑**，不是
-   「跑过没问题」）。
+6. **e2e 跑了四个 chromium spec：21 passed / 6 failed，六条都不是本轮引入的。**
+   把 `web/src` 与 `src/tavotto` 整个换成 `c12c229c`（当前 `origin/main`）
+   再跑一遍，`a11y.spec.ts:291` 以**逐字相同**的方式失败，两侧的无障碍快照也
+   逐字相同：左侧轨道上只有「画布 / 素材 / 结构 / 图内元素 / 设置」五个按钮，
+   **「问题」与「项目接入状态」不在 DOM 里**；另外三条等的是
+   `[data-element-svg] svg`。**根因没查到**——`LeftRail` 里那两个入口都是无
+   条件渲染的，而 Session 12 记的是同样四个 spec 27 passed。它以一条开着的
+   遗留留在 `STATUS.md`，附复现命令。**「在 main 上也红」定的是范围，不是
+   性质**：它仍然是个缺陷，只是不归本轮。
 7. 04–12 的其余遗留原样开着。
 
 ### 工作树状态
