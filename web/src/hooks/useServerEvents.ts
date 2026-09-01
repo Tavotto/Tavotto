@@ -10,6 +10,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
+import { applyExportJob } from '@/store/exportStore'
 import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -47,6 +48,12 @@ export function handleServerEvent(ev: ServerEvent) {
     case 'engine.bootstrap':
       // 渲染环境安装进度（建 venv + 装 matplotlib）
       useEnvStore.getState().onProgress(ev)
+      break
+
+    case 'export.progress':
+      // 导出作业的进度与终局（ADR 0031）。SSE 是**加速器不是唯一通道**：
+      // exportStore 自己还有一条轮询，两条路进的是同一个 applyExportJob()
+      applyExportJob(ev)
       break
 
     case 'engine.dependency':

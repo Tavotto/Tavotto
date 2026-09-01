@@ -238,9 +238,11 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await expect(panel2.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
   await expect(panel2.getByRole('textbox', { name: '字号' })).toHaveValue('13')
 
-  // 出版预检（导出对话框内嵌预检结果）
+  // 出版预检（导出面板只给摘要，完整清单在左侧问题面板 —— ADR 0031 §四）
   await page.getByRole('button', { name: '导出' }).first().click()
-  await expect(page.getByText(/预检：|导出前检查通过/)).toBeVisible({ timeout: 30_000 })
+  await expect(
+    page.getByText(/导出前检查通过|\d+ (阻断|警告|建议|无法核验)/),
+  ).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press('Escape')
 
   // 导出 PDF + PNG：同一次合成（PNG 由同一份 PDF 渲染），runtime 面板由

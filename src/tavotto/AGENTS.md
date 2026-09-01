@@ -682,7 +682,27 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
-- **导出**：请求可带 `proof` 对象 → 随成图写 `_proof.json`。
+- **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
+  `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /
+  `/cancel` / `/validate` —— **五个端点、一个服务**。「要什么」只有
+  `engine/exportreq.py` 的 `ExportRequest`（缺省值一处），「怎么落盘」只有
+  `engine/exportjob.py`（临时目录 → 全部产出完成 → `atomicio.publish_file()`
+  逐个原子 replace）。
+  * `scope=canvas` 合成页；`scope=original` 走 `pdfbackend.original_pdf/png`
+    （矢量整页搬运不重画，位图**保源像素网格**）。`original` 段里**没有**
+    x/y/w/h 与页面尺寸——想让画布缩放漏进原图导出得先改结构。
+  * **PPI 只在有位图格式时是数字**，否则 `None`；`partial` 是独立一档
+    （成功的照常交付，失败的带自己的 `error.code`）；覆盖策略闭集
+    `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。
+  * 后台作业必须 `app.bound_project(ctx)`：`_request_ctx()` 的兜底是默认项目，
+    多项目并存时不绑定 = 成功地导出了另一个图库的同名图。
+  * **旧契约一个字节不变**：没有 `filename` 的请求（`stem`/`dpi`，或
+    `items[]`+`texts[]`）抬成同一个作业，文件名照旧带时间戳，回执照旧有
+    `files[]`/`export_dir`/`warnings`，报告照旧叫 `_proof.json`。
+    新路径的报告叫 `<基名>_style-check.json`（v3，`kind` 不变）。
+  * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
+    `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
+    写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），

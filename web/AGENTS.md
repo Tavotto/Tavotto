@@ -238,6 +238,47 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   `components/inspector/elementStylePreview.test.tsx`、
   `e2e/fake-realtime.spec.ts`（真浏览器，顺带产出 perf-baseline 的 Phase G 数字）。
 
+## 统一检查与问题定位（2026-08-31，ADR 0030）
+
+完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
+**「这份项目有什么问题」只有一条链**：
+
+```text
+preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐）
+  → lib/validation.ts    接成可定位问题：画布维度、逐条命中、指纹、fixKind
+  → store/validationStore.ts  编排：防抖 250ms + 代次、按画布增量、失败不清空
+  → components/left/ProblemPanel.tsx  左侧「问题」抽屉（常驻入口 + 角标）
+```
+
+* **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
+  与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
+  投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份。
+  它也**不列第二套清单**（ADR 0031 §四）：只给数量 + 「查看问题」，
+  完整清单、筛选与修复都在左侧问题面板。
+* **`ready` / `failed` 不许压扁成「没问题」**：`total === 0` 单独看不足以说
+  「检查通过」。打开导出对话框时**当场同步跑一遍**，就是为了不让那 250ms 防抖
+  窗口里说出一句假话。
+* **逐条命中**（`PreflightOccurrence`）是 TS 侧的展开层，**不进跨语言合同**：
+  golden vectors 比的仍是聚合投影。看护用例盯着两者一致（命中的 objectId /
+  gid 并起来必须与聚合项逐字相等）。
+* **定位只有 `lib/issueFocus.focusObject()` 一处**：切画布 → 切工作流模式 →
+  选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
+  （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
+  绝不静默不动。属性字段的落点是 `data-prop`（稳定机器标识），**不是
+  aria-label**——那是本地化文案，换语言就选不中。
+* **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
+  主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
+  「技术详情」里。
+* **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
+  所以"提到正好 8 pt"不算修好）、不动科研数据（字体 / 色图 / 裁剪一律不自动）。
+  落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
+  一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
+* **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
+  Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
@@ -504,6 +545,37 @@ descriptor 文件读。
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏
   describe；e2e `a11y.spec.ts` 的接入状态两条 + `golden-paths.spec.ts`。
+
+## 统一导出管线（2026-08-31，Prompt 12；ADR 0031）
+
+```text
+prepareExport(input)   请求成形 + 就地校验（**不发网络**，输入框每敲一个字都能调）
+validateExport(input)  真的开始之前能看出来的：重名 / 目录写不写得了
+runExport(input)       起作业 → SSE + 轮询跟进度 → 落终局
+cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动过）
+```
+
+- **载荷的构造只有 `lib/exportRequest.buildExportRequest()` 一处**。组件不许
+  自己拼那个对象，也不许在第二个 API 上把同一批参数再抄一遍——那正是
+  「预检按一套规矩、导出按另一套」的来源。
+- **`scope=original` 的载荷里没有 x/y/w/h，也没有页面尺寸**。不是"记得别填"，
+  是那几个键不在类型上。尺寸来自 `lib/originalSpec.getOriginalOutputSpec()`，
+  被忽略的变换逐项进 `ignored` 并**说给用户听**。
+- **PPI 只在有位图格式时是数字**，否则 `null`。压成一个默认值的话，界面就会
+  去显示一个不影响任何东西的设置（T-49 同一个形状）。
+- **作业活在 `store/exportStore.ts`，不活在对话框里**：关掉弹窗不取消作业。
+  进度经 SSE `export.progress`，**外加一条轮询**——SSE 是加速器不是唯一通道
+  （浏览器演练场、断线、代理下必须照样拿得到终局）。两条路进同一个
+  `applyExportJob()`，晚到的旧快照按 job_id + 终局状态挡掉。
+- **「导出期间又被编辑过」用此刻的文档重算指纹**，不是拿 `lastInput.doc`
+  跟自己比（那份是开始时冻住的引用，比出来永远相等，而空的 diff 与"没变化"
+  长得一模一样）。指纹量的是**载荷**：改画布名、折叠侧栏、撤销又重做，
+  导出结果一样就不该冒这句话。
+- **文件名规则是严格同源对**（`engine/exportreq.py`），八条闭集原因 +
+  `tests/golden/filename_vectors.json`。首尾空白的字符集**写死一份**，
+  不许退回 `String.trim()`（它与 Python 的 `str.strip()` 认的集合不同）。
+- **原图不可用时说出原因，不隐藏选项、不静默改成画布**：一个消失的按钮
+  无法解释自己，一次悄悄换掉的范围会让用户拿到一张他没要的图。
 
 ## 两条工作流与原图规格（2026-08-29，Prompt 09；ADR 0028）
 

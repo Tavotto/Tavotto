@@ -14,6 +14,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { canvasToDoc, type CanvasData, type PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useProjectStore } from './projectStore'
+import { resetExportState, useExportStore } from './exportStore'
 import { startWorkspacePersistence, useWorkspaceStore } from './workspace'
 
 const PANEL: PanelObject = {
@@ -93,5 +94,45 @@ describe('换项目与工作区偏好', () => {
       mode: 'fast_edit',
       panelId: PANEL.id,
     })
+  })
+
+  /**
+   * 导出结果属于**旧项目**（PR #214 评审）。
+   *
+   * `outputs[].url` 是裸路径 `/exports/<name>`，渲染时由 `apiUrl()` 补上
+   * **当前**项目的 `pj`——不清的话，切完项目再打开导出面板会看到旧项目的
+   * 结果，而那些链接指向的是新项目的导出目录（不是 404 就是下到同名的
+   * 另一张图）。轮询也会一直问一个属于旧项目的作业。
+   */
+  it('切项目把导出结果丢掉（**只清前端状态，不取消后端那个作业**）', async () => {
+    resetExportState()
+    useExportStore.setState({
+      job: {
+        job_id: 'j-old',
+        status: 'done',
+        outputs: [
+          {
+            format: 'pdf',
+            name: 'Fig 1.pdf',
+            url: '/exports/Fig 1.pdf',
+            bytes: 1,
+            dimensions: { px: null, mm: null },
+            vector: true,
+            status: 'done',
+            replaced: false,
+            error: null,
+          },
+        ],
+        warnings: [],
+        conflicts: [],
+        error: null,
+      },
+      running: false,
+    })
+
+    await useProjectStore.getState().open('/new')
+
+    expect(useExportStore.getState().job, '旧项目的导出结果不该跟着进新项目').toBeNull()
+    expect(useExportStore.getState().running).toBe(false)
   })
 })

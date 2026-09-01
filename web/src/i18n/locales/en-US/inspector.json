@@ -251,7 +251,16 @@
     "textBatchTitle_other": "Shared style of {{count}} text elements",
     "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
-    "waiting": "Waiting for the engine to render…"
+    "waiting": "Waiting for the engine to render…",
+    "axis": {
+      "x": "X",
+      "y": "Y",
+      "width": "Width",
+      "height": "Height",
+      "min": "Min",
+      "max": "Max",
+      "indexed": "Value {{n}}"
+    }
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",

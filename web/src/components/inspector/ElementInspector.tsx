@@ -531,6 +531,37 @@ const LABEL_W = 72
  * 「移除 override」在不同字段上的自然说法；没有专属说法的用通用那条。
  * 注意查的是**固定的几个 prop**，不是开放集合，所以这里可以放心用 key。
  */
+/**
+ * pair / rect 的**每一格都要有自己的名字**。
+ *
+ * 两个框都只挂一个「图幅」等于没名字：辅助技术里读出来是"编辑框 80"
+ * "编辑框 57.6"，用户不知道哪个是宽、哪个是高。axe 的 `label` 规则按
+ * **critical** 报——PR #214 新加的问题面板 a11y 用例在 Windows/webkit 上抓到
+ * 的就是这一对（那一次恰好停在快速编辑，右栏摆着「图幅」）。
+ *
+ * 这几格的语义**随属性变**，所以不能用统一的序号名糊过去：
+ * `size_mm` 是宽/高、`xlim`/`ylim` 是最小/最大、`position`（rect）是
+ * x/y/宽/高。表里没有的属性退回带序号的名字——**有个不精确的名字也好过没有
+ * 名字**，而且这种退化是听得见的（读出来就是"第 1 项"），不会假装解决了。
+ */
+const PAIR_AXES: Record<string, readonly string[]> = {
+  size_mm: ['width', 'height'],
+  xlim: ['min', 'max'],
+  ylim: ['min', 'max'],
+}
+const RECT_AXES = ['x', 'y', 'width', 'height'] as const
+
+function axisAriaLabel(
+  field: { prop: string; type: string; unit?: string },
+  label: string,
+  i: number,
+): string {
+  const names = field.type === 'rect' ? RECT_AXES : PAIR_AXES[field.prop]
+  const name = names?.[i]
+  const axis = name ? el(`axis.${name}`) : el('axis.indexed', { n: i + 1 })
+  return field.unit ? `${label} ${axis} (${field.unit})` : `${label} ${axis}`
+}
+
 const RESET_HINT_PROPS = new Set(['vmin', 'vmax', 'size_mm'])
 const resetHint = (prop: string) =>
   el(`resetHint.${RESET_HINT_PROPS.has(prop) ? prop : 'default'}`)
@@ -551,7 +582,10 @@ function FieldBlock({
   const propRe = new RegExp(`(^|[^A-Za-z_])${field.prop}([^A-Za-z_0-9]|$)`)
   const warning = warnings.find((w) => propRe.test(w))
   return (
-    <div>
+    /* `data-prop` 是**定位服务的落点**（`lib/issueFocus.ts`）：问题面板要把
+       焦点落到出问题的那个字段上，而选择器只能用稳定的机器标识——
+       aria-label 是本地化文案，换个语言就选不中了（focusRescue 同一条理由）。 */
+    <div data-prop={field.prop} data-gid={element.gid}>
       <FieldRow panel={panel} element={element} field={field} />
       {warning && (
         <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
@@ -1447,6 +1481,7 @@ function FieldRow({
             {arr.map((v, i) => (
               <NumberField
                 key={i}
+                ariaLabel={axisAriaLabel(field, label, i)}
                 value={Number(v)}
                 step={step}
                 precision={field.type === 'rect' ? 3 : 2}

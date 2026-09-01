@@ -42,8 +42,8 @@
 | 08 | Readiness 前端与常驻左栏 | ✅ 完成（本次） |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ✅ 完成（本次，ADR 0028） |
 | 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
-| 11 | 统一检查引擎与问题面板 | ⬜ |
-| 12 | 导出管线与精简导出 UI | ⬜ |
+| 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
+| 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
 | 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
 | 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
 | 15 | 图例绑定与控件 | ⬜ |
@@ -62,7 +62,7 @@
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
-| 3 核心工作流与输出 | 09–12 | 🟡 09（双工作流 + 原图规格合同）完成；10–12 未开始 |
+| 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
@@ -84,9 +84,9 @@
 | R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | `app.py:4206` | P2 | 03 |
 | R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
 | R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
-| R-10 | **导出偏好只在 localStorage**：换机器 / 清缓存即丢，也不随项目走 | `lib/exportDefaults.ts` | P2 | 12 |
+| R-10 | ~~**导出偏好只在 localStorage**~~ **已处置（Session 12，重新定性）**：Prompt 12 §六明写「最近导出目录属于 UI preference，不进入项目 undo」——格式 / PPI / 报告开关同属这一档，**它们本来就该是本机偏好**（换机器丢掉一个 600 ppi 的选择不构成数据损失）。真正属于项目的那一项（用哪套规范）在 Session 10 就已经写进文档（`doc.profile` 带快照）。**这一行的原始定性是错的**，不是没做 | `lib/exportDefaults.ts` + ADR 0029 的 `doc.profile` | P2 | ✅ 12（重新定性） |
 | R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
-| R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | `lib/preflight.ts` | P2 | 11 |
+| R-12 | ✅ **已修（11）** **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位。`ValidationIssue.objectRef` 带 `documentId` / `canvasId`，定位会切画布 | `lib/preflight.ts` | P2 | ✅ 11 |
 | R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
 | R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
 | R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
@@ -316,6 +316,34 @@ desktop…」。
 > 的事毫无关系"。纪律：**反证与全量串行，全量开始之后一个字都不改**
 > （文档除外，套件不读 `docs/`）。
 
+### Session 11 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3370** passed / 34 skipped / 2 deselected / 0 failed，9 分 49 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— **147** files / **1805** tests passed（比 10 的 138/1659 +9 文件 / +146 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2808 / en-US 2898；新增 `errors:problems.*`（含 32 条规则短标题）、`workspace:rail.problems` / `history.fixIssue*`、`dialogs:export.openProblems` / `preflightFailed*`） |
+| `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0（288 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `2b28899feb865bf1`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `71b114bf1a448afc`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 44 条 | ✅ 全部被打红（第一轮 38/44，六条存活的成因与处置见 `TEST_MATRIX.md`） |
+| `npx playwright test e2e/a11y.spec.ts --project=chromium` | ✅ **8 passed**（新增「问题面板」一条，见下） |
+| `npx playwright test e2e/asset-library e2e/keyboard-golden-path --project=chromium` | ✅ **7 passed**（这三条 spec 断言导出对话框里的预检块，本轮重写过它） |
+
+> **后端 3370 与 Session 10 的 3271 之间的差额不是本轮的。** 本轮只加了 1 条
+> 后端用例（导出上下文跨语言同源）；其余来自 Session 10 之后合进 `main` 的
+> PR（基线是 `main@dd7c5b5`，不是 Session 10 收工那一刻）。
+
+> **a11y 那条真跑起来当场红了一次，而且红得对**：问题面板里「技术详情」的
+> `<summary>` 用了 `text-ink-faint`（2.54:1，axe serious）。`ink-faint` 按 UI
+> 纪律只给装饰与禁用态，而 summary 是个真控件、上面是要读的字。改成 `ink-3`
+> 之后 8/8 绿。**这正是 08/09 两轮只做到 `--list` 时漏掉的那一类**。
+
+---
+
 ---
 
 > 单跑某个前端用例文件时**必须自己带上**
@@ -323,23 +351,63 @@ desktop…」。
 > 脚本里）：没有它 Node 自带的 `localStorage` 会盖住 jsdom 那份且不可用，
 > 报错看起来像被测代码坏了。本轮又踩了一次。
 
+### Session 12 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3467** passed / 34 skipped / 2 deselected / 0 failed，约 11 分（比 11 的 3370 +97：70 条导出用例 + 27 条参数化的错误码） |
+| `cd web && pnpm test` | ✅ exit 0 —— **151** files / **1919** tests passed（比 11 的 147/1805 +4 文件 / +114 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2841 / en-US 2931；`dialogs:export.*` 删 21 组 / 加 27 组，`errors:backend.*` +27 条，`workspace:topbar.exportPackage` + `status.packaged*`） |
+| `cd web && pnpm lint` | ✅ 只有既有的 fast-refresh 提示，**无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0（293 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/gen_filename_vectors.py` | ✅ 向量与实现一致（无参 = 校对模式） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `f22a72331cc5617d`，第六轮评审后）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `e539f57cec7a516e`，第四轮评审后）+ 不进 git，网站仓库另行 sync |
+| 变异反证 23 条 | ✅ 全部被打红（第一轮 20/23，三条存活的成因与处置见 `TEST_MATRIX.md`） |
+| **评审回合 3（PR #214，`0031649`）** | ✅ 3 P1 + 3 P2 **全部成立、全部改**。处置见 `TEST_MATRIX.md`「评审回合 3」 |
+| **复审回合（PR #214，`0c92c5a`）** | ✅ 1 P1 + 5 P2 **全部成立、全部改**。处置见 `TEST_MATRIX.md`「复审回合」 |
+| **第三轮评审（PR #214，`8c1f7d4`）** | ✅ 1 P1 + 3 P2 **全部成立、全部改**，并修掉变异脚本自己把「锚点找不到」与「存活」混报的空转。处置见 `TEST_MATRIX.md`「第三轮评审」 |
+| **第四轮评审（PR #214，`07fc7c2`）** | ✅ 2 P1 + 2 P2 **全部成立、全部改**（其中一条 P1 是第三轮的修复制造出来的）。处置见 `TEST_MATRIX.md`「第四轮评审」 |
+| **第五轮评审（PR #214，`c8479335`）** | ✅ 1 P1 + 2 P2 **全部成立、全部改**（两条 P2 都在十行以内，比开 Issue 便宜）。处置见 `TEST_MATRIX.md`「第五轮评审」 |
+| **第六轮评审（PR #214，`13ec3b69`）** | ✅ **0 P1 + 4 P2**，全部成立、全部改（都在 20 行以内、都在本 PR 已动过的文件里，其中一条是本 PR 自己声明的不变式被违反）；变异反证扩到**后端 28 / 前端 27，全红**。处置见 `TEST_MATRIX.md`「第六轮评审」 |
+| **合并 main（`#215`）** | ✅ 唯一冲突是 `codex-plugin/mcp/widget/canvas.html`——**生成物，在合并态重建**（挑一边留下都会得到一份与源码不对应的产物）。#215 同时动了 `app.py` / `pymupdf_backend.py` / `overrides.py`，与本 PR 同模块不同区域，**文本干净不等于语义干净**，所以全量套件在合并态重跑了一遍 |
+| **第七轮评审（PR #214，`4f5f1855`）** | ✅ **0 P1 + 3 P2**，全部成立、全部改。第一条虽挂 P2，后果是「新导出永远停在进行中」——**按后果处置不按标签处置**。变异反证 5 条：第一轮 4 红 1 存活，存活的那条是「判据只钉了一条边」（补了 `.then` 没补 `.catch`），补齐后 5/5 全红。处置见 `TEST_MATRIX.md`「第七轮评审」 |
+| `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
+
+> **导出的 golden 基线在动手之前就取了**（`/api/export` 三个用例的 PDF 页面
+> 尺寸 / 可提取文字 / 图片数 / 绘制数 / xobject 数 / 渲染像素 sha1 + PNG 尺寸
+> 与 sha1）。整条管线重写之后**逐字节相同**——旧契约那条路一个像素没变。
+
 ---
 
-## 遗留（Session 08 之后仍开着的）
+## 遗留（Session 12 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
+| — | **不渲染的面板会成批报「无法核验」**：渲染只对激活画布上「编辑中 / 有 override / 脚本领先磁盘」的面板发起（`renderTargets`），所以多画布项目里 `panel-text-not-verifiable` 数量可观。它是 `not_verifiable` 这一档、有自己的分组，**而且是真话**——但数量上是噪音。改法要么按需渲染、要么把这一档折叠成每画布一条 | 未定 |
+| — | **批量修复不跨画布**（撤销栈按画布换入换出，跨画布的"一个批事务"在这套模型里不存在）。界面只在当前画布上给「全部修复」，别的画布上的一条一条修 | 已处置（说明写在按钮文案里） |
+| — | **问题面板没有虚拟滚动**：有多少条渲染多少行。本轮用例里最多几十条，真实上限没量过（与接入中心同一条遗留） | 待量 |
+| — | **`user_choice` 目前只有页宽一条规则**。这一档不是为它而设——它是 `applyIssueFix(id, choice?)` 这个签名成立的前提 | 已处置 |
+| — | **MCP 内嵌画布保留自己的等级图标表**：它消费的是 MCP 聚合载荷、且是另一个尺寸敏感的 bundle。图标一致的看护覆盖应用内两处 | 已处置 |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07 两次、08 一次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交。**三次绿仍不构成"它被修好了"**——那条线一个字节没改） | 待查 |
+| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07/08 三次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交）。**Session 12 新证据：它对机器负载敏感。** 本轨道第 12 次全量里红了一次——而那一遍我把 pytest 全量与 Playwright e2e **同时**开着；单跑 0.7–2.9 秒，同一棵树串行全量 8 次全绿。它等的是「SIGINT 之后 `tavotto run` 在 90 秒内退出」，重载下这个预算不够。**但这解释不了 Session 06 那次**（那一遍是串行的），所以问题没关：判据把"进程反应有多快"当成了产品性质，而它其实是机器性质 | 待查（多一条证据） |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
 | — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六）。**08 没做**：本阶段的左栏改造只到「常驻外壳 + 项目状态入口」，历史入口的位置牵涉顶栏与文档菜单的分工 | 未定 |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
 | — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
 | — | **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行。**本轮没有实测过大项目**（用例里最多 6 行），真实上限不知道 | 待量 |
 | — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
-| — | 就绪度前端的 axe 覆盖靠 **e2e**（`e2e/a11y.spec.ts` 新增两条：接入状态对话框 + 素材卡角标的 nested-interactive）。**本轮没跑过 Playwright**——它要真实后端与浏览器，本机沙箱里起不来；单测只结构性断言了 option 内零可 Tab 控件 | 23 前必须真跑一次 |
+| — | ~~就绪度前端的 axe 覆盖靠 e2e，本轮没跑过 Playwright~~ **已跑**：第七轮合并 main 之后在本机跑了**完整** 115 条（114 passed / 1 skipped）。「本机沙箱里起不来」是错的判断（见 R-19）；worktree 里要带 `TAVOTTO_PYTHON=<主工作区>/.venv/bin/python`，且**必须先 `python scripts/build_frontend.py`**——包内 `src/tavotto/web/` 优先于 `web/dist`，不重建的话测的是上一次的界面，而且一路绿 | ✅ 已闭合 |
 | — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
+| — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
+| — | **「按另一个像素网格导出位图」这个能力不存在**：评审回合 3 把那条没有调用点的 `native_grid=False` 分支删了（它用的密度常量还是错的）。要加这个能力时，密度得从 `engine/originalspec` 来，像素网格由调用方算好传进来 | 未定 |
+| — | **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画：`_resolve_panel_source()` 的 `safe_resolve()` 排在查注册表之前。界面已经如实说出来（不给必然失败的按钮），但**能力本身是缺的**。改它要动画布导出共用的那条路 | 未定（评审回合 3 记录） |
+| — | **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败） | 择机 |
+| — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
+| — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
 | — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
@@ -347,18 +415,23 @@ desktop…」。
 
 ## 下一阶段
 
-**Prompt 11（统一检查引擎与问题面板）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。
+**Prompt 13（统一属性系统、文字控件、标注字体）**，入口见
+`SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-10 留给后面的三个可复用入口：
+12 留给 13 的可复用入口：
 
-* `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` —— 「这个项目
-  按哪套规范检查」的**唯一判据**（有快照按快照，没有才按全局现值）。
-  11 的检查引擎与 12 的导出面板直接用，**不要在那两处再挑一遍**；
-* `store/profileStore` 的 `specs` / `catalog()` —— 清单的唯一持有者
-  （后端不在时退回内置，组件里不许有 fetch）；
-* `lib/profileText.ts` —— profile 在界面上叫什么的唯一实现
-  （内置跟界面语言走，**默认视图不出现 id 与版本号**）。
+* `lib/exportRequest.buildExportRequest(input)` —— 导出载荷的**唯一构造**。
+  13–16 改属性之后**不需要动它**：属性改的是 `doc.objects` 与
+  `panel.overrides`，载荷在导出那一刻从那里现取；
+* `lib/exportPayload.toExportObjects()` —— 画布对象 → 载荷的唯一投影
+  （顺序即 z 序、隐藏对象不发）。**新属性加在这一处**；
+* `lib/exportName.checkFilename()` —— 文件名合不合法（八条闭集原因，与
+  `engine/exportreq.py` 严格同源，改一边必须重生成向量）；
+* `store/exportStore.ts` —— 起 / 取消 / 跟进度。作业活在 store 不活在对话框。
+
+以及 09–11 留下的四个（原样有效）：`lib/originalSpec.getOriginalOutputSpec()`、
+`lib/specBinding.resolveDocumentSpec()`、
+`store/validationStore.getValidationSummary()`、`lib/issueFocus.focusIssue()`。
 
 ---
 

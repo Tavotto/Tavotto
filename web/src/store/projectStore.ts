@@ -18,6 +18,7 @@ import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
@@ -88,6 +89,14 @@ async function resetForNewProject() {
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
   useProjectReadinessStore.getState().clear()
+  // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
+  // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
+  // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是
+  // 404 就是下到同名的另一张图）。轮询也会一直问一个属于旧项目的作业。
+  //
+  // **只清前端状态，不取消后端那个作业**：用户切个项目不是在说"我不要那次
+  // 导出了"，文件该照常写完（与 native 会话同一条纪律，ADR 0021 §14）。
+  resetExportState()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },

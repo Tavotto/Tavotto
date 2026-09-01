@@ -28,6 +28,31 @@ import type { Manifest, ManifestElement } from './api'
  * 会让「缩一缩就放行」变成常态，而那正是投稿被拒的头号原因。
  */
 
+/**
+ * 一次**具体命中**：某个对象 / 图内元素上的这一条规则，带它自己那份量化细节。
+ *
+ * 聚合项（`PreflightIssue`）回答「这份文档有没有过」，命中回答「是谁没过」。
+ * 问题面板要的是后者：一行一个真实对象、一句它自己的当前值，点一下就能落到
+ * 那个字段上。聚合项做不到——它的 `detail` 属于**最糟的那一次**，拿它去描述
+ * 另外两个元素等于说了三遍同一个数字，其中两遍是假的。
+ *
+ * **不进跨语言合同。** `tests/golden/preflight_vectors.json` 比的是聚合投影
+ * （id / severity / message / object_ids / gids / detail），Python 侧那份求值器
+ * 服务的是 MCP 的聚合清单，不需要这一层。看护用例盯着两者的一致性：命中的
+ * objectId / gid 并起来必须与聚合项逐字相等。
+ */
+export interface PreflightOccurrence {
+  objectId: string | null
+  /** 图内元素 gid；面板级 / 页面级命中为 null */
+  gid: string | null
+  /** 命中的那个属性（`fontsize` / `linewidth` / `sizePt`…）；说不出来时为 null */
+  prop: string | null
+  /** 这一次命中自己的文案（聚合项只保留最糟那次的） */
+  message: UiMessage
+  /** 这一次命中自己的量化细节 */
+  detail: Record<string, unknown>
+}
+
 export interface PreflightIssue {
   id: string
   severity: Severity
@@ -42,6 +67,8 @@ export interface PreflightIssue {
   gids: string[]
   /** 量化细节（等效字号、dpi、比例…）；写进 proof report */
   detail: Record<string, unknown>
+  /** 逐条命中（问题面板用）。聚合投影不含它——见 `PreflightOccurrence` */
+  occurrences: PreflightOccurrence[]
 }
 
 /** 显示用文本（组件里请配合 useTranslation 订阅语言变化）。 */
@@ -152,6 +179,8 @@ class Sink {
   private worst = new Map<string, number>()
   private order: string[] = []
   private profile: PublicationProfile
+  /** 每条规则下按「对象 + 元素」去重的命中排名（与聚合项同一把尺子） */
+  private hitWorst = new Map<string, number>()
 
   constructor(profile: PublicationProfile) {
     this.profile = profile
@@ -165,18 +194,30 @@ class Sink {
       gids?: string[]
       detail?: Record<string, unknown>
       worse?: number
+      /** 命中的属性名（`fontsize` / `linewidth`…）——问题面板据此定位字段 */
+      prop?: string
     } = {},
   ): void {
     let item = this.items.get(id)
     let fresh = false
     if (!item) {
-      item = { id, severity: severityOf(this.profile, id), message, objectIds: [], gids: [], detail: {} }
+      item = {
+        id,
+        severity: severityOf(this.profile, id),
+        message,
+        objectIds: [],
+        gids: [],
+        detail: {},
+        occurrences: [],
+      }
       this.items.set(id, item)
       this.order.push(id)
       fresh = true
     }
     for (const oid of opts.objectIds ?? []) if (!item.objectIds.includes(oid)) item.objectIds.push(oid)
     for (const gid of opts.gids ?? []) if (!item.gids.includes(gid)) item.gids.push(gid)
+
+    this.record(item, message, opts)
 
     const prev = this.worst.get(id)
     const ranked = opts.worse != null
@@ -185,6 +226,47 @@ class Sink {
     if (!wins) return
     item.message = message
     if (opts.detail) item.detail = { ...item.detail, ...opts.detail }
+  }
+
+  /**
+   * 逐条命中入账。**同一个「规则 + 对象 + 元素」只留一条**——去重的尺子与
+   * 聚合项完全一样（带 `worse` 的取最糟那次，不带的第一次说了算），否则同一
+   * 个元素的三个字号字段会在面板上排成三行说同一件事。
+   *
+   * 一次调用可能带来多个命中：`out-of-page` 一次交上来一串对象 id，
+   * 字号那类一次一个 gid。展开规则固定——有 gid 就按 gid 展开，
+   * 否则按对象 id 展开，两者都没有就是页面级的一条。
+   */
+  private record(
+    item: PreflightIssue,
+    message: UiMessage,
+    opts: { objectIds?: string[]; gids?: string[]; detail?: Record<string, unknown>; worse?: number; prop?: string },
+  ): void {
+    const detail = opts.detail ?? {}
+    const prop = opts.prop ?? null
+    const objectId = opts.objectIds?.[0] ?? null
+    const pairs: [string | null, string | null][] = (opts.gids ?? []).length
+      ? opts.gids!.map((gid) => [objectId, gid])
+      : (opts.objectIds ?? []).length
+        ? opts.objectIds!.map((oid) => [oid, null])
+        : [[null, null]]
+    for (const [oid, gid] of pairs) {
+      const key = `${item.id}\u0000${oid ?? ''}\u0000${gid ?? ''}\u0000${prop ?? ''}`
+      const idx = item.occurrences.findIndex(
+        (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
+      )
+      if (idx < 0) {
+        if (opts.worse != null) this.hitWorst.set(key, opts.worse)
+        item.occurrences.push({ objectId: oid, gid, prop, message, detail })
+        continue
+      }
+      // 已经有一条：只有「带排名且更糟」才顶掉它（与聚合项同一条规则）
+      if (opts.worse == null) continue
+      const prev = this.hitWorst.get(key)
+      if (prev != null && opts.worse <= prev) continue
+      this.hitWorst.set(key, opts.worse)
+      item.occurrences[idx] = { objectId: oid, gid, prop, message, detail }
+    }
   }
 
   result(): PreflightIssue[] {
@@ -212,6 +294,7 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
     const want = [single, double].filter((v) => v != null).map(g).join('/')
     sink.add('page-width', pf('pageWidth', { actual: g(w), want }), {
       detail: { page_w_mm: r2(w), single_mm: single, double_mm: double, column: null },
+      prop: 'page.w',
     })
   }
 
@@ -297,14 +380,16 @@ function checkPanelRaster(
   )
 }
 
-function* fontElements(manifest: Manifest): Generator<[ManifestElement, number]> {
+function* fontElements(
+  manifest: Manifest,
+): Generator<[ManifestElement, number, string]> {
   for (const el of manifest.elements ?? []) {
     const size = num(field(el, 'fontsize'))
-    if (size != null) yield [el, size]
+    if (size != null) yield [el, size, 'fontsize']
     const tick = num(field(el, 'tick_fontsize'))
-    if (tick != null) yield [el, tick]
+    if (tick != null) yield [el, tick, 'tick_fontsize']
     const title = num(field(el, 'title_fontsize'))
-    if (title != null) yield [el, title]
+    if (title != null) yield [el, title, 'title_fontsize']
   }
 }
 
@@ -327,7 +412,7 @@ function checkPanelFonts(
   const cjkOk = new Set((cjk.accepted ?? []).map((s) => s.toLowerCase()))
   const weights = profile.text_weight_policy ?? {}
 
-  for (const [el, size] of fontElements(manifest)) {
+  for (const [el, size, sizeProp] of fontElements(manifest)) {
     const gid = el.gid
     if (field(el, 'visible') === false) continue
     const eff = size * scale
@@ -335,20 +420,20 @@ function checkPanelFonts(
       sink.add(
         'font-below-absolute-floor',
         pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor }, worse: -eff },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor }, worse: -eff, prop: sizeProp },
       )
     } else if (eff < strict) {
       sink.add(
         'font-too-small',
         pf('fontTooSmall', { effective: eff.toFixed(2), min: g(strict) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), min_pt: strict }, worse: -eff },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), min_pt: strict }, worse: -eff, prop: sizeProp },
       )
     }
     if (eff > biggest) {
       sink.add(
         'font-too-large',
         pf('fontTooLarge', { effective: eff.toFixed(2), max: g(biggest) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest }, worse: eff },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest }, worse: eff, prop: sizeProp },
       )
     }
   }
@@ -366,14 +451,14 @@ function checkPanelFonts(
           flagged.has(low)
             ? pf('fontFamilySubstitutedKnown', { family, want: fam.latin })
             : pf('fontFamilySubstituted', { family, want: fam.latin }),
-          { objectIds: [pid], gids: [gid], detail: { family } },
+          { objectIds: [pid], gids: [gid], detail: { family }, prop: 'fontfamily' },
         )
       }
       if (hasCjk(text) && cjk.required && !cjkOk.has(low)) {
         sink.add(
           'cjk-fallback-missing',
           pf('cjkFallbackMissing', { family }),
-          { objectIds: [pid], gids: [gid], detail: { family } },
+          { objectIds: [pid], gids: [gid], detail: { family }, prop: 'fontfamily' },
         )
       }
     }
@@ -386,6 +471,7 @@ function checkPanelFonts(
           objectIds: [pid],
           gids: [gid],
           detail: { role, want, got },
+          prop: 'weight',
         })
       }
     }
@@ -426,7 +512,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
 
     if (role === 'legend') {
       if (legend.frame === false && field(el, 'frameon') === true) {
-        sink.add('legend-frame', pf('legendFrame'), { objectIds: [pid], gids: [gid] })
+        sink.add('legend-frame', pf('legendFrame'), { objectIds: [pid], gids: [gid], prop: 'frameon' })
       }
       const size = num(field(el, 'fontsize'))
       const lo = num(legend.min_font_size_pt)
@@ -439,7 +525,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
             pf('legendFontSize', { effective: eff.toFixed(2), min: g(lo), max: g(hi) }),
             // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
-              worse: Math.max(lo - eff, eff - hi) },
+              worse: Math.max(lo - eff, eff - hi), prop: 'fontsize' },
           )
         }
       }
@@ -452,6 +538,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
           objectIds: [pid],
           gids: [gid],
           detail: { direction: got, want: wantDir },
+          prop: 'direction',
         })
       }
     }
@@ -483,7 +570,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
             'line-width-off-preset',
             pf('frameWidthOffPreset', { effective: eff.toFixed(2), presets: frameLw.map(g).join('/') }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
-              worse: Math.min(...frameLw.map((v) => Math.abs(eff - v))) },
+              worse: Math.min(...frameLw.map((v) => Math.abs(eff - v))), prop: 'spine_linewidth' },
           )
         }
       }
@@ -495,7 +582,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         sink.add(
           'axis-label-format',
           pf('axisLabelFormat', { label: text.trim().slice(0, 30), want: axis.label_format }),
-          { objectIds: [pid], gids: [gid], detail: { text: text.trim().slice(0, 60) } },
+          { objectIds: [pid], gids: [gid], detail: { text: text.trim().slice(0, 60) }, prop: 'text' },
         )
       }
     }
@@ -511,7 +598,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
             'line-width-off-preset',
             pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
-              worse: Math.min(...presets.map((v) => Math.abs(eff - v))) },
+              worse: Math.min(...presets.map((v) => Math.abs(eff - v))), prop: 'linewidth' },
           )
         }
       }
@@ -529,13 +616,13 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
           sink.add(
             'discouraged-colormap',
             pf('discouragedColormap', { cmap, recommended: palette.recommended }),
-            { objectIds: [pid], gids: [gid], detail: { cmap } },
+            { objectIds: [pid], gids: [gid], detail: { cmap }, prop: 'cmap' },
           )
         } else if (goodCmaps.size && !goodCmaps.has(low)) {
           sink.add(
             'palette-semantic',
             pf('paletteSemantic', { cmap, url: palette.url }),
-            { objectIds: [pid], gids: [gid], detail: { cmap } },
+            { objectIds: [pid], gids: [gid], detail: { cmap }, prop: 'cmap' },
           )
         }
       }
@@ -651,12 +738,14 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },
         worse: -size,
+        prop: 'sizePt',
       })
     } else if (size < strict) {
       sink.add('font-too-small', pf('textTooSmall', { size: g(size), min: g(strict) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), min_pt: strict },
         worse: -size,
+        prop: 'sizePt',
       })
     }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
@@ -837,8 +926,21 @@ export function buildProofPayload(
   issues: PreflightIssue[],
   settings: { dpi: number; formats: string[]; stem: string },
   profile: PublicationProfile,
-  /** 有 error 却仍然导出时，用户按下的那次显式确认 */
-  forced?: { forced: boolean; acknowledged: string[] },
+  /**
+   * 用户按下的那次显式确认。
+   *
+   * `checkFailed` / `acknowledgedCheckFailed` 是**独立的一档**：检查根本没跑成
+   * 而用户确认了继续，与"干干净净跑过一遍"在报告里必须分得出来——只看
+   * `forced`（有 error 才为真）与 `acknowledged`（要有规则码才非空）的话，
+   * 那两种情形长得一模一样，而确认框上写着这次确认会被记进报告
+   * （PR #214 第三轮评审）。
+   */
+  forced?: {
+    forced: boolean
+    acknowledged: string[]
+    checkFailed?: boolean
+    acknowledgedCheckFailed?: boolean
+  },
 ) {
   const sum = summarize(issues)
   return {
@@ -868,6 +970,9 @@ export function buildProofPayload(
     })),
     forced: forced?.forced ?? false,
     acknowledged: forced?.acknowledged ?? [],
+    // 「查不了」与「没问题」是两个答案，留档里同样不许压扁（T-54）
+    check_failed: forced?.checkFailed ?? false,
+    acknowledged_check_failed: forced?.acknowledgedCheckFailed ?? false,
     objects: doc.objects
       .filter((o) => !o.hidden)
       .map((o) =>

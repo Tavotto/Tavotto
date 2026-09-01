@@ -107,6 +107,17 @@ const BUDGETS: Budget[] = [
   ['workspace', 'fastEdit.sizeAssumed', 16, '原图尺寸旁的来源标记'],
   ['workspace', 'fastEdit.sizeUnknown', 16, '原图尺寸旁的来源标记'],
   ['workspace', 'rail.readiness', 20, '左侧轨道按钮'],
+  ['workspace', 'rail.problems', 16, '左侧轨道按钮'],
+  // 问题面板（Prompt 11）：等级筛选是并排的四个小 chip，抽屉最窄 280px；
+  // 行内的两颗按钮跟在标题右边，长一点就把主语挤没了——硬边界
+  ['errors', 'problems.severity.error', 12, '等级 chip / 行内 badge'],
+  ['errors', 'problems.severity.warn', 12, '等级 chip / 行内 badge'],
+  ['errors', 'problems.severity.notVerifiable', 16, '等级 chip / 行内 badge'],
+  ['errors', 'problems.severity.suggestion', 12, '等级 chip / 行内 badge'],
+  ['errors', 'problems.fix', 8, '问题行上的修复按钮'],
+  ['errors', 'problems.fixChoose', 10, '问题行上的修复按钮（要先选）'],
+  ['errors', 'problems.retry', 14, '检查失败后的重试'],
+  ['errors', 'problems.clearFilter', 12, '筛选为空时的出口'],
 ]
 
 describe('紧位置的英文文案有字数上限', () => {

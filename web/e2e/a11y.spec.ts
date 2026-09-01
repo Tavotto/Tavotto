@@ -365,6 +365,40 @@ test('素材卡的状态角标不引入嵌套交互（axe nested-interactive）'
   ).toBeVisible()
 })
 
+test('问题面板：axe 无违规、行内的「修复」不是「定位」的子节点', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  // 先把一张图放上画布——空画布上问题清单只有页面级那几条，行内动作量不到
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
+    .toBeVisible({ timeout: 60_000 })
+
+  // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）
+  const rail = page.locator('[data-rail="problems"]')
+  await rail.focus()
+  await page.keyboard.press('Enter')
+  const drawer = page.getByRole('complementary', { name: /问题|Problems/ })
+  await expect(drawer).toBeVisible()
+
+  // **嵌套交互是这一屏最容易犯的错**：整行可点 + 行尾一颗「修复」，写成
+  // 按钮套按钮的话辅助技术里它是一个读不出来的控件
+  const nested = await new AxeBuilder({ page })
+    .withRules(['nested-interactive', 'aria-required-children', 'aria-required-parent'])
+    .analyze()
+  expect(nested.violations.map((v) => ({
+    id: v.id,
+    nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+  }))).toEqual([])
+
+  // 覆盖层下 axe 算不出背景色的节点由自算尺子逐个核对（与工作台那条同一条纪律）
+  await expectAccessible(page, {
+    allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+})
+
 test('图标按钮都有可访问名（axe button-name / 顶栏抽查）', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)

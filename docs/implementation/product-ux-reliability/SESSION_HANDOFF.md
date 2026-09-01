@@ -5,7 +5,689 @@
 
 ---
 
-## 最近一次：Session 10（2026-08-30）
+## 最近一次：Session 12（2026-08-31）
+
+### 目标
+
+把导出**底层与界面**同时重做：原图与画布收敛成**同一个 `ExportRequest` 的
+两个 scope**，作业获得原子落盘 / 取消 / 部分失败可见 / 明确的覆盖策略，
+导出面板按用户做决定的顺序重排并删掉六类噪音。
+
+本阶段**不做**属性系统改造（Prompt 13）、**不做**科学文本与字体回退
+（Prompt 14）、**不动** MCP 那条导出入口（另一个 bundle、另一份载荷）。
+
+### 开始前实测到的四件事（不是假设）
+
+1. **「按原图导出」这条路根本不存在。** ADR 0028 定义了 `OriginalOutputSpec`，
+   Prompt 09 让快速编辑跑起来了，但导出那一端只有画布合成——用户在快速编辑里
+   改完一张图点导出，拿到的是**那张图在画布上的落位**。
+2. **「导出什么」有四份构造**：`ExportDialog.tsx` / `app.api_export()` /
+   codex-plugin bridge / `/api/package`，默认值并不一样。
+3. **导出目录里的文件全都带 `_MMDD_HHMMSS`**：撞名问题解决了，代价是用户
+   永远拿不到自己起的那个名字。
+4. **合成是直写目标路径的**：`canvas.save_pdf(out_dir / name)` 没有临时文件，
+   中途失败留下半个 PDF；`proof` 也是 `write_text` 直写。
+
+### 实际完成
+
+**1. `engine/exportreq.py` —— 「这次导出要什么」只有这一份定义。**
+
+```text
+scope ∈ {original, canvas}   formats   filename   ppi: int|None
+background   overwrite ∈ {ask, replace, rename}   validation{policy, acknowledged}
+include_style_check_report   document_id / document_revision
+canvas{page_w_mm, page_h_mm, objects[]} | original{figure_id, overrides[], w/h/px, ignored[]}
+```
+
+`OriginalSource` 上**没有** x/y/w/h、页面尺寸、crop（T-59）。缺省值只有这一处；
+旧契约（`stem` / `items[]`+`texts[]`）由 `normalize()` 抬成同一个作业，
+`legacy_naming=True` 让它继续拿到带时间戳的名字。
+
+**2. `engine/exportjob.py` —— 一次导出的生命周期只有这一份实现。**
+`prepare / validate / run / cancel / progress`；临时目录 → 全部产出完成 →
+`atomicio.publish_file()` 逐个原子 replace；`partial` 是独立一档；
+取消清临时目录；`sweep_stale_tmp_dirs()` 扫掉上一次进程被 kill 留下的。
+
+**3. `atomicio.publish_file(tmp, dest)`** —— 「字节从来没经过我们的手」那条
+路上的同一套纪律（fsync 文件 → replace → fsync 目录 → 失败清 tmp）。
+
+**4. `pdfbackend` 新增两个原图产出 + 透明背景。**
+`original_pdf()`（矢量整页 `insert_pdf` 搬运，不重画）/ `original_png()`
+（位图**保源像素网格**）/ `compose(w, h, transparent)`。
+
+**5. 五个端点、一个服务。** `POST /api/export`（同步，旧契约照旧）、
+`/api/export/start`（后台作业 + SSE `export.progress`）、`/state`、`/cancel`、
+`/validate`。后台线程经 `app.bound_project(ctx)` 钉在起它的那个项目上（T-63）。
+
+**6. 前端三个新模块。** `lib/exportName.ts`（文件名规则，**严格同源对**）、
+`lib/exportRequest.ts`（载荷构造 + scope 默认值 + 原图可用性 + 快照指纹）、
+`store/exportStore.ts`（作业编排：SSE + 轮询、晚到快照挡掉、失败保留设置）。
+
+**7. 导出面板整屏重做。** 文件名 → 输出范围 → 格式 → 分辨率（仅位图）→
+规范 → 检查 → 高级选项。删除清单逐项见下；「打包项目」**搬到 TopBar 文档菜单**
+与「导入项目包」并排（移走不等于砍掉）。
+
+**8. 「留档」→「样式检查报告」**，进高级选项，格式升 v3（+ 版本 / 时间 /
+产物事实 / scope / ignored）。文件名 `<基名>_style-check.json`；旧路径仍写
+`<stem>_<时间戳>_proof.json`，`kind` 不变。
+
+### 关键 API（Prompt 13 直接用）
+
+```python
+# src/tavotto/engine/exportreq.py
+normalize(spec) -> ExportRequest        # 缺省值唯一出处
+check_filename(name) -> str | None      # 八条闭集原因；顺序是判据的一部分
+strip_output_extension / output_name / dedupe_name
+SCOPES / FORMATS / OVERWRITE_POLICIES / BACKGROUNDS / VALIDATION_POLICIES
+PPI_MIN / PPI_MAX / PPI_DEFAULT / FILENAME_MAX / ERROR_CODES
+
+# src/tavotto/engine/exportjob.py
+prepare(spec, export_dir) -> ExportJob   validate(job) -> dict
+run(job, produce, *, publish=None, report=None) -> dict    run_async(...)
+cancel(job_id) / progress(job_id) / sweep_stale_tmp_dirs(dir) / ERROR_CODES
+Produced / Output / Cancelled / STATUS_*
+
+# src/tavotto/app.py
+bound_project(ctx)                       # 后台线程钉项目（**必须**）
+_export_produce(job, tmp_dir)            # canvas / original 的分歧只在这里
+```
+
+```ts
+// web/src/lib/exportName.ts   —— 与 exportreq.py 严格同源
+checkFilename / stripOutputExtension / outputName / outputNames / dedupeCheck / FILENAME_MAX
+
+// web/src/lib/exportRequest.ts  —— 载荷构造**唯一一处**
+buildExportRequest(input): { request, names, revision }
+defaultScope(mode) / originalAvailability(figureId) / filenameProblem(raw, formats)
+snapshotRevision(request) / hasRaster(formats) / PPI_MIN / PPI_MAX / PPI_DEFAULT
+
+// web/src/store/exportStore.ts
+prepareExport(input)          // 不发网络，输入框每敲一个字都能调
+validateExportRequest(input)  // 重名 / 目录写不写得了
+runExport(input) / cancelCurrentExport() / applyExportJob(job) / resetExportState()
+liveRevision(input)           // 用**此刻的文档**重算指纹
+useExportStore                // job / running / startError / lastInput / editedDuringExport
+```
+
+### 迁移
+
+**没有磁盘格式改动**，除了两处**新增**：
+* 样式检查报告 v3（新路径的新文件名；旧路径的 `_proof.json` 一个字节没动，
+  `kind` 仍是 `tavotto-proof`）；
+* 新路径的导出文件名不再带时间戳（旧路径带）。
+
+`tests/golden/filename_vectors.json` 是新增的跨语言向量；生成器
+`scripts/gen_filename_vectors.py`（`--write` 重生成，无参校对）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/exportreq.py          ExportRequest / 文件名规则 / 覆盖策略
+新增  src/tavotto/engine/exportjob.py          作业生命周期 / 原子发布 / 取消 / 部分失败
+新增  scripts/gen_filename_vectors.py          跨语言向量的生成与校对
+新增  tests/golden/filename_vectors.json       37 check + 10 strip + 2 name + 5 dedupe
+新增  tests/test_export_request.py             （22 条）
+新增  tests/test_export_pipeline.py            （29 条）
+新增  web/src/lib/exportName.ts                文件名规则（TS 侧同源）
+新增  web/src/lib/exportName.golden.test.ts    （62 条）
+新增  web/src/lib/exportRequest.ts             载荷构造唯一一处
+新增  web/src/lib/exportRequest.test.ts        （10 条）
+新增  web/src/store/exportStore.ts             作业编排（SSE + 轮询）
+新增  web/src/store/exportStore.test.ts        （7 条）
+新增  docs/adr/0031-unified-export-pipeline.md
+改动  src/tavotto/engine/atomicio.py           +publish_file()
+改动  src/tavotto/pdfbackend/pymupdf_backend.py +original_pdf/original_png/透明背景
+改动  src/tavotto/pdfbackend/__init__.py       边界契约 +2
+改动  src/tavotto/app.py                       导出端点整段重写 + bound_project()
+改动  web/src/lib/api.ts                       ExportRequest/ExportJob/ExportOutput +4 端点
+                                               +'export.progress' 事件
+改动  web/src/hooks/useServerEvents.ts         +export.progress → applyExportJob
+改动  web/src/components/ExportDialog.tsx      **整屏重做**（956 → 970 行）。界面项少了
+                                               六类，行数没少是因为结果区 / 进度 / 冲突条 /
+                                               范围说明各拆成了具名子组件
+改动  web/src/components/TopBar.tsx            +「导出项目包」（从导出面板搬来）
+改动  web/src/components/ExportDialog.test.tsx 重写（17 条）
+改动  web/src/i18n/locales/*/dialogs.json      export.* 删 21 组 / 加 27 组
+改动  web/src/i18n/locales/*/errors.json       +27 条后端 code 文案
+改动  web/src/i18n/locales/*/workspace.json    +topbar.exportPackage / status.packaged*
+改动  web/e2e/asset-library.spec.ts            预检摘要的措辞变了
+改动  web/e2e/keyboard-golden-path.spec.ts     **修掉一处空门禁**（见下）
+改动  tests/test_error_codes.py                扫描面 +2 模块 +3 正则 + ERROR_CODES 注册表
+改动  tests/test_telemetry_invariants.py       埋点挪进 _export_telemetry，门禁跟着改扫描面
+改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
+改动  docs/implementation/product-ux-reliability/*
+重建  codex-plugin/mcp/widget/canvas.html      指纹 f22a72331cc5617d（第六轮评审后）
+重建  web/dist-playground/                     指纹 e539f57cec7a516e（不进 git）
+```
+
+### 界面上删掉的（§五 逐项）
+
+预设整行 / 重复的期刊宽 / profile 的 id 与版本号 / 页面·栏位·字号·DPI·矢量·
+位图的大方格 / 「合成走 PyMuPDF」「Codex 插件的 tavotto_export」那句说明 /
+行内的内部对象标签 / 三点菜单里的「打包项目」/「留档」这个标签 /
+`_时间戳` 后缀 / 导出摘要那一行（页面·N 面板·N 文字·N 标注）/
+弹窗里可展开的第二套问题清单。
+
+### 这一轮踩到的坑
+
+**1. 变异反证抓出三条空判据，三种成因。**
+① 「透明背景」量的是 `pix.alpha == 1`（有没有 alpha 通道），而变异改的是
+"底下有没有铺白" —— **主语对了，维度错了**；② 「后台线程不绑定项目」在只开
+一个项目的用例里量不出来 —— **判据看不见那个维度**；③ 「原图尺寸用 spec
+还是用落位」在夹具里两个数字相等（都是 80×60）—— **夹具让判据恒真**。
+三条都补了判据，第二轮 23/23 全红。
+
+**2. `editedDuringExport` 第一版是恒等成立的。** 它拿 `lastInput.doc` 重算
+指纹再跟自己比 —— 那份是导出开始时冻住的引用，**比出来永远相等**，而空的
+diff 与"没变化"长得一模一样。改成现取 `useDocumentStore.getState().doc`。
+
+**3. 一处 e2e 空门禁是新界面制造的。** `keyboard-golden-path` 用
+`dialog.getByText(/\.pdf/)` 判"导出完成"，而新界面在文件名下方摆了一行
+**文件名预览**（`Fig 1.pdf`）——那条判据在按导出**之前**就成立。改成断言
+结果区的「已保存到」+ 一个真正指向 `/exports/` 的链接。
+
+**4. 错误码门禁的前提变了。** 它靠正则扫源码找 `"code": "..."`，而
+`exportreq._one_of()` 收的 code 是**变量**、`exportjob` 是 `job.error_code =`
+的赋值——两个模块整体对它隐形。处置是**升级枚举面**（两个模块各导出一个
+`ERROR_CODES` 元组，门禁直接读它）而不是给新代码开白名单。
+
+**5. `str.strip()` 与 `String.trim()` 认的空白字符集不一样。** U+FEFF 只有 JS
+认，`\x1c`–`\x1f` 只有 Python 认。文件名的首尾空白判定要是各用各的内建函数，
+两侧对 `"﻿Fig"` 会给出不同答案。写死一份共用集合，向量里专门留了几条用例。
+
+**6. `dot_only` 排在 `trailing_dot` 后面就永远够不着。** `.` 与 `..` 都以点
+结尾，第一版里那条规则是死的。变异反证顺手抓到（把它删掉不红）。
+
+### 评审回合 3（PR #214）：六条全改
+
+Codex 报了 3 P1 + 3 P2，**全部成立**。逐条处置见 `TEST_MATRIX.md`；这里只记
+三件会影响后面阶段的：
+
+**1. `pdfbackend` 里不许有密度常量。** 第一版写死 96 dpi 把位图装进 PDF，
+而 `engine/originalspec.ASSUMED_DPI` 是 PNG 600 / 其余 300 —— 更糟的是那行
+上面挂着一句注释声称两者"是同一个假设"。**注释是断言**（T-66）。现在
+`original_pdf(src, out, page_pt)` 收页面尺寸，密度只从唯一权威来。
+
+**2. 「能不能做」的判据要去问真正会执行的那条路的前提**（T-65）。用
+`spec.stale` 判原图能不能导是错的——它答的是"这份规格是不是上一次已知的"。
+真正的前提在 `_resolve_panel_source()` 的第一步 `safe_resolve()`。
+
+**3. 报告是产物，不是附属品。** 覆盖策略、去重、冲突检测对它一视同仁。
+
+### 复审回合（`0c92c5a`）：又六条全改
+
+1 P1 + 5 P2，逐条见 `TEST_MATRIX.md`。三条会影响后面阶段：
+
+**1. 落盘是提交点。** 第一个 `os.replace` 之后没有"一个字节没动过"可言，
+所以 `cancel()` 从那一刻起如实回 `False`——**别许一个做不到的承诺**。
+
+**2. 读 store 快照的 memo，依赖里要放触发重算的信号。** `originalAvailability`
+/ `findFigurePanel` 都是"问 store 当前状态"的绑定层函数，只挂 id 的话对话框
+开着时状态变了不会重算。带理由的 `exhaustive-deps` 豁免。
+
+**3. 「照抄源文件」的前提是容器对得上。** JPEG 源不能逐字节搬进 `.png`。
+
+### 第三轮评审（`8c1f7d4`）：又四条全改
+
+1 P1 + 3 P2，逐条见 `TEST_MATRIX.md`。两条对 13–18 直接有用：
+
+**1. 确认是对「这一批问题」的**（T-67）。任何"用户点过头"的状态都要绑在
+**被确认的那个集合的指纹**上，不是绑在动作上——不然它会替用户签一个他没签过
+的字，而那个签名会进留档。
+
+**2. 「每条规则各自的最优解」拼不出「所有规则的可行解」**（T-68）。属性系统
+（13）里同一个属性被多条规则约束会更常见：要么带上约束一起合并，要么就别
+声称同时满足。
+
+另：变异反证脚本自己有一处空转（「锚点找不到」与「存活」混报），已修——
+**把纪律写进文档而不写进工具，下一次照样会踩**（T-69）。
+
+### 第四轮评审（`07fc7c2`）：又四条全改
+
+2 P1 + 2 P2，**其中一条 P1 是第三轮的修复制造出来的**。三条对后面阶段有用：
+
+**1. 闸放在咽喉上，不放在按钮上**（T-70）。一个安全判据如果能被"再加一个入口"
+绕过，它就不在正确的位置上。
+
+**2. 广播事件必须有归属判据**（T-71）。「我能不能收」问的是**所有权**，
+不是"我现在有没有空"。
+
+**3. 判据要打在真正会出事的那条路上**（T-72）。这一轮变异反证有两条存活，
+成因相同：一条点了一颗本来就 `disabled` 的按钮，一条测了纯函数却漏了调用方。
+
+### 第五轮评审（`c8479335`）：又三条全改
+
+1 P1 + 2 P2。用户口径是「P1 必修，P2 视情况」——两条 P2 都在十行以内，
+其中一条还是第四轮那个咽喉闸漏了一个条件，比开 Issue 便宜，所以全修。
+
+**1. 原子性要盖到中间产物**（T-73）：重渲染出来的那份 PDF 原来落在按图名共享
+的路径上，两次导出打同一张图时后一次会覆盖前一次正在读的文件——**不报错，
+只是悄悄给错图**。「这一步是串行的」推不出「这一步的产物是我的」。
+
+**2. 同一件事写两遍，两遍都对也会分叉**（T-74）：第四轮是"按钮有闸、
+`start()` 没有"，第五轮是"两边都有、但少了一条"。处置不是补那一条，是收敛成
+一个 `canStart`。
+
+### 第六轮评审（`13ec3b69`）：四条 P2 全改
+
+**0 P1。** 四条都在 20 行以内、都落在本 PR 已动过的文件里，其中一条还是本 PR
+自己声明的不变式（T-54）被违反，修比开 Issue 便宜。两条留给后面阶段：
+
+**1. 「先看一眼再动手」的那一眼和那一手必须同锁**（T-75）。本轨道这是**第三次**
+撞见同一个形状（查撞/预留、查提交点/置取消、取名/预留）。每加一件"动手之前先
+看的事"，就要重新问一遍它在不在锁里。
+
+**2. 判据要落在被修的那个性质上**（T-76）。这一轮变异反证有一条存活：我写的
+行为用例盖不住"取名在不在锁里"——两种实现下结果一样。改成直接量同步性质。
+
+### 尚存限制
+
+1. **`codex-plugin` 那条导出入口没并进来**（`bridge.py` 自己的 `_write_proof`
+   仍写 `_proof.json`）。它是另一个进程、另一份载荷、另一条分发路径，
+   并进来要连 widget 一起改，本轮刻意没动。
+2. **PPI 的重采样只在原图位图源上有开关**（`native_grid`），界面没有暴露
+   「按另一个像素网格导出位图」这个选项——默认永远保源网格。
+3. **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败）。
+4. **进度只有阶段与步数**，没有百分比：合成那一步的耗时占大头而它不可分。
+5. **透明背景对 PDF 是"不画白底"**，不是 PDF 的透明组；位图源装进 PDF 时
+   `vector: false`，界面没有单独说这一句。
+6. **e2e 只跑了四条 spec 的 chromium project**（a11y / asset-library /
+   keyboard-golden-path / i18n，27 passed；评审回合之后复跑仍 27 passed）。
+   webkit / chromium-en 与其余 spec 本轮没跑。
+7. **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画
+   （`safe_resolve()` 排在查注册表之前）。界面已经如实说出来，但**能力本身
+   是缺的**——改它要动画布导出共用的那条路。
+8. **「按另一个像素网格导出位图」这个能力不存在**（评审回合 3 删掉了那条
+   没有调用点、又用着错误常量的分支）。
+9. 04–11 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-reliability-11-12`（从 `origin/main` 的 `dd7c5b5`
+  开出）→ **PR #214**（11 与 12 一起，四个提交 + 六个评审回合，27 条 findings 全改）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 13：统一属性系统、文字控件、标注字体）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「6. 输出一致性合同」（本轮整段重写）
+与「4. Style / Spec / Validation / Export 分层」、`ARCHITECTURE.md` 的 §5.3
+（本轮整段重写）与 §6/§6b、`docs/adr/0031-unified-export-pipeline.md`。
+
+**Session 12 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 这次导出要什么 | `lib/exportRequest.buildExportRequest(input)` | **唯一构造**。13–16 改属性之后不需要动它——属性改的是 `doc.objects`，载荷从那里现取 |
+| 文件名合不合法 | `lib/exportName.checkFilename()` | 八条闭集原因；与 Python 侧同源，改一边必须改另一边 + 重生成向量 |
+| 起 / 取消 / 跟进度 | `store/exportStore.ts` | 作业活在 store，不活在对话框 |
+| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | Session 09 留的（12 的 `scope=original` 就是它的消费端） |
+| 按哪套规范 | `lib/specBinding.resolveDocumentSpec(binding, catalog)` | Session 10 留的 |
+| 检查结果摘要 | `store/validationStore.getValidationSummary(scope, extra?)` | Session 11 留的，**不要再跑第二遍求值器** |
+
+**属性/文本改动怎么自动进同一条导出管线**（Prompt 13–16 的关注点）：
+
+```text
+用户改一个属性 → documentStore.commit → doc.objects 变
+    ↓（导出时现取，没有第二份缓存）
+buildExportRequest({ doc })
+    ↓ scope=canvas  → canvas.objects[]  → pdfbackend.compose().place()
+    ↓ scope=original→ original.overrides[] → worker.export() 全质量重渲染
+```
+
+**属性系统只要改 `doc.objects` 与 `panel.overrides`，导出这一端一行都不用动。**
+`toExportObjects()` 是画布对象 → 载荷的唯一投影（顺序即 z 序、隐藏对象不发），
+新属性加在那里一处；原图那一端连投影都没有——它直接把 `overrides` 交给引擎。
+文字与字体（14）同理：图内文字走 override → worker，画布文字走
+`pdfbackend._draw_text`（几何与 `TextView` 严格同源）。
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条原样
+成立，12 再加五条）：
+
+24. **不许在组件里拼导出载荷。** 构造只有 `buildExportRequest()` 一处；
+    要新字段就加进 `ExportRequest`（两侧同时），不要在第二个 API 上抄一遍。
+25. **不许往 `OriginalSource` 上加布局字段**（T-59）。x/y/w/h、页面尺寸、
+    crop 一个都不进那个类型——那是「原图导出不套用画布缩放」唯一的结构性保证。
+26. **不许把「不适用」压成一个默认值**（T-60）。`ppi: null` 与 `ppi: 600`
+    是两个答案；同族的还有 `dpi_source: unknown`、`ready: false`。
+27. **不许把部分失败报成全部成功，也不许因为一项失败就丢掉另一项**（T-62）。
+28. **不许让后台线程走「落到默认项目」那条兜底**（T-63）。起线程之前
+    `bound_project(ctx)`；它不会报错，只会成功地导出另一个图库的图。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）——**导出产物也是**
+   （`publish_file()`）；保存状态只经 `setSaveState()` / `setDocNotice()` 改。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
+   `lib/originalSpec.ts` 一份**（ADR 0028）；**「按哪套规范检查」只有
+   `lib/specBinding.ts` 一份**（ADR 0029）；**「这份项目有什么问题」只有
+   `lib/validation.ts` + `store/validationStore.ts` 一条链**（ADR 0030）；
+   **「这次导出要什么」只有 `ExportRequest` 一个结构、「怎么落盘」只有
+   `engine/exportjob.py` 一份**（ADR 0031）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。**检查本身零写入**。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处；「谁认领了这个 stem」只有
+   `discover.claims_of()` 一处；「状态说成什么话」只有 `lib/readinessText.ts`
+   一处；「文档里有没有这张图」只有 `findFigurePanel()` 一处；「profile 叫
+   什么」只有 `lib/profileText.ts` 一处；**「文件名合不合法」只有
+   `check_filename()` / `checkFilename()` 这一对**。
+7. **就绪度与检查都不执行用户脚本、不 probe、不写盘**；**导出会执行**
+   （有 override 的图要重渲染），但**只在用户明确点导出之后**。
+8. **派生数据刷新不得把文档标脏，也不得进普通撤销历史。** 导出设置
+   （格式 / PPI / 报告开关 / 最近的规范）是**本机 UI 偏好**，不进文档、
+   不进 undo；选规范是文档修改。
+9. **素材不在清单里 ≠ 脚本关系失效**；**≠ 这张图没有规格**；**查不了 ≠ 没问题**；
+   **原图不可用 ≠ 悄悄改成画布导出**。
+10. `reason` 是闭集：定位失败的原因、**文件名不合法的原因**（八条）、
+    **覆盖策略**（三条）、**作业状态**（七档）都不接受自由文本。
+11. **「没测量 / 不适用」不许压扁**：`conflicts` 的 `null`、`registry_valid`
+    的 `null`、`capability` 的 `undefined`、`dpi` 的 `null` 与 `dpi_source`
+    的四档、`follow` 的"没选过"、检查的 `ready: false`、**导出的 `ppi: null`**。
+
+---
+
+## 历史：Session 11（2026-08-31）
+
+### 目标
+
+把散在导出弹窗、设置与局部组件里的样式检查收敛成**一个统一 Validation 服务**，
+并建立默认可见的左侧「问题」面板。核心不是美化警告列表，而是**保证每一条问题
+都能定位到真实文档、工作流、对象和属性字段**。
+
+本阶段**不做导出面板与输出门禁**（Prompt 12）、**不做属性系统改造**
+（Prompt 13）、**不把就绪度并进问题清单**（那是另一类事实，见 T-56）。
+
+### 开始前实测到的四件事（不是假设）
+
+1. **「这张图有没有问题」只有一条路能问：打开导出对话框。** `ExportDialog`
+   自己调 `runPreflight()`，展开之后每行末尾挂着 `axes_0.lines_1`，点一下调
+   `revealObjects(ids)`。
+2. **`PreflightIssue` 没有画布维度**（R-12）。第二张画布上的问题**根本不会被
+   列出来**（对话框只查激活画布），列出来了也跳不过去。
+3. **聚合项没法定位到"是谁"。** 一条 `font-too-small` 底下挂三个 gid，文案说
+   的是最糟那个的数字；点「定位」把三个对象一起选中，属性页显示多选摘要。
+4. **导出对话框里有第二套判据。** 「导出 DPI」那一格写着 `bad={dpi < minDpi}`
+   ——一个直接写在组件里的比较；而 MCP 那条入口
+   （`bridge.export_raster_issues()`）判的又是第三份。
+
+### 实际完成
+
+**1. `web/src/lib/validation.ts` —— 求值与导航分开。**
+
+`lib/preflight.ts` 保持它的角色（规则求值器，跨语言 golden vectors 对齐），
+新的一层回答「谁没过、点一下去哪」：
+
+```ts
+ValidationIssue {
+  issueId        // = fingerprint = ruleCode｜canvasId｜objectId｜gid｜propertyPath
+  ruleCode severity context   // context: 'document' | 'export'
+  objectRef      // { documentId, canvasId, objectId, gid }   ← canvasId 是新补的那一维
+  subject        // 界面拿它说人话（elementLabel / elementRole / objectName）
+  propertyPath   // 'fontsize' / 'sizePt' / 'page.w' / 'export.dpi'
+  message technicalDetails fixKind
+}
+```
+
+**2. 聚合项摊成逐条命中**（T-52）。`Sink` 额外记一份 `PreflightOccurrence`
+（objectId / gid / prop / **它自己那次**的 message 与 detail），去重的尺子与
+聚合项完全一样。**不进跨语言合同**——golden vectors 比的仍是聚合投影，
+Python 侧一个字节没改；看护用例盯着两者一致。
+
+**3. `store/validationStore.ts` —— 编排。** 防抖 250ms + 代次（还在飞的那一轮
+回来时丢掉）、按画布增量（沿用 = **同一个对象引用**）、**失败不清空**、
+**不改文档**。`startValidation()` 在 `App.tsx` 装配一次，是唯一驱动点。
+
+**4. `lib/issueFocus.ts` —— 跨模块唯一的一个 focus 动作。**
+切画布 → 切工作流模式 → 选中 → 视口 → 短暂高亮 → Inspector → 属性字段；
+失败回**闭集原因**（`canvas_missing` / `object_deleted` / `not_editable` /
+`document_not_loaded`），绝不静默不动。属性字段的落点是 `data-prop`。
+
+**5. `lib/issueFix.ts`（纯计算）+ `store/issueFixActions.ts`（落地）。**
+`safe_auto` 三条门槛见 T-55；落地经 `documentStore.commit`，一个修复一个事务、
+一批一个批事务、⌘Z 一次撤回；**批量只在当前画布**。
+
+**6. 左侧「问题」面板 + 常驻轨道入口 + 角标。** 等级 chip 筛选、行内「定位 /
+修复」、技术详情默认收起、空态与「这一次没查成」是两句不同的话、方向键漫游。
+**普通界面一个 gid 都不出现**（措辞唯一实现 `lib/validationText.ts`）。
+
+**7. 导出对话框只消费摘要。** 不再跑第二遍求值器；打开时**当场同步跑一遍**
+（那 250ms 防抖窗口里不能说「检查通过」）；proof 留档用 `rawIssuesFor()` 的
+聚合投影（格式一个字节没动）；「导出 DPI」那一格的判断交给统一服务。
+
+### 关键 API（Prompt 12 直接用）
+
+```ts
+// web/src/lib/validation.ts
+ValidationIssue / ObjectRef / IssueSubject / FixKind / IssueContext
+validateCanvas(input, documentId, assets, render): CanvasResult   // { issues, raw }
+validateProject(input): CanvasResult[]
+exportContextRaw(ctx, profile): PreflightIssue[]      // 与 MCP 严格同源
+exportContextIssues(ctx, profile, ref): ValidationIssue[]
+summaryFor(issues, { canvasId?, extra?, ready, failed }): ValidationSummary
+fingerprintOf(ruleCode, ref, propertyPath) / ruleEntry(code) / knownRuleCodes()
+filterIssues(issues, filter) / mergeExportIssues(a, b)
+
+// web/src/store/validationStore.ts
+startValidation(): () => void        // App 装配一次；唯一驱动点
+runValidation(only?: Set<canvasId>)  // 同步跑一遍（导出对话框打开时用）
+schedule(canvasId?) / cancelScheduled() / resetValidation()
+getValidationSummary(scope, extra?) / listIssues(filter?) / rawIssuesFor(canvasId)
+useValidationStore   // results / issues / ready / failed / running / lastDurationMs
+
+// web/src/lib/issueFocus.ts
+focusObject(ref, propertyPath?): FocusOutcome
+focusIssue(issue): FocusOutcome
+openProblems(filter?: { severities?: Severity[] })
+focusFailureMessage(reason)
+
+// web/src/lib/issueFix.ts（纯）/ web/src/store/issueFixActions.ts（落地）
+planFix(issue, profile, doc, choice?) / fixOptions(issue, profile)
+applyIssueFix(issue, profile, choice?) / applyIssueFixes(issues, profile)
+
+// web/src/lib/validationText.ts
+SEVERITY_ICON / severityLabel / issueTitle / issueValues / subjectName
+technicalDetailLines / issueAriaLabel / issueDetailText
+```
+
+### 迁移
+
+**没有磁盘格式改动。** 文档 schema、proof report v2、profile 清单一个字节没动。
+`PreflightIssue` 多了一个 `occurrences` 字段（TS 侧，运行时内存），golden
+vectors 的投影不含它。
+
+### 修改的文件
+
+```text
+新增  web/src/lib/validation.ts               Issue 模型 / 规则目录 / 指纹 / 摘要
+新增  web/src/lib/validation.test.ts          （21 条）
+新增  web/src/lib/validationText.ts           「问题怎么说」唯一实现
+新增  web/src/lib/validationText.test.ts      （13 条）
+新增  web/src/lib/issueFocus.ts               跨模块唯一的 focus 动作
+新增  web/src/lib/issueFocus.test.ts          （14 条）
+新增  web/src/lib/issueFix.ts                 修复计划（纯计算）
+新增  web/src/lib/issueFix.test.ts            （12 条）
+新增  web/src/store/validationStore.ts        编排（防抖 / 代次 / 增量 / 失败不清空）
+新增  web/src/store/validationStore.test.ts   （12 条）
+新增  web/src/store/issueFixActions.ts        修复的落地（走 commit）
+新增  web/src/components/left/ProblemPanel.tsx        左侧「问题」抽屉
+新增  web/src/components/left/problemPanel.test.tsx   （15 条）
+新增  docs/adr/0030-validation-and-problem-navigation.md
+改动  web/src/lib/preflight.ts                Sink 记逐条命中 + 19 处 add() 带上 prop
+改动  web/src/store/uiStore.ts                +'problems' tab / issueHighlight / problemFilter
+改动  web/src/store/profileStore.ts           catalog() 抽出纯函数 toCatalog()
+改动  web/src/components/left/LeftRail.tsx    +「问题」常驻入口 + 角标
+改动  web/src/components/left/LeftPanel.tsx   +problems 分派 + 标题计数
+改动  web/src/components/ExportDialog.tsx     消费摘要；删掉组件里的 dpi 判据、
+                                              删掉行内 gid、定位改走 focusIssue
+改动  web/src/canvas/OverlaySvg.tsx           定位后的短暂高亮（加粗虚线外框）
+改动  web/src/components/inspector/ElementInspector.tsx  FieldBlock +data-prop/data-gid
+改动  web/src/components/inspector/TextSection.tsx       字号行 +data-prop
+改动  web/src/App.tsx                         +startValidation()
+改动  web/src/i18n/locales/*                  +errors:problems.*（含 32 条规则短标题）
+                                              +workspace:rail.problems / history.fixIssue*
+                                              +dialogs:export.openProblems / preflightFailed*
+改动  web/src/i18n/overflow.test.tsx          +9 条英文字数预算
+改动  tests/test_preflight.py                 +1 条跨语言同源
+改动  tests/test_profile_store.py             字号字面量看护 +4 个消费点
+改动  tests/test_i18n_dead_keys.py            匹配器认识复数后缀 + 自检 +2
+改动  AGENTS.md / web/AGENTS.md               同源对 + 统一检查那一节
+改动  docs/implementation/product-ux-reliability/*   本轨道交接
+重建  codex-plugin/mcp/widget/canvas.html     指纹 1ac44a5f373b11b8
+重建  web/dist-playground/                    指纹 712cf96d09cfac61（不进 git）
+```
+
+### 测试命令与真实结果
+
+```sh
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
+cd web && pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/lib/validation.test.ts
+python scripts/build_mcp_widget.py && python scripts/build_browser_playground.py
+ruff check . && ruff format --check .
+```
+
+后端全量 **exit 0 —— 3370 passed / 34 skipped / 0 failed**（本轮只加了 1 条
+后端用例；与 Session 10 的 3271 之间的差额来自后来合进 `main` 的 PR）；
+前端 **147 files / 1805 passed**，`build` / `i18n:check` / `lint` 三条 exit 0。
+完整表格见 `STATUS.md`。**变异反证 44 条全部被打红**（第一轮 38/44，
+六条存活的成因与处置见 `TEST_MATRIX.md`）。
+
+**e2e 本轮真跑了两批**（不是 `--list`）：`a11y.spec.ts` 8 passed（新增「问题
+面板」一条）、`asset-library` + `keyboard-golden-path` 7 passed（这三条 spec
+断言导出对话框里的预检块，本轮重写过它）。跑法见 `STATUS.md` 末节。
+
+### 这一轮踩到的坑
+
+**1. 反证脚本自己的判据是空的。** 第一版拿 `vitest ... | tail -3` 的文本找
+`failed`，而 vitest 的统计行**不在最后三行里**——44 条全部显示「存活」。
+判据没有进控制流（用文本而不是退出码）时，它会把一整套好用例报成坏用例。
+改成看退出码 + **先跑一遍基线自检**（没有变异时必须绿）。
+
+**2. `useProfileStore((s) => s.catalog())` 会把界面转到报错。** `catalog()`
+每次调用都新建一个数组，拿它当 zustand 选择器的返回值 = 每一帧都"变了" =
+`Maximum update depth exceeded`。处置是把 `catalog()` 的实现抽成纯函数
+`toCatalog(specs)`，组件订阅 `specs` 再 `useMemo`。
+
+**3. 埋点读的是渲染闭包里的旧值。** 「打开导出对话框记一次预检计数」的 effect
+里用了上一次渲染算出来的 `summary`，而 `runValidation()` 是同一轮 effect 里
+刚跑的——埋点稳定报 0。处置是在 effect 里**现取**。
+
+**4. 又一次「两道守卫说同一件事」。** 「画布还在不在」查了两遍，把前一句改成
+恒真没有任何用例会红。合并成一处（T-57）——本轨道第三次撞见这个形状。
+
+**5. `git stash push -- src` 在 `web/` 目录下会把整轮改动收走。** 为了数一个
+lint 基线跑的，当场 `git stash pop` 全部取回。**别为了取个基线动工作树**。
+
+**6. a11y 那条真跑起来当场红了一次，而且红得对。** 问题面板里「技术详情」的
+`<summary>` 用了 `text-ink-faint`（2.54:1，axe serious）——`ink-faint` 按 UI
+纪律只给装饰与禁用态，而 summary 是个真控件、上面是要读的字。单测里的
+「有 aria-label / 可键盘到达」一条都没红：**结构性断言看不见对比度**。
+
+**7. 性能预算的第一版量到的是一张画布。** `addCanvas` 建的是**空**画布，
+只在激活画布上摆对象的话「12 画布 × 8 面板 × 60 元素」这个负载是假的
+（2.66ms 显得很好看）。每张都装满之后是 22ms，预算定 300ms。同一轮还差点
+再踩一次：`vi.useFakeTimers()` 默认接管 `performance.now`，那样 `spent` 恒为 0，
+预算判据什么都量不到——用例里先 `expect(spent).toBeGreaterThan(0)` 证明尺子是活的。
+
+### 尚存限制
+
+1. **不渲染的面板会成批报「无法核验」**（见 `STATUS.md` 的遗留表）。
+2. **批量修复不跨画布**（撤销栈按画布换入换出）。
+3. **问题面板没有虚拟滚动**，真实上限没量过。
+4. **`user_choice` 目前只有页宽一条规则**。
+5. **MCP 内嵌画布保留自己的等级图标表**（另一个 bundle、消费的是另一种载荷）。
+6. **e2e 只跑了三条 spec**（a11y + asset-library + keyboard-golden-path，
+   chromium project）。webkit / chromium-en 两个 project 与其余 spec 本轮没跑。
+7. 04–10 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`verify-main`（从 `origin/main` 的 `dd7c5b5` 开出，**尚未推送**）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+### Session 11 当时留给 12 的入口（已被 12 消费，保留备查）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「5. 问题定位合同」（本轮整段重写）与
+「6 / 6b 输出一致性 / 原图规格」、`ARCHITECTURE.md` 的 §5.3 与 §6b、
+`docs/adr/0030-validation-and-problem-navigation.md`。
+
+**Session 11 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 检查结果摘要 | `store/validationStore.getValidationSummary(scope, extra?)` | **唯一来源**，带 `ready` / `failed`。**不要再跑第二遍求值器** |
+| proof 留档要的聚合投影 | `store/validationStore.rawIssuesFor(canvasId)` | 同一次求值的另一份投影；proof report v2 格式一个字节没动 |
+| 导出上下文规则 | `lib/validation.exportContextRaw / exportContextIssues` | 与 MCP 的 `bridge.export_raster_issues()` **严格同源**。新的导出上下文规则加在这里，**不要加进组件** |
+| 把用户交回问题面板 | `lib/issueFocus.openProblems(filter?)` | 导出弹窗里不再列第二套清单 |
+| 跳到那个对象 | `lib/issueFocus.focusIssue(issue)` | 切画布 / 切模式 / 选中 / 聚焦字段一处实现 |
+| 问题怎么说 | `lib/validationText.ts` | 短标题 / 当前值→要求 / 人话主语 / 等级图标表 |
+| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | Session 09 留的 |
+| 按哪套规范 | `lib/specBinding.resolveDocumentSpec(binding, catalog)` | Session 10 留的 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条原样成立，11 再加五条）：
+
+19. **不许在导出面板（或任何组件）里现算「这个值合不合规范」。** 阈值一个字
+    都不进组件；要判就加一条规则进 `exportContextRaw()`，它会自动进摘要、
+    进问题面板、进 proof。
+20. **不许把 `total === 0` 当成「检查通过」**（T-54）。`ready` / `failed` 与
+    计数一起来，压扁它等于宣布一句假的好消息。
+21. **不许在普通界面显示 gid / 对象 id / 文件路径。** 精确名词只在「技术详情」
+    里，措辞只有 `lib/validationText.ts` 一处。
+22. **不许另造第二个 focus 动作。** 定位只有 `lib/issueFocus.focusObject()`；
+    要新的落点就往那八步里加，别在组件里拼一遍。
+23. **不许把 `safe_auto` 理解成"写个合理的值"**（T-55）。修完必须真的能过，
+    而且要按面板缩放反算回脚本坐标系。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
+   `setDocNotice()` 改（ADR 0024）。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
+   `lib/originalSpec.ts` 一份**（ADR 0028）；**「按哪套规范检查」只有
+   `lib/specBinding.ts` 一份**（ADR 0029）；**「这份项目有什么问题」只有
+   `lib/validation.ts` + `store/validationStore.ts` 一条链，定位只有
+   `lib/issueFocus.ts` 一处，措辞只有 `lib/validationText.ts` 一处**（ADR 0030）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。**检查本身零写入**。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处；脚本遍历只有
+   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
+   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
+   `lib/readinessText.ts` 一处；「文档里有没有这张图」只有 `findFigurePanel()`
+   一处；「profile 叫什么」只有 `lib/profileText.ts` 一处。
+7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**；
+   **检查同样不执行、不写盘、不发后端**。
+8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
+   侧栏折叠、横幅关闭、聚焦目标、工作区模式、**问题面板的筛选与定位高亮**
+   同样不进文档、不进 undo。**但选规范 / 同步快照 / 切换跟随 / 应用样式 /
+   点「修复」都是文档修改**——它们进 undo、进 dirty，这是有意的区别。
+9. **素材不在清单里 ≠ 脚本关系失效**（T-28）；**也 ≠ 这张图没有规格**；
+   **全局规范被删了 ≠ 这个项目没有规范**；**查不了 ≠ 没问题**（T-54）。
+10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
+    **定位失败的原因同样是闭集**，不接受自由文本。
+11. **「没测量」不许压扁**：`conflicts` 的 `null`、`registry_valid` 的 `null`、
+    `capability` 的 `undefined`、`dpi` 的 `null` 与 `dpi_source` 的四档、
+    `follow` 的"没选过"、**检查的 `ready: false`**。
+
+---
+
+## 历史：Session 10（2026-08-30）
 
 ### 目标
 
@@ -276,72 +958,6 @@ plural 形态之一，于是 `pnpm i18n:check` 把它当成 `profile_too` 的一
 - author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
   提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
   `git -c user.email=… commit`，**别改共享的 `.git/config`**
-
----
-
-## 下一阶段入口（Prompt 11：统一检查引擎与问题面板）
-
-**从这里开始读**：`UX_CONTRACTS.md` 的「4. Style / Spec / Validation / Export
-分层合同」（本轮整段重写）与「5. 问题定位合同」、`ARCHITECTURE.md` 的 §6。
-
-**Session 10 留给它的可复用入口**：
-
-| 东西 | 位置 | 性质 |
-| --- | --- | --- |
-| 这个项目按哪套规范检查 | `lib/specBinding.resolveDocumentSpec(doc.profile, catalog)` | **唯一判据**。11 的检查引擎、12 的导出面板都从这里取现值，**不许自己再挑一遍** |
-| 规范清单 | `store/profileStore` 的 `specs` / `catalog()` | 后端不在时退内置；组件里不许有 fetch |
-| 任意 id → 规范（后端） | `profilestore.resolve_spec(id, journal)` | MCP 与 HTTP 共用 |
-| profile 叫什么 / 技术详情 | `lib/profileText.ts` | 默认视图不出现 id 与版本号 |
-| 定位到画布上的某个面板 | `store/workspace.focusLayoutPanel(panelId)` | 11 的问题面板直接调（Session 09 留的） |
-| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | 12 的导出面板从它取尺寸（Session 09 留的） |
-
-**Prompt 11 的已知缺口**（`UX_CONTRACTS.md` §5 记着）：`PreflightIssue` 没有
-`documentId` / `canvasId` 维度，多画布项目里跳不到"另一张画布上的那个对象"。
-**那是 11 要补的，别在 10 的 profile 层里绕过去。**
-
-**绝不要做的事**（07 的六条、08 的三条、09 的四条原样成立，10 再加五条）：
-
-14. **不许在文档里存 profile 的"引用"而不是快照。** 引用意味着"改一处影响
-    另一处"，而本阶段的整个裁决就是反过来（T-46）。
-15. **不许用版本号判"有没有新版"**（T-47）。两个方向都会错，看护用例两条都在。
-16. **不许把「统一为 8 pt」理解成"把 8 pt 那条边放宽"**（T-48）。
-    `eff <= floor` 一个字都不能动；要改就先改 ADR。
-17. **不许在求值器、导出面板、设置页里写字号下限的字面量。** 有一条代码搜索
-    式的看护用例盯着这四个文件。缺键兜底只有 `FALLBACK_MIN_FONT_SIZE_PT`。
-18. **不许在 React 组件里做磁盘操作或懂磁盘格式。** 清单只经 `profileStore`
-    → `/api/profiles/*` → `engine/profilestore.py`。
-
-**必须保留的不变式**（改动前先确认还成立）：
-
-1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
-2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
-3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
-   `setDocNotice()` 改（ADR 0024）。
-4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
-   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
-   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
-   `lib/originalSpec.ts` 一份**（ADR 0028）；**「按哪套规范检查」的判据只有
-   `lib/specBinding.ts` 一份，全局清单的磁盘入口只有 `profilestore.py` 一份**
-   （ADR 0029）。
-5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
-   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
-6. 「哪些文件算素材」只有 `iter_assets()` 一处；脚本遍历只有
-   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
-   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
-   `lib/readinessText.ts` 一处；「文档里有没有这张图」只有 `findFigurePanel()`
-   一处；**「profile 叫什么」只有 `lib/profileText.ts` 一处**。
-7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**；
-   界面也不执行。**profile 的读写同样不碰任何用户脚本与项目文件。**
-8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
-   侧栏折叠、横幅关闭、聚焦目标、工作区模式同样不进文档、不进 undo。
-   **但选规范 / 同步快照 / 切换跟随 / 应用样式都是文档修改**——它们进 undo、
-   进 dirty，这是有意的区别。
-9. **素材不在清单里 ≠ 脚本关系失效**（T-28）；**也 ≠ 这张图没有规格**；
-   **全局规范被删了 ≠ 这个项目没有规范**（快照还在，另说一句话）。
-10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
-11. **「没测量」不许压扁**：`conflicts` 的 `null`、`registry_valid` 的 `null`、
-    `capability` 的 `undefined`、`dpi` 的 `null` 与 `dpi_source` 的四档、
-    **`follow` 的"没选过"与样式字段的"这份样式没管这一项"**。
 
 ---
 

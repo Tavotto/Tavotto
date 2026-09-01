@@ -115,6 +115,7 @@ export function OverlaySvg() {
   const guidesLocked = useUiStore((s) => s.guidesLocked)
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const issueHighlight = useUiStore((s) => s.issueHighlight)
 
   const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
   const cropTarget = objects.find((o) => o.id === cropTargetId && o.type === 'panel')
@@ -171,6 +172,33 @@ export function OverlaySvg() {
           strokeDasharray="3 3"
         />
       )}
+
+      {/* 定位之后那一下高亮：**加粗虚线**外框（形状），叠在选择框之外一圈。
+          与选中态分开画——用户看得出「我被带到这儿了」与「它现在被选中」是
+          两件事；reduced motion 下不闪，静静地显示同样长的时间（动效在
+          index.css 的全局 override 里被关掉，这里不额外判一次） */}
+      {issueHighlight?.objectId &&
+        (() => {
+          const target = objects.find((o) => o.id === issueHighlight.objectId)
+          if (!target) return null
+          const box = toScreen(target, t)
+          return (
+            <rect
+              key={issueHighlight.token}
+              data-issue-highlight={issueHighlight.objectId}
+              x={box.x - 3}
+              y={box.y - 3}
+              width={box.w + 6}
+              height={box.h + 6}
+              rx={2}
+              fill="none"
+              stroke={SEL}
+              strokeWidth={2}
+              strokeDasharray="6 3"
+              className="motion-safe:animate-pulse"
+            />
+          )
+        })()}
 
       {/* hover 预示；线状与真实轮廓类对象沿自己的形状描示，不画对不上的包围盒 */}
       {hovered && <ObjectOutline obj={hovered} t={t} opacity={0.4} />}

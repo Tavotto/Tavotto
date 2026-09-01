@@ -372,16 +372,26 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 `OverlaySvg.tsx`、`ContextBar.tsx`、`interactions.ts`；几何权威
 `exactPanelRender`（`docs/adr/0016`、`0017`）。
 
-### 5.3 导出
+### 5.3 导出（`← 12`，ADR 0031）
 
-| 环节 | 位置 |
-| --- | --- |
-| **原图规格**（`← 09`，ADR 0028） | 决策 `web/src/lib/originalSpec.ts`（唯一服务）；事实 `src/tavotto/engine/originalspec.py` + `/api/panels` 的 `original_spec` |
-| 载荷构造 | `web/src/lib/exportPayload.ts`、默认值 `lib/exportDefaults.ts`（localStorage 偏好） |
-| UI | `web/src/components/ExportDialog.tsx` |
-| 后端 | `POST /api/export`（`app.py:860`），面板取源 `app.py:816 _resolve_panel_source()` |
-| 打包（图 + 脚本 + 证明） | `POST /api/package`（`app.py:989`） |
-| 合成 | `pdfbackend/`（全仓唯一 import pymupdf 的模块） |
+**原图与画布是同一个请求的两个 scope，不是两条管线。**
+
+| 环节 | 唯一出处 | 备注 |
+| --- | --- | --- |
+| **「这次要什么」** | `engine/exportreq.py` ↔ `web/src/lib/exportRequest.ts` | `ExportRequest`；缺省值只有一处。`scope ∈ {original, canvas}` |
+| **原图规格**（`← 09`，ADR 0028） | 决策 `web/src/lib/originalSpec.ts`；事实 `engine/originalspec.py` + `/api/panels` 的 `original_spec` | `original` 段的 w/h/px 从它来，**不从画布落位来** |
+| 文件名规则 | `engine/exportreq.check_filename()` ↔ `lib/exportName.ts` | **严格同源对**，`tests/golden/filename_vectors.json` |
+| 作业生命周期 | `engine/exportjob.py` | prepare / validate / run / cancel；临时目录 → 原子 replace；`partial` 独立一档 |
+| 原子发布 | `engine/atomicio.publish_file()` | fsync 文件 → replace → fsync 目录（与 ADR 0023 同一序列） |
+| 合成（canvas） | `pdfbackend.compose(w, h, transparent)` | 全仓唯一 import pymupdf 的模块；PDF 与 PNG 出自**同一页** |
+| 原图产出（original） | `pdfbackend.original_pdf/original_png` | 矢量整页搬运不重画；位图**保源像素网格** |
+| 面板取源 | `app._resolve_panel_source()` | 有 override 的图先由引擎全质量重渲染，两个格式共享它 |
+| HTTP | `POST /api/export`（同步）/ `/start` / `/state` / `/cancel` / `/validate` | 五个端点、**一个服务**；老契约由 `normalize()` 抬成同一个作业 |
+| 后台线程的项目 | `app.bound_project(ctx)` | `_request_ctx()` 的兜底是默认项目，不绑定 = 导出另一个图库的同名图 |
+| 前端编排 | `web/src/store/exportStore.ts` | 作业活在 store 不活在对话框；SSE `export.progress` + 轮询，同一个 `applyExportJob()` |
+| UI | `web/src/components/ExportDialog.tsx` | 文件名 → 范围 → 格式 → 分辨率 → 规范 → 检查 → 高级 |
+| 样式检查报告 | `app._style_check_report()` + `lib/preflight.buildProofPayload()` | v3；前端给检查结果，服务端补版本/时间/产物事实；**失败不牵连成图** |
+| 打包（图 + 脚本 + 清单） | `POST /api/package`；入口在 **TopBar 文档菜单** | 从导出对话框的三点菜单搬走（ADR 0031 §6），与"导入项目包"并排 |
 
 ---
 
@@ -419,6 +429,29 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 
 最小字号：**默认规范只有 8 pt 一个数**（`min_effective` = `absolute_min` =
 `legend_policy.min` = 8.0）。`eff <= floor` 的边界语义未变。
+
+---
+
+## 6b. 统一检查与问题定位（`← 11`，ADR 0030）
+
+| 环节 | 唯一出处 | 备注 |
+| --- | --- | --- |
+| 规则求值 | `engine/preflight.py` / `web/src/lib/preflight.ts` | 与 ADR 0029 同一条链；golden vectors 对齐 |
+| 逐条命中 | `preflight.ts` 的 `Sink.record()` → `PreflightOccurrence` | **TS 侧的展开层，不进跨语言合同**；看护用例盯着与聚合项一致 |
+| 接成可定位问题 | `web/src/lib/validation.ts` | `ValidationIssue` / `ObjectRef` / 规则目录 / 指纹 / 导出上下文 / 摘要组装（`summaryFor`） |
+| 编排 | `web/src/store/validationStore.ts` | 防抖 250ms + 代次、按画布增量、失败不清空、**不改文档**；`startValidation()` 在 `App.tsx` 装配一次 |
+| 定位 | `web/src/lib/issueFocus.ts` | **跨模块唯一**；`focusObject` / `focusIssue` / `openProblems`；失败回闭集原因 |
+| 措辞 | `web/src/lib/validationText.ts` | 短标题 / 当前值→要求 / 人话主语 / 技术详情 / 等级图标表 |
+| 修复计划（纯计算） | `web/src/lib/issueFix.ts` | `planFix` / `fixOptions`；**不碰 store** |
+| 修复落地 | `web/src/store/issueFixActions.ts` | `applyIssueFix` / `applyIssueFixes` → `documentStore.commit` |
+| 界面 | `web/src/components/left/ProblemPanel.tsx` + `LeftRail`（常驻入口 + 角标） | 抽屉内容由 `LeftPanel` 按 `leftTab === 'problems'` 分派 |
+| 定位高亮 | `uiStore.issueHighlight` → `canvas/OverlaySvg.tsx` | 加粗虚线外框，与选中态分开；`motion-safe:` 下才闪 |
+| 属性字段落点 | `data-prop`（`ElementInspector.FieldBlock` / `TextSection`） | **不是 aria-label** |
+| 导出面板消费 | `getValidationSummary(scope, extra)` / `rawIssuesFor(canvasId)` / `openProblems(filter?)` | 不跑第二遍求值器；proof 留档仍用聚合投影（格式一个字节没动） |
+
+三类规则：Document/Object（实时）、Export-context（`exportContextRaw()`，与
+`codex-plugin` 的 `bridge.export_raster_issues()` 严格同源）、Readiness
+（ADR 0027，**不进这个清单**）。
 
 ---
 

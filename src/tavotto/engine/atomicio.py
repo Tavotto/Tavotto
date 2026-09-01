@@ -159,6 +159,53 @@ def write_bytes(path: Path, data: bytes) -> None:
     _fsync_dir(path.parent)
 
 
+def publish_file(tmp: Path, dest: Path) -> None:
+    """把一个**已经写好**的临时文件原子地放到最终位置。
+
+    `write_bytes` 管的是"内容在内存里"的情况；导出不是——PDF/PNG 是渲染后端
+    直接 `save()` 到一个路径上的，字节从来没经过我们的手。那条路径上仍然要有
+    同一份纪律：先 fsync 文件本身（`os.replace` 只保证"要么旧要么新"，不保证
+    新内容已经离开页缓存），再 replace，再 fsync 目录。
+
+    临时文件必须与目标**同一个目录**（跨设备 rename 不是原子的）。失败时临时
+    文件被清掉——导出目录里绝不留半个文件（共享规则 §8：输出失败不得留下
+    半文件）。
+    """
+    tmp = Path(tmp)
+    dest = Path(dest)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("mkdir_failed", f"无法创建目录：{exc}", dest) from exc
+    # **必须以可写方式打开。** Windows 上 `os.fsync()` 走 MSVCRT 的 `_commit()`，
+    # 而它只接受**可写**句柄：对一个 `O_RDONLY` 的 fd 调用直接回
+    # `[Errno 9] Bad file descriptor`。POSIX 上只读 fd 照样 fsync 得了，
+    # 所以这条缺陷在 mac/Linux 上**一次都不会现形**——它是在合并队列的
+    # Windows 那条腿上第一次被看见的，形态是**每一次导出全失败**
+    # （70 条用例连带红，打包版冒烟里 `POST /api/export` 直接 500）。
+    # `write_bytes()` 没撞上它，是因为那边 fsync 的是 `open(tmp,"wb")` 的可写 fd。
+    try:
+        handle = open(tmp, "rb+")
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("write_failed", f"临时文件读不出来：{exc}", dest) from exc
+    try:
+        os.fsync(handle.fileno())
+    except OSError as exc:
+        handle.close()
+        _discard(tmp)
+        raise AtomicWriteError("write_failed", f"临时文件落盘失败：{exc}", dest) from exc
+    else:
+        handle.close()
+    try:
+        os.replace(tmp, dest)
+    except OSError as exc:
+        _discard(tmp)
+        raise AtomicWriteError("replace_failed", f"替换失败：{exc}", dest) from exc
+    _fsync_dir(dest.parent)
+
+
 def write_json(path: Path, obj: Any, *, indent: int | None = None) -> None:
     """原子写 JSON。序列化在**碰磁盘之前**完成——载荷有问题时原文件一字未动。"""
     write_bytes(Path(path), dumps_json(obj, indent=indent))

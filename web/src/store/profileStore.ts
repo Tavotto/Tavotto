@@ -94,6 +94,22 @@ function asFailure(err: unknown): ApiFailure {
 let seq = 0
 let applied = 0
 
+/**
+ * 清单记录 → 规范目录。**纯函数**：组件里 `useMemo([specs])` 直接用它，
+ * 而不是订阅 `catalog()`——后者每次调用都新建一个数组，拿它当 zustand
+ * 选择器的返回值等于"每一帧都变了"，React 会一直重渲染到报错为止。
+ */
+export function toCatalog(specs: ProfileRecord[]): SpecCatalogEntry[] {
+  return specs.map((r) => ({
+    id: r.id,
+    display_name: r.display_name,
+    name_key: r.name_key || undefined,
+    version: r.version,
+    built_in: r.built_in,
+    data: r.data,
+  }))
+}
+
 export const useProfileStore = create<ProfileState>((set, get) => ({
   styles: [],
   specs: builtinSpecRecords(),
@@ -133,15 +149,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
   get: (kind, id) => get().list(kind).find((r) => r.id === id) ?? null,
 
-  catalog: () =>
-    get().specs.map((r) => ({
-      id: r.id,
-      display_name: r.display_name,
-      name_key: r.name_key || undefined,
-      version: r.version,
-      built_in: r.built_in,
-      data: r.data,
-    })),
+  catalog: () => toCatalog(get().specs),
 
   create: (kind, name, data) => run(set, get, kind, () => createProfile(kind, name, data)),
   duplicate: (kind, id, name) => run(set, get, kind, () => duplicateProfile(kind, id, name)),

@@ -20,6 +20,7 @@
 """
 
 import ast
+import errno
 import io
 import json
 import os
@@ -2128,3 +2129,87 @@ def test_preview_svg_is_written_without_newline_translation():
         'figsession 写预览 SVG 必须显式 `newline=""`——默认的 universal '
         "newlines 会在 Windows 上把 `\\n` 翻成 `\\r\\n`"
     )
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "这条是**在 POSIX 上模拟 Windows 语义**的用例，靠 `fcntl` 读 fd 的访问模式，"
+        "而 Windows 上根本没有 `fcntl`。真 Windows 上这条性质由 `os.fsync()` 本身兑现——"
+        "整套件走的就是真的那条路，不需要也不可能在这里再模拟一遍。"
+    ),
+)
+def test_publish_file_fsyncs_through_a_writable_handle(tmp_path, monkeypatch):
+    """Windows 的 `os.fsync()` 只接受**可写**句柄。
+
+    MSVCRT 的 `_commit()` 对一个 `O_RDONLY` 的 fd 直接回
+    `[Errno 9] Bad file descriptor`；POSIX 上只读 fd 照样 fsync 得了，
+    **所以这条缺陷在 mac/Linux 上一次都不会现形**——本机全套件、CI 的
+    ubuntu 腿、macOS 腿全绿，它是在合并队列的 Windows 那条腿上第一次被看见的，
+    形态是 `publish_file()` 每次都抛 `write_failed`，也就是**每一次导出全失败**
+    （70 条用例连带红，打包版冒烟里 `POST /api/export` 直接 500）。
+
+    这里把 Windows 的两条规矩搬到本机（本文件的一贯做法：拿不到真实语义就
+    monkeypatch 出同样的失败）：
+
+    * 只读 fd 上 fsync → `EBADF`；
+    * `os.open()` 打开一个**目录**直接失败（`_fsync_dir()` 因此整段跳过）。
+    """
+    import fcntl
+
+    from tavotto.engine import atomicio
+
+    real_fsync = os.fsync
+    real_os_open = os.open
+    synced: list[int] = []
+
+    def windows_fsync(fd):
+        mode = fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE
+        if mode == os.O_RDONLY:
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        synced.append(mode)
+        return real_fsync(fd)
+
+    def windows_os_open(path, flags, *args, **kwargs):
+        if Path(path).is_dir():
+            raise OSError(errno.EACCES, "Permission denied")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fsync", windows_fsync)
+    monkeypatch.setattr(os, "open", windows_os_open)
+
+    tmp = tmp_path / "Fig 1.pdf.tmp"
+    tmp.write_bytes(b"%PDF-1.4\n")
+    dest = tmp_path / "Fig 1.pdf"
+
+    atomicio.publish_file(tmp, dest)
+
+    assert dest.read_bytes() == b"%PDF-1.4\n"
+    assert not tmp.exists(), "临时文件没被 replace 掉"
+    # **不是"没报错"就算过。** 把 fsync 整段删掉也能让上面三条通过，而那样
+    # `os.replace` 会在掉电时留下一个空文件——这一步的存在本身要被量到。
+    assert synced, "文件根本没有 fsync 过"
+
+
+def test_publish_file_still_reports_a_real_fsync_failure(tmp_path, monkeypatch):
+    """改成可写句柄之后，**真正的** I/O 失败仍然要响亮地失败。
+
+    上一条钉的是"别把好的当坏的"；这一条钉反方向——别为了让上一条过而把
+    整个 fsync 吞掉。
+    """
+    from tavotto.engine import atomicio
+
+    def boom(fd):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "fsync", boom)
+
+    tmp = tmp_path / "Fig 1.pdf.tmp"
+    tmp.write_bytes(b"%PDF-1.4\n")
+    dest = tmp_path / "Fig 1.pdf"
+
+    with pytest.raises(atomicio.AtomicWriteError) as got:
+        atomicio.publish_file(tmp, dest)
+    assert got.value.code == "write_failed"
+    assert not dest.exists(), "失败了却留下了产物"
+    assert not tmp.exists(), "失败了却留下了半个临时文件"

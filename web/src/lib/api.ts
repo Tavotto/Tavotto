@@ -851,28 +851,127 @@ export type ExportObject =
       rotation_deg?: number
     })
 
+/**
+ * 统一导出请求（ADR 0031）——**原图与画布走同一个结构**。
+ *
+ * 载荷的构造只有一处：`lib/exportRequest.ts`。组件不许自己拼这个对象，
+ * 也不许在第二个 API 上把同一批参数再抄一遍——那正是"预检按一套规矩、
+ * 导出按另一套"的来源。
+ */
 export interface ExportRequest {
-  page_w_mm: number
-  page_h_mm: number
-  dpi: number
+  scope: 'original' | 'canvas'
   formats: string[]
-  stem: string
-  /** 数组序 = z 序（底 → 顶），与 document.objects 一致 */
-  objects: ExportObject[]
-  /** 可选：导出 proof report，随成图写到 exports/<stem>_<ts>_proof.json */
-  proof?: Record<string, unknown>
+  /** 基名，不含扩展名（`lib/exportName.ts` 已经剥过） */
+  filename: string
+  /** **只在有位图格式时是数字**；只出 PDF 时是 null（不是 0，也不是默认值） */
+  ppi: number | null
+  background: 'white' | 'transparent'
+  overwrite: 'ask' | 'replace' | 'rename'
+  validation?: { policy: 'block_on_error' | 'acknowledged'; acknowledged?: string[] }
+  include_style_check_report?: boolean
+  document_id?: string | null
+  /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
+  document_revision?: string | null
+  /** `scope=canvas`：页面 + z 序对象（底 → 顶） */
+  canvas?: { page_w_mm: number; page_h_mm: number; objects: ExportObject[] }
+  /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
+  original?: {
+    figure_id: string
+    overrides?: { gid: string; prop: string; value: unknown }[]
+    w_mm?: number | null
+    h_mm?: number | null
+    px_w?: number | null
+    px_h?: number | null
+    source_kind?: string
+    /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
+    ignored?: string[]
+  }
+  /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
+  style_check_report?: Record<string, unknown>
 }
 
-export interface ExportResponse {
-  files: { name: string; url: string }[]
+/** 一件产出。**成功与失败是同一个结构**——失败项也要出现在清单里 */
+export interface ExportOutput {
+  format: string
+  name: string | null
+  url: string | null
+  bytes: number | null
+  dimensions: { px: [number, number] | null; mm: [number, number] | null }
+  /** 这一份是不是真矢量。**PNG 恒 false**（不得伪称矢量） */
+  vector: boolean
+  status: 'done' | 'failed'
+  replaced: boolean
+  error: { code: string; params: Record<string, unknown> } | null
+}
+
+export type ExportJobStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'partial'
+  | 'failed'
+  | 'cancelled'
+  | 'conflict'
+  | 'unknown'
+
+export interface ExportJob {
+  job_id: string
+  status: ExportJobStatus
+  request?: Record<string, unknown>
+  outputs: ExportOutput[]
+  warnings: string[]
+  /** `overwrite: 'ask'` 撞上已有文件时，撞的是哪几个名字 */
+  conflicts: string[]
   export_dir?: string
-  /** 面板重渲染时 worker 报的警告（元素不存在 / 属性不支持）。
-   *  导出照常完成，但成图可能与画布不完全一致——必须让用户看见。 */
-  warnings?: string[]
+  document_revision?: string | null
+  progress?: { phase: string; step: number; total: number }
+  timing?: { started_at: number | null; finished_at: number | null; elapsed_ms: number | null }
+  error: { code: string; params: Record<string, unknown>; recoverable: boolean } | null
+  /** 旧契约的投影（老标签页与 CI 脚本读它）；新界面读 outputs */
+  files?: { name: string; url: string }[]
 }
 
+/** 同步导出（一次请求出完）。桌面/浏览器/内嵌三条路都发同一个结构。 */
 export const exportFigure = (req: ExportRequest) =>
-  jsonFetch<ExportResponse>('/api/export', {
+  jsonFetch<ExportJob>('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+
+/** 起一个后台导出作业，立刻回 job_id；进度经 SSE `export.progress`。 */
+export const startExport = (req: ExportRequest) =>
+  jsonFetch<ExportJob>('/api/export/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+
+/** 作业当前状态（SSE 断了之后的补拉）。 */
+export const exportState = (jobId: string) =>
+  jsonFetch<ExportJob>(`/api/export/state?job_id=${encodeURIComponent(jobId)}`)
+
+/** 取消。回的是「有没有这个作业可取消」，不是「已经取消了」。 */
+export const cancelExport = (jobId: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/export/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  })
+
+export interface ExportValidation {
+  ok: boolean
+  /** 会撞上的已有文件名 */
+  conflicts?: string[]
+  writable?: boolean
+  ppi_applies?: boolean
+  names?: Record<string, string>
+  error?: { code: string; params: Record<string, unknown>; message: string }
+}
+
+/** 真的开始之前能看出来的问题：重名、目录写不写得了、PPI 有没有意义。 */
+export const validateExport = (req: ExportRequest) =>
+  jsonFetch<ExportValidation>('/api/export/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -1697,6 +1796,8 @@ export type ServerEvent =
     } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
+  /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
+  | ({ kind: 'export.progress' } & ExportJob)
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
   | ({
       kind: 'ai.done'
@@ -1720,6 +1821,7 @@ const EVENT_KINDS = [
   'native.session',
   'engine.bootstrap',
   'engine.dependency',
+  'export.progress',
   'ai.delta',
   'ai.done',
 ] as const

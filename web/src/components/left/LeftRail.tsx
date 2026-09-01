@@ -1,22 +1,32 @@
 import { useTranslation } from 'react-i18next'
-import { Braces, ClipboardList, Images, Layers, LayoutGrid, Settings } from 'lucide-react'
+import {
+  Braces,
+  ClipboardList,
+  Images,
+  Layers,
+  LayoutGrid,
+  Settings,
+  TriangleAlert,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
+import { useValidationStore } from '@/store/validationStore'
 import { Tip } from '../ui/Tooltip'
 
 /**
  * 标签名走 workspace:rail.<id>，图标与顺序留在代码里。
  *
- * Prompt 11 的「问题」入口会加在这里（`{ id: 'problems', icon: … }` + 一个
- * `LeftTab` 取值 + 一份抽屉内容）。**在它真的有内容之前不放一个占位按钮**
- * ——按了什么都不发生的入口比没有入口更坏，用户会以为功能坏了。
+ * 「问题」（Prompt 11）**常驻**：它在没有问题时也要在——「一个问题都没有」
+ * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。角标只在真的
+ * 有问题时出现，抽屉收起时它是唯一的提示。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   { id: 'canvases', icon: LayoutGrid },
   { id: 'assets', icon: Images },
   { id: 'layers', icon: Layers },
   { id: 'elements', icon: Braces },
+  { id: 'problems', icon: TriangleAlert },
 ]
 
 /**
@@ -28,6 +38,8 @@ export function LeftRail() {
   const tab = useUiStore((s) => s.leftTab)
   const open = useUiStore((s) => s.leftOpen)
   const railClick = useUiStore((s) => s.railClick)
+  const problems = useValidationStore((s) => s.issues.length)
+  const blocking = useValidationStore((s) => s.issues.some((i) => i.severity === 'error'))
 
   return (
     <nav
@@ -37,7 +49,10 @@ export function LeftRail() {
     >
       {ITEMS.map(({ id, icon: Icon }) => {
         const active = open && tab === id
-        const label = t(`rail.${id}`)
+        // 角标只写进无障碍名，不再单独挂一个 aria-live——轨道是导航，不是播报区
+        const label = id === 'problems' && problems > 0
+          ? t('rail.problemsCount', { count: problems })
+          : t(`rail.${id}`)
         return (
           <Tip key={id} label={active ? t('rail.collapse', { label }) : label} side="right">
             <button
@@ -62,6 +77,20 @@ export function LeftRail() {
                 />
               )}
               <Icon size={16} />
+              {id === 'problems' && problems > 0 && (
+                /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
+                   而且用形状（实心点）+ 数字两重表达，不只靠颜色 */
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center',
+                    'rounded-full px-0.5 font-mono text-[9px] leading-none',
+                    blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
+                  )}
+                >
+                  {problems > 99 ? '99+' : problems}
+                </span>
+              )}
             </button>
           </Tip>
         )

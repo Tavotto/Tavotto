@@ -11,7 +11,14 @@ AGPL-3.0-only。把「读页面尺寸 / 栅格化 / 按布局合成」这三件�
   render_preview_png(path, w, out)  → 画布显示用的位图预览（带磁盘缓存）
   text_width(s, size_pt, ...)       → 中英混排字符串宽度（pt）
   compare_png(a, b)                 → 两张 PNG 的像素差异指标（写回像素门）
-  compose(page_w_mm, page_h_mm)     → 合成画布；place() 逐个落对象，save_*() 出图
+  compose(page_w_mm, page_h_mm, transparent=False)
+                                    → 合成画布；place() 逐个落对象，save_*() 出图
+  original_pdf(src, out, page_pt)   → 按原图尺寸出 PDF（矢量源整页搬运，不重画；
+                                       位图源的页面尺寸由调用方给——密度的解析
+                                       只有 engine/originalspec 一处）
+  original_png(src, out, ppi, transparent)
+                                    → 按原图出 PNG（位图**永远**保源像素网格；
+                                       JPEG 源换容器不换像素）
   annotate_asset(pdf, png, objs)    → 把画布标注画进单图文件（写回原图带标注）
   BACKEND_NAME / BACKEND_VERSION    → 后端身份（进渲染缓存键：换实现/换版本
                                        出来的像素可能就不一样了）
@@ -28,6 +35,8 @@ from .pymupdf_backend import (  # noqa: F401
     compose,
     hex2rgb,
     mm2pt,
+    original_pdf,
+    original_png,
     probe_asset,
     render_preview_png,
     text_width,
@@ -41,6 +50,8 @@ __all__ = [
     "compose",
     "hex2rgb",
     "mm2pt",
+    "original_pdf",
+    "original_png",
     "probe_asset",
     "render_preview_png",
     "text_width",

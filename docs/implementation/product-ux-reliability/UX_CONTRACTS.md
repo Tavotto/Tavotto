@@ -291,33 +291,105 @@ Export     —— 文件怎么生成      （格式、PPI、透明、目标路�
 
 ---
 
-## 5. 问题定位合同
+## 5. 问题定位合同（Session 11 整段重写，ADR 0030）
 
 ```text
-issue → document/mode → object → viewport → selection → inspector field
+issue → 画布 → 工作流模式 → 对象 → 视口 → 选中 → Inspector → 属性字段
 ```
 
-- 每个问题项必须持有**稳定对象引用**，不是数组下标、不是文件名、
-  不是 matplotlib 临时内部 id。
-- 现状：`PreflightIssue { id, severity, message: UiMessage, objectIds: string[],
-  gids: string[], detail }`（`web/src/lib/preflight.ts`）——
-  已经是「对象 id + 图内元素 gid」的稳定引用，`id` 是机器可读的稳定判据身份，
-  措辞变化不影响 golden vectors。**这就是 ObjectRef 的现有等价物**，
-  后续不另造第二套类型。
-- 缺口（归属 Prompt 11）：问题项没有 `documentId` / `canvasId` 维度，
-  多画布项目里无法跳到"另一张画布上的那个对象"。
+**「这份项目有什么问题」全产品只有一条链**：
+
+```text
+preflight.runSpec()          规则求值（两份求值器，golden vectors 对齐）
+  → lib/validation.ts        接成可定位问题（画布维度、逐条命中、指纹、fixKind）
+  → store/validationStore.ts 编排（防抖 250ms + 代次、按画布增量、失败不清空）
+  → components/left/ProblemPanel.tsx  左侧「问题」抽屉
+```
+
+导出对话框**只消费摘要**（`getValidationSummary(scope, extra)`）与聚合投影
+（`rawIssuesFor(canvasId)`，proof 留档要的那一份，**同一次求值的另一份投影**）。
+它不再跑第二遍求值器，也不再在组件里现算「这个 PPI 够不够」。
+
+### 问题的身份
+
+| 字段 | 含义 |
+| --- | --- |
+| `issueId` | = 指纹 = `ruleCode｜canvasId｜objectId｜gid｜propertyPath`。**不含当前值**——值变了仍是同一条，UI 拿它当 key 才不会每敲一个数字就重建整行 |
+| `objectRef` | `{ documentId, canvasId, objectId, gid }`。**`canvasId` 正是改造前缺的那一维**（R-12 已关） |
+| `subject` | 界面拿它说人话：`elementLabel`（manifest 给的中文散文，过 `engineLabel()`）/ `elementRole` / `objectName` |
+| `propertyPath` | `fontsize` / `sizePt` / `page.w` / `export.dpi`——定位落到字段上靠它 |
+| `message` | **描述符**，不是翻好的字符串 |
+| `fixKind` | `none` / `safe_auto` / `user_choice` |
+
+**聚合项回答「过没过」，逐条命中回答「谁没过」。** 面板列的是后者：聚合项的
+`detail` 属于最糟的那一次，摊开来描述别的对象会说出假数字。逐条命中
+（`PreflightOccurrence`）**不进跨语言合同**——golden vectors 比的仍是聚合投影，
+看护用例盯着两者一致。
+
+### 三类规则不混在一起
+
+| 类 | 什么时候能判 | 谁产生 |
+| --- | --- | --- |
+| Document / Object | 编辑时实时可见 | `preflight.runSpec()` |
+| Export context | 选了格式与 PPI 之后 | `validation.exportContextRaw()`（与 MCP 的 `bridge.export_raster_issues()` **严格同源**：同一个 rule code、同一个 message key、同一张 severity 表） |
+| Readiness | 项目接入事实 | `engine/readiness.py`（ADR 0027）**不进清单**，面板底部只给一条链接 |
+
+### 「还没查」是独立一档
+
+`total === 0` **单独看不足以说「检查通过」**。摘要带 `ready` / `failed`，
+`summarizeIssues()` 不给它们默认值。配套两条：导出对话框打开时**当场同步跑
+一遍**（纯计算），检查失败时**保留上一次的结果**并单独说一句，且把它算进
+「需要用户点头」的条件。
+
+### 定位
+
+跨模块**只有 `lib/issueFocus.focusObject(ref, propertyPath)`**。两条分支：
+`gid` 非空 = 进快速编辑 + 图内元素编辑 + 选中那个 gid；否则回排版模式。
+失败回**闭集原因**（`canvas_missing` / `object_deleted` / `not_editable` /
+`document_not_loaded`），各有各的下一步，**绝不静默不动**。
+
+属性字段的落点是 `data-prop`（稳定机器标识），**不是 aria-label**——那是本地化
+文案，换语言就选不中。定位**一个字都不写文档**。
+
+### 界面上不出现内部标识
+
+措辞唯一实现 `lib/validationText.ts`。主语说人话，gid / 对象 id / 属性名只出现
+在每行**默认收起**的「技术详情」里。等级用图标形状 + 文字标签 + 颜色三重表达。
+
+### 自动修复
+
+`safe_auto` 三条门槛：**目标值唯一**、**修完真的能过**（绝对下限不含等号，
+所以"提到正好 8 pt"不算修好；且要按面板缩放反算回脚本坐标系）、**不动科研
+数据**（字体 / 色图 / 裁剪一律不自动）。目录声明规则的意图，`planFix()` 用当前
+值算这一条能不能修，算不出来降回 `none`——按了没反应的按钮比没有按钮更坏。
+
+落地经 `documentStore.commit`：一个修复一个事务、一批一个批事务、⌘Z 一次撤回、
+dirty / autosave 照常。**批量只在当前画布**（撤销栈按画布换入换出）。
 
 ---
 
-## 6. 输出一致性合同
+## 6. 输出一致性合同（Session 12 整段重写，ADR 0031）
+
+**「这次导出要什么」全产品只有一个结构**：`ExportRequest`
+（`engine/exportreq.py` ↔ `web/src/lib/exportRequest.ts`）。
 
 | 判据 | 要求 |
 | --- | --- |
-| 原图导出 | 不套用任何画布缩放；尺寸来自 **`OriginalOutputSpec`**（ADR 0028，唯一服务 `web/src/lib/originalSpec.ts`） |
+| 原图导出 | 不套用任何画布缩放；尺寸来自 **`OriginalOutputSpec`**（ADR 0028）。载荷里**根本没有** x/y/w/h 与页面尺寸 |
+| 被忽略的变换 | 逐项进 `ignored` 并**说给用户听**。忽略而不说等于骗人；说了而不忽略等于套用画布缩放 |
 | 画布导出 | 忠实于画布（mm、栏宽、页边距） |
 | 预览 / PDF / PNG | 尽量同一语义渲染源；不允许"预览正常但导出缺字/方框/错位" |
-| 失败 | 不留半文件；覆盖已有文件必须明确 |
-| 降级 | 格式不支持某能力时清楚降级，**不得伪称矢量**（现状已有先例：`opacity<1`、翻转面板按 DPI 位图嵌入，见 `types/document.ts` 注释） |
+| 多格式 | **一个作业 = 一份快照**：PDF 与 PNG 物理上出自同一页 / 同一个源文件 |
+| PPI | **只在有位图格式时是数字**，否则 `null`。`null` 与 `600` 是两个不同的答案 |
+| 位图源的原图导出 | **保源像素网格**，不按导出 ppi 重采样 |
+| 失败 | 不留半文件（临时目录 → 全部完成 → 原子 replace）；**部分失败是独立一档**，不许报成全部成功 |
+| 取消 | 清临时文件，最终目录一个字节没动过；**关掉对话框不取消作业** |
+| 覆盖 | 闭集 `ask` / `replace` / `rename`，默认 `ask`；撞名时**不渲染、不写盘** |
+| 文件名 | 按最严平台（Windows）校验，八条闭集原因；**输入的那一刻**就地提示 |
+| 文档修订 | 客户端在开始那一刻取的**载荷指纹**，服务端原样回传；完成时与此刻一比 |
+| 降级 | 格式不支持某能力时清楚降级，**不得伪称矢量**（`opacity<1`、翻转面板按 DPI 位图嵌入；位图源装进 PDF 时 `vector: false`） |
+| 界面 | 不出现内部库名、profile id/版本、gid、对象 id、绝对路径 |
+| 原图不可用 | **说出原因**，不隐藏选项、不静默改成画布 |
 | 写回 | 热态所见 == 写进文件的 == 重开后重放出来的（根 `AGENTS.md` 的写回事务不变式） |
 
 ---
@@ -386,8 +458,10 @@ spec 跟着变。
   用户设的那一份必须原样生效。
 - 展开 / 折叠之后画布视口必须重算，且 `zoom` / `panX` / `panY` **一位都不
   变**——对象在文档坐标里不许跳动。
-- 轨道上有稳定的「素材」与「项目接入状态」入口；Prompt 11 的「问题」入口
-  在 `LeftRail.ITEMS` 旁留了位置，**但在它真的有内容之前不渲染占位按钮**。
+- 轨道上有稳定的「素材」「问题」与「项目接入状态」入口。**「问题」常驻**
+  （Session 11）：一个问题都没有时它也在——「没有问题」本身就是用户要的答案；
+  角标只在真的有问题时出现，抽屉收起时它是唯一的提示，且**不挡画布**
+  （就在轨道自己的格子里），用形状 + 数字两重表达。
 
 ---
 

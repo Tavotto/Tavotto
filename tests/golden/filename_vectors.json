@@ -1,0 +1,307 @@
+{
+ "note": "由 scripts/gen_filename_vectors.py 生成；engine/exportreq.py 与 web/src/lib/exportName.ts 两侧各跑一遍。",
+ "filename_max": 120,
+ "check": [
+  {
+   "name": "Fig 1",
+   "reason": null
+  },
+  {
+   "name": "fig-1_final",
+   "reason": null
+  },
+  {
+   "name": "图 1 主图",
+   "reason": null
+  },
+  {
+   "name": "",
+   "reason": "empty"
+  },
+  {
+   "name": " ",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "  Fig 1",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "Fig 1  ",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "\tFig",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "Fig\t",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "﻿Fig",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "Fig﻿",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "　Fig",
+   "reason": "whitespace_edge"
+  },
+  {
+   "name": "Fig\u001c",
+   "reason": "control_char"
+  },
+  {
+   "name": "Fig\u001c1",
+   "reason": "control_char"
+  },
+  {
+   "name": "Fig\n1",
+   "reason": "control_char"
+  },
+  {
+   "name": "Fig\u0000 1",
+   "reason": "control_char"
+  },
+  {
+   "name": "Fig1",
+   "reason": "control_char"
+  },
+  {
+   "name": "Fig<1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig>1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig:1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig\"1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig/1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig\\1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig|1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig?1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig*1",
+   "reason": "illegal_char"
+  },
+  {
+   "name": "Fig.",
+   "reason": "trailing_dot"
+  },
+  {
+   "name": "Fig..",
+   "reason": "trailing_dot"
+  },
+  {
+   "name": ".",
+   "reason": "dot_only"
+  },
+  {
+   "name": "..",
+   "reason": "dot_only"
+  },
+  {
+   "name": "...",
+   "reason": "dot_only"
+  },
+  {
+   "name": ".hidden",
+   "reason": null
+  },
+  {
+   "name": "CON",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "con",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "Con.pdf",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "CONSOLE",
+   "reason": null
+  },
+  {
+   "name": "COM1",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "COM10",
+   "reason": null
+  },
+  {
+   "name": "LPT9",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "NUL.png",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "aux",
+   "reason": "reserved_name"
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "reason": null
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "reason": "too_long"
+  }
+ ],
+ "strip": [
+  {
+   "name": "Fig 1.pdf",
+   "formats": [
+    "pdf",
+    "png"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.PDF",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.png",
+   "formats": [
+    "png"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.svg",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.pdf.pdf",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": "Fig 1.pdf"
+  },
+  {
+   "name": "v1.2",
+   "formats": [
+    "pdf",
+    "png"
+   ],
+   "stripped": "v1.2"
+  },
+  {
+   "name": "data.tar.gz",
+   "formats": [
+    "png"
+   ],
+   "stripped": "data.tar.gz"
+  },
+  {
+   "name": "archive.tiff",
+   "formats": [
+    "png"
+   ],
+   "stripped": "archive"
+  },
+  {
+   "name": ".pdf",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": ".pdf"
+  },
+  {
+   "name": "Fig 1",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": "Fig 1"
+  }
+ ],
+ "output_name": [
+  {
+   "base": "Fig 1",
+   "format": "pdf",
+   "name": "Fig 1.pdf"
+  },
+  {
+   "base": "Fig 1",
+   "format": "png",
+   "name": "Fig 1.png"
+  }
+ ],
+ "dedupe": [
+  {
+   "base": "Fig 1",
+   "format": "pdf",
+   "taken": [],
+   "name": "Fig 1.pdf"
+  },
+  {
+   "base": "Fig 1",
+   "format": "pdf",
+   "taken": [
+    "Fig 1.pdf"
+   ],
+   "name": "Fig 1 (2).pdf"
+  },
+  {
+   "base": "Fig 1",
+   "format": "pdf",
+   "taken": [
+    "Fig 1.pdf",
+    "Fig 1 (2).pdf"
+   ],
+   "name": "Fig 1 (3).pdf"
+  },
+  {
+   "base": "Fig 1",
+   "format": "png",
+   "taken": [
+    "Fig 1.pdf"
+   ],
+   "name": "Fig 1.png"
+  },
+  {
+   "base": "图 1",
+   "format": "pdf",
+   "taken": [
+    "图 1.pdf",
+    "图 1 (2).pdf",
+    "图 1 (3).pdf"
+   ],
+   "name": "图 1 (4).pdf"
+  }
+ ]
+}
