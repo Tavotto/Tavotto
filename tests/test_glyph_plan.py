@@ -232,6 +232,34 @@ def test_interpretation_only_produces_a_render_representation():
     assert richtext.plain_text(raw) == raw  # 而原文没有
 
 
+def test_a_run_of_unicode_scripts_folds_as_one_piece():
+    """`m⁻²`：`⁻` 与 `²` 的处境不同，但**整串一起折**。
+
+    逐字符处理会得到一个 62% 的合成减号紧挨着一个全尺寸的设计上标——比原样
+    还难看。这条盯的是分块，不是折不折：把 `interpret_runs` 里那个
+    「吃掉同类字符」的循环改成逐字符，这里立刻红。
+    """
+    folded = richtext.interpret_runs(
+        richtext.parse_runs("m⁻²"),
+        # `²` 在 Latin-1 里，正文脸画得出；`⁻` 画不出——两个字符两种处境
+        is_primary=lambda cp: cp < 0x80 or cp == 0xB2,
+        is_drawable=lambda cp: cp < 0x80 or cp == 0xB2,
+        mode="auto",
+    )
+    assert [(r.text, r.script) for r in folded] == [("m", ""), ("-2", "sup")]
+
+
+def test_superscript_and_subscript_never_merge():
+    """相邻的上标段与下标段是两段——合并的话下标会被画到上标的基线上。"""
+    folded = richtext.interpret_runs(
+        richtext.parse_runs("x⁵₂"),
+        is_primary=lambda cp: cp < 0x80,
+        is_drawable=lambda cp: cp < 0x80,
+        mode="auto",
+    )
+    assert [(r.text, r.script) for r in folded] == [("x", ""), ("5", "sup"), ("2", "sub")]
+
+
 def test_missing_glyph_is_folded_even_in_auto_mode():
     """auto 档的那句承诺：**只有「不然就是方框」的才合成**。
 
