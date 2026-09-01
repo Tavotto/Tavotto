@@ -373,6 +373,8 @@ desktop…」。
 | **第五轮评审（PR #214，`c8479335`）** | ✅ 1 P1 + 2 P2 **全部成立、全部改**（两条 P2 都在十行以内，比开 Issue 便宜）。处置见 `TEST_MATRIX.md`「第五轮评审」 |
 | **第六轮评审（PR #214，`13ec3b69`）** | ✅ **0 P1 + 4 P2**，全部成立、全部改（都在 20 行以内、都在本 PR 已动过的文件里，其中一条是本 PR 自己声明的不变式被违反）；变异反证扩到**后端 28 / 前端 27，全红**。处置见 `TEST_MATRIX.md`「第六轮评审」 |
 | **合并 main（`#215`）** | ✅ 唯一冲突是 `codex-plugin/mcp/widget/canvas.html`——**生成物，在合并态重建**（挑一边留下都会得到一份与源码不对应的产物）。#215 同时动了 `app.py` / `pymupdf_backend.py` / `overrides.py`，与本 PR 同模块不同区域，**文本干净不等于语义干净**，所以全量套件在合并态重跑了一遍 |
+| **合并队列的 Windows 腿（PR #214）** | ✅ 被踢出来两次，两次都是**真缺陷**：① `atomicio.publish_file()` 对只读 fd 调 `os.fsync()`，Windows 的 `_commit()` 只接受可写句柄 → EBADF → **每一次导出都失败**（70 条用例连带红，打包版 `POST /api/export` 直接 500）；② `ElementInspector` 的 pair/rect 控件不给数字框任何可访问名（axe `label`，**critical**，main 上原有）。都已修 + 回归用例 + 变异反证。处置见 `TEST_MATRIX.md`「合并队列的 Windows 腿」 |
+| **`full-ci` 标签** | ✅ `backend-platforms` / `windows-exe-smoke` / `package` 在 PR 上默认 skipping，只在 `merge_group` 跑。给 PR 打 `full-ci` 让它们**直接在 PR 上跑**，别拿合并队列当探测器。注意：打标签会当场触发新 run 并取消旧的，被取消的 run 留下的是**假红**（先看 `conclusion` 是不是 `cancelled`） |
 | **第七轮评审（PR #214，`4f5f1855`）** | ✅ **0 P1 + 3 P2**，全部成立、全部改。第一条虽挂 P2，后果是「新导出永远停在进行中」——**按后果处置不按标签处置**。变异反证 5 条：第一轮 4 红 1 存活，存活的那条是「判据只钉了一条边」（补了 `.then` 没补 `.catch`），补齐后 5/5 全红。处置见 `TEST_MATRIX.md`「第七轮评审」 |
 | `npx playwright test e2e/a11y e2e/asset-library e2e/keyboard-golden-path e2e/i18n --project=chromium` | ✅ **27 passed**（2.4 分钟）——含「导出对话框：axe 干净 + 焦点 trap」、中英文各一遍导出对话框、纯键盘走完导出闭环 |
 

@@ -1403,3 +1403,105 @@ fast refresh）；两个 memo 的依赖加了带理由的 `exhaustive-deps` 豁�
    （本轮三处前端修复会整个测不到，而且一路绿）。
 
 第 2 条尤其阴：它不会报错，只会让你拿到一份**测了旧代码的绿**。
+
+---
+
+## 合并队列的 Windows 腿：两个真缺陷
+
+第七轮之后 PR 全绿、进了合并队列，**被踢出来两次**。两次都不是"CI 抖动"，
+是两个真缺陷——而且**都只在 Windows 那条腿上现形**。
+
+### 1. `os.fsync()` 对只读 fd 在 Windows 上回 EBADF（我引入的）
+
+`backend-platforms (windows-latest)` **70 条失败**，`windows-exe-smoke` 里
+打包版 `POST /api/export` 直接 500。
+
+70 条里**没有一条是独立成因**，全带同一句
+`write_failed: 临时文件落盘失败：[Errno 9] Bad file descriptor`。
+`engine/atomicio.publish_file()` 里：
+
+```python
+fd = os.open(tmp, os.O_RDONLY)
+os.fsync(fd)
+```
+
+Windows 上 `os.fsync()` 走 MSVCRT 的 `_commit()`，**它只接受可写句柄**，
+对 `O_RDONLY` 的 fd 直接回 EBADF。改成 `open(tmp, "rb+")`。
+
+> **同一个模块里，一条路对一条路错。** `write_bytes()` 从来没撞上它，因为那边
+> fsync 的是 `open(tmp,"wb")` 的可写 fd。新加的那条路照着"先 fsync 再 replace"
+> 的序列写，却把"用什么句柄"这一维漏了——**序列对了不等于每一步的前提都对**。
+
+后果不是"测试红"：**Windows 上每一次导出都失败**，打包版也一样。
+
+回归用例两条，按 `tests/test_windows_regressions.py` 的一贯做法把 Windows 语义
+搬到本机（只读 fd → EBADF、`os.open` 打开目录直接失败），**外加断言 fsync 真的
+发生过**——把这一步整段删掉也能让"没报错"通过，而那样掉电会留下空文件。
+另一条钉反方向：真正的 EIO 仍要响亮失败，不留产物、不留半个临时文件。
+
+### 2. pair / rect 属性的数字框没有可访问名（main 上原有的）
+
+修完 1 之后 70 条全消失，剩下**一条**——是那两条新用例里的一条自己红了：
+`ModuleNotFoundError: No module named 'fcntl'`。它是"在 POSIX 上模拟 Windows
+语义"的用例，而 Windows 上没有 `fcntl`。加 `skipif(os.name == "nt")`：
+真 Windows 上这条性质由 `os.fsync()` 本身兑现，整套件走的就是真的那条路。
+
+同一轮 `windows-exe-smoke` 的 Playwright 又红一条：
+`[webkit] 问题面板：axe 无违规`，违规是 **critical 的 `label`**，落在
+`input[value="80"]` / `input[value="57.6"]` 上。
+
+那不是问题面板——**axe 扫的是整页**，违规节点在右栏：快速编辑下的「图幅」。
+`ElementInspector` 的 `pair`/`rect` 通用控件渲染 `NumberField` 时
+`prefix`/`title`/`ariaLabel` 一个都没给，于是 `derivedLabel` 是 undefined。
+
+**这是 main 上就有的缺陷**，本 PR 一行没动过那个文件；是 11 阶段新加的那条
+a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那一次。
+
+> 把 critical 加进 `allow` 列表就是亲手挖一个空门禁。修它。
+
+每一格的语义**随属性变**（`size_mm` 宽/高、`xlim`/`ylim` 最小/最大、
+`position` x/y/宽/高），不能用统一的序号名糊过去；表里没有的属性退回
+「第 N 项」——**有个不精确的名字也好过没有名字**，而且这种退化是听得见的。
+
+单测钉在控件层而不是只靠那条 e2e：**e2e 要恰好走到那一屏才量得到**，
+而缺陷属于控件本身，任何 pair/rect 属性都带着它。四条用例，其中两条是不变式
+（figure / axes 两个角色各一条：属性栏里没有一个数字框是无名的），另有一条
+单独断言**两个名字必须不同**——都挂同一个「图幅」也能骗过"非空"。
+变异反证 3/3 全红。
+
+### 为什么本机、ubuntu、macOS 全绿
+
+| 缺陷 | 在别处为什么不响 |
+| --- | --- |
+| fsync 只读 fd | POSIX 上只读 fd **照样 fsync 得了**。这不是"没测到"，是那条语义在别的平台上不存在 |
+| 数字框无名 | axe 是同一份 JS，判据一样——**差的是 DOM**：chromium 那次没停在快速编辑，右栏根本没有那两个框 |
+
+> 第二条值得单独记：**同一个判据在两个浏览器上给出不同结论时，先怀疑输入不同，
+> 而不是判据不稳。** 这里"输入"是那一屏的 DOM，而它取决于测试走到哪一步。
+
+### `full-ci` 标签：别拿合并队列当探测器
+
+`backend-platforms` / `windows-exe-smoke` / `package` 在 PR 上默认 skipping，
+只在 `merge_group` 跑。第一次被踢出来之后改成给 PR 打 **`full-ci`** 标签
+（`.github/workflows/ci.yml` 里那条 `contains(labels.*.name, 'full-ci')`），
+两条腿直接在 PR 上跑——第二个缺陷就是这样在 PR 上抓到的，没有再占一次队列。
+
+> 打标签会**当场触发一次新 run 并取消旧的**。被取消的 run 会把 gate 留成
+> failure 形状（7–9 秒的"红"），那是假红——判之前先看 `conclusion` 是不是
+> `cancelled`。
+
+---
+
+## 记错对象的四次（同一晚，同一形状）
+
+判据落在错的东西上，四次都伪装成"结果"：
+
+| # | 判据 | 量到的其实是 |
+| --- | --- | --- |
+| 1 | `PYTHONDONTWRITEBYTECODE=1` 下跑全量 | 那条用例断言的正是"桥不给解释器加任何标志"，**环境变量漏进了子进程**——假红 |
+| 2 | `(cmd \| tail -N); EXIT=$?` | `tail` 的退出码，恒 0。e2e 明明红着，脚本报绿 |
+| 3 | `gh pr checks \| awk '$2=="pending"'` | job 名字里带空格，`$2` 切的是名字的一截，不是状态 |
+| 4 | `gh run list --limit 3 -q '.[0]'` | 最新的那个 run **不一定是 CI**（是 `PR conflict domains`，只有一个 job，当然 success） |
+
+> 四条的共同点：**判据本身跑通了、也给出了一个看起来合理的值**。
+> 出错的是"这个值回答的是哪个问题"。参见 [[name-the-subject-of-the-predicate]]。
