@@ -35,7 +35,15 @@ FONT_SUFFIXES = (
 
 
 def _tracked_files() -> list[str]:
-    out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        # Windows 上不给 encoding 就按系统代码页解码，中文路径会解成乱码
+        encoding="utf-8",
+        check=True,
+    )
     return out.stdout.splitlines()
 
 

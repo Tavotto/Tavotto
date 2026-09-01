@@ -395,6 +395,48 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 * `TextObject.fontFamily` 是**可选字段**：缺席 = 没设过 = 继承默认族。
   磁盘格式不升版，载荷缺省不发。
 
+### 5.1c 字形归属与科学文本（`← 14`，ADR 0033）
+
+```text
+                    src/tavotto/glyphplan.py  ↔  web/src/lib/glyphPlan.ts
+                    四层 primary / cjk / fallback / missing（顺序不可交换）
+                              │                          │
+        oracle = 真字体（has_glyph）        oracle = 生成的覆盖表
+                              │                    canvas_coverage.json
+                              │                    （@glyphcoverage 别名，四个 bundle）
+   ┌──────────┬───────────────┼───────────────┐          │
+ 落笔        量宽          预检 Python      导出侧       预检 TS / 画布预览
+_draw_text  text_width    engine/preflight  missing_    lib/preflight · TextView
+                          （也读表）        glyphs()
+
+          scripts/gen_canvas_coverage.py --check   ← 看住表与真字体不漂
+          tests/golden/glyph_plan_vectors.json     ← 看住两侧算法不分叉
+```
+
+**受控科学文本解释**（`richtext.interpret_runs` ↔ `richText.interpretRuns`）
+排在计划之前：它把 Unicode 上下标折成合成片段，产出的是**渲染表示**——
+`TextObject.text` 一个字符不改。
+
+```text
+raw text ──parse_runs──▶ 标记片段 ──interpret_runs──▶ 渲染片段 ──plan──▶ 分层片段
+   │                        │                                            │
+   └─ 复制 / 保存 / 重开     └─ serialize_runs 的逆（不受解释影响）        └─ 落笔与量宽
+```
+
+**图内文字走另一条**（matplotlib 自己的解析链）：
+
+```text
+Text.get_fontfamily()  →  fontManager._find_fonts_by_props()  →  FT2Font.get_char_index()
+                       manifest._glyph_scan() → glyphs_missing / glyphs_fallback
+                              ↓（进 manifest，两个预检求值器读同一份）
+                       glyph-missing / glyph-substituted
+```
+
+`overrides._set_text_fontfamily` 设的是**回退链**（`_family_chain()`），不是
+单个名字：matplotlib 3.6 起 family 是一条逐字形回退链，只给一个名字时缺的
+字形画成 .notdef 方框。尾巴只有 `DejaVu Sans`（matplotlib 自带，每个平台都在）
+——**不放平台相关的中文字体**，那会让同一份文档在两台机器上画出不同的字。
+
 ### 5.2 画布
 
 `web/src/canvas/CanvasStage.tsx`、`PanelView.tsx`、`ObjectView.tsx`、

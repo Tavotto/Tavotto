@@ -5,7 +5,267 @@
 
 ---
 
-## 最近一次：Session 13（2026-09-01）
+## 最近一次：Session 14（2026-09-01）
+
+### 目标
+
+Prompt 14：科学文本、Unicode 字形覆盖与跨导出字体回退。让「特殊字符在导出里
+变成黑方框」这件事**说得出是哪几个字**，并且预览与导出对同一个问题给出同一个
+答案。**不改用户原始文本**。
+
+### 开始前实测到的五件事（不是假设，前提被推翻了一半）
+
+Prompt 的前提是「预览或导出中出现黑色方框」。先量了一遍：
+
+1. **画布文字 → PDF 没有方框。** PyMuPDF 1.28.2 在 `TextWriter.append` 里自己
+   挑了一张 `Noto Serif Regular` 把 base-14 缺的 `⁵` `⁻` `₂` 画了出来。
+2. **图内文字 + 默认族也没有方框**（DejaVu 盖得住这一批，中日韩除外）。
+3. **图内文字 + Times New Roman 有方框**：`⁵` `⁻` `₂` 三个字符画出来的暗像素数
+   **一模一样（3551）**——那就是同一个 .notdef 空心框。matplotlib 明确 warn 了
+   是哪个码位缺在哪个字体，而 Tavotto 把这条信息丢掉了。
+4. **画布那张回退脸与请求的族和字重无关**：三个族 × 粗/常规六种组合，回退脸
+   永远是 `Noto Serif Regular`。于是 sans-serif 粗体标签里那个下标是衬线常规的
+   字形，而没有任何人被告知。
+5. **`ord(ch) > 0x2E80` 量的是码位，不是覆盖**，两个方向都会错：`₂`（U+2082）
+   在中日韩脸里有、码位却在 CJK 段之外；`━`（U+2501）拉丁段里只有中日韩脸画得
+   出，而现行路由不会去问它——**共 87 个码位是本可以画出来的方框**。
+
+顺带确认了一条：**仓库里没有任何字符替换逻辑**，raw text 本来就是保留的
+（退出条件第 1 条改造前就成立，本轮补上了看住它的判据）。
+
+### 实际完成
+
+**1. `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` —— 字形归属计划。**
+
+```text
+四层        primary / cjk / fallback / missing，顺序不可交换
+判据        字形覆盖（不是码位）；ord>0x2E80 只保留为**换行单元**的判据
+消费者      落笔 `_draw_text` / 量宽 `text_width` / 预检两侧 / 画布预览
+同源        算法严格同源；**oracle 刻意不同源**（Python 问真字体，浏览器读表）
+```
+
+分层与改造前**逐字符等价**，只多救回第 4 步那 87 个码位。
+
+**2. 生成物 `src/tavotto/pdfbackend/canvas_coverage.json`（15 KB）。**
+唯一产生者 `scripts/gen_canvas_coverage.py`，`--check` 看住它与真字体一致。
+经 `@glyphcoverage` 别名进**四个** bundle（app / vitest / playground / mcp）。
+
+**3. 受控科学文本解释（`richtext.interpret_runs` / `interpretRuns`），两档。**
+
+| 档 | 做什么 | 为什么 |
+| --- | --- | --- |
+| `auto`（默认） | 只有「不然就是方框」的 Unicode 上下标才合成 | 今天画得对的东西一个像素不变，**文本层也一个字符不变** |
+| `scientific` | 认得的一律合成 | 字体统一。代价：PDF 文本层里 `×10⁵` 抽回来是 `×105`（实测） |
+
+`m²` 那种 base-14 自己画得出的设计字形两档都不动；**整串一起折**
+（`m⁻²` 里两个字符处境不同，逐字符会得到小合成减号 + 大设计上标）。
+**没有 `math` 这一档**——画布文字不经 matplotlib。
+
+**4. 缺字形进问题系统：两条规则、两句话。**
+
+| 规则 | 说的是 | lab / free-form |
+| --- | --- | --- |
+| `glyph-missing` | 这几个字画不出来，导出上是方框 | error / warn |
+| `glyph-substituted` | 画出来了，但不是用它自己的字体 | suggestion / suggestion |
+
+图内那侧的产生者只有 `manifest._glyph_scan()` 一处（两个求值器读同一份
+manifest）；画布那侧两个求值器各算各的，判据同源、读同一张表。
+**画布那条量的是渲染表示**（标记拆掉、该合成的已合成）——量原文会报出一批
+不会发生的方框。
+
+**5. 图内文字的逐字形回退。** `overrides._set_text_fontfamily` 改为按回退链设族
+（`FONT_FALLBACK_TAIL = ("DejaVu Sans",)`，matplotlib 自带，不新增任何字体
+分发）。`get_fontfamily()[0]` 仍是用户选的那个，manifest 与预检报的都是它。
+**中日韩治不了**，所以字体下拉按运行时探测补上了装得到的中文字体——报一盏
+没有开关的红灯比不报更坏。
+
+**6. 字体来源门禁** `tests/test_font_provenance.py`：版本库里没有字体文件、
+前端不下载也不内嵌字体、后端没有 `fontfile=` / `fontbuffer=` 入口、依赖里
+没有字体包、下拉里每个族后端都真的画得出。
+
+### 关键 API / 类型 / 格式
+
+```python
+# src/tavotto/glyphplan.py（纯标准库）
+GLYPH_LAYERS = ("primary", "cjk", "fallback", "missing")
+CJK_START = 0x2E80                 # 换行单元的判据，**不是**覆盖判据
+layer_of(cp, cov) / plan(text, cov) / missing_chars / substituted_chars
+text_diagnostics(text, cov, interpretation)   # 量渲染表示，不是原文
+canvas_coverage()                  # 读生成的覆盖表（预检两侧都走这条）
+
+# src/tavotto/richtext.py
+SUPERSCRIPT_BASE / SUBSCRIPT_BASE   # 闭集，与 richText.ts 同源
+TEXT_INTERPRETATIONS = ("auto", "scientific")
+interpret_runs(runs, is_primary=, is_drawable=, mode=)
+has_scientific_chars(text)
+
+# src/tavotto/pdfbackend/__init__.py（边界契约新增）
+text_plan(s, family, bold, italic) -> [(片段, 层)]
+missing_glyphs(s, family, bold, italic) -> [字符]
+coverage_ranges() / COVERAGE_MAX_CP
+
+# src/tavotto/engine/manifest.py
+_glyph_scan(text, families) -> (画不出来的, 换脸画的)
+# manifest 元素新增两个可选字段：glyphs_missing / glyphs_fallback
+```
+
+```ts
+// web/src/lib/glyphPlan.ts
+GLYPH_LAYERS / CJK_START / COVERAGE_BACKEND
+layerOf(cp) / planRuns(text) / missingChars / substitutedChars / textDiagnostics
+// web/src/lib/richText.ts
+SUPERSCRIPT_BASE / SUBSCRIPT_BASE / TEXT_INTERPRETATIONS / interpretRuns / hasScientificChars
+// web/src/lib/typography.ts
+TYPOGRAPHY_PROPS 第十条 'interpretation'（figureText 不支持）
+```
+
+### 迁移
+
+**没有磁盘格式改动。** `TextObject.interpretation` 是可选字段：老文档没有它 =
+`auto` = 与升级前逐字符同样的渲染。回到 `auto` 时**删字段**；导出载荷里没设过
+就**不发** `interpretation`——老后端拿到的字节与旧版逐字相同。
+
+`tests/golden/preflight_vectors.json` 23 → 27 条（**既有 23 条一条没变**）。
+新增 `tests/golden/glyph_plan_vectors.json`（60 条）与
+`src/tavotto/pdfbackend/canvas_coverage.json`（生成物，进 git）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/glyphplan.py                     字形归属计划（纯标准库，同源对左侧）
+新增  web/src/lib/glyphPlan.ts                     同源对右侧（oracle = 覆盖表）
+新增  web/src/lib/glyphPlan.test.ts                （16 条）
+新增  web/src/lib/glyphPlan.golden.test.ts         跨语言向量（60 条）
+新增  src/tavotto/pdfbackend/canvas_coverage.json  生成物（15 KB，1114 个区间）
+新增  scripts/gen_canvas_coverage.py               覆盖表生成器 + --check
+新增  scripts/gen_glyph_plan_vectors.py            向量生成器 + 校对
+新增  tests/golden/glyph_plan_vectors.json         60 条
+新增  tests/test_glyph_plan.py                     计划 / 量宽 / 覆盖表 / 解释档（88 条）
+新增  tests/test_glyph_coverage_figure.py          图内缺字形（worker，5 条）
+新增  tests/test_font_provenance.py                字体来源门禁（7 条）
+新增  docs/adr/0033-scientific-text-and-font-fallback.md
+改动  src/tavotto/richtext.py                      +受控科学文本解释（闭集两张表）
+改动  src/tavotto/pdfbackend/pymupdf_backend.py    分段改为按覆盖；text_plan/missing_glyphs/coverage_ranges
+改动  src/tavotto/pdfbackend/__init__.py           边界契约 +3 个名字
+改动  src/tavotto/engine/manifest.py               +_glyph_scan；_NAMED_FAMILIES 补中文候选
+改动  src/tavotto/engine/overrides.py              设族按回退链（FONT_FALLBACK_TAIL）
+改动  src/tavotto/engine/preflight.py              +glyph-missing / glyph-substituted（两类各一处）
+改动  src/tavotto/profiles/publication.json        两条规则的等级（两个 profile）
+改动  web/src/lib/richText.ts                      +interpretRuns（与 Python 同源）
+改动  web/src/lib/preflight.ts                     +两条规则；spec.texts +interpretation
+改动  web/src/lib/typography.ts                    TYPOGRAPHY_PROPS +interpretation（三张表一起）
+改动  web/src/lib/validation.ts                    规则目录 +2（fix: none）
+改动  web/src/lib/api.ts                           ManifestElement +glyphs_*；ExportObject.text +interpretation
+改动  web/src/lib/exportPayload.ts                 +interpretation（缺省不发）
+改动  web/src/types/document.ts                    TextObject +interpretation?
+改动  web/src/canvas/TextView.tsx                  预览按覆盖表解释（不按浏览器字体栈）
+改动  web/src/components/inspector/TextSection.tsx +ScientificText（解释档 + 字形提示）
+改动  web/src/components/inspector/typographyAdapter.ts  两张表补第十条
+改动  web/{vite,vitest,vite.playground,vite.mcp}.config.ts + tsconfig.app.json  +@glyphcoverage
+改动  scripts/build_mcp_widget.py / build_browser_playground.py  覆盖表进源码指纹
+改动  scripts/gen_preflight_vectors.py             +4 条向量
+改动  web/src/i18n/locales/*/{errors,inspector}.json  +12 组文案（两种语言）
+改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md  新同源对与新纪律
+重建  codex-plugin/mcp/widget/canvas.html          指纹 90c7441a4f95b406
+重建  web/dist-playground/                         指纹 256bd5821164afb3（不进 git）
+```
+
+### 这一轮踩到的坑
+
+**1. 前提被实测推翻了一半，而按原前提做会做出一个更差的产品。** 「把所有
+Unicode 上标折成合成上下标」看起来是纯赚，实测之后发现它把 PDF 文本层里的
+`×10⁵` 变成了 `×105`——审稿人复制走的是 105。这是语义损坏，比「上标是另一张
+脸画的」严重。默认档因此改成「只救方框」，一律合成变成用户明确选的一档。
+
+**2. 覆盖表的裁剪条件差一点就制造了一个只在下标字符上发作的两侧分歧。**
+第一版把 `fallback` 层裁成「primary 与 cjk 都没有」，而 `layer_of` 的第 2 步
+带着 `cp > CJK_START` 的限制——`₂` 因此会被前端判成 `cjk`、后端判成
+`fallback`。裁剪条件必须**逐字复刻走到那一步的前提**。
+
+**3. 「产物指纹」漏了一条分发路径。** 覆盖表经路径别名进 bundle，但两个受管
+产物的 `source_fingerprint()` 只登记了 `publication.json`。不补上的话，换一版
+PyMuPDF 重新生成之后，产物会以「没变化」的样子带着旧答案发出去。
+
+**4. 变异反证第一轮 15 条活了 1 条，成因是「同一条规则的第二个消费点漏了」。**
+「整串一起折」TS 侧有判据、Python 侧没有。补完之后 15/15 全红。
+
+**5. 反证时 `git checkout -- .` 吃掉了刚补的那条用例。** 补完判据没有先提交就
+再跑了一轮反证，于是那条用例被还原掉，M6 第二次仍然显示「存活」——**看起来
+像判据没用，实际是判据不在了**。反证前先提交这条纪律，本轮又付了一次学费。
+
+### 尚存限制
+
+1. **中日韩没有自动回退。** 尾巴里不放平台相关的中文字体（同一份文档在两台
+   机器上会画出不同的字）。用户在下拉里选，候选名单取自出版规范的
+   `cjk_fallback.accepted` 并按运行时探测过滤。
+2. **画布文字仍然只有三个通用族**，本轮没有改这条闭集。
+3. **`scientific` 档的代价只写在 tooltip 里**，没有做「导出前再确认一次」。
+4. **图内文字没有 `interpretation`**：那边的上下标是 matplotlib 的 `$…$`。
+   能力表里它是 `figureText` 不支持的一条。
+5. **PDF 字体子集嵌入**仍由 PyMuPDF 自己管，本轮没有碰它，也没有量过子集的
+   完整性——`preferred_formats` 那条规范没有新增判据。
+6. **Session 14 没跑 e2e**：改动没碰黄金路径的键位与文案，但这是**没跑**，
+   不是「跑过没问题」。13 留下的那条 e2e 六红仍然开着。
+7. 04–13 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 与 14 两轮都在这条分支上，
+  **尚未推送、没有 PR**）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 15：图例文本与线条测量）
+
+**从这里开始读**：`docs/adr/0033-scientific-text-and-font-fallback.md`（本轮）、
+`docs/adr/0032-typography-capability-layer.md`、`UX_CONTRACTS.md` 的
+「6. 输出一致性合同」。
+
+**Session 14 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 一段文字长什么样 | `lib/typography.ts` | **唯一词汇**，现在有十条属性（`interpretation` 是第十条） |
+| 这个字由哪张脸画出来 | `glyphplan.py` ↔ `glyphPlan.ts` | 四层计划。图例文本的测量要用**最终 render plan**，别再按 `ord` 切一遍 |
+| 量宽 | `pdfbackend.text_width(s, size_pt, bold, italic, family)` | 与落笔读同一份计划。**族必须传对**：等宽族比衬线族宽得多 |
+| 这段文字会不会缺字 | `pdfbackend.missing_glyphs()` / `glyphplan.text_diagnostics()` | 前者问真字体（导出侧），后者读表（预检两侧） |
+| 图内文字缺什么字 | manifest 的 `glyphs_missing` / `glyphs_fallback` | 产生者只有 `manifest._glyph_scan()` 一处 |
+| 图内文字的字体回退链 | `overrides.FONT_FALLBACK_TAIL` / `_family_chain()` | 加一条尾巴前先回答「它在每个平台上都在吗」 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、
+12 的五条、13 的四条原样成立，14 再加四条）：
+
+33. **不许拿浏览器的字体栈当「画不画得出」的判据**（T-80）。浏览器画得出
+    `⁵` 不代表导出画得出；那条路的终点正是「预览好好的、导出上是个方框」。
+    判据只有 `glyphPlan.layerOf()` 一份，它读的是生成的覆盖表。
+34. **不许拿原文当渲染表示去量**（T-81）。行内标记要拆掉、该合成的要先合成，
+    否则报出来的是一批不会发生的方框——**假红比假绿隐蔽**，它让人去修一个
+    不存在的问题。
+35. **不许把「画不出来」和「换了张脸画」说成同一句话**（T-82）。用户看到红灯
+    却发现图上好好的，下一次就不看这盏灯了。
+36. **不许为了字形覆盖往仓库里放字体**（T-83）。字体是独立作品，AGPL 的仓库
+    照样不能随手带一份别人的 `.ttf` 出门。三条合法来源写在
+    `tests/test_font_provenance.py` 的模块 docstring 里。
+
+**必须保留的不变式**（在 13 的十五条之上）：
+
+16. **落笔、量宽、预检、预览读同一份字形归属计划**（ADR 0033）。分段判据一旦
+    有两份，换行位置迟早和画出来的字对不上。
+17. **分层四步的顺序不可交换**，且覆盖表的裁剪条件必须逐字复刻「走到那一步的
+    前提」——差一个条件就会制造一个只在个别字符上发作的两侧分歧。
+18. **raw text 一个字符都不改**：解释只生成渲染表示，`parse_runs` ↔
+    `serialize_runs` 那一对不受影响。
+19. **`auto` 档不许改变任何今天画得对的东西**（像素与 PDF 文本层都不变）。
+20. **覆盖表是生成物**：改了后端字体相关的东西、或换了 PyMuPDF 版本，跑
+    `python scripts/gen_canvas_coverage.py`；它同时进两个受管产物的源码指纹。
+
+---
+
+## 历史：Session 13（2026-09-01）
 
 ### 目标
 
@@ -223,7 +483,7 @@ latin_family(name) / latin_font(bold, italic, family) / cjk_font()
 
 ---
 
-## 下一阶段入口（Prompt 14：科学文本 / Unicode / 字体回退）
+### Session 13 当时写给 Prompt 14 的入口（已消费）
 
 **从这里开始读**：`docs/adr/0032-typography-capability-layer.md`（本轮）、
 `UX_CONTRACTS.md` 的「6. 输出一致性合同」、`ARCHITECTURE.md` 的 §5.3。

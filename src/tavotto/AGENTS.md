@@ -52,7 +52,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 
 - `src/tavotto/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
   模块；`__init__.py` 是与实现无关的契约层（probe_asset / render_preview_png /
-  text_width / compose + mm2pt / hex2rgb）。`app.py` 只认这些名字。
+  text_width / text_plan / missing_glyphs / coverage_ranges / compose +
+  mm2pt / hex2rgb）。`app.py` 只认这些名字。
+- **字形归属计划（ADR 0033）**：一个字符由哪张脸画出来，只有
+  `tavotto/glyphplan.py` 一份判据（四层 primary/cjk/fallback/missing，顺序不可
+  交换）。落笔、量宽、预检、前端预览读同一份计划。`ord(ch) > 0x2E80` 只保留为
+  **换行单元**的判据，**不再当覆盖判据用**——它量的是码位，不是「这张脸画不
+  画得出这个字」。浏览器没有字体引擎，读的是生成物
+  `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
+  看住它与真字体一致）。**本仓库不分发任何字体**，看护
+  `tests/test_font_provenance.py`。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
   边界废掉。许可证说明见 `docs/legal/LICENSING.md`。

@@ -31,9 +31,13 @@ import matplotlib.pyplot as plt
 def main():
     fig, ax = plt.subplots(figsize=(4.0, 3.0))
     ax.plot([0, 1], [0, 1])
+    ax.plot([0, 1], [1, 0], label="\\u6837\\u54c1 B")
     ax.set_xlabel("Flux (A m\\u207b\\u00b2)")
     ax.set_ylabel("\\u6d53\\u5ea6 (mg/L)")
     ax.set_title("Plain ASCII title")
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["\\u96f6", "\\u00d710\\u2075"])
+    ax.legend()
     fig.savefig("GlyphFig.pdf")
 """
 
@@ -86,6 +90,29 @@ def test_cjk_label_reports_the_characters_that_come_out_as_boxes(library):
     man = _manifest(library)
     gone = _el(man, "axes_0.ylabel").get("glyphs_missing")
     assert gone == ["浓", "度"]
+
+
+def test_tick_labels_and_legend_text_are_measured_too(library):
+    """判据按**是不是 Text** 走，所以刻度文字与图例文字自动在内。
+
+    这条是那句话的凭据：漏掉哪一类的表现都是「那一类的方框没人报」，而刻度
+    文字恰恰是最容易出现 `×10⁵` 与中文单位的地方。
+
+    用**中文**而不是 `⁵` 来量：默认族画得出 `⁵`、画不出汉字，于是这条断言在
+    每台机器上都成立，不依赖 Times New Roman 装没装。
+    """
+    man = _manifest(library)
+    tick = next(
+        (e for e in man["elements"] if e["role"] == "ticklabel" and "零" in e.get("label", "")),
+        None,
+    )
+    legend = next(
+        (e for e in man["elements"] if e["role"] == "legend_text" and "样" in e.get("label", "")),
+        None,
+    )
+    assert tick is not None and legend is not None, "刻度 / 图例文字没进元素树"
+    assert tick.get("glyphs_missing") == ["零"]
+    assert legend.get("glyphs_missing") == ["样", "品"]
 
 
 def test_named_family_without_the_glyphs_reports_them(library):

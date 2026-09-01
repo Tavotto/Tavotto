@@ -2973,16 +2973,6 @@ def build_manifest(state: FigState, stem: str) -> dict:
             "draggable": el["draggable"],
             "editable": _fields_for(el),
         }
-        # 缺字形按**是不是 Text** 判，不按 role 列白名单：刻度文字、图例文字、
-        # 标题都是同一个 `Text`，漏掉哪一类的表现都是「那一类的方框没人报」。
-        if isinstance(artist, Text):
-            gone, subst = _glyph_scan(artist.get_text(), artist.get_fontfamily() or [])
-            if gone:
-                entry["glyphs_missing"] = gone
-            # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
-            # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
-            if subst:
-                entry["glyphs_fallback"] = subst
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):
@@ -3189,6 +3179,20 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["drag_prop"] = "pos_frac" if isinstance(artist, Text) else "loc_frac"
             except Exception:
                 entry["draggable"] = False
+        # 缺字形：判据的主语是**真正会被画出来的那个 Text**。
+        # 刻度文字登记的是 `TickLabel` 代理（真身在 `.live()`），按
+        # `isinstance(artist, Text)` 判会安静地漏掉整整一类——而刻度文字
+        # 恰恰是最容易出现 `×10⁵` 与中文单位的地方。放在这里是因为上面那些
+        # 分支已经把「量不出几何 / 文字空了」的元素 `continue` 掉了。
+        live_text = artist.live() if el["role"] == "ticklabel" else artist
+        if isinstance(live_text, Text):
+            gone, subst = _glyph_scan(live_text.get_text(), live_text.get_fontfamily() or [])
+            if gone:
+                entry["glyphs_missing"] = gone
+            # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
+            # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
+            if subst:
+                entry["glyphs_fallback"] = subst
         elements.append(entry)
 
     if budget.skipped:

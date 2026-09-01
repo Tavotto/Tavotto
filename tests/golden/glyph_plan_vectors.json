@@ -836,6 +836,174 @@
    "missing": [
     "؟"
    ]
+  },
+  {
+   "name": "plain-x10-text/serif",
+   "text": "plain x10 text",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plain-x10-text/sans-serif",
+   "text": "plain x10 text",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plain-x10-text/monospace",
+   "text": "plain x10 text",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/serif",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/sans-serif",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/monospace",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/serif",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/sans-serif",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/monospace",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
   }
  ]
 }

@@ -107,9 +107,21 @@ def cjk_font() -> pymupdf.Font:
     return get_font(_CJK_FACE)
 
 
-#: 分层结果按 (拉丁脸, CJK 脸, 码位) 记忆。贪心换行会对同一批字符反复量宽，
-#: 每次都去问 `has_glyph` 的话，一段 200 字的文本要问上万次。
-_LAYER_CACHE: dict[tuple[str, str, int], str] = {}
+#: 分层结果**按码位**记忆。贪心换行会对同一批字符反复量宽，每次都去问
+#: `has_glyph` 的话，一段 200 字的文本要问上万次。
+#:
+#: **键里没有字体**：三个族 × 四个字形共用同一张覆盖表（`primary` 与隐式回退
+#: 两层都实测过跨脸相同，看护 `test_every_base14_face_shares_one_charset`），
+#: 而 CJK 脸只有一张。把脸放进键只会让同一个答案存十二份。**这条假设一旦
+#: 不成立，那个看护用例先红**——那时要连同 `canvas_coverage.json` 一起改，
+#: 因为前端读的也是一张与族无关的表。
+#:
+#: 失效与上限：覆盖只随 PyMuPDF 版本变（换版本就是换进程），所以**不需要
+#: 失效**；上限是防长跑进程见过太多罕见码位，撞上就整个丢掉重来——它是纯
+#: 记忆化，丢了只是慢一点。
+_LAYER_CACHE: dict[int, str] = {}
+#: 缓存条数上限。一份文档里的不同码位通常是几百个；一万条已经远超正常用量。
+_LAYER_CACHE_MAX = 10_000
 
 
 def coverage(
@@ -136,14 +148,14 @@ def _coverage_of(latin: pymupdf.Font, cjk: pymupdf.Font) -> glyphplan.Coverage:
 
 def _plan(s: str, latin: pymupdf.Font, cjk: pymupdf.Font) -> list[glyphplan.GlyphRun]:
     cov = _coverage_of(latin, cjk)
-    key0, key1 = latin.name, cjk.name
     runs: list[glyphplan.GlyphRun] = []
     for ch in s:
         cp = ord(ch)
-        key = (key0, key1, cp)
-        layer = _LAYER_CACHE.get(key)
+        layer = _LAYER_CACHE.get(cp)
         if layer is None:
-            layer = _LAYER_CACHE[key] = glyphplan.layer_of(cp, cov)
+            if len(_LAYER_CACHE) >= _LAYER_CACHE_MAX:
+                _LAYER_CACHE.clear()
+            layer = _LAYER_CACHE[cp] = glyphplan.layer_of(cp, cov)
         if runs and runs[-1].layer == layer:
             runs[-1] = glyphplan.GlyphRun(runs[-1].text + ch, layer)
         else:

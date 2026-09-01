@@ -45,7 +45,7 @@
 | 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
 | 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
 | 13 | 统一属性系统、文字控件、标注字体 | ✅ 完成（本次，ADR 0032） |
-| 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
+| 14 | 科学文本 / Unicode / 字体回退 | ✅ 完成（本次，ADR 0033） |
 | 15 | 图例绑定与控件 | ⬜ |
 | 16 | 刻度线直接操作 | ⬜ |
 | 17 | 多选浮动栏 | ⬜ |
@@ -418,7 +418,32 @@ desktop…」。
 
 ---
 
-## 遗留（Session 13 之后仍开着的）
+### Session 14 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ⟪PYTEST⟫ |
+| `cd web && pnpm test` | ✅ exit 0 —— **157** files / **2082** tests passed（比 13 的 155/1986 +2 文件 / +96 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2876 / en-US 2966；`errors:preflight.{glyphMissing,glyphSubstituted,textGlyphMissing,textGlyphSubstituted}` +4、`inspector:text.{interpretation*,glyphMissing,glyphFallback}` +7、`inspector:history.setInterpretation` +1） |
+| `cd web && pnpm lint` | ✅ **19 条既有 fast-refresh 提示，无新增**（与 13 逐条相同） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（300 files） |
+| `python scripts/gen_canvas_coverage.py` | ✅ 覆盖表与当前后端一致（pymupdf 1.28.2，1114 个区间） |
+| `python scripts/gen_glyph_plan_vectors.py` | ✅ 60 条与 Python 侧一致 |
+| `python scripts/gen_preflight_vectors.py` | ✅ 23 → 27 条；**既有 23 条一条没变** |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `90c7441a4f95b406`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `256bd5821164afb3`） |
+| 变异反证 15 条 | ✅ 全部被打红（第一轮 14/15，存活的那条与处置见 `TEST_MATRIX.md`） |
+| Playwright e2e | ⚠️ **没跑**。改动没碰黄金路径的键位与文案，但这是「没跑」，不是「跑过没问题」；13 记的那六条红仍然开着 |
+
+> **图内文字那条路的判据与渲染器对拍过 9/9。** 「这套字体画不画得出这些字」
+> 用的是字体文件的 cmap，而 matplotlib 在渲染时会自己 warn 缺哪个码位——
+> 两把尺子互相独立（一把读文件，一把看渲染器实际画的时候说了什么）。九组
+> （默认族 / Times New Roman / 回退链 / 中文 / mathtext / 纯 ASCII…）逐组一致。
+
+---
+
+## 遗留（Session 14 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -448,44 +473,46 @@ desktop…」。
 | — | **左侧轨道上「问题」与「项目接入状态」两个按钮不在 DOM 里**（本机 chromium e2e，六条红的共同上游）。**在 `origin/main`（`c12c229c`）上一模一样地红**，两侧的无障碍快照逐字相同——不是本轮引入的。但 Session 12 的记录是同样四个 spec **27 passed**，而 `LeftRail` 里这两个入口都是无条件渲染的，源码上找不到能让它们消失的判据。复现：`python scripts/build_frontend.py` 之后 `cd web && TAVOTTO_PYTHON=<repo>/.venv/bin/python npx playwright test e2e/a11y.spec.ts --project=chromium -g "项目接入状态"` | **未查明，优先** |
 | — | **「新建标注时套用当前 Style」没有做**：本仓库里 Style 是一次性应用、不是文档上的绑定（ADR 0029 绑的是 Spec），「当前 Style」这个概念不存在。做成本机 UI 偏好会让同一个动作在两台机器上建出不同的对象，比现状更坏。13 只把新建默认值收敛成 `canvasTextDefaults()` 一处 | 待用户拍板 |
 | — | **画布文字的字体族只有三个通用族**：具体字体名要么内嵌用户磁盘上的字体（另一件事、另一份许可证讨论），要么就是静默替换。图内文字那侧才有「装不上的具体字体」这一档（`options_unavailable`） | 已处置（闭集是能力承诺） |
-| — | **中日韩字形不跟着族走**：实测 PyMuPDF 1.28.2 的四个 `china-*` 别名回同一张 `Droid Sans Fallback Regular`。界面暂时没有单独说这一句 | Prompt 14 |
+| — | **中日韩字形不跟着族走**：实测 PyMuPDF 1.28.2 的四个 `china-*` 别名回同一张 `Droid Sans Fallback Regular`。**14 的处置：不改这条能力，改成说得出**——画布文字里的中日韩字符现在会在 `glyph-substituted` 里被报成「不是用所选字体画的」 | 已处置 |
 | — | **`text_weight_policy` 里的 `annotation` 一档仍然没有执行者**：规范声明「标注一律常规字重」，而 `addSubLabels()` 造出来的 (a)(b)(c) 按惯例加粗。现在执行会让每一份既有文档立刻多出一批警告——**这是规范范围的问题**，不是属性层的问题 | 待用户拍板 |
 | — | **`valign` / `lineHeight` / `rotationDeg` 在能力表里，但控件只出前六条**：行距与旋转仍在各自的「更多」里用原来的控件（数据已经经过能力层，控件还没并进 `TypographyControls`） | 择机 |
 | — | **Session 13 没跑 e2e**：改动没碰黄金路径的键位与文案，但这是**没跑**，不是「跑过没问题」 | 23 前 |
+| — | **图内中日韩没有自动回退**：回退尾巴只有 matplotlib 自带的 DejaVu Sans（在每个平台上都在，回退结果确定）。往里放一个平台相关的中文字体会让同一份文档在两台机器上画出不同的字。用户在字体下拉里选（候选取自出版规范的 `cjk_fallback.accepted`，按运行时探测过滤） | 已处置（明示取舍） |
+| — | **`scientific` 档的代价只写在 tooltip 里**：合成之后 PDF 文本层里 `×10⁵` 抽回来是 `×105`。没有做「导出前再确认一次」——那会给一个每次导出都要点掉的对话框 | 未定 |
+| — | **PDF 字体子集嵌入没有判据**：由 PyMuPDF 自己管，本轮没碰也没量过子集完整性。`preferred_formats` 那条规范没有新增看护 | 未定 |
+| — | **覆盖表是在 macOS + pymupdf 1.28.2 上生成的**。它随 PyMuPDF 的 wheel 走，理论上跨平台一致，但**没有在 Linux / Windows 上实测过**；`gen_canvas_coverage.py --check` 会在 CI 上第一次回答这个问题 | 待 CI 回答 |
+| — | **`interpretation` 只有画布文字有**：图内文字的上下标是 matplotlib 的 `$…$`（另一条管线）。能力表里它是 `figureText` 不支持的一条 | 已处置 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 14（科学文本 / Unicode / 字体回退）**，入口见
+**Prompt 15（图例文本与线条测量）**，入口见
 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-13 留给 14 的可复用入口：
+14 留给 15 的可复用入口：
 
-* `lib/typography.ts` —— **「一段文字长什么样」的唯一词汇**。加一条属性要
-  同时回答「两类各支不支持 / property path 叫什么 / 怎么校验」，三张表都在
-  这一个文件里；
-* `typographyAdapter.TypographyAdapter` —— 控件只认这个接口。14 的字体回退
-  提示挂在 `unavailableOptions()` 上；
-* `mathTextModeOf(kind)` —— `inline_markup`（画布，`lib/richText.ts` ↔
-  `src/tavotto/richtext.py` 两侧各画一遍）/ `engine_mathtext`（图内，`$…$`
-  交给 matplotlib，换字体时 `math_fontfamily` 要跟着换）；
-* `pdfbackend.CANVAS_TEXT_FAMILIES` / `latin_font()` / `cjk_font()` ——
-  **落笔与量宽必须同族**；CJK 只有一张脸；
-* manifest 的 `options_unavailable` —— 「界面说换了、字形没换」的唯一依据；
-* `propertyPathOf(kind, prop)` —— 新规则要能定位到字段的话，字段名从这里取。
+* `glyphplan.py` ↔ `glyphPlan.ts` —— **「这个字由哪张脸画出来」的唯一判据**
+  （四层，顺序不可交换）。图例文本的测量要用**最终 render plan**，别再按
+  `ord` 切一遍；
+* `pdfbackend.text_width(s, size_pt, bold, italic, family)` —— 与落笔读同一份
+  计划。**族必须传对**：等宽族比衬线族宽得多；
+* `pdfbackend.missing_glyphs()`（问真字体，导出侧）与
+  `glyphplan.text_diagnostics()`（读表，预检两侧）；
+* manifest 的 `glyphs_missing` / `glyphs_fallback` —— 图内文字缺什么字，
+  产生者只有 `manifest._glyph_scan()` 一处；
+* `overrides.FONT_FALLBACK_TAIL` / `_family_chain()` —— 加一条尾巴前先回答
+  「它在每个平台上都在吗」。
 
-12 留给 13 的四个入口（13 已消费，对 14 原样有效）：
+13 留给 14 的六个入口（14 已消费，对 15 原样有效）：`lib/typography.ts`
+（现在有十条属性）、`typographyAdapter.TypographyAdapter`、`mathTextModeOf`、
+`pdfbackend.CANVAS_TEXT_FAMILIES`、manifest 的 `options_unavailable`、
+`propertyPathOf(kind, prop)`。
 
-* `lib/exportRequest.buildExportRequest(input)` —— 导出载荷的**唯一构造**。
-  13–16 改属性之后**不需要动它**：属性改的是 `doc.objects` 与
-  `panel.overrides`，载荷在导出那一刻从那里现取；
-* `lib/exportPayload.toExportObjects()` —— 画布对象 → 载荷的唯一投影
-  （顺序即 z 序、隐藏对象不发）。**新属性加在这一处**；
-* `lib/exportName.checkFilename()` —— 文件名合不合法（八条闭集原因，与
-  `engine/exportreq.py` 严格同源，改一边必须重生成向量）；
-* `store/exportStore.ts` —— 起 / 取消 / 跟进度。作业活在 store 不活在对话框。
+12 留给 13 的四个入口（原样有效）：`lib/exportRequest.buildExportRequest()`、
+`lib/exportPayload.toExportObjects()`（**新属性加在这一处**）、
+`lib/exportName.checkFilename()`、`store/exportStore.ts`。
 
 以及 09–11 留下的四个（原样有效）：`lib/originalSpec.getOriginalOutputSpec()`、
 `lib/specBinding.resolveDocumentSpec()`、

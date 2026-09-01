@@ -313,6 +313,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **写入**：invalid 输入不开事务、不 commit、不进历史，校验**不 clamp**；
   连续输入合并成一条历史，且 `write()` **自己会开一轮**——打字那条路没有
   `onScrubStart`。
+* **字形归属与科学文本（ADR 0033）**：`lib/glyphPlan.ts` 回答「这个字符导出
+  后由哪张脸画、会不会是方框」，判据是**生成的覆盖表**（`@glyphcoverage`
+  别名，与 `src/tavotto/glyphplan.py` 严格同源）——**不是浏览器自己的字体
+  栈**。拿浏览器画得出当判据的结果正是「预览好好的、导出上是个方框」。
+  `TextObject.interpretation` 两档（`auto` 默认 / `scientific`），合成只生成
+  渲染表示，**raw text 一个字符不改**；`scientific` 的代价是 PDF 文本层里的
+  `⁵` 变成 `5`，所以它必须由用户明确选。缺字形与「换了脸」是**两条规则、
+  两句话**（`glyph-missing` / `glyph-substituted`）。
 * 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
   warning**，绝不换掉再改文档。
 * 看护：`lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`

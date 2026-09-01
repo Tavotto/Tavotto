@@ -24,6 +24,7 @@
   | `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`+`pyfloat.rs` | `tests/golden/patch_vectors.json`（逐字节） |
   | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
   | `src/tavotto/richtext.py` ↔ `web/src/lib/richText.ts` | pytest 真 PDF 几何看护 |
+  | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体，浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住） |
   | `web/src/lib/shapeGeometry.ts` ↔ `pdfbackend` `_polygon_points`/`_dash_pattern` | pytest get_drawings() 几何看护 |
   | `handoff.desktop_argv()` ↔ `src-tauri/src/main.rs::parse_open_args()` | 两侧单测 |
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
@@ -103,6 +104,10 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   `[tool.ruff]` 的 `src`**——否则从那个目录平铺 import 的模块会被 ruff 判成
   第三方，排进 matplotlib 那一组。**在已有源码根下新增模块不用动它**，
   ruff 按路径自然认出来。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
+- 改了 `src/tavotto/pdfbackend/` 里字体相关的东西、或换了 PyMuPDF 版本：
+  `python scripts/gen_canvas_coverage.py`（`--write` 重新生成）——那张覆盖表
+  是前端「这个字导出后是不是方框」的唯一依据，漂了不看住的表现是
+  「预览说画得出、导出上是个方框」。
 - 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
   **两个受管产物都要重建**——`python scripts/build_mcp_widget.py` 与
   `python scripts/build_browser_playground.py`（各有 `--check`）。

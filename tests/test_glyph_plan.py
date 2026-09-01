@@ -67,6 +67,7 @@ def test_generator_is_up_to_date():
         [sys.executable, str(root / "scripts" / "gen_glyph_plan_vectors.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # 生成器的输出全是中文；Windows 的系统代码页解不了
         cwd=root,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -180,9 +181,14 @@ def test_every_base14_face_shares_one_charset():
         for bold in (False, True)
         for italic in (False, True)
     ]
-    reference = {cp for cp in range(0x20, 0x3000) if faces[0].has_glyph(cp)}
+    rng = range(0x20, 0x3000)
+    reference = {cp for cp in rng if faces[0].has_glyph(cp)}
+    # 隐式回退那一层也要比：分层缓存按**码位**记（键里没有字体），而
+    # `canvas_coverage.json` 也只有一张与族无关的表——两处都靠这条假设。
+    ref_fallback = {cp for cp in rng if faces[0].has_glyph(cp, fallback=True)}
     for face in faces[1:]:
-        assert {cp for cp in range(0x20, 0x3000) if face.has_glyph(cp)} == reference
+        assert {cp for cp in rng if face.has_glyph(cp)} == reference
+        assert {cp for cp in rng if face.has_glyph(cp, fallback=True)} == ref_fallback
 
 
 # --------------------------------------------------------------------------

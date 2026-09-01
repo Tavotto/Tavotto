@@ -1569,3 +1569,109 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 * 「画布渲染不看对象自己的族」——`TextView.test.tsx` 里压根没有一条断言看
   `style.fontFamily`。补三条：默认族仍是 `--font-doc`（老文档一个像素不变）、
   设过就按它画、三族在画布上互不相同。
+
+---
+
+## Session 14：科学文本 / 字形覆盖 / 字体回退
+
+### 新增用例（后端 100 / 前端 96）
+
+**后端 `tests/test_glyph_plan.py`（88 条，其中 60 条是跨语言向量）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._golden_vectors_match_python_side`（60 条参数化） | 60 条向量 × 计划 + 缺字单子；vitest 跑同一份 |
+| `..._generator_is_up_to_date` | 向量是生成物：改了算法没重跑生成器时红 |
+| `..._subscript_two_stays_on_the_fallback_layer` | `₂` 在中日韩脸里有、码位在 CJK 段之外——**覆盖表的裁剪条件**（差一个 `cjk` 就是一个只在下标字符上发作的两侧分歧） |
+| `..._box_drawing_is_rescued_by_the_fourth_step` | `━` 是第 4 步救回来的那 87 个码位之一 |
+| `..._unrenderable_character_is_missing_not_silently_dropped` | 真画不出来的报 `missing`，不是安静地当成画得出 |
+| `..._plan_matches_the_faces_the_pdf_actually_uses`（9 条参数化） | **第二把独立的尺子**：读导出 PDF 的字体资源表，层数必须与脸数对得上 |
+| `..._fallback_face_is_the_same_regardless_of_family_and_weight` | 回退脸与族/字重无关（六种组合只回一张脸）——`glyph-substituted` 存在的理由 |
+| `..._measured_width_equals_the_advance_actually_written`（5 条参数化） | 量宽与落笔**同一份计划**（逐段按计划推进 vs `text_width`） |
+| `..._coverage_table_matches_the_live_fonts` | 生成的表还配得上真字体（漂了就红） |
+| `..._every_base14_face_shares_one_charset` | 12 张脸共用一张 `primary` 表——单份覆盖表的合法性 |
+| `..._auto_mode_keeps_the_pdf_text_layer_verbatim` | 默认档下 PDF 文本层逐字不变（`×10⁵` 抽回来还是 `×10⁵`） |
+| `..._scientific_mode_draws_everything_with_one_face` | 一张脸 + **代价说清楚**（文本层降级成 `×105`，这条断言就是那句话的凭据） |
+| `..._designed_superscripts_are_never_synthesized` | `m²` 两档都不动 |
+| `..._interpretation_only_produces_a_render_representation` | 解释不经 `parse_runs` ↔ `serialize_runs` 那一对，raw text 不变 |
+| `..._a_run_of_unicode_scripts_folds_as_one_piece` | **整串一起折**（`m⁻²` 不许一半合成一半留设计字形） |
+| `..._superscript_and_subscript_never_merge` | 相邻上标段与下标段是两段 |
+| `..._missing_glyph_is_folded_even_in_auto_mode` | auto 档那句承诺（用注入的判据跑：守的是「换个覆盖更窄的后端时它仍然救得回方框」） |
+
+**后端 `tests/test_glyph_coverage_figure.py`（5 条，worker）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._default_family_draws_the_scientific_characters` | **对照组**：没有它的话「换成 TNR 就缺字」分不清是字体的问题还是判据把所有非 ASCII 都报成缺字 |
+| `..._ascii_only_text_never_reports_glyph_trouble` | 纯 ASCII 两张单子都不出现 |
+| `..._cjk_label_reports_the_characters_that_come_out_as_boxes` | 中文轴标题**逐字列出**，不是一句「有问题」 |
+| `..._named_family_without_the_glyphs_reports_them` | TNR 下 `⁻` 被报出来，且**用户选的那个族仍是 manifest 报的那个** |
+| `..._fallback_tail_keeps_the_glyphs_out_of_the_missing_list` | 回退尾巴的兑现凭据：`⁻` 落在 fallback 那张单子上，不在 missing 那张 |
+
+**后端 `tests/test_font_provenance.py`（7 条）** —— 版本库里没有字体文件 /
+前端不下载也不内嵌 / 后端没有 `fontfile=` 与 `fontbuffer=` 入口 / 依赖里没有
+字体包 / 下拉里每个族后端都真的画得出（3 条参数化）。
+
+**前端（96 条）**
+
+| 文件 | 条数 | 守的是 |
+| --- | --- | --- |
+| `lib/glyphPlan.golden.test.ts` | 60 | 跨语言向量（与 pytest 同一份） |
+| `lib/glyphPlan.test.ts` | 16 | 四步顺序 / 第 4 步救回的那一族 / missing / 合并 / 空串 / **按码位遍历**（代理对算一个字符）/ missing 与 substituted 是两句话 / `textDiagnostics` 量渲染表示 / 覆盖表说得出自己是哪一版后端出的 |
+| `lib/richText.test.ts` | +12 | 判据缺席不折 / auto 只救方框 / scientific 一律折 / **整串一起折** / 基础字符画不出时不折 / `^{…}` 不叠一层 / 上下标不合并 / 普通自然语言零影响 / **乘号绝不换成字母 x** / `$…$` 不被双重处理 / `hasScientificChars` |
+| `canvas/TextView.test.tsx` | +3 | 默认档原样显示 Unicode 上标 / scientific 合成成 span（字号缩、基线抬）/ `m²` 两档都不动 |
+| `components/inspector/TextSection.test.tsx` | +5 | 普通文字不出现那一行 / 有上标才出现 / 锚点来自 `propertyPathOf()` / 缺字逐字列出 / **换脸那句与方框那句分开** |
+| `tests/golden/preflight_vectors.json` | +4 条向量 | 画布缺字 / 画布换脸 / **scientific 档下一条都不报**（量原文的话这条会假红）/ 图内两张单子（既有 23 条**一条没变**） |
+
+### 变异反证：15 条，第一轮 14 红 1 存活，补完 15/15 全红
+
+判定**只看退出码**（`| tail` 会把退出码换成 tail 的）；Python 侧跑前清
+`__pycache__`；每条先验证「树真的变了」再跑。脚本在 `<scratchpad>/mutate.sh`
+（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| 分层第 2 步去掉 CJK 段限制（`₂` 改判成 cjk） | 红 | — |
+| 分层去掉第 4 步（`━` 变成 missing） | 红 | — |
+| cjk 层也交给拉丁脸落笔 | 红 | — |
+| 量宽一律按拉丁脸（与落笔不同源） | 红 | — |
+| auto 档按 scientific 折（文本层降级） | 红 | — |
+| **逐字符折**（`m⁻²` 一半合成一半留设计字形） | **存活** | 红 |
+| 覆盖表生成时多减一个 `cjk`（表与 `layer_of` 对不上） | 红 | — |
+| 缺字形与回退合成一张单子 | 红 | — |
+| 设族时不带回退尾巴（`⁻` 变回方框） | 红 | — |
+| preflight 量原文而不是渲染表示 | 红 | — |
+| TS 分层第 2 步去掉 CJK 段限制 | 红 | — |
+| TS 按码元遍历（emoji 拆成两个） | 红 | — |
+| 预览一律按 scientific 合成 | 红 | — |
+| TS 解释器不看 `isDrawable`（auto 变成一律折） | 红 | — |
+| 科学文本那一行无条件显示 | 红 | — |
+
+**存活的那条是「同一条规则的第二个消费点漏了」**：「整串一起折」TS 侧
+（`richText.test.ts`）有判据，Python 侧没有。补两条（`m⁻²` 整串 + 上下标不
+合并）之后 15/15 全红。
+
+**顺带又踩了一次「反证前先提交」**：补完判据没有先提交就再跑了一轮反证，
+`git checkout -- .` 把刚补的那条用例还原掉了，于是 M6 第二次仍然显示「存活」
+——**看起来像判据没用，实际是判据不在了**。
+
+### 与渲染器的对拍（两把独立的尺子）
+
+图内那条判据读的是字体文件的 cmap，而 matplotlib 在渲染时会自己 warn 缺哪个
+码位。两把尺子互相独立（一把读文件，一把看渲染器实际画的时候说了什么），
+九组逐组一致：
+
+```text
+'×10⁵ A m⁻²'  Times New Roman        我们 ['⁵','⁻']        渲染器 ['⁵','⁻']
+'×10⁵ A m⁻²'  DejaVu Sans            我们 []               渲染器 []
+'×10⁵ A m⁻²'  [TNR, DejaVu Sans]     我们 []               渲染器 []      ← 回退链
+'样品浓度 (mg/L)' DejaVu Sans          我们 ['样','品','浓','度'] 渲染器 同
+'样品浓度'     PingFang SC            我们 []               渲染器 []
+'H₂O 中文 ⁵'  Arial                  我们 ['₂','中','文','⁵'] 渲染器 同
+'plain ascii' Times New Roman        我们 []               渲染器 []
+'$10^{-5}$ cm' Times New Roman       我们 []               渲染器 []      ← mathtext 段跳过
+'25 °C ± 0.5' Times New Roman        我们 []               渲染器 []
+```
+
+**同源了就等于自己验自己**：如果两边都用 `get_char_index`，这张表证明的只是
+「我抄对了自己」。

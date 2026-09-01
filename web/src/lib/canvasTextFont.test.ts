@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import { toExportObjects } from './exportPayload'
 import { collectPanelAnnotations } from './writeBackAnnotations'
-import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily } from './typography'
+import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily, writeCanvasText } from './typography'
 import { migrateToProject, type PanelObject, type TextObject } from '@/types/document'
 
 const text = (over: Partial<TextObject> = {}): TextObject => ({
@@ -51,6 +51,27 @@ describe('导出载荷', () => {
 
     const styled = JSON.parse(wire(text({ fontFamily: 'monospace' })))
     expect(styled).toMatchObject({ type: 'text', font_family: 'monospace' })
+  })
+
+  it('`interpretation` 同一条纪律：没设过不发，设过才发', () => {
+    // 载荷层是**透传**（与 `font_family` 同一条规则，不是第二套）：不发是
+    // 因为字段根本不在对象上。「回到默认值就删字段」由 writer 保证——
+    // 两件事分开，载荷层才不需要认识每条属性的默认值。
+    const wire = (o: TextObject) => JSON.stringify(toExportObjects([o])[0])
+    expect(wire(text())).not.toContain('interpretation')
+    expect(JSON.parse(wire(text({ interpretation: 'scientific' })))).toMatchObject({
+      interpretation: 'scientific',
+    })
+  })
+
+  it('writer 那一侧：回到 auto 就删字段，不写一个等于默认值的显式值', () => {
+    // 留着它的话，一份「什么都没改」的文档在载荷里会凭空多一个字段，
+    // 而老后端拿到的字节就不再与旧版逐字相同了。
+    const o = text({ interpretation: 'scientific' })
+    writeCanvasText(o, 'interpretation', 'auto')
+    expect('interpretation' in o).toBe(false)
+    writeCanvasText(o, 'interpretation', 'scientific')
+    expect(o.interpretation).toBe('scientific')
   })
 })
 

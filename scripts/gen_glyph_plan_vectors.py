@@ -50,6 +50,9 @@ CASES: list[tuple[str, str]] = [
     ("arabic-question-mark", "؟"),  # 真的谁都画不出
     ("combining-mark", "ـَ"),  # ARABIC TATWEEL + FATHA：组合记号
     ("mixed-missing", "T؟ = 5"),  # 缺字形夹在正常文本里
+    ("plain-x10-text", "plain x10 text"),  # 普通文本里的 x10 不许被当成科学记数法
+    ("existing-mathtext", "existing $10^{-5}$ mathtext"),  # 画布上 `$` 只是普通字符
+    ("mixed-scripts", "样品 A: 5.0 × 10⁵ cm⁻³"),  # 中英 + 科学符号混排
 ]
 
 #: 三个族各跑一遍：族只换拉丁脸，不换覆盖判据——**这条是承诺，要被看住**。
