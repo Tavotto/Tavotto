@@ -157,3 +157,47 @@ describe('TextView 编辑提交', () => {
     expect(editingEl.textContent).toBe('')
   })
 })
+
+/**
+ * 预览的上下标合成与导出走**同一份判据**。
+ *
+ * 这里量的是「预览按覆盖表决定合不合成」，不是「浏览器能不能显示 ⁵」——
+ * jsdom 与真浏览器当然都显示得出，拿它当判据的结果正是「预览好好的、导出
+ * 上是个方框」。
+ */
+describe('科学文本解释', () => {
+  const renderOne = (over: Partial<TextObject>) => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj(over))
+    })
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
+    })
+    return container.querySelector('div')!
+  }
+
+  it('默认（auto）原样显示 Unicode 上标——文本层不降级，预览也不该先降级', () => {
+    const el = renderOne({ text: '×10⁵' })
+    expect(el.textContent).toBe('×10⁵')
+    expect(el.querySelectorAll('span[style]').length).toBe(0)
+  })
+
+  it('scientific 档合成上标：基础字符 + 缩小抬高的 span', () => {
+    const el = renderOne({ text: '×10⁵', interpretation: 'scientific' })
+    expect(el.textContent).toBe('×105')
+    const sup = [...el.querySelectorAll('span')].find((s) => s.style.verticalAlign)
+    expect(sup?.textContent).toBe('5')
+    // 抬高是正值（vertical-align 正 = 往上）；字号按 SCRIPT_SIZE 缩
+    expect(parseFloat(sup!.style.verticalAlign)).toBeGreaterThan(0)
+    expect(parseFloat(sup!.style.fontSize)).toBeLessThan(mmPxOf(el))
+  })
+
+  it('`m²` 两档都不动——那是 base-14 自己画得出的设计字形', () => {
+    expect(renderOne({ text: 'm²', interpretation: 'scientific' }).textContent).toBe('m²')
+  })
+})
+
+/** 取这段文字的正文字号（px），用来验证上标确实更小 */
+function mmPxOf(el: HTMLElement): number {
+  return parseFloat(el.style.fontSize)
+}

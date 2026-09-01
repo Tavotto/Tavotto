@@ -10,6 +10,7 @@ import {
   type Severity,
 } from './profile'
 import { effectiveCanvasFamily } from './typography'
+import { textDiagnostics } from './glyphPlan'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -145,6 +146,8 @@ export interface PreflightTextSpec {
   bold: boolean
   /** **生效**的字体族（没设过 = 默认族），不是空串——没量过与量到默认是两个答案 */
   font_family: string
+  /** **生效**的科学文本解释档（没设过 = auto）。缺字形判据要量渲染表示，不是原文 */
+  interpretation?: 'auto' | 'scientific'
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -465,6 +468,36 @@ function checkPanelFonts(
         )
       }
     }
+    // 字形覆盖：判据是**引擎实际解析到的那套字体画不画得出这些字**
+    // （manifest 的 `glyphs_missing` / `glyphs_fallback`，产生者只有
+    // `engine/manifest._glyph_scan()` 一处）。与上面那条族白名单是两个问题：
+    // 白名单里的字体没装上时它不响，而装了一个不在白名单里、却画得出中文的
+    // 字体时它误报。
+    const gone = el.glyphs_missing ?? []
+    if (gone.length) {
+      const chars = gone.join('')
+      sink.add('glyph-missing', pf('glyphMissing', { chars, count: String(gone.length) }), {
+        objectIds: [pid],
+        gids: [gid],
+        detail: { chars: gone, family: typeof family === 'string' ? family : '' },
+        worse: gone.length,
+        prop: 'fontfamily',
+      })
+    }
+    const fellBack = el.glyphs_fallback ?? []
+    if (fellBack.length) {
+      const chars = fellBack.join('')
+      sink.add(
+        'glyph-substituted',
+        pf('glyphSubstituted', { chars, count: String(fellBack.length) }),
+        {
+          objectIds: [pid],
+          gids: [gid],
+          detail: { chars: fellBack, family: typeof family === 'string' ? family : '' },
+          prop: 'fontfamily',
+        },
+      )
+    }
     const role = el.role
     const want = weights[role]
     if ((want === 'bold' || want === 'normal') && TEXT_ROLES.has(role)) {
@@ -767,6 +800,25 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         { objectIds: [t.id], detail: { family }, prop: 'fontFamily' },
       )
     }
+    // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
+    // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
+    const { missing, substituted } = textDiagnostics(t.text, t.interpretation)
+    if (missing.length) {
+      const chars = missing.join('')
+      sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
+        objectIds: [t.id],
+        detail: { chars: missing, family },
+        worse: missing.length,
+      })
+    }
+    if (substituted.length) {
+      const chars = substituted.join('')
+      sink.add(
+        'glyph-substituted',
+        pf('textGlyphSubstituted', { chars, count: String(substituted.length) }),
+        { objectIds: [t.id], detail: { chars: substituted, family } },
+      )
+    }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
       sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
         objectIds: [t.id],
@@ -914,6 +966,7 @@ export function buildSpec(
         // 生效族，不是文档里存的那个（没设过时存的是 undefined）。缺省值
         // 只有 `lib/typography` 一处，这里不写第二个。
         font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
+        interpretation: o.type === 'text' ? o.interpretation : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

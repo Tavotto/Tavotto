@@ -1,5 +1,5 @@
 /**
- * 标注文字的行内标记：上标 `^{…}`、下标 `_{…}`。
+ * 标注文字的行内标记：上标 `^{…}`、下标 `_{…}`，以及 Unicode 科学文本的解释。
  *
  * 为什么是标记而不是富文本模型：
  *   * 文档 schema 不用动（`TextObject.text` 仍是一个字符串），旧文档零影响；
@@ -77,6 +77,146 @@ function matchBrace(text: string, open: number): number {
     else if (text[i] === '}' && --depth === 0) return i
   }
   return -1
+}
+
+/* ------------ 受控科学文本解释：Unicode 上下标字符 → 渲染用片段 ------------- */
+/**
+ * **与 `src/tavotto/richtext.py` 的同名一节严格同源**（同一张表、同一条判据）。
+ *
+ * ### 合成是有代价的，所以默认只在「不然就是方框」时才合成
+ *
+ * 把 `⁵` 画成「62% 的 5 抬高 42%」以后，**PDF 文本层里那个字符就是 `5`**
+ * ——实测导出后抽回来的文本从 `×10⁵` 变成 `×105`。审稿人复制走的是 105，
+ * 这是语义损坏，比「上标是另一张脸画的」严重。所以两档，各自诚实：
+ *
+ * ```text
+ * auto（默认）  只有这一串里有字符谁都画不出（否则就是方框）时才合成
+ * scientific    认得的 Unicode 上下标一律合成：字体统一，代价是文本层降级
+ * ```
+ *
+ * 两档都还要求折出来的基础字符正文脸全画得出，否则白折一场。
+ * 「整串一起折」是刻意的：`m⁻²` 里两个字符处境不同，逐字符处理会得到一个
+ * 小的合成减号紧挨着一个大的设计上标，比原样还难看。
+ */
+
+/** 上标字符 → 基础字符。**闭集**，与 `richtext.SUPERSCRIPT_BASE` 同源。 */
+export const SUPERSCRIPT_BASE: Readonly<Record<string, string>> = {
+  '⁰': '0',
+  '¹': '1',
+  '²': '2',
+  '³': '3',
+  '⁴': '4',
+  '⁵': '5',
+  '⁶': '6',
+  '⁷': '7',
+  '⁸': '8',
+  '⁹': '9',
+  '⁺': '+',
+  '⁻': '-',
+  '⁼': '=',
+  '⁽': '(',
+  '⁾': ')',
+  'ⁿ': 'n',
+  'ⁱ': 'i',
+}
+
+/** 下标字符 → 基础字符。**闭集**，与 `richtext.SUBSCRIPT_BASE` 同源。 */
+export const SUBSCRIPT_BASE: Readonly<Record<string, string>> = {
+  '₀': '0',
+  '₁': '1',
+  '₂': '2',
+  '₃': '3',
+  '₄': '4',
+  '₅': '5',
+  '₆': '6',
+  '₇': '7',
+  '₈': '8',
+  '₉': '9',
+  '₊': '+',
+  '₋': '-',
+  '₌': '=',
+  '₍': '(',
+  '₎': ')',
+  'ₐ': 'a',
+  'ₑ': 'e',
+  'ₒ': 'o',
+  'ₓ': 'x',
+  'ₕ': 'h',
+  'ₖ': 'k',
+  'ₗ': 'l',
+  'ₘ': 'm',
+  'ₙ': 'n',
+  'ₚ': 'p',
+  'ₛ': 's',
+  'ₜ': 't',
+}
+
+/**
+ * 解释档位。**没有 `math` 这一档**：画布文字不经 matplotlib，摆一个不存在
+ * 的模式等于一句做不到的承诺（见 `typography.ts` 的 `mathTextModeOf`）。
+ */
+export const TEXT_INTERPRETATIONS = ['auto', 'scientific'] as const
+export type TextInterpretation = (typeof TEXT_INTERPRETATIONS)[number]
+export const DEFAULT_INTERPRETATION: TextInterpretation = 'auto'
+
+const scriptOf = (ch: string): ScriptKind =>
+  ch in SUPERSCRIPT_BASE ? 'sup' : ch in SUBSCRIPT_BASE ? 'sub' : ''
+
+/**
+ * 这段文字里有没有认得的 Unicode 上下标字符。界面靠它决定要不要露出
+ * 「解释方式」那一行——没有这类字符时那个选择对用户没有任何意义。
+ */
+export const hasScientificChars = (text: string): boolean =>
+  [...text].some((ch) => scriptOf(ch) !== '')
+
+export interface InterpretOptions {
+  /** 正文那张脸自己画得出这个码位吗 */
+  isPrimary: (cp: number) => boolean
+  /** 任何一层画得出吗（false = 导出上是个方框） */
+  isDrawable: (cp: number) => boolean
+  mode?: TextInterpretation
+}
+
+/** 标记片段 → **渲染用**片段。判据缺席时一条都不折——不猜一张默认覆盖表。 */
+export function interpretRuns(runs: TextRun[], opts?: InterpretOptions): TextRun[] {
+  if (!opts) return [...runs]
+  const { isPrimary, isDrawable } = opts
+  const scientific = (opts.mode ?? DEFAULT_INTERPRETATION) === 'scientific'
+  const out: TextRun[] = []
+  const emit = (text: string, script: ScriptKind) => {
+    if (!text) return
+    const last = out[out.length - 1]
+    if (last && last.script === script) last.text += text
+    else out.push({ text, script })
+  }
+  for (const run of runs) {
+    if (run.script) {
+      emit(run.text, run.script)
+      continue
+    }
+    const chars = [...run.text]
+    let i = 0
+    while (i < chars.length) {
+      const script = scriptOf(chars[i])
+      if (!script) {
+        emit(chars[i], '')
+        i++
+        continue
+      }
+      let j = i
+      while (j < chars.length && scriptOf(chars[j]) === script) j++
+      const chunk = chars.slice(i, j)
+      const table = script === 'sup' ? SUPERSCRIPT_BASE : SUBSCRIPT_BASE
+      const base = chunk.map((c) => table[c]).join('')
+      const cp = (c: string) => c.codePointAt(0) as number
+      const worth = chunk.some((c) => (scientific ? !isPrimary(cp(c)) : !isDrawable(cp(c))))
+      const possible = [...base].every((c) => isPrimary(cp(c)))
+      if (worth && possible) emit(base, script)
+      else emit(chunk.join(''), '')
+      i = j
+    }
+  }
+  return out
 }
 
 /** 片段列表 → 标记文本（大小写转换等改完内容后写回用）。 */

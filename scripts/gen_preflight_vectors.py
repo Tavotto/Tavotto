@@ -478,6 +478,53 @@ def cases() -> list[dict]:
         }
     )
 
+    # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
+    #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
+    #      ② 画布文字里的 `⁵` 会退到另一张脸 → glyph-substituted；
+    #      ③ 同一段文字选 `scientific` 之后 `⁵` 被合成掉，**一条都不该报**
+    #         ——判据必须量渲染表示，量原文的话这条会假红；
+    #      ④ 图内文字的两张单子直接来自 manifest（产生者只有引擎一处）。
+    out.append(
+        {
+            "name": "canvas-text-glyph-missing",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-arabic", 9.0, "T\u061f = 5")],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-glyph-substituted",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-sup", 9.0, "\u00d710\u2075")],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-glyph-scientific-mode",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-sup", 9.0, "\u00d710\u2075", interpretation="scientific")],
+            ),
+        }
+    )
+    m = _clean_manifest()
+    m["elements"][3]["glyphs_missing"] = ["\u4e2d", "\u6587"]
+    m["elements"][4]["glyphs_fallback"] = ["\u2075", "\u207b"]
+    out.append(
+        {
+            "name": "figure-text-glyph-coverage",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
     # 14. 刻度标签超过 10 个（规范建议控制在 10 以内）
     m = _clean_manifest()
     m["elements"] += [_el(f"axes_0.xticklabels_{i}", "ticklabel", fontsize=9.0) for i in range(12)]

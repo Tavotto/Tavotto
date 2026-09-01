@@ -47,6 +47,8 @@ function toExportObject(o: CanvasObject): ExportObject {
         // `fontFamily` 没设过 = 继承默认（衬线），**不发**——后端缺省就是它，
         // 发一个等价的显式值只会让老文档的载荷凭空多一个字段。
         font_family: o.fontFamily,
+        // 同理：`interpretation` 没设过 = auto = 后端缺省，不发。
+        interpretation: o.interpretation,
         underline: o.underline || undefined,
         line_height: o.lineHeight,
         padding_mm: o.padding || undefined,

@@ -21,7 +21,7 @@ from typing import Callable
 
 import pymupdf
 
-from .. import richtext
+from .. import glyphplan, richtext
 
 BACKEND_NAME = "pymupdf"
 #: 本后端实现的版本号。它属于契约层是因为**渲染缓存的身份需要它**：
@@ -107,20 +107,127 @@ def cjk_font() -> pymupdf.Font:
     return get_font(_CJK_FACE)
 
 
-def _script_runs(s: str) -> list[list]:
-    """按 CJK / 拉丁切分连续段：[[is_cjk, seg], ...]"""
-    out: list[list] = []
+#: 分层结果按 (拉丁脸, CJK 脸, 码位) 记忆。贪心换行会对同一批字符反复量宽，
+#: 每次都去问 `has_glyph` 的话，一段 200 字的文本要问上万次。
+_LAYER_CACHE: dict[tuple[str, str, int], str] = {}
+
+
+def coverage(
+    family: object = "serif", bold: bool = False, italic: bool = False
+) -> glyphplan.Coverage:
+    """这一族/字重下的三层覆盖 oracle——**问的是真字体**，不是任何一张抄下来的表。
+
+    导出那一端永远走这条路；浏览器没有字体引擎，读的是
+    `canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check` 看护两者一致）。
+    """
+    return _coverage_of(latin_font(bold, italic, family), cjk_font())
+
+
+def _coverage_of(latin: pymupdf.Font, cjk: pymupdf.Font) -> glyphplan.Coverage:
+    return glyphplan.Coverage(
+        primary=lambda cp: bool(latin.has_glyph(cp)),
+        cjk=lambda cp: bool(cjk.has_glyph(cp)),
+        # PyMuPDF 自己挑得出的那张脸（实测 1.28.2 上是 Noto Serif Regular，
+        # 且**与请求的族和字重无关**——所以 fallback 层画出来的字必然与
+        # 正文不同脸，这正是它要被单独报出来的原因）。
+        fallback=lambda cp: bool(latin.has_glyph(cp, fallback=True)),
+    )
+
+
+def _plan(s: str, latin: pymupdf.Font, cjk: pymupdf.Font) -> list[glyphplan.GlyphRun]:
+    cov = _coverage_of(latin, cjk)
+    key0, key1 = latin.name, cjk.name
+    runs: list[glyphplan.GlyphRun] = []
     for ch in s:
-        cjk = ord(ch) > 0x2E80
-        if out and out[-1][0] == cjk:
-            out[-1][1] += ch
+        cp = ord(ch)
+        key = (key0, key1, cp)
+        layer = _LAYER_CACHE.get(key)
+        if layer is None:
+            layer = _LAYER_CACHE[key] = glyphplan.layer_of(cp, cov)
+        if runs and runs[-1].layer == layer:
+            runs[-1] = glyphplan.GlyphRun(runs[-1].text + ch, layer)
         else:
-            out.append([cjk, ch])
-    return out
+            runs.append(glyphplan.GlyphRun(ch, layer))
+    return runs
+
+
+def _face_of(layer: str, latin: pymupdf.Font, cjk: pymupdf.Font) -> pymupdf.Font:
+    """哪一层交给哪张脸落笔。
+
+    `fallback` 与 `missing` 都仍然交给**正文那张脸**：PyMuPDF 会在 append 时
+    自己挑回退脸（missing 那一档挑不到，画出来就是 .notdef 方框）。把它们
+    改交给 CJK 脸会换掉既有文档里那些字符的字形——分层是为了说清楚谁画的，
+    不是为了改画面。
+    """
+    return cjk if layer == "cjk" else latin
 
 
 def _mixed_width(s: str, latin: pymupdf.Font, cjk: pymupdf.Font, size: float) -> float:
-    return sum((cjk if c else latin).text_length(seg, size) for c, seg in _script_runs(s))
+    """量宽与落笔**读同一份计划**：分段判据一旦有两份，换行位置就会和画出来的
+    字对不上。"""
+    return sum(
+        _face_of(r.layer, latin, cjk).text_length(r.text, size) for r in _plan(s, latin, cjk)
+    )
+
+
+def text_plan(
+    s: str,
+    family: object = "serif",
+    bold: bool = False,
+    italic: bool = False,
+) -> list[tuple[str, str]]:
+    """边界层对外的字形归属计划：`[(片段, 层), ...]`（层见 `glyphplan.GLYPH_LAYERS`）。
+
+    进出只有基本类型，不泄漏后端字体对象。
+    """
+    return [(r.text, r.layer) for r in _plan(s, latin_font(bold, italic, family), cjk_font())]
+
+
+def missing_glyphs(
+    s: str,
+    family: object = "serif",
+    bold: bool = False,
+    italic: bool = False,
+) -> list[str]:
+    """这段文字里**画不出来**的字符（去重、保出现顺序）——预检的唯一依据。"""
+    return glyphplan.missing_chars(s, coverage(family, bold, italic))
+
+
+#: 覆盖表要枚举到哪。BMP + SMP（`0x30000`）之上是私用区与未分配平面，
+#: 枚举它们只会让生成物变大而一个字符都救不回来。
+COVERAGE_MAX_CP = 0x30000
+
+
+def coverage_ranges() -> dict:
+    """把**真字体**的三层覆盖压成区间表——`canvas_coverage.json` 的唯一产生者。
+
+    前端读的那份生成物由 `scripts/gen_canvas_coverage.py` 从这里出，
+    `--check` 比对它与当前后端是否还一致：PyMuPDF 换版本、换平台导致覆盖
+    漂移时，红的是那一格，而不是某个用户的图上多出一个方框。
+    """
+    latin, cjk = latin_font(False, False, "serif"), cjk_font()
+    cov = _coverage_of(latin, cjk)
+    lo, hi = 0x20, COVERAGE_MAX_CP
+    return {
+        "primary": glyphplan.ranges_of(cov.primary, lo, hi),
+        "cjk": glyphplan.ranges_of(cov.cjk, lo, hi),
+        # 只登记**真的会走到第 3 步**的那一段：`layer_of()` 到第 3 步时已经
+        # 排除了 primary、以及「CJK 段且 CJK 脸有」。按这个条件裁剪，表比
+        # 原始覆盖小得多，而两侧的分层结果逐字符相同。
+        #
+        # **不许再多减一个 `cjk`**：`₂`（U+2082）在 CJK 脸里有、码位却在
+        # CJK 段之外，第 2 步轮不到它。多减那一下会让前端把它判成 `cjk`，
+        # 后端仍判 `fallback`——一个只在下标字符上发作的两侧分歧。
+        "fallback": glyphplan.ranges_of(
+            lambda cp: (
+                not cov.primary(cp)
+                and not (cp > glyphplan.CJK_START and cov.cjk(cp))
+                and cov.fallback(cp)
+            ),
+            lo,
+            hi,
+        ),
+    }
 
 
 def text_width(
@@ -405,6 +512,8 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
     （缺省衬线 = Times），CJK 走 PyMuPDF 自带的那一张 CJK 脸（见 `_CJK_FACE`
     ——换族不换它）。整框套 CJK 字体会把
     拉丁字母排成全角步进（"E x p o r t"），必须按 script 切段各用各的字体。
+    行内 Unicode 上下标按 `richtext.interpret_runs` 受控解释（`interpretation`
+    字段，缺省 auto）——**raw text 一个字符不改**，只改渲染表示。
     行高 line_height（缺省 1.25）、按框宽贪心换行（CJK 逐字、拉丁按词，
     单词自己就超宽时逐字兜底），与前端 TextView 一致；
     背景/描边/内边距/下划线/旋转同前端语义。"""
@@ -418,6 +527,11 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
     # 「没设过」压成一个新的默认值再写回文档**——那两个是不同的答案。
     latin = latin_font(t.get("bold", False), t.get("italic", False), t.get("font_family"))
     cjk = cjk_font()
+    # 受控科学文本解释（`interpretation` 缺席 = auto = 老文档也一样）。
+    # auto 只救「不然就是方框」的那几个字符——合成会让 PDF 文本层里的 `⁵`
+    # 变成 `5`，那笔账只有用户自己选 `scientific` 时才划得来。
+    interp = str(t.get("interpretation") or richtext.DEFAULT_INTERPRETATION)
+    _cov = _coverage_of(latin, cjk)
     x0, y0 = mm2pt(t["x_mm"]) + pad, mm2pt(t["y_mm"]) + pad
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
@@ -468,7 +582,12 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
             else:
                 cur.append((ch, sc))
 
-        for run in richtext.parse_runs(raw):
+        for run in richtext.interpret_runs(
+            richtext.parse_runs(raw),
+            is_primary=_cov.primary,
+            is_drawable=lambda cp: glyphplan.layer_of(cp, _cov) != "missing",
+            mode=interp,
+        ):
             for ch in run.text:
                 if ord(ch) > 0x2E80:  # 换行单元：CJK 逐字
                     if cur:
@@ -531,8 +650,8 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
             underlines.append((x, y + size * 0.11, w))
         for seg_text, seg_script in line:
             seg_size, rise = richtext.run_metrics(seg_script, size)
-            for is_cjk, sub in _script_runs(seg_text):
-                f = cjk if is_cjk else latin
+            for sub, layer in _plan(seg_text, latin, cjk):
+                f = _face_of(layer, latin, cjk)
                 tw.append((x, y - rise), sub, font=f, fontsize=seg_size)
                 x += f.text_length(sub, seg_size)
     tw.write_text(page, morph=morph)

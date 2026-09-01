@@ -112,6 +112,9 @@ const FIGURE_PROP: Record<TypographyProp, string | null> = {
   valign: 'va',
   lineHeight: null,
   rotationDeg: 'rotation',
+  // 图内文字的上下标是 matplotlib 的 `$…$`（`mathTextModeOf` 的另一档），
+  // 不是我们自己的合成管线——引擎不认这条 prop，所以是 null 而不是某个名字。
+  interpretation: null,
 }
 
 /**
@@ -261,6 +264,7 @@ const CANVAS_INHERITABLE = new Set<TypographyProp>([
   'style',
   'lineHeight',
   'rotationDeg',
+  'interpretation',
 ])
 
 /** 规范属性名 → 历史标题。**改哪一条就说哪一条**，不共用一句「编辑文字」。 */
@@ -274,6 +278,7 @@ const CANVAS_HISTORY: Record<TypographyProp, string> = {
   valign: 'setAlign',
   lineHeight: 'setLineHeight',
   rotationDeg: 'rotateObject',
+  interpretation: 'setInterpretation',
 }
 
 /**

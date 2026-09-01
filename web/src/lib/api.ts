@@ -817,6 +817,8 @@ export type ExportObject =
       align: string
       /** 三个通用族之一；缺席 = 继承默认（衬线），后端缺省与它一致 */
       font_family?: 'serif' | 'sans-serif' | 'monospace'
+      /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
+      interpretation?: 'auto' | 'scientific'
       underline?: boolean
       line_height?: number
       padding_mm?: number
@@ -1128,6 +1130,14 @@ export interface ManifestElement {
    * `inspector/UnsupportedProps.tsx`；没有它这个字段就只到 manifest、没到眼睛。
    */
   unsupported_props?: UnsupportedProp[]
+  /**
+   * 这段文字里**当前字体画不出来**的字符（导出后是方框）。产生者只有
+   * `engine/manifest._glyph_scan()` 一处——两个预检求值器读的是同一份
+   * manifest，所以这条判据天然不会分叉。缺席 = 一个都不缺。
+   */
+  glyphs_missing?: string[]
+  /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
+  glyphs_fallback?: string[]
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。

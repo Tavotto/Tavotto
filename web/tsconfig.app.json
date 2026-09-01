@@ -27,6 +27,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@profiles": ["../src/tavotto/profiles/publication.json"],
+      "@glyphcoverage": ["../src/tavotto/pdfbackend/canvas_coverage.json"],
       "@playground-runtime": ["../packaging/playground-runtime.json"]
     }
   },

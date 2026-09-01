@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 
+from .. import glyphplan
 from . import profiles as profiles_mod
 
 SPEC_DOC = """
@@ -42,6 +43,7 @@ figure spec（两侧同源的规范化输入）：
   }],
   "texts":   [{"id": str, "text": str, "size_pt": float, "bold": bool,
                "font_family": str,      # 生效的族（没设过 = 默认族，不是空串）
+               "interpretation": str,   # 科学文本解释档（没设过 = auto，不是空串）
                "rect_mm": [x,y,w,h], "hidden": bool}],
   "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
 }
@@ -411,6 +413,34 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                     gids=[gid],
                     detail={"family": family},
                 )
+        # 字形覆盖：判据是**引擎实际解析到的那套字体画不画得出这些字**
+        # （manifest 的 `glyphs_missing` / `glyphs_fallback`，产生者只有
+        # `manifest._glyph_scan()` 一处，两个求值器读的是同一份 manifest）。
+        # 与上面那条族白名单是两个问题：白名单里的字体没装上时它不响，
+        # 而装了一个不在白名单里、却画得出中文的字体时它误报。
+        gone = el.get("glyphs_missing")
+        if isinstance(gone, list) and gone:
+            shown = "".join(str(c) for c in gone)
+            sink.add(
+                "glyph-missing",
+                f"图内文字有字符当前字体画不出来，导出后是方框：{shown}",
+                message=("glyphMissing", {"chars": shown, "count": str(len(gone))}),
+                object_ids=[pid],
+                gids=[gid],
+                detail={"chars": list(gone), "family": family if isinstance(family, str) else ""},
+                worse=len(gone),
+            )
+        subst = el.get("glyphs_fallback")
+        if isinstance(subst, list) and subst:
+            shown = "".join(str(c) for c in subst)
+            sink.add(
+                "glyph-substituted",
+                f"图内文字有字符不是用它自己的字体画的（自动回退）：{shown}",
+                message=("glyphSubstituted", {"chars": shown, "count": str(len(subst))}),
+                object_ids=[pid],
+                gids=[gid],
+                detail={"chars": list(subst), "family": family if isinstance(family, str) else ""},
+            )
         role = el.get("role", "")
         want = weights.get(role)
         if want in ("bold", "normal") and role in _TEXT_ROLES:
@@ -729,6 +759,17 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
         sink.add("hidden", "隐藏的对象不会出现在导出中", message=("hidden", {}), object_ids=hidden)
 
 
+#: 覆盖 oracle 按进程缓存：一次预检要过很多段文字，而它只是一次 JSON 读盘。
+_COVERAGE: glyphplan.Coverage | None = None
+
+
+def _canvas_coverage() -> glyphplan.Coverage:
+    global _COVERAGE
+    if _COVERAGE is None:
+        _COVERAGE = glyphplan.canvas_coverage()
+    return _COVERAGE
+
+
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
     strict = _num_or(
         profile.get("min_effective_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
@@ -780,6 +821,30 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 ),
                 object_ids=[tid],
                 detail={"family": family},
+            )
+        # 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
+        # 判据与前端 `glyphPlan.ts` 同源，读同一张生成的覆盖表。
+        gone, subst = glyphplan.text_diagnostics(
+            str(t.get("text") or ""), _canvas_coverage(), t.get("interpretation")
+        )
+        if gone:
+            shown = "".join(gone)
+            sink.add(
+                "glyph-missing",
+                f"画布文字有字符画不出来，导出后是方框：{shown}",
+                message=("textGlyphMissing", {"chars": shown, "count": str(len(gone))}),
+                object_ids=[tid],
+                detail={"chars": gone, "family": family},
+                worse=len(gone),
+            )
+        if subst:
+            shown = "".join(subst)
+            sink.add(
+                "glyph-substituted",
+                f"画布文字有字符不是用所选字体画的（自动回退）：{shown}",
+                message=("textGlyphSubstituted", {"chars": shown, "count": str(len(subst))}),
+                object_ids=[tid],
+                detail={"chars": subst, "family": family},
             )
         if has_cjk(t.get("text")) and cjk.get("required") and not cjk.get("accepted"):
             sink.add(

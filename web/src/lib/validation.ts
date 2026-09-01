@@ -129,6 +129,10 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   'font-too-large': { context: 'document', fix: 'safe_auto' },
   'font-family-substituted': { context: 'document', fix: 'none' },
   'cjk-fallback-missing': { context: 'document', fix: 'none' },
+  // 两条都 `fix: 'none'`：能修的动作是「换一个画得出这些字的字体」，
+  // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
+  'glyph-missing': { context: 'document', fix: 'none' },
+  'glyph-substituted': { context: 'document', fix: 'none' },
   'text-weight-policy': { context: 'document', fix: 'safe_auto' },
   'legend-frame': { context: 'document', fix: 'safe_auto' },
   'legend-font-size': { context: 'document', fix: 'safe_auto' },

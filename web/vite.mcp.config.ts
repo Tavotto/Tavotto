@@ -19,6 +19,9 @@ export default defineConfig({
       '@profiles': fileURLToPath(
         new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
+      '@glyphcoverage': fileURLToPath(
+        new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),
+      ),
     },
   },
   build: {

@@ -264,3 +264,49 @@ describe('与图内文字一致的界面结构（ADR 0010）', () => {
     expect(after).toContain('背景')
   })
 })
+
+/**
+ * 科学文本那一行与字形提示：**两样都只在确有其事时才出现**。
+ *
+ * 默认界面只显示完成任务所需的信息（`00_SHARED_RULES` §7）——文字里没有
+ * Unicode 上下标时，那个选择对用户不产生任何差别。
+ */
+describe('科学文本与字形提示', () => {
+  const setText = (text: string, over: Partial<TextObject> = {}) => {
+    act(() => {
+      s().commit(literal('换文字'), (d) => {
+        Object.assign(d.objects[0] as TextObject, { text, ...over })
+      })
+    })
+  }
+  const row = () => container.querySelector(`[data-prop="${propertyPathOf('canvasText', 'interpretation')}"]`)
+
+  it('普通文字：那一行根本不出现', () => {
+    setText('Sample A')
+    expect(row()).toBeNull()
+  })
+
+  it('有 Unicode 上标时才出现', () => {
+    setText('×10⁵')
+    expect(row()).not.toBeNull()
+  })
+
+  it('锚点用的是 propertyPathOf()，问题面板定位得到它', () => {
+    setText('H₂O')
+    // 三处（检查报的字段名 / 控件锚点 / 定位选择器）读同一份表——各写各的
+    // 字符串时，缺的那一处表现为「点了定位什么都没发生」，界面并不报错。
+    expect(row()?.getAttribute('data-prop')).toBe('interpretation')
+  })
+
+  it('画不出来的字符逐字列出来（那是导出后的方框）', () => {
+    setText('T؟ = 5')
+    expect(container.textContent).toContain('؟')
+  })
+
+  it('换脸画的字符另说一句，不与方框混成一句', () => {
+    setText('×10⁵')
+    const missing = container.textContent?.includes('导出后是方框')
+    expect(missing).toBe(false)
+    expect(container.textContent).toContain('另一张字体')
+  })
+})

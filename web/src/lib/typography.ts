@@ -30,6 +30,11 @@
  */
 
 import type { EditableField } from './api'
+import {
+  DEFAULT_INTERPRETATION,
+  TEXT_INTERPRETATIONS,
+  type TextInterpretation,
+} from './richText'
 import type { TextObject } from '@/types/document'
 
 /* ----------------------------- 规范属性名 --------------------------------- */
@@ -48,6 +53,7 @@ export const TYPOGRAPHY_PROPS = [
   'valign',
   'lineHeight',
   'rotationDeg',
+  'interpretation',
 ] as const
 
 export type TypographyProp = (typeof TYPOGRAPHY_PROPS)[number]
@@ -149,6 +155,9 @@ const SUPPORT: Record<TypographyKind, ReadonlySet<TypographyProp>> = {
     'halign',
     'lineHeight',
     'rotationDeg',
+    // 图内文字**没有**这一条：那边的上下标是 matplotlib 的 `$…$`
+    // （`mathTextModeOf` 的另一档），不是我们自己的合成管线。
+    'interpretation',
   ]),
 }
 
@@ -207,6 +216,7 @@ const PATHS: Record<TypographyKind, Partial<Record<TypographyProp, string>>> = {
     halign: 'align',
     lineHeight: 'lineHeight',
     rotationDeg: 'rotationDeg',
+    interpretation: 'interpretation',
   },
 }
 
@@ -313,7 +323,9 @@ export function coerceTypography(
       // enum：选项表由调用方给（族的选项因运行时而异），没给就用规范里的默认集
       const options =
         field?.options ??
-        (prop === 'weight'
+        (prop === 'interpretation'
+          ? (TEXT_INTERPRETATIONS as readonly string[])
+          : prop === 'weight'
           ? (WEIGHTS as readonly string[])
           : prop === 'style'
             ? (STYLES as readonly string[])
@@ -355,6 +367,8 @@ export function readCanvasText(o: TextObject, prop: TypographyProp): unknown {
       return o.lineHeight
     case 'rotationDeg':
       return o.rotationDeg
+    case 'interpretation':
+      return o.interpretation
     default:
       return undefined
   }
@@ -371,6 +385,8 @@ export function inheritedCanvasValue(prop: TypographyProp): unknown {
       return 1.25
     case 'rotationDeg':
       return 0
+    case 'interpretation':
+      return DEFAULT_INTERPRETATION
     default:
       return undefined
   }
@@ -412,6 +428,10 @@ export function writeCanvasText(o: TextObject, prop: TypographyProp, value: unkn
       if (!Number(value)) delete o.rotationDeg
       else o.rotationDeg = Number(value)
       return
+    case 'interpretation':
+      if (value === DEFAULT_INTERPRETATION || !value) delete o.interpretation
+      else o.interpretation = value as TextInterpretation
+      return
     default:
       return
   }
@@ -443,6 +463,8 @@ export function canvasFieldOf(prop: TypographyProp): EditableField | undefined {
       return { prop: path, type: 'number', value: null, min: 0.8, max: 3, step: 0.05 }
     case 'rotationDeg':
       return { prop: path, type: 'number', value: null, min: -180, max: 180, step: 5, unit: '°' }
+    case 'interpretation':
+      return { prop: path, type: 'enum', value: null, options: [...TEXT_INTERPRETATIONS] }
     default:
       return undefined
   }

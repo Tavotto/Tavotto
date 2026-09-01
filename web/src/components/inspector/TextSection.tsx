@@ -1,7 +1,16 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
-import { toggleScript, transformCase, type CaseMode } from '@/lib/richText'
+import {
+  DEFAULT_INTERPRETATION,
+  hasScientificChars,
+  TEXT_INTERPRETATIONS,
+  toggleScript,
+  transformCase,
+  type CaseMode,
+  type TextInterpretation,
+} from '@/lib/richText'
+import { textDiagnostics } from '@/lib/glyphPlan'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectivePt, round1 } from '@/lib/units'
 import { ALT, combo, modKey } from '@/lib/utils'
@@ -14,7 +23,7 @@ import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
-import { canvasFieldOf, coerceTypography } from '@/lib/typography'
+import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
 import { TypographyControls } from './controls/TypographyControls'
 import { useCanvasTypography } from './typographyAdapter'
 import { shared } from './common'
@@ -206,6 +215,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             </>
           }
         />
+        <ScientificText objs={objs} adapter={typography} />
         {one && (
           <MatchFigureSize
             text={one}
@@ -401,5 +411,66 @@ function MatchFigureSize({
         {tx('matchAction')}
       </button>
     </p>
+  )
+}
+
+/**
+ * 科学文本：解释档 + 字形提示。**两样都只在确有其事时才出现。**
+ *
+ * 解释档只在选中的文字里真有 Unicode 上下标字符时露面——没有那类字符时，
+ * 这个选择对用户不产生任何差别，摆出来只是噪音（`00_SHARED_RULES` §7）。
+ *
+ * 字形提示分两句，因为它们是两件事：**画不出来**（导出后是方框，问题面板
+ * 里是一条 error）与**换了一张脸画**（画出来了，只是字体不一致）。压成一句
+ * 的话，用户看到红灯却发现图上好好的，下一次就不看这盏灯了。判据来自
+ * `lib/glyphPlan`——与导出那一端读同一张覆盖表，**不是**浏览器自己的字体栈。
+ */
+function ScientificText({
+  objs,
+  adapter,
+}: {
+  objs: TextObject[]
+  adapter: ReturnType<typeof useCanvasTypography>
+}) {
+  const field = adapter.fieldOf('interpretation')
+  const value = adapter.valueOf('interpretation')
+  const showPicker = objs.some((o) => hasScientificChars(o.text))
+  // 提示按**每个对象自己的解释档**算：多选时两段文字可能各选各的。
+  const missing: string[] = []
+  const substituted: string[] = []
+  for (const o of objs) {
+    const d = textDiagnostics(o.text, o.interpretation)
+    for (const c of d.missing) if (!missing.includes(c)) missing.push(c)
+    for (const c of d.substituted) if (!substituted.includes(c)) substituted.push(c)
+  }
+  if (!field || (!showPicker && !missing.length && !substituted.length)) return null
+  const current = (displayValueOf(value) ?? DEFAULT_INTERPRETATION) as TextInterpretation
+  return (
+    <>
+      {showPicker && (
+        <div data-prop={adapter.pathOf('interpretation') ?? undefined}>
+          <Row label={tx('interpretation')}>
+            <Segmented
+              value={value.kind === 'mixed' ? null : current}
+              onChange={(v) => adapter.writeOnce('interpretation', v)}
+              items={TEXT_INTERPRETATIONS.map((v) => ({
+                value: v,
+                label: tx(v === 'auto' ? 'interpretationAuto' : 'interpretationScientific'),
+                tip: tx(v === 'auto' ? 'interpretationAutoTip' : 'interpretationScientificTip'),
+              }))}
+              className="w-full"
+            />
+          </Row>
+        </div>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-danger">{tx('glyphMissing', { chars: missing.join('') })}</p>
+      )}
+      {substituted.length > 0 && (
+        <p className="text-xs text-ink-3">
+          {tx('glyphFallback', { chars: substituted.join('') })}
+        </p>
+      )}
+    </>
   )
 }

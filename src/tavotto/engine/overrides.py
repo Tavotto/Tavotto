@@ -395,6 +395,25 @@ def _mathtext_font_name(fam: str) -> str | None:
     return fam
 
 
+#: 字体回退尾巴：正文那张脸缺字形时，逐字形退到这里。
+#:
+#: **只有 DejaVu Sans 一个**，理由是三条同时成立：matplotlib 自己就带着它
+#: （我们不新增、不捆绑任何字体，见 `00_SHARED_RULES` §10），它在每个平台上
+#: 都在（回退结果因此是确定的，不会「这台机器有那台没有」），而且实测它盖住
+#: 了科学文本里那一批 base-14 缺的字符（`⁵` `⁻` `₂` `μ` `≤` `Å` …）。
+#:
+#: **中日韩不在它的覆盖里**，本尾巴治不了中文方框——那要用户选一个装了中文
+#: 的字体（选项由 `manifest._family_options()` 按运行时探测给出）。往这里塞
+#: 一个平台相关的中文字体会让同一份文档在两台机器上画出不同的字，比一条
+#: 说得清楚的问题项更坏。
+FONT_FALLBACK_TAIL = ("DejaVu Sans",)
+
+
+def _family_chain(fam: str) -> list[str]:
+    """正文族 + 回退尾巴。已经点了名的不重复加。"""
+    return [fam, *(f for f in FONT_FALLBACK_TAIL if f != fam)]
+
+
 def _set_text_fontfamily(t: Text, v) -> None:
     """改字体连同 mathtext 一起改。set_fontfamily 只影响正文，$…$ 里的上下标
     仍按 mathtext 字体集渲染——同一个文字框里两种字体。把该 artist 的
@@ -403,13 +422,21 @@ def _set_text_fontfamily(t: Text, v) -> None:
     字体时 custom 集只能指向最后一次的选择（明示的边界）；未改字体的文字
     不在 custom 集上，不受影响。
 
+    **正文字体按回退链设**（`_family_chain`）：只设一个名字时，那个字体缺的
+    字形会画成方框；带上尾巴之后 matplotlib 逐字形退到 DejaVu Sans。用户选的
+    那个族仍然是 `get_fontfamily()[0]`，manifest 与预检报的都是它。
+
     **正文字体优先落地**：mathtext 那一步是「让上下标跟着一起换」的加分项，
     换不成也不该把整条编辑拖失败——失败的表现是 warning，而一条 warning 就
     阻断写回。换不成时 `$…$` 留在默认字体集里，用户看得见（正文变了、公式
     没变），不是静默的。
     """
     fam = str(v[0]) if isinstance(v, (list, tuple)) else str(v)
-    t.set_fontfamily(fam)
+    # **按回退链设，不按单个名字设**：matplotlib 3.6 起 family 是一条逐字形
+    # 回退链，只给一个名字时缺的字形画成 .notdef 方框（实测 Times New Roman
+    # 画 `×10⁵` 的 `⁵` `⁻` 是三个一模一样的空心框）。`get_fontfamily()[0]`
+    # 仍然是用户选的那个，manifest / 预检报的都是它。
+    t.set_fontfamily(_family_chain(fam))
     math_name = _mathtext_font_name(fam)
     if not math_name:
         return

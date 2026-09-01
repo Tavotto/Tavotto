@@ -11,6 +11,7 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 from __future__ import annotations
 
 import math
+import re
 import sys
 
 from matplotlib import font_manager
@@ -924,9 +925,30 @@ def _alpha_field(artist) -> list[dict]:
 #: 下 `sans-serif` 会抛 ValueError（连字符被 fontconfig 语法当成分隔符解析
 #: 失败），尽管它当然可用。macOS / matplotlib 3.10.8 实测。
 _GENERIC_FAMILIES = ("serif", "sans-serif", "monospace")
-#: 具体字体名：装了才列。桌面上这三个通常都在，浏览器 playground（Pyodide
+#: 具体字体名：装了才列。桌面上前三个通常都在，浏览器 playground（Pyodide
 #: 只带 DejaVu 三件套）与没装 msttcorefonts 的 Linux 上一个都没有。
-_NAMED_FAMILIES = ("Times New Roman", "Arial", "Helvetica")
+#:
+#: **中日韩那一批是修「中文画成方框」的唯一入口**：三个通用族与拉丁具体字体
+#: 一个都画不出汉字，不给用户一个选得中的中文字体，问题面板就成了一盏没有
+#: 开关的红灯。名字取自出版规范 `cjk_fallback.accepted`（那份 JSON 是「哪些
+#: 中文字体可接受」的唯一权威）——这里是**候选名单**，回答的是另一个问题：
+#: 这台机器上哪些画得出来。两个问题不同，所以这不是把规则抄了第二份；真正
+#: 决定列不列的仍然是下面那个探测器。
+_NAMED_FAMILIES = (
+    "Times New Roman",
+    "Arial",
+    "Helvetica",
+    "方正小标宋简体",
+    "Noto Sans CJK SC",
+    "Noto Serif CJK SC",
+    "Source Han Sans SC",
+    "Source Han Serif SC",
+    "PingFang SC",
+    "Songti SC",
+    "STSong",
+    "Microsoft YaHei",
+    "SimSun",
+)
 #: 探测结果按进程缓存：一次 manifest 要过很多个 Text，探测结果在一次渲染里
 #: 不会变。（`findfont` 自己也有 lru_cache，这层只是省掉异常构造。）
 _FONT_PRESENT: dict[str, bool] = {}
@@ -951,6 +973,92 @@ def _font_installed(name: str) -> bool:
             hit = False
         _FONT_PRESENT[name] = hit
     return hit
+
+
+#: 一段文字里最多报几个缺字形的字符。问题面板要把它们逐字列出来，一句
+#: 「缺 200 个字符」既没法读也没法修；超出的部分由数量说话。
+MAX_MISSING_GLYPHS = 12
+
+#: 字体文件 → FT2Font 的进程内缓存。一次 manifest 要过很多个 Text，而
+#: 打开字体文件是几毫秒级的。
+_FT_FONTS: dict[str, object] = {}
+
+#: `$…$` 之间的片段。matplotlib 用 **mathtext 字体集**画它们（不是正文那张
+#: 脸），拿正文字体去判它们的覆盖会报出一批不存在的缺字。**判不了就不判**，
+#: 别用一个量错对象的判据去凑数量。
+_MATH_SPAN = re.compile(r"(?<!\\)\$.*?(?<!\\)\$", re.S)
+
+
+def _ft_font(path: str):
+    hit = _FT_FONTS.get(path)
+    if hit is None:
+        from matplotlib.ft2font import FT2Font
+
+        try:
+            hit = FT2Font(path)
+        except (OSError, RuntimeError):  # 坏字体文件不该带着整次渲染一起死
+            hit = False
+        _FT_FONTS[path] = hit
+    return hit or None
+
+
+def _resolved_font_paths(families) -> list[str]:
+    """这段文字**真正会用到**的字体文件，按 matplotlib 自己的回退顺序。
+
+    走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
+    「我们说画得出的」== 「渲染时画得出的」。私有接口不在时退回单点解析
+    ——那时链只有一环，判据会偏严（多报），不会偏松（漏报）。
+    """
+    prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
+    try:
+        found = font_manager.fontManager._find_fonts_by_props(prop)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        try:
+            found = [font_manager.findfont(prop)]
+        except (ValueError, RuntimeError):
+            return []
+    return [str(f) for f in found]
+
+
+def _glyph_scan(text: str, families) -> tuple[list[str], list[str]]:
+    """(画不出来的, 不是正文那张脸画的) —— 两张单子一次扫出来。
+
+    `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
+    解析不出任何字体时两张单子都空：**判不了就不判**，不拿一个量错对象的
+    判据去凑数量。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return [], []
+    fonts = [f for f in (_ft_font(p) for p in _resolved_font_paths(families)) if f is not None]
+    if not fonts:
+        return [], []
+    primary, rest = fonts[0], fonts[1:]
+    gone: dict[str, None] = {}
+    subst: dict[str, None] = {}
+    for ch in _MATH_SPAN.sub("", text):
+        if ch.isspace() or ch in gone or ch in subst:
+            continue
+        if primary.get_char_index(ord(ch)):
+            continue
+        if any(f.get_char_index(ord(ch)) for f in rest):
+            if len(subst) < MAX_MISSING_GLYPHS:
+                subst[ch] = None
+        elif len(gone) < MAX_MISSING_GLYPHS:
+            gone[ch] = None
+    return list(gone), list(subst)
+
+
+def missing_glyphs(text: str, families) -> list[str]:
+    """这段文字里**这套字体画不出来**的字符（去重、保出现顺序、有上限）。
+
+    这是「导出上会是一个方框」的唯一依据，也是 `glyph-missing` 那条检查的
+    输入。判据是**字形覆盖**，不是字体名——`cjk-fallback-missing` 那条问的
+    是「族名在不在规范的白名单里」，两个问题不一样：白名单里的字体没装上
+    时它不响，而装了一个不在白名单里、却画得出中文的字体时它误报。
+
+    `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
+    """
+    return _glyph_scan(text, families)[0]
 
 
 def _family_options() -> list[str]:
@@ -2865,6 +2973,16 @@ def build_manifest(state: FigState, stem: str) -> dict:
             "draggable": el["draggable"],
             "editable": _fields_for(el),
         }
+        # 缺字形按**是不是 Text** 判，不按 role 列白名单：刻度文字、图例文字、
+        # 标题都是同一个 `Text`，漏掉哪一类的表现都是「那一类的方框没人报」。
+        if isinstance(artist, Text):
+            gone, subst = _glyph_scan(artist.get_text(), artist.get_fontfamily() or [])
+            if gone:
+                entry["glyphs_missing"] = gone
+            # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
+            # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
+            if subst:
+                entry["glyphs_fallback"] = subst
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):
