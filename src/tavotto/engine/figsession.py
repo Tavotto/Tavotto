@@ -74,6 +74,29 @@ def _json_default(o):
         return str(o)
 
 
+#: 导出 PDF / PS 时字体按 TrueType（fonttype 42）嵌入，而不是 matplotlib 默认的 Type 3。
+#:
+#: Type 3 路径上 U+00FF 之外的字符（`⁵` `⁻` `μ` `α β γ Δ` `≤ ≥`……）被画成
+#: XObject 而不是文字：像素全对，**PDF 文本层里却没有它们**——复制、搜索、
+#: 读屏都拿不到，而且多数期刊直接拒收 Type 3 字体。预览（manifest 的字形扫描）
+#: 说「画得出」、PNG 也画得出，只有 PDF 的文本层缺一截，正是「预览与导出语义
+#: 不一致」那一档缺陷（tests/test_scientific_text_matrix.py 抓到的）。
+#: 只在用户脚本没把它改成别的值时接管：用户显式设了 42 是同一个结果，显式设成
+#: 3 的脚本极少见，而那种情况下我们仍以文本层完整为准（决策 T-122）。
+EXPORT_FONTTYPE = 42
+
+
+def export_font_context(fmt: str):
+    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。"""
+    import contextlib
+
+    if str(fmt).lower() not in ("pdf", "ps", "eps"):
+        return contextlib.nullcontext()
+    import matplotlib
+
+    return matplotlib.rc_context({"pdf.fonttype": EXPORT_FONTTYPE, "ps.fonttype": EXPORT_FONTTYPE})
+
+
 class LiveFigureSession:
     """捕获到的一组 Figure + 它们的可编辑状态。
 
@@ -419,7 +442,7 @@ class LiveFigureSession:
             warnings = overrides_mod.apply(state, patches)
             t1 = time.perf_counter()
             out.parent.mkdir(parents=True, exist_ok=True)
-            with self.real_output():
+            with self.real_output(), export_font_context(fmt):
                 state.fig.savefig(out, format=fmt, dpi=int(dpi))
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
