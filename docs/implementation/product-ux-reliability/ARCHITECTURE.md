@@ -499,6 +499,10 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 
 ---
 
+**字体嵌入（`← 23`，T-122）**：原图 / 画布里嵌的面板 PDF 都出自 `figsession.export()`，那里用
+`rc_context` 把 `pdf.fonttype` / `ps.fonttype` 钉成 42——文本层与预览的字形扫描说的是同一批字符；
+Type 3 只在用户脚本自己 `savefig` 的原始产物里出现（那不是我们的图库）。
+
 ## 6. Style / Spec / Validation / Export（`← 10`，ADR 0029）
 
 | 层 | 唯一出处 | 备注 |

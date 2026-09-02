@@ -1947,3 +1947,62 @@ payload 加 `origin` 要改 action 签名与 `ACTIVITY_PAYLOAD_KEYS`。
 
 **裁决：跑过一次看有没有漏 key 即可，产物不进版本库；`i18n:types` + `i18n:check` 才是门禁。**
 用户主文案改成「可编辑的图 / 仅排版」，注册表对话框说「已登记的源脚本」。
+
+## T-122（Session 23）原图 PDF / PS 导出用 fonttype 42，不用 matplotlib 默认的 Type 3
+
+**问题。** 科学文本矩阵用例第一遍就抓到：原图 PDF 的文本层只剩「×10 A m ²」——matplotlib
+默认 `pdf.fonttype=3` 把 U+00FF 之外的字符（`⁵ ⁻ μ α β γ Δ ≤ ≥`）画成 XObject 而不是文字。
+像素全对、预览的字形扫描说「画得出」、PNG 也画得出，只有 PDF 的文本层缺一截：复制 / 搜索 /
+读屏都拿不到，多数期刊还直接拒收 Type 3。这正是「预览与导出语义不一致」那一档。
+
+**裁决：`figsession.export()` 对 pdf / ps / eps 用 `rc_context({"pdf.fonttype": 42, "ps.fonttype": 42})`
+接管；其它格式不动；用户脚本显式设成 3 也被接管（文本层完整优先）。** 代价与证据：
+Type 42 与 Type 3 的像素差只在字形边缘 hinting（diff 图只有轮廓线，形状与位置一致）；golden
+视觉回归与 CompatBench 保真度都走 `preview_png` / Agg PNG，不经 PDF，不受影响；导出每张多
+20–35 ms（TrueType 子集化，交错 A/B/C 实测），文件反而更小（Type 0 子集）。`scientific` 档合成
+上标那条另有代价（`×10⁵` 抽回是 `×105`），是画布文字的另一条管线，本条不改。
+
+## T-123（Session 23）「另存为」与自动保存共用 `validate_document`（ADR 0023 §5a 的条件已满足）
+
+**裁决：R-18 的调用方修好之后立即收紧。** 不是文档的载荷、来自更新版本的 schema 都在落盘前 400，
+同名的好文件不会被顶掉；round-trip 用例进 `test_document_persistence.py`。没有做的：另存为的
+外部修改冲突检测（两个窗口对同名画布另存为，后写覆盖先写、两边 200）——它是用户点名的一次写入，
+与自动保存的语义不同，记 P2。
+
+## T-124（Session 23）R-18 的两条空检查：N-1 没写成算失败，不算跳过
+
+**问题。** `upgrade_acceptance.py` 发的是 `{"doc": …}` 包一层的形状，v0.12.0 起自动保存端点就要求
+顶层 `schema`，异常被 except 吞成 `autosave_saved=False`，于是「自动保存读得回来」从没跑过；
+「老布局可列出」对字符串列表 `.get("name")` 必然 AttributeError，同样被吞。两条都是「验没了」而报告全绿。
+
+**裁决：发产品自己会写的文档形状；读回的必须是顶层带 schema 且指着那张图的文档（`document_readback`）；
+`missing_state_checks()` 把「上一版没写成」变成失败的检查。** 四条变异全红。
+
+## T-125（Session 23）发行链的桌面冒烟也打开教程；`canvas_coverage.json` 进 PyInstaller datas
+
+**裁决：`desktop-tauri.yml` 两次内置 runtime 冒烟加 `--tutorial`（真正构建并签名用户下载物的那条链
+以前一次都不开教程），`test_tutorial` 的门禁从只看 `ci.yml` 扩到它；字形覆盖表显式列进 datas
+（wheel/sdist 随包自然收录，冻结产物今天还没走到读它的那一行，是埋雷不是活缺陷）。** 这两条与
+README 的 Windows ARM 口径同一形状：门禁正确但范围窄过它守的东西。
+
+## T-126（Session 23）图内文字的浮动栏回到 `TypographyAdapter`
+
+**裁决：`ElementBar` 的文字分支改成 `useFigureTypography`，字体 / 字号 / 加粗 / 斜体 / 颜色与属性页、
+右键弹层同一份适配器；不再有「加粗按 `weight === 'bold'` 两态读」的第三份实现。** 这是 ADR 0032
+自己的判定（浮动工具条必须与属性页同一个适配器），13 那轮漏掉了这一处。
+
+## T-127（Session 23）热渲染比 main 慢 15% 的处置：记 P2 带数字，不在终审里动引擎
+
+**数据。** 交错 A/B/C（main / 本分支 / 本分支去掉 fonttype 42）各 3 轮取中位：`Fig1_kinetics` 热渲染
+wall 31.3 → 36.2 ms，manifest 17.7 → 22.4 ms（+27%），canvas_draw 持平；三张轻图同形。manifest
+的 `_glyph_scan` 每次 7 µs，不是它。
+
+**裁决：不在发布终审里改引擎（冻结范围禁止「趁机重写」），记 P2 带复现命令与阈值：manifest 步骤
+超过 main 的 1.3 倍算回归，超过 2 倍升 P1。** 归因留给下一轮（候选：图例绑定派生、四边刻度模型、
+路径几何）。
+
+## T-128（Session 23）发布结论按门禁清单逐条给，主分支上别的轨道的红一并计入
+
+**裁决：Gate 1–6 与 A–N 场景只按「本树上跑过的证据」打勾；main 上 Lab Qualification / Nightly
+CompatBench / Distribution metrics 的连红不属于本分支，但它们是仓库的发布门禁，结论里写成阻断项、
+点名 owner，不写成「与本分支无关」就过。**
