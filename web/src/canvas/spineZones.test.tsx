@@ -19,7 +19,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { Manifest, ManifestElement } from '@/lib/api'
+import type { Manifest, ManifestElement, SpineGeom, SpineSide } from '@/lib/api'
 import { literal } from '@/i18n'
 import { ZONE_PX } from '@/lib/tickSides'
 import { useDocumentStore } from '@/store/documentStore'
@@ -60,7 +60,7 @@ const axesEl = (spines: ManifestElement['spines']): ManifestElement =>
     spines,
   }) as unknown as ManifestElement
 
-const SPINES: NonNullable<ManifestElement['spines']> = {
+const SPINES: Record<SpineSide, SpineGeom> = {
   bottom: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.9, 0.9] },
   top: { visible: true, ticks: false, from: [0.1, 0.1], to: [0.9, 0.1] },
   left: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.1, 0.1] },

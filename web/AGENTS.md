@@ -349,6 +349,37 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」。
 * 看护：`inspector/legendCard.test.tsx`；Python 侧 `tests/test_legend_binding.py`。
 
+## 坐标轴边框的语义命中区与四边刻度（2026-09-02，ADR 0035）
+
+完整版在 `docs/adr/0035-axis-tick-direct-manipulation.md`，改动前先读。
+
+* **点内侧控向内、点外侧控向外、线本身选中子图**。命中函数是纯的
+  `lib/tickSides.spineZoneAt`：边框线端点来自 manifest 的 `spines`（引擎按画出来
+  的那条线给，**含偏出去的边框**），带宽按**屏幕像素**定（`ZONE_PX` /
+  `ZONE_PX_TOUCH`，调用方传「一个分数单位 = 几个屏幕像素」= 面板内容边长 ×
+  zoom），旋转由 `ElementHitLayer.frac` 反旋转——命中函数不知道 zoom 与旋转。
+  高亮条用同一把尺（`zoneRectFrac`），与命中带逐像素重合。
+* **优先级**：`pickElement` 命中文字 / 曲线 / 别的子图 / 刻度文字时边框命中区
+  让路，只有命中 figure 或那条边所属的子图本身（含铺满它的位图）才算；resize
+  手柄在 OverlaySvg 层天然在上。角落并列：更近的边 > 此刻画着刻度的边 >
+  固定次序（下、左、上、右）；twinx / secondary 与宿主重合的边同一条规则。
+* **状态是派生的**：matplotlib 的 `direction` 是整条轴的，`ticks_<side>` 是边的，
+  `inward = 边可见 && 方向含 in`。**三处同源**——画布命中区、示意图
+  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档 + 「显示边」）都读
+  `readAxesTickModel`、走 `toggleSidePlan` / `axisChoicePlan` / `sideVisiblePlan`、
+  经 `store/actions.applyTickSidePlan` **一次 commit**（方向落刻度元素、显隐落子图，
+  拆开会渲染出一帧半新半旧）。计划的 `effect.coupled` 是「方向那一步连带改到的
+  同轴另一边」——hover 文字、示意图 tooltip 必须说出来，不装作每边独立。
+* 「隐藏」是四档里的派生态（两边都不显示），不是第四个真值；从它选回方向时
+  **删**两边的 `ticks_<side>` override 回到脚本的边，不猜。
+* **不支持就不摆**：manifest 没有 `spines`（极坐标 / 3D / 色条轴）画布无命中区；
+  引擎没发某条轴的刻度元素时那两条边方向未知，示意图退回单个 `ticks_<side>`
+  开关。刻度卡承接 `minor_length` / `minor_width`（`length` / `width` 只动主刻度），
+  方向档带 `data-prop="direction"` 锚点供问题面板定位。
+* 看护：`lib/tickSides.test.ts`（几何 + 映射全状态扫描）、`canvas/spineZones.test.tsx`
+  （命中层：hover / 点击 / 优先级 / zoom / 触控 / 旋转 / 偏出去的边框）、
+  `inspector/tickTaskCard.test.tsx`（示意图两带 + 四档 + 显示边 + 锚点）。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。

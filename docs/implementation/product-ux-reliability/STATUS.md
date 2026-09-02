@@ -47,7 +47,7 @@
 | 13 | 统一属性系统、文字控件、标注字体 | ✅ 完成（本次，ADR 0032） |
 | 14 | 科学文本 / Unicode / 字体回退 | ✅ 完成（本次，ADR 0033） |
 | 15 | 图例绑定与控件 | ✅ 完成（本次，ADR 0034） |
-| 16 | 刻度线直接操作 | ⬜ |
+| 16 | 刻度线直接操作 | ✅ 完成（本次，ADR 0035） |
 | 17 | 多选浮动栏 | ⬜ |
 | 18 | QuickEdit 右键动作 | ⬜ |
 | 19 | 设置 / Agent / 包管理 | ⬜ |
@@ -463,7 +463,25 @@ desktop…」。
 
 ---
 
-## 遗留（Session 15 之后仍开着的）
+### Session 16 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ✅ exit 0 —— **3655** passed / 34 skipped / 0 failed（比 15 的 3642 +13：`test_tick_sides_geometry.py` 12 条 + 15 那条负载敏感的 `test_ctrl_c_…` 这一遍绿）。这一遍与 vitest 全量**串行**跑，没有同时开别的重活 |
+| `cd web && pnpm test` | ✅ exit 0 —— **160** files / **2185** tests passed（比 15 的 158/2114 +2 文件 / +71 条：`tickSides.test.ts` 40 + `spineZones.test.tsx` 22 + 刻度卡 +9） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `spineZones.test.tsx` 有两条 TS 报错，被 `build_frontend.py` 抓到——`pnpm build` 的 tsc 覆盖测试文件，vitest 不覆盖类型） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2936 / en-US 3027；`inspector:tick.{side.*,sides,sidesAria,sideAria,minorLength,minorWidth,dir.hidden}` `inspector:control.zoneAria` `inspector:prop.{minor_length,minor_width}` `workspace:history.tickSide{On,Off,Hide}` `workspace:spineZone.*` 7 条） |
+| `cd web && pnpm lint` | ✅ 20 条既有 fast-refresh 提示 + `TickAndSpineDiagram.tsx` 新增 1 条同类（导出 `TICK_SPINE_PROPS` 常量，与 LegendCard 同形），无 error |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `98f076bdcc65eb78`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `ca979f12d73899d2`） |
+| 变异反证 10 条 | ✅ 10/10 全红（见 `TEST_MATRIX.md`） |
+| 真浏览器（Playwright chromium，临时 spec 不进仓库） | ✅ 打开 `Fig1_kinetics`（脚本朝内刻度）：从面板底沿往上扫，先出现「下边 · 朝外刻度 关着 · 点击显示」（外侧带），中间一段无带，再出现「下边 · 朝内刻度 开着 · 点击隐藏这一边的刻度线」（内侧带）；点内侧带 → 下边刻度线消失、刻度数字仍在、属性页方向档「隐藏」高亮、「显示边」两开关关、恢复芯片「下边刻度线 ×」出现。三张截图在 scratchpad。**顺带抓到一条**：状态文字往框外推会出面板的裁剪框（overflow hidden）整个被裁掉——改成往框里推 |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条临时 spec）。13 记的六条红仍开着 |
+
+---
+
+## 遗留（Session 16 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -507,15 +525,28 @@ desktop…」。
 | — | **`markerscale` / `handleheight` / `borderaxespad` 没开放**；图例标题的排版走它自己的元素，不在图例卡的批量里 | 择机 |
 | — | **图例超出边界 / 遮挡数据的检查没做**：`best` 的避让只在 draw 时算，没有可靠的静态判据，Prompt 明写「不做虚假检查」 | 已决定不做 |
 | — | **Session 15 没跑 e2e**：改动没碰黄金路径的键位；图例位置的「自动」按钮文案变了，e2e 里没有引用它（grep 过）。这是**没跑**，不是「跑过没问题」 | 23 前 |
+| — | **按边分方向不支持**（下边朝内、上边朝外）：matplotlib 的 `direction` 是整条轴的。界面把连带说出来（hover 文字 / tooltip / 浅色带），不伪造 | 已处置（ADR 0035） |
+| — | **次刻度没有独立方向**：沿用主次同改，只分了长度 / 线宽 | 择机 |
+| — | **刻度线没有 SVG 局部预览**（伪元素没有 gid）：点一下要等后端渲染回来才见像素变化；hover 文字与示意图读 override，状态即时 | 择机 |
+| — | **画布 hover 文字的锚点不随旋转换边**：180° 的面板上文字叠在相反的一侧 | 择机 |
+| — | **`length` / `width` 语义从 which="both" 改为只动主刻度**：存量文档里带这两条 override 且开着次刻度的图，次刻度回到脚本自己的长度 | 已处置（ADR 0035 §5 明示） |
+| — | **Session 16 没跑 e2e**：改动没碰黄金路径的键位；命中层新增的是 hover / 点击分支，既有 e2e 没有针对边框的用例。这是**没跑**，不是「跑过没问题」 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 16（刻度线直接操作）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+**Prompt 17（多选浮动 Context Bar）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-15 留给 16 的可复用入口：`presentation/roleProfiles.ts`（首屏模板 + `visibleWhen`）、
+16 留给 17 的可复用入口：`PanelView.ElementHitLayer.spineZoneUnder`（「先 pick 再问带」
+的命中层形状，allow 闸在这里）、`lib/tickSides.spineZoneAt` 的 `scale` 参数（屏幕像素
+定宽）、`PanelView.SpineZoneFeedback`（只在 hover 期间存在、无过渡、文字反旋转 +
+1/zoom）、`store/actions.applyTickSidePlan`（多条 override + 删除一次 commit）、
+`tickSides.readAxesTickModel` / `effect.coupled`（能力派生 + 连带说出来）、
+`TickAndSpineDiagram.ZoneSwitch`（可聚焦 switch + `data-*` 稳定锚点）。
+
+15 留给 16 的可复用入口（16 已消费，对 17 原样有效）：`presentation/roleProfiles.ts`（首屏模板 + `visibleWhen`）、
 `ElementInspector` 的 `primaryExtra` + 让位集合（刻度卡 / 图例卡两处先例）、
 `controlKindOf` 的新 ControlKind 三处、`store/actions.restoreLegendEntryFollow`
 （多条 override 一次 commit）、`overrides.sync_legends`（派生显示的形状）、

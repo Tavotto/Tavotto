@@ -752,6 +752,19 @@ interface SpineHover {
   coupledGeoms: { side: SpineSide; geom: SpineGeom }[]
 }
 
+/**
+ * 状态文字相对带中点的位移（屏幕像素系，随 1/zoom 一起缩放）。**往框里推**：
+ * 往外推会撞上刻度文字那一排、再往外就出了面板的裁剪框（面板内容
+ * overflow hidden），实测下边的文字整个被裁掉。框里只在 hover 那一刻盖住一点
+ * 数据，指针一走就没了。
+ */
+const LABEL_SHIFT: Record<SpineSide, string> = {
+  top: 'translate(-50%, 90%)',
+  bottom: 'translate(-50%, -130%)',
+  left: 'translate(28px, -50%)',
+  right: 'translate(calc(-100% - 28px), -50%)',
+}
+
 const sameSpineHover = (a: SpineHover | null, b: SpineHover | null) =>
   a === b ||
   (!!a &&
@@ -840,7 +853,7 @@ function SpineZoneFeedback({
         style={{
           left: cx,
           top: cy,
-          transform: `translate(-50%, ${hover.side === 'top' ? '-140%' : hover.side === 'bottom' ? '40%' : '-50%'}) rotate(${-rot}deg) scale(${1 / zoom})`,
+          transform: `${LABEL_SHIFT[hover.side]} rotate(${-rot}deg) scale(${1 / zoom})`,
           transformOrigin: 'center',
         }}
       >

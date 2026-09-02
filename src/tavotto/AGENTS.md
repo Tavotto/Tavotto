@@ -324,6 +324,18 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   不是把当前推断出来的值钉死。**为什么要模型化**：「全部灰色」与「上边红色」
   是两条会互相盖写的 setter，直接改的话谁先谁后就是两张图——而 patch 列表序
   在热会话与全量重放之间并不保证同序。
+- **边框线几何 `spines` 与主 / 次刻度分档（2026-09-02，ADR 0035）**：直角坐标轴
+  （`ax.name == "rectilinear"` 且四条命名边框齐全）的 axes 元素带 `spines`：每边
+  `visible`（边框线本身）/ `ticks`（这一侧主刻度线）/ `from` / `to`（figure 分数、
+  y 向下），端点取 `Spine.get_path()` 经它自己的 transform——**含**
+  `set_position(("outward", n))` 的偏移；**不能用 `get_window_extent`**（它把刻度
+  伸出量算进去了）。极坐标 / 3D / 色条轴不给；拥有这一边的 axis 不可见
+  （twinx 的第二个 axes 关掉的 x 轴）或线退化成一点（`secondary_xaxis` 的左右）
+  不出。唯一出处 `manifest.spine_geometry`，渲染派生数据、不进文档。
+  刻度组元素的 `length` / `width` 只动主刻度（`tick_params(which="major")`，与
+  matplotlib 默认同口径），新增 `minor_length` / `minor_width` 只动次刻度（getter
+  三级真值链：Tick 对象 → `_minor_tick_kw` → rcParams，次刻度没开也有值）；
+  `direction` / 颜色 / 字号仍 which="both"。看护 `tests/test_tick_sides_geometry.py`。
 - **路径几何 `geometry`（2026-08-18）**：manifest 给曲线 / fill_between /
   `ax.fill()` 的 Polygon / PathPatch 带上**真正画出来的那条路径**（figure 分数、
   y 向下，与 bbox 同一套），前端据此沿路径描边与命中——bbox 里绝大部分是空白，

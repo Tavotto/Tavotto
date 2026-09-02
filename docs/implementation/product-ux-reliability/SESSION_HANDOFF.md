@@ -5,7 +5,217 @@
 
 ---
 
-## 最近一次：Session 15（2026-09-02）
+## 最近一次：Session 16（2026-09-02）
+
+### 目标
+
+Prompt 16：修掉「刻度朝内却必须点击图框外侧才能控制」这条反直觉命中，建立
+基于视觉语义的坐标轴命中：点边框内侧控向内刻度、点外侧控向外刻度、两侧都
+开显示双侧；与属性页精确控制同源；zoom / DPR / 旋转 / 触控下命中稳定；不支持
+的轴诚实降级。顺带把主 / 次刻度的长度 / 线宽分档。
+
+### 开始前实测到的四件事（一次探针全部现形）
+
+1. **反直觉命中只在示意图里**：`TickAndSpineDiagram` 的刻度命中矩形写死在框外
+   一圈（`hitRect(side, 'ticks')`），`direction=in` 时短线画在框里、点它没反应。
+   画布上根本**没有**刻度线 / 边框的命中——`ticks` 伪元素的框圈的是刻度文字。
+2. **方向是整条轴的**（3.10.8）：`tick_params` 没有按边分方向的入口，上下共用
+   x 的 `direction`、左右共用 y 的。Prompt 那张「每边 inward / outward」表只能
+   派生，不能直存；按 Tick 逐个改 marker 的 hack 在换 locator / scale 时整组丢掉。
+3. **`length` / `width` / `direction` 全是 `which="both"`**：改主刻度长度把次刻度
+   一起拉长（matplotlib 自己的默认是只动主刻度，次刻度 2 pt 不变）。
+4. **`Spine.get_window_extent()` 不是那条线**：它把刻度伸出量算进去（下边 y0 =
+   28.1 而线在 33.0）；`_adjust_location()` + `get_transform().transform(get_path()
+   .vertices)` 才是，而且含 `outward` 偏移（左边 x = 36.1、框在 50.0）。3D 轴也有
+   四条同名 `spines`（占位），`secondary_xaxis` 的左右两条退化成一点。
+
+### 实际完成
+
+**1. 引擎：`manifest.spine_geometry` + 主 / 次分档（ADR 0035）。**
+
+```text
+axes.spines[side] = { visible: 边框线, ticks: 这一侧主刻度线, from, to }   figure 分数、y 向下
+只给 ax.name == "rectilinear" 且四条命名边框齐全的；色条轴不给
+拥有这一边的 axis 不可见（twinx 第二个 axes 的 x）/ 线退化成一点（secondary 左右）不出
+ticks.length / width      → tick_params(which="major")     ← 曾经 both
+ticks.minor_length / minor_width → which="minor"；getter 三级：Tick → _minor_tick_kw → rcParams
+direction / 颜色 / 字号    仍 which="both"；3D 不出 minor_length / minor_width
+```
+
+**2. 前端 `lib/tickSides.ts`（纯函数，三处同源的唯一出处）。**
+
+```text
+spineZoneAt(spines, fx, fy, scale, widths)   三带：inner / outer / neutral；带宽屏幕像素
+zoneRectFrac(...)                             高亮条同一把尺
+pickSpineZone(manifest, ..., allowGid)        整图挑边：更近 > 有刻度 > 元素序；allow 是优先级闸
+readAxesTickModel(manifest, overrides, gid)   sides[side] = {visible, direction, inward, outward}
+toggleSidePlan / axisChoicePlan / sideVisiblePlan → { set, remove, effect{coupled…} }
+```
+
+**3. 画布 `ElementHitLayer`（PanelView.tsx）**：pointermove 先 `pickElement`，命中
+figure / 那条边的子图（含铺满它的位图）才问 `pickSpineZone`；hover 画
+`SpineZoneFeedback`（目标带实心 + 连带的带浅色 + 一行状态文字，文字反旋转、
+按 1/zoom 缩放，**无过渡动画**）；pointerdown 在内 / 外带 = `applyTickSidePlan`
+一次 commit + 选中子图（已选着它或它的刻度组时不动选区）；中线 = 只选中。
+触控用宽带（`zoneWidthsFor(pointerType)`）。
+
+**4. 属性页**：示意图每边改成内 / 外两个 switch（`data-tick-zone="side:inner|outer"`、
+`data-tick-coupled`），命中矩形在框里 / 框外、中间留中性带；刻度卡方向档加
+「隐藏」（派生态），新增「显示边」两开关、次刻度长度 / 宽度两行，方向行带
+`data-prop="direction" data-gid` 锚点（问题面板的 `tick-direction` 现在定位得到）。
+`store/actions.applyTickSidePlan`：`finishActiveGesture` + 一次 `updateObject`（set + remove）。
+
+**5. 同源**：画布命中区 / 示意图 / 刻度卡都读 `readAxesTickModel`、走同一份计划、
+同一个 action。`STYLE_ROLE_PROPS.ticks` +`minor_length` / `minor_width`。
+
+### 关键 API（Prompt 17 直接用）
+
+```python
+# src/tavotto/engine/manifest.py
+spine_geometry(ax, W, H)            # 唯一出处；渲染派生数据
+_SPINE_AXIS                         # side → (axis, tick line 序号)
+# src/tavotto/engine/overrides.py
+TickSet.tick_params(which=...)      # 默认 both；长度 / 线宽分档写
+_minor_tick_prop(ts, key, rc, default)
+```
+
+```ts
+// web/src/lib/tickSides.ts
+ZONE_PX / ZONE_PX_TOUCH / zoneWidthsFor / spineZoneAt / zoneRectFrac / pickSpineZone
+readAxesTickModel / toggleSidePlan / axisChoicePlan / sideVisiblePlan / axisChoice
+// web/src/store/actions.ts
+applyTickSidePlan(panelId, plan)    // set + remove 一次 commit
+// web/src/canvas/PanelView.tsx
+ElementHitLayer.spineZoneUnder / SpineZoneFeedback   // 命中层里「先 pick 再问带」的形状
+// web/src/components/inspector
+TickAndSpineDiagram.ZoneSwitch / TickTaskCard{model, applyPlan} / TICK_CARD_PROPS（+2）
+```
+
+### 迁移
+
+**没有磁盘格式改动。** 一处**语义**变化：`ticks.length` / `ticks.width` 从 which="both"
+改成只动主刻度——存量文档里带这两条 override 且脚本开着次刻度的图，次刻度回到
+脚本自己的长度 / 线宽（ADR 0035 §5 写明）。manifest 新字段 `spines` /
+`minor_length` / `minor_width` 老前端原样忽略。
+
+### 修改的文件
+
+```text
+新增  web/src/lib/tickSides.ts                          几何 + 状态 + 计划（纯函数）
+新增  web/src/lib/tickSides.test.ts                     40 条
+新增  web/src/canvas/spineZones.test.tsx                22 条（命中层）
+新增  tests/test_tick_sides_geometry.py                 12 条（worker）
+新增  docs/adr/0035-axis-tick-direct-manipulation.md
+改动  src/tavotto/engine/manifest.py                    spine_geometry / axes.spines / minor_length|width 字段 / 3D 摘掉
+改动  src/tavotto/engine/overrides.py                   TickSet.tick_params(which) / length|width → major / minor_* handler
+改动  web/src/lib/api.ts                                SpineSide / SpineGeom / ManifestElement.spines
+改动  web/src/canvas/PanelView.tsx                      ElementHitLayer 命中带 + SpineZoneFeedback
+改动  web/src/store/actions.ts                          +applyTickSidePlan
+改动  web/src/components/inspector/controls/TickAndSpineDiagram.tsx   ZoneSwitch / hitRect 三带
+改动  web/src/components/inspector/controls/TickTaskCard.tsx          四档 / 显示边 / 次刻度行 / 锚点
+改动  web/src/components/inspector/ElementInspector.tsx  TickControl 接 model + applyPlan
+改动  web/src/components/inspector/tickAdapter.ts        adapter.gid
+改动  web/src/components/inspector/tickTaskCard.test.tsx 示意图段整段重写 + 8 条
+改动  web/src/components/inspector/presentation/roleProfiles.ts / lib/stylePresets.ts
+改动  web/src/i18n/locales/*/{inspector,workspace}.json + resources.d.ts
+改动  AGENTS.md（web/、src/tavotto/）
+重建  codex-plugin/mcp/widget/canvas.html              指纹 98f076bdcc65eb78
+重建  web/dist-playground/                              指纹 ca979f12d73899d2（不进 git）
+```
+
+### 这一轮踩到的坑
+
+**1. 「每边独立的方向」不存在。** 第一稿按 Prompt 的表设计 per-side inward /
+outward 直存，写到 setter 才发现 `tick_params` 落在轴上。改成派生 + 计划里的
+`coupled`，并让三处界面都把连带说出来（T-90）。
+
+**2. jsdom 的 `pointerleave` 不触发 React 的 `onPointerLeave`**（它由 `pointerout`
+合成）。以及：没落进命中带的按下会开始一次拖动（`trackPointer` 挂在 window），
+用例之间不松手的话后面所有 `pointermove` 被 `kind !== 'none'` 吃掉——「单跑绿、
+全量红」的又一种形状；`beforeEach` 里 `useInteractionStore.getState().end()`。
+
+**3. 用例的 fixture 与真实排版不一致会假红**：刻度文字 bbox 紧贴边框（真实的
+离线 ≈ 7 pt），外侧带全被它盖住；偏出去的边框测试里刻度文字没跟着挪。修 fixture，
+不修判据。
+
+**4. `makeManifest(undefined)` 触发默认参数**——「没有 spines」要用 `null` 这一档
+表达（[[unknown-is-its-own-value]] 的又一次）。
+
+**5. 缺 `IS_REACT_ACT_ENVIRONMENT`** 会让 act 内的状态更新不同步刷新，表现像是
+命中层没响应。
+
+**6. hover 文字往框外推会被面板裁掉**（面板内容 overflow hidden）——jsdom 看不见
+裁剪，真浏览器第一张截图就没有文字。改成往框里推（`LABEL_SHIFT`），只在 hover
+那一刻盖住一点数据。**真浏览器那一遍不是可选项**：这条只有它抓得到。
+
+**7. `pnpm build` 的 tsc 覆盖测试文件、vitest 不查类型**：`spineZones.test.tsx`
+两条 TS 报错在 vitest 全绿之后才被 `build_frontend.py` 抓到。
+
+### 尚存限制
+
+1. **按边分方向不支持**（下边朝内、上边朝外）：matplotlib 的能力边界，不伪造。
+2. **次刻度没有独立的方向**：沿用主次同改（有长度 / 线宽）。
+3. **引擎没发某条轴的刻度元素时**（刻度文字整组没画）那两条边方向未知：画布无
+   命中区、示意图退回单开关。
+4. **画布上的 hover 文字随面板旋转反转**，但 180° 的面板上仍会叠在图上方
+   / 下方的相反位置（锚点没有按旋转换边）。
+5. **图例示意线 / 曲线的 SVG 局部预览与刻度无关**——刻度线仍走后端渲染
+   （伪元素没有 gid），点一下要等几百毫秒才见到像素变化；hover 文字与示意图
+   读的是 override，所以状态是即时的。
+6. **e2e 没跑**（13 记的六条红仍开着）；PDF / PNG 一致性没有专门为刻度新增用例，
+   靠同一条 setter + 既有的导出一致性看护。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 / 14 / 15 / 16 四轮都在这条分支上，
+  **尚未推送、没有 PR**）；本轮提交 `d2745fc8`（代码）+ 文字落位 / 留档 / 产物一笔
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 17：多选浮动 Context Bar）
+
+**从这里开始读**：`docs/adr/0035-axis-tick-direct-manipulation.md`（本轮）、
+`UX_CONTRACTS.md` 的「4e 坐标轴刻度直接操作合同」、`web/AGENTS.md` 的「坐标轴边框
+的语义命中区」与「命中与选择几何」两段、`canvas/ContextBar.tsx` /
+`canvas/OverlaySvg.tsx` / `store/actions.alignSelectedTo`。
+
+**Session 16 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 「先 pick 再问带」的命中层形状 | `PanelView.ElementHitLayer.spineZoneUnder` | 新命中区要让位给既有命中：allow 闸在这里，别在 `pickElement` 里加分支 |
+| 屏幕像素定宽的命中带 | `lib/tickSides.spineZoneAt` 的 `scale` 参数 | 浮动栏的落位 / 手柄大小同样要按 1/zoom 反除 |
+| hover 反馈的形状 | `PanelView.SpineZoneFeedback` | 只在 hover 期间存在、无过渡、文字反旋转 + 1/zoom；浮动栏也不该常驻遮挡 |
+| 一份计划 = 一次 commit | `store/actions.applyTickSidePlan` | 多条 override + 删除同一次 `updateObject`；对齐 / 分布本来就走 `alignSelectedTo`，别绕开 |
+| 状态是派生的、界面说出连带 | `lib/tickSides.readAxesTickModel` / `effect.coupled` | 浮动栏的动作可用性要从 capability 派生，不按对象数猜 |
+| 示意图里的可聚焦 switch | `TickAndSpineDiagram.ZoneSwitch` | `role="switch"` + `data-*` 稳定锚点；Prompt 21 的 coachmark 要挂在这类锚点上 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、
+12 的五条、13 的四条、14 的四条、15 的四条原样成立，16 再加三条）：
+
+41. **不许把命中区写死在某一侧**（T-89）。「点哪里」必须从「画在哪里」派生；
+    带宽按屏幕像素定，不按分数、不按 mm。
+42. **不许装作 matplotlib 能按边分方向**（T-90）。方向是轴的，边只是显不显示；
+    改到方向时连带的另一边要说出来，不能静默。
+43. **不许把「隐藏」当成第四个真值写进文档**。它是两边都不显示的派生态；从它
+    选回方向时删两边的 override 回到脚本的边，不替用户猜哪一边。
+
+**必须保留的不变式**（在 15 的二十五条之上）：
+
+26. **三处同源**：画布命中区 / 示意图 / 刻度卡读同一份模型、走同一份计划、同一个
+    action（`tickSides.test.ts` 的全状态扫描 + `spineZones.test.tsx` + `tickTaskCard.test.tsx`）。
+27. **`length` / `width` 只动主刻度、`minor_*` 只动次刻度**，顺序无关
+    （`test_tick_sides_geometry.py`）。
+28. **`spines` 是画出来的那条线**（含偏移），极坐标 / 3D / 色条轴没有。
+29. **文字 / 曲线 / 刻度文字 / resize 手柄在边框命中区之上**。
+
+---
+
+## 历史：Session 15（2026-09-02）
 
 ### 目标
 
@@ -196,6 +406,7 @@ restoreLegendEntryFollow(panelId, element)
   `git -c user.email=… commit`，**别改共享的 `.git/config`**
 
 ---
+
 
 ## 下一阶段入口（Prompt 16：刻度线直接操作）
 

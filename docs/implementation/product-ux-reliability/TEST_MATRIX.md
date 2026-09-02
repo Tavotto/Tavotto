@@ -1775,3 +1775,81 @@ setter），一条用例杀不死它是这条冗余的代价，**不是判据缺
 * 真应用（worktree 起在 5099）走了一遍：选图例 → 图例卡；选「lin」项 →
   「自定义」+「恢复跟随」→ 渲染回来线宽 1.5；改曲线「lin」颜色 → 图例示意线
   跟着变成品红。
+
+## Session 16：坐标轴边框语义命中区 / 四边刻度模型 / 主次刻度分档
+
+### 新增用例（后端 12 / 前端 40 + 22 + 8）
+
+**后端 `tests/test_tick_sides_geometry.py`（12 条，worker）**：四条边框线落在框沿、
+`visible` / `ticks` 与四边字段同口径；`spines` 报的是改完 override 之后的状态
+（边框显隐与刻度显隐是两件事）；偏出去的左边框在框沿之外、隐藏的边框几何照给、
+twinx 第二个 axes 不出上下两条且左右各按真值；极坐标 / 3D 不给 `spines`；对数 +
+反转不改几何、`secondary_xaxis` 只有上下两条且下边既不显示也没刻度；色条轴不给；
+`length` 只动主刻度、`minor_length` 顺序无关、`minor_width` 同样分档、次刻度没开
+时先设长度再开仍生效、次刻度长度像素真变 + 撤销回原样、3D 不出次刻度字段。
+
+**前端 `lib/tickSides.test.ts`（40 条）**：三带分类（四边 × inner / outer / neutral，
+10 条参数化）、带外不命中、五档 zoom 下带宽恒定 + 高亮条同尺、触控带、角落
+（更近的边 / 等距先取有刻度的 / 固定次序）、偏出去的边框、无目标的边、无
+`spines`、端点顺序任意；模型派生（默认 / override 优先 / 没刻度元素的轴不进模型 /
+非子图 → null）；计划（inout → in → 隐藏三步、隐藏边点框外只开边、点框里开边 +
+inout 且连带点名、另一边不可见不算连带、不在模型的边 → null、**全状态扫描**：
+3 方向 × 2 × 2 显隐 × 2 边 × 2 带 = 48 种，切完那一方向必翻转、另一方向按规则）；
+四档（派生态「隐藏」、选隐藏写两边 false、选回方向删两边 override、只写方向、
+当前方向 → null）、显示边；整图挑边（allow 闸、twinx 取有刻度的那条）。
+
+**前端 `canvas/spineZones.test.tsx`（22 条）**：hover 高亮条 + 状态文字 + pointer
+光标 + 条厚度 = band − neutral；外侧说朝外且开着；离开命中带 / 离开面板即消失；
+连带的另一边浅色一起亮 + 文字点名；中线无高亮；点击 = inout + 一条历史 + 选中
+子图；隐藏的上边点框外只开边、点框里开边 + inout 一次 commit 撤销一起回；左边框
+写 Y 不写 X；已选着刻度组不改选区；中线只选中；文字 / 刻度文字优先、外侧带没被
+盖住的段照样可点；zoom 0.5 / 3 下 5 px 在带里 20 px 在带外；触控 14 px；旋转
+90 / 180 / 270 反旋转后落在同一带；偏出去的边框（pickElement 命中 figure）可点、
+框沿空白不命中、点线本身选中子图；无 `spines` 整层无命中。
+
+**前端 `inspector/tickTaskCard.test.tsx`（+8，示意图段整段重写）**：内 / 外两带的
+aria-checked 与实线 / 虚线；**内侧带的命中矩形在框里、外侧在框外（四边）、中间
+留中性带**；刻度朝内时点框里那一带即可控制；两带各自开关；一次点击一条历史
+（方向 + 显隐同一 commit）；连带点名（`data-tick-coupled`）；X / Y 互不影响；
+次刻度只画在开着的那一半；关掉一边两带都虚线；四档「隐藏」写两边 false 且方向
+不动、选回方向删两边 override；两边用示意图关掉后方向档显示「隐藏」且文档里没有
+`hidden` 这个值；「显示边」开关 + 键盘；`minor_length` 写自己的字段不碰 `length`；
+`data-prop="direction"` 锚点带 `data-gid`。
+
+### 变异反证：10 条，10/10 全红（第一轮）
+
+判定只看退出码；Python 侧跑前清 `__pycache__`；树先提交（`d2745fc8`）再变异，
+每条跑完 `git checkout` 那一个文件。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `length` 回 `which="both"` | 红（2 条） |
+| M2 边框几何改用 axes 框而不是 spine 路径 | 红（偏出去的边框） |
+| M3 去掉「axis 不可见不出」+「色条轴不出」两道闸 | 红（twinx + 色条各 1） |
+| M4 上下边的内 / 外符号反过来（原始缺陷的形状） | 红（25 条） |
+| M5 带宽按分数写死、不随 zoom | 红（5 条） |
+| M6 去掉优先级闸（文字上也给边框命中） | 红（2 条） |
+| M7 计划按 patch 逐条 commit | 红（2 条：历史数 + 撤销一起回） |
+| M8 连带永远不报 | 红（3 条） |
+| M9 触控带宽忽略 | 红（2 条） |
+| M10 从「隐藏」选回方向不删两边 override | 红（2 条） |
+
+### 实跑到的、不是假设的
+
+* matplotlib 3.10.8：`tick_params(which="major", direction="in")` 之后
+  `_minor_tick_kw` 里没有 tickdir、次刻度仍朝外；`tick_params(length=6)` 默认只动
+  主刻度（次刻度仍 2.0）；`which="both"` 才两档一起——Tavotto 此前所有刻度 setter
+  都是 `which="both"`。
+* `Spine.get_window_extent()` 把刻度伸出量算进去（下边 y0 = 28.1 而线在 33.0）；
+  `_adjust_location()` + `get_transform().transform(get_path().vertices)` 才是那条线，
+  且含 `outward` 偏移（左边 x = 36.1 而框在 50.0）。
+* 3D 轴也有 `left/right/bottom/top` 四条 `spines`（占位），只按名字判会把 3D 当直角
+  轴；`secondary_xaxis` 的左右两条退化成一点（长 2e-8 px）。
+* 真浏览器（chromium）里从面板底沿往上扫：外侧带 → 无带 → 内侧带三段依次出现，
+  文字与 jsdom 用例里断言的逐字相同；点内侧带后刻度线消失、数字仍在。状态文字
+  第一版放在带的外侧，被面板的 overflow hidden 整个裁掉——jsdom 看不见裁剪，
+  这一条只有真浏览器抓得到。
+* jsdom 的 React `onPointerLeave` 由 `pointerout` 合成，直接派 `pointerleave` 不触发；
+  没落进命中带的按下会开始一次拖动（`trackPointer` 挂在 window 上），用例之间不
+  松手的话后面的 `pointermove` 全被 `kind !== 'none'` 吃掉——「单跑绿全量红」的
+  又一种形状。
