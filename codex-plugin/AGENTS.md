@@ -38,7 +38,7 @@
 
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
   （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
-  MCP server 与内嵌画布；交接这条路一字未改。**仍不做 `.app.json`**（需要
+  MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`）；交接这条路一字未改。**仍不做 `.app.json`**（需要
   OpenAI 侧注册的托管 App id）。pyproject 的 `exclude` 显式挡住 `codex-plugin/`
   进 wheel/sdist。插件版本 == `tavotto.__version__`（`tests/test_codex_plugin.py` 看护）。
 - **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 tavotto，
@@ -60,6 +60,30 @@
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `tavotto open --json` 的 `registry.parameterizable`，
   为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
+
+## 改过脚本之后的显式刷新（2026-09-02，ADR 0041）
+
+- **`tavotto_refresh_project` 是第七个工具**，也是模型改完 .py 之后该调的那一步；技能与
+  README 里不再写「重开会话 / 手动刷新」让 Tavotto 跟上。实现全在 `bridge.refresh_project()`：
+  先探 `127.0.0.1:5089/api/version`，可达就委托运行中的 Tavotto（`/api/projects/open
+  default=false` → `/api/project/refresh?pj= reason=codex` → `/api/project/readiness`，带
+  `session_client` 的本机凭据，前端当场收到 SSE）；不可达就在本进程调**同一份**
+  `engine.project_refresh.refresh_project_index()` + `readiness.compute()`。**两条路都不复制
+  discover、不 probe、不跑脚本**；可达但刷新失败原样带回它的 code，不退回本地再试。
+- **项目只来自授权**：`session_id`（`get_session` 重新校验范围）→ `project_path`（与
+  `tavotto_open_figure` 同一套 `check_scope → resolve_target → check_scope`）→ 唯一有会话的项目；
+  零个 `no_project`、多个 `ambiguous_project`（错误里列会话 id，不列路径）。`reason` 固定
+  `codex`，模型传什么都不透传。结果里**没有绝对路径**（项目短 id 与 `app._project_id` 同一把尺）。
+- **本进程那份刷新状态 `_REFRESH_CTX` 按项目缓存**：第一次如实报 `assets.baseline: true`，
+  第二次起才是跨轮 diff。测试的 autouse fixture 要清它，并把 `engine_handoff.http_json_status`
+  打成不可达——**用例里绝不真的探 5089**，开发机上很可能真开着一个 Tavotto。
+- **桌面版的诚实限制**：sidecar 端口不落盘，这条路对桌面用户总是 `delivered: local`，Tavotto
+  里的更新靠它自己的 watcher；工具文字里如实说，不许写成「界面已同步」。
+- 降级 server 的 `NORMAL_TOOLS` 与 `_BRIDGE_IMPORT` 探测语句都要跟着 bridge 的 import 走
+  （`test_bridge_import_probe_matches_the_bridge` / `test_degraded_refresh_tool_is_a_structured_error_too`）。
+- 看护：`tests/test_mcp_server.py` 末节十六条（schema / 授权 / 越界 / 空 diff / 新脚本 / readiness /
+  不 probe 不跑脚本 / 不可达 → local / 可达委托 / 可达失败 / no_project / 多项目隔离 / 无绝对路径 /
+  reason 固定 / 无注册表）+ `test_mcp_resolver.py` 的降级用例。
 
 ## MCP server 与内嵌画布（2026-08-18）
 
@@ -93,8 +117,8 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   **插件自管 venv**（`<配置目录>/mcp-runtime/venv`，`--provision` 建、
   钉插件版本、绝不碰用户全局环境）→ 从 CLI 反推 shebang → PATH。**每个候选
   都要真的验证 `import tavotto.engine`**；frozen `tavotto-cli` 永远出不了
-  候选。降级 server 的 tools/list **只列 `tavotto_health`**（不把六个不可用
-  工具伪装成可用），`serverInfo.version` 固定 "0"，六个工具名的调用回结构化
+  候选。降级 server 的 tools/list **只列 `tavotto_health`**（不把七个不可用
+  工具伪装成可用），`serverInfo.version` 固定 "0"，七个工具名的调用回结构化
   错误 + 恢复步骤，不声明任何资源。`--health` 输出一行 JSON 体检（引擎/
   画布/桌面版/每个候选的结论与耗时）。真 server 也有 `tavotto_health` 工具
   （出图前的能力门槛）；widget 缺失时 open/apply 在 structuredContent 里带

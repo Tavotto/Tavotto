@@ -1851,14 +1851,16 @@ def _refresh_changed_bucket(result: dict) -> str:
 
 
 def _capture_refresh_completed(result: dict) -> None:
-    """`project_refresh_completed`：只收白名单里的四个来由，其余（probe /
-    手工登记 / 打开项目）是别的动作的副产物，不记。白名单取自 EVENTS 表本身。"""
-    allowed = engine_telemetry.EVENTS["project_refresh_completed"]["source"]["values"]
-    if result.get("reason") not in allowed:
-        return
+    """`project_refresh_completed`：只收四个用户可见的来由（watcher / manual /
+    codex / ai），其余（probe / 手工登记 / 打开项目）是别的动作的副产物，不记。
+
+    **这里不再自己比一遍白名单**：`EVENTS` 表里 `source` 的枚举就是那四个值，
+    `capture()` 对表外的值当场丢弃——同一条保证写两遍，变异任何一遍都杀不死
+    （反证 M6 存活的成因），删掉重复的那份，让表成为唯一权威。
+    """
     engine_telemetry.capture(
         "project_refresh_completed",
-        {"source": result["reason"], "changed_bucket": _refresh_changed_bucket(result)},
+        {"source": result.get("reason"), "changed_bucket": _refresh_changed_bucket(result)},
     )
 
 

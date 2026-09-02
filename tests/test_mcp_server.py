@@ -1475,6 +1475,10 @@ def test_refresh_rejects_an_unauthorized_path_and_writes_nothing(tmp_path, monke
     res = _refresh(project_path=str(outside))
     assert res["isError"] and _body(res)["code"] == "path_out_of_scope"
     assert (outside / "tavotto_registry.json").read_bytes() == before
+    # **先校验范围再碰文件系统**：越界的、不存在的路径也只能是 path_out_of_scope，
+    # 回 not_found 等于替模型探测范围外有没有这个目录
+    res = _refresh(project_path=str(tmp_path / "nowhere" / "figs"))
+    assert res["isError"] and _body(res)["code"] == "path_out_of_scope"
 
 
 def test_refresh_with_nothing_changed_is_an_empty_diff(project, fake_pool):

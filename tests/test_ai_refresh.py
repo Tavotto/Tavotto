@@ -94,7 +94,7 @@ def _open(client, figs, default=True):
     return m.PROJECTS[body["id"]]
 
 
-def _manual_watcher(ctx):
+def _manual_watcher(ctx, *, debounce=0.0, clock=None):
     """把项目的 watcher 换成用例自己驱动的那一个，**并登记进注册表**——
     `_after_ai_change` 是经 `engine_watch.absorb(path)` 找它的。"""
     engine_watch.stop()
@@ -107,7 +107,12 @@ def _manual_watcher(ctx):
         script_changed=lambda scripts: calls["script_changed"].append(list(scripts)),
     )
     w = engine_watch.ProjectWatcher(
-        ctx, sink=sink, interval=0.01, debounce=0.0, max_batch=1e9, clock=FakeClock()
+        ctx,
+        sink=sink,
+        interval=0.01,
+        debounce=debounce,
+        max_batch=1e9,
+        clock=clock or FakeClock(),
     )
     w.prime()
     with engine_watch._lock:
@@ -210,6 +215,34 @@ class TestAfterAiChange:
         _ai_edit(figs)
         w.poll()
         assert calls["refresh"] and calls["script_changed"] == [["fig1.py"]]
+
+    def test_a_write_already_pending_in_the_watcher_is_still_fresh(
+        self, client, tmp_path, sse_spy, invalidated
+    ):
+        """watcher 已经把这次写入拍进 pending、但防抖还没到期（真实场景里最常见的
+        一档：CLI 刚退出、watcher 上一轮刚拍过）。这时快照里的签名已经是新的——
+        只比快照会误判成「watcher 处理过了」，AI 路径就一件事都不做，而 pending 里
+        那一批随后照样结算：用户看到的是提示迟了两秒、还是两份。"""
+        figs = _project(tmp_path)
+        ctx = _open(client, figs)
+        clock = FakeClock()
+        w, calls = _manual_watcher(ctx, debounce=0.5, clock=clock)
+        sse_spy.clear()
+
+        _ai_edit(figs)
+        w.poll()  # 拍进 pending，防抖没到期 → 不结算
+        assert calls == {"refresh": [], "script_changed": []}
+
+        result = m._after_ai_change(ctx, "fig1.py")
+        assert result["panel_event"] is True, "躺在 pending 里的写入也算没消化"
+        assert invalidated == [("fig1.py", str(ctx.path))]
+        assert [ev for ev, _ in sse_spy].count("panel.file_changed") == 1
+
+        clock.t += 5.0
+        w.poll()  # 防抖到期：那一批已经被 absorb 摘掉，不再结算
+        w.poll()
+        assert calls == {"refresh": [], "script_changed": []}
+        assert [ev for ev, _ in sse_spy].count("panel.file_changed") == 1
 
     def test_no_user_script_is_executed_and_no_probe(self, client, tmp_path, sse_spy, monkeypatch):
         figs = _project(tmp_path)

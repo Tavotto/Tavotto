@@ -899,8 +899,19 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
   cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
-  `ai.done` 推送；revert 恢复快照。脚本被改后由项目 watcher
-  （`engine/project_watch.py`，ADR 0026）作废渲染会话并触发一次统一刷新。
+  `ai.done` 推送；revert 恢复快照。**文件真的变了就在 `ai.done` 之前走统一刷新**
+  （ADR 0041）：`ai_bridge.run(on_changed)` 是注入的钩子，app 层接
+  `_after_ai_change(ctx, script)`——顺序与 watcher 的 `_dispatch` 逐字相同（作废
+  worker → `refresh_project(reason="ai")` → `panel.file_changed`，payload 带
+  `reason: "ai"`），先 `engine_watch.absorb()` 问 watcher 这次写入它消化过没有，
+  消化过就只补刷新、不再作废也不再发第二份事件。结局经 `refresh_outcome()`
+  压成枚举进 `ai.done.refresh` 与历史库 `refresh` 列：`changed: true` +
+  `refresh.status: failed` 是「改成了、项目没刷新」，**不许合成一个「成功」**，
+  也不许把会话记成失败。项目 watcher（`engine/project_watch.py`，ADR 0026）
+  仍是兜底：AI 路径没跑成、或 CLI 之外的改动，它都会看到。**不 probe、不跑脚本。**
+  MCP 侧同一件事是 `tavotto_refresh_project`（`codex-plugin/AGENTS.md`）；
+  `app.refresh_project` 是四条路径（手动 / watcher / codex / ai）唯一的漏斗，
+  `project_refresh_completed` 遥测只在这一处、只收这四个来由。
 - **「支持哪些 Agent」的唯一权威是 `engine/ai_agents.py` 的 `AGENT_REGISTRY`**
   （ADR 0015，改动前先读）。候选探测、启动验证、无副作用就绪检查、命令构造、
   流式输出分类、一键安装包名，全部由各自的 `AgentDefinition` 适配器给出。
@@ -1079,6 +1090,12 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史
   标签的 key**（开发者写死的稳定标识）经闭表映射，查不到落 `other`——
   标签**文案**绝不能用，它被翻译过、还插值了用户的文件名与属性名。
+- **CONSENT_VERSION 现在是 2**（2026-09-02，Session 22 加了九条：刷新 / 接入状态 /
+  教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。再加事件仍照这条纪律：两侧 `EVENTS`
+  表都登记、`tests/test_telemetry_proxy.py` 的样例表补一条、文档三处（events /
+  privacy / README）一起改、范围扩大就再升版。`package_action` **没有包名**、
+  `project_refresh_completed` 只发桶不发条数、教程只发 step id 与流程版本——
+  「能不能带这个字段」的判据是「它能不能承载用户内容」，不是「方不方便分析」。
 - **前端只发服务端推断不出来的那几条**，经 `/api/telemetry/event`，
   校验走**同一份** `engine/telemetry.validate`。`web/src/lib/telemetry.ts` 只缓存
   「现在发不发」+ 转发 + 分类，同意态与 install_id 一律不进前端
