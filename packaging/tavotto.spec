@@ -79,8 +79,11 @@ datas = [
     # 第一次用到时报「文件不存在」。
     #   profiles/   出版规范（预检两侧共读的唯一权威，engine/profiles.py）
     #   resources/  离线教程项目（engine/tutorial.py，ADR 0039）
+    #   pdfbackend/canvas_coverage.json  画布字形覆盖表（glyphplan.coverage_table_path，
+    #               preflight 的文字检查读它；wheel/sdist 随包自然收录，冻结产物要显式列）
     (str(PKG / "profiles"), "tavotto/profiles"),
     (str(PKG / "resources"), "tavotto/resources"),
+    (str(PKG / "pdfbackend" / "canvas_coverage.json"), "tavotto/pdfbackend"),
 ]
 # 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
 #   safe worker      —— worker.py 及它平铺 import 的传递闭包；

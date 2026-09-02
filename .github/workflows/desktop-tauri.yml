@@ -376,7 +376,8 @@ jobs:
             --figures examples/runtime_check \
             --expect-source bundled --expect-runtime \
             --expect-control-plane workerd \
-            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib \
+            --tutorial
 
       - name: Tauri build
         # CLI 版本钉死：src-tauri/windows/installer.nsi 按这个版本的上游模板
@@ -504,7 +505,8 @@ jobs:
             --workdir "$RUNNER_TEMP/冒烟 数据" \
             --expect-source bundled --expect-runtime \
             --expect-control-plane workerd \
-            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib \
+            --tutorial
           rm -rf "$DEST"
 
       - name: 打 .dmg

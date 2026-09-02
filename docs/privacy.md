@@ -35,8 +35,9 @@ cannot carry any of the following, on the client and again at the server:
 * arbitrary free-form strings
 
 Only a fixed allowlist of events, each with a fixed allowlist of properties whose
-values are booleans, bounded integers, short enum strings, or a version string,
-is accepted. Anything else is rejected rather than silently forwarded. The full
+values are booleans, bounded integers, short enum strings, or a version string
+(at most 32 characters of `[0-9A-Za-z.+_-]`, taken from the release feed and never
+from user content), is accepted. Anything else is rejected rather than silently forwarded. The full
 list is in [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
 
 ## Update checks

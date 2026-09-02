@@ -263,8 +263,8 @@ Beta，边界是明确的：只支持 Python 脚本或 `-m` 模块、只接管�
 ### 桌面版
 
 到[最新发行版](https://github.com/Tavotto/Tavotto/releases/latest)下载 macOS 的
-`.dmg`（Apple Silicon）或 Windows 的 `.exe`。装完双击即用——Tavotto 在自己的窗口里
-打开，之后的升级也都在软件内完成。
+`.dmg`（Apple Silicon）或 Windows 的 `.exe`（x64；Windows ARM 没有构建、也没有验证过）。
+装完双击即用——Tavotto 在自己的窗口里打开，之后的升级也都在软件内完成。
 
 **你不需要自己装 Python。** 两个安装包都自带一套 Tavotto 专用的 Python 运行环境，
 常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、Pillow，

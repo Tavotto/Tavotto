@@ -323,8 +323,9 @@ The two switches are independent; neither covers the other. Details in the
 ### Desktop
 
 Download from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest):
-a `.dmg` for macOS (Apple Silicon) or an `.exe` for Windows. Install it, double-click,
-done — Tavotto opens in its own window and updates itself from then on.
+a `.dmg` for macOS (Apple Silicon) or an `.exe` for Windows (x64; Windows on ARM is neither
+built nor verified). Install it, double-click, done — Tavotto opens in its own window and
+updates itself from then on.
 
 **You do not need to install Python.** Both installers carry a private Python runtime
 with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,

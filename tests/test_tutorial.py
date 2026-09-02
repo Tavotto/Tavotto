@@ -780,6 +780,18 @@ def test_smoke_and_ci_run_the_tutorial_on_the_bundled_runtime():
     ]
     assert len(bundled) == 2, "找不到两条内置 runtime 的冒烟①"
     assert all("--tutorial" in blk for blk in bundled)
+    # 真正构建并签名用户下载物的那条链（desktop-tauri.yml）也要打开一次教程：
+    # ci.yml 冒的是同一份 PyInstaller 产物，但只在合并队列 / full-ci 标签下跑，
+    # 而发行链以前一次都不开教程——资源漏进 datas 的缺陷会一路绿到用户手里
+    desktop = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    shipped = [
+        blk
+        for blk in desktop.split("- name:")
+        if "--expect-source bundled --expect-runtime" in blk
+        and "--expect-control-plane workerd" in blk
+    ]
+    assert len(shipped) >= 2, "找不到发行链上的内置 runtime 冒烟"
+    assert all("--tutorial" in blk for blk in shipped)
     # wheel 装进干净环境之后经 importlib.resources 验一遍教程资源
     assert "tutorial.validate_tutorial_resources()" in ci
 
@@ -789,6 +801,16 @@ def test_desktop_spec_ships_the_tutorial_resources_as_datas():
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     assert '"tavotto/resources"' in spec
     assert '"tavotto/profiles"' in spec
+
+
+def test_desktop_spec_ships_the_canvas_coverage_table():
+    """`pdfbackend/canvas_coverage.json` 是 git 跟踪的生成物，wheel / sdist 随包自然
+    收录，但 PyInstaller 不收数据文件：`glyphplan.coverage_table_path()` 在冻结产物里
+    落到 `_MEIPASS/tavotto/pdfbackend/`，不显式列进 datas 就是「源码树 / wheel 全绿、
+    桌面版第一次走到 preflight 的文字检查时报文件不存在」。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert 'canvas_coverage.json"), "tavotto/pdfbackend"' in spec
+    assert (REPO / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json").is_file()
 
 
 def test_pyproject_keeps_resources_inside_the_wheel_and_sdist():
