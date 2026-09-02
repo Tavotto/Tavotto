@@ -137,8 +137,12 @@ def test_item_text_survives_a_legend_rebuild(library):
     assert _legend_texts(man)[:2] == ["AAA", "BBB"]
 
 
-def test_item_text_follows_display_order_after_reorder(library):
-    """`texts_j` 指的是**显示顺序**里的第 j 项（与 entry_order 的语义一致）。"""
+def test_item_identity_survives_a_reorder(library):
+    """`texts_j` 指的是**原始第 j 项**，不是显示位置（ADR 0034）。
+
+    改过第一项的字再把它挪到最后，字必须跟着它走。按显示位置编号的话，
+    override 会留在「第一行」上——用户改的是 alpha，重排后 gamma 顶着那行字。
+    """
     man = _render(
         library,
         [
@@ -146,7 +150,20 @@ def test_item_text_follows_display_order_after_reorder(library):
             {"gid": T0, "prop": "text", "value": "第一项"},
         ],
     )
-    assert _legend_texts(man) == ["第一项", "alpha", "beta"]
+    # 元素表按原始序号：texts_0 仍是 alpha 那一项（现在叫「第一项」）
+    assert _legend_texts(man) == ["第一项", "beta", "gamma"]
+    # 显示顺序按 y 坐标（top-origin，小的在上）：gamma / 第一项 / beta
+    tops = {
+        _field(man, e["gid"], "text"): e["bbox"][1]
+        for e in man["elements"]
+        if e["role"] == "legend_text" and ".texts_" in e["gid"]
+    }
+    assert sorted(tops, key=tops.get) == ["gamma", "第一项", "beta"]
+    order = next(f for f in _el(man, "axes_0.legend")["editable"] if f["prop"] == "entry_order")
+    assert order["value"] == [2, 0, 1]
+    assert order["options"] == ["第一项", "beta", "gamma"], (
+        "options 按原始序，options[value[k]] = 显示位 k"
+    )
 
 
 def test_rebuild_does_not_orphan_any_override(library):

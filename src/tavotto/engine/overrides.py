@@ -2608,7 +2608,7 @@ def _mk_set_scale(which: str):
 
 
 # ---------------------------------------------------------------------------
-# 图例：loc 预设与「重建型」布局属性（ncol/labelspacing/…）
+# 图例：loc 预设、条目模型（稳定序号 / 源对象绑定 / 隐藏 / 重排）与重建
 # ---------------------------------------------------------------------------
 _LEGEND_LOCS = [
     "best",
@@ -2638,76 +2638,662 @@ def _legend_loc_name(leg: Legend) -> str:
     return inv.get(loc, "best")
 
 
+#: 图例项的绑定模式（ADR 0034）。`follow_source`：图例上那条示意线由图中
+#: 源对象**派生**，源变它就变；`custom`：示意线自己是一份状态，源变它不动。
+#: 「没有源」不是第三档——那时根本没有 `binding` 这条字段（见
+#: `manifest._legend_entry_fields`），界面显示「未关联图中对象」。
+LEGEND_BINDINGS = ("follow_source", "custom")
+#: 图例项示意线的样式 prop。任何一条落在 `state.applied` 里，这一项就是
+#: `custom`——判据是**文档里有没有这条 override**，不是「值和源一不一样」：
+#: 用户把颜色改成与源相同的值，仍然是「我要自己管这一项」。
+LEGEND_ENTRY_STYLE_PROPS = (
+    "handle_color",
+    "handle_linestyle",
+    "handle_linewidth",
+    "handle_marker",
+    "handle_markersize",
+)
+#: 条目的**状态类** prop：它们改的是条目模型（隐藏集 / 绑定表），不是某个
+#: artist 的属性，重建后**不重放**（模型自己就是它们的落点）。
+_LEGEND_ENTRY_STATE_PROPS = frozenset({"binding", "visible"})
+#: `_init_legend_box` 里 handlebox 的几何（heuristic 与 matplotlib 逐字相同，
+#: 3.10 `Legend._init_legend_box`）。改版时以它为准重对一次。
+_LEGEND_HANDLE_MARKER_OPTS = ["None", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", "."]
+
+
+class LegendEntries:
+    """一个图例的**条目模型**（挂在 `leg._mm_entries` 上，`instrument` 时建）。
+
+    条目按**原始序号** j 编号，`axes_i.legend.texts_j` 从此指的是原始第 j 项，
+    不再是显示顺序的第 j 项——重排之后用户改过的那一项才不会「跟着位置跑」
+    （改了第一项的字，再把它移到最后，字得跟着它走）。
+
+    每一项记：源对象（图中那条曲线 / 散点 / 柱系列，找不到就是 None）、
+    脚本原样的绑定（源找到且示意线与源一致 → follow_source；找到但脚本
+    自己改过示意线 → custom）、当前 Text（隐藏的项保留最后那个 Text 对象，
+    gid 与 override 都挂在它上面）、示意线的**脚本原样快照**（`pristine`，
+    没有源的项重建时的唯一素材，也是「撤销到底」时的样子）、以及
+    `custom_base`——一个 custom 项「不带任何 handle_* override 时长什么样」：
+    脚本原样就是 custom 的项等于 pristine；从跟随状态脱开的项等于脱开那一刻
+    从源派生出来的样子（否则改列数重排之后它会退回脚本原样，而脱开之前它
+    明明已经跟着源变过了）。
+    """
+
+    def __init__(self, leg: Legend, state: "FigState") -> None:
+        self.leg = leg
+        self.state = state
+        handles = [h for h in leg.legend_handles if h is not None]
+        texts = list(leg.get_texts())
+        n = min(len(handles), len(texts))
+        self.n = n
+        # 快照必须是**另一个对象**：handle_* override 改的是图例盒里那份活的
+        # 示意线，而创建时那份正是它——不另存一份，「脚本原样」会被第一条
+        # override 悄悄改掉，撤销就回不去了
+        # 绑定用的指纹取自**创建时那份**示意线：误差棒的示意线是 LineCollection，
+        # 快照只能造出 Line2D（HandlerLineCollection），拿快照比会永远对不上
+        self.orig_fp: list[tuple] = [legend_handle_fingerprint(h) for h in handles[:n]]
+        self.pristine: list = [self.snapshot(h) for h in handles[:n]]
+        self.custom_base: list = list(self.pristine)
+        self.orig_labels: list[str] = [t.get_text() for t in texts[:n]]
+        self.texts: list = texts[:n]
+        self.order: list[int] = list(range(n))
+        self.hidden: set[int] = set()
+        self.sources: list = [None] * n
+        self.source_gids: list[str | None] = [None] * n
+        self.default_binding: list[str] = ["custom"] * n
+        self.binding_override: dict[int, str] = {}
+        for j, t in enumerate(self.texts):
+            t._mm_legend_entry = (leg, j)  # noqa: SLF001
+
+    def snapshot(self, h):
+        """一份示意线的独立副本（按 matplotlib 自己的 handler 派生，再把
+        markerscale 多乘的那一次放回）。造不出来就只能用原对象。"""
+        try:
+            c = legend_fresh_handle(self.leg, h)
+        except Exception:  # noqa: BLE001
+            c = None
+        if c is None or type(c) is not type(h):
+            # handler 造出来的不是同一种东西（误差棒示意线 LineCollection →
+            # Line2D）：那就只能用原对象本身当快照。代价：这一项的 handle_*
+            # override 会直接改到它——没有源的误差棒示意线撤销到底后样式回不
+            # 到原样（有源的项走源派生，不受影响）
+            return h
+        if isinstance(c, Line2D) and isinstance(h, Line2D):
+            c.set_markersize(h.get_markersize())
+        return c
+
+    def has_style_override(self, j: int) -> bool:
+        gid = self.gid_of(j)
+        return any((gid, p) in self.state.applied for p in LEGEND_ENTRY_STYLE_PROPS)
+
+    def base_of(self, j: int):
+        """重建 / 同步时这一项该从谁派生：跟随的从源，其余从 custom_base。"""
+        if self.effective_binding(j) == "follow_source":
+            return self.sources[j]
+        return self.custom_base[j]
+
+    # ---- 视图 ----
+    def shown(self) -> list[int]:
+        """当前显示的原始序号，按显示顺序。"""
+        return [j for j in self.order if j not in self.hidden]
+
+    def display_index(self, j: int) -> int | None:
+        shown = self.shown()
+        return shown.index(j) if j in shown else None
+
+    def handle_of(self, j: int):
+        """条目 j 此刻的示意线 artist；隐藏中的项回它的 custom_base。"""
+        k = self.display_index(j)
+        if k is None:
+            return self.custom_base[j]
+        handles = [h for h in self.leg.legend_handles if h is not None]
+        return handles[k] if k < len(handles) else self.custom_base[j]
+
+    def gid_of(self, j: int) -> str:
+        return f"{self.leg.get_gid() or ''}.texts_{j}"
+
+    def effective_binding(self, j: int) -> str | None:
+        """None = 没有源；否则 follow_source / custom（见 LEGEND_BINDINGS）。"""
+        if self.sources[j] is None:
+            return None
+        if self.has_style_override(j):
+            return "custom"
+        return self.binding_override.get(j) or self.default_binding[j]
+
+
+def legend_entries(leg: Legend) -> LegendEntries | None:
+    return getattr(leg, "_mm_entries", None)
+
+
+def _entry_of(t: Text) -> tuple[LegendEntries, int]:
+    leg, j = t._mm_legend_entry  # noqa: SLF001
+    model = legend_entries(leg)
+    if model is None:
+        raise ValueError("图例项没有条目模型（instrument 没跑过）")
+    return model, j
+
+
+def _legend_handle_box_geometry(leg: Legend) -> tuple[float, float, float]:
+    """(width, height, descent)：与 `Legend._init_legend_box` 同一套 heuristic。"""
+    fontsize = leg._fontsize  # noqa: SLF001
+    descent = 0.35 * fontsize * (leg.handleheight - 0.7)
+    height = fontsize * leg.handleheight - descent
+    return leg.handlelength * fontsize, height, descent
+
+
+def legend_fresh_handle(leg: Legend, orig, box=None):
+    """按 matplotlib 自己的 handler 从 `orig` 造一份图例示意线。
+
+    这与 `Legend._init_legend_box` 每一项做的事逐字相同（同一个 handler、同样
+    的 fontsize 与 handlebox 几何），所以「从源重新派生」得到的正是
+    `ax.legend()` 此刻会画出来的那条。`box` 给了就画进它（替换式同步），
+    不给就画进一个一次性的 DrawingArea（只为了拿指纹）。
+    """
+    from matplotlib.offsetbox import DrawingArea  # 只在这里用，别污染模块层
+
+    handler = leg.get_legend_handler(leg.get_legend_handler_map(), orig)
+    if handler is None:
+        return None
+    width, height, descent = _legend_handle_box_geometry(leg)
+    if box is None:
+        box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
+        box.set_figure(leg.get_figure(root=False))
+    return handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
+
+
+def _rgba(c):
+    try:
+        return tuple(round(float(x), 4) for x in mcolors.to_rgba(c))
+    except (ValueError, TypeError):
+        return str(c)
+
+
+def _first(seq, default=None):
+    try:
+        return seq[0] if len(seq) else default
+    except TypeError:
+        return default
+
+
+def legend_handle_fingerprint(h) -> tuple:
+    """示意线的**样式指纹**：两份指纹相等 = 画出来一模一样。
+
+    按 artist 类型取各自会被 `update_from` 复制的那几条；类型名进指纹，
+    Line2D 与 Rectangle 永远不相等。
+    """
+    kind = type(h).__name__
+    if isinstance(h, Line2D):
+        return (
+            kind,
+            _rgba(h.get_color()),
+            str(h.get_linestyle()),
+            round(float(h.get_linewidth()), 3),
+            str(h.get_marker()),
+            round(float(h.get_markersize()), 3),
+            _rgba(h.get_markerfacecolor()),
+            _rgba(h.get_markeredgecolor()),
+            round(float(h.get_markeredgewidth()), 3),
+            h.get_alpha(),
+        )
+    if isinstance(h, Patch):
+        return (
+            kind,
+            _rgba(h.get_facecolor()),
+            _rgba(h.get_edgecolor()),
+            round(float(h.get_linewidth()), 3),
+            str(h.get_linestyle()),
+            h.get_hatch(),
+            h.get_alpha(),
+            bool(h.get_fill()),
+        )
+    if isinstance(h, Collection):
+        fc = _first(h.get_facecolor())
+        ec = _first(h.get_edgecolor())
+        return (
+            kind,
+            None if fc is None else _rgba(fc),
+            None if ec is None else _rgba(ec),
+            round(float(_first(h.get_linewidth(), 0.0) or 0.0), 3),
+            h.get_hatch(),
+            h.get_alpha(),
+        )
+    return (kind, id(h))
+
+
+def _entry_boxes(leg: Legend) -> list[tuple]:
+    """按显示顺序给出每一项的 (handlebox, textbox)。
+
+    `_legend_handle_box` 是 HPacker(列) → VPacker(项) → HPacker([示意线, 文字])。
+    示意线在前还是文字在前（`markerfirst`）matplotlib 没存下来，按类型认。
+    """
+    from matplotlib.offsetbox import DrawingArea, TextArea
+
+    out = []
+    for column in leg._legend_handle_box.get_children():  # noqa: SLF001
+        for item in column.get_children():
+            hb = tb = None
+            for child in item.get_children():
+                if isinstance(child, DrawingArea):
+                    hb = child
+                elif isinstance(child, TextArea):
+                    tb = child
+            if hb is not None and tb is not None:
+                out.append((hb, tb))
+    return out
+
+
+def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:
+    """把显示位 k 的示意线换成从 `orig` 现派生的那份。
+
+    只动 handlebox 里的子 artist 与 `legend_handles[k]`，布局盒、文字、
+    定位回调一概不碰——所以它不改包围盒，只改示意线本身的样子。
+    `copy_of` 给了表示 `orig` 本身已经是一份示意线（快照），派生会把
+    markerscale 再乘一次，事后把 markersize 放回。
+    """
+    boxes = _entry_boxes(leg)
+    if k >= len(boxes):
+        return False
+    box = boxes[k][0]
+    old = list(box.get_children())
+    box._children.clear()  # noqa: SLF001 — DrawingArea 没有 remove_artist
+    fresh = legend_fresh_handle(leg, orig, box)
+    if fresh is None:
+        box._children.extend(old)  # noqa: SLF001 — handler 造不出来就保留原样
+        return False
+    if copy_of is not None and isinstance(fresh, Line2D) and isinstance(copy_of, Line2D):
+        fresh.set_markersize(copy_of.get_markersize())
+    idx = [i for i, h in enumerate(leg.legend_handles) if h is not None]
+    if k < len(idx):
+        leg.legend_handles[idx[k]] = fresh
+    return True
+
+
+def _all_legends(fig) -> list[Legend]:
+    out = list(getattr(fig, "legends", []) or [])
+    for ax in fig.axes:
+        leg = ax.get_legend()
+        if leg is not None:
+            out.append(leg)
+    return out
+
+
+def sync_legends(state: "FigState") -> None:
+    """让每个 `follow_source` 的图例项与它的源对象一致（在 `apply` 尾部跑）。
+
+    派生显示：这一步**不写文档、不进 applied**，只把图中源对象此刻的样子
+    重新派生到示意线上。源没变时派生结果与现状逐字节相同，所以无条件跑
+    也是幂等的；有 handle_* override 的项（custom）不在这里被碰。
+    """
+    for leg in _all_legends(state.fig):
+        model = legend_entries(leg)
+        if model is None:
+            continue
+        for k, j in enumerate(model.shown()):
+            binding = model.effective_binding(j)
+            try:
+                if binding == "follow_source":
+                    _legend_replace_handle(leg, k, model.sources[j])
+                    # 回到跟随，「脱开时的样子」就作废了
+                    model.custom_base[j] = model.pristine[j]
+                elif not model.has_style_override(j):
+                    # custom 而没有 override：示意线该是 custom_base 的样子
+                    # （撤掉 binding override 之后要退回脚本原样）。指纹相同就
+                    # 不动——重派生不是免费的，也不该每一帧都换对象
+                    base = model.custom_base[j]
+                    cur = model.handle_of(j)
+                    if legend_handle_fingerprint(cur) != legend_handle_fingerprint(base):
+                        _legend_replace_handle(leg, k, base, copy_of=base)
+            except Exception as exc:  # noqa: BLE001 — 同步失败不拖垮渲染
+                print(f"[legend] {model.gid_of(j)} 同步示意线失败: {exc}", file=sys.stderr)
+
+
+def _source_label(art) -> str:
+    try:
+        return str(art.get_label())
+    except Exception:  # noqa: BLE001 — 没有 label 的对象就当空
+        return ""
+
+
+def bind_legend_entries(
+    leg: Legend, candidates: list[tuple[str, object]], auto_handles: list
+) -> None:
+    """给一个图例的每一项找**源对象**（instrument 时跑一次，override 之前）。
+
+    `candidates` 是 (gid, 图中对象) —— 曲线 / 散点 / 填充 / 柱系列容器 / 误差棒
+    容器……；`auto_handles` 是 `get_legend_handles_labels()` 此刻会给出的那份
+    （不带 handles 参数的 `ax.legend()` 就是按它的顺序建的）。
+
+    判据（每一项独立）：先拿每个候选按 matplotlib 自己的 handler 派生一份示意
+    线取指纹，再与图例上现有的示意线比：
+
+      1. 指纹 + label 都相等且唯一 → follow_source；
+      2. 只有指纹相等且唯一 → follow_source（脚本把 labels 单独传了）；
+      3. 只有 label 相等且唯一（类型一致）→ custom：源找到了，但示意线与源
+         不一致——脚本在 `legend()` 之后改过示意线，或改过源。这种项默认
+         **不跟随**：跟随等于改掉脚本此刻画出来的东西；
+      4. 多个候选并列 → 只在 `auto_handles` 位置对得上时选它，否则不绑
+         （**不伪造绑定**：绑错一条比不绑更坏）。
+    """
+    model = legend_entries(leg)
+    if model is None:
+        return
+    fresh: list[tuple[str, object, tuple | None]] = []
+    for gid, art in candidates:
+        try:
+            h = legend_fresh_handle(leg, art)
+        except Exception:  # noqa: BLE001 — handler 造不出来的候选不参与
+            h = None
+        fresh.append((gid, art, None if h is None else legend_handle_fingerprint(h)))
+    auto_ids = [id(a) for a in auto_handles] if len(auto_handles) == model.n else []
+
+    def _positional(pool, j):
+        if j < len(auto_ids):
+            hit = [c for c in pool if id(c[1]) == auto_ids[j]]
+            if len(hit) == 1:
+                return hit[0]
+        return None
+
+    for j in range(model.n):
+        fp = model.orig_fp[j]
+        label = model.orig_labels[j]
+        by_fp = [c for c in fresh if c[2] == fp]
+        by_label = [
+            c
+            for c in fresh
+            if c[2] is not None and c[2][0] == fp[0] and _source_label(c[1]) == label
+        ]
+        both = [c for c in by_fp if c in by_label]
+        pick, binding = None, "custom"
+        if len(both) == 1:
+            pick, binding = both[0], "follow_source"
+        elif len(both) > 1:
+            pick, binding = _positional(both, j), "follow_source"
+        elif len(by_fp) == 1:
+            pick, binding = by_fp[0], "follow_source"
+        elif len(by_fp) > 1:
+            pick, binding = _positional(by_fp, j), "follow_source"
+        elif len(by_label) == 1:
+            pick, binding = by_label[0], "custom"
+        elif len(by_label) > 1:
+            pick, binding = _positional(by_label, j), "custom"
+        if pick is None:
+            continue
+        model.sources[j] = pick[1]
+        model.source_gids[j] = pick[0]
+        model.default_binding[j] = binding
+
+
 _LEGEND_LAYOUT_ATTRS = {
     "ncol": "_ncols",
     "borderpad": "borderpad",
     "labelspacing": "labelspacing",
     "handlelength": "handlelength",
+    "handletextpad": "handletextpad",
+    "columnspacing": "columnspacing",
 }
 
 
+def _copy_text_look(dst: Text, src: Text) -> None:
+    """把一段图例文字的**样子**（不含位置 / 变换）搬到新对象上。
+
+    刻意不用 `Text.update_from`：它连 transform 一起抄，而图例文字的
+    transform 属于它所在的 TextArea——抄过去整块图例文字会画到别处。
+    """
+    dst.set_color(src.get_color())
+    dst.set_fontproperties(src.get_fontproperties().copy())
+    dst.set_alpha(src.get_alpha())
+    dst.set_visible(src.get_visible())
+    dst.set_path_effects(src.get_path_effects())
+
+
+def rebuild_legend(leg: Legend, state: "FigState") -> None:
+    """按条目模型重排图例盒（列数 / 间距 / 顺序 / 隐藏都走这一条）。
+
+    素材：跟随的项拿**源对象**重新派生（与 `ax.legend()` 同一条路，误差棒
+    仍是误差棒、markerscale 只乘一次）；其余拿它的 custom_base 快照——快照
+    上 markerscale 已经乘过，重派生会再乘一次，所以事后把 markersize 放回。
+    文字对象整批换新：样子从旧对象搬过去，gid / 模型 / override 由
+    `_reindex_legend_children` 接上。
+    """
+    model = legend_entries(leg)
+    if model is None:
+        return
+    shown = model.shown()
+    handles = [model.base_of(j) for j in shown]
+    labels = [model.texts[j].get_text() for j in shown]
+    old_texts = {j: model.texts[j] for j in shown}
+    title = leg.get_title()
+    title_text = title.get_text()
+    title_fp = title.get_fontproperties().copy()
+    title_color, title_alpha = title.get_color(), title.get_alpha()
+    leg._init_legend_box(handles, labels)  # noqa: SLF001
+    # _init_legend_box 会换掉 _legend_box，定位回调必须重挂——
+    # 否则图例内容画在默认偏移上（导出里整块消失）
+    leg._legend_box.set_offset(leg._findoffset)  # noqa: SLF001
+    # 标题：`set_title(prop=None)` 会让新标题退回默认字号，脚本的
+    # title_fontsize 就丢了——把旧标题的字体属性一起带过去
+    leg.set_title(title_text, prop=title_fp)
+    leg.get_title().set_color(title_color)
+    leg.get_title().set_alpha(title_alpha)
+    new_handles = [h for h in leg.legend_handles if h is not None]
+    for k, j in enumerate(shown):
+        if model.effective_binding(j) != "follow_source" and k < len(new_handles):
+            fresh, copy = new_handles[k], model.custom_base[j]
+            if isinstance(fresh, Line2D) and isinstance(copy, Line2D):
+                fresh.set_markersize(copy.get_markersize())
+    for k, t in enumerate(leg.get_texts()):
+        if k < len(shown):
+            _copy_text_look(t, old_texts[shown[k]])
+    _reindex_legend_children(leg, state)
+
+
 def _legend_rebuild_setter(prop: str):
-    """ncol/borderpad/labelspacing/handlelength 是构建期参数，改动需要
-    _init_legend_box 重排——文字/标题对象会被重建，必须重挂 gid、更新
-    state.index 并重放这些 gid 上已应用的 override。"""
+    """ncol / borderpad / labelspacing / handlelength / handletextpad /
+    columnspacing 是构建期参数，改动需要重排整个图例盒。"""
     attr = _LEGEND_LAYOUT_ATTRS[prop]
 
     def setter(leg: Legend, v, state) -> None:
         setattr(leg, attr, int(v) if prop == "ncol" else float(v))
-        handles = leg.legend_handles
-        labels = [t.get_text() for t in leg.get_texts()]
-        title = leg.get_title().get_text()
-        leg._init_legend_box(handles, labels)  # noqa: SLF001
-        # _init_legend_box 会换掉 _legend_box，定位回调必须重挂——
-        # 否则图例内容画在默认偏移上（导出里整块消失）
-        leg._legend_box.set_offset(leg._findoffset)  # noqa: SLF001
-        leg.set_title(title)
-        _reindex_legend_children(leg, state)
+        rebuild_legend(leg, state)
 
     setter._needs_state = True  # noqa: SLF001
     return setter
 
 
-def _legend_orig_entries(leg: Legend) -> tuple[list, list]:
-    """图例条目的原始 (handles, labels)。首次访问时缓存——重排后
-    legend_handles 顺序会变，原始序必须只取一次。"""
-    orig = getattr(leg, "_mm_entry_orig", None)
-    if orig is None:
-        orig = (list(leg.legend_handles), [t.get_text() for t in leg.get_texts()])
-        leg._mm_entry_orig = orig  # noqa: SLF001
-    return orig
-
-
 def _legend_entry_order(leg: Legend) -> list[int]:
-    n = len(leg.get_texts())
-    cur = getattr(leg, "_mm_entry_order", None)
-    return list(cur) if cur is not None else list(range(n))
+    model = legend_entries(leg)
+    return list(model.order) if model is not None else list(range(len(leg.get_texts())))
 
 
 def _set_legend_entry_order(leg: Legend, v, state) -> None:
-    """图例条目重排：按原始序号的排列重建图例盒。文字对象会被重建，
-    与 ncol 等重建型属性一样要重挂 gid 并重放已应用的 override
-    （注意 texts_j 的 gid 指的是**显示顺序**的第 j 项）。"""
-    handles, labels = _legend_orig_entries(leg)
-    idx = [int(i) for i in (v or []) if 0 <= int(i) < len(handles)]
-    idx += [i for i in range(len(handles)) if i not in idx]  # 缺漏的按原序补尾
-    title = leg.get_title().get_text()
-    leg._init_legend_box([handles[i] for i in idx], [labels[i] for i in idx])  # noqa: SLF001
-    leg._legend_box.set_offset(leg._findoffset)  # noqa: SLF001 — 重挂定位回调
-    leg.set_title(title)
-    leg._mm_entry_order = idx  # noqa: SLF001
-    _reindex_legend_children(leg, state)
+    """图例条目重排：value 是原始序号的排列（缺漏的按原序补尾）。"""
+    model = legend_entries(leg)
+    if model is None:
+        return
+    n = model.n
+    idx = []
+    for i in v or []:
+        i = int(i)
+        if 0 <= i < n and i not in idx:
+            idx.append(i)
+    idx += [i for i in range(n) if i not in idx]
+    model.order = idx
+    rebuild_legend(leg, state)
 
 
 _set_legend_entry_order._needs_state = True  # noqa: SLF001
 
 
+def _frame_rounded(leg: Legend) -> bool:
+    return isinstance(leg.get_frame().get_boxstyle(), BoxStyle.Round)
+
+
+def _set_frame_rounded(leg: Legend, v) -> None:
+    # 与 `Legend.__init__` 的 fancybox 分支逐字相同
+    if bool(v):
+        leg.get_frame().set_boxstyle("round", pad=0, rounding_size=0.2)
+    else:
+        leg.get_frame().set_boxstyle("square", pad=0)
+
+
+# ---- 条目级 handler（挂在 legend_text 上）----
+def _entry_visible_get(t: Text) -> bool:
+    model, j = _entry_of(t)
+    return j not in model.hidden
+
+
+def _entry_visible_set(t: Text, v, state) -> None:
+    model, j = _entry_of(t)
+    if bool(v):
+        model.hidden.discard(j)
+    else:
+        model.hidden.add(j)
+    rebuild_legend(model.leg, state)
+
+
+_entry_visible_set._needs_state = True  # noqa: SLF001
+
+
+def _entry_binding_get(t: Text):
+    model, j = _entry_of(t)
+    return model.binding_override.get(j)
+
+
+def _entry_binding_set(t: Text, v) -> None:
+    model, j = _entry_of(t)
+    if v is None:
+        model.binding_override.pop(j, None)
+        return
+    if v not in LEGEND_BINDINGS:
+        raise ValueError(f"binding 只能是 {LEGEND_BINDINGS}，收到 {v!r}")
+    if v == "custom" and model.effective_binding(j) == "follow_source":
+        _detach_entry(model, j)
+    model.binding_override[j] = str(v)
+
+
+def _detach_entry(model: LegendEntries, j: int) -> None:
+    """一个跟随中的项脱开：custom_base 记成**源此刻**派生出来的样子，图例盒里
+    那份活的示意线也换成它。
+
+    必须从源现派生，不能拿盒里那份：同一批 patch 里源的改动可能排在前面、
+    而跟随同步要到整轮结束才跑——盒里那份此刻还是上一轮的样子。拿它当
+    脱开点，会把「先把线改绿、再在图例项上改线宽」做成一条红线。
+    """
+    src = model.sources[j]
+    fresh = legend_fresh_handle(model.leg, src)
+    if fresh is None:
+        model.custom_base[j] = model.snapshot(model.handle_of(j))
+        return
+    model.custom_base[j] = fresh
+    k = model.display_index(j)
+    if k is not None:
+        _legend_replace_handle(model.leg, k, src)
+
+
+def _entry_handle(t: Text):
+    model, j = _entry_of(t)
+    return model.handle_of(j)
+
+
+def _handle_read(h, prop: str):
+    """示意线的一条样式；类型不认这条 prop 就抛（manifest 不会发它）。"""
+    if isinstance(h, Line2D):
+        return {
+            "handle_color": lambda: h.get_color(),
+            "handle_linestyle": lambda: h.get_linestyle(),
+            "handle_linewidth": lambda: float(h.get_linewidth()),
+            "handle_marker": lambda: h.get_marker(),
+            "handle_markersize": lambda: float(h.get_markersize()),
+        }[prop]()
+    if isinstance(h, Patch):
+        return {"handle_color": lambda: h.get_facecolor()}[prop]()
+    if isinstance(h, Collection):
+        return {
+            "handle_color": lambda: (
+                h.get_color() if isinstance(h, LineCollection) else h.get_facecolor()
+            ),
+        }[prop]()
+    raise KeyError(prop)
+
+
+def _handle_write(h, prop: str, v) -> None:
+    if isinstance(h, Line2D):
+        {
+            "handle_color": lambda: h.set_color(v),
+            "handle_linestyle": lambda: h.set_linestyle(v),
+            "handle_linewidth": lambda: h.set_linewidth(float(v)),
+            "handle_marker": lambda: h.set_marker(v),
+            "handle_markersize": lambda: h.set_markersize(float(v)),
+        }[prop]()
+        return
+    if isinstance(h, Patch):
+        {"handle_color": lambda: h.set_facecolor(v)}[prop]()
+        return
+    if isinstance(h, Collection):
+        {
+            "handle_color": lambda: (
+                h.set_color(v) if isinstance(h, LineCollection) else h.set_facecolor(v)
+            ),
+        }[prop]()
+        return
+    raise KeyError(prop)
+
+
+def legend_handle_props(h) -> tuple[str, ...]:
+    """这一种示意线支持哪几条 handle_* prop（manifest 与 handler 共用）。
+
+    色图**正在**决定颜色的 Collection 示意线（映射散点的图例）不给 `handle_color`
+    ——`set_facecolor` 设得进去，下一次 draw `update_scalarmappable()` 原样
+    覆盖回来，那是一个改了没反应的控件（判据与散点本体同一个：
+    `color_mapping_is_live`）。
+    """
+    if isinstance(h, Line2D):
+        return LEGEND_ENTRY_STYLE_PROPS
+    if isinstance(h, Patch):
+        return ("handle_color",)
+    if isinstance(h, Collection):
+        # 面 / 散点 / 线组的示意线只给颜色：它们的「线宽」是边宽，而边色
+        # 默认与面同色（fill_between 的示意矩形），改了 0.5 pt 在像素上
+        # 量不出——一个改了看不见的控件不如不摆
+        return () if color_mapping_is_live(h) else ("handle_color",)
+    return ()
+
+
+def _entry_handle_write(t: Text, prop: str, v) -> None:
+    model, j = _entry_of(t)
+    if model.effective_binding(j) == "follow_source":
+        # 第一条 handle_* override 落下的这一刻它脱开跟随。`applied` 要到
+        # setter 返回后才登记，所以这里还看得见「它刚才还在跟随」
+        _detach_entry(model, j)
+    _handle_write(model.handle_of(j), prop, v)
+
+
+def _mk_entry_handle_handler(prop: str) -> tuple:
+    return (
+        lambda t: _handle_read(_entry_handle(t), prop),
+        lambda t, v: _entry_handle_write(t, prop, v),
+    )
+
+
 def _reindex_legend_children(leg: Legend, state: "FigState") -> None:
+    """重建之后把新文字对象接回 gid / 条目模型 / state，并重放已应用的 override。
+
+    gid 按**原始序号**：显示位 k 上的新 Text 属于 `model.shown()[k]` 那一项。
+    隐藏中的项保留旧 Text（gid 与 override 都还挂在它上面，解除隐藏时重建
+    会按它此刻的文字造新对象）。
+    """
     leg_gid = leg.get_gid() or ""
-    if not leg_gid:
+    model = legend_entries(leg)
+    if not leg_gid or model is None:
         return
     remap = {}
-    for j, t in enumerate(leg.get_texts()):
+    shown = model.shown()
+    for k, t in enumerate(leg.get_texts()):
+        if k >= len(shown):
+            break
+        j = shown[k]
+        t._mm_legend_entry = (leg, j)  # noqa: SLF001
+        model.texts[j] = t
         remap[f"{leg_gid}.texts_{j}"] = t
     title = leg.get_title()
     if title is not None:
@@ -2719,9 +3305,10 @@ def _reindex_legend_children(leg: Legend, state: "FigState") -> None:
         for el in state.elements:
             if el["gid"] == gid:
                 el["artist"] = artist
-    # 重放这些 gid 上已应用的 override（旧对象被扔掉，效果要落到新对象上）
+    # 重放这些 gid 上已应用的 override（旧对象被扔掉，效果要落到新对象上）。
+    # 状态类 prop（隐藏 / 绑定）落在模型上，重建正是按模型做的，不重放。
     for (gid, prop), value in list(state.applied.items()):
-        if gid in remap:
+        if gid in remap and prop not in _LEGEND_ENTRY_STATE_PROPS:
             handler = HANDLERS.get((_cls_key(remap[gid]), prop))
             if handler is not None:
                 handler[1](remap[gid], value)
@@ -2743,7 +3330,10 @@ def _cls_key(artist) -> str | None:
     if isinstance(artist, Figure):
         return "figure"
     if isinstance(artist, Text):
-        return "text"
+        # 图例项的文字带条目模型标记：它既是一段文字（全部 text handler 照用），
+        # 又是一个「条目」（示意线样式 / 绑定 / 隐藏挂在它上面）。图例标题
+        # 没有这个标记，仍是普通文字。
+        return "legend_text" if getattr(artist, "_mm_legend_entry", None) else "text"
     if isinstance(artist, FancyArrowPatch):
         return "arrowpatch"
     if isinstance(artist, Line2D):
@@ -3624,6 +4214,19 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: float(a.handlelength),
         _legend_rebuild_setter("handlelength"),
     ),
+    ("legend", "handletextpad"): (
+        lambda a: float(a.handletextpad),
+        _legend_rebuild_setter("handletextpad"),
+    ),
+    ("legend", "columnspacing"): (
+        lambda a: float(a.columnspacing),
+        _legend_rebuild_setter("columnspacing"),
+    ),
+    ("legend", "frame_linewidth"): (
+        lambda a: float(a.get_frame().get_linewidth()),
+        lambda a, v: a.get_frame().set_linewidth(float(v)),
+    ),
+    ("legend", "frame_rounded"): (_frame_rounded, _set_frame_rounded),
     # ---- ticks: 方向 / 长度 / 线宽 / 数字格式 ----
     ("ticks", "direction"): (
         lambda a: str(getattr(_tick0(a), "_tickdir", "out")),
@@ -3888,6 +4491,23 @@ for _bp, (_bread, _bwrite) in _BBOX_PROPS.items():
 # `bbox_visible=False` 不该为了「关」而现建一个 patch（本来就没有框时它是
 # no-op）。其余五条照旧「首次改任何背景属性即出现背景框」。
 HANDLERS[("text", "bbox_visible")] = (HANDLERS[("text", "bbox_visible")][0], _set_bbox_visible)
+
+# ---------------------------------------------------------------------------
+# 图例项（legend_text）= 一段文字 + 一个条目。文字那半**逐条镜像** text 的
+# handler / restore（同一份实现，不抄第二遍）；条目那半是自己的：示意线
+# 样式、绑定、隐藏。`visible` 被条目级的实现盖掉——隐藏一个图例项是把整项
+# 从图例盒里拿掉（示意线与文字一起），不是只让文字消失、留一个空行。
+# ---------------------------------------------------------------------------
+for (_k, _p), _h in list(HANDLERS.items()):
+    if _k == "text":
+        HANDLERS.setdefault(("legend_text", _p), _h)
+for (_k, _p), _r in list(_RESTORE.items()):
+    if _k == "text":
+        _RESTORE.setdefault(("legend_text", _p), _r)
+HANDLERS[("legend_text", "visible")] = (_entry_visible_get, _entry_visible_set)
+HANDLERS[("legend_text", "binding")] = (_entry_binding_get, _entry_binding_set)
+for _p in LEGEND_ENTRY_STYLE_PROPS:
+    HANDLERS[("legend_text", _p)] = _mk_entry_handle_handler(_p)
 
 _RESTORE.update(_PENDING_RESTORES)
 
@@ -4431,5 +5051,9 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     finally:
         # 下一次 apply 绝不能拿着上一批的 patch 表去算落位
         state.pending = {}
+
+    # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
+    # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。
+    sync_legends(state)
 
     return warnings

@@ -313,7 +313,10 @@ _ROLE_TO_FAMILY = {
     "text": "text",
     "title": "text",
     "axis_label": "text",
-    "legend_text": "text",
+    # 图例标题是普通文字；图例**项**多一个条目模型（示意线 / 绑定 / 隐藏），
+    # dispatch 侧按条目标记分成 `legend_text` 这一族（ADR 0034）。同一个 role
+    # 两族是有意的：标题与项在界面上同为「图例里的文字」
+    "legend_text": ("text", "legend_text"),
     "legend": "legend",
     "axes": "axes",
     "axes3d": "axes",
@@ -340,6 +343,8 @@ def single_authority(fig, state, man) -> dict:
         art, role = el["artist"], el["role"]
         key = O._cls_key(art)  # noqa: SLF001
         want = _ROLE_TO_FAMILY.get(role)
+        if isinstance(want, tuple):
+            want = key if key in want else want[0]
         if want is not None and key != want:
             family_conflicts.append(
                 {"gid": entry["gid"], "role": role, "cls_key": key, "expected": want}

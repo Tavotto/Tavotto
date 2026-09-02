@@ -17,8 +17,9 @@ import sys
 from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
-from matplotlib.collections import Collection, PathCollection, PolyCollection
+from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
+from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
@@ -26,13 +27,16 @@ import pathgeom
 from overrides import (
     _ARROWSTYLES,
     _CB_EXTENDS,
+    _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
     _TICK_FORMATS,
     _TICK_MINOR_FORMATS,
     BBOX_DEFAULTS,
     HATCHES,
+    LEGEND_BINDINGS,
     ColorbarProxy,
     FigState,
+    LegendEntries,
     SeriesGroup,
     TickLabel,
     TickSet,
@@ -44,6 +48,7 @@ from overrides import (
     _cb_tick_color,
     _cb_tick_fontsize,
     _cls_key,
+    _frame_rounded,
     _grid_prop,
     _grid_visible,
     _legend_entry_order,
@@ -53,6 +58,7 @@ from overrides import (
     _stroke_state,
     _tick0,
     axes_position_eaten_by_layout,
+    bind_legend_entries,
     coincident_shared_axes_pairs,
     collection_caps,
     colorbar_host_count,
@@ -63,6 +69,8 @@ from overrides import (
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
+    legend_entries,
+    legend_handle_props,
     remember_axis_directions,
     scale_options,
     spine_all_color,
@@ -444,7 +452,7 @@ def instrument(state: FigState) -> None:
                 draggable=True,
             )
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
-        _register(state, f"fig.legend_{i}", leg, "legend", "图例", draggable=True)
+        _register_legend(state, f"fig.legend_{i}", leg)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
     # **传 `_ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
@@ -761,25 +769,7 @@ def instrument(state: FigState) -> None:
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
         if leg is not None:
-            _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
-            title = leg.get_title()
-            if title is not None and title.get_text():
-                _register(
-                    state,
-                    f"axes_{i}.legend.title",
-                    title,
-                    "legend_text",
-                    f"图例标题 “{_snippet(title.get_text())}”",
-                )
-            for j, t in enumerate(leg.get_texts()):
-                if t.get_text():
-                    _register(
-                        state,
-                        f"axes_{i}.legend.texts_{j}",
-                        t,
-                        "legend_text",
-                        f"图例项 “{_snippet(t.get_text())}”",
-                    )
+            _register_legend(state, f"axes_{i}.legend", leg)
         if not is3d:
             # 边框模型的「脚本原样」也在这里采（与刻度模型同一时机：build 之后、
             # 任何 override 之前）
@@ -799,7 +789,90 @@ def instrument(state: FigState) -> None:
             )
             _sync_tick_labels(state, ax, which, f"axes_{i}")
 
+    # 图例项 → 图中源对象（要等全部元素登记完才有反查表）
+    _bind_legends(state)
+
     state.unregistered = census(fig, state)
+
+
+def _register_legend(state: FigState, gid: str, leg) -> None:
+    """登记一个图例：图例本体 + 标题 + 每一项（**原始序号**，与条目模型同源）。
+
+    条目模型（`LegendEntries`）在这里建——它记的是**脚本原样**（创建时的
+    示意线副本与文字），必须在任何 override 之前采。
+    """
+    _register(state, gid, leg, "legend", "图例", draggable=True)
+    model = LegendEntries(leg, state)
+    leg._mm_entries = model  # noqa: SLF001
+    title = leg.get_title()
+    if title is not None and title.get_text():
+        _register(
+            state, f"{gid}.title", title, "legend_text", f"图例标题 “{_snippet(title.get_text())}”"
+        )
+    for j, t in enumerate(model.texts):
+        if t.get_text():
+            _register(
+                state, f"{gid}.texts_{j}", t, "legend_text", f"图例项 “{_snippet(t.get_text())}”"
+            )
+
+
+#: 能当图例源对象的角色：它们各自的 artist / 容器正是 `ax.legend()` 会拿来
+#: 派生示意线的东西。单根柱（`bar`）不在内——柱系列的容器才是源。
+_LEGEND_SOURCE_ROLES = frozenset(
+    {
+        "line",
+        "scatter",
+        "fill",
+        "collection",
+        "linecoll",
+        "patch",
+        "bar_series",
+        "errorbar",
+        "stem_series",
+    }
+)
+
+
+def _bind_legends(state: FigState) -> None:
+    """给每个图例的每一项找源对象（判据在 `overrides.bind_legend_entries`）。"""
+    axes_gid_of = {
+        id(el["artist"]): el["gid"] for el in state.elements if el["role"] in ("axes", "axes3d")
+    }
+    sources: list[tuple[str, str, object]] = []  # (所属 axes gid, 元素 gid, 源对象)
+    for el in state.elements:
+        if el["role"] not in _LEGEND_SOURCE_ROLES:
+            continue
+        art = el["artist"]
+        if isinstance(art, SeriesGroup):
+            art = art.container
+            if art is None:
+                continue
+        owner = el["gid"].split(".", 1)[0]
+        sources.append((owner, el["gid"], art))
+    for el in state.elements:
+        if el["role"] != "legend":
+            continue
+        leg = el["artist"]
+        parent = leg.parent
+        if isinstance(parent, Axes):
+            owner = axes_gid_of.get(id(parent))
+            cands = [(g, a) for o, g, a in sources if o == owner]
+            try:
+                auto = list(parent.get_legend_handles_labels()[0])
+            except Exception:  # noqa: BLE001 — 拿不到就没有位置线索
+                auto = []
+        else:
+            cands = [(g, a) for _o, g, a in sources]
+            auto = []
+            for ax in getattr(state.fig, "axes", []):
+                try:
+                    auto.extend(ax.get_legend_handles_labels()[0])
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            bind_legend_entries(leg, cands, auto)
+        except Exception as exc:  # noqa: BLE001 — 绑定失败只是没有绑定，不拦渲染
+            print(f"[legend] {el['gid']} 的源对象绑定失败: {exc}", file=sys.stderr)
 
 
 #: 每张 Axes 上属于 matplotlib 自己的结构件——它们不是「Tavotto 漏掉的用户
@@ -2093,11 +2166,13 @@ def _legend_fields(leg) -> list[dict]:
         },
         # 条目顺序：value 是按显示顺序排的原始序号；options 给当前显示的文字
         # （前端画上下移动列表，不是普通下拉）
+        # 条目顺序：value 是显示顺序里的原始序号；options 是**原始序**的文字
+        # （options[value[k]] = 显示位 k 上的字）。前端画上下移动列表
         {
             "prop": "entry_order",
             "type": "order",
             "value": _legend_entry_order(leg),
-            "options": [t.get_text() for t in leg.get_texts()],
+            "options": _legend_entry_labels(leg),
             "group": "布局",
         },
         {
@@ -2136,7 +2211,178 @@ def _legend_fields(leg) -> list[dict]:
             "step": 0.1,
             "group": "布局",
         },
+        {
+            "prop": "handletextpad",
+            "type": "number",
+            "value": round(float(leg.handletextpad), 2),
+            "min": 0,
+            "max": 3,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "columnspacing",
+            "type": "number",
+            "value": round(float(leg.columnspacing), 2),
+            "min": 0,
+            "max": 6,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "frame_linewidth",
+            "type": "number",
+            "value": round(float(frame.get_linewidth()), 2),
+            "min": 0,
+            "max": 4,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "样式",
+        },
+        {
+            "prop": "frame_rounded",
+            "type": "bool",
+            "value": bool(_frame_rounded(leg)),
+            "group": "样式",
+        },
     ]
+
+
+def _legend_entry_labels(leg) -> list[str]:
+    """条目文字按**原始序**（隐藏中的项也在：它的 Text 对象还在模型里）。"""
+    model = legend_entries(leg)
+    if model is None:
+        return [t.get_text() for t in leg.get_texts()]
+    return [t.get_text() for t in model.texts]
+
+
+def _legend_entry_fields(t) -> list[dict]:
+    """图例项的条目那半：绑定 / 示意线样式 / 隐藏。
+
+    示意线支持哪几条按它的 artist 类型给（`legend_handle_props`）：曲线的示意
+    线是 Line2D，五条全有；柱 / 填充 / 散点的示意线只有颜色（映射散点连颜色
+    都没有——色图在管）。没有源的项不发 `binding`——界面据此显示「未关联
+    图中对象」，不摆一个假开关。
+    """
+    leg, j = t._mm_legend_entry  # noqa: SLF001
+    model = legend_entries(leg)
+    if model is None:
+        return []
+    h = model.handle_of(j)
+    fields: list[dict] = []
+    binding = model.effective_binding(j)
+    if binding is not None:
+        fields.append(
+            {
+                "prop": "binding",
+                "type": "enum",
+                "value": binding,
+                "options": list(LEGEND_BINDINGS),
+                "group": "图例项",
+            }
+        )
+    props = legend_handle_props(h)
+    if "handle_color" in props:
+        fields.append(
+            {
+                "prop": "handle_color",
+                "type": "color",
+                "value": to_hex(_handle_color_of(h)),
+                "group": "图例项",
+            }
+        )
+    if "handle_linestyle" in props:
+        ls = _linestyle_name(h)
+        opts = ["-", "--", ":", "-."]
+        fields.append(
+            {
+                "prop": "handle_linestyle",
+                "type": "enum",
+                "value": ls,
+                "options": opts if ls in opts else [ls] + opts,
+                "group": "图例项",
+            }
+        )
+    if "handle_linewidth" in props:
+        fields.append(
+            {
+                "prop": "handle_linewidth",
+                "type": "number",
+                "value": round(float(h.get_linewidth()), 2),
+                "min": 0.1,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+                "group": "图例项",
+            }
+        )
+    if "handle_marker" in props:
+        marker = str(h.get_marker())
+        m_opts = list(_LEGEND_HANDLE_MARKER_OPTS)
+        if marker not in m_opts:
+            m_opts = [marker] + m_opts
+        fields.append(
+            {
+                "prop": "handle_marker",
+                "type": "enum",
+                "value": marker,
+                "options": m_opts,
+                "group": "图例项",
+            }
+        )
+    if "handle_markersize" in props:
+        fields.append(
+            {
+                "prop": "handle_markersize",
+                "type": "number",
+                "value": round(float(h.get_markersize()), 2),
+                "min": 0,
+                "max": 20,
+                "step": 0.5,
+                "unit": "pt",
+                "group": "图例项",
+            }
+        )
+    fields.append({"prop": "visible", "type": "bool", "value": j not in model.hidden})
+    return fields
+
+
+def _legend_entry_info(t) -> dict | None:
+    """图例项的**身份**（不是可编辑字段）：原始序号、源对象的 gid、脚本原样的
+    绑定。界面拿 `source_gid` 做「查看源对象」与「恢复跟随」，不显示 gid 本身。
+    """
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return None
+    model = legend_entries(entry[0])
+    if model is None:
+        return None
+    j = entry[1]
+    info: dict = {"index": j}
+    if model.source_gids[j] is not None:
+        info["source_gid"] = model.source_gids[j]
+        info["binding_default"] = model.default_binding[j]
+    return info
+
+
+def _entry_is_hidden(t) -> bool:
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return False
+    model = legend_entries(entry[0])
+    return model is not None and entry[1] in model.hidden
+
+
+def _handle_color_of(h):
+    if isinstance(h, Line2D):
+        return h.get_color()
+    if isinstance(h, Patch):
+        return h.get_facecolor()
+    if isinstance(h, LineCollection):
+        c = h.get_color()
+        return c[0] if len(c) else "#000000"
+    fc = h.get_facecolor()
+    return fc[0] if len(fc) else "#000000"
 
 
 def _tick_fields(ts: TickSet) -> list[dict]:
@@ -2741,6 +2987,12 @@ def _fields_for(el) -> list[dict]:
         return _tick_fields(artist)
     if key == "text":
         return _text_fields(artist)
+    if key == "legend_text":
+        # 一段文字 + 一个条目。`visible` 由条目级的实现接管（整项进出图例盒），
+        # 文字自己那条不再单独出现——同一个名字两套语义是最坏的那种冗余
+        return [f for f in _text_fields(artist) if f["prop"] != "visible"] + _legend_entry_fields(
+            artist
+        )
     if key == "line":
         return _line_fields(artist)
     if key == "legend":
@@ -2981,6 +3233,9 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 _drop(el, "empty_text")
                 continue
             entry["label"] = _relabel(el["label"], live_text)
+            info = _legend_entry_info(artist)
+            if info is not None:
+                entry["legend_entry"] = info
         if el["role"] in ("axes", "axes3d"):
             # 前端可拖动/缩放子图占比（override axes position）。子 axes 的
             # 落位归父级的 locator 管，给不了这个能力——`_axes_fields` 那边
@@ -3094,6 +3349,22 @@ def build_manifest(state: FigState, stem: str) -> dict:
                         "detail": {"hosts": hosts},
                     }
                 ]
+        elif el["role"] == "legend_text" and _entry_is_hidden(artist):
+            # 隐藏中的图例项：Text 对象已经不在图例盒里，它自己量出来的框是
+            # 上一次布局的残影。它「住在」图例里，就报图例的框——元素表里必须
+            # 留着它，否则「恢复显示」那个入口跟着一起消失
+            leg = artist._mm_legend_entry[0]  # noqa: SLF001
+            try:
+                bb = leg.get_window_extent(renderer)
+                entry["bbox"] = [
+                    float(bb.x0 / W),
+                    float(1.0 - bb.y1 / H),
+                    float(bb.width / W),
+                    float(bb.height / H),
+                ]
+            except Exception:
+                _drop(el, "no_geometry")
+                continue
         elif isinstance(artist, Collection):
             # 散点（PathCollection）**不再单开一支**：它当年之所以有自己的
             # 分支，是因为 `get_window_extent` 对集合回空框、需要用数据范围

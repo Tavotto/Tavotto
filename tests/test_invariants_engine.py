@@ -329,6 +329,10 @@ def _editable_targets(man):
 _NON_VISUAL_PROPS = {
     "label": "只在图例里显形；元素自己的图上不画（图例项文字是另一个元素）",
     "zorder": "只改绘制次序；被它盖住/露出的是别的元素，本元素的像素可以不变",
+    # 绑定是**状态**不是样式：follow → custom 是「从此不再跟随」，脱开那一刻
+    # 示意线就是它此刻的样子（ADR 0034）；像素要等源对象下一次变才会分岔。
+    # 反方向（custom → follow）会动像素，`test_legend_binding.py` 钉住它。
+    "binding": "图例项脱开跟随的那一刻不改示意线；分岔发生在源对象下一次变化时",
 }
 
 #: **使能项**：这些 prop 要另一条 prop 开着才看得见，缺了它就是「改了没反应」。
@@ -360,6 +364,9 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "linestyle": (("edgecolor", "#ff00ff"), ("linewidth", 1.5)),
     "facecolor": (("fill", True),),
     "markersize": (("marker", "o"),),
+    "handle_markersize": (("handle_marker", "o"),),
+    # 列间距只在多列时有地方可摆——单列图例上它是死的（界面也只在 ncol>1 时给）
+    "columnspacing": (("ncol", 2),),
     "markerfacecolor": (("marker", "o"), ("markersize", 8.0)),
     "markeredgecolor": (("marker", "o"), ("markersize", 8.0)),
     "title_fontsize": (("title", "T"),),
@@ -584,8 +591,6 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
 
     for gid, field in _editable_targets(base):
         prop = field["prop"]
-        if prop in _LEGEND_REBUILD_PROPS:
-            continue  # 已知缺陷，单独由下面那条用例钉着
         _enablers, patch = _patch_for(gid, field, advertised)
         if patch is None:
             continue
@@ -661,62 +666,41 @@ def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     _man(hot_restore, "InvCont")
 
 
-#: **已知缺陷**：图例的「重建型」prop 撤销之后回不到脚本原样。
-#:
-#: 它们的 setter 靠 `Legend._init_legend_box(handles, labels)` 让 matplotlib
-#: 重排整个图例盒，而**那个操作不是幂等的、也不是恒等的**（实测 3.10.8）：
-#:
-#:   * 喂回 `leg.legend_handles` 时，误差棒那条图例的 handle 从
-#:     `LineCollection` 变成 `Line2D`——图例上的误差棒示意消失，只剩一条线
-#:     （改 ncol=1→2→1 之后，图例区域 393 个像素与原样不同，而**包围盒一个
-#:     像素没动**）；
-#:   * 喂回 `ax.get_legend_handles_labels()` 那份原始容器倒是幂等了
-#:     （连做三次结果不变），但**第一次就把图例盒撑高了 21px**，也不是恒等。
-#:
-#: 两条路都回不去，说明这不是「喂错了 handles」，是 `_init_legend_box` 本身
-#: 复现不出 `Legend.__init__` 当初那次布局。真修法是让撤销**还原保存下来的
-#: `_legend_box`**、并把这五条 prop 建模成互相覆盖的一组——那是一次图例重建
-#: 路径的改造，1.0 稳定化期刻意不做（见 docs/1.0-release-readiness.md 的
-#: Post-1.0 backlog）。
-#:
-#: **豁免不等于不管**：`test_legend_rebuild_drift_stays_where_it_is` 把这个
-#: 缺陷的边界钉死——只许发生在图例上、只许改像素不许改几何。它一旦扩大，
-#: 那条用例会红。
+#: 图例的「重建型」prop（列数 / 间距 / 顺序 / 隐藏）在 2026-09-02 之前是**已知
+#: 缺陷**：它们的 setter 把 `leg.legend_handles`（示意线的副本）喂回
+#: `_init_legend_box`，于是误差棒的示意线从 LineCollection 退化成 Line2D、
+#: markerscale 每重建一次多乘一次、标题字号退回默认——撤销回不到脚本原样，
+#: 上面那条不变式当年为它们开了豁免。ADR 0034 之后重建从**源对象**（或脚本
+#: 原样快照）派生，与 `ax.legend()` 走同一条路，豁免已删：上面那条用例现在
+#: 连它们一起扫。这里只留一条针对性的「重建两次仍逐位回原样」，防止那条
+#: 豁免以别的形状回来。
 _LEGEND_REBUILD_PROPS = frozenset(
-    {"ncol", "borderpad", "labelspacing", "handlelength", "entry_order"}
+    {"ncol", "borderpad", "labelspacing", "handlelength", "entry_order", "columnspacing"}
 )
 
 
 @pytest.mark.parametrize("stem", ["InvCont"])
-def test_legend_rebuild_drift_stays_where_it_is(hot_restore, stem):
-    """已知缺陷的**边界**：图例重建的漂移只许留在图例里、只许是像素级。
+def test_legend_rebuild_restores_exactly(hot_restore, stem):
+    """重建型 prop：改 → 再改 → 撤销到底，manifest 与像素都逐位回到脚本原样。
 
-    这条不是「证明它是对的」，是「证明它没有变得更坏」。三条边界：
-
-      1. 撤销之后 **manifest 一个字节都不变**——所以它不会污染写回自检、
-         不会让四路等价矩阵报假分歧、不会改任何元素的几何；
-      2. 漂移**收敛**：重建两次之后再重建，画面不再继续变（不是复利的）；
-      3. 出问题的确实只有图例那几条 prop——别的 prop 撤销后画面逐位回原样，
-         那由上面那条用例保证。
-
-    第 1 条是它今天还能被划成 P2 的全部理由：写回落盘的是全新 worker 重放
-    出来的那份（= 脚本原样），用户屏幕上那份才是跑偏的那个。方向是安全的，
-    但**「所见 == 所写」这条不变式确实破了**，所以它在 backlog 里带着编号。
+    InvCont 的图例里有误差棒（示意线是 LineCollection）——正是当年退化成
+    Line2D 的那一条；重建两次是为了抓「每次多乘一次 markerscale」那种复利。
     """
     base = _man(hot_restore, stem)
+    base_png = _png(hot_restore, stem, [], "legend-rebuild-base")
     gid = "axes_0.legend"
-    field = _fields(base, gid)["ncol"]
-    value = _sample_value(field)
-
-    hot_restore.override(stem, [{"gid": gid, "prop": "ncol", "value": value}])
-    after = _man(hot_restore, stem)
-    assert after == base, "图例重建的漂移跑到 manifest 上了——那就不再是 P2 了"
-
-    once = _png(hot_restore, stem, [], "legend-drift-1")
-    hot_restore.override(stem, [{"gid": gid, "prop": "ncol", "value": value}])
-    _man(hot_restore, stem)
-    twice = _png(hot_restore, stem, [], "legend-drift-2")
-    assert once == twice, "漂移是复利的——每撤销一次再坏一点，那就不止 P2 了"
+    fields = _fields(base, gid)
+    for prop in sorted(_LEGEND_REBUILD_PROPS & set(fields)):
+        value = _sample_value(fields[prop])
+        if value is None:
+            continue
+        hot_restore.override(stem, [{"gid": gid, "prop": prop, "value": value}])
+        hot_restore.override(stem, [{"gid": gid, "prop": "ncol", "value": 2}])
+        after = _man(hot_restore, stem)
+        assert after == base, f"{prop}：重建两次再撤销，manifest 没回到原样"
+        assert _png(hot_restore, stem, [], f"legend-rebuild-{prop}") == base_png, (
+            f"{prop}：manifest 一样但画面变了（示意线退化 / markerscale 复利）"
+        )
 
 
 #: **同一个元素上、两条会互相影响的 prop**。这一类的杀伤力在于：单独改任何
