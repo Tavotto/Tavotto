@@ -210,6 +210,20 @@ def test_resources_are_small_and_render_no_external_data():
         ),
         (lambda r: (r / "big.bin").write_bytes(b"\0" * (tutorial.MAX_FILE_BYTES + 1)), "太大"),
         (lambda r: (r / "tutorial_meta.json").unlink(), "缺少 tutorial_meta.json"),
+        (
+            lambda r: (r / "tutorial_meta.json").write_text(
+                json.dumps(
+                    {
+                        **json.loads((r / "tutorial_meta.json").read_text(encoding="utf-8")),
+                        "panels": json.loads((r / "tutorial_meta.json").read_text("utf-8"))[
+                            "panels"
+                        ][:1],
+                    }
+                ),
+                encoding="utf-8",
+            ),
+            "至少要有两张",
+        ),
     ],
     ids=[
         "missing-pdf",
@@ -224,6 +238,7 @@ def test_resources_are_small_and_render_no_external_data():
         "doc-unknown-asset",
         "oversized",
         "missing-meta",
+        "single-panel",
     ],
 )
 def test_validation_catches_broken_resources(tmp_path, mutate, needle):
@@ -296,6 +311,18 @@ def test_reset_restores_pristine_copy_and_leaves_no_leftovers(data_dir):
     assert not (reset.path / "tavottofile" / "export").exists()
     leftovers = [p.name for p in reset.path.parent.iterdir() if p.name.startswith(".")]
     assert leftovers == [], leftovers
+
+
+def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):
+    first = tutorial.ensure_tutorial_copy()
+    stale_old = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-deadbeef.old"
+    stale_tmp = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-cafef00d.tmp"
+    for d in (stale_old, stale_tmp):
+        d.mkdir()
+        (d / "junk").write_text("x", encoding="utf-8")
+    tutorial.ensure_tutorial_copy()
+    assert not stale_old.exists() and not stale_tmp.exists()
+    assert first.path.is_dir()
 
 
 def test_missing_files_are_repaired_without_touching_the_rest(data_dir):
@@ -535,10 +562,20 @@ def test_reset_clears_only_tutorial_state(client, tmp_path, monkeypatch, data_di
     engine_config.touch_recent(str(figs))
 
     _forbid_execution(monkeypatch)
+    closed: list[tuple[str, bool]] = []
+    real_close = m.close_project
+
+    def spy_close(target, wait=False):
+        closed.append((target, wait))
+        return real_close(target, wait=wait)
+
+    monkeypatch.setattr(m, "close_project", spy_close)
     resp = client.post("/api/tutorial/reset", json={})
     body = resp.get_json()
     assert resp.status_code == 200, body
     assert body["reset"] is True and body["project"]["id"] == pid
+    # 换目录之前先把教程项目关干净（worker 退出并释放文件，Windows 上才 rename 得动）
+    assert closed == [(pid, True)]
     assert sorted(body["cleared"]) == sorted([f"{doc_id}.json", f"{pid}.json"])
 
     assert not (m.AUTOSAVE_DIR / f"{doc_id}.json").exists()
@@ -714,6 +751,26 @@ def test_installed_wheel_layout_exposes_resources_through_importlib(tmp_path):
     )
     assert info["problems"] == []
     assert info["meta"] == tutorial.tutorial_metadata()["tutorial_version"]
+
+
+def test_smoke_and_ci_run_the_tutorial_on_the_bundled_runtime():
+    """教程脚本「在内置 runtime 上可运行」由冒烟证明：`--tutorial` 要真的接进去。"""
+    smoke = (REPO / "scripts" / "smoke_app.py").read_text(encoding="utf-8")
+    assert '"--tutorial"' in smoke
+    assert "_check_tutorial(base)" in smoke
+    assert "/api/tutorial/open" in smoke and "/api/tutorial/reset" in smoke
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # 两条桌面冒烟①（Windows / macOS 内置 runtime）都带 --tutorial
+    bundled = [
+        blk
+        for blk in ci.split("- name:")
+        if "--expect-source bundled --expect-runtime" in blk
+        and "--expect-control-plane workerd" in blk
+    ]
+    assert len(bundled) == 2, "找不到两条内置 runtime 的冒烟①"
+    assert all("--tutorial" in blk for blk in bundled)
+    # wheel 装进干净环境之后经 importlib.resources 验一遍教程资源
+    assert "tutorial.validate_tutorial_resources()" in ci
 
 
 def test_desktop_spec_ships_the_tutorial_resources_as_datas():
