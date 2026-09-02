@@ -5,7 +5,110 @@
 
 ---
 
-## 最近一次：Session 22（2026-09-02）
+## 最近一次：Session 23（2026-09-02）——最终发布交接
+
+### 目标
+
+Prompt 23：不加产品功能。审计前 22 轮是否真闭环、全量真跑、A–N 场景映射、故障注入盘点、性能与
+内存有数字、打包验证、无障碍 / i18n / 隐私终审、修 P0/P1、给诚实的发布结论。
+
+### 发布结论
+
+```text
+BLOCKED — 不建议发布
+```
+
+本分支 P0 = 0、P1 = 0；阻断在 main 上的三条轨道（#225 Lab、#226 Nightly CompatBench、桌面产物未在 CI
+执行本分支改动）。最短路径与逐条门禁在 `STATUS.md`「发布结论」。
+
+### 实际完成（本轮 12 个提交）
+
+1. **R-18**：升级验收两条空检查真跑起来（`e6756752`，四条变异全红）。
+2. **web 三处**：`ElementBar` 文字分支接回 `TypographyAdapter`；MCP Splash 与 playground 引导页进 i18n；
+   `ScriptLibrary` 对比度 2.54 → ≥4.7（`879f6e2e`）。
+3. **打包三件**：`canvas_coverage.json` 进 datas；`desktop-tauri.yml` 冒烟带 `--tutorial`；README 说出
+   Windows ARM（`5d35686e`）。
+4. **原图 PDF 文本层**：fonttype 42（`67518179`，T-122）+ 科学文本矩阵用例 + ⌘S 键位用例。
+5. **另存为校验**：`validate_document`（`37765bfc`，T-123；ADR 0023 §5a 兑现）。
+6. **e2e 流程 B / D** 追上 16 / 19 的界面（`30d0d6ce`）。
+7. 受管产物重建（`9d8dadc5`）；留档与基线（`18c08333`、`64adbebe`、本提交）。
+
+### 实测到的、不是假设的
+
+- 原图 PDF 文本层缺 U+00FF 之外的字符是 matplotlib Type 3 的行为，用户自己 `savefig` 也一样；
+  Tavotto 从没设过 fonttype。像素差只在字形边缘（diff 图只有轮廓）；golden / CompatBench 都走 Agg PNG。
+- 分支比 main 热渲染慢 15%，全在 manifest；不是 `_glyph_scan`（7 µs）。交错 A/B/C 才分得出
+  fonttype 42 的 20–35 ms 与十轮累计的 5 ms。
+- 版本时间线每条整份文档：1 MB 文档塞满 120 条后一次追加 547 ms。
+- 发行链（`desktop-tauri.yml`）以前一次都不开教程；`tests/test_tutorial` 的门禁只看 `ci.yml`。
+- 变异前没提交，`git checkout` 吃掉了未提交的处理器改动（第二次踩）。
+- `-q` 叠加 `addopts=-q` 让 pytest 摘要行消失；判绿看退出码或 `--junitxml` / `-o addopts=""`。
+- 实验室脚本 `lab_acceptance.py` 本机要 `TAVOTTO_CI_STATE_ROOT`（默认 `/srv/tavotto-ci`）。
+
+### 关键 API / 脚本（发布路径直接用）
+
+```text
+scripts/bench_document.py            文档层三档基线（validate / write / read / autosave / 版本追加）
+scripts/bench_render.py --plane python --repeat 7   交错 A/B 的那条命令（两棵树各 3 轮）
+scripts/ci/lab_acceptance.py --dist dist            本机：TAVOTTO_CI_STATE_ROOT=<可写目录>
+tests/test_scientific_text_matrix.py                 科学文本矩阵（六位置 × 四产物）
+figsession.export_font_context(fmt)                  导出 PDF/PS 的 fonttype 42 接管（T-122）
+```
+
+### 修改的文件
+
+```text
+后端  src/tavotto/app.py（另存为校验）  engine/figsession.py（fonttype 42）  scripts/ci/upgrade_acceptance.py
+      packaging/tavotto.spec  .github/workflows/desktop-tauri.yml  scripts/bench_document.py（新）
+测试  tests/{test_ci_qualification,test_document_persistence,test_tutorial,test_support_matrix}.py
+      tests/test_scientific_text_matrix.py（新）
+前端  web/src/canvas/context-bar/ElementBar.tsx（+ elementBar.test.tsx）  web/src/hooks/useKeyboardSave.test.tsx（新）
+      web/src/mcp/main.tsx  web/src/playground/main.tsx  web/src/components/left/ScriptLibrary.tsx
+      web/src/i18n/locales/{zh-CN,en-US}/dialogs.json + resources.d.ts  web/e2e/ux-consistency.spec.ts
+文档  README.md  README.zh-CN.md  docs/privacy.md  docs/perf-baseline.md  docs/adr/0023  src/tavotto/AGENTS.md
+      docs/implementation/product-ux-reliability/*
+产物  codex-plugin/mcp/widget/canvas.html（e97fd2530046d37a）  web/dist-playground/（09a8abe9eab7a60b，不进 git）
+```
+
+### 尚存限制
+
+`STATUS.md`「遗留（Session 23 之后仍开着的）」——每条带级别、复现 / 影响、issue、owner（#220–#227）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13–23 十一轮都在这条分支上，**尚未推送、没有 PR**）；
+  基于 `origin/main` = `c12c229c`（GitHub API 核过），无冲突。
+- 本轮末提交：`64adbebe` + 本留档提交（`git log -1`）；`git status` 干净；author `88193520+erwanjun@users.noreply.github.com`。
+- 临时 worktree `perf-c`（A/B/C 用）已删除；`dist/`、`src/tavotto/web/` 是 gitignore 产物。
+
+---
+
+## 发布路径（接手者从这里开始）
+
+1. **推分支、开 PR，打 `full-ci` 标签**——让 `windows-exe-smoke` / `macos-app-smoke` 第一次执行本分支的
+   `tavotto.spec` datas 与 `--tutorial`；合并队列会再跑一遍。桌面腿红了先看 `--tutorial` 那一步
+   （`scripts/smoke_app.py:318-352`）。
+2. **#225 / #226 不在本分支**：Lab release 档与 nightly 绿之前不打 tag。
+3. `cd ../Tavotto_website && pnpm sync-playground`（playground 指纹 `09a8abe9eab7a60b`）。
+4. 发版按 `docs/1.0-release-readiness.md`；发完把 `docs/perf-baseline.md`「发布终审」的数字当下一轮的基线。
+
+**绝不要做的事**（07 起的各条原样成立，23 再加三条）：
+
+64. **不许把导出 PDF 的 fonttype 改回 3**——文本层会再次丢 U+00FF 之外的字符；矩阵用例会红，别去改用例。
+65. **不许为了让 `test_ctrl_c…` 稳定而放宽 90 s 或跳过它**——它红的时候先看负载（`uptime`），那是机器性质。
+66. **不许在变异反证前留着未提交的修复**——`git checkout` 不分你我。
+
+**必须保留的不变式**（22 的六十条之上）：
+
+61. 预览字形扫描说画得出的字符，原图 PDF 与画布 PDF 的文本层都抽得回来（`test_scientific_text_matrix`）。
+62. 「另存为」与自动保存共用 `validate_document`；来自更新版本的文档进不了 `tavottofile/`。
+63. N-1 升级验收里「上一版没写成」是失败的检查，不是跳过。
+64. 发行链的桌面冒烟打开一次教程；`canvas_coverage.json` 在 datas 里。
+
+---
+
+## 历史：Session 22（2026-09-02）
 
 ### 目标
 
@@ -150,7 +253,7 @@ _capture_refresh_completed(result) ; _capture_package_action(op, progress)
 
 ---
 
-## 下一阶段入口（Prompt 23：全量 QA、性能、无障碍、打包、发布门禁）
+### （已消费）Session 22 留给 23 的入口
 
 **从这里开始读**：`docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`（本轮）、`UX_CONTRACTS.md` 7b、
 `ARCHITECTURE.md` §8d、`STATUS.md` 遗留表（含 21 之后没关的 e2e 两条红）。

@@ -54,7 +54,7 @@
 | 20 | 离线教程资源后端 | ✅ 完成（本次，ADR 0039） |
 | 21 | onboarding UI 与提示 | ✅ 完成（本次，ADR 0040） |
 | 22 | Codex/AI、i18n、遥测、文档整合 | ✅ 完成（本次，ADR 0041） |
-| 23 | 全量 QA 与发布门禁 | ⬜ |
+| 23 | 全量 QA 与发布门禁 | 🟡 **BLOCKED — 不建议发布**（本次；本分支 P0 = 0、P1 = 0，阻断在 main 上另外三条轨道的连红与桌面产物未验证，见「发布结论」） |
 
 ## 六个 Gate
 
@@ -65,7 +65,7 @@
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
 | 5 产品外壳 | 19–22 | ✅ 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）+ 21（交互式 onboarding 与一次性提示）+ 22（Codex / AI 显式刷新、遥测整合、入口与文档）全部完成 |
-| 6 发布 | 23 | ⬜ |
+| 6 发布 | 23 | 🟡 本树全量真跑过、打包 wheel 验过、场景 A–N 有映射；**桌面产物只有 CI 证据且本分支的桌面改动尚未在 CI 执行过**，main 上 Lab / Nightly / Metrics 连红 |
 
 ---
 
@@ -586,175 +586,112 @@ desktop…」。
 | 变异反证 17（后端）+ 19（前端） | ✅ 后端 14 红 + 3 存活各处置后红（M3 补用例、M6 删冗余、M13 补断言）；前端 18 红 + 1 存活补断言后红（F4），见 `TEST_MATRIX.md` |
 | `git diff --check` | ✅ |
 
-## 遗留（Session 22 之后仍开着的）
+### Session 23 之后（终审：改动后在**最终树**上再跑一遍全量）
 
-| ID | 事项 | 归属 |
+| 命令 | 结果 |
+| --- | --- |
+| `ruff check . && ruff format --check .` | ✅（第一遍红：矩阵用例改判据后漏跑 formatter，`64adbebe` 修） |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | ✅ 一致（`e97fd2530046d37a` / `09a8abe9eab7a60b`） |
+| `PYTHONPATH=<wt>/src .venv/bin/python -m pytest -q tests`（`TAVOTTO_NO_TELEMETRY=1`，junit 计数） | **3861 条：1 failed / 34 skipped**（753 s）——唯一红仍是 `tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`（两次全量都红、单跑 2/2 绿 0.8 s；`tavotto run` 线，本分支未动 `runspec` / `cli` / `tests/native`，Session 06 起就有） |
+| `cd web && pnpm test` | ✅ 184 文件 / 2503 条（17 s；比基线多 2 个文件 7 条） |
+| `pnpm build` / `pnpm i18n:check` / `pnpm lint` | ✅ / ✅ / ✅ 无 error（主 chunk 1.85 MB，R-17） |
+| `build_frontend.py` + Playwright 三个 project 全量 | ✅ **126 条：125 passed / 1 skipped / 0 failed**（707 s；改动前 2 红的流程 B / D 已绿） |
+| `python -m build` + `scripts/ci/lab_acceptance.py --dist dist` | ✅ 结构断言 9 项 + 端到端冒烟全过（wheel 1.50 MB） |
+| `scripts/bench_render.py` 交错 A/B/C ×3 / `scripts/bench_document.py` / watcher 空闲采样 | ✅ 数据在 `docs/perf-baseline.md`「发布终审」 |
+
+改动前的基线（本树 `5608008f`）：pytest 3840 条 1 红（`test_ctrl_c…` 负载敏感、单跑绿）、vitest 2496 绿、
+e2e 126 条 2 红（流程 B / D）——全部记在 `TEST_MATRIX.md` Session 23。
+
+## 发布结论（Session 23）
+
+```text
+BLOCKED — 不建议发布
+```
+
+本分支：**P0 = 0，P1 = 0**（本轮修掉的 P1：原图 PDF 文本层缺科学字符 T-122、升级验收两条空检查 R-18、
+另存为不校验 T-123）。阻断项与最短修复路径：
+
+1. **main 上 Lab Qualification 连红**（#225，`test_project_env.py` 14 条）——release 档的 lab 资格拿不到。
+   修法：给实验室 runner 的 base 解释器装 matplotlib，或让 `venvfixture.make_project_venv` 不假设 base 带它。
+2. **main 上 Nightly CompatBench 连红**（#226，四个多图用例 `native_run` 退成 product_bug）——nightly 门禁。
+   修法：compat-bridge 轨道修 native run 的多图路由或按证据改基线声明。
+3. **桌面产物本分支未在 CI 执行过**：Session 19–23 改了 `tavotto.spec` 的 datas 与两条 workflow 的
+   `--tutorial`，它们只在合并队列 / `full-ci` 标签 / tag 上第一次执行。修法：先给本分支的 PR 打 `full-ci`
+   标签，看 `windows-exe-smoke` / `macos-app-smoke` 两腿真过一次。
+4. Distribution metrics 连红（#227）不阻断产品，但发行量指标断了六天，发版前该修。
+
+以上四条都不在本分支的改动范围内；1–3 任一不清，结论不变。清完之后本分支满足门禁清单其余各项
+（见下方逐条）。
+
+### 门禁清单逐条
+
+| 项 | 状态 |
+| --- | --- |
+| Gate 1–5 全部通过 | ✅（01–22 各自的结果表 + 本轮审计未发现空门禁） |
+| P0 为 0 | ✅ |
+| P1 为 0 或有批准的例外 | ✅ 本分支；❌ main 上 #225 / #226 |
+| 全量自动化真实通过 | 见上表 |
+| 关键 E2E 通过 | 见上表（流程 B / D 已修） |
+| 文档 migration / 保存 / recovery | ✅（Gate 1 用例 + 本轮 round-trip / 未来 schema 拒绝） |
+| original / canvas export fidelity | ✅（既有像素 / 尺寸用例 + 本轮 PDF 文本层矩阵） |
+| 特殊字符矩阵 | ✅ `test_scientific_text_matrix.py` 7/7 |
+| package manager 隔离与安全 | ✅（审计 §3：结构性，34 条用例含 3 条真装） |
+| wheel / sdist 与目标 desktop | ✅ wheel / sdist 本机验；❌ desktop 本机未验、CI 未执行本分支 |
+| i18n / a11y | ✅ `i18n:check`、a11y / contrast / i18n e2e 三个 project 绿；对比度缺口已修 |
+| telemetry / privacy 文档一致 | ✅（三方逐位一致；`target_version` 措辞收窄） |
+| TEST_MATRIX / STATUS / DECISIONS / UX_CONTRACTS 更新 | ✅ |
+| 工作树无临时文件和无关改动 | ✅（`git status` 干净；`dist/`、`src/tavotto/web/` 为 gitignore 产物） |
+
+### 真实用户流程 A–N（自动化覆盖；映射逐条在会话目录 `scenario-coverage.md`）
+
+| 场景 | 覆盖 | 无自动化 / 备注 |
 | --- | --- | --- |
-| — | **`ScriptLibrary` 的「高级详情」summary 对比度 2.54:1**（`text-ink-faint` 上放了可点的文字）：仓库自己的尺子在教程 e2e 里量到的，与教程无关的既有问题；既有 `a11y.spec` 的工作台用例没量到它（那条用例的场景里脚本库那一段没展开）。教程 e2e 只量 coachmark 与被环套着的卡片 | 22（i18n / a11y 整合） |
-| — | **Step 4 的完成条件认「任一教程面板」**：两张图都在画布上时问题面板里两张的问题都在，用户点 Fig1 的一条也算完成、教程接着在 Fig1 里说话。是对的（教的是「从问题定位」），但文案没说「哪一张」 | 已决定不做 |
-| — | **教程外的一次性提示在 e2e 场景里会出现**（第一次单选面板就弹「双击可进入图内编辑」）：已改成不占 `role=status`、不挡指针；其它 spec 若靠底部右侧的坐标点画布，可能被这张卡片挡到——全量 e2e 只撞到 `cross-tab-paste` 一条（role 撞名），改后需复跑 | 23 前复核 |
-| — | **embedded 只做了「不出现 + 可关持久化 + 宿主可显式调 `startTutorial()`」**，没有做「coachmark 限制在容器内」——MCP 画布 / playground 不渲染 `App`，也没有 Tutorial API，入口整行不出现（`no_api`） | 已处置（诚实降级） |
-| — | **Step 3 的锚点是 `[data-prop="fontsize"]`**，选中的文字元素如果只有 `text` 字段（刻度标签那类）就没有这一行；教程里首选 title 不会撞到，但用户自己点了别的文字时 coachmark 会「等待 → 找不到 → 返回 / 跳过」 | 已处置（可恢复） |
-| — | **`e2e/ux-consistency.spec.ts` 流程 B 红**（`getByRole('switch', { name: '右边刻度线' })` 等到超时）：失败截图里刻度卡是 Session 16 之后的形态——「显示边」按 **X 刻度 / Y 刻度** 两个页签分开，右边那个开关在 Y 页签下，用例没先切页签。画面里没有 coachmark / 提示，与本轮无关；Session 16–20 都没跑过这条 spec。**本轮没修**（它守的是 16 的合同，改用例得对着 ADR 0035 核） | 23 前（或 16 的作者） |
-| — | **`e2e/ux-consistency.spec.ts` 流程 D 红**：`getByRole('button', { name: '项目与路径' })` 等到超时——Session 19 把设置分区改成十一个、这一区叫「项目」（`dialogs:settings.section.project`），用例里还是旧名。同样与本轮无关，19 当时只跑了 `settings-shell` / `coding-agents` 两条 spec | 23 前（或 19 的作者） |
-| — | **Session 21 的 e2e 只跑了 chromium**（webkit 只跑黄金路径三条，教程 spec 没进那份 testMatch） | 23 前 |
-| — | **桌面版对 `tavotto_refresh_project` 永远是 `delivered: local`**：sidecar 的端口与凭据经 Tauri 壳 stdin 交接、不落盘，MCP 进程探不到实例；界面靠桌面版自己的 watcher 在两秒内跟上。工具文字如实说。要让桌面版也 `app`，得给 sidecar 一条可发现的本机凭据（另一个 ADR 的事） | 23 评估 / 记 issue |
-| — | **`ScriptLibrary` 的「高级详情」对比度 2.54:1** 仍在（21 记的）：本轮是接线与遥测，没动它 | 23（a11y） |
-| — | **命令面板 / 接入中心 / 多选栏的遥测只有 jsdom 用例**，没有真浏览器 e2e；`tutorial.spec.ts` 本轮复跑（见结果表） | 23 QA |
-| — | **`problem_focused` / `export_completed.scope` 两条 Prompt 22「例如」列的事件没加**：前者需要把校验规则 id 归成闭集 rule_group（`lib/validation.ts` 的规则 id 分散在多处，本轮没核完）；后者要在 `api_export` 里把 `request.scope` 带进既有事件（加字段 = 再升一次同意版本，与本轮九条合并升更划算，但时间不够）。都记在 `docs/analytics/telemetry-events.md` 之外，不写进承诺 | 23 或下一次遥测扩容 |
-| — | **`web/dist-playground/` 已按本轮源码重建，网站仓库尚未 `pnpm sync-playground`** | 发布前 |
+| A 单图快速编辑 | e2e `asset-library` 完整链（保存 → 关闭 → 重开 → 字号仍 13）+ store 用例 + 本轮 ⌘S 键位 | — |
+| B dirty / 关闭 / 恢复 | `saveStateMachine` 全套（clean 不拦、保存中编辑、恢复副本裁决、主文档不动）+ atomicio 五条 | 三选一对话框不存在（#223）；真实进程 kill |
+| C 迁移 / 项目移动 | schema 2 → 3 前端迁移 + 未来 schema 两侧拒；项目移动 `test_project_env` / registry 相对路径 | 迁移前逐文档备份（原文件在显式覆盖前不动） |
+| D 外部修改 | `test_project_watch` 批次 / 自写不回环 / 外部紧接触发；不跑脚本 | 自动保存不进 watcher（结构上在数据目录，未断言） |
+| E 就绪度六档 | `test_readiness*` + 接入中心 e2e | — |
+| F 原图导出 | ADR 0028 用例（scope=original 无 x/y/w/h、DPI 来源、透明）+ 本轮文本层 | — |
+| G 画布导出 | 页面 mm 尺寸 / 翻转 / 旋转 / hidden / 部分失败 / 覆盖 | 多面板与裁剪面板的像素断言 |
+| H Style / Spec / 问题 | ADR 0029/0030 用例（快照、7.5 pt → 8 pt、focusIssue、safe fix undo、导出摘要同源） | — |
+| I 科学文本 | **本轮矩阵** 六位置 × 四产物 | — |
+| J 图例 / 刻度 | ADR 0034/0035 用例 + e2e 流程 B（本轮修） | — |
+| K 多选 / QuickEdit | ADR 0036/0037 用例 + `quick-menu` e2e | — |
+| L 设置 / 包管理 | `settings-shell` / `coding-agents` e2e + 包管理 34 条 | 真 150% scale（600 px 视口等价） |
+| M 教程 | `tutorial` e2e 四条 + 后端 47 | — |
+| N Codex / AI 刷新 | `test_ai_refresh` 18 + MCP 16 + 前端 `useServerEvents` | — |
 
+## 遗留（Session 23 之后仍开着的）
 
+| 事项 | 级别 | 复现 / 影响 | 归属 |
+| --- | --- | --- | --- |
+| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225 | project-env + lab runner |
+| main：Nightly CompatBench `native_run` 4 用例退成 product_bug | **P1（发布）** | #226 | compat-bridge |
+| 桌面产物：本分支的 datas / `--tutorial` 改动未在 CI 执行过；`delivered: local` 桌面限制 | P1（未验证，不是缺陷） | 合并队列 / `full-ci` 第一次执行 | 23 → PR |
+| main：Distribution metrics HTTP 400 | P2 | #227 | ops |
+| 热渲染比 main 慢 15%（manifest +27%） | P2 | #220，阈值 1.3× / 2× | engine |
+| 版本时间线整份文档、autosave 无上限 | P2 | #221（5 000 对象 547 ms） | documents |
+| 另存为无冲突检测；读侧 NaN 无对称闸 | P2 / P3 | #222 | documents |
+| 桌面壳无 CloseRequested 处理 | P2（待真机） | #223 | desktop |
+| MCP 插件第二份导出实现 | P2 | #224 | codex-plugin |
+| 原图写回 / AI 回滚不经 atomicio（无 fsync，有 20 份备份） | P2 | R-05 族 | 择机 |
+| `test_ctrl_c_reaches_the_script…` 负载敏感（本轮负载 13.6 时红一次） | P2 | 单跑 3.8 s 绿 | tavotto run 线 |
+| 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | `pnpm build` 告警 | 择机 |
+| 网站 /try 未同步（`pnpm sync-playground`） | 发布前 | playground 指纹 `09a8abe9eab7a60b` | 发布前 |
+| README 两张预检截图是旧规范拍的 | P3 | alt 如实 | 择机 |
+| `problem_focused` / `export_completed.scope` 两条事件未加 | — | 22 记 | 下次遥测扩容 |
 
-| ID | 事项 | 归属 |
-| --- | --- | --- |
-| — | **桌面 PyInstaller 产物本机跑不了**：spec 的 datas 改动（`tavotto/resources` + 补漏的 `tavotto/profiles`）只有静态断言与 CI 桌面腿（`--tutorial`）能证明。**`profiles/publication.json` 在此前的冻结产物里本来就不在**——预检 / 规范在桌面版里是坏的还是有别的兜底，要等 CI 桌面腿或一台装了 PyInstaller 的机器回答 | **待 CI 回答，优先** |
-| — | **旧版本目录不清理**：改一次资源就多一份 `<data_dir>/tutorial/v…/`（几十 KB），旧的是用户改过的东西，没有做「清理旧教程」入口 | 已决定不做（说明在 ADR 0039） |
-| — | **「副本完整」只看存在性**：用户把脚本改坏了普通打开不修，只有「重新开始教程」会。进度优先于整洁 | 已处置（ADR 0039 §4） |
-| — | **自动保存槽位的清理靠前端遵守 `document_id`**：前端用别的 documentId 打开教程画布，重置就清不到那一格。后端没有办法从槽位内容反推它属于哪个项目（文档里没有 figures_dir） | 21 必须遵守（T-106） |
-| — | **`examples/figures` 与教程资源是两份内容相近的示例**：前者给开发 / CI 冒烟（随源码），后者给用户（随包）。没有合并——冒烟要的是 pandas / scipy 全栈脚本，教程要的是只依赖 numpy + matplotlib | 已决定不做 |
-| — | **Session 20 没跑 e2e**：本轮没有 UI 改动。这是**没跑**，不是「跑过没问题」 | 23 前 |
-
-## 遗留（Session 19 之后仍开着的）
-
-| ID | 事项 | 归属 |
-| --- | --- | --- |
-| — | **包管理没有回滚**（pip 没有事务，ADR 0019 §八）。处置：改动前后各记一份 `pip freeze` 快照（最多 12 份）、页面常驻一句「没有回滚，有快照，坏了可重建」；快照目前**只能看文件**，界面上没有「按快照恢复」——重建装回去的是账上记的版本，不是快照 | 已处置（诚实降级） |
-| — | **卸载受管环境里的包不会顺带卸掉它拉进来的依赖**（pip 也不会）。账上只记用户点名装的；孤儿依赖留在环境里，重建时不会装回去 | 已处置（说明在 ADR 0038） |
-| — | **`agentVersionLabel` 抽不出数字就不显示**：真机 claude 的 shim 是坏的（`--version` 打的是 bash 报错），后端仍报 `installed`——「第一行非空 = 版本」这条判据在后端（`probe_version_detailed`），本轮没动它。表现是一级列表上 Claude Code 只有名字与「已安装」，详情里能看到那行报错 | 待查（后端判据） |
-| — | **诊断页的健康检查列表仍按后端 `/api/diagnostics` 的顺序 + 好坏分组**，没有做「一键修复」；`cli_*` 只在前端过滤，诊断包里照旧带 | 已处置 |
-| — | **设置外壳固定 760×600**：常规页下半屏留白。这是有意的（留白比跳动便宜）。**没有做用户可调尺寸** | 已决定不做 |
-| — | **窄窗口（<640）下导航变顶部一条**：e2e 量过 600×700；**150% 系统缩放没有真机量**（用窄视口等价替代） | 待真机 |
-| — | **包管理页不在内嵌画布 / playground 里**（它们没有设置对话框），「browser/embedded 无本地包权限」这一档实际只剩「没打开项目」与「这台机器建不了环境」两种禁用原因 | 已处置 |
-
-| ID | 事项 | 归属 |
-| --- | --- | --- |
-| — | **不渲染的面板会成批报「无法核验」**：渲染只对激活画布上「编辑中 / 有 override / 脚本领先磁盘」的面板发起（`renderTargets`），所以多画布项目里 `panel-text-not-verifiable` 数量可观。它是 `not_verifiable` 这一档、有自己的分组，**而且是真话**——但数量上是噪音。改法要么按需渲染、要么把这一档折叠成每画布一条 | 未定 |
-| — | **批量修复不跨画布**（撤销栈按画布换入换出，跨画布的"一个批事务"在这套模型里不存在）。界面只在当前画布上给「全部修复」，别的画布上的一条一条修 | 已处置（说明写在按钮文案里） |
-| — | **问题面板没有虚拟滚动**：有多少条渲染多少行。本轮用例里最多几十条，真实上限没量过（与接入中心同一条遗留） | 待量 |
-| — | **`user_choice` 目前只有页宽一条规则**。这一档不是为它而设——它是 `applyIssueFix(id, choice?)` 这个签名成立的前提 | 已处置 |
-| — | **MCP 内嵌画布保留自己的等级图标表**：它消费的是 MCP 聚合载荷、且是另一个尺寸敏感的 bundle。图标一致的看护覆盖应用内两处 | 已处置 |
-| R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
-| R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07/08 三次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交）。**Session 12 新证据：它对机器负载敏感。** 本轨道第 12 次全量里红了一次——而那一遍我把 pytest 全量与 Playwright e2e **同时**开着；单跑 0.7–2.9 秒，同一棵树串行全量 8 次全绿。它等的是「SIGINT 之后 `tavotto run` 在 90 秒内退出」，重载下这个预算不够。**但这解释不了 Session 06 那次**（那一遍是串行的），所以问题没关：判据把"进程反应有多快"当成了产品性质，而它其实是机器性质 | 待查（多一条证据） |
-| — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
-| — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六）。**08 没做**：本阶段的左栏改造只到「常驻外壳 + 项目状态入口」，历史入口的位置牵涉顶栏与文档菜单的分工 | 未定 |
-| — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
-| — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
-| — | **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行。**本轮没有实测过大项目**（用例里最多 6 行），真实上限不知道 | 待量 |
-| — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
-| — | ~~就绪度前端的 axe 覆盖靠 e2e，本轮没跑过 Playwright~~ **已跑**：第七轮合并 main 之后在本机跑了**完整** 115 条（114 passed / 1 skipped）。「本机沙箱里起不来」是错的判断（见 R-19）；worktree 里要带 `TAVOTTO_PYTHON=<主工作区>/.venv/bin/python`，且**必须先 `python scripts/build_frontend.py`**——包内 `src/tavotto/web/` 优先于 `web/dist`，不重建的话测的是上一次的界面，而且一路绿 | ✅ 已闭合 |
-| — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
-| — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
-| — | **「按另一个像素网格导出位图」这个能力不存在**：评审回合 3 把那条没有调用点的 `native_grid=False` 分支删了（它用的密度常量还是错的）。要加这个能力时，密度得从 `engine/originalspec` 来，像素网格由调用方算好传进来 | 未定 |
-| — | **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画：`_resolve_panel_source()` 的 `safe_resolve()` 排在查注册表之前。界面已经如实说出来（不给必然失败的按钮），但**能力本身是缺的**。改它要动画布导出共用的那条路 | 未定（评审回合 3 记录） |
-| — | **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败） | 择机 |
-| — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
-| — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
-| — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
-| — | **左侧轨道上「问题」与「项目接入状态」两个按钮不在 DOM 里**（本机 chromium e2e，六条红的共同上游）。**在 `origin/main`（`c12c229c`）上一模一样地红**，两侧的无障碍快照逐字相同——不是本轮引入的。但 Session 12 的记录是同样四个 spec **27 passed**，而 `LeftRail` 里这两个入口都是无条件渲染的，源码上找不到能让它们消失的判据。复现：`python scripts/build_frontend.py` 之后 `cd web && TAVOTTO_PYTHON=<repo>/.venv/bin/python npx playwright test e2e/a11y.spec.ts --project=chromium -g "项目接入状态"` | **未查明，优先** |
-| — | **「新建标注时套用当前 Style」没有做**：本仓库里 Style 是一次性应用、不是文档上的绑定（ADR 0029 绑的是 Spec），「当前 Style」这个概念不存在。做成本机 UI 偏好会让同一个动作在两台机器上建出不同的对象，比现状更坏。13 只把新建默认值收敛成 `canvasTextDefaults()` 一处 | 待用户拍板 |
-| — | **画布文字的字体族只有三个通用族**：具体字体名要么内嵌用户磁盘上的字体（另一件事、另一份许可证讨论），要么就是静默替换。图内文字那侧才有「装不上的具体字体」这一档（`options_unavailable`） | 已处置（闭集是能力承诺） |
-| — | **中日韩字形不跟着族走**：实测 PyMuPDF 1.28.2 的四个 `china-*` 别名回同一张 `Droid Sans Fallback Regular`。**14 的处置：不改这条能力，改成说得出**——画布文字里的中日韩字符现在会在 `glyph-substituted` 里被报成「不是用所选字体画的」 | 已处置 |
-| — | **`text_weight_policy` 里的 `annotation` 一档仍然没有执行者**：规范声明「标注一律常规字重」，而 `addSubLabels()` 造出来的 (a)(b)(c) 按惯例加粗。现在执行会让每一份既有文档立刻多出一批警告——**这是规范范围的问题**，不是属性层的问题 | 待用户拍板 |
-| — | **`valign` / `lineHeight` / `rotationDeg` 在能力表里，但控件只出前六条**：行距与旋转仍在各自的「更多」里用原来的控件（数据已经经过能力层，控件还没并进 `TypographyControls`） | 择机 |
-| — | **Session 13 没跑 e2e**：改动没碰黄金路径的键位与文案，但这是**没跑**，不是「跑过没问题」 | 23 前 |
-| — | **图内中日韩没有自动回退**：回退尾巴只有 matplotlib 自带的 DejaVu Sans（在每个平台上都在，回退结果确定）。往里放一个平台相关的中文字体会让同一份文档在两台机器上画出不同的字。用户在字体下拉里选（候选取自出版规范的 `cjk_fallback.accepted`，按运行时探测过滤） | 已处置（明示取舍） |
-| — | **`scientific` 档的代价只写在 tooltip 里**：合成之后 PDF 文本层里 `×10⁵` 抽回来是 `×105`。没有做「导出前再确认一次」——那会给一个每次导出都要点掉的对话框 | 未定 |
-| — | **PDF 字体子集嵌入没有判据**：由 PyMuPDF 自己管，本轮没碰也没量过子集完整性。`preferred_formats` 那条规范没有新增看护 | 未定 |
-| — | **覆盖表是在 macOS + pymupdf 1.28.2 上生成的**。它随 PyMuPDF 的 wheel 走，理论上跨平台一致，但**没有在 Linux / Windows 上实测过**；`gen_canvas_coverage.py --check` 会在 CI 上第一次回答这个问题 | 待 CI 回答 |
-| — | **`interpretation` 只有画布文字有**：图内文字的上下标是 matplotlib 的 `$…$`（另一条管线）。能力表里它是 `figureText` 不支持的一条 | 已处置 |
-| — | **没有源的误差棒图例项撤销到底后示意线样式回不到原样**：它的示意线是 LineCollection，按 matplotlib handler 造不出同类快照，`pristine` 只能是原对象本身，handle_* override 直接改到它。有源的走源派生，不受影响（ADR 0034 §5） | 已处置（限制写进 ADR） |
-| — | **图例示意线没有 SVG 局部预览**：改曲线颜色时曲线立刻变、图例示意线要等定稿渲染回来（几百毫秒）。示意线在 SVG 里没有 gid | 择机 |
-| — | **`markerscale` / `handleheight` / `borderaxespad` 没开放**；图例标题的排版走它自己的元素，不在图例卡的批量里 | 择机 |
-| — | **图例超出边界 / 遮挡数据的检查没做**：`best` 的避让只在 draw 时算，没有可靠的静态判据，Prompt 明写「不做虚假检查」 | 已决定不做 |
-| — | **Session 15 没跑 e2e**：改动没碰黄金路径的键位；图例位置的「自动」按钮文案变了，e2e 里没有引用它（grep 过）。这是**没跑**，不是「跑过没问题」 | 23 前 |
-| — | **按边分方向不支持**（下边朝内、上边朝外）：matplotlib 的 `direction` 是整条轴的。界面把连带说出来（hover 文字 / tooltip / 浅色带），不伪造 | 已处置（ADR 0035） |
-| — | **次刻度没有独立方向**：沿用主次同改，只分了长度 / 线宽 | 择机 |
-| — | **刻度线没有 SVG 局部预览**（伪元素没有 gid）：点一下要等后端渲染回来才见像素变化；hover 文字与示意图读 override，状态即时 | 择机 |
-| — | **画布 hover 文字的锚点不随旋转换边**：180° 的面板上文字叠在相反的一侧 | 择机 |
-| — | **`length` / `width` 语义从 which="both" 改为只动主刻度**：存量文档里带这两条 override 且开着次刻度的图，次刻度回到脚本自己的长度 | 已处置（ADR 0035 §5 明示） |
-| — | **Session 16 没跑 e2e**：改动没碰黄金路径的键位；命中层新增的是 hover / 点击分支，既有 e2e 没有针对边框的用例。这是**没跑**，不是「跑过没问题」 | 23 前 |
-| — | **组不作为整体对齐**：成组的成员各自对齐到参照框（与属性页此前行为一致）；整体语义留给布局组。Prompt 说「mixed group 不要擅自猜」，17 没有猜 | 已处置（ADR 0036 §3） |
-| — | **分布时锁定对象只是被排除**，其余在选区框里等距，可能与锁定的那个重叠；没有做「以锁定对象为固定锚」的分布 | 已处置（限制写进 ADR） |
-| — | **弹层打开时第一个分段项的 tooltip 会先亮一下**（Radix 自动聚焦 + 聚焦即开气泡）。现在它不再吃点击，只是视觉噪音；不自动聚焦的话键盘用户进不了弹层 | 择机 |
-| — | **多选栏的落位用未旋转包围盒**（与 OverlaySvg 的联合框同一份）：旋转过的对象联合框比真实轮廓大一圈，栏会离得远一点 | 已处置（同一份几何优先于更紧的框） |
-| — | **Session 17 没跑 e2e 全量**：改动没碰黄金路径的键位与文案；跑了一条临时 spec 覆盖本阶段路径。这是**没跑全量**，不是「跑过没问题」 | 23 前 |
-| — | **右键菜单没有键盘打开方式**（Shift+F10 / ContextMenu 键）：打开之后键盘全套可用，但打开只能靠鼠标；等价路径是属性页 / 浮动栏 / 快捷键。做它要决定锚在哪（主选对象的屏幕框），与 21 的引导一起考虑 | 未定（ADR 0037 §3） |
-| — | **裁剪规则在四个入口上不一致**：双击面板与右键菜单在旋转面板上不进裁剪态（菜单给原因），浮动栏的裁剪按钮与 Enter 键仍会进——既有的不一致，18 没有顺手改 | 择机 |
-| — | **「重新构建」在内嵌画布 / playground 里只是重画**：`EngineTransport` 没有作废会话的通道，toast 如实说「源脚本没有重跑」。要真重跑得给传输层加一条 `invalidate` | 未定 |
-| — | **M8 / M9 在 jsdom 里结构性存活**（捕获层 Esc 守卫）：真浏览器守护只有 `e2e/quick-menu.spec.ts` 一条，而 e2e 全量本机不常跑、CI 只有 Windows 腿 | 已处置（用例进仓库；T-98 留档） |
-| — | **Session 18 没跑 e2e 全量**：跑了本阶段那一条（进仓库）。这是**没跑全量**，不是「跑过没问题」 | 23 前 |
-| — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
-
----
+Session 19 之后那张长表里其余「已处置 / 已决定不做 / 择机」各项原样有效，不再复制。
 
 ## 下一阶段
 
-**Prompt 21（onboarding UI 与提示）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+没有下一阶段。本轨道 23 个 Session 全部完成；接下来是**发布路径**：
 
-20 留给 21 的可复用入口：`GET /api/tutorial` / `POST /api/tutorial/open` / `POST /api/tutorial/reset`、
-`tutorial_meta.json`（`document_id` / `document_name` / `panels[].editable_roles` / `spec_issue.text_prefix`）、
-`ProjectStatus.tutorial` / `RecentProject.tutorial`、`GET /api/layouts/Tutorial`。**不得再从仓库根
-`examples/` 读文件；不得在打开教程时执行脚本。**
-
-19 留给后面阶段的可复用入口（原样有效）：`setSettingsOpen(true, '<section>', { returnTo })`、
-`GET /api/engine/packages` 的 `capability`、`packageStore.plan → run`（教程绝不自动调 `run`）、
-`fetchDiagnosticsSummary()`、`settings/CopyButton`、`agentVersionLabel`。
-
-18 留给后面阶段的可复用入口：`ui/Menu.PointMenu` / `MenuSub` / `MenuItem.reason`（任何贴着一个
-点打开的菜单、任何带常驻原因的禁用项）、`store/actions.rebuildPanel`（用户明确触发的一次脚本
-重跑；设置页的「换了环境之后重跑」可以直接调）、`resetOverridesConfirmed` / `setObjectsLocked` /
-`setObjectsHidden`、`POST /api/engine/invalidate`、稳定锚点 `data-quick-menu` / `data-quick-item`
-（Prompt 21 的 coachmark 挂这里）。
-
-17 留给 18 的可复用入口（18 已消费，对后面原样有效）：`store/actions.alignSelectedTo` / `groupSelected` /
-`ungroupSelected`、`inspector/arrangeButtons.ts`、`store/arrangeStore`、
-`context-bar/openArrange.openArrangeInInspector`、`lib/activity.emitActivity`、
-`context-bar/position.placeToolbar`、`projectReadinessStore.focusPanel(fileId)`。
-
-16 留给 17 的可复用入口（17 已消费，对 18 原样有效）：`PanelView.ElementHitLayer.spineZoneUnder`（「先 pick 再问带」
-的命中层形状，allow 闸在这里）、`lib/tickSides.spineZoneAt` 的 `scale` 参数（屏幕像素
-定宽）、`PanelView.SpineZoneFeedback`（只在 hover 期间存在、无过渡、文字反旋转 +
-1/zoom）、`store/actions.applyTickSidePlan`（多条 override + 删除一次 commit）、
-`tickSides.readAxesTickModel` / `effect.coupled`（能力派生 + 连带说出来）、
-`TickAndSpineDiagram.ZoneSwitch`（可聚焦 switch + `data-*` 稳定锚点）。
-
-15 留给 16 的可复用入口（16 已消费，对 17 原样有效）：`presentation/roleProfiles.ts`（首屏模板 + `visibleWhen`）、
-`ElementInspector` 的 `primaryExtra` + 让位集合（刻度卡 / 图例卡两处先例）、
-`controlKindOf` 的新 ControlKind 三处、`store/actions.restoreLegendEntryFollow`
-（多条 override 一次 commit）、`overrides.sync_legends`（派生显示的形状）、
-`LegendEntries.order/shown()`（稳定身份 vs 显示位置）、
-`canvas/interactions.pickElement`（命中几何）。
-
-14 留给 15 的可复用入口（15 已消费，对 16 原样有效）：
-
-* `glyphplan.py` ↔ `glyphPlan.ts` —— **「这个字由哪张脸画出来」的唯一判据**
-  （四层，顺序不可交换）。图例文本的测量要用**最终 render plan**，别再按
-  `ord` 切一遍；
-* `pdfbackend.text_width(s, size_pt, bold, italic, family)` —— 与落笔读同一份
-  计划。**族必须传对**：等宽族比衬线族宽得多；
-* `pdfbackend.missing_glyphs()`（问真字体，导出侧）与
-  `glyphplan.text_diagnostics()`（读表，预检两侧）；
-* manifest 的 `glyphs_missing` / `glyphs_fallback` —— 图内文字缺什么字，
-  产生者只有 `manifest._glyph_scan()` 一处；
-* `overrides.FONT_FALLBACK_TAIL` / `_family_chain()` —— 加一条尾巴前先回答
-  「它在每个平台上都在吗」。
-
-13 留给 14 的六个入口（14 已消费，对 15 原样有效）：`lib/typography.ts`
-（现在有十条属性）、`typographyAdapter.TypographyAdapter`、`mathTextModeOf`、
-`pdfbackend.CANVAS_TEXT_FAMILIES`、manifest 的 `options_unavailable`、
-`propertyPathOf(kind, prop)`。
-
-12 留给 13 的四个入口（原样有效）：`lib/exportRequest.buildExportRequest()`、
-`lib/exportPayload.toExportObjects()`（**新属性加在这一处**）、
-`lib/exportName.checkFilename()`、`store/exportStore.ts`。
-
-以及 09–11 留下的四个（原样有效）：`lib/originalSpec.getOriginalOutputSpec()`、
-`lib/specBinding.resolveDocumentSpec()`、
-`store/validationStore.getValidationSummary()`、`lib/issueFocus.focusIssue()`。
-
----
+1. 推分支、开 PR（13–23 十一轮攒在 `feat/product-ux-13-properties`，按用户节奏拆或不拆），打 `full-ci`
+   标签让两条桌面腿第一次执行本分支的 spec / workflow 改动；
+2. 处理 #225 / #226（不在本分支），Lab release 档跑绿；
+3. `pnpm sync-playground` 同步网站 /try；
+4. 之后按 `docs/1.0-release-readiness.md` 走 tag。
 
 ## E2E 本机跑法（2026-08-30 实测，推翻 R-19 原来的理由）
 

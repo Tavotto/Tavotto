@@ -2331,3 +2331,99 @@ F15 手动记成 autosave、F16 409 记成 failed、F17 保留主版本不记、
 - `panel.file_changed` 顺手 `refreshAssetsAndSync`：`fetchPanels` 没给 resolved 值 = unhandled rejection，全绿 exit 1。
 - `pnpm i18n:extract` 往四个命名空间塞空键、拆复数基键，`i18n:check` 立刻红（`docs/i18n.md` 早有记录）。
 - 后台命令继承上一条的 cwd：`pnpm test` 在 worktree 根起步 → `ERR_PNPM_NO_PKG_MANIFEST`。
+
+## Session 23：全量 QA、真实用户流程、性能与发布门禁
+
+### 先跑基线（改动前，本树 5608008f，机器 Apple M4 Pro / 24 GB / macOS 26.6.2）
+
+| 命令 | 结果 | 耗时 |
+| --- | --- | --- |
+| `ruff check . && ruff format --check .` | ✅ | 0 s |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | ✅ 一致 | 1 s |
+| `PYTHONPATH=<wt>/src .venv/bin/python -m pytest -q tests --junitxml`（`TAVOTTO_NO_TELEMETRY=1`） | **3840 条：1 failed / 34 skipped**——唯一红是 `tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`（90 s 内没退出；四路审计扫描并行时负载 13.6）；单跑 3.8 s 绿。它是 STATUS 遗留表里「对机器负载敏感」的那条，本轮多一条证据 | 752 s |
+| `cd web && pnpm test` | ✅ 182 文件 / 2496 条 | 15 s |
+| `pnpm build` | ✅（主 chunk 1.85 MB / gzip 574 kB，R-17 从 1.57 MB 涨上来） | 6 s |
+| `pnpm i18n:check` / `pnpm lint` | ✅ / ✅ 无 error | 1 s |
+| `build_frontend.py` + `TAVOTTO_PYTHON=<repo>/.venv/bin/python PYTHONPATH=<wt>/src npx playwright test`（三个 project 全量） | **126 条：2 failed / 1 skipped / 123 passed**——两条红正是 STATUS 登记的 `ux-consistency` 流程 B / D | 1068 s |
+
+### 审计（四路只读扫描 + 本人复核，报告在会话目录）
+
+| 维度 | 结论 | 处置 |
+| --- | --- | --- |
+| 反序列化 | pickle / marshal / yaml / eval 零命中；`exec` 只在 bridge 子进程跑用户脚本（本职） | — |
+| 文档落盘 | layouts / autosave / versions / baked / profiles / 注册表 / 教程 / 导出全部经 `atomicio`；**`POST /api/layouts/<name>` 不调 `validate_document`**、无冲突检测 | 判据已补（T-123）；冲突检测记 #222 |
+| 上限 | versions 40/120 条、baked 50、备份 20；**autosave 目录无上限无清理** | #221 |
+| 非有限数 | 写侧 `allow_nan=False` 唯一实现；读侧四处裸 `json.loads` | #222（P3） |
+| 外部修改 | autosave 内容 hash + 409、旧前端 updatedAt、写回 mtime+sha1+size 三套各管一条路，无静默覆盖 | — |
+| 原图写回 / AI 回滚 | 裸 `replace` / `copy2`，无 fsync，有备份（20 份）兜底 | R-05 族，择机 |
+| 刷新漏斗 | 六条入口全经 `app.refresh_project`；`registry.changed` / `assets.changed` 只在 `project_refresh.py` 一处发 | — |
+| 检查引擎 | `runSpec` / `buildSpec` 只在 `validation.ts` 调；无第二个阈值；问题面板不露 gid | — |
+| 导出 | 五个端点全经 `exportreq.normalize` + `exportjob`；对话框顺序与 ADR 0031 §6 逐项一致；**MCP 插件自己那套导出** | #224 |
+| 属性写入 | **`ElementBar` 文字分支绕过 `TypographyAdapter`** | 已修（T-126） |
+| 遗留物 | console.log / debugger / TODO / `.only` / 杂散文件 / feature flag 零命中 | — |
+| 品牌 / i18n | `playground/main.tsx` 三条硬编码产品名与双语分支；`mcp/main.tsx` Splash 三条硬编码中文 | 已修 |
+| 打包 | wheel / sdist 四项资源齐；**`canvas_coverage.json` 不在 PyInstaller datas**；发行链桌面冒烟不开教程；README 没提 Windows ARM | 已修（T-125） |
+| 包管理 | argv 列表无 shell；spec 按空白整条拒；受保护集合在活环境现算闭包；签名里没有解释器参数 | — |
+| 遥测 | 18 条事件三方逐位一致；唯一非枚举值 `target_version` 字符集限界且来自发布源 | privacy.md 措辞收窄 |
+
+### 新增用例（后端 23；前端 7；e2e 修 2）
+
+- `tests/test_ci_qualification.py`（+6）：R-18 的四个判据（发文档本身 / 字符串列表 / 读回是文档 / 没写成算失败）。
+- `tests/test_document_persistence.py`（+6）：另存为 round-trip；四种非文档 400；未来 schema 400 且旧文件不动。
+- `tests/test_tutorial.py`（+1，改 1）：`canvas_coverage.json` 进 datas；`desktop-tauri.yml` 的冒烟也带 `--tutorial`。
+- `tests/test_support_matrix.py`（+1）：矩阵判 windows-arm64 unsupported 时两个 README 必须说出来。
+- `tests/test_scientific_text_matrix.py`（新，7）：六项字符 × 六个文字位置 × 预览 manifest / 原图 PDF 文本层 / 原图 PNG / 画布三族 `missing_glyphs` / 画布 PDF+PNG。
+- `web/src/canvas/context-bar/elementBar.test.tsx`（新，3）：五件控件在；加粗 / 斜体离散写入落 override；属性页写的值浮动栏当场一致。
+- `web/src/hooks/useKeyboardSave.test.tsx`（新，4）：⌘S / Ctrl+S → `runManualSave` 且吃默认动作；输入框里照存；⇧⌘S 另存为；裸 s 不动。
+- `web/e2e/ux-consistency.spec.ts`：流程 B 改读「边 × 半区」锚点并先切 Y 页签；流程 D 改成十一分区里的五个 + 「关于与隐私」/「诊断 · 技术详情」。
+
+### 变异反证（全部提交后再做，`git checkout` 还原）
+
+| # | 变异 | 结果 |
+| --- | --- | --- |
+| R1 | 自动保存又包一层 `{"doc": …}` | 红 |
+| R2 | `layout_names` 只认对象 | 红 |
+| R3 | `missing_state_checks` 恒空 | 红 |
+| R4 | `document_readback` 认包一层的 | 红 |
+| E1 | 加粗永远写 `bold` | 红 |
+| E2 | 去掉斜体控件 | 红 |
+| E3 | 加粗态不读适配器 | 红 |
+| P1 | 去掉 datas 那一行 | 红 |
+| P2 | desktop-tauri 去掉 `--tutorial` | 红 |
+| P3 | README 删掉 ARM 那句 | 红 |
+| L1 | 另存为不调 `validate_document` | 5 红 |
+| K1 | ⌘S 判 `'x'` | 红 |
+| S1 | fonttype 不接管（= 修复前的树） | 矩阵用例 2 红（这就是它第一遍抓到缺陷的样子） |
+
+**这一轮的一次事故**：L1 反证时对未提交的 `app.py` 做 `git checkout`，把处理器改动一起还原了——
+「变异前先提交」这条纪律再踩一次；测试与 ADR 改动没丢，重新套上后 275 条绿再提交。
+
+### 真实用户流程 A–N：自动化覆盖映射
+
+映射在会话目录 `scenario-coverage.md`（逐条读过用例体，不按名字匹配）。本轮补上的：A 的 ⌘S 键位、
+I 的整套矩阵（两个 mu 并排 / β γ Δ / `°C` 两字形式 / Å / ≤ ≥ / 标注文字 / 四种产物串起来）。
+**仍没有自动化的**：B 的三选一关闭对话框（产品里不存在，#223）与真实进程 kill；C 的迁移前逐文档备份
+（前端原地迁移；原始 schema 2 文件在用户显式覆盖前不动）；D 的自动保存不进 watcher（autosave 在数据目录，
+不在被监视的项目树）；G 的多面板画布导出与裁剪面板导出的像素断言；L 的真 `deviceScaleFactor 1.5`
+（用 600 px 视口等价）。逐条打勾见 STATUS 的场景表。
+
+### 故障注入与并发（既有用例，按关键字点数）
+
+磁盘满 / replace 失败 2、损坏 4、冲突 26、watcher 与手动同时 2、SSE 旧响应 1、cancel / partial 8、
+内存 6、并发 / 中断 38、教程资源缺失 1、字体 / 字形缺失 15；前端 stale 46 文件、cancel 4、防抖 3、
+冲突 6、恢复 23。**没有长固定 sleep 的新用例**；本轮没有新增故障注入（缺口都归到场景表与 issue）。
+
+### 性能（数据在 `docs/perf-baseline.md`「发布终审」）
+
+交错 A/B/C 三方各 3 轮；`scripts/bench_document.py`（新）三档；watcher 空闲真进程 6 采样。
+结论：热渲染 +15%（manifest +27%，#220）；导出 +20–35 ms 全部是 fonttype 42；文档层线性；
+版本时间线塞满后 547 ms（#221）；空闲 CPU 0.0–0.1%、147 MB、3 线程、无孤儿。
+
+### 打包
+
+`python -m build`（隔离环境装 hatchling）7 s → `tavotto-0.12.0-py3-none-any.whl` 1.50 MB + sdist 4.59 MB；
+`scripts/ci/lab_acceptance.py --dist dist`（`TAVOTTO_CI_STATE_ROOT` 指到会话目录）：import / 版本 /
+web/index.html / worker / patchspec / profiles / console script / `--help` / `doctor --json` / 端到端冒烟
+（启动 → 渲染 → 热渲染 → 导出 → 覆盖导出 → 干净退出）**全部 ✅**；`test_tutorial` 的三条真 wheel 用例
+（教程资源集合逐一相等、sdist 同、解开后经 importlib.resources 定位）✅。桌面产物：**本机未验证**
+（PyInstaller / Tauri 产物在 CI 桌面腿；本分支的 `--tutorial` 与 datas 改动会在合并队列第一次执行）。
