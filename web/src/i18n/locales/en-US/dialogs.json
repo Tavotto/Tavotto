@@ -16,24 +16,24 @@
     "editedDuringExport": "This document changed while the export was running — the files hold what it looked like when you pressed Export.",
     "exported": "Exported: {{files}}",
     "filenameError": {
-      "empty": "Enter a file name.",
-      "whitespace_edge": "A file name can't start or end with a space.",
-      "too_long": "That file name is too long — shorten it.",
       "control_char": "That file name contains invisible characters. Type it again.",
-      "illegal_char": "A file name can't contain < > : \" / \\ | ? * characters.",
-      "trailing_dot": "A file name can't end with a period.",
       "dot_only": "That name has a special meaning. Pick another one.",
-      "reserved_name": "That name is reserved by the system. Pick another one."
+      "empty": "Enter a file name.",
+      "illegal_char": "A file name can't contain < > : \" / \\ | ? * characters.",
+      "reserved_name": "That name is reserved by the system. Pick another one.",
+      "too_long": "That file name is too long — shorten it.",
+      "trailing_dot": "A file name can't end with a period.",
+      "whitespace_edge": "A file name can't start or end with a space."
     },
     "filenameLabel": "File name",
     "filenamePlaceholder": "Figure 1",
     "formatLabel": "Format",
     "ignored": {
-      "scale": "scaling",
       "crop": "cropping",
-      "rotation": "rotation",
       "flip": "flipping",
-      "opacity": "opacity"
+      "opacity": "opacity",
+      "rotation": "rotation",
+      "scale": "scaling"
     },
     "jobLost": "This export job is no longer on the server (it may have restarted). It's unclear whether the files were written — check the export folder, or just try again.",
     "mmSize": "{{w}} × {{h}} mm",
@@ -411,6 +411,18 @@
   },
   "profiles": {
     "applyToFigure": "Apply to the current figure…",
+    "binding": {
+      "builtinDefault": "Default spec",
+      "current": "This project is checked against “{{name}}”",
+      "globalMissing": "That profile is no longer in the global list; the project’s snapshot still applies",
+      "source": {
+        "builtin": "not bound; using the built-in default",
+        "global": "following the global profile",
+        "snapshot": "using the snapshot taken when it was chosen"
+      },
+      "sync": "Update to current",
+      "updateAvailable": "The global spec has changed; this project still checks against the old snapshot"
+    },
     "builtin": "Built-in",
     "builtin.spec.free-form-v1": "Free layout",
     "builtin.spec.lab-publication-v1": "Default spec",
@@ -421,6 +433,13 @@
     "delete": "Delete",
     "deleteBody": "Projects that already use it are unaffected — each keeps its own copy.",
     "deleteTitle": "Delete “{{name}}”?",
+    "detail": {
+      "id": "Identifier",
+      "origin": "Origin",
+      "revision": "Revision",
+      "version": "Version"
+    },
+    "details": "Details",
     "duplicate": "Duplicate",
     "empty": "Nothing here yet",
     "export": "Export to a file",
@@ -448,12 +467,9 @@
     "import": "Import from a file",
     "inUse": "In use here",
     "kind": {
-      "spec": "Specs",
       "specHint": "A spec decides what a figure must satisfy: minimum font size, column widths, minimum resolution. It only checks — it never changes your figure.",
-      "style": "Styles",
       "styleHint": "A style decides how a figure looks: sizes, fonts, line widths, ticks, legend, background. Applying one is a single undoable change."
     },
-    "kindAria": "Styles or specs",
     "name": "Name",
     "new": "New",
     "newName": "New profile",
@@ -594,11 +610,7 @@
       "diagnosticsHintAfter": "; the interaction record lives only in memory and enters the zip only when you press this button.",
       "diagnosticsHintBefore": "Export a zip to send us when something goes wrong: version, system, render interpreter, recent logs, and an anonymized record of recent edits.",
       "diagnosticsHintStrong": "No figure text, Python source, research data, or API keys",
-      "diagnosticsTitle": "Environment diagnostics",
-      "engineOk": "Working",
       "engineStatus": "Interpreter",
-      "engineStatusHint": "Where the Python that renders your scripts comes from. The bundled environment ships with the installer and works offline.",
-      "environmentTitle": "Rendering environment",
       "exportBundle": "Export a diagnostics bundle",
       "exportFailed": "Could not build the diagnostic package. Try again; if it keeps failing, mention this in your issue.",
       "exported": "Diagnostic package ready",
@@ -632,7 +644,6 @@
       },
       "backAria": "Back to the coding agent list",
       "backToList": "Coding Agents",
-      "codexIntegrationDesc": "Open, edit and export research figures inside a Codex session.",
       "codexIntegrationName": "{{product}} for Codex",
       "defaultAgent": "Default agent",
       "defaultAgentAria": "Default coding agent",
@@ -643,6 +654,9 @@
         "brokenCandidate": "Skipped a candidate that would not start",
         "cancel": "Cancel",
         "checkedAt": "Last checked",
+        "copyCommand": "Copy install command",
+        "copyDiagnostics": "Copy diagnostics",
+        "copyPath": "Copy executable path",
         "currentOverride": "Using a custom path",
         "customExecutable": "Custom executable",
         "customPath": "Custom path",
@@ -704,7 +718,6 @@
         "noNpm": "npm is not available on this machine. Install Node.js LTS (nodejs.org) first, then come back and click install.",
         "running": "Installing…"
       },
-      "intro": "{{product}} automatically discovers coding agents installed on this computer and uses their existing login and model configuration.",
       "lastChecked": "Last checked {{time}}",
       "noUsableAgent": "No usable coding agent was detected. Install one, then hit Rescan.",
       "noUsableAgentShort": "None available",
@@ -744,6 +757,7 @@
       "toggleAria": "Enable {{name}} in {{product}}",
       "useFromAgents": "Use {{product}} from coding agents",
       "useInProduct": "Use coding agents in {{product}}",
+      "versionAria": "Version {{version}}",
       "viewGuide": "Read the guide"
     },
     "canvas": {
@@ -754,6 +768,19 @@
       "elsewhere": "Grid, snapping, rulers and the safe area live on the “Canvas” tab of the right panel, next to the canvas itself.",
       "more": "Other canvas settings",
       "openCanvasSettings": "Open canvas settings"
+    },
+    "copied": "Copied",
+    "copy": "Copy",
+    "diagnostics": {
+      "copyReport": "Copy diagnostics",
+      "healthTitle": "Health",
+      "hidePreview": "Hide",
+      "prepareFailed": "Could not generate the diagnostic report. Please try again.",
+      "preparing": "Preparing…",
+      "previewNote": "This is what will be copied (secrets and personal paths are redacted). Review it, then copy.",
+      "reportTitle": "Diagnostic report",
+      "summaryFailing": "{{count}} problem(s)",
+      "summaryOk": "Everything looks fine"
     },
     "export": {
       "defaultDpi": "Default DPI",
@@ -779,6 +806,90 @@
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
+    "packages": {
+      "builtinEmpty": "No built-in package information.",
+      "builtinFromBundled": "Bundled with the {{product}} installer; read-only.",
+      "builtinFromManaged": "Ships with the {{product}} environment; read-only.",
+      "builtinPlanned": "Creating the environment installs matplotlib and its dependencies.",
+      "builtinTitle": "Built-in packages",
+      "col": {
+        "actions": "Actions",
+        "name": "Name",
+        "status": "Status",
+        "version": "Version"
+      },
+      "confirm": {
+        "uninstallAction": "Uninstall",
+        "uninstallBody": "It will be removed from this project’s Tavotto environment. Scripts that use it cannot render until it is reinstalled.",
+        "uninstallBodyDependents": "{{dependents}} depend on {{name}}. They will stop working too, and scripts that use them cannot render.",
+        "uninstallTitle": "Uninstall {{name}}?"
+      },
+      "disabled": {
+        "noBasePython": "No Python that can create an environment was found on this computer (3.10 or newer is required). Install Python, then come back here.",
+        "noProject": "Open a project to manage its {{product}} environment.",
+        "other": "Package management is not available right now."
+      },
+      "env": {
+        "inUse": "Used by this project",
+        "incomplete": "Incomplete (rebuilt before the next operation)",
+        "notCreated": "Not created yet — the first install creates it",
+        "notInUse": "Not currently used by this project",
+        "python": "Python {{version}}",
+        "ready": "Ready",
+        "rebuild": "Rebuild"
+      },
+      "envTitle": "{{product}} environment",
+      "install": "Install",
+      "job": {
+        "cancel": "Cancel",
+        "cancelled": "Cancelled: {{op}} {{name}}. The environment is marked incomplete and will be rebuilt before the next operation.",
+        "copyLog": "Copy log",
+        "creating_env": "Creating the Tavotto environment…",
+        "dismiss": "Dismiss",
+        "done": "Finished: {{op}} {{name}} {{version}}",
+        "failed": "Could not {{op}} {{name}}",
+        "installing": "Running {{op}} for {{name}}…",
+        "log": "Detailed log",
+        "preparing": "Preparing to {{op}} {{name}}…",
+        "progressAria": "Package operation progress",
+        "verifying": "Verifying the environment can still render…"
+      },
+      "loading": "Loading…",
+      "network": {
+        "customIndex": "custom package index in use",
+        "proxy": "via a proxy"
+      },
+      "networkNote": "Installing and upgrading download from the package index.",
+      "op": {
+        "install": "install",
+        "uninstall": "uninstall",
+        "update": "upgrade"
+      },
+      "protected": "Built-in dependency, read-only",
+      "readOnly": "Read-only",
+      "reason": {
+        "repair": "Installed by missing-dependency repair",
+        "user": "Installed manually"
+      },
+      "reinstall": "Reinstall",
+      "rollbackNote": "Package operations cannot be rolled back: pip has no transactions. A snapshot of the environment is recorded before and after every change ({{count}} kept); if the environment breaks, “Rebuild” restores what the ledger records.",
+      "specAria": "Package name or spec to install",
+      "specInvalid": "Only “name” or “name>=version” is accepted — no spaces, paths, URLs or options.",
+      "specPlaceholder": "Package name or spec, e.g. lmfit or lmfit>=1.3",
+      "status": {
+        "changed": "Version changed",
+        "changedDetail": "was {{recorded}} when installed",
+        "installed": "Installed",
+        "missing": "Missing from the environment",
+        "unknown": "Unknown"
+      },
+      "uninstall": "Uninstall",
+      "uninstallAria": "Uninstall {{name}}",
+      "update": "Upgrade",
+      "updateAria": "Upgrade {{name}}",
+      "userEmpty": "Nothing has been installed into this environment yet.",
+      "userTitle": "Installed by you"
+    },
     "project": {
       "backupDir": "Backup folder",
       "backupDirHint": "Originals are copied here before anything is written back. Leave empty for the default location; saved per project.",
@@ -801,15 +912,18 @@
       "writeBackAllowed": "Write-back allowed"
     },
     "section": {
-      "about": "Privacy, diagnostics and About",
+      "about": "About & privacy",
       "ai": "Coding Agents",
       "canvas": "Canvas and editing",
-      "export": "Export defaults",
+      "diagnostics": "Diagnostics",
+      "export": "Export",
       "general": "General",
-      "profiles": "Styles & specs",
-      "project": "Project and paths",
-      "shortcuts": "Shortcuts",
-      "sidebars": "Sidebar behaviour",
+      "interface": "Interface",
+      "packages": "Packages",
+      "project": "Project",
+      "sidebars": "Sidebars",
+      "spec": "Specs",
+      "style": "Styles",
       "update": "Updates"
     },
     "shortcuts": {

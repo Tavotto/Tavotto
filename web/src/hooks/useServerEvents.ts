@@ -8,6 +8,7 @@ import {
 } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
+import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
@@ -60,6 +61,11 @@ export function handleServerEvent(ev: ServerEvent) {
       // 受控依赖修复的进度（ADR 0019）。**不带 pj**：它是按 plan_id 走的，
       // 而 plan 本身绑定了项目——多开标签页时各自只认自己那条计划。
       useDepRepairStore.getState().onProgress(ev)
+      break
+
+    case 'engine.package':
+      // 包管理作业的进度（ADR 0038）。同样按 job_id 走，作业绑定项目。
+      usePackageStore.getState().onProgress(ev)
       break
 
     case 'render.started': {

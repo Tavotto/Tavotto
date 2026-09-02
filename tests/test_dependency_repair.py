@@ -606,11 +606,12 @@ def test_the_manifest_records_what_we_installed(tmp_path):
         reason="missing_dependency",
     )
     assert managedenv.installed_requirements(project) == ["lmfit==1.3.3", "Pillow==11.0.0"]
-    # 诊断视图只出包名与版本，不出请求约束与原因（能少给就少给）
+    # 诊断视图只出包名、版本与来源枚举（缺包修复 / 用户装的），不出请求约束
+    # （能少给就少给；`reason` 是两值枚举，不是用户内容——包管理页按它分来源）
     installed = managedenv.state(project)["installed"]
     assert installed == [
-        {"distribution": "lmfit", "resolved_version": "1.3.3"},
-        {"distribution": "Pillow", "resolved_version": "11.0.0"},
+        {"distribution": "lmfit", "resolved_version": "1.3.3", "reason": "missing_dependency"},
+        {"distribution": "Pillow", "resolved_version": "11.0.0", "reason": "missing_dependency"},
     ]
 
 

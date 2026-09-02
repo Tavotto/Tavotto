@@ -226,6 +226,11 @@ interface UiState extends Persisted {
   settingsOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
+  /**
+   * 从哪个面板深链进设置的（导出面板的「编辑规范」）。关掉设置时回到那里，
+   * 而不是把用户扔回画布。只认闭集里的值；null = 不回。
+   */
+  settingsReturnTo: 'export' | null
   /** 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
   layoutIntent: 'save' | 'load'
   /** 全局确认框；由 askConfirm() 写入，ConfirmDialog 渲染 */
@@ -267,7 +272,7 @@ interface UiState extends Persisted {
   setStylesOpen: (v: boolean) => void
   setRegistryOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
-  setSettingsOpen: (v: boolean, section?: string) => void
+  setSettingsOpen: (v: boolean, section?: string, opts?: { returnTo?: 'export' | null }) => void
   setConfirm: (req: ConfirmRequest | null) => void
   setLayout: (layout: WorkspaceLayout) => void
 }
@@ -317,6 +322,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
+  settingsReturnTo: null,
   layoutIntent: 'save',
   confirm: null,
   layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
@@ -467,8 +473,23 @@ export const useUiStore = create<UiState>((set, get) => ({
   setStylesOpen: (stylesOpen) => set({ stylesOpen }),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
-  setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
-    set({ settingsOpen, ...(settingsSection ? { settingsSection } : {}) }),
+  setSettingsOpen: (settingsOpen, settingsSection = undefined, opts = undefined) =>
+    set((s) => {
+      if (settingsOpen) {
+        return {
+          settingsOpen,
+          ...(settingsSection ? { settingsSection } : {}),
+          settingsReturnTo: opts?.returnTo ?? null,
+        }
+      }
+      // 关闭：深链进来的回到出发的那个面板（只有导出一个来源；其余为 null）
+      const back = s.settingsReturnTo
+      return {
+        settingsOpen,
+        settingsReturnTo: null,
+        ...(back === 'export' ? { exportOpen: true } : {}),
+      }
+    }),
   setConfirm: (confirm) => set({ confirm }),
   // **不 persist、不动 prefOpen**：这里改的是「窗口现在多宽」，
   // 而窗口宽度不是用户对常驻侧栏的偏好。

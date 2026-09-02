@@ -97,6 +97,13 @@ def is_mutating(python: str) -> bool:
         return bool(python) and env_key_of(python) in _mutating
 
 
+def is_mutating_key(key: str) -> bool:
+    """按**合成 key** 查（受管环境还没建出来时它没有解释器路径，
+    `deprepair._env_key` 给的是 `tavotto_managed:<项目指纹>`）。"""
+    with _lock:
+        return bool(key) and key in _mutating
+
+
 def native_sessions_on(python: str) -> list[str]:
     with _lock:
         return sorted(_native.get(env_key_of(python), ()))

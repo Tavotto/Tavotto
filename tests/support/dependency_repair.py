@@ -10,6 +10,7 @@
 
 import base64
 import hashlib
+import subprocess
 import time
 import zipfile
 from pathlib import Path
@@ -17,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from support import venvfixture
-from tavotto.engine import deprepair, pool as engine_pool, projectenv
+from tavotto.engine import deprepair, managedenv, pool as engine_pool, projectenv
 
 try:
     WORKER_PY = engine_pool.find_worker_python()
@@ -104,6 +105,48 @@ def wheelhouse(tmp_path, monkeypatch):
     monkeypatch.setenv("PIP_FIND_LINKS", str(house))
     monkeypatch.setenv("PIP_NO_INDEX", "1")
     return house
+
+
+@pytest.fixture
+def offline_managed_env(monkeypatch):
+    """让受管环境**能在离线 CI 里建出来**，同时说清楚这里放宽了什么。
+
+    生产上新建的受管环境是严格隔离的（不带 `--system-site-packages`）并且要
+    `pip install matplotlib`——那一步必然联网。CI 不联网，所以这组用例里：
+
+    * 基础栈换成空表（不下载任何东西）；
+    * venv 带 `--system-site-packages`，matplotlib 用宿主那份，于是 worker
+      自检仍然是**真跑一次**。
+
+    被放宽的那两条**另有单元用例逐字节钉住**
+    （`test_dependency_repair.py::test_managed_venv_creation_is_isolated_and_minimal`）
+    ——否则「离线 fixture 好使」会掩盖「生产上建出来的环境不隔离」。
+    这组用例真正证明的是：位置、项目作用域、**真 pip 把包装进了那个环境**、
+    `sys.prefix` 是它、manifest 记账、重建装得回去。
+    """
+    monkeypatch.setattr(managedenv, "BASE_PACKAGES", ())
+    original = managedenv.create_venv
+
+    def _with_host_stack(target_project, base):
+        root = managedenv.venv_dir(target_project)
+        target = managedenv.venv_python(target_project)
+        if target.is_file():
+            return True, ""
+        root.parent.mkdir(parents=True, exist_ok=True)
+        out = subprocess.run(
+            [base, "-m", "venv", "--system-site-packages", str(root)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+        return target.is_file(), out.stderr
+
+    assert original is managedenv.create_venv  # 换的是同一个出处
+    monkeypatch.setattr(managedenv, "create_venv", _with_host_stack)
+    monkeypatch.setattr(deprepair, "_base_python", WORKER_PY)
+    monkeypatch.setattr(deprepair, "_base_python_known", True)
 
 
 # --------------------------------------------------------------- 工具

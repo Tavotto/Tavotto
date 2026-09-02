@@ -1867,6 +1867,7 @@ export type ServerEvent =
     } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
+  | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
@@ -1892,6 +1893,7 @@ const EVENT_KINDS = [
   'native.session',
   'engine.bootstrap',
   'engine.dependency',
+  'engine.package',
   'export.progress',
   'ai.delta',
   'ai.done',
@@ -2397,6 +2399,107 @@ export const rebuildManagedEnvironment = () =>
     '/api/engine/environment/managed/rebuild',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
   )
+
+// ---------------------------------------------------------------------------
+// 包管理（设置 → 包管理，ADR 0038）
+//
+// 目标环境**只有**当前项目的 Tavotto 受管环境。与依赖修复同一条纪律：先形成
+// 作业（不改任何东西，把「会发生什么」交回来），再按 job_id 执行。
+// ---------------------------------------------------------------------------
+export type PackageOp = 'install' | 'update' | 'uninstall'
+
+/** 包状态：账上有 + 环境里有 + 版本一致 = installed；空串 = 环境不在，问不出 */
+export type PackageStatus = 'installed' | 'missing' | 'changed' | ''
+
+export interface BuiltinPackage {
+  name: string
+  version: string
+  status: PackageStatus
+}
+
+export interface UserPackage {
+  distribution: string
+  requested_specifier: string
+  installed_version: string
+  recorded_version: string
+  /** missing_dependency（缺包修复装的）/ user_requested（用户自己装的） */
+  reason: 'missing_dependency' | 'user_requested' | string
+  status: PackageStatus
+  /** 账上是用户装的、却在基础栈的依赖闭包里（用户装了个 numpy）：只读 */
+  protected: boolean
+  /** 账上哪些别的用户包依赖它 */
+  required_by: string[]
+  installed_at: number
+}
+
+export interface ManagedPackages {
+  capability: { available: boolean; reason: string }
+  environment: (ManagedEnvironment & { in_use: boolean }) | null
+  builtin: BuiltinPackage[]
+  /** managed_env（受管环境现算）/ bundled_runtime（内置 runtime 清单）/ planned（都还没有） */
+  builtin_source: 'managed_env' | 'bundled_runtime' | 'planned' | ''
+  user: UserPackage[]
+  busy: boolean
+  network?: { proxy: boolean; custom_index: boolean | null }
+  snapshots?: number
+  rollback?: string
+}
+
+export interface PackageJob {
+  job_id: string
+  op: PackageOp
+  distribution: string
+  requirement: string
+  creates_environment: boolean
+  /** 卸载时：账上哪些用户包依赖它（界面据此二次确认） */
+  dependents: string[]
+  network_required: boolean
+  expires_at: number
+}
+
+/** 作业进度。前端**按 state 换文案，不解析日志**。 */
+export interface PackageProgress {
+  job_id: string
+  state: DependencyProgress['state']
+  log: string
+  error: string | null
+  code: string
+  op?: PackageOp
+  distribution?: string
+  requirement?: string
+  result?: { op?: string; distribution?: string; version?: string } | null
+}
+
+export const fetchManagedPackages = () =>
+  jsonFetch<ManagedPackages>('/api/engine/packages')
+
+export const planPackageJob = (op: PackageOp, spec: string) =>
+  jsonFetch<{ job: PackageJob }>('/api/engine/packages/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, spec }),
+  })
+
+export const runPackageJob = (jobId: string) =>
+  jsonFetch<{ started: boolean } & PackageProgress>('/api/engine/packages/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  })
+
+export const cancelPackageJob = (jobId: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/engine/packages/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  })
+
+export const fetchPackageJob = (jobId: string) =>
+  jsonFetch<PackageProgress>(`/api/engine/packages/job?job_id=${encodeURIComponent(jobId)}`)
+
+/** 「复制诊断」用的纯文本报告（已脱敏；与诊断包同一份采集） */
+export const fetchDiagnosticsSummary = () =>
+  jsonFetch<{ text: string; report: Record<string, unknown> }>('/api/diagnostics/summary')
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**

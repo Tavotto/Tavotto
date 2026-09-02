@@ -10,10 +10,13 @@ const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 常规。保留的是「语言」与「恢复默认布局」两个真动作；
+ * 常规。保留的是「语言」「恢复默认布局」「快捷键速查表」三个真动作；
  * 「什么时候生效」「自动保存怎么实现」「重置具体影响什么」三段解释进问号。
+ *
+ * 快捷键那一行从独立分区并进来（ADR 0038）：一个分区只有一个按钮，是导航
+ * 上的噪音；它本身不是设置，是一个入口。
  */
-export function GeneralSettings() {
+export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
   const setStatus = useUiStore((s) => s.setStatus)
   const locale = useLocale()
@@ -49,6 +52,18 @@ export function GeneralSettings() {
           }}
         >
           {st('general.resetLayout')}
+        </Button>
+      </SettingRow>
+      <SettingRow label={st('shortcuts.label')} help={st('shortcuts.hint')}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            close()
+            useUiStore.getState().setShortcutHelpOpen(true)
+          }}
+        >
+          {st('shortcuts.open')}
         </Button>
       </SettingRow>
     </SettingSection>

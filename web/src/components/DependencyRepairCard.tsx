@@ -242,7 +242,7 @@ function RepairProgress({
         </h3>
         {failed && (
           <p className="mt-1 text-xs leading-relaxed text-danger">
-            {codeMessage(progress.code) ?? progress.error ?? ''}
+            {repairCodeMessage(progress.code) ?? progress.error ?? ''}
           </p>
         )}
         {cancelled && (
@@ -274,8 +274,12 @@ function RepairProgress({
   )
 }
 
-/** 稳定错误码 → 当前语言的一句话；没登记的回 null（让调用方用后端原文兜底） */
-function codeMessage(code: string): string | null {
+/**
+ * 稳定错误码 → 当前语言的一句话；没登记的回 null（让调用方用后端原文兜底）。
+ * 包管理页（`settings/PackagesSettings.tsx`）与这张卡共用这一份：两处的码
+ * 来自同一个后端漏斗（`app._repair_error`）、同一张文案表。
+ */
+export function repairCodeMessage(code: string): string | null {
   if (!code) return null
   const key = `repairError.${code}`
   const text = en(key)
@@ -284,7 +288,7 @@ function codeMessage(code: string): string | null {
 
 function Failure({ code, text }: { code: string; text: string }) {
   if (!code && !text) return null
-  return <p className="text-xs leading-relaxed text-danger">{codeMessage(code) ?? text}</p>
+  return <p className="text-xs leading-relaxed text-danger">{repairCodeMessage(code) ?? text}</p>
 }
 
 /**

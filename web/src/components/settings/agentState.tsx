@@ -51,13 +51,23 @@ export function AgentStateBadge({
 }
 
 /**
- * 行的第二行说明：装了就说清「哪个版本、在哪儿」，没装就说清下一步。
- * 完整路径过长时靠 CSS 省略，`title` 与详情页给全值。
+ * 版本号——**只有号**。CLI 的 `--version` 打出来的是 `codex-cli 0.42.0` /
+ * `2.0.14 (Claude Code)` 这类带内部包名的行，一级列表上只该出现数字部分
+ * （内部包名不是用户要认的东西，ADR 0038）。抽不出数字就回原文（诊断材料，
+ * 不翻），空就回 null 让调用方决定显示什么。
  */
-export function agentSubtitle(agent: AiAgentCaps): string {
-  if (agent.installed) {
-    return [agent.version, agent.executable_path].filter(Boolean).join(' · ')
-  }
+export function agentVersionLabel(version: string | null | undefined): string | null {
+  if (!version) return null
+  const m = /\d+(?:\.\d+)+(?:[-+.][0-9A-Za-z.-]+)?/.exec(version)
+  return m ? m[0] : version
+}
+
+/**
+ * 行的第二行说明：**没装 / 装坏了才有**——装好的那一行只有名称、版本、状态，
+ * 路径与命令归详情（ADR 0038；此前这里放的是 `版本 · 完整路径`）。
+ */
+export function agentSubtitle(agent: AiAgentCaps): string | null {
+  if (agent.installed) return null
   if (agent.state === 'broken') return ag('subtitle.broken')
   return ag('subtitle.notInstalled', { product: PRODUCT_NAME })
 }

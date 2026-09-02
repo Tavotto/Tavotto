@@ -2016,7 +2016,23 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     return body, False
 
 
-def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+@app.get("/api/diagnostics/summary")
+def api_diagnostics_summary():
+    """给「复制诊断」用的**纯文本**报告（已脱敏）。
+
+    与诊断包同一份 `build_report()`——不是第二份诊断实现，只是换了个交付形态：
+    用户在设置里点「复制」，贴进 issue 或群聊。所以它经过与 zip 同一道脱敏
+    （密钥 / 个人路径 / 假名标识），界面先把文本摆出来让用户看过再复制。
+    """
+    status = _diagnostics_project_status()
+    report = engine_diagnostics.build_report(project=status, port=request.host.rsplit(":", 1)[-1])
+    resp = jsonify({"text": engine_diagnostics.render_text(report), "report": report})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _diagnostics_project_status() -> dict:
+    """诊断报告里的 project 段（诊断包与文本摘要共用这一份）。"""
     ctx = _request_ctx()
     status = project_status(ctx)
     if ctx is not None:
@@ -2048,6 +2064,11 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
         # **不含** index 地址、pip 配置、绝对路径——那三样是这一族功能里
         # 最容易顺手泄漏凭据的地方。
         status["dependency_repair"] = engine_deprepair.diagnostics_state(str(ctx.path))
+    return status
+
+
+def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+    status = _diagnostics_project_status()
     data = engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
@@ -4474,6 +4495,76 @@ def api_managed_environment_rebuild():
     engine_deprepair.reset_state(root)
     engine_deprepair.rebuild_managed_async(root, lambda p: sse_publish("engine.dependency", p))
     return jsonify({"started": True})
+
+
+# ------------------------- 包管理（ADR 0038）---------------------------------
+#
+# 设置 → 包管理。目标环境**只有**这个项目的 Tavotto 受管环境；用户的 `.venv`
+# 与内置 runtime 不在这条面上（前者是他的研究环境，后者是「重装就能修」的
+# 前提）。四个端点与受控依赖修复同一条纪律：先形成作业（不改任何东西），
+# 再按 job_id 执行——请求体里除了 job_id 什么都不读。
+@app.get("/api/engine/packages")
+def api_packages_list():
+    """内置 / 用户装的两份清单 + 环境状态 + 能不能操作。**不装任何东西**。"""
+    try:
+        root: str | None = str(require_project())
+    except NoProjectError:
+        root = None
+    resp = jsonify(engine_deprepair.list_managed_packages(root))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/packages/plan")
+def api_packages_plan():
+    """形成一个包操作作业：`{op: install|update|uninstall, spec}` → `{job}`。
+
+    包名 / 需求串在 `create_package_job` 里过白名单语法；卸载时把「谁依赖它」
+    一起交回去，界面据此二次确认。**这一步不改任何东西。**
+    """
+    root = str(require_project())
+    body = request.get_json(force=True)
+    try:
+        job = engine_deprepair.create_package_job(
+            root, str(body.get("op") or "").strip(), str(body.get("spec") or "").strip()
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc)
+    return jsonify({"job": job.to_payload()})
+
+
+@app.post("/api/engine/packages/run")
+def api_packages_run():
+    """执行一个已形成的作业。**请求体里只有 job_id。** 进度经 SSE `engine.package`。"""
+    root = str(require_project())
+    body = request.get_json(force=True)
+    job = engine_deprepair.get_package_job(str(body.get("job_id") or ""))
+    if job is None or job.project != root:
+        # 作业绑定项目：A 项目的作业不能拿到 B 项目来执行；过期的一并拒绝
+        return jsonify(
+            {
+                "error": "没有这个作业（或已过期），请重新开始。",
+                "code": engine_deprepair.ERROR_NOT_ALLOWED,
+            }
+        ), 409
+    engine_deprepair.run_package_job_async(job.job_id, lambda p: sse_publish("engine.package", p))
+    return jsonify({"started": True, **engine_deprepair.progress(job.job_id)})
+
+
+@app.post("/api/engine/packages/cancel")
+def api_packages_cancel():
+    """取消。**不承诺回滚**：装 / 卸到一半的受管环境会被标成未完成，下次重建。"""
+    require_project()
+    body = request.get_json(force=True)
+    return jsonify({"cancelling": bool(engine_deprepair.cancel(str(body.get("job_id") or "")))})
+
+
+@app.get("/api/engine/packages/job")
+def api_packages_job():
+    """某个作业的当前进度（SSE 断了之后的补拉）。"""
+    resp = jsonify(engine_deprepair.progress(request.args.get("job_id", "")))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ------------------------- 检查更新 -----------------------------------------

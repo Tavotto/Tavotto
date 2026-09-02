@@ -128,6 +128,37 @@ describe('编码 Agent 一级页面', () => {
     expect(document.querySelector('.text-danger')).not.toBeNull()
   })
 
+  it('一级页面每行只有名称 · 版本号 · 状态：没有路径、没有内部包名、没有说明段（ADR 0038）', async () => {
+    await open()
+    const list = document.querySelector('ul.overflow-hidden')!
+    expect(list.textContent).toContain('Codex')
+    expect(list.textContent).toContain('1.2.3')
+    expect(list.textContent).not.toContain('codex-cli')           // 内部包名
+    expect(list.textContent).not.toContain('/opt/homebrew/bin')    // 安装目录
+    expect(text()).not.toContain('自动发现本机已经安装的编码 Agent')  // 长说明
+    // 反方向那一节没有卡片外框、没有说明段：只有名字 + 外链
+    expect(text()).toContain('Tavotto for Codex')
+    expect(text()).not.toContain('在 Codex 会话中打开、编辑并导出科研图')
+    expect(document.querySelectorAll('.rounded-md.border.border-border.bg-surface.p-3').length).toBe(0)
+  })
+
+  it('未安装的行说下一步；装坏了的行说清是坏了（第二行只在这两种情况出现）', async () => {
+    await open(capsOf([agentCaps({ installed: false, state: 'not_installed', version: null, executable_path: null }), claudeCaps({ state: 'broken', installed: false })]))
+    expect(text()).toContain(ag('subtitle.notInstalled', { product: 'Tavotto' }))
+    expect(text()).toContain(ag('subtitle.broken'))
+  })
+
+  it('详情里路径与诊断可复制', async () => {
+    await open()
+    await act(async () => byName(ag('rowAria', { name: 'Codex' }))!.click())
+    expect(byName(ag('detail.copyPath'))).toBeTruthy()
+    // 高级设置默认折叠，展开诊断之后才有「复制诊断信息」
+    const details = [...document.querySelectorAll('details')] as HTMLDetailsElement[]
+    for (const d of details) d.open = true
+    await act(async () => {})
+    expect(byName(ag('detail.copyDiagnostics'))).toBeTruthy()
+  })
+
   it('一级页面没有任何路径输入框，也没有 Base URL / 密钥 / 协议', async () => {
     await open()
     expect(document.querySelectorAll('input[type="text"], input[type="password"]').length).toBe(0)
@@ -224,13 +255,13 @@ describe('编码 Agent 一级页面', () => {
 
   it('刷新失败保留上一次结果，并给一条非破坏性提示', async () => {
     await open()
-    expect(text()).toContain('codex-cli 1.2.3')
+    expect(text()).toContain('1.2.3')
     fetchMock.mockRejectedValue(new Error('boom'))
     const rescan = byName(ag('rescan'))!
     await act(async () => rescan.click())
     await act(async () => {})
     expect(text()).toContain(ag('refreshFailed'))
-    expect(text()).toContain('codex-cli 1.2.3')          // 旧结果还在
+    expect(text()).toContain('1.2.3')                     // 旧结果还在
     expect(text()).not.toContain(ag('state.not_installed'))
   })
 

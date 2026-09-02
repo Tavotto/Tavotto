@@ -588,6 +588,18 @@ export default interface Resources {
     },
     "profiles": {
       "applyToFigure": "应用到当前图…",
+      "binding": {
+        "builtinDefault": "默认规范",
+        "current": "本项目按「{{name}}」检查",
+        "globalMissing": "全局清单里已没有这条配置，项目里的快照仍然有效",
+        "source": {
+          "builtin": "未绑定，按内置默认",
+          "global": "跟随全局配置",
+          "snapshot": "用的是选择时的快照"
+        },
+        "sync": "更新到当前",
+        "updateAvailable": "全局这套规范已更新，项目仍按旧快照检查"
+      },
       "builtin": "内置",
       "builtin.spec.free-form-v1": "自由排版",
       "builtin.spec.lab-publication-v1": "默认规范",
@@ -598,6 +610,13 @@ export default interface Resources {
       "delete": "删除",
       "deleteBody": "已经用过它的项目不受影响：项目里存着自己的那一份。",
       "deleteTitle": "删除「{{name}}」？",
+      "detail": {
+        "id": "标识",
+        "origin": "来源",
+        "revision": "修订",
+        "version": "版本"
+      },
+      "details": "详情",
       "duplicate": "复制一份",
       "empty": "还没有配置",
       "export": "导出为文件",
@@ -625,12 +644,9 @@ export default interface Resources {
       "import": "从文件导入",
       "inUse": "本项目在用",
       "kind": {
-        "spec": "规范",
         "specHint": "规范决定图要满足什么：字号下限、栏宽、最低分辨率。只用于检查，不会改动你的图。",
-        "style": "样式",
         "styleHint": "样式决定图长什么样：字号、字体、线宽、刻度、图例、背景。应用到图上是一次可撤销的修改。"
       },
-      "kindAria": "样式还是规范",
       "name": "名称",
       "new": "新建",
       "newName": "新配置",
@@ -768,11 +784,7 @@ export default interface Resources {
         "diagnosticsHintAfter": "；交互记录只存在内存里，只有你点这个按钮时才会进 zip。",
         "diagnosticsHintBefore": "遇到问题时导出一个 zip 发给我们：里面是版本、系统、渲染解释器、最近日志，以及最近编辑操作的匿名状态记录。",
         "diagnosticsHintStrong": "不含图中文字、Python 脚本、科研数据与 API 密钥",
-        "diagnosticsTitle": "环境诊断",
-        "engineOk": "正常",
         "engineStatus": "解释器来源",
-        "engineStatusHint": "渲染你脚本的那个 Python 从哪来。内置环境随安装包附带，装完即用、不联网。",
-        "environmentTitle": "渲染环境",
         "exportBundle": "导出诊断包",
         "exportFailed": "诊断包生成失败，请重试；如果一直失败，请在 issue 里附上这条提示。",
         "exported": "诊断包已生成",
@@ -806,7 +818,6 @@ export default interface Resources {
         },
         "backAria": "返回编码 Agent 列表",
         "backToList": "编码 Agent",
-        "codexIntegrationDesc": "在 Codex 会话中打开、编辑并导出科研图。",
         "codexIntegrationName": "{{product}} for Codex",
         "defaultAgent": "默认 Agent",
         "defaultAgentAria": "默认编码 Agent",
@@ -817,6 +828,9 @@ export default interface Resources {
           "brokenCandidate": "跳过了一个启动不了的候选",
           "cancel": "取消",
           "checkedAt": "最后检测",
+          "copyCommand": "复制安装命令",
+          "copyDiagnostics": "复制诊断信息",
+          "copyPath": "复制可执行文件路径",
           "currentOverride": "当前使用自定义路径",
           "customExecutable": "自定义可执行文件",
           "customPath": "自定义路径",
@@ -878,7 +892,6 @@ export default interface Resources {
           "noNpm": "本机没有 npm。请先安装 Node.js LTS（nodejs.org），装好后回到这里再点安装。",
           "running": "正在安装…"
         },
-        "intro": "{{product}} 会自动发现本机已经安装的编码 Agent，并使用它们现有的登录和模型配置。",
         "lastChecked": "最近检测 {{time}}",
         "noUsableAgent": "未检测到可用的编码 Agent。装好任意一个之后点「重新检测」。",
         "noUsableAgentShort": "暂无可用",
@@ -918,6 +931,7 @@ export default interface Resources {
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "在编码 Agent 中使用 {{product}}",
         "useInProduct": "在 {{product}} 中使用编码 Agent",
+        "versionAria": "版本 {{version}}",
         "viewGuide": "查看使用指南"
       },
       "canvas": {
@@ -928,6 +942,19 @@ export default interface Resources {
         "elsewhere": "网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。",
         "more": "其他画布设置",
         "openCanvasSettings": "打开画布设置"
+      },
+      "copied": "已复制",
+      "copy": "复制",
+      "diagnostics": {
+        "copyReport": "复制诊断",
+        "healthTitle": "健康状态",
+        "hidePreview": "收起",
+        "prepareFailed": "诊断报告生成失败，请重试。",
+        "preparing": "正在生成…",
+        "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
+        "reportTitle": "诊断报告",
+        "summaryFailing": "{{count}} 项异常",
+        "summaryOk": "全部正常"
       },
       "export": {
         "defaultDpi": "默认 DPI",
@@ -953,6 +980,90 @@ export default interface Resources {
       },
       "helpAbout": "关于{{label}}",
       "navLabel": "设置分区",
+      "packages": {
+        "builtinEmpty": "没有内置包信息。",
+        "builtinFromBundled": "随 {{product}} 安装包附带，只读。",
+        "builtinFromManaged": "随 {{product}} 环境提供，只读。",
+        "builtinPlanned": "创建环境时会装上 matplotlib 及其依赖。",
+        "builtinTitle": "内置包",
+        "col": {
+          "actions": "操作",
+          "name": "名称",
+          "status": "状态",
+          "version": "版本"
+        },
+        "confirm": {
+          "uninstallAction": "卸载",
+          "uninstallBody": "会从这个项目的 Tavotto 环境里移除它。用到它的脚本将无法渲染，直到重新安装。",
+          "uninstallBodyDependents": "{{dependents}} 依赖 {{name}}。卸载后它们也会不可用，用到的脚本将无法渲染。",
+          "uninstallTitle": "卸载 {{name}}？"
+        },
+        "disabled": {
+          "noBasePython": "这台机器上没有可以用来创建环境的 Python（需要 3.10 以上）。请先安装 Python，再回到这里。",
+          "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
+          "other": "包管理暂时不可用。"
+        },
+        "env": {
+          "inUse": "本项目正在使用",
+          "incomplete": "未完成（下次操作前会重建）",
+          "notCreated": "尚未创建——第一次安装时会自动创建",
+          "notInUse": "本项目当前未使用它",
+          "python": "Python {{version}}",
+          "ready": "就绪",
+          "rebuild": "重建"
+        },
+        "envTitle": "{{product}} 环境",
+        "install": "安装",
+        "job": {
+          "cancel": "取消",
+          "cancelled": "已取消{{op}} {{name}}。环境已标记为未完成，下次操作前会重建。",
+          "copyLog": "复制日志",
+          "creating_env": "正在创建 Tavotto 环境…",
+          "dismiss": "关闭",
+          "done": "已{{op}} {{name}} {{version}}",
+          "failed": "{{op}} {{name}} 没有完成",
+          "installing": "正在{{op}} {{name}}…",
+          "log": "详细日志",
+          "preparing": "正在准备{{op}} {{name}}…",
+          "progressAria": "包操作进度",
+          "verifying": "正在验证环境仍可渲染…"
+        },
+        "loading": "正在读取…",
+        "network": {
+          "customIndex": "使用自定义软件源",
+          "proxy": "当前走代理"
+        },
+        "networkNote": "安装与升级需要联网下载。",
+        "op": {
+          "install": "安装",
+          "uninstall": "卸载",
+          "update": "升级"
+        },
+        "protected": "内置依赖，只读",
+        "readOnly": "只读",
+        "reason": {
+          "repair": "缺包时自动修复安装",
+          "user": "手动安装"
+        },
+        "reinstall": "重新安装",
+        "rollbackNote": "包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 {{count}} 份），环境损坏时可用「重建」恢复到账上记录的状态。",
+        "specAria": "要安装的包名或规范",
+        "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
+        "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
+        "status": {
+          "changed": "版本已变化",
+          "changedDetail": "安装时是 {{recorded}}",
+          "installed": "已安装",
+          "missing": "环境里不见了",
+          "unknown": "未知"
+        },
+        "uninstall": "卸载",
+        "uninstallAria": "卸载 {{name}}",
+        "update": "升级",
+        "updateAria": "升级 {{name}}",
+        "userEmpty": "还没有在这个环境里安装过包。",
+        "userTitle": "用户安装"
+      },
       "project": {
         "backupDir": "备份目录",
         "backupDirHint": "写回原始文件前，原件先复制到这里。目录留空 = 使用默认位置；设置按项目分别保存。",
@@ -974,16 +1085,19 @@ export default interface Resources {
         "writeBackAllowed": "允许写回原始文件"
       },
       "section": {
-        "about": "隐私、诊断与 About",
+        "about": "关于与隐私",
         "ai": "编码 Agent",
         "canvas": "画布与编辑",
-        "export": "导出默认值",
+        "diagnostics": "诊断",
+        "export": "导出",
         "general": "常规",
-        "profiles": "样式与规范",
-        "project": "项目与路径",
-        "shortcuts": "快捷键",
-        "sidebars": "侧栏行为",
-        "update": "检查更新"
+        "interface": "界面",
+        "packages": "包管理",
+        "project": "项目",
+        "sidebars": "侧栏",
+        "spec": "规范",
+        "style": "样式",
+        "update": "更新"
       },
       "shortcuts": {
         "hint": "全部快捷键见速查表（按 ? 随时打开）。",
@@ -1340,7 +1454,6 @@ export default interface Resources {
       "autoInstallHintBefore": "会在 Tavotto 自己的目录里建一个独立环境并装上 matplotlib，",
       "autoInstallHintStrong": "不会改动你现有的任何 Python 环境",
       "bundledHint": "常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）已随 Tavotto 一起安装，不需要你另外装 Python，首次渲染也不联网。",
-      "bundledPackages": "内置包版本",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，安装后把 Tavotto 的安装目录加入白名单。",
       "incompleteBefore": "Tavotto 自带的渲染环境",
       "incompleteHint": "排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
@@ -1409,7 +1522,14 @@ export default interface Resources {
         "managed_env_broken": "Tavotto 的这个环境已损坏，可以重建它。",
         "managed_env_create_failed": "创建 Tavotto 环境失败。",
         "managed_env_unavailable": "这台机器上没有可以用来创建环境的 Python。请先安装 Python 3.10 以上，或选择一个已有的环境。",
+        "package_disk_low": "磁盘剩余空间不足 200 MB，先清理一些空间再安装。",
+        "package_env_missing": "这个项目还没有 Tavotto 环境。先安装一个包，环境会随之创建。",
+        "package_not_found_after_install": "pip 结束了，但环境里没有这个包——可能装到了别处或名字对上了另一个包。详细日志里有完整输出。",
+        "package_not_installed": "这个环境里没有这个包。",
+        "package_op_invalid": "不支持的包操作。",
+        "package_protected": "这是内置依赖，卸掉它这个环境就不能渲染了。",
         "package_requirement_invalid": "只接受「包名」或「包名>=版本」这样的写法。",
+        "package_still_installed": "pip 结束了，但这个包还在环境里。可以重建环境。",
         "pip_unavailable": "这个 Python 环境里没有 pip，Tavotto 不会替你改动它。可以改用 Tavotto 的隔离环境。",
         "repair_plan_stale": "在你确认期间，那个 Python 环境发生了变化。请重新开始。"
       },

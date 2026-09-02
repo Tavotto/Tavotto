@@ -91,11 +91,14 @@ const text = () => document.body.textContent ?? ''
 const buttons = () => [...document.body.querySelectorAll('button')]
 const byText = (label: string) => buttons().find((b) => b.textContent?.trim() === label)
 
-async function mount() {
+async function mount(kind: 'style' | 'spec' = 'style') {
   await act(async () => {
-    root.render(<ProfilesSettings />)
+    root.render(<ProfilesSettings kind={kind} />)
   })
 }
+
+/** 「样式」与「规范」自 Session 19 起是两个分区（同一个组件按 kind 渲染）：切页 = 换 kind 重渲染 */
+const switchToSpec = () => mount('spec')
 
 beforeEach(async () => {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
@@ -166,15 +169,11 @@ describe('内置只读', () => {
 })
 
 describe('Style 与 Spec 不混改', () => {
-  it('切到规范后字段整组换掉', async () => {
+  it('切到「规范」分区后字段整组换掉', async () => {
     await mount()
     expect(text()).toContain('线宽')
     expect(text()).not.toContain('最小字号')
-    await act(async () => {
-      ;[...document.body.querySelectorAll('[role="radio"], button')]
-        .find((b) => b.textContent?.trim() === '规范')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    await switchToSpec()
     expect(text()).toContain('最小字号')
     expect(text()).toContain('单栏宽')
     expect(text()).not.toContain('刻度字号')
@@ -192,11 +191,7 @@ describe('警告与项目绑定', () => {
 
   it('「跟随更新」默认关着，打开是一次可撤销的文档修改', async () => {
     await mount()
-    await act(async () => {
-      ;[...document.body.querySelectorAll('[role="radio"], button')]
-        .find((b) => b.textContent?.trim() === '规范')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    await switchToSpec()
     // 还没绑定这套规范时根本不出现这个开关（没有可跟随的对象）
     expect(document.body.querySelector('[aria-label="跟随更新"]')).toBeNull()
 
@@ -218,11 +213,7 @@ describe('警告与项目绑定', () => {
 
   it('换一套规范不会把「跟随更新」悄悄关掉', async () => {
     await mount()
-    await act(async () => {
-      ;[...document.body.querySelectorAll('[role="radio"], button')]
-        .find((b) => b.textContent?.trim() === '规范')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    await switchToSpec()
     await act(async () => {
       byText('本项目用这套规范')!.click()
     })
@@ -244,11 +235,7 @@ describe('警告与项目绑定', () => {
 
   it('「本项目用这套规范」写的是带快照的绑定，不是一个 id', async () => {
     await mount()
-    await act(async () => {
-      ;[...document.body.querySelectorAll('[role="radio"], button')]
-        .find((b) => b.textContent?.trim() === '规范')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    await switchToSpec()
     await act(async () => {
       byText('本项目用这套规范')!.click()
     })

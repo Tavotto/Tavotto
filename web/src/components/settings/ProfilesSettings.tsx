@@ -1,13 +1,17 @@
 /**
- * 「样式与规范」设置分区（Session 10，ADR 0029）。
+ * 「样式」与「规范」两个设置分区共用的骨架（Session 10，ADR 0029；Session 19
+ * 起按 `kind` 分成两页，ADR 0038）。
  *
- * 一屏两件事，**但绝不放进同一张表单**：
+ * 两件事**绝不放进同一张表单**：
  *
  *     样式 Style  —— 图长什么样；应用到图 = 一次可撤销的文档修改
  *     规范 Spec   —— 图要满足什么；只用于检查，**永远不改图**
  *
  * 两者共用列表与增删改复制的骨架，编辑区各是各的——混在一起改的话，
  * 「我只是想把字号调大」会顺手把验收口径也放宽，而用户不会知道。
+ * 规范页顶部多一行「本项目现在按哪套检查、用的是快照还是全局」——项目里存的
+ * 是绑定 + 规则快照（ADR 0029），这层关系在这里说清，不在导出面板里猜。
+ * 内部 id / 版本号只在「详情」折叠区里出现（`profileText.ts` 的纪律）。
  *
  * 磁盘一律走 `store/profileStore` → `/api/profiles/*` → `engine/profilestore.py`。
  * 这个组件里没有一行 fetch，也没有任何磁盘格式的知识。
@@ -19,10 +23,11 @@ import { msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
   profileName,
+  profileOriginLabel,
   profileTechnicalDetail,
   profileWarningText,
 } from '@/lib/profileText'
-import { bindingFor } from '@/lib/specBinding'
+import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -30,9 +35,8 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { NumberField, TextInput } from '../ui/Input'
-import { Segmented } from '../ui/Segmented'
 import { Toggle } from '../ui/Toggle'
-import { SettingRow, SettingSection } from './SettingRow'
+import { DiagnosticDisclosure, DiagnosticItem, SettingRow, SettingSection } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -146,9 +150,8 @@ function clearPath(obj: Record<string, unknown>, path: string): Record<string, u
   return next
 }
 
-export function ProfilesSettings() {
+export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
   useTranslation('dialogs')
-  const [kind, setKind] = useState<ProfileKind>('style')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
   const [name, setName] = useState('')
@@ -163,6 +166,10 @@ export function ProfilesSettings() {
   useEffect(() => {
     void useProfileStore.getState().load()
   }, [])
+  // 同一个组件实例在两个分区之间复用时，选中项不能带到另一类清单上
+  useEffect(() => {
+    setSelectedId(null)
+  }, [kind])
 
   const selected = useMemo(
     () => records.find((r) => r.id === selectedId) ?? records[0] ?? null,
@@ -288,9 +295,10 @@ export function ProfilesSettings() {
   const doc = useDocumentStore((s) => s.doc)
   const commit = useDocumentStore((s) => s.commit)
 
-  const asCatalogEntry = (r: ProfileRecord) => ({
+  const asCatalogEntry = (r: ProfileRecord): SpecCatalogEntry => ({
     id: r.id,
     display_name: r.display_name,
+    name_key: r.name_key,
     version: r.version,
     built_in: r.built_in,
     data: r.data,
@@ -335,24 +343,57 @@ export function ProfilesSettings() {
 
   const boundId = doc.profile?.id
 
+  /**
+   * 规范页顶部那一行：本项目按哪套检查、用的是快照还是全局。判据只有
+   * `lib/specBinding.resolveDocumentSpec` 一份（导出面板用的同一个）。
+   */
+  const specCatalog = useMemo<SpecCatalogEntry[]>(
+    () => (kind === 'spec' ? records.map(asCatalogEntry) : []),
+    [kind, records], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const resolved = useMemo(
+    () => (kind === 'spec' ? resolveDocumentSpec(doc.profile, specCatalog) : null),
+    [kind, doc.profile, specCatalog],
+  )
+  const boundRecord = boundId ? records.find((r) => r.id === boundId) : undefined
+  const syncToGlobal = () => {
+    if (!boundRecord) return
+    commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
+      d.profile = bindingFor(asCatalogEntry(boundRecord), {
+        journal: doc.profile?.journal,
+        follow: doc.profile?.follow,
+      })
+    })
+  }
+
   return (
     <SettingSection>
-      <Segmented<ProfileKind>
-        value={kind}
-        onChange={(v) => {
-          setKind(v)
-          setSelectedId(null)
-        }}
-        items={[
-          { value: 'style', label: st('kind.style') },
-          { value: 'spec', label: st('kind.spec') },
-        ]}
-        className="self-start"
-        ariaLabel={st('kindAria')}
-      />
       <p className="text-xs leading-relaxed text-ink-3">
         {kind === 'style' ? st('kind.styleHint') : st('kind.specHint')}
       </p>
+      {resolved && (
+        <div data-spec-binding className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span className="text-ink-2">
+            {st('binding.current', {
+              name: boundRecord
+                ? profileName(boundRecord)
+                : resolved.source === 'builtin'
+                  ? st('binding.builtinDefault')
+                  : (boundId ?? ''),
+            })}
+          </span>
+          <span className="text-ink-3">{st(`binding.source.${resolved.source}`)}</span>
+          {resolved.globalMissing && <span className="text-ink-3">{st('binding.globalMissing')}</span>}
+          {resolved.updateAvailable && (
+            <>
+              <span className="text-ink-2">{st('binding.updateAvailable')}</span>
+              <Button variant="outline" size="sm" onClick={syncToGlobal}>
+                {st('binding.sync')}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-3">
         {/* 左：清单 */}
@@ -493,6 +534,14 @@ export function ProfilesSettings() {
                   ))}
                 </ul>
               )}
+
+              {/* 内部 id / 版本 / 修订号只在这里出现（profileText.ts 的纪律） */}
+              <DiagnosticDisclosure title={st('details')}>
+                <DiagnosticItem name={st('detail.id')} value={selected.id} />
+                <DiagnosticItem name={st('detail.version')} value={selected.version || '—'} />
+                <DiagnosticItem name={st('detail.revision')} value={String(selected.revision)} />
+                <DiagnosticItem name={st('detail.origin')} value={profileOriginLabel(selected)} />
+              </DiagnosticDisclosure>
 
               {kind === 'spec' && boundId === selected.id && (
                 <SettingRow label={st('follow')} help={st('followHelp')} labelWidth={92}>

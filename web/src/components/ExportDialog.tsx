@@ -598,7 +598,8 @@ export function ExportDialog() {
             type="button"
             onClick={() => {
               setOpen(false)
-              useUiStore.getState().setSettingsOpen(true, 'profiles')
+              // 深链到「规范」页；关掉设置时回到这个面板（uiStore.settingsReturnTo）
+              useUiStore.getState().setSettingsOpen(true, 'spec', { returnTo: 'export' })
             }}
             className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
           >

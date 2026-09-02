@@ -19,6 +19,11 @@ interface DialogProps {
   /** 特殊场合才用；常规尺寸走 size */
   width?: number
   /**
+   * 固定高度（CSS 长度）。给「内容随分区变化」的外壳（设置）用：外框不随
+   * 内容高低跳动，内容区自己滚。不给就是按内容撑高、上限 86vh 的老行为。
+   */
+  height?: string
+  /**
    * 有不可中断的操作在跑：标记 aria-busy，并挡住 Esc / 点外面 / 右上角关闭。
    * 破坏性写入（写回原始文件、历史恢复）中途被关掉会让用户以为已取消，其实没有。
    */
@@ -36,6 +41,7 @@ export function Dialog({
   footer,
   size = 'md',
   width,
+  height,
   busy = false,
   blockDismiss = false,
 }: DialogProps) {
@@ -55,7 +61,7 @@ export function Dialog({
           )}
         />
         <RD.Content
-          style={{ width: width ?? WIDTH[size] }}
+          style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}) }}
           aria-busy={busy || undefined}
           onKeyDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={() => {
