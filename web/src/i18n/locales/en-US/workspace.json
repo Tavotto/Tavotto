@@ -279,7 +279,9 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward"
+    "zUp": "Bring forward",
+    "hideLegendEntry": "Hide legend entry “{{label}}”",
+    "legendFollowSource": "Legend entry follows source again"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",

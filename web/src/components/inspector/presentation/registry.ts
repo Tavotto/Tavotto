@@ -29,7 +29,9 @@ const ADVANCED_PROPS = new Set(['zorder', 'position'])
 const CONTROL_BY_PROP: Record<string, ControlKind> = {
   linestyle: 'line-style',
   grid_linestyle: 'line-style',
+  handle_linestyle: 'line-style',
   marker: 'marker',
+  handle_marker: 'marker',
   hatch: 'hatch',
   cmap: 'colormap',
   fontfamily: 'font',
@@ -52,6 +54,10 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   // 图例位置是角色专属语义（3×3 网格）；别的角色如果哪天也发 loc，回落 Select
   if (field.prop === 'loc' && role === 'legend' && field.type === 'enum') {
     return 'legend-position'
+  }
+  // 图例项的绑定：一行状态 + 动作（跟随 / 自定义），不是一个下拉
+  if (field.prop === 'binding' && role === 'legend_text' && field.type === 'enum') {
+    return 'legend-binding'
   }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp

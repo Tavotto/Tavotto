@@ -269,7 +269,9 @@
     "zBottom": "置于底层",
     "zDown": "下移一层",
     "zTop": "置于顶层",
-    "zUp": "上移一层"
+    "zUp": "上移一层",
+    "hideLegendEntry": "隐藏图例项 “{{label}}”",
+    "legendFollowSource": "图例项恢复跟随"
   },
   "layerTree": {
     "collapseGroup": "折叠组",

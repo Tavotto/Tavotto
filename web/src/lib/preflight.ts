@@ -639,6 +639,22 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         }
       }
     }
+    if (role === 'legend_text') {
+      // 图例项的示意线（ADR 0034）：自定义的那些自己是一份状态，宽度要过档位，
+      // 定位到图例项本身；跟随源的由源那条规则管着（再报一次是同一件事报两遍）
+      const lw = num(field(el, 'handle_linewidth'))
+      if (lw != null && presets.length && lw > 0 && field(el, 'binding') !== 'follow_source') {
+        const eff = lw * scale
+        if (presets.every((v) => Math.abs(eff - v) > tol)) {
+          sink.add(
+            'line-width-off-preset',
+            pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: Math.min(...presets.map((v) => Math.abs(eff - v))), prop: 'handle_linewidth' },
+          )
+        }
+      }
+    }
     if (role === 'line') {
       if (!linesByAxes.has(ax)) linesByAxes.set(ax, [])
       linesByAxes.get(ax)!.push(el)

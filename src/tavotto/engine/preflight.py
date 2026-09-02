@@ -603,6 +603,30 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                         detail={"effective_pt": _r2(eff)},
                         worse=min(abs(eff - v) for v in presets),
                     )
+        if role == "legend_text":
+            # 图例项的示意线（ADR 0034）：**自定义**的那些自己是一份状态，宽度
+            # 要过档位，且定位到图例项本身；跟随源的由源那条规则管着——再报
+            # 一次是同一件事报两遍。没有源的项（binding 字段缺席）按自定义算
+            lw = _num(_field(el, "handle_linewidth"))
+            if lw is not None and presets and lw > 0 and _field(el, "binding") != "follow_source":
+                eff = lw * scale
+                if all(abs(eff - v) > tol for v in presets):
+                    sink.add(
+                        "line-width-off-preset",
+                        f"图例示意线宽最终有效值 {eff:.2f}pt 不在规范档位 "
+                        f"{'/'.join(f'{v:g}' for v in presets)}pt 上",
+                        message=(
+                            "lineWidthOffPreset",
+                            {
+                                "effective": f"{eff:.2f}",
+                                "presets": "/".join(f"{v:g}" for v in presets),
+                            },
+                        ),
+                        object_ids=[pid],
+                        gids=[gid],
+                        detail={"effective_pt": _r2(eff)},
+                        worse=min(abs(eff - v) for v in presets),
+                    )
         if role == "line":
             lines_by_axes.setdefault(ax, []).append(el)
 

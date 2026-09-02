@@ -33,7 +33,26 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   title: TEXT_PROFILE,
   text: TEXT_PROFILE,
   axis_label: TEXT_PROFILE,
-  legend_text: TEXT_PROFILE,
+  // 图例项 = 一段文字 + 一个条目（ADR 0034）：文字那半与别的文字一样，
+  // 条目那半（与图中对象的绑定、示意线样式）也在首屏——用户选中一条图例项
+  // 最可能要改的正是它的线型 / 线宽 / 标记。图例标题没有条目字段，模板里
+  // 点名的属性 manifest 没给就自动跳过。
+  legend_text: {
+    primary: [
+      ...TEXT_PROFILE.primary,
+      'binding',
+      'handle_color',
+      'handle_linestyle',
+      'handle_linewidth',
+      'handle_marker',
+      'handle_markersize',
+    ],
+    more: [...(TEXT_PROFILE.more ?? [])],
+    visibleWhen: {
+      // 标记大小只在有标记时有意义
+      handle_markersize: (read) => read('handle_marker') !== 'None',
+    },
+  },
   line: {
     primary: ['label', 'color', 'linewidth', 'linestyle', 'marker', 'markersize'],
     more: ['alpha', 'markerfacecolor', 'markeredgecolor', 'visible'],
@@ -70,12 +89,26 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['arrowstyle', 'color', 'linewidth', 'linestyle'],
     more: ['mutation_scale', 'alpha', 'visible'],
   },
+  // 图例（ADR 0034）：科研用户的高频项常驻——位置、列数、示意线长、
+  // 示意线-文字间距、行距、列距、边框。字号由图例卡的 Typography 接管、
+  // 条目顺序由图例卡的条目列表接管（`LEGEND_CARD_PROPS`），两者不在这里。
   legend: {
-    primary: ['loc', 'fontsize', 'frameon', 'edgecolor', 'facecolor'],
-    more: [
-      'ncol', 'labelspacing', 'borderpad', 'handlelength',
-      'title', 'title_fontsize', 'framealpha', 'entry_order', 'visible',
+    primary: [
+      'loc', 'ncol', 'handlelength', 'handletextpad', 'labelspacing', 'columnspacing',
+      'frameon', 'frame_linewidth', 'frame_rounded', 'edgecolor', 'facecolor',
     ],
+    more: [
+      'title', 'title_fontsize', 'fontsize', 'framealpha', 'borderpad',
+      'entry_order', 'visible',
+    ],
+    visibleWhen: {
+      // 列距只在多列时有地方可摆；边框的四条只在边框开着时有意义
+      columnspacing: (read) => Number(read('ncol')) > 1,
+      frame_linewidth: (read) => read('frameon') !== false,
+      frame_rounded: (read) => read('frameon') !== false,
+      edgecolor: (read) => read('frameon') !== false,
+      facecolor: (read) => read('frameon') !== false,
+    },
   },
   axes: {
     // 尺寸（mm）由 AxesSizeMm 组件承接；裸 position rect 是 figure 分数

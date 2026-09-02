@@ -142,7 +142,7 @@
     "customLineStyle": "Custom line style ({{value}})",
     "hatchNone": "No hatch",
     "hatchPattern": "Hatch {{value}}",
-    "legendCustomHint": "The legend was dragged to a custom spot; pick any preset to snap back.",
+    "legendCustomHint": "The legend was dragged to a custom spot; pick any preset (including Best fit) to snap back.",
     "resetSide": "Reset {{label}} to script",
     "switchOff": "{{label}}: off (click to turn on)",
     "switchOn": "{{label}}: on (click to turn off)",
@@ -368,11 +368,11 @@
       "none": "None"
     },
     "loc": {
-      "best": "Best",
+      "best": "Best fit",
       "center": "Center",
       "center left": "Center left",
       "center right": "Center right",
-      "custom": "Custom (dragged)",
+      "custom": "Custom position",
       "lower center": "Lower center",
       "lower left": "Lower left",
       "lower right": "Lower right",
@@ -457,6 +457,10 @@
       "log": "Log",
       "logit": "Logit (log-odds)",
       "symlog": "Symlog"
+    },
+    "binding": {
+      "follow_source": "Follow plot object",
+      "custom": "Custom"
     }
   },
   "exitElementEdit": "Exit figure editing",
@@ -482,7 +486,8 @@
     "tickMarks": "Tick marks",
     "ticks": "Ticks",
     "typography": "Typography",
-    "view": "View"
+    "view": "View",
+    "legendEntry": "Legend entry"
   },
   "hiddenState": "Hidden",
   "hide": "Hide",
@@ -668,7 +673,7 @@
     "invert_y": "Invert Y axis",
     "label": "Name",
     "labelpad": "Label distance",
-    "labelspacing": "Line spacing",
+    "labelspacing": "Row spacing",
     "length": "Tick length",
     "linespacing": "Line spacing",
     "linestyle": "Line style",
@@ -738,7 +743,17 @@
     "xscale": "X scale",
     "ylim": "Y range",
     "yscale": "Y scale",
-    "zorder": "Stacking order"
+    "zorder": "Stacking order",
+    "handle_color": "Swatch color",
+    "handle_linestyle": "Swatch line style",
+    "handle_linewidth": "Swatch line width",
+    "handle_marker": "Swatch marker",
+    "handle_markersize": "Marker size",
+    "binding": "Source link",
+    "handletextpad": "Handle–text gap",
+    "columnspacing": "Column spacing",
+    "frame_linewidth": "Frame line width",
+    "frame_rounded": "Rounded frame"
   },
   "propByRole": {
     "bar": {
@@ -1051,5 +1066,31 @@
     "verified_other": "Verified against a clean replay ({{count}} elements matched)",
     "withAnnotations_one": "Write the canvas annotation back too ({{count}})",
     "withAnnotations_other": "Write the canvas annotations back too ({{count}})"
+  },
+  "legend": {
+    "typography": "Text",
+    "entries_one": "Entry ({{count}})",
+    "entries_other": "Entries ({{count}})",
+    "entriesAria": "Legend entries",
+    "selectEntry": "Select legend entry “{{label}}”",
+    "show": "Show",
+    "hide": "Hide",
+    "showEntry": "Show legend entry “{{label}}”",
+    "hideEntry": "Hide legend entry “{{label}}”",
+    "moveUp": "Move “{{label}}” up",
+    "moveDown": "Move “{{label}}” down",
+    "badge": {
+      "follow": "Linked",
+      "custom": "Custom",
+      "unbound": "Unlinked"
+    },
+    "stateFollow": "Follows the plot object",
+    "stateCustom": "Custom",
+    "makeCustom": "Make custom",
+    "restoreFollow": "Follow again",
+    "followHint": "The swatch tracks that curve in the plot; editing any style below makes it custom.",
+    "customHint": "The swatch no longer tracks the plot object; “Follow again” re-derives it from the source.",
+    "customHintStyled": "The swatch uses the styles you set here; “Follow again” drops them (one undo).",
+    "viewSource": "View source: {{label}}"
   }
 }

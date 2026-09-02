@@ -525,6 +525,39 @@ def cases() -> list[dict]:
         }
     )
 
+    # 15. 图例项的示意线（ADR 0034）：自定义的一项线宽脱档要报、定位到那一项；
+    #     跟随源的一项即使示意线宽脱档也不报（源那条规则已经管着，源本身合规）
+    m = _clean_manifest()
+    m["elements"] += [
+        {
+            **_el("axes_0.legend.texts_0", "legend_text", fontsize=9.0, handle_linewidth=1.2),
+            "legend_entry": {
+                "index": 0,
+                "source_gid": "axes_0.lines_0",
+                "binding_default": "custom",
+            },
+        },
+        {
+            **_el("axes_0.legend.texts_1", "legend_text", fontsize=9.0, handle_linewidth=1.2),
+            "legend_entry": {
+                "index": 1,
+                "source_gid": "axes_0.lines_1",
+                "binding_default": "follow_source",
+            },
+        },
+    ]
+    for j, binding in ((0, "custom"), (1, "follow_source")):
+        m["elements"][-2 + j]["editable"].append(
+            {"prop": "binding", "type": "enum", "value": binding}
+        )
+    out.append(
+        {
+            "name": "legend-entry-custom-handle-width",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
     # 14. 刻度标签超过 10 个（规范建议控制在 10 以内）
     m = _clean_manifest()
     m["elements"] += [_el(f"axes_0.xticklabels_{i}", "ticklabel", fontsize=9.0) for i in range(12)]

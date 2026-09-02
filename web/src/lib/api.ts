@@ -1168,6 +1168,16 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
+   * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示
+   * 「未关联图中对象」，不摆假开关。
+   */
+  legend_entry?: {
+    index: number
+    source_gid?: string
+    binding_default?: 'follow_source' | 'custom'
+  }
 }
 
 export interface Manifest {

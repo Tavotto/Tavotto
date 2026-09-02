@@ -140,7 +140,7 @@
     "customLineStyle": "自定义线型（{{value}}）",
     "hatchNone": "无花纹",
     "hatchPattern": "花纹 {{value}}",
-    "legendCustomHint": "图例被拖到过自定义位置；点任一预设即可回到自动定位。",
+    "legendCustomHint": "图例被拖到过自定义位置；点任一预设（含「最佳位置」）即可回到预设定位。",
     "resetSide": "恢复{{label}}到脚本",
     "switchOff": "{{label}}：关（点击开启）",
     "switchOn": "{{label}}：开（点击关闭）",
@@ -354,11 +354,11 @@
       "none": "无"
     },
     "loc": {
-      "best": "自动",
+      "best": "最佳位置",
       "center": "居中",
       "center left": "左中",
       "center right": "右中",
-      "custom": "自定义（拖动过）",
+      "custom": "自定义位置",
       "lower center": "下中",
       "lower left": "左下",
       "lower right": "右下",
@@ -443,6 +443,10 @@
       "log": "对数",
       "logit": "对数几率（logit）",
       "symlog": "对称对数"
+    },
+    "binding": {
+      "follow_source": "跟随图中对象",
+      "custom": "自定义"
     }
   },
   "exitElementEdit": "退出图内编辑",
@@ -468,7 +472,8 @@
     "tickMarks": "刻度线",
     "ticks": "刻度",
     "typography": "排版",
-    "view": "视角"
+    "view": "视角",
+    "legendEntry": "图例项"
   },
   "hiddenState": "已隐藏",
   "hide": "隐藏",
@@ -645,13 +650,13 @@
     "grid_x": "X 网格",
     "grid_y": "Y 网格",
     "ha": "水平对齐",
-    "handlelength": "图例线长",
+    "handlelength": "示意线长度",
     "interpolation": "插值",
     "invert_x": "反转 X 轴",
     "invert_y": "反转 Y 轴",
     "label": "名称",
     "labelpad": "与轴距离",
-    "labelspacing": "行距",
+    "labelspacing": "行间距",
     "length": "刻度长度",
     "linespacing": "行距",
     "linestyle": "线型",
@@ -721,7 +726,17 @@
     "xscale": "X 轴缩放",
     "ylim": "Y 范围",
     "yscale": "Y 轴缩放",
-    "zorder": "堆叠层级"
+    "zorder": "堆叠层级",
+    "handle_color": "示意线颜色",
+    "handle_linestyle": "示意线型",
+    "handle_linewidth": "示意线宽",
+    "handle_marker": "示意标记",
+    "handle_markersize": "标记大小",
+    "binding": "与图中对象",
+    "handletextpad": "线与文字间距",
+    "columnspacing": "列间距",
+    "frame_linewidth": "边框线宽",
+    "frame_rounded": "圆角边框"
   },
   "propByRole": {
     "bar": {
@@ -1023,5 +1038,30 @@
     "updatedIntro": "已更新以下文件：",
     "verified_other": "已通过干净重放校验（{{count}} 个元素一致）",
     "withAnnotations_other": "连同画布标注一并写回（{{count}} 条）"
+  },
+  "legend": {
+    "typography": "文字",
+    "entries_other": "图例项（{{count}}）",
+    "entriesAria": "图例项列表",
+    "selectEntry": "选中图例项 “{{label}}”",
+    "show": "显示",
+    "hide": "隐藏",
+    "showEntry": "显示图例项 “{{label}}”",
+    "hideEntry": "隐藏图例项 “{{label}}”",
+    "moveUp": "上移 “{{label}}”",
+    "moveDown": "下移 “{{label}}”",
+    "badge": {
+      "follow": "跟随",
+      "custom": "自定义",
+      "unbound": "未关联"
+    },
+    "stateFollow": "跟随图中对象",
+    "stateCustom": "自定义",
+    "makeCustom": "改为自定义",
+    "restoreFollow": "恢复跟随",
+    "followHint": "示意线跟着图中那条曲线走；改下方任一样式即改为自定义。",
+    "customHint": "示意线不再跟随图中对象；「恢复跟随」会回到由它派生的样子。",
+    "customHintStyled": "示意线用的是你在这里改的样式；「恢复跟随」会撤掉这些修改（一次撤销）。",
+    "viewSource": "查看源对象：{{label}}"
   }
 }

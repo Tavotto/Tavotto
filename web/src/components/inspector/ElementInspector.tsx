@@ -90,6 +90,7 @@ import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
 import { HatchPicker } from './controls/HatchPicker'
+import { LegendBindingControl } from './controls/LegendBindingControl'
 import { LegendPositionPicker } from './controls/LegendPositionPicker'
 import { LineStylePicker } from './controls/LineStylePicker'
 import { MarkerPicker } from './controls/MarkerPicker'
@@ -110,6 +111,8 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { HistoryPanel } from './HistoryPanel'
+import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
+import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
@@ -223,12 +226,18 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const tickAxisOfSelf =
     element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
   const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
+  // 图例卡只在图例**有项**时出现；没有项的图例（脚本只放了标题）字号照旧
+  // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
+  const legendCardCoversSelf =
+    element?.role === 'legend' && !!manifest && legendEntryElements(manifest, element.gid).length > 0
   const consumedBySideDiagram = new Set<string>(
     element?.role === 'axes'
       ? TICK_SPINE_PROPS
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
-        : [],
+        : legendCardCoversSelf
+          ? LEGEND_CARD_PROPS
+          : [],
   )
   const buckets =
     element && element.editable.length
@@ -348,6 +357,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
+              ) : legendCardCoversSelf && element ? (
+                <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
               ) : null
             }
           />
@@ -1098,6 +1109,8 @@ function FieldRow({
   field: EditableField
 }) {
   const value = currentValue(panel, element.gid, field)
+  // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
+  const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
@@ -1238,6 +1251,17 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'legend-binding':
+      // 「恢复跟随」是一次多条 override 的结构性动作，走 store 的
+      // restoreLegendEntryFollow（一条历史）；「改为自定义」是一条普通写入
+      return wrap(
+        <LegendBindingControl
+          panel={panel}
+          manifest={rowManifest}
+          element={element}
+          onSetCustom={() => writeOnce('custom')}
+        />,
+      )
     case 'arrow-style':
       return wrap(
         <ArrowStylePicker
@@ -1367,7 +1391,8 @@ function FieldRow({
       )
 
     case 'order': {
-      // 图例条目顺序：value = 按显示顺序排的原始序号，options = 当前显示文字
+      // 图例条目顺序：value = 按显示顺序排的原始序号，options = **原始序**的文字
+      // （options[原始序号] 是那一项的字，重排后不动）
       const perm = Array.isArray(value)
         ? (value as number[])
         : (field.options ?? []).map((_, i) => i)
@@ -1391,7 +1416,7 @@ function FieldRow({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink">
-                  {labels[i] ?? el('orderEntry', { index: origIdx + 1 })}
+                  {labels[origIdx] ?? el('orderEntry', { index: origIdx + 1 })}
                 </span>
                 <Button
                   size="icon-sm"

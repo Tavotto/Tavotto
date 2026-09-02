@@ -30,6 +30,7 @@
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
   | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
+  | `engine/overrides.LEGEND_ENTRY_STYLE_PROPS`+`LEGEND_BINDINGS` ↔ `web/src/lib/legendModel.ts` | `tests/test_legend_model_pairs.py`（顺序也比） |
   | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
   | `engine/originalspec.py` `DPI_SOURCES` ↔ `web/src/lib/api.ts` `dpi_source` 联合 | `test_frontend_and_backend_agree_on_the_dpi_source_set` |
   | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |

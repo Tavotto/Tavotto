@@ -8,7 +8,8 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
-import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
+import type { CapturedFigureDescriptor, ManifestElement, PanelInfo } from '@/lib/api'
+import { restoreFollowPlan } from '@/lib/legendModel'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
@@ -708,6 +709,30 @@ export function clearOverrides(
     o.overrides = o.overrides.filter(
       (p) => !hit.some((t) => t.gid === p.gid && t.prop === p.prop),
     )
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 图例项「恢复跟随图中对象」（ADR 0034）：删掉示意线的全部 handle_* override，
+ * 脚本原样是 custom 的项再写一条 `binding = follow_source`。**一次 commit**：
+ * 一条撤销、一次渲染——拆成几步的话中间态会渲染出一帧半跟随半自定义的图例。
+ */
+export function restoreLegendEntryFollow(panelId: string, element: ManifestElement) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const plan = restoreFollowPlan(element)
+  const touches =
+    plan.set.length > 0 ||
+    plan.remove.some((t) => panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop))
+  if (!touches) return
+  updateObject<PanelObject>(panelId, hist('legendFollowSource'), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !plan.remove.some((t) => t.gid === p.gid && t.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)

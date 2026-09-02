@@ -328,6 +328,27 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
   `tests/test_typography_families.py`。
 
+## 图例条目与绑定（2026-09-02，ADR 0034）
+
+完整版在 `docs/adr/0034-legend-entry-binding.md`，改动前先读。
+
+* **图例项 = 一段文字 + 一个条目**：文字那半走 ADR 0032 的 Typography 控件；
+  条目那半（`binding` / `handle_*` / `visible`）是 `legend_text` 元素上的普通
+  manifest 字段。`lib/legendModel.ts` 是前端投影：显示顺序、每项此刻的绑定
+  （判据与引擎 `effective_binding` 同一条——任一 `handle_*` override 在即
+  custom，**不是**「值和源一不一样」）、「恢复跟随」的计划。
+  `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与 `engine/overrides` 严格同源。
+* **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（Typography 批量作用
+  于全部项）与 `entry_order`（条目列表的上下移动），通用列表让出这两条
+  （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
+  预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
+* **恢复跟随**只有 `store/actions.restoreLegendEntryFollow` 一处：删全部
+  `handle_*` override + 按 `binding_default` 决定写 `binding=follow_source` 还是
+  删 binding override，**一次 commit**。别在组件里逐条 `clearOverride`——那是
+  一串撤销记录，中间态还会渲染出半跟随半自定义的图例。
+* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」。
+* 看护：`inspector/legendCard.test.tsx`；Python 侧 `tests/test_legend_binding.py`。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
