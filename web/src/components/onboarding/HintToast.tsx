@@ -16,30 +16,37 @@ export function HintToast() {
   const token = useHintStore((s) => s.token)
   const dismiss = useHintStore((s) => s.dismiss)
   const { mounted, state } = usePresence(!!current, DURATION.exit)
-  if (!mounted || !current) return null
+  const text = current ? t(`hints.${current}`) : ''
   return (
     <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex justify-end">
-      <div
-        key={token}
-        role="status"
-        data-state={state}
-        data-onboarding-hint={current}
-        className={cn(
-          'pointer-events-auto flex max-w-[320px] items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-ink-2 shadow-pop',
-          'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
-        )}
-      >
-        <Lightbulb size={13} className="mt-px shrink-0 text-ink-3" aria-hidden />
-        <span className="min-w-0 flex-1 leading-relaxed">{t(`hints.${current}`)}</span>
-        <button
-          type="button"
-          onClick={dismiss}
-          aria-label={translate('actions.close')}
-          className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
-        >
-          <X size={12} />
-        </button>
+      {/* 读屏：aria-live 常驻。**不给 role=status**——状态 toast 那一份已经是 status，
+          再来一个同名的会让「唯一的状态区」变成两个（既有 e2e 用 getByRole('status')
+          找 toast，第一遍就撞上了） */}
+      <div aria-live="polite" className="sr-only">
+        {text}
       </div>
+      {mounted && current && (
+        <div
+          key={token}
+          data-state={state}
+          data-onboarding-hint={current}
+          className={cn(
+            'pointer-events-auto flex max-w-[320px] items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-ink-2 shadow-pop',
+            'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
+          )}
+        >
+          <Lightbulb size={13} className="mt-px shrink-0 text-ink-3" aria-hidden />
+          <span className="min-w-0 flex-1 leading-relaxed">{text}</span>
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label={translate('actions.close')}
+            className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
