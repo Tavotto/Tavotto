@@ -145,7 +145,7 @@ _capture_refresh_completed(result) ; _capture_package_action(op, progress)
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-13-properties`（13–22 十轮都在这条分支上，**尚未推送、没有 PR**）；本轮提交
-  `2f4ed1bc`（实现 + 测试 + 文档）+ 反证后处置 + 留档
+  `2f4ed1bc`（实现 + 测试 + 文档）+ `98467dc7`（反证后处置）+ `1b632039`（留档）
 - author 用 `88193520+erwanjun@users.noreply.github.com`，提交时 `git -c user.email=…`
 
 ---
