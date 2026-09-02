@@ -1694,3 +1694,53 @@ onboarding 去 import 核心 action 的结果，或 action 发一声。前者把
 `pointer-events: none`（`:has([role='tooltip'])` 只选到气泡的外壳）。** 不改成「不
 自动聚焦」——那会让键盘用户进不了弹层。这一条在 jsdom 里量不到，是 Playwright 的
 `intercepts pointer events` 抓到的。
+
+## T-95（Session 18）右键菜单是真菜单，图内元素的弹层不是
+
+**问题。** 旧 QuickEdit 是一份自制的按钮列表：没有 `menuitem`、没有方向键、没有子菜单、
+没有 disabled 原因。Prompt 18 要加子菜单与多选清单，摆在面前的是「把自制 Item 补全」还是
+「换成仓库已有的 Radix 菜单」。
+
+**裁决：画布对象的右键换成 Radix 菜单（`ui/Menu.PointMenu`，锚在光标处的零尺寸触发器）；
+图内元素的弹层原样保留为 `role="dialog"`。** 前者是纯动作清单，菜单语义与键盘模型 Radix 一次
+给全；后者含文字框 / 样式条 / 缩放 / 图例位置这些**控件**，硬塞进 menuitem 只会得到一个
+不合法的嵌套交互。两种外壳共用 `quickEditStore` 一个开关，ContextBar 让位 / 切工作流关闭 /
+问题定位关闭仍只认它。
+
+## T-96（Session 18）「重新构建」= 用户明确触发的一次脚本执行，与脚本文件变更走同一个原语
+
+**问题。** 前端没有「重跑脚本」的通道：`requestRender` 只是按 patches 向热会话要图，脚本
+改没改由后端 watcher 决定；数据文件变了而脚本没变时，用户没有任何办法让图刷新。
+
+**裁决：后端加 `POST /api/engine/invalidate`，做的事与 `panel.file_changed` 那条路**逐字相同**
+（`pool.invalidate`，只让会话过期、不起 worker）；前端 `rebuildPanel` = invalidate →
+`markStale` → 一次 immediate 渲染。** 它不改文档、不进历史（撤销撤的是编辑，不是一次重画）。
+作废不了时**要说出来**：native 会话是用户自己终端里的进程（ADR 0021，不杀）、内嵌画布与
+playground 没有作废通道——这两种情况都只按当前 overrides 重画，toast 写明「源脚本没有重跑」。
+一个静默的 200 会让用户以为数据文件的改动已经生效。
+
+## T-97（Session 18）「恢复图内修改」= 属性页的「重置到脚本原始」，写回过的面板要换一句话
+
+**问题。** Prompt 提到「baked overrides 代表磁盘当前基线时要仔细区分」。摆在面前的是要不要
+做成第二种恢复（回到磁盘基线而不是脚本原样）。
+
+**裁决：不做第二种。菜单项就是 `resetOverrides`（同一个 action、同一条历史标签），语义是
+「这个面板实例回到源脚本当前生成的状态」。** 差异只在**确认框的话**：override 恰好等于磁盘
+基线（`isJustBakedBaseline`）时说明「这些修改已经写回到原始文件里……原始文件保持现状」——
+否则用户会以为文件被改回去了。「回到磁盘基线」这个动作等于把基线再播种一遍，属性页的
+「同步」按钮那条路已经存在，不在右键里再造一个。
+
+## T-98（Session 18）Esc 要在捕获层止步——jsdom 看不见这一条
+
+**问题。** 第一遍真浏览器：子菜单开着按 Esc，菜单关了，**选区也没了**——全局 Esc 跑了。
+而 jsdom 里同一份代码（只有冒泡层 `onKeyDown` 的 `stopPropagation`）全绿。
+
+**成因。** 真浏览器在**事件监听器之间有微任务检查点**：Radix 在 document 捕获层处理 Esc 并关掉
+菜单，React 的 sync-lane 刷新在下一个检查点就把节点卸了，到冒泡层时 target 已经不在 React
+树里，`onKeyDown` 根本不跑，事件一路到 window。jsdom 把所有监听器跑完才处理微任务，
+`onKeyDown` 仍在，于是恒绿。
+
+**裁决：根菜单与子菜单各在 `onEscapeKeyDown`（document 捕获层）`stopPropagation`；冒泡层那条
+留着管首字母跳转与方向键。** 变异 M8 / M9 在 jsdom 里**存活是结构性的**，真浏览器守护落在
+`e2e/quick-menu.spec.ts`。不改 `useKeyboard` 去看 `defaultPrevented`——那会改变所有 Esc
+消费者的语义。

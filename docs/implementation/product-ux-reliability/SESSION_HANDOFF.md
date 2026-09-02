@@ -5,7 +5,170 @@
 
 ---
 
-## 最近一次：Session 17（2026-09-02）
+## 最近一次：Session 18（2026-09-02）
+
+### 目标
+
+Prompt 18：画布对象的右键菜单按对象与选区给出真正高频、符合上下文的动作；复用 17 的排列
+action / 按钮表 / 参照、08 的 readiness focus、既有 crop / fit / duplicate / z-order / delete；
+不做第二个 Inspector、不复制排列或 override 逻辑。
+
+### 开始前实测到的四件事
+
+1. **旧 QuickEdit 的对象菜单是自制按钮列表**：没有 `menuitem`、方向键、子菜单、disabled 原因；
+   四个层级动作平铺；不分对象类型、不分单选多选。仓库已有 `ui/Menu.tsx`（Radix DropdownMenu），
+   但只有触发器式菜单，没有「贴着一个点打开」的外壳，也没用过 `Sub`。
+2. **右键的选区规则已经对了一半**：`ObjectView.onContextMenu` 已做「不在选区 → 换成整组」，但
+   图内编辑态里右键别的对象不退编辑态（左键会退）。
+3. **前端没有「重跑脚本」的通道**：`requestRender` 只按 patches 向热会话要图；脚本改没改由
+   后端 watcher 决定（`panel.file_changed` → `pool.invalidate` + 前端 `markStale`）。「重新构建」
+   要真重跑就得让后端作废会话——用户明确触发的脚本执行是 §4 允许的形态。
+4. **旋转面板能不能裁剪四个入口不一致**：双击不进（`ObjectView`），浮动栏 / Enter 键会进。
+
+### 实际完成
+
+**1. `ui/Menu.tsx` 三个新原语（ADR 0037）。**
+
+```text
+PointMenu     贴着一个点打开：零尺寸锚 + modal=false（外部点击照常落到画布）
+              + 键盘不外泄（onKeyDown / onEscapeKeyDown 都 stopPropagation）+ 关闭后焦点还给打开前的元素
+MenuSub       SubTrigger + SubContent，越界翻转；Esc 同样在捕获层止步
+MenuItem      +reason（常驻原因，不是 tooltip）/ icon / data-* 透传；MenuHeading（不大写的说明行）
+```
+
+**2. `canvas/ObjectContextMenu.tsx`：五份清单只发意图。** `panel` / `panel-layout-only` / `text` /
+`mark` / `multi`（`data-quick-menu`），每项 `data-quick-item`。排列 / 成组走 `alignSelectedTo` /
+`groupSelected` / `ungroupSelected`（按钮表 + 参照同源），readiness 走 `focusPanel`，其余走既有
+action。图内元素的 dialog 弹层留在 `QuickEdit.tsx`，只补「恢复此元素修改（N）」。
+
+**3. 四个新 action + 一个端点。** `rebuildPanel`（`POST /api/engine/invalidate` = 与脚本变更同一个
+`pool.invalidate`，不起 worker → `markStale` → immediate 渲染；不改文档不进历史；作废不了要说）、
+`resetOverridesConfirmed`（= 属性页 `resetOverrides` + 先问一句；写回过的面板换一句话）、
+`setObjectsLocked` / `setObjectsHidden`（收目标状态、一条历史）、`triStateOf`。
+
+**4. `ObjectView.onContextMenu`**：不在选区里 → 换成它 / 整组，并与左键一样退出图内编辑态；已在
+选区里一个字不动（shift 混排进来的标注因此不退）。
+
+**5. 真浏览器抓到一条 jsdom 看不见的**：子菜单上按 Esc，选区被全局 Esc 清空。成因是监听器之间
+的微任务检查点（T-98）；修法是根菜单与子菜单各在 `onEscapeKeyDown` 止步。守护落在
+`e2e/quick-menu.spec.ts`（进仓库）。
+
+### 关键 API（Prompt 19 / 21 直接用）
+
+```ts
+// web/src/components/ui/Menu.tsx
+PointMenu({ open, onOpenChange, at, ariaLabel, width?, ...data-* })   // 任何贴着一个点的菜单
+MenuSub({ label, icon?, disabled?, ...data-* })   MenuItem({ reason?, icon?, shortcut?, ...data-* })   MenuHeading
+// web/src/store/actions.ts
+rebuildPanel(panelId): Promise<'rebuilt'|'rerendered'|'failed'|'skipped'>
+resetOverridesConfirmed(panelId): Promise<boolean>
+setObjectsLocked(ids, locked) / setObjectsHidden(ids, hidden) / triStateOf(objs, pick)
+// web/src/lib/api.ts
+engineInvalidate(id): Promise<{ invalidated: boolean; reason?: string }>
+// src/tavotto/app.py
+POST /api/engine/invalidate { id }  → { invalidated: true } | { invalidated: false, reason: 'native_session' } | 404
+```
+
+稳定锚点：`data-quick-menu` / `data-quick-menu-count` / `data-quick-heading` / `data-quick-item` /
+`data-quick-arrange-ref`（图内弹层 `data-quick-item="reset-element"`）。
+
+### 迁移
+
+**没有磁盘格式改动、没有新文档字段、没有新错误码。** 行为变化三条：① 画布对象的右键菜单换了
+形态（真菜单 + 子菜单，多选与仅排版面板各有清单）；② 图内编辑态里右键不在选区里的别的对象
+现在退出编辑态（此前停在半编辑半选中的混合态）；③ `quickEdit.openInspector` 文案「在属性页
+打开」→「打开全部属性」（图内元素弹层也用它）。
+
+### 修改的文件
+
+```text
+新增  web/src/canvas/ObjectContextMenu.tsx          五份清单
+新增  web/src/canvas/objectContextMenu.test.tsx     62 条
+新增  web/src/store/quickEditActions.test.ts        18 条
+新增  web/e2e/quick-menu.spec.ts                    真浏览器 1 条（jsdom 量不到的那几件）
+新增  tests/test_engine_invalidate.py               4 条
+新增  docs/adr/0037-quickedit-context-menu.md
+改动  web/src/components/ui/Menu.tsx                PointMenu / MenuSub / MenuItem.reason / MenuHeading
+改动  web/src/canvas/QuickEdit.tsx                  对象分支交给 ObjectContextMenu；元素弹层 +「恢复此元素修改」
+改动  web/src/canvas/ObjectView.tsx                 右键的选区规则（退编辑态）
+改动  web/src/store/actions.ts                      rebuildPanel / resetOverridesConfirmed / setObjectsLocked / setObjectsHidden / triStateOf
+改动  web/src/lib/api.ts                            engineInvalidate
+改动  src/tavotto/app.py                            POST /api/engine/invalidate
+改动  web/src/i18n/locales/*/workspace.json + resources.d.ts
+改动  web/AGENTS.md
+重建  codex-plugin/mcp/widget/canvas.html           指纹 f0875a2608115edd
+重建  web/dist-playground/                          指纹 36826a10beef7d5a（不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **jsdom 没有监听器之间的微任务检查点**（T-98）：Radix 在 document 捕获层关掉菜单后，真浏览器里
+   React 立刻卸了节点，冒泡层 `onKeyDown` 跑不到；jsdom 里跑得到。同一份代码 jsdom 全绿、浏览器红，
+   而且删掉捕获层守卫之后 jsdom 还是绿（变异 M8 / M9 存活）。**这类判据只有真浏览器抓得到。**
+2. **Radix 把「聚焦下一项」放在 `setTimeout(0)`**：按完方向键要等一拍再看 `activeElement`。
+3. **中文复数只有 `_other`**：英文给了 `_one/_other` 的键，中文必须写 `xxx_other` 而不是基键，
+   否则 `i18n:check` 红（「同时存在基键与复数形态」）。
+4. **`alignSelectedTo('samew', 'selection')` 的结果是选区包围盒的宽**：我按主选的宽写了期望值，
+   判据没错，是我对参照语义的假设错了。
+5. **一次性渲染出来的 `ObjectView` 不跟文档走**：用例里改 `locked` 之后 DOM 不重渲染，锁定那条
+   得在 seed 里就锁好。**拖到 (1300, 820) 的面板落在右栏底下**：画布区右沿 ≈ 1040。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 18 之后」新增的五行（没有键盘打开方式、裁剪规则四入口不一致、
+内嵌画布里的重建只是重画、M8 / M9 结构性存活、e2e 全量没跑）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 / 14 / 15 / 16 / 17 / 18 六轮都在这条分支上，
+  **尚未推送、没有 PR**）；本轮提交 `608745c8`（代码 + widget）+ 文档 / e2e / 留档一笔
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 19：设置 / Agent / 包管理）
+
+**从这里开始读**：`docs/adr/0037-quickedit-context-menu.md`（本轮）、`UX_CONTRACTS.md` 的
+「4g 画布对象右键菜单合同」、`web/AGENTS.md` 的「画布对象的右键菜单」、
+`docs/adr/0018`（项目环境自动接手）/ `0021`（`tavotto run`）、`components/settings/*`、
+`store/envStore.ts`、`engine/managedenv.py` / `deprepair.py`（包管理的既有面）。
+
+**Session 18 留给后面的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 贴着一个点打开的菜单 | `ui/Menu.PointMenu` | 设置页 / 素材卡的「更多」若要右键版本，直接用；别再手写弹层 |
+| 带常驻原因的禁用项 | `ui/Menu.MenuItem.reason` | 「为什么不能」写在项里，不写 tooltip |
+| 用户明确触发的脚本重跑 | `store/actions.rebuildPanel` + `POST /api/engine/invalidate` | 「换了环境 / 装完包之后重跑这张图」直接调；`retryEnvironmentFailures` 管的是失败的那批，这个管的是用户点名的那一张 |
+| 一条历史的批量状态 | `setObjectsLocked` / `setObjectsHidden` | 图层树的批量操作可复用；收目标状态不收 toggle |
+| 引导锚点 | `data-quick-menu` / `data-quick-item` / `data-quick-arrange-ref` | Prompt 21 的 coachmark 挂这里，别改名 |
+| jsdom 量不到的那一类 | `e2e/quick-menu.spec.ts` | 捕获层 Esc / 越界翻转 / 冷构建；同类判据加在这条 spec 里 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、12 的五条、13 的四条、
+14 的四条、15 的四条、16 的三条、17 的三条原样成立，18 再加三条）：
+
+47. **不许在右键菜单里塞属性控件、算几何、判就绪度**（T-95）。菜单只发意图；控件归 ContextBar
+    与属性页，几何归 action，就绪度归后端。
+48. **不许让「重新构建」静默降级**（T-96）。作废不了就说「源脚本没有重跑」；也不许把它做成一条
+    历史——撤销撤的是编辑。
+49. **不许用冒泡层的 stopPropagation 当作「事件不出浮层」的证据**（T-98）。Radix 在捕获层关掉的
+    浮层，冒泡层跑不到；jsdom 看不见这一条，真浏览器跑一遍。
+
+**必须保留的不变式**（在 17 的三十三条之上）：
+
+34. **右键的选区规则**：已在选区里一个字不动，不在 → 换成它 / 整组
+    （`objectContextMenu.test.tsx` 的「右键先保证目标在选区里」八条）。
+35. **五份清单的每一项与直接调 action 同一条历史标签**（层级 / 对齐 / 成组各一条钉着）。
+36. **`rebuildPanel` 不改文档、不进历史，先作废后渲染**（`quickEditActions.test.ts`）。
+37. **`resetOverridesConfirmed` 只清本实例、可撤销、先问**。
+38. **Esc / 首字母不出菜单，选区不动**（jsdom 一条 + 真浏览器一条）。
+
+---
+
+## 历史：Session 17（2026-09-02）
 
 ### 目标
 

@@ -49,7 +49,7 @@
 | 15 | 图例绑定与控件 | ✅ 完成（本次，ADR 0034） |
 | 16 | 刻度线直接操作 | ✅ 完成（本次，ADR 0035） |
 | 17 | 多选浮动栏 | ✅ 完成（本次，ADR 0036） |
-| 18 | QuickEdit 右键动作 | ⬜ |
+| 18 | QuickEdit 右键动作 | ✅ 完成（本次，ADR 0037） |
 | 19 | 设置 / Agent / 包管理 | ⬜ |
 | 20 | 离线教程资源后端 | ⬜ |
 | 21 | onboarding UI 与提示 | ⬜ |
@@ -63,7 +63,7 @@
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
-| 4 编辑一致性 | 13–18 | 🟡 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）完成；18 未开始 |
+| 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
 
@@ -497,7 +497,26 @@ desktop…」。
 
 ---
 
-## 遗留（Session 17 之后仍开着的）
+### Session 18 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **167** files / **2344** tests passed（比 17 的 165/2265 +2 文件 / +79 条：`canvas/objectContextMenu.test.tsx` 62 + `store/quickEditActions.test.ts` 18；既有用例一条没改） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（新增 `workspace:quickEdit.*` 19 组、`workspace:history.{lock,unlock,hide,show}Objects`、`workspace:status.{panelRebuilt,panelRerenderedNoRerun,rebuildFailed}`、`workspace:confirm.resetOverrides*`；`quickEdit.openInspector` 文案改为「打开全部属性」；`resources.d.ts` 重新生成。第一版把中文的 `_other` 写成了基键，门禁当场红） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示 |
+| `ruff check . && ruff format --check .` | ✅ |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests/test_engine_invalidate.py tests/test_i18n_dead_keys.py tests/test_engine_variants.py tests/test_error_codes.py` | ✅ exit 0（145 条）。**后端只加了一个端点，全量 pytest 这一轮没跑**（16 那遍 3655/34/0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `f0875a2608115edd`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `36826a10beef7d5a`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 22 条 | ✅ 19 红、3 存活且成因说得清（M8 / M9 结构性——jsdom 没有监听器之间的微任务检查点；M12 语义 no-op），见 `TEST_MATRIX.md` |
+| 真浏览器 `e2e/quick-menu.spec.ts`（Playwright chromium，**进仓库**） | ✅ 1400×900：面板右键菜单十项、hover 排列层级子菜单、**子菜单上按 Esc → 菜单关、选区不动、单选浮动栏回来**（第一遍红：选区被全局 Esc 清空，见 T-98）；「重新构建」真的冷构建一遍脚本 → toast「已按源脚本重新构建」；↓ ↓ 聚焦到「重新构建」、按 r 不切矩形工具；面板拖到画布右下角右键 → 菜单翻到光标上方（y 551–876 ≤ 885）、子菜单翻到左边（x 852–1026 ≤ 1030）；⌘A 三对象右键 → 多选菜单「参照：选区」→ 左对齐 x 全等（664）；文字右键「编辑文字」进编辑态。截图七张在 scratchpad |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条）。13 记的六条红仍开着 |
+
+---
+
+## 遗留（Session 18 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -552,21 +571,29 @@ desktop…」。
 | — | **弹层打开时第一个分段项的 tooltip 会先亮一下**（Radix 自动聚焦 + 聚焦即开气泡）。现在它不再吃点击，只是视觉噪音；不自动聚焦的话键盘用户进不了弹层 | 择机 |
 | — | **多选栏的落位用未旋转包围盒**（与 OverlaySvg 的联合框同一份）：旋转过的对象联合框比真实轮廓大一圈，栏会离得远一点 | 已处置（同一份几何优先于更紧的框） |
 | — | **Session 17 没跑 e2e 全量**：改动没碰黄金路径的键位与文案；跑了一条临时 spec 覆盖本阶段路径。这是**没跑全量**，不是「跑过没问题」 | 23 前 |
+| — | **右键菜单没有键盘打开方式**（Shift+F10 / ContextMenu 键）：打开之后键盘全套可用，但打开只能靠鼠标；等价路径是属性页 / 浮动栏 / 快捷键。做它要决定锚在哪（主选对象的屏幕框），与 21 的引导一起考虑 | 未定（ADR 0037 §3） |
+| — | **裁剪规则在四个入口上不一致**：双击面板与右键菜单在旋转面板上不进裁剪态（菜单给原因），浮动栏的裁剪按钮与 Enter 键仍会进——既有的不一致，18 没有顺手改 | 择机 |
+| — | **「重新构建」在内嵌画布 / playground 里只是重画**：`EngineTransport` 没有作废会话的通道，toast 如实说「源脚本没有重跑」。要真重跑得给传输层加一条 `invalidate` | 未定 |
+| — | **M8 / M9 在 jsdom 里结构性存活**（捕获层 Esc 守卫）：真浏览器守护只有 `e2e/quick-menu.spec.ts` 一条，而 e2e 全量本机不常跑、CI 只有 Windows 腿 | 已处置（用例进仓库；T-98 留档） |
+| — | **Session 18 没跑 e2e 全量**：跑了本阶段那一条（进仓库）。这是**没跑全量**，不是「跑过没问题」 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 18（QuickEdit 右键动作）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+**Prompt 19（设置 / Agent / 包管理）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-17 留给 18 的可复用入口：`store/actions.alignSelectedTo` / `groupSelected` /
-`ungroupSelected`（多选动作只有这一份，QuickEdit 的菜单项直接调）、
-`inspector/arrangeButtons.ts`（按钮表：图标 / 顺序 / 最少对象数 / tooltip 键）、
-`store/arrangeStore`（参照）、`context-bar/openArrange.openArrangeInInspector`
-（「更多」到属性页排列组）、`lib/activity.emitActivity`（动作完成信号）、
-`context-bar/position.placeToolbar`（任何贴着选区的浮层都可以用这一份落位）、
-`projectReadinessStore.focusPanel(fileId)`（09 起就在的 readiness focus 入口，18 必须复用）。
+18 留给后面阶段的可复用入口：`ui/Menu.PointMenu` / `MenuSub` / `MenuItem.reason`（任何贴着一个
+点打开的菜单、任何带常驻原因的禁用项）、`store/actions.rebuildPanel`（用户明确触发的一次脚本
+重跑；设置页的「换了环境之后重跑」可以直接调）、`resetOverridesConfirmed` / `setObjectsLocked` /
+`setObjectsHidden`、`POST /api/engine/invalidate`、稳定锚点 `data-quick-menu` / `data-quick-item`
+（Prompt 21 的 coachmark 挂这里）。
+
+17 留给 18 的可复用入口（18 已消费，对后面原样有效）：`store/actions.alignSelectedTo` / `groupSelected` /
+`ungroupSelected`、`inspector/arrangeButtons.ts`、`store/arrangeStore`、
+`context-bar/openArrange.openArrangeInInspector`、`lib/activity.emitActivity`、
+`context-bar/position.placeToolbar`、`projectReadinessStore.focusPanel(fileId)`。
 
 16 留给 17 的可复用入口（17 已消费，对 18 原样有效）：`PanelView.ElementHitLayer.spineZoneUnder`（「先 pick 再问带」
 的命中层形状，allow 闸在这里）、`lib/tickSides.spineZoneAt` 的 `scale` 参数（屏幕像素

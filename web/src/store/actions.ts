@@ -1,5 +1,4 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
-import { engineInvalidate } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -11,7 +10,12 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
-import type { CapturedFigureDescriptor, ManifestElement, PanelInfo } from '@/lib/api'
+import {
+  engineInvalidate,
+  type CapturedFigureDescriptor,
+  type ManifestElement,
+  type PanelInfo,
+} from '@/lib/api'
 import { restoreFollowPlan } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
