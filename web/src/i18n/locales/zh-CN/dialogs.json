@@ -247,6 +247,18 @@
       "versions": {
         "keywords": "version history timeline bb sjx banben",
         "label": "布局版本时间线…"
+      },
+      "tutorial-start": {
+        "label": "开始教程",
+        "keywords": "tutorial onboarding start jc jiaocheng 示例 新手"
+      },
+      "tutorial-resume": {
+        "label": "继续教程",
+        "keywords": "tutorial onboarding resume jc jiaocheng 继续"
+      },
+      "tutorial-reset": {
+        "label": "重新开始教程",
+        "keywords": "tutorial onboarding reset jc jiaocheng 重置"
       }
     },
     "listLabel": "命令",
@@ -966,6 +978,24 @@
       "sourceUpgrade": "源码检出请自行执行",
       "upToDate": "已是最新版本。",
       "upgrading": "升级中…"
+    },
+    "tutorial": {
+      "label": "新手教程",
+      "hint": "用一份离线的示例项目走一遍快速编辑、问题定位、导出与多选对齐。",
+      "state": {
+        "not_started": "未开始",
+        "active": "进行中",
+        "paused": "已暂停",
+        "completed": "已完成",
+        "skipped": "已跳过"
+      },
+      "start": "开始教程",
+      "resume": "继续教程",
+      "restart": "再看一遍教程",
+      "reset": "重新开始教程",
+      "hints": "情境提示",
+      "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
+      "resetHints": "重置提示"
     }
   },
   "style": {
@@ -1124,5 +1154,99 @@
     "versionName": "版本名称",
     "viewCurrent": "当前",
     "viewVersion": "该版本"
+  },
+  "onboarding": {
+    "pause": "暂停教程",
+    "back": "返回",
+    "skipStep": "跳过此步",
+    "start": "开始",
+    "explore": "继续探索",
+    "openOwnProject": "打开自己的项目",
+    "resolvedContinue": "问题已解决，继续",
+    "targetWaiting": "正在等待目标出现…",
+    "targetMissing": "找不到这一步的目标。可以返回上一步或跳过此步。",
+    "progress": "第 {{n}} 步，共 {{total}} 步",
+    "hintsReset": "情境提示已重置，会再各出现一次",
+    "landed": {
+      "started": "教程已开始",
+      "resumed": "从上次停下的地方继续",
+      "restarted": "教程已重新开始"
+    },
+    "failure": {
+      "unavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。",
+      "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
+      "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
+      "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+      "cancelled": "已取消。",
+      "no_api": "这个环境没有提供教程。"
+    },
+    "reset": {
+      "title": "重新开始教程？",
+      "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+      "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
+      "confirm": "重新开始"
+    },
+    "steps": {
+      "welcome": {
+        "title": "用示例了解 Tavotto",
+        "body": "这是一份离线的教程副本，随便改，随时可以重新开始，不会碰你自己的项目。接下来用真实操作走一遍两条核心流程。"
+      },
+      "open_fast_edit": {
+        "title": "打开一张图",
+        "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。",
+        "canvas": {
+          "title": "打开一张图",
+          "body": "双击画布上的 Fig2_correlation 进入图内编辑（也可以在左侧「素材」里双击它的卡片）。"
+        }
+      },
+      "select_text": {
+        "title": "选一个文字",
+        "body": "点击图里的标题（或坐标轴标签），把它选中。"
+      },
+      "change_typography": {
+        "title": "改字号或字体",
+        "body": "在右侧属性里改字号或字体，比如把字号调大一点。每次修改都进撤销历史。"
+      },
+      "locate_problem": {
+        "title": "从「问题」定位",
+        "body": "打开左侧「问题」，那里列着这张图里不合规范的地方。",
+        "row": {
+          "title": "从「问题」定位",
+          "body": "点这一条问题，Tavotto 会选中对象并把焦点落到对应的属性字段上。"
+        }
+      },
+      "export_original": {
+        "title": "看看原图导出",
+        "body": "打开「导出」，确认输出范围是「原图」，然后关闭面板。",
+        "scope": {
+          "title": "看看原图导出",
+          "body": "「原图」按这张图自己的尺寸输出，不会使用画布缩放。确认后关闭面板继续。"
+        }
+      },
+      "add_to_layout": {
+        "title": "加入画布",
+        "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。"
+      },
+      "multi_select_align": {
+        "title": "Shift 多选",
+        "body": "按住 Shift 点第二张图，把两张图一起选中。",
+        "bar": {
+          "title": "对齐",
+          "body": "选区旁边的浮动栏里点一个对齐，比如顶对齐。"
+        }
+      },
+      "export_canvas": {
+        "title": "看看画布导出",
+        "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
+        "scope": {
+          "title": "看看画布导出",
+          "body": "「画布」按页面尺寸和排版输出整个版面。确认后关闭面板继续。"
+        }
+      },
+      "done": {
+        "title": "教程完成",
+        "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。"
+      }
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { UiMessage } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import type { Severity } from '@/lib/profile'
 
 export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
@@ -303,6 +304,21 @@ let statusTimer: number | undefined
 /** 非宽屏两侧互斥：打开一侧就得收起另一侧，避免把画布挤没 */
 const exclusive = (s: UiState) => s.layout !== 'wide'
 
+const sameList = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((v, i) => v === b[i])
+
+/** 图内元素选区真的变了才发一声（只带数量） */
+const announceGids = (before: string[], after: string[]) => {
+  if (!sameList(before, after)) emitActivity({ kind: 'element.selection_changed', count: after.length })
+}
+
+/** 左侧「问题」抽屉从关到开（或从别的页切过来）才算「打开了问题面板」 */
+const announceProblems = (before: UiState, after: UiState) => {
+  const wasOpen = before.leftOpen && before.leftTab === 'problems'
+  const isOpen = after.leftOpen && after.leftTab === 'problems'
+  if (!wasOpen && isOpen) emitActivity({ kind: 'problems.opened' })
+}
+
 export const useUiStore = create<UiState>((set, get) => ({
   ...readPersisted(),
   status: null,
@@ -346,6 +362,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
   railClick: (tab) => {
+    const before = get()
     set((s) => {
       if (s.leftOpen && s.leftTab === tab) return { leftOpen: false }
       return exclusive(s)
@@ -354,8 +371,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     })
     prefOpen.left = get().leftOpen
     persist(get())
+    announceProblems(before, get())
   },
   setLeftTab: (leftTab) => {
+    const before = get()
     set((s) =>
       exclusive(s)
         ? { leftTab, leftOpen: true, rightOpen: false }
@@ -363,6 +382,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     )
     prefOpen.left = get().leftOpen
     persist(get())
+    announceProblems(before, get())
   },
   setRightTab: (rightTab) => {
     set((s) =>
@@ -452,21 +472,31 @@ export const useUiStore = create<UiState>((set, get) => ({
   setCropTarget: (cropTargetId) => set({ cropTargetId }),
   setElementPanel: (elementPanelId) =>
     set({ elementPanelId, selectedGids: [], cropTargetId: null }),
-  setSelectedGid: (gid) => set({ selectedGids: gid ? [gid] : [] }),
-  setSelectedGids: (gids) =>
-    set((s) =>
-      s.selectedGids.length === gids.length && s.selectedGids.every((g, i) => g === gids[i])
-        ? s
-        : { selectedGids: gids },
-    ),
-  toggleSelectedGid: (gid) =>
+  setSelectedGid: (gid) => {
+    const before = get().selectedGids
+    set({ selectedGids: gid ? [gid] : [] })
+    announceGids(before, get().selectedGids)
+  },
+  setSelectedGids: (gids) => {
+    const before = get().selectedGids
+    set((s) => (sameList(s.selectedGids, gids) ? s : { selectedGids: gids }))
+    announceGids(before, get().selectedGids)
+  },
+  toggleSelectedGid: (gid) => {
+    const before = get().selectedGids
     set((s) => ({
       selectedGids: s.selectedGids.includes(gid)
         ? s.selectedGids.filter((g) => g !== gid)
         : [...s.selectedGids, gid],
-    })),
+    }))
+    announceGids(before, get().selectedGids)
+  },
   setTool: (tool) => set({ tool }),
-  setExportOpen: (exportOpen) => set({ exportOpen }),
+  setExportOpen: (exportOpen) => {
+    const was = get().exportOpen
+    set({ exportOpen })
+    if (exportOpen && !was) emitActivity({ kind: 'export.dialog_opened' })
+  },
   setLayoutOpen: (layoutOpen, intent) =>
     set(intent ? { layoutOpen, layoutIntent: intent } : { layoutOpen }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),

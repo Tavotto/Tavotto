@@ -692,9 +692,21 @@
     "versionTimeline": "Layout version timeline…",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
-    "zoomValue": "Zoom {{percent}}%"
+    "zoomValue": "Zoom {{percent}}%",
+    "tutorial": {
+      "start": "Start tutorial",
+      "resume": "Resume tutorial",
+      "restart": "Take the tutorial again"
+    }
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version — this page still works in the meantime."
+  },
+  "hints": {
+    "panel_editable": "Double-click this figure to edit inside it.",
+    "panel_layout_only": "This figure can be laid out; connect its source script to edit elements inside it.",
+    "fast_edit_entered": "Changes here are saved to the current Tavotto document; the original file is untouched.",
+    "multi_select": "The floating bar next to the selection aligns and distributes directly.",
+    "problem_found": "“Problems” on the left locates the object and its property field."
   }
 }

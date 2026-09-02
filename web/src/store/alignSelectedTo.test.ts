@@ -202,7 +202,11 @@ describe('离散动作与连续手势', () => {
 describe('本地活动信号', () => {
   it('对齐 / 成组 / 取消成组各发一次，detail 只有枚举与计数', () => {
     const got: ActivityDetail[] = []
-    const off = onActivity((d) => got.push(d))
+    // Session 21 起总线上还有 history.pushed / selection.changed 这类通用信号：
+    // 这条用例守的是排列三件事**各发一次**，只看它们自己那三种 kind
+    const off = onActivity((d) => {
+      if (d.kind.startsWith('selection.') && d.kind !== 'selection.changed') got.push(d)
+    })
     alignSelectedTo('top', 'page')
     groupSelected()
     ungroupSelected()
@@ -218,8 +222,9 @@ describe('本地活动信号', () => {
   it('分布被拒绝（两个对象）时不发信号', () => {
     const got: ActivityDetail[] = []
     const handler = (e: Event) => got.push((e as CustomEvent<ActivityDetail>).detail)
-    window.addEventListener(ACTIVITY_EVENT, handler)
+    // 选区先摆好再监听：`set` 自己会发一声 selection.changed，那不是被测的对齐
     useSelectionStore.getState().set(['t1', 't2'])
+    window.addEventListener(ACTIVITY_EVENT, handler)
     alignSelectedTo('vdist', 'selection')
     window.removeEventListener(ACTIVITY_EVENT, handler)
     expect(got).toEqual([])

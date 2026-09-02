@@ -44,11 +44,22 @@ export function FastEditBar() {
           </span>
           {spec && <OriginalSize spec={spec} />}
           <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
-          <Button size="sm" variant="outline" onClick={() => void addFigureToLayout(panel.fileId)}>
+          {/* `data-onboarding-anchor`：新手教程 Step 6 的 coachmark 挂这两颗按钮 */}
+          <Button
+            size="sm"
+            variant="outline"
+            data-onboarding-anchor="add-to-layout"
+            onClick={() => void addFigureToLayout(panel.fileId)}
+          >
             <Plus size={12} />
             {t('fastEdit.addToCanvas')}
           </Button>
-          <Button size="sm" variant="ghost" onClick={returnToLayout}>
+          <Button
+            size="sm"
+            variant="ghost"
+            data-onboarding-anchor="to-layout"
+            onClick={returnToLayout}
+          >
             <LayoutGrid size={12} />
             {t('fastEdit.toLayout')}
           </Button>

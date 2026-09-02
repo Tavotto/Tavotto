@@ -48,7 +48,17 @@
     "regionLabel": "Choose a project",
     "removeFromList": "Remove {{name}} from the list (nothing on disk is deleted)",
     "removeFromListTitle": "Remove from the list (nothing on disk is deleted)",
-    "tagline": "A project is the folder your figures live in. Pick one to start laying out."
+    "tagline": "A project is the folder your figures live in. Pick one to start laying out.",
+    "tutorialLabel": "Tutorial",
+    "tutorial": {
+      "start": "Learn Tavotto with a sample",
+      "resume": "Resume tutorial",
+      "restart": "Take the tutorial again"
+    },
+    "tutorialHint": "An offline sample project: change anything, restart any time, your own projects are never touched.",
+    "tutorialUnavailable": "The tutorial resources in this install are incomplete. Please reinstall Tavotto.",
+    "tutorialOpening": "Preparing…",
+    "tutorialBadge": "Tutorial project"
   },
   "switcher": {
     "allProjects": "All projects…",

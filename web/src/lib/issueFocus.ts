@@ -21,6 +21,7 @@
  * 视口、选中、模式、面板开合全是会话状态（`UX_CONTRACTS.md` §3）。
  */
 import { msg } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { enterElementEdit } from '@/store/actions'
 import { activateCanvas } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
@@ -70,6 +71,17 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
  * 崩溃，是一个说得出原因的失败（`not_editable`）。
  */
 export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
+  const outcome = focusObjectInner(ref, propertyPath)
+  // 本地活动信号：只说成功没成功、落在哪条工作流、字段聚焦到哪一档——不带 id / gid
+  emitActivity(
+    outcome.ok
+      ? { kind: 'problem.focused', ok: true, mode: outcome.mode, field: outcome.field }
+      : { kind: 'problem.focused', ok: false },
+  )
+  return outcome
+}
+
+function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
   const s0 = useDocumentStore.getState()
   if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
   // **多项目隔离**：对象 id 在两个项目里可以相同（都是 `o_…` 形状）。不比一次

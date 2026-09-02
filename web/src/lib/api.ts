@@ -402,6 +402,71 @@ export const removeRecentProject = (path: string) =>
     body: JSON.stringify({ path }),
   })
 
+/* ------------------------------ 离线教程（ADR 0039） ------------------------------ */
+
+/** `tutorial_meta.json`（schema 1）里前端要用的那几个字段。**没有路径、没有 gid**。 */
+export interface TutorialPanelMeta {
+  key: string
+  /** 素材 id（`Fig1_kinetics.pdf`）——文档里 `PanelObject.fileId` 认的就是它 */
+  file: string
+  stem: string
+  script: string
+  /** manifest 的 role 名；coachmark 按 role 找元素，不按 gid */
+  editable_roles: string[]
+  /** 故意留在图里的一条规范问题（第二张图的 7 pt 文字）；没有就是 null */
+  spec_issue: { code: string; role: string; text_prefix: string } | null
+}
+
+export interface TutorialMetadata {
+  schema: number
+  tutorial_version: number
+  project_name: string
+  document_name: string
+  /** 打开教程画布时**必须**用它做 documentId：重置只清这一格自动保存（T-106） */
+  document_id: string
+  expected_stems: string[]
+  editable_role_preferences: string[]
+  panels: TutorialPanelMeta[]
+}
+
+export interface TutorialStatus {
+  available: boolean
+  /** 资源坏了时的静态验证结论（技术描述，界面只说「重新安装」） */
+  problems: string[]
+  tutorial_version?: number
+  metadata?: TutorialMetadata
+  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  project?: { open: boolean; id: string | null }
+}
+
+export interface TutorialOpenResult {
+  project: ProjectStatus
+  tutorial: TutorialMetadata
+  reset: boolean
+  created?: boolean
+  repaired?: string[]
+  cleared?: string[]
+}
+
+/** 教程资源可不可用、副本在不在。只读；不复制、不打开。 */
+export const fetchTutorialStatus = () => jsonFetch<TutorialStatus>('/api/tutorial')
+
+/** 确保可写副本（缺的补上）→ 后端 `open_project()` → 状态 + 元数据。不执行脚本。 */
+export const openTutorialApi = (opts: { default?: boolean } = {}) =>
+  jsonFetch<TutorialOpenResult>('/api/tutorial/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
+export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+  jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+
 export interface DirEntry {
   name: string
   path: string

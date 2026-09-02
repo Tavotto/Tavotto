@@ -32,6 +32,10 @@ import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
+import { HintToast } from '@/components/onboarding/HintToast'
+import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
+import { startOnboardingEngine } from '@/lib/onboarding/flow'
+import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { syncLoadedDocument } from '@/store/liveSync'
@@ -141,6 +145,10 @@ function Workspace() {
     // 只有用户点「导出诊断包」时这些事件才会进一个 zip
     const stopDiagnostics = installDiagnosticsWiring()
     installDiagnosticsDevHook()
+    // 新手教程引擎 + 一次性提示引擎：订阅本地活动信号与 store，随工作台生命周期
+    // 清理。它们不碰文档、不发请求（ADR 0040）
+    const stopOnboarding = startOnboardingEngine()
+    const stopHints = startHintEngine()
     const onAutosaveError = (ev: Event) => {
       // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
       const stale = (ev as CustomEvent<{ reason?: string }>).detail?.reason === 'stale'
@@ -178,6 +186,8 @@ function Workspace() {
       stopWorkspace()
       stopValidation()
       stopDiagnostics()
+      stopOnboarding()
+      stopHints()
       window.removeEventListener('mm:sse-open', syncNative)
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)
       window.removeEventListener('tavotto:doc-conflict', onDocConflict)
@@ -201,6 +211,7 @@ function Workspace() {
             <CanvasHud />
             <NativeSessionCards />
             <StatusToasts />
+            <HintToast />
           </div>
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
@@ -229,6 +240,8 @@ function Workspace() {
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
+        {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
+        <OnboardingLayer />
       </div>
     </TooltipProvider>
   )

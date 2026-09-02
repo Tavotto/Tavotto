@@ -9,6 +9,7 @@ import {
   putAutosave,
   type DiskDocumentSummary,
 } from '@/lib/api'
+import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
 import { currentProjectId } from '@/lib/session'
 import { msg, t, type UiMessage } from '@/i18n'
@@ -216,6 +217,9 @@ function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<Documen
     edit_kind: classifyEditKind(entry.label?.key),
     patch_count: boundedCount(entry.patches.length),
   })
+  // 本地活动信号（不是遥测）：教程要知道「一条真实的编辑事务落进了历史」。
+  // 只带开发者写死的历史 key，不带补丁、不带对象。
+  emitActivity({ kind: 'history.pushed', label: entry.label?.key ?? '' })
   return { past, future: [] }
 }
 
@@ -988,6 +992,7 @@ function afterWriteOk(id: string, savedAt: number): void {
   if (!isCurrentDoc(id)) return
   useDocumentStore.setState({ lastPersisted: savedAt })
   setSaveState(useDocumentStore.getState().dirty ? 'dirty' : 'saved')
+  emitActivity({ kind: 'document.saved' })
 }
 
 function conflictIssue(id: string, err: unknown): SaveIssue {
@@ -1265,6 +1270,26 @@ export function discardLocalCopy(): void {
 /** 「这份读不了」的裁决：知道了。磁盘上那份文件一个字节没动。 */
 export function dismissDocNotice(): void {
   setDocNotice(null)
+}
+
+/**
+ * 忘掉本机关于某个 documentId 的一切：自动保存槽位、待恢复副本、最近文档
+ * 条目。**只动本机、只动这一个 id**——磁盘上的文档不归这里管。
+ *
+ * 给「重新开始教程」用：后端把教程画布的磁盘槽位清了，本机这一份不跟着清的话
+ * `readAutosaveDoc` 会把它当成"磁盘上没有、本机这份就是文档本身"推回磁盘，
+ * 刚重置的教程当场被旧进度盖回去。
+ */
+export function forgetLocalDocument(id: string): void {
+  try {
+    localStorage.removeItem(slotKey(id))
+    localStorage.removeItem(recoveryKey(id))
+    localStorage.removeItem(TABS_PREFIX + id)
+  } catch {
+    /* 删不掉只是留几个垃圾键 */
+  }
+  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
+  useDocumentStore.setState({ recentDocs: kept })
 }
 
 /* -------------------------------------------------------------------------- */

@@ -24,6 +24,7 @@ import {
   Ungroup,
 } from 'lucide-react'
 import { t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { MOD } from '@/lib/utils'
 import {
   ALIGN_BUTTONS,
@@ -119,19 +120,27 @@ export function ObjectContextMenu({
   useEffect(() => {
     if (!obj) close()
   }, [obj, close])
-  if (!obj) return null
 
   const multi = selected.length >= 2 && selected.some((o) => o.id === id)
-  const kind: ObjectMenuKind = multi
-    ? 'multi'
-    : obj.type === 'panel'
-      ? obj.script
-        ? 'panel'
-        : 'panel-layout-only'
-      : obj.type === 'text'
-        ? 'text'
-        : 'mark'
-
+  const kind: ObjectMenuKind | null = !obj
+    ? null
+    : multi
+      ? 'multi'
+      : obj.type === 'panel'
+        ? obj.script
+          ? 'panel'
+          : 'panel-layout-only'
+        : obj.type === 'text'
+          ? 'text'
+          : 'mark'
+  // 菜单真的打开了（组件挂上 = 用户右键成功落在一个对象上）才发一声本地信号。
+  // 挂在早退之前：Hook 顺序不能随 `obj` 变
+  useEffect(() => {
+    if (kind) emitActivity({ kind: 'menu.opened', menu: kind })
+    // 只在挂载那一刻发一次；菜单种类在一次打开里不会变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  if (!obj || !kind) return null
   /**
    * 同步动作：先做再关。动作抛异常时菜单也必须关掉（卡在屏幕上的菜单比错误本身
    * 更让人摸不着头脑），异常继续往外抛（该进 Console / ErrorBoundary 的还得进）。

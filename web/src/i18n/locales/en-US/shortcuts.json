@@ -5,14 +5,17 @@
     "newline": "{{alt}}⏎ or {{mod}}⏎ (while editing text)",
     "spaceDrag": "Space+drag",
     "tools": "V / T / A / R / O / L",
-    "wheelZoom": "{{mod}}+wheel"
+    "wheelZoom": "{{mod}}+wheel",
+    "shiftClick": "⇧+click",
+    "rightClick": "Right-click"
   },
   "group": {
     "arrange": "Arrange and stacking",
     "editing": "Selection and editing",
     "general": "General",
     "tools": "Tools",
-    "view": "View"
+    "view": "View",
+    "tutorial": "Tutorial"
   },
   "key": {
     "copyPaste": "Copy / paste objects (works across layout documents)",
@@ -37,7 +40,10 @@
     "zEnds": "Bring to front / send to back",
     "zMove": "Bring forward / send backward",
     "zoom": "Zoom in / out",
-    "zoomPresets": "100% / fit canvas"
+    "zoomPresets": "100% / fit canvas",
+    "multiSelect": "Add / remove objects or figure elements from the selection",
+    "quickEdit": "Open the quick-edit menu for the object",
+    "tutorialPause": "Pause the tutorial (when the tutorial card has focus)"
   },
   "title": "Keyboard shortcuts"
 }

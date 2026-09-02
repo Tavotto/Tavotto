@@ -248,6 +248,18 @@
       "versions": {
         "keywords": "version history timeline snapshot",
         "label": "Layout version timeline…"
+      },
+      "tutorial-start": {
+        "label": "Start tutorial",
+        "keywords": "tutorial onboarding start sample learn"
+      },
+      "tutorial-resume": {
+        "label": "Resume tutorial",
+        "keywords": "tutorial onboarding resume continue"
+      },
+      "tutorial-reset": {
+        "label": "Restart tutorial",
+        "keywords": "tutorial onboarding reset restart"
       }
     },
     "listLabel": "Commands",
@@ -972,6 +984,24 @@
       "sourceUpgrade": "For a source checkout, run",
       "upToDate": "You are on the latest version.",
       "upgrading": "Upgrading…"
+    },
+    "tutorial": {
+      "label": "Tutorial",
+      "hint": "Walk through quick edit, locating problems, export and multi-select alignment on an offline sample project.",
+      "state": {
+        "not_started": "Not started",
+        "active": "In progress",
+        "paused": "Paused",
+        "completed": "Completed",
+        "skipped": "Skipped"
+      },
+      "start": "Start tutorial",
+      "resume": "Resume tutorial",
+      "restart": "Take the tutorial again",
+      "reset": "Restart tutorial",
+      "hints": "Contextual hints",
+      "hintsHint": "One-time hints shown the first time you meet a kind of action; each appears once.",
+      "resetHints": "Reset hints"
     }
   },
   "style": {
@@ -1137,5 +1167,99 @@
     "versionName": "Version name",
     "viewCurrent": "Current",
     "viewVersion": "This version"
+  },
+  "onboarding": {
+    "pause": "Pause tutorial",
+    "back": "Back",
+    "skipStep": "Skip this step",
+    "start": "Start",
+    "explore": "Keep exploring",
+    "openOwnProject": "Open my own project",
+    "resolvedContinue": "Already fixed, continue",
+    "targetWaiting": "Waiting for the target to appear…",
+    "targetMissing": "The target for this step is not on screen. You can go back or skip this step.",
+    "progress": "Step {{n}} of {{total}}",
+    "hintsReset": "Contextual hints reset; each will show once more",
+    "landed": {
+      "started": "Tutorial started",
+      "resumed": "Resuming where you left off",
+      "restarted": "Tutorial restarted"
+    },
+    "failure": {
+      "unavailable": "The tutorial resources in this install are incomplete. Please reinstall Tavotto.",
+      "open_failed": "The tutorial project could not be opened. Try again, or open your own project first.",
+      "locked": "A file in the tutorial project is in use by another program. Close it and try again.",
+      "document_failed": "The tutorial canvas could not be read (incompatible version or missing file). Try “Restart tutorial”.",
+      "cancelled": "Cancelled.",
+      "no_api": "This environment does not provide the tutorial."
+    },
+    "reset": {
+      "title": "Restart the tutorial?",
+      "body": "The tutorial project goes back to how it was installed: your edits, written-back figures and progress in it are cleared. Other projects are untouched.",
+      "bodyWithLayouts": "The tutorial project goes back to how it was installed, and the canvas files you saved inside it are cleared too: {{names}}. Export them first if you want to keep them. Other projects are untouched.",
+      "confirm": "Restart"
+    },
+    "steps": {
+      "welcome": {
+        "title": "Learn Tavotto with a sample",
+        "body": "This is an offline tutorial copy: change anything, restart any time, your own projects are never touched. You will walk through the two core workflows with real actions."
+      },
+      "open_fast_edit": {
+        "title": "Open a figure",
+        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure.",
+        "canvas": {
+          "title": "Open a figure",
+          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure (its card in the “Assets” drawer works too)."
+        }
+      },
+      "select_text": {
+        "title": "Select a text",
+        "body": "Click the title (or an axis label) inside the figure to select it."
+      },
+      "change_typography": {
+        "title": "Change the size or font",
+        "body": "In the properties on the right, change the font size or family, for example make it a bit larger. Every change goes into undo history."
+      },
+      "locate_problem": {
+        "title": "Locate from “Problems”",
+        "body": "Open “Problems” on the left; it lists what in this figure breaks the spec.",
+        "row": {
+          "title": "Locate from “Problems”",
+          "body": "Click this problem: Tavotto selects the object and focuses the matching property field."
+        }
+      },
+      "export_original": {
+        "title": "Look at the original export",
+        "body": "Open “Export”, confirm the scope is “Original”, then close the panel.",
+        "scope": {
+          "title": "Look at the original export",
+          "body": "“Original” outputs the figure at its own size; canvas scaling is never applied. Close the panel to continue."
+        }
+      },
+      "add_to_layout": {
+        "title": "Add to canvas",
+        "body": "Both figures are already on the canvas. Click “Add to canvas” to go back to the layout and see them."
+      },
+      "multi_select_align": {
+        "title": "Shift-select",
+        "body": "Hold Shift and click the second figure to select both.",
+        "bar": {
+          "title": "Align",
+          "body": "Pick an alignment in the floating bar next to the selection, for example align top."
+        }
+      },
+      "export_canvas": {
+        "title": "Look at the canvas export",
+        "body": "Open “Export” again, confirm the scope is “Canvas”, then close the panel.",
+        "scope": {
+          "title": "Look at the canvas export",
+          "body": "“Canvas” outputs the whole page using its size and layout. Close the panel to continue."
+        }
+      },
+      "done": {
+        "title": "Tutorial complete",
+        "body": "You have covered quick edit, locating problems, original and canvas export, and multi-select alignment. Reopen the tutorial any time from the “More” menu."
+      }
+    }
   }
 }

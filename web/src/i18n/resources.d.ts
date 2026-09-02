@@ -329,6 +329,100 @@ export default interface Resources {
       },
       "title": "用你自己的 Python 运行并连接"
     },
+    "onboarding": {
+      "back": "返回",
+      "explore": "继续探索",
+      "failure": {
+        "cancelled": "已取消。",
+        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+        "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
+        "no_api": "这个环境没有提供教程。",
+        "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
+        "unavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。"
+      },
+      "hintsReset": "情境提示已重置，会再各出现一次",
+      "landed": {
+        "restarted": "教程已重新开始",
+        "resumed": "从上次停下的地方继续",
+        "started": "教程已开始"
+      },
+      "openOwnProject": "打开自己的项目",
+      "pause": "暂停教程",
+      "progress": "第 {{n}} 步，共 {{total}} 步",
+      "reset": {
+        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+        "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
+        "confirm": "重新开始",
+        "title": "重新开始教程？"
+      },
+      "resolvedContinue": "问题已解决，继续",
+      "skipStep": "跳过此步",
+      "start": "开始",
+      "steps": {
+        "add_to_layout": {
+          "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
+          "title": "加入画布"
+        },
+        "change_typography": {
+          "body": "在右侧属性里改字号或字体，比如把字号调大一点。每次修改都进撤销历史。",
+          "title": "改字号或字体"
+        },
+        "done": {
+          "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。",
+          "title": "教程完成"
+        },
+        "export_canvas": {
+          "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
+          "scope": {
+            "body": "「画布」按页面尺寸和排版输出整个版面。确认后关闭面板继续。",
+            "title": "看看画布导出"
+          },
+          "title": "看看画布导出"
+        },
+        "export_original": {
+          "body": "打开「导出」，确认输出范围是「原图」，然后关闭面板。",
+          "scope": {
+            "body": "「原图」按这张图自己的尺寸输出，不会使用画布缩放。确认后关闭面板继续。",
+            "title": "看看原图导出"
+          },
+          "title": "看看原图导出"
+        },
+        "locate_problem": {
+          "body": "打开左侧「问题」，那里列着这张图里不合规范的地方。",
+          "row": {
+            "body": "点这一条问题，Tavotto 会选中对象并把焦点落到对应的属性字段上。",
+            "title": "从「问题」定位"
+          },
+          "title": "从「问题」定位"
+        },
+        "multi_select_align": {
+          "bar": {
+            "body": "选区旁边的浮动栏里点一个对齐，比如顶对齐。",
+            "title": "对齐"
+          },
+          "body": "按住 Shift 点第二张图，把两张图一起选中。",
+          "title": "Shift 多选"
+        },
+        "open_fast_edit": {
+          "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。",
+          "canvas": {
+            "body": "双击画布上的 Fig2_correlation 进入图内编辑（也可以在左侧「素材」里双击它的卡片）。",
+            "title": "打开一张图"
+          },
+          "title": "打开一张图"
+        },
+        "select_text": {
+          "body": "点击图里的标题（或坐标轴标签），把它选中。",
+          "title": "选一个文字"
+        },
+        "welcome": {
+          "body": "这是一份离线的教程副本，随便改，随时可以重新开始，不会碰你自己的项目。接下来用真实操作走一遍两条核心流程。",
+          "title": "用示例了解 Tavotto"
+        }
+      },
+      "targetMissing": "找不到这一步的目标。可以返回上一步或跳过此步。",
+      "targetWaiting": "正在等待目标出现…"
+    },
     "palette": {
       "commands": {
         "add-text": {
@@ -418,6 +512,18 @@ export default interface Resources {
         "sub-labels": {
           "keywords": "label abc xhbq xuhao",
           "label": "添加 (a)(b)(c) 序号标签"
+        },
+        "tutorial-reset": {
+          "keywords": "tutorial onboarding reset jc jiaocheng 重置",
+          "label": "重新开始教程"
+        },
+        "tutorial-resume": {
+          "keywords": "tutorial onboarding resume jc jiaocheng 继续",
+          "label": "继续教程"
+        },
+        "tutorial-start": {
+          "keywords": "tutorial onboarding start jc jiaocheng 示例 新手",
+          "label": "开始教程"
         },
         "ungroup": {
           "keywords": "ungroup qxcz",
@@ -1114,6 +1220,24 @@ export default interface Resources {
       },
       "techDetails": "技术详情",
       "title": "设置",
+      "tutorial": {
+        "hint": "用一份离线的示例项目走一遍快速编辑、问题定位、导出与多选对齐。",
+        "hints": "情境提示",
+        "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
+        "label": "新手教程",
+        "reset": "重新开始教程",
+        "resetHints": "重置提示",
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "开始教程",
+        "state": {
+          "active": "进行中",
+          "completed": "已完成",
+          "not_started": "未开始",
+          "paused": "已暂停",
+          "skipped": "已跳过"
+        }
+      },
       "update": {
         "autoCheck": "自动检查",
         "autoCheckAria": "每天自动检查更新",
@@ -2875,7 +2999,17 @@ export default interface Resources {
       "regionLabel": "选择项目",
       "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
       "removeFromListTitle": "从列表移除（不删除磁盘内容）",
-      "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。"
+      "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。",
+      "tutorial": {
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "用示例了解 Tavotto"
+      },
+      "tutorialBadge": "教程项目",
+      "tutorialHint": "一份离线的示例项目，随便改、随时重来，不会碰你自己的项目。",
+      "tutorialLabel": "新手教程",
+      "tutorialOpening": "准备中…",
+      "tutorialUnavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。"
     },
     "switcher": {
       "allProjects": "全部项目…",
@@ -2898,6 +3032,8 @@ export default interface Resources {
       "altDrag": "{{alt}}+拖角点",
       "arrowKeys": "方向键 / ⇧+方向键",
       "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
+      "rightClick": "右键",
+      "shiftClick": "⇧+点击",
       "spaceDrag": "Space+拖动",
       "tools": "V / T / A / R / O / L",
       "wheelZoom": "{{mod}}+滚轮"
@@ -2907,6 +3043,7 @@ export default interface Resources {
       "editing": "选择与编辑",
       "general": "通用",
       "tools": "工具",
+      "tutorial": "教程",
       "view": "视图"
     },
     "key": {
@@ -2918,15 +3055,18 @@ export default interface Resources {
       "export": "导出",
       "freeResize": "非等比自由拉伸",
       "help": "本帮助",
+      "multiSelect": "加选 / 减选对象或图内元素",
       "newline": "插入换行；单按 ⏎ 提交",
       "nudge": "微调 0.5mm / 5mm",
       "palette": "命令面板",
       "pan": "平移画布",
+      "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存当前文档",
       "saveLayout": "保存为画布文件",
       "script": "上标 / 下标（属性面板的文字输入框内）",
       "selectAll": "全选",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
+      "tutorialPause": "暂停教程（焦点在教程卡片上时）",
       "undoRedo": "撤销 / 重做",
       "wheelZoom": "缩放画布",
       "zEnds": "置顶 / 置底",
@@ -3139,6 +3279,13 @@ export default interface Resources {
       "sizeUnknown": "尺寸未知",
       "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。",
       "toLayout": "画布排版"
+    },
+    "hints": {
+      "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
+      "multi_select": "选区附近的浮动栏可以直接对齐和分布。",
+      "panel_editable": "双击这张图可以进入图内编辑。",
+      "panel_layout_only": "这张图可以排版；连接源脚本后才能改图内元素。",
+      "problem_found": "左侧「问题」能定位到对象和对应的属性字段。"
     },
     "history": {
       "addArrow": "添加箭头",
@@ -3578,6 +3725,11 @@ export default interface Resources {
       "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+      "tutorial": {
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "开始教程"
+      },
       "undo": "撤销",
       "undoWith": "撤销 {{label}}",
       "updateAvailable": "有新版本 {{version}}",

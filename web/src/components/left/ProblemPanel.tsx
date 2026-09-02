@@ -237,6 +237,10 @@ function IssueRow({
             在辅助技术里是一个读不出来的控件（nested interactive） */}
         <button
           data-issue-row
+          // 稳定的机器标识（规则码 + 画布对象 id），新手教程按它找那一行；
+          // aria-label 是本地化文案，不能当选择器
+          data-issue-rule={issue.ruleCode}
+          data-issue-object={issue.objectRef.objectId ?? undefined}
           onClick={locate}
           aria-label={issueAriaLabel(issue)}
           title={issueDetailText(issue)}

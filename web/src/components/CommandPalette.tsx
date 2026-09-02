@@ -15,7 +15,9 @@ import {
   selectAll,
   ungroupSelected,
 } from '@/store/actions'
+import { resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -46,12 +48,30 @@ interface Command {
   shortcut?: string
   /** 需要选中对象才可用 */
   needsSelection?: boolean
+  /** 按状态决定出不出现（教程的开始 / 继续 / 重置互斥）；不给 = 一直在 */
+  available?: () => boolean
   run: () => void
 }
 
 const ui = () => useUiStore.getState()
 
 const COMMANDS: Command[] = [
+  // 教程三条：状态判据只有 lib/onboarding/tutorial 一份，这里只挑显示哪条
+  {
+    id: 'tutorial-start',
+    available: () => tutorialEntry() !== 'resume',
+    run: () => void runTutorialEntry(),
+  },
+  {
+    id: 'tutorial-resume',
+    available: () => tutorialEntry() === 'resume',
+    run: () => void runTutorialEntry(),
+  },
+  {
+    id: 'tutorial-reset',
+    available: () => useOnboardingStore.getState().tutorialProjectId != null,
+    run: () => void resetTutorial(),
+  },
   { id: 'export', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
   { id: 'save-document', shortcut: `${MOD}S`, run: () => void runManualSave() },
   { id: 'save-layout', shortcut: `⇧${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
@@ -108,6 +128,8 @@ export function CommandPalette() {
   const open = usePalette((s) => s.open)
   const setOpen = usePalette((s) => s.setOpen)
   const hasSelection = useSelectionStore((s) => s.ids.length > 0)
+  // 教程状态变了要重算可用命令（三条互斥）
+  const onboardingStatus = useOnboardingStore((s) => s.status)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -136,16 +158,20 @@ export function CommandPalette() {
   // 中文界面下输拼音首字母也能中
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const pool = COMMANDS.filter((c) => !c.needsSelection || hasSelection).map((c) => ({
-      ...c,
-      label: commandLabel(t, c.id),
-      keywords: commandKeywords(t, c.id),
-    }))
+    const pool = COMMANDS.filter((c) => (!c.needsSelection || hasSelection) && (c.available?.() ?? true)).map(
+      (c) => ({
+        ...c,
+        label: commandLabel(t, c.id),
+        keywords: commandKeywords(t, c.id),
+      }),
+    )
     if (!q) return pool
     return pool.filter(
       (c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q),
     )
-  }, [query, hasSelection, t])
+    // `onboardingStatus` 是让 memo 在教程状态变化时重算的信号，不是入参
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, hasSelection, t, onboardingStatus])
 
   useEffect(() => {
     setActive((a) => Math.min(a, Math.max(0, matches.length - 1)))

@@ -47,7 +47,17 @@
     "regionLabel": "选择项目",
     "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
     "removeFromListTitle": "从列表移除（不删除磁盘内容）",
-    "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。"
+    "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。",
+    "tutorialLabel": "新手教程",
+    "tutorial": {
+      "start": "用示例了解 Tavotto",
+      "resume": "继续教程",
+      "restart": "再看一遍教程"
+    },
+    "tutorialHint": "一份离线的示例项目，随便改、随时重来，不会碰你自己的项目。",
+    "tutorialUnavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。",
+    "tutorialOpening": "准备中…",
+    "tutorialBadge": "教程项目"
   },
   "switcher": {
     "allProjects": "全部项目…",

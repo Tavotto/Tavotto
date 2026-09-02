@@ -669,6 +669,8 @@ export function setOverride(
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
+  // 本地信号只带属性名（matplotlib 的 prop，不是用户内容），不带 gid 与值
+  emitActivity({ kind: 'element.property_changed', prop })
 }
 
 /**
@@ -967,6 +969,9 @@ export function setOverrides(
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
+  for (const prop of new Set(patches.map((p) => p.prop))) {
+    emitActivity({ kind: 'element.property_changed', prop })
+  }
 }
 
 /**
@@ -1057,6 +1062,9 @@ export function enterElementEdit(panelId: string) {
     ui.setLeftTab('elements')
   }
   if (seeded) status(note('bakedSeeded', { count: seeded }))
+  // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
+  // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
+  emitActivity({ kind: 'figure.element_edit_entered' })
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。

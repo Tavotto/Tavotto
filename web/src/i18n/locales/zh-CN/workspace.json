@@ -646,9 +646,21 @@
     "versionTimeline": "布局版本时间线…",
     "zoomIn": "放大",
     "zoomOut": "缩小",
-    "zoomValue": "缩放 {{percent}}%"
+    "zoomValue": "缩放 {{percent}}%",
+    "tutorial": {
+      "start": "开始教程",
+      "resume": "继续教程",
+      "restart": "再看一遍教程"
+    }
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本（当前页面仍可继续操作）"
+  },
+  "hints": {
+    "panel_editable": "双击这张图可以进入图内编辑。",
+    "panel_layout_only": "这张图可以排版；连接源脚本后才能改图内元素。",
+    "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
+    "multi_select": "选区附近的浮动栏可以直接对齐和分布。",
+    "problem_found": "左侧「问题」能定位到对象和对应的属性字段。"
   }
 }

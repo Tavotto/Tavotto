@@ -28,6 +28,7 @@
  */
 import { create } from 'zustand'
 import { msg } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { rescueFocus } from '@/lib/focusRescue'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -61,11 +62,20 @@ interface WorkspaceState {
   clear: () => void
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   mode: 'layout',
   activePanelId: null,
-  enterFastEdit: (panelId) => set({ mode: 'fast_edit', activePanelId: panelId }),
-  exitToLayout: () => set({ mode: 'layout', activePanelId: null }),
+  enterFastEdit: (panelId) => {
+    const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
+    set({ mode: 'fast_edit', activePanelId: panelId })
+    if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
+  },
+  exitToLayout: () => {
+    const changed = get().mode !== 'layout'
+    set({ mode: 'layout', activePanelId: null })
+    if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
+  },
+  // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
   clear: () => set({ mode: 'layout', activePanelId: null }),
 }))
 
@@ -161,9 +171,11 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   revealPanel(panel)
   if (panel.script) {
     enterElementEdit(panel.id)
+    emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'editing' })
     return 'editing'
   }
   useUiStore.getState().setElementPanel(null)
+  emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'layout_only' })
   return 'layout_only'
 }
 
@@ -186,6 +198,7 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
   useUiStore
     .getState()
     .setStatus(msg(got.created ? 'fastEdit.added' : 'fastEdit.alreadyOnCanvas', { name }, 'workspace'))
+  emitActivity({ kind: 'figure.added_to_layout', outcome: got.created ? 'added' : 'focused' })
   return got.created ? 'added' : 'focused'
 }
 
