@@ -563,12 +563,14 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 
 | 环节 | 位置 |
 | --- | --- |
-| 设置外壳 | `web/src/components/SettingsDialog.tsx` + `components/settings/` |
+| 设置外壳（`← 19`，ADR 0038） | `web/src/components/SettingsDialog.tsx`（固定 760×600、十一分区、`resolveSection` 别名、`uiStore.settingsReturnTo`）+ `components/settings/`（`InterfaceSettings` / `PackagesSettings` / `DiagnosticsSettings` / `CopyButton` 新增；`ProfilesSettings({ kind })`） |
 | 项目设置 | `PATCH /api/project/settings`（`app.py:2074`），存 `engine/config.py project_settings()` |
 | 环境解析 | `engine/projectenv.py`（`docs/adr/0018`）、`engine/depresolve.py` |
 | 受管环境 | `engine/managedenv.py`；`GET/PATCH /api/engine/environment`、`POST …/install`、`…/managed/rebuild` |
 | 受控依赖修复 | `engine/deprepair.py`（`docs/adr/0019`），`POST /api/engine/dependency/plan|install|cancel` |
-| 前端 | `web/src/store/envStore.ts`、`depRepairStore.ts`、`components/EngineEnvironmentCard.tsx`、`DependencyRepairCard.tsx` |
+| **包管理（`← 19`，ADR 0038）** | `engine/deprepair.py` §包管理：`list_managed_packages` / `inventory` / `protected_distributions` / `create_package_job` → `run_package_job`（与修复共用 `_run_pip` / `envlease` 锁 / `_sanitize` / `worker_self_test`）；`GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`；SSE `engine.package` → `store/packageStore.ts` → `settings/PackagesSettings.tsx` |
+| 诊断文本 | `GET /api/diagnostics/summary` = `diagnostics.build_report()` → `render_text()`；`app._diagnostics_project_status()` 与 zip 端点共用 |
+| 前端 | `web/src/store/envStore.ts`、`depRepairStore.ts`、`packageStore.ts`、`components/EngineEnvironmentCard.tsx`（内置包清单已移到包管理页）、`DependencyRepairCard.tsx`（`repairCodeMessage` 导出给包管理页共用） |
 | Coding Agent 注册表 | `engine/ai_agents.py`（`docs/adr/0015`），`/api/ai/agents/*` |
 
 ---

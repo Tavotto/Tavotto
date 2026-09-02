@@ -2002,3 +2002,85 @@ can_manual_link 出现、capability 缺席什么都不说、readiness 取不到�
 * 把 `ObjectView` 一次性渲染出来的用例不跟文档走：改 `locked` 之后 DOM 不重渲染，锁定那条要
   在 seed 里就锁好。
 * 拖到 (1300, 820) 的面板落在右栏底下，右键点到的是侧栏——画布区右沿 ≈ 1040。
+
+## Session 19：设置外壳 / 编码 Agent 精简 / 包管理 / 诊断拆页
+
+### 新增用例（后端 45；前端 12 + 19 + 7 + 2 + 3；真浏览器 6）
+
+**`tests/test_package_management.py`（45 条）**：清单六条（没项目 → `no_project` 禁用原因、环境未建
+一个子进程都不起、内置 = 闭包不含 lmfit / scipy、状态按环境不按账（missing / changed）、账上的 numpy
+在闭包里标 protected、清单里没有路径 / 代理地址 / 凭据）；闭包两条（递归、无盘点只剩基础集）；语法
+与安全十六条（三条 argv 逐字节钉、十二种敌意串 × 三种操作在 plan 阶段就死且 pip 一次不调、卸载只收
+包名、未知 op、**结构性：作业解释器落在 `managedenv.env_dir` 下 + 签名里没有 `python` 参数**）；
+保护与依赖七条（卸 matplotlib / numpy / Pillow / pip 一律 protected、卸没装的、依赖者报出来、update /
+uninstall 要有环境、install 无环境就计划创建、无基础 Python 拒绝、磁盘不足只挡 install / update）；
+绑定与并发八条（未知作业、环境变了 stale、作业绑项目（A 的作业在 B 项目 409）、run 端点只读 job_id、
+plan 端点的稳定码、list 端点没项目 200 + 原因、作业与修复同一把锁、native 会话用自己的码、盘点期间
+`busy`）；记账两条（`forget_install` 按 PEP 503、快照上限与文件名无路径）；**离线真安装三条**
+（建环境 → 装本地 wheel → 账 / import / 宿主解释器 import 不到 / 清单 `in_use` → 升级幂等 → 卸载 →
+import 不到 / 账划掉 / matplotlib 仍好 / 前后快照都在；新 wheel 真升到 1.1；不存在的包报
+`dependency_not_found` 且环境仍可用）。
+
+**`SettingsDialog.test.tsx`（12 条）**：十一分区顺序与默认页、四条别名、`profiles` 深链落规范页、
+样式 / 规范各自字段、外框宽高常量切分区不变、内容区 `overflow-y-auto` + 切页 scrollTop 归零、
+导航不换行可横滚、↓ ↑ Home End 走 + 搬焦点、roving tabindex、returnTo 三条。
+
+**`PackagesSettings.test.tsx`（19 条）**：禁用原因三条（没项目 / 建不了环境 / busy）；清单五条（内置只读 +
+用户升级卸载 + 保护只读、来源与规范与版本变化、环境行、无回滚常驻、无路径）；安装六条（敌意串不发
+请求、plan → run 两步 + 进度 + 禁用不冻结、plan 失败按 code、进度到终态日志可复制 + 重读清单、别的
+作业事件不收、取消真发）；卸载三条（先问 + 依赖者列出 + 取消不 run、确认才 run、后端拒卸内置按 code）；
+升级一条。
+
+**`DiagnosticsSettings.test.tsx`（7 条）**：坏的在前说原因好的只有名字、`cli_*` 不显示且不计入异常数、
+全部正常一句话、渲染环境卡只在技术详情里一张 + 内置包版本不在、复制先预览后复制（预览阶段剪贴板
+零字节）、摘要拿不到说失败、导出按钮还在。
+
+**`agentState.test.ts`（2 条）+ `CodingAgentsSection.test.tsx`（+3）**：版本号只取数字 / 抽不出回 null；
+一级页面无路径无内部包名无说明段无卡片框、未安装 / 装坏的第二行、详情可复制。
+
+**`e2e/settings-shell.spec.ts`（6 条，真浏览器）**：切遍十一分区外框逐像素不变 + 对话框本体不滚 +
+无横向溢出；1024×640 外框在视口内；600×700 导航在内容上方 + 可切页 + 不溢出；英文四页不溢出；
+方向键走导航；三页 axe 无 critical / serious。
+
+### 变异验证记录（Session 19）
+
+**流程**：`scratchpad/mutate19.py`——树不干净拒跑；**先跑一遍基线（pytest 43 条 + vitest 五文件
+必须绿）**；每条变异 → 跑定向用例 → 按**退出码**判 → `git checkout -- 文件` 还原。
+
+| 变异 | 结果 |
+| --- | --- |
+| P1 保护闭包不递归 | 红 |
+| P2 内置包可以卸 | 红 |
+| P3 卸载不报依赖者 | 红 |
+| P4 磁盘检查删掉 | 红 |
+| P5 作业不查环境指纹 | 红 |
+| P6 run 端点不核项目 | 红 |
+| P7 install 也带 `--upgrade` | 红（argv 逐字节钉住） |
+| P8 卸载接受版本约束 | 红 |
+| P9 plan 不查环境忙 | 红 |
+| P10 划账不按 PEP 503 归一 | 红 |
+| P11 账上有就报已安装 | 红 |
+| P12 network 回代理地址 | 红 |
+| F1 卸载不问 | 红（2 条） |
+| F2 客户端不挡形状 | 红 |
+| F3 别的作业事件也收 | 红 |
+| F4 作业跑着也不禁用 | 红（2 条） |
+| F5 诊断不过滤 CLI 项 | 红（2 条） |
+| F6 版本抽不出就回原文 | 红 |
+| F7 `profiles` 别名指到样式 | 红（2 条） |
+| F8 关掉设置不回导出 | 红 |
+| F9 切页不滚回顶部 | 红 |
+| F10 外框不传固定高 | 红 |
+| F11 装好的行也显示路径 | 红 |
+
+**23/23 全红。** 没有存活项。
+
+### 实跑到的、不是假设的
+
+* **真浏览器第一遍 5 红**：状态徽章 `w-24` 定宽被英文撑破（4 条溢出用例一起红）；本机 claude 的
+  shim `--version` 第一行是 bash 报错，`agentVersionLabel` 回原文 → 一级页面出现 `/Users/…`；
+  进场动画中量 `boundingBox`（747×590）；<1024 抽屉遮罩的淡入让 Playwright 恒判不稳定。
+* **`"lmfit==1.0 "` 过了敌意用例**：`create_package_job` 在边界 `strip()`，这是合理行为；敌意串
+  改成内部空格。
+* **`open_project()` 回 dict**，`["id"]` 才是 pj。
+* **纯函数单测放进带 `root.unmount()` 的 afterEach 文件里会在 afterEach 炸**——单独成文件。

@@ -5,7 +5,193 @@
 
 ---
 
-## 最近一次：Session 18（2026-09-02）
+## 最近一次：Session 19（2026-09-02）
+
+### 目标
+
+Prompt 19：设置外壳不随内容跳动、信息架构清楚；编码 Agent 页面只剩名称 · 版本 · 状态；
+Tavotto 受管环境的包管理做成产品能力（安装 / 升级 / 卸载），**复用 ADR 0019 的全部机制、
+不造第二套环境与命令执行器**；诊断页去重；Style / Spec 拆成两页。
+
+### 开始前实测到的六件事
+
+1. **设置对话框是按内容撑高的**（`Dialog size="lg"` 560 宽、`max-h-[86vh]`）：切到「编码
+   Agent」外框高一倍，切回「常规」又缩回去。三个分区各只有一两行（侧栏 / 画布 / 快捷键）。
+2. **Agent 一级列表第二行是 `codex-cli 0.42.0 · /opt/homebrew/bin/codex`**——内部包名与
+   安装目录默认暴露；顶上一段「Tavotto 会自动发现……」；「Tavotto for Codex」是一张带框大卡片。
+3. **「关于」页里渲染环境卡片出现两次**（首屏两行摘要 + 折叠区里整张卡），内置包清单挂在卡里。
+4. **包管理没有产品面**：受管环境只能在脚本缺包时被动装一个包（`deprepair.create_plan`
+   必须给 `module`），没有清单、没有升级 / 卸载、不知道它是不是正在用。但**机制全在**：
+   `pool.mutating_environment` → `envlease` 一张锁表、`_pip_install` 流式执行器、
+   `_sanitize` 两道脱敏、`worker_self_test` 真起 worker、`managedenv.record_install` 记账。
+5. **桌面壳不 spawn pip**：`src-tauri/` 里只有 sidecar spawn；包操作天然走 Flask 后端。
+6. **导出面板「编辑规范」深链到 `profiles` 分区**，关掉设置回到画布，不回导出面板。
+
+### 实际完成
+
+**1. 设置外壳（`SettingsDialog.tsx`，ADR 0038 §1–2）。** 固定 `SHELL_WIDTH = 760` /
+`SHELL_HEIGHT = 600px`（`ui/Dialog` 新增 `height`），内容区 `[data-settings-content]` 独立滚、
+切页滚回顶部；<640px 导航变顶部一条可横滚；roving tabindex + ↑ ↓ ← → Home End。十一个分区
+`general / interface / project / style / spec / export / ai / packages / diagnostics / update / about`；
+旧 id 走 `resolveSection()` 别名（`profiles → spec`、`canvas / sidebars → interface`、
+`shortcuts → general`）。`uiStore.settingsReturnTo`（闭集 `'export' | null`）：导出面板深链进来、
+关掉回导出面板；每次打开重置。
+
+**2. 编码 Agent（§3）。** `AgentList` 每行只有 `[图标] 名称 · 版本号 · 状态`；`agentVersionLabel`
+只取数字部分、**抽不出就不显示**；第二行只在未安装 / 装坏时出现；顶部解释段、卡片外框、
+说明段全删；详情里路径 / 诊断 / 安装命令各有 `CopyButton`。
+
+**3. 包管理（§5）。** 后端 `deprepair` 追加作业模型：`create_package_job(project, op, spec)`
+（签名里**没有解释器参数**）→ `PackageJob`（绑项目 + 环境指纹 + 有效期）→ `run_package_job(job_id)`；
+`inventory(python)` 一次子进程盘点（`importlib.metadata`，含 requires 图）；
+`protected_distributions()` = 基础栈 + **目标环境里现算**的传递闭包 + pip；`list_managed_packages()`
+两份清单 + 能力 + 网络三真假 + 快照数；`_run_pip` 抽成 install / uninstall 共用执行器，
+`pip_install_argv(..., upgrade=)` 默认 argv 一个字节没变，`pip_uninstall_argv`；改动前后
+`managedenv.record_snapshot` 各一份 freeze；`forget_install` / `installed_entry`；`envlease.is_mutating_key`。
+四个端点 `GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`；SSE `engine.package`。
+前端 `store/packageStore.ts` + `settings/PackagesSettings.tsx`。
+
+**4. 诊断页（§4）。** `DiagnosticsSettings.tsx`：健康状态（坏的在前、说原因）+「复制诊断」
+（`GET /api/diagnostics/summary` = `build_report()` 摊平成文本，`diagnostics.render_text`，先预览再复制）
++「导出诊断包」；`cli_*` 不显示；渲染环境卡只在技术详情里一张；`EngineEnvironmentCard` 删掉内置包清单。
+`app._diagnostics_project_status()` 从 bundle 端点抽出来两处共用。
+
+**5. 样式 / 规范（§6）。** `ProfilesSettings({ kind })`；规范页顶部 `[data-spec-binding]` 说清快照 /
+全局 / 内置 + 「更新到当前」；id / 版本 / 修订进「详情」折叠区。`GeneralSettings` 并入快捷键行；
+`InterfaceSettings` = 侧栏 + 画布；`CanvasSettings / SidebarSettings / ShortcutSettings` 三文件删除。
+
+### 关键 API（Prompt 20 / 21 直接用）
+
+```ts
+// web/src/components/SettingsDialog.tsx
+SECTIONS / resolveSection(id) / SHELL_WIDTH / SHELL_HEIGHT
+useUiStore.setSettingsOpen(true, 'packages' | 'diagnostics' | …, { returnTo?: 'export' })
+// web/src/store/packageStore.ts
+load() / plan(op, spec) → PackageJob | null / run(jobId) / cancel() / poll() / onProgress(p)
+isPackageJobRunning(progress)
+// web/src/lib/api.ts
+fetchManagedPackages() / planPackageJob(op, spec) / runPackageJob(id) / cancelPackageJob(id) / fetchPackageJob(id)
+fetchDiagnosticsSummary() → { text, report }
+// web/src/components/settings/CopyButton.tsx   CopyButton({ text | () => text, label })
+// web/src/components/settings/agentState.tsx   agentVersionLabel(version) → '0.151.0' | null
+// src/tavotto/engine/deprepair.py
+list_managed_packages(project|None) / create_package_job(project, op, spec) / run_package_job_async(job_id, on_event)
+inventory(python) / protected_distributions(inv) / OP_* / PKG_* / ERROR_PACKAGE_*
+// src/tavotto/engine/managedenv.py
+forget_install / installed_entry / record_snapshot / list_snapshots / REASON_*
+// src/tavotto/engine/diagnostics.py            render_text(report)
+```
+
+稳定锚点：`[data-settings-shell]` / `[data-settings-content]` / `nav[aria-label] button[data-section]` /
+`[data-packages-page]` / `[data-packages-env]` / `[data-packages-job]` / `[data-diagnostics-page]` /
+`[data-diagnostics-preview]` / `[data-spec-binding]` / `[data-agent-version]`。Prompt 21 的 coachmark 挂这里。
+
+### 迁移
+
+**没有磁盘格式改动。** `environment.json` 的 `installed_by_tavotto[].reason` 早就在写，只是现在多了
+第二个取值 `user_requested`（读旧账时缺省当 `missing_dependency`）；`environment.json` 旁多一个
+`snapshots/` 目录（可删）。`managedenv.state()["installed"][]` 多带 `reason`（两值枚举）。设置分区
+id 变了但**旧 id 全部走别名**，调用方一处没改也能落到正确的页。错误码新增七条 `package_*`（文案在
+`errors:engine.repairError.*`，与缺包修复同一张表、同一个漏斗 `app._repair_error`）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/deprepair.py（追加 §包管理 ~400 行）  tests/test_package_management.py（45 条）
+新增  docs/adr/0038-settings-shell-agents-packages.md
+新增  web/src/store/packageStore.ts  web/src/components/settings/{PackagesSettings,DiagnosticsSettings,InterfaceSettings,CopyButton}.tsx
+新增  web/src/components/SettingsDialog.test.tsx  settings/{PackagesSettings,DiagnosticsSettings}.test.tsx  settings/agentState.test.ts
+新增  web/e2e/settings-shell.spec.ts（6 条，真浏览器）
+删除  web/src/components/settings/{CanvasSettings,SidebarSettings,ShortcutSettings}.tsx
+改动  src/tavotto/app.py（四个包端点 + /api/diagnostics/summary + _diagnostics_project_status）
+改动  src/tavotto/engine/{managedenv,envlease,diagnostics}.py
+改动  tests/support/dependency_repair.py（offline_managed_env 夹具从 e2e 搬进来）  tests/test_dependency_repair{,_e2e}.py
+改动  web/src/components/{SettingsDialog,ExportDialog,EngineEnvironmentCard,DependencyRepairCard}.tsx  ui/Dialog.tsx
+改动  web/src/components/settings/{CodingAgentsSection,AgentList,AgentDetailView,agentState,GeneralSettings,ProfilesSettings,PrivacyAboutSettings}.tsx
+改动  web/src/{lib/api.ts,store/uiStore.ts,hooks/useServerEvents.ts}
+改动  web/src/i18n/locales/*/{dialogs,errors}.json + resources.d.ts
+重建  codex-plugin/mcp/widget/canvas.html           指纹 4f10cda116943005
+重建  web/dist-playground/                          指纹 de4a1f68a2a0afc7（不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **真浏览器第一遍 5 红，两条是产品缺陷**：① 状态徽章定宽 `w-24`，英文「Sign-in required」
+   撑破整行（jsdom 量不出）；② `agentVersionLabel` 抽不出数字时回原文——本机 claude 的 shim
+   `--version` 打的是 bash 报错（带 `/Users/…`），于是「默认不出路径」在真机上第一遍就破了。
+   判据改成「抽不出就不显示」，用例补在 `agentState.test.ts`。
+2. **`boundingBox` 要等进场动画跑完**：pop-in 缩放中量到 747×590，以为外框没按合同来。
+   `el.getAnimations().map(a => a.finished)` 等完再量。
+3. **<1024 的抽屉遮罩让 Playwright 恒判「不稳定」**（fade-in 动画），`click()` 一直重试到超时。
+   设置对话框是 z-50 的 portal、在抽屉之上，直接 `dispatchEvent('click')` 绕过指针拦截。
+4. **`create_package_job` 的 `str(spec).strip()` 让 `"lmfit==1.0 "` 过了**——边界处剥空白是
+   合理行为（内部空白仍然死），敌意用例里那条改成内部空格。
+5. **`open_project()` 回的是 dict**，`["id"]` 才是 pj；直接把 dict 当 pid 传给 `close_project`
+   报 unhashable。
+6. **纯函数单测别放进有 `afterEach(root.unmount())` 的组件测试文件**：没 mount 的用例在
+   afterEach 里炸。`agentVersionLabel` 的两条单独成文件。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 19 之后」新增的七行（无回滚只有快照、孤儿依赖、后端把 shim 报错
+当版本、健康列表无一键修复、外壳尺寸不可调、150% 缩放没真机、内嵌 / playground 没有设置页）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 / 14 / 15 / 16 / 17 / 18 / 19 七轮都在这条分支上，
+  **尚未推送、没有 PR**）；本轮提交 `a097310b`（代码 + 测试）+ `d8c29ad8`（真机两条 + ADR + widget）
+  + `1c59dd6f`（反证前补用例）+ 留档一笔
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 20：离线教程资源后端）
+
+**从这里开始读**：`docs/adr/0038-settings-shell-agents-packages.md`（本轮）、`UX_CONTRACTS.md` 的
+「5d 设置外壳 / Agent / 包管理 / 诊断合同」、`web/AGENTS.md` 的「设置外壳与包管理」、
+`ARCHITECTURE.md` §7 / §8（**教程 / onboarding 目前不存在**，全新实现）。
+
+**Session 19 留给后面的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 设置分区深链 | `setSettingsOpen(true, '<section>', { returnTo })` + `resolveSection` | 教程 / Help 要「打开设置 → 包管理」直接调；旧 id 走别名 |
+| 「这个项目能不能装包」 | `GET /api/engine/packages` 的 `capability` | 教程里判「要不要提示装包」看它，不自己探 Python |
+| 用户明确触发的装包 | `packageStore.plan('install', spec)` → `run(jobId)` | 两步不许合并成一步；**教程绝不自动调 run** |
+| 复制诊断 | `fetchDiagnosticsSummary()` | Help 里「复制诊断信息」直接用，已脱敏 |
+| 复制小按钮 | `settings/CopyButton` | 任何路径 / 命令的复制 |
+| 版本号清洗 | `agentVersionLabel` | 任何要显示 CLI 版本的地方 |
+| 真浏览器量法 | `e2e/settings-shell.spec.ts` 的 `horizontalOffenders` + `getAnimations().finished` | 量溢出 / 量外框都先等动画 |
+
+**绝不要做的事**（07 的六条 … 18 的三条原样成立，19 再加四条）：
+
+50. **不许自动安装包**（T-99）。教程、onboarding、readiness、watcher 只能**提示**「缺 X，去包管理装」
+    并深链过去；`run` 必须由用户在包管理页点。`create_package_job` 没有解释器参数、`run_package_job`
+    只认 job_id，这两条是机制面，不是约定。
+51. **不许把「内置」写成一份清单**（T-100）。内置 = 目标环境里现算的依赖闭包；源码里抄一份 matplotlib
+    的依赖会随版本漂。
+52. **不许在一级页面显示 CLI 的原始 `--version` 文本**（T-101）。只显示 `agentVersionLabel` 抽出来
+    的数字；原文归详情。
+53. **不许让设置外壳按内容撑高**（T-102）。新分区再长也在 `[data-settings-content]` 里滚；
+    Dialog 的 `height` 是合同。
+
+**必须保留的不变式**（在 18 的三十八条之上）：
+
+39. **设置外框 760×600 切遍十一分区不变**（`SettingsDialog.test.tsx` + `e2e/settings-shell.spec.ts` 逐像素）。
+40. **旧分区 id 别名到新分区**（profiles → spec 等四条）。
+41. **Agent 一级列表无路径、无内部包名、无说明段**（`CodingAgentsSection.test.tsx`）。
+42. **包操作只对受管环境**（`test_the_bundled_runtime_and_the_project_venv_are_never_targets`：签名里
+    没有解释器参数 + 作业解释器落在 `managedenv.env_dir` 下）。
+43. **内置 = 依赖闭包，卸它一律 `package_protected`**；**卸载先问、有依赖者要列出来**。
+44. **plan 与 run 两步、run 只读 job_id、作业绑项目 + 环境指纹**。
+45. **诊断页不显示 `cli_*`，渲染环境卡只一张，内置包清单不在诊断页**。
+
+---
+
+## 历史：Session 18（2026-09-02）
 
 ### 目标
 

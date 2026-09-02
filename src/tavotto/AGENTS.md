@@ -623,6 +623,21 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `tests/test_dependency_repair_e2e.py`（真建 venv、真跑 pip、真起 worker、
   真出图；不联网靠手工 wheel + `PIP_FIND_LINKS`/`PIP_NO_INDEX`）+ web 的
   `DependencyRepairCard.test.tsx`。
+- **包管理（ADR 0038，2026-09-02）住在同一个模块的 §包管理**，没有第二套
+  执行器：`create_package_job(project, op, spec)` → `run_package_job(job_id)`
+  两步（签名里**没有解释器参数**，目标只有受管环境；作业绑项目 + 环境指纹）；
+  `_run_pip` 是 install / uninstall 共用的流式执行器，`pip_install_argv(..., upgrade=)`
+  默认 argv 一个字节没变、`--upgrade` 只给 update；`pip_uninstall_argv` 带 `-y`
+  （确认在界面上）。**「内置」= `BASE_PACKAGES` + 目标环境里现算的依赖闭包 + pip**
+  （`inventory()` 一次子进程读 `importlib.metadata`，`protected_distributions()`），
+  卸它一律 `package_protected`；卸载作业把账上的依赖者交回去让界面二次确认。
+  改动前后各记一份 freeze 快照（`managedenv.record_snapshot`，不是回滚）；改完必须
+  `probe_environment` + `worker_self_test` 仍过，否则标 `incomplete`。端点
+  `GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`，进度 SSE
+  `engine.package`。看护 `tests/test_package_management.py`（45 条，含离线真安装）。
+- `GET /api/diagnostics/summary`：诊断包同一份 `build_report()` 摊平成文本
+  （`diagnostics.render_text`），给设置里「复制诊断」用；project 段由
+  `app._diagnostics_project_status()` 与 zip 端点共用。
 
 ## 两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）
 

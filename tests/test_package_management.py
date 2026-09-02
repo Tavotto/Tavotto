@@ -560,7 +560,9 @@ def test_install_update_uninstall_end_to_end(tmp_path, wheelhouse, offline_manag
     # ---- uninstall ----
     rec = run(deprepair.OP_UNINSTALL, FIXTURE_DIST)
     assert rec["result"]["op"] == deprepair.OP_UNINSTALL
-    out = subprocess.run([python, "-c", f"import {FIXTURE_IMPORT}"], capture_output=True, text=True)
+    out = subprocess.run(
+        [python, "-c", f"import {FIXTURE_IMPORT}"], capture_output=True, text=True, encoding="utf-8"
+    )
     assert out.returncode != 0, "卸完还 import 得到"
     assert managedenv.installed_entry(project, FIXTURE_DIST) is None
     assert managedenv.read_manifest(project)["state"] == managedenv.STATE_READY

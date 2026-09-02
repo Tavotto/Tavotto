@@ -1744,3 +1744,50 @@ playground 没有作废通道——这两种情况都只按当前 overrides 重�
 留着管首字母跳转与方向键。** 变异 M8 / M9 在 jsdom 里**存活是结构性的**，真浏览器守护落在
 `e2e/quick-menu.spec.ts`。不改 `useKeyboard` 去看 `defaultPrevented`——那会改变所有 Esc
 消费者的语义。
+
+## T-99（Session 19）包只由用户在包管理页点装；作业模型的两条机制面
+
+**问题。** Prompt 19 要「安装 / 升级 / 卸载」的结构化 API，而共享规则 §4 说「不自动安装依赖」。
+把 `installUserPackage(spec)` 做成一个调用，任何页面（教程、readiness、watcher）都能顺手调。
+
+**裁决：与 ADR 0019 同一条纪律——两步。`create_package_job(project, op, spec)` 只形成作业、不改
+任何东西；`run_package_job(job_id)` 只认 job_id。** 前端 `packageStore.plan()` / `run()` 分开导出，
+`PackagesSettings` 是唯一调 `run` 的地方。机制面有两条：`create_package_job` 的签名里**没有解释器
+参数**（调用方给不了目标）；作业绑项目 + 环境指纹 + 有效期（A 项目的作业拿到 B 项目 → 409）。
+
+## T-100（Session 19）「内置」是依赖闭包，不是清单
+
+**问题。** 「built-in 只读、不许卸」需要一个「哪些是内置」的判据。最省事的是在源码里列
+`matplotlib, numpy, pillow, fonttools, kiwisolver, …`。
+
+**裁决：在目标环境里现算。** `inventory(python)` 一次子进程读 `importlib.metadata` 的名字 / 版本 /
+requires，`protected_distributions()` 从 `BASE_PACKAGES` + pip 出发沿 requires 取闭包。matplotlib 换
+版本、依赖变了，保护范围自动跟上；用户自己装了个 numpy，账上是用户包，界面上仍是只读。代价是
+打开包管理页起一个子进程（几百毫秒）；环境不存在时一个子进程都不起。
+
+## T-101（Session 19）一级页面上的版本号只有数字；抽不出就不显示
+
+**问题。** `--version` 的第一行是 `codex-cli 0.151.0`（带内部包名），本机 claude 的 shim 坏了、第一行
+是 bash 报错（带 `/Users/…`）。第一版 `agentVersionLabel` 抽不出数字就回原文，真机第一遍一级列表
+上就出现了完整路径——「默认不暴露路径」当场破了。
+
+**裁决：`agentVersionLabel` 只回数字部分；抽不出回 null，那一格不渲染。原文只在详情里。** 后端仍把
+「第一行非空」当「装了」（`probe_version_detailed`），本轮没动它，记进遗留。
+
+## T-102（Session 19）设置外壳的尺寸是合同
+
+**问题。** 通用 Dialog 按内容撑高，切分区外框跳动；有人会想给每个分区一个「合适」的高。
+
+**裁决：固定 `SHELL_WIDTH = 760` / `SHELL_HEIGHT = 600px`（Dialog 新增 `height`），内容区独立滚，
+<640px 导航变顶部一条。** 短分区下半屏留白是有意的：留白比跳动便宜。真像素由
+`e2e/settings-shell.spec.ts` 切遍十一个分区逐个比 `boundingBox`——**先等进场动画跑完**
+（`getAnimations().finished`），否则量到的是缩放中的框。
+
+## T-103（Session 19）没有回滚就说没有回滚
+
+**问题。** Prompt 要「失败保留环境可用性」「事务」。pip 没有事务（ADR 0019 §八）。
+
+**裁决：不假装。** 每次改动前后各记一份 `pip freeze`（脱敏后，最多 12 份），页面**常驻**一句
+「包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 N 份），环境损坏时
+可用「重建」恢复到账上记录的状态」。验证一层不少：pip 退出后 `inventory` 里必须有 / 没有它，
+再 `probe_environment` + `worker_self_test`——**环境改完必须还能画图**，不能就标 `incomplete`。

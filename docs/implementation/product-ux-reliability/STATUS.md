@@ -50,7 +50,7 @@
 | 16 | 刻度线直接操作 | ✅ 完成（本次，ADR 0035） |
 | 17 | 多选浮动栏 | ✅ 完成（本次，ADR 0036） |
 | 18 | QuickEdit 右键动作 | ✅ 完成（本次，ADR 0037） |
-| 19 | 设置 / Agent / 包管理 | ⬜ |
+| 19 | 设置 / Agent / 包管理 | ✅ 完成（本次，ADR 0038） |
 | 20 | 离线教程资源后端 | ⬜ |
 | 21 | onboarding UI 与提示 | ⬜ |
 | 22 | Codex/AI、i18n、遥测、文档整合 | ⬜ |
@@ -64,7 +64,7 @@
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
-| 5 产品外壳 | 19–22 | ⬜ |
+| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）完成；20–22 未开始 |
 | 6 发布 | 23 | ⬜ |
 
 ---
@@ -516,7 +516,37 @@ desktop…」。
 
 ---
 
-## 遗留（Session 18 之后仍开着的）
+### Session 19 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ✅ exit 0 —— **3705** passed / 34 skipped / 0 failed（比 16 的 3655 +50：`test_package_management.py` 45 + 其余 5）。**跑了三遍才绿，前两遍都是我的错**：第一遍带了 `TAVOTTO_WORKER_PYTHON`，它压过项目记住的 venv，`test_dependency_repair_e2e::test_golden_path_install_into_the_project_venv` 在第二次 probe 时拿到 `project_env_already_attempted`（Session 15 记过同形状——全量别带那个变量，只有单跑 worker 用例文件才要）；第二遍 84% 处被 `test_source_hygiene::test_windows_bound_subprocesses_pin_their_decoding` 拦住——新测试里一个 `subprocess.run` 没给 `encoding="utf-8"`。三遍都与 vitest 全量**串行** |
+| `cd web && pnpm test` | ✅ exit 0 —— **171** files / **2387** tests passed（比 18 的 167/2344 +4 文件 / +43 条：`SettingsDialog.test.tsx` 12 + `PackagesSettings.test.tsx` 19 + `DiagnosticsSettings.test.tsx` 7 + `agentState.test.ts` 2 + Agent 页 +3；`settingsDisclosure.test` 的 About 四条改写成诊断页四条，`profilesSettings.test` 的「切到规范」改成按 kind 重渲染） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `e2e/settings-shell.spec.ts` 把 `app` 夹具当对象用，被 tsc 抓到——e2e 文件也在 tsc 范围里） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 3069 / en-US 3165；新增 `dialogs:settings.section.{interface,style,spec,packages,diagnostics}`、`settings.packages.*` 60 组、`settings.diagnostics.*` 9 条、`settings.agents.{versionAria,detail.copy*}`、`settings.{copy,copied}`、`profiles.{binding.*,details,detail.*}`；`errors:engine.repairError.package_*` 7 条；删掉 `section.{profiles,shortcuts}` / `agents.{intro,codexIntegrationDesc}` / `about.{environmentTitle,engineOk,engineStatusHint,diagnosticsTitle}` / `profiles.{kind.style,kind.spec,kindAria}` / `engine.bundledPackages`。第一版 `PackagesSettings.tsx` 里写死了一个 "Python"，`i18next-cli lint` 当场红） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示 |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `PYTHONPATH=<wt>/src TAVOTTO_WORKER_PYTHON=… pytest tests/test_package_management.py tests/test_dependency_repair.py tests/test_error_codes.py tests/test_i18n_dead_keys.py tests/test_diagnostics_bundle.py tests/test_ai_bridge.py` | ✅ exit 0（`test_package_management.py` 45 条，含三条离线真安装：建受管环境 → 装本地 wheel → 升级 → 卸载 → 账 / import / 快照 / 宿主解释器全部核过；`test_dependency_repair.py` 的清单断言多了 `reason` 枚举） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `4f10cda116943005`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `de4a1f68a2a0afc7`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 23 条（Python 12 + 前端 11） | ✅ **23/23 全红**，基线绿（见 `TEST_MATRIX.md`） |
+| 真浏览器 `e2e/settings-shell.spec.ts` + `e2e/coding-agents.spec.ts`（Playwright chromium，**进仓库**） | ✅ 11/11。**第一遍 5 红**：① Agent 一级列表的状态徽章定宽 `w-24`，英文「Sign-in required」把行撑破（4 条测溢出的一起红）；② 本机 claude 的 shim `--version` 第一行是 bash 报错（带 `/Users/…` 完整路径），`agentVersionLabel` 抽不出数字就回原文 → 一级页面出现了完整路径；③ 进场动画没跑完就量 `boundingBox`（747×590 vs 760×600）；④ <1024 的抽屉遮罩淡入动画让 Playwright 恒判「不稳定」，点不到设置按钮。前两条是产品缺陷，后两条是量法。截图八张在 scratchpad（`s19-*.png`） |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面两条 spec）。13 记的六条红仍开着 |
+
+---
+
+## 遗留（Session 19 之后仍开着的）
+
+| ID | 事项 | 归属 |
+| --- | --- | --- |
+| — | **包管理没有回滚**（pip 没有事务，ADR 0019 §八）。处置：改动前后各记一份 `pip freeze` 快照（最多 12 份）、页面常驻一句「没有回滚，有快照，坏了可重建」；快照目前**只能看文件**，界面上没有「按快照恢复」——重建装回去的是账上记的版本，不是快照 | 已处置（诚实降级） |
+| — | **卸载受管环境里的包不会顺带卸掉它拉进来的依赖**（pip 也不会）。账上只记用户点名装的；孤儿依赖留在环境里，重建时不会装回去 | 已处置（说明在 ADR 0038） |
+| — | **`agentVersionLabel` 抽不出数字就不显示**：真机 claude 的 shim 是坏的（`--version` 打的是 bash 报错），后端仍报 `installed`——「第一行非空 = 版本」这条判据在后端（`probe_version_detailed`），本轮没动它。表现是一级列表上 Claude Code 只有名字与「已安装」，详情里能看到那行报错 | 待查（后端判据） |
+| — | **诊断页的健康检查列表仍按后端 `/api/diagnostics` 的顺序 + 好坏分组**，没有做「一键修复」；`cli_*` 只在前端过滤，诊断包里照旧带 | 已处置 |
+| — | **设置外壳固定 760×600**：常规页下半屏留白。这是有意的（留白比跳动便宜）。**没有做用户可调尺寸** | 已决定不做 |
+| — | **窄窗口（<640）下导航变顶部一条**：e2e 量过 600×700；**150% 系统缩放没有真机量**（用窄视口等价替代） | 待真机 |
+| — | **包管理页不在内嵌画布 / playground 里**（它们没有设置对话框），「browser/embedded 无本地包权限」这一档实际只剩「没打开项目」与「这台机器建不了环境」两种禁用原因 | 已处置 |
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
