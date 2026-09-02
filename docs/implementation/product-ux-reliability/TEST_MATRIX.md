@@ -2437,3 +2437,17 @@ web/index.html / worker / patchspec / profiles / console script / `--help` / `do
 
 两条都是 Session 19 的代码；Codex 定 P2，本轮按「跨项目事件污染」（P0 类）处置。第一遍假红是夹具的
 假 `cancel` 对任何 id 都回 True（[[fixture-makes-the-predicate-vacuous]] 同族）。
+
+### 评审回合 2（PR #228 的 `full-ci` 桌面腿：Windows 打包产物上的 Playwright 第一次跑本分支）
+
+`windows-exe-smoke`：99 passed / 4 flaky / 2 failed / 21 skipped（25.8 min）。两条真红都是**竞态**，mac 上稳绿：
+
+| 条 | 现场证据（trace.zip 的 network / 快照） | 处置 | 判据 |
+| --- | --- | --- | --- |
+| `tutorial.spec` 重新开始教程：画布没恢复原位（差 0.199 = 拖过的那段） | `POST tutorial/reset` 返回前后前端又 `PUT autosave` 两次（派生同步作用在还没换掉的旧文档上），随后 `GET autosave` 200 读回拖过的文档 | `resetTutorial` 先 `suspendAutosaveFor(当前教程画布)`：防抖不排、`flush` 回 skipped；`switchDocument` 换到干净画布即恢复；重置没做成手动接回 | `saveStateMachine.test` +2、`tutorial.test` +2；变异「flush 不看挂起」「reset 不挂起」各红 |
+| `quick-menu.spec` 重新构建：90 s 没弹「已按源脚本重新构建」，状态区空 | 首次渲染 3.1 s 还在飞时点了重新构建：`invalidate` 200 → 排队的那次 239 ms 才画完；`settledRender` 只等一次，在飞的结束→排队的开始是同步两次 `patch`，消费者恢复时键仍是 `rendering` → 静默 `failed` | `settledRender` 循环等到真的不在渲染 | `quickEditActions.test` +1（第二次渲染也延后释放）；变异「只等一次」红 |
+
+**这一轮的一次假绿**：第一版用例让排队那次即时返回，jsdom 里 `await settledRender()` 比 `await engineRender()`
+多一个 microtask，单次等待也恒绿——变异存活后加临时日志才看出来（[[mutation-may-not-be-a-mutation]] 的反面：
+判据没变、是**用例的输入形状**让它量不到）。四条 flaky（playground 两条、settings-shell 窄窗口、教程完整走完）
+重试即过，记在 #31 的 Windows 桌面 e2e 稳定性之下。
