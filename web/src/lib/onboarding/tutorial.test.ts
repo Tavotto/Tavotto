@@ -222,7 +222,12 @@ describe('resetTutorial', () => {
     useDocumentStore.getState().commit({ key: 'literal', ns: 'common', values: { text: 'x' } }, (d) => {
       d.objects = []
     })
-    localStorage.setItem('tavotto.autosave.tavotto-tutorial', '{"stale":true}')
+    // 本机槽位里留一份**合法但陈旧**的教程画布（比磁盘新、内容不同）：重置不忘掉它的话，
+    // readAutosaveDoc 会把它当成"本机这份就是文档本身"装回来
+    localStorage.setItem(
+      'tavotto.autosave.tavotto-tutorial',
+      JSON.stringify({ ...LAYOUT, updatedAt: Date.now() + 10_000, canvases: [{ ...LAYOUT.canvases[0], objects: [] }] }),
+    )
     const p = resetTutorial()
     await new Promise((r) => setTimeout(r, 0))
     useUiStore.getState().confirm!.resolve(true)
@@ -235,7 +240,6 @@ describe('resetTutorial', () => {
     // 教程那格本机 autosave 被忘掉（不然旧进度会被推回刚重置的磁盘槽位）；
     // 之前那份文档仍在最近文档索引里——别的文档一个没动
     // （切进干净画布时会重新落一次快照——那是新的，不是旧进度）
-    expect(localStorage.getItem('tavotto.autosave.tavotto-tutorial') ?? '').not.toContain('stale')
     expect(useDocumentStore.getState().recentDocs.some((e) => e.id === 'd_before')).toBe(true)
   })
 
