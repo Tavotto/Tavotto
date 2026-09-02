@@ -338,6 +338,20 @@ describe('安装', () => {
     expect(input().disabled).toBe(false)
   })
 
+  it('空闲标签页不认领别的项目的作业：进度为空时收到陌生 job_id 也不显示、不刷清单', async () => {
+    await mount()
+    listMock.mockClear()
+    await act(async () => {
+      usePackageStore.getState().onProgress({ job_id: 'someone-elses', state: 'installing', log: 'x', error: null, code: '' })
+    })
+    expect(usePackageStore.getState().progress).toBeNull()
+    await act(async () => {
+      usePackageStore.getState().onProgress({ job_id: 'someone-elses', state: 'done', log: 'x', error: null, code: '' })
+    })
+    expect(usePackageStore.getState().progress).toBeNull()
+    expect(listMock).not.toHaveBeenCalled()
+  })
+
   it('别的作业的进度事件不会盖掉自己的', async () => {
     planMock.mockResolvedValue({ job: job() })
     runMock.mockResolvedValue({ started: true, job_id: 'job-1', state: 'installing', log: '', error: null, code: '' })

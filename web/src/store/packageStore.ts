@@ -24,6 +24,9 @@ import { useRenderStore } from '@/store/renderStore'
  * 进度经 SSE `engine.package` 推过来，SSE 断了由 `poll()` 补拉。
  * 界面**按 state 换文案，不解析日志**——日志只在「详细日志」里原样显示。
  */
+/** 本标签页经 `run()` 起过的作业号：进度事件只认这里面的 */
+const startedJobs = new Set<string>()
+
 interface PackageState {
   data: ManagedPackages | null
   loading: boolean
@@ -96,6 +99,7 @@ export const usePackageStore = create<PackageState>((set, get) => ({
 
   run: async (jobId) => {
     if (get().busy) return false
+    startedJobs.add(jobId)
     set({ busy: true, errorCode: '', errorText: '' })
     try {
       // 乐观地先进 preparing：SSE 的第一条要等后端线程起来，那一下空窗期里
@@ -133,9 +137,11 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   },
 
   onProgress: (p) => {
-    const current = get().progress
-    // 只认自己那条作业：SSE 是全进程共享的一条流
-    if (current && current.job_id !== p.job_id) return
+    // 只认**自己起过**的作业：SSE 是全进程共享的一条流，同一后端下另一个项目的标签页
+    // 也会收到这条进度。以前只挡「与当前作业不同」，空闲标签页（progress 为 null）
+    // 会把别人的作业认领成自己的——终态时刷错项目的环境、进行中时露出别人的取消按钮
+    // （评审 #228）。后端 cancel / job 也按项目核，这一层是前端自己的那一份。
+    if (!p.job_id || !startedJobs.has(p.job_id)) return
     set({ progress: p })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       if (p.state !== 'done') set({ errorCode: p.code || '', errorText: p.error || '' })

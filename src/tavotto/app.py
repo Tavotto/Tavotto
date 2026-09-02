@@ -4777,18 +4777,43 @@ def _capture_package_action(op: str, progress: dict) -> None:
     engine_telemetry.capture("package_action", {"action": action, "outcome": outcome})
 
 
+def _foreign_package_job(root: str, job_id: str) -> bool:
+    """这个作业属于**别的**项目吗？
+
+    作业绑项目（`create_package_job(project, …)`），而进度 `job_id` 经 SSE 全进程广播：
+    B 项目的标签页拿得到 A 的 `job_id`。`/run` 一直核 `job.project == root`；取消与补拉
+    以前只核「请求方有个项目」——B 能取消 A 的安装、读 A 的日志（评审 #228 两条 P2，
+    按跨项目事件污染处置）。过期 / 不存在的作业不算别人的：取消回 False、补拉回 idle。
+    """
+    job = engine_deprepair.get_package_job(job_id)
+    return job is not None and job.project != root
+
+
+def _not_your_job():
+    return jsonify(
+        {"error": "这个作业属于另一个项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+    ), 409
+
+
 @app.post("/api/engine/packages/cancel")
 def api_packages_cancel():
     """取消。**不承诺回滚**：装 / 卸到一半的受管环境会被标成未完成，下次重建。"""
-    require_project()
+    root = str(require_project())
     body = request.get_json(force=True)
-    return jsonify({"cancelling": bool(engine_deprepair.cancel(str(body.get("job_id") or "")))})
+    job_id = str(body.get("job_id") or "")
+    if _foreign_package_job(root, job_id):
+        return _not_your_job()
+    return jsonify({"cancelling": bool(engine_deprepair.cancel(job_id))})
 
 
 @app.get("/api/engine/packages/job")
 def api_packages_job():
-    """某个作业的当前进度（SSE 断了之后的补拉）。"""
-    resp = jsonify(engine_deprepair.progress(request.args.get("job_id", "")))
+    """某个作业的当前进度（SSE 断了之后的补拉）。只给自己项目的作业。"""
+    root = str(require_project())
+    job_id = request.args.get("job_id", "")
+    if _foreign_package_job(root, job_id):
+        return _not_your_job()
+    resp = jsonify(engine_deprepair.progress(job_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -392,6 +392,51 @@ def test_jobs_are_bound_to_their_project(client, tmp_path, no_pip, monkeypatch):
         m.close_project(pid_b, wait=True)
 
 
+def test_cancel_and_poll_refuse_another_projects_job(client, tmp_path, no_pip, monkeypatch):
+    """进度 job_id 经 SSE 全进程广播，B 项目的标签页拿得到 A 的作业号：
+    取消与补拉都要像 /run 一样核 `job.project == root`（评审 #228）。"""
+    from tavotto import app as m
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    _fake_ready_env(a)
+    monkeypatch.setattr(deprepair, "inventory", lambda p: dict(_INV))
+    cancelled: list[str] = []
+    job = deprepair.create_package_job(a, deprepair.OP_UNINSTALL, "lmfit")
+    # 假的 cancel 只认这一个作业（真的对不存在的 id 也回 False）
+    monkeypatch.setattr(
+        deprepair,
+        "cancel",
+        lambda job_id: job_id == job.job_id and (cancelled.append(job_id) or True),
+    )
+    pid_a = m.open_project(str(a))["id"]
+    pid_b = m.open_project(str(b))["id"]
+    try:
+        resp = client.post(f"/api/engine/packages/cancel?pj={pid_b}", json={"job_id": job.job_id})
+        assert resp.status_code == 409 and resp.get_json()["code"] == deprepair.ERROR_NOT_ALLOWED
+        assert cancelled == [], "B 的取消不能碰到 A 的作业"
+        resp = client.get(f"/api/engine/packages/job?pj={pid_b}&job_id={job.job_id}")
+        assert resp.status_code == 409, "B 读不到 A 的进度与日志"
+        # 自己项目的照旧
+        resp = client.post(f"/api/engine/packages/cancel?pj={pid_a}", json={"job_id": job.job_id})
+        assert resp.status_code == 200 and cancelled == [job.job_id]
+        assert (
+            client.get(f"/api/engine/packages/job?pj={pid_a}&job_id={job.job_id}").status_code
+            == 200
+        )
+        # 不存在 / 过期的作业不算「别人的」：取消回 False、补拉回 idle
+        resp = client.post(f"/api/engine/packages/cancel?pj={pid_b}", json={"job_id": "nope"})
+        assert resp.status_code == 200 and resp.get_json()["cancelling"] is False
+        assert (
+            client.get(f"/api/engine/packages/job?pj={pid_b}&job_id=nope").get_json()["state"]
+            == "idle"
+        )
+    finally:
+        m.close_project(pid_a, wait=True)
+        m.close_project(pid_b, wait=True)
+
+
 def test_run_endpoint_reads_nothing_but_the_job_id(client, tmp_path, no_pip, monkeypatch):
     """请求体里塞 op / spec / python 都不算数：执行的是作业里那一件事。"""
     from tavotto import app as m
