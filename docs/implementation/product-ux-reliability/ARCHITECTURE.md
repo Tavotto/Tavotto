@@ -585,7 +585,30 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 | 遥测 | `engine/telemetry.py` + 代理白名单，三档同意，`TAVOTTO_NO_TELEMETRY=1` 硬开关；前端 `lib/telemetry.ts`、`store/telemetryStore.ts` |
 | i18n | `web/src/i18n/`（8 个命名空间：common/workspace/project/inspector/dialogs/errors/ai/shortcuts），门禁 `pnpm i18n:check` |
 | 诊断 | `engine/diagnostics.py`、`diagnostics_frontend.py`（`docs/adr/0016`），`web/src/diagnostics/` |
-| **教程 / onboarding** | **不存在**（全仓搜 `tutorial`/`onboarding` 零命中）——Prompt 20/21 是全新实现 |
+| **离线教程项目（`← 20`，ADR 0039）** | 资源 `src/tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`）；副本 `<data_dir>/tutorial/v<版本>-<指纹>/Tutorial/`（`ensure_tutorial_copy`）；`GET /api/tutorial`、`POST /api/tutorial/open|reset`；`project_status().tutorial` / recent 的 `tutorial` 标记。见 §8b |
+| **onboarding UI** | **不存在**——Prompt 21 消费上面的 API 与 `tutorial_meta.json`，不得读仓库根 `examples/` |
+
+### 8b. 离线教程项目（`← 20`，ADR 0039）
+
+```text
+包内（只读）  tavotto/resources/tutorial_project/{tutorial_meta.json, tavotto_registry.json, paper_style.py,
+              fig1_kinetics.py, Fig1_kinetics.pdf, fig2_correlation.py, Fig2_correlation.pdf,
+              tavottofile/Tutorial.json, README.md}
+      │  ensure_tutorial_copy()   首次复制 / 幂等复用 / 缺文件只补缺的 / reset 临时目录 + 两段 rename
+      ▼
+数据目录     <data_dir>/tutorial/v<tutorial_version>-<资源指纹>/Tutorial/   ← 一个普通项目目录
+              <data_dir>/tutorial/v…/state.json
+      │  open_project()          与用户项目同一条路径：只读注册表，不起草、不 probe、不起 worker
+      ▼
+进程         PROJECTS[pid]（`is_tutorial_path()` 标记）→ /api/panels 两张图都 editable → 图内编辑 / 画布 / 导出照常
+```
+
+* 重置：`close_project(pid, wait=True)` → `ensure_tutorial_copy(reset=True)` → 只清
+  `layouts/_autosave/<document_id>.json` + `baked_overrides/<pid>.json` → `open_project()`。
+* 「教程由哪些文件组成」只有 `tutorial.resource_files()` 一个出处；打包三条路（hatch wheel / sdist 自然
+  收进、PyInstaller datas 显式列）都由它对账（`tests/test_tutorial.py` 读产物成员）。
+* 错误码 `tutorial_resources_missing / tutorial_resources_invalid / tutorial_copy_failed / tutorial_locked`
+  经 `app._tutorial_error` 一个漏斗。
 
 ---
 
@@ -593,4 +616,6 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 
 `packaging/`（wheel / sdist / 内置渲染 runtime / PyInstaller / macOS 签名），
 `src-tauri/`（桌面壳、ACL、更新通道）。平台支持口径唯一出处
-`docs/support-matrix.json`。
+`docs/support-matrix.json`。**包内数据文件**（`profiles/`、`resources/`）：wheel / sdist 随
+`packages = ["src/tavotto"]` 自然收进；PyInstaller **不收**，`tavotto.spec` 的 datas 必须显式列
+（`← 20`）。

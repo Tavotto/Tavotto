@@ -2084,3 +2084,71 @@ import 不到 / 账划掉 / matplotlib 仍好 / 前后快照都在；新 wheel �
   改成内部空格。
 * **`open_project()` 回 dict**，`["id"]` 才是 pj。
 * **纯函数单测放进带 `root.unmount()` 的 afterEach 文件里会在 afterEach 炸**——单独成文件。
+
+## Session 20：离线教程资源与 Tutorial API
+
+### 新增用例（后端 47；前端 0；真进程冒烟 1）
+
+**`tests/test_tutorial.py`（47 条）**：资源五条（`importlib.resources` 可达且清单不含 `__pycache__`、
+元数据稳定且无路径 / 两张图都带 title · legend_text · axis_label / 至少一条 8 pt 问题、静态验证全过、
+体积与无外部数据、PDF 零尺寸被拒）+ 十三种坏资源各一条（缺 PDF / 坏 PDF / 坏注册表 / 语法错 / 读外部
+数据 / 网络 import / 绝对路径 / stems 不一致 / 文档 schema 旧 / 文档引用不存在的素材 / 超大文件 / 缺
+元数据 / 只有一张图）；副本九条（首次复制到 `v<版本>-<指纹>/Tutorial` + state.json + 可写、幂等且保留
+用户改动、reset 恢复原样且无残留、缺文件与坏注册表只补缺的、资源变了换目录旧目录留着（升版本号 /
+只改内容各一次）、复制失败旧副本原样且无 `.tmp`、占用（PermissionError）报 `tutorial_locked` 旧副本
+原样、放新副本失败把旧的放回、陈旧 `.old/.tmp` 被清、`is_tutorial_path` 只认数据目录那棵树）；
+API 十一条（GET 不泄漏包内 / 数据目录路径、GET 对坏资源如实、open 不起 worker 不 probe 不起草 + 两张
+面板都连着脚本 + `/api/layouts/Tutorial` 是 schema 3 + 再开复用、最近列表标记 + 可移除、open 不动
+用户项目、reset 只清教程 autosave 与 baked 且先 `close_project(pid, wait=True)`、reset 在没开时先建、
+默认项目归属两种、锁住 409 且旧副本重新打开、open 修复缺文件、三个端点走认证）；打包六条（读 wheel
+成员逐字节比对 + 无 `.pyc` + 体积、读 sdist 成员、解包 wheel 后子进程只靠 `importlib.resources` 找到
+资源且验证全过、spec datas 含 resources 与 profiles、pyproject / gitignore 不挡资源、冒烟脚本与 CI 的
+`--tutorial` 接线合同）；worker 真跑两条（每张图 build → stems / roles ⊇ editable_roles / 7 pt 文字 /
+build 期间副本 PDF 一个字节不变）。
+
+**`scripts/smoke_app.py --tutorial`（真进程）**：`GET /api/tutorial` → open（`default=False`）→ 两张图各
+`POST /api/engine/render?pj=` 一次并核 roles → reset → 副本完整。接进 CI 两条内置 runtime 的冒烟①。
+
+### 变异验证记录（Session 20）
+
+**流程**：`scratchpad/mutate.py`——树不干净拒跑；每条变异 → 跑 `tests/test_tutorial.py` → 按**退出码**判
+→ `git checkout -- 文件` 还原。反证前先补了四条用例（单张图元数据、reset 先关项目、陈旧残留目录、
+冒烟 / CI 接线合同）。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 reset 不先挪走旧副本 | 红 |
+| M2 缺文件不修 | 红 |
+| M3 占用不识别（`_is_locked` 恒假） | 红 |
+| M4 放新副本失败不把旧的放回 | 红 |
+| M5 指纹不看内容 | 红 |
+| M6 `is_tutorial_path` 恒真 | 红 |
+| M7 panels 只要一张 | 红（补的用例） |
+| M8 不查外部数据调用 | 红 |
+| M9 不读 PDF 尺寸 | **存活** → 坏 PDF 在 `probe_asset` 就抛、走的是 except 分支，`w_pt > 0` 那条边没人量。补 probe 回零尺寸的用例，复跑**红** |
+| M10 reset 不清教程 autosave | 红 |
+| M11 reset 清掉所有 autosave | 红（别的文档的槽位必须还在） |
+| M12 open 起 worker | 红（`_forbid_execution` 夹具） |
+| M13 `project_status` 不标 tutorial | 红 |
+| M14 reset 不先关项目 | 红（补的用例：`close_project(pid, wait=True)` 必须被调） |
+| M15 占用回 500 不回 409 | 红 |
+| M16 复制失败留半个临时目录 | 红 |
+| M17 残留目录不清 | 红（补的用例） |
+| M18 spec 漏掉 resources | 红 |
+| M19 绝对路径不查 | 红 |
+| M20 坏注册表不当缺文件补 | 红 |
+| M21 recent 不标 tutorial | 红 |
+| M22 副本不设可写位 | **存活** → 语义 no-op：`copyfile` 本就不拷权限位，副本按 umask 建成可写。删掉 chmod 而不是「加强」用例 |
+
+**22 条：20 红；2 存活各自处置（1 补用例后红，1 删冗余代码）。**
+
+### 实跑到的、不是假设的
+
+* **matplotlib 在这台机器上 import 只要 0.3 s**：worker 用例 0.26 s 跑完一度让我怀疑「没真跑」；
+  拿 manifest 元素数与 7 pt 文字核过，确实跑了。
+* **打开用户项目会起草注册表**：`test_open_does_not_touch_the_user_project` 第一版把起草算到了教程
+  头上（假红）。
+* **第一版副本目录叫 `project/`**，最近列表里就显示「project」——`project_status()["name"]` 取目录名。
+* **前端只加一个类型字段也要重建两个受管产物**（指纹覆盖 `web/src/**`）。
+* **桌面 PyInstaller 产物里 `profiles/publication.json` 本来就不在**（datas 没收，Analysis 不收数据
+  文件）——本轮顺手补上，但没有本机产物能证明，等 CI 桌面腿。

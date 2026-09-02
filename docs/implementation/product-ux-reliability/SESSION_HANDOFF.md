@@ -5,7 +5,156 @@
 
 ---
 
-## 最近一次：Session 19（2026-09-02）
+## 最近一次：Session 20（2026-09-02）
+
+### 目标
+
+Prompt 20：建立**真正随安装包分发、完全离线、不污染用户工程**的教程项目资源与后端 Tutorial API。
+不做教程 UI、不做 coachmark、不改多选与 QuickEdit——Prompt 21 消费这里的 API 与元数据。
+
+### 开始前实测到的五件事
+
+1. **教程 / onboarding 完全不存在**（全仓 `tutorial` 零命中），是全新实现，没有旧代码要迁。
+2. **`examples/figures` 不随 wheel 走**（sdist include 与 wheel packages 都只收 `src/tavotto`），它是
+   开发 / CI 冒烟的示例；`paper_style.py` 指定 Times New Roman（没装就回退），`fig2_comparison.py`
+   一次出两张图。不能直接拿来当教程，但可以整理成独立资源。
+3. **包内数据文件在桌面版里是漏的**：`packaging/tavotto.spec` 的 datas 只有 `web/`、worker 那几个 .py
+   与 runtime；PyInstaller 的 Analysis 只把 .py 编进 PYZ，`profiles/publication.json` 在冻结产物里
+   **本来就不在**（源码树 / wheel 里都有，所以 lab_acceptance 那条结构检查看不出来）。本轮顺手补上。
+4. **副本要清的东西分布在三处**：项目内 `tavottofile/`（画布 / 导出 / 版本历史，随目录整个换）、
+   数据目录 `layouts/_autosave/<documentId>.json`（按前端 documentId，不按项目——所以元数据里要
+   定死一个 `document_id`）、数据目录 `baked_overrides/<项目 id>.json`（写回基线）。
+5. **`open_project()` 只读注册表 JSON**，注册表在就不起草、不 probe、不起 worker——「打开教程不跑
+   脚本」在既有路径上就成立，本轮只需别绕开它。
+
+### 实际完成
+
+**1. 资源（`src/tavotto/resources/tutorial_project/`，ADR 0039 §1）。** `fig1_kinetics.py`（两条曲线 +
+图例 + 标题 + 科学字符 min⁻¹ / α / °C）、`fig2_correlation.py`（散点 + 线性拟合 + **故意 7 pt** 的
+"n = 60, R² = …"，触发 8 pt 下限）、自包含 `paper_style.py`（只用 DejaVu Sans；`figure.dpi` 120）、
+注册表、`tavottofile/Tutorial.json`（schema 3，两张图放上画布、纵向故意错开 6 mm）、
+`tutorial_meta.json`（schema 1 / tutorial_version 1 / `document_id: "tavotto-tutorial"` /
+`document_name: "Tutorial"` / `panels[]` 带 `editable_roles` 与 `spec_issue`）、README。
+PDF 用 matplotlib 3.10.8 生成，各约 15 KB，只嵌 DejaVu Sans；总计 9 个文件 37.5 KB。
+
+**2. `engine/tutorial.py`（§2–4）。** `resource_root()`（`importlib.resources` → 源码树兜底）、
+`resource_files()`（唯一的文件清单）、`resource_manifest()` / `resource_digest()`、`tutorial_metadata()`、
+`tutorial_destination()` = `<data_dir>/tutorial/v<版本>-<指纹>/Tutorial/`、`is_tutorial_path()`、
+`copy_status()`、`ensure_tutorial_copy(reset=)`（首次复制 / 幂等 / 只补缺的 / reset 两段 rename）、
+`validate_tutorial_resources()`（纯静态：JSON / compile / PDF 尺寸 / 外部数据调用 / 网络 import /
+绝对路径 / 体积）。`TutorialError(code)` 四个稳定码。纯标准库（PDF 尺寸那条在函数内延迟 import
+`pdfbackend` 契约层）。
+
+**3. 三个端点（§5–7）。** `GET /api/tutorial`（不回包内路径）、`POST /api/tutorial/open`（ensure →
+`open_project()` → 状态 + 元数据 + created / repaired）、`POST /api/tutorial/reset`（`close_project(pid,
+wait=True)` → 原子换副本 → 只清 `_autosave/<document_id>.json` + `baked_overrides/<pid>.json` → 重开；
+锁住时 409 并把旧副本重新打开）。`project_status()` 与 `/api/projects/recent` 多一个 `tutorial` 标记。
+
+**4. 打包（§8）。** wheel / sdist 自然收进；`tavotto.spec` datas 加 `tavotto/resources` **与
+`tavotto/profiles`**；CI 装 wheel 冒烟加 `validate_tutorial_resources()` 断言；`smoke_app.py --tutorial`
+（打开 → 两张图各渲染一次 → reset → 副本完整）接进 Windows / macOS 两条内置 runtime 的冒烟①。
+
+**5. 错误码门禁扫进 `engine/tutorial.py`**（`TutorialError("<code>")` 模式），四个 `tutorial_*` 双语文案。
+`api.ts` 的 `ProjectStatus` / `RecentProject` 加 `tutorial?: boolean`（只有类型，没有 UI）。
+
+### 关键 API（Prompt 21 直接用）
+
+```ts
+// 后端
+GET  /api/tutorial          → { available, problems[], tutorial_version, metadata, copy{exists,complete,missing[],registry_ok}, project{open,id} }
+POST /api/tutorial/open     { default?: bool } → { project: ProjectStatus, tutorial: meta, reset: false, created, repaired[] }
+POST /api/tutorial/reset    { default?: bool } → { project, tutorial, reset: true, cleared[] } | 409 tutorial_locked
+ProjectStatus.tutorial / RecentProject.tutorial   // 教程副本的标记
+// tutorial_meta.json（schema 1）
+document_id            前端打开教程画布时**必须**用的 documentId（重置只清这一格自动保存）
+document_name          `/api/layouts/Tutorial` 里那份 schema 3 画布
+panels[].key|file|stem|script|editable_roles[]|spec_issue{code,role,text_prefix}
+editable_role_preferences[]   coachmark 优先指的 role（manifest 的 role 名，不是 gid）
+// src/tavotto/engine/tutorial.py
+tutorial_metadata() / tutorial_destination() / ensure_tutorial_copy(reset=) / validate_tutorial_resources() / is_tutorial_path()
+```
+
+### 迁移
+
+没有磁盘格式改动。新目录 `<data_dir>/tutorial/`（可整个删）。`project_status()` / recent 各多一个布尔
+字段（旧前端忽略）。错误码新增四条 `tutorial_*`。`tavotto.spec` datas 多两条（profiles 那条是补漏）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/tutorial.py                    src/tavotto/resources/tutorial_project/{9 个文件}
+新增  tests/test_tutorial.py（47 条）                    docs/adr/0039-offline-tutorial-project.md
+改动  src/tavotto/app.py（三个端点 + project_status / recent 的 tutorial 标记）
+改动  packaging/tavotto.spec（datas + profiles + resources）  scripts/smoke_app.py（--tutorial）
+改动  .github/workflows/ci.yml（wheel 冒烟教程断言；两条冒烟① --tutorial）
+改动  tests/test_error_codes.py   web/src/lib/api.ts   web/src/i18n/locales/*/errors.json + resources.d.ts
+重建  codex-plugin/mcp/widget/canvas.html               指纹 2745c510f75b89fc
+重建  web/dist-playground/                              指纹 455ea989fd650a30（不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **副本目录名就是项目名**：`project_status()["name"]` 取目录名，第一版叫 `project/`，最近列表里
+   显示「project」。改成 `Tutorial/`。
+2. **打开用户项目会起草注册表、建 `tavottofile/`**：「不动用户项目」的快照要在打开之后取，否则
+   把既有行为算到教程头上。
+3. **`subprocess.run` 没钉 `encoding`** 被 `test_source_hygiene` 抓到（与 19 同形状）。
+4. **前端只加一个类型字段也要重建两个受管产物**（指纹覆盖 `web/src/**`）；既然 errors.json 必须改
+   （错误码门禁），产物反正要重建。
+5. **变异 M22（chmod）存活是语义 no-op**：`copyfile` 本来就不拷权限位，副本按 umask 建成可写；
+   删掉而不是「加强」用例。M9（PDF 零尺寸）存活是没覆盖，补 probe 回零尺寸的用例。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 20 之后」新增的六行（桌面 PyInstaller 本机跑不了、旧版本目录不清理、
+「完整」只看存在性、自动保存槽位靠前端遵守 `document_id`、`examples/figures` 与教程资源是两份、
+e2e 全量没跑）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13–20 八轮都在这条分支上，**尚未推送、没有 PR**）；本轮
+  提交 `dc2397e0`（代码 + 资源 + 测试 + 打包）+ `反证前补用例` + `反证后处置` + 留档一笔
+- author 用 `88193520+erwanjun@users.noreply.github.com`，提交时 `git -c user.email=…`
+
+---
+
+## 下一阶段入口（Prompt 21：onboarding UI 与提示）
+
+**从这里开始读**：`docs/adr/0039-offline-tutorial-project.md`（本轮）、`UX_CONTRACTS.md` 的「5e 离线
+教程项目合同」、`src/tavotto/AGENTS.md` 的「项目系统」末尾教程那一条、`ARCHITECTURE.md` §8b。
+
+**Session 20 留给 21 的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 「用示例了解 Tavotto」 | `POST /api/tutorial/open` → 走既有 `projectStore` 的项目切换（响应里的 `project` 就是 ProjectStatus） | 不要自己复制文件、不要读仓库根 `examples/` |
+| 教程画布 | `GET /api/layouts/Tutorial`（pj = 教程项目）+ `switchDocument(doc, meta.document_id)` | documentId **必须**是 `metadata.document_id`，否则重置清不到自动保存 |
+| coachmark 目标 | `metadata.panels[].editable_roles` / `spec_issue.text_prefix` / `editable_role_preferences` | 按 manifest 的 role 找元素，不按 gid |
+| 「这是教程吗」 | `ProjectStatus.tutorial` / `RecentProject.tutorial` | 最近列表显示「教程」标记，不显示数据目录路径 |
+| 「重新开始教程」 | `POST /api/tutorial/reset`（教程之前是默认项目才继续是默认） | 只清教程自己的东西；onboarding 的本机完成状态归 21 自己清 |
+| 资源坏了 | `GET /api/tutorial` 的 `available:false` + `problems[]` | 说「重新安装」，别假装能修 |
+| 稳定锚点 | 17 / 18 / 19 留下的 `data-multi-selection-context-bar` / `data-quick-menu` / `data-settings-content` 等 | 挂 coachmark |
+
+**绝不要做的事**（07 的六条 … 19 的四条原样成立，20 再加三条）：
+
+54. **不许从仓库根 `examples/` 读任何东西**（T-105）：用户机器上没有仓库根；教程资源只在包内。
+55. **不许在打开教程时执行脚本**（T-107）：渲染只在用户进入图内编辑那一刻由 worker 做；onboarding
+    的「预热」如果要渲染，必须是用户可见、可取消的动作。
+56. **不许用别的 documentId 打开教程画布**（T-106）：`document_id` 是重置时清自动保存的唯一依据。
+
+**必须保留的不变式**（在 19 的四十五条之上）：
+
+46. **教程资源经 `importlib.resources` 可达，静态验证全过，wheel / sdist / spec datas 里都有**
+    （`test_tutorial.py` 四条打包用例 + CI 装 wheel 冒烟）。
+47. **打开 / 重置教程不起 worker、不 probe、不起草**（`_forbid_execution` 夹具）。
+48. **重置只清教程自己的自动保存槽位与写回基线；别的项目一个字节不碰**。
+49. **副本替换是原子的：失败旧副本仍在；锁住报 `tutorial_locked` 且项目重新打开**。
+50. **改了资源就换目录**（目录名含内容指纹）。
+
+---
+
+## 历史：Session 19（2026-09-02）
 
 ### 目标
 

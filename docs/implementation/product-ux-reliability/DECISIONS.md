@@ -1791,3 +1791,39 @@ requires，`protected_distributions()` 从 `BASE_PACKAGES` + pip 出发沿 requi
 「包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 N 份），环境损坏时
 可用「重建」恢复到账上记录的状态」。验证一层不少：pip 退出后 `inventory` 里必须有 / 没有它，
 再 `probe_environment` + `worker_self_test`——**环境改完必须还能画图**，不能就标 `incomplete`。
+
+## T-104（Session 20）教程副本进最近列表，带标记
+
+**问题。** 教程副本躺在数据目录里；进最近列表会把 `…/tutorial/v1-…/Tutorial` 这种路径展示给用户，
+不进又要给它开第二条打开路径（`open_project` 里就 `touch_recent`）。
+
+**裁决：进，带 `tutorial: true`。** 打开教程走与普通项目**完全相同**的 `open_project()`，不分叉；
+`/api/projects/recent` 与 `project_status()` 各多一个布尔字段，界面按它显示「教程」而不是路径。用户
+可以像别的项目一样把它从最近列表移掉，磁盘副本不动。
+
+## T-105（Session 20）教程资源只在包内；目录名带内容指纹
+
+**问题。** Prompt 原案 `DATA_ROOT/tutorial/v1/project/`——「改了资源要升版本号」没有任何技术信号
+提醒。而仓库根 `examples/figures` 在用户机器上根本不存在。
+
+**裁决：资源在 `tavotto/resources/tutorial_project/`，经 `importlib.resources` 访问；副本目录名 =
+`v<tutorial_version>-<资源内容指纹>`。** 改一个字节就换目录，旧目录留着（用户改过的）。「教程由哪些
+文件组成」只有 `resource_files()` 一个出处，没有手写清单。Prompt 21 **不得**从 `examples/` 读任何东西。
+
+## T-106（Session 20）重置的范围精确到「只属于教程的」，靠一个定死的 `document_id`
+
+**问题。** 自动保存槽位按前端 documentId 存在数据目录里，槽位内容里没有 figures_dir——后端无法从
+槽位反推它属于哪个项目；「清掉教程的自动保存」要么清全部（伤别的文档），要么一个都不清。
+
+**裁决：元数据定死 `document_id`，前端打开教程画布必须用它；重置只清这一格 + `baked_overrides/<pid>.json`，
+项目内 `tavottofile/` 随目录整个换。** 不碰别的项目、别的文档、全局 recent、项目设置、遥测同意、
+onboarding 本机状态。教程之前是默认项目才继续是默认。
+
+## T-107（Session 20）打开教程不执行脚本；「完整」只看存在性
+
+**问题。** 「首次打开就预热渲染」体验好，但共享规则 §4 不许静默执行；「副本内容与包内不一致就重建」
+整洁，但会抹掉用户写回过的 PDF、改过的脚本。
+
+**裁决：open = 复制文件 + 既有 `open_project()`（只读注册表 JSON）；validate 纯静态；渲染只在用户进入
+图内编辑那一刻由 worker 做。副本「完整」= 文件都在 + 注册表能读；缺的只补缺的；内容漂了是进度，只有
+「重新开始教程」才整个换。** 测试里 worker 真跑教程脚本，那是测试，不是产品行为。

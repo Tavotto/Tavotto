@@ -51,7 +51,7 @@
 | 17 | 多选浮动栏 | ✅ 完成（本次，ADR 0036） |
 | 18 | QuickEdit 右键动作 | ✅ 完成（本次，ADR 0037） |
 | 19 | 设置 / Agent / 包管理 | ✅ 完成（本次，ADR 0038） |
-| 20 | 离线教程资源后端 | ⬜ |
+| 20 | 离线教程资源后端 | ✅ 完成（本次，ADR 0039） |
 | 21 | onboarding UI 与提示 | ⬜ |
 | 22 | Codex/AI、i18n、遥测、文档整合 | ⬜ |
 | 23 | 全量 QA 与发布门禁 | ⬜ |
@@ -64,7 +64,7 @@
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
-| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）完成；20–22 未开始 |
+| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）完成；21–22 未开始 |
 | 6 发布 | 23 | ⬜ |
 
 ---
@@ -536,6 +536,36 @@ desktop…」。
 
 ---
 
+### Session 20 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ⏳ 见本节末尾的留档行 |
+| `PYTHONPATH=<wt>/src TAVOTTO_WORKER_PYTHON=… pytest tests/test_tutorial.py` | ✅ **47** passed（含 worker 真跑两张教程图；读 dist 的三条在 `python -m build` 之后跑，也绿） |
+| `pytest tests/test_error_codes.py tests/test_projects.py tests/test_project_env.py tests/test_diagnostics_bundle.py tests/test_runtime_build.py tests/test_source_hygiene.py tests/test_ci_tooling.py tests/test_release_workflow_contract.py tests/test_merge_queue_workflows.py tests/test_update_chain_gates.py tests/test_autosave.py tests/test_package.py tests/test_i18n_dead_keys.py` | ✅ 520 passed / 6 skipped（第一遍 `test_source_hygiene` 抓到新测试里一个没钉 `encoding` 的 `subprocess.run`——与 19 同形状） |
+| `python -m build` | ✅ `tavotto-0.12.0-py3-none-any.whl`（1.47 MB）+ `tavotto-0.12.0.tar.gz`；wheel 里 `tavotto/resources/tutorial_project/` 9 个成员 37 524 字节，sdist 同 9 个；`tavotto/web/index.html` 在 |
+| `cd web && pnpm test` | ✅ exit 0 —— **171** files / **2387** tests passed（与 19 相同：本轮没有前端用例） |
+| `cd web && pnpm build` | ✅ exit 0 |
+| `cd web && pnpm i18n:check` | ✅ exit 0（`errors:backend.tutorial_*` 四条双语；`resources.d.ts` 经 `pnpm i18n:types` 重生成） |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py` | ✅ 已重建（指纹 `2745c510f75b89fc` / `455ea989fd650a30`） |
+| `git diff --check` | ✅ |
+| 变异反证 22 条（Python 22） | ✅ 20 红 + 2 存活各自处置（M9 补用例后复跑红；M22 语义 no-op 删掉），见 `TEST_MATRIX.md` |
+| `python scripts/smoke_app.py --python <repo>/.venv/bin/python --tutorial`（真进程，`TAVOTTO_WORKER_PYTHON` 指向 homebrew 3.13 + matplotlib 3.10.8） | ✅ 冒烟通过：`GET /api/tutorial` → open（2 个脚本）→ `Fig1_kinetics` 300 ms 冷启动 → `Fig2_correlation` 310 ms → reset → 副本完整 → 干净退出无残留 worker |
+| 桌面 PyInstaller 产物 | ⚠️ **本机跑不了**（`.venv` 没装 PyInstaller，也没有 Rust supervisor 二进制）。spec 的 datas 改动只有静态断言（`test_desktop_spec_ships_the_tutorial_resources_as_datas`）+ CI 桌面腿的 `--tutorial` 冒烟能证明 |
+| Playwright e2e 全量 | ⚠️ **没跑**（本轮没有 UI 改动；13 记的六条红仍开着） |
+
+## 遗留（Session 20 之后仍开着的）
+
+| ID | 事项 | 归属 |
+| --- | --- | --- |
+| — | **桌面 PyInstaller 产物本机跑不了**：spec 的 datas 改动（`tavotto/resources` + 补漏的 `tavotto/profiles`）只有静态断言与 CI 桌面腿（`--tutorial`）能证明。**`profiles/publication.json` 在此前的冻结产物里本来就不在**——预检 / 规范在桌面版里是坏的还是有别的兜底，要等 CI 桌面腿或一台装了 PyInstaller 的机器回答 | **待 CI 回答，优先** |
+| — | **旧版本目录不清理**：改一次资源就多一份 `<data_dir>/tutorial/v…/`（几十 KB），旧的是用户改过的东西，没有做「清理旧教程」入口 | 已决定不做（说明在 ADR 0039） |
+| — | **「副本完整」只看存在性**：用户把脚本改坏了普通打开不修，只有「重新开始教程」会。进度优先于整洁 | 已处置（ADR 0039 §4） |
+| — | **自动保存槽位的清理靠前端遵守 `document_id`**：前端用别的 documentId 打开教程画布，重置就清不到那一格。后端没有办法从槽位内容反推它属于哪个项目（文档里没有 figures_dir） | 21 必须遵守（T-106） |
+| — | **`examples/figures` 与教程资源是两份内容相近的示例**：前者给开发 / CI 冒烟（随源码），后者给用户（随包）。没有合并——冒烟要的是 pandas / scipy 全栈脚本，教程要的是只依赖 numpy + matplotlib | 已决定不做 |
+| — | **Session 20 没跑 e2e**：本轮没有 UI 改动。这是**没跑**，不是「跑过没问题」 | 23 前 |
+
 ## 遗留（Session 19 之后仍开着的）
 
 | ID | 事项 | 归属 |
@@ -612,7 +642,16 @@ desktop…」。
 
 ## 下一阶段
 
-**Prompt 19（设置 / Agent / 包管理）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+**Prompt 21（onboarding UI 与提示）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+
+20 留给 21 的可复用入口：`GET /api/tutorial` / `POST /api/tutorial/open` / `POST /api/tutorial/reset`、
+`tutorial_meta.json`（`document_id` / `document_name` / `panels[].editable_roles` / `spec_issue.text_prefix`）、
+`ProjectStatus.tutorial` / `RecentProject.tutorial`、`GET /api/layouts/Tutorial`。**不得再从仓库根
+`examples/` 读文件；不得在打开教程时执行脚本。**
+
+19 留给后面阶段的可复用入口（原样有效）：`setSettingsOpen(true, '<section>', { returnTo })`、
+`GET /api/engine/packages` 的 `capability`、`packageStore.plan → run`（教程绝不自动调 `run`）、
+`fetchDiagnosticsSummary()`、`settings/CopyButton`、`agentVersionLabel`。
 
 18 留给后面阶段的可复用入口：`ui/Menu.PointMenu` / `MenuSub` / `MenuItem.reason`（任何贴着一个
 点打开的菜单、任何带常驻原因的禁用项）、`store/actions.rebuildPanel`（用户明确触发的一次脚本

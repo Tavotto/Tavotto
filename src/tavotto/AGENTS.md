@@ -863,6 +863,19 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     所以「离最近整数 < 0.02 就还原成整数」是去掉编码损失，不是四舍五入。
   * 没测量的维度一律 `None`：矢量不编像素数与 dpi，位图不编 viewBox，
     PDF 的透明度是 `None` 而不是 `False`。
+- **离线教程项目（ADR 0039，2026-09-02）**：资源在包内
+  `tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`，
+  `importlib.resources` → 源码树兜底，与 `profiles_path()` 同一条纪律），**绝不在
+  那里写**；可写副本在 `<data_dir>/tutorial/v<版本>-<资源指纹>/Tutorial/`
+  （`ensure_tutorial_copy()`：首次复制 / 幂等复用 / 缺文件只补缺的 / `reset=True`
+  临时目录 + 两段 rename 原子替换，失败旧副本原样在）。目录名带**内容指纹**：改了
+  资源就换目录，不靠「记得升 `tutorial_version`」。「教程由哪些文件组成」只有
+  `resource_files()` 一个出处——加一张图不用改任何清单，wheel / sdist / spec datas
+  的对账测试都读它。三个端点 `GET /api/tutorial`、`POST /api/tutorial/open|reset`
+  走既有 `open_project()`：**不起草、不 probe、不起 worker**；`validate_tutorial_resources()`
+  纯静态。重置只清 `_autosave/<document_id>.json` + `baked_overrides/<pid>.json`，
+  别的项目一个字节不碰。教程进最近列表、带 `tutorial` 标记。前端（Prompt 21）
+  不得再从仓库根 `examples/` 读文件。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
 
