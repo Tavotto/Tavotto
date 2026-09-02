@@ -2427,3 +2427,13 @@ web/index.html / worker / patchspec / profiles / console script / `--help` / `do
 （启动 → 渲染 → 热渲染 → 导出 → 覆盖导出 → 干净退出）**全部 ✅**；`test_tutorial` 的三条真 wheel 用例
 （教程资源集合逐一相等、sdist 同、解开后经 importlib.resources 定位）✅。桌面产物：**本机未验证**
 （PyInstaller / Tauri 产物在 CI 桌面腿；本分支的 `--tutorial` 与 datas 改动会在合并队列第一次执行）。
+
+### 评审回合 1（PR #228，Codex 两条 P2，全改）
+
+| 条 | 处置 | 判据 |
+| --- | --- | --- |
+| `packageStore.onProgress` 空闲标签页认领别人的作业 | 只认本标签页 `run()` 起过的 `job_id`（`startedJobs`） | `PackagesSettings.test` +1（陌生 job_id 在 progress 为空时不显示、不刷清单）；变异「退回只挡不同作业」红 |
+| `/api/engine/packages/cancel` 不核作业归属 | cancel 与 job 补拉都按 `job.project == root` 核（与 `/run` 同一判据） | `test_cancel_and_poll_refuse_another_projects_job`；变异「归属恒 False」红 |
+
+两条都是 Session 19 的代码；Codex 定 P2，本轮按「跨项目事件污染」（P0 类）处置。第一遍假红是夹具的
+假 `cancel` 对任何 id 都回 True（[[fixture-makes-the-predicate-vacuous]] 同族）。
