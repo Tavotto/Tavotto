@@ -814,7 +814,8 @@ def test_desktop_spec_ships_the_canvas_coverage_table():
 
 
 def test_pyproject_keeps_resources_inside_the_wheel_and_sdist():
-    import tomllib
+    # `tomllib` 是 3.11+ 的标准库；3.10 腿跳过这一条，3.11–3.13 三腿照常守
+    tomllib = pytest.importorskip("tomllib", reason="tomllib 需要 Python 3.11+")
 
     cfg = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     build = cfg["tool"]["hatch"]["build"]
