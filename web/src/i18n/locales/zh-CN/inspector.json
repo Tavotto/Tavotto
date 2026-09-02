@@ -47,6 +47,7 @@
     "pasteStyleEmpty": "还没有复制过样式",
     "pasteStyleTip": "粘贴到选区里的{{kind}}",
     "pinMembers": "固定选中成员（不随重排）",
+    "refLabel": "参照",
     "refTip": {
       "page": "以整个画布为基准",
       "primary": "以最后选中的那个对象为基准，它自己不动",

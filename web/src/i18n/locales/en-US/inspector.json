@@ -47,6 +47,7 @@
     "pasteStyleEmpty": "No style has been copied yet",
     "pasteStyleTip": "Paste onto the {{kind}} in the selection",
     "pinMembers": "Pin selected members (ignore re-flow)",
+    "refLabel": "Reference",
     "refTip": {
       "page": "Use the whole canvas as the reference",
       "primary": "Use the last-selected object as the reference; it stays put",

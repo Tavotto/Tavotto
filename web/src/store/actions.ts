@@ -4,6 +4,7 @@ import { listJoin } from '@/i18n/format'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
+import { emitActivity } from '@/lib/activity'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
@@ -1229,11 +1230,14 @@ export function groupSelected() {
     status(note('needTwoForGroup'))
     return
   }
+  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
+  finishActiveGesture()
   const gid = newId('g')
   updateObjects(ids, hist('group', { count: ids.length }), (o) => {
     o.groupId = gid
   })
   status(note('grouped', { count: ids.length }))
+  emitActivity({ kind: 'selection.grouped', count: ids.length })
 }
 
 export function ungroupSelected() {
@@ -1245,6 +1249,7 @@ export function ungroupSelected() {
     status(note('notInAnyGroup'))
     return
   }
+  finishActiveGesture()
   commit(hist('ungroup'), (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) o.groupId = undefined
     // 该组若带布局约束，成员散了约束也一并移除
@@ -1254,10 +1259,18 @@ export function ungroupSelected() {
       )
     }
   })
+  emitActivity({ kind: 'selection.ungrouped', count: ids.length })
 }
 
+/**
+ * 这批对象里有没有成组的——「取消成组」可不可用的唯一判据。
+ * 属性页（非响应式地问当前选区）与浮动栏（订阅着 objects 的组件）都读它。
+ */
+export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean =>
+  objs.some((o) => !!o.groupId)
+
 /** 选区里存在成组对象——决定「取消成组」是否可用 */
-export const selectionHasGroup = () => selectedObjects().some((o) => o.groupId)
+export const selectionHasGroup = () => selectionHasGroupIn(selectedObjects())
 
 /* ========================================================================== */
 /*  多选：参照目标对齐 / 分布 / 等宽等高 / 精确间距                              */
@@ -1338,7 +1351,19 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
     status(note('needThreeForDistribute'))
     return
   }
+  // 离散动作：先收掉还开着的连续手势（字号还在安静计时里时点对齐），否则这次
+  // commit 会静默并进上一条历史，一次撤销把两件事一起吐出来
+  finishActiveGesture()
   const primaryId = ids.at(-1)!
+  // 锁定对象与含锁定成员的组**不动**——与拖动 / 方向键同一套判据（movableTargets），
+  // 但它们仍算进选区的参照框：锁定的是位置，不是「参与排列」的资格。
+  // 只取选区里的：组的其余成员没被选中就不替用户排。
+  const { objects: movable, blockedGroups } = movableTargets(ids)
+  const movableIds = new Set(movable.filter((o) => ids.includes(o.id)).map((o) => o.id))
+  if (!movableIds.size) {
+    status(blockedGroups ? note('blockedGroupsAll') : note('alignAllLocked'))
+    return
+  }
   commit(hist('alignWithRef', { mode: alignModeMsg(mode), ref: alignRefMsg(ref) }), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     if (!objs.length) return
@@ -1350,8 +1375,14 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
           ? rectOf(primary)
           : (boundsOf(objs) ?? rectOf(primary))
     // 以某个对象为参照时它自己不动，否则等宽等高会把基准也改掉
-    alignIn(ref === 'primary' ? objs.filter((o) => o !== primary) : objs, mode, box)
+    const targets = objs.filter(
+      (o) => movableIds.has(o.id) && (ref !== 'primary' || o !== primary),
+    )
+    alignIn(targets, mode, box)
   })
+  const skipped = ids.length - movableIds.size
+  if (skipped > 0) status(note('alignLockedSkipped', { count: skipped }))
+  emitActivity({ kind: 'selection.aligned', mode, ref, count: ids.length })
 }
 
 /** 精确间距：按位置排序后依次贴齐，第一个对象保持不动 */

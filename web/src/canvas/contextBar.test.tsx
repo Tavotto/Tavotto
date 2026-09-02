@@ -11,7 +11,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
-import { ContextBar } from './ContextBar'
+import { ContextBar } from './context-bar/ContextBar'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -205,13 +205,15 @@ describe('ContextBar', () => {
     expect(trigger.textContent).toContain('无衬线')
   })
 
-  it('多选不出现（多选归对齐工具条管）', async () => {
+  it('多选换成多选栏：单选的文字控件不出现', async () => {
     useDocumentStore.getState().commit(literal('再放一个'), (d) => {
       d.objects.push({ ...textObj(), id: 't2' })
     })
     await act(async () => {
       useSelectionStore.getState().set(['t1', 't2'])
     })
-    expect(bar()).toBeNull()
+    expect(bar()).not.toBeNull()
+    expect(bar()!.hasAttribute('data-multi-selection-context-bar')).toBe(true)
+    expect(bar()!.querySelector('[aria-label="加粗"]')).toBeNull()
   })
 })

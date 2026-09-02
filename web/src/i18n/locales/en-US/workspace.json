@@ -109,8 +109,18 @@
     "replaceAssetTitle": "Replace with \"{{name}}\"?"
   },
   "contextBar": {
+    "alignMenu": "Align",
     "aria": "Quick edit",
-    "openInspector": "All properties"
+    "distributeMenu": "Distribute",
+    "groupMenu": "Group",
+    "moreArrange": "More arrange options",
+    "moreArrangeTip": "Open the full arrange tools in Properties: spacing, layout groups, copy style",
+    "multiAria": "Multi-selection actions",
+    "openInspector": "All properties",
+    "primaryHint": "The last selected object is the primary (thicker outline); the Primary reference aligns to it",
+    "selectedCount_one": "{{count}} selected",
+    "selectedCount_other": "{{count}} selected",
+    "sizeMenu": "Size"
   },
   "crash": {
     "blank": "Open a blank document",
@@ -493,6 +503,9 @@
     "openAssets": "Open the asset library"
   },
   "status": {
+    "alignAllLocked": "All selected objects are locked; unlock them to arrange",
+    "alignLockedSkipped_one": "Skipped {{count}} locked object",
+    "alignLockedSkipped_other": "Skipped {{count}} locked objects",
     "assetReplaced": "Replaced with \"{{name}}\"; position and size unchanged",
     "bakedSeeded_one": "Loaded the baseline from the last write-back ({{count}} item)",
     "bakedSeeded_other": "Loaded the baseline from the last write-back ({{count}} items)",

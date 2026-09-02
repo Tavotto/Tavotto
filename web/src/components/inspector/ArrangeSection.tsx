@@ -1,14 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  AlignCenterHorizontal,
-  AlignCenterVertical,
-  AlignEndHorizontal,
-  AlignEndVertical,
-  AlignHorizontalDistributeCenter,
-  AlignStartHorizontal,
-  AlignStartVertical,
-  AlignVerticalDistributeCenter,
   ArrowDownToLine,
   ArrowUpToLine,
   Clipboard,
@@ -16,11 +8,8 @@ import {
   Group,
   MoveDown,
   MoveUp,
-  MoveHorizontal,
-  MoveVertical,
   Ungroup,
 } from 'lucide-react'
-import type { AlignMode } from '@/lib/geometry'
 import { t as translate } from '@/i18n'
 import { MOD } from '@/lib/utils'
 import {
@@ -40,9 +29,9 @@ import {
   toggleLayoutPinned,
   ungroupSelected,
   updateLayoutGroup,
-  type AlignRef,
   type ZMove,
 } from '@/store/actions'
+import { useArrangeStore } from '@/store/arrangeStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import type { CanvasObject, LayoutGroup } from '@/types/document'
@@ -52,28 +41,20 @@ import { NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
+import {
+  ALIGN_BUTTONS,
+  ALIGN_REFS,
+  DISTRIBUTE_BUTTONS,
+  SIZE_BUTTONS,
+  type ArrangeButton,
+} from './arrangeButtons'
 import { useSelectedObjects } from './common'
 
 /** 本组的文案在 inspector:arrange.* 下；对齐动作名复用 inspector:alignMode.* */
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
-const ALIGN: { mode: AlignMode; icon: typeof AlignStartVertical }[] = [
-  { mode: 'left', icon: AlignStartVertical },
-  { mode: 'hcenter', icon: AlignCenterVertical },
-  { mode: 'right', icon: AlignEndVertical },
-  { mode: 'top', icon: AlignStartHorizontal },
-  { mode: 'vcenter', icon: AlignCenterHorizontal },
-  { mode: 'bottom', icon: AlignEndHorizontal },
-]
-
-/** 分布/统一尺寸：hdist/vdist 有带条件的长提示，等宽等高用通用短名 */
-const DISTRIBUTE: { mode: AlignMode; icon: typeof MoveUp; tipKey?: string; min: number }[] = [
-  { mode: 'hdist', icon: AlignHorizontalDistributeCenter, tipKey: 'hdist', min: 3 },
-  { mode: 'vdist', icon: AlignVerticalDistributeCenter, tipKey: 'vdist', min: 3 },
-  { mode: 'samew', icon: MoveHorizontal, min: 2 },
-  { mode: 'sameh', icon: MoveVertical, min: 2 },
-]
+const DISTRIBUTE: readonly ArrangeButton[] = [...DISTRIBUTE_BUTTONS, ...SIZE_BUTTONS]
 
 const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
   { move: 'top', icon: ArrowUpToLine, key: 'zTop', shortcut: `⇧${MOD}]` },
@@ -82,14 +63,12 @@ const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string
   { move: 'bottom', icon: ArrowDownToLine, key: 'zBottom', shortcut: `⇧${MOD}[` },
 ]
 
-const REFS: AlignRef[] = ['selection', 'page', 'primary']
-
 /** 六向对齐，参照整个画布 —— 单选时唯一说得通的对齐 */
 export function AlignToCanvasRow() {
   useTranslation('inspector')
   return (
     <div className="grid grid-cols-6 gap-0.5">
-      {ALIGN.map(({ mode, icon: Icon }) => {
+      {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
         const label = ar('alignRelativeCanvas', { mode: alignModeLabel(mode) })
         return (
         <Tip key={mode} label={label} side="left">
@@ -150,7 +129,12 @@ export function ArrangeSection({
 
   return (
     <>
-      <Section title={multi ? ar('titleMulti', { count }) : ar('title')}>
+      {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
+      <Section
+        title={multi ? ar('titleMulti', { count }) : ar('title')}
+        className="scroll-mt-2"
+        data-arrange-section=""
+      >
         <div className="flex flex-col gap-1.5">
           {multi ? <MultiAlignRows count={count} /> : <AlignToCanvasRow />}
           {zRow}
@@ -165,25 +149,21 @@ export function ArrangeSection({
   )
 }
 
-/** 对齐参照是模块级共享状态：对齐行与「更多排列」都要读 */
-let alignRefState: AlignRef = 'selection'
-
 function MultiAlignRows({ count }: { count: number }) {
   useTranslation('inspector')
-  const [ref, setRefLocal] = useState<AlignRef>(alignRefState)
-  const setRef = (r: AlignRef) => {
-    alignRefState = r
-    setRefLocal(r)
-  }
+  // 对齐参照与画布上的多选浮动栏共用 arrangeStore：这边切了那边当场就是新值
+  const ref = useArrangeStore((s) => s.alignRef)
+  const setRef = useArrangeStore((s) => s.setAlignRef)
 
   return (
     <>
       <Segmented
         className="w-full"
         tone="quiet"
+        ariaLabel={ar('refLabel')}
         value={ref}
         onChange={setRef}
-        items={REFS.map((r) => ({
+        items={ALIGN_REFS.map((r) => ({
           value: r,
           label: alignRefLabel(r),
           tip: ar(`refTip.${r}`),
@@ -191,7 +171,7 @@ function MultiAlignRows({ count }: { count: number }) {
       />
 
       <div role="toolbar" aria-label={ar('alignToolbar')} className="grid grid-cols-6 gap-0.5">
-        {ALIGN.map(({ mode, icon: Icon }) => {
+        {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
           const tip = alignModeLabel(mode)
           return (
             <Tip

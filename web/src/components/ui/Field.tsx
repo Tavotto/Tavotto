@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -9,6 +9,7 @@ export function Section({
   children,
   className,
   plainTitle = false,
+  ...rest
 }: {
   title?: ReactNode
   action?: ReactNode
@@ -16,9 +17,9 @@ export function Section({
   className?: string
   /** 标题是内容而非分组名（如图内元素名）时关掉全大写 */
   plainTitle?: boolean
-}) {
+} & Omit<HTMLAttributes<HTMLElement>, 'title' | 'children' | 'className'>) {
   return (
-    <section className={cn('px-3 pb-4 pt-3 [&+&]:pt-0', className)}>
+    <section {...rest} className={cn('px-3 pb-4 pt-3 [&+&]:pt-0', className)}>
       {title && (
         <header className="mb-2 flex h-4 items-center justify-between">
           <h3

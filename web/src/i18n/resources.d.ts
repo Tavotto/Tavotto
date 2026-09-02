@@ -1667,6 +1667,7 @@ export default interface Resources {
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
       "pinMembers": "固定选中成员（不随重排）",
+      "refLabel": "参照",
       "refTip": {
         "page": "以整个画布为基准",
         "primary": "以最后选中的那个对象为基准，它自己不动",
@@ -2915,8 +2916,17 @@ export default interface Resources {
       "replaceAssetTitle": "替换为「{{name}}」？"
     },
     "contextBar": {
+      "alignMenu": "对齐",
       "aria": "快速编辑",
-      "openInspector": "全部属性"
+      "distributeMenu": "分布",
+      "groupMenu": "成组",
+      "moreArrange": "更多排列",
+      "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
+      "multiAria": "多选操作",
+      "openInspector": "全部属性",
+      "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
+      "selectedCount_other": "已选 {{count}} 个",
+      "sizeMenu": "尺寸"
     },
     "crash": {
       "blank": "打开空白文档",
@@ -3286,6 +3296,8 @@ export default interface Resources {
       "openAssets": "打开素材库"
     },
     "status": {
+      "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
+      "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
       "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",
       "bakedSeeded_other": "已载入写回文件时的基线（{{count}} 项）",
       "blankCreated": "已新建空白文档，原文档可从「最近文档」取回",
