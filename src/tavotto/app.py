@@ -3146,6 +3146,41 @@ def api_engine_render():
     return jsonify(out)
 
 
+@app.post("/api/engine/invalidate")
+def api_engine_invalidate():
+    """作废这张图的热会话；下一次 render 从头跑脚本（QuickEdit 的「重新构建」）。
+
+    用的是项目刷新那条路**同一个原语**（`pool.invalidate`，脚本文件变了就是
+    这么作废的），只是触发者换成用户的一次明确点击。它**只让会话过期**：源脚本
+    一个字不动、不写回原始文件、不清 override（override 住在前端文档里，随下一次
+    render 原样重放）、**不在这里起 worker**——冷 build 仍由随后的 render 惰性
+    触发（与打开面板同一 lazy 语义，脚本只在用户要图的那一刻跑）。
+
+    native 会话是用户自己终端里的进程（ADR 0021），**不杀**：回
+    `invalidated: false` + `reason`，前端照常重新渲染当前变体，但要如实说
+    「没有重跑脚本」——一个静默的 200 会让用户以为数据文件的改动已经生效。
+    """
+    body = request.get_json(force=True) or {}
+    rel_id = body.get("id", "")
+    root = str(require_project())
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        if info is None:
+            abort(_runtime_asset_unknown(rel_id))
+        if engine_enginesession.profile_of(root, rel_id) == engine_enginesession.PROFILE_NATIVE:
+            return jsonify({"invalidated": False, "reason": "native_session"})
+        script = info["script"]
+    else:
+        path = safe_resolve(rel_id)
+        info = current_registry().for_stem(path.stem)
+        if info is None:
+            abort(404)
+        script = info["script"]
+    engine_pool.invalidate(script, root)
+    LOG.info("引擎会话作废（用户重新构建）: %s", script)
+    return jsonify({"invalidated": True})
+
+
 @app.post("/api/engine/preview_png")
 def api_engine_preview_png():
     """**按给定 patches** 出高清位图（bucket 宽度），不依赖热会话当前是哪个变体。

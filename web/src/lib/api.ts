@@ -1333,6 +1333,30 @@ export async function engineRender(
 }
 
 /**
+ * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
+ * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
+ * `invalidated: false` 是诚实的降级（native 会话是用户自己终端里的进程，不杀），
+ * 调用方照常重新渲染，但要说出「源脚本没有重跑」。
+ */
+export async function engineInvalidate(
+  id: string,
+): Promise<{ invalidated: boolean; reason?: string }> {
+  const res = await fetch(apiUrl('/api/engine/invalidate'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }))
+  const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, body)
+    throw new Error(
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+    )
+  }
+  return { invalidated: body.invalidated === true, reason: body.reason as string | undefined }
+}
+
+/**
  * 高清位图预览：含 imshow 的面板用 SVG 显示会糊，退出编辑态后走这个。
  *
  * **按 patches 出图**，与热会话当前是哪个变体无关——旧的 `/api/engine/png`

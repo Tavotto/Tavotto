@@ -106,7 +106,12 @@
     "replaceAssetBody_one": "This panel has {{count}} figure edit. Those edits are bound to elements of the original script and cannot survive an asset swap, so they will be cleared (undoable). Position, size, crop and stacking order are kept.",
     "replaceAssetBody_other": "This panel has {{count}} figure edits. Those edits are bound to elements of the original script and cannot survive an asset swap, so they will be cleared (undoable). Position, size, crop and stacking order are kept.",
     "replaceAssetConfirm": "Replace and clear edits",
-    "replaceAssetTitle": "Replace with \"{{name}}\"?"
+    "replaceAssetTitle": "Replace with \"{{name}}\"?",
+    "resetOverridesTitle": "Revert figure edits?",
+    "resetOverridesBody_one": "This panel will return to what the source script currently generates. {{count}} figure edit will be cleared (undoable); the source script and the original file are not modified, and other panels of the same file are unaffected.",
+    "resetOverridesBody_other": "This panel will return to what the source script currently generates. {{count}} figure edits will be cleared (undoable); the source script and the original file are not modified, and other panels of the same file are unaffected.",
+    "resetOverridesBodyBaked": "These edits have already been written back to the original file. Reverting returns this panel to what the source script currently generates (undoable), while the original file and the source script stay as they are; other panels of the same file are unaffected.",
+    "resetOverridesConfirm": "Revert"
   },
   "contextBar": {
     "alignMenu": "Align",
@@ -294,7 +299,11 @@
     "legendFollowSource": "Legend entry follows source again",
     "tickSideOn": "{{side}}: show {{dir}} ticks",
     "tickSideOff": "{{side}}: hide {{dir}} ticks",
-    "tickSideHide": "{{side}}: hide tick marks"
+    "tickSideHide": "{{side}}: hide tick marks",
+    "lockObjects": "Lock {{count}} objects",
+    "unlockObjects": "Unlock {{count}} objects",
+    "hideObjects": "Hide {{count}} objects",
+    "showObjects": "Show {{count}} objects"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -373,7 +382,7 @@
     "hide": "Hide this element",
     "hideObject": "Hide",
     "lock": "Lock",
-    "openInspector": "Open in the properties panel",
+    "openInspector": "Open all properties",
     "scale": "Scale",
     "scaleDown": "Shrink 5%",
     "scaleProxiedTip": "Position and size belong to the host axes “{{label}}”; scaling changes those",
@@ -386,7 +395,27 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward"
+    "zUp": "Bring forward",
+    "menuAria": "Object menu",
+    "rebuild": "Rebuild",
+    "resetOverridesCount_one": "Revert figure edits ({{count}})",
+    "resetOverridesCount_other": "Revert figure edits ({{count}})",
+    "connectSource": "Connect the source script",
+    "editText": "Edit text",
+    "arrange": "Align & distribute",
+    "arrangeRef": "Reference: {{ref}}",
+    "needObjects_one": "Needs at least {{count}} selected object",
+    "needObjects_other": "Needs at least {{count}} selected objects",
+    "openArrange": "Open arrange properties",
+    "duplicate": "Duplicate",
+    "lockAll": "Lock all",
+    "unlockAll": "Unlock all",
+    "lockCount": "Lock {{count}} objects",
+    "unlockCount": "Unlock {{count}} objects",
+    "hideCount": "Hide {{count}} objects",
+    "zOrder": "Stacking order",
+    "deleteCount": "Delete {{count}} objects",
+    "cropRotatedReason": "Rotated panels can’t be cropped yet; reset the rotation first"
   },
   "rail": {
     "assets": "Assets",
@@ -597,7 +626,10 @@
     "stylePasted_other": "Pasted style onto {{count}} objects",
     "subLabelsAdded_one": "Added {{count}} panel label, ordered top to bottom, left to right",
     "subLabelsAdded_other": "Added {{count}} panel labels, ordered top to bottom, left to right",
-    "undone": "Undone: {{label}}"
+    "undone": "Undone: {{label}}",
+    "panelRebuilt": "Rebuilt from the source script",
+    "panelRerenderedNoRerun": "Re-rendered with the current edits; the source script was not re-run",
+    "rebuildFailed": "Rebuild failed: {{error}}"
   },
   "tabs": {
     "allCanvases": "All canvases",

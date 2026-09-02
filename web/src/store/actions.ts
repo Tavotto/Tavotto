@@ -1,4 +1,6 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
+import { engineInvalidate } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { rescueFocus } from '@/lib/focusRescue'
@@ -29,6 +31,7 @@ import { useAssetStore } from './assetStore'
 import { readAutosaveDoc, saveNow, useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
+import { renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -562,6 +565,51 @@ export function toggleLocked(id: string) {
   })
 }
 
+/** 一批对象的锁定 / 隐藏态：全是 / 全不是 / 混合——菜单文案与下一步动作按它派生 */
+export type TriState = 'all' | 'none' | 'mixed'
+
+export function triStateOf(objs: readonly CanvasObject[], pick: (o: CanvasObject) => boolean): TriState {
+  let yes = 0
+  for (const o of objs) if (pick(o)) yes++
+  return yes === 0 ? 'none' : yes === objs.length ? 'all' : 'mixed'
+}
+
+/**
+ * 批量锁定 / 解锁（右键多选菜单，Prompt 18）：**一条历史、一次 commit**。
+ * 循环调 `toggleLocked` 会留下 N 条撤销记录，而且混合状态下 toggle 会把一半锁上、
+ * 一半解开——所以这里收的是**目标状态**，已经是那个状态的对象不动、不进 commit。
+ * 选区一个字不动：锁定改的是「能不能被挪」，不是「选没选中」（拖动 / 对齐都按
+ * `movableTargets` 跳过它，与单个对象的 `toggleLocked` 同一条产品语义）。
+ */
+export function setObjectsLocked(ids: string[], locked: boolean) {
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.locked !== locked)
+  if (!targets.length) return
+  finishActiveGesture()
+  const tids = targets.map((o) => o.id)
+  const label =
+    tids.length === 1
+      ? hist(locked ? 'lockObject' : 'unlockObject')
+      : hist(locked ? 'lockObjects' : 'unlockObjects', { count: tids.length })
+  updateObjects(tids, label, (o) => {
+    o.locked = locked
+  })
+}
+
+/** 批量隐藏 / 显示：同上，一条历史。隐藏后对象仍留在选区里（与 `toggleHidden` 一致，图层树里可恢复） */
+export function setObjectsHidden(ids: string[], hidden: boolean) {
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.hidden !== hidden)
+  if (!targets.length) return
+  finishActiveGesture()
+  const tids = targets.map((o) => o.id)
+  const label =
+    tids.length === 1
+      ? hist(hidden ? 'hideObject' : 'showObject')
+      : hist(hidden ? 'hideObjects' : 'showObjects', { count: tids.length })
+  updateObjects(tids, label, (o) => {
+    o.hidden = hidden
+  })
+}
+
 export function renameObject(id: string, name: string) {
   updateObject(id, hist('renameObject'), (o) => {
     o.name = name.trim() || undefined
@@ -781,6 +829,103 @@ export function resetOverrides(panelId: string) {
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
   status(note('overridesCleared'))
+}
+
+/**
+ * 「恢复图内修改」（右键菜单，Prompt 18）：先问一句再清。
+ *
+ * 语义与属性页那颗「重置到脚本原始」按钮**完全相同**（同一个 `resetOverrides`）：
+ * 清掉**这个面板实例**的全部 override → 回到源脚本**当前**生成的状态。源脚本不动、
+ * 原始文件不动、同一文件的其他面板不动；进一条历史，⌘Z 整份回来。
+ *
+ * 写回过的面板要分开说：那份 override 已经烙在磁盘文件上（`isJustBakedBaseline`），
+ * 清掉之后画布上这个面板显示的是脚本原样，而文件仍是写回后的样子——两者从此不同，
+ * 确认框必须把这一句说出来，否则用户会以为文件被改回去了。
+ */
+export async function resetOverridesConfirmed(panelId: string): Promise<boolean> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !panel.overrides.length) return false
+  const baked = isJustBakedBaseline(panel)
+  const ok = await askConfirm({
+    title: msg('confirm.resetOverridesTitle', undefined, 'workspace'),
+    body: msg(
+      baked ? 'confirm.resetOverridesBodyBaked' : 'confirm.resetOverridesBody',
+      { count: panel.overrides.length },
+      'workspace',
+    ),
+    confirmLabel: msg('confirm.resetOverridesConfirm', undefined, 'workspace'),
+    danger: true,
+  })
+  if (!ok) return false
+  // 等用户点头的这段时间里面板可能已经没了 / 已经空了：以那一刻为准
+  resetOverrides(panelId)
+  return true
+}
+
+export type RebuildOutcome = 'rebuilt' | 'rerendered' | 'failed' | 'skipped'
+
+/** 这一版画完（成功或失败）之前不回来；`render()` 在同键忙时只排队就返回 */
+function settledRender(key: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (useRenderStore.getState().get(key).status !== 'rendering') return resolve()
+    const off = useRenderStore.subscribe((s) => {
+      if (s.get(key).status !== 'rendering') {
+        off()
+        resolve()
+      }
+    })
+  })
+}
+
+/**
+ * 「重新构建」（右键菜单，Prompt 18）：作废这张图的热会话，按**当前 overrides**
+ * 从头跑一遍源脚本再画。
+ *
+ * 它是用户明确触发的一次脚本执行（00_SHARED_RULES §4 允许的形态），做的事与
+ * 「脚本文件变了」那条路**逐字相同**：后端 `pool.invalidate`（同一个原语）+
+ * 前端 `markStale`（清掉该文件全部变体的权威，画布留着上一张不闪白）+ 一次
+ * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**——文档一个字节
+ * 不动，所以它**不进历史**（撤销撤的是编辑，不是一次重画）。
+ *
+ * 同一文件的多个实例共享一条会话：会话作废对它们一视同仁，其余实例由
+ * `useEngineSync` 的跟踪位（`markStale` 置的）按各自 overrides 重画。
+ *
+ * 结果分四档：`rebuilt`（脚本真的重跑了）/ `rerendered`（会话作废不了——native
+ * 会话是用户自己终端里的进程，或内嵌画布 / playground 没有作废通道——只按当前
+ * overrides 重画了，**要说出来**）/ `failed`（渲染错误已落在该变体上：画布角标 +
+ * 属性页的错误块显示，这里**不叠一条 toast**）/ `skipped`（不是可编辑面板）。
+ */
+export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
+  finishActiveGesture()
+  const fileId = panel.fileId
+  let invalidated = false
+  if (!engineTransport()) {
+    try {
+      invalidated = (await engineInvalidate(fileId)).invalidated
+    } catch (err) {
+      status(
+        note('rebuildFailed', { error: err instanceof Error ? err.message : String(err) }),
+        'error',
+      )
+      return 'failed'
+    }
+  }
+  // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
+  const fresh = findObject(panelId)
+  if (fresh?.type !== 'panel') return 'skipped'
+  const store = useRenderStore.getState()
+  store.markStale([fileId])
+  // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
+  requestRender(fresh, 'none')
+  const key = renderKeyOf(fresh)
+  await store.render(fileId, fresh.overrides, undefined, 'immediate')
+  await settledRender(key)
+  if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
+  status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'))
+  return invalidated ? 'rebuilt' : 'rerendered'
 }
 
 /**
