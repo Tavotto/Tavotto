@@ -271,7 +271,10 @@
     "zTop": "置于顶层",
     "zUp": "上移一层",
     "hideLegendEntry": "隐藏图例项 “{{label}}”",
-    "legendFollowSource": "图例项恢复跟随"
+    "legendFollowSource": "图例项恢复跟随",
+    "tickSideOn": "{{side}}：显示{{dir}}刻度",
+    "tickSideOff": "{{side}}：不显示{{dir}}刻度",
+    "tickSideHide": "{{side}}：隐藏刻度线"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -451,6 +454,15 @@
     "safeNoteDismiss": "知道了",
     "starting": "正在启动渲染环境…",
     "viewResults": "查看捕获结果"
+  },
+  "spineZone": {
+    "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
+    "stateOn": "开着",
+    "stateOff": "关着",
+    "willOn": "点击显示",
+    "willOff": "点击关掉",
+    "willHide": "点击隐藏这一边的刻度线",
+    "coupled": "（方向随这条轴一起改：{{sides}}）"
   },
   "stage": {
     "backToCanvas": "返回画布",

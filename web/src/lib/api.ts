@@ -1113,6 +1113,15 @@ export interface UnsupportedProp {
   detail?: Record<string, unknown>
 }
 
+export type SpineSide = 'top' | 'bottom' | 'left' | 'right'
+
+export interface SpineGeom {
+  visible: boolean
+  ticks: boolean
+  from: [number, number]
+  to: [number, number]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -1168,6 +1177,13 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
+   * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。
+   * 极坐标 / 3D / 色条轴没有；twinx 关掉的那条轴、退化成一点的边不出。
+   * `visible` 是边框线本身，`ticks` 是这一侧的主刻度线——两件事分开报。
+   */
+  spines?: Partial<Record<SpineSide, SpineGeom>>
   /**
    * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
    * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示

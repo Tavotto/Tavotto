@@ -55,6 +55,7 @@ from overrides import (
     _legend_loc_name,
     _linecoll_linestyle_name,
     _linestyle_name,
+    _minor_tick_prop,
     _stroke_state,
     _tick0,
     axes_position_eaten_by_layout,
@@ -2446,6 +2447,29 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "unit": "pt",
             "group": "刻度线",
         },
+        # 次刻度的长度 / 线宽单列（主刻度那两条只动主刻度）。次刻度没开时
+        # 也出：值读的是轴上 `_minor_tick_kw` / rcParams 那份「开了会是多少」，
+        # 用户先设长度再开次刻度与反过来结果一样
+        {
+            "prop": "minor_length",
+            "type": "number",
+            "value": round(_minor_tick_prop(ts, "size", "size", 2.0), 2),
+            "min": 0,
+            "max": 12,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "刻度线",
+        },
+        {
+            "prop": "minor_width",
+            "type": "number",
+            "value": round(_minor_tick_prop(ts, "width", "width", 0.6), 2),
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "刻度线",
+        },
         # 数值格式（主刻度 Formatter）。"auto" = 回到脚本原样，不是「换成
         # ScalarFormatter」——对数轴上后者会把 10³ 写成 1000
         {
@@ -2508,9 +2532,67 @@ def _tick_fields(ts: TickSet) -> list[dict]:
         },
     ]
     if is3d:
-        # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z
-        fields = [f for f in fields if f["prop"] not in ("direction", "visible")]
+        # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z；
+        # 次刻度的长度 / 线宽会被 axis3d.draw 每帧用 _axinfo 盖回去，不出
+        fields = [
+            f
+            for f in fields
+            if f["prop"] not in ("direction", "visible", "minor_length", "minor_width")
+        ]
     return fields
+
+
+#: 四条直角边框 → 拥有它的轴与 tick line 序号（line 1 = 下/左，line 2 = 上/右）
+_SPINE_AXIS = {"bottom": ("x", 1), "top": ("x", 2), "left": ("y", 1), "right": ("y", 2)}
+
+
+def spine_geometry(ax, W: float, H: float) -> dict | None:
+    """四条边框**画出来的那条线**的两端（figure 分数、y 向下），供前端建立
+    「边框内侧 / 外侧」的语义命中区（Prompt 16）。
+
+    只有直角坐标轴才有：极坐标的边框是圆弧（`polar` / `start` / `end` /
+    `inner`），3D 轴的四条 `spines` 只是占位、真正的轴线在投影里——两种都
+    回 None，前端据此**不摆**直接操作，而不是摆一套点了会错的。
+
+    每条边：`visible` 是边框线本身显不显示；`ticks` 是这一侧的主刻度线显不
+    显示；`from` / `to` 取自 `Spine.get_path()` 经它自己的 transform 变换
+    ——**含** `set_position(("outward", n))` 的偏移，所以偏出去的边框命中区
+    跟着线走，不留在 axes 的框上。**不能用 `get_window_extent`**：它把刻度
+    的伸出量也算进去了，回来的是一个带厚度的框而不是那条线。
+
+    拥有这一侧的 axis 不可见（`twinx` 出来的第二个 axes 关掉了自己的 x 轴）
+    或线退化成一点（`secondary_xaxis` 的左右两条）时这一侧不出——那儿没有
+    任何刻度可控。
+    """
+    if getattr(ax, "name", "") != "rectilinear":
+        return None
+    if any(side not in ax.spines for side in _SPINE_AXIS):
+        return None
+    out: dict[str, dict] = {}
+    for side, (which, line) in _SPINE_AXIS.items():
+        axis = getattr(ax, f"{which}axis", None)
+        if axis is None or not axis.get_visible():
+            continue
+        sp = ax.spines[side]
+        try:
+            sp._adjust_location()  # noqa: SLF001 — draw() 也是先走这一步再画
+            pts = sp.get_transform().transform(sp.get_path().vertices)
+        except Exception:  # noqa: BLE001 — 自定义 Spine 形状不明：宁可不给
+            continue
+        if len(pts) < 2:
+            continue
+        (x0, y0), (x1, y1) = pts[0], pts[-1]
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            continue
+        if math.hypot(x1 - x0, y1 - y0) < 0.5:
+            continue
+        out[side] = {
+            "visible": bool(sp.get_visible()),
+            "ticks": bool(tick_side_visible(ax, which, line)),
+            "from": [round(float(x0 / W), 5), round(float(1.0 - y0 / H), 5)],
+            "to": [round(float(x1 / W), 5), round(float(1.0 - y1 / H), 5)],
+        }
+    return out or None
 
 
 def _axes_fields(ax, el: dict | None = None) -> list[dict]:
@@ -3389,6 +3471,13 @@ def build_manifest(state: FigState, stem: str) -> dict:
             except Exception:
                 _drop(el, "no_geometry")
                 continue
+        # 边框线几何（figure 分数、top-origin）：坐标轴四边的直接操作命中区
+        # 据此建立。与 geometry 同样是**渲染派生数据**，不进文档。色条轴不给
+        # ——它的刻度归色条元素管，两处各摆一套控件只会互相盖写。
+        if el["role"] == "axes" and artist not in state.colorbar_axes:
+            spines = spine_geometry(artist, W, H)
+            if spines:
+                entry["spines"] = spines
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。

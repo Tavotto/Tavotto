@@ -281,7 +281,10 @@
     "zTop": "Bring to front",
     "zUp": "Bring forward",
     "hideLegendEntry": "Hide legend entry “{{label}}”",
-    "legendFollowSource": "Legend entry follows source again"
+    "legendFollowSource": "Legend entry follows source again",
+    "tickSideOn": "{{side}}: show {{dir}} ticks",
+    "tickSideOff": "{{side}}: hide {{dir}} ticks",
+    "tickSideHide": "{{side}}: hide tick marks"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -470,6 +473,15 @@
     "safeNoteDismiss": "Got it",
     "starting": "Starting the rendering environment…",
     "viewResults": "View captured figures"
+  },
+  "spineZone": {
+    "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
+    "stateOn": "on",
+    "stateOff": "off",
+    "willOn": "click to show",
+    "willOff": "click to turn off",
+    "willHide": "click to hide this side's tick marks",
+    "coupled": "(direction is shared along the axis: {{sides}})"
   },
   "stage": {
     "backToCanvas": "Back to canvas",

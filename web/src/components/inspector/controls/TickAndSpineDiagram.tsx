@@ -1,19 +1,40 @@
 import { useState, type KeyboardEvent } from 'react'
 import { t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
+import {
+  toggleSidePlan,
+  type AxesTickModel,
+  type SidePlan,
+  type SpineSide,
+  type TickDirection,
+} from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
 import { Tip } from '../../ui/Tooltip'
 
 /**
  * 刻度与边框状态图：一张可点击的小坐标轴。
  *
- * 四条边各有两个开关——边框（spine_<side>）画成边线本体，刻度
- * （ticks_<side>）画成边上的三根刻度短线；网格（grid_x / grid_y）是图下方的
- * 两个开关，状态同时预览在图内。点对应的边即切换；每条边可单独聚焦
- * （role="switch" + aria-checked），开关状态用「实线 vs 虚线 + 透明度」表达，
- * 不只靠颜色。
+ * 四条边各画成边线本体（spine_<side> 开关）+ 边上的刻度短线。刻度短线的
+ * 命中按**视觉语义**分两个带（Prompt 16）：
+ *
+ *   边线内侧（框里）的带 —— 这一边的**向内**刻度
+ *   边线外侧（框外）的带 —— 这一边的**向外**刻度
+ *   边线本身             —— 边框开关
+ *
+ * 旧实现把刻度命中区写死在框外：刻度朝内时短线画在框里，点它却什么都不
+ * 发生，得去点框外那块空白——就是「刻度朝内却必须点击图框外侧」那条反直觉
+ * 命中。现在两个带各是一个 switch（aria-checked = 这一方向此刻开不开），
+ * 点击走 `toggleSidePlan`——与画布上的边框命中区、刻度卡的方向档同一份
+ * 计划函数，三处永远同源。方向在 matplotlib 里是整条轴的，所以 tooltip 会
+ * 说出连带改到的同轴另一边。
+ *
+ * 网格（grid_x / grid_y）是图下方的两个开关，状态同时预览在图内。开关状态
+ * 用「实线 vs 虚线 + 透明度」表达，不只靠颜色。
  *
  * 纯展示 + 回调组件：字段在不在、当前值、写入全部由调用方（manifest 与
- * ElementWriter）决定；manifest 没有的部分整块不画。
+ * ElementWriter）决定；manifest 没有的部分整块不画。`model` 里没有的边
+ * （引擎没发那条轴的刻度元素）退回单个 `ticks_<side>` 开关，命中带盖住
+ * 内外两侧——此时方向未知，画成朝外只是 matplotlib 的默认。
  */
 
 /** 一个轴当前的刻度形态。字段缺席时由调用方给缺省（out / 无次刻度） */
@@ -22,7 +43,7 @@ export interface AxisTickState {
   minor: boolean
 }
 
-export type TickDirection = 'in' | 'out' | 'inout'
+export type { TickDirection }
 
 export interface TickSpineAdapter {
   has: (prop: string) => boolean
@@ -39,6 +60,10 @@ export interface TickSpineAdapter {
    * 于是这张图说的和画布上发生的是两回事。上下边读 x、左右边读 y。
    */
   axisState?: (axis: 'x' | 'y') => AxisTickState
+  /** 四边刻度模型（`readAxesTickModel`）：有它内外两个带才各自可点 */
+  model?: AxesTickModel | null
+  /** 一次点击 = 一份计划 = 一条历史（`applyTickSidePlan`） */
+  applyPlan?: (plan: SidePlan) => void
 }
 
 export const TICK_SPINE_PROPS = [
@@ -120,17 +145,37 @@ const minorTickMarks = (side: Side, direction: TickDirection): string =>
     .map((p) => tickAt(side, p, MINOR_LEN, direction))
     .join(' ')
 
-/** 命中区：比图形宽出一圈，好点 */
-const hitRect = (side: Side, kind: 'spine' | 'ticks') => {
+/**
+ * 命中区（viewBox 单位）。边线两侧各留 `NEUTRAL` 不切刻度（那是边框开关），
+ * 往里 / 往外各一条 `BAND` 宽的带：`inner` 在框里，`outer` 在框外——与画布
+ * 上 `lib/tickSides.spineZoneAt` 的三带同构，只是这里是固定尺寸的示意图。
+ * `ticks` 是退化形态（没有方向信息时）：内外两带合成一块。
+ */
+const NEUTRAL = 3.5
+const BAND = 10.5
+const hitRect = (side: Side, kind: 'spine' | 'ticks' | 'inner' | 'outer') => {
   const { x, y, w, h } = BOX
-  const t = kind === 'spine' ? 7 : 11
-  const off = kind === 'spine' ? -3.5 : 3
-  switch (side) {
-    case 'top': return { x, y: y + (kind === 'spine' ? off : -t - off), width: w, height: t }
-    case 'bottom': return { x, y: y + h + (kind === 'spine' ? off : off), width: w, height: t }
-    case 'left': return { x: x + (kind === 'spine' ? off : -t - off), y, width: t, height: h }
-    case 'right': return { x: x + w + (kind === 'spine' ? off : off), y, width: t, height: h }
+  // 每条边「向外」的符号：上 / 左为负，下 / 右为正
+  const outward = side === 'top' || side === 'left' ? -1 : 1
+  const edge = side === 'top' ? y : side === 'bottom' ? y + h : side === 'left' ? x : x + w
+  let a: number
+  let b: number
+  if (kind === 'spine') {
+    a = edge - NEUTRAL
+    b = edge + NEUTRAL
+  } else if (kind === 'ticks') {
+    a = edge - NEUTRAL - BAND
+    b = edge + NEUTRAL + BAND
+  } else {
+    const sign = kind === 'outer' ? outward : -outward
+    a = edge + sign * NEUTRAL
+    b = edge + sign * (NEUTRAL + BAND)
   }
+  const lo = Math.min(a, b)
+  const t = Math.abs(b - a)
+  return side === 'top' || side === 'bottom'
+    ? { x, y: lo, width: w, height: t }
+    : { x: lo, y, width: t, height: h }
 }
 
 const ctl = (key: string, values?: Record<string, unknown>) =>
@@ -185,6 +230,101 @@ function SvgSwitch({
   )
 }
 
+/** 一根方向的刻度短线：只画向内或只画向外那一半（两个带各画各的） */
+const halfMarks = (side: Side, half: 'in' | 'out', len: number, minor: boolean): string =>
+  (minor ? minorPositions(side) : majorPositions(side))
+    .map((p) => tickAt(side, p, len, half))
+    .join(' ')
+
+/** 内 / 外一个带的开关：aria-checked = 这一方向此刻开不开，点击走同一份计划 */
+function ZoneSwitch({
+  side,
+  zone,
+  adapter,
+  model,
+  minor,
+}: {
+  side: Side
+  zone: 'inner' | 'outer'
+  adapter: TickSpineAdapter
+  model: AxesTickModel
+  minor: boolean
+}) {
+  const [focused, setFocused] = useState(false)
+  const state = model.sides[side]!
+  const dir = zone === 'inner' ? 'in' : 'out'
+  const on = dir === 'in' ? state.inward : state.outward
+  const plan = toggleSidePlan(model, side, zone)
+  const name = ctl('zoneAria', {
+    side: translate(`tick.side.${side}`, { ns: 'inspector' }),
+    dir: translate(`tick.dir.${dir}`, { ns: 'inspector' }),
+  })
+  const coupled = plan?.effect.coupled.length
+    ? translate('spineZone.coupled', {
+        ns: 'workspace',
+        sides: listJoin(
+          plan.effect.coupled.map((sd) => translate(`tick.side.${sd}`, { ns: 'inspector' })),
+        ),
+      })
+    : ''
+  const tip = `${ctl(on ? 'switchOn' : 'switchOff', { label: name })}${coupled ? ` ${coupled}` : ''}`
+  const fire = () => {
+    if (plan) adapter.applyPlan?.(plan)
+  }
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    fire()
+  }
+  const hit = hitRect(side, zone)
+  const sideOn = state.visible
+  return (
+    <Tip label={tip}>
+      <g
+        role="switch"
+        aria-checked={on}
+        aria-label={name}
+        tabIndex={0}
+        className="cursor-pointer outline-none"
+        data-tick-zone={`${side}:${zone}`}
+        data-tick-coupled={plan?.effect.coupled.length ? plan.effect.coupled.join(',') : undefined}
+        onClick={fire}
+        onKeyDown={onKey}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      >
+        <rect {...hit} fill="transparent" />
+        {focused && (
+          <rect {...hit} fill="none" stroke="var(--color-accent)" strokeWidth="1" rx="2" />
+        )}
+        {/* 开着：实线；关着：这一半画成浅虚线占位，让用户看得出「这里能点出一排刻度」 */}
+        <path
+          d={halfMarks(side, dir, MAJOR_LEN, false)}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={on ? 1.6 : 1}
+          strokeOpacity={on ? 1 : sideOn ? 0.22 : 0.3}
+          strokeDasharray={on ? undefined : '1.5 1.5'}
+          data-tick-major={side}
+          data-tick-half={dir}
+          data-tick-on={on ? 'true' : 'false'}
+        />
+        {minor && on && (
+          <path
+            d={halfMarks(side, dir, MINOR_LEN, true)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.1}
+            strokeOpacity={0.85}
+            data-tick-minor={side}
+            data-tick-half={dir}
+          />
+        )}
+      </g>
+    </Tip>
+  )
+}
+
 export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) {
   const sideProps = SIDES.flatMap((s) => [`spine_${s}`, `ticks_${s}`])
   if (!sideProps.some((p) => adapter.has(p))) return null
@@ -196,6 +336,10 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
   const stateOf = (side: Side): AxisTickState =>
     adapter.axisState?.(axisOfSide(side)) ?? { direction: 'out', minor: false }
   const modified = TICK_SPINE_PROPS.filter((p) => adapter.has(p) && adapter.isOverridden(p))
+  const model = adapter.model ?? null
+  /** 这条边有方向信息（模型里有它）→ 内外两带各自可点；否则退回单开关 */
+  const zoned = (side: Side): side is SpineSide =>
+    !!model && !!model.sides[side] && !!adapter.applyPlan
 
   return (
     <div className="flex flex-col gap-1">
@@ -237,7 +381,25 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
                 />
               </SvgSwitch>
             )}
-            {adapter.has(`ticks_${side}`) && (
+            {adapter.has(`ticks_${side}`) && zoned(side) && (
+              <>
+                <ZoneSwitch
+                  side={side}
+                  zone="inner"
+                  adapter={adapter}
+                  model={model!}
+                  minor={stateOf(side).minor}
+                />
+                <ZoneSwitch
+                  side={side}
+                  zone="outer"
+                  adapter={adapter}
+                  model={model!}
+                  minor={stateOf(side).minor}
+                />
+              </>
+            )}
+            {adapter.has(`ticks_${side}`) && !zoned(side) && (
               <SvgSwitch
                 prop={`ticks_${side}`}
                 on={on(`ticks_${side}`)}

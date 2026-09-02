@@ -280,8 +280,12 @@ class TickSet:
         labs = self.labels
         return getter(labs[0]) if labs else default
 
-    def tick_params(self, **kw) -> None:
-        self.ax.tick_params(axis=self.which, which="both", **kw)
+    def tick_params(self, which: str = "both", **kw) -> None:
+        """`which` 默认 "both"——方向 / 颜色 / 字号那一档主次同改；长度与线宽
+        **分档写**（主 `length` / `width`，次 `minor_length` / `minor_width`），
+        matplotlib 的次刻度默认就比主刻度短（2 pt vs 3.5 pt），which="both"
+        会把这层区分抹平。"""
+        self.ax.tick_params(axis=self.which, which=which, **kw)
 
 
 class TickLabel:
@@ -1151,6 +1155,31 @@ def _tick0(ts: "TickSet"):
     return ticks[0] if ticks else None
 
 
+def _minor_tick0(ts: "TickSet"):
+    ticks = _tick_axis(ts).get_minor_ticks()
+    return ticks[0] if ticks else None
+
+
+def _minor_tick_prop(ts: "TickSet", key: str, rc: str, default: float) -> float:
+    """次刻度的长度 / 线宽（三级真值链，与 `_tick_side_state` 同一套路数）：
+    有 Tick 对象读它；没有（次刻度没开）读轴的 `_minor_tick_kw`——
+    `tick_params(which="minor")` 写的就是它、之后新建的次刻度从它继承；
+    kw 里也没有才按 rcParams 落回 matplotlib 会种的那个初值。"""
+    t = _minor_tick0(ts)
+    if t is not None:
+        if key == "size":
+            return float(t._size)  # noqa: SLF001
+        return float(t.tick1line.get_markeredgewidth())
+    kw = _tick_axis(ts)._minor_tick_kw  # noqa: SLF001
+    v = kw.get(key)
+    if v is not None:
+        return float(v)
+    try:
+        return float(mpl.rcParams[f"{ts.which}tick.minor.{rc}"])
+    except KeyError:
+        return default
+
+
 #: (轴, line) → 边名。line 1 = 下/左（tick1line），line 2 = 上/右（tick2line）
 _TICK_SIDES = {("x", 1): "bottom", ("x", 2): "top", ("y", 1): "left", ("y", 2): "right"}
 
@@ -1234,7 +1263,7 @@ def _mk_tick_side(which: str, side: str, line: int):
 
 
 def _set_tick_width(ts: "TickSet", v) -> None:
-    ts.tick_params(width=float(v))
+    ts.tick_params(which="major", width=float(v))
     # mplot3d 的 axis3d.draw 每次都会用 _axinfo 覆盖刻度线宽，
     # 只走 tick_params 会在下一次 draw 被打回去
     info = getattr(_tick_axis(ts), "_axinfo", None)
@@ -4234,14 +4263,27 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: str(getattr(_tick0(a), "_tickdir", "out")),
         lambda a, v: a.tick_params(direction=str(v)),
     ),
+    # 长度 / 线宽**按档写**：`length` / `width` 只动主刻度（与 matplotlib
+    # `tick_params` 的默认 which="major" 同口径），次刻度另有 `minor_length` /
+    # `minor_width`。两档写的是轴上不同的 kw，应用顺序因此不影响结果。
+    # 曾经 which="both"：改主刻度长度会把次刻度一起拉长，「主 / 次」的区分
+    # 在界面上就此消失（Prompt 16）。
     ("ticks", "length"): (
         lambda a: float(getattr(_tick0(a), "_size", 3.5)),
-        lambda a, v: a.tick_params(length=float(v)),
+        lambda a, v: a.tick_params(which="major", length=float(v)),
     ),
     # 刻度是 marker：线宽在 markeredgewidth 上，get_linewidth 是错误口径
     ("ticks", "width"): (
         lambda a: float(_tick0(a).tick1line.get_markeredgewidth()) if _tick0(a) else 0.8,
         _set_tick_width,
+    ),
+    ("ticks", "minor_length"): (
+        lambda a: _minor_tick_prop(a, "size", "size", 2.0),
+        lambda a, v: a.tick_params(which="minor", length=float(v)),
+    ),
+    ("ticks", "minor_width"): (
+        lambda a: _minor_tick_prop(a, "width", "width", 0.6),
+        lambda a, v: a.tick_params(which="minor", width=float(v)),
     ),
     # ---- ticks: 刻度定位模型（Locator / Formatter）----
     ("ticks", "major_mode"): _mk_tick_model_handler("major_mode", str),

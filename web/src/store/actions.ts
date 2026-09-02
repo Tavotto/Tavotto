@@ -10,6 +10,7 @@ import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import type { CapturedFigureDescriptor, ManifestElement, PanelInfo } from '@/lib/api'
 import { restoreFollowPlan } from '@/lib/legendModel'
+import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
@@ -731,6 +732,36 @@ export function restoreLegendEntryFollow(panelId: string, element: ManifestEleme
   updateObject<PanelObject>(panelId, hist('legendFollowSource'), (o) => {
     o.overrides = o.overrides.filter(
       (p) => !plan.remove.some((t) => t.gid === p.gid && t.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 四边刻度的一次点击（画布命中区 / 示意图 / 刻度卡共用，Prompt 16）：
+ * 计划里的 set 与 remove 进**同一次 commit**——一条撤销、一次渲染。方向落在
+ * 刻度元素、显隐落在子图元素，两条 override 分属两个 gid，拆成两步的话中间
+ * 那一帧会渲染出「边打开了、方向还是旧的」的图，撤销栈里也多一条。
+ */
+export function applyTickSidePlan(panelId: string, plan: SidePlan | null) {
+  if (!plan) return
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const remove = plan.remove.filter((t) =>
+    panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
+  )
+  if (!plan.set.length && !remove.length) return
+  const e = plan.effect
+  const label = hist(e.hides ? 'tickSideHide' : e.on ? 'tickSideOn' : 'tickSideOff', {
+    side: t(`tick.side.${e.side}`, { ns: 'inspector' }),
+    dir: t(`tick.dir.${e.dir}`, { ns: 'inspector' }),
+  })
+  updateObject<PanelObject>(panelId, label, (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !remove.some((r) => r.gid === p.gid && r.prop === p.prop),
     )
     upsertOverrides(o, plan.set)
   })

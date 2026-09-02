@@ -1764,7 +1764,8 @@ export default interface Resources {
       "resetSide": "恢复{{label}}到脚本",
       "switchOff": "{{label}}：关（点击开启）",
       "switchOn": "{{label}}：开（点击关闭）",
-      "tickSpineDiagram": "刻度与边框状态图"
+      "tickSpineDiagram": "刻度与边框状态图",
+      "zoneAria": "{{side}}{{dir}}刻度"
     },
     "element": {
       "advanced": "高级",
@@ -2326,9 +2327,11 @@ export default interface Resources {
       "markerfacecolor": "标记填充",
       "markersize": "标记大小",
       "minor_format": "次刻度格式",
+      "minor_length": "次刻度长度",
       "minor_mode": "次刻度方式",
       "minor_step": "次刻度间隔",
       "minor_visible": "次刻度",
+      "minor_width": "次刻度线宽",
       "mutation_scale": "箭头帽大小",
       "ncol": "列数",
       "orientation": "方向",
@@ -2592,6 +2595,7 @@ export default interface Resources {
       "axisX": "X 轴",
       "axisY": "Y 轴",
       "dir": {
+        "hidden": "隐藏",
         "in": "朝内",
         "inout": "内外",
         "out": "朝外"
@@ -2600,8 +2604,19 @@ export default interface Resources {
       "length": "长度",
       "minor": "次刻度",
       "minorAria": "{{axis}}的次刻度",
+      "minorLength": "次刻度长度",
       "minorOff": "只要主刻度",
       "minorOn": "主刻度 + 次刻度",
+      "minorWidth": "次刻度宽度",
+      "side": {
+        "bottom": "下边",
+        "left": "左边",
+        "right": "右边",
+        "top": "上边"
+      },
+      "sideAria": "{{side}}刻度线",
+      "sides": "显示边",
+      "sidesAria": "在哪几条边显示刻度线",
       "width": "宽度",
       "xTicks": "X 刻度",
       "yTicks": "Y 刻度"
@@ -3058,6 +3073,9 @@ export default interface Resources {
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
       "syncPublicationProfile": "同步规范到新版",
+      "tickSideHide": "{{side}}：隐藏刻度线",
+      "tickSideOff": "{{side}}：不显示{{dir}}刻度",
+      "tickSideOn": "{{side}}：显示{{dir}}刻度",
       "ungroup": "取消成组",
       "unhideElement": "恢复隐藏元素",
       "unlockAspect": "解锁宽高比",
@@ -3248,6 +3266,15 @@ export default interface Resources {
       "safeNoteDismiss": "知道了",
       "starting": "正在启动渲染环境…",
       "viewResults": "查看捕获结果"
+    },
+    "spineZone": {
+      "coupled": "（方向随这条轴一起改：{{sides}}）",
+      "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
+      "stateOff": "关着",
+      "stateOn": "开着",
+      "willHide": "点击隐藏这一边的刻度线",
+      "willOff": "点击关掉",
+      "willOn": "点击显示"
     },
     "stage": {
       "backToCanvas": "返回画布",

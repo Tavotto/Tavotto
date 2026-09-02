@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { t as translate } from '@/i18n'
-import { enginePreviewPng, panelSrc } from '@/lib/api'
+import { listJoin } from '@/i18n/format'
+import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import {
+  pickSpineZone,
+  readAxesTickModel,
+  toggleSidePlan,
+  zoneRectFrac,
+  zoneWidthsFor,
+  type SidePlan,
+  type SpineGeom,
+  type SpineSide,
+  type SpineZone,
+  type ZoneWidths,
+} from '@/lib/tickSides'
 import { diagnosticHash } from '@/diagnostics'
-import { isJustBakedBaseline } from '@/store/actions'
+import { applyTickSidePlan, isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { nativePanelState, useNativeSessionStore } from '@/store/nativeSessionStore'
@@ -472,6 +485,48 @@ function ElementHitLayer({
   const ref = useRef<HTMLDivElement>(null)
   /** 框选带（本层局部 px；世界层随 zoom 缩放，画框时线宽反除保持 1 屏幕 px） */
   const [band, setBand] = useState<{ l: number; t: number; w: number; h: number } | null>(null)
+  /** 指针悬在某条边框的内 / 外侧命中带上（Prompt 16）：高亮 + 说明 + 点击即切 */
+  const [spineHover, setSpineHover] = useState<SpineHover | null>(null)
+
+  /** 一个分数单位对应的屏幕像素：命中带按屏幕像素定宽，zoom 变了带不变 */
+  const zoneScale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
+
+  /**
+   * 边框命中区只在 `pickElement` 命中 figure（图外空白、偏出去的边框）或那条边
+   * 所属的子图本身（含铺满它的位图）时才算：文字 / 曲线 / 别的子图 / 刻度文字
+   * 永远高优先级——它们才是用户点到的东西。
+   */
+  const spineZoneUnder = (
+    fx: number,
+    fy: number,
+    pointerType: string | undefined,
+    picked: ManifestElement | null,
+  ): SpineHover | null => {
+    const widths = zoneWidthsFor(pointerType)
+    const allow = (gid: string) =>
+      !picked || picked.gid === 'figure' || picked.gid === gid || picked.geom_gid === gid
+    const pick = pickSpineZone(manifest, fx, fy, zoneScale, widths, allow)
+    if (!pick) return null
+    const model = readAxesTickModel(manifest, obj.overrides, pick.gid)
+    const state = model?.sides[pick.hit.side]
+    if (!model || !state) return null
+    const zone = pick.hit.zone
+    const plan = zone === 'neutral' ? null : toggleSidePlan(model, pick.hit.side, zone)
+    if (zone !== 'neutral' && !plan) return null
+    const spinesOf = manifest!.elements.find((e) => e.gid === pick.gid)!.spines!
+    return {
+      gid: pick.gid,
+      side: pick.hit.side,
+      zone,
+      geom: pick.geom,
+      plan,
+      widths,
+      on: zone === 'inner' ? state.inward : zone === 'outer' ? state.outward : state.visible,
+      coupledGeoms: (plan?.effect.coupled ?? [])
+        .map((sd) => ({ side: sd, geom: spinesOf[sd] }))
+        .filter((c): c is { side: SpineSide; geom: SpineGeom } => !!c.geom),
+    }
+  }
 
   /**
    * 屏幕点 → 内容分数坐标。旋转后 getBoundingClientRect 给的是轴对齐外框，
@@ -568,19 +623,47 @@ function ElementHitLayer({
         if (useInteractionStore.getState().kind !== 'none') return
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
-        setHoverGid(hit?.gid ?? null)
+        const zone = spineZoneUnder(fx, fy, e.pointerType, hit)
+        setSpineHover((prev) => (sameSpineHover(prev, zone) ? prev : zone))
+        // 悬在边框带上时高亮的是那条边所属的子图（偏出去的边框 pickElement 命中
+        // 的是 figure，不补这一步用户看不出「这条线是谁的」）
+        setHoverGid(zone?.gid ?? hit?.gid ?? null)
         if (ref.current) {
           ref.current.style.cursor =
-            hit?.draggable || hit?.resizable || hit?.arrow_endpoints ? 'move' : 'crosshair'
+            zone && zone.zone !== 'neutral'
+              ? 'pointer'
+              : hit?.draggable || hit?.resizable || hit?.arrow_endpoints
+                ? 'move'
+                : 'crosshair'
         }
       }}
-      onPointerLeave={() => setHoverGid(null)}
+      onPointerLeave={() => {
+        setHoverGid(null)
+        setSpineHover(null)
+      }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
         e.stopPropagation()
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
         const ui = useUiStore.getState()
+        // 边框的内 / 外侧命中带：一次点击 = 切这一边的向内 / 向外刻度（一条历史）。
+        // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源）；已经选着它或
+        // 它的刻度组时不动选区。中线（neutral）不切刻度，走下面的普通选中。
+        const zone = spineZoneUnder(fx, fy, e.pointerType, hit)
+        if (zone && zone.zone !== 'neutral' && zone.plan) {
+          applyTickSidePlan(obj.id, zone.plan)
+          const sel = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
+          const keep = sel === zone.gid || sel?.startsWith(`${zone.gid}.`)
+          if (!keep) ui.setSelectedGid(zone.gid)
+          setSpineHover(null)
+          return
+        }
+        if (zone && zone.zone === 'neutral' && (!hit || hit.gid === 'figure')) {
+          // 偏出去的边框线本身：点它选中它的子图（框内那条本来就会命中子图）
+          ui.setSelectedGid(zone.gid)
+          return
+        }
         // shift 加选放开到任何具体元素（曲线、柱形系列、误差棒都要能多选，
         // 批量改颜色/线宽靠它）。figure 除外——它是兜底命中，混进多选没有意义。
         // 加选不挑几何能力：对齐与整组平移那边由 alignEntries 自行过滤，
@@ -648,7 +731,123 @@ function ElementHitLayer({
           }}
         />
       )}
+      {spineHover && spineHover.zone !== 'neutral' && (
+        <SpineZoneFeedback hover={spineHover} layout={layout} zoom={zoom} rot={rot} />
+      )}
     </div>
+  )
+}
+
+/** 指针悬在边框命中带上的那一刻：谁的、哪条边、哪个带、点下去会发生什么 */
+interface SpineHover {
+  gid: string
+  side: SpineSide
+  zone: SpineZone
+  geom: SpineGeom
+  plan: SidePlan | null
+  widths: ZoneWidths
+  /** 这个带对应的刻度此刻开着没有（neutral 时是这一边显不显示） */
+  on: boolean
+  /** 方向那一步会连带改到的同轴另一边 */
+  coupledGeoms: { side: SpineSide; geom: SpineGeom }[]
+}
+
+const sameSpineHover = (a: SpineHover | null, b: SpineHover | null) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.gid === b.gid &&
+    a.side === b.side &&
+    a.zone === b.zone &&
+    a.on === b.on &&
+    a.coupledGeoms.length === b.coupledGeoms.length)
+
+const spineTip = (key: string, values?: Record<string, unknown>) =>
+  translate(`spineZone.${key}`, { ns: 'workspace', ...(values ?? {}) })
+
+/**
+ * 边框命中带的 hover 反馈（Prompt 16 §四）：
+ *   * 将被控制的那条带高亮（实心），方向那一步连带的同轴另一边浅色一起亮
+ *     ——matplotlib 的方向是整条轴的，装作每边独立就是骗人；
+ *   * 一行状态文字说清「哪边 · 向内 / 向外 · 现在开着 / 关着 · 点击会怎样」，
+ *     不只靠 cursor；文字随面板旋转反转回来，180° 的面板上也读得正；
+ *   * 没有任何过渡动画（reduced motion 下也不会闪），只随指针出现 / 消失；
+ *   * 只在 hover 期间存在，不常驻遮挡图形。
+ */
+function SpineZoneFeedback({
+  hover,
+  layout,
+  zoom,
+  rot,
+}: {
+  hover: SpineHover
+  layout: Layout
+  zoom: number
+  rot: PanelRotation
+}) {
+  const scale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
+  const zone = hover.zone as 'inner' | 'outer'
+  const strip = (side: SpineSide, geom: SpineGeom, strong: boolean) => {
+    const r = zoneRectFrac(side, geom, zone, scale, hover.widths)
+    return (
+      <div
+        key={side}
+        data-spine-zone={side}
+        data-spine-zone-kind={zone}
+        data-spine-zone-strong={strong ? 'true' : 'false'}
+        className="pointer-events-none absolute"
+        style={{
+          left: r.x * layout.width,
+          top: r.y * layout.height,
+          width: r.w * layout.width,
+          height: r.h * layout.height,
+          background: strong
+            ? 'color-mix(in srgb, var(--color-accent) 28%, transparent)'
+            : 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+          outline: strong ? `${1 / zoom}px solid var(--color-accent)` : undefined,
+        }}
+      />
+    )
+  }
+  const e = hover.plan?.effect
+  const sideName = translate(`tick.side.${hover.side}`, { ns: 'inspector' })
+  const dirName = translate(`tick.dir.${zone === 'inner' ? 'in' : 'out'}`, { ns: 'inspector' })
+  const state = spineTip(hover.on ? 'stateOn' : 'stateOff')
+  const action = e
+    ? spineTip(e.hides ? 'willHide' : e.on ? 'willOn' : 'willOff')
+    : ''
+  const coupled = e?.coupled.length
+    ? spineTip('coupled', {
+        sides: listJoin(e.coupled.map((sd) => translate(`tick.side.${sd}`, { ns: 'inspector' }))),
+      })
+    : ''
+  const text = spineTip('label', { side: sideName, dir: dirName, state, action })
+  // 文字锚在这条带的中点外侧一点；随面板旋转反转回来，并按 1/zoom 缩放保持字号
+  const r = zoneRectFrac(hover.side, hover.geom, zone, scale, hover.widths)
+  const cx = (r.x + r.w / 2) * layout.width
+  const cy = (r.y + r.h / 2) * layout.height
+  return (
+    <>
+      {strip(hover.side, hover.geom, true)}
+      {hover.coupledGeoms.map((c) => strip(c.side, c.geom, false))}
+      <div
+        role="status"
+        data-spine-zone-label={hover.side}
+        className={cn(
+          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm border border-border bg-surface px-1.5 py-0.5',
+          'text-[11px] leading-4 text-ink shadow-sm',
+        )}
+        style={{
+          left: cx,
+          top: cy,
+          transform: `translate(-50%, ${hover.side === 'top' ? '-140%' : hover.side === 'bottom' ? '40%' : '-50%'}) rotate(${-rot}deg) scale(${1 / zoom})`,
+          transformOrigin: 'center',
+        }}
+      >
+        {text}
+        {coupled ? <span className="text-ink-3"> {coupled}</span> : null}
+      </div>
+    </>
   )
 }
 

@@ -128,7 +128,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   ticks: {
     primary: ['major_mode', 'major_step', 'major_values', 'fontsize', 'color'],
     more: [
-      'format', 'direction', 'length', 'width',
+      'format', 'direction', 'length', 'width', 'minor_length', 'minor_width',
       'minor_visible', 'minor_mode', 'minor_step', 'minor_format',
       'rotation', 'visible',
     ],

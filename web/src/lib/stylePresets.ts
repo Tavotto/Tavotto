@@ -71,7 +71,7 @@ export const STYLE_ROLE_PROPS: Record<string, string[]> = {
   text: ['fontsize', 'color', 'fontfamily', 'weight', 'style'],
   title: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
   axis_label: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
-  ticks: ['fontsize', 'color', 'direction', 'length', 'width'],
+  ticks: ['fontsize', 'color', 'direction', 'length', 'width', 'minor_length', 'minor_width'],
   legend: ['fontsize', 'frameon', 'framealpha', 'edgecolor'],
   line: ['linewidth', 'linestyle', 'marker', 'markersize'],
   errorbar: ['linewidth', 'capsize', 'cap_thickness'],

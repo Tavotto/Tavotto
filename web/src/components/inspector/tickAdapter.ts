@@ -68,6 +68,7 @@ export function useTickAxisAdapter(
   }
   return {
     axis,
+    gid,
     has: (prop) => !!fieldOf(prop),
     fieldOf,
     read,

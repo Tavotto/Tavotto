@@ -49,6 +49,7 @@ import {
   type AlignEntry,
 } from '@/lib/elementGeom'
 import {
+  applyTickSidePlan,
   clearOverride,
   clearOverrides,
   resetOverrides,
@@ -56,6 +57,7 @@ import {
   setOverrides,
   unhideElement,
 } from '@/store/actions'
+import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
 import { useDocumentStore } from '@/store/documentStore'
 import { previewStyle } from '@/store/svgPreviewStore'
 import { canPreviewStyle } from '@/lib/svgStyle'
@@ -761,6 +763,11 @@ function TickControl({
    */
   const axes = selfAxis ? all.filter((a) => a.axis === selfAxis) : all
 
+  // 四边刻度模型：示意图的内 / 外两带、刻度卡的「隐藏」档与「显示边」开关、
+  // 画布上的边框命中区读的都是它，写的都是 applyTickSidePlan（Prompt 16）
+  const model = readAxesTickModel(manifest, panel.overrides, host.gid)
+  const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
+
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
@@ -769,11 +776,15 @@ function TickControl({
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
     reset: (p) => clearOverride(panel.id, host.gid, p),
     axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
+    model,
+    applyPlan,
   }
   return (
     <div className="flex flex-col gap-2">
       <TickAndSpineDiagram adapter={adapter} />
-      {axes.length > 0 && <TickTaskCard axes={axes} labelWidth={LABEL_W} />}
+      {axes.length > 0 && (
+        <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
+      )}
     </div>
   )
 }
