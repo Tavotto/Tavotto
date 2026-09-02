@@ -106,7 +106,13 @@ def test_every_text_site_is_in_the_manifest_and_draws_every_character(rendered):
     roles = [e["role"] for e in man["elements"]]
     # 六个位置在元素树里的角色名：title / axis_label（x 与 y 各一）/ ticklabel /
     # legend_text / text（annotate 出来的是 Text）
-    for role, n in (("title", 1), ("axis_label", 2), ("ticklabel", 2), ("legend_text", 2), ("text", 1)):
+    for role, n in (
+        ("title", 1),
+        ("axis_label", 2),
+        ("ticklabel", 2),
+        ("legend_text", 2),
+        ("text", 1),
+    ):
         assert roles.count(role) >= n, f"缺 {role}×{n}：{sorted(set(roles))}"
     seen = " ".join(e.get("label", "") for e in man["elements"])
     for name, tok in TOKENS.items():
