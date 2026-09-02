@@ -123,6 +123,9 @@
     "pillTitle": "Run the publication preflight again",
     "renderFailed": "Render failed",
     "rendering": "Re-rendering",
+    "splashConnecting": "Connecting to Codex…",
+    "splashNoHost": "This canvas opens inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export the figure.",
+    "splashWaiting": "Waiting for the result of tavotto_open_figure…",
     "synced": "In sync"
   },
   "nativeRun": {
@@ -282,6 +285,9 @@
   },
   "playground": {
     "backHome": "Tavotto homepage",
+    "bootDownloadDesktop": "Download desktop {{product}}",
+    "bootListSeparator": ", ",
+    "bootUnsupportedBrowser": "The {{product}} browser playground needs a current browser with WebAssembly and module Worker support (missing: {{missing}}). Desktop {{product}} is not affected.",
     "cancelLoading": "Cancel",
     "cdnNote": "The browser downloads the Python runtime from jsDelivr (Pyodide v{{version}}).",
     "changed": "changed unexpectedly",

@@ -1,15 +1,21 @@
-import { Bold } from 'lucide-react'
+import { useMemo } from 'react'
+import { Bold, Italic } from 'lucide-react'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
+import { fontStackOf } from '@/components/inspector/controls/fontStack'
+import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography } from '@/components/inspector/typographyAdapter'
+import { FALLBACK_MIN_FONT_SIZE_PT } from '@/lib/profile'
+import { displayValueOf, nextToggle, toggleStateOf } from '@/lib/typography'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
 import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Popover } from '@/components/ui/Popover'
+import { Select } from '@/components/ui/Select'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 import { Sep } from './shared'
@@ -34,48 +40,7 @@ function ElementQuickInner({
   const role = element.role
 
   if (hasTextStyleBar(element)) {
-    const size = w.fieldOf('fontsize')
-    const bold = w.read('weight') === 'bold'
-    return (
-      <>
-        {size && (
-          <NumberField
-            className="w-[64px] shrink-0"
-            value={Number(w.read('fontsize') ?? 9)}
-            min={size.min}
-            max={size.max}
-            step={size.step ?? 0.5}
-            precision={1}
-            suffix={size.unit}
-            title={translate('textControls.size', { ns: 'inspector' })}
-            onChange={(v) => w.write('fontsize', v)}
-            onScrubStart={w.beginGesture}
-            onScrubEnd={w.endGesture}
-          />
-        )}
-        {/* 与属性页、批量样式**同一个**三态图标按钮：这里曾经是一份自己写的
-            <Button active={bold}>，长得一样但是第二份实现——同形的两份实现
-            迟早分叉，本轮那些「多选就退化」的缺陷正是这么来的 */}
-        {w.has('weight') && (
-          <StyleToggle
-            state={bold ? 'on' : 'off'}
-            label={translate('textBar.bold', { ns: 'inspector' })}
-            onClick={() => w.writeOnce('weight', bold ? 'normal' : 'bold')}
-          >
-            <Bold size={12} />
-          </StyleToggle>
-        )}
-        {w.has('color') && (
-          <ColorField
-            className="w-[86px] shrink-0"
-            value={String(w.read('color') ?? '#000000')}
-            onChange={(v) => w.write('color', v, true)}
-            onGestureEnd={w.endGesture}
-          />
-        )}
-        <Sep />
-      </>
-    )
+    return <TextElementActions panel={panel} element={element} />
   }
 
   if (role === 'line' || role === 'linecoll') {
@@ -172,4 +137,80 @@ function ElementQuickInner({
   }
 
   return null
+}
+
+/**
+ * 图内文字（matplotlib `Text`）的浮动快捷编辑。
+ *
+ * **与属性页、右键快捷编辑读同一个适配器、写同一条路**（`useFigureTypography`，
+ * ADR 0032）。这里以前是第三份实现：绕过适配器直接 `setOverride`，只有字号 /
+ * 加粗 / 颜色，加粗按 `weight === 'bold'` 两态读——mixed / inherit 无从表达，
+ * 字号的显示回退 `?? 9` 也与别处的 `?? 8` 不一致。现在四档取值、斜体、字体
+ * 都与属性页同一份；布局仍按上下文（这里没有标签列），共享的是数据与 action。
+ */
+function TextElementActions({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+  const elements = useMemo(() => [element], [element])
+  const a = useFigureTypography(panel, elements, FIGURE_TEXT_SINGLE_PROPS)
+  const family = a.fieldOf('fontFamily')
+  const size = a.fieldOf('sizePt')
+  const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
+  const italicState = toggleStateOf(a.valueOf('style'), 'italic')
+  return (
+    <>
+      {family && (family.options?.length ?? 0) > 0 && (
+        <Select
+          className="w-[112px] shrink-0"
+          ariaLabel={translate('textControls.font', { ns: 'inspector' })}
+          value={String(displayValueOf(a.valueOf('fontFamily')) ?? '')}
+          onChange={(v) => a.writeOnce('fontFamily', v)}
+          options={(family.options ?? []).map((o) => ({
+            value: o,
+            label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>,
+          }))}
+        />
+      )}
+      {size && (
+        <NumberField
+          className="w-[64px] shrink-0"
+          value={Number(displayValueOf(a.valueOf('sizePt')) ?? FALLBACK_MIN_FONT_SIZE_PT)}
+          min={size.min}
+          max={size.max}
+          step={size.step ?? 0.5}
+          precision={1}
+          suffix={size.unit}
+          title={translate('textControls.size', { ns: 'inspector' })}
+          onChange={(v) => a.write('sizePt', v)}
+          onScrubStart={a.beginGesture}
+          onScrubEnd={a.endGesture}
+        />
+      )}
+      {a.fieldOf('weight') && (
+        <StyleToggle
+          state={boldState}
+          label={translate('textBar.bold', { ns: 'inspector' })}
+          onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
+        >
+          <Bold size={12} />
+        </StyleToggle>
+      )}
+      {a.fieldOf('style') && (
+        <StyleToggle
+          state={italicState}
+          label={translate('textBar.italic', { ns: 'inspector' })}
+          onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
+        >
+          <Italic size={12} />
+        </StyleToggle>
+      )}
+      {a.fieldOf('color') && (
+        <ColorField
+          className="w-[86px] shrink-0"
+          value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
+          onChange={(v) => a.write('color', v, true)}
+          onGestureEnd={a.endGesture}
+        />
+      )}
+      <Sep />
+    </>
+  )
 }

@@ -123,6 +123,9 @@
     "pillTitle": "重新跑一遍出版规范预检",
     "renderFailed": "渲染失败",
     "rendering": "正在重渲染",
+    "splashConnecting": "正在连接 Codex…",
+    "splashNoHost": "这块画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 tavotto_* 工具也能完成打开 / 改图 / 预检 / 导出。",
+    "splashWaiting": "正在等待 tavotto_open_figure 的结果…",
     "synced": "已同步"
   },
   "nativeRun": {
@@ -281,6 +284,9 @@
   },
   "playground": {
     "backHome": "Tavotto 官网",
+    "bootDownloadDesktop": "下载桌面版 {{product}}",
+    "bootListSeparator": "、",
+    "bootUnsupportedBrowser": "{{product}} 浏览器 playground 需要支持 WebAssembly 与 module Worker 的现代浏览器（缺少：{{missing}}）。桌面版 {{product}} 不受此限制。",
     "cancelLoading": "取消",
     "cdnNote": "浏览器会从 jsDelivr 下载 Python 运行时（Pyodide v{{version}}）。",
     "changed": "意外改动",
