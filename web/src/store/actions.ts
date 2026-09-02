@@ -870,17 +870,27 @@ export async function resetOverridesConfirmed(panelId: string): Promise<boolean>
 
 export type RebuildOutcome = 'rebuilt' | 'rerendered' | 'failed' | 'skipped'
 
-/** 这一版画完（成功或失败）之前不回来；`render()` 在同键忙时只排队就返回 */
-function settledRender(key: string): Promise<void> {
-  return new Promise((resolve) => {
-    if (useRenderStore.getState().get(key).status !== 'rendering') return resolve()
-    const off = useRenderStore.subscribe((s) => {
-      if (s.get(key).status !== 'rendering') {
-        off()
-        resolve()
-      }
+/**
+ * 这一版画完（成功或失败）之前不回来；`render()` 在同键忙时只排队就返回。
+ *
+ * **要循环等**：在飞的那次结束时 `renderStore` 会先写一次它的结果（`ready`），
+ * 紧接着**同步**把排队的那次置回 `rendering`——订阅回调看到的那个 `ready`
+ * 只存在于两次 `patch` 之间，等 Promise 的消费者真正恢复时，键已经又在渲染了。
+ * 只等一次的话「重新构建」在上一次渲染还在飞的时候点下去（慢机器、刚打开的图）
+ * 会拿着 `rendering` 判成 failed，一声不吭（Windows 桌面腿的 e2e 抓到的）。
+ */
+async function settledRender(key: string): Promise<void> {
+  for (;;) {
+    if (useRenderStore.getState().get(key).status !== 'rendering') return
+    await new Promise<void>((resolve) => {
+      const off = useRenderStore.subscribe((s) => {
+        if (s.get(key).status !== 'rendering') {
+          off()
+          resolve()
+        }
+      })
     })
-  })
+  }
 }
 
 /**

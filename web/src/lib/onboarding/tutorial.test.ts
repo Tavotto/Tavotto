@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TutorialMetadata } from '@/lib/api'
 import { setTelemetryEnabled } from '@/lib/telemetry'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocumentStore, isAutosaveSuspendedFor } from '@/store/documentStore'
 import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -287,6 +287,37 @@ describe('resetTutorial', () => {
     // 之前那份文档仍在最近文档索引里——别的文档一个没动
     // （切进干净画布时会重新落一次快照——那是新的，不是旧进度）
     expect(useDocumentStore.getState().recentDocs.some((e) => e.id === 'd_before')).toBe(true)
+  })
+
+  it('重置期间教程画布被挂起：后端清槽位时前端一个字节都不写；装回干净画布后恢复', async () => {
+    await startTutorial()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    let suspendedDuringReset: boolean | null = null
+    stubFetch({
+      '/api/tutorial/reset': () => {
+        suspendedDuringReset = isAutosaveSuspendedFor('tavotto-tutorial')
+        return json({ project: PROJECT, tutorial: META, reset: true, cleared: ['tavotto-tutorial.json'] })
+      },
+    })
+    const p = resetTutorial()
+    await new Promise((r) => setTimeout(r, 0))
+    useUiStore.getState().confirm!.resolve(true)
+    const out = await p
+    expect(out.ok).toBe(true)
+    expect(suspendedDuringReset).toBe(true)
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
+  })
+
+  it('重置没做成（锁住）：挂起被接回，不把用户的画布晾在不保存的状态', async () => {
+    await startTutorial()
+    stubFetch({
+      '/api/tutorial/reset': () => json({ error: 'busy', code: 'tutorial_locked', params: { reason: 'busy' } }, 409),
+    })
+    const p = resetTutorial()
+    await new Promise((r) => setTimeout(r, 0))
+    useUiStore.getState().confirm!.resolve(true)
+    await p
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
   })
 
   it('锁住（409 tutorial_locked）→ locked，进度不动', async () => {

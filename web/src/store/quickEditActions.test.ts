@@ -272,6 +272,32 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(useUiStore.getState().status?.key).toBe('status.panelRebuilt')
   })
 
+  it('上一次渲染还在飞时点「重新构建」：等排队的那次真画完再判，不把 rendering 当 failed', async () => {
+    // 第一次渲染卡在半路（刚打开的图、慢机器）——重新构建的那次只能排队
+    let releaseFirst!: () => void
+    const first = new Promise<{ rev: number; manifest: { elements: never[] }; warnings: never[] }>((r) => {
+      releaseFirst = () => r({ rev: 1, manifest: { elements: [] }, warnings: [] })
+    })
+    engineRender.mockReset()
+    engineRender.mockReturnValueOnce(first)
+    engineRender.mockResolvedValue({ rev: 2, manifest: { elements: [] }, warnings: [] })
+    const inFlight = useRenderStore.getState().render('Fig1.pdf', ov, undefined, 'immediate')
+    await flush()
+    const key = renderKeyOf(byId<PanelObject>('p1'))
+    expect(useRenderStore.getState().get(key).status).toBe('rendering')
+
+    const outcome = rebuildPanel('p1')
+    await flush()
+    releaseFirst()
+    await inFlight
+    // 在飞的结束 → 排队的（作废后的那次）开始 → 画完：结果必须是 rebuilt 且提示到位
+    expect(await outcome).toBe('rebuilt')
+    expect(useRenderStore.getState().get(key).status).toBe('ready')
+    expect(useRenderStore.getState().get(key).rev).toBe(2)
+    expect(engineRender).toHaveBeenCalledTimes(2)
+    expect(useUiStore.getState().status?.key).toBe('status.panelRebuilt')
+  })
+
   it('作废先于渲染：渲染那一刻会话已经过期', async () => {
     const order: string[] = []
     engineInvalidate.mockImplementation(async () => {

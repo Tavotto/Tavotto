@@ -23,6 +23,9 @@ import {
   restoreSession,
   saveNow,
   startAutosave,
+  isAutosaveSuspendedFor,
+  resumeAutosave,
+  suspendAutosaveFor,
   useDocumentStore,
 } from './documentStore'
 
@@ -230,6 +233,49 @@ describe('保存状态机', () => {
     expect(['dirty', 'saving', 'save_error', 'conflict'].every(
       (v) => hasUnsavedWork(v as never))).toBe(true)
     expect(['clean', 'saved'].some((v) => hasUnsavedWork(v as never))).toBe(false)
+  })
+})
+
+describe('挂起自动保存（教程重置窗口）', () => {
+  it('挂起中：编辑不排防抖、flush 回 skipped、一个 PUT 都没有；switchDocument 之后恢复', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await s().switchDocument(seeded(1), 'd_susp')
+    await vi.advanceTimersByTimeAsync(50)
+    puts.length = 0
+    suspendAutosaveFor('d_susp')
+    expect(isAutosaveSuspendedFor('d_susp')).toBe(true)
+    s().commit(literal('拖了一下'), (d) => {
+      d.objects.push(text('n1', 'A'))
+    })
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(flushAutosave()).toBe('skipped')
+    expect(puts).toEqual([])
+    // 换文档 = 挂起结束：新文档照常自动保存
+    await s().switchDocument(seeded(2), 'd_after')
+    expect(isAutosaveSuspendedFor('d_susp')).toBe(false)
+    s().commit(literal('新文档改一笔'), (d) => {
+      d.objects.push(text('n2', 'B'))
+    })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    // 切换时的那次落盘 + 编辑的那次防抖：都只写新文档，旧的那格一个字节没有
+    expect(puts.length).toBeGreaterThan(0)
+    expect(puts.every((p) => p.id === 'd_after')).toBe(true)
+  })
+
+  it('resumeAutosave 接回来：重置没做成时防抖照常写', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await s().switchDocument(seeded(1), 'd_resume')
+    await vi.advanceTimersByTimeAsync(50)
+    puts.length = 0
+    suspendAutosaveFor('d_resume')
+    resumeAutosave()
+    s().commit(literal('改一笔'), (d) => {
+      d.objects.push(text('n1', 'A'))
+    })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(puts.map((p) => p.id)).toEqual(['d_resume'])
   })
 })
 

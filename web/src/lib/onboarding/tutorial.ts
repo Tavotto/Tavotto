@@ -29,7 +29,13 @@ import {
   type TutorialOpenResult,
   type TutorialStatus,
 } from '@/lib/api'
-import { forgetLocalDocument, readAutosaveDoc, useDocumentStore } from '@/store/documentStore'
+import {
+  forgetLocalDocument,
+  readAutosaveDoc,
+  resumeAutosave,
+  suspendAutosaveFor,
+  useDocumentStore,
+} from '@/store/documentStore'
 import { ONBOARDING_FLOW_VERSION, type OnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore, askConfirm } from '@/store/uiStore'
@@ -203,15 +209,25 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   })
   if (!ok) return { ok: false, reason: 'cancelled', message: failureMessage('cancelled') }
   useTutorialStore.setState({ busy: 'reset', failure: null })
+  // 先把手里这份教程画布从自动保存链路上摘下来，再让后端清槽位、换目录：重置窗口里
+  // 的防抖写盘 / 派生同步（项目重开会推 registry.changed / assets.changed）否则会把
+  // 拖过 / 改过的旧文档写回刚清掉的那一格，随后装回来的就是旧的（Windows 桌面腿抓到）。
+  // 换到干净画布时 switchDocument 自动恢复；重置没做成就手动接回。
+  const current = useDocumentStore.getState().documentId
+  const suspended = meta !== null && current === meta.document_id
+  if (suspended) suspendAutosaveFor(current)
   let res: TutorialOpenResult
   try {
     res = await resetTutorialApi({ default: true })
   } catch (e) {
+    if (suspended) resumeAutosave()
     return fail(classify(e), e)
   }
   // 后端只清了磁盘那格；本机这格不忘掉的话 readAutosaveDoc 会把旧进度推回去
   forgetLocalDocument(res.tutorial.document_id)
-  return landTutorial(res, 'reset')
+  const out = await landTutorial(res, 'reset')
+  if (!out.ok) resumeAutosave()
+  return out
 }
 
 /** 教程项目里除教程画布之外、用户自己另存的画布文件名 */

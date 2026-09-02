@@ -649,6 +649,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     const pd = migrateToProject(next)
     if (!pd) return false
+    // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
+    autosaveSuspendedFor = null
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
     set({
       doc: canvasToDoc(active),
@@ -707,7 +709,7 @@ const CURRENT_KEY = 'tavotto.currentDoc'
 const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
 
-export type FlushResult = 'saved' | 'empty' | 'error'
+export type FlushResult = 'saved' | 'empty' | 'error' | 'skipped'
 
 const slotKey = (id: string) => SLOT_PREFIX + id
 const TABS_PREFIX = 'tavotto.tabs.'
@@ -1136,6 +1138,9 @@ async function ensureDiskKnown(id: string, pj: string | null): Promise<SaveIssue
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
 export function flushAutosave(): FlushResult {
   const state = useDocumentStore.getState()
+  // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
+  // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
+  if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
   const pd = state.buildProject()
   if (!hasContent(pd)) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
@@ -1577,6 +1582,31 @@ function cancelPendingAutosave(): void {
   autosaveTimer = undefined
 }
 
+/**
+ * 自动保存被**挂起**的那份文档 id；`null` = 没有。
+ *
+ * 教程「重新开始」是唯一的调用方：后端在重置里清掉磁盘槽位、换掉项目目录，
+ * 而前端此刻手里还是旧文档——重置窗口里的任何一次防抖写盘 / 派生同步
+ * （项目重开会推 `registry.changed` / `assets.changed`，它们照样进 `applyDerivedUpdate`）
+ * 都会把**拖过 / 改过的旧文档**写回刚清掉的那一格，随后装回来的就是旧的
+ * （Windows 桌面腿的 e2e 第一次跑就抓到，mac 上只是时序没撞上）。
+ * 挂起期间：防抖不排、`flushAutosave` 不写；`switchDocument` 换到任何文档即恢复。
+ */
+let autosaveSuspendedFor: string | null = null
+
+/** 把这份文档从自动保存链路上摘下来，直到下一次 `switchDocument`。 */
+export function suspendAutosaveFor(id: string): void {
+  autosaveSuspendedFor = id
+  cancelPendingAutosave()
+}
+
+export const isAutosaveSuspendedFor = (id: string): boolean => autosaveSuspendedFor === id
+
+/** 重置没做成（锁住 / 失败）时把文档接回自动保存链路。 */
+export function resumeAutosave(): void {
+  autosaveSuspendedFor = null
+}
+
 export function startAutosave(): () => void {
   const onLeave = (e: BeforeUnloadEvent) => {
     // **先读状态再冲刷。** 反过来的话 `flushAutosave()` 会把状态推成
@@ -1605,6 +1635,7 @@ export function startAutosave(): () => void {
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
     if (state.loadSeq !== prev.loadSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
+    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
