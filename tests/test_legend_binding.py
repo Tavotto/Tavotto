@@ -415,6 +415,17 @@ def test_frame_linewidth_and_rounding_are_editable(hot):
     _man(hot)
 
 
+def test_handle_override_survives_a_later_rebuild_in_a_hot_session(hot):
+    """热会话里先改示意线颜色、**下一步**再改列数：重建的素材是 custom_base
+    （脱开那一刻的样子），颜色 override 必须重放到新示意线上——同一批 patch
+    里两条一起来时 setter 排在重建之后、天然正确，只有分两步才量得到重放。"""
+    first = [{"gid": T[0], "prop": "handle_color", "value": "#123456"}]
+    _man(hot, first)
+    man = _man(hot, first + [{"gid": LEG, "prop": "ncol", "value": 2}])
+    assert _val(man, T[0], "handle_color") == "#123456"
+    _man(hot)
+
+
 def test_rebuild_does_not_compound_markerscale_on_custom_entries(hot):
     """带 override 的自定义项重建：素材是快照（markerscale 已乘过），派生会再乘
     一次——`rebuild_legend` 必须把 markersize 放回。这一项有 override，所以

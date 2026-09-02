@@ -386,8 +386,10 @@ describe('选中图例', () => {
 
   it('字号与条目顺序由图例卡接管，通用列表不再出第二套', async () => {
     await mount(['axes_0.legend'])
-    // 图例卡的 Typography 行有字号；通用列表里没有以 fontsize 为锚点的第二行
-    expect(host.querySelectorAll('[data-inspector-prop="fontsize"]').length).toBe(1)
+    // 图例卡的 Typography 行有字号（锚点 data-prop=fontsize，来自 propertyPathOf）；
+    // 通用列表里没有以 fontsize / entry_order 为锚点的第二行——锚点两处同名，
+    // 数「一共几个」才量得到重复
+    expect(host.querySelectorAll('[data-prop="fontsize"]').length).toBe(1)
     expect(labels().filter((p) => p === 'entry_order')).toHaveLength(0)
     // 条目列表：三项按显示顺序，徽标各说各的
     const list = host.querySelector('ul[aria-label="图例项列表"]')!
