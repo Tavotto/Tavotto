@@ -5,7 +5,160 @@
 
 ---
 
-## 最近一次：Session 20（2026-09-02）
+## 最近一次：Session 21（2026-09-02）
+
+### 目标
+
+Prompt 21：完整但克制的新手体验——让第一次使用的科研用户**通过真实动作**走一遍两条核心工作流，
+不是看幻灯片。九步教程、本地 Activity Bus、版本化 onboardingStore、无遮罩 coachmark、五类一次性
+情境提示、四个入口共用一份状态。不自动运行脚本、不装包、不碰用户项目。
+
+### 开始前实测到的六件事
+
+1. **onboarding 完全不存在**；Session 17 留的 `lib/activity.ts` 只有三种排列信号，但形态正确
+   （本地 window 事件、只有枚举与计数）——扩它，不另起一套。
+2. **画布上双击面板走 `enterElementEdit`，不是 `openFastEdit`**（后者只在素材卡 / 交接 / 拖放）。
+3. **问题面板的图内问题从渲染后的 manifest 算**（`validationStore` 读 `render.byKey`）；那条故意的
+   7 pt 在 Fig2 上——教程要编辑的那张得是 Fig2（T-108）。
+4. **切项目的既有链路给的是空白文档**（`resetForNewProject` → `switchDocument(blank)`），工作台挂载时
+   `restoreSession()` 读 `tavotto.currentDoc`：教程画布必须在 `phase: 'open'` 之前就位。
+5. **Radix 模态对话框把外面的指针与焦点都挡掉**：导出面板开着时挂在 body 上的 coachmark 点不到。
+6. **`display:contents` 的锚点没有盒子**（Typography 的行内 Anchor）。
+
+### 实际完成
+
+**1. Activity Bus（`lib/activity.ts`）。** 18 种 kind 闭集 `ACTIVITY_KINDS` + payload 白名单
+`ACTIVITY_PAYLOAD_KEYS`（只有枚举与计数）；发射点：`projectStore.adoptOpenedProject`（project.opened）、
+`workspace.enterFastEdit / exitToLayout / openFastEdit / addFigureToLayout`、`actions.enterElementEdit /
+setOverride / setOverrides`、`selectionStore`、`uiStore.setSelectedGid(s) / toggleSelectedGid /
+railClick / setLeftTab / setExportOpen`、`documentStore.pushHistory / afterWriteOk`、
+`issueFocus.focusObject`、`ExportDialog`（scope）、`ObjectContextMenu`（menu.opened）。
+
+**2. `store/onboardingStore.ts`。** `tavotto.onboarding`：schemaVersion 1 / flowVersion 1 / status 五态 /
+currentStep / completedSteps / hintSeen / startedAt / completedAt / tutorialProjectId / tutorialDocumentId /
+pausedBy。逐字段迁移；flowVersion 升级进行中回第一个未完成、已完成不打扰；
+`configureOnboardingPersistence(adapter | null)`。
+
+**3. `lib/onboarding/`。** `stepIds.ts`（十个 id，持久化格式）；`steps.ts`（完成条件 + 锚点 + 变体 +
+reveal + altDone）；`flow.ts`（唯一引擎：累计并按步骤消费信号、评估、离开教程系统暂停、回来自动
+继续并 `ensureTutorialDocument`、重启后取元数据）；`tutorial.ts`（`startTutorial / resetTutorial /
+tutorialEntry / runTutorialEntry / resetHints`，四个入口共用）；`hints.ts`（五类一次性提示）；
+`position.ts`（纯函数落位）。
+
+**4. `components/onboarding/`。** `Coachmark`（非模态 dialog，Tab 顺序返回→跳过→主动作→关闭）、
+`OnboardingLayer`（`data-*` / manifest bbox 锚点；缺失先等 1.5 s 再说找不到；对话框内 portal 进同层；
+画布对象被平移出 `[data-canvas-stage]` 只动视口挪回；reduced motion）、`HintToast`（右下角，
+不占 `role=status`）。
+
+**5. 入口与锚点。** ProjectPicker「用示例了解 Tavotto」（GET 不到端点整行不出现；资源坏禁用 +
+「重新安装」；教程副本在最近列表显示「教程项目」）；TopBar 更多菜单；命令面板 `tutorial-start /
+tutorial-resume / tutorial-reset`（`Command.available`）；设置常规两行；ShortcutHelp 加 ⇧点击 /
+右键 / 教程分组。`data-onboarding-anchor` 在导出按钮 / 输出范围 / 加入画布 / 回到画布 / 三个入口；
+`data-issue-rule` / `data-issue-object` 在问题行。
+
+**6. 基础设施改动。** `projectStore.adoptOpenedProject(status, { prepareDocument })`（`open()` 现在只是
+它的壳）；`documentStore.forgetLocalDocument(id)`；`lib/api.ts` 的 `fetchTutorialStatus /
+openTutorialApi / resetTutorialApi` + `TutorialMetadata / TutorialStatus / TutorialOpenResult`。
+
+### 关键 API（Prompt 22 直接用）
+
+```ts
+// lib/activity.ts
+ACTIVITY_KINDS / ACTIVITY_PAYLOAD_KEYS       // 遥测映射只许从这两张表挑；不出网、不落盘
+emitActivity(detail) / onActivity(listener)
+// store/onboardingStore.ts
+useOnboardingStore：status / currentStep / completedSteps / hintSeen / tutorialProjectId / tutorialDocumentId / pausedBy
+start / pause('user'|'system') / resume / skip / complete / markStep / goTo / back / markHintSeen / resetHints / resetOnboarding
+configureOnboardingPersistence(adapter | null)  ONBOARDING_FLOW_VERSION（改步骤内容升它，不改 step id）
+// lib/onboarding/tutorial.ts（四个入口共用）
+tutorialEntry(status?) → 'start' | 'resume' | 'restart'；runTutorialEntry()；resetTutorial()；resetHints()
+startTutorial() / ensureTutorialDocument()；useTutorialStore { status, meta, busy, failure }
+// lib/onboarding/flow.ts
+startOnboardingEngine()（幂等）/ currentContext() / completeStep / backStep / skipStep / inTutorial()
+// lib/onboarding/steps.ts
+STEPS / stepById / buildContext / editPanelMeta / problemsResolved / TYPOGRAPHY_PROPS_FIGURE / TEXT_ROLES
+```
+
+### 迁移
+
+没有磁盘格式改动。本机多一格 `localStorage['tavotto.onboarding']`（可整格删，坏了回默认）。
+`lib/activity.ts` 的 detail union 扩了（订阅方按 kind 分支，老订阅方不受影响）。`selectionStore` /
+`uiStore` 的 set 多了一次「真的变了才发」的比较。
+
+### 修改的文件
+
+```text
+新增  web/src/store/onboardingStore.ts（+ .test）      web/src/lib/onboarding/{stepIds,steps,flow,tutorial,hints,position}.ts（+ 4 个 .test）
+新增  web/src/components/onboarding/{OnboardingLayer,Coachmark,HintToast}.tsx（+ onboardingLayer.test.tsx）
+新增  web/src/lib/activity.test.ts   web/src/store/selectionStore.test.ts   web/e2e/tutorial.spec.ts
+新增  docs/adr/0040-onboarding-coachmarks-and-hints.md
+改动  web/src/lib/activity.ts   web/src/lib/api.ts   web/src/lib/issueFocus.ts
+改动  web/src/store/{projectStore,workspace,selectionStore,uiStore,actions,documentStore}.ts
+改动  web/src/App.tsx   components/{ProjectPicker,TopBar,CommandPalette,ShortcutHelp,ExportDialog}.tsx
+改动  components/left/ProblemPanel.tsx   components/settings/GeneralSettings.tsx   canvas/{FastEditBar,ObjectContextMenu}.tsx
+改动  web/src/i18n/locales/{zh-CN,en-US}/{dialogs,project,workspace,shortcuts}.json + resources.d.ts
+改动  web/src/store/alignSelectedTo.test.ts（只看排列三种 kind）   web/AGENTS.md
+重建  codex-plugin/mcp/widget/canvas.html（指纹 e24359828915068d）   web/dist-playground/（532128103da274fa，不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **Hook 放在早退之后**（`ObjectContextMenu` 的 `useEffect`）——lint 抓到，不是我看到的。
+2. **jsdom 假计时器下 `await new Promise(setTimeout)` 永远不回来**：flush 要 `advanceTimersByTimeAsync`。
+3. **`fetchAutosave` 回的就是文档本身**（修订号在响应头）；**写盘成功后本机槽位会被删**——两个错前提
+   各让我改了一次用例。
+4. **coachmark 自己也是 `role=dialog`**：e2e 的 `getByRole('dialog')` 要排除它。
+5. **`role=status` 撞名**：`HintToast` 第一版给了 status，既有 `cross-tab-paste.spec` 的
+   `getByRole('status')` 变成 strict-mode 违规。改成只留 `aria-live`。
+6. **画布对象被平移到抽屉后面时 DOM 矩形照样有值**：按窗口判 offscreen 是假的（T-114）。
+7. **prettier 会把仓库风格改成双引号 + 分号**：别在这个仓库里 `npx prettier --write`。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 21 之后」六行（ScriptLibrary 对比度既有问题、Step 4 认任一教程面板、
+教程外提示在别的 e2e 场景可能挡点、embedded 只做降级、Step 3 锚点只认 fontsize、e2e 只跑 chromium）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13–21 九轮都在这条分支上，**尚未推送、没有 PR**）；本轮
+  提交 `16ef8cfc`（实现 + 测试 + ADR）+ 反证前补用例 + 反证后补用例 + 留档（本笔）
+- author 用 `88193520+erwanjun@users.noreply.github.com`，提交时 `git -c user.email=…`
+
+---
+
+## 下一阶段入口（Prompt 22：Codex / AI、i18n、遥测、文档整合）
+
+**从这里开始读**：`docs/adr/0040-onboarding-coachmarks-and-hints.md`（本轮）、`UX_CONTRACTS.md` 5f、
+`ARCHITECTURE.md` §8c、`web/AGENTS.md`「交互式 Onboarding 与本地活动信号」。
+
+**Session 21 留给 22 的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 可映射的活动枚举 | `lib/activity.ts` 的 `ACTIVITY_KINDS`（18 种）与 `ACTIVITY_PAYLOAD_KEYS` | 遥测只许从这两张表挑；本地信号本身不出网 |
+| 教程进度 | `useOnboardingStore`（status / currentStep / completedSteps） | 可映射成 `tutorial_step_completed{step}` 一类枚举事件；`hintSeen` / 项目 id / 文档 id **不映射** |
+| 同意态 | `store/telemetryStore` + 后端 `EVENTS` 白名单 | 新事件两侧都要登记（`test_client_and_proxy_contracts_match`） |
+| 文案 | `dialogs:onboarding.*` / `settings.tutorial.*` / `project:picker.tutorial*` / `workspace:hints.*` / `shortcuts:*` | 双语已齐；英文更长，coachmark 300px 定宽、`overflow.test` 那套预算可以扩到它 |
+
+**绝不要做的事**（07 的六条 … 20 的三条原样成立，21 再加三条）：
+
+57. **不许让遥测反过来驱动界面**：活动信号是本地的、遥测是出网的，方向只有 活动 → 遥测（经同意）一条。
+58. **不许把对象 id / gid / 文件名 / 文字塞进活动 payload**：先进 `ACTIVITY_PAYLOAD_KEYS`，进不了就不该发
+    （`activity.test.ts` 的白名单反证是结构性防线）。
+59. **不许改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式）；改步骤内容升 `ONBOARDING_FLOW_VERSION`。
+
+**必须保留的不变式**（在 20 的五十条之上）：
+
+51. **点「下一步」完成不了任何一步**：完成条件只来自 store 状态与真实 action 的信号（`flow.test` 13 条）。
+52. **关掉 coachmark 是 paused，不是 completed**；切走项目是 `pausedBy: 'system'`，回来自动继续。
+53. **coachmark 没有遮罩、不写偏好**：`reveal()` 直接 `uiStore.setState`，画布对象只动视口。
+54. **四个入口不判状态**，只调 `lib/onboarding/tutorial.ts`。
+55. **`HintToast` 不占 `role=status`**（状态区只有 `StatusToasts` 一份）。
+
+---
+
+## 历史：Session 20（2026-09-02）
 
 ### 目标
 

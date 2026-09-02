@@ -586,7 +586,7 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 | i18n | `web/src/i18n/`（8 个命名空间：common/workspace/project/inspector/dialogs/errors/ai/shortcuts），门禁 `pnpm i18n:check` |
 | 诊断 | `engine/diagnostics.py`、`diagnostics_frontend.py`（`docs/adr/0016`），`web/src/diagnostics/` |
 | **离线教程项目（`← 20`，ADR 0039）** | 资源 `src/tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`）；副本 `<data_dir>/tutorial/v<版本>-<指纹>/Tutorial/`（`ensure_tutorial_copy`）；`GET /api/tutorial`、`POST /api/tutorial/open|reset`；`project_status().tutorial` / recent 的 `tutorial` 标记。见 §8b |
-| **onboarding UI** | **不存在**——Prompt 21 消费上面的 API 与 `tutorial_meta.json`，不得读仓库根 `examples/` |
+| **onboarding UI（`← 21`，ADR 0040）** | `lib/activity.ts`（18 种 kind 闭集的本地信号）；`store/onboardingStore.ts`（本机状态机）；`lib/onboarding/{stepIds,steps,flow,tutorial,hints,position}.ts`；`components/onboarding/{OnboardingLayer,Coachmark,HintToast}.tsx`；入口 ProjectPicker / TopBar 更多 / CommandPalette / GeneralSettings。见 §8c |
 
 ### 8b. 离线教程项目（`← 20`，ADR 0039）
 
@@ -611,6 +611,31 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
   经 `app._tutorial_error` 一个漏斗。
 
 ---
+
+### 8c. 交互式 Onboarding（`← 21`，ADR 0040）
+
+```text
+真实 action 成功 ──emitActivity──▶ window 'tavotto:activity'（kind 闭集，payload 只有枚举 / 计数）
+                                        │
+   store 变化 ─────────────────────────┤
+                                        ▼
+                         lib/onboarding/flow.ts（引擎，唯一实例）
+                           ├─ 累计 StepSignals（只在教程里；按步骤消费）
+                           ├─ evaluate：steps.ts 的 done(ctx) → onboardingStore.markStep / goTo / complete
+                           ├─ 离开教程项目 / 文档 → pause('system')；回来 → resume + ensureTutorialDocument
+                           └─ 重启后 meta 为空 → GET /api/tutorial 取元数据
+                                        │
+                     onboardingStore（localStorage 'tavotto.onboarding'，可换 adapter / 关掉）
+                                        │
+              components/onboarding/OnboardingLayer：按 steps.anchor(ctx) 找 data-* 锚点 / manifest bbox
+                → position.ts 落位 → Coachmark（非模态 dialog）+ 高亮环；锚点在对话框里 portal 进同层
+```
+
+* 入口动作只有 `lib/onboarding/tutorial.ts` 一份：`startTutorial()` = `POST /api/tutorial/open` →
+  `projectStore.adoptOpenedProject(status, { prepareDocument })` → `readAutosaveDoc(document_id)` 或
+  `GET /api/layouts/<document_name>` → `switchDocument(doc, document_id)` → onboarding start / resume；
+  `resetTutorial()` = 确认 → `POST /api/tutorial/reset` → `forgetLocalDocument(document_id)` → 同上。
+* 一次性提示：`lib/onboarding/hints.ts` 订阅同一条信号 + `validationStore`，`HintToast` 显示。
 
 ## 9. 打包
 

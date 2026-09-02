@@ -52,7 +52,7 @@
 | 18 | QuickEdit 右键动作 | ✅ 完成（本次，ADR 0037） |
 | 19 | 设置 / Agent / 包管理 | ✅ 完成（本次，ADR 0038） |
 | 20 | 离线教程资源后端 | ✅ 完成（本次，ADR 0039） |
-| 21 | onboarding UI 与提示 | ⬜ |
+| 21 | onboarding UI 与提示 | ✅ 完成（本次，ADR 0040） |
 | 22 | Codex/AI、i18n、遥测、文档整合 | ⬜ |
 | 23 | 全量 QA 与发布门禁 | ⬜ |
 
@@ -64,7 +64,7 @@
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
-| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）完成；21–22 未开始 |
+| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）+ 21（交互式 onboarding 与一次性提示）完成；22 未开始 |
 | 6 发布 | 23 | ⬜ |
 
 ---
@@ -555,7 +555,35 @@ desktop…」。
 | 桌面 PyInstaller 产物 | ⚠️ **本机跑不了**（`.venv` 没装 PyInstaller，也没有 Rust supervisor 二进制）。spec 的 datas 改动只有静态断言（`test_desktop_spec_ships_the_tutorial_resources_as_datas`）+ CI 桌面腿的 `--tutorial` 冒烟能证明 |
 | Playwright e2e 全量 | ⚠️ **没跑**（本轮没有 UI 改动；13 记的六条红仍开着） |
 
-## 遗留（Session 20 之后仍开着的）
+### Session 21 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **179** files / **2452** tests passed（比 20 的 171 / 2387 多 8 个文件 78 条：`onboardingStore` 12 / `activity` 5 / `selectionStore` 3 / `position` 8 / `flow` 13 / `tutorial` 10 / `hints` 8 / `onboardingLayer` 6，另 `alignSelectedTo` 两条改成只看排列三种 kind） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b` 含 e2e 工程） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 3170 / en-US 3266 条；`resources.d.ts` 经 `pnpm i18n:types` 重生成） |
+| `cd web && pnpm lint` | ✅ 无 error（只有既有的 fast-refresh 提示；第一遍抓到 `ObjectContextMenu` 里我把 `useEffect` 放在早退之后——Hook 顺序随 `obj` 变，已改） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest tests/test_i18n_dead_keys.py tests/test_error_codes.py tests/test_source_hygiene.py tests/test_ci_tooling.py tests/test_mcp_resolver.py tests/test_tutorial.py -k "not worker"` | ✅ **247** passed / 1 skipped / 5 deselected。**本轮 Python 源码零改动**，全量 pytest 没跑（20 的 3756 / 34 / 0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py`（各 `--check`） | ✅ 已重建并一致（指纹 `e24359828915068d` / `532128103da274fa`） |
+| `python scripts/build_frontend.py` + `npx playwright test e2e/tutorial.spec.ts --project=chromium`（真后端 + 真 matplotlib） | ✅ **4 passed**（第一遍 4 红：treeitem 折叠 / Tab 顺序 / 像素判据 / 切回项目是空白文档；第二遍 3 红：dialog 定位器把 coachmark 算进去 / `data-*` 布尔值是 `"true"` / 拖动落在抽屉把手上；第三遍 1 红：坐标对象被平移出工作区——**产品缺口**，加 `hiddenInStage` 后绿） |
+| `npx playwright test --project=chromium`（全量，冻结前端 + `build_frontend.py` 之后，14 分钟） | ⚠️ **89 passed / 3 failed**：`cross-tab-paste`（**本轮引入**：`HintToast` 第一版占了 `role=status`，与状态区撞名——已改成只留 `aria-live`，重建后单跑复绿）；`ux-consistency` 流程 B / D（**既有**：16 把刻度卡拆成 X/Y 页签、19 把「项目与路径」改名「项目」，用例没跟上；画面里没有教程元素）。13 记的那六条红这次**没有再出现**（a11y / i18n / keyboard-golden-path / asset-library 全绿） |
+| 变异反证 24 条（前端） | ✅ 22 红 + 2 存活各补用例后红（M8 教程外的信号、M24 选区没变也发），见 `TEST_MATRIX.md` |
+| `git diff --check` | ✅ |
+
+## 遗留（Session 21 之后仍开着的）
+
+| ID | 事项 | 归属 |
+| --- | --- | --- |
+| — | **`ScriptLibrary` 的「高级详情」summary 对比度 2.54:1**（`text-ink-faint` 上放了可点的文字）：仓库自己的尺子在教程 e2e 里量到的，与教程无关的既有问题；既有 `a11y.spec` 的工作台用例没量到它（那条用例的场景里脚本库那一段没展开）。教程 e2e 只量 coachmark 与被环套着的卡片 | 22（i18n / a11y 整合） |
+| — | **Step 4 的完成条件认「任一教程面板」**：两张图都在画布上时问题面板里两张的问题都在，用户点 Fig1 的一条也算完成、教程接着在 Fig1 里说话。是对的（教的是「从问题定位」），但文案没说「哪一张」 | 已决定不做 |
+| — | **教程外的一次性提示在 e2e 场景里会出现**（第一次单选面板就弹「双击可进入图内编辑」）：已改成不占 `role=status`、不挡指针；其它 spec 若靠底部右侧的坐标点画布，可能被这张卡片挡到——全量 e2e 只撞到 `cross-tab-paste` 一条（role 撞名），改后需复跑 | 23 前复核 |
+| — | **embedded 只做了「不出现 + 可关持久化 + 宿主可显式调 `startTutorial()`」**，没有做「coachmark 限制在容器内」——MCP 画布 / playground 不渲染 `App`，也没有 Tutorial API，入口整行不出现（`no_api`） | 已处置（诚实降级） |
+| — | **Step 3 的锚点是 `[data-prop="fontsize"]`**，选中的文字元素如果只有 `text` 字段（刻度标签那类）就没有这一行；教程里首选 title 不会撞到，但用户自己点了别的文字时 coachmark 会「等待 → 找不到 → 返回 / 跳过」 | 已处置（可恢复） |
+| — | **`e2e/ux-consistency.spec.ts` 流程 B 红**（`getByRole('switch', { name: '右边刻度线' })` 等到超时）：失败截图里刻度卡是 Session 16 之后的形态——「显示边」按 **X 刻度 / Y 刻度** 两个页签分开，右边那个开关在 Y 页签下，用例没先切页签。画面里没有 coachmark / 提示，与本轮无关；Session 16–20 都没跑过这条 spec。**本轮没修**（它守的是 16 的合同，改用例得对着 ADR 0035 核） | 23 前（或 16 的作者） |
+| — | **`e2e/ux-consistency.spec.ts` 流程 D 红**：`getByRole('button', { name: '项目与路径' })` 等到超时——Session 19 把设置分区改成十一个、这一区叫「项目」（`dialogs:settings.section.project`），用例里还是旧名。同样与本轮无关，19 当时只跑了 `settings-shell` / `coding-agents` 两条 spec | 23 前（或 19 的作者） |
+| — | **Session 21 的 e2e 只跑了 chromium**（webkit 只跑黄金路径三条，教程 spec 没进那份 testMatch） | 23 前 |
+
+
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |

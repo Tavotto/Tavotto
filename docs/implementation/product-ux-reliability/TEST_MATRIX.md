@@ -2152,3 +2152,108 @@ build 期间副本 PDF 一个字节不变）。
 * **前端只加一个类型字段也要重建两个受管产物**（指纹覆盖 `web/src/**`）。
 * **桌面 PyInstaller 产物里 `profiles/publication.json` 本来就不在**（datas 没收，Analysis 不收数据
   文件）——本轮顺手补上，但没有本机产物能证明，等 CI 桌面腿。
+
+## Session 21：交互式 Onboarding、真实完成条件与一次性情境提示
+
+### 新增用例（后端 0；前端 8 个文件 78 条；真浏览器 4 条）
+
+**`store/onboardingStore.test.ts`（12）**：start / pause(user|system) / resume / skip / complete / markStep 去重 /
+back 不撤完成 / resetOnboarding 与 resetHints 分开；持久化只写白名单字段；坏 blob / 非对象 / schema 不认
+→ 安全默认；逐字段校验保住能保住的；flowVersion 升级进行中回第一个未完成、已完成不打扰；persistence
+为 null 纯内存；宿主 adapter。
+
+**`lib/activity.test.ts`（5）**：`Record<ActivityKind, 样本>` 与 `ACTIVITY_KINDS` 一一对应（新增 kind 不加
+样本编译红）；每种样本的键都在 `ACTIVITY_PAYLOAD_KEYS` 里、`id / gid / name / path / text / value / stem`
+不在；emit → 订阅 → 退订；杂事件过滤；监听者抛错不冒回。
+
+**`store/selectionStore.test.ts`（3）**：set / add / toggle / clear 各发一次只带数量；没变不发；prune 不发。
+
+**`lib/onboarding/position.test.ts`（8）**：下 → 上 → 右 → 左 → 夹进视口；居中；offscreen；unionBoxes。
+
+**`lib/onboarding/flow.test.ts`（13，走生产 action）**：步骤表与 id 表对应；要编辑的是带 spec_issue 的 Fig2；
+welcome 手动且提前进入的图内编辑态在点「开始」后立刻识别；open_fast_edit 只认那张图；select_text 主选必须
+文字类 role（曲线 / figure 不算）；change_typography 要排版 override + 历史（非排版属性不算、只有信号没历史
+不算、消费后清零）；locate_problem 真 `focusObject` 成功且落在教程面板（失败不算）；「已解决」出口三条件；
+export_original 面板开着确认原图 **且关掉**；add_to_layout 在快速编辑里要按「加入画布」回版面、画布模式
+直接完成；multi_select_align 单张不算、两张教程图 + 对齐算；export_canvas 消费过的原图信号不算；done →
+complete；切项目系统暂停 / 切回自动继续 / 用户暂停不自动继续；换文档也算离开且教程外的信号（含导出范围）
+不累计。
+
+**`lib/onboarding/tutorial.test.ts`（10，stub fetch）**：open → 认领 → 教程画布用 `document_id` → 从头；有
+进度用进度；同一项目不再走认领且暂停的继续；完成后再开 = 从头且不 reset；失败按 code 分类（unavailable /
+locked / no_api / open_failed）；layout 404 → document_failed；GET 不到 → no_api；reset 先确认并列出另存
+画布、取消不发；确认后 POST → 忘掉本机那格（留一份合法但陈旧的画布反证）→ 干净画布 → 从头；409 locked
+进度不动。
+
+**`lib/onboarding/hints.test.ts`（8）**：每类一次 / 教程进行中不出 / 不叠 / 到时收起 / 重置后再出；触发：
+可编辑面板 / 仅排版面板 / 图内编辑态与快速编辑里的单选不算 / 多选 / 进快速编辑 / 第一次出现问题。
+
+**`components/onboarding/onboardingLayer.test.tsx`（6，jsdom + 假矩形）**：不在教程里不画；欢迎页居中、
+非模态、无遮罩、aria 关联、读屏区、「开始」是真动作；关闭键与 Esc = 暂停；锚点在 → 下方落位 + 高亮环 +
+进度 + 返回 / 跳过（跳过 = 前进）；锚点缺 → 等待 → 超时说找不到 → 返回真的回上一步；锚点在对话框里 →
+portal 进对话框 + 绝对定位；reduced motion 无过渡无进场动画。
+
+**既有用例改动**：`alignSelectedTo.test.ts` 两条只看排列三种 kind（总线上多了通用信号）；
+`objectContextMenu.test.tsx` 抓到 Hook 顺序随 `obj` 变（第一版把 `useEffect` 放在早退之后）。
+
+**`e2e/tutorial.spec.ts`（4，chromium，真后端 + 真 matplotlib）**：① 完整走完——素材卡双击 → 点高亮环
+中心选标题 → 字号框敲 12 → 「问题」抽屉点 p2 的 7 pt 那条 → 导出（coachmark 在面板里）确认原图 Esc →
+「添加到画布」 → Shift 点 p1（层先把它挪回工作区）→ 浮动栏顶对齐 → 导出确认画布 Esc → 「继续探索」→
+本机状态 completed；② 刷新回同一步、Tab 顺序返回→跳过→暂停、axe 无 critical/serious（`color-contrast`
+交给仓库尺子量 coachmark 与被环套着的卡片）、Esc 暂停后刷新不出现、「更多」菜单继续；③ 拖走第一张图 →
+⌘K「重新开始教程」→ 确认 → 图回原位（按页面相对位置判）、欢迎页、最近列表显示「教程项目」不显示数据
+目录路径；④ 从别的项目「更多」开始 → 切回原项目 coachmark 消失 → 切回教程自动继续。
+
+### 变异验证记录（Session 21）
+
+**流程**：`scratchpad/mutate21.py`——树不干净拒跑；每条变异 → 跑指定 vitest 文件 → 按**退出码**判 →
+`git checkout -- 文件` 还原。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 select_text 不看 role | 红 |
+| M2 change_typography 的与改成或 | 红 |
+| M3 problem.focused 不看 ok | 红 |
+| M4 完成时不消费信号 | 红（2 条） |
+| M5 export_original 不要求面板关掉 | 红 |
+| M6 inTutorial 不看 documentId | 红 |
+| M7 离开教程不暂停 | 红（2 条） |
+| M8 不在教程里也累计信号 | **存活** → 原用例发的两条信号（属性 / 历史）还有第二道守卫 `editingTutorialPanel()`，切走文档后 `ctx.edit` 为 null 本来就不累计——变异在那两条上不可观测。补「教程外开导出面板确认原图」（没有第二道守卫的那一类），复跑**红** |
+| M9 flowVersion 升级不回到未完成步骤 | 红 |
+| M10 markStep 不去重 | 红 |
+| M11 persistence 为 null 仍写 localStorage | 红（2 条） |
+| M12 提示不看 hintSeen | 红 |
+| M13 提示不看教程进行中 | 红 |
+| M14 落位永远放下方 | 红 |
+| M15 coachmark 上的 Esc 不暂停 | 红 |
+| M16 锚点在对话框里也 portal 到 body | 红 |
+| M17 已解决出口不看检查跑过没有 | 红 |
+| M18 open_fast_edit 不看是哪张图 | 红 |
+| M19 教程画布不用 document_id | 红（4 条） |
+| M20 重置不忘掉本机那格 | 红（反证前先把用例里的陈旧槽位换成**合法**画布——第一版塞的 `{"stale":true}` 不是文档，`readAutosaveDoc` 根本读不回来，变异照样绿） |
+| M21 同一项目再点入口也走认领 | 红 |
+| M22 对齐信号不看选区里有几张教程图 | 红 |
+| M23 activity payload 白名单放进 id | 红 |
+| M24 选区没变也发信号 | **存活** → 没人量过这一维。补 `selectionStore.test.ts`，复跑**红** |
+
+**24 条：22 红 + 2 存活各补用例后红。**
+
+### 实跑到的、不是假设的
+
+* **画布上双击面板走的是 `enterElementEdit`，不是 `openFastEdit`**（后者只在素材卡 / 交接 / 拖放）。
+  Step 1 的完成条件因此认状态不认那一个 action（T-110）。
+* **问题面板的图内问题从渲染后的 manifest 算**；两张图在画布上都会被显示渲染，所以两张图的问题都在——
+  第一版 e2e 点了 Fig1 的一条 `font-below-absolute-floor`（8.5 pt 刻度）就完成了 Step 4，教程接着在 Fig1
+  的快速编辑里说话。产品上「任一教程面板」都算是对的；e2e 改成点 p2 那条。
+* **`display:contents` 的锚点没有盒子**（TypographyControls 的行内 Anchor）：`boxOf()` 并集子节点。
+* **画布对象被平移到抽屉后面时 `getBoundingClientRect` 照样有值**：按窗口判 offscreen 是假的，得按
+  `[data-canvas-stage]` 的矩形判（T-114）。第一遍 e2e Step 7 就红在这里。
+* **coachmark 自己也是 `role=dialog`**：Playwright 的 `getByRole('dialog')` 会把它算进去，导出面板要按
+  `:not([data-onboarding-coachmark])` 找。
+* **写盘成功后本机 autosave 槽位会被删掉**（`scheduleDiskWrite` 的 then 分支）：拿 `localStorage` 里的
+  槽位当「文档内容」判据是假的，e2e 改成按页面相对位置量、单测改成留一份合法的陈旧画布。
+* **Radix 把 `data-onboarding-back` 这类布尔属性渲染成 `"true"`**，不是空串。
+* **axe 在高亮环下报的 `color-contrast` 落在 `ScriptLibrary` 的「高级详情」summary 上**（2.54:1，
+  `text-ink-faint`）——与教程无关的既有问题，记进 STATUS 遗留。
+* **assertion 前提错过三次**：back 的目标是上一步不是下一步；`fetchAutosave` 回的就是文档本身；
+  重置后那格槽位装的是**新的**干净画布不是空。
