@@ -1,0 +1,19 @@
+{
+  "_comment": "stem（产物文件名主干）↔ 产出它的脚本。教程项目随 Tavotto 安装包分发，这份副本可以随便改：「重新开始教程」会恢复原样。",
+  "scripts": {
+    "fig1_kinetics.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "Fig1_kinetics"
+      ]
+    },
+    "fig2_correlation.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": [
+        "Fig2_correlation"
+      ]
+    }
+  }
+}

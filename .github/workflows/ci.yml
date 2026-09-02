@@ -604,6 +604,13 @@ jobs:
           assert pool.WORKER_PY.is_file(), 'wheel 里没有 worker.py'
           print('worker ok')
           "
+          "$BIN/python" -c "
+          from tavotto.engine import tutorial
+          problems = tutorial.validate_tutorial_resources()
+          assert not problems, 'wheel 里的教程资源不完整: ' + '; '.join(problems)
+          assert 'site-packages' in str(tutorial.resource_root()), tutorial.resource_root()
+          print('tutorial ok', tutorial.resource_root())
+          "
       - name: 起服务并请求首页
         shell: bash
         env:
@@ -798,7 +805,8 @@ jobs:
             --figures examples/runtime_check `
             --expect-source bundled --expect-runtime `
             --expect-control-plane workerd `
-            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib `
+            --tutorial
 
       - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
         # 用户名带中文、项目路径带空格是国内最常见的组合，也是历来最容易
@@ -1011,7 +1019,8 @@ jobs:
             --figures examples/runtime_check \
             --expect-source bundled --expect-runtime \
             --expect-control-plane workerd \
-            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib \
+            --tutorial
 
       - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
         # 项目路径与**用户数据目录**都放到中文+空格路径下——两者的失败方式不同

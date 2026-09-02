@@ -43,6 +43,8 @@ _SOURCE_FILES = (
     "engine/profilestore.py",
     "engine/exportreq.py",
     "engine/exportjob.py",
+    # 离线教程（ADR 0039）：`TutorialError("<code>")` 由 app._tutorial_error 转成 JSON
+    "engine/tutorial.py",
 )
 
 #: 「自己报得出全部 code」的模块（ADR 0031 的导出管线）。
@@ -83,6 +85,7 @@ _CODE_PATTERNS = (
     r'ExportRequestError\(\s*"([a-z0-9_]+)"',
     r'error_code\s*=\s*"([a-z0-9_]+)"',
     r'_fail\(\s*job,\s*"([a-z0-9_]+)"',
+    r'TutorialError\(\s*"([a-z0-9_]+)"',
 )
 
 
@@ -227,6 +230,12 @@ USER_VISIBLE_CODES = {
     "report_write_failed": {"error"},
     "report_missing_payload": set(),
     "source_missing": {"figure"},
+    # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
+    #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
+    "tutorial_resources_missing": {"reason"},
+    "tutorial_resources_invalid": {"reason"},
+    "tutorial_copy_failed": {"reason"},
+    "tutorial_locked": {"reason"},
 }
 
 pytestmark = pytest.mark.skipif(
@@ -286,6 +295,7 @@ def test_error_field_is_still_there_as_the_fallback():
                     "AtomicWriteError",
                     "ProfileStoreError",
                     "ExportRequestError",
+                    "TutorialError",
                 )
             )
             # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗

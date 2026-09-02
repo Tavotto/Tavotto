@@ -360,6 +360,8 @@ export interface ProjectStatus {
   /** 打开动作附带：注册表是静态扫描草稿 / stem 归属冲突列表 */
   drafted?: boolean
   conflicts?: string[]
+  /** 这是数据目录里的离线教程副本（ADR 0039）；「重新开始教程」只对它可用 */
+  tutorial?: boolean
 }
 
 export interface RecentProject {
@@ -371,6 +373,8 @@ export interface RecentProject {
   id?: string | null
   opened?: boolean
   current: boolean
+  /** 教程副本进最近列表但带标记（T-104）：列表显示「教程」而不是数据目录里的路径 */
+  tutorial?: boolean
 }
 
 export const fetchProject = () => jsonFetch<ProjectStatus>('/api/project')

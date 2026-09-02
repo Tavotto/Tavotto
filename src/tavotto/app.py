@@ -84,6 +84,7 @@ from .engine import (
     runtimeasset as engine_runtimeasset,
     session_client as engine_session_client,
     telemetry as engine_telemetry,
+    tutorial as engine_tutorial,
     updater as engine_updater,
 )
 
@@ -1636,6 +1637,9 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         "settings": engine_config.project_settings(str(p)),
         "export_dir": str(project_export_dir(ctx)),
         "backup_dir": str(project_backup_dir(ctx)),
+        # 教程项目的标记（ADR 0039）：它走的是与普通项目同一条打开路径，
+        # 界面上「重新开始教程」「教程角标」只认这一个字段，不自己比路径。
+        "tutorial": engine_tutorial.is_tutorial_path(p),
     }
 
 
@@ -2140,6 +2144,9 @@ def api_projects_recent():
                 "id": open_paths.get(str(p)),
                 "opened": str(p) in open_paths,
                 "current": current is not None and p == current.path,
+                # 教程副本进最近列表但带标记（T-104）：列表只显示「教程」，
+                # 不把数据目录里的路径当成用户自己的项目路径来展示。
+                "tutorial": engine_tutorial.is_tutorial_path(p),
             }
         )
     resp = jsonify({"recent": entries})
@@ -2190,6 +2197,130 @@ def api_projects_remove():
     """从最近列表移除；绝不删除磁盘内容。"""
     body = request.get_json(force=True)
     return jsonify({"ok": engine_config.remove_recent(str(body.get("path") or ""))})
+
+
+# ------------------------- 离线教程项目（ADR 0039） ---------------------------
+# 三个端点都不执行脚本、不 probe：复制文件 + `open_project()`（只读注册表）。
+# 认证与别的端点一样走 security 钩子；客户端**不能**指定目的地——副本永远在
+# `engine/tutorial.tutorial_destination()`。
+
+
+def _tutorial_error(exc: engine_tutorial.TutorialError):
+    status = 409 if exc.code == "tutorial_locked" else 500
+    return jsonify(
+        {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
+    ), status
+
+
+def _tutorial_ctx() -> "ProjectCtx | None":
+    """进程里打开着的那个教程项目（教程一次只有一份副本在用）。"""
+    with _PROJECT_LOCK:
+        for ctx in PROJECTS.values():
+            if engine_tutorial.is_tutorial_path(ctx.path):
+                return ctx
+    return None
+
+
+@app.get("/api/tutorial")
+def api_tutorial():
+    """教程资源可不可用、副本在不在。**不回包内路径**。"""
+    problems = engine_tutorial.validate_tutorial_resources()
+    body: dict = {"available": not problems, "problems": problems}
+    if not problems:
+        meta = engine_tutorial.tutorial_metadata()
+        ctx = _tutorial_ctx()
+        body.update(
+            tutorial_version=meta["tutorial_version"],
+            metadata=meta,
+            copy=engine_tutorial.copy_status(meta),
+            project={"open": ctx is not None, "id": ctx.id if ctx else None},
+        )
+    resp = jsonify(body)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/tutorial/open")
+def api_tutorial_open():
+    """确保可写副本（缺文件就补）→ 走普通 `open_project()` → 回状态 + 元数据。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        tp = engine_tutorial.ensure_tutorial_copy()
+        status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
+    except (RuntimeError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify(
+        {
+            "project": status,
+            "tutorial": tp.metadata,
+            "reset": False,
+            "created": tp.created,
+            "repaired": tp.repaired,
+        }
+    )
+
+
+def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
+    """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
+
+    * 教程画布的自动保存槽位（`document_id` 是元数据里定死的）；
+    * 教程项目的写回基线 `baked_overrides/<项目 id>.json`——副本换成了原始 PDF，
+      旧基线描述的是已经不存在的写回结果。
+    项目内的 `tavottofile/`（画布、导出、版本历史）随目录整个换掉。
+    全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
+    """
+    removed: list[str] = []
+    for target in (_autosave_path(str(meta["document_id"])), BAKED_DIR / f"{pid}.json"):
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
+            continue
+        removed.append(target.name)
+    return removed
+
+
+@app.post("/api/tutorial/reset")
+def api_tutorial_reset():
+    """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        meta = engine_tutorial.tutorial_metadata()
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
+    ctx = _tutorial_ctx()
+    was_default = ctx is not None and ctx.id == DEFAULT_PROJECT
+    if ctx is not None:
+        # `wait=True`：worker 子进程必须真的退出并释放文件，Windows 上
+        # 否则下一步 rename 会撞上占用。
+        close_project(ctx.id, wait=True)
+    try:
+        tp = engine_tutorial.ensure_tutorial_copy(reset=True)
+    except engine_tutorial.TutorialError as exc:
+        # 副本换不掉时旧副本仍在（tutorial 模块保证），把项目重新打开还给用户
+        if ctx is not None and ctx.path.is_dir():
+            try:
+                open_project(str(ctx.path), make_default=was_default)
+            except (RuntimeError, OSError):
+                pass
+        return _tutorial_error(exc)
+    pid = _project_id(tp.path)
+    cleared = _clear_tutorial_local_state(pid, meta)
+    try:
+        status = open_project(
+            str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))
+        )
+    except (RuntimeError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify({"project": status, "tutorial": tp.metadata, "reset": True, "cleared": cleared})
 
 
 @app.post("/api/project/refresh")

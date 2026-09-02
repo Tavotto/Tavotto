@@ -315,6 +315,45 @@ def _check_environment(
         print("✓ 内置科学栈: " + "  ".join(f"{n}={imports[n]}" for n in expect_packages))
 
 
+def _check_tutorial(base: str) -> None:
+    """离线教程项目（ADR 0039）在**这份产物、这套渲染环境**上真的能用。
+
+    三件事各问一次：资源在包里（`GET /api/tutorial`）、副本复制 + 打开不跑脚本
+    （`POST /api/tutorial/open`）、两张教程图在当前渲染环境里都画得出来
+    （`/api/engine/render`——这是唯一会执行教程脚本的地方，由冒烟显式触发）。
+    最后 reset 一次，验证「重新开始教程」在真进程里走得通。
+    `default=False`：冒烟的主项目仍是默认项目，别的断言不受影响。
+    """
+    info = _get(f"{base}/api/tutorial", timeout=30)
+    if not info.get("available"):
+        raise SmokeError(f"教程资源不可用: {info.get('problems')}")
+    opened = _post(f"{base}/api/tutorial/open", {"default": False}, timeout=60)
+    pj = opened["project"]["id"]
+    if not opened["project"].get("tutorial"):
+        raise SmokeError(f"教程项目没被标成 tutorial: {opened['project']}")
+    meta = opened["tutorial"]
+    print(f"✓ 教程项目已打开（v{meta['tutorial_version']}，{len(meta['panels'])} 张图）")
+    for panel in meta["panels"]:
+        t0 = time.time()
+        res = _post(
+            f"{base}/api/engine/render?pj={pj}",
+            {"id": panel["file"], "patches": []},
+            timeout=RENDER_TIMEOUT_S,
+        )
+        roles = {el.get("role") for el in (res.get("manifest") or {}).get("elements", [])}
+        missing = set(panel.get("editable_roles") or []) - roles
+        if missing:
+            raise SmokeError(f"教程图 {panel['file']} 渲染出来缺少可编辑角色 {sorted(missing)}")
+        print(f"✓ 教程图 {panel['file']}：{len(roles)} 种元素（{time.time() - t0:.1f}s）")
+    reset = _post(f"{base}/api/tutorial/reset", {"default": False}, timeout=60)
+    if not reset.get("reset") or reset["project"]["id"] != pj:
+        raise SmokeError(f"教程重置没有回到同一份副本: {reset}")
+    after = _get(f"{base}/api/tutorial", timeout=30)
+    if not after.get("copy", {}).get("complete"):
+        raise SmokeError(f"重置之后副本不完整: {after.get('copy')}")
+    print("✓ 教程重置：干净副本已重新打开")
+
+
 def _check_control_plane(base: str, expect: str | None) -> None:
     """渲染控制面自检：**在渲染之后**问，那时池里才有真会话。
 
@@ -348,6 +387,7 @@ def run_smoke(
     expect_packages: list[str] | None = None,
     expect_control_plane: str | None = None,
     expect_runtime: bool = False,
+    expect_tutorial: bool = False,
 ) -> None:
     port = port or _free_port()
     base = f"http://127.0.0.1:{port}"
@@ -520,6 +560,9 @@ def run_smoke(
             raise SmokeError("第二次导出没有产出文件")
         print(f"✓ 覆盖导出 {second.name}")
 
+        if expect_tutorial:
+            _check_tutorial(base)
+
         diag = _get(f"{base}/api/diagnostics")["checks"]
         bad = [c for c in diag if not c["ok"]]
         print(f"✓ 诊断 {len(diag)} 项，其中未通过 {len(bad)}: {[c['id'] for c in bad]}")
@@ -620,6 +663,11 @@ def main(argv: list[str] | None = None) -> int:
         "（该带内置 runtime 的形态，且带的这份完整可用）",
     )
     ap.add_argument(
+        "--tutorial",
+        action="store_true",
+        help="打开、渲染并重置离线教程项目（教程脚本在这套渲染环境上真跑一遍）",
+    )
+    ap.add_argument(
         "--workdir",
         default=None,
         help="隔离用户目录的落点（默认系统临时目录）。指到中文/带空格的路径可覆盖那一档回归",
@@ -655,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
             packages,
             args.expect_control_plane,
             args.expect_runtime,
+            args.tutorial,
         )
     except Exception as exc:  # noqa: BLE001 — 冒烟脚本要给人看结论
         print(f"::error::冒烟失败: {exc}", file=sys.stderr)
