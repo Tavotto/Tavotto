@@ -587,6 +587,7 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
 | 诊断 | `engine/diagnostics.py`、`diagnostics_frontend.py`（`docs/adr/0016`），`web/src/diagnostics/` |
 | **离线教程项目（`← 20`，ADR 0039）** | 资源 `src/tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`）；副本 `<data_dir>/tutorial/v<版本>-<指纹>/Tutorial/`（`ensure_tutorial_copy`）；`GET /api/tutorial`、`POST /api/tutorial/open|reset`；`project_status().tutorial` / recent 的 `tutorial` 标记。见 §8b |
 | **onboarding UI（`← 21`，ADR 0040）** | `lib/activity.ts`（18 种 kind 闭集的本地信号）；`store/onboardingStore.ts`（本机状态机）；`lib/onboarding/{stepIds,steps,flow,tutorial,hints,position}.ts`；`components/onboarding/{OnboardingLayer,Coachmark,HintToast}.tsx`；入口 ProjectPicker / TopBar 更多 / CommandPalette / GeneralSettings。见 §8c |
+| **Codex / AI 显式刷新与遥测整合（`← 22`，ADR 0041）** | MCP `tavotto_refresh_project`（`codex-plugin/mcp/tavotto_mcp/bridge.refresh_project`：委托运行中的 Tavotto 或本进程调同一份 `refresh_project_index`）；AI `ai_bridge.run(on_changed)` → `app._after_ai_change`（作废 → 刷新 → `panel.file_changed reason=ai`）+ `project_watch.absorb`；遥测九条（`telemetry.EVENTS` v2 + 代理表）；前端 `lib/activityTelemetry.ts`、`projectReadinessStore.openCenter({source})`、`CommandPalette` 三条新命令。见 §8d |
 
 ### 8b. 离线教程项目（`← 20`，ADR 0039）
 
@@ -636,6 +637,31 @@ OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合
   `GET /api/layouts/<document_name>` → `switchDocument(doc, document_id)` → onboarding start / resume；
   `resetTutorial()` = 确认 → `POST /api/tutorial/reset` → `forgetLocalDocument(document_id)` → 同上。
 * 一次性提示：`lib/onboarding/hints.ts` 订阅同一条信号 + `validationStore`，`HintToast` 显示。
+
+### 8d. Codex / 内置 AI 的显式刷新与遥测整合（`← 22`，ADR 0041）
+
+```text
+Codex 改 .py ──▶ tavotto_refresh_project ──┬─ 127.0.0.1:5089 可达 ─▶ /api/projects/open(default=false)
+                                          │                         → /api/project/refresh?pj= reason=codex
+                                          │                         → /api/project/readiness      (delivered=app，前端收 SSE)
+                                          └─ 不可达 ──────────────▶ 本进程 refresh_project_index(reason=codex) + readiness.compute
+                                                                                                  (delivered=local，下次打开生效)
+内置 AI 改 .py ─▶ ai_bridge pump: changed=true ─▶ on_changed ─▶ app._after_ai_change
+                     │                              engine_watch.absorb([script]) ─┬─ fresh ─▶ pool.invalidate → refresh(ai) → panel.file_changed(reason=ai)
+                     │                                                            └─ 已消化 ─▶ 只 refresh(ai)（无差异零事件）
+                     └─▶ ai.done{changed, refresh:{status,...}} ─▶ 前端：不 markStale；failed 单独提示
+watcher ─▶ 同一次写入：签名已被 absorb 记下 → 不再刷新 / 不再发事件；用户再改一次 → 照常
+```
+
+* **刷新只有一个漏斗**：`app.refresh_project()`。四个用户可见来由（manual / watcher / codex / ai）
+  都从这里出去，`project_refresh_completed` 也只在这里记（表的枚举是唯一白名单）。
+* **前端消费不变**：`registry.changed` / `assets.changed` / `panel.file_changed` 走 Session 06 的同一条
+  `liveSync`；本轮只加了 `panel.file_changed.reason` 与 `ai.done.refresh` 两个可选字段。
+* **活动 → 遥测**只有 `lib/activityTelemetry.ts` 一条（浮动栏三种 kind + 来源作用域）；其余遥测
+  各在自己的成功边界（保存 / 恢复 / 教程 / 接入中心 / 包操作）。
+* **入口**：命令面板 `refresh-project` / `readiness` / `hints-reset` + 既有 `tutorial-*` / `shortcut-help`；
+  顶栏「更多」加同两条；三处共用 `liveSync.refreshProjectNow` / `projectReadinessStore.openCenter` /
+  `lib/onboarding/tutorial`。
 
 ## 9. 打包
 

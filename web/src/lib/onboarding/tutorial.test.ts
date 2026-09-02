@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TutorialMetadata } from '@/lib/api'
+import { setTelemetryEnabled } from '@/lib/telemetry'
 import { useDocumentStore } from '@/store/documentStore'
 import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -62,7 +63,7 @@ const LAYOUT = {
 
 const PROJECT = { open: true, id: 'p_tut', name: 'Tutorial', figures_dir: '/data/tutorial/Tutorial', tutorial: true }
 
-let calls: { url: string; method: string }[]
+let calls: { url: string; method: string; body?: string }[]
 let responses: Record<string, () => Response>
 
 const json = (body: unknown, status = 200) =>
@@ -81,7 +82,7 @@ function stubFetch(over: Record<string, () => Response> = {}) {
   calls = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://x').pathname
-    calls.push({ url, method: init?.method ?? 'GET' })
+    calls.push({ url, method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : undefined })
     const hit = responses[url]
     if (hit) return hit()
     return json({}, 200)
@@ -105,6 +106,51 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  setTelemetryEnabled(false)
+})
+
+describe('tutorial_started 遥测（ADR 0041）', () => {
+  // 教程打开会顺手写盘（document_saved 是另一条事件）：这里只看 tutorial_started
+  const telemetryPosts = () =>
+    calls
+      .filter((c) => c.url === '/api/telemetry/event')
+      .map((c) => JSON.parse(c.body ?? '{}') as { event: string })
+      .filter((p) => p.event === 'tutorial_started')
+
+  it('真的开始了才记一条：来源 + 流程版本，没有项目 / 文档 id', async () => {
+    setTelemetryEnabled(true)
+    const out = await startTutorial('picker')
+    expect(out).toMatchObject({ ok: true, kind: 'started' })
+    const posts = telemetryPosts()
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toMatchObject({
+      event: 'tutorial_started',
+      properties: { source: 'picker', tutorial_version: 1 },
+    })
+    expect(JSON.stringify(posts[0])).not.toContain('p_tut')
+    expect(JSON.stringify(posts[0])).not.toContain('tavotto-tutorial')
+  })
+
+  it('继续不是开始：暂停后再进入口不记', async () => {
+    setTelemetryEnabled(true)
+    await startTutorial('help')
+    useOnboardingStore.getState().pause('user')
+    calls = []
+    const out = await startTutorial('help')
+    expect(out).toMatchObject({ ok: true, kind: 'resumed' })
+    expect(telemetryPosts()).toEqual([])
+  })
+
+  it('入口没说来源就不记（重置那条路 / 测试）；没同意也不记', async () => {
+    setTelemetryEnabled(true)
+    await startTutorial()
+    expect(telemetryPosts()).toEqual([])
+    setTelemetryEnabled(false)
+    useOnboardingStore.getState().resetOnboarding()
+    calls = []
+    await startTutorial('settings')
+    expect(telemetryPosts()).toEqual([])
+  })
 })
 
 describe('startTutorial', () => {

@@ -5,7 +5,184 @@
 
 ---
 
-## 最近一次：Session 21（2026-09-02）
+## 最近一次：Session 22（2026-09-02）
+
+### 目标
+
+Prompt 22：不新增大功能，把 Codex、内置 AI、命令面板、遥测、隐私文档与中英文资源接到**同一套契约**上：
+Codex 改完脚本有显式的刷新工具；内置 AI 改完文件在 `ai.done` 之前走统一刷新；watcher / Codex / AI /
+手动四条路一次修改只形成一份实质更新；同意后只发闭集枚举的粗粒度事件；隐私与事件文档只写代码能兑现的话。
+
+### 开始前实测到的六件事
+
+1. **MCP server 与 Tavotto 是两个进程**（`codex-plugin/mcp/tavotto_mcp/` 直接 import `tavotto.engine`，不是
+   Flask 的客户端）：「Codex 刷新 → SSE → 前端」必须经运行中的 Tavotto；`engine/handoff._remote_probe`
+   早就有一条带本机凭据（`session_client.auth_headers`）调 `127.0.0.1:5089` 的路，复用它。
+2. **桌面版 sidecar 的端口与凭据不落盘**（Tauri 壳经 stdin 交接，`session_client` 的文档写明）——
+   桌面用户这条路永远探不到实例，只能诚实降级为本地刷新 + watcher 兜底。
+3. **`ai.done` 只做 `markStale`**，watcher 随后又 `panel.file_changed` 再 `markStale` 一次：同一次修改两次重建、
+   两条提示；后端的注册表要等 watcher。`ai_bridge.run` 没有任何刷新钩子。
+4. **静态发现只登记看得见 stem 的脚本**：`def main(): pass` 不会进注册表——用例里的「新脚本」必须
+   `fig.savefig('X.pdf')`，否则 diff 为空、遥测桶是 `none`（第一遍三条用例因此假红）。
+5. **`pnpm i18n:extract` 会往四个命名空间塞空键、拆复数基键**，紧接着 `i18n:check` 就红——`docs/i18n.md`
+   §217 早有记录，它不是门禁；跑一次看漏 key 即可，产物 `git checkout` 掉。
+6. **遥测 `EVENTS` 表的枚举本身就是白名单**：app 层再比一遍来由是同一条保证的第二份实现，变异任何一份
+   都杀不死（反证 M6 存活）；`check_scope` 在 `resolve_target` 前后各一次同理（M13），但前者有独立理由——
+   越界的不存在路径不许回 `not_found`。
+
+### 实际完成
+
+**1. MCP `tavotto_refresh_project`（`bridge.refresh_project`，ADR 0041 §1）。** 输入 `session_id?` /
+`project_path?` / `reason?`（只认 `codex`）。项目只来自授权：会话 → 已授权路径（`check_scope → resolve_target
+→ check_scope`）→ 唯一有会话的项目；零个 `no_project`、多个 `ambiguous_project`。先探 `/api/version`：可达
+→ `open(default=false)` → `refresh?pj= reason=codex` → `readiness`（`delivered=app`）；不可达 → 本进程调同一份
+`refresh_project_index` + `readiness.compute`（`delivered=local`，`_REFRESH_CTX` 按项目缓存、首轮如实
+`baseline: true`）；可达但失败原样带回 code。结果无绝对路径（`project_id` 与 `app._project_id` 同一把尺）。
+`server._tools()` 第七个工具（描述写清不运行脚本 / needs_probe 别猜 / conflict 别裁决 / 不用手动刷新）；
+`initialize.instructions` 与降级 server 的 `NORMAL_TOOLS`、`_BRIDGE_IMPORT` 同步；`handoff.http_json_status`
+公开别名。
+
+**2. 内置 AI（ADR 0041 §2–3）。** `ai_bridge.run(..., on_changed)`；pump 在算出 `changed` 之后、发 `ai.done`
+之前调 `refresh_outcome()`（`ok | failed | skipped | not_wired`，不看 status），结局进 `ai.done.refresh` 与
+`ai_history` 新列 `refresh`（`_migrate` 用 `ALTER TABLE` 补列）。app 层 `_after_ai_change(ctx, script)`：
+`PROJECTS` 里没它 → `project_closed`；`engine_watch.absorb([script])` 先问 watcher；吸收了 → `pool.invalidate` →
+`refresh_project(reason="ai")` → `panel.file_changed(reason="ai")`；watcher 已先结算 → 只再刷新一次；没有
+watcher → 全做。`ProjectWatcher.absorb()`（新 `_lock`，`poll()` 与它互斥）按签名记「已消化」并从 pending 摘掉。
+`api_ai_run` 用同一个 `ctx` 给 run 与刷新。
+
+**3. 遥测（ADR 0041 §4）。** `telemetry.EVENTS` / 代理 `contract.py` 各加九条：`project_refresh_completed`
+（服务端 `app.refresh_project` 成功之后，唯一漏斗）、`project_readiness_opened`、`tutorial_started`、
+`tutorial_step_completed`、`tutorial_completed`、`context_bar_multi_used`、`document_saved`、`recovery_action`、
+`package_action`（服务端 `api_packages_run` 的 on_event，终态才记，**无包名**）。`CONSENT_VERSION = 2`。
+前端：`lib/telemetry.ts` 加 `selectionSizeBucket` / `readinessStatusBucket`；新 `lib/activityTelemetry.ts`
+（`fromContextBar()` 作用域 + 三种 kind 映射 + `captureContextBarMore`，`App.tsx` 里 `startActivityTelemetry()`）；
+`projectReadinessStore.openCenter({ source })` / `focusPanel(id, source)` 报告到了才记；`tutorial.ts`
+`startTutorial(source)` / `runTutorialEntry(source)` 只在 started / restarted 记；`flow.completeStep(id, via)`
+跳过不记、走完另记；`documentStore` 的 `manualSavePending` 标志 + `captureSaveOutcome` + 恢复两处。
+
+**4. 入口（ADR 0041 §5）。** `CommandPalette` 新增 `refresh-project` / `readiness`（选中面板就聚焦到它）/
+`hints-reset`，项目命令按 `projectStore.phase === 'open'` 出现；`TopBar` 更多菜单加「刷新项目」「项目接入状态」；
+八处接入中心入口带来源（banner / panel / quickedit / palette）；四处教程入口带来源（picker / help / settings /
+palette）。`useServerEvents`：`ai.done` 不再 `markStale`，`refresh.status === 'failed'` 单独提示
+（`ai:status.aiChangedRefreshFailed`，错误码经 `errors:backend.*`）；`panel.file_changed.reason === 'ai'`
+不弹「脚本已更新」。`lib/api.ts` 加 `AiRefreshOutcome` 与两个可选字段。
+
+**5. 文案与文档。** 主文案「可参数化面板」→「可编辑的图（有源脚本的面板）」，注册表对话框「已登记的源脚本」
+（zh / en 各 10 处）；同意书 `sendsBefore` 列出新类别；`errors:backend.project_closed`；`palette.commands.*`
+三条；`topbar.refreshProject / readiness`。文档：ADR 0041、`docs/privacy.md`（本地分析一节 + consent v2 +
+禁发清单扩展）、`docs/analytics/telemetry-events.md`（九行 + 三段边界说明）、`README.md` / `README.zh-CN.md`
+（Codex 刷新一段、遥测一段、助手一段）、`codex-plugin/README.md`（「改了脚本之后」一节）、SKILL.md
+（七步收尾流程 + 工具顺序一条）、`references/desktop-handoff.md` / `compatibility.md`（「重开会话」→ 先刷新）、
+三份 AGENTS.md（web / src/tavotto / codex-plugin）。
+
+### 关键 API（Prompt 23 直接用）
+
+```py
+# codex-plugin/mcp/tavotto_mcp/bridge.py
+refresh_project(*, session_id=None, project_path=None, port=None, http_status=None) -> dict
+resolve_refresh_project(...) / project_id(project) / DELIVERED_APP / DELIVERED_LOCAL / REFRESH_REASON / _REFRESH_CTX
+# src/tavotto/engine/ai_bridge.py
+run(..., on_changed=None) ; refresh_outcome(on_changed, script, changed) ; REFRESH_OK/FAILED/SKIPPED/NOT_WIRED
+# src/tavotto/engine/project_watch.py
+ProjectWatcher.absorb(rel_paths) -> list[str] ; absorb(figures_dir, rel_paths) -> list[str] | None
+# src/tavotto/app.py
+_after_ai_change(ctx, script) ; _script_change_handler(ctx, reason="watcher"|"ai") ; _refresh_changed_bucket(result)
+_capture_refresh_completed(result) ; _capture_package_action(op, progress)
+# src/tavotto/engine/ai_history.py   record_end(..., refresh=None) ; 行里多 refresh: dict | None
+```
+
+```ts
+// web/src/lib/telemetry.ts        selectionSizeBucket(n) / readinessStatusBucket(summary)
+// web/src/lib/activityTelemetry.ts fromContextBar(fn) / captureContextBarMore(n) / activityToTelemetry(detail, fromBar) / startActivityTelemetry()
+// web/src/store/projectReadinessStore.ts  openCenter({ focus?, source? }) / focusPanel(id, source?) / ReadinessOpenSource
+// web/src/lib/onboarding/tutorial.ts       startTutorial(source?) / runTutorialEntry(source) / TutorialEntrySource
+// web/src/lib/onboarding/flow.ts           completeStep(id, via: 'done' | 'skipped' = 'done')
+// web/src/lib/api.ts                        AiRefreshOutcome ; panel.file_changed.reason ; ai.done.refresh
+// 命令 id                                    refresh-project / readiness / hints-reset（+ 既有 tutorial-* / shortcut-help）
+```
+
+### 迁移
+
+- `ai_history.sqlite3` 多一列 `refresh TEXT`（`_migrate` 按 `PRAGMA table_info` 补，老行为 NULL → 读成 None）。
+- `CONSENT_VERSION` 1 → 2：已同意的安装升级后 `needs_reconsent`，重新问一次，`install_id` 不换。
+- SSE `panel.file_changed` 多可选 `reason`；`ai.done` 多可选 `refresh`——老前端忽略即可。
+- MCP `tools/list` 多一项；`NORMAL_TOOLS` 七个。没有磁盘格式改动。
+
+### 修改的文件
+
+```text
+新增  codex-plugin/mcp/tavotto_mcp/bridge.py（§刷新 ~230 行）  tests/test_ai_refresh.py（18）  tests/test_telemetry_integrations.py（12）
+新增  web/src/lib/activityTelemetry.ts（+ .test 13）  web/src/components/CommandPalette.test.tsx（7）  web/src/lib/onboarding/flowTelemetry.test.ts（5）
+新增  docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md
+改动  src/tavotto/app.py（_after_ai_change / 刷新遥测 / 包遥测 / api_ai_run）  engine/{ai_bridge,ai_history,project_watch,telemetry,handoff}.py
+改动  codex-plugin/mcp/tavotto_mcp/server.py  codex-plugin/mcp/server.py  services/telemetry_proxy/.../contract.py
+改动  web/src/{App.tsx,lib/telemetry.ts,lib/api.ts,hooks/useServerEvents.ts}  store/{projectReadinessStore,documentStore}.ts
+改动  web/src/lib/onboarding/{tutorial,flow}.ts  components/{CommandPalette,TopBar,ProjectPicker,ProjectReadinessBanner}.tsx
+改动  canvas/{FastEditBar,ObjectContextMenu}.tsx  canvas/context-bar/{MultiSelectionBar,SingleObjectBar}.tsx
+改动  components/{inspector/PanelSection,left/AssetBrowser,left/ProblemPanel,left/LeftRail,settings/GeneralSettings}.tsx
+改动  web/src/i18n/locales/{zh-CN,en-US}/{dialogs,workspace,ai,errors}.json + resources.d.ts
+改动  tests/{test_mcp_server（+16）,test_mcp_resolver（+1）,test_telemetry_proxy,test_error_codes}.py
+改动  web/src/{hooks/useServerEvents,store/projectReadinessStore,store/documentStore,lib/onboarding/tutorial}.test.ts  canvas/context-bar/multiSelectionBar.test.tsx
+改动  docs/{privacy,analytics/telemetry-events}.md  README.md  README.zh-CN.md  codex-plugin/README.md  codex-plugin/skills/tavotto-figure/{SKILL,references/desktop-handoff,references/compatibility}.md
+改动  AGENTS.md ×3（web / src/tavotto / codex-plugin）  docs/implementation/product-ux-reliability/*
+重建  codex-plugin/mcp/widget/canvas.html（指纹 317e8e756cd08a1a）  web/dist-playground/（ce546102484da66b，不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **后台 `pnpm test` 记住了上一条命令的 cwd**（worktree 根，没有 package.json）——第一遍全量假红。
+2. **变异反证的用例要点名**：M3 第一次存活是因为新补的用例没进它的用例表，不是判据弱。
+3. **jsdom 没有 `scrollIntoView`**；React 受控输入要用原生 setter 再派发 `input`，直接赋 `value` 被当成没变。
+4. **`ai.done` 的用例里 `panel.file_changed` 会顺手 `refreshAssetsAndSync`**：`fetchPanels` 没给 resolved 值
+   就是一条 unhandled rejection，全量绿但 exit 1。
+5. **遥测的 grep 假摘要**：pytest 的 summary 行被这里的配置吞掉，判绿只能看退出码。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 22 之后」。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13–22 十轮都在这条分支上，**尚未推送、没有 PR**）；本轮提交
+  `2f4ed1bc`（实现 + 测试 + 文档）+ 反证后处置 + 留档
+- author 用 `88193520+erwanjun@users.noreply.github.com`，提交时 `git -c user.email=…`
+
+---
+
+## 下一阶段入口（Prompt 23：全量 QA、性能、无障碍、打包、发布门禁）
+
+**从这里开始读**：`docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`（本轮）、`UX_CONTRACTS.md` 7b、
+`ARCHITECTURE.md` §8d、`STATUS.md` 遗留表（含 21 之后没关的 e2e 两条红）。
+
+**Session 22 留给 23 的**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 刷新的唯一漏斗 | `app.refresh_project()` | 性能 / 竞态审计从这里量：四条来由一处计数 |
+| 变异脚本 | `scratchpad/mutate_backend.py` / `mutate_frontend.py`（本轮会话目录，不进仓库） | 改判据前先跑一遍，`TEST_MATRIX.md` 记了每条变异点 |
+| e2e 缺口 | `ux-consistency.spec.ts` 流程 B / D 既有红；命令面板 / 接入中心 / 多选栏没有真浏览器用例 | 23 的 QA 范围 |
+| 网站 /try | `web/dist-playground/` 已重建但未同步到网站仓库 | 发布前 `pnpm sync-playground` |
+
+**绝不要做的事**（07 的六条 … 21 的三条原样成立，22 再加四条）：
+
+60. **不许在前端 `ai.done` 里再 `markStale`**：stale 只由 `panel.file_changed` 置一次；也不许 watcher 之外再造
+    第二套「文件变了」的判据。
+61. **不许把遥测的白名单在 app / 前端再比一遍**：表是唯一权威，同一条保证写两遍谁都杀不死。
+62. **不许让 `tavotto_refresh_project` 接受模型给的自由路径而不 `check_scope`**，也不许在可达失败时退回本地重试。
+63. **不许给 `package_action` / 任何事件加能承载用户内容的字段**（包名、路径、id）；新字段先进两侧表再谈捕获。
+
+**必须保留的不变式**（在 21 的五十五条之上）：
+
+56. **AI 改完文件，`ai.done` 到达时后端注册表已经是新的**（刷新在它之前做完；`test_changed_true_refreshes_before_ai_done`）。
+57. **同一次写入 watcher 与 AI 路径只结算一次**（`absorb` 按签名；pending 里的也算没消化）。
+58. **刷新失败与代码改动分开记**：`changed: true` + `refresh.status: failed` 两件事都说。
+59. **`project_refresh_completed` 只在 `app.refresh_project` 成功之后记、只收四个来由**（表的枚举）。
+60. **活动 → 遥测只有浮动栏那一条映射**，其余 kind 逐种反证为不映射；方向单向。
+
+---
+
+## 历史：Session 21（2026-09-02）
 
 ### 目标
 
@@ -127,7 +304,7 @@ STEPS / stepById / buildContext / editPanelMeta / problemsResolved / TYPOGRAPHY_
 
 ---
 
-## 下一阶段入口（Prompt 22：Codex / AI、i18n、遥测、文档整合）
+### （已消费）Session 21 留给 22 的入口
 
 **从这里开始读**：`docs/adr/0040-onboarding-coachmarks-and-hints.md`（本轮）、`UX_CONTRACTS.md` 5f、
 `ARCHITECTURE.md` §8c、`web/AGENTS.md`「交互式 Onboarding 与本地活动信号」。

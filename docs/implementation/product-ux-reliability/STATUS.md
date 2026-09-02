@@ -53,7 +53,7 @@
 | 19 | 设置 / Agent / 包管理 | ✅ 完成（本次，ADR 0038） |
 | 20 | 离线教程资源后端 | ✅ 完成（本次，ADR 0039） |
 | 21 | onboarding UI 与提示 | ✅ 完成（本次，ADR 0040） |
-| 22 | Codex/AI、i18n、遥测、文档整合 | ⬜ |
+| 22 | Codex/AI、i18n、遥测、文档整合 | ✅ 完成（本次，ADR 0041） |
 | 23 | 全量 QA 与发布门禁 | ⬜ |
 
 ## 六个 Gate
@@ -64,7 +64,7 @@
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
 | 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
-| 5 产品外壳 | 19–22 | 🟨 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）+ 21（交互式 onboarding 与一次性提示）完成；22 未开始 |
+| 5 产品外壳 | 19–22 | ✅ 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）+ 21（交互式 onboarding 与一次性提示）+ 22（Codex / AI 显式刷新、遥测整合、入口与文档）全部完成 |
 | 6 发布 | 23 | ⬜ |
 
 ---
@@ -570,7 +570,23 @@ desktop…」。
 | 变异反证 24 条（前端） | ✅ 22 红 + 2 存活各补用例后红（M8 教程外的信号、M24 选区没变也发），见 `TEST_MATRIX.md` |
 | `git diff --check` | ✅ |
 
-## 遗留（Session 21 之后仍开着的）
+### Session 22 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests`（全量，含 `TAVOTTO_NO_TELEMETRY=1`） | ✅ **exit 0**，0 failed / 34 skipped；总数按进度点估约 3.8k（此配置下摘要行不打印，20 的最近一次是 3756，本轮净增 47 条） |
+| `pytest tests/test_ai_refresh.py tests/test_telemetry_integrations.py tests/test_mcp_server.py`（新增 47 + MCP 全部） | ✅ exit 0（`test_widget_artifact_is_in_sync` 在重建产物前红一次，重建后绿） |
+| `cd web && pnpm test` | ✅ exit 0 —— **182** files / **2496** tests passed（比 21 的 179 / 2452 多 3 个文件 44 条）；第一遍 exit 1 是新用例留下一条 unhandled rejection（`fetchPanels` 没给值），补 mock 后绿 |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b` 含 e2e 工程） |
+| `cd web && pnpm i18n:types && pnpm i18n:check` | ✅ exit 0（zh-CN 3178 / en-US 3276 条）；`pnpm i18n:extract` 跑过一次：它往 inspector / project / shortcuts / common 塞空键与拆复数基键，`i18n:check` 当场红，产物 `git checkout` 掉（T-121） |
+| `cd web && pnpm lint` | ✅ 无 error |
+| `ruff check . && ruff format --check .` | ✅ |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py`（各 `--check`） | ✅ 已重建并一致（`317e8e756cd08a1a` / `ce546102484da66b`） |
+| `python scripts/build_frontend.py` + `TAVOTTO_PYTHON=<repo>/.venv/bin/python PYTHONPATH=<wt>/src npx playwright test e2e/{tutorial,quick-menu,asset-library}.spec.ts --project=chromium` | ✅ **9 passed**（教程 4 / 右键菜单含多选对齐 1 / 素材库含 readiness 入口 4，1.7 分钟）。没有为命令面板 / 接入中心遥测新写 e2e（遗留表） |
+| 变异反证 17（后端）+ 19（前端） | ✅ 后端 14 红 + 3 存活各处置后红（M3 补用例、M6 删冗余、M13 补断言）；前端 18 红 + 1 存活补断言后红（F4），见 `TEST_MATRIX.md` |
+| `git diff --check` | ✅ |
+
+## 遗留（Session 22 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -582,6 +598,11 @@ desktop…」。
 | — | **`e2e/ux-consistency.spec.ts` 流程 B 红**（`getByRole('switch', { name: '右边刻度线' })` 等到超时）：失败截图里刻度卡是 Session 16 之后的形态——「显示边」按 **X 刻度 / Y 刻度** 两个页签分开，右边那个开关在 Y 页签下，用例没先切页签。画面里没有 coachmark / 提示，与本轮无关；Session 16–20 都没跑过这条 spec。**本轮没修**（它守的是 16 的合同，改用例得对着 ADR 0035 核） | 23 前（或 16 的作者） |
 | — | **`e2e/ux-consistency.spec.ts` 流程 D 红**：`getByRole('button', { name: '项目与路径' })` 等到超时——Session 19 把设置分区改成十一个、这一区叫「项目」（`dialogs:settings.section.project`），用例里还是旧名。同样与本轮无关，19 当时只跑了 `settings-shell` / `coding-agents` 两条 spec | 23 前（或 19 的作者） |
 | — | **Session 21 的 e2e 只跑了 chromium**（webkit 只跑黄金路径三条，教程 spec 没进那份 testMatch） | 23 前 |
+| — | **桌面版对 `tavotto_refresh_project` 永远是 `delivered: local`**：sidecar 的端口与凭据经 Tauri 壳 stdin 交接、不落盘，MCP 进程探不到实例；界面靠桌面版自己的 watcher 在两秒内跟上。工具文字如实说。要让桌面版也 `app`，得给 sidecar 一条可发现的本机凭据（另一个 ADR 的事） | 23 评估 / 记 issue |
+| — | **`ScriptLibrary` 的「高级详情」对比度 2.54:1** 仍在（21 记的）：本轮是接线与遥测，没动它 | 23（a11y） |
+| — | **命令面板 / 接入中心 / 多选栏的遥测只有 jsdom 用例**，没有真浏览器 e2e；`tutorial.spec.ts` 本轮复跑（见结果表） | 23 QA |
+| — | **`problem_focused` / `export_completed.scope` 两条 Prompt 22「例如」列的事件没加**：前者需要把校验规则 id 归成闭集 rule_group（`lib/validation.ts` 的规则 id 分散在多处，本轮没核完）；后者要在 `api_export` 里把 `request.scope` 带进既有事件（加字段 = 再升一次同意版本，与本轮九条合并升更划算，但时间不够）。都记在 `docs/analytics/telemetry-events.md` 之外，不写进承诺 | 23 或下一次遥测扩容 |
+| — | **`web/dist-playground/` 已按本轮源码重建，网站仓库尚未 `pnpm sync-playground`** | 发布前 |
 
 
 

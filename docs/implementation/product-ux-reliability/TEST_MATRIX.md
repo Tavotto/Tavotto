@@ -2257,3 +2257,77 @@ portal 进对话框 + 绝对定位；reduced motion 无过渡无进场动画。
   `text-ink-faint`）——与教程无关的既有问题，记进 STATUS 遗留。
 * **assertion 前提错过三次**：back 的目标是上一步不是下一步；`fetchAutosave` 回的就是文档本身；
   重置后那格槽位装的是**新的**干净画布不是空。
+
+## Session 22：Codex / AI 显式刷新、去重、遥测整合、入口与文档
+
+### 新增用例（后端 47；前端 44；真浏览器复跑 3 个 spec）
+
+**`tests/test_ai_refresh.py`（18）**：`refresh_outcome` 五档（skipped / not_wired / ok 只有枚举与布尔 /
+RefreshError 带 code / 未预期异常归 refresh_failed）；`_after_ai_change` 七条：三件事各做一次且 watcher 随后
+两轮零动作、再改一次照常触发；**pending 里躺着的写入也算没消化**（反证 M3 补）；不 probe 不跑脚本
+（RAN.txt 不存在）；watcher 先结算时不再作废、不再发第二份事件；没有 watcher 全做；新脚本进 diff；项目已
+关闭 → `project_closed`；注册表坏 → failed 带 code；两个项目互不相干。`ai_bridge.run` 四条（假 CLI 是一段
+python）：changed=true 时刷新在 `ai.done` 之前、`ai.done.refresh` 与历史库一致；changed=false 跳过；刷新失败不把
+会话记成失败；后端重启后 `get()` 从历史库带回 refresh。端点接线一条（源码判据）。
+
+**`tests/test_telemetry_integrations.py`（12）**：manual 无变化 → `none`、无脚本名 / 路径；codex 新脚本 →
+`one`；未知来由归 manual；probe / registry 不记（守的是表的枚举）；刷新失败零事件；桶边界六档；包操作只记
+终态、无包名；CONSENT_VERSION ≥ 2 且九条都在表里；`step_id` 枚举与 `stepIds.ts` 逐字同源。
+
+**`tests/test_mcp_server.py`（+16）**：schema + description + 无 `_meta` + instructions；经会话刷新；越界路径拒且注册表
+零改动、**越界的不存在路径也是 `path_out_of_scope`**（反证 M13 补）；空 diff（第二轮 baseline=false）；新脚本 +
+新素材；readiness 摘要只有六个键；不 probe 不起 worker 不 import；不可达 → local 且文字说「未在运行」；可达 →
+open(default=false) → refresh?pj= reason=codex → readiness；可达失败原样带 code；no_project；两项目 →
+ambiguous（错误里无路径）+ session_id 只刷一个；结果无绝对路径；reason 固定 codex；无注册表目录。
+**`tests/test_mcp_resolver.py`（+1）**：降级 server 对 `tavotto_refresh_project` 回结构化错误。
+
+**前端**：`lib/activityTelemetry.test.ts`（13：十二种映射、桶边界、不从浮动栏不映射、其余十五种 kind 逐种不映射、
+payload 只有两键、作用域收回 / 抛出也收回、more、没同意不发、幂等、`readinessStatusBucket`）；
+`components/CommandPalette.test.tsx`（7：六条命令中英文齐、两份资源 id 集合一致、不重复、没项目整组不出现、
+刷新调统一端点 reason=manual、接入状态 source=palette、英文关键词可搜）；`lib/onboarding/flowTelemetry.test.ts`
+（5：完成记 / 跳过不记 / 走完另记 completed / 十个 id 闭集 / 没同意不发）；`store/projectReadinessStore.test.ts`
+（+3：banner + mixed、quickedit + all_editable、不带来源 / 报告失败 / 没同意都不记）；`hooks/useServerEvents.test.ts`
+（+5：ai.done 不 markStale 且两条事件之间不弹「脚本已更新」、watcher 那条照旧提示、刷新失败单独提示且错误码翻译、
+skipped 走普通结局、老后端无字段行为不变）；`lib/onboarding/tutorial.test.ts`（+3：started 记来源与版本无 id、
+继续不记、无来源 / 没同意不记）；`canvas/context-bar/multiSelectionBar.test.tsx`（+3：三种按钮各一条无对象 id、
+禁用按钮不记 + more、程序调用不算浮动栏）；`store/documentStore.test.ts`（+5：autosave ok、manual、409 →
+conflict、restore / keep_main、没同意不发）。
+
+### 变异验证记录（Session 22）
+
+后端 17 条（`scratchpad/mutate_backend.py`，每条变异后只跑点名的用例、`git checkout` 还原、清 `__pycache__`）：
+
+| # | 变异 | 结果 |
+| --- | --- | --- |
+| M1 | AI 路径不再问 watcher（`fresh = None`） | 红 |
+| M2 | `absorb` 不更新快照签名 | 红 |
+| M3 | `absorb` 忽略 pending（只比快照） | **存活** → 成因：用例的 watcher 防抖为 0，从没出现「拍进 pending、未结算」这一档；补 `test_a_write_already_pending_in_the_watcher_is_still_fresh`（防抖 0.5 + 假时钟）后红 |
+| M4 | 刷新失败记成 ok | 红 |
+| M5 | `ai.done` 在刷新之前发 | 红 |
+| M6 | 刷新遥测收所有来由（删 app 层守卫） | **存活** → 成因：冗余保证——`EVENTS` 表的枚举本来就丢掉 probe / registry。处置：删掉 app 层那份；改成「刷新成功不记」重跑 → 红 |
+| M7 | 桶边界 5→6 | 红 |
+| M8 | `panel.file_changed` 丢掉 reason | 红 |
+| M9 | 包操作中间态也记 | 红 |
+| M10 | MCP reason 透传 | 红 |
+| M11 | 可达但失败时退回本地 | 红 |
+| M12 | 多项目时挑第一个 | 红 |
+| M13 | 越界路径不再先 `check_scope` | **存活** → 成因：`resolve_target` 之后的第二次 `check_scope` 兜着。前一次有独立理由（不泄露范围外路径的存在性），补「越界的不存在路径也是 `path_out_of_scope`」后红 |
+| M14 | 结果带绝对路径 | 红 |
+| M15 | 客户端表少一条 step id | 红（两侧对拍 + 与 stepIds.ts 对拍双红） |
+| M16 | 项目已关闭仍刷新 | 红 |
+| M17 | 历史库不写 refresh 列 | 红 |
+
+前端 19 条（`scratchpad/mutate_frontend.py`）：F1–F3 映射来源 / 作用域 / more；F4 **reason=ai 照样弹「脚本已更新」存活**
+→ 成因：用例只看 `ai.done` 之后的最终状态，而它本来就会盖掉前一条——补「两条事件之间状态为空」的断言后红；
+F5 ai.done 再 markStale、F6 刷新失败当成功、F7 报告没到也记、F8 不带来源默认 panel、F9 跳过也记、F10 走完不记
+completed、F11 继续也记 started、F12 没项目也列刷新命令、F13 面板入口来源写错、F14 浮动栏不包作用域、
+F15 手动记成 autosave、F16 409 记成 failed、F17 保留主版本不记、F18 选区桶 6→7、F19 零张图也给桶——全部红。
+
+### 实跑到的、不是假设的
+
+- 静态发现只登记看得见 stem 的脚本：`def main(): pass` 不进注册表，三条用例第一遍假红（diff 空 / 桶 none）。
+- 假 CLI 用 `sys.executable -c` 改文件即可端到端跑 `ai_bridge.run`：pump 线程、快照、历史库、`ai.done` 全走真代码。
+- jsdom 没有 `scrollIntoView`；React 受控输入直接赋 `value` 不触发 onChange。
+- `panel.file_changed` 顺手 `refreshAssetsAndSync`：`fetchPanels` 没给 resolved 值 = unhandled rejection，全绿 exit 1。
+- `pnpm i18n:extract` 往四个命名空间塞空键、拆复数基键，`i18n:check` 立刻红（`docs/i18n.md` 早有记录）。
+- 后台命令继承上一条的 cwd：`pnpm test` 在 worktree 根起步 → `ERR_PNPM_NO_PKG_MANIFEST`。

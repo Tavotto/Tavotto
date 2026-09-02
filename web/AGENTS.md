@@ -491,6 +491,36 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
   `advanceTimersByTimeAsync`，别等真的 setTimeout。
 
+## Codex / AI 刷新、入口整合与遥测映射（2026-09-02，ADR 0041）
+
+完整版在 `docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`，改动前先读。
+
+* **项目文件变化只走统一刷新**：前端唯一的刷新入口是 `liveSync.refreshProjectNow()`（调
+  `/api/project/refresh`），命令面板 `refresh-project`、顶栏「更多」、素材库按钮都调它。**不新增
+  第二套 watcher，不在前端猜 readiness**——接入状态只读 `projectReadinessStore`（后端事实），
+  打开它走 `openCenter({ source })` / `focusPanel(id, source)`，`source` 是闭集
+  `banner | panel | quickedit | palette`，新入口必须带上（不带 = 不记遥测，不是默认值）。
+* **`ai.done` 不 markStale**：文件变了的话后端在它之前已经作废 worker、跑过刷新、发过
+  `panel.file_changed`（`reason: 'ai'`），stale 只由那条事件置一次；`reason === 'ai'` 时不弹
+  「脚本已更新」，一次修改只留 `ai.done` 那条提示。`ev.refresh.status === 'failed'` 要单独说
+  （`ai:status.aiChangedRefreshFailed`），不把代码改动伪装成全部成功。
+* **onboarding 活动信号与遥测分离**：`lib/activity.ts` 不出网；活动 → 遥测的映射**只有**
+  `lib/activityTelemetry.ts` 一处、只映射浮动栏的排列 / 成组 / 取消成组（`fromContextBar()`
+  作用域内发出的才算），其余 kind 逐种反证为不映射。遥测永远不反过来驱动界面。
+* **新遥测事件只捕获成功边界**：`document_saved` 在 `scheduleDiskWrite` 的三个结局；
+  `recovery_action` 在恢复 / 保留主版本的动作里；`tutorial_step_completed` 只在
+  `completeStep(id, 'done')`（跳过不记）；`tutorial_started` 只在真的开始 / 重新开始。所有
+  字段先进后端 `EVENTS` 表（两侧对拍），前端不发表里没有的键。
+* **命令面板的 id 是稳定标识**（e2e 与资源都认它）：`refresh-project / readiness / tutorial-start /
+  tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
+  `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
+  两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。
+* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；注册表对话框那类
+  高级入口说「已登记的源脚本」。
+* 看护：`lib/activityTelemetry.test.ts` / `components/CommandPalette.test.tsx` /
+  `store/projectReadinessStore.test.ts`「打开接入中心的遥测」/ `hooks/useServerEvents.test.ts`
+  「AI 修改之后」。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。

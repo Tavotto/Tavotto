@@ -1890,3 +1890,60 @@ onboarding 本机状态。教程之前是默认项目才继续是默认。
 **裁决：层里加 `hiddenInStage()`（锚点在 `[data-canvas-stage]` 里且盒子有一部分落在工作区外）→ 触发
 步骤的 `reveal()`；画布对象的 reveal 只调 `viewportStore.revealRect`，不选中、不改文档。** 与
 `workspace.revealPanel` 同一条纪律：视口不是用户数据。
+
+## T-115（Session 22）Codex 刷新工具两条投递路径：优先委托运行中的 Tavotto，不可达才本地
+
+**问题。** MCP server 与 Tavotto 是两个进程。只在本进程刷新，界面要等 watcher；只委托运行中的
+Tavotto，桌面版（端口不落盘）与没开 Tavotto 时就什么都做不了。
+
+**裁决：先探 `127.0.0.1:5089/api/version`，可达就 `open(default=false) → refresh(reason=codex) →
+readiness` 并 `delivered=app`；不可达就在本进程调同一份 `refresh_project_index` 并 `delivered=local`；
+可达但刷新失败原样带回它的 code、不退回本地再试。** 两条路都不复制 discover、不 probe、不跑脚本；
+工具文字里如实说「未在运行 / 本地完成」，不许写成「界面已同步」。
+
+## T-116（Session 22）AI 修改后的刷新在 `ai.done` 之前、由后端确定性完成；结局与 `changed` 分开记
+
+**问题。** 前端在 `ai.done` 上自己 `markStale`，watcher 随后再来一次；应用窗口关着时前端那一枪
+根本不存在。刷新失败若合进 `status`，会把「代码改成了」说成失败，或把「项目没刷新」说成成功。
+
+**裁决：`ai_bridge.run(on_changed)` 注入钩子，pump 线程在算出 `changed` 之后、发 `ai.done` 之前调一次，
+`refresh_outcome()` 压成 `{status: ok|failed|skipped|not_wired, code?, ...}` 进 `ai.done.refresh` 与历史库
+`refresh` 列。不看 status（超时但文件改了也刷新）；不 probe、不跑脚本。**
+
+## T-117（Session 22）去重靠签名吸收（`absorb`），不靠时间窗；先问 watcher 再动手
+
+**问题。** AI 路径与 watcher 都会看到同一次写入。写完忽略 N 秒在慢盘上不够、在快机上吞掉用户
+紧接着的真实修改（ADR 0026 §4 同一族）。
+
+**裁决：`ProjectWatcher.absorb(paths)` 把这几条脚本此刻的签名记成已消化并从 pending 摘掉，返回真的
+被吸收的那些。AI 路径先 absorb：吸收了就作废 + 刷新 + 事件全做；watcher 已先结算就只补一次刷新；
+没有 watcher 全做。** 「躺在 pending 里、还没结算」也算没消化（反证 M3 存活补的那条用例）。
+
+## T-118（Session 22）`project_refresh_completed` 只收四个来由，判据只写一份
+
+**问题。** 反证时「app 层的来由守卫」删掉用例仍绿——`EVENTS` 表的枚举本来就会丢掉 probe / registry，
+同一条保证写了两遍，谁都杀不死谁。
+
+**裁决：删掉 app 层那份，表是唯一白名单；`test_probe_and_registry_reasons_are_not_captured` 守的
+就是表。** 其余八条事件同理：字段先进表，前端 / 服务端不再各自比一遍。
+
+## T-119（Session 22）活动信号 → 遥测只映射浮动栏那一条，来源用同步作用域判
+
+**问题。** `selection.aligned` 同时由浮动栏、属性页排列组、命令面板发出，信号本身不带来源；给
+payload 加 `origin` 要改 action 签名与 `ACTIVITY_PAYLOAD_KEYS`。
+
+**裁决：`fromContextBar(fn)` 在浮动栏的点击处理器里包住 action，作用域内**同步**发出的成功信号才映射；
+其余十五种 kind 逐种反证为不映射；「更多」按钮没有信号，直接记。** 方向只有活动 → 遥测。
+
+## T-120（Session 22）采集范围扩大 → CONSENT_VERSION 2，重新征求；`package_action` 不带包名
+
+**裁决：九条新事件是实质性扩大，升版、旧同意失效、`install_id` 不换（既有纪律）；同意书文案列出
+新类别。包名可能泄露私有项目依赖，`package_action` 只有 action 与 outcome。**
+
+## T-121（Session 22）`i18n:extract` 不当门禁；主文案不写「可参数化」
+
+**问题。** `pnpm i18n:extract` 会把模板串按 key 并集展开、往四个命名空间塞空键，紧接着的
+`i18n:check` 就红（`docs/i18n.md` 早有记录）。
+
+**裁决：跑过一次看有没有漏 key 即可，产物不进版本库；`i18n:types` + `i18n:check` 才是门禁。**
+用户主文案改成「可编辑的图 / 仅排版」，注册表对话框说「已登记的源脚本」。

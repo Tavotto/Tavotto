@@ -895,3 +895,34 @@ spec 跟着变。
   中英文 + 125%/150% 缩放不溢出、颜色不是唯一状态表达。
 - 遥测与核心功能完全解耦；文件名 / 路径 / 脚本名 / stem / 图内文字
   **在结构上就发不出去**（白名单 + `tests/test_telemetry_invariants.py`）。
+
+### 7b. Codex / AI 刷新与遥测整合合同（Session 22，ADR 0041）
+
+**用户看到的**
+
+- Codex 或内置 AI 改了脚本之后，开着的 Tavotto **自己更新**：不需要手动刷新、不需要重启。
+  一次修改在界面上只形成**一份**更新：面板重建一次、状态栏一条提示。
+- AI 改成了但项目刷新失败：状态栏**单独说这件事**（错误码翻成当前语言），改动已保存，
+  Tavotto 会自动重试；不把整次修改伪装成成功。
+- 命令面板里有「刷新项目（检查新文件）」「显示项目接入状态」「开始 / 继续 / 重新开始教程」
+  「重新显示新手提示」「快捷键帮助」；顶栏「更多」有前两条；三处调的是同一批动作。
+  没有打开项目（embedded / playground）时项目命令整组不出现。
+- 同意匿名用量统计的用户在升级后会被**重新问一次**（采集范围变了：CONSENT_VERSION 2）；
+  同意书上写清新加了哪几类事件。
+
+**Codex 看到的**
+
+- `tavotto_refresh_project` 返回哪些脚本 / 图变了、哪些图可编辑（`readiness.panels[].status`）、
+  刷新是经运行中的 Tavotto 还是本地完成（`delivered`）。工具不运行脚本；`needs_probe` 要用户
+  在 Tavotto 里点「试运行并连接」，`conflict` 不自动裁决。结果里没有绝对路径。
+
+**遥测合同（只在同意后）**
+
+- 九条新事件的字段全部是闭集枚举或分桶计数：`project_refresh_completed{source, changed_bucket}`、
+  `project_readiness_opened{source, status_bucket}`、`tutorial_started{source, tutorial_version}`、
+  `tutorial_step_completed{step_id, tutorial_version}`、`tutorial_completed{tutorial_version}`、
+  `context_bar_multi_used{action_id, selection_size_bucket}`、`document_saved{trigger, outcome}`、
+  `recovery_action{action}`、`package_action{action, outcome}`。
+- **禁止**：文件名、路径、脚本名、stem、面板 id、图内文字、提示词、用户输入、错误 traceback、
+  包名、包日志、私有 index URL、教程项目 / 文档 id、精确项目规模。
+- 活动信号不是遥测；映射只有浮动栏那一条，且只在同意态与后端白名单之后出网。

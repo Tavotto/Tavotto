@@ -11,6 +11,8 @@ import { boundsOf } from '@/lib/geometry'
 import { ArrangeSection } from '@/components/inspector/ArrangeSection'
 import { usePalette } from '@/components/CommandPalette'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { startActivityTelemetry } from '@/lib/activityTelemetry'
+import { setTelemetryEnabled } from '@/lib/telemetry'
 import { alignSelectedTo } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -31,10 +33,13 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const engineRender = vi.fn()
+const postTelemetry = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   engineRender: (id: string, patches: unknown[], opts?: EngineRenderOptions) =>
     engineRender(id, patches, opts),
+  postTelemetryEvent: (event: string, properties: Record<string, unknown>) =>
+    postTelemetry(event, properties),
 }))
 
 const text = (id: string, over: Partial<TextObject> = {}): TextObject =>
@@ -566,5 +571,49 @@ describe('与 ArrangeSection 共用参照', () => {
     expect(radio(inBar(), '最后选中').getAttribute('aria-checked')).toBe('true')
     // 参照切换不进历史、不动文档
     expect(past()).toHaveLength(0)
+  })
+})
+
+describe('遥测 context_bar_multi_used（ADR 0041）', () => {
+  let stopTelemetry: (() => void) | null = null
+  beforeEach(() => {
+    postTelemetry.mockClear()
+    setTelemetryEnabled(true)
+    stopTelemetry = startActivityTelemetry()
+  })
+  afterEach(() => {
+    stopTelemetry?.()
+    setTelemetryEnabled(false)
+  })
+
+  it('栏上点对齐 / 分布 / 成组：各记一条，带闭集 action_id 与选区桶，没有对象 id', async () => {
+    await select(['t1', 't2', 't3'])
+    await click(btn('[data-align-mode="left"]'))
+    await click(btn('[data-align-mode="hdist"]'))
+    await click(btn('[data-group-action="group"]'))
+    const calls = postTelemetry.mock.calls.filter(([e]) => e === 'context_bar_multi_used')
+    expect(calls.map(([, p]) => p)).toEqual([
+      { action_id: 'align_left', selection_size_bucket: '3_5' },
+      { action_id: 'distribute_h', selection_size_bucket: '3_5' },
+      { action_id: 'group', selection_size_bucket: '3_5' },
+    ])
+    expect(JSON.stringify(calls)).not.toContain('t1')
+  })
+
+  it('「更多」直接记 more；被禁用的分布按钮点了不记（动作没发生）', async () => {
+    await select(['t1', 't2'])
+    await click(btn('[data-align-mode="hdist"]'))
+    expect(postTelemetry).not.toHaveBeenCalled()
+    await click(btn('[data-multi-more]'))
+    expect(postTelemetry).toHaveBeenCalledWith('context_bar_multi_used', {
+      action_id: 'more',
+      selection_size_bucket: '2',
+    })
+  })
+
+  it('同一个 action 从属性页 / 程序调用发起：不算浮动栏，不记', async () => {
+    await select(['t1', 't2', 't3'])
+    await act(async () => alignSelectedTo('left', 'selection'))
+    expect(postTelemetry.mock.calls.filter(([e]) => e === 'context_bar_multi_used')).toEqual([])
   })
 })

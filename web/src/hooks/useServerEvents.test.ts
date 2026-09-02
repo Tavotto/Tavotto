@@ -446,6 +446,8 @@ describe('AI 修改之后（ADR 0041）', () => {
     handleServerEvent(
       ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['fig1.py'], stems: ['Fig1'], reason: 'ai' }),
     )
+    // reason=ai 的那条**自己不弹**「脚本已更新」——提示留给紧跟着的 ai.done
+    expect(statusKey()).toBeUndefined()
     handleServerEvent(
       ev({
         kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x',
