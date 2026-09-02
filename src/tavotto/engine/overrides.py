@@ -2909,8 +2909,10 @@ def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:
 
 
 def _all_legends(fig) -> list[Legend]:
+    """figure 上全部图例：figure 级的 + 每个 axes 的（含插图 / 次坐标轴——
+    `fig.axes` 里没有它们，遍历权威只有 `manifest._ordered_axes` 一处）。"""
     out = list(getattr(fig, "legends", []) or [])
-    for ax in fig.axes:
+    for ax in _sibling("manifest")._ordered_axes(fig)[0]:  # noqa: SLF001
         leg = ax.get_legend()
         if leg is not None:
             out.append(leg)

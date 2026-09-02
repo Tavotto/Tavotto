@@ -1696,3 +1696,82 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 
 **同源了就等于自己验自己**：如果两边都用 `get_char_index`，这张表证明的只是
 「我抄对了自己」。
+
+
+---
+
+## Session 15：图例条目模型 / 源对象绑定 / 高频控件
+
+### 新增用例（后端 31 + 1 向量 / 前端 19）
+
+**后端 `tests/test_legend_binding.py`（28 条，worker）**：导入绑定（label +
+指纹 / 脚本改过示意线的项默认 custom / 代理 artist 无源无 binding 字段 / 示意线
+类型决定字段集）；源的颜色 / 线型 / 线宽 / marker 变 → 图例同步（4 条参数化）、
+markersize 按 markerscale 派生、同步只改像素不改包围盒；脱开（override →
+custom，源再变它不动）、撤掉 override 回到跟随、脱开点跨重建保留、脚本自定义
+的项显式切回跟随、显式 `binding=custom` 冻结；隐藏一项（整行出盒、元素留着、
+序号不变、文字 override 保留）、重排后 override 跟着项走；热态 == 全新重放、
+撤销到底像素逐位；布局旋钮四条 + 列距只在多列时有效 + 边框线宽 / 圆角 +
+重建保留标题字号；热会话两步的重放；自定义项重建不复利 markerscale；
+同名同型双胞胎按位置绑。
+**`tests/test_legend_model_pairs.py`（2 条）**：两侧常量严格同源（顺序也比）。
+**`tests/test_legend_text.py`**：`test_item_text_follows_display_order_after_reorder`
+改成 `test_item_identity_survives_a_reorder`（合同变了：原始序号）。
+**`tests/test_invariants_engine.py`**：图例重建豁免删除；新增
+`test_legend_rebuild_restores_exactly`；`_ENABLERS` +2（`handle_markersize`
+要先有 marker、`columnspacing` 要先多列）；`_NON_VISUAL_PROPS` +`binding`（写了理由）。
+**`tests/golden/preflight_vectors.json`** 27 → 28（`legend-entry-custom-handle-width`，
+既有 27 条一条没变）。
+
+**前端 `components/inspector/legendCard.test.tsx`（19 条）**：模型（显示顺序 /
+每项绑定 / 视图 / 恢复跟随的计划）；分桶（高频项常驻、列距条件显示、图例项
+首屏与控件形态）；图例页（没有「自动」、字号与顺序不出第二套、无嵌套可交互、
+点文字选中、上下移动写原始序号——含已重排过的情形、显隐）；图例项页（跟随状态
++ 查看源对象、改颜色立刻是自定义、改为自定义 / 恢复跟随一次撤销、脚本 custom
+的项恢复写 binding、无源项没有绑定行）。`pickers.test.tsx` 的图例位置用例改成
+「最佳位置」+ 断言「自动」不存在。
+
+### 变异反证：17 条，第一轮 14 红 3 存活，补完 16 红 1 存活（成因是双保险）
+
+判定只看退出码；Python 侧跑前清 `__pycache__` + `PYTHONDONTWRITEBYTECODE`；
+树不干净直接拒跑；每条跑完 `git checkout` 那一个文件。脚本
+`<scratchpad>/mutate15.py`（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| M1 sync 里跳过跟随替换 | 红 | — |
+| M2 有 handle_* override 仍算跟随 | 红 | — |
+| M3 脱开点拿盒里那份而不是从源派生 | 红 | — |
+| M4 重建把快照喂回去（旧路径） | **存活** | **存活**（见下） |
+| M5 重建后不放回 markersize | 红 | — |
+| M6 重建后不重放 override（单批） | **存活** | M6b 热会话两步：红 |
+| M7 双胞胎取第一个匹配而不是按位置 | 红 | — |
+| M8 没有源也发 binding 字段 | 红 | — |
+| M9 预检对跟随的项也报线宽 | （变异点写错）| 红 |
+| M10 隐藏的项元素表里丢掉 | 红 | — |
+| M11 重建丢标题字体属性 | 红 | — |
+| F1 前端徽标忽略 handle_* override | 红 | — |
+| F2 恢复跟随不写 binding=follow_source | 红 | — |
+| F3 上下移动写显示位置 | 红 | — |
+| F4 图例卡不接管 fontsize | **存活** | 展开「更多」再数：红 |
+| F5 位置控件仍有「自动」 | 红 | — |
+
+**M6 的存活是用例形状**：同一批 patch 里 handle override 的 setter 排在重建之后，
+天然正确；只有热会话分两步（先改颜色、下一步再改列数）才走到重放。补了那条
+用例（M6b）。**F4 的存活也是用例形状**：`fontsize` 在图例模板里落在「更多」，
+折叠着的重复数不到，先展开再数。
+
+**M4 的存活是结构性的双保险**：重建从源派生之后，`sync_legends` 在同一次
+`apply()` 尾部又会对每个跟随的项从源派生一次——把重建的素材换成快照，同步照样
+把它治回来。两处都从源派生是有意的（重建那一步先落对，同步兜底所有别的
+setter），一条用例杀不死它是这条冗余的代价，**不是判据缺口**。记在这里，别去
+「加强」那条用例。
+
+### 实跑到的、不是假设的
+
+* 改造前四条缺陷一次探针全部现形：`line.set_color` 之后 `leg.legend_handles[0]`
+  仍是旧色；ncol 重建后标题字号 12 → 10；markerscale 4×1.5 = 6 → 9 → 13.5；
+  误差棒示意线 LineCollection → Line2D。
+* 真应用（worktree 起在 5099）走了一遍：选图例 → 图例卡；选「lin」项 →
+  「自定义」+「恢复跟随」→ 渲染回来线宽 1.5；改曲线「lin」颜色 → 图例示意线
+  跟着变成品红。

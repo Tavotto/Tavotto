@@ -437,6 +437,26 @@ Text.get_fontfamily()  →  fontManager._find_fonts_by_props()  →  FT2Font.get
 字形画成 .notdef 方框。尾巴只有 `DejaVu Sans`（matplotlib 自带，每个平台都在）
 ——**不放平台相关的中文字体**，那会让同一份文档在两台机器上画出不同的字。
 
+### 5.1d 图例条目模型（`← 15`，ADR 0034）
+
+```text
+engine/overrides.LegendEntries（每个图例一份，instrument 时建）
+  texts_j = 原始第 j 项 ── sources[j] / default_binding[j] / pristine[j] / custom_base[j]
+        │                       ▲ bind_legend_entries：label + 示意线指纹，并列按位置，不伪造
+        │
+  apply() ──► setters ──► sync_legends（尾部）：跟随的项从源重新派生示意线（派生显示）
+        │                  custom 无 override 的项 = custom_base；有 override 的项不碰
+        └─ 重建型 prop ──► rebuild_legend：素材 = 源 / custom_base，_reindex 接回 gid + 重放
+                                                          │
+manifest：legend_text 元素 + legend_entry{index, source_gid?, binding_default?}
+          + 字段 binding / handle_* / visible（按示意线类型给）
+                                                          │
+web/src/lib/legendModel.ts（投影：显示顺序 / 每项绑定 / 恢复跟随的计划）
+  ├─ inspector/LegendCard.tsx（图例页：Typography 批量 + 条目列表）
+  ├─ inspector/controls/LegendBindingControl.tsx（图例项页：状态 + 动作）
+  └─ store/actions.restoreLegendEntryFollow（一次 commit）
+```
+
 ### 5.2 画布
 
 `web/src/canvas/CanvasStage.tsx`、`PanelView.tsx`、`ObjectView.tsx`、

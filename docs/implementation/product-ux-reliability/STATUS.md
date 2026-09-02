@@ -46,7 +46,7 @@
 | 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
 | 13 | 统一属性系统、文字控件、标注字体 | ✅ 完成（本次，ADR 0032） |
 | 14 | 科学文本 / Unicode / 字体回退 | ✅ 完成（本次，ADR 0033） |
-| 15 | 图例绑定与控件 | ⬜ |
+| 15 | 图例绑定与控件 | ✅ 完成（本次，ADR 0034） |
 | 16 | 刻度线直接操作 | ⬜ |
 | 17 | 多选浮动栏 | ⬜ |
 | 18 | QuickEdit 右键动作 | ⬜ |
@@ -63,7 +63,7 @@
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
-| 4 编辑一致性 | 13–18 | ⬜ |
+| 4 编辑一致性 | 13–18 | 🟡 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）完成；16–18 未开始 |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
 
@@ -443,7 +443,13 @@ desktop…」。
 
 ---
 
-## 遗留（Session 14 之后仍开着的）
+### Session 15 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+@@SESSION15_TABLE@@
+
+---
+
+## 遗留（Session 15 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -482,16 +488,27 @@ desktop…」。
 | — | **PDF 字体子集嵌入没有判据**：由 PyMuPDF 自己管，本轮没碰也没量过子集完整性。`preferred_formats` 那条规范没有新增看护 | 未定 |
 | — | **覆盖表是在 macOS + pymupdf 1.28.2 上生成的**。它随 PyMuPDF 的 wheel 走，理论上跨平台一致，但**没有在 Linux / Windows 上实测过**；`gen_canvas_coverage.py --check` 会在 CI 上第一次回答这个问题 | 待 CI 回答 |
 | — | **`interpretation` 只有画布文字有**：图内文字的上下标是 matplotlib 的 `$…$`（另一条管线）。能力表里它是 `figureText` 不支持的一条 | 已处置 |
+| — | **没有源的误差棒图例项撤销到底后示意线样式回不到原样**：它的示意线是 LineCollection，按 matplotlib handler 造不出同类快照，`pristine` 只能是原对象本身，handle_* override 直接改到它。有源的走源派生，不受影响（ADR 0034 §5） | 已处置（限制写进 ADR） |
+| — | **图例示意线没有 SVG 局部预览**：改曲线颜色时曲线立刻变、图例示意线要等定稿渲染回来（几百毫秒）。示意线在 SVG 里没有 gid | 择机 |
+| — | **`markerscale` / `handleheight` / `borderaxespad` 没开放**；图例标题的排版走它自己的元素，不在图例卡的批量里 | 择机 |
+| — | **图例超出边界 / 遮挡数据的检查没做**：`best` 的避让只在 draw 时算，没有可靠的静态判据，Prompt 明写「不做虚假检查」 | 已决定不做 |
+| — | **Session 15 没跑 e2e**：改动没碰黄金路径的键位；图例位置的「自动」按钮文案变了，e2e 里没有引用它（grep 过）。这是**没跑**，不是「跑过没问题」 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 15（图例文本与线条测量）**，入口见
-`SESSION_HANDOFF.md` 的「下一阶段入口」。
+**Prompt 16（刻度线直接操作）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-14 留给 15 的可复用入口：
+15 留给 16 的可复用入口：`presentation/roleProfiles.ts`（首屏模板 + `visibleWhen`）、
+`ElementInspector` 的 `primaryExtra` + 让位集合（刻度卡 / 图例卡两处先例）、
+`controlKindOf` 的新 ControlKind 三处、`store/actions.restoreLegendEntryFollow`
+（多条 override 一次 commit）、`overrides.sync_legends`（派生显示的形状）、
+`LegendEntries.order/shown()`（稳定身份 vs 显示位置）、
+`canvas/interactions.pickElement`（命中几何）。
+
+14 留给 15 的可复用入口（15 已消费，对 16 原样有效）：
 
 * `glyphplan.py` ↔ `glyphPlan.ts` —— **「这个字由哪张脸画出来」的唯一判据**
   （四层，顺序不可交换）。图例文本的测量要用**最终 render plan**，别再按

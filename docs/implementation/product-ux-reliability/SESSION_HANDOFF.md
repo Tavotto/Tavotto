@@ -5,7 +5,243 @@
 
 ---
 
-## 最近一次：Session 14（2026-09-01）
+## 最近一次：Session 15（2026-09-02）
+
+### 目标
+
+Prompt 15：把图例从「少量独立属性的复制品」升级为与源线条 / 标记有明确绑定
+关系的可编辑对象，并把科研用户的高频属性放到常驻区。**不复制线条 style
+writer**：示意线由 matplotlib 自己的 handler 从源派生；界面复用 13 的 Typography
+控件、统一的 `setOverride(s)` / `clearOverrides` 那套 document action。
+
+### 开始前实测到的四件事（一次探针全部现形，不是假设）
+
+1. **图例示意线是创建那一刻的副本，源变它不变**（3.10.8）：`line.set_color`
+   之后 `leg.legend_handles[0].get_color()` 仍是旧色。Tavotto 改曲线颜色走
+   override → `set_color`，于是图上绿线、图例红线，而且没有提示。
+2. **重建型 prop 把副本再喂回 `_init_legend_box`**（`ncol` / `labelspacing` /
+   `entry_order`…）：误差棒示意线 LineCollection → Line2D、markerscale 每重建一次
+   多乘一次（4 → 6 → 9 → 13.5）、`set_title(prop=None)` 让标题字号 12 → 10。
+   这三条就是 `1.0-release-readiness.md` §4.1 的 P2 backlog——**成因写错了**
+   （「布局不可复现」），其实是喂错了素材。
+3. **`texts_j` 按显示位置编号**：改过第一项的字再把它挪到最后，字留在第一行。
+4. **「自动」= matplotlib 的 `best`**（`_legend_loc_name` 对未知 loc 也回 best）。
+   它不是「未设置」，也不是布局算法；一个无上下文的独立按钮说不清这一点。
+
+### 实际完成
+
+**1. `engine/overrides.LegendEntries` —— 每个图例一份条目模型（ADR 0034）。**
+
+```text
+texts_j 的 j = 原始序号        重排 / 隐藏不改它；隐藏的项 Text 留在 index 里
+sources[j] / default_binding   label + 示意线指纹绑定源对象；并列按位置；不伪造
+pristine[j] / custom_base[j]   脚本原样快照 / 「不带 override 时长什么样」
+effective_binding(j)           None（无源）| custom（任一 handle_* override 在）
+                               | binding_override | default_binding
+```
+
+`_cls_key` 对带条目标记的 Text 回 `legend_text`：text handler 逐条镜像 + 条目
+handler（`handle_color/linestyle/linewidth/marker/markersize` / `binding` /
+`visible`）。图例标题仍是 `text`。
+
+**2. 跟随同步 = 派生显示。** `sync_legends` 在 `apply()` 尾部对每个跟随的项
+从源重新派生示意线（`legend_fresh_handle` 画进原来的 DrawingArea，只换示意线
+本身，不改包围盒）；不进 `applied`、不进文档、不产生历史。脱开
+（`_detach_entry`）从**源现派生**记 `custom_base`——盒里那份此刻还是上一轮的。
+
+**3. 重建统一走 `rebuild_legend`。** 素材 = 源（跟随）/ custom_base（其余），
+文字整批换新后搬样子、标题带字体属性重设、`_reindex_legend_children` 按原始
+序号接回 gid 并重放 override（状态类 `binding` / `visible` 不重放）。**撤销到底
+manifest 与像素逐位回原样**，invariants 里那条图例重建豁免删掉了。
+
+**4. manifest。** 图例新增 `handletextpad` / `columnspacing` / `frame_linewidth` /
+`frame_rounded`；`entry_order` 的 `options` 改成**原始序**；`fig.legend` 的
+标题与项也登记了（此前只登记图例本体）；图例项元素带
+`legend_entry{index, source_gid?, binding_default?}` + 字段 `binding`（有源时）/
+`handle_*`（按示意线类型：曲线五条、柱 / 填充 / 散点只有颜色、映射散点没有）/
+`visible`（条目级：整项出盒）；隐藏的项报图例的框。
+
+**5. 前端。** `lib/legendModel.ts`（投影 + 两侧同源常量）、
+`inspector/LegendCard.tsx`（图例页：Typography 批量 + 条目列表；接管 `fontsize`
+与 `entry_order`）、`controls/LegendBindingControl.tsx`（图例项页：状态 + 「改为
+自定义」/「恢复跟随」+「查看源对象」）、`store/actions.restoreLegendEntryFollow`
+（一次 commit）。图例模板：位置 / 列数 / 示意线长 / 线与文字间距 / 行距 / 列距
+（`ncol>1`）/ 边框四条（`frameon`）常驻；图例项模板：文字 + 绑定 + 示意线样式。
+「自动」→「最佳位置」，拖动过 →「自定义位置」。
+
+**6. 检查。** `line-width-off-preset` 也看自定义图例项的示意线宽（两侧求值器 +
+向量 27 → 28，既有 27 条一条没变），定位到那一项的 `handle_linewidth`。
+
+### 关键 API（Prompt 16 直接用）
+
+```python
+# src/tavotto/engine/overrides.py
+LEGEND_BINDINGS / LEGEND_ENTRY_STYLE_PROPS          # 两侧同源常量
+LegendEntries                                       # leg._mm_entries；legend_entries(leg)
+  .shown() / .display_index(j) / .handle_of(j) / .gid_of(j)
+  .effective_binding(j) / .has_style_override(j) / .base_of(j) / .snapshot(h)
+bind_legend_entries(leg, candidates, auto_handles)  # instrument 时（manifest._bind_legends）
+legend_fresh_handle(leg, orig, box=None)            # 按 matplotlib handler 派生一份示意线
+legend_handle_fingerprint(h) / legend_handle_props(h)
+sync_legends(state)                                 # apply() 尾部
+rebuild_legend(leg, state)                          # 所有重建型 prop 的唯一出口
+# src/tavotto/engine/manifest.py
+_register_legend(state, gid, leg)                   # 图例 + 标题 + 项（原始序号）
+_legend_entry_fields(t) / _legend_entry_info(t) / _entry_is_hidden(t)
+```
+
+```ts
+// web/src/lib/legendModel.ts
+LEGEND_ENTRY_STYLE_PROPS / LEGEND_BINDINGS / LegendBinding / LegendEntryView
+legendEntryElements(manifest, legendGid) / legendGidOfEntry(el) / entryIndexOf(el)
+legendDisplayOrder(panel, legend, n) / legendEntryViews(panel, manifest, legend)
+entryBinding(panel, el) / hasStyleOverride(panel, gid) / restoreFollowPlan(el)
+// web/src/components/inspector
+LegendCard / LEGEND_CARD_PROPS            // 图例页承接掉的字段
+controls/LegendBindingControl             // controlKindOf → 'legend-binding'
+// web/src/store/actions.ts
+restoreLegendEntryFollow(panelId, element)
+```
+
+### 迁移
+
+**没有磁盘格式改动。** 新增的全是 override（`gid + prop + value`）。一处**语义**
+变化：`axes_i.legend.texts_j` 的 j 从显示位置改为原始序号——只有「既重排过又改过
+某一项文字」的存量文档会受影响（那条 override 现在跟着项走，不跟着位置走），
+而那正是修掉的缺陷。`tests/golden/preflight_vectors.json` 27 → 28。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/overrides.py 的图例段         LegendEntries / 绑定 / 同步 / 重建（整段重写）
+新增  tests/test_legend_binding.py                     28 条（worker）
+新增  tests/test_legend_model_pairs.py                 2 条（两侧常量）
+新增  web/src/lib/legendModel.ts                       前端投影
+新增  web/src/components/inspector/LegendCard.tsx      图例卡
+新增  web/src/components/inspector/controls/LegendBindingControl.tsx
+新增  web/src/components/inspector/legendCard.test.tsx 19 条
+新增  docs/adr/0034-legend-entry-binding.md
+改动  src/tavotto/engine/manifest.py                   _register_legend / _bind_legends / 图例项字段 / 隐藏项的框 / 图例新字段
+改动  src/tavotto/engine/preflight.py                  图例项示意线宽进 line-width-off-preset
+改动  scripts/gen_preflight_vectors.py + tests/golden/preflight_vectors.json   +1 条
+改动  tests/test_legend_text.py                        原始序号契约
+改动  tests/test_invariants_engine.py                  删豁免 + test_legend_rebuild_restores_exactly + 使能项
+改动  tests/support/engine_invariant_probe.py          legend_text 允许两族（标题 text / 项 legend_text）
+改动  web/src/lib/api.ts                               ManifestElement +legend_entry
+改动  web/src/lib/preflight.ts                         图例项示意线宽
+改动  web/src/store/actions.ts                         +restoreLegendEntryFollow
+改动  web/src/components/inspector/ElementInspector.tsx  图例卡 / 绑定控件 / order 控件按原始序取字
+改动  web/src/components/inspector/presentation/{types,registry,roleProfiles}.ts
+改动  web/src/components/inspector/roles/registry.ts   +「图例项」分组
+改动  web/src/components/inspector/controls/pickers.test.tsx
+改动  web/src/i18n/locales/*/{inspector,workspace}.json + resources.d.ts
+改动  docs/1.0-release-readiness.md                    §4.1 改成已修
+改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
+重建  codex-plugin/mcp/widget/canvas.html              指纹 13af9ce29dc7172a
+重建  web/dist-playground/                             指纹 62fa24ca25dd57c5（不进 git）
+```
+
+### 这一轮踩到的坑
+
+**1. 脱开点拿盒里那份，一批里「先改绿再改线宽」得到一条红线。** 同一批 patch
+里源的改动排在前面，而跟随同步要到整轮结束才跑；setter 那一刻盒里的示意线
+还是上一轮的。必须从源**现派生**（T-86）。
+
+**2. 快照会被 override 悄悄改掉。** 第一版 `orig_handles` 存的就是盒里那份活的
+示意线，handle_* override 直接改到它——「脚本原样」被第一条 override 改没了。
+快照必须是另一个对象；而误差棒的 LineCollection 造不出同类快照，只能用原对象
+（限制写进 ADR）。
+
+**3. 绑定用的指纹得取自创建时那份示意线，不是快照。** 误差棒的快照是 Line2D
+（HandlerLineCollection），拿它比永远对不上——那一项因此「无源」。
+
+**4. 两条能力真实的红。** 映射散点的图例示意线 `handle_color` 设得进、画不出
+（`update_scalarmappable` 下一帧覆盖回去），判据与散点本体同一个
+（`color_mapping_is_live`）；柱 / 填充示意线的「线宽」是边宽而边色与面同色，
+改 0.5 pt 像素上量不出——砍掉，只给颜色。
+
+**5. `binding` 是状态不是样式。** follow → custom 那一刻不改像素，能力真实那条
+用例会把它算成「改了没反应」——豁免要写得出理由（分岔发生在源下一次变化时），
+反方向会动像素由 `test_legend_binding.py` 钉住。
+
+**6. 三条变异存活，两条是用例形状、一条是双保险**（见 TEST_MATRIX）。M4
+（重建喂快照）杀不死是因为 `sync_legends` 同一轮兜底——记下来，别去「加强」用例。
+
+**7. `1.0-release-readiness.md` 里那条「喂回 `get_legend_handles_labels()` 撑高
+21px」复现不出**（InvCont 67 → 67）。我第一版写了个猜出来的成因（「候选里多了
+一个 artist」），量了一下是错的——改成只写测到的。
+
+### 尚存限制
+
+1. **没有源的误差棒项撤销到底后示意线样式回不到原样**（快照只能是原对象本身）。
+   有源的走源派生，不受影响。
+2. **曲线颜色的 SVG 局部预览只改曲线**，图例示意线要等定稿渲染回来（几百毫秒）。
+   给示意线挂 gid 做预览是后话。
+3. **图例项没有独立的画布内拖动 / 命中语义变化**：点文字选中项、点框拖图例，
+   沿用既有的「小框优先」；示意线本身不是元素。
+4. **图例超出边界 / 遮挡数据的检查没做**：没有可靠的计算（`best` 的避让只在
+   draw 时算），Prompt 明写「不做虚假检查」。
+5. **`markerscale` / `handleheight` / `borderaxespad` 没开放**；`title` 的排版走
+   它自己的 legend_text 元素（不在图例卡的批量里）。
+6. **切回跟随后 custom override 一律清掉**（不保留），写进 ADR。
+7. **e2e 没跑**（13 记的六条红仍开着）；04–14 的其余遗留原样开着。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 / 14 / 15 三轮都在这条分支上，
+  **尚未推送、没有 PR**）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 16：刻度线直接操作）
+
+**从这里开始读**：`docs/adr/0034-legend-entry-binding.md`（本轮）、
+`docs/adr/0032-typography-capability-layer.md`、`UX_CONTRACTS.md` 的「4d 图例条目
+合同」、`src/tavotto/AGENTS.md` 的刻度模型段（`tick_cfg` / `apply_tick_model` /
+`TickSet` / `TickLabel`）。
+
+**Session 15 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 「一个元素的首屏放什么」 | `presentation/roleProfiles.ts`（`visibleWhen` 条件显示） | 高频项常驻的唯一出处；模板点名 manifest 没给的字段自动跳过 |
+| 复合控件挂进首屏 | `ElementInspector` 的 `primaryExtra` + `consumedBySideDiagram`（刻度卡 / 图例卡两处先例） | 卡接管的字段要从通用列表让出来，**数得出重复** |
+| 一条状态 + 动作的字段控件 | `controlKindOf` → `'legend-binding'` + `FieldRow` 的 case | 加新 ControlKind 的三处：types / registry / FieldRow |
+| 多条 override 一次 commit 的结构性动作 | `store/actions.restoreLegendEntryFollow` | `finishActiveGesture()` + 一次 `updateObject`，别在组件里逐条 clear |
+| 派生显示 | `overrides.sync_legends` | 「源一变就重新派生、不进文档」这个形状可复用（刻度文字冻结与它同族） |
+| 稳定身份 vs 显示位置 | `LegendEntries.order` / `shown()` | 刻度也有同样的问题：第 j 条刻度是「显示第 j 条」还是「值为 x 的那条」 |
+| 命中几何 | `canvas/interactions.pickElement`（小框优先、路径命中、`HIT_PENALTY`） | 刻度线的直接操作要先在这里回答「点在刻度上算谁的」 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、
+12 的五条、13 的四条、14 的四条原样成立，15 再加四条）：
+
+37. **不许把派生值写进文档**（T-85）。图例示意线跟着源变是派生显示，每次源变
+    就写一条 override 的做法会淹没用户自己的改动，而且两份值迟早失联。
+38. **不许拿盒里那份当「此刻的样子」**（T-86）。同一批 patch 里别的 setter 可能
+    排在前面而同步还没跑；要「此刻」就从源现派生。
+39. **不许在并列时猜一个**（T-87）。绑错一条比不绑更坏——「未关联」是诚实的
+    答案，它还留着「示意线照常可编辑」这条路。
+40. **不许把示意线副本再喂回 `_init_legend_box`**（T-88）。素材只有源对象或
+    脚本原样快照；副本再复制一次就是当年那条 P2。
+
+**必须保留的不变式**（在 14 的二十条之上）：
+
+21. **`texts_j` 的 j 是原始序号**，重排 / 隐藏都不改它；override 跟着项走。
+22. **跟随 = 派生显示**：不进 `applied`、不进文档；热态 == 重放继续成立
+    （`test_hot_equals_fresh_replay`）。
+23. **撤销到底 manifest 与像素逐位回原样，图例不再豁免**
+    （`test_exact_restore_is_pixel_and_manifest_identical` 现在连图例一起扫）。
+24. **两侧常量严格同源**：`LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS`
+    （`tests/test_legend_model_pairs.py`）。
+25. **能力按示意线类型给**，色图在管的示意线不给颜色（与散点本体同一条判据）。
+
+---
+
+## 历史：Session 14（2026-09-01）
 
 ### 目标
 
@@ -234,7 +470,7 @@ PyMuPDF 重新生成之后，产物会以「没变化」的样子带着旧答案
 
 ---
 
-## 下一阶段入口（Prompt 15：图例文本与线条测量）
+### Session 14 当时写给 Prompt 15 的入口（已消费）
 
 **从这里开始读**：`docs/adr/0033-scientific-text-and-font-fallback.md`（本轮）、
 `docs/adr/0032-typography-capability-layer.md`、`UX_CONTRACTS.md` 的

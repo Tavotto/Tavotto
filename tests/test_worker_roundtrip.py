@@ -412,7 +412,9 @@ def test_legend_entry_order_roundtrip(worker):
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_sc", "patches": patch})
     f2 = _field(resp["manifest"], leg["gid"], "entry_order")
     assert f2["value"] == [2, 0, 1]
-    assert f2["options"] == [labels0[2], labels0[0], labels0[1]]
+    # options 按**原始序**（ADR 0034）：options[value[k]] 是显示位 k 上的字，
+    # 重排后 options 本身不动
+    assert f2["options"] == labels0
 
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_sc", "patches": []})
     f3 = _field(resp["manifest"], leg["gid"], "entry_order")

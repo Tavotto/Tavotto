@@ -864,7 +864,7 @@ def _bind_legends(state: FigState) -> None:
         else:
             cands = [(g, a) for _o, g, a in sources]
             auto = []
-            for ax in getattr(state.fig, "axes", []):
+            for ax in _ordered_axes(state.fig)[0]:
                 try:
                     auto.extend(ax.get_legend_handles_labels()[0])
                 except Exception:  # noqa: BLE001
