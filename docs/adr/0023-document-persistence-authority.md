@@ -126,6 +126,9 @@ replace 出来的是一个**空文件**——比保留旧内容还糟。
 `docs/implementation/product-ux-reliability/STATUS.md` 的 R-18）。
 那属于修调用方，不属于修落盘。非有限数仍然挡——那种文档写出去谁都读不回来。
 **条件**：R-18 修好后再收紧，并同时给 `/api/layouts` 补 round-trip 用例。
+**已兑现（2026-09-02，Session 23）**：R-18 的调用方修好之后，`POST /api/layouts/<name>`
+与自动保存共用 `validate_document`（不是文档 / 来自更新版本的 schema 都 400），
+round-trip 与拒绝用例在 `tests/test_document_persistence.py`。
 
 **b) 不给文档模型加 `extensions` 透传字段。**
 Prompt 02 §四 提议留一个未知字段兜底位。但现在 `migrateToProject` 与

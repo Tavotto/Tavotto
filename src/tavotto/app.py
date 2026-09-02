@@ -5119,16 +5119,14 @@ def api_layout_save(name):
     进程被杀）留下的是一个**截断的文件**，而它已经把上一份好文件顶掉了——
     产品里最显眼的一次保存，恰恰是唯一一处不原子的写入。
 
-    **载荷这里不做 schema 校验。** 已经在用这条路的调用方不止前端：
-    `scripts/ci/upgrade_acceptance.py` 发的是 `{"doc": ...}` 包一层的形状。
-    在这个 PR 里收紧会让 N-1 升级验收的两个检查悄悄换一种坏法（见
-    docs/implementation/product-ux-reliability/STATUS.md 的 R-18），
-    那属于修调用方，不属于修落盘。非有限数仍然挡（`atomicio` 里），
-    因为那种文档写出去谁都读不回来。
+    **载荷与自动保存走同一份判据**（`documents.validate_document`，ADR 0023
+    §5a 的条件——R-18 修好之后——已满足）：不是文档的东西、来自更新版本的
+    schema，都在落盘之前挡下。以前这条路一个字段都不查，「来自更新的 Tavotto」
+    的文档能原样写进 `tavottofile/`，随后每一次打开都被拒。非有限数照旧由
+    `atomicio` 挡（那种文档写出去谁都读不回来）。
     """
-    engine_atomicio.write_json(
-        layout_path(name, project_layout_dir()), request.get_json(force=True), indent=1
-    )
+    body = engine_documents.validate_document(request.get_json(force=True))
+    engine_atomicio.write_json(layout_path(name, project_layout_dir()), body, indent=1)
     return jsonify({"ok": True})
 
 
