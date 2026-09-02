@@ -1055,6 +1055,7 @@ export default interface Resources {
           "changedDetail": "安装时是 {{recorded}}",
           "installed": "已安装",
           "missing": "环境里不见了",
+          "planned": "创建时安装",
           "unknown": "未知"
         },
         "uninstall": "卸载",

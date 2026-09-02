@@ -881,6 +881,7 @@
         "changedDetail": "was {{recorded}} when installed",
         "installed": "Installed",
         "missing": "Missing from the environment",
+        "planned": "Installed on creation",
         "unknown": "Unknown"
       },
       "uninstall": "Uninstall",

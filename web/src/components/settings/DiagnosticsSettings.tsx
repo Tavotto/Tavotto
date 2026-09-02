@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { fetchDiagnosticsSummary } from '@/lib/api'
@@ -92,17 +92,20 @@ export function DiagnosticsSettings() {
       </SettingSection>
 
       <SettingSection title={st('diagnostics.reportTitle')}>
-        <div className="flex flex-wrap items-center gap-2">
-          <CopySummary />
-          <DiagnosticsExportButton />
-          <HelpTip label={st('about.diagnosticsHelpAria')}>
-            <p>
-              {st('about.diagnosticsHintBefore')}
-              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
-              {st('about.diagnosticsHintAfter')}
-            </p>
-          </HelpTip>
-        </div>
+        <CopySummary
+          trailing={
+            <>
+              <DiagnosticsExportButton />
+              <HelpTip label={st('about.diagnosticsHelpAria')}>
+                <p>
+                  {st('about.diagnosticsHintBefore')}
+                  <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
+                  {st('about.diagnosticsHintAfter')}
+                </p>
+              </HelpTip>
+            </>
+          }
+        />
       </SettingSection>
 
       {/* 技术详情：来源 / 版本 / 完整路径 / 换解释器。默认折叠 */}
@@ -141,7 +144,7 @@ export function DiagnosticsSettings() {
  * 文本由后端 `/api/diagnostics/summary` 给（与诊断包同一份采集、同一道脱敏），
  * 前端不再自己拼一份——拼一份就是第二个采集出处。
  */
-function CopySummary() {
+function CopySummary({ trailing }: { trailing?: ReactNode }) {
   useTranslation('dialogs')
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
   const [text, setText] = useState('')
@@ -156,7 +159,7 @@ function CopySummary() {
     }
   }
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {phase !== 'ready' ? (
           <Button variant="outline" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
@@ -170,6 +173,7 @@ function CopySummary() {
             </Button>
           </>
         )}
+        {trailing}
         {phase === 'error' && (
           <span role="alert" className="text-xs text-danger">
             {st('diagnostics.prepareFailed')}

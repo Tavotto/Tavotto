@@ -55,20 +55,25 @@ export function AgentList({
             一行只有三件事实：名称 · 版本号 · 状态（ADR 0038）。路径、命令、
             检测来源全在详情里——「Tavotto 会自动发现……」那种解释也不在这儿。
           */}
-          <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-3 py-2">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-              {agent.display_name}
-            </span>
-            {agent.installed && agentVersionLabel(agent.version) && (
-              <span
-                data-agent-version
-                className="shrink-0 font-mono text-xs text-ink-3"
-                aria-label={ag('versionAria', { version: agentVersionLabel(agent.version) })}
-              >
-                {agentVersionLabel(agent.version)}
+          <div className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-2">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                {agent.display_name}
               </span>
+              {agent.installed && agentVersionLabel(agent.version) && (
+                <span
+                  data-agent-version
+                  className="max-w-32 shrink-0 truncate font-mono text-xs text-ink-3"
+                  aria-label={ag('versionAria', { version: agentVersionLabel(agent.version) })}
+                >
+                  {agentVersionLabel(agent.version)}
+                </span>
+              )}
+              <AgentStateBadge state={agent.state} className="shrink-0 whitespace-nowrap" />
+            </div>
+            {agentSubtitle(agent) && (
+              <p className="truncate text-xs text-ink-3">{agentSubtitle(agent)}</p>
             )}
-            <AgentStateBadge state={agent.state} className="w-24 shrink-0 justify-end" />
           </div>
           {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了） */}
           <div className="relative z-10 flex shrink-0 items-center gap-1">
@@ -84,11 +89,6 @@ export function AgentList({
             aria-hidden
             className="pointer-events-none shrink-0 text-ink-faint"
           />
-          {agentSubtitle(agent) && (
-            <p className="pointer-events-none absolute bottom-1 left-[60px] text-xs text-ink-3">
-              {agentSubtitle(agent)}
-            </p>
-          )}
         </li>
       ))}
     </ul>

@@ -2409,7 +2409,7 @@ export const rebuildManagedEnvironment = () =>
 export type PackageOp = 'install' | 'update' | 'uninstall'
 
 /** 包状态：账上有 + 环境里有 + 版本一致 = installed；空串 = 环境不在，问不出 */
-export type PackageStatus = 'installed' | 'missing' | 'changed' | ''
+export type PackageStatus = 'installed' | 'missing' | 'changed' | 'planned' | ''
 
 export interface BuiltinPackage {
   name: string

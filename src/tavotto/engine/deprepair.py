@@ -1231,6 +1231,7 @@ FREEZE_TIMEOUT_S = 60
 PKG_INSTALLED = "installed"  # 账上有、环境里也有、版本一致
 PKG_MISSING = "missing"  # 账上有、环境里没有（被人手工删了 / 环境重建过一半）
 PKG_CHANGED = "changed"  # 账上记的版本与环境里的不一致（别的安装顺手升过它）
+PKG_PLANNED = "planned"  # 环境还没建：创建时会装上（内置清单专用）
 
 _jobs: dict[str, "PackageJob"] = {}
 
@@ -1415,7 +1416,7 @@ def list_managed_packages(project: str | Path | None) -> dict:
         else:
             builtin_source = "planned"
             for name in managedenv.BASE_PACKAGES:
-                builtin.append({"name": name, "version": "", "status": ""})
+                builtin.append({"name": name, "version": "", "status": PKG_PLANNED})
 
     # ---- 用户装的：账为主、盘点为证 ----
     user: list[dict] = []

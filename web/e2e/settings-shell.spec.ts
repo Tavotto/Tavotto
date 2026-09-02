@@ -15,9 +15,19 @@ const SECTION_LABELS = ['常规', '界面', '项目', '样式', '规范', '导�
 
 async function openSettings(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByRole('button', { name: '设置', exact: true }).first().click()
+  // <1024 时左栏是覆盖式抽屉，首屏开着、遮罩盖住了设置按钮（遮罩自身的淡入
+  // 动画让 Playwright 一直判它"不稳定"）。设置对话框是 z-50 的 portal，在抽屉之上，
+  // 所以这里绕过指针拦截直接派发 click——测的是对话框，不是抽屉
+  const settings = page.getByRole('button', { name: '设置', exact: true }).first()
+  if (await page.getByRole('button', { name: '收起侧栏' }).count()) {
+    await settings.dispatchEvent('click')
+  } else {
+    await settings.click()
+  }
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
+  // 进场动画（pop-in 缩放）跑完再量：动画中的 boundingBox 是缩过的
+  await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
   return dialog
 }
 
@@ -39,7 +49,8 @@ async function horizontalOffenders(page: Page): Promise<string[]> {
 }
 
 test('设置：切遍每个分区，外框不跳、内容区自己滚', async ({ app, page }) => {
-  const dialog = await openSettings(page, app.baseURL)
+  const a = await app()
+  const dialog = await openSettings(page, a.baseURL)
   const nav = dialog.getByRole('navigation')
   const box0 = (await dialog.boundingBox())!
   for (const label of SECTION_LABELS) {
@@ -56,8 +67,9 @@ test('设置：切遍每个分区，外框不跳、内容区自己滚', async ({
 })
 
 test('设置：1024×640 小窗口整个外框在视口内且不横向溢出', async ({ app, page }) => {
+  const a = await app()
   await page.setViewportSize({ width: 1024, height: 640 })
-  const dialog = await openSettings(page, app.baseURL)
+  const dialog = await openSettings(page, a.baseURL)
   const box = (await dialog.boundingBox())!
   expect(box.x).toBeGreaterThanOrEqual(0)
   expect(box.y).toBeGreaterThanOrEqual(0)
@@ -71,8 +83,9 @@ test('设置：1024×640 小窗口整个外框在视口内且不横向溢出', a
 })
 
 test('设置：窄窗口（<640 CSS px，等价于高缩放）导航变成顶部一条、仍可切页', async ({ app, page }) => {
+  const a = await app()
   await page.setViewportSize({ width: 600, height: 700 })
-  const dialog = await openSettings(page, app.baseURL)
+  const dialog = await openSettings(page, a.baseURL)
   const nav = dialog.getByRole('navigation')
   const navBox = (await nav.boundingBox())!
   const contentBox = (await dialog.locator('[data-settings-content]').boundingBox())!
@@ -85,7 +98,8 @@ test('设置：窄窗口（<640 CSS px，等价于高缩放）导航变成顶部
 })
 
 test('设置：英文界面同样不溢出', async ({ app, page }) => {
-  await page.goto(app.baseURL)
+  const a = await app()
+  await page.goto(a.baseURL)
   await page.evaluate(() => localStorage.setItem('tavotto.locale', 'en-US'))
   await page.reload()
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click()
@@ -99,7 +113,8 @@ test('设置：英文界面同样不溢出', async ({ app, page }) => {
 })
 
 test('设置：方向键在导航里走，Enter 不需要——落地即切页', async ({ app, page }) => {
-  const dialog = await openSettings(page, app.baseURL)
+  const a = await app()
+  const dialog = await openSettings(page, a.baseURL)
   const nav = dialog.getByRole('navigation')
   await nav.getByRole('button', { name: '常规', exact: true }).focus()
   await page.keyboard.press('ArrowDown')
@@ -110,7 +125,8 @@ test('设置：方向键在导航里走，Enter 不需要——落地即切页',
 })
 
 test('设置：包管理 / 诊断 / Agent 三页 axe 无 critical/serious', async ({ app, page }) => {
-  const dialog = await openSettings(page, app.baseURL)
+  const a = await app()
+  const dialog = await openSettings(page, a.baseURL)
   for (const label of ['包管理', '诊断', '编码 Agent']) {
     await dialog.getByRole('navigation').getByRole('button', { name: label, exact: true }).click()
     await page.waitForTimeout(300)

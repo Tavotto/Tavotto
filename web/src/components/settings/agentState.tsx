@@ -59,7 +59,9 @@ export function AgentStateBadge({
 export function agentVersionLabel(version: string | null | undefined): string | null {
   if (!version) return null
   const m = /\d+(?:\.\d+)+(?:[-+.][0-9A-Za-z.-]+)?/.exec(version)
-  return m ? m[0] : version
+  // 抽不出版本号就**不显示**：`--version` 的第一行有时是 shim 的报错
+  // （带完整路径），那正是一级页面不该出现的东西；原文留在详情里
+  return m ? m[0] : null
 }
 
 /**
