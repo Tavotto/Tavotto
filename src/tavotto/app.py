@@ -1611,15 +1611,52 @@ def api_events():
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
-def _script_change_handler(ctx: "ProjectCtx"):
+def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
     """watcher 回调必须绑定到具体项目——事件里带上 pj，别的标签页才不会
-    因为另一个图库的脚本变动去重渲染自己的面板。"""
+    因为另一个图库的脚本变动去重渲染自己的面板。
+
+    `reason` 只有两个取值：`watcher`（默认）与 `ai`（`_after_ai_change`）。前端
+    据它决定要不要单独弹「脚本已更新」——AI 那条路紧跟着还有一条 `ai.done`
+    在说同一件事，两条提示只留一条。
+    """
 
     def _on_change(changed: list[str]) -> None:
         stems = [s for sc in changed for s in ctx.registry.stems_of(sc)]
-        sse_publish("panel.file_changed", {"scripts": changed, "stems": stems, "pj": ctx.id})
+        sse_publish(
+            "panel.file_changed",
+            {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason},
+        )
 
     return _on_change
+
+
+def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
+    """AI 改完脚本之后的**后端确定性路径**（ADR 0041 §2）。
+
+    顺序与 watcher 的 `_dispatch` 逐字相同：作废 worker → 统一刷新 →
+    `panel.file_changed`。区别只在「谁先看到这次写入」：
+
+    * 先问 watcher（`engine_watch.absorb`）：这条脚本此刻的签名它消化过没有。
+      没消化过（常态——CLI 刚退出，watcher 还在防抖）→ 三件事这里做全，并把
+      签名记成已消化，watcher 下一轮不再重复；
+    * 已经消化过（CLI 写完文件后又跑了几秒才退出）→ 作废与事件 watcher 已经
+      发过，这里**只**再走一次刷新——它按内容比对，无差异一条事件都不发；
+    * 项目已经关闭 → 抛 `project_closed`，进 `ai.done.refresh` 的 failed 档。
+
+    **不 probe、不跑脚本**：刷新只读 AST（ADR 0025）；重渲染由前端收到
+    `panel.file_changed` 之后按既有纪律决定（正在画布上的面板才重建）。
+    """
+    if PROJECTS.get(ctx.id) is not ctx:
+        raise engine_refresh.RefreshError("project_closed", "项目已关闭，AI 修改后的刷新跳过")
+    fresh = engine_watch.absorb(ctx.path, [script])
+    first = fresh is None or script in fresh
+    if first:
+        engine_pool.invalidate(script, str(ctx.path))
+    result = refresh_project(ctx, reason="ai", changed_paths=[script])
+    if first and (ctx.path / script).exists():
+        _script_change_handler(ctx, reason="ai")([script])
+    result["panel_event"] = bool(first)
+    return result
 
 
 def project_status(ctx: "ProjectCtx | None") -> dict:
@@ -1786,13 +1823,42 @@ def refresh_project(
     把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
     watcher 也调这个函数，不许自己 merge、自己发事件）。
     """
-    return engine_refresh.refresh_project_index(
+    result = engine_refresh.refresh_project_index(
         ctx,
         reason=reason,
         changed_paths=changed_paths,
         allow_static_merge=allow_static_merge,
         publish=publish,
         sink=_refresh_sink(ctx),
+    )
+    # 遥测挂在**成功边界**上，且只在这一处：四条刷新路径（手动 / watcher /
+    # Codex / AI）都经过这里。失败抛出去了就没有这一句——失败不是完成。
+    _capture_refresh_completed(result)
+    return result
+
+
+def _refresh_changed_bucket(result: dict) -> str:
+    """脚本 + 素材变化条数的分桶。桶名是闭集，条数本身不发。"""
+    reg, assets = result["registry"], result["assets"]
+    n = sum(len(reg[k]) for k in ("added_scripts", "removed_scripts", "changed_scripts")) + sum(
+        len(assets[k]) for k in ("added", "removed", "changed")
+    )
+    if n == 0:
+        return "none"
+    if n == 1:
+        return "one"
+    return "few" if n <= 5 else "many"
+
+
+def _capture_refresh_completed(result: dict) -> None:
+    """`project_refresh_completed`：只收白名单里的四个来由，其余（probe /
+    手工登记 / 打开项目）是别的动作的副产物，不记。白名单取自 EVENTS 表本身。"""
+    allowed = engine_telemetry.EVENTS["project_refresh_completed"]["source"]["values"]
+    if result.get("reason") not in allowed:
+        return
+    engine_telemetry.capture(
+        "project_refresh_completed",
+        {"source": result["reason"], "changed_bucket": _refresh_changed_bucket(result)},
     )
 
 
@@ -4678,8 +4744,35 @@ def api_packages_run():
                 "code": engine_deprepair.ERROR_NOT_ALLOWED,
             }
         ), 409
-    engine_deprepair.run_package_job_async(job.job_id, lambda p: sse_publish("engine.package", p))
+
+    def _on_event(p: dict) -> None:
+        sse_publish("engine.package", p)
+        _capture_package_action(job.op, p)
+
+    engine_deprepair.run_package_job_async(job.job_id, _on_event)
     return jsonify({"started": True, **engine_deprepair.progress(job.job_id)})
+
+
+#: 作业 op → 遥测 action；终态 → 遥测 outcome。**没有包名**（可能泄露私有依赖）。
+_PACKAGE_ACTION = {
+    engine_deprepair.OP_INSTALL: "install",
+    engine_deprepair.OP_UPDATE: "update",
+    engine_deprepair.OP_UNINSTALL: "remove",
+}
+_PACKAGE_OUTCOME = {
+    engine_deprepair.STATE_DONE: "ok",
+    engine_deprepair.STATE_FAILED: "failed",
+    engine_deprepair.STATE_CANCELLED: "cancelled",
+}
+
+
+def _capture_package_action(op: str, progress: dict) -> None:
+    """`package_action`：作业到终态才记一条；中间态一条都不记。"""
+    outcome = _PACKAGE_OUTCOME.get(str(progress.get("state") or ""))
+    action = _PACKAGE_ACTION.get(op)
+    if outcome is None or action is None:
+        return
+    engine_telemetry.capture("package_action", {"action": action, "outcome": outcome})
 
 
 @app.post("/api/engine/packages/cancel")
@@ -4864,17 +4957,20 @@ def api_ai_run():
         "target": body.get("target"),
         "canvas": body.get("canvas"),
     }
+    ctx = current_ctx()
     try:
         sid = engine_ai.run(
             agent,
             info["script"],
             prompt,
-            str(require_project()),
+            str(ctx.path),
             context=context,
             on_event=sse_publish,
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
+            # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
+            on_changed=lambda script: _after_ai_change(ctx, script),
         )
     except engine_ai.AgentError as exc:
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，

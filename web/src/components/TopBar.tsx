@@ -34,6 +34,8 @@ import { ProjectSwitcher } from './ProjectSwitcher'
 import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
+import { refreshProjectNow } from '@/store/liveSync'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
@@ -644,6 +646,14 @@ function MoreMenu() {
       <MenuSeparator />
       <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
       <MenuSeparator />
+      {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}
+      <MenuItem onSelect={() => void refreshProjectNow()}>{t('topbar.refreshProject')}</MenuItem>
+      <MenuItem
+        onSelect={() => useProjectReadinessStore.getState().openCenter({ source: 'palette' })}
+      >
+        {t('topbar.readiness')}
+      </MenuItem>
+      <MenuSeparator />
       <MenuItem onSelect={() => usePalette.getState().setOpen(true)} shortcut={`${MOD}K`}>
         {t('topbar.commandPalette')}
       </MenuItem>
@@ -651,7 +661,7 @@ function MoreMenu() {
         {t('topbar.shortcutHelp')}
       </MenuItem>
       {/* 开始 / 继续 / 重新开始教程：文案与动作都来自 lib/onboarding/tutorial，不在这里判状态 */}
-      <MenuItem onSelect={() => void runTutorialEntry()} data-onboarding-anchor="help-tutorial">
+      <MenuItem onSelect={() => void runTutorialEntry('help')} data-onboarding-anchor="help-tutorial">
         {t(`topbar.tutorial.${tutorialKind}`)}
       </MenuItem>
     </Menu>

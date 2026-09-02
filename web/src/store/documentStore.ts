@@ -995,6 +995,20 @@ function afterWriteOk(id: string, savedAt: number): void {
   emitActivity({ kind: 'document.saved' })
 }
 
+/* -------------------------------------------------------------------------- */
+/*  遥测：一次写盘的结局。只有 manual / autosave 两档与 ok / conflict / failed  */
+/*  三种结局，没有文档名、路径、修订号。                                        */
+/*                                                                            */
+/*  「这次写是手动还是自动」在 `saveNow()` 里知道、在 `scheduleDiskWrite()` 里   */
+/*  用：手动保存先把标志举起来，下一次真正开始的写盘把它消费掉。写盘排队时     */
+/*  标志会落到排队后开始的那一次上——粗，但它就是那次手动保存推出去的内容。     */
+/* -------------------------------------------------------------------------- */
+let manualSavePending = false
+
+function captureSaveOutcome(trigger: 'manual' | 'autosave', outcome: 'ok' | 'conflict' | 'failed') {
+  captureTelemetry('document_saved', { trigger, outcome })
+}
+
 function conflictIssue(id: string, err: unknown): SaveIssue {
   const body = err instanceof ApiError ? err.body : {}
   const disk = (body.summary as DiskDocumentSummary | undefined) ?? null
@@ -1014,6 +1028,8 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
     return
   }
   diskBusy = true
+  const trigger: 'manual' | 'autosave' = manualSavePending ? 'manual' : 'autosave'
+  manualSavePending = false
   if (isCurrentDoc(id)) setSaveState('saving')
   void ensureDiskKnown(id, pj)
     .then((issue) => {
@@ -1031,6 +1047,7 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
         /* 副本删不掉不影响正确性（读取时按 updatedAt 取新） */
       }
       afterWriteOk(id, res.saved_at ?? Date.now())
+      captureSaveOutcome(trigger, 'ok')
     })
     .catch((err: unknown) => {
       // 磁盘写失败（含被 409 挡下的过期写）：本机副本仍在（flush 时已写，
@@ -1042,6 +1059,7 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
           : isStaleWrite(err) || isExternalChange(err)
             ? conflictIssue(id, err)
             : null
+      captureSaveOutcome(trigger, conflict ? 'conflict' : 'failed')
       if (isCurrentDoc(id)) {
         setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
       }
@@ -1173,8 +1191,10 @@ export function flushAutosave(): FlushResult {
  */
 export async function saveNow(): Promise<SaveState> {
   cancelPendingAutosave()
+  manualSavePending = true
   const result = flushAutosave()
   if (result === 'empty') {
+    manualSavePending = false
     setSaveState('clean')
     return 'clean'
   }
@@ -1256,6 +1276,7 @@ export function recoverLocalCopy(): boolean {
   dropRecovery(notice.docId)
   setDocNotice(null)
   setSaveState('dirty')
+  captureTelemetry('recovery_action', { action: 'restore' })
   return true
 }
 
@@ -1265,6 +1286,7 @@ export function discardLocalCopy(): void {
   if (notice?.kind !== 'recovery') return
   dropRecovery(notice.docId)
   setDocNotice(null)
+  captureTelemetry('recovery_action', { action: 'keep_main' })
 }
 
 /** 「这份读不了」的裁决：知道了。磁盘上那份文件一个字节没动。 */

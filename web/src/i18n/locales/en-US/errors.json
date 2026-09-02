@@ -99,6 +99,7 @@
     "profile_revision_missing": "The request has no revision, so we cannot tell whether someone else changed it.",
     "profile_store_unsupported_schema": "This profile store was written by a newer Tavotto. This version can read it but will not overwrite it — upgrade first.",
     "profile_too_large": "The imported file is too large.",
+    "project_closed": "The project was closed, so the refresh after the assistant’s edit was skipped; the new script is picked up the next time the project is opened",
     "project_env_already_attempted": "The environment was already switched once this round — retry manually",
     "project_env_module_missing": "The project environment does not have that package either",
     "project_env_no_matplotlib": "The project environment cannot import matplotlib",

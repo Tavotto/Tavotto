@@ -667,6 +667,7 @@
     "noOtherDocuments": "No other documents",
     "paperStyles": "Paper styles…",
     "presets": "Research presets and symbols…",
+    "readiness": "Project readiness",
     "recentDocuments": "Recent documents (this machine)",
     "recentEntryMulti_one": "{{name}} · {{canvases}} canvases · {{count}} object",
     "recentEntryMulti_other": "{{name}} · {{canvases}} canvases · {{count}} objects",
@@ -674,6 +675,7 @@
     "recentEntry_other": "{{name}} · {{count}} objects",
     "redo": "Redo",
     "redoWith": "Redo {{label}}",
+    "refreshProject": "Refresh project",
     "renameDocument": "Rename document…",
     "saveAsCanvasFile": "Save as canvas file…",
     "saveClean": "Saved {{time}}",
@@ -686,18 +688,18 @@
     "saveStateTitle": "{{mod}}S saves this document; ⇧{{mod}}S saves a named canvas file",
     "shortcutHelp": "Keyboard shortcuts",
     "subLabelsTip": "Add (a)(b)(c) labels in reading order",
+    "tutorial": {
+      "start": "Start tutorial",
+      "resume": "Resume tutorial",
+      "restart": "Take the tutorial again"
+    },
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
     "versionTimeline": "Layout version timeline…",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
-    "zoomValue": "Zoom {{percent}}%",
-    "tutorial": {
-      "start": "Start tutorial",
-      "resume": "Resume tutorial",
-      "restart": "Take the tutorial again"
-    }
+    "zoomValue": "Zoom {{percent}}%"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version — this page still works in the meantime."

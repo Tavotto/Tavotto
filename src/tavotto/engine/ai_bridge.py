@@ -502,11 +502,17 @@ def run(
     model: str | None = None,
     effort: str | None = None,
     endpoint_id: str | None = None,
+    on_changed=None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
     **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
     拒绝。只靠前端隐藏是不够的——这个端点可以被直接调。
+
+    `on_changed(script)`：文件**真的变了**之后、`ai.done` 发出**之前**调一次
+    （app 层接的是统一刷新，ADR 0025）。本模块不 import app、不知道刷新长什么
+    样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
+    它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
     """
     require_usable(agent)
     script_path = Path(figures_dir) / script
@@ -575,6 +581,7 @@ def run(
         "transcript": [],
         "diff": "",
         "changed": False,
+        "refresh": {"status": "pending"},
         "model": model,
         "effort": effort,
         "snapshot": str(snap),
@@ -634,12 +641,17 @@ def run(
             )
             if sess["status"] == "running":
                 sess["status"] = "done" if proc.returncode == 0 else "failed"
+            # 文件变了就接统一刷新——**不看 status**：CLI 超时 / 非零退出但文件
+            # 已经改了，磁盘上的事实就是改了，watcher 迟早也会看到它。刷新在
+            # `ai.done` 之前做完，前端收到那条事件时后端的注册表已经是新的。
+            sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
-                "AI 会话结束: %s %s status=%s changed=%s",
+                "AI 会话结束: %s %s status=%s changed=%s refresh=%s",
                 agent,
                 script,
                 sess["status"],
                 sess["changed"],
+                sess["refresh"]["status"],
             )
             ai_history.record_end(
                 sid,
@@ -647,6 +659,7 @@ def run(
                 diff=sess["diff"],
                 changed=sess["changed"],
                 transcript=sess["transcript"],
+                refresh=sess["refresh"],
             )
             emit(
                 "ai.done",
@@ -656,12 +669,18 @@ def run(
                     "changed": sess["changed"],
                     "diff": sess["diff"],
                     "script": script,
+                    "refresh": sess["refresh"],
                 },
             )
         except Exception as exc:  # noqa: BLE001
             sess["status"] = "failed"
+            sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
             ai_history.record_end(
-                sid, "failed", error=str(exc), transcript=sess.get("transcript") or []
+                sid,
+                "failed",
+                error=str(exc),
+                transcript=sess.get("transcript") or [],
+                refresh=sess["refresh"],
             )
             emit(
                 "ai.done",
@@ -672,11 +691,51 @@ def run(
                     "diff": "",
                     "error": str(exc),
                     "script": script,
+                    "refresh": sess["refresh"],
                 },
             )
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid
+
+
+#: `ai.done.refresh.status` 的闭集。前端与历史页按它分支，别再加自由文本。
+REFRESH_SKIPPED = "skipped"  # 文件没变，没有刷新的必要
+REFRESH_NOT_WIRED = "not_wired"  # 调用方没接 on_changed（纯引擎侧 / 测试）
+REFRESH_OK = "ok"
+REFRESH_FAILED = "failed"
+
+
+def refresh_outcome(on_changed, script: str, changed: bool) -> dict:
+    """AI 改完文件之后接统一刷新，把结局压成一份**只有枚举与布尔**的摘要。
+
+    边界要说清：代码改动成功与刷新成功是两件事。刷新失败不能把前者伪装成
+    「全部成功」（前端会把 `failed` 单独说出来），也不能反过来把 AI 会话记成
+    失败——文件确实改了，watcher 下一轮还会再试。摘要里**不带**任何脚本名、
+    路径与 diff 内容：那些各有各的字段。
+    """
+    if not changed:
+        return {"status": REFRESH_SKIPPED}
+    if on_changed is None:
+        return {"status": REFRESH_NOT_WIRED}
+    try:
+        result = on_changed(script) or {}
+    except Exception as exc:  # noqa: BLE001 — 刷新失败不许弄丢 AI 会话的结局
+        code = getattr(exc, "code", None) or "refresh_failed"
+        LOG.warning("AI 修改后的统一刷新失败（%s）", code)
+        return {"status": REFRESH_FAILED, "code": str(code)}
+    reg = result.get("registry") or {}
+    assets = result.get("assets") or {}
+    return {
+        "status": REFRESH_OK,
+        "registry_changed": bool(
+            reg.get("added_scripts") or reg.get("removed_scripts") or reg.get("changed_scripts")
+        ),
+        "assets_changed": bool(
+            assets.get("added") or assets.get("removed") or assets.get("changed")
+        ),
+        "published": list(result.get("published") or []),
+    }
 
 
 def _load_sidecar(sid: str) -> dict | None:
@@ -722,6 +781,7 @@ def get(sid: str) -> dict | None:
             "transcript": hist["transcript"],
             "diff": hist["diff"],
             "changed": hist["changed"],
+            "refresh": hist.get("refresh"),
             "note": "后端已重启，记录来自历史库",
         }
     return {

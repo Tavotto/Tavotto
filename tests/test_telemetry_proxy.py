@@ -439,6 +439,16 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
         "export_completed": {"pdf": True, "png": True, "with_proof": False, "panel_count": 6},
         "ai_assistant_invoked": {"agent": "claude"},
         "update_completed": {"update_kind": "pipx", "target_version": "0.9.0"},
+        # Session 22（CONSENT_VERSION 2）
+        "project_refresh_completed": {"source": "codex", "changed_bucket": "one"},
+        "project_readiness_opened": {"source": "palette", "status_bucket": "mixed"},
+        "tutorial_started": {"source": "picker", "tutorial_version": 1},
+        "tutorial_step_completed": {"step_id": "select_text", "tutorial_version": 1},
+        "tutorial_completed": {"tutorial_version": 1},
+        "context_bar_multi_used": {"action_id": "distribute_h", "selection_size_bucket": "3_5"},
+        "document_saved": {"trigger": "autosave", "outcome": "ok"},
+        "recovery_action": {"action": "restore"},
+        "package_action": {"action": "install", "outcome": "ok"},
     }
     assert set(samples) == set(client.EVENTS), "新增事件要在这里补一条样例"
     auto = {"app_version": "0.8.0", "platform": "linux", "arch": "x86_64", "distribution": "pip"}

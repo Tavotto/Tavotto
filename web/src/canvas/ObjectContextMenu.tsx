@@ -253,7 +253,7 @@ function LayoutOnlyPanelItems({
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
   const explainable = !panel.script && !!cap && cap.status !== 'editable'
   const connectable = explainable && (cap.can_probe || cap.can_manual_link)
-  const focus = run(() => useProjectReadinessStore.getState().focusPanel(panel.fileId))
+  const focus = run(() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'quickedit'))
   const rotated = panelRotation(panel) !== 0
   return (
     <>

@@ -101,7 +101,7 @@ export function LeftRail() {
       <span className="mt-auto h-px w-6 bg-border" aria-hidden />
       <Tip label={t('rail.readiness')} side="right">
         <button
-          onClick={() => useProjectReadinessStore.getState().openCenter()}
+          onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-sm outline-none',

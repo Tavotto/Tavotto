@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-08-20
+Last updated: 2026-09-02
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition, project
 files, scripts, figures and exports stay on the user's machine unless the user
@@ -25,8 +25,10 @@ cannot carry any of the following, on the client and again at the server:
 * project names, canvas names, document titles
 * axis labels, annotations, legend contents, any text drawn inside a figure
 * scientific values or data points
-* package names imported by user scripts
+* package names imported by user scripts, package names the user installs into
+  Tavotto's managed environment, package-manager logs, private index URLs
 * AI prompts, AI responses, diffs
+* tutorial project or document identifiers, panel identifiers
 * usernames, email addresses, account IDs, hostnames
 * MAC addresses, hardware serial numbers, Windows SID, machine GUIDs
 * raw exception text or stack traces
@@ -91,10 +93,19 @@ explicitly opts in**, either in the one-time first-run prompt or under
   exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
   for editing, an edit committed, a canvas created, a preflight run finished, an
-  export succeeded, the assistant started, an update installed), plus the
-  application version, operating-system family (macos/windows/linux/other),
-  processor architecture (arm64/x86_64/other), and how Tavotto was installed
-  (desktop/pipx/pip/source/unknown).
+  export succeeded, the assistant started, an update installed; since consent
+  version 2 also: a project refresh completed and which entry point triggered it,
+  the readiness view opened and from where, which tutorial step was completed,
+  which kind of multi-selection arrange button was used, how a save / recovery /
+  package operation ended), plus the application version, operating-system family
+  (macos/windows/linux/other), processor architecture (arm64/x86_64/other), and
+  how Tavotto was installed (desktop/pipx/pip/source/unknown). Every value is a
+  fixed enumeration or a bucketed count; the full list is in
+  [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
+* **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
+  consent version was raised: consent given for version 1 stopped being sufficient
+  at that moment, no event is transmitted until the user is asked again, and the
+  existing identifier is kept.
 * **How to turn it off.** The toggle under *Settings → Privacy, diagnostics &
   About* takes effect immediately; already-queued events are dropped. Setting
   `TAVOTTO_NO_TELEMETRY=1` disables transmission entirely regardless of the saved
@@ -121,6 +132,29 @@ a third-party hosting provider that operates its own network and access logs
 outside our control, and PostHog operates its own infrastructure. What we do
 control is what Tavotto sends, what the proxy forwards, and what we ourselves
 record — and none of those include your content.
+
+## Project analysis stays local
+
+Tavotto keeps a derived picture of each open project — which script produces which
+figure, whether a figure can be edited element by element, whether a source file is
+missing. Computing it never leaves the machine and never runs the user's code:
+
+* **The project watcher** polls file metadata (names, sizes, modification times) of
+  the project directory and reads Python sources only for local static analysis of
+  which figure a script saves. It does not execute scripts, install anything or
+  send anything.
+* **Readiness analysis** is computed entirely locally from that static picture.
+* **A trial run ("probe")** — actually executing a plotting script to discover its
+  figures — happens only when the user explicitly triggers it in the interface or
+  through `tavotto open`. Nothing runs scripts automatically: not the watcher, not
+  the readiness view, not the tutorial, not the assistant's refresh.
+* **The Codex plugin's refresh tool** (`tavotto_refresh_project`) asks the local
+  Tavotto service, or the plugin's own copy of the same code when the app is not
+  running, to re-read the project. It uploads no figures, scripts or data to any
+  Tavotto service; the only network involved is the loopback connection to the
+  Tavotto process on the same machine.
+* **Tutorial progress** (which step you are on, which one-time hints you have
+  seen) is stored in the browser's local storage on this machine only.
 
 ## Diagnostics bundle
 

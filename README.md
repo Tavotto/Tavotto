@@ -82,6 +82,12 @@ In the new session you can say:
 > is healthy, and open the result in Tavotto at the end. Do not install or upgrade any
 > component that is already working.
 
+When Codex later edits, adds or renames a plotting script, it calls the plugin's
+`tavotto_refresh_project` tool: Tavotto re-reads the project (static analysis only, no
+script is run) and the open Tavotto window updates by itself — you never refresh or
+restart it by hand. The tool reports which figures are now editable, which still need
+a trial run you trigger in Tavotto, and which have a source conflict for you to settle.
+
 The first time a project-directory approval appears, what you are confirming is the
 local figure directory Tavotto may access. Figures, scripts and data are still
 processed on your machine.
@@ -293,11 +299,20 @@ the building. It makes exactly two requests on its own:
   **Settings → Check for updates** (or set `TAVOTTO_NO_UPDATE_CHECK=1`).
 - **Anonymous usage statistics — off until you say yes.** You are asked once, on first
   run. If you opt in, Tavotto sends broad feature events (app started, figure opened,
-  edit committed, export succeeded) plus version, OS family and architecture, tagged
-  with a random UUID generated on your machine. Never your figures, scripts, filenames,
-  paths, data, figure text or assistant prompts — the event schema cannot represent
-  them. Turn it off under **Settings → Privacy, diagnostics & About** (or set
+  edit committed, export succeeded, project refreshed, readiness view opened, a
+  tutorial step completed, a multi-selection arrange button used, how a save or a
+  package operation ended) plus version, OS family and architecture, tagged with a
+  random UUID generated on your machine. Every value is a fixed enumeration or a
+  bucketed count. Never your figures, scripts, filenames, paths, data, figure text,
+  package names or assistant prompts — the event schema cannot represent them. When
+  the list of events grows, the consent version is raised and you are asked again.
+  Turn it off under **Settings → Privacy, diagnostics & About** (or set
   `TAVOTTO_NO_TELEMETRY=1`).
+
+Project analysis is local too: the project watcher only reads file metadata and Python
+sources for static analysis, readiness is computed on your machine, tutorial progress is
+stored in your browser's local storage, and a script is only ever executed when you ask
+for a trial run.
 
 The two switches are independent; neither covers the other. Details in the
 [privacy policy](docs/privacy.md) and the
@@ -470,8 +485,10 @@ the proof report.
 
 The assistant panel can hand a request to the **Codex or Claude CLI** on your machine
 to edit the script itself — "move the legend to the top left and make it 7 pt". Your
-script is snapshotted first; afterwards you see the diff, the figure re-renders, and
-one click reverts it. This is the one path that touches your source, and you have to
+script is snapshotted first; afterwards Tavotto re-reads the project (the same refresh
+the Codex plugin and the file watcher use), you see the diff, the figure re-renders, and
+one click reverts it. If the refresh fails, the status line says so instead of pretending
+the whole edit succeeded. This is the one path that touches your source, and you have to
 ask for it. Everything else works without those tools installed.
 
 ## Where your files live

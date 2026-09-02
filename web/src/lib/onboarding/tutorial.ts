@@ -15,6 +15,7 @@
  *   * 打开不执行脚本——这里只调既有的项目打开链路（T-107）。
  */
 import { create } from 'zustand'
+import { captureTelemetry } from '@/lib/telemetry'
 import { msg, type UiMessage } from '@/i18n'
 import {
   ApiError,
@@ -29,7 +30,7 @@ import {
   type TutorialStatus,
 } from '@/lib/api'
 import { forgetLocalDocument, readAutosaveDoc, useDocumentStore } from '@/store/documentStore'
-import { useOnboardingStore, type OnboardingStatus } from '@/store/onboardingStore'
+import { ONBOARDING_FLOW_VERSION, type OnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore, askConfirm } from '@/store/uiStore'
 import { migrateToProject } from '@/types/document'
@@ -166,7 +167,13 @@ const inTutorialProject = (projectId: string | undefined | null) =>
  * 3. 装教程画布；
  * 4. 上次暂停在这份教程里就继续，否则从头开始。
  */
-export async function startTutorial(): Promise<TutorialOutcome> {
+/**
+ * 教程是从哪个入口开始的（遥测 `tutorial_started.source` 的闭集）。
+ * `picker` 项目选择页；`help` 顶栏「更多」；`settings` 设置页；`palette` 命令面板。
+ */
+export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette'
+
+export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
   if (useTutorialStore.getState().busy) return fail('open_failed')
   useTutorialStore.setState({ busy: 'open', failure: null })
   let res: TutorialOpenResult
@@ -175,7 +182,7 @@ export async function startTutorial(): Promise<TutorialOutcome> {
   } catch (e) {
     return fail(classify(e), e)
   }
-  return landTutorial(res, 'start')
+  return landTutorial(res, 'start', source)
 }
 
 /**
@@ -218,7 +225,11 @@ async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<st
   }
 }
 
-async function landTutorial(res: TutorialOpenResult, how: 'start' | 'reset'): Promise<TutorialOutcome> {
+async function landTutorial(
+  res: TutorialOpenResult,
+  how: 'start' | 'reset',
+  source?: TutorialEntrySource,
+): Promise<TutorialOutcome> {
   const meta = res.tutorial
   const projectId = res.project.id ?? null
   useTutorialStore.setState({ meta })
@@ -262,6 +273,11 @@ async function landTutorial(res: TutorialOpenResult, how: 'start' | 'reset'): Pr
   }
   useTutorialStore.setState({ busy: null, failure: null })
   useUiStore.getState().setStatus(msg(`onboarding.landed.${kind}`, undefined, 'dialogs'))
+  // 遥测只记**真的开始了**的那一次（含重新开始）；继续不是开始。入口不传
+  // source（重置那条路、测试）就不记——来源说不出来就别编一个。
+  if (kind !== 'resumed' && source) {
+    captureTelemetry('tutorial_started', { source, tutorial_version: ONBOARDING_FLOW_VERSION })
+  }
   return { ok: true, kind }
 }
 
@@ -285,8 +301,8 @@ export function tutorialEntry(
 }
 
 /** 入口点下去：三种都走 `startTutorial()`——「重新开始」的语义是 onboarding 从头，副本不换 */
-export async function runTutorialEntry(): Promise<TutorialOutcome> {
-  const out = await startTutorial()
+export async function runTutorialEntry(source: TutorialEntrySource): Promise<TutorialOutcome> {
+  const out = await startTutorial(source)
   if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
   return out
 }

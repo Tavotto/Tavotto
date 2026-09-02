@@ -103,7 +103,7 @@ function TutorialRows({ close }: { close: () => void }) {
           onClick={() => {
             // 先关设置：coachmark 要挂的目标都在工作台上，不在这个对话框里
             close()
-            void runTutorialEntry()
+            void runTutorialEntry('settings')
           }}
         >
           {st(`tutorial.${entry}`)}

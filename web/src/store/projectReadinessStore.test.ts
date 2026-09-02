@@ -16,9 +16,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchReadiness: vi.fn(),
+  postTelemetryEvent: vi.fn().mockResolvedValue(undefined),
 }))
 
-import { fetchReadiness, type ReadinessPanel, type ReadinessReport } from '@/lib/api'
+import {
+  fetchReadiness,
+  postTelemetryEvent,
+  type ReadinessPanel,
+  type ReadinessReport,
+} from '@/lib/api'
+import { setTelemetryEnabled } from '@/lib/telemetry'
 import { setCurrentProjectId } from '@/lib/session'
 import { pendingCount } from '@/lib/readinessText'
 import {
@@ -300,6 +307,68 @@ describe('聚焦与开关', () => {
     useProjectReadinessStore.getState().closeCenter()
     expect(useUiStore.getState().registryOpen).toBe(false)
     expect(useProjectReadinessStore.getState().focusId).toBeNull()
+  })
+})
+
+describe('打开接入中心的遥测（ADR 0041）', () => {
+  const post = vi.mocked(postTelemetryEvent)
+  const flush = async () => {
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+  }
+
+  it('带来源打开：报告到了之后记一条 source + status_bucket，没有图名', async () => {
+    setTelemetryEnabled(true)
+    post.mockClear()
+    mockFetch.mockResolvedValue(
+      report({
+        panels: [
+          panel({ id: 'a.pdf', stem: 'a', status: 'editable' }),
+          panel({ id: 'b.pdf', stem: 'b', status: 'layout_only' }),
+        ],
+      }),
+    )
+    useProjectReadinessStore.getState().openCenter({ source: 'banner' })
+    await flush()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledWith('project_readiness_opened', {
+      source: 'banner',
+      status_bucket: 'mixed',
+    })
+    expect(JSON.stringify(post.mock.calls)).not.toContain('a.pdf')
+    setTelemetryEnabled(false)
+  })
+
+  it('focusPanel 带来源 → quickedit；全可编辑 → all_editable', async () => {
+    setTelemetryEnabled(true)
+    post.mockClear()
+    mockFetch.mockResolvedValue(report({ panels: [panel({ status: 'editable' })] }))
+    useProjectReadinessStore.getState().focusPanel('Fig1.pdf', 'quickedit')
+    await flush()
+    expect(post).toHaveBeenCalledWith('project_readiness_opened', {
+      source: 'quickedit',
+      status_bucket: 'all_editable',
+    })
+    setTelemetryEnabled(false)
+  })
+
+  it('不带来源不记；报告取不回来不记；没同意不记', async () => {
+    setTelemetryEnabled(true)
+    post.mockClear()
+    mockFetch.mockResolvedValue(report())
+    useProjectReadinessStore.getState().openCenter()
+    await flush()
+    expect(post).not.toHaveBeenCalled()
+
+    mockFetch.mockRejectedValue(new Error('down'))
+    useProjectReadinessStore.getState().openCenter({ source: 'panel' })
+    await flush()
+    expect(post).not.toHaveBeenCalled()
+
+    setTelemetryEnabled(false)
+    mockFetch.mockResolvedValue(report({ fingerprint: 'fp-2' }))
+    useProjectReadinessStore.getState().openCenter({ source: 'panel' })
+    await flush()
+    expect(post).not.toHaveBeenCalled()
   })
 })
 

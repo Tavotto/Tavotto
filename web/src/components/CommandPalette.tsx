@@ -15,9 +15,12 @@ import {
   selectAll,
   ungroupSelected,
 } from '@/store/actions'
-import { resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
+import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
+import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -54,24 +57,51 @@ interface Command {
 }
 
 const ui = () => useUiStore.getState()
+/** 项目相关的命令只在项目打开着时出现（embedded / playground 里没有项目，整组不出现） */
+const projectOpen = () => useProjectStore.getState().phase === 'open'
 
+/**
+ * 命令 id 是**稳定标识**（文案与关键词按 id 查资源；e2e 与遥测都认它），
+ * 改名等于换一条命令。动作全部复用真实 action / helper：刷新走
+ * `liveSync.refreshProjectNow`（统一刷新端点），接入状态走
+ * `projectReadinessStore.openCenter`，教程三条走 `lib/onboarding/tutorial`——
+ * 顶栏「更多」与设置页调的是同一批函数，这里不判状态、不另写一份。
+ */
 const COMMANDS: Command[] = [
+  // 项目：刷新（检查新文件）与接入状态
+  {
+    id: 'refresh-project',
+    available: projectOpen,
+    run: () => void refreshProjectNow(),
+  },
+  {
+    id: 'readiness',
+    available: projectOpen,
+    run: () => {
+      // 当前选中的是一张图就直接聚焦到它那一行
+      const id = useSelectionStore.getState().primary()
+      const o = id ? useDocumentStore.getState().doc.objects.find((x) => x.id === id) : null
+      const focus = o?.type === 'panel' ? o.fileId : null
+      useProjectReadinessStore.getState().openCenter({ focus, source: 'palette' })
+    },
+  },
   // 教程三条：状态判据只有 lib/onboarding/tutorial 一份，这里只挑显示哪条
   {
     id: 'tutorial-start',
     available: () => tutorialEntry() !== 'resume',
-    run: () => void runTutorialEntry(),
+    run: () => void runTutorialEntry('palette'),
   },
   {
     id: 'tutorial-resume',
     available: () => tutorialEntry() === 'resume',
-    run: () => void runTutorialEntry(),
+    run: () => void runTutorialEntry('palette'),
   },
   {
     id: 'tutorial-reset',
     available: () => useOnboardingStore.getState().tutorialProjectId != null,
     run: () => void resetTutorial(),
   },
+  { id: 'hints-reset', run: () => resetHints() },
   { id: 'export', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
   { id: 'save-document', shortcut: `${MOD}S`, run: () => void runManualSave() },
   { id: 'save-layout', shortcut: `⇧${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
@@ -128,8 +158,9 @@ export function CommandPalette() {
   const open = usePalette((s) => s.open)
   const setOpen = usePalette((s) => s.setOpen)
   const hasSelection = useSelectionStore((s) => s.ids.length > 0)
-  // 教程状态变了要重算可用命令（三条互斥）
+  // 教程状态变了要重算可用命令（三条互斥）；项目开合决定项目命令出不出现
   const onboardingStatus = useOnboardingStore((s) => s.status)
+  const projectPhase = useProjectStore((s) => s.phase)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -169,9 +200,9 @@ export function CommandPalette() {
     return pool.filter(
       (c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q),
     )
-    // `onboardingStatus` 是让 memo 在教程状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, hasSelection, t, onboardingStatus])
+  }, [query, hasSelection, t, onboardingStatus, projectPhase])
 
   useEffect(() => {
     setActive((a) => Math.min(a, Math.max(0, matches.length - 1)))

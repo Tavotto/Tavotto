@@ -204,7 +204,7 @@ function TutorialEntry() {
           loading={busy === 'open'}
           loadingLabel={t('picker.tutorialOpening')}
           data-onboarding-anchor="tutorial-entry"
-          onClick={() => void runTutorialEntry()}
+          onClick={() => void runTutorialEntry('picker')}
         >
           <BookOpen size={14} />
           {t(`picker.tutorial.${entry}`)}

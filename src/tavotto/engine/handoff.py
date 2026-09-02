@@ -371,6 +371,11 @@ def _probe_error(err) -> HandoffError:
     return HandoffError(message, mapped, **extra)
 
 
+#: 给别的模块（Codex 插件的 MCP bridge）复用的公开名：同一份带本机凭据的 HTTP
+#: 调用，别再各写一份 `urllib` + `auth_headers`。
+http_json_status = _http_json_status
+
+
 def _remote_probe(port: int, project: str, script: str, *, http_status=None) -> dict | None:
     """本机已有实例在跑时，把试运行**委托给它**。没有实例回 None。
 

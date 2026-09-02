@@ -76,7 +76,7 @@ export function FastEditBar() {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId)}
+              onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'quickedit')}
             >
               {t('fastEdit.connectSource')}
             </Button>

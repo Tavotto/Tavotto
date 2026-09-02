@@ -171,6 +171,9 @@ USER_VISIBLE_CODES = {
     "external_change": set(),
     # --- Prompt 04：统一项目刷新（engine/project_refresh.py）---
     "registry_reload_failed": {"reason"},
+    # AI 改完脚本、统一刷新之前项目已被关闭（`app._after_ai_change`）：进
+    # `ai.done.refresh.code`，前端按 errors:backend.* 显示
+    "project_closed": set(),
     # --- 原子写（engine/atomicio.py，ADR 0023）：一直会落到界面上，
     #     直到 2026-08-29 才进扫描范围 ---
     "non_finite_number": {"reason"},

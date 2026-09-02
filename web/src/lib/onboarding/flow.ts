@@ -16,8 +16,9 @@
  *   * 引擎**不碰文档**、不发请求；它改的只有 onboardingStore。
  */
 import { onActivity, type ActivityDetail } from '@/lib/activity'
+import { captureTelemetry } from '@/lib/telemetry'
 import { useDocumentStore } from '@/store/documentStore'
-import { useOnboardingStore } from '@/store/onboardingStore'
+import { ONBOARDING_FLOW_VERSION, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -162,15 +163,30 @@ export function evaluate(): void {
   }
 }
 
-/** 一步完成：记完成、消费信号、前进。manual 的步骤由 coachmark 按钮调这里 */
-export function completeStep(id: StepDef['id']): void {
+/**
+ * 一步完成：记完成、消费信号、前进。manual 的步骤由 coachmark 按钮调这里。
+ *
+ * `via`：`done` = 完成条件真的满足了（引擎评估 / 欢迎页与「继续」按钮）；
+ * `skipped` = 用户点了「跳过此步」。状态机两者同样处理，**遥测只记前者**——
+ * 跳过不是完成。教程整个走完（最后一步之后）另记一条 `tutorial_completed`。
+ */
+export function completeStep(id: StepDef['id'], via: 'done' | 'skipped' = 'done'): void {
   const ob = useOnboardingStore.getState()
   const def = stepById(id)
   ob.markStep(id)
   for (const k of def.consumes ?? []) signals[k] = 0
+  if (via === 'done') {
+    captureTelemetry('tutorial_step_completed', {
+      step_id: id,
+      tutorial_version: ONBOARDING_FLOW_VERSION,
+    })
+  }
   const next = nextStepId(id)
   if (next) ob.goTo(next)
-  else ob.complete()
+  else {
+    ob.complete()
+    captureTelemetry('tutorial_completed', { tutorial_version: ONBOARDING_FLOW_VERSION })
+  }
 }
 
 type StepDef = ReturnType<typeof stepById>
@@ -183,7 +199,7 @@ export function backStep(): void {
 /** 「跳过此步」：当作完成处理（用户明确说了不做） */
 export function skipStep(): void {
   const cur = useOnboardingStore.getState().currentStep
-  if (cur) completeStep(cur)
+  if (cur) completeStep(cur, 'skipped')
 }
 
 /**

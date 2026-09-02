@@ -135,7 +135,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
         <Button
           size="sm"
           className="gap-1 px-1.5"
-          onClick={() => useProjectReadinessStore.getState().focusPanel(obj.fileId)}
+          onClick={() => useProjectReadinessStore.getState().focusPanel(obj.fileId, 'quickedit')}
         >
           <CircleHelp size={12} />
           {translate('readiness.whyNotEditable', { ns: 'workspace' })}

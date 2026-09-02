@@ -107,11 +107,16 @@ class FakeWorker:
 
 
 @pytest.fixture(autouse=True)
-def _clean_sessions():
+def _clean_sessions(monkeypatch):
     bridge.reset_root_authority()
     bridge.sessions().clear()
+    bridge._REFRESH_CTX.clear()
+    # 刷新工具默认先探 127.0.0.1:5089 上有没有运行中的 Tavotto。**用例里绝不
+    # 真的去探**——开发机上很可能真开着一个，tmp 项目会被打开进用户的应用。
+    monkeypatch.setattr(bridge.engine_handoff, "http_json_status", lambda *a, **k: (None, None))
     yield
     bridge.sessions().clear()
+    bridge._REFRESH_CTX.clear()
     bridge.reset_root_authority()
 
 
@@ -173,6 +178,7 @@ def test_tools_list_shape():
         "tavotto_preflight",
         "tavotto_export",
         "tavotto_verify_replay",
+        "tavotto_refresh_project",
         "tavotto_close_session",
     ]
     for t in tools:
@@ -186,7 +192,12 @@ def test_only_canvas_tools_carry_the_ui_resource():
     tools = {t["name"]: t for t in server._tools()}
     for name in server.UI_TOOLS:
         assert tools[name]["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
-    for name in ("tavotto_preflight", "tavotto_export", "tavotto_close_session"):
+    for name in (
+        "tavotto_preflight",
+        "tavotto_export",
+        "tavotto_refresh_project",
+        "tavotto_close_session",
+    ):
         assert "_meta" not in tools[name]
 
 
@@ -1382,3 +1393,280 @@ def test_vector_render_never_pays_for_a_png(project, fake_pool):
     out = bridge.open_figure(str(project))
     assert out["svg"]
     assert "preview_png_base64" not in out
+
+
+# ------------------------------ 刷新工具（ADR 0041） -------------------------
+def _refresh(**args) -> dict:
+    return _call("tavotto_refresh_project", args)
+
+
+def _second_project(tmp_path, name: str, stem: str) -> Path:
+    figs = tmp_path / name
+    figs.mkdir()
+    (figs / f"{stem.lower()}.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    (figs / f"{stem}.pdf").write_bytes(b"%PDF-1.4\n")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {"scripts": {f"{stem.lower()}.py": {"entry": "main", "cost": "light", "stems": [stem]}}}
+        ),
+        encoding="utf-8",
+    )
+    return figs
+
+
+CANARY_SCRIPT = (
+    "from pathlib import Path\n"
+    "Path('IMPORTED.txt').write_text('x')\n\n\n"
+    "def main():\n    Path('RAN.txt').write_text('x')\n"
+    "    fig.savefig('Fig2.pdf')\n"
+)
+
+
+def test_refresh_tool_schema_and_description():
+    """(1) schema (13) description：说清「不是运行脚本」「needs_probe 别猜」「conflict 别裁决」。"""
+    tools = {t["name"]: t for t in server._tools()}
+    tool = tools["tavotto_refresh_project"]
+    schema = tool["inputSchema"]
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {"session_id", "project_path", "reason"}
+    assert schema.get("required", []) == [], "输入尽量少：三个都可选"
+    assert schema["properties"]["reason"]["enum"] == ["codex"]
+    desc = tool["description"]
+    for needle in (
+        "不是运行脚本",
+        "不 probe",
+        "needs_probe",
+        "conflict",
+        "不需要手动刷新",
+        "session_id",
+    ):
+        assert needle in desc, needle
+    # (15) 不挂 UI：它的产出是文字与结构化结果，挂 UI 只会让画布不停重建
+    assert "_meta" not in tool and "tavotto_refresh_project" not in server.UI_TOOLS
+    # initialize 的 instructions 也告诉模型改完 .py 之后调它
+    s = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO()))
+    assert (
+        "tavotto_refresh_project"
+        in s.dispatch("initialize", {"protocolVersion": "2025-06-18"})["instructions"]
+    )
+
+
+def test_refresh_via_the_authorized_session(project, fake_pool):
+    """(2) 项目来自会话，不来自模型的文本。"""
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    res = _refresh(session_id=sid)
+    assert not res.get("isError"), res
+    body = _body(res)
+    assert body["ok"] is True and body["reason"] == "codex"
+    assert body["project_id"] == bridge.project_id(str(project))
+    assert body["delivered"] == "local"  # 用例里 Tavotto 不可达
+    assert body["sessions"] == [sid]
+    assert "已刷新" in res["content"][0]["text"]
+
+
+def test_refresh_rejects_an_unauthorized_path_and_writes_nothing(tmp_path, monkeypatch, fake_pool):
+    """(3) 越界路径当场拒，且它的注册表一个字节都没动。"""
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inside))
+    outside = _second_project(tmp_path, "outside", "Fig9")
+    (outside / "fig_new.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    before = (outside / "tavotto_registry.json").read_bytes()
+    res = _refresh(project_path=str(outside))
+    assert res["isError"] and _body(res)["code"] == "path_out_of_scope"
+    assert (outside / "tavotto_registry.json").read_bytes() == before
+
+
+def test_refresh_with_nothing_changed_is_an_empty_diff(project, fake_pool):
+    """(4) 第二次起素材 diff 是真的跨轮比（第一次如实报 baseline）。"""
+    first = _body(_refresh(project_path=str(project)))
+    assert first["assets"]["baseline"] is True
+    second = _body(_refresh(project_path=str(project)))
+    assert second["assets"] == {"added": [], "removed": [], "changed": [], "baseline": False}
+    assert second["registry"]["added_scripts"] == []
+    assert second["registry"]["removed_scripts"] == []
+    assert second["registry"]["changed_scripts"] == []
+
+
+def test_refresh_sees_a_new_script_and_a_new_asset(project, fake_pool):
+    """(5) Codex 新建了脚本与产物：diff 里都有，注册表已登记。"""
+    _body(_refresh(project_path=str(project)))
+    (project / "fig2.py").write_text("def main():\n    fig.savefig('Fig2.pdf')\n", encoding="utf-8")
+    (project / "Fig2.pdf").write_bytes(b"%PDF-1.4\n")
+    res = _refresh(project_path=str(project))
+    body = _body(res)
+    assert body["registry"]["added_scripts"] == ["fig2.py"]
+    assert body["assets"]["added"] == ["Fig2.pdf"]
+    reg = json.loads((project / "tavotto_registry.json").read_text(encoding="utf-8"))
+    assert "fig2.py" in reg["scripts"]
+    assert "fig2.py" in res["content"][0]["text"]
+
+
+def test_refresh_returns_a_readiness_summary(project, fake_pool):
+    """(6) readiness 只带 summary + 每张图的状态 / 原因 / 脚本，都是项目相对名。"""
+    (project / "Orphan.pdf").write_bytes(b"%PDF-1.4\n")
+    body = _body(_refresh(project_path=str(project)))
+    ready = body["readiness"]
+    assert ready["summary"]["total"] == 2 and ready["summary"]["editable"] == 1
+    by_id = {p["id"]: p for p in ready["panels"]}
+    assert by_id["Fig1.pdf"]["status"] == "editable" and by_id["Fig1.pdf"]["script"] == "fig1.py"
+    assert by_id["Orphan.pdf"]["status"] != "editable"
+    assert set(by_id["Orphan.pdf"]) == {
+        "id",
+        "stem",
+        "status",
+        "reason_code",
+        "script",
+        "candidates",
+    }
+
+
+def test_refresh_never_probes_or_runs_user_code(project, fake_pool, monkeypatch):
+    """(7)(8) 刷新只读 AST：不起 worker、不 import、不调 main()。"""
+    from tavotto.engine import probe as engine_probe
+
+    monkeypatch.setattr(engine_probe, "probe", lambda *a, **k: pytest.fail("不许 probe"))
+    monkeypatch.setattr(
+        engine_probe, "probe_and_register", lambda *a, **k: pytest.fail("不许 probe")
+    )
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: pytest.fail("不许起 worker"))
+    (project / "fig2.py").write_text(CANARY_SCRIPT, encoding="utf-8")
+    body = _body(_refresh(project_path=str(project)))
+    assert "fig2.py" in body["registry"]["added_scripts"]
+    assert not (project / "IMPORTED.txt").exists() and not (project / "RAN.txt").exists()
+
+
+def test_refresh_falls_back_to_local_when_the_app_is_unreachable(project, fake_pool):
+    """(9a) 后端不可达：本地完成，`delivered=local` 说出口。"""
+    res = _refresh(project_path=str(project))
+    assert _body(res)["delivered"] == "local"
+    assert "未在运行" in res["content"][0]["text"]
+
+
+def test_refresh_delegates_to_a_running_app(project, fake_pool):
+    """(9b) 后端可达：开项目（default=false）→ /api/project/refresh?pj= reason=codex → readiness。"""
+    calls: list[tuple[str, dict | None]] = []
+
+    def http(url, payload=None, timeout=10.0):
+        calls.append((url, payload))
+        if url.endswith("/api/version"):
+            return 200, {"version": "x"}
+        if url.endswith("/api/projects/open"):
+            return 200, {"id": "pj-app"}
+        if "/api/project/refresh" in url:
+            return 200, {
+                "reason": "codex",
+                "registry": {
+                    "added_scripts": ["fig2.py"],
+                    "removed_scripts": [],
+                    "changed_scripts": [],
+                    "script_changes": {},
+                    "added_stems": ["Fig2"],
+                    "removed_stems": [],
+                    "moved_stems": [],
+                    "conflicts": {},
+                    "conflicts_changed": False,
+                },
+                "assets": {"added": [], "removed": [], "changed": [], "baseline": False},
+                "published": ["registry.changed"],
+            }
+        if "/api/project/readiness" in url:
+            return 200, {"summary": {"total": 1, "editable": 1}, "panels": [], "conflicts": []}
+        raise AssertionError(url)
+
+    body = bridge.refresh_project(project_path=str(project), http_status=http)
+    assert body["delivered"] == "app"
+    assert body["registry"]["added_scripts"] == ["fig2.py"]
+    assert body["readiness"]["summary"] == {"total": 1, "editable": 1}
+    urls = [u for u, _ in calls]
+    assert urls[1].endswith("/api/projects/open") and calls[1][1] == {
+        "path": str(project),
+        "default": False,
+    }
+    assert "/api/project/refresh?pj=pj-app" in urls[2] and calls[2][1] == {"reason": "codex"}
+    assert "/api/project/readiness?pj=pj-app" in urls[3]
+
+
+def test_refresh_surfaces_the_running_apps_error_code(project, fake_pool):
+    """(9c) 运行中的 Tavotto 刷不成：原样带回它的 code，不退回本地再试一遍。"""
+
+    def http(url, payload=None, timeout=10.0):
+        if url.endswith("/api/version"):
+            return 200, {}
+        if url.endswith("/api/projects/open"):
+            return 200, {"id": "pj-app"}
+        return 400, {"error": "扫描失败", "code": "scan_failed", "params": {"reason": "x"}}
+
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.refresh_project(project_path=str(project), http_status=http)
+    assert exc.value.code == "scan_failed"
+
+
+def test_refresh_without_a_project_is_no_project(project, fake_pool):
+    """(10) 没会话、没路径：说清要先开图或传路径。"""
+    res = _refresh()
+    assert res["isError"] and _body(res)["code"] == "no_project"
+    assert "tavotto_open_figure" in _body(res)["error"]
+
+
+def test_refresh_is_ambiguous_with_two_projects_and_isolated_with_a_session(
+    project, tmp_path, fake_pool
+):
+    """(11) 两个项目都开着会话：不传就拒；传 session_id 只刷那一个。"""
+    other = _second_project(tmp_path, "other", "Fig7")
+    sid_a = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    sid_b = _body(_call("tavotto_open_figure", {"project_path": str(other)}))["session_id"]
+    res = _refresh()
+    assert res["isError"] and _body(res)["code"] == "ambiguous_project"
+    # 错误里列的是会话 id → 项目短 id，不是路径
+    assert str(tmp_path) not in json.dumps(_body(res))
+
+    (project / "fig_a.py").write_text(
+        "def main():\n    fig.savefig('FigA.pdf')\n", encoding="utf-8"
+    )
+    (other / "fig_b.py").write_text("def main():\n    fig.savefig('FigB.pdf')\n", encoding="utf-8")
+    body = _body(_refresh(session_id=sid_a))
+    assert body["registry"]["added_scripts"] == ["fig_a.py"]
+    assert body["sessions"] == [sid_a]
+    reg_b = json.loads((other / "tavotto_registry.json").read_text(encoding="utf-8"))
+    assert "fig_b.py" not in reg_b["scripts"], "另一个项目的注册表不该被这次刷新碰到"
+    assert sid_b in bridge.sessions()
+
+
+def test_refresh_result_contains_no_absolute_paths(project, tmp_path, fake_pool):
+    """(12) 结果里只有项目短 id 与相对名。"""
+    (project / "sub").mkdir()
+    (project / "sub" / "fig3.py").write_text(
+        "def main():\n    fig.savefig('Fig3.pdf')\n", encoding="utf-8"
+    )
+    res = _refresh(project_path=str(project))
+    blob = json.dumps(res, ensure_ascii=False)
+    assert str(tmp_path) not in blob and str(project) not in blob
+    assert "sub/fig3.py" in json.dumps(_body(res)["registry"]["added_scripts"])
+
+
+def test_refresh_reason_is_fixed_to_codex_whatever_the_model_passes(
+    project, fake_pool, monkeypatch
+):
+    """来由进日志、事件与遥测维度：模型传什么都不透传。"""
+    seen: list[str] = []
+    real = bridge.engine_refresh.refresh_project_index
+
+    def spy(ctx, **kw):
+        seen.append(kw["reason"])
+        return real(ctx, **kw)
+
+    monkeypatch.setattr(bridge.engine_refresh, "refresh_project_index", spy)
+    _refresh(project_path=str(project), reason="manual")
+    assert seen == ["codex"]
+
+
+def test_refresh_on_a_directory_without_a_registry_is_a_clear_error(
+    tmp_path, monkeypatch, fake_pool
+):
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "fig.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    res = _refresh(project_path=str(empty))
+    assert res["isError"] and _body(res)["code"] in ("no_registry", "handoff_failed")

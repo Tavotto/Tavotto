@@ -115,6 +115,8 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
   时它会拒绝——**先去修，或者问用户**；用户明确说「就这样导出」才带
   `explicit_confirm: true`（这次会记进 proof report）。
 * **收尾** `tavotto_close_session { session_id }`。
+* **改了 .py 之后** `tavotto_refresh_project { session_id }`——让 Tavotto 界面自己更新，
+  见下文「修改绘图脚本之后」。
 
 期刊有自己的尺寸就带 `journal`，只覆盖点名的键：
 `{"journal": {"widths_mm": {"double": 178}}}`。
@@ -150,6 +152,22 @@ python3 scripts/handoff.py <脚本路径>
 | 数据本身、坐标范围、对数/线性、加一条新曲线 | 代码（回来改脚本） |
 | colorbar 方向、子图数量与结构 | 代码 |
 
-改代码之后**重开一次会话**（`tavotto_close_session` 再 `tavotto_open_figure`），
-或者再交接一次给桌面窗口。用户撞上 Tavotto 自身的缺陷时，按
+## 修改绘图脚本之后：让 Tavotto 自己更新
+
+新建、修改、重命名或删除了绘图脚本（用户要求改数据 / 坐标范围 / 加曲线这类必须回
+代码的改动之后），按这七步收尾——**不要要求用户手动刷新或重启 Tavotto**：
+
+1. 保存代码（脚本与产物同目录，契约不变）；
+2. 调 `tavotto_refresh_project`（有会话就传 `session_id`，否则传 `project_path`）；
+3. 读返回的 `registry`（新增 / 移除 / 变更了哪些脚本）与 `readiness`（每张图的状态）；
+4. 状态是 `editable` 的图：告诉用户 Tavotto 已更新、可以直接在里面改；
+5. 状态是 `needs_probe` 的：说明需要用户在 Tavotto 里点一次「试运行并连接」——**不要猜**
+   它会产出哪张图，也不要替用户跑脚本；
+6. 状态是 `conflict` 的：把候选脚本列给用户，**不自动裁决**；
+7. `delivered: local` 说明 Tavotto 没开着（或是桌面版）：刷新已在本地完成，用户下次打开
+   项目时自动生效；开着的桌面版会由它自己的 watcher 在两秒内跟上。
+
+这条工具**不运行脚本**。开着的 MCP 会话仍然端着改动前的图：要在会话里继续用
+`tavotto_apply_overrides` 改这张图，就 `tavotto_close_session` 再 `tavotto_open_figure`
+重开一次；只是让 Tavotto 界面跟上，则刷新就够了。用户撞上 Tavotto 自身的缺陷时，按
 `references/issue-reporting.md` 写脱敏的 issue 草稿——**用户明确允许才外发**。

@@ -260,10 +260,22 @@
       "tutorial-reset": {
         "label": "Restart tutorial",
         "keywords": "tutorial onboarding reset restart"
+      },
+      "refresh-project": {
+        "label": "Refresh project (check for new files)",
+        "keywords": "refresh reload rescan project files check"
+      },
+      "readiness": {
+        "label": "Show project readiness",
+        "keywords": "readiness status editable layout only why not editable"
+      },
+      "hints-reset": {
+        "label": "Show onboarding hints again",
+        "keywords": "hints tips reset onboarding"
       }
     },
     "listLabel": "Commands",
-    "needPanel": "Select a parameterizable panel first",
+    "needPanel": "Select an editable figure first (a panel with a source script)",
     "noMatch": "No matching command",
     "placeholder": "Type a command…",
     "searchLabel": "Search commands"
@@ -642,7 +654,7 @@
         "on": "On",
         "policy": "Privacy policy",
         "sendsAfter": " (otherwise “did they come back a week later” cannot be answered). It is not tied to any account, and carries no hardware serial, MAC address or other identifier that could single out a specific device.",
-        "sendsBefore": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine that ",
+        "sendsBefore": "Sent: app version, operating system and architecture, which broad features are used, whether preflight and export succeed, how far the tutorial got, which entry point triggered a project refresh or the readiness view and how it went, which kind of multi-selection arrange button was used, and how saves, recoveries and package operations ended. The identifier is a random UUID generated on this machine that ",
         "sendsPersist": "stays the same across restarts",
         "summary": "Anonymous feature usage is sent only after you turn this on. Never your figures, scripts, file names, paths, research data or prompts.",
         "title": "Anonymous usage statistics",
@@ -919,8 +931,8 @@
       "registry": "Project readiness…",
       "scriptCount_one": "{{count}} script registered",
       "scriptCount_other": "{{count}} scripts registered",
-      "scripts": "Parameterizable scripts",
-      "scriptsHint": "Registered parameterizable scripts. Only panels produced by a registered script can be edited element by element.",
+      "scripts": "Registered source scripts",
+      "scriptsHint": "Registered source scripts. Only figures produced by a registered script can be edited element by element.",
       "switch": "Switch project…",
       "writeBackAllowed": "Write-back allowed"
     },
@@ -1020,18 +1032,18 @@
     "deleteTitle": "Delete style “{{name}}”?",
     "description": "Save font sizes, line widths, ticks and palettes as a named style and apply it to panels in bulk. Only figure edits are written; source files are never touched.",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style and apply it in bulk. Only figure edits are written; source files are never touched.",
-    "emptyBody": "No styles saved yet. Select a rendered, parameterizable panel and extract its font sizes, line widths, ticks and palette as a starting point.",
+    "emptyBody": "No styles saved yet. Select a rendered, editable figure and extract its font sizes, line widths, ticks and palette as a starting point.",
     "emptyDraft": "Empty style. Click “Extract from the current panel” to read the selected panel's font sizes, line widths, ticks and palette, then delete anything you don't want to unify and save.",
     "extract": "Extract from the current panel",
     "extractFrom": "Read the current values from “{{name}}”",
-    "extractNeedPanel": "Select a rendered, parameterizable panel to extract from",
+    "extractNeedPanel": "Select a rendered, editable figure to extract from",
     "includePageSize": "Include page size",
     "namePlaceholder": "Style name (e.g. “AMFE main text”)",
     "nameRequired": "Give the style a name first",
-    "needPanel": "Select a rendered, parameterizable panel on the canvas first",
+    "needPanel": "Select a rendered, editable figure on the canvas first",
     "newStyle": "New style",
-    "noPanelsPanel": "Select a parameterizable panel on the canvas first",
-    "noPanelsScope": "No parameterizable panel in this scope",
+    "noPanelsPanel": "Select an editable figure on the canvas first",
+    "noPanelsScope": "No editable figure in this scope",
     "noSavedStyles": "No styles saved yet",
     "pageSizeSuffix": " ({{w}}×{{h}} mm)",
     "pageSizeTo": "Page size → {{w}}×{{h}} mm",

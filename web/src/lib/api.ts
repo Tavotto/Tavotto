@@ -1885,7 +1885,16 @@ export type ServerEvent =
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
-  | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
+  /**
+   * 已登记脚本的**内容**变了。`reason` 说谁先看到的：`watcher`（默认，缺省同义）
+   * 或 `ai`——后者紧跟着一条 `ai.done` 在说同一件事，界面只提示一次。
+   */
+  | ({
+      kind: 'panel.file_changed'
+      scripts?: string[]
+      stems?: string[]
+      reason?: 'watcher' | 'ai'
+    } & ProjectScoped)
   /**
    * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个
    * 脚本发十几条）：`scripts` / `stems` 是本次全部受影响的；`script` 只在
@@ -1948,7 +1957,24 @@ export type ServerEvent =
       diff: string
       script: string
       error?: string
+      /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
+      refresh?: AiRefreshOutcome
     } & ProjectScoped)
+
+/**
+ * AI 改完代码之后统一刷新的结局。**与代码改动分开记**：`changed: true` +
+ * `refresh.status: 'failed'` 是「改成了、但项目没刷新」，界面要把两件事都说出来。
+ * `skipped` = 文件没变；`not_wired` = 后端没接刷新（纯引擎侧）；`pending` 只在
+ * 会话还没结束时出现。
+ */
+export interface AiRefreshOutcome {
+  status: 'ok' | 'failed' | 'skipped' | 'not_wired' | 'pending'
+  /** failed 时的稳定错误码（`errors:backend.*`） */
+  code?: string
+  registry_changed?: boolean
+  assets_changed?: boolean
+  published?: string[]
+}
 
 const EVENT_KINDS = [
   'render.started',

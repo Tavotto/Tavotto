@@ -34,6 +34,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { HintToast } from '@/components/onboarding/HintToast'
 import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
+import { startActivityTelemetry } from '@/lib/activityTelemetry'
 import { startOnboardingEngine } from '@/lib/onboarding/flow'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
@@ -149,6 +150,8 @@ function Workspace() {
     // 清理。它们不碰文档、不发请求（ADR 0040）
     const stopOnboarding = startOnboardingEngine()
     const stopHints = startHintEngine()
+    // 活动信号 → 遥测的白名单映射（只有多选栏那一条；经同意态与后端白名单）
+    const stopActivityTelemetry = startActivityTelemetry()
     const onAutosaveError = (ev: Event) => {
       // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
       const stale = (ev as CustomEvent<{ reason?: string }>).detail?.reason === 'stale'
@@ -188,6 +191,7 @@ function Workspace() {
       stopDiagnostics()
       stopOnboarding()
       stopHints()
+      stopActivityTelemetry()
       window.removeEventListener('mm:sse-open', syncNative)
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)
       window.removeEventListener('tavotto:doc-conflict', onDocConflict)

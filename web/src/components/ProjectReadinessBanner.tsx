@@ -46,7 +46,7 @@ export function ProjectReadinessBanner() {
       <Button
         size="sm"
         className="shrink-0"
-        onClick={() => useProjectReadinessStore.getState().openCenter()}
+        onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'banner' })}
       >
         {t('workspace:readiness.openCenter')}
       </Button>

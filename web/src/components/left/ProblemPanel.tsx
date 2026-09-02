@@ -347,7 +347,7 @@ function ReadinessLink() {
     <div className="shrink-0 border-t border-border px-3 py-1.5">
       <Tip label={pr('readinessTip')} side="top">
         <button
-          onClick={() => useProjectReadinessStore.getState().openCenter()}
+          onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
         >
           <ClipboardList size={12} className="shrink-0 text-ink-3" aria-hidden />

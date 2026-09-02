@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -269,6 +269,10 @@ class ProjectWatcher:
         self._first_seen: float | None = None
         self._last_seen: float | None = None
         self._missing = False  # 目录当前不可用（只为日志去重）
+        # `poll()` 跑在 watcher 线程，`absorb()` 从 AI 会话的 pump 线程进来：
+        # 两边都要动快照与 pending。锁只护这两份账，**不**在锁里调刷新回调之外
+        # 的任何等待——刷新自己有项目锁，顺序永远是 watcher 锁 → 项目锁。
+        self._lock = threading.RLock()
 
     # ---------------- 一轮 ----------------
     def prime(self) -> None:
@@ -278,6 +282,10 @@ class ProjectWatcher:
 
     def poll(self) -> None:
         """一轮：拍快照 → 累积 → 够安静（或够久）就结算这一批。"""
+        with self._lock:
+            self._poll_locked()
+
+    def _poll_locked(self) -> None:
         snap = take_snapshot(self.root)
         if snap is None:
             # 目录暂时不可用。**不清空 pending、不动上一张快照**——把
@@ -318,6 +326,39 @@ class ProjectWatcher:
         batch, self._pending = self._pending, Delta()
         self._first_seen = self._last_seen = None
         self._dispatch(batch)
+
+    # ---------------- 别人先处理过的那一次写入 ----------------
+    def absorb(self, rel_paths: Iterable[str]) -> list[str]:
+        """把这几条脚本路径**此刻**的签名记成「已消化」，返回真的被吸收的那些。
+
+        谁调它：AI 修改完成后的后端路径（`app._after_ai_change`）。那条路已经
+        作废了 worker、跑过统一刷新、发过 `panel.file_changed`——watcher 下一轮
+        再看到同一次写入时不该把这三件事再做一遍（前端会收到第二份 stale、
+        第二条提示，同一张图重建两次）。
+
+        判据是**签名相等**，不是时间窗：调用之后用户又改了一次，签名不同，
+        照常触发。只动脚本表——素材（AI 不生成）与注册表（走
+        `is_self_written()`）各有各的判据。「真的被吸收」= 快照里记的还是旧
+        签名、或这条路径正躺在 pending 里；两者都不成立说明 watcher 已经自己
+        结算过这一次写入，调用方就不该再发第二份事件。
+        """
+        fresh: list[str] = []
+        with self._lock:
+            for raw in rel_paths:
+                rel = str(raw).replace("\\", "/")
+                sig = _sig(self.root / rel)
+                known = self._snapshot.scripts.get(rel) if self._snapshot is not None else None
+                if known != sig or rel in self._pending.scripts:
+                    fresh.append(rel)
+                if self._snapshot is not None:
+                    if sig is None:
+                        self._snapshot.scripts.pop(rel, None)
+                    else:
+                        self._snapshot.scripts[rel] = sig
+                self._pending.scripts.discard(rel)
+            if not self._pending:
+                self._first_seen = self._last_seen = None
+        return fresh
 
     # ---------------- 结算一批 ----------------
     def _dispatch(self, batch: Delta) -> None:
@@ -472,6 +513,17 @@ def stop(figures_dir: str | Path | None = None) -> None:
             victims = [w] if w is not None else []
     for w in victims:
         w.stop()
+
+
+def absorb(figures_dir: str | Path, rel_paths: Iterable[str]) -> list[str] | None:
+    """`ProjectWatcher.absorb` 的模块级入口。**没有 watcher 时回 `None`**——
+    与「有 watcher 但它已经处理过」（空列表）是两回事：前者调用方要自己把
+    作废 / 事件做全，后者一件都不该再做。"""
+    with _lock:
+        w = _watchers.get(_key(figures_dir))
+    if w is None:
+        return None
+    return w.absorb(rel_paths)
 
 
 def watched_dirs() -> list[str]:

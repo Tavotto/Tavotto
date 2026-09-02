@@ -623,11 +623,13 @@
     "noOtherDocuments": "暂无其他文档",
     "paperStyles": "论文样式…",
     "presets": "科研预设与符号…",
+    "readiness": "项目接入状态",
     "recentDocuments": "最近文档（本机）",
     "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
     "recentEntry_other": "{{name}} · {{count}} 个对象",
     "redo": "重做",
     "redoWith": "重做 {{label}}",
+    "refreshProject": "刷新项目",
     "renameDocument": "重命名文档…",
     "saveAsCanvasFile": "保存为画布文件…",
     "saveClean": "已保存 {{time}}",
@@ -640,18 +642,18 @@
     "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
     "shortcutHelp": "快捷键帮助",
     "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+    "tutorial": {
+      "start": "开始教程",
+      "resume": "继续教程",
+      "restart": "再看一遍教程"
+    },
     "undo": "撤销",
     "undoWith": "撤销 {{label}}",
     "updateAvailable": "有新版本 {{version}}",
     "versionTimeline": "布局版本时间线…",
     "zoomIn": "放大",
     "zoomOut": "缩小",
-    "zoomValue": "缩放 {{percent}}%",
-    "tutorial": {
-      "start": "开始教程",
-      "resume": "继续教程",
-      "restart": "再看一遍教程"
-    }
+    "zoomValue": "缩放 {{percent}}%"
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本（当前页面仍可继续操作）"

@@ -80,11 +80,11 @@ export default interface Resources {
       "model": "模型",
       "noCli": "未检测到可用的编码 Agent。",
       "noPanelHint": "带 { } 标记的面板由脚本生成，助手可以直接修改脚本。",
-      "noPanelTitle": "选中一个可参数化面板",
+      "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
       "openAiSettings": "打开编码 Agent 设置",
       "placeholder": "例如：把图例移到左上角",
-      "placeholderNoPanel": "先选中一个可参数化面板",
+      "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在探测本机 CLI…",
       "processSteps_other": "过程 {{count}} 步",
       "processTail": " · {{text}}",
@@ -114,6 +114,7 @@ export default interface Resources {
     },
     "status": {
       "aiChanged": "AI 已修改脚本，正在重建图表…",
+      "aiChangedRefreshFailed": "AI 已修改脚本，但项目没有刷新成功：{{reason}}。改动已保存，Tavotto 会自动重试",
       "aiFailed": "AI 任务失败",
       "aiNoChange": "AI 运行完成，但脚本没有变化",
       "aiTimeout": "AI 任务超时",
@@ -453,6 +454,10 @@ export default interface Resources {
           "keywords": "group cz chengzu",
           "label": "成组所选对象"
         },
+        "hints-reset": {
+          "keywords": "hints tips reset ts tishi 提示 新手",
+          "label": "重新显示新手提示"
+        },
         "layout-col": {
           "keywords": "col layout lbj liebuju",
           "label": "创建列布局"
@@ -484,6 +489,14 @@ export default interface Resources {
         "new-doc": {
           "keywords": "new blank xj xinjian",
           "label": "新建空白文档"
+        },
+        "readiness": {
+          "keywords": "readiness status editable jr jieru 接入 可编辑 仅排版 为什么不能编辑",
+          "label": "显示项目接入状态"
+        },
+        "refresh-project": {
+          "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
+          "label": "刷新项目（检查新文件）"
         },
         "rulers": {
           "keywords": "ruler bc biaochi",
@@ -535,7 +548,7 @@ export default interface Resources {
         }
       },
       "listLabel": "命令",
-      "needPanel": "先选中一个可参数化面板",
+      "needPanel": "先选中一张可编辑的图（有源脚本的面板）",
       "noMatch": "没有匹配的命令",
       "placeholder": "输入命令…",
       "searchLabel": "搜索命令"
@@ -910,7 +923,7 @@ export default interface Resources {
           "on": "已开启",
           "policy": "隐私政策",
           "sendsAfter": "（否则算不出「一周后还在不在用」），与任何账号无关，也不含硬件序列号、MAC 地址这类能唯一指认某台设备的标识。",
-          "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，",
+          "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功、教程走到了第几步、项目刷新与接入状态是从哪个入口触发的及其结果、多选排列用了哪类按钮、保存 / 恢复 / 包操作的结局。标识是本机随机生成的一串 UUID，",
           "sendsPersist": "多次启动之间保持不变",
           "summary": "仅在你明确开启后发送匿名功能使用情况，不发送图、脚本、文件名、路径、科研数据或提示词。",
           "title": "匿名用量统计",
@@ -1186,8 +1199,8 @@ export default interface Resources {
         "readOnlyHint": "开启后禁止「写回原始文件」，源图不会被覆盖",
         "registry": "项目接入状态…",
         "scriptCount_other": "{{count}} 个脚本已登记",
-        "scripts": "可参数化脚本",
-        "scriptsHint": "已登记的可参数化脚本：只有登记过的脚本，其产出的面板才能进入图内编辑。",
+        "scripts": "已登记的源脚本",
+        "scriptsHint": "已登记的源脚本：只有登记过的脚本，其产出的图才能进入图内编辑。",
         "switch": "切换项目…",
         "writeBackAllowed": "允许写回原始文件"
       },
@@ -1285,18 +1298,18 @@ export default interface Resources {
       "deleteTitle": "删除样式「{{name}}」？",
       "description": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件",
       "descriptionEmpty": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件",
-      "emptyBody": "还没有保存的样式。选中一个已渲染的可参数化面板，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
+      "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
       "emptyDraft": "空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，删掉不想统一的项后保存。",
       "extract": "从当前面板提取",
       "extractFrom": "从「{{name}}」读取当前值",
-      "extractNeedPanel": "选中一个已渲染的可参数化面板后可提取",
+      "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
       "includePageSize": "包含页面尺寸",
       "namePlaceholder": "样式名称（如「AMFE 正文图」）",
       "nameRequired": "先给样式起个名字",
-      "needPanel": "先在画布上选中一个已渲染的可参数化面板",
+      "needPanel": "先在画布上选中一张已渲染、可编辑的图",
       "newStyle": "新建样式",
-      "noPanelsPanel": "先在画布上选中一个可参数化面板",
-      "noPanelsScope": "范围内没有可参数化面板",
+      "noPanelsPanel": "先在画布上选中一张可编辑的图",
+      "noPanelsScope": "范围内没有可编辑的图",
       "noSavedStyles": "还没有保存的样式",
       "pageSizeSuffix": "（{{w}}×{{h}} mm）",
       "pageSizeTo": "页面尺寸 → {{w}}×{{h}} mm",
@@ -1530,6 +1543,7 @@ export default interface Resources {
       "profile_revision_missing": "请求缺少版本号，无法判断是否有人同时改过",
       "profile_store_unsupported_schema": "这份配置是更高版本的 Tavotto 写的，本版本只读不写——升级之后再改它",
       "profile_too_large": "导入的文件太大",
+      "project_closed": "项目已关闭，AI 修改后的刷新已跳过；下次打开项目时会自动读到新脚本",
       "project_env_already_attempted": "这一轮已经自动换过一次环境了，请手动重试",
       "project_env_module_missing": "找到的项目环境里也没有这个包",
       "project_env_no_matplotlib": "找到的项目环境导入不了 matplotlib",
@@ -3708,11 +3722,13 @@ export default interface Resources {
       "noOtherDocuments": "暂无其他文档",
       "paperStyles": "论文样式…",
       "presets": "科研预设与符号…",
+      "readiness": "项目接入状态",
       "recentDocuments": "最近文档（本机）",
       "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
       "recentEntry_other": "{{name}} · {{count}} 个对象",
       "redo": "重做",
       "redoWith": "重做 {{label}}",
+      "refreshProject": "刷新项目",
       "renameDocument": "重命名文档…",
       "saveAsCanvasFile": "保存为画布文件…",
       "saveClean": "已保存 {{time}}",

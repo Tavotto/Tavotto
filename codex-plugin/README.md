@@ -264,6 +264,22 @@ PDF/SVG 是真矢量，PNG 按给定 dpi 栅格化，同时写一份 proof repor
 结果 + 是否强制导出）。缺省落在 `<项目>/tavottofile/export/`——与 Tavotto 画布导出同一个
 目录规则。
 
+### 改了脚本之后：刷新项目
+
+Codex 修改、新建、重命名或删除绘图脚本之后调 `tavotto_refresh_project`（技能里已写进
+流程末尾）。它让 Tavotto 重新读这个项目：静态合并脚本注册表、比对素材、算每张图的接入
+状态，并把结果推给**正在运行的 Tavotto 界面**——用户不需要手动刷新，也不需要重启。
+返回哪些脚本 / 图变了、哪些图现在可编辑（`readiness.panels[].status`）。
+
+* **不是运行脚本的工具**：不 probe、不执行任何用户代码。`needs_probe` 的图要用户在
+  Tavotto 里点「试运行并连接」；`conflict` 的图不自动裁决。
+* 项目来自当前授权：优先传 `session_id`（`tavotto_open_figure` 回来的），或传一个已授权
+  工作区内的 `project_path`；两者都不传时用唯一有会话的项目。
+* `delivered: app` = 运行中的 Tavotto 已同步（浏览器模式的实例，`127.0.0.1:5089`）；
+  `delivered: local` = Tavotto 没开着（或是桌面版——它的端口不落盘），刷新已在本地完成，
+  下次打开项目时自动生效；桌面版开着时由它自己的 watcher 在两秒内跟上。
+* 结果里没有绝对路径：项目是短 id，脚本 / 图是项目相对名。
+
 ### 想彻底确认
 
 `tavotto_verify_replay` 起一个一次性 worker 从零重放同一组 patches，把两份 manifest

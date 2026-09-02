@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Group, SlidersHorizontal, Ungroup } from 'lucide-react'
 import { t as translate } from '@/i18n'
+import { captureContextBarMore, fromContextBar } from '@/lib/activityTelemetry'
 import { cn } from '@/lib/utils'
 import {
   ALIGN_BUTTONS,
@@ -84,7 +85,7 @@ export function MultiSelectionBar({
         </MenuPopover>
         <Sep />
         <GroupButtons grouped={grouped} />
-        <MoreButton />
+        <MoreButton count={count} />
       </>
     )
   }
@@ -101,7 +102,7 @@ export function MultiSelectionBar({
       <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
       <Sep />
       <GroupButtons grouped={grouped} />
-      <MoreButton />
+      <MoreButton count={count} />
     </>
   )
 }
@@ -159,7 +160,8 @@ function AlignRow({
               className={cn(blocked && 'cursor-not-allowed opacity-35')}
               onClick={() => {
                 if (blocked) return
-                alignSelectedTo(mode, refName)
+                // 遥测只认「从浮动栏发起」的那一次（`lib/activityTelemetry`）
+                fromContextBar(() => alignSelectedTo(mode, refName))
               }}
             >
               <Icon size={12} />
@@ -180,7 +182,7 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
           size="icon-sm"
           data-group-action="group"
           aria-label={ar('group')}
-          onClick={() => groupSelected()}
+          onClick={() => fromContextBar(() => groupSelected())}
         >
           <Group size={12} />
         </Button>
@@ -191,7 +193,7 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
             size="icon-sm"
             data-group-action="ungroup"
             aria-label={ar('ungroup')}
-            onClick={() => ungroupSelected()}
+            onClick={() => fromContextBar(() => ungroupSelected())}
           >
             <Ungroup size={12} />
           </Button>
@@ -202,14 +204,17 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
 }
 
 /** 「更多」：到属性页的排列组去（间距 / 布局组 / 样式搬运都在那里） */
-function MoreButton() {
+function MoreButton({ count }: { count: number }) {
   return (
     <Tip label={qb('moreArrangeTip')} side="bottom">
       <Button
         size="icon-sm"
         data-multi-more
         aria-label={qb('moreArrange')}
-        onClick={() => openArrangeInInspector()}
+        onClick={() => {
+          openArrangeInInspector()
+          captureContextBarMore(count)
+        }}
       >
         <SlidersHorizontal size={12} />
       </Button>

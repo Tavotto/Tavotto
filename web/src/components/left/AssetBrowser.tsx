@@ -965,7 +965,7 @@ function AssetCapabilityNotice({ panel }: { panel?: PanelInfo }) {
       <Button
         size="sm"
         className="-ml-2 mt-0.5"
-        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id)}
+        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
       </Button>
