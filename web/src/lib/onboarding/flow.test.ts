@@ -416,6 +416,12 @@ describe('暂停与恢复', () => {
     expect(ob().status).toBe('paused')
     emitActivity({ kind: 'element.property_changed', prop: 'fontsize' })
     emitActivity({ kind: 'history.pushed', label: 'history.setProp' })
+    // 这两条没有第二道守卫（它们不看正在编辑哪张图）：教程外开导出面板确认原图，
+    // 回来之后不能被当成刚做的
+    useUiStore.getState().setExportOpen(true)
+    emitActivity({ kind: 'export.scope_changed', scope: 'original' })
+    emitActivity({ kind: 'export.scope_changed', scope: 'canvas' })
+    useUiStore.getState().setExportOpen(false)
     await tick()
     expect(signalSnapshot()).toEqual(EMPTY_SIGNALS)
   })
