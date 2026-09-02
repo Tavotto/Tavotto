@@ -415,6 +415,62 @@ def test_frame_linewidth_and_rounding_are_editable(hot):
     _man(hot)
 
 
+def test_rebuild_does_not_compound_markerscale_on_custom_entries(hot):
+    """带 override 的自定义项重建：素材是快照（markerscale 已乘过），派生会再乘
+    一次——`rebuild_legend` 必须把 markersize 放回。这一项有 override，所以
+    `sync_legends` 不会替它兜底（有 override 的项它不碰），漏了就是 9 → 13.5。"""
+    patches = [{"gid": T[2], "prop": "handle_color", "value": "#123456"}]
+    assert _val(_man(hot, patches), T[2], "handle_markersize") == 9.0
+    man = _man(hot, patches + [{"gid": LEG, "prop": "ncol", "value": 2}])
+    assert _val(man, T[2], "handle_markersize") == 9.0
+    assert _val(man, T[2], "handle_color") == "#123456"
+    _man(hot)
+
+
+TWINS_SCRIPT = "fig_legend_twins.py"
+TWINS_LIBRARY = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    x = np.linspace(0.0, 6.0, 30)
+    ax.plot(x, np.sin(x), "r-", label="dup")
+    ax.plot(x, np.cos(x), "r-", label="dup")
+    ax.legend()
+    fig.savefig("Twins.pdf")
+"""
+
+
+@pytest.fixture(scope="module")
+def twins(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-twins")
+    (figs / TWINS_SCRIPT).write_text(TWINS_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(TWINS_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        yield w
+    finally:
+        pool.discard(w)
+
+
+def test_identical_twins_bind_by_position_not_by_first_match(twins):
+    """两条同色同型同名的曲线：label 与指纹都并列，只能按
+    `get_legend_handles_labels()` 的位置认——第二项绑第二条，不是「第一个匹配到
+    的」。绑错的表现是改第二条线的颜色、第一项的示意线变了。"""
+    resp = twins.override("Twins", [])
+    assert not resp["warnings"], resp["warnings"]
+    man = resp["manifest"]
+    assert _el(man, "axes_0.legend.texts_0")["legend_entry"]["source_gid"] == "axes_0.lines_0"
+    assert _el(man, "axes_0.legend.texts_1")["legend_entry"]["source_gid"] == "axes_0.lines_1"
+    resp = twins.override("Twins", [{"gid": "axes_0.lines_1", "prop": "color", "value": "#00ff00"}])
+    assert not resp["warnings"], resp["warnings"]
+    assert _val(resp["manifest"], "axes_0.legend.texts_1", "handle_color") == "#00ff00"
+    assert _val(resp["manifest"], "axes_0.legend.texts_0", "handle_color") == "#ff0000"
+    twins.override("Twins", [])
+
+
 def test_rebuild_keeps_the_title_font_size(hot):
     """重建之前标题字号 12（脚本的 title_fontsize）；重建之后必须还是 12。"""
     man = _man(hot, [{"gid": LEG, "prop": "ncol", "value": 2}])

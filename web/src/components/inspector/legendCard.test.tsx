@@ -422,6 +422,16 @@ describe('选中图例', () => {
     ])
   })
 
+  it('已经重排过再移动：写的仍是原始序号的排列，不是显示位置', async () => {
+    useDocumentStore.getState().commit(literal('先重排'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides.push({ gid: 'axes_0.legend', prop: 'entry_order', value: [2, 0, 1] })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('下移 “proxy”'))
+    expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([0, 2, 1])
+  })
+
   it('隐藏写那一项的 visible=false；再点一次恢复', async () => {
     await mount(['axes_0.legend'])
     await click(byAria('隐藏图例项 “sin”'))
