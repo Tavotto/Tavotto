@@ -5,7 +5,178 @@
 
 ---
 
-## 最近一次：Session 16（2026-09-02）
+## 最近一次：Session 17（2026-09-02）
+
+### 目标
+
+Prompt 17：Shift 点击 / 框选 / ⌘A / 图层树选出两个及以上画布对象时，在联合选区
+附近直接给出对齐、分布、等宽等高、成组与完整排列入口；不复制排列算法、不改
+readiness、不做 coachmark，只留稳定锚点给 Prompt 21。
+
+### 开始前实测到的四件事
+
+1. **`ContextBar` 单选才出现**，多选直接 `null`（既有用例还专门钉着「多选不出现」）。
+2. **参照是 `ArrangeSection` 的模块级变量** `alignRefState`——浮动栏要读就得再抄一份。
+3. **`alignSelectedTo` 会挪锁定对象**：拖动 / 方向键走 `movableTargets`，对齐没走；
+   框选会把锁定对象选进来（`rectsIntersect` 只看 hidden），一次对齐就把锁住的底图挪走。
+   它也**不收连续手势**（`gestureCoordinator` 的注释点名了「对齐」，实现里没有）。
+4. **`Section` 不透传 props**：`data-arrange-section` 锚点挂不上去。
+
+### 实际完成
+
+**1. `canvas/context-bar/`（ADR 0036）**：一个外壳三种目标。
+
+```text
+ContextBar.tsx        目标解析 element / object / multi；active（不在图内编辑 / 裁剪 / 文字编辑 /
+                      QuickEdit / 非选择工具 / narrow 抽屉 / 模态 / 命令面板、没被 Esc 掉）
+                      × visible（没按着指针、interaction kind === 'none'）；落位；Esc；portal
+SingleObjectBar.tsx   原样搬家       ElementBar.tsx   原样搬家
+MultiSelectionBar.tsx full：计数 · 参照 · 六向 · 分布 · 尺寸 · 成组[/取消] · 更多
+                      compact：计数 · [对齐▾] [分布▾] [尺寸▾] · 成组 · 更多（Popover 里同一批按钮）
+position.ts           placeToolbar / sidebarInsets / barVariant / freeWidthOf / selectionScreenRect
+```
+
+数据锚点：外壳 `data-context-bar` `data-context-bar-mode` `data-multi-selection-context-bar`
+`data-variant` `data-placement`；按钮 `data-align-mode` `data-group-action` `data-multi-more`
+`data-multi-menu` `data-align-ref-picker` `data-selection-count`。
+
+**2. `store/arrangeStore`**：参照唯一持有者（UI 会话状态）。`ArrangeSection` 改读它，
+按钮表挪到 `inspector/arrangeButtons.ts`（`ALIGN_BUTTONS` / `DISTRIBUTE_BUTTONS` /
+`SIZE_BUTTONS` / `ALIGN_REFS`），两个入口一份。`Section` 现在透传 HTML 属性，
+排列组挂 `data-arrange-section`，「更多」= `setRightTab('properties')` + 滚到它。
+
+**3. 主选**：`OverlaySvg` 多选时末位 id 轮廓 2 px（线状 2.5）+ `data-primary-selection`，
+联合框 `data-multi-selection-bounds`。
+
+**4. actions**：`alignSelectedTo` 先 `finishActiveGesture()`；`movableTargets(ids) ∩ ids`
+才动，锁定的仍算进参照框，跳过几个就提示（`status.alignLockedSkipped`），全锁提示
+`alignAllLocked`；`groupSelected` / `ungroupSelected` 同样先收手势；三者完成后
+`emitActivity`。新增 `selectionHasGroupIn(objs)`（`selectionHasGroup()` 改调它）。
+
+**5. `lib/activity.ts`**：`tavotto:activity` CustomEvent，`ActivityDetail` 闭集三种，
+`onActivity(listener)` 订阅。决定：**现在就接 action**（不是只留锚点）——三行代码、
+无用户内容、失败被吞；Prompt 21 直接订阅。
+
+**6. 顺带修的两条（真浏览器抓到）**：`fixed` 工具条 `w-max`；Tooltip 含 Radix 外壳
+`pointer-events:none`（`index.css` 的 `:has([role='tooltip'])`）。
+
+### 关键 API（Prompt 18 直接用）
+
+```ts
+// web/src/store/actions.ts
+alignSelectedTo(mode, ref)            // 锁定跳过 + 收手势 + 活动信号；ref: 'selection'|'page'|'primary'
+groupSelected() / ungroupSelected()   // 同上
+selectionHasGroupIn(objs)             // 「取消成组」可不可用
+// web/src/store/arrangeStore.ts
+useArrangeStore((s) => s.alignRef) / setAlignRef
+// web/src/components/inspector/arrangeButtons.ts
+ALIGN_BUTTONS / DISTRIBUTE_BUTTONS / SIZE_BUTTONS / ALIGN_REFS / ArrangeButton
+// web/src/canvas/context-bar/
+position.placeToolbar(anchor, size, viewport, insets) / sidebarInsets(ui) / barVariant(free) / selectionScreenRect(bounds, t)
+openArrange.openArrangeInInspector()
+// web/src/lib/activity.ts
+emitActivity(detail) / onActivity(fn) / ACTIVITY_EVENT
+```
+
+### 迁移
+
+**没有磁盘格式改动、没有新文档字段。** 行为变化两条：① 对齐不再挪锁定对象（此前会）；
+② 对齐 / 成组前收掉开着的手势（此前会并进上一条历史）。
+
+### 修改的文件
+
+```text
+新增  web/src/canvas/context-bar/{ContextBar,SingleObjectBar,ElementBar,MultiSelectionBar}.tsx
+新增  web/src/canvas/context-bar/{position,elementQuick,openArrange,text}.ts, shared.tsx
+新增  web/src/canvas/context-bar/{position.test.ts,multiSelectionBar.test.tsx}
+新增  web/src/canvas/primarySelection.test.tsx
+新增  web/src/store/arrangeStore.ts (+ .test.ts)      web/src/store/alignSelectedTo.test.ts
+新增  web/src/lib/activity.ts                          web/src/components/inspector/arrangeButtons.ts
+新增  docs/adr/0036-multi-selection-context-bar.md
+删除  web/src/canvas/ContextBar.tsx（拆进 context-bar/；CanvasStage 与两个测试的 import 已改）
+改动  web/src/canvas/OverlaySvg.tsx                    主选轮廓 / 两个锚点
+改动  web/src/components/inspector/ArrangeSection.tsx  读 arrangeStore、按钮表外置、data-arrange-section
+改动  web/src/components/ui/Field.tsx                  Section 透传 HTML 属性
+改动  web/src/components/ui/Tooltip.tsx + index.css    气泡不吃指针
+改动  web/src/store/actions.ts                         alignSelectedTo / group / ungroup / selectionHasGroupIn
+改动  web/src/i18n/locales/*/{workspace,inspector}.json + resources.d.ts
+改动  web/AGENTS.md
+重建  codex-plugin/mcp/widget/canvas.html              指纹 97162c7183a44a0f
+重建  web/dist-playground/                              指纹 ac90363fcc807f16（不进 git）
+```
+
+### 这一轮踩到的坑
+
+1. **`pnpm test -- <路径>` 不过滤**，跑的是全量（pnpm 把 `--` 吞了）。定向跑用
+   `NODE_OPTIONS=--no-experimental-webstorage npx vitest run <路径>`。
+2. **fixture 自己已经是目标状态 → no-op → 「历史少一条」假红**：三段文字的 y 默认等距，
+   vdist 什么都不写；文字的 sameh 也是 no-op（高度由内容决定）。判据没错，是我
+   捏的输入形状已经满足了它（[[simulated-input-shape-lies]] 的又一次）。
+3. **`fixed` 盒子 `width:auto` 被可用宽度压扁**：left 还是旧值时盒子只剩「left 到视口右沿」
+   那么宽，量到 299 就以为放得下。`w-max` 之后量到的才是 617。**jsdom 里 offsetWidth
+   恒为 0，这条只有真浏览器抓得到。**
+4. **聚焦触发的 tooltip 会拦点击**：Radix Popover 自动聚焦第一个分段项，其气泡停在
+   下一排按钮上，Playwright 报的是 `data-radix-popper-content-wrapper intercepts
+   pointer events`——先在内容层加 `pointer-events-none` 没用，外壳没有背景也照样命中，
+   要用 `:has` 选到外壳。**ArrangeSection 里键盘 Tab 到分段项也会撞同一件事**，一并修了。
+5. **图内编辑态的判据是「在不在编辑」不是「那张面板还在不在」**：第一版按 `panel`
+   对象是否解析得到判，`elementPanelId` 指向一个非面板 id 时多选栏照出。
+
+### 尚存限制
+
+见 `STATUS.md` 遗留表「Session 17 之后」新增的五行（组不作为整体对齐、分布时锁定
+对象只是被排除、弹层第一项的气泡先亮一下、落位用未旋转包围盒、e2e 全量没跑）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-13-properties`（13 / 14 / 15 / 16 / 17 五轮都在这条分支上，
+  **尚未推送、没有 PR**）；本轮提交 `b0d14f7c`（代码 + widget）+ 文档 / 留档一笔
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 18：QuickEdit 右键动作）
+
+**从这里开始读**：`docs/adr/0036-multi-selection-context-bar.md`（本轮）、
+`UX_CONTRACTS.md` 的「4f 多选浮动栏合同」、`web/AGENTS.md` 的「多选浮动栏与共享排列参照」、
+`canvas/QuickEdit.tsx` / `canvas/quickEditStore.ts`、`store/actions.alignSelectedTo`、
+`store/projectReadinessStore.focusPanel`（readiness focus 入口，18 必须复用）。
+
+**Session 17 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 多选动作 | `store/actions.alignSelectedTo` / `groupSelected` / `ungroupSelected` | **只有这一份**：QuickEdit 的菜单项直接调，不在菜单里算 x/y |
+| 按钮表 | `inspector/arrangeButtons.ts` | 图标 / 顺序 / 最少对象数 / tooltip 键；菜单项按它生成 |
+| 参照 | `store/arrangeStore` | 菜单里要显示「（选区）」就读它，不另存 |
+| 「更多」 | `context-bar/openArrange.openArrangeInInspector` | 到属性页排列组 |
+| 落位 | `context-bar/position.placeToolbar` | 任何贴着选区的浮层可复用；QuickEdit 目前贴鼠标，可保持 |
+| 动作完成信号 | `lib/activity.emitActivity` | 新增 kind 要进 `ActivityDetail` 闭集 |
+| 稳定锚点 | `data-multi-selection-context-bar` / `data-primary-selection` / `data-multi-selection-bounds` | Prompt 21 的 coachmark 挂这里，别改名 |
+
+**绝不要做的事**（07 的六条、08 的三条、09 的四条、10 的五条、11 的五条、
+12 的五条、13 的四条、14 的四条、15 的四条、16 的三条原样成立，17 再加三条）：
+
+44. **不许在 QuickEdit / 菜单里再算一遍对齐**（T-91）。意图进 action，几何在 action 里；
+    菜单项出现与否按 `arrangeButtons.min` 与 `selectionHasGroupIn` 派生，不按对象数猜。
+45. **不许再造第二个参照状态**（T-92）。`arrangeStore` 是唯一出处；也不许把它写进文档或历史。
+46. **不许把活动信号当遥测**（T-93）。它只在本进程 window 上、无用户内容；要遥测走
+    `telemetryStore` 那条经用户同意的路。
+
+**必须保留的不变式**（在 16 的二十九条之上）：
+
+30. **多选栏与 ArrangeSection 同源**：同一个 action、同一条历史标签、同一份参照
+    （`multiSelectionBar.test.tsx` 的「标签与直接调 action 一致」「共用参照」两条）。
+31. **锁定对象对齐不动、仍算进参照框**（`alignSelectedTo.test.ts`）。
+32. **落位与联合框同一份几何**（`multiSelectionBar.test.tsx` 落位五条对着 `placeToolbar(selectionScreenRect(...))` 算）。
+33. **交互期间不出现、结束后回来；Esc 只关本次**。
+
+---
+
+## 历史：Session 16（2026-09-02）
 
 ### 目标
 

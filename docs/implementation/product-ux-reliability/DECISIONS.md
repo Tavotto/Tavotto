@@ -1650,3 +1650,47 @@ gid；拆成两步会渲染出一帧「边开了、方向还是旧的」，撤�
 `tick_params` 默认同口径），次刻度另有 `minor_length` / `minor_width`。这是语义
 变化，存量文档里带这两条 override 且开着次刻度的图，次刻度会回到脚本自己的长度
 ——写进 ADR 0035 §5，不静默。
+
+## T-91（Session 17）浮动栏只发意图，几何在 action 里
+
+**问题。** 多选浮动栏很容易写成「按钮里算新 x/y 再 commit」——它离数据近、看起来
+只是几行。
+
+**裁决：浮动栏、属性页、（18 的）右键菜单三个入口都只调 `alignSelectedTo` /
+`groupSelected` / `ungroupSelected`；按钮表（图标 / 顺序 / 最少对象数）在
+`arrangeButtons.ts` 一份。** 判据不是「两边都改对了」，是只有一份：用例里拿浮动栏
+点出来的历史标签与直接调 action 的逐字比。顺带把两条 action 层的缺口补上：对齐
+此前会挪锁定对象（拖动不会），也不收开着的手势——这两件事以前只有属性页一个
+入口时没人撞见，多一个入口就暴露了。
+
+## T-92（Session 17）参照是 UI 会话状态，只有一份
+
+**问题。** 参照（选区 / 画布 / 主选）原来是 `ArrangeSection` 的模块级变量；第二个
+入口要读它就得再抄一份，而两份的表现是「浮动栏按画布对齐、属性页显示着选区」。
+
+**裁决：`store/arrangeStore`。不进文档（它不是文档内容）、不进撤销（换参照不占历史）、
+不 persist（是「这一轮想按什么对齐」，不是长期偏好）、切文档不重置（同一次会话手感
+连续）；存枚举不存翻译。** 两个入口双向同步有用例钉着。
+
+## T-93（Session 17）活动信号现在就接进 action，但它不是遥测
+
+**问题。** Prompt 21 的 coachmark 要知道「用户已经自己对齐过一次了」。两条路：
+onboarding 去 import 核心 action 的结果，或 action 发一声。前者把 onboarding 拖进
+核心依赖图。
+
+**裁决：`lib/activity.ts` 的 `tavotto:activity` 本地 CustomEvent，现在就从三个 action
+里发。** detail 是闭集 `kind` + 枚举 + 计数，无对象 id / 文字 / 文件名；派发失败被吞，
+不影响动作；只在本进程 window 上，不落盘不出网。它**不是** ADR 0016 的诊断事件，
+也**不是**遥测——要遥测走 `telemetryStore` 那条经用户同意的路。没有选「先只留锚点」：
+三行代码，晚接一轮只是让 21 再来碰一次 `actions.ts`。
+
+## T-94（Session 17）气泡不是控件，连定位外壳一起不吃指针
+
+**问题。** 真浏览器里弹层自动聚焦第一个分段项，它的 tooltip 停在下一排按钮上，点击
+落在气泡上什么都不发生。属性页里键盘 Tab 到分段项也是同一件事，只是没人用键盘
+走到那里过。
+
+**裁决：Tooltip 内容与 Radix 的 `data-radix-popper-content-wrapper` 外壳一起
+`pointer-events: none`（`:has([role='tooltip'])` 只选到气泡的外壳）。** 不改成「不
+自动聚焦」——那会让键盘用户进不了弹层。这一条在 jsdom 里量不到，是 Playwright 的
+`intercepts pointer events` 抓到的。

@@ -1853,3 +1853,74 @@ aria-checked 与实线 / 虚线；**内侧带的命中矩形在框里、外侧�
   没落进命中带的按下会开始一次拖动（`trackPointer` 挂在 window 上），用例之间不
   松手的话后面的 `pointermove` 全被 `kind !== 'none'` 吃掉——「单跑绿全量红」的
   又一种形状。
+
+## Session 17：多选浮动 Context Bar / 共享排列参照 / 主选语义
+
+### 新增用例（前端 13 + 42 + 5 + 17 + 2；后端无）
+
+**`canvas/context-bar/position.test.ts`（13 条，纯函数）**：上方居中、顶部安全区放不下
+翻下方（含边界 = TOP_SAFE 本身）、下方也放不下贴窗口底边、左右不越界、避让停靠侧栏
+（左含轨道）、两侧之间比栏还窄贴左；`sidebarInsets` 三态；`barVariant` 阈值 + 可用宽度；
+`selectionScreenRect` 原点 + 平移 + 世界像素 × 缩放、缩放翻倍尺寸翻倍。
+
+**`canvas/context-bar/multiSelectionBar.test.tsx`（42 条）**：单选仍是 Object bar、单图内
+元素仍是 Element bar（mock `engineRender` 播一份 manifest）、两个 / 三个对象出现 + 计数 +
+role / aria-label、图内编辑态不出；两个对象分布 `aria-disabled` 点了不动、三个可用、
+有组多出取消成组；对齐（选区 / 画布 / 主选）、等宽 / 等高、水平 / 垂直分布、成组 →
+取消成组、撤销回原位、「更多」开属性页且选区不动、**标签与直接调 action 逐字一致**；
+pointerdown 隐藏 pointerup 再现、七种 interaction kind 参数化隐藏 / 再现、QuickEdit /
+裁剪 / 文字编辑 / 非选择工具 / 模态 / 命令面板 / narrow 抽屉让位、选区掉到 1 换回单选栏；
+Esc 焦点在栏内拦事件 + 选区不动、焦点在外不拦、选区一变重新出现且仅缩放不解除；落位五条
+对着 `placeToolbar(selectionScreenRect(boundsOf(sel)))` 算（上方 / zoom-pan 重贴 / 侧栏开合 /
+顶部不够放下方 / 左右不越界 / 对象挪动重贴）；窄屏压缩（resize 事件 + 弹层里同一批按钮
+可用、停靠侧栏吃掉宽度也压缩）；每颗按钮有可达名、分段组有组名、出现不抢焦点、
+按钮可 Tab；**与 ArrangeSection 共用参照双向同步、切参照不进历史**。
+
+**`canvas/primarySelection.test.tsx`（5 条）**：单选无标记无联合框；多选末位 id 唯一主选、
+2 px、联合框锚点；ids 顺序换主选跟着换；线状对象做主选沿线描示更粗；联合框几何 =
+包围盒。
+
+**`store/alignSelectedTo.test.ts`（17 条）**：参照三档 + 主选跟 ids 顺序、等宽 / 等高、
+分布两个拒绝三个等距；锁定不动但算进参照框 + 提示、含锁定成员的组整组不动、全锁
+不进历史；成组 / 取消成组各一条历史 + `selectionHasGroupIn` 同判据；开着的手势先收
+（对齐 / 成组）；活动信号三种各一次且 detail 不含 id、拒绝时不发、监听者抛错不影响动作。
+
+**`store/arrangeStore.test.ts`（2 条）**：默认 selection、同值不产生新状态。
+
+既有 `canvas/contextBar.test.tsx` 的「多选不出现」改成「换成多选栏，单选文字控件不出现」。
+
+### 变异反证：14 条，14/14 全红（第一轮）
+
+判定只看退出码；树先提交（`b0d14f7c`）再变异，脚本树不干净拒跑，每条跑完
+`git checkout` 那一个文件。定向集：`context-bar/` + `contextBar.test.tsx` +
+`primarySelection.test.tsx` + `alignSelectedTo.test.ts` + `arrangeStore.test.ts`（90 条）。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `alignSelectedTo` 不收手势 | 红（1 条） |
+| M2 对齐不跳过锁定对象 | 红（3 条） |
+| M3 主选取首位而不是末位 | 红（5 条：action 4 + 栏 1） |
+| M4 OverlaySvg 主选标记挂到首位 | 红（3 条） |
+| M5 多选栏要三个才出现 | 红（24 条） |
+| M6 交互中不隐藏（去掉 `kind === 'none'`） | 红（7 条：七种 kind 全部） |
+| M7 顶部不够也不翻到下方 | 红（4 条：纯函数 3 + 栏 1） |
+| M8 分布不按数量禁用 | 红（1 条） |
+| M9 属性页参照退回本地 state | 红（1 条：共用参照） |
+| M10 活动信号不派发 | 红（1 条） |
+| M11 Esc 不拦事件 | 红（1 条） |
+| M12 左栏占位算成 0 | 红（3 条：纯函数 1 + 栏 2） |
+| M13 图内编辑态照出多选栏 | 红（1 条） |
+| M14 落位不随 zoom / pan | 红（3 条） |
+
+### 实跑到的、不是假设的
+
+* `pnpm test -- <路径>` 不过滤（pnpm 吞掉 `--`），跑的是全量 165 文件——第一遍就把
+  「其余全绿、只有我三条红」这件事顺手证明了。
+* 真浏览器（chromium）：完整栏量出 617 px；`fixed` 盒子 `width:auto` 时 left 停在旧值、
+  盒子被压到 299 px，静态阈值放行的 600 px 视口下「放得下」是假的——`w-max` 之后压缩档
+  才真的出现。jsdom 里 `offsetWidth` 恒为 0，这条判据在 jsdom 里恒真。
+* 真浏览器：Radix Popover 自动聚焦第一个分段项，其 tooltip 停在下一排按钮上，
+  Playwright 卡在 `data-radix-popper-content-wrapper intercepts pointer events`；内容层
+  `pointer-events-none` 不够，外壳没有背景也照样命中，`:has([role='tooltip'])` 选到外壳才行。
+* 三段文字的 y 等距、文字 sameh 是 no-op：两条「历史少一条」的假红都是 fixture 已经
+  处在目标状态。

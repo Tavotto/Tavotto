@@ -48,7 +48,7 @@
 | 14 | 科学文本 / Unicode / 字体回退 | ✅ 完成（本次，ADR 0033） |
 | 15 | 图例绑定与控件 | ✅ 完成（本次，ADR 0034） |
 | 16 | 刻度线直接操作 | ✅ 完成（本次，ADR 0035） |
-| 17 | 多选浮动栏 | ⬜ |
+| 17 | 多选浮动栏 | ✅ 完成（本次，ADR 0036） |
 | 18 | QuickEdit 右键动作 | ⬜ |
 | 19 | 设置 / Agent / 包管理 | ⬜ |
 | 20 | 离线教程资源后端 | ⬜ |
@@ -63,7 +63,7 @@
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
-| 4 编辑一致性 | 13–18 | 🟡 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）完成；16–18 未开始 |
+| 4 编辑一致性 | 13–18 | 🟡 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）完成；18 未开始 |
 | 5 产品外壳 | 19–22 | ⬜ |
 | 6 发布 | 23 | ⬜ |
 
@@ -479,9 +479,25 @@ desktop…」。
 | 真浏览器（Playwright chromium，临时 spec 不进仓库） | ✅ 打开 `Fig1_kinetics`（脚本朝内刻度）：从面板底沿往上扫，先出现「下边 · 朝外刻度 关着 · 点击显示」（外侧带），中间一段无带，再出现「下边 · 朝内刻度 开着 · 点击隐藏这一边的刻度线」（内侧带）；点内侧带 → 下边刻度线消失、刻度数字仍在、属性页方向档「隐藏」高亮、「显示边」两开关关、恢复芯片「下边刻度线 ×」出现。三张截图在 scratchpad。**顺带抓到一条**：状态文字往框外推会出面板的裁剪框（overflow hidden）整个被裁掉——改成往框里推 |
 | Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条临时 spec）。13 记的六条红仍开着 |
 
+### Session 17 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **165** files / **2265** tests passed（比 16 的 160/2185 +5 文件 / +80 条：`context-bar/position.test.ts` 13 + `multiSelectionBar.test.tsx` 42 + `primarySelection.test.tsx` 5 + `alignSelectedTo.test.ts` 17 + `arrangeStore.test.ts` 2；既有 `contextBar.test.tsx` 的「多选不出现」改成「换成多选栏」） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `alignSelectedTo.test.ts` 有两条 TS 报错——同 16：tsc 覆盖测试文件、vitest 不查类型） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（新增 `workspace:contextBar.{multiAria,selectedCount,alignMenu,distributeMenu,sizeMenu,groupMenu,moreArrange,moreArrangeTip,primaryHint}`、`workspace:status.{alignLockedSkipped,alignAllLocked}`、`inspector:arrange.refLabel`；`resources.d.ts` 重新生成） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示（按钮表 / 文案助手 / 打开属性页各自单独成文件，避开 fast-refresh 提示） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests/test_mcp_server.py tests/test_codex_plugin.py tests/test_i18n_dead_keys.py tests/test_pr_conflict_domains.py` | ✅ exit 0（177 条，含 12 skipped）。**Python 侧没有改动，全量 pytest 这一轮没跑**（16 那遍 3655/34/0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `97162c7183a44a0f`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `ac90363fcc807f16`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 14 条 | ✅ 14/14 全红（见 `TEST_MATRIX.md`） |
+| 真浏览器（Playwright chromium，临时 spec 不进仓库） | ✅ 1400×900：放一张图 + 两段文字，⌘A → 浮动栏贴在联合框上方、右沿在右栏左沿之内（bar 415–1032 / aside 1040）；主选轮廓更粗、联合框在；点「左对齐」三个对象贴齐、栏重贴；参照切「画布」属性页当场同步、tooltip「水平居中（画布）」；拖动期间栏消失、松手回来。900×700：右侧覆盖式抽屉开着 → 让位，关掉 → 回来（完整档）。600×700：静态阈值放行（600 ≥ 600）但量出 617 > 584 → **压缩档**、右沿 592 ≤ 600；点「对齐 ▾」弹层里切「画布」+「右对齐」生效；拉回 1000 宽回到完整档。**抓到两条**：① `fixed` 盒子的 `width:auto` 被可用宽度压扁，量到的不是自然宽度（改 `w-max`）；② 弹层自动聚焦第一个分段项，它的 tooltip 盖住下一排按钮，点击落在气泡上什么都不发生（tooltip 连 Radix 外壳一起 `pointer-events:none`）。八张截图在 scratchpad |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条临时 spec）。13 记的六条红仍开着 |
+
 ---
 
-## 遗留（Session 16 之后仍开着的）
+## 遗留（Session 17 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
@@ -531,15 +547,28 @@ desktop…」。
 | — | **画布 hover 文字的锚点不随旋转换边**：180° 的面板上文字叠在相反的一侧 | 择机 |
 | — | **`length` / `width` 语义从 which="both" 改为只动主刻度**：存量文档里带这两条 override 且开着次刻度的图，次刻度回到脚本自己的长度 | 已处置（ADR 0035 §5 明示） |
 | — | **Session 16 没跑 e2e**：改动没碰黄金路径的键位；命中层新增的是 hover / 点击分支，既有 e2e 没有针对边框的用例。这是**没跑**，不是「跑过没问题」 | 23 前 |
+| — | **组不作为整体对齐**：成组的成员各自对齐到参照框（与属性页此前行为一致）；整体语义留给布局组。Prompt 说「mixed group 不要擅自猜」，17 没有猜 | 已处置（ADR 0036 §3） |
+| — | **分布时锁定对象只是被排除**，其余在选区框里等距，可能与锁定的那个重叠；没有做「以锁定对象为固定锚」的分布 | 已处置（限制写进 ADR） |
+| — | **弹层打开时第一个分段项的 tooltip 会先亮一下**（Radix 自动聚焦 + 聚焦即开气泡）。现在它不再吃点击，只是视觉噪音；不自动聚焦的话键盘用户进不了弹层 | 择机 |
+| — | **多选栏的落位用未旋转包围盒**（与 OverlaySvg 的联合框同一份）：旋转过的对象联合框比真实轮廓大一圈，栏会离得远一点 | 已处置（同一份几何优先于更紧的框） |
+| — | **Session 17 没跑 e2e 全量**：改动没碰黄金路径的键位与文案；跑了一条临时 spec 覆盖本阶段路径。这是**没跑全量**，不是「跑过没问题」 | 23 前 |
 | — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
 
 ---
 
 ## 下一阶段
 
-**Prompt 17（多选浮动 Context Bar）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
+**Prompt 18（QuickEdit 右键动作）**，入口见 `SESSION_HANDOFF.md` 的「下一阶段入口」。
 
-16 留给 17 的可复用入口：`PanelView.ElementHitLayer.spineZoneUnder`（「先 pick 再问带」
+17 留给 18 的可复用入口：`store/actions.alignSelectedTo` / `groupSelected` /
+`ungroupSelected`（多选动作只有这一份，QuickEdit 的菜单项直接调）、
+`inspector/arrangeButtons.ts`（按钮表：图标 / 顺序 / 最少对象数 / tooltip 键）、
+`store/arrangeStore`（参照）、`context-bar/openArrange.openArrangeInInspector`
+（「更多」到属性页排列组）、`lib/activity.emitActivity`（动作完成信号）、
+`context-bar/position.placeToolbar`（任何贴着选区的浮层都可以用这一份落位）、
+`projectReadinessStore.focusPanel(fileId)`（09 起就在的 readiness focus 入口，18 必须复用）。
+
+16 留给 17 的可复用入口（17 已消费，对 18 原样有效）：`PanelView.ElementHitLayer.spineZoneUnder`（「先 pick 再问带」
 的命中层形状，allow 闸在这里）、`lib/tickSides.spineZoneAt` 的 `scale` 参数（屏幕像素
 定宽）、`PanelView.SpineZoneFeedback`（只在 hover 期间存在、无过渡、文字反旋转 +
 1/zoom）、`store/actions.applyTickSidePlan`（多条 override + 删除一次 commit）、

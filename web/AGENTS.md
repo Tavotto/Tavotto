@@ -380,6 +380,35 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （命中层：hover / 点击 / 优先级 / zoom / 触控 / 旋转 / 偏出去的边框）、
   `inspector/tickTaskCard.test.tsx`（示意图两带 + 四档 + 显示边 + 锚点）。
 
+## 多选浮动栏与共享排列参照（2026-09-02，ADR 0036）
+
+完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
+
+* **一个外壳三种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（单个图内元素 /
+  单个画布对象 / 两个以上画布对象），出现与让位、落位（`position.ts` 纯函数）、
+  Esc、拖动隐藏、portal 都在外壳；三种内容各一个文件。对外仍是 `ContextBar()`。
+* **多选栏不是第二套排列系统**：按钮只发意图，落地走 `store/actions.alignSelectedTo`
+  / `groupSelected` / `ungroupSelected`——与 `ArrangeSection` 同一个函数、同一条历史
+  标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
+* **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
+  persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+* **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
+  `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
+  后续 coachmark 都锚在这两个节点上，别改名。
+* **落位不查 DOM**：联合选区经 `position.selectionScreenRect`（与 OverlaySvg 的
+  `toScreen` 同一份换算 + 视口原点）算窗口坐标。宽窄档两道判据：静态阈值
+  `FULL_BAR_MIN_WIDTH` + 量出来放不下就降级；工具条盒子必须 `w-max`，否则
+  `fixed` 盒子被可用宽度压扁、量到的不是自然宽度。
+* **锁定对象不动但算进参照框**：`alignSelectedTo` 与拖动同用 `movableTargets`；
+  对齐 / 成组 / 取消成组执行前 `finishActiveGesture()`。
+* **本地活动信号** `lib/activity.ts`（`tavotto:activity`）：闭集 kind + 枚举 + 计数，
+  无用户内容；核心 action 不 import onboarding；它不是遥测，别往 `telemetry` 里接。
+* **Tooltip 不吃指针**（含 Radix 定位外壳，`index.css` 那条 `:has([role='tooltip'])`）：
+  聚焦触发的气泡会停在下一排按钮上，真浏览器里点上去什么都不发生。
+* 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
+  `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
+  `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。

@@ -460,8 +460,21 @@ web/src/lib/legendModel.ts（投影：显示顺序 / 每项绑定 / 恢复跟随
 ### 5.2 画布
 
 `web/src/canvas/CanvasStage.tsx`、`PanelView.tsx`、`ObjectView.tsx`、
-`OverlaySvg.tsx`、`ContextBar.tsx`、`interactions.ts`；几何权威
-`exactPanelRender`（`docs/adr/0016`、`0017`）。
+`OverlaySvg.tsx`、`context-bar/`（`← 17`，ADR 0036：一个外壳三种目标——单个图内
+元素 / 单个画布对象 / 两个以上画布对象；落位在 `position.ts` 纯函数，与 OverlaySvg
+的联合框同一份换算）、`interactions.ts`；几何权威 `exactPanelRender`
+（`docs/adr/0016`、`0017`）。
+
+多选排列（`← 17`）：
+
+```text
+浮动栏 MultiSelectionBar ─┐
+属性页 ArrangeSection    ─┼→ store/actions.alignSelectedTo / groupSelected / ungroupSelected   ← 唯一出处
+（18）QuickEdit 菜单     ─┘        ↑ 参照 store/arrangeStore（UI 会话状态）
+                                   ↑ 按钮表 inspector/arrangeButtons.ts
+                                   → 完成后 lib/activity.emitActivity（本地信号，非遥测）
+OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合框 data-multi-selection-bounds
+```
 
 ### 5.3 导出（`← 12`，ADR 0031）
 
