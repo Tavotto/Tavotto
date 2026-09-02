@@ -540,7 +540,7 @@ desktop…」。
 
 | 命令 | 结果 |
 | --- | --- |
-| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ⏳ 见本节末尾的留档行 |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py`（**不带** `TAVOTTO_WORKER_PYTHON`，与 vitest 串行，树干净） | ✅ exit 0 —— **3756** passed / 34 skipped / 0 failed，11 分 09 秒（比 19 的 3705 +51：`test_tutorial.py` 47 + `test_error_codes.py` 四个 `tutorial_*` code 各一条参数化） |
 | `PYTHONPATH=<wt>/src TAVOTTO_WORKER_PYTHON=… pytest tests/test_tutorial.py` | ✅ **47** passed（含 worker 真跑两张教程图；读 dist 的三条在 `python -m build` 之后跑，也绿） |
 | `pytest tests/test_error_codes.py tests/test_projects.py tests/test_project_env.py tests/test_diagnostics_bundle.py tests/test_runtime_build.py tests/test_source_hygiene.py tests/test_ci_tooling.py tests/test_release_workflow_contract.py tests/test_merge_queue_workflows.py tests/test_update_chain_gates.py tests/test_autosave.py tests/test_package.py tests/test_i18n_dead_keys.py` | ✅ 520 passed / 6 skipped（第一遍 `test_source_hygiene` 抓到新测试里一个没钉 `encoding` 的 `subprocess.run`——与 19 同形状） |
 | `python -m build` | ✅ `tavotto-0.12.0-py3-none-any.whl`（1.47 MB）+ `tavotto-0.12.0.tar.gz`；wheel 里 `tavotto/resources/tutorial_project/` 9 个成员 37 524 字节，sdist 同 9 个；`tavotto/web/index.html` 在 |

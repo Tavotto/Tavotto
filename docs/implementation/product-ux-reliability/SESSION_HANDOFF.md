@@ -114,7 +114,8 @@ e2e 全量没跑）。
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-13-properties`（13–20 八轮都在这条分支上，**尚未推送、没有 PR**）；本轮
-  提交 `dc2397e0`（代码 + 资源 + 测试 + 打包）+ `反证前补用例` + `反证后处置` + 留档一笔
+  提交 `dc2397e0`（代码 + 资源 + 测试 + 打包）+ `13dbb00d`（反证前补用例）+ `f27afef6`（反证后处置）
+  + `3c30af55`（留档）+ 本笔（全量 pytest **3756 / 34 / 0** 回填）
 - author 用 `88193520+erwanjun@users.noreply.github.com`，提交时 `git -c user.email=…`
 
 ---
