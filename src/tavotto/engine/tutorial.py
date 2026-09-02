@@ -361,10 +361,9 @@ def _build_fresh_copy(version_dir: Path, files: dict[str, Path]) -> Path:
         for rel, src in files.items():
             dst = tmp / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
+            # `copyfile` 只拷内容不拷权限位：包内文件就算是只读的（site-packages /
+            # .app），副本也按 umask 建成可写的，不需要再 chmod。
             shutil.copyfile(src, dst)
-            # 副本必须可写：包内文件在只读的 site-packages / .app 里，
-            # copyfile 不带权限，但 umask 之外别让只读位漏过来。
-            os.chmod(dst, 0o644)
     except OSError as exc:
         shutil.rmtree(tmp, ignore_errors=True)
         raise TutorialError("tutorial_copy_failed", f"复制教程项目失败：{exc}") from exc
@@ -421,7 +420,6 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 tmp = dst.with_name(f".{dst.name}.{uuid.uuid4().hex[:8]}.tmp")
                 shutil.copyfile(files[rel], tmp)
-                os.chmod(tmp, 0o644)
                 os.replace(tmp, dst)
             except OSError as exc:
                 code = "tutorial_locked" if _is_locked(exc) else "tutorial_copy_failed"

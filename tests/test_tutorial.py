@@ -127,6 +127,17 @@ def test_shipped_resources_pass_static_validation():
     assert tutorial.validate_tutorial_resources() == []
 
 
+def test_validation_rejects_a_pdf_with_no_page_size(monkeypatch):
+    """PDF 打得开但首页尺寸为零（空 MediaBox）——「可读」不等于「有尺寸」。"""
+    from tavotto import pdfbackend
+
+    monkeypatch.setattr(
+        pdfbackend, "probe_asset", lambda p, k: {"kind": "pdf", "w_pt": 0, "h_pt": 0}
+    )
+    problems = tutorial.validate_tutorial_resources()
+    assert problems and all("读不出页面尺寸" in p for p in problems), problems
+
+
 def test_resources_are_small_and_render_no_external_data():
     files = tutorial.resource_files()
     total = sum(p.stat().st_size for p in files.values())
