@@ -445,7 +445,21 @@ desktop…」。
 
 ### Session 15 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
 
-@@SESSION15_TABLE@@
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ⚠️ **3642** passed / 34 skipped / **1 failed**（比 14 的 3612 +30：`test_legend_binding.py` 28 条 + `test_legend_model_pairs.py` 2 条 + 向量 1 条 − invariants 里删掉的那条豁免用例 + 改名 1 条）。红的那一条是 `test_ctrl_c_reaches_the_script_and_leaves_no_orphan`——遗留表里记着的「对机器负载敏感」那条：这一遍我把 vitest + `pnpm build` 与它**同时**开着（又一条证据），单跑 1.89 秒绿 |
+| 第一遍全量（作废） | 17 条红全部是 `test_project_env.py` / `test_dependency_repair_e2e.py`：我把 `TAVOTTO_WORKER_PYTHON` 设在了整个 shell 里，它们测的正是「没有环境变量时该选哪个解释器」。**worker 解释器本机能自动发现，这个变量不需要设**；去掉后 40/40 绿。另两条真缺陷（`_all_legends` 走了 `fig.axes`、roundtrip 用例还按显示序断言）已修 |
+| `cd web && pnpm test` | ✅ exit 0 —— **158** files / **2114** tests passed（比 14 的 157/2094 +1 文件 / +20 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2913 / en-US 3004；`inspector:legend.*` +23 组、`inspector:prop.{handle_*,binding,handletextpad,columnspacing,frame_linewidth,frame_rounded}` +10、`inspector:enum.binding.*` +2、`inspector:group.legendEntry`、`workspace:history.{hideLegendEntry,legendFollowSource}`） |
+| `cd web && pnpm lint` | ✅ **20 条既有 fast-refresh 提示，无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/gen_preflight_vectors.py` | ✅ 27 → 28 条；**既有 27 条一条没变** |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `13af9ce29dc7172a`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `162ab50a1c10af91`） |
+| 变异反证 17 条 | ✅ 16 红 + 1 结构性存活（M4：重建喂快照被同一轮 `sync_legends` 治回来，双保险不是判据缺口）。第一轮 14/17，两条用例形状的盲区已补（热会话两步的重放、折叠区里的重复要先展开），见 `TEST_MATRIX.md` |
+| 真应用（worktree 起在 5099） | ✅ 图例卡 / 图例项页 / 恢复跟随 / 改曲线颜色图例跟着变，四步各截了图（scratchpad，不进仓库） |
+| Playwright e2e | ⚠️ **没跑**。改动没碰黄金路径的键位；图例位置「自动」的文案 e2e 里没有引用（grep 过）。这是「没跑」，不是「跑过没问题」；13 记的那六条红仍然开着 |
 
 ---
 

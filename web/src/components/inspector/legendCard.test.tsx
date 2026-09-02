@@ -218,7 +218,6 @@ async function mount(gids: string[]) {
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
 const byText = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
-const inputs = () => Array.from(host.querySelectorAll('input'))
 /** 通用列表里某个字段的输入框（行锚点 `data-prop` 是定位服务的落点） */
 const propInput = (prop: string, type?: string) =>
   Array.from(host.querySelectorAll(`[data-prop="${prop}"] input`)).find(

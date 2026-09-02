@@ -138,7 +138,7 @@ restoreLegendEntryFollow(panelId, element)
 改动  docs/1.0-release-readiness.md                    §4.1 改成已修
 改动  AGENTS.md / src/tavotto/AGENTS.md / web/AGENTS.md
 重建  codex-plugin/mcp/widget/canvas.html              指纹 13af9ce29dc7172a
-重建  web/dist-playground/                             指纹 62fa24ca25dd57c5（不进 git）
+重建  web/dist-playground/                             指纹 162ab50a1c10af91（不进 git）
 ```
 
 ### 这一轮踩到的坑
