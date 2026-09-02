@@ -386,6 +386,8 @@ describe('选中图例', () => {
 
   it('字号与条目顺序由图例卡接管，通用列表不再出第二套', async () => {
     await mount(['axes_0.legend'])
+    // 「更多」展开之后才量得到：没接管的话那两条会落在折叠区里
+    await click(byText('更多'))
     // 图例卡的 Typography 行有字号（锚点 data-prop=fontsize，来自 propertyPathOf）；
     // 通用列表里没有以 fontsize / entry_order 为锚点的第二行——锚点两处同名，
     // 数「一共几个」才量得到重复
