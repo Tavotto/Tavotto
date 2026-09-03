@@ -1,20 +1,25 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { msg } from '@/i18n'
 import {
+  DEFAULT_INTERPRETATION,
+  interpretRuns,
   parseRuns,
-  plainText,
   SCRIPT_SIZE,
   SUB_DROP,
   SUP_RISE,
+  type TextInterpretation,
 } from '@/lib/richText'
+import { layerOf } from '@/lib/glyphPlan'
 import { MM_PER_PT } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
+import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
 /**
- * 文字对象：字体固定为文档字体（Times / 宋体），与 UI 字体分离。
+ * 文字对象：字体族由对象自己选（`CANVAS_TEXT_FAMILIES` 三选一），没设过就是
+ * 文档默认族（衬线 = `--font-doc`），与 UI 字体分离。
  * 高度由内容撑开后回写到文档，但不进 undo —— 它是渲染派生值。
  */
 export function TextView({ obj }: { obj: TextObject }) {
@@ -110,7 +115,7 @@ export function TextView({ obj }: { obj: TextObject }) {
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
       className="absolute left-0 top-0 w-full outline-none"
       style={{
-        fontFamily: 'var(--font-doc)',
+        fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
         fontSize: sizePx,
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
@@ -130,7 +135,9 @@ export function TextView({ obj }: { obj: TextObject }) {
           : undefined,
       }}
     >
-      {editing ? null : <RenderedText text={obj.text} sizePx={sizePx} />}
+      {editing ? null : (
+        <RenderedText text={obj.text} sizePx={sizePx} interpretation={obj.interpretation} />
+      )}
     </div>
   )
 }
@@ -142,9 +149,24 @@ export function TextView({ obj }: { obj: TextObject }) {
  * 是相对元素自身字号解析的，套在缩小后的 span 上会再乘一次比例，画布与
  * 导出就对不上了。常量取自 lib/richText.ts，与后端 richtext.py 同源。
  */
-function RenderedText({ text, sizePx }: { text: string; sizePx: number }) {
-  const runs = parseRuns(text)
-  if (runs.every((r) => r.script === '')) return <>{plainText(text)}</>
+function RenderedText({
+  text,
+  sizePx,
+  interpretation,
+}: {
+  text: string
+  sizePx: number
+  interpretation?: TextInterpretation
+}) {
+  // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
+  // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
+  // 拿它当判据的结果正是「预览好好的、导出上是个方框」。
+  const runs = interpretRuns(parseRuns(text), {
+    isPrimary: (cp) => layerOf(cp) === 'primary',
+    isDrawable: (cp) => layerOf(cp) !== 'missing',
+    mode: interpretation ?? DEFAULT_INTERPRETATION,
+  })
+  if (runs.every((r) => r.script === '')) return <>{runs.map((r) => r.text).join('')}</>
   return (
     <>
       {runs.map((r, i) =>

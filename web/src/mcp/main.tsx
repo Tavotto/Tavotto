@@ -1,7 +1,7 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { applyLocale } from '@/i18n'
+import { applyLocale, t as translate } from '@/i18n'
 import { normalizeLocale } from '@/i18n/locale'
 import { AppsBridge, hostFallback } from './appsBridge'
 import { McpApp } from './McpApp'
@@ -134,12 +134,10 @@ function Boot() {
 }
 
 function Splash({ state }: { state: 'connecting' | 'waiting' | 'nohost' }) {
-  const text =
-    state === 'nohost'
-      ? '这块画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 tavotto_* 工具也能完成打开 / 改图 / 预检 / 导出。'
-      : state === 'connecting'
-        ? '正在连接 Codex…'
-        : '正在等待 tavotto_open_figure 的结果…'
+  // 与 McpApp 同一个命名空间（`dialogs:mcp.*`）：这一屏以前是硬编码中文，
+  // 英文 host 里连接 / 等待 / 无 host 三种状态全是中文
+  const key = state === 'nohost' ? 'splashNoHost' : state === 'connecting' ? 'splashConnecting' : 'splashWaiting'
+  const text = translate(`mcp.${key}`, { ns: 'dialogs' })
   return (
     <div className="flex h-full w-full items-center justify-center bg-bg p-6">
       <p className="max-w-md text-center text-[13px] leading-relaxed text-ink-2">{text}</p>

@@ -182,33 +182,44 @@ test('流程 B：选中子图即可设四边刻度、方向与次刻度，示意
     'true',
     { timeout: 15_000 },
   )
+  // Session 16 之后「显示边」按 X 刻度 / Y 刻度两个页签分开：右边那个开关在 Y 页签下，
+  // 开完要切回 X 页签——下面的方向三档与次刻度断言都是对着 X 轴写的
+  await panel.getByRole('radio', { name: 'Y 刻度' }).click()
   await panel.getByRole('switch', { name: '右边刻度线' }).click()
   await expect(panel.getByRole('switch', { name: '右边刻度线' })).toHaveAttribute(
     'aria-checked',
     'true',
     { timeout: 15_000 },
   )
+  await panel.getByRole('radio', { name: 'X 刻度' }).click()
 
-  const majorBottom = panel.locator('[data-tick-major="bottom"]')
-  const majorLeft = panel.locator('[data-tick-major="left"]')
+  // Session 16（ADR 0035）之后示意图按**边 × 内外半区**画：方向不再是一条边上的
+  // 一个属性，而是「内半区亮 / 外半区亮 / 都亮」——与 tickTaskCard.test 读同一份锚点
+  const half = (side: string, dir: 'in' | 'out') =>
+    panel.locator(`[data-tick-major="${side}"][data-tick-half="${dir}"]`)
+  const expectDirection = async (side: string, direction: 'in' | 'out' | 'inout') => {
+    const want = { in: ['true', 'false'], out: ['false', 'true'], inout: ['true', 'true'] }[direction]
+    await expect(half(side, 'in')).toHaveAttribute('data-tick-on', want[0], { timeout: 15_000 })
+    await expect(half(side, 'out')).toHaveAttribute('data-tick-on', want[1], { timeout: 15_000 })
+  }
 
   // --- 示意图读的是真实状态 ---
   // paper_style.py 里 xtick.direction = "in"：**这张图本来就是朝内的**，
   // 而修改前的示意图把刻度画死在框外（before/zh-1440-axes-ticks.png）。
   // 起手就该是 in——这一条本身就是那个缺陷的真数据反例。
-  await expect(majorBottom).toHaveAttribute('data-tick-direction', 'in', { timeout: 15_000 })
+  await expectDirection('bottom', 'in')
   // 三档都要能带动示意图
   await panel.getByRole('radio', { name: '朝外' }).click()
-  await expect(majorBottom).toHaveAttribute('data-tick-direction', 'out', { timeout: 15_000 })
+  await expectDirection('bottom', 'out')
   await panel.getByRole('radio', { name: '朝内' }).click()
-  await expect(majorBottom).toHaveAttribute('data-tick-direction', 'in', { timeout: 15_000 })
+  await expectDirection('bottom', 'in')
 
   // --- 切到 Y 刻度，设成内外 ---
   await panel.getByRole('radio', { name: 'Y 刻度' }).click()
   await panel.getByRole('radio', { name: '内外' }).click()
-  await expect(majorLeft).toHaveAttribute('data-tick-direction', 'inout', { timeout: 15_000 })
+  await expectDirection('left', 'inout')
   // X 不受影响（两个轴各写各的 ticks 元素）
-  await expect(majorBottom).toHaveAttribute('data-tick-direction', 'in')
+  await expectDirection('bottom', 'in')
 
   // --- 开 X 次刻度：示意图上出现更短的次刻度 ---
   await panel.getByRole('radio', { name: 'X 刻度' }).click()
@@ -306,7 +317,8 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
         [...d.querySelectorAll('p')].filter((p) => (p.textContent ?? '').trim().length >= 30).length,
     )
 
-  for (const section of ['常规', '项目与路径', '画布与编辑', '侧栏行为', '导出默认值']) {
+  // Session 19 把设置分成十一个分区：这里挑五个正文最容易长成文字墙的
+  for (const section of ['常规', '界面', '项目', '样式', '导出']) {
     await dialog.getByRole('navigation').getByRole('button', { name: section }).click()
     await page.waitForTimeout(250)
     expect(await proseCount(), `${section} 分区仍是文字墙`).toBeLessThanOrEqual(1)
@@ -325,16 +337,20 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   // Esc 关的是气泡，不是整个设置对话框
   await expect(dialog).toBeVisible()
 
-  // --- About：完整解释器路径只在「环境诊断」里 ---
-  await dialog.getByRole('navigation').getByRole('button', { name: /隐私、诊断与 About/ }).click()
+  // --- 关于与隐私：只说「发什么 / 不发什么」，一个绝对路径都没有 ---
+  await dialog.getByRole('navigation').getByRole('button', { name: '关于与隐私' }).click()
   await expect(dialog.getByText(/仅在你明确开启后发送匿名功能使用情况/)).toBeVisible()
 
   const absolutePath = /(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/
+  const aboutScreen = (await dialog.textContent()) ?? ''
+  expect(aboutScreen).not.toMatch(absolutePath)
+
+  // --- 诊断：完整解释器路径只在折叠的「技术详情」里（Session 19 把诊断拆成独立分区）---
+  await dialog.getByRole('navigation').getByRole('button', { name: '诊断', exact: true }).click()
+  const diag = dialog.getByRole('button', { name: '技术详情' })
+  await expect(diag).toHaveAttribute('aria-expanded', 'false')
   const firstScreen = (await dialog.textContent()) ?? ''
   expect(firstScreen).not.toMatch(absolutePath)
-
-  const diag = dialog.getByRole('button', { name: '环境诊断' })
-  await expect(diag).toHaveAttribute('aria-expanded', 'false')
   await diag.click()
   await expect(diag).toHaveAttribute('aria-expanded', 'true')
   await page.waitForTimeout(500)

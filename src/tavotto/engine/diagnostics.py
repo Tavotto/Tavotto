@@ -259,6 +259,36 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     return _redact_obj(report)
 
 
+def render_text(report: dict) -> str:
+    """把（已脱敏的）报告摊平成可粘贴的文本：`a.b.c: value` 一行一条。
+
+    给设置里的「复制诊断」用。不另起一份采集逻辑——输入就是 `build_report()`
+    的产物，所以脱敏那一道它天然过了；这里只做排版。列表按序号展开，长文本
+    （最近错误）原样多行。
+    """
+    lines: list[str] = []
+
+    def walk(prefix: str, value) -> None:
+        if isinstance(value, dict):
+            for k, v in value.items():
+                walk(f"{prefix}.{k}" if prefix else str(k), v)
+        elif isinstance(value, list):
+            if not value:
+                lines.append(f"{prefix}: []")
+            for i, v in enumerate(value):
+                walk(f"{prefix}[{i}]", v)
+        else:
+            text = "" if value is None else str(value)
+            if "\n" in text:
+                lines.append(f"{prefix}:")
+                lines.extend("    " + ln for ln in text.splitlines())
+            else:
+                lines.append(f"{prefix}: {text}")
+
+    walk("", report)
+    return "\n".join(lines) + "\n"
+
+
 def build_bundle(
     project: dict | None = None,
     port: int | None = None,

@@ -434,6 +434,71 @@ describe('SSE 重连恢复', () => {
   })
 })
 
+describe('AI 修改之后（ADR 0041）', () => {
+  beforeEach(() => {
+    // panel.file_changed 会顺手刷一次素材清单：给它一份空清单，别让在途请求悬着
+    mockPanels.mockResolvedValue(panels([]))
+  })
+
+  it('ai.done 不再自己 markStale：stale 只由 panel.file_changed（reason=ai）置一次', () => {
+    seed([panelObj('p1', 'Fig1.pdf', { script: 'fig1.py' })])
+    const markStale = vi.spyOn(useRenderStore.getState(), 'markStale')
+    handleServerEvent(
+      ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['fig1.py'], stems: ['Fig1'], reason: 'ai' }),
+    )
+    // reason=ai 的那条**自己不弹**「脚本已更新」——提示留给紧跟着的 ai.done
+    expect(statusKey()).toBeUndefined()
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x',
+        script: 'fig1.py', refresh: { status: 'ok', registry_changed: false, assets_changed: false, published: [] },
+      }),
+    )
+    expect(markStale).toHaveBeenCalledTimes(1)
+    expect(markStale).toHaveBeenCalledWith(['Fig1.pdf'])
+    // 一次修改只留一条可理解的提示：AI 的那条，不是「脚本已更新」
+    expect(statusKey()).toBe('status.aiChanged')
+    markStale.mockRestore()
+  })
+
+  it('watcher 发的 panel.file_changed（没有 reason）照旧提示「脚本已更新」', () => {
+    seed([panelObj('p1', 'Fig1.pdf', { script: 'fig1.py' })])
+    handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['fig1.py'], stems: ['Fig1'] }))
+    expect(statusKey()).toBe('status.scriptChanged')
+  })
+
+  it('代码改成了、刷新失败：单独说出来（错误码翻成当前语言），不伪装成全部成功', () => {
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x',
+        script: 'fig1.py', refresh: { status: 'failed', code: 'project_closed' },
+      }),
+    )
+    expect(statusKey()).toBe('status.aiChangedRefreshFailed')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    const reason = (useUiStore.getState().status as { values?: { reason?: string } })?.values?.reason ?? ''
+    expect(reason).not.toBe('project_closed')
+    expect(reason.length).toBeGreaterThan(0)
+  })
+
+  it('刷新失败但文件没变：按普通结局提示（没有可失败的刷新）', () => {
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: false, diff: '',
+        script: 'fig1.py', refresh: { status: 'skipped' },
+      }),
+    )
+    expect(statusKey()).toBe('status.aiNoChange')
+  })
+
+  it('老后端没有 refresh 字段：行为不变', () => {
+    handleServerEvent(
+      ev({ kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py' }),
+    )
+    expect(statusKey()).toBe('status.aiChanged')
+  })
+})
+
 describe('手动刷新', () => {
   it('走统一刷新端点，然后经同一个合并函数取素材', async () => {
     seed([panelObj('o1', 'Fig1.pdf', { script: null })])

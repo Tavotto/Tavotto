@@ -100,11 +100,24 @@
     "docLossTitle": "当前文档无法保存到本机",
     "replaceAssetBody_other": "当前面板有 {{count}} 项图内修改。这些修改绑定在原脚本的元素上，换素材后无法保留，将被清空（可撤销）。位置、尺寸、裁剪与层级都会保留。",
     "replaceAssetConfirm": "替换并清空修改",
-    "replaceAssetTitle": "替换为「{{name}}」？"
+    "replaceAssetTitle": "替换为「{{name}}」？",
+    "resetOverridesTitle": "恢复图内修改？",
+    "resetOverridesBody_other": "恢复后，这个面板会回到源脚本当前生成的状态。{{count}} 项图内修改将被清除（可撤销）；源脚本与原始文件不会改动，同一文件的其他面板不受影响。",
+    "resetOverridesBodyBaked": "这些修改已经写回到原始文件里。恢复后，这个面板会回到源脚本当前生成的状态（可撤销），而原始文件与源脚本都保持现状，同一文件的其他面板不受影响。",
+    "resetOverridesConfirm": "恢复"
   },
   "contextBar": {
+    "alignMenu": "对齐",
     "aria": "快速编辑",
-    "openInspector": "全部属性"
+    "distributeMenu": "分布",
+    "groupMenu": "成组",
+    "moreArrange": "更多排列",
+    "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
+    "multiAria": "多选操作",
+    "openInspector": "全部属性",
+    "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
+    "selectedCount_other": "已选 {{count}} 个",
+    "sizeMenu": "尺寸"
   },
   "crash": {
     "blank": "打开空白文档",
@@ -269,7 +282,16 @@
     "zBottom": "置于底层",
     "zDown": "下移一层",
     "zTop": "置于顶层",
-    "zUp": "上移一层"
+    "zUp": "上移一层",
+    "hideLegendEntry": "隐藏图例项 “{{label}}”",
+    "legendFollowSource": "图例项恢复跟随",
+    "tickSideOn": "{{side}}：显示{{dir}}刻度",
+    "tickSideOff": "{{side}}：不显示{{dir}}刻度",
+    "tickSideHide": "{{side}}：隐藏刻度线",
+    "lockObjects": "锁定 {{count}} 个对象",
+    "unlockObjects": "解锁 {{count}} 个对象",
+    "hideObjects": "隐藏 {{count}} 个对象",
+    "showObjects": "显示 {{count}} 个对象"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -344,7 +366,7 @@
     "hide": "隐藏此元素",
     "hideObject": "隐藏",
     "lock": "锁定",
-    "openInspector": "在属性页打开",
+    "openInspector": "打开全部属性",
     "scale": "缩放",
     "scaleDown": "缩小 5%",
     "scaleProxiedTip": "位置和大小属于宿主子图「{{label}}」，缩放改的是它",
@@ -357,7 +379,25 @@
     "zBottom": "置于底层",
     "zDown": "下移一层",
     "zTop": "置于顶层",
-    "zUp": "上移一层"
+    "zUp": "上移一层",
+    "menuAria": "对象菜单",
+    "rebuild": "重新构建",
+    "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
+    "connectSource": "连接源脚本",
+    "editText": "编辑文字",
+    "arrange": "对齐与分布",
+    "arrangeRef": "参照：{{ref}}",
+    "needObjects_other": "需要至少选中 {{count}} 个对象",
+    "openArrange": "打开排列属性",
+    "duplicate": "创建副本",
+    "lockAll": "锁定全部",
+    "unlockAll": "解锁全部",
+    "lockCount": "锁定 {{count}} 个",
+    "unlockCount": "解锁 {{count}} 个",
+    "hideCount": "隐藏 {{count}} 个",
+    "zOrder": "排列层级",
+    "deleteCount": "删除 {{count}} 个对象",
+    "cropRotatedReason": "旋转过的面板暂不能裁剪，先取消旋转"
   },
   "rail": {
     "assets": "素材",
@@ -450,6 +490,15 @@
     "starting": "正在启动渲染环境…",
     "viewResults": "查看捕获结果"
   },
+  "spineZone": {
+    "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
+    "stateOn": "开着",
+    "stateOff": "关着",
+    "willOn": "点击显示",
+    "willOff": "点击关掉",
+    "willHide": "点击隐藏这一边的刻度线",
+    "coupled": "（方向随这条轴一起改：{{sides}}）"
+  },
   "stage": {
     "backToCanvas": "返回画布",
     "elementEditing": "图内编辑",
@@ -460,6 +509,8 @@
     "openAssets": "打开素材库"
   },
   "status": {
+    "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
+    "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
     "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",
     "bakedSeeded_other": "已载入写回文件时的基线（{{count}} 项）",
     "blankCreated": "已新建空白文档，原文档可从「最近文档」取回",
@@ -531,7 +582,10 @@
     "stylePasteNoTarget": "选区里没有可粘贴的{{kind}}",
     "stylePasted_other": "已粘贴样式到 {{count}} 个对象",
     "subLabelsAdded_other": "已添加 {{count}} 个序号标签（按从上到下、从左到右排序）",
-    "undone": "撤销：{{label}}"
+    "undone": "撤销：{{label}}",
+    "panelRebuilt": "已按源脚本重新构建",
+    "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
+    "rebuildFailed": "重新构建失败：{{error}}"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -569,11 +623,13 @@
     "noOtherDocuments": "暂无其他文档",
     "paperStyles": "论文样式…",
     "presets": "科研预设与符号…",
+    "readiness": "项目接入状态",
     "recentDocuments": "最近文档（本机）",
     "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
     "recentEntry_other": "{{name}} · {{count}} 个对象",
     "redo": "重做",
     "redoWith": "重做 {{label}}",
+    "refreshProject": "刷新项目",
     "renameDocument": "重命名文档…",
     "saveAsCanvasFile": "保存为画布文件…",
     "saveClean": "已保存 {{time}}",
@@ -586,6 +642,11 @@
     "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
     "shortcutHelp": "快捷键帮助",
     "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+    "tutorial": {
+      "start": "开始教程",
+      "resume": "继续教程",
+      "restart": "再看一遍教程"
+    },
     "undo": "撤销",
     "undoWith": "撤销 {{label}}",
     "updateAvailable": "有新版本 {{version}}",
@@ -596,5 +657,12 @@
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本（当前页面仍可继续操作）"
+  },
+  "hints": {
+    "panel_editable": "双击这张图可以进入图内编辑。",
+    "panel_layout_only": "这张图可以排版；连接源脚本后才能改图内元素。",
+    "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
+    "multi_select": "选区附近的浮动栏可以直接对齐和分布。",
+    "problem_found": "左侧「问题」能定位到对象和对应的属性字段。"
   }
 }

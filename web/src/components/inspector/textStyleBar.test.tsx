@@ -24,8 +24,10 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { flushPreviewFrame, resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { propertyPathOf } from '@/lib/typography'
 import { ElementInspector } from './ElementInspector'
-import { hasTextStyleBar } from './TextStyleBar'
+import { hasTextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
+import { FIGURE_TEXT_SINGLE_PROPS } from './typographyAdapter'
 
 const engineRender = vi.fn()
 
@@ -246,6 +248,25 @@ describe('高频样式是带可见标签的行', () => {
     expect(text).not.toContain('堆叠层级')
     // 文字内容仍在列表里（工具条不管它）
     expect(text).toContain('内容')
+  })
+
+  it('每一条属性都挂着定位锚点——工具条把它们从平铺列表拿走，锚点要一起带过来', async () => {
+    await mount('axes_0.title')
+    // 本轮修掉的缺陷：`TEXT_BAR_PROPS` 把这六条从平铺列表里摘走了
+    // （平铺那一份是有 `data-prop` 的），工具条却没有补上锚点。表现是
+    // 「问题面板上点定位，焦点没落到字段上」——而界面并不报错。
+    for (const prop of FIGURE_TEXT_SINGLE_PROPS) {
+      const path = propertyPathOf('figureText', prop)
+      expect(path, prop).toBeTruthy()
+      expect(host.querySelector(`[data-prop="${path}"]`), prop).not.toBeNull()
+    }
+  })
+
+  it('工具条摘走的那几条 = 规范表算出来的那几条（不许手抄第二份）', () => {
+    const derived = new Set(
+      FIGURE_TEXT_SINGLE_PROPS.map((p) => propertyPathOf('figureText', p)).filter(Boolean),
+    )
+    expect(new Set(TEXT_BAR_PROPS)).toEqual(derived)
   })
 
   it('同一属性不出两套控件：颜色行只有一个取色器', async () => {

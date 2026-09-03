@@ -123,3 +123,13 @@ Python，首次渲染也不联网：
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `web/AGENTS.md` 的「浏览器 playground」。
+- **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
+  `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
+  `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**
+  （源码树 / wheel 里都在，所以 lab_acceptance 那条结构检查看不出来）。
+  `tavotto.spec` 的 datas 现在列了 `profiles/` 与 `resources/` 两条；新增包内数据
+  目录时在那里加一行，`importlib.resources.files("tavotto")` 在冻结产物里落在
+  `_MEIPASS/tavotto`，datas 的目的地就写 `tavotto/<目录>`。wheel / sdist 那边
+  `packages = ["src/tavotto"]` 自然收进，前提是文件不被 `.gitignore` 挡
+  （`tests/test_tutorial.py` 读产物成员对账，不在源码树上断言）。桌面冒烟①带
+  `--tutorial`：教程两张图在内置 runtime 上真渲染一次再重置。

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
 import {
   armNoProjectRecovery,
@@ -47,6 +48,22 @@ interface ProjectState {
   refreshRecent: () => Promise<void>
   /** 打开/切换项目：后端切换成功后冲刷并重置前端会话状态 */
   open: (path: string, create?: boolean) => Promise<ProjectStatus>
+  /**
+   * 后端**已经**打开了一个项目（`/api/projects/open` 之外的入口，比如教程的
+   * `/api/tutorial/open`）：认领它并做与 `open` 完全相同的前端换代。
+   * 「打开项目之后前端要做什么」只有这一份，别的入口不许再抄一遍。
+   */
+  adoptOpenedProject: (
+    status: ProjectStatus,
+    opts?: {
+      /**
+       * 在「前端状态已换代、但工作台还没宣布打开」的那个空档里装文档。
+       * 教程用它把教程画布换进来：工作台一挂载就会 `restoreSession()`，那时
+       * `tavotto.currentDoc` 记的必须已经是教程文档，否则它会把空白文档再装回去。
+       */
+      prepareDocument?: () => Promise<void>
+    },
+  ) => Promise<ProjectStatus>
   remove: (path: string) => Promise<void>
   /** 后端不认本标签页的项目了（409 no_project）：退回 Project Picker */
   dropProject: () => void
@@ -163,13 +180,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   open: async (path, create = false) => {
     const status = await openProjectApi(path, create)
+    return get().adoptOpenedProject(status)
+  },
+
+  adoptOpenedProject: async (status, opts) => {
     // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
     if (status.id) setCurrentProjectId(status.id)
     // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
     armNoProjectRecovery()
     await resetForNewProject()
+    // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
+    // 必须赶在 `phase: 'open'` 之前（见接口注释）
+    if (opts?.prepareDocument) await opts.prepareDocument()
     set({ project: status, phase: 'open' })
     void get().refreshRecent()
+    emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
   },
 

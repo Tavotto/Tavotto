@@ -360,6 +360,8 @@ export interface ProjectStatus {
   /** 打开动作附带：注册表是静态扫描草稿 / stem 归属冲突列表 */
   drafted?: boolean
   conflicts?: string[]
+  /** 这是数据目录里的离线教程副本（ADR 0039）；「重新开始教程」只对它可用 */
+  tutorial?: boolean
 }
 
 export interface RecentProject {
@@ -371,6 +373,8 @@ export interface RecentProject {
   id?: string | null
   opened?: boolean
   current: boolean
+  /** 教程副本进最近列表但带标记（T-104）：列表显示「教程」而不是数据目录里的路径 */
+  tutorial?: boolean
 }
 
 export const fetchProject = () => jsonFetch<ProjectStatus>('/api/project')
@@ -396,6 +400,71 @@ export const removeRecentProject = (path: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
+  })
+
+/* ------------------------------ 离线教程（ADR 0039） ------------------------------ */
+
+/** `tutorial_meta.json`（schema 1）里前端要用的那几个字段。**没有路径、没有 gid**。 */
+export interface TutorialPanelMeta {
+  key: string
+  /** 素材 id（`Fig1_kinetics.pdf`）——文档里 `PanelObject.fileId` 认的就是它 */
+  file: string
+  stem: string
+  script: string
+  /** manifest 的 role 名；coachmark 按 role 找元素，不按 gid */
+  editable_roles: string[]
+  /** 故意留在图里的一条规范问题（第二张图的 7 pt 文字）；没有就是 null */
+  spec_issue: { code: string; role: string; text_prefix: string } | null
+}
+
+export interface TutorialMetadata {
+  schema: number
+  tutorial_version: number
+  project_name: string
+  document_name: string
+  /** 打开教程画布时**必须**用它做 documentId：重置只清这一格自动保存（T-106） */
+  document_id: string
+  expected_stems: string[]
+  editable_role_preferences: string[]
+  panels: TutorialPanelMeta[]
+}
+
+export interface TutorialStatus {
+  available: boolean
+  /** 资源坏了时的静态验证结论（技术描述，界面只说「重新安装」） */
+  problems: string[]
+  tutorial_version?: number
+  metadata?: TutorialMetadata
+  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  project?: { open: boolean; id: string | null }
+}
+
+export interface TutorialOpenResult {
+  project: ProjectStatus
+  tutorial: TutorialMetadata
+  reset: boolean
+  created?: boolean
+  repaired?: string[]
+  cleared?: string[]
+}
+
+/** 教程资源可不可用、副本在不在。只读；不复制、不打开。 */
+export const fetchTutorialStatus = () => jsonFetch<TutorialStatus>('/api/tutorial')
+
+/** 确保可写副本（缺的补上）→ 后端 `open_project()` → 状态 + 元数据。不执行脚本。 */
+export const openTutorialApi = (opts: { default?: boolean } = {}) =>
+  jsonFetch<TutorialOpenResult>('/api/tutorial/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
+export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+  jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
   })
 
 export interface DirEntry {
@@ -815,6 +884,10 @@ export type ExportObject =
       italic: boolean
       color: string
       align: string
+      /** 三个通用族之一；缺席 = 继承默认（衬线），后端缺省与它一致 */
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
+      /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
+      interpretation?: 'auto' | 'scientific'
       underline?: boolean
       line_height?: number
       padding_mm?: number
@@ -1045,6 +1118,15 @@ export interface EditableField {
   step?: number
   unit?: string
   options?: string[]
+  /**
+   * `options` 里**这个运行时画不出来**的那几个。
+   *
+   * 只有字体族会用到：脚本写死了一个本机没装的字体时，引擎仍把它放进选项
+   * （enum 必须含有自己的当前值，否则界面显示空白），但它是一句**假承诺**
+   * ——选中它什么都不会变。界面据此保留名字、加一条 warning，而不是悄悄
+   * 换成别的字体再把文档改掉。
+   */
+  options_unavailable?: string[]
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }
@@ -1100,6 +1182,15 @@ export interface UnsupportedProp {
   detail?: Record<string, unknown>
 }
 
+export type SpineSide = 'top' | 'bottom' | 'left' | 'right'
+
+export interface SpineGeom {
+  visible: boolean
+  ticks: boolean
+  from: [number, number]
+  to: [number, number]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -1117,6 +1208,14 @@ export interface ManifestElement {
    * `inspector/UnsupportedProps.tsx`；没有它这个字段就只到 manifest、没到眼睛。
    */
   unsupported_props?: UnsupportedProp[]
+  /**
+   * 这段文字里**当前字体画不出来**的字符（导出后是方框）。产生者只有
+   * `engine/manifest._glyph_scan()` 一处——两个预检求值器读的是同一份
+   * manifest，所以这条判据天然不会分叉。缺席 = 一个都不缺。
+   */
+  glyphs_missing?: string[]
+  /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
+  glyphs_fallback?: string[]
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
@@ -1147,6 +1246,23 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
+   * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。
+   * 极坐标 / 3D / 色条轴没有；twinx 关掉的那条轴、退化成一点的边不出。
+   * `visible` 是边框线本身，`ticks` 是这一侧的主刻度线——两件事分开报。
+   */
+  spines?: Partial<Record<SpineSide, SpineGeom>>
+  /**
+   * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
+   * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示
+   * 「未关联图中对象」，不摆假开关。
+   */
+  legend_entry?: {
+    index: number
+    source_gid?: string
+    binding_default?: 'follow_source' | 'custom'
+  }
 }
 
 export interface Manifest {
@@ -1283,6 +1399,30 @@ export async function engineRender(
     )
   }
   return body as EngineRenderResponse
+}
+
+/**
+ * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
+ * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
+ * `invalidated: false` 是诚实的降级（native 会话是用户自己终端里的进程，不杀），
+ * 调用方照常重新渲染，但要说出「源脚本没有重跑」。
+ */
+export async function engineInvalidate(
+  id: string,
+): Promise<{ invalidated: boolean; reason?: string }> {
+  const res = await fetch(apiUrl('/api/engine/invalidate'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }))
+  const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, body)
+    throw new Error(
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+    )
+  }
+  return { invalidated: body.invalidated === true, reason: body.reason as string | undefined }
 }
 
 /**
@@ -1745,7 +1885,16 @@ export type ServerEvent =
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
-  | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
+  /**
+   * 已登记脚本的**内容**变了。`reason` 说谁先看到的：`watcher`（默认，缺省同义）
+   * 或 `ai`——后者紧跟着一条 `ai.done` 在说同一件事，界面只提示一次。
+   */
+  | ({
+      kind: 'panel.file_changed'
+      scripts?: string[]
+      stems?: string[]
+      reason?: 'watcher' | 'ai'
+    } & ProjectScoped)
   /**
    * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个
    * 脚本发十几条）：`scripts` / `stems` 是本次全部受影响的；`script` 只在
@@ -1796,6 +1945,7 @@ export type ServerEvent =
     } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
+  | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
@@ -1807,7 +1957,24 @@ export type ServerEvent =
       diff: string
       script: string
       error?: string
+      /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
+      refresh?: AiRefreshOutcome
     } & ProjectScoped)
+
+/**
+ * AI 改完代码之后统一刷新的结局。**与代码改动分开记**：`changed: true` +
+ * `refresh.status: 'failed'` 是「改成了、但项目没刷新」，界面要把两件事都说出来。
+ * `skipped` = 文件没变；`not_wired` = 后端没接刷新（纯引擎侧）；`pending` 只在
+ * 会话还没结束时出现。
+ */
+export interface AiRefreshOutcome {
+  status: 'ok' | 'failed' | 'skipped' | 'not_wired' | 'pending'
+  /** failed 时的稳定错误码（`errors:backend.*`） */
+  code?: string
+  registry_changed?: boolean
+  assets_changed?: boolean
+  published?: string[]
+}
 
 const EVENT_KINDS = [
   'render.started',
@@ -1821,6 +1988,7 @@ const EVENT_KINDS = [
   'native.session',
   'engine.bootstrap',
   'engine.dependency',
+  'engine.package',
   'export.progress',
   'ai.delta',
   'ai.done',
@@ -2326,6 +2494,107 @@ export const rebuildManagedEnvironment = () =>
     '/api/engine/environment/managed/rebuild',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
   )
+
+// ---------------------------------------------------------------------------
+// 包管理（设置 → 包管理，ADR 0038）
+//
+// 目标环境**只有**当前项目的 Tavotto 受管环境。与依赖修复同一条纪律：先形成
+// 作业（不改任何东西，把「会发生什么」交回来），再按 job_id 执行。
+// ---------------------------------------------------------------------------
+export type PackageOp = 'install' | 'update' | 'uninstall'
+
+/** 包状态：账上有 + 环境里有 + 版本一致 = installed；空串 = 环境不在，问不出 */
+export type PackageStatus = 'installed' | 'missing' | 'changed' | 'planned' | ''
+
+export interface BuiltinPackage {
+  name: string
+  version: string
+  status: PackageStatus
+}
+
+export interface UserPackage {
+  distribution: string
+  requested_specifier: string
+  installed_version: string
+  recorded_version: string
+  /** missing_dependency（缺包修复装的）/ user_requested（用户自己装的） */
+  reason: 'missing_dependency' | 'user_requested' | string
+  status: PackageStatus
+  /** 账上是用户装的、却在基础栈的依赖闭包里（用户装了个 numpy）：只读 */
+  protected: boolean
+  /** 账上哪些别的用户包依赖它 */
+  required_by: string[]
+  installed_at: number
+}
+
+export interface ManagedPackages {
+  capability: { available: boolean; reason: string }
+  environment: (ManagedEnvironment & { in_use: boolean }) | null
+  builtin: BuiltinPackage[]
+  /** managed_env（受管环境现算）/ bundled_runtime（内置 runtime 清单）/ planned（都还没有） */
+  builtin_source: 'managed_env' | 'bundled_runtime' | 'planned' | ''
+  user: UserPackage[]
+  busy: boolean
+  network?: { proxy: boolean; custom_index: boolean | null }
+  snapshots?: number
+  rollback?: string
+}
+
+export interface PackageJob {
+  job_id: string
+  op: PackageOp
+  distribution: string
+  requirement: string
+  creates_environment: boolean
+  /** 卸载时：账上哪些用户包依赖它（界面据此二次确认） */
+  dependents: string[]
+  network_required: boolean
+  expires_at: number
+}
+
+/** 作业进度。前端**按 state 换文案，不解析日志**。 */
+export interface PackageProgress {
+  job_id: string
+  state: DependencyProgress['state']
+  log: string
+  error: string | null
+  code: string
+  op?: PackageOp
+  distribution?: string
+  requirement?: string
+  result?: { op?: string; distribution?: string; version?: string } | null
+}
+
+export const fetchManagedPackages = () =>
+  jsonFetch<ManagedPackages>('/api/engine/packages')
+
+export const planPackageJob = (op: PackageOp, spec: string) =>
+  jsonFetch<{ job: PackageJob }>('/api/engine/packages/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, spec }),
+  })
+
+export const runPackageJob = (jobId: string) =>
+  jsonFetch<{ started: boolean } & PackageProgress>('/api/engine/packages/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  })
+
+export const cancelPackageJob = (jobId: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/engine/packages/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  })
+
+export const fetchPackageJob = (jobId: string) =>
+  jsonFetch<PackageProgress>(`/api/engine/packages/job?job_id=${encodeURIComponent(jobId)}`)
+
+/** 「复制诊断」用的纯文本报告（已脱敏；与诊断包同一份采集） */
+export const fetchDiagnosticsSummary = () =>
+  jsonFetch<{ text: string; report: Record<string, unknown> }>('/api/diagnostics/summary')
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**

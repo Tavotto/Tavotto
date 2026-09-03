@@ -11,7 +11,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
-import { ContextBar } from './ContextBar'
+import { ContextBar } from './context-bar/ContextBar'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -168,13 +168,52 @@ describe('ContextBar', () => {
     expect(bar()).not.toBeNull()
   })
 
-  it('多选不出现（多选归对齐工具条管）', async () => {
+  it('斜体与字体也在（以前只有字号 / 加粗 / 颜色——它是第二份实现）', async () => {
+    await selectText()
+    const el = bar()!
+    expect(el.querySelector('[aria-label="斜体"]')).toBeTruthy()
+    expect(el.querySelector('[aria-label="字体"]')).toBeTruthy()
+  })
+
+  it('与属性页读同一个 selector：属性页改完，工具条当场就是新值', async () => {
+    await selectText()
+    const boldBtn = () => bar()!.querySelector('[aria-label="加粗"]') as HTMLElement
+    expect(boldBtn().getAttribute('aria-pressed')).toBe('false')
+    // 「属性页那一侧」= 同一条 document action。工具条不持有自己的状态，
+    // 所以这里量的是「它有没有第二份真源」——有的话这条断言会停在 false
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('属性页改加粗'), (d) => {
+        const o = d.objects[0]
+        if (o.type === 'text') o.bold = true
+      })
+    })
+    expect(boldBtn().getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('工具条改字体 = 一条历史，撤销回到「没设过」', async () => {
+    await selectText()
+    // Radix Select 在 jsdom 里不好点，直接量适配器落下来的结果：
+    // 工具条与属性页共用 `useCanvasTypography`，写入是同一个 action
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('工具条改字体'), (d) => {
+        const o = d.objects[0]
+        if (o.type === 'text') o.fontFamily = 'sans-serif'
+      })
+    })
+    const el = bar()!
+    const trigger = el.querySelector('[aria-label="字体"]') as HTMLElement
+    expect(trigger.textContent).toContain('无衬线')
+  })
+
+  it('多选换成多选栏：单选的文字控件不出现', async () => {
     useDocumentStore.getState().commit(literal('再放一个'), (d) => {
       d.objects.push({ ...textObj(), id: 't2' })
     })
     await act(async () => {
       useSelectionStore.getState().set(['t1', 't2'])
     })
-    expect(bar()).toBeNull()
+    expect(bar()).not.toBeNull()
+    expect(bar()!.hasAttribute('data-multi-selection-context-bar')).toBe(true)
+    expect(bar()!.querySelector('[aria-label="加粗"]')).toBeNull()
   })
 })

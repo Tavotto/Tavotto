@@ -176,7 +176,7 @@ describe('LegendPositionPicker', () => {
     'right', 'center left', 'center right', 'lower center', 'upper center', 'center',
   ]
 
-  it('3×3 网格 + 自动档；点击写 matplotlib loc 名', async () => {
+  it('3×3 网格 + 「最佳位置」档；点击写 matplotlib loc 名；没有模糊的「自动」按钮', async () => {
     const onChange = vi.fn()
     await mount(
       <LegendPositionPicker value="lower right" options={LOCS} onChange={onChange} ariaLabel="位置" />,
@@ -186,9 +186,10 @@ describe('LegendPositionPicker', () => {
       radioByLabel('左上')!.click()
     })
     expect(onChange).toHaveBeenCalledWith('upper left')
-    const best = Array.from(host.querySelectorAll('button')).find(
-      (b) => b.textContent === '自动',
-    )!
+    // matplotlib 的 `best` 是「最佳位置」（按数据避让），不是一个无上下文的「自动」
+    const all = Array.from(host.querySelectorAll('button'))
+    expect(all.find((b) => b.textContent === '自动')).toBeUndefined()
+    const best = all.find((b) => b.textContent === '最佳位置')!
     await act(async () => {
       best.click()
     })

@@ -208,6 +208,41 @@ def test_layout_save_rejects_non_finite(client, tmp_path):
     assert not (tmp_path / "坏图.json").exists()
 
 
+def test_layout_save_round_trips_a_project_document(client, tmp_path):
+    """「另存为」写下去的就是读回来的（ADR 0023 §5a 的 round-trip 用例）。"""
+    assert client.post("/api/layouts/主图", json=PD).status_code == 200
+    got = client.get("/api/layouts/主图").get_json()
+    assert got == PD
+    assert "主图" in client.get("/api/layouts").get_json()["layouts"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"doc": {"schema": 2, "objects": []}},  # 包一层的旧验收脚本形状
+        {"objects": []},  # 没有 schema
+        [1, 2],  # 不是对象
+        {"schema": 3, "canvases": []},  # 项目文档没有画布
+    ],
+)
+def test_layout_save_rejects_things_that_are_not_documents(client, tmp_path, raw):
+    """另存为与自动保存同一份判据：不是文档的载荷落不了盘（以前这条路一个字段都不查）。"""
+    resp = client.post("/api/layouts/坏图", json=raw)
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "invalid_document"
+    assert not list(tmp_path.glob("*.json")) and not list(tmp_path.rglob("坏图*"))
+
+
+def test_layout_save_reports_future_schema_and_keeps_the_old_file(client, tmp_path):
+    """来自更新版本的文档不许经「另存为」进 tavottofile/：写进去之后每一次打开都会被拒，
+    而且它会顶掉同名的那份好文件。"""
+    assert client.post("/api/layouts/主图", json={"schema": 2, "objects": []}).status_code == 200
+    resp = client.post("/api/layouts/主图", json={"schema": 99, "canvases": [{}]})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "schema_too_new"
+    assert client.get("/api/layouts/主图").get_json() == {"schema": 2, "objects": []}
+
+
 def test_legacy_styles_file_is_not_listed_as_a_document(client, tmp_path):
     """老装机的 `LAYOUT_DIR/_styles.json` 可能还躺在那儿（ADR 0029 之后新装
     机不再往这里写），而画布列表是对同一个目录 `glob("*.json")`——不剔掉的话

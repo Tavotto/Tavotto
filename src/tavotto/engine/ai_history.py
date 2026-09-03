@@ -46,7 +46,24 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=10)
     con.row_factory = sqlite3.Row
     con.executescript(_SCHEMA)
+    _migrate(con)
     return con
+
+
+#: 建表之后追加的列（列名 → 类型）。老库没有这些列，`ALTER TABLE` 补上；
+#: 新库 `_SCHEMA` 里没写它们也没关系——判据是「表里有没有」，不是版本号。
+_ADDED_COLUMNS = {
+    # Session 22：AI 改完代码之后统一刷新的结局（JSON），与 `changed` 分开记：
+    # 代码改成了、刷新没成，是两件事，不能合成一个「成功」。
+    "refresh": "TEXT",
+}
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    have = {row["name"] for row in con.execute("PRAGMA table_info(sessions)")}
+    for name, kind in _ADDED_COLUMNS.items():
+        if name not in have:
+            con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
 
 
 def record_start(sess: dict, db_path: Path | None = None) -> None:
@@ -84,11 +101,12 @@ def record_end(
     error: str | None = None,
     transcript: list | None = None,
     db_path: Path | None = None,
+    refresh: dict | None = None,
 ) -> None:
     with _connect(db_path) as con:
         con.execute(
             """UPDATE sessions SET status=?, diff=?, changed=?, error=?,
-               transcript=?, ended_ms=? WHERE id=?""",
+               transcript=?, ended_ms=?, refresh=? WHERE id=?""",
             (
                 status,
                 diff,
@@ -96,6 +114,7 @@ def record_end(
                 error,
                 json.dumps(transcript or [], ensure_ascii=False),
                 int(time.time() * 1000),
+                None if refresh is None else json.dumps(refresh, ensure_ascii=False),
                 sid,
             ),
         )
@@ -146,6 +165,11 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         d["transcript"] = json.loads(d["transcript"])
     except (ValueError, TypeError):
         d["transcript"] = []
+    try:
+        refresh = json.loads(d.get("refresh") or "null")
+    except (ValueError, TypeError):
+        refresh = None
+    d["refresh"] = refresh if isinstance(refresh, dict) else None
     snap = d.get("snapshot_path")
     d["revert_available"] = bool(snap) and Path(snap).is_file()
     return d

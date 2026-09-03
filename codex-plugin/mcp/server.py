@@ -80,7 +80,8 @@ DESKTOP_ONLY_HINT = (
 #: 对拍，改 bridge 的 import 必须同步这里。
 _BRIDGE_IMPORT = (
     "from tavotto.engine import config, handoff, patchspec, "
-    "pool, preflight, previewbudget, profiles, profilestore, registry, telemetry"
+    "pool, preflight, previewbudget, profiles, profilestore, project_refresh, "
+    "readiness, registry, telemetry"
 )
 
 
@@ -374,7 +375,7 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
 
 
 # ------------------------------- 降级 server --------------------------------
-#: 正常模式下的六个工具名。降级模式**不把它们列进 tools/list**（列了就是
+#: 正常模式下的七个工具名。降级模式**不把它们列进 tools/list**（列了就是
 #: 伪装成可用），但对着旧会话里模型记住的名字调用时，回结构化错误而不是
 #: method_not_found——错误里说清缺什么、怎么修。
 NORMAL_TOOLS = (
@@ -383,6 +384,7 @@ NORMAL_TOOLS = (
     "tavotto_preflight",
     "tavotto_export",
     "tavotto_verify_replay",
+    "tavotto_refresh_project",
     "tavotto_close_session",
 )
 

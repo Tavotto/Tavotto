@@ -127,7 +127,8 @@ afterEach(async () => {
 /* ------------------------------ 不再有文字墙 ------------------------------ */
 
 describe('各分区首屏没有说明文字墙', () => {
-  for (const section of ['general', 'project', 'canvas', 'sidebars', 'export', 'shortcuts']) {
+  // about 不在列：隐私最短摘要是**必须常驻**的一段（见下「该常驻的不许折叠」）
+  for (const section of ['general', 'project', 'interface', 'export', 'packages', 'diagnostics']) {
     it(`${section} 分区最多一段长文`, async () => {
       await open(section)
       expect(proseCount()).toBeLessThanOrEqual(1)
@@ -332,33 +333,41 @@ describe('该常驻的不许折叠', () => {
 
 /* ------------------------------ About 与诊断 ------------------------------ */
 
-describe('About 页', () => {
+describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () => {
   it('首屏不显示完整解释器绝对路径', async () => {
-    await open('about')
+    await open('diagnostics')
     expect(bodyText()).not.toContain(PYTHON_PATH)
   })
 
-  it('首屏给的是「解释器来源 + matplotlib 版本」两行摘要', async () => {
-    await open('about')
-    expect(bodyText()).toContain(st('about.engineStatus'))
-    expect(bodyText()).toContain('3.10.8')
+  it('首屏是健康状态 + 复制 / 导出诊断，不是环境路径', async () => {
+    await open('diagnostics')
+    expect(bodyText()).toContain(st('diagnostics.healthTitle'))
+    expect(bodyText()).toContain(st('diagnostics.copyReport'))
+    expect(bodyText()).toContain(st('about.exportBundle'))
+    // 解释器来源与 matplotlib 版本是技术详情，不在首屏
+    expect(bodyText()).not.toContain('3.10.8')
   })
 
-  it('展开「环境诊断」后完整路径才出现', async () => {
-    await open('about')
-    const diag = buttons().find((b) => b.textContent?.trim() === st('about.diagnosticsTitle'))!
+  it('展开「技术详情」后完整路径才出现，且渲染环境卡只有一张', async () => {
+    await open('diagnostics')
+    const diag = buttons().find((b) => b.textContent?.trim() === st('techDetails'))!
     expect(diag.getAttribute('aria-expanded')).toBe('false')
     await act(async () => {
       diag.click()
     })
     expect(diag.getAttribute('aria-expanded')).toBe('true')
     expect(bodyText()).toContain(PYTHON_PATH)
+    expect(bodyText()).toContain('3.10.8')
+    // 「渲染环境」卡片（okTitle）只出现一次——此前 About 页里有两张
+    const okTitle = t('engine.okTitle', { ns: 'errors' })
+    expect(bodyText().split(okTitle).length - 1).toBe(1)
   })
 
-  it('页面内明显分三块：产品 / 隐私与数据 / 渲染环境', async () => {
+  it('About 页只剩产品与隐私两块，不再有渲染环境', async () => {
     await open('about')
     expect(bodyText()).toContain(st('about.privacyTitle'))
-    expect(bodyText()).toContain(st('about.environmentTitle'))
+    expect(bodyText()).not.toContain(st('about.engineStatus'))
+    expect(bodyText()).not.toContain(PYTHON_PATH)
   })
 })
 
@@ -367,7 +376,7 @@ describe('About 页', () => {
 describe('SettingRow 布局稳定', () => {
   it('不同分区的标签列宽一致', async () => {
     const widths = new Set<string>()
-    for (const section of ['general', 'project', 'export', 'sidebars']) {
+    for (const section of ['general', 'project', 'export', 'interface']) {
       await open(section)
       for (const el of body().querySelectorAll('span[style*="width"]')) {
         const w = (el as HTMLElement).style.width

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   ArrowUp,
+  BookOpen,
   CornerDownLeft,
   Folder,
   FolderOpen,
@@ -20,8 +21,16 @@ import {
 } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { t as translate } from '@/i18n'
+import { useFormatMessage } from '@/i18n/react'
 import { PRODUCT_NAME } from '@/lib/brand'
+import {
+  loadTutorialStatus,
+  runTutorialEntry,
+  tutorialEntry,
+  useTutorialStore,
+} from '@/lib/onboarding/tutorial'
 import { cn } from '@/lib/utils'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
@@ -127,6 +136,8 @@ export function ProjectPicker() {
           </p>
         )}
 
+        <TutorialEntry />
+
         {recent.length > 0 && (
           <section aria-label={t('picker.recentLabel')} className="mt-7">
             <h2 className="mb-1.5 text-xs font-medium text-ink-2">{t('picker.recentHeading')}</h2>
@@ -156,6 +167,58 @@ export function ProjectPicker() {
         )}
       </main>
     </div>
+  )
+}
+
+/**
+ * 「用示例了解 Tavotto」——低干扰的一行入口（ADR 0040）。
+ *
+ * 状态三档：宿主没有 Tutorial API（GET 失败）→ 整行不出现；资源坏了
+ * （`available:false`）→ 按钮禁用 + 一句「请重新安装」；正常 → 按钮。
+ * 点下去的全部逻辑在 `lib/onboarding/tutorial.ts`，这里只显示结果。
+ */
+function TutorialEntry() {
+  const { t } = useTranslation('project')
+  const fmt = useFormatMessage()
+  const status = useTutorialStore((s) => s.status)
+  const busy = useTutorialStore((s) => s.busy)
+  const failure = useTutorialStore((s) => s.failure)
+  const entry = useOnboardingStore((s) => tutorialEntry(s.status))
+
+  useEffect(() => {
+    void loadTutorialStatus()
+  }, [])
+
+  // 宿主没提供 Tutorial API（embedded / 老后端）：入口整行不出现
+  if (failure?.reason === 'no_api' && !status) return null
+  const unavailable = !!status && !status.available
+
+  return (
+    <section aria-label={t('picker.tutorialLabel')} className="mt-5 flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="md"
+          className="-ml-2.5 text-ink-2"
+          disabled={unavailable || busy === 'open'}
+          loading={busy === 'open'}
+          loadingLabel={t('picker.tutorialOpening')}
+          data-onboarding-anchor="tutorial-entry"
+          onClick={() => void runTutorialEntry('picker')}
+        >
+          <BookOpen size={14} />
+          {t(`picker.tutorial.${entry}`)}
+        </Button>
+      </div>
+      <p className="text-xs leading-relaxed text-ink-3">
+        {unavailable ? t('picker.tutorialUnavailable') : t('picker.tutorialHint')}
+      </p>
+      {failure && failure.reason !== 'no_api' && failure.reason !== 'cancelled' && (
+        <p role="alert" className="text-xs leading-relaxed text-danger">
+          {fmt(failure.message)}
+        </p>
+      )}
+    </section>
   )
 }
 
@@ -193,7 +256,12 @@ function RecentRow({
           )}
           {busy && <span className="shrink-0 text-xs text-ink-3">{t('picker.opening')}</span>}
         </span>
-        <span className="block truncate font-mono text-xs text-ink-3">{entry.path}</span>
+        {/* 教程副本躺在数据目录里：显示「教程」而不是那条路径（T-104） */}
+        {entry.tutorial ? (
+          <span className="block text-xs text-ink-3">{t('picker.tutorialBadge')}</span>
+        ) : (
+          <span className="block truncate font-mono text-xs text-ink-3">{entry.path}</span>
+        )}
       </button>
       <button
         onClick={onRemove}

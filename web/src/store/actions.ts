@@ -1,15 +1,25 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
+import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
+import { emitActivity } from '@/lib/activity'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
-import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
-import type { StylePlan, StylePreset } from '@/lib/stylePresets'
+import {
+  engineInvalidate,
+  type CapturedFigureDescriptor,
+  type ManifestElement,
+  type PanelInfo,
+} from '@/lib/api'
+import { restoreFollowPlan } from '@/lib/legendModel'
+import type { SidePlan } from '@/lib/tickSides'
+import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
+import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
 import type {
   ArrowObject,
@@ -25,6 +35,7 @@ import { useAssetStore } from './assetStore'
 import { readAutosaveDoc, saveNow, useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
+import { renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -144,6 +155,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
 
 export function addText(partial: Partial<TextObject> = {}) {
   const page = doc().page
+  const d = canvasTextDefaults()
   const obj: TextObject = {
     id: newId('t'),
     type: 'text',
@@ -152,10 +164,12 @@ export function addText(partial: Partial<TextObject> = {}) {
     y: page.h / 2 - 4,
     w: 40,
     h: 5,
-    sizePt: 10,
-    bold: false,
-    color: '#000000',
-    align: 'left',
+    // 排版默认值只有 `lib/typography.canvasTextDefaults()` 一处。
+    // `fontFamily` 刻意不填：新建的文字「没设过字体」，跟着文档默认族走。
+    sizePt: d.sizePt,
+    bold: d.weight === 'bold',
+    color: d.color,
+    align: d.halign,
     ...partial,
   }
   commit(hist('addText'), (d) => {
@@ -220,6 +234,7 @@ export function addSubLabels() {
   const created: string[] = []
   commit(hist('addSubLabels'), (d) => {
     panels.forEach((p, i) => {
+      const def = canvasTextDefaults()
       const label: TextObject = {
         id: newId('t'),
         type: 'text',
@@ -228,10 +243,12 @@ export function addSubLabels() {
         y: p.y + 1,
         w: 10,
         h: 5,
-        sizePt: 10,
+        sizePt: def.sizePt,
+        color: def.color,
+        align: def.halign,
+        // 子图序号约定是加粗的——这是这一个入口自己的取舍，
+        // 不是另一套默认值，所以它叠在共用默认值**之上**
         bold: true,
-        color: '#000000',
-        align: 'left',
       }
       created.push(label.id)
       d.objects.push(label)
@@ -552,6 +569,51 @@ export function toggleLocked(id: string) {
   })
 }
 
+/** 一批对象的锁定 / 隐藏态：全是 / 全不是 / 混合——菜单文案与下一步动作按它派生 */
+export type TriState = 'all' | 'none' | 'mixed'
+
+export function triStateOf(objs: readonly CanvasObject[], pick: (o: CanvasObject) => boolean): TriState {
+  let yes = 0
+  for (const o of objs) if (pick(o)) yes++
+  return yes === 0 ? 'none' : yes === objs.length ? 'all' : 'mixed'
+}
+
+/**
+ * 批量锁定 / 解锁（右键多选菜单，Prompt 18）：**一条历史、一次 commit**。
+ * 循环调 `toggleLocked` 会留下 N 条撤销记录，而且混合状态下 toggle 会把一半锁上、
+ * 一半解开——所以这里收的是**目标状态**，已经是那个状态的对象不动、不进 commit。
+ * 选区一个字不动：锁定改的是「能不能被挪」，不是「选没选中」（拖动 / 对齐都按
+ * `movableTargets` 跳过它，与单个对象的 `toggleLocked` 同一条产品语义）。
+ */
+export function setObjectsLocked(ids: string[], locked: boolean) {
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.locked !== locked)
+  if (!targets.length) return
+  finishActiveGesture()
+  const tids = targets.map((o) => o.id)
+  const label =
+    tids.length === 1
+      ? hist(locked ? 'lockObject' : 'unlockObject')
+      : hist(locked ? 'lockObjects' : 'unlockObjects', { count: tids.length })
+  updateObjects(tids, label, (o) => {
+    o.locked = locked
+  })
+}
+
+/** 批量隐藏 / 显示：同上，一条历史。隐藏后对象仍留在选区里（与 `toggleHidden` 一致，图层树里可恢复） */
+export function setObjectsHidden(ids: string[], hidden: boolean) {
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.hidden !== hidden)
+  if (!targets.length) return
+  finishActiveGesture()
+  const tids = targets.map((o) => o.id)
+  const label =
+    tids.length === 1
+      ? hist(hidden ? 'hideObject' : 'showObject')
+      : hist(hidden ? 'hideObjects' : 'showObjects', { count: tids.length })
+  updateObjects(tids, label, (o) => {
+    o.hidden = hidden
+  })
+}
+
 export function renameObject(id: string, name: string) {
   updateObject(id, hist('renameObject'), (o) => {
     o.name = name.trim() || undefined
@@ -607,6 +669,8 @@ export function setOverride(
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
+  // 本地信号只带属性名（matplotlib 的 prop，不是用户内容），不带 gid 与值
+  emitActivity({ kind: 'element.property_changed', prop })
 }
 
 /**
@@ -706,6 +770,60 @@ export function clearOverrides(
   if (next?.type === 'panel') requestRender(next, true)
 }
 
+/**
+ * 图例项「恢复跟随图中对象」（ADR 0034）：删掉示意线的全部 handle_* override，
+ * 脚本原样是 custom 的项再写一条 `binding = follow_source`。**一次 commit**：
+ * 一条撤销、一次渲染——拆成几步的话中间态会渲染出一帧半跟随半自定义的图例。
+ */
+export function restoreLegendEntryFollow(panelId: string, element: ManifestElement) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const plan = restoreFollowPlan(element)
+  const touches =
+    plan.set.length > 0 ||
+    plan.remove.some((t) => panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop))
+  if (!touches) return
+  updateObject<PanelObject>(panelId, hist('legendFollowSource'), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !plan.remove.some((t) => t.gid === p.gid && t.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 四边刻度的一次点击（画布命中区 / 示意图 / 刻度卡共用，Prompt 16）：
+ * 计划里的 set 与 remove 进**同一次 commit**——一条撤销、一次渲染。方向落在
+ * 刻度元素、显隐落在子图元素，两条 override 分属两个 gid，拆成两步的话中间
+ * 那一帧会渲染出「边打开了、方向还是旧的」的图，撤销栈里也多一条。
+ */
+export function applyTickSidePlan(panelId: string, plan: SidePlan | null) {
+  if (!plan) return
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const remove = plan.remove.filter((t) =>
+    panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
+  )
+  if (!plan.set.length && !remove.length) return
+  const e = plan.effect
+  const label = hist(e.hides ? 'tickSideHide' : e.on ? 'tickSideOn' : 'tickSideOff', {
+    side: t(`tick.side.${e.side}`, { ns: 'inspector' }),
+    dir: t(`tick.dir.${e.dir}`, { ns: 'inspector' }),
+  })
+  updateObject<PanelObject>(panelId, label, (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !remove.some((r) => r.gid === p.gid && r.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+}
+
 export function resetOverrides(panelId: string) {
   finishActiveGesture()
   const panel = findObject(panelId)
@@ -717,6 +835,113 @@ export function resetOverrides(panelId: string) {
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
   status(note('overridesCleared'))
+}
+
+/**
+ * 「恢复图内修改」（右键菜单，Prompt 18）：先问一句再清。
+ *
+ * 语义与属性页那颗「重置到脚本原始」按钮**完全相同**（同一个 `resetOverrides`）：
+ * 清掉**这个面板实例**的全部 override → 回到源脚本**当前**生成的状态。源脚本不动、
+ * 原始文件不动、同一文件的其他面板不动；进一条历史，⌘Z 整份回来。
+ *
+ * 写回过的面板要分开说：那份 override 已经烙在磁盘文件上（`isJustBakedBaseline`），
+ * 清掉之后画布上这个面板显示的是脚本原样，而文件仍是写回后的样子——两者从此不同，
+ * 确认框必须把这一句说出来，否则用户会以为文件被改回去了。
+ */
+export async function resetOverridesConfirmed(panelId: string): Promise<boolean> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !panel.overrides.length) return false
+  const baked = isJustBakedBaseline(panel)
+  const ok = await askConfirm({
+    title: msg('confirm.resetOverridesTitle', undefined, 'workspace'),
+    body: msg(
+      baked ? 'confirm.resetOverridesBodyBaked' : 'confirm.resetOverridesBody',
+      { count: panel.overrides.length },
+      'workspace',
+    ),
+    confirmLabel: msg('confirm.resetOverridesConfirm', undefined, 'workspace'),
+    danger: true,
+  })
+  if (!ok) return false
+  // 等用户点头的这段时间里面板可能已经没了 / 已经空了：以那一刻为准
+  resetOverrides(panelId)
+  return true
+}
+
+export type RebuildOutcome = 'rebuilt' | 'rerendered' | 'failed' | 'skipped'
+
+/**
+ * 这一版画完（成功或失败）之前不回来；`render()` 在同键忙时只排队就返回。
+ *
+ * **要循环等**：在飞的那次结束时 `renderStore` 会先写一次它的结果（`ready`），
+ * 紧接着**同步**把排队的那次置回 `rendering`——订阅回调看到的那个 `ready`
+ * 只存在于两次 `patch` 之间，等 Promise 的消费者真正恢复时，键已经又在渲染了。
+ * 只等一次的话「重新构建」在上一次渲染还在飞的时候点下去（慢机器、刚打开的图）
+ * 会拿着 `rendering` 判成 failed，一声不吭（Windows 桌面腿的 e2e 抓到的）。
+ */
+async function settledRender(key: string): Promise<void> {
+  for (;;) {
+    if (useRenderStore.getState().get(key).status !== 'rendering') return
+    await new Promise<void>((resolve) => {
+      const off = useRenderStore.subscribe((s) => {
+        if (s.get(key).status !== 'rendering') {
+          off()
+          resolve()
+        }
+      })
+    })
+  }
+}
+
+/**
+ * 「重新构建」（右键菜单，Prompt 18）：作废这张图的热会话，按**当前 overrides**
+ * 从头跑一遍源脚本再画。
+ *
+ * 它是用户明确触发的一次脚本执行（00_SHARED_RULES §4 允许的形态），做的事与
+ * 「脚本文件变了」那条路**逐字相同**：后端 `pool.invalidate`（同一个原语）+
+ * 前端 `markStale`（清掉该文件全部变体的权威，画布留着上一张不闪白）+ 一次
+ * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**——文档一个字节
+ * 不动，所以它**不进历史**（撤销撤的是编辑，不是一次重画）。
+ *
+ * 同一文件的多个实例共享一条会话：会话作废对它们一视同仁，其余实例由
+ * `useEngineSync` 的跟踪位（`markStale` 置的）按各自 overrides 重画。
+ *
+ * 结果分四档：`rebuilt`（脚本真的重跑了）/ `rerendered`（会话作废不了——native
+ * 会话是用户自己终端里的进程，或内嵌画布 / playground 没有作废通道——只按当前
+ * overrides 重画了，**要说出来**）/ `failed`（渲染错误已落在该变体上：画布角标 +
+ * 属性页的错误块显示，这里**不叠一条 toast**）/ `skipped`（不是可编辑面板）。
+ */
+export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
+  finishActiveGesture()
+  const fileId = panel.fileId
+  let invalidated = false
+  if (!engineTransport()) {
+    try {
+      invalidated = (await engineInvalidate(fileId)).invalidated
+    } catch (err) {
+      status(
+        note('rebuildFailed', { error: err instanceof Error ? err.message : String(err) }),
+        'error',
+      )
+      return 'failed'
+    }
+  }
+  // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
+  const fresh = findObject(panelId)
+  if (fresh?.type !== 'panel') return 'skipped'
+  const store = useRenderStore.getState()
+  store.markStale([fileId])
+  // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
+  requestRender(fresh, 'none')
+  const key = renderKeyOf(fresh)
+  await store.render(fileId, fresh.overrides, undefined, 'immediate')
+  await settledRender(key)
+  if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
+  status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'))
+  return invalidated ? 'rebuilt' : 'rerendered'
 }
 
 /**
@@ -754,6 +979,9 @@ export function setOverrides(
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
+  for (const prop of new Set(patches.map((p) => p.prop))) {
+    emitActivity({ kind: 'element.property_changed', prop })
+  }
 }
 
 /**
@@ -844,6 +1072,9 @@ export function enterElementEdit(panelId: string) {
     ui.setLeftTab('elements')
   }
   if (seeded) status(note('bakedSeeded', { count: seeded }))
+  // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
+  // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
+  emitActivity({ kind: 'figure.element_edit_entered' })
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
@@ -879,14 +1110,17 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
         o.overrides.push({ gid: p.gid, prop: p.prop, value: p.value })
       }
     }
-    const applyText = (
-      obj: TextObject,
-      s: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string },
-    ) => {
-      if (s.sizePt != null) obj.sizePt = s.sizePt
-      if (s.bold != null) obj.bold = s.bold
-      if (s.italic != null) obj.italic = s.italic || undefined
-      if (s.color != null) obj.color = s.color
+    /**
+     * 样式里的画布文字项 → 文档。**经属性能力层写**（`writeCanvasText`），
+     * 不在这里手写第二遍 `bold ? … : …`：样式应用与手动编辑必须落成同一种
+     * 形状，否则「应用样式之后再手动改一下」会得到两个不同的字段集合。
+     */
+    const applyText = (obj: TextObject, s: StyleTextEntry) => {
+      if (s.sizePt != null) writeCanvasText(obj, 'sizePt', s.sizePt)
+      if (s.bold != null) writeCanvasText(obj, 'weight', s.bold ? 'bold' : 'normal')
+      if (s.italic != null) writeCanvasText(obj, 'style', s.italic ? 'italic' : 'normal')
+      if (s.color != null) writeCanvasText(obj, 'color', s.color)
+      if (s.fontFamily != null) writeCanvasText(obj, 'fontFamily', s.fontFamily)
     }
     for (const id of plan.annotationIds) {
       const obj = d.objects.find((x) => x.id === id)
@@ -1163,11 +1397,14 @@ export function groupSelected() {
     status(note('needTwoForGroup'))
     return
   }
+  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
+  finishActiveGesture()
   const gid = newId('g')
   updateObjects(ids, hist('group', { count: ids.length }), (o) => {
     o.groupId = gid
   })
   status(note('grouped', { count: ids.length }))
+  emitActivity({ kind: 'selection.grouped', count: ids.length })
 }
 
 export function ungroupSelected() {
@@ -1179,6 +1416,7 @@ export function ungroupSelected() {
     status(note('notInAnyGroup'))
     return
   }
+  finishActiveGesture()
   commit(hist('ungroup'), (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) o.groupId = undefined
     // 该组若带布局约束，成员散了约束也一并移除
@@ -1188,10 +1426,18 @@ export function ungroupSelected() {
       )
     }
   })
+  emitActivity({ kind: 'selection.ungrouped', count: ids.length })
 }
 
+/**
+ * 这批对象里有没有成组的——「取消成组」可不可用的唯一判据。
+ * 属性页（非响应式地问当前选区）与浮动栏（订阅着 objects 的组件）都读它。
+ */
+export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean =>
+  objs.some((o) => !!o.groupId)
+
 /** 选区里存在成组对象——决定「取消成组」是否可用 */
-export const selectionHasGroup = () => selectedObjects().some((o) => o.groupId)
+export const selectionHasGroup = () => selectionHasGroupIn(selectedObjects())
 
 /* ========================================================================== */
 /*  多选：参照目标对齐 / 分布 / 等宽等高 / 精确间距                              */
@@ -1272,7 +1518,19 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
     status(note('needThreeForDistribute'))
     return
   }
+  // 离散动作：先收掉还开着的连续手势（字号还在安静计时里时点对齐），否则这次
+  // commit 会静默并进上一条历史，一次撤销把两件事一起吐出来
+  finishActiveGesture()
   const primaryId = ids.at(-1)!
+  // 锁定对象与含锁定成员的组**不动**——与拖动 / 方向键同一套判据（movableTargets），
+  // 但它们仍算进选区的参照框：锁定的是位置，不是「参与排列」的资格。
+  // 只取选区里的：组的其余成员没被选中就不替用户排。
+  const { objects: movable, blockedGroups } = movableTargets(ids)
+  const movableIds = new Set(movable.filter((o) => ids.includes(o.id)).map((o) => o.id))
+  if (!movableIds.size) {
+    status(blockedGroups ? note('blockedGroupsAll') : note('alignAllLocked'))
+    return
+  }
   commit(hist('alignWithRef', { mode: alignModeMsg(mode), ref: alignRefMsg(ref) }), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     if (!objs.length) return
@@ -1284,8 +1542,14 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
           ? rectOf(primary)
           : (boundsOf(objs) ?? rectOf(primary))
     // 以某个对象为参照时它自己不动，否则等宽等高会把基准也改掉
-    alignIn(ref === 'primary' ? objs.filter((o) => o !== primary) : objs, mode, box)
+    const targets = objs.filter(
+      (o) => movableIds.has(o.id) && (ref !== 'primary' || o !== primary),
+    )
+    alignIn(targets, mode, box)
   })
+  const skipped = ids.length - movableIds.size
+  if (skipped > 0) status(note('alignLockedSkipped', { count: skipped }))
+  emitActivity({ kind: 'selection.aligned', mode, ref, count: ids.length })
 }
 
 /** 精确间距：按位置排序后依次贴齐，第一个对象保持不动 */

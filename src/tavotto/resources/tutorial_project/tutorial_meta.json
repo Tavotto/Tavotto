@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "tutorial_version": 1,
+  "project_name": "Tutorial",
+  "document_name": "Tutorial",
+  "document_id": "tavotto-tutorial",
+  "expected_stems": [
+    "Fig1_kinetics",
+    "Fig2_correlation"
+  ],
+  "editable_role_preferences": [
+    "title",
+    "legend_text",
+    "axis_label"
+  ],
+  "panels": [
+    {
+      "key": "first",
+      "file": "Fig1_kinetics.pdf",
+      "stem": "Fig1_kinetics",
+      "script": "fig1_kinetics.py",
+      "editable_roles": [
+        "title",
+        "legend_text",
+        "axis_label",
+        "line"
+      ],
+      "spec_issue": null
+    },
+    {
+      "key": "second",
+      "file": "Fig2_correlation.pdf",
+      "stem": "Fig2_correlation",
+      "script": "fig2_correlation.py",
+      "editable_roles": [
+        "title",
+        "legend_text",
+        "axis_label",
+        "text"
+      ],
+      "spec_issue": {
+        "code": "font-below-absolute-floor",
+        "role": "text",
+        "text_prefix": "n = 60"
+      }
+    }
+  ]
+}

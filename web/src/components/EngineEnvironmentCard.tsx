@@ -107,20 +107,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           )}
           <ProjectEnvironmentLine compact={compact} />
         </div>
-        {env.bundled && Object.keys(env.runtime?.packages ?? {}).length > 0 && (
-          <details className="text-xs text-ink-3">
-            <summary className="cursor-pointer select-none text-ink-2">
-              {en('bundledPackages')}
-            </summary>
-            <ul className="mt-1 flex flex-col gap-0.5 font-mono">
-              {Object.entries(env.runtime.packages).map(([name, ver]) => (
-                <li key={name}>
-                  {name} {ver}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        {/* 内置包版本清单在设置 → 包管理（ADR 0038）；这张卡只说环境本身 */}
         {!compact && advancedBlock}
       </div>
     )

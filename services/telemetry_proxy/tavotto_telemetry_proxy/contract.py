@@ -66,6 +66,62 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     "ai_assistant_invoked": {"agent": enum("codex", "claude", "other")},
     "update_completed": {"update_kind": enum("desktop", "pip", "pipx"), "target_version": VERSION},
+    # ---- 客户端 CONSENT_VERSION 2（Session 22）新增的九条；与客户端表逐字对拍 ----
+    "project_refresh_completed": {
+        "source": enum("watcher", "manual", "codex", "ai"),
+        "changed_bucket": enum("none", "one", "few", "many"),
+    },
+    "project_readiness_opened": {
+        "source": enum("banner", "panel", "quickedit", "palette"),
+        "status_bucket": enum("all_editable", "mixed", "layout_only"),
+    },
+    "tutorial_started": {
+        "source": enum("picker", "help", "settings", "palette"),
+        "tutorial_version": integer(1000),
+    },
+    "tutorial_step_completed": {
+        "step_id": enum(
+            "welcome",
+            "open_fast_edit",
+            "select_text",
+            "change_typography",
+            "locate_problem",
+            "export_original",
+            "add_to_layout",
+            "multi_select_align",
+            "export_canvas",
+            "done",
+        ),
+        "tutorial_version": integer(1000),
+    },
+    "tutorial_completed": {"tutorial_version": integer(1000)},
+    "context_bar_multi_used": {
+        "action_id": enum(
+            "align_left",
+            "align_center",
+            "align_right",
+            "align_top",
+            "align_middle",
+            "align_bottom",
+            "distribute_h",
+            "distribute_v",
+            "same_width",
+            "same_height",
+            "group",
+            "ungroup",
+            "more",
+        ),
+        "selection_size_bucket": enum("2", "3_5", "6_plus"),
+    },
+    "document_saved": {
+        "trigger": enum("manual", "autosave"),
+        "outcome": enum("ok", "conflict", "failed"),
+    },
+    "recovery_action": {"action": enum("restore", "keep_main")},
+    "package_action": {
+        "action": enum("install", "update", "remove"),
+        "outcome": enum("ok", "failed", "cancelled"),
+    },
 }
 
 #: 发行量指标。**它们不是用户**——GitHub 的 download_count 是累计计数器，

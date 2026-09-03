@@ -73,6 +73,17 @@ if not (PKG / "web" / "index.html").is_file():
 datas = [
     # 前端构建产物：app.py 按 PKG_ROOT/"web" 找，冻结后 PKG_ROOT 落在 _MEIPASS/tavotto
     (str(PKG / "web"), "tavotto/web"),
+    # **包内数据文件 PyInstaller 不会自己收**：Analysis 只把 .py 编进 PYZ，
+    # `importlib.resources.files("tavotto")` 在冻结产物里落在 _MEIPASS/tavotto，
+    # 数据得显式放到同一处。漏一条的表现是源码树 / wheel 里一切正常、桌面版
+    # 第一次用到时报「文件不存在」。
+    #   profiles/   出版规范（预检两侧共读的唯一权威，engine/profiles.py）
+    #   resources/  离线教程项目（engine/tutorial.py，ADR 0039）
+    #   pdfbackend/canvas_coverage.json  画布字形覆盖表（glyphplan.coverage_table_path，
+    #               preflight 的文字检查读它；wheel/sdist 随包自然收录，冻结产物要显式列）
+    (str(PKG / "profiles"), "tavotto/profiles"),
+    (str(PKG / "resources"), "tavotto/resources"),
+    (str(PKG / "pdfbackend" / "canvas_coverage.json"), "tavotto/pdfbackend"),
 ]
 # 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
 #   safe worker      —— worker.py 及它平铺 import 的传递闭包；

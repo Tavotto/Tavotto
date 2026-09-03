@@ -69,7 +69,8 @@ def source_fingerprint() -> str:
     bundle 里，任何一处都可能改变 playground 行为）+ 案例源码与封面
     （examples/*.py 经 ?raw 进 bundle，generated/ 的封面与 manifest 是
     卡片资产——两者任何一个变了都是另一个 playground）+ playground 入口
-    与构建配置 + 进 engine.zip 的每个 Python 模块 + 运行时锁 + 规范文件。
+    与构建配置 + 进 engine.zip 的每个 Python 模块 + 运行时锁 + 规范文件
+    + 字形覆盖表（同样经路径别名进 bundle）。
     """
     files: list[Path] = []
     for p in (WEB / "src").rglob("*"):
@@ -83,6 +84,10 @@ def source_fingerprint() -> str:
         WEB / "package.json",
         RUNTIME_LOCK,
         ROOT / "src" / "tavotto" / "profiles" / "publication.json",
+        # 字形覆盖表也经路径别名整份进 bundle（`@glyphcoverage`）：换一版
+        # PyMuPDF 重新生成之后，画布对「这个字导出后是不是方框」的答案就变了。
+        # 不把它算进指纹的话，产物会以「没变化」的样子带着旧答案发出去。
+        ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json",
     ]
     files += [ENGINE / name for name in ENGINE_FILES]
     return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())

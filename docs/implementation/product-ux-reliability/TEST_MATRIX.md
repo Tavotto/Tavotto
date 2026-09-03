@@ -1505,3 +1505,949 @@ a11y 用例把它照出来的，而且只在**恰好停在快速编辑**的那�
 
 > 四条的共同点：**判据本身跑通了、也给出了一个看起来合理的值**。
 > 出错的是"这个值回答的是哪个问题"。参见 [[name-the-subject-of-the-predicate]]。
+
+---
+
+## Session 13：属性能力层 / Typography 控件 / 标注字体
+
+### 新增用例（后端 15 / 前端 34）
+
+**后端 `tests/test_typography_families.py`（15 条）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._one_closed_set_on_both_sides` | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `lib/typography.ts` **逐字 + 顺序**；默认族必须是第一个 |
+| `..._maps_to_its_own_base14_face`（5 条参数化） | 三族 × 常规/粗/斜/粗斜 → base-14 的正确那张脸 |
+| `..._falls_back_to_the_default_instead_of_resolving_it`（6 条参数化） | 认不出来的名字**按默认画**，不抛异常也不去解析一个不存在的字体 |
+| `..._reaches_the_pdf_font_resources` | 族走到**产物**里（量 PDF 页面的字体资源表），不是只改了前端预览 |
+| `..._uses_the_same_family_as_writing` | 量宽与落笔同族（三个数两两不等 = 尺子看得见「族」这一维） |
+| `..._does_not_change_with_the_family` | CJK 只有一张脸——那句注释的看护（实测，不是照抄） |
+
+**前端（34 条）**
+
+| 文件 | 条数 | 守的是 |
+| --- | --- | --- |
+| `lib/typography.test.ts` | 14 | 能力表 / property path 互查 / 交集不是并集 / 四档取值 / boolean↔枚举换算 / 回到默认删字段 / 校验闭集成因且**不 clamp** / 新建默认值不含字体族 |
+| `components/inspector/typographyAdapter.test.tsx` | 14 | mixed 不冒充第一个 / inherit 不算「已修改」/ 必填字段没有恢复按钮 / 不支持说得出为什么 / 多对象一条历史 / **打字也合并**（不先喊 beginGesture）/ 拖动也是一条 / 别处的离散动作先收尾 / invalid 一个字不写 / 恢复 = 删字段 |
+| `lib/canvasTextFont.test.ts` | 3 | 载荷缺省不发（主语是**序列化之后的字节**）/ 写回带族但不缩放它 / 老文档打开后字段仍不存在 |
+| `canvas/TextView.test.tsx` | +3 | 没设过 = `--font-doc`；设过就按它画；三族在画布上互不相同 |
+| `components/inspector/TextSection.test.tsx` | +2（改 1） | 标注有「字体」行；**每条排版属性都挂着锚点**；没设过不显示「已修改」 |
+| `components/inspector/textStyleBar.test.tsx` | +2 | 图内六条属性的锚点齐全；`TEXT_BAR_PROPS` = 规范表算出来的那几条 |
+| `canvas/contextBar.test.tsx` | +3 | 工具条有斜体与字体；与属性页读同一个 selector（属性页改完当场是新值） |
+| `lib/issueFocus.test.ts` | 改 4 | `focusedField: boolean` → `field: none/focused/requested` |
+| `tests/golden/preflight_vectors.json` | +2 条向量 | 画布文字的族在两侧求值器上给出同一个答案（既有 21 条**一条没变**） |
+
+### 变异反证：15 条，第一轮 13 红 2 存活，补完 15/15 全红
+
+判定**只看退出码**；Python 侧跑前清 `__pycache__`。脚本在
+`<scratchpad>/mutate.py`（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| 画布 `overrideStateOf` 不再区分「可继承」 | 红 | 红 |
+| `inherit` 档被压成 `uniform` | 红 | 红 |
+| 连续输入不开事务 | **存活** | 红 |
+| 越界的数值不再被拒绝 | 红 | 红 |
+| 枚举不再校验 | 红 | 红 |
+| 回到默认值时写显式值而不是删字段 | 红 | 红 |
+| 控件不再挂定位锚点 | 红 | 红 |
+| `TEXT_BAR_PROPS` 改成手抄（漏了 style） | 红 | 红 |
+| 导出载荷不带 `font_family` | 红 | 红 |
+| 画布文字的族不进预检（TS 侧） | 红 | 红 |
+| 画布渲染不看对象自己的族 | **存活** | 红 |
+| 落笔忽略 family（永远画 Times） | 红 | 红 |
+| 量宽忽略 family | 红 | 红 |
+| 画布文字的族不进预检（Python 侧） | 红 | 红 |
+| 闭集少一个族 | 红 | 红 |
+
+**两条存活的成因是同一个：判据没量到那个维度。**
+
+* 「连续输入不开事务」——**用例自己先调了 `beginGesture()`**，于是「`write()`
+  会不会自己开一轮」被挡在判据外面。真实路径是「在字号框里打字」，
+  `NumberField` 那条只有 `onChange`，没有 `onScrubStart`。改法不是加一条新
+  用例，是把准备阶段换成真实调用方此刻会做的事（见 DECISIONS T-80）。
+* 「画布渲染不看对象自己的族」——`TextView.test.tsx` 里压根没有一条断言看
+  `style.fontFamily`。补三条：默认族仍是 `--font-doc`（老文档一个像素不变）、
+  设过就按它画、三族在画布上互不相同。
+
+---
+
+## Session 14：科学文本 / 字形覆盖 / 字体回退
+
+### 新增用例（后端 100 / 前端 96）
+
+**后端 `tests/test_glyph_plan.py`（88 条，其中 60 条是跨语言向量）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._golden_vectors_match_python_side`（60 条参数化） | 60 条向量 × 计划 + 缺字单子；vitest 跑同一份 |
+| `..._generator_is_up_to_date` | 向量是生成物：改了算法没重跑生成器时红 |
+| `..._subscript_two_stays_on_the_fallback_layer` | `₂` 在中日韩脸里有、码位在 CJK 段之外——**覆盖表的裁剪条件**（差一个 `cjk` 就是一个只在下标字符上发作的两侧分歧） |
+| `..._box_drawing_is_rescued_by_the_fourth_step` | `━` 是第 4 步救回来的那 87 个码位之一 |
+| `..._unrenderable_character_is_missing_not_silently_dropped` | 真画不出来的报 `missing`，不是安静地当成画得出 |
+| `..._cjk_is_not_reported_as_a_substitution` | 中日韩落在 `cjk` 层但**不进「换了脸」那张单子**——它只有一张脸，说了用户也改不动 |
+| `..._the_script_character_tables_are_identical_on_both_sides` | 两张**手写**的上下标表逐字相同（键与值都比）——vectors 比的是分层计划，覆盖不到它们 |
+| `..._the_interpretation_modes_are_the_same_closed_set` | 解释档闭集与默认档两侧一致 |
+| `..._the_layer_names_and_cjk_boundary_are_the_same_on_both_sides` | 分层名（**顺序也比**，它就是优先级）与 CJK 段下界 |
+| `..._plan_matches_the_faces_the_pdf_actually_uses`（9 条参数化） | **第二把独立的尺子**：读导出 PDF 的字体资源表，层数必须与脸数对得上 |
+| `..._fallback_face_is_the_same_regardless_of_family_and_weight` | 回退脸与族/字重无关（六种组合只回一张脸）——`glyph-substituted` 存在的理由 |
+| `..._measured_width_equals_the_advance_actually_written`（5 条参数化） | 量宽与落笔**同一份计划**（逐段按计划推进 vs `text_width`） |
+| `..._coverage_table_matches_the_live_fonts` | 生成的表还配得上真字体（漂了就红） |
+| `..._every_base14_face_shares_one_charset` | 12 张脸共用一张 `primary` 表——单份覆盖表的合法性 |
+| `..._auto_mode_keeps_the_pdf_text_layer_verbatim` | 默认档下 PDF 文本层逐字不变（`×10⁵` 抽回来还是 `×10⁵`） |
+| `..._scientific_mode_draws_everything_with_one_face` | 一张脸 + **代价说清楚**（文本层降级成 `×105`，这条断言就是那句话的凭据） |
+| `..._designed_superscripts_are_never_synthesized` | `m²` 两档都不动 |
+| `..._interpretation_only_produces_a_render_representation` | 解释不经 `parse_runs` ↔ `serialize_runs` 那一对，raw text 不变 |
+| `..._a_run_of_unicode_scripts_folds_as_one_piece` | **整串一起折**（`m⁻²` 不许一半合成一半留设计字形） |
+| `..._superscript_and_subscript_never_merge` | 相邻上标段与下标段是两段 |
+| `..._missing_glyph_is_folded_even_in_auto_mode` | auto 档那句承诺（用注入的判据跑：守的是「换个覆盖更窄的后端时它仍然救得回方框」） |
+
+**后端 `tests/test_glyph_coverage_figure.py`（5 条，worker）**
+
+| 用例 | 守的是 |
+| --- | --- |
+| `..._default_family_draws_the_scientific_characters` | **对照组**：没有它的话「换成 TNR 就缺字」分不清是字体的问题还是判据把所有非 ASCII 都报成缺字 |
+| `..._ascii_only_text_never_reports_glyph_trouble` | 纯 ASCII 两张单子都不出现 |
+| `..._cjk_label_reports_the_characters_that_come_out_as_boxes` | 中文轴标题**逐字列出**，不是一句「有问题」 |
+| `..._named_family_without_the_glyphs_reports_them` | TNR 下 `⁻` 被报出来，且**用户选的那个族仍是 manifest 报的那个** |
+| `..._fallback_tail_keeps_the_glyphs_out_of_the_missing_list` | 回退尾巴的兑现凭据：`⁻` 落在 fallback 那张单子上，不在 missing 那张 |
+| `..._tick_labels_and_legend_text_are_measured_too` | **刻度文字与图例文字也在内**——补这一条时撞出了真缺陷（见下）。用中文而不是 `⁵` 来量，于是不依赖 Times New Roman 装没装 |
+
+**后端 `tests/test_font_provenance.py`（7 条）** —— 版本库里没有字体文件 /
+前端不下载也不内嵌 / 后端没有 `fontfile=` 与 `fontbuffer=` 入口 / 依赖里没有
+字体包 / 下拉里每个族后端都真的画得出（3 条参数化）。
+
+**前端（96 条）**
+
+| 文件 | 条数 | 守的是 |
+| --- | --- | --- |
+| `lib/glyphPlan.golden.test.ts` | 60 | 跨语言向量（与 pytest 同一份） |
+| `lib/glyphPlan.test.ts` | 16 | 四步顺序 / 第 4 步救回的那一族 / missing / 合并 / 空串 / **按码位遍历**（代理对算一个字符）/ missing 与 substituted 是两句话 / `textDiagnostics` 量渲染表示 / 覆盖表说得出自己是哪一版后端出的 |
+| `lib/richText.test.ts` | +12 | 判据缺席不折 / auto 只救方框 / scientific 一律折 / **整串一起折** / 基础字符画不出时不折 / `^{…}` 不叠一层 / 上下标不合并 / 普通自然语言零影响 / **乘号绝不换成字母 x** / `$…$` 不被双重处理 / `hasScientificChars` |
+| `canvas/TextView.test.tsx` | +3 | 默认档原样显示 Unicode 上标 / scientific 合成成 span（字号缩、基线抬）/ `m²` 两档都不动 |
+| `components/inspector/TextSection.test.tsx` | +5 | 普通文字不出现那一行 / 有上标才出现 / 锚点来自 `propertyPathOf()` / 缺字逐字列出 / **换脸那句与方框那句分开** |
+| `tests/golden/preflight_vectors.json` | +4 条向量 | 画布缺字 / 画布换脸 / **scientific 档下一条都不报**（量原文的话这条会假红）/ 图内两张单子（既有 23 条**一条没变**） |
+
+### 变异反证：15 条，第一轮 14 红 1 存活，补完 15/15 全红
+
+判定**只看退出码**（`| tail` 会把退出码换成 tail 的）；Python 侧跑前清
+`__pycache__`；每条先验证「树真的变了」再跑。脚本在 `<scratchpad>/mutate.sh`
+（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| 分层第 2 步去掉 CJK 段限制（`₂` 改判成 cjk） | 红 | — |
+| 分层去掉第 4 步（`━` 变成 missing） | 红 | — |
+| cjk 层也交给拉丁脸落笔 | 红 | — |
+| 量宽一律按拉丁脸（与落笔不同源） | 红 | — |
+| auto 档按 scientific 折（文本层降级） | 红 | — |
+| **逐字符折**（`m⁻²` 一半合成一半留设计字形） | **存活** | 红 |
+| 覆盖表生成时多减一个 `cjk`（表与 `layer_of` 对不上） | 红 | — |
+| 缺字形与回退合成一张单子 | 红 | — |
+| 设族时不带回退尾巴（`⁻` 变回方框） | 红 | — |
+| preflight 量原文而不是渲染表示 | 红 | — |
+| TS 分层第 2 步去掉 CJK 段限制 | 红 | — |
+| TS 按码元遍历（emoji 拆成两个） | 红 | — |
+| 预览一律按 scientific 合成 | 红 | — |
+| TS 解释器不看 `isDrawable`（auto 变成一律折） | 红 | — |
+| 科学文本那一行无条件显示 | 红 | — |
+| 刻度文字不取代理的真身（`live_text = artist`） | 红 | — |
+| 载荷不带 `interpretation` | 红 | — |
+| **缓存上限改成 1（故意的无害变异）** | **存活（预期）** | — |
+| TS 上标表少一个 `⁴` | 红 | — |
+| TS 下标表值写错（`₂` → `3`） | 红 | — |
+| TS 分层名顺序反了 | 红 | — |
+| TS 解释档少一档 | 红 | — |
+
+**存活的那条是「同一条规则的第二个消费点漏了」**：「整串一起折」TS 侧
+（`richText.test.ts`）有判据，Python 侧没有。补两条（`m⁻²` 整串 + 上下标不
+合并）之后 15/15 全红。
+
+**最后那条是正向对照**：把分层缓存的上限从 10000 改成 1 仍然完全正确（只是每个
+字符都要重算一次），**它必须存活**。一套 18 条全红的反证说明不了判据强，只说明
+我挑的都是真变异；夹一条无害的进去，「全红」才有信息量。
+
+**「所有主要文字对象都要有回归测试」这条退出条件撞出了一个真缺陷**：刻度文字
+登记的是 `TickLabel` 代理而不是 `Text`，按 `isinstance(artist, Text)` 判会安静地
+漏掉整整一类。补用例之前那条判据看上去无可挑剔——它甚至有一句注释解释「按是不
+是 Text 判，不按 role 列白名单」，而那句话本身是对的，**错的是主语**。
+
+**顺带又踩了一次「反证前先提交」**：补完判据没有先提交就再跑了一轮反证，
+`git checkout -- .` 把刚补的那条用例还原掉了，于是 M6 第二次仍然显示「存活」
+——**看起来像判据没用，实际是判据不在了**。
+
+### 与渲染器的对拍（两把独立的尺子）
+
+图内那条判据读的是字体文件的 cmap，而 matplotlib 在渲染时会自己 warn 缺哪个
+码位。两把尺子互相独立（一把读文件，一把看渲染器实际画的时候说了什么），
+九组逐组一致：
+
+```text
+'×10⁵ A m⁻²'  Times New Roman        我们 ['⁵','⁻']        渲染器 ['⁵','⁻']
+'×10⁵ A m⁻²'  DejaVu Sans            我们 []               渲染器 []
+'×10⁵ A m⁻²'  [TNR, DejaVu Sans]     我们 []               渲染器 []      ← 回退链
+'样品浓度 (mg/L)' DejaVu Sans          我们 ['样','品','浓','度'] 渲染器 同
+'样品浓度'     PingFang SC            我们 []               渲染器 []
+'H₂O 中文 ⁵'  Arial                  我们 ['₂','中','文','⁵'] 渲染器 同
+'plain ascii' Times New Roman        我们 []               渲染器 []
+'$10^{-5}$ cm' Times New Roman       我们 []               渲染器 []      ← mathtext 段跳过
+'25 °C ± 0.5' Times New Roman        我们 []               渲染器 []
+```
+
+**同源了就等于自己验自己**：如果两边都用 `get_char_index`，这张表证明的只是
+「我抄对了自己」。
+
+
+---
+
+## Session 15：图例条目模型 / 源对象绑定 / 高频控件
+
+### 新增用例（后端 31 + 1 向量 / 前端 19）
+
+**后端 `tests/test_legend_binding.py`（28 条，worker）**：导入绑定（label +
+指纹 / 脚本改过示意线的项默认 custom / 代理 artist 无源无 binding 字段 / 示意线
+类型决定字段集）；源的颜色 / 线型 / 线宽 / marker 变 → 图例同步（4 条参数化）、
+markersize 按 markerscale 派生、同步只改像素不改包围盒；脱开（override →
+custom，源再变它不动）、撤掉 override 回到跟随、脱开点跨重建保留、脚本自定义
+的项显式切回跟随、显式 `binding=custom` 冻结；隐藏一项（整行出盒、元素留着、
+序号不变、文字 override 保留）、重排后 override 跟着项走；热态 == 全新重放、
+撤销到底像素逐位；布局旋钮四条 + 列距只在多列时有效 + 边框线宽 / 圆角 +
+重建保留标题字号；热会话两步的重放；自定义项重建不复利 markerscale；
+同名同型双胞胎按位置绑。
+**`tests/test_legend_model_pairs.py`（2 条）**：两侧常量严格同源（顺序也比）。
+**`tests/test_legend_text.py`**：`test_item_text_follows_display_order_after_reorder`
+改成 `test_item_identity_survives_a_reorder`（合同变了：原始序号）。
+**`tests/test_invariants_engine.py`**：图例重建豁免删除；新增
+`test_legend_rebuild_restores_exactly`；`_ENABLERS` +2（`handle_markersize`
+要先有 marker、`columnspacing` 要先多列）；`_NON_VISUAL_PROPS` +`binding`（写了理由）。
+**`tests/golden/preflight_vectors.json`** 27 → 28（`legend-entry-custom-handle-width`，
+既有 27 条一条没变）。
+
+**前端 `components/inspector/legendCard.test.tsx`（19 条）**：模型（显示顺序 /
+每项绑定 / 视图 / 恢复跟随的计划）；分桶（高频项常驻、列距条件显示、图例项
+首屏与控件形态）；图例页（没有「自动」、字号与顺序不出第二套、无嵌套可交互、
+点文字选中、上下移动写原始序号——含已重排过的情形、显隐）；图例项页（跟随状态
++ 查看源对象、改颜色立刻是自定义、改为自定义 / 恢复跟随一次撤销、脚本 custom
+的项恢复写 binding、无源项没有绑定行）。`pickers.test.tsx` 的图例位置用例改成
+「最佳位置」+ 断言「自动」不存在。
+
+### 变异反证：17 条，第一轮 14 红 3 存活，补完 16 红 1 存活（成因是双保险）
+
+判定只看退出码；Python 侧跑前清 `__pycache__` + `PYTHONDONTWRITEBYTECODE`；
+树不干净直接拒跑；每条跑完 `git checkout` 那一个文件。脚本
+`<scratchpad>/mutate15.py`（不进仓库）。
+
+| 变异 | 第一轮 | 第二轮 |
+| --- | --- | --- |
+| M1 sync 里跳过跟随替换 | 红 | — |
+| M2 有 handle_* override 仍算跟随 | 红 | — |
+| M3 脱开点拿盒里那份而不是从源派生 | 红 | — |
+| M4 重建把快照喂回去（旧路径） | **存活** | **存活**（见下） |
+| M5 重建后不放回 markersize | 红 | — |
+| M6 重建后不重放 override（单批） | **存活** | M6b 热会话两步：红 |
+| M7 双胞胎取第一个匹配而不是按位置 | 红 | — |
+| M8 没有源也发 binding 字段 | 红 | — |
+| M9 预检对跟随的项也报线宽 | （变异点写错）| 红 |
+| M10 隐藏的项元素表里丢掉 | 红 | — |
+| M11 重建丢标题字体属性 | 红 | — |
+| F1 前端徽标忽略 handle_* override | 红 | — |
+| F2 恢复跟随不写 binding=follow_source | 红 | — |
+| F3 上下移动写显示位置 | 红 | — |
+| F4 图例卡不接管 fontsize | **存活** | 展开「更多」再数：红 |
+| F5 位置控件仍有「自动」 | 红 | — |
+
+**M6 的存活是用例形状**：同一批 patch 里 handle override 的 setter 排在重建之后，
+天然正确；只有热会话分两步（先改颜色、下一步再改列数）才走到重放。补了那条
+用例（M6b）。**F4 的存活也是用例形状**：`fontsize` 在图例模板里落在「更多」，
+折叠着的重复数不到，先展开再数。
+
+**M4 的存活是结构性的双保险**：重建从源派生之后，`sync_legends` 在同一次
+`apply()` 尾部又会对每个跟随的项从源派生一次——把重建的素材换成快照，同步照样
+把它治回来。两处都从源派生是有意的（重建那一步先落对，同步兜底所有别的
+setter），一条用例杀不死它是这条冗余的代价，**不是判据缺口**。记在这里，别去
+「加强」那条用例。
+
+### 实跑到的、不是假设的
+
+* 改造前四条缺陷一次探针全部现形：`line.set_color` 之后 `leg.legend_handles[0]`
+  仍是旧色；ncol 重建后标题字号 12 → 10；markerscale 4×1.5 = 6 → 9 → 13.5；
+  误差棒示意线 LineCollection → Line2D。
+* 真应用（worktree 起在 5099）走了一遍：选图例 → 图例卡；选「lin」项 →
+  「自定义」+「恢复跟随」→ 渲染回来线宽 1.5；改曲线「lin」颜色 → 图例示意线
+  跟着变成品红。
+
+## Session 16：坐标轴边框语义命中区 / 四边刻度模型 / 主次刻度分档
+
+### 新增用例（后端 12 / 前端 40 + 22 + 8）
+
+**后端 `tests/test_tick_sides_geometry.py`（12 条，worker）**：四条边框线落在框沿、
+`visible` / `ticks` 与四边字段同口径；`spines` 报的是改完 override 之后的状态
+（边框显隐与刻度显隐是两件事）；偏出去的左边框在框沿之外、隐藏的边框几何照给、
+twinx 第二个 axes 不出上下两条且左右各按真值；极坐标 / 3D 不给 `spines`；对数 +
+反转不改几何、`secondary_xaxis` 只有上下两条且下边既不显示也没刻度；色条轴不给；
+`length` 只动主刻度、`minor_length` 顺序无关、`minor_width` 同样分档、次刻度没开
+时先设长度再开仍生效、次刻度长度像素真变 + 撤销回原样、3D 不出次刻度字段。
+
+**前端 `lib/tickSides.test.ts`（40 条）**：三带分类（四边 × inner / outer / neutral，
+10 条参数化）、带外不命中、五档 zoom 下带宽恒定 + 高亮条同尺、触控带、角落
+（更近的边 / 等距先取有刻度的 / 固定次序）、偏出去的边框、无目标的边、无
+`spines`、端点顺序任意；模型派生（默认 / override 优先 / 没刻度元素的轴不进模型 /
+非子图 → null）；计划（inout → in → 隐藏三步、隐藏边点框外只开边、点框里开边 +
+inout 且连带点名、另一边不可见不算连带、不在模型的边 → null、**全状态扫描**：
+3 方向 × 2 × 2 显隐 × 2 边 × 2 带 = 48 种，切完那一方向必翻转、另一方向按规则）；
+四档（派生态「隐藏」、选隐藏写两边 false、选回方向删两边 override、只写方向、
+当前方向 → null）、显示边；整图挑边（allow 闸、twinx 取有刻度的那条）。
+
+**前端 `canvas/spineZones.test.tsx`（22 条）**：hover 高亮条 + 状态文字 + pointer
+光标 + 条厚度 = band − neutral；外侧说朝外且开着；离开命中带 / 离开面板即消失；
+连带的另一边浅色一起亮 + 文字点名；中线无高亮；点击 = inout + 一条历史 + 选中
+子图；隐藏的上边点框外只开边、点框里开边 + inout 一次 commit 撤销一起回；左边框
+写 Y 不写 X；已选着刻度组不改选区；中线只选中；文字 / 刻度文字优先、外侧带没被
+盖住的段照样可点；zoom 0.5 / 3 下 5 px 在带里 20 px 在带外；触控 14 px；旋转
+90 / 180 / 270 反旋转后落在同一带；偏出去的边框（pickElement 命中 figure）可点、
+框沿空白不命中、点线本身选中子图；无 `spines` 整层无命中。
+
+**前端 `inspector/tickTaskCard.test.tsx`（+8，示意图段整段重写）**：内 / 外两带的
+aria-checked 与实线 / 虚线；**内侧带的命中矩形在框里、外侧在框外（四边）、中间
+留中性带**；刻度朝内时点框里那一带即可控制；两带各自开关；一次点击一条历史
+（方向 + 显隐同一 commit）；连带点名（`data-tick-coupled`）；X / Y 互不影响；
+次刻度只画在开着的那一半；关掉一边两带都虚线；四档「隐藏」写两边 false 且方向
+不动、选回方向删两边 override；两边用示意图关掉后方向档显示「隐藏」且文档里没有
+`hidden` 这个值；「显示边」开关 + 键盘；`minor_length` 写自己的字段不碰 `length`；
+`data-prop="direction"` 锚点带 `data-gid`。
+
+### 变异反证：10 条，10/10 全红（第一轮）
+
+判定只看退出码；Python 侧跑前清 `__pycache__`；树先提交（`d2745fc8`）再变异，
+每条跑完 `git checkout` 那一个文件。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `length` 回 `which="both"` | 红（2 条） |
+| M2 边框几何改用 axes 框而不是 spine 路径 | 红（偏出去的边框） |
+| M3 去掉「axis 不可见不出」+「色条轴不出」两道闸 | 红（twinx + 色条各 1） |
+| M4 上下边的内 / 外符号反过来（原始缺陷的形状） | 红（25 条） |
+| M5 带宽按分数写死、不随 zoom | 红（5 条） |
+| M6 去掉优先级闸（文字上也给边框命中） | 红（2 条） |
+| M7 计划按 patch 逐条 commit | 红（2 条：历史数 + 撤销一起回） |
+| M8 连带永远不报 | 红（3 条） |
+| M9 触控带宽忽略 | 红（2 条） |
+| M10 从「隐藏」选回方向不删两边 override | 红（2 条） |
+
+### 实跑到的、不是假设的
+
+* matplotlib 3.10.8：`tick_params(which="major", direction="in")` 之后
+  `_minor_tick_kw` 里没有 tickdir、次刻度仍朝外；`tick_params(length=6)` 默认只动
+  主刻度（次刻度仍 2.0）；`which="both"` 才两档一起——Tavotto 此前所有刻度 setter
+  都是 `which="both"`。
+* `Spine.get_window_extent()` 把刻度伸出量算进去（下边 y0 = 28.1 而线在 33.0）；
+  `_adjust_location()` + `get_transform().transform(get_path().vertices)` 才是那条线，
+  且含 `outward` 偏移（左边 x = 36.1 而框在 50.0）。
+* 3D 轴也有 `left/right/bottom/top` 四条 `spines`（占位），只按名字判会把 3D 当直角
+  轴；`secondary_xaxis` 的左右两条退化成一点（长 2e-8 px）。
+* 真浏览器（chromium）里从面板底沿往上扫：外侧带 → 无带 → 内侧带三段依次出现，
+  文字与 jsdom 用例里断言的逐字相同；点内侧带后刻度线消失、数字仍在。状态文字
+  第一版放在带的外侧，被面板的 overflow hidden 整个裁掉——jsdom 看不见裁剪，
+  这一条只有真浏览器抓得到。
+* jsdom 的 React `onPointerLeave` 由 `pointerout` 合成，直接派 `pointerleave` 不触发；
+  没落进命中带的按下会开始一次拖动（`trackPointer` 挂在 window 上），用例之间不
+  松手的话后面的 `pointermove` 全被 `kind !== 'none'` 吃掉——「单跑绿全量红」的
+  又一种形状。
+
+## Session 17：多选浮动 Context Bar / 共享排列参照 / 主选语义
+
+### 新增用例（前端 13 + 42 + 5 + 17 + 2；后端无）
+
+**`canvas/context-bar/position.test.ts`（13 条，纯函数）**：上方居中、顶部安全区放不下
+翻下方（含边界 = TOP_SAFE 本身）、下方也放不下贴窗口底边、左右不越界、避让停靠侧栏
+（左含轨道）、两侧之间比栏还窄贴左；`sidebarInsets` 三态；`barVariant` 阈值 + 可用宽度；
+`selectionScreenRect` 原点 + 平移 + 世界像素 × 缩放、缩放翻倍尺寸翻倍。
+
+**`canvas/context-bar/multiSelectionBar.test.tsx`（42 条）**：单选仍是 Object bar、单图内
+元素仍是 Element bar（mock `engineRender` 播一份 manifest）、两个 / 三个对象出现 + 计数 +
+role / aria-label、图内编辑态不出；两个对象分布 `aria-disabled` 点了不动、三个可用、
+有组多出取消成组；对齐（选区 / 画布 / 主选）、等宽 / 等高、水平 / 垂直分布、成组 →
+取消成组、撤销回原位、「更多」开属性页且选区不动、**标签与直接调 action 逐字一致**；
+pointerdown 隐藏 pointerup 再现、七种 interaction kind 参数化隐藏 / 再现、QuickEdit /
+裁剪 / 文字编辑 / 非选择工具 / 模态 / 命令面板 / narrow 抽屉让位、选区掉到 1 换回单选栏；
+Esc 焦点在栏内拦事件 + 选区不动、焦点在外不拦、选区一变重新出现且仅缩放不解除；落位五条
+对着 `placeToolbar(selectionScreenRect(boundsOf(sel)))` 算（上方 / zoom-pan 重贴 / 侧栏开合 /
+顶部不够放下方 / 左右不越界 / 对象挪动重贴）；窄屏压缩（resize 事件 + 弹层里同一批按钮
+可用、停靠侧栏吃掉宽度也压缩）；每颗按钮有可达名、分段组有组名、出现不抢焦点、
+按钮可 Tab；**与 ArrangeSection 共用参照双向同步、切参照不进历史**。
+
+**`canvas/primarySelection.test.tsx`（5 条）**：单选无标记无联合框；多选末位 id 唯一主选、
+2 px、联合框锚点；ids 顺序换主选跟着换；线状对象做主选沿线描示更粗；联合框几何 =
+包围盒。
+
+**`store/alignSelectedTo.test.ts`（17 条）**：参照三档 + 主选跟 ids 顺序、等宽 / 等高、
+分布两个拒绝三个等距；锁定不动但算进参照框 + 提示、含锁定成员的组整组不动、全锁
+不进历史；成组 / 取消成组各一条历史 + `selectionHasGroupIn` 同判据；开着的手势先收
+（对齐 / 成组）；活动信号三种各一次且 detail 不含 id、拒绝时不发、监听者抛错不影响动作。
+
+**`store/arrangeStore.test.ts`（2 条）**：默认 selection、同值不产生新状态。
+
+既有 `canvas/contextBar.test.tsx` 的「多选不出现」改成「换成多选栏，单选文字控件不出现」。
+
+### 变异反证：14 条，14/14 全红（第一轮）
+
+判定只看退出码；树先提交（`b0d14f7c`）再变异，脚本树不干净拒跑，每条跑完
+`git checkout` 那一个文件。定向集：`context-bar/` + `contextBar.test.tsx` +
+`primarySelection.test.tsx` + `alignSelectedTo.test.ts` + `arrangeStore.test.ts`（90 条）。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `alignSelectedTo` 不收手势 | 红（1 条） |
+| M2 对齐不跳过锁定对象 | 红（3 条） |
+| M3 主选取首位而不是末位 | 红（5 条：action 4 + 栏 1） |
+| M4 OverlaySvg 主选标记挂到首位 | 红（3 条） |
+| M5 多选栏要三个才出现 | 红（24 条） |
+| M6 交互中不隐藏（去掉 `kind === 'none'`） | 红（7 条：七种 kind 全部） |
+| M7 顶部不够也不翻到下方 | 红（4 条：纯函数 3 + 栏 1） |
+| M8 分布不按数量禁用 | 红（1 条） |
+| M9 属性页参照退回本地 state | 红（1 条：共用参照） |
+| M10 活动信号不派发 | 红（1 条） |
+| M11 Esc 不拦事件 | 红（1 条） |
+| M12 左栏占位算成 0 | 红（3 条：纯函数 1 + 栏 2） |
+| M13 图内编辑态照出多选栏 | 红（1 条） |
+| M14 落位不随 zoom / pan | 红（3 条） |
+
+### 实跑到的、不是假设的
+
+* `pnpm test -- <路径>` 不过滤（pnpm 吞掉 `--`），跑的是全量 165 文件——第一遍就把
+  「其余全绿、只有我三条红」这件事顺手证明了。
+* 真浏览器（chromium）：完整栏量出 617 px；`fixed` 盒子 `width:auto` 时 left 停在旧值、
+  盒子被压到 299 px，静态阈值放行的 600 px 视口下「放得下」是假的——`w-max` 之后压缩档
+  才真的出现。jsdom 里 `offsetWidth` 恒为 0，这条判据在 jsdom 里恒真。
+* 真浏览器：Radix Popover 自动聚焦第一个分段项，其 tooltip 停在下一排按钮上，
+  Playwright 卡在 `data-radix-popper-content-wrapper intercepts pointer events`；内容层
+  `pointer-events-none` 不够，外壳没有背景也照样命中，`:has([role='tooltip'])` 选到外壳才行。
+* 三段文字的 y 等距、文字 sameh 是 no-op：两条「历史少一条」的假红都是 fixture 已经
+  处在目标状态。
+
+## Session 18：QuickEdit 右键菜单 / 重新构建 / 批量动作
+
+### 新增用例（前端 62 + 18；后端 4；真浏览器 1）
+
+**`canvas/objectContextMenu.test.tsx`（62 条）**：右键选择逻辑八条（未选 → 选中、单选保持、多选内
+保持且顺序不变、多选外切换、组成员整组、锁定不吃指针、编辑态右键别的对象退编辑、混排标注不退）；
+可编辑面板十条（结构逐项、无 override 无恢复项、编辑图内元素、重新构建调 invalidate 再按当前
+overrides 渲染且文档历史不动、裁剪、旋转面板 disabled + 原因 + 点了不动、完整放入一条历史、
+恢复先问 → 确认清空 / 另一实例不动 / 可撤销、打开全部属性选区不动、窄屏铺开右栏）；仅排版面板
+六条（结构、四种非 editable 状态统一「为什么不能编辑？」且只开接入中心、连接源脚本按 can_probe /
+can_manual_link 出现、capability 缺席什么都不说、readiness 取不到报告仍保留选区）；文字 / 箭头 /
+形状七条（结构、编辑文字、副本、锁定 → 解锁、隐藏、层级子菜单四项带快捷键且标签与直接调 action
+逐字一致、删除）；多选十二条（结构 + 计数、对齐子菜单参照行 + 六向两分布 + 左对齐标签与 action
+一致、参照读 arrangeStore、两对象分布 disabled + 原因、等宽、成组 → 整组只剩取消成组、混合选区
+两项都给、打开排列属性、副本保留组语义、批量锁定一条历史 + 混合两项、批量隐藏可撤销、层级作用
+整个选区、删除 N 个）；键盘 / 关闭 / 无障碍十二条（role + aria、↓ ↑ Home End、Enter、子菜单
+→ ← 与 Esc、Esc 不冒到 window 且选区不动、首字母不切工具、点外部关掉且另一个对象直接开、滚轮 /
+失焦、焦点归还、ContextBar 让位、目标消失自关、动作抛异常仍关）；图内元素弹层两条（仍是 dialog +
+「恢复此元素修改」、Select portal 不误关 / 点别处关 / Esc 关）。
+
+**`store/quickEditActions.test.ts`（18 条）**：批量锁定五条（混合 → 全锁一条历史带数量且选区不动、
+全解 + 幂等、单数 key、撤销整批、triStateOf）；批量隐藏一条；恢复四条（取消不动、确认只清本实例
+一条历史可撤销并渲染 `[]`、写回过的面板换 body key、无 override 不问）；重建八条（先作废后渲染 /
+按文件 id / 不清 override / 不改文档 / 不进历史 / 状态 ready / toast、顺序、作废不了 →
+`rerendered` + 「没有重跑」、作废失败不渲染 + 报错、渲染失败不叠 toast、替代传输不调作废、
+非可编辑面板跳过、同文件另一实例 stale + tracked）。
+
+**`tests/test_engine_invalidate.py`（4 条）**：磁盘面板按脚本 + 项目根作废且不起 worker、源文件
+字节不变；未登记 404 且什么都不做；native 会话不杀且 `invalidated: false`；safe runtime 面板按
+脚本作废。
+
+**`e2e/quick-menu.spec.ts`（1 条，真浏览器）**：子菜单上的 Esc 不清空选区、重新构建真跑脚本
+（冷构建 → toast）、键盘 ↓ / 首字母不切工具、贴画布右下角右键菜单翻上方 + 子菜单翻左边、
+⌘A 多选右键 → 对齐子菜单 → 左对齐三对象 x 相等。
+
+### 变异反证：22 条，19 红、3 存活（成因都说得清）
+
+判定只看退出码；树先提交（`608745c8`）再变异，脚本树不干净拒跑，每条跑完 `git checkout`
+那一个文件。定向集：`objectContextMenu.test.tsx` + `quickEditActions.test.ts` + `hitTest.test.tsx`
+（97 条）；后端三条用 `test_engine_invalidate.py`。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 右键不再把未选对象选进去 | 红（4 条） |
+| M2 右键永远重置选区为该对象 | 红（2 条） |
+| M3 右键别的对象不退图内编辑 | 红（1 条） |
+| M4 多选阈值 2 → 3 | 红（3 条） |
+| M5 capability 缺席也解释 | 红（1 条） |
+| M6 旋转面板照样能裁剪 | 红（1 条） |
+| M7 整组选区仍给成组 | 红（1 条） |
+| M8 根菜单 Esc 不在捕获层止步 | **存活（结构性）**：jsdom 没有监听器之间的微任务检查点，冒泡层 `onKeyDown` 仍跑到；真浏览器守护 `e2e/quick-menu.spec.ts`（T-98） |
+| M9 子菜单 Esc 不在捕获层止步 | **存活（结构性）**：同上；这条正是第一遍真浏览器红的那条 |
+| M10 菜单里按键冒到全局 | 红（1 条） |
+| M11 关闭后不还焦点 | 红（1 条） |
+| M12 批量锁定用 toggle | **存活（语义 no-op）**：目标已按 `!!locked !== locked` 过滤，toggle == set |
+| M13 重建不 markStale | 红（1 条） |
+| M14 重建先渲染后作废 | 红（1 条） |
+| M15 作废不了也说重建了 | 红（2 条） |
+| M16 恢复不问直接清 | 红（1 条） |
+| M17 native 会话也作废 | 红（pytest） |
+| M18 作废不带项目根 | 红（pytest） |
+| M19 元素弹层的 Select portal 守卫删掉 | 红（1 条） |
+| M20 打开全部属性不切属性页 | 红（2 条） |
+| M21 隐藏批量直接改内存不 commit | 红（2 条） |
+| M22 后端未登记 404 改成 200 | 红（pytest） |
+
+### 实跑到的、不是假设的
+
+* **真浏览器第一遍就红**：子菜单开着按 Esc → 菜单关了、选区也没了。jsdom 里同一份代码全绿。
+  成因是监听器之间的微任务检查点（T-98），修法是捕获层 `onEscapeKeyDown` 止步。
+* Radix 把「聚焦下一项」放在 `setTimeout(0)`（RovingFocusGroup）：jsdom 与 Playwright 里
+  按完方向键都要等一拍再看 `activeElement`，否则第二个 ↓ 看起来没动。
+* `alignSelectedTo('samew', 'selection')` 的结果是**选区包围盒的宽**（90），不是主选的宽——
+  第一版用例写成了 10，是我对参照语义的假设错了，判据没错。
+* 把 `ObjectView` 一次性渲染出来的用例不跟文档走：改 `locked` 之后 DOM 不重渲染，锁定那条要
+  在 seed 里就锁好。
+* 拖到 (1300, 820) 的面板落在右栏底下，右键点到的是侧栏——画布区右沿 ≈ 1040。
+
+## Session 19：设置外壳 / 编码 Agent 精简 / 包管理 / 诊断拆页
+
+### 新增用例（后端 45；前端 12 + 19 + 7 + 2 + 3；真浏览器 6）
+
+**`tests/test_package_management.py`（45 条）**：清单六条（没项目 → `no_project` 禁用原因、环境未建
+一个子进程都不起、内置 = 闭包不含 lmfit / scipy、状态按环境不按账（missing / changed）、账上的 numpy
+在闭包里标 protected、清单里没有路径 / 代理地址 / 凭据）；闭包两条（递归、无盘点只剩基础集）；语法
+与安全十六条（三条 argv 逐字节钉、十二种敌意串 × 三种操作在 plan 阶段就死且 pip 一次不调、卸载只收
+包名、未知 op、**结构性：作业解释器落在 `managedenv.env_dir` 下 + 签名里没有 `python` 参数**）；
+保护与依赖七条（卸 matplotlib / numpy / Pillow / pip 一律 protected、卸没装的、依赖者报出来、update /
+uninstall 要有环境、install 无环境就计划创建、无基础 Python 拒绝、磁盘不足只挡 install / update）；
+绑定与并发八条（未知作业、环境变了 stale、作业绑项目（A 的作业在 B 项目 409）、run 端点只读 job_id、
+plan 端点的稳定码、list 端点没项目 200 + 原因、作业与修复同一把锁、native 会话用自己的码、盘点期间
+`busy`）；记账两条（`forget_install` 按 PEP 503、快照上限与文件名无路径）；**离线真安装三条**
+（建环境 → 装本地 wheel → 账 / import / 宿主解释器 import 不到 / 清单 `in_use` → 升级幂等 → 卸载 →
+import 不到 / 账划掉 / matplotlib 仍好 / 前后快照都在；新 wheel 真升到 1.1；不存在的包报
+`dependency_not_found` 且环境仍可用）。
+
+**`SettingsDialog.test.tsx`（12 条）**：十一分区顺序与默认页、四条别名、`profiles` 深链落规范页、
+样式 / 规范各自字段、外框宽高常量切分区不变、内容区 `overflow-y-auto` + 切页 scrollTop 归零、
+导航不换行可横滚、↓ ↑ Home End 走 + 搬焦点、roving tabindex、returnTo 三条。
+
+**`PackagesSettings.test.tsx`（19 条）**：禁用原因三条（没项目 / 建不了环境 / busy）；清单五条（内置只读 +
+用户升级卸载 + 保护只读、来源与规范与版本变化、环境行、无回滚常驻、无路径）；安装六条（敌意串不发
+请求、plan → run 两步 + 进度 + 禁用不冻结、plan 失败按 code、进度到终态日志可复制 + 重读清单、别的
+作业事件不收、取消真发）；卸载三条（先问 + 依赖者列出 + 取消不 run、确认才 run、后端拒卸内置按 code）；
+升级一条。
+
+**`DiagnosticsSettings.test.tsx`（7 条）**：坏的在前说原因好的只有名字、`cli_*` 不显示且不计入异常数、
+全部正常一句话、渲染环境卡只在技术详情里一张 + 内置包版本不在、复制先预览后复制（预览阶段剪贴板
+零字节）、摘要拿不到说失败、导出按钮还在。
+
+**`agentState.test.ts`（2 条）+ `CodingAgentsSection.test.tsx`（+3）**：版本号只取数字 / 抽不出回 null；
+一级页面无路径无内部包名无说明段无卡片框、未安装 / 装坏的第二行、详情可复制。
+
+**`e2e/settings-shell.spec.ts`（6 条，真浏览器）**：切遍十一分区外框逐像素不变 + 对话框本体不滚 +
+无横向溢出；1024×640 外框在视口内；600×700 导航在内容上方 + 可切页 + 不溢出；英文四页不溢出；
+方向键走导航；三页 axe 无 critical / serious。
+
+### 变异验证记录（Session 19）
+
+**流程**：`scratchpad/mutate19.py`——树不干净拒跑；**先跑一遍基线（pytest 43 条 + vitest 五文件
+必须绿）**；每条变异 → 跑定向用例 → 按**退出码**判 → `git checkout -- 文件` 还原。
+
+| 变异 | 结果 |
+| --- | --- |
+| P1 保护闭包不递归 | 红 |
+| P2 内置包可以卸 | 红 |
+| P3 卸载不报依赖者 | 红 |
+| P4 磁盘检查删掉 | 红 |
+| P5 作业不查环境指纹 | 红 |
+| P6 run 端点不核项目 | 红 |
+| P7 install 也带 `--upgrade` | 红（argv 逐字节钉住） |
+| P8 卸载接受版本约束 | 红 |
+| P9 plan 不查环境忙 | 红 |
+| P10 划账不按 PEP 503 归一 | 红 |
+| P11 账上有就报已安装 | 红 |
+| P12 network 回代理地址 | 红 |
+| F1 卸载不问 | 红（2 条） |
+| F2 客户端不挡形状 | 红 |
+| F3 别的作业事件也收 | 红 |
+| F4 作业跑着也不禁用 | 红（2 条） |
+| F5 诊断不过滤 CLI 项 | 红（2 条） |
+| F6 版本抽不出就回原文 | 红 |
+| F7 `profiles` 别名指到样式 | 红（2 条） |
+| F8 关掉设置不回导出 | 红 |
+| F9 切页不滚回顶部 | 红 |
+| F10 外框不传固定高 | 红 |
+| F11 装好的行也显示路径 | 红 |
+
+**23/23 全红。** 没有存活项。
+
+### 实跑到的、不是假设的
+
+* **真浏览器第一遍 5 红**：状态徽章 `w-24` 定宽被英文撑破（4 条溢出用例一起红）；本机 claude 的
+  shim `--version` 第一行是 bash 报错，`agentVersionLabel` 回原文 → 一级页面出现 `/Users/…`；
+  进场动画中量 `boundingBox`（747×590）；<1024 抽屉遮罩的淡入让 Playwright 恒判不稳定。
+* **`"lmfit==1.0 "` 过了敌意用例**：`create_package_job` 在边界 `strip()`，这是合理行为；敌意串
+  改成内部空格。
+* **`open_project()` 回 dict**，`["id"]` 才是 pj。
+* **纯函数单测放进带 `root.unmount()` 的 afterEach 文件里会在 afterEach 炸**——单独成文件。
+
+## Session 20：离线教程资源与 Tutorial API
+
+### 新增用例（后端 47；前端 0；真进程冒烟 1）
+
+**`tests/test_tutorial.py`（47 条）**：资源五条（`importlib.resources` 可达且清单不含 `__pycache__`、
+元数据稳定且无路径 / 两张图都带 title · legend_text · axis_label / 至少一条 8 pt 问题、静态验证全过、
+体积与无外部数据、PDF 零尺寸被拒）+ 十三种坏资源各一条（缺 PDF / 坏 PDF / 坏注册表 / 语法错 / 读外部
+数据 / 网络 import / 绝对路径 / stems 不一致 / 文档 schema 旧 / 文档引用不存在的素材 / 超大文件 / 缺
+元数据 / 只有一张图）；副本九条（首次复制到 `v<版本>-<指纹>/Tutorial` + state.json + 可写、幂等且保留
+用户改动、reset 恢复原样且无残留、缺文件与坏注册表只补缺的、资源变了换目录旧目录留着（升版本号 /
+只改内容各一次）、复制失败旧副本原样且无 `.tmp`、占用（PermissionError）报 `tutorial_locked` 旧副本
+原样、放新副本失败把旧的放回、陈旧 `.old/.tmp` 被清、`is_tutorial_path` 只认数据目录那棵树）；
+API 十一条（GET 不泄漏包内 / 数据目录路径、GET 对坏资源如实、open 不起 worker 不 probe 不起草 + 两张
+面板都连着脚本 + `/api/layouts/Tutorial` 是 schema 3 + 再开复用、最近列表标记 + 可移除、open 不动
+用户项目、reset 只清教程 autosave 与 baked 且先 `close_project(pid, wait=True)`、reset 在没开时先建、
+默认项目归属两种、锁住 409 且旧副本重新打开、open 修复缺文件、三个端点走认证）；打包六条（读 wheel
+成员逐字节比对 + 无 `.pyc` + 体积、读 sdist 成员、解包 wheel 后子进程只靠 `importlib.resources` 找到
+资源且验证全过、spec datas 含 resources 与 profiles、pyproject / gitignore 不挡资源、冒烟脚本与 CI 的
+`--tutorial` 接线合同）；worker 真跑两条（每张图 build → stems / roles ⊇ editable_roles / 7 pt 文字 /
+build 期间副本 PDF 一个字节不变）。
+
+**`scripts/smoke_app.py --tutorial`（真进程）**：`GET /api/tutorial` → open（`default=False`）→ 两张图各
+`POST /api/engine/render?pj=` 一次并核 roles → reset → 副本完整。接进 CI 两条内置 runtime 的冒烟①。
+
+### 变异验证记录（Session 20）
+
+**流程**：`scratchpad/mutate.py`——树不干净拒跑；每条变异 → 跑 `tests/test_tutorial.py` → 按**退出码**判
+→ `git checkout -- 文件` 还原。反证前先补了四条用例（单张图元数据、reset 先关项目、陈旧残留目录、
+冒烟 / CI 接线合同）。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 reset 不先挪走旧副本 | 红 |
+| M2 缺文件不修 | 红 |
+| M3 占用不识别（`_is_locked` 恒假） | 红 |
+| M4 放新副本失败不把旧的放回 | 红 |
+| M5 指纹不看内容 | 红 |
+| M6 `is_tutorial_path` 恒真 | 红 |
+| M7 panels 只要一张 | 红（补的用例） |
+| M8 不查外部数据调用 | 红 |
+| M9 不读 PDF 尺寸 | **存活** → 坏 PDF 在 `probe_asset` 就抛、走的是 except 分支，`w_pt > 0` 那条边没人量。补 probe 回零尺寸的用例，复跑**红** |
+| M10 reset 不清教程 autosave | 红 |
+| M11 reset 清掉所有 autosave | 红（别的文档的槽位必须还在） |
+| M12 open 起 worker | 红（`_forbid_execution` 夹具） |
+| M13 `project_status` 不标 tutorial | 红 |
+| M14 reset 不先关项目 | 红（补的用例：`close_project(pid, wait=True)` 必须被调） |
+| M15 占用回 500 不回 409 | 红 |
+| M16 复制失败留半个临时目录 | 红 |
+| M17 残留目录不清 | 红（补的用例） |
+| M18 spec 漏掉 resources | 红 |
+| M19 绝对路径不查 | 红 |
+| M20 坏注册表不当缺文件补 | 红 |
+| M21 recent 不标 tutorial | 红 |
+| M22 副本不设可写位 | **存活** → 语义 no-op：`copyfile` 本就不拷权限位，副本按 umask 建成可写。删掉 chmod 而不是「加强」用例 |
+
+**22 条：20 红；2 存活各自处置（1 补用例后红，1 删冗余代码）。**
+
+### 实跑到的、不是假设的
+
+* **matplotlib 在这台机器上 import 只要 0.3 s**：worker 用例 0.26 s 跑完一度让我怀疑「没真跑」；
+  拿 manifest 元素数与 7 pt 文字核过，确实跑了。
+* **打开用户项目会起草注册表**：`test_open_does_not_touch_the_user_project` 第一版把起草算到了教程
+  头上（假红）。
+* **第一版副本目录叫 `project/`**，最近列表里就显示「project」——`project_status()["name"]` 取目录名。
+* **前端只加一个类型字段也要重建两个受管产物**（指纹覆盖 `web/src/**`）。
+* **桌面 PyInstaller 产物里 `profiles/publication.json` 本来就不在**（datas 没收，Analysis 不收数据
+  文件）——本轮顺手补上，但没有本机产物能证明，等 CI 桌面腿。
+
+## Session 21：交互式 Onboarding、真实完成条件与一次性情境提示
+
+### 新增用例（后端 0；前端 8 个文件 78 条；真浏览器 4 条）
+
+**`store/onboardingStore.test.ts`（12）**：start / pause(user|system) / resume / skip / complete / markStep 去重 /
+back 不撤完成 / resetOnboarding 与 resetHints 分开；持久化只写白名单字段；坏 blob / 非对象 / schema 不认
+→ 安全默认；逐字段校验保住能保住的；flowVersion 升级进行中回第一个未完成、已完成不打扰；persistence
+为 null 纯内存；宿主 adapter。
+
+**`lib/activity.test.ts`（5）**：`Record<ActivityKind, 样本>` 与 `ACTIVITY_KINDS` 一一对应（新增 kind 不加
+样本编译红）；每种样本的键都在 `ACTIVITY_PAYLOAD_KEYS` 里、`id / gid / name / path / text / value / stem`
+不在；emit → 订阅 → 退订；杂事件过滤；监听者抛错不冒回。
+
+**`store/selectionStore.test.ts`（3）**：set / add / toggle / clear 各发一次只带数量；没变不发；prune 不发。
+
+**`lib/onboarding/position.test.ts`（8）**：下 → 上 → 右 → 左 → 夹进视口；居中；offscreen；unionBoxes。
+
+**`lib/onboarding/flow.test.ts`（13，走生产 action）**：步骤表与 id 表对应；要编辑的是带 spec_issue 的 Fig2；
+welcome 手动且提前进入的图内编辑态在点「开始」后立刻识别；open_fast_edit 只认那张图；select_text 主选必须
+文字类 role（曲线 / figure 不算）；change_typography 要排版 override + 历史（非排版属性不算、只有信号没历史
+不算、消费后清零）；locate_problem 真 `focusObject` 成功且落在教程面板（失败不算）；「已解决」出口三条件；
+export_original 面板开着确认原图 **且关掉**；add_to_layout 在快速编辑里要按「加入画布」回版面、画布模式
+直接完成；multi_select_align 单张不算、两张教程图 + 对齐算；export_canvas 消费过的原图信号不算；done →
+complete；切项目系统暂停 / 切回自动继续 / 用户暂停不自动继续；换文档也算离开且教程外的信号（含导出范围）
+不累计。
+
+**`lib/onboarding/tutorial.test.ts`（10，stub fetch）**：open → 认领 → 教程画布用 `document_id` → 从头；有
+进度用进度；同一项目不再走认领且暂停的继续；完成后再开 = 从头且不 reset；失败按 code 分类（unavailable /
+locked / no_api / open_failed）；layout 404 → document_failed；GET 不到 → no_api；reset 先确认并列出另存
+画布、取消不发；确认后 POST → 忘掉本机那格（留一份合法但陈旧的画布反证）→ 干净画布 → 从头；409 locked
+进度不动。
+
+**`lib/onboarding/hints.test.ts`（8）**：每类一次 / 教程进行中不出 / 不叠 / 到时收起 / 重置后再出；触发：
+可编辑面板 / 仅排版面板 / 图内编辑态与快速编辑里的单选不算 / 多选 / 进快速编辑 / 第一次出现问题。
+
+**`components/onboarding/onboardingLayer.test.tsx`（6，jsdom + 假矩形）**：不在教程里不画；欢迎页居中、
+非模态、无遮罩、aria 关联、读屏区、「开始」是真动作；关闭键与 Esc = 暂停；锚点在 → 下方落位 + 高亮环 +
+进度 + 返回 / 跳过（跳过 = 前进）；锚点缺 → 等待 → 超时说找不到 → 返回真的回上一步；锚点在对话框里 →
+portal 进对话框 + 绝对定位；reduced motion 无过渡无进场动画。
+
+**既有用例改动**：`alignSelectedTo.test.ts` 两条只看排列三种 kind（总线上多了通用信号）；
+`objectContextMenu.test.tsx` 抓到 Hook 顺序随 `obj` 变（第一版把 `useEffect` 放在早退之后）。
+
+**`e2e/tutorial.spec.ts`（4，chromium，真后端 + 真 matplotlib）**：① 完整走完——素材卡双击 → 点高亮环
+中心选标题 → 字号框敲 12 → 「问题」抽屉点 p2 的 7 pt 那条 → 导出（coachmark 在面板里）确认原图 Esc →
+「添加到画布」 → Shift 点 p1（层先把它挪回工作区）→ 浮动栏顶对齐 → 导出确认画布 Esc → 「继续探索」→
+本机状态 completed；② 刷新回同一步、Tab 顺序返回→跳过→暂停、axe 无 critical/serious（`color-contrast`
+交给仓库尺子量 coachmark 与被环套着的卡片）、Esc 暂停后刷新不出现、「更多」菜单继续；③ 拖走第一张图 →
+⌘K「重新开始教程」→ 确认 → 图回原位（按页面相对位置判）、欢迎页、最近列表显示「教程项目」不显示数据
+目录路径；④ 从别的项目「更多」开始 → 切回原项目 coachmark 消失 → 切回教程自动继续。
+
+### 变异验证记录（Session 21）
+
+**流程**：`scratchpad/mutate21.py`——树不干净拒跑；每条变异 → 跑指定 vitest 文件 → 按**退出码**判 →
+`git checkout -- 文件` 还原。
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 select_text 不看 role | 红 |
+| M2 change_typography 的与改成或 | 红 |
+| M3 problem.focused 不看 ok | 红 |
+| M4 完成时不消费信号 | 红（2 条） |
+| M5 export_original 不要求面板关掉 | 红 |
+| M6 inTutorial 不看 documentId | 红 |
+| M7 离开教程不暂停 | 红（2 条） |
+| M8 不在教程里也累计信号 | **存活** → 原用例发的两条信号（属性 / 历史）还有第二道守卫 `editingTutorialPanel()`，切走文档后 `ctx.edit` 为 null 本来就不累计——变异在那两条上不可观测。补「教程外开导出面板确认原图」（没有第二道守卫的那一类），复跑**红** |
+| M9 flowVersion 升级不回到未完成步骤 | 红 |
+| M10 markStep 不去重 | 红 |
+| M11 persistence 为 null 仍写 localStorage | 红（2 条） |
+| M12 提示不看 hintSeen | 红 |
+| M13 提示不看教程进行中 | 红 |
+| M14 落位永远放下方 | 红 |
+| M15 coachmark 上的 Esc 不暂停 | 红 |
+| M16 锚点在对话框里也 portal 到 body | 红 |
+| M17 已解决出口不看检查跑过没有 | 红 |
+| M18 open_fast_edit 不看是哪张图 | 红 |
+| M19 教程画布不用 document_id | 红（4 条） |
+| M20 重置不忘掉本机那格 | 红（反证前先把用例里的陈旧槽位换成**合法**画布——第一版塞的 `{"stale":true}` 不是文档，`readAutosaveDoc` 根本读不回来，变异照样绿） |
+| M21 同一项目再点入口也走认领 | 红 |
+| M22 对齐信号不看选区里有几张教程图 | 红 |
+| M23 activity payload 白名单放进 id | 红 |
+| M24 选区没变也发信号 | **存活** → 没人量过这一维。补 `selectionStore.test.ts`，复跑**红** |
+
+**24 条：22 红 + 2 存活各补用例后红。**
+
+### 实跑到的、不是假设的
+
+* **画布上双击面板走的是 `enterElementEdit`，不是 `openFastEdit`**（后者只在素材卡 / 交接 / 拖放）。
+  Step 1 的完成条件因此认状态不认那一个 action（T-110）。
+* **问题面板的图内问题从渲染后的 manifest 算**；两张图在画布上都会被显示渲染，所以两张图的问题都在——
+  第一版 e2e 点了 Fig1 的一条 `font-below-absolute-floor`（8.5 pt 刻度）就完成了 Step 4，教程接着在 Fig1
+  的快速编辑里说话。产品上「任一教程面板」都算是对的；e2e 改成点 p2 那条。
+* **`display:contents` 的锚点没有盒子**（TypographyControls 的行内 Anchor）：`boxOf()` 并集子节点。
+* **画布对象被平移到抽屉后面时 `getBoundingClientRect` 照样有值**：按窗口判 offscreen 是假的，得按
+  `[data-canvas-stage]` 的矩形判（T-114）。第一遍 e2e Step 7 就红在这里。
+* **coachmark 自己也是 `role=dialog`**：Playwright 的 `getByRole('dialog')` 会把它算进去，导出面板要按
+  `:not([data-onboarding-coachmark])` 找。
+* **写盘成功后本机 autosave 槽位会被删掉**（`scheduleDiskWrite` 的 then 分支）：拿 `localStorage` 里的
+  槽位当「文档内容」判据是假的，e2e 改成按页面相对位置量、单测改成留一份合法的陈旧画布。
+* **Radix 把 `data-onboarding-back` 这类布尔属性渲染成 `"true"`**，不是空串。
+* **axe 在高亮环下报的 `color-contrast` 落在 `ScriptLibrary` 的「高级详情」summary 上**（2.54:1，
+  `text-ink-faint`）——与教程无关的既有问题，记进 STATUS 遗留。
+* **assertion 前提错过三次**：back 的目标是上一步不是下一步；`fetchAutosave` 回的就是文档本身；
+  重置后那格槽位装的是**新的**干净画布不是空。
+
+## Session 22：Codex / AI 显式刷新、去重、遥测整合、入口与文档
+
+### 新增用例（后端 47；前端 44；真浏览器复跑 3 个 spec）
+
+**`tests/test_ai_refresh.py`（18）**：`refresh_outcome` 五档（skipped / not_wired / ok 只有枚举与布尔 /
+RefreshError 带 code / 未预期异常归 refresh_failed）；`_after_ai_change` 七条：三件事各做一次且 watcher 随后
+两轮零动作、再改一次照常触发；**pending 里躺着的写入也算没消化**（反证 M3 补）；不 probe 不跑脚本
+（RAN.txt 不存在）；watcher 先结算时不再作废、不再发第二份事件；没有 watcher 全做；新脚本进 diff；项目已
+关闭 → `project_closed`；注册表坏 → failed 带 code；两个项目互不相干。`ai_bridge.run` 四条（假 CLI 是一段
+python）：changed=true 时刷新在 `ai.done` 之前、`ai.done.refresh` 与历史库一致；changed=false 跳过；刷新失败不把
+会话记成失败；后端重启后 `get()` 从历史库带回 refresh。端点接线一条（源码判据）。
+
+**`tests/test_telemetry_integrations.py`（12）**：manual 无变化 → `none`、无脚本名 / 路径；codex 新脚本 →
+`one`；未知来由归 manual；probe / registry 不记（守的是表的枚举）；刷新失败零事件；桶边界六档；包操作只记
+终态、无包名；CONSENT_VERSION ≥ 2 且九条都在表里；`step_id` 枚举与 `stepIds.ts` 逐字同源。
+
+**`tests/test_mcp_server.py`（+16）**：schema + description + 无 `_meta` + instructions；经会话刷新；越界路径拒且注册表
+零改动、**越界的不存在路径也是 `path_out_of_scope`**（反证 M13 补）；空 diff（第二轮 baseline=false）；新脚本 +
+新素材；readiness 摘要只有六个键；不 probe 不起 worker 不 import；不可达 → local 且文字说「未在运行」；可达 →
+open(default=false) → refresh?pj= reason=codex → readiness；可达失败原样带 code；no_project；两项目 →
+ambiguous（错误里无路径）+ session_id 只刷一个；结果无绝对路径；reason 固定 codex；无注册表目录。
+**`tests/test_mcp_resolver.py`（+1）**：降级 server 对 `tavotto_refresh_project` 回结构化错误。
+
+**前端**：`lib/activityTelemetry.test.ts`（13：十二种映射、桶边界、不从浮动栏不映射、其余十五种 kind 逐种不映射、
+payload 只有两键、作用域收回 / 抛出也收回、more、没同意不发、幂等、`readinessStatusBucket`）；
+`components/CommandPalette.test.tsx`（7：六条命令中英文齐、两份资源 id 集合一致、不重复、没项目整组不出现、
+刷新调统一端点 reason=manual、接入状态 source=palette、英文关键词可搜）；`lib/onboarding/flowTelemetry.test.ts`
+（5：完成记 / 跳过不记 / 走完另记 completed / 十个 id 闭集 / 没同意不发）；`store/projectReadinessStore.test.ts`
+（+3：banner + mixed、quickedit + all_editable、不带来源 / 报告失败 / 没同意都不记）；`hooks/useServerEvents.test.ts`
+（+5：ai.done 不 markStale 且两条事件之间不弹「脚本已更新」、watcher 那条照旧提示、刷新失败单独提示且错误码翻译、
+skipped 走普通结局、老后端无字段行为不变）；`lib/onboarding/tutorial.test.ts`（+3：started 记来源与版本无 id、
+继续不记、无来源 / 没同意不记）；`canvas/context-bar/multiSelectionBar.test.tsx`（+3：三种按钮各一条无对象 id、
+禁用按钮不记 + more、程序调用不算浮动栏）；`store/documentStore.test.ts`（+5：autosave ok、manual、409 →
+conflict、restore / keep_main、没同意不发）。
+
+### 变异验证记录（Session 22）
+
+后端 17 条（`scratchpad/mutate_backend.py`，每条变异后只跑点名的用例、`git checkout` 还原、清 `__pycache__`）：
+
+| # | 变异 | 结果 |
+| --- | --- | --- |
+| M1 | AI 路径不再问 watcher（`fresh = None`） | 红 |
+| M2 | `absorb` 不更新快照签名 | 红 |
+| M3 | `absorb` 忽略 pending（只比快照） | **存活** → 成因：用例的 watcher 防抖为 0，从没出现「拍进 pending、未结算」这一档；补 `test_a_write_already_pending_in_the_watcher_is_still_fresh`（防抖 0.5 + 假时钟）后红 |
+| M4 | 刷新失败记成 ok | 红 |
+| M5 | `ai.done` 在刷新之前发 | 红 |
+| M6 | 刷新遥测收所有来由（删 app 层守卫） | **存活** → 成因：冗余保证——`EVENTS` 表的枚举本来就丢掉 probe / registry。处置：删掉 app 层那份；改成「刷新成功不记」重跑 → 红 |
+| M7 | 桶边界 5→6 | 红 |
+| M8 | `panel.file_changed` 丢掉 reason | 红 |
+| M9 | 包操作中间态也记 | 红 |
+| M10 | MCP reason 透传 | 红 |
+| M11 | 可达但失败时退回本地 | 红 |
+| M12 | 多项目时挑第一个 | 红 |
+| M13 | 越界路径不再先 `check_scope` | **存活** → 成因：`resolve_target` 之后的第二次 `check_scope` 兜着。前一次有独立理由（不泄露范围外路径的存在性），补「越界的不存在路径也是 `path_out_of_scope`」后红 |
+| M14 | 结果带绝对路径 | 红 |
+| M15 | 客户端表少一条 step id | 红（两侧对拍 + 与 stepIds.ts 对拍双红） |
+| M16 | 项目已关闭仍刷新 | 红 |
+| M17 | 历史库不写 refresh 列 | 红 |
+
+前端 19 条（`scratchpad/mutate_frontend.py`）：F1–F3 映射来源 / 作用域 / more；F4 **reason=ai 照样弹「脚本已更新」存活**
+→ 成因：用例只看 `ai.done` 之后的最终状态，而它本来就会盖掉前一条——补「两条事件之间状态为空」的断言后红；
+F5 ai.done 再 markStale、F6 刷新失败当成功、F7 报告没到也记、F8 不带来源默认 panel、F9 跳过也记、F10 走完不记
+completed、F11 继续也记 started、F12 没项目也列刷新命令、F13 面板入口来源写错、F14 浮动栏不包作用域、
+F15 手动记成 autosave、F16 409 记成 failed、F17 保留主版本不记、F18 选区桶 6→7、F19 零张图也给桶——全部红。
+
+### 实跑到的、不是假设的
+
+- 静态发现只登记看得见 stem 的脚本：`def main(): pass` 不进注册表，三条用例第一遍假红（diff 空 / 桶 none）。
+- 假 CLI 用 `sys.executable -c` 改文件即可端到端跑 `ai_bridge.run`：pump 线程、快照、历史库、`ai.done` 全走真代码。
+- jsdom 没有 `scrollIntoView`；React 受控输入直接赋 `value` 不触发 onChange。
+- `panel.file_changed` 顺手 `refreshAssetsAndSync`：`fetchPanels` 没给 resolved 值 = unhandled rejection，全绿 exit 1。
+- `pnpm i18n:extract` 往四个命名空间塞空键、拆复数基键，`i18n:check` 立刻红（`docs/i18n.md` 早有记录）。
+- 后台命令继承上一条的 cwd：`pnpm test` 在 worktree 根起步 → `ERR_PNPM_NO_PKG_MANIFEST`。
+
+## Session 23：全量 QA、真实用户流程、性能与发布门禁
+
+### 先跑基线（改动前，本树 5608008f，机器 Apple M4 Pro / 24 GB / macOS 26.6.2）
+
+| 命令 | 结果 | 耗时 |
+| --- | --- | --- |
+| `ruff check . && ruff format --check .` | ✅ | 0 s |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | ✅ 一致 | 1 s |
+| `PYTHONPATH=<wt>/src .venv/bin/python -m pytest -q tests --junitxml`（`TAVOTTO_NO_TELEMETRY=1`） | **3840 条：1 failed / 34 skipped**——唯一红是 `tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`（90 s 内没退出；四路审计扫描并行时负载 13.6）；单跑 3.8 s 绿。它是 STATUS 遗留表里「对机器负载敏感」的那条，本轮多一条证据 | 752 s |
+| `cd web && pnpm test` | ✅ 182 文件 / 2496 条 | 15 s |
+| `pnpm build` | ✅（主 chunk 1.85 MB / gzip 574 kB，R-17 从 1.57 MB 涨上来） | 6 s |
+| `pnpm i18n:check` / `pnpm lint` | ✅ / ✅ 无 error | 1 s |
+| `build_frontend.py` + `TAVOTTO_PYTHON=<repo>/.venv/bin/python PYTHONPATH=<wt>/src npx playwright test`（三个 project 全量） | **126 条：2 failed / 1 skipped / 123 passed**——两条红正是 STATUS 登记的 `ux-consistency` 流程 B / D | 1068 s |
+
+### 审计（四路只读扫描 + 本人复核，报告在会话目录）
+
+| 维度 | 结论 | 处置 |
+| --- | --- | --- |
+| 反序列化 | pickle / marshal / yaml / eval 零命中；`exec` 只在 bridge 子进程跑用户脚本（本职） | — |
+| 文档落盘 | layouts / autosave / versions / baked / profiles / 注册表 / 教程 / 导出全部经 `atomicio`；**`POST /api/layouts/<name>` 不调 `validate_document`**、无冲突检测 | 判据已补（T-123）；冲突检测记 #222 |
+| 上限 | versions 40/120 条、baked 50、备份 20；**autosave 目录无上限无清理** | #221 |
+| 非有限数 | 写侧 `allow_nan=False` 唯一实现；读侧四处裸 `json.loads` | #222（P3） |
+| 外部修改 | autosave 内容 hash + 409、旧前端 updatedAt、写回 mtime+sha1+size 三套各管一条路，无静默覆盖 | — |
+| 原图写回 / AI 回滚 | 裸 `replace` / `copy2`，无 fsync，有备份（20 份）兜底 | R-05 族，择机 |
+| 刷新漏斗 | 六条入口全经 `app.refresh_project`；`registry.changed` / `assets.changed` 只在 `project_refresh.py` 一处发 | — |
+| 检查引擎 | `runSpec` / `buildSpec` 只在 `validation.ts` 调；无第二个阈值；问题面板不露 gid | — |
+| 导出 | 五个端点全经 `exportreq.normalize` + `exportjob`；对话框顺序与 ADR 0031 §6 逐项一致；**MCP 插件自己那套导出** | #224 |
+| 属性写入 | **`ElementBar` 文字分支绕过 `TypographyAdapter`** | 已修（T-126） |
+| 遗留物 | console.log / debugger / TODO / `.only` / 杂散文件 / feature flag 零命中 | — |
+| 品牌 / i18n | `playground/main.tsx` 三条硬编码产品名与双语分支；`mcp/main.tsx` Splash 三条硬编码中文 | 已修 |
+| 打包 | wheel / sdist 四项资源齐；**`canvas_coverage.json` 不在 PyInstaller datas**；发行链桌面冒烟不开教程；README 没提 Windows ARM | 已修（T-125） |
+| 包管理 | argv 列表无 shell；spec 按空白整条拒；受保护集合在活环境现算闭包；签名里没有解释器参数 | — |
+| 遥测 | 18 条事件三方逐位一致；唯一非枚举值 `target_version` 字符集限界且来自发布源 | privacy.md 措辞收窄 |
+
+### 新增用例（后端 23；前端 7；e2e 修 2）
+
+- `tests/test_ci_qualification.py`（+6）：R-18 的四个判据（发文档本身 / 字符串列表 / 读回是文档 / 没写成算失败）。
+- `tests/test_document_persistence.py`（+6）：另存为 round-trip；四种非文档 400；未来 schema 400 且旧文件不动。
+- `tests/test_tutorial.py`（+1，改 1）：`canvas_coverage.json` 进 datas；`desktop-tauri.yml` 的冒烟也带 `--tutorial`。
+- `tests/test_support_matrix.py`（+1）：矩阵判 windows-arm64 unsupported 时两个 README 必须说出来。
+- `tests/test_scientific_text_matrix.py`（新，7）：六项字符 × 六个文字位置 × 预览 manifest / 原图 PDF 文本层 / 原图 PNG / 画布三族 `missing_glyphs` / 画布 PDF+PNG。
+- `web/src/canvas/context-bar/elementBar.test.tsx`（新，3）：五件控件在；加粗 / 斜体离散写入落 override；属性页写的值浮动栏当场一致。
+- `web/src/hooks/useKeyboardSave.test.tsx`（新，4）：⌘S / Ctrl+S → `runManualSave` 且吃默认动作；输入框里照存；⇧⌘S 另存为；裸 s 不动。
+- `web/e2e/ux-consistency.spec.ts`：流程 B 改读「边 × 半区」锚点并先切 Y 页签；流程 D 改成十一分区里的五个 + 「关于与隐私」/「诊断 · 技术详情」。
+
+### 变异反证（全部提交后再做，`git checkout` 还原）
+
+| # | 变异 | 结果 |
+| --- | --- | --- |
+| R1 | 自动保存又包一层 `{"doc": …}` | 红 |
+| R2 | `layout_names` 只认对象 | 红 |
+| R3 | `missing_state_checks` 恒空 | 红 |
+| R4 | `document_readback` 认包一层的 | 红 |
+| E1 | 加粗永远写 `bold` | 红 |
+| E2 | 去掉斜体控件 | 红 |
+| E3 | 加粗态不读适配器 | 红 |
+| P1 | 去掉 datas 那一行 | 红 |
+| P2 | desktop-tauri 去掉 `--tutorial` | 红 |
+| P3 | README 删掉 ARM 那句 | 红 |
+| L1 | 另存为不调 `validate_document` | 5 红 |
+| K1 | ⌘S 判 `'x'` | 红 |
+| S1 | fonttype 不接管（= 修复前的树） | 矩阵用例 2 红（这就是它第一遍抓到缺陷的样子） |
+
+**这一轮的一次事故**：L1 反证时对未提交的 `app.py` 做 `git checkout`，把处理器改动一起还原了——
+「变异前先提交」这条纪律再踩一次；测试与 ADR 改动没丢，重新套上后 275 条绿再提交。
+
+### 真实用户流程 A–N：自动化覆盖映射
+
+映射在会话目录 `scenario-coverage.md`（逐条读过用例体，不按名字匹配）。本轮补上的：A 的 ⌘S 键位、
+I 的整套矩阵（两个 mu 并排 / β γ Δ / `°C` 两字形式 / Å / ≤ ≥ / 标注文字 / 四种产物串起来）。
+**仍没有自动化的**：B 的三选一关闭对话框（产品里不存在，#223）与真实进程 kill；C 的迁移前逐文档备份
+（前端原地迁移；原始 schema 2 文件在用户显式覆盖前不动）；D 的自动保存不进 watcher（autosave 在数据目录，
+不在被监视的项目树）；G 的多面板画布导出与裁剪面板导出的像素断言；L 的真 `deviceScaleFactor 1.5`
+（用 600 px 视口等价）。逐条打勾见 STATUS 的场景表。
+
+### 故障注入与并发（既有用例，按关键字点数）
+
+磁盘满 / replace 失败 2、损坏 4、冲突 26、watcher 与手动同时 2、SSE 旧响应 1、cancel / partial 8、
+内存 6、并发 / 中断 38、教程资源缺失 1、字体 / 字形缺失 15；前端 stale 46 文件、cancel 4、防抖 3、
+冲突 6、恢复 23。**没有长固定 sleep 的新用例**；本轮没有新增故障注入（缺口都归到场景表与 issue）。
+
+### 性能（数据在 `docs/perf-baseline.md`「发布终审」）
+
+交错 A/B/C 三方各 3 轮；`scripts/bench_document.py`（新）三档；watcher 空闲真进程 6 采样。
+结论：热渲染 +15%（manifest +27%，#220）；导出 +20–35 ms 全部是 fonttype 42；文档层线性；
+版本时间线塞满后 547 ms（#221）；空闲 CPU 0.0–0.1%、147 MB、3 线程、无孤儿。
+
+### 打包
+
+`python -m build`（隔离环境装 hatchling）7 s → `tavotto-0.12.0-py3-none-any.whl` 1.50 MB + sdist 4.59 MB；
+`scripts/ci/lab_acceptance.py --dist dist`（`TAVOTTO_CI_STATE_ROOT` 指到会话目录）：import / 版本 /
+web/index.html / worker / patchspec / profiles / console script / `--help` / `doctor --json` / 端到端冒烟
+（启动 → 渲染 → 热渲染 → 导出 → 覆盖导出 → 干净退出）**全部 ✅**；`test_tutorial` 的三条真 wheel 用例
+（教程资源集合逐一相等、sdist 同、解开后经 importlib.resources 定位）✅。桌面产物：**本机未验证**
+（PyInstaller / Tauri 产物在 CI 桌面腿；本分支的 `--tutorial` 与 datas 改动会在合并队列第一次执行）。
+
+### 评审回合 1（PR #228，Codex 两条 P2，全改）
+
+| 条 | 处置 | 判据 |
+| --- | --- | --- |
+| `packageStore.onProgress` 空闲标签页认领别人的作业 | 只认本标签页 `run()` 起过的 `job_id`（`startedJobs`） | `PackagesSettings.test` +1（陌生 job_id 在 progress 为空时不显示、不刷清单）；变异「退回只挡不同作业」红 |
+| `/api/engine/packages/cancel` 不核作业归属 | cancel 与 job 补拉都按 `job.project == root` 核（与 `/run` 同一判据） | `test_cancel_and_poll_refuse_another_projects_job`；变异「归属恒 False」红 |
+
+两条都是 Session 19 的代码；Codex 定 P2，本轮按「跨项目事件污染」（P0 类）处置。第一遍假红是夹具的
+假 `cancel` 对任何 id 都回 True（[[fixture-makes-the-predicate-vacuous]] 同族）。
+
+### 评审回合 2（PR #228 的 `full-ci` 桌面腿：Windows 打包产物上的 Playwright 第一次跑本分支）
+
+`windows-exe-smoke`：99 passed / 4 flaky / 2 failed / 21 skipped（25.8 min）。两条真红都是**竞态**，mac 上稳绿：
+
+| 条 | 现场证据（trace.zip 的 network / 快照） | 处置 | 判据 |
+| --- | --- | --- | --- |
+| `tutorial.spec` 重新开始教程：画布没恢复原位（差 0.199 = 拖过的那段） | `POST tutorial/reset` 返回前后前端又 `PUT autosave` 两次（派生同步作用在还没换掉的旧文档上），随后 `GET autosave` 200 读回拖过的文档 | `resetTutorial` 先 `suspendAutosaveFor(当前教程画布)`：防抖不排、`flush` 回 skipped；`switchDocument` 换到干净画布即恢复；重置没做成手动接回 | `saveStateMachine.test` +2、`tutorial.test` +2；变异「flush 不看挂起」「reset 不挂起」各红 |
+| `quick-menu.spec` 重新构建：90 s 没弹「已按源脚本重新构建」，状态区空 | 首次渲染 3.1 s 还在飞时点了重新构建：`invalidate` 200 → 排队的那次 239 ms 才画完；`settledRender` 只等一次，在飞的结束→排队的开始是同步两次 `patch`，消费者恢复时键仍是 `rendering` → 静默 `failed` | `settledRender` 循环等到真的不在渲染 | `quickEditActions.test` +1（第二次渲染也延后释放）；变异「只等一次」红 |
+
+**这一轮的一次假绿**：第一版用例让排队那次即时返回，jsdom 里 `await settledRender()` 比 `await engineRender()`
+多一个 microtask，单次等待也恒绿——变异存活后加临时日志才看出来（[[mutation-may-not-be-a-mutation]] 的反面：
+判据没变、是**用例的输入形状**让它量不到）。四条 flaky（playground 两条、settings-shell 窄窗口、教程完整走完）
+重试即过，记在 #31 的 Windows 桌面 e2e 稳定性之下。

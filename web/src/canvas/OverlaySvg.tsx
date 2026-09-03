@@ -118,6 +118,10 @@ export function OverlaySvg() {
   const issueHighlight = useUiStore((s) => s.issueHighlight)
 
   const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
+  // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
+  // 联合框只说「选了这一片」，说不出「以谁为基准」
+  const primaryId = selectedIds.at(-1) ?? null
+  const multi = selected.length > 1
   const cropTarget = objects.find((o) => o.id === cropTargetId && o.type === 'panel')
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
@@ -206,11 +210,20 @@ export function OverlaySvg() {
       {/* 选择框；同上——形状对象只有沿真实轮廓的描示，没有矩形外框 */}
       {!cropTarget &&
         selected.map((o) => (
-          <ObjectOutline key={o.id} obj={o} t={t} dashed={o.id === editingTextId} />
+          <ObjectOutline
+            key={o.id}
+            obj={o}
+            t={t}
+            dashed={o.id === editingTextId}
+            primary={multi && o.id === primaryId}
+          />
         ))}
 
+      {/* 联合框：多选浮动栏与后续的新手提示都锚在这一个节点上（`data-multi-selection-bounds`），
+          它的几何与浮动栏的落位算的是同一份 boundsOf + 同一个视口变换 */}
       {groupBounds && !cropTarget && (
         <rect
+          data-multi-selection-bounds
           {...rectAttrs(toScreen(groupBounds, t))}
           fill="none"
           stroke={SEL}
@@ -375,14 +388,19 @@ function ObjectOutline({
   t,
   opacity,
   dashed,
+  primary,
 }: {
   obj: CanvasObject
   t: ViewTransform
   opacity?: number
   dashed?: boolean
+  /** 多选里的主选：轮廓 2px（其余 1px），并挂 `data-primary-selection` 锚点 */
+  primary?: boolean
 }) {
-  if (isLinear(obj)) return <LinearOutline obj={obj} t={t} opacity={opacity} />
+  if (isLinear(obj)) return <LinearOutline obj={obj} t={t} opacity={opacity} primary={primary} />
   const box = toScreen(obj, t)
+  const strokeWidth = primary ? 2 : 1
+  const anchor = primary ? { 'data-primary-selection': obj.id } : {}
   const outline =
     obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
       ? shapeOutline(
@@ -396,12 +414,13 @@ function ObjectOutline({
   if (!outline) {
     return (
       <rect
+        {...anchor}
         {...rectAttrs(box)}
         transform={spinOf(obj, box)}
         fill="none"
         stroke={SEL}
         strokeOpacity={opacity}
-        strokeWidth={1}
+        strokeWidth={strokeWidth}
         strokeDasharray={dashed ? '3 2' : undefined}
       />
     )
@@ -410,14 +429,14 @@ function ObjectOutline({
     fill: 'none' as const,
     stroke: SEL,
     strokeOpacity: opacity,
-    strokeWidth: 1,
+    strokeWidth,
     strokeLinejoin: 'round' as const,
     style: { shapeRendering: 'geometricPrecision' as const },
   }
   // 轮廓算在对象自己的局部坐标里，先平移到包围盒左上角，再由 spin 转到朝向
   // （SVG 的 transform 列表从左往右应用，所以 rotate 写在 translate 前面）
   return (
-    <g transform={`${spinOf(obj, box) ?? ''} translate(${box.x},${box.y})`.trim()}>
+    <g {...anchor} transform={`${spinOf(obj, box) ?? ''} translate(${box.x},${box.y})`.trim()}>
       {outline.kind === 'ellipse' ? (
         <ellipse cx={outline.cx} cy={outline.cy} rx={outline.rx} ry={outline.ry} {...common} />
       ) : outline.kind === 'poly' ? (
@@ -438,15 +457,18 @@ function LinearOutline({
   obj,
   t,
   opacity,
+  primary,
 }: {
   obj: LinearObject
   t: ViewTransform
   opacity?: number
+  primary?: boolean
 }) {
   const ends = lineEndpoints(obj)
   const box = toScreen(obj, t)
   return (
     <line
+      {...(primary ? { 'data-primary-selection': obj.id } : {})}
       x1={box.x + ends.start.rx * box.w}
       y1={box.y + ends.start.ry * box.h}
       x2={box.x + ends.end.rx * box.w}
@@ -454,7 +476,7 @@ function LinearOutline({
       transform={spinOf(obj, box)}
       stroke={SEL}
       strokeOpacity={opacity}
-      strokeWidth={1.5}
+      strokeWidth={primary ? 2.5 : 1.5}
       strokeLinecap="round"
       style={{ shapeRendering: 'geometricPrecision' }}
     />

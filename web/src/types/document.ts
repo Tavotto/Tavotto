@@ -141,6 +141,26 @@ export interface TextObject extends ObjectBase {
   type: 'text'
   text: string
   sizePt: number
+  /**
+   * 字体族。**可选：老文档没有它 = 从没设过 = 继承默认（衬线）**，
+   * 磁盘格式不升版，导出载荷也不多字段。生效值一律经
+   * `lib/typography.effectiveCanvasFamily()` 取，别处不许写第二个默认值。
+   *
+   * 取值是三个通用族的闭集（`CANVAS_TEXT_FAMILIES`）——合成跑在没有
+   * matplotlib 的 Flask 进程里，画得出来的就是 PyMuPDF 的 base-14。
+   */
+  fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /**
+   * 科学文本解释档位。**可选：老文档没有它 = auto**（与升级前逐字符同样的
+   * 渲染），磁盘格式不升版。
+   *
+   *   auto        只有「不然就是方框」的 Unicode 上下标才合成
+   *   scientific  认得的 Unicode 上下标一律合成：字体统一，代价是 PDF
+   *               文本层里的 `⁵` 变成 `5`（实测），所以必须由用户明确选
+   *
+   * 闭集与语义的唯一出处是 `lib/richText.ts`（↔ `src/tavotto/richtext.py`）。
+   */
+  interpretation?: 'auto' | 'scientific'
   bold: boolean
   /** 可选：旧文档无此字段，undefined 即 false（后端 t.get("italic") 同义）。
    *  斜体只作用于拉丁字形——导出走 times-italic，宋体无斜体变体。 */

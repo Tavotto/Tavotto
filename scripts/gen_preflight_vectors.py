@@ -135,11 +135,15 @@ def _spec(
 
 
 def _text(tid: str, size_pt: float, text: str = "(a)", **kw) -> dict:
+    # `font_family` 是**生效**的族（前端由 `effectiveCanvasFamily()` 算出来），
+    # 缺省就是衬线——所以老向量里那些没写这一维的文字与这里的缺省一致，
+    # 加这一维不改任何一条既有向量的结论。
     base = {
         "id": tid,
         "text": text,
         "size_pt": size_pt,
         "bold": False,
+        "font_family": "serif",
         "rect_mm": [1.0, 1.0, 10.0, 5.0],
         "hidden": False,
     }
@@ -442,6 +446,113 @@ def cases() -> list[dict]:
     out.append(
         {
             "name": "font-too-large",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 13e. 画布文字的字体族：规范只认衬线那一族，无衬线是「已知的替代品」、
+    #      等宽连替代品都算不上——**两条走不同的 message key**，而两侧必须
+    #      给出同一个答案。这条向量是「标注能设字体」这个新能力的跨语言看护。
+    out.append(
+        {
+            "name": "canvas-text-font-family",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[
+                    _text("t-serif", 9.0, "(a)", font_family="serif"),
+                    _text("t-sans", 9.0, "(b)", font_family="sans-serif"),
+                ],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-font-family-unknown",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-mono", 9.0, "(a)", font_family="monospace")],
+            ),
+        }
+    )
+
+    # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
+    #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
+    #      ② 画布文字里的 `⁵` 会退到另一张脸 → glyph-substituted；
+    #      ③ 同一段文字选 `scientific` 之后 `⁵` 被合成掉，**一条都不该报**
+    #         ——判据必须量渲染表示，量原文的话这条会假红；
+    #      ④ 图内文字的两张单子直接来自 manifest（产生者只有引擎一处）。
+    out.append(
+        {
+            "name": "canvas-text-glyph-missing",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-arabic", 9.0, "T\u061f = 5")],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-glyph-substituted",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-sup", 9.0, "\u00d710\u2075")],
+            ),
+        }
+    )
+    out.append(
+        {
+            "name": "canvas-text-glyph-scientific-mode",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[_text("t-sup", 9.0, "\u00d710\u2075", interpretation="scientific")],
+            ),
+        }
+    )
+    m = _clean_manifest()
+    m["elements"][3]["glyphs_missing"] = ["\u4e2d", "\u6587"]
+    m["elements"][4]["glyphs_fallback"] = ["\u2075", "\u207b"]
+    out.append(
+        {
+            "name": "figure-text-glyph-coverage",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 15. 图例项的示意线（ADR 0034）：自定义的一项线宽脱档要报、定位到那一项；
+    #     跟随源的一项即使示意线宽脱档也不报（源那条规则已经管着，源本身合规）
+    m = _clean_manifest()
+    m["elements"] += [
+        {
+            **_el("axes_0.legend.texts_0", "legend_text", fontsize=9.0, handle_linewidth=1.2),
+            "legend_entry": {
+                "index": 0,
+                "source_gid": "axes_0.lines_0",
+                "binding_default": "custom",
+            },
+        },
+        {
+            **_el("axes_0.legend.texts_1", "legend_text", fontsize=9.0, handle_linewidth=1.2),
+            "legend_entry": {
+                "index": 1,
+                "source_gid": "axes_0.lines_1",
+                "binding_default": "follow_source",
+            },
+        },
+    ]
+    for j, binding in ((0, "custom"), (1, "follow_source")):
+        m["elements"][-2 + j]["editable"].append(
+            {"prop": "binding", "type": "enum", "value": binding}
+        )
+    out.append(
+        {
+            "name": "legend-entry-custom-handle-width",
             "profile_id": "lab-publication-v1",
             "spec": _spec([_panel("p1", manifest=m)]),
         }

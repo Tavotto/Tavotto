@@ -850,3 +850,51 @@ node tests/support/browser_dom_probe.mjs /tmp/paths.svg --cycles 2 --copies 4
 （`tests/conftest.py` 头一句写着这件事），要的是 worker 那一侧的那个。
 第 2 步要 `web/node_modules`（`cd web && pnpm install`）与 Playwright 的
 Chromium（`pnpm exec playwright install chromium`）。
+
+## 发布终审（Session 23，2026-09-02）：main vs 产品体验分支的交错 A/B/C
+
+机器：Apple M4 Pro / 24 GB / macOS 26.6.2；解释器 `.venv`（Python 3.13.11）+ worker
+`/opt/homebrew/opt/python@3.13`（matplotlib 3.10.8）；图库 `examples/figures`；
+`scripts/bench_render.py --plane python --repeat 7`，A / B / C **交错**各跑 3 轮取中位
+（不同时刻的两次跑是样本不是对照）。A = `origin/main`（`c12c229c`），B = 分支 `9d8dadc5`，
+C = 分支去掉 fonttype 42 那一笔（`5d35686e`）。
+
+| 面板 | 指标 | A main | B 分支 | C 分支-42 |
+|---|---|---|---|---|
+| Fig1_kinetics | 冷 wall | 452.0 | 472.9 | 470.7 |
+| | 冷 script_build | 95.0 | 108.6 | 110.0 |
+| | 热 wall（中位） | 31.3 | 36.2 | 36.0 |
+| | 热 manifest | 17.7 | 22.4 | 22.1 |
+| | 热 canvas_draw | 11.4 | 11.5 | 11.4 |
+| | 导出 wall | 63.8 | **98.2** | 63.7 |
+| Fig2_correlation | 热 wall / manifest | 28.0 / 17.2 | 31.2 / 20.0 | 30.9 / 19.8 |
+| | 导出 wall | 55.2 | **74.9** | 54.6 |
+| Fig2_yield | 热 wall / manifest | 18.9 / 10.0 | 21.0 / 12.0 | 21.2 / 12.2 |
+| | 导出 wall | 20.4 | **54.6** | 20.9 |
+
+结论（单位 ms）：
+
+* **热渲染慢 ~15%，全部落在 manifest 步骤（+27%，约 5 ms/次）**，`canvas_draw` 持平。是 13–22
+  十轮的累计代价（B ≈ C）。`manifest._glyph_scan` 每次 7 µs，不是它。记 P2（T-127）：
+  **阈值**——manifest 超过 main 的 1.3× 算回归、2× 升 P1；复现：上面那条命令在两棵树上交错跑。
+* **导出多出的 20–35 ms 全部来自 fonttype 42**（C 与 A 持平）：TrueType 子集化的固定代价，换来
+  完整的 PDF 文本层与 Type 0 嵌入（T-122）。微基准：单张简单图 `savefig(pdf)` 10 → 28 ms，
+  字节 12.5 KB → 9.9 KB。
+* 冷启动 +4%（script_build +14%，绝对 13 ms）：worker 端 import 面变大，同一族。
+
+### 文档层（`scripts/bench_document.py`，新增）
+
+| 对象数 | 字节 | validate | write_json | read | revision | autosave PUT | autosave GET | 版本追加（已满 120） |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 23 KB | 0.0 | 0.29 | 0.15 | 0.03 | 0.74 | 0.10 | 9.3 |
+| 1 000 | 230 KB | 0.0 | 1.4 | 1.3 | 0.1 | 4.25 | 0.17 | 102.5 |
+| 5 000 | 1.16 MB | 0.0 | 7.3 | 7.2 | 0.39 | 20.8 | 0.47 | **547** |
+
+自动保存本身是线性的（1 MB 文档 21 ms 往返）。**版本时间线每条塞整份文档**：上限是条数（120）
+不是字节，1 MB 的文档塞满后单文件约 140 MB，每次追加要「读 → 追加 → 裁 → 整写」547 ms。
+记 P2（issue 见 STATUS 遗留表）；阈值：1 000 对象的追加超过 250 ms 升 P1。
+
+### watcher 空闲（真进程，`examples/figures`，渲染一次后）
+
+6 个 5 秒采样：app + worker 合计 CPU **0.0–0.1%**，RSS 147 MB，主进程 3 线程 / 56 fd；
+`touch` 三个脚本后三次采样 CPU 仍 0.0%（批次合并成一次刷新，日志 3 行）；`kill` 后无孤儿子进程。

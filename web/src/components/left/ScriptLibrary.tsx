@@ -358,7 +358,7 @@ function AdvancedDetails({ entry }: { entry: ScriptInventoryEntry }) {
   useTranslation('workspace')
   return (
     <details>
-      <summary className="cursor-pointer select-none text-xs text-ink-faint outline-none hover:text-ink-3 focus-visible:focus-ring">
+      <summary className="cursor-pointer select-none text-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring">
         {sc('advanced')}
       </summary>
       <dl className="mt-0.5 flex flex-col gap-0.5 text-xs text-ink-3">

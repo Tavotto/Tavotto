@@ -279,6 +279,248 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 
+## 属性能力层与 Typography 控件（2026-09-01，ADR 0032）
+
+完整版在 `docs/adr/0032-typography-capability-layer.md`，改动前先读。
+**「一段文字长什么样」只有一套词汇**：
+
+```text
+lib/typography.ts          规范属性名 · 取值语义 · 能力表 · property path · 校验
+  → components/inspector/typographyAdapter.ts
+       useFigureTypography（能力问 manifest，写 setOverride(s)）
+       useCanvasTypography（能力看 TextObject 字段，写 updateObjects）
+  → components/inspector/controls/TypographyControls.tsx（一份控件）
+       属性页图内文字 / 图内批量 / 画布标注 / 浮动工具条 —— 四个入口
+```
+
+* **不许在组件里按对象类型 switch 着写属性。** 要新属性就加进
+  `TYPOGRAPHY_PROPS`，三张表（支持 / path / 校验）一起改；在第二个组件里抄
+  一份换算就是埋一次分叉——`ContextBar` 的文字快捷编辑以前正是那样，
+  没有斜体、没有字体、`o.bold = !o.bold` 与属性页的 `!bold` 在多选下算出不同
+  的结果。
+* **值有四档，一档都不许压扁**：`uniform` / `mixed` / `inherit` / `unsupported`。
+  字号 mixed 画成 9 pt、字体 inherit 画成一次显式设置，都是数据损坏级的误导。
+* **能力有两层**：静态支持表只答「值不值得问引擎」，图内真正能改什么由
+  manifest 的 `editable` 说了算。
+* **property path 只有 `propertyPathOf(kind, prop)` 一份**：检查报的字段名、
+  控件挂的 `data-prop`、`issueFocus` 查的选择器同源。`TEXT_BAR_PROPS`
+  （「平铺列表要让出哪几条」）**从这张表算出来，不手抄**。
+* **画布文字的字体族是闭集**（`serif` / `sans-serif` / `monospace`），与
+  `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源（顺序也比）。合成跑在没有
+  matplotlib 的 Flask 进程里，画得出来的就是 PyMuPDF 的 base-14；摆一个画不
+  出来的选项 = 静默替换。`TextObject.fontFamily` 是**可选字段**，缺席 = 没设过
+  = 继承默认族，回到默认值时**删字段**。
+* **写入**：invalid 输入不开事务、不 commit、不进历史，校验**不 clamp**；
+  连续输入合并成一条历史，且 `write()` **自己会开一轮**——打字那条路没有
+  `onScrubStart`。
+* **字形归属与科学文本（ADR 0033）**：`lib/glyphPlan.ts` 回答「这个字符导出
+  后由哪张脸画、会不会是方框」，判据是**生成的覆盖表**（`@glyphcoverage`
+  别名，与 `src/tavotto/glyphplan.py` 严格同源）——**不是浏览器自己的字体
+  栈**。拿浏览器画得出当判据的结果正是「预览好好的、导出上是个方框」。
+  `TextObject.interpretation` 两档（`auto` 默认 / `scientific`），合成只生成
+  渲染表示，**raw text 一个字符不改**；`scientific` 的代价是 PDF 文本层里的
+  `⁵` 变成 `5`，所以它必须由用户明确选。缺字形与「换了脸」是**两条规则、
+  两句话**（`glyph-missing` / `glyph-substituted`）。
+* 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
+  warning**，绝不换掉再改文档。
+* 看护：`lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`
+  / `lib/canvasTextFont.test.ts` / `TextSection.test.tsx` / `textStyleBar.test.tsx`
+  / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
+  `tests/test_typography_families.py`。
+
+## 图例条目与绑定（2026-09-02，ADR 0034）
+
+完整版在 `docs/adr/0034-legend-entry-binding.md`，改动前先读。
+
+* **图例项 = 一段文字 + 一个条目**：文字那半走 ADR 0032 的 Typography 控件；
+  条目那半（`binding` / `handle_*` / `visible`）是 `legend_text` 元素上的普通
+  manifest 字段。`lib/legendModel.ts` 是前端投影：显示顺序、每项此刻的绑定
+  （判据与引擎 `effective_binding` 同一条——任一 `handle_*` override 在即
+  custom，**不是**「值和源一不一样」）、「恢复跟随」的计划。
+  `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与 `engine/overrides` 严格同源。
+* **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（Typography 批量作用
+  于全部项）与 `entry_order`（条目列表的上下移动），通用列表让出这两条
+  （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
+  预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
+* **恢复跟随**只有 `store/actions.restoreLegendEntryFollow` 一处：删全部
+  `handle_*` override + 按 `binding_default` 决定写 `binding=follow_source` 还是
+  删 binding override，**一次 commit**。别在组件里逐条 `clearOverride`——那是
+  一串撤销记录，中间态还会渲染出半跟随半自定义的图例。
+* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」。
+* 看护：`inspector/legendCard.test.tsx`；Python 侧 `tests/test_legend_binding.py`。
+
+## 坐标轴边框的语义命中区与四边刻度（2026-09-02，ADR 0035）
+
+完整版在 `docs/adr/0035-axis-tick-direct-manipulation.md`，改动前先读。
+
+* **点内侧控向内、点外侧控向外、线本身选中子图**。命中函数是纯的
+  `lib/tickSides.spineZoneAt`：边框线端点来自 manifest 的 `spines`（引擎按画出来
+  的那条线给，**含偏出去的边框**），带宽按**屏幕像素**定（`ZONE_PX` /
+  `ZONE_PX_TOUCH`，调用方传「一个分数单位 = 几个屏幕像素」= 面板内容边长 ×
+  zoom），旋转由 `ElementHitLayer.frac` 反旋转——命中函数不知道 zoom 与旋转。
+  高亮条用同一把尺（`zoneRectFrac`），与命中带逐像素重合。
+* **优先级**：`pickElement` 命中文字 / 曲线 / 别的子图 / 刻度文字时边框命中区
+  让路，只有命中 figure 或那条边所属的子图本身（含铺满它的位图）才算；resize
+  手柄在 OverlaySvg 层天然在上。角落并列：更近的边 > 此刻画着刻度的边 >
+  固定次序（下、左、上、右）；twinx / secondary 与宿主重合的边同一条规则。
+* **状态是派生的**：matplotlib 的 `direction` 是整条轴的，`ticks_<side>` 是边的，
+  `inward = 边可见 && 方向含 in`。**三处同源**——画布命中区、示意图
+  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档 + 「显示边」）都读
+  `readAxesTickModel`、走 `toggleSidePlan` / `axisChoicePlan` / `sideVisiblePlan`、
+  经 `store/actions.applyTickSidePlan` **一次 commit**（方向落刻度元素、显隐落子图，
+  拆开会渲染出一帧半新半旧）。计划的 `effect.coupled` 是「方向那一步连带改到的
+  同轴另一边」——hover 文字、示意图 tooltip 必须说出来，不装作每边独立。
+* 「隐藏」是四档里的派生态（两边都不显示），不是第四个真值；从它选回方向时
+  **删**两边的 `ticks_<side>` override 回到脚本的边，不猜。
+* **不支持就不摆**：manifest 没有 `spines`（极坐标 / 3D / 色条轴）画布无命中区；
+  引擎没发某条轴的刻度元素时那两条边方向未知，示意图退回单个 `ticks_<side>`
+  开关。刻度卡承接 `minor_length` / `minor_width`（`length` / `width` 只动主刻度），
+  方向档带 `data-prop="direction"` 锚点供问题面板定位。
+* 看护：`lib/tickSides.test.ts`（几何 + 映射全状态扫描）、`canvas/spineZones.test.tsx`
+  （命中层：hover / 点击 / 优先级 / zoom / 触控 / 旋转 / 偏出去的边框）、
+  `inspector/tickTaskCard.test.tsx`（示意图两带 + 四档 + 显示边 + 锚点）。
+
+## 多选浮动栏与共享排列参照（2026-09-02，ADR 0036）
+
+完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
+
+* **一个外壳三种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（单个图内元素 /
+  单个画布对象 / 两个以上画布对象），出现与让位、落位（`position.ts` 纯函数）、
+  Esc、拖动隐藏、portal 都在外壳；三种内容各一个文件。对外仍是 `ContextBar()`。
+* **多选栏不是第二套排列系统**：按钮只发意图，落地走 `store/actions.alignSelectedTo`
+  / `groupSelected` / `ungroupSelected`——与 `ArrangeSection` 同一个函数、同一条历史
+  标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
+* **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
+  persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+* **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
+  `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
+  后续 coachmark 都锚在这两个节点上，别改名。
+* **落位不查 DOM**：联合选区经 `position.selectionScreenRect`（与 OverlaySvg 的
+  `toScreen` 同一份换算 + 视口原点）算窗口坐标。宽窄档两道判据：静态阈值
+  `FULL_BAR_MIN_WIDTH` + 量出来放不下就降级；工具条盒子必须 `w-max`，否则
+  `fixed` 盒子被可用宽度压扁、量到的不是自然宽度。
+* **锁定对象不动但算进参照框**：`alignSelectedTo` 与拖动同用 `movableTargets`；
+  对齐 / 成组 / 取消成组执行前 `finishActiveGesture()`。
+* **本地活动信号** `lib/activity.ts`（`tavotto:activity`）：闭集 kind + 枚举 + 计数，
+  无用户内容；核心 action 不 import onboarding；它不是遥测，别往 `telemetry` 里接。
+* **Tooltip 不吃指针**（含 Radix 定位外壳，`index.css` 那条 `:has([role='tooltip'])`）：
+  聚焦触发的气泡会停在下一排按钮上，真浏览器里点上去什么都不发生。
+* 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
+  `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
+  `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
+
+## 画布对象的右键菜单（2026-09-02，ADR 0037）
+
+完整版在 `docs/adr/0037-quickedit-context-menu.md`，改动前先读。
+
+* **两种外壳一个开关**：画布对象 → `canvas/ObjectContextMenu.tsx`（Radix 菜单，
+  `ui/Menu.PointMenu` 外壳：零尺寸锚 + `modal={false}` + 键盘不外泄 + 焦点归还）；图内元素 →
+  `QuickEdit.tsx` 里的 `role="dialog"` 弹层（含控件，不是菜单）。开合都在 `quickEditStore`。
+* **五份清单只发意图**（`data-quick-menu` = `panel` / `panel-layout-only` / `text` / `mark` /
+  `multi`）：排列 / 成组走 `alignSelectedTo` / `groupSelected` / `ungroupSelected`，readiness 走
+  `projectReadinessStore.focusPanel`，其余走既有 action。菜单里**不许**出现几何、`!!script`
+  之外的状态判断、第二份按钮表或参照。
+* **右键的选区规则在 `ObjectView.onContextMenu`**：已在选区里一个字不动；不在 → 换成它 / 整组，
+  并与左键一样退出图内编辑态（shift 混排进来的标注除外）。
+* **`rebuildPanel`** = `POST /api/engine/invalidate`（与 `panel.file_changed` 同一个
+  `pool.invalidate`）→ `markStale` → immediate 渲染；不改文档、不进历史；`invalidated: false`
+  （native / 内嵌画布）照常重画但 toast 说「源脚本没有重跑」。**`resetOverridesConfirmed`** 就是
+  属性页的 `resetOverrides`，只多问一句（写回过的面板换一句话）。批量锁定 / 隐藏收目标状态、
+  一条历史（`setObjectsLocked` / `setObjectsHidden`）。
+* **Esc 要在 document 捕获层止步**（根菜单与子菜单各一个 `onEscapeKeyDown`）：真浏览器在监听器
+  之间有微任务检查点，Radix 关掉菜单后 React 已把节点卸掉，冒泡层的 `onKeyDown` 跑不到；
+  **jsdom 没有这个检查点，删掉捕获层守卫照样全绿**——这类判据只有真浏览器抓得到
+  （`e2e/quick-menu.spec.ts`）。
+* 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
+* 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
+  `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。
+
+## 设置外壳与包管理（2026-09-02，ADR 0038）
+
+完整版在 `docs/adr/0038-settings-shell-agents-packages.md`，改动前先读。
+
+* **外壳尺寸是合同**：`SettingsDialog` 固定 `SHELL_WIDTH = 760` / `SHELL_HEIGHT = 600px`
+  （`ui/Dialog` 的 `height`），内容区 `[data-settings-content]` 独立滚、切页滚回顶部；<640px 导航变
+  顶部一条。**新分区再长也不许让外框撑高。** 十一个分区在 `SECTIONS`；旧 id 走 `resolveSection()`
+  的别名表（`profiles → spec` 等），深链的调用方**不要**再写旧 id。
+* **深链带返回**：`setSettingsOpen(true, section, { returnTo: 'export' })`；`settingsReturnTo` 是闭集
+  （`'export' | null`），每次打开重置。要加新的返回目标先扩闭集。
+* **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
+  就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
+  用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
+* **包管理只操作当前项目的 Tavotto 受管环境**：`store/packageStore.ts` 的 `plan(op, spec)` →
+  `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
+  深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`
+  （`errors:engine.repairError.*`，与缺包修复同一张表）。「没有回滚」那句话常驻，别删。
+* **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡只在技术详情里一张，内置包清单归包管理页。
+  「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
+* 看护：`SettingsDialog.test.tsx` / `settings/PackagesSettings.test.tsx` /
+  `settings/DiagnosticsSettings.test.tsx` / `settings/agentState.test.ts` / `e2e/settings-shell.spec.ts`
+  （外框逐像素、溢出、窄窗口、英文、方向键、axe——**量之前先等 `getAnimations().finished`**）。
+
+## 交互式 Onboarding 与本地活动信号（2026-09-02，ADR 0040）
+
+完整版在 `docs/adr/0040-onboarding-coachmarks-and-hints.md`，改动前先读。
+
+* **本地活动信号 `lib/activity.ts` 是闭集**：`ACTIVITY_KINDS` 列 kind、`ACTIVITY_PAYLOAD_KEYS` 列允许的
+  字段（只有枚举与计数：**没有 id / gid / name / path / text / value**）。新增一种信号 = 加 union 分支 +
+  进两张表 + `activity.test.ts` 加样本；**一个 action 一个发射点、只在成功之后发**，组件里不补第二枪。
+  它不是遥测：不出网、不落盘；Prompt 22 映射遥测只许从这张表挑，且必须经同意态与后端白名单。
+* **教程状态只在 `store/onboardingStore.ts`**（`tavotto.onboarding`）：状态机 / 步骤 id / 提示记录 /
+  教程项目与文档 id；不记 DOM、文案、路径、对象 id。改步骤内容升 `ONBOARDING_FLOW_VERSION`，
+  **不改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式的一部分）。关掉 coachmark 是 `paused`
+  （`pausedBy: 'user'`），切走项目是 `paused`（`'system'`），绝不伪装 `completed`。
+* **四个入口共用 `lib/onboarding/tutorial.ts`**（`tutorialEntry / runTutorialEntry / resetTutorial /
+  resetHints`）：项目选择器、顶栏更多、命令面板、设置常规。**不许在入口里判状态**。打开教程走
+  `projectStore.adoptOpenedProject(status, { prepareDocument })`——与打开任何项目同一条认领链路；
+  教程画布的 documentId **必须**是 `metadata.document_id`（T-106）；同一项目里再点入口不走认领。
+* **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
+  信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
+  CSS class 猜状态；不为教程复制任何 action。**
+* **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
+  | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
+  `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
+  `data-element-svg`（+ manifest bbox）。**aria-label / 文案 / class 都不能当选择器。** 改了这些
+  属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+* **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
+  的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
+  `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
+* 看护：`onboardingStore.test.ts` / `activity.test.ts` / `selectionStore.test.ts` /
+  `lib/onboarding/{position,flow,tutorial,hints}.test.ts` / `components/onboarding/onboardingLayer.test.tsx` /
+  `e2e/tutorial.spec.ts`（四条：完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 切项目暂停继续）。
+  jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
+  `advanceTimersByTimeAsync`，别等真的 setTimeout。
+
+## Codex / AI 刷新、入口整合与遥测映射（2026-09-02，ADR 0041）
+
+完整版在 `docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`，改动前先读。
+
+* **项目文件变化只走统一刷新**：前端唯一的刷新入口是 `liveSync.refreshProjectNow()`（调
+  `/api/project/refresh`），命令面板 `refresh-project`、顶栏「更多」、素材库按钮都调它。**不新增
+  第二套 watcher，不在前端猜 readiness**——接入状态只读 `projectReadinessStore`（后端事实），
+  打开它走 `openCenter({ source })` / `focusPanel(id, source)`，`source` 是闭集
+  `banner | panel | quickedit | palette`，新入口必须带上（不带 = 不记遥测，不是默认值）。
+* **`ai.done` 不 markStale**：文件变了的话后端在它之前已经作废 worker、跑过刷新、发过
+  `panel.file_changed`（`reason: 'ai'`），stale 只由那条事件置一次；`reason === 'ai'` 时不弹
+  「脚本已更新」，一次修改只留 `ai.done` 那条提示。`ev.refresh.status === 'failed'` 要单独说
+  （`ai:status.aiChangedRefreshFailed`），不把代码改动伪装成全部成功。
+* **onboarding 活动信号与遥测分离**：`lib/activity.ts` 不出网；活动 → 遥测的映射**只有**
+  `lib/activityTelemetry.ts` 一处、只映射浮动栏的排列 / 成组 / 取消成组（`fromContextBar()`
+  作用域内发出的才算），其余 kind 逐种反证为不映射。遥测永远不反过来驱动界面。
+* **新遥测事件只捕获成功边界**：`document_saved` 在 `scheduleDiskWrite` 的三个结局；
+  `recovery_action` 在恢复 / 保留主版本的动作里；`tutorial_step_completed` 只在
+  `completeStep(id, 'done')`（跳过不记）；`tutorial_started` 只在真的开始 / 重新开始。所有
+  字段先进后端 `EVENTS` 表（两侧对拍），前端不发表里没有的键。
+* **命令面板的 id 是稳定标识**（e2e 与资源都认它）：`refresh-project / readiness / tutorial-start /
+  tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
+  `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
+  两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。
+* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；注册表对话框那类
+  高级入口说「已登记的源脚本」。
+* 看护：`lib/activityTelemetry.test.ts` / `components/CommandPalette.test.tsx` /
+  `store/projectReadinessStore.test.ts`「打开接入中心的遥测」/ `hooks/useServerEvents.test.ts`
+  「AI 修改之后」。
+
 ## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。

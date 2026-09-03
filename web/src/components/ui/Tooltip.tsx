@@ -24,7 +24,11 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
           side={side}
           sideOffset={6}
           className={cn(
-            'z-50 flex items-center gap-2 rounded-sm border border-border bg-surface',
+            // pointer-events-none：气泡只是说明，不是控件。聚焦触发的气泡会停在
+            // 触发器下方、盖住下一排按钮（弹层自动聚焦第一个分段项时实测撞见），
+            // 不让它吃点击。Radix 的定位外壳也得一起放行：index.css 里那条
+            // `[data-radix-popper-content-wrapper]:has([role='tooltip'])`
+            'pointer-events-none z-50 flex items-center gap-2 rounded-sm border border-border bg-surface',
             'px-2 py-1 text-xs text-ink shadow-pop',
             'origin-[var(--radix-tooltip-content-transform-origin)]',
             'data-[state=delayed-open]:animate-pop-in',

@@ -23,6 +23,9 @@ export default defineConfig({
       '@profiles': fileURLToPath(
         new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
+      '@glyphcoverage': fileURLToPath(
+        new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),
+      ),
       '@playground-runtime': fileURLToPath(
         new URL('../packaging/playground-runtime.json', import.meta.url),
       ),

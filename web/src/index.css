@@ -317,3 +317,11 @@
   font-variant-numeric: tabular-nums;
   font-size: var(--text-xs);
 }
+
+/* 气泡（Tooltip）不是控件：连 Radix 的定位外壳一起不吃指针。
+   聚焦触发的气泡会停在触发器下方、盖住下一排按钮（弹层自动聚焦第一个分段项时
+   实测撞见：鼠标点在气泡上，什么都不发生）。内容层的 pointer-events-none 挡不住
+   外壳——外壳没有背景也照样命中。`:has` 只认带 role=tooltip 的那一层外壳。 */
+[data-radix-popper-content-wrapper]:has([role='tooltip']) {
+  pointer-events: none;
+}

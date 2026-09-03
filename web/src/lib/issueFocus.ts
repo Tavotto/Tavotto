@@ -21,6 +21,7 @@
  * 视口、选中、模式、面板开合全是会话状态（`UX_CONTRACTS.md` §3）。
  */
 import { msg } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { enterElementEdit } from '@/store/actions'
 import { activateCanvas } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
@@ -39,8 +40,22 @@ export type FocusFailure =
   | 'not_editable'
   | 'document_not_loaded'
 
+/**
+ * 属性字段这一步的结果。**三档，不是一个 boolean**：
+ *
+ *   none      —— 这条问题说不出是哪个字段（页宽、重叠这类）
+ *   focused   —— 锚点当场就在，焦点已经落上去了
+ *   requested —— 锚点还没进 DOM（属性页正在重排），已排在下一帧再试一次
+ *
+ * 旧实现回的是 `focusedField: boolean`，而那个 boolean **恒为 true**——只要
+ * `propertyPath` 非空就回 true，真正的查找排在 rAF 里、结果没人看得见。
+ * 注释还写着「找不到就如实回 false」。判据修对了不等于它说的话对
+ * （`docs/adr/0030`）；这里把说法改成它做得到的那一句。
+ */
+export type FieldFocus = 'none' | 'focused' | 'requested'
+
 export type FocusOutcome =
-  | { ok: true; mode: 'layout' | 'fast_edit'; focusedField: boolean }
+  | { ok: true; mode: 'layout' | 'fast_edit'; field: FieldFocus }
   | { ok: false; reason: FocusFailure }
 
 /** 高亮持续多久（ms）。够看见，短到不碍事。 */
@@ -56,6 +71,17 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
  * 崩溃，是一个说得出原因的失败（`not_editable`）。
  */
 export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
+  const outcome = focusObjectInner(ref, propertyPath)
+  // 本地活动信号：只说成功没成功、落在哪条工作流、字段聚焦到哪一档——不带 id / gid
+  emitActivity(
+    outcome.ok
+      ? { kind: 'problem.focused', ok: true, mode: outcome.mode, field: outcome.field }
+      : { kind: 'problem.focused', ok: false },
+  )
+  return outcome
+}
+
+function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
   const s0 = useDocumentStore.getState()
   if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
   // **多项目隔离**：对象 id 在两个项目里可以相同（都是 `o_…` 形状）。不比一次
@@ -80,7 +106,7 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
     // 页面级问题（页宽、比例）：没有对象可选，把属性页切到「画布」那一栏
     ui.setRightTab('canvas')
     useWorkspaceStore.getState().exitToLayout()
-    return { ok: true, mode: 'layout', focusedField: false }
+    return { ok: true, mode: 'layout', field: 'none' }
   }
   const obj = useDocumentStore.getState().doc.objects.find((o) => o.id === ref.objectId)
   if (!obj) return { ok: false, reason: 'object_deleted' }
@@ -96,7 +122,7 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
     useUiStore.getState().setSelectedGid(ref.gid)
     useUiStore.getState().setRightTab('properties')
     flash(ref)
-    return { ok: true, mode: 'fast_edit', focusedField: focusField(propertyPath) }
+    return { ok: true, mode: 'fast_edit', field: focusField(propertyPath) }
   }
 
   // 画布对象：排版模式（越界、重叠、页边距这些只在版面上说得清）
@@ -107,7 +133,7 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
   reveal(obj)
   useUiStore.getState().setRightTab('properties')
   flash(ref)
-  return { ok: true, mode: 'layout', focusedField: focusField(propertyPath) }
+  return { ok: true, mode: 'layout', field: focusField(propertyPath) }
 }
 
 /** 定位到一条问题（面板整行点击与「定位」按钮共用）。 */
@@ -135,25 +161,29 @@ function flash(ref: ObjectRef): void {
  *
  * 选择器用 `data-prop`（属性名是稳定的机器标识），**不用 aria-label**
  * ——那是本地化文案，换个语言就选不中了（`focusRescue.ts` 踩过同一个坑）。
+ * 锚点由属性能力层统一挂（`lib/typography.propertyPathOf()` →
+ * `controls/TypographyControls` 的 `Anchor`），报字段名的和挂锚点的读同一张表。
  *
- * DOM 这时候还没重排完（切模式 / 进图内编辑都会换掉整棵属性页），所以推到
- * 下一帧再找；找不到就如实回 false，调用方据此不宣称"已定位到字段"。
+ * 当场找得到就当场聚焦并回 `focused`；找不到不是失败——切模式 / 进图内编辑
+ * 会换掉整棵属性页，DOM 这时候还没重排完，所以再排一帧重试，回 `requested`。
+ * **回 `requested` 不等于成功**：调用方不许拿它说「已定位到字段」。
  */
-function focusField(propertyPath?: string | null): boolean {
-  if (!propertyPath || typeof document === 'undefined') return false
-  const run = () => {
+function focusField(propertyPath?: string | null): FieldFocus {
+  if (!propertyPath || typeof document === 'undefined') return 'none'
+  const run = (): boolean => {
     const host = document.querySelector<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
-    if (!host) return
+    if (!host) return false
     const control = host.querySelector<HTMLElement>('input, select, textarea, button')
     const target = control ?? host
     // 两个方法都可选调用：jsdom 没有 scrollIntoView，而"定位"这一步失手
     // 不该把整条动作炸掉——用户要的是焦点落到字段上，滚动只是顺带
     target.scrollIntoView?.({ block: 'nearest' })
     target.focus?.()
+    return true
   }
+  if (run()) return 'focused'
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
-  else run()
-  return true
+  return 'requested'
 }
 
 /** 属性名里只可能出现 `[A-Za-z0-9_.]`，但选择器仍然要转义（`.` 是类选择器）。 */

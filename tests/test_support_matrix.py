@@ -104,6 +104,17 @@ def test_readme_references_the_matrix():
         )
 
 
+def test_readme_does_not_offer_windows_arm_silently():
+    """矩阵里 `windows-arm64` 是 unsupported，而两个 README 都不带架构限定地给出
+    Windows `.exe`——Windows-on-ARM 的读者从任一语言的 README 都得不到警告。
+    只要矩阵还这么判，README 的 Windows 安装包那句就必须把 ARM 说出来。"""
+    assert _targets()["windows-arm64"]["status"] == "unsupported"
+    en = (ROOT / "README.md").read_text(encoding="utf-8")
+    zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "Windows on ARM" in en and "neither" in en.split("Windows on ARM", 1)[1][:60]
+    assert "Windows ARM" in zh and "没有构建" in zh.split("Windows ARM", 1)[1][:40]
+
+
 def test_every_target_has_the_required_fields():
     for tid, t in _targets().items():
         assert t.get("label") and t.get("status"), tid

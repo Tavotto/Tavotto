@@ -1,5 +1,6 @@
 import type { Manifest } from './api'
 import { t } from '@/i18n'
+import type { CanvasTextFamily } from './typography'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
 
 /**
@@ -9,6 +10,24 @@ import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/t
  * 走与手动编辑完全相同的通路（PanelObject.overrides + TextObject 字段），
  * 因此天然进撤销、天然不写回源文件。
  */
+
+/**
+ * 样式里描述一段画布文字的那一小块。
+ *
+ * **字段名跟着 `TextObject` 走，取值语义跟着属性能力层走**：`bold` 是
+ * boolean（磁盘形状），落进文档时经 `writeCanvasText` 换算成规范值——
+ * 样式应用与手动编辑因此写出同一种形状。
+ *
+ * `fontFamily` 是 Prompt 13 加的：标注能设字体了，样式就得能统一它，
+ * 否则「一键把全图对齐到这套样式」会漏掉刚刚新增的那一维。
+ */
+export interface StyleTextEntry {
+  sizePt?: number
+  bold?: boolean
+  italic?: boolean
+  color?: string
+  fontFamily?: CanvasTextFamily
+}
 
 /**
  * 一份样式的**内容**（信封里的 `data`）。名字、id、revision 在信封上
@@ -21,9 +40,9 @@ export interface StyleProfileData {
   /** 系列配色（按曲线/散点/柱形在图内的出现顺序循环取色）；空 = 不动配色 */
   palette?: string[]
   /** 画布标注文字样式 */
-  annotation?: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string }
+  annotation?: StyleTextEntry
   /** 子图序号标签 (a)(b)(c) 样式（按内容 ^(x)$ 识别） */
-  subLabel?: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string }
+  subLabel?: StyleTextEntry
   /** 页面预设 */
   page?: { w: number; h: number }
   /** 默认画布背景色；不设 = 不动背景 */
@@ -52,7 +71,7 @@ export const STYLE_ROLE_PROPS: Record<string, string[]> = {
   text: ['fontsize', 'color', 'fontfamily', 'weight', 'style'],
   title: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
   axis_label: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
-  ticks: ['fontsize', 'color', 'direction', 'length', 'width'],
+  ticks: ['fontsize', 'color', 'direction', 'length', 'width', 'minor_length', 'minor_width'],
   legend: ['fontsize', 'frameon', 'framealpha', 'edgecolor'],
   line: ['linewidth', 'linestyle', 'marker', 'markersize'],
   errorbar: ['linewidth', 'capsize', 'cap_thickness'],

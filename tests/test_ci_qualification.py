@@ -625,6 +625,54 @@ def test_upgrade_acceptance_carries_session_credentials():
     )
 
 
+def test_upgrade_acceptance_writes_the_document_shape_the_product_writes():
+    """R-18 ①：自动保存端点从 v0.12.0 起就要求顶层 `schema`。
+
+    以前这里 PUT 的是 `{"doc": …, "updatedAt": …}` 包一层的形状——N-1 一开始
+    就 400，异常被 except 吞成 `autosave_saved=False`，「自动保存读得回来」
+    这条检查**从来没跑过**。钉的是发出去的字节：`json.dumps(doc)`，不许再包。
+    """
+    src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
+    body = src.split("def write_state_with_old", 1)[1].split("\ndef ", 1)[0]
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+    assert "data=json.dumps(doc).encode()" in code, "自动保存要发文档本身，不是 {'doc': …}"
+    assert '{"doc": doc}' not in code, "另存为也要发文档本身（前端 saveLayout 就是这么发的）"
+    assert '"schema": 2' in code, "文档顶层必须带 schema"
+
+
+class TestUpgradeAcceptanceReadback:
+    """R-18 ②：`/api/layouts` 返回的是字符串列表；读回的文档要真是文档。"""
+
+    def test_layout_names_reads_the_string_list_the_product_returns(self):
+        assert UA.layout_names({"layouts": ["升级布局", "另一张"]}) == ["升级布局", "另一张"]
+
+    def test_layout_names_also_accepts_named_entries(self):
+        assert UA.layout_names({"layouts": [{"name": "a"}, "b"]}) == ["a", "b"]
+
+    def test_layout_names_refuses_a_shape_it_cannot_read(self):
+        with pytest.raises(UA.CiError):
+            UA.layout_names({"layouts": "升级布局"})
+
+    def test_document_readback_wants_a_document_that_still_points_at_the_panel(self):
+        doc = {"schema": 2, "objects": [{"type": "panel", "id": "Fig1.pdf"}]}
+        ok, _ = UA.document_readback(doc, "Fig1.pdf")
+        assert ok
+        assert not UA.document_readback({"doc": doc}, "Fig1.pdf")[0], "包一层的不是文档"
+        assert not UA.document_readback(doc, "Fig9.pdf")[0], "指错图的不算读回"
+        assert not UA.document_readback(None, "Fig1.pdf")[0]
+
+    def test_state_the_old_version_failed_to_write_is_a_failed_check_not_a_skip(self):
+        """验收问的是「上一版写的这一版读得回来吗」；上一版没写成，问题就没被问到。
+        以前 `if facts.get("layout_saved"):` 让整条检查静静消失、报告照旧全绿。"""
+        failed = UA.missing_state_checks({"layout_saved": False, "layout_error": "HTTP 400"})
+        assert [(n, ok) for n, ok, _ in failed] == [
+            ("N-1 写出命名布局", False),
+            ("N-1 写出自动保存", False),
+        ]
+        assert "HTTP 400" in failed[0][2]
+        assert UA.missing_state_checks({"layout_saved": True, "autosave_saved": True}) == []
+
+
 def test_no_app_request_anywhere_skips_auth():
     """**任何**起实例的脚本里，打到应用的请求都必须带上会话凭据。
 

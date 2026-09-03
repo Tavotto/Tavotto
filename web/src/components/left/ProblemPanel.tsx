@@ -237,6 +237,10 @@ function IssueRow({
             在辅助技术里是一个读不出来的控件（nested interactive） */}
         <button
           data-issue-row
+          // 稳定的机器标识（规则码 + 画布对象 id），新手教程按它找那一行；
+          // aria-label 是本地化文案，不能当选择器
+          data-issue-rule={issue.ruleCode}
+          data-issue-object={issue.objectRef.objectId ?? undefined}
           onClick={locate}
           aria-label={issueAriaLabel(issue)}
           title={issueDetailText(issue)}
@@ -343,7 +347,7 @@ function ReadinessLink() {
     <div className="shrink-0 border-t border-border px-3 py-1.5">
       <Tip label={pr('readinessTip')} side="top">
         <button
-          onClick={() => useProjectReadinessStore.getState().openCenter()}
+          onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
         >
           <ClipboardList size={12} className="shrink-0 text-ink-3" aria-hidden />

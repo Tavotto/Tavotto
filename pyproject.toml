@@ -96,6 +96,9 @@ exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
            "services", "services/**",
            "tools", "tools/**"]
 
+# 包内数据（profiles/、resources/tutorial_project/）随 packages 自然收进 wheel 与 sdist，
+# 前提是它们不被 .gitignore 挡（hatchling 默认跳过 VCS 忽略的文件）。桌面产物那边
+# PyInstaller **不会**自己收数据文件，见 packaging/tavotto.spec 的 datas。
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavotto"]
 

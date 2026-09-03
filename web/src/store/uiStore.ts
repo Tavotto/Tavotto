@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { UiMessage } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import type { Severity } from '@/lib/profile'
 
 export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
@@ -226,6 +227,11 @@ interface UiState extends Persisted {
   settingsOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
+  /**
+   * 从哪个面板深链进设置的（导出面板的「编辑规范」）。关掉设置时回到那里，
+   * 而不是把用户扔回画布。只认闭集里的值；null = 不回。
+   */
+  settingsReturnTo: 'export' | null
   /** 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
   layoutIntent: 'save' | 'load'
   /** 全局确认框；由 askConfirm() 写入，ConfirmDialog 渲染 */
@@ -267,7 +273,7 @@ interface UiState extends Persisted {
   setStylesOpen: (v: boolean) => void
   setRegistryOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
-  setSettingsOpen: (v: boolean, section?: string) => void
+  setSettingsOpen: (v: boolean, section?: string, opts?: { returnTo?: 'export' | null }) => void
   setConfirm: (req: ConfirmRequest | null) => void
   setLayout: (layout: WorkspaceLayout) => void
 }
@@ -298,6 +304,21 @@ let statusTimer: number | undefined
 /** 非宽屏两侧互斥：打开一侧就得收起另一侧，避免把画布挤没 */
 const exclusive = (s: UiState) => s.layout !== 'wide'
 
+const sameList = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((v, i) => v === b[i])
+
+/** 图内元素选区真的变了才发一声（只带数量） */
+const announceGids = (before: string[], after: string[]) => {
+  if (!sameList(before, after)) emitActivity({ kind: 'element.selection_changed', count: after.length })
+}
+
+/** 左侧「问题」抽屉从关到开（或从别的页切过来）才算「打开了问题面板」 */
+const announceProblems = (before: UiState, after: UiState) => {
+  const wasOpen = before.leftOpen && before.leftTab === 'problems'
+  const isOpen = after.leftOpen && after.leftTab === 'problems'
+  if (!wasOpen && isOpen) emitActivity({ kind: 'problems.opened' })
+}
+
 export const useUiStore = create<UiState>((set, get) => ({
   ...readPersisted(),
   status: null,
@@ -317,6 +338,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
+  settingsReturnTo: null,
   layoutIntent: 'save',
   confirm: null,
   layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
@@ -340,6 +362,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
   railClick: (tab) => {
+    const before = get()
     set((s) => {
       if (s.leftOpen && s.leftTab === tab) return { leftOpen: false }
       return exclusive(s)
@@ -348,8 +371,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     })
     prefOpen.left = get().leftOpen
     persist(get())
+    announceProblems(before, get())
   },
   setLeftTab: (leftTab) => {
+    const before = get()
     set((s) =>
       exclusive(s)
         ? { leftTab, leftOpen: true, rightOpen: false }
@@ -357,6 +382,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     )
     prefOpen.left = get().leftOpen
     persist(get())
+    announceProblems(before, get())
   },
   setRightTab: (rightTab) => {
     set((s) =>
@@ -446,29 +472,54 @@ export const useUiStore = create<UiState>((set, get) => ({
   setCropTarget: (cropTargetId) => set({ cropTargetId }),
   setElementPanel: (elementPanelId) =>
     set({ elementPanelId, selectedGids: [], cropTargetId: null }),
-  setSelectedGid: (gid) => set({ selectedGids: gid ? [gid] : [] }),
-  setSelectedGids: (gids) =>
-    set((s) =>
-      s.selectedGids.length === gids.length && s.selectedGids.every((g, i) => g === gids[i])
-        ? s
-        : { selectedGids: gids },
-    ),
-  toggleSelectedGid: (gid) =>
+  setSelectedGid: (gid) => {
+    const before = get().selectedGids
+    set({ selectedGids: gid ? [gid] : [] })
+    announceGids(before, get().selectedGids)
+  },
+  setSelectedGids: (gids) => {
+    const before = get().selectedGids
+    set((s) => (sameList(s.selectedGids, gids) ? s : { selectedGids: gids }))
+    announceGids(before, get().selectedGids)
+  },
+  toggleSelectedGid: (gid) => {
+    const before = get().selectedGids
     set((s) => ({
       selectedGids: s.selectedGids.includes(gid)
         ? s.selectedGids.filter((g) => g !== gid)
         : [...s.selectedGids, gid],
-    })),
+    }))
+    announceGids(before, get().selectedGids)
+  },
   setTool: (tool) => set({ tool }),
-  setExportOpen: (exportOpen) => set({ exportOpen }),
+  setExportOpen: (exportOpen) => {
+    const was = get().exportOpen
+    set({ exportOpen })
+    if (exportOpen && !was) emitActivity({ kind: 'export.dialog_opened' })
+  },
   setLayoutOpen: (layoutOpen, intent) =>
     set(intent ? { layoutOpen, layoutIntent: intent } : { layoutOpen }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen) => set({ stylesOpen }),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
-  setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
-    set({ settingsOpen, ...(settingsSection ? { settingsSection } : {}) }),
+  setSettingsOpen: (settingsOpen, settingsSection = undefined, opts = undefined) =>
+    set((s) => {
+      if (settingsOpen) {
+        return {
+          settingsOpen,
+          ...(settingsSection ? { settingsSection } : {}),
+          settingsReturnTo: opts?.returnTo ?? null,
+        }
+      }
+      // 关闭：深链进来的回到出发的那个面板（只有导出一个来源；其余为 null）
+      const back = s.settingsReturnTo
+      return {
+        settingsOpen,
+        settingsReturnTo: null,
+        ...(back === 'export' ? { exportOpen: true } : {}),
+      }
+    }),
   setConfirm: (confirm) => set({ confirm }),
   // **不 persist、不动 prefOpen**：这里改的是「窗口现在多宽」，
   // 而窗口宽度不是用户对常驻侧栏的偏好。

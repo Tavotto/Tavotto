@@ -69,13 +69,26 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
     startMoveDrag(e, obj.id)
   }
 
-  /** 右键：先保证它在选区里（菜单里的复制/层级/删除都作用于选区），再弹快捷菜单 */
+  /**
+   * 右键：先保证它在选区里，再弹菜单（菜单里每一项都作用于**整个选区**）。
+   *
+   *   已在选区里（单选或多选）→ 选区一个字不动，多选就按多选给菜单；
+   *   不在选区里              → 换成它 / 它所在的整组（与左键同一条「点谁都是整组」）。
+   *
+   * 图内编辑态里右键了**别的**对象：与左键同一条路——退出编辑态回到画布层
+   * （属性页才能跟着菜单的目标走）。例外同样与左键一致：shift 加选进混排选区的
+   * 标注已经在选区里，右键它不退编辑态。
+   */
   const onContextMenu = (e: React.MouseEvent) => {
     if (editing || cropping) return
     e.preventDefault()
     e.stopPropagation()
     const sel = useSelectionStore.getState()
-    if (!sel.ids.includes(obj.id)) sel.set(groupMates(obj.id))
+    if (!sel.ids.includes(obj.id)) {
+      const ui = useUiStore.getState()
+      if (ui.elementPanelId && ui.elementPanelId !== obj.id) ui.setElementPanel(null)
+      sel.set(groupMates(obj.id))
+    }
     openQuickEdit({ kind: 'object', id: obj.id }, e)
   }
 

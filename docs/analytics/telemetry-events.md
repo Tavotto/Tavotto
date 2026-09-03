@@ -106,6 +106,19 @@ and answers no question we actually have.
 | `export_completed` | `/api/export` wrote every requested file | server (`app.api_export`) | `pdf`, `png`, `with_proof`: bool; `panel_count`: int ≤ 1000 |
 | `ai_assistant_invoked` | `engine_ai.run()` returned a session | server (`app.api_ai_run`) | `agent`: `codex` \| `claude` \| `other` |
 | `update_completed` | an update finished installing | server (`engine/updater.apply_upgrade`) for pip/pipx; client (`store/updateStore.installDesktop`) for the desktop shell | `update_kind`: `desktop` \| `pip` \| `pipx`; `target_version`: version (omitted when unknown) |
+| `project_refresh_completed` | the unified project refresh **succeeded** (`app.refresh_project`, the single funnel for manual / watcher / Codex / AI) | server | `source`: `watcher` \| `manual` \| `codex` \| `ai` (refreshes caused by probe, manual registration or opening a project are **not** captured); `changed_bucket`: `none` \| `one` \| `few` (2–5) \| `many` (6+) — script + asset change count, bucketed |
+| `project_readiness_opened` | the readiness center is opened from a named entry point and the report has arrived | client (`store/projectReadinessStore.openCenter`) | `source`: `banner` \| `panel` \| `quickedit` \| `palette`; `status_bucket`: `all_editable` \| `mixed` \| `layout_only` (a project with zero figures sends nothing) |
+| `tutorial_started` | the tutorial actually starts or restarts (resuming is not a start) | client (`lib/onboarding/tutorial`) | `source`: `picker` \| `help` \| `settings` \| `palette`; `tutorial_version`: int ≤ 1000 (`ONBOARDING_FLOW_VERSION`) |
+| `tutorial_step_completed` | a tutorial step's real completion condition was met (skipping a step sends nothing) | client (`lib/onboarding/flow.completeStep`) | `step_id`: one of the ten ids in `web/src/lib/onboarding/stepIds.ts` (`tests/test_telemetry_integrations.py` keeps the enum in step with that file); `tutorial_version` |
+| `tutorial_completed` | the last step completed | client (`lib/onboarding/flow.completeStep`) | `tutorial_version` |
+| `context_bar_multi_used` | a multi-selection context-bar action succeeded (the same action from the inspector or the palette is not counted) | client (`lib/activityTelemetry`, the only activity-signal → telemetry mapping) | `action_id`: `align_left` \| `align_center` \| `align_right` \| `align_top` \| `align_middle` \| `align_bottom` \| `distribute_h` \| `distribute_v` \| `same_width` \| `same_height` \| `group` \| `ungroup` \| `more`; `selection_size_bucket`: `2` \| `3_5` \| `6_plus` |
+| `document_saved` | a document write to disk finished | client (`store/documentStore.scheduleDiskWrite`) | `trigger`: `manual` \| `autosave`; `outcome`: `ok` \| `conflict` \| `failed` |
+| `recovery_action` | the user decided on the crash-recovery banner | client (`documentStore.recoverLocalCopy` / `discardLocalCopy`) | `action`: `restore` \| `keep_main` |
+| `package_action` | a managed-environment package job reached a terminal state | server (`app.api_packages_run` progress hook) | `action`: `install` \| `update` \| `remove`; `outcome`: `ok` \| `failed` \| `cancelled`. **No package name** — it could reveal a private project's dependencies |
+
+The nine events in the second half were added in **`CONSENT_VERSION` 2** (2026-09-02).
+Consent stored for version 1 stopped being sufficient the moment that constant was
+raised; those installs are asked again and keep their `install_id`.
 
 ### Explicitly forbidden on every event
 
@@ -113,7 +126,9 @@ file names · stems · script names · paths · project or canvas names · docum
 titles · gids · element labels · axis labels · legend text · any figure text ·
 data values · prompts · AI output · diffs · session IDs · export directories ·
 exported file names · release notes · exception text · stack traces · IP ·
-user agent · hostname · username · e-mail · locale.
+user agent · hostname · username · e-mail · locale · **package names · package
+logs · private index URLs · tutorial project / document ids · panel ids · exact
+project size**.
 
 None of these appear as an allowlisted property name, which is why they cannot
 be sent — not because callers remember not to. Regression tests:
@@ -156,6 +171,24 @@ available (not on every profile change inside the dialog); the MCP one fires
 inside `run_preflight` after `summarize()`. They cover disjoint user flows, so
 this is coverage rather than double counting. Both send the same four counts and
 nothing else.
+
+**Why the activity bus is not forwarded wholesale.** `web/src/lib/activity.ts`
+carries eighteen local signals for onboarding; exactly one mapping
+(`lib/activityTelemetry.ts`) turns three of them (`selection.aligned` /
+`selection.grouped` / `selection.ungrouped`) into `context_bar_multi_used`, and only
+when the action was started from the floating context bar. The other fifteen kinds
+are tested one by one to map to nothing. Direction is one-way: activity → telemetry
+(behind consent and the server allowlist); telemetry never drives the UI.
+
+**Why `project_refresh_completed` is server-side and skips some reasons.** All four
+refresh paths (manual button, watcher, Codex MCP tool, built-in assistant) end in
+`app.refresh_project`, so one capture point covers them and a failed refresh produces
+nothing. Refreshes that are side effects of another action (probe success, manual
+registration, opening a project) are not user "refreshes" and are not counted.
+
+**Why tutorial events carry only ids and a version.** The tutorial's project id,
+document id and hint bookkeeping stay on the machine; `step_id` is a developer-written
+closed set and `tutorial_version` says which flow the id belongs to.
 
 **Why the embedded Codex canvas sends nothing.** The MCP widget bundles the same
 frontend code, but nothing calls `setTelemetryEnabled` there, so

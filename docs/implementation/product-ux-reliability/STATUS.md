@@ -44,17 +44,17 @@
 | 10 | Style / Spec 分层 | ✅ 完成（本次，ADR 0029） |
 | 11 | 统一检查引擎与问题面板 | ✅ 完成（本次，ADR 0030） |
 | 12 | 导出管线与精简导出 UI | ✅ 完成（本次，ADR 0031） |
-| 13 | 统一属性系统、文字控件、标注字体 | ⬜ |
-| 14 | 科学文本 / Unicode / 字体回退 | ⬜ |
-| 15 | 图例绑定与控件 | ⬜ |
-| 16 | 刻度线直接操作 | ⬜ |
-| 17 | 多选浮动栏 | ⬜ |
-| 18 | QuickEdit 右键动作 | ⬜ |
-| 19 | 设置 / Agent / 包管理 | ⬜ |
-| 20 | 离线教程资源后端 | ⬜ |
-| 21 | onboarding UI 与提示 | ⬜ |
-| 22 | Codex/AI、i18n、遥测、文档整合 | ⬜ |
-| 23 | 全量 QA 与发布门禁 | ⬜ |
+| 13 | 统一属性系统、文字控件、标注字体 | ✅ 完成（本次，ADR 0032） |
+| 14 | 科学文本 / Unicode / 字体回退 | ✅ 完成（本次，ADR 0033） |
+| 15 | 图例绑定与控件 | ✅ 完成（本次，ADR 0034） |
+| 16 | 刻度线直接操作 | ✅ 完成（本次，ADR 0035） |
+| 17 | 多选浮动栏 | ✅ 完成（本次，ADR 0036） |
+| 18 | QuickEdit 右键动作 | ✅ 完成（本次，ADR 0037） |
+| 19 | 设置 / Agent / 包管理 | ✅ 完成（本次，ADR 0038） |
+| 20 | 离线教程资源后端 | ✅ 完成（本次，ADR 0039） |
+| 21 | onboarding UI 与提示 | ✅ 完成（本次，ADR 0040） |
+| 22 | Codex/AI、i18n、遥测、文档整合 | ✅ 完成（本次，ADR 0041） |
+| 23 | 全量 QA 与发布门禁 | 🟡 **BLOCKED — 不建议发布**（本次；本分支 P0 = 0、P1 = 0，阻断在 main 上另外三条轨道的连红与桌面产物未验证，见「发布结论」） |
 
 ## 六个 Gate
 
@@ -63,9 +63,9 @@
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
 | 2 项目实时状态 | 04–08 | ✅ 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）+ 07（就绪度事实模型）+ 08（就绪度界面与常驻左栏）全部完成 |
 | 3 核心工作流与输出 | 09–12 | ✅ 09（双工作流）+ 10（Style/Spec 分层）+ 11（统一检查与问题定位）+ 12（统一导出管线与精简导出面板）全部完成 |
-| 4 编辑一致性 | 13–18 | ⬜ |
-| 5 产品外壳 | 19–22 | ⬜ |
-| 6 发布 | 23 | ⬜ |
+| 4 编辑一致性 | 13–18 | ✅ 13（属性能力层）+ 14（科学文本 / 字体回退）+ 15（图例绑定与控件）+ 16（刻度直接操作）+ 17（多选浮动栏）+ 18（右键菜单）全部完成 |
+| 5 产品外壳 | 19–22 | ✅ 19（设置外壳 / Agent 精简 / 包管理 / 诊断拆页）+ 20（离线教程资源与 Tutorial API）+ 21（交互式 onboarding 与一次性提示）+ 22（Codex / AI 显式刷新、遥测整合、入口与文档）全部完成 |
+| 6 发布 | 23 | 🟡 本树全量真跑过、打包 wheel 验过、场景 A–N 有映射；**桌面产物只有 CI 证据且本分支的桌面改动尚未在 CI 执行过**，main 上 Lab / Nightly / Metrics 连红 |
 
 ---
 
@@ -384,58 +384,314 @@ desktop…」。
 
 ---
 
-## 遗留（Session 12 之后仍开着的）
+### Session 13 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
 
-| ID | 事项 | 归属 |
-| --- | --- | --- |
-| — | **不渲染的面板会成批报「无法核验」**：渲染只对激活画布上「编辑中 / 有 override / 脚本领先磁盘」的面板发起（`renderTargets`），所以多画布项目里 `panel-text-not-verifiable` 数量可观。它是 `not_verifiable` 这一档、有自己的分组，**而且是真话**——但数量上是噪音。改法要么按需渲染、要么把这一档折叠成每画布一条 | 未定 |
-| — | **批量修复不跨画布**（撤销栈按画布换入换出，跨画布的"一个批事务"在这套模型里不存在）。界面只在当前画布上给「全部修复」，别的画布上的一条一条修 | 已处置（说明写在按钮文案里） |
-| — | **问题面板没有虚拟滚动**：有多少条渲染多少行。本轮用例里最多几十条，真实上限没量过（与接入中心同一条遗留） | 待量 |
-| — | **`user_choice` 目前只有页宽一条规则**。这一档不是为它而设——它是 `applyIssueFix(id, choice?)` 这个签名成立的前提 | 已处置 |
-| — | **MCP 内嵌画布保留自己的等级图标表**：它消费的是 MCP 聚合载荷、且是另一个尺寸敏感的 bundle。图标一致的看护覆盖应用内两处 | 已处置 |
-| R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
-| R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | **`test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 偶发红**（Session 06 的全量里红一次；07/08 三次全量都绿。属 `tavotto run` 线，与本轨道无代码路径相交）。**Session 12 新证据：它对机器负载敏感。** 本轨道第 12 次全量里红了一次——而那一遍我把 pytest 全量与 Playwright e2e **同时**开着；单跑 0.7–2.9 秒，同一棵树串行全量 8 次全绿。它等的是「SIGINT 之后 `tavotto run` 在 90 秒内退出」，重载下这个预算不够。**但这解释不了 Session 06 那次**（那一遍是串行的），所以问题没关：判据把"进程反应有多快"当成了产品性质，而它其实是机器性质 | 待查（多一条证据） |
-| — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
-| — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六）。**08 没做**：本阶段的左栏改造只到「常驻外壳 + 项目状态入口」，历史入口的位置牵涉顶栏与文档菜单的分工 | 未定 |
-| — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
-| — | 没有 index.json（`/api/layouts` 靠 glob 现算） | 未定 |
-| — | **接入中心没有虚拟滚动**：报告里有多少张图就渲染多少行。**本轮没有实测过大项目**（用例里最多 6 行），真实上限不知道 | 待量 |
-| — | **「重新扫描」只有项目级一个入口**（对话框顶部）。Prompt 08 的原文也把它列进 `editable` 行内动作；18 行里每行挂一个项目级动作是噪音，故未做 | 已决定不做 |
-| — | ~~就绪度前端的 axe 覆盖靠 e2e，本轮没跑过 Playwright~~ **已跑**：第七轮合并 main 之后在本机跑了**完整** 115 条（114 passed / 1 skipped）。「本机沙箱里起不来」是错的判断（见 R-19）；worktree 里要带 `TAVOTTO_PYTHON=<主工作区>/.venv/bin/python`，且**必须先 `python scripts/build_frontend.py`**——包内 `src/tavotto/web/` 优先于 `web/dist`，不重建的话测的是上一次的界面，而且一路绿 | ✅ 已闭合 |
-| — | **就绪度只覆盖磁盘素材**（`/api/panels` 的 id 空间）。runtime figure 素材（ADR 0013，`runtime:` 前缀）不在报告里。**08 的处置：界面对它们一个字不说**——runtime 卡片有自己那套角标（`panelBadge.runtime*`），接入状态的四个出口都只在拿得到 `capability` 时才出现 | 已处置 |
-| — | **`codex-plugin` 那条导出入口没并进统一管线**（`bridge.py` 自己的 `_write_proof` 仍写 `_proof.json`）。另一个进程、另一份载荷、另一条分发路径，并进来要连 widget 一起改 | 未定（12 刻意没动） |
-| — | **「按另一个像素网格导出位图」这个能力不存在**：评审回合 3 把那条没有调用点的 `native_grid=False` 分支删了（它用的密度常量还是错的）。要加这个能力时，密度得从 `engine/originalspec` 来，像素网格由调用方算好传进来 | 未定 |
-| — | **源文件不在素材清单里时不能按原图导出**，哪怕它有脚本能重新画：`_resolve_panel_source()` 的 `safe_resolve()` 排在查注册表之前。界面已经如实说出来（不给必然失败的按钮），但**能力本身是缺的**。改它要动画布导出共用的那条路 | 未定（评审回合 3 记录） |
-| — | **`/api/package` 仍是同步的**，没有进作业模型（它不出图，没有部分失败） | 择机 |
-| — | **导出进度只有阶段与步数，没有百分比**：合成那一步占大头而它不可分 | 已处置（界面说的是阶段，不假装有百分比） |
-| — | **透明背景对 PDF 是「不画白底」**，不是 PDF 的透明组；位图源装进 PDF 时 `vector: false`，界面没有单独说这一句 | 未定 |
-| — | **README 里两张预检截图是旧规范拍的**（alt 文本如实描述图里的「低于 8.5 pt」）。改 alt 会让它不再描述那张图；重拍要跑真实应用 | 23 前 |
-| — | **`needs_probe` 的候选是项目级的**（`details.candidate_scope: "project"`）。**08 的处置：措辞如实**——「项目里有会画图的脚本，但要运行一次才知道它生成的是哪个文件」，动作叫「试运行并连接」而不是「连接到某某」；`candidate_scope` 进技术详情 | 已处置 |
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3498** passed / 34 skipped / 0 failed（比 12 的 3467 +31：新增 `test_typography_families.py` 15 条 + 预检向量 2 条 + 参数化） |
+| `cd web && pnpm test` | ✅ exit 0 —— **155** files / **1986** tests passed（比 12 的 151/1919 +4 文件 / +67 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2865 / en-US 2955；`errors:preflight.textFontFamilySubstituted*` +2、`inspector:history.{setFontFamily,resetTextProp}` +2、`inspector:textControls.font{MissingTag,MissingHint}` +2） |
+| `cd web && pnpm lint` | ✅ 19 条既有 fast-refresh 提示，**无新增**（三态开关的两个 helper 搬进 `lib/typography.ts` 之后控件文件只导出组件） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（294 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/gen_preflight_vectors.py --write` | ✅ 21 → 23 条；**既有 21 条一条没变**（新增的两条是画布文字的字体族） |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `42c3a0cc7b8e1c26`）+ `--check` 通过 |
+| `python scripts/build_browser_playground.py` | ✅ 已重建（指纹 `e0a4ff5da0ef92df`）+ 不进 git，网站仓库另行 sync |
+| 变异反证 17 条 | ✅ 全部被打红（第一轮 15/17，两条存活的成因与处置见 `TEST_MATRIX.md`） |
+| `npx playwright test e2e/a11y e2e/i18n e2e/keyboard-golden-path e2e/asset-library --project=chromium` | ⚠️ **21 passed / 6 failed**——**六条在 `origin/main`（`c12c229c`）上一模一样地红**，见下 |
+
+> **e2e 的六条红做过 A/B，不是「猜它不是我的」。** 同一台机器、同一份 fixture、
+> 同一条命令，把 `web/src` 与 `src/tavotto` 整个换成 `c12c229c`（当前
+> `origin/main`）、重跑 `scripts/build_frontend.py` 之后，`a11y.spec.ts:291`
+> 以**逐字相同**的方式失败（等 `getByRole('navigation').getByRole('button',
+> { name: /项目接入状态/ })` 超时 180 s）。两侧的 `error-context.md` 里那段
+> 无障碍快照也逐字相同：左侧轨道上只有 `画布 / 素材 / 结构 / 图内元素 / 设置`
+> 五个按钮，**「问题」与「项目接入状态」两个按钮不在 DOM 里**。六条红全是
+> 这两个入口的下游（另外三条等的是 `[data-element-svg] svg`）。
+>
+> **这与 Session 12 的记录冲突**：那一轮同样四个 spec 是 27 passed。所以在
+> `#214 → #219` 之间的 main 上、或者本机环境里，有一件事变了而没人发现——
+> `LeftRail` 里那两个按钮都是**无条件渲染**的（`ITEMS` 五项 + 轨道底部的
+> 接入状态入口），源码上找不到能让它们消失的判据。**没有查到根因就不许写成
+> 「已知问题」**，所以它以一条开着的遗留留给下一个 Session，附本轮的复现命令。
 
 ---
+
+### Session 14 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3612** passed / 34 skipped / 0 failed（比 13 的 3498 +114：`test_glyph_plan.py` 103 条 + `test_glyph_coverage_figure.py` 6 条 + `test_font_provenance.py` 7 条 + 预检向量 4 条，减去参数化口径的变化） |
+| `cd web && pnpm test` | ✅ exit 0 —— **157** files / **2094** tests passed（比 13 的 155/1986 +2 文件 / +108 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2876 / en-US 2966；`errors:preflight.{glyphMissing,glyphSubstituted,textGlyphMissing,textGlyphSubstituted}` +4、`inspector:text.{interpretation*,glyphMissing,glyphFallback}` +7、`inspector:history.setInterpretation` +1） |
+| `cd web && pnpm lint` | ✅ **19 条既有 fast-refresh 提示，无新增**（与 13 逐条相同） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（300 files） |
+| `python scripts/gen_canvas_coverage.py` | ✅ 覆盖表与当前后端一致（pymupdf 1.28.2，1114 个区间） |
+| `python scripts/gen_glyph_plan_vectors.py` | ✅ 69 条与 Python 侧一致（含 Prompt 清单里的 plain x10 / 已有 mathtext / 中英科学混排） |
+| `python scripts/gen_preflight_vectors.py` | ✅ 23 → 27 条；**既有 23 条一条没变** |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `1d0ca399a046dc8c`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `9a31ab339b26ef91`） |
+| 变异反证 22 条 | ✅ 21 条被打红 + 1 条**故意的无害变异存活**（缓存上限改成 1：仍然正确，只是慢——它是这套反证的正向对照）。第一轮 14/15，存活的那条与处置见 `TEST_MATRIX.md` |
+| Playwright e2e | ⚠️ **没跑**。改动没碰黄金路径的键位与文案，但这是「没跑」，不是「跑过没问题」；13 记的那六条红仍然开着 |
+
+> **图内文字那条路的判据与渲染器对拍过 9/9。** 「这套字体画不画得出这些字」
+> 用的是字体文件的 cmap，而 matplotlib 在渲染时会自己 warn 缺哪个码位——
+> 两把尺子互相独立（一把读文件，一把看渲染器实际画的时候说了什么）。九组
+> （默认族 / Times New Roman / 回退链 / 中文 / mathtext / 纯 ASCII…）逐组一致。
+
+---
+
+### Session 15 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ⚠️ **3642** passed / 34 skipped / **1 failed**（比 14 的 3612 +30：`test_legend_binding.py` 28 条 + `test_legend_model_pairs.py` 2 条 + 向量 1 条 − invariants 里删掉的那条豁免用例 + 改名 1 条）。红的那一条是 `test_ctrl_c_reaches_the_script_and_leaves_no_orphan`——遗留表里记着的「对机器负载敏感」那条：这一遍我把 vitest + `pnpm build` 与它**同时**开着（又一条证据），单跑 1.89 秒绿 |
+| 第一遍全量（作废） | 17 条红全部是 `test_project_env.py` / `test_dependency_repair_e2e.py`：我把 `TAVOTTO_WORKER_PYTHON` 设在了整个 shell 里，它们测的正是「没有环境变量时该选哪个解释器」。**worker 解释器本机能自动发现，这个变量不需要设**；去掉后 40/40 绿。另两条真缺陷（`_all_legends` 走了 `fig.axes`、roundtrip 用例还按显示序断言）已修 |
+| `cd web && pnpm test` | ✅ exit 0 —— **158** files / **2114** tests passed（比 14 的 157/2094 +1 文件 / +20 条） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2913 / en-US 3004；`inspector:legend.*` +23 组、`inspector:prop.{handle_*,binding,handletextpad,columnspacing,frame_linewidth,frame_rounded}` +10、`inspector:enum.binding.*` +2、`inspector:group.legendEntry`、`workspace:history.{hideLegendEntry,legendFollowSource}`） |
+| `cd web && pnpm lint` | ✅ **20 条既有 fast-refresh 提示，无新增** |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/gen_preflight_vectors.py` | ✅ 27 → 28 条；**既有 27 条一条没变** |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `13af9ce29dc7172a`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `162ab50a1c10af91`） |
+| 变异反证 17 条 | ✅ 16 红 + 1 结构性存活（M4：重建喂快照被同一轮 `sync_legends` 治回来，双保险不是判据缺口）。第一轮 14/17，两条用例形状的盲区已补（热会话两步的重放、折叠区里的重复要先展开），见 `TEST_MATRIX.md` |
+| 真应用（worktree 起在 5099） | ✅ 图例卡 / 图例项页 / 恢复跟随 / 改曲线颜色图例跟着变，四步各截了图（scratchpad，不进仓库） |
+| Playwright e2e | ⚠️ **没跑**。改动没碰黄金路径的键位；图例位置「自动」的文案 e2e 里没有引用（grep 过）。这是「没跑」，不是「跑过没问题」；13 记的那六条红仍然开着 |
+
+---
+
+### Session 16 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ✅ exit 0 —— **3655** passed / 34 skipped / 0 failed（比 15 的 3642 +13：`test_tick_sides_geometry.py` 12 条 + 15 那条负载敏感的 `test_ctrl_c_…` 这一遍绿）。这一遍与 vitest 全量**串行**跑，没有同时开别的重活 |
+| `cd web && pnpm test` | ✅ exit 0 —— **160** files / **2185** tests passed（比 15 的 158/2114 +2 文件 / +71 条：`tickSides.test.ts` 40 + `spineZones.test.tsx` 22 + 刻度卡 +9） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `spineZones.test.tsx` 有两条 TS 报错，被 `build_frontend.py` 抓到——`pnpm build` 的 tsc 覆盖测试文件，vitest 不覆盖类型） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2936 / en-US 3027；`inspector:tick.{side.*,sides,sidesAria,sideAria,minorLength,minorWidth,dir.hidden}` `inspector:control.zoneAria` `inspector:prop.{minor_length,minor_width}` `workspace:history.tickSide{On,Off,Hide}` `workspace:spineZone.*` 7 条） |
+| `cd web && pnpm lint` | ✅ 20 条既有 fast-refresh 提示 + `TickAndSpineDiagram.tsx` 新增 1 条同类（导出 `TICK_SPINE_PROPS` 常量，与 LegendCard 同形），无 error |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `98f076bdcc65eb78`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `ca979f12d73899d2`） |
+| 变异反证 10 条 | ✅ 10/10 全红（见 `TEST_MATRIX.md`） |
+| 真浏览器（Playwright chromium，临时 spec 不进仓库） | ✅ 打开 `Fig1_kinetics`（脚本朝内刻度）：从面板底沿往上扫，先出现「下边 · 朝外刻度 关着 · 点击显示」（外侧带），中间一段无带，再出现「下边 · 朝内刻度 开着 · 点击隐藏这一边的刻度线」（内侧带）；点内侧带 → 下边刻度线消失、刻度数字仍在、属性页方向档「隐藏」高亮、「显示边」两开关关、恢复芯片「下边刻度线 ×」出现。三张截图在 scratchpad。**顺带抓到一条**：状态文字往框外推会出面板的裁剪框（overflow hidden）整个被裁掉——改成往框里推 |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条临时 spec）。13 记的六条红仍开着 |
+
+### Session 17 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **165** files / **2265** tests passed（比 16 的 160/2185 +5 文件 / +80 条：`context-bar/position.test.ts` 13 + `multiSelectionBar.test.tsx` 42 + `primarySelection.test.tsx` 5 + `alignSelectedTo.test.ts` 17 + `arrangeStore.test.ts` 2；既有 `contextBar.test.tsx` 的「多选不出现」改成「换成多选栏」） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `alignSelectedTo.test.ts` 有两条 TS 报错——同 16：tsc 覆盖测试文件、vitest 不查类型） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（新增 `workspace:contextBar.{multiAria,selectedCount,alignMenu,distributeMenu,sizeMenu,groupMenu,moreArrange,moreArrangeTip,primaryHint}`、`workspace:status.{alignLockedSkipped,alignAllLocked}`、`inspector:arrange.refLabel`；`resources.d.ts` 重新生成） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示（按钮表 / 文案助手 / 打开属性页各自单独成文件，避开 fast-refresh 提示） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests/test_mcp_server.py tests/test_codex_plugin.py tests/test_i18n_dead_keys.py tests/test_pr_conflict_domains.py` | ✅ exit 0（177 条，含 12 skipped）。**Python 侧没有改动，全量 pytest 这一轮没跑**（16 那遍 3655/34/0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `97162c7183a44a0f`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `ac90363fcc807f16`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 14 条 | ✅ 14/14 全红（见 `TEST_MATRIX.md`） |
+| 真浏览器（Playwright chromium，临时 spec 不进仓库） | ✅ 1400×900：放一张图 + 两段文字，⌘A → 浮动栏贴在联合框上方、右沿在右栏左沿之内（bar 415–1032 / aside 1040）；主选轮廓更粗、联合框在；点「左对齐」三个对象贴齐、栏重贴；参照切「画布」属性页当场同步、tooltip「水平居中（画布）」；拖动期间栏消失、松手回来。900×700：右侧覆盖式抽屉开着 → 让位，关掉 → 回来（完整档）。600×700：静态阈值放行（600 ≥ 600）但量出 617 > 584 → **压缩档**、右沿 592 ≤ 600；点「对齐 ▾」弹层里切「画布」+「右对齐」生效；拉回 1000 宽回到完整档。**抓到两条**：① `fixed` 盒子的 `width:auto` 被可用宽度压扁，量到的不是自然宽度（改 `w-max`）；② 弹层自动聚焦第一个分段项，它的 tooltip 盖住下一排按钮，点击落在气泡上什么都不发生（tooltip 连 Radix 外壳一起 `pointer-events:none`）。八张截图在 scratchpad |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条临时 spec）。13 记的六条红仍开着 |
+
+---
+
+### Session 18 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **167** files / **2344** tests passed（比 17 的 165/2265 +2 文件 / +79 条：`canvas/objectContextMenu.test.tsx` 62 + `store/quickEditActions.test.ts` 18；既有用例一条没改） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（新增 `workspace:quickEdit.*` 19 组、`workspace:history.{lock,unlock,hide,show}Objects`、`workspace:status.{panelRebuilt,panelRerenderedNoRerun,rebuildFailed}`、`workspace:confirm.resetOverrides*`；`quickEdit.openInspector` 文案改为「打开全部属性」；`resources.d.ts` 重新生成。第一版把中文的 `_other` 写成了基键，门禁当场红） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示 |
+| `ruff check . && ruff format --check .` | ✅ |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests/test_engine_invalidate.py tests/test_i18n_dead_keys.py tests/test_engine_variants.py tests/test_error_codes.py` | ✅ exit 0（145 条）。**后端只加了一个端点，全量 pytest 这一轮没跑**（16 那遍 3655/34/0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `f0875a2608115edd`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `36826a10beef7d5a`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 22 条 | ✅ 19 红、3 存活且成因说得清（M8 / M9 结构性——jsdom 没有监听器之间的微任务检查点；M12 语义 no-op），见 `TEST_MATRIX.md` |
+| 真浏览器 `e2e/quick-menu.spec.ts`（Playwright chromium，**进仓库**） | ✅ 1400×900：面板右键菜单十项、hover 排列层级子菜单、**子菜单上按 Esc → 菜单关、选区不动、单选浮动栏回来**（第一遍红：选区被全局 Esc 清空，见 T-98）；「重新构建」真的冷构建一遍脚本 → toast「已按源脚本重新构建」；↓ ↓ 聚焦到「重新构建」、按 r 不切矩形工具；面板拖到画布右下角右键 → 菜单翻到光标上方（y 551–876 ≤ 885）、子菜单翻到左边（x 852–1026 ≤ 1030）；⌘A 三对象右键 → 多选菜单「参照：选区」→ 左对齐 x 全等（664）；文字右键「编辑文字」进编辑态。截图七张在 scratchpad |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面那条）。13 记的六条红仍开着 |
+
+---
+
+### Session 19 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py` | ✅ exit 0 —— **3705** passed / 34 skipped / 0 failed（比 16 的 3655 +50：`test_package_management.py` 45 + 其余 5）。**跑了三遍才绿，前两遍都是我的错**：第一遍带了 `TAVOTTO_WORKER_PYTHON`，它压过项目记住的 venv，`test_dependency_repair_e2e::test_golden_path_install_into_the_project_venv` 在第二次 probe 时拿到 `project_env_already_attempted`（Session 15 记过同形状——全量别带那个变量，只有单跑 worker 用例文件才要）；第二遍 84% 处被 `test_source_hygiene::test_windows_bound_subprocesses_pin_their_decoding` 拦住——新测试里一个 `subprocess.run` 没给 `encoding="utf-8"`。三遍都与 vitest 全量**串行** |
+| `cd web && pnpm test` | ✅ exit 0 —— **171** files / **2387** tests passed（比 18 的 167/2344 +4 文件 / +43 条：`SettingsDialog.test.tsx` 12 + `PackagesSettings.test.tsx` 19 + `DiagnosticsSettings.test.tsx` 7 + `agentState.test.ts` 2 + Agent 页 +3；`settingsDisclosure.test` 的 About 四条改写成诊断页四条，`profilesSettings.test` 的「切到规范」改成按 kind 重渲染） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`；第一版 `e2e/settings-shell.spec.ts` 把 `app` 夹具当对象用，被 tsc 抓到——e2e 文件也在 tsc 范围里） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 3069 / en-US 3165；新增 `dialogs:settings.section.{interface,style,spec,packages,diagnostics}`、`settings.packages.*` 60 组、`settings.diagnostics.*` 9 条、`settings.agents.{versionAria,detail.copy*}`、`settings.{copy,copied}`、`profiles.{binding.*,details,detail.*}`；`errors:engine.repairError.package_*` 7 条；删掉 `section.{profiles,shortcuts}` / `agents.{intro,codexIntegrationDesc}` / `about.{environmentTitle,engineOk,engineStatusHint,diagnosticsTitle}` / `profiles.{kind.style,kind.spec,kindAria}` / `engine.bundledPackages`。第一版 `PackagesSettings.tsx` 里写死了一个 "Python"，`i18next-cli lint` 当场红） |
+| `cd web && pnpm lint` | ✅ 无 error；新文件 0 条提示 |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `PYTHONPATH=<wt>/src TAVOTTO_WORKER_PYTHON=… pytest tests/test_package_management.py tests/test_dependency_repair.py tests/test_error_codes.py tests/test_i18n_dead_keys.py tests/test_diagnostics_bundle.py tests/test_ai_bridge.py` | ✅ exit 0（`test_package_management.py` 45 条，含三条离线真安装：建受管环境 → 装本地 wheel → 升级 → 卸载 → 账 / import / 快照 / 宿主解释器全部核过；`test_dependency_repair.py` 的清单断言多了 `reason` 枚举） |
+| `python scripts/build_mcp_widget.py --check` | ✅ 已重建 + 一致（指纹 `4f10cda116943005`） |
+| `python scripts/build_browser_playground.py --check` | ✅ 已重建 + 一致（指纹 `de4a1f68a2a0afc7`；`web/dist-playground/` 不进 git） |
+| `git diff --check` | ✅ |
+| 变异反证 23 条（Python 12 + 前端 11） | ✅ **23/23 全红**，基线绿（见 `TEST_MATRIX.md`） |
+| 真浏览器 `e2e/settings-shell.spec.ts` + `e2e/coding-agents.spec.ts`（Playwright chromium，**进仓库**） | ✅ 11/11。**第一遍 5 红**：① Agent 一级列表的状态徽章定宽 `w-24`，英文「Sign-in required」把行撑破（4 条测溢出的一起红）；② 本机 claude 的 shim `--version` 第一行是 bash 报错（带 `/Users/…` 完整路径），`agentVersionLabel` 抽不出数字就回原文 → 一级页面出现了完整路径；③ 进场动画没跑完就量 `boundingBox`（747×590 vs 760×600）；④ <1024 的抽屉遮罩淡入动画让 Playwright 恒判「不稳定」，点不到设置按钮。前两条是产品缺陷，后两条是量法。截图八张在 scratchpad（`s19-*.png`） |
+| Playwright e2e 全量 | ⚠️ **没跑**（只跑了上面两条 spec）。13 记的六条红仍开着 |
+
+---
+
+### Session 20 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -x --deselect tests/test_codex_e2e.py`（**不带** `TAVOTTO_WORKER_PYTHON`，与 vitest 串行，树干净） | ✅ exit 0 —— **3756** passed / 34 skipped / 0 failed，11 分 09 秒（比 19 的 3705 +51：`test_tutorial.py` 47 + `test_error_codes.py` 四个 `tutorial_*` code 各一条参数化） |
+| `PYTHONPATH=<wt>/src TAVOTTO_WORKER_PYTHON=… pytest tests/test_tutorial.py` | ✅ **47** passed（含 worker 真跑两张教程图；读 dist 的三条在 `python -m build` 之后跑，也绿） |
+| `pytest tests/test_error_codes.py tests/test_projects.py tests/test_project_env.py tests/test_diagnostics_bundle.py tests/test_runtime_build.py tests/test_source_hygiene.py tests/test_ci_tooling.py tests/test_release_workflow_contract.py tests/test_merge_queue_workflows.py tests/test_update_chain_gates.py tests/test_autosave.py tests/test_package.py tests/test_i18n_dead_keys.py` | ✅ 520 passed / 6 skipped（第一遍 `test_source_hygiene` 抓到新测试里一个没钉 `encoding` 的 `subprocess.run`——与 19 同形状） |
+| `python -m build` | ✅ `tavotto-0.12.0-py3-none-any.whl`（1.47 MB）+ `tavotto-0.12.0.tar.gz`；wheel 里 `tavotto/resources/tutorial_project/` 9 个成员 37 524 字节，sdist 同 9 个；`tavotto/web/index.html` 在 |
+| `cd web && pnpm test` | ✅ exit 0 —— **171** files / **2387** tests passed（与 19 相同：本轮没有前端用例） |
+| `cd web && pnpm build` | ✅ exit 0 |
+| `cd web && pnpm i18n:check` | ✅ exit 0（`errors:backend.tutorial_*` 四条双语；`resources.d.ts` 经 `pnpm i18n:types` 重生成） |
+| `ruff check . && ruff format --check .` | ✅ exit 0 |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py` | ✅ 已重建（指纹 `2745c510f75b89fc` / `455ea989fd650a30`） |
+| `git diff --check` | ✅ |
+| 变异反证 22 条（Python 22） | ✅ 20 红 + 2 存活各自处置（M9 补用例后复跑红；M22 语义 no-op 删掉），见 `TEST_MATRIX.md` |
+| `python scripts/smoke_app.py --python <repo>/.venv/bin/python --tutorial`（真进程，`TAVOTTO_WORKER_PYTHON` 指向 homebrew 3.13 + matplotlib 3.10.8） | ✅ 冒烟通过：`GET /api/tutorial` → open（2 个脚本）→ `Fig1_kinetics` 300 ms 冷启动 → `Fig2_correlation` 310 ms → reset → 副本完整 → 干净退出无残留 worker |
+| 桌面 PyInstaller 产物 | ⚠️ **本机跑不了**（`.venv` 没装 PyInstaller，也没有 Rust supervisor 二进制）。spec 的 datas 改动只有静态断言（`test_desktop_spec_ships_the_tutorial_resources_as_datas`）+ CI 桌面腿的 `--tutorial` 冒烟能证明 |
+| Playwright e2e 全量 | ⚠️ **没跑**（本轮没有 UI 改动；13 记的六条红仍开着） |
+
+### Session 21 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cd web && pnpm test` | ✅ exit 0 —— **179** files / **2452** tests passed（比 20 的 171 / 2387 多 8 个文件 78 条：`onboardingStore` 12 / `activity` 5 / `selectionStore` 3 / `position` 8 / `flow` 13 / `tutorial` 10 / `hints` 8 / `onboardingLayer` 6，另 `alignSelectedTo` 两条改成只看排列三种 kind） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b` 含 e2e 工程） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 3170 / en-US 3266 条；`resources.d.ts` 经 `pnpm i18n:types` 重生成） |
+| `cd web && pnpm lint` | ✅ 无 error（只有既有的 fast-refresh 提示；第一遍抓到 `ObjectContextMenu` 里我把 `useEffect` 放在早退之后——Hook 顺序随 `obj` 变，已改） |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest tests/test_i18n_dead_keys.py tests/test_error_codes.py tests/test_source_hygiene.py tests/test_ci_tooling.py tests/test_mcp_resolver.py tests/test_tutorial.py -k "not worker"` | ✅ **247** passed / 1 skipped / 5 deselected。**本轮 Python 源码零改动**，全量 pytest 没跑（20 的 3756 / 34 / 0 仍是最近一次全量） |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py`（各 `--check`） | ✅ 已重建并一致（指纹 `e24359828915068d` / `532128103da274fa`） |
+| `python scripts/build_frontend.py` + `npx playwright test e2e/tutorial.spec.ts --project=chromium`（真后端 + 真 matplotlib） | ✅ **4 passed**（第一遍 4 红：treeitem 折叠 / Tab 顺序 / 像素判据 / 切回项目是空白文档；第二遍 3 红：dialog 定位器把 coachmark 算进去 / `data-*` 布尔值是 `"true"` / 拖动落在抽屉把手上；第三遍 1 红：坐标对象被平移出工作区——**产品缺口**，加 `hiddenInStage` 后绿） |
+| `npx playwright test --project=chromium`（全量，冻结前端 + `build_frontend.py` 之后，14 分钟） | ⚠️ **89 passed / 3 failed**：`cross-tab-paste`（**本轮引入**：`HintToast` 第一版占了 `role=status`，与状态区撞名——已改成只留 `aria-live`，重建后单跑复绿）；`ux-consistency` 流程 B / D（**既有**：16 把刻度卡拆成 X/Y 页签、19 把「项目与路径」改名「项目」，用例没跟上；画面里没有教程元素）。13 记的那六条红这次**没有再出现**（a11y / i18n / keyboard-golden-path / asset-library 全绿） |
+| 变异反证 24 条（前端） | ✅ 22 红 + 2 存活各补用例后红（M8 教程外的信号、M24 选区没变也发），见 `TEST_MATRIX.md` |
+| `git diff --check` | ✅ |
+
+### Session 22 之后（改动后实跑，**冻结前端 + 重建两个产物之后**跑的一遍）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest -q tests`（全量，含 `TAVOTTO_NO_TELEMETRY=1`） | ✅ **exit 0**，0 failed / 34 skipped；总数按进度点估约 3.8k（此配置下摘要行不打印，20 的最近一次是 3756，本轮净增 47 条） |
+| `pytest tests/test_ai_refresh.py tests/test_telemetry_integrations.py tests/test_mcp_server.py`（新增 47 + MCP 全部） | ✅ exit 0（`test_widget_artifact_is_in_sync` 在重建产物前红一次，重建后绿） |
+| `cd web && pnpm test` | ✅ exit 0 —— **182** files / **2496** tests passed（比 21 的 179 / 2452 多 3 个文件 44 条）；第一遍 exit 1 是新用例留下一条 unhandled rejection（`fetchPanels` 没给值），补 mock 后绿 |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b` 含 e2e 工程） |
+| `cd web && pnpm i18n:types && pnpm i18n:check` | ✅ exit 0（zh-CN 3178 / en-US 3276 条）；`pnpm i18n:extract` 跑过一次：它往 inspector / project / shortcuts / common 塞空键与拆复数基键，`i18n:check` 当场红，产物 `git checkout` 掉（T-121） |
+| `cd web && pnpm lint` | ✅ 无 error |
+| `ruff check . && ruff format --check .` | ✅ |
+| `python scripts/build_mcp_widget.py` / `build_browser_playground.py`（各 `--check`） | ✅ 已重建并一致（`317e8e756cd08a1a` / `ce546102484da66b`） |
+| `python scripts/build_frontend.py` + `TAVOTTO_PYTHON=<repo>/.venv/bin/python PYTHONPATH=<wt>/src npx playwright test e2e/{tutorial,quick-menu,asset-library}.spec.ts --project=chromium` | ✅ **9 passed**（教程 4 / 右键菜单含多选对齐 1 / 素材库含 readiness 入口 4，1.7 分钟）。没有为命令面板 / 接入中心遥测新写 e2e（遗留表） |
+| 变异反证 17（后端）+ 19（前端） | ✅ 后端 14 红 + 3 存活各处置后红（M3 补用例、M6 删冗余、M13 补断言）；前端 18 红 + 1 存活补断言后红（F4），见 `TEST_MATRIX.md` |
+| `git diff --check` | ✅ |
+
+### Session 23 之后（终审：改动后在**最终树**上再跑一遍全量）
+
+| 命令 | 结果 |
+| --- | --- |
+| `ruff check . && ruff format --check .` | ✅（第一遍红：矩阵用例改判据后漏跑 formatter，`64adbebe` 修） |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | ✅ 一致（`e97fd2530046d37a` / `09a8abe9eab7a60b`） |
+| `PYTHONPATH=<wt>/src .venv/bin/python -m pytest -q tests`（`TAVOTTO_NO_TELEMETRY=1`，junit 计数） | **3861 条：1 failed / 34 skipped**（753 s）——唯一红仍是 `tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`（两次全量都红、单跑 2/2 绿 0.8 s；`tavotto run` 线，本分支未动 `runspec` / `cli` / `tests/native`，Session 06 起就有） |
+| `cd web && pnpm test` | ✅ 184 文件 / 2503 条（17 s；比基线多 2 个文件 7 条） |
+| `pnpm build` / `pnpm i18n:check` / `pnpm lint` | ✅ / ✅ / ✅ 无 error（主 chunk 1.85 MB，R-17） |
+| `build_frontend.py` + Playwright 三个 project 全量 | ✅ **126 条：125 passed / 1 skipped / 0 failed**（707 s；改动前 2 红的流程 B / D 已绿） |
+| `python -m build` + `scripts/ci/lab_acceptance.py --dist dist` | ✅ 结构断言 9 项 + 端到端冒烟全过（wheel 1.50 MB） |
+| `scripts/bench_render.py` 交错 A/B/C ×3 / `scripts/bench_document.py` / watcher 空闲采样 | ✅ 数据在 `docs/perf-baseline.md`「发布终审」 |
+
+改动前的基线（本树 `5608008f`）：pytest 3840 条 1 红（`test_ctrl_c…` 负载敏感、单跑绿）、vitest 2496 绿、
+e2e 126 条 2 红（流程 B / D）——全部记在 `TEST_MATRIX.md` Session 23。
+
+## 发布结论（Session 23）
+
+```text
+BLOCKED — 不建议发布
+```
+
+本分支：**P0 = 0，P1 = 0**（本轮修掉的 P1：原图 PDF 文本层缺科学字符 T-122、升级验收两条空检查 R-18、
+另存为不校验 T-123）。阻断项与最短修复路径：
+
+1. **main 上 Lab Qualification 连红**（#225，`test_project_env.py` 14 条）——release 档的 lab 资格拿不到。
+   修法：给实验室 runner 的 base 解释器装 matplotlib，或让 `venvfixture.make_project_venv` 不假设 base 带它。
+2. **main 上 Nightly CompatBench 连红**（#226，四个多图用例 `native_run` 退成 product_bug）——nightly 门禁。
+   修法：compat-bridge 轨道修 native run 的多图路由或按证据改基线声明。
+3. **桌面产物本分支未在 CI 执行过**：Session 19–23 改了 `tavotto.spec` 的 datas 与两条 workflow 的
+   `--tutorial`，它们只在合并队列 / `full-ci` 标签 / tag 上第一次执行。修法：先给本分支的 PR 打 `full-ci`
+   标签，看 `windows-exe-smoke` / `macos-app-smoke` 两腿真过一次。
+4. Distribution metrics 连红（#227）不阻断产品，但发行量指标断了六天，发版前该修。
+
+以上四条都不在本分支的改动范围内；1–3 任一不清，结论不变。清完之后本分支满足门禁清单其余各项
+（见下方逐条）。
+
+### 门禁清单逐条
+
+| 项 | 状态 |
+| --- | --- |
+| Gate 1–5 全部通过 | ✅（01–22 各自的结果表 + 本轮审计未发现空门禁） |
+| P0 为 0 | ✅ |
+| P1 为 0 或有批准的例外 | ✅ 本分支；❌ main 上 #225 / #226 |
+| 全量自动化真实通过 | 见上表 |
+| 关键 E2E 通过 | 见上表（流程 B / D 已修） |
+| 文档 migration / 保存 / recovery | ✅（Gate 1 用例 + 本轮 round-trip / 未来 schema 拒绝） |
+| original / canvas export fidelity | ✅（既有像素 / 尺寸用例 + 本轮 PDF 文本层矩阵） |
+| 特殊字符矩阵 | ✅ `test_scientific_text_matrix.py` 7/7 |
+| package manager 隔离与安全 | ✅（审计 §3：结构性，34 条用例含 3 条真装） |
+| wheel / sdist 与目标 desktop | ✅ wheel / sdist 本机验；❌ desktop 本机未验、CI 未执行本分支 |
+| i18n / a11y | ✅ `i18n:check`、a11y / contrast / i18n e2e 三个 project 绿；对比度缺口已修 |
+| telemetry / privacy 文档一致 | ✅（三方逐位一致；`target_version` 措辞收窄） |
+| TEST_MATRIX / STATUS / DECISIONS / UX_CONTRACTS 更新 | ✅ |
+| 工作树无临时文件和无关改动 | ✅（`git status` 干净；`dist/`、`src/tavotto/web/` 为 gitignore 产物） |
+
+### 真实用户流程 A–N（自动化覆盖；映射逐条在会话目录 `scenario-coverage.md`）
+
+| 场景 | 覆盖 | 无自动化 / 备注 |
+| --- | --- | --- |
+| A 单图快速编辑 | e2e `asset-library` 完整链（保存 → 关闭 → 重开 → 字号仍 13）+ store 用例 + 本轮 ⌘S 键位 | — |
+| B dirty / 关闭 / 恢复 | `saveStateMachine` 全套（clean 不拦、保存中编辑、恢复副本裁决、主文档不动）+ atomicio 五条 | 三选一对话框不存在（#223）；真实进程 kill |
+| C 迁移 / 项目移动 | schema 2 → 3 前端迁移 + 未来 schema 两侧拒；项目移动 `test_project_env` / registry 相对路径 | 迁移前逐文档备份（原文件在显式覆盖前不动） |
+| D 外部修改 | `test_project_watch` 批次 / 自写不回环 / 外部紧接触发；不跑脚本 | 自动保存不进 watcher（结构上在数据目录，未断言） |
+| E 就绪度六档 | `test_readiness*` + 接入中心 e2e | — |
+| F 原图导出 | ADR 0028 用例（scope=original 无 x/y/w/h、DPI 来源、透明）+ 本轮文本层 | — |
+| G 画布导出 | 页面 mm 尺寸 / 翻转 / 旋转 / hidden / 部分失败 / 覆盖 | 多面板与裁剪面板的像素断言 |
+| H Style / Spec / 问题 | ADR 0029/0030 用例（快照、7.5 pt → 8 pt、focusIssue、safe fix undo、导出摘要同源） | — |
+| I 科学文本 | **本轮矩阵** 六位置 × 四产物 | — |
+| J 图例 / 刻度 | ADR 0034/0035 用例 + e2e 流程 B（本轮修） | — |
+| K 多选 / QuickEdit | ADR 0036/0037 用例 + `quick-menu` e2e | — |
+| L 设置 / 包管理 | `settings-shell` / `coding-agents` e2e + 包管理 34 条 | 真 150% scale（600 px 视口等价） |
+| M 教程 | `tutorial` e2e 四条 + 后端 47 | — |
+| N Codex / AI 刷新 | `test_ai_refresh` 18 + MCP 16 + 前端 `useServerEvents` | — |
+
+## 遗留（Session 23 之后仍开着的）
+
+| 事项 | 级别 | 复现 / 影响 | 归属 |
+| --- | --- | --- | --- |
+| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225 | project-env + lab runner |
+| main：Nightly CompatBench `native_run` 4 用例退成 product_bug | **P1（发布）** | #226 | compat-bridge |
+| 桌面产物：本分支的 datas / `--tutorial` 改动未在 CI 执行过；`delivered: local` 桌面限制 | P1（未验证，不是缺陷） | 合并队列 / `full-ci` 第一次执行 | 23 → PR |
+| main：Distribution metrics HTTP 400 | P2 | #227 | ops |
+| 热渲染比 main 慢 15%（manifest +27%） | P2 | #220，阈值 1.3× / 2× | engine |
+| 版本时间线整份文档、autosave 无上限 | P2 | #221（5 000 对象 547 ms） | documents |
+| 另存为无冲突检测；读侧 NaN 无对称闸 | P2 / P3 | #222 | documents |
+| 桌面壳无 CloseRequested 处理 | P2（待真机） | #223 | desktop |
+| MCP 插件第二份导出实现 | P2 | #224 | codex-plugin |
+| 原图写回 / AI 回滚不经 atomicio（无 fsync，有 20 份备份） | P2 | R-05 族 | 择机 |
+| `test_ctrl_c_reaches_the_script…` 负载敏感（本轮负载 13.6 时红一次） | P2 | 单跑 3.8 s 绿 | tavotto run 线 |
+| 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | `pnpm build` 告警 | 择机 |
+| 网站 /try 未同步（`pnpm sync-playground`） | 发布前 | playground 指纹 `09a8abe9eab7a60b` | 发布前 |
+| README 两张预检截图是旧规范拍的 | P3 | alt 如实 | 择机 |
+| `problem_focused` / `export_completed.scope` 两条事件未加 | — | 22 记 | 下次遥测扩容 |
+
+Session 19 之后那张长表里其余「已处置 / 已决定不做 / 择机」各项原样有效，不再复制。
 
 ## 下一阶段
 
-**Prompt 13（统一属性系统、文字控件、标注字体）**，入口见
-`SESSION_HANDOFF.md` 的「下一阶段入口」。
+没有下一阶段。本轨道 23 个 Session 全部完成；接下来是**发布路径**：
 
-12 留给 13 的可复用入口：
-
-* `lib/exportRequest.buildExportRequest(input)` —— 导出载荷的**唯一构造**。
-  13–16 改属性之后**不需要动它**：属性改的是 `doc.objects` 与
-  `panel.overrides`，载荷在导出那一刻从那里现取；
-* `lib/exportPayload.toExportObjects()` —— 画布对象 → 载荷的唯一投影
-  （顺序即 z 序、隐藏对象不发）。**新属性加在这一处**；
-* `lib/exportName.checkFilename()` —— 文件名合不合法（八条闭集原因，与
-  `engine/exportreq.py` 严格同源，改一边必须重生成向量）；
-* `store/exportStore.ts` —— 起 / 取消 / 跟进度。作业活在 store 不活在对话框。
-
-以及 09–11 留下的四个（原样有效）：`lib/originalSpec.getOriginalOutputSpec()`、
-`lib/specBinding.resolveDocumentSpec()`、
-`store/validationStore.getValidationSummary()`、`lib/issueFocus.focusIssue()`。
-
----
+1. 推分支、开 PR（13–23 十一轮攒在 `feat/product-ux-13-properties`，按用户节奏拆或不拆），打 `full-ci`
+   标签让两条桌面腿第一次执行本分支的 spec / workflow 改动；
+2. 处理 #225 / #226（不在本分支），Lab release 档跑绿；
+3. `pnpm sync-playground` 同步网站 /try；
+4. 之后按 `docs/1.0-release-readiness.md` 走 tag。
 
 ## E2E 本机跑法（2026-08-30 实测，推翻 R-19 原来的理由）
 

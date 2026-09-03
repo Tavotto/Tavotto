@@ -84,6 +84,7 @@ from .engine import (
     runtimeasset as engine_runtimeasset,
     session_client as engine_session_client,
     telemetry as engine_telemetry,
+    tutorial as engine_tutorial,
     updater as engine_updater,
 )
 
@@ -1610,15 +1611,52 @@ def api_events():
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
-def _script_change_handler(ctx: "ProjectCtx"):
+def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
     """watcher 回调必须绑定到具体项目——事件里带上 pj，别的标签页才不会
-    因为另一个图库的脚本变动去重渲染自己的面板。"""
+    因为另一个图库的脚本变动去重渲染自己的面板。
+
+    `reason` 只有两个取值：`watcher`（默认）与 `ai`（`_after_ai_change`）。前端
+    据它决定要不要单独弹「脚本已更新」——AI 那条路紧跟着还有一条 `ai.done`
+    在说同一件事，两条提示只留一条。
+    """
 
     def _on_change(changed: list[str]) -> None:
         stems = [s for sc in changed for s in ctx.registry.stems_of(sc)]
-        sse_publish("panel.file_changed", {"scripts": changed, "stems": stems, "pj": ctx.id})
+        sse_publish(
+            "panel.file_changed",
+            {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason},
+        )
 
     return _on_change
+
+
+def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
+    """AI 改完脚本之后的**后端确定性路径**（ADR 0041 §2）。
+
+    顺序与 watcher 的 `_dispatch` 逐字相同：作废 worker → 统一刷新 →
+    `panel.file_changed`。区别只在「谁先看到这次写入」：
+
+    * 先问 watcher（`engine_watch.absorb`）：这条脚本此刻的签名它消化过没有。
+      没消化过（常态——CLI 刚退出，watcher 还在防抖）→ 三件事这里做全，并把
+      签名记成已消化，watcher 下一轮不再重复；
+    * 已经消化过（CLI 写完文件后又跑了几秒才退出）→ 作废与事件 watcher 已经
+      发过，这里**只**再走一次刷新——它按内容比对，无差异一条事件都不发；
+    * 项目已经关闭 → 抛 `project_closed`，进 `ai.done.refresh` 的 failed 档。
+
+    **不 probe、不跑脚本**：刷新只读 AST（ADR 0025）；重渲染由前端收到
+    `panel.file_changed` 之后按既有纪律决定（正在画布上的面板才重建）。
+    """
+    if PROJECTS.get(ctx.id) is not ctx:
+        raise engine_refresh.RefreshError("project_closed", "项目已关闭，AI 修改后的刷新跳过")
+    fresh = engine_watch.absorb(ctx.path, [script])
+    first = fresh is None or script in fresh
+    if first:
+        engine_pool.invalidate(script, str(ctx.path))
+    result = refresh_project(ctx, reason="ai", changed_paths=[script])
+    if first and (ctx.path / script).exists():
+        _script_change_handler(ctx, reason="ai")([script])
+    result["panel_event"] = bool(first)
+    return result
 
 
 def project_status(ctx: "ProjectCtx | None") -> dict:
@@ -1636,6 +1674,9 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         "settings": engine_config.project_settings(str(p)),
         "export_dir": str(project_export_dir(ctx)),
         "backup_dir": str(project_backup_dir(ctx)),
+        # 教程项目的标记（ADR 0039）：它走的是与普通项目同一条打开路径，
+        # 界面上「重新开始教程」「教程角标」只认这一个字段，不自己比路径。
+        "tutorial": engine_tutorial.is_tutorial_path(p),
     }
 
 
@@ -1782,13 +1823,44 @@ def refresh_project(
     把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
     watcher 也调这个函数，不许自己 merge、自己发事件）。
     """
-    return engine_refresh.refresh_project_index(
+    result = engine_refresh.refresh_project_index(
         ctx,
         reason=reason,
         changed_paths=changed_paths,
         allow_static_merge=allow_static_merge,
         publish=publish,
         sink=_refresh_sink(ctx),
+    )
+    # 遥测挂在**成功边界**上，且只在这一处：四条刷新路径（手动 / watcher /
+    # Codex / AI）都经过这里。失败抛出去了就没有这一句——失败不是完成。
+    _capture_refresh_completed(result)
+    return result
+
+
+def _refresh_changed_bucket(result: dict) -> str:
+    """脚本 + 素材变化条数的分桶。桶名是闭集，条数本身不发。"""
+    reg, assets = result["registry"], result["assets"]
+    n = sum(len(reg[k]) for k in ("added_scripts", "removed_scripts", "changed_scripts")) + sum(
+        len(assets[k]) for k in ("added", "removed", "changed")
+    )
+    if n == 0:
+        return "none"
+    if n == 1:
+        return "one"
+    return "few" if n <= 5 else "many"
+
+
+def _capture_refresh_completed(result: dict) -> None:
+    """`project_refresh_completed`：只收四个用户可见的来由（watcher / manual /
+    codex / ai），其余（probe / 手工登记 / 打开项目）是别的动作的副产物，不记。
+
+    **这里不再自己比一遍白名单**：`EVENTS` 表里 `source` 的枚举就是那四个值，
+    `capture()` 对表外的值当场丢弃——同一条保证写两遍，变异任何一遍都杀不死
+    （反证 M6 存活的成因），删掉重复的那份，让表成为唯一权威。
+    """
+    engine_telemetry.capture(
+        "project_refresh_completed",
+        {"source": result.get("reason"), "changed_bucket": _refresh_changed_bucket(result)},
     )
 
 
@@ -2016,7 +2088,23 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     return body, False
 
 
-def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+@app.get("/api/diagnostics/summary")
+def api_diagnostics_summary():
+    """给「复制诊断」用的**纯文本**报告（已脱敏）。
+
+    与诊断包同一份 `build_report()`——不是第二份诊断实现，只是换了个交付形态：
+    用户在设置里点「复制」，贴进 issue 或群聊。所以它经过与 zip 同一道脱敏
+    （密钥 / 个人路径 / 假名标识），界面先把文本摆出来让用户看过再复制。
+    """
+    status = _diagnostics_project_status()
+    report = engine_diagnostics.build_report(project=status, port=request.host.rsplit(":", 1)[-1])
+    resp = jsonify({"text": engine_diagnostics.render_text(report), "report": report})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _diagnostics_project_status() -> dict:
+    """诊断报告里的 project 段（诊断包与文本摘要共用这一份）。"""
     ctx = _request_ctx()
     status = project_status(ctx)
     if ctx is not None:
@@ -2048,6 +2136,11 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
         # **不含** index 地址、pip 配置、绝对路径——那三样是这一族功能里
         # 最容易顺手泄漏凭据的地方。
         status["dependency_repair"] = engine_deprepair.diagnostics_state(str(ctx.path))
+    return status
+
+
+def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+    status = _diagnostics_project_status()
     data = engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
@@ -2119,6 +2212,9 @@ def api_projects_recent():
                 "id": open_paths.get(str(p)),
                 "opened": str(p) in open_paths,
                 "current": current is not None and p == current.path,
+                # 教程副本进最近列表但带标记（T-104）：列表只显示「教程」，
+                # 不把数据目录里的路径当成用户自己的项目路径来展示。
+                "tutorial": engine_tutorial.is_tutorial_path(p),
             }
         )
     resp = jsonify({"recent": entries})
@@ -2169,6 +2265,130 @@ def api_projects_remove():
     """从最近列表移除；绝不删除磁盘内容。"""
     body = request.get_json(force=True)
     return jsonify({"ok": engine_config.remove_recent(str(body.get("path") or ""))})
+
+
+# ------------------------- 离线教程项目（ADR 0039） ---------------------------
+# 三个端点都不执行脚本、不 probe：复制文件 + `open_project()`（只读注册表）。
+# 认证与别的端点一样走 security 钩子；客户端**不能**指定目的地——副本永远在
+# `engine/tutorial.tutorial_destination()`。
+
+
+def _tutorial_error(exc: engine_tutorial.TutorialError):
+    status = 409 if exc.code == "tutorial_locked" else 500
+    return jsonify(
+        {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
+    ), status
+
+
+def _tutorial_ctx() -> "ProjectCtx | None":
+    """进程里打开着的那个教程项目（教程一次只有一份副本在用）。"""
+    with _PROJECT_LOCK:
+        for ctx in PROJECTS.values():
+            if engine_tutorial.is_tutorial_path(ctx.path):
+                return ctx
+    return None
+
+
+@app.get("/api/tutorial")
+def api_tutorial():
+    """教程资源可不可用、副本在不在。**不回包内路径**。"""
+    problems = engine_tutorial.validate_tutorial_resources()
+    body: dict = {"available": not problems, "problems": problems}
+    if not problems:
+        meta = engine_tutorial.tutorial_metadata()
+        ctx = _tutorial_ctx()
+        body.update(
+            tutorial_version=meta["tutorial_version"],
+            metadata=meta,
+            copy=engine_tutorial.copy_status(meta),
+            project={"open": ctx is not None, "id": ctx.id if ctx else None},
+        )
+    resp = jsonify(body)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/tutorial/open")
+def api_tutorial_open():
+    """确保可写副本（缺文件就补）→ 走普通 `open_project()` → 回状态 + 元数据。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        tp = engine_tutorial.ensure_tutorial_copy()
+        status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
+    except (RuntimeError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify(
+        {
+            "project": status,
+            "tutorial": tp.metadata,
+            "reset": False,
+            "created": tp.created,
+            "repaired": tp.repaired,
+        }
+    )
+
+
+def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
+    """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
+
+    * 教程画布的自动保存槽位（`document_id` 是元数据里定死的）；
+    * 教程项目的写回基线 `baked_overrides/<项目 id>.json`——副本换成了原始 PDF，
+      旧基线描述的是已经不存在的写回结果。
+    项目内的 `tavottofile/`（画布、导出、版本历史）随目录整个换掉。
+    全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
+    """
+    removed: list[str] = []
+    for target in (_autosave_path(str(meta["document_id"])), BAKED_DIR / f"{pid}.json"):
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
+            continue
+        removed.append(target.name)
+    return removed
+
+
+@app.post("/api/tutorial/reset")
+def api_tutorial_reset():
+    """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
+    body = request.get_json(silent=True) or {}
+    try:
+        meta = engine_tutorial.tutorial_metadata()
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
+    ctx = _tutorial_ctx()
+    was_default = ctx is not None and ctx.id == DEFAULT_PROJECT
+    if ctx is not None:
+        # `wait=True`：worker 子进程必须真的退出并释放文件，Windows 上
+        # 否则下一步 rename 会撞上占用。
+        close_project(ctx.id, wait=True)
+    try:
+        tp = engine_tutorial.ensure_tutorial_copy(reset=True)
+    except engine_tutorial.TutorialError as exc:
+        # 副本换不掉时旧副本仍在（tutorial 模块保证），把项目重新打开还给用户
+        if ctx is not None and ctx.path.is_dir():
+            try:
+                open_project(str(ctx.path), make_default=was_default)
+            except (RuntimeError, OSError):
+                pass
+        return _tutorial_error(exc)
+    pid = _project_id(tp.path)
+    cleared = _clear_tutorial_local_state(pid, meta)
+    try:
+        status = open_project(
+            str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))
+        )
+    except (RuntimeError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify({"project": status, "tutorial": tp.metadata, "reset": True, "cleared": cleared})
 
 
 @app.post("/api/project/refresh")
@@ -3144,6 +3364,41 @@ def api_engine_render():
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
         out["environment_switched"] = switched
     return jsonify(out)
+
+
+@app.post("/api/engine/invalidate")
+def api_engine_invalidate():
+    """作废这张图的热会话；下一次 render 从头跑脚本（QuickEdit 的「重新构建」）。
+
+    用的是项目刷新那条路**同一个原语**（`pool.invalidate`，脚本文件变了就是
+    这么作废的），只是触发者换成用户的一次明确点击。它**只让会话过期**：源脚本
+    一个字不动、不写回原始文件、不清 override（override 住在前端文档里，随下一次
+    render 原样重放）、**不在这里起 worker**——冷 build 仍由随后的 render 惰性
+    触发（与打开面板同一 lazy 语义，脚本只在用户要图的那一刻跑）。
+
+    native 会话是用户自己终端里的进程（ADR 0021），**不杀**：回
+    `invalidated: false` + `reason`，前端照常重新渲染当前变体，但要如实说
+    「没有重跑脚本」——一个静默的 200 会让用户以为数据文件的改动已经生效。
+    """
+    body = request.get_json(force=True) or {}
+    rel_id = body.get("id", "")
+    root = str(require_project())
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        if info is None:
+            abort(_runtime_asset_unknown(rel_id))
+        if engine_enginesession.profile_of(root, rel_id) == engine_enginesession.PROFILE_NATIVE:
+            return jsonify({"invalidated": False, "reason": "native_session"})
+        script = info["script"]
+    else:
+        path = safe_resolve(rel_id)
+        info = current_registry().for_stem(path.stem)
+        if info is None:
+            abort(404)
+        script = info["script"]
+    engine_pool.invalidate(script, root)
+    LOG.info("引擎会话作废（用户重新构建）: %s", script)
+    return jsonify({"invalidated": True})
 
 
 @app.post("/api/engine/preview_png")
@@ -4441,6 +4696,128 @@ def api_managed_environment_rebuild():
     return jsonify({"started": True})
 
 
+# ------------------------- 包管理（ADR 0038）---------------------------------
+#
+# 设置 → 包管理。目标环境**只有**这个项目的 Tavotto 受管环境；用户的 `.venv`
+# 与内置 runtime 不在这条面上（前者是他的研究环境，后者是「重装就能修」的
+# 前提）。四个端点与受控依赖修复同一条纪律：先形成作业（不改任何东西），
+# 再按 job_id 执行——请求体里除了 job_id 什么都不读。
+@app.get("/api/engine/packages")
+def api_packages_list():
+    """内置 / 用户装的两份清单 + 环境状态 + 能不能操作。**不装任何东西**。"""
+    try:
+        root: str | None = str(require_project())
+    except NoProjectError:
+        root = None
+    resp = jsonify(engine_deprepair.list_managed_packages(root))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/packages/plan")
+def api_packages_plan():
+    """形成一个包操作作业：`{op: install|update|uninstall, spec}` → `{job}`。
+
+    包名 / 需求串在 `create_package_job` 里过白名单语法；卸载时把「谁依赖它」
+    一起交回去，界面据此二次确认。**这一步不改任何东西。**
+    """
+    root = str(require_project())
+    body = request.get_json(force=True)
+    try:
+        job = engine_deprepair.create_package_job(
+            root, str(body.get("op") or "").strip(), str(body.get("spec") or "").strip()
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc)
+    return jsonify({"job": job.to_payload()})
+
+
+@app.post("/api/engine/packages/run")
+def api_packages_run():
+    """执行一个已形成的作业。**请求体里只有 job_id。** 进度经 SSE `engine.package`。"""
+    root = str(require_project())
+    body = request.get_json(force=True)
+    job = engine_deprepair.get_package_job(str(body.get("job_id") or ""))
+    if job is None or job.project != root:
+        # 作业绑定项目：A 项目的作业不能拿到 B 项目来执行；过期的一并拒绝
+        return jsonify(
+            {
+                "error": "没有这个作业（或已过期），请重新开始。",
+                "code": engine_deprepair.ERROR_NOT_ALLOWED,
+            }
+        ), 409
+
+    def _on_event(p: dict) -> None:
+        sse_publish("engine.package", p)
+        _capture_package_action(job.op, p)
+
+    engine_deprepair.run_package_job_async(job.job_id, _on_event)
+    return jsonify({"started": True, **engine_deprepair.progress(job.job_id)})
+
+
+#: 作业 op → 遥测 action；终态 → 遥测 outcome。**没有包名**（可能泄露私有依赖）。
+_PACKAGE_ACTION = {
+    engine_deprepair.OP_INSTALL: "install",
+    engine_deprepair.OP_UPDATE: "update",
+    engine_deprepair.OP_UNINSTALL: "remove",
+}
+_PACKAGE_OUTCOME = {
+    engine_deprepair.STATE_DONE: "ok",
+    engine_deprepair.STATE_FAILED: "failed",
+    engine_deprepair.STATE_CANCELLED: "cancelled",
+}
+
+
+def _capture_package_action(op: str, progress: dict) -> None:
+    """`package_action`：作业到终态才记一条；中间态一条都不记。"""
+    outcome = _PACKAGE_OUTCOME.get(str(progress.get("state") or ""))
+    action = _PACKAGE_ACTION.get(op)
+    if outcome is None or action is None:
+        return
+    engine_telemetry.capture("package_action", {"action": action, "outcome": outcome})
+
+
+def _foreign_package_job(root: str, job_id: str) -> bool:
+    """这个作业属于**别的**项目吗？
+
+    作业绑项目（`create_package_job(project, …)`），而进度 `job_id` 经 SSE 全进程广播：
+    B 项目的标签页拿得到 A 的 `job_id`。`/run` 一直核 `job.project == root`；取消与补拉
+    以前只核「请求方有个项目」——B 能取消 A 的安装、读 A 的日志（评审 #228 两条 P2，
+    按跨项目事件污染处置）。过期 / 不存在的作业不算别人的：取消回 False、补拉回 idle。
+    """
+    job = engine_deprepair.get_package_job(job_id)
+    return job is not None and job.project != root
+
+
+def _not_your_job():
+    return jsonify(
+        {"error": "这个作业属于另一个项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+    ), 409
+
+
+@app.post("/api/engine/packages/cancel")
+def api_packages_cancel():
+    """取消。**不承诺回滚**：装 / 卸到一半的受管环境会被标成未完成，下次重建。"""
+    root = str(require_project())
+    body = request.get_json(force=True)
+    job_id = str(body.get("job_id") or "")
+    if _foreign_package_job(root, job_id):
+        return _not_your_job()
+    return jsonify({"cancelling": bool(engine_deprepair.cancel(job_id))})
+
+
+@app.get("/api/engine/packages/job")
+def api_packages_job():
+    """某个作业的当前进度（SSE 断了之后的补拉）。只给自己项目的作业。"""
+    root = str(require_project())
+    job_id = request.args.get("job_id", "")
+    if _foreign_package_job(root, job_id):
+        return _not_your_job()
+    resp = jsonify(engine_deprepair.progress(job_id))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ------------------------- 检查更新 -----------------------------------------
 def _updater_disabled_in_desktop():
     """桌面模式下 Python updater 整个停用（升级归 Tauri 层，避免两套升级机制）。
@@ -4607,17 +4984,20 @@ def api_ai_run():
         "target": body.get("target"),
         "canvas": body.get("canvas"),
     }
+    ctx = current_ctx()
     try:
         sid = engine_ai.run(
             agent,
             info["script"],
             prompt,
-            str(require_project()),
+            str(ctx.path),
             context=context,
             on_event=sse_publish,
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
+            # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
+            on_changed=lambda script: _after_ai_change(ctx, script),
         )
     except engine_ai.AgentError as exc:
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
@@ -4764,16 +5144,14 @@ def api_layout_save(name):
     进程被杀）留下的是一个**截断的文件**，而它已经把上一份好文件顶掉了——
     产品里最显眼的一次保存，恰恰是唯一一处不原子的写入。
 
-    **载荷这里不做 schema 校验。** 已经在用这条路的调用方不止前端：
-    `scripts/ci/upgrade_acceptance.py` 发的是 `{"doc": ...}` 包一层的形状。
-    在这个 PR 里收紧会让 N-1 升级验收的两个检查悄悄换一种坏法（见
-    docs/implementation/product-ux-reliability/STATUS.md 的 R-18），
-    那属于修调用方，不属于修落盘。非有限数仍然挡（`atomicio` 里），
-    因为那种文档写出去谁都读不回来。
+    **载荷与自动保存走同一份判据**（`documents.validate_document`，ADR 0023
+    §5a 的条件——R-18 修好之后——已满足）：不是文档的东西、来自更新版本的
+    schema，都在落盘之前挡下。以前这条路一个字段都不查，「来自更新的 Tavotto」
+    的文档能原样写进 `tavottofile/`，随后每一次打开都被拒。非有限数照旧由
+    `atomicio` 挡（那种文档写出去谁都读不回来）。
     """
-    engine_atomicio.write_json(
-        layout_path(name, project_layout_dir()), request.get_json(force=True), indent=1
-    )
+    body = engine_documents.validate_document(request.get_json(force=True))
+    engine_atomicio.write_json(layout_path(name, project_layout_dir()), body, indent=1)
     return jsonify({"ok": True})
 
 

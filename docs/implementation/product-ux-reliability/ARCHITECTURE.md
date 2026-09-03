@@ -366,11 +366,115 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 取景框改成那张图的包围盒），画布排版是它在页面上的落位。模式与当前图是**工作区
 状态**——不进文档、不进撤销、不置 dirty，按 documentId 存本机一档。
 
+### 5.1b 属性能力层：一段文字长什么样（`← 13`，ADR 0032）
+
+```text
+                       web/src/lib/typography.ts
+        规范属性名 · 取值语义 · 能力表 · property path · 校验/规整
+                              │
+              ┌───────────────┴───────────────┐
+   useFigureTypography                 useCanvasTypography
+   （能力问 manifest）                  （能力看 TextObject 字段）
+   setOverride / setOverrides            updateObjects
+              └───────────────┬───────────────┘
+                     TypographyAdapter（一个接口）
+                              │
+                controls/TypographyControls.tsx（一份控件）
+        属性页图内文字 · 图内批量 · 画布标注 · 浮动工具条 —— 四个入口
+```
+
+* **控件看不到目标是哪一类、是一个还是三个**，两件事都由适配器吸收；
+  写入仍各走各的 document action，**没有一条路径绕开 `documentStore.commit`**。
+* **值有四档**（`uniform` / `mixed` / `inherit` / `unsupported`），压扁任意
+  两档都是数据损坏级的误导。
+* **property path 只有 `propertyPathOf(kind, prop)` 一份**：检查报的字段名、
+  控件挂的 `data-prop`、问题面板查的选择器同源（`← 11` 的定位链最后一跳）。
+* **画布文字的字体族是闭集**（三个通用族），与
+  `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——合成跑在没有 matplotlib 的
+  Flask 进程里，画得出来的就是 PyMuPDF 的 base-14。
+* `TextObject.fontFamily` 是**可选字段**：缺席 = 没设过 = 继承默认族。
+  磁盘格式不升版，载荷缺省不发。
+
+### 5.1c 字形归属与科学文本（`← 14`，ADR 0033）
+
+```text
+                    src/tavotto/glyphplan.py  ↔  web/src/lib/glyphPlan.ts
+                    四层 primary / cjk / fallback / missing（顺序不可交换）
+                              │                          │
+        oracle = 真字体（has_glyph）        oracle = 生成的覆盖表
+                              │                    canvas_coverage.json
+                              │                    （@glyphcoverage 别名，四个 bundle）
+   ┌──────────┬───────────────┼───────────────┐          │
+ 落笔        量宽          预检 Python      导出侧       预检 TS / 画布预览
+_draw_text  text_width    engine/preflight  missing_    lib/preflight · TextView
+                          （也读表）        glyphs()
+
+          scripts/gen_canvas_coverage.py --check   ← 看住表与真字体不漂
+          tests/golden/glyph_plan_vectors.json     ← 看住两侧算法不分叉
+```
+
+**受控科学文本解释**（`richtext.interpret_runs` ↔ `richText.interpretRuns`）
+排在计划之前：它把 Unicode 上下标折成合成片段，产出的是**渲染表示**——
+`TextObject.text` 一个字符不改。
+
+```text
+raw text ──parse_runs──▶ 标记片段 ──interpret_runs──▶ 渲染片段 ──plan──▶ 分层片段
+   │                        │                                            │
+   └─ 复制 / 保存 / 重开     └─ serialize_runs 的逆（不受解释影响）        └─ 落笔与量宽
+```
+
+**图内文字走另一条**（matplotlib 自己的解析链）：
+
+```text
+Text.get_fontfamily()  →  fontManager._find_fonts_by_props()  →  FT2Font.get_char_index()
+                       manifest._glyph_scan() → glyphs_missing / glyphs_fallback
+                              ↓（进 manifest，两个预检求值器读同一份）
+                       glyph-missing / glyph-substituted
+```
+
+`overrides._set_text_fontfamily` 设的是**回退链**（`_family_chain()`），不是
+单个名字：matplotlib 3.6 起 family 是一条逐字形回退链，只给一个名字时缺的
+字形画成 .notdef 方框。尾巴只有 `DejaVu Sans`（matplotlib 自带，每个平台都在）
+——**不放平台相关的中文字体**，那会让同一份文档在两台机器上画出不同的字。
+
+### 5.1d 图例条目模型（`← 15`，ADR 0034）
+
+```text
+engine/overrides.LegendEntries（每个图例一份，instrument 时建）
+  texts_j = 原始第 j 项 ── sources[j] / default_binding[j] / pristine[j] / custom_base[j]
+        │                       ▲ bind_legend_entries：label + 示意线指纹，并列按位置，不伪造
+        │
+  apply() ──► setters ──► sync_legends（尾部）：跟随的项从源重新派生示意线（派生显示）
+        │                  custom 无 override 的项 = custom_base；有 override 的项不碰
+        └─ 重建型 prop ──► rebuild_legend：素材 = 源 / custom_base，_reindex 接回 gid + 重放
+                                                          │
+manifest：legend_text 元素 + legend_entry{index, source_gid?, binding_default?}
+          + 字段 binding / handle_* / visible（按示意线类型给）
+                                                          │
+web/src/lib/legendModel.ts（投影：显示顺序 / 每项绑定 / 恢复跟随的计划）
+  ├─ inspector/LegendCard.tsx（图例页：Typography 批量 + 条目列表）
+  ├─ inspector/controls/LegendBindingControl.tsx（图例项页：状态 + 动作）
+  └─ store/actions.restoreLegendEntryFollow（一次 commit）
+```
+
 ### 5.2 画布
 
 `web/src/canvas/CanvasStage.tsx`、`PanelView.tsx`、`ObjectView.tsx`、
-`OverlaySvg.tsx`、`ContextBar.tsx`、`interactions.ts`；几何权威
-`exactPanelRender`（`docs/adr/0016`、`0017`）。
+`OverlaySvg.tsx`、`context-bar/`（`← 17`，ADR 0036：一个外壳三种目标——单个图内
+元素 / 单个画布对象 / 两个以上画布对象；落位在 `position.ts` 纯函数，与 OverlaySvg
+的联合框同一份换算）、`interactions.ts`；几何权威 `exactPanelRender`
+（`docs/adr/0016`、`0017`）。
+
+多选排列（`← 17`）：
+
+```text
+浮动栏 MultiSelectionBar ─┐
+属性页 ArrangeSection    ─┼→ store/actions.alignSelectedTo / groupSelected / ungroupSelected   ← 唯一出处
+（18）QuickEdit 菜单     ─┘        ↑ 参照 store/arrangeStore（UI 会话状态）
+                                   ↑ 按钮表 inspector/arrangeButtons.ts
+                                   → 完成后 lib/activity.emitActivity（本地信号，非遥测）
+OverlaySvg：主选（ids 末位）轮廓 2 px + data-primary-selection；联合框 data-multi-selection-bounds
+```
 
 ### 5.3 导出（`← 12`，ADR 0031）
 
@@ -394,6 +498,10 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 | 打包（图 + 脚本 + 清单） | `POST /api/package`；入口在 **TopBar 文档菜单** | 从导出对话框的三点菜单搬走（ADR 0031 §6），与"导入项目包"并排 |
 
 ---
+
+**字体嵌入（`← 23`，T-122）**：原图 / 画布里嵌的面板 PDF 都出自 `figsession.export()`，那里用
+`rc_context` 把 `pdf.fonttype` / `ps.fonttype` 钉成 42——文本层与预览的字形扫描说的是同一批字符；
+Type 3 只在用户脚本自己 `savefig` 的原始产物里出现（那不是我们的图库）。
 
 ## 6. Style / Spec / Validation / Export（`← 10`，ADR 0029）
 
@@ -459,12 +567,14 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 
 | 环节 | 位置 |
 | --- | --- |
-| 设置外壳 | `web/src/components/SettingsDialog.tsx` + `components/settings/` |
+| 设置外壳（`← 19`，ADR 0038） | `web/src/components/SettingsDialog.tsx`（固定 760×600、十一分区、`resolveSection` 别名、`uiStore.settingsReturnTo`）+ `components/settings/`（`InterfaceSettings` / `PackagesSettings` / `DiagnosticsSettings` / `CopyButton` 新增；`ProfilesSettings({ kind })`） |
 | 项目设置 | `PATCH /api/project/settings`（`app.py:2074`），存 `engine/config.py project_settings()` |
 | 环境解析 | `engine/projectenv.py`（`docs/adr/0018`）、`engine/depresolve.py` |
 | 受管环境 | `engine/managedenv.py`；`GET/PATCH /api/engine/environment`、`POST …/install`、`…/managed/rebuild` |
 | 受控依赖修复 | `engine/deprepair.py`（`docs/adr/0019`），`POST /api/engine/dependency/plan|install|cancel` |
-| 前端 | `web/src/store/envStore.ts`、`depRepairStore.ts`、`components/EngineEnvironmentCard.tsx`、`DependencyRepairCard.tsx` |
+| **包管理（`← 19`，ADR 0038）** | `engine/deprepair.py` §包管理：`list_managed_packages` / `inventory` / `protected_distributions` / `create_package_job` → `run_package_job`（与修复共用 `_run_pip` / `envlease` 锁 / `_sanitize` / `worker_self_test`）；`GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`；SSE `engine.package` → `store/packageStore.ts` → `settings/PackagesSettings.tsx` |
+| 诊断文本 | `GET /api/diagnostics/summary` = `diagnostics.build_report()` → `render_text()`；`app._diagnostics_project_status()` 与 zip 端点共用 |
+| 前端 | `web/src/store/envStore.ts`、`depRepairStore.ts`、`packageStore.ts`、`components/EngineEnvironmentCard.tsx`（内置包清单已移到包管理页）、`DependencyRepairCard.tsx`（`repairCodeMessage` 导出给包管理页共用） |
 | Coding Agent 注册表 | `engine/ai_agents.py`（`docs/adr/0015`），`/api/ai/agents/*` |
 
 ---
@@ -479,12 +589,88 @@ web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
 | 遥测 | `engine/telemetry.py` + 代理白名单，三档同意，`TAVOTTO_NO_TELEMETRY=1` 硬开关；前端 `lib/telemetry.ts`、`store/telemetryStore.ts` |
 | i18n | `web/src/i18n/`（8 个命名空间：common/workspace/project/inspector/dialogs/errors/ai/shortcuts），门禁 `pnpm i18n:check` |
 | 诊断 | `engine/diagnostics.py`、`diagnostics_frontend.py`（`docs/adr/0016`），`web/src/diagnostics/` |
-| **教程 / onboarding** | **不存在**（全仓搜 `tutorial`/`onboarding` 零命中）——Prompt 20/21 是全新实现 |
+| **离线教程项目（`← 20`，ADR 0039）** | 资源 `src/tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`）；副本 `<data_dir>/tutorial/v<版本>-<指纹>/Tutorial/`（`ensure_tutorial_copy`）；`GET /api/tutorial`、`POST /api/tutorial/open|reset`；`project_status().tutorial` / recent 的 `tutorial` 标记。见 §8b |
+| **onboarding UI（`← 21`，ADR 0040）** | `lib/activity.ts`（18 种 kind 闭集的本地信号）；`store/onboardingStore.ts`（本机状态机）；`lib/onboarding/{stepIds,steps,flow,tutorial,hints,position}.ts`；`components/onboarding/{OnboardingLayer,Coachmark,HintToast}.tsx`；入口 ProjectPicker / TopBar 更多 / CommandPalette / GeneralSettings。见 §8c |
+| **Codex / AI 显式刷新与遥测整合（`← 22`，ADR 0041）** | MCP `tavotto_refresh_project`（`codex-plugin/mcp/tavotto_mcp/bridge.refresh_project`：委托运行中的 Tavotto 或本进程调同一份 `refresh_project_index`）；AI `ai_bridge.run(on_changed)` → `app._after_ai_change`（作废 → 刷新 → `panel.file_changed reason=ai`）+ `project_watch.absorb`；遥测九条（`telemetry.EVENTS` v2 + 代理表）；前端 `lib/activityTelemetry.ts`、`projectReadinessStore.openCenter({source})`、`CommandPalette` 三条新命令。见 §8d |
+
+### 8b. 离线教程项目（`← 20`，ADR 0039）
+
+```text
+包内（只读）  tavotto/resources/tutorial_project/{tutorial_meta.json, tavotto_registry.json, paper_style.py,
+              fig1_kinetics.py, Fig1_kinetics.pdf, fig2_correlation.py, Fig2_correlation.pdf,
+              tavottofile/Tutorial.json, README.md}
+      │  ensure_tutorial_copy()   首次复制 / 幂等复用 / 缺文件只补缺的 / reset 临时目录 + 两段 rename
+      ▼
+数据目录     <data_dir>/tutorial/v<tutorial_version>-<资源指纹>/Tutorial/   ← 一个普通项目目录
+              <data_dir>/tutorial/v…/state.json
+      │  open_project()          与用户项目同一条路径：只读注册表，不起草、不 probe、不起 worker
+      ▼
+进程         PROJECTS[pid]（`is_tutorial_path()` 标记）→ /api/panels 两张图都 editable → 图内编辑 / 画布 / 导出照常
+```
+
+* 重置：`close_project(pid, wait=True)` → `ensure_tutorial_copy(reset=True)` → 只清
+  `layouts/_autosave/<document_id>.json` + `baked_overrides/<pid>.json` → `open_project()`。
+* 「教程由哪些文件组成」只有 `tutorial.resource_files()` 一个出处；打包三条路（hatch wheel / sdist 自然
+  收进、PyInstaller datas 显式列）都由它对账（`tests/test_tutorial.py` 读产物成员）。
+* 错误码 `tutorial_resources_missing / tutorial_resources_invalid / tutorial_copy_failed / tutorial_locked`
+  经 `app._tutorial_error` 一个漏斗。
 
 ---
+
+### 8c. 交互式 Onboarding（`← 21`，ADR 0040）
+
+```text
+真实 action 成功 ──emitActivity──▶ window 'tavotto:activity'（kind 闭集，payload 只有枚举 / 计数）
+                                        │
+   store 变化 ─────────────────────────┤
+                                        ▼
+                         lib/onboarding/flow.ts（引擎，唯一实例）
+                           ├─ 累计 StepSignals（只在教程里；按步骤消费）
+                           ├─ evaluate：steps.ts 的 done(ctx) → onboardingStore.markStep / goTo / complete
+                           ├─ 离开教程项目 / 文档 → pause('system')；回来 → resume + ensureTutorialDocument
+                           └─ 重启后 meta 为空 → GET /api/tutorial 取元数据
+                                        │
+                     onboardingStore（localStorage 'tavotto.onboarding'，可换 adapter / 关掉）
+                                        │
+              components/onboarding/OnboardingLayer：按 steps.anchor(ctx) 找 data-* 锚点 / manifest bbox
+                → position.ts 落位 → Coachmark（非模态 dialog）+ 高亮环；锚点在对话框里 portal 进同层
+```
+
+* 入口动作只有 `lib/onboarding/tutorial.ts` 一份：`startTutorial()` = `POST /api/tutorial/open` →
+  `projectStore.adoptOpenedProject(status, { prepareDocument })` → `readAutosaveDoc(document_id)` 或
+  `GET /api/layouts/<document_name>` → `switchDocument(doc, document_id)` → onboarding start / resume；
+  `resetTutorial()` = 确认 → `POST /api/tutorial/reset` → `forgetLocalDocument(document_id)` → 同上。
+* 一次性提示：`lib/onboarding/hints.ts` 订阅同一条信号 + `validationStore`，`HintToast` 显示。
+
+### 8d. Codex / 内置 AI 的显式刷新与遥测整合（`← 22`，ADR 0041）
+
+```text
+Codex 改 .py ──▶ tavotto_refresh_project ──┬─ 127.0.0.1:5089 可达 ─▶ /api/projects/open(default=false)
+                                          │                         → /api/project/refresh?pj= reason=codex
+                                          │                         → /api/project/readiness      (delivered=app，前端收 SSE)
+                                          └─ 不可达 ──────────────▶ 本进程 refresh_project_index(reason=codex) + readiness.compute
+                                                                                                  (delivered=local，下次打开生效)
+内置 AI 改 .py ─▶ ai_bridge pump: changed=true ─▶ on_changed ─▶ app._after_ai_change
+                     │                              engine_watch.absorb([script]) ─┬─ fresh ─▶ pool.invalidate → refresh(ai) → panel.file_changed(reason=ai)
+                     │                                                            └─ 已消化 ─▶ 只 refresh(ai)（无差异零事件）
+                     └─▶ ai.done{changed, refresh:{status,...}} ─▶ 前端：不 markStale；failed 单独提示
+watcher ─▶ 同一次写入：签名已被 absorb 记下 → 不再刷新 / 不再发事件；用户再改一次 → 照常
+```
+
+* **刷新只有一个漏斗**：`app.refresh_project()`。四个用户可见来由（manual / watcher / codex / ai）
+  都从这里出去，`project_refresh_completed` 也只在这里记（表的枚举是唯一白名单）。
+* **前端消费不变**：`registry.changed` / `assets.changed` / `panel.file_changed` 走 Session 06 的同一条
+  `liveSync`；本轮只加了 `panel.file_changed.reason` 与 `ai.done.refresh` 两个可选字段。
+* **活动 → 遥测**只有 `lib/activityTelemetry.ts` 一条（浮动栏三种 kind + 来源作用域）；其余遥测
+  各在自己的成功边界（保存 / 恢复 / 教程 / 接入中心 / 包操作）。
+* **入口**：命令面板 `refresh-project` / `readiness` / `hints-reset` + 既有 `tutorial-*` / `shortcut-help`；
+  顶栏「更多」加同两条；三处共用 `liveSync.refreshProjectNow` / `projectReadinessStore.openCenter` /
+  `lib/onboarding/tutorial`。
 
 ## 9. 打包
 
 `packaging/`（wheel / sdist / 内置渲染 runtime / PyInstaller / macOS 签名），
 `src-tauri/`（桌面壳、ACL、更新通道）。平台支持口径唯一出处
-`docs/support-matrix.json`。
+`docs/support-matrix.json`。**包内数据文件**（`profiles/`、`resources/`）：wheel / sdist 随
+`packages = ["src/tavotto"]` 自然收进；PyInstaller **不收**，`tavotto.spec` 的 datas 必须显式列
+（`← 20`）。

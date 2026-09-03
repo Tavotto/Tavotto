@@ -1,31 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
-import { ExternalLink, Eye, EyeOff, Minus, Plus } from 'lucide-react'
+import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { cn, MOD } from '@/lib/utils'
-import {
-  changeZOrder,
-  deleteSelected,
-  duplicateSelected,
-  enterElementEdit,
-  hideElement,
-  setOverride,
-  toggleHidden,
-  toggleLocked,
-  unhideElement,
-} from '@/store/actions'
+import { cn } from '@/lib/utils'
+import { clearOverrides, hideElement, setOverride, unhideElement } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import type { CanvasObject, PanelObject } from '@/types/document'
-import { objectLabel } from '@/types/document'
+import type { PanelObject } from '@/types/document'
 import { propLabel } from '@/components/inspector/roles/registry'
+import { ObjectContextMenu } from './ObjectContextMenu'
 import { useQuickEdit } from './quickEditStore'
 import { TextActionRow } from '@/components/inspector/TextActions'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
@@ -36,9 +25,17 @@ import { LegendPositionPicker } from '@/components/inspector/controls/LegendPosi
 /**
  * 右键快捷编辑：光标处的小弹层。
  *
- * 图内元素按角色给 3–6 个高频控件，画布对象给一份轻量菜单。所有写入都走
- * 既有 actions（setOverride / 对象操作），因此天然进撤销、天然触发重渲染 ——
- * 这里只是把属性页里最常用的那几项搬到手边，不是第二套数据通道。
+ * 两种目标、两种外壳：
+ *
+ *   图内元素   → 本文件的 dialog-like 弹层：按角色给 3–6 个高频**控件**（文字框、
+ *                样式条、缩放、图例位置），所以它是 `role="dialog"`，不是菜单；
+ *   画布对象   → `ObjectContextMenu`：真正的上下文菜单（Radix：`role="menu"`、
+ *                子菜单、方向键、越界翻转），按对象与选区给动作（Prompt 18）。
+ *
+ * 所有写入都走既有 actions（setOverride / 对象操作），因此天然进撤销、天然触发
+ * 重渲染——这里只是把属性页里最常用的那几项搬到手边，不是第二套数据通道。
+ * 开合状态在 `quickEditStore`（两种外壳同一个开关：ContextBar 让位、切工作流
+ * 关闭、问题定位关闭都只认它一个）。
  */
 
 const MARGIN = 8
@@ -48,16 +45,46 @@ const qe = (key: string, values?: Record<string, unknown>) =>
   translate(`quickEdit.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
 export function QuickEdit() {
-  useTranslation('workspace')
   const target = useQuickEdit((s) => s.target)
   const at = useQuickEdit((s) => s.at)
   const close = useQuickEdit((s) => s.close)
+
+  // 画布一平移/缩放，锚点就失效了，直接关掉比跟随更诚实；窗口失焦同理。
+  // 两种外壳共用这两条（Esc / 点外部由各自的外壳负责）
+  useEffect(() => {
+    if (!target) return
+    window.addEventListener('wheel', close, { passive: true })
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('wheel', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [target, close])
+
+  if (!target) return null
+  if (target.kind === 'object') return <ObjectContextMenu id={target.id} at={at} close={close} />
+  return <ElementPopover target={target} at={at} close={close} />
+}
+
+/* -------------------------------------------------------------------------- */
+/*  图内元素的弹层外壳                                                          */
+/* -------------------------------------------------------------------------- */
+
+function ElementPopover({
+  target,
+  at,
+  close,
+}: {
+  target: { kind: 'element'; panelId: string; gid: string; focusText?: boolean }
+  at: { x: number; y: number }
+  close: () => void
+}) {
+  useTranslation('workspace')
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState(at)
 
   // 量出实际尺寸再贴边，避免弹层被视口切掉
   useLayoutEffect(() => {
-    if (!target) return
     const el = ref.current
     const w = el?.offsetWidth ?? 200
     const h = el?.offsetHeight ?? 160
@@ -67,9 +94,7 @@ export function QuickEdit() {
     })
     // 双击文字进来的直接聚焦内容框（全选便于整段替换）；
     // 其余情况焦点给容器，Tab 才能走到弹层里的控件
-    const ta = target.kind === 'element' && target.focusText
-      ? el?.querySelector('textarea')
-      : null
+    const ta = target.focusText ? el?.querySelector('textarea') : null
     if (ta) {
       ta.focus({ preventScroll: true })
       ta.select()
@@ -79,7 +104,6 @@ export function QuickEdit() {
   }, [target, at])
 
   useEffect(() => {
-    if (!target) return
     // Esc 走捕获阶段：全局快捷键里的 Esc 另有职责（退编辑态），这里要先接住
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -97,40 +121,27 @@ export function QuickEdit() {
     }
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('pointerdown', onDown, true)
-    // 画布一平移/缩放，锚点就失效了，直接关掉比跟随更诚实
-    window.addEventListener('wheel', close, { passive: true })
-    window.addEventListener('blur', close)
     return () => {
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('wheel', close)
-      window.removeEventListener('blur', close)
     }
-  }, [target, close])
-
-  if (!target) return null
+  }, [close])
 
   return createPortal(
     <div
       ref={ref}
       tabIndex={-1}
-      // 对象那份是纯菜单，图内元素那份含输入控件，按对话框宣告更诚实
-      role={target.kind === 'object' ? 'menu' : 'dialog'}
+      // 含输入控件，按对话框宣告更诚实（纯菜单那份在 ObjectContextMenu）
+      role="dialog"
       aria-label={qe('aria')}
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
-        'fixed z-50 rounded-md border border-border bg-surface p-1',
-        // 对象那份是纯菜单，窄着就行；元素那份要放下样式工具条
-        target.kind === 'element' ? 'w-[268px]' : 'w-[196px]',
+        'fixed z-50 w-[268px] rounded-md border border-border bg-surface p-1',
         'text-xs text-ink shadow-pop animate-pop-in',
       )}
     >
-      {target.kind === 'element' ? (
-        <ElementQuick target={target} close={close} />
-      ) : (
-        <ObjectQuick id={target.id} close={close} />
-      )}
+      <ElementQuick target={target} close={close} />
     </div>,
     document.body,
   )
@@ -170,14 +181,16 @@ function Item({
   shortcut,
   danger,
   onClick,
+  ...rest
 }: {
   children: ReactNode
   shortcut?: string
   danger?: boolean
   onClick: () => void
-}) {
+} & Record<`data-${string}`, string | undefined>) {
   return (
     <button
+      {...rest}
       type="button"
       onClick={onClick}
       className={cn(
@@ -240,6 +253,16 @@ function ElementQuick({
     else hideElement(panel.id, el.gid, el.label)
     close()
   }
+  // 「恢复此元素修改」：与属性页同一个 action、同一条历史标签，一次 commit
+  const own = panel.overrides.filter((o) => o.gid === el.gid)
+  const resetElement = () => {
+    clearOverrides(
+      panel.id,
+      msg('element.resetElement', undefined, 'inspector'),
+      own.map((o) => ({ gid: o.gid, prop: o.prop })),
+    )
+    close()
+  }
 
   return (
     <>
@@ -254,16 +277,22 @@ function ElementQuick({
       {isGeometric(el) && <GeomControls panel={panel} el={el} />}
       {el.role === 'legend' && <LegendControls read={read} field={field} write={write} />}
 
+      {(field('visible') || own.length > 0) && <Divider />}
+      {own.length > 0 && (
+        <Item onClick={resetElement} data-quick-item="reset-element">
+          <span className="flex items-center gap-1.5">
+            <RotateCcw size={12} />
+            {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
+          </span>
+        </Item>
+      )}
       {field('visible') && (
-        <>
-          <Divider />
-          <Item onClick={toggleVisible}>
-            <span className="flex items-center gap-1.5">
-              {hidden ? <Eye size={12} /> : <EyeOff size={12} />}
-              {qe(hidden ? 'unhide' : 'hide')}
-            </span>
-          </Item>
-        </>
+        <Item onClick={toggleVisible}>
+          <span className="flex items-center gap-1.5">
+            {hidden ? <Eye size={12} /> : <EyeOff size={12} />}
+            {qe(hidden ? 'unhide' : 'hide')}
+          </span>
+        </Item>
       )}
       <Item onClick={openInPanel}>
         <span className="flex items-center gap-1.5">
@@ -430,68 +459,3 @@ function LegendControls({
 
 /** 有字号又有颜色的元素就按文字对待——比枚举角色名更耐引擎变动 */
 const isGeometric = (el: ManifestElement) => !!el.resizable || !!el.geom_gid
-
-/* -------------------------------------------------------------------------- */
-/*  画布对象                                                                   */
-/* -------------------------------------------------------------------------- */
-
-function ObjectQuick({ id, close }: { id: string; close: () => void }) {
-  useTranslation('workspace')
-  const obj = useDocumentStore((s) => s.doc.objects.find((o) => o.id === id)) as
-    | CanvasObject
-    | undefined
-  const selected = useSelectionStore((s) => s.ids.length)
-
-  useEffect(() => {
-    if (!obj) close()
-  }, [obj, close])
-  if (!obj) return null
-
-  // 动作抛异常时菜单也必须关掉：卡在屏幕上的菜单比错误本身更让人摸不着头脑。
-  // 异常继续往外抛（该进 Console / ErrorBoundary 的还得进）。
-  const run = (fn: () => void) => () => {
-    try {
-      fn()
-    } finally {
-      close()
-    }
-  }
-
-  return (
-    <>
-      {/* 复制 / 层级 / 删除作用于整个选区，多选时要说清楚，别让人以为只动这一个 */}
-      <Head>
-        {selected > 1
-          ? translate('count.selectedObjects', { count: selected })
-          : objectLabel(obj)}
-      </Head>
-      {obj.type === 'panel' && obj.script && (
-        <Item onClick={run(() => enterElementEdit(obj.id))}>{qe('editElements')}</Item>
-      )}
-      <Item onClick={run(duplicateSelected)} shortcut={`${MOD}D`}>
-        {translate('actions.copy')}
-      </Item>
-      <Item onClick={run(() => toggleLocked(obj.id))}>{qe(obj.locked ? 'unlock' : 'lock')}</Item>
-      <Item onClick={run(() => toggleHidden(obj.id))}>
-        {qe(obj.hidden ? 'show' : 'hideObject')}
-      </Item>
-      <Divider />
-      <Item onClick={run(() => changeZOrder('top'))} shortcut={`⇧${MOD}]`}>
-        {qe('zTop')}
-      </Item>
-      <Item onClick={run(() => changeZOrder('up'))} shortcut={`${MOD}]`}>
-        {qe('zUp')}
-      </Item>
-      <Item onClick={run(() => changeZOrder('down'))} shortcut={`${MOD}[`}>
-        {qe('zDown')}
-      </Item>
-      <Item onClick={run(() => changeZOrder('bottom'))} shortcut={`⇧${MOD}[`}>
-        {qe('zBottom')}
-      </Item>
-      <Divider />
-      <Item danger onClick={run(deleteSelected)} shortcut="Delete">
-        {translate('actions.delete')}
-      </Item>
-    </>
-  )
-}

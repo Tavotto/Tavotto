@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import type { ExportJob, ExportOutput } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { openProblems } from '@/lib/issueFocus'
 import {
@@ -224,6 +225,12 @@ export function ExportDialog() {
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, documentId])
+
+  // 本地活动信号：面板开着时输出范围是什么（初值与每次切换都发）。教程按它
+  // 判「用户确认过原图 / 画布」——不读 DOM、不猜 CSS class
+  useEffect(() => {
+    if (open) emitActivity({ kind: 'export.scope_changed', scope })
+  }, [open, scope])
 
   /* -------------------------------- 检查 --------------------------------- */
   const raster = hasRaster(formats)
@@ -520,7 +527,13 @@ export function ExportDialog() {
 
         {/* 2. 输出范围 —— 默认跟着工作流，用户随时切 */}
         <Row label={ex('scopeLabel')} labelWidth={56}>
-          <div role="radiogroup" aria-label={ex('scopeLabel')} className="flex gap-1">
+          {/* `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+          <div
+            role="radiogroup"
+            aria-label={ex('scopeLabel')}
+            data-onboarding-anchor="export-scope"
+            className="flex gap-1"
+          >
             <ScopeButton
               active={scope === 'original'}
               disabled={!availability.ok}
@@ -598,7 +611,8 @@ export function ExportDialog() {
             type="button"
             onClick={() => {
               setOpen(false)
-              useUiStore.getState().setSettingsOpen(true, 'profiles')
+              // 深链到「规范」页；关掉设置时回到这个面板（uiStore.settingsReturnTo）
+              useUiStore.getState().setSettingsOpen(true, 'spec', { returnTo: 'export' })
             }}
             className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
           >

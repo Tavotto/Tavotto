@@ -53,7 +53,10 @@ SCHEMA_VERSION = 1
 #: 留存曲线断掉、活跃数虚高一轮，而实际上一个新用户都没有。
 #: 判据用 `>=` 而不是 `==`：降级回旧版本时，保存的是范围更大的那一版同意，
 #: 它涵盖旧版本要采的东西，不该反过来失效。
-CONSENT_VERSION = 1
+#:
+#: 版本史：1 = 首版九条事件；2 = Session 22 加了刷新 / 接入状态 / 教程 /
+#: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）。
+CONSENT_VERSION = 2
 
 #: 生产默认投递地址。**只发到 Tavotto 自己的代理**，应用里没有、也不该有
 #: 任何 PostHog 项目密钥：开源桌面应用里嵌的东西一律是公开的。
@@ -134,6 +137,72 @@ EVENTS: dict[str, dict[str, dict]] = {
     # 只有「用了哪个 agent」。提示词 / 脚本 / 目标 / 会话 id 一个都不发。
     "ai_assistant_invoked": {"agent": _enum("codex", "claude", "other")},
     "update_completed": {"update_kind": _enum("desktop", "pip", "pipx"), "target_version": VERSION},
+    # ---- Session 22（CONSENT_VERSION 2）：跨入口整合之后的粗粒度事件 ----
+    # 统一刷新**成功**之后（`app.refresh_project`）。source 只收四个用户可见的
+    # 来由；probe / 手工登记 / 打开项目那几条是别的动作的副产物，不记。
+    # changed_bucket 是脚本 + 素材变化条数的分桶，不带任何一个文件名。
+    "project_refresh_completed": {
+        "source": _enum("watcher", "manual", "codex", "ai"),
+        "changed_bucket": _enum("none", "one", "few", "many"),
+    },
+    # 「项目接入状态」中心被打开。status_bucket 由报告的计数算出，不带图名。
+    "project_readiness_opened": {
+        "source": _enum("banner", "panel", "quickedit", "palette"),
+        "status_bucket": _enum("all_editable", "mixed", "layout_only"),
+    },
+    # 教程：只有步骤 id（开发者写死的闭集，`web/src/lib/onboarding/stepIds.ts`）
+    # 与流程版本号；教程项目 / 文档 id、提示记录一个都不发。
+    "tutorial_started": {
+        "source": _enum("picker", "help", "settings", "palette"),
+        "tutorial_version": _int(1000),
+    },
+    "tutorial_step_completed": {
+        "step_id": _enum(
+            "welcome",
+            "open_fast_edit",
+            "select_text",
+            "change_typography",
+            "locate_problem",
+            "export_original",
+            "add_to_layout",
+            "multi_select_align",
+            "export_canvas",
+            "done",
+        ),
+        "tutorial_version": _int(1000),
+    },
+    "tutorial_completed": {"tutorial_version": _int(1000)},
+    # 多选浮动栏上按了哪一类按钮；选区大小分桶，不带对象 id。
+    "context_bar_multi_used": {
+        "action_id": _enum(
+            "align_left",
+            "align_center",
+            "align_right",
+            "align_top",
+            "align_middle",
+            "align_bottom",
+            "distribute_h",
+            "distribute_v",
+            "same_width",
+            "same_height",
+            "group",
+            "ungroup",
+            "more",
+        ),
+        "selection_size_bucket": _enum("2", "3_5", "6_plus"),
+    },
+    # 文档写盘的结局（手动 / 自动各一档），没有文档名、路径、修订号。
+    "document_saved": {
+        "trigger": _enum("manual", "autosave"),
+        "outcome": _enum("ok", "conflict", "failed"),
+    },
+    # 恢复横幅上用户选了哪一边。
+    "recovery_action": {"action": _enum("restore", "keep_main")},
+    # 受管环境的包操作结局。**没有包名**：包名可能泄露私有项目依赖。
+    "package_action": {
+        "action": _enum("install", "update", "remove"),
+        "outcome": _enum("ok", "failed", "cancelled"),
+    },
 }
 
 

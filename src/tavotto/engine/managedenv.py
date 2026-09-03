@@ -189,6 +189,25 @@ def touch(project: str | Path) -> None:
     update_manifest(project, last_used=int(time.time()))
 
 
+#: 「为什么装的」——两档。`missing_dependency` 是脚本缺包时一键修复装上的，
+#: `user_requested` 是用户在设置 → 包管理里自己点装的。界面按它标来源，
+#: 重建时两档都装回去（它们都是「Tavotto 往这个环境里装过的」）。
+REASON_MISSING_DEPENDENCY = "missing_dependency"
+REASON_USER_REQUESTED = "user_requested"
+
+
+def _same_distribution(a: str, b: str) -> bool:
+    """PEP 503 规范化之后相等才算同一个包（`Scikit_Learn` == `scikit-learn`）。
+
+    判据与 `depresolve.normalize_distribution` 同一条；这里内联一份最小实现
+    是为了不让本模块 import depresolve（它被 deprepair import，方向要单向）。
+    """
+    import re
+
+    norm = lambda n: re.sub(r"[-_.]+", "-", str(n or "")).lower()  # noqa: E731
+    return norm(a) == norm(b)
+
+
 def record_install(
     project: str | Path,
     *,
@@ -210,7 +229,7 @@ def record_install(
         entries = [
             e
             for e in (data.get("installed_by_tavotto") or [])
-            if isinstance(e, dict) and e.get("distribution") != distribution
+            if isinstance(e, dict) and not _same_distribution(e.get("distribution"), distribution)
         ]
         entries.append(
             {
@@ -224,6 +243,84 @@ def record_install(
         )
         data["installed_by_tavotto"] = entries[-64:]
         write_manifest(project, data)
+
+
+def forget_install(project: str | Path, distribution: str) -> bool:
+    """用户卸载了它：从账上划掉，重建时不再装回去。回「账上原来有没有」。"""
+    with _lock:
+        data = read_manifest(project)
+        if not data:
+            return False
+        before = [e for e in (data.get("installed_by_tavotto") or []) if isinstance(e, dict)]
+        after = [e for e in before if not _same_distribution(e.get("distribution"), distribution)]
+        if len(after) == len(before):
+            return False
+        data["installed_by_tavotto"] = after
+        write_manifest(project, data)
+        return True
+
+
+def installed_entry(project: str | Path, distribution: str) -> dict | None:
+    """账上关于这个包的那一笔（没有回 None）。"""
+    data = read_manifest(project) or {}
+    for e in data.get("installed_by_tavotto") or []:
+        if isinstance(e, dict) and _same_distribution(e.get("distribution"), distribution):
+            return dict(e)
+    return None
+
+
+# --------------------------------------------------------------- 快照
+#: 每次改动环境前后各记一份 `pip freeze`，留给「装坏了要修」的时候对照。
+#: **不是回滚机制**（ADR 0019 §八：pip 没有事务），只是修复时的证据；
+#: 最多留这么多份，旧的滚掉。
+SNAPSHOT_DIRNAME = "snapshots"
+SNAPSHOT_KEEP = 12
+
+
+def snapshot_dir(project: str | Path) -> Path:
+    return env_dir(project) / SNAPSHOT_DIRNAME
+
+
+def record_snapshot(project: str | Path, label: str, text: str) -> Path | None:
+    """把一份（已脱敏的）freeze 文本落到 `snapshots/<时间>-<label>.txt`。
+
+    写不进去只记日志：快照是修复时的佐证，不该让一次安装因为它失败。
+    """
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in str(label or "snapshot"))[
+        :40
+    ]
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    path = snapshot_dir(project) / f"{stamp}-{safe}.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(str(text or ""), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        LOG.warning("环境快照写入失败: %s", exc)
+        return None
+    _prune_snapshots(project)
+    return path
+
+
+def _prune_snapshots(project: str | Path) -> None:
+    try:
+        files = sorted(p for p in snapshot_dir(project).glob("*.txt"))
+    except OSError:
+        return
+    for stale in files[:-SNAPSHOT_KEEP]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
+def list_snapshots(project: str | Path) -> list[str]:
+    """快照文件名（不含路径——诊断包读它，路径里有数据目录）。"""
+    try:
+        return sorted(p.name for p in snapshot_dir(project).glob("*.txt"))
+    except OSError:
+        return []
 
 
 # --------------------------------------------------------------- 状态查询
@@ -270,6 +367,8 @@ def state(project: str | Path) -> dict:
             {
                 "distribution": e.get("distribution", ""),
                 "resolved_version": e.get("resolved_version", ""),
+                # 来源是个两值枚举（缺包修复 / 用户自己装的），不是用户内容
+                "reason": e.get("reason", "") or REASON_MISSING_DEPENDENCY,
             }
             for e in (data.get("installed_by_tavotto") or [])
             if isinstance(e, dict)

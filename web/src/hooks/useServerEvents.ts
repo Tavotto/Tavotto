@@ -8,6 +8,7 @@ import {
 } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
+import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
@@ -22,6 +23,8 @@ import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
 const stemOf = (fileId: string) => short(fileId)
+/** 后端稳定错误码 → 当前语言的一句话（参数为空的那些） */
+const translateBackend = (code: string) => t(`backend.${code}`, { ns: 'errors' })
 
 /** 冷启动耗时提示；light 没有提示（本来就快） */
 const costHint = (cost: string): string =>
@@ -60,6 +63,11 @@ export function handleServerEvent(ev: ServerEvent) {
       // 受控依赖修复的进度（ADR 0019）。**不带 pj**：它是按 plan_id 走的，
       // 而 plan 本身绑定了项目——多开标签页时各自只认自己那条计划。
       useDepRepairStore.getState().onProgress(ev)
+      break
+
+    case 'engine.package':
+      // 包管理作业的进度（ADR 0038）。同样按 job_id 走，作业绑定项目。
+      usePackageStore.getState().onProgress(ev)
       break
 
     case 'render.started': {
@@ -120,7 +128,8 @@ export function handleServerEvent(ev: ServerEvent) {
       // /api/panels 里的 mtime 一动不动，等它等不来。派生元数据的同步照常
       // 跟在刷新后面（走合并入口，与同一批里的其它事件共用一个请求）。
       void refreshAssetsAndSync()
-      if (affected.length) {
+      // AI 那条路紧跟着一条 `ai.done` 在说同一件事：一次修改只留一条提示
+      if (affected.length && ev.reason !== 'ai') {
         setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
       break
@@ -187,11 +196,19 @@ export function handleServerEvent(ev: ServerEvent) {
     case 'ai.done': {
       const ai = useAiStore.getState()
       ai.finish(ev)
-      const sess = ai.sessions.find((s) => s.id === ev.session)
-      if (ev.changed && sess?.fileId) {
-        // 不等 watcher：立刻把目标面板转入引擎跟踪并重建。
-        // 同脚本的其它面板由随后的 panel.file_changed 覆盖。
-        render.markStale([sess.fileId])
+      // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
+      // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
+      // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
+      // 老后端（没有 refresh 字段）仍靠 watcher 的 panel.file_changed 兜底。
+      const refreshFailed = ev.changed && ev.refresh?.status === 'failed'
+      if (refreshFailed) {
+        // 代码改成了、项目没刷新：两件事都说，不把前者伪装成全部成功
+        const code = ev.refresh?.code ?? ''
+        const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
+          ? translateBackend(code)
+          : code
+        setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
+        break
       }
       setStatus(
         msg(

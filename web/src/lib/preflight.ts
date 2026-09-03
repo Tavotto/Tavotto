@@ -9,6 +9,8 @@ import {
   type PublicationProfile,
   type Severity,
 } from './profile'
+import { effectiveCanvasFamily } from './typography'
+import { textDiagnostics } from './glyphPlan'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -142,6 +144,10 @@ export interface PreflightTextSpec {
   text: string
   size_pt: number
   bold: boolean
+  /** **生效**的字体族（没设过 = 默认族），不是空串——没量过与量到默认是两个答案 */
+  font_family: string
+  /** **生效**的科学文本解释档（没设过 = auto）。缺字形判据要量渲染表示，不是原文 */
+  interpretation?: 'auto' | 'scientific'
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -462,6 +468,36 @@ function checkPanelFonts(
         )
       }
     }
+    // 字形覆盖：判据是**引擎实际解析到的那套字体画不画得出这些字**
+    // （manifest 的 `glyphs_missing` / `glyphs_fallback`，产生者只有
+    // `engine/manifest._glyph_scan()` 一处）。与上面那条族白名单是两个问题：
+    // 白名单里的字体没装上时它不响，而装了一个不在白名单里、却画得出中文的
+    // 字体时它误报。
+    const gone = el.glyphs_missing ?? []
+    if (gone.length) {
+      const chars = gone.join('')
+      sink.add('glyph-missing', pf('glyphMissing', { chars, count: String(gone.length) }), {
+        objectIds: [pid],
+        gids: [gid],
+        detail: { chars: gone, family: typeof family === 'string' ? family : '' },
+        worse: gone.length,
+        prop: 'fontfamily',
+      })
+    }
+    const fellBack = el.glyphs_fallback ?? []
+    if (fellBack.length) {
+      const chars = fellBack.join('')
+      sink.add(
+        'glyph-substituted',
+        pf('glyphSubstituted', { chars, count: String(fellBack.length) }),
+        {
+          objectIds: [pid],
+          gids: [gid],
+          detail: { chars: fellBack, family: typeof family === 'string' ? family : '' },
+          prop: 'fontfamily',
+        },
+      )
+    }
     const role = el.role
     const want = weights[role]
     if ((want === 'bold' || want === 'normal') && TEXT_ROLES.has(role)) {
@@ -603,6 +639,22 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         }
       }
     }
+    if (role === 'legend_text') {
+      // 图例项的示意线（ADR 0034）：自定义的那些自己是一份状态，宽度要过档位，
+      // 定位到图例项本身；跟随源的由源那条规则管着（再报一次是同一件事报两遍）
+      const lw = num(field(el, 'handle_linewidth'))
+      if (lw != null && presets.length && lw > 0 && field(el, 'binding') !== 'follow_source') {
+        const eff = lw * scale
+        if (presets.every((v) => Math.abs(eff - v) > tol)) {
+          sink.add(
+            'line-width-off-preset',
+            pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: Math.min(...presets.map((v) => Math.abs(eff - v))), prop: 'handle_linewidth' },
+          )
+        }
+      }
+    }
     if (role === 'line') {
       if (!linesByAxes.has(ax)) linesByAxes.set(ax, [])
       linesByAxes.get(ax)!.push(el)
@@ -729,6 +781,9 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
   const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const cjk = profile.cjk_fallback
+  const fam = profile.font_family
+  const accepted = new Set((fam?.latin_accepted ?? []).map((s) => s.toLowerCase()))
+  const flagged = new Set((fam?.latin_substitutes_flagged ?? []).map((s) => s.toLowerCase()))
   for (const t of spec.texts) {
     if (t.hidden) continue
     const size = num(t.size_pt) ?? 0
@@ -747,6 +802,38 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         worse: -size,
         prop: 'sizePt',
       })
+    }
+    // 字体族：画布文字现在也能各设各的，规范里那条族约束必须看得见它们
+    // ——**新增一条能违反规则的路，就要同时把检查的范围扩到那条路上**。
+    const family = String(t.font_family ?? '')
+    if (family && accepted.size && !accepted.has(family.toLowerCase())) {
+      const known = flagged.has(family.toLowerCase())
+      sink.add(
+        'font-family-substituted',
+        known
+          ? pf('textFontFamilySubstitutedKnown', { family, want: fam.latin })
+          : pf('textFontFamilySubstituted', { family, want: fam.latin }),
+        { objectIds: [t.id], detail: { family }, prop: 'fontFamily' },
+      )
+    }
+    // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
+    // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
+    const { missing, substituted } = textDiagnostics(t.text, t.interpretation)
+    if (missing.length) {
+      const chars = missing.join('')
+      sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
+        objectIds: [t.id],
+        detail: { chars: missing, family },
+        worse: missing.length,
+      })
+    }
+    if (substituted.length) {
+      const chars = substituted.join('')
+      sink.add(
+        'glyph-substituted',
+        pf('textGlyphSubstituted', { chars, count: String(substituted.length) }),
+        { objectIds: [t.id], detail: { chars: substituted, family } },
+      )
     }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
       sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
@@ -892,6 +979,10 @@ export function buildSpec(
         text: o.type === 'text' ? o.text : '',
         size_pt: o.type === 'text' ? o.sizePt : 0,
         bold: o.type === 'text' ? o.bold : false,
+        // 生效族，不是文档里存的那个（没设过时存的是 undefined）。缺省值
+        // 只有 `lib/typography` 一处，这里不写第二个。
+        font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
+        interpretation: o.type === 'text' ? o.interpretation : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

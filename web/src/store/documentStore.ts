@@ -9,6 +9,7 @@ import {
   putAutosave,
   type DiskDocumentSummary,
 } from '@/lib/api'
+import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
 import { currentProjectId } from '@/lib/session'
 import { msg, t, type UiMessage } from '@/i18n'
@@ -216,6 +217,9 @@ function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<Documen
     edit_kind: classifyEditKind(entry.label?.key),
     patch_count: boundedCount(entry.patches.length),
   })
+  // 本地活动信号（不是遥测）：教程要知道「一条真实的编辑事务落进了历史」。
+  // 只带开发者写死的历史 key，不带补丁、不带对象。
+  emitActivity({ kind: 'history.pushed', label: entry.label?.key ?? '' })
   return { past, future: [] }
 }
 
@@ -645,6 +649,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     const pd = migrateToProject(next)
     if (!pd) return false
+    // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
+    autosaveSuspendedFor = null
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
     set({
       doc: canvasToDoc(active),
@@ -703,7 +709,7 @@ const CURRENT_KEY = 'tavotto.currentDoc'
 const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
 
-export type FlushResult = 'saved' | 'empty' | 'error'
+export type FlushResult = 'saved' | 'empty' | 'error' | 'skipped'
 
 const slotKey = (id: string) => SLOT_PREFIX + id
 const TABS_PREFIX = 'tavotto.tabs.'
@@ -988,6 +994,21 @@ function afterWriteOk(id: string, savedAt: number): void {
   if (!isCurrentDoc(id)) return
   useDocumentStore.setState({ lastPersisted: savedAt })
   setSaveState(useDocumentStore.getState().dirty ? 'dirty' : 'saved')
+  emitActivity({ kind: 'document.saved' })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  遥测：一次写盘的结局。只有 manual / autosave 两档与 ok / conflict / failed  */
+/*  三种结局，没有文档名、路径、修订号。                                        */
+/*                                                                            */
+/*  「这次写是手动还是自动」在 `saveNow()` 里知道、在 `scheduleDiskWrite()` 里   */
+/*  用：手动保存先把标志举起来，下一次真正开始的写盘把它消费掉。写盘排队时     */
+/*  标志会落到排队后开始的那一次上——粗，但它就是那次手动保存推出去的内容。     */
+/* -------------------------------------------------------------------------- */
+let manualSavePending = false
+
+function captureSaveOutcome(trigger: 'manual' | 'autosave', outcome: 'ok' | 'conflict' | 'failed') {
+  captureTelemetry('document_saved', { trigger, outcome })
 }
 
 function conflictIssue(id: string, err: unknown): SaveIssue {
@@ -1009,6 +1030,8 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
     return
   }
   diskBusy = true
+  const trigger: 'manual' | 'autosave' = manualSavePending ? 'manual' : 'autosave'
+  manualSavePending = false
   if (isCurrentDoc(id)) setSaveState('saving')
   void ensureDiskKnown(id, pj)
     .then((issue) => {
@@ -1026,6 +1049,7 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
         /* 副本删不掉不影响正确性（读取时按 updatedAt 取新） */
       }
       afterWriteOk(id, res.saved_at ?? Date.now())
+      captureSaveOutcome(trigger, 'ok')
     })
     .catch((err: unknown) => {
       // 磁盘写失败（含被 409 挡下的过期写）：本机副本仍在（flush 时已写，
@@ -1037,6 +1061,7 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectI
           : isStaleWrite(err) || isExternalChange(err)
             ? conflictIssue(id, err)
             : null
+      captureSaveOutcome(trigger, conflict ? 'conflict' : 'failed')
       if (isCurrentDoc(id)) {
         setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
       }
@@ -1113,6 +1138,9 @@ async function ensureDiskKnown(id: string, pj: string | null): Promise<SaveIssue
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
 export function flushAutosave(): FlushResult {
   const state = useDocumentStore.getState()
+  // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
+  // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
+  if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
   const pd = state.buildProject()
   if (!hasContent(pd)) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
@@ -1168,8 +1196,10 @@ export function flushAutosave(): FlushResult {
  */
 export async function saveNow(): Promise<SaveState> {
   cancelPendingAutosave()
+  manualSavePending = true
   const result = flushAutosave()
   if (result === 'empty') {
+    manualSavePending = false
     setSaveState('clean')
     return 'clean'
   }
@@ -1251,6 +1281,7 @@ export function recoverLocalCopy(): boolean {
   dropRecovery(notice.docId)
   setDocNotice(null)
   setSaveState('dirty')
+  captureTelemetry('recovery_action', { action: 'restore' })
   return true
 }
 
@@ -1260,11 +1291,32 @@ export function discardLocalCopy(): void {
   if (notice?.kind !== 'recovery') return
   dropRecovery(notice.docId)
   setDocNotice(null)
+  captureTelemetry('recovery_action', { action: 'keep_main' })
 }
 
 /** 「这份读不了」的裁决：知道了。磁盘上那份文件一个字节没动。 */
 export function dismissDocNotice(): void {
   setDocNotice(null)
+}
+
+/**
+ * 忘掉本机关于某个 documentId 的一切：自动保存槽位、待恢复副本、最近文档
+ * 条目。**只动本机、只动这一个 id**——磁盘上的文档不归这里管。
+ *
+ * 给「重新开始教程」用：后端把教程画布的磁盘槽位清了，本机这一份不跟着清的话
+ * `readAutosaveDoc` 会把它当成"磁盘上没有、本机这份就是文档本身"推回磁盘，
+ * 刚重置的教程当场被旧进度盖回去。
+ */
+export function forgetLocalDocument(id: string): void {
+  try {
+    localStorage.removeItem(slotKey(id))
+    localStorage.removeItem(recoveryKey(id))
+    localStorage.removeItem(TABS_PREFIX + id)
+  } catch {
+    /* 删不掉只是留几个垃圾键 */
+  }
+  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
+  useDocumentStore.setState({ recentDocs: kept })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1530,6 +1582,31 @@ function cancelPendingAutosave(): void {
   autosaveTimer = undefined
 }
 
+/**
+ * 自动保存被**挂起**的那份文档 id；`null` = 没有。
+ *
+ * 教程「重新开始」是唯一的调用方：后端在重置里清掉磁盘槽位、换掉项目目录，
+ * 而前端此刻手里还是旧文档——重置窗口里的任何一次防抖写盘 / 派生同步
+ * （项目重开会推 `registry.changed` / `assets.changed`，它们照样进 `applyDerivedUpdate`）
+ * 都会把**拖过 / 改过的旧文档**写回刚清掉的那一格，随后装回来的就是旧的
+ * （Windows 桌面腿的 e2e 第一次跑就抓到，mac 上只是时序没撞上）。
+ * 挂起期间：防抖不排、`flushAutosave` 不写；`switchDocument` 换到任何文档即恢复。
+ */
+let autosaveSuspendedFor: string | null = null
+
+/** 把这份文档从自动保存链路上摘下来，直到下一次 `switchDocument`。 */
+export function suspendAutosaveFor(id: string): void {
+  autosaveSuspendedFor = id
+  cancelPendingAutosave()
+}
+
+export const isAutosaveSuspendedFor = (id: string): boolean => autosaveSuspendedFor === id
+
+/** 重置没做成（锁住 / 失败）时把文档接回自动保存链路。 */
+export function resumeAutosave(): void {
+  autosaveSuspendedFor = null
+}
+
 export function startAutosave(): () => void {
   const onLeave = (e: BeforeUnloadEvent) => {
     // **先读状态再冲刷。** 反过来的话 `flushAutosave()` 会把状态推成
@@ -1558,6 +1635,7 @@ export function startAutosave(): () => void {
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
     if (state.loadSeq !== prev.loadSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
+    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。

@@ -47,7 +47,14 @@ const GROUPS: { id: string; rows: Row[] }[] = [
       { keys: 'Esc', desc: 'escape' },
       { keys: `${MOD}↑ / ${MOD}↓`, desc: 'script' },
       { comboKey: 'arrowKeys', desc: 'nudge' },
+      // 多选与右键：真实存在的两条手势（ObjectView 的 shift 加选、QuickEdit 菜单）
+      { comboKey: 'shiftClick', desc: 'multiSelect' },
+      { comboKey: 'rightClick', desc: 'quickEdit' },
     ],
+  },
+  {
+    id: 'tutorial',
+    rows: [{ keys: 'Esc', desc: 'tutorialPause' }],
   },
   {
     id: 'arrange',

@@ -52,7 +52,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 
 - `src/tavotto/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
   模块；`__init__.py` 是与实现无关的契约层（probe_asset / render_preview_png /
-  text_width / compose + mm2pt / hex2rgb）。`app.py` 只认这些名字。
+  text_width / text_plan / missing_glyphs / coverage_ranges / compose +
+  mm2pt / hex2rgb）。`app.py` 只认这些名字。
+- **字形归属计划（ADR 0033）**：一个字符由哪张脸画出来，只有
+  `tavotto/glyphplan.py` 一份判据（四层 primary/cjk/fallback/missing，顺序不可
+  交换）。落笔、量宽、预检、前端预览读同一份计划。`ord(ch) > 0x2E80` 只保留为
+  **换行单元**的判据，**不再当覆盖判据用**——它量的是码位，不是「这张脸画不
+  画得出这个字」。浏览器没有字体引擎，读的是生成物
+  `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
+  看住它与真字体一致）。**本仓库不分发任何字体**，看护
+  `tests/test_font_provenance.py`。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
   边界废掉。许可证说明见 `docs/legal/LICENSING.md`。
@@ -170,6 +179,9 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。
+- **导出 PDF / PS 一律 fonttype 42**（`figsession.export_font_context`，T-122）：matplotlib 默认的
+  Type 3 把 U+00FF 之外的字符画成 XObject，像素对、文本层没有它们（`⁵ μ α ≤`……），
+  期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
@@ -244,10 +256,27 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   （test_arrowpatch_endpoints_and_style_roundtrip 看护）。前端交互语义见
   `web/AGENTS.md`。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
-  图例条目顺序 entry_order（重建型，manifest type="order"）。**图例重建后必须
-  `_legend_box.set_offset(leg._findoffset)` 重挂定位回调**，否则导出时图例整块
-  消失（ncol 等旧重建路径同修）。散点/扁平线的 bbox 走 `_padded_bbox`
-  （PathCollection 用 datalim 换算，零厚度边垫 4px，否则进不了 manifest）。
+  散点/扁平线的 bbox 走 `_padded_bbox`（PathCollection 用 datalim 换算，零厚度边
+  垫 4px，否则进不了 manifest）。
+- **图例条目模型（2026-09-02，ADR 0034）**：每个图例挂一份
+  `overrides.LegendEntries`（`instrument` 时建，`_register_legend` 一处）。
+  `axes_i.legend.texts_j` 的 **j 是原始序号**，重排 / 隐藏不改它；图例项的
+  `_cls_key` 是 `legend_text`（text handler 逐条镜像 + 条目 handler：
+  `handle_color/linestyle/linewidth/marker/markersize` / `binding` / `visible`），
+  图例标题仍是 `text`。每一项按 label + 示意线指纹绑定源对象
+  （`bind_legend_entries`，并列时只认 `get_legend_handles_labels()` 的位置，
+  **不伪造**）；跟随的项在 `apply()` 尾部 `sync_legends` 从源重新派生示意线
+  （派生显示，不进 applied）；任一 `handle_*` override 落下即脱开，脱开点
+  `custom_base` 是**源此刻**派生的样子（`_detach_entry` 从源现派生——盒里那份
+  此刻还是上一轮的）。重建型 prop（ncol / borderpad / labelspacing /
+  handlelength / handletextpad / columnspacing / entry_order / 条目 visible）
+  一律走 `rebuild_legend`：素材是源对象或脚本原样快照，**不许把
+  `leg.legend_handles` 副本喂回 `_init_legend_box`**（误差棒退化成 Line2D、
+  markerscale 复利、标题字号丢——当年的 P2 就是这么来的）；重建后
+  `_legend_box.set_offset(leg._findoffset)` 重挂定位回调，否则导出时图例整块
+  消失。隐藏的项 Text 留在 index 里、manifest 报图例的框（否则「恢复显示」
+  没入口）。前端投影 `web/src/lib/legendModel.ts`，两侧常量严格同源
+  （`tests/test_legend_model_pairs.py`）。
 - **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
   重建。`overrides._cb_reorient` 在同一个 Axes 对象上换 orientation/ticklocation
   → 按 `_cb_place` 重算落位（竖↔横逐位可逆）→ `_reset_locator_formatter_scale()`
@@ -298,6 +327,18 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   不是把当前推断出来的值钉死。**为什么要模型化**：「全部灰色」与「上边红色」
   是两条会互相盖写的 setter，直接改的话谁先谁后就是两张图——而 patch 列表序
   在热会话与全量重放之间并不保证同序。
+- **边框线几何 `spines` 与主 / 次刻度分档（2026-09-02，ADR 0035）**：直角坐标轴
+  （`ax.name == "rectilinear"` 且四条命名边框齐全）的 axes 元素带 `spines`：每边
+  `visible`（边框线本身）/ `ticks`（这一侧主刻度线）/ `from` / `to`（figure 分数、
+  y 向下），端点取 `Spine.get_path()` 经它自己的 transform——**含**
+  `set_position(("outward", n))` 的偏移；**不能用 `get_window_extent`**（它把刻度
+  伸出量算进去了）。极坐标 / 3D / 色条轴不给；拥有这一边的 axis 不可见
+  （twinx 的第二个 axes 关掉的 x 轴）或线退化成一点（`secondary_xaxis` 的左右）
+  不出。唯一出处 `manifest.spine_geometry`，渲染派生数据、不进文档。
+  刻度组元素的 `length` / `width` 只动主刻度（`tick_params(which="major")`，与
+  matplotlib 默认同口径），新增 `minor_length` / `minor_width` 只动次刻度（getter
+  三级真值链：Tick 对象 → `_minor_tick_kw` → rcParams，次刻度没开也有值）；
+  `direction` / 颜色 / 字号仍 which="both"。看护 `tests/test_tick_sides_geometry.py`。
 - **路径几何 `geometry`（2026-08-18）**：manifest 给曲线 / fill_between /
   `ax.fill()` 的 Polygon / PathPatch 带上**真正画出来的那条路径**（figure 分数、
   y 向下，与 bbox 同一套），前端据此沿路径描边与命中——bbox 里绝大部分是空白，
@@ -585,6 +626,21 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `tests/test_dependency_repair_e2e.py`（真建 venv、真跑 pip、真起 worker、
   真出图；不联网靠手工 wheel + `PIP_FIND_LINKS`/`PIP_NO_INDEX`）+ web 的
   `DependencyRepairCard.test.tsx`。
+- **包管理（ADR 0038，2026-09-02）住在同一个模块的 §包管理**，没有第二套
+  执行器：`create_package_job(project, op, spec)` → `run_package_job(job_id)`
+  两步（签名里**没有解释器参数**，目标只有受管环境；作业绑项目 + 环境指纹）；
+  `_run_pip` 是 install / uninstall 共用的流式执行器，`pip_install_argv(..., upgrade=)`
+  默认 argv 一个字节没变、`--upgrade` 只给 update；`pip_uninstall_argv` 带 `-y`
+  （确认在界面上）。**「内置」= `BASE_PACKAGES` + 目标环境里现算的依赖闭包 + pip**
+  （`inventory()` 一次子进程读 `importlib.metadata`，`protected_distributions()`），
+  卸它一律 `package_protected`；卸载作业把账上的依赖者交回去让界面二次确认。
+  改动前后各记一份 freeze 快照（`managedenv.record_snapshot`，不是回滚）；改完必须
+  `probe_environment` + `worker_self_test` 仍过，否则标 `incomplete`。端点
+  `GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`，进度 SSE
+  `engine.package`。看护 `tests/test_package_management.py`（45 条，含离线真安装）。
+- `GET /api/diagnostics/summary`：诊断包同一份 `build_report()` 摊平成文本
+  （`diagnostics.render_text`），给设置里「复制诊断」用；project 段由
+  `app._diagnostics_project_status()` 与 zip 端点共用。
 
 ## 两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）
 
@@ -810,6 +866,19 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     所以「离最近整数 < 0.02 就还原成整数」是去掉编码损失，不是四舍五入。
   * 没测量的维度一律 `None`：矢量不编像素数与 dpi，位图不编 viewBox，
     PDF 的透明度是 `None` 而不是 `False`。
+- **离线教程项目（ADR 0039，2026-09-02）**：资源在包内
+  `tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`，
+  `importlib.resources` → 源码树兜底，与 `profiles_path()` 同一条纪律），**绝不在
+  那里写**；可写副本在 `<data_dir>/tutorial/v<版本>-<资源指纹>/Tutorial/`
+  （`ensure_tutorial_copy()`：首次复制 / 幂等复用 / 缺文件只补缺的 / `reset=True`
+  临时目录 + 两段 rename 原子替换，失败旧副本原样在）。目录名带**内容指纹**：改了
+  资源就换目录，不靠「记得升 `tutorial_version`」。「教程由哪些文件组成」只有
+  `resource_files()` 一个出处——加一张图不用改任何清单，wheel / sdist / spec datas
+  的对账测试都读它。三个端点 `GET /api/tutorial`、`POST /api/tutorial/open|reset`
+  走既有 `open_project()`：**不起草、不 probe、不起 worker**；`validate_tutorial_resources()`
+  纯静态。重置只清 `_autosave/<document_id>.json` + `baked_overrides/<pid>.json`，
+  别的项目一个字节不碰。教程进最近列表、带 `tutorial` 标记。前端（Prompt 21）
+  不得再从仓库根 `examples/` 读文件。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
 
@@ -833,8 +902,19 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
   cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
-  `ai.done` 推送；revert 恢复快照。脚本被改后由项目 watcher
-  （`engine/project_watch.py`，ADR 0026）作废渲染会话并触发一次统一刷新。
+  `ai.done` 推送；revert 恢复快照。**文件真的变了就在 `ai.done` 之前走统一刷新**
+  （ADR 0041）：`ai_bridge.run(on_changed)` 是注入的钩子，app 层接
+  `_after_ai_change(ctx, script)`——顺序与 watcher 的 `_dispatch` 逐字相同（作废
+  worker → `refresh_project(reason="ai")` → `panel.file_changed`，payload 带
+  `reason: "ai"`），先 `engine_watch.absorb()` 问 watcher 这次写入它消化过没有，
+  消化过就只补刷新、不再作废也不再发第二份事件。结局经 `refresh_outcome()`
+  压成枚举进 `ai.done.refresh` 与历史库 `refresh` 列：`changed: true` +
+  `refresh.status: failed` 是「改成了、项目没刷新」，**不许合成一个「成功」**，
+  也不许把会话记成失败。项目 watcher（`engine/project_watch.py`，ADR 0026）
+  仍是兜底：AI 路径没跑成、或 CLI 之外的改动，它都会看到。**不 probe、不跑脚本。**
+  MCP 侧同一件事是 `tavotto_refresh_project`（`codex-plugin/AGENTS.md`）；
+  `app.refresh_project` 是四条路径（手动 / watcher / codex / ai）唯一的漏斗，
+  `project_refresh_completed` 遥测只在这一处、只收这四个来由。
 - **「支持哪些 Agent」的唯一权威是 `engine/ai_agents.py` 的 `AGENT_REGISTRY`**
   （ADR 0015，改动前先读）。候选探测、启动验证、无副作用就绪检查、命令构造、
   流式输出分类、一键安装包名，全部由各自的 `AgentDefinition` 适配器给出。
@@ -1013,6 +1093,12 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史
   标签的 key**（开发者写死的稳定标识）经闭表映射，查不到落 `other`——
   标签**文案**绝不能用，它被翻译过、还插值了用户的文件名与属性名。
+- **CONSENT_VERSION 现在是 2**（2026-09-02，Session 22 加了九条：刷新 / 接入状态 /
+  教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。再加事件仍照这条纪律：两侧 `EVENTS`
+  表都登记、`tests/test_telemetry_proxy.py` 的样例表补一条、文档三处（events /
+  privacy / README）一起改、范围扩大就再升版。`package_action` **没有包名**、
+  `project_refresh_completed` 只发桶不发条数、教程只发 step id 与流程版本——
+  「能不能带这个字段」的判据是「它能不能承载用户内容」，不是「方不方便分析」。
 - **前端只发服务端推断不出来的那几条**，经 `/api/telemetry/event`，
   校验走**同一份** `engine/telemetry.validate`。`web/src/lib/telemetry.ts` 只缓存
   「现在发不发」+ 转发 + 分类，同意态与 install_id 一律不进前端

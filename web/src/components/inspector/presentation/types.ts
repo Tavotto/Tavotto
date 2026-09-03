@@ -24,6 +24,7 @@ export type ControlKind =
   | 'hatch'
   | 'colormap'
   | 'legend-position'
+  | 'legend-binding'
   | 'arrow-style'
   | 'pair'
   | 'rect'

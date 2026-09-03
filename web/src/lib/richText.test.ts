@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  hasScientificChars,
   hasScripts,
+  interpretRuns,
   parseRuns,
   plainText,
   serializeRuns,
@@ -132,5 +134,105 @@ describe('transformCase 的公式保护', () => {
 
   it('不开保护时（画布标注）照常全转', () => {
     expect(transformCase('cm^{-1} value', 'upper')).toBe('CM^{-1} VALUE')
+  })
+})
+
+/**
+ * 受控科学文本解释。判据由调用方注入（`isPrimary` / `isDrawable`），所以
+ * 这一组用例**不依赖任何具体后端的覆盖表**——它盯的是规则本身。
+ */
+describe('interpretRuns', () => {
+  // 「正文脸只有 ASCII」：`⁵` 既不是 primary 也画不出来
+  const asciiOnly = { isPrimary: (cp: number) => cp < 0x80, isDrawable: (cp: number) => cp < 0x80 }
+  // 「正文脸只有 ASCII，但有一张回退脸什么都画得出」
+  const withFallback = { isPrimary: (cp: number) => cp < 0x80, isDrawable: () => true }
+
+  it('判据缺席时一条都不折——不猜一张默认覆盖表', () => {
+    expect(interpretRuns(parseRuns('×10⁵'))).toEqual([{ text: '×10⁵', script: '' }])
+  })
+
+  it('auto 只救「不然就是方框」的那一串', () => {
+    expect(interpretRuns(parseRuns('x10⁵'), { ...asciiOnly, mode: 'auto' })).toEqual([
+      { text: 'x10', script: '' },
+      { text: '5', script: 'sup' },
+    ])
+  })
+
+  it('auto 不动那些回退脸画得出的——合成会让 PDF 文本层里的 ⁵ 变成 5', () => {
+    expect(interpretRuns(parseRuns('x10⁵'), { ...withFallback, mode: 'auto' })).toEqual([
+      { text: 'x10⁵', script: '' },
+    ])
+  })
+
+  it('scientific 一律合成', () => {
+    expect(interpretRuns(parseRuns('x10⁵'), { ...withFallback, mode: 'scientific' })).toEqual([
+      { text: 'x10', script: '' },
+      { text: '5', script: 'sup' },
+    ])
+  })
+
+  it('整串一起折：`m⁻²` 不许一半合成一半留着设计字形', () => {
+    // ⁻ 画不出、² 画得出（Latin-1 里有）——逐字符处理会得到一个小的合成
+    // 减号紧挨着一个大的设计上标，比原样还难看。
+    const mixed = {
+      isPrimary: (cp: number) => cp < 0x80 || cp === 0xb2,
+      isDrawable: (cp: number) => cp < 0x80 || cp === 0xb2,
+      mode: 'auto' as const,
+    }
+    expect(interpretRuns(parseRuns('m⁻²'), mixed)).toEqual([
+      { text: 'm', script: '' },
+      { text: '-2', script: 'sup' },
+    ])
+  })
+
+  it('基础字符自己画不出时不折——白折一场', () => {
+    const nothing = { isPrimary: () => false, isDrawable: () => false, mode: 'scientific' as const }
+    expect(interpretRuns(parseRuns('10⁵'), nothing)).toEqual([{ text: '10⁵', script: '' }])
+  })
+
+  it('已经在 `^{…}` 里的不再叠一层', () => {
+    expect(interpretRuns(parseRuns('cm^{-1}'), { ...asciiOnly, mode: 'scientific' })).toEqual([
+      { text: 'cm', script: '' },
+      { text: '-1', script: 'sup' },
+    ])
+  })
+
+  it('上标与下标各自成段，不合并', () => {
+    expect(interpretRuns(parseRuns('x⁵₂'), { ...withFallback, mode: 'scientific' })).toEqual([
+      { text: 'x', script: '' },
+      { text: '5', script: 'sup' },
+      { text: '2', script: 'sub' },
+    ])
+  })
+
+  it('普通自然语言一个字符都不动', () => {
+    const all = { isPrimary: () => true, isDrawable: () => true, mode: 'scientific' as const }
+    const s = 'Sample A (25 °C, ±0.5) 样品浓度 100% x10 no scripts here'
+    expect(interpretRuns(parseRuns(s), all).map((r) => r.text).join('')).toBe(s)
+  })
+
+  it('已有的 `$…$` 不被双重处理——画布文字里那对 `$` 只是普通字符', () => {
+    // 画布文字不经 matplotlib（`mathTextModeOf` 的另一档才是 engine mathtext）。
+    // `^{-5}` 是**我们自己的行内标记**，`parseRuns` 已经把它拆成上标；解释这
+    // 一步不许再动它，`$` 也不许被吃掉。
+    const all = { isPrimary: () => true, isDrawable: () => true, mode: 'scientific' as const }
+    expect(interpretRuns(parseRuns('$10^{-5}$'), all)).toEqual([
+      { text: '$10', script: '' },
+      { text: '-5', script: 'sup' },
+      { text: '$', script: '' },
+    ])
+  })
+
+  it('乘号是乘号，绝不换成字母 x', () => {
+    expect(
+      interpretRuns(parseRuns('×10⁵'), { ...withFallback, mode: 'scientific' })[0].text,
+    ).toBe('×10')
+  })
+
+  it('hasScientificChars 只对认得的上下标字符为真', () => {
+    expect(hasScientificChars('×10⁵')).toBe(true)
+    expect(hasScientificChars('H₂O')).toBe(true)
+    expect(hasScientificChars('m²')).toBe(true)
+    expect(hasScientificChars('Sample A 样品')).toBe(false)
   })
 })

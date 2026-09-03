@@ -11,13 +11,15 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 from __future__ import annotations
 
 import math
+import re
 import sys
 
 from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
-from matplotlib.collections import Collection, PathCollection, PolyCollection
+from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
+from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
@@ -25,13 +27,16 @@ import pathgeom
 from overrides import (
     _ARROWSTYLES,
     _CB_EXTENDS,
+    _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
     _TICK_FORMATS,
     _TICK_MINOR_FORMATS,
     BBOX_DEFAULTS,
     HATCHES,
+    LEGEND_BINDINGS,
     ColorbarProxy,
     FigState,
+    LegendEntries,
     SeriesGroup,
     TickLabel,
     TickSet,
@@ -43,15 +48,18 @@ from overrides import (
     _cb_tick_color,
     _cb_tick_fontsize,
     _cls_key,
+    _frame_rounded,
     _grid_prop,
     _grid_visible,
     _legend_entry_order,
     _legend_loc_name,
     _linecoll_linestyle_name,
     _linestyle_name,
+    _minor_tick_prop,
     _stroke_state,
     _tick0,
     axes_position_eaten_by_layout,
+    bind_legend_entries,
     coincident_shared_axes_pairs,
     collection_caps,
     colorbar_host_count,
@@ -62,6 +70,8 @@ from overrides import (
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
+    legend_entries,
+    legend_handle_props,
     remember_axis_directions,
     scale_options,
     spine_all_color,
@@ -443,7 +453,7 @@ def instrument(state: FigState) -> None:
                 draggable=True,
             )
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
-        _register(state, f"fig.legend_{i}", leg, "legend", "图例", draggable=True)
+        _register_legend(state, f"fig.legend_{i}", leg)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
     # **传 `_ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
@@ -760,25 +770,7 @@ def instrument(state: FigState) -> None:
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
         if leg is not None:
-            _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
-            title = leg.get_title()
-            if title is not None and title.get_text():
-                _register(
-                    state,
-                    f"axes_{i}.legend.title",
-                    title,
-                    "legend_text",
-                    f"图例标题 “{_snippet(title.get_text())}”",
-                )
-            for j, t in enumerate(leg.get_texts()):
-                if t.get_text():
-                    _register(
-                        state,
-                        f"axes_{i}.legend.texts_{j}",
-                        t,
-                        "legend_text",
-                        f"图例项 “{_snippet(t.get_text())}”",
-                    )
+            _register_legend(state, f"axes_{i}.legend", leg)
         if not is3d:
             # 边框模型的「脚本原样」也在这里采（与刻度模型同一时机：build 之后、
             # 任何 override 之前）
@@ -798,7 +790,90 @@ def instrument(state: FigState) -> None:
             )
             _sync_tick_labels(state, ax, which, f"axes_{i}")
 
+    # 图例项 → 图中源对象（要等全部元素登记完才有反查表）
+    _bind_legends(state)
+
     state.unregistered = census(fig, state)
+
+
+def _register_legend(state: FigState, gid: str, leg) -> None:
+    """登记一个图例：图例本体 + 标题 + 每一项（**原始序号**，与条目模型同源）。
+
+    条目模型（`LegendEntries`）在这里建——它记的是**脚本原样**（创建时的
+    示意线副本与文字），必须在任何 override 之前采。
+    """
+    _register(state, gid, leg, "legend", "图例", draggable=True)
+    model = LegendEntries(leg, state)
+    leg._mm_entries = model  # noqa: SLF001
+    title = leg.get_title()
+    if title is not None and title.get_text():
+        _register(
+            state, f"{gid}.title", title, "legend_text", f"图例标题 “{_snippet(title.get_text())}”"
+        )
+    for j, t in enumerate(model.texts):
+        if t.get_text():
+            _register(
+                state, f"{gid}.texts_{j}", t, "legend_text", f"图例项 “{_snippet(t.get_text())}”"
+            )
+
+
+#: 能当图例源对象的角色：它们各自的 artist / 容器正是 `ax.legend()` 会拿来
+#: 派生示意线的东西。单根柱（`bar`）不在内——柱系列的容器才是源。
+_LEGEND_SOURCE_ROLES = frozenset(
+    {
+        "line",
+        "scatter",
+        "fill",
+        "collection",
+        "linecoll",
+        "patch",
+        "bar_series",
+        "errorbar",
+        "stem_series",
+    }
+)
+
+
+def _bind_legends(state: FigState) -> None:
+    """给每个图例的每一项找源对象（判据在 `overrides.bind_legend_entries`）。"""
+    axes_gid_of = {
+        id(el["artist"]): el["gid"] for el in state.elements if el["role"] in ("axes", "axes3d")
+    }
+    sources: list[tuple[str, str, object]] = []  # (所属 axes gid, 元素 gid, 源对象)
+    for el in state.elements:
+        if el["role"] not in _LEGEND_SOURCE_ROLES:
+            continue
+        art = el["artist"]
+        if isinstance(art, SeriesGroup):
+            art = art.container
+            if art is None:
+                continue
+        owner = el["gid"].split(".", 1)[0]
+        sources.append((owner, el["gid"], art))
+    for el in state.elements:
+        if el["role"] != "legend":
+            continue
+        leg = el["artist"]
+        parent = leg.parent
+        if isinstance(parent, Axes):
+            owner = axes_gid_of.get(id(parent))
+            cands = [(g, a) for o, g, a in sources if o == owner]
+            try:
+                auto = list(parent.get_legend_handles_labels()[0])
+            except Exception:  # noqa: BLE001 — 拿不到就没有位置线索
+                auto = []
+        else:
+            cands = [(g, a) for _o, g, a in sources]
+            auto = []
+            for ax in _ordered_axes(state.fig)[0]:
+                try:
+                    auto.extend(ax.get_legend_handles_labels()[0])
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            bind_legend_entries(leg, cands, auto)
+        except Exception as exc:  # noqa: BLE001 — 绑定失败只是没有绑定，不拦渲染
+            print(f"[legend] {el['gid']} 的源对象绑定失败: {exc}", file=sys.stderr)
 
 
 #: 每张 Axes 上属于 matplotlib 自己的结构件——它们不是「Tavotto 漏掉的用户
@@ -924,9 +999,30 @@ def _alpha_field(artist) -> list[dict]:
 #: 下 `sans-serif` 会抛 ValueError（连字符被 fontconfig 语法当成分隔符解析
 #: 失败），尽管它当然可用。macOS / matplotlib 3.10.8 实测。
 _GENERIC_FAMILIES = ("serif", "sans-serif", "monospace")
-#: 具体字体名：装了才列。桌面上这三个通常都在，浏览器 playground（Pyodide
+#: 具体字体名：装了才列。桌面上前三个通常都在，浏览器 playground（Pyodide
 #: 只带 DejaVu 三件套）与没装 msttcorefonts 的 Linux 上一个都没有。
-_NAMED_FAMILIES = ("Times New Roman", "Arial", "Helvetica")
+#:
+#: **中日韩那一批是修「中文画成方框」的唯一入口**：三个通用族与拉丁具体字体
+#: 一个都画不出汉字，不给用户一个选得中的中文字体，问题面板就成了一盏没有
+#: 开关的红灯。名字取自出版规范 `cjk_fallback.accepted`（那份 JSON 是「哪些
+#: 中文字体可接受」的唯一权威）——这里是**候选名单**，回答的是另一个问题：
+#: 这台机器上哪些画得出来。两个问题不同，所以这不是把规则抄了第二份；真正
+#: 决定列不列的仍然是下面那个探测器。
+_NAMED_FAMILIES = (
+    "Times New Roman",
+    "Arial",
+    "Helvetica",
+    "方正小标宋简体",
+    "Noto Sans CJK SC",
+    "Noto Serif CJK SC",
+    "Source Han Sans SC",
+    "Source Han Serif SC",
+    "PingFang SC",
+    "Songti SC",
+    "STSong",
+    "Microsoft YaHei",
+    "SimSun",
+)
 #: 探测结果按进程缓存：一次 manifest 要过很多个 Text，探测结果在一次渲染里
 #: 不会变。（`findfont` 自己也有 lru_cache，这层只是省掉异常构造。）
 _FONT_PRESENT: dict[str, bool] = {}
@@ -953,6 +1049,92 @@ def _font_installed(name: str) -> bool:
     return hit
 
 
+#: 一段文字里最多报几个缺字形的字符。问题面板要把它们逐字列出来，一句
+#: 「缺 200 个字符」既没法读也没法修；超出的部分由数量说话。
+MAX_MISSING_GLYPHS = 12
+
+#: 字体文件 → FT2Font 的进程内缓存。一次 manifest 要过很多个 Text，而
+#: 打开字体文件是几毫秒级的。
+_FT_FONTS: dict[str, object] = {}
+
+#: `$…$` 之间的片段。matplotlib 用 **mathtext 字体集**画它们（不是正文那张
+#: 脸），拿正文字体去判它们的覆盖会报出一批不存在的缺字。**判不了就不判**，
+#: 别用一个量错对象的判据去凑数量。
+_MATH_SPAN = re.compile(r"(?<!\\)\$.*?(?<!\\)\$", re.S)
+
+
+def _ft_font(path: str):
+    hit = _FT_FONTS.get(path)
+    if hit is None:
+        from matplotlib.ft2font import FT2Font
+
+        try:
+            hit = FT2Font(path)
+        except (OSError, RuntimeError):  # 坏字体文件不该带着整次渲染一起死
+            hit = False
+        _FT_FONTS[path] = hit
+    return hit or None
+
+
+def _resolved_font_paths(families) -> list[str]:
+    """这段文字**真正会用到**的字体文件，按 matplotlib 自己的回退顺序。
+
+    走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
+    「我们说画得出的」== 「渲染时画得出的」。私有接口不在时退回单点解析
+    ——那时链只有一环，判据会偏严（多报），不会偏松（漏报）。
+    """
+    prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
+    try:
+        found = font_manager.fontManager._find_fonts_by_props(prop)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        try:
+            found = [font_manager.findfont(prop)]
+        except (ValueError, RuntimeError):
+            return []
+    return [str(f) for f in found]
+
+
+def _glyph_scan(text: str, families) -> tuple[list[str], list[str]]:
+    """(画不出来的, 不是正文那张脸画的) —— 两张单子一次扫出来。
+
+    `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
+    解析不出任何字体时两张单子都空：**判不了就不判**，不拿一个量错对象的
+    判据去凑数量。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return [], []
+    fonts = [f for f in (_ft_font(p) for p in _resolved_font_paths(families)) if f is not None]
+    if not fonts:
+        return [], []
+    primary, rest = fonts[0], fonts[1:]
+    gone: dict[str, None] = {}
+    subst: dict[str, None] = {}
+    for ch in _MATH_SPAN.sub("", text):
+        if ch.isspace() or ch in gone or ch in subst:
+            continue
+        if primary.get_char_index(ord(ch)):
+            continue
+        if any(f.get_char_index(ord(ch)) for f in rest):
+            if len(subst) < MAX_MISSING_GLYPHS:
+                subst[ch] = None
+        elif len(gone) < MAX_MISSING_GLYPHS:
+            gone[ch] = None
+    return list(gone), list(subst)
+
+
+def missing_glyphs(text: str, families) -> list[str]:
+    """这段文字里**这套字体画不出来**的字符（去重、保出现顺序、有上限）。
+
+    这是「导出上会是一个方框」的唯一依据，也是 `glyph-missing` 那条检查的
+    输入。判据是**字形覆盖**，不是字体名——`cjk-fallback-missing` 那条问的
+    是「族名在不在规范的白名单里」，两个问题不一样：白名单里的字体没装上
+    时它不响，而装了一个不在白名单里、却画得出中文的字体时它误报。
+
+    `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
+    """
+    return _glyph_scan(text, families)[0]
+
+
 def _family_options() -> list[str]:
     """字体下拉的选项：由运行时的解析能力决定，不是写死的一张表。"""
     return [*_GENERIC_FAMILIES, *(n for n in _NAMED_FAMILIES if _font_installed(n))]
@@ -962,11 +1144,17 @@ def _text_fields(t) -> list[dict]:
     alpha = t.get_alpha()
     fam = (t.get_fontfamily() or ["serif"])[0]
     fam_opts = _family_options()
+    fam_missing: list[str] = []
     if fam not in fam_opts:
         # 脚本自己写死了一个不在选项里的字体名。它是**当前值**，enum 必须含有
         # 自己的值，否则界面显示空白。注意这与「提供一个死选项」不是一回事：
         # 能选的只有它自己，选了也只是维持原状，不会新造一次静默失效。
+        #
+        # **但界面必须知道它是哪一种**：选项表里混着「装了、能画」与「没装、
+        # 选了也白选」两类，不标出来的话用户会以为自己刚刚换了字体。
+        # `options_unavailable` 是那条 warning 的唯一依据（`web/src/lib/api.ts`）。
         fam_opts = [fam] + fam_opts
+        fam_missing = [fam]
     patch = t.get_bbox_patch()
     if patch is not None:
         pad, rounded = _boxstyle_info(patch)
@@ -1035,7 +1223,13 @@ def _text_fields(t) -> list[dict]:
             "value": str(t.get_fontstyle()),
             "options": ["normal", "italic"],
         },
-        {"prop": "fontfamily", "type": "enum", "value": str(fam), "options": fam_opts},
+        {
+            "prop": "fontfamily",
+            "type": "enum",
+            "value": str(fam),
+            "options": fam_opts,
+            **({"options_unavailable": fam_missing} if fam_missing else {}),
+        },
         {
             "prop": "rotation",
             "type": "number",
@@ -1973,11 +2167,13 @@ def _legend_fields(leg) -> list[dict]:
         },
         # 条目顺序：value 是按显示顺序排的原始序号；options 给当前显示的文字
         # （前端画上下移动列表，不是普通下拉）
+        # 条目顺序：value 是显示顺序里的原始序号；options 是**原始序**的文字
+        # （options[value[k]] = 显示位 k 上的字）。前端画上下移动列表
         {
             "prop": "entry_order",
             "type": "order",
             "value": _legend_entry_order(leg),
-            "options": [t.get_text() for t in leg.get_texts()],
+            "options": _legend_entry_labels(leg),
             "group": "布局",
         },
         {
@@ -2016,7 +2212,178 @@ def _legend_fields(leg) -> list[dict]:
             "step": 0.1,
             "group": "布局",
         },
+        {
+            "prop": "handletextpad",
+            "type": "number",
+            "value": round(float(leg.handletextpad), 2),
+            "min": 0,
+            "max": 3,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "columnspacing",
+            "type": "number",
+            "value": round(float(leg.columnspacing), 2),
+            "min": 0,
+            "max": 6,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "frame_linewidth",
+            "type": "number",
+            "value": round(float(frame.get_linewidth()), 2),
+            "min": 0,
+            "max": 4,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "样式",
+        },
+        {
+            "prop": "frame_rounded",
+            "type": "bool",
+            "value": bool(_frame_rounded(leg)),
+            "group": "样式",
+        },
     ]
+
+
+def _legend_entry_labels(leg) -> list[str]:
+    """条目文字按**原始序**（隐藏中的项也在：它的 Text 对象还在模型里）。"""
+    model = legend_entries(leg)
+    if model is None:
+        return [t.get_text() for t in leg.get_texts()]
+    return [t.get_text() for t in model.texts]
+
+
+def _legend_entry_fields(t) -> list[dict]:
+    """图例项的条目那半：绑定 / 示意线样式 / 隐藏。
+
+    示意线支持哪几条按它的 artist 类型给（`legend_handle_props`）：曲线的示意
+    线是 Line2D，五条全有；柱 / 填充 / 散点的示意线只有颜色（映射散点连颜色
+    都没有——色图在管）。没有源的项不发 `binding`——界面据此显示「未关联
+    图中对象」，不摆一个假开关。
+    """
+    leg, j = t._mm_legend_entry  # noqa: SLF001
+    model = legend_entries(leg)
+    if model is None:
+        return []
+    h = model.handle_of(j)
+    fields: list[dict] = []
+    binding = model.effective_binding(j)
+    if binding is not None:
+        fields.append(
+            {
+                "prop": "binding",
+                "type": "enum",
+                "value": binding,
+                "options": list(LEGEND_BINDINGS),
+                "group": "图例项",
+            }
+        )
+    props = legend_handle_props(h)
+    if "handle_color" in props:
+        fields.append(
+            {
+                "prop": "handle_color",
+                "type": "color",
+                "value": to_hex(_handle_color_of(h)),
+                "group": "图例项",
+            }
+        )
+    if "handle_linestyle" in props:
+        ls = _linestyle_name(h)
+        opts = ["-", "--", ":", "-."]
+        fields.append(
+            {
+                "prop": "handle_linestyle",
+                "type": "enum",
+                "value": ls,
+                "options": opts if ls in opts else [ls] + opts,
+                "group": "图例项",
+            }
+        )
+    if "handle_linewidth" in props:
+        fields.append(
+            {
+                "prop": "handle_linewidth",
+                "type": "number",
+                "value": round(float(h.get_linewidth()), 2),
+                "min": 0.1,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+                "group": "图例项",
+            }
+        )
+    if "handle_marker" in props:
+        marker = str(h.get_marker())
+        m_opts = list(_LEGEND_HANDLE_MARKER_OPTS)
+        if marker not in m_opts:
+            m_opts = [marker] + m_opts
+        fields.append(
+            {
+                "prop": "handle_marker",
+                "type": "enum",
+                "value": marker,
+                "options": m_opts,
+                "group": "图例项",
+            }
+        )
+    if "handle_markersize" in props:
+        fields.append(
+            {
+                "prop": "handle_markersize",
+                "type": "number",
+                "value": round(float(h.get_markersize()), 2),
+                "min": 0,
+                "max": 20,
+                "step": 0.5,
+                "unit": "pt",
+                "group": "图例项",
+            }
+        )
+    fields.append({"prop": "visible", "type": "bool", "value": j not in model.hidden})
+    return fields
+
+
+def _legend_entry_info(t) -> dict | None:
+    """图例项的**身份**（不是可编辑字段）：原始序号、源对象的 gid、脚本原样的
+    绑定。界面拿 `source_gid` 做「查看源对象」与「恢复跟随」，不显示 gid 本身。
+    """
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return None
+    model = legend_entries(entry[0])
+    if model is None:
+        return None
+    j = entry[1]
+    info: dict = {"index": j}
+    if model.source_gids[j] is not None:
+        info["source_gid"] = model.source_gids[j]
+        info["binding_default"] = model.default_binding[j]
+    return info
+
+
+def _entry_is_hidden(t) -> bool:
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return False
+    model = legend_entries(entry[0])
+    return model is not None and entry[1] in model.hidden
+
+
+def _handle_color_of(h):
+    if isinstance(h, Line2D):
+        return h.get_color()
+    if isinstance(h, Patch):
+        return h.get_facecolor()
+    if isinstance(h, LineCollection):
+        c = h.get_color()
+        return c[0] if len(c) else "#000000"
+    fc = h.get_facecolor()
+    return fc[0] if len(fc) else "#000000"
 
 
 def _tick_fields(ts: TickSet) -> list[dict]:
@@ -2074,6 +2441,29 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "prop": "width",
             "type": "number",
             "value": round(float(t0.tick1line.get_markeredgewidth()), 2) if t0 is not None else 0.8,
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "刻度线",
+        },
+        # 次刻度的长度 / 线宽单列（主刻度那两条只动主刻度）。次刻度没开时
+        # 也出：值读的是轴上 `_minor_tick_kw` / rcParams 那份「开了会是多少」，
+        # 用户先设长度再开次刻度与反过来结果一样
+        {
+            "prop": "minor_length",
+            "type": "number",
+            "value": round(_minor_tick_prop(ts, "size", "size", 2.0), 2),
+            "min": 0,
+            "max": 12,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "刻度线",
+        },
+        {
+            "prop": "minor_width",
+            "type": "number",
+            "value": round(_minor_tick_prop(ts, "width", "width", 0.6), 2),
             "min": 0.1,
             "max": 3,
             "step": 0.1,
@@ -2142,9 +2532,67 @@ def _tick_fields(ts: TickSet) -> list[dict]:
         },
     ]
     if is3d:
-        # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z
-        fields = [f for f in fields if f["prop"] not in ("direction", "visible")]
+        # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z；
+        # 次刻度的长度 / 线宽会被 axis3d.draw 每帧用 _axinfo 盖回去，不出
+        fields = [
+            f
+            for f in fields
+            if f["prop"] not in ("direction", "visible", "minor_length", "minor_width")
+        ]
     return fields
+
+
+#: 四条直角边框 → 拥有它的轴与 tick line 序号（line 1 = 下/左，line 2 = 上/右）
+_SPINE_AXIS = {"bottom": ("x", 1), "top": ("x", 2), "left": ("y", 1), "right": ("y", 2)}
+
+
+def spine_geometry(ax, W: float, H: float) -> dict | None:
+    """四条边框**画出来的那条线**的两端（figure 分数、y 向下），供前端建立
+    「边框内侧 / 外侧」的语义命中区（Prompt 16）。
+
+    只有直角坐标轴才有：极坐标的边框是圆弧（`polar` / `start` / `end` /
+    `inner`），3D 轴的四条 `spines` 只是占位、真正的轴线在投影里——两种都
+    回 None，前端据此**不摆**直接操作，而不是摆一套点了会错的。
+
+    每条边：`visible` 是边框线本身显不显示；`ticks` 是这一侧的主刻度线显不
+    显示；`from` / `to` 取自 `Spine.get_path()` 经它自己的 transform 变换
+    ——**含** `set_position(("outward", n))` 的偏移，所以偏出去的边框命中区
+    跟着线走，不留在 axes 的框上。**不能用 `get_window_extent`**：它把刻度
+    的伸出量也算进去了，回来的是一个带厚度的框而不是那条线。
+
+    拥有这一侧的 axis 不可见（`twinx` 出来的第二个 axes 关掉了自己的 x 轴）
+    或线退化成一点（`secondary_xaxis` 的左右两条）时这一侧不出——那儿没有
+    任何刻度可控。
+    """
+    if getattr(ax, "name", "") != "rectilinear":
+        return None
+    if any(side not in ax.spines for side in _SPINE_AXIS):
+        return None
+    out: dict[str, dict] = {}
+    for side, (which, line) in _SPINE_AXIS.items():
+        axis = getattr(ax, f"{which}axis", None)
+        if axis is None or not axis.get_visible():
+            continue
+        sp = ax.spines[side]
+        try:
+            sp._adjust_location()  # noqa: SLF001 — draw() 也是先走这一步再画
+            pts = sp.get_transform().transform(sp.get_path().vertices)
+        except Exception:  # noqa: BLE001 — 自定义 Spine 形状不明：宁可不给
+            continue
+        if len(pts) < 2:
+            continue
+        (x0, y0), (x1, y1) = pts[0], pts[-1]
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            continue
+        if math.hypot(x1 - x0, y1 - y0) < 0.5:
+            continue
+        out[side] = {
+            "visible": bool(sp.get_visible()),
+            "ticks": bool(tick_side_visible(ax, which, line)),
+            "from": [round(float(x0 / W), 5), round(float(1.0 - y0 / H), 5)],
+            "to": [round(float(x1 / W), 5), round(float(1.0 - y1 / H), 5)],
+        }
+    return out or None
 
 
 def _axes_fields(ax, el: dict | None = None) -> list[dict]:
@@ -2621,6 +3069,12 @@ def _fields_for(el) -> list[dict]:
         return _tick_fields(artist)
     if key == "text":
         return _text_fields(artist)
+    if key == "legend_text":
+        # 一段文字 + 一个条目。`visible` 由条目级的实现接管（整项进出图例盒），
+        # 文字自己那条不再单独出现——同一个名字两套语义是最坏的那种冗余
+        return [f for f in _text_fields(artist) if f["prop"] != "visible"] + _legend_entry_fields(
+            artist
+        )
     if key == "line":
         return _line_fields(artist)
     if key == "legend":
@@ -2861,6 +3315,9 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 _drop(el, "empty_text")
                 continue
             entry["label"] = _relabel(el["label"], live_text)
+            info = _legend_entry_info(artist)
+            if info is not None:
+                entry["legend_entry"] = info
         if el["role"] in ("axes", "axes3d"):
             # 前端可拖动/缩放子图占比（override axes position）。子 axes 的
             # 落位归父级的 locator 管，给不了这个能力——`_axes_fields` 那边
@@ -2974,6 +3431,22 @@ def build_manifest(state: FigState, stem: str) -> dict:
                         "detail": {"hosts": hosts},
                     }
                 ]
+        elif el["role"] == "legend_text" and _entry_is_hidden(artist):
+            # 隐藏中的图例项：Text 对象已经不在图例盒里，它自己量出来的框是
+            # 上一次布局的残影。它「住在」图例里，就报图例的框——元素表里必须
+            # 留着它，否则「恢复显示」那个入口跟着一起消失
+            leg = artist._mm_legend_entry[0]  # noqa: SLF001
+            try:
+                bb = leg.get_window_extent(renderer)
+                entry["bbox"] = [
+                    float(bb.x0 / W),
+                    float(1.0 - bb.y1 / H),
+                    float(bb.width / W),
+                    float(bb.height / H),
+                ]
+            except Exception:
+                _drop(el, "no_geometry")
+                continue
         elif isinstance(artist, Collection):
             # 散点（PathCollection）**不再单开一支**：它当年之所以有自己的
             # 分支，是因为 `get_window_extent` 对集合回空框、需要用数据范围
@@ -2998,6 +3471,13 @@ def build_manifest(state: FigState, stem: str) -> dict:
             except Exception:
                 _drop(el, "no_geometry")
                 continue
+        # 边框线几何（figure 分数、top-origin）：坐标轴四边的直接操作命中区
+        # 据此建立。与 geometry 同样是**渲染派生数据**，不进文档。色条轴不给
+        # ——它的刻度归色条元素管，两处各摆一套控件只会互相盖写。
+        if el["role"] == "axes" and artist not in state.colorbar_axes:
+            spines = spine_geometry(artist, W, H)
+            if spines:
+                entry["spines"] = spines
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
@@ -3059,6 +3539,20 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["drag_prop"] = "pos_frac" if isinstance(artist, Text) else "loc_frac"
             except Exception:
                 entry["draggable"] = False
+        # 缺字形：判据的主语是**真正会被画出来的那个 Text**。
+        # 刻度文字登记的是 `TickLabel` 代理（真身在 `.live()`），按
+        # `isinstance(artist, Text)` 判会安静地漏掉整整一类——而刻度文字
+        # 恰恰是最容易出现 `×10⁵` 与中文单位的地方。放在这里是因为上面那些
+        # 分支已经把「量不出几何 / 文字空了」的元素 `continue` 掉了。
+        live_text = artist.live() if el["role"] == "ticklabel" else artist
+        if isinstance(live_text, Text):
+            gone, subst = _glyph_scan(live_text.get_text(), live_text.get_fontfamily() or [])
+            if gone:
+                entry["glyphs_missing"] = gone
+            # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
+            # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
+            if subst:
+                entry["glyphs_fallback"] = subst
         elements.append(entry)
 
     if budget.skipped:

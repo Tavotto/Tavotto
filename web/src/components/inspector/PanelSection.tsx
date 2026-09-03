@@ -109,7 +109,7 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
       <Button
         size="sm"
         className="-ml-2 mt-0.5"
-        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId)}
+        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
       </Button>

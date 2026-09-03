@@ -243,6 +243,42 @@ def _tools() -> list[dict]:
             },
         },
         {
+            "name": "tavotto_refresh_project",
+            "title": "刷新项目（改过绘图脚本之后）",
+            "description": (
+                "修改、新建、重命名或删除绘图脚本之后调用一次，让 Tavotto 重新读这个项目："
+                "静态合并脚本注册表、比对素材、更新每张图的接入状态，并把结果推给正在运行的"
+                " Tavotto 界面——用户不需要手动刷新、也不需要重启。返回哪些脚本 / 图变了、"
+                "哪些图现在可编辑（readiness.panels[].status）。"
+                "**这不是运行脚本的工具**：不 probe、不执行任何用户代码。"
+                "status 为 needs_probe 的图要用户在 Tavotto 里点「试运行并连接」，不要猜；"
+                "conflict 的不要自动裁决，把候选脚本告诉用户。"
+                "项目来自当前授权：优先传 session_id（tavotto_open_figure 回来的），"
+                "或传一个已授权工作区内的 project_path；两者都不传时用唯一有会话的项目。"
+                "delivered=app 表示运行中的 Tavotto 已同步；local 表示 Tavotto 没开着，"
+                "刷新已在本地完成，下次打开项目时自动生效。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "tavotto_open_figure 返回的会话 id（首选）",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "图库目录 / 脚本 / 产物的绝对路径，必须在已授权工作区内",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "enum": ["codex"],
+                        "description": "固定为 codex；其它值不接受",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "tavotto_close_session",
             "title": "关闭会话",
             "description": "释放引擎会话。用户的项目数据一个字节都不动。",
@@ -405,6 +441,51 @@ def _call_verify(args: dict) -> dict:
     return {"content": _text(head), "structuredContent": out}
 
 
+def _call_refresh(args: dict) -> dict:
+    """改过脚本之后的显式刷新（ADR 0041 §1）。实现全在 `bridge.refresh_project`。"""
+    out = bridge.refresh_project(
+        session_id=args.get("session_id") or None,
+        project_path=args.get("project_path") or None,
+    )
+    reg, assets, ready = out["registry"], out["assets"], out.get("readiness")
+    lines = [
+        "已刷新项目（经运行中的 Tavotto，界面已同步）"
+        if out["delivered"] == bridge.DELIVERED_APP
+        else "已刷新项目（Tavotto 未在运行，已在本地完成；下次打开项目时自动生效）",
+    ]
+    for label, key in (
+        ("新增脚本", "added_scripts"),
+        ("移除脚本", "removed_scripts"),
+        ("配置变化", "changed_scripts"),
+    ):
+        if reg.get(key):
+            lines.append(f"{label}: {', '.join(reg[key])}")
+    if not any(reg.get(k) for k in ("added_scripts", "removed_scripts", "changed_scripts")):
+        lines.append("脚本注册表无变化")
+    if assets.get("baseline"):
+        lines.append("素材基线已建立（首轮，没有可比较的上一轮）")
+    else:
+        parts = [
+            f"{label} {len(assets[key])}"
+            for label, key in (("新增", "added"), ("删除", "removed"), ("更新", "changed"))
+            if assets.get(key)
+        ]
+        lines.append("素材: " + ("、".join(parts) if parts else "无变化"))
+    if ready:
+        summary = ready.get("summary") or {}
+        lines.append(f"可编辑 {summary.get('editable', 0)}/{summary.get('total', 0)} 张图")
+        for p in ready.get("panels") or []:
+            if p.get("status") == "editable":
+                continue
+            lines.append(f"- {p['id']}: {p['status']}（{p.get('reason_code')}）")
+        if summary.get("needs_probe"):
+            lines.append("needs_probe 的图请让用户在 Tavotto 里点「试运行并连接」，不要猜。")
+        if summary.get("conflict"):
+            lines.append("conflict 的图不要自动裁决，把候选脚本告诉用户。")
+    lines.append("不需要用户手动刷新或重启 Tavotto。")
+    return {"content": _text(*lines), "structuredContent": out}
+
+
 def _call_close(args: dict) -> dict:
     out = bridge.close_session(str(args.get("session_id") or ""))
     return {
@@ -461,6 +542,7 @@ HANDLERS = {
     "tavotto_preflight": _call_preflight,
     "tavotto_export": _call_export,
     "tavotto_verify_replay": _call_verify,
+    "tavotto_refresh_project": _call_refresh,
     "tavotto_close_session": _call_close,
 }
 
@@ -722,7 +804,8 @@ class Server:
                 "**不会动用户的 Python 源码**。流程：tavotto_open_figure 打开 → "
                 "tavotto_apply_overrides 改（patches 永远发全量列表）→ "
                 "tavotto_preflight 体检 → tavotto_export 出图。"
-                "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改。"
+                "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
+                "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
             ),
         }
 

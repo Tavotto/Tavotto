@@ -31,9 +31,10 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * 设置 → 编码 Agent。
  *
  * 一级页面只回答一个问题：**这台机器上有哪些编码 Agent、现在能不能用**。
- * 路径输入框、第三方接口、Base URL、密钥、wire api 一个都不在这儿——它们
- * 全在各自 Agent 的详情里（`AgentDetailView`）。普通用户装好 CLI 之后
- * 什么都不用配，这一页就是那句话的兑现。
+ * 每行只有名称、版本号、状态；路径、命令、检测来源、第三方接口、Base URL、
+ * 密钥、wire api 一个都不在这儿——它们全在各自 Agent 的详情里
+ * （`AgentDetailView`，可复制）。这一页上也没有解释段：普通用户装好 CLI
+ * 之后什么都不用配，页面本身就是那句话的兑现（ADR 0015 / 0038）。
  *
  * 页面分成两个方向明确的小节，**它们是两件事**：
  *   ① 在 Tavotto 中使用编码 Agent —— 借本机的 CLI 改图脚本；
@@ -125,13 +126,10 @@ export function CodingAgentsSection() {
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
-      {/* ---------------- 标题区 ---------------- */}
+      {/* ---------------- 标题区：只有动作，没有解释（ADR 0038） ---------------- */}
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-sm font-medium text-ink">{ag('title')}</h3>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
-            {ag('intro', { product: PRODUCT_NAME })}
-          </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <Button variant="outline" size="sm" loading={busy} onClick={() => void reload(true)}>
@@ -162,13 +160,11 @@ export function CodingAgentsSection() {
             {[0, 1].map((i) => (
               <li
                 key={i}
-                className={`flex min-h-16 items-center gap-3 px-3 ${i > 0 ? 'border-t border-border' : ''}`}
+                className={`flex min-h-12 items-center gap-3 px-3 ${i > 0 ? 'border-t border-border' : ''}`}
               >
                 <span className="h-9 w-9 shrink-0 rounded-md bg-surface-2" />
-                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <span className="h-3 w-24 rounded-sm bg-surface-2" />
-                  <span className="h-3 w-40 rounded-sm bg-surface-2" />
-                </span>
+                <span className="h-3 w-24 rounded-sm bg-surface-2" />
+                <span className="ml-auto h-3 w-16 rounded-sm bg-surface-2" />
               </li>
             ))}
           </ul>
@@ -190,21 +186,20 @@ export function CodingAgentsSection() {
             )}
           </section>
 
-          {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ---------------- */}
+          {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
+              一行：名字 + 外链。没有卡片外框、没有说明段（ADR 0038）——
+              「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
           <section className="flex flex-col gap-1.5">
             <h4 className="text-xs font-medium text-ink-2">{ag('useFromAgents', { product: PRODUCT_NAME })}</h4>
-            <div className="rounded-md border border-border bg-surface p-3">
-              <p className="text-sm font-medium text-ink">
+            <div className="flex min-h-7 items-center gap-3 px-1">
+              <span className="min-w-0 flex-1 truncate text-sm text-ink">
                 {ag('codexIntegrationName', { product: PRODUCT_NAME })}
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
-                {ag('codexIntegrationDesc', { product: PRODUCT_NAME })}
-              </p>
+              </span>
               <a
                 href={CODEX_GUIDE_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-1.5 inline-flex items-center gap-1 text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+                className="inline-flex shrink-0 items-center gap-1 text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
               >
                 {ag('viewGuide')}
                 <ExternalLink size={11} aria-hidden />

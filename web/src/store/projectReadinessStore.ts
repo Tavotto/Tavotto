@@ -18,6 +18,7 @@
 import { create } from 'zustand'
 import { fetchReadiness, type ReadinessReport } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { captureTelemetry, readinessStatusBucket } from '@/lib/telemetry'
 import { useUiStore } from './uiStore'
 
 /** 已关闭的横幅：项目 id → 那一版报告的 fingerprint */
@@ -66,6 +67,14 @@ function writeDismissed(map: Record<string, string>): void {
   }
 }
 
+/**
+ * 接入中心是从哪个入口打开的（遥测 `project_readiness_opened.source` 的闭集）。
+ * `banner` 顶部横幅；`panel` 左栏按钮 / 素材库 / 属性页 / 问题面板；
+ * `quickedit` 画布上的「为什么不能编辑？」（浮动栏 / 右键 / 快速编辑条）；
+ * `palette` 命令面板与顶栏「更多」。
+ */
+export type ReadinessOpenSource = 'banner' | 'panel' | 'quickedit' | 'palette'
+
 interface ReadinessState {
   /** 最后一次**成功**取回的报告。后台失败不清它——旧事实好过没有事实 */
   report: ReadinessReport | null
@@ -88,9 +97,9 @@ interface ReadinessState {
    * 的兜底）。这里再记一份的话，同一条保证有两个实现，删掉任意一个都还有
    * 另一个兜着——那正是 T-36 里变异永远杀不死的形状。
    */
-  openCenter: (opts?: { focus?: string | null }) => void
+  openCenter: (opts?: { focus?: string | null; source?: ReadinessOpenSource }) => void
   /** 「为什么不能编辑？」的落点：打开中心并聚焦到这张图 */
-  focusPanel: (id: string) => void
+  focusPanel: (id: string, source?: ReadinessOpenSource) => void
   /** 滚动与高亮已经做完了，清掉聚焦标记（否则重开还会再高亮一次） */
   clearFocus: () => void
   closeCenter: () => void
@@ -163,10 +172,21 @@ export const useProjectReadinessStore = create<ReadinessState>((set, get) => ({
     set({ focusId: opts?.focus ?? null })
     useUiStore.getState().setRegistryOpen(true)
     // 打开的那一刻取一次：入口可能是从没加载过就绪度的地方（项目菜单、设置页）
-    void get().load()
+    const loaded = get().load()
+    const source = opts?.source
+    if (source) {
+      // 遥测：来源 + 报告的桶。报告取不回来 / 项目里没有图时**不发**——
+      // 桶说不出来就别编一个。捕获永不抛、永不阻塞打开。
+      void loaded.then((report) => {
+        const bucket = report ? readinessStatusBucket(report.summary) : null
+        if (bucket) {
+          captureTelemetry('project_readiness_opened', { source, status_bucket: bucket })
+        }
+      })
+    }
   },
 
-  focusPanel: (id) => get().openCenter({ focus: id }),
+  focusPanel: (id, source) => get().openCenter({ focus: id, source }),
 
   clearFocus: () => {
     if (get().focusId !== null) set({ focusId: null })

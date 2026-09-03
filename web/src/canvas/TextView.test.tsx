@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
+import { CANVAS_TEXT_FAMILIES, canvasFontStack } from '@/lib/typography'
 import { TextView } from './TextView'
 
 const textObj = (over: Partial<TextObject> = {}): TextObject => ({
@@ -71,6 +72,36 @@ function typeInto(el: HTMLElement, text: string) {
   // jsdom 的 innerText 赋值不落进 DOM，只是普通属性——commitText 读的正是它
   ;(el as unknown as { innerText: string }).innerText = text
 }
+
+describe('字体族落到画布上', () => {
+  const renderOne = (over: Partial<TextObject>) => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj(over))
+    })
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
+    })
+    return container.querySelector('div')!
+  }
+
+  it('没设过字体 = 文档默认族（老文档的画面一个像素不变）', () => {
+    expect(renderOne({ text: 'H2O' }).style.fontFamily).toBe('var(--font-doc)')
+  })
+
+  it('设过就按它画——不是只在属性页里换了个数字', () => {
+    const el = renderOne({ text: 'H2O', fontFamily: 'monospace' })
+    // 判据是**画布上的那条 CSS**，不是文档里的那个字段：两者之间就是这一轮
+    // 补上的那一段线，量文档等于自己验自己
+    expect(el.style.fontFamily).not.toBe('var(--font-doc)')
+    expect(el.style.fontFamily).toBe(canvasFontStack('monospace'))
+  })
+
+  it('三个族在画布上各不相同（尺子看得见「族」这一维）', () => {
+    const seen = new Set<string>()
+    for (const f of CANVAS_TEXT_FAMILIES) seen.add(canvasFontStack(f))
+    expect(seen.size).toBe(CANVAS_TEXT_FAMILIES.length)
+  })
+})
 
 describe('TextView 编辑提交', () => {
   it('退出编辑后正文只显示一遍（不残留 contentEditable 的野节点）', async () => {
@@ -126,3 +157,47 @@ describe('TextView 编辑提交', () => {
     expect(editingEl.textContent).toBe('')
   })
 })
+
+/**
+ * 预览的上下标合成与导出走**同一份判据**。
+ *
+ * 这里量的是「预览按覆盖表决定合不合成」，不是「浏览器能不能显示 ⁵」——
+ * jsdom 与真浏览器当然都显示得出，拿它当判据的结果正是「预览好好的、导出
+ * 上是个方框」。
+ */
+describe('科学文本解释', () => {
+  const renderOne = (over: Partial<TextObject>) => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj(over))
+    })
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
+    })
+    return container.querySelector('div')!
+  }
+
+  it('默认（auto）原样显示 Unicode 上标——文本层不降级，预览也不该先降级', () => {
+    const el = renderOne({ text: '×10⁵' })
+    expect(el.textContent).toBe('×10⁵')
+    expect(el.querySelectorAll('span[style]').length).toBe(0)
+  })
+
+  it('scientific 档合成上标：基础字符 + 缩小抬高的 span', () => {
+    const el = renderOne({ text: '×10⁵', interpretation: 'scientific' })
+    expect(el.textContent).toBe('×105')
+    const sup = [...el.querySelectorAll('span')].find((s) => s.style.verticalAlign)
+    expect(sup?.textContent).toBe('5')
+    // 抬高是正值（vertical-align 正 = 往上）；字号按 SCRIPT_SIZE 缩
+    expect(parseFloat(sup!.style.verticalAlign)).toBeGreaterThan(0)
+    expect(parseFloat(sup!.style.fontSize)).toBeLessThan(mmPxOf(el))
+  })
+
+  it('`m²` 两档都不动——那是 base-14 自己画得出的设计字形', () => {
+    expect(renderOne({ text: 'm²', interpretation: 'scientific' }).textContent).toBe('m²')
+  })
+})
+
+/** 取这段文字的正文字号（px），用来验证上标确实更小 */
+function mmPxOf(el: HTMLElement): number {
+  return parseFloat(el.style.fontSize)
+}

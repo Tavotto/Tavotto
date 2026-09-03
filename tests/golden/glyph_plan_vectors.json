@@ -1,0 +1,1009 @@
+{
+ "schema": 1,
+ "comment": "生成物：字形归属计划的跨语言看护向量。唯一产生者 scripts/gen_glyph_plan_vectors.py；手改无效。pytest（tests/test_glyph_plan.py）与 vitest（web/src/lib/glyphPlan.golden.test.ts）各跑一遍同一份。",
+ "backend_version": "1.28.2",
+ "vectors": [
+  {
+   "name": "empty/serif",
+   "text": "",
+   "family": "serif",
+   "runs": [],
+   "missing": []
+  },
+  {
+   "name": "empty/sans-serif",
+   "text": "",
+   "family": "sans-serif",
+   "runs": [],
+   "missing": []
+  },
+  {
+   "name": "empty/monospace",
+   "text": "",
+   "family": "monospace",
+   "runs": [],
+   "missing": []
+  },
+  {
+   "name": "ascii/serif",
+   "text": "Sample A",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "Sample A",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "ascii/sans-serif",
+   "text": "Sample A",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "Sample A",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "ascii/monospace",
+   "text": "Sample A",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "Sample A",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "multiply-sign/serif",
+   "text": "×10⁵",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "multiply-sign/sans-serif",
+   "text": "×10⁵",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "multiply-sign/monospace",
+   "text": "×10⁵",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "unit-negative-exponent/serif",
+   "text": "A m⁻²",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "A m",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "²",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "unit-negative-exponent/sans-serif",
+   "text": "A m⁻²",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "A m",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "²",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "unit-negative-exponent/monospace",
+   "text": "A m⁻²",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "A m",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "²",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-greek/serif",
+   "text": "μm",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "μm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-greek/sans-serif",
+   "text": "μm",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "μm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-greek/monospace",
+   "text": "μm",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "μm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-sign/serif",
+   "text": "µm",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "µm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-sign/sans-serif",
+   "text": "µm",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "µm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "micro-sign/monospace",
+   "text": "µm",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "µm",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "greek-letters/serif",
+   "text": "α β γ Δ",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "α β γ Δ",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "greek-letters/sans-serif",
+   "text": "α β γ Δ",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "α β γ Δ",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "greek-letters/monospace",
+   "text": "α β γ Δ",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "α β γ Δ",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "degree-celsius/serif",
+   "text": "25 °C",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "25 °C",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "degree-celsius/sans-serif",
+   "text": "25 °C",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "25 °C",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "degree-celsius/monospace",
+   "text": "25 °C",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "25 °C",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "angstrom/serif",
+   "text": "Å",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "Å",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "angstrom/sans-serif",
+   "text": "Å",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "Å",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "angstrom/monospace",
+   "text": "Å",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "Å",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plus-minus/serif",
+   "text": "±",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "±",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plus-minus/sans-serif",
+   "text": "±",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "±",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plus-minus/monospace",
+   "text": "±",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "±",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "comparisons/serif",
+   "text": "≤ ≥ ≈",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "≤ ≥ ≈",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "comparisons/sans-serif",
+   "text": "≤ ≥ ≈",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "≤ ≥ ≈",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "comparisons/monospace",
+   "text": "≤ ≥ ≈",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "≤ ≥ ≈",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "subscript/serif",
+   "text": "H₂O",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "H",
+     "layer": "primary"
+    },
+    {
+     "text": "₂",
+     "layer": "fallback"
+    },
+    {
+     "text": "O",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "subscript/sans-serif",
+   "text": "H₂O",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "H",
+     "layer": "primary"
+    },
+    {
+     "text": "₂",
+     "layer": "fallback"
+    },
+    {
+     "text": "O",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "subscript/monospace",
+   "text": "H₂O",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "H",
+     "layer": "primary"
+    },
+    {
+     "text": "₂",
+     "layer": "fallback"
+    },
+    {
+     "text": "O",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "cjk/serif",
+   "text": "中文标签",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "中文标签",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "cjk/sans-serif",
+   "text": "中文标签",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "中文标签",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "cjk/monospace",
+   "text": "中文标签",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "中文标签",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-cjk-latin/serif",
+   "text": "样品 A ×10⁵",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A ×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-cjk-latin/sans-serif",
+   "text": "样品 A ×10⁵",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A ×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-cjk-latin/monospace",
+   "text": "样品 A ×10⁵",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A ×10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "box-drawing/serif",
+   "text": "━┃",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "━┃",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "box-drawing/sans-serif",
+   "text": "━┃",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "━┃",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "box-drawing/monospace",
+   "text": "━┃",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "━┃",
+     "layer": "cjk"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "emoji-surrogate-pair/serif",
+   "text": "😀",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "😀",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "emoji-surrogate-pair/sans-serif",
+   "text": "😀",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "😀",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "emoji-surrogate-pair/monospace",
+   "text": "😀",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "😀",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "math-alphanumeric/serif",
+   "text": "𝛼",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "𝛼",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "math-alphanumeric/sans-serif",
+   "text": "𝛼",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "𝛼",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "math-alphanumeric/monospace",
+   "text": "𝛼",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "𝛼",
+     "layer": "fallback"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "arabic-question-mark/serif",
+   "text": "؟",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "؟",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "arabic-question-mark/sans-serif",
+   "text": "؟",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "؟",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "arabic-question-mark/monospace",
+   "text": "؟",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "؟",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "combining-mark/serif",
+   "text": "ـَ",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "ـَ",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "ـ",
+    "َ"
+   ]
+  },
+  {
+   "name": "combining-mark/sans-serif",
+   "text": "ـَ",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "ـَ",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "ـ",
+    "َ"
+   ]
+  },
+  {
+   "name": "combining-mark/monospace",
+   "text": "ـَ",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "ـَ",
+     "layer": "missing"
+    }
+   ],
+   "missing": [
+    "ـ",
+    "َ"
+   ]
+  },
+  {
+   "name": "mixed-missing/serif",
+   "text": "T؟ = 5",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "T",
+     "layer": "primary"
+    },
+    {
+     "text": "؟",
+     "layer": "missing"
+    },
+    {
+     "text": " = 5",
+     "layer": "primary"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "mixed-missing/sans-serif",
+   "text": "T؟ = 5",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "T",
+     "layer": "primary"
+    },
+    {
+     "text": "؟",
+     "layer": "missing"
+    },
+    {
+     "text": " = 5",
+     "layer": "primary"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "mixed-missing/monospace",
+   "text": "T؟ = 5",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "T",
+     "layer": "primary"
+    },
+    {
+     "text": "؟",
+     "layer": "missing"
+    },
+    {
+     "text": " = 5",
+     "layer": "primary"
+    }
+   ],
+   "missing": [
+    "؟"
+   ]
+  },
+  {
+   "name": "plain-x10-text/serif",
+   "text": "plain x10 text",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plain-x10-text/sans-serif",
+   "text": "plain x10 text",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "plain-x10-text/monospace",
+   "text": "plain x10 text",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "plain x10 text",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/serif",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/sans-serif",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "existing-mathtext/monospace",
+   "text": "existing $10^{-5}$ mathtext",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "existing $10^{-5}$ mathtext",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/serif",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/sans-serif",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "sans-serif",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  },
+  {
+   "name": "mixed-scripts/monospace",
+   "text": "样品 A: 5.0 × 10⁵ cm⁻³",
+   "family": "monospace",
+   "runs": [
+    {
+     "text": "样品",
+     "layer": "cjk"
+    },
+    {
+     "text": " A: 5.0 × 10",
+     "layer": "primary"
+    },
+    {
+     "text": "⁵",
+     "layer": "fallback"
+    },
+    {
+     "text": " cm",
+     "layer": "primary"
+    },
+    {
+     "text": "⁻",
+     "layer": "fallback"
+    },
+    {
+     "text": "³",
+     "layer": "primary"
+    }
+   ],
+   "missing": []
+  }
+ ]
+}

@@ -38,13 +38,14 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
 
-from . import depresolve, execspec, managedenv, pool, projectenv, runcodes, runtime
+from . import depresolve, envlease, execspec, managedenv, pool, projectenv, runcodes, runtime
 
 LOG = logging.getLogger("tavotto.deprepair")
 
@@ -74,6 +75,15 @@ ERROR_BUSY = "dependency_install_busy"
 #: 脚本——两件事的下一步动作完全不同，混成一个码就只能给一句含糊的「忙」。
 ERROR_IN_USE_BY_NATIVE = runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
 ERROR_ROUNDS_EXHAUSTED = "dependency_repair_rounds_exhausted"
+#: 包管理（设置 → 包管理，ADR 0038）专有的几条。它们与上面那批共用同一个
+#: 漏斗（`app._repair_error`）与同一张文案表（`errors:engine.repairError.*`）。
+ERROR_PACKAGE_PROTECTED = "package_protected"
+ERROR_PACKAGE_NOT_INSTALLED = "package_not_installed"
+ERROR_PACKAGE_ENV_MISSING = "package_env_missing"
+ERROR_PACKAGE_DISK_LOW = "package_disk_low"
+ERROR_PACKAGE_OP_INVALID = "package_op_invalid"
+ERROR_PACKAGE_STILL_INSTALLED = "package_still_installed"
+ERROR_PACKAGE_NOT_FOUND_AFTER = "package_not_found_after_install"
 
 # ---------------------------------------------------------------------------
 # 目标环境
@@ -609,7 +619,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             distribution=req.distribution,
             requested_specifier=req.specifier,
             resolved_version=version,
-            reason="missing_dependency",
+            reason=managedenv.REASON_MISSING_DEPENDENCY,
         )
         managedenv.mark_ready(project)
     projectenv.remember(
@@ -833,7 +843,7 @@ def classify_pip_failure(text: str) -> str:
     return ERROR_FAILED
 
 
-def pip_install_argv(python: str, requirement: str) -> list[str]:
+def pip_install_argv(python: str, requirement: str, *, upgrade: bool = False) -> list[str]:
     """安装命令——**唯一出处**，测试逐字节钉住。
 
     每一个参数都有理由：
@@ -842,13 +852,15 @@ def pip_install_argv(python: str, requirement: str) -> list[str]:
     * `--disable-pip-version-check` / `--no-input`：子进程里没人能回答提示；
     * `--only-binary=:all:`：一键路径**只装 wheel**。sdist 会调本机编译器、
       跑 build backend，十几分钟起步，失败原因完全在 Tavotto 的控制面之外；
-    * **没有 `--upgrade`**：默认就是 pip 的 only-if-needed——往用户的科研
-      环境里装一个包，不该顺手把 NumPy/SciPy 栈整体升级掉。
+    * **默认没有 `--upgrade`**：默认就是 pip 的 only-if-needed——往用户的科研
+      环境里装一个包，不该顺手把 NumPy/SciPy 栈整体升级掉。只有用户在
+      包管理里**明确点「升级」**（`upgrade=True`，目标只会是受管环境）才带上，
+      而且升级策略仍是 pip 默认的 only-if-needed——升级它，不顺手升级它的依赖。
 
     argv 是 list、`shell=False`；包名与版本已在 `depresolve.parse_requirement`
     过了严格语法，`-r` / `--index-url` / URL / 本地路径在那里就死了。
     """
-    return [
+    argv = [
         str(python),
         "-m",
         "pip",
@@ -856,20 +868,58 @@ def pip_install_argv(python: str, requirement: str) -> list[str]:
         "--disable-pip-version-check",
         "--no-input",
         "--only-binary=:all:",
-        requirement,
+    ]
+    if upgrade:
+        argv.append("--upgrade")
+    argv.append(requirement)
+    return argv
+
+
+def pip_uninstall_argv(python: str, distribution: str) -> list[str]:
+    """卸载命令——唯一出处。`-y` 是因为子进程里没人能回答 pip 的确认提示；
+    真正的确认发生在界面上（`create_package_job` 把依赖它的包报出来，用户点过
+    才会走到这里）。"""
+    return [
+        str(python),
+        "-m",
+        "pip",
+        "uninstall",
+        "--disable-pip-version-check",
+        "--no-input",
+        "-y",
+        distribution,
     ]
 
 
 def _pip_install(
-    python: str, requirement: str, cancel_ev: threading.Event, on_log
+    python: str, requirement: str, cancel_ev: threading.Event, on_log, *, upgrade: bool = False
 ) -> tuple[str, str]:
-    """跑一次 pip。回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
+    """跑一次 pip install。回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
     if depresolve.parse_requirement(requirement) is None:
         # 第二道门：真正拼进 argv 之前再验一次形状。第一道在解析处，
         # 这一道挡的是「以后有人从别的路径构造出需求串」。
         return ERROR_REQUIREMENT_INVALID, f"需求串不合形状: {requirement!r}"
-    argv = pip_install_argv(python, requirement)
-    LOG.info("pip install: %s", requirement)
+    LOG.info("pip install: %s%s", requirement, " (upgrade)" if upgrade else "")
+    return _run_pip(pip_install_argv(python, requirement, upgrade=upgrade), cancel_ev, on_log)
+
+
+def _pip_uninstall(
+    python: str, distribution: str, cancel_ev: threading.Event, on_log
+) -> tuple[str, str]:
+    """跑一次 pip uninstall。包名同样要过语法关——它一样会进 argv。"""
+    parsed = depresolve.parse_requirement(distribution)
+    if parsed is None or parsed[1]:
+        return ERROR_REQUIREMENT_INVALID, f"包名不合形状: {distribution!r}"
+    LOG.info("pip uninstall: %s", distribution)
+    return _run_pip(pip_uninstall_argv(python, distribution), cancel_ev, on_log)
+
+
+def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, str]:
+    """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
+
+    可取消、有超时、日志逐行回调。**argv 由调用方的两个 `*_argv()` 出处拼好**，
+    这里不再碰它的形状。
+    """
     try:
         proc = subprocess.Popen(
             argv,
@@ -1134,4 +1184,573 @@ def diagnostics_state(project: str | Path) -> dict:
         "rounds": rounds,
         "managed_environment": managed,
         "max_rounds": MAX_DEPENDENCY_REPAIR_ROUNDS,
+        # 只给份数：快照文件名里有时间戳与操作名，内容（freeze 全文）不进诊断
+        "snapshots": len(managedenv.list_snapshots(root)),
     }
+
+
+# ---------------------------------------------------------------------------
+# 用户包管理（设置 → 包管理；ADR 0038）
+#
+# 与上面的「缺包修复」共用**同一个执行器、同一把环境锁、同一份脱敏、同一个
+# 自检**——这里没有第二套 pip 调用。多出来的只有：
+#
+#   * 目标环境**只有一种**：这个项目的 Tavotto 受管环境。用户的 `.venv` 与
+#     内置 runtime 都不在这里出现（前者是他的研究环境，后者是「重装就能修」
+#     的前提）；
+#   * 三种操作 install / update / uninstall，每一种都先形成一个 **job**（不改
+#     任何东西，把「会发生什么」交给界面确认），再按 job_id 执行——与 plan /
+#     install 两步同一条防 TOCTOU 的纪律；
+#   * 「内置」与「用户装的」的分界由**依赖闭包**算出来（`protected_distributions`）：
+#     matplotlib 及它拉进来的一切、pip 自身，卸掉任何一个环境就废了。
+# ---------------------------------------------------------------------------
+OP_INSTALL = "install"
+OP_UPDATE = "update"
+OP_UNINSTALL = "uninstall"
+PACKAGE_OPS = (OP_INSTALL, OP_UPDATE, OP_UNINSTALL)
+
+#: 装包前至少要有这么多空闲磁盘。科研 wheel 动辄几十 MB，解压再翻一倍；
+#: 磁盘写满时 pip 留下的半个包比「装不上」难查得多。
+MIN_FREE_BYTES = 200 * 1024 * 1024
+
+#: 永远算「内置」的：受管环境的基础栈 + 包管理器本身。它们的依赖闭包由
+#: `protected_distributions()` 在目标解释器里现算，这里不抄一份 matplotlib
+#: 的依赖清单（抄了就会与真实依赖漂移）。
+_ALWAYS_PROTECTED = tuple(
+    depresolve.normalize_distribution(n) for n in managedenv.BASE_PACKAGES
+) + (
+    "pip",
+    "setuptools",
+    "wheel",
+)
+
+INVENTORY_TIMEOUT_S = 60
+FREEZE_TIMEOUT_S = 60
+
+#: 包状态（界面按它换文案，不解析版本串）。
+PKG_INSTALLED = "installed"  # 账上有、环境里也有、版本一致
+PKG_MISSING = "missing"  # 账上有、环境里没有（被人手工删了 / 环境重建过一半）
+PKG_CHANGED = "changed"  # 账上记的版本与环境里的不一致（别的安装顺手升过它）
+PKG_PLANNED = "planned"  # 环境还没建：创建时会装上（内置清单专用）
+
+_jobs: dict[str, "PackageJob"] = {}
+
+
+@dataclasses.dataclass(frozen=True)
+class PackageJob:
+    """一次包操作的完整描述——执行端只认它（与 `RepairPlan` 同一条纪律）。"""
+
+    job_id: str
+    project: str
+    project_id: str
+    op: str
+    distribution: str
+    #: 交给 pip 的那一个参数（install / update：`lmfit>=1.3`；uninstall：包名）
+    requirement: str
+    python: str  # 受管环境还没建时为空
+    env_fingerprint: str
+    creates_environment: bool
+    #: 卸载时：账上哪些用户包声明依赖它（界面据此二次确认）
+    dependents: tuple[str, ...]
+    created_at: float
+    expires_at: float
+
+    def to_payload(self) -> dict:
+        return {
+            "job_id": self.job_id,
+            "op": self.op,
+            "distribution": self.distribution,
+            "requirement": self.requirement,
+            "creates_environment": self.creates_environment,
+            "dependents": list(self.dependents),
+            "network_required": self.op != OP_UNINSTALL,
+            "expires_at": int(self.expires_at),
+        }
+
+
+# --------------------------------------------------------------- 清单
+_INVENTORY_SCRIPT = """\
+import json, re, sys
+import importlib.metadata as m
+
+
+def norm(n):
+    return re.sub(r"[-_.]+", "-", n).lower()
+
+
+out = {}
+for d in m.distributions():
+    name = d.metadata.get("Name") or ""
+    if not name:
+        continue
+    reqs = []
+    for r in d.requires or ():
+        # `pytest; extra == "test"` 是可选依赖，没装进来；其余标记（python_version
+        # 之类）保守地算进去——多保护一个包比少保护一个安全
+        if "extra ==" in r or "extra==" in r:
+            continue
+        mo = re.match(r"\\s*([A-Za-z0-9][A-Za-z0-9._-]*)", r)
+        if mo:
+            reqs.append(norm(mo.group(1)))
+    out[norm(name)] = {"name": name, "version": d.version or "", "requires": sorted(set(reqs))}
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def inventory(python: str) -> dict[str, dict] | None:
+    """目标解释器里装了什么、谁依赖谁——**一次子进程**拿全。
+
+    键是 PEP 503 规范化名；问不出来回 None（解释器起不来 / 超时）。
+    走 `importlib.metadata` 而不是 `pip list`：后者的输出格式不是契约。
+    """
+    rc, out = _run([str(python), "-I", "-c", _INVENTORY_SCRIPT], INVENTORY_TIMEOUT_S)
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def protected_distributions(inv: dict[str, dict] | None) -> set[str]:
+    """不许卸载的那一批：基础栈 + 它们的**传递依赖闭包** + pip 自身。
+
+    闭包在目标环境里现算：matplotlib 依赖什么由装着的那个版本说了算，
+    源码里抄一份清单的话 matplotlib 换版本就漂了。
+    """
+    protected = set(_ALWAYS_PROTECTED)
+    if not inv:
+        return protected
+    stack = list(protected)
+    while stack:
+        name = stack.pop()
+        for dep in (inv.get(name) or {}).get("requires", ()):
+            if dep not in protected:
+                protected.add(dep)
+                stack.append(dep)
+    return protected
+
+
+def _dependents_of(name: str, inv: dict[str, dict] | None, candidates: list[str]) -> list[str]:
+    """`candidates`（账上的用户包）里谁**直接或间接**依赖 `name`。"""
+    if not inv:
+        return []
+    target = depresolve.normalize_distribution(name)
+    out: list[str] = []
+    for cand in candidates:
+        key = depresolve.normalize_distribution(cand)
+        if key == target:
+            continue
+        seen: set[str] = set()
+        stack = [key]
+        hit = False
+        while stack and not hit:
+            cur = stack.pop()
+            for dep in (inv.get(cur) or {}).get("requires", ()):
+                if dep == target:
+                    hit = True
+                    break
+                if dep not in seen:
+                    seen.add(dep)
+                    stack.append(dep)
+        if hit:
+            out.append(cand)
+    return out
+
+
+def _proxy_configured() -> bool:
+    return any(
+        os.environ.get(k) for k in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+    )
+
+
+def list_managed_packages(project: str | Path | None) -> dict:
+    """设置 → 包管理那一页要的全部事实（**不装任何东西**）。
+
+    `capability.available=False` 时界面显示原因而不是一片空表：没打开项目 /
+    这台机器建不了环境 / 环境正在改动。受管环境存在时起**一次**子进程盘点
+    版本与依赖图（几百毫秒）；不存在时一个子进程都不起。
+    """
+    if project is None:
+        return {
+            "capability": {"available": False, "reason": "no_project"},
+            "environment": None,
+            "builtin": [],
+            "builtin_source": "",
+            "user": [],
+            "busy": False,
+        }
+    root = str(Path(project))
+    managed = managedenv.state(root)
+    python = managedenv.python_of(root)
+    inv = inventory(python) if python else None
+    protected = protected_distributions(inv)
+    accounted = [
+        e
+        for e in (managedenv.read_manifest(root) or {}).get("installed_by_tavotto") or []
+        if isinstance(e, dict) and e.get("distribution")
+    ]
+    accounted_names = [str(e["distribution"]) for e in accounted]
+
+    # ---- 内置：受管环境在就按依赖闭包现算；不在就退到内置 runtime 的清单 ----
+    builtin: list[dict] = []
+    builtin_source = ""
+    if inv is not None:
+        builtin_source = "managed_env"
+        for key in sorted(protected):
+            rec = inv.get(key)
+            if rec is None:
+                if key in _ALWAYS_PROTECTED and key not in ("setuptools", "wheel"):
+                    builtin.append({"name": key, "version": "", "status": PKG_MISSING})
+                continue
+            builtin.append(
+                {"name": rec["name"], "version": rec["version"], "status": PKG_INSTALLED}
+            )
+    else:
+        info = runtime.manifest()
+        if info and isinstance(info.get("packages"), dict):
+            builtin_source = "bundled_runtime"
+            for name, ver in sorted(info["packages"].items()):
+                builtin.append({"name": str(name), "version": str(ver), "status": PKG_INSTALLED})
+        else:
+            builtin_source = "planned"
+            for name in managedenv.BASE_PACKAGES:
+                builtin.append({"name": name, "version": "", "status": PKG_PLANNED})
+
+    # ---- 用户装的：账为主、盘点为证 ----
+    user: list[dict] = []
+    for e in accounted:
+        dist = str(e["distribution"])
+        key = depresolve.normalize_distribution(dist)
+        rec = inv.get(key) if inv else None
+        recorded = str(e.get("resolved_version") or "")
+        actual = str(rec["version"]) if rec else ""
+        if inv is None:
+            status = ""  # 环境不在 / 问不出来：不谎报「已安装」
+        elif rec is None:
+            status = PKG_MISSING
+        elif recorded and actual and recorded != actual:
+            status = PKG_CHANGED
+        else:
+            status = PKG_INSTALLED
+        user.append(
+            {
+                "distribution": dist,
+                "requested_specifier": str(e.get("requested_specifier") or ""),
+                "installed_version": actual,
+                "recorded_version": recorded,
+                "reason": str(e.get("reason") or managedenv.REASON_MISSING_DEPENDENCY),
+                "status": status,
+                # 账上是用户包、闭包里却是基础栈的依赖（用户装了个 numpy）：
+                # 卸掉它会拆掉 matplotlib，界面要把它标成只读
+                "protected": key in protected,
+                "required_by": _dependents_of(dist, inv, accounted_names),
+                "installed_at": int(e.get("at") or 0),
+            }
+        )
+
+    if python:
+        busy = envlease.is_mutating(python)
+    else:
+        busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root))
+    available = True if managed["exists"] else managed_available()
+    capability = {"available": available is not False, "reason": ""}
+    if available is False:
+        capability = {"available": False, "reason": ERROR_MANAGED_UNAVAILABLE}
+    elif managed["exists"] and inv is None:
+        capability = {"available": True, "reason": ERROR_MANAGED_BROKEN}
+    elif managed["state"] == managedenv.STATE_INCOMPLETE and (managedenv.read_manifest(root) or {}):
+        capability = {"available": True, "reason": "managed_env_incomplete"}
+
+    return {
+        "capability": capability,
+        "environment": {
+            **managed,
+            "python_version": managed["python_version"],
+            "in_use": pool.same_python(projectenv.remembered(root), python) if python else False,
+        },
+        "builtin": builtin,
+        "builtin_source": builtin_source,
+        "user": user,
+        "busy": busy,
+        # 三个网络事实（只回真假，绝不回地址）：装包要联网 / 走了代理 / 配了私有源
+        "network": {
+            "proxy": _proxy_configured(),
+            "custom_index": custom_package_index(python) if python else None,
+        },
+        "snapshots": len(managedenv.list_snapshots(root)),
+        # 卸载没有回滚这件事要在界面上**说出来**（ADR 0019 §八）
+        "rollback": "snapshot_only",
+    }
+
+
+# --------------------------------------------------------------- 形成作业
+def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
+    """把「对哪个包做什么」定下来——**这一步不改任何东西**。
+
+    校验全在这里：操作名闭集、包名 / 需求串语法、目标环境在不在、内置包不许
+    卸、磁盘够不够、环境是不是正被改动。过了才发 job_id。
+    """
+    root = str(Path(project))
+    if op not in PACKAGE_OPS:
+        raise RepairError(ERROR_PACKAGE_OP_INVALID, f"未知的包操作: {op!r}")
+    parsed = depresolve.parse_requirement(str(spec or "").strip())
+    if parsed is None:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "只接受 `包名` 或 `包名>=版本` 这样的形态")
+    name, specifier = parsed
+    if op == OP_UNINSTALL and specifier:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "卸载只接受包名")
+    requirement = f"{name}{specifier}"
+    key_name = depresolve.normalize_distribution(name)
+
+    python = managedenv.python_of(root) or ""
+    creates = False
+    if not python:
+        if op != OP_INSTALL:
+            raise RepairError(ERROR_PACKAGE_ENV_MISSING, "这个项目还没有 Tavotto 环境")
+        creates = True
+        if not base_python():
+            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+
+    env_key = _env_key(TARGET_MANAGED, python, root)
+    busy = envlease.is_mutating(python) if python else envlease.is_mutating_key(env_key)
+    if busy:
+        raise RepairError(ERROR_BUSY, "这个环境正在改动，请稍候")
+
+    dependents: tuple[str, ...] = ()
+    if op == OP_UNINSTALL:
+        inv = inventory(python)
+        if inv is None:
+            raise RepairError(ERROR_MANAGED_BROKEN, "问不出这个环境里装了什么")
+        if key_name not in inv:
+            raise RepairError(ERROR_PACKAGE_NOT_INSTALLED, f"环境里没有 {name}")
+        if key_name in protected_distributions(inv):
+            raise RepairError(ERROR_PACKAGE_PROTECTED, f"{name} 是内置包，卸掉它这个环境就用不了了")
+        accounted = [
+            str(e.get("distribution"))
+            for e in (managedenv.read_manifest(root) or {}).get("installed_by_tavotto") or []
+            if isinstance(e, dict) and e.get("distribution")
+        ]
+        dependents = tuple(_dependents_of(name, inv, accounted))
+    else:
+        try:
+            target_dir = managedenv.env_dir(root)
+            probe_dir = target_dir if target_dir.exists() else target_dir.parent
+            probe_dir.mkdir(parents=True, exist_ok=True)
+            free = shutil.disk_usage(str(probe_dir)).free
+        except OSError:
+            free = None
+        if free is not None and free < MIN_FREE_BYTES:
+            raise RepairError(ERROR_PACKAGE_DISK_LOW, "磁盘剩余空间不足")
+
+    now = time.time()
+    job = PackageJob(
+        job_id=secrets.token_urlsafe(24),
+        project=root,
+        project_id=managedenv.project_fingerprint(root),
+        op=op,
+        distribution=name,
+        requirement=requirement,
+        python=python,
+        env_fingerprint=_fingerprint(TARGET_MANAGED, python, root),
+        creates_environment=creates,
+        dependents=dependents,
+        created_at=now,
+        expires_at=now + PLAN_TTL_S,
+    )
+    with _lock:
+        for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
+            _jobs.pop(stale, None)
+        _jobs[job.job_id] = job
+    LOG.info("包操作作业: %s %s", op, requirement)
+    return job
+
+
+def get_package_job(job_id: str) -> PackageJob | None:
+    with _lock:
+        job = _jobs.get(str(job_id or ""))
+    if job is not None and job.expires_at < time.time():
+        with _lock:
+            _jobs.pop(job.job_id, None)
+        return None
+    return job
+
+
+# --------------------------------------------------------------- 执行
+def run_package_job_async(job_id: str, on_event=None) -> None:
+    threading.Thread(
+        target=lambda: _run_package_job_guarded(job_id, on_event),
+        daemon=True,
+        name="tavotto-package-job",
+    ).start()
+
+
+def _run_package_job_guarded(job_id: str, on_event) -> dict:
+    try:
+        return run_package_job(job_id, on_event)
+    except RepairError as exc:
+        return _emit_job(job_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("包操作线程异常")
+        return _emit_job(job_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
+
+
+def run_package_job(job_id: str, on_event=None) -> dict:
+    """执行一个作业。**只认 job_id**：做什么、对哪个包、哪个项目，全部来自作业。"""
+    job = get_package_job(job_id)
+    if job is None:
+        raise RepairError(ERROR_NOT_ALLOWED, "没有这个作业（或已过期）")
+    if _fingerprint(TARGET_MANAGED, job.python, job.project) != job.env_fingerprint:
+        with _lock:
+            _jobs.pop(job.job_id, None)
+        raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+
+    cancel_ev = threading.Event()
+    with _lock:
+        _cancels[job.job_id] = cancel_ev
+    key = _env_key(TARGET_MANAGED, job.python, job.project)
+    try:
+        with pool.mutating_environment(key, job.python):
+            return _run_package_job(job, key, on_event, cancel_ev)
+    except pool.EnvironmentBusy as exc:
+        raise _busy_error(exc) from exc
+    finally:
+        with _lock:
+            _cancels.pop(job.job_id, None)
+            _jobs.pop(job.job_id, None)  # 作业是一次性的
+
+
+def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threading.Event) -> dict:
+    project = job.project
+    _emit_job(job.job_id, STATE_PREPARING, on_event, job=job)
+
+    python = job.python
+    if job.creates_environment:
+        _emit_job(job.job_id, STATE_CREATING_ENV, on_event, job=job)
+        python = _create_managed(project, cancel_ev)
+        pool.note_mutating_python(env_key, python)
+    if cancel_ev.is_set():
+        managedenv.mark_incomplete(project, f"{job.op} 被取消")
+        return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
+
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc != 0:
+        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+
+    # 改动前的快照：不是回滚（pip 没有事务），是修复时的对照
+    before = _freeze(python)
+    managedenv.record_snapshot(project, f"before-{job.op}-{job.distribution}", before)
+
+    _emit_job(job.job_id, STATE_INSTALLING, on_event, job=job)
+    log = lambda text: _append_log(job.job_id, text, on_event)  # noqa: E731
+    if job.op == OP_UNINSTALL:
+        code, out = _pip_uninstall(python, job.distribution, cancel_ev, log)
+    else:
+        code, out = _pip_install(
+            python, job.requirement, cancel_ev, log, upgrade=job.op == OP_UPDATE
+        )
+    if code == ERROR_CANCELLED:
+        # 装 / 卸到一半：这个环境不再假装是干净的（我们自己的东西，重建即可）
+        managedenv.mark_incomplete(project, f"{job.op} 被取消")
+        return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
+    if code:
+        raise RepairError(code, _sanitize(out)[-800:])
+
+    # ---- 验证：结果真的落地了 + 环境还能画图 ----
+    _emit_job(job.job_id, STATE_VERIFYING, on_event, job=job)
+    inv = inventory(python)
+    key_name = depresolve.normalize_distribution(job.distribution)
+    present = inv is not None and key_name in inv
+    if job.op == OP_UNINSTALL and present:
+        raise RepairError(ERROR_PACKAGE_STILL_INSTALLED, f"pip 退出了，但 {job.distribution} 还在")
+    if job.op != OP_UNINSTALL and not present:
+        # pip exit 0 + 包不在：装进了别处 / 名字对上了另一个包
+        raise RepairError(
+            ERROR_PACKAGE_NOT_FOUND_AFTER, f"pip 退出了，但环境里没有 {job.distribution}"
+        )
+    health = projectenv.probe_environment(python)
+    if not health.get("ok"):
+        managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
+        raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
+    selftest = worker_self_test(python)
+    if not selftest.get("ok"):
+        managedenv.mark_incomplete(project, f"{job.op} 之后 worker 自检未通过")
+        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(selftest.get("detail", ""))[-800:])
+
+    after = _freeze(python)
+    managedenv.record_snapshot(project, f"after-{job.op}-{job.distribution}", after)
+
+    # ---- 记账 + 让这个项目用这个环境 ----
+    version = str((inv or {}).get(key_name, {}).get("version") or "") if present else ""
+    if job.op == OP_UNINSTALL:
+        managedenv.forget_install(project, job.distribution)
+    else:
+        prior = managedenv.installed_entry(project, job.distribution) or {}
+        managedenv.record_install(
+            project,
+            import_name=str(prior.get("import_name") or ""),
+            distribution=job.distribution,
+            requested_specifier=job.requirement[len(job.distribution) :],
+            resolved_version=version,
+            reason=managedenv.REASON_USER_REQUESTED
+            if not prior
+            else str(prior.get("reason") or managedenv.REASON_USER_REQUESTED),
+        )
+    managedenv.mark_ready(project)
+    if job.op != OP_UNINSTALL:
+        # 装进受管环境却不用它，用户看到的是「装了怎么还缺」——与缺包修复
+        # 同一条处置：让这个项目从此用这个环境（ADR 0018 项目作用域）。
+        projectenv.remember(
+            project, python, automatic=False, trigger="package_management", health=health
+        )
+        pool.note_project_python_ok(python)
+    pool.reset_worker_python()
+    result = {
+        "ok": True,
+        "op": job.op,
+        "distribution": job.distribution,
+        "version": version,
+        "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
+    }
+    _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
+    LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+    return result
+
+
+def _freeze(python: str) -> str:
+    """`pip freeze` 的（已脱敏）文本；问不出来回空串。"""
+    rc, out = _run(
+        [str(python), "-m", "pip", "freeze", "--disable-pip-version-check"], FREEZE_TIMEOUT_S
+    )
+    return _sanitize(out) if rc == 0 else ""
+
+
+def _emit_job(
+    job_id: str,
+    state: str,
+    on_event,
+    *,
+    job: PackageJob | None = None,
+    code: str = "",
+    error: str | None = None,
+    result: dict | None = None,
+) -> dict:
+    """作业进度（与 `_emit` 同一张 `_progress` 表，多带 op / job_id）。"""
+    with _lock:
+        rec = dict(_progress.get(job_id) or {"log": ""})
+        rec.update(
+            job_id=job_id,
+            plan_id=job_id,
+            state=state,
+            code=code,
+            error=error,
+            result=result or rec.get("result"),
+        )
+        if job is not None:
+            rec.update(op=job.op, distribution=job.distribution, requirement=job.requirement)
+        _progress[job_id] = rec
+        snapshot = dict(rec)
+    if on_event is not None:
+        on_event(snapshot)
+    return snapshot

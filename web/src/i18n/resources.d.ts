@@ -80,11 +80,11 @@ export default interface Resources {
       "model": "模型",
       "noCli": "未检测到可用的编码 Agent。",
       "noPanelHint": "带 { } 标记的面板由脚本生成，助手可以直接修改脚本。",
-      "noPanelTitle": "选中一个可参数化面板",
+      "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
       "openAiSettings": "打开编码 Agent 设置",
       "placeholder": "例如：把图例移到左上角",
-      "placeholderNoPanel": "先选中一个可参数化面板",
+      "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在探测本机 CLI…",
       "processSteps_other": "过程 {{count}} 步",
       "processTail": " · {{text}}",
@@ -114,6 +114,7 @@ export default interface Resources {
     },
     "status": {
       "aiChanged": "AI 已修改脚本，正在重建图表…",
+      "aiChangedRefreshFailed": "AI 已修改脚本，但项目没有刷新成功：{{reason}}。改动已保存，Tavotto 会自动重试",
       "aiFailed": "AI 任务失败",
       "aiNoChange": "AI 运行完成，但脚本没有变化",
       "aiTimeout": "AI 任务超时",
@@ -302,6 +303,9 @@ export default interface Resources {
       "pillTitle": "重新跑一遍出版规范预检",
       "renderFailed": "渲染失败",
       "rendering": "正在重渲染",
+      "splashConnecting": "正在连接 Codex…",
+      "splashNoHost": "这块画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 tavotto_* 工具也能完成打开 / 改图 / 预检 / 导出。",
+      "splashWaiting": "正在等待 tavotto_open_figure 的结果…",
       "synced": "已同步"
     },
     "nativeRun": {
@@ -328,6 +332,100 @@ export default interface Resources {
         "script": "脚本"
       },
       "title": "用你自己的 Python 运行并连接"
+    },
+    "onboarding": {
+      "back": "返回",
+      "explore": "继续探索",
+      "failure": {
+        "cancelled": "已取消。",
+        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+        "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
+        "no_api": "这个环境没有提供教程。",
+        "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
+        "unavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。"
+      },
+      "hintsReset": "情境提示已重置，会再各出现一次",
+      "landed": {
+        "restarted": "教程已重新开始",
+        "resumed": "从上次停下的地方继续",
+        "started": "教程已开始"
+      },
+      "openOwnProject": "打开自己的项目",
+      "pause": "暂停教程",
+      "progress": "第 {{n}} 步，共 {{total}} 步",
+      "reset": {
+        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+        "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
+        "confirm": "重新开始",
+        "title": "重新开始教程？"
+      },
+      "resolvedContinue": "问题已解决，继续",
+      "skipStep": "跳过此步",
+      "start": "开始",
+      "steps": {
+        "add_to_layout": {
+          "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
+          "title": "加入画布"
+        },
+        "change_typography": {
+          "body": "在右侧属性里改字号或字体，比如把字号调大一点。每次修改都进撤销历史。",
+          "title": "改字号或字体"
+        },
+        "done": {
+          "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。",
+          "title": "教程完成"
+        },
+        "export_canvas": {
+          "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
+          "scope": {
+            "body": "「画布」按页面尺寸和排版输出整个版面。确认后关闭面板继续。",
+            "title": "看看画布导出"
+          },
+          "title": "看看画布导出"
+        },
+        "export_original": {
+          "body": "打开「导出」，确认输出范围是「原图」，然后关闭面板。",
+          "scope": {
+            "body": "「原图」按这张图自己的尺寸输出，不会使用画布缩放。确认后关闭面板继续。",
+            "title": "看看原图导出"
+          },
+          "title": "看看原图导出"
+        },
+        "locate_problem": {
+          "body": "打开左侧「问题」，那里列着这张图里不合规范的地方。",
+          "row": {
+            "body": "点这一条问题，Tavotto 会选中对象并把焦点落到对应的属性字段上。",
+            "title": "从「问题」定位"
+          },
+          "title": "从「问题」定位"
+        },
+        "multi_select_align": {
+          "bar": {
+            "body": "选区旁边的浮动栏里点一个对齐，比如顶对齐。",
+            "title": "对齐"
+          },
+          "body": "按住 Shift 点第二张图，把两张图一起选中。",
+          "title": "Shift 多选"
+        },
+        "open_fast_edit": {
+          "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。",
+          "canvas": {
+            "body": "双击画布上的 Fig2_correlation 进入图内编辑（也可以在左侧「素材」里双击它的卡片）。",
+            "title": "打开一张图"
+          },
+          "title": "打开一张图"
+        },
+        "select_text": {
+          "body": "点击图里的标题（或坐标轴标签），把它选中。",
+          "title": "选一个文字"
+        },
+        "welcome": {
+          "body": "这是一份离线的教程副本，随便改，随时可以重新开始，不会碰你自己的项目。接下来用真实操作走一遍两条核心流程。",
+          "title": "用示例了解 Tavotto"
+        }
+      },
+      "targetMissing": "找不到这一步的目标。可以返回上一步或跳过此步。",
+      "targetWaiting": "正在等待目标出现…"
     },
     "palette": {
       "commands": {
@@ -358,6 +456,10 @@ export default interface Resources {
         "group": {
           "keywords": "group cz chengzu",
           "label": "成组所选对象"
+        },
+        "hints-reset": {
+          "keywords": "hints tips reset ts tishi 提示 新手",
+          "label": "重新显示新手提示"
         },
         "layout-col": {
           "keywords": "col layout lbj liebuju",
@@ -391,6 +493,14 @@ export default interface Resources {
           "keywords": "new blank xj xinjian",
           "label": "新建空白文档"
         },
+        "readiness": {
+          "keywords": "readiness status editable jr jieru 接入 可编辑 仅排版 为什么不能编辑",
+          "label": "显示项目接入状态"
+        },
+        "refresh-project": {
+          "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
+          "label": "刷新项目（检查新文件）"
+        },
         "rulers": {
           "keywords": "ruler bc biaochi",
           "label": "显示 / 隐藏标尺"
@@ -419,6 +529,18 @@ export default interface Resources {
           "keywords": "label abc xhbq xuhao",
           "label": "添加 (a)(b)(c) 序号标签"
         },
+        "tutorial-reset": {
+          "keywords": "tutorial onboarding reset jc jiaocheng 重置",
+          "label": "重新开始教程"
+        },
+        "tutorial-resume": {
+          "keywords": "tutorial onboarding resume jc jiaocheng 继续",
+          "label": "继续教程"
+        },
+        "tutorial-start": {
+          "keywords": "tutorial onboarding start jc jiaocheng 示例 新手",
+          "label": "开始教程"
+        },
         "ungroup": {
           "keywords": "ungroup qxcz",
           "label": "取消成组"
@@ -429,13 +551,16 @@ export default interface Resources {
         }
       },
       "listLabel": "命令",
-      "needPanel": "先选中一个可参数化面板",
+      "needPanel": "先选中一张可编辑的图（有源脚本的面板）",
       "noMatch": "没有匹配的命令",
       "placeholder": "输入命令…",
       "searchLabel": "搜索命令"
     },
     "playground": {
       "backHome": "Tavotto 官网",
+      "bootDownloadDesktop": "下载桌面版 {{product}}",
+      "bootListSeparator": "、",
+      "bootUnsupportedBrowser": "{{product}} 浏览器 playground 需要支持 WebAssembly 与 module Worker 的现代浏览器（缺少：{{missing}}）。桌面版 {{product}} 不受此限制。",
       "cancelLoading": "取消",
       "cdnNote": "浏览器会从 jsDelivr 下载 Python 运行时（Pyodide v{{version}}）。",
       "changed": "意外改动",
@@ -588,6 +713,18 @@ export default interface Resources {
     },
     "profiles": {
       "applyToFigure": "应用到当前图…",
+      "binding": {
+        "builtinDefault": "默认规范",
+        "current": "本项目按「{{name}}」检查",
+        "globalMissing": "全局清单里已没有这条配置，项目里的快照仍然有效",
+        "source": {
+          "builtin": "未绑定，按内置默认",
+          "global": "跟随全局配置",
+          "snapshot": "用的是选择时的快照"
+        },
+        "sync": "更新到当前",
+        "updateAvailable": "全局这套规范已更新，项目仍按旧快照检查"
+      },
       "builtin": "内置",
       "builtin.spec.free-form-v1": "自由排版",
       "builtin.spec.lab-publication-v1": "默认规范",
@@ -598,6 +735,13 @@ export default interface Resources {
       "delete": "删除",
       "deleteBody": "已经用过它的项目不受影响：项目里存着自己的那一份。",
       "deleteTitle": "删除「{{name}}」？",
+      "detail": {
+        "id": "标识",
+        "origin": "来源",
+        "revision": "修订",
+        "version": "版本"
+      },
+      "details": "详情",
       "duplicate": "复制一份",
       "empty": "还没有配置",
       "export": "导出为文件",
@@ -625,12 +769,9 @@ export default interface Resources {
       "import": "从文件导入",
       "inUse": "本项目在用",
       "kind": {
-        "spec": "规范",
         "specHint": "规范决定图要满足什么：字号下限、栏宽、最低分辨率。只用于检查，不会改动你的图。",
-        "style": "样式",
         "styleHint": "样式决定图长什么样：字号、字体、线宽、刻度、图例、背景。应用到图上是一次可撤销的修改。"
       },
-      "kindAria": "样式还是规范",
       "name": "名称",
       "new": "新建",
       "newName": "新配置",
@@ -768,11 +909,7 @@ export default interface Resources {
         "diagnosticsHintAfter": "；交互记录只存在内存里，只有你点这个按钮时才会进 zip。",
         "diagnosticsHintBefore": "遇到问题时导出一个 zip 发给我们：里面是版本、系统、渲染解释器、最近日志，以及最近编辑操作的匿名状态记录。",
         "diagnosticsHintStrong": "不含图中文字、Python 脚本、科研数据与 API 密钥",
-        "diagnosticsTitle": "环境诊断",
-        "engineOk": "正常",
         "engineStatus": "解释器来源",
-        "engineStatusHint": "渲染你脚本的那个 Python 从哪来。内置环境随安装包附带，装完即用、不联网。",
-        "environmentTitle": "渲染环境",
         "exportBundle": "导出诊断包",
         "exportFailed": "诊断包生成失败，请重试；如果一直失败，请在 issue 里附上这条提示。",
         "exported": "诊断包已生成",
@@ -792,7 +929,7 @@ export default interface Resources {
           "on": "已开启",
           "policy": "隐私政策",
           "sendsAfter": "（否则算不出「一周后还在不在用」），与任何账号无关，也不含硬件序列号、MAC 地址这类能唯一指认某台设备的标识。",
-          "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，",
+          "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功、教程走到了第几步、项目刷新与接入状态是从哪个入口触发的及其结果、多选排列用了哪类按钮、保存 / 恢复 / 包操作的结局。标识是本机随机生成的一串 UUID，",
           "sendsPersist": "多次启动之间保持不变",
           "summary": "仅在你明确开启后发送匿名功能使用情况，不发送图、脚本、文件名、路径、科研数据或提示词。",
           "title": "匿名用量统计",
@@ -806,7 +943,6 @@ export default interface Resources {
         },
         "backAria": "返回编码 Agent 列表",
         "backToList": "编码 Agent",
-        "codexIntegrationDesc": "在 Codex 会话中打开、编辑并导出科研图。",
         "codexIntegrationName": "{{product}} for Codex",
         "defaultAgent": "默认 Agent",
         "defaultAgentAria": "默认编码 Agent",
@@ -817,6 +953,9 @@ export default interface Resources {
           "brokenCandidate": "跳过了一个启动不了的候选",
           "cancel": "取消",
           "checkedAt": "最后检测",
+          "copyCommand": "复制安装命令",
+          "copyDiagnostics": "复制诊断信息",
+          "copyPath": "复制可执行文件路径",
           "currentOverride": "当前使用自定义路径",
           "customExecutable": "自定义可执行文件",
           "customPath": "自定义路径",
@@ -878,7 +1017,6 @@ export default interface Resources {
           "noNpm": "本机没有 npm。请先安装 Node.js LTS（nodejs.org），装好后回到这里再点安装。",
           "running": "正在安装…"
         },
-        "intro": "{{product}} 会自动发现本机已经安装的编码 Agent，并使用它们现有的登录和模型配置。",
         "lastChecked": "最近检测 {{time}}",
         "noUsableAgent": "未检测到可用的编码 Agent。装好任意一个之后点「重新检测」。",
         "noUsableAgentShort": "暂无可用",
@@ -918,6 +1056,7 @@ export default interface Resources {
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "在编码 Agent 中使用 {{product}}",
         "useInProduct": "在 {{product}} 中使用编码 Agent",
+        "versionAria": "版本 {{version}}",
         "viewGuide": "查看使用指南"
       },
       "canvas": {
@@ -928,6 +1067,19 @@ export default interface Resources {
         "elsewhere": "网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。",
         "more": "其他画布设置",
         "openCanvasSettings": "打开画布设置"
+      },
+      "copied": "已复制",
+      "copy": "复制",
+      "diagnostics": {
+        "copyReport": "复制诊断",
+        "healthTitle": "健康状态",
+        "hidePreview": "收起",
+        "prepareFailed": "诊断报告生成失败，请重试。",
+        "preparing": "正在生成…",
+        "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
+        "reportTitle": "诊断报告",
+        "summaryFailing": "{{count}} 项异常",
+        "summaryOk": "全部正常"
       },
       "export": {
         "defaultDpi": "默认 DPI",
@@ -953,6 +1105,91 @@ export default interface Resources {
       },
       "helpAbout": "关于{{label}}",
       "navLabel": "设置分区",
+      "packages": {
+        "builtinEmpty": "没有内置包信息。",
+        "builtinFromBundled": "随 {{product}} 安装包附带，只读。",
+        "builtinFromManaged": "随 {{product}} 环境提供，只读。",
+        "builtinPlanned": "创建环境时会装上 matplotlib 及其依赖。",
+        "builtinTitle": "内置包",
+        "col": {
+          "actions": "操作",
+          "name": "名称",
+          "status": "状态",
+          "version": "版本"
+        },
+        "confirm": {
+          "uninstallAction": "卸载",
+          "uninstallBody": "会从这个项目的 Tavotto 环境里移除它。用到它的脚本将无法渲染，直到重新安装。",
+          "uninstallBodyDependents": "{{dependents}} 依赖 {{name}}。卸载后它们也会不可用，用到的脚本将无法渲染。",
+          "uninstallTitle": "卸载 {{name}}？"
+        },
+        "disabled": {
+          "noBasePython": "这台机器上没有可以用来创建环境的 Python（需要 3.10 以上）。请先安装 Python，再回到这里。",
+          "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
+          "other": "包管理暂时不可用。"
+        },
+        "env": {
+          "inUse": "本项目正在使用",
+          "incomplete": "未完成（下次操作前会重建）",
+          "notCreated": "尚未创建——第一次安装时会自动创建",
+          "notInUse": "本项目当前未使用它",
+          "python": "Python {{version}}",
+          "ready": "就绪",
+          "rebuild": "重建"
+        },
+        "envTitle": "{{product}} 环境",
+        "install": "安装",
+        "job": {
+          "cancel": "取消",
+          "cancelled": "已取消{{op}} {{name}}。环境已标记为未完成，下次操作前会重建。",
+          "copyLog": "复制日志",
+          "creating_env": "正在创建 Tavotto 环境…",
+          "dismiss": "关闭",
+          "done": "已{{op}} {{name}} {{version}}",
+          "failed": "{{op}} {{name}} 没有完成",
+          "installing": "正在{{op}} {{name}}…",
+          "log": "详细日志",
+          "preparing": "正在准备{{op}} {{name}}…",
+          "progressAria": "包操作进度",
+          "verifying": "正在验证环境仍可渲染…"
+        },
+        "loading": "正在读取…",
+        "network": {
+          "customIndex": "使用自定义软件源",
+          "proxy": "当前走代理"
+        },
+        "networkNote": "安装与升级需要联网下载。",
+        "op": {
+          "install": "安装",
+          "uninstall": "卸载",
+          "update": "升级"
+        },
+        "protected": "内置依赖，只读",
+        "readOnly": "只读",
+        "reason": {
+          "repair": "缺包时自动修复安装",
+          "user": "手动安装"
+        },
+        "reinstall": "重新安装",
+        "rollbackNote": "包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 {{count}} 份），环境损坏时可用「重建」恢复到账上记录的状态。",
+        "specAria": "要安装的包名或规范",
+        "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
+        "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
+        "status": {
+          "changed": "版本已变化",
+          "changedDetail": "安装时是 {{recorded}}",
+          "installed": "已安装",
+          "missing": "环境里不见了",
+          "planned": "创建时安装",
+          "unknown": "未知"
+        },
+        "uninstall": "卸载",
+        "uninstallAria": "卸载 {{name}}",
+        "update": "升级",
+        "updateAria": "升级 {{name}}",
+        "userEmpty": "还没有在这个环境里安装过包。",
+        "userTitle": "用户安装"
+      },
       "project": {
         "backupDir": "备份目录",
         "backupDirHint": "写回原始文件前，原件先复制到这里。目录留空 = 使用默认位置；设置按项目分别保存。",
@@ -968,22 +1205,25 @@ export default interface Resources {
         "readOnlyHint": "开启后禁止「写回原始文件」，源图不会被覆盖",
         "registry": "项目接入状态…",
         "scriptCount_other": "{{count}} 个脚本已登记",
-        "scripts": "可参数化脚本",
-        "scriptsHint": "已登记的可参数化脚本：只有登记过的脚本，其产出的面板才能进入图内编辑。",
+        "scripts": "已登记的源脚本",
+        "scriptsHint": "已登记的源脚本：只有登记过的脚本，其产出的图才能进入图内编辑。",
         "switch": "切换项目…",
         "writeBackAllowed": "允许写回原始文件"
       },
       "section": {
-        "about": "隐私、诊断与 About",
+        "about": "关于与隐私",
         "ai": "编码 Agent",
         "canvas": "画布与编辑",
-        "export": "导出默认值",
+        "diagnostics": "诊断",
+        "export": "导出",
         "general": "常规",
-        "profiles": "样式与规范",
-        "project": "项目与路径",
-        "shortcuts": "快捷键",
-        "sidebars": "侧栏行为",
-        "update": "检查更新"
+        "interface": "界面",
+        "packages": "包管理",
+        "project": "项目",
+        "sidebars": "侧栏",
+        "spec": "规范",
+        "style": "样式",
+        "update": "更新"
       },
       "shortcuts": {
         "hint": "全部快捷键见速查表（按 ? 随时打开）。",
@@ -999,6 +1239,24 @@ export default interface Resources {
       },
       "techDetails": "技术详情",
       "title": "设置",
+      "tutorial": {
+        "hint": "用一份离线的示例项目走一遍快速编辑、问题定位、导出与多选对齐。",
+        "hints": "情境提示",
+        "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
+        "label": "新手教程",
+        "reset": "重新开始教程",
+        "resetHints": "重置提示",
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "开始教程",
+        "state": {
+          "active": "进行中",
+          "completed": "已完成",
+          "not_started": "未开始",
+          "paused": "已暂停",
+          "skipped": "已跳过"
+        }
+      },
       "update": {
         "autoCheck": "自动检查",
         "autoCheckAria": "每天自动检查更新",
@@ -1046,18 +1304,18 @@ export default interface Resources {
       "deleteTitle": "删除样式「{{name}}」？",
       "description": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件",
       "descriptionEmpty": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件",
-      "emptyBody": "还没有保存的样式。选中一个已渲染的可参数化面板，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
+      "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
       "emptyDraft": "空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，删掉不想统一的项后保存。",
       "extract": "从当前面板提取",
       "extractFrom": "从「{{name}}」读取当前值",
-      "extractNeedPanel": "选中一个已渲染的可参数化面板后可提取",
+      "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
       "includePageSize": "包含页面尺寸",
       "namePlaceholder": "样式名称（如「AMFE 正文图」）",
       "nameRequired": "先给样式起个名字",
-      "needPanel": "先在画布上选中一个已渲染的可参数化面板",
+      "needPanel": "先在画布上选中一张已渲染、可编辑的图",
       "newStyle": "新建样式",
-      "noPanelsPanel": "先在画布上选中一个可参数化面板",
-      "noPanelsScope": "范围内没有可参数化面板",
+      "noPanelsPanel": "先在画布上选中一张可编辑的图",
+      "noPanelsScope": "范围内没有可编辑的图",
       "noSavedStyles": "还没有保存的样式",
       "pageSizeSuffix": "（{{w}}×{{h}} mm）",
       "pageSizeTo": "页面尺寸 → {{w}}×{{h}} mm",
@@ -1291,6 +1549,7 @@ export default interface Resources {
       "profile_revision_missing": "请求缺少版本号，无法判断是否有人同时改过",
       "profile_store_unsupported_schema": "这份配置是更高版本的 Tavotto 写的，本版本只读不写——升级之后再改它",
       "profile_too_large": "导入的文件太大",
+      "project_closed": "项目已关闭，AI 修改后的刷新已跳过；下次打开项目时会自动读到新脚本",
       "project_env_already_attempted": "这一轮已经自动换过一次环境了，请手动重试",
       "project_env_module_missing": "找到的项目环境里也没有这个包",
       "project_env_no_matplotlib": "找到的项目环境导入不了 matplotlib",
@@ -1326,6 +1585,10 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "tmp_dir_failed": "无法在导出目录里建立临时文件：{{error}}。",
+      "tutorial_copy_failed": "准备教程项目失败，上一份教程副本没有被动过：{{reason}}",
+      "tutorial_locked": "教程项目里有文件正被其他程序占用，关掉后再试：{{reason}}",
+      "tutorial_resources_invalid": "这份安装里的教程资源不完整，请重新安装 Tavotto：{{reason}}",
+      "tutorial_resources_missing": "这份安装里没有教程资源，请重新安装 Tavotto：{{reason}}",
       "unsupported_format": "还不支持导出 {{format}} 格式。",
       "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
       "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
@@ -1340,7 +1603,6 @@ export default interface Resources {
       "autoInstallHintBefore": "会在 Tavotto 自己的目录里建一个独立环境并装上 matplotlib，",
       "autoInstallHintStrong": "不会改动你现有的任何 Python 环境",
       "bundledHint": "常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）已随 Tavotto 一起安装，不需要你另外装 Python，首次渲染也不联网。",
-      "bundledPackages": "内置包版本",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，安装后把 Tavotto 的安装目录加入白名单。",
       "incompleteBefore": "Tavotto 自带的渲染环境",
       "incompleteHint": "排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
@@ -1409,7 +1671,14 @@ export default interface Resources {
         "managed_env_broken": "Tavotto 的这个环境已损坏，可以重建它。",
         "managed_env_create_failed": "创建 Tavotto 环境失败。",
         "managed_env_unavailable": "这台机器上没有可以用来创建环境的 Python。请先安装 Python 3.10 以上，或选择一个已有的环境。",
+        "package_disk_low": "磁盘剩余空间不足 200 MB，先清理一些空间再安装。",
+        "package_env_missing": "这个项目还没有 Tavotto 环境。先安装一个包，环境会随之创建。",
+        "package_not_found_after_install": "pip 结束了，但环境里没有这个包——可能装到了别处或名字对上了另一个包。详细日志里有完整输出。",
+        "package_not_installed": "这个环境里没有这个包。",
+        "package_op_invalid": "不支持的包操作。",
+        "package_protected": "这是内置依赖，卸掉它这个环境就不能渲染了。",
         "package_requirement_invalid": "只接受「包名」或「包名>=版本」这样的写法。",
+        "package_still_installed": "pip 结束了，但这个包还在环境里。可以重建环境。",
         "pip_unavailable": "这个 Python 环境里没有 pip，Tavotto 不会替你改动它。可以改用 Tavotto 的隔离环境。",
         "repair_plan_stale": "在你确认期间，那个 Python 环境发生了变化。请重新开始。"
       },
@@ -1464,6 +1733,8 @@ export default interface Resources {
       "fontTooLarge": "图内文字的最终有效字号 {{effective}}pt 超过 {{max}}pt，通常大于正文字号",
       "fontTooSmall": "图内文字的最终有效字号 {{effective}}pt 低于规范下限 {{min}}pt",
       "frameWidthOffPreset": "外框线宽最终有效值 {{effective}}pt 不在规范档位 {{presets}}pt 上",
+      "glyphMissing": "图内文字里有 {{count}} 个字符当前字体画不出来，导出后是方框：{{chars}}",
+      "glyphSubstituted": "图内文字里有 {{count}} 个字符不是用它自己的字体画的（自动回退到另一张字体）：{{chars}}",
       "hidden": "隐藏的对象不会出现在导出中",
       "legendFontSize": "图例字号最终有效值 {{effective}}pt 不在规范的 {{min}}–{{max}}pt 之间",
       "legendFrame": "图例带边框，规范要求图例无框",
@@ -1484,6 +1755,10 @@ export default interface Resources {
       "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图",
       "textBelowFloor": "画布文字 {{size}}pt 不大于绝对下限 {{floor}}pt",
       "textCjkFallbackMissing": "画布中文文字没有可用的中文字体 fallback",
+      "textFontFamilySubstituted": "画布文字用的是{{family}}，规范要求 {{want}}",
+      "textFontFamilySubstitutedKnown": "画布文字用的是{{family}}，规范要求 {{want}}（该字体是常见的替代品）",
+      "textGlyphMissing": "画布文字里有 {{count}} 个字符画不出来，导出后是方框：{{chars}}",
+      "textGlyphSubstituted": "画布文字里有 {{count}} 个字符不是用所选字体画的（自动回退到另一张字体）：{{chars}}",
       "textTooSmall": "画布文字 {{size}}pt 低于规范下限 {{min}}pt",
       "textWeightPolicy": "规范建议 {{role}} 的字重为 {{want}}（当前 {{got}}）",
       "tickDirection": "刻度朝向为 {{got}}，规范要求 {{want}}",
@@ -1661,6 +1936,7 @@ export default interface Resources {
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
       "pinMembers": "固定选中成员（不随重排）",
+      "refLabel": "参照",
       "refTip": {
         "page": "以整个画布为基准",
         "primary": "以最后选中的那个对象为基准，它自己不动",
@@ -1754,11 +2030,12 @@ export default interface Resources {
       "customLineStyle": "自定义线型（{{value}}）",
       "hatchNone": "无花纹",
       "hatchPattern": "花纹 {{value}}",
-      "legendCustomHint": "图例被拖到过自定义位置；点任一预设即可回到自动定位。",
+      "legendCustomHint": "图例被拖到过自定义位置；点任一预设（含「最佳位置」）即可回到预设定位。",
       "resetSide": "恢复{{label}}到脚本",
       "switchOff": "{{label}}：关（点击开启）",
       "switchOn": "{{label}}：开（点击关闭）",
-      "tickSpineDiagram": "刻度与边框状态图"
+      "tickSpineDiagram": "刻度与边框状态图",
+      "zoneAria": "{{side}}{{dir}}刻度"
     },
     "element": {
       "advanced": "高级",
@@ -1921,6 +2198,10 @@ export default interface Resources {
         "auto": "自动",
         "equal": "等比"
       },
+      "binding": {
+        "custom": "自定义",
+        "follow_source": "跟随图中对象"
+      },
       "direction": {
         "in": "朝内",
         "inout": "跨轴",
@@ -1968,11 +2249,11 @@ export default interface Resources {
         "none": "无"
       },
       "loc": {
-        "best": "自动",
+        "best": "最佳位置",
         "center": "居中",
         "center left": "左中",
         "center right": "右中",
-        "custom": "自定义（拖动过）",
+        "custom": "自定义位置",
         "lower center": "下中",
         "lower left": "左下",
         "lower right": "右下",
@@ -2074,6 +2355,7 @@ export default interface Resources {
       "gridFramePerSide": "边框（逐条）",
       "layout": "布局",
       "legend": "图例",
+      "legendEntry": "图例项",
       "lineMarker": "线条与标记",
       "stroke": "描边",
       "style": "样式",
@@ -2101,6 +2383,7 @@ export default interface Resources {
       "flipV": "垂直翻转",
       "insertNewline": "插入换行",
       "matchFigureSize": "对齐图内字号",
+      "resetTextProp": "恢复文字属性",
       "restoreVersion": "恢复历史版本",
       "reverseArrow": "反转箭头方向",
       "rotateObject": "旋转对象",
@@ -2110,10 +2393,12 @@ export default interface Resources {
       "setDash": "修改线型",
       "setFill": "修改填充",
       "setFillOpacity": "修改填充不透明度",
+      "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
       "setHeadStart": "修改起点端型",
       "setHeight": "修改高度",
+      "setInterpretation": "科学文本解释",
       "setLineHeight": "修改行距",
       "setPadding": "修改内边距",
       "setPageBackground": "修改页面背景",
@@ -2137,6 +2422,31 @@ export default interface Resources {
       "toggleItalic": "切换斜体",
       "toggleUnderline": "切换下划线",
       "transformCase": "转换大小写"
+    },
+    "legend": {
+      "badge": {
+        "custom": "自定义",
+        "follow": "跟随",
+        "unbound": "未关联"
+      },
+      "customHint": "示意线不再跟随图中对象；「恢复跟随」会回到由它派生的样子。",
+      "customHintStyled": "示意线用的是你在这里改的样式；「恢复跟随」会撤掉这些修改（一次撤销）。",
+      "entriesAria": "图例项列表",
+      "entries_other": "图例项（{{count}}）",
+      "followHint": "示意线跟着图中那条曲线走；改下方任一样式即改为自定义。",
+      "hide": "隐藏",
+      "hideEntry": "隐藏图例项 “{{label}}”",
+      "makeCustom": "改为自定义",
+      "moveDown": "下移 “{{label}}”",
+      "moveUp": "上移 “{{label}}”",
+      "restoreFollow": "恢复跟随",
+      "selectEntry": "选中图例项 “{{label}}”",
+      "show": "显示",
+      "showEntry": "显示图例项 “{{label}}”",
+      "stateCustom": "自定义",
+      "stateFollow": "跟随图中对象",
+      "typography": "文字",
+      "viewSource": "查看源对象：{{label}}"
     },
     "lock": "锁定",
     "locked": "已锁定",
@@ -2229,11 +2539,13 @@ export default interface Resources {
       "bbox_pad": "内边距",
       "bbox_rounded": "圆角",
       "bbox_visible": "背景",
+      "binding": "与图中对象",
       "borderpad": "内边距",
       "cap_thickness": "端帽粗细",
       "capsize": "端帽长度",
       "cmap": "色图",
       "color": "颜色",
+      "columnspacing": "列间距",
       "direction": "刻度朝向",
       "edgecolor": "描边色",
       "elev": "俯仰角",
@@ -2245,6 +2557,8 @@ export default interface Resources {
       "fontfamily": "字体",
       "fontsize": "字号",
       "format": "数值格式",
+      "frame_linewidth": "边框线宽",
+      "frame_rounded": "圆角边框",
       "framealpha": "边框透明度",
       "frameon": "边框",
       "gradient_color": "渐变基色",
@@ -2256,13 +2570,19 @@ export default interface Resources {
       "grid_x": "X 网格",
       "grid_y": "Y 网格",
       "ha": "水平对齐",
-      "handlelength": "图例线长",
+      "handle_color": "示意线颜色",
+      "handle_linestyle": "示意线型",
+      "handle_linewidth": "示意线宽",
+      "handle_marker": "示意标记",
+      "handle_markersize": "标记大小",
+      "handlelength": "示意线长度",
+      "handletextpad": "线与文字间距",
       "interpolation": "插值",
       "invert_x": "反转 X 轴",
       "invert_y": "反转 Y 轴",
       "label": "名称",
       "labelpad": "与轴距离",
-      "labelspacing": "行距",
+      "labelspacing": "行间距",
       "length": "刻度长度",
       "linespacing": "行距",
       "linestyle": "线型",
@@ -2277,9 +2597,11 @@ export default interface Resources {
       "markerfacecolor": "标记填充",
       "markersize": "标记大小",
       "minor_format": "次刻度格式",
+      "minor_length": "次刻度长度",
       "minor_mode": "次刻度方式",
       "minor_step": "次刻度间隔",
       "minor_visible": "次刻度",
+      "minor_width": "次刻度线宽",
       "mutation_scale": "箭头帽大小",
       "ncol": "列数",
       "orientation": "方向",
@@ -2463,7 +2785,14 @@ export default interface Resources {
       "clearBorder": "清除描边",
       "color": "颜色",
       "fontSize": "字号",
+      "glyphFallback": "这些字符会用另一张字体画：{{chars}}",
+      "glyphMissing": "这些字符画不出来，导出后是方框：{{chars}}",
       "insertNewline": "插入换行",
+      "interpretation": "科学文本",
+      "interpretationAuto": "自动",
+      "interpretationAutoTip": "只有画不出来的字符才合成上下标（默认）；其余原样保留",
+      "interpretationScientific": "合成上下标",
+      "interpretationScientificTip": "认得的 Unicode 上下标一律合成：字体统一，但导出的 PDF 里复制出来的会是 105 而不是 10⁵",
       "italic": "斜体（仅拉丁字形）",
       "lineHeight": "行距",
       "matchAction": "对齐",
@@ -2527,6 +2856,8 @@ export default interface Resources {
       "align": "对齐",
       "color": "颜色",
       "font": "字体",
+      "fontMissingHint": "这台电脑没有装这个字体，图上那行字实际是别的字体画的。换一个能用的字体，或者装上它。",
+      "fontMissingTag": "（未安装）",
       "size": "字号"
     },
     "tick": {
@@ -2534,6 +2865,7 @@ export default interface Resources {
       "axisX": "X 轴",
       "axisY": "Y 轴",
       "dir": {
+        "hidden": "隐藏",
         "in": "朝内",
         "inout": "内外",
         "out": "朝外"
@@ -2542,8 +2874,19 @@ export default interface Resources {
       "length": "长度",
       "minor": "次刻度",
       "minorAria": "{{axis}}的次刻度",
+      "minorLength": "次刻度长度",
       "minorOff": "只要主刻度",
       "minorOn": "主刻度 + 次刻度",
+      "minorWidth": "次刻度宽度",
+      "side": {
+        "bottom": "下边",
+        "left": "左边",
+        "right": "右边",
+        "top": "上边"
+      },
+      "sideAria": "{{side}}刻度线",
+      "sides": "显示边",
+      "sidesAria": "在哪几条边显示刻度线",
       "width": "宽度",
       "xTicks": "X 刻度",
       "yTicks": "Y 刻度"
@@ -2676,7 +3019,17 @@ export default interface Resources {
       "regionLabel": "选择项目",
       "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
       "removeFromListTitle": "从列表移除（不删除磁盘内容）",
-      "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。"
+      "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。",
+      "tutorial": {
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "用示例了解 Tavotto"
+      },
+      "tutorialBadge": "教程项目",
+      "tutorialHint": "一份离线的示例项目，随便改、随时重来，不会碰你自己的项目。",
+      "tutorialLabel": "新手教程",
+      "tutorialOpening": "准备中…",
+      "tutorialUnavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。"
     },
     "switcher": {
       "allProjects": "全部项目…",
@@ -2699,6 +3052,8 @@ export default interface Resources {
       "altDrag": "{{alt}}+拖角点",
       "arrowKeys": "方向键 / ⇧+方向键",
       "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
+      "rightClick": "右键",
+      "shiftClick": "⇧+点击",
       "spaceDrag": "Space+拖动",
       "tools": "V / T / A / R / O / L",
       "wheelZoom": "{{mod}}+滚轮"
@@ -2708,6 +3063,7 @@ export default interface Resources {
       "editing": "选择与编辑",
       "general": "通用",
       "tools": "工具",
+      "tutorial": "教程",
       "view": "视图"
     },
     "key": {
@@ -2719,15 +3075,18 @@ export default interface Resources {
       "export": "导出",
       "freeResize": "非等比自由拉伸",
       "help": "本帮助",
+      "multiSelect": "加选 / 减选对象或图内元素",
       "newline": "插入换行；单按 ⏎ 提交",
       "nudge": "微调 0.5mm / 5mm",
       "palette": "命令面板",
       "pan": "平移画布",
+      "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存当前文档",
       "saveLayout": "保存为画布文件",
       "script": "上标 / 下标（属性面板的文字输入框内）",
       "selectAll": "全选",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
+      "tutorialPause": "暂停教程（焦点在教程卡片上时）",
       "undoRedo": "撤销 / 重做",
       "wheelZoom": "缩放画布",
       "zEnds": "置顶 / 置底",
@@ -2839,11 +3198,24 @@ export default interface Resources {
       "docLossTitle": "当前文档无法保存到本机",
       "replaceAssetBody_other": "当前面板有 {{count}} 项图内修改。这些修改绑定在原脚本的元素上，换素材后无法保留，将被清空（可撤销）。位置、尺寸、裁剪与层级都会保留。",
       "replaceAssetConfirm": "替换并清空修改",
-      "replaceAssetTitle": "替换为「{{name}}」？"
+      "replaceAssetTitle": "替换为「{{name}}」？",
+      "resetOverridesBodyBaked": "这些修改已经写回到原始文件里。恢复后，这个面板会回到源脚本当前生成的状态（可撤销），而原始文件与源脚本都保持现状，同一文件的其他面板不受影响。",
+      "resetOverridesBody_other": "恢复后，这个面板会回到源脚本当前生成的状态。{{count}} 项图内修改将被清除（可撤销）；源脚本与原始文件不会改动，同一文件的其他面板不受影响。",
+      "resetOverridesConfirm": "恢复",
+      "resetOverridesTitle": "恢复图内修改？"
     },
     "contextBar": {
+      "alignMenu": "对齐",
       "aria": "快速编辑",
-      "openInspector": "全部属性"
+      "distributeMenu": "分布",
+      "groupMenu": "成组",
+      "moreArrange": "更多排列",
+      "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
+      "multiAria": "多选操作",
+      "openInspector": "全部属性",
+      "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
+      "selectedCount_other": "已选 {{count}} 个",
+      "sizeMenu": "尺寸"
     },
     "crash": {
       "blank": "打开空白文档",
@@ -2928,6 +3300,13 @@ export default interface Resources {
       "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。",
       "toLayout": "画布排版"
     },
+    "hints": {
+      "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
+      "multi_select": "选区附近的浮动栏可以直接对齐和分布。",
+      "panel_editable": "双击这张图可以进入图内编辑。",
+      "panel_layout_only": "这张图可以排版；连接源脚本后才能改图内元素。",
+      "problem_found": "左侧「问题」能定位到对象和对应的属性字段。"
+    },
     "history": {
       "addArrow": "添加箭头",
       "addGuide": "添加参考线",
@@ -2956,14 +3335,18 @@ export default interface Resources {
       "fixIssues_other": "修复 {{count}} 个检查项",
       "group": "成组 {{count}} 个对象",
       "hideElements": "隐藏 {{count}} 个图内元素",
+      "hideLegendEntry": "隐藏图例项 “{{label}}”",
       "hideObject": "隐藏对象",
+      "hideObjects": "隐藏 {{count}} 个对象",
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "legendFollowSource": "图例项恢复跟随",
       "lineEndpoint": "调整直线端点",
       "lockAspect": "锁定宽高比",
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
+      "lockObjects": "锁定 {{count}} 个对象",
       "mcpOpenFigure": "打开图",
       "moveElement": "移动{{label}}",
       "moveElements": "移动 {{count}} 个图内元素",
@@ -2995,14 +3378,19 @@ export default interface Resources {
       "setProp": "修改{{prop}}",
       "setPublicationProfile": "设置出版规范",
       "showObject": "显示对象",
+      "showObjects": "显示 {{count}} 个对象",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
       "syncPublicationProfile": "同步规范到新版",
+      "tickSideHide": "{{side}}：隐藏刻度线",
+      "tickSideOff": "{{side}}：不显示{{dir}}刻度",
+      "tickSideOn": "{{side}}：显示{{dir}}刻度",
       "ungroup": "取消成组",
       "unhideElement": "恢复隐藏元素",
       "unlockAspect": "解锁宽高比",
       "unlockElement": "解锁图内元素",
       "unlockObject": "解锁对象",
+      "unlockObjects": "解锁 {{count}} 个对象",
       "unpinLayout": "跟随布局约束",
       "updateLayoutGroup": "调整布局组",
       "zBottom": "置于底层",
@@ -3079,11 +3467,26 @@ export default interface Resources {
     },
     "quickEdit": {
       "aria": "快捷编辑",
+      "arrange": "对齐与分布",
+      "arrangeRef": "参照：{{ref}}",
+      "connectSource": "连接源脚本",
+      "cropRotatedReason": "旋转过的面板暂不能裁剪，先取消旋转",
+      "deleteCount": "删除 {{count}} 个对象",
+      "duplicate": "创建副本",
       "editElements": "编辑图内元素",
+      "editText": "编辑文字",
       "hide": "隐藏此元素",
+      "hideCount": "隐藏 {{count}} 个",
       "hideObject": "隐藏",
       "lock": "锁定",
-      "openInspector": "在属性页打开",
+      "lockAll": "锁定全部",
+      "lockCount": "锁定 {{count}} 个",
+      "menuAria": "对象菜单",
+      "needObjects_other": "需要至少选中 {{count}} 个对象",
+      "openArrange": "打开排列属性",
+      "openInspector": "打开全部属性",
+      "rebuild": "重新构建",
+      "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
       "scaleDown": "缩小 5%",
       "scaleProxiedTip": "位置和大小属于宿主子图「{{label}}」，缩放改的是它",
@@ -3092,9 +3495,12 @@ export default interface Resources {
       "show": "显示",
       "unhide": "恢复显示",
       "unlock": "解锁",
+      "unlockAll": "解锁全部",
+      "unlockCount": "解锁 {{count}} 个",
       "widthShare": "占宽 {{percent}}%",
       "zBottom": "置于底层",
       "zDown": "下移一层",
+      "zOrder": "排列层级",
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
@@ -3189,6 +3595,15 @@ export default interface Resources {
       "starting": "正在启动渲染环境…",
       "viewResults": "查看捕获结果"
     },
+    "spineZone": {
+      "coupled": "（方向随这条轴一起改：{{sides}}）",
+      "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
+      "stateOff": "关着",
+      "stateOn": "开着",
+      "willHide": "点击隐藏这一边的刻度线",
+      "willOff": "点击关掉",
+      "willOn": "点击显示"
+    },
     "stage": {
       "backToCanvas": "返回画布",
       "elementEditing": "图内编辑",
@@ -3199,6 +3614,8 @@ export default interface Resources {
       "openAssets": "打开素材库"
     },
     "status": {
+      "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
+      "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
       "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",
       "bakedSeeded_other": "已载入写回文件时的基线（{{count}} 项）",
       "blankCreated": "已新建空白文档，原文档可从「最近文档」取回",
@@ -3240,10 +3657,13 @@ export default interface Resources {
       "packageOpenFailed": "项目包打开失败：{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
       "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材），换机器可从「文档菜单 → 导入项目包」打开",
+      "panelRebuilt": "已按源脚本重新构建",
+      "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
       "pasteNothing": "没有可粘贴的对象（缺失素材均被跳过）",
       "pastedWithSkips_other": "已粘贴 {{count}} 个对象（跳过 {{skipped}} 个缺失素材的面板；{{undo}} 可撤销）",
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
       "projectBackgroundError": "后台检查项目文件时出错了。已打开的内容没有受影响，修好那个文件后会自动重试。",
+      "rebuildFailed": "重新构建失败：{{error}}",
       "recentMissing": "该文档的本机副本已不存在",
       "recentTooNew": "该文档来自更新的 Tavotto，本版本读不了它（磁盘上的文件没有改动）",
       "redone": "重做：{{label}}",
@@ -3308,11 +3728,13 @@ export default interface Resources {
       "noOtherDocuments": "暂无其他文档",
       "paperStyles": "论文样式…",
       "presets": "科研预设与符号…",
+      "readiness": "项目接入状态",
       "recentDocuments": "最近文档（本机）",
       "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
       "recentEntry_other": "{{name}} · {{count}} 个对象",
       "redo": "重做",
       "redoWith": "重做 {{label}}",
+      "refreshProject": "刷新项目",
       "renameDocument": "重命名文档…",
       "saveAsCanvasFile": "保存为画布文件…",
       "saveClean": "已保存 {{time}}",
@@ -3325,6 +3747,11 @@ export default interface Resources {
       "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为一份命名的画布文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+      "tutorial": {
+        "restart": "再看一遍教程",
+        "resume": "继续教程",
+        "start": "开始教程"
+      },
       "undo": "撤销",
       "undoWith": "撤销 {{label}}",
       "updateAvailable": "有新版本 {{version}}",

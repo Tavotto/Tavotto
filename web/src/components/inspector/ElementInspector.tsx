@@ -49,6 +49,7 @@ import {
   type AlignEntry,
 } from '@/lib/elementGeom'
 import {
+  applyTickSidePlan,
   clearOverride,
   clearOverrides,
   resetOverrides,
@@ -56,6 +57,7 @@ import {
   setOverrides,
   unhideElement,
 } from '@/store/actions'
+import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
 import { useDocumentStore } from '@/store/documentStore'
 import { previewStyle } from '@/store/svgPreviewStore'
 import { canPreviewStyle } from '@/lib/svgStyle'
@@ -90,6 +92,7 @@ import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
 import { HatchPicker } from './controls/HatchPicker'
+import { LegendBindingControl } from './controls/LegendBindingControl'
 import { LegendPositionPicker } from './controls/LegendPositionPicker'
 import { LineStylePicker } from './controls/LineStylePicker'
 import { MarkerPicker } from './controls/MarkerPicker'
@@ -101,15 +104,17 @@ import {
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
 import { useElementWriter } from './elementWrite'
-import { TextStyleControls } from './controls/TextStyleControls'
-import { useTextStyleAdapter } from './textStyleAdapter'
-import { isTextLikeSelection, TEXT_STYLE_PROPS } from './textStyleModel'
+import { TypographyControls } from './controls/TypographyControls'
+import { isTextLikeSelection } from './textStyleModel'
+import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
 import { fontStackOf } from './controls/fontStack'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { HistoryPanel } from './HistoryPanel'
+import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
+import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
@@ -223,12 +228,18 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const tickAxisOfSelf =
     element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
   const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
+  // 图例卡只在图例**有项**时出现；没有项的图例（脚本只放了标题）字号照旧
+  // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
+  const legendCardCoversSelf =
+    element?.role === 'legend' && !!manifest && legendEntryElements(manifest, element.gid).length > 0
   const consumedBySideDiagram = new Set<string>(
     element?.role === 'axes'
       ? TICK_SPINE_PROPS
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
-        : [],
+        : legendCardCoversSelf
+          ? LEGEND_CARD_PROPS
+          : [],
   )
   const buckets =
     element && element.editable.length
@@ -348,6 +359,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
+              ) : legendCardCoversSelf && element ? (
+                <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
               ) : null
             }
           />
@@ -750,6 +763,11 @@ function TickControl({
    */
   const axes = selfAxis ? all.filter((a) => a.axis === selfAxis) : all
 
+  // 四边刻度模型：示意图的内 / 外两带、刻度卡的「隐藏」档与「显示边」开关、
+  // 画布上的边框命中区读的都是它，写的都是 applyTickSidePlan（Prompt 16）
+  const model = readAxesTickModel(manifest, panel.overrides, host.gid)
+  const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
+
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
@@ -758,11 +776,15 @@ function TickControl({
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
     reset: (p) => clearOverride(panel.id, host.gid, p),
     axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
+    model,
+    applyPlan,
   }
   return (
     <div className="flex flex-col gap-2">
       <TickAndSpineDiagram adapter={adapter} />
-      {axes.length > 0 && <TickTaskCard axes={axes} labelWidth={LABEL_W} />}
+      {axes.length > 0 && (
+        <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
+      )}
     </div>
   )
 }
@@ -796,7 +818,7 @@ function commonFields(els: ManifestElement[]): EditableField[] {
 }
 
 /**
- * 跨角色的公共文字样式。控件与单选**完全相同**（`TextStyleControls`）：
+ * 跨角色的公共文字样式。控件与单选**完全相同**（`TypographyControls`）：
  * 字体是带 Aa 预览的下拉、字号是数字框、B/I 是三态图标按钮、颜色是色块，
  * 不会因为选中了第二个对象就退化成 `常规 / 加粗` 的通用枚举列表。
  *
@@ -810,9 +832,9 @@ function TextStyleBatchSection({
   panel: PanelObject
   elements: ManifestElement[]
 }) {
-  const adapter = useTextStyleAdapter(panel, elements)
+  const adapter = useFigureTypography(panel, elements, FIGURE_TEXT_BATCH_PROPS)
   const roles = [...new Set(elements.map((e) => e.role))]
-  const hasAny = TEXT_STYLE_PROPS.some((p) => adapter.fieldOf(p))
+  const hasAny = FIGURE_TEXT_BATCH_PROPS.some((p) => adapter.fieldOf(p))
   return (
     <Section plainTitle title={el('textBatchTitle', { count: elements.length })}>
       {!hasAny ? (
@@ -824,7 +846,7 @@ function TextStyleBatchSection({
               ? el('textBatchHintMixed', { count: elements.length })
               : el('batchHint', { count: elements.length })}
           </p>
-          <TextStyleControls adapter={adapter} labelWidth={LABEL_W} />
+          <TypographyControls adapter={adapter} labelWidth={LABEL_W} />
         </>
       )}
     </Section>
@@ -1098,6 +1120,8 @@ function FieldRow({
   field: EditableField
 }) {
   const value = currentValue(panel, element.gid, field)
+  // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
+  const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
@@ -1238,6 +1262,17 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'legend-binding':
+      // 「恢复跟随」是一次多条 override 的结构性动作，走 store 的
+      // restoreLegendEntryFollow（一条历史）；「改为自定义」是一条普通写入
+      return wrap(
+        <LegendBindingControl
+          panel={panel}
+          manifest={rowManifest}
+          element={element}
+          onSetCustom={() => writeOnce('custom')}
+        />,
+      )
     case 'arrow-style':
       return wrap(
         <ArrowStylePicker
@@ -1367,7 +1402,8 @@ function FieldRow({
       )
 
     case 'order': {
-      // 图例条目顺序：value = 按显示顺序排的原始序号，options = 当前显示文字
+      // 图例条目顺序：value = 按显示顺序排的原始序号，options = **原始序**的文字
+      // （options[原始序号] 是那一项的字，重排后不动）
       const perm = Array.isArray(value)
         ? (value as number[])
         : (field.options ?? []).map((_, i) => i)
@@ -1391,7 +1427,7 @@ function FieldRow({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink">
-                  {labels[i] ?? el('orderEntry', { index: origIdx + 1 })}
+                  {labels[origIdx] ?? el('orderEntry', { index: origIdx + 1 })}
                 </span>
                 <Button
                   size="icon-sm"

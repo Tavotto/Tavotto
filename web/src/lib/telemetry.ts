@@ -157,6 +157,35 @@ export function classifyEditKind(labelKey: string | undefined): EditKind {
 /** patch_count 的上限与后端白名单同源（超出的截断，绝不发一个被拒的值） */
 export const MAX_PATCH_COUNT = 1000
 
+/* -------------------------------------------------------------------------- */
+/*  Session 22 的分桶：计数只以桶名出网，桶名是与后端 EVENTS 同源的闭集          */
+/* -------------------------------------------------------------------------- */
+
+export type SelectionSizeBucket = '2' | '3_5' | '6_plus'
+
+/** 多选栏的选区大小。1 个不是多选，调用方不该来（回 '2' 只是让类型闭合） */
+export function selectionSizeBucket(n: number): SelectionSizeBucket {
+  if (n >= 6) return '6_plus'
+  if (n >= 3) return '3_5'
+  return '2'
+}
+
+export type ReadinessStatusBucket = 'all_editable' | 'mixed' | 'layout_only'
+
+/**
+ * 接入状态报告 → 一个桶。`null` = 项目里没有图，没有任何一个桶说得通，
+ * 那时**不发**（不是 all_editable：零张图全可编辑是句空话）。
+ */
+export function readinessStatusBucket(summary: {
+  total: number
+  editable: number
+}): ReadinessStatusBucket | null {
+  if (summary.total <= 0) return null
+  if (summary.editable >= summary.total) return 'all_editable'
+  if (summary.editable <= 0) return 'layout_only'
+  return 'mixed'
+}
+
 export function boundedCount(n: number): number {
   if (!Number.isFinite(n) || n < 0) return 0
   return Math.min(Math.floor(n), MAX_PATCH_COUNT)

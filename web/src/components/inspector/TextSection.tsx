@@ -1,14 +1,16 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
 import {
-  Bold,
-  CornerDownLeft,
-  Italic,
-  Subscript,
-  Superscript,
-  Underline,
-} from 'lucide-react'
-import { toggleScript, transformCase, type CaseMode } from '@/lib/richText'
+  DEFAULT_INTERPRETATION,
+  hasScientificChars,
+  TEXT_INTERPRETATIONS,
+  toggleScript,
+  transformCase,
+  type CaseMode,
+  type TextInterpretation,
+} from '@/lib/richText'
+import { textDiagnostics } from '@/lib/glyphPlan'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectivePt, round1 } from '@/lib/units'
 import { ALT, combo, modKey } from '@/lib/utils'
@@ -21,7 +23,9 @@ import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
-import { AlignmentRow, FontSizeRow, TextColorRow } from './controls/textRows'
+import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
+import { TypographyControls } from './controls/TypographyControls'
+import { useCanvasTypography } from './typographyAdapter'
 import { shared } from './common'
 
 /** 本组文案 inspector:text.*，历史标签 inspector:history.* */
@@ -58,12 +62,8 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
-  const bold = shared(objs, (o) => (o as TextObject).bold)
-  const italic = shared(objs, (o) => (o as TextObject).italic === true)
+  const typography = useCanvasTypography(objs)
   const underline = shared(objs, (o) => (o as TextObject).underline === true)
-  const align = shared(objs, (o) => (o as TextObject).align)
-  const sizePt = shared(objs, (o) => (o as TextObject).sizePt)
-  const color = shared(objs, (o) => (o as TextObject).color)
   const bg = shared(objs, (o) => (o as TextObject).bg ?? null)
   const borderColor = shared(objs, (o) => (o as TextObject).borderColor ?? null)
 
@@ -170,77 +170,52 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
       )}
 
       <div className="flex flex-col gap-1.5">
-        {/* 与图内文字同一套行组件：可见的「字号」「颜色」「对齐」标签。
-            画布文字没有字体族（统一走文档字体），所以没有「字体」行——
-            不摆假控件。 */}
-        {/* `data-prop` 是定位服务的落点：画布标注的字号问题要落在这里 */}
-        <div data-prop="sizePt">
-          <FontSizeRow
-            value={sizePt ?? 10}
-            mixed={sizePt === undefined}
-            step={0.5}
-            min={3}
-            max={96}
-            onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
-          >
-            <Button
-              size="icon"
-              active={bold === true}
-              onClick={() => patch(hist('toggleBold'), (o) => (o.bold = !bold))}
-              aria-label={tx('bold')}
-            >
-              <Bold size={13} />
-            </Button>
-            <Button
-              size="icon"
-              active={italic === true}
-              onClick={() => patch(hist('toggleItalic'), (o) => (o.italic = !italic))}
-              aria-label={tx('italic')}
-            >
-              <Italic size={13} />
-            </Button>
-            <Button
-              size="icon"
-              active={underline === true}
-              onClick={() =>
-                patch(hist('toggleUnderline'), (o) => {
-                  if (underline) delete o.underline
-                  else o.underline = true
-                })
-              }
-              aria-label={tx('underline')}
-            >
-              <Underline size={13} />
-            </Button>
-            <Button
-              size="icon"
-              disabled={!one}
-              onClick={() => wrapScript('sup')}
-              aria-label={tx('superscript')}
-              title={tx('superscriptTitle', { key: modKey('↑') })}
-            >
-              <Superscript size={13} />
-            </Button>
-            <Button
-              size="icon"
-              disabled={!one}
-              onClick={() => wrapScript('sub')}
-              aria-label={tx('subscript')}
-              title={tx('subscriptTitle', { key: modKey('↓') })}
-            >
-              <Subscript size={13} />
-            </Button>
-          </FontSizeRow>
-        </div>
-        <TextColorRow
-          value={color ?? '#000000'}
-          onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}
+        {/*
+          **与图内文字同一份控件**（`TypographyControls`）：字体 / 字号 /
+          B / I / 颜色 / 对齐一条不差，标注终于能设字体了。
+          写入经 `useCanvasTypography` → `updateObjects` → `documentStore.commit`，
+          与图内那条路各走各的 writer，界面语言却是同一套。
+        */}
+        <TypographyControls
+          adapter={typography}
+          labelWidth={72}
+          sizeRowExtra={
+            <>
+              <Button
+                size="icon-sm"
+                active={underline === true}
+                onClick={() =>
+                  patch(hist('toggleUnderline'), (o) => {
+                    if (underline) delete o.underline
+                    else o.underline = true
+                  })
+                }
+                aria-label={tx('underline')}
+              >
+                <Underline size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                disabled={!one}
+                onClick={() => wrapScript('sup')}
+                aria-label={tx('superscript')}
+                title={tx('superscriptTitle', { key: modKey('↑') })}
+              >
+                <Superscript size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                disabled={!one}
+                onClick={() => wrapScript('sub')}
+                aria-label={tx('subscript')}
+                title={tx('subscriptTitle', { key: modKey('↓') })}
+              >
+                <Subscript size={12} />
+              </Button>
+            </>
+          }
         />
-        <AlignmentRow
-          value={align ?? null}
-          onChange={(v) => patch(hist('setAlign'), (o) => (o.align = v))}
-          labels={{ left: tx('alignLeft'), center: tx('alignCenter'), right: tx('alignRight') }}
-        />
+        <ScientificText objs={objs} adapter={typography} />
         {one && (
           <MatchFigureSize
             text={one}
@@ -414,6 +389,9 @@ function MatchFigureSize({
   const scale = panelFullSize(panel).w / panel.nativeW
   const eff = round1(effectivePt(panelFullSize(panel).w, panel.nativeW))
   if (Math.abs(eff - text.sizePt) < 0.05) return null
+  // 面板缩得极小时算出来的等效字号会掉出字号的合法区间。**不给一个按了会被
+  // 挡下来的动作**——判据用属性能力层那一份，不在这里手写一个第二版区间。
+  if (!coerceTypography('sizePt', eff, canvasFieldOf('sizePt')).ok) return null
 
   return (
     <p
@@ -433,5 +411,66 @@ function MatchFigureSize({
         {tx('matchAction')}
       </button>
     </p>
+  )
+}
+
+/**
+ * 科学文本：解释档 + 字形提示。**两样都只在确有其事时才出现。**
+ *
+ * 解释档只在选中的文字里真有 Unicode 上下标字符时露面——没有那类字符时，
+ * 这个选择对用户不产生任何差别，摆出来只是噪音（`00_SHARED_RULES` §7）。
+ *
+ * 字形提示分两句，因为它们是两件事：**画不出来**（导出后是方框，问题面板
+ * 里是一条 error）与**换了一张脸画**（画出来了，只是字体不一致）。压成一句
+ * 的话，用户看到红灯却发现图上好好的，下一次就不看这盏灯了。判据来自
+ * `lib/glyphPlan`——与导出那一端读同一张覆盖表，**不是**浏览器自己的字体栈。
+ */
+function ScientificText({
+  objs,
+  adapter,
+}: {
+  objs: TextObject[]
+  adapter: ReturnType<typeof useCanvasTypography>
+}) {
+  const field = adapter.fieldOf('interpretation')
+  const value = adapter.valueOf('interpretation')
+  const showPicker = objs.some((o) => hasScientificChars(o.text))
+  // 提示按**每个对象自己的解释档**算：多选时两段文字可能各选各的。
+  const missing: string[] = []
+  const substituted: string[] = []
+  for (const o of objs) {
+    const d = textDiagnostics(o.text, o.interpretation)
+    for (const c of d.missing) if (!missing.includes(c)) missing.push(c)
+    for (const c of d.substituted) if (!substituted.includes(c)) substituted.push(c)
+  }
+  if (!field || (!showPicker && !missing.length && !substituted.length)) return null
+  const current = (displayValueOf(value) ?? DEFAULT_INTERPRETATION) as TextInterpretation
+  return (
+    <>
+      {showPicker && (
+        <div data-prop={adapter.pathOf('interpretation') ?? undefined}>
+          <Row label={tx('interpretation')}>
+            <Segmented
+              value={value.kind === 'mixed' ? null : current}
+              onChange={(v) => adapter.writeOnce('interpretation', v)}
+              items={TEXT_INTERPRETATIONS.map((v) => ({
+                value: v,
+                label: tx(v === 'auto' ? 'interpretationAuto' : 'interpretationScientific'),
+                tip: tx(v === 'auto' ? 'interpretationAutoTip' : 'interpretationScientificTip'),
+              }))}
+              className="w-full"
+            />
+          </Row>
+        </div>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-danger">{tx('glyphMissing', { chars: missing.join('') })}</p>
+      )}
+      {substituted.length > 0 && (
+        <p className="text-xs text-ink-3">
+          {tx('glyphFallback', { chars: substituted.join('') })}
+        </p>
+      )}
+    </>
   )
 }

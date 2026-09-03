@@ -97,7 +97,7 @@ def digest(items) -> str:
 
 
 def source_fingerprint() -> str:
-    """画布源码的指纹：`web/src/**` + 规范文件 + 构建配置。
+    """画布源码的指纹：`web/src/**` + 规范文件 + 覆盖表 + 构建配置。
 
     只盯这几处：改了它们而没重新构建，用户装到的画布就是旧的。
     收集顺序无所谓——排序与规范化都在 `digest()` 里。
@@ -112,6 +112,10 @@ def source_fingerprint() -> str:
         WEB / "vite.mcp.config.ts",
         WEB / "package.json",
         ROOT / "src" / "tavotto" / "profiles" / "publication.json",
+        # 字形覆盖表也经路径别名整份进 bundle（`@glyphcoverage`）：换一版
+        # PyMuPDF 重新生成之后，画布对「这个字导出后是不是方框」的答案就变了。
+        # 不把它算进指纹的话，产物会以「没变化」的样子带着旧答案发出去。
+        ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json",
     ]
     return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
 

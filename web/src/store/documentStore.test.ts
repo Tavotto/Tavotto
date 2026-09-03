@@ -2,10 +2,14 @@ import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { TextObject } from '@/types/document'
+import { setTelemetryEnabled } from '@/lib/telemetry'
 import {
+  discardLocalCopy,
   flushAutosave,
   readAutosaveDoc,
+  recoverLocalCopy,
   restoreSession,
+  saveNow,
   startAutosave,
   useDocumentStore,
 } from './documentStore'
@@ -718,5 +722,98 @@ describe('自动保存的跨标签页写覆盖', () => {
 
     expect(errors).toEqual([{ id: 'd_io', reason: 'io' }])
     expect(slot('d_io')).not.toBeNull()
+  })
+})
+
+describe('遥测 document_saved / recovery_action（ADR 0041）', () => {
+  const telemetry: { event: string; properties: Record<string, unknown> }[] = []
+  let putStatus = 200
+
+  const recordingFetch = (async (url: unknown, init?: RequestInit) => {
+    if (String(url).includes('/api/telemetry/event') && init?.method === 'POST') {
+      telemetry.push(JSON.parse(String(init.body)))
+      return new Response('{"accepted":true}', { status: 200 })
+    }
+    if (putStatus !== 200 && /\/api\/autosave\//.test(String(url)) && init?.method === 'PUT') {
+      return new Response(JSON.stringify({ error: 'x', code: 'stale_write', revision: 'r-other' }), {
+        status: putStatus,
+      })
+    }
+    return baseFetchImpl(url as RequestInfo, init)
+  }) as typeof fetch
+
+  beforeEach(async () => {
+    globalThis.fetch = recordingFetch
+    putStatus = 200
+    await reset()
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_tel')
+    await tick()
+    telemetry.length = 0
+    setTelemetryEnabled(true)
+  })
+  afterEach(() => {
+    setTelemetryEnabled(false)
+    globalThis.fetch = baseFetchImpl
+  })
+
+  const saved = () => telemetry.filter((t) => t.event === 'document_saved').map((t) => t.properties)
+
+  it('自动保存写盘成功：trigger=autosave outcome=ok，没有文档名与修订号', async () => {
+    useDocumentStore.getState().commit(literal('A'), (d) => {
+      d.objects.push(text('t1', 'A'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    expect(saved()).toEqual([{ trigger: 'autosave', outcome: 'ok' }])
+    expect(JSON.stringify(telemetry)).not.toContain('d_tel')
+  })
+
+  it('手动保存：trigger=manual', async () => {
+    useDocumentStore.getState().commit(literal('B'), (d) => {
+      d.objects.push(text('t2', 'B'))
+    })
+    await saveNow()
+    await tick()
+    expect(saved()).toEqual([{ trigger: 'manual', outcome: 'ok' }])
+  })
+
+  it('409 过期写：outcome=conflict（不是 failed）', async () => {
+    putStatus = 409
+    useDocumentStore.getState().commit(literal('C'), (d) => {
+      d.objects.push(text('t3', 'C'))
+    })
+    flushAutosave()
+    await tick()
+    expect(saved()).toEqual([{ trigger: 'autosave', outcome: 'conflict' }])
+  })
+
+  it('恢复横幅：恢复 → restore；保留主版本 → keep_main', async () => {
+    const pd = { ...emptyProject(), updatedAt: 5 }
+    const notice = {
+      kind: 'recovery' as const,
+      docId: 'd_tel',
+      summary: { savedAt: 5, objects: 0, canvases: 1, name: 'x' },
+    }
+    localStorage.setItem('tavotto.recovery.d_tel', JSON.stringify(pd))
+    useDocumentStore.setState({ docNotice: notice })
+    expect(recoverLocalCopy()).toBe(true)
+    localStorage.setItem('tavotto.recovery.d_tel', JSON.stringify(pd))
+    useDocumentStore.setState({ docNotice: notice })
+    discardLocalCopy()
+    await tick()
+    expect(telemetry.filter((t) => t.event === 'recovery_action').map((t) => t.properties)).toEqual([
+      { action: 'restore' },
+      { action: 'keep_main' },
+    ])
+  })
+
+  it('没同意：写盘照样成功，一个字节不发', async () => {
+    setTelemetryEnabled(false)
+    useDocumentStore.getState().commit(literal('D'), (d) => {
+      d.objects.push(text('t4', 'D'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    expect(telemetry).toEqual([])
   })
 })

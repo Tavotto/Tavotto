@@ -316,26 +316,123 @@ describe('选中子图即可配置刻度', () => {
 
 /* ------------------------------ 示意图读真实状态 -------------------------- */
 
-describe('状态图反映真实刻度形态', () => {
-  const dOf = (el: SVGPathElement | null) => el?.getAttribute('d') ?? ''
+describe('状态图反映真实刻度形态（内 / 外两带各是一个开关）', () => {
+  const dOf = (el: Element | null) => el?.getAttribute('d') ?? ''
+  const half = (side: string, dir: 'in' | 'out') =>
+    host.querySelector(`[data-tick-major="${side}"][data-tick-half="${dir}"]`)
+  const zone = (side: string, zone: 'inner' | 'outer') =>
+    host.querySelector(`[data-tick-zone="${side}:${zone}"]`) as SVGGElement | null
 
-  it('out：刻度画在框外；in：画在框内；inout：两侧都有', async () => {
+  it('out：只有框外那一半是实线；in：只有框里那一半；inout：两半都实', async () => {
     await mount('axes_0')
-    // 底边（X）：out 时从 y=82 往下（更大的 y）
-    expect(majorPath('bottom')?.getAttribute('data-tick-direction')).toBe('out')
-    const outD = dOf(majorPath('bottom'))
-    expect(outD).toContain('L50 88') // 82 + 6
+    // 底边（X）：框外 = 从 y=82 往下到 88；框里 = 往上到 76
+    expect(half('bottom', 'out')?.getAttribute('data-tick-on')).toBe('true')
+    expect(half('bottom', 'in')?.getAttribute('data-tick-on')).toBe('false')
+    expect(dOf(half('bottom', 'out'))).toContain('L50 88')
+    expect(dOf(half('bottom', 'in'))).toContain('L50 76')
+    expect(zone('bottom', 'outer')?.getAttribute('aria-checked')).toBe('true')
+    expect(zone('bottom', 'inner')?.getAttribute('aria-checked')).toBe('false')
 
     await act(async () => {
       dirBtn('in').click()
     })
-    expect(majorPath('bottom')?.getAttribute('data-tick-direction')).toBe('in')
-    expect(dOf(majorPath('bottom'))).toContain('L50 76') // 82 - 6
+    expect(half('bottom', 'in')?.getAttribute('data-tick-on')).toBe('true')
+    expect(half('bottom', 'out')?.getAttribute('data-tick-on')).toBe('false')
 
     await act(async () => {
       dirBtn('inout').click()
     })
-    expect(dOf(majorPath('bottom'))).toContain('M50 76 L50 88')
+    expect(half('bottom', 'in')?.getAttribute('data-tick-on')).toBe('true')
+    expect(half('bottom', 'out')?.getAttribute('data-tick-on')).toBe('true')
+  })
+
+  it('内侧带的命中矩形在框里、外侧带在框外（命中区与视觉语义一致，四边都查）', async () => {
+    await mount('axes_0')
+    // 与 TickAndSpineDiagram 的 BOX 同一份数：x 26..122，y 14..82
+    const box = { x0: 26, x1: 122, y0: 14, y1: 82 }
+    const rectOf = (side: string, z: 'inner' | 'outer') => {
+      const r = zone(side, z)!.querySelector('rect')!
+      const x = Number(r.getAttribute('x'))
+      const y = Number(r.getAttribute('y'))
+      return { x0: x, y0: y, x1: x + Number(r.getAttribute('width')), y1: y + Number(r.getAttribute('height')) }
+    }
+    expect(rectOf('bottom', 'inner').y1).toBeLessThanOrEqual(box.y1)
+    expect(rectOf('bottom', 'outer').y0).toBeGreaterThanOrEqual(box.y1)
+    expect(rectOf('top', 'inner').y0).toBeGreaterThanOrEqual(box.y0)
+    expect(rectOf('top', 'outer').y1).toBeLessThanOrEqual(box.y0)
+    expect(rectOf('left', 'inner').x0).toBeGreaterThanOrEqual(box.x0)
+    expect(rectOf('left', 'outer').x1).toBeLessThanOrEqual(box.x0)
+    expect(rectOf('right', 'inner').x1).toBeLessThanOrEqual(box.x1)
+    expect(rectOf('right', 'outer').x0).toBeGreaterThanOrEqual(box.x1)
+    // 两带之间留着中性带（边线本身是边框开关），不紧贴
+    expect(rectOf('bottom', 'inner').y1).toBeLessThan(box.y1)
+    expect(rectOf('bottom', 'outer').y0).toBeGreaterThan(box.y1)
+  })
+
+  it('刻度朝内时点框里那一带即可控制（不再要求点框外）', async () => {
+    await mount('axes_0')
+    await act(async () => {
+      dirBtn('in').click()
+    })
+    // 现在下边只有向内刻度：点框里那一带 = 关掉它 = 这一边没有刻度了
+    await act(async () => {
+      zone('bottom', 'inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBe(false)
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('in') // 方向没动
+    // 再点框外那一带：这一边重新打开，方向里加上向外——in + out = inout
+    await act(async () => {
+      zone('bottom', 'outer')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBe(true)
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('inout')
+  })
+
+  it('两带各自开关：先加向内成 inout，再去掉向外成 in', async () => {
+    await mount('axes_0')
+    await act(async () => {
+      zone('bottom', 'inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('inout')
+    await act(async () => {
+      zone('bottom', 'outer')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('in')
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBeUndefined()
+  })
+
+  it('一次点击 = 一条历史（方向 + 显隐两条 override 同一次 commit）', async () => {
+    await mount('axes_0')
+    // 上边默认隐藏、轴朝外：点上边框里那一带 = 打开上边 + 方向加向内（inout）
+    const before = useDocumentStore.getState().past.length
+    await act(async () => {
+      zone('top', 'inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBe(true)
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('inout')
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBeUndefined()
+    expect(overrideOf('axes_0.xticks', 'direction')).toBeUndefined()
+  })
+
+  it('方向是整条轴的：连带改到的另一边要点名', async () => {
+    await mount('axes_0')
+    // 上边隐藏：动下边的方向不牵连任何人
+    expect(zone('bottom', 'inner')?.getAttribute('data-tick-coupled')).toBeNull()
+    await act(async () => {
+      zone('top', 'inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // 上下都可见了（inout）：去掉下边的向内 = 方向改 out，上边跟着只剩向外
+    expect(zone('bottom', 'inner')?.getAttribute('data-tick-coupled')).toBe('top')
+    // 关掉下边的向外则只是隐藏下边（方向不动）：不牵连
+    await act(async () => {
+      zone('bottom', 'inner')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('out')
+    expect(zone('bottom', 'outer')?.getAttribute('data-tick-coupled')).toBeNull()
   })
 
   it('X 与 Y 各自的方向互不影响', async () => {
@@ -350,11 +447,13 @@ describe('状态图反映真实刻度形态', () => {
     await act(async () => {
       dirBtn('inout').click()
     })
-    expect(majorPath('bottom')?.getAttribute('data-tick-direction')).toBe('in')
-    expect(majorPath('left')?.getAttribute('data-tick-direction')).toBe('inout')
+    expect(half('bottom', 'in')?.getAttribute('data-tick-on')).toBe('true')
+    expect(half('bottom', 'out')?.getAttribute('data-tick-on')).toBe('false')
+    expect(half('left', 'in')?.getAttribute('data-tick-on')).toBe('true')
+    expect(half('left', 'out')?.getAttribute('data-tick-on')).toBe('true')
   })
 
-  it('次刻度关着时没有次刻度短线；打开后出现，且明显更短', async () => {
+  it('次刻度关着时没有次刻度短线；打开后出现在开着的那一半，且明显更短', async () => {
     await mount('axes_0')
     expect(minorPath('bottom')).toBeNull()
     await act(async () => {
@@ -362,24 +461,104 @@ describe('状态图反映真实刻度形态', () => {
     })
     const minor = minorPath('bottom')
     expect(minor).toBeTruthy()
+    expect(minor?.getAttribute('data-tick-half')).toBe('out')
     // 主刻度 6、次刻度 3：从边线 82 出发，主到 88、次到 85
     expect(dOf(minor)).toContain('L38 85')
-    expect(dOf(majorPath('bottom'))).toContain('L50 88')
+    expect(dOf(half('bottom', 'out'))).toContain('L50 88')
     // 只影响 X：左边（Y）不该冒出次刻度
     expect(minorPath('left')).toBeNull()
   })
 
-  it('关掉某一边后，该边主次刻度都是关闭样式（虚线 + 低不透明度）', async () => {
+  it('关掉某一边后，该边两带都是关闭样式（虚线），主次刻度都不画实线', async () => {
     await mount('axes_0')
     await act(async () => {
       byAria('X 轴的次刻度')!.click()
     })
-    // 上边默认关：主次都该是关闭样式
-    expect(majorPath('top')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
-    expect(minorPath('top')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
-    // 下边是开的：实线
-    expect(majorPath('bottom')?.getAttribute('stroke-dasharray')).toBeNull()
+    // 上边默认关：两半都虚线，没有次刻度
+    expect(half('top', 'out')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
+    expect(half('top', 'in')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
+    expect(minorPath('top')).toBeNull()
+    // 下边是开的（朝外）：框外那一半实线 + 次刻度在
+    expect(half('bottom', 'out')?.getAttribute('stroke-dasharray')).toBeNull()
     expect(minorPath('bottom')?.getAttribute('stroke-dasharray')).toBeNull()
+  })
+})
+
+/* ------------------------------ 属性页的精确控制 -------------------------- */
+
+describe('刻度卡的方向四档与显示边', () => {
+  it('「隐藏」= 这条轴两边都不显示刻度线，方向不动；选回一个方向即回到脚本的边', async () => {
+    await mount('axes_0')
+    await act(async () => {
+      byAria('隐藏')!.click()
+    })
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBe(false)
+    expect(overrideOf('axes_0', 'ticks_top')).toBe(false)
+    expect(overrideOf('axes_0.xticks', 'direction')).toBeUndefined()
+    // 左右（Y）不受牵连
+    expect(overrideOf('axes_0', 'ticks_left')).toBeUndefined()
+    expect(byAria('隐藏')!.getAttribute('aria-checked')).toBe('true')
+    await act(async () => {
+      byAria('朝内')!.click()
+    })
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('in')
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBeUndefined() // 回到脚本：下边开
+    expect(overrideOf('axes_0', 'ticks_top')).toBeUndefined()
+  })
+
+  it('两边都用示意图关掉后，方向档显示为「隐藏」（派生态，不是第四个真值）', async () => {
+    await mount('axes_0')
+    const outer = host.querySelector('[data-tick-zone="bottom:outer"]') as SVGGElement
+    await act(async () => {
+      outer.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_bottom')).toBe(false)
+    expect(byAria('隐藏')!.getAttribute('aria-checked')).toBe('true')
+    expect(livePanel().overrides.some((o) => o.value === 'hidden')).toBe(false)
+  })
+
+  it('「显示边」开关写 ticks_<side>，键盘走得通', async () => {
+    await mount('axes_0')
+    const top = byAria('上边刻度线')!
+    expect(top.getAttribute('role')).toBe('switch')
+    expect(top.getAttribute('aria-checked')).toBe('false')
+    await act(async () => {
+      top.click()
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBe(true)
+    expect(byAria('上边刻度线')!.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('次刻度长度 / 宽度是自己的字段，写 minor_length / minor_width', async () => {
+    manifest = makeManifest(
+      { ...xTicksEl, editable: [...ticksFields(), f('minor_length', 'number', 2, { min: 0, max: 12, step: 0.5, unit: 'pt' }), f('minor_width', 'number', 0.6, { min: 0.1, max: 3, step: 0.1, unit: 'pt' })] } as ManifestElement,
+      yTicksEl,
+    )
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest })
+    await mount('axes_0')
+    const input = host.querySelector(
+      'input[data-inspector-prop="minor_length"]',
+    ) as HTMLInputElement
+    expect(input).toBeTruthy()
+    await act(async () => {
+      input.focus()
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, '4')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(overrideOf('axes_0.xticks', 'minor_length')).toBe(4)
+    expect(overrideOf('axes_0.xticks', 'length')).toBeUndefined()
+  })
+
+  it('方向字段带 data-prop 锚点：问题面板能定位到它', async () => {
+    await mount('axes_0.xticks')
+    const anchor = host.querySelector('[data-prop="direction"]')
+    expect(anchor).toBeTruthy()
+    expect(anchor?.getAttribute('data-gid')).toBe('axes_0.xticks')
+    expect(anchor?.querySelector('[role="radiogroup"]')).toBeTruthy()
   })
 })
 
@@ -561,6 +740,14 @@ describe('键盘可达', () => {
     ) as HTMLElement
     expect(sw).toBeTruthy()
     expect(sw.getAttribute('tabindex')).toBe('0')
+    // 内 / 外两带也是可聚焦的 switch，Enter 即切换
+    const inner = host.querySelector('[data-tick-zone="top:inner"]') as SVGGElement
+    expect(inner.getAttribute('tabindex')).toBe('0')
+    expect(inner.getAttribute('role')).toBe('switch')
+    await act(async () => {
+      inner.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBe(true)
   })
 
   it('方向是 radiogroup，每个档位都是 radio', async () => {

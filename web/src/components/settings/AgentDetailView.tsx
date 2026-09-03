@@ -20,6 +20,7 @@ import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge } from './agentState'
+import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 
 /** 概览里的一行「标签 / 值」 */
@@ -121,8 +122,13 @@ export function AgentDetailView({
             <span className="font-mono">{agent.version ?? ag('detail.none')}</span>
           </Field>
           <Field label={ag('detail.executable')}>
-            <span className="font-mono" title={agent.executable_path ?? undefined}>
-              {agent.executable_path ?? ag('detail.none')}
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="min-w-0 flex-1 break-all font-mono" title={agent.executable_path ?? undefined}>
+                {agent.executable_path ?? ag('detail.none')}
+              </span>
+              {agent.executable_path && (
+                <CopyButton text={agent.executable_path} label={ag('detail.copyPath')} />
+              )}
             </span>
           </Field>
           <Field label={ag('detail.source')}>
@@ -387,8 +393,25 @@ function CustomExecutable({
 function Diagnostics({ agent }: { agent: AiAgentCaps }) {
   useTranslation('dialogs')
   const d = agent.diagnostics
+  /** 诊断文本（复制用）：状态 / 版本 / 路径 / 来源 / 就绪 / 找过的位置——不含账号信息 */
+  const asText = () =>
+    [
+      `agent: ${agent.id}`,
+      `state: ${agent.state}`,
+      `version: ${agent.version ?? ''}`,
+      `executable: ${agent.executable_path ?? ''}`,
+      `source: ${agent.detection_source ?? ''}`,
+      `readiness: ${d.readiness}${d.readiness_detail ? ` (${d.readiness_detail})` : ''}`,
+      d.broken_path ? `broken_candidate: ${d.broken_path}` : '',
+      ...d.searched.map((p) => `searched: ${p}`),
+    ]
+      .filter(Boolean)
+      .join('\n')
   return (
     <div className="flex flex-col gap-1.5">
+      <div className="flex justify-end">
+        <CopyButton text={asText} label={ag('detail.copyDiagnostics')} />
+      </div>
       <Field label={ag('detail.readiness')}>
         {ag(`readiness.${d.readiness}`)}
         {d.readiness_detail ? (
@@ -481,6 +504,7 @@ function InstallPanel({
           {running ? ag('install.running') : ag('install.action', { name: agent.display_name })}
         </Button>
         <span className="min-w-0 truncate font-mono text-xs text-ink-3">{command}</span>
+        <CopyButton text={command} label={ag('detail.copyCommand')} />
       </div>
       {!info.available && <p className="text-xs leading-relaxed text-ink-3">{ag('install.noNpm')}</p>}
       {live?.status === 'error' && (

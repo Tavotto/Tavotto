@@ -295,6 +295,67 @@ def _tracebacks(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------- 两个阶段
+#: N-1 写进去、候选版要读回来的两样东西的名字。
+LAYOUT_NAME = "升级布局"
+AUTOSAVE_ID = "upgrade-doc"
+
+
+def layout_names(payload: object) -> list[str]:
+    """`GET /api/layouts` 的载荷 → 画布名列表。
+
+    产品返回的是 `{"layouts": ["名字", …]}`——**字符串**列表，不是对象。
+    以前这里对每一项 `.get("name")`，在字符串上必然 `AttributeError`，被外面的
+    except 接住记成 False，「老布局可列出」从第一天起就没真比过（R-18 ②）。
+    对象形状也认（万一哪一版改成带元数据的条目），但不再假设它一定是对象。
+    """
+    if isinstance(payload, dict):
+        items = payload.get("layouts", [])
+    else:
+        items = payload
+    if not isinstance(items, list):
+        raise CiError("bad_layouts_payload", f"/api/layouts 载荷形状不对：{str(payload)[:120]}")
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            names.append(item)
+        elif isinstance(item, dict) and isinstance(item.get("name"), str):
+            names.append(item["name"])
+    return names
+
+
+def document_readback(payload: object, panel_id: str) -> tuple[bool, str]:
+    """读回来的是不是**一份 Tavotto 文档**、而且还指着那张图。
+
+    两个端点（`/api/layouts/<name>` 与 `/api/autosave/<id>`）都直接返回文档本身：
+    顶层必须有 `schema`（2 单画布 / 3 项目），而不是 `{"doc": …}` 包一层。
+    只看「读回非空」不够——一份被写成别的形状的 JSON 也非空。
+    """
+    if not isinstance(payload, dict):
+        return False, f"不是 JSON 对象：{str(payload)[:80]}"
+    schema = payload.get("schema")
+    if schema not in (2, 3):
+        return False, f"顶层 schema={schema!r}，不是一份文档"
+    text = json.dumps(payload, ensure_ascii=False)
+    if panel_id not in text:
+        return False, f"文档里没有升级前那张图（{panel_id}）"
+    return True, f"schema {schema}，含 {panel_id}"
+
+
+def missing_state_checks(facts: dict) -> list[tuple[str, bool, str]]:
+    """N-1 没写成的状态 → **失败的检查**，不是跳过。
+
+    验收的问题是「上一版写的东西这一版读得回来吗」；上一版没写成，这个问题
+    就没被问到。以前的写法是 `if facts.get("layout_saved"):`，写不成时
+    整条检查静静消失，报告照旧全绿（R-18）。
+    """
+    out: list[tuple[str, bool, str]] = []
+    if not facts.get("layout_saved"):
+        out.append(("N-1 写出命名布局", False, str(facts.get("layout_error", "未尝试"))[:150]))
+    if not facts.get("autosave_saved"):
+        out.append(("N-1 写出自动保存", False, str(facts.get("autosave_error", "未尝试"))[:150]))
+    return out
+
+
 def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
     """用 N-1 造出一份真实的用户状态。返回后面要拿来核对的指纹。"""
     facts: dict = {}
@@ -321,10 +382,17 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
         )
         facts["patches"] = patches
 
-        # 存一份命名画布布局（落项目内 tavottofile/）
+        # 存一份命名画布布局（落项目内 tavottofile/）。
+        #
+        # **发的就是产品自己会写的那份文档**（schema 2 的单画布文档，顶层带
+        # `schema`），不再包一层 `{"doc": …}`：前端 `saveLayout` 发的是文档本身，
+        # 而自动保存端点从 v0.12.0 起就要求顶层 `schema`——包一层的载荷在
+        # N-1 上一开始就 400，异常被下面的 except 吞成 `autosave_saved=False`，
+        # 于是「自动保存读得回来」这条检查**从来没跑过**（R-18）。
+        now_ms = int(time.time() * 1000)
         doc = {
             "schema": 2,
-            "id": "upgrade-doc",
+            "id": AUTOSAVE_ID,
             "name": "升级用例",
             "pageWmm": 90,
             "pageHmm": 60,
@@ -339,9 +407,11 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
                     "overrides": patches,
                 }
             ],
+            "createdAt": now_ms,
+            "updatedAt": now_ms,
         }
         try:
-            SA._post(f"{s.base}/api/layouts/升级布局", {"doc": doc}, timeout=120)
+            SA._post(f"{s.base}/api/layouts/{LAYOUT_NAME}", doc, timeout=120)
             facts["layout_saved"] = True
         except Exception as exc:  # noqa: BLE001
             facts["layout_saved"] = False
@@ -350,8 +420,8 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
         # 自动保存（磁盘为主，落 layouts/_autosave/）
         try:
             req = urllib.request.Request(
-                f"{s.base}/api/autosave/upgrade-doc",
-                data=json.dumps({"doc": doc, "updatedAt": int(time.time() * 1000)}).encode(),
+                f"{s.base}/api/autosave/{AUTOSAVE_ID}",
+                data=json.dumps(doc).encode(),
                 # **SA._AUTH 不能漏**：这里是全文件唯一一处不经 SA._post 的
                 # 应用请求（PUT，SA 没有对应助手），而它外面裹着 try/except，
                 # 漏了的话表现是 autosave_saved=False 静静记进报告，
@@ -449,33 +519,28 @@ def verify_with_new(
         warn = res.get("warnings") or []
         checks.append(("渲染无 warning", not warn, "无" if not warn else str(warn[:2])))
 
-        # 4) 布局读得回来
+        # 4) 布局读得回来——**不只是列得出名字，还要打得开、还是一份文档**
+        #
+        # N-1 那边没写成不是「跳过」而是**失败**：这两条检查的存在意义就是
+        # 「上一版写的东西这一版读得回来」，上一版没写成 = 验收缺了一半，
+        # 以前的写法（`if facts.get("layout_saved")`）会让它静静消失（R-18）。
+        checks.extend(missing_state_checks(facts))
         if facts.get("layout_saved"):
             try:
-                lay = SA._get(f"{s.base}/api/layouts")
-                names = [
-                    x.get("name")
-                    for x in (
-                        lay.get("layouts") or lay
-                        if isinstance(lay, list)
-                        else lay.get("layouts", [])
-                    )
-                ]
-                checks.append(("老布局可列出", "升级布局" in names, str(names[:4])))
+                names = layout_names(SA._get(f"{s.base}/api/layouts"))
+                checks.append(("老布局可列出", LAYOUT_NAME in names, str(names[:4])))
+                opened = SA._get(f"{s.base}/api/layouts/{LAYOUT_NAME}")
+                ok, why = document_readback(opened, facts["panel_id"])
+                checks.append(("老布局可打开", ok, why))
             except Exception as exc:  # noqa: BLE001
-                checks.append(("老布局可列出", False, str(exc)[:150]))
+                checks.append(("老布局可打开", False, str(exc)[:150]))
 
         # 5) 自动保存读得回来
         if facts.get("autosave_saved"):
             try:
-                got = SA._get(f"{s.base}/api/autosave/upgrade-doc")
-                checks.append(
-                    (
-                        "老自动保存可解析",
-                        bool(got and got.get("doc")),
-                        "读回且含 doc" if got.get("doc") else str(got)[:120],
-                    )
-                )
+                got = SA._get(f"{s.base}/api/autosave/{AUTOSAVE_ID}")
+                ok, why = document_readback(got, facts["panel_id"])
+                checks.append(("老自动保存可解析", ok, why))
             except Exception as exc:  # noqa: BLE001
                 checks.append(("老自动保存可解析", False, str(exc)[:150]))
 

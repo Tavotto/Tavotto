@@ -249,6 +249,25 @@ def test_degraded_normal_tool_calls_are_structured_errors():
     assert "已打开" not in text and "已就绪" not in text
 
 
+def test_degraded_refresh_tool_is_a_structured_error_too():
+    """(14) 旧会话里模型记住的 `tavotto_refresh_project`：降级 server 回结构化
+    错误 + 恢复步骤，不是 method_not_found，也不伪装成刷新成功。"""
+    assert "tavotto_refresh_project" in launcher.NORMAL_TOOLS
+    (res,) = _degraded_roundtrip(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "tavotto_refresh_project", "arguments": {}},
+        }
+    )
+    result = res["result"]
+    assert result["isError"] is True
+    body = result["structuredContent"]
+    assert body["ok"] is False and body["code"] == "desktop_only" and body["recovery"]
+    assert "已刷新" not in result["content"][0]["text"]
+
+
 def test_degraded_health_tool_reports_the_gap_without_pretending():
     (res,) = _degraded_roundtrip(
         {

@@ -36,7 +36,7 @@ Codex 内嵌画布、Tavotto 桌面窗口——背后是同一个引擎、同一
   发增量的后果是：你以为只改了一项，实际上把别的修改全撤销了。
 * **形状不合法的条目不会静默丢**：`tavotto_apply_overrides` 的响应里有 `rejected`
   （带 index 与原因，如 `bad_gid` / `non_finite_float`）。元素不存在则出现在
-  `warnings` 里（多半是脚本改过了，会话该重开）。两者都要看。
+  `warnings` 里（多半是脚本改过了：先 `tavotto_refresh_project` 让 Tavotto 跟上，会话要继续用就重开）。两者都要看。
 
 ## 出版规范预检查什么
 

@@ -56,6 +56,6 @@ python3 scripts/handoff.py <脚本路径>
 （sparse 安装与插件发行包里只有 `codex-plugin/`，仓库的 `docs/` 不随包分发，
 所以这里用仓库 URL 而不是相对路径）。
 
-交接后改了代码：重开一次会话（`tavotto_close_session` 再 `tavotto_open_figure`），
+交接后改了代码：先调 `tavotto_refresh_project`（Tavotto 窗口自己更新，用户不用手动刷新），要在 MCP 会话里继续改这张图再重开一次会话（`tavotto_close_session` 再 `tavotto_open_figure`），
 或者再交接一次给桌面窗口——Tavotto 会重扫产物并定位到这张图，用户已经排好的版和
 已经调过的元素不会丢。重复交接同一张只选中，不叠第二份。

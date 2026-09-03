@@ -23,12 +23,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
 from tavotto.engine import (
     config as engine_config,
@@ -39,6 +41,8 @@ from tavotto.engine import (
     previewbudget,
     profiles as engine_profiles,
     profilestore as engine_profilestore,
+    project_refresh as engine_refresh,
+    readiness as engine_readiness,
     registry as engine_registry,
     telemetry as engine_telemetry,
 )
@@ -478,6 +482,221 @@ def open_figure(
             except BridgeError as exc:
                 out["preview_png_error"] = exc.code or "preview_failed"
     return out
+
+
+# ------------------------------- 刷新（ADR 0041） ----------------------------
+#: 刷新的来由固定是 codex：它进日志、进事件、进遥测维度，模型传什么都不透传。
+REFRESH_REASON = "codex"
+#: 结果里 `delivered` 的两个取值。**不是成败**——两条路都成功刷新了磁盘上的
+#: 事实；区别只在运行中的 Tavotto 界面这一次有没有同步到。
+DELIVERED_APP = "app"
+DELIVERED_LOCAL = "local"
+
+
+def project_id(project: str) -> str:
+    """项目短 id，与 `app._project_id()` 同一把尺（`normalize_path_identity`）。
+    刷新结果里**用它代替绝对路径**：Codex 要的是「这个项目变了什么」，不是
+    用户的目录结构。"""
+    key = engine_config.normalize_path_identity(project)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+class _RefreshCtx:
+    """`refresh_project_index()` / `readiness.compute()` 要的三样东西。
+
+    这是**本进程**那份项目状态，不是运行中的 Tavotto 手里那份：它只在
+    Tavotto 没开着时才被用到（`DELIVERED_LOCAL`），刷新状态（素材基线、
+    注册表修订号、就绪度缓存）挂在它身上，同一个项目跨调用复用，于是第二次
+    起素材 diff 是真的跨轮比（第一次如实报 `baseline: true`）。
+    """
+
+    def __init__(self, project: str, registry) -> None:
+        self.path = Path(project)
+        self.id = project_id(project)
+        self.registry = registry
+
+
+_REFRESH_CTX: dict[str, _RefreshCtx] = {}
+
+
+def _local_refresh_ctx(project: str) -> _RefreshCtx:
+    ctx = _REFRESH_CTX.get(project)
+    if ctx is not None:
+        return ctx
+    try:
+        registry = engine_registry.open_registry(project)
+    except FileNotFoundError as exc:
+        raise BridgeError(
+            "这个目录还不是一个 Tavotto 图库（没有 tavotto_registry.json）。"
+            "先用 tavotto_open_figure 打开其中一张图（它会登记），再刷新。",
+            code="no_registry",
+        ) from exc
+    except RuntimeError as exc:
+        raise BridgeError(f"注册表无法加载: {exc}", code="bad_registry") from exc
+    ctx = _REFRESH_CTX[project] = _RefreshCtx(project, registry)
+    return ctx
+
+
+def resolve_refresh_project(
+    *, session_id: str | None = None, project_path: str | None = None
+) -> str:
+    """刷新哪个项目。**项目上下文来自授权，不来自模型的自由文本。**
+
+    三条路，按可信度排：
+    1. `session_id` → 那个会话的项目（`get_session` 会重新做范围校验）；
+    2. `project_path` → 与 `tavotto_open_figure` 同一套：`check_scope` →
+       `handoff.resolve_target` 沿目录向上找图库 → 再 `check_scope` 一次；
+    3. 都不传 → 当前**恰好一个**项目有会话时用它；零个报 `no_project`，
+       多个报 `ambiguous_project`（列的是会话 id，不是路径）。
+    """
+    if session_id:
+        return get_session(str(session_id)).project
+    if project_path:
+        real = check_scope(str(project_path))
+        if not os.path.exists(real):
+            raise BridgeError(f"路径不存在: {real}", code="not_found")
+        try:
+            found = engine_handoff.resolve_target(real)
+        except engine_handoff.HandoffError as exc:
+            raise BridgeError(str(exc), code="handoff_failed") from exc
+        return check_scope(found.project)
+    projects = sorted({s.project for s in _SESSIONS.values()})
+    if len(projects) == 1:
+        return check_scope(projects[0])
+    if not projects:
+        raise BridgeError(
+            "没有打开的会话，也没有传 project_path：先 tavotto_open_figure 打开一张图，"
+            "或传一个已授权工作区内的项目目录。",
+            code="no_project",
+        )
+    raise BridgeError(
+        "有多个项目开着会话，说不清要刷新哪一个：传 session_id 或 project_path。",
+        code="ambiguous_project",
+        sessions={sid: project_id(s.project) for sid, s in _SESSIONS.items()},
+    )
+
+
+def _app_reachable(port: int, http_status) -> bool:
+    st, _ = http_status(f"http://127.0.0.1:{port}/api/version", timeout=0.6)
+    return st is not None
+
+
+def _remote_refresh(port: int, project: str, http_status) -> tuple[dict, dict | None]:
+    """把刷新**委托给运行中的 Tavotto**：它持有项目的 ctx、watcher 与 SSE，
+    刷新在那儿做完，前端当场收到 `registry.changed` / `assets.changed`。
+
+    `default: false`——只让它端着这个项目，不改别的标签页的默认落点
+    （与 `handoff._remote_probe` 同一条纪律）。刷新失败原样带回它的 code，
+    **不退回本地再试一遍**：同一份磁盘事实，它刷不成本地也刷不成。
+    """
+    base = f"http://127.0.0.1:{port}"
+    st, opened = http_status(
+        f"{base}/api/projects/open", {"path": project, "default": False}, timeout=10.0
+    )
+    pj = (opened or {}).get("id")
+    if st != 200 or not pj:
+        raise BridgeError(
+            f"运行中的 Tavotto 打不开这个项目: {(opened or {}).get('error') or f'HTTP {st}'}",
+            code="remote_open_failed",
+        )
+    q = f"?pj={quote(pj, safe='')}"
+    st, result = http_status(
+        f"{base}/api/project/refresh{q}", {"reason": REFRESH_REASON}, timeout=60.0
+    )
+    if st != 200 or not isinstance(result, dict):
+        raise BridgeError(
+            f"运行中的 Tavotto 刷新失败: {(result or {}).get('error') or f'HTTP {st}'}",
+            code=str((result or {}).get("code") or "refresh_failed"),
+            params=(result or {}).get("params") or {},
+        )
+    st, readiness = http_status(f"{base}/api/project/readiness{q}", timeout=30.0)
+    return result, readiness if st == 200 and isinstance(readiness, dict) else None
+
+
+def _local_refresh(project: str) -> tuple[dict, dict]:
+    """Tavotto 没开着：在本进程调**同一份**刷新服务（`engine/project_refresh`），
+    不复制扫描算法、不 probe、不跑脚本。没有 SSE 可发（没人在听），下次
+    Tavotto 打开这个项目时读到的就是刷新后的注册表。"""
+    ctx = _local_refresh_ctx(project)
+    try:
+        result = engine_refresh.refresh_project_index(ctx, reason=REFRESH_REASON, publish=False)
+    except engine_refresh.RefreshError as exc:
+        raise BridgeError(exc.message, code=exc.code, params=exc.params) from exc
+    return result, engine_readiness.compute(ctx)
+
+
+def _compact_readiness(report: dict | None) -> dict | None:
+    """就绪度报告 → Codex 要看的那几列。id / stem / 脚本都是项目相对的。"""
+    if not isinstance(report, dict):
+        return None
+    panels = [
+        {
+            "id": p.get("id"),
+            "stem": p.get("stem"),
+            "status": p.get("status"),
+            "reason_code": p.get("reason_code"),
+            "script": p.get("script"),
+            "candidates": list(p.get("candidates") or []),
+        }
+        for p in report.get("panels") or []
+    ]
+    return {
+        "summary": dict(report.get("summary") or {}),
+        "panels": panels,
+        "conflicts": report.get("conflicts"),
+    }
+
+
+def refresh_project(
+    *,
+    session_id: str | None = None,
+    project_path: str | None = None,
+    port: int | None = None,
+    http_status=None,
+) -> dict:
+    """`tavotto_refresh_project` 的实现：解析授权的项目 → 优先委托运行中的
+    Tavotto → 不可达再本地 → 结构化 diff + 就绪度摘要。
+
+    **不复制 discover、不 probe、不运行用户脚本**：两条路都落在
+    `engine/project_refresh.refresh_project_index()`（ADR 0025）。结果里没有
+    绝对路径：项目用短 id，脚本 / 图都是项目相对名。
+    """
+    project = resolve_refresh_project(session_id=session_id, project_path=project_path)
+    port = engine_handoff.DEFAULT_PORT if port is None else int(port)
+    http_status = engine_handoff.http_json_status if http_status is None else http_status
+
+    if _app_reachable(port, http_status):
+        result, readiness = _remote_refresh(port, project, http_status)
+        delivered = DELIVERED_APP
+    else:
+        result, readiness = _local_refresh(project)
+        delivered = DELIVERED_LOCAL
+
+    registry = dict(result.get("registry") or {})
+    assets = dict(result.get("assets") or {})
+    return {
+        "ok": True,
+        "project_id": project_id(project),
+        "reason": REFRESH_REASON,
+        "delivered": delivered,
+        "registry": {
+            k: registry.get(k)
+            for k in (
+                "added_scripts",
+                "removed_scripts",
+                "changed_scripts",
+                "script_changes",
+                "added_stems",
+                "removed_stems",
+                "moved_stems",
+                "conflicts",
+                "conflicts_changed",
+            )
+        },
+        "assets": {k: assets.get(k) for k in ("added", "removed", "changed", "baseline")},
+        "readiness": _compact_readiness(readiness),
+        "sessions": sorted(sid for sid, s in _SESSIONS.items() if s.project == project),
+    }
 
 
 # ------------------------------- 渲染 / 应用 ---------------------------------

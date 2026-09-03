@@ -106,11 +106,26 @@
     "replaceAssetBody_one": "This panel has {{count}} figure edit. Those edits are bound to elements of the original script and cannot survive an asset swap, so they will be cleared (undoable). Position, size, crop and stacking order are kept.",
     "replaceAssetBody_other": "This panel has {{count}} figure edits. Those edits are bound to elements of the original script and cannot survive an asset swap, so they will be cleared (undoable). Position, size, crop and stacking order are kept.",
     "replaceAssetConfirm": "Replace and clear edits",
-    "replaceAssetTitle": "Replace with \"{{name}}\"?"
+    "replaceAssetTitle": "Replace with \"{{name}}\"?",
+    "resetOverridesTitle": "Revert figure edits?",
+    "resetOverridesBody_one": "This panel will return to what the source script currently generates. {{count}} figure edit will be cleared (undoable); the source script and the original file are not modified, and other panels of the same file are unaffected.",
+    "resetOverridesBody_other": "This panel will return to what the source script currently generates. {{count}} figure edits will be cleared (undoable); the source script and the original file are not modified, and other panels of the same file are unaffected.",
+    "resetOverridesBodyBaked": "These edits have already been written back to the original file. Reverting returns this panel to what the source script currently generates (undoable), while the original file and the source script stay as they are; other panels of the same file are unaffected.",
+    "resetOverridesConfirm": "Revert"
   },
   "contextBar": {
+    "alignMenu": "Align",
     "aria": "Quick edit",
-    "openInspector": "All properties"
+    "distributeMenu": "Distribute",
+    "groupMenu": "Group",
+    "moreArrange": "More arrange options",
+    "moreArrangeTip": "Open the full arrange tools in Properties: spacing, layout groups, copy style",
+    "multiAria": "Multi-selection actions",
+    "openInspector": "All properties",
+    "primaryHint": "The last selected object is the primary (thicker outline); the Primary reference aligns to it",
+    "selectedCount_one": "{{count}} selected",
+    "selectedCount_other": "{{count}} selected",
+    "sizeMenu": "Size"
   },
   "crash": {
     "blank": "Open a blank document",
@@ -279,7 +294,16 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward"
+    "zUp": "Bring forward",
+    "hideLegendEntry": "Hide legend entry “{{label}}”",
+    "legendFollowSource": "Legend entry follows source again",
+    "tickSideOn": "{{side}}: show {{dir}} ticks",
+    "tickSideOff": "{{side}}: hide {{dir}} ticks",
+    "tickSideHide": "{{side}}: hide tick marks",
+    "lockObjects": "Lock {{count}} objects",
+    "unlockObjects": "Unlock {{count}} objects",
+    "hideObjects": "Hide {{count}} objects",
+    "showObjects": "Show {{count}} objects"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -358,7 +382,7 @@
     "hide": "Hide this element",
     "hideObject": "Hide",
     "lock": "Lock",
-    "openInspector": "Open in the properties panel",
+    "openInspector": "Open all properties",
     "scale": "Scale",
     "scaleDown": "Shrink 5%",
     "scaleProxiedTip": "Position and size belong to the host axes “{{label}}”; scaling changes those",
@@ -371,7 +395,27 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward"
+    "zUp": "Bring forward",
+    "menuAria": "Object menu",
+    "rebuild": "Rebuild",
+    "resetOverridesCount_one": "Revert figure edits ({{count}})",
+    "resetOverridesCount_other": "Revert figure edits ({{count}})",
+    "connectSource": "Connect the source script",
+    "editText": "Edit text",
+    "arrange": "Align & distribute",
+    "arrangeRef": "Reference: {{ref}}",
+    "needObjects_one": "Needs at least {{count}} selected object",
+    "needObjects_other": "Needs at least {{count}} selected objects",
+    "openArrange": "Open arrange properties",
+    "duplicate": "Duplicate",
+    "lockAll": "Lock all",
+    "unlockAll": "Unlock all",
+    "lockCount": "Lock {{count}} objects",
+    "unlockCount": "Unlock {{count}} objects",
+    "hideCount": "Hide {{count}} objects",
+    "zOrder": "Stacking order",
+    "deleteCount": "Delete {{count}} objects",
+    "cropRotatedReason": "Rotated panels can’t be cropped yet; reset the rotation first"
   },
   "rail": {
     "assets": "Assets",
@@ -469,6 +513,15 @@
     "starting": "Starting the rendering environment…",
     "viewResults": "View captured figures"
   },
+  "spineZone": {
+    "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
+    "stateOn": "on",
+    "stateOff": "off",
+    "willOn": "click to show",
+    "willOff": "click to turn off",
+    "willHide": "click to hide this side's tick marks",
+    "coupled": "(direction is shared along the axis: {{sides}})"
+  },
   "stage": {
     "backToCanvas": "Back to canvas",
     "elementEditing": "Figure editing",
@@ -479,6 +532,9 @@
     "openAssets": "Open the asset library"
   },
   "status": {
+    "alignAllLocked": "All selected objects are locked; unlock them to arrange",
+    "alignLockedSkipped_one": "Skipped {{count}} locked object",
+    "alignLockedSkipped_other": "Skipped {{count}} locked objects",
     "assetReplaced": "Replaced with \"{{name}}\"; position and size unchanged",
     "bakedSeeded_one": "Loaded the baseline from the last write-back ({{count}} item)",
     "bakedSeeded_other": "Loaded the baseline from the last write-back ({{count}} items)",
@@ -570,7 +626,10 @@
     "stylePasted_other": "Pasted style onto {{count}} objects",
     "subLabelsAdded_one": "Added {{count}} panel label, ordered top to bottom, left to right",
     "subLabelsAdded_other": "Added {{count}} panel labels, ordered top to bottom, left to right",
-    "undone": "Undone: {{label}}"
+    "undone": "Undone: {{label}}",
+    "panelRebuilt": "Rebuilt from the source script",
+    "panelRerenderedNoRerun": "Re-rendered with the current edits; the source script was not re-run",
+    "rebuildFailed": "Rebuild failed: {{error}}"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -608,6 +667,7 @@
     "noOtherDocuments": "No other documents",
     "paperStyles": "Paper styles…",
     "presets": "Research presets and symbols…",
+    "readiness": "Project readiness",
     "recentDocuments": "Recent documents (this machine)",
     "recentEntryMulti_one": "{{name}} · {{canvases}} canvases · {{count}} object",
     "recentEntryMulti_other": "{{name}} · {{canvases}} canvases · {{count}} objects",
@@ -615,6 +675,7 @@
     "recentEntry_other": "{{name}} · {{count}} objects",
     "redo": "Redo",
     "redoWith": "Redo {{label}}",
+    "refreshProject": "Refresh project",
     "renameDocument": "Rename document…",
     "saveAsCanvasFile": "Save as canvas file…",
     "saveClean": "Saved {{time}}",
@@ -627,6 +688,11 @@
     "saveStateTitle": "{{mod}}S saves this document; ⇧{{mod}}S saves a named canvas file",
     "shortcutHelp": "Keyboard shortcuts",
     "subLabelsTip": "Add (a)(b)(c) labels in reading order",
+    "tutorial": {
+      "start": "Start tutorial",
+      "resume": "Resume tutorial",
+      "restart": "Take the tutorial again"
+    },
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
@@ -637,5 +703,12 @@
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version — this page still works in the meantime."
+  },
+  "hints": {
+    "panel_editable": "Double-click this figure to edit inside it.",
+    "panel_layout_only": "This figure can be laid out; connect its source script to edit elements inside it.",
+    "fast_edit_entered": "Changes here are saved to the current Tavotto document; the original file is untouched.",
+    "multi_select": "The floating bar next to the selection aligns and distributes directly.",
+    "problem_found": "“Problems” on the left locates the object and its property field."
   }
 }
