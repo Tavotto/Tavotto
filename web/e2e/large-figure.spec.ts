@@ -57,12 +57,42 @@ const VECTOR_PATH_COUNT = 3 * 160 * 160;
 const DOM_NODE_BUDGET = 20_000;
 
 /**
+ * registry 声明的 stem（`tests/fixtures/large_figures/tavotto_registry.json`），
+ * 产物是 `<stem>.pdf`。
+ *
+ * 素材卡按它定位：`data-card` 挂的是**后端给的 file id**，不是卡片上那行
+ * 显示名。显示名带不带扩展名（`fileName(panel.id)`）是个渲染决定，改了它
+ * 这条 spec 不该跟着红——而它一旦红，红的样子是超时（issue #213）。
+ */
+const STEM = "Issue181_large_pcolormesh";
+
+/** 素材卡：吃 stem 不吃扩展名，产物换成 `.png` 也照样选得中。 */
+const ASSET_CARD = `[data-card^="${STEM}."]`;
+
+/**
+ * **画布上的面板节点**——`ObjectView` 自己渲染的 `data-object-id`，限定在
+ * `[data-canvas-stage]` 这一个容器里。
+ *
+ * 「画布空不空」用它判，不用那句「画布是空的」：那句话是 i18n 资源
+ * （`workspace:stage.emptyTitle`），切到英文当场不成立；而且图内编辑态下
+ * `EmptyHint` 整个不渲染（`CanvasStage`: `!fastEdit && objects.length === 0`），
+ * 「找不到那句话」在打开面板之后是**恒真**的。
+ *
+ * 注意主语：图内编辑态只渲染正在编辑的那一个对象（`CanvasLayers only=…`），
+ * 所以这个计数问的是「这一屏画布上摆着几个面板」，不是「文档里有几个对象」。
+ * 这条 spec 全程只有一个面板，两者一致。
+ */
+const CANVAS_OBJECTS = "[data-canvas-stage] [data-object-id]";
+
+/**
  * #181 的合成图库：脚本 + registry 就是一个合法项目，数据由 rng(181) 现生成。
  *
  * **产物要现跑一次**：`examples/figures` 里的 `.pdf` 是提交进仓库的，而这个
  * fixture 刻意不提交产物（默认规模下 SVG 一百多 MB）。少了这一步素材列表是
  * 空的（实测 `/api/panels` 回 `panels: []`），双击等于点在一个不存在的东西上
  * ——最后红在超时，而超时红看起来跟「大图把浏览器打死了」一模一样。
+ * 这一档现在由 `openLargePanel` 里那条 20s 的素材卡断言拦下并写明成因
+ * （issue #213），但**成因本身还在这里**：产物没跑出来就没有素材卡。
  *
  * n=160 实测 2.5 秒，比起后面那次冷 build 可以忽略。
  */
@@ -99,6 +129,11 @@ function largeFigureLibrary(): string {
  * 画布默认是空的（`golden-paths.spec.ts` 同一条路）。少了双击那一步，等的是
  * 一个永远不会出现的选择器，最后红在超时上——而超时红看起来跟「大图把浏览器
  * 打死了」一模一样，那是最容易把人带偏的一种假红。
+ *
+ * **这条 spec 的失败模式与它要检出的缺陷长得一样**（issue #213），所以每一处
+ * 定位都按两条纪律写：① 锚在结构（`data-card` / `data-object-id`）而不是界面
+ * 文案——文案是 i18n 资源，改了它、切了语言，等的就是永不出现的元素；
+ * ② 定位类的等待压短并在报文里点名「这是定位失败，不是性能问题」。
  */
 async function openLargePanel(
   app: RunningApp,
@@ -113,11 +148,24 @@ async function openLargePanel(
     (r) => r.url().includes("/api/engine/render") && r.status() === 200,
     { timeout: 150_000 },
   );
-  // 素材名来自 registry 的 stems，产物是 `<stem>.pdf`
-  await page
-    .getByText("Issue181_large_pcolormesh.pdf")
-    .dblclick({ timeout: 60_000 });
-  await expect(page.getByText("画布是空的")).toHaveCount(0);
+  // **先确认素材卡真的在，再双击。** 素材列表空掉时（fixture 产物没跑出来、
+  // `/api/panels` 回 `[]`）双击点的是一个不存在的东西，`dblclick` 会一路等到
+  // 超时——而超时红看起来跟「大图把浏览器打死了」一模一样。所以这里把等待
+  // 压短（20s，素材列表是启动后第一批请求，不涉及大图渲染）并在报文里点名
+  // 成因，让红的**报文**自己把「定位失败」与「性能问题」分开。
+  const card = page.locator(ASSET_CARD);
+  await expect(
+    card,
+    `素材卡 ${ASSET_CARD} 没出现——这是**定位/素材列表**失败，不是大图性能` +
+      `问题：先看 /api/panels 是不是空的（fixture 产物有没有跑出来）`,
+  ).toHaveCount(1, { timeout: 20_000 });
+  await card.dblclick({ timeout: 60_000 });
+  // 双击落地 = 画布上真的多了一个面板节点。**结构性判据**，不是那句提示语。
+  await expect(
+    page.locator(CANVAS_OBJECTS).first(),
+    `双击之后画布上没有面板节点（${CANVAS_OBJECTS}）——这是**定位/交互**失败，` +
+      `不是大图性能问题`,
+  ).toBeAttached({ timeout: 30_000 });
   // 走引擎（`/api/engine/render`，带 manifest 与 preview 裁决）的是**图内编辑
   // 态**；没进那个态的话，上面的 `waitForResponse` 等的是一个永远不会来的响应。
   //
@@ -227,8 +275,16 @@ test("降档之后：选中图内元素、属性面板打得开、撤销回得�
   // **撤销把「双击加面板」那一步撤掉，画布回到空——这正是它该做的。**
   // 第一版在这里断言「面板还在」，红了；红得有道理，是断言写错了不是产品错了。
   // 大图上真正值得守的是「撤销/重做不炸、渲染态跟得上」，所以走一个来回。
+  //
+  // 判据是**画布上还有没有面板节点**，不是「画布是空的」那句提示语（#213）：
+  // 提示语一改，这里等的就是一个永不出现的元素，最后红在 30s 超时上，而那个
+  // 红长得跟「大图把浏览器打死了」一模一样。
   await page.keyboard.press("ControlOrMeta+z");
-  await expect(page.getByText("画布是空的")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.locator(CANVAS_OBJECTS),
+    `撤销之后画布上仍有面板节点（${CANVAS_OBJECTS}）：撤销没把「双击加面板」` +
+      `那一步撤掉`,
+  ).toHaveCount(0, { timeout: 30_000 });
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await expect(
     page.locator("[data-element-svg], [data-display]").first(),
