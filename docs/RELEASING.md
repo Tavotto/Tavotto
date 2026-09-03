@@ -192,6 +192,8 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 ```sh
 # 先自证这棵树就是发布 SHA（trust job 认的那个），别凭印象
 git -C <发布树> rev-parse HEAD
+# 再自证它是干净的——`-dirty` 的产物不对应任何提交，不该进网站（见下）
+git -C <发布树> status --porcelain
 
 cd ../Tavotto_website
 TAVOTTO_REPO=<发布树> pnpm sync-playground -- --dry-run   # 先看一眼读的是哪棵树
@@ -209,6 +211,14 @@ TAVOTTO_REPO=<发布树> pnpm check-playground
    （指纹 `fcfb77bc`，而发布树建出来是 `53b8a6ab`）——只因为指纹对不上才发现；
 2. 同步纠正之后 `check-playground` 仍报 `playground stale`，因为它是从**主工作区**
    算的源指纹。照着这条红去「重做同步」，重做又把错版本拷回来——**成环**。
+
+**`-dirty` 与「不可达于发布线」是同一类事实，而且是更糟的那一半**：实测主工作区
+`web/dist-playground` 里那份产物的 `product_commit` 是
+`48fa4ca323de…-dirty`——它连 `48fa4ca` 这个提交都不完全对应，是从一棵有未提交
+改动的树上建的。那份东西**在世界上任何一棵树上都复现不出来**：指纹对不上时，
+你连去哪儿找源头都不知道。所以这条缺陷的性质不是「同步了一个旧版本」，是
+「同步了一个**不对应任何提交**的产物」。`check-playground` 对两者一视同仁，都在
+`FAIL` 后面补一句「这条 FAIL 可能是关于 checkout 的，不是关于 bundle 的」。
 
 两个脚本现在开跑前都打印读到的路径、这个路径的来源（`TAVOTTO_REPO` 还是默认值）
 与那棵树的 HEAD，并在该 commit 不可达于 `origin/main` 时告警；`check` 的 `FAIL`
