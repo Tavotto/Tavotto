@@ -550,6 +550,19 @@ HANDLERS = {
 UI_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides")
 
 
+def _human_error(payload: dict) -> str:
+    """给人看的那一份：错误 + 下一步，**不含机器码**。"""
+    text = str(payload.get("error") or "")
+    recovery = payload.get("recovery")
+    if isinstance(recovery, str):
+        step = recovery.strip()
+        if step and step not in text:
+            text += f"\n下一步：{step}"
+    elif isinstance(recovery, (list, tuple)) and recovery:
+        text += "\n恢复步骤：\n- " + "\n- ".join(str(item) for item in recovery)
+    return text
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -561,9 +574,13 @@ def call_tool(name: str, args: dict) -> dict:
     except bridge.BridgeError as exc:
         payload = exc.payload()
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
+        # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
+        # 把机器码摆在最前面，模型多半会连着念出去——用户听到
+        # 「workspace_confirmation_no_response」等于什么都没听到。同 ADR 0021
+        # 的「code 稳定，文案随时可改」：稳定的是 code，给人看的是文案与下一步。
         return {
             "isError": True,
-            "content": _text(f"[{payload['code']}] {payload['error']}"),
+            "content": _text(_human_error(payload)),
             "structuredContent": payload,
         }
     if name in UI_TOOLS:

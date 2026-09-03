@@ -668,6 +668,45 @@ def test_the_four_workspace_authorisation_failures_do_not_collapse(tmp_path, mon
         assert body["code"] not in body["error"], name
 
 
+def test_tool_errors_never_read_the_machine_code_out_loud(tmp_path, monkeypatch):
+    """`content` 是念给用户听的那一份：**错误 + 下一步，不含 code**。
+
+    分档做对了、出口仍把 `[workspace_confirmation_no_response]` 摆在最前面的话，
+    模型多半连着念出去——用户听到一串下划线等于什么都没听到。code 只属于
+    `structuredContent`（同 ADR 0021「code 稳定，文案随时可改」）。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    outside = tmp_path / "outside"
+    inside.mkdir()
+    outside.mkdir()
+
+    seen = []
+    res = _call("tavotto_open_figure", {"project_path": str(inside)})
+    seen.append((res, "no_workspace_root", True))
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inside))
+    res = _call("tavotto_open_figure", {"project_path": str(outside)})
+    seen.append((res, "path_out_of_scope", True))
+    # 没有 recovery 的普通失败也不许把 code 念出来
+    res = _call("tavotto_apply_overrides", {"session_id": "nope", "patches": []})
+    seen.append((res, "unknown_session", False))
+
+    for result, code, has_recovery in seen:
+        assert result["isError"] is True
+        payload = _body(result)
+        text = result["content"][0]["text"]
+        if code:
+            assert payload["code"] == code
+        assert payload["code"] not in text, payload["code"]
+        assert payload["error"] in text
+        if has_recovery:
+            # 下一步必须真的出现在人读的那一份里，而不是只躺在结构化字段里
+            assert payload["recovery"] in text
+
+
 def test_a_host_that_never_answers_the_prompt_is_not_a_user_refusal(tmp_path, monkeypatch):
     """超时那条腿：EOF 之外，真的等满超时也必须落在「宿主没回应」这一档。
 
