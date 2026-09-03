@@ -26,16 +26,22 @@ TESTS_DIR = Path(__file__).resolve().parent
 _SESSION_TIMEOUT_SECONDS = 120.0
 
 
-def _run_session(tmp_path: Path, body: str, **env_overrides: str) -> subprocess.CompletedProcess:
+def _run_session(
+    tmp_path: Path, body: str, *, plugin: str | None = None, **env_overrides: str
+) -> subprocess.CompletedProcess:
     """在临时目录里跑一个只有一条用例的 pytest 会话，挂上真的 `tests/conftest.py`。
 
     `cwd` 在仓库之外，所以子进程捡不到仓库的 `pytest.ini`（那里的 `-q` 会叠成
     `-qq`，摘要行直接消失）；`-p conftest` 靠 `PYTHONPATH` 里的 `tests/` 解析。
     """
     (tmp_path / "test_one.py").write_text(textwrap.dedent(body), encoding="utf-8")
+    extra: list[str] = []
+    if plugin is not None:
+        (tmp_path / "helper_plugin.py").write_text(textwrap.dedent(plugin), encoding="utf-8")
+        extra = ["-p", "helper_plugin"]
     env = dict(os.environ, **env_overrides)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(TESTS_DIR), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])]
+        [str(TESTS_DIR), str(tmp_path), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])]
     )
     return subprocess.run(
         [
@@ -47,6 +53,7 @@ def _run_session(tmp_path: Path, body: str, **env_overrides: str) -> subprocess.
             "no:cacheprovider",
             "-p",
             "conftest",
+            *extra,
             "test_one.py",
         ],
         cwd=tmp_path,
@@ -122,4 +129,40 @@ def test_daemon_and_joined_threads_are_not_accused(tmp_path):
     )
     out = f"{proc.stdout}\n{proc.stderr}"
     assert proc.returncode == 0, f"没有泄漏却被判红：\n{out[-3000:]}"
+    assert "非 daemon 线程活着" not in out, f"诬告了：\n{out[-3000:]}"
+
+
+def test_a_thread_closed_by_another_plugins_unconfigure_is_not_accused(tmp_path):
+    """判据的主语里有**时刻**，而那个时刻是「就要退出了」，不是「用例刚跑完」。
+
+    别的插件完全可以在自己的 `pytest_unconfigure` 里关掉它的非 daemon worker——
+    那样解释器根本不会挂。这里造的正是那种会话：线程在 `pytest_sessionfinish` 那
+    一刻确实活着（而且活过 5 秒宽限，所以门禁一定记下了嫌疑），随后被插件收干净。
+    要求它**绿**：拿过去那一刻的名单直接判红，就是把干净的会话诬告成泄漏。
+    """
+    proc = _run_session(
+        tmp_path,
+        """
+        def test_nothing():
+            pass
+        """,
+        plugin="""
+        import threading
+
+        _release = threading.Event()
+        _worker = threading.Thread(target=_release.wait, name="plugin-owned-worker")
+
+
+        def pytest_configure(config):
+            _worker.start()
+
+
+        def pytest_unconfigure(config):
+            # 门禁挂在 trylast 上，所以这一手一定先跑：走到那里时线程已经没了。
+            _release.set()
+            _worker.join(30)
+        """,
+    )
+    out = f"{proc.stdout}\n{proc.stderr}"
+    assert proc.returncode == 0, f"插件自己收干净了，却被判红：\n{out[-3000:]}"
     assert "非 daemon 线程活着" not in out, f"诬告了：\n{out[-3000:]}"

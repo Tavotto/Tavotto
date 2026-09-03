@@ -119,9 +119,9 @@ def telemetry_sent(_isolated_user_config, monkeypatch):
 #: 后者会把解释器挂死。所以宽限不会让这条判据变空。
 _THREAD_SHUTDOWN_GRACE_SECONDS = 5.0
 
-#: 会话结束时抓到的现场（已格式化好的报告 + 该用的退出码）。为空表示这条门禁没
-#: 有发现问题——`pytest_unconfigure` 只在非空时才硬退出。
-_STUCK_THREAD_REPORT: list[tuple[str, int]] = []
+#: 会话结束时的**嫌疑**：`(session, 该用的退出码)`。为空表示这条门禁没有发现问题。
+#: 它只是嫌疑不是裁决——裁决要等 `pytest_unconfigure` 里退出前再枚举一次才作数。
+_STUCK_THREAD_SUSPECTS: list[tuple[pytest.Session, int]] = []
 
 
 def _threads_that_block_interpreter_exit() -> list[threading.Thread]:
@@ -175,32 +175,43 @@ def pytest_sessionfinish(session, exitstatus):
     if not stuck:
         return
     # 别把已有的失败降级成「只有线程泄漏」：本来就红的会话保留它自己的退出码。
-    code = int(exitstatus) or int(pytest.ExitCode.TESTS_FAILED)
-    session.exitstatus = code
-    _STUCK_THREAD_REPORT.append(
-        (
-            f"用例跑完还有 {len(stuck)} 条非 daemon 线程活着，"
-            f"解释器会挂在退出上（已宽限 {_THREAD_SHUTDOWN_GRACE_SECONDS:g} 秒）：\n"
-            f"{_describe_stuck_threads(stuck)}\n\n"
-            "三条修法（`d9e2b60` 用的是前两条）：给等待一个有上限的形式"
-            "（`wait(timeout)` 到点抛出，线程死掉而不是继续 park）、"
-            "把线程标成 `daemon=True`、或者在用例里 join 干净再返回。",
-            code,
-        )
-    )
+    # 这里只记**嫌疑**，不设 `session.exitstatus`、也不写报告——见 `pytest_unconfigure`。
+    _STUCK_THREAD_SUSPECTS.append((session, int(exitstatus) or int(pytest.ExitCode.TESTS_FAILED)))
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config):
-    """报告 + 硬退出。放在 unconfigure 是为了让它成为日志的最后一段。
+    """**退出前再枚举一次**，然后报告 + 硬退出。
 
-    `pytest_sessionfinish` 里抛异常也能红，但那会打断 terminal reporter 的
-    wrapper——摘要那一行（多少条过、多少条红）就没了，而且进程照样挂在
+    放在 unconfigure 而不是在 `pytest_sessionfinish` 里抛异常，有两个理由：抛异常
+    会打断 terminal reporter 的 wrapper（摘要那一行就没了），而且进程照样挂在
     `threading._shutdown()` 上。这里跑在摘要之后、所有插件收尾之后。
+
+    「所有插件收尾之后」正是**必须重新枚举**的原因：别的插件完全可以在自己的
+    `pytest_unconfigure` 里关掉它的非 daemon worker，那样解释器根本不会挂——拿
+    `pytest_sessionfinish` 那一刻的名单直接判 1，判的是**过去那一刻的状态**，会把
+    一个干净的会话诬告成红的。判据的主语要包含**哪个时刻**：这里的时刻是「就要
+    退出了」，不是「用例刚跑完」。
     """
-    if not _STUCK_THREAD_REPORT:
+    if not _STUCK_THREAD_SUSPECTS:
         return
-    report, code = _STUCK_THREAD_REPORT[0]
+    session, code = _STUCK_THREAD_SUSPECTS[0]
+    stuck = _threads_that_block_interpreter_exit()
+    if not stuck:  # 有人在自己的 unconfigure 里收干净了——解释器不会挂，这不是缺陷
+        return
+    report = (
+        f"用例跑完还有 {len(stuck)} 条非 daemon 线程活着，解释器会挂在退出上"
+        f"（宽限 {_THREAD_SHUTDOWN_GRACE_SECONDS:g} 秒之后、所有插件收尾之后，"
+        "仍然活着）：\n"
+        f"{_describe_stuck_threads(stuck)}\n\n"
+        "三条修法（`d9e2b60` 用的是前两条）：给等待一个有上限的形式"
+        "（`wait(timeout)` 到点抛出，线程死掉而不是继续 park）、"
+        "把线程标成 `daemon=True`、或者在用例里 join 干净再返回。"
+    )
+    # 退出码有两处兑现：`session.exitstatus`（`wrap_session` 在 unconfigure 之后才
+    # `return session.exitstatus`）与下面的 `os._exit`。两处都设在**确认之后**，
+    # 所以上面那条早退不会留下一个「已经被判红」的干净会话。
+    session.exitstatus = code
     sys.stdout.flush()  # 先把摘要冲出去，报告才会落在日志最后一段
     _write_report_to_stderr(f"\n{report}\n")
     os._exit(code)
