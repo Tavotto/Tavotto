@@ -188,11 +188,12 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
       于是新建的 venv 一个 matplotlib 都看不到，`probe_environment()` 如实
       报 `project_env_no_matplotlib`，`test_project_env.py` 14 条全红（#225）。
 
-    做法是往新 venv 自己的 site-packages 写一个**只含路径行**的 `.pth`。
-    路径行与 `addsitedir()` 有一个决定性的差别：**路径行只把目录追加进
-    `sys.path`，不会再去执行那个目录里的 `.pth`**。宿主的 editable 安装
-    （`__editable__*.pth` + 一个注册进 `sys.meta_path` 的 finder）因此不会
-    跟着进来——夹具要的是「这个环境里有 matplotlib」，不是「宿主装过什么」。
+    做法是往新 venv 自己的 site-packages 写一个 `.pth`（内容见 `_pth_line()`，
+    一行纯 ASCII，做的事就是 `sys.path.extend`）。`sys.path.extend` 与
+    `addsitedir()` 有一个决定性的差别：**它只把目录追加进 `sys.path`，不会再去
+    执行那个目录里的 `.pth`**。宿主的 editable 安装（`__editable__*.pth` +
+    一个注册进 `sys.meta_path` 的 finder）因此不会跟着进来——夹具要的是
+    「这个环境里有 matplotlib」，不是「宿主装过什么」。
 
     ABI 上是安全的：新 venv 就是 `python` 自己 `-m venv` 建出来的，同一个
     解释器、同一个 minor、同一套平台标签。这与 ADR 0018「绝不混装
@@ -211,14 +212,36 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
     if not dirs:
         return None
     pth = site_packages(venv) / _HOST_SITE_PTH
-    # **`.pth` 的解码不由我们说了算，由目标解释器的 `site` 说了算**：实测
-    # 3.11 的 `site.addpackage` 用 `encoding="locale"` 读，3.13 改成先试
-    # UTF-8、失败才退回 locale。所以只有全 ASCII 的路径在两种读法下逐字相同。
-    # 路径带非 ASCII（中文用户目录）且解释器较老、locale 又不是 UTF-8 时，这一行
-    # 会被解错、目录不存在、`site` 静默跳过——**但后果不会静默**：`verify()`
-    # 紧接着就会因为 venv 里没有 matplotlib 而报 `NOT_INHERITED`。
-    pth.write_text("\n".join(dirs) + "\n", encoding="utf-8")
+    pth.write_text(_pth_line(dirs), encoding="ascii")
     return pth
+
+
+def _pth_line(dirs: list[str]) -> str:
+    """把这些目录编成**一行纯 ASCII** 的 `.pth`。
+
+    **`.pth` 的解码不由写的人说了算，由目标解释器的 `site` 说了算**：实测
+    3.11 的 `site.addpackage` 用 `encoding="locale"` 读，3.13 才改成先试
+    UTF-8、失败再退回 locale。所以直接把路径写成文本行是错的——路径里有非
+    ASCII（`C:\\Users\\张三`）时，UTF-8 写、locale 读会解出另一串字符，目录
+    「不存在」，`site` 静默跳过。
+
+    「按目标解释器的 locale 写」不解决问题，只是把错挪到另一头（新解释器
+    先试 UTF-8，locale 编码的中文路径在那边解不出来）。**两头不能同时对，
+    除非不依赖任何一头**——所以走 base64：`.pth` 的字节全是 ASCII，而
+    Windows 的每个 ANSI 代码页与 UTF-8 都是 ASCII 的超集，两种读法**逐字节
+    读到同一行**，真正的路径在这一行被解码时才由我们自己按 UTF-8 还原。
+
+    用 `sys.path.extend` 而不是 `site.addsitedir`：仍然只追加目录，不去执行
+    那些目录里的 `.pth`（宿主的 editable 安装因此不跟进来），也仍然排在
+    venv 自己 site-packages 的后面（遮蔽替身照样先被找到）。
+    """
+    import base64
+
+    blob = base64.b64encode("\n".join(dirs).encode("utf-8")).decode("ascii")
+    return (
+        "import base64,sys; "
+        f"sys.path.extend(base64.b64decode('{blob}').decode('utf-8').split(chr(10)))\n"
+    )
 
 
 def interpreter_of(venv: Path) -> str | None:
@@ -228,28 +251,6 @@ def interpreter_of(venv: Path) -> str | None:
         if cand.is_file():
             return str(cand)
     return None
-
-
-def _pth_decoding_hint(facts: dict) -> str:
-    """`NOT_INHERITED` 时，把「那一行路径可能被解错了」这条**可能成因**指出来。
-
-    只说可能，不下结论——我没有在那种机器上复现过。但撞上的人拿到一句
-    「没接进来」会去查 venv、查 site-packages、查 `inherit_host_site()`，
-    唯独想不到是 `.pth` 里那一行被按 locale 解码解错了。诊断得指向下一步看哪里。
-
-    只在**真有**非 ASCII 路径时才说：路径全是 ASCII 时这条成因不成立，
-    加进去只是噪音。
-    """
-    bad = [str(d) for d in (facts.get("dirs") or []) if not str(d).isascii()]
-    if not bad:
-        return ""
-    return (
-        "【可能成因之一】要接进来的路径里有非 ASCII 字符（如 "
-        f"{bad[0]}）。`.pth` 是按 UTF-8 写的，而怎么读由目标解释器的 `site` 决定："
-        '实测 3.11 用 `encoding="locale"`，3.13 才先试 UTF-8。'
-        "解释器较老且 locale 不是 UTF-8 时，这一行可能被解错、目录当作不存在被静默跳过。"
-        "先确认一下那条路径在 venv 里读回来是什么样子。——"
-    )
 
 
 def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
@@ -305,8 +306,7 @@ def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
             )
         raise VenvFixtureError(
             PREMISE_NOT_INHERITED,
-            _pth_decoding_hint(facts)
-            + f"{where} 有 matplotlib {facts['matplotlib']}，却没能接进新建的 venv "
+            f"{where} 有 matplotlib {facts['matplotlib']}，却没能接进新建的 venv "
             f"{venv}——`inherit_host_site()` 漏掉了宿主的 site-packages。"
             f"venv 侧报的是：{detail}",
         )
