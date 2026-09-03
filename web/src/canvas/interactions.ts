@@ -1012,6 +1012,13 @@ export function pickElement(
  * `currentGid` 不在这堆里（刚从别处点过来、选的是元素树里另一个东西）时从
  * **第一名**开始——也就是普通点击会选中的那一个。⌥ 的第一下不该跳过用户
  * 本来就要的那个元素。
+ *
+ * `anchor` = 「无论如何都要在表里的那一个」，给**没有指针**的入口用：那条路
+ * 拿元素 bbox 的中心当探针，而 **bbox 中心不一定落在那个元素身上**——U 形
+ * 曲线的中心落在杯口里，离描边十几毫米。不兜住的话第一下就跳到底下的容器上，
+ * 而且此后再也回不来（表里根本没有它），「轮换」变成单程票。bbox 一定包含
+ * 自己的中心，所以把它排在表首既恒成立、也保住了「走一圈回到原地」。命中真的
+ * 落在它身上时它本来就在表里，这一步什么都不做。
  */
 export function cycleElementAt(
   manifest: Manifest | null | undefined,
@@ -1019,8 +1026,11 @@ export function cycleElementAt(
   fy: number,
   lockedGids: readonly string[] | undefined,
   currentGid: string | null,
+  anchor?: ManifestElement | null,
 ): { el: ManifestElement; index: number; total: number } | null {
-  const stack = pickElementStack(manifest, fx, fy, lockedGids)
+  const hits = pickElementStack(manifest, fx, fy, lockedGids)
+  const stack =
+    anchor && !hits.some((e) => e.gid === anchor.gid) ? [anchor, ...hits] : hits
   if (!stack.length) return null
   const at = currentGid ? stack.findIndex((e) => e.gid === currentGid) : -1
   const next = at < 0 ? 0 : (at + 1) % stack.length
@@ -1039,12 +1049,17 @@ export function cycleElementAt(
  * 几何权威按 ADR 0017：命中测试只认 `exactPanelManifest`，权威没就位就什么都
  * 不动（调用方去说「正在同步」）。
  */
-export function cycleOverlapAt(panel: PanelObject, fx: number, fy: number): boolean {
+export function cycleOverlapAt(
+  panel: PanelObject,
+  fx: number,
+  fy: number,
+  anchor?: ManifestElement | null,
+): boolean {
   const manifest = exactPanelManifest(useRenderStore.getState(), panel)
   if (!manifest) return false
   const ui = useUiStore.getState()
   const current = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
-  const step = cycleElementAt(manifest, fx, fy, panel.lockedGids, current)
+  const step = cycleElementAt(manifest, fx, fy, panel.lockedGids, current, anchor)
   if (!step) return false
   ui.setSelectedGid(step.el.gid)
   ui.setStatus(
@@ -1056,6 +1071,28 @@ export function cycleOverlapAt(panel: PanelObject, fx: number, fy: number): bool
   )
   return true
 }
+
+/**
+ * 连着按同一条命令时**探针不动**的记账。
+ *
+ * 指针那条路的探针是固定的（用户按住不动的那一点），所以它天然是个环：走一圈
+ * 回到原地。键盘这条路每次现从「当前选中元素 bbox 中心」取点，而选中项每按一
+ * 下就变——探针跟着漂走，第三下就落到另一组候选里去了，「轮换」变成单程票，
+ * 出得去回不来（U 形曲线走到子图之后再也回不到曲线上）。
+ *
+ * 所以一轮连续轮换里探针只取一次，anchor 也只认起手那个元素。**自失效**：
+ * 钥匙是「上一次是我选中的那个 gid」，用户中途点了别的、选了别的元素，钥匙
+ * 对不上，下一次自然重新取点——不需要订阅任何东西，也没有第二份状态要维护。
+ */
+let cycleProbe: {
+  panelId: string
+  /** 上一次**是我**选中的那个 gid：钥匙，对不上就是新的一轮 */
+  gid: string
+  /** 起手那个元素：整轮的 anchor 都是它，否则第二下就把它挤出候选表了 */
+  anchorGid: string
+  fx: number
+  fy: number
+} | null = null
 
 /** ⌥ 轮换在键盘上可不可用：图内编辑态 + 恰好选中一个非 figure 的元素。 */
 export function canCycleOverlapSelection(): boolean {
@@ -1076,11 +1113,21 @@ export function cycleOverlapSelection(): boolean {
   if (!canCycleOverlapSelection()) return false
   const panel = doc().objects.find((o) => o.id === ui.elementPanelId)
   if (panel?.type !== 'panel') return false
+  const gid = ui.selectedGids[0]
   const manifest = exactPanelManifest(useRenderStore.getState(), panel)
-  const el = manifest?.elements.find((e) => e.gid === ui.selectedGids[0])
+  const el = manifest?.elements.find((e) => e.gid === gid)
   if (!el) return false
   const [x, y, w, h] = el.bbox
-  return cycleOverlapAt(panel, x + w / 2, y + h / 2)
+  // 同一轮里探针不动（见 cycleProbe）；新的一轮才从 bbox 中心取点
+  const same = cycleProbe?.panelId === panel.id && cycleProbe.gid === gid
+  const run = same ? cycleProbe! : { anchorGid: gid, fx: x + w / 2, fy: y + h / 2 }
+  // anchor 认**起手那个元素**，不是此刻选中的那个：认后者的话第二下就把起手的
+  // 元素挤出候选表，环从 3 缩成 2，还是回不去
+  const anchor = manifest!.elements.find((e) => e.gid === run.anchorGid) ?? el
+  if (!cycleOverlapAt(panel, run.fx, run.fy, anchor)) return false
+  const now = useUiStore.getState().selectedGids
+  cycleProbe = { panelId: panel.id, gid: now[0], anchorGid: run.anchorGid, fx: run.fx, fy: run.fy }
+  return true
 }
 
 /**

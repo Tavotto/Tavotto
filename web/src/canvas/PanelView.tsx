@@ -719,6 +719,11 @@ function ElementHitLayer({
       onDoubleClick={(e) => {
         // 始终拦下：不能让外层 ObjectView 的双击把编辑态切成裁剪/重进编辑
         e.stopPropagation()
+        // ⌥ 双击 = 连着轮换两下，**不进快速改字**。两个 pointerdown 已经各换了
+        // 一次选中，这里再弹一个内容输入框的话，用户要的是「换一个」，拿到的却是
+        // 一次没要的编辑——而且弹层认的是 `pickElement` 的结果（重叠时恒为宿主），
+        // 与刚刚轮换到的那一个根本不是同一个元素。「⌥ 只换选中」不给双击破例。
+        if (e.altKey && !e.shiftKey) return
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
         // 双击带文字内容的元素 = 快速改字：弹层聚焦内容输入框

@@ -31,6 +31,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { PanelView } from './PanelView'
+import { useQuickEdit } from './quickEditStore'
 import {
   canCycleOverlapSelection,
   cycleElementAt,
@@ -124,11 +125,29 @@ const manifest = (over: { hidden?: boolean } = {}): Manifest =>
         draggable: false,
       },
       {
+        // U 形曲线：bbox 中心落在「杯口」里，**不在曲线自己身上**（离描边 15mm）。
+        // 键盘入口拿 bbox 中心当探针，这条就是那个探针会落空的现场。
+        gid: 'axes_1.lines_1',
+        role: 'line',
+        label: '曲线 “U 形”',
+        bbox: [0.2, 0.4, 0.6, 0.38],
+        geometry: {
+          kind: 'polyline',
+          paths: [{ points: [[0.2, 0.4], [0.35, 0.75], [0.5, 0.78], [0.65, 0.75], [0.8, 0.4]], closed: false }],
+          fill: false,
+          stroke: true,
+        },
+        editable: [],
+        draggable: false,
+      },
+      {
         gid: 'axes_1.texts_0',
         role: 'text',
         label: '文字 “注”',
         bbox: [0.6, 0.6, 0.2, 0.1],
-        editable: [],
+        // `f()` 按值的类型猜 type，字符串会猜成 enum —— 双击改字的判据要的是
+        // `type === 'text'`，这里必须写死，否则那两条双击用例恒真
+        editable: [{ prop: 'text', type: 'text', value: '注' } as never],
         draggable: true,
         anchor: [0.7, 0.65],
         drag_prop: 'pos_frac',
@@ -160,6 +179,8 @@ const panel = (over: Partial<PanelObject> = {}): PanelObject =>
 const OVERLAP: [number, number] = [0.5, 0.3]
 /** 对角曲线上的一点：内容元素仍该赢过两个容器 */
 const ON_LINE: [number, number] = [0.5, 0.5]
+/** 那段文字上的一点：双击它 = 快速改字 */
+const TEXT: [number, number] = [0.7, 0.65]
 
 /* --------------------------------- 挂载 ---------------------------------- */
 
@@ -233,6 +254,7 @@ beforeEach(async () => {
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
   useUiStore.setState({ tool: 'select', elementPanelId: 'p1', selectedGids: [], status: null })
+  useQuickEdit.getState().close()
   useSelectionStore.getState().clear()
   useInteractionStore.getState().end()
   useRenderStore.getState().clear()
@@ -385,6 +407,28 @@ describe('⌥ 点击：画布上换得到孪生轴，并且说得出换到了谁
     expect(selected()).toEqual(['axes_2'])
   })
 
+  it('⌥ 双击只轮换，不进快速改字（⌥ 只换选中这条不许被双击破例）', async () => {
+    await mount()
+    await press(TEXT, { altKey: true })
+    await press(TEXT, { altKey: true })
+    await act(async () => {
+      hitLayer().dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, cancelable: true, altKey: true, ...clientAt(...TEXT) }),
+      )
+    })
+    expect(useQuickEdit.getState().target, '⌥ 双击不该弹出快速编辑').toBeNull()
+  })
+
+  it('不按 ⌥ 的双击仍然进快速改字（原有行为不变）', async () => {
+    await mount()
+    await act(async () => {
+      hitLayer().dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...clientAt(...TEXT) }),
+      )
+    })
+    expect(useQuickEdit.getState().target).toMatchObject({ gid: 'axes_1.texts_0' })
+  })
+
   it('⇧⌥ 仍然是加选，不轮换（两个修饰键各管一件事）', async () => {
     await mount()
     await press(ON_LINE)
@@ -417,6 +461,37 @@ describe('键盘：命令面板的同一条动作', () => {
     expect(canCycleOverlapSelection()).toBe(false)
     useUiStore.getState().setSelectedGid('figure')
     expect(canCycleOverlapSelection()).toBe(false)
+  })
+
+  it('bbox 中心不在自己身上时（U 形曲线）：仍然在同一组里循环，走得回来', async () => {
+    await mount()
+    // 这条曲线的 bbox 中心落在杯口里 —— 探针命中的只有两个 axes 容器，
+    // 当前选中项本身**不在**候选表里。不兜住的话第一下就跳到 axes 上，
+    // 而且此后再也回不来（表里根本没有它）。
+    expect(pickElementStack(manifest(), 0.5, 0.59).map((e) => e.gid)).not.toContain(
+      'axes_1.lines_1',
+    )
+    useUiStore.getState().setSelectedGid('axes_1.lines_1')
+    const seen: string[] = []
+    for (let i = 0; i < 3; i++) {
+      expect(cycleOverlapSelection()).toBe(true)
+      seen.push(selected()[0])
+    }
+    expect(seen).toEqual(['axes_1', 'axes_2', 'axes_1.lines_1'])
+  })
+
+  it('中途选了别的元素就重新取点：探针不会跨着两轮粘住', async () => {
+    await mount()
+    useUiStore.getState().setSelectedGid('axes_1.lines_1') // U 形曲线：探针在杯口
+    expect(cycleOverlapSelection()).toBe(true)
+    expect(selected()).toEqual(['axes_1'])
+    // 用户自己去点了别的（钥匙对不上）→ 下一轮从**这个**元素的中心重新取点。
+    // 那一点上压着四个候选（文字自己 / U 形曲线 / 宿主 / 孪生轴），与上一轮那
+    // 三个不是同一组 —— total 变了就是「探针真的重取了」的证据。
+    useUiStore.getState().setSelectedGid('axes_1.texts_0')
+    expect(cycleOverlapSelection()).toBe(true)
+    expect(useUiStore.getState().status).toMatchObject({ values: { index: 2, total: 4 } })
+    expect(selected()).toEqual(['axes_1.lines_1'])
   })
 
   it('几何权威没就位：什么都不动（ADR 0017），由调用方去说「正在同步」', async () => {
