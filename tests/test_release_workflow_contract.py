@@ -762,10 +762,13 @@ def test_pending_release_notes_cannot_slip_past_a_tag():
     ), "待发条目的检查跑在读手写正文之后 —— 那时该发的正文已经定了"
 
 
-def _check_pending(tmp_path, body: str | None):
-    """按发布链的用法跑一次闸：返回 (退出码, stderr)。"""
+def _check_pending(tmp_path, body: str | None, write: bool = True):
+    """按发布链的用法跑一次闸：返回 (退出码, stderr)。
+
+    `body is None` = 暂存文件根本不存在；`write=False` = 文件已由调用方摆好。
+    """
     pending = tmp_path / "UNRELEASED.md"
-    if body is not None:
+    if body is not None and write:
         pending.write_text(body, encoding="utf-8")
     proc = subprocess.run(
         [
@@ -800,7 +803,28 @@ def test_the_pending_notes_gate_greens_once_the_entries_are_moved_out(tmp_path):
     assert code == 0, f"条目已并入却仍然红（exit {code}）"
 
 
-def test_the_pending_notes_gate_is_silent_when_there_is_nothing_staged(tmp_path):
-    """暂存文件不存在不是错误——没有待发条目的版本照常发。"""
-    code, _ = _check_pending(tmp_path, None)
-    assert code == 0, f"没有暂存文件却拦下了发布（exit {code}）"
+def test_the_pending_notes_gate_reds_when_the_staging_file_is_gone(tmp_path):
+    """**「找不到」不是「已迁移」。**
+
+    闸的第一版把文件不存在读成了「没有待发条目」，于是删掉
+    `UNRELEASED.md` 就能让它绿——而它守的恰恰是那份文件里的东西：
+    迁移提示跟着文件一起消失，发布链全绿，用户升级后一个字也看不到。
+    判据在，但它要读的那个东西不在时它不红——本仓库反复清理的那个家族
+    （#238 的 `faulthandler_exit_on_timeout` 退化成一条 warning 是同一形状）。
+
+    M4 钉的是对称的另一半（判成「文件非空」→ 永远红 → 被人删掉），
+    两个方向缺一条这道闸就是摆设。
+    """
+    code, err = _check_pending(tmp_path, None)
+    assert code == 1, f"暂存文件不见了却放行（exit {code}）"
+    assert "找不到" in err, "报文没说清缺的是这份文件 —— 报错文案也是断言"
+    assert "Traceback" not in err, "读不到时甩了个栈：看到栈的人会以为脚本坏了，然后把这一步拿掉"
+
+
+def test_the_pending_notes_gate_reds_when_the_staging_file_is_unreadable(tmp_path):
+    """读不出来也不算已并入，且报的是原因不是栈。"""
+    bad = tmp_path / "UNRELEASED.md"
+    bad.write_bytes(b"## Notes\n\xff\xfe not utf-8\n")
+    code, err = _check_pending(tmp_path, None, write=False)
+    assert code == 1, f"文件解不出来却放行（exit {code}）"
+    assert "读不了" in err and "Traceback" not in err, err

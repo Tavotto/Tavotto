@@ -15,8 +15,17 @@
 `docs/release-notes/<tag>.md` 并从暂存文件里删掉**，说明性的注释留在原处，
 所以「还有没有待发条目」与「文件是不是空的」不是一回事。
 
+**三个方向都要钉住，缺一条就是空门禁：**
+
+* 文件在、还有 `## ` 段落 → 红（没并入就不给发）；
+* 文件在、段落已并入 → 绿（剩下的说明注释不算条目）；
+* **文件不在 / 读不出来 → 红**。这一条最容易漏：把「找不到」读成「已迁移」，
+  闸就在它唯一该拦的时刻放行——`UNRELEASED.md` 被删掉，连同里面那条迁移
+  提示一起消失，而发布链全绿。判据在，但它要读的东西不在时它不红，
+  这正是本仓库反复清理的那个家族。
+
 用法：`python scripts/check_pending_release_notes.py [--pending PATH] [--tag TAG]`
-待发条目为空时静默退出 0；还有条目时把每一段的标题打出来并退出 1。
+待发条目为空时静默退出 0；其余情况把原因打到 stderr 并退出 1。
 """
 
 from __future__ import annotations
@@ -44,14 +53,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tag", default=None, help="这一版的 tag，只用于错误信息")
     args = ap.parse_args(argv)
 
-    if not args.pending.exists():
-        return 0
-    sections = pending_sections(args.pending.read_text(encoding="utf-8"))
+    rel = args.pending.relative_to(ROOT) if args.pending.is_relative_to(ROOT) else args.pending
+
+    # 报错文案也是断言：读不到时要说清缺的是什么，而不是甩一个栈出来——
+    # 发布链上看到栈的人第一反应是「脚本坏了」，然后把这一步拿掉。
+    try:
+        text = args.pending.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(
+            f"找不到 {rel} —— 待发条目的暂存文件不该消失。"
+            "它被删掉的话，里面那条还没发出去的迁移提示会跟着一起消失，"
+            "而这道闸永远不会再红。请恢复它（没有待发条目时只留说明注释）。",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, UnicodeDecodeError) as exc:
+        print(
+            f"读不了 {rel}（{type(exc).__name__}: {exc}）—— 读不出来就不算已并入。", file=sys.stderr
+        )
+        return 1
+
+    sections = pending_sections(text)
     if not sections:
         return 0
 
     target = f"docs/release-notes/{args.tag}.md" if args.tag else "docs/release-notes/<tag>.md"
-    rel = args.pending.relative_to(ROOT) if args.pending.is_relative_to(ROOT) else args.pending
     print(f"{rel} 里还有 {len(sections)} 条待发条目没有并进 {target}：", file=sys.stderr)
     for s in sections:
         print(f"  {s}", file=sys.stderr)
