@@ -53,7 +53,9 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
   // （25 s 进编辑态 + 80 s 渲染在旧断言下是红的，在"两个独立超时"下是绿的）。
   // 诊断性拆分不该顺带买来 30 秒预算。
   const deadline = Date.now() + 90_000
-  const left = () => Math.max(0, deadline - Date.now())
+  // **下限 1 而不是 0**：Playwright 把 `timeout: 0` 读成"不设超时"，
+  // 预算耗尽反而变成永不超时——那是本次修复要挡的事情的反面
+  const left = () => Math.max(1, deadline - Date.now())
   await expect(
     page.locator('[data-exit-element-edit]'),
     '双击素材卡之后没有进入图内编辑',
