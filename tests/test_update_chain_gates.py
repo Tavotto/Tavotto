@@ -289,9 +289,19 @@ def test_n1_new_process_is_pinned_by_image_path_not_by_name():
     run 33027201414 就是这么红的）。
     """
     job = _n1_job()
-    assert "$exe.Equals($shell, [System.StringComparison]::OrdinalIgnoreCase)" in job, (
+    assert "Resolve-TavottoPath $exe" in job and "$shellCanon" in job, (
         "「新进程」不再按壳的映像路径认——按进程名取会把 sidecar 认成壳"
     )
+    # 两侧都要过规范化：只规范化一侧＝拿规范化的尺子去量没规范化的东西
+    assert "$shellCanon = Resolve-TavottoPath $shell" in job, (
+        "壳这一侧没有规范化——尾部反斜杠 / 大小写 / 8.3 短名任一对不上就红在正式发布中途"
+    )
+    for token, why in [
+        ("[System.IO.Path]::GetFullPath", "重复分隔符与 `..` 不会被归并"),
+        ("GetLongPathName", "8.3 短名不会被展开"),
+        ("OrdinalIgnoreCase", "Windows 路径大小写不敏感，逐字比会误判"),
+    ]:
+        assert token in job, f"路径规范化里少了 {token}——{why}"
     assert "Where-Object { $_.Id -ne $p.Id } | Select-Object -First 1" not in job, (
         "又回到了「第一个不是旧进程的同名进程」——那正是 #147 的红灯来源"
     )

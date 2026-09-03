@@ -834,6 +834,40 @@ jobs:
           # 问题，加再多重试也救不回来。v0.12.0 run 33027201414 的
           # 「✓ 新进程 pid 1284，ProductVersion=」就是这个形状：它在
           # DisplayVersion 确认后第一轮轮询（1 秒）就命中了。
+          # 两侧路径**规范化后再比**，不比逐字。这三样任一对不上，首测就红在
+          # 正式发布中途，代价最高：
+          #  · `InstallLocation` 带不带尾部反斜杠，注册表里两种写法都有；
+          #  · Windows 路径大小写不敏感，CIM 与注册表未必给同一种拼法；
+          #  · 8.3 短名（`C:\Users\RUNNER~1\…`）与长名指向同一个文件。
+          # 判据两个方向都要成立：同一个文件的畸形写法必须匹配上，**不同的
+          # 文件必须匹配不上**——只钉一条边是这个仓库反复出现的形状。
+          function Resolve-TavottoPath([string]$Path) {
+            if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+            $q = $Path.Trim().Trim('"')
+            # GetFullPath 归并重复分隔符、解 `..`、统一分隔符
+            try { $q = [System.IO.Path]::GetFullPath($q) } catch { }
+            # 8.3 短名展开。**只有 Windows 有**，失败就退回上一步的结果——
+            # 这一段本机（macOS）验不了，见 PR 正文的「仍未执行」一节。
+            try {
+              if (-not ([System.Management.Automation.PSTypeName]'TavottoLongPath').Type) {
+                # 别用 @'…'@ here-string：它的定界符必须顶格，而顶格会终结
+                # YAML 的块标量，整个 workflow 直接解析失败。
+                $sig = '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]' +
+                       ' public static extern uint GetLongPathName(string s,' +
+                       ' System.Text.StringBuilder b, uint n);'
+                Add-Type -Name TavottoLongPath -Namespace '' -MemberDefinition $sig
+              }
+              $sb = New-Object System.Text.StringBuilder 32767
+              if ([TavottoLongPath]::GetLongPathName($q, $sb, 32767) -gt 0 -and $sb.Length -gt 0) {
+                $q = $sb.ToString()
+              }
+            } catch { }
+            return $q.TrimEnd([System.IO.Path]::DirectorySeparatorChar,
+                              [System.IO.Path]::AltDirectorySeparatorChar)
+          }
+          $shellCanon = Resolve-TavottoPath $shell
+          Write-Host "壳的规范化映像路径：$shellCanon"
+
           $fresh = $null
           $procPath = ""
           $seen = @{}
@@ -848,7 +882,8 @@ jobs:
               $exe = if ($ci) { "$($ci.ExecutablePath)" } else { "" }
               if ([string]::IsNullOrWhiteSpace($exe)) { continue }
               $seen[$c.Id] = $exe
-              if ($exe.Equals($shell, [System.StringComparison]::OrdinalIgnoreCase)) {
+              if ([string]::Equals((Resolve-TavottoPath $exe), $shellCanon,
+                                   [System.StringComparison]::OrdinalIgnoreCase)) {
                 $fresh = $c; $procPath = $exe; break
               }
             }
