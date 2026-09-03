@@ -49,7 +49,8 @@ const ws = () => useWorkspaceStore.getState()
 const reset = async () => {
   localStorage.clear()
   useSelectionStore.getState().clear()
-  useUiStore.getState().setElementPanel(null)
+  useUiStore.getState().setElementPanel(null) // 顺带清 selectedGids 与 cropTargetId
+  useUiStore.setState({ editingTextId: null }) // setElementPanel 不清它，会漏到下一条用例
   ws().clear()
   useAssetStore.setState({
     panels: [info('a.pdf'), info('b.pdf')],
@@ -185,6 +186,29 @@ describe('源脚本关联迟到（issue #267）', () => {
     scriptArrives('late.pdf')
 
     expect(useUiStore.getState().elementPanelId).toBe(other)
+  })
+
+  it('用户正在裁剪这张图：迟到的关联不打断他（会清掉 cropTargetId）', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    const id = panelOf('late.pdf').id
+    useUiStore.getState().setCropTarget(id) // 属性页的「裁剪」/ Enter
+
+    scriptArrives('late.pdf')
+
+    // 补进图内编辑会调 setElementPanel()，而它清 cropTargetId + selectedGids
+    expect(useUiStore.getState().cropTargetId).toBe(id)
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+  })
+
+  it('用户正在改画布上的文字：迟到的关联同样不插进来', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    useUiStore.setState({ editingTextId: 't1' })
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBeNull()
   })
 
   it('工作区已经切到别的图：迟到的关联不越过它把用户拉回去', () => {

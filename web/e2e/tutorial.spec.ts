@@ -47,14 +47,21 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
   //   第二条红 = 进去了，但那一版矢量渲染没回来。
   // 合成一条时两种都只报 "element(s) not found"，得下载 trace 才分得开——
   // 而它恰恰是在合并队列里踢 PR 的那一条。
+  //
+  // **两条共用同一个 90 s 截止期。** 顺序执行的两个 timeout 会相加：
+  // 30 s + 90 s 意味着实际截止期变成最多 120 s——数字一个没改，判据却松了
+  // （25 s 进编辑态 + 80 s 渲染在旧断言下是红的，在"两个独立超时"下是绿的）。
+  // 诊断性拆分不该顺带买来 30 秒预算。
+  const deadline = Date.now() + 90_000
+  const left = () => Math.max(0, deadline - Date.now())
   await expect(
     page.locator('[data-exit-element-edit]'),
     '双击素材卡之后没有进入图内编辑',
-  ).toBeVisible({ timeout: 30_000 })
+  ).toBeVisible({ timeout: Math.min(30_000, left()) })
   await expect(
     page.locator('[data-element-svg]').first().locator('svg'),
     '进了图内编辑，但这一版的矢量渲染没回来',
-  ).toBeVisible({ timeout: 90_000 })
+  ).toBeVisible({ timeout: left() })
 
   // ---- Step 2：选一个文字（高亮环套着图里的标题；点它的中心 = 真实选中） ----
   await expect(coachmark(page)).toContainText('选一个文字')
