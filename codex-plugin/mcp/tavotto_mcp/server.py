@@ -550,6 +550,19 @@ HANDLERS = {
 UI_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides")
 
 
+def _human_error(payload: dict) -> str:
+    """给人看的那一份：错误 + 下一步，**不含机器码**。"""
+    text = str(payload.get("error") or "")
+    recovery = payload.get("recovery")
+    if isinstance(recovery, str):
+        step = recovery.strip()
+        if step and step not in text:
+            text += f"\n下一步：{step}"
+    elif isinstance(recovery, (list, tuple)) and recovery:
+        text += "\n恢复步骤：\n- " + "\n- ".join(str(item) for item in recovery)
+    return text
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -561,9 +574,13 @@ def call_tool(name: str, args: dict) -> dict:
     except bridge.BridgeError as exc:
         payload = exc.payload()
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
+        # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
+        # 把机器码摆在最前面，模型多半会连着念出去——用户听到
+        # 「workspace_confirmation_no_response」等于什么都没听到。同 ADR 0021
+        # 的「code 稳定，文案随时可改」：稳定的是 code，给人看的是文案与下一步。
         return {
             "isError": True,
-            "content": _text(f"[{payload['code']}] {payload['error']}"),
+            "content": _text(_human_error(payload)),
             "structuredContent": payload,
         }
     if name in UI_TOOLS:
@@ -695,7 +712,9 @@ class Server:
             "roots", "roots/list", None, ROOTS_REQUEST_TIMEOUT_S
         )
         if transport_error:
-            bridge.fail_protocol_roots(transport_error)
+            # 声明了 capability 却没把响应送回来 = 宿主接线的问题，**不是**
+            # 「没配工作区」，更不是用户拒绝（issue #173）。
+            bridge.fail_protocol_roots(transport_error, state="no_response")
             return
         assert response is not None
         protocol_error = self._response_error(response)
@@ -736,7 +755,9 @@ class Server:
             ELICITATION_REQUEST_TIMEOUT_S,
         )
         if transport_error:
-            bridge.fail_user_binding(transport_error)
+            # 超时 / EOF / 没有可等待的传输：**框从没到过用户面前**。报成用户
+            # 拒绝会把人送去「再点一次」，而根本没有框可点（issue #173）。
+            bridge.fail_user_binding(transport_error, state="no_response")
             return
         assert response is not None
         protocol_error = self._response_error(response)

@@ -407,9 +407,18 @@ python codex-plugin/mcp/server.py --self-check
 用户经 MCP elicitation 批准、只活在本连接内的精确目录 → 宿主传过来的工作区变量
 （`TAVOTTO_MCP_WORKSPACE` / `CODEX_WORKSPACE_ROOT` / `CODEX_PROJECT_ROOT` /
 `CODEX_WORKSPACE_DIR`）→ 进程 cwd，**且它不在插件包自己的目录里**。装好的插件
-cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一个都拿不到时按能力返回
-`workspace_confirmation_required` 或 `no_workspace_root`——不静默放行，也不把
-模型参数当权限。
+cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一个都拿不到时**按失败原因
+分档**返回——不静默放行，也不把模型参数当权限。
+
+**失败分档**（每档一个稳定 `code` + 一个 `disposition` + 一句 `recovery`）：
+用户看着确认框拒绝是 `workspace_confirmation_declined`（`ask_user_again`）；
+宿主声明了 `elicitation`/`roots` 却**没把框送到用户面前**（超时、断开）是
+`workspace_confirmation_no_response` / `workspace_roots_no_response`
+（`fix_host_wiring`——这不是用户拒绝，再点也不会有提示，去查宿主接线）；
+路径越界是 `path_out_of_scope`（`narrow_the_path`，错误里列出允许的根）；
+宿主既没给目录也不支持确认是 `no_workspace_root`（`configure_roots`，直接给
+`TAVOTTO_MCP_ROOTS` 的用法）。`tavotto_health` 的
+`root_authority.authorization` 不用先失败一次就能看到当前这一档。
 
 ## 已知限制
 

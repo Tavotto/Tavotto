@@ -47,7 +47,18 @@ from tavotto.engine import (
     telemetry as engine_telemetry,
 )
 
-from .roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority, canonical_path
+from .roots import (
+    CODE_AMBIGUOUS_ROOT,
+    CODE_NO_WORKSPACE_ROOT,
+    CODE_PATH_OUT_OF_SCOPE,
+    CODE_ROOTS_ERROR,
+    CODE_ROOTS_NO_RESPONSE,
+    ROOTS_ENV,
+    WORKSPACE_ENVS,
+    WORKSPACE_FAILURES,
+    RootAuthority,
+    canonical_path,
+)
 
 #: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
@@ -108,12 +119,16 @@ def fail_user_binding(message: str, *, state: str = "error") -> None:
     _ROOT_AUTHORITY.fail_user_binding(message, state=state)
 
 
+def workspace_failure():
+    return _ROOT_AUTHORITY.failure()
+
+
 def accept_protocol_roots(result) -> None:
     _ROOT_AUTHORITY.accept_protocol_result(result)
 
 
-def fail_protocol_roots(message: str) -> None:
-    _ROOT_AUTHORITY.fail_protocol(message)
+def fail_protocol_roots(message: str, *, state: str = "error") -> None:
+    _ROOT_AUTHORITY.fail_protocol(message, state=state)
 
 
 def mark_protocol_roots_stale() -> None:
@@ -125,48 +140,36 @@ def reset_root_authority() -> None:
 
 
 def _no_roots_error() -> "BridgeError":
-    """一个可用的根都没有时说人话。
+    """一个可用的根都没有时说人话——**并且说清是哪一档**。
 
-    静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索
-    ——两种都不行，所以这里把**要设哪个变量**直接写出来。
+    静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索。
+    但把失败并成一档同样不行（issue #173）：宿主声明了 elicitation 却没弹框，
+    与用户看着框按了拒绝，处置正好相反。分档与措辞的唯一出处是
+    `roots.WORKSPACE_FAILURES`，这里只负责把当时的细节接上去。
     """
     diagnostics = root_diagnostics()
     confirmation = diagnostics.get("workspace_confirmation") or {}
-    state = confirmation.get("state")
-    code = "no_workspace_root"
-    confirmation_note = ""
-    recovery = f"把 {ROOTS_ENV} 设成工作目录后重试。"
-    if diagnostics.get("source") not in {
-        "explicit_env",
-        "mcp_roots",
-        "mcp_roots_pending",
-        "mcp_roots_error",
-    }:
-        if state == "available":
-            code = "workspace_confirmation_required"
-            confirmation_note = (
-                " 宿主支持工作区确认；请用一个绝对、已存在的项目路径重新调用 "
-                "tavotto_open_figure，Tavotto 会显示精确目录请用户批准。"
-            )
-            recovery = "改传绝对项目路径，让用户核对并批准确认框；不要猜测授权结果。"
-        elif state in {"declined", "cancelled", "error"}:
-            code = f"workspace_confirmation_{state}"
-            confirmation_note = (
-                f" 工作区确认状态: {state}"
-                f"（{confirmation.get('error') or '没有批准目录'}）。"
-                "不要自动循环重试；等用户主动重新发起，或改用显式服务器配置。"
-            )
-            recovery = "等待用户在可交互 Codex 界面重新发起并批准，或显式配置根。"
+    failure = workspace_failure()
+    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR}:
+        detail = "；".join(diagnostics.get("warnings") or ())
+    elif failure.code == CODE_NO_WORKSPACE_ROOT:
+        detail = (
+            f"{ROOTS_ENV} 没设，宿主也没给工作区目录"
+            f"（找过 {', '.join(WORKSPACE_ENVS)}），进程 cwd 也不是可用工作区"
+            "（可能是插件目录，或已在插件更新时被替换）"
+        )
+    else:
+        detail = confirmation.get("error") or ""
+    message = failure.summary
+    if detail:
+        message += f"（{detail}）"
     return BridgeError(
-        f"没有可用的项目根：{ROOTS_ENV} 没设，宿主也没给工作区目录"
-        f"（找过 {', '.join(WORKSPACE_ENVS)}），而进程 cwd 不是可用工作区"
-        "（可能是插件目录，或已在插件更新时被替换）。"
-        + confirmation_note
-        + f"把 {ROOTS_ENV} 设成你的工作目录（{os.pathsep} 分隔多个）再试。",
-        code=code,
+        message,
+        code=failure.code,
         roots=[],
+        disposition=failure.disposition,
+        recovery=failure.next_step,
         workspace_confirmation=confirmation,
-        recovery=recovery,
     )
 
 
@@ -193,9 +196,12 @@ def check_scope(path: str) -> str:
     target = os.path.expanduser(str(path))
     if not os.path.isabs(target):
         if len(roots) != 1:
+            failure = WORKSPACE_FAILURES[CODE_AMBIGUOUS_ROOT]
             raise BridgeError(
-                "相对路径需要恰好一个可信工作区根；当前有多个根，请传绝对路径。",
-                code="ambiguous_workspace_root",
+                failure.summary,
+                code=failure.code,
+                disposition=failure.disposition,
+                recovery=failure.next_step,
                 roots=roots,
                 path=target,
             )
@@ -203,10 +209,12 @@ def check_scope(path: str) -> str:
     real = canonical_path(target)
     if any(_within(real, r) for r in roots):
         return real
+    failure = WORKSPACE_FAILURES[CODE_PATH_OUT_OF_SCOPE]
     raise BridgeError(
-        f"路径不在允许的范围内: {real}（允许的根: {os.pathsep.join(roots)}）。"
-        f"要放开别的目录，把 {ROOTS_ENV} 设成它们（{os.pathsep} 分隔）。",
-        code="path_out_of_scope",
+        f"{failure.summary}不在范围内的是 {real}；当前允许的根: {os.pathsep.join(roots)}。",
+        code=failure.code,
+        disposition=failure.disposition,
+        recovery=failure.next_step,
         roots=roots,
         path=real,
     )

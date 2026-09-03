@@ -502,7 +502,10 @@ def _degraded_server(
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": f"[{code}] {hint}\n恢复步骤：\n- "
+                                    # code 只留在 structuredContent 里：这段是
+                                    # 念给用户听的。
+                                    "text": hint
+                                    + "\n恢复步骤：\n- "
                                     + "\n- ".join(payload["recovery"]),
                                 }
                             ],
@@ -517,7 +520,14 @@ def _degraded_server(
                         "id": rid,
                         "result": {
                             "isError": True,
-                            "content": [{"type": "text", "text": f"[{code}] {hint}"}],
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": hint
+                                    + "\n恢复步骤：\n- "
+                                    + "\n- ".join(payload["recovery"]),
+                                }
+                            ],
                             "structuredContent": payload,
                         },
                     }

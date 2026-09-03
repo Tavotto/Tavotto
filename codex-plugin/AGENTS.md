@@ -106,6 +106,10 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   批准、只活在本连接内的精确 realpath → 宿主工作区变量 → 安全 cwd。模型传来的
   `project_path` 只是候选，不能自证权限；相对路径只有恰好一个可信根时才解析。
   确认框默认 false，拒绝/取消/超时一律 fail-closed，重新 initialize 清掉授权；
+  **授权失败要分档**（issue #173）：唯一出处 `roots.WORKSPACE_FAILURES`，一个稳定
+  `code` ↔ 一个 `disposition` ↔ 一句下一步；「宿主声明了能力却没弹框」是独立一档
+  （`fix_host_wiring`），**绝不能报成用户拒绝**——两者的处置正好相反。code 只作机器
+  标识，不许当文案念给用户；
   root 改变后旧 session 必须回 `workspace_root_changed`。server→client 请求只能在
   活跃 `tools/call` 内发，reader pump 必须保序且有界等待。越界一律拒，**绝不
   「就近找一个能用的」**。看护 `tests/test_mcp_roots.py`、双向协议用例与

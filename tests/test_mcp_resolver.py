@@ -247,6 +247,9 @@ def test_degraded_normal_tool_calls_are_structured_errors():
     assert body["recovery"], "错误必须带恢复步骤"
     text = result["content"][0]["text"]
     assert "已打开" not in text and "已就绪" not in text
+    # 降级 server 是同一形状的第二个消费点：code 只进 structuredContent
+    assert body["code"] not in text
+    assert all(step in text for step in body["recovery"])
 
 
 def test_degraded_refresh_tool_is_a_structured_error_too():
