@@ -562,6 +562,78 @@ def test_a_launcher_that_only_degrades_still_counts_as_startable(tmp_path):
     assert not ok and "没有体检 JSON" in detail, detail
 
 
+def _plugin_with_two_manifests(tmp_path):
+    plugin = tmp_path / "plug"
+    (plugin / "skills" / "s" / "agents").mkdir(parents=True)
+    (plugin / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"tavotto": {"command": "python3"}}}) + "\n", encoding="utf-8"
+    )
+    (plugin / "skills" / "s" / "agents" / "openai.yaml").write_text(
+        "dependencies:\n  tools:\n    - type: mcp\n      command: python3\npolicy:\n  x: 1\n",
+        encoding="utf-8",
+    )
+    return plugin
+
+
+def test_pinning_is_all_or_nothing_when_the_second_file_fails(tmp_path, monkeypatch):
+    """第二份换不上去时，**磁盘上两份都保持原样**。
+
+    半套状态正是这条 issue 想避免的那个坏结局：Codex 按 command 匹配 stdio 依赖，
+    `.mcp.json` 换了、`openai.yaml` 没换的话，插件自带的 server 会被当成「还没装」，
+    用户每装一次被告知一次没装。
+
+    判据的主语是**那两个文件的字节**，不是「有没有抛异常」——只写一侧的实现照样抛，
+    抛的时候磁盘已经坏了。故障注入钉在 `os.replace` 上：那是任何一份正确实现都必须
+    经过的那一步（不是某个 helper），所以退回「两次独立写」时它同样会被打到。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import atomicio, codexinstall
+
+    plugin = _plugin_with_two_manifests(tmp_path)
+    mcp, yml = plugin / ".mcp.json", plugin / "skills" / "s" / "agents" / "openai.yaml"
+    before = (mcp.read_bytes(), yml.read_bytes())
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:  # 第二份的那一次 rename
+            raise OSError(28, "No space left on device")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(atomicio.os, "replace", flaky)
+    with pytest.raises(OSError):
+        codexinstall.pin_launcher_command(plugin, "/opt/real/python")
+
+    assert (mcp.read_bytes(), yml.read_bytes()) == before, "留下了半套状态"
+    assert calls["n"] >= 3, "根本没试过回滚"
+    leftovers = sorted(q.name for q in plugin.rglob("*.tmp"))
+    assert leftovers == [], f"留下了临时文件：{leftovers}"
+
+
+def test_pinning_writes_through_a_symlinked_manifest(tmp_path):
+    """清单是符号链接时，换的是**它指向的那个文件**，不是把链接替换成普通文件。
+
+    `os.replace()` 换的是路径本身——PR #254 上正因为这条吃过一条 P1：链接被换成了
+    普通文件，旧内容原封不动留在那头，而调用方报「换好了」。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = _plugin_with_two_manifests(tmp_path)
+    real = tmp_path / "elsewhere" / "openai.yaml"
+    real.parent.mkdir()
+    link = plugin / "skills" / "s" / "agents" / "openai.yaml"
+    real.write_bytes(link.read_bytes())
+    link.unlink()
+    link.symlink_to(real)
+
+    codexinstall.pin_launcher_command(plugin, "/opt/real/python")
+    assert link.is_symlink(), "符号链接被换成了普通文件"
+    assert "command: /opt/real/python" in real.read_text(encoding="utf-8"), "写的不是链接指向的那份"
+
+
 def test_pinning_only_touches_the_dependency_command(tmp_path):
     """钉命令只动 `dependencies:` 块里那一行，`interface:` / `policy:` 不许被扫到。"""
     sys.path.insert(0, str(SRC))

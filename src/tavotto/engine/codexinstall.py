@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import brand
+from . import atomicio, brand
 from .runtime import CREATE_NO_WINDOW
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
@@ -39,6 +39,7 @@ ERR_MARKETPLACE = "marketplace_add_failed"
 ERR_PLUGIN = "plugin_add_failed"
 ERR_PROVISION = "provision_failed"
 ERR_INTERPRETER = "interpreter_unusable"
+ERR_PIN = "pin_failed"
 ERR_HEALTH = "health_failed"
 ERR_UNINSTALL = "uninstall_failed"
 
@@ -248,29 +249,86 @@ def _replace_dependency_command(text: str, command: str) -> str:
     return text[: m.start()] + block + text[m.end() :]
 
 
-def pin_launcher_command(plugin_dir: Path, command: str) -> list[str]:
-    """把**已装副本**的启动命令钉到 `command`，`.mcp.json` 与 `openai.yaml` 一起改。
+def _resolved(path: Path) -> Path:
+    """跟着符号链接走到真正那个文件。
 
-    这两处是根 `AGENTS.md` 列的严格同源对：Codex 的 stdio 依赖按 `command` 做
-    规范键匹配，只改一侧的话技能声明的依赖对不上插件自带的 server，Codex 会把它
-    当成「还没装」再弹一次安装提示。改的是**已装副本**，仓库里那份不动——仓库里
-    钉的是跨机器的引导默认值，绝对路径只属于这一台机器。
+    `os.replace()` 换的是**路径本身**：目标是个符号链接时，替换掉的是链接、而不是
+    它指向的文件——旧内容原封不动留在那头，工程结构还被改了（PR #254 上因此吃过
+    一条 P1）。这里先解析，tmp 也落在解析后的同一个目录里（跨设备 rename 不原子）。
     """
-    changed: list[str] = []
+    return Path(os.path.realpath(path))
+
+
+def _pin_plan(plugin_dir: Path, command: str) -> list[tuple[Path, bytes, bytes, str]]:
+    """算出要落的两份内容——**全在内存里**，这一步失败磁盘一个字节都没碰过。"""
+    plan: list[tuple[Path, bytes, bytes, str]] = []
     mcp_path = plugin_dir / ".mcp.json"
-    data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    old = mcp_path.read_bytes()
+    data = json.loads(old.decode("utf-8"))
     for entry in data.get("mcpServers", {}).values():
         if isinstance(entry, dict) and "command" in entry:
             entry["command"] = command
-    mcp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    changed.append(mcp_path.name)
+    new = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    plan.append((_resolved(mcp_path), old, new, mcp_path.name))
     for yaml_path in sorted(plugin_dir.glob("skills/*/agents/openai.yaml")):
-        text = yaml_path.read_text(encoding="utf-8")
-        new = _replace_dependency_command(text, command)
-        if new != text:
-            yaml_path.write_text(new, encoding="utf-8")
-            changed.append(yaml_path.relative_to(plugin_dir).as_posix())
-    return changed
+        old = yaml_path.read_bytes()
+        new = _replace_dependency_command(old.decode("utf-8"), command).encode("utf-8")
+        if new != old:
+            plan.append(
+                (_resolved(yaml_path), old, new, yaml_path.relative_to(plugin_dir).as_posix())
+            )
+    return plan
+
+
+def pin_launcher_command(plugin_dir: Path, command: str) -> list[str]:
+    """把**已装副本**的启动命令钉到 `command`，`.mcp.json` 与 `openai.yaml` 一起改。
+
+    这两处是根 `AGENTS.md` 列的严格同源对：Codex 的 stdio 依赖按 `command` 做规范键
+    匹配，只改一侧的话技能声明的依赖对不上插件自带的 server，Codex 会把它当成「还没
+    装」——用户每装一次就被告知一次没装。改的是**已装副本**，仓库里那份不动。
+
+    **「一起改」必须是事务性的，不只是「两条写在一起」**：一份落了、另一份抛了，留下
+    的正是上面那个坏状态。所以分两段——
+
+    1. 两份新内容全在内存里算好，各写成同目录 tmp（序列化错、磁盘满、权限不足都在
+       这一段暴露，此时磁盘上两份原文一字未动）；
+    2. 连续 `publish_file` 换上去。第 k 份换失败时，把已经换掉的前 k-1 份按原字节
+       写回去，再抛 `AtomicWriteError`。
+
+    落盘一律走 `engine/atomicio`（ADR 0023：文档类写入只有一份实现），**不在这里写
+    第二份 tmp+replace**。
+    """
+    plan = _pin_plan(plugin_dir, command)
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for dest, _old, new, _label in plan:
+            tmp = dest.with_name(f"{dest.name}.{os.getpid()}.pin.tmp")
+            with open(tmp, "wb") as fh:
+                fh.write(new)
+            staged.append((tmp, dest))
+    except OSError as exc:
+        for tmp, _dest in staged:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise atomicio.AtomicWriteError("write_failed", f"临时文件写不出来：{exc}", plan[0][0])
+
+    done: list[tuple[Path, bytes]] = []
+    for (tmp, dest), (_d, old, _new, _label) in zip(staged, plan):
+        try:
+            atomicio.publish_file(tmp, dest)
+        except OSError:
+            for later_tmp, _later_dest in staged[len(done) + 1 :]:
+                try:
+                    later_tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for applied, original in reversed(done):
+                atomicio.write_bytes(applied, original)  # 回滚：换回原字节
+            raise
+        done.append((dest, old))
+    return [label for _d, _o, _n, label in plan]
 
 
 def _verified_interpreter(server: Path, py: str | None) -> str | None:
@@ -452,7 +510,16 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
             detail=f"`{command}` 起不来启动器（{detail}），也没找到能替它的解释器。"
             "装一个 Python（或用 TAVOTTO_MCP_PYTHON 指一个）再重跑。",
         )
-    changed = pin_launcher_command(plugin_dir, chosen)
+    try:
+        changed = pin_launcher_command(plugin_dir, chosen)
+    except OSError as exc:
+        # 事务失败：两份清单都还是原样（见 pin_launcher_command 的两段式）
+        return _step(
+            "interpreter",
+            ok=False,
+            code=ERR_PIN,
+            detail=f"两份清单没能一起换上去，已回滚到原样：{exc}",
+        )
     return _step(
         "interpreter",
         ok=True,
