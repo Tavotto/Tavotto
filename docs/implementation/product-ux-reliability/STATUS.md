@@ -619,7 +619,20 @@ BLOCKED — 不建议发布
 所以不再记成 0。阻断项与最短修复路径：
 
 1. **main 上 Lab Qualification 连红**（#225，`test_project_env.py` 14 条）——release 档的 lab 资格拿不到。
-   修法：给实验室 runner 的 base 解释器装 matplotlib，或让 `venvfixture.make_project_venv` 不假设 base 带它。
+   **已定性（PR #239）：根因是用例的前提错了，不是机器残缺——机器侧无待办。**
+   `tests/support/venvfixture.py:57` 的 `make_project_venv()` 用 `python -m venv --system-site-packages`，
+   而 `--system-site-packages` 继承的是 **`sys.base_prefix` 的 site-packages，不是交给夹具的那个解释器的**；
+   两者只在「那个解释器就是基础解释器」时才重合。GitHub 腿一直绿是因为**重合**
+   （`.github/workflows/ci.yml:395-397` 把 `-e ".[dev]"` 与 matplotlib 装进 setup-python 的解释器，
+   pytest 用的也是它）；Lab 红是因为**不重合**（`_lab-qualification.yml:114-116` 是
+   `python3 -m venv "$VENV"` 之后往 `$VENV` 里装，base 是 `/usr/bin/python3`）。这条规则夹具自己
+   早就写在 `venvfixture.py:32-38` 的 docstring 里，当时只推到了「遮掉 `tavotto`」，没有推到 matplotlib 上。
+   ~~修法：给实验室 runner 的 base 解释器装 matplotlib~~ —— **这条解药是错的，别照做。**
+   科学栈版本由 `packaging/runtime-lock.json` 钉住、经 `scripts/ci/runtime_pins.py` 装进那个一次性 venv
+   （理由写在 `runtime_pins.py:4-5`：matplotlib 换一个小版本就会改掉抗锯齿、字体度量或默认样式）；
+   装到系统解释器上，等于让一个**没锁版本**的 matplotlib 经 `--system-site-packages` 漏回夹具 venv，
+   像素基线随之失去意义。**修法只有一条**：让 `make_project_venv` 不假设 base 带它 —— 见 **PR #239**。
+   状态：**待 CI 验证**（PR #239 未合；#225 真正关闭仍需 Lab Qualification 实跑一次绿）。
 2. **main 上 Nightly CompatBench 连红**（#226，四个多图用例 `native_run` 退成 product_bug）——nightly 门禁。
    修法：compat-bridge 轨道修 native run 的多图路由或按证据改基线声明。
 3. **桌面产物本分支未在 CI 执行过**：Session 19–23 改了 `tavotto.spec` 的 datas 与两条 workflow 的
@@ -675,7 +688,7 @@ BLOCKED — 不建议发布
 
 | 事项 | 级别 | 复现 / 影响 | 归属 |
 | --- | --- | --- | --- |
-| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225 | project-env + lab runner |
+| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225；已定性 = 夹具前提错（`--system-site-packages` 继承 base，不是交给它的解释器），**不是机器残缺**；修复在 **PR #239（未合）**，状态**待 CI 验证** | project-env（**lab runner 侧无待办**） |
 | main：Nightly CompatBench `native_run` 4 用例退成 product_bug | **P1（发布）** | #226 | compat-bridge |
 | 桌面产物：本分支的 datas / `--tutorial` 改动未在 CI 执行过；`delivered: local` 桌面限制 | P1（未验证，不是缺陷） | 合并队列 / `full-ci` 第一次执行 | 23 → PR |
 | main：Distribution metrics HTTP 400 | P2 | #227 | ops |
