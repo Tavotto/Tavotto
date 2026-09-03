@@ -264,12 +264,20 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
-  // 两条允许，各自带真核对：背景整片 aria-hidden（「焦点确实困在对话框里」由
+  // 三条允许，各自带真核对：背景整片 aria-hidden（「焦点确实困在对话框里」由
   // 紧接着那圈 Tab 断言覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个
-  // 核对——`color-contrast` 进不进 incomplete 随卡片数量与浏览器而变（这条
-  // 用例实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
+  // 核对；跨 landmark 的标题顺序由本文件自己按文档顺序核对。三条进不进
+  // incomplete 都随抽屉开合、卡片数量与浏览器而变（`color-contrast` 这条用例
+  // 实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
+  //
+  // `heading-order` 是跑 #210 的门禁时抓到的一条**旧**偶发：双击加面板后右栏会
+  // 切到「图元素」页，它那个 `h2` 与对话框的 `h2` 分属两个 landmark，axe 判不了
+  // 顺序就丢进 incomplete，而这条用例没声明它 → 红。切没切过去取决于扫描那一刻
+  // 右栏落定没有，所以时红时绿。交错 A/B 实测：**与 #210 的改动无关**，
+  // origin/main 上单跑 10 次同样红 3 次（chromium-en）。工作台/问题面板那两条
+  // 用例早就声明了它。
   await expectAccessible(page, {
-    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler],
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
 
   // 焦点 trap：连按 Tab 一整圈，焦点永远落在对话框里
