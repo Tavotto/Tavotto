@@ -1353,9 +1353,7 @@ def test_export_names_come_from_the_shared_filename_rules(project, fake_pool, tm
     assert checked_ok > 20 and checked_bad >= 2, (checked_ok, checked_bad)
 
 
-def test_one_format_failing_is_partial_and_publishes_nothing_for_it(
-    project, monkeypatch, tmp_path
-):
+def test_one_format_failing_is_partial_and_publishes_nothing_for_it(project, monkeypatch, tmp_path):
     """一个格式挂了：另一个照常交付，失败那项带自己的 code，**盘上不留半套**。
 
     以前是 `raise BridgeError` —— 已经写进最终目录的 PDF 留在那儿，调用方
