@@ -454,9 +454,7 @@ class TestRunWiresRefresh:
         assert done["refresh"] == {"status": "skipped"}
         assert ai_history.get(sid)["refresh"] == {"status": "skipped"}
 
-    def test_wait_done_barrier_survives_a_slow_record_end(
-        self, tmp_path, fake_cli, monkeypatch
-    ):
+    def test_wait_done_barrier_survives_a_slow_record_end(self, tmp_path, fake_cli, monkeypatch):
         """`_wait_done` 的屏障不许是「等够几毫秒」（issue #277）。
 
         往 `ai_history.record_end` 里注入一个**远大于**旧实现那 50ms 的延迟——它正好
