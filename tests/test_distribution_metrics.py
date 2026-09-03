@@ -489,7 +489,9 @@ def test_upstream_failure_is_a_nonzero_exit(monkeypatch, capsys):
     monkeypatch.setattr(
         collector,
         "transmit",
-        lambda *_a: (_ for _ in ()).throw(collector.CollectError("上报失败: HTTP 502")),
+        lambda *_a: collector.TransmitResult(
+            collector.SERVER_ERROR, "上报失败: HTTP 502", status=502
+        ),
     )
     rc = collector.main(
         [
@@ -501,7 +503,7 @@ def test_upstream_failure_is_a_nonzero_exit(monkeypatch, capsys):
             str(PYPI_FIXTURE),
         ]
     )
-    assert rc == 1
+    assert rc != 0
     err = capsys.readouterr().err
     assert "上报失败" in err
     assert "t0ken-abcdef" not in err, "错误输出里绝不能带 token"
@@ -512,3 +514,252 @@ def test_summary_keeps_installers_and_updaters_apart(events):
     assert summary["github_installer_downloads_lifetime"] == 1959
     assert summary["github_by_role"]["updater"]["downloads_total"] > 1959
     assert "users" not in json.dumps(summary["github_by_role"])
+
+
+# ---------------------------------------------------------------------------
+# 上报失败的**形状**（issue #227）
+#
+# 2026-08-28 到 09-02 连红六天，日志上从头到尾只有一句「上报失败: HTTP 400」。
+# 那六天里没有任何人能从日志判断出：token 好着呢（认证问题代理回 401 不回
+# 400），坏的是**线上代理的白名单还是 d2d7187c 之前那份**，不认识采集器当天
+# 开始发的 `update_check` / `plugin_manifest`。
+#
+# 下面这一组的主语是**日志**：不是「有没有失败」（那本来就红），而是
+# 「读日志的人能不能一眼分清是哪一种失败、下一步该动哪里」。
+# ---------------------------------------------------------------------------
+import io  # noqa: E402
+import urllib.error  # noqa: E402
+
+TOKEN = "s3cret-metrics-token-0123456789"
+
+#: 2026-09-02 那次真实的 400。旧代理（d2d7187c~1）对今天的 payload 的原样回复，
+#: 加上本 PR 给代理补的 `detail`。
+REAL_400_BODY = json.dumps(
+    {
+        "ok": False,
+        "code": "bad_property",
+        "error": "property not in enum",
+        "detail": "events[7].github_release_asset_snapshot.asset_role",
+    }
+).encode("utf-8")
+
+
+def _http_error(code: int, body: bytes = b"{}"):
+    def raiser(*_a, **_kw):
+        raise urllib.error.HTTPError(
+            "https://telemetry.tavotto.com/v1/metrics", code, "boom", {}, io.BytesIO(body)
+        )
+
+    return raiser
+
+
+def _http_ok(body: bytes, status: int = 200):
+    class Resp:
+        def __init__(self):
+            self.status = status
+
+        def read(self, *_a):
+            return body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    return lambda *_a, **_kw: Resp()
+
+
+def _transmit(monkeypatch, urlopen):
+    monkeypatch.setattr(collector.urllib.request, "urlopen", urlopen)
+    return collector.transmit(
+        [{"event": "github_repo_snapshot", "properties": {}}] * 3,
+        "https://telemetry.tavotto.com/v1/metrics",
+        TOKEN,
+    )
+
+
+def test_the_four_hundred_that_burned_six_days_now_names_itself(monkeypatch):
+    """400 必须说出 code / error / detail，并指向「先看线上代理是不是旧的」。
+
+    少了这三样，下一个人只能重烧一轮才知道 400 说的是什么——那正是 #227 的
+    六天。`detail` 尤其关键：一批 129 条，没有下标等于让人二分。
+    """
+    result = _transmit(monkeypatch, _http_error(400, REAL_400_BODY))
+    assert result.tier == collector.REJECTED
+    assert result.exit_code == 3
+    assert "bad_property" in result.message, result.message
+    assert "property not in enum" in result.message
+    assert "events[7].github_release_asset_snapshot.asset_role" in result.message
+    # 处方：重试无用 + 线上代理可能落后于仓库
+    assert "重试不会有任何变化" in result.hint
+    assert "fingerprint" in result.hint and "重新部署" in result.hint
+
+
+def test_unauthorized_is_not_folded_into_rejected(monkeypatch):
+    """401 和 400 的处方完全不同：一个改 secret，一个改 payload / 重新部署。
+
+    还要分清**第三件事**：「代理侧没配 token」（端点关着）与「本仓库没配
+    secret」不是一回事——后者根本走不到发请求这一步。
+    """
+    result = _transmit(monkeypatch, _http_error(401, b'{"code":"unauthorized"}'))
+    assert result.tier == collector.UNAUTHORIZED
+    assert result.exit_code == 4
+    assert "未授权" in result.message and "401" in result.message
+    assert "代理侧" in result.hint and "两件事" in result.hint
+
+
+def test_server_error_is_not_our_payload(monkeypatch):
+    result = _transmit(monkeypatch, _http_error(503, b'{"code":"upstream_error"}'))
+    assert result.tier == collector.SERVER_ERROR
+    assert result.exit_code == 5
+    assert "不是这一批的形状问题" in result.hint
+
+
+def test_network_failure_is_unknown_not_rejected(monkeypatch):
+    """**「不知道」是独立一档。**
+
+    连接断了/超时，请求已经发出去了，这批到底有没有被处理无从得知。并进
+    ACCEPTED 会让看板安静地缺一段；并进 REJECTED 会让人去改一个没坏的 payload。
+    只有这一档的处方是「重跑」——snapshot_key 去重让重跑安全。
+    """
+
+    def boom(*_a, **_kw):
+        raise urllib.error.URLError("connection reset")
+
+    result = _transmit(monkeypatch, boom)
+    assert result.tier == collector.UNKNOWN
+    assert result.exit_code == 6
+    assert "未知" in result.message and "无从得知" in result.message
+    assert "重跑是安全的" in result.hint
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html>Sign in to the network</html>",  # 强制门户
+        b'{"ok": true}',  # 像是成功，但没说收了几条
+        b'{"ok": true, "accepted": 1}',  # 收的条数对不上
+        b'{"ok": false, "accepted": 3}',
+    ],
+)
+def test_two_hundred_with_the_wrong_shape_is_unknown_not_success(monkeypatch, body):
+    """**「200」不等于「拿到了要的东西」。**
+
+    指错地址、域名过期被接管、公司网络的强制门户，都会回 200 加一坨别的东西。
+    把它当成功，看板会安静地缺一段而所有灯都是绿的——这比红灯坏得多。
+    """
+    result = _transmit(monkeypatch, _http_ok(body))
+    assert result.tier == collector.UNKNOWN, body
+    assert result.exit_code == 6
+
+
+def test_the_right_shape_is_accepted(monkeypatch):
+    """反过来：形状对了就必须是 ACCEPTED，否则上一条用例就成了恒真。"""
+    result = _transmit(monkeypatch, _http_ok(b'{"ok": true, "accepted": 3}'))
+    assert result.tier == collector.ACCEPTED
+    assert result.exit_code == 0
+
+
+def test_every_tier_has_its_own_exit_code():
+    """分档不能只在措辞上——退出码也要分得开，否则 workflow 层面仍是一团。"""
+    codes = collector.EXIT_CODES
+    assert len(set(codes.values())) == len(codes), codes
+    assert codes[collector.ACCEPTED] == 0
+    assert all(v != 0 for k, v in codes.items() if k != collector.ACCEPTED)
+    # 采集失败与缺配置也不许和上报的任何一档撞车
+    assert collector.EXIT_COLLECT_FAILED not in codes.values()
+    assert collector.EXIT_MISSING_CONFIG not in codes.values()
+
+
+@pytest.mark.parametrize("status", [400, 401, 500])
+def test_the_token_never_reaches_the_log(monkeypatch, status):
+    """哪一档都不许把 token 打出来——包括对面故意回显它的时候。"""
+    hostile = json.dumps({"code": "x", "error": f"got {TOKEN}"}).encode("utf-8")
+    result = _transmit(monkeypatch, _http_error(status, hostile))
+    text = f"{result.message} {result.hint}"
+    assert TOKEN not in text, text
+    assert "已整段丢弃" in result.message
+
+
+def test_control_characters_cannot_forge_a_log_line(monkeypatch, capsys):
+    """`::error::` 是**行首**指令：响应体里一个换行就能凭空捏出一条「错误」。
+
+    判据的主语是**打进日志的那几行**，不是「文本里出现过 `::error::` 没有」：
+    换行被剥掉之后那串字符还在，但它再也不可能站到行首去。
+    """
+    forged = json.dumps({"code": "a\n::error::这条是伪造的", "error": "b\r\nx"}).encode("utf-8")
+    monkeypatch.setenv("TAVOTTO_METRICS_TOKEN", TOKEN)
+    monkeypatch.setattr(collector.urllib.request, "urlopen", _http_error(400, forged))
+    rc = collector.main(
+        [
+            "--date",
+            "2026-08-20",
+            "--github-json",
+            str(GITHUB_FIXTURE),
+            "--pypi-json",
+            str(PYPI_FIXTURE),
+        ]
+    )
+    assert rc == 3
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("::")]
+    # 我们自己发的那两条（error + notice）之外，一条指令行都不许多出来
+    assert len(lines) == 2, lines
+    assert "这条是伪造的" in lines[0], "内容要留着给人看，只是不许自成一行"
+
+
+def _run_main(monkeypatch, **env):
+    for key in ("TAVOTTO_METRICS_TOKEN", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return collector.main(
+        [
+            "--date",
+            "2026-08-20",
+            "--github-json",
+            str(GITHUB_FIXTURE),
+            "--pypi-json",
+            str(PYPI_FIXTURE),
+        ]
+    )
+
+
+def test_missing_token_on_the_canonical_repo_is_a_real_failure(monkeypatch, capsys):
+    """本仓库没配 = 数据从这一刻起就在丢。必须红，而且要说去哪配。"""
+    rc = _run_main(monkeypatch, GITHUB_REPOSITORY="Tavotto/Tavotto")
+    assert rc == collector.EXIT_MISSING_CONFIG
+    err = capsys.readouterr().err
+    assert "::error" in err and "真失败" in err
+    assert "TAVOTTO_METRICS_TOKEN" in err and "Secrets" in err
+
+
+def test_missing_token_on_a_fork_is_expected_not_a_failure(monkeypatch, capsys):
+    """fork 拿不到上游的 secret 是常态，不该把别人的 CI 弄红——但要说出来。"""
+    rc = _run_main(monkeypatch, GITHUB_REPOSITORY="someone/Tavotto")
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "::notice::" in err and "预期内的" in err
+    assert "::error" not in err
+
+
+@pytest.mark.parametrize("repo", ["", "   ", "Tavotto", "not-a-repo"])
+def test_an_unrecognised_repo_is_not_downgraded_to_expected(monkeypatch, capsys, repo):
+    """**「不知道自己是谁」不许并进宽松的那一档。**
+
+    仓库名取不到或认不出时按真失败处理。反过来的话，一次环境变量写错就能让
+    主仓库的采集**静悄悄地绿着停掉**——而这条链路的全部意义就是「丢数据必须
+    有人看见」。
+    """
+    rc = _run_main(monkeypatch, GITHUB_REPOSITORY=repo) if repo else _run_main(monkeypatch)
+    assert rc == collector.EXIT_MISSING_CONFIG, repo
+    assert "::error" in capsys.readouterr().err
+
+
+def test_token_situation_is_a_closed_enumeration():
+    """三档，一个不多一个不少（合并任意两档就回到 #227 那种「说不清」）。"""
+    assert collector.token_situation("t", "Tavotto/Tavotto") == collector.CONFIGURED
+    assert collector.token_situation("t", "someone/Tavotto") == collector.CONFIGURED
+    assert collector.token_situation("", "someone/Tavotto") == collector.UNCONFIGURED_FORK
+    assert collector.token_situation("", "Tavotto/Tavotto") == collector.MISSING_HERE
+    assert collector.token_situation("", None) == collector.MISSING_HERE
