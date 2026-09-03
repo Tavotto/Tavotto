@@ -2418,11 +2418,12 @@ def ensure_pinnable_layout_engine(fig):
     """
     if fig is None:
         return None
-    existing = pinnable_layout_engine(fig)
-    if existing is not None:
-        return existing
     if not figure_layout_engine_eats_position(fig):
-        return None
+        # 「换不换」只有 `figure_layout_engine_eats_position` 一份判据——这里**不**
+        # 再写一次「是不是已经换过了」的早退。写两遍的话，其中一份坏掉时另一份
+        # 会替它兜住，变异反证于是两条一起存活（实测：早退在时，把判据里排除自己
+        # 子类那半段删掉，整套用例全绿）。
+        return pinnable_layout_engine(fig)
     engine = PinnedTightLayoutEngine(**fig.get_layout_engine().get())
     fig.set_layout_engine(engine)
     return engine
