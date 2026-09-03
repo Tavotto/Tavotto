@@ -89,6 +89,33 @@ API / MCP 的来路也一样走它。
 换上去是无条件的：pin 表为空时它与原生 `TightLayoutEngine` **逐字节相同**（实测像素与
 位置），所以从没被编辑过的图零影响。
 
+### 接管的是**原件实例**，不是它的参数
+
+`ensure_pinnable_layout_engine` 把原引擎**包起来**（`PinnedTightLayoutEngine(inner)`），
+`execute()` 里调 `inner.execute(fig)`，`_adjust_compatible` / `_colorbar_gridspec` 跟着
+原件走，`set` / `get` 转发。**不用 `PinnedTightLayoutEngine(**inner.get())` 重建**：
+用户脚本可以挂自己的 `TightLayoutEngine` 子类，`isinstance` 判据同样选中它，重建会把
+它重写过的 `execute()` 与子类状态静默丢掉（每个没被 pin 的轴的落位跟着变），而子类的
+`get()` 多回一个键时重建会当场 TypeError。#140 的 guard 已经拆掉，这条路上的失败就是
+静默的。
+
+`set` 的签名必须与 `TightLayoutEngine.set` **逐字相同**（`*, pad, w_pad, h_pad, rect`）
+——上游那份的实现是 `for td in self.set.__kwdefaults__`，而 `self.set` 解析到的是子类
+的 override；写成 `**kwargs` 的话 `__kwdefaults__` 是 `None`，第一次建引擎就
+`TypeError`（实测）。
+
+### setter 里的顺序：可能失败的那一步排在不可逆的两步之前
+
+`_set_axes_position` 先 `a.set_position(bounds)`，**之后**才换引擎、落 pin。反过来写
+会烧掉一张图：`set_position` 对长度不是 4 的 bounds 抛 `TypeError`，而 pin 已经落下——
+`apply` 把异常收成一条 warning、**不记进 `state.applied`**，于是还原那条路永远不跑、
+永远不 `unpin`。坏 bounds 从此留在引擎里，而 `Figure.draw` **只吞 `ValueError`**：
+`Bbox.from_bounds()` 抛的是 `TypeError`，它一路冒出去，**这张图再也画不出来，且撤销
+不回来**（三版实测）。
+
+选换顺序而不是校验长度：校验只挡这一种坏输入，换顺序挡 `set_position` 的**每一种**
+失败。这与 #190 那一族是同一句话——不可逆的那一步不许排在可能失败的那一步之前。
+
 ### `layout_engine_tight` 这条 reason 连同 i18n 文案一并删除
 
 guard 拆掉才算真修完（#162 的关闭条件之五）。`position_locked` 现在只剩一个来源
