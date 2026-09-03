@@ -31,6 +31,9 @@ function writeTwinProject(): string {
     'def main():',
     '    fig, ax = plt.subplots(figsize=(4, 3))',
     '    ax.plot([0, 1, 2, 3], [1, 3, 2, 4], color="tab:blue")',
+    '    # U 形曲线：bbox 中心落在杯口里、不在曲线自己身上 —— 键盘入口的探针',
+    '    xs = [i * 3 / 40 for i in range(41)]',
+    '    ax.plot(xs, [4 * (x - 1.5) ** 2 / 2.25 - 1 for x in xs], color="tab:green", label="U")',
     '    ax.set_xlabel("time / s")',
     '    ax.set_ylabel("left")',
     '    # 两条曲线都钉在上半部分：绘图区下半块留成空白，那儿只剩两个 axes 容器',
@@ -135,4 +138,91 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   await page.mouse.click(at.x, at.y)
   await page.waitForTimeout(400)
   expect(await shownGid()).toBe(host)
+
+  // 4) ⌥ 双击：只轮换，**不弹快速改字**。两个 pointerdown 各换一次选中，双击
+  //    再弹一个内容输入框的话，用户要的是「换一个」，拿到的是一次没要的编辑。
+  await page.keyboard.down('Alt')
+  await page.mouse.dblclick(at.x, at.y)
+  await page.waitForTimeout(500)
+  await page.keyboard.up('Alt')
+  expect(
+    await page.locator('[role="dialog"]').count(),
+    '⌥ 双击不该弹出快速编辑弹层',
+  ).toBe(0)
+  expect(await shownGid(), '⌥ 双击仍然只是换选中').toMatch(/^axes_\d+$/)
+})
+
+test('键盘轮换：bbox 中心不在曲线身上时也走得回来', async ({ app, page }) => {
+  const a = await app({ figures: writeTwinProject() })
+  await page.goto(a.baseURL)
+  await page.getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  await page.waitForTimeout(1500)
+
+  /**
+   * 在**真的** matplotlib 输出里挑出那条 U 形曲线：对每条曲线量「bbox 中心到
+   * 路径的最近距离」，取最大的那条 —— 那正好就是「中心不在自己身上」的定义，
+   * 不靠猜 gid 的序号。顺带返回一个**确实在线上**的点用来选中它。
+   */
+  const probe = await page.evaluate(() => {
+    const svg = document.querySelector('[data-element-svg] svg')
+    if (!svg) return null
+    let best: { id: string; on: { x: number; y: number }; gap: number } | null = null
+    for (const g of svg.querySelectorAll('[id*=".lines_"]')) {
+      const path = g.querySelector('path') as SVGPathElement | null
+      if (!path?.getTotalLength) continue
+      const len = path.getTotalLength()
+      const ctm = path.getScreenCTM()
+      if (!ctm || len < 40) continue
+      const at = (f: number) => {
+        const q = path.getPointAtLength(len * f)
+        return { x: q.x * ctm.a + q.y * ctm.c + ctm.e, y: q.x * ctm.b + q.y * ctm.d + ctm.f }
+      }
+      const pts = Array.from({ length: 201 }, (_, i) => at(i / 200))
+      const r = path.getBoundingClientRect()
+      const c = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      const gap = Math.min(...pts.map((q) => Math.hypot(q.x - c.x, q.y - c.y)))
+      if (!best || gap > best.gap) best = { id: g.id, on: at(0.5), gap }
+    }
+    return best
+  })
+  expect(probe, '图里应当有曲线').not.toBeNull()
+  expect(
+    probe!.gap,
+    'U 形曲线的 bbox 中心应当离曲线足够远（这条断言垮了说明夹具没画出 U 形）',
+  ).toBeGreaterThan(20)
+
+  await page.mouse.click(probe!.on.x, probe!.on.y)
+  await page.waitForTimeout(400)
+  const shownGid = () =>
+    page.evaluate(() => document.querySelector('[data-gid]')?.getAttribute('data-gid') ?? null)
+  expect(await shownGid(), '点在曲线上应当选中它').toBe(probe!.id)
+
+  /**
+   * ⌘K → 「在重叠的图内元素之间轮换」：键盘那条路，跑一次。
+   *
+   * 输入框**必须**按命令面板自己的可达名取。`getByRole('textbox').first()` 会
+   * 抓到属性页里的某个数值框 —— 那样这条用例不但测不到轮换，还会往图上写一个
+   * 属性（实测第一版就是这么静默跑偏的）。
+   */
+  const palette = page.getByRole('listbox', { name: '命令' })
+  const search = page.getByRole('textbox', { name: '搜索命令' })
+  const runCommand = async () => {
+    await page.keyboard.press('ControlOrMeta+k')
+    await expect(search).toBeVisible()
+    await search.fill('重叠')
+    await expect(palette.getByRole('option')).toHaveCount(1)
+    await page.keyboard.press('Enter')
+    await expect(search).toBeHidden()
+    await page.waitForTimeout(400)
+  }
+
+  // 一路走出去再走回来：中途换到的都不是它，最后一步必须回到它自己
+  const seen: (string | null)[] = []
+  for (let i = 0; i < 6 && seen.at(-1) !== probe!.id; i++) {
+    await runCommand()
+    seen.push(await shownGid())
+  }
+  expect(seen.length, '不该一步就「回到」自己（那说明根本没轮换）').toBeGreaterThan(1)
+  expect(seen.at(-1), `轮换应当走得回起点，实际走过：${seen.join(' → ')}`).toBe(probe!.id)
 })
