@@ -426,7 +426,12 @@ def write_status_file(path: str, payload: dict) -> None:
 
 
 def usage_text() -> str:
-    """`tavotto run` 的用法（stderr 用）。**Beta 与边界写在这里，不在别处**。"""
+    """`tavotto run` 的用法文本。**Beta 与边界写在这里，不在别处**。
+
+    同一段文字有两个流向，取决于**是谁要的**：`--help` 是用户要的输出，写
+    stdout 且退 0；用法错误（缺 `--`、不认识的选项）是用户没要的诊断，写
+    stderr 且退 2（issue #198）。调用方各自指定流，这里只负责措辞。
+    """
     return (
         "用法：tavotto run [选项] -- <python> <脚本.py|-m 模块> [脚本自己的参数…]\n"
         "\n"

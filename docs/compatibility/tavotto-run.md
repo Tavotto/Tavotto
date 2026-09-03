@@ -176,7 +176,10 @@ Tavotto 在放开脚本之前，会把 Figure 恢复成**脚本原样**；等到
 * `print` / `tqdm` 原样出现在你的终端；
 * `input()` 拿得到你敲的东西；
 * **Ctrl+C** 照常打断你的脚本（Tavotto 不吞它，也不会抢在你的进程前面退出）；
-* Tavotto 自己的提示**全部写 stderr**，`--quiet` 可以关掉。
+* Tavotto 自己的提示**全部写 stderr**，`--quiet` 可以关掉——stdout 整条留给你的
+  程序。（例外只有一个：`tavotto run --help` 走 **stdout**，所以
+  `tavotto run --help | less` 和 `> help.txt` 都拿得到东西；用法错误仍然写
+  stderr 并退 2。）
 
 ---
 

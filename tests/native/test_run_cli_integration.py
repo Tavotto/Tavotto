@@ -76,7 +76,11 @@ def test_the_script_keeps_the_users_stdout_cwd_env_and_argv(tmp_path):
 
 
 def test_run_messages_only_stderr(tmp_path):
-    """Tavotto 自己的话**全部写 stderr**。"""
+    """**用户的 Python 起来之后**，Tavotto 自己的话全部写 stderr。
+
+    "全部"只在这条路上成立——`--help` 归 stdout，见
+    `test_help_goes_to_stdout_and_shows_the_delimiter`（issue #198）。
+    """
     nativekit.write(tmp_path / "figure.py", PROBE_SCRIPT)
     with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
         session,
@@ -293,7 +297,13 @@ def test_not_a_single_line_runs_before_the_user_confirms(tmp_path):
 
 # --------------------------------------------------------------------------
 def test_usage_errors_exit_two_and_run_nothing(tmp_path):
-    """invocation 层的失败**固定退出码 2**，而且什么都没起。"""
+    """invocation 层的失败**固定退出码 2**，写 stderr，而且什么都没起。
+
+    与 `test_help_goes_to_stdout_and_shows_the_delimiter` **是一对，必须一起
+    看**（ADR 0021 §10.1）：用法文本有两个流向——`--help` 是用户要的输出
+    （stdout / 退 0），用法错误是用户没要的诊断（stderr / 退 2）。只钉一边，
+    下一个人就会把两种情况改成同一个流向（issue #198）。
+    """
     nativekit.write(tmp_path / "figure.py", SENTINEL_SCRIPT)
     cases = [
         (["run", "python", "figure.py"], runcodes.RUN_COMMAND_MISSING),  # 缺 `--`
@@ -309,6 +319,21 @@ def test_usage_errors_exit_two_and_run_nothing(tmp_path):
     assert not (tmp_path / "RAN").exists()
 
 
+def test_an_unknown_option_before_the_delimiter_goes_to_stderr(tmp_path):
+    """`--` **左边**不认识的选项：用法文本走 stderr、退 2、stdout 一个字节都没有。
+
+    单列一条是因为它是 `usage_text()` 的**第三个**消费点（另外两个是 `--help`
+    与 `_fail(with_usage=True)`），而且是最容易被"顺手统一"到 stdout 的那个
+    ——它印的正是同一段文字。
+    """
+    nativekit.write(tmp_path / "figure.py", SENTINEL_SCRIPT)
+    res = nativekit.run_cli("run", "--nope", "--", "python", "figure.py", cwd=tmp_path)
+    assert res.returncode == runcodes.EXIT_USAGE, f"{res.returncode}\n{res.stderr}"
+    assert res.stdout == "", f"用法错误写到了 stdout: {res.stdout!r}"
+    assert "--nope" in res.stderr and "tavotto run" in res.stderr, res.stderr
+    assert not (tmp_path / "RAN").exists()
+
+
 def _stable_prefix(code: str) -> str:
     """错误文案里第一个占位符之前的那一段。
 
@@ -319,12 +344,22 @@ def _stable_prefix(code: str) -> str:
     return runcodes.MESSAGES[code]["zh"].split("{", 1)[0]
 
 
-def test_help_goes_to_stderr_and_shows_the_delimiter(tmp_path):
-    res = nativekit.run_cli("run", "--help", cwd=tmp_path)
-    assert res.returncode == 0
-    assert res.stdout == "", "帮助写到了 stdout（那是用户程序的流）"
-    assert "--" in res.stderr and "tavotto run" in res.stderr
-    assert "--x-" not in res.stderr, "内部测试 flag 出现在正式 help 里"
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_goes_to_stdout_and_shows_the_delimiter(tmp_path, flag):
+    """`--help` 是**被请求的输出**：stdout 非空、stderr 为空、退 0（issue #198）。
+
+    "Tavotto 的话全写 stderr"守的是"stdout 归用户程序"，而这条路上根本没有
+    用户程序——它在解析阶段就返回，一个子进程都没起。写反了的后果是
+    `tavotto run --help | less` 与 `> help.txt` 在用户那儿都是空的（2026-08-28
+    在真 Windows 产物上实测到）。另一半在
+    `test_usage_errors_exit_two_and_run_nothing`：**两条一起钉**。
+    """
+    res = nativekit.run_cli("run", flag, cwd=tmp_path)
+    assert res.returncode == 0, f"{res.returncode}\n{res.stderr}"
+    assert res.stdout.strip(), "帮助没进 stdout（`| less` / `> help.txt` 会是空的）"
+    assert res.stderr == "", f"帮助写到了 stderr: {res.stderr!r}"
+    assert "--" in res.stdout and "tavotto run" in res.stdout
+    assert "--x-" not in res.stdout, "内部测试 flag 出现在正式 help 里"
 
 
 # --------------------------------------------------------------------------

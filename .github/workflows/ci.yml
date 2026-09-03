@@ -747,8 +747,22 @@ jobs:
           # 名字——漏收的表现不是构建失败，是用户机器上的 ModuleNotFoundError。
           # 两条都**不起任何子进程**：--help 退 0；故意的用法错误退 2，后者
           # 顺带证明 runcodes 的退出码闭集也真的进了包（--help 碰不到它）。
-          & $cli run --help > $null
+          #
+          # --help 的**流向**也在这里判一半（issue #198 就是从这一步的日志看
+          # 出来的：`> $null` 之后用法文本还在，说明它写的是 stderr）。所以
+          # 这里不再 `> $null` 丢掉，而是**重定向到文件再断言它非空**——这正是
+          # 用户 `tavotto run --help > help.txt` 会得到的东西，而冻结产物上流的
+          # 接管方式与源码树不同（PyInstaller 的 console 壳 + Windows 控制台），
+          # 源码树的用例看不见这一层。
+          #
+          # 另一半（stderr 必须为空）**刻意留在 pytest** 里
+          # （test_help_goes_to_stdout_and_shows_the_delimiter）：这一步下面那段
+          # 注释记着，原生命令的 stderr 在 pwsh 里怎么被接管一直没查清，为它
+          # 引一条 `2>` 进来只会换一种假红。
+          $helpOut = "$env:RUNNER_TEMP\run-help.out"
+          & $cli run --help > $helpOut
           if ($LASTEXITCODE -ne 0) { throw "tavotto-cli run --help 失败（$LASTEXITCODE）——runcli 多半没进包" }
+          if ([string]::IsNullOrWhiteSpace((Get-Content $helpOut -Raw))) { throw "run --help 的用法文本没进 stdout：管到 less 或重定向到文件时用户拿到的是空的（issue #198）" }
           # 下面这条**期望非零退出**，是本 workflow 里第一条这样的判据——而
           # "这一步算成功吗"在 pwsh 里默认是**推断**出来的，不是我们说的。
           #
@@ -768,7 +782,8 @@ jobs:
           # 三条附带的事实，留给下一个想"顺手整理"这段的人：
           #  * `2>&1 > $null` 连吞输出都没做到——`2>&1` 绑的是**当时的** stdout，
           #    `> $null` 是之后才改的（与 bash 的 `2>&1 > file` 同一个形状）；
-          #  * `run --help` 的用法文本写的是 **stderr**，所以 `> $null` 挡不住它；
+          #  * `run --help` 的用法文本**现在写 stdout**（issue #198 之前写的是
+          #    stderr，所以那时 `> $null` 挡不住它——上面那条断言就是钉这个的）；
           #  * stderr 不重定向是刻意的：那几行进日志无害，反而是"码表真的进了
           #    包"的证据。
           $prev = $ErrorActionPreference

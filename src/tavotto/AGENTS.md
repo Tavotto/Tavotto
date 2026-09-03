@@ -705,6 +705,10 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **确认之前一行用户代码都不许跑。** 顺序是产品语义的一部分
   （`test_not_a_single_line_runs_before_the_user_confirms`）。
 - **Tavotto 的话只写 stderr。** stdout 是用户程序的——所以也没有 `--json`。
+  **`--help` 是唯一的例外**：它在解析阶段就返回，一个子进程都没起，stdout 此刻
+  不归任何用户程序，而 `--help` 是用户要的输出（POSIX），所以走 stdout 退 0；
+  用法错误照旧 stderr 退 2。两个流向一起钉在
+  `tests/native/test_run_cli_integration.py`（ADR 0021 §10.1，issue #198）。
 - **`creationflags` 必须显式声明是哪一类**：GUI 拥有的隐藏子进程用
   `CREATE_NO_WINDOW`，CLI 拥有的控制台子进程用 `INHERIT_CONSOLE`
   （`test_windows_regressions` 按闭集判）。
