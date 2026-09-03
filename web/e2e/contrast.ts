@@ -139,6 +139,17 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
      * （实测这一档几乎全是折叠 `<details>` 里的 `dt`/`dd`——`getClientRects()`
      * 有值，但根本没画）。不给它编一个背景色，交给调用处当「不在范围内」处理，
      * 与 `display:none` 同理。
+     *
+     * **两条已知盲区，别让它们悄悄成立：**
+     * ① 采样点是**元素框内的一点**，不是字形像素。命中测试按盒子算，所以点落在
+     *    字与字之间的空隙上照样命中元素自己（实测：`letter-spacing:14px` 的窄
+     *    行内元素与紧挨 inline-block 的行内元素都正常报出 1.61:1）。剩下的盲区是
+     *    **同一个框内背景不均匀**——半覆盖的兄弟层、`background-image`、渐变——
+     *    这时量到的是采样点那一处的背景，不是每个字背后的。
+     * ② `scrollIntoView` 会触发页面自己的 scroll 监听。注入的 `<style>` 挂在
+     *    `document.head`，而本仓库唯一的 `MutationObserver`（`focusRescue`）只
+     *    `observe(document.body, {childList, subtree})`，看不到它；滚动位置扫完
+     *    逐个还原（实测扫描前后 `<style>` 数与 `body` 的行内样式都不变）。
      */
     const paintStackBelow = (el: HTMLElement): HTMLElement[] | null => {
       const at = (): HTMLElement[] | null => {
