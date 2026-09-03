@@ -153,7 +153,11 @@ pip install --index-url https://test.pypi.org/simple/ \
 ## 发一个新版本
 
 1. 改 `src/tavotto/__init__.py` 里的 `__version__`（版本号唯一出处）。
-2. 写 `docs/release-notes/vX.Y.Z.md`（见下）。
+2. 写 `docs/release-notes/vX.Y.Z.md`（见下）：**先把
+   `docs/release-notes/UNRELEASED.md` 里的待发条目搬进来并从那边删掉**
+   ——那里放的是已经合进 main、但还没有任何一版告诉用户的行为变更与
+   迁移提示。带着没搬走的段落打 tag，`release.yml` 会当场红
+   （`scripts/check_pending_release_notes.py`）。
 3. 提交、打 tag、推送：
 
    ```sh
@@ -184,6 +188,11 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 > script produces several panels.
 
 `docs/release-notes/v0.1.1.md` 是范例。
+
+**行为变更与存量数据的迁移提示写进 `UNRELEASED.md`，不要只写在 PR 正文
+里。** 发行说明是发版那天写的，写的人不会回头翻每一个 PR 的「遗留」段：
+#215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的用户需要一句
+提示，那句话只留在 PR 正文里，于是一版都没有发出去（issue #244）。
 
 ## Codex 插件的更新提醒
 

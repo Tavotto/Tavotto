@@ -22,6 +22,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 WF = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -733,3 +735,71 @@ def test_an_existing_tag_pointing_elsewhere_is_refused():
     trust = _wf(RELEASE).jobs["trust"]
     assert "refs/tags/${REL_TAG}" in trust, "trust 没有检查 tag 是否已存在"
     assert 'EXISTING" != "$SHA' in trust, "存在的 tag 没有与本次 SHA 比对"
+
+
+def test_pending_release_notes_cannot_slip_past_a_tag():
+    """待发条目没并进这一版的正文，就不许发。
+
+    issue #244：#215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的
+    用户升级会拿到反向的导出——那句迁移提示只写在 PR 正文的「遗留」段里，
+    发行说明是发版那天写的，没人回头翻，于是一版都没发出去。用户一个字
+    看不到，而整条发布链全绿。
+
+    闸必须在**读手写正文之前**：读完再查，`has_notes` 已经写出去了。
+    """
+    step = [
+        s
+        for s in _wf(RELEASE).steps("validate_artifacts")
+        if 'F="docs/release-notes/${TAG}.md"' in s
+    ]
+    assert step, "找不到拼 release body 的那一步"
+    run = step[0]
+    assert "scripts/check_pending_release_notes.py" in run, (
+        "拼 release body 时没有检查待发条目 —— 漏掉的迁移提示会静默发不出去"
+    )
+    assert run.index("check_pending_release_notes.py") < run.index(
+        'F="docs/release-notes/${TAG}.md"'
+    ), "待发条目的检查跑在读手写正文之后 —— 那时该发的正文已经定了"
+
+
+def _check_pending(tmp_path, body: str | None):
+    """按发布链的用法跑一次闸：返回 (退出码, stderr)。"""
+    pending = tmp_path / "UNRELEASED.md"
+    if body is not None:
+        pending.write_text(body, encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WF.parents[1] / "scripts" / "check_pending_release_notes.py"),
+            "--pending",
+            str(pending),
+            "--tag",
+            "v9.9.9",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode, proc.stderr
+
+
+def test_the_pending_notes_gate_reds_on_an_unmerged_entry(tmp_path):
+    """还有 `## ` 段落 = 还没并入。退出码判定，不看它打印了什么。"""
+    code, err = _check_pending(tmp_path, "<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n")
+    assert code == 1, f"带着未并入的条目却放行了（exit {code}）"
+    assert "v9.9.9" in err, "错误信息没说该并到哪一版去"
+
+
+def test_the_pending_notes_gate_greens_once_the_entries_are_moved_out(tmp_path):
+    """并入 = 段落搬走，说明性注释留在原处。
+
+    判据要是写成「文件非空」，这份留下来的注释会把闸永远钉红，
+    第一个撞上的人就会把它删掉——门禁于是消失得无声无息。
+    """
+    code, _ = _check_pending(tmp_path, "<!-- 说明：发版时把 `## ` 段落搬进 vX.Y.Z.md -->\n")
+    assert code == 0, f"条目已并入却仍然红（exit {code}）"
+
+
+def test_the_pending_notes_gate_is_silent_when_there_is_nothing_staged(tmp_path):
+    """暂存文件不存在不是错误——没有待发条目的版本照常发。"""
+    code, _ = _check_pending(tmp_path, None)
+    assert code == 0, f"没有暂存文件却拦下了发布（exit {code}）"
