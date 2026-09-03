@@ -237,13 +237,21 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `layout="tight"` / `tight_layout=True` 会挂一个每次绘制都重算落位的
   `TightLayoutEngine`。落第一条 `axes.position` 时 `_set_axes_position` 把它换成
   `overrides.PinnedTightLayoutEngine`：**被 override 过的轴钉住，其余照旧自动
-  排版**。**安装点只有这一个**（热态与重放共用的同一条路，不是两边各调一次）。`execute()` 的顺序是「先把被 pin 的轴放回 gridspec 格子 → 让 tight
+  排版**。**安装点只有这一个**（热态与重放共用的同一条路，不是两边各调一次），
+  接管的是**原件实例**（包起来委派，不是按 `get()` 重建——用户自己的
+  `TightLayoutEngine` 子类会被重建静默丢掉）。setter 里 `set_position` 必须排在
+  换引擎 / 落 pin **之前**：反过来写时坏 bounds 会留在引擎里，而 `Figure.draw`
+  只吞 `ValueError`，`Bbox.from_bounds()` 抛的 `TypeError` 会让这张图再也画不出来。
+  `execute()` 的顺序是「先把被 pin 的轴放回 gridspec 格子 → 让 tight
   照常算 → 再盖回 pin」——**第一步不能省**：`get_tight_layout_figure` 拿
   gridspec 格子当 ax_bbox、拿当前 tight bbox 算边距，被 pin 的轴离开格子之后
   这个差就不再是「装饰物探出去多少」，实测 10 次绘制不收敛、且热态与重放收敛到
   两个结果。撤销必须 `unpin`（`_RESTORE` 里那条），否则 axes 被永久钉在「脚本
   原样」那组算出来的数上。**上游性质**：零 override 的 tight 图连画 14 次会出现
   4 种画面（飘的是 ylabel 落点），所以这类图上「两侧画的次数不同就不能比像素」。
+  **与寄生轴（#217）不冲突**：布局引擎在 `Figure.draw` 最前面跑（钉住宿主），
+  宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生跟着走）；寄生轴自己的
+  position 照旧是死开关（reason `parasite_host_rect`）。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 - **「这张图上有哪些 axes」只有 `manifest._ordered_axes` 一处**（看护

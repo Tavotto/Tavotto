@@ -116,6 +116,21 @@ API / MCP 的来路也一样走它。
 选换顺序而不是校验长度：校验只挡这一种坏输入，换顺序挡 `set_position` 的**每一种**
 失败。这与 #190 那一族是同一句话——不可逆的那一步不许排在可能失败的那一步之前。
 
+### 与寄生轴（#217 / ADR 无，见 `src/tavotto/AGENTS.md`）相遇时谁说了算
+
+`host_subplot(...).twinx()` 造出来的**寄生轴**被宿主的 `draw()` 每帧按宿主 rect
+重置，所以它的 `position` 是死开关（`position_locked`，reason `parasite_host_rect`）。
+本 ADR 让宿主的 `position` 可编辑了，两条规则因此在同一张图上相遇。
+
+**它们不冲突，因为管的是不同的轴，而且顺序天然是对的**：布局引擎在
+`Figure.draw` 的**最前面**跑（钉住宿主），宿主的 `draw()` 随后把自己的 rect 推给
+寄生轴（寄生跟着走）。三版实测：tight 图上拖 `host_subplot`，宿主逐位落在请求的
+位置、寄生轴的 manifest bbox 与宿主**逐位相同**、寄生轴自己照旧不宣称 `position`；
+绘制次数对齐时「改了又撤销」逐位回到从没 override 过的样子。
+
+用户看到的：拖宿主 = 宿主到位、它的右轴跟着走；右轴自己拖不动（本来也不该动，
+它没有独立的落位）。看护 `tests/test_layout_engine_pinning.py` 第 11 节。
+
 ### `layout_engine_tight` 这条 reason 连同 i18n 文案一并删除
 
 guard 拆掉才算真修完（#162 的关闭条件之五）。`position_locked` 现在只剩一个来源
