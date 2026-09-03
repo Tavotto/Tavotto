@@ -579,11 +579,19 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
     `status.elementCycled`，措辞用元素树 / 属性页那份 `engineLabel`
     （「子图 2（右轴）」，引擎侧出处 `engine/manifest.py::_twin_axes_labels`），
     **不另造第二套**；`StatusToasts` 自带 `aria-live`。
+  * **⌥ 双击不给破例**：两个 pointerdown 已经各轮换一次，`onDoubleClick` 再弹
+    快速改字的话，用户要的是「换一个」、拿到的是一次没要的编辑，而且弹层认的是
+    `pickElement`（重叠时恒为宿主），与刚换到的不是同一个元素。
   * **键盘等价路径**（issue #37「画布操作要有对象树 / inspector 等价路径」）：
     ⌘K 的 `cycle-overlap` 命令跑同一个动作，没有指针就拿当前选中元素 bbox 的
     中心当那个点（`cycleOverlapSelection`）；几何权威没就位时什么都不动
     （ADR 0017），由调用方说「正在同步」。元素树本来就分得清孪生轴，那是第二
-    条键盘入口。
+    条键盘入口。**这条路有两个坑，两个都要堵**：① bbox 中心**不一定落在那个
+    元素身上**（U 形曲线的中心在杯口里），所以 `cycleElementAt` 收一个 `anchor`
+    排在表首（bbox 恒含自己的中心）；② 探针若每次现取就会跟着选中项漂走，
+    第三下落进另一组候选，轮换变成出得去回不来的单程票 —— 所以一轮连续轮换里
+    探针与 anchor **只取一次**（`cycleProbe`，钥匙是「上次是我选中的 gid」，
+    用户点了别的自然失效）。只堵①不堵②的话环会从 3 缩成 2，照样回不去。
   * 看护：`canvas/twinAxesPick.test.tsx`（两个方向各一组：不按 ⌥ 时命中逐条
     不变 / 按 ⌥ 时换得到 twin、说得出是谁、绕得回来）+
     `e2e/twin-axes-pick.spec.ts`（真浏览器 + 真 matplotlib：引擎真的把孪生轴
