@@ -114,11 +114,37 @@ def _memo_does_not_outlive_one_build() -> dict:
     return {"before": before, "after": after}
 
 
+def _apply_inside_the_scope_raises() -> dict:
+    """`apply()` 落进记忆表作用域时**当场炸**，不是安静地读旧刻度。
+
+    `fig.stale` 当不了这个信号：实测每次 `build_manifest` 结束时它都是 True
+    （量包围盒本身就会把 artist 标脏），拿它当「作用域里有人动过图」会恒假报警。
+    能守住前提的是 `apply` 这个唯一入口。
+    """
+    fig, _ax = _figure(5)
+    state = O.FigState(fig)
+    M.instrument(state)
+    outside = "no-raise"
+    try:
+        O.apply(state, [])  # 作用域外：照常
+    except RuntimeError as e:  # noqa: BLE001
+        outside = f"raised: {e}"
+    inside = "no-raise"
+    with O.ticklabel_memo():
+        try:
+            O.apply(state, [])
+        except RuntimeError:
+            inside = "raised"
+    plt.close(fig)
+    return {"outside_scope": outside, "inside_scope": inside}
+
+
 def main() -> None:
     report = {
         "few": _case(4),
         "many": _case(24),
         "across_builds": _memo_does_not_outlive_one_build(),
+        "apply_guard": _apply_inside_the_scope_raises(),
     }
     print(json.dumps(report, ensure_ascii=False))
 

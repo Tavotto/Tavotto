@@ -4915,7 +4915,20 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     （色条方向）→ 子图 position → 刻度类型 → 其余（列表序）→ 刻度定位 →
     刻度文字。figure 锚定的 prop 依赖应用那一刻的几何，只有先把几何放到位、
     且几何变过就重放它们，热会话的增量应用才与冷启动的全量重放收敛到同一
-    状态——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。"""
+    状态——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。
+
+    **入口守卫**：`ticklabel_memo()` 的前提是「作用域里没有任何东西会改刻度」，
+    而那条前提只写在 docstring 里——前提失效时不会有任何信号，表现是记忆表回旧
+    的刻度文字、manifest 描述一个已经不存在的状态：不报错、不变红，**只是所见
+    不等于所写**。所以这里当场炸：`apply` 落进 `build_manifest` 的作用域是**唯一**
+    能让前提失效的改法（改刻度的路全从这里走），把它钉成断言，前提就有人守着，
+    而不是靠下一个人记得读那段 docstring。
+    """
+    if getattr(_ticklabel_memo, "table", None) is not None:
+        raise RuntimeError(
+            "apply() 跑在 ticklabel_memo() 作用域里——记忆表的前提（作用域内不改刻度）"
+            "已经不成立。别放宽这条断言：要在 build_manifest 里改图，先把记忆表关掉。"
+        )
     warnings: list[str] = []
     new: dict[tuple, object] = {}
     for p in patches:

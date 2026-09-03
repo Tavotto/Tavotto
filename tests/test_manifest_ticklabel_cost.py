@@ -89,3 +89,19 @@ def test_the_memo_does_not_outlive_one_build(probe):
     got = probe["across_builds"]
     assert got["before"] == ["0.00", "0.25", "0.50", "0.75", "1.00"], got
     assert got["after"] == ["AA", "BB", "CC"], got
+
+
+def test_apply_inside_the_scope_raises_instead_of_reading_a_stale_memo(probe):
+    """前提得有人守着：`apply()` 落进记忆表作用域时**当场炸**。
+
+    记忆表成立的前提是「作用域里没有东西改刻度」。它原本只写在 docstring 里，
+    而 docstring 里的前提会腐坏，腐坏的表现是**静默错**——manifest 描述一个已经
+    不存在的刻度状态，不报错、不变红，只是所见不等于所写。`apply` 是改刻度的
+    唯一入口，把它钉成断言，前提失效时就有信号。
+
+    顺带钉住**作用域外照常**：断言写成「任何时候 apply 都炸」的话，整条渲染链
+    第一次 override 就死了——这条用例是它的反向边。
+    """
+    got = probe["apply_guard"]
+    assert got["outside_scope"] == "no-raise", got
+    assert got["inside_scope"] == "raised", got
