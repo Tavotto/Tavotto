@@ -178,11 +178,18 @@ def test_revert_refuses_a_symlink_that_escapes_the_project(session):
     """
     outside = _relink(session, session["project"].parent / "outside" / "real.py")
 
-    with pytest.raises(ai_bridge.AgentError) as caught:
+    try:
         ai_bridge.revert(session["sid"])
+    except ai_bridge.AgentError as exc:
+        caught: ai_bridge.AgentError | None = exc
+    else:
+        caught = None
 
+    # **必须排在「有没有拒绝」之前**，而且不能用 `pytest.raises` 包住调用：
+    # 那样「没拒绝」会先失败、这一条根本跑不到——而它守的正是「拒绝的判据
+    # 被拿掉之后，写入真的落到了项目外」这一种坏法。
     assert outside.read_bytes() == AFTER  # 主语：项目外那份文件的字节
-    assert caught.value.code == "script_path_outside_project"
+    assert caught is not None and caught.code == "script_path_outside_project"
     assert session["script"].is_symlink()
     assert ai_bridge.SESSIONS[session["sid"]]["status"] == "done"
 
