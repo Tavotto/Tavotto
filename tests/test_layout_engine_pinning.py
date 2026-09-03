@@ -276,6 +276,44 @@ cax.remove()
 fig.canvas.draw()
 plt.close(fig)
 
+# -- 9) 不可逆的那一步不许排在可能失败的那一步之前 --------------------------
+# `set_position` 对长度不是 4 的 bounds 抛 TypeError。setter 里如果先 pin 再
+# set_position，异常抛出时 pin 已经落下——而 `apply` 只把它收成一条 warning、
+# **不记进 `state.applied`**，于是还原那条路永远不会跑、永远不会 unpin。
+#
+# 判据的主语是**引擎上有没有残留的 pin**，不是「抛没抛」：抛异常本来就该抛，
+# 那一半在下面只是前置条件。
+fig, ax = make(layout="tight")
+try:
+    set_pos(ax, [0.1, 0.1, 0.5])
+except TypeError:
+    pass
+else:
+    raise AssertionError("长度 3 的 bounds 被放行了——前置条件都不成立，下面那条判据没意义")
+leftover = overrides.pinnable_layout_engine(fig)
+assert leftover is None or not leftover.is_pinned(ax), (
+    "setter 抛了异常，pin 却已经落下：这条 override 进不了 state.applied，"
+    "撤销那条路永远不会 unpin 它")
+# 前置条件的另一半：这张图还得画得出来
+fig.canvas.draw()
+plt.close(fig)
+
+# 后果留档：万一坏 pin 真的留下了会怎样。`Figure.draw` **只吞 ValueError**，
+# 而 `Bbox.from_bounds()` 抛的是 TypeError——它一路冒出去，这张图从此画不出来
+# （不是「静默重试」）。三版实测一致。这条断言盯着上游那个 except 子句：
+# 它哪天改成吞 Exception，第 9 节的理由要重写（那时的后果会变成静默重试）。
+fig, ax = make(layout="tight")
+engine = overrides.ensure_pinnable_layout_engine(fig)
+engine._pinned[ax] = (0.1, 0.1, 0.5)
+try:
+    fig.canvas.draw()
+except TypeError:
+    pass
+else:
+    raise AssertionError(
+        "坏 pin 留在引擎里，绘制却没抛——上游改了吞异常的范围，第 9 节的理由要重写")
+plt.close(fig)
+
 print("OK")
 """
 

@@ -2491,10 +2491,22 @@ def _set_axes_position(a, v) -> None:
     再也不跟着字号 / 标签变化重排——那是一个不声不响的语义降级。
     """
     bounds = [float(x) for x in v]
+    # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
+    # bounds 抛 TypeError）必须排在**不可逆**的两步（换引擎、落 pin）之前。
+    #
+    # 反过来写会烧掉一张图：pin 已经落下而 setter 抛了异常，于是 `apply` 把它收成一条
+    # warning、**不记进 `state.applied`**；后续任何一次全量列表里都没有这个 key，
+    # 还原那条路（`_RESTORE`）就永远不会跑，也就永远不会 `unpin`。坏 bounds 从此留在
+    # 引擎里，而 `Figure.draw` 只吞 `ValueError`——`Bbox.from_bounds()` 抛的是
+    # **TypeError**，它会一路冒出去：**这张图再也画不出来，且撤销不回来**
+    # （三个版本实测一致）。
+    #
+    # 这与 #190 那一族是同一句话：不可逆的那一步排在了可能失败的那一步之前。
+    # 校验长度只挡得住这一种坏输入，换顺序挡得住 `set_position` 的**每一种**失败。
+    a.set_position(bounds)
     engine = ensure_pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
     if engine is not None:
         engine.pin(a, bounds)
-    a.set_position(bounds)
 
 
 def _restore_axes_position(a, orig) -> None:
