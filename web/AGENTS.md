@@ -16,6 +16,13 @@
 - **改了 web/src 就得重建两个受管产物**：`python scripts/build_mcp_widget.py`
   （Codex 内嵌画布）与 `python scripts/build_browser_playground.py`（/try），
   各有 `--check` 防漂移。
+- **注释里别写完整的 Tailwind 类名。** 扫描器不分代码和注释：一句文档里出现某个
+  「还没人真用过」的工具类名，它就会被当成用到了，往产物 CSS 里凭空加一条规则
+  （2026-09-03 实测，#210 的 PR 里踩到——一条 e2e 注释给 `canvas.html` 加了一条
+  淡出动画的规则）。要提就写成不成立的形态（`animate-fade-in/out`）或直接用中文
+  描述。重建产物后逐行看一眼 diff：
+  `git diff -U0 --word-diff=porcelain codex-plugin/mcp/widget/canvas.html`，
+  预期只有 `tavotto-mcp-widget <指纹>` 那一行变。
 - 界面用 agent-browser 实测；黄金路径 E2E `cd web && pnpm e2e`（Playwright，
   先 `python scripts/build_frontend.py`）。
 
