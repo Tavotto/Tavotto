@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import sys
@@ -94,6 +95,36 @@ class TestManifestShape:
         with pytest.raises(CC.CorpusError) as exc:
             CC.validate_manifest(_doc([one_case]))
         assert exc.value.code == "too_many_mutations"
+
+    def test_native_eligible_needs_a_self_executing_script(self, one_case):
+        """`entry` 是函数名的 case 不许声明 native_eligible。
+
+        issue #226：四条 `entry: main` 的 case 被声明成 native_eligible +
+        `native_run: true`，而 `tavotto run` 跑的是用户自己那条命令
+        `python 脚本.py`（ADR 0021 §2.1，`python -c` 明确不支持 §2.3），
+        Tavotto 不会替用户去调 `main()`。那次执行里一张图都没有，产品按
+        §10.3 如实回 `no_figure_captured`，基准却把这个**正确**结果记成
+        product_bug —— nightly 从 08-29 起连红五次，指着的不是缺陷。
+
+        判据落在 `native_eligible` 而不是 `product_routes.native_run` 上：
+        route 声明改成 not_applicable 之后仍然留着 `native_eligible: true`
+        的话，`--target` 的 native 子集照样会把它捞进来跑。
+        """
+        one_case["entry"] = "main"
+        one_case["native_eligible"] = True
+        with pytest.raises(CC.CorpusError) as exc:
+            CC.validate_manifest(_doc([one_case]))
+        assert exc.value.code == "native_eligible_needs_self_executing_script"
+
+    def test_a_self_executing_script_may_declare_native_eligible(self, one_case):
+        """反向：`entry: __main__` 的 case 声明 native_eligible 必须仍然合法。
+
+        没有这一条的话，把规则写成「一律拒绝 native_eligible」也能让上面那条
+        变绿，而 native_run 这条路由会连一个 case 都跑不到。
+        """
+        one_case["entry"] = "__main__"
+        one_case["native_eligible"] = True
+        CC.validate_manifest(_doc([one_case]))
 
 
 # ============================================================ 例外必须有理由
@@ -623,4 +654,30 @@ def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
         "这些 case 的脚本一次都不存盘，却在没有声明（并被 runner 验证）"
         "desktop_project/cli_open/safe_probe 产品路由的情况下被记成"
         f"「完全支持」：{offenders}"
+    )
+
+
+def test_native_run_route_covers_the_savefig_passthrough(manifest):
+    """`native_run: true` 的 case 里必须至少有一条**真的存盘**。
+
+    ADR 0021 给 native 侧的 savefig 定的是「**透传**（照常写文件）+ 捕获」，
+    与 safe 侧「吞掉」正相反。issue #226 之前，声明 native_run 的 case 里唯一
+    带 savefig 的就是那四条 `entry: main` 的——它们一张图都出不来。把它们如实
+    记成 not_applicable 而不补一条，等于让 native_run 这条路由只覆盖
+    `plt.show()`，透传语义回退了它也不会红。
+    """
+    savers = []
+    for c in manifest["cases"]:
+        if (c.get("product_routes") or {}).get("native_run") is not True:
+            continue
+        src = (CC.COMPAT_DIR / c["script"]).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        if any(
+            isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "savefig"
+            for n in ast.walk(tree)
+        ):
+            savers.append(c["id"])
+    assert savers, (
+        "没有一条声明 native_run 的 case 会 savefig —— `tavotto run` 的 savefig "
+        "透传语义（ADR 0021）没有任何 case 在验"
     )

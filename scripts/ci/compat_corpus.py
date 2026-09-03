@@ -101,8 +101,14 @@ NON_NEGOTIABLE_STAGES = ("execute", "capture", "open")
 
 #: `native_eligible`：这条 case 能不能走 `tavotto run`（ADR 0021 §12/§13）。
 #: 判据：Python 脚本或模块 / Figure 在**当前进程**里创建 / 非 Jupyter /
-#: 不依赖任意 shell 包装 / 测试环境跑得起来。**默认 false**——
-#: 「不是每条 case 都默认 true」与 `browser_eligible` 同一条纪律。
+#: 不依赖任意 shell 包装 / 测试环境跑得起来 / **脚本自执行**（见下）。
+#: **默认 false**——「不是每条 case 都默认 true」与 `browser_eligible` 同一条纪律。
+#:
+#: 「自执行」那一维是 issue #226 补上的，漏了它的表现极具误导性：native run
+#: 跑的是用户**自己那条命令**（`python 脚本.py`），而 `entry` 是函数名的 case，
+#: 图只有在 Tavotto 主动 `getattr(module, entry)()` 时才出现。两次执行不是同一次，
+#: 于是产品正确地回 `no_figure_captured`（ADR 0021 §10.3），基准却把这个正确结果
+#: 记成 product_bug——nightly 连红五次，指着的却不是缺陷。
 NATIVE_ELIGIBLE_KEY = "native_eligible"
 
 #: 产品路由（Session 6）。「worker 能直接调」不等于「真实用户能使用」——
@@ -248,6 +254,21 @@ def _validate_case(case: dict, root: Path) -> None:
             "Tier 1 不允许存在 product_bug——那一档是标准 matplotlib 的高频"
             "路径，有 bug 就是发不了版。要么修，要么把它降级并写清楚为什么"
             "它不再是高频路径",
+        )
+
+    if case.get(NATIVE_ELIGIBLE_KEY) and case.get("entry") != "__main__":
+        # native run 的 invocation 是闭集：`<python> <脚本.py>` / `<python> -m <模块>`
+        # （ADR 0021 §2.1），连 `python -c` 都显式不支持（§2.3）。它等价于 worker 的
+        # `runpy.run_path(..., run_name="__main__")`——Tavotto **不会**替用户调入口函数。
+        # 所以 entry 是函数名时，corpus 记的那次执行（import 模块 + 调 entry）与 native
+        # 真正跑的那次**不是同一次**，声明它「必须通过」只能靠产品去做它明确裁决过不做
+        # 的事来兑现。
+        bad(
+            "native_eligible_needs_self_executing_script",
+            f"native_eligible=true 但 entry={case.get('entry')!r}——"
+            f"native run 只跑 `python <脚本>`，不会替用户调入口函数，"
+            f"这个 case 的图在那次执行里根本不会出现（ADR 0021 §2.1/§10.3）。"
+            f"要么把脚本写成自执行（entry=__main__），要么如实记 native_eligible=false",
         )
 
     routes = case.get("product_routes") or {}

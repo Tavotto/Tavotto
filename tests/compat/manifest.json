@@ -225,7 +225,11 @@
       ],
       "browser_eligible": true,
       "smoke": true,
-      "notes": "顶层直写、既没有函数也没有 __main__ 守卫。静态扫描一度判它「不是绘图脚本」，整个脚本对 Tavotto 隐形。"
+      "notes": "顶层直写、既没有函数也没有 __main__ 守卫。静态扫描一度判它「不是绘图脚本」，整个脚本对 Tavotto 隐形。 顶层直写 + `fig.savefig()` 且自执行，是 native_eligible 里唯一带 savefig 的形态，因此由它验 `tavotto run` 的 savefig **透传**语义（ADR 0021：native 侧 savefig 照常写文件并同时捕获）——没有它，native_run 这条路由一条 savefig 脚本都不覆盖。",
+      "native_eligible": true,
+      "product_routes": {
+        "native_run": true
+      }
     },
     {
       "id": "shape_dunder_main",
@@ -476,14 +480,14 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "一个脚本三张图。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
-      "native_eligible": true,
+      "notes": "一个脚本三张图。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。 native_run 记 not_applicable：绘图正文在 `main()` 里而脚本自己不调用，`tavotto run` 跑的是用户**自己那条命令** `python multi_figure.py`（ADR 0021 §2.1 语法固定为 `<python> <脚本.py>` / `-m <模块>`，§2.3 连 `python -c` 都显式不支持），Tavotto 不会替用户去调入口函数——那次执行里一张图都不会有，产品按 §10.3 如实回 `no_figure_captured` 并 exit 0。safe 侧三条路由（probe/CLI/素材库）照常验，它们调的就是 `main()`。savefig 透传的 native 覆盖由 shape_toplevel_imperative 承担（issue #226）。",
+      "native_eligible": false,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": true
+        "native_run": "not_applicable"
       }
     },
     {
@@ -526,14 +530,14 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
-      "native_eligible": true,
+      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。 native_run 记 not_applicable：绘图正文在 `main()` 里而脚本自己不调用，`tavotto run` 跑的是用户**自己那条命令** `python multi_figure.py`（ADR 0021 §2.1 语法固定为 `<python> <脚本.py>` / `-m <模块>`，§2.3 连 `python -c` 都显式不支持），Tavotto 不会替用户去调入口函数——那次执行里一张图都不会有，产品按 §10.3 如实回 `no_figure_captured` 并 exit 0。safe 侧三条路由（probe/CLI/素材库）照常验，它们调的就是 `main()`。savefig 透传的 native 覆盖由 shape_toplevel_imperative 承担（issue #226）。",
+      "native_eligible": false,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": true
+        "native_run": "not_applicable"
       }
     },
     {
@@ -576,14 +580,14 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
-      "native_eligible": true,
+      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。 native_run 记 not_applicable：绘图正文在 `main()` 里而脚本自己不调用，`tavotto run` 跑的是用户**自己那条命令** `python multi_figure.py`（ADR 0021 §2.1 语法固定为 `<python> <脚本.py>` / `-m <模块>`，§2.3 连 `python -c` 都显式不支持），Tavotto 不会替用户去调入口函数——那次执行里一张图都不会有，产品按 §10.3 如实回 `no_figure_captured` 并 exit 0。safe 侧三条路由（probe/CLI/素材库）照常验，它们调的就是 `main()`。savefig 透传的 native 覆盖由 shape_toplevel_imperative 承担（issue #226）。",
+      "native_eligible": false,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": true
+        "native_run": "not_applicable"
       }
     },
     {
@@ -842,14 +846,14 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
-      "native_eligible": true,
+      "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。 native_run 记 not_applicable：绘图正文在 `main()` 里而脚本自己不调用，`tavotto run` 跑的是用户**自己那条命令** `python loop_figures.py`（ADR 0021 §2.1 语法固定为 `<python> <脚本.py>` / `-m <模块>`，§2.3 连 `python -c` 都显式不支持），Tavotto 不会替用户去调入口函数——那次执行里一张图都不会有，产品按 §10.3 如实回 `no_figure_captured` 并 exit 0。safe 侧三条路由（probe/CLI/素材库）照常验，它们调的就是 `main()`。savefig 透传的 native 覆盖由 shape_toplevel_imperative 承担（issue #226）。",
+      "native_eligible": false,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": true
+        "native_run": "not_applicable"
       }
     },
     {
