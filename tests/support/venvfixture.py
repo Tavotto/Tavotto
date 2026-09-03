@@ -214,7 +214,7 @@ def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
 
     没有这一步时，前提失效的表现是十几条用例在断言产品的错误码
     （`assert 'project_env_no_matplotlib' == 'project_env_module_missing'`）——
-    读的人第一反应是产品坏了，而真正的答案在夹具或那台机器上。四档分开报，
+    读的人第一反应是产品坏了，而真正的答案在夹具或那台机器上。分开报，
     是因为它们该找的人不同：
 
     * `fixture_host_unreadable`：**还不知道**——宿主那一次探测自己就失败了，
