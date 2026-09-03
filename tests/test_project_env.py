@@ -157,33 +157,39 @@ def test_the_fixture_venv_inherits_from_the_host_not_from_its_base(tmp_path):
     assert got.stdout.strip() == "7"
 
 
-def test_the_inherited_path_file_is_pure_ascii_whatever_the_paths_are():
-    """接目录用的那个 `.pth` **字节必须全是 ASCII**——那是「谁来解码都一样」
-    的唯一保证。
+def test_the_pth_is_pure_ascii_and_the_paths_live_in_utf8_source():
+    """接目录这件事**拆成两个文件**，各自解决一件谁来解码的事。
 
-    `site` 怎么读 `.pth` 由目标解释器决定：实测 3.11 的 `site.addpackage` 用
-    `encoding="locale"`，3.13 才先试 UTF-8、失败再退回 locale。路径里有非
-    ASCII（`C:\\Users\\张三`）时，写 UTF-8 和写 locale **各对一头、各错一头**，
-    错的那头解出另一串字符、目录「不存在」、`site` 静默跳过。ASCII 是两种读法
-    的交集（Windows 的每个 ANSI 代码页与 UTF-8 都是 ASCII 的超集）。
+    `.pth` 怎么读由目标解释器的 `site` 决定：实测 3.11 的 `site.addpackage` 用
+    `encoding="locale"`，3.13 才先试 UTF-8、失败再退回 locale。路径里有非 ASCII
+    （`C:\\Users\\张三`）时，写 UTF-8 和写 locale **各对一头、各错一头**，错的
+    那头解出另一串字符、目录「不存在」、`site` 静默跳过。
+
+    所以路径根本不进 `.pth`：`.pth` 只留一行纯 ASCII 的 import（ASCII 是两种
+    读法的交集——Windows 的每个 ANSI 代码页与 UTF-8 都是它的超集），路径写在
+    `.py` 里，而**Python 源文件的默认编码由语言规定就是 UTF-8**（PEP 3120），
+    与 locale 无关。
 
     **判据量的是字节，不是「能不能 import」**：本机 locale 是 UTF-8，两种读法
     在这里恰好一致，import 那把尺子量不到这一维，会恒真。
     """
     dirs = ["/tmp/plain/site-packages", "/Users/张三/env/site-packages"]
-    line = venvfixture._pth_line(dirs)
+
+    line = venvfixture._pth_line()
     assert line.encode("utf-8").isascii(), line
     assert line.startswith("import "), "不以 `import ` 开头的话 site 会把它当路径，不执行"
 
-    # ASCII 不能是「把路径丢了」换来的：跑一遍 `site` 会 exec 的那一行，
-    # 看路径是不是逐字还原回来。
+    # ASCII 不能是「把路径丢了」换来的：跑一遍加载器，看路径逐字还原回来。
+    source = venvfixture._loader_source(dirs)
     before = list(sys.path)
     try:
-        exec(line, {})  # noqa: S102 —— 这正是 site.addpackage 对 `import ` 行做的事
+        exec(compile(source, "<loader>", "exec"), {})  # noqa: S102 —— import 本模块时跑的就是它
         added = sys.path[len(before) :]
     finally:
         sys.path[:] = before
     assert added == dirs
+    # 路径要**看得见**：出错时 traceback 指到的是这一行，不是一串 base64。
+    assert "/Users/张三/env/site-packages" in source
 
 
 @needs_worker

@@ -28,7 +28,8 @@ _MASK = (
 #: 把宿主 import 得到的东西接进新 venv 的那个 `.pth`。文件名带前缀是为了让
 #: 排障的人一眼看出它是谁写的——venv 里出现一个来路不明的 `.pth` 比缺一个
 #: 更难查。
-_HOST_SITE_PTH = "_tavotto_fixture_host_site.pth"
+_HOST_SITE_MODULE = "_tavotto_fixture_host_site"
+_HOST_SITE_PTH = f"{_HOST_SITE_MODULE}.pth"
 
 # --------------------------------------------------------------- 分档结论
 #: 夹具前提不成立的五种**不同**答案。合并成一句「环境有问题」就等于把
@@ -211,36 +212,57 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
             dirs.append(str(d))
     if not dirs:
         return None
-    pth = site_packages(venv) / _HOST_SITE_PTH
-    pth.write_text(_pth_line(dirs), encoding="ascii")
+    site = site_packages(venv)
+    # **路径写在 .py 里，.pth 只留一行 ASCII 的 import。** 两个文件各自解决
+    # 一件事，理由见 `_pth_line()` / `_loader_source()`。
+    (site / f"{_HOST_SITE_MODULE}.py").write_text(_loader_source(dirs), encoding="utf-8")
+    pth = site / _HOST_SITE_PTH
+    pth.write_text(_pth_line(), encoding="ascii")
     return pth
 
 
-def _pth_line(dirs: list[str]) -> str:
-    """把这些目录编成**一行纯 ASCII** 的 `.pth`。
+def _pth_line() -> str:
+    """`.pth` 的内容：**一行纯 ASCII**，只做一件事——import 那个加载器模块。
 
     **`.pth` 的解码不由写的人说了算，由目标解释器的 `site` 说了算**：实测
     3.11 的 `site.addpackage` 用 `encoding="locale"` 读，3.13 才改成先试
-    UTF-8、失败再退回 locale。所以直接把路径写成文本行是错的——路径里有非
+    UTF-8、失败再退回 locale。所以路径**不能**直接写进 `.pth`——路径里有非
     ASCII（`C:\\Users\\张三`）时，UTF-8 写、locale 读会解出另一串字符，目录
     「不存在」，`site` 静默跳过。
 
     「按目标解释器的 locale 写」不解决问题，只是把错挪到另一头（新解释器
     先试 UTF-8，locale 编码的中文路径在那边解不出来）。**两头不能同时对，
-    除非不依赖任何一头**——所以走 base64：`.pth` 的字节全是 ASCII，而
-    Windows 的每个 ANSI 代码页与 UTF-8 都是 ASCII 的超集，两种读法**逐字节
-    读到同一行**，真正的路径在这一行被解码时才由我们自己按 UTF-8 还原。
+    除非这一行根本不含需要协商的字节**：模块名是 ASCII，而 Windows 的每个
+    ANSI 代码页与 UTF-8 都是 ASCII 的超集，两种读法**逐字节读到同一行**。
+    """
+    return f"import {_HOST_SITE_MODULE}\n"
+
+
+def _loader_source(dirs: list[str]) -> str:
+    """加载器模块的源码：路径就明明白白写在里面。
+
+    路径放在 `.py` 而不是 `.pth` 里，因为**Python 源文件的默认编码是 UTF-8，
+    由语言规定（PEP 3120），与 locale 无关**——`.pth` 那条「谁来解码」的
+    不确定性在这里根本不存在。
+
+    这么分还买到第二件事：**出错时说得出人话**。上一版把路径 base64 塞进
+    `.pth` 一行里，实测（3.11）把 blob 弄坏时用户看到的是
+    `binascii.Error: Incorrect padding` ——不含任何一条真实路径，也说不出这
+    文件是干嘛的。现在 traceback 指向的是这个模块里那一行读得懂的源码。
 
     用 `sys.path.extend` 而不是 `site.addsitedir`：仍然只追加目录，不去执行
     那些目录里的 `.pth`（宿主的 editable 安装因此不跟进来），也仍然排在
     venv 自己 site-packages 的后面（遮蔽替身照样先被找到）。
     """
-    import base64
-
-    blob = base64.b64encode("\n".join(dirs).encode("utf-8")).decode("ascii")
+    listing = json.dumps(dirs, ensure_ascii=False, indent=4)
     return (
-        "import base64,sys; "
-        f"sys.path.extend(base64.b64decode('{blob}').decode('utf-8').split(chr(10)))\n"
+        "# 由 tests/support/venvfixture.py 写入：把「交给夹具的那个解释器」\n"
+        "# 能 import 的目录接进这个 venv。同目录的 .pth 只负责 import 本模块。\n"
+        "import sys\n"
+        "\n"
+        f"HOST_SITE_DIRS = {listing}\n"
+        "\n"
+        "sys.path.extend(HOST_SITE_DIRS)\n"
     )
 
 
