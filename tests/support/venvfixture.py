@@ -31,9 +31,12 @@ _MASK = (
 _HOST_SITE_PTH = "_tavotto_fixture_host_site.pth"
 
 # --------------------------------------------------------------- 分档结论
-#: 夹具前提不成立的四种**不同**答案。合并成一句「环境有问题」就等于把
+#: 夹具前提不成立的五种**不同**答案。合并成一句「环境有问题」就等于把
 #: 「这台机器缺 matplotlib」和「夹具没把它带进来」变成同一个结论，而这两件事
 #: 该找的人、该动的东西完全不同。
+#: **「问不出宿主的情况」是独立一档**，不许并进「宿主没有 matplotlib」——
+#: 「测过了，没有」和「根本没测到」是两个结论，后者连该找谁都还不知道。
+PREMISE_HOST_UNREADABLE = "fixture_host_unreadable"
 PREMISE_HOST_NO_MATPLOTLIB = "fixture_host_no_matplotlib"
 PREMISE_NOT_INHERITED = "fixture_venv_did_not_inherit_matplotlib"
 PREMISE_MASK_INEFFECTIVE = "fixture_venv_tavotto_not_masked"
@@ -214,6 +217,8 @@ def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
     读的人第一反应是产品坏了，而真正的答案在夹具或那台机器上。四档分开报，
     是因为它们该找的人不同：
 
+    * `fixture_host_unreadable`：**还不知道**——宿主那一次探测自己就失败了，
+      「宿主有没有 matplotlib」这个问题没有答案。不许并进下面那一档。
     * `fixture_host_no_matplotlib`：**机器/环境侧**——交给夹具的解释器自己就
       没有 matplotlib。夹具无能为力（本轮明确不装任何东西）。
     * `fixture_venv_did_not_inherit_matplotlib`：**夹具侧**——宿主有，没带进来。
@@ -239,6 +244,14 @@ def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
             f"Python {facts.get('version')}）"
         )
         detail = seen.get("matplotlib_error") or ""
+        if not facts or "_error" in facts:
+            raise VenvFixtureError(
+                PREMISE_HOST_UNREADABLE,
+                f"没能问出宿主 {python} 的情况（{facts.get('_error') or '没有任何输出'}），"
+                "所以也说不出新建的 venv 为什么没有 matplotlib——"
+                "先把这次探测修好，别拿它当「宿主没装」的证据。"
+                f"venv 侧报的是：{detail}",
+            )
         if not facts.get("matplotlib"):
             raise VenvFixtureError(
                 PREMISE_HOST_NO_MATPLOTLIB,

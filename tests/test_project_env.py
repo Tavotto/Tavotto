@@ -104,7 +104,7 @@ def _clean_env_state():
 
 
 # ----------------------------------------------------------- 夹具自身
-# 下面两条测的是**夹具**而不是产品。它们在这里，是因为夹具的前提失效时，红的
+# 下面三条测的是**夹具**而不是产品。它们在这里，是因为夹具的前提失效时，红的
 # 是本文件里十几条看起来在测别的东西的用例（#225：14 条全红，第一条报
 # `assert 'project_env_no_matplotlib' == 'project_env_module_missing'`，
 # 读的人第一反应是产品坏了）。
@@ -155,11 +155,12 @@ def test_the_fixture_venv_inherits_from_the_host_not_from_its_base(tmp_path):
 
 @needs_worker
 def test_the_fixture_grades_a_broken_premise_instead_of_blaming_the_product(tmp_path):
-    """前提不成立时给**分档**结论：三种成因是三个不同的答案。
+    """前提不成立时给**分档**结论：这些成因是不同的答案，不许合并。
 
     「宿主自己就没有 matplotlib」是机器/环境侧的事（夹具不装任何东西，帮不上
     忙）；「宿主有、没接进来」和「遮蔽失效」都是夹具侧的缺陷，但要改的地方
-    不同。合并成一句「环境有问题」等于把该找的人也合并了。
+    不同；「根本没问出宿主的情况」是**「不知道」这一档**，把它并进「宿主没装」
+    就是拿一次失败的观测当证据。合并成一句「环境有问题」等于把该找的人也合并了。
     """
     bare = tmp_path / "bare"
     subprocess.run(
@@ -182,7 +183,13 @@ def test_the_fixture_grades_a_broken_premise_instead_of_blaming_the_product(tmp_
         venvfixture.verify(bare, WORKER_PY)
     assert err.value.code == venvfixture.PREMISE_NOT_INHERITED
 
-    # 3) 遮蔽失效 → 夹具侧的另一档（把替身换成一个 import 得动的模块）
+    # 3) 宿主那次探测自己就失败了 → 「不知道」是独立一档。并进 1) 的话，
+    #    一次坏掉的观测会被当成「宿主没装 matplotlib」的证据。
+    with pytest.raises(venvfixture.VenvFixtureError) as err:
+        venvfixture.verify(bare, WORKER_PY, {"_error": "宿主探测起不来"})
+    assert err.value.code == venvfixture.PREMISE_HOST_UNREADABLE
+
+    # 4) 遮蔽失效 → 夹具侧的另一档（把替身换成一个 import 得动的模块）
     ok_root = tmp_path / "ok"
     ok_root.mkdir()
     good = venvfixture.make_project_venv(ok_root, ".venv", python=WORKER_PY)
