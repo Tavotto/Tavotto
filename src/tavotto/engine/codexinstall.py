@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,7 @@ ERR_CODEX_MISSING = "codex_cli_missing"
 ERR_MARKETPLACE = "marketplace_add_failed"
 ERR_PLUGIN = "plugin_add_failed"
 ERR_PROVISION = "provision_failed"
+ERR_INTERPRETER = "interpreter_unusable"
 ERR_HEALTH = "health_failed"
 ERR_UNINSTALL = "uninstall_failed"
 
@@ -103,6 +105,56 @@ def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
     return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
 
 
+#: 探测一个可执行文件是不是**真的能跑的 Python** 时让它回显的记号。
+_PY_PROBE = "tavotto-python-ok"
+
+
+def _last_json(text: str) -> dict | None:
+    """输出里最后一行能解析成对象的 JSON（插件的 `--health` 就回这么一行）。"""
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _runs_python(candidate: str) -> bool:
+    """`candidate` 是不是一个**跑得起来**的 Python——判据是跑一遍，不是 which。
+
+    `shutil.which("python3")` 回答的是「PATH 里有没有这个名字」。Windows 上这两件
+    事分得开：`%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python3.exe` 是微软商店的
+    App Execution Alias，没装商店版 Python 时启动它既不是「找不到命令」也不是一个
+    Python——它打开商店并回 9009（issue #172 的现场报告）。
+    退出码才是真话，所以这里跑一遍并要回显记号。
+    """
+    rc, out = _run([candidate, "-c", f"print('{_PY_PROBE}')"], timeout=60)
+    return rc == 0 and _PY_PROBE in out
+
+
+def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
+    """`command` 能不能把插件的启动器跑起来——**Codex 起 MCP server 的那一跳**。
+
+    这是本模块唯一有资格回答「这台机器上这条命令行不行」的判据，且它只信执行
+    结果：跑 `<command> <plugin>/mcp/server.py --health`，要求输出里有一行能解析
+    的体检 JSON。退出码 0（引擎可用）与 3（降级）都算**起得来**——降级 server 在
+    Codex 里是有工具的（`tavotto_health` + 每个工具名的结构化错误），而起不来的
+    表现是「插件启用了却一个工具都没有」，用户看不到任何线索。
+
+    代价说清楚：命令若真是商店别名，跑这一次可能会弹一次商店窗口。那正是 Codex
+    每次起 server 时已经在发生的事，这里花一次把它换掉。
+    """
+    rc, out = _run([command, str(server), "--health"], timeout=120)
+    if _last_json(out) is not None:
+        return True, f"退出码 {rc}，启动器回了体检 JSON"
+    return False, f"退出码 {rc}，没有体检 JSON：{(out[-160:] or '（零输出）')}"
+
+
 def installed_plugin_dir() -> Path | None:
     """已装插件在 Codex 那边的落点（`$CODEX_HOME/plugins/**/.codex-plugin/plugin.json`）。
 
@@ -131,15 +183,21 @@ def plugin_python() -> str | None:
 
     冻结形态下退回 PATH 上的真 python；`TAVOTTO_MCP_PYTHON` 优先（那是插件自己
     认的覆盖变量，用户指过就该听他的）。找不到就回 None——**说清楚比装作能跑好**。
+
+    PATH 上的候选**要跑过才算数**（`_runs_python`）：`shutil.which()` 回答的是
+    「PATH 里有没有这个名字」，在 Windows 上那答不了「能不能跑」——见 issue #172。
     """
     override = os.environ.get("TAVOTTO_MCP_PYTHON")
     if override and Path(override).is_file():
         return override
     if not getattr(sys, "frozen", False):
         return sys.executable
-    for name in ("python3", "python"):
+    # `py` 排在最后：Windows 的 Python Launcher（`C:\Windows\py.exe`）不是商店
+    # 别名，往往是这台机器上最稳的一个入口；POSIX 上 which 通常直接回 None，
+    # 万一有个同名的别的东西，`_runs_python` 会把它挡掉——不靠平台分支，靠跑一遍。
+    for name in ("python3", "python", "py"):
         hit = shutil.which(name)
-        if hit:
+        if hit and _runs_python(hit):
             return hit
     return None
 
@@ -151,6 +209,91 @@ def engine_importable() -> bool:
     except Exception:
         return False
     return True
+
+
+# ---------------------- 启动命令：钉到一个真能跑的解释器 ----------------------
+#: `dependencies:` 顶层块（缩进行都算它的，遇到下一个顶格 key 为止）。
+_DEPS_BLOCK = re.compile(r"^dependencies:\n(?:.*?)(?=^\w|\Z)", re.M | re.S)
+
+
+def _yaml_scalar(value: str) -> str:
+    """写进 YAML 的纯量。带空格的绝对路径 plain scalar 容得下，但 `#`、`: `、
+    引号与开头的指示符会把它变成别的东西——那时候加单引号。"""
+    risky = (
+        not value
+        or value != value.strip()
+        or value[:1] in "-?:,[]{}#&*!|>'\"%@`"
+        or " #" in value
+        or ": " in value
+    )
+    if risky:
+        return "'" + value.replace("'", "''") + "'"
+    return value
+
+
+def _replace_dependency_command(text: str, command: str) -> str:
+    """把 `openai.yaml` 的 `dependencies.tools[].command` 换成 `command`。
+
+    只在 `dependencies:` 块里换——`interface:` 与 `policy:` 一个字都不许动。
+    """
+    m = _DEPS_BLOCK.search(text)
+    if not m:
+        return text
+    block = re.sub(
+        r"^(\s*command:\s*).*$",
+        lambda mm: mm.group(1) + _yaml_scalar(command),
+        m.group(0),
+        flags=re.M,
+    )
+    return text[: m.start()] + block + text[m.end() :]
+
+
+def pin_launcher_command(plugin_dir: Path, command: str) -> list[str]:
+    """把**已装副本**的启动命令钉到 `command`，`.mcp.json` 与 `openai.yaml` 一起改。
+
+    这两处是根 `AGENTS.md` 列的严格同源对：Codex 的 stdio 依赖按 `command` 做
+    规范键匹配，只改一侧的话技能声明的依赖对不上插件自带的 server，Codex 会把它
+    当成「还没装」再弹一次安装提示。改的是**已装副本**，仓库里那份不动——仓库里
+    钉的是跨机器的引导默认值，绝对路径只属于这一台机器。
+    """
+    changed: list[str] = []
+    mcp_path = plugin_dir / ".mcp.json"
+    data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    for entry in data.get("mcpServers", {}).values():
+        if isinstance(entry, dict) and "command" in entry:
+            entry["command"] = command
+    mcp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    changed.append(mcp_path.name)
+    for yaml_path in sorted(plugin_dir.glob("skills/*/agents/openai.yaml")):
+        text = yaml_path.read_text(encoding="utf-8")
+        new = _replace_dependency_command(text, command)
+        if new != text:
+            yaml_path.write_text(new, encoding="utf-8")
+            changed.append(yaml_path.relative_to(plugin_dir).as_posix())
+    return changed
+
+
+def _verified_interpreter(server: Path, py: str | None) -> str | None:
+    """挑一个**验证过起得来启动器**的解释器绝对路径。
+
+    首选插件自己 `--health` 解析出来的那个：解释器定位的权威只有
+    `mcp/server.py` 的 resolver 一份（显式覆盖 → worker 环境 → 自管 runtime →
+    从 CLI 反推 → PATH），这里问它要结论，不抄第二份候选链。它答不上来（机器上
+    压根没有引擎）时退回跑得动体检的 `py` 本身——降级 server 也是有工具的。
+    """
+    candidates: list[str] = []
+    if py:
+        rc, out = _run([py, str(server), "--health"], timeout=120)
+        report = _last_json(out) or {}
+        chosen = report.get("python")
+        if isinstance(chosen, str) and chosen.strip():
+            candidates.append(chosen)
+        candidates.append(py)
+    for cand in candidates:
+        ok, _detail = launcher_starts(cand, server)
+        if ok:
+            return cand
+    return None
 
 
 # ------------------------------ 步骤 ------------------------------
@@ -259,6 +402,64 @@ def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dic
     return _step("engine", ok=True, detail="已准备匹配版本的引擎")
 
 
+def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dict:
+    """已装副本里那条启动命令，**在这台机器上真起得来吗**（issue #172）。
+
+    `.mcp.json` 里钉的是 `python3`——POSIX 上它是唯一靠得住的名字，Windows 上它
+    往往指向微软商店的 App Execution Alias：命令「存在」、退出码 9009、Codex 那边
+    一个工具都没有，连降级 server 都起不来（起不来就没人能说话）。Codex 的
+    `.mcp.json` 没有按平台分支的字段、没有候选链、`command` 也不过 shell，所以这
+    件事只能在**安装时**解决：跑一遍，起不来就把已装副本的 command 换成一个验证
+    过的解释器绝对路径。
+
+    判据是执行，不是 `shutil.which` / `os.name`——「PATH 里有没有 python3」在
+    Windows 上答不了「能不能跑」，而按平台分支只会把同一个错误换个地方犯。
+    """
+    if plugin_dir is None:
+        return _step(
+            "interpreter", ok=False, code=ERR_INTERPRETER, detail="插件还没装好，无从检查启动命令"
+        )
+    mcp_path = plugin_dir / ".mcp.json"
+    server = plugin_dir / "mcp" / "server.py"
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        command = next(iter(data["mcpServers"].values()))["command"]
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return _step(
+            "interpreter",
+            ok=False,
+            code=ERR_INTERPRETER,
+            detail=f"读不出 {mcp_path} 里的 mcpServers[...].command",
+        )
+    ok, detail = launcher_starts(command, server)
+    if ok:
+        return _step("interpreter", ok=True, skipped=True, detail=f"`{command}`：{detail}")
+    if not apply:
+        return _step(
+            "interpreter",
+            ok=False,
+            code=ERR_INTERPRETER,
+            detail=f"`{command}` 起不来启动器（{detail}）。Windows 上 `python3` 常常是"
+            "微软商店的 App Execution Alias：命令存在、退出码 9009、Codex 里一个工具"
+            "都没有。跑 `tavotto codex install` 把它钉到一个真能跑的解释器。",
+        )
+    chosen = _verified_interpreter(server, py)
+    if chosen is None:
+        return _step(
+            "interpreter",
+            ok=False,
+            code=ERR_INTERPRETER,
+            detail=f"`{command}` 起不来启动器（{detail}），也没找到能替它的解释器。"
+            "装一个 Python（或用 TAVOTTO_MCP_PYTHON 指一个）再重跑。",
+        )
+    changed = pin_launcher_command(plugin_dir, chosen)
+    return _step(
+        "interpreter",
+        ok=True,
+        detail=f"启动命令由 `{command}` 换成 `{chosen}`（改了 {'、'.join(changed)}）",
+    )
+
+
 def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
     if plugin_dir is None:
         return _step("health", ok=False, detail="找不到已装的插件", code=ERR_HEALTH)
@@ -309,6 +510,10 @@ def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict]]:
     plugin_dir = installed_plugin_dir()
     py = plugin_python()
     steps.append(_engine_step(plugin_dir, py, apply=apply))
+    if not steps[-1]["ok"]:
+        return False, steps
+    # 引擎之后、体检之前：自管 runtime 这时候才存在，解释器该从它里面挑
+    steps.append(_interpreter_step(plugin_dir, py, apply=apply))
     if not steps[-1]["ok"]:
         return False, steps
     steps.append(_health_step(plugin_dir, py))

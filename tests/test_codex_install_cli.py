@@ -72,6 +72,38 @@ else:
 """
 
 
+def _shim(bindir: Path, name: str, body_posix: str, body_nt: str) -> Path:
+    """在 `bindir` 里放一个**真能执行**的小程序（POSIX 一个 sh 脚本，Windows 一个 .cmd）。
+
+    这些用例判的是「跑起来会怎样」，所以不能用 `monkeypatch` 把 `shutil.which`
+    打成想要的答案——那样量的还是「PATH 里有没有」，正是 issue #172 里答错的那个问题。
+    """
+    bindir.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        exe = bindir / f"{name}.cmd"
+        exe.write_text("@echo off\r\n" + body_nt + "\r\n", encoding="utf-8")
+    else:
+        exe = bindir / name
+        exe.write_text("#!/bin/sh\n" + body_posix + "\n", encoding="utf-8")
+        exe.chmod(0o755)
+    return exe
+
+
+def _real_python_shim(bindir: Path, name: str) -> Path:
+    """一个换了名字的真 Python。"""
+    return _shim(bindir, name, f'exec "{sys.executable}" "$@"', f'"{sys.executable}" %*')
+
+
+def _store_alias_shim(bindir: Path, name: str) -> Path:
+    """商店别名那个形状：**命令存在**、零输出、退出码非零。
+
+    模拟的是它可观测的行为（用户报告里的那三件事），不是别名机制本身——被测的
+    判据只看这三件事。`exit 9009` 在 POSIX 上会被截成 8 位（49），无所谓：判据
+    从不读那个数字，读了就成了挑平台的判据。
+    """
+    return _shim(bindir, name, "exit 9009", "exit /b 9009")
+
+
 @pytest.fixture
 def fake_codex(tmp_path, monkeypatch):
     """一个假 codex + 一个假 CODEX_HOME（里面预置一份已装插件的落点）。"""
@@ -98,12 +130,41 @@ def fake_codex(tmp_path, monkeypatch):
     (plugin_dir / "mcp" / "server.py").write_text(
         "import sys\nprint('{\"ok\": true}')\nsys.exit(0)\n", encoding="utf-8"
     )
+    # 已装副本的两份清单（严格同源对：command 必须一致）
+    (plugin_dir / ".mcp.json").write_text(
+        json.dumps(
+            {"mcpServers": {"tavotto": {"command": "python3", "args": ["./mcp/server.py"]}}},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    agents = plugin_dir / "skills" / "tavotto-figure" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "openai.yaml").write_text(
+        "interface:\n"
+        '  display_name: "Tavotto Figure"\n'
+        "dependencies:\n"
+        "  tools:\n"
+        "    - type: mcp\n"
+        "      value: tavotto\n"
+        "      transport: stdio\n"
+        "      command: python3\n"
+        "policy:\n"
+        "  allow_implicit_invocation: true\n",
+        encoding="utf-8",
+    )
 
+    # PATH 上先摆一个**确定能跑**的 python3：`.mcp.json` 里钉的就是这个名字，
+    # 不摆的话这些用例的结论取决于跑它的那台机器上 python3 是什么（Windows 上
+    # 很可能就是商店别名）。要测「起不来」的用例自己再往前插一个。
+    _real_python_shim(bindir, "python3")
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("FAKE_CODEX_STATE", str(tmp_path / "state.json"))
     monkeypatch.setenv("FAKE_CODEX_LOG", str(tmp_path / "calls.log"))
-    return {"log": tmp_path / "calls.log", "home": codex_home}
+    return {"log": tmp_path / "calls.log", "home": codex_home, "plugin": plugin_dir}
 
 
 def _run(argv: list[str], env_extra: dict | None = None) -> tuple[int, str, str]:
@@ -205,21 +266,25 @@ def test_frozen_cli_does_not_use_itself_as_the_interpreter(monkeypatch, tmp_path
 
     把它当 python 使只会被 `packaging/entry.py` 当成 Tavotto 的命令行参数解析掉，
     插件脚本根本不会跑（Codex 在 PR #169 上指出）。
+
+    退回 PATH 时**候选要跑过才算数**：`shutil.which("python3")` 在 Windows 上会
+    对商店别名答「有」，而那玩意儿启动起来是零输出 + 9009（issue #172）。所以这里
+    摆的是真程序，不是打过桩的 which。
     """
     sys.path.insert(0, str(SRC))
     from tavotto.engine import codexinstall
 
     monkeypatch.delenv("TAVOTTO_MCP_PYTHON", raising=False)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    real = tmp_path / "python3"
-    real.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr(
-        codexinstall.shutil, "which", lambda n: str(real) if n == "python3" else None
-    )
-    assert codexinstall.plugin_python() == str(real)
 
-    # PATH 上一个真 python 都没有：说清楚，别装作能跑
-    monkeypatch.setattr(codexinstall.shutil, "which", lambda _n: None)
+    bindir = tmp_path / "bin"
+    _store_alias_shim(bindir, "python3")  # 存在，但起不来
+    real = _real_python_shim(bindir, "python")
+    monkeypatch.setenv("PATH", str(bindir))
+    assert codexinstall.plugin_python() == str(real), "把「PATH 里有」当成「能跑」了"
+
+    # PATH 上只剩那个起不来的：说清楚，别装作能跑
+    real.unlink()
     assert codexinstall.plugin_python() is None
     monkeypatch.delattr(sys, "frozen", raising=False)
     assert codexinstall.plugin_python() == sys.executable
@@ -351,6 +416,184 @@ def test_success_only_tells_the_user_to_open_a_new_session(fake_codex):
     assert rc == 0, err
     assert "新开一个 Codex 会话" in out
     assert "已启用" not in out
+
+
+# ------------------- 启动命令：能不能跑，不是 PATH 里有没有 -------------------
+# issue #172：`.mcp.json` 里钉死的 `python3` 在 Windows 上往往是微软商店的
+# App Execution Alias——命令**存在**、退出码 9009、Codex 里一个工具都没有（连降级
+# server 都起不来，也就没人能说话）。Codex 的 `.mcp.json` 没有按平台分支的字段、
+# 没有候选链、`command` 也不过 shell，所以只能在安装时把已装副本换成一条真能跑的。
+
+
+def _mcp_command(plugin_dir: Path) -> str:
+    data = json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
+    return next(iter(data["mcpServers"].values()))["command"]
+
+
+def _yaml_command(plugin_dir: Path) -> str:
+    text = (plugin_dir / "skills" / "tavotto-figure" / "agents" / "openai.yaml").read_text(
+        encoding="utf-8"
+    )
+    line = [ln for ln in text.splitlines() if ln.strip().startswith("command:")]
+    assert len(line) == 1, f"openai.yaml 里的 command 行不是一条：{line}"
+    return line[0].split(":", 1)[1].strip()
+
+
+def test_install_pins_a_runnable_interpreter_when_the_command_cannot_start_the_launcher(
+    fake_codex, tmp_path, monkeypatch
+):
+    """PATH 上的 `python3` 是那个 9009 的东西时，安装要把启动命令换掉。
+
+    两侧一起换：`.mcp.json` 的 `command` 与 `openai.yaml` 的
+    `dependencies.tools[].command` 是根 AGENTS.md 的严格同源对（stdio 依赖按
+    command 做规范键匹配），只换一侧的话技能声明的依赖对不上插件自带的 server。
+    """
+    shim = tmp_path / "storebin"
+    _store_alias_shim(shim, "python3")
+    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+
+    rc, out, err = _run(["codex", "install", "--json"])
+    assert rc == 0, err
+    step = {s["step"]: s for s in json.loads(out.strip().splitlines()[-1])["steps"]}["interpreter"]
+    assert step["ok"] and step["skipped"] is False, step
+
+    plugin = fake_codex["plugin"]
+    assert _mcp_command(plugin) != "python3", "起不来的命令还留在 .mcp.json 里"
+    assert _mcp_command(plugin) == sys.executable
+    assert _yaml_command(plugin) == sys.executable, "同源对只改了一侧"
+
+    # 幂等：换过之后再跑一次，什么都不该做
+    rc, out, err = _run(["codex", "install", "--json"])
+    assert rc == 0, err
+    again = {s["step"]: s for s in json.loads(out.strip().splitlines()[-1])["steps"]}["interpreter"]
+    assert again["skipped"] is True, "已经能跑了还再钉一次"
+
+
+def test_the_pinned_interpreter_comes_from_the_plugins_own_resolver(
+    fake_codex, tmp_path, monkeypatch
+):
+    """挑哪个解释器由**插件的 resolver** 说了算，安装器不自己再挑一遍。
+
+    `mcp/server.py` 的候选链（显式覆盖 → worker 环境 → 自管 runtime → 从 CLI
+    反推 → PATH）是唯一权威；安装器抄第二份的话，两边会各修一次同一个格子。
+    """
+    shim = tmp_path / "storebin"
+    _store_alias_shim(shim, "python3")
+    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+    resolved = _real_python_shim(tmp_path / "resolved", "python-resolved")
+    plugin = fake_codex["plugin"]
+    (plugin / "mcp" / "server.py").write_text(
+        "import json,sys\n"
+        f"print(json.dumps({{'ok': True, 'python': {str(resolved)!r}}}))\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+
+    assert _run(["codex", "install", "--json"])[0] == 0
+    assert _mcp_command(plugin) == str(resolved), "没用体检报出来的那个解释器"
+    assert _yaml_command(plugin) == str(resolved)
+
+
+def test_doctor_reports_the_unusable_command_without_writing_anything(
+    fake_codex, tmp_path, monkeypatch
+):
+    """doctor 只诊断：报出「是解释器的问题」和下一步，一个字节都不改。"""
+    assert _run(["codex", "install", "--json"])[0] == 0
+    plugin = fake_codex["plugin"]
+    assert _mcp_command(plugin) == "python3", "PATH 上的 python3 本来是能跑的"
+    before = (plugin / ".mcp.json").read_bytes()
+    before_yaml = (plugin / "skills" / "tavotto-figure" / "agents" / "openai.yaml").read_bytes()
+
+    shim = tmp_path / "storebin"
+    _store_alias_shim(shim, "python3")
+    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+
+    rc, out, err = _run(["codex", "doctor", "--json"])
+    assert rc == 1, out
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["error_code"] == "interpreter_unusable"
+    assert "9009" in data["error"], "没说清是解释器/别名的问题，用户看不出下一步"
+    assert "tavotto codex install" in data["error"], "没给可执行的下一步"
+    assert (plugin / ".mcp.json").read_bytes() == before, "doctor 改了 .mcp.json"
+    assert (
+        plugin / "skills" / "tavotto-figure" / "agents" / "openai.yaml"
+    ).read_bytes() == before_yaml
+
+
+def test_no_usable_interpreter_says_so_instead_of_pinning_something_broken(
+    fake_codex, tmp_path, monkeypatch
+):
+    """一个能跑的都找不到时报稳定 code，**不许随便钉一个**。"""
+    shim = tmp_path / "storebin"
+    _store_alias_shim(shim, "python3")
+    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+    plugin = fake_codex["plugin"]
+    # 插件副本坏了：谁来跑启动器都回不出体检 JSON
+    (plugin / "mcp" / "server.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+
+    rc, out, err = _run(["codex", "install", "--json"])
+    assert rc == 1, out
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["error_code"] == "interpreter_unusable"
+    assert _mcp_command(plugin) == "python3", "没找到能跑的却还是改了 .mcp.json"
+
+
+def test_a_launcher_that_only_degrades_still_counts_as_startable(tmp_path):
+    """降级 server（退出码 3）**算起得来**：Codex 里它是有工具的。
+
+    起不来才是绝症——那时候连「装了桌面版」这句话都没人说得出口。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    server = tmp_path / "server.py"
+    server.write_text(
+        'import sys\nprint(\'{"ok": false, "code": "desktop_only"}\')\nsys.exit(3)\n',
+        encoding="utf-8",
+    )
+    ok, detail = codexinstall.launcher_starts(sys.executable, server)
+    assert ok, detail
+
+    # 零输出 + 非零退出码 = 起不来。**判据不读那个数字**：现场报的是 9009，
+    # 但 POSIX 的退出码只有 8 位（`exit 9009` 到这儿是 49），按数字认会挑平台。
+    silent = tmp_path / "silent.py"
+    silent.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+    ok, detail = codexinstall.launcher_starts(sys.executable, silent)
+    assert not ok and "没有体检 JSON" in detail, detail
+
+
+def test_pinning_only_touches_the_dependency_command(tmp_path):
+    """钉命令只动 `dependencies:` 块里那一行，`interface:` / `policy:` 不许被扫到。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = tmp_path / "plug"
+    (plugin / "skills" / "s" / "agents").mkdir(parents=True)
+    (plugin / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"tavotto": {"command": "python3"}}}), encoding="utf-8"
+    )
+    yaml_path = plugin / "skills" / "s" / "agents" / "openai.yaml"
+    yaml_path.write_text(
+        "interface:\n"
+        "  command: 别动我\n"
+        "dependencies:\n"
+        "  tools:\n"
+        "    - type: mcp\n"
+        "      command: python3\n"
+        "policy:\n"
+        "  command: 也别动我\n",
+        encoding="utf-8",
+    )
+    changed = codexinstall.pin_launcher_command(plugin, "/opt/py 3/bin/python")
+    assert changed == [".mcp.json", "skills/s/agents/openai.yaml"]
+    text = yaml_path.read_text(encoding="utf-8")
+    assert "  command: 别动我" in text and "  command: 也别动我" in text
+    assert "      command: /opt/py 3/bin/python\n" in text, text
+
+    # `#` 会把后面吃成注释：这种值要加引号
+    codexinstall.pin_launcher_command(plugin, "/opt/py #1/python")
+    text = yaml_path.read_text(encoding="utf-8")
+    assert "      command: '/opt/py #1/python'\n" in text, text
 
 
 # --------------------------- 真 CLI（显式 opt-in） ---------------------------

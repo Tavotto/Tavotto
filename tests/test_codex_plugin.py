@@ -213,6 +213,34 @@ def test_skill_entry_desktop_only_is_not_described_as_missing():
     assert 'pipx install "tavotto[worker]"' in recovery
 
 
+def test_recovery_doc_separates_a_toolless_but_installed_plugin_from_a_missing_one():
+    """「装了、也新开过会话，工具还是一个都没有」是**另一格**（issue #172）。
+
+    它与「插件没在本会话加载」长得一模一样，恢复动作却相反：那边是装插件 + 新开
+    会话，这边重装一百遍也没用——起不来的是 Codex 拉起 MCP server 的那条命令
+    （Windows 上 `python3` 常常是商店别名：命令在、9009、零输出）。MCP server 起
+    不来的时候**技能是唯一还活着的通道**，所以这句话只能写在这儿。
+    """
+    recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
+    assert "tavotto codex doctor" in recovery, "没给只诊断的那条"
+    assert "tavotto codex install" in recovery, "没给可执行的修复动作"
+    assert "9009" in recovery, "没说清「命令存在但起不来」这个形状"
+    assert "不要重装插件" in recovery, "没挡住「重装一遍」这条错的恢复动作"
+
+
+def test_recovery_doc_says_a_plugin_upgrade_undoes_the_pinned_command():
+    """升级把插件目录整个换掉，钉进已装副本的启动命令会跟着被换回来。
+
+    断言**限定在升级那一节**：这句话写在别处等于没写——用户是在升级完之后
+    才回来读它的。
+    """
+    recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
+    parts = recovery.split("## 插件有新版本")
+    assert len(parts) == 2, "升级那一节的标题变了，这条判据跟着失效了"
+    upgrade_section = parts[1].split("\n## ")[0]
+    assert "tavotto codex install" in upgrade_section
+
+
 def test_skill_entry_update_reminder_never_blocks_the_task():
     text = _skill_text()
     assert "当前任务照常完成" in text
@@ -1067,9 +1095,18 @@ def test_mcp_json_shape_matches_what_codex_reads():
     servers = data["mcpServers"]
     assert list(servers) == ["tavotto"]
     entry = servers["tavotto"]
-    # 本地 stdio：command + args + cwd。远程 HTTP 那套字段这里一个都不该有
+    # 本地 stdio：command + args + cwd。远程 HTTP 那套字段这里一个都不该有。
+    #
+    # **`python3` 是引导默认值，不是「哪儿都能跑」的保证**（issue #172）：Codex 的
+    # `.mcp.json` 里没有按平台分支的字段、没有候选链，`command` 也不过 shell（形状取自
+    # codex-rs 的 RawMcpServerConfig 与官方插件装出来的清单），一个字符串覆盖不了
+    # POSIX 与 Windows——POSIX 上只有 `python3` 靠得住，Windows 上它往往是微软商店的
+    # App Execution Alias。所以别把它改成 `python`（macOS 上多半没有这个名字），
+    # 也别把某台机器上的绝对路径提交回来：Windows 那一格由 `tavotto codex install`
+    # 的 interpreter 步在**已装副本**上解决（engine/codexinstall.py）。
     assert entry["command"] == "python3"
     assert entry["args"] == ["./mcp/server.py"]
+    # 钉命令只换 command：启动器仍按 cwd 解析，两者一起变才叫改配置
     assert entry["cwd"] == "."
     assert "url" not in entry
     # 起 worker 要跑用户的脚本，heavy 的图是分钟级——超时不能用默认的那点
