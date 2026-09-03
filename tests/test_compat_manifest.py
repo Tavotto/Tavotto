@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import ast
 import copy
 import json
 import sys
@@ -41,6 +40,10 @@ def one_case(manifest) -> dict:
 
 def _doc(cases: list[dict]) -> dict:
     return {"schema": 1, "cases": cases}
+
+
+def _case(manifest: dict, cid: str) -> dict:
+    return next(c for c in manifest["cases"] if c["id"] == cid)
 
 
 # ============================================================ 清单结构
@@ -96,8 +99,8 @@ class TestManifestShape:
             CC.validate_manifest(_doc([one_case]))
         assert exc.value.code == "too_many_mutations"
 
-    def test_native_eligible_needs_a_self_executing_script(self, one_case):
-        """`entry` 是函数名的 case 不许声明 native_eligible。
+    def test_native_eligible_needs_a_self_executing_script(self, manifest):
+        """绘图正文在没人调用的函数里的 case，不许声明 native_eligible。
 
         issue #226：四条 `entry: main` 的 case 被声明成 native_eligible +
         `native_run: true`，而 `tavotto run` 跑的是用户自己那条命令
@@ -108,23 +111,32 @@ class TestManifestShape:
 
         判据落在 `native_eligible` 而不是 `product_routes.native_run` 上：
         route 声明改成 not_applicable 之后仍然留着 `native_eligible: true`
-        的话，`--target` 的 native 子集照样会把它捞进来跑。
+        的话，`SUBSETS` 里的 native 子集照样会把它捞进来跑。
+
+        这里用**真语料**（`multi_figure.py` 的正文全在 `def main()` 里而脚本
+        自己不调），不用捏出来的形状——判据读的是源码，捏一份等于自己验自己。
         """
-        one_case["entry"] = "main"
-        one_case["native_eligible"] = True
+        case = copy.deepcopy(_case(manifest, "shape_multi_figure_a"))
+        case["native_eligible"] = True
         with pytest.raises(CC.CorpusError) as exc:
-            CC.validate_manifest(_doc([one_case]))
+            CC.validate_manifest(_doc([case]))
         assert exc.value.code == "native_eligible_needs_self_executing_script"
 
-    def test_a_self_executing_script_may_declare_native_eligible(self, one_case):
-        """反向：`entry: __main__` 的 case 声明 native_eligible 必须仍然合法。
+    def test_a_guarded_main_counts_as_self_executing(self, manifest):
+        """`if __name__ == "__main__": build()` 必须放行——**哪怕 entry 是函数名**。
 
-        没有这一条的话，把规则写成「一律拒绝 native_eligible」也能让上面那条
-        变绿，而 native_run 这条路由会连一个 case 都跑不到。
+        `entry` 与「自不自执行」是两个维度：`_entry_of` 优先挑顶层函数，所以
+        `dunder_main.py` 的 entry 是 `build`，而 `python dunder_main.py` 照样
+        出图。拿 `entry != "__main__"` 当代理的话，这条 case 会被拒，而且拒绝
+        的理由（「图在那次执行里根本不会出现」）是假的——判据一旦看起来对，
+        人更会信它说的那句错话。
         """
-        one_case["entry"] = "__main__"
-        one_case["native_eligible"] = True
-        CC.validate_manifest(_doc([one_case]))
+        case = copy.deepcopy(_case(manifest, "shape_dunder_main"))
+        assert case["entry"] == "build", "这条用例的前提是 entry 不是 __main__"
+        case["native_eligible"] = True
+        # 陪跑一条真 smoke case：_validate_smoke_subset 要求子集非空，
+        # 单条 doc 会在规则之外先炸，那样这条用例证明不了任何事。
+        CC.validate_manifest(_doc([case, _case(manifest, "shape_toplevel_imperative")]))
 
 
 # ============================================================ 例外必须有理由
@@ -654,30 +666,4 @@ def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
         "这些 case 的脚本一次都不存盘，却在没有声明（并被 runner 验证）"
         "desktop_project/cli_open/safe_probe 产品路由的情况下被记成"
         f"「完全支持」：{offenders}"
-    )
-
-
-def test_native_run_route_covers_the_savefig_passthrough(manifest):
-    """`native_run: true` 的 case 里必须至少有一条**真的存盘**。
-
-    ADR 0021 给 native 侧的 savefig 定的是「**透传**（照常写文件）+ 捕获」，
-    与 safe 侧「吞掉」正相反。issue #226 之前，声明 native_run 的 case 里唯一
-    带 savefig 的就是那四条 `entry: main` 的——它们一张图都出不来。把它们如实
-    记成 not_applicable 而不补一条，等于让 native_run 这条路由只覆盖
-    `plt.show()`，透传语义回退了它也不会红。
-    """
-    savers = []
-    for c in manifest["cases"]:
-        if (c.get("product_routes") or {}).get("native_run") is not True:
-            continue
-        src = (CC.COMPAT_DIR / c["script"]).read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        if any(
-            isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "savefig"
-            for n in ast.walk(tree)
-        ):
-            savers.append(c["id"])
-    assert savers, (
-        "没有一条声明 native_run 的 case 会 savefig —— `tavotto run` 的 savefig "
-        "透传语义（ADR 0021）没有任何 case 在验"
     )

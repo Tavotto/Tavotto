@@ -32,6 +32,7 @@ benchmark 从此只证明「我们接受现状」。所以：
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -105,10 +106,16 @@ NON_NEGOTIABLE_STAGES = ("execute", "capture", "open")
 #: **默认 false**——「不是每条 case 都默认 true」与 `browser_eligible` 同一条纪律。
 #:
 #: 「自执行」那一维是 issue #226 补上的，漏了它的表现极具误导性：native run
-#: 跑的是用户**自己那条命令**（`python 脚本.py`），而 `entry` 是函数名的 case，
-#: 图只有在 Tavotto 主动 `getattr(module, entry)()` 时才出现。两次执行不是同一次，
-#: 于是产品正确地回 `no_figure_captured`（ADR 0021 §10.3），基准却把这个正确结果
-#: 记成 product_bug——nightly 连红五次，指着的却不是缺陷。
+#: 跑的是用户**自己那条命令**（`python 脚本.py`），而绘图正文写在没人调用的
+#: 函数里时，图只有在 Tavotto 主动 `getattr(module, entry)()` 时才出现。两次执行
+#: 不是同一次，于是产品正确地回 `no_figure_captured`（ADR 0021 §10.3），基准却把
+#: 这个正确结果记成 product_bug——nightly 连红五次，指着的却不是缺陷。
+#:
+#: 判据读**源码**，不拿 `entry` 当代理：`entry` 与「自不自执行」是两个维度，
+#: `cases/script_shapes/dunder_main.py` 就是反例——它的 `entry` 是 `build`
+#: （`_entry_of` 优先挑顶层函数），而它在 `if __name__ == "__main__":` 下调了
+#: `build()`，`python dunder_main.py` 照样出图。用 `entry` 拒它不但拒错，
+#: 连拒绝的理由都是假的。
 NATIVE_ELIGIBLE_KEY = "native_eligible"
 
 #: 产品路由（Session 6）。「worker 能直接调」不等于「真实用户能使用」——
@@ -171,6 +178,29 @@ def validate_manifest(data: dict, root: Path = COMPAT_DIR) -> None:
         _validate_case(case, root)
 
     _validate_smoke_subset(cases)
+
+
+def _script_self_executes(path: Path) -> bool:
+    """`python <脚本>` 会不会真的执行到点什么（ADR 0021 §2.1 的那次执行）。
+
+    判据落在**源码**上，不拿 `entry` 当代理——那是两个维度：`_entry_of` 优先挑
+    顶层函数，所以 `if __name__ == "__main__": build()` 这种自执行脚本的 `entry`
+    也会是 `build`（`cases/script_shapes/dunder_main.py`）。
+
+    「执行到点什么」= 顶层语句里除 import / 函数定义 / 类定义之外，还有真正的调用。
+    `if __name__ == "__main__":` 块算在内：`runpy` 与 `python 脚本.py` 都把
+    `__name__` 设成 `"__main__"`，那个块**会**跑。反过来，只有 `import` 与 `def`
+    的脚本（issue #226 的那四条）在这次执行里一张图都产不出来。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue  # 只是定义，没人调就不会跑
+        if isinstance(st, (ast.Import, ast.ImportFrom)):
+            continue  # 装依赖不是"跑脚本"
+        if any(isinstance(node, ast.Call) for node in ast.walk(st)):
+            return True
+    return False
 
 
 def _validate_case(case: dict, root: Path) -> None:
@@ -256,19 +286,20 @@ def _validate_case(case: dict, root: Path) -> None:
             "它不再是高频路径",
         )
 
-    if case.get(NATIVE_ELIGIBLE_KEY) and case.get("entry") != "__main__":
+    if case.get(NATIVE_ELIGIBLE_KEY) and not _script_self_executes(root / script):
         # native run 的 invocation 是闭集：`<python> <脚本.py>` / `<python> -m <模块>`
         # （ADR 0021 §2.1），连 `python -c` 都显式不支持（§2.3）。它等价于 worker 的
         # `runpy.run_path(..., run_name="__main__")`——Tavotto **不会**替用户调入口函数。
-        # 所以 entry 是函数名时，corpus 记的那次执行（import 模块 + 调 entry）与 native
-        # 真正跑的那次**不是同一次**，声明它「必须通过」只能靠产品去做它明确裁决过不做
-        # 的事来兑现。
+        # 脚本被当作 `__main__` 跑时只有 import 与 def 会执行的话，corpus 记的那次执行
+        # （import 模块 + 调 entry）与 native 真正跑的那次**不是同一次**，声明它
+        # 「必须通过」只能靠产品去做它明确裁决过不做的事来兑现。
         bad(
             "native_eligible_needs_self_executing_script",
-            f"native_eligible=true 但 entry={case.get('entry')!r}——"
-            f"native run 只跑 `python <脚本>`，不会替用户调入口函数，"
-            f"这个 case 的图在那次执行里根本不会出现（ADR 0021 §2.1/§10.3）。"
-            f"要么把脚本写成自执行（entry=__main__），要么如实记 native_eligible=false",
+            f"native_eligible=true，但 {script} 被当作 __main__ 跑的时候只有 import "
+            f"与 def 会执行——绘图正文在没人调用的函数里（entry={case.get('entry')!r}），"
+            f"而 native run 只跑 `python <脚本>`，不会替用户调它（ADR 0021 §2.1/§10.3）。"
+            f'要么在脚本里真的调用它（顶层或 `if __name__ == "__main__"` 下都行），'
+            f"要么如实记 native_eligible=false",
         )
 
     routes = case.get("product_routes") or {}
