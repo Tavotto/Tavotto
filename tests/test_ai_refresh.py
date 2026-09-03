@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -372,10 +373,29 @@ def fake_cli(monkeypatch, tmp_path):
 
 
 def _wait_done(sid, timeout=10.0):
+    """等 AI 会话**真的收尾**——等 pump 线程退出，不是等够几毫秒（issue #277）。
+
+    以前这里轮询到 `SESSIONS[sid]["status"] != "running"` 就返回，再
+    `time.sleep(0.05)`「让 pump 线程把 record_end / emit 做完」——**拿固定 sleep
+    当跨线程屏障**。可 `status` 是在 `_pump` 里先翻的，`ai.done` 排在它后面，中间
+    还隔着一次 `ai_history.record_end` 的 SQLite 写。runner 一忙 50ms 就不够，调用方
+    紧接着的 `next(d for n, d in events if n == "ai.done")` 便在空序列上炸成
+    `StopIteration`——CI 的 3.13 腿上见过两次，分别来自两个毫无交集的 PR（一个纯
+    前端、一个纯引擎），自变量只剩机器负载。
+
+    换成等 pump 线程收尾。这是**充要**的：`emit` 就是 `on_event` 的同步调用
+    （`ai_bridge.py`「emit = on_event or …」），而 `emit("ai.done", …)` 是 `_pump`
+    的最后一步——线程退出 ⇔ `ai.done` 已经发完。**加大 sleep 不是修**，那只是把
+    窗口挪远一点，路径本身还是在赌时序。
+    """
     deadline = time.monotonic() + timeout
+    # 线程在 `run()` 返回 sid 之前就起了；找不到只有一种可能——它已经收尾了。
+    pump = next((t for t in threading.enumerate() if t.name == f"ai-{sid}"), None)
     while time.monotonic() < deadline:
         if ai_bridge.SESSIONS[sid]["status"] != "running":
-            time.sleep(0.05)  # 让 pump 线程把 record_end / emit 做完
+            if pump is not None:
+                pump.join(max(0.0, deadline - time.monotonic()))
+                assert not pump.is_alive(), "pump 线程没有在超时内收尾"
             return ai_bridge.SESSIONS[sid]
         time.sleep(0.01)
     raise AssertionError("AI 会话没有结束")
@@ -433,6 +453,41 @@ class TestRunWiresRefresh:
         done = next(d for n, d in events if n == "ai.done")
         assert done["refresh"] == {"status": "skipped"}
         assert ai_history.get(sid)["refresh"] == {"status": "skipped"}
+
+    def test_wait_done_barrier_survives_a_slow_record_end(
+        self, tmp_path, fake_cli, monkeypatch
+    ):
+        """`_wait_done` 的屏障不许是「等够几毫秒」（issue #277）。
+
+        往 `ai_history.record_end` 里注入一个**远大于**旧实现那 50ms 的延迟——它正好
+        落在 `_pump` 里 `status` 翻转与 `emit("ai.done")` 之间，也就是旧实现盲等的那
+        一段。屏障只要还是固定 sleep，这条用例就**必然**红（不是偶发、与机器快慢无关）；
+        等 pump 线程收尾则与这个延迟完全无关。
+
+        **不用「跑 N 次都绿」当验证**——那是样本，证明不了「不再依赖时序」。
+        """
+        real_record_end = ai_history.record_end
+
+        def slow_record_end(*a, **kw):
+            time.sleep(0.4)  # 旧屏障是 0.05s：这里稳稳地越过它
+            return real_record_end(*a, **kw)
+
+        monkeypatch.setattr(ai_history, "record_end", slow_record_end)
+        fake_cli["code"] = NOOP_CLI
+        figs = _project(tmp_path)
+        events: list[tuple[str, dict]] = []
+        sid = ai_bridge.run(
+            "codex",
+            "fig1.py",
+            "p",
+            str(figs),
+            on_event=lambda n, d: events.append((n, d)),
+            on_changed=lambda s: None,
+        )
+        _wait_done(sid)
+        assert [n for n, _ in events if n == "ai.done"], (
+            "`_wait_done` 返回时 ai.done 还没发出来——屏障还是在等时间，不是等那件事"
+        )
 
     def test_refresh_failure_does_not_fail_the_ai_session(self, tmp_path, fake_cli):
         figs = _project(tmp_path)
