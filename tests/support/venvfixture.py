@@ -44,7 +44,7 @@ PREMISE_VENV_UNUSABLE = "fixture_venv_unusable"
 
 
 class VenvFixtureError(AssertionError):
-    """夹具的前提不成立。`code` 是上面四档之一，别再往里合并新的含义。"""
+    """夹具的前提不成立。`code` 是上面那几档之一，别再往里合并新的含义。"""
 
     def __init__(self, code: str, message: str):
         super().__init__(f"[{code}] {message}")
@@ -230,6 +230,28 @@ def interpreter_of(venv: Path) -> str | None:
     return None
 
 
+def _pth_decoding_hint(facts: dict) -> str:
+    """`NOT_INHERITED` 时，把「那一行路径可能被解错了」这条**可能成因**指出来。
+
+    只说可能，不下结论——我没有在那种机器上复现过。但撞上的人拿到一句
+    「没接进来」会去查 venv、查 site-packages、查 `inherit_host_site()`，
+    唯独想不到是 `.pth` 里那一行被按 locale 解码解错了。诊断得指向下一步看哪里。
+
+    只在**真有**非 ASCII 路径时才说：路径全是 ASCII 时这条成因不成立，
+    加进去只是噪音。
+    """
+    bad = [str(d) for d in (facts.get("dirs") or []) if not str(d).isascii()]
+    if not bad:
+        return ""
+    return (
+        "【可能成因之一】要接进来的路径里有非 ASCII 字符（如 "
+        f"{bad[0]}）。`.pth` 是按 UTF-8 写的，而怎么读由目标解释器的 `site` 决定："
+        '实测 3.11 用 `encoding="locale"`，3.13 才先试 UTF-8。'
+        "解释器较老且 locale 不是 UTF-8 时，这一行可能被解错、目录当作不存在被静默跳过。"
+        "先确认一下那条路径在 venv 里读回来是什么样子。——"
+    )
+
+
 def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
     """建完就地验一遍夹具的前提，不成立**分档**抛出来。
 
@@ -283,7 +305,8 @@ def verify(venv: Path, python: str, facts: dict | None = None) -> dict:
             )
         raise VenvFixtureError(
             PREMISE_NOT_INHERITED,
-            f"{where} 有 matplotlib {facts['matplotlib']}，却没能接进新建的 venv "
+            _pth_decoding_hint(facts)
+            + f"{where} 有 matplotlib {facts['matplotlib']}，却没能接进新建的 venv "
             f"{venv}——`inherit_host_site()` 漏掉了宿主的 site-packages。"
             f"venv 侧报的是：{detail}",
         )
