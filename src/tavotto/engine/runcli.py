@@ -34,10 +34,18 @@ tavotto run（本模块）
 
 ## 输出
 
-Tavotto 自己的话**全部写 stderr**；用户的 stdout 一个字节不解析、不加前缀。
-所以**没有 `--json`**：承诺"stdout 只有一行 JSON"就与 native 的核心语义直接
-冲突（用户的 `print` / `tqdm` / 二进制输出都在那条流上）。要机器可读结果用
-`--status-file`。
+**用户的 Python 起来之后**，Tavotto 自己的话全部写 stderr；用户的 stdout 一个
+字节不解析、不加前缀。所以**没有 `--json`**：承诺"stdout 只有一行 JSON"就与
+native 的核心语义直接冲突（用户的 `print` / `tqdm` / 二进制输出都在那条流上）。
+要机器可读结果用 `--status-file`。
+
+**`--help` 不在这条规则里，它走 stdout。** 规则守的是"stdout 归用户程序"，而
+`--help` 这条路上没有用户程序——它在解析阶段就返回了，一个子进程都没起，那条
+流此刻是 Tavotto 自己的。按 POSIX 惯例 `--help` 是用户**要**的输出，归 stdout；
+写反了 `tavotto run --help | less` 与 `> help.txt` 在用户那儿都是空的
+（issue #198）。**用法错误**（缺 `--`、不认识的选项）是另一回事：那是用户没要
+的诊断，照旧写 stderr 且退 2——两个流向必须一起钉住，只钉一条就会有人把它们
+改成同一个。
 
 纯标准库 + `handoff`（唤起桌面）；**不 import Flask、不 import matplotlib**。
 """
@@ -102,7 +110,9 @@ def cli(argv: list[str]) -> int:
     # 我们要先自己判这一条，再让 argparse 处理剩下的。
     args, unknown = ap.parse_known_args(mine)
     if args.want_help:
-        print(runspec.usage_text(), file=sys.stderr, end="")
+        # **stdout**：被请求的输出（见模块说明）。这条路上还没有任何用户
+        # 进程，stdout 此刻不是"用户程序的"。
+        print(runspec.usage_text(), end="")
         return runcodes.EXIT_OK
     if "--" not in raw or not invocation:
         _fail(RunError(runcodes.RUN_COMMAND_MISSING), quiet=False, with_usage=True)

@@ -579,7 +579,7 @@ cache 里有 preview **不等于** live session 还在。
 
 ## 10. 输出与退出码
 
-### 10.1 Tavotto 的信息全部写 stderr
+### 10.1 Tavotto 的信息写 stderr，`--help` 除外
 
 ```text
 [Tavotto Run · Beta]
@@ -590,6 +590,21 @@ Waiting for Tavotto desktop…
 ```
 
 `--quiet` 抑制这些。**用户 stdout 一个字节不解析、不加前缀、不缓冲改写。**
+
+这条规则守的是“stdout 归用户程序”，所以它只在**有用户程序**的那条路上
+成立。三种输出分三个去处：
+
+| 输出 | 流 | 退出码 | 为什么 |
+|---|---|---|---|
+| `--help` / `-h` 的用法文本 | **stdout** | 0 | 用户**要**的输出（POSIX 惯例）；这条路在解析阶段就返回，一个子进程都没起，stdout 此刻不属于任何用户程序 |
+| 用法错误（缺 `--`、不认识的选项、invocation 被拒） | stderr | 2 | 用户**没要**的诊断 |
+| 状态行 / 错误 / 进度 | stderr | — | 同上；stdout 已经归用户的 Python 了 |
+
+写反了的后果是 `tavotto run --help | less` 与 `> help.txt` 在用户那儿都是
+空的（issue #198，2026-08-28 在真 Windows 产物上实测到）。**两个流向必须一起
+钉住**：只钉一条，下一个人就会把两种情况改成同一个流向
+（`test_help_goes_to_stdout_and_shows_the_delimiter` 与
+`test_usage_errors_exit_two_and_run_nothing` 各钉一边）。
 
 ### 10.2 退出码
 

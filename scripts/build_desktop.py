@@ -257,21 +257,43 @@ def main() -> None:
     #
     # 这里只跑**不起任何子进程**的两条：`run --help`（退出 0）与一条故意的
     # 用法错误（退出 2）。第二条比第一条值钱——它证明的不只是"模块在"，
-    # 还有 `runcodes` 的码表与退出码闭集真的被打进去了（argparse 的 help
-    # 不碰它们）。
-    for argv, want in (([str(cli), "run", "--help"], 0), ([str(cli), "run", "python", "x.py"], 2)):
+    # 还有 `runcodes` 的码表与退出码闭集真的被打进去了（help 不碰它们）。
+    #
+    # `want_stream` 是 issue #198 的那一条：同一段用法文本，`--help` 是用户
+    # **要**的输出（stdout / 退 0），用法错误是用户**没要**的诊断（stderr /
+    # 退 2）。**两个流向一起判**——只判一个，下一个人就会把两种情况改成同一个
+    # 流向。判在这里是因为冻结产物上流的接管方式与源码树不同（PyInstaller 的
+    # console 壳），`tests/native/test_run_cli_integration.py` 那份看不见它。
+    cases = (
+        ([str(cli), "run", "--help"], 0, "stdout"),
+        ([str(cli), "run", "python", "x.py"], 2, "stderr"),
+    )
+    for argv, want, want_stream in cases:
         probe = subprocess.run(
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        detail = (
+            f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(probe.stderr or '').strip()[:400]}\n"
         )
         if probe.returncode != want:
             raise SystemExit(
                 f"tavotto-cli {' '.join(argv[1:])} 退出码 {probe.returncode}，应为 {want}：\n"
-                f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
-                f"  stderr: {(probe.stderr or '').strip()[:400]}\n"
+                f"{detail}"
                 "  多半是 engine/runcli.py 及其闭包没被 PyInstaller 收进去"
                 "（packaging/tavotto.spec 的 hiddenimports）。"
             )
-    print("* tavotto-cli run: --help 与用法错误（退出 2）都对，闭包完整")
+        other = "stderr" if want_stream == "stdout" else "stdout"
+        if not (getattr(probe, want_stream) or "").strip():
+            raise SystemExit(
+                f"tavotto-cli {' '.join(argv[1:])} 什么都没写进 {want_stream}（issue #198）：\n{detail}"
+            )
+        if (getattr(probe, other) or "").strip():
+            raise SystemExit(
+                f"tavotto-cli {' '.join(argv[1:])} 写进了 {other}，那条流不该有东西"
+                f"（issue #198）：\n{detail}"
+            )
+    print("* tavotto-cli run: --help（stdout/0）与用法错误（stderr/2）都对，闭包完整")
 
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")
