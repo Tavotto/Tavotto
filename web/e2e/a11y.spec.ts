@@ -270,12 +270,12 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   // incomplete 都随抽屉开合、卡片数量与浏览器而变（`color-contrast` 这条用例
   // 实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
   //
-  // `heading-order` 是跑 #210 的门禁时抓到的一条**旧**偶发：双击加面板后右栏会
-  // 切到「图元素」页，它那个 `h2` 与对话框的 `h2` 分属两个 landmark，axe 判不了
-  // 顺序就丢进 incomplete，而这条用例没声明它 → 红。切没切过去取决于扫描那一刻
-  // 右栏落定没有，所以时红时绿。交错 A/B 实测：**与 #210 的改动无关**，
-  // origin/main 上单跑 10 次同样红 3 次（chromium-en）。工作台/问题面板那两条
-  // 用例早就声明了它。
+  // `heading-order` 是跑 #210 的门禁时抓到的一条**旧**偶发，与 #210 的改动无关：
+  // 交错 A/B 实测，origin/main 上单跑 10 次红 3 次（chromium-en），改动后同一条
+  // 命令 14 次全绿。抓到的节点是**对话框自己的 `h2`**（`#radix-_r_18_`，Radix 把
+  // 它 portal 到 `<body>` 末尾、背景整片 aria-hidden 之后）——axe 判不了它在文档
+  // 里的层级位置，就丢进 incomplete；判不判得了随扫描那一刻的可见性而变，所以
+  // 时红时绿。工作台/问题面板那两条用例早就声明了它，这里补齐。
   await expectAccessible(page, {
     allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
