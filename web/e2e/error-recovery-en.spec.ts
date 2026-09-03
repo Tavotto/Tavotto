@@ -12,14 +12,14 @@
  * project 显式 testIgnore 它——spec 自带 en-US locale，两个 project 都跑等于
  * 同一份内容跑两遍）。
  *
- * **这套 spec 在 CI 里只跑在 Windows 上**：全仓唯一执行 `pnpm e2e` 的地方是
- * `.github/workflows/ci.yml` 的 `windows-exe-smoke`（windows-latest），
- * macOS 那条腿明写「e2e 不在这里跑」。于是本文件里两条 `test.skip(win32)`
- * 在 CI 里**一次都没有执行过**——收得到不等于跑得过（issue #30）。
- * 这个拓扑由 `tests/test_e2e_leg_topology.py` 看住：腿变了它当场红，
- * 提醒回来重估每一条按平台跳过的用例。Windows 文件占用（file_locked）
- * 的界面用例见文件末尾的说明。
+ * **本文件里有按平台跳过的用例，先看清它们跑在哪条腿上**：CI 有两条 e2e 腿——
+ * `windows-exe-smoke`（windows-latest，打包产物）与 `posix-e2e`
+ * （ubuntu-latest，`python -m tavotto`）。两条 POSIX 权限用例在后者上执行，
+ * `file_locked` 那条在前者上执行。这个配对由
+ * `tests/test_e2e_leg_topology.py` 看住：**每条 skip 都必须点得出一条会执行
+ * 它的腿**，配不上当场红——收得到不等于跑得过（issue #30）。
  */
+import { spawn } from 'node:child_process'
 import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -148,7 +148,7 @@ test('render 失败（脚本抛异常）：英文报错 + 重试按钮，画布�
 test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续', async ({ app, page }) => {
   test.skip(
     process.platform === 'win32',
-    'POSIX 权限位；CI 无 POSIX e2e 腿，本条只在本机全量跑时执行（issue #30）',
+    'POSIX 权限位；本条在 CI 的 posix-e2e 腿（ubuntu-latest）上执行（issue #30）',
   )
   const locked = path.join(os.tmpdir(), `tavotto-en-locked-${Date.now()}`)
   mkdirSync(locked, { recursive: true })
@@ -177,7 +177,7 @@ test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续
 test('导出目录不可写：导出失败给英文报错，且不丢项目', async ({ app, page }) => {
   test.skip(
     process.platform === 'win32',
-    'POSIX 权限位；CI 无 POSIX e2e 腿，本条只在本机全量跑时执行（issue #30）',
+    'POSIX 权限位；本条在 CI 的 posix-e2e 腿（ubuntu-latest）上执行（issue #30）',
   )
   const a = await app()
   await openFigures(page, a.baseURL)
@@ -258,6 +258,84 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   await expectNoCjk(scopeDialog, 'Scope and agent 弹层')
 })
 
+/** 打开左侧「图内元素」树并展开全部分组（en-US 名字）。 */
+async function openElementTree(page: Page): Promise<void> {
+  const nav = page.getByRole('navigation').getByRole('button', { name: 'Figure elements' })
+  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+  await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
+  for (let i = 0; i < 8; i++) {
+    const g = page.locator('[role="treeitem"][aria-expanded="false"]').first()
+    if (!(await g.count())) break
+    await g.click()
+    await page.waitForTimeout(120)
+  }
+}
+
+test('原图被独占占用（file_locked）：英文报错说清该关掉谁，改动不丢', async ({ app, page }) => {
+  test.skip(
+    process.platform !== 'win32',
+    '独占锁只在 Windows 上真实存在；本条在 CI 的 windows-exe-smoke 腿上执行（issue #30）',
+  )
+  const dir = path.join(os.tmpdir(), `tavotto-en-locked-file-${Date.now()}`)
+  copyTree(path.join(REPO, 'examples', 'figures'), dir)
+
+  const a = await app({ figures: dir })
+  await openFigures(page, a.baseURL)
+  await placeAndEdit(page)
+
+  // 写回入口只在面板真有 override 时才亮：选中标题、改一次字号
+  await openElementTree(page)
+  await page.getByRole('treeitem', { name: /^Title/ }).first().click()
+  const panel = page.getByLabel('Right panel', { exact: true })
+  const size = panel.getByRole('textbox', { name: 'Font size' })
+  await size.fill('12')
+  await size.press('Enter')
+  await expect(panel.getByText('1 modified')).toBeVisible({ timeout: 30_000 })
+
+  /*
+   * 真的独占占用，不是模拟的错误码：PowerShell 以 FileShare.Read 打开原始
+   * PDF——**允许别人读、不允许改名/删除**，这正是 Acrobat / 看图工具打开一个
+   * 文件时的形状，于是写回最后那步 `os.replace` 抛 PermissionError
+   * （后端把它转成 409 `file_locked`，见 app.py 的 _write_back_error）。
+   * 用 `-Command` 起一个常驻进程，断言跑完再杀掉；`finally` 保证不留句柄。
+   */
+  const target = path.join(dir, 'Fig1_kinetics.pdf')
+  const holder = spawn(
+    'powershell',
+    [
+      '-NoProfile',
+      '-Command',
+      `$f=[System.IO.File]::Open('${target.replace(/'/g, "''")}',` +
+        `[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read);` +
+        `Start-Sleep -Seconds 300;$f.Close()`,
+    ],
+    { stdio: 'ignore' },
+  )
+  try {
+    // 句柄真的开出来再动手（起 PowerShell 比点一次按钮慢得多）
+    await page.waitForTimeout(3_000)
+
+    await page.getByRole('button', { name: /Write back to the original file/i }).first().click()
+    const dialog = page.getByRole('dialog').first()
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: /^Write back$/ }).click()
+
+    // 稳定的英文文案（errors:backend.file_locked），不是后端拼好的中文原句
+    await expect(
+      dialog.getByText(/locked by another program/i).first(),
+    ).toBeVisible({ timeout: 120_000 })
+    // 可执行的下一步：告诉用户去关掉谁
+    await expect(dialog.getByText(/Close whatever has it open/i).first()).toBeVisible()
+    await expectNoCjk(dialog, 'file_locked 错误面')
+  } finally {
+    holder.kill()
+  }
+
+  // 失败之后改动仍在（写回是事务，原文件与热态都不该被动过）
+  await page.keyboard.press('Escape')
+  await expect(panel.getByText('1 modified')).toBeVisible()
+})
+
 test('updater 离线：检查更新失败给英文报错，界面可继续', async ({ app, page }) => {
   // 经环境代理把出网请求指向一个立即拒绝的端口 = 可靠的「离线」
   const a = await app({
@@ -282,20 +360,15 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   await expectNoCjk(err, '更新检查失败')
 })
 
-// 「Windows 文件占用（file_locked）」的界面用例仍然缺着——但**理由变了**。
+// 「Windows 文件占用（file_locked）」的界面用例现在**在上面**，不再缺着。
 //
-// 原来这里写的是「e2e workflow 目前只有 Ubuntu 腿，写了也永远进不去 win32
-// 分支」。那个前提**写反了**：唯一执行 `pnpm e2e` 的是 ci.yml 的
-// `windows-exe-smoke`（windows-latest），恒跳过的恰恰是上面两条 POSIX 用例。
-// 也就是说，「不写 file_locked 界面用例」这个决定是从一个与事实相反的前提
-// 推出来的（issue #30）。
+// 留一段来路说明，因为它是一个「决定被写反的前提挡住」的例子：这里原来写着
+// 「e2e workflow 目前只有 Ubuntu 腿，写了也永远进不去 win32 分支」，并据此
+// 决定不写这条用例。那个前提**写反了**——当时唯一执行 `pnpm e2e` 的是
+// ci.yml 的 `windows-exe-smoke`（windows-latest），恒跳过的恰恰是本文件里
+// 两条 POSIX 用例。前提反了，从它推出来的「不写」也就跟着错了（issue #30）。
 //
-// 按真实拓扑重估的结论：这条用例**现在就落得了地**，形状是
-// `test.skip(process.platform !== 'win32', …)`，它会在 windows-exe-smoke 上
-// 真实执行。没有在本轮写，是因为它只可能在 Windows 上跑一次，而本轮的作业
-// 机器不是 Windows——一条从没执行过、只在合并队列里第一次运行的新用例，正是
-// 「从没跑过的门禁不会保持正确」那一类。落地方案与代价记在 issue #30。
-//
-// 在那之前的既有看护（都不覆盖英文**界面**这半场）：file_locked 的后端行为由
-// tests/test_windows_regressions.py 看护，中英文案由 tests/test_error_codes.py
-// 对拍。
+// 三条腿上的分工现在是：界面这半场由上面那条用例在 windows-exe-smoke 上真跑
+// （真独占句柄，不是模拟的错误码）；后端行为由 tests/test_windows_regressions.py
+// 看护；中英文案由 tests/test_error_codes.py 对拍；jsdom 那一档的文案分支在
+// web/src/components/inspector/WriteBackDialog.test.tsx。

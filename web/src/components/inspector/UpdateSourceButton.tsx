@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
-import { ApiError, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
-import { msg, t as translate } from '@/i18n'
+import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
+import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
   annotationsBlocked,
@@ -82,7 +82,13 @@ async function runWriteBack(
           : verified + res.verification.elements
       if (res.post_check === 'size_mismatch') sizeMismatch = true
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e)
+      // 后端的 `error` 字段是**中文原句**（app.py 的 _write_back_error）。直接拿
+      // e.message 拼进文案，英文界面上就会漏出中文——`file_locked` 正是这样：
+      // errors.json 两侧都登记了 `backend.file_locked`，而这里从来没去查它
+      // （issue #30 的完成定义第一条就是「不泄漏中文」）。
+      // 走 backendErrorMsg：有稳定 code 时取当前语言的那句，没有才用后端原文，
+      // 与 NativeConfirmDialog / ScriptLibrary / RegistryDialog 同一条出口。
+      const detail = formatMessage(backendErrorMsg(e))
       throw new WriteBackFailure(
         updated.length
           ? wb('failedPartial', {
