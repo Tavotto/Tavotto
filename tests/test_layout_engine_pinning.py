@@ -354,6 +354,73 @@ assert mine.ran > ran_before, (
     "用户重写的 execute() 没再跑过——它被替换掉了，这张图的排版语义已经不是脚本写的那个")
 plt.close(fig)
 
+# -- 11) 寄生轴（#217/#258）与持久 tight（#162）相遇时谁说了算 --------------
+# 两条规则管的是**不同的轴**，而且顺序天然是对的：布局引擎在 `Figure.draw` 的最
+# 前面跑（钉住宿主），宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生跟着走）。
+# 所以「在 tight 图上拖 host_subplot」= 宿主到位、右轴跟着；而寄生轴**自己的**
+# position 照旧是死开关，manifest 照旧不宣称它。
+from mpl_toolkits.axes_grid1 import host_subplot
+
+PAR_PIN = [0.20, 0.25, 0.40, 0.45]
+
+
+def par_fig():
+    fig = plt.figure(figsize=(5, 3), layout="tight")
+    h = host_subplot(111, figure=fig)
+    pa = h.twinx()
+    h.plot([0, 1], [0, 1]); pa.plot([0, 1], [0, 60])
+    h.set_ylabel("host y"); pa.set_ylabel("par y")
+    st = overrides.FigState(fig)
+    manifest.instrument(st)
+    return fig, h, pa, st
+
+
+def axes_boxes(st):
+    m = manifest.build_manifest(st, "T")
+    return {e["gid"]: [round(v, 5) for v in e["bbox"]]
+            for e in m["elements"]
+            if e["gid"].startswith("axes_") and e["gid"][5:].isdigit()}
+
+
+fig, h, pa, st = par_fig()
+fig.canvas.draw()
+assert overrides.figure_layout_engine_eats_position(fig), "夹具没挂上持久 tight，下面白测"
+m = manifest.build_manifest(st, "T")
+by = {e["gid"]: e for e in m["elements"]}
+assert by["axes_0"]["resizable"] is True, "宿主该能拖"
+assert by["axes_1"]["resizable"] is False, "寄生轴不该能拖（#258 实测它是死开关）"
+reasons = {u["prop"]: u["reason"] for u in by["axes_1"].get("unsupported_props", [])}
+assert reasons.get("position") == "parasite_host_rect", reasons
+before = axes_boxes(st)
+assert before["axes_0"] == before["axes_1"], ("寄生轴本来就该与宿主同框：", before)
+
+warns = overrides.apply(st, [{"gid": "axes_0", "prop": "position", "value": PAR_PIN}])
+assert not warns, warns
+fig.canvas.draw()
+assert box(h) == rounded(PAR_PIN), ("tight 图上的 host_subplot 没钉住：", box(h))
+after = axes_boxes(st)
+assert after["axes_0"] != before["axes_0"], "宿主没动"
+assert after["axes_1"] == after["axes_0"], ("拖了宿主，右轴没跟着走：", after)
+plt.close(fig)
+
+
+def par_leg(with_override, draws=10):
+    fig, _h, _pa, st = par_fig()
+    for k in range(draws):
+        if with_override and k == 1:
+            overrides.apply(st, [{"gid": "axes_0", "prop": "position", "value": PAR_PIN}])
+        if with_override and k == 3:
+            overrides.apply(st, [])
+        fig.canvas.draw()
+    out = axes_boxes(st)
+    plt.close(fig)
+    return out
+
+
+assert par_leg(True) == par_leg(False), (
+    "host_subplot 图上改了又撤销，没有逐位回到从没 override 过的样子：",
+    par_leg(True), par_leg(False))
+
 print("OK")
 """
 
