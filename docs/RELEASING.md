@@ -165,6 +165,7 @@ pip install --index-url https://test.pypi.org/simple/ \
 4. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
 
    ```sh
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm sync-playground -- --dry-run
    TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm sync-playground
    TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm check-playground
    ```
@@ -193,9 +194,13 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 git -C <发布树> rev-parse HEAD
 
 cd ../Tavotto_website
+TAVOTTO_REPO=<发布树> pnpm sync-playground -- --dry-run   # 先看一眼读的是哪棵树
 TAVOTTO_REPO=<发布树> pnpm sync-playground
 TAVOTTO_REPO=<发布树> pnpm check-playground
 ```
+
+`--dry-run` 解析 checkout、按 manifest 校验产物、把两者都报出来，但不动
+`public/try/`——**贵的错误是从一棵没人看过的树上拷贝**。
 
 **为什么不能省**：v0.12.0 发版时主工作区停在落后 main 五个 PR 的提交上，
 两条后果都实测发生过（issue #148）：
