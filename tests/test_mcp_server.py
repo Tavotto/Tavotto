@@ -485,7 +485,7 @@ def test_workspace_elicitation_refusal_fails_closed(project, monkeypatch, action
     payload = opened["structuredContent"]
     assert payload["code"] == f"workspace_confirmation_{state}"
     assert payload["disposition"] == "ask_user_again"
-    assert "不要自动循环重试" in payload["error"]
+    assert "不要自动循环重试" in payload["recovery"]
     # 用户确实作出了选择：不许被说成「宿主没把框送到用户面前」（#173 的反面）
     assert "没有把确认框送到用户面前" not in payload["error"]
     # code 是给机器的，文案是给人的：不许把 code 原样念出来
@@ -649,6 +649,7 @@ def test_the_four_workspace_authorisation_failures_do_not_collapse(tmp_path, mon
     assert dispositions["宿主没弹框"] == "fix_host_wiring"
     # 处置与「用户拒绝」正好相反：明说别再让用户点
     assert "这不是用户拒绝" in silent["recovery"]
+    assert "下一步" not in silent["error"], "下一步只住在 recovery 一处，别拼进 error"
     assert "再让用户点一次也不会出现提示" in silent["recovery"]
 
     assert codes["路径越界"] == "path_out_of_scope"

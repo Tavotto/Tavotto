@@ -164,7 +164,7 @@ def _no_roots_error() -> "BridgeError":
     if detail:
         message += f"（{detail}）"
     return BridgeError(
-        f"{message} 下一步：{failure.next_step}",
+        message,
         code=failure.code,
         roots=[],
         disposition=failure.disposition,
@@ -198,7 +198,7 @@ def check_scope(path: str) -> str:
         if len(roots) != 1:
             failure = WORKSPACE_FAILURES[CODE_AMBIGUOUS_ROOT]
             raise BridgeError(
-                f"{failure.summary} 下一步：{failure.next_step}",
+                failure.summary,
                 code=failure.code,
                 disposition=failure.disposition,
                 recovery=failure.next_step,
@@ -211,8 +211,7 @@ def check_scope(path: str) -> str:
         return real
     failure = WORKSPACE_FAILURES[CODE_PATH_OUT_OF_SCOPE]
     raise BridgeError(
-        f"{failure.summary}不在范围内的是 {real}；"
-        f"当前允许的根: {os.pathsep.join(roots)}。下一步：{failure.next_step}",
+        f"{failure.summary}不在范围内的是 {real}；当前允许的根: {os.pathsep.join(roots)}。",
         code=failure.code,
         disposition=failure.disposition,
         recovery=failure.next_step,
