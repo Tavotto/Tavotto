@@ -1287,6 +1287,15 @@ def test_position_survives_a_persistent_tight_layout(hot_replay, library):
         "写回自检会判定分歧：用户「写回时的样子」与「重开后的样子」不是一张图"
     )
     assert hot_png == fresh_png, "几何一致但**画出来**不一样"
+    # **画面真的变了**——这条不能省，而且不能用 manifest 的包围盒代替它。
+    # 变异反证：把 `PinnedTightLayoutEngine.execute()` 末尾「盖回 pin」那一步删掉，
+    # 上面几条**全绿**——setter 里的 `set_position` 已经把值写进去了，manifest 读
+    # 回来就是新位置，而布局引擎在随后的绘制里把它算回去。那正是 #140 那个 silent
+    # wrong 的形状：文档里记着、画面上什么都没发生。只有拿「改之前 vs 改之后的
+    # 像素」比才看得见。
+    assert hot_png != base_png, (
+        "拖了子图，画出来却一模一样——position 又被布局引擎算回去了（#140 的 silent wrong）"
+    )
 
     # 撤销这一档用的是**粗一点**的那把尺，理由是量出来的：unpin 之后 tight 要
     # 三四次绘制才重新收敛，而一次 override 回合只画一两次，残差 ~3e-3（还在
