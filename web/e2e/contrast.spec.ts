@@ -119,6 +119,39 @@ test('自算对比度：绘制顺序按 z-index/层叠上下文，不是 DOM 顺
 })
 
 /**
+ * **这一刻没被画出来的文字不在范围内**，但「折叠着」不等于「永远不看」（#261 评审）。
+ *
+ * 折叠 `<details>` 里的内容 `getClientRects()` 有值、`display` 也不是 `none`，
+ * 可它根本没画（Chromium 走 `content-visibility`）。实测真实界面里这一档几乎全是
+ * `AdvancedDetails` 的 `dt`/`dd`——一屏 63 个文字节点里有 20 个。给它们编一个背景色
+ * 就是凭空造读数。
+ *
+ * 两个方向：折叠时**不许**报（它没被画出来），展开后**必须**报（同一段文字、
+ * 同样不达标）。
+ */
+const COLLAPSED_PAGE = (open: boolean) => `
+<div style="background:#ffffff;padding:8px">
+  <details${open ? ' open' : ''}>
+    <summary style="color:#222222">折叠标题</summary>
+    <p style="margin:0;color:#cccccc">折叠里的浅色文字</p>
+  </details>
+</div>`
+
+test('自算对比度：没被画出来的文字不算，展开之后必须算', async ({ page }) => {
+  await page.setContent(COLLAPSED_PAGE(false))
+  expect(
+    (await lowContrastNodes(page)).join(' | '),
+    '折叠 `<details>` 里的文字根本没画出来，却给它编了一个背景色',
+  ).not.toContain('折叠里的浅色文字')
+
+  await page.setContent(COLLAPSED_PAGE(true))
+  expect(
+    (await lowContrastNodes(page)).join(' | '),
+    '展开之后仍然漏报——「折叠时跳过」被写成了「永远跳过」',
+  ).toContain('折叠里的浅色文字')
+})
+
+/**
  * **「判不准」是独立一档**（#261 评审）。
  *
  * 叠到底都没有不透明层时，以前这里按「白纸」算——那是把「不知道」并进了一个
