@@ -141,7 +141,7 @@ async function loadTutorialDocument(meta: TutorialMetadata): Promise<boolean> {
   if (saved) return store.switchDocument(saved, id)
   let raw: unknown
   try {
-    raw = await fetchLayout(meta.document_name)
+    raw = (await fetchLayout(meta.document_name)).doc
   } catch {
     return false
   }

@@ -547,15 +547,49 @@ export const panelSrc = (
 export const fetchLayoutNames = () =>
   jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
-export const fetchLayout = (name: string) =>
-  jsonFetch<unknown>(`/api/layouts/${encodeURIComponent(name)}`)
+/** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
+export interface FetchedLayout {
+  doc: unknown
+  revision: string | null
+}
 
-export const saveLayout = (name: string, doc: FigureDocument | ProjectDocument) =>
-  jsonFetch<{ ok: boolean }>(`/api/layouts/${encodeURIComponent(name)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(doc),
-  })
+export async function fetchLayout(name: string): Promise<FetchedLayout> {
+  const res = await fetch(apiUrl(`/api/layouts/${encodeURIComponent(name)}`), withProject())
+  if (!res.ok) {
+    let body: Record<string, unknown> = {}
+    try {
+      body = (await res.json()) as Record<string, unknown>
+    } catch {
+      /* 非 JSON 错误体，保留状态码 */
+    }
+    noteProjectGone(res.status, body)
+    throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, body)
+  }
+  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
+}
+
+/**
+ * 「另存为」。`baseRevision` = 本窗口最后一次**读到或写成功**的那一份画布
+ * 文件的内容 hash；`REVISION_ABSENT` = 「我没读到过这个名字下的任何内容」。
+ *
+ * 与 `putAutosave` 是同一条判据的同一个哨兵（后端 `_revision_conflict` 只有
+ * 一份）。少了它，两个窗口对同名画布各另存一次，后写的整份盖掉先写的，
+ * **而两边都收到 200**。
+ */
+export const saveLayout = (
+  name: string,
+  doc: FigureDocument | ProjectDocument,
+  baseRevision?: string,
+) =>
+  jsonFetch<{ ok: boolean; revision: string | null }>(
+    `/api/layouts/${encodeURIComponent(name)}` +
+      (baseRevision === undefined ? '' : `?base_revision=${encodeURIComponent(baseRevision)}`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(doc),
+    },
+  )
 
 /* --------------------------- 文档自动保存（磁盘） ---------------------------- */
 /** 文档主体的可靠落盘（后端原子写）；localStorage 只留索引与崩溃兜底副本 */

@@ -281,11 +281,14 @@ export default interface Resources {
       "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
     },
     "layout": {
+      "conflict": "磁盘上已经有一份名为「{{name}}」的画布文件，而它不是本窗口写的（另一个窗口或 Tavotto 之外的工具动过）。",
+      "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "description": "画布文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机",
       "empty": "还没有保存过画布文件",
       "load": "载入",
       "loadHeading": "载入画布文件",
       "namePlaceholder": "布局名称",
+      "overwrite": "仍然覆盖",
       "saveAs": "保存为画布文件",
       "saveHeading": "保存为画布文件",
       "saved": "已保存为画布文件：{{name}}",
@@ -1581,6 +1584,7 @@ export default interface Resources {
       "no_output": "这次导出没有产出任何文件。",
       "no_project": "尚未打开项目",
       "non_finite_number": "文档里含有无法保存的数值（NaN 或 ∞），磁盘上那份一个字节都没动：{{reason}}",
+      "non_finite_on_disk": "磁盘上这份文档里含有 NaN 或 ∞——它不是合法的 JSON，浏览器读不出来。Tavotto 没有改动这个文件；请检查是哪个外部工具写坏了它。",
       "not_parameterizable": "该面板不可参数化（没有对应脚本）",
       "open_project_failed": "打不开这个项目：{{reason}}",
       "package_file_missing": "缺少上传文件",
