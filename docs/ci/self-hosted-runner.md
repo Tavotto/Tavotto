@@ -162,6 +162,26 @@ sudo ./scripts/ci/bootstrap_lab_runner.sh --user github-runner
 
 它同样**不改防火墙、不动 sshd、不删任何文件**。
 
+### 装完字体之后要清 matplotlib 的字体缓存
+
+```bash
+sudo -u github-runner rm -rf ~github-runner/.cache/matplotlib
+```
+
+matplotlib 把「这台机器有哪些字体」缓存成 `<cachedir>/fontlist-v*.json`，
+**只按自己的格式版本号判失效，不看字体目录变没变**
+（`font_manager._load_fontmanager`）。新装的字体包**不会**让它过期：包装上了、
+`fc-list` 也查得到，matplotlib 仍然看不见——表现是渲染用例继续红，而字体明明
+在，两条线索指向完全不同的方向。
+
+`<cachedir>` 在 Linux 上是 `$XDG_CACHE_HOME/matplotlib`（默认
+`~/.cache/matplotlib`），**除非设了 `MPLCONFIGDIR`**：走内置 runtime 的那条链路
+会把它改道到 `<data_dir>/cache/mpl`（`engine/runtime.child_env()`），那份要另外
+清一次。清错目录的表现与不清一模一样。
+
+bootstrap 脚本刻意不替你删——它不删任何文件（见脚本头部的「刻意不做的事」），
+所以这一步留在文档里。
+
 ### 专用用户
 
 ```
@@ -216,6 +236,7 @@ benchmark、已审阅的 golden 数据。**工作目录本身每次都清理**�
 | Rust | stable + clippy + rustfmt | workerd 门禁 |
 | Playwright | chromium + 系统依赖 | `npx playwright install-deps chromium` |
 | fonts-noto-cjk | | corpus 的中文 case 要它才画得出字 |
+| fonts-dejavu-extra | | DejaVu 的斜体脸；缺了 `style=italic` 静默退回 regular |
 
 Rust 装完**必须把 `~/.cargo/bin` 加进 runner 服务的 PATH**：
 

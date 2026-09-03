@@ -1587,3 +1587,58 @@ def test_release_yml_wires_the_blocker_gate():
     assert "\n        if:" not in step, (
         "blocker 门禁被 if 限定到了某一条触发路径——tag push 会无声绕过它"
     )
+
+
+# ---------------------------------------------------------------- 字体包清单
+# `bootstrap_lab_runner.sh` 的 `APT_PACKAGES` ↔ `docs/ci/self-hosted-runner.md`
+# 的工具链表。两份说的是同一件事——**这台机器上装了什么**——而它们各自会被
+# 不同的理由改动（脚本因为「重建时要装上」，文档因为「机器现在有什么」）。
+# issue #229 就是这条缝：字体在机器上手工装好了，脚本没补，按脚本重建会复发。
+#
+# 字体缺失**没有任何一条信息指向「机器少装了东西」**：matplotlib 找不到
+# `DejaVuSans-Oblique.ttf` 时不 warn，`style=italic` 静默退回 regular，画出来
+# 与 regular 逐字节相同，红的是渲染用例。所以这条缝只能靠判据看住。
+
+BOOTSTRAP = CI_DIR / "bootstrap_lab_runner.sh"
+RUNNER_DOC = CI_DIR.parents[1] / "docs" / "ci" / "self-hosted-runner.md"
+
+
+def _font_packages_in_script() -> set[str]:
+    """`APT_PACKAGES` 数组里的 `fonts-*` 包名。
+
+    **先去注释再取词**：注释里也会出现包名（`fonts-dejavu-core` 是「为什么
+    要 extra」的一部分，恰恰是**不装**的那个），连注释一起 grep 会把它读成
+    要装的包，判据于是永远对不上。
+    """
+    src = BOOTSTRAP.read_text(encoding="utf-8")
+    block = src.split("APT_PACKAGES=(", 1)[1].split("\n)", 1)[0]
+    return {
+        word
+        for line in block.splitlines()
+        for word in line.split("#", 1)[0].split()
+        if word.startswith("fonts-")
+    }
+
+
+def _font_packages_in_doc() -> set[str]:
+    """工具链表第一列里的 `fonts-*` 包名。"""
+    src = RUNNER_DOC.read_text(encoding="utf-8")
+    table = src.split("## 4. 工具链", 1)[1].split("\n## ", 1)[0]
+    return {
+        first
+        for line in table.splitlines()
+        if line.startswith("|") and (first := line.split("|")[1].strip()).startswith("fonts-")
+    }
+
+
+def test_the_font_packages_are_one_list_on_both_sides():
+    """脚本装的字体包与文档那张表必须逐个对上（issue #229）。"""
+    script, doc = _font_packages_in_script(), _font_packages_in_doc()
+    # 两侧同时读成空集也是「相等」——那种绿是解析坏了，不是清单对上了。
+    assert script, "没从 APT_PACKAGES 里读到任何 fonts-* 包：解析坏了，下面那条断言恒真"
+    assert doc, "没从工具链表里读到任何 fonts-* 包：解析坏了，下面那条断言恒真"
+    assert script == doc, (
+        f"字体包清单两侧不一致：脚本装了 {sorted(script - doc)} 而文档没写，"
+        f"文档写了 {sorted(doc - script)} 而脚本不装。"
+        "两份都是「这台机器上有什么」，漂了就会在下一次重建时少装一个包。"
+    )

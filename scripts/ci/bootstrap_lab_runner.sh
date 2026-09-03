@@ -74,6 +74,14 @@ APT_PACKAGES=(
     ca-certificates curl wget git jq unzip zip xz-utils file
     python3 python3-pip python3-venv python3-dev
     fonts-noto-cjk            # corpus 里的中文 case 要它才画得出字
+    # DejaVu 的**斜体那几张脸**。基础系统只带 fonts-dejavu-core，里面只有
+    # regular 与 bold；`DejaVuSans-Oblique.ttf` 不在解析得到的字体里时，
+    # matplotlib 的 `style=italic` 会**静默退回 regular**——没有 warning，
+    # 画出来与 regular 逐字节相同。表现是渲染用例报「宣称可编辑、状态设进去
+    # 了、像素没变」（test_capability_truthfulness），看上去像产品缺陷，实际
+    # 是机器残缺：同一份代码在 GitHub 的 ubuntu runner 上通过。装它对既有渲染
+    # 无影响——两份 DejaVuSans.ttf 字形一致。见 issue #229。
+    fonts-dejavu-extra
     flock                     # 服务端互斥（GitHub concurrency 之外的第二道保险）
 )
 
