@@ -2022,8 +2022,10 @@ def test_partial_looks_like_neither_full_success_nor_full_failure(batch_project,
     assert counts["opened"] + counts["failed"] + counts["skipped"] == counts["requested"]
     text = res["content"][0]["text"]
     assert "3 张已打开" in text and "1 张失败" in text
-    assert "XPS_C_Ti_800C" in text and "script_error" in text
+    assert "XPS_C_Ti_800C" in text and "脚本第 3 行炸了" in text
     assert "status=partial" in text
+    # code 只进 structuredContent：念给用户听的那一份里不出现机器码
+    assert "script_error" not in text and body["failed"][0]["code"] == "script_error"
 
 
 def test_a_batch_where_nothing_opens_is_an_error_with_per_stem_detail(batch_project, monkeypatch):
@@ -2081,13 +2083,14 @@ def test_batch_stops_at_the_session_budget_instead_of_evicting_its_own(
     """未尝试是第三档：预算用光时不许悄悄把自己刚开的挤掉，也不许报成失败。"""
     batch_pool()
     monkeypatch.setattr(bridge, "MAX_SESSIONS", 2)
-    body = _body(
-        _call("tavotto_open_figure", {"project_path": str(batch_project), "stems": BATCH_STEMS})
-    )
+    res = _call("tavotto_open_figure", {"project_path": str(batch_project), "stems": BATCH_STEMS})
+    body, text = _body(res), res["content"][0]["text"]
     assert body["counts"] == {"requested": 4, "opened": 2, "failed": 0, "skipped": 2}
     assert body["status"] == "partial"
     assert [s["stem"] for s in body["skipped"]] == BATCH_STEMS[2:]
     assert {s["code"] for s in body["skipped"]} == {"session_budget_exhausted"}
+    # 机器码不进人读的那一份，但「为什么没试、下一步做什么」要在
+    assert "session_budget_exhausted" not in text and "tavotto_close_session" in text
     assert body["failed"] == [], "没试过 ≠ 试过并失败"
     # 先开的两条**还活着**（被自己这一批挤掉的话，返回的 session_id 就是假的）
     for entry in body["opened"]:

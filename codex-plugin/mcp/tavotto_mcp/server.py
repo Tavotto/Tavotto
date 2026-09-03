@@ -430,10 +430,12 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
             f"  ✓ {entry['stem']}  会话 {entry['session_id']}  "
             f"{size[0]}×{size[1]} mm，{entry['elements']} 个可编辑元素"
         )
+    # **code 只进 `structuredContent`**：这几行是念给用户听的那一份。念一个
+    # `session_budget_exhausted` 出来，用户既不知道发生了什么也不知道下一步。
     for entry in out["failed"]:
-        lines.append(f"  ✗ {entry['stem']}  [{entry['code']}] {entry['error'].splitlines()[0]}")
+        lines.append(f"  ✗ {entry['stem']}  {entry['error'].splitlines()[0]}")
     for entry in out["skipped"]:
-        lines.append(f"  · {entry['stem']}  [{entry['code']}] 未尝试")
+        lines.append(f"  · {entry['stem']}  未尝试：{entry['error'].splitlines()[0]}")
     if out["failed"] or out["skipped"]:
         # 「其余照常打开」要说出口：模型看到一条失败就整批重来的话，已经开好的
         # 那几个会话会被晾在账本里没人关。
