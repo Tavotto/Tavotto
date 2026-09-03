@@ -16,6 +16,7 @@ import {
   useWorkspaceStore,
 } from './workspace'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
+import { syncLoadedDocument } from './liveSync'
 
 /**
  * 两条工作流共享同一个对象模型（Prompt 09）。这批用例守的是「**没有第二套
@@ -101,6 +102,74 @@ describe('打开一张图 → 快速编辑', () => {
     useUiStore.getState().setTool('arrow')
     openFastEdit('a.pdf')
     expect(useUiStore.getState().tool).toBe('select')
+  })
+})
+
+/**
+ * issue #267：**双击落在「素材→脚本」关联到达之前**。
+ *
+ * 关联是异步来的（后端扫描 / 试运行 → `assets.changed` → `panelSourceSync`
+ * 原地补 `script`）。`openFastEdit` 的"能不能进图内编辑"此前是一次**一次性
+ * 判断**——判完没有人再问第二遍，于是双击早一步的用户永远进不去图内编辑，
+ * 而界面上一切正常（属性页甚至会在关联到达后长出「编辑图内元素」按钮）。
+ *
+ * 这不是"慢"，是**判断丢了且没有恢复路径**：所以它在快机器上永远看不到、
+ * 在慢机器上必然发生，表现为"偶发"。
+ *
+ * 三条一起钉：补进去（正向）、用户已经走开就不补（两个反向）。只钉正向的话，
+ * 一个"关联一到就无条件抢进图内编辑"的实现照样全绿，而那会把界面从已经回到
+ * 排版、或已经打开另一张图的用户手里抢走。
+ */
+describe('源脚本关联迟到（issue #267）', () => {
+  beforeEach(reset)
+
+  /** 素材清单里补上关联，然后走文档同步那条路（不发请求） */
+  const scriptArrives = (fileId: string) => {
+    useAssetStore.setState({
+      byId: { ...useAssetStore.getState().byId, [fileId]: info(fileId, { script: 'late.py' }) },
+    })
+    syncLoadedDocument()
+  }
+
+  it('关联到达时把那次进入补上——用户不必自己再点一次「编辑图内元素」', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    expect(openFastEdit('late.pdf')).toBe('layout_only')
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(ws().pendingElementEdit).toBe(panelOf('late.pdf').id)
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBe(panelOf('late.pdf').id)
+    // 待办只补一次：留着的话下一次关联事件会再抢一回
+    expect(ws().pendingElementEdit).toBeNull()
+  })
+
+  it('用户已经回到画布排版：迟到的关联不把他拽回图内编辑', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    returnToLayout()
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(ws().mode).toBe('layout')
+  })
+
+  it('用户已经打开了别的图：迟到的关联不换掉他正在看的那张', () => {
+    useAssetStore.setState({
+      byId: {
+        'late.pdf': info('late.pdf', { script: undefined }),
+        'a.pdf': info('a.pdf'),
+      },
+    })
+    openFastEdit('late.pdf')
+    openFastEdit('a.pdf') // 改了主意，去开另一张（这张有脚本，直接进图内编辑）
+    const other = panelOf('a.pdf').id
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBe(other)
+    expect(ws().activePanelId).toBe(other)
   })
 })
 

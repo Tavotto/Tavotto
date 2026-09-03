@@ -54,8 +54,25 @@ interface WorkspaceState {
    * 用户放了两份的那张图会在两个实例之间随机跳。
    */
   activePanelId: string | null
+  /**
+   * 用户要求打开某张图做图内编辑，而**那一刻它还没有源脚本**（关联还在路上）
+   * ——记下这个待办，脚本关系一建立就把那次进入补上（issue #267）。
+   *
+   * 为什么需要它：`openFastEdit` 的"能不能进图内编辑"是一次**一次性判断**，
+   * 判完就没有人再问第二遍。素材→脚本的关联是异步到达的（后端扫描 / 试运行
+   * → `assets.changed` → `panelSourceSync` 原地补 `script`），双击落在关联
+   * 之前时，用户的意图就此丢失且**没有任何恢复路径**——界面停在排版态，
+   * 「编辑图内元素」要他自己再点一次。机器慢一点就必然发生，快一点就永远
+   * 看不到，所以它表现为"偶发"。
+   *
+   * 只补**这一个面板、这一次**：用户如果已经走开（换了面板 / 回了排版），
+   * 补进去就是把界面从他手里抢走。
+   */
+  pendingElementEdit: string | null
   /** 进入快速编辑（对象必须已经在激活画布里） */
   enterFastEdit: (panelId: string) => void
+  /** 设置 / 清除「等源脚本到了再进图内编辑」的待办 */
+  setPendingElementEdit: (panelId: string | null) => void
   /** 回到画布排版 */
   exitToLayout: () => void
   /** 换文档 / 换项目：整个清掉，不留指向旧文档对象的 id */
@@ -65,18 +82,21 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   mode: 'layout',
   activePanelId: null,
+  pendingElementEdit: null,
   enterFastEdit: (panelId) => {
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
     set({ mode: 'fast_edit', activePanelId: panelId })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
   },
+  setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
   exitToLayout: () => {
     const changed = get().mode !== 'layout'
-    set({ mode: 'layout', activePanelId: null })
+    // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
-  clear: () => set({ mode: 'layout', activePanelId: null }),
+  clear: () => set({ mode: 'layout', activePanelId: null, pendingElementEdit: null }),
 }))
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
@@ -170,11 +190,18 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   useSelectionStore.getState().set([panel.id])
   revealPanel(panel)
   if (panel.script) {
+    useWorkspaceStore.getState().setPendingElementEdit(null)
     enterElementEdit(panel.id)
     emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'editing' })
     return 'editing'
   }
   useUiStore.getState().setElementPanel(null)
+  // **这一刻**没有源脚本，不代表这张图不可编辑：素材→脚本的关联是异步到达的
+  // （后端扫描 / 试运行 → `assets.changed` → `panelSourceSync` 原地补
+  // `script`）。把用户的意图记下来，关联建立时由 `liveSync` 补上那次进入
+  // ——否则这条判断就是一次性的，双击落在关联之前时意图**永久丢失**
+  // （issue #267：机器慢一点就必然发生，快一点就永远看不到）。
+  useWorkspaceStore.getState().setPendingElementEdit(panel.id)
   emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'layout_only' })
   return 'layout_only'
 }

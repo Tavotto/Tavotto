@@ -25,6 +25,8 @@ import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { previewSession, resetPreview } from './svgPreviewStore'
 import { useUiStore } from './uiStore'
+import { enterElementEdit } from './actions'
+import { useWorkspaceStore } from './workspace'
 
 /**
  * 同步结果 → 渲染层 / 编辑态 / 提示。
@@ -55,6 +57,23 @@ function applyPanelSync(result: PanelSyncResult): void {
     // ——那是用户的编辑，源关系恢复之后它们还要用。
     if (previewSession()?.panelId === editing) resetPreview()
     ui.setElementPanel(null) // 顺带清 selectedGids 与 cropTarget
+  }
+
+  // 升级方向（issue #267）。降级那一侧一直有人管（上面：源脚本没了就退出
+  // 图内编辑），**升级这一侧从来没有**——`upgraded` 只换来一句提示。于是
+  // 「用户双击时还没关联上」这条路上，他要的图内编辑再也不会到来。
+  //
+  // 只补 `openFastEdit` 明确记下的那一个待办，而且要求**用户还停在那张图上**
+  // （`activePanelId`）、**此刻不在图内编辑**：迟到的关联不许把界面从已经走开
+  // 的用户手里抢走。
+  const wsStore = useWorkspaceStore.getState()
+  const pending = wsStore.pendingElementEdit
+  if (pending && result.upgraded.includes(pending)) {
+    wsStore.setPendingElementEdit(null)
+    // 读**此刻**的 uiStore，不是函数开头那份快照：上面的降级分支可能刚改过它
+    if (wsStore.activePanelId === pending && useUiStore.getState().elementPanelId == null) {
+      enterElementEdit(pending)
+    }
   }
 
   if (editingLost) {
