@@ -2967,18 +2967,32 @@ def api_native_approve(native_id: str):
     """
     body = request.get_json(silent=True) or {}
     try:
-        descriptor = engine_nativehandoff.consume(native_id)
+        # **peek 不是 consume**：凭据要留到 attach 真的成功为止（ADR 0021 §4
+        # 的"attach 之后删除"）。反过来（先 consume 再 attach）会把一次
+        # **可恢复**的失败变成不可逆的——环境正在装依赖、relay 瞬时连不上
+        # 都是等一会儿再点一次就好的事，而那时凭据已经是墓碑，界面没得重试
+        # （issue #190）。
+        descriptor = engine_nativehandoff.peek(native_id)
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
     meta = descriptor.get("metadata") or {}
     try:
         session = engine_nativesession.REGISTRY.attach(descriptor)
     except engine_runcodes.RunError as exc:
+        # **凭据留着**（还是 pending）：失败原因回给界面，界面把这一项留在
+        # 队列里让用户再点一次（`nativeSessionStore.approve` 的 catch），而
+        # CLI 那边继续等——等的是一次**可能成功**的重试。用户不想等了就点
+        # 取消，那条路会把 descriptor 墓碑成 cancelled，CLI 当场收摊。
         return _native_error(exc)
     except engine_pool.EnvironmentBusy as exc:
         resp = jsonify({"ok": False, "code": exc.code, "error": str(exc)})
         resp.status_code = 409
         return resp
+    # attach 成了才烧掉凭据——**一次性是对成功的 attach 说的**。
+    # 它**不抛**（见 `mark_consumed` 的 docstring）：走到这里会话已经活着，
+    # 把一次墓碑写失败翻译成 500 就是把成功报成失败。
+    if not engine_nativehandoff.mark_consumed(native_id):
+        LOG.warning("native 交接凭据没能墓碑化（%s）——会话已连上，凭据交给 TTL 清理", native_id)
     if body.get("remember") is True:
         engine_nativeperm.remember(
             meta.get("project_root", ""),
@@ -3031,8 +3045,9 @@ def api_native_session_build(session_id: str):
         # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
         # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
         # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
-        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
-        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。这个文件里每一处
+        # `_worker_error_payload` 都必须带 `, 500`——native 这两处曾经漏过
+        # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     _materialize_native(session)
@@ -3060,8 +3075,9 @@ def _native_action(session_id: str, action: str):
         # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
         # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
         # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
-        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
-        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。这个文件里每一处
+        # `_worker_error_payload` 都必须带 `, 500`——native 这两处曾经漏过
+        # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     return jsonify({"ok": True, "result": result, "session": session.public_state()})
 

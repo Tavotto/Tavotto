@@ -249,10 +249,37 @@ def consume(native_id: str, now: float | None = None) -> dict:
     顺序是刻意的——先读出来再墓碑化。反过来（先标记再读）在并发下会让两个
     请求都读到墓碑；而这里两个请求里只有一个能读到 pending，另一个拿到
     `native_handoff_consumed`。
+
+    **读出来之后还有会失败的一步时别用它**：`app.py` 的确认端点走的是
+    `peek()` → attach → `mark_consumed()`，因为在 attach **之前**烧掉凭据会把
+    一次可恢复的失败变成不可逆的（issue #190）。这一条留给"读出来就算取用了"
+    的调用方。
     """
     data = peek(native_id, now)
-    _tombstone(native_id, STATE_CONSUMED, now)
+    mark_consumed(native_id, now)
     return data
+
+
+def mark_consumed(native_id: str, now: float | None = None) -> bool:
+    """attach **成功之后**把凭据换成墓碑。**不校验 live，也绝不抛。**回成没成。
+
+    不校验：走到这一行时会话已经连上了，而 descriptor 在 attach 那几百毫秒里
+    可能刚好过期——那时抛出去等于"会话正跑着，界面收到一条失败"。一次性由
+    attach **之前**的 `peek()` 保证，这一步只负责把 token 从磁盘上抹掉。
+
+    不抛是同一条理由的下半句：盘满 / 权限没了会让 `_write_private()` 失败，
+    而那时 relay 已认证、会话已注册、CLI 马上要 spawn 用户的 Python。让这个
+    异常冒上去 = 一次**成功的** attach 被报成 500。所以退而求其次去删文件，
+    再不行就交给 `prune_stale()` 与 TTL——留在盘上的那份仍然 0600，而且它
+    对应的会话已经活着，再 attach 一次会被 `native_session_conflict` 挡掉。
+    调用方拿 False 去**记一条日志**，不去改响应。
+    """
+    try:
+        _tombstone(native_id, STATE_CONSUMED, now)
+        return True
+    except (OSError, RunError):
+        discard(native_id)  # 自己会吞 OSError：这里已经是兜底的兜底
+        return False
 
 
 def cancel(native_id: str, now: float | None = None) -> None:
