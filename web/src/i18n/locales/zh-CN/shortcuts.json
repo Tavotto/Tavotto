@@ -7,7 +7,8 @@
     "tools": "V / T / A / R / O / L",
     "wheelZoom": "{{mod}}+滚轮",
     "shiftClick": "⇧+点击",
-    "rightClick": "右键"
+    "rightClick": "右键",
+    "altClick": "{{alt}}+点击"
   },
   "group": {
     "arrange": "排列与层级",
@@ -43,7 +44,8 @@
     "zoomPresets": "100% / 适应画布",
     "multiSelect": "加选 / 减选对象或图内元素",
     "quickEdit": "按对象打开快捷编辑菜单",
-    "tutorialPause": "暂停教程（焦点在教程卡片上时）"
+    "tutorialPause": "暂停教程（焦点在教程卡片上时）",
+    "cycleOverlap": "在重叠的图内元素之间轮换选中（双纵轴的两个子图容器）"
   },
   "title": "快捷键"
 }

@@ -15,6 +15,7 @@ import {
   selectAll,
   ungroupSelected,
 } from '@/store/actions'
+import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
 import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
@@ -125,6 +126,20 @@ const COMMANDS: Command[] = [
       const o = id ? useDocumentStore.getState().doc.objects.find((x) => x.id === id) : null
       if (o?.type === 'panel' && o.script) enterElementEdit(o.id)
       else ui().setStatus(msg('palette.needPanel', undefined, 'dialogs'), 'error')
+    },
+  },
+  // ⌥ 点击的键盘等价物（issue #37 的「画布操作要有对象树 / inspector 等价
+  // 路径」）：图内编辑态下选中一个元素，用它 bbox 的中心当那个点往后轮换。
+  // 判据与动作都在 `canvas/interactions`，这里不判第二遍。
+  {
+    id: 'cycle-overlap',
+    available: canCycleOverlapSelection,
+    run: () => {
+      // 几何权威没就位时 `cycleOverlapSelection` 什么都不动（ADR 0017），
+      // 说一句「正在同步」而不是装作换了一个
+      if (!cycleOverlapSelection()) {
+        ui().setStatus(msg('status.geometrySyncing', undefined, 'workspace'), 'error')
+      }
     },
   },
   {

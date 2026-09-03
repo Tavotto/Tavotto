@@ -1,5 +1,8 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, t, type UiMessage } from '@/i18n'
+// 元素名的措辞只有这一份（元素树 / 属性页 / 快速编辑都用它）：轮换的 toast
+// 要说「子图 2（右轴）」，不能在画布层再拼一套。
+import { engineLabel } from '@/components/inspector/roles/registry'
 import {
   anchoredRect,
   endpointDelta,
@@ -918,17 +921,32 @@ function arrowDistMm(
   return Math.hypot(px - (ax + dx * t), py - (ay + dy * t))
 }
 
-export function pickElement(
+/**
+ * 命中评分后的**全部候选**，按「谁该赢」升序排；`pickElement` 取的就是 `[0]`。
+ *
+ * 为什么要一张表：`pickElement` 只回答得了「点这儿选谁」。重叠到**评分逐位
+ * 相同**时它给不出第二个答案——twinx 的孪生轴与宿主 bbox 一模一样、role 同为
+ * `axes`，面积与降权都相等，先登记的宿主恒胜，twin 容器在画布上永远点不中
+ * （issue #216）。两个 bbox 之间没有任何空间信号可用，唯一的出路是让用户说
+ * 一句「换下一个」（⌥ 点击 / 命令面板轮换），而轮换要的正是这张有序候选表。
+ *
+ * 排序：先比评分，评分相同按 **manifest 里的登记序**——这与旧实现（严格
+ * 小于才换优胜者）逐位相同，所以「**不轮换时**点这儿选谁」一个字节没变。
+ * 评分相同的候选因此在表里**相邻**：宿主的下一个永远是它的孪生轴，轮换
+ * 一步到位，不会先绕过一堆曲线。
+ *
+ * `figure` 不进这张表：它是 `pickElement` 的兜底命中，不是「压在这儿的候选」。
+ */
+export function pickElementStack(
   manifest: Manifest | null | undefined,
   fx: number,
   fy: number,
   lockedGids?: readonly string[],
-): ManifestElement | null {
-  if (!manifest) return null
+): ManifestElement[] {
+  if (!manifest) return []
   const PAD = 0.004
-  let best: ManifestElement | null = null
-  let bestScore = Infinity
-  for (const el of manifest.elements) {
+  const hits: { el: ManifestElement; score: number; i: number }[] = []
+  for (const [i, el] of manifest.elements.entries()) {
     if (el.gid === 'figure') continue
     if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
     if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
@@ -941,11 +959,7 @@ export function pickElement(
       const [sw, sh] = manifest.size_mm
       if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > PATH_HIT_MM) continue
       const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
-      const score = (lenMm * 2 * PATH_HIT_MM) / (sw * sh)
-      if (score < bestScore) {
-        bestScore = score
-        best = el
-      }
+      hits.push({ el, score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh), i })
       continue
     }
     // 有真实路径的元素（曲线 / 填充 / 独立形状）按**路径**命中，不用 bbox：
@@ -965,22 +979,108 @@ export function pickElement(
       const score = inside
         ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
         : geomInkAreaFrac(geom, manifest.size_mm, tol)
-      if (score < bestScore) {
-        bestScore = score
-        best = el
-      }
+      hits.push({ el, score, i })
       continue
     }
     const [x, y, w, h] = el.bbox
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
-    const area = w * h
-    const score = area * (HIT_PENALTY[el.role] ?? 1)
-    if (score < bestScore) {
-      bestScore = score
-      best = el
-    }
+    hits.push({ el, score: w * h * (HIT_PENALTY[el.role] ?? 1), i })
   }
-  return best ?? manifest.elements.find((e) => e.gid === 'figure') ?? null
+  // 评分打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
+  // 的兑现点。别改成纯 `a.score - b.score` 靠 sort 的稳定性兜着——那是隐含依赖，
+  // 而这里正是重叠候选唯一的次序来源。
+  hits.sort((a, b) => a.score - b.score || a.i - b.i)
+  return hits.map((h) => h.el)
+}
+
+export function pickElement(
+  manifest: Manifest | null | undefined,
+  fx: number,
+  fy: number,
+  lockedGids?: readonly string[],
+): ManifestElement | null {
+  return (
+    pickElementStack(manifest, fx, fy, lockedGids)[0] ??
+    manifest?.elements.find((e) => e.gid === 'figure') ??
+    null
+  )
+}
+
+/**
+ * 轮换的一步：在 `pickElementStack` 里从 `currentGid` 往后走一格（到头绕回）。
+ *
+ * `currentGid` 不在这堆里（刚从别处点过来、选的是元素树里另一个东西）时从
+ * **第一名**开始——也就是普通点击会选中的那一个。⌥ 的第一下不该跳过用户
+ * 本来就要的那个元素。
+ */
+export function cycleElementAt(
+  manifest: Manifest | null | undefined,
+  fx: number,
+  fy: number,
+  lockedGids: readonly string[] | undefined,
+  currentGid: string | null,
+): { el: ManifestElement; index: number; total: number } | null {
+  const stack = pickElementStack(manifest, fx, fy, lockedGids)
+  if (!stack.length) return null
+  const at = currentGid ? stack.findIndex((e) => e.gid === currentGid) : -1
+  const next = at < 0 ? 0 : (at + 1) % stack.length
+  return { el: stack[next], index: next + 1, total: stack.length }
+}
+
+/**
+ * ⌥ 点击 / 命令面板的「在重叠元素间轮换」：把选中挪到同一个点上的下一个候选，
+ * 并把**现在选中的是谁**说出来。
+ *
+ * 为什么必须说出来：孪生轴与宿主的选择框逐像素重合，只换 `selectedGids` 的话
+ * 画布上一个像素都不变，轮换在用户眼里就成了「随机换了个选中项」。措辞用元素树 /
+ * 属性页那一份（`engineLabel`，「子图 2（右轴）」），不另造第二套；toast 自带
+ * `aria-live`，读屏器也听得到。
+ *
+ * 几何权威按 ADR 0017：命中测试只认 `exactPanelManifest`，权威没就位就什么都
+ * 不动（调用方去说「正在同步」）。
+ */
+export function cycleOverlapAt(panel: PanelObject, fx: number, fy: number): boolean {
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!manifest) return false
+  const ui = useUiStore.getState()
+  const current = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
+  const step = cycleElementAt(manifest, fx, fy, panel.lockedGids, current)
+  if (!step) return false
+  ui.setSelectedGid(step.el.gid)
+  ui.setStatus(
+    msg(
+      'status.elementCycled',
+      { label: engineLabel(step.el.label), index: step.index, total: step.total },
+      'workspace',
+    ),
+  )
+  return true
+}
+
+/** ⌥ 轮换在键盘上可不可用：图内编辑态 + 恰好选中一个非 figure 的元素。 */
+export function canCycleOverlapSelection(): boolean {
+  const ui = useUiStore.getState()
+  if (!ui.elementPanelId || ui.selectedGids.length !== 1) return false
+  return ui.selectedGids[0] !== 'figure'
+}
+
+/**
+ * 键盘 / 命令面板入口：没有指针，就拿**当前选中元素 bbox 的中心**当那个点。
+ *
+ * 这不是第二套判据——轮换仍然是 `cycleOverlapAt` 那一份，只是换了个取点方式。
+ * 孪生轴与宿主的 bbox 逐位相同，中心自然同时落在两者里，所以从宿主出发一步
+ * 就到孪生轴（评分相同 ⇒ 表里相邻）。
+ */
+export function cycleOverlapSelection(): boolean {
+  const ui = useUiStore.getState()
+  if (!canCycleOverlapSelection()) return false
+  const panel = doc().objects.find((o) => o.id === ui.elementPanelId)
+  if (panel?.type !== 'panel') return false
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  const el = manifest?.elements.find((e) => e.gid === ui.selectedGids[0])
+  if (!el) return false
+  const [x, y, w, h] = el.bbox
+  return cycleOverlapAt(panel, x + w / 2, y + h / 2)
 }
 
 /**

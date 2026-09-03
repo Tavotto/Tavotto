@@ -562,6 +562,30 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**
   （椭圆/三角/菱形/多边形/大括号；矩形不在此列，直线走端点那套）。
   看护 `pathGeom.test.ts` / `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
+- **重叠候选之间的轮换**（2026-09-03，issue #216）：`pickElement` 只回答得了
+  「点这儿选谁」，重叠到**评分逐位相同**时给不出第二个答案——twinx 的孪生轴
+  与宿主 bbox 一模一样、role 同为 `axes`，先登记的宿主恒胜，twin 容器直选
+  点不中，而两个 bbox 之间没有任何空间信号可用。出路是让用户说「换下一个」：
+  * **一份有序候选表** `pickElementStack`，`pickElement` 取的就是它的 `[0]`。
+    排序 = 评分升序 + **评分相同按 manifest 登记序**（旧实现「严格小于才换
+    优胜者」的逐位等价），所以**不轮换时选谁一个字节没变**；评分相同的候选
+    因此在表里相邻，宿主的下一个永远是它的孪生轴。别改成靠 `sort` 的稳定性
+    兜着——那是隐含依赖，而这里正是重叠次序唯一的出处。
+  * **⌥ 点击**在候选间轮换（`cycleOverlapAt`），排在**边框命中区之前**：孪生轴
+    与宿主的边框逐位重合，正是最需要轮换的那一点。⌥ 只换选中，不写文档、不
+    进历史、不起拖动；⇧ 归加选，两个修饰键各管一件事。
+  * **换到了谁必须说出口**：两者的选择框逐像素重合，只换 `selectedGids` 的话
+    画布上一个像素都不变，轮换在用户眼里就是「随机换了个选中项」。toast 走
+    `status.elementCycled`，措辞用元素树 / 属性页那份 `engineLabel`
+    （「子图 2（右轴）」，引擎侧出处 `engine/manifest.py::_twin_axes_labels`），
+    **不另造第二套**；`StatusToasts` 自带 `aria-live`。
+  * **键盘等价路径**（issue #37「画布操作要有对象树 / inspector 等价路径」）：
+    ⌘K 的 `cycle-overlap` 命令跑同一个动作，没有指针就拿当前选中元素 bbox 的
+    中心当那个点（`cycleOverlapSelection`）；几何权威没就位时什么都不动
+    （ADR 0017），由调用方说「正在同步」。元素树本来就分得清孪生轴，那是第二
+    条键盘入口。
+  * 看护：`canvas/twinAxesPick.test.tsx`（两个方向各一组：不按 ⌥ 时命中逐条
+    不变 / 按 ⌥ 时换得到 twin、说得出是谁、绕得回来）。
 - **图内箭头交互**与画布箭头同语义（2026-08-17，elementArrowEditing.test 看护）：
   命中/框选按**线本身**不按 bbox 空白矩形、选中/hover 沿线描示无矩形外框、
   拖端点 shift 锁 15°、整体拖 shift 锁水平/垂直/45°（分数坐标锁角必须换算到

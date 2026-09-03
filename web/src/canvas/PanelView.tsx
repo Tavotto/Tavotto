@@ -45,6 +45,7 @@ import {
   unrotateVec,
 } from '@/types/document'
 import {
+  cycleOverlapAt,
   isElementHidden,
   pickElement,
   startArrowDrag,
@@ -647,6 +648,15 @@ function ElementHitLayer({
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
         const ui = useUiStore.getState()
+        // ⌥ 点击 = 在压在这一点上的重叠候选之间轮换（issue #216）。**排在边框
+        // 命中区之前**：孪生轴与宿主的边框线逐位重合，正是最需要轮换的那一点，
+        // 让位给「切这一边的刻度」的话用户永远换不到 twin 容器上。⇧ 归加选，
+        // 两个修饰键各管一件事；⌥ 只换选中，不起拖动（这一层的 ⌥ 此前没有语义，
+        // 拖动照旧不按修饰键分档）。
+        if (e.altKey && !e.shiftKey && cycleOverlapAt(obj, fx, fy)) {
+          setSpineHover(null)
+          return
+        }
         // 边框的内 / 外侧命中带：一次点击 = 切这一边的向内 / 向外刻度（一条历史）。
         // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源）；已经选着它或
         // 它的刻度组时不动选区。中线（neutral）不切刻度，走下面的普通选中。

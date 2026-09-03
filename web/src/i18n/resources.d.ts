@@ -437,6 +437,10 @@ export default interface Resources {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
         },
+        "cycle-overlap": {
+          "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
+          "label": "在重叠的图内元素之间轮换选中"
+        },
         "edit-elements": {
           "keywords": "edit element tnys tuneiyuansu",
           "label": "编辑选中面板的图内元素"
@@ -3096,6 +3100,7 @@ export default interface Resources {
   },
   "shortcuts": {
     "combo": {
+      "altClick": "{{alt}}+点击",
       "altDrag": "{{alt}}+拖角点",
       "arrowKeys": "方向键 / ⇧+方向键",
       "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
@@ -3115,6 +3120,7 @@ export default interface Resources {
     },
     "key": {
       "copyPaste": "复制 / 粘贴对象（可跨布局文档）",
+      "cycleOverlap": "在重叠的图内元素之间轮换选中（双纵轴的两个子图容器）",
       "delete": "删除对象；图内编辑时 = 隐藏元素（可恢复）",
       "duplicate": "原位复制所选",
       "enter": "编辑所选：文字进入编辑，可参数化面板进图内编辑",
@@ -3680,6 +3686,7 @@ export default interface Resources {
       "dismissError": "关闭错误提示",
       "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
       "documentReopened_other": "已切回：{{name}}（{{count}} 张画布）",
+      "elementCycled": "已选中「{{label}}」（这一点上第 {{index}}/{{total}} 个重叠元素）",
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
