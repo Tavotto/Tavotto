@@ -43,6 +43,7 @@ from flask import (
     send_file,
     send_from_directory,
 )
+from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 
 from . import pdfbackend
@@ -102,6 +103,32 @@ MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
 
 app = Flask(__name__, static_folder=None)
+
+
+class _StrictJSONProvider(DefaultJSONProvider):
+    """响应侧的非有限数闸 —— 这道闸的**第三个**边界。
+
+    另外两个：写盘走 `atomicio.dumps_json(allow_nan=False)`，读盘走
+    `documents.loads_document()` 的 `parse_constant`。少了这一个，前两个合起来
+    仍然漏：`GET /api/versions/<id>/<vid>` 与 `POST /api/package/open` 交给浏览器
+    的不是磁盘上那份字节，而是**这里重新序列化出来的响应**，而 Flask 默认
+    `allow_nan=True`——实测 `jsonify({"x": float("inf")})` 回的是
+    `{"x":Infinity}`，浏览器 `JSON.parse` 当场拒收。
+
+    于是「后端读得动、浏览器读不动」这件事有两条来路：磁盘上写着 `NaN`
+    字面量（读侧闸管这条），以及磁盘上是合法的 `1e400`、Python 把它读成
+    `inf`、再由这里写回一个非法字面量（这条只有这里管得到）。
+
+    失败方式是 `ValueError` → `_unhandled` → 500 `internal_error`。**这是有意的**：
+    发一个响亮的 500，好过发一份接收方解析不了、而它自己不知道为什么的响应。
+    """
+
+    def dumps(self, obj, **kwargs):
+        kwargs.setdefault("allow_nan", False)
+        return super().dumps(obj, **kwargs)
+
+
+app.json = _StrictJSONProvider(app)
 
 # 会话认证钩子（浏览器与桌面模式共用，见 security.py / ADR 0008）必须在
 # 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
@@ -5449,6 +5476,17 @@ def api_autosave_put(doc_id):
 #: 被写一次，所以 mtime 就是「这份文档最后一次被编辑」。
 AUTOSAVE_KEEP_SLOTS = 64
 AUTOSAVE_KEEP_BYTES = 64 * 1024 * 1024
+#: 字节上限**不许**把槽位数压到这个数以下。
+#:
+#: 自动保存槽位不是缓存，它是没另存过的文档的**主副本**（写盘成功之后前端就把
+#: localStorage 里那份删掉了）。而字节上限是按大小算的：一份 10 MB 的文档下
+#: 64 MB 只够 6 个槽，**比前端索引里还认领着的 12 个还少**——用户在菜单里点开
+#: 「最近文档」，后端 404，工作没了。
+#:
+#: 所以两条上限的地位不一样：条数上限是这道兜底的主判据，字节上限只在**它之外**
+#: 起作用。一个会删掉用户唯一一份副本的上限，比一个不设上限的目录坏得多。
+#: 24 = 前端 `MAX_SLOTS` 的两倍，给多浏览器 profile 留余量。
+AUTOSAVE_MIN_SLOTS = 24
 
 
 def _prune_autosave_slots(keep: Path) -> list[str]:
@@ -5476,7 +5514,8 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     victims: list[tuple[int, Path]] = []
     for i, (mtime_ns, size, path) in enumerate(rows):
         total += size
-        if (i >= AUTOSAVE_KEEP_SLOTS or total > AUTOSAVE_KEEP_BYTES) and path != keep:
+        over_bytes = total > AUTOSAVE_KEEP_BYTES and i >= AUTOSAVE_MIN_SLOTS
+        if (i >= AUTOSAVE_KEEP_SLOTS or over_bytes) and path != keep:
             victims.append((mtime_ns, path))
     removed: list[str] = []
     for mtime_ns, path in victims:
@@ -5599,20 +5638,40 @@ def _save_versions(doc_id: str, versions: list[dict]) -> None:
     `api_versions_create` 会交回一个磁盘上根本不存在的版本。
     """
     head, sep, tail = b'{"versions": [', b", ", b"]}"
-    chunks: list[bytes] = []
+    blobs = [engine_atomicio.dumps_json(v) for v in versions]
     # **算的是文件的字节数，不是条目的字节数。** 外壳与分隔符也占地方；不把它们
     # 记进来的话，上限守的就是一个比文件小一点的量，而"小一点"随条数增长
     # （每多一条多两个字节）——判据的主语与常量的说明会悄悄地对不上。
-    total = len(head) + len(tail)
-    for v in reversed(versions):
-        blob = engine_atomicio.dumps_json(v)
-        cost = len(blob) + (len(sep) if chunks else 0)
-        if chunks and total + cost > VERSION_KEEP_BYTES:
+    size = len(head) + len(tail) + sum(len(b) for b in blobs) + len(sep) * max(len(blobs) - 1, 0)
+    dropped: set[int] = set()
+    for i in _sacrifice_order(versions):  # 与条数上限**同一套优先级**
+        if size <= VERSION_KEEP_BYTES:
             break
-        chunks.append(blob)
-        total += cost
-    chunks.reverse()
+        dropped.add(i)
+        size -= len(blobs[i]) + len(sep)
+    chunks = [b for i, b in enumerate(blobs) if i not in dropped]
     engine_atomicio.write_bytes(_versions_path(doc_id), head + sep.join(chunks) + tail)
+
+
+def _sacrifice_order(versions: list[dict]) -> list[int]:
+    """再腾一条地方的话，**先牺牲谁** —— 时间线上所有裁剪路径的唯一优先级。
+
+    「先裁自动、再裁最旧」（见 `VERSION_KEEP_TOTAL` 上的注释）：自动检查点是
+    1 秒防抖攒出来的，手工检查点是用户主动按下的。两者同价的话，一段密集编辑
+    产生的自动检查点会把用户几天前特意留的那一版顶掉。
+
+    **最新那条不参与牺牲**：它是这次调用刚交回给调用方的那一版，裁掉它等于
+    `api_versions_create` 交回一个磁盘上不存在的版本。于是「至少留一条」不再是
+    一条要单独记得的规矩，而是这个顺序本身的性质。
+
+    条数上限与字节上限**共用这一个顺序**。改造中途它们各有一套：条数那边按
+    自动/手动分档，字节那边是纯粹的「留最新一段」——同一份契约在同一个文件里
+    有两个答案，而字节那条会把手工检查点交给自动检查点去顶。
+    """
+    keep_newest = len(versions) - 1
+    autos = [i for i, v in enumerate(versions) if v.get("auto") and i != keep_newest]
+    manual = [i for i, v in enumerate(versions) if not v.get("auto") and i != keep_newest]
+    return autos + manual  # 各自已按下标（= 时间）升序
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
@@ -5620,7 +5679,10 @@ def _prune_versions(versions: list[dict]) -> list[dict]:
     if len(autos) > VERSION_KEEP_AUTO:
         drop = {id(v) for v in autos[: len(autos) - VERSION_KEEP_AUTO]}
         versions = [v for v in versions if id(v) not in drop]
-    return versions[-VERSION_KEEP_TOTAL:]
+    if len(versions) > VERSION_KEEP_TOTAL:
+        drop_idx = set(_sacrifice_order(versions)[: len(versions) - VERSION_KEEP_TOTAL])
+        versions = [v for i, v in enumerate(versions) if i not in drop_idx]
+    return versions
 
 
 def _version_meta(v: dict) -> dict:

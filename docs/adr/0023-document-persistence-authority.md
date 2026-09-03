@@ -96,10 +96,22 @@ replace 出来的是一个**空文件**——比保留旧内容还糟。
 一字未动」，读侧说的是「磁盘上那份是坏的，Tavotto 没有动它」——用户的下一步
 不一样。
 
-`parse_float` **刻意不接管**：`1e400` 这类合法 JSON 数字在 Python 与浏览器里
-都会溢出成 `Infinity`，两侧读到的是同一个值，不属于这条要挡的不对称；而给
-每一个浮点数套一层 Python 回调会把整条读路径拖慢（版本时间线整份读回正是
-热路径）。它仍然过不了写侧的 `allow_nan=False`。
+### 3.2b 第三个边界：响应
+
+读侧闸挡的是磁盘上写着 `NaN` **字面量**那一档。还有第二条来路：磁盘上是合法
+的 `1e400`，Python 读成 `inf`，而 `GET /api/versions/<id>/<vid>` 与
+`POST /api/package/open` 交给浏览器的**不是磁盘上那份字节，是后端重新序列化
+出来的响应**——Flask 默认 `allow_nan=True`，实测 `jsonify({"x": float("inf")})`
+回的是 `{"x":Infinity}`，浏览器 `JSON.parse` 当场拒收。
+
+所以同一条规则有**三个**边界，各守一处：写盘 `atomicio.dumps_json`、读盘
+`documents.loads_document`、响应 `app._StrictJSONProvider`（`allow_nan=False`，
+失败是 500 `internal_error`——发一个响亮的 500 好过发一份接收方解析不了的响应）。
+
+`parse_float` **刻意不接管**：套在每一个浮点数上的 Python 回调会把整条读路径
+拖慢（版本时间线整份读回正是热路径），而它要挡的那一档已经由响应边界管住了。
+（本条第一版的理由写的是「两侧读到的是同一个值」——那是**量错了时刻**：它
+描述读文件那一刻，而经过 `jsonify` 的那条路上前端根本没读过那个文件。）
 
 两个消费点**有意**只把它当「读不出来」：`document_summary`（契约就是读不出来
 → `None`，它的两个调用方一个是 409 冲突响应的一部分、一个是 `/summary` 的

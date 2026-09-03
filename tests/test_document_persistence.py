@@ -888,6 +888,7 @@ def test_autosave_slots_are_capped_by_count_oldest_first(client, tmp_path, monke
 def test_autosave_slots_are_capped_by_bytes(client, tmp_path, monkeypatch):
     """两条上限谁先咬到算谁的：条数够用、字节超了也要裁。"""
     monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 100)
+    monkeypatch.setattr(m, "AUTOSAVE_MIN_SLOTS", 0)  # 保底另有一条用例，这里量的是字节这一档
     for i in range(5):
         client.put(f"/api/autosave/b{i}", json=PD)
         os.utime(tmp_path / documents.AUTOSAVE_DIRNAME / f"b{i}.json", ns=(0, (i + 1) * 10**9))
@@ -935,3 +936,42 @@ def test_pruning_skips_a_slot_rewritten_since_the_scan(client, tmp_path, monkeyp
     monkeypatch.setattr(m, "_document_lock", racing)
     assert m._prune_autosave_slots(tmp_path / documents.AUTOSAVE_DIRNAME / "new.json") == []
     assert victim.is_file(), "清理删掉了一份刚刚被写过的槽位"
+
+
+def test_the_byte_cap_never_cuts_autosave_below_the_slot_floor(client, tmp_path, monkeypatch):
+    """字节上限**不许**把槽位数压到保底之下。
+
+    自动保存槽位不是缓存，是没另存过的文档的**主副本**（写盘成功之后前端就把
+    localStorage 那份删了）。而字节上限按大小算：一份 10 MB 的文档下 64 MB 只够
+    6 个槽——比前端索引里还认领着的 12 个还少，用户点开「最近文档」就是 404。
+    一个会删掉用户唯一一份副本的上限，比一个不设上限的目录坏得多。
+    """
+    monkeypatch.setattr(m, "AUTOSAVE_MIN_SLOTS", 3)
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_BYTES", 1)  # 字节上限压到极限
+    for i in range(5):
+        client.put(f"/api/autosave/f{i}", json=PD)
+        os.utime(tmp_path / documents.AUTOSAVE_DIRNAME / f"f{i}.json", ns=(0, (i + 1) * 10**9))
+    client.put("/api/autosave/f4", json=PD)
+    kept = _slot_names(tmp_path)
+    assert len(kept) == 3, f"字节上限吃掉了保底槽位：{kept}"
+
+
+def test_no_response_ever_carries_a_bare_infinity(client, tmp_path):
+    """**第三个边界：响应。**
+
+    读侧闸挡的是磁盘上写着 `NaN` 字面量那一档。另一条来路是磁盘上写着合法的
+    `1e400`：Python 读成 `inf`，而版本时间线那条 GET 交给浏览器的不是磁盘上
+    那份字节，是**后端重新序列化出来的响应**——Flask 默认 `allow_nan=True`，
+    实测 `jsonify({"x": float("inf")})` 回 `{"x":Infinity}`，浏览器
+    `JSON.parse` 当场拒收。
+
+    判据的主语因此是**响应体**，不是磁盘上那份：拿浏览器那一侧的解析规则去读
+    它，读得动才算数。
+    """
+    poisoned = tmp_path / documents.VERSIONS_DIRNAME / "dinf.json"
+    poisoned.parent.mkdir(parents=True, exist_ok=True)
+    poisoned.write_text('{"versions": [{"id": "v1", "doc": {"x": 1e400}}]}', encoding="utf-8")
+
+    r = client.get("/api/versions/dinf/v1")
+    assert r.status_code == 500, "非有限数悄悄地被发出去了"
+    documents.loads_document(r.get_data())  # 浏览器那一侧必须解析得动这份错误响应

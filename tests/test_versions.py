@@ -185,3 +185,58 @@ def test_the_count_cap_still_governs_small_documents(client, monkeypatch):
         _create(client, name=f"v{i}", doc_id="d4")
     versions = client.get("/api/versions/d4").get_json()["versions"]
     assert [v["name"] for v in versions] == ["v4", "v5", "v6", "v7", "v8"]
+
+
+def _auto(client, doc_id, n):
+    """内容各不相同、**大小基本相同**的自动检查点。
+
+    内容要不同：相同内容会被去重跳过，那样就什么都没测到。大小要相同：靠
+    对象数拉开差异的话，条目大小随之变化，「预算装得下几条」就不再是个能
+    预先算出来的数，判据只好写得很松——松到量不出优先级。
+    """
+    r = client.post(
+        f"/api/versions/{doc_id}", json={"doc": _doc(2, name=f"c{n:02d}"), "auto": True}
+    )
+    assert r.status_code == 200 and not r.get_json().get("skipped")
+
+
+def test_the_byte_cap_sacrifices_auto_checkpoints_before_manual_ones(client, monkeypatch):
+    """两条上限**同一套优先级**：先裁自动、再裁最旧。
+
+    改造中途它们各有一套——条数那边按自动/手动分档，字节那边是纯粹的
+    「留最新一段」。后果是用户主动按下的那一版，被 1 秒防抖攒出来的自动检查点
+    顶掉了（同一份契约在同一个文件里有两个答案）。
+    """
+    manual = _create(client, name="手动", doc_id="d6")["version"]["id"]
+    one = len(m.engine_atomicio.dumps_json(m._load_versions("d6")[0]))
+    # 预算按**实测的一条**算，正好装得下六条上下：太紧的话除最新那条之外全被
+    # 裁掉，优先级这一维就量不到了（第一版正是这么写的，手动那条当然也没了）。
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", one * 6)
+    for i in range(20):
+        _auto(client, "d6", i)
+    versions = client.get("/api/versions/d6").get_json()["versions"]
+    assert 1 < len(versions) <= 7, f"预算没咬到，或者咬得只剩一条：{len(versions)}"
+    assert any(v["id"] == manual for v in versions), "手工检查点被自动检查点挤掉了"
+
+
+def test_the_count_cap_sacrifices_auto_checkpoints_before_manual_ones(client, monkeypatch):
+    """条数上限那一侧同理。以前它是 `versions[-N:]`——纯按时间，手工检查点
+    在自动检查点面前没有任何优待。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_TOTAL", 5)
+    monkeypatch.setattr(m, "VERSION_KEEP_AUTO", 40)  # 让自动环不先咬，量的是总数那一档
+    manual = _create(client, name="手动", doc_id="d7")["version"]["id"]
+    for i in range(8):
+        _auto(client, "d7", i)
+    versions = client.get("/api/versions/d7").get_json()["versions"]
+    assert len(versions) == 5
+    assert any(v["id"] == manual for v in versions), "手工检查点被自动检查点挤掉了"
+
+
+def test_the_newest_entry_never_gets_sacrificed_even_when_it_is_auto(client, monkeypatch):
+    """最新那条不参与牺牲——哪怕它是自动的。裁掉它等于交回一个磁盘上不存在
+    的版本。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 1)
+    _create(client, name="手动", doc_id="d8")
+    _auto(client, "d8", 1)
+    versions = client.get("/api/versions/d8").get_json()["versions"]
+    assert [v["auto"] for v in versions] == [True], "留下的不是最新那条"
