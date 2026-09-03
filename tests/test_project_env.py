@@ -194,6 +194,29 @@ def test_the_fixture_grades_a_broken_premise_instead_of_blaming_the_product(tmp_
     assert err.value.code == venvfixture.PREMISE_MASK_INEFFECTIVE
 
 
+@needs_worker
+def test_make_project_venv_never_returns_a_venv_it_has_not_verified(tmp_path, monkeypatch):
+    """体检的结论要**进控制流**。
+
+    「跑了体检」和「结论挡住了下一步」是两件事：把结论记进日志然后照样把 venv
+    还回去的话，前提失效时红的仍然是十几条断言产品错误码的用例，分档白分。
+    """
+    boom = venvfixture.VenvFixtureError(venvfixture.PREMISE_NOT_INHERITED, "变异")
+    seen: list[str] = []
+
+    def _spy(venv, python, facts=None):
+        seen.append(str(venv))
+        raise boom
+
+    monkeypatch.setattr(venvfixture, "verify", _spy)
+    root = tmp_path / "p"
+    root.mkdir()
+    with pytest.raises(venvfixture.VenvFixtureError) as err:
+        venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)
+    assert err.value is boom
+    assert seen, "`make_project_venv` 根本没体检"
+
+
 # --------------------------------------------------------------- 发现
 def test_only_a_real_venv_counts(tmp_path):
     """光有目录名不算数——项目里叫 `env/` 的经常是别的东西。"""
