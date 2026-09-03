@@ -395,7 +395,14 @@ def _wait_done(sid, timeout=10.0):
         if ai_bridge.SESSIONS[sid]["status"] != "running":
             if pump is not None:
                 pump.join(max(0.0, deadline - time.monotonic()))
-                assert not pump.is_alive(), "pump 线程没有在超时内收尾"
+                # **超时要当场点名失败**，绝不静默往下走：走下去就是把「等到了」的
+                # 假象喂给后面的断言，红会报在别处（`next(...)` 的 StopIteration
+                # 就是这么长出来的）。报文里带上等了多久、哪条会话。
+                if pump.is_alive():
+                    raise AssertionError(
+                        f"pump 线程 ai-{sid} 在 {timeout}s 内没有退出——"
+                        "ai.done 还没发出来，后面的断言不能当它已经发了"
+                    )
             return ai_bridge.SESSIONS[sid]
         time.sleep(0.01)
     raise AssertionError("AI 会话没有结束")
