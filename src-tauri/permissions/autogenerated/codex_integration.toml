@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-codex-integration"
+description = "Enables the codex_integration command without any pre-configured scope."
+commands.allow = ["codex_integration"]
+
+[[permission]]
+identifier = "deny-codex-integration"
+description = "Denies the codex_integration command without any pre-configured scope."
+commands.deny = ["codex_integration"]

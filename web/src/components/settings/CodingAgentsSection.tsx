@@ -16,6 +16,7 @@ import { Button } from '../ui/Button'
 import { Select } from '../ui/Select'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
+import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { ag } from './agentState'
 
 /** 最近的可滚动祖先（设置对话框的内容区）；返回详情时要把它归位 */
@@ -205,6 +206,10 @@ export function CodingAgentsSection() {
                 <ExternalLink size={11} aria-hidden />
               </a>
             </div>
+            {/* 桌面版才有的安装入口：spawn `tavotto-cli codex install --json`。
+                浏览器模式下 CodexIntegrationPanel 自己返回 null——上面那一行
+                （名字 + 指南）在两种形态下一模一样。 */}
+            <CodexIntegrationPanel />
           </section>
         </>
       )}

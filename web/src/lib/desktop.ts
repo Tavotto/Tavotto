@@ -11,6 +11,7 @@
 
 /** Tauri 2 注入的 IPC 标记；存在即运行在 Tavotto 桌面壳里 */
 import { t } from '@/i18n'
+import { CodexShellError } from '@/lib/codexInstall'
 
 export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -152,6 +153,35 @@ export async function setDesktopMenuLocale(
   } catch {
     // 老版本的壳没有这个命令（ACL 会直接拒），菜单保持旧语言即可
     return false
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Codex 集成的安装 / 诊断（ADR 0012）                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 跑一次 `tavotto-cli codex <action> --json`，返回它打出来的那一行 JSON 原文。
+ *
+ * **这里不解析、不判断、更不安装**：壳只负责 spawn，解析在
+ * `lib/codexInstall.ts`，安装步骤只在 `engine/codexinstall.py`（ADR 0012 的
+ * 「不写第二套安装器」）。`action` 是闭集，Rust 侧再挡一次。
+ *
+ * 浏览器模式下抛 `CodexShellError('not_desktop')`——**不是静默返回空**：
+ * 按钮本来就只在桌面模式渲染，真走到这里说明有人绕过了那个判断，
+ * 悄悄回一个「成功」会把它藏起来。
+ */
+export async function runCodexIntegration(action: 'install' | 'doctor'): Promise<string> {
+  if (!isDesktop()) throw new CodexShellError('not_desktop')
+  const { invoke } = await import('@tauri-apps/api/core')
+  try {
+    return await invoke<string>('codex_integration', { action })
+  } catch (e) {
+    // Rust 回的是稳定 code（cli_not_found / spawn_failed / bad_output /
+    // bad_action）；ACL 拒绝或老壳没有这个命令时回的是别的字符串，
+    // 一律当 spawn_failed——**不把它当句子显示给用户**。
+    const code = typeof e === 'string' ? e : ''
+    throw new CodexShellError(code || 'spawn_failed')
   }
 }
 

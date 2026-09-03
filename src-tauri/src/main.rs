@@ -207,6 +207,56 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// 「安装 Codex 集成」/「重新诊断」——**壳里没有第二套安装器**（ADR 0012）。
+///
+/// 这个命令的全部职责是 spawn `tavotto-cli codex <action> --json`，把它打出来的
+/// 那一行 JSON 原样交给前端渲染。marketplace / 插件 / 引擎 / 体检四步一条都不在
+/// 这里：安装器只有 `engine/codexinstall.py` 那一份，按钮与终端命令永远走同一条
+/// 实现（看护 `tests/test_desktop_codex_button.py`）。
+///
+/// `action` 是**闭集**（`install` / `doctor`）——webview 递不进任意 argv，也递不进
+/// `uninstall`：卸载不该是一个按得动的按钮。
+///
+/// **失败也是一行 JSON**（引擎的 `--json` 纪律），所以这里不看退出码，只找 stdout
+/// 里最后那行 JSON。真的一行都没有（CLI 没找到 / spawn 不起来 / 输出被截断）才回
+/// `Err`，回的是**稳定 code**，由前端翻成人话——英文 code 不进界面。
+#[tauri::command]
+async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<String, String> {
+    if action != "install" && action != "doctor" {
+        return Err("bad_action".into());
+    }
+    let resource_dir = app.path().resource_dir().ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cli = sidecar::resolve_cli(resource_dir.as_deref())?;
+        let mut cmd = std::process::Command::new(&cli);
+        cmd.arg("codex")
+            .arg(&action)
+            .arg("--json")
+            // 安装要拉一次稀疏检出，可能跑上几分钟。stdin 给 null：这条命令
+            // 刻意不是交互向导，等在一个没人接的提示上等于挂死。
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().map_err(|_| "spawn_failed".to_string())?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        stdout
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| l.starts_with('{'))
+            .map(str::to_string)
+            .ok_or_else(|| "bad_output".to_string())
+    })
+    .await
+    .map_err(|_| "spawn_failed".to_string())?
+}
+
 /// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
 /// 事件转发（`tavotto:menu`）与 `CmdOrCtrl+*` 一个字节不动：切语言绝不能
 /// 让 ⌘Z 失灵，那种坏法用户根本不会往语言上联想。
@@ -521,7 +571,11 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![reveal_export, set_menu_locale])
+        .invoke_handler(tauri::generate_handler![
+            reveal_export,
+            set_menu_locale,
+            codex_integration
+        ])
         .menu(build_menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();

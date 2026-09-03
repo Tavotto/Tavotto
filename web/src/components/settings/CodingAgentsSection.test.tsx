@@ -283,6 +283,24 @@ describe('编码 Agent 一级页面', () => {
     expect(link.getAttribute('href')).toContain('github.com/Tavotto/Tavotto')
   })
 
+  it('桌面模式下这一节里有「安装 Codex 集成」的入口（issue #170）', async () => {
+    // 入口只在桌面壳里出现——浏览器模式下没有 tavotto-cli 可 spawn。
+    // **量的是设置页里真的渲染出来了**，组件自己的单测证明不了它被挂上去了。
+    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    try {
+      await open()
+      expect(text()).toContain(ag('codexInstall.action'))
+      expect(text()).toContain(ag('codexInstall.doctor'))
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+    }
+  })
+
+  it('浏览器模式下那一节只有名字 + 指南，没有按不动的按钮', async () => {
+    await open()
+    expect(text()).not.toContain(ag('codexInstall.action'))
+  })
+
   it('没有可用 Agent 时说清楚，并且不谎报', async () => {
     await open(capsOf([agentCaps({ state: 'not_installed', installed: false, usable: false })]))
     expect(text()).toContain(ag('noUsableAgent'))
