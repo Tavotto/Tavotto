@@ -92,6 +92,10 @@ def _tools() -> list[dict]:
                 "**默认不回预检明细**，只回一行计数——只是打开看看的时候，"
                 "每次都糊一屏重复的规范建议是噪声；要逐条就 preflight=true "
                 "或事后调 tavotto_preflight。"
+                "一个脚本出好几张独立图时用 stems（或 discover_stems=true）"
+                "一次全开，拿回 N 个各自可编辑的会话：某一张失败**不影响其余**，"
+                "失败那张带自己的 code 与 stem 名；结局看 status"
+                "（done / partial / failed 三档）。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -109,6 +113,22 @@ def _tools() -> list[dict]:
                     "stem": {
                         "type": "string",
                         "description": "产物文件名主干（一个项目多张图时必须点名）",
+                    },
+                    "stems": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "一次打开多张独立的图，每张一个可独立编辑的会话。"
+                            "与 stem 互斥；批量只回每张的摘要与 session_id"
+                            "（要 manifest/SVG 或内嵌画布就对那个 stem 单独调一次）"
+                        ),
+                    },
+                    "discover_stems": {
+                        "type": "boolean",
+                        "description": (
+                            "从注册表自动发现可参数化且产物在磁盘上的图，全部打开。"
+                            "与 stem / stems 互斥；不猜没登记的产物，也不跑脚本"
+                        ),
                     },
                     "profile_id": {
                         "type": "string",
@@ -317,10 +337,127 @@ def _brief_manifest(manifest: dict | None) -> str:
     return f"{size[0]}×{size[1]} mm，{sum(roles.values())} 个可编辑元素（{top}）"
 
 
+def _batch_request(args: dict) -> dict | None:
+    """这次 open 是不是批量的？是的话返回清单来源，不是返回 None。
+
+    参数**互斥而不是「优先级」**：同时给了 stem 与 stems，谁也说不清用户想要
+    哪一种，静默挑一个的代价是「我明明写了 stems，它只开了一张」。
+    """
+    raw = args.get("stems")
+    discover = bool(args.get("discover_stems"))
+    if raw is None and not discover:
+        return None
+    if raw is not None and discover:
+        raise RpcError(
+            INVALID_PARAMS, "stems 与 discover_stems 二选一：要么点名，要么让 Tavotto 发现"
+        )
+    if args.get("stem"):
+        raise RpcError(INVALID_PARAMS, "stem 是单图那一路；批量用 stems 或 discover_stems")
+    if args.get("include_png"):
+        # 悄悄忽略一个用户显式设过的参数，等于让他以为自己的参数生效了。
+        raise RpcError(INVALID_PARAMS, "批量不回位图预览（include_png 只在单图那一路上有意义）")
+    if discover:
+        return {"stems": None, "discover": True}
+    if not isinstance(raw, list) or not raw:
+        raise RpcError(INVALID_PARAMS, "stems 要是一个非空的字符串数组")
+    cleaned = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise RpcError(INVALID_PARAMS, "stems 里的每一项都要是非空字符串")
+        cleaned.append(item.strip())
+    return {"stems": cleaned, "discover": False}
+
+
+def _sum_counts(into: dict, counts: dict) -> None:
+    for key, value in (counts or {}).items():
+        into[key] = into.get(key, 0) + int(value or 0)
+
+
+def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
+    """一次调用打开 N 张图。**预检按 #102 第 4 条走：默认只回汇总与阻断项。**
+
+    单图那一路每开一张已经只回一行计数了；批量再逐张展开就是把同一个噪声乘以
+    N。所以这里默认只给一份合计 + 「哪几张有阻断项」，逐条留给
+    `tavotto_preflight`（要全展开仍然是 `preflight=true`）。
+    """
+    out = bridge.open_figures(
+        target,
+        stems=plan["stems"],
+        discover=plan["discover"],
+        profile_id=args.get("profile_id"),
+        journal=args.get("journal"),
+    )
+    detailed = bool(args.get("preflight"))
+    total: dict = {}
+    blocking_stems: list[str] = []
+    unknown_stems: list[str] = []
+    reports: list[str] = []
+    for entry in out["opened"]:
+        try:
+            checks = bridge.run_preflight(entry["session_id"])
+        except bridge.BridgeError as exc:
+            # 预检没跑出结论 ≠ 通过。并进合计里那几个 0 会让一张没体检过的图
+            # 看起来是干净的。
+            entry["preflight"] = {"code": exc.code or "preflight_failed"}
+            unknown_stems.append(entry["stem"])
+            continue
+        entry["preflight"] = {
+            "counts": checks["counts"],
+            "blocking": checks["blocking"],
+            "needs_confirm": checks["needs_confirm"],
+        }
+        _sum_counts(total, checks["counts"])
+        if checks["blocking"]:
+            blocking_stems.append(entry["stem"])
+        if detailed:
+            reports.append(checks["report"])
+    out["preflight"] = {
+        "counts": total,
+        "blocking_stems": blocking_stems,
+        "unknown_stems": unknown_stems,
+        "detailed_text": detailed,
+    }
+
+    counts = out["counts"]
+    lines = [
+        f"批量打开 {counts['requested']} 张（来源：{'注册表发现' if out['source'] == 'discover' else '点名'}）"
+        f"：{counts['opened']} 张已打开、{counts['failed']} 张失败、"
+        f"{counts['skipped']} 张未尝试 —— status={out['status']}",
+    ]
+    for entry in out["opened"]:
+        size = entry.get("size_mm") or [0, 0]
+        lines.append(
+            f"  ✓ {entry['stem']}  会话 {entry['session_id']}  "
+            f"{size[0]}×{size[1]} mm，{entry['elements']} 个可编辑元素"
+        )
+    for entry in out["failed"]:
+        lines.append(f"  ✗ {entry['stem']}  [{entry['code']}] {entry['error'].splitlines()[0]}")
+    for entry in out["skipped"]:
+        lines.append(f"  · {entry['stem']}  [{entry['code']}] 未尝试")
+    if out["failed"] or out["skipped"]:
+        # 「其余照常打开」要说出口：模型看到一条失败就整批重来的话，已经开好的
+        # 那几个会话会被晾在账本里没人关。
+        lines.append("失败/未尝试的那几张不影响已打开的会话，各自重试即可。")
+    summary = "、".join(f"{k}×{v}" for k, v in sorted(total.items())) or "无"
+    lines.append(
+        f"预检合计 {summary}"
+        + ("" if detailed else "（逐条建议未展开；要就 preflight=true 或调 tavotto_preflight）")
+    )
+    if blocking_stems:
+        lines.append("! 有阻断项，会挡住导出: " + "、".join(blocking_stems))
+    if unknown_stems:
+        lines.append("? 预检没跑出结论（不等于通过）: " + "、".join(unknown_stems))
+    lines.extend(reports)
+    return {"content": _text(*lines), "structuredContent": out}
+
+
 def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
+    plan = _batch_request(args)
+    if plan is not None:
+        return _call_open_batch(str(target), args, plan)
     out = bridge.open_figure(
         str(target),
         stem=args.get("stem"),
@@ -584,7 +721,26 @@ def call_tool(name: str, args: dict) -> dict:
             "structuredContent": payload,
         }
     if name in UI_TOOLS:
-        if widget.available():
+        if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
+            # **批量结果不挂画布，而且要把这件事说出口。**一次 tools/call 只带
+            # 得出一块 iframe，而画布只认完整的单图 open 结果
+            # （`web/src/mcp/main.tsx` 的 `isOpenResult` 要 session_id + manifest
+            # + project + stem + script + profile 六项齐全）。把批量负载挂上去
+            # 的表现是 iframe 永远停在「等待 tavotto_open_figure」——静默少一块
+            # UI 正是这里最不该发生的事。
+            result["structuredContent"]["canvas_ui"] = {
+                "available": False,
+                "code": "batch_open",
+                "reason": (
+                    "批量打开不带内嵌画布。要在画布里改哪一张，就用 stem 单独调一次 "
+                    "tavotto_open_figure——已经开着的会话不受影响。"
+                ),
+            }
+            result["content"][0]["text"] += (
+                "\n内嵌画布：批量这一路不挂画布；要在画布里编辑某一张，"
+                "单独 tavotto_open_figure 那个 stem。"
+            )
+        elif widget.available():
             meta = dict(widget.resource_meta())
             # widgetData 是 host 递给 iframe 的初始负载（ChatGPT 侧的约定）；
             # MCP Apps 标准路径下 iframe 从 ui/notifications/tool-result 拿同一份。
