@@ -111,10 +111,25 @@ sys.stdout.write(json.dumps(out))
 
 
 def _run_json(python: str, source: str, *, isolated: bool) -> dict:
-    """在某个解释器里跑一段脚本，把它那行 JSON 读回来；跑不起来回诊断。"""
+    """在某个解释器里跑一段脚本，把它那行 JSON 读回来；跑不起来回诊断。
+
+    **编码要钉死。** 不给 `encoding` 的话 `text=True` 在 Windows 上按系统代码页
+    解码，读线程当场 `UnicodeDecodeError` 而 `returncode` 照样拿得到——分档
+    诊断会在最需要它的时候变成空串。载荷这一侧是安全的（`json.dumps` 默认
+    `ensure_ascii=True`，出去的是纯 ASCII，**别给它加 `ensure_ascii=False`**），
+    但失败路径读的是 stderr，那里是解释器自己的中文/本地化 traceback，
+    所以 `errors="replace"` 也要有：宁可看到几个替换符，也不要整段诊断消失。
+    """
     cmd = [str(python)] + (["-I"] if isolated else []) + ["-c", source]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         return {"_error": str(exc)[:400]}
     if proc.returncode != 0:
@@ -196,6 +211,12 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
     if not dirs:
         return None
     pth = site_packages(venv) / _HOST_SITE_PTH
+    # **`.pth` 的解码不由我们说了算，由目标解释器的 `site` 说了算**：实测
+    # 3.11 的 `site.addpackage` 用 `encoding="locale"` 读，3.13 改成先试
+    # UTF-8、失败才退回 locale。所以只有全 ASCII 的路径在两种读法下逐字相同。
+    # 路径带非 ASCII（中文用户目录）且解释器较老、locale 又不是 UTF-8 时，这一行
+    # 会被解错、目录不存在、`site` 静默跳过——**但后果不会静默**：`verify()`
+    # 紧接着就会因为 venv 里没有 matplotlib 而报 `NOT_INHERITED`。
     pth.write_text("\n".join(dirs) + "\n", encoding="utf-8")
     return pth
 

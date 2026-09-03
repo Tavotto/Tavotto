@@ -147,6 +147,10 @@ def test_the_fixture_venv_inherits_from_the_host_not_from_its_base(tmp_path):
         ],
         capture_output=True,
         text=True,
+        # 失败时读的是子解释器的 traceback（Windows 上按代码页写）——不钉编码的话
+        # `got.stderr` 会在这条断言真的红掉的那一刻变成空的。
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     assert got.returncode == 0, got.stderr
