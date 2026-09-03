@@ -50,7 +50,7 @@ PROBE = os.path.join(REPO, "tests", "support", "engine_invariant_probe.py")
 
 SCRIPT_NAME = "fig_invariants.py"
 ENTRY = "main"
-STEMS = ("InvMix", "InvCont", "InvCbar")
+STEMS = ("InvMix", "InvCont", "InvCbar", "InvPar")
 
 #: 一个脚本出三张图，一次 build 全捕获（build 是这套用例里唯一慢的一步）。
 #: 每张图都刻意做得**元素互相重叠**——`zorder` 想被验出效果就得有东西挡；
@@ -62,6 +62,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.patches import Arc, Circle, Rectangle
+from mpl_toolkits.axes_grid1 import host_subplot
 
 
 def main():
@@ -178,6 +179,28 @@ def main():
     fig.colorbar(sm, ax=ax, location="left")
     fig.colorbar(sm, ax=ax, location="top", fraction=0.046)
     fig.savefig("InvCbar2.pdf")
+
+    # ---- InvPar：`axes_grid1` 的 host_subplot + twinx（**寄生轴**，#217） ----
+    # 这一族轴既不在 `fig.axes` 也不在 `child_axes`，只挂在 `host.parasites`
+    # 上——遍历漏了它，第二组数据在 Tavotto 里既列不出也改不了，而且**不报错**。
+    # 放进这份夹具，是为了让寄生轴上的登记面吃到与其他图**同一套**扫描：能力
+    # 真实、枚举可用、逐字还原。两条曲线都带 marker 与虚线，是为了让 marker 组
+    # 与 linestyle 有可分辨的差；宿主与寄生各有 y 轴标签，两侧的文字类元素都扫得到。
+    fig = plt.figure(figsize=(4.2, 3.2))
+    host = host_subplot(111, figure=fig)
+    par = host.twinx()
+    # **四边留白必须够宽**：默认边距下两行的轴标签有一行落在画布外，于是
+    # `linespacing` 改了也看不见——那是**夹具挡住了要测的东西**，不是这条属性
+    # 不生效（同一个 prop 在纯 Text / 标题上实测都改得动像素）。这种情况改图。
+    fig.subplots_adjust(left=0.26, bottom=0.26, right=0.74, top=0.84)
+    host.plot(x, np.sin(x) + 2.0, marker="o", markersize=7, label="host")
+    par.plot(x, np.cos(x) * 40.0 + 60.0, color="#B34700", marker="s",
+             markersize=7, linestyle="--", label="parasite")
+    host.set_xlabel("shared x")
+    host.set_ylabel("host y")
+    par.set_ylabel("parasite y")
+    host.set_title("host + parasite")
+    fig.savefig("InvPar.pdf")
 """
 
 

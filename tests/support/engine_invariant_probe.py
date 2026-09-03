@@ -228,7 +228,7 @@ def completeness(fig, state, man) -> dict:
     # 与 `census` / `instrument` 同一条遍历：`inset_axes` 与 `secondary_[xy]axis`
     # 挂在 `ax.child_axes` 上，**不在 `fig.axes` 里**。只走 fig.axes 的话，
     # 插图里漏掉的 artist 连这条不变式都看不见——探针自己成了那个报平安的门禁。
-    ordered, _child_ids = M._ordered_axes(fig)  # noqa: SLF001
+    ordered, _child_ids, _parasite_ids = M._ordered_axes(fig)  # noqa: SLF001
     for owner_gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         for child in owner.get_children():
             if id(child) in known or isinstance(child, (Axes, Axis)):

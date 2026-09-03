@@ -113,7 +113,7 @@ def census(fig) -> dict:
     # `manifest.instrument` 早就按它遍历了，普查跟不上的话，插图里漏掉的
     # artist 在报告里不出现、`n_axes` 也少数——**一份报平安的普查比没有普查
     # 更坏**，而普查存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
-    _census_axes, _child_ids = manifest_mod._ordered_axes(fig)  # noqa: SLF001
+    _census_axes, _child_ids, _parasite_ids = manifest_mod._ordered_axes(fig)  # noqa: SLF001
     for owner in [fig] + list(_census_axes):
         for child in owner.get_children():
             if isinstance(child, (Axes, Axis)):
