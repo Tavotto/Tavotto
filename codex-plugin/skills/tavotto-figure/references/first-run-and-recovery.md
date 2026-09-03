@@ -67,9 +67,24 @@ clone 源码或本地构建**。已经画好的图和脚本都在磁盘上，联
 看 `tavotto_health` 的 `root_authority`。`roots` 为空且 client 声明了
 `elicitation` 时：第一次 `tavotto_open_figure` 必须传**绝对、已存在**的项目
 路径，让 Codex 显示规范路径请用户确认——模型给的路径只是候选，不能自证权限。
-遇到 `workspace_confirmation_declined` / `workspace_confirmation_cancelled` /
-`workspace_confirmation_error` 后**不要自动重试**，等用户主动重新发起；也不要
-改用 shell 绕过。health 已给出恰好一个可信根时才可以用相对路径。
+授权失败**分档**，每档一个稳定 `code`、一个 `disposition`（谁该动手）和一句
+`recovery`（下一步）。**把 `recovery` 转达给用户，别把 `code` 念出来**；不要
+自动重试，也不要改用 shell 绕过。health 已给出恰好一个可信根时才可以用相对路径。
+
+| `code` | `disposition` | 下一步 |
+| --- | --- | --- |
+| `workspace_confirmation_declined` | `ask_user_again` | 用户看着框拒绝了：换个目录再问一次 |
+| `workspace_confirmation_cancelled` | `ask_user_again` | 框被关掉：可交互会话里请用户重新发起；`codex exec` 拿不到确认 |
+| `workspace_confirmation_no_response` | `fix_host_wiring` | **框从没到过用户面前**（超时/断开）：查宿主接线，别再让用户点 |
+| `workspace_confirmation_error` | `fix_host_wiring` | 宿主回了错误：看宿主日志 |
+| `workspace_confirmation_stale` | `ask_user_again` | 批准的目录在授权落地前变了：核对路径后重新批准 |
+| `workspace_confirmation_required` | `send_absolute_path` | 还没给出可展示的目录：改传绝对、已存在的路径 |
+| `workspace_roots_no_response` / `workspace_roots_error` | `fix_host_wiring` | 宿主声明了 roots 却没给出目录：查宿主接线 |
+| `path_out_of_scope` | `narrow_the_path` | 路径越界：改用 `roots` 里列出的目录 |
+| `no_workspace_root` | `configure_roots` | 宿主什么都没给：让用户设 `TAVOTTO_MCP_ROOTS` 后重启 |
+
+**`fix_host_wiring` 那几档不是用户拒绝**：再让用户点多少次都不会有提示，只能
+去查宿主，或退回 `TAVOTTO_MCP_ROOTS`。这两件事的处置相反，别混着说。
 
 ## 三条铁律
 

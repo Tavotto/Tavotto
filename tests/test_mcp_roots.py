@@ -11,8 +11,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
 
 from tavotto_mcp.roots import (  # noqa: E402
+    DISPOSITIONS,
     ROOTS_ENV,
     WORKSPACE_ENVS,
+    WORKSPACE_FAILURES,
     RootAuthority,
     _windows_absolute_realpath,
 )
@@ -264,3 +266,109 @@ def test_user_binding_expires_on_a_new_initialize(authority, tmp_path):
     authority.observe_client("2025-06-18", {"elicitation": {}}, {})
     assert authority.snapshot().roots == ()
     assert authority.diagnostics()["workspace_confirmation"]["state"] == "available"
+
+
+# --------------------- #173：授权失败的分档是一张闭表 ------------------------
+def test_every_failure_bucket_is_a_stable_code_with_a_next_step():
+    """表里的每一档都要有稳定 code、闭集里的处置、和一句能照做的下一步。
+
+    **code 不许当文案**：它是给机器的稳定标识，念给用户听等于没说。
+    """
+    for key, failure in WORKSPACE_FAILURES.items():
+        assert failure.code == key
+        assert failure.disposition in DISPOSITIONS, key
+        assert failure.summary.strip() and failure.next_step.strip(), key
+        assert failure.code not in failure.next_step, key
+        assert failure.code not in failure.summary, key
+    # 一个 code 只能有一份措辞
+    assert len({f.next_step for f in WORKSPACE_FAILURES.values()}) == len(WORKSPACE_FAILURES)
+
+
+def test_the_four_issue_buckets_map_to_four_different_dispositions():
+    """issue #173 点名的四种情况，处置必须两两不同。"""
+    four = [
+        WORKSPACE_FAILURES["workspace_confirmation_declined"],
+        WORKSPACE_FAILURES["workspace_confirmation_no_response"],
+        WORKSPACE_FAILURES["path_out_of_scope"],
+        WORKSPACE_FAILURES["no_workspace_root"],
+    ]
+    assert len({f.disposition for f in four}) == 4
+    assert len({f.code for f in four}) == 4
+
+
+@pytest.mark.parametrize(
+    "state,code,disposition",
+    [
+        ("available", "workspace_confirmation_required", "send_absolute_path"),
+        ("declined", "workspace_confirmation_declined", "ask_user_again"),
+        ("cancelled", "workspace_confirmation_cancelled", "ask_user_again"),
+        ("no_response", "workspace_confirmation_no_response", "fix_host_wiring"),
+        ("error", "workspace_confirmation_error", "fix_host_wiring"),
+        ("stale", "workspace_confirmation_stale", "ask_user_again"),
+        ("unsupported", "no_workspace_root", "configure_roots"),
+    ],
+)
+def test_each_confirmation_state_selects_its_own_bucket(authority, state, code, disposition):
+    authority.observe_client("2025-06-18", {"elicitation": {}}, {})
+    if state != "available":
+        authority.fail_user_binding("宿主没回来", state=state)
+    failure = authority.failure()
+    assert failure.code == code
+    assert failure.disposition == disposition
+
+
+@pytest.mark.parametrize(
+    "state,code",
+    [
+        ("no_response", "workspace_roots_no_response"),
+        ("error", "workspace_roots_error"),
+    ],
+)
+def test_a_silent_roots_host_is_not_an_unconfigured_host(authority, state, code):
+    """声明了 roots 却没给出目录 ≠ 宿主根本没配——下一步指向的地方不一样。"""
+    authority.observe_client("2025-11-25", {"roots": {}}, {})
+    authority.fail_protocol("宿主没回来", state=state)
+    failure = authority.failure()
+    assert failure.code == code
+    assert failure.disposition == "fix_host_wiring"
+    assert failure.code != WORKSPACE_FAILURES["no_workspace_root"].code
+    # 没回应仍要在下一次 tools/call 重试，而不是从此不再问
+    assert authority.protocol_request_needed() is True
+
+
+def test_an_empty_but_answered_roots_list_is_a_configuration_problem(authority):
+    authority.observe_client("2025-11-25", {"roots": {}}, {})
+    authority.accept_protocol_result({"roots": []})
+    assert authority.failure().code == "no_workspace_root"
+    assert authority.failure().disposition == "configure_roots"
+
+
+def test_a_directory_that_changes_during_confirmation_is_its_own_bucket(authority, tmp_path):
+    """确认框显示之后目录没了：既不是用户拒绝，也不是宿主接线坏了。"""
+    project = tmp_path / "project"
+    project.mkdir()
+    authority.observe_client("2025-06-18", {"elicitation": {}}, {})
+    candidate = authority.user_binding_candidate(str(project))
+    assert candidate
+    project.rmdir()
+    assert authority.accept_user_binding(candidate) is False
+    failure = authority.failure()
+    assert failure.code == "workspace_confirmation_stale"
+    assert failure.disposition == "ask_user_again"
+
+
+def test_diagnostics_expose_the_bucket_without_failing_a_call_first(authority, tmp_path):
+    """体检里就看得见这一档——不必先让一次 open 失败才知道该找谁。"""
+    project = tmp_path / "project"
+    project.mkdir()
+    authority.observe_client("2025-06-18", {"elicitation": {}}, {})
+    authority.fail_user_binding("300s 内没有响应", state="no_response")
+    assert authority.diagnostics()["authorization"] == {
+        "code": "workspace_confirmation_no_response",
+        "disposition": "fix_host_wiring",
+        "next_step": WORKSPACE_FAILURES["workspace_confirmation_no_response"].next_step,
+    }
+
+    candidate = authority.user_binding_candidate(str(project))
+    assert candidate and authority.accept_user_binding(candidate)
+    assert authority.diagnostics()["authorization"] is None

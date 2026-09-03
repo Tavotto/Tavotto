@@ -695,7 +695,9 @@ class Server:
             "roots", "roots/list", None, ROOTS_REQUEST_TIMEOUT_S
         )
         if transport_error:
-            bridge.fail_protocol_roots(transport_error)
+            # 声明了 capability 却没把响应送回来 = 宿主接线的问题，**不是**
+            # 「没配工作区」，更不是用户拒绝（issue #173）。
+            bridge.fail_protocol_roots(transport_error, state="no_response")
             return
         assert response is not None
         protocol_error = self._response_error(response)
@@ -736,7 +738,9 @@ class Server:
             ELICITATION_REQUEST_TIMEOUT_S,
         )
         if transport_error:
-            bridge.fail_user_binding(transport_error)
+            # 超时 / EOF / 没有可等待的传输：**框从没到过用户面前**。报成用户
+            # 拒绝会把人送去「再点一次」，而根本没有框可点（issue #173）。
+            bridge.fail_user_binding(transport_error, state="no_response")
             return
         assert response is not None
         protocol_error = self._response_error(response)

@@ -444,6 +444,7 @@ def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_ca
     ],
 )
 def test_workspace_elicitation_refusal_fails_closed(project, monkeypatch, action, state):
+    """用户真的看见框并作了选择——**这一档才允许说「再问一次」**。"""
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
@@ -481,9 +482,14 @@ def test_workspace_elicitation_refusal_fails_closed(project, monkeypatch, action
     frames = [json.loads(line) for line in out.getvalue().splitlines()]
     opened = frames[2]["result"]
     assert opened["isError"] is True
-    assert opened["structuredContent"]["code"] == f"workspace_confirmation_{state}"
-    assert state in opened["structuredContent"]["error"]
-    assert "不要自动循环重试" in opened["structuredContent"]["error"]
+    payload = opened["structuredContent"]
+    assert payload["code"] == f"workspace_confirmation_{state}"
+    assert payload["disposition"] == "ask_user_again"
+    assert "不要自动循环重试" in payload["error"]
+    # 用户确实作出了选择：不许被说成「宿主没把框送到用户面前」（#173 的反面）
+    assert "没有把确认框送到用户面前" not in payload["error"]
+    # code 是给机器的，文案是给人的：不许把 code 原样念出来
+    assert payload["code"] not in payload["error"]
     assert bridge.sessions() == {}
 
 
@@ -523,7 +529,11 @@ def test_rootless_elicitation_requires_an_absolute_existing_candidate(monkeypatc
 
 
 def test_roots_client_that_disconnects_fails_closed_without_internal_error(tmp_path, monkeypatch):
-    """声明 capability 却不回答的 host 不得锁死，也不得退回插件 cwd。"""
+    """声明 capability 却不回答的 host 不得锁死，也不得退回插件 cwd。
+
+    而且它**不是**「宿主根本没配」：告诉这种用户去设 `TAVOTTO_MCP_ROOTS` 之前，
+    先得说清宿主已经声明了能力却没接线，否则下一步指错了地方（#173）。
+    """
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
@@ -556,8 +566,170 @@ def test_roots_client_that_disconnects_fails_closed_without_internal_error(tmp_p
     assert frames[1]["method"] == "roots/list"
     opened = frames[2]["result"]
     assert opened["isError"] is True
-    assert opened["structuredContent"]["code"] == "no_workspace_root"
+    payload = opened["structuredContent"]
+    assert payload["code"] == "workspace_roots_no_response"
+    assert payload["disposition"] == "fix_host_wiring"
+    assert "不是用户拒绝" in payload["recovery"]
     assert all(frame.get("error", {}).get("code") != rpc.INTERNAL_ERROR for frame in frames)
+
+
+# --------------------- #173：授权失败的四档不许合并 --------------------------
+def _open_over_stdio(capabilities: dict, project_path: str, replies=()) -> dict:
+    """走真 stdio 帧打开一次图，回 `tavotto_open_figure` 的 structuredContent。"""
+    incoming = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": capabilities},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": project_path},
+            },
+        },
+        *replies,
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    answered = [f for f in frames if f.get("id") == 2 and "result" in f]
+    assert len(answered) == 1, frames
+    assert answered[0]["result"]["isError"] is True, answered
+    return answered[0]["result"]["structuredContent"]
+
+
+def test_the_four_workspace_authorisation_failures_do_not_collapse(tmp_path, monkeypatch):
+    """四档失败 = 四个稳定 code + 四种不同的处置（issue #173）。
+
+    现场就是把「宿主声明支持 elicitation 却从没弹框」并进了「用户拒绝」：
+    用户被要求「再点一次」，而根本没有框可以点。把任意两档合并回一档，这条
+    用例就红。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    outside = tmp_path / "outside"
+    inside.mkdir()
+    outside.mkdir()
+
+    declined = _open_over_stdio(
+        {"elicitation": {}},
+        str(inside),
+        [{"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": {"action": "decline"}}],
+    )
+    # 声明了 elicitation 却一帧都不回 —— 框从没到过用户面前。
+    silent = _open_over_stdio({"elicitation": {}}, str(inside))
+    unconfigured = _open_over_stdio({}, str(inside))
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inside))
+    out_of_scope = _open_over_stdio({}, str(outside))
+
+    buckets = {
+        "用户明确拒绝": declined,
+        "宿主没弹框": silent,
+        "路径越界": out_of_scope,
+        "宿主没配": unconfigured,
+    }
+    codes = {name: body["code"] for name, body in buckets.items()}
+    dispositions = {name: body["disposition"] for name, body in buckets.items()}
+    assert len(set(codes.values())) == 4, codes
+    assert len(set(dispositions.values())) == 4, dispositions
+
+    assert codes["用户明确拒绝"] == "workspace_confirmation_declined"
+    assert dispositions["用户明确拒绝"] == "ask_user_again"
+
+    assert codes["宿主没弹框"] == "workspace_confirmation_no_response"
+    assert dispositions["宿主没弹框"] == "fix_host_wiring"
+    # 处置与「用户拒绝」正好相反：明说别再让用户点
+    assert "这不是用户拒绝" in silent["recovery"]
+    assert "再让用户点一次也不会出现提示" in silent["recovery"]
+
+    assert codes["路径越界"] == "path_out_of_scope"
+    assert dispositions["路径越界"] == "narrow_the_path"
+    # 说清允许的是哪些
+    assert str(inside.resolve()) in out_of_scope["error"]
+    assert out_of_scope["roots"] == [str(inside.resolve())]
+
+    assert codes["宿主没配"] == "no_workspace_root"
+    assert dispositions["宿主没配"] == "configure_roots"
+    assert bridge.ROOTS_ENV in unconfigured["recovery"]
+
+    for name, body in buckets.items():
+        # 每一档都说得出「下一步做什么」，而且不是把 code 原样念给用户
+        assert body["recovery"].strip(), name
+        assert body["code"] not in body["recovery"], name
+        assert body["code"] not in body["error"], name
+
+
+def test_a_host_that_never_answers_the_prompt_is_not_a_user_refusal(tmp_path, monkeypatch):
+    """超时那条腿：EOF 之外，真的等满超时也必须落在「宿主没回应」这一档。
+
+    EOF 与超时是同一档的两个入口，但只测 EOF 会让超时那条分支从没被执行过。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    sent: list[str] = []
+
+    def timed_out(self, label, method, params, timeout):
+        sent.append(method)
+        return None, f"{method} 在 {timeout:g}s 内没有响应"
+
+    monkeypatch.setattr(server.Server, "_client_request", timed_out)
+    payload = _open_over_stdio({"elicitation": {}}, str(inside))
+    assert sent == ["elicitation/create"]
+    assert payload["code"] == "workspace_confirmation_no_response"
+    assert payload["disposition"] == "fix_host_wiring"
+    assert "没有响应" in payload["error"]
+    assert payload["workspace_confirmation"]["state"] == "no_response"
+
+
+@pytest.mark.parametrize(
+    "capabilities,request_id,method,code",
+    [
+        (
+            {"elicitation": {}},
+            "tavotto-elicitation-1",
+            "elicitation/create",
+            "workspace_confirmation_error",
+        ),
+        ({"roots": {}}, "tavotto-roots-1", "roots/list", "workspace_roots_error"),
+    ],
+)
+def test_a_host_error_is_its_own_bucket(
+    tmp_path, monkeypatch, capabilities, request_id, method, code
+):
+    """宿主收下请求后回了错：仍是宿主侧的问题，但与「一声不吭」是两个 code。"""
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    payload = _open_over_stdio(
+        capabilities,
+        str(inside),
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"{method} 没实现"},
+            }
+        ],
+    )
+    assert payload["code"] == code
+    assert payload["disposition"] == "fix_host_wiring"
+    assert "没实现" in payload["error"]
 
 
 def test_handler_exceptions_do_not_kill_the_connection(monkeypatch):

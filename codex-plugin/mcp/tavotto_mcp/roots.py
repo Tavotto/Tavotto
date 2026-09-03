@@ -31,6 +31,158 @@ WORKSPACE_ENVS = (
 )
 
 
+# --------------------------- 工作区授权失败的分档 ---------------------------
+#: 授权失败**不是一件事**（issue #173）。真实现场：宿主在 initialize 里声明了
+#: ``elicitation``，却从没把确认框送到用户面前；server 把这次「没回应」报成了
+#: 「用户拒绝」，于是用户被要求「再点一次」——而根本没有框可以点。
+#:
+#: **「宿主没回应」是独立一档**，不许并进相邻取值：它和「用户拒绝」的下一步
+#: 正好相反（一个要去查宿主接线，一个只要再问一次）。下面这张表是「授权失败
+#: 长什么样」的唯一出处：一个稳定 code ↔ 一个处置 ↔ 一句说得出「下一步做
+#: 什么」的措辞。调用方只准从表里取，不许现编字符串，也不许把 code 当文案
+#: 直接念给用户。
+
+#: 处置（谁该动手）是闭集。
+ASK_USER_AGAIN = "ask_user_again"
+FIX_HOST_WIRING = "fix_host_wiring"
+NARROW_THE_PATH = "narrow_the_path"
+CONFIGURE_ROOTS = "configure_roots"
+SEND_ABSOLUTE_PATH = "send_absolute_path"
+DISPOSITIONS = (
+    ASK_USER_AGAIN,
+    FIX_HOST_WIRING,
+    NARROW_THE_PATH,
+    CONFIGURE_ROOTS,
+    SEND_ABSOLUTE_PATH,
+)
+
+CODE_CONFIRMATION_DECLINED = "workspace_confirmation_declined"
+CODE_CONFIRMATION_CANCELLED = "workspace_confirmation_cancelled"
+CODE_CONFIRMATION_NO_RESPONSE = "workspace_confirmation_no_response"
+CODE_CONFIRMATION_ERROR = "workspace_confirmation_error"
+CODE_CONFIRMATION_STALE = "workspace_confirmation_stale"
+CODE_CONFIRMATION_REQUIRED = "workspace_confirmation_required"
+CODE_ROOTS_NO_RESPONSE = "workspace_roots_no_response"
+CODE_ROOTS_ERROR = "workspace_roots_error"
+CODE_NO_WORKSPACE_ROOT = "no_workspace_root"
+CODE_PATH_OUT_OF_SCOPE = "path_out_of_scope"
+CODE_AMBIGUOUS_ROOT = "ambiguous_workspace_root"
+
+
+@dataclass(frozen=True)
+class WorkspaceFailure:
+    """一档授权失败：稳定 code + 处置 + 人话的下一步。"""
+
+    code: str
+    disposition: str
+    summary: str
+    next_step: str
+
+    def payload(self) -> dict:
+        return {
+            "code": self.code,
+            "disposition": self.disposition,
+            "next_step": self.next_step,
+        }
+
+
+def _failure(code: str, disposition: str, summary: str, next_step: str) -> WorkspaceFailure:
+    assert disposition in DISPOSITIONS, disposition
+    return WorkspaceFailure(code, disposition, summary, next_step)
+
+
+WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
+    entry.code: entry
+    for entry in (
+        _failure(
+            CODE_CONFIRMATION_DECLINED,
+            ASK_USER_AGAIN,
+            "用户在工作区确认框里拒绝了这个目录。",
+            "换一个目录再问一次，或请用户把 "
+            f"{ROOTS_ENV} 设成工作目录后重启 Codex；不要自动循环重试。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_CANCELLED,
+            ASK_USER_AGAIN,
+            "工作区确认框被关掉了，没有作出选择。",
+            "在可交互会话里请用户重新发起这次打开并批准；非交互会话"
+            f"（codex exec）拿不到确认，请改用 {ROOTS_ENV}。不要自动循环重试。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_NO_RESPONSE,
+            FIX_HOST_WIRING,
+            "宿主声明支持工作区确认，却没有把确认框送到用户面前（超时或连接中断）。",
+            "这不是用户拒绝——再让用户点一次也不会出现提示。请检查宿主的 "
+            "elicitation 接线（版本、权限、是不是非交互模式），或直接把 "
+            f"{ROOTS_ENV} 设成工作目录后重启 Codex。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_ERROR,
+            FIX_HOST_WIRING,
+            "宿主收下了工作区确认请求，却回了一个错误。",
+            "这是宿主侧的问题，不是用户拒绝。看宿主日志确认 elicitation 是否可用，"
+            f"或改用 {ROOTS_ENV} 显式配置根目录。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_STALE,
+            ASK_USER_AGAIN,
+            "用户批准的目录在授权落地前变了（被删除、被换成别的 symlink 目标，或已不是目录）。",
+            "重新核对项目路径后再打开一次，让用户对新的规范路径重新批准。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_REQUIRED,
+            SEND_ABSOLUTE_PATH,
+            "宿主支持工作区确认，但还没有可以展示给用户的目录。",
+            "用一个绝对、已存在的项目路径重新调用 tavotto_open_figure，"
+            "Tavotto 会把这条完整路径显示出来请用户批准；不要猜测授权结果。",
+        ),
+        _failure(
+            CODE_ROOTS_NO_RESPONSE,
+            FIX_HOST_WIRING,
+            "宿主声明支持 MCP roots，却没有回应工作区目录查询（超时或连接中断）。",
+            "这不是用户拒绝，也不是没配置——请检查宿主的 roots 接线，或直接把 "
+            f"{ROOTS_ENV} 设成工作目录后重启 Codex。",
+        ),
+        _failure(
+            CODE_ROOTS_ERROR,
+            FIX_HOST_WIRING,
+            "宿主声明支持 MCP roots，但查询工作区目录时回了一个错误。",
+            f"这是宿主侧的问题。看宿主日志，或改用 {ROOTS_ENV} 显式配置根目录。",
+        ),
+        _failure(
+            CODE_NO_WORKSPACE_ROOT,
+            CONFIGURE_ROOTS,
+            "宿主既没有给出工作区目录，也不支持工作区确认。",
+            f"把 {ROOTS_ENV} 设成你的项目目录（多个用 {os.pathsep} 分隔）后重启 Codex 再试。",
+        ),
+        _failure(
+            CODE_PATH_OUT_OF_SCOPE,
+            NARROW_THE_PATH,
+            "这条路径不在当前允许的工作区范围内。",
+            "改用允许的根之内的路径；确实要放开别的目录，就把 "
+            f"{ROOTS_ENV} 设成它们（{os.pathsep} 分隔）后重启 Codex。",
+        ),
+        _failure(
+            CODE_AMBIGUOUS_ROOT,
+            SEND_ABSOLUTE_PATH,
+            "同时有多个可信工作区根，相对路径没有唯一解释。",
+            "改传绝对路径。",
+        ),
+    )
+}
+
+#: 连接内确认状态 → 失败档。``accepted`` / ``unsupported`` / ``unavailable``
+#: 不在表里：前者没失败，后两者归 ``no_workspace_root``（宿主根本没这条路）。
+_CONFIRMATION_FAILURE_CODES = {
+    "available": CODE_CONFIRMATION_REQUIRED,
+    "declined": CODE_CONFIRMATION_DECLINED,
+    "cancelled": CODE_CONFIRMATION_CANCELLED,
+    "no_response": CODE_CONFIRMATION_NO_RESPONSE,
+    "error": CODE_CONFIRMATION_ERROR,
+    "stale": CODE_CONFIRMATION_STALE,
+}
+
+
 def _within(path: str, root: str) -> bool:
     try:
         common = os.path.commonpath([path, root])
@@ -191,6 +343,7 @@ class RootAuthority:
                 "pending",
                 "stale",
                 "error",
+                "no_response",
             }
 
     def user_binding_candidate(self, target: Any) -> str | None:
@@ -235,11 +388,11 @@ class RootAuthority:
             if _within(real, self.plugin_dir):
                 raise ValueError("指向插件缓存目录，不是用户工作区")
         except (OSError, ValueError) as exc:
-            self.fail_user_binding(f"确认后的目录已失效：{exc}")
+            self.fail_user_binding(f"确认后的目录已失效：{exc}", state="stale")
             return False
         # 防止确认框显示后目录被换成另一个 symlink 目标。
         if real != candidate:
-            self.fail_user_binding("确认期间目录的规范路径发生变化")
+            self.fail_user_binding("确认期间目录的规范路径发生变化", state="stale")
             return False
         with self._lock:
             if not self._client_elicitation:
@@ -284,12 +437,18 @@ class RootAuthority:
             self._protocol_error = None
             self._protocol_warnings = tuple(warnings)
 
-    def fail_protocol(self, message: str) -> None:
+    def fail_protocol(self, message: str, *, state: str = "error") -> None:
+        """``roots/list`` 失败。
+
+        ``state`` 区分「宿主根本没回应」（``no_response``：超时、EOF、没有可等待
+        的传输）与「宿主回了一个错误」（``error``）。合并这两者会让「声明了
+        capability 却没接线」的宿主看起来像「用户没批准」，处置就反了。
+        """
         with self._lock:
             if not self._protocol_supported:
                 return
             self._protocol_roots = ()
-            self._protocol_state = "error"
+            self._protocol_state = state
             self._protocol_error = str(message)
 
     def snapshot(self) -> RootSnapshot:
@@ -300,6 +459,26 @@ class RootAuthority:
                 self._generation += 1
                 self._last_identity = identity
             return RootSnapshot(roots, source, self._generation, warnings)
+
+    def failure(self) -> WorkspaceFailure:
+        """一个可信根都没有时，这次失败属于哪一档（issue #173）。
+
+        **各档的处置互相相反**，所以这里按「谁该动手」分类，绝不合并：宿主没
+        回应时再让用户点一次是白点，用户拒绝时去查宿主接线是白查。判据的主语
+        是**这条连接此刻的授权来源**，不是模型传了什么路径。
+        """
+        source = self.snapshot().source
+        if source == "mcp_roots_no_response":
+            return WORKSPACE_FAILURES[CODE_ROOTS_NO_RESPONSE]
+        if source == "mcp_roots_error":
+            return WORKSPACE_FAILURES[CODE_ROOTS_ERROR]
+        if source in {"explicit_env", "mcp_roots", "mcp_roots_pending"}:
+            # 显式配置与宿主明确给出的（空）清单都是「已经回答过了，只是没有
+            # 可用目录」——那是配置问题，不是没弹框。
+            return WORKSPACE_FAILURES[CODE_NO_WORKSPACE_ROOT]
+        with self._lock:
+            state = self._user_binding_state
+        return WORKSPACE_FAILURES[_CONFIRMATION_FAILURE_CODES.get(state) or CODE_NO_WORKSPACE_ROOT]
 
     def diagnostics(self) -> dict:
         snap = self.snapshot()
@@ -331,7 +510,9 @@ class RootAuthority:
                 "error": self._user_binding_error,
                 "lifetime": "mcp_connection",
             }
-            return out
+        # 锁外调用：failure() 自己要拿锁。有根时不是失败，如实报 None。
+        out["authorization"] = None if snap.roots else self.failure().payload()
+        return out
 
     def _select_unlocked(self) -> tuple[tuple[str, ...], str, tuple[str, ...]]:
         raw = (os.environ.get(ROOTS_ENV) or "").strip()
@@ -344,7 +525,10 @@ class RootAuthority:
                 return self._protocol_roots, "mcp_roots", self._protocol_warnings
             if self._protocol_state in {"pending", "stale"}:
                 return (), "mcp_roots_pending", ()
-            return (), "mcp_roots_error", tuple(x for x in (self._protocol_error,) if x)
+            warnings = tuple(x for x in (self._protocol_error,) if x)
+            if self._protocol_state == "no_response":
+                return (), "mcp_roots_no_response", warnings
+            return (), "mcp_roots_error", warnings
 
         if self._user_root is not None:
             return (self._user_root,), "user_elicitation", ()

@@ -34,8 +34,8 @@
 `ambiguous_workspace_root`。
 
 `tavotto_health.root_authority` 暴露来源、规范化根、generation、警告、client 名称/
-版本/协议、initialize 实际声明的 capability 名称，以及 Roots/工作区确认状态。
-它是诊断记录，不从版本号猜 capability。
+版本/协议、initialize 实际声明的 capability 名称、Roots/工作区确认状态，以及当前
+这次失败属于哪一档（`authorization`）。它是诊断记录，不从版本号猜 capability。
 
 ### 2. 模型给候选，用户给权限
 
@@ -52,6 +52,28 @@
 拒绝、取消、超时、协议错误全部 fail-closed，并返回不同的
 `workspace_confirmation_*` code。错误明确要求代理不要自动循环重试。显式
 `TAVOTTO_MCP_ROOTS` 或已声明的 Roots 边界不能被 elicitation 扩宽。
+
+### 2b. 授权失败分档（2026-09-03，issue #173）
+
+真实用户报告：宿主声明了 `elicitation`，Codex UI 里却从没出现任何提示，而 server
+把这次「没回应」报成了用户拒绝。用户于是被要求「再点一次」——根本没有框可以点。
+**「宿主没回应」是独立一档**，不能并进「用户拒绝」这类相邻取值：两者的处置正好
+相反。
+
+`roots.WORKSPACE_FAILURES` 是「授权失败长什么样」的唯一出处：一个稳定 `code` ↔ 一个
+`disposition`（谁该动手，闭集）↔ 一句说得出下一步的措辞。工具错误里同时带
+`code` / `disposition` / `recovery`，**`code` 只作机器标识，不当文案**。
+
+| `disposition` | 何时 | `code` |
+| --- | --- | --- |
+| `ask_user_again` | 用户看着确认框作了选择，或批准的目录在授权落地前变了 | `workspace_confirmation_declined` / `_cancelled` / `_stale` |
+| `fix_host_wiring` | 宿主声明了 `elicitation`/`roots`，却超时、断开或回错误 | `workspace_confirmation_no_response` / `_error`、`workspace_roots_no_response` / `workspace_roots_error` |
+| `narrow_the_path` | 路径不在允许的根之内（错误里列出允许的根） | `path_out_of_scope` |
+| `configure_roots` | 宿主既没给工作区目录，也不支持确认 | `no_workspace_root` |
+| `send_absolute_path` | 还没有可以展示给用户的绝对路径，或多根下传了相对路径 | `workspace_confirmation_required` / `ambiguous_workspace_root` |
+
+传输层失败（超时、EOF、没有可等待的传输）与宿主的错误响应在内部是两个状态
+（`no_response` / `error`），因为「一声不吭」和「明确回了错」查的地方不一样。
 
 已有 session 每次使用前重新规范化项目路径并检查当前根；host 换根、连接重新授权，
 或项目目录被替换成指向范围外的 symlink/junction 后，旧项目不再在范围内就删除该
@@ -72,9 +94,11 @@ Roots 探针超时 2 秒；真人确认超时 300 秒。EOF、错误 response �
 
 自动化分三层：
 
-- `tests/test_mcp_roots.py`：来源优先级、路径校验、连接生命周期、capability probe；
+- `tests/test_mcp_roots.py`：来源优先级、路径校验、连接生命周期、capability probe、
+  失败分档（每个确认状态各选中自己那一档）；
 - `tests/test_mcp_server.py`：完整双向 JSON-RPC，分别覆盖 Roots 与 elicitation，
-  并断言 open 的 MCP App metadata；
+  断言 open 的 MCP App metadata，并在真 stdio 帧上跑四档失败（拒绝 / 没弹框 /
+  越界 / 没配），要求四个 code、四种处置两两不同；
 - `tests/test_mcp_stdio.py`：真 server 子进程、真 stdio 双向请求，防止直接函数调用假绿。
 
 真实 Codex CLI 探针必须另记：它证明 host 的 initialize 能力与非交互取消行为，不能
