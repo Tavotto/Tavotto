@@ -287,7 +287,9 @@ test('原图被独占占用（file_locked）：英文报错说清该关掉谁，
   await openElementTree(page)
   await page.getByRole('treeitem', { name: /^Title/ }).first().click()
   const panel = page.getByLabel('Right panel', { exact: true })
-  const size = panel.getByRole('textbox', { name: 'Font size' })
+  // 可访问名是 `Size`（inspector:text.fontSize），不是 prop.fontsize 的
+  // `Font size`——本机跑一遍才看出来的（zh-CN 下两者都是「字号」，分不出）
+  const size = panel.getByRole('textbox', { name: 'Size', exact: true }).first()
   await size.fill('12')
   await size.press('Enter')
   await expect(panel.getByText('1 modified')).toBeVisible({ timeout: 30_000 })
