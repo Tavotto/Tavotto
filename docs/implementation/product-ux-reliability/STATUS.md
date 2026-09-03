@@ -674,7 +674,8 @@ BLOCKED — 不建议发布
 | 另存为无冲突检测；读侧 NaN 无对称闸 | P2 / P3 | #222 | documents |
 | 桌面壳无 CloseRequested 处理 | P2（待真机） | #223 | desktop |
 | MCP 插件第二份导出实现 | P2 | #224 | codex-plugin |
-| 原图写回 / AI 回滚不经 atomicio（无 fsync，有 20 份备份） | P2 | R-05 族 | 择机 |
+| AI 回滚 `copy2` **非原子覆盖用户的 `.py`**（中途失败留下截断的源文件） | **P1** | #251，已修（走 `atomicio.write_bytes`） | R-05 族 |
+| 原图写回**已经是原子的**（`os.replace` + 备份 + 回滚），只缺 fsync | P3 | #252，直接换 `publish_file` 会引入半应用路径 | 择机 |
 | `test_ctrl_c_reaches_the_script…` 负载敏感（本轮负载 13.6 时红一次） | P2 | 单跑 3.8 s 绿 | tavotto run 线 |
 | 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | `pnpm build` 告警 | 择机 |
 | 网站 /try 未同步（`pnpm sync-playground`） | 发布前 | playground 指纹 `09a8abe9eab7a60b` | 发布前 |
