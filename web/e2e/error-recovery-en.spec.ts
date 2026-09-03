@@ -10,8 +10,15 @@
  *
  * 本 spec 只挂在 chromium-en project 下（playwright.config 的基础 chromium
  * project 显式 testIgnore 它——spec 自带 en-US locale，两个 project 都跑等于
- * 同一份内容跑两遍）。Windows 文件占用（file_locked）刻意没有用例，见文件
- * 末尾的说明。
+ * 同一份内容跑两遍）。
+ *
+ * **这套 spec 在 CI 里只跑在 Windows 上**：全仓唯一执行 `pnpm e2e` 的地方是
+ * `.github/workflows/ci.yml` 的 `windows-exe-smoke`（windows-latest），
+ * macOS 那条腿明写「e2e 不在这里跑」。于是本文件里两条 `test.skip(win32)`
+ * 在 CI 里**一次都没有执行过**——收得到不等于跑得过（issue #30）。
+ * 这个拓扑由 `tests/test_e2e_leg_topology.py` 看住：腿变了它当场红，
+ * 提醒回来重估每一条按平台跳过的用例。Windows 文件占用（file_locked）
+ * 的界面用例见文件末尾的说明。
  */
 import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
@@ -139,7 +146,10 @@ test('render 失败（脚本抛异常）：英文报错 + 重试按钮，画布�
 })
 
 test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续', async ({ app, page }) => {
-  test.skip(process.platform === 'win32', 'POSIX 权限位')
+  test.skip(
+    process.platform === 'win32',
+    'POSIX 权限位；CI 无 POSIX e2e 腿，本条只在本机全量跑时执行（issue #30）',
+  )
   const locked = path.join(os.tmpdir(), `tavotto-en-locked-${Date.now()}`)
   mkdirSync(locked, { recursive: true })
   chmodSync(locked, 0o000)
@@ -165,7 +175,10 @@ test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续
 })
 
 test('导出目录不可写：导出失败给英文报错，且不丢项目', async ({ app, page }) => {
-  test.skip(process.platform === 'win32', 'POSIX 权限位')
+  test.skip(
+    process.platform === 'win32',
+    'POSIX 权限位；CI 无 POSIX e2e 腿，本条只在本机全量跑时执行（issue #30）',
+  )
   const a = await app()
   await openFigures(page, a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
@@ -269,9 +282,20 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   await expectNoCjk(err, '更新检查失败')
 })
 
-// 有意没有「Windows 文件占用（file_locked）」的用例：独占锁只在 Windows 上
-// 真实存在，而 e2e workflow 目前只有 Ubuntu 腿——一个永远进不去 win32 分支
-// 的空壳测试是假绿（空转的门禁比没有门禁更坏）。file_locked 的后端行为由
-// tests/test_windows_regressions.py 看护，file_locked 的中英文案由
-// tests/test_error_codes.py 对拍；英文**界面**验证挂在 issue #30 的
-// 真机验收清单上，等 e2e 有 Windows 腿再把用例真实落地。
+// 「Windows 文件占用（file_locked）」的界面用例仍然缺着——但**理由变了**。
+//
+// 原来这里写的是「e2e workflow 目前只有 Ubuntu 腿，写了也永远进不去 win32
+// 分支」。那个前提**写反了**：唯一执行 `pnpm e2e` 的是 ci.yml 的
+// `windows-exe-smoke`（windows-latest），恒跳过的恰恰是上面两条 POSIX 用例。
+// 也就是说，「不写 file_locked 界面用例」这个决定是从一个与事实相反的前提
+// 推出来的（issue #30）。
+//
+// 按真实拓扑重估的结论：这条用例**现在就落得了地**，形状是
+// `test.skip(process.platform !== 'win32', …)`，它会在 windows-exe-smoke 上
+// 真实执行。没有在本轮写，是因为它只可能在 Windows 上跑一次，而本轮的作业
+// 机器不是 Windows——一条从没执行过、只在合并队列里第一次运行的新用例，正是
+// 「从没跑过的门禁不会保持正确」那一类。落地方案与代价记在 issue #30。
+//
+// 在那之前的既有看护（都不覆盖英文**界面**这半场）：file_locked 的后端行为由
+// tests/test_windows_regressions.py 看护，中英文案由 tests/test_error_codes.py
+// 对拍。
