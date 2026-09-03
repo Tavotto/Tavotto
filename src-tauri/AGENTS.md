@@ -24,6 +24,11 @@
   加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
   失败路径不许吞——回退时把完整文件路径告诉用户。
+- **关窗询问闸**（issue #223，ADR 0002 的「关窗询问闸」一节）：
+  `WindowEvent::CloseRequested` → `CloseGate` → 事件 `tavotto:close-requested`
+  → 前端答 `hold`/`close`/`cancel`。三条别改坏：**默认不拦**（前端 arm 之后才拦，
+  splash/error 页没有监听器）、**超时只针对「前端有没有接手」**（用户想多久都行）、
+  **必须留看门狗**（没有它 = 一个关不掉的窗口）。⌘Q 与系统注销不走这条路。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见

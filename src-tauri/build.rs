@@ -9,6 +9,8 @@ fn main() {
             "reveal_export",
             "set_menu_locale",
             "codex_integration",
+            "arm_close_guard",
+            "resolve_close_request",
         ]),
     ))
     .expect("failed to run tauri-build");

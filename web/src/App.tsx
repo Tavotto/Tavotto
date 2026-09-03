@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
+import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
 import { Inspector } from '@/components/inspector/Inspector'
@@ -91,6 +92,9 @@ export function App() {
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
             确认屏不能等到用户先挑完项目才出现 */}
         <NativeConfirmDialog />
+        {/* 关窗询问闸也挂在这一层：它一挂上壳才开始拦关闭按钮，
+            少了这一份，Project Picker 上点关闭要等一次看门狗超时 */}
+        <CloseGuardDialog />
       </>
     )
   return <Workspace />
@@ -244,6 +248,7 @@ function Workspace() {
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
+        <CloseGuardDialog />
         {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
         <OnboardingLayer />
       </div>

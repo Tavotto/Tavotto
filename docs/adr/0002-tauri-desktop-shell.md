@@ -60,6 +60,41 @@ matplotlib worker（用户/内置 Python，独立子进程）
 - **窗口状态**：tauri-plugin-window-state 记忆大小/位置；最小 1024×680
   （三栏工作台断点下限）。
 
+### 关窗询问闸（2026-09-03，issue #223）
+
+改造前壳里**没有** `WindowEvent::CloseRequested` 处理，「关窗前问一句」全靠
+前端的 `beforeunload`（ADR 0024：`dirty`/`saving`/`save_error`/`conflict` 四档
+才拦）。而 `beforeunload` 是**浏览器**的机制——WKWebView / WebView2 在**窗口**
+被关掉时派不派它取决于壳，本仓库从未在真机上验证过。所以桌面上这句话由壳来问：
+
+```text
+关闭按钮 / Alt+F4 / 任务栏关闭
+  → WindowEvent::CloseRequested
+  → CloseGate（main.rs）：armed 且未确认 → prevent_close + 发 tavotto:close-requested
+  → 前端 CloseGuardDialog：hasUnsavedWork(saveState) ?
+        否 → 立刻答 close                  （不弹空提示）
+        是 → 先答 hold（我接手了），再弹「保存 / 不保存 / 取消」
+  → resolve_close_request(decision) → close 则壳调 window.close()（第二遍放行）
+```
+
+四条不变式：
+
+- **默认不拦**（`armed == false`）。只有前端注册好监听器之后才 `arm_close_guard`。
+  splash / error 页在 `tauri://` 源下没有这个监听器，在它们上面拦一下等于让
+  关闭按钮「按了没反应」——那比不问更坏。
+- **超时的主语是「前端有没有接手」，不是「用户有没有回答」。** 前端一收到事件
+  就先答 `hold`，此后用户想多久都行；`CLOSE_ACK_TIMEOUT`（2 s）只针对没人接手
+  的情形。量错这个主语的表现是用户读对话框读到第三秒、窗口在他面前关掉。
+- **必须有看门狗。** webview 卡死时若只 `prevent_close()` 而没有兜底，得到的是
+  一个**关不掉的窗口**；用户只能杀进程，那连防抖窗口内的最后一次编辑都保不住。
+  超时放行 = 退回改造前的行为（磁盘自动保存 + 本机崩溃恢复副本兜着）。
+- **存不成就不关。** 「保存」之后仍 `hasUnsavedWork`（写盘失败 / 冲突未决）时
+  窗口留着并说明原因——照关的话，用户按下的那个「保存」就是一句谎话。
+
+**⌘Q / 系统注销不走这条路**（那是 `RunEvent::ExitRequested`），仍然只有自动保存
+与崩溃恢复副本兜底，见「已知限制」。真机验收清单在
+[`docs/acceptance/desktop-close-guard.md`](../acceptance/desktop-close-guard.md)。
+
 ## 认证模型（一次性 bootstrap）
 
 威胁模型：本机其他进程/浏览器页面对 `127.0.0.1:<port>` 的任意访问
@@ -173,6 +208,11 @@ Tauri bundler）。
 - 画布级 ⌘C/⌘V 在桌面菜单预定义角色下的行为需人工回归一轮（文本框内已保证）；
   发现异常的回退方案是把剪贴板项换成自定义转发（同撤销/重做路径）。
 - 双击 .tavotto 项目包 / 文件关联未做。
+- **关窗询问闸只盖 `CloseRequested`**：⌘Q（macOS 应用菜单的退出角色）与系统
+  注销走 `RunEvent::ExitRequested`，不经过它。那两条仍只有磁盘自动保存
+  （1 s 防抖）+ 本机崩溃恢复副本兜底，最多丢防抖窗口内的一次编辑，下次启动
+  会弹恢复。要盖住它们得再拦一次 `ExitRequested`，风险是把「退不掉的应用」
+  换给用户，因此单独立项（issue #223 的后续）。
 
 ## 应用内更新（2026-08-18）
 

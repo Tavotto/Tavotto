@@ -9,6 +9,7 @@ mod sidecar;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use tauri::menu::{AboutMetadataBuilder, Menu, MenuItemBuilder, SubmenuBuilder};
@@ -27,6 +28,8 @@ struct AppState {
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
     /// 跑的窗口，那条路发 `tavotto:open` 事件。
     open: Option<OpenRequest>,
+    /// 关窗询问闸（issue #223）。窗口关闭按钮 / Alt+F4 / 任务栏关闭都先经过它。
+    close_gate: Mutex<CloseGate>,
 }
 
 /// 交接契约：`Tavotto --open <项目目录> [--stem <stem> | --pick-script <脚本>]`。
@@ -255,6 +258,177 @@ async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<Stri
     })
     .await
     .map_err(|_| "spawn_failed".to_string())?
+}
+
+/* -------------------------------------------------------------------------- */
+/*  关窗询问闸（issue #223）                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// 前端**确认收到**这一次询问的时限。超过它就当 webview 已经答不上话
+/// （JS 崩了、主线程卡死、页面是 splash/error 那种没有监听器的壳内页），
+/// 放行关闭——退回改造前的行为（磁盘自动保存 + 本机崩溃恢复副本兜底）。
+///
+/// **这不是用户思考的时限**：前端一收到事件就先答一句 `hold` 表示「我接手了，
+/// 正在问用户」，此后用户想多久都行。把两件事分成两步，正是为了让这个超时
+/// 可以短到用户察觉不到，同时又不会在用户读对话框时把窗口关掉。
+const CLOSE_ACK_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// 前端对一次关窗询问的答复。**闭集**，与 `web/src/lib/desktop.ts` 的
+/// `CloseDecision` 严格同源（`tests/test_desktop_close_guard.py` 逐个比）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseDecision {
+    /// 我接手了，正在问用户——别再等我，也别强关。
+    Hold,
+    /// 关吧。
+    Close,
+    /// 用户改主意了，窗口留着。
+    Cancel,
+}
+
+impl CloseDecision {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "hold" => Some(Self::Hold),
+            "close" => Some(Self::Close),
+            "cancel" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
+}
+
+/// 壳对一次 `CloseRequested` 的裁决。
+#[derive(Debug, PartialEq, Eq)]
+enum CloseVerdict {
+    /// 放行。
+    Close,
+    /// 拦住并问前端；带上这一次的代号，看门狗只对自己那一代负责。
+    Ask(u64),
+}
+
+/// 「关窗前问一句」的闸。
+///
+/// **默认不拦**（`armed == false`）：只有前端亲口说过「我在，我能答」
+/// （`arm_close_guard`）之后才拦。壳自带的 splash / error 页在 `tauri://` 源下，
+/// 既没有 i18next 也没有这个监听器——那时候点关闭必须当场关掉，等两秒看门狗
+/// 的「按了没反应」比不问更坏。
+#[derive(Default)]
+struct CloseGate {
+    armed: bool,
+    /// 每一次 `CloseRequested` 递增。用户取消后再点一次关闭是**新的一代**，
+    /// 上一代的看门狗醒来时会发现代号对不上，什么都不做。
+    generation: u64,
+    /// 这一代已经被前端接手（正在弹三选一）——看门狗不再强关。
+    acknowledged: bool,
+    /// 前端已经答复「关」。`window.close()` 会再触发一次 `CloseRequested`，
+    /// 那一次靠这个标记直接放行，否则就是一个关不掉的窗口。
+    confirmed: bool,
+}
+
+impl CloseGate {
+    fn on_close_requested(&mut self) -> CloseVerdict {
+        if !self.armed || self.confirmed {
+            return CloseVerdict::Close;
+        }
+        self.generation += 1;
+        self.acknowledged = false;
+        CloseVerdict::Ask(self.generation)
+    }
+
+    /// 前端的答复。返回 true = 现在就关。
+    fn resolve(&mut self, decision: CloseDecision) -> bool {
+        match decision {
+            CloseDecision::Hold => {
+                self.acknowledged = true;
+                false
+            }
+            CloseDecision::Close => {
+                self.confirmed = true;
+                true
+            }
+            CloseDecision::Cancel => {
+                self.acknowledged = false;
+                false
+            }
+        }
+    }
+
+    /// 看门狗到点。返回 true = 这一代没人接手，强关。
+    fn watchdog_fires(&mut self, generation: u64) -> bool {
+        if self.generation != generation || self.acknowledged || self.confirmed {
+            return false;
+        }
+        self.confirmed = true;
+        true
+    }
+}
+
+/// 前端就绪：从现在起关窗先问它。
+///
+/// **必须在监听器注册之后才调**——反过来的话，两者之间的那次关闭会拦下一个
+/// 没人听的问题，白等一个看门狗。
+#[tauri::command]
+fn arm_close_guard(app: tauri::AppHandle) {
+    app.state::<AppState>().close_gate.lock().unwrap().armed = true;
+}
+
+/// 前端对 `tavotto:close-requested` 的答复。
+#[tauri::command]
+fn resolve_close_request(app: tauri::AppHandle, decision: String) -> Result<(), String> {
+    let Some(decision) = CloseDecision::parse(&decision) else {
+        return Err(format!("未知的关窗答复：{decision}"));
+    };
+    // 锁在这条语句结束就还回去：`close()` 会同步走一遍窗口事件，握着锁进去
+    // 等于自己和自己抢。
+    let close_now = app
+        .state::<AppState>()
+        .close_gate
+        .lock()
+        .unwrap()
+        .resolve(decision);
+    if close_now {
+        if let Some(win) = app.get_webview_window("main") {
+            win.close().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// 起一条看门狗：`CLOSE_ACK_TIMEOUT` 之后这一代还没人接手就强关。
+///
+/// 没有它，一个卡死的 webview 就是一个**关不掉的窗口**——那比「关窗不提示」
+/// 坏得多，用户只能去杀进程，而杀进程连自动保存的防抖窗口都保不住。
+fn spawn_close_watchdog(app: tauri::AppHandle, generation: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_ACK_TIMEOUT);
+        let force = app
+            .try_state::<AppState>()
+            .is_some_and(|s| s.close_gate.lock().unwrap().watchdog_fires(generation));
+        if force {
+            eprintln!("[close-guard] 前端未在 {CLOSE_ACK_TIMEOUT:?} 内应答，放行关闭");
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.close();
+            }
+        }
+    });
+}
+
+/// 窗口关闭按钮 / Alt+F4 / 任务栏关闭 → 先问前端有没有没落盘的工作。
+///
+/// **⌘Q 与系统注销不走这里**（那是 `RunEvent::ExitRequested`），仍然只有
+/// 自动保存 + 崩溃恢复副本兜底——见 ADR 0002 的「关窗询问闸」一节。
+fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    let app = window.app_handle().clone();
+    let verdict = match app.try_state::<AppState>() {
+        Some(state) => state.close_gate.lock().unwrap().on_close_requested(),
+        None => CloseVerdict::Close,
+    };
+    let CloseVerdict::Ask(generation) = verdict else {
+        return;
+    };
+    api.prevent_close();
+    // 发不出去也不特殊处理：看门狗是这条路上唯一的兜底，让它只有一条。
+    let _ = app.emit_to("main", "tavotto:close-requested", ());
+    spawn_close_watchdog(app, generation);
 }
 
 /// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
@@ -546,6 +720,8 @@ fn main() {
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
         menu_locale: Mutex::new(i18n::DEFAULT_LOCALE),
+        // 默认**不拦**：前端注册好监听器后自己来 arm。
+        close_gate: Mutex::new(CloseGate::default()),
     };
 
     let app = tauri::Builder::default()
@@ -574,8 +750,19 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             reveal_export,
             set_menu_locale,
-            codex_integration
+            codex_integration,
+            arm_close_guard,
+            resolve_close_request
         ])
+        .on_window_event(|window, event| {
+            // 只看主窗口：壳只有这一个，但事件回调是全局的。
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                on_close_requested(window, api);
+            }
+        })
         .menu(build_menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
@@ -842,5 +1029,106 @@ mod tests {
         let req = parse_open_args(&args(&["--open", "/用户/我的 图库", "--stem", "图 1"])).unwrap();
         assert_eq!(req.project, "/用户/我的 图库");
         assert_eq!(req.stem.as_deref(), Some("图 1"));
+    }
+
+    /* ---------------------------------------------------------------- */
+    /*  关窗询问闸（issue #223）                                          */
+    /* ---------------------------------------------------------------- */
+
+    fn armed_gate() -> CloseGate {
+        CloseGate {
+            armed: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_unarmed_gate_never_holds_the_window() {
+        // splash / error 页在 `tauri://` 源下，没有那个监听器。在它们上面
+        // 拦一下等于让关闭按钮「按了没反应」两秒——那比不问更坏。
+        let mut gate = CloseGate::default();
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
+        // 而且不该留下待应答的一代：看门狗没起，代号也就不该往前走。
+        assert_eq!(gate.generation, 0);
+    }
+
+    #[test]
+    fn an_armed_gate_asks_the_frontend_first() {
+        let mut gate = armed_gate();
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+    }
+
+    #[test]
+    fn the_confirmed_close_is_let_through_on_the_second_pass() {
+        // `resolve("close")` 之后壳自己调 `window.close()`，那一下会**再**触发
+        // 一次 CloseRequested。这一次必须放行，否则就是一个关不掉的窗口。
+        let mut gate = armed_gate();
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+        assert!(gate.resolve(CloseDecision::Close));
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
+    }
+
+    #[test]
+    fn cancel_keeps_the_window_and_the_next_press_asks_again() {
+        let mut gate = armed_gate();
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+        assert!(!gate.resolve(CloseDecision::Hold));
+        assert!(!gate.resolve(CloseDecision::Cancel));
+        // 取消不是「以后都别问了」
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(2));
+    }
+
+    #[test]
+    fn the_watchdog_forces_a_close_when_nobody_answers() {
+        // webview 卡死 / JS 崩了：没人会 hold，也没人会 close。兜底必须存在，
+        // 否则窗口关不掉，用户只能杀进程——那连防抖窗口内的编辑都保不住。
+        let mut gate = armed_gate();
+        let CloseVerdict::Ask(gen) = gate.on_close_requested() else {
+            panic!("armed 的闸该问一句");
+        };
+        assert!(gate.watchdog_fires(gen));
+        // 强关也走「已确认」那条路：随后的 close() 会再触发一次 CloseRequested。
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
+    }
+
+    #[test]
+    fn the_watchdog_does_not_close_a_window_the_user_is_still_deciding_on() {
+        // 这是这条闸最容易写坏的一处：超时的主语是**「前端有没有接手」**，
+        // 不是「用户有没有回答」。量错了主语，用户读对话框读到第三秒，
+        // 窗口就在他面前关掉了。
+        let mut gate = armed_gate();
+        let CloseVerdict::Ask(gen) = gate.on_close_requested() else {
+            panic!("armed 的闸该问一句");
+        };
+        assert!(!gate.resolve(CloseDecision::Hold));
+        assert!(!gate.watchdog_fires(gen));
+    }
+
+    #[test]
+    fn a_stale_watchdog_never_closes_a_later_generation() {
+        // 取消之后再点一次关闭：上一代的看门狗还在睡，醒来时不该把
+        // 这一代（用户可能正在读对话框）的窗口关掉。
+        let mut gate = armed_gate();
+        let CloseVerdict::Ask(first) = gate.on_close_requested() else {
+            panic!("armed 的闸该问一句");
+        };
+        assert!(!gate.resolve(CloseDecision::Cancel));
+        let CloseVerdict::Ask(second) = gate.on_close_requested() else {
+            panic!("armed 的闸该问一句");
+        };
+        assert_ne!(first, second);
+        assert!(!gate.resolve(CloseDecision::Hold));
+        assert!(!gate.watchdog_fires(first));
+    }
+
+    #[test]
+    fn the_decision_vocabulary_is_a_closed_set() {
+        // 前端拼错一个词不该被当成「关吧」。
+        assert_eq!(CloseDecision::parse("hold"), Some(CloseDecision::Hold));
+        assert_eq!(CloseDecision::parse("close"), Some(CloseDecision::Close));
+        assert_eq!(CloseDecision::parse("cancel"), Some(CloseDecision::Cancel));
+        for bad in ["", "Close", "closed", "ok", "true", "discard"] {
+            assert_eq!(CloseDecision::parse(bad), None, "{bad} 不该被认下来");
+        }
     }
 }

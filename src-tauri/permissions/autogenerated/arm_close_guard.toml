@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-arm-close-guard"
+description = "Enables the arm_close_guard command without any pre-configured scope."
+commands.allow = ["arm_close_guard"]
+
+[[permission]]
+identifier = "deny-arm-close-guard"
+description = "Denies the arm_close_guard command without any pre-configured scope."
+commands.deny = ["arm_close_guard"]
