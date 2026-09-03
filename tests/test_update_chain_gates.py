@@ -241,6 +241,12 @@ def test_shell_e2e_update_trigger_is_default_off():
     )
 
 
+def _n1_job() -> str:
+    """release.yml 里 `n1_update_windows` 那个 job 的正文。"""
+    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    return src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
+
+
 def test_release_runs_the_n1_update_verification():
     """发布编排里真的有 N-1 更新验证 job，且形状对。"""
     src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -265,6 +271,93 @@ def test_release_runs_the_n1_update_verification():
     )
     # 等新进程出现，不等旧进程优雅退出（NSIS /R 重启、旧进程 exit(0) 不走 RunEvent::Exit）
     assert "ProductVersion" in job, "「重启后跑的是新版本」的断言不见了"
+
+
+def test_n1_new_process_is_pinned_by_image_path_not_by_name():
+    """#147：「新进程」的主语按**壳的映像路径**认，不许按进程名认。
+
+    安装目录里有两个都叫 `Tavotto.exe` 的二进制——壳在安装根，sidecar 在
+    `sidecar/Tavotto/Tavotto.exe`（同一个 job 的冒烟步骤正是这么找 sidecar
+    的）。`Get-Process Tavotto` 按进程名匹配，两个都收；而 sidecar 是
+    PyInstaller 产物，**没有版本资源**（对 v0.12.0 官方安装包实测：壳
+    ProductVersion=0.12.0，sidecar 连 StringFileInfo 都没有）。选中 sidecar
+    就必然读到空 ProductVersion，且**等多久都不会变**——重试窗口救不回来，
+    这是量错对象，不是时序。
+
+    坏掉之后会怎样：退回 `Where-Object { $_.Id -ne $p.Id }` 那种按名字取
+    「第一个不是旧进程的」，更新链成功的那次发布照样报红（v0.12.0 的
+    run 33027201414 就是这么红的）。
+    """
+    job = _n1_job()
+    assert "$exe.Equals($shell, [System.StringComparison]::OrdinalIgnoreCase)" in job, (
+        "「新进程」不再按壳的映像路径认——按进程名取会把 sidecar 认成壳"
+    )
+    assert "Where-Object { $_.Id -ne $p.Id } | Select-Object -First 1" not in job, (
+        "又回到了「第一个不是旧进程的同名进程」——那正是 #147 的红灯来源"
+    )
+    # 「在安装目录下」不是替代品：sidecar 也在安装目录下
+    assert "$procPath.StartsWith($inst" not in job, (
+        "用「映像在安装目录下」当主语判据——sidecar 就在安装目录下，它放得过去"
+    )
+
+
+def test_n1_version_read_is_null_safe_and_polls_as_advertised():
+    """#147：ProductVersion 读空必须走**显式 fail 分支**并打印可读诊断。
+
+    v0.12.0 发布 run 33027201414：更新链本身成功（DisplayVersion → 0.12.0、
+    新进程起来了），但 `$pv.StartsWith($env:NEW_VERSION)` 在 null 上抛
+    InvalidOperation，把该有诊断的断言变成裸脚本错误。
+
+    顺带钉住「错误信息本身也是断言」：诊断里写了轮询窗口，代码里就必须真的
+    有那个循环——第一版只给映像路径加了轮询，版本资源仍是读一次，而诊断已经
+    写着「已轮询 15s」。
+    """
+    job = _n1_job()
+    # 主语是**守卫**那一处，不是轮询循环里的 `-not …` break 条件——两处长得
+    # 很像，锚错了就变成「循环在 StartsWith 之前」这种恒真的断言。
+    guard_head = "if ([string]::IsNullOrWhiteSpace($procPv)) {"
+    guard = job.find(guard_head)
+    use = job.find("$procPv.StartsWith(")
+    assert guard != -1, "ProductVersion 的空值守卫不见了"
+    assert use != -1, "「是不是新版本」的比较不见了"
+    assert guard < use, "空值守卫排在 .StartsWith 之后——null 上调方法仍会抛 InvalidOperation"
+    # 空值走 throw，且诊断点名 pid / 映像路径 / 句柄读到的原始值
+    empty_branch = job.split(guard_head, 1)[1].split("\n          }", 1)[0]
+    assert "throw" in empty_branch, "ProductVersion 为空时不再 fail——门禁被掏空了"
+    for token, why in [
+        ("$procPath", "映像路径"),
+        ("$($fresh.Id)", "pid"),
+        ("$handlePv", "句柄读到的原始值"),
+    ]:
+        assert token in empty_branch, f"空值诊断里没有{why}，读的人无从判断是哪一种空"
+    # 句柄那份只当诊断：必须包在 try/catch 里，读不到不构成失败
+    assert "try { $handlePv = " in job and "catch { $handlePv = " in job, (
+        "进程句柄的 MainModule 读值不再是「包住的诊断」——它一旦能失败就又是裸错误"
+    )
+    # 诊断承诺的轮询窗口，代码里必须真的有
+    import re
+
+    m = re.search(r"读不到新进程映像的 ProductVersion（\$procPath，已轮询 (\d+)s）", job)
+    assert m, "空值诊断不再说明轮询了多久——读的人分不清「没等」还是「等了也没有」"
+    window = m.group(1)
+    assert re.search(rf"foreach \(\$i in 1\.\.{window}\) \{{\s*\n\s*\$vi = ", job), (
+        f"诊断说 ProductVersion 轮询了 {window}s，代码里却没有对应的循环——"
+        "错误信息本身也是断言，说了就必须兑现"
+    )
+
+
+def test_n1_update_step_exits_explicitly():
+    """#197：pwsh 步骤的后置条件写显式 `exit 0`，不托付隐式退出码传播。
+
+    #192 在 windows-exe-smoke 上被踢出三次：所有 throw 都没触发、脚本执行到
+    最后一行、日志里没有任何异常块，步骤仍然退 1，机制至今没查清。这一步的
+    契约是「三条判据都过 = 成功」，所有失败路径都是 throw，走不到 `exit 0`。
+    """
+    job = _n1_job()
+    step = job.split("驱动真实应用内更新并断言换到了新版本", 1)[1].split("\n      - name:", 1)[0]
+    assert step.rstrip().endswith("exit 0"), (
+        "N-1 更新断言这一步不再以显式 `exit 0` 收尾——退出码托付给了与结论无关的命令（issue #197）"
+    )
 
 
 def test_release_notes_do_not_leak_powershell_backticks():

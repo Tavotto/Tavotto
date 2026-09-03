@@ -823,34 +823,61 @@ jobs:
 
           # 判据二：**等新进程出现，不等旧进程优雅退出**——更新装完 NSIS 以
           # /R 重启应用，旧进程 std::process::exit(0) 不走 RunEvent::Exit。
+          #
+          # 「新进程」的主语必须钉到**壳的映像路径**，不能钉到进程名。安装目录
+          # 里有两个都叫 Tavotto.exe 的二进制——壳在安装根，sidecar 在
+          # $inst\sidecar\Tavotto\Tavotto.exe（下一步的冒烟正是这么找它的）
+          # ——而 `Get-Process Tavotto` 按**进程名**匹配，两个都收。sidecar 是
+          # PyInstaller 产物，**根本没有版本资源**（对 0.12.0 安装包实测：壳
+          # ProductVersion=0.12.0，sidecar 连 StringFileInfo 都没有），一旦选中
+          # 它，ProductVersion 必然是空的，而且**等多久都不会变**——那不是时序
+          # 问题，加再多重试也救不回来。v0.12.0 run 33027201414 的
+          # 「✓ 新进程 pid 1284，ProductVersion=」就是这个形状：它在
+          # DisplayVersion 确认后第一轮轮询（1 秒）就命中了。
           $fresh = $null
+          $procPath = ""
+          $seen = @{}
           foreach ($i in 1..120) {
             Start-Sleep 1
-            $fresh = @(Get-Process Tavotto -ErrorAction SilentlyContinue) |
-                     Where-Object { $_.Id -ne $p.Id } | Select-Object -First 1
+            foreach ($c in @(Get-Process Tavotto -ErrorAction SilentlyContinue)) {
+              if ($c.Id -eq $p.Id) { continue }
+              # 映像路径走 CIM（Win32_Process.ExecutablePath），不走 .NET 的
+              # MainModule：新进程刚起时模块表可能还没填好，读回空串。
+              $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.Id)" `
+                    -ErrorAction SilentlyContinue
+              $exe = if ($ci) { "$($ci.ExecutablePath)" } else { "" }
+              if ([string]::IsNullOrWhiteSpace($exe)) { continue }
+              $seen[$c.Id] = $exe
+              if ($exe.Equals($shell, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $fresh = $c; $procPath = $exe; break
+              }
+            }
             if ($fresh) { break }
           }
-          if (-not $fresh) { throw "更新装完后没有新 Tavotto 进程出现（/R 重启失败？）" }
+          if (-not $fresh) {
+            $other = ($seen.GetEnumerator() |
+                      ForEach-Object { "pid $($_.Key) → $($_.Value)" }) -join "; "
+            if (-not $other) { $other = "（一个都没有）" }
+            throw ("2 分钟内没有出现映像为 $shell 的新进程（/R 重启失败？）。" +
+                   "期间看到的其它 Tavotto 进程：$other")
+          }
 
-          # 判据三：**跑起来的那个进程**是新版本。
+          # 判据三：**跑起来的那个壳**是新版本。
           # 不变式的主语是「重启后新进程的 ProductVersion」
           # （docs/ci/release-qualification.md「n1_update_windows」一节）。只验
           # 安装目录里的文件不够：「装对了但 /R 起错了二进制」恰好从中间漏过去。
+          # 「在安装目录下」也不够——sidecar 就在安装目录下，那条检查放它过去。
+          # 判据二已经把主语钉到 $shell 的映像路径上，这里只剩版本资源。
           #
-          # 两处换法，各解一个问题：
-          #  1) 映像路径走 CIM（Win32_Process.ExecutablePath），不走 .NET 的
-          #     MainModule。新进程离 DisplayVersion 确认只有一秒，此刻 MainModule
-          #     可能还没填好，读回空串，而 `$pv.StartsWith()` 在 null 上抛
-          #     InvalidOperation——v0.12.0 发布 run 33027201414 就是这么「失败」
-          #     的，更新链本身是成功的。CIM 不依赖进程句柄的模块表。
-          #  2) 版本资源从**那个映像路径**读，不从进程句柄读；带 15s 轮询兜底。
-          $procPath = ""
+          # 版本资源从**那个映像路径**读，不从进程句柄读，并且轮询 15s：
+          # 安装器此刻可能仍在替换 exe，磁盘上那份同样会读到中间态。诊断里
+          # 写了轮询窗口，代码里就必须真有——错误信息本身也是断言。
+          $vi = $null
+          $procPv = ""
           foreach ($i in 1..15) {
-            $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($fresh.Id)" `
-                  -ErrorAction SilentlyContinue
-            if ($ci -and -not [string]::IsNullOrWhiteSpace($ci.ExecutablePath)) {
-              $procPath = $ci.ExecutablePath; break
-            }
+            $vi = (Get-Item $procPath -ErrorAction SilentlyContinue).VersionInfo
+            if ($vi) { $procPv = "$($vi.ProductVersion)".Trim() }
+            if (-not [string]::IsNullOrWhiteSpace($procPv)) { break }
             Start-Sleep 1
           }
           # 句柄那份只当诊断：读不到不构成失败，但读到什么必须留在日志里
@@ -859,24 +886,19 @@ jobs:
           try { $handlePv = "$($fresh.MainModule.FileVersionInfo.ProductVersion)" }
           catch { $handlePv = "<读取失败：$($_.Exception.GetType().Name)>" }
 
-          if ([string]::IsNullOrWhiteSpace($procPath)) {
-            throw ("读不到新进程的映像路径（pid $($fresh.Id)，已轮询 15s）：" +
-                   "无法确认重启后跑的是哪个二进制。句柄读到的 ProductVersion='$handlePv'")
-          }
-          $vi = (Get-Item $procPath -ErrorAction SilentlyContinue).VersionInfo
-          $procPv = if ($vi) { "$($vi.ProductVersion)".Trim() } else { "" }
           Write-Host "✓ 新进程 pid $($fresh.Id)"
           Write-Host "  映像路径：$procPath"
           Write-Host "    ProductVersion='$procPv'  FileVersion='$(if ($vi) { $vi.FileVersion })'"
           Write-Host "  进程句柄 MainModule → ProductVersion='$handlePv'（仅诊断）"
-
-          if (-not $procPath.StartsWith($inst, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "重启后跑的不是刚装的那个二进制：映像 $procPath 不在安装目录 $inst 下"
+          if ($seen.Count -gt 1) {
+            Write-Host "  同名的其它 Tavotto 进程（按映像路径已排除）："
+            $seen.GetEnumerator() | Where-Object { $_.Key -ne $fresh.Id } |
+              ForEach-Object { Write-Host "    pid $($_.Key) → $($_.Value)" }
           }
           if ([string]::IsNullOrWhiteSpace($procPv)) {
             throw ("读不到新进程映像的 ProductVersion（$procPath，已轮询 15s）。" +
                    "pid $($fresh.Id)，句柄读值='$handlePv'——更新链可能是成功的，" +
-                   "先看上面四行再判。")
+                   "先看上面的诊断再判。")
           }
           if (-not $procPv.StartsWith($env:NEW_VERSION)) {
             throw "重启后跑的不是新版本：ProductVersion=$procPv，期望 $env:NEW_VERSION"
@@ -885,6 +907,11 @@ jobs:
           Get-Process Tavotto -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
           Start-Sleep 3
+          # 这一步的契约是「三条判据都过 = 成功」，别把它托付给 $LASTEXITCODE
+          # 的隐式传播——那个值来自与结论无关的命令（issue #197：脚本跑到最后
+          # 一行仍退 1，机制没查清，解法是把后置条件写显式）。所有失败路径都是
+          # throw，走不到这里，所以不掩盖任何真失败。
+          exit 0
 
       - name: 更新后的产物冒烟（复用 smoke_app 的既有断言）
         if: steps.probe.outputs.supported == 'true'
