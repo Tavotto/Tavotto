@@ -43,7 +43,16 @@ export default defineConfig({
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
-      testMatch: ['golden-paths.spec.ts', 'a11y.spec.ts', 'keyboard-golden-path.spec.ts'],
+      // twin-axes-pick 进这条腿的理由与上面同源：⌥ 点击轮换（issue #216）唯一
+      // 没被量到的维度就是「另一个引擎里 altKey 到不到得了命中层」，那只有
+      // 换引擎跑才回答得了。这一腿在 merge_group / full-ci 上真会执行
+      // （ci.yml 的 windows-exe-smoke 里 `playwright install chromium webkit` + `pnpm e2e`）。
+      testMatch: [
+        'golden-paths.spec.ts',
+        'a11y.spec.ts',
+        'keyboard-golden-path.spec.ts',
+        'twin-axes-pick.spec.ts',
+      ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
     // 英文的完整流程覆盖在 i18n.spec.ts（两种语言各走一遍）。

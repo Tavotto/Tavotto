@@ -588,7 +588,8 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
     不变 / 按 ⌥ 时换得到 twin、说得出是谁、绕得回来）+
     `e2e/twin-axes-pick.spec.ts`（真浏览器 + 真 matplotlib：引擎真的把孪生轴
     发成一个独立 axes 吗、⌥ 真的带得到命中层吗、播报真的看得见吗——jsdom 里
-    命中层的 `getBoundingClientRect` 是桩出来的，这几件事量不到）。
+    命中层的 `getBoundingClientRect` 是桩出来的，这几件事量不到）。**它同时进
+    webkit 那一腿**：⌥ 唯一没被量到的维度就是「换个引擎还带不带得到 `altKey`」。
 - **图内箭头交互**与画布箭头同语义（2026-08-17，elementArrowEditing.test 看护）：
   命中/框选按**线本身**不按 bbox 空白矩形、选中/hover 沿线描示无矩形外框、
   拖端点 shift 锁 15°、整体拖 shift 锁水平/垂直/45°（分数坐标锁角必须换算到
