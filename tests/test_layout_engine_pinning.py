@@ -314,6 +314,46 @@ else:
         "坏 pin 留在引擎里，绘制却没抛——上游改了吞异常的范围，第 9 节的理由要重写")
 plt.close(fig)
 
+# -- 10) 用户自己的 TightLayoutEngine 子类：接管它，不是替换它 --------------
+# `isinstance` 判据同样会选中用户脚本挂上来的子类。用 `PinnedTightLayoutEngine(
+# **inner.get())` 重建的话，它重写过的 `execute()` 与全部子类状态会被**静默丢掉**
+# （每一个没被 pin 的轴的落位跟着变），而 `get()` 多回一个键时重建会当场 TypeError、
+# 这条编辑直接失败。包住原件再委派，两种都不发生。
+class UserTight(TightLayoutEngine):
+    # 一个会留下可观测痕迹、且 get() 多一个键的子类。
+    # （驱动本身就是个三引号字符串，这里只能用 # 注释，不能写 docstring。）
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.ran = 0
+        self.flavour = "用户自己的"
+
+    def execute(self, fig):
+        self.ran += 1
+        super().execute(fig)
+
+    def get(self):
+        # 子类往参数表里多塞一个键：重建那种写法会在这里 TypeError
+        return {**super().get(), "flavour": self.flavour}
+
+
+fig, axs = make(2, layout="tight")
+mine = UserTight(pad=2.0)
+fig.set_layout_engine(mine)
+fig.canvas.draw()
+ran_before = mine.ran
+assert ran_before > 0, "夹具自己没跑起来——下面那条判据没意义"
+
+engine = overrides.ensure_pinnable_layout_engine(fig)
+assert engine is not None, "自定义子类没被接管——position 会被静默吃掉（#140 的形状）"
+assert engine.get() == mine.get(), ("参数表没跟着原件走：", engine.get(), mine.get())
+set_pos(axs[0], PIN)
+fig.canvas.draw()
+assert box(axs[0]) == rounded(PIN), "接管之后钉不住"
+assert mine.ran > ran_before, (
+    "用户重写的 execute() 没再跑过——它被替换掉了，这张图的排版语义已经不是脚本写的那个")
+plt.close(fig)
+
 print("OK")
 """
 

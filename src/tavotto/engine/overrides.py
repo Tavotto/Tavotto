@@ -2352,11 +2352,44 @@ class PinnedTightLayoutEngine(TightLayoutEngine):
     _adjust_compatible = True
     _colorbar_gridspec = True
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    #: 在 `super().__init__()` 跑完之前 `set()` 就会被调用一次，那时还没有 inner。
+    _inner = None
+
+    def __init__(self, inner):
+        """`inner` 是被接管的那个引擎**实例本身**，不是它的参数。
+
+        **不用 `PinnedTightLayoutEngine(**inner.get())` 重建**：用户脚本可以挂一个
+        自己的 `TightLayoutEngine` 子类（`isinstance` 判据同样选中它），重建会把它
+        重写过的 `execute()` 与全部子类状态**静默丢掉**，把每一个没被 pin 的轴的
+        落位一起改掉；而子类的 `get()` 多回一个键时，重建会当场 TypeError、这条编辑
+        直接失败。包住原件再委派，两种都不会发生（Codex 在 PR #262 上指出）。
+        """
+        super().__init__()
+        self._inner = inner
+        # 这两个决定 `fig.colorbar` 怎么抠空间、`fig.subplots_adjust` 要不要执行。
+        # **跟着被接管的那个走**，不是照抄 TightLayoutEngine 的类属性——自定义子类
+        # 可以改它们。
+        self._adjust_compatible = inner.adjust_compatible
+        self._colorbar_gridspec = inner.colorbar_gridspec
         #: axes → figure 分数坐标 (x0, y0, w, h)。弱引用：被 pin 的轴
         #: `ax.remove()` 掉之后不该被这张表续命。
         self._pinned: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+    def set(self, *, pad=None, w_pad=None, h_pad=None, rect=None) -> None:
+        """pad / h_pad / w_pad / rect 归被接管的那个引擎管。
+
+        **签名必须与 `TightLayoutEngine.set` 逐字相同**：上游那份的实现是
+        `for td in self.set.__kwdefaults__`，而 `self.set` 解析到的是**这里这个
+        override**。写成 `**kwargs` 的话 `__kwdefaults__` 是 None，第一次建引擎就
+        `TypeError: 'NoneType' object is not iterable`（实测）。
+        """
+        if self._inner is None:  # super().__init__() 期间：还没有 inner
+            super().set(pad=pad, w_pad=w_pad, h_pad=h_pad, rect=rect)
+        else:
+            self._inner.set(pad=pad, w_pad=w_pad, h_pad=h_pad, rect=rect)
+
+    def get(self) -> dict:
+        return self._inner.get() if self._inner is not None else super().get()
 
     def pin(self, ax, bounds) -> None:
         """这个 axes 的位置由用户说了算，tight 不许再算它。"""
@@ -2383,8 +2416,10 @@ class PinnedTightLayoutEngine(TightLayoutEngine):
             ss = get_ss() if get_ss is not None else None
             if ss is not None:
                 ax.set_position(ss.get_position(fig))
-        # 2) tight 照常算它自己那份
-        super().execute(fig)
+        # 2) 让被接管的那个引擎照常算它自己那份。**调 `inner.execute` 而不是
+        #    `super().execute`**：原件可能是用户自己的 `TightLayoutEngine` 子类，
+        #    它重写过的排版必须原样跑（见 `__init__`）。
+        self._inner.execute(fig)
         # 3) 再把用户摆过的位置盖回去——这一步必须在最后：`subplots_adjust`
         #    会把每一个有 SubplotSpec 的轴按格子重新落位。
         for ax, bounds in live:
@@ -2426,7 +2461,7 @@ def ensure_pinnable_layout_engine(fig):
         # 会替它兜住，变异反证于是两条一起存活（实测：早退在时，把判据里排除自己
         # 子类那半段删掉，整套用例全绿）。
         return pinnable_layout_engine(fig)
-    engine = PinnedTightLayoutEngine(**fig.get_layout_engine().get())
+    engine = PinnedTightLayoutEngine(fig.get_layout_engine())
     fig.set_layout_engine(engine)
     return engine
 
