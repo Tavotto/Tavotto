@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import json
 import socket
+import time
 
 import pytest
 
@@ -23,8 +24,10 @@ from tavotto.engine import (
     enginesession,
     nativehandoff,
     nativeperm,
+    nativerelay,
     nativesession,
     pool as engine_pool,
+    runcli,
     runcodes,
     runspec,
 )
@@ -182,6 +185,172 @@ def test_unknown_session_is_404(client):
     resp = client.get("/api/native/sessions/native-nope")
     assert resp.status_code == 404
     assert json.loads(resp.get_data(as_text=True))["code"] == runcodes.NATIVE_SESSION_UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# attach 被拒：凭据不该跟着一起没（issue #190）
+# --------------------------------------------------------------------------
+def _busy_attach(seen: list):
+    """一条**可恢复**地拒绝 attach 的假 registry：环境正在装依赖。
+
+    这正是 `REGISTRY.attach()` 真实会抛的那一个——它先 `envlease.acquire_native()`
+    再连 socket，所以被拒时 relay 那侧一个字节都还没收到，CLI 仍在等。
+    """
+
+    def _attach(descriptor, **_kw):
+        seen.append(descriptor.get("native_id"))
+        raise engine_pool.EnvironmentBusy("这个 Python 环境正在安装依赖，请稍候再试。")
+
+    return _attach
+
+
+def test_a_rejected_attach_leaves_the_credential_usable(client, monkeypatch):
+    """attach 被拒 ≠ 凭据作废。**这两件事今天是同一行代码，所以必须分开钉。**
+
+    `consume()` 是不可逆的。它排在 attach 前面时，一次**可恢复**的失败
+    （环境正在装依赖、relay 瞬时连不上）会顺手把凭据烧成墓碑：界面上那颗
+    "重试"按钮点下去只会拿到 `native_handoff_consumed`，而用户什么都没做错。
+
+    判据两条腿：凭据还 peek 得到（不是 consumed），以及**再点一次真的走到了
+    attach**。只钉第一条不够——"没被墓碑化"与"第二次请求真的被放行"是两件事。
+    """
+    native_id = make_descriptor()
+    seen: list = []
+    monkeypatch.setattr(nativesession.REGISTRY, "attach", _busy_attach(seen))
+
+    resp = client.post(f"/api/native/pending/{native_id}/approve")
+    assert resp.status_code == 409
+    assert json.loads(resp.get_data(as_text=True))["code"] == "environment_mutating"
+
+    # consumed / cancelled 的话 peek 自己会抛
+    assert nativehandoff.peek(native_id)["native_id"] == native_id
+
+    again = client.post(f"/api/native/pending/{native_id}/approve")
+    assert again.status_code == 409
+    assert seen == [native_id, native_id], "第二次 approve 没走到 attach，凭据已经被烧了"
+
+
+def test_the_waiting_cli_gets_the_verdict_at_once_instead_of_at_the_timeout(client, monkeypatch):
+    """**量的是"多久拿到结论"，不是"最终报没报错"**——超时那条路上后者也成立。
+
+    这是 #190 真正花掉用户时间的那一半。把 `consume()` 挪到 attach 之后，界面
+    能重试了，但 CLI 侧 `_cancel_watch()` 看到的仍然只是"还是 pending"——与
+    "用户还没点确认"在磁盘上一模一样，于是它继续等，直到 `--x-attach-timeout`
+    （产品默认 300 秒）耗尽。两个消费点，改一个不算修完。
+
+    所以 timeout 给得**远大于**容许的等待：判据要能把"当场收摊"与"等满超时"
+    分开，两者都会抛 `RunError`。
+    """
+    seen: list = []
+    monkeypatch.setattr(nativesession.REGISTRY, "attach", _busy_attach(seen))
+    relay = nativerelay.NativeRelay()
+    try:
+        native_id = make_descriptor(
+            attach_host=relay.host,
+            attach_port=relay.attach_port,
+            attach_token=relay.attach_token,
+        )
+        assert client.post(f"/api/native/pending/{native_id}/approve").status_code == 409
+        assert seen == [native_id], "assert 的前提没成立：这次 approve 根本没走到 attach"
+
+        generous = 30.0  # 远大于下面容许的 5 秒——不然"当场"与"等满"量不出区别
+        started = time.monotonic()
+        with pytest.raises(RunError) as exc:
+            relay.wait_for_desktop(generous, watch=runcli._cancel_watch(native_id))
+        elapsed = time.monotonic() - started
+    finally:
+        relay.close()
+
+    assert exc.value.code != runcodes.NATIVE_ATTACH_TIMEOUT, (
+        "CLI 等满了超时才收摊——它把一次已经知道原因的失败读成了『attach 正在路上』"
+    )
+    assert exc.value.exit_code() == runcodes.EXIT_ATTACH_FAILED, (
+        "attach 失败不是『用户取消』：退出码不同，用户的下一步也不同"
+    )
+    assert elapsed < 5.0, f"{elapsed:.1f}s 才拿到结论（timeout 给的是 {generous}s）"
+
+
+def test_a_successful_attach_still_burns_the_credential(client, monkeypatch):
+    """反方向的那条腿：**一次性不能因为这次修改被弄丢**。
+
+    只把 `consume()` 删掉也能让上面两条绿——而那样 descriptor 会一直留在盘上，
+    里面躺着 relay 的 attach token。这条钉住"attach 成功之后凭据必须没了"。
+    """
+    native_id = make_descriptor()
+    monkeypatch.setattr(
+        nativesession.REGISTRY, "attach", lambda *_a, **_k: _fake_session(native_id)
+    )
+    assert client.post(f"/api/native/pending/{native_id}/approve").status_code == 200
+    with pytest.raises(RunError) as exc:
+        nativehandoff.peek(native_id)
+    assert exc.value.code == runcodes.NATIVE_HANDOFF_CONSUMED
+
+
+# --------------------------------------------------------------------------
+# bridge 失败的错误契约（issue #191）
+# --------------------------------------------------------------------------
+class _BridgeFails:
+    """四个端点各自调的那个方法都抛 `pool.WorkerError`。"""
+
+    def _boom(self, *_a, **_kw):
+        raise engine_pool.WorkerError("bridge 没回话", traceback_text="TB", code="worker_timeout")
+
+    ensure_built = _boom
+    resume = _boom  # /continue
+    detach = _boom
+    terminate = _boom
+
+
+#: 会打到 bridge 的 native 端点。**枚举而不是只钉 build**：`continue` /
+#: `detach` / `terminate` 共用 `_native_action()` 里的同一行 except，而
+#: "共享判据修一处、第二个消费点还是老样子"这个形状在本仓库出现过三次。
+BRIDGE_ENDPOINTS = ("build", "continue", "detach", "terminate")
+
+
+@pytest.mark.parametrize("action", BRIDGE_ENDPOINTS)
+def test_a_bridge_failure_is_never_reported_as_a_success(client, monkeypatch, action):
+    """裸 dict 会被 Flask 序列化成 **HTTP 200**——而调用方按状态码判成败。
+
+    表现不是"状态码不好看"：前端认为这次 build / continue 成功了，接着去读
+    响应里根本没有的 `session` / `result`，于是报出来的是**第二个**错误
+    （`undefined` 之类），真正的 bridge 原因被盖掉。排障时看到的是一条与根因
+    无关的前端异常。
+
+    所以三件事一起钉：状态码非 2xx、body 就是 safe 那侧同一份契约、以及
+    body 里**没有**那两个会被当成"成功"的键。
+    """
+    monkeypatch.setattr(nativesession.REGISTRY, "get", lambda _sid: _BridgeFails())
+
+    resp = client.post(f"/api/native/sessions/native-x/{action}")
+    body = json.loads(resp.get_data(as_text=True))
+
+    assert not 200 <= resp.status_code < 300, (
+        f"/{action} 把一次 bridge 失败回成了 {resp.status_code}"
+    )
+    assert resp.status_code == 500, f"/{action} 与 safe 侧的 500 不是同一个契约"
+    assert body["code"] == "worker_timeout"
+    assert body["error"] and body["traceback"]
+    assert "session" not in body and "result" not in body, (
+        f"/{action} 的失败响应里带了成功路径的键——客户端会读到半份结果"
+    )
+
+
+def test_every_worker_error_payload_in_app_carries_a_status_code():
+    """**结构性守卫**：`_worker_error_payload()` 的每一处使用都必须带 `, 500`。
+
+    上面那条参数化用例钉的是今天的四个端点；这一条钉的是明天新加的第五个。
+    漏掉状态码不会有任何静态信号——`return _worker_error_payload(exc)` 是一句
+    合法的 Flask 返回，它只是**默认 200**。
+    """
+    src = __import__("pathlib").Path(appmod.__file__).read_text(encoding="utf-8")
+    uses = [
+        line.strip()
+        for line in src.splitlines()
+        if "_worker_error_payload(" in line and not line.lstrip().startswith(("#", "def "))
+    ]
+    assert len(uses) >= 10, f"没解析到使用点（只拿到 {uses}）——判据本身坏了"
+    bare = [u for u in uses if not u.endswith(", 500")]
+    assert bare == [], f"app.py 里这些 `_worker_error_payload` 没带状态码（Flask 会回 200）: {bare}"
 
 
 # --------------------------------------------------------------------------

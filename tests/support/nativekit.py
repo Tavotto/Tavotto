@@ -4,10 +4,11 @@
 invocation 对拍），这边验的是**产品控制面**（CLI 契约、descriptor、relay、
 会话生命周期、屏障基准）。
 
-**这里的"假桌面"是真 attach 客户端**：它读那份 0600 的 descriptor、consume
-它、走 `nativesession.REGISTRY.attach()`。也就是说除了"没有窗口"以外，走的
-是与真桌面完全相同的一条路——descriptor 校验、token 认证、单 reader 传输、
-状态机全在里面。用一个 mock 会话代替它，这些主张一条都验不到。
+**这里的"假桌面"是真 attach 客户端**：它读那份 0600 的 descriptor、走
+`nativesession.REGISTRY.attach()`、成功之后才把凭据墓碑化。也就是说除了
+"没有窗口"以外，走的是与真桌面完全相同的一条路——descriptor 校验、token
+认证、单 reader 传输、状态机、以及那三步的**顺序**全在里面。用一个 mock
+会话代替它，这些主张一条都验不到。
 """
 
 from __future__ import annotations
@@ -102,8 +103,15 @@ def _native_dir() -> str:
 
 
 def attach_as_desktop(native_id: str) -> nativesession.NativeSession:
-    """假桌面：consume descriptor + attach。**走的是真控制面。**"""
-    return nativesession.REGISTRY.attach(nativehandoff.consume(native_id))
+    """假桌面：peek descriptor → attach → **成功之后**才墓碑化。走真控制面。
+
+    三步的顺序与 `app.py::api_native_approve()` 逐条相同，包括 #190 改掉的
+    那一条：凭据在 attach 成功之前不烧。假桌面照着旧顺序写的话，产品链上
+    那条端点的顺序就没有任何用例走过了。
+    """
+    session = nativesession.REGISTRY.attach(nativehandoff.peek(native_id))
+    nativehandoff.mark_consumed(native_id)
+    return session
 
 
 def wait_state(session, states, timeout: float = 60.0) -> str:
@@ -145,9 +153,10 @@ def product_run(
     """**完整产品链**：真 `tavotto run` 进程 → 假桌面 attach → 真用户 Python
     → 真 Bridge Runner → 真 Matplotlib Figure。
 
-    唯一被替掉的是"有没有窗口"：假桌面走的是 `nativehandoff.consume()` +
-    `nativesession.REGISTRY.attach()`，也就是真桌面走的那条路
-    （descriptor 校验、token 认证、单 reader 传输、状态机全在里面）。
+    唯一被替掉的是"有没有窗口"：假桌面走的是 `nativehandoff.peek()` +
+    `nativesession.REGISTRY.attach()` + `nativehandoff.mark_consumed()`，
+    也就是真桌面走的那条路（descriptor 校验、token 认证、单 reader 传输、
+    状态机全在里面）。
 
     yield `(session, proc)`；`session` 在 `attach=False` 时是 None（那是给
     "确认之前一行代码都没跑"这类判据用的）。

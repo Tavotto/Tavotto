@@ -61,6 +61,13 @@ STATE_PENDING = "pending"
 STATE_CONSUMED = "consumed"
 STATE_CANCELLED = "cancelled"
 
+#: 一次**失败的** attach 记在这个键下，而 descriptor 保持 `pending`。
+#: 它刻意不是第四种 state：attach 被拒（环境正在装依赖、relay 瞬时连不上）
+#: 是**可恢复**的，凭据还该能再用一次；而正在等的 CLI 需要一个"这次没成"的
+#: 信号——没有它，"确认过但 attach 失败"与"用户还没点确认"在磁盘上长得
+#: 一模一样，CLI 只能白等满 `--x-attach-timeout`（issue #190）。
+ATTACH_ERROR = "attach_error"
+
 
 def native_dir() -> str:
     return os.path.join(str(config.data_dir()), "session", "native")
@@ -249,10 +256,47 @@ def consume(native_id: str, now: float | None = None) -> dict:
     顺序是刻意的——先读出来再墓碑化。反过来（先标记再读）在并发下会让两个
     请求都读到墓碑；而这里两个请求里只有一个能读到 pending，另一个拿到
     `native_handoff_consumed`。
+
+    **读出来之后还有会失败的一步时别用它**：`app.py` 的确认端点走的是
+    `peek()` → attach → `mark_consumed()`，因为在 attach **之前**烧掉凭据会把
+    一次可恢复的失败变成不可逆的（issue #190）。这一条留给"读出来就算取用了"
+    的调用方。
     """
     data = peek(native_id, now)
-    _tombstone(native_id, STATE_CONSUMED, now)
+    mark_consumed(native_id, now)
     return data
+
+
+def mark_consumed(native_id: str, now: float | None = None) -> None:
+    """attach **成功之后**把凭据换成墓碑。**这里不再校验 live。**
+
+    校验会在这里变成一个新缺陷：走到这一行时会话已经连上了，而 descriptor
+    在 attach 那几百毫秒里可能刚好过期——那时抛出去等于"会话正跑着，界面
+    收到一条失败"。一次性由 attach **之前**的 `peek()` 保证，这一步只负责把
+    token 从磁盘上抹掉。
+    """
+    _tombstone(native_id, STATE_CONSUMED, now)
+
+
+def record_attach_failure(native_id: str, code: str, now: float | None = None) -> bool:
+    """记一次失败的 attach；**descriptor 保持 pending**。回有没有记上。
+
+    读者是正在等的 CLI（`runcli._cancel_watch`）。写在 descriptor 上而不是
+    走别的通道，是因为那时两边唯一共享的东西就是这份文件——sidecar 还没有
+    连上 relay（`REGISTRY.attach()` 是先拿环境租约再连的，被拒时一个字节都
+    还没发出去）。
+
+    descriptor 已经取消 / 过期 / 不在了 → 什么都不做：那几种情况下 CLI 早就
+    从 `peek()` 自己那条分支收摊了，再写一份没人读的记录只是把 token 又落一次盘。
+    """
+    t = time.time() if now is None else now
+    try:
+        data = _check_live(_load(native_id), now)
+    except RunError:
+        return False
+    data[ATTACH_ERROR] = {"code": str(code or ""), "at": t}
+    _write_private(_path_for(native_id), data)
+    return True
 
 
 def cancel(native_id: str, now: float | None = None) -> None:
