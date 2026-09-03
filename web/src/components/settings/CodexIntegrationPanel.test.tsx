@@ -46,6 +46,14 @@ async function mount() {
 
 const text = () => document.body.textContent ?? ''
 const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElement[]
+/**
+ * **失败原因那一段**，不是整个界面。
+ *
+ * 一开始这些断言量的是 `document.body.textContent`——而逐步清单里也会原样显示
+ * 引擎给的 `detail`，于是「把找过哪些位置显示出来」这条在删掉拼接之后照样绿
+ * （量错了对象：那句话出现在别处，不等于它出现在**原因**里）。
+ */
+const alertText = () => document.querySelector('[role="alert"]')?.textContent ?? ''
 const byLabel = (label: string) => buttons().find((b) => (b.textContent ?? '').includes(label))!
 
 /** 点「安装 Codex 集成」，等这一轮 async 跑完 */
@@ -98,10 +106,10 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
       await mount()
       await clickInstall()
 
-      expect(text()).toContain(ci(`error.${code}`))
+      expect(alertText()).toContain(ci(`error.${code}`))
       expect(text()).not.toContain(code)
       // 兜底那句也不该出现——出现了说明它落到了 `other`，等于这条 code 没文案
-      expect(text()).not.toContain(ci('error.other'))
+      expect(alertText()).not.toContain(ci('error.other'))
     })
   }
 
@@ -111,7 +119,8 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     await mount()
     await clickInstall()
 
-    expect(text()).toContain(searched)
+    expect(alertText()).toContain(ci('error.codex_cli_missing'))
+    expect(alertText()).toContain(searched)
     expect(text()).not.toContain('codex_cli_missing')
   })
 
@@ -120,7 +129,7 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     await mount()
     await clickInstall()
 
-    expect(text()).toContain(ci('error.other'))
+    expect(alertText()).toContain(ci('error.other'))
     expect(text()).not.toContain('brand_new_failure')
   })
 
@@ -129,7 +138,7 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     await mount()
     await clickInstall()
 
-    expect(text()).toContain(ci('error.cli_not_found'))
+    expect(alertText()).toContain(ci('error.cli_not_found'))
     expect(text()).not.toContain('cli_not_found')
   })
 
@@ -138,7 +147,7 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     await mount()
     await clickInstall()
 
-    expect(text()).toContain(ci('error.bad_output'))
+    expect(alertText()).toContain(ci('error.bad_output'))
     expect(text()).not.toContain(ci('doneNewSession'))
   })
 })
