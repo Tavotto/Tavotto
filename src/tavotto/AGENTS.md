@@ -233,6 +233,17 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   apply_aspect，几何组应用完必须 `draw_without_rendering()` 刷新布局再应用
   其余 prop。事故期间保存的旧文档用 `scripts/recover_frac_positions.py`
   修复（从写回 PDF 的文字层反推真实位置，输出另存 + POST 成布局版本）。
+- **持久 tight 布局下的子图位置（ADR 0042，issue #162）**：
+  `layout="tight"` / `tight_layout=True` 会挂一个每次绘制都重算落位的
+  `TightLayoutEngine`。`manifest.instrument()` 无条件把它换成
+  `overrides.PinnedTightLayoutEngine`：**被 override 过的轴钉住，其余照旧自动
+  排版**。`execute()` 的顺序是「先把被 pin 的轴放回 gridspec 格子 → 让 tight
+  照常算 → 再盖回 pin」——**第一步不能省**：`get_tight_layout_figure` 拿
+  gridspec 格子当 ax_bbox、拿当前 tight bbox 算边距，被 pin 的轴离开格子之后
+  这个差就不再是「装饰物探出去多少」，实测 10 次绘制不收敛、且热态与重放收敛到
+  两个结果。撤销必须 `unpin`（`_RESTORE` 里那条），否则 axes 被永久钉在「脚本
+  原样」那组算出来的数上。**上游性质**：零 override 的 tight 图连画 14 次会出现
+  4 种画面（飘的是 ylabel 落点），所以这类图上「两侧画的次数不同就不能比像素」。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 - **「这张图上有哪些 axes」只有 `manifest._ordered_axes` 一处**（看护
