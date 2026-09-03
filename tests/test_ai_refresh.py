@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -372,10 +373,36 @@ def fake_cli(monkeypatch, tmp_path):
 
 
 def _wait_done(sid, timeout=10.0):
+    """等 AI 会话**真的收尾**——等 pump 线程退出，不是等够几毫秒（issue #277）。
+
+    以前这里轮询到 `SESSIONS[sid]["status"] != "running"` 就返回，再
+    `time.sleep(0.05)`「让 pump 线程把 record_end / emit 做完」——**拿固定 sleep
+    当跨线程屏障**。可 `status` 是在 `_pump` 里先翻的，`ai.done` 排在它后面，中间
+    还隔着一次 `ai_history.record_end` 的 SQLite 写。runner 一忙 50ms 就不够，调用方
+    紧接着的 `next(d for n, d in events if n == "ai.done")` 便在空序列上炸成
+    `StopIteration`——CI 的 3.13 腿上见过两次，分别来自两个毫无交集的 PR（一个纯
+    前端、一个纯引擎），自变量只剩机器负载。
+
+    换成等 pump 线程收尾。这是**充要**的：`emit` 就是 `on_event` 的同步调用
+    （`ai_bridge.py`「emit = on_event or …」），而 `emit("ai.done", …)` 是 `_pump`
+    的最后一步——线程退出 ⇔ `ai.done` 已经发完。**加大 sleep 不是修**，那只是把
+    窗口挪远一点，路径本身还是在赌时序。
+    """
     deadline = time.monotonic() + timeout
+    # 线程在 `run()` 返回 sid 之前就起了；找不到只有一种可能——它已经收尾了。
+    pump = next((t for t in threading.enumerate() if t.name == f"ai-{sid}"), None)
     while time.monotonic() < deadline:
         if ai_bridge.SESSIONS[sid]["status"] != "running":
-            time.sleep(0.05)  # 让 pump 线程把 record_end / emit 做完
+            if pump is not None:
+                pump.join(max(0.0, deadline - time.monotonic()))
+                # **超时要当场点名失败**，绝不静默往下走：走下去就是把「等到了」的
+                # 假象喂给后面的断言，红会报在别处（`next(...)` 的 StopIteration
+                # 就是这么长出来的）。报文里带上等了多久、哪条会话。
+                if pump.is_alive():
+                    raise AssertionError(
+                        f"pump 线程 ai-{sid} 在 {timeout}s 内没有退出——"
+                        "ai.done 还没发出来，后面的断言不能当它已经发了"
+                    )
             return ai_bridge.SESSIONS[sid]
         time.sleep(0.01)
     raise AssertionError("AI 会话没有结束")
@@ -433,6 +460,61 @@ class TestRunWiresRefresh:
         done = next(d for n, d in events if n == "ai.done")
         assert done["refresh"] == {"status": "skipped"}
         assert ai_history.get(sid)["refresh"] == {"status": "skipped"}
+
+    def test_wait_done_blocks_until_the_pump_thread_finishes(self, tmp_path, fake_cli, monkeypatch):
+        """屏障必须等 pump 线程收尾——**任何固定时长的等待都不行，多长都不行**。
+
+        第一版判据是往 `record_end` 注入 0.4 s 延迟再看用例过不过。那**钉的是一个
+        取值，不是那条性质**：把屏障换成 `time.sleep(0.5)` 照样绿，而同一个竞态在
+        `record_end` 超过 0.5 s 时又回来了——和旧实现是同一个错误。0.4 这个数字是
+        我挑的，它只能否掉「比它短的固定等待」这一档。（#278 评审 P2，成立；
+        根 `AGENTS.md` 那条「一个语义错的精确值也比一个诚实的粗略值更坏」说的正是
+        这件事。）
+
+        这一版**不比时长**。把 pump 线程**停在 `record_end` 里不放行**——此刻
+        `status` 已经翻转、`ai.done` 还没发，正是旧实现盲等的那一段——然后要求
+        `_wait_done` **报超时失败**：
+
+        * 等的是**那件事**的实现：pump 没退出 → join 超时 → 点名失败 ✓
+        * 等的是**一段时间**的实现：睡完就返回成功，**无论睡 50 ms 还是 5 s** ✗
+
+        错误实现红不红与它睡多久无关，判据于是与时长解耦。放行之后再走一遍正向：
+        屏障返回，且 `ai.done` 确实已经在 `events` 里。
+        """
+        real_record_end = ai_history.record_end
+        entered = threading.Event()
+        release = threading.Event()
+
+        def parked_record_end(*a, **kw):
+            entered.set()
+            release.wait(30)  # 只是别让线程真的挂死，不参与判据
+            return real_record_end(*a, **kw)
+
+        monkeypatch.setattr(ai_history, "record_end", parked_record_end)
+        fake_cli["code"] = NOOP_CLI
+        figs = _project(tmp_path)
+        events: list[tuple[str, dict]] = []
+        sid = ai_bridge.run(
+            "codex",
+            "fig1.py",
+            "p",
+            str(figs),
+            on_event=lambda n, d: events.append((n, d)),
+            on_changed=lambda s: None,
+        )
+
+        assert entered.wait(10), "pump 线程没有走到 record_end——这条用例的前提没摆好"
+        # 前提自证：此刻 ai.done 一定还没发（它排在 record_end 后面）
+        assert not [n for n, _ in events if n == "ai.done"]
+
+        with pytest.raises(AssertionError, match="没有退出"):
+            _wait_done(sid, timeout=1.0)
+
+        release.set()
+        _wait_done(sid)
+        assert [n for n, _ in events if n == "ai.done"], (
+            "放行之后屏障返回了，但 ai.done 还没进 events"
+        )
 
     def test_refresh_failure_does_not_fail_the_ai_session(self, tmp_path, fake_cli):
         figs = _project(tmp_path)
