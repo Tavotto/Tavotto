@@ -109,9 +109,7 @@ class TestWin32SkipsDeclareTheyNeverRun:
     def test_the_enumeration_still_matches_the_specs(self):
         """枚举与现实漂开 = 判据看不见新增的那一条。"""
         found = {
-            p.name: len(self._skips(p))
-            for p in sorted(E2E.glob("*.spec.ts"))
-            if self._skips(p)
+            p.name: len(self._skips(p)) for p in sorted(E2E.glob("*.spec.ts")) if self._skips(p)
         }
         assert found == WIN32_SKIPS, (
             f"web/e2e 里 `test.skip(win32)` 的分布变了：{found} != {WIN32_SKIPS}。"
