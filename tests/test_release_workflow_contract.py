@@ -778,6 +778,7 @@ def _check_pending(tmp_path, body: str | None):
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return proc.returncode, proc.stderr
 
