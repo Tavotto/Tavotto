@@ -32,6 +32,21 @@
 
 失败就**大声失败**（非零退出）：这条链路和桌面遥测相反——桌面丢事件必须无声，
 定时采集器丢数据必须有人看见，否则看板会安静地缺一段而没人知道。
+
+**但「大声」不等于「说清楚」。** 退出码一档一个原因，日志里也各自点名：
+
+    0  落了；或者「预期内的未配置」（fork 里没有上游 secret，见 `token_situation`）
+    1  采集失败（GitHub 那半边取不到）
+    2  缺配置：本仓库没配 TAVOTTO_METRICS_TOKEN——**真失败**，数据在丢
+    3  上报被拒（4xx）：对面明确不收这一批，重试无用。多半是线上代理落后于仓库
+    4  上报未授权（401/403）：token 不对，或**代理侧**没配 token
+    5  上游故障（5xx）：不是这一批的形状问题
+    6  结果未知：连接中断/超时，或 200 但形状不对——**不知道落没落**，重跑安全
+    7  被限流（429）：payload 是好的，**等过了 Retry-After 重试有意义**
+
+2026-08-28 到 09-02 连红六天（issue #227）就是没分档的代价：日志上只有
+「上报失败: HTTP 400」，而 400 的真正含义是「线上代理的白名单还是 d2d7187c
+之前那份，不认识 `update_check` / `plugin_manifest`」。
 """
 
 from __future__ import annotations
@@ -52,6 +67,8 @@ GITHUB_API = "https://api.github.com"
 PYPISTATS_API = "https://pypistats.org/api"
 DEFAULT_METRICS_URL = "https://telemetry.tavotto.com/v1/metrics"
 
+CANONICAL_REPO = f"{REPO_OWNER}/{REPO_NAME}"
+
 USER_AGENT = "tavotto-distribution-metrics/1 (+https://github.com/Tavotto/Tavotto)"
 NETWORK_TIMEOUT_S = 20
 SCHEMA_VERSION = 1
@@ -60,6 +77,53 @@ SCHEMA_VERSION = 1
 #: 几天是**自愈**：某天 GitHub Actions 没跑成（配额、宕机、密钥过期），下一次
 #: 运行会把缺的那几天补上，而不需要人去手动回填。
 PYPI_HEAL_DAYS = 14
+
+
+# ---------------------------------------------------------------------------
+# 上报的结局：一档一个名字
+# ---------------------------------------------------------------------------
+#: 这几档**处方完全不同**，合并任意两档都要下一个人重烧一轮才知道该改什么：
+#:
+#:   ACCEPTED      落了。
+#:   REJECTED      代理明确拒收这一批（4xx）。重试一万次结果一样——要么 payload
+#:                 变了、要么**线上代理落后于仓库**。2026-08-28 起连红六天正是
+#:                 后者（issue #227）。
+#:   UNAUTHORIZED  token 不对，或代理侧根本没配 token（端点是关着的）。
+#:                 和「我们本地没有 token」是两件事，别混。
+#:   SERVER_ERROR  对面坏了（5xx）。不是我们的 payload，等它恢复。
+#:   UNKNOWN       **不知道落没落。** 见下面 `UNKNOWN` 的注释。
+ACCEPTED = "accepted"
+REJECTED = "rejected"
+UNAUTHORIZED = "unauthorized"
+#: **429 不是「重试无用」。** 它说的是「现在别来，等会儿再来」——把它并进
+#: REJECTED 等于把一次限流变成一次真实的数据丢失（那一天的快照永远没了）。
+#: 分档的精神就是「处方不同的必须分开」：REJECTED 的处方是改 payload / 重新
+#: 部署代理，这一档的处方是**按 Retry-After 等一会儿再跑**。
+RATE_LIMITED = "rate_limited"
+SERVER_ERROR = "server_error"
+#: **「不知道」是独立一档，不许并进相邻取值。** 连接断了、超时、或者回了 200
+#: 但形状不是代理的那个形状——这三种情况下这批快照到底有没有被处理，我们没有
+#: 任何证据。并进 ACCEPTED，看板会安静地缺一段；并进 REJECTED，会让人去改一个
+#: 根本没坏的 payload。它自己一档，处方也只有它有：**重跑是安全的**
+#: （同一天的 snapshot_key 相同，重复上报不会翻倍）。
+UNKNOWN = "unknown"
+
+#: 退出码也一档一个，好让「哪一种失败」在 workflow 的层面上就分得开。
+EXIT_CODES = {
+    ACCEPTED: 0,
+    REJECTED: 3,
+    UNAUTHORIZED: 4,
+    SERVER_ERROR: 5,
+    UNKNOWN: 6,
+    RATE_LIMITED: 7,
+}
+EXIT_COLLECT_FAILED = 1
+EXIT_MISSING_CONFIG = 2
+
+#: 没有 token 时的三种处境。**它们不是同一件事**（见 `token_situation`）。
+CONFIGURED = "configured"
+MISSING_HERE = "missing_here"
+UNCONFIGURED_FORK = "unconfigured_fork"
 
 
 class CollectError(RuntimeError):
@@ -378,7 +442,87 @@ def collect(
     return events
 
 
-def transmit(events: list[dict], url: str, token: str) -> None:
+class TransmitResult:
+    """一次上报的结局。`tier` 是上面那几档之一，`message` 是给人看的那一句。"""
+
+    __slots__ = ("tier", "status", "message", "hint")
+
+    def __init__(self, tier: str, message: str, *, status: int | None = None, hint: str = ""):
+        self.tier = tier
+        self.status = status
+        self.message = message
+        self.hint = hint
+
+    @property
+    def exit_code(self) -> int:
+        return EXIT_CODES[self.tier]
+
+
+def _scrub(text: object, limit: int = 200) -> str:
+    """一段来自网络的字符串 → 能安全打进 CI 日志的一段。
+
+    控制字符会伪造日志行（`::error::` 是行首指令，一个换行就能凭空捏出一条
+    「错误」），所以先剥干净再截断。
+    """
+    if not isinstance(text, str):
+        return ""
+    clean = "".join(ch if ch.isprintable() else " " for ch in text).strip()
+    return clean[:limit] + ("…" if len(clean) > limit else "")
+
+
+def _upstream_note(raw: bytes, token: str) -> str:
+    """把代理的响应体压成一句能读的话。**逐字段白名单，绝不整体回显。**
+
+    只取 `code` / `error` / `detail` 三个字段：它们是代理自己拼出来的稳定
+    标识，按设计不含任何我们发过去的内容（见 services/telemetry_proxy/
+    tavotto_telemetry_proxy/core.py 的 `Rejected`）。
+
+    原来这里**一个字节都不打**，理由写着「响应体可能回显我们发过去的东西」。
+    那个顾虑对 `/v1/events` 成立，对这条链路不成立：这一批里全是公开计数
+    （release id、下载数、日期），没有任何用户脚本 / 路径 / 图内文字——白名单
+    在 schema 层面就让它们进不来。而代价是六天连红只看得到「HTTP 400」。
+
+    仍然留三道闸：`TAVOTTO_TELEMETRY_METRICS_URL` 可以被指到任何地方，所以
+    控制字符剥掉、每段截断、并且拿 token 查一遍——只要它出现，整句丢弃。
+    三道闸各守一件事，没有一道是另一道的复刻。
+
+    **次序是这条保证的载体，不是随便排的。** token 检查必须跑在 `_scrub`
+    **之前**，对着**原始响应体**做。反过来（先净化后检查）有一个真实的洞：
+    `_scrub` 会在第 200 个字符处截断，如果 token 正好跨在那个边界上，被截剩的
+    **token 前缀**会留在输出里，而 `token in note` 因为整枚 token 已经不完整
+    而判否——净化器把证据毁掉了一部分，检查于是看不见它。实测：30 字的 token
+    垫在第 190 字之后，`s3cret-met` 这 10 个字照样进了日志，而闸门说「没有
+    token」。所以 token 只对**原文**查。
+
+    **而且只查这一次。** 曾经在净化之后又兜了一遍底——那是同一条保证的第二份
+    实现，而且杀不死：`_scrub` 只做「逐字符替换 + 截断 + 两端 strip」，三样都
+    不会凭空拼出原文里没有的 token，所以原文那道闸严格覆盖它。冗余的保证不会
+    更安全，只会让针对它的变异存活、把空门禁伪装成有门禁——实测把第二道闸改成
+    `if False` 时全部用例照绿（#250 评审时抓到的）。
+    """
+    text = raw.decode("utf-8", errors="replace")
+    if token and token in text:
+        # 正常的代理不会这么干（它连收到的 token 都不区分「没带」和「带错了」），
+        # 但这条断言不依赖对面的善意。查的是**没被动过的原文**。
+        return "（响应体里出现了 token，已整段丢弃）"
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return "（响应体不是 JSON）"
+    if not isinstance(body, dict):
+        return "（响应体不是 JSON 对象）"
+    parts = [f"{k}={_scrub(body.get(k))}" for k in ("code", "error", "detail") if body.get(k)]
+    return " ".join(parts) or "（响应体里没有 code/error/detail）"
+
+
+def transmit(events: list[dict], url: str, token: str) -> TransmitResult:
+    """把这一批送出去，并**说清楚结局是哪一档**。
+
+    这个函数不抛异常：结局本身就是它的返回值。以前它把 4xx / 5xx / 网络中断
+    统统折叠成一句 `上报失败: HTTP {code}`，于是 2026-08-28 起的六天里，日志上
+    只有「HTTP 400」四个字——而 400 的真正含义是「线上代理的白名单还是旧的，
+    不认识 `update_check` / `plugin_manifest` 这两个新角色」。
+    """
     body = json.dumps({"schema_version": SCHEMA_VERSION, "events": events}).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -392,12 +536,134 @@ def transmit(events: list[dict], url: str, token: str) -> None:
     )
     try:
         with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
-            resp.read(4096)
+            return _interpret_ok(resp.status, resp.read(8192), len(events), url)
     except urllib.error.HTTPError as exc:
-        # **绝不打印 token**，也不打印上游响应体（它可能回显我们发过去的东西）
-        raise CollectError(f"上报失败: HTTP {exc.code}") from None
+        return _interpret_http_error(exc, token, url)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise CollectError(f"上报失败: {type(exc).__name__}") from None
+        # **不知道落没落**：请求已经发出去了，断在哪一段无从得知。
+        return TransmitResult(
+            UNKNOWN,
+            f"上报结果未知: {type(exc).__name__}（连接中断/超时，这批到底有没有被处理无从得知）",
+            hint=(
+                "重跑是安全的（同一天的 snapshot_key 相同，重复上报不会翻倍）："
+                "gh workflow run telemetry-metrics.yml --ref main -f dry_run=false"
+            ),
+        )
+
+
+def _interpret_ok(status: int, raw: bytes, sent: int, url: str) -> TransmitResult:
+    """2xx 也要验形状。**「200」不等于「拿到了要的东西」。**
+
+    指错地址（打字打错、代理域名过期被别人接管、公司网络的强制门户）都会回
+    一个 200 加一坨 HTML。把它当成成功，看板就会安静地缺一段而所有灯都是绿的。
+    `ok` 与 `accepted` 从代理的第一版（2026-08-20）起就在，验它们没有兼容风险。
+    """
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        body = None
+    if isinstance(body, dict) and body.get("ok") is True and body.get("accepted") == sent:
+        return TransmitResult(ACCEPTED, f"已上报 {sent} 条到 {url}", status=status)
+    return TransmitResult(
+        UNKNOWN,
+        (
+            f"HTTP {status}，但响应不是代理的形状"
+            f'（期望 {{"ok": true, "accepted": {sent}}}）——'
+            f"这批到底有没有落无从得知"
+        ),
+        status=status,
+        hint=(
+            f"先确认 {url} 真的是 Tavotto 的遥测代理：curl -s {url.rsplit('/v1/', 1)[0]}/healthz"
+        ),
+    )
+
+
+def _header(exc, name: str) -> str:
+    """`HTTPError` 上取一个响应头。取不到就是空串，不炸。"""
+    headers = getattr(exc, "headers", None)
+    try:
+        return headers.get(name) or "" if headers is not None else ""
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _interpret_http_error(exc, token: str, url: str) -> TransmitResult:
+    """服务端明确回了一个状态码——**按它是谁的问题分档**。"""
+    try:
+        raw = exc.read(8192)
+    except OSError:
+        raw = b""
+    note = _upstream_note(raw, token)
+    base = f"{url.rsplit('/v1/', 1)[0]}/healthz"
+    if exc.code in (401, 403):
+        return TransmitResult(
+            UNAUTHORIZED,
+            f"上报未授权: HTTP {exc.code} {note}",
+            status=exc.code,
+            hint=(
+                "token 不对，或者**代理侧**没配 TAVOTTO_METRICS_TOKEN（没配时这个端点是"
+                "关着的，不是敞开的）。注意这和「本仓库没配 secret」是两件事——"
+                "那种情况根本走不到发请求这一步。"
+            ),
+        )
+    if exc.code == 429:
+        # **可重试的一档。** `Retry-After` 是对面给的等待时长（秒，或 HTTP 日期），
+        # 原样带出来——少了它，读日志的人只能瞎猜等多久。
+        retry_after = _scrub(_header(exc, "Retry-After"), 64) or "（对面没给 Retry-After）"
+        return TransmitResult(
+            RATE_LIMITED,
+            f"上报被限流: HTTP 429 Retry-After={retry_after} {note}",
+            status=exc.code,
+            hint=(
+                "**这一批没丢，只是现在不能送。** 和「被拒」不同：payload 是好的，"
+                "重试有意义。等过了 Retry-After 再跑一次即可"
+                "（snapshot_key 去重让重跑安全）："
+                "gh workflow run telemetry-metrics.yml --ref main -f dry_run=false"
+            ),
+        )
+    if 400 <= exc.code < 500:
+        return TransmitResult(
+            REJECTED,
+            f"上报被拒: HTTP {exc.code} {note}",
+            status=exc.code,
+            hint=(
+                "代理明确拒收了这一批，**重试不会有任何变化**。`detail` 指的是"
+                "批次里的第几条、哪个属性。最常见的成因是两侧白名单漂开了——"
+                "采集器与 services/telemetry_proxy 的两张表在仓库里同步了，"
+                "**不等于线上那份代理换了**（它是独立部署的服务）。"
+                f"先比对指纹：curl -s {base} 的 contract.fingerprint 应当等于"
+                " python -c \"import sys;sys.path.insert(0,'services/telemetry_proxy');"
+                'from tavotto_telemetry_proxy.core import contract_fingerprint as f;print(f())"；'
+                "对不上就先重新部署代理（services/telemetry_proxy/README.md）。"
+            ),
+        )
+    return TransmitResult(
+        SERVER_ERROR,
+        f"上报失败: HTTP {exc.code} {note}",
+        status=exc.code,
+        hint="代理侧的故障，不是这一批的形状问题；等它恢复后重跑即可（snapshot_key 去重）。",
+    )
+
+
+def token_situation(token: str, repo: str | None) -> str:
+    """没有 token 时，这算「预期内的未配置」还是「真失败」。
+
+    **「不知道」不并进宽松的那一档。** 只有在**确知**自己不是
+    `Tavotto/Tavotto` 时才降级成「预期内的未配置」——fork 里手动触发这个
+    workflow 天经地义，它拿不到上游的 secret，不该把别人的 CI 弄红。
+    仓库名取不到、或者认不出，一律按真失败处理：否则一次环境变量写错
+    就能让主仓库的采集**静悄悄地绿着停掉**，而这条链路的全部意义就是
+    「丢数据必须有人看见」。
+    """
+    if token:
+        return CONFIGURED
+    owner, _, name = (repo or "").partition("/")
+    recognisable = bool(owner.strip()) and bool(name.strip()) and "/" not in name
+    if recognisable and repo != CANONICAL_REPO:
+        return UNCONFIGURED_FORK
+    # 空、只有空格、`Tavotto`、`not-a-repo`……这些都不是「某个别的仓库」，
+    # 而是「我们不知道自己在哪」。往 MISSING_HERE 走。
+    return MISSING_HERE
 
 
 #: 人主动点下来的东西。只有这一组可以叫 downloads。
@@ -449,6 +715,16 @@ def summarize(events: list[dict]) -> dict:
     }
 
 
+#: 只影响 `::error title=` 那几个字，判定不看它。
+_TITLES = {
+    REJECTED: "被拒（对面明确不收）",
+    UNAUTHORIZED: "未授权（token 不对）",
+    RATE_LIMITED: "被限流（等会儿再来）",
+    SERVER_ERROR: "失败（代理侧故障）",
+    UNKNOWN: "结果未知（不知道落没落）",
+}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -483,16 +759,39 @@ def main(argv: list[str] | None = None) -> int:
 
     url = os.environ.get("TAVOTTO_TELEMETRY_METRICS_URL") or DEFAULT_METRICS_URL
     metrics_token = os.environ.get("TAVOTTO_METRICS_TOKEN") or ""
-    if not metrics_token:
-        print("::error::缺少 TAVOTTO_METRICS_TOKEN（要上报就必须配）", file=sys.stderr)
-        return 2
-    try:
-        transmit(events, url, metrics_token)
-    except CollectError as exc:
-        print(f"::error::{exc}", file=sys.stderr)
-        return 1
-    print(f"* 已上报 {len(events)} 条到 {url}", file=sys.stderr)
-    return 0
+    repo = os.environ.get("GITHUB_REPOSITORY") or ""
+    situation = token_situation(metrics_token, repo)
+    if situation == UNCONFIGURED_FORK:
+        # 预期内的未配置。**说出来但不弄红**：fork 没有上游的 secret 是常态，
+        # 而「这一档存在」本身要写在日志里——否则读日志的人分不清「没配」
+        # 和「配了但上报失败」。
+        print(
+            f"::notice::{repo} 不是 {CANONICAL_REPO}，没有 TAVOTTO_METRICS_TOKEN 是"
+            "预期内的：这一批不上报（采集本身已经跑通，上面的汇总就是结果）。"
+            "想在自己的部署上报，配一个 secret 并把 TAVOTTO_TELEMETRY_METRICS_URL "
+            "指向你自己的代理。",
+            file=sys.stderr,
+        )
+        return 0
+    if situation == MISSING_HERE:
+        print(
+            f"::error title=缺少配置::{CANONICAL_REPO} 上没有 TAVOTTO_METRICS_TOKEN——"
+            "这是**真失败**，不是预期内的未配置：数据从这一刻起就在丢。"
+            "去 Settings → Secrets and variables → Actions 配 repository secret "
+            "`TAVOTTO_METRICS_TOKEN`（值 = 代理侧同名环境变量），"
+            "见 services/telemetry_proxy/README.md。",
+            file=sys.stderr,
+        )
+        return EXIT_MISSING_CONFIG
+
+    result = transmit(events, url, metrics_token)
+    if result.tier == ACCEPTED:
+        print(f"* {result.message}", file=sys.stderr)
+        return result.exit_code
+    print(f"::error title=上报{_TITLES[result.tier]}::{result.message}", file=sys.stderr)
+    if result.hint:
+        print(f"::notice::{result.hint}", file=sys.stderr)
+    return result.exit_code
 
 
 if __name__ == "__main__":

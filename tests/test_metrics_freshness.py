@@ -94,6 +94,28 @@ def test_runs_exist_but_none_succeeded():
     assert age is None
 
 
+def test_a_queued_or_running_run_is_not_a_conclusion():
+    """**排队中 / 跑着的 run 不算「跑过了」。**
+
+    GitHub 对这两种 run 回 `conclusion: null`，而 `updated_at` 照常在动。
+    判据要是只看「有没有新的 run」，一条**从没跑通过**的通道就会显示成
+    天天新鲜——排队本身会不断刷新时间戳。这里钉死：只有有结论、而且结论
+    是 success 的才进计数。
+
+    代码本来就是对的（`conclusion == "success"`），但在此之前没有一条用例
+    喂过 `None`——现有参数只覆盖了 failure 与 cancelled。没被执行过的正确
+    分支不会保持正确。
+    """
+    only_queued = [_run(0.1, None), _run(1, None), _run(2, None)]
+    status, age, _ = checker.evaluate(only_queued, NOW)
+    assert status == checker.NO_SUCCESS, "排队中的 run 被当成了「跑过了」"
+    assert age is None
+    # 混进一个真正成功但很旧的，仍然要判 STALE 而不是被新排队的 run 顶成 OK
+    status, age, _ = checker.evaluate([*only_queued, _run(50)], NOW)
+    assert status == checker.STALE
+    assert age == pytest.approx(50, abs=0.1)
+
+
 # ---------------------------------------------------------------------------
 # 「跑过了」不是「数据落了」
 # ---------------------------------------------------------------------------

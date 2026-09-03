@@ -63,9 +63,18 @@ jobs:
           # 地址不是秘密：用仓库变量覆盖（演练环境指向自己的代理），
           # 没配就走脚本里的默认值 https://telemetry.tavotto.com/v1/metrics
           TAVOTTO_TELEMETRY_METRICS_URL: ${{ vars.TAVOTTO_TELEMETRY_METRICS_URL }}
-        run: |
-          if [ -z "${TAVOTTO_METRICS_TOKEN}" ]; then
-            echo "::error::仓库还没配 TAVOTTO_METRICS_TOKEN——见 services/telemetry_proxy/README.md"
-            exit 1
-          fi
-          python scripts/collect_distribution_metrics.py
+          # Actions 本来就会注入它；显式写一遍是为了让「脚本依赖这个变量」
+          # 在这里看得见——「没配 token」在本仓库是真失败、在 fork 里是预期内
+          # 的未配置，分档要先知道自己是谁（见 `token_situation`）。
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        # **判定整个在脚本里，这里一行 shell 都不写。** 原来这里有一段
+        # `if [ -z "$TAVOTTO_METRICS_TOKEN" ]; then echo "::error::..."` ——
+        # 两个毛病：
+        #   1. 同一条保证实现了两遍（脚本里也判），而 YAML 这份还盖住了脚本
+        #      那份，脚本里那条分支在 CI 上永远走不到；
+        #   2. Actions 会把这一步的 shell 源码原样打进 `##[group]Run …` 抬头。
+        #      于是 2026-09-02 那份日志里**同时**出现了「上报失败: HTTP 400」和
+        #      「仓库还没配 TAVOTTO_METRICS_TOKEN」——后者根本没执行，只是被
+        #      回显的源码，却让 issue #227 一开始就把病因记成了「没配 token」。
+        #      实际上那次 token 配得好好的（代理对认证问题回 401，不是 400）。
+        run: python scripts/collect_distribution_metrics.py

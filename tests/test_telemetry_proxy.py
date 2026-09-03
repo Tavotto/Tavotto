@@ -384,6 +384,109 @@ def test_metrics_snapshot_uuid_is_deterministic(upstream):
     assert upstream[0][0]["properties"]["snapshot_key"] == "gh-asset:222:2026-08-20"
 
 
+# ---------------------------------------------------------------------------
+# 拒收的**形状**（issue #227）
+#
+# 2026-08-28 起采集器每天被 400 一次，连红六天，而日志上只有「HTTP 400」。
+# 真实成因是线上代理还是 d2d7187c 之前那份白名单，不认识 `update_check` /
+# `plugin_manifest`。代理这一侧欠的是：拒收时说清**是哪一条的哪个属性**。
+# ---------------------------------------------------------------------------
+def test_rejection_names_the_offending_event_and_property(upstream):
+    """一批 129 条里有一条不合规，必须能一眼定位到那一条那一格。
+
+    这就是 #227 那次 400 的真实形状：`asset_role` 落在旧白名单之外。
+    没有 `detail`，读日志的人只能二分。
+    """
+    body = {
+        "schema_version": 1,
+        "events": [_snapshot() for _ in range(9)],
+    }
+    body["events"][7]["properties"]["asset_role"] = "update_check_but_older_proxy"
+    status, out = _metrics(body)
+    assert status == 400 and out["code"] == "bad_property"
+    assert out["detail"] == "events[7].github_release_asset_snapshot.asset_role"
+    assert upstream == []
+
+
+def test_rejection_detail_points_at_the_right_index(upstream):
+    """下标必须真的是**那一条**的下标，不是常数。"""
+    for bad in (0, 3, 8):
+        body = {"schema_version": 1, "events": [_snapshot() for _ in range(9)]}
+        body["events"][bad]["properties"]["download_count_total"] = -1
+        assert _metrics(body)[1]["detail"] == (
+            f"events[{bad}].github_release_asset_snapshot.download_count_total"
+        )
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["论文数据.pdf", "/Users/me/figures/fig1.py", "把第三条曲线改成红色", "region"],
+)
+def test_an_unknown_property_key_is_never_echoed(upstream, key):
+    """**未知属性只报位置，不报名字。**
+
+    键名是调用方给的。`/v1/events` 是公网端点，把它原样回显就等于给
+    「拿文件名当键」这类客户端 bug 开了一条回声通道——而白名单存在的
+    全部意义就是让那种内容在结构上发不出去。
+    """
+    ev = _event()
+    ev["properties"][key] = 1
+    status, body = _post("/v1/events", ev)
+    assert status == 400 and body["code"] == "unknown_property"
+    text = json.dumps(body, ensure_ascii=False)
+    assert key not in text, text
+    # 位置仍然给得出来：事件名（在白名单里查到的）+ 第几个属性
+    assert body["detail"].startswith("export_completed.#")
+
+
+# ---------------------------------------------------------------------------
+# 「线上跑的是哪一版白名单」
+# ---------------------------------------------------------------------------
+def test_healthz_reports_the_contract_fingerprint(upstream):
+    """代码合进 main 不等于线上那份换了——代理是独立部署的服务。
+
+    仓库里两张表由 `test_client_and_proxy_contracts_match` 看住，但那道门禁
+    对「部署落后」完全看不见。#227 的六天连红就在这个缝里：两侧代码看起来
+    完全一致，线上却是旧的。指纹让这件事变成一条 curl。
+    """
+    status, body = core.handle("GET", "/healthz", {}, b"")
+    assert status == 200
+    assert body["contract"]["schema_version"] == proxy_contract.SCHEMA_VERSION
+    assert body["contract"]["fingerprint"] == core.contract_fingerprint()
+    assert re.fullmatch(r"[0-9a-f]{16}", body["contract"]["fingerprint"])
+
+
+def test_the_fingerprint_actually_tracks_the_contract(monkeypatch):
+    """**反恒真**：指纹必须随白名单变，否则它只是一个好看的常数。
+
+    这里改的正是 #227 那一格——给 `asset_role` 去掉一个取值，指纹必须变。
+    """
+    before = core.contract_fingerprint()
+    assert core.contract_fingerprint() == before, "同一份表算两次必须一样"
+
+    shrunk = {
+        **proxy_contract.METRICS_EVENTS["github_release_asset_snapshot"],
+        "asset_role": proxy_contract.enum("installer", "updater"),
+    }
+    monkeypatch.setitem(core.METRICS_EVENTS, "github_release_asset_snapshot", shrunk)
+    assert core.contract_fingerprint() != before, "少了两个取值，指纹却没变"
+
+    monkeypatch.setitem(core.EVENTS, "app_started", {"app_mode": proxy_contract.enum("desktop")})
+    assert core.contract_fingerprint() != before
+
+
+def test_the_fingerprint_carries_no_secret(monkeypatch, upstream):
+    """它挂在公开的 /healthz 上，所以不许把任何密钥卷进去。"""
+    monkeypatch.setenv("POSTHOG_PROJECT_KEY", "phc_super_secret_key")
+    before = core.contract_fingerprint()
+    monkeypatch.setenv("POSTHOG_PROJECT_KEY", "phc_a_completely_different_key")
+    monkeypatch.setenv("TAVOTTO_METRICS_TOKEN", "another-token-entirely")
+    assert core.contract_fingerprint() == before
+    body = core.handle("GET", "/healthz", {}, b"")[1]
+    text = json.dumps(body)
+    assert "phc" not in text and "token" not in text.lower()
+
+
 def test_metrics_batch_is_bounded(upstream):
     body = {"schema_version": 1, "events": [_snapshot() for _ in range(core.MAX_METRICS_BATCH + 1)]}
     assert _metrics(body)[0] == 413

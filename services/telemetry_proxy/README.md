@@ -183,6 +183,25 @@ client that emits an event the deployed proxy has not learned yet means that
 event is silently 400'd for as long as the old proxy is live — the client drops
 it and nobody notices.
 
+The scheduled collector is louder but was, until 2026-09, no clearer: on
+2026-08-27 commit `d2d7187c` added two `asset_role` values to *both* tables in
+the repo, nobody redeployed the proxy, and the daily run went red for six days
+saying only `HTTP 400` (issue #227). Both tables being in sync **in git** says
+nothing about the version that is actually serving traffic.
+
+**Check which contract is deployed before assuming the two sides agree:**
+
+```sh
+curl -s https://telemetry.tavotto.com/healthz          # → contract.fingerprint
+python -c "import sys; sys.path.insert(0, 'services/telemetry_proxy'); \
+  from tavotto_telemetry_proxy.core import contract_fingerprint as f; print(f())"
+```
+
+Different fingerprints mean the deployment is behind `main` — redeploy before
+touching the collector. The fingerprint is derived from event and property names
+only: no secrets, no deployment details, nothing user-derived, which is why it
+is safe on the public health endpoint.
+
 ## Deploying to Tencent Cloud SCF (mainland China reachability)
 
 `*.vercel.app` and anything CNAME'd to Vercel is unreachable from mainland China.
