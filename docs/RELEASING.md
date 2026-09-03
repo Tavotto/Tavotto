@@ -162,12 +162,53 @@ pip install --index-url https://test.pypi.org/simple/ \
    git push origin main v0.2.0
    ```
 
+4. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
+
+   ```sh
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm sync-playground
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm check-playground
+   ```
+
+   **这两条命令必须显式带 `TAVOTTO_REPO`**，理由见下面一节。
+
 tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
 **发之前确认 CI 是绿的**——`release.yml` 的 `lab_release_gate` 会对候选 wheel
 重跑全量 + slow 用例、升级验收与视觉回归（exact artifact），但那是**发行资格
 验证**，不是替代日常 CI：tag 只应打在 CI 已经全绿、且已合并进 main 的提交上
 （`trust` job 会硬校验 main 可达性，够不着直接拒）。
+
+## 网站 `/try`：同步与复核必须指名读的是哪棵树
+
+浏览器 playground 的产物由本仓库构建（`scripts/build_browser_playground.py`），
+由网站仓库 `Tavotto_website` 分发（`public/try/`，见 ADR 0007）。两个脚本
+`pnpm sync-playground` 与 `pnpm check-playground` 都用 `TAVOTTO_REPO` 定位产品
+仓库，**默认 `../Tavotto`——那是主工作区，而主工作区停在谁的分支上没有任何
+机制保证**。发布 SHA 与主工作区 HEAD 是两个不同的事实。
+
+**复核 playground 必须带 `TAVOTTO_REPO` 指向发布 SHA 所在的那棵树**：
+
+```sh
+# 先自证这棵树就是发布 SHA（trust job 认的那个），别凭印象
+git -C <发布树> rev-parse HEAD
+
+cd ../Tavotto_website
+TAVOTTO_REPO=<发布树> pnpm sync-playground
+TAVOTTO_REPO=<发布树> pnpm check-playground
+```
+
+**为什么不能省**：v0.12.0 发版时主工作区停在落后 main 五个 PR 的提交上，
+两条后果都实测发生过（issue #148）：
+
+1. `sync-playground` 把一份来自非发布祖先的陈旧产物拷进了 `public/try/`
+   （指纹 `fcfb77bc`，而发布树建出来是 `53b8a6ab`）——只因为指纹对不上才发现；
+2. 同步纠正之后 `check-playground` 仍报 `playground stale`，因为它是从**主工作区**
+   算的源指纹。照着这条红去「重做同步」，重做又把错版本拷回来——**成环**。
+
+两个脚本现在开跑前都打印读到的路径、这个路径的来源（`TAVOTTO_REPO` 还是默认值）
+与那棵树的 HEAD，并在该 commit 不可达于 `origin/main` 时告警；`check` 的 `FAIL`
+文本里也带着同样三样。**看到 stale 先读那三行**：先确认路径与 commit 是你要的
+那棵树，再谈重建与重新同步。实现见网站仓库 `scripts/lib/product-repo.mjs`。
 
 ## Release notes
 
