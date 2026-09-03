@@ -156,12 +156,7 @@ jobs:
                tail -40 slow-collect.log
                exit 1 ;;
           esac
-          # `pytest.ini` 开着 `faulthandler_exit_on_timeout`（用例卡满 300 秒就
-          # dump 完退出，别挂满 job 上限）。**这一档必须关掉**：这些用例真建 venv、
-          # 真联网装 matplotlib，单条超过 300 秒完全正常，不关就是一次慢的
-          # pip install 把整个资格跑硬杀成假红。这是那条开关唯一的例外。
-          ${{ steps.venv.outputs.python }} -m pytest -m slow -q \
-              -o faulthandler_exit_on_timeout=false
+          ${{ steps.venv.outputs.python }} -m pytest -m slow -q
 
       - name: 前端与 Rust（仅 nightly 及以上）
         if: env.LAB_MODE != 'main'
