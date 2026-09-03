@@ -6,6 +6,7 @@ import { useAssetStore } from './assetStore'
 import { startAutosave, useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
+import { enterElementEdit } from './actions'
 import {
   addFigureToLayout,
   findFigurePanel,
@@ -144,31 +145,50 @@ describe('源脚本关联迟到（issue #267）', () => {
     expect(ws().pendingElementEdit).toBeNull()
   })
 
-  it('用户已经回到画布排版：迟到的关联不把他拽回图内编辑', () => {
+  it('回到画布排版就把待办作废（不留着等下一条事件来抢）', () => {
     useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
     openFastEdit('late.pdf')
+    expect(ws().pendingElementEdit).not.toBeNull()
+
     returnToLayout()
 
-    scriptArrives('late.pdf')
-
-    expect(useUiStore.getState().elementPanelId).toBeNull()
-    expect(ws().mode).toBe('layout')
+    expect(ws().pendingElementEdit).toBeNull()
   })
 
-  it('用户已经打开了别的图：迟到的关联不换掉他正在看的那张', () => {
+  /*
+   * 下面两条走的是**绕过 `openFastEdit` 的那两个入口**（`lib/issueFocus.ts`
+   * 就是这么用的：问题面板里点一条问题 → 直接 `enterFastEdit` / 直接
+   * `enterElementEdit`）。必须从这里进——`openFastEdit` 与 `returnToLayout`
+   * 自己会清掉待办，用它们做反向用例的话待办早就没了，守卫拆掉也不会红
+   * （本轮实测：那样写的两条用例在"无条件抢进"的变异下双双存活）。
+   */
+
+  it('用户已经在编辑别的图：迟到的关联不把图内编辑换成另一张', () => {
     useAssetStore.setState({
-      byId: {
-        'late.pdf': info('late.pdf', { script: undefined }),
-        'a.pdf': info('a.pdf'),
-      },
+      byId: { 'late.pdf': info('late.pdf', { script: undefined }), 'a.pdf': info('a.pdf') },
     })
     openFastEdit('late.pdf')
-    openFastEdit('a.pdf') // 改了主意，去开另一张（这张有脚本，直接进图内编辑）
+    addFigureToLayout('a.pdf')
     const other = panelOf('a.pdf').id
+    enterElementEdit(other) // 画布双击 / 「编辑图内元素」按钮：不经过 openFastEdit
 
     scriptArrives('late.pdf')
 
     expect(useUiStore.getState().elementPanelId).toBe(other)
+  })
+
+  it('工作区已经切到别的图：迟到的关联不越过它把用户拉回去', () => {
+    useAssetStore.setState({
+      byId: { 'late.pdf': info('late.pdf', { script: undefined }), 'a.pdf': info('a.pdf') },
+    })
+    openFastEdit('late.pdf')
+    addFigureToLayout('a.pdf')
+    const other = panelOf('a.pdf').id
+    ws().enterFastEdit(other) // issueFocus 的定位路径：不经过 openFastEdit
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBeNull()
     expect(ws().activePanelId).toBe(other)
   })
 })
