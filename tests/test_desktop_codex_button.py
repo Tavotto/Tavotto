@@ -216,6 +216,52 @@ def test_every_engine_error_code_has_text(locale: str):
     assert not empty, f"{locale} 这些文案是空的：{empty}"
 
 
+def _apply_gated_codes() -> set[str]:
+    """引擎在 `apply=False`（doctor）那条分支上报出来的 code。
+
+    这些 code 的语义在两个动作下**不是同一件事**：install 时是「试过了，失败了」，
+    doctor 时是「一步都没试，缺这一项」。共用一句话的后果是——只诊断的一次跑显示成
+    「登记失败，常见原因是没有网络或没有权限」，用户会去查一个**根本没发生过的
+    失败**。所以要求这些 code 另有一句 doctor 专用文案。
+
+    **从引擎的控制流枚举**（`if not apply: return _step(..., code=ERR_X)`），不抄
+    清单：哪天 `apply` 又多守住一步，这道判据当场要求补那一句。
+    """
+    from tavotto.engine import codexinstall
+
+    src = (ROOT / "src" / "tavotto" / "engine" / "codexinstall.py").read_text(encoding="utf-8")
+    codes = set()
+    for block in re.findall(r"if not apply:\s*\n\s*return _step\((.*?)\)\n", src, re.S):
+        for name in re.findall(r"code=(ERR_\w+)", block):
+            codes.add(getattr(codexinstall, name))
+    assert codes, "一个 `if not apply:` 分支都没找到——正则失效了，这道门禁已经空了"
+    return codes
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
+def test_apply_gated_codes_have_a_doctor_specific_sentence(locale: str):
+    """
+    「重新诊断」只诊断不改动（ADR 0012）。它报 `marketplace_add_failed` 的时候
+    引擎**一次 add 都没跑过**，所以那句话不能说「登记失败，可能是网络问题」。
+    """
+    doctor = _texts(locale).get("error", {}).get("doctor", {})
+    missing = sorted(_apply_gated_codes() - set(doctor))
+    assert not missing, f"{locale} 缺这些 code 的 doctor 专用文案：{missing}"
+    generic = _texts(locale).get("error", {})
+    same = sorted(k for k, v in doctor.items() if v == generic.get(k))
+    assert not same, f"{locale} 这些 doctor 文案与 install 那句一字不差，等于没写：{same}"
+
+
+def test_the_wording_is_chosen_by_the_action():
+    """前端要真的按 `action` 选文案——文案写了但没人用，是另一种空门禁。"""
+    src = (ROOT / "web" / "src" / "lib" / "codexInstall.ts").read_text(encoding="utf-8")
+    body = src.split("export function codexErrorText")[1].split("\n}\n")[0]
+    assert "action === 'doctor'" in body, "codexErrorText 没按动作分档"
+    assert "doctor." in body, "没查 error.doctor.<code>"
+    tail = src.split("export function codexResultErrorText")[1]
+    assert "r.action" in tail, "codexResultErrorText 没把 action 传下去"
+
+
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
 def test_every_engine_step_has_a_label(locale: str):
     """步骤名同理：前端查不到会原样显示 `codex_cli`。"""

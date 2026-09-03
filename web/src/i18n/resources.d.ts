@@ -956,6 +956,11 @@ export default interface Resources {
             "bad_output": "命令跑完了但没有给出可读的结果，可能被中断了。重试一次；仍然如此就在终端里跑 tavotto codex doctor 看原文。",
             "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。这一版安装包可能不完整，重新装一次桌面版即可。",
             "codex_cli_missing": "找不到 codex 命令，所以没法继续。请先自行安装 Codex CLI（这里不代装），装好后再点一次。",
+            "doctor": {
+              "marketplace_add_failed": "还没有把 Tavotto 登记成 Codex 的插件市场。这次只是诊断，没有改动任何东西——装一次就会补上它。",
+              "plugin_add_failed": "插件还没装上。这次只是诊断，没有改动任何东西——装一次就会补上它。",
+              "provision_failed": "插件还没有一份匹配版本的 Tavotto 引擎。这次只是诊断，没有改动任何东西——装一次就会补上它。"
+            },
             "health_failed": "组件都装上了，但体检没过——插件还找不到能用的 Tavotto 引擎。展开下面的详情看它报了什么。",
             "marketplace_add_failed": "没能把 Tavotto 登记成 Codex 的插件市场。常见原因是没有网络或没有权限写 Codex 的配置目录。",
             "not_desktop": "这个操作只在桌面版里可用。",

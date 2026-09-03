@@ -101,20 +101,44 @@ export function codexStepStateText(s: CodexStep): string {
   return s.skipped ? ci('stepState.skipped') : ci('stepState.done')
 }
 
+/** 只翻一个 key，查不到回 null（i18next 查不到时原样回 key，据此判断） */
+function lookup(key: string): string | null {
+  const hit = t(key, { ns: 'dialogs' })
+  return !hit || hit === key ? null : hit
+}
+
 /**
  * 失败原因的**成文**。界面上显示的就是这一句，绝不显示 `code` 本身。
+ *
+ * ## 同一个 code，两个动作下不是同一件事
+ *
+ * 引擎的 marketplace / plugin / engine 三步在 `apply=False`（doctor）那条分支上
+ * **什么都没做就报出 install 的那个 code**（`_marketplace_step()` 的
+ * `if not apply: return _step(..., code=ERR_MARKETPLACE)`）。共用一句话的后果是：
+ * 只诊断的一次跑显示成「登记失败，常见原因是没有网络或没有权限」——用户会去查一个
+ * **根本没发生过的失败**。所以 doctor 那一档另有一句话（`error.doctor.<code>`），
+ * 查不到才回落到通用那句：不是每个 code 在两个动作下都有分别（`health_failed`
+ * 两边都真的跑了体检，`codex_cli_missing` 两边都什么也没试）。
+ * 哪些 code 需要 doctor 专用文案，由 `tests/test_desktop_codex_button.py` 从引擎的
+ * `if not apply:` 分支**枚举**着比——不在这里抄一份清单。
  *
  * `codex_cli_missing` 那句要把「找过哪些位置」带出来——只说「找不到 codex」
  * 对一个把它装在别处的用户什么忙都帮不上（与引擎 `find_codex()` 的注释同一条
  * 理由）。那串位置在引擎的 `detail` 里，是路径，**不翻**。
  */
-export function codexErrorText(code: string | undefined, detail?: string): string {
+export function codexErrorText(
+  code: string | undefined,
+  detail?: string,
+  action?: string,
+): string {
+  if (!code) return ci('error.other')
   // **认得的 code 清单也只在文案表里**：另存一个 Set 只会与引擎的 `ERR_*` 漂移，
   // 而漂移的表现正是这条纪律要挡的那个——界面上冒出一串下划线英文。
   // 查不到（老界面 + 新引擎，或壳回了别的字符串）一律落到 `other`。
-  const key = code ? `settings.agents.codexInstall.error.${code}` : ''
-  const hit = key ? t(key, { ns: 'dialogs' }) : ''
-  if (!hit || hit === key) return ci('error.other')
+  const base = `settings.agents.codexInstall.error.`
+  const hit =
+    (action === 'doctor' ? lookup(`${base}doctor.${code}`) : null) ?? lookup(`${base}${code}`)
+  if (hit === null) return ci('error.other')
   if (code === 'codex_cli_missing' && detail) return `${hit} ${detail}`
   return hit
 }
@@ -122,5 +146,10 @@ export function codexErrorText(code: string | undefined, detail?: string): strin
 /** 整个结果的失败成文：优先用顶层 `error_code`，回退到第一条失败的步骤 */
 export function codexResultErrorText(r: CodexResult): string {
   const failed = r.steps.find((s) => !s.ok)
-  return codexErrorText(r.error_code ?? failed?.error_code, r.error ?? failed?.detail)
+  return codexErrorText(
+    r.error_code ?? failed?.error_code,
+    r.error ?? failed?.detail,
+    // **动作是判据的一部分**：同一个 code 在 install 与 doctor 下说的不是一件事
+    r.action,
+  )
 }

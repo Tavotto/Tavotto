@@ -687,6 +687,11 @@
           "bad_output": "The command finished without a readable result; it may have been interrupted. Try again; if it keeps happening, run tavotto codex doctor in a terminal to see the raw output.",
           "cli_not_found": "The Tavotto command line (tavotto-cli) was not found on this machine. This install may be incomplete — reinstalling the desktop app fixes it.",
           "codex_cli_missing": "The codex command was not found, so nothing could be done. Install the Codex CLI yourself first (this button will not install it), then try again.",
+          "doctor": {
+            "marketplace_add_failed": "Tavotto is not registered as a Codex plugin marketplace yet. This run only diagnosed; nothing was changed. Running the install will set it up.",
+            "plugin_add_failed": "The plugin is not installed yet. This run only diagnosed; nothing was changed. Running the install will set it up.",
+            "provision_failed": "The plugin does not have a matching version of the Tavotto engine yet. This run only diagnosed; nothing was changed. Running the install will set it up."
+          },
           "health_failed": "Everything is installed, but the health check failed — the plugin still cannot find a usable Tavotto engine. Expand the details below for what it reported.",
           "marketplace_add_failed": "Tavotto could not be registered as a Codex plugin marketplace. The usual causes are no network access or no permission to write Codex's config directory.",
           "not_desktop": "This action is only available in the desktop app.",

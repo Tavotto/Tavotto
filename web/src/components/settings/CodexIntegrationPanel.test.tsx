@@ -152,6 +152,66 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
   })
 })
 
+describe('doctor 报的与 install 报的不是同一件事', () => {
+  /**
+   * 引擎的 `_marketplace_step(apply=False)` 在**一次 add 都没跑过**的情况下就报
+   * `marketplace_add_failed`。共用 install 那句话的话，只诊断的一次跑会显示成
+   * 「登记失败，常见原因是没有网络或没有权限」——用户会去查一个根本没发生过的失败。
+   */
+  const doctorFailed = (code: string) =>
+    JSON.stringify({
+      ok: false,
+      action: 'doctor',
+      steps: [
+        { step: 'codex_cli', ok: true, skipped: false, detail: '/usr/local/bin/codex' },
+        { step: 'marketplace', ok: false, skipped: false, detail: '未登记', error_code: code },
+      ],
+      error_code: code,
+      error: '未登记',
+    })
+
+  for (const code of ['marketplace_add_failed', 'plugin_add_failed', 'provision_failed']) {
+    it(`doctor 的 ${code} 说的是「缺这一项」，不是「试过了失败了」`, async () => {
+      runMock.mockResolvedValue(doctorFailed(code))
+      await mount()
+      const b = byLabel(ci('doctor'))
+      await act(async () => b.click())
+      await act(async () => {})
+
+      expect(alertText()).toContain(ci(`error.doctor.${code}`))
+      // install 那句（「没能把…」/「常见原因是没有网络」）绝不能出现
+      expect(alertText()).not.toContain(ci(`error.${code}`))
+    })
+  }
+
+  it('install 仍然用 install 那句，没有被 doctor 文案顶掉', async () => {
+    runMock.mockResolvedValue(failedJson('marketplace_add_failed', '网络不通'))
+    await mount()
+    await clickInstall()
+
+    expect(alertText()).toContain(ci('error.marketplace_add_failed'))
+    expect(alertText()).not.toContain(ci('error.doctor.marketplace_add_failed'))
+  })
+
+  it('两个动作下语义相同的 code（health_failed）不需要第二句，回落通用那句', async () => {
+    runMock.mockResolvedValue(
+      JSON.stringify({
+        ok: false,
+        action: 'doctor',
+        steps: [{ step: 'health', ok: false, skipped: false, error_code: 'health_failed' }],
+        error_code: 'health_failed',
+      }),
+    )
+    await mount()
+    const b = byLabel(ci('doctor'))
+    await act(async () => b.click())
+    await act(async () => {})
+
+    expect(alertText()).toContain(ci('error.health_failed'))
+    expect(alertText()).not.toContain(ci('error.other'))
+  })
+})
+
 describe('成功路径', () => {
   const okJson = JSON.stringify({
     ok: true,
