@@ -20,13 +20,14 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from . import ai_agents, ai_history, ai_providers, config
+from . import ai_agents, ai_history, ai_providers, atomicio, config, projectenv
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
@@ -531,6 +532,9 @@ def run(
                 "agent": agent,
                 "script": script,
                 "script_path": str(script_path),
+                # 回滚要判「resolve 之后还在不在项目内」，得知道根在哪。
+                # 与 `ai_history.record_start` 的 project 同一个表达式。
+                "project": str(Path(figures_dir).resolve()),
                 "snapshot": str(snap),
                 "prompt": user_prompt,
                 "started": time.time(),
@@ -585,6 +589,7 @@ def run(
         "model": model,
         "effort": effort,
         "snapshot": str(snap),
+        "project": str(Path(figures_dir).resolve()),
         "proc": proc,
         "started": time.time(),
     }
@@ -748,16 +753,81 @@ def _load_sidecar(sid: str) -> dict | None:
         return None
 
 
+def _project_root(sess: dict) -> str:
+    """这次会话的项目根。
+
+    `run()` 起会话时就记了一份。**老 sidecar（本改动之前写的）没有这个字段**，
+    而超龄快照才会被 `_prune_snapshots()` 清掉——升级之后回滚一个升级前的会话
+    是真实路径，所以要有兜底：`script_path` 由 `Path(figures_dir) / script`
+    拼出来（见 `run()`），把 `script` 的层数剥掉就回到根。
+    """
+    recorded = sess.get("project")
+    if recorded:
+        return str(recorded)
+    script_path = Path(sess["script_path"])
+    try:
+        return str(script_path.parents[len(Path(sess["script"]).parts) - 1])
+    except (IndexError, KeyError):
+        return str(script_path.parent)
+
+
 def revert(sid: str) -> dict:
     """恢复快照（回滚 AI 修改）。watcher 会自动作废渲染会话。
-    进程重启后 SESSIONS 丢失也没关系——从磁盘 sidecar 找回。"""
+    进程重启后 SESSIONS 丢失也没关系——从磁盘 sidecar 找回。
+
+    **写的是用户自己写的源文件，所以这一步必须原子。** 这里原本是
+    `shutil.copy2(snap, script_path)`：它先把用户的 `.py` 用 `"wb"` 打开
+    （= 当场清空），再流式写回去。中途任何一次失败（磁盘满、进程被杀、
+    I/O 错误）留下的是一个**截断的用户脚本**，而好的那一份此刻已经没了——
+    与 R-01 的「另存为直接 `write_text`」是同一个形状，只是发生在回滚这条路上
+    （ADR 0023 §1）。改走 `atomicio.write_bytes()`：先写同目录临时文件、fsync、
+    再 `os.replace` 顶上去，任何一步失败都清掉临时文件而**原文件一个字节不变**。
+    「文档类落盘只有一份实现」是 ADR 0023 的裁决，所以这里不另写一份 tmp+replace。
+
+    **符号链接必须先落地再写。** `copy2` 是**穿过**链接写的（它 `open(dst,"wb")`，
+    内核跟着链接走到真文件）；`os.replace` 不是——它把**链接本身**换成一个普通
+    文件，真正的源文件仍带着 AI 的改动，而端点会报「回滚成功」。那等于把
+    「非原子地写对对象」换成「原子地写错对象」，比原来的缺陷更坏。所以写之前
+    先 `projectenv.contained_path()`：它 realpath 之后再按前缀钉回项目内，
+    **回的就是拿去写的那条路径**（判过的与用的是同一个，不给结论外溢的机会）。
+
+    落地之后**必须重判一次边界**：链接可以指到项目外（`fig1.py -> ~/x.py`），
+    而写回这条路只该碰用户交给 Tavotto 的那棵树——同一条判据在
+    `app.py` 的试运行端点上已经是 `script_path_outside_project`，这里复用它。
+    （`contained_file()` 不能用：它**故意不** realpath 文件本身，那是为
+    `venv/bin/python` 这种合法的外指链接留的口子，正是这里要挡的东西。）
+
+    两处**刻意**与 `copy2` 不同，都不是疏忽：
+
+    * **不还原 mtime。** `copy2` 会把脚本的 mtime 一并倒回 AI 改之前，而
+      watcher 的判据正是 `(size, mtime_ns)`（ADR 0026 §2a）。倒回一个更旧的
+      时间戳意味着「回滚」这件事有可能对 watcher 完全隐形——恰好是本函数
+      文档第一句承诺会发生的事。落盘时间取「现在」，签名必然与已登记的不同。
+    * **权限位照抄快照**（= AI 改之前那份）。`os.replace` 换上来的是临时文件的
+      inode，它的模式来自 umask，用户脚本上的可执行位/私有位会被悄悄改掉。
+      chmod 放在替换之后是权限窗口最小的可行位置——atomicio 是唯一权威，
+      不给它加一个 mode 参数。失败不影响回滚成立（Windows 上它近乎空操作）。
+    """
     sess = SESSIONS.get(sid) or _load_sidecar(sid)
     if sess is None:
         raise RuntimeError("会话不存在（快照也未找到）")
     snap = Path(sess["snapshot"])
     if not snap.is_file():
         raise RuntimeError("快照文件已丢失，无法回滚")
-    shutil.copy2(snap, sess["script_path"])
+    try:
+        data = snap.read_bytes()  # 先整份读进来：读不出来时用户的脚本还没被碰过
+        mode = stat.S_IMODE(snap.stat().st_mode)
+    except OSError as exc:
+        raise RuntimeError(f"快照读不出来，无法回滚：{exc}") from exc
+    target = projectenv.contained_path(_project_root(sess), sess["script_path"])
+    if target is None:
+        raise AgentError("script_path_outside_project", {"script": sess["script"]})
+    script_path = Path(target)  # 已 realpath：脚本是符号链接时写的是它指向的真文件
+    atomicio.write_bytes(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
+    try:
+        os.chmod(script_path, mode)
+    except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
+        LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
     LOG.info("AI 修改已回滚: %s（session %s）", sess["script"], sid)
     if sid in SESSIONS:
         SESSIONS[sid]["status"] = "reverted"

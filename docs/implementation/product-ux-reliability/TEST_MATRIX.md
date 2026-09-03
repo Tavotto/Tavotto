@@ -2355,7 +2355,8 @@ F15 手动记成 autosave、F16 409 记成 failed、F17 保留主版本不记、
 | 上限 | versions 40/120 条、baked 50、备份 20；**autosave 目录无上限无清理** | #221 |
 | 非有限数 | 写侧 `allow_nan=False` 唯一实现；读侧四处裸 `json.loads` | #222（P3） |
 | 外部修改 | autosave 内容 hash + 409、旧前端 updatedAt、写回 mtime+sha1+size 三套各管一条路，无静默覆盖 | — |
-| 原图写回 / AI 回滚 | 裸 `replace` / `copy2`，无 fsync，有备份（20 份）兜底 | R-05 族，择机 |
+| AI 回滚 | `copy2` **非原子**：先清空用户的 `.py` 再流式写回，中途失败留下截断的源文件 | 已修（#251），判据 `tests/test_ai_revert_atomic.py` |
+| 原图写回 | 同目录 tmp + `os.replace`，**是原子的**；有备份（20 份）与回滚，缺 fsync | #252（P3） |
 | 刷新漏斗 | 六条入口全经 `app.refresh_project`；`registry.changed` / `assets.changed` 只在 `project_refresh.py` 一处发 | — |
 | 检查引擎 | `runSpec` / `buildSpec` 只在 `validation.ts` 调；无第二个阈值；问题面板不露 gid | — |
 | 导出 | 五个端点全经 `exportreq.normalize` + `exportjob`；对话框顺序与 ADR 0031 §6 逐项一致；**MCP 插件自己那套导出** | #224 |
