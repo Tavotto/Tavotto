@@ -29,9 +29,28 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / ".github" / "workflows"
 E2E = ROOT / "web" / "e2e"
+
+# 本模块的输入是**仓库级**的两个目录，而 sdist 只带 `tests` / `src/tavotto` /
+# `web/src`（`[tool.hatch.build.targets.sdist].include`）。从 sdist 解出来跑时
+# 它们根本不存在——那种情况必须**如实跳过并说清是哪一种**：
+# 「这个环境里没有这些文件」与「路径变了」是两回事，后者会把人送去找一个
+# 不存在的重命名。守卫的前提由 `test_the_skip_premise_still_holds` 钉住：
+# 哪天 sdist 带上了 .github，这个 skip 就是多余的，而多余的 skip 会安静地把
+# 判据关掉（`tests/test_blame_ignore_revs.py` 的浅克隆 skip 是同一族先例：
+# 把盲点写在明处不等于补上了）。
+_MISSING = [str(p.relative_to(ROOT)) for p in (WF, E2E) if not p.is_dir()]
+if _MISSING:
+    pytest.skip(
+        f"当前环境里没有 {_MISSING}——本模块的判据是仓库级 CI 拓扑，"
+        "只在**源码检出**里有意义（sdist 只带 tests / src/tavotto / web/src）。"
+        "这不是「路径变了」，别去找重命名。",
+        allow_module_level=True,
+    )
 
 #: CI 里执行 `pnpm e2e` 的每一条腿：job id → runner。
 #: 加腿 / 删腿 / 换 runner 都必须回到这里，顺便重估下面每一条 skip。
@@ -61,9 +80,35 @@ def _job(text: str, job_id: str) -> str:
 
 
 def _workflows() -> list[Path]:
+    """`.github/workflows` 目录存在（上面的守卫保证了）却一个 yml 都没有。"""
     files = sorted(WF.glob("*.yml"))
-    assert files, ".github/workflows 下一个 workflow 都没读到——路径变了？"
+    assert files, (
+        f"{WF} 存在但一个 *.yml 都没有——workflow 被挪走或改了后缀？"
+        "（目录整个不在的情况由模块顶上的 skip 守卫接住，不会走到这里）"
+    )
     return files
+
+
+def test_the_skip_premise_still_holds():
+    """守卫的前提：sdist 确实不带这两个目录，而 `tests` 确实带。
+
+    前提一变（比如以后把 `.github` 也打进 sdist），这里当场红——那时守卫就
+    多余了，而一个多余的 skip 会在**本该跑得动**的环境里安静地把判据关掉。
+    """
+    body = re.search(
+        r"(?ms)^\[tool\.hatch\.build\.targets\.sdist\]\n(.*?)^\[",
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+    )
+    assert body, "pyproject 里切不出 [tool.hatch.build.targets.sdist] 段"
+    include = body.group(1)
+    assert re.search(r'(?m)^\s*"tests",\s*$', include), (
+        "sdist 不再带 tests——本模块根本不会被解出来，这个守卫也就没有主语了"
+    )
+    for shipped in (".github", "web/e2e"):
+        assert shipped not in include, (
+            f"sdist 现在带上了 {shipped}——模块顶上的 skip 守卫已经多余。"
+            "留着它等于在一个本该能跑的环境里安静地关掉整组判据"
+        )
 
 
 def _e2e_invocations() -> list[tuple[str, int]]:
