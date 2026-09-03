@@ -235,6 +235,20 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   修复（从写回 PDF 的文字层反推真实位置，输出另存 + POST 成布局版本）。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
+- **「这张图上有哪些 axes」只有 `manifest._ordered_axes` 一处**（看护
+  `tests/test_axes_traversal_authority.py` 的源码级门禁）。`fig.axes` 之外有
+  **两族**：`ax.inset_axes()` / `ax.secondary_[xy]axis()` 挂在 `ax.child_axes`
+  上；`mpl_toolkits.axes_grid1`（与 `axisartist`）的
+  `host_subplot(...).twinx()` 挂在 `host.parasites` 上（**寄生轴**，#217——
+  漏掉它时第二组数据整条不进 manifest，既列不出也改不了，而且不报错）。
+  编号顺序是**契约不是实现细节**：`fig.axes` → 子 axes → 寄生轴，**寄生轴
+  单独走第二趟**，这样改动前的那份 `axes_i` 序列永远是新序列的严格前缀，
+  存量文档里的 gid 一个字节不动。寄生轴的**能力按实况判**：`position` 与
+  `visible` 都是死开关（`HostAxesBase.draw` 每帧拿宿主 rect 调
+  `apply_aspect`、代画孩子时从不看寄生轴自己的 visible），两条都不出字段、
+  各带一个 reason code（`parasite_host_rect` / `parasite_host_draw`）；其余
+  （数据范围、刻度、网格、边框、轴标签、曲线）照常给。看护
+  `tests/test_parasite_axes.py` + 不变式夹具的 `InvPar` 一格。
 - 特殊 artist：轴标签拖动走 `set_label_coords`（恢复时 transform 也要还原）；
   标题拖动要设 `ax._autotitlepos=False`；3D axes 暴露文字类元素 +
   position/visible（可拖动缩放；Axes3D 会按盒比例微调落位，以重建后

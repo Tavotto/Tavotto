@@ -149,38 +149,62 @@ def _register(
     )
 
 
-def _ordered_axes(fig) -> tuple[list, set]:
-    """(全部 axes（含子 axes）, 子 axes 的 id 集合)。
+def _ordered_axes(fig) -> tuple[list, set, set]:
+    """(全部 axes（含子 axes 与寄生轴）, 子 axes 的 id 集合, 寄生轴的 id 集合)。
 
-    `fig.axes` 只收 `add_subplot` / `add_axes` 建出来的那些；
-    `ax.inset_axes(...)` 与 `ax.secondary_[xy]axis(...)` 建出来的挂在
-    `ax.child_axes` 上，`in fig.axes` 为 False——不遍历它们的话，插图里的
-    曲线选不中、次坐标轴的标签也改不了。
+    `fig.axes` 只收 `add_subplot` / `add_axes` 建出来的那些。有**两族**轴不在
+    里面，各挂在各自的属性上：
 
-    **子 axes 一律排在所有 `fig.axes` 之后**，编号继续 `axes_{i}`。这条不是
-    风格问题：`axes_i` 会进用户文档（override 的 gid），存量文档里的编号
-    一个字节都不能变。插在中间会让「同一张图、同一个 gid」在升级前后指向
+      * **子 axes**：`ax.inset_axes(...)` 与 `ax.secondary_[xy]axis(...)`
+        建出来的挂在 `ax.child_axes` 上——不遍历它们的话，插图里的曲线选不中、
+        次坐标轴的标签也改不了；
+      * **寄生轴**：`mpl_toolkits.axes_grid1`（与 `axisartist`）的
+        `host_subplot(...).twinx()` 建出来的挂在 `host.parasites` 上。它们
+        **既不在 `fig.axes` 也不在 `child_axes`**（宿主在自己的 `draw()` 里把
+        `ax.get_children()` 临时接到孩子列表上代画），于是整条第二组数据连同
+        它的右轴一起不进 manifest：列不出、也改不了，而且**不报错**
+        （issue #217）。
+
+    **子 axes 与寄生轴一律排在所有 `fig.axes` 之后**，编号继续 `axes_{i}`。
+    这条不是风格问题：`axes_i` 会进用户文档（override 的 gid），存量文档里的
+    编号一个字节都不能变。插在中间会让「同一张图、同一个 gid」在升级前后指向
     不同的 axes——那是数据级的错位。
 
+    **寄生轴单独走第二趟，不与 `child_axes` 合成一趟**，理由同上：一张
+    `host_subplot` 上既开了 `twinx()` 又开了 `inset_axes()` 的图，合成一趟会
+    按属性先后把寄生轴排到插图前面，把那个插图**已经发出去的** `axes_i` 顶掉
+    一位。两趟走完，本次改动之前的那份序列是新序列的**严格前缀**——存量文档
+    里的每一个 `axes_i` 都还指向同一个 axes，新认出来的只在末尾追加。
+
     逐层广度优先（同一层的兄弟排完再下一层），所以同一个脚本每次跑出来的
-    gid 串完全一致；插图里再开插图也照样确定。按 `id()` 去重防环。
+    gid 串完全一致；插图里再开插图、寄生轴上再开插图也照样确定。按 `id()`
+    去重防环。
     """
     out = list(fig.axes)
     seen = {id(a) for a in out}
     children: set = set()
-    layer = list(out)
-    while layer:
-        nxt = []
-        for parent in layer:
-            for child in getattr(parent, "child_axes", None) or []:
-                if id(child) in seen:
-                    continue
-                seen.add(id(child))
-                children.add(id(child))
-                out.append(child)
-                nxt.append(child)
-        layer = nxt
-    return out, children
+    parasites: set = set()
+
+    def _absorb(frontier: list, sources: tuple[tuple[str, set], ...]) -> None:
+        """把 `sources` 点名的属性逐层收进 `out`（每条是「属性名, 归入的集合」）。"""
+        while frontier:
+            nxt = []
+            for parent in frontier:
+                for attr, bucket in sources:
+                    for kid in getattr(parent, attr, None) or []:
+                        if id(kid) in seen:
+                            continue
+                        seen.add(id(kid))
+                        bucket.add(id(kid))
+                        out.append(kid)
+                        nxt.append(kid)
+            frontier = nxt
+
+    _absorb(list(out), (("child_axes", children),))
+    # 第二趟从**当前全部**已知 axes 起步：寄生轴可能开在插图上，插图也可能开在
+    # 寄生轴上，两个方向都要走得到。第一趟收过的由 `seen` 挡住，不会重排。
+    _absorb(list(out), (("parasites", parasites), ("child_axes", children)))
+    return out, children, parasites
 
 
 def _is_secondary_axis(ax) -> bool:
@@ -460,13 +484,13 @@ def instrument(state: FigState) -> None:
     # 里，`fig.axes` 扫不到它，于是挂在插图上的色条整个不被认出来——连带那条
     # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
     # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `_ordered_axes` 一处。
-    _all_axes_for_cbar, _ = _ordered_axes(fig)
+    _all_axes_for_cbar, _, _ = _ordered_axes(fig)
     cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     state.colorbar_axes = set(cbar_of_ax)
     state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax, _all_axes_for_cbar)
     # `fig.axes` 之后再接子 axes（inset / secondary），编号继续往下走——
     # 存量文档里的 axes_i 因此一个字节不变，见 `_ordered_axes`。
-    all_axes, child_ids = _ordered_axes(fig)
+    all_axes, child_ids, parasite_ids = _ordered_axes(fig)
     gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(all_axes)}
     cbar_ordinal: dict[int, int] = {}
     # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
@@ -480,6 +504,7 @@ def instrument(state: FigState) -> None:
     for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
         is_child = id(ax) in child_ids
+        is_parasite = id(ax) in parasite_ids
         secondary = is_child and _is_secondary_axis(ax)
         # **落位不给编辑**：子 axes 的位置由父级的 `_axes_locator` 每帧重算，
         # `set_position` 之后立刻读回是新值、`draw()` 一次就被顶回原值（实测）。
@@ -487,7 +512,15 @@ def instrument(state: FigState) -> None:
         # 判据是「子 axes **且** 有 locator」而不是光看 locator：色条轴也带
         # `_ColorbarAxesLocator`，而色条的 position override 是**支持**的
         # （用户自己摆过色条时就靠它），光判 locator 会把那条功能一起砍掉。
-        position_locked = is_child and ax.get_axes_locator() is not None
+        #
+        # 寄生轴是**同一个形状、另一个机制**：它没有 locator，顶回落位的是宿主
+        # 的 `HostAxesBase.draw`——`for ax in self.parasites: ax.apply_aspect(rect)`
+        # 里的 rect 就是宿主此刻的 position，aspect='auto' 下 `apply_aspect` 直接
+        # `_set_position(rect, which='active')`。实测（matplotlib 3.10.8）：
+        # `set_position` 之后 `_originalPosition` 是新值、`_position` 一 draw 就被
+        # 改回宿主的框，**画出来的像素一个都不动**。反过来这也意味着寄生轴天然
+        # 跟着宿主走，不需要用户自己摆。
+        position_locked = (is_child and ax.get_axes_locator() is not None) or is_parasite
         # 持久 tight 引擎会在下一次绘制里把位置整个算回去。同样宁可不支持也不给
         # 一个按了会弹回来的旋钮——但这一次要说得出为什么（reason 走
         # `unsupported_props`，界面按 code 翻译）。
@@ -519,9 +552,15 @@ def instrument(state: FigState) -> None:
             label,
             position_locked=position_locked,
             limits_slaved=secondary,
+            # 寄生轴的 `set_visible(False)` 同样是个死开关：宿主的 draw 无条件
+            # 把 `ax.get_children()` 接过去画，**从不看寄生轴自己的 visible**
+            # （实测像素一个都不变）。宁可不给这个控件，也不给一个按了没反应的。
+            visible_locked=is_parasite,
             position_locked_reason=(
                 "layout_engine_tight"
                 if locked_by_layout
+                else "parasite_host_rect"
+                if is_parasite
                 else "child_axes_locator"
                 if position_locked
                 else ""
@@ -890,7 +929,7 @@ def _internal_ids(fig, colorbar_axes=()) -> set[int]:
     喊狼来了，真正的缺口就没人看了」。这条与 `census` 的遍历必须同源。
     """
     ids = {id(fig.patch)}
-    ordered, _child_ids = _ordered_axes(fig)
+    ordered, _child_ids, _parasite_ids = _ordered_axes(fig)
     for ax in ordered:
         ids.add(id(ax))
         ids.add(id(ax.patch))
@@ -939,7 +978,7 @@ def census(fig, state: FigState) -> list[dict]:
     # `fig.axes`——于是插图里漏掉的 artist **在普查里也不出现**，报告照样说
     # 「没漏」。一个报平安的普查比没有普查更坏，而它正是「不许静默消失」
     # 那条不变式的诊断面。编号也必须同源，否则 `where` 指向另一个 axes。
-    ordered, _child_ids = _ordered_axes(fig)
+    ordered, _child_ids, _parasite_ids = _ordered_axes(fig)
     for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         try:
             children = list(owner.get_children())
@@ -2601,11 +2640,14 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
     `el` 带着遍历时才知道的能力标记（见 `_register`）：
 
     * `position_locked` —— 落位不归 Tavotto 管，`set_position` 一 draw 就被顶
-      回去。**不出这个字段**，宁可不支持也不给一个按了会弹回来的旋钮。两个
+      回去。**不出这个字段**，宁可不支持也不给一个按了会弹回来的旋钮。三个
       来源，理由不同、reason code 也不同（`position_locked_reason`）：子 axes
       （inset / secondary）的父级 `_axes_locator` 每帧重算；整张图挂着**持久的**
       `TightLayoutEngine` 时它会把所有子图的位置重算（#140，判据见
-      `figure_layout_engine_eats_position`）。
+      `figure_layout_engine_eats_position`）；寄生轴（`host_subplot().twinx()`）
+      被宿主的 `draw()` 每帧按宿主 rect 重置（#217）。
+    * `visible_locked` —— 寄生轴独有：宿主代画它的孩子时**不看**它自己的
+      visible，`set_visible(False)` 在画面上一个像素都不动（#217）。
     * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：
       `set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect` 被 matplotlib 自己
       拒绝（"Secondary Axes can't set the aspect ratio"）、`get_xscale()` 回的
@@ -2630,7 +2672,11 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 }
             ]
         ),
-        {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
+        *(
+            []
+            if flags.get("visible_locked")
+            else [{"prop": "visible", "type": "bool", "value": bool(ax.get_visible())}]
+        ),
         *(
             []
             if flags.get("limits_slaved")
@@ -3332,6 +3378,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
             if reason:
                 entry.setdefault("unsupported_props", []).append(
                     {"prop": "position", "reason": reason}
+                )
+            if el.get("visible_locked"):
+                entry.setdefault("unsupported_props", []).append(
+                    {"prop": "visible", "reason": "parasite_host_draw"}
                 )
             if artist in state.colorbar_axes:
                 entry["is_colorbar"] = True

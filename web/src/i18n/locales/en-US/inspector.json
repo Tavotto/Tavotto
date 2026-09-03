@@ -1007,6 +1007,8 @@
     "child_axes_locator": "This child axes is positioned by its parent on every frame; a change here would snap back on the next draw",
     "layout_engine_tight": "This figure uses a persistent tight layout, which recomputes subplot positions on every draw — changes here would not take effect",
     "multi_host_colorbar": "This colorbar spans {{hosts}} subplots; switching its orientation is not supported in this version",
+    "parasite_host_draw": "This is a parasite axes from host_subplot; the host draws its contents and never checks this switch — hide the individual elements on it instead",
+    "parasite_host_rect": "This is a parasite axes from host_subplot; its position is reset by the host on every draw — move the host subplot and it follows along",
     "partial": "({{count}} of {{total}} elements)",
     "unknown": "Changing this here is not supported in this version"
   },
