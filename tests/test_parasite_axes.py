@@ -241,9 +241,17 @@ def test_those_two_props_really_are_dead_on_a_parasite(library):
 
     这也是 matplotlib 升版的看护点：哪天 `HostAxesBase.draw` 开始尊重寄生轴
     自己的 visible / position，这条会当场红，提醒把控件放回来。
+
+    **开头那条「寄生轴在不在」不是冗余**：反证时实测过，遍历不认寄生轴的那一版
+    上，`axes_2` 根本不存在，两条 patch 打在一个没有的 gid 上什么也不发生，
+    `moved == base` 与 `hidden == base` 双双恒真——这条用例是这个文件里唯一
+    在 #217 原貌下**仍然绿**的一条。宿主那侧的对照组挡不住它：宿主一直都在。
     """
     w = _worker(library)
     try:
+        assert PARASITE_GID in _by_gid(w.override(STEM, [])["manifest"]), (
+            f"{PARASITE_GID} 不在 manifest 里——下面两条 patch 会打空，判据恒真"
+        )
         base = _png(w, [], "base")
         moved = _png(
             w, [{"gid": PARASITE_GID, "prop": "position", "value": [0.2, 0.2, 0.4, 0.4]}], "par-pos"
