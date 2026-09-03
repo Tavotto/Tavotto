@@ -16,10 +16,29 @@ import type { Page } from '@playwright/test'
  * 达标，而是 axe 根本没测**。实证：把 `--color-warn` 改成明显不达标的 `#e8c98f`，
  * 只看 violations 的检查照样绿。
  *
- * 背景色在这里是确定的：向上找第一个不透明祖先即可，不必猜覆盖层；半透明前景
- * 先与背景合成再算比值，否则算出来偏乐观。
+ * 背景色按**绘制顺序**取：从元素自己往下叠到第一个不透明层为止（`paintStackBelow`
+ * → `opaqueBg`），既含祖先也含画在下面的兄弟。画在**上面**的覆盖层一律不算——
+ * 模态遮罩确实会把背后的文字压暗，但那是被遮住的 inert 内容，不在 WCAG 1.4.3
+ * 的范围内；把它算进来，同一批节点就会在「有没有模态」之间给出两个结论。
+ * 半透明前景先与背景合成再算比值，否则算出来偏乐观。
  */
 export async function lowContrastNodes(page: Page, root = 'body'): Promise<string[]> {
+  // **先等动效落定**（issue #210）：对比度是**稳定态**的属性，淡入淡出中间那一
+  // 帧不是。本仓库的气泡/抽屉走 `animate-fade-in` / `animate-fade-out` 与 WAAPI，
+  // 扫描撞进去就会把有效 alpha 量成 0.12、0.42 这种中间值，报出一条下一帧就消失
+  // 的假红——两次扫描因此给出不同结论（实测：接入状态那条用例先 focus 轨道按钮，
+  // 气泡正在淡出时被量到 `1.27:1（有效 alpha 0.12）`）。
+  // 只等**有限次**的动画：`animate-pulse` 这类 `iterations: Infinity` 的永远不结束。
+  await page.evaluate(async () => {
+    if (typeof document.getAnimations !== 'function') return
+    const finite = document
+      .getAnimations()
+      .filter((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)
+    await Promise.race([
+      Promise.allSettled(finite.map((a) => a.finished)),
+      new Promise((r) => setTimeout(r, 2000)),
+    ])
+  })
   return page.evaluate((rootSelector) => {
     // 1×1 画布：把**任何** CSS 颜色语法解析成 sRGB。
     // 只认 `rgb()/rgba()` 是个静默的盲点——Tailwind 的 `bg-ink/[.72]` 在现代
@@ -85,8 +104,50 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
       return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]
     }
     /**
-     * 文字背后**真正的**颜色：从元素自身往上收集每一层背景，直到（含）第一个
-     * 不透明的，再从下往上叠回来。
+     * 采样点上**绘制顺序位于该元素之下**的每一层，自上而下。
+     *
+     * 为什么不能只走 DOM 祖先链（issue #210）：祖先链看不见「画在下面的兄弟
+     * 层」。空画布提示就是这么被诬告的——它绝对定位在纸面中心，视觉上坐在
+     * **白纸**（`[data-page-sheet]`，`background: #ffffff`）上，而白纸是它的
+     * **兄弟子树**，不是祖先；尺子一路往上只找到画布灰 `--color-canvas`
+     * (#eaeae6)，`#6b6b64` 在它上面正好 4.45:1，于是报了一条差 0.05 的假红。
+     * 实测：那一点的真实渲染像素是 rgb(255,255,255)，元素截图里白底占 68%，
+     * 真实比值 5.37:1 —— 达标。
+     *
+     * **也不能用 `document.elementsFromPoint`**：命中测试受 `pointer-events`
+     * 与 `overflow` 裁剪影响。模态打开时 Radix 会把 `body` 设成
+     * `pointer-events:none`（实测：同一点上 `elementsFromPoint` 从 13 个元素
+     * 塌成 2 个，只剩遮罩和 `<html>`），滚出容器的内容同样命中不到——同一批
+     * 节点就会在「有没有模态」之间给出两个结论，那正是 #210 的现象。
+     *
+     * 这里按几何自己排：某一层的绘制顺序是「它自己 → 它的前序兄弟（连子树，
+     * 后代画在祖先之上）→ 父元素」，只收边框盒覆盖采样点的那些。已知近似：
+     * 不看 `z-index`，也按父盒剪枝（绝对定位跑到父盒外的层收不到）——收不到
+     * 就退回更下面那层，与旧行为同向。
+     */
+    const paintStackBelow = (el: HTMLElement): HTMLElement[] => {
+      const r = el.getBoundingClientRect()
+      const x = r.left + r.width / 2
+      const y = r.top + r.height / 2
+      const covers = (n: Element) => {
+        const b = n.getBoundingClientRect()
+        return b.width > 0 && b.height > 0 && x >= b.left && x < b.right && y >= b.top && y < b.bottom
+      }
+      const out: HTMLElement[] = []
+      const subtree = (n: Element) => {
+        if (!covers(n)) return
+        for (let c = n.lastElementChild; c; c = c.previousElementSibling) subtree(c)
+        out.push(n as HTMLElement)
+      }
+      for (let n: HTMLElement | null = el; n; n = n.parentElement) {
+        out.push(n)
+        for (let s = n.previousElementSibling; s; s = s.previousElementSibling) subtree(s)
+      }
+      return out
+    }
+    /**
+     * 文字背后**真正的**颜色：按绘制顺序从元素自身往下收集每一层背景，直到
+     * （含）第一个不透明的，再从下往上叠回来。
      *
      * 以前这里只找第一个**不透明**背景，半透明的中间层直接跳过——于是
      * `bg-ink/[.72]`（白字 + 72% 墨色角标）会被当成「白底白字」算出 1.00:1，
@@ -97,9 +158,8 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
      */
     const opaqueBg = (el: HTMLElement): { color: number[]; node: HTMLElement | null } => {
       const layers: number[][] = []
-      let n: HTMLElement | null = el
       let stop: HTMLElement | null = null
-      while (n) {
+      for (const n of paintStackBelow(el)) {
         const c = parse(getComputedStyle(n).backgroundColor)
         if (c && c[3] > 0) {
           layers.push(c)
@@ -108,7 +168,6 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
             break
           }
         }
-        n = n.parentElement
       }
       // 最底下那层：找到了不透明的就用它，一直没找到就按白纸算（同旧行为）
       let base = stop ? layers.pop()! : [255, 255, 255, 1]
@@ -129,6 +188,10 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
      *
      * 累乘到**背景那一层为止（含）**：背景自己也淡化时，把它的 opacity 记在前景
      * 上是保守方向——算出来的比值只会更差，不会更好。门禁宁可偏严。
+     *
+     * 背景层现在可能是个**兄弟**（见 `paintStackBelow`），那就累乘到「第一个
+     * 同时含住它俩的祖先」为止：再往上的 opacity 对前景和背景同等生效，进不了
+     * 比值。`Node.contains` 认自己，所以背景层是祖先时这条判据退化成 `n === stop`。
      */
     const groupOpacity = (el: HTMLElement, stop: HTMLElement | null): number => {
       let n: HTMLElement | null = el
@@ -136,7 +199,7 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
       while (n) {
         const o = parseFloat(getComputedStyle(n).opacity)
         if (!Number.isNaN(o)) a *= o
-        if (n === stop) break
+        if (stop && n.contains(stop)) break
         n = n.parentElement
       }
       return a
