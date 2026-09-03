@@ -130,3 +130,57 @@ def test_prune_keeps_manual_over_auto(client, monkeypatch):
     autos = [v for v in versions if v["auto"]]
     assert len(autos) == 3  # 自动检查点滚动清理
     assert any(v["id"] == manual for v in versions)  # 手动版本保留
+
+
+# ------------------- 字节上限（issue #221 §1） -------------------------------
+#
+# 条数上限（120）管不住体积：每条版本条目里塞的是**整份文档**，于是文件大小
+# = 条数 × 文档大小，而每次追加都要把整个文件「读 → 追加 → 裁 → 整写」。
+# 实测（`scripts/bench_document.py`，2026-09-03）1.16 MB 的文档塞满 120 条 =
+# 约 140 MB / 单次追加 547 ms。
+
+
+def _timeline_bytes(doc_id="d1"):
+    return m._versions_path(doc_id).read_bytes()
+
+
+def test_timeline_stops_growing_at_the_byte_budget(client, monkeypatch):
+    """追加的代价必须只跟预算有关，与追加了多少次无关。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 4000)
+    for i in range(40):
+        _create(client, name=f"v{i}")
+        assert len(_timeline_bytes()) <= 4000 + len(m.engine_atomicio.dumps_json({"id": "x"})), (
+            f"第 {i} 次追加之后文件超出了预算"
+        )
+    names = [v["name"] for v in client.get("/api/versions/d1").get_json()["versions"]]
+    assert names[-1] == "v39", "最新的那条没留住"
+    assert "v0" not in names, "预算没咬到任何一条（这条判据量不到东西）"
+
+
+def test_the_newest_version_survives_even_when_it_alone_exceeds_the_budget(client, monkeypatch):
+    """单条就超预算时仍然留下最新那条：否则 `api_versions_create` 会交回一个
+    磁盘上根本不存在的版本。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 1)
+    _create(client, name="big", doc_id="d2")
+    versions = client.get("/api/versions/d2").get_json()["versions"]
+    assert [v["name"] for v in versions] == ["big"]
+
+
+def test_the_assembled_file_is_byte_identical_to_dumping_the_kept_list(client):
+    """`_save_versions` 是逐条序列化再拼起来的（为了量大小与写文件只序列化
+    一次）。**拼出来的必须与整份 dump 逐字节相同**——否则那就是第二个
+    序列化器，迟早与 `atomicio.dumps_json` 分叉。"""
+    for i in range(3):
+        _create(client, name=f"v{i}", doc_id="d3")
+    kept = m._load_versions("d3")
+    assert _timeline_bytes("d3") == m.engine_atomicio.dumps_json({"versions": kept})
+
+
+def test_the_count_cap_still_governs_small_documents(client, monkeypatch):
+    """预算是**第二条**上限，不是替换：小文档下仍然由条数上限说了算。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_TOTAL", 5)
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 64 * 1024 * 1024)
+    for i in range(9):
+        _create(client, name=f"v{i}", doc_id="d4")
+    versions = client.get("/api/versions/d4").get_json()["versions"]
+    assert [v["name"] for v in versions] == ["v4", "v5", "v6", "v7", "v8"]
