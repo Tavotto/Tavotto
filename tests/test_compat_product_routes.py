@@ -20,6 +20,7 @@
 import json
 import pathlib
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ import pytest
 from tavotto.engine import pool as engine_pool, runtimeasset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "ci"))
+import compat_corpus  # noqa: E402
 import compat_matrix  # noqa: E402
 
 try:
@@ -137,6 +139,46 @@ def test_native_run_route_goes_through_the_product_control_plane(tmp_path, monke
     body = body.split('"""', 2)[-1]  # 函数 docstring 里恰恰会解释"为什么不用它"
     for forbidden in ("BridgeSession", "bridge_spike", "bridge.spec_for"):
         assert forbidden not in body, f"native_run 路由里出现了内部 spike 入口: {forbidden}"
+
+
+@needs_worker
+def test_native_run_passes_savefig_through_to_disk(tmp_path, monkeypatch):
+    """native 侧的 `savefig` 必须**照常写文件**——不是只捕获。
+
+    ADR 0021 给 native 定的语义与 safe 正相反：safe worker 吞掉写盘（沙盒
+    纪律），`tavotto run` 照常写，因为它的承诺是「与你自己在终端里跑这条命令
+    完全等同」，而用户的命令本来就会产出那些 PDF。
+
+    这一条钉的是**磁盘上的那个文件**。issue #226 的第一版收尾里，这里曾经是
+    一条「至少有一条 native_run case 的源码里出现过 .savefig」的 AST 断言——
+    那是空门禁：把 `_install_savefig_hook` 改成只记账不透传，源码一个字都不
+    会变，它照绿。语料侧用的就是 `shape_toplevel_imperative` 那条脚本
+    （顶层直写 + `fig.savefig()`、自执行），也就是清单里承担这条覆盖的那条。
+    """
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    manifest = compat_corpus.load_manifest()
+    case = next(c for c in manifest["cases"] if c["id"] == "shape_toplevel_imperative")
+    assert (case.get("product_routes") or {}).get("native_run") is True, (
+        "shape_toplevel_imperative 不再声明 native_run —— savefig 透传语义"
+        "又没有 case 在验了（issue #226）"
+    )
+
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    script = pathlib.Path(case["script"]).name
+    shutil.copy2(compat_corpus.COMPAT_DIR / case["script"], figs / script)
+    (figs / "tavotto_registry.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
+
+    produced = figs / f"{case['stem']}.pdf"
+    assert not produced.exists()
+    res = compat_matrix.route_native_run(figs, script, [case["stem"]])
+    assert res["ok"] is True, res
+    assert produced.is_file(), (
+        f"`tavotto run` 跑完之后 {produced.name} 不在磁盘上——native 侧的 savefig "
+        f"没有透传，用户自己跑同一条命令会拿到的文件消失了（ADR 0021）。"
+        f"目录内容：{sorted(p.name for p in figs.iterdir())}"
+    )
+    assert produced.stat().st_size > 0, f"{produced.name} 是个空文件"
 
 
 @needs_worker

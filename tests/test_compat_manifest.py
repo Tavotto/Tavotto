@@ -42,6 +42,10 @@ def _doc(cases: list[dict]) -> dict:
     return {"schema": 1, "cases": cases}
 
 
+def _case(manifest: dict, cid: str) -> dict:
+    return next(c for c in manifest["cases"] if c["id"] == cid)
+
+
 # ============================================================ 清单结构
 class TestManifestShape:
     def test_the_real_manifest_loads_and_validates(self, manifest):
@@ -94,6 +98,45 @@ class TestManifestShape:
         with pytest.raises(CC.CorpusError) as exc:
             CC.validate_manifest(_doc([one_case]))
         assert exc.value.code == "too_many_mutations"
+
+    def test_native_eligible_needs_a_self_executing_script(self, manifest):
+        """绘图正文在没人调用的函数里的 case，不许声明 native_eligible。
+
+        issue #226：四条 `entry: main` 的 case 被声明成 native_eligible +
+        `native_run: true`，而 `tavotto run` 跑的是用户自己那条命令
+        `python 脚本.py`（ADR 0021 §2.1，`python -c` 明确不支持 §2.3），
+        Tavotto 不会替用户去调 `main()`。那次执行里一张图都没有，产品按
+        §10.3 如实回 `no_figure_captured`，基准却把这个**正确**结果记成
+        product_bug —— nightly 从 08-29 起连红五次，指着的不是缺陷。
+
+        判据落在 `native_eligible` 而不是 `product_routes.native_run` 上：
+        route 声明改成 not_applicable 之后仍然留着 `native_eligible: true`
+        的话，`SUBSETS` 里的 native 子集照样会把它捞进来跑。
+
+        这里用**真语料**（`multi_figure.py` 的正文全在 `def main()` 里而脚本
+        自己不调），不用捏出来的形状——判据读的是源码，捏一份等于自己验自己。
+        """
+        case = copy.deepcopy(_case(manifest, "shape_multi_figure_a"))
+        case["native_eligible"] = True
+        with pytest.raises(CC.CorpusError) as exc:
+            CC.validate_manifest(_doc([case]))
+        assert exc.value.code == "native_eligible_needs_self_executing_script"
+
+    def test_a_guarded_main_counts_as_self_executing(self, manifest):
+        """`if __name__ == "__main__": build()` 必须放行——**哪怕 entry 是函数名**。
+
+        `entry` 与「自不自执行」是两个维度：`_entry_of` 优先挑顶层函数，所以
+        `dunder_main.py` 的 entry 是 `build`，而 `python dunder_main.py` 照样
+        出图。拿 `entry != "__main__"` 当代理的话，这条 case 会被拒，而且拒绝
+        的理由（「图在那次执行里根本不会出现」）是假的——判据一旦看起来对，
+        人更会信它说的那句错话。
+        """
+        case = copy.deepcopy(_case(manifest, "shape_dunder_main"))
+        assert case["entry"] == "build", "这条用例的前提是 entry 不是 __main__"
+        case["native_eligible"] = True
+        # 陪跑一条真 smoke case：_validate_smoke_subset 要求子集非空，
+        # 单条 doc 会在规则之外先炸，那样这条用例证明不了任何事。
+        CC.validate_manifest(_doc([case, _case(manifest, "shape_toplevel_imperative")]))
 
 
 # ============================================================ 例外必须有理由
