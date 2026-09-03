@@ -12,9 +12,11 @@
   热态 / 干净重放 / 导出用同一个；项目之间互不串环境；用户显式选择压过自动。
 * **边界**：只有 `missing_dependency` 触发；一次最多自动切一次；不装任何东西。
 
-真 venv 用例**不联网**：从当前 worker 解释器 `venv --system-site-packages`
-建一个（matplotlib 就是宿主那份），要「这个环境里有而别处没有」的包时，
-往它自己的 site-packages 里写一个纯 Python 的 fixture 模块。
+真 venv 用例**不联网**：从当前 worker 解释器建一个 venv，matplotlib 就用宿主
+那份（`support.venvfixture` 负责——注意 `--system-site-packages` 继承的是
+**base 解释器**，宿主自己是 venv 时还得把它自己的 site-packages 接进来，
+见 #225）；要「这个环境里有而别处没有」的包时，往它自己的 site-packages 里写
+一个纯 Python 的 fixture 模块。
 """
 
 import os
@@ -99,6 +101,97 @@ def _clean_env_state():
     yield
     projectenv.reset_cache()
     engine_pool.reset_worker_python()
+
+
+# ----------------------------------------------------------- 夹具自身
+# 下面两条测的是**夹具**而不是产品。它们在这里，是因为夹具的前提失效时，红的
+# 是本文件里十几条看起来在测别的东西的用例（#225：14 条全红，第一条报
+# `assert 'project_env_no_matplotlib' == 'project_env_module_missing'`，
+# 读的人第一反应是产品坏了）。
+
+
+@needs_worker
+def test_the_fixture_venv_inherits_from_the_host_not_from_its_base(tmp_path):
+    """宿主解释器**自己是个 venv** 时，它自己的包也要进得来。
+
+    这就是实验室 runner 的形状：`_lab-qualification.yml` 把 Tavotto 与按
+    `packaging/runtime-lock.json` 钉版的科学栈装进一个一次性 venv，pytest 与
+    `WORKER_PY` 都是它，而 base（`/usr/bin/python3`）按设计不带 matplotlib。
+    `--system-site-packages` 继承的是 **base** 而不是那个 venv，于是项目 venv
+    里 `import matplotlib` 失败（#225）。
+
+    marker 是 matplotlib 的**替身**：实验室 runner 上 matplotlib 正是「只在
+    宿主自己的 site-packages 里、base 里没有」的那种包。这里不直接拿
+    matplotlib 当尺子，是因为开发机与 GitHub runner 上 base 恰好也带着它——
+    那把尺子量不到这一维，用例会恒真。
+    """
+    host_root = tmp_path / "host"
+    host_root.mkdir()
+    host = venvfixture.make_project_venv(host_root, "hostenv", python=WORKER_PY)
+    host_python = venvfixture.interpreter_of(host)
+    assert host_python, host
+    # **只写进宿主自己的 site-packages**——base 里没有这个名字。
+    (venvfixture.site_packages(host) / "tavotto_host_only_marker.py").write_text(
+        "VALUE = 7\n", encoding="utf-8"
+    )
+
+    project = tmp_path / "figs"
+    project.mkdir()
+    venv = venvfixture.make_project_venv(project, ".venv", python=host_python)
+    got = subprocess.run(
+        [
+            venvfixture.interpreter_of(venv),
+            "-I",
+            "-c",
+            "import tavotto_host_only_marker as m; print(m.VALUE)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert got.returncode == 0, got.stderr
+    assert got.stdout.strip() == "7"
+
+
+@needs_worker
+def test_the_fixture_grades_a_broken_premise_instead_of_blaming_the_product(tmp_path):
+    """前提不成立时给**分档**结论：三种成因是三个不同的答案。
+
+    「宿主自己就没有 matplotlib」是机器/环境侧的事（夹具不装任何东西，帮不上
+    忙）；「宿主有、没接进来」和「遮蔽失效」都是夹具侧的缺陷，但要改的地方
+    不同。合并成一句「环境有问题」等于把该找的人也合并了。
+    """
+    bare = tmp_path / "bare"
+    subprocess.run(
+        [WORKER_PY, "-m", "venv", "--without-pip", str(bare)],
+        check=True,
+        capture_output=True,
+        timeout=300,
+    )
+    bare_python = venvfixture.interpreter_of(bare)
+    assert bare_python, bare
+
+    # 1) 宿主自己就没有 matplotlib → 机器/环境侧
+    with pytest.raises(venvfixture.VenvFixtureError) as err:
+        venvfixture.verify(bare, bare_python)
+    assert err.value.code == venvfixture.PREMISE_HOST_NO_MATPLOTLIB
+
+    # 2) **同一个 venv、同一次体检**，只换一个带 matplotlib 的宿主 → 夹具侧。
+    #    换的是宿主这一个变量，结论就该换一档——两档没有被合并成一句话。
+    with pytest.raises(venvfixture.VenvFixtureError) as err:
+        venvfixture.verify(bare, WORKER_PY)
+    assert err.value.code == venvfixture.PREMISE_NOT_INHERITED
+
+    # 3) 遮蔽失效 → 夹具侧的另一档（把替身换成一个 import 得动的模块）
+    ok_root = tmp_path / "ok"
+    ok_root.mkdir()
+    good = venvfixture.make_project_venv(ok_root, ".venv", python=WORKER_PY)
+    (venvfixture.site_packages(good) / "tavotto.py").write_text(
+        "__version__ = 'not really'\n", encoding="utf-8"
+    )
+    with pytest.raises(venvfixture.VenvFixtureError) as err:
+        venvfixture.verify(good, WORKER_PY)
+    assert err.value.code == venvfixture.PREMISE_MASK_INEFFECTIVE
 
 
 # --------------------------------------------------------------- 发现
