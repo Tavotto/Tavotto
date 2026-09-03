@@ -10,9 +10,11 @@ worker 在此转换为各 artist 自己的坐标系。
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import re
 import sys
+import threading
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
@@ -199,6 +201,56 @@ class ColorbarProxy:
         """宿主轴已有 axes_i gid；伪元素靠 manifest bbox 命中。"""
 
 
+#: 一次 `build_manifest` 之内的 `get_[xyz]ticklabels()` 记忆表。**线程局部**：
+#: Figure 归线程所有（`LiveFigureSession._own`），两条线程各建各的 manifest 时
+#: 共用一张表就成了跨图串味。
+_ticklabel_memo = threading.local()
+
+
+@contextlib.contextmanager
+def ticklabel_memo():
+    """在这个作用域里，同一条轴的 `get_[xyz]ticklabels()` 只算一次。
+
+    **前提（失效就不能再用）**：作用域里没有任何东西会改刻度。唯一的开启点是
+    `manifest.build_manifest`——它开头先 `fig.canvas.draw()`（locator/formatter
+    在那一刻就把这一帧的刻度定死了），之后整趟只读几何、不动 artist、不动
+    xlim/ylim、不换 locator。override 的应用发生在 `apply()` 里，在这个作用域
+    **之外**（`figsession.do_render` 先 apply 再 render）。
+
+    为什么值得记：matplotlib 每次 `get_[xyz]ticklabels()` 都要跑一趟
+    `Axis._update_ticks()`（locator + formatter + 视区取舍），实测
+    `Fig1_kinetics` 上单次约 0.4 ms；而 `build_manifest` 对**每个**刻度伪元素
+    要问三次（`_fields_for` 的 text 字段、几何分支、缺字形扫描），13 个刻度
+    就是 39 次同样的重算——manifest 步骤一半的时间花在这里（issue #220）。
+    """
+    outer = getattr(_ticklabel_memo, "table", None)
+    _ticklabel_memo.table = {}
+    try:
+        yield
+    finally:
+        _ticklabel_memo.table = outer
+
+
+def _ticklabels(ax: Axes, which: str, *, minor: bool = False) -> list:
+    """`ax.get_[xyz]ticklabels()`，在 `ticklabel_memo()` 作用域里只算一次。
+
+    键里带 `id(ax)`，值里**连 ax 一起存**：只有 id 的话，作用域内某个 Axes 被
+    回收后新对象拿到同一个 id，就会安静地读到别人的刻度。存一份引用既让 id
+    不可能被复用，取的时候还能再核一次身份。
+    """
+    get = getattr(ax, f"get_{which}ticklabels")
+    table = getattr(_ticklabel_memo, "table", None)
+    if table is None:  # 不在作用域里（restore / 手工调用）：照旧现算
+        return list(get(minor=True)) if minor else list(get())
+    key = (id(ax), which, minor)
+    hit = table.get(key)
+    if hit is not None and hit[0] is ax:
+        return hit[1]
+    labels = list(get(minor=True)) if minor else list(get())
+    table[key] = (ax, labels)
+    return labels
+
+
 def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> list[tuple]:
     """**真的画在图上**的刻度标签 → [(它在 `get_[which]ticklabels()` 里的下标, Text)]。
 
@@ -223,9 +275,8 @@ def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> li
     **放弃过滤退回全量**（宁多勿错删；`test_manifest_geometry` 有版本金丝雀）。
     """
     axis = _axis_of(ax, which)
-    get = getattr(ax, f"get_{which}ticklabels")
     try:
-        raw = list(get(minor=True)) if minor else list(get())
+        raw = _ticklabels(ax, which, minor=minor)
     except (TypeError, AttributeError):  # 该轴不支持 minor 参数
         return []
     entries = list(enumerate(raw))
@@ -315,7 +366,7 @@ class TickLabel:
         """伪元素不进 SVG；前端命中靠 manifest bbox。"""
 
     def live(self):
-        labels = getattr(self.ax, f"get_{self.which}ticklabels")()
+        labels = _ticklabels(self.ax, self.which)
         return labels[self.index] if self.index < len(labels) else None
 
     def get_text(self) -> str:

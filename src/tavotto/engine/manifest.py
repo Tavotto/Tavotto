@@ -90,6 +90,7 @@ from overrides import (
     tick_minor_step,
     tick_minor_visible,
     tick_side_visible,
+    ticklabel_memo,
     to_hex,
 )
 
@@ -3316,6 +3317,17 @@ def _ensure_agg_canvas(fig):
 
 
 def build_manifest(state: FigState, stem: str) -> dict:
+    """一份 manifest。**刻度记忆表只在这里开**（`overrides.ticklabel_memo`）。
+
+    开在这一层而不是 `_build_manifest` 里面，是因为记忆表成立的前提正是这条
+    调用边界：进来先 draw、出去之前不动图。谁把它挪到别处，得先重新证明那个
+    前提在新位置还成立。
+    """
+    with ticklabel_memo():
+        return _build_manifest(state, stem)
+
+
+def _build_manifest(state: FigState, stem: str) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
