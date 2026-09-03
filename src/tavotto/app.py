@@ -5064,6 +5064,11 @@ def api_ai_session(sid):
 def api_ai_revert(sid):
     try:
         return jsonify(engine_ai.revert(sid))
+    except engine_ai.AgentError as exc:
+        # 快照落地后指到项目外——稳定 code 走 `_agent_error`（两份 errors.json
+        # 早就有这条文案）。**必须排在 RuntimeError 之前**：AgentError 是它的
+        # 子类，反过来写的话这条 code 会被压成一句中文 reason。
+        return _agent_error(exc)
     except RuntimeError as exc:
         return jsonify(
             {"error": str(exc), "code": "ai_revert_failed", "params": {"reason": str(exc)}}
