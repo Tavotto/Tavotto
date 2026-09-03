@@ -42,6 +42,7 @@
     4  上报未授权（401/403）：token 不对，或**代理侧**没配 token
     5  上游故障（5xx）：不是这一批的形状问题
     6  结果未知：连接中断/超时，或 200 但形状不对——**不知道落没落**，重跑安全
+    7  被限流（429）：payload 是好的，**等过了 Retry-After 重试有意义**
 
 2026-08-28 到 09-02 连红六天（issue #227）就是没分档的代价：日志上只有
 「上报失败: HTTP 400」，而 400 的真正含义是「线上代理的白名单还是 d2d7187c
@@ -94,6 +95,11 @@ PYPI_HEAL_DAYS = 14
 ACCEPTED = "accepted"
 REJECTED = "rejected"
 UNAUTHORIZED = "unauthorized"
+#: **429 不是「重试无用」。** 它说的是「现在别来，等会儿再来」——把它并进
+#: REJECTED 等于把一次限流变成一次真实的数据丢失（那一天的快照永远没了）。
+#: 分档的精神就是「处方不同的必须分开」：REJECTED 的处方是改 payload / 重新
+#: 部署代理，这一档的处方是**按 Retry-After 等一会儿再跑**。
+RATE_LIMITED = "rate_limited"
 SERVER_ERROR = "server_error"
 #: **「不知道」是独立一档，不许并进相邻取值。** 连接断了、超时、或者回了 200
 #: 但形状不是代理的那个形状——这三种情况下这批快照到底有没有被处理，我们没有
@@ -109,6 +115,7 @@ EXIT_CODES = {
     UNAUTHORIZED: 4,
     SERVER_ERROR: 5,
     UNKNOWN: 6,
+    RATE_LIMITED: 7,
 }
 EXIT_COLLECT_FAILED = 1
 EXIT_MISSING_CONFIG = 2
@@ -476,21 +483,31 @@ def _upstream_note(raw: bytes, token: str) -> str:
     在 schema 层面就让它们进不来。而代价是六天连红只看得到「HTTP 400」。
 
     仍然留三道闸：`TAVOTTO_TELEMETRY_METRICS_URL` 可以被指到任何地方，所以
-    控制字符剥掉、每段截断、最后拿 token 兜底查一遍——只要它出现在任何位置，
-    整句丢弃。
+    控制字符剥掉、每段截断、并且拿 token 查一遍——只要它出现，整句丢弃。
+
+    **次序是这条保证的载体，不是随便排的。** token 检查必须跑在 `_scrub`
+    **之前**，对着**原始响应体**做。反过来（先净化后检查）有一个真实的洞：
+    `_scrub` 会在第 200 个字符处截断，如果 token 正好跨在那个边界上，被截剩的
+    **token 前缀**会留在输出里，而 `token in note` 因为整枚 token 已经不完整
+    而判否——净化器把证据毁掉了一部分，检查于是看不见它。实测：30 字的 token
+    垫在第 190 字之后，`s3cret-met` 这 10 个字照样进了日志，而闸门说「没有
+    token」。所以：**先对原文查，再净化，净化后再兜一次底。**
     """
+    text = raw.decode("utf-8", errors="replace")
+    if token and token in text:
+        # 正常的代理不会这么干（它连收到的 token 都不区分「没带」和「带错了」），
+        # 但这条断言不依赖对面的善意。查的是**没被动过的原文**。
+        return "（响应体里出现了 token，已整段丢弃）"
     try:
-        body = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+        body = json.loads(text)
+    except ValueError:
         return "（响应体不是 JSON）"
     if not isinstance(body, dict):
         return "（响应体不是 JSON 对象）"
     parts = [f"{k}={_scrub(body.get(k))}" for k in ("code", "error", "detail") if body.get(k)]
     note = " ".join(parts) or "（响应体里没有 code/error/detail）"
     if token and token in note:
-        # 正常的代理不会这么干（它连收到的 token 都不区分「没带」和「带错了」），
-        # 但这条断言不依赖对面的善意。
-        return "（响应体里出现了 token，已整段丢弃）"
+        return "（响应体里出现了 token，已整段丢弃）"  # 兜底，不是主闸
     return note
 
 
@@ -557,6 +574,15 @@ def _interpret_ok(status: int, raw: bytes, sent: int, url: str) -> TransmitResul
     )
 
 
+def _header(exc, name: str) -> str:
+    """`HTTPError` 上取一个响应头。取不到就是空串，不炸。"""
+    headers = getattr(exc, "headers", None)
+    try:
+        return headers.get(name) or "" if headers is not None else ""
+    except (AttributeError, TypeError):
+        return ""
+
+
 def _interpret_http_error(exc, token: str, url: str) -> TransmitResult:
     """服务端明确回了一个状态码——**按它是谁的问题分档**。"""
     try:
@@ -574,6 +600,21 @@ def _interpret_http_error(exc, token: str, url: str) -> TransmitResult:
                 "token 不对，或者**代理侧**没配 TAVOTTO_METRICS_TOKEN（没配时这个端点是"
                 "关着的，不是敞开的）。注意这和「本仓库没配 secret」是两件事——"
                 "那种情况根本走不到发请求这一步。"
+            ),
+        )
+    if exc.code == 429:
+        # **可重试的一档。** `Retry-After` 是对面给的等待时长（秒，或 HTTP 日期），
+        # 原样带出来——少了它，读日志的人只能瞎猜等多久。
+        retry_after = _scrub(_header(exc, "Retry-After"), 64) or "（对面没给 Retry-After）"
+        return TransmitResult(
+            RATE_LIMITED,
+            f"上报被限流: HTTP 429 Retry-After={retry_after} {note}",
+            status=exc.code,
+            hint=(
+                "**这一批没丢，只是现在不能送。** 和「被拒」不同：payload 是好的，"
+                "重试有意义。等过了 Retry-After 再跑一次即可"
+                "（snapshot_key 去重让重跑安全）："
+                "gh workflow run telemetry-metrics.yml --ref main -f dry_run=false"
             ),
         )
     if 400 <= exc.code < 500:
@@ -674,6 +715,7 @@ def summarize(events: list[dict]) -> dict:
 _TITLES = {
     REJECTED: "被拒（对面明确不收）",
     UNAUTHORIZED: "未授权（token 不对）",
+    RATE_LIMITED: "被限流（等会儿再来）",
     SERVER_ERROR: "失败（代理侧故障）",
     UNKNOWN: "结果未知（不知道落没落）",
 }

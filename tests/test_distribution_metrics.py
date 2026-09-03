@@ -763,3 +763,67 @@ def test_token_situation_is_a_closed_enumeration():
     assert collector.token_situation("", "someone/Tavotto") == collector.UNCONFIGURED_FORK
     assert collector.token_situation("", "Tavotto/Tavotto") == collector.MISSING_HERE
     assert collector.token_situation("", None) == collector.MISSING_HERE
+
+
+# ---------------------------------------------------------------------------
+# 429 与「净化/检查」的次序（#250 评审两条）
+# ---------------------------------------------------------------------------
+def _http_error_with_headers(code: int, body: bytes, headers: dict):
+    def raiser(*_a, **_kw):
+        raise urllib.error.HTTPError(
+            "https://telemetry.tavotto.com/v1/metrics", code, "boom", headers, io.BytesIO(body)
+        )
+
+    return raiser
+
+
+def test_rate_limiting_is_not_a_permanent_rejection(monkeypatch):
+    """**429 说的是「现在别来」，不是「重试无用」。**
+
+    把它并进 REJECTED，一次限流就变成一次真实的数据丢失——那一天的快照永远
+    没了。分档的精神是「处方不同的必须分开」：REJECTED 要改 payload / 重新
+    部署代理，这一档只要等一会儿再跑。
+    """
+    result = _transmit(
+        monkeypatch,
+        _http_error_with_headers(429, b'{"code":"rate_limited"}', {"Retry-After": "120"}),
+    )
+    assert result.tier == collector.RATE_LIMITED
+    assert result.tier != collector.REJECTED
+    assert result.exit_code == 7 and result.exit_code != collector.EXIT_CODES[collector.REJECTED]
+    assert "Retry-After=120" in result.message, result.message
+    assert "重试有意义" in result.hint
+
+
+def test_rate_limiting_without_a_retry_after_still_says_so(monkeypatch):
+    """对面不给 Retry-After 是常有的事——不许因此静默，也不许假装知道等多久。"""
+    result = _transmit(monkeypatch, _http_error_with_headers(429, b"{}", {}))
+    assert result.tier == collector.RATE_LIMITED
+    assert "没给 Retry-After" in result.message
+
+
+def test_the_token_check_runs_before_the_scrubber_not_after(monkeypatch):
+    """**次序本身就是这条保证。**
+
+    `_scrub` 在第 200 字处截断。token 正好跨在那个边界上时，被截剩的
+    **token 前缀**会留在输出里，而「整枚 token 在不在里面」因为它已经不完整
+    而判否——净化器毁掉了一部分证据，闸门于是看不见它。
+    实测过的泄漏：30 字 token 垫在第 190 字之后，`s3cret-met` 这 10 个字进了
+    日志，而闸门说「没有 token」。所以 token 必须对**原始响应体**查。
+    """
+    padded = json.dumps({"code": "x", "error": "x" * 190 + TOKEN}).encode("utf-8")
+    result = _transmit(monkeypatch, _http_error(400, padded))
+    text = f"{result.message} {result.hint}"
+    assert TOKEN not in text
+    # 连前缀都不许漏：8 个字符已经足够拿去比对/爆破
+    leaked = [TOKEN[:n] for n in range(8, len(TOKEN)) if TOKEN[:n] in text]
+    assert not leaked, f"漏出了 token 前缀：{max(leaked, key=len)!r}"
+    assert "已整段丢弃" in result.message
+
+
+def test_a_token_split_by_control_characters_is_still_caught(monkeypatch):
+    """净化会把控制字符换成空格——那也可能改变 token 的形状，同理要先查原文。"""
+    body = json.dumps({"code": "x", "error": f"prefix {TOKEN} suffix"}).encode("utf-8")
+    result = _transmit(monkeypatch, _http_error(400, body))
+    assert TOKEN not in result.message
+    assert "已整段丢弃" in result.message
