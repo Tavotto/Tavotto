@@ -24,11 +24,11 @@ import type { Page } from '@playwright/test'
  */
 export async function lowContrastNodes(page: Page, root = 'body'): Promise<string[]> {
   // **先等动效落定**（issue #210）：对比度是**稳定态**的属性，淡入淡出中间那一
-  // 帧不是。本仓库的气泡/抽屉走 `animate-fade-in` / `animate-fade-out` 与 WAAPI，
+  // 帧不是。本仓库的气泡/抽屉走 CSS 淡入淡出动画与 WAAPI，
   // 扫描撞进去就会把有效 alpha 量成 0.12、0.42 这种中间值，报出一条下一帧就消失
   // 的假红——两次扫描因此给出不同结论（实测：接入状态那条用例先 focus 轨道按钮，
   // 气泡正在淡出时被量到 `1.27:1（有效 alpha 0.12）`）。
-  // 只等**有限次**的动画：`animate-pulse` 这类 `iterations: Infinity` 的永远不结束。
+  // 只等**有限次**的动画：脉冲类 `iterations: Infinity` 的动画永远不结束。
   await page.evaluate(async () => {
     if (typeof document.getAnimations !== 'function') return
     const finite = document
