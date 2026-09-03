@@ -484,6 +484,7 @@ def _upstream_note(raw: bytes, token: str) -> str:
 
     仍然留三道闸：`TAVOTTO_TELEMETRY_METRICS_URL` 可以被指到任何地方，所以
     控制字符剥掉、每段截断、并且拿 token 查一遍——只要它出现，整句丢弃。
+    三道闸各守一件事，没有一道是另一道的复刻。
 
     **次序是这条保证的载体，不是随便排的。** token 检查必须跑在 `_scrub`
     **之前**，对着**原始响应体**做。反过来（先净化后检查）有一个真实的洞：
@@ -491,7 +492,13 @@ def _upstream_note(raw: bytes, token: str) -> str:
     **token 前缀**会留在输出里，而 `token in note` 因为整枚 token 已经不完整
     而判否——净化器把证据毁掉了一部分，检查于是看不见它。实测：30 字的 token
     垫在第 190 字之后，`s3cret-met` 这 10 个字照样进了日志，而闸门说「没有
-    token」。所以：**先对原文查，再净化，净化后再兜一次底。**
+    token」。所以 token 只对**原文**查。
+
+    **而且只查这一次。** 曾经在净化之后又兜了一遍底——那是同一条保证的第二份
+    实现，而且杀不死：`_scrub` 只做「逐字符替换 + 截断 + 两端 strip」，三样都
+    不会凭空拼出原文里没有的 token，所以原文那道闸严格覆盖它。冗余的保证不会
+    更安全，只会让针对它的变异存活、把空门禁伪装成有门禁——实测把第二道闸改成
+    `if False` 时全部用例照绿（#250 评审时抓到的）。
     """
     text = raw.decode("utf-8", errors="replace")
     if token and token in text:
@@ -505,10 +512,7 @@ def _upstream_note(raw: bytes, token: str) -> str:
     if not isinstance(body, dict):
         return "（响应体不是 JSON 对象）"
     parts = [f"{k}={_scrub(body.get(k))}" for k in ("code", "error", "detail") if body.get(k)]
-    note = " ".join(parts) or "（响应体里没有 code/error/detail）"
-    if token and token in note:
-        return "（响应体里出现了 token，已整段丢弃）"  # 兜底，不是主闸
-    return note
+    return " ".join(parts) or "（响应体里没有 code/error/detail）"
 
 
 def transmit(events: list[dict], url: str, token: str) -> TransmitResult:
