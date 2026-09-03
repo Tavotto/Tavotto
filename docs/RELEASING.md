@@ -162,12 +162,83 @@ pip install --index-url https://test.pypi.org/simple/ \
    git push origin main v0.2.0
    ```
 
+4. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
+
+   ```sh
+   # web/dist-playground/ 不进版本库（.gitignore），发布树必须先自己建一份
+   (cd <发布 SHA 所在的那棵树> && python scripts/build_browser_playground.py)
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm sync-playground -- --dry-run
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm sync-playground
+   TAVOTTO_REPO=<发布 SHA 所在的那棵树> pnpm check-playground
+   ```
+
+   **这两条命令必须显式带 `TAVOTTO_REPO`**，理由见下面一节。
+
 tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
 **发之前确认 CI 是绿的**——`release.yml` 的 `lab_release_gate` 会对候选 wheel
 重跑全量 + slow 用例、升级验收与视觉回归（exact artifact），但那是**发行资格
 验证**，不是替代日常 CI：tag 只应打在 CI 已经全绿、且已合并进 main 的提交上
 （`trust` job 会硬校验 main 可达性，够不着直接拒）。
+
+## 网站 `/try`：同步与复核必须指名读的是哪棵树
+
+浏览器 playground 的产物由本仓库构建（`scripts/build_browser_playground.py`），
+由网站仓库 `Tavotto_website` 分发（`public/try/`，见 ADR 0007）。两个脚本
+`pnpm sync-playground` 与 `pnpm check-playground` 都用 `TAVOTTO_REPO` 定位产品
+仓库，**默认 `../Tavotto`——那是主工作区，而主工作区停在谁的分支上没有任何
+机制保证**。发布 SHA 与主工作区 HEAD 是两个不同的事实。
+
+**复核 playground 必须带 `TAVOTTO_REPO` 指向发布 SHA 所在的那棵树**：
+
+```sh
+# 先自证这棵树就是发布 SHA（trust job 认的那个），别凭印象
+git -C <发布树> rev-parse HEAD
+# 再自证它是干净的——`-dirty` 的产物不对应任何提交，脚本会直接拒绝（见下）
+git -C <发布树> status --porcelain
+
+# web/dist-playground/ 在 .gitignore 里，发布树上没有现成产物，必须先建
+(cd <发布树> && python scripts/build_browser_playground.py)
+
+cd ../Tavotto_website
+TAVOTTO_REPO=<发布树> pnpm sync-playground -- --dry-run   # 先看一眼读的是哪棵树
+TAVOTTO_REPO=<发布树> pnpm sync-playground
+TAVOTTO_REPO=<发布树> pnpm check-playground
+```
+
+`--dry-run` 解析 checkout、按 manifest 校验产物、把两者都报出来，但不动
+`public/try/`——**贵的错误是从一棵没人看过的树上拷贝**。
+
+**注意 `web/dist-playground/` 不进版本库**（`.gitignore:76`，`git ls-files` 为空）。
+按发布 SHA 新建的干净 checkout 上**没有**现成产物：不先在那棵树上跑一次
+`python scripts/build_browser_playground.py`，同步要么因为源目录不存在而失败，
+要么——更糟——让人顺手把 `TAVOTTO_REPO` 指到「碰巧有产物的那棵树」，那正是下面
+这个缺陷本身。
+
+**为什么不能省**：v0.12.0 发版时主工作区停在落后 main 五个 PR 的提交上，
+两条后果都实测发生过（issue #148）：
+
+1. `sync-playground` 把一份来自非发布祖先的陈旧产物拷进了 `public/try/`
+   （指纹 `fcfb77bc`，而发布树建出来是 `53b8a6ab`）——只因为指纹对不上才发现；
+2. 同步纠正之后 `check-playground` 仍报 `playground stale`，因为它是从**主工作区**
+   算的源指纹。照着这条红去「重做同步」，重做又把错版本拷回来——**成环**。
+
+**`-dirty` 与「不可达于发布线」是同一类事实，而且是更糟的那一半**：实测主工作区
+`web/dist-playground` 里那份产物的 `product_commit` 是
+`48fa4ca323de…-dirty`——它连 `48fa4ca` 这个提交都不完全对应，是从一棵有未提交
+改动的树上建的。那份东西**在世界上任何一棵树上都复现不出来**：指纹对不上时，
+你连去哪儿找源头都不知道。所以这条缺陷的性质不是「同步了一个旧版本」，是
+「同步了一个**不对应任何提交**的产物」。**这一条现在是硬失败，不是提醒**：`sync-playground` 拒绝拷贝
+`product_commit` 带 `-dirty`（或读不出 commit）的产物，`check-playground` 把它
+列为第 0 道校验直接 `FAIL`。判据读的是**产物自己的 manifest**，不需要任何本地
+checkout，CI 里同样成立——因为另外两道校验结构上看不见它：产物与它自己的
+manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然都对得上。`--force`
+是刻意的本地预览逃生口，发布流程里不许用。
+
+两个脚本现在开跑前都打印读到的路径、这个路径的来源（`TAVOTTO_REPO` 还是默认值）
+与那棵树的 HEAD，并在该 commit 不可达于 `origin/main` 时告警；`check` 的 `FAIL`
+文本里也带着同样三样。**看到 stale 先读那三行**：先确认路径与 commit 是你要的
+那棵树，再谈重建与重新同步。实现见网站仓库 `scripts/lib/product-repo.mjs`。
 
 ## Release notes
 
