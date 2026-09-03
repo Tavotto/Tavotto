@@ -61,13 +61,6 @@ STATE_PENDING = "pending"
 STATE_CONSUMED = "consumed"
 STATE_CANCELLED = "cancelled"
 
-#: 一次**失败的** attach 记在这个键下，而 descriptor 保持 `pending`。
-#: 它刻意不是第四种 state：attach 被拒（环境正在装依赖、relay 瞬时连不上）
-#: 是**可恢复**的，凭据还该能再用一次；而正在等的 CLI 需要一个"这次没成"的
-#: 信号——没有它，"确认过但 attach 失败"与"用户还没点确认"在磁盘上长得
-#: 一模一样，CLI 只能白等满 `--x-attach-timeout`（issue #190）。
-ATTACH_ERROR = "attach_error"
-
 
 def native_dir() -> str:
     return os.path.join(str(config.data_dir()), "session", "native")
@@ -267,36 +260,26 @@ def consume(native_id: str, now: float | None = None) -> dict:
     return data
 
 
-def mark_consumed(native_id: str, now: float | None = None) -> None:
-    """attach **成功之后**把凭据换成墓碑。**这里不再校验 live。**
+def mark_consumed(native_id: str, now: float | None = None) -> bool:
+    """attach **成功之后**把凭据换成墓碑。**不校验 live，也绝不抛。**回成没成。
 
-    校验会在这里变成一个新缺陷：走到这一行时会话已经连上了，而 descriptor
-    在 attach 那几百毫秒里可能刚好过期——那时抛出去等于"会话正跑着，界面
-    收到一条失败"。一次性由 attach **之前**的 `peek()` 保证，这一步只负责把
-    token 从磁盘上抹掉。
+    不校验：走到这一行时会话已经连上了，而 descriptor 在 attach 那几百毫秒里
+    可能刚好过期——那时抛出去等于"会话正跑着，界面收到一条失败"。一次性由
+    attach **之前**的 `peek()` 保证，这一步只负责把 token 从磁盘上抹掉。
+
+    不抛是同一条理由的下半句：盘满 / 权限没了会让 `_write_private()` 失败，
+    而那时 relay 已认证、会话已注册、CLI 马上要 spawn 用户的 Python。让这个
+    异常冒上去 = 一次**成功的** attach 被报成 500。所以退而求其次去删文件，
+    再不行就交给 `prune_stale()` 与 TTL——留在盘上的那份仍然 0600，而且它
+    对应的会话已经活着，再 attach 一次会被 `native_session_conflict` 挡掉。
+    调用方拿 False 去**记一条日志**，不去改响应。
     """
-    _tombstone(native_id, STATE_CONSUMED, now)
-
-
-def record_attach_failure(native_id: str, code: str, now: float | None = None) -> bool:
-    """记一次失败的 attach；**descriptor 保持 pending**。回有没有记上。
-
-    读者是正在等的 CLI（`runcli._cancel_watch`）。写在 descriptor 上而不是
-    走别的通道，是因为那时两边唯一共享的东西就是这份文件——sidecar 还没有
-    连上 relay（`REGISTRY.attach()` 是先拿环境租约再连的，被拒时一个字节都
-    还没发出去）。
-
-    descriptor 已经取消 / 过期 / 不在了 → 什么都不做：那几种情况下 CLI 早就
-    从 `peek()` 自己那条分支收摊了，再写一份没人读的记录只是把 token 又落一次盘。
-    """
-    t = time.time() if now is None else now
     try:
-        data = _check_live(_load(native_id), now)
-    except RunError:
+        _tombstone(native_id, STATE_CONSUMED, now)
+        return True
+    except (OSError, RunError):
+        discard(native_id)  # 自己会吞 OSError：这里已经是兜底的兜底
         return False
-    data[ATTACH_ERROR] = {"code": str(code or ""), "at": t}
-    _write_private(_path_for(native_id), data)
-    return True
 
 
 def cancel(native_id: str, now: float | None = None) -> None:

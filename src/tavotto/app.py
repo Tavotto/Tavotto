@@ -2979,16 +2979,20 @@ def api_native_approve(native_id: str):
     try:
         session = engine_nativesession.REGISTRY.attach(descriptor)
     except engine_runcodes.RunError as exc:
-        engine_nativehandoff.record_attach_failure(native_id, exc.code)
+        # **凭据留着**（还是 pending）：失败原因回给界面，界面把这一项留在
+        # 队列里让用户再点一次（`nativeSessionStore.approve` 的 catch），而
+        # CLI 那边继续等——等的是一次**可能成功**的重试。用户不想等了就点
+        # 取消，那条路会把 descriptor 墓碑成 cancelled，CLI 当场收摊。
         return _native_error(exc)
     except engine_pool.EnvironmentBusy as exc:
-        engine_nativehandoff.record_attach_failure(native_id, exc.code)
         resp = jsonify({"ok": False, "code": exc.code, "error": str(exc)})
         resp.status_code = 409
         return resp
-    # attach 成了才烧掉凭据——**一次性是对成功的 attach 说的**。这两行的
-    # 顺序就是 #190 的全部内容，别在中间插入任何还会失败的一步。
-    engine_nativehandoff.mark_consumed(native_id)
+    # attach 成了才烧掉凭据——**一次性是对成功的 attach 说的**。
+    # 它**不抛**（见 `mark_consumed` 的 docstring）：走到这里会话已经活着，
+    # 把一次墓碑写失败翻译成 500 就是把成功报成失败。
+    if not engine_nativehandoff.mark_consumed(native_id):
+        LOG.warning("native 交接凭据没能墓碑化（%s）——会话已连上，凭据交给 TTL 清理", native_id)
     if body.get("remember") is True:
         engine_nativeperm.remember(
             meta.get("project_root", ""),

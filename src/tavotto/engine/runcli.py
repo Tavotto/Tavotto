@@ -329,11 +329,16 @@ def _cancel_watch(native_id: str):
     没有这一条的表现是：用户点了"取消"，桌面那边关掉了对话框，而他的终端
     还在"Waiting for Tavotto desktop…"上挂满 5 分钟。
 
-    "确认过、但 attach 被拒"是同一个形状，只是更难看出来：桌面把凭据留着
-    （#190 之后 `consume` 挪到了 attach 成功之后），于是 descriptor 仍然是
-    `pending`——与"用户还没点确认"在磁盘上一模一样。判据因此不能只看
-    state，还要看那条失败记录；没有它，一次在**那一刻就已经知道原因**的失败
-    会被读成"正在路上"，用户白等满 `--x-attach-timeout`（默认 300 秒）。
+    **"attach 被拒"刻意不在收摊之列。** #190 之后凭据要到 attach 成功才烧，
+    所以被拒之后 descriptor 还是 `pending`，界面把那一项留在队列里让用户再点
+    一次（`nativeSessionStore.approve` 的 catch），而 `environment_mutating`
+    这一档本来就会自己消失。这时候 CLI 收摊 = 界面上留着一颗已经按不动的
+    重试按钮——那正是 #190 的病根（可恢复的失败被做成不可恢复）换了个主语。
+
+    等待因此由**用户的决定**来结束，不由这里猜：他点取消 → descriptor 墓碑成
+    cancelled → 下面第一条分支当场收摊（退出码 3）。#190 之前这条路是断的——
+    那时 attach 失败已经把 descriptor 变成 `consumed`，而 `cancel()` 对终态是
+    幂等 no-op，于是取消了也还是等满 300 秒。
     """
     last = [0.0]
 
@@ -343,7 +348,7 @@ def _cancel_watch(native_id: str):
             return
         last[0] = now
         try:
-            data = nativehandoff.peek(native_id)
+            nativehandoff.peek(native_id)
         except RunError as exc:
             if exc.code in (
                 runcodes.NATIVE_ATTACH_CANCELLED,
@@ -355,14 +360,8 @@ def _cancel_watch(native_id: str):
             # `mark_consumed()` 放在 attach 之后）：那说明 relay 这一侧已经
             # 接受并认证了那条连接，继续等就是等自己马上返回。
             return
-        code = (data.get(nativehandoff.ATTACH_ERROR) or {}).get("code")
-        if code:
-            # **不翻译成"取消"**：退出码不同（取消 3、attach 失败 4），
-            # 用户的下一步也不同。码没登记在 `runcodes.MESSAGES` 里时
-            # （envlease 的 `environment_mutating` 就是一个）退回通用的
-            # attach 失败——仍然是当场收摊，只是少一句更准的解释；桌面那侧
-            # 的对话框里有准确的原因，而用户刚点的正是它。
-            raise RunError(code if code in runcodes.MESSAGES else runcodes.NATIVE_ATTACH_FAILED)
+        # 还是 pending：用户还没点，或者点了但 attach 被拒而他可以再点一次。
+        # 两种都继续等（见上面的 docstring）。
 
     return _watch
 

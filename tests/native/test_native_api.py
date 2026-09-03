@@ -230,16 +230,24 @@ def test_a_rejected_attach_leaves_the_credential_usable(client, monkeypatch):
     assert seen == [native_id, native_id], "第二次 approve 没走到 attach，凭据已经被烧了"
 
 
-def test_the_waiting_cli_gets_the_verdict_at_once_instead_of_at_the_timeout(client, monkeypatch):
-    """**量的是"多久拿到结论"，不是"最终报没报错"**——超时那条路上后者也成立。
+def _wait_with_the_cli_watch(relay, native_id, timeout):
+    """真跑一遍 CLI 的等待循环，回 `(RunError, 用了多久)`。"""
+    started = time.monotonic()
+    with pytest.raises(RunError) as exc:
+        relay.wait_for_desktop(timeout, watch=runcli._cancel_watch(native_id))
+    return exc.value, time.monotonic() - started
 
-    这是 #190 真正花掉用户时间的那一半。把 `consume()` 挪到 attach 之后，界面
-    能重试了，但 CLI 侧 `_cancel_watch()` 看到的仍然只是"还是 pending"——与
-    "用户还没点确认"在磁盘上一模一样，于是它继续等，直到 `--x-attach-timeout`
-    （产品默认 300 秒）耗尽。两个消费点，改一个不算修完。
 
-    所以 timeout 给得**远大于**容许的等待：判据要能把"当场收摊"与"等满超时"
-    分开，两者都会抛 `RunError`。
+def test_a_rejected_attach_keeps_the_cli_waiting_so_the_retry_can_land(client, monkeypatch):
+    """**被拒之后 CLI 必须还在**——否则界面上那颗重试按钮已经按不动了。
+
+    `nativeSessionStore.approve()` 的 catch 刻意把失败项**留在队列里**（"悄悄
+    关掉对话框等于让那个终端继续挂着"），而 `environment_mutating` 这一档
+    会自己消失。CLI 这时候收摊，用户点重试拿到的是 `native_handoff_invalid`
+    ——`_run()` 的 finally 已经 `discard()` 掉了那份 descriptor。
+
+    那正是 #190 的病根（**可恢复的失败被做成不可恢复**）换了个主语，所以这条
+    判据钉的是"不收摊"：等待要由超时或用户的决定结束，不由 watch 猜。
     """
     seen: list = []
     monkeypatch.setattr(nativesession.REGISTRY, "attach", _busy_attach(seen))
@@ -251,23 +259,74 @@ def test_the_waiting_cli_gets_the_verdict_at_once_instead_of_at_the_timeout(clie
             attach_token=relay.attach_token,
         )
         assert client.post(f"/api/native/pending/{native_id}/approve").status_code == 409
-        assert seen == [native_id], "assert 的前提没成立：这次 approve 根本没走到 attach"
+        assert seen == [native_id], "前提没成立：这次 approve 根本没走到 attach"
+        # 短 timeout：这里要的是"它一直等到超时"，不是"它等了很久"
+        err, _ = _wait_with_the_cli_watch(relay, native_id, 1.5)
+    finally:
+        relay.close()
+    assert err.code == runcodes.NATIVE_ATTACH_TIMEOUT, (
+        f"attach 被拒之后 CLI 提前收摊了（{err.code}）——界面还留着一颗重试按钮，"
+        "而 descriptor 马上会被 _run() 的 finally 删掉"
+    )
 
-        generous = 30.0  # 远大于下面容许的 5 秒——不然"当场"与"等满"量不出区别
-        started = time.monotonic()
-        with pytest.raises(RunError) as exc:
-            relay.wait_for_desktop(generous, watch=runcli._cancel_watch(native_id))
-        elapsed = time.monotonic() - started
+
+def test_cancelling_after_a_rejected_attach_ends_the_wait_at_once(client, monkeypatch):
+    """**量的是"多久拿到结论"**，不是"最终报没报错"——超时那条路上后者也成立。
+
+    这是 #190 里那五分钟真正的去处，而它是被**顺序**卡住的：老代码 attach 失败
+    时 descriptor 已经是 `consumed` 墓碑，而 `cancel()` 对终态是幂等 no-op
+    ——于是用户点了取消也还是 `consumed`，CLI 读成"attach 正在路上"继续等，
+    直到 `--x-attach-timeout`（产品默认 300 秒）耗尽。
+
+    凭据留到 attach 成功之后再烧，这条路才通：取消真的写得进 cancelled 墓碑，
+    CLI 当场收摊，退出码是"取消"而不是"超时"。所以 timeout 给得**远大于**
+    容许的等待——不然"当场"与"等满"量不出区别。
+    """
+    seen: list = []
+    monkeypatch.setattr(nativesession.REGISTRY, "attach", _busy_attach(seen))
+    relay = nativerelay.NativeRelay()
+    try:
+        native_id = make_descriptor(
+            attach_host=relay.host,
+            attach_port=relay.attach_port,
+            attach_token=relay.attach_token,
+        )
+        assert client.post(f"/api/native/pending/{native_id}/approve").status_code == 409
+        assert seen == [native_id], "前提没成立：这次 approve 根本没走到 attach"
+        assert client.post(f"/api/native/pending/{native_id}/cancel").status_code == 200
+
+        generous = 30.0  # 远大于下面容许的 5 秒
+        err, elapsed = _wait_with_the_cli_watch(relay, native_id, generous)
     finally:
         relay.close()
 
-    assert exc.value.code != runcodes.NATIVE_ATTACH_TIMEOUT, (
-        "CLI 等满了超时才收摊——它把一次已经知道原因的失败读成了『attach 正在路上』"
+    assert err.code == runcodes.NATIVE_ATTACH_CANCELLED, (
+        f"取消之后 CLI 收到的是 {err.code}——它把用户的取消读成了别的东西"
     )
-    assert exc.value.exit_code() == runcodes.EXIT_ATTACH_FAILED, (
-        "attach 失败不是『用户取消』：退出码不同，用户的下一步也不同"
-    )
+    assert err.exit_code() == runcodes.EXIT_CANCELLED
     assert elapsed < 5.0, f"{elapsed:.1f}s 才拿到结论（timeout 给的是 {generous}s）"
+
+
+def test_a_failed_tombstone_write_never_reports_a_live_session_as_a_failure(client, monkeypatch):
+    """墓碑写失败（盘满 / 权限）时，**会话已经活着**——不许报 500。
+
+    走到那一行时 relay 已认证、会话已注册、CLI 马上要 spawn 用户的 Python。
+    把一次写盘失败翻译成"审批失败"，用户看到的是一个正在跑的会话被报成没跑起来。
+    """
+    native_id = make_descriptor()
+    monkeypatch.setattr(
+        nativesession.REGISTRY, "attach", lambda *_a, **_k: _fake_session(native_id)
+    )
+
+    def _no_disk(*_a, **_kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(nativehandoff, "_write_private", _no_disk)
+    monkeypatch.setattr(nativehandoff.os, "unlink", _no_disk)  # 连兜底的删除也失败
+
+    resp = client.post(f"/api/native/pending/{native_id}/approve")
+    assert resp.status_code == 200, "墓碑写失败被报成了 attach 失败"
+    assert json.loads(resp.get_data(as_text=True))["session"]["session_id"]
 
 
 def test_a_successful_attach_still_burns_the_credential(client, monkeypatch):
