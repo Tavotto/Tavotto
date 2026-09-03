@@ -20,13 +20,14 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from . import ai_agents, ai_history, ai_providers, config
+from . import ai_agents, ai_history, ai_providers, atomicio, config
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
@@ -750,14 +751,45 @@ def _load_sidecar(sid: str) -> dict | None:
 
 def revert(sid: str) -> dict:
     """恢复快照（回滚 AI 修改）。watcher 会自动作废渲染会话。
-    进程重启后 SESSIONS 丢失也没关系——从磁盘 sidecar 找回。"""
+    进程重启后 SESSIONS 丢失也没关系——从磁盘 sidecar 找回。
+
+    **写的是用户自己写的源文件，所以这一步必须原子。** 这里原本是
+    `shutil.copy2(snap, script_path)`：它先把用户的 `.py` 用 `"wb"` 打开
+    （= 当场清空），再流式写回去。中途任何一次失败（磁盘满、进程被杀、
+    I/O 错误）留下的是一个**截断的用户脚本**，而好的那一份此刻已经没了——
+    与 R-01 的「另存为直接 `write_text`」是同一个形状，只是发生在回滚这条路上
+    （ADR 0023 §1）。改走 `atomicio.write_bytes()`：先写同目录临时文件、fsync、
+    再 `os.replace` 顶上去，任何一步失败都清掉临时文件而**原文件一个字节不变**。
+    「文档类落盘只有一份实现」是 ADR 0023 的裁决，所以这里不另写一份 tmp+replace。
+
+    两处**刻意**与 `copy2` 不同，都不是疏忽：
+
+    * **不还原 mtime。** `copy2` 会把脚本的 mtime 一并倒回 AI 改之前，而
+      watcher 的判据正是 `(size, mtime_ns)`（ADR 0026 §2a）。倒回一个更旧的
+      时间戳意味着「回滚」这件事有可能对 watcher 完全隐形——恰好是本函数
+      文档第一句承诺会发生的事。落盘时间取「现在」，签名必然与已登记的不同。
+    * **权限位照抄快照**（= AI 改之前那份）。`os.replace` 换上来的是临时文件的
+      inode，它的模式来自 umask，用户脚本上的可执行位/私有位会被悄悄改掉。
+      chmod 放在替换之后是权限窗口最小的可行位置——atomicio 是唯一权威，
+      不给它加一个 mode 参数。失败不影响回滚成立（Windows 上它近乎空操作）。
+    """
     sess = SESSIONS.get(sid) or _load_sidecar(sid)
     if sess is None:
         raise RuntimeError("会话不存在（快照也未找到）")
     snap = Path(sess["snapshot"])
     if not snap.is_file():
         raise RuntimeError("快照文件已丢失，无法回滚")
-    shutil.copy2(snap, sess["script_path"])
+    try:
+        data = snap.read_bytes()  # 先整份读进来：读不出来时用户的脚本还没被碰过
+        mode = stat.S_IMODE(snap.stat().st_mode)
+    except OSError as exc:
+        raise RuntimeError(f"快照读不出来，无法回滚：{exc}") from exc
+    script_path = Path(sess["script_path"])
+    atomicio.write_bytes(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
+    try:
+        os.chmod(script_path, mode)
+    except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
+        LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
     LOG.info("AI 修改已回滚: %s（session %s）", sess["script"], sid)
     if sid in SESSIONS:
         SESSIONS[sid]["status"] = "reverted"
