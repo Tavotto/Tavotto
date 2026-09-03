@@ -208,11 +208,15 @@ test('键盘轮换：bbox 中心不在曲线身上时也走得回来', async ({ 
   const palette = page.getByRole('listbox', { name: '命令' })
   const search = page.getByRole('textbox', { name: '搜索命令' })
   const runCommand = async () => {
+    // 焦点可能停在属性页某个输入框里，那时 useKeyboard 会把 ⌘K 让给原生编辑
+    // （`inEditableTarget`）—— 面板根本不开。先摘掉焦点，别让这条用例偶发红。
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
     await page.keyboard.press('ControlOrMeta+k')
     await expect(search).toBeVisible()
     await search.fill('重叠')
-    await expect(palette.getByRole('option')).toHaveCount(1)
-    await page.keyboard.press('Enter')
+    // 按可达名点那一条，不按「筛出来几条」计数：计数会把「命令暂时不可用」
+    // 与「筛错了」混成同一种红，而且它对渲染时序敏感。
+    await palette.getByRole('option', { name: /重叠/ }).click()
     await expect(search).toBeHidden()
     await page.waitForTimeout(400)
   }
