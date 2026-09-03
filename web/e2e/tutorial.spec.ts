@@ -42,7 +42,28 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
   await expect(coachmark(page)).toContainText('打开一张图')
   await expect(page.locator('[data-onboarding-ring]')).toBeVisible()
   await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
-  await expect(page.locator('[data-element-svg]').first().locator('svg')).toBeVisible({ timeout: 90_000 })
+  // 两条分开判，超时报文才说得出**停在哪一步**（issue #267）：
+  //   第一条红 = 双击根本没进图内编辑（素材→脚本关联迟到时那次进入被丢掉）；
+  //   第二条红 = 进去了，但那一版矢量渲染没回来。
+  // 合成一条时两种都只报 "element(s) not found"，得下载 trace 才分得开——
+  // 而它恰恰是在合并队列里踢 PR 的那一条。
+  //
+  // **两条共用同一个 90 s 截止期。** 顺序执行的两个 timeout 会相加：
+  // 30 s + 90 s 意味着实际截止期变成最多 120 s——数字一个没改，判据却松了
+  // （25 s 进编辑态 + 80 s 渲染在旧断言下是红的，在"两个独立超时"下是绿的）。
+  // 诊断性拆分不该顺带买来 30 秒预算。
+  const deadline = Date.now() + 90_000
+  // **下限 1 而不是 0**：Playwright 把 `timeout: 0` 读成"不设超时"，
+  // 预算耗尽反而变成永不超时——那是本次修复要挡的事情的反面
+  const left = () => Math.max(1, deadline - Date.now())
+  await expect(
+    page.locator('[data-exit-element-edit]'),
+    '双击素材卡之后没有进入图内编辑',
+  ).toBeVisible({ timeout: Math.min(30_000, left()) })
+  await expect(
+    page.locator('[data-element-svg]').first().locator('svg'),
+    '进了图内编辑，但这一版的矢量渲染没回来',
+  ).toBeVisible({ timeout: left() })
 
   // ---- Step 2：选一个文字（高亮环套着图里的标题；点它的中心 = 真实选中） ----
   await expect(coachmark(page)).toContainText('选一个文字')

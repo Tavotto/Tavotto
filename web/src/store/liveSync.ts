@@ -25,6 +25,8 @@ import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { previewSession, resetPreview } from './svgPreviewStore'
 import { useUiStore } from './uiStore'
+import { enterElementEdit } from './actions'
+import { useWorkspaceStore } from './workspace'
 
 /**
  * 同步结果 → 渲染层 / 编辑态 / 提示。
@@ -55,6 +57,31 @@ function applyPanelSync(result: PanelSyncResult): void {
     // ——那是用户的编辑，源关系恢复之后它们还要用。
     if (previewSession()?.panelId === editing) resetPreview()
     ui.setElementPanel(null) // 顺带清 selectedGids 与 cropTarget
+  }
+
+  // 升级方向（issue #267）。降级那一侧一直有人管（上面：源脚本没了就退出
+  // 图内编辑），**升级这一侧从来没有**——`upgraded` 只换来一句提示。于是
+  // 「用户双击时还没关联上」这条路上，他要的图内编辑再也不会到来。
+  //
+  // 只补 `openFastEdit` 明确记下的那一个待办，而且要求**用户此刻什么都没在做**。
+  //
+  // 判据的主语是「补进去会不会破坏用户手上的东西」，不是「他在不在这张图上」。
+  // `enterElementEdit` → `setElementPanel()` 会**清掉 `selectedGids` 与
+  // `cropTargetId`**（uiStore.ts:473）——所以正在裁剪的用户会被当场打断：
+  // 裁剪取消、模式切走，而他根本没要求进图内编辑。`editingTextId` 同理
+  // （正在双击改画布文字）。**这三个字段是 uiStore 里"用户正开着某个模式"的
+  // 全部取值**，不是随手列的白名单：新增第四个模式时这里必须一起加，否则
+  // 迟到的关联又会去踩它。
+  const wsStore = useWorkspaceStore.getState()
+  const pending = wsStore.pendingElementEdit
+  if (pending && result.upgraded.includes(pending)) {
+    wsStore.setPendingElementEdit(null)
+    // 读**此刻**的 uiStore，不是函数开头那份快照：上面的降级分支可能刚改过它
+    const now = useUiStore.getState()
+    const idle = now.elementPanelId == null && now.cropTargetId == null && now.editingTextId == null
+    if (wsStore.activePanelId === pending && idle) {
+      enterElementEdit(pending)
+    }
   }
 
   if (editingLost) {

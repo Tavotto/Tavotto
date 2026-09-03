@@ -6,6 +6,7 @@ import { useAssetStore } from './assetStore'
 import { startAutosave, useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
+import { enterElementEdit } from './actions'
 import {
   addFigureToLayout,
   findFigurePanel,
@@ -16,6 +17,7 @@ import {
   useWorkspaceStore,
 } from './workspace'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
+import { syncLoadedDocument } from './liveSync'
 
 /**
  * 两条工作流共享同一个对象模型（Prompt 09）。这批用例守的是「**没有第二套
@@ -47,7 +49,8 @@ const ws = () => useWorkspaceStore.getState()
 const reset = async () => {
   localStorage.clear()
   useSelectionStore.getState().clear()
-  useUiStore.getState().setElementPanel(null)
+  useUiStore.getState().setElementPanel(null) // 顺带清 selectedGids 与 cropTargetId
+  useUiStore.setState({ editingTextId: null }) // setElementPanel 不清它，会漏到下一条用例
   ws().clear()
   useAssetStore.setState({
     panels: [info('a.pdf'), info('b.pdf')],
@@ -101,6 +104,121 @@ describe('打开一张图 → 快速编辑', () => {
     useUiStore.getState().setTool('arrow')
     openFastEdit('a.pdf')
     expect(useUiStore.getState().tool).toBe('select')
+  })
+})
+
+/**
+ * issue #267：**双击落在「素材→脚本」关联到达之前**。
+ *
+ * 关联是异步来的（后端扫描 / 试运行 → `assets.changed` → `panelSourceSync`
+ * 原地补 `script`）。`openFastEdit` 的"能不能进图内编辑"此前是一次**一次性
+ * 判断**——判完没有人再问第二遍，于是双击早一步的用户永远进不去图内编辑，
+ * 而界面上一切正常（属性页甚至会在关联到达后长出「编辑图内元素」按钮）。
+ *
+ * 这不是"慢"，是**判断丢了且没有恢复路径**：所以它在快机器上永远看不到、
+ * 在慢机器上必然发生，表现为"偶发"。
+ *
+ * 三条一起钉：补进去（正向）、用户已经走开就不补（两个反向）。只钉正向的话，
+ * 一个"关联一到就无条件抢进图内编辑"的实现照样全绿，而那会把界面从已经回到
+ * 排版、或已经打开另一张图的用户手里抢走。
+ */
+describe('源脚本关联迟到（issue #267）', () => {
+  beforeEach(reset)
+
+  /** 素材清单里补上关联，然后走文档同步那条路（不发请求） */
+  const scriptArrives = (fileId: string) => {
+    useAssetStore.setState({
+      byId: { ...useAssetStore.getState().byId, [fileId]: info(fileId, { script: 'late.py' }) },
+    })
+    syncLoadedDocument()
+  }
+
+  it('关联到达时把那次进入补上——用户不必自己再点一次「编辑图内元素」', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    expect(openFastEdit('late.pdf')).toBe('layout_only')
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(ws().pendingElementEdit).toBe(panelOf('late.pdf').id)
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBe(panelOf('late.pdf').id)
+    // 待办只补一次：留着的话下一次关联事件会再抢一回
+    expect(ws().pendingElementEdit).toBeNull()
+  })
+
+  it('回到画布排版就把待办作废（不留着等下一条事件来抢）', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    expect(ws().pendingElementEdit).not.toBeNull()
+
+    returnToLayout()
+
+    expect(ws().pendingElementEdit).toBeNull()
+  })
+
+  /*
+   * 下面两条走的是**绕过 `openFastEdit` 的那两个入口**（`lib/issueFocus.ts`
+   * 就是这么用的：问题面板里点一条问题 → 直接 `enterFastEdit` / 直接
+   * `enterElementEdit`）。必须从这里进，而且第二张图要在**记下待办之前**就
+   * 已经在文档里：`openFastEdit` / `returnToLayout` / `focusLayoutPanel`
+   * （`addFigureToLayout` 走它）都会顺手清掉待办，用它们摆场景的话待办早就
+   * 没了，守卫拆掉也不会红——本轮实测过两次，那样写的反向用例在"无条件
+   * 抢进"的变异下双双存活。
+   */
+
+  /** 让 `other` 先进文档，再把待办记在 `late.pdf` 上 */
+  const setUpOtherThenLatch = (): string => {
+    useAssetStore.setState({
+      byId: { 'late.pdf': info('late.pdf', { script: undefined }), 'a.pdf': info('a.pdf') },
+    })
+    openFastEdit('a.pdf')
+    const other = panelOf('a.pdf').id
+    returnToLayout()
+    expect(openFastEdit('late.pdf')).toBe('layout_only')
+    expect(ws().pendingElementEdit).toBe(panelOf('late.pdf').id)
+    return other
+  }
+
+  it('用户已经在编辑别的图：迟到的关联不把图内编辑换成另一张', () => {
+    const other = setUpOtherThenLatch()
+    enterElementEdit(other) // 画布双击 / 「编辑图内元素」按钮：不经过 openFastEdit
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBe(other)
+  })
+
+  it('用户正在裁剪这张图：迟到的关联不打断他（会清掉 cropTargetId）', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    const id = panelOf('late.pdf').id
+    useUiStore.getState().setCropTarget(id) // 属性页的「裁剪」/ Enter
+
+    scriptArrives('late.pdf')
+
+    // 补进图内编辑会调 setElementPanel()，而它清 cropTargetId + selectedGids
+    expect(useUiStore.getState().cropTargetId).toBe(id)
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+  })
+
+  it('用户正在改画布上的文字：迟到的关联同样不插进来', () => {
+    useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
+    openFastEdit('late.pdf')
+    useUiStore.setState({ editingTextId: 't1' })
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+  })
+
+  it('工作区已经切到别的图：迟到的关联不越过它把用户拉回去', () => {
+    const other = setUpOtherThenLatch()
+    ws().enterFastEdit(other) // issueFocus 的定位路径：不经过 openFastEdit
+
+    scriptArrives('late.pdf')
+
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(ws().activePanelId).toBe(other)
   })
 })
 
