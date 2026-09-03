@@ -24,7 +24,7 @@ import type { ElementGeometry, Manifest, ManifestElement, SpineGeom, SpineSide }
 import { literal } from '@/i18n'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -422,7 +422,12 @@ describe('键盘：命令面板的同一条动作', () => {
   it('几何权威没就位：什么都不动（ADR 0017），由调用方去说「正在同步」', async () => {
     await mount()
     useUiStore.getState().setSelectedGid('axes_1')
-    useRenderStore.getState().clear()
+    // **显示那份还在**（画布照常挂着这张图），只是被标了 stale ⇒ 不再是几何
+    // 权威。命中测试是几何写操作的输入，只认 `exactPanelManifest`——退而求其次
+    // 读显示那份的话这条会绿，所以这里刻意留着显示态而不是清空整个 store。
+    const key = renderKeyOf(livePanel())
+    useRenderStore.getState().patch(key, { stale: true })
+    expect(panelRender(useRenderStore.getState(), livePanel())?.manifest).toBeTruthy()
     expect(cycleOverlapSelection()).toBe(false)
     expect(selected()).toEqual(['axes_1'])
   })
