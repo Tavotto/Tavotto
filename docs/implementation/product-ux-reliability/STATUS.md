@@ -84,7 +84,7 @@
 | R-02 | **非有限数被原样写进磁盘**：`json.dumps` 默认允许 NaN/Infinity，写出的 `{"w": NaN}` 不是合法 JSON，前端表现为「读不出来」并静默退回本机副本 | ✅ 已修（02） | 判据放在序列化边界：`engine/atomicio.py:118` `dumps_json`（`allow_nan=False` → `AtomicWriteError`）；这条例外记在 `engine/documents.py:83` | P1 |
 | R-03 | **版本检查点没有画布身份**：检查点存的是**激活画布**，却按 `documentId`（项目）归档；在画布 B 上产生的检查点，在画布 A 上恢复会把 B 的内容与名字盖到 A 上 | ✅ 已修（03） | `web/src/hooks/useVersionCheckpoints.ts:25,32-35` 现在把 `canvasId: activeCanvasId` 一并存进版本条目 | P1 |
 | R-04 | **`_styles` 被列成一份用户文档**：`GET /api/layouts` 对数据目录 `glob("*.json")`，而样式预设就存在 `LAYOUT_DIR/_styles.json` | ✅ 已修（02） | `app.py:5114-5121` 显式剔掉 Tavotto 自己的文件；旧位置的 `_styles.json` 另有一次性迁移进 store（`app.py:5547`、`engine_profilestore.migrate_legacy_styles`） | P2 |
-| R-05 | **原子写实现散落**：`app.py` 四处（02）与 `discover.write_config`（04）已并入 `engine/atomicio`；`engine/` 里另外**六处**仍是各写各的手写 `tmp + os.replace`——无 fsync、失败不清 tmp、无结构化错误 | 🟡 部分（02 + 04），剩余有 issue | 已并：`app.py:344/5154/5338/5412`、`discover.py:961`。未并六处：`engine/config.py:181`、`runspec.py:421`、`runtimeasset.py:135`、`locate.py:295`、`session_client.py:61`、`nativehandoff.py:103` → **#241**。（原文「散落 9 处以上」把已并的 `app.py` 那批也算在内） | P2 |
+| R-05 | **原子写实现散落**：`app.py` 四处（02）与 `discover.write_config`（04）已并入 `engine/atomicio`；`engine/` 里另外**六处**仍各写各的 `tmp + os.replace`，而且**六份行为互不相同**——这正是 R-05 的要点：它们不是重复代码，是同一个问题的六个不同答案 | 🟡 部分（02 + 04），剩余有 issue | 已并：`app.py:344/5154/5338/5412`、`discover.py:961`。未并六处**逐个实核**（`98a866ca`，三项依次为「文件 fsync / 失败清 tmp / 结构化错误」）：`config.py:174-182` ❌❌❌；`runspec.py:410-425` **✅ fsync** ❌❌；`runtimeasset.py:132-136` ❌❌❌；`locate.py:276-299` ❌❌❌；`session_client.py:59-70` ❌ **✅ 清 tmp（仅 `OSError`，`json.dump` 抛 `TypeError` 或 Ctrl+C 时 tmp 仍留下）** ❌；`nativehandoff.py:99-113` **✅ fsync** **✅ 清 tmp（`BaseException`）** ❌。**六处共同缺的只有两件**：无一抛 `AtomicWriteError`（`app.py:682` 的 errorhandler 接不住），以及**无一做目录 fsync**（atomicio 六步序列的第 5 步）→ **#241**。（原文「散落 9 处以上」把已并的 `app.py` 那批也算在内；原文「无一做 fsync、无一清 tmp」**是错的**，逐个核过之后改成上面这份） | P2 |
 | R-06 | **没有显式的保存状态机**：`saving` / `save_error` / `conflict` / `recovery_available` 都不是文档状态（错误只是一个 `window` 事件，刷新即丢） | ✅ 已修（03） | `web/src/store/documentStore.ts:838` `SaveState` 六态闭集 + `:840` 卡住原因；恢复副本是**单独一根轴**（`:856`），没有塞进同一个枚举；状态图在 `:826`；用例 `web/src/store/saveStateMachine.test.ts` | P1 |
 | R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | ❌ 未修（有 issue） | `app.py:124` `LAYOUT_DIR = DATA_ROOT/"layouts"` → `app.py:5161` `AUTOSAVE_DIR` → `app.py:5168`；`engine/documents.py:38`。同一结构后果见下方场景 D 的备注 → **#243**。（原记的 `app.py:4206` 行号已过时） | P2 |
 | R-08 | **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | ✅ 已修（03） | `app.py:5318-5327` 用 `engine_atomicio.content_revision` 比基线，不一致回 409 `external_change`；判据与写入在**同一把锁**里（`app.py:5316`）；修订号经 `X-Tavotto-Revision` 出网（`app.py:5214`） | P1 |
@@ -652,7 +652,7 @@ BLOCKED — 不建议发布
 | --- | --- |
 | Gate 1–5 全部通过 | ✅（01–22 各自的结果表 + 本轮审计未发现空门禁） |
 | P0 为 0 | ✅ |
-| P1 为 0 或有批准的例外 | ✅ 本分支；❌ main 上 #225 / #226 |
+| P1 为 0 或有批准的例外 | ❌ **未满足**：main 上 #225 / #226，**本分支的全量里还有 #240**（`test_ctrl_c…`，P1 门禁空转，性质未定）。#240 不是本分支引入的，但要让「本分支 P1 = 0」成立，得有一条**批准的例外**——目前没有，所以它计入 |
 | 全量自动化真实通过 | ⚠️ **不是绿的**：Session 23 终审两次全量都是 `1 failed`（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`，见上方 Session 23 结果表）。这一格在 #240 定性并处置之前**不算通过** |
 | 关键 E2E 通过 | ✅ 见上方 Session 23 结果表：Playwright 三个 project 全量 125 passed / 1 skipped / 0 failed，改动前 2 红的流程 B / D 已绿 |
 | 文档 migration / 保存 / recovery | ✅（Gate 1 用例 + 本轮 round-trip / 未来 schema 拒绝） |
