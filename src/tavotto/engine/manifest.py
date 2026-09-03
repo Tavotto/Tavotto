@@ -65,7 +65,6 @@ from overrides import (
     colorbar_mapping_is_live,
     colorbar_maps,
     drawn_tick_label_entries,
-    ensure_pinnable_layout_engine,
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
@@ -457,12 +456,6 @@ def sync_tick_elements(state: FigState) -> None:
 
 def instrument(state: FigState) -> None:
     fig = state.fig
-    # **接管布局引擎必须发生在这里，热态与重放同一时刻**（issue #162）。
-    # 持久 tight 引擎会把 `set_position` 算回去；换上 `PinnedTightLayoutEngine`
-    # 之后被 override 过的子图钉得住、其余照旧自动排版。pin 表为空时它与原生
-    # tight 逐字节相同（实测三版），所以对没被编辑过的图是零影响。
-    # 只在一侧换就等于两侧跑的是两套布局——「所见 == 所写 == 重放」当场破掉。
-    ensure_pinnable_layout_engine(fig)
     state.elements.clear()
     state.index.clear()
 
@@ -2646,8 +2639,8 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
       （inset / secondary）的父级 `_axes_locator` 每帧重算；寄生轴
       （`host_subplot().twinx()`）被宿主的 `draw()` 每帧按宿主 rect 重置（#217）。
       持久 `TightLayoutEngine` 曾经是第三个来源（#140），issue #162 之后不再是
-      ——`instrument()` 会把它换成 `overrides.PinnedTightLayoutEngine`，落过
-      position 的子图钉得住。
+      ——落 position 时 `overrides._set_axes_position` 会把它换成
+      `overrides.PinnedTightLayoutEngine`，那个子图从此钉得住。
     * `visible_locked` —— 寄生轴独有：宿主代画它的孩子时**不看**它自己的
       visible，`set_visible(False)` 在画面上一个像素都不动（#217）。
     * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：

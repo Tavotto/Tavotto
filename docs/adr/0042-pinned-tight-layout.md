@@ -30,8 +30,8 @@
 
 ## 决定
 
-`overrides.PinnedTightLayoutEngine`——`TightLayoutEngine` 的子类，
-`manifest.instrument()` 无条件把持久 tight 引擎换成它。它每次 `execute()` 做三件事：
+`overrides.PinnedTightLayoutEngine`——`TightLayoutEngine` 的子类。落第一条
+`axes.position` override 时把持久 tight 引擎换成它。它每次 `execute()` 做三件事：
 
 1. 把**被 override 过的**轴放回 `SubplotSpec` 该给它的格子；
 2. 让 `TightLayoutEngine.execute()` 照常算它自己那份；
@@ -71,17 +71,22 @@
 其它元素的自动排版一切照旧。撤销那条 override 之后，它立刻回到自动排版
 （`unpin` 是 `_RESTORE` 的一部分，实测逐位回到「从没被 override 过」的位置）。
 
-### 两个消费点，一份实现
+### 只有一个安装点，而它是热态与重放共用的那条路
 
-`ensure_pinnable_layout_engine(fig)` 只有两个调用点，而热态与重放**都会走到它们**：
+「解引擎这一步必须同时发生在热态与重放两侧」（issue #162 点名的约束）落地的办法
+**不是两边各调一次，而是只有一个调用点**：`overrides._set_axes_position`。两侧都在
+`overrides.apply()` 里、在同一个规范顺序档位上、在这张图的第一条 position override
+落下的那一刻走到它——**同一条代码路径，没有第二份需要对齐的实现**。旧文档与直接调
+API / MCP 的来路也一样走它。
 
-* `manifest.instrument()`——三个入口（`figsession` / `browser` / `bridge_runner`）
-  都是 `FigState` + `instrument`；必须在这里换，因为「position 能不能编辑」是 manifest
-  当场就要回答的问题；
-* `_set_axes_position`——**第二个消费点**，挡的是没走过 instrument 的来路
-  （1.0 之前存下的旧文档、直接调 API / MCP 的调用）。
+`manifest.instrument()` 里原本也调过一次（想在建 manifest 之前就换掉）。变异反证证明
+那一次**杀不死**：删掉它整套用例全绿，因为 setter 已经覆盖同一件事。同一条保证实现两遍，
+坏掉一份另一份会替它兜住——两条变异一起存活。删掉之后 setter 那条变异当场变红。
+同一轮里还抓到一对同构的冗余：`ensure_pinnable_layout_engine` 的「已经换过就早退」与
+`figure_layout_engine_eats_position` 里「排除自己的子类」也是同一条保证的两份实现，
+收敛成后者一份。
 
-无条件换是安全的：pin 表为空时它与原生 `TightLayoutEngine` **逐字节相同**（实测像素与
+换上去是无条件的：pin 表为空时它与原生 `TightLayoutEngine` **逐字节相同**（实测像素与
 位置），所以从没被编辑过的图零影响。
 
 ### `layout_engine_tight` 这条 reason 连同 i18n 文案一并删除

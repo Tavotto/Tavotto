@@ -2405,13 +2405,15 @@ def ensure_pinnable_layout_engine(fig):
 
     **热态与重放必须在同一时刻做这一步**，否则「所见 == 所写 == 重开后重放出来
     的」当场破掉：换引擎会改变没被 pin 的轴的落位收敛过程，只在一侧做就等于两侧
-    跑的是两套布局。所以调用点只有两个，而两侧都会走到它们：
+    跑的是两套布局。做到这一点的办法不是「两边各调一次」，而是**只有一个调用点**
+    ——`_set_axes_position`。它是热态与重放**共用的同一条代码路径**：两侧都在
+    `overrides.apply()` 里、在同一个规范顺序档位上、在这张图的第一条 position
+    override 落下的那一刻走到它。
 
-    * `manifest.instrument()`——热态与重放都从这里开始（`figsession` /
-      `browser` / `bridge_runner` 三个入口都是 `FigState` + `instrument`），
-      而且必须在这里换，因为「position 能不能编辑」是 manifest 当场就要回答的；
-    * `_set_axes_position`——**第二个消费点**，挡的是没走 instrument 的来路
-      （旧文档、直接调 API / MCP）。
+    曾经在 `manifest.instrument()` 里也调过一次（想让 manifest 建好之前就换掉）。
+    变异反证证明那一次是**杀不死的**：把它删掉，整套用例全绿——因为 setter 这条
+    路已经覆盖了同一件事。同一条保证实现两遍，坏掉一份另一份会替它兜住，于是两条
+    变异一起存活。删掉之后 setter 那条变异当场变红。
 
     换上去是无条件的：pin 表为空时它与原生 `TightLayoutEngine` 逐字节相同
     （实测），所以没被编辑过的图不受任何影响。

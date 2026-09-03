@@ -235,9 +235,9 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   修复（从写回 PDF 的文字层反推真实位置，输出另存 + POST 成布局版本）。
 - **持久 tight 布局下的子图位置（ADR 0042，issue #162）**：
   `layout="tight"` / `tight_layout=True` 会挂一个每次绘制都重算落位的
-  `TightLayoutEngine`。`manifest.instrument()` 无条件把它换成
+  `TightLayoutEngine`。落第一条 `axes.position` 时 `_set_axes_position` 把它换成
   `overrides.PinnedTightLayoutEngine`：**被 override 过的轴钉住，其余照旧自动
-  排版**。`execute()` 的顺序是「先把被 pin 的轴放回 gridspec 格子 → 让 tight
+  排版**。**安装点只有这一个**（热态与重放共用的同一条路，不是两边各调一次）。`execute()` 的顺序是「先把被 pin 的轴放回 gridspec 格子 → 让 tight
   照常算 → 再盖回 pin」——**第一步不能省**：`get_tight_layout_figure` 拿
   gridspec 格子当 ax_bbox、拿当前 tight bbox 算边距，被 pin 的轴离开格子之后
   这个差就不再是「装饰物探出去多少」，实测 10 次绘制不收敛、且热态与重放收敛到
