@@ -1587,3 +1587,134 @@ def test_release_yml_wires_the_blocker_gate():
     assert "\n        if:" not in step, (
         "blocker 门禁被 if 限定到了某一条触发路径——tag push 会无声绕过它"
     )
+
+
+# ---------------------------------------------------------------- 字体包清单
+# `bootstrap_lab_runner.sh` 的 `APT_PACKAGES` ↔ `docs/ci/self-hosted-runner.md`
+# 的工具链表。两份说的是同一件事——**这台机器上装了什么**——而它们各自会被
+# 不同的理由改动（脚本因为「重建时要装上」，文档因为「机器现在有什么」）。
+# issue #229 就是这条缝：字体在机器上手工装好了，脚本没补，按脚本重建会复发。
+#
+# 字体缺失**没有任何一条信息指向「机器少装了东西」**：matplotlib 找不到
+# `DejaVuSans-Oblique.ttf` 时不 warn，`style=italic` 静默退回 regular，画出来
+# 与 regular 逐字节相同，红的是渲染用例。所以这条缝只能靠判据看住。
+
+BOOTSTRAP = CI_DIR / "bootstrap_lab_runner.sh"
+RUNNER_DOC = CI_DIR.parents[1] / "docs" / "ci" / "self-hosted-runner.md"
+
+
+def _font_packages_in_script() -> set[str]:
+    """`APT_PACKAGES` 数组里的 `fonts-*` 包名。
+
+    **先去注释再取词**：注释里也会出现包名（`fonts-dejavu-core` 是「为什么
+    要 extra」的一部分，恰恰是**不装**的那个），连注释一起 grep 会把它读成
+    要装的包，判据于是永远对不上。
+    """
+    src = BOOTSTRAP.read_text(encoding="utf-8")
+    block = src.split("APT_PACKAGES=(", 1)[1].split("\n)", 1)[0]
+    return {
+        word
+        for line in block.splitlines()
+        for word in line.split("#", 1)[0].split()
+        if word.startswith("fonts-")
+    }
+
+
+def _font_packages_in_doc() -> set[str]:
+    """工具链表第一列里的 `fonts-*` 包名。"""
+    src = RUNNER_DOC.read_text(encoding="utf-8")
+    table = src.split("## 4. 工具链", 1)[1].split("\n## ", 1)[0]
+    return {
+        first
+        for line in table.splitlines()
+        if line.startswith("|") and (first := line.split("|")[1].strip()).startswith("fonts-")
+    }
+
+
+def test_the_font_packages_are_one_list_on_both_sides():
+    """脚本装的字体包与文档那张表必须逐个对上（issue #229）。"""
+    script, doc = _font_packages_in_script(), _font_packages_in_doc()
+    # 两侧同时读成空集也是「相等」——那种绿是解析坏了，不是清单对上了。
+    assert script, "没从 APT_PACKAGES 里读到任何 fonts-* 包：解析坏了，下面那条断言恒真"
+    assert doc, "没从工具链表里读到任何 fonts-* 包：解析坏了，下面那条断言恒真"
+    assert script == doc, (
+        f"字体包清单两侧不一致：脚本装了 {sorted(script - doc)} 而文档没写，"
+        f"文档写了 {sorted(doc - script)} 而脚本不装。"
+        "两份都是「这台机器上有什么」，漂了就会在下一次重建时少装一个包。"
+    )
+
+
+# ---------------------------------------------------------------- 字体体检
+# `lab_preflight.check_fonts()`。执行位置查过了：`_lab-qualification.yml` 的
+# 「开跑前体检」是 checkout 之后的第一步、**没有 if**，抽查 6 次有结论的
+# lab-ci run（最近一次 2026-09-03），那一步的 conclusion 都是 success ——
+# 它是真的每轮都跑，不是「声明了从没执行过」。
+#
+# 判据的主语要说死：它量的是**这台机器上有没有那张脸**，不是「italic 有没有
+# 退回 regular」。所以下面第三条用例钉的是**失败信息本身**——判据说的话不许
+# 比它量的东西强。
+
+
+def _fc(monkeypatch, listing: str | None):
+    """把 fc-list 换成给定输出；`None` 表示这台机器上没有 fc-list。
+
+    输出形状取自本机真跑的 `fc-list : file`（每行 `<路径>: `），不是凭空捏的
+    ——捏出来的形状会产生假红，而假红比假绿隐蔽。
+    """
+    import subprocess as sp
+
+    import lab_preflight as PF
+
+    monkeypatch.setattr(
+        PF.shutil, "which", lambda exe: None if listing is None else "/usr/bin/fc-list"
+    )
+    monkeypatch.setattr(
+        PF.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a[0], 0, listing or "", "")
+    )
+    return PF
+
+
+def test_preflight_blocks_when_the_oblique_face_is_missing(monkeypatch):
+    """缺那张脸 = 阻断（issue #229：脚本没补包，重建就会复发）。"""
+    PF = _fc(monkeypatch, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf: \n")
+    (check,) = PF.check_fonts()
+    assert not check.ok and not check.warn, "缺字体必须阻断，不是警告"
+    assert "fonts-dejavu-extra" in check.remedy
+    # 判据必须进控制流：没挂进 run_all 的体检项一次都不会执行。
+    assert "check_fonts" in PF.run_all.__code__.co_names, "check_fonts 没挂进 run_all"
+
+
+def test_preflight_passes_when_the_oblique_face_is_installed(monkeypatch):
+    """装上了就得放行——否则这条判据在健康的机器上是一堵墙。"""
+    PF = _fc(
+        monkeypatch,
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf: \n"
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf: \n",
+    )
+    (check,) = PF.check_fonts()
+    assert check.ok, check.detail
+    assert check.detail.endswith("DejaVuSans-Oblique.ttf")
+
+
+def test_preflight_treats_unmeasurable_as_its_own_answer(monkeypatch):
+    """没有 fc-list 是第三档：记录但不阻断。「量不到」不是「不在」。"""
+    PF = _fc(monkeypatch, None)
+    (check,) = PF.check_fonts()
+    assert not check.ok and check.warn, "量不到时既不能判通过，也不能阻断"
+
+
+def test_the_font_check_does_not_claim_more_than_it_measures(monkeypatch):
+    """失败信息本身就是一条断言，它说的话必须和判据量的东西一致。
+
+    这条判据量的是**文件在不在**；它证明不了「italic 没退回 regular」——那取决于
+    跑图的解释器解析到哪一份 DejaVu（matplotlib 自带的 mpl-data 里也有一张
+    Oblique）。措辞一旦说过了头，下一个人会拿它当那一维已经被看住的证据。
+    """
+    PF = _fc(monkeypatch, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf: \n")
+    assert "不证明" in (PF.check_fonts.__doc__ or ""), "docstring 没写死它证明不了什么"
+    for check in (*PF.check_fonts(), *_fc(monkeypatch, None).check_fonts()):
+        said = check.name + check.detail + check.remedy
+        assert "退回" not in said and "回退" not in said, (
+            f"「{check.name}」的措辞里出现了「退回/回退」——那是它量不到的那一维，"
+            "不许写进判据说出口的话"
+        )

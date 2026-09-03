@@ -167,6 +167,68 @@ def check_toolchain(mode: str) -> list[Check]:
     return checks
 
 
+#: 这台机器必须自带的字体脸。**只有 DejaVu 的斜体这一张**：它不在
+#: `fonts-dejavu-core` 里（core 只有 regular 与 bold），而 Ubuntu 的基础系统
+#: 只装 core —— issue #229 就是这么来的。
+REQUIRED_FONT_FACE = "DejaVuSans-Oblique.ttf"
+
+
+def check_fonts() -> list[Check]:
+    """这台机器上有没有 `DejaVuSans-Oblique.ttf`。
+
+    **它证明的是「包装上了 / 这台机器上有这张脸」，不证明「italic 没有退回
+    regular」。** 后者取决于跑图的那个解释器最终解析到哪一份 DejaVu：
+    matplotlib 自己的 `mpl-data` 里也带着一张 Oblique，实测（mpl 3.10.8）
+    `findfont(style=italic)` 选的是它而不是系统那张——style 不匹配罚 1.0，
+    而目录顺序根本不参与打分。那一环还没在真机上定性。
+
+    所以失败信息只说得出「机器缺了配置清单里的字体」这一句。**判据说的话
+    不许比它量的东西强**：写成「italic 会退回 regular」就是拿文件存在性当
+    另一个维度的代理，量对了主语、用错了尺子。
+
+    量不到是**独立的第三档**（`ok=False, warn=True`，记录但不阻断）：没有
+    `fc-list` 时我们不知道那张脸在不在，而「不知道」不是「不在」。
+    """
+    name = f"字体 {REQUIRED_FONT_FACE}"
+    fc = shutil.which("fc-list")
+    if not fc:
+        return [
+            Check(
+                name,
+                False,
+                "没有 fc-list，量不了这一项",
+                warn=True,
+                remedy="装 fontconfig 才查得了字体。**「量不到」不等于「不在」**，"
+                "所以这一项只警告不阻断",
+            )
+        ]
+    try:
+        out = subprocess.run(
+            [fc, ":", "file"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 环境相关
+        return [
+            Check(name, False, f"fc-list 跑不起来：{exc}", warn=True, remedy="同上：量不到 ≠ 不在")
+        ]
+    hit = [ln.split(":", 1)[0].strip() for ln in out.splitlines() if REQUIRED_FONT_FACE in ln]
+    return [
+        Check(
+            name,
+            bool(hit),
+            hit[0] if hit else "fc-list 列不出这张脸",
+            remedy="sudo apt-get install -y fonts-dejavu-extra；"
+            "装完**必须**清 matplotlib 的字体缓存（rm -rf ~/.cache/matplotlib）"
+            "——它只按自己的格式版本号判失效，不看字体目录变没变。"
+            "见 docs/ci/self-hosted-runner.md 的工具链表",
+        )
+    ]
+
+
 def check_environment() -> list[Check]:
     """locale / 时区 / FD 上限。这三样错了不会崩，只会让结果变得不可复现。"""
     checks: list[Check] = []
@@ -404,6 +466,7 @@ def run_all(mode: str, reap: bool = False) -> list[Check]:
     checks += check_hardware()
     checks += check_state_root(mode)
     checks += check_toolchain(mode)
+    checks += check_fonts()
     checks += check_environment()
     checks += check_stale_processes(reap=reap)
     checks += check_stale_locks()
