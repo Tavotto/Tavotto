@@ -149,9 +149,10 @@ def test_timeline_stops_growing_at_the_byte_budget(client, monkeypatch):
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 4000)
     for i in range(40):
         _create(client, name=f"v{i}")
-        assert len(_timeline_bytes()) <= 4000 + len(m.engine_atomicio.dumps_json({"id": "x"})), (
-            f"第 {i} 次追加之后文件超出了预算"
-        )
+        # 上限守的是**文件**的字节数：外壳与分隔符也算，所以这里没有任何宽限项。
+        # （第一版给了个 `len(dumps_json({"id": "x"}))` 的宽限，那是拿一个与
+        #  外壳无关的量当余量——它在整模块跑的时候恰好成立，单跑这一条就红。）
+        assert len(_timeline_bytes()) <= 4000, f"第 {i} 次追加之后文件超出了预算"
     names = [v["name"] for v in client.get("/api/versions/d1").get_json()["versions"]]
     assert names[-1] == "v39", "最新的那条没留住"
     assert "v0" not in names, "预算没咬到任何一条（这条判据量不到东西）"

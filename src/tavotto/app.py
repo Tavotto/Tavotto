@@ -5598,18 +5598,21 @@ def _save_versions(doc_id: str, versions: list[dict]) -> None:
     **至少留一条**：单条就超预算时仍然留下最新那条，否则
     `api_versions_create` 会交回一个磁盘上根本不存在的版本。
     """
+    head, sep, tail = b'{"versions": [', b", ", b"]}"
     chunks: list[bytes] = []
-    total = 0
+    # **算的是文件的字节数，不是条目的字节数。** 外壳与分隔符也占地方；不把它们
+    # 记进来的话，上限守的就是一个比文件小一点的量，而"小一点"随条数增长
+    # （每多一条多两个字节）——判据的主语与常量的说明会悄悄地对不上。
+    total = len(head) + len(tail)
     for v in reversed(versions):
         blob = engine_atomicio.dumps_json(v)
-        if chunks and total + len(blob) > VERSION_KEEP_BYTES:
+        cost = len(blob) + (len(sep) if chunks else 0)
+        if chunks and total + cost > VERSION_KEEP_BYTES:
             break
         chunks.append(blob)
-        total += len(blob)
+        total += cost
     chunks.reverse()
-    engine_atomicio.write_bytes(
-        _versions_path(doc_id), b'{"versions": [' + b", ".join(chunks) + b"]}"
-    )
+    engine_atomicio.write_bytes(_versions_path(doc_id), head + sep.join(chunks) + tail)
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
