@@ -303,14 +303,22 @@ def sweep_stale_tmp_dirs(export_dir: Path) -> int:
 # -------------------------------- 生命周期 -----------------------------------
 
 
-def prepare(spec: dict, export_dir: Path) -> ExportJob:
+def prepare(
+    spec: dict,
+    export_dir: Path,
+    *,
+    allowed_formats: tuple[str, ...] = exportreq.FORMATS,
+) -> ExportJob:
     """规范化 + 登记。**不碰磁盘、不出文件**。
 
     校验失败抛 `ExportRequestError`——请求不合法这件事必须在建作业之前说清楚，
     否则界面会拿到一个 job_id 然后立刻收到它失败了，用户看到的是"导出坏了"
     而不是"这个文件名不能用"。
+
+    `allowed_formats` 原样交给 `exportreq.normalize()`：画布合成认两种，引擎
+    直接序列化那条路多认一个 svg（见 `exportreq.ENGINE_FORMATS`）。
     """
-    request = exportreq.normalize(spec)
+    request = exportreq.normalize(spec, allowed_formats=allowed_formats)
     with _LOCK:
         _sweep()
         job = ExportJob(id=uuid.uuid4().hex[:16], request=request, export_dir=Path(export_dir))
@@ -399,13 +407,20 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
         # 旧契约：`<stem>_<MMDD_HHMMSS>.<ext>`。时间戳让它天生撞不了车，
         # 所以老标签页与 CI 脚本从来不需要覆盖策略，行为一个字节不变。
         ts = time.strftime("%m%d_%H%M%S")
-        return {
-            k: (
-                f"{req.filename}_{ts}{LEGACY_REPORT_SUFFIX}"
-                if k == REPORT_KEY
-                else f"{req.filename}_{ts}.{k}"
+        base = f"{req.filename}_{ts}"
+        # **判据落在真正要创建的那个名字上。** 新契约在 `normalize()` 里查过
+        # `filename`，旧契约查不了：`legacy_stem()` 只把非法字符折成下划线，
+        # 它管不了长度，而这里还要再接 12 个字符的时间戳——一个 115 字的
+        # stem 到这一步变成 127 字，超过 `FILENAME_MAX`，而拷到 Windows 上
+        # 这个文件根本创建不出来。查 `req.filename` 而不查 `base`，就是在量
+        # 另一个东西（同一条纪律：判据的主语得是磁盘上那个名字）。
+        bad = exportreq.check_filename(base)
+        if bad is not None:
+            raise exportreq.ExportRequestError(
+                "bad_filename", f"文件名不合法（{bad}）", {"reason": bad}
             )
-            for k in keys
+        return {
+            k: (f"{base}{LEGACY_REPORT_SUFFIX}" if k == REPORT_KEY else f"{base}.{k}") for k in keys
         }
 
     batch: set[str] = set()

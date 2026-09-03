@@ -34,6 +34,8 @@ from urllib.parse import quote
 
 from tavotto.engine import (
     config as engine_config,
+    exportjob as engine_exportjob,
+    exportreq as engine_exportreq,
     handoff as engine_handoff,
     patchspec,
     pool as engine_pool,
@@ -63,8 +65,10 @@ _ROOT_AUTHORITY = RootAuthority(_PLUGIN_DIR)
 #: 会话上限：一个 Codex 会话同时端着几十张图没有意义，而每个 worker 都是一个
 #: 常驻 Python 进程（几百 MB）。超了按最久未用淘汰。
 MAX_SESSIONS = 8
-#: 导出格式白名单。svg 走 matplotlib 自己的序列化，与 PDF 同源。
-EXPORT_FORMATS = ("pdf", "png", "svg")
+#: 导出格式白名单。**取自唯一那份枚举**（`engine/exportreq.ENGINE_FORMATS`）：
+#: 引擎直接序列化这条路比画布合成多认一个 svg，而"认哪几种"这件事只该有一处
+#: 说了算——两处各写一份，迟早有一处漏掉新格式而另一处放行。
+EXPORT_FORMATS = engine_exportreq.ENGINE_FORMATS
 
 
 class BridgeError(RuntimeError):
@@ -960,7 +964,21 @@ def export(
     explicit_confirm: bool = False,
     proof: bool = True,
 ) -> dict:
-    """先预检，再导出。**有阻断项且没有明确确认时一张图都不出。**"""
+    """先预检，再导出。**有阻断项且没有明确确认时一张图都不出。**
+
+    「这次导出要什么」与「怎么把它变成磁盘上的文件」**都不在这里实现**
+    （issue #224）：请求走 `engine/exportreq.py` 的 `ExportRequest`（文件名
+    清洗、扩展名、留档后缀、格式枚举、PPI 语义只有那一份），落盘走
+    `engine/exportjob.py` 的作业生命周期（临时目录 → 全部产出完成 → 逐个
+    原子 `os.replace`；一个格式挂了进 `partial`，而不是把半套文件留在最终
+    目录里；取消与残留临时目录由同一个模块清）。ADR 0031 里「codex-plugin
+    一行不用改」说的是**回执形状**，不是给第二份实现的豁免。
+
+    回执形状原样保留：`files[]`（含 `path`）/ `export_dir` / `proof_path` /
+    `warnings` / `patch_hash` / `profile` / `preflight` / `forced` /
+    `acknowledged`。新增的只有诚实所需的两项——作业终局 `status`，以及失败
+    那一项自己带的 `error`。
+    """
     session = get_session(session_id)
     fmts = [f.lower().strip() for f in (formats or []) if str(f).strip()]
     bad = [f for f in fmts if f not in EXPORT_FORMATS]
@@ -1003,44 +1021,138 @@ def export(
         # 传同一个路径反而会被拒。边界只有一条，默认值也得走它。
         target_dir = Path(check_scope(str(engine_config.project_export_dir(session.project))))
     target_dir.mkdir(parents=True, exist_ok=True)
-    name = _safe_stem(stem or session.stem)
-    ts = time.strftime("%m%d_%H%M%S")
 
-    files, warnings = [], []
+    forced = bool(checks["blocking"] and explicit_confirm)
+    acknowledged = (
+        [i["id"] for i in checks["errors"]] + [i["id"] for i in checks["not_verifiable"]]
+        if (checks["needs_confirm"] and explicit_confirm)
+        else []
+    )
+    size_mm = (session.manifest or {}).get("size_mm") or [None, None]
+
+    # **没有 `filename` = 旧契约**：`normalize()` 把它抬成同一个作业，名字仍是
+    # `<stem>_<MMDD_HHMMSS>.<ext>`、留档仍是 `…_proof.json`（ADR 0031 §5 明写
+    # 旧契约一个字节不变）。变的是**由谁**拼这个名字：清洗规则从这里搬走了。
+    # `scope=original` 是如实描述——这条入口导的就是那一张图自己，画布上的
+    # 落位与缩放在这里根本不存在（`OriginalSource` 上就没有 x/y/w/h）。
+    spec = {
+        "scope": engine_exportreq.SCOPE_ORIGINAL,
+        "formats": fmts,
+        "stem": stem or session.stem,
+        "dpi": dpi,
+        "proof": bool(proof),
+        "original": {
+            "figure_id": session.stem,
+            "overrides": session.patches,
+            "source_kind": "figure",
+            "w_mm": size_mm[0],
+            "h_mm": size_mm[1],
+        },
+    }
+    try:
+        job = engine_exportjob.prepare(spec, target_dir, allowed_formats=EXPORT_FORMATS)
+    except engine_exportreq.ExportRequestError as exc:
+        raise BridgeError(exc.message, code=exc.code, params=exc.params) from exc
+    # 上一次进程被 kill 时留下的临时目录顺手扫掉（只认本模块的前缀）
+    engine_exportjob.sweep_stale_tmp_dirs(target_dir)
+
     worker = session.acquire()
-    for fmt in fmts:
-        path = target_dir / f"{name}_{ts}.{fmt}"
-        try:
-            resp = worker.export(session.stem, session.patches, str(path), fmt, dpi)
-        except engine_pool.WorkerError as exc:
-            raise BridgeError(
-                f"导出 {fmt} 失败: {exc}",
-                code=exc.code or "export_failed",
-                traceback=exc.traceback_text,
-            ) from exc
-        for w in resp.get("warnings") or []:
-            if w not in warnings:
-                warnings.append(w)
-        files.append(
-            {
-                "format": fmt,
-                "path": str(path),
-                "bytes": path.stat().st_size if path.exists() else 0,
-                # PDF/SVG 是 matplotlib 直接序列化的真矢量；PNG 才吃 dpi
-                "vector": fmt in ("pdf", "svg"),
-                "dpi": dpi if fmt == "png" else None,
-            }
+    failures: dict[str, engine_pool.WorkerError] = {}
+
+    def _produce(job, tmp_dir: Path) -> list:
+        produced = []
+        for fmt in job.request.formats:
+            job.check_cancelled()
+            tmp = tmp_dir / f"{job.id}.{fmt}"
+            try:
+                resp = worker.export(session.stem, session.patches, str(tmp), fmt, dpi)
+            except engine_pool.WorkerError as exc:
+                # 一个格式挂了，不该让另一个已经渲染好的成果跟着丢，更不该把
+                # 半套文件留在最终目录里：失败的那一项带自己的 code 进
+                # `partial`（ADR 0031 §4「部分失败可见」）
+                failures[fmt] = exc
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code=exc.code or "export_failed",
+                        error_params={"error": str(exc), "format": fmt},
+                    )
+                )
+                continue
+            for w in resp.get("warnings") or []:
+                if w not in job.warnings:
+                    job.warnings.append(w)
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    tmp_path=tmp,
+                    width_mm=size_mm[0],
+                    height_mm=size_mm[1],
+                    # PDF/SVG 是 matplotlib 直接序列化的真矢量；PNG 才吃 dpi
+                    vector=fmt in engine_exportreq.VECTOR_FORMATS,
+                )
+            )
+        return produced
+
+    def _report(job, outputs: list) -> bytes:
+        return _proof_bytes(
+            session,
+            checks,
+            [
+                str(target_dir / o.name)
+                for o in outputs
+                if o.status == engine_exportjob.STATUS_DONE and o.name
+            ],
+            dpi,
+            list(job.request.formats),
+            forced=forced,
+            acknowledged=acknowledged,
         )
 
+    engine_exportjob.run(job, _produce, report=_report if proof else None)
+
+    if job.status == engine_exportjob.STATUS_CONFLICT:
+        raise BridgeError(
+            f"导出目录里这几个名字正被另一次导出占用：{'、'.join(job.conflicts)}",
+            code="export_conflict",
+            conflicts=list(job.conflicts),
+        )
+    if job.status == engine_exportjob.STATUS_FAILED:
+        code = job.error_code or "export_failed"
+        first = next((failures[f] for f in fmts if f in failures), None)
+        raise BridgeError(
+            job.error_params.get("error") or f"导出失败（{code}）",
+            code=code,
+            traceback=first.traceback_text if first is not None else None,
+        )
+
+    files = []
+    for o in job.outputs:
+        entry = {
+            "format": o.format,
+            "path": str(target_dir / o.name) if o.name else None,
+            "bytes": o.bytes or 0,
+            # PDF/SVG 是 matplotlib 直接序列化的真矢量；PNG 才吃 dpi
+            "vector": o.vector,
+            "dpi": job.request.ppi if o.format in engine_exportreq.RASTER_FORMATS else None,
+            "status": o.status,
+        }
+        if o.error_code:
+            entry["error"] = {"code": o.error_code, "params": o.error_params}
+        files.append(entry)
+
     result = {
-        "ok": True,
+        "ok": job.status == engine_exportjob.STATUS_DONE,
+        # `partial` 是**独立一档**：并进 `done` 或 `failed` 都会说谎，
+        # 只是方向相反（ADR 0031 §4）
+        "status": job.status,
         "session_id": session.id,
         "stem": session.stem,
         "export_dir": str(target_dir),
         "files": files,
         "patch_hash": session.patch_hash(),
         "profile": checks["profile"],
-        "warnings": warnings,
+        "warnings": list(job.warnings),
         "preflight": {
             k: checks[k]
             for k in (
@@ -1055,50 +1167,40 @@ def export(
         },
         # `forced` 只说「有 error 却还是出了」；无法核验项要的是确认、
         # 不是强制，两件事在留档里必须分得开
-        "forced": bool(checks["blocking"] and explicit_confirm),
-        "acknowledged": (
-            [i["id"] for i in checks["errors"]] + [i["id"] for i in checks["not_verifiable"]]
-        )
-        if (checks["needs_confirm"] and explicit_confirm)
-        else [],
+        "forced": forced,
+        "acknowledged": acknowledged,
     }
-    if proof:
-        result["proof_path"] = _write_proof(
-            target_dir,
-            f"{name}_{ts}",
-            session,
-            checks,
-            files,
-            dpi,
-            fmts,
-            forced=result["forced"],
-            acknowledged=result["acknowledged"],
-        )
+    if job.report is not None:
+        if job.report.status == engine_exportjob.STATUS_DONE and job.report.name:
+            result["proof_path"] = str(target_dir / job.report.name)
+        else:
+            # 要了留档却没写成，**不静默跳过**：作业已经因此进了 `partial`，
+            # 回执里也得说出是哪一条（ADR 0031 §7 的同一条）
+            result["proof_error"] = {
+                "code": job.report.error_code,
+                "params": job.report.error_params,
+            }
     return result
 
 
-def _safe_stem(raw: str) -> str:
-    import re
-
-    return re.sub(r"[^\w\-一-鿿]+", "_", raw or "figure") or "figure"
-
-
-def _write_proof(
-    out_dir: Path,
-    base: str,
+def _proof_bytes(
     session: Session,
     checks: dict,
-    files: list[dict],
+    paths: list[str],
     dpi: int,
     formats: list[str],
     *,
     forced: bool,
     acknowledged: list[str],
-) -> str:
+) -> bytes:
     """proof report：profile 身份 + 全部检查结果 + 无法核验项 + 是否强制导出。
 
     与画布导出的 proof 同一个 kind/version（`web/src/lib/preflight.ts` 的
     `buildProofPayload`）——两条入口出的留档得能放在一起看。
+
+    **只回字节**：它叫什么、写到哪、撞了名怎么办由 `exportjob._plan_names()`
+    决定。报告和图一样是会被写进最终目录的产物，名字的规则不能在这里再写一遍
+    （ADR 0031 §7b 第 2 条正是踩过的那个坑）。
     """
     from tavotto.engine.brand import PROOF_KIND  # 品牌常量唯一出处
 
@@ -1139,12 +1241,10 @@ def _write_proof(
         ],
         "forced": forced,
         "acknowledged": acknowledged,
-        "files": [f["path"] for f in files],
+        "files": paths,
         "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    path = out_dir / f"{base}_proof.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    return str(path)
+    return json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
 
 
 # --------------------------- 等价性自检（可选） -------------------------------

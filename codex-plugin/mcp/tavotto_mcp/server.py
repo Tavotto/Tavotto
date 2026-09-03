@@ -418,9 +418,18 @@ def _call_export(args: dict) -> dict:
         explicit_confirm=bool(args.get("explicit_confirm")),
         proof=args.get("proof") is not False,
     )
-    lines = ["已导出：" + "、".join(f["path"] for f in out["files"])]
+    # 成功的与失败的**分开说**：把 `partial` 说成"已导出"，模型会把一次半成的
+    # 导出转述成完成（ADR 0031 §4：`partial` 是独立一档）
+    ok = [f for f in out["files"] if f["status"] == "done"]
+    failed = [f for f in out["files"] if f["status"] != "done"]
+    lines = ["已导出：" + "、".join(f["path"] for f in ok)] if ok else []
+    for f in failed:
+        code = (f.get("error") or {}).get("code") or "export_failed"
+        lines.append(f"未出成：{f['format']}（{code}）——这次导出是部分完成的。")
     if out.get("proof_path"):
         lines.append("留档：" + out["proof_path"])
+    if out.get("proof_error"):
+        lines.append("留档没写成：" + str(out["proof_error"].get("code")))
     if out["forced"]:
         lines.append("注意：这次是带着阻断性问题强制导出的，已记进 proof report。")
     if out["warnings"]:
