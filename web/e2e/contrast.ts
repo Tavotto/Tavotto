@@ -16,8 +16,11 @@ import type { Page } from '@playwright/test'
  * 达标，而是 axe 根本没测**。实证：把 `--color-warn` 改成明显不达标的 `#e8c98f`，
  * 只看 violations 的检查照样绿。
  *
- * 背景色按**绘制顺序**取：从元素自己往下叠到第一个不透明层为止（`paintStackBelow`
- * → `opaqueBg`），既含祖先也含画在下面的兄弟。画在**上面**的覆盖层一律不算——
+ * 背景色按**绘制顺序**取：问浏览器自己的命中测试要「这一点上自上而下的整叠元素」
+ * （`paintStackBelow`），再从元素自己往下叠到第一个不透明层为止（`opaqueBg`）。
+ * 绘制顺序不等于 DOM 顺序（z-index / 层叠上下文），所以不自己排——浏览器已经
+ * 实现了整套规则。量不出来时报**判不准**，不编一个自信的数。
+ * 画在**上面**的覆盖层一律不算——
  * 模态遮罩确实会把背后的文字压暗，但那是被遮住的 inert 内容，不在 WCAG 1.4.3
  * 的范围内；把它算进来，同一批节点就会在「有没有模态」之间给出两个结论。
  * 半透明前景先与背景合成再算比值，否则算出来偏乐观。
@@ -114,36 +117,48 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
      * 实测：那一点的真实渲染像素是 rgb(255,255,255)，元素截图里白底占 68%，
      * 真实比值 5.37:1 —— 达标。
      *
-     * **也不能用 `document.elementsFromPoint`**：命中测试受 `pointer-events`
-     * 与 `overflow` 裁剪影响。模态打开时 Radix 会把 `body` 设成
-     * `pointer-events:none`（实测：同一点上 `elementsFromPoint` 从 13 个元素
-     * 塌成 2 个，只剩遮罩和 `<html>`），滚出容器的内容同样命中不到——同一批
-     * 节点就会在「有没有模态」之间给出两个结论，那正是 #210 的现象。
+     * **权威是浏览器自己的命中测试**（`document.elementsFromPoint`，返回该点上
+     * 自上而下的整叠元素），不是 DOM 顺序。第一版这里按几何自己排「元素自己 →
+     * 前序兄弟 → 父元素」，等于**把 DOM 顺序当成绘制顺序** —— 而
+     * `LeftPanel` 在 narrow 档给抽屉的是 `absolute inset-y-0 z-30`：它在 DOM 里
+     * 排在画布**之前**，却画在画布**之上**（实测 900px 视口下 `position:absolute`
+     * / `z-index:30`）。量画布文字时那一版会停在抽屉那层不透明白底上，把一个根本
+     * 不在文字背后的颜色当成背景。z-index、`position`、`transform`/`opacity`/
+     * `filter`/`isolation` 造出的层叠上下文……自己实现一遍是整套 CSS 绘制顺序，
+     * 做一半比不做更危险（它会让人更信它）。浏览器已经实现了，直接问它。
      *
-     * 这里按几何自己排：某一层的绘制顺序是「它自己 → 它的前序兄弟（连子树，
-     * 后代画在祖先之上）→ 父元素」，只收边框盒覆盖采样点的那些。已知近似：
-     * 不看 `z-index`，也按父盒剪枝（绝对定位跑到父盒外的层收不到）——收不到
-     * 就退回更下面那层，与旧行为同向。
+     * 命中测试的两个已知障碍都当场解掉，不留「有模态就退化」的暗门：
+     * ① `pointer-events` —— 模态打开时 Radix 会把 `body` 设成
+     *    `pointer-events:none`，同一点上整叠从 13 个塌成 2 个（只剩遮罩和
+     *    `<html>`）。扫描期间临时注入 `*{pointer-events:auto !important}`
+     *    盖住它（作者 `!important` 压得过行内样式），扫完就摘掉；
+     * ② 滚出视口 —— 先按元素每个 client rect 的可见中心试，再
+     *    `scrollIntoView` 重试一次，扫完把所有滚动位置还原。
+     *
+     * 还是命中不到就返回 `null`：那说明它在**任何一个采样点上都没有被画出来**
+     * （实测这一档几乎全是折叠 `<details>` 里的 `dt`/`dd`——`getClientRects()`
+     * 有值，但根本没画）。不给它编一个背景色，交给调用处当「不在范围内」处理，
+     * 与 `display:none` 同理。
      */
-    const paintStackBelow = (el: HTMLElement): HTMLElement[] => {
-      const r = el.getBoundingClientRect()
-      const x = r.left + r.width / 2
-      const y = r.top + r.height / 2
-      const covers = (n: Element) => {
-        const b = n.getBoundingClientRect()
-        return b.width > 0 && b.height > 0 && x >= b.left && x < b.right && y >= b.top && y < b.bottom
+    const paintStackBelow = (el: HTMLElement): HTMLElement[] | null => {
+      const at = (): HTMLElement[] | null => {
+        for (const r of Array.from(el.getClientRects())) {
+          const x0 = Math.max(0, r.left)
+          const x1 = Math.min(window.innerWidth, r.right)
+          const y0 = Math.max(0, r.top)
+          const y1 = Math.min(window.innerHeight, r.bottom)
+          if (!(x1 > x0 && y1 > y0)) continue
+          const stack = document.elementsFromPoint((x0 + x1) / 2, (y0 + y1) / 2)
+          const i = stack.indexOf(el)
+          // 从 el 自己往下切：画在**上面**的覆盖层一律不算（见函数头注释）
+          if (i >= 0) return stack.slice(i) as HTMLElement[]
+        }
+        return null
       }
-      const out: HTMLElement[] = []
-      const subtree = (n: Element) => {
-        if (!covers(n)) return
-        for (let c = n.lastElementChild; c; c = c.previousElementSibling) subtree(c)
-        out.push(n as HTMLElement)
-      }
-      for (let n: HTMLElement | null = el; n; n = n.parentElement) {
-        out.push(n)
-        for (let s = n.previousElementSibling; s; s = s.previousElementSibling) subtree(s)
-      }
-      return out
+      const direct = at()
+      if (direct) return direct
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior })
+      return at()
     }
     /**
      * 文字背后**真正的**颜色：按绘制顺序从元素自身往下收集每一层背景，直到
@@ -156,10 +171,14 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
      *
      * 返回的 `node` 仍然是那个不透明层——`groupOpacity` 要用它当累乘的终点。
      */
-    const opaqueBg = (el: HTMLElement): { color: number[]; node: HTMLElement | null } => {
+    const opaqueBg = (
+      el: HTMLElement,
+    ): { color: number[]; node: HTMLElement } | 'not-painted' | 'no-opaque-layer' => {
+      const stack = paintStackBelow(el)
+      if (!stack) return 'not-painted'
       const layers: number[][] = []
       let stop: HTMLElement | null = null
-      for (const n of paintStackBelow(el)) {
+      for (const n of stack) {
         const c = parse(getComputedStyle(n).backgroundColor)
         if (c && c[3] > 0) {
           layers.push(c)
@@ -169,8 +188,10 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
           }
         }
       }
-      // 最底下那层：找到了不透明的就用它，一直没找到就按白纸算（同旧行为）
-      let base = stop ? layers.pop()! : [255, 255, 255, 1]
+      // 叠到底都没有不透明层：**「不知道」是独立一档**。以前这里按白纸算，那是
+      // 把「判不准」并进了一个相邻取值——算出来的比值看着跟真的一样自信。
+      if (!stop) return 'no-opaque-layer'
+      let base = layers.pop()!
       for (let i = layers.length - 1; i >= 0; i--) {
         const c = layers[i]
         const a = c[3]
@@ -206,46 +227,77 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
     }
     const scope = document.querySelector(rootSelector)
     if (!scope) return [`NO ROOT: ${rootSelector}`]
+    // 命中测试要在「pointer-events 全开」下做，且允许把元素滚进视口——两样都是
+    // 临时的，`finally` 里原样还原（同一次同步 evaluate 内完成，页面不留痕迹）。
+    const peOverride = document.createElement('style')
+    peOverride.textContent = '*{pointer-events:auto !important}'
+    document.head.appendChild(peOverride)
+    const savedScroll: [Element, number, number][] = []
+    for (const n of Array.from(document.querySelectorAll('*'))) {
+      if (n.scrollTop || n.scrollLeft) savedScroll.push([n, n.scrollTop, n.scrollLeft])
+    }
+    const savedPage: [number, number] = [window.scrollX, window.scrollY]
     const out: string[] = []
-    for (const el of Array.from(scope.querySelectorAll('*'))) {
-      const e = el as HTMLElement
-      // 只看自己直接持有文字的元素，避免把容器算成它子孙的颜色
-      const text = Array.from(e.childNodes)
-        .filter((n) => n.nodeType === 3)
-        .map((n) => n.textContent ?? '')
-        .join('')
-        .trim()
-      if (!text) continue
-      const cs = getComputedStyle(e)
-      if (cs.visibility === 'hidden' || cs.display === 'none') continue
-      if (!e.getClientRects().length) continue
-      // **禁用态不在 WCAG 1.4.3 的范围内**（"Incidental: text that is part of an
-      // inactive user interface component"），axe 的 color-contrast 同样跳过。
-      // 本仓库的禁用态就是靠 `disabled:opacity-35` 做的——把 opacity 计入之后
-      // 不排除它们，每一个灰掉的按钮都会变成一条假红，而误报比漏报更糟：它逼人
-      // 去「修」一件标准上根本不要求的事。
-      if (e.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')) continue
-      const fgRaw = parse(cs.color)
-      if (!fgRaw) continue
-      const { color: bg, node: bgNode } = opaqueBg(e)
-      // 半透明前景先与背景合成，否则算出来的比值偏乐观。alpha 有两个来源：
-      // 颜色自己的 alpha，以及**从这里累乘到背景那一层的 CSS opacity**。
-      const a = fgRaw[3] * groupOpacity(e, bgNode)
-      if (a <= 0.01) continue      // 整个透明：看不见的东西不谈对比度
-      const fg = [0, 1, 2].map((i) => fgRaw[i] * a + bg[i] * (1 - a))
-      const size = parseFloat(cs.fontSize)
-      const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700)
-      const need = large ? 3 : 4.5
-      const l1 = lum(fg)
-      const l2 = lum(bg)
-      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
-      if (ratio < need) {
-        out.push(
-          `${e.tagName}.${String(e.className).slice(0, 40)} "${text.slice(0, 16)}" ` +
-            `${ratio.toFixed(2)}:1 < ${need}` +
-            (a < 0.999 ? ` (有效 alpha ${a.toFixed(2)})` : ''),
-        )
+    try {
+      for (const el of Array.from(scope.querySelectorAll('*'))) {
+        const e = el as HTMLElement
+        // 只看自己直接持有文字的元素，避免把容器算成它子孙的颜色
+        const text = Array.from(e.childNodes)
+          .filter((n) => n.nodeType === 3)
+          .map((n) => n.textContent ?? '')
+          .join('')
+          .trim()
+        if (!text) continue
+        const cs = getComputedStyle(e)
+        if (cs.visibility === 'hidden' || cs.display === 'none') continue
+        if (!e.getClientRects().length) continue
+        // **禁用态不在 WCAG 1.4.3 的范围内**（"Incidental: text that is part of an
+        // inactive user interface component"），axe 的 color-contrast 同样跳过。
+        // 本仓库的禁用态就是靠 `disabled:opacity-35` 做的——把 opacity 计入之后
+        // 不排除它们，每一个灰掉的按钮都会变成一条假红，而误报比漏报更糟：它逼人
+        // 去「修」一件标准上根本不要求的事。
+        if (e.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')) continue
+        const fgRaw = parse(cs.color)
+        if (!fgRaw) continue
+        const measured = opaqueBg(e)
+        // 「这一刻它根本没被画出来」与 `display:none` 同理，不在对比度的范围内。
+        if (measured === 'not-painted') continue
+        // 「判不准」是**独立一档**，不许并进任何一个数：报出来，让人去看，而不是
+        // 给一个自信的错数（`unknown-is-its-own-value`）。
+        if (measured === 'no-opaque-layer') {
+          out.push(
+            `${e.tagName}.${String(e.className).slice(0, 40)} "${text.slice(0, 16)}" ` +
+              `判不准（绘制顺序上叠到底也没有不透明层，量不出背景色）`,
+          )
+          continue
+        }
+        const { color: bg, node: bgNode } = measured
+        // 半透明前景先与背景合成，否则算出来的比值偏乐观。alpha 有两个来源：
+        // 颜色自己的 alpha，以及**从这里累乘到背景那一层的 CSS opacity**。
+        const a = fgRaw[3] * groupOpacity(e, bgNode)
+        if (a <= 0.01) continue      // 整个透明：看不见的东西不谈对比度
+        const fg = [0, 1, 2].map((i) => fgRaw[i] * a + bg[i] * (1 - a))
+        const size = parseFloat(cs.fontSize)
+        const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700)
+        const need = large ? 3 : 4.5
+        const l1 = lum(fg)
+        const l2 = lum(bg)
+        const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+        if (ratio < need) {
+          out.push(
+            `${e.tagName}.${String(e.className).slice(0, 40)} "${text.slice(0, 16)}" ` +
+              `${ratio.toFixed(2)}:1 < ${need}` +
+              (a < 0.999 ? ` (有效 alpha ${a.toFixed(2)})` : ''),
+          )
+        }
       }
+    } finally {
+      for (const [n, top, left] of savedScroll) {
+        n.scrollTop = top
+        n.scrollLeft = left
+      }
+      window.scrollTo(savedPage[0], savedPage[1])
+      peOverride.remove()
     }
     return out
   }, root)

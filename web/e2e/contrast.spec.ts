@@ -76,6 +76,65 @@ test('自算对比度：背景按绘制顺序取，画在下面的兄弟层也�
 })
 
 /**
+ * **绘制顺序不等于 DOM 顺序**：z-index / 层叠上下文这一维不能漏（#261 评审）。
+ *
+ * 形状照抄 `web/src/components/left/LeftPanel.tsx` 的 narrow 档——抽屉是
+ * `absolute inset-y-0 z-30`，在 DOM 里排在画布**之前**，却画在画布**之上**
+ * （实测 900px 视口下 `position:absolute` / `z-index:30`）。两个 `<p>` 颜色、
+ * 字号、几何位置全一样，唯一的差别是那块白面板**画在它上面还是画在它下面**：
+ *
+ * - `z-30` 那块画在**上面** → 文字真正的背景是画布灰，4.45:1，**必须报**。
+ *   把 DOM 顺序当绘制顺序的实现会在这块白底上停下，算出 5.37:1 放行。
+ * - 同样 DOM 位置、同样几何、但**没有** z-index 且不定位 → 它就在文字下面，
+ *   背景真的是白的，5.37:1，**不许报**。
+ *
+ * 两条一起钉住的正是「遮挡层在上时不能当背景，真在背后时又必须算进去」。
+ */
+const ZINDEX_PAGE = `
+<div style="position:relative;width:360px;height:120px;background:#eaeae6">
+  <aside style="position:absolute;inset-block:0;left:0;width:360px;background:#ffffff;z-index:30"></aside>
+  <div style="position:relative">
+    <p style="margin:0;padding:40px 0 0 20px;color:#6b6b64">被 z-30 抽屉盖住</p>
+  </div>
+</div>
+<div style="position:relative;width:360px;height:120px;background:#eaeae6">
+  <aside style="position:absolute;inset-block:0;left:0;width:360px;background:#ffffff"></aside>
+  <div style="position:relative">
+    <p style="margin:0;padding:40px 0 0 20px;color:#6b6b64">白面板真在文字背后</p>
+  </div>
+</div>`
+
+test('自算对比度：绘制顺序按 z-index/层叠上下文，不是 DOM 顺序', async ({ page }) => {
+  await page.setContent(ZINDEX_PAGE)
+  const bad = (await lowContrastNodes(page)).join(' | ')
+
+  expect(
+    bad,
+    '把 DOM 顺序当成了绘制顺序——z-30 的抽屉画在文字**上面**，它的白底不是这段文字的背景',
+  ).toContain('被 z-30 抽屉盖住')
+  expect(
+    bad,
+    '真在文字背后的那块白面板没算进去——遮挡层不算不等于背后的层也不算',
+  ).not.toContain('白面板真在文字背后')
+})
+
+/**
+ * **「判不准」是独立一档**（#261 评审）。
+ *
+ * 叠到底都没有不透明层时，以前这里按「白纸」算——那是把「不知道」并进了一个
+ * 相邻取值，算出来的比值看着跟真的一样自信。现在它必须报出来让人去看。
+ */
+const NO_OPAQUE_PAGE = `<p style="color:#6b6b64">底下没有不透明层</p>`
+
+test('自算对比度：量不出背景色时报「判不准」，不按白纸编一个数', async ({ page }) => {
+  await page.setContent(NO_OPAQUE_PAGE)
+  const bad = (await lowContrastNodes(page)).join(' | ')
+
+  expect(bad, '叠到底没有不透明层，却给出了一个自信的比值').toContain('判不准')
+  expect(bad, '判不准也要指名道姓说是哪个节点').toContain('底下没有不透明层')
+})
+
+/**
  * 对比度是**稳定态**的属性：淡入淡出中间那一帧不是（issue #210）。
  *
  * 两个 `<p>` 走同一条淡入动画，落定后一个够黑、一个本来就浅。扫描必须等动效
