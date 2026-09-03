@@ -371,6 +371,16 @@ gate 只有 `contents: read`。PyPI 的 OIDC 发布模型与 `environment` 保�
   ProductVersion 都换成了新版本，再对更新后的 sidecar 跑
   `smoke_app --expect-source bundled --expect-runtime`。
 
+  **「重启后的新进程」这个主语按壳的映像路径认，不按进程名认。** 安装目录里
+  有两个都叫 `Tavotto.exe` 的二进制——壳在安装根，sidecar 在
+  `sidecar/Tavotto/Tavotto.exe`——`Get-Process Tavotto` 两个都收，而 sidecar
+  是 PyInstaller 产物、**没有版本资源**（对 v0.12.0 官方安装包实测：壳
+  `ProductVersion=0.12.0`，sidecar 连 `StringFileInfo` 都没有）。选中 sidecar
+  就必然读到空 ProductVersion，且等多久都不会变；「映像在安装目录下」也放它
+  过去。所以判据用 `Win32_Process.ExecutablePath` 与 `$inst\Tavotto.exe` 全等
+  匹配，版本资源再从那个映像路径读（轮询 15s，兜安装器仍在替换 exe 的中间态），
+  空值走显式 fail 并打印 pid / 映像路径 / 句柄读值。见 issue #147。
+
 **只能发布后测**：已发布应用的 endpoint 烤死指向 `releases/latest`，发布前
 它还指着上一版。**N-1 二进制没有触发口的那一轮**（N-1 ≤ 0.10.0）自动化
 驱动不了它的 UI，job 会转成手动提示——按下面的 checklist 手工执行一遍，
