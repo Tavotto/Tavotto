@@ -34,6 +34,7 @@ import subprocess
 
 import pytest
 
+from tavotto import app
 from tavotto.engine import pool
 
 try:
@@ -201,6 +202,20 @@ def main():
     par.set_ylabel("parasite y")
     host.set_title("host + parasite")
     fig.savefig("InvPar.pdf")
+
+    # ---- InvTight：**持久 tight 布局**（issue #162） ----
+    # `layout="tight"` 会在图上挂一个常驻的 TightLayoutEngine，它每次绘制都把
+    # 有 SubplotSpec 的子图位置整个算回去。#140 之前 `axes.position` 在这里是
+    # silent wrong，#140 之后是「不宣称这条能力」，#162 之后靠
+    # `overrides.PinnedTightLayoutEngine` 钉住。两个子图 + 轴标签是有意的：
+    # 一个是被拖的，另一个用来验「我拖了 A，B 不该跟着跳」。
+    fig, axs = plt.subplots(1, 2, figsize=(4.6, 2.4), layout="tight")
+    for i, a in enumerate(axs):
+        a.plot([0.0, 1.0], [0.0, i + 1.0], marker="o", label=f"s{i}")
+        a.set_xlabel("x label")
+        a.set_ylabel("y label")
+    axs[0].legend(loc="upper left")
+    fig.savefig("InvTight.pdf")
 """
 
 
@@ -1197,6 +1212,111 @@ ORDER_CASES = [
     ("D-stem-linewidth", "InvCont", [_A_SLW, _B_SLW]),
     ("D-bars", "InvCont", [_A_BAR, _B_BAR]),
 ]
+
+
+#: 拖一个子图到别处（figure 分数坐标，与 `axes.position` 的 setter 同一约定）。
+_TIGHT_POS = [{"gid": "axes_0", "prop": "position", "value": [0.12, 0.55, 0.30, 0.35]}]
+#: 同一个矩形，换成 manifest 的约定：bbox 是 figure 分数、**y 向下**。
+_TIGHT_POS_BBOX = [0.12, 1.0 - 0.55 - 0.35, 0.30, 0.35]
+#: 对照组：同样是「一步 override」，但一个像素的几何都不动。
+_TIGHT_CTRL = [{"gid": "axes_0.lines_0", "prop": "color", "value": "#123456"}]
+
+
+def _near(a, b):
+    """两个包围盒是不是「同一个位置」——尺子借写回自己那把（`REPLAY_GEOM_TOL`）。
+
+    不自己发明一个数是有意的。原生 tight 的迭代**永远到不了不动点**（零
+    override 时也一样），残差随绘制历史在 1e-9 ~ 3e-3 之间浮动，按当下量到的
+    噪声去调容差只会调出一条**下次换个历史就红**的判据。而这里要拦的东西尺寸是
+    已知的：把被 pin 的轴留在 tight 的边距计算里、或者把它整个排除掉，两种做错
+    的实现都会让邻居挪 **0.07 以上**（三版实测）——比 `REPLAY_GEOM_TOL` 大 14 倍。
+    """
+    tol = app.REPLAY_GEOM_TOL
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def _boxes(man):
+    return {el["gid"]: el.get("bbox") for el in man["elements"] if el["gid"].startswith("axes_")}
+
+
+def test_position_survives_a_persistent_tight_layout(hot_replay, library):
+    """`layout="tight"` 的图上拖子图：真的动了、热态 == 重放、撤销逐位回得去。
+
+    这是 issue #162 的验收判据本身。持久 tight 引擎每次绘制都把子图位置重算，
+    所以这条 override 有三种坏法，而它们都不长一个样：
+
+    1. **没落地**——画面纹丝不动（#140 之前的 silent wrong）；
+    2. **只在热态落地**——重开之后被 tight 算回去，于是「用户所见」与「写回
+       文件里的」不是一张图，而写回自检只比几何，正好量得到这一维；
+    3. **牵连别人**——被拖的那个钉住了，没被拖的跟着跳，用户没法解释。
+
+    三条各有一句断言。撤销那条同样重要：unpin 漏了的话，这个 axes 会被永久钉在
+    「脚本原样」那组算出来的数上，再也不跟着字号 / 标签变化重排——一个不声不响
+    的语义降级，没有任何别的门禁看得见它。
+
+    判据全部落在 manifest 的包围盒上：像素那把尺在持久 tight 图上是坏的（同一组
+    patch 连要三张预览，出来三张不同的图），「整份 manifest 逐位相同」那把在这里
+    恒红且与 override 无关——两条都见 ADR 0042 末节的实测数。逐位那一档在
+    `tests/test_layout_engine_pinning.py` 里，那边两条腿的绘制次数与顺序完全对齐，
+    比得起。
+    """
+    # **判据全部落在 manifest 的包围盒上，一条像素断言都没有**——不是省事，是量过
+    # 之后知道那把尺在这类图上是坏的：同一组 patch 连要三张 `preview_png`，出来
+    # **三张不同的图**（原生 tight 的 ylabel 落点与 tight 互相追着跑，见 ADR 0042）。
+    # 拿它比什么都会时红时绿，而「拖过之后与拖之前不一样」更会被这层噪声**白送**。
+    #
+    # 包围盒这把尺反过来是精确的：钉住之后 `axes_0` 的 bbox **逐位等于请求的那个
+    # 矩形**，连画几轮都不变（实测 0.0）。所以这里问的是「拖到哪就是哪」，
+    # 而不是「有没有变化」——`!=` 在浮点上会被 6e-10 的收敛残差满足，那是一条
+    # 空判据（变异反证抓到过：删掉 `execute` 末尾盖回 pin 那一步，`!=` 照样为真）。
+    #
+    # 几何比较之间也不许夹一次别的尺度的渲染：`_png` 画的是 380 px 预览，那一次
+    # 会把 tight 的迭代带到另一个尺度上，回来要几个回合才收敛——瞬态在 3.11.1 上
+    # 有 9.8e-3，比 `REPLAY_GEOM_TOL` 还大，夹在中间量到的就是它。
+    base = _man(hot_replay, "InvTight")
+    # 对照组与被测组交错：原生 tight 到不了不动点，相邻两回合本就有 ~4e-9 残差。
+    # 对照组走一条**同样是一步、同样不动几何**的 patch，两组于是节奏一致。
+    ctrl = _man(hot_replay, "InvTight", _TIGHT_CTRL)
+    _man(hot_replay, "InvTight")
+    moved = _man(hot_replay, "InvTight", _TIGHT_POS)
+    assert _boxes(moved)["axes_0"] == pytest.approx(_TIGHT_POS_BBOX, abs=1e-9), (
+        "子图没落在请求的位置上——持久 tight 引擎把它算回去了：",
+        _boxes(moved)["axes_0"],
+        _TIGHT_POS_BBOX,
+    )
+    # 再来一轮：中间隔了一次绘制，布局引擎已经发过言了。`set_position` 写进去、
+    # 引擎随后算回去的那种 silent wrong（#140 的形状）只有这一轮看得见。
+    again = _man(hot_replay, "InvTight", _TIGHT_POS)
+    assert _boxes(again)["axes_0"] == pytest.approx(_TIGHT_POS_BBOX, abs=1e-9), (
+        "第二轮就被算回去了：",
+        _boxes(again)["axes_0"],
+    )
+    assert _near(_boxes(moved)["axes_1"], _boxes(ctrl)["axes_1"]), (
+        "只拖了 axes_0，axes_1 却跟着动了：",
+        _boxes(moved)["axes_1"],
+        _boxes(ctrl)["axes_1"],
+    )
+
+    # 撤销：`unpin` 一旦漏掉，这个轴会**永远停在请求的位置上**，与脚本原样差 0.34
+    # （实测），写回自己那把尺（`REPLAY_GEOM_TOL` = 0.005）拦得住。
+    back = _man(hot_replay, "InvTight")
+    assert app._compare_manifests(back, base)[0] == [], (
+        "撤销之后没有回到脚本原样（unpin 漏了的话它会被永久钉住）"
+    )
+
+    # 热态 vs 全新 worker 重放。**不用「整份 manifest 逐位相同」**（别的用例用的
+    # 那把尺）：原生 tight 的迭代到不了不动点，两侧几何本就差 ~2e-6，而零 override
+    # 时差得更多（实测 1.93e-6 vs 拖过之后的 1.63e-6）——那把尺在这类图上恒红，
+    # 与被测的东西无关。用写回自己那把，它同时是「放行还是 409」的判据本身；
+    # 再加上被拖的那个轴上一把精确的。
+    fresh_man, _fresh_png = _fresh(library, "InvTight", _TIGHT_POS)
+    assert app._compare_manifests(moved, fresh_man)[0] == [], (
+        "写回自检会判定分歧：用户「写回时的样子」与「重开后的样子」不是一张图"
+    )
+    assert _boxes(fresh_man)["axes_0"] == pytest.approx(_TIGHT_POS_BBOX, abs=1e-9), (
+        "重开之后子图不在用户摆的地方：",
+        _boxes(fresh_man)["axes_0"],
+    )
 
 
 @pytest.mark.parametrize("case_id,stem,patches", ORDER_CASES, ids=[c[0] for c in ORDER_CASES])

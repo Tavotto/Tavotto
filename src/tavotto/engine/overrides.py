@@ -15,6 +15,7 @@ import importlib
 import re
 import sys
 import threading
+import weakref
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
@@ -27,6 +28,7 @@ from matplotlib.axes._base import _AxesBase
 from matplotlib.collections import Collection, LineCollection, PathCollection, QuadMesh, TriMesh
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
+from matplotlib.layout_engine import TightLayoutEngine
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
@@ -2292,14 +2294,185 @@ def _cb_orientation_snapshot(p: "ColorbarProxy") -> dict:
     }
 
 
+class PinnedTightLayoutEngine(TightLayoutEngine):
+    """持久 tight 布局下把「用户摆过的子图」钉住，其余照旧自动排版（issue #162）。
+
+    ## 为什么要有它
+
+    Tavotto 落 `axes.position` override 的方式是 `ax.set_position(v)`。图上挂着
+    **持久的** `TightLayoutEngine` 时（`plt.subplots(layout="tight")` /
+    `tight_layout=True`），它会在紧随其后的那次绘制里把位置整个算回去——文档里
+    记着 override、画面上什么都没发生。#140 的处理是**不宣称这条能力**（界面
+    置灰 + reason），silent wrong 是没了，但这么写图的用户从此拖不动子图、
+    不能多选对齐、不能改 mm 宽高、不能成组缩放。这个类是把能力拿回来的那一步。
+
+    ## 三条路各自的实测结论（3.9.4 / 3.10.8 / 3.11.1，三版一致）
+
+    | 做法 | 结论 |
+    |---|---|
+    | `ax.set_in_layout(False)` | **无效**，挡不住 TightLayoutEngine |
+    | 应用前 `fig.set_layout_engine("none")` | 能 work，但同时关掉这张图对**其它**元素的自动排版，副作用面比现状更糟 |
+    | 自定义引擎（本类） | 成立，见下面的量法 |
+
+    ## 关键在于「什么时候盖回去」，不只是「盖不盖」
+
+    最直觉的写法——`super().execute(fig)` 之后把 pin 过的位置盖回去——**是错
+    的**，而且错得不显眼：它算得出正确的画面，却让「热态所见 == 重开后重放
+    出来的」当场破掉。原因在 `matplotlib._tight_layout.get_tight_layout_figure`
+    里：它拿 `ss.get_position(fig)`（**gridspec 该给这个格子的位置**）当 ax_bbox，
+    却拿 axes **当前**的 tight bbox 当 tight_bbox，两者相减得到边距。被 pin 的
+    轴一旦离开自己的格子，这个差就不再是「装饰物探出去多少」，于是每次 draw
+    都算出一组新的边距——实测 10 次 draw 都没收敛，而且「先画两次再 pin」与
+    「一次性 pin 再画」收敛到**不同**的结果（三版一致）。写回自检只比几何，
+    这种分歧正好落在它量得到的那一维上：409，或者更坏——用户所见与写进文件的
+    不是一张图。
+
+    所以这里的顺序是：**先把被 pin 的轴放回 gridspec 该给它的格子 → 让 tight
+    照常算 → 再盖回 pin**。tight 的输入于是与「一条 override 都没有」时逐位
+    相同，实测结果也逐位相同（`others_match_native` 在 10 次 draw 上全 True，
+    三版一致）：
+
+    * 被 pin 的轴每一次 draw 都精确落在请求的位置上（与 draw 次数无关）；
+    * **没被 pin 的轴一动不动**——「我拖了 A，B 不该跟着跳」；
+    * 热态（逐步 pin）与重放（一次性 pin）在同一 draw 序号上逐位相同；
+    * pin 表为空时，像素与位置与原生 `TightLayoutEngine` **逐字节相同**——
+      所以在 `instrument()` 里无条件换上它不改变任何没被编辑过的图。
+
+    ## 为什么是 TightLayoutEngine 的子类
+
+    `_adjust_compatible` / `_colorbar_gridspec` 直接继承（`fig.colorbar` 靠
+    后者决定怎么抠空间，`fig.subplots_adjust` 靠前者决定要不要执行），
+    `set()` / `get()` 的 pad/h_pad/w_pad/rect 也照旧。代价是 `isinstance(...,
+    TightLayoutEngine)` 对它为真——**判据必须自己排除掉它**，见
+    `figure_layout_engine_eats_position`。
+    """
+
+    #: 与 `TightLayoutEngine` 相同；写出来是因为它们决定 `fig.colorbar` 与
+    #: `fig.subplots_adjust` 的行为，继承来的默认值不该靠读父类才知道。
+    _adjust_compatible = True
+    _colorbar_gridspec = True
+
+    #: 在 `super().__init__()` 跑完之前 `set()` 就会被调用一次，那时还没有 inner。
+    _inner = None
+
+    def __init__(self, inner):
+        """`inner` 是被接管的那个引擎**实例本身**，不是它的参数。
+
+        **不用 `PinnedTightLayoutEngine(**inner.get())` 重建**：用户脚本可以挂一个
+        自己的 `TightLayoutEngine` 子类（`isinstance` 判据同样选中它），重建会把它
+        重写过的 `execute()` 与全部子类状态**静默丢掉**，把每一个没被 pin 的轴的
+        落位一起改掉；而子类的 `get()` 多回一个键时，重建会当场 TypeError、这条编辑
+        直接失败。包住原件再委派，两种都不会发生（Codex 在 PR #262 上指出）。
+        """
+        super().__init__()
+        self._inner = inner
+        # 这两个决定 `fig.colorbar` 怎么抠空间、`fig.subplots_adjust` 要不要执行。
+        # **跟着被接管的那个走**，不是照抄 TightLayoutEngine 的类属性——自定义子类
+        # 可以改它们。
+        self._adjust_compatible = inner.adjust_compatible
+        self._colorbar_gridspec = inner.colorbar_gridspec
+        #: axes → figure 分数坐标 (x0, y0, w, h)。弱引用：被 pin 的轴
+        #: `ax.remove()` 掉之后不该被这张表续命。
+        self._pinned: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+    def set(self, *, pad=None, w_pad=None, h_pad=None, rect=None) -> None:
+        """pad / h_pad / w_pad / rect 归被接管的那个引擎管。
+
+        **签名必须与 `TightLayoutEngine.set` 逐字相同**：上游那份的实现是
+        `for td in self.set.__kwdefaults__`，而 `self.set` 解析到的是**这里这个
+        override**。写成 `**kwargs` 的话 `__kwdefaults__` 是 None，第一次建引擎就
+        `TypeError: 'NoneType' object is not iterable`（实测）。
+        """
+        if self._inner is None:  # super().__init__() 期间：还没有 inner
+            super().set(pad=pad, w_pad=w_pad, h_pad=h_pad, rect=rect)
+        else:
+            self._inner.set(pad=pad, w_pad=w_pad, h_pad=h_pad, rect=rect)
+
+    def get(self) -> dict:
+        return self._inner.get() if self._inner is not None else super().get()
+
+    def pin(self, ax, bounds) -> None:
+        """这个 axes 的位置由用户说了算，tight 不许再算它。"""
+        self._pinned[ax] = tuple(float(v) for v in bounds)
+
+    def unpin(self, ax) -> None:
+        """撤销一条 position override：把这个 axes 还给 tight。"""
+        self._pinned.pop(ax, None)
+
+    def is_pinned(self, ax) -> bool:
+        return ax in self._pinned
+
+    def _live_pins(self) -> list:
+        """还挂在图上的 pin。`ax.remove()` 过的轴留在弱引用表里也没用了。"""
+        return [(ax, b) for ax, b in self._pinned.items() if ax.get_figure() is not None]
+
+    def execute(self, fig) -> None:
+        live = self._live_pins()
+        # 1) 放回格子：tight 的输入必须与「没有任何 override」时一样，否则它
+        #    算出来的边距会随 pin 的位置漂（见类注释）。没有 SubplotSpec 的轴
+        #    （`fig.add_axes`）本来就不参与 tight 计算，跳过。
+        for ax, _bounds in live:
+            get_ss = getattr(ax, "get_subplotspec", None)
+            ss = get_ss() if get_ss is not None else None
+            if ss is not None:
+                ax.set_position(ss.get_position(fig))
+        # 2) 让被接管的那个引擎照常算它自己那份。**调 `inner.execute` 而不是
+        #    `super().execute`**：原件可能是用户自己的 `TightLayoutEngine` 子类，
+        #    它重写过的排版必须原样跑（见 `__init__`）。
+        self._inner.execute(fig)
+        # 3) 再把用户摆过的位置盖回去——这一步必须在最后：`subplots_adjust`
+        #    会把每一个有 SubplotSpec 的轴按格子重新落位。
+        for ax, bounds in live:
+            ax.set_position(list(bounds))
+
+
+def pinnable_layout_engine(fig):
+    """这张图上装着的 Tavotto 可钉引擎（没有就 None）。"""
+    try:
+        engine = fig.get_layout_engine()
+    except Exception:
+        return None
+    return engine if isinstance(engine, PinnedTightLayoutEngine) else None
+
+
+def ensure_pinnable_layout_engine(fig):
+    """持久 tight 引擎 → 换成可钉的那一版。已经换过 / 用不上则原样返回。
+
+    **热态与重放必须在同一时刻做这一步**，否则「所见 == 所写 == 重开后重放出来
+    的」当场破掉：换引擎会改变没被 pin 的轴的落位收敛过程，只在一侧做就等于两侧
+    跑的是两套布局。做到这一点的办法不是「两边各调一次」，而是**只有一个调用点**
+    ——`_set_axes_position`。它是热态与重放**共用的同一条代码路径**：两侧都在
+    `overrides.apply()` 里、在同一个规范顺序档位上、在这张图的第一条 position
+    override 落下的那一刻走到它。
+
+    曾经在 `manifest.instrument()` 里也调过一次（想让 manifest 建好之前就换掉）。
+    变异反证证明那一次是**杀不死的**：把它删掉，整套用例全绿——因为 setter 这条
+    路已经覆盖了同一件事。同一条保证实现两遍，坏掉一份另一份会替它兜住，于是两条
+    变异一起存活。删掉之后 setter 那条变异当场变红。
+
+    换上去是无条件的：pin 表为空时它与原生 `TightLayoutEngine` 逐字节相同
+    （实测），所以没被编辑过的图不受任何影响。
+    """
+    if fig is None:
+        return None
+    if not figure_layout_engine_eats_position(fig):
+        # 「换不换」只有 `figure_layout_engine_eats_position` 一份判据——这里**不**
+        # 再写一次「是不是已经换过了」的早退。写两遍的话，其中一份坏掉时另一份
+        # 会替它兜住，变异反证于是两条一起存活（实测：早退在时，把判据里排除自己
+        # 子类那半段删掉，整套用例全绿）。
+        return pinnable_layout_engine(fig)
+    engine = PinnedTightLayoutEngine(fig.get_layout_engine())
+    fig.set_layout_engine(engine)
+    return engine
+
+
 def figure_layout_engine_eats_position(fig) -> bool:
     """这张图的布局引擎会不会把 `set_position` 整个算回去？
 
-    Tavotto 落 `axes.position` override 的方式是 `ax.set_position(v)`（见
-    `overrides` 的 `("axes","position")` setter）。图上挂着**持久的**
-    `TightLayoutEngine` 时，它会在紧随其后的那次绘制里把位置重算——文档里记着
-    override、画面上什么都没发生。用户拖子图、多选对齐、改 mm 宽高、成组缩放
-    都会撞上：点了、历史里有了、撤销栈里有了，图纹丝不动。
+    问的是「**还没被 Tavotto 接管**的持久 tight 引擎」——它现在只有一个消费者
+    `ensure_pinnable_layout_engine`，回答的是「要不要换成可钉的那一版」。
+    #140 时代它还兼着「要不要把 position 能力藏起来」，那一层已经由
+    `PinnedTightLayoutEngine` 取代（issue #162）。
 
     三个版本上逐个量过（3.9.4 / 3.10.8 / 3.11.1，结果完全一致）：
 
@@ -2318,80 +2491,71 @@ def figure_layout_engine_eats_position(fig) -> bool:
     「把 tight 设成常驻引擎」这一种写法。
 
     还量了一条否定结论：`ax.set_in_layout(False)` **挡不住** TightLayoutEngine
-    （三个版本上都不行），所以不能靠它把能力救回来。
+    （三个版本上都不行），所以救不回来的不是它——救回来的是自定义引擎。
 
     判据用 `isinstance` 而不是类名字符串：`PlaceHolderLayoutEngine` 与
     `ConstrainedLayoutEngine` 都**不是** `TightLayoutEngine` 的子类（实测
-    `issubclass` 为 False），所以 isinstance 不会误伤它们。
-
-    **这只是图级的一半**，逐轴那一半见 `axes_position_eaten_by_layout`。
+    `issubclass` 为 False），所以 isinstance 不会误伤它们。**但
+    `PinnedTightLayoutEngine` 是**，所以它必须被显式排除——不排除的话
+    `ensure_pinnable_layout_engine` 会在每次调用时再换一次引擎，把上一版的
+    pin 表连同用户摆过的每一个位置一起丢掉。
     """
     try:
-        from matplotlib.layout_engine import TightLayoutEngine
-
-        return isinstance(fig.get_layout_engine(), TightLayoutEngine)
-    except Exception:
-        return False
-
-
-def axes_position_eaten_by_layout(fig, ax) -> bool:
-    """**这一个** axes 的 `set_position` 会被布局引擎算回去吗？
-
-    图级的持久 tight 引擎只是必要条件。tight_layout 算的是 gridspec，
-    **没有 SubplotSpec 的 axes 它根本不参与**——`fig.add_axes([...])` 建的轴
-    （用户自己摆的插图、自己摆的色条 `cax=`）位置照旧保得住，甚至 matplotlib
-    自己会为此发一句 "This figure includes Axes that are not compatible with
-    tight_layout"。拿图级结果一刀切会**把一个真能力藏起来**，那比不支持更糟
-    （`Arc` 那次的教训）。
-
-    3.9.4 / 3.10.8 / 3.11.1 三版实测，结果一致：
-
-    | 同一张 `layout='tight'` 图上的 axes | SubplotSpec | set_position 之后再 draw |
-    |---|---|---|
-    | `plt.subplots()` 的子图 | 有 | **被吃掉** |
-    | `fig.add_axes([...])` | 无 | 保住 ✅ |
-    | `fig.colorbar(im, ax=ax)` 的色条轴 | 有（从宿主 gridspec 里抠的） | **被吃掉** |
-    | `fig.colorbar(im, cax=fig.add_axes(...))` 的色条轴 | 无 | 保住 ✅ |
-
-    （Codex 在 PR #161 上指出图级一刀切会误伤，逐版复核属实。）
-    """
-    if not figure_layout_engine_eats_position(fig):
-        return False
-    get_ss = getattr(ax, "get_subplotspec", None)
-    if get_ss is None:
-        return False
-    try:
-        return get_ss() is not None
+        engine = fig.get_layout_engine()
+        return isinstance(engine, TightLayoutEngine) and not isinstance(
+            engine, PinnedTightLayoutEngine
+        )
     except Exception:
         return False
 
 
 def _set_axes_position(a, v) -> None:
-    """落 `axes.position`——**除非布局引擎会把它算回去**。
+    """落 `axes.position`——持久 tight 布局下顺手把这个 axes 钉住。
 
-    这是那条判据的**第二个消费点**。manifest 那边持久 tight 引擎下已经不宣称这条
-    能力了，但「不宣称」挡不住两种来路：一份 1.0 之前存下的旧文档，以及一个直接
-    调 API / MCP 的调用。它们发过来的 override 会被老老实实记成「已应用」、不发
-    任何 warning——而 tight 引擎随后把位置算回去，**全新重放也一样算回去**，于是
-    热态与重放「一致地错」，写回自检拦不住，一条永远不生效的改动被烙进
-    `baked_overrides`。
+    这是 `ensure_pinnable_layout_engine` 的**第二个消费点**。`instrument()`
+    那边已经在建 manifest 之前把引擎换成可钉的那一版了，但「instrument 换过」
+    挡不住两种来路：一份 1.0 之前存下的旧文档，以及一个直接调 API / MCP 的
+    调用——它们可能落在一个没走过 instrument 的 FigState 上。共用同一份实现
+    是有意的（见 CLAUDE.md「共享判据修一处不算修完」）。
 
-    抛出去会变成 worker 的 warning，一条即阻断写回：用户看到的是「这条改不动」，
-    而不是「写回成功了，但图和屏幕上不一样」。判据与 manifest 共用
-    `axes_position_eaten_by_layout` 这一份实现（见 CLAUDE.md「共享判据修一处
-    不算修完」）。
+    引擎装不上（不是持久 tight 的图）时 `engine` 为 None，那正是**绝大多数**
+    图的情形：位置照旧只靠 `set_position`，没有任何东西会算回去。
 
-    **撤销那条路不走这里**（`_RESTORE` 里另有一条）：还原脚本原样是无害的，
-    在那儿抛只会让 undo 平白多一条 warning。
+    **撤销那条路不走这里**（`_RESTORE` 里另有一条）：还原不只是把数字写回去,
+    还要把这个 axes 还给 tight，否则撤销之后它会被钉在「脚本原样」那个数上，
+    再也不跟着字号 / 标签变化重排——那是一个不声不响的语义降级。
     """
-    fig = getattr(a, "get_figure", lambda: None)()
-    if fig is not None and axes_position_eaten_by_layout(fig, a):
-        raise ValueError(
-            "layout_engine_tight: 这张图用了常驻的 tight 布局（layout='tight' / "
-            "tight_layout=True），子图位置每次绘制都会被重新算过，这条改动不会"
-            "生效。issue #162"
-        )
-    a.set_position([float(x) for x in v])
+    bounds = [float(x) for x in v]
+    # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
+    # bounds 抛 TypeError）必须排在**不可逆**的两步（换引擎、落 pin）之前。
+    #
+    # 反过来写会烧掉一张图：pin 已经落下而 setter 抛了异常，于是 `apply` 把它收成一条
+    # warning、**不记进 `state.applied`**；后续任何一次全量列表里都没有这个 key，
+    # 还原那条路（`_RESTORE`）就永远不会跑，也就永远不会 `unpin`。坏 bounds 从此留在
+    # 引擎里，而 `Figure.draw` 只吞 `ValueError`——`Bbox.from_bounds()` 抛的是
+    # **TypeError**，它会一路冒出去：**这张图再也画不出来，且撤销不回来**
+    # （三个版本实测一致）。
+    #
+    # 这与 #190 那一族是同一句话：不可逆的那一步排在了可能失败的那一步之前。
+    # 校验长度只挡得住这一种坏输入，换顺序挡得住 `set_position` 的**每一种**失败。
+    a.set_position(bounds)
+    engine = ensure_pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
+    if engine is not None:
+        engine.pin(a, bounds)
+
+
+def _restore_axes_position(a, orig) -> None:
+    """撤销一条 position override：先把 axes 还给布局引擎，再写回脚本原样。
+
+    `unpin` 不能省。position 的「脚本原样」在持久 tight 图上是一组**算出来的**
+    数字，不是用户或脚本表过的态——留着 pin 就等于把那次计算的结果冻成了永久
+    设置（见 CLAUDE.md「getter 必须回可回灌的形式」的同一族问题）。unpin 之后
+    tight 会在下一次 draw 里重新算它，实测逐位回到「从没被 override 过」的位置。
+    """
+    engine = pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
+    if engine is not None:
+        engine.unpin(a)
+    a.set_position([float(x) for x in orig])
 
 
 def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
@@ -4546,7 +4710,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("colorbar", "extend"): _restore_cb_extend,
     # 还原脚本原样：不过 `_set_axes_position` 的 guard——tight 引擎下还原是无害
     # 的（它本来就要把位置算回去），在 undo 路上抛只会平白多一条 warning
-    ("axes", "position"): lambda a, orig: a.set_position([float(x) for x in orig]),
+    ("axes", "position"): _restore_axes_position,
     ("figure", "size_mm"): lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
 }
 for _p in _TICK_MODEL_PROPS:

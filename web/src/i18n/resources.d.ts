@@ -2899,7 +2899,6 @@ export default interface Resources {
     "unlock": "解锁",
     "unsupported": {
       "child_axes_locator": "这个子 axes 的位置由父级每帧重算，改了会在下一次绘制时弹回去",
-      "layout_engine_tight": "这张图用了常驻的 tight 布局，子图位置每次绘制都会被它重新算过——改了不会生效",
       "multi_host_colorbar": "这条色条横跨 {{hosts}} 个子图，方向切换在当前版本不支持",
       "parasite_host_draw": "这是 host_subplot 的寄生轴，宿主代它绘制内容、不看它自己的显示开关；要隐藏请逐个关掉它上面的元素",
       "parasite_host_rect": "这是 host_subplot 的寄生轴，落位每次绘制都会被宿主重置——改宿主子图的位置，它会跟着走",

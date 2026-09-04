@@ -58,7 +58,6 @@ from overrides import (
     _minor_tick_prop,
     _stroke_state,
     _tick0,
-    axes_position_eaten_by_layout,
     bind_legend_entries,
     coincident_shared_axes_pairs,
     collection_caps,
@@ -66,7 +65,6 @@ from overrides import (
     colorbar_mapping_is_live,
     colorbar_maps,
     drawn_tick_label_entries,
-    figure_layout_engine_eats_position,
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
@@ -499,9 +497,6 @@ def instrument(state: FigState) -> None:
     child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
     # twinx/twiny 的 twin 轴 → 「子图 N（右轴）」这类可区分标签，整轮算一次
     twin_labels = _twin_axes_labels(all_axes, child_ids, cbar_of_ax)
-    # 图级判据，整轮只算一次
-    tight_layout_engine = figure_layout_engine_eats_position(fig)
-
     for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
         is_child = id(ax) in child_ids
@@ -521,16 +516,16 @@ def instrument(state: FigState) -> None:
         # `set_position` 之后 `_originalPosition` 是新值、`_position` 一 draw 就被
         # 改回宿主的框，**画出来的像素一个都不动**。反过来这也意味着寄生轴天然
         # 跟着宿主走，不需要用户自己摆。
+        #
+        # **持久 tight 布局不再是第三个来源**（issue #162）：落 position 时
+        # `overrides._set_axes_position` 把引擎换成 `PinnedTightLayoutEngine`，
+        # 子图钉得住。**它与寄生轴这条规则不冲突，因为两者管的是不同的轴、
+        # 且顺序天然是对的**：布局引擎在 `Figure.draw` 的最前面跑（钉住宿主），
+        # 宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生轴跟着宿主走）。
+        # 所以「拖 tight 图上的 host_subplot」= 宿主到位、它的右轴跟着，而寄生轴
+        # 自己的 position 照旧是死开关。看护见
+        # `tests/test_layout_engine_pinning.py` 第 11 节。
         position_locked = (is_child and ax.get_axes_locator() is not None) or is_parasite
-        # 持久 tight 引擎会在下一次绘制里把位置整个算回去。同样宁可不支持也不给
-        # 一个按了会弹回来的旋钮——但这一次要说得出为什么（reason 走
-        # `unsupported_props`，界面按 code 翻译）。
-        # **逐轴判，不是图级一刀切**：同一张 tight 图上 `fig.add_axes()` 建的轴
-        # 不参与 tight 计算，位置是真能改的（见 axes_position_eaten_by_layout）。
-        locked_by_layout = (
-            tight_layout_engine and not position_locked and axes_position_eaten_by_layout(fig, ax)
-        )
-        position_locked = position_locked or locked_by_layout
         if is_child:
             kind = "secondary" if secondary else "inset"
             child_ordinal[kind] += 1
@@ -558,9 +553,7 @@ def instrument(state: FigState) -> None:
             # （实测像素一个都不变）。宁可不给这个控件，也不给一个按了没反应的。
             visible_locked=is_parasite,
             position_locked_reason=(
-                "layout_engine_tight"
-                if locked_by_layout
-                else "parasite_host_rect"
+                "parasite_host_rect"
                 if is_parasite
                 else "child_axes_locator"
                 if position_locked
@@ -2641,12 +2634,13 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
     `el` 带着遍历时才知道的能力标记（见 `_register`）：
 
     * `position_locked` —— 落位不归 Tavotto 管，`set_position` 一 draw 就被顶
-      回去。**不出这个字段**，宁可不支持也不给一个按了会弹回来的旋钮。三个
+      回去。**不出这个字段**，宁可不支持也不给一个按了会弹回来的旋钮。两个
       来源，理由不同、reason code 也不同（`position_locked_reason`）：子 axes
-      （inset / secondary）的父级 `_axes_locator` 每帧重算；整张图挂着**持久的**
-      `TightLayoutEngine` 时它会把所有子图的位置重算（#140，判据见
-      `figure_layout_engine_eats_position`）；寄生轴（`host_subplot().twinx()`）
-      被宿主的 `draw()` 每帧按宿主 rect 重置（#217）。
+      （inset / secondary）的父级 `_axes_locator` 每帧重算；寄生轴
+      （`host_subplot().twinx()`）被宿主的 `draw()` 每帧按宿主 rect 重置（#217）。
+      持久 `TightLayoutEngine` 曾经是第三个来源（#140），issue #162 之后不再是
+      ——落 position 时 `overrides._set_axes_position` 会把它换成
+      `overrides.PinnedTightLayoutEngine`，那个子图从此钉得住。
     * `visible_locked` —— 寄生轴独有：宿主代画它的孩子时**不看**它自己的
       visible，`set_visible(False)` 在画面上一个像素都不动（#217）。
     * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：
