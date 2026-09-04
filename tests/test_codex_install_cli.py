@@ -281,7 +281,11 @@ def test_frozen_cli_does_not_use_itself_as_the_interpreter(monkeypatch, tmp_path
     _store_alias_shim(bindir, "python3")  # 存在，但起不来
     real = _real_python_shim(bindir, "python")
     monkeypatch.setenv("PATH", str(bindir))
-    assert codexinstall.plugin_python() == str(real), "把「PATH 里有」当成「能跑」了"
+    # Windows 上 `shutil.which` 回的是 PATHEXT 那一份的大写扩展名（`python.CMD`），
+    # 路径比较必须走 normcase——否则这条判据在真 Windows 上红在大小写上。
+    assert os.path.normcase(codexinstall.plugin_python()) == os.path.normcase(str(real)), (
+        "把「PATH 里有」当成「能跑」了"
+    )
 
     # PATH 上只剩那个起不来的：说清楚，别装作能跑
     real.unlink()
@@ -425,6 +429,23 @@ def test_success_only_tells_the_user_to_open_a_new_session(fake_codex):
 # 没有候选链、`command` 也不过 shell，所以只能在安装时把已装副本换成一条真能跑的。
 
 
+def _break_the_mcp_command(plugin_dir: Path, tmp_path) -> Path:
+    """把已装副本的启动命令换成一个**起不来的绝对路径**。
+
+    早先这里是往 PATH 前面插一个叫 `python3` 的 shim。真 Windows 上那招不成立：
+    `subprocess` 走 CreateProcess，PATH 搜索**只补 `.exe`**，看不见 `.cmd`——名字
+    照样解析到机器上真的 `python3.exe`，判据于是绿在了错的理由上（#256 的
+    windows-latest 腿）。给全路径就没这个问题（日志里 `codex.CMD` 就是这么跑起来的）。
+    """
+    broken = _store_alias_shim(tmp_path / "storebin", "python3")
+    data = json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
+    next(iter(data["mcpServers"].values()))["command"] = str(broken)
+    (plugin_dir / ".mcp.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return broken
+
+
 def _mcp_command(plugin_dir: Path) -> str:
     data = json.loads((plugin_dir / ".mcp.json").read_text(encoding="utf-8"))
     return next(iter(data["mcpServers"].values()))["command"]
@@ -440,17 +461,16 @@ def _yaml_command(plugin_dir: Path) -> str:
 
 
 def test_install_pins_a_runnable_interpreter_when_the_command_cannot_start_the_launcher(
-    fake_codex, tmp_path, monkeypatch
+    fake_codex, tmp_path
 ):
-    """PATH 上的 `python3` 是那个 9009 的东西时，安装要把启动命令换掉。
+    """启动命令起不来（存在、零输出、非零码）时，安装要把它换掉。
 
     两侧一起换：`.mcp.json` 的 `command` 与 `openai.yaml` 的
     `dependencies.tools[].command` 是根 AGENTS.md 的严格同源对（stdio 依赖按
     command 做规范键匹配），只换一侧的话技能声明的依赖对不上插件自带的 server。
     """
-    shim = tmp_path / "storebin"
-    _store_alias_shim(shim, "python3")
-    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+    broken = _break_the_mcp_command(fake_codex["plugin"], tmp_path)
+    assert _mcp_command(fake_codex["plugin"]) == str(broken)
 
     rc, out, err = _run(["codex", "install", "--json"])
     assert rc == 0, err
@@ -458,7 +478,7 @@ def test_install_pins_a_runnable_interpreter_when_the_command_cannot_start_the_l
     assert step["ok"] and step["skipped"] is False, step
 
     plugin = fake_codex["plugin"]
-    assert _mcp_command(plugin) != "python3", "起不来的命令还留在 .mcp.json 里"
+    assert _mcp_command(plugin) != str(broken), "起不来的命令还留在 .mcp.json 里"
     assert _mcp_command(plugin) == sys.executable
     assert _yaml_command(plugin) == sys.executable, "同源对只改了一侧"
 
@@ -469,19 +489,15 @@ def test_install_pins_a_runnable_interpreter_when_the_command_cannot_start_the_l
     assert again["skipped"] is True, "已经能跑了还再钉一次"
 
 
-def test_the_pinned_interpreter_comes_from_the_plugins_own_resolver(
-    fake_codex, tmp_path, monkeypatch
-):
+def test_the_pinned_interpreter_comes_from_the_plugins_own_resolver(fake_codex, tmp_path):
     """挑哪个解释器由**插件的 resolver** 说了算，安装器不自己再挑一遍。
 
     `mcp/server.py` 的候选链（显式覆盖 → worker 环境 → 自管 runtime → 从 CLI
     反推 → PATH）是唯一权威；安装器抄第二份的话，两边会各修一次同一个格子。
     """
-    shim = tmp_path / "storebin"
-    _store_alias_shim(shim, "python3")
-    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
-    resolved = _real_python_shim(tmp_path / "resolved", "python-resolved")
     plugin = fake_codex["plugin"]
+    _break_the_mcp_command(plugin, tmp_path)
+    resolved = _real_python_shim(tmp_path / "resolved", "python-resolved")
     (plugin / "mcp" / "server.py").write_text(
         "import json,sys\n"
         f"print(json.dumps({{'ok': True, 'python': {str(resolved)!r}}}))\n"
@@ -494,19 +510,14 @@ def test_the_pinned_interpreter_comes_from_the_plugins_own_resolver(
     assert _yaml_command(plugin) == str(resolved)
 
 
-def test_doctor_reports_the_unusable_command_without_writing_anything(
-    fake_codex, tmp_path, monkeypatch
-):
+def test_doctor_reports_the_unusable_command_without_writing_anything(fake_codex, tmp_path):
     """doctor 只诊断：报出「是解释器的问题」和下一步，一个字节都不改。"""
     assert _run(["codex", "install", "--json"])[0] == 0
     plugin = fake_codex["plugin"]
-    assert _mcp_command(plugin) == "python3", "PATH 上的 python3 本来是能跑的"
+    assert _mcp_command(plugin) == "python3", "夹具里的 python3 本来是能跑的"
+    _break_the_mcp_command(plugin, tmp_path)
     before = (plugin / ".mcp.json").read_bytes()
     before_yaml = (plugin / "skills" / "tavotto-figure" / "agents" / "openai.yaml").read_bytes()
-
-    shim = tmp_path / "storebin"
-    _store_alias_shim(shim, "python3")
-    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
 
     rc, out, err = _run(["codex", "doctor", "--json"])
     assert rc == 1, out
@@ -520,14 +531,10 @@ def test_doctor_reports_the_unusable_command_without_writing_anything(
     ).read_bytes() == before_yaml
 
 
-def test_no_usable_interpreter_says_so_instead_of_pinning_something_broken(
-    fake_codex, tmp_path, monkeypatch
-):
+def test_no_usable_interpreter_says_so_instead_of_pinning_something_broken(fake_codex, tmp_path):
     """一个能跑的都找不到时报稳定 code，**不许随便钉一个**。"""
-    shim = tmp_path / "storebin"
-    _store_alias_shim(shim, "python3")
-    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
     plugin = fake_codex["plugin"]
+    broken = _break_the_mcp_command(plugin, tmp_path)
     # 插件副本坏了：谁来跑启动器都回不出体检 JSON
     (plugin / "mcp" / "server.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
 
@@ -535,7 +542,7 @@ def test_no_usable_interpreter_says_so_instead_of_pinning_something_broken(
     assert rc == 1, out
     data = json.loads(out.strip().splitlines()[-1])
     assert data["error_code"] == "interpreter_unusable"
-    assert _mcp_command(plugin) == "python3", "没找到能跑的却还是改了 .mcp.json"
+    assert _mcp_command(plugin) == str(broken), "没找到能跑的却还是改了 .mcp.json"
 
 
 def test_a_launcher_that_only_degrades_still_counts_as_startable(tmp_path):
@@ -575,6 +582,42 @@ def _plugin_with_two_manifests(tmp_path):
     return plugin
 
 
+def test_pinning_survives_crlf_manifests(tmp_path):
+    """行尾是 CRLF 时两份**都要**换上去，且行尾原样保留。
+
+    这条是真机逼出来的：原实现用跨行正则 `^dependencies:\n…`（`re.M | re.S`），
+    CRLF 下 `^dependencies:` 后面是 `\r` 不是 `\n`，**永不匹配**，于是 openai.yaml
+    静默不改、连错都不报——`.mcp.json` 钉上了、同源对只剩一侧，正是 Codex 反复
+    提示重装的那个状态。Git for Windows 默认 `core.autocrlf=true` + Codex 走
+    sparse-checkout，用户机器上那份大概率就是 CRLF。
+
+    判据故意**同时钉「换了」与「行尾没被改掉」**：只钉前者的话，把整份文件规范化成
+    LF 也能过，而那会让下一次 git 比较整份文件都是脏的。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = tmp_path / "plug"
+    (plugin / "skills" / "s" / "agents").mkdir(parents=True)
+    (plugin / ".mcp.json").write_bytes(
+        (json.dumps({"mcpServers": {"tavotto": {"command": "python3"}}}) + "\n").encode()
+    )
+    yaml_path = plugin / "skills" / "s" / "agents" / "openai.yaml"
+    crlf = (
+        "interface:\r\n  display_name: keep\r\n"
+        "dependencies:\r\n  tools:\r\n    - type: mcp\r\n      command: python3\r\n"
+        "policy:\r\n  allow_implicit_invocation: true\r\n"
+    )
+    yaml_path.write_bytes(crlf.encode("utf-8"))
+
+    changed = codexinstall.pin_launcher_command(plugin, "/opt/real/python")
+    assert changed == [".mcp.json", "skills/s/agents/openai.yaml"], "CRLF 下同源对只换了一侧"
+    after = yaml_path.read_bytes()
+    assert b"      command: /opt/real/python\r\n" in after, after
+    assert after.count(b"\r\n") == crlf.count("\r\n"), "行尾被改掉了"
+    assert b"display_name: keep" in after and b"allow_implicit_invocation" in after
+
+
 def test_pinning_is_all_or_nothing_when_the_second_file_fails(tmp_path, monkeypatch):
     """第二份换不上去时，**磁盘上两份都保持原样**。
 
@@ -602,6 +645,11 @@ def test_pinning_is_all_or_nothing_when_the_second_file_fails(tmp_path, monkeypa
             raise OSError(28, "No space left on device")
         return real_replace(src, dst, *a, **kw)
 
+    # **先钉死「要落的就是两份」**。计划被静默削成一份时（CRLF 那条缺陷就是这么
+    # 干的），第二次 replace 压根不会发生，本用例会以 DID NOT RAISE 的形式空转——
+    # 缺陷存在时判据反而不红，那是最坏的一种。
+    assert len(codexinstall._pin_plan(plugin, "/opt/real/python")) == 2
+
     monkeypatch.setattr(atomicio.os, "replace", flaky)
     with pytest.raises(OSError):
         codexinstall.pin_launcher_command(plugin, "/opt/real/python")
@@ -627,7 +675,10 @@ def test_pinning_writes_through_a_symlinked_manifest(tmp_path):
     link = plugin / "skills" / "s" / "agents" / "openai.yaml"
     real.write_bytes(link.read_bytes())
     link.unlink()
-    link.symlink_to(real)
+    try:
+        link.symlink_to(real)
+    except OSError as exc:  # Windows 上没开发者模式/无权限时建不了
+        pytest.skip(f"这台机器建不了符号链接：{exc}")
 
     codexinstall.pin_launcher_command(plugin, "/opt/real/python")
     assert link.is_symlink(), "符号链接被换成了普通文件"

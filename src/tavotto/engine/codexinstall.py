@@ -213,10 +213,6 @@ def engine_importable() -> bool:
 
 
 # ---------------------- 启动命令：钉到一个真能跑的解释器 ----------------------
-#: `dependencies:` 顶层块（缩进行都算它的，遇到下一个顶格 key 为止）。
-_DEPS_BLOCK = re.compile(r"^dependencies:\n(?:.*?)(?=^\w|\Z)", re.M | re.S)
-
-
 def _yaml_scalar(value: str) -> str:
     """写进 YAML 的纯量。带空格的绝对路径 plain scalar 容得下，但 `#`、`: `、
     引号与开头的指示符会把它变成别的东西——那时候加单引号。"""
@@ -236,17 +232,27 @@ def _replace_dependency_command(text: str, command: str) -> str:
     """把 `openai.yaml` 的 `dependencies.tools[].command` 换成 `command`。
 
     只在 `dependencies:` 块里换——`interface:` 与 `policy:` 一个字都不许动。
+
+    **逐行扫，不用跨行正则。** 原来那版是 `^dependencies:\n…`（`re.M | re.S`），
+    在 CRLF 行尾下**永不匹配**：`^dependencies:` 后面是 `\r` 不是 `\n`，于是整个
+    函数静默返回原文——`.mcp.json` 钉上了、`openai.yaml` 没动，正是本改动要避免的
+    半套状态，而且连错都不报。Git for Windows 默认 `core.autocrlf=true`，Codex 用
+    git sparse-checkout 拉插件，用户机器上那份大概率就是 CRLF（这条是在合并队列的
+    windows-latest 腿上第一次现形的）。每行的行尾原样带回去，不把文件改成混合行尾。
     """
-    m = _DEPS_BLOCK.search(text)
-    if not m:
-        return text
-    block = re.sub(
-        r"^(\s*command:\s*).*$",
-        lambda mm: mm.group(1) + _yaml_scalar(command),
-        m.group(0),
-        flags=re.M,
-    )
-    return text[: m.start()] + block + text[m.end() :]
+    out: list[str] = []
+    in_deps = False
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        eol = line[len(body) :]
+        if re.match(r"\w", body):  # 顶格的 key = 新的顶层块（空行与注释不算）
+            in_deps = body.startswith("dependencies:")
+        elif in_deps:
+            m = re.match(r"(\s*command:\s*)", body)
+            if m:
+                body = m.group(1) + _yaml_scalar(command)
+        out.append(body + eol)
+    return "".join(out)
 
 
 def _resolved(path: Path) -> Path:
@@ -272,7 +278,17 @@ def _pin_plan(plugin_dir: Path, command: str) -> list[tuple[Path, bytes, bytes, 
     plan.append((_resolved(mcp_path), old, new, mcp_path.name))
     for yaml_path in sorted(plugin_dir.glob("skills/*/agents/openai.yaml")):
         old = yaml_path.read_bytes()
-        new = _replace_dependency_command(old.decode("utf-8"), command).encode("utf-8")
+        new_text = _replace_dependency_command(old.decode("utf-8"), command)
+        # **换没换上去要当场验，别信正则**：这一行原本静默失配了整整一个平台。
+        # 用一条与上面那个扫描器无关的判据——目标行必须真的出现在文件里。
+        wanted = "command: " + _yaml_scalar(command)
+        if not any(ln.strip() == wanted for ln in new_text.splitlines()):
+            raise atomicio.AtomicWriteError(
+                "write_failed",
+                f"{yaml_path.name} 里的依赖 command 没能换成 {command}（同源对会只剩一侧）",
+                yaml_path,
+            )
+        new = new_text.encode("utf-8")
         if new != old:
             plan.append(
                 (_resolved(yaml_path), old, new, yaml_path.relative_to(plugin_dir).as_posix())
