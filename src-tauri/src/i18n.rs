@@ -52,8 +52,19 @@ pub fn normalize(tag: &str) -> Option<Locale> {
 /// 界面里的一切文案都在前端，这里只有「前端还没起来 / 根本起不来」的部分。
 pub struct ShellText {
     pub app_about: &'static str,
+    /// macOS 才有的应用菜单三项（隐藏 / 隐藏其他 / 退出 Tavotto）；别的平台上
+    /// 退出在「文件」菜单里，这三条用不上。
+    ///
+    /// 与下面的 `quit` 是**同一条判据的两条边**：那一边早就标了
+    /// `cfg_attr(target_os = "macos", allow(dead_code))`，这一边一直没标——
+    /// 因为 `src-tauri` 的 clippy 在这个仓库里从来没跑过（`desktop-tauri.yml`
+    /// 的 fmt/clippy 三连属于它的 `workerd` job，src-tauri 那条腿只有
+    /// `cargo test`）。issue #275 把 clippy 接进 PR 档，第一次跑就撞上它。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub app_hide: &'static str,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub app_hide_others: &'static str,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub app_quit: &'static str,
     pub file: &'static str,
     pub file_open_project: &'static str,
