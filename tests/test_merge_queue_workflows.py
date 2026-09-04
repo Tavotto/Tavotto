@@ -54,6 +54,19 @@ def _required_of(job_block: str) -> set[str]:
     return set(m.group(1).split(","))
 
 
+def _if_of(job_block: str) -> str:
+    """读单行 `if:`；折叠块（`if: >-`）读不出来当场抛——重型那几档才那么写。"""
+    m = re.search(r"(?m)^    if: (.+)$", job_block)
+    assert m, "job 里读不出单行 if:"
+    return m.group(1).strip()
+
+
+#: fast 档 job 的**唯一**合法条件。写死在这里是有意的：它与重型档的
+#: `if: >-`（merge_group 或 full-ci 标签）是两种东西，而两者在 Gate 的
+#: needs 里长得一模一样。
+FAST_LANE_CONDITION = "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+
+
 # ============================================================ merge_group 触发
 class TestMergeGroupTrigger:
     def test_ci_listens_to_merge_group_checks_requested(self):
@@ -204,11 +217,59 @@ class TestGates:
         assert _needs_of(block) == _required_of(block)
 
     def test_fast_gate_covers_the_fast_layer(self):
-        assert {"python-lint", "invariants", "frontend", "workerd", "compat-smoke"} <= _needs_of(
-            _job(CI, "ci-fast-gate")
-        )
+        assert {
+            "python-lint",
+            "invariants",
+            "frontend",
+            "workerd",
+            "desktop-shell",
+            "compat-smoke",
+        } <= _needs_of(_job(CI, "ci-fast-gate"))
         assert _needs_of(_job(CI, "ci-fast-gate")) & {"backend", "backend-fast"}, (
             "fast gate 必须聚合 backend 快线"
+        )
+
+    def test_every_fast_lane_job_actually_runs_on_a_plain_pull_request(self):
+        """fast 档的每个 job 都必须在**普通 PR** 上产出结论。
+
+        「接进了 Gate 的闭集」与「在 PR 上真的跑」是两件事，而它们在
+        `needs:` 那一行长得一模一样。重型那几档正是接在 integration gate 里、
+        普通 PR 上整体 skipped——`--allow-deferred` 判 deferred，Gate 照样绿。
+        把一个 fast 档的 job 悄悄改成同样的条件，Gate 依旧全绿，而它守的东西
+        合并前一次都不验：**issue #275 就是这个形状**（`src-tauri` 的 Rust 判据
+        只登记在发行链上，改了壳的 PR 一路绿）。
+
+        这里逐个比死条件，而不是「含 pull_request 就算过」：重型档的折叠条件
+        里也含 `pull_request`，只是后面还跟着 `full-ci` 标签。
+        """
+        for job_id in sorted(_needs_of(_job(CI, "ci-fast-gate"))):
+            assert _if_of(_job(CI, job_id)) == FAST_LANE_CONDITION, (
+                f"fast 档的 `{job_id}` 不是在每个 PR 上都跑——它在 Gate 里，"
+                "但普通 PR 上没有结论，等于一道登记了却不执行的门禁"
+            )
+
+    def test_the_desktop_shell_rust_gates_have_an_execution_slot(self):
+        """`src-tauri` 的 fmt / clippy / 单测必须在 PR 档有执行位置（#275）。
+
+        改造前它们只跑在 `desktop-tauri.yml`（打 tag / workflow_dispatch）的
+        **build 矩阵的 macOS 那条腿**上：登记在发行链里，合并前从不执行。
+        而 `main.rs` 里其中一条判据守的是「关不掉的窗口」，它只可能写成
+        **行为**判据（源码里搜 token 的写法会放行 `if false { … }`）——
+        行为判据只有真的跑起来才算数。
+
+        `mkdir -p dist/Tavotto` 那一步同样是判据的一部分：`tauri.conf.json` 的
+        `bundle.resources` 指向它，缺了 tauri-build 直接失败。它也是这一格
+        **不必**挂在完整打包之后的原因。
+        """
+        block = _code(_job(CI, "desktop-shell"))
+        assert "mkdir -p dist/Tavotto" in block, "少了那个空 sidecar 目录，tauri-build 起不来"
+        for cmd in ("cargo fmt --check", "cargo clippy --all-targets -- -D warnings", "cargo test"):
+            assert re.search(
+                rf"(?m)^      - working-directory: src-tauri\n\s+run: {re.escape(cmd)}$",
+                block,
+            ), f"desktop-shell 里没有在 src-tauri 下跑 `{cmd}`"
+        assert "desktop-shell" in _needs_of(_job(CI, "ci-fast-gate")), (
+            "跑了但没接进 Gate：它红了没人看得见"
         )
 
     def test_integration_gate_covers_the_heavy_layer(self):
