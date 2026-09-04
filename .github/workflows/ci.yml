@@ -1122,6 +1122,79 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  posix-e2e:
+    # **POSIX 那条 e2e 腿**（issue #30 / STATUS 的 R-16）。
+    #
+    # 在这之前，全仓唯一执行 `pnpm e2e` 的地方是 windows-exe-smoke，于是
+    # `web/e2e/error-recovery-en.spec.ts` 里两条 `test.skip(win32)`
+    # （项目目录不可读 / 导出目录不可写，靠的是 POSIX 权限位）在唯一存在的
+    # 那条腿上**恒跳过**——收得到不等于跑得过，它们只在作者本机绿过，
+    # CI 里一次都没有进过断言。空转的门禁比没有门禁更坏。
+    #
+    # 这条腿**不打包**：不设 `TAVOTTO_EXE`，fixtures 回退到 `python -m tavotto`
+    # （web/e2e/fixtures.ts 的 launchCommand）。产物形态的验证归 Windows 那条，
+    # 这里要回答的是另一个问题——**同一套界面在 POSIX 的权限 / 路径语义下
+    # 还成不成立**。所以也不需要内置 runtime / PyInstaller / Rust supervisor，
+    # 十来分钟的构建全部省掉。
+    #
+    # 只跑 chromium 与 chromium-en 两个 project：webkit 那档验的是 macOS 桌面壳
+    # 的引擎，已经在 windows-exe-smoke 上跑过，在 Linux 上再跑一遍只是把腿拉长。
+    #
+    # 合并资格档：与另外两条重腿同档，只在 merge_group 的组合提交（或带
+    # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
+    # `!= 'pull_request'` 那种过宽的否定条件。
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [backend-fast, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 装 Tavotto 与渲染依赖
+        # matplotlib 不是运行期依赖（用户自己的解释器才是渲染环境），
+        # 这条腿要真渲染出图，所以显式装一份。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . matplotlib
+
+      - name: 构建前端进包
+        # 包内 `src/tavotto/web/` 优先于 `web/dist`——不跑这一步测的是旧界面。
+        run: python scripts/build_frontend.py
+
+      - name: Playwright 黄金路径（真实界面 + python -m tavotto）
+        working-directory: web
+        env:
+          # 不设 TAVOTTO_EXE：这条腿刻意跑源码形态（见上）。
+          TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm e2e --project=chromium --project=chromium-en
+
+      - name: 失败时收集 trace 与操作轨迹
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posix-e2e-report
+          path: |
+            web/playwright-report/**
+            web/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
+
   # ────────────────────────────────────────────────────────────────
   # 稳定 Gate（Merge Queue 迁移的落点，判定逻辑在 scripts/ci/aggregate_gate.py）
   #
@@ -1182,7 +1255,7 @@ jobs:
   ci-integration-gate:
     name: CI integration gate
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke]
+    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1224,7 +1297,7 @@ jobs:
             --mode integration \
             --event "$GATE_EVENT" \
             $FLAGS \
-            --required backend-platforms,package,windows-exe-smoke,macos-app-smoke \
+            --required backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e \
             --needs-json "$NEEDS_JSON"
 
   # ────────────────────────────────────────────────────────────────

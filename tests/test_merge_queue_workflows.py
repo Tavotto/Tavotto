@@ -306,7 +306,7 @@ class TestGates:
             "pull_request types 里掉了 labeled——加标签不会触发新 run"
         )
 
-    HEAVY = ("backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke")
+    HEAVY = ("backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e")
 
     def _heavy_cond(self, job_id: str) -> str:
         """折叠块的行模式写成 ` {6,}\\S.*`（缩进全部交给 ` {6,}`、正文以 \\S

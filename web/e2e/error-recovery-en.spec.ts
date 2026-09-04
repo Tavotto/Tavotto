@@ -10,9 +10,16 @@
  *
  * 本 spec 只挂在 chromium-en project 下（playwright.config 的基础 chromium
  * project 显式 testIgnore 它——spec 自带 en-US locale，两个 project 都跑等于
- * 同一份内容跑两遍）。Windows 文件占用（file_locked）刻意没有用例，见文件
- * 末尾的说明。
+ * 同一份内容跑两遍）。
+ *
+ * **本文件里有按平台跳过的用例，先看清它们跑在哪条腿上**：CI 有两条 e2e 腿——
+ * `windows-exe-smoke`（windows-latest，打包产物）与 `posix-e2e`
+ * （ubuntu-latest，`python -m tavotto`）。两条 POSIX 权限用例在后者上执行，
+ * `file_locked` 那条在前者上执行。这个配对由
+ * `tests/test_e2e_leg_topology.py` 看住：**每条 skip 都必须点得出一条会执行
+ * 它的腿**，配不上当场红——收得到不等于跑得过（issue #30）。
  */
+import { spawn } from 'node:child_process'
 import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -139,7 +146,10 @@ test('render 失败（脚本抛异常）：英文报错 + 重试按钮，画布�
 })
 
 test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续', async ({ app, page }) => {
-  test.skip(process.platform === 'win32', 'POSIX 权限位')
+  test.skip(
+    process.platform === 'win32',
+    'POSIX 权限位；本条在 CI 的 posix-e2e 腿（ubuntu-latest）上执行（issue #30）',
+  )
   const locked = path.join(os.tmpdir(), `tavotto-en-locked-${Date.now()}`)
   mkdirSync(locked, { recursive: true })
   chmodSync(locked, 0o000)
@@ -165,7 +175,10 @@ test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续
 })
 
 test('导出目录不可写：导出失败给英文报错，且不丢项目', async ({ app, page }) => {
-  test.skip(process.platform === 'win32', 'POSIX 权限位')
+  test.skip(
+    process.platform === 'win32',
+    'POSIX 权限位；本条在 CI 的 posix-e2e 腿（ubuntu-latest）上执行（issue #30）',
+  )
   const a = await app()
   await openFigures(page, a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
@@ -245,6 +258,86 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   await expectNoCjk(scopeDialog, 'Scope and agent 弹层')
 })
 
+/** 打开左侧「图内元素」树并展开全部分组（en-US 名字）。 */
+async function openElementTree(page: Page): Promise<void> {
+  const nav = page.getByRole('navigation').getByRole('button', { name: 'Figure elements' })
+  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+  await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
+  for (let i = 0; i < 8; i++) {
+    const g = page.locator('[role="treeitem"][aria-expanded="false"]').first()
+    if (!(await g.count())) break
+    await g.click()
+    await page.waitForTimeout(120)
+  }
+}
+
+test('原图被独占占用（file_locked）：英文报错说清该关掉谁，改动不丢', async ({ app, page }) => {
+  test.skip(
+    process.platform !== 'win32',
+    '独占锁只在 Windows 上真实存在；本条在 CI 的 windows-exe-smoke 腿上执行（issue #30）',
+  )
+  const dir = path.join(os.tmpdir(), `tavotto-en-locked-file-${Date.now()}`)
+  copyTree(path.join(REPO, 'examples', 'figures'), dir)
+
+  const a = await app({ figures: dir })
+  await openFigures(page, a.baseURL)
+  await placeAndEdit(page)
+
+  // 写回入口只在面板真有 override 时才亮：选中标题、改一次字号
+  await openElementTree(page)
+  await page.getByRole('treeitem', { name: /^Title/ }).first().click()
+  const panel = page.getByLabel('Right panel', { exact: true })
+  // 可访问名是 `Size`（inspector:text.fontSize），不是 prop.fontsize 的
+  // `Font size`——本机跑一遍才看出来的（zh-CN 下两者都是「字号」，分不出）
+  const size = panel.getByRole('textbox', { name: 'Size', exact: true }).first()
+  await size.fill('12')
+  await size.press('Enter')
+  await expect(panel.getByText('1 modified')).toBeVisible({ timeout: 30_000 })
+
+  /*
+   * 真的独占占用，不是模拟的错误码：PowerShell 以 FileShare.Read 打开原始
+   * PDF——**允许别人读、不允许改名/删除**，这正是 Acrobat / 看图工具打开一个
+   * 文件时的形状，于是写回最后那步 `os.replace` 抛 PermissionError
+   * （后端把它转成 409 `file_locked`，见 app.py 的 _write_back_error）。
+   * 用 `-Command` 起一个常驻进程，断言跑完再杀掉；`finally` 保证不留句柄。
+   */
+  const target = path.join(dir, 'Fig1_kinetics.pdf')
+  const holder = spawn(
+    'powershell',
+    [
+      '-NoProfile',
+      '-Command',
+      `$f=[System.IO.File]::Open('${target.replace(/'/g, "''")}',` +
+        `[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read);` +
+        `Start-Sleep -Seconds 300;$f.Close()`,
+    ],
+    { stdio: 'ignore' },
+  )
+  try {
+    // 句柄真的开出来再动手（起 PowerShell 比点一次按钮慢得多）
+    await page.waitForTimeout(3_000)
+
+    await page.getByRole('button', { name: /Write back to the original file/i }).first().click()
+    const dialog = page.getByRole('dialog').first()
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: /^Write back$/ }).click()
+
+    // 稳定的英文文案（errors:backend.file_locked），不是后端拼好的中文原句
+    await expect(
+      dialog.getByText(/locked by another program/i).first(),
+    ).toBeVisible({ timeout: 120_000 })
+    // 可执行的下一步：告诉用户去关掉谁
+    await expect(dialog.getByText(/Close whatever has it open/i).first()).toBeVisible()
+    await expectNoCjk(dialog, 'file_locked 错误面')
+  } finally {
+    holder.kill()
+  }
+
+  // 失败之后改动仍在（写回是事务，原文件与热态都不该被动过）
+  await page.keyboard.press('Escape')
+  await expect(panel.getByText('1 modified')).toBeVisible()
+})
+
 test('updater 离线：检查更新失败给英文报错，界面可继续', async ({ app, page }) => {
   // 经环境代理把出网请求指向一个立即拒绝的端口 = 可靠的「离线」
   const a = await app({
@@ -269,9 +362,15 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   await expectNoCjk(err, '更新检查失败')
 })
 
-// 有意没有「Windows 文件占用（file_locked）」的用例：独占锁只在 Windows 上
-// 真实存在，而 e2e workflow 目前只有 Ubuntu 腿——一个永远进不去 win32 分支
-// 的空壳测试是假绿（空转的门禁比没有门禁更坏）。file_locked 的后端行为由
-// tests/test_windows_regressions.py 看护，file_locked 的中英文案由
-// tests/test_error_codes.py 对拍；英文**界面**验证挂在 issue #30 的
-// 真机验收清单上，等 e2e 有 Windows 腿再把用例真实落地。
+// 「Windows 文件占用（file_locked）」的界面用例现在**在上面**，不再缺着。
+//
+// 留一段来路说明，因为它是一个「决定被写反的前提挡住」的例子：这里原来写着
+// 「e2e workflow 目前只有 Ubuntu 腿，写了也永远进不去 win32 分支」，并据此
+// 决定不写这条用例。那个前提**写反了**——当时唯一执行 `pnpm e2e` 的是
+// ci.yml 的 `windows-exe-smoke`（windows-latest），恒跳过的恰恰是本文件里
+// 两条 POSIX 用例。前提反了，从它推出来的「不写」也就跟着错了（issue #30）。
+//
+// 三条腿上的分工现在是：界面这半场由上面那条用例在 windows-exe-smoke 上真跑
+// （真独占句柄，不是模拟的错误码）；后端行为由 tests/test_windows_regressions.py
+// 看护；中英文案由 tests/test_error_codes.py 对拍；jsdom 那一档的文案分支在
+// web/src/components/inspector/WriteBackDialog.test.tsx。
