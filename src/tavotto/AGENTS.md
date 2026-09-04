@@ -771,6 +771,13 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **布局版本**：`/api/versions/<docId>` 系列，快照存 `layouts/_versions/`，
   自动检查点去重 + 滚动清理（保手动裁自动）；恢复=前端 commit（可撤销），
   与「写回原始文件」的 baked 历史完全无关。
+  **上限有两条，谁先咬到算谁的**（2026-09-03，issue #221）：条数
+  `VERSION_KEEP_TOTAL=120` 与字节 `VERSION_KEEP_BYTES=24 MB`。条数单独用不住
+  体积——每条条目里塞的是**整份文档**，于是文件大小 = 条数 × 文档大小，而每次
+  追加都要把整个文件「读 → 追加 → 裁 → 整写」（实测 1.16 MB 的文档塞满 120 条
+  = 约 140 MB / 单次追加 547 ms）。`_save_versions` 逐条序列化再拼，**量大小与
+  写文件共用同一批字节**（分两次序列化的话，削掉的开销会原样回来），拼出来的
+  与 `dumps_json({"versions": kept})` 逐字节相同。至少留最新一条。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
@@ -814,6 +821,29 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
   `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
   画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
+- **读侧也有一道非有限数闸：`documents.loads_document()`**（2026-09-03，
+  issue #222）。写侧挡住的只是**我们自己写出去的**那份；外部工具往
+  `tavottofile/*.json` 写一个 `NaN` 之后，Python 的 `json.loads` 照读不误，而
+  每一份经过后端交给浏览器的字节都会在 `JSON.parse` 上炸掉。**读文档的 JSON
+  一律走它**，新增读取点别用裸 `json.loads`。消费点四个拒（命名画布 GET /
+  自动保存 GET / 版本时间线 / 项目包里的 layout.json），两个**有意**只当
+  「读不出来」（`document_summary` 的契约就是读不出来 → `None`，它的两个调用方
+  都不能抛；`_autosave_newer_than` 是旧前端的兜底，不能因为一个坏槽位把用户
+  锁死）。`DocumentError` 是 `ValueError` 的子类——`except ValueError` 会把这道
+  闸整个吞掉，`_load_versions` 里单独 re-raise 就是为这个（吞掉的后果不是
+  少显示几条：下一次创建检查点会在空列表上整份写回）。
+- **「另存为」与自动保存共用同一份冲突判据**（2026-09-03，issue #222）：
+  `POST /api/layouts/<name>?base_revision=…` 走 `_revision_conflict` +
+  `REVISION_ABSENT` + `_external_change`，**不许写第二份**。锁是
+  `_document_lock(path)`（按落盘路径，自动保存 / 另存为 / 槽位清理共用，
+  **不可重入**）。GET 交出 `X-Tavotto-Revision` 且不用 `send_file`
+  （句柄会在 Windows 上挡住下一次 `os.replace`）。
+- **自动保存槽位有磁盘兜底上限**（2026-09-03，issue #221）：
+  `AUTOSAVE_KEEP_SLOTS=64` / `AUTOSAVE_KEEP_BYTES=64 MB`，写完之后在锁**外**
+  跑 `_prune_autosave_slots()`，按 mtime 从旧到新删，永不动刚写的那一份，
+  删之前在该文件自己的锁里重新 stat 一次。这是**兜底不是主路径**：主清理在
+  前端（被 `tavotto.docIndex` 的 12 条挤出去的槽位会被 DELETE 掉），上限刻意
+  远高于 12，只够到清过站点数据 / 换浏览器 / 换机器共用数据目录留下的孤儿。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 项目系统（后端侧）

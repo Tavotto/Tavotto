@@ -13,7 +13,8 @@
 |---|---|
 | Python 侧文档类写入 | 只有 `engine/atomicio.py` 一份实现 |
 | 写入序列 | tmp（同目录）→ flush → **fsync 文件** → `os.replace` → fsync 目录 → 失败清 tmp |
-| NaN / Infinity | **序列化那一步就拒绝**（`allow_nan=False`），400 `non_finite_number` |
+| NaN / Infinity（写） | **序列化那一步就拒绝**（`allow_nan=False`），400 `non_finite_number` |
+| NaN / Infinity（读） | `documents.loads_document()` 的 `parse_constant`，400 `non_finite_on_disk`（2026-09-03 补，见 §3.2a） |
 | schema 判据 | `engine/documents.py` 一份；更高版本 → `schema_too_new`，不"尽力打开" |
 | 收纳目录里 Tavotto 自己的文件 | **枚举**（`RESERVED_DOCUMENT_FILENAMES`），不用 `_` 前缀规则 |
 | 修订号 | 内容 hash，**不掺 mtime** |
@@ -78,6 +79,47 @@ replace 出来的是一个**空文件**——比保留旧内容还糟。
 磁盘上就是 `{"w": NaN}`。
 
 所以判据放在写入边界上并**响亮地失败**，而不是写一份没人能读的文件。
+
+### 3.2a 读侧的另一半（2026-09-03，issue #222）
+
+上面那条只挡住**我们自己写出去的**那一份。外部工具往 `tavottofile/*.json`
+写一个 `NaN` 之后，Python 的 `json.loads` 照读不误（它默认认这三个非标准
+字面量），而**每一份经过后端交给浏览器的字节都会在 `JSON.parse` 上炸掉**：
+`GET /api/layouts/<name>` 原样 `send_file`、`GET /api/autosave/<id>` 原样发
+字节、`POST /api/package/open` 把包里的 doc 直接 `jsonify` 回去。用户看到的
+仍然是「这份文档打不开」，而磁盘上那个文件看起来好端端的——与 §3.2 要挡的
+是同一个现象，只是这一次是别人写坏的。
+
+于是读侧也有唯一入口 `documents.loads_document()`（`parse_constant`）。
+**两侧不是两份权威，是同一条规则的两个边界**（与 patchspec / atomicio 的
+关系同形）。code 刻意不同名：写侧说的是「你这次保存没写进去，磁盘上那份
+一字未动」，读侧说的是「磁盘上那份是坏的，Tavotto 没有动它」——用户的下一步
+不一样。
+
+### 3.2b 第三个边界：响应
+
+读侧闸挡的是磁盘上写着 `NaN` **字面量**那一档。还有第二条来路：磁盘上是合法
+的 `1e400`，Python 读成 `inf`，而 `GET /api/versions/<id>/<vid>` 与
+`POST /api/package/open` 交给浏览器的**不是磁盘上那份字节，是后端重新序列化
+出来的响应**——Flask 默认 `allow_nan=True`，实测 `jsonify({"x": float("inf")})`
+回的是 `{"x":Infinity}`，浏览器 `JSON.parse` 当场拒收。
+
+所以同一条规则有**三个**边界，各守一处：写盘 `atomicio.dumps_json`、读盘
+`documents.loads_document`、响应 `app._StrictJSONProvider`（`allow_nan=False`，
+失败是 500 `internal_error`——发一个响亮的 500 好过发一份接收方解析不了的响应）。
+
+`parse_float` **刻意不接管**：套在每一个浮点数上的 Python 回调会把整条读路径
+拖慢（版本时间线整份读回正是热路径），而它要挡的那一档已经由响应边界管住了。
+（本条第一版的理由写的是「两侧读到的是同一个值」——那是**量错了时刻**：它
+描述读文件那一刻，而经过 `jsonify` 的那条路上前端根本没读过那个文件。）
+
+两个消费点**有意**只把它当「读不出来」：`document_summary`（契约就是读不出来
+→ `None`，它的两个调用方一个是 409 冲突响应的一部分、一个是 `/summary` 的
+404，都不能抛）与 `_autosave_newer_than`（旧前端的兜底，既定纪律是不能因为
+一个坏掉的旧槽位把用户锁死）。`_load_versions` 相反，**必须抛**：`DocumentError`
+是 `ValueError` 的子类，跟着原来的 `except (OSError, ValueError): return []`
+走的话时间线会显示成"没有版本"，而下一次创建检查点会在那个空列表上整份
+写回——用户全部的检查点当场没了。
 
 **这不是新规则，是把一条已经验证过的规则铺到第二个出口。** `engine/patchspec.py`
 早就在做同一件事：规范化时把非有限浮点剔成 `non_finite_float`（第 64–66 行），

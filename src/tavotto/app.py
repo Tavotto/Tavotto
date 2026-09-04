@@ -43,6 +43,7 @@ from flask import (
     send_file,
     send_from_directory,
 )
+from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 
 from . import pdfbackend
@@ -102,6 +103,32 @@ MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
 
 app = Flask(__name__, static_folder=None)
+
+
+class _StrictJSONProvider(DefaultJSONProvider):
+    """响应侧的非有限数闸 —— 这道闸的**第三个**边界。
+
+    另外两个：写盘走 `atomicio.dumps_json(allow_nan=False)`，读盘走
+    `documents.loads_document()` 的 `parse_constant`。少了这一个，前两个合起来
+    仍然漏：`GET /api/versions/<id>/<vid>` 与 `POST /api/package/open` 交给浏览器
+    的不是磁盘上那份字节，而是**这里重新序列化出来的响应**，而 Flask 默认
+    `allow_nan=True`——实测 `jsonify({"x": float("inf")})` 回的是
+    `{"x":Infinity}`，浏览器 `JSON.parse` 当场拒收。
+
+    于是「后端读得动、浏览器读不动」这件事有两条来路：磁盘上写着 `NaN`
+    字面量（读侧闸管这条），以及磁盘上是合法的 `1e400`、Python 把它读成
+    `inf`、再由这里写回一个非法字面量（这条只有这里管得到）。
+
+    失败方式是 `ValueError` → `_unhandled` → 500 `internal_error`。**这是有意的**：
+    发一个响亮的 500，好过发一份接收方解析不了、而它自己不知道为什么的响应。
+    """
+
+    def dumps(self, obj, **kwargs):
+        kwargs.setdefault("allow_nan", False)
+        return super().dumps(obj, **kwargs)
+
+
+app.json = _StrictJSONProvider(app)
 
 # 会话认证钩子（浏览器与桌面模式共用，见 security.py / ADR 0008）必须在
 # 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
@@ -1527,7 +1554,13 @@ def api_package_open():
 
     try:
         z = zipfile.ZipFile(io.BytesIO(file.read()))
-        doc = json.loads(z.read("layout.json"))
+        # 包里那份 layout.json 也是一份**文档**，读侧同一道闸：含 NaN 的包
+        # 后端读得动，而这个端点把 doc 原样 `jsonify` 回前端——那一步再把
+        # `NaN` 写回响应里，浏览器 `JSON.parse` 当场炸。`DocumentError` 是
+        # `ValueError`，落进下面的 `package_invalid`（连原因一起回给用户）：
+        # 对一个上传上来的包，「不是有效的项目包 + 原因」比「磁盘上那份坏了」
+        # 更贴合用户处境。
+        doc = engine_documents.loads_document(z.read("layout.json"))
         manifest = json.loads(z.read("package_manifest.json"))
     except (KeyError, ValueError, zipfile.BadZipFile) as exc:
         return jsonify(
@@ -5148,12 +5181,41 @@ def api_layouts():
     return jsonify({"layouts": names})
 
 
+def serve_document(path: Path):
+    """把一份文档原样交出去，并附上**它这一份**的内容修订号。
+
+    自动保存与命名画布文件走同一份实现，因为三条纪律对两者一字不差：
+
+    * **读一次，发这一份，也 hash 这一份。** `send_file(p)` 再单独
+      `content_revision(p)` 读第二遍的话，两次读之间文件被改过时 header 描述
+      的是**另一份内容**——前端拿这个 header 当后续写入的基线，外部修改检测
+      于是会放行一次真正的覆盖。
+    * **不把文件句柄交出去。** `send_file` 的响应是 direct passthrough，句柄
+      要等响应被消费完才关；Windows 上 `os.replace` 撞见一个还开着的目标就是
+      `[WinError 5] Access is denied`——用户读过一次之后，下一次保存写不进去
+      （POSIX 上换掉一个开着的文件完全合法，所以这条只在别人电脑上现形）。
+    * **非有限数在读侧也挡**（ADR 0023 §3.2 的另一侧）：外部工具写进来的
+      `NaN` / `Infinity` 后端读得动、浏览器 `JSON.parse` 读不动。原样发出去
+      的后果是前端表现为「这份文档打不开」而磁盘上看起来好端端的；发一个带
+      `code` 的 400 才说得清是哪个文件、坏在哪里。解析结果丢弃——这里只要
+      判据，交出去的仍然是磁盘上那一份字节。
+    """
+    data = path.read_bytes()
+    engine_documents.loads_document(data)
+    resp = app.response_class(data, mimetype="application/json")
+    resp.headers["Cache-Control"] = "no-store"
+    # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
+    # 跟着一路进 localStorage 兜底副本和版本快照。
+    resp.headers["X-Tavotto-Revision"] = engine_atomicio.revision_of(data)
+    return resp
+
+
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
     for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
-            return send_file(p, mimetype="application/json")
+            return serve_document(p)
     abort(404)
 
 
@@ -5172,8 +5234,26 @@ def api_layout_save(name):
     `atomicio` 挡（那种文档写出去谁都读不回来）。
     """
     body = engine_documents.validate_document(request.get_json(force=True))
-    engine_atomicio.write_json(layout_path(name, project_layout_dir()), body, indent=1)
-    return jsonify({"ok": True})
+    path = layout_path(name, project_layout_dir())
+    # 外部修改检测走**自动保存那一份**判据（`_revision_conflict` / `REVISION_ABSENT` /
+    # `_external_change`，都定义在下面的自动保存那一段）。另写一份判据是这条
+    # issue 的反面：同一个问题在产品里有两个答案，而「另存为」那个答案是
+    # 「没有答案」——改造前这条路只有 validate + 原子写，两个窗口对同名画布
+    # 各存一次，后写的整份盖掉先写的，**而两边都收到 200**。
+    base_revision = request.args.get("base_revision")
+    # 判据与写入之间不能有缝：中间放开一瞬，两个窗口就能双双判「没冲突」
+    # 然后一前一后落盘。锁按落盘路径取，与自动保存共用同一条锁带——同一个
+    # 文件被两条路同时写时，它们必须互斥。
+    with _document_lock(path):
+        if base_revision:
+            current = engine_atomicio.content_revision(path)
+            if _revision_conflict(base_revision, current):
+                return _external_change(current, path)
+        engine_atomicio.write_json(path, body, indent=1)
+        # **在锁里读**：放到锁外读的话，交回去的可能是另一个窗口刚写下的那份
+        # 内容的 hash，于是下一次写会带着一个「不是我写的」基线过来。
+        revision = engine_atomicio.content_revision(path)
+    return jsonify({"ok": True, "revision": revision})
 
 
 # ------------------------- 文档自动保存（磁盘） ------------------------------
@@ -5189,7 +5269,7 @@ def _autosave_path(doc_id: str) -> Path:
     return AUTOSAVE_DIR / f"{doc_id}.json"
 
 
-#: 自动保存的「读修订号 → 判冲突 → 写」必须是一个原子段。
+#: 文档落盘的「读修订号 → 判冲突 → 写」必须是一个原子段。
 #:
 #: 判据本身是对的（`_revision_conflict` 两条边都钉住了），但**判完到写完之间
 #: 没有互斥**，于是它只在请求串行时成立：两个标签页同时保存同一份文档时，
@@ -5200,14 +5280,19 @@ def _autosave_path(doc_id: str) -> Path:
 #: 用**固定条数的锁带**而不是「doc_id → 锁」的表：锁表要自己治理生命周期
 #: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
 #: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
-_AUTOSAVE_LOCKS = [threading.Lock() for _ in range(64)]
+_DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
 
 
-def _autosave_lock(path: Path) -> threading.Lock:
-    """按**落盘路径**取锁，不按 doc_id：`_autosave_path` 会把非法字符归一成
-    `_`，于是两个不同的 id 可能指向同一个文件——按 id 分锁的话，那两个请求
-    以为自己各写各的。"""
-    return _AUTOSAVE_LOCKS[hash(str(path)) % len(_AUTOSAVE_LOCKS)]
+def _document_lock(path: Path) -> threading.Lock:
+    """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
+    `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
+    文件——按名字分锁的话，那两个请求以为自己各写各的。
+
+    自动保存、命名画布文件（「另存为」）、槽位清理三条路共用这一条锁带：同一个
+    文件被两条路同时动时它们必须互斥。**锁不可重入**——持锁期间不要再去锁
+    另一个路径（槽位清理因此放在写入的锁段之外）。
+    """
+    return _DOCUMENT_LOCKS[hash(str(path)) % len(_DOCUMENT_LOCKS)]
 
 
 @app.get("/api/autosave/<doc_id>")
@@ -5218,22 +5303,9 @@ def api_autosave_get(doc_id):
     # 读失败（权限、坏扇区）**照旧往上抛成 500**，不折成 404：「读不动」不是
     # 「没有」——报成 404 的话前端会当成这份自动保存不存在，下一次写就以
     # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
-    data = p.read_bytes()
-    # **读一次，发这一份，也 hash 这一份。** 以前是 `send_file(p)` 再单独
-    # `content_revision(p)` 读第二遍，两个毛病：
-    #
-    # * 两次读之间文件可能被改过 —— 前端拿这个 header 当**后续写入的基线**，
-    #   它描述的却是另一份内容，于是外部修改检测会放行一次真正的覆盖；
-    # * `send_file` 把文件句柄留在响应里，直到响应被消费完才关。Windows 上
-    #   `os.replace` 撞见一个还开着的目标文件就是 `[WinError 5] Access is
-    #   denied` —— 用户读过一次这份自动保存之后，下一次保存就写不进去了
-    #   （POSIX 上换掉一个开着的文件完全合法，所以这条只在 Windows 上现形）。
-    resp = app.response_class(data, mimetype="application/json")
-    resp.headers["Cache-Control"] = "no-store"
-    # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
-    # 跟着一路进 localStorage 兜底副本和版本快照。
-    resp.headers["X-Tavotto-Revision"] = engine_atomicio.revision_of(data)
-    return resp
+    # 交出去的三条纪律（读一次就发这一份 / 不把文件句柄交出去 / 读侧的非有限数
+    # 闸）见 `serve_document`——命名画布文件那条路一字不差，所以只有一份实现。
+    return serve_document(p)
 
 
 def _autosave_newer_than(p: Path, base) -> int | None:
@@ -5251,8 +5323,14 @@ def _autosave_newer_than(p: Path, base) -> int | None:
         mine = int(base)
     except (TypeError, ValueError):
         return None
+    # 解析走 `documents.loads_document`（读侧唯一入口）。**这一处的非有限数
+    # 仍然只当「读不出来」处理**：`DocumentError` 是 `ValueError` 的子类，被
+    # 下面这个 except 吞掉，于是这次写照常放行。那是有意的——这条兜底判据的
+    # 既定纪律就是「自动保存是用户数据的最后一道，不能因为一个坏掉的旧槽位
+    # 卡死」，而放行的结果恰恰是用一份好内容换掉那个坏文件。坏在哪里由
+    # `GET /api/autosave/<id>` 说（那条路 400 + `non_finite_on_disk`）。
     try:
-        theirs = json.loads(p.read_text(encoding="utf-8")).get("updatedAt")
+        theirs = engine_documents.loads_document(p.read_bytes()).get("updatedAt")
     except (OSError, ValueError, AttributeError):
         return None
     if isinstance(theirs, (int, float)) and not isinstance(theirs, bool) and theirs > mine:
@@ -5275,8 +5353,13 @@ def document_summary(path: Path) -> dict | None:
     可比较的东西」，不是「摘要里各项为 0」——后者会让前端把一个空壳画成
     「对方把文档清空了」。
     """
+    # 同样走读侧唯一入口。含 NaN 的那份在这里归到「不是 JSON」那一档
+    # （`DocumentError` 是 `ValueError` 的子类，被这个 except 收走）——摘要的
+    # 契约就是"读不出来 → None"，而它的两个调用方都不能抛：一个是 409 冲突
+    # 响应的一部分（抛出去会把 409 变成 400，用户看到的是另一件事），一个是
+    # `/api/autosave/<id>/summary`（None → 404）。**原因由 GET 那条路负责说清**。
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = engine_documents.loads_document(path.read_bytes())
         mtime = int(path.stat().st_mtime * 1000)
     except (OSError, ValueError):
         return None
@@ -5294,6 +5377,24 @@ def document_summary(path: Path) -> dict | None:
         else None,
         "revision": engine_atomicio.content_revision(path),
     }
+
+
+def _external_change(current: str | None, path: Path):
+    """「磁盘上那份不是我以为的那份」的 409 —— **自动保存与另存为共用这一份**。
+
+    两条路给前端的形状必须逐字相同：前端的出口只有一套（重新加载 / 明确覆盖 /
+    另存为），而「明确覆盖」拿的正是这里回的 `revision` 当下一次的基线
+    （ADR 0024 §3c：**不是清空基线**——清空等于用户按一次覆盖就把这份文档的
+    外部修改检测永久关掉了）。
+    """
+    return jsonify(
+        {
+            "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+            "code": "external_change",
+            "revision": current,
+            "summary": document_summary(path),
+        }
+    ), 409
 
 
 #: `base_revision` 的哨兵：调用方**读过**，磁盘上当时没有这份文件。
@@ -5333,19 +5434,12 @@ def api_autosave_put(doc_id):
     base_revision = request.args.get("base_revision")
     # 判据与写入之间不能有缝：中间放开一瞬，两个标签页就能双双判「没冲突」
     # 然后一前一后落盘，后写的把先写的整份盖掉。锁按落盘路径取（见
-    # `_autosave_lock`），不同文档互不阻塞。
-    with _autosave_lock(p):
+    # `_document_lock`），不同文档互不阻塞。
+    with _document_lock(p):
         if base_revision:
             current = engine_atomicio.content_revision(p)
             if _revision_conflict(base_revision, current):
-                return jsonify(
-                    {
-                        "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
-                        "code": "external_change",
-                        "revision": current,
-                        "summary": document_summary(p),
-                    }
-                ), 409
+                return _external_change(current, p)
         else:
             theirs = _autosave_newer_than(p, request.args.get("base"))
             if theirs is not None:
@@ -5362,7 +5456,80 @@ def api_autosave_put(doc_id):
         # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
         # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(p)
+    # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
+    _prune_autosave_slots(p)
     return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
+
+
+#: 自动保存槽位的磁盘上限。**这是一道兜底，不是主清理路径。**
+#:
+#: 主清理在前端：`documentStore.flushAutosave` 每次落盘都会把被 `tavotto.docIndex`
+#: （`MAX_SLOTS = 12`）挤出去的文档的磁盘槽位一并 `DELETE` 掉。但那条路只在
+#: 「同一个浏览器 profile 的索引还在」时有效——清过站点数据、换个浏览器、换台
+#: 机器共用同一个数据目录、或者那次 DELETE 恰好失败（前端 `.catch(() => {})`），
+#: 槽位就成了没有人再认领的孤儿，而这个目录**没有任何一条路会回收它们**：
+#: 删除路径只有 `DELETE /api/autosave/<id>` 与教程重置两条。于是磁盘随「打开过
+#: 多少份文档」线性增长，永不回落。
+#:
+#: 上限**刻意远高于前端的 12**：前端还认领着的槽位绝不能被这道兜底删掉，
+#: 它只该够到那些已经没人认领的。按 mtime 从旧到新删——槽位每次自动保存都会
+#: 被写一次，所以 mtime 就是「这份文档最后一次被编辑」。
+AUTOSAVE_KEEP_SLOTS = 64
+AUTOSAVE_KEEP_BYTES = 64 * 1024 * 1024
+#: 字节上限**不许**把槽位数压到这个数以下。
+#:
+#: 自动保存槽位不是缓存，它是没另存过的文档的**主副本**（写盘成功之后前端就把
+#: localStorage 里那份删掉了）。而字节上限是按大小算的：一份 10 MB 的文档下
+#: 64 MB 只够 6 个槽，**比前端索引里还认领着的 12 个还少**——用户在菜单里点开
+#: 「最近文档」，后端 404，工作没了。
+#:
+#: 所以两条上限的地位不一样：条数上限是这道兜底的主判据，字节上限只在**它之外**
+#: 起作用。一个会删掉用户唯一一份副本的上限，比一个不设上限的目录坏得多。
+#: 24 = 前端 `MAX_SLOTS` 的两倍，给多浏览器 profile 留余量。
+AUTOSAVE_MIN_SLOTS = 24
+
+
+def _prune_autosave_slots(keep: Path) -> list[str]:
+    """把自动保存目录裁回上限，返回删掉的文件名。
+
+    `keep` 是**这次刚写的那一份**，无论如何都不动它：它是用户此刻正在编辑的
+    内容，而这个函数的整个存在理由是回收没人认领的旧槽位。
+
+    删之前在**该文件自己的锁**里重新 stat 一次：扫描到删除之间有人写过它，
+    说明它已经不是"最旧的那几个"了，跳过。少了这一步，一次并发保存可以被这
+    条清理路径当场删掉，而那次保存已经回了 200。
+    """
+    try:
+        rows = []
+        for entry in os.scandir(AUTOSAVE_DIR):
+            if not entry.name.endswith(".json") or not entry.is_file():
+                continue
+            st = entry.stat()
+            rows.append((st.st_mtime_ns, st.st_size, Path(entry.path)))
+    except OSError:
+        # 目录还不存在 / 读不动：没什么可裁的，也绝不能因此让这次保存失败。
+        return []
+    rows.sort(key=lambda r: r[0], reverse=True)  # 新的在前
+    total = 0
+    victims: list[tuple[int, Path]] = []
+    for i, (mtime_ns, size, path) in enumerate(rows):
+        total += size
+        over_bytes = total > AUTOSAVE_KEEP_BYTES and i >= AUTOSAVE_MIN_SLOTS
+        if (i >= AUTOSAVE_KEEP_SLOTS or over_bytes) and path != keep:
+            victims.append((mtime_ns, path))
+    removed: list[str] = []
+    for mtime_ns, path in victims:
+        with _document_lock(path):
+            try:
+                if path.stat().st_mtime_ns != mtime_ns:
+                    continue
+                path.unlink()
+            except OSError:
+                continue
+        removed.append(path.name)
+    if removed:
+        LOG.info("自动保存槽位清理：删掉 %d 份无人认领的旧槽位", len(removed))
+    return removed
 
 
 @app.get("/api/autosave/<doc_id>/summary")
@@ -5395,6 +5562,19 @@ VERSIONS_DIR = (
 _VERSIONS_LOCK = threading.Lock()
 VERSION_KEEP_AUTO = 40  # 自动检查点保留数
 VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
+#: 单文档版本时间线的**字节上限**（见 `_save_versions`）。
+#:
+#: 条数上限单独用不住体积：条目里存的是整份文档，于是文件大小 = 条数 × 文档
+#: 大小，而「读 → 追加 → 裁 → 整写」的代价跟着文件大小走。实测（2026-09-03，
+#: `scripts/bench_document.py`）1.16 MB 的文档塞满 120 条 = 约 140 MB / 单次
+#: 追加 547 ms。加了这条上限之后，**追加与读取的代价都只跟这个数有关，与
+#: 文档大小无关**。
+#:
+#: 24 MB 是这样定的：常见文档（230 KB / 1 000 对象）下它一次都咬不到条数上限
+#: 之前的那 40 条自动检查点（24 MB ÷ 230 KB ≈ 104 条），而 1.16 MB 的大文档
+#: 被裁到约 20 条、单次追加落到 100 ms 量级——issue #221 的 P1 阈值是
+#: 「1 000 对象的追加超过 250 ms」。
+VERSION_KEEP_BYTES = 24 * 1024 * 1024
 
 
 _version_seq = 0
@@ -5423,14 +5603,75 @@ def _load_versions(doc_id: str) -> list[dict]:
         # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
         p = VERSIONS_DIR / p.name
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("versions", []) if isinstance(data, dict) else []
-    except (OSError, ValueError):
+        raw = p.read_bytes()
+    except OSError:
         return []
+    try:
+        data = engine_documents.loads_document(raw)
+    except engine_documents.DocumentError:
+        # **非有限数一路抛上去，不折成「没有版本」。** `DocumentError` 是
+        # `ValueError` 的子类，跟着下面那个 except 走的话这道闸就是空的——
+        # 而这里静默返回 `[]` 不只是少显示几条：`api_versions_create` 会在
+        # 这个空列表上追加一条，`_save_versions` 整份写回，**用户全部的检查点
+        # 当场没了**。判据落在被 except 吞掉的路径上就等于没有判据。
+        raise
+    except ValueError:
+        return []
+    return data.get("versions", []) if isinstance(data, dict) else []
 
 
 def _save_versions(doc_id: str, versions: list[dict]) -> None:
-    engine_atomicio.write_json(_versions_path(doc_id), {"versions": versions})
+    """整份写回版本时间线，**从新往旧留到字节预算为止**。
+
+    条数上限（`VERSION_KEEP_TOTAL`）管不住体积：每条版本条目里塞的是**整份
+    文档**，1.16 MB 的文档塞满 120 条就是约 140 MB 一个文件，而每一次追加都要
+    把它「读 → 追加 → 裁 → 整写」一遍（实测单次 547 ms）。所以再加一条以
+    **字节**为单位的上限，两条谁先咬到算谁的。
+
+    **每条只序列化一次。** 量大小与写文件用的是同一批字节：分两次序列化的话，
+    这次要削掉的开销会原样以另一种形式回来（对没超预算的小文档甚至是净亏）。
+    拼出来的字节与 `dumps_json({"versions": kept})` **逐字节相同**（`json` 在
+    `indent=None` 下的分隔符就是 `", "` / `": "`），看护在
+    `tests/test_versions.py::test_the_assembled_file_is_byte_identical_to_dumping_the_kept_list`。
+
+    **至少留一条**：单条就超预算时仍然留下最新那条，否则
+    `api_versions_create` 会交回一个磁盘上根本不存在的版本。
+    """
+    head, sep, tail = b'{"versions": [', b", ", b"]}"
+    blobs = [engine_atomicio.dumps_json(v) for v in versions]
+    # **算的是文件的字节数，不是条目的字节数。** 外壳与分隔符也占地方；不把它们
+    # 记进来的话，上限守的就是一个比文件小一点的量，而"小一点"随条数增长
+    # （每多一条多两个字节）——判据的主语与常量的说明会悄悄地对不上。
+    size = len(head) + len(tail) + sum(len(b) for b in blobs) + len(sep) * max(len(blobs) - 1, 0)
+    dropped: set[int] = set()
+    for i in _sacrifice_order(versions):  # 与条数上限**同一套优先级**
+        if size <= VERSION_KEEP_BYTES:
+            break
+        dropped.add(i)
+        size -= len(blobs[i]) + len(sep)
+    chunks = [b for i, b in enumerate(blobs) if i not in dropped]
+    engine_atomicio.write_bytes(_versions_path(doc_id), head + sep.join(chunks) + tail)
+
+
+def _sacrifice_order(versions: list[dict]) -> list[int]:
+    """再腾一条地方的话，**先牺牲谁** —— 时间线上所有裁剪路径的唯一优先级。
+
+    「先裁自动、再裁最旧」（见 `VERSION_KEEP_TOTAL` 上的注释）：自动检查点是
+    1 秒防抖攒出来的，手工检查点是用户主动按下的。两者同价的话，一段密集编辑
+    产生的自动检查点会把用户几天前特意留的那一版顶掉。
+
+    **最新那条不参与牺牲**：它是这次调用刚交回给调用方的那一版，裁掉它等于
+    `api_versions_create` 交回一个磁盘上不存在的版本。于是「至少留一条」不再是
+    一条要单独记得的规矩，而是这个顺序本身的性质。
+
+    条数上限与字节上限**共用这一个顺序**。改造中途它们各有一套：条数那边按
+    自动/手动分档，字节那边是纯粹的「留最新一段」——同一份契约在同一个文件里
+    有两个答案，而字节那条会把手工检查点交给自动检查点去顶。
+    """
+    keep_newest = len(versions) - 1
+    autos = [i for i, v in enumerate(versions) if v.get("auto") and i != keep_newest]
+    manual = [i for i, v in enumerate(versions) if not v.get("auto") and i != keep_newest]
+    return autos + manual  # 各自已按下标（= 时间）升序
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
@@ -5438,7 +5679,10 @@ def _prune_versions(versions: list[dict]) -> list[dict]:
     if len(autos) > VERSION_KEEP_AUTO:
         drop = {id(v) for v in autos[: len(autos) - VERSION_KEEP_AUTO]}
         versions = [v for v in versions if id(v) not in drop]
-    return versions[-VERSION_KEEP_TOTAL:]
+    if len(versions) > VERSION_KEEP_TOTAL:
+        drop_idx = set(_sacrifice_order(versions)[: len(versions) - VERSION_KEEP_TOTAL])
+        versions = [v for i, v in enumerate(versions) if i not in drop_idx]
+    return versions
 
 
 def _version_meta(v: dict) -> dict:

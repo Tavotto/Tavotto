@@ -1,4 +1,5 @@
-"""项目文档的格式判据 —— schema 版本、结构校验、收纳目录里谁不是用户文档。
+"""项目文档的格式判据 —— schema 版本、结构校验、收纳目录里谁不是用户文档，
+以及读回一份文档时的非有限数闸（`loads_document`）。
 
 这里只放**判据**，不放 I/O：落盘一律走 `atomicio`，HTTP 形状留在 `app.py`。
 前端的同一套判据在 `web/src/types/document.ts`（`migrateToProject`）与
@@ -8,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +73,58 @@ class DocumentError(ValueError):
 
     def as_payload(self) -> dict[str, str]:
         return {"error": self.message, "code": self.code}
+
+
+#: 非有限数的**读侧**入口。写侧是 `atomicio.dumps_json(allow_nan=False)`。
+#:
+#: 两侧不是两份权威，是**同一条规则的两个边界**——与 ADR 0023 §3.2 里
+#: `patchspec` 和 `atomicio` 的关系同形：规则只有一条（NaN / Infinity 不是
+#: JSON，浏览器的 `JSON.parse` 读不动），出口有两个，各自要在自己那一侧
+#: 响亮地失败。少了读侧这一半，外部工具往 `tavottofile/*.json` 写一个 NaN
+#: 之后，后端一路读得动（Python 的 `json.loads` 默认认这三个字面量），
+#: 而每一份经过后端交给浏览器的字节都会在 `JSON.parse` 上炸掉——用户看到的
+#: 是「这份文档打不开」，磁盘上那个文件看起来好端端的。
+#:
+#: **code 与写侧刻意不同名。** 两边告诉用户的事不一样：写侧是「你这次保存
+#: 没写进去，磁盘上那份一字未动」，读侧是「磁盘上那份是坏的，Tavotto 没有
+#: 动它」——用户的下一步动作也不同（改文档 vs 去查是谁写坏了那个文件）。
+def _reject_non_finite(literal: str) -> Any:
+    raise DocumentError(
+        "non_finite_on_disk",
+        f"这份文档里含有 {literal}——它不是合法的 JSON，浏览器读不出来（Tavotto 没有改动这个文件）",
+    )
+
+
+def loads_document(data: str | bytes) -> Any:
+    """解析一份文档的 JSON —— **读侧唯一的入口**，非有限数在这里被拒。
+
+    `parse_constant` 只在解析器撞见 `NaN` / `Infinity` / `-Infinity` 这三个
+    **非标准字面量**时被调用，常规载荷一次都不进这个回调，所以这道闸在热路径
+    （版本时间线整份读回）上是零开销的。
+
+    刻意**不**接管 `parse_float`。`1e400` 这类合法 JSON 数字在 Python 里溢出成
+    `inf`，而它交到浏览器手上会经过哪一步，要分两条路看清楚——**前端读的
+    不一定是磁盘上那份字节**：
+
+    * 原样发字节那条（`app.serve_document`）：浏览器拿到的就是 `1e400` 本身，
+      它自己的 `JSON.parse` 同样得到 `Infinity`，两侧一致，没有不对称；
+    * 经过 `jsonify` 那条（版本时间线、项目包）：交出去的是**后端重新序列化
+      出来的响应**，Flask 默认 `allow_nan=True` 会把 `inf` 写成裸 `Infinity`
+      ——那才是真正的不对称，而它归 `app._StrictJSONProvider` 管（响应边界
+      `allow_nan=False`），不归这里。
+
+    （这段话第一版写的是「两侧读到的是同一个值」，那是**量错了时刻**：它描述
+    的是读文件那一刻，而第二条路上前端根本没读过那个文件。判据一旦看起来对，
+    人更会信它说的话。）
+
+    所以这里不套 `parse_float`：那会给每一个浮点数加一层 Python 回调，把整条
+    读路径拖慢一大截，换来的那一档已经有别的边界管住了。非有限数照旧过不了
+    写侧的 `allow_nan=False`。
+
+    结构判据在 `validate_document`：这里只回答「这段字节能不能变成一份
+    所有读者都读得回来的 JSON」。
+    """
+    return json.loads(data, parse_constant=_reject_non_finite)
 
 
 def validate_document(raw: Any) -> dict:

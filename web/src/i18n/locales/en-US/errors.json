@@ -74,6 +74,7 @@
     "no_output": "This export produced no files.",
     "no_project": "No project is open yet",
     "non_finite_number": "This document contains a value that cannot be saved (NaN or infinity); the file on disk was left untouched: {{reason}}",
+    "non_finite_on_disk": "The document on disk contains NaN or infinity, which is not valid JSON and cannot be read in the browser. Tavotto left the file untouched; check which external tool wrote it.",
     "not_parameterizable": "This panel is not parameterizable (no matching script)",
     "open_project_failed": "Cannot open this project: {{reason}}",
     "package_file_missing": "No file was uploaded",

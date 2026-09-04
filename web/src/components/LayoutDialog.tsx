@@ -2,7 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n'
 import { FolderOpen, Save } from 'lucide-react'
-import { backendErrorText, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
+import {
+  ApiError,
+  REVISION_ABSENT,
+  backendErrorText,
+  fetchLayout,
+  fetchLayoutNames,
+  saveLayout,
+  type DiskDocumentSummary,
+} from '@/lib/api'
+import { knownLayoutRevision, rememberLayoutRevision } from '@/lib/layoutRevision'
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
@@ -23,6 +32,17 @@ export function LayoutDialog() {
   const [name, setName] = useState(docName)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * 磁盘上那个名字下已经有一份**不是本窗口写的**内容（后端 409）。
+   * 这不是错误，是一个待用户裁决的岔口：出口只有「覆盖」一条，而覆盖要
+   * 拿 409 里回的 hash 当基线（ADR 0024 §3c——**不是清空基线**：清空等于
+   * 用户按一次覆盖就把这个名字的外部修改检测永久关掉了）。
+   */
+  const [conflict, setConflict] = useState<{
+    name: string
+    revision: string
+    summary: DiskDocumentSummary | null
+  } | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
 
@@ -30,6 +50,7 @@ export function LayoutDialog() {
     if (!open) return
     setName(docName)
     setError(null)
+    setConflict(null)
     fetchLayoutNames()
       .then(setNames)
       .catch((e) => setError(backendErrorText(e)))
@@ -50,21 +71,41 @@ export function LayoutDialog() {
     return () => cancelAnimationFrame(id)
   }, [open, intent, names.length])
 
-  const doSave = async () => {
+  /**
+   * `overwrite` = 用户在冲突提示上按了「覆盖」，带上 409 里回的那份 hash。
+   * 没有它时基线是本窗口读到 / 写成功过的那一份；一次都没确认过就发
+   * `REVISION_ABSENT`——后端于是把「磁盘上有一份我从没读过的内容」判成冲突。
+   */
+  const doSave = async (overwrite?: string) => {
     const stem = name.trim()
     if (!stem) return
     setBusy(true)
     setError(null)
+    setConflict(null)
     try {
       // 保存整个项目文档（schema 3，含全部画布）；文件名即项目名
       const store = useDocumentStore.getState()
       store.renameProject(stem)
-      await saveLayout(stem, useDocumentStore.getState().buildProject())
+      const baseRevision = overwrite ?? knownLayoutRevision(stem) ?? REVISION_ABSENT
+      const res = await saveLayout(stem, useDocumentStore.getState().buildProject(), baseRevision)
+      rememberLayoutRevision(stem, res.revision)
       setNames(await fetchLayoutNames())
       useUiStore.getState().setStatus(msg('layout.saved', { name: stem }, 'dialogs'))
       setOpen(false)
     } catch (e) {
-      setError(backendErrorText(e))
+      const revision =
+        e instanceof ApiError && e.status === 409 && e.body.code === 'external_change'
+          ? e.body.revision
+          : null
+      if (typeof revision === 'string') {
+        setConflict({
+          name: stem,
+          revision,
+          summary: (e as ApiError).body.summary as DiskDocumentSummary | null,
+        })
+      } else {
+        setError(backendErrorText(e))
+      }
     } finally {
       setBusy(false)
     }
@@ -73,9 +114,12 @@ export function LayoutDialog() {
   const doLoad = async (target: string) => {
     setBusy(true)
     setError(null)
+    setConflict(null)
     try {
-      const payload = await fetchLayout(target)
-      openLayoutDocument(normalizeLayout(payload, target))
+      const { doc, revision } = await fetchLayout(target)
+      // 读到了就记下基线：之后覆盖这个名字不必再打扰用户一次
+      rememberLayoutRevision(target, revision)
+      openLayoutDocument(normalizeLayout(doc, target))
       setOpen(false)
     } catch (e) {
       setError(backendErrorText(e))
@@ -103,7 +147,7 @@ export function LayoutDialog() {
             disabled={!name.trim()}
             loading={busy}
             loadingLabel={t('dialogs:layout.saving')}
-            onClick={doSave}
+            onClick={() => doSave()}
           >
             <Save size={14} />
             {t('dialogs:layout.saveAs')}
@@ -121,7 +165,7 @@ export function LayoutDialog() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') doSave()
+              if (e.key === 'Enter') void doSave()
             }}
             placeholder={t('dialogs:layout.namePlaceholder')}
             className="h-7"
@@ -156,6 +200,32 @@ export function LayoutDialog() {
             </ul>
           )}
         </div>
+
+        {conflict && (
+          <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-warn-subtle p-2">
+            <p className="text-xs text-ink">
+              {t('dialogs:layout.conflict', { name: conflict.name })}
+            </p>
+            {conflict.summary && (
+              <p className="text-xs text-ink-3">
+                {t('dialogs:layout.conflictDisk', {
+                  objects: conflict.summary.objects,
+                  canvases: conflict.summary.canvases,
+                })}
+              </p>
+            )}
+            <div>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={busy}
+                onClick={() => doSave(conflict.revision)}
+              >
+                {t('dialogs:layout.overwrite')}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {error && <p className="text-xs text-danger">{error}</p>}
       </div>

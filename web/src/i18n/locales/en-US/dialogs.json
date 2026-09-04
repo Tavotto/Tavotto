@@ -101,11 +101,14 @@
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
   },
   "layout": {
+    "conflict": "A canvas file named “{{name}}” already exists on disk and was not written by this window (another window, or a tool outside Tavotto, changed it).",
+    "conflictDisk": "On disk: {{canvases}} canvas(es) / {{objects}} objects",
     "description": "A canvas file is a named saved version you can load at any time; everyday edits are already autosaved on this machine",
     "empty": "No canvas file has been saved yet",
     "load": "Load",
     "loadHeading": "Load a canvas file",
     "namePlaceholder": "Layout name",
+    "overwrite": "Overwrite anyway",
     "saveAs": "Save as canvas file",
     "saveHeading": "Save as canvas file",
     "saved": "Saved as canvas file: {{name}}",
