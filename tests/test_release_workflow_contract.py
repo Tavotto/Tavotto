@@ -21,7 +21,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 WF = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -733,3 +736,152 @@ def test_an_existing_tag_pointing_elsewhere_is_refused():
     trust = _wf(RELEASE).jobs["trust"]
     assert "refs/tags/${REL_TAG}" in trust, "trust 没有检查 tag 是否已存在"
     assert 'EXISTING" != "$SHA' in trust, "存在的 tag 没有与本次 SHA 比对"
+
+
+def test_pending_release_notes_cannot_slip_past_a_tag():
+    """待发条目没并进这一版的正文，就不许发。
+
+    issue #244：#215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的
+    用户升级会拿到反向的导出——那句迁移提示只写在 PR 正文的「遗留」段里，
+    发行说明是发版那天写的，没人回头翻，于是一版都没发出去。用户一个字
+    看不到，而整条发布链全绿。
+
+    闸必须在**读手写正文之前**：读完再查，`has_notes` 已经写出去了。
+    """
+    step = [
+        s
+        for s in _wf(RELEASE).steps("validate_artifacts")
+        if 'F="docs/release-notes/${TAG}.md"' in s
+    ]
+    assert step, "找不到拼 release body 的那一步"
+    run = step[0]
+    assert "scripts/check_pending_release_notes.py" in run, (
+        "拼 release body 时没有检查待发条目 —— 漏掉的迁移提示会静默发不出去"
+    )
+    assert run.index("check_pending_release_notes.py") < run.index(
+        'F="docs/release-notes/${TAG}.md"'
+    ), "待发条目的检查跑在读手写正文之后 —— 那时该发的正文已经定了"
+
+
+#: 「退出码对了」与「报文说得出话」是两个维度，只钉前者会漏掉整条报文。
+#: 这条报文本身也要说人话：`err is None` 撞进 `"x" in err` 报的是 TypeError，
+#: 读的人只看得见「用例坏了」，看不见「stderr 一个字节都没捕到」。
+_NO_STDERR = (
+    "没捕到子进程的 stderr —— 退出码对不代表报文还在（Windows 上解码异常会被 _readerthread 吞掉）"
+)
+
+
+def _check_pending(tmp_path, body: str | None, write: bool = True):
+    """按发布链的用法跑一次闸：返回 (退出码, stderr)。
+
+    `body is None` = 暂存文件根本不存在；`write=False` = 文件已由调用方摆好。
+    """
+    pending = tmp_path / "UNRELEASED.md"
+    if body is not None and write:
+        pending.write_text(body, encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WF.parents[1] / "scripts" / "check_pending_release_notes.py"),
+            "--pending",
+            str(pending),
+            "--tag",
+            "v9.9.9",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode, proc.stderr
+
+
+def test_the_pending_notes_gate_reds_on_an_unmerged_entry(tmp_path):
+    """还有 `## ` 段落 = 还没并入。退出码判定，不看它打印了什么。"""
+    code, err = _check_pending(tmp_path, "<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n")
+    assert code == 1, f"带着未并入的条目却放行了（exit {code}）"
+    assert err is not None, _NO_STDERR
+    assert "v9.9.9" in err, "错误信息没说该并到哪一版去"
+
+
+def test_the_pending_notes_gate_greens_once_the_entries_are_moved_out(tmp_path):
+    """并入 = 段落搬走，说明性注释留在原处。
+
+    判据要是写成「文件非空」，这份留下来的注释会把闸永远钉红，
+    第一个撞上的人就会把它删掉——门禁于是消失得无声无息。
+    """
+    code, _ = _check_pending(tmp_path, "<!-- 说明：发版时把 `## ` 段落搬进 vX.Y.Z.md -->\n")
+    assert code == 0, f"条目已并入却仍然红（exit {code}）"
+
+
+def test_the_pending_notes_gate_reds_when_the_staging_file_is_gone(tmp_path):
+    """**「找不到」不是「已迁移」。**
+
+    闸的第一版把文件不存在读成了「没有待发条目」，于是删掉
+    `UNRELEASED.md` 就能让它绿——而它守的恰恰是那份文件里的东西：
+    迁移提示跟着文件一起消失，发布链全绿，用户升级后一个字也看不到。
+    判据在，但它要读的那个东西不在时它不红——本仓库反复清理的那个家族
+    （#238 的 `faulthandler_exit_on_timeout` 退化成一条 warning 是同一形状）。
+
+    M4 钉的是对称的另一半（判成「文件非空」→ 永远红 → 被人删掉），
+    两个方向缺一条这道闸就是摆设。
+    """
+    code, err = _check_pending(tmp_path, None)
+    assert code == 1, f"暂存文件不见了却放行（exit {code}）"
+    assert err is not None, _NO_STDERR
+    assert "找不到" in err, "报文没说清缺的是这份文件 —— 报错文案也是断言"
+    assert "Traceback" not in err, "读不到时甩了个栈：看到栈的人会以为脚本坏了，然后把这一步拿掉"
+
+
+def test_the_pending_notes_gate_reds_when_the_staging_file_is_unreadable(tmp_path):
+    """读不出来也不算已并入，且报的是原因不是栈。"""
+    bad = tmp_path / "UNRELEASED.md"
+    bad.write_bytes(b"## Notes\n\xff\xfe not utf-8\n")
+    code, err = _check_pending(tmp_path, None, write=False)
+    assert code == 1, f"文件解不出来却放行（exit {code}）"
+    assert err is not None, _NO_STDERR
+    assert "读不了" in err and "Traceback" not in err, err
+
+
+def test_the_gate_message_survives_a_non_utf8_default_encoding(tmp_path):
+    """报文的编码由脚本自己钉，不能由平台挑。
+
+    这条闸的报文是中文的，而它**永远是被 `capture_output=True` 读走的**——
+    stdout/stderr 永远是管道，而 Windows 上管道退回系统 ANSI 代码页
+    （runner 上 cp1252）。那时中文走 `backslashreplace` 变 ASCII 转义，
+    `——` 却**能**编成单字节 `0x97`，父进程按 UTF-8 严格解就炸在那个字节上。
+
+    **而那个异常没人接**：Windows 的 `communicate()` 在 `_readerthread` 里解码，
+    线程死掉、缓冲区留空，`subprocess.run` 照常返回——`returncode` 是对的、
+    `stderr` 是 `None`。2026-09-04 #253 的 windows 腿实测：`assert code == 1`
+    三条全过，只有读报文的那三条炸在 TypeError 上。
+
+    **判据不看源码里有没有 reconfigure，也不看父进程解出了什么**：前者换个
+    写法就漏，后者的行为按平台分岔（POSIX 抛异常、Windows 静默给 None）。
+    这里量的是**子进程吐出来的字节**——不进文本模式，自己解一次。
+    量字节这一维在任何平台上都一样，所以这条用例在 mac/Linux 上就能抓到
+    只在 Windows 上发作的那个缺陷。
+    """
+    pending = tmp_path / "UNRELEASED.md"
+    pending.write_text("<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n", encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WF.parents[1] / "scripts" / "check_pending_release_notes.py"),
+            "--pending",
+            str(pending),
+            "--tag",
+            "v9.9.9",
+        ],
+        capture_output=True,  # 刻意不进文本模式：要量的是字节，不是父进程的解码器
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},  # runner 上的默认编码
+    )
+    assert proc.returncode == 1, f"cp1252 下闸没红（exit {proc.returncode}）"
+    assert proc.stderr, "cp1252 下一个字节都没吐出来"
+    try:
+        text = proc.stderr.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AssertionError(
+            f"报文不是 UTF-8（{exc}）—— 脚本没钉自己的输出编码，"
+            "Windows 上这段字节会让父进程的 stderr 静默变成 None"
+        ) from None
+    assert "v9.9.9" in text, f"报文没说该并到哪一版：{text!r}"

@@ -527,6 +527,12 @@ jobs:
           #  · Code signing policy 段：SignPath Foundation 的条件要求这个词组
           #    出现在下载/发布页；措辞按 SIGNPATH_ENABLED 分岔——把未签名的
           #    包描述成已签名，正是 policy 里明令禁止的那件事。
+          # 待发条目（docs/release-notes/UNRELEASED.md）必须先并进这一版的
+          # 正文。行为变更与存量数据的迁移提示写在 PR 正文的「遗留」段里，
+          # 发版那天没人会回头翻——issue #244 就是这么漏掉的：用户升级后
+          # 一个字也看不到，而整条发布链全绿。这一步放在读手写正文**之前**，
+          # 没并入就不给发。
+          python scripts/check_pending_release_notes.py --tag "$TAG"
           F="docs/release-notes/${TAG}.md"
           B="out/release-body.md"
           mkdir -p out
