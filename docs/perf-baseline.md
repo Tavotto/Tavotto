@@ -898,3 +898,40 @@ C = 分支去掉 fonttype 42 那一笔（`5d35686e`）。
 
 6 个 5 秒采样：app + worker 合计 CPU **0.0–0.1%**，RSS 147 MB，主进程 3 线程 / 56 fd；
 `touch` 三个脚本后三次采样 CPU 仍 0.0%（批次合并成一次刷新，日志 3 行）；`kill` 后无孤儿子进程。
+
+## issue #220（2026-09-03）：manifest 回归的根因与修复后的三臂交错
+
+机器同上（Apple M4 Pro / macOS 26.6.2），解释器 `.venv`（Python 3.13.11）+ worker
+`/opt/homebrew/opt/python@3.13`（matplotlib 3.10.8）；命令与「发布终审」那节**逐字相同**
+（`scripts/bench_render.py --python .venv/bin/python --plane python --repeat 7`），
+A / M / D **交错**跑 2 轮取中位。本机同时有别的进程在跑，**load average 5.0–7.2**——
+绝对值不与「发布终审」那节可比，同一次交错跑内部可比。
+
+A = `c12c229c`（回归前）、M = `d7c36a21`（当时的 main，含 #228 与 #258）、D = 本次修复。
+
+| 面板 | 指标 | A 回归前 | M main | D 修复后 |
+|---|---|---|---|---|
+| Fig1_kinetics | 热 manifest | 19.2 | 22.1 | **12.3** |
+| | 热 wall | 33.0 | 36.2 | 26.9 |
+| | 热 canvas_draw | 11.4 | 11.4 | 11.6 |
+| Fig2_correlation | 热 manifest / wall | 17.2 / 27.9 | 19.4 / 30.5 | **11.7** / 23.0 |
+| Fig2_yield | 热 manifest / wall | 10.8 / 19.5 | 11.8 / 20.9 | **7.5** / 16.6 |
+
+倍率（manifest，对 A）：main **1.15 / 1.13 / 1.10**（阈值 1.3× 未越线，与 issue 记的 1.27
+同向、幅度小一些——那次的机器更闲）；修复后 **0.64 / 0.68 / 0.70**，比回归前还快三成。
+
+**#258 没有让它变大**：微基准（只量 `build_manifest`，5 轮交错）上 `98a866ca`（#228 落地）
+21.94、`d7c36a21`（再加 #258）21.82，差值在噪声内。回归整段来自 #228。
+
+**根因不在 ADR 0034/0035 的模型里**，在调用次数上：`TickLabel.live()` 与
+`drawn_tick_label_entries()` 都调 `ax.get_[xyz]ticklabels()`，matplotlib 每次都要重跑一遍
+`Axis._update_ticks()`（locator + formatter + 视区取舍，`Fig1_kinetics` 上单次约 0.4 ms）。
+`build_manifest` 对**每个**刻度伪元素问三次：`_fields_for` 的 text 字段、几何分支、以及
+#228 新加的缺字形扫描（`live_text = artist.live()`）——第三次正是这次回归。cProfile 上
+`get_ticklabels` 的 cumtime 0.744 → 0.949 s / 40 次 build，`_update_ticks` 调用数
+2760 → 3280，与 wall 的差值同量级。
+
+修法是 `overrides.ticklabel_memo()`：一次 `build_manifest` 之内同一条轴只算一次。它顺带
+把回归**之前**就存在的两次重复也去掉了，所以 D 比 A 还快。看护
+`tests/test_manifest_ticklabel_cost.py`（判的是 `_update_ticks` 的**调用次数与刻度条数无关**，
+不是 wall time——性能数字写进用例就是偶发红）。
