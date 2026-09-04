@@ -688,14 +688,17 @@
           "cli_not_found": "The Tavotto command line (tavotto-cli) was not found on this machine. This install may be incomplete — reinstalling the desktop app fixes it.",
           "codex_cli_missing": "The codex command was not found, so nothing could be done. Install the Codex CLI yourself first (this button will not install it), then try again.",
           "doctor": {
+            "interpreter_unusable": "The plugin's launcher command does not start on this machine — Codex would show no tools at all. This run only diagnosed; nothing was changed. Running the install will swap it for an interpreter verified to actually run.",
             "marketplace_add_failed": "Tavotto is not registered as a Codex plugin marketplace yet. This run only diagnosed; nothing was changed. Running the install will set it up.",
             "plugin_add_failed": "The plugin is not installed yet. This run only diagnosed; nothing was changed. Running the install will set it up.",
             "provision_failed": "The plugin does not have a matching version of the Tavotto engine yet. This run only diagnosed; nothing was changed. Running the install will set it up."
           },
           "health_failed": "Everything is installed, but the health check failed — the plugin still cannot find a usable Tavotto engine. Expand the details below for what it reported.",
+          "interpreter_unusable": "The plugin's launcher command does not start on this machine — Codex would show no tools at all. (On Windows, python3 is often the Microsoft Store placeholder: it looks present but exits immediately.) Installing swaps it for an interpreter verified to actually run; if none is found, install a Python or point TAVOTTO_MCP_PYTHON at one and try again.",
           "marketplace_add_failed": "Tavotto could not be registered as a Codex plugin marketplace. The usual causes are no network access or no permission to write Codex's config directory.",
           "not_desktop": "This action is only available in the desktop app.",
           "other": "The install did not succeed; the command's own words are in the details below.",
+          "pin_failed": "The new launcher command could not be written to both of the plugin's manifests, so it was rolled back to the original — no half-updated pair is left behind. The plugin directory is most likely read-only or in use; clear that and try again.",
           "plugin_add_failed": "The marketplace was registered, but the plugin was not installed. Expand the details below for what Codex reported.",
           "provision_failed": "The plugin is installed, but a matching version of the Tavotto engine could not be prepared for it.",
           "spawn_failed": "The Tavotto command line could not be started. Try again; if it keeps happening, run tavotto codex install in a terminal to see the raw output.",
@@ -707,6 +710,7 @@
           "codex_cli": "Codex command line",
           "engine": "Matching engine",
           "health": "Health check",
+          "interpreter": "Launcher command (started for real)",
           "marketplace": "Marketplace registration",
           "plugin": "Plugin"
         },

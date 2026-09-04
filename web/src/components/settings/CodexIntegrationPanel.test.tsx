@@ -98,6 +98,9 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     'plugin_add_failed',
     'provision_failed',
     'health_failed',
+    // #256 给引擎加的两个：启动命令在这台机器上起不来 / 两份清单没能一起换上去
+    'interpreter_unusable',
+    'pin_failed',
   ]
 
   for (const code of CODES) {
@@ -170,7 +173,12 @@ describe('doctor 报的与 install 报的不是同一件事', () => {
       error: '未登记',
     })
 
-  for (const code of ['marketplace_add_failed', 'plugin_add_failed', 'provision_failed']) {
+  for (const code of [
+    'marketplace_add_failed',
+    'plugin_add_failed',
+    'provision_failed',
+    'interpreter_unusable',
+  ]) {
     it(`doctor 的 ${code} 说的是「缺这一项」，不是「试过了失败了」`, async () => {
       runMock.mockResolvedValue(doctorFailed(code))
       await mount()
