@@ -102,6 +102,20 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 `session_id` + `manifest`（哪些元素可改）+ 预览 SVG + 出版规范 + 预检结果。
 支持 UI 的 Codex 会同时开出一块交互画布，用户可以直接拖。
 
+**一个脚本出好几张独立图时不要开 N 次**——`stems` 一次全开，拿回 N 个各自
+可编辑的 `session_id`（不知道有哪些就 `discover_stems: true`，它只认注册表里
+已登记且产物在磁盘上的那些）：
+
+```
+tavotto_open_figure { "project_path": "/absolute/path/to/figures",
+                      "stems": ["XPS_C_Ti_700C", "XPS_C_Ti_800C"] }
+```
+
+批量回的是每张的**摘要 + session_id**（没有 manifest/SVG，也不挂画布——要在
+画布里改哪一张，就用 `stem` 单独开那一张）。结局看 `status`：`done` /
+`partial` / `failed`。**`partial` 是「其余都开着」**，失败那张带自己的
+`stem` 与 code，重试它一张即可，别把整批重开。
+
 之后按序：
 
 * **改图** `tavotto_apply_overrides { session_id, patches }`。

@@ -329,10 +329,38 @@ def close_session(session_id: str) -> dict:
     }
 
 
-def _evict_if_needed() -> None:
+def _evict_if_needed() -> list[str]:
+    """超额时按最久未用淘汰，**并把淘汰了谁交出去**。
+
+    静默淘汰的表现是「我手上的 session_id 突然 unknown_session，而我什么都没做」
+    ——调用方甚至说不出它是什么时候没的。返回值让 open 那一路当场说出口。
+    """
+    evicted: list[str] = []
     while len(_SESSIONS) > MAX_SESSIONS:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
+        evicted.append(oldest.id)
+    return evicted
+
+
+def _live_session_for(project: str, stem: str) -> Session | None:
+    """这张图是不是已经**原样**开着了？是就沿用，不新建第二个会话。
+
+    同一张图开两个会话没有任何好处，代价却是实打实的：账本多占一格，超额时
+    `_evict_if_needed()` 就会挤掉别的图——**批量打开之后再单独开其中一张来看
+    画布，挤掉的正好是这一批里先开的那几个**（它们最久没用）。旧行为下这一步
+    是静默的，用户手上剩下的是几个「开着却已经不存在」的 session_id。
+
+    **只沿用还没改过的会话（`patches` 为空）**，这不是保守，是画布的账本决定的：
+    `web/src/mcp/session.ts` 的 `seedSession()` 用 `overrides: []` 去 seed 面板
+    （`main.tsx` 里写着为什么），沿用一个已经带着 patch 的会话会让画布的账本与
+    引擎状态对不上——画面是改过的，账本是空的，用户下一次编辑就把之前的修改
+    静默还原了。改过的图要重开，就诚实地新建一个会话。
+    """
+    live = [
+        s for s in _SESSIONS.values() if s.project == project and s.stem == stem and not s.patches
+    ]
+    return max(live, key=lambda s: s.last_used) if live else None
 
 
 def shutdown_all() -> None:
@@ -379,18 +407,26 @@ def _all_stems(registry) -> list[str]:
     return sorted({s for script in registry.all_scripts() for s in registry.stems_of(script)})
 
 
-def open_figure(
-    target: str,
-    *,
-    stem: str | None = None,
-    profile_id: str | None = None,
-    journal: dict | None = None,
-    include_png: bool = False,
-) -> dict:
-    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+@dataclass
+class _ProjectCtx:
+    """一次交接解析的结果：项目、注册表、以及目标自带的 stem（如果有）。
 
-    `target` 可以是产物、脚本或图库目录——解析规则复用 `engine/handoff.py`
-    （`tavotto open` 走的是同一条），**这里不另写一套判断**。
+    单图与批量两条路**共用同一段解析**——范围校验的顺序、注册表的错误码、
+    `ensure_registered` 的写时机在这里只有一份。批量那条路要先拿到注册表才
+    知道有哪些 stem，复制一份解析等于给「越界一律拒」开第二个入口。
+    """
+
+    project: str
+    reg_info: dict
+    registry: object
+    target_stem: str | None
+
+
+def _resolve_project(target: str, stem: str | None) -> _ProjectCtx:
+    """`target`（产物 / 脚本 / 图库目录）→ 已授权的项目 + 注册表。
+
+    解析规则复用 `engine/handoff.py`（`tavotto open` 走的是同一条），
+    **这里不另写一套判断**。
     """
     real = check_scope(target)
     if not os.path.exists(real):
@@ -420,8 +456,24 @@ def open_figure(
         ) from exc
     except RuntimeError as exc:  # 注册表损坏 / 重复 stem
         raise BridgeError(f"注册表无法加载: {exc}", code="bad_registry") from exc
+    return _ProjectCtx(
+        project=project, reg_info=reg_info, registry=registry, target_stem=found.stem
+    )
 
-    want = stem or found.stem
+
+def open_figure(
+    target: str,
+    *,
+    stem: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    include_png: bool = False,
+) -> dict:
+    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。"""
+    ctx = _resolve_project(target, stem)
+    project, reg_info, registry = ctx.project, ctx.reg_info, ctx.registry
+
+    want = stem or ctx.target_stem
     chosen = _pick_stem(project, want, registry)
     info = registry.for_stem(chosen)
     assert info is not None
@@ -442,23 +494,38 @@ def open_figure(
     except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
-    session = Session(
-        id="s-" + uuid.uuid4().hex[:12],
-        project=project,
-        stem=chosen,
-        script=info["script"],
-        entry=info["entry"],
-        profile=profile,
-    )
-    # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
-    # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
-    # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
-    render = _render(session, [], preview_dpi=None)
-    _SESSIONS[session.id] = session
-    _evict_if_needed()
+    session = _live_session_for(project, chosen)
+    reused = session is not None
+    evicted: list[str] = []
+    if session is not None:
+        # 沿用时**照样重渲染一次**（`patches` 按定义是空的）：open 的返回里
+        # manifest / SVG / 位图必须与会话此刻的状态配对（ADR 0022 不变量 5），
+        # 把上一次的快照直接回给画布等于让它显示一个可能已经过期的画面，
+        # raster 档下更是连位图都没有。
+        session.profile = profile
+        render = _render(session, list(session.patches), preview_dpi=None)
+    else:
+        session = Session(
+            id="s-" + uuid.uuid4().hex[:12],
+            project=project,
+            stem=chosen,
+            script=info["script"],
+            entry=info["entry"],
+            profile=profile,
+        )
+        # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
+        # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
+        # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
+        render = _render(session, [], preview_dpi=None)
+        _SESSIONS[session.id] = session
+        evicted = _evict_if_needed()
     out = {
         "ok": True,
         "session_id": session.id,
+        #: 这次是沿用了已经开着的会话，还是新建了一个
+        "reused": reused,
+        #: 这次开图挤掉了谁（按最久未用）。空列表 = 一个都没挤掉。
+        "evicted_sessions": evicted,
         "project": project,
         "stem": chosen,
         "script": info["script"],
@@ -494,6 +561,192 @@ def open_figure(
             except BridgeError as exc:
                 out["preview_png_error"] = exc.code or "preview_failed"
     return out
+
+
+# --------------------------- 批量打开（issue #174） --------------------------
+#: 批量响应的标记。`mode == BATCH_MODE` 的结果**不是**一次单图 open：它没有
+#: 顶层 `session_id` / `manifest` / `svg`，谁也不能把它当成单图结果读。
+BATCH_MODE = "batch"
+
+#: 批量的结局是**三档**，词汇沿用 `engine/exportjob.py`（那里 `partial` 已经
+#: 是独立一档）。把 `partial` 并进 `done` 会把「四张里坏了一张」报成全成功，
+#: 并进 `failed` 会让调用方把已经开好的三个会话当垃圾丢掉——那三个会话是真的
+#: 开着的，丢掉就再也没人关得掉它们。
+BATCH_DONE = "done"
+BATCH_PARTIAL = "partial"
+BATCH_FAILED = "failed"
+
+#: 三个桶：开成了 / 试过并失败了 / **根本没试**。第三个不是失败的一种说法：
+#: 会话预算用光时那些 stem 谁也不知道它们能不能打开，把它们记进 `failed` 等于
+#: 报了一个没测量过的结论（`docs` 与 AGENTS 里那条「不知道是独立一档」）。
+BATCH_BUCKETS = ("opened", "failed", "skipped")
+
+
+def discover_stems(project: str, registry) -> list[str]:
+    """**从注册表**发现可批量打开的 stem —— 不猜。
+
+    判据两条，缺一不可：
+
+    1. **在注册表里**（`for_stem` 解得出脚本）——注册表里有就是可参数化的，
+       这也正是 `registry.parameterizable` 的定义。目录里躺着一个没登记的
+       `.pdf` 不算：它没有产出它的脚本，打开也只能当素材排版。
+    2. **产物在磁盘上**——与 `_pick_stem` 自动挑图用的是同一条判据。脚本静态
+       解得出名字但从没跑过的 stem 不进批量，否则一次「打开四张图」会变成
+       一次谁也没要求过的批量重跑。
+
+    这里**不 probe、不跑用户脚本**（`dynamic_names` 那类脚本静态解不出 stem，
+    自然也不会出现在注册表里）。
+    """
+    found: list[str] = []
+    for stem in _all_stems(registry):
+        for ext in engine_handoff.OUT_EXTS:
+            if os.path.isfile(os.path.join(project, stem + ext)):
+                found.append(stem)
+                break
+    return found
+
+
+def _failure_entry(stem: str, exc: BridgeError) -> dict:
+    payload = {k: v for k, v in exc.payload().items() if k != "ok"}
+    # `stem` 放最后：它是**这次请求点名的那张图**，谁也不能被 BridgeError 的
+    # extra 覆盖掉。关闭条件里「失败那张点得出名字」靠的就是这个字段。
+    return {**payload, "stem": stem}
+
+
+def open_figures(
+    target: str,
+    *,
+    stems: list[str] | None = None,
+    discover: bool = False,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+) -> dict:
+    """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
+
+    每一张都走 `open_figure` 那条路——同一套范围校验、同一套注册表判断、同一个
+    `_render`。这里加的只有三件事：清单从哪来、一张失败了别连累其余、以及把
+    结局如实分成三档。
+
+    **一张失败不回滚整批**：已经渲染成功的会话照常登记，调用方拿 session_id
+    继续 `tavotto_apply_overrides` / `tavotto_export`，与单开出来的会话没有任何
+    区别。失败那张带着稳定 code 与它自己的 stem 名回来。
+    """
+    ctx = _resolve_project(target, None)
+    if discover:
+        wanted = discover_stems(ctx.project, ctx.registry)
+        source = "discover"
+        if not wanted:
+            raise BridgeError(
+                f"{ctx.project} 里没有任何「已登记且产物在磁盘上」的图可供批量打开。"
+                "先把脚本跑一遍，或用 stems 点名。",
+                code="no_figure",
+                project=ctx.project,
+                registry_stems=_all_stems(ctx.registry),
+            )
+    else:
+        # 去重但保持调用方给的顺序：同一个 stem 开两次只会得到两个指向同一张图
+        # 的会话，白占预算。
+        seen: set[str] = set()
+        wanted = [s for s in (stems or []) if not (s in seen or seen.add(s))]
+        source = "stems"
+
+    opened: list[dict] = []
+    failed: list[dict] = []
+    skipped: list[dict] = []
+    for stem in wanted:
+        # **预算在开之前问，不靠事后淘汰**：`_evict_if_needed()` 按 last_used
+        # 淘汰，而同一批里先开的那几个正好最久没用——超额批量的表现会是「返回了
+        # 八个 session_id，前几个已经被自己这一批挤掉了」，看上去还是全成功。
+        if len(_SESSIONS) >= MAX_SESSIONS:
+            skipped.append(
+                {
+                    "stem": stem,
+                    "code": "session_budget_exhausted",
+                    "error": (
+                        f"会话数已达上限 {MAX_SESSIONS}，这张没有尝试打开。"
+                        "先 tavotto_close_session 关掉不用的，再打开剩下的。"
+                    ),
+                }
+            )
+            continue
+        try:
+            one = open_figure(ctx.project, stem=stem, profile_id=profile_id, journal=journal)
+        except BridgeError as exc:
+            failed.append(_failure_entry(stem, exc))
+            continue
+        except Exception as exc:  # noqa: BLE001 — 见下
+            # 一张图的意外异常不该打死整批，但**「不认识的错」要自成一档**：
+            # 套一个现成的 code 会把一个没人诊断过的失败伪装成已知形态。
+            failed.append(
+                {
+                    "stem": stem,
+                    "code": "unexpected_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        opened.append(_batch_entry(one))
+
+    counts = {
+        "requested": len(wanted),
+        "opened": len(opened),
+        "failed": len(failed),
+        "skipped": len(skipped),
+    }
+    if not opened:
+        # 一张都没开成：这次调用**真的失败了**，`isError` 该是 true。细节照样
+        # 带在 payload 里（每张的 code 与 stem 名一个不少），调用方分诊得了。
+        raise BridgeError(
+            f"批量打开：{counts['requested']} 张一张也没打开成功。",
+            code="batch_all_failed",
+            mode=BATCH_MODE,
+            status=BATCH_FAILED,
+            project=ctx.project,
+            source=source,
+            requested=list(wanted),
+            counts=counts,
+            failed=failed,
+            skipped=skipped,
+        )
+    return {
+        "ok": True,
+        "mode": BATCH_MODE,
+        # **结局看 `status`，不是看 `ok`**：`ok` 只说这次调用做完了它能做的。
+        "status": BATCH_DONE if len(opened) == len(wanted) else BATCH_PARTIAL,
+        "project": ctx.project,
+        "source": source,
+        "requested": list(wanted),
+        "counts": counts,
+        "opened": opened,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def _batch_entry(one: dict) -> dict:
+    """单图 open 结果 → 批量里的一条**摘要**。
+
+    批量刻意不回 manifest / SVG / 位图：`structuredContent` 会整份进模型上下文，
+    四张图的 manifest 加四份 SVG 就是 #102 抱怨的那种「糊一屏」，只是换了个层级。
+    要 manifest 就对那个 stem 单独调一次 `tavotto_open_figure`——会话是同一个
+    语义，画布也只在那一次挂得出来。
+    """
+    manifest = one.get("manifest") or {}
+    return {
+        "session_id": one["session_id"],
+        "stem": one["stem"],
+        "script": one["script"],
+        "entry": one["entry"],
+        "cost": one.get("cost", ""),
+        "size_mm": manifest.get("size_mm"),
+        "elements": len(manifest.get("elements") or []),
+        "patch_hash": one["patch_hash"],
+        "render_revision": one.get("render_revision"),
+        "profile": one["profile"],
+        "parameterizable": (one.get("registry") or {}).get("parameterizable"),
+        "preview_mode": (one.get("preview") or {}).get("mode"),
+        "warnings": one.get("warnings", []),
+    }
 
 
 # ------------------------------- 刷新（ADR 0041） ----------------------------
