@@ -1488,6 +1488,180 @@ def test_default_formats_follow_the_profile_of_this_call(project, fake_pool):
     assert [f["format"] for f in done["files"]] == ["svg"]
 
 
+# ------------- issue #224：这条入口走统一导出管线，不是第二份实现 -------------
+class _FlakyWorker(FakeWorker):
+    """指定的那个格式渲染时炸掉，其余照常。"""
+
+    def __init__(self, failing: str) -> None:
+        super().__init__()
+        self.failing = failing
+
+    def export(self, stem, patches, path, fmt="pdf", dpi=600):
+        if fmt == self.failing:
+            raise bridge.engine_pool.WorkerError(f"{fmt} 渲染炸了", code="render_failed")
+        return super().export(stem, patches, path, fmt, dpi)
+
+
+class _PeekingWorker(FakeWorker):
+    """每次渲染**之前**看一眼最终目录里已经有什么，并记下拿到的目标路径。"""
+
+    def __init__(self, final_dir: Path) -> None:
+        super().__init__()
+        self.final_dir = final_dir
+        self.seen: list[list[str]] = []
+        self.targets: list[Path] = []
+
+    def export(self, stem, patches, path, fmt="pdf", dpi=600):
+        self.seen.append(
+            sorted(p.name for p in self.final_dir.iterdir()) if self.final_dir.exists() else []
+        )
+        self.targets.append(Path(path))
+        return super().export(stem, patches, path, fmt, dpi)
+
+
+def test_export_names_come_from_the_shared_filename_rules(project, fake_pool, tmp_path):
+    """`tests/golden/filename_vectors.json` 现在也守着 MCP 这条路（#224）。
+
+    以前这条入口自己拼名字（`_safe_stem` 是 `exportreq._LEGACY_STEM` 的第二份
+    抄写），于是同源对的向量**一条也够不着它**。现在名字全部来自
+    `exportreq.legacy_stem()` + `exportjob._plan_names()`，判据就能直接拿那份
+    向量逐条驱动这条路。
+
+    期望值**从规则算出来**，不是照抄向量的 `reason`：旧契约的名字是
+    `<stem>_<MMDD_HHMMSS>`，一个本身合法的 120 字名字接上 12 个字符的时间戳
+    之后就超了 `FILENAME_MAX`——**判据的主语是磁盘上那个名字**，不是用户
+    给的那半截。
+    """
+    import re as _re
+
+    from tavotto.engine import exportreq
+
+    vectors = json.loads(
+        (ROOT / "tests" / "golden" / "filename_vectors.json").read_text(encoding="utf-8")
+    )
+    sid = _open(project)
+    checked_ok = checked_bad = 0
+    for i, case in enumerate(vectors["check"]):
+        raw = case["name"]
+        # 空 stem 走的是会话自己的 stem（这条入口的兜底），不是 `legacy_stem` 的
+        base = exportreq.legacy_stem(raw or bridge.get_session(sid).stem)
+        out = tmp_path / f"names-{i}"
+        # 时间戳的长度是固定的，拿一个同形状的探针问一次同一份规则
+        bad = exportreq.check_filename(f"{base}_0101_000000")
+        if bad is not None:
+            with pytest.raises(bridge.BridgeError) as exc:
+                bridge.export(sid, formats=["pdf"], stem=raw, out_dir=str(out))
+            assert exc.value.code == "bad_filename", raw
+            assert not out.exists() or not list(out.iterdir()), "被拒之后还留下了文件"
+            checked_bad += 1
+            continue
+        done = bridge.export(sid, formats=["pdf"], stem=raw, out_dir=str(out))
+        name = Path(done["files"][0]["path"]).name
+        assert _re.fullmatch(rf"{_re.escape(base)}_\d{{4}}_\d{{6}}\.pdf", name), (raw, name)
+        # 落到磁盘上的那个名字，**它自己**要过得了跨平台规则
+        assert exportreq.check_filename(name[: -len(".pdf")]) is None, name
+        assert (out / name).is_file()
+        checked_ok += 1
+    assert checked_ok > 20 and checked_bad >= 2, (checked_ok, checked_bad)
+
+
+def test_one_format_failing_is_partial_and_publishes_nothing_for_it(project, monkeypatch, tmp_path):
+    """一个格式挂了：另一个照常交付，失败那项带自己的 code，**盘上不留半套**。
+
+    以前是 `raise BridgeError` —— 已经写进最终目录的 PDF 留在那儿，调用方
+    只看到一句"导出失败"。`partial` 是独立一档（ADR 0031 §4）。
+    """
+    from tavotto.engine import exportjob as engine_exportjob
+
+    worker = _FlakyWorker("png")
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: worker)
+    sid = _open(project)
+    out = tmp_path / "partial"
+    done = bridge.export(sid, formats=["pdf", "png"], out_dir=str(out))
+
+    assert done["status"] == engine_exportjob.STATUS_PARTIAL
+    assert done["ok"] is False, "半成的导出被报成了全部成功"
+    by_fmt = {f["format"]: f for f in done["files"]}
+    assert by_fmt["pdf"]["status"] == "done"
+    assert Path(by_fmt["pdf"]["path"]).read_bytes().startswith(b"%PDF")
+    assert by_fmt["png"]["status"] == "failed"
+    assert by_fmt["png"]["error"]["code"] == "render_failed"
+    assert by_fmt["png"]["path"] is None
+    # 判据的主语是**磁盘上的字节**：失败的那一项在最终目录里一个文件都没有
+    assert not list(out.glob("*.png")), sorted(p.name for p in out.iterdir())
+    assert not [p for p in out.iterdir() if p.name.startswith(engine_exportjob.TMP_PREFIX)], (
+        "临时目录没清掉"
+    )
+
+
+def test_every_format_failing_is_still_an_error(project, monkeypatch, tmp_path):
+    """全挂 = `failed`，仍然抛结构化错误（调用方的错误契约一个字节不变）。
+
+    导出目录里**一张图都没有**；留档仍然会写出来——那是统一管线对所有入口
+    一视同仁的行为（画布那条路同样如此），而它如实记着"这次落盘的文件：无"。
+    """
+    from tavotto.engine import exportjob as engine_exportjob
+
+    worker = _FlakyWorker("pdf")
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: worker)
+    sid = _open(project)
+    out = tmp_path / "allfail"
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.export(sid, formats=["pdf"], out_dir=str(out))
+    assert exc.value.code == "render_failed"
+    assert not list(out.glob("*.pdf")), "全失败还在导出目录里留下了图"
+    assert not [p for p in out.iterdir() if p.name.startswith(engine_exportjob.TMP_PREFIX)]
+    leftover = json.loads(next(out.glob("*_proof.json")).read_text(encoding="utf-8"))
+    assert leftover["files"] == []
+
+
+def test_files_are_published_only_after_every_format_is_rendered(project, monkeypatch, tmp_path):
+    """**临时目录 → 全部产出完成 → 原子 replace**（ADR 0031 §4 第 1 条）。
+
+    直接写最终路径的话，第二个格式渲染到一半时第一个格式的成品已经躺在导出
+    目录里了——中途断电/被杀就是"半套文件"。这条用例量的正是那一刻的磁盘。
+    """
+    from tavotto.engine import exportjob as engine_exportjob
+
+    out = tmp_path / "atomic"
+    out.mkdir()
+    worker = _PeekingWorker(out)
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: worker)
+    sid = _open(project)
+    done = bridge.export(sid, formats=["pdf", "png"], out_dir=str(out))
+
+    assert len(worker.seen) == 2
+    for snapshot in worker.seen:
+        assert not [n for n in snapshot if n.endswith((".pdf", ".png"))], (
+            f"还没全部渲完，成品就已经在最终目录里了：{snapshot}"
+        )
+    # 渲染写的是作业私有的临时目录，不是最终路径
+    for target in worker.targets:
+        assert target.parent.name.startswith(engine_exportjob.TMP_PREFIX), target
+        assert target.parent.parent == out
+    assert sorted(Path(f["path"]).suffix for f in done["files"]) == [".pdf", ".png"]
+    assert all(Path(f["path"]).is_file() for f in done["files"])
+    assert not [p for p in out.iterdir() if p.name.startswith(engine_exportjob.TMP_PREFIX)]
+
+
+def test_the_proof_report_is_named_and_published_by_the_job(project, fake_pool, tmp_path):
+    """留档也由作业命名与落盘：同一个时间戳、旧后缀 `_proof.json` 一字未改。
+
+    自己拼名字的下场 ADR 0031 §7b 第 2 条写过——覆盖策略够不着它。
+    """
+    sid = _open(project)
+    out = tmp_path / "proof"
+    done = bridge.export(sid, formats=["pdf"], out_dir=str(out))
+    fig = Path(done["files"][0]["path"])
+    proof = Path(done["proof_path"])
+    assert proof.name == fig.name[: -len(".pdf")] + "_proof.json"
+    assert proof.parent == out
+    payload = json.loads(proof.read_text(encoding="utf-8"))
+    # 留档里记的是**真的落了盘的那几个**路径
+    assert payload["files"] == [str(fig)]
+    assert payload["source"] == "codex-mcp"
+
+
 # ------------------------------ 重放自检 ------------------------------------
 def test_replay_reports_missing_and_extra_elements():
     """结构分歧也是分歧。

@@ -42,11 +42,22 @@ SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 #: **不许在这里加一个当前管线给不出真矢量的格式**（共享规则 §8：不得伪称矢量）。
 FORMAT_PDF = "pdf"
 FORMAT_PNG = "png"
+FORMAT_SVG = "svg"
 FORMATS = (FORMAT_PDF, FORMAT_PNG)
+
+#: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）额外认的格式。
+#:
+#: 它**不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
+#: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 PyMuPDF，那条路**给不出**
+#: SVG。把它放进全局枚举，导出面板就会摆出一个合成管线兑现不了的选项。
+#: 所以「这次认哪几种格式」是**消费点自己带的参数**
+#: （`normalize(allowed_formats=…)`），而规则（清洗、扩展名、去重、PPI 语义、
+#: 顺序）仍然只有这一份。
+ENGINE_FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_SVG)
 
 #: 哪些格式是位图 —— 「PPI 只在位图输出时有意义」这句话的唯一判据。
 RASTER_FORMATS = frozenset({FORMAT_PNG})
-VECTOR_FORMATS = frozenset({FORMAT_PDF})
+VECTOR_FORMATS = frozenset({FORMAT_PDF, FORMAT_SVG})
 
 #: 覆盖已有文件的策略。**默认 `ask`**：静默覆盖用户上一次的成果是不可逆的。
 OVERWRITE_ASK = "ask"
@@ -318,7 +329,7 @@ def _one_of(value: Any, allowed: tuple[str, ...], default: str, code: str) -> st
     return text
 
 
-def _formats(raw: Any) -> tuple[str, ...]:
+def _formats(raw: Any, allowed: tuple[str, ...]) -> tuple[str, ...]:
     if raw is None:
         raise ExportRequestError("no_format", "至少要选一种输出格式", {})
     if isinstance(raw, str):
@@ -328,7 +339,7 @@ def _formats(raw: Any) -> tuple[str, ...]:
     seen: list[str] = []
     for f in raw:
         text = str(f).lower()
-        if text not in FORMATS:
+        if text not in allowed:
             raise ExportRequestError(
                 "unsupported_format", f"不支持的格式：{text}", {"format": text}
             )
@@ -336,9 +347,9 @@ def _formats(raw: Any) -> tuple[str, ...]:
             seen.append(text)
     if not seen:
         raise ExportRequestError("no_format", "至少要选一种输出格式", {})
-    # 顺序固定成 FORMATS 的顺序：结果里的 outputs[] 与界面上的清单要能逐项对上，
+    # 顺序固定成枚举的顺序：结果里的 outputs[] 与界面上的清单要能逐项对上，
     # 而请求里的顺序取决于用户点勾选框的先后——那不是一个稳定的身份
-    return tuple(f for f in FORMATS if f in seen)
+    return tuple(f for f in allowed if f in seen)
 
 
 def _ppi(raw: Any, *, has_raster: bool) -> int | None:
@@ -373,19 +384,22 @@ def _float(raw: Any, name: str) -> float:
     return value
 
 
-def normalize(spec: dict) -> ExportRequest:
+def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> ExportRequest:
     """任意 JSON → `ExportRequest`。**缺省值只有这一处**。
 
     旧契约（`stem` / `items[]` + `texts[]` / 没有 `scope`）在这里被抬成新形状，
     `legacy_naming=True` 让它继续拿到带时间戳的文件名——老标签页与 CI 脚本
     的行为一个字节不变，新界面则拿到用户自己起的名字。
+
+    `allowed_formats` 是**这个消费点**认的格式集合（缺省 `FORMATS`；引擎直接
+    序列化那条路传 `ENGINE_FORMATS`）。它只决定"认不认"与顺序，其余规则一份。
     """
     if not isinstance(spec, dict):
         raise ExportRequestError("bad_request", "请求体不是一个对象", {})
 
     legacy = "filename" not in spec
     scope = _one_of(spec.get("scope"), SCOPES, SCOPE_CANVAS, "bad_scope")
-    formats = _formats(spec.get("formats"))
+    formats = _formats(spec.get("formats"), allowed_formats)
     has_raster = any(f in RASTER_FORMATS for f in formats)
     ppi = _ppi(spec.get("ppi", spec.get("dpi")), has_raster=has_raster)
 
