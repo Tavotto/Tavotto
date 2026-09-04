@@ -1046,14 +1046,158 @@ def test_a_directory_without_a_registry_is_a_clear_error(tmp_path, monkeypatch, 
     assert _body(res)["code"] in ("no_registry", "no_figure")
 
 
-def test_session_eviction_keeps_the_lid_on(project, fake_pool, monkeypatch):
+def test_session_eviction_keeps_the_lid_on(batch_project, batch_pool, monkeypatch):
+    """四张**不同**的图逐张打开：账本封顶，最后开的那张一定在。
+
+    （用不同的 stem 是必须的：同一张图重复 open 会沿用同一个会话，压根不新建，
+    那样量的就不是「盖子还在不在」了。）
+    """
+    batch_pool()
     monkeypatch.setattr(bridge, "MAX_SESSIONS", 2)
     ids = [
-        _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
-        for _ in range(4)
+        _body(_call("tavotto_open_figure", {"project_path": str(batch_project), "stem": stem}))[
+            "session_id"
+        ]
+        for stem in BATCH_STEMS
     ]
+    assert len(set(ids)) == 4
     assert len(bridge.sessions()) == 2
     assert ids[-1] in bridge.sessions()
+
+
+def test_eviction_says_out_loud_who_it_dropped(batch_project, batch_pool, monkeypatch):
+    """静默淘汰的表现是「我的 session_id 突然不认识了，而我什么都没做」。"""
+    batch_pool()
+    monkeypatch.setattr(bridge, "MAX_SESSIONS", 2)
+    first = _body(
+        _call("tavotto_open_figure", {"project_path": str(batch_project), "stem": BATCH_STEMS[0]})
+    )["session_id"]
+    for stem in BATCH_STEMS[1:3]:
+        res = _call("tavotto_open_figure", {"project_path": str(batch_project), "stem": stem})
+    body, text = _body(res), res["content"][0]["text"]
+    assert body["evicted_sessions"] == [first]
+    assert first in text and "挤掉" in text
+    assert first not in bridge.sessions()
+
+
+def test_reopening_the_same_figure_reuses_its_session(batch_project, batch_pool):
+    """同一张图不开第二个会话——多占一格的代价是别人被挤掉。"""
+    batch_pool()
+    args = {"project_path": str(batch_project), "stem": BATCH_STEMS[0]}
+    first = _body(_call("tavotto_open_figure", args))
+    again = _call("tavotto_open_figure", args)
+    body = _body(again)
+    assert body["session_id"] == first["session_id"] and body["reused"] is True
+    assert first["reused"] is False
+    assert len(bridge.sessions()) == 1
+    assert "沿用" in again["content"][0]["text"]
+    # 沿用也**重渲染一次**：manifest / SVG 必须与会话此刻的状态配对（ADR 0022）
+    assert body["manifest"] and body["svg"]
+
+
+def test_an_edited_figure_is_reopened_as_a_new_session(batch_project, batch_pool):
+    """改过的会话不许沿用：画布 seed 的是 overrides=[]，账本会与引擎对不上。"""
+    batch_pool()
+    args = {"project_path": str(batch_project), "stem": BATCH_STEMS[0]}
+    first = _body(_call("tavotto_open_figure", args))["session_id"]
+    _call(
+        "tavotto_apply_overrides",
+        {
+            "session_id": first,
+            "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}],
+        },
+    )
+    body = _body(_call("tavotto_open_figure", args))
+    assert body["session_id"] != first and body["reused"] is False
+    # 老会话原样留着（用户的修改没被谁悄悄丢掉），新会话是干净的
+    assert bridge.sessions()[first].patches
+    assert bridge.sessions()[body["session_id"]].patches == []
+
+
+def test_opening_one_for_the_canvas_after_a_full_batch_keeps_the_batch(
+    batch_project, batch_pool, monkeypatch
+):
+    """P2 ①：批量填满预算之后，照指引再单独打开其中一张，原批次一个都不能少。
+
+    旧行为下这一步会新建会话 → `_evict_if_needed()` 静默挤掉这批里最久没用的
+    那个，而那正好是先开的第一张。
+    """
+    batch_pool()
+    monkeypatch.setattr(bridge, "MAX_SESSIONS", 4)
+    batch = _body(
+        _call("tavotto_open_figure", {"project_path": str(batch_project), "stems": BATCH_STEMS})
+    )
+    assert batch["counts"]["opened"] == 4
+    before = dict(bridge.sessions())
+    # 指引里那句「要在画布里改哪一张，就用 stem 单独调一次」——照做
+    again = _call(
+        "tavotto_open_figure", {"project_path": str(batch_project), "stem": BATCH_STEMS[0]}
+    )
+    body = _body(again)
+    assert body["reused"] is True and body["evicted_sessions"] == []
+    assert set(bridge.sessions()) == set(before), "原批次的会话一个都不许少"
+    # 而且它带得出画布（单图那一路照常挂 _meta）
+    assert ("_meta" in again) is widget.available()
+    for entry in batch["opened"]:
+        assert entry["session_id"] in bridge.sessions()
+
+
+def test_a_crashing_preflight_never_takes_the_batch_with_it(batch_project, batch_pool):
+    """P2 ②：预检抛 BridgeError 之外的东西，已经开好的会话与 id 一个都不能丢。"""
+    batch_pool()
+    real = bridge.run_preflight
+
+    def crash(session_id, **kw):
+        if bridge.sessions()[session_id].stem == "XPS_C_Ti_800C":
+            raise IndexError("list index out of range")  # 畸形 manifest 几何
+        return real(session_id, **kw)
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(bridge, "run_preflight", crash):
+        res = _call(
+            "tavotto_open_figure", {"project_path": str(batch_project), "stems": BATCH_STEMS}
+        )
+    assert not res.get("isError"), "预检炸了不许把整批变成一条错误"
+    body = _body(res)
+    assert [e["stem"] for e in body["opened"]] == BATCH_STEMS
+    for entry in body["opened"]:
+        assert entry["session_id"] in bridge.sessions()
+    bad = next(e for e in body["opened"] if e["stem"] == "XPS_C_Ti_800C")
+    # 「意料之外的异常」与「预期内的失败」是两档：code 分得开，都不算通过
+    assert bad["preflight"]["code"] == "preflight_crashed"
+    assert "IndexError" in bad["preflight"]["error"]
+    assert body["preflight"]["unknown_stems"] == ["XPS_C_Ti_800C"]
+    assert body["preflight"]["blocking_stems"] == []
+
+
+def test_a_crashing_preflight_never_takes_a_single_open_with_it(batch_project, batch_pool):
+    """同一条判据的另一个消费点：单图那一路的会话也不能被预检带走。"""
+    batch_pool()
+
+    def crash(session_id, **kw):
+        raise ValueError("bad bbox")
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(bridge, "run_preflight", crash):
+        res = _call(
+            "tavotto_open_figure", {"project_path": str(batch_project), "stem": BATCH_STEMS[0]}
+        )
+    assert not res.get("isError"), _body(res)
+    body = _body(res)
+    assert body["session_id"] in bridge.sessions()
+    assert body["preflight"]["code"] == "preflight_crashed"
+    assert "不等于通过" in res["content"][0]["text"]
+    # 会话是好的：拿它继续改图必须成功
+    applied = _call(
+        "tavotto_apply_overrides",
+        {
+            "session_id": body["session_id"],
+            "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0}],
+        },
+    )
+    assert not applied.get("isError"), _body(applied)
 
 
 # ------------------------------ 画布产物 ------------------------------------
@@ -2150,7 +2294,8 @@ def test_batch_counts_an_unscored_figure_as_unknown_not_as_clean(batch_project, 
     assert body["preflight"]["unknown_stems"] == ["XPS_C_Ti_800C"]
     assert body["preflight"]["blocking_stems"] == []
     entry = next(e for e in body["opened"] if e["stem"] == "XPS_C_Ti_800C")
-    assert entry["preflight"] == {"code": "no_manifest"}, "不许拿一份空计数冒充「通过」"
+    assert entry["preflight"]["code"] == "no_manifest"
+    assert "counts" not in entry["preflight"], "不许拿一份空计数冒充「通过」"
     assert "没跑出结论" in res["content"][0]["text"]
 
 

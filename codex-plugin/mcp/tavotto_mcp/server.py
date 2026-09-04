@@ -393,20 +393,24 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
     unknown_stems: list[str] = []
     reports: list[str] = []
     for entry in out["opened"]:
+        checks = _safe_preflight(entry["session_id"])
         try:
-            checks = bridge.run_preflight(entry["session_id"])
-        except bridge.BridgeError as exc:
-            # 预检没跑出结论 ≠ 通过。并进合计里那几个 0 会让一张没体检过的图
-            # 看起来是干净的。
-            entry["preflight"] = {"code": exc.code or "preflight_failed"}
+            entry["preflight"] = {
+                "counts": checks["counts"],
+                "blocking": checks["blocking"],
+                "needs_confirm": checks["needs_confirm"],
+            }
+            _sum_counts(total, checks["counts"])
+        except Exception as exc:  # noqa: BLE001 — 见 `_safe_preflight` 的 docstring
+            # 预检没跑出结论 ≠ 通过：并进合计里那几个 0 会让一张没体检过的图看
+            # 起来是干净的。而**这一整批已经开好的 session_id 更不能跟着丢**。
+            entry["preflight"] = (
+                checks
+                if "code" in checks
+                else {"code": "preflight_crashed", "error": f"{type(exc).__name__}: {exc}"}
+            )
             unknown_stems.append(entry["stem"])
             continue
-        entry["preflight"] = {
-            "counts": checks["counts"],
-            "blocking": checks["blocking"],
-            "needs_confirm": checks["needs_confirm"],
-        }
-        _sum_counts(total, checks["counts"])
         if checks["blocking"]:
             blocking_stems.append(entry["stem"])
         if detailed:
@@ -453,6 +457,24 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
     return {"content": _text(*lines), "structuredContent": out}
 
 
+def _safe_preflight(session_id: str) -> dict:
+    """跑一次预检；**跑不出结论时也不把异常放出去**。
+
+    open 这条路上会话已经登记了。异常一旦逃出去，`tools/call` 回的是一条错误
+    结果，里头没有 session_id——用户手上就是一个开着、却谁也关不掉的会话
+    （批量那一路更严重：**同一次调用里已经开好的其余几个也跟着一起丢**）。
+
+    两档分开，因为它们不是一回事：`BridgeError` 是预期内的失败，有稳定 code；
+    其余异常是**没人诊断过的**，硬套一个现成 code 会把它伪装成已知形态。
+    """
+    try:
+        return bridge.run_preflight(session_id)
+    except bridge.BridgeError as exc:
+        return {"code": exc.code or "preflight_failed", "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — 见 docstring
+        return {"code": "preflight_crashed", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
@@ -474,23 +496,44 @@ def _call_open(args: dict) -> dict:
     # 初始化自己的状态并直接展开那四个数组（`web/src/mcp/McpApp.tsx`），程序化调用
     # 方也可能在读它。裁掉结构化字段等于把画布打死——第一版就是那么写的，
     # Codex 在 PR #171 上指出。
-    checks = bridge.run_preflight(out["session_id"])
+    # **会话已经登记了，预检再怎么炸也不能把它带走。**「预期内的失败」
+    # （BridgeError，有稳定 code）与「意料之外的异常」（畸形 manifest 几何抛的
+    # IndexError/ValueError 那一类）是两档，都不等于「体检通过」——但两档都不该
+    # 让调用方连 session_id 都拿不到：那时用户手上是一个开着、却关不掉的会话。
+    checks = _safe_preflight(out["session_id"])
     detailed = bool(args.get("preflight"))
-    out["preflight"] = {
-        k: checks[k]
-        for k in (
-            "counts",
-            "blocking",
-            "needs_confirm",
-            "errors",
-            "warnings",
-            "not_verifiable",
-            "suggestions",
-        )
-    }
-    out["preflight"]["detailed_text"] = detailed
+    if checks is None or "counts" not in checks:
+        out["preflight"] = {"detailed_text": detailed, **(checks or {})}
+    else:
+        out["preflight"] = {
+            k: checks[k]
+            for k in (
+                "counts",
+                "blocking",
+                "needs_confirm",
+                "errors",
+                "warnings",
+                "not_verifiable",
+                "suggestions",
+            )
+        }
+        out["preflight"]["detailed_text"] = detailed
+    if "counts" not in out["preflight"]:
+        return {
+            "content": _text(
+                f"已打开 {out['stem']}（会话 {out['session_id']}）",
+                _brief_manifest(out.get("manifest")),
+                f"? 出版规范预检没跑出结论（{out['preflight'].get('error') or '见 code'}）"
+                "——这**不等于通过**；会话是好的，可以改图，体检重跑 tavotto_preflight。",
+            ),
+            "structuredContent": out,
+        }
     lines = [
-        f"已打开 {out['stem']}（会话 {out['session_id']}）",
+        (
+            f"这张已经开着，沿用同一个会话 {out['session_id']}（没有新建会话，也就没有挤掉别的图）"
+            if out.get("reused")
+            else f"已打开 {out['stem']}（会话 {out['session_id']}）"
+        ),
         _brief_manifest(out.get("manifest")),
         f"规范 {out['profile']['profile_id']} v{out['profile']['profile_version']}；"
         f"预检 {checks['counts']}"
@@ -508,6 +551,12 @@ def _call_open(args: dict) -> dict:
         # `str + dict` 炸掉。渲染好的那一份是 `report`，与 tavotto_preflight 用的
         # 是同一个——不在这里造第二份。
         lines.append(checks["report"])
+    if out.get("evicted_sessions"):
+        # 静默淘汰的表现是「我的 session_id 突然不认识了，而我什么都没做」。
+        lines.append(
+            f"! 会话数已达上限，挤掉了最久没用的 {len(out['evicted_sessions'])} 个"
+            f"（{'、'.join(out['evicted_sessions'])}）——它们已经关掉了，要用得重新打开。"
+        )
     if out["registry"].get("parameterizable") is False:
         lines.append("! 这张图不可参数化（没有对应脚本），只能当素材排版")
     if out.get("warnings"):

@@ -325,10 +325,38 @@ def close_session(session_id: str) -> dict:
     }
 
 
-def _evict_if_needed() -> None:
+def _evict_if_needed() -> list[str]:
+    """超额时按最久未用淘汰，**并把淘汰了谁交出去**。
+
+    静默淘汰的表现是「我手上的 session_id 突然 unknown_session，而我什么都没做」
+    ——调用方甚至说不出它是什么时候没的。返回值让 open 那一路当场说出口。
+    """
+    evicted: list[str] = []
     while len(_SESSIONS) > MAX_SESSIONS:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
+        evicted.append(oldest.id)
+    return evicted
+
+
+def _live_session_for(project: str, stem: str) -> Session | None:
+    """这张图是不是已经**原样**开着了？是就沿用，不新建第二个会话。
+
+    同一张图开两个会话没有任何好处，代价却是实打实的：账本多占一格，超额时
+    `_evict_if_needed()` 就会挤掉别的图——**批量打开之后再单独开其中一张来看
+    画布，挤掉的正好是这一批里先开的那几个**（它们最久没用）。旧行为下这一步
+    是静默的，用户手上剩下的是几个「开着却已经不存在」的 session_id。
+
+    **只沿用还没改过的会话（`patches` 为空）**，这不是保守，是画布的账本决定的：
+    `web/src/mcp/session.ts` 的 `seedSession()` 用 `overrides: []` 去 seed 面板
+    （`main.tsx` 里写着为什么），沿用一个已经带着 patch 的会话会让画布的账本与
+    引擎状态对不上——画面是改过的，账本是空的，用户下一次编辑就把之前的修改
+    静默还原了。改过的图要重开，就诚实地新建一个会话。
+    """
+    live = [
+        s for s in _SESSIONS.values() if s.project == project and s.stem == stem and not s.patches
+    ]
+    return max(live, key=lambda s: s.last_used) if live else None
 
 
 def shutdown_all() -> None:
@@ -462,23 +490,38 @@ def open_figure(
     except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
-    session = Session(
-        id="s-" + uuid.uuid4().hex[:12],
-        project=project,
-        stem=chosen,
-        script=info["script"],
-        entry=info["entry"],
-        profile=profile,
-    )
-    # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
-    # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
-    # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
-    render = _render(session, [], preview_dpi=None)
-    _SESSIONS[session.id] = session
-    _evict_if_needed()
+    session = _live_session_for(project, chosen)
+    reused = session is not None
+    evicted: list[str] = []
+    if session is not None:
+        # 沿用时**照样重渲染一次**（`patches` 按定义是空的）：open 的返回里
+        # manifest / SVG / 位图必须与会话此刻的状态配对（ADR 0022 不变量 5），
+        # 把上一次的快照直接回给画布等于让它显示一个可能已经过期的画面，
+        # raster 档下更是连位图都没有。
+        session.profile = profile
+        render = _render(session, list(session.patches), preview_dpi=None)
+    else:
+        session = Session(
+            id="s-" + uuid.uuid4().hex[:12],
+            project=project,
+            stem=chosen,
+            script=info["script"],
+            entry=info["entry"],
+            profile=profile,
+        )
+        # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
+        # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
+        # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
+        render = _render(session, [], preview_dpi=None)
+        _SESSIONS[session.id] = session
+        evicted = _evict_if_needed()
     out = {
         "ok": True,
         "session_id": session.id,
+        #: 这次是沿用了已经开着的会话，还是新建了一个
+        "reused": reused,
+        #: 这次开图挤掉了谁（按最久未用）。空列表 = 一个都没挤掉。
+        "evicted_sessions": evicted,
         "project": project,
         "stem": chosen,
         "script": info["script"],

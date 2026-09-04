@@ -148,6 +148,16 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   iframe，而画布只认完整的单图 open 结果（`web/src/mcp/main.tsx` 的
   `isOpenResult`），挂上去的表现是 iframe 永远停在「等待 tavotto_open_figure」。
   预检按 #102 第 4 条只回合计 + 阻断项点名，「没跑出结论」不并进「通过」。
+- **open 之后的每一步都不许把已经登记的会话带走**（#271 评审）：预检经
+  `server._safe_preflight()`，`BridgeError`（预期内、有稳定 code）与其余异常
+  （`preflight_crashed`，没人诊断过）**分两档**，两条路都照常回 session_id
+  ——异常逃出去时 `tools/call` 回的是一条错误结果，里头没有 id，用户手上就是
+  开着却关不掉的会话（批量那一路会连同**同一次调用里已开好的其余几个**一起丢）。
+- **同一张图不开第二个会话**：`_live_session_for()` 沿用**还没改过**的会话
+  （`patches` 为空），因为画布 seed 的是 `overrides: []`（`web/src/mcp/session.ts`），
+  沿用带 patch 的会话会让画布账本与引擎状态对不上。这条同时堵掉「批量填满预算 →
+  照指引再单独开一张看画布 → 静默挤掉这批里先开的那个」。真发生淘汰时
+  `_evict_if_needed()` 返回被淘汰的 id，open 的文字里**必须说出口**。
 - **会话不抱 worker 引用**：池的 `MAX_ALIVE` 与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。
