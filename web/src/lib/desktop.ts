@@ -99,6 +99,63 @@ export async function onDesktopOpen(
   return listen<DesktopOpenPayload>('tavotto:open', (e) => handler(e.payload))
 }
 
+/* -------------------------------------------------------------------------- */
+/*  关窗询问闸（issue #223）                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 对壳的关窗询问的答复。**闭集**，与 `src-tauri/src/main.rs` 的 `CloseDecision`
+ * 严格同源（`tests/test_desktop_close_guard.py` 逐个比两侧）。
+ *
+ * - `hold`：我接手了，正在问用户。壳的看门狗从此不再强关，用户想多久都行。
+ * - `close`：关吧。
+ * - `cancel`：窗口留着。
+ */
+export type CloseDecision = 'hold' | 'close' | 'cancel'
+
+/**
+ * 告诉壳「我在，关窗前先问我」。
+ *
+ * **必须在 `onDesktopCloseRequested()` 注册成功之后才调**：反过来的话，两者
+ * 之间的那次关闭会被拦下来问一个没人听的问题，用户看到的是按钮按了不动，
+ * 直到壳的看门狗超时。
+ *
+ * 浏览器模式返回 false（那边由 `beforeunload` 兜着）；老版本的壳没有这个命令，
+ * ACL 会直接拒 —— 同样返回 false，退回改造前的行为，绝不抛。
+ */
+export async function armDesktopCloseGuard(): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('arm_close_guard')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 订阅「用户点了窗口关闭按钮」。窗口此刻已经被壳拦住，处理器**必须**在两秒内
+ * 用 `resolveDesktopCloseRequest()` 答一句，否则壳会当 webview 死了并放行关闭。
+ */
+export async function onDesktopCloseRequested(handler: () => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen('tavotto:close-requested', () => handler())
+}
+
+/** 答复壳的关窗询问。浏览器模式 / 老壳返回 false（不抛）。 */
+export async function resolveDesktopCloseRequest(decision: CloseDecision): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('resolve_close_request', { decision })
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 原生目录选择器（「打开项目」用）。用户取消返回 null——取消不是错误。
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器。

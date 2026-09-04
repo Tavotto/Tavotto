@@ -1,4 +1,11 @@
 {
+  "closeGuard": {
+    "body": "This document has changes that are not on disk yet. Save them before closing the window?",
+    "discard": "Don't save",
+    "save": "Save and close",
+    "saveFailed": "The save did not go through, so the window stays open. Fix the save problem first, or choose “Don’t save” to close anyway.",
+    "title": "Unsaved changes"
+  },
   "export": {
     "advanced": "Advanced",
     "blockedTitle": "There are blocking problems or items that cannot be verified automatically — tick the confirmation above before exporting",
