@@ -421,6 +421,61 @@ assert par_leg(True) == par_leg(False), (
     "host_subplot 图上改了又撤销，没有逐位回到从没 override 过的样子：",
     par_leg(True), par_leg(False))
 
+# -- 12) 与刻度记忆表（#220 / #273）的时序 -----------------------------------
+# `build_manifest` 开着 `overrides.ticklabel_memo()`，前提是「作用域里没有任何
+# 东西会改刻度」；而**本引擎的 execute() 正是跑在那个作用域里**（`build_manifest`
+# 进来第一件事就是 `fig.canvas.draw()`）。git 说这两个改动不冲突，可它们动的是
+# 同一份状态——所以这条时序要有判据看着，不能靠读代码放心。
+#
+# 安全的理由**不是**「引擎不碰刻度」（它移动 axes，轴一变长短刻度就会重算），
+# 而是**移动发生在记忆表还空着的时候**：作用域内唯一的 draw 是第一条语句。
+# 谁哪天在缓存之后再插一次 draw，下面这条会红。
+memo_state = []
+_orig_execute = overrides.PinnedTightLayoutEngine.execute
+
+
+def _spy(self, f):
+    table = getattr(overrides._ticklabel_memo, "table", None)
+    memo_state.append(None if table is None else len(table))
+    return _orig_execute(self, f)
+
+
+fig, axs = make(2, layout="tight")
+st = overrides.FigState(fig)
+manifest.instrument(st)
+warns = overrides.apply(st, [{"gid": "axes_0", "prop": "position", "value": PIN}])
+assert not warns, warns
+overrides.PinnedTightLayoutEngine.execute = _spy
+try:
+    # apply() 那道 RuntimeError 守卫不在本引擎的路径上——execute 不调 apply
+    m1 = manifest.build_manifest(st, "T")
+    m2 = manifest.build_manifest(st, "T")
+finally:
+    overrides.PinnedTightLayoutEngine.execute = _orig_execute
+
+in_scope = [n for n in memo_state if n is not None]
+assert in_scope, "execute 一次都没跑在记忆表作用域里——夹具没覆盖到这条时序，判据是空的"
+assert set(in_scope) == {0}, (
+    "引擎在记忆表**已经缓存过刻度之后**才移动 axes：缓存的是移动前那一版刻度，"
+    "而轴一变长短刻度就会重算。作用域内的 draw 必须只有第一条语句那一次。",
+    memo_state)
+
+
+def _xticks(man, gid):
+    return [
+        e["editable"][0]["value"]
+        for e in man["elements"]
+        if e["gid"].startswith(gid + ".xticklabels_")
+    ]
+
+
+assert _xticks(m1, "axes_0") == _xticks(m2, "axes_0"), (
+    "连着两次 build_manifest 的刻度就不一样了", _xticks(m1, "axes_0"), _xticks(m2, "axes_0"))
+b = next(e["bbox"] for e in m2["elements"] if e["gid"] == "axes_0")
+want = [PIN[0], 1.0 - PIN[1] - PIN[3], PIN[2], PIN[3]]
+assert all(abs(x - y) < 1e-9 for x, y in zip(b, want)), ("记忆表作用域里钉住的位置不对", b, want)
+plt.close(fig)
+
 print("OK")
 """
 
