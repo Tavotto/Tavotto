@@ -551,6 +551,56 @@ jobs:
       # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
       - run: cargo test
 
+  # 桌面壳（Tauri）的静态门禁 + 单测。**与 workerd 同一条纪律**，理由也一样：
+  # 这些用例原先只跑在 desktop-tauri.yml 里，而那个工作流只在打 tag /
+  # workflow_dispatch 时跑，`cargo test` 还进一步收在 build 矩阵的 macOS 那条腿上
+  # ——于是改了 src-tauri 的 PR 一路全绿，Rust 侧的判据合并前一次都不执行
+  # （issue #275）。`main.rs` 里现在有 20 条 #[test]：交接契约 argv 解析、
+  # 「build_menu 不许碰 PathResolver」（那条曾让 Windows 桌面版每次启动当场死掉）、
+  # 壳内 i18n 文案表、以及关窗询问闸的状态机与「拦了就一定起看门狗」。
+  # **最后那条守的是「关不掉的窗口」**——它只可能写成行为判据（源码里搜
+  # token 的写法放行 `if false { … }`），而行为判据只有跑起来才算数。
+  #
+  # **刻意不做 paths 过滤**（同 workerd）：漏配一条路径换来的是「改了壳却没人跑
+  # Rust」，而静默不跑的门禁与空转的门禁一样坏。
+  #
+  # 只跑一条 Linux 腿：贵的那部分（真打包、签名、NSIS/dmg）仍在
+  # desktop-tauri.yml。这一格只要求「编译得过 + 判据跑得出结论」。
+  # **已知边界**：`main.rs` 里有 `#[cfg(target_os = "macos")]` 的应用菜单分支，
+  # 在 Linux 上不参与编译，这一格看不到它——那部分仍由 desktop-tauri.yml 的
+  # macOS 腿覆盖（发布链）。写在这里，免得下一个人以为「壳全都验过了」。
+  desktop-shell:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 本机实测冷编译 37 秒；上限是防挂死、不是性能预算
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: 摆一个空的 sidecar 产物目录
+        # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，
+        # tauri-build 校验它存在才肯生成命令清单。**空目录就够**——这一格不打包，
+        # 也正因如此它不必挂在「构建完 PyInstaller sidecar 之后」，代价从
+        # 「等一次完整打包」降到几十秒。
+        run: mkdir -p dist/Tavotto
+      - working-directory: src-tauri
+        run: cargo fmt --check
+      - working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - working-directory: src-tauri
+        run: cargo test
+
   package:
     # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯
     # 「本地能跑但打包后 404」这类只在发布时才暴露的问题。
@@ -1089,7 +1139,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, workerd, compat-smoke]
+    needs: [python-lint, cla-check, invariants, backend-fast, frontend, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1126,7 +1176,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,workerd,compat-smoke \
+            --required python-lint,cla-check,invariants,backend-fast,frontend,workerd,desktop-shell,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:

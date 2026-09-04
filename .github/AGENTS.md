@@ -6,7 +6,7 @@
 
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
 Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
-frontend / workerd / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
+frontend / workerd / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
 点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
 main + 前序 PR + 当前 PR」的组合提交验证）；`full-ci` 标签 = 在 PR 自己的
 SHA 上提前跑全套；push main = 轻量落地审计（main-landing-audit，不重复打
@@ -122,6 +122,20 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 ## 发布链
 
+- **`desktop-shell`（2026-09-04，issue #275）**：`src-tauri` 的
+  `cargo fmt --check` / `clippy -D warnings` / `cargo test`，与 `workerd` 同一条
+  纪律（都不做 paths 过滤）。它原先只在 `desktop-tauri.yml` 里跑，而那个工作流
+  只在打 tag / dispatch 时跑、`cargo test` 还收在 build 矩阵的 macOS 那条腿上
+  ——改了壳的 PR 因此一路全绿，Rust 侧判据合并前一次都不执行。
+  **`tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，空目录就够**
+  （`mkdir -p dist/Tavotto`），所以这一格不必挂在完整打包之后，几十秒回来。
+  已知边界：`main.rs` 里 `#[cfg(target_os = "macos")]` 的应用菜单分支在这条
+  Linux 腿上不参与编译，那部分仍由 desktop-tauri.yml 的 macOS 腿覆盖。
+- **「在 Gate 的闭集里」≠「在 PR 上会跑」**：重型那几档接在 integration gate 里，
+  普通 PR 上整体 skipped 而 Gate 判 deferred（绿）。把一个 fast 档的 job 改成
+  重型条件，Gate 依旧全绿而它守的东西合并前一次都不验——
+  `tests/test_merge_queue_workflows.py::test_every_fast_lane_job_actually_runs_on_a_plain_pull_request`
+  逐个比死条件看住这一位。
 - release.yml 生成插件更新清单（`make_plugin_manifest.py` → `out/codex-plugin.json`），
   **不能挪进 desktop-tauri.yml 的 updater-manifest**（那个 job 没配 minisign
   私钥就整个跳过，插件更新通道会悄悄停而且全绿）。
