@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "主窗口（内容来自本机 sidecar 的 127.0.0.1 动态端口）能用的最小权限：监听菜单事件 + 原生目录选择 + 切换原生菜单语言 + 应用内更新（检查/下载/安装/重启）。不开放 shell、fs、任意 opener。",
+  "description": "主窗口（内容来自本机 sidecar 的 127.0.0.1 动态端口）能用的最小权限：监听菜单事件 + 原生目录选择 + 切换原生菜单语言 + 安装/诊断 Codex 集成（只 spawn tavotto-cli codex install|doctor --json）+ 应用内更新（检查/下载/安装/重启）。不开放 shell、fs、任意 opener。",
   "windows": [
     "main"
   ],
@@ -15,6 +15,7 @@
     "dialog:allow-open",
     "allow-reveal-export",
     "allow-set-menu-locale",
+    "allow-codex-integration",
     "updater:default",
     "process:allow-restart"
   ]

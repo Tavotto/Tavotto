@@ -13,6 +13,7 @@ import {
   pickDirectory,
   relaunchDesktop,
   revealExportedFile,
+  runCodexIntegration,
 } from './desktop'
 
 afterEach(() => {
@@ -116,5 +117,14 @@ describe('应用内更新的浏览器回退', () => {
     vi.stubGlobal('location', { ...window.location, reload })
     await relaunchDesktop()
     expect(reload).toHaveBeenCalled()
+  })
+})
+
+describe('Codex 集成的浏览器回退', () => {
+  it('没有壳时抛稳定 code，而不是悄悄回一个「成功」', async () => {
+    await expect(runCodexIntegration('install')).rejects.toMatchObject({
+      name: 'CodexShellError',
+      code: 'not_desktop',
+    })
   })
 })

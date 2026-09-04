@@ -70,7 +70,19 @@ fn resolve_command(
         }
     }
 
-    let cli_name = if cfg!(windows) {
+    if let Some(cli) = source_tree_venv_bin() {
+        return Ok((cli, Vec::new()));
+    }
+    Err(m.sidecar_not_found.into())
+}
+
+/// 源码树回退：从可执行文件与 cwd 向上找 `pyproject.toml` 旁 `.venv` 里的 `tavotto`。
+///
+/// **sidecar 与 `tavotto-cli` 在开发形态下是同一个入口**（`.venv/bin/tavotto`
+/// 既能 `--desktop-sidecar` 也能 `codex install`），所以这段查找只有一份——
+/// 抄第二份的结果是「开发机上按钮能用、sidecar 起不来」这类各修各的的怪状。
+fn source_tree_venv_bin() -> Option<PathBuf> {
+    let rel = if cfg!(windows) {
         "Scripts\\tavotto.exe"
     } else {
         "bin/tavotto"
@@ -85,14 +97,50 @@ fn resolve_command(
     for start in starts {
         for dir in start.ancestors() {
             if dir.join("pyproject.toml").is_file() {
-                let cli = dir.join(".venv").join(cli_name);
+                let cli = dir.join(".venv").join(rel);
                 if cli.is_file() {
-                    return Ok((cli, Vec::new()));
+                    return Some(cli);
                 }
             }
         }
     }
-    Err(m.sidecar_not_found.into())
+    None
+}
+
+/// 解析安装包里那个 **console 版 `tavotto-cli`**——「安装 Codex 集成」按钮
+/// spawn 的就是它（ADR 0012）。
+///
+/// **壳里没有第二套安装器。** 按钮的全部职责是跑
+/// `tavotto-cli codex install --json` 并渲染那一行 JSON；安装步骤（marketplace、
+/// 插件、引擎、体检）一条都不在 Rust 里，也不该在前端里。
+///
+/// 优先级与 sidecar 同源：`TAVOTTO_CLI_EXE` 覆盖 → 打包资源
+/// `resources/sidecar/Tavotto/tavotto-cli(.exe)`（与 sidecar 同目录，
+/// `packaging/tavotto.spec` 让两个 exe 共用一份 `_internal/`）→ 源码树 `.venv`。
+///
+/// **GUI 那个 `Tavotto` exe 不能拿来当 CLI 用**：它是 windows 子系统的产物，
+/// 没有终端时 stdout 落进日志，我们等的那行 JSON 永远回不来。
+pub fn resolve_cli(resource_dir: Option<&Path>) -> Result<PathBuf, String> {
+    if let Ok(exe) = std::env::var("TAVOTTO_CLI_EXE") {
+        let p = PathBuf::from(exe);
+        return if p.is_file() {
+            Ok(p)
+        } else {
+            Err("cli_not_found".into())
+        };
+    }
+    let cli_name = if cfg!(windows) {
+        "tavotto-cli.exe"
+    } else {
+        "tavotto-cli"
+    };
+    if let Some(res) = resource_dir {
+        let bundled = res.join("sidecar").join("Tavotto").join(cli_name);
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+    }
+    source_tree_venv_bin().ok_or_else(|| "cli_not_found".to_string())
 }
 
 /// `{path}` + `{err}` 两个占位符一起填。文案模板里的占位符名字与
