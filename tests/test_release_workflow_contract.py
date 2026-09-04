@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -762,6 +763,14 @@ def test_pending_release_notes_cannot_slip_past_a_tag():
     ), "待发条目的检查跑在读手写正文之后 —— 那时该发的正文已经定了"
 
 
+#: 「退出码对了」与「报文说得出话」是两个维度，只钉前者会漏掉整条报文。
+#: 这条报文本身也要说人话：`err is None` 撞进 `"x" in err` 报的是 TypeError，
+#: 读的人只看得见「用例坏了」，看不见「stderr 一个字节都没捕到」。
+_NO_STDERR = (
+    "没捕到子进程的 stderr —— 退出码对不代表报文还在（Windows 上解码异常会被 _readerthread 吞掉）"
+)
+
+
 def _check_pending(tmp_path, body: str | None, write: bool = True):
     """按发布链的用法跑一次闸：返回 (退出码, stderr)。
 
@@ -790,6 +799,7 @@ def test_the_pending_notes_gate_reds_on_an_unmerged_entry(tmp_path):
     """还有 `## ` 段落 = 还没并入。退出码判定，不看它打印了什么。"""
     code, err = _check_pending(tmp_path, "<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n")
     assert code == 1, f"带着未并入的条目却放行了（exit {code}）"
+    assert err is not None, _NO_STDERR
     assert "v9.9.9" in err, "错误信息没说该并到哪一版去"
 
 
@@ -817,6 +827,7 @@ def test_the_pending_notes_gate_reds_when_the_staging_file_is_gone(tmp_path):
     """
     code, err = _check_pending(tmp_path, None)
     assert code == 1, f"暂存文件不见了却放行（exit {code}）"
+    assert err is not None, _NO_STDERR
     assert "找不到" in err, "报文没说清缺的是这份文件 —— 报错文案也是断言"
     assert "Traceback" not in err, "读不到时甩了个栈：看到栈的人会以为脚本坏了，然后把这一步拿掉"
 
@@ -827,4 +838,50 @@ def test_the_pending_notes_gate_reds_when_the_staging_file_is_unreadable(tmp_pat
     bad.write_bytes(b"## Notes\n\xff\xfe not utf-8\n")
     code, err = _check_pending(tmp_path, None, write=False)
     assert code == 1, f"文件解不出来却放行（exit {code}）"
+    assert err is not None, _NO_STDERR
     assert "读不了" in err and "Traceback" not in err, err
+
+
+def test_the_gate_message_survives_a_non_utf8_default_encoding(tmp_path):
+    """报文的编码由脚本自己钉，不能由平台挑。
+
+    这条闸的报文是中文的，而它**永远是被 `capture_output=True` 读走的**——
+    stdout/stderr 永远是管道，而 Windows 上管道退回系统 ANSI 代码页
+    （runner 上 cp1252）。那时中文走 `backslashreplace` 变 ASCII 转义，
+    `——` 却**能**编成单字节 `0x97`，父进程按 UTF-8 严格解就炸在那个字节上。
+
+    **而那个异常没人接**：Windows 的 `communicate()` 在 `_readerthread` 里解码，
+    线程死掉、缓冲区留空，`subprocess.run` 照常返回——`returncode` 是对的、
+    `stderr` 是 `None`。2026-09-04 #253 的 windows 腿实测：`assert code == 1`
+    三条全过，只有读报文的那三条炸在 TypeError 上。
+
+    **判据不看源码里有没有 reconfigure，也不看父进程解出了什么**：前者换个
+    写法就漏，后者的行为按平台分岔（POSIX 抛异常、Windows 静默给 None）。
+    这里量的是**子进程吐出来的字节**——不进文本模式，自己解一次。
+    量字节这一维在任何平台上都一样，所以这条用例在 mac/Linux 上就能抓到
+    只在 Windows 上发作的那个缺陷。
+    """
+    pending = tmp_path / "UNRELEASED.md"
+    pending.write_text("<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n", encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WF.parents[1] / "scripts" / "check_pending_release_notes.py"),
+            "--pending",
+            str(pending),
+            "--tag",
+            "v9.9.9",
+        ],
+        capture_output=True,  # 刻意不进文本模式：要量的是字节，不是父进程的解码器
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},  # runner 上的默认编码
+    )
+    assert proc.returncode == 1, f"cp1252 下闸没红（exit {proc.returncode}）"
+    assert proc.stderr, "cp1252 下一个字节都没吐出来"
+    try:
+        text = proc.stderr.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AssertionError(
+            f"报文不是 UTF-8（{exc}）—— 脚本没钉自己的输出编码，"
+            "Windows 上这段字节会让父进程的 stderr 静默变成 None"
+        ) from None
+    assert "v9.9.9" in text, f"报文没说该并到哪一版：{text!r}"

@@ -38,6 +38,31 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PENDING = ROOT / "docs" / "release-notes" / "UNRELEASED.md"
 
 
+def _pin_stdio_utf8() -> None:
+    """报文的编码由这个脚本自己定，不由平台挑。
+
+    这里的报文是中文的，而它**永远是被 `capture_output=True` 读走的**（发布链
+    里是 `release.yml`，本仓库里是自测）——也就是说 stdout/stderr 永远是管道，
+    而 Windows 上管道会退回系统 ANSI 代码页（runner 上是 cp1252）。那时中文走
+    `backslashreplace` 变成 ASCII 转义，`——` 却**能**在 cp1252 里编成单字节
+    `0x97`，于是这行报文是一段「大部分是 ASCII、中间夹着 0x97」的字节串。
+
+    父进程按 UTF-8 严格解就在 `0x97` 上炸——而在 Windows 上 `communicate()`
+    是在 `_readerthread` 里解码的，那个异常**没人接**：线程死掉、缓冲区留空，
+    `subprocess.run` 照常返回，`returncode` 是对的、`stderr` 是 `None`。
+    退出码那一维全绿，报文那一维静默消失。2026-09-04 的 #253 实测如此。
+
+    仓库里 15 个脚本已经这么钉（`scripts/ci/_common.py` 是同一段），这里不
+    `import _common`——那是隐式耦合，见那份文件的抬头。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def pending_sections(text: str) -> list[str]:
     """待发条目的标题行（`## ` 开头）。
 
@@ -48,6 +73,7 @@ def pending_sections(text: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _pin_stdio_utf8()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pending", type=Path, default=DEFAULT_PENDING)
     ap.add_argument("--tag", default=None, help="这一版的 tag，只用于错误信息")
