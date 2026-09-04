@@ -20,6 +20,23 @@ codex plugin add tavotto@tavotto
 当前会话拿得到工具。**不要在旧会话里继续假装工具可用**，也不要替用户在本会话
 里重装第二遍。
 
+### 插件明明装着、也新开过会话，工具还是一个都没有（多见于 Windows）
+
+这时候**不是插件没装**，是 Codex 起 MCP server 的那一跳没起来：插件清单里钉的
+启动命令是 `python3`，Windows 上这个名字常常指向微软商店的 App Execution Alias
+——命令**存在**、启动起来只有一个 9009 且什么都不打印。于是插件的启动器一次都
+没跑起来，连会说人话的降级 server 都没有，Codex 那边也不会为此报任何错。
+
+给用户这两条里的一条（**不要重装插件、不要 marketplace upgrade**）：
+
+```sh
+tavotto codex doctor      # 只诊断：指名道姓说出是哪条启动命令起不来
+tavotto codex install     # 修：把已装副本的启动命令钉到一个验证过的解释器
+```
+
+跑完**新开一次 Codex 会话**。用户只装了桌面版、PATH 上没有 `tavotto` 时，用桌面
+版自带的 `tavotto-cli` 跑同样的子命令。
+
 ## 工具在、引擎不可用（`tavotto_health` 回 `ok: false`）
 
 按返回的 `code` 只做**对应的一条**恢复动作，不做全套重装：
@@ -52,7 +69,9 @@ marketplace add/upgrade。
 codex plugin marketplace upgrade tavotto
 ```
 
-升级后同样要新开会话。不自动升级、不反复提醒、不为此打断手里的活。`update`
+升级后同样要新开会话。**Windows 上升级完还要再跑一次 `tavotto codex install`**
+——升级会把插件目录整个换掉，之前钉进已装副本的启动命令会跟着被换回 `python3`。
+不自动升级、不反复提醒、不为此打断手里的活。`update`
 里若还有 `tavotto` 字段，那是说本机 Tavotto 版本低于新插件的要求——让用户去
 Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。
 

@@ -28,6 +28,19 @@
   （同目录/静态产物名/main()/模板）、publication-style（尺寸/字号/克制/组图）、
   desktop-handoff（交接与退出码）、issue-reporting（脱敏草稿 + 用户同意）、
   compatibility（能改什么）。**SKILL.md 里必须写清什么情况读哪份**。
+- **`.mcp.json` 的 `command` 是引导默认值，不是「哪儿都能跑」的保证**（issue #172）。
+  Codex 的 `.mcp.json` 没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
+  （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），所以一个字符串覆盖不了
+  POSIX 与 Windows：POSIX 上只有 `python3` 靠得住，Windows 上 `python3` 往往是微软商店
+  的 App Execution Alias（命令**存在**、退出码 9009、零输出）——启动器一次都不跑，连
+  降级 server 都没有，而 Codex 不为 MCP server 起不来报任何错。Windows 那一格由
+  `tavotto codex install` 的 **interpreter 步**在**已装副本**上解决：跑一遍看它起不起
+  得来（`launcher_starts()`——判据是执行，不是 `shutil.which` 也不是 `os.name`），起不
+  来就把命令换成插件 `--health` 自己解析出来的解释器绝对路径，**`.mcp.json` 与
+  `openai.yaml` 两侧一起换**（stdio 依赖按 command 匹配，只换一侧会再弹一次安装提示）。
+  仓库里那份**永远保持裸名字**——绝对路径只属于那一台机器。插件升级会把目录整个换掉，
+  钉过的命令跟着没，所以升级后要重跑（README 与 `references/first-run-and-recovery.md`
+  都写了，`tests/test_codex_plugin.py` 看护）。
 - `agents/openai.yaml` 的 `dependencies.tools` 声明本插件的 MCP server 依赖：
   `type: mcp` + `value` == `.mcp.json` 的 server key（`tavotto`）+
   `transport: stdio` + `command` == `.mcp.json` 的 `command`。schema 来自

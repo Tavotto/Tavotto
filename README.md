@@ -71,6 +71,16 @@ It never installs or upgrades the Codex CLI itself, and it never reinstalls a
 component that is already healthy. `tavotto codex uninstall` removes the plugin and
 the marketplace entry (it leaves the engine alone).
 
+**On Windows, run `tavotto codex install` as well** (macOS and Linux do not need it).
+The plugin manifest pins `python3` as the command Codex uses to start the MCP server.
+On Windows that name usually points at a Microsoft Store App Execution Alias: the
+command *exists*, but starting it yields exit code 9009 and nothing else, so the
+server never starts and the plugin shows up enabled with no tools at all.
+`tavotto codex install` actually runs the command to see whether it starts the
+launcher, and pins a verified interpreter into the installed copy if it does not
+(`tavotto codex doctor` reports the same without changing anything). **Run it again
+after upgrading the plugin** — an upgrade replaces the whole plugin directory.
+
 Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
 so a bare `tavotto` is not available — run the two `codex plugin` commands above
 instead. (A settings-page button that runs the same installer is tracked in

@@ -38,15 +38,22 @@ tavotto codex uninstall   # 移除插件与 marketplace 项（不碰引擎）
 4. **准备匹配版本的引擎**：当前进程能 `import tavotto.engine` 即已满足
    （pip/pipx 形态天然满足）；frozen 桌面形态复用插件的 `--provision`
    逻辑（同一份实现，从插件包调，不抄第二份）。
-5. **健康检查**：等价于 `python3 <插件>/mcp/server.py --health`，输出逐项
+5. **启动命令可用性**（2026-09-03 补，issue #172）：已装副本 `.mcp.json` 里那条
+   `command`，**跑一遍**看它能不能把 `mcp/server.py` 拉起来（判据是执行，不是
+   `shutil.which`——Windows 上 `python3` 常常是商店别名：命令存在、9009、零输出）。
+   起不来就换成插件 `--health` 解析出来的解释器绝对路径，`.mcp.json` 与
+   `openai.yaml` 两侧一起换（严格同源对）。找不到能跑的就报 `interpreter_unusable`，
+   **不许随便钉一个**。仓库里那份始终是裸名字 `python3`。
+6. **健康检查**：等价于 `python3 <插件>/mcp/server.py --health`，输出逐项
    结论。
-6. 收尾**只输出一句**：「新开一个 Codex 会话」。不试图在旧会话里验证工具。
+7. 收尾**只输出一句**：「新开一个 Codex 会话」。不试图在旧会话里验证工具。
 
 ### 输出契约
 
 与 `tavotto open --json` 同族：`--json` 时一行 JSON，失败带稳定
 `error_code`（`codex_cli_missing` / `marketplace_add_failed` /
-`plugin_add_failed` / `provision_failed` / `health_failed`…），每步带
+`plugin_add_failed` / `provision_failed` / `interpreter_unusable` /
+`health_failed`…），每步带
 `skipped: true/false`——幂等重跑必须能看出「什么都没做」。
 
 ### 桌面设置页按钮
