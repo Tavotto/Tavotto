@@ -11,9 +11,11 @@
   `test_desktop_i18n.py::test_set_menu_locale_is_declared_in_all_three_places`
   同一形状。（PR #255 用**枚举** `main.rs` 里所有命令的方式取代这类白名单；
   它落地之后本文件这两条就是冗余的，删掉即可。）
-* **看门狗是这条路上唯一的兜底。** 拦下窗口却没人应答时若不强关，用户得到的
+* **能拦住窗口的地方只许有一个。** 拦下窗口却没人应答时若不强关，用户得到的
   是一个**关不掉的窗口**——那比「关窗不提示」坏得多，他只能去杀进程，而杀进程
-  连防抖窗口内的最后一次编辑都保不住。所以「拦」与「起看门狗」必须同时在。
+  连防抖窗口内的最后一次编辑都保不住。所以「拦」的入口收成一个（`hold_window`），
+  这里数它有几个；**那个入口真的起了看门狗**由 Rust 侧的行为判据钉住
+  （文本判据看不见可达性，`if false { … }` 能大摇大摆走过去）。
 
 `src-tauri/` 不进 wheel/sdist，因此整个文件在没有它的树上跳过。
 """
@@ -45,19 +47,6 @@ CLOSE_COMMANDS = ("arm_close_guard", "resolve_close_request")
 
 def _main_rs() -> str:
     return MAIN_RS.read_text(encoding="utf-8")
-
-
-def _rust_fn_body(src: str, signature: str) -> str:
-    """抠出一个自由函数的函数体，并剥掉行注释。
-
-    剥注释是必须的：这个文件里的说明性注释会提到 `prevent_close`、
-    `spawn_close_watchdog` 这些名字，不剥的话判据匹配到的是散文，
-    把实现整个删掉它照样绿。
-    """
-    start = src.index(signature)
-    body = src[start:]
-    body = body[: body.index("\n}\n")]
-    return "\n".join(line.split("//")[0] for line in body.splitlines())
 
 
 def test_the_close_event_name_is_one_string_on_both_sides():
@@ -102,18 +91,34 @@ def test_the_close_guard_commands_are_declared_in_all_three_places(command: str)
     assert command in handler, "generate_handler 里没有它"
 
 
-def test_holding_the_window_always_arms_the_watchdog():
-    """拦一次窗口就必须起一条看门狗——两件事在同一个函数里，不许只留前一半。
+def test_only_one_place_in_the_shell_can_stop_a_window_from_closing():
+    """`api.prevent_close()` 在整个壳里只许有一处，且必须在 `hold_window` 那条路上。
 
-    只留 `prevent_close()` 的表现是：webview 卡死时窗口**关不掉**。那不是
-    「保护得更严」，那是把用户逼去杀进程。
+    **这条不负责证明「看门狗真的起了」**——那是行为判据，在 Rust 侧
+    （`holding_a_window_always_arms_a_watchdog_for_the_same_generation`：用一个
+    记录型 fake 跑 `hold_window`，断言「拦 + 问 + 起看门狗」三件事都发生、
+    且代号一致）。这里只回答一个**计数**问题：有几个地方能让窗口关不掉。
+
+    原先这一位写成「在 `on_close_requested` 的函数体里搜 `spawn_close_watchdog(`」，
+    那是个**空门禁**：`if false { spawn_close_watchdog(…) }` 也含那个 token，
+    剥掉注释也拦不住——子串判据看不见可达性。换成「拦的入口只有一个，而那个入口
+    的行为有单测钉住」之后，两条合起来才真的守住了「没有看门狗 = 关不掉的窗口」。
     """
-    body = _rust_fn_body(
-        _main_rs(),
-        "fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi)",
+    rs = _main_rs()
+    calls = rs.count("prevent_close()")
+    # trait 里的定义 + impl 里的实现 + 实现体内对真 api 的那一次调用
+    assert calls == 3, (
+        f"`prevent_close()` 出现了 {calls} 次（预期 3：trait 声明 / impl 签名 / "
+        "impl 体内对 api 的调用）。多出来的那一处能独立拦住窗口，"
+        "而它不在 hold_window 上，也就没有看门狗兜底"
     )
-    assert "api.prevent_close()" in body, "这个函数已经不拦窗口了？判据的前提变了，先读它"
-    assert "spawn_close_watchdog(" in body, "拦下了窗口却没起看门狗：这是一个关不掉的窗口"
+    impl = rs[rs.index("impl CloseHold for TauriCloseHold") :]
+    impl = impl[: impl.index("\n}\n")]
+    assert "self.api.prevent_close()" in impl, "真正拦窗口的那一下不在 CloseHold 的实现里"
+
+    handler = rs[rs.index("fn on_close_requested(window: &tauri::Window") :]
+    handler = handler[: handler.index("\n}\n")]
+    assert "hold_window(" in handler, "窗口事件处理器没有走 hold_window 这唯一入口"
 
 
 def test_the_close_guard_reuses_the_one_unsaved_predicate():

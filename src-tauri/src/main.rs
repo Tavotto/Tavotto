@@ -305,6 +305,26 @@ enum CloseVerdict {
     Ask(u64),
 }
 
+/// 待决询问的状态。
+///
+/// **「没人接手」「接手了说继续关」「接手了说取消」是三件不同的事**，看门狗
+/// 必须分得出来。把它压成一个 `acknowledged: bool` 就分不出第三种：用户在 2 秒内
+/// 点了「取消」会把那一位重置成 false，而**那一次请求的看门狗还在睡**——它醒来
+/// 看到 false 就按「前端没接手」放行，于是用户明明点了取消、窗口照样被关掉。
+/// 取消也是一种接手：用户表了态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum CloseAsk {
+    /// 没有待决的询问（开机态，也是「取消」之后的落点）。
+    #[default]
+    Idle,
+    /// 第 n 代正在等前端说第一句话。**只有这一档的看门狗会开火。**
+    Waiting(u64),
+    /// 第 n 代已被前端接手（正在问用户）。用户想多久都行。
+    Held(u64),
+    /// 已经答复「关」。`window.close()` 触发的第二次 `CloseRequested` 靠它放行。
+    Confirmed,
+}
+
 /// 「关窗前问一句」的闸。
 ///
 /// **默认不拦**（`armed == false`）：只有前端亲口说过「我在，我能答」
@@ -314,50 +334,53 @@ enum CloseVerdict {
 #[derive(Default)]
 struct CloseGate {
     armed: bool,
-    /// 每一次 `CloseRequested` 递增。用户取消后再点一次关闭是**新的一代**，
-    /// 上一代的看门狗醒来时会发现代号对不上，什么都不做。
-    generation: u64,
-    /// 这一代已经被前端接手（正在弹三选一）——看门狗不再强关。
-    acknowledged: bool,
-    /// 前端已经答复「关」。`window.close()` 会再触发一次 `CloseRequested`，
-    /// 那一次靠这个标记直接放行，否则就是一个关不掉的窗口。
-    confirmed: bool,
+    /// 每一次 `CloseRequested` 取一个新代号。取消后再点一次关闭是**新的一代**，
+    /// 上一代的看门狗醒来时会发现自己那一代已经不在 `Waiting` 上了。
+    next_generation: u64,
+    ask: CloseAsk,
 }
 
 impl CloseGate {
     fn on_close_requested(&mut self) -> CloseVerdict {
-        if !self.armed || self.confirmed {
+        if !self.armed || self.ask == CloseAsk::Confirmed {
             return CloseVerdict::Close;
         }
-        self.generation += 1;
-        self.acknowledged = false;
-        CloseVerdict::Ask(self.generation)
+        self.next_generation += 1;
+        self.ask = CloseAsk::Waiting(self.next_generation);
+        CloseVerdict::Ask(self.next_generation)
     }
 
     /// 前端的答复。返回 true = 现在就关。
     fn resolve(&mut self, decision: CloseDecision) -> bool {
         match decision {
+            // 接手：看门狗从此不对这一代负责。答复迟到（此刻已经 Idle）就丢掉,
+            // 别把一次已经被取消的询问重新挂起来。
             CloseDecision::Hold => {
-                self.acknowledged = true;
+                if let CloseAsk::Waiting(g) | CloseAsk::Held(g) = self.ask {
+                    self.ask = CloseAsk::Held(g);
+                }
                 false
             }
             CloseDecision::Close => {
-                self.confirmed = true;
+                self.ask = CloseAsk::Confirmed;
                 true
             }
+            // **取消把这一代结掉。** 回到 Idle 之后没有任何代号还在 `Waiting`,
+            // 睡着的那条看门狗醒来什么都不会做——这正是「用户点了取消、窗口
+            // 却在两秒后自己关掉」那个缺陷的修法。
             CloseDecision::Cancel => {
-                self.acknowledged = false;
+                self.ask = CloseAsk::Idle;
                 false
             }
         }
     }
 
-    /// 看门狗到点。返回 true = 这一代没人接手，强关。
+    /// 看门狗到点。返回 true = 这一代确实没人接手，强关。
     fn watchdog_fires(&mut self, generation: u64) -> bool {
-        if self.generation != generation || self.acknowledged || self.confirmed {
+        if self.ask != CloseAsk::Waiting(generation) {
             return false;
         }
-        self.confirmed = true;
+        self.ask = CloseAsk::Confirmed;
         true
     }
 }
@@ -393,7 +416,54 @@ fn resolve_close_request(app: tauri::AppHandle, decision: String) -> Result<(), 
     Ok(())
 }
 
-/// 起一条看门狗：`CLOSE_ACK_TIMEOUT` 之后这一代还没人接手就强关。
+/// 拦一次窗口要做的三件事。**收进一个 trait，是为了让「拦了就一定起了看门狗」
+/// 成为一条能跑的断言，而不是在源码文本里搜一个 token。**
+///
+/// 文本判据的天花板在这里：`if false { spawn_close_watchdog(…) }` 也含那个
+/// token，剥掉注释也照样通过——而它守的正是「没有看门狗 = 关不掉的窗口」。
+/// 换成行为判据之后，假的实现在录到的动作里当场缺一项（见本文件末尾的
+/// `holding_a_window_always_arms_a_watchdog_for_the_same_generation`）。
+trait CloseHold {
+    /// 别关，我还没问完。
+    fn prevent_close(&self);
+    /// 问前端：有没有没落盘的工作？
+    fn ask_frontend(&self);
+    /// 没人应答时的兜底。
+    fn arm_watchdog(&self, generation: u64);
+}
+
+/// **拦窗口的唯一入口。** 三件事在同一个函数里按同一个代号发生；
+/// `api.prevent_close()` 在整个壳里只出现在这个 trait 的实现里
+/// （`tests/test_desktop_close_guard.py` 数它出现几次）。
+fn hold_window<H: CloseHold + ?Sized>(hold: &H, generation: u64) {
+    hold.prevent_close();
+    hold.ask_frontend();
+    hold.arm_watchdog(generation);
+}
+
+/// 生产实现。这层适配器（把三件事接到真的 Tauri 对象上）是这条路上唯一没有
+/// 单测覆盖的一小段——它没有分支，全部逻辑在 `CloseGate` 与 `hold_window` 里。
+struct TauriCloseHold<'a> {
+    api: &'a tauri::CloseRequestApi,
+    app: tauri::AppHandle,
+}
+
+impl CloseHold for TauriCloseHold<'_> {
+    fn prevent_close(&self) {
+        self.api.prevent_close();
+    }
+
+    fn ask_frontend(&self) {
+        // 发不出去也不特殊处理：看门狗是这条路上唯一的兜底，让它只有一条。
+        let _ = self.app.emit_to("main", "tavotto:close-requested", ());
+    }
+
+    fn arm_watchdog(&self, generation: u64) {
+        spawn_close_watchdog(self.app.clone(), generation);
+    }
+}
+
+/// 起一条看门狗：`CLOSE_ACK_TIMEOUT` 之后这一代还**停在 `Waiting` 上**就强关。
 ///
 /// 没有它，一个卡死的 webview 就是一个**关不掉的窗口**——那比「关窗不提示」
 /// 坏得多，用户只能去杀进程，而杀进程连自动保存的防抖窗口都保不住。
@@ -425,10 +495,7 @@ fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     let CloseVerdict::Ask(generation) = verdict else {
         return;
     };
-    api.prevent_close();
-    // 发不出去也不特殊处理：看门狗是这条路上唯一的兜底，让它只有一条。
-    let _ = app.emit_to("main", "tavotto:close-requested", ());
-    spawn_close_watchdog(app, generation);
+    hold_window(&TauriCloseHold { api, app }, generation);
 }
 
 /// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
@@ -1042,20 +1109,30 @@ mod tests {
         }
     }
 
+    /// 起一次询问，返回它的代号。
+    fn ask(gate: &mut CloseGate) -> u64 {
+        match gate.on_close_requested() {
+            CloseVerdict::Ask(g) => g,
+            CloseVerdict::Close => panic!("armed 的闸该问一句"),
+        }
+    }
+
     #[test]
     fn an_unarmed_gate_never_holds_the_window() {
         // splash / error 页在 `tauri://` 源下，没有那个监听器。在它们上面
         // 拦一下等于让关闭按钮「按了没反应」两秒——那比不问更坏。
         let mut gate = CloseGate::default();
         assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
-        // 而且不该留下待应答的一代：看门狗没起，代号也就不该往前走。
-        assert_eq!(gate.generation, 0);
+        // 而且不该留下待决的一代：看门狗没起，代号也就不该往前走。
+        assert_eq!(gate.ask, CloseAsk::Idle);
+        assert_eq!(gate.next_generation, 0);
     }
 
     #[test]
     fn an_armed_gate_asks_the_frontend_first() {
         let mut gate = armed_gate();
         assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+        assert_eq!(gate.ask, CloseAsk::Waiting(1));
     }
 
     #[test]
@@ -1063,7 +1140,7 @@ mod tests {
         // `resolve("close")` 之后壳自己调 `window.close()`，那一下会**再**触发
         // 一次 CloseRequested。这一次必须放行，否则就是一个关不掉的窗口。
         let mut gate = armed_gate();
-        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+        ask(&mut gate);
         assert!(gate.resolve(CloseDecision::Close));
         assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
     }
@@ -1071,37 +1148,70 @@ mod tests {
     #[test]
     fn cancel_keeps_the_window_and_the_next_press_asks_again() {
         let mut gate = armed_gate();
-        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(1));
+        assert_eq!(ask(&mut gate), 1);
         assert!(!gate.resolve(CloseDecision::Hold));
         assert!(!gate.resolve(CloseDecision::Cancel));
         // 取消不是「以后都别问了」
-        assert_eq!(gate.on_close_requested(), CloseVerdict::Ask(2));
+        assert_eq!(ask(&mut gate), 2);
     }
+
+    /* --- 看门狗必须分得出三件事：没人接手 / 说继续关 / 说取消 --- */
 
     #[test]
     fn the_watchdog_forces_a_close_when_nobody_answers() {
         // webview 卡死 / JS 崩了：没人会 hold，也没人会 close。兜底必须存在，
         // 否则窗口关不掉，用户只能杀进程——那连防抖窗口内的编辑都保不住。
         let mut gate = armed_gate();
-        let CloseVerdict::Ask(gen) = gate.on_close_requested() else {
-            panic!("armed 的闸该问一句");
-        };
-        assert!(gate.watchdog_fires(gen));
+        let g = ask(&mut gate);
+        assert!(gate.watchdog_fires(g));
         // 强关也走「已确认」那条路：随后的 close() 会再触发一次 CloseRequested。
         assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
     }
 
     #[test]
     fn the_watchdog_does_not_close_a_window_the_user_is_still_deciding_on() {
-        // 这是这条闸最容易写坏的一处：超时的主语是**「前端有没有接手」**，
-        // 不是「用户有没有回答」。量错了主语，用户读对话框读到第三秒，
-        // 窗口就在他面前关掉了。
+        // 超时的主语是**「前端有没有接手」**，不是「用户有没有回答」。量错了
+        // 主语，用户读对话框读到第三秒，窗口就在他面前关掉了。
         let mut gate = armed_gate();
-        let CloseVerdict::Ask(gen) = gate.on_close_requested() else {
-            panic!("armed 的闸该问一句");
-        };
+        let g = ask(&mut gate);
         assert!(!gate.resolve(CloseDecision::Hold));
-        assert!(!gate.watchdog_fires(gen));
+        assert!(!gate.watchdog_fires(g));
+    }
+
+    #[test]
+    fn a_cancelled_request_is_never_closed_by_its_own_sleeping_watchdog() {
+        // **取消也是一种接手：用户表了态。** 这一位曾经是错的——`acknowledged`
+        // 被 Cancel 重置成 false，而那次请求的看门狗还在睡，醒来看到 false 就
+        // 按「没人接手」放行：用户明明点了取消，窗口两秒后自己关掉。
+        let mut gate = armed_gate();
+        let g = ask(&mut gate);
+        assert!(!gate.resolve(CloseDecision::Hold));
+        assert!(!gate.resolve(CloseDecision::Cancel));
+        assert!(
+            !gate.watchdog_fires(g),
+            "取消掉的那一代不该被自己的看门狗关掉"
+        );
+        assert_eq!(gate.ask, CloseAsk::Idle);
+    }
+
+    #[test]
+    fn cancelling_before_the_hold_also_settles_the_generation() {
+        // 前端有可能一步到位（没有 hold 直接 cancel）。那一代同样该结掉。
+        let mut gate = armed_gate();
+        let g = ask(&mut gate);
+        assert!(!gate.resolve(CloseDecision::Cancel));
+        assert!(!gate.watchdog_fires(g));
+    }
+
+    #[test]
+    fn a_late_hold_after_a_cancel_does_not_revive_the_request() {
+        // 迟到的答复不该把一次已经取消的询问重新挂起来——挂起来之后
+        // 那一代又变成「有人在问用户」，而其实没有任何对话框在。
+        let mut gate = armed_gate();
+        ask(&mut gate);
+        assert!(!gate.resolve(CloseDecision::Cancel));
+        assert!(!gate.resolve(CloseDecision::Hold));
+        assert_eq!(gate.ask, CloseAsk::Idle);
     }
 
     #[test]
@@ -1109,16 +1219,12 @@ mod tests {
         // 取消之后再点一次关闭：上一代的看门狗还在睡，醒来时不该把
         // 这一代（用户可能正在读对话框）的窗口关掉。
         let mut gate = armed_gate();
-        let CloseVerdict::Ask(first) = gate.on_close_requested() else {
-            panic!("armed 的闸该问一句");
-        };
+        let first = ask(&mut gate);
         assert!(!gate.resolve(CloseDecision::Cancel));
-        let CloseVerdict::Ask(second) = gate.on_close_requested() else {
-            panic!("armed 的闸该问一句");
-        };
+        let second = ask(&mut gate);
         assert_ne!(first, second);
-        assert!(!gate.resolve(CloseDecision::Hold));
         assert!(!gate.watchdog_fires(first));
+        assert_eq!(gate.ask, CloseAsk::Waiting(second));
     }
 
     #[test]
@@ -1130,5 +1236,59 @@ mod tests {
         for bad in ["", "Close", "closed", "ok", "true", "discard"] {
             assert_eq!(CloseDecision::parse(bad), None, "{bad} 不该被认下来");
         }
+    }
+
+    /* --- 拦窗口这件事本身：**行为**判据，不是源码里搜 token --- */
+
+    #[derive(Default)]
+    struct RecordingHold {
+        acts: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl CloseHold for RecordingHold {
+        fn prevent_close(&self) {
+            self.acts.borrow_mut().push("prevent".into());
+        }
+        fn ask_frontend(&self) {
+            self.acts.borrow_mut().push("ask".into());
+        }
+        fn arm_watchdog(&self, generation: u64) {
+            self.acts
+                .borrow_mut()
+                .push(format!("watchdog:{generation}"));
+        }
+    }
+
+    #[test]
+    fn holding_a_window_always_arms_a_watchdog_for_the_same_generation() {
+        // 这条替掉了原先「在 main.rs 文本里搜 `spawn_close_watchdog(`」那条判据。
+        // 那是个空门禁：`if false { spawn_close_watchdog(…) }` 照样含那个 token，
+        // 剥掉注释也拦不住——而它守的正是「没有看门狗 = 关不掉的窗口」。
+        // 现在录的是**真的发生了什么**：少一项、或者代号对不上，当场红。
+        let hold = RecordingHold::default();
+        hold_window(&hold, 7);
+        assert_eq!(
+            *hold.acts.borrow(),
+            vec![
+                "prevent".to_string(),
+                "ask".to_string(),
+                "watchdog:7".to_string()
+            ],
+            "拦窗口必须是「拦 + 问 + 起看门狗」三件事，且看门狗认的是同一代"
+        );
+    }
+
+    #[test]
+    fn the_watchdog_is_armed_for_the_generation_the_gate_handed_out() {
+        // 代号错位的表现最隐蔽：看门狗永远开不了火（守着一个不存在的代），
+        // 于是「有兜底」这件事在真机上是假的，而上面那条 vec 断言里的
+        // 数字若被写死成常量也发现不了——所以这里的代号取自闸本身。
+        let mut gate = armed_gate();
+        let g = ask(&mut gate);
+        let hold = RecordingHold::default();
+        hold_window(&hold, g);
+        assert!(hold.acts.borrow().contains(&format!("watchdog:{g}")));
+        // 而这个代号确实是看门狗开得了火的那一个
+        assert!(gate.watchdog_fires(g));
     }
 }
