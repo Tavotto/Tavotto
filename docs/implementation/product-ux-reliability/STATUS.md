@@ -69,31 +69,36 @@
 
 ---
 
-## 风险登记（Session 01 审计，**已实测**的标 ✔）
+## 风险登记（Session 01 审计；**Session 23 之后整段重写，逐格复核到代码**）
 
 严重度用本仓库 `docs/1.0-release-readiness.md` 的分级口径。
 
-| ID | 风险 | 证据 | 严重度 | 归属 |
+**状态是一个闭集**，五个值互不合并：`✅ 已修` / `✅ 已处置（重新定性）` /
+`🟡 部分（剩余有 issue）` / `❌ 未修（有 issue）` / `❓ 未验证`。
+**「不知道」是独立一档**——指不出兑现它的那行代码就写 `❓ 未验证`，不许滑进相邻的
+`✅`。「证据」一栏里每一项都必须是能点开的东西：commit、`文件:行`、或 issue 号。
+
+| ID | 风险 | 状态 | 兑现证据（commit / `文件:行` / issue） | 严重度 |
 | --- | --- | --- | --- | --- |
-| R-01 ✔ | ✅ **已修（02）** **用户的「另存为」不是原子写**：`POST /api/layouts/<name>` 直接 `write_text` 覆盖既有文件，中途失败留下截断文件且旧内容已没了 | `app.py:4192`（实测源码） | P1 | 02 |
-| R-02 ✔ | ✅ **已修（02）** **非有限数被原样写进磁盘**：`json.dumps` 默认允许 NaN/Infinity，写出的 `{"w": NaN}` 不是合法 JSON，浏览器 `JSON.parse` 解不动 → 该文档在前端表现为"读不出来"，静默退回本机副本 | 实测：PUT `/api/autosave/d1` 带 NaN → 200，磁盘上就是 `NaN`；`json.loads(..., parse_constant=raise)` 报错 | P1 | 02 |
-| R-03 | ✅ **已修（03）** **版本检查点没有画布身份**：检查点存的是**激活画布**（`useVersionCheckpoints` 传 `state.doc`），却按 `documentId`（项目）归档；在画布 B 上产生的检查点，在画布 A 上恢复会把 B 的内容与名字盖到 A 上 | `hooks/useVersionCheckpoints.ts:29`、`VersionDialog.tsx:319` | P1 | 03 |
-| R-04 ✔ | ✅ **已修（02）** **`_styles` 被列成一份用户文档**：`GET /api/layouts` 对数据目录 `glob("*.json")`，而样式预设就存在 `LAYOUT_DIR/_styles.json` | 实测：存一个样式后 `/api/layouts` 返回 `{"layouts": ["_styles"]}` | P2 | 02 |
-| R-05 | 🟡 **部分（02 + 04）** `app.py` 四处（02）与 `discover.write_config`（04，注册表落盘）已并入 `engine/atomicio`；`engine/` 里另外五处（config / runspec / runtimeasset / locate / session_client / nativehandoff）未动——它们写的不是文档，各有各的生命周期，合并要逐个看过。**原子写实现散落 9 处以上**，无一做 fsync、无一在失败时清理 tmp、无一返回结构化错误 | `app.py:329/4269/4331/4463`、`engine/config.py:182`、`runspec.py:411`、`runtimeasset.py:132`、`locate.py:279`、`session_client.py:71`、`nativehandoff.py:108` | P2 | 02 |
-| R-06 | ✅ **已修（03）** **没有显式的保存状态机**：`saving` / `save_error` / `conflict` / `recovery_available` 都不是文档状态（错误只是一个 `window` 事件，刷新即丢） | `documentStore.ts` 无对应字段 | P1 | 03 |
-| R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | `app.py:4206` | P2 | 03 |
-| R-08 | ✅ **已修（03）** **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | `app.py:4226` 只比 `updatedAt` | P1 | 03 |
-| R-09 | ✅ **已修（09）** **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | 全仓无独立单图编辑入口 | P1（产品） | 09 |
-| R-10 | ~~**导出偏好只在 localStorage**~~ **已处置（Session 12，重新定性）**：Prompt 12 §六明写「最近导出目录属于 UI preference，不进入项目 undo」——格式 / PPI / 报告开关同属这一档，**它们本来就该是本机偏好**（换机器丢掉一个 600 ppi 的选择不构成数据损失）。真正属于项目的那一项（用哪套规范）在 Session 10 就已经写进文档（`doc.profile` 带快照）。**这一行的原始定性是错的**，不是没做 | `lib/exportDefaults.ts` + ADR 0029 的 `doc.profile` | P2 | ✅ 12（重新定性） |
-| R-11 | ~~**最小字号有两个数**~~ **已处置（Session 10，T-48）**：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt；8 pt 那条边的语义未动 | `profiles/publication.json` | P2 | ✅ 10 |
-| R-12 | ✅ **已修（11）** **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位。`ValidationIssue.objectRef` 带 `documentId` / `canvasId`，定位会切画布 | `lib/preflight.ts` | P2 | ✅ 11 |
-| R-13 | ✅ **已修（05）** **没有 watcher 事件批次合并**：项目 watcher（`engine/project_watch.py`）把一批连续写入合并成**一次**刷新；`registry.changed`/`assets.changed` 仍只由统一刷新发，watcher 自己只发 `panel.file_changed` | 原证据 `pool.py:2003`（已删） | P2 | 05 |
-| R-14 | **教程 / onboarding 完全不存在** | 全仓搜 `tutorial`/`onboarding` 零命中 | P2（产品） | 20/21 |
-| R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations | 既有 issue #130 | P2 | 22 |
-| R-16 | **E2E 只有 Windows 腿** | 既有 issue #30 | P2 | 23 |
-| R-19 ✔ | ✅ **已兑现（2026-08-30）** **e2e 与 axe 两层在 05–09 里从没真跑过**。真跑起来之后共 8 条红：#207 三条（两条**夹具跟不上契约**、一条**自算对比度尺子的假红**）、#208 五条（三条是「轨道按钮是开关不是打开」、一条跨标签页共享工作区模式、一条只有**合并态**才红）。全部已修，本机全量 111 passed。**本行原来的理由被证伪**：E2E 在本机跑得起来——`TAVOTTO_PYTHON` 指主仓库 venv + `PYTHONPATH=<worktree>/src` + 先跑一次 `scripts/build_frontend.py`，单条 2.6 秒、全量 ~10 分钟。剩余的「有模态/无模态下自算对比度结论不一致」记 issue #210 | 见下方「E2E 本机跑法」 | P2（门禁未执行） | ✅ 09/10 |
-| R-17 | 前端主 chunk 1.57 MB（gzip 487 kB），构建有大小告警 | `pnpm build` 输出 | P3 | 23 |
-| R-18 ✔ | **N-1 升级验收里两个检查是空的**：① 它 PUT 给 `/api/autosave/` 的是 `{"doc":…, "updatedAt":…}`，没有 `schema`，后端从**一开始**就 400，异常被 `except` 吞成 `autosave_saved=False`，于是"自动保存读得回来"这条检查**从来没跑过**；② `"老布局可列出"` 对 `layouts`（一个字符串列表）做 `x.get("name")`，必然 `AttributeError` 被同一个 `except` 接住记成 False | `scripts/ci/upgrade_acceptance.py:344,353,455` | P1（门禁空转） | 23 |
+| R-01 | **「另存为」不是原子写**：`POST /api/layouts/<name>` 直接 `write_text` 覆盖既有文件，中途失败留下截断文件且旧内容已没了 | ✅ 已修（02） | `app.py:5175` 走 `engine_atomicio.write_json`；六步写入序列见 `engine/atomicio.py:1-30`；失败经 `app.py:682` 的 `AtomicWriteError` errorhandler 出结构化错误 | P1 |
+| R-02 | **非有限数被原样写进磁盘**：`json.dumps` 默认允许 NaN/Infinity，写出的 `{"w": NaN}` 不是合法 JSON，前端表现为「读不出来」并静默退回本机副本 | ✅ 已修（02） | 判据放在序列化边界：`engine/atomicio.py:118` `dumps_json`（`allow_nan=False` → `AtomicWriteError`）；这条例外记在 `engine/documents.py:83` | P1 |
+| R-03 | **版本检查点没有画布身份**：检查点存的是**激活画布**，却按 `documentId`（项目）归档；在画布 B 上产生的检查点，在画布 A 上恢复会把 B 的内容与名字盖到 A 上 | ✅ 已修（03） | `web/src/hooks/useVersionCheckpoints.ts:25,32-35` 现在把 `canvasId: activeCanvasId` 一并存进版本条目 | P1 |
+| R-04 | **`_styles` 被列成一份用户文档**：`GET /api/layouts` 对数据目录 `glob("*.json")`，而样式预设就存在 `LAYOUT_DIR/_styles.json` | ✅ 已修（02） | `app.py:5135-5142` 显式剔掉 Tavotto 自己的文件；旧位置的 `_styles.json` 另有一次性迁移进 store（`app.py:5568`、`engine_profilestore.migrate_legacy_styles`） | P2 |
+| R-05 | **原子写实现散落**：`app.py` 四处（02）与 `discover.write_config`（04）已并入 `engine/atomicio`；`engine/` 里另外**六处**仍各写各的 `tmp + os.replace`，而且**六份行为互不相同**——这正是 R-05 的要点：它们不是重复代码，是同一个问题的六个不同答案 | 🟡 部分（02 + 04），剩余有 issue | 已并：`app.py:344/5175/5359/5433`、`discover.py:961`。未并六处**逐个实核**（`98a866ca`，三项依次为「文件 fsync / 失败清 tmp / 结构化错误」）：`config.py:174-182` ❌❌❌；`runspec.py:410-425` **✅ fsync** ❌❌；`runtimeasset.py:132-136` ❌❌❌；`locate.py:276-299` ❌❌❌；`session_client.py:59-70` ❌ **✅ 清 tmp（仅 `OSError`，`json.dump` 抛 `TypeError` 或 Ctrl+C 时 tmp 仍留下）** ❌；`nativehandoff.py:99-113` **✅ fsync** **✅ 清 tmp（`BaseException`）** ❌。**六处共同缺的只有两件**：无一抛 `AtomicWriteError`（`app.py:682` 的 errorhandler 接不住），以及**无一做目录 fsync**（atomicio 六步序列的第 5 步）→ **#241**。**2026-09-04 复核**：#254（`02b35d7b`）已把 **AI 回滚**并入 `atomicio.write_bytes`（issue **#251 已 CLOSED**），**原图写回**已经是原子的、只缺 fsync（**#252**，直接换 `publish_file` 会引入半应用路径）——两者都不在上面六处之列，六处**一处未动**。（原文「散落 9 处以上」把已并的 `app.py` 那批也算在内；原文「无一做 fsync、无一清 tmp」**是错的**，逐个核过之后改成上面这份） | P2 |
+| R-06 | **没有显式的保存状态机**：`saving` / `save_error` / `conflict` / `recovery_available` 都不是文档状态（错误只是一个 `window` 事件，刷新即丢） | ✅ 已修（03） | `web/src/store/documentStore.ts:838` `SaveState` 六态闭集 + `:840` 卡住原因；恢复副本是**单独一根轴**（`:856`），没有塞进同一个枚举；状态图在 `:826`；用例 `web/src/store/saveStateMachine.test.ts` | P1 |
+| R-07 | **autosave 存在数据目录而非项目内**：`AUTOSAVE_DIR = LAYOUT_DIR/_autosave`，项目整个拷到另一台电脑不会带上未落名的工作副本 | ❌ 未修（有 issue） | `app.py:124` `LAYOUT_DIR = DATA_ROOT/"layouts"` → `app.py:5182` `AUTOSAVE_DIR` → `app.py:5189`；`engine/documents.py:38`。同一结构后果见下方场景 D 的备注 → **#243**。（原记的 `app.py:4206` 行号已过时） | P2 |
+| R-08 | **没有外部修改冲突检测**：只有跨标签页的 `updatedAt` 乐观并发；用户在编辑器外改了 `tavottofile/*.json`，Tavotto 会静默覆盖 | ✅ 已修（03） | `app.py:5339-5348` 用 `engine_atomicio.content_revision` 比基线，不一致回 409 `external_change`；判据与写入在**同一把锁**里（`app.py:5337`）；修订号经 `X-Tavotto-Revision` 出网（`app.py:5235`） | P1 |
+| R-09 | **快速编辑不存在**：图内编辑必须先把面板放进画布，普通用户被迫理解画布 | ✅ 已修（09，ADR 0028） | `web/src/canvas/QuickEdit.tsx`；原图输出合同 `engine/exportreq.py:37,242`（`scope=original` 没有 x/y/w/h，图幅由图自己定） | P1（产品） |
+| R-10 | ~~**导出偏好只在 localStorage**~~ **这一行的原始定性是错的**：格式 / PPI / 报告开关本来就该是本机偏好，换机器丢掉一个 600 ppi 的选择不构成数据损失 | ✅ 已处置（12，重新定性） | 本机偏好：`web/src/lib/exportDefaults.ts`；真正属于项目的那一项（用哪套规范）Session 10 起写进文档 `doc.profile` 带快照（ADR 0029） | P2 |
+| R-11 | ~~**最小字号有两个数**~~：三个数（8.5 严格 / 8.0 绝对 / 8.5 图例）收敛成一个 8 pt | ✅ 已处置（10，T-48） | `src/tavotto/profiles/publication.json:42-43`（`min_effective` = `absolute_min` = 8.0）；删掉 8.5 pt 那条的理由写在同文件 `:10`。**README 的两张预检截图还停在旧的两条下限** → #247 | P2 |
+| R-12 | **问题项没有画布维度**：`PreflightIssue` 有 `objectIds`/`gids`，无 `canvasId`，多画布项目里无法跨画布定位 | ✅ 已修（11，ADR 0030） | `ValidationIssue.objectRef` 带 `canvasId`，定位会先切画布再落到对象：`web/src/lib/issueFocus.ts:93-100` | P2 |
+| R-13 | **没有 watcher 事件批次合并**：一批连续写入会发出一串刷新 | ✅ 已修（05，ADR 0026） | `engine/project_watch.py:207` `diff_snapshots` + `Delta.absorb`（`:186`）+ `max_batch`（`:255`）把一批连续写入合成**一次**刷新；原证据里的 `pool.py:2003` 那份实现已删 | P2 |
+| R-14 | **教程 / onboarding 完全不存在**（登记时全仓搜 `tutorial`/`onboarding` 零命中） | ✅ 已修（20/21，ADR 0039/0040） | 后端 `src/tavotto/engine/tutorial.py`（离线教程资源 + Tutorial API）；前端 `web/src/lib/onboarding/{flow,hints,position}.ts`；e2e `web/e2e/tutorial.spec.ts` 四条。下方场景 M 的覆盖就是这一条 | P2（产品） |
+| R-15 | **a11y 门禁半盲**：axe 的 `incomplete` 不进 violations，遮挡层下的对比度从没被测过 | ✅ 已修（22） | issue **#130 已 CLOSED**；`web/e2e/a11y.spec.ts` 每条用例都把 `incomplete` 交代清楚、**不按规则 id 放行**（`:84`、`:125`、`:132`），对比度与标题层级各自补了一份自算判据。剩余「有模态 / 无模态下自算对比度结论不一致」是 **#210** | P2 |
+| R-16 | **E2E 只有 Windows 腿** | ❌ 未修（原引用记错对象） | 事实属实：Playwright 黄金路径只挂在 windows 腿上（`.github/workflows/ci.yml:848`，失败产物名 `windows-smoke-logs`）。**原文引的 #30 是 i18n 议题，不是这件事**；桌面真机黄金路径那条是 **#31**，腿拓扑本身另有轨道在处理 | P2 |
+| R-19 | **e2e 与 axe 两层在 05–09 里从没真跑过**（本行原来的理由「本机沙箱起不来真实后端 + 浏览器」已被实测证伪） | ✅ 已兑现（09/10，2026-08-30） | 真跑起来共 8 条红：#207 三条、#208 五条，全部已修，本机全量 111 passed；跑法见下方「E2E 本机跑法」。剩余一条记 **#210** | P2（门禁未执行） |
+| R-17 | 前端主 chunk 从登记时的 1.57 MB（gzip 487 kB）涨到 **1.85 MB**（gzip 574 kB），`pnpm build` 长期带大小告警 | ❌ 未修（有 issue） | 数字见下方 Session 23 终审结果表与 `TEST_MATRIX.md` 的 Session 23 `pnpm build` 行；`web/vite.config.ts` 里没有 `manualChunks`、也没调 `chunkSizeWarningLimit` → **#246** | P3 |
+| R-18 | **N-1 升级验收里两个检查是空的**：① PUT 给 `/api/autosave/` 的载荷没有顶层 `schema`，后端从一开始就 400，异常被 `except` 吞成 `autosave_saved=False`；② `"老布局可列出"` 对一个字符串列表做 `x.get("name")`，必然 `AttributeError` 被同一个 `except` 接住记成 False | ✅ 已修（23） | 载荷改成产品自己会写的那份文档（顶层带 `schema`）：`scripts/ci/upgrade_acceptance.py:387-394`；文档形状断言 `:329-341`；**写不成不再静静消失**，改判成失败的检查：`:344-356` `missing_state_checks` | P1（门禁空转） |
 
 **本轨道之外**（记录但不处理，README「明确不包含」）：PyMuPDF 替换、
 Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
@@ -608,19 +613,37 @@ e2e 126 条 2 红（流程 B / D）——全部记在 `TEST_MATRIX.md` Session 2
 BLOCKED — 不建议发布
 ```
 
-本分支：**P0 = 0，P1 = 0**（本轮修掉的 P1：原图 PDF 文本层缺科学字符 T-122、升级验收两条空检查 R-18、
-另存为不校验 T-123）。阻断项与最短修复路径：
+本分支：**P0 = 0；P1 = 1**（本轮修掉的 P1：原图 PDF 文本层缺科学字符 T-122、升级验收两条空检查 R-18、
+另存为不校验 T-123）。剩下的那 1 条是 **#240**——它不是本分支引入的（`tavotto run` 线，本分支未动
+`runspec` / `cli` / `tests/native`），但**它红着，「全量自动化真实通过」这条门禁就没通过**，
+所以不再记成 0。阻断项与最短修复路径：
 
 1. **main 上 Lab Qualification 连红**（#225，`test_project_env.py` 14 条）——release 档的 lab 资格拿不到。
-   修法：给实验室 runner 的 base 解释器装 matplotlib，或让 `venvfixture.make_project_venv` 不假设 base 带它。
-2. **main 上 Nightly CompatBench 连红**（#226，四个多图用例 `native_run` 退成 product_bug）——nightly 门禁。
-   修法：compat-bridge 轨道修 native run 的多图路由或按证据改基线声明。
+   **已定性（PR #239）：根因是用例的前提错了，不是机器残缺——机器侧无待办。**
+   `tests/support/venvfixture.py:57` 的 `make_project_venv()` 用 `python -m venv --system-site-packages`，
+   而 `--system-site-packages` 继承的是 **`sys.base_prefix` 的 site-packages，不是交给夹具的那个解释器的**；
+   两者只在「那个解释器就是基础解释器」时才重合。GitHub 腿一直绿是因为**重合**
+   （`.github/workflows/ci.yml:395-397` 把 `-e ".[dev]"` 与 matplotlib 装进 setup-python 的解释器，
+   pytest 用的也是它）；Lab 红是因为**不重合**（`_lab-qualification.yml:114-116` 是
+   `python3 -m venv "$VENV"` 之后往 `$VENV` 里装，base 是 `/usr/bin/python3`）。这条规则夹具自己
+   早就写在 `venvfixture.py:32-38` 的 docstring 里，当时只推到了「遮掉 `tavotto`」，没有推到 matplotlib 上。
+   ~~修法：给实验室 runner 的 base 解释器装 matplotlib~~ —— **这条解药是错的，别照做。**
+   科学栈版本由 `packaging/runtime-lock.json` 钉住、经 `scripts/ci/runtime_pins.py` 装进那个一次性 venv
+   （理由写在 `runtime_pins.py:4-5`：matplotlib 换一个小版本就会改掉抗锯齿、字体度量或默认样式）；
+   装到系统解释器上，等于让一个**没锁版本**的 matplotlib 经 `--system-site-packages` 漏回夹具 venv，
+   像素基线随之失去意义。**修法只有一条**：让 `make_project_venv` 不假设 base 带它 —— 见 **PR #239**。
+   状态：**待 CI 验证**（PR #239 未合；#225 真正关闭仍需 Lab Qualification 实跑一次绿）。
+2. ~~**main 上 Nightly CompatBench 连红**（#226）~~ —— **已清（2026-09-04 复核）**：#234（`c2922f4f`）
+   查出根因是**声明漏了「脚本自执行」这一维，把产品的正确结果记成了缺陷**，issue **#226 已 CLOSED**。
 3. **桌面产物本分支未在 CI 执行过**：Session 19–23 改了 `tavotto.spec` 的 datas 与两条 workflow 的
    `--tutorial`，它们只在合并队列 / `full-ci` 标签 / tag 上第一次执行。修法：先给本分支的 PR 打 `full-ci`
    标签，看 `windows-exe-smoke` / `macos-app-smoke` 两腿真过一次。
-4. Distribution metrics 连红（#227）不阻断产品，但发行量指标断了六天，发版前该修。
+4. ~~Distribution metrics 连红（#227）~~ —— **已清（2026-09-04 复核）**：#250（`417f1a4a`）把「没配 token」「被拒」「未授权」「不知道」分成各自点名的失败，issue **#227 已 CLOSED**。
+5. **`test_ctrl_c_reaches_the_script…` 在全量里长期红**（#240，Session 06 / 15 / 23×2；07 / 16 绿）
+   ——门禁「全量自动化真实通过」指的就是这张表。修法：先**定性**（`tavotto run` 控制通道的真缺陷，
+   还是用例的时序前提），再按定性处置；不允许 skip / xfail / 删。
 
-以上四条都不在本分支的改动范围内；1–3 任一不清，结论不变。清完之后本分支满足门禁清单其余各项
+以上五条都不在本分支的改动范围内。**2026-09-04 复核：2 与 4 已清**（#226 / #227 均已 CLOSED），剩 1（#225，修复在未合的 PR #239）、3（桌面产物未在 CI 执行过）、5（#240）；三条任一不清，结论不变。清完之后本分支满足门禁清单其余各项
 （见下方逐条）。
 
 ### 门禁清单逐条
@@ -629,9 +652,9 @@ BLOCKED — 不建议发布
 | --- | --- |
 | Gate 1–5 全部通过 | ✅（01–22 各自的结果表 + 本轮审计未发现空门禁） |
 | P0 为 0 | ✅ |
-| P1 为 0 或有批准的例外 | ✅ 本分支；❌ main 上 #225 / #226 |
-| 全量自动化真实通过 | 见上表 |
-| 关键 E2E 通过 | 见上表（流程 B / D 已修） |
+| P1 为 0 或有批准的例外 | ❌ **未满足**：main 上 #225（#226 已 CLOSED），**本分支的全量里还有 #240**（`test_ctrl_c…`，P1 门禁空转，性质未定）。#240 不是本分支引入的，但要让「本分支 P1 = 0」成立，得有一条**批准的例外**——目前没有，所以它计入 |
+| 全量自动化真实通过 | ⚠️ **不是绿的**：Session 23 终审两次全量都是 `1 failed`（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`，见上方 Session 23 结果表）。这一格在 #240 定性并处置之前**不算通过** |
+| 关键 E2E 通过 | ✅ 见上方 Session 23 结果表：Playwright 三个 project 全量 125 passed / 1 skipped / 0 failed，改动前 2 红的流程 B / D 已绿 |
 | 文档 migration / 保存 / recovery | ✅（Gate 1 用例 + 本轮 round-trip / 未来 schema 拒绝） |
 | original / canvas export fidelity | ✅（既有像素 / 尺寸用例 + 本轮 PDF 文本层矩阵） |
 | 特殊字符矩阵 | ✅ `test_scientific_text_matrix.py` 7/7 |
@@ -665,22 +688,18 @@ BLOCKED — 不建议发布
 
 | 事项 | 级别 | 复现 / 影响 | 归属 |
 | --- | --- | --- | --- |
-| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225 | project-env + lab runner |
-| main：Nightly CompatBench `native_run` 4 用例退成 product_bug | **P1（发布）** | #226 | compat-bridge |
+| main：Lab Qualification `test_project_env` 14 红 | **P1（发布）** | #225；已定性 = 夹具前提错（`--system-site-packages` 继承 base，不是交给它的解释器），**不是机器残缺**；修复在 **PR #239（未合）**，状态**待 CI 验证** | project-env（**lab runner 侧无待办**） |
 | 桌面产物：本分支的 datas / `--tutorial` 改动未在 CI 执行过；`delivered: local` 桌面限制 | P1（未验证，不是缺陷） | 合并队列 / `full-ci` 第一次执行 | 23 → PR |
-| main：Distribution metrics HTTP 400 | P2 | #227 | ops |
 | 热渲染比 main 慢 15%（manifest +27%） | P2 | #220，阈值 1.3× / 2× | engine |
 | 版本时间线整份文档、autosave 无上限 | P2 | #221（5 000 对象 547 ms） | documents |
 | 另存为无冲突检测；读侧 NaN 无对称闸 | P2 / P3 | #222 | documents |
 | 桌面壳无 CloseRequested 处理 | P2（待真机） | #223 | desktop |
 | MCP 插件第二份导出实现 | P2 | #224 | codex-plugin |
-| AI 回滚 `copy2` **非原子覆盖用户的 `.py`**（中途失败留下截断的源文件） | **P1** | #251，已修（走 `atomicio.write_bytes`） | R-05 族 |
 | 原图写回**已经是原子的**（`os.replace` + 备份 + 回滚），只缺 fsync | P3 | #252，直接换 `publish_file` 会引入半应用路径 | 择机 |
-| `test_ctrl_c_reaches_the_script…` 负载敏感（本轮负载 13.6 时红一次） | P2 | 单跑 3.8 s 绿 | tavotto run 线 |
-| 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | `pnpm build` 告警 | 择机 |
-| 网站 /try 未同步（`pnpm sync-playground`） | 发布前 | playground 指纹 `09a8abe9eab7a60b` | 发布前 |
-| README 两张预检截图是旧规范拍的 | P3 | alt 如实 | 择机 |
-| `problem_focused` / `export_completed.scope` 两条事件未加 | — | 22 记 | 下次遥测扩容 |
+| `test_ctrl_c_reaches_the_script…` 在全量里红、窄范围绿（06 / 15 / 23×2 红，07 / 16 绿） | **P1（门禁）** | **#240**；性质未定：`tavotto run` 真缺陷 vs 判据的时序前提，两者都没被排除。**上方门禁清单「全量自动化真实通过」那一格指的就是这张红表** | tavotto run 线 |
+| 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | **#246**；`pnpm build` 告警，`vite.config.ts` 无 `manualChunks` | 择机 |
+| README 两张预检截图是旧规范拍的 | P3 | **#247**；alt 如实，图过期——alt 里的「8.5 pt 与 8 pt 两条下限」在 ADR 0029 之后只剩一条 8 pt | 择机 |
+| `problem_focused` / `export_completed.scope` 两条事件未加 | P3 | **#245**；两侧同源对（`engine/telemetry.py` ↔ `services/telemetry_proxy/.../contract.py`）必须一起改 | 下次遥测扩容 |
 
 Session 19 之后那张长表里其余「已处置 / 已决定不做 / 择机」各项原样有效，不再复制。
 
@@ -691,7 +710,7 @@ Session 19 之后那张长表里其余「已处置 / 已决定不做 / 择机」
 1. 推分支、开 PR（13–23 十一轮攒在 `feat/product-ux-13-properties`，按用户节奏拆或不拆），打 `full-ci`
    标签让两条桌面腿第一次执行本分支的 spec / workflow 改动；
 2. 处理 #225 / #226（不在本分支），Lab release 档跑绿；
-3. `pnpm sync-playground` 同步网站 /try；
+3. ~~`pnpm sync-playground` 同步网站 /try~~ —— **已完成**：网站仓 `014a997`「同步 /try playground 到 98a866c」，`public/try/playground-manifest.json` 与 `engine.zip` 已随之更新；
 4. 之后按 `docs/1.0-release-readiness.md` 走 tag。
 
 ## E2E 本机跑法（2026-08-30 实测，推翻 R-19 原来的理由）
