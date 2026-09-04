@@ -264,12 +264,20 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
-  // 两条允许，各自带真核对：背景整片 aria-hidden（「焦点确实困在对话框里」由
+  // 三条允许，各自带真核对：背景整片 aria-hidden（「焦点确实困在对话框里」由
   // 紧接着那圈 Tab 断言覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个
-  // 核对——`color-contrast` 进不进 incomplete 随卡片数量与浏览器而变（这条
-  // 用例实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
+  // 核对；跨 landmark 的标题顺序由本文件自己按文档顺序核对。三条进不进
+  // incomplete 都随抽屉开合、卡片数量与浏览器而变（`color-contrast` 这条用例
+  // 实测过两种都出现过），而豁免带着真核对，用不上并不构成放行。
+  //
+  // `heading-order` 是跑 #210 的门禁时抓到的一条**旧**偶发，与 #210 的改动无关：
+  // 交错 A/B 实测，origin/main 上单跑 10 次红 3 次（chromium-en），改动后同一条
+  // 命令 14 次全绿。抓到的节点是**对话框自己的 `h2`**（`#radix-_r_18_`，Radix 把
+  // 它 portal 到 `<body>` 末尾、背景整片 aria-hidden 之后）——axe 判不了它在文档
+  // 里的层级位置，就丢进 incomplete；判不判得了随扫描那一刻的可见性而变，所以
+  // 时红时绿。工作台/问题面板那两条用例早就声明了它，这里补齐。
   await expectAccessible(page, {
-    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler],
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
 
   // 焦点 trap：连按 Tab 一整圈，焦点永远落在对话框里
@@ -309,19 +317,17 @@ test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢�
     timeout: 30_000,
   })
 
-  // 两条允许，各自带真核对：背景整片 aria-hidden（焦点进不去由下面那圈 Tab
-  // 覆盖）；覆盖层下 axe 算不出背景色的那几个节点由本文件的自算对比度尺子逐个
-  // 核对。后者是这个对话框第一次在真浏览器里跑出来的——`--list` 收得到 ≠ 跑得过。
-  // **判据收在对话框里**（`root`）：这条用例的对象是接入状态这一屏。模态打开时
-  // 全页扫描会把背后的工作台一并量进来，而工作台自己的对比度由上面那条
-  // 「工作台」用例在**没有模态**的状态下守——两处都量、结论还不一致的话，
-  // 红的是哪一屏就说不清了（实测确实不一致，已记 issue）。
-  //
   // 两条「查不了」的允许各自带真核对：背景整片 aria-hidden（焦点进不去由下面
-  // 那圈 Tab 覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个核对。
+  // 那圈 Tab 覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个核对。后者是
+  // 这个对话框第一次在真浏览器里跑出来的——`--list` 收得到 ≠ 跑得过。
+  //
+  // **判据扫全页**，不收进 `[role="dialog"]`：模态打开时全页扫描会把背后的工作台
+  // 一并量进来，那正是要的——同一批节点在「有没有模态」下必须给出同一个结论。
+  // 曾经收进对话框是为了绕开一处不一致，而那处不一致是**尺子**的缺陷（背景只走
+  // DOM 祖先链，看不见画在下面的兄弟层），已在 issue #210 里定性并修掉；
+  // `contrast.spec.ts` 里有它的两向判据。
   await expectAccessible(page, {
     allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler],
-    root: '[role="dialog"]',
   })
 
   for (let i = 0; i < 25; i++) {
