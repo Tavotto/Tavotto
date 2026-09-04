@@ -163,6 +163,10 @@
         "keywords": "canvas page settings hbsz huabu",
         "label": "画布设置"
       },
+      "cycle-overlap": {
+        "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
+        "label": "在重叠的图内元素之间轮换选中"
+      },
       "edit-elements": {
         "keywords": "edit element tnys tuneiyuansu",
         "label": "编辑选中面板的图内元素"

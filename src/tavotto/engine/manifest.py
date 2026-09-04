@@ -239,8 +239,9 @@ def _twin_axes_labels(all_axes: list, child_ids: set, cbar_of_ax: dict) -> dict[
     重叠，默认按遍历序拿到「子图 7」这类与宿主毫不相干的名字——六宫格图上
     第 2 格的右轴叫「子图 7」，元素树里根本猜不到它是谁，这正是「双纵轴
     无法分侧调整」的第一半根因（另一半是画布命中：两个同尺寸 bbox 评分
-    打平，先登记的恒胜，twin 容器在画布上永远点不中——记录在案，元素树是
-    它的入口）。gid 一个字节不动（存量文档的 axes_i 是数据），只改显示名。
+    打平，先登记的恒胜——issue #216 已修，画布上 ⌥ 点击在重叠候选之间轮换，
+    这里发的标签正是那条 toast 说出「换到了谁」用的措辞）。gid 一个字节不动
+    （存量文档的 axes_i 是数据），只改显示名。
 
     亲缘判据**只有 `overrides.coincident_shared_axes_pairs` 一份**（共享
     x/y + position 基本重合，公开 API）——`follow_map` 的「拖动时一起走」

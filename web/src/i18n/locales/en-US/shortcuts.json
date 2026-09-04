@@ -7,7 +7,8 @@
     "tools": "V / T / A / R / O / L",
     "wheelZoom": "{{mod}}+wheel",
     "shiftClick": "⇧+click",
-    "rightClick": "Right-click"
+    "rightClick": "Right-click",
+    "altClick": "{{alt}}+click"
   },
   "group": {
     "arrange": "Arrange and stacking",
@@ -43,7 +44,8 @@
     "zoomPresets": "100% / fit canvas",
     "multiSelect": "Add / remove objects or figure elements from the selection",
     "quickEdit": "Open the quick-edit menu for the object",
-    "tutorialPause": "Pause the tutorial (when the tutorial card has focus)"
+    "tutorialPause": "Pause the tutorial (when the tutorial card has focus)",
+    "cycleOverlap": "Cycle the selection through overlapping figure elements (both axes of a twin-axis plot)"
   },
   "title": "Keyboard shortcuts"
 }

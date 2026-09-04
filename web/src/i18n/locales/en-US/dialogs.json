@@ -164,6 +164,10 @@
         "keywords": "canvas page settings size",
         "label": "Canvas settings"
       },
+      "cycle-overlap": {
+        "keywords": "cycle overlap overlapping twin axis behind stack",
+        "label": "Cycle through overlapping figure elements"
+      },
       "edit-elements": {
         "keywords": "edit element figure inner",
         "label": "Edit figure elements of the selected panel"

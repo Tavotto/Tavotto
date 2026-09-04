@@ -528,6 +528,7 @@
     "dismissError": "关闭错误提示",
     "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
     "documentReopened_other": "已切回：{{name}}（{{count}} 张画布）",
+    "elementCycled": "已选中「{{label}}」（这一点上第 {{index}}/{{total}} 个重叠元素）",
     "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
     "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
     "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",

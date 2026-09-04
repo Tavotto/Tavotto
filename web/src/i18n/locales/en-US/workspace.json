@@ -556,6 +556,7 @@
     "documentLoaded_other": "Loaded {{name}} ({{count}} canvases)",
     "documentReopened_one": "Switched back to {{name}} ({{count}} canvas)",
     "documentReopened_other": "Switched back to {{name}} ({{count}} canvases)",
+    "elementCycled": "Selected \"{{label}}\" — {{index}} of {{total}} overlapping here",
     "elementHidden": "Hid \"{{label}}\" — restore it from \"Hidden elements\"",
     "elementLocked": "Locked \"{{label}}\" — canvas clicks will skip it",
     "elementsHidden_one": "Hid {{count}} element — restore them from \"Hidden elements\"",
