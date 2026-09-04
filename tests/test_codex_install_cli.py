@@ -618,6 +618,31 @@ def test_pinning_survives_crlf_manifests(tmp_path):
     assert b"display_name: keep" in after and b"allow_implicit_invocation" in after
 
 
+def test_a_silent_no_op_substitution_fails_loudly_instead_of_leaving_half_a_pair(
+    tmp_path, monkeypatch
+):
+    """替换**静默没换上去**时要当场炸，不能只钉一侧就报成功。
+
+    这条判据的主语不是正则，是「万一以后又静默失配会怎样」——CRLF 那次正是这个
+    形状：函数原样返回、零报错、`.mcp.json` 钉上了、`openai.yaml` 没动，用户端
+    表现成「每装一次被告知一次没装」。所以在计划阶段当场验一次目标行真的落进了
+    文件，验的判据与那个扫描器无关（不拿它自己验自己）。
+
+    注入点就是「扫描器原样返回」：任何一次静默失配都长这样。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = _plugin_with_two_manifests(tmp_path)
+    mcp, yml = plugin / ".mcp.json", plugin / "skills" / "s" / "agents" / "openai.yaml"
+    before = (mcp.read_bytes(), yml.read_bytes())
+
+    monkeypatch.setattr(codexinstall, "_replace_dependency_command", lambda text, command: text)
+    with pytest.raises(OSError):
+        codexinstall.pin_launcher_command(plugin, "/opt/real/python")
+    assert (mcp.read_bytes(), yml.read_bytes()) == before, "静默失配之后还是留下了半套状态"
+
+
 def test_pinning_is_all_or_nothing_when_the_second_file_fails(tmp_path, monkeypatch):
     """第二份换不上去时，**磁盘上两份都保持原样**。
 
