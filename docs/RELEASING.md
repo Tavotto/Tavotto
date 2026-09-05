@@ -289,23 +289,33 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 #215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的用户需要一句
 提示，那句话只留在 PR 正文里，于是一版都没有发出去（issue #244）。
 
-## Codex 插件的更新提醒
+## Codex 插件：Release 上的 zip 与发行分支 `plugin-stable`（ADR 0043）
 
-插件（`codex-plugin/`）随 Tavotto 一起发。装了它的用户**不会自动收到更新**——
-Codex 不管这件事，所以插件自己每 24 小时查一次清单，有新版就在交接结果里
-附一句提醒（只提醒，不下载、不安装）。
+插件（`codex-plugin/`）随 Tavotto 一起发，但**画布不再从源码 checkout 里拿**：release.yml 的
+`build` job 在固定发行 SHA 上真构建画布、按 git 清单组装完整插件、用发出去的那份 wheel 真起
+server 验一遍，然后把三样东西放进 `dist/`（进产物清单、SHA256SUMS、provenance）：
 
-发版时这一步是自动的（`release.yml` 的「生成 Codex 插件清单与安装包」），
-产出两份挂到 Release：
-
+* `codex-plugin-<版本>.zip` —— 完整插件（含画布与随包清单 `plugin-build.json`）；
 * `codex-plugin.json` —— 版本清单。**文件名不能改**：插件拉的是
-  `releases/latest/download/codex-plugin.json`（`update_check.DEFAULT_URL`）。
-* `codex-plugin-<版本>.zip` —— 插件安装包，清单的 `download_url` 指向它。
+  `releases/latest/download/codex-plugin.json`（`update_check.DEFAULT_URL`）；
+* `codex-plugin-build.json` —— 随包清单的副本（source_sha / 构建输入指纹 / 内容摘要）。
 
-要手动做一次（或者本地看看长什么样）：
+`validate_artifacts` 成对验证（zip 内容 ↔ 版本清单 ↔ 随包清单 ↔ trust 的 SHA），
+`github_release` 随 `dist/*` 挂上，之后 `plugin_stable` job 把**同一份** zip 投影到发行分支
+`plugin-stable`——marketplace 的 `git-subdir` 入口读的就是它。`publish=false` 演练里这个 job
+对临时 bare 仓库真实跑完 bootstrap / 幂等 / 拒绝 / 回退，并对真实远端只读 plan。
+
+GitHub Release、PyPI、Git 分支不是一个原子事务：`plugin_stable` 红了 = Release 已公开、
+marketplace 通道**尚未推进**，旧稳定插件原样在，用 Actions → plugin-stable → `promote`
+幂等重试（`docs/ci/plugin-stable-channel.md` 第 7 节）。绝不删公开版本伪装回滚。
+
+本地看看长什么样（不需要发版）：
 
 ```bash
-python scripts/make_plugin_manifest.py --tag v0.7.1 \
+python scripts/build_mcp_widget.py --out build/canvas.html
+python scripts/plugin_stage.py stage --widget build/canvas.html --out build/plugin-stage \
+  --source-sha "$(git rev-parse HEAD)" --allow-dirty
+python scripts/make_plugin_manifest.py --tag v0.7.1 --plugin-dir build/plugin-stage \
   --out out/codex-plugin.json --zip out/codex-plugin-0.7.1.zip
 ```
 
@@ -313,9 +323,9 @@ python scripts/make_plugin_manifest.py --tag v0.7.1 \
 
 1. 改 `codex-plugin/.codex-plugin/plugin.json` 的 `version`
    （版本号只有这一处；`tests/test_codex_plugin.py` 盯着它与 `tavotto.__version__` 一致）；
-2. 正常打 tag 发版——上面那步会自动生成清单与 zip；
+2. 正常打 tag 发版——build 造插件、validate 验、Release 挂、`plugin_stable` 推进发行分支；
 3. 用户下次调用插件时看到提醒，执行
-   `codex plugin marketplace upgrade tavotto` 并重载 Codex。
+   `codex plugin marketplace upgrade tavotto` 并重载 Codex（实测：刷新快照并按版本刷新插件缓存）。
 
 `min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）的判据是
 **「桥 import 得动吗」**：它必须等于第一个装得下 `mcp/server.py::_BRIDGE_IMPORT`

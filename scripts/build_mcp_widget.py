@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 """构建 Codex 内嵌画布（MCP App UI）的单文件 HTML。
 
-    python scripts/build_mcp_widget.py            # 构建并写入插件目录
-    python scripts/build_mcp_widget.py --check    # 校验：0 一致 / 1 过期 / 2 还没构建
+    python scripts/build_mcp_widget.py                       # 构建并写入本地插件目录（开发态）
+    python scripts/build_mcp_widget.py --out build/canvas.html   # 写到显式位置（CI staging 用）
+    python scripts/build_mcp_widget.py --check [--out PATH]  # 校验：0 一致 / 1 过期 / 2 还没构建
+    python scripts/build_mcp_widget.py --fingerprint         # 只打印源码指纹
 
-产物：`codex-plugin/mcp/widget/canvas.html`（**进 git**）。
+默认产物位置 `codex-plugin/mcp/widget/canvas.html`——那是 MCP server 加载画布的
+既有位置（`tavotto_mcp/widget.py` 的默认路径，`TAVOTTO_MCP_WIDGET` 可覆盖）。
+本地开发：构建一次，`python codex-plugin/mcp/server.py` 或指向工作副本的
+marketplace 装出来的插件就带上了它。**它是构建产物，不进版本库**（ADR 0043）；
+用户装到的画布来自发行分支 `plugin-stable`，由 CI 从固定源码状态构建、验证、
+发布（`scripts/plugin_stage.py` / `scripts/plugin_publish.py`）。
 
-为什么要单文件、为什么要提交进仓库：
-
-* MCP 资源的内容就是一段 HTML 文本，host 把它直接塞进 iframe——外链的
-  JS/CSS 没有可寻址的来源，`_meta.ui.csp` 声明的 `resourceDomains` 我们也刻意
-  留空（这块画布不发任何跨源请求，与后端的往来全部走 `tools/call`）；
-* 插件是从**仓库本体**分发的（`.agents/plugins/marketplace.json` 指向
-  `./codex-plugin`）。产物不进 git，用户装完插件就只有一个空目录——
-  MCP server 会如实降级成「没有 UI，五个工具照常可用」，但那不是我们想要的
-  默认状态。所以它和 `src-tauri/windows/installer.nsi` 一样是**受管的产物**：
-  由脚本生成，改前端后必须重跑（`--check` 在 CI 里看着）。
+为什么要单文件：MCP 资源的内容就是一段 HTML 文本，host 把它直接塞进 iframe——
+外链的 JS/CSS 没有可寻址的来源，`_meta.ui.csp` 声明的 `resourceDomains` 我们也
+刻意留空（这块画布不发任何跨源请求，与后端的往来全部走 `tools/call`）。
 
 画布的源码是 `web/src/mcp/`，它 import 的是 Tavotto 前端**同一份**
 `canvas/` + stores + types——拖拽、命中测试、吸附、undo、patch 状态没有第二份实现。
+
+三条写盘纪律：
+
+* vite 的输出落在**临时目录**，不在 `web/` 下留下中间产物；
+* 最终 HTML 先写同目录临时文件、成功后 `os.replace` 换上——构建失败时旧产物
+  原样不动，也**不会**把旧产物报成「刚构建成功」；
+* 构建结束不改任何 tracked 源码。
 
 纯标准库。
 """
@@ -33,14 +40,34 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePath
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
-DIST = WEB / "dist-mcp"
 OUT = ROOT / "codex-plugin" / "mcp" / "widget" / "canvas.html"
 #: 产物开头的指纹注释：`--check` 靠它判断「源码改了但没重新构建」
 STAMP = "<!-- tavotto-mcp-widget "
+
+#: `web/src/**` 之外**也参与**编译的输入。漏一个的表现是「改了它、产物指纹没变、
+#: 用户装到旧画布、零报错」——所以这张表宁可宽一点：
+#:   * 锁文件：依赖升级会改产物字节；
+#:   * tsconfig 三份：`tsc -b` 与 vite 都读；
+#:   * 本脚本自己：内联规则变了产物也变；
+#:   * 规范 JSON 与字形覆盖表：经路径别名整份进 bundle。
+EXTRA_INPUTS = (
+    "web/mcp.html",
+    "web/vite.mcp.config.ts",
+    "web/package.json",
+    "web/pnpm-lock.yaml",
+    "web/pnpm-workspace.yaml",
+    "web/tsconfig.json",
+    "web/tsconfig.app.json",
+    "web/tsconfig.node.json",
+    "scripts/build_mcp_widget.py",
+    "src/tavotto/profiles/publication.json",
+    "src/tavotto/pdfbackend/canvas_coverage.json",
+)
 
 
 def _force_utf8() -> None:
@@ -96,45 +123,52 @@ def digest(items) -> str:
     return h.hexdigest()[:16]
 
 
-def source_fingerprint() -> str:
-    """画布源码的指纹：`web/src/**` + 规范文件 + 覆盖表 + 构建配置。
+def _is_test_file(p: Path) -> bool:
+    return (
+        ".test." in p.name or "__tests__" in p.parts or p.name.endswith((".spec.ts", ".spec.tsx"))
+    )
 
-    只盯这几处：改了它们而没重新构建，用户装到的画布就是旧的。
-    收集顺序无所谓——排序与规范化都在 `digest()` 里。
+
+def source_inputs() -> list[Path]:
+    """参与画布编译的全部输入文件（存在的那些）。
+
+    `web/src/**` 下**所有**普通文件都算（.ts/.tsx/.css 之外还有 locale JSON、
+    示例 .py、示例 .webp、生成的 resources.d.ts——它们都经 import 进 bundle），
+    只剔掉测试文件；再加 `EXTRA_INPUTS`。**不假设「扫了 TS/TSX/CSS 就覆盖全部依赖」。**
     """
     files: list[Path] = []
-    for base in (WEB / "src",):
-        for p in base.rglob("*"):
-            if p.is_file() and p.suffix in (".ts", ".tsx", ".css") and ".test." not in p.name:
-                files.append(p)
-    files += [
-        WEB / "mcp.html",
-        WEB / "vite.mcp.config.ts",
-        WEB / "package.json",
-        ROOT / "src" / "tavotto" / "profiles" / "publication.json",
-        # 字形覆盖表也经路径别名整份进 bundle（`@glyphcoverage`）：换一版
-        # PyMuPDF 重新生成之后，画布对「这个字导出后是不是方框」的答案就变了。
-        # 不把它算进指纹的话，产物会以「没变化」的样子带着旧答案发出去。
-        ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json",
-    ]
-    return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
+    for p in (WEB / "src").rglob("*"):
+        if p.is_file() and not _is_test_file(p) and "node_modules" not in p.parts:
+            files.append(p)
+    files += [ROOT / rel for rel in EXTRA_INPUTS]
+    return [p for p in files if p.is_file()]
+
+
+def source_fingerprint() -> str:
+    """画布源码的指纹。收集顺序无所谓——排序与规范化都在 `digest()` 里。"""
+    return digest((p.relative_to(ROOT), p.read_bytes()) for p in source_inputs())
 
 
 def build() -> str:
-    """跑 vite，把 JS/CSS 内联成一份 HTML 文本。"""
-    cmd = (
-        [*_pnpm(), "exec", "vite", "build", "--config", "vite.mcp.config.ts"]
-        if _pnpm()[0].endswith("pnpm")
-        else [*_pnpm(), "build", "--config", "vite.mcp.config.ts"]
-    )
-    proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
-    if proc.returncode != 0:
-        raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")
+    """跑 vite（输出进临时目录），把 JS/CSS 内联成一份 HTML 文本并打上指纹戳。"""
+    tool = _pnpm()
+    fingerprint = source_fingerprint()  # 构建**之前**算：构建不改源码，之后算也一样
+    with tempfile.TemporaryDirectory(prefix="tavotto-mcp-dist-") as dist_str:
+        dist = Path(dist_str)
+        cmd = (
+            [*tool, "exec", "vite", "build", "--config", "vite.mcp.config.ts"]
+            if tool[0].endswith("pnpm")
+            else [*tool, "build", "--config", "vite.mcp.config.ts"]
+        )
+        cmd += ["--outDir", str(dist), "--emptyOutDir"]
+        proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
+        if proc.returncode != 0:
+            raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")
 
-    html = (DIST / "mcp.html").read_text(encoding="utf-8")
-    js = (DIST / "canvas.js").read_text(encoding="utf-8")
-    css_path = DIST / "canvas.css"
-    css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+        html = (dist / "mcp.html").read_text(encoding="utf-8")
+        js = (dist / "canvas.js").read_text(encoding="utf-8")
+        css_path = dist / "canvas.css"
+        css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
 
     # `</script>` 出现在 JS 字符串里会提前关掉标签（比如某段代码里带着它）。
     # 转义成 `<\/script>` 在 JS 里等价，在 HTML 解析器眼里则不再是结束标签。
@@ -150,87 +184,106 @@ def build() -> str:
     html = re.sub(
         r'<link[^>]*href="[^"]*canvas\.css"[^>]*>', lambda _m: f"<style>{css}</style>", html
     )
-    if "canvas.js" in html or "canvas.css" in html:
+    if 'canvas.js"' in html[:4096] or 'canvas.css"' in html[:4096]:
         raise SystemExit("内联失败：产物里还留着外链引用（vite 的输出形状变了？）")
+    if '<div id="root">' not in html:
+        raise SystemExit('内联失败：产物里没有 <div id="root">')
 
-    stamp = f"{STAMP}{source_fingerprint()} -->\n"
-    return stamp + html
+    return f"{STAMP}{fingerprint} -->\n" + html
 
 
-def current_fingerprint() -> str | None:
+def write_output(html: str, out: Path) -> None:
+    """先写同目录临时文件再 `os.replace`：失败不留半个文件，旧产物原样不动。"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(html, encoding="utf-8", newline="\n")
+        os.replace(tmp, out)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def current_fingerprint(out: Path = OUT) -> str | None:
     """产物里那枚指纹；**文件不在与指纹读不出来都回 `None`**。
 
-    两种 `None` 的**处置不同**，所以判「在不在」要另问 `OUT.is_file()`，别拿这个
+    两种 `None` 的**处置不同**，所以判「在不在」要另问 `out.is_file()`，别拿这个
     返回值当代理：一份存在但被截断、或早于打戳那一版的产物，指纹读不出来——那是
-    「过期」（重建一次就好），不是「还没构建」。合在一起会对着一个明明躺在磁盘上
-    的文件说「它不存在」。
+    「过期」（重建一次就好），不是「还没构建」。
     """
-    if not OUT.is_file():
+    if not out.is_file():
         return None
-    head = OUT.read_text(encoding="utf-8")[:200]
+    with out.open("rb") as fh:
+        head = fh.read(200).decode("utf-8", "replace")
     m = re.match(re.escape(STAMP) + r"([0-9a-f]+) -->", head)
     return m.group(1) if m else None
+
+
+def check(out: Path, *, as_json: bool) -> int:
+    """三档，不是两档：0 一致 / 1 过期 / 2 产物不存在。
+
+    「产物不存在」与「产物过期」处置不同：刚 clone 下来还没构建过的人看到「过期」
+    会去找自己改坏了什么；而在发布链上「不存在」意味着打出去的插件没有画布。
+    调用方按退出码分流，不靠读那句中文。**「在不在」问文件，不问指纹。**
+    """
+    want = source_fingerprint()
+    have = current_fingerprint(out)
+    missing = not out.is_file()
+    ok = (not missing) and have is not None and have == want
+    status = "ok" if ok else ("missing" if missing else "stale")
+    report = {"ok": ok, "status": status, "expected": want, "found": have, "path": str(out)}
+    if as_json:
+        print(json.dumps(report, ensure_ascii=False), file=sys.stdout if ok else sys.stderr)
+    elif ok:
+        print(f"画布产物与源码一致（{want}）")
+    elif missing:
+        print(
+            f"画布产物还没构建：{out} 不存在。跑一次 python scripts/build_mcp_widget.py",
+            file=sys.stderr,
+        )
+    else:
+        found = have if have is not None else "读不出指纹（截断或旧格式）"
+        print(
+            f"画布产物过期：源码指纹 {want}，产物里是 {found}。"
+            f"跑一次 python scripts/build_mcp_widget.py",
+            file=sys.stderr,
+        )
+    return 0 if ok else (2 if missing else 1)
 
 
 def main(argv: list[str] | None = None) -> int:
     _force_utf8()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument(
-        "--check", action="store_true", help="只校验产物是否与源码同步（CI 用），不构建"
+        "--check", action="store_true", help="只校验产物是否与源码同步（0/1/2 三档），不构建"
+    )
+    ap.add_argument("--fingerprint", action="store_true", help="只打印源码指纹")
+    ap.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="产物位置（默认 codex-plugin/mcp/widget/canvas.html，MCP server 加载画布的既有位置）",
     )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
+    out = args.out if args.out is not None else OUT
 
-    want = source_fingerprint()
-    have = current_fingerprint()
+    if args.fingerprint:
+        print(source_fingerprint())
+        return 0
     if args.check:
-        # **三档，不是两档。**「产物不存在」与「产物过期」是两件事，上一版把
-        # 前者并进后者、报同一句「产物过期……产物里是 None」：
-        #
-        #   0  一致        —— 没事
-        #   1  过期        —— 有人改了 web/src 却没重建（真错）
-        #   2  产物不存在  —— 还没构建过
-        #
-        # 分开的理由不是措辞：**处置不同**。刚 clone 下来还没跑过构建的人看到
-        # 「过期」会去找自己改坏了什么；而在发布链上「不存在」意味着打出去的
-        # 插件没有画布，是致命的。调用方按退出码分流，不靠读那句中文。
-        # **「在不在」问文件，不问指纹。** `current_fingerprint()` 对「文件不在」
-        # 和「指纹读不出来」都回 None——后者是一份**确实存在**的坏产物，属于
-        # 「过期」那一档。拿返回值当代理就会对着磁盘上的文件说「它不存在」。
-        missing = not OUT.is_file()
-        ok = (not missing) and have is not None and have == want
-        status = "ok" if ok else ("missing" if missing else "stale")
-        report = {"ok": ok, "status": status, "expected": want, "found": have, "path": str(OUT)}
-        if args.json:
-            print(json.dumps(report, ensure_ascii=False), file=sys.stdout if ok else sys.stderr)
-        elif ok:
-            print(f"画布产物与源码一致（{want}）")
-        elif missing:
-            print(
-                f"画布产物还没构建：{OUT} 不存在。跑一次 python scripts/build_mcp_widget.py",
-                file=sys.stderr,
-            )
-        else:
-            found = have if have is not None else "读不出指纹（截断或旧格式）"
-            print(
-                f"画布产物过期：源码指纹 {want}，产物里是 {found}。"
-                f"跑一次 python scripts/build_mcp_widget.py",
-                file=sys.stderr,
-            )
-        return 0 if ok else (2 if missing else 1)
+        return check(out, as_json=args.json)
 
     html = build()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(html, encoding="utf-8")
-    size = OUT.stat().st_size
-    report = {"ok": True, "path": str(OUT), "bytes": size, "fingerprint": want}
+    write_output(html, out)
+    size = out.stat().st_size
+    fingerprint = current_fingerprint(out)
+    report = {"ok": True, "path": str(out), "bytes": size, "fingerprint": fingerprint}
     print(
         json.dumps(report, ensure_ascii=False)
         if args.json
-        else f"已写入 {OUT}（{size / 1024:.0f} KiB，指纹 {want}）"
+        else f"已写入 {out}（{size / 1024:.0f} KiB，指纹 {fingerprint}）"
     )
-    # dist-mcp 是中间产物，留着只会让人以为它是发布物
-    shutil.rmtree(DIST, ignore_errors=True)
     return 0
 
 

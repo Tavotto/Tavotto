@@ -42,15 +42,42 @@ def log(argv):
 argv = sys.argv[1:]
 log(argv)
 d = load()
+want_json = "--json" in argv
+argv = [a for a in argv if a != "--json"]
 if os.environ.get("FAKE_CODEX_FAIL") == " ".join(argv[:3]):
     print("boom", file=sys.stderr); sys.exit(3)
+if want_json and os.environ.get("FAKE_CODEX_TEXT_ONLY"):
+    # 老客户端：不认识 --json
+    print("error: unexpected argument '--json'", file=sys.stderr); sys.exit(2)
+mk_root = os.environ.get("FAKE_CODEX_MK_ROOT", "/home/u/.codex/.tmp/marketplaces/tavotto")
+plugin_path = os.environ.get("FAKE_CODEX_PLUGIN_PATH") or (
+    "https://github.com/Tavotto/Tavotto.git, path `codex-plugin`, ref `plugin-stable`")
+version = os.environ.get("FAKE_CODEX_VERSION", "0.12.0")
+listed = d["marketplace"] and not os.environ.get("FAKE_CODEX_ENTRY_ABSENT")
+entry = {
+    "pluginId": "tavotto@tavotto", "name": "tavotto", "marketplaceName": "tavotto",
+    "version": version or None, "installed": bool(d["plugin"]), "enabled": bool(d["plugin"]),
+    "source": {"source": "git-subdir", "url": "https://github.com/Tavotto/Tavotto.git",
+               "path": "./codex-plugin", "ref": "plugin-stable"},
+    "marketplaceSource": {"sourceType": "git", "source": "https://github.com/Tavotto/Tavotto.git"},
+}
 if argv[:3] == ["plugin", "marketplace", "list"]:
-    # 真 CLI 的形状：MARKETPLACE / ROOT 两列。ROOT 里带 tavotto 是常事
-    # （用户目录、缓存路径），子串判据会在这里翻车
-    print("MARKETPLACE  ROOT")
-    print("personal     /home/u/tavotto-notes")
-    if d["marketplace"]:
-        print("tavotto      /home/u/.codex/.tmp/marketplaces/tavotto")
+    if want_json:
+        # 真 CLI 0.151 的形状：pretty-printed 多行 JSON
+        mks = [{"name": "personal", "root": "/home/u/tavotto-notes",
+                "marketplaceSource": {"sourceType": "local", "source": "/home/u/tavotto-notes"}}]
+        if d["marketplace"]:
+            mks.append({"name": "tavotto", "root": mk_root,
+                        "marketplaceSource": {"sourceType": "git",
+                                              "source": "https://github.com/Tavotto/Tavotto.git"}})
+        print(json.dumps({"marketplaces": mks}, indent=2))
+    else:
+        # 真 CLI 的形状：MARKETPLACE / ROOT 两列。ROOT 里带 tavotto 是常事
+        # （用户目录、缓存路径），子串判据会在这里翻车
+        print("MARKETPLACE  ROOT")
+        print("personal     /home/u/tavotto-notes")
+        if d["marketplace"]:
+            print("tavotto      " + mk_root)
 elif argv[:3] == ["plugin", "marketplace", "add"]:
     d["marketplace"] = True; save(d); print("added")
 elif argv[:3] == ["plugin", "marketplace", "remove"]:
@@ -59,10 +86,19 @@ elif argv[:3] == ["plugin", "marketplace", "remove"]:
     d["marketplace"] = False; save(d); print("removed")
 elif argv[:2] == ["plugin", "list"]:
     # **marketplace 加好之后插件照样会被列出来**，只是 STATUS 是 not installed
-    print("PLUGIN           STATUS              VERSION  PATH")
-    if d["marketplace"]:
-        st = "installed, enabled" if d["plugin"] else "not installed"
-        print("tavotto@tavotto  " + st + "  0.12.0  /tmp/p")
+    if want_json:
+        out = {"installed": [], "available": []}
+        if listed:
+            out["installed" if d["plugin"] else "available"].append(entry)
+        print(json.dumps(out, indent=2))
+    else:
+        print("Marketplace `tavotto`")
+        print(mk_root + "/.agents/plugins/marketplace.json")
+        print("")
+        print("PLUGIN           STATUS              VERSION  PATH")
+        if listed:
+            st = "installed, enabled" if d["plugin"] else "not installed  "
+            print("tavotto@tavotto  " + st + "  " + (version or "-").ljust(7) + "  " + plugin_path)
 elif argv[:2] == ["plugin", "add"]:
     d["plugin"] = True; save(d); print("added")
 elif argv[:2] == ["plugin", "remove"]:
@@ -104,6 +140,27 @@ def _store_alias_shim(bindir: Path, name: str) -> Path:
     return _shim(bindir, name, "exit 9009", "exit /b 9009")
 
 
+def _complete_fake_plugin(plugin_dir: Path) -> None:
+    """把假插件补成「形状完整」：doctor 的画布步按 REQUIRED 逐条点名，少一个都红。
+
+    画布用 pluginkit 的假单文件（有指纹戳、有 root、过体量下限）；其余文件只要在。
+    """
+    from tests.support import pluginkit
+
+    pluginkit.write_fake_widget(plugin_dir / "mcp" / "widget" / "canvas.html")
+    for rel in (
+        "mcp/tavotto_mcp/server.py",
+        "mcp/tavotto_mcp/widget.py",
+        "skills/tavotto-figure/SKILL.md",
+        "skills/tavotto-figure/scripts/handoff.py",
+        "assets/tavotto.svg",
+    ):
+        p = plugin_dir / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            p.write_text("# placeholder\n", encoding="utf-8")
+
+
 @pytest.fixture
 def fake_codex(tmp_path, monkeypatch):
     """一个假 codex + 一个假 CODEX_HOME（里面预置一份已装插件的落点）。"""
@@ -120,16 +177,42 @@ def fake_codex(tmp_path, monkeypatch):
         exe.chmod(0o755)
 
     codex_home = tmp_path / "codexhome"
-    plugin_dir = codex_home / "plugins" / "cache" / "abc123"
+    # 真 CLI 的缓存形状：plugins/cache/<marketplace>/<plugin>/<version>
+    plugin_dir = codex_home / "plugins" / "cache" / "tavotto" / "tavotto" / "0.12.0"
     (plugin_dir / ".codex-plugin").mkdir(parents=True)
     (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "tavotto"}), encoding="utf-8"
+        json.dumps({"name": "tavotto", "version": "0.12.0"}), encoding="utf-8"
     )
     (plugin_dir / "mcp").mkdir()
     # 假 server：--health 回一行 JSON，--provision 直接成功
     (plugin_dir / "mcp" / "server.py").write_text(
-        "import sys\nprint('{\"ok\": true}')\nsys.exit(0)\n", encoding="utf-8"
+        'import sys\nprint(\'{"ok": true, "engine_version": "0.13.0"}\')\nsys.exit(0)\n',
+        encoding="utf-8",
     )
+    _complete_fake_plugin(plugin_dir)
+    # marketplace 快照：插件条目已经是发行通道（git-subdir → plugin-stable）
+    mk_root = tmp_path / "mk-snapshot"
+    (mk_root / ".agents" / "plugins").mkdir(parents=True)
+    (mk_root / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "tavotto",
+                "plugins": [
+                    {
+                        "name": "tavotto",
+                        "source": {
+                            "source": "git-subdir",
+                            "url": "https://github.com/Tavotto/Tavotto.git",
+                            "path": "./codex-plugin",
+                            "ref": "plugin-stable",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FAKE_CODEX_MK_ROOT", str(mk_root))
     # 已装副本的两份清单（严格同源对：command 必须一致）
     (plugin_dir / ".mcp.json").write_text(
         json.dumps(
@@ -760,3 +843,267 @@ def test_real_codex_cli_install_then_doctor(tmp_path):
     rc, out, err = _run(["codex", "doctor", "--json"], env)
     assert rc == 0, out + err
     assert json.loads(out.strip().splitlines()[-1])["ok"] is True
+
+
+# ------------------- 诊断要回答的四个问题（ADR 0043） -------------------
+# 装的是哪份插件、来自哪里、画布完整吗、引擎版本满足吗。判据的主语是 `--json`
+# 输出里的 `summary` 与各步的 `error_code`，不是 stdout 的措辞。
+
+
+def _doctor_json(env_extra: dict | None = None) -> tuple[int, dict, str]:
+    rc, out, err = _run(["codex", "doctor", "--json"], env_extra)
+    return rc, json.loads(out.strip().splitlines()[-1]), err
+
+
+def _tree_digest(root: Path) -> dict[str, str]:
+    import hashlib
+
+    return {
+        str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_doctor_answers_the_four_questions_when_healthy(fake_codex):
+    assert _run(["codex", "install", "--json"])[0] == 0
+    rc, data, err = _doctor_json()
+    assert rc == 0, err
+    s = data["summary"]
+    assert s["plugin"]["version"] == "0.12.0"
+    assert s["plugin"]["install_dir"] == str(fake_codex["plugin"])
+    assert s["marketplace"]["registered"] is True
+    assert s["marketplace"]["source"] == "https://github.com/Tavotto/Tavotto.git"
+    assert s["channel"]["channel"] == "stable"
+    assert s["canvas"]["complete"] is True
+    assert s["engine"]["version"] == "0.13.0"
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["canvas"]["ok"] and steps["canvas"]["skipped"], (
+        "健康时画布步是「跳过（本来就好）」"
+    )
+
+
+def test_doctor_is_read_only_even_when_it_finds_problems(fake_codex):
+    assert _run(["codex", "install", "--json"])[0] == 0
+    (fake_codex["plugin"] / "mcp" / "widget" / "canvas.html").unlink()
+    before = _tree_digest(fake_codex["home"])
+    calls_before = fake_codex["log"].read_text(encoding="utf-8")
+    rc, data, _ = _doctor_json()
+    assert rc == 1 and data["error_code"] == "canvas_incomplete"
+    assert _tree_digest(fake_codex["home"]) == before, "doctor 改动了 CODEX_HOME 里的文件"
+    new_calls = fake_codex["log"].read_text(encoding="utf-8")[len(calls_before) :]
+    assert " add " not in new_calls and " remove " not in new_calls, (
+        f"doctor 跑了 add / remove：{new_calls}"
+    )
+
+
+def test_a_missing_canvas_is_named_not_folded_into_reinstall(fake_codex):
+    assert _run(["codex", "install", "--json"])[0] == 0
+    canvas = fake_codex["plugin"] / "mcp" / "widget" / "canvas.html"
+    canvas.write_bytes(b"")
+    rc, data, _ = _doctor_json()
+    assert data["error_code"] == "canvas_incomplete"
+    assert "空文件" in data["error"]
+    assert data["summary"]["canvas"]["complete"] is False
+    # install 也不会假装修好：画布不是它补的，它如实报同一个 code
+    rc, out, _ = _run(["codex", "install", "--json"])
+    assert rc == 1 and json.loads(out.strip().splitlines()[-1])["error_code"] == "canvas_incomplete"
+    assert canvas.stat().st_size == 0, "install 不许悄悄补画布"
+
+
+def test_a_pinned_launcher_does_not_make_the_canvas_step_cry_wolf(fake_codex, tmp_path):
+    """已装副本合法的本地修改（两份清单一起钉 command）不算损坏。
+
+    让 install 走「钉解释器」那条路要用 `_break_the_mcp_command`（绝对路径的坏命令）：
+    往 PATH 前面插 `python3` shim 在真 Windows 上不成立——CreateProcess 只补 `.exe`，
+    看不见 `.cmd`（#256 与本 PR 的 windows-latest 腿都撞过）。
+    """
+    broken = _break_the_mcp_command(fake_codex["plugin"], tmp_path)
+    assert _run(["codex", "install", "--json"])[0] == 0
+    assert _mcp_command(fake_codex["plugin"]) != str(broken), "启动命令没被换掉"
+    rc, data, err = _doctor_json()
+    assert rc == 0, err
+    assert data["summary"]["canvas"]["complete"] is True
+
+
+def test_a_half_pinned_pair_is_reported_as_incomplete(fake_codex):
+    assert _run(["codex", "install", "--json"])[0] == 0
+    mcp = fake_codex["plugin"] / ".mcp.json"
+    data = json.loads(mcp.read_text(encoding="utf-8"))
+    data["mcpServers"]["tavotto"]["command"] = sys.executable
+    mcp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    rc, out, _ = _doctor_json()
+    assert out["error_code"] == "canvas_incomplete" and "只钉了一侧" in out["error"]
+
+
+def test_unknown_marketplace_state_is_not_treated_as_absent(fake_codex):
+    """`marketplace list` 本身失败 = 不知道；install 不许对着「不知道」跑 add。"""
+    rc, data, _ = _doctor_json({"FAKE_CODEX_FAIL": "plugin marketplace list"})
+    assert rc == 1 and data["error_code"] == "marketplace_state_unknown"
+    rc, out, _ = _run(
+        ["codex", "install", "--json"], {"FAKE_CODEX_FAIL": "plugin marketplace list"}
+    )
+    assert rc == 1
+    assert json.loads(out.strip().splitlines()[-1])["error_code"] == "marketplace_state_unknown"
+    calls = fake_codex["log"].read_text(encoding="utf-8")
+    assert "marketplace add" not in calls
+
+
+def test_a_registered_marketplace_whose_entry_the_client_skips_is_named(fake_codex):
+    """快照登记了、插件却没被列出：来源类型客户端不认识（或快照过旧），不是「没装」。"""
+    assert _run(["codex", "install", "--json"])[0] == 0  # 先把 marketplace 登记上
+    rc, data, _ = _doctor_json({"FAKE_CODEX_ENTRY_ABSENT": "1"})
+    assert rc == 1 and data["error_code"] == "plugin_source_unsupported"
+    assert "marketplace upgrade" in data["error"]
+    before = fake_codex["log"].read_text(encoding="utf-8").count("plugin add")
+    rc, out, _ = _run(["codex", "install", "--json"], {"FAKE_CODEX_ENTRY_ABSENT": "1"})
+    assert json.loads(out.strip().splitlines()[-1])["error_code"] == "plugin_source_unsupported"
+    after = fake_codex["log"].read_text(encoding="utf-8").count("plugin add")
+    assert after == before, "来源不支持时不该盲跑 plugin add"
+
+
+def test_a_legacy_local_snapshot_is_reported_with_the_upgrade_path(fake_codex, tmp_path):
+    """旧用户：快照里的插件条目还是 local ./codex-plugin。不是错误，但要说出下一步。"""
+    mk_root = Path(os.environ["FAKE_CODEX_MK_ROOT"])
+    (mk_root / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "tavotto",
+                "plugins": [
+                    {"name": "tavotto", "source": {"source": "local", "path": "./codex-plugin"}}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _run(["codex", "install", "--json"])[0] == 0
+    rc, data, err = _doctor_json()
+    assert rc == 0, err
+    assert data["summary"]["channel"]["channel"] == "legacy-local"
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "codex plugin marketplace upgrade tavotto" in steps["marketplace"]["detail"]
+
+
+def test_a_custom_source_is_left_alone(fake_codex):
+    mk_root = Path(os.environ["FAKE_CODEX_MK_ROOT"])
+    (mk_root / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "tavotto",
+                "plugins": [
+                    {
+                        "name": "tavotto",
+                        "source": {
+                            "source": "git-subdir",
+                            "url": "https://github.com/someone/fork.git",
+                            "path": "./codex-plugin",
+                            "ref": "main",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _run(["codex", "install", "--json"])[0] == 0
+    rc, data, err = _doctor_json()
+    assert rc == 0, err
+    assert data["summary"]["channel"]["channel"] == "custom"
+    calls = fake_codex["log"].read_text(encoding="utf-8")
+    assert calls.count("marketplace add") == 1 and "marketplace remove" not in calls
+
+
+def test_the_install_dir_is_the_version_codex_says_it_enabled(fake_codex, tmp_path):
+    """git 来源的插件：`plugin list` 的 PATH 列是来源描述不是路径（codex 0.151 实测），
+    安装目录 = cache/<marketplace>/<plugin>/<Codex 报的版本>。同名缓存并存时不按最高
+    版本号猜；连版本都报不出来时才看缓存，且只认恰好一份。"""
+    other = fake_codex["home"] / "plugins" / "cache" / "tavotto" / "tavotto" / "9.9.9"
+    import shutil
+
+    shutil.copytree(fake_codex["plugin"], other)
+    assert _run(["codex", "install", "--json"])[0] == 0
+    rc, data, err = _doctor_json()
+    assert rc == 0, err
+    assert data["summary"]["plugin"]["install_dir"] == str(fake_codex["plugin"]), (
+        "该用 Codex 报的版本那份（0.12.0），不是最高版本号（9.9.9）"
+    )
+    # 客户端报不出版本：两份并存 → 歧义，把候选列出来
+    rc, data, _ = _doctor_json({"FAKE_CODEX_VERSION": ""})
+    assert rc == 1 and data["error_code"] == "plugin_install_ambiguous"
+    assert "9.9.9" in data["error"] and "0.12.0" in data["error"]
+    shutil.rmtree(other)
+    rc, data, err = _doctor_json({"FAKE_CODEX_VERSION": ""})
+    assert rc == 0, err
+    assert data["summary"]["plugin"]["install_dir"] == str(fake_codex["plugin"]), "恰好一份就认它"
+
+
+def test_a_local_source_plugin_is_located_by_the_reported_path(fake_codex, tmp_path):
+    """本地来源（指向工作副本的 marketplace）：PATH 列就是 Codex 加载的目录。"""
+    local = tmp_path / "workcopy" / "codex-plugin"
+    import shutil
+
+    shutil.copytree(fake_codex["plugin"], local)
+    assert _run(["codex", "install", "--json"], {"FAKE_CODEX_PLUGIN_PATH": str(local)})[0] == 0
+    rc, data, err = _doctor_json({"FAKE_CODEX_PLUGIN_PATH": str(local)})
+    assert rc == 0, err
+    assert data["summary"]["plugin"]["install_dir"] == str(local)
+
+
+def test_a_text_only_client_still_gets_a_correct_diagnosis(fake_codex):
+    """老客户端没有 --json：状态从文本表读，路径从 PATH 列读。"""
+    env = {"FAKE_CODEX_TEXT_ONLY": "1"}
+    assert _run(["codex", "install", "--json"], env)[0] == 0
+    rc, data, err = _doctor_json(env)
+    assert rc == 0, err
+    assert data["summary"]["plugin"]["install_dir"] == str(fake_codex["plugin"])
+    assert data["summary"]["plugin"]["version"] == "0.12.0"
+    assert data["summary"]["marketplace"]["registered"] is True
+
+
+def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
+    """随包清单说最低 0.13.0，体检报引擎 0.5.0 → engine_too_old，不是笼统的 health_failed。"""
+    from tavotto.engine import pluginmanifest
+
+    plugin = fake_codex["plugin"]
+    (plugin / "LICENSE").write_text("AGPL\n", encoding="utf-8")
+    pluginmanifest.write_build_manifest(
+        plugin,
+        modes={},
+        source_sha="a" * 40,
+        fingerprint="feedfacecafebeef",
+        lockfile_sha256=None,
+        toolchain={},
+        min_tavotto_version="0.13.0",
+    )
+    (plugin / "mcp" / "server.py").write_text(
+        'import sys\nprint(\'{"ok": true, "engine_version": "0.5.0"}\')\nsys.exit(0)\n',
+        encoding="utf-8",
+    )
+    # 清单之后又改了 server.py：先把清单重写一遍，否则画布步会先报「发行文件被改过」
+    pluginmanifest.write_build_manifest(
+        plugin,
+        modes={},
+        source_sha="a" * 40,
+        fingerprint="feedfacecafebeef",
+        lockfile_sha256=None,
+        toolchain={},
+        min_tavotto_version="0.13.0",
+    )
+    assert _run(["codex", "install", "--json"])[0] == 1
+    rc, data, _ = _doctor_json()
+    assert rc == 1 and data["error_code"] == "engine_too_old"
+    assert data["summary"]["engine"] == {
+        **data["summary"]["engine"],
+        "version": "0.5.0",
+        "min_required": "0.13.0",
+        "satisfied": False,
+    }
+
+
+def test_json_output_parser_handles_pretty_printed_and_last_line_shapes():
+    from tavotto.engine import codexinstall
+
+    assert codexinstall._json_output('{\n  "a": [\n    1\n  ]\n}\n') == {"a": [1]}
+    assert codexinstall._json_output('warning: x\n{\n  "a": 1\n}') == {"a": 1}
+    assert codexinstall._json_output('noise\n{"ok": true}') == {"ok": True}
+    assert codexinstall._json_output("nothing here") is None

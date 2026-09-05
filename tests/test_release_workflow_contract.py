@@ -430,8 +430,13 @@ def test_the_release_attaches_everything_in_one_go():
     rel = _wf(RELEASE)
     attach = [s for s in rel.steps("github_release") if "action-gh-release" in s]
     assert len(attach) == 1, "挂 Release 只该有一步"
-    for needle in ("SHA256SUMS.txt", "tavotto-sbom.spdx.json", "codex-plugin.json", "latest.json"):
+    for needle in ("assets/dist/*", "SHA256SUMS.txt", "tavotto-sbom.spdx.json", "latest.json"):
         assert needle in attach[0], f"一次性挂载里少了 {needle}"
+    # Codex 插件（zip + codex-plugin.json + 随包清单）在 dist/ 里随 `assets/dist/*` 挂上
+    # （ADR 0043：由 build job 造、validate 成对验过），所以它们必须是 validate 的必需 role
+    validate = "\n".join(rel.steps("validate_artifacts"))
+    for role in ("codex-plugin", "codex-plugin-manifest", "codex-plugin-build"):
+        assert role in validate, f"validate_artifacts 的 --require 里少了 {role}"
 
 
 def test_the_published_artifacts_are_re_verified_before_attaching():

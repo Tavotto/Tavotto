@@ -1098,7 +1098,16 @@ def test_release_workflow_publishes_the_plugin_channel():
     """
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest.py" in release
-    assert "out/codex-plugin.json" in release
+    # ADR 0043：清单与 zip 由 build job（有 Node、固定发行 SHA）从验证过的 staging 生成，
+    # 落在 dist/ 随产物清单走；不再在没有 Node 的 validate 里从源码目录打包
+    assert "dist/codex-plugin.json" in release
+    assert "--plugin-dir" in release, "release 必须从 plugin_stage 组装的 staging 打包"
+    build_job = release.split("\n  build:\n", 1)[1].split("\n  desktop:\n", 1)[0]
+    assert "make_plugin_manifest.py" in build_job, "插件清单与 zip 该在 build job 里造"
+    validate_job = release.split("\n  validate_artifacts:\n", 1)[1].split(
+        "\n  github_release:\n", 1
+    )[0]
+    assert "make_plugin_manifest.py" not in validate_job, "validate 没有 Node，不许在那儿从源码打包"
     desktop = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest" not in desktop
 

@@ -506,9 +506,49 @@ jobs:
       # Codex 内嵌画布是 web/src 打出来的单文件产物，随插件一起提交进仓库。
       # 改了前端却没重跑它，用户在 Codex 里装到的画布就是上一版——功能全在、
       # 只是旧，零报错。指纹算法纯 Python，这一步不需要 Node。
+      # （过渡期：ADR 0043 的 PR B 之后画布不再入库，这一步随之退休。）
       - name: MCP 画布产物与前端源码同步
         working-directory: .
         run: python3 scripts/build_mcp_widget.py --check
+      # ── 完整插件候选（ADR 0043）─────────────────────────────────────────
+      # 从**本次实际 checkout**（PR = 合并提交；merge_group = 队列组合提交）真构建
+      # 画布，按 git 清单 + 显式构建物组装完整插件、逐条验证、打成确定性 zip 上传。
+      # 候选**只作验证**，不向任何源码分支回写、不发布到稳定通道；发布只走
+      # release.yml 在固定发行 SHA 上重新构建的那一份。
+      # `--source-sha` 取 `git rev-parse HEAD`：清单里记的必须是真造它的那个 commit，
+      # 组装脚本自己会与 HEAD 对拍，传错就红。
+      - name: 构建 MCP 画布（真 vite，写到临时位置）
+        working-directory: .
+        run: python3 scripts/build_mcp_widget.py --out "$RUNNER_TEMP/plugin/canvas.html" --json
+      - name: 组装并验证完整插件候选
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          STAGE="$RUNNER_TEMP/plugin/stage"
+          ZIP="$RUNNER_TEMP/plugin/codex-plugin-candidate.zip"
+          python3 scripts/plugin_stage.py stage --widget "$RUNNER_TEMP/plugin/canvas.html" \
+            --out "$STAGE" --source-sha "$SHA" \
+            --audit "event=$EVENT" --audit "run_id=$RUN_ID" --audit "kind=candidate"
+          python3 scripts/plugin_stage.py verify "$STAGE" --source-sha "$SHA"
+          python3 scripts/plugin_stage.py archive --stage "$STAGE" --out "$ZIP"
+          # 归档再验一次：dotfiles / 模式 / 字节都要在 zip 里活着走一遍
+          python3 scripts/plugin_stage.py verify "$ZIP" --source-sha "$SHA" \
+            --content-digest "$(python3 scripts/plugin_stage.py digest "$STAGE")" --json
+          cp "$STAGE/plugin-build.json" "$RUNNER_TEMP/plugin/plugin-build.json"
+      # 只传**一个已验证的归档** + 它的清单，不传目录：目录经 artifact 传输会丢
+      # dotfiles 与模式（.codex-plugin/plugin.json、.mcp.json 正是 dotfiles）。
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-plugin-candidate
+          path: |
+            ${{ runner.temp }}/plugin/codex-plugin-candidate.zip
+            ${{ runner.temp }}/plugin/plugin-build.json
+          if-no-files-found: error
+          retention-days: 7
       # 浏览器 playground（网站 /try，ADR 0007）：产物由本仓库构建、由网站仓库
       # 提交。这里真跑一遍构建（vite + engine.zip + 指纹 manifest），保证构建
       # 脚本随前端一起是活的；「网站上那份是不是过期」的门禁在网站仓库——
@@ -516,6 +556,64 @@ jobs:
       - name: 浏览器 playground 构建
         working-directory: .
         run: python3 scripts/build_browser_playground.py
+
+  # ────────────────────────────────────────────────────────────────
+  # 完整插件候选的消费方（ADR 0043）：在**没有 Node、没有源码构建能力**的 job 上，
+  # 把 frontend 刚上传的归档解包，当成用户会装到的那份插件来验——
+  #   · 解包后不依赖源码树：清单逐文件 sha256 / 模式 / 不多不少；
+  #   · 真起 MCP server 走 stdio 读画布资源，与磁盘上那份逐字相同；
+  #   · 依赖真实插件的 pytest 用例在这里执行并**记录执行数量**（快线里其它 job 上
+  #     它们各自 skip——干净 checkout 没有画布，那里不许放宽断言冒充通过）。
+  # 它经 `CI fast gate` 参与合并资格（needs 与 --required 闭集都有它）：红了 Gate 就红。
+  # ────────────────────────────────────────────────────────────────
+  plugin-candidate:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    needs: [frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 全历史：候选用例要把本次 checkout 推成一个临时 bare 仓库的 main（发行分支投影 +
+      # 稀疏克隆回读那一条），浅克隆推不出去（"shallow update not allowed"，2026-09-05 首跑实测）。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装引擎（server 要在 engine 模式下才声明画布资源）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install matplotlib
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-plugin-candidate
+          path: ${{ runner.temp }}/candidate
+      - name: 解包并验证候选（脱离源码树；真起 server 读资源）
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          C="$RUNNER_TEMP/candidate"
+          test -f "$C/codex-plugin-candidate.zip" && test -f "$C/plugin-build.json"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$C/plugin-build.json")"
+          PLUGIN="$(python3 scripts/plugin_stage.py unpack "$C/codex-plugin-candidate.zip" --out "$C/unpacked")"
+          python3 scripts/plugin_stage.py verify "$PLUGIN" --source-sha "$SHA" --content-digest "$DIGEST" --serve "$(command -v python)"
+          echo "TAVOTTO_PLUGIN_CANDIDATE=$PLUGIN" >> "$GITHUB_ENV"
+      - name: 依赖真实插件的用例（在这里必须执行，不许 skip）
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA tests/test_plugin_candidate.py 2>&1 | tee "$RUNNER_TEMP/candidate-pytest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED" "$RUNNER_TEMP/candidate-pytest.log"; then
+            echo "::error::候选验证用例里有 skip——有真实产物时它们必须执行"
+            exit 1
+          fi
+          {
+            echo "### 完整插件候选"
+            echo ""
+            echo "- 插件目录：\`$TAVOTTO_PLUGIN_CANDIDATE\`"
+            echo "- pytest：$(tail -1 "$RUNNER_TEMP/candidate-pytest.log")"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Rust supervisor 的静态门禁。desktop-tauri.yml 里也有一份，但那个工作流只在
   # 打 tag / workflow_dispatch 时跑——改了 workerd 的 PR 因此一路全绿，要等到
@@ -1212,7 +1310,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1249,7 +1347,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,workerd,desktop-shell,compat-smoke \
+            --required python-lint,cla-check,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:

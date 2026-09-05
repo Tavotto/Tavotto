@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +73,16 @@ REPO = "Tavotto/Tavotto"
 ZIP_SKIP = {"__pycache__", ".DS_Store", ".pytest_cache"}
 
 
+def _stage_module():
+    """`scripts/plugin_stage.py`：确定性 zip 与完整插件验证的唯一实现（同目录 import）。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import plugin_stage
+    finally:
+        sys.path.pop(0)
+    return plugin_stage
+
+
 def plugin_version(path: Path = PLUGIN_JSON) -> str:
     data = json.loads(path.read_text(encoding="utf-8"))
     version = data.get("version")
@@ -120,8 +129,16 @@ def build_manifest(tag: str, version: str, *, published_at: str | None = None) -
 _REQUIRED_IN_ZIP = ("mcp/widget/canvas.html",)
 
 
-def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
-    """把插件目录打成 zip（顶层目录固定叫 codex-plugin）。"""
+def build_zip(
+    target: Path, source: Path = PLUGIN_DIR, *, require_build_manifest: bool = False
+) -> Path:
+    """把插件目录打成 zip（顶层目录固定叫 codex-plugin）。
+
+    zip 本身由 `plugin_stage.write_zip` 写：条目排序、时间戳钉死、模式取自构建清单
+    ——同一份 staging 在任何机器上打出逐字节相同的 zip，发行分支与 ZIP 才比得出
+    「是不是同一份内容」。`require_build_manifest=True`（发布链）时 `source` 必须是
+    `plugin_stage.py stage` 组装并验证过的 staging，不接受直接从源码目录打包。
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in source.rglob("*") if p.is_file())
     kept = [p for p in files if not ZIP_SKIP & set(p.relative_to(source).parts)]
@@ -133,10 +150,17 @@ def build_zip(target: Path, source: Path = PLUGIN_DIR) -> Path:
         raise SystemExit(
             f"插件 zip 缺少构建产物 {missing}——先跑 python scripts/build_mcp_widget.py"
         )
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in kept:
-            zf.write(path, str(Path("codex-plugin") / path.relative_to(source)))
-    return target
+    stage = _stage_module()
+    if require_build_manifest:
+        problems = stage.verify_dir(source)
+        if problems:
+            raise SystemExit(
+                f"{source} 不是一份验证通过的完整插件 staging，不打包：\n  " + "\n  ".join(problems)
+            )
+    try:
+        return stage.write_zip(source, target)
+    except stage.StageError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -145,9 +169,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True, help="清单写到哪儿")
     ap.add_argument("--zip", default=None, help="同时打一个插件 zip 到这儿")
     ap.add_argument("--published-at", default=None, help="ISO8601 发布时间（CI 传 date -u）")
+    ap.add_argument(
+        "--plugin-dir",
+        type=Path,
+        default=None,
+        help="从这份 plugin_stage 组装并验证过的 staging 读版本、打 zip（发布链必须走这条）",
+    )
     args = ap.parse_args(argv)
 
-    version = plugin_version()
+    plugin_dir = args.plugin_dir if args.plugin_dir is not None else PLUGIN_DIR
+    version = plugin_version(plugin_dir / ".codex-plugin" / "plugin.json")
     check_tag(args.tag, version)
     manifest = build_manifest(args.tag, version, published_at=args.published_at)
 
@@ -156,7 +187,9 @@ def main(argv: list[str] | None = None) -> int:
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"* 插件清单: {out}（{version}）")
     if args.zip:
-        made = build_zip(Path(args.zip))
+        made = build_zip(
+            Path(args.zip), plugin_dir, require_build_manifest=args.plugin_dir is not None
+        )
         print(f"* 插件包: {made}（{made.stat().st_size // 1024} KiB）")
         if made.name != f"codex-plugin-{version}.zip":
             print(

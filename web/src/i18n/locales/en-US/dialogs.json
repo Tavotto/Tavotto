@@ -699,6 +699,7 @@
         "error": {
           "bad_action": "That action is not allowed.",
           "bad_output": "The command finished without a readable result; it may have been interrupted. Try again; if it keeps happening, run tavotto codex doctor in a terminal to see the raw output.",
+          "canvas_incomplete": "The installed plugin is incomplete: the embedded canvas is missing, damaged or does not match the bundled manifest — the tools still work in Codex, just without a canvas. Reinstall the plugin (codex plugin remove tavotto@tavotto, then codex plugin add tavotto@tavotto) and run the install again. Nothing was changed this time.",
           "cli_not_found": "The Tavotto command line (tavotto-cli) was not found on this machine. This install may be incomplete — reinstalling the desktop app fixes it.",
           "codex_cli_missing": "The codex command was not found, so nothing could be done. Install the Codex CLI yourself first (this button will not install it), then try again.",
           "doctor": {
@@ -707,13 +708,18 @@
             "plugin_add_failed": "The plugin is not installed yet. This run only diagnosed; nothing was changed. Running the install will set it up.",
             "provision_failed": "The plugin does not have a matching version of the Tavotto engine yet. This run only diagnosed; nothing was changed. Running the install will set it up."
           },
+          "engine_too_old": "The Tavotto engine on this machine is older than the minimum version the installed plugin requires, so the plugin's bridge cannot drive it. Upgrade the engine (pipx upgrade tavotto, or update the desktop app), or roll the plugin back to a version that matches the engine.",
           "health_failed": "Everything is installed, but the health check failed — the plugin still cannot find a usable Tavotto engine. Expand the details below for what it reported.",
           "interpreter_unusable": "The plugin's launcher command does not start on this machine — Codex would show no tools at all. (On Windows, python3 is often the Microsoft Store placeholder: it looks present but exits immediately.) Installing swaps it for an interpreter verified to actually run; if none is found, install a Python or point TAVOTTO_MCP_PYTHON at one and try again.",
           "marketplace_add_failed": "Tavotto could not be registered as a Codex plugin marketplace. The usual causes are no network access or no permission to write Codex's config directory.",
+          "marketplace_state_unknown": "Codex's marketplace registration could not be determined (codex plugin marketplace list did not produce a result), so nothing was changed. Expand the details for what Codex reported; usually Codex itself is not set up yet.",
           "not_desktop": "This action is only available in the desktop app.",
           "other": "The install did not succeed; the command's own words are in the details below.",
           "pin_failed": "The new launcher command could not be written to both of the plugin's manifests, so it was rolled back to the original — no half-updated pair is left behind. The plugin directory is most likely read-only or in use; clear that and try again.",
           "plugin_add_failed": "The marketplace was registered, but the plugin was not installed. Expand the details below for what Codex reported.",
+          "plugin_install_ambiguous": "The installed plugin could not be located unambiguously: Codex reported no install path, and the cache holds zero or several same-named copies. This tool does not guess by version number or timestamp; expand the details for the candidates. Usually codex plugin remove tavotto@tavotto followed by codex plugin add tavotto@tavotto clears it up.",
+          "plugin_source_unsupported": "The marketplace is registered, but Codex does not list the Tavotto plugin. Most likely this Codex version does not understand the plugin source in the marketplace manifest (the release channel uses a git-subdir source), or the local marketplace snapshot is stale. Run codex plugin marketplace upgrade tavotto in a terminal first; if the plugin still does not appear, update Codex.",
+          "plugin_state_unknown": "The plugin's install state could not be determined (codex plugin list did not produce a result), so nothing was changed. Expand the details for what Codex reported.",
           "provision_failed": "The plugin is installed, but a matching version of the Tavotto engine could not be prepared for it.",
           "spawn_failed": "The Tavotto command line could not be started. Try again; if it keeps happening, run tavotto codex install in a terminal to see the raw output.",
           "uninstall_failed": "The removal did not finish; the command's own words are in the details below."
@@ -721,6 +727,7 @@
         "healthy": "Everything checks out. Nothing to do.",
         "running": "Installing…",
         "step": {
+          "canvas": "Embedded canvas integrity",
           "codex_cli": "Codex command line",
           "engine": "Matching engine",
           "health": "Health check",

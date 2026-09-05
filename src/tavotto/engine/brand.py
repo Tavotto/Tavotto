@@ -40,6 +40,13 @@ CODEX_MARKETPLACE_NAME = "tavotto"
 CODEX_PLUGIN_REF = "tavotto@tavotto"
 #: 插件在 Codex 那边的名字（`codex plugin list` 里的那一列）
 CODEX_PLUGIN_NAME = "tavotto"
+#: 插件在仓库里 / 发行分支里的目录名（marketplace 清单的 `path` 指向它）
+CODEX_PLUGIN_SUBDIR = "codex-plugin"
+#: 机器维护的发行分支：完整插件（含内嵌画布）的投影，由 scripts/plugin_publish.py 推进
+#: （ADR 0043）。marketplace 的 `git-subdir` 来源指到它；源码分支上不再跟踪画布产物。
+CODEX_PLUGIN_STABLE_BRANCH = "plugin-stable"
+#: `git-subdir` 来源里的仓库地址（Codex 对 https://github.com/… 会自动补 .git，这里直接写全）
+CODEX_PLUGIN_SOURCE_URL = f"{REPO_URL}.git"
 
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是

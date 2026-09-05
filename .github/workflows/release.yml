@@ -275,6 +275,39 @@ jobs:
           print('ok', tavotto.__version__)
           "
 
+      # ── 完整 Codex 插件（ADR 0043）───────────────────────────────────────
+      # **在这里造，只造这一次。** 这个 job 有 Node、有刚 checkout 的固定发行 SHA、
+      # 有刚装了 wheel 的干净环境：画布从本次源码真构建，插件按 git 清单 + 显式构建物
+      # 组装，随包清单记下 source_sha / 构建输入指纹 / 内容摘要，然后**用发出去的
+      # 那份 wheel 里的引擎**真起 server 读一遍画布资源。下游（validate / Release /
+      # 发行分支）只消费 dist/ 里这一份 zip，谁都不再从源码目录打包——从前
+      # validate_artifacts 在一台没有 Node 的机器上直接 zip 源码目录，画布是不是
+      # 本次源码构建的、在不在，那一步都答不了。
+      - name: 构建 MCP 画布 + 组装并验证完整插件
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+          TAG: ${{ needs.trust.outputs.tag }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/plugin/stage"
+          python3 scripts/build_mcp_widget.py --out "$RUNNER_TEMP/plugin/canvas.html" --json
+          python3 scripts/plugin_stage.py stage --widget "$RUNNER_TEMP/plugin/canvas.html" \
+            --out "$STAGE" --source-sha "$SOURCE_SHA" \
+            --audit "workflow=release" --audit "run_id=$RUN_ID" --audit "tag=$TAG"
+          python3 scripts/plugin_stage.py verify "$STAGE" \
+            --source-sha "$SOURCE_SHA" --version "$VER" --serve /tmp/smoke/bin/python
+          # 清单 + 确定性 zip 都从这份 staging 出；zip 再解包验一次（dotfiles / 模式 / 摘要）
+          python3 scripts/make_plugin_manifest.py --tag "$TAG" \
+            --out dist/codex-plugin.json --zip "dist/codex-plugin-${VER}.zip" \
+            --plugin-dir "$STAGE" --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 scripts/plugin_stage.py verify "dist/codex-plugin-${VER}.zip" \
+            --source-sha "$SOURCE_SHA" --version "$VER" \
+            --content-digest "$(python3 scripts/plugin_stage.py digest "$STAGE")" --json
+          cp "$STAGE/plugin-build.json" dist/codex-plugin-build.json
+          cat dist/codex-plugin.json
+
       - name: 这条腿的产物清单
         # **下游唯一的文件名出处。** 从前 SBOM、SHA256SUMS、provenance、
         # Release 附件、PyPI 校验、exact artifact 冒烟七处各自猜一次
@@ -289,7 +322,10 @@ jobs:
             --version "$VER" --source-sha "$SOURCE_SHA" \
             --out dist/artifact-manifest-python.json \
             --add "wheel:dist/tavotto-${VER}-py3-none-any.whl:python" \
-            --add "sdist:dist/tavotto-${VER}.tar.gz:python"
+            --add "sdist:dist/tavotto-${VER}.tar.gz:python" \
+            --add "codex-plugin:dist/codex-plugin-${VER}.zip:any" \
+            --add "codex-plugin-manifest:dist/codex-plugin.json:any" \
+            --add "codex-plugin-build:dist/codex-plugin-build.json:any"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -434,8 +470,33 @@ jobs:
           python3 scripts/ci/artifact_manifest.py merge \
             manifests/*/artifact-manifest-*.json --out artifact-manifest.json
           python3 scripts/ci/artifact_manifest.py verify artifact-manifest.json \
-            --require wheel,sdist,windows-installer,macos-installer \
+            --require wheel,sdist,windows-installer,macos-installer,codex-plugin,codex-plugin-manifest,codex-plugin-build \
             --version "$VER" --source-sha "$SOURCE_SHA"
+
+      - name: 完整插件：成对验证（zip 内容 + 版本清单 + 随包清单互相对得上）
+        # 「缺 canvas 不准发」在 build job 里已经拦过一次（组装时点名 REQUIRED）；
+        # 这里在**搬运之后**再验一次整份内容，并核对三份文件说的是同一个插件：
+        # zip 里的 plugin-build.json 的 source_sha == trust 的 SHA、版本 == VER、
+        # codex-plugin.json 的 latest_version / download_url 指向的正是这个 zip。
+        # 只查文件名存在不算验证。
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ZIP="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin)"
+          META="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin-manifest)"
+          BUILD="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin-build)"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$BUILD")"
+          python3 scripts/plugin_stage.py verify "$ZIP" \
+            --source-sha "$SOURCE_SHA" --version "$VER" --content-digest "$DIGEST" --json
+          python3 - "$META" "$ZIP" "$VER" <<'PY'
+          import json, os, sys
+          meta, zip_path, ver = json.load(open(sys.argv[1], encoding="utf-8")), sys.argv[2], sys.argv[3]
+          assert meta["latest_version"] == ver, (meta["latest_version"], ver)
+          assert meta["download_url"].rsplit("/", 1)[-1] == os.path.basename(zip_path), (meta["download_url"], zip_path)
+          print("插件版本清单与 zip 成对：", meta["latest_version"], os.path.basename(zip_path))
+          PY
 
       - name: 从清单里取出具体路径（单值输入只能收这个）
         id: paths
@@ -471,6 +532,7 @@ jobs:
             dist/*.tar.gz
             dist/*.exe
             dist/*.dmg
+            dist/codex-plugin-*.zip
 
       - name: 生成 SBOM（SPDX）
         # syft 的 `file:` 收的是**一个具体路径**，不是 glob——`dist/*.whl`
@@ -495,20 +557,11 @@ jobs:
           (cd dist && shasum -a 256 -- *) > out/SHA256SUMS.txt
           cat out/SHA256SUMS.txt
 
-      - name: 生成 Codex 插件清单与安装包
-        # 插件的更新通道：装了插件的用户下次调用时就是靠这份清单看到新版本。
-        # **刻意留在这条链上而不是 desktop 那边的 updater-manifest**——
-        # 那个 job 依赖 minisign 私钥，没配就整个跳过；挂在那儿等于
-        # 「哪天没配签名密钥，插件的更新通道就悄悄停了」，而且全绿。
-        env:
-          TAG: ${{ needs.trust.outputs.tag }}
-        run: |
-          set -euo pipefail
-          python scripts/make_plugin_manifest.py --tag "$TAG" \
-            --out out/codex-plugin.json \
-            --zip "out/codex-plugin-${TAG#v}.zip" \
-            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          cat out/codex-plugin.json
+      # Codex 插件清单与安装包**不在这里生成**（ADR 0043）：它们由 build job 从固定发行
+      # SHA 真构建、真验证后放进 dist/（这个 job 没有 Node，从源码目录打包答不了
+      # 「画布是不是本次源码构建的」）。上面那步已经把 dist/ 里那份 zip 与两份清单
+      # 成对验过。更新通道仍然是 Release 上的 codex-plugin.json——**文件名不能改**
+      # （update_check.DEFAULT_URL），随 dist/* 一起挂上去。
 
       - name: 拼 release body（手写正文可缺，支持段与签名披露不可缺）
         id: notes
@@ -651,12 +704,12 @@ jobs:
           # codex-plugin.json 的**文件名不能改**：插件拉的是
           # releases/latest/download/codex-plugin.json（见 update_check.DEFAULT_URL）
           # `files` 明确支持多行 glob——与只收单个路径的 syft 不同。
+          # codex-plugin.json 与 codex-plugin-<版本>.zip 在 assets/dist/ 里（build job
+          # 造的、validate 成对验过的那一份），随 `assets/dist/*` 一起挂上。
           files: |
             assets/dist/*
             assets/out/SHA256SUMS.txt
             assets/out/tavotto-sbom.spdx.json
-            assets/out/codex-plugin.json
-            assets/out/codex-plugin-*.zip
             assets/out/latest.json
 
       # 官网的下载按钮直连安装包：版本、大小、校验和都在构建时从这次 Release 的
@@ -1074,3 +1127,150 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           print-hash: true
+
+  # ────────────────────────────────────────────────────────────────
+  # 发行分支 `plugin-stable` 推进（ADR 0043）。
+  #
+  # marketplace 的安装入口读的是这条分支：用户装到的插件 = 这里投影的那份。
+  # 它消费 validate_artifacts 验过的**同一份** zip（不重跑 vite、不重新 checkout 浮动
+  # main 拼装、不借工作目录里的 dist）。
+  #
+  #   publish=true   Release 建好、PyPI 发完之后才推进（引擎必须先经用户正常渠道拿得到，
+  #                  发布器自己还会对 GitHub Release / PyPI 各问一次）。GitHub Release、
+  #                  PyPI、Git 分支不是一个原子事务：这一步失败时 Release 已经公开、
+  #                  marketplace 通道**尚未推进**，旧稳定插件原样保留——用同一份产物
+  #                  重跑本 job 或 plugin-stable.yml 即可幂等重试，绝不删公开版本伪装回滚。
+  #   publish=false  演练：对一个临时 bare 仓库真实跑 bootstrap → 幂等 no-op → 同版本
+  #                  不同内容拒绝 → 回退，再对真实远端只读 `plan`。真实 refs 一个不动。
+  #
+  # 权限：只有这个 job 有 contents: write（顶层是 read）；发布器不执行插件包里的任何
+  # 代码，只搬字节。它也不靠 bot push 触发别的 workflow——没有 workflow 监听这条分支。
+  # ────────────────────────────────────────────────────────────────
+  plugin_stable:
+    needs: [trust, validate_artifacts, github_release, pypi]
+    # validate 必须绿；正式发布还要等 Release 与 PyPI 都出结论（pypi 允许 skipped：
+    # 仓库变量未开闸时它不跑，发布器会自己核 PyPI 上有没有这个版本）。
+    if: >-
+      always() && needs.trust.result == 'success' && needs.validate_artifacts.result == 'success'
+      && (
+        needs.trust.outputs.publish != 'true'
+        || (needs.github_release.result == 'success'
+            && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped'))
+      )
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: release-assets, path: assets }
+
+      - name: 取出 validate 验过的那份插件并再验一次
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          M=assets/dist/artifact-manifest.json
+          python3 scripts/ci/artifact_manifest.py verify "$M" --base assets \
+            --require codex-plugin,codex-plugin-build --version "$VER" --source-sha "$SOURCE_SHA"
+          ZIP="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role codex-plugin)"
+          BUILD="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role codex-plugin-build)"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$BUILD")"
+          STAGE="$(python3 scripts/plugin_stage.py unpack "$ZIP" --out "$RUNNER_TEMP/stable")"
+          python3 scripts/plugin_stage.py verify "$STAGE" \
+            --source-sha "$SOURCE_SHA" --version "$VER" --content-digest "$DIGEST"
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: 演练（publish=false）：临时 bare 仓库上真实跑完发布器的全部行为
+        if: needs.trust.outputs.publish != 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+          VER: ${{ needs.trust.outputs.version }}
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/drill-remote.git"
+          git init --quiet --bare "$R"
+          git push --quiet "$R" "HEAD:refs/heads/main"
+          P="python3 scripts/plugin_publish.py"
+          # bootstrap：分支不存在 → 创建
+          $P bootstrap --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --engine-check none --reason "release dry-run" --audit "run_id=${{ github.run_id }}" --yes
+          TIP="$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)"
+          # 幂等：同内容再来一次 = no-op，tip 不动
+          $P promote --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --expected-remote-sha "$TIP" --engine-check none --reason "release dry-run" --yes
+          [ "$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)" = "$TIP" ]
+          # 防旧覆盖新：期望值错 → 拒绝（退出 3），tip 不动
+          set +e; $P promote --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --expected-remote-sha 0000000000000000000000000000000000000000 \
+            --engine-check none --reason "release dry-run" --yes; rc=$?; set -e
+          [ "$rc" -eq 3 ] || { echo "::error::期望值不符时应退 3，实际 $rc"; exit 1; }
+          [ "$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)" = "$TIP" ]
+          # 回退：显式授权，快进一个新提交，树 == 旧快照
+          $P rollback --remote "$R" --to "$TIP" --expected-remote-sha "$TIP" \
+            --authorized-by "release dry-run" --reason "drill" --yes
+          [ "$(git --git-dir="$R" rev-list --count plugin-stable)" = "2" ]
+          echo "临时远端演练通过：bootstrap / no-op / 拒绝 / rollback"
+
+      - name: 对真实发行分支只读 plan（publish=false）
+        if: needs.trust.outputs.publish != 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # 没有 --yes：一个写请求都不发。分支还不存在时 plan 显示 bootstrap，存在时显示
+          # promote / no-op / 拒绝——正式发布日会撞的墙这里先撞一遍。
+          python3 scripts/plugin_publish.py plan --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --engine-check none --reason "dry-run plan" --receipt-out "$RUNNER_TEMP/plan.json" || true
+          if [ -f "$RUNNER_TEMP/plan.json" ]; then
+            python3 - "$RUNNER_TEMP/plan.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          p = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("### plugin-stable · plan（只读）\n")
+          for k in ("action", "reason", "remote_tip", "remote_version", "new_version"):
+              print(f"- {k}: `{p.get(k)}`")
+          PY
+          fi
+
+      - name: 推进 plugin-stable（publish=true）
+        if: needs.trust.outputs.publish == 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+          TAG: ${{ needs.trust.outputs.tag }}
+          # actions/checkout 留下的凭据只对本仓库有效；发布器推的正是本仓库的发行分支
+        run: |
+          set -euo pipefail
+          P="python3 scripts/plugin_publish.py"
+          TIP="$(git ls-remote --refs origin refs/heads/plugin-stable | cut -f1 || true)"
+          if [ -z "$TIP" ]; then
+            echo "::error::plugin-stable 还不存在——先按 docs/ci/plugin-stable-channel.md 用已发布的版本 bootstrap（plugin-stable.yml），本 job 不替人做首次创建"
+            exit 1
+          fi
+          $P promote --staging "$STAGE" --source-sha "$SOURCE_SHA" --release-tag "$TAG" \
+            --expected-remote-sha "$TIP" --engine-check github-release,pypi \
+            --audit "run_id=${{ github.run_id }}" --audit "workflow=release" \
+            --receipt-out "$RUNNER_TEMP/receipt.json" --yes
+          python3 - "$RUNNER_TEMP/receipt.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          p = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("### plugin-stable\n")
+          print(f"- {p.get('action')}: {p.get('reason')}  → `{p.get('commit')}`")
+          PY
+
+      - name: 留下收据
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: plugin-stable-receipt
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/plan.json
+          if-no-files-found: ignore

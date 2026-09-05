@@ -968,6 +968,7 @@ export default interface Resources {
           "error": {
             "bad_action": "这个动作不被允许。",
             "bad_output": "命令跑完了但没有给出可读的结果，可能被中断了。重试一次；仍然如此就在终端里跑 tavotto codex doctor 看原文。",
+            "canvas_incomplete": "已装的插件不完整：内嵌画布缺失、损坏或与随包清单不符——Codex 里工具照常可用，只是没有画布。处方是重新装插件（先 codex plugin remove tavotto@tavotto，再 codex plugin add tavotto@tavotto），然后再点一次安装。这次没有改动任何文件。",
             "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。这一版安装包可能不完整，重新装一次桌面版即可。",
             "codex_cli_missing": "找不到 codex 命令，所以没法继续。请先自行安装 Codex CLI（这里不代装），装好后再点一次。",
             "doctor": {
@@ -976,13 +977,18 @@ export default interface Resources {
               "plugin_add_failed": "插件还没装上。这次只是诊断，没有改动任何东西——装一次就会补上它。",
               "provision_failed": "插件还没有一份匹配版本的 Tavotto 引擎。这次只是诊断，没有改动任何东西——装一次就会补上它。"
             },
+            "engine_too_old": "本机的 Tavotto 引擎版本低于已装插件要求的最低版本，插件的桥接层带不动它。升级引擎（pipx upgrade tavotto，或升级桌面版），或者把插件退回与引擎匹配的版本。",
             "health_failed": "组件都装上了，但体检没过——插件还找不到能用的 Tavotto 引擎。展开下面的详情看它报了什么。",
             "interpreter_unusable": "插件的启动命令在这台机器上跑不起来——那样 Codex 里会一个工具都没有。（Windows 上的 python3 常常是微软商店的占位命令：看着存在，一跑就退。）安装会把它换成一个验证过真能跑的解释器；换不成就装一个 Python，或用 TAVOTTO_MCP_PYTHON 指一个再试。",
             "marketplace_add_failed": "没能把 Tavotto 登记成 Codex 的插件市场。常见原因是没有网络或没有权限写 Codex 的配置目录。",
+            "marketplace_state_unknown": "问不到 Codex 的插件市场登记状态（codex plugin marketplace list 没有跑出结论），所以没有动任何东西。展开详情看 Codex 报了什么，多半是 Codex 本身没启动好。",
             "not_desktop": "这个操作只在桌面版里可用。",
             "other": "没能装好，下面的详情里是命令的原话。",
             "pin_failed": "没能把新的启动命令写进插件的两份清单，已经回滚到原样——不会留下半新半旧的一对。多半是插件目录只读或正被占用，处理掉再重试。",
             "plugin_add_failed": "市场登记好了，但插件没装上。展开下面的详情看 Codex 报了什么。",
+            "plugin_install_ambiguous": "定位不到唯一的一份已装插件：Codex 没有报出安装路径，而缓存里有零份或多份同名副本。这里不按版本号或修改时间猜，展开详情看候选路径；通常先 codex plugin remove tavotto@tavotto 再重新 codex plugin add tavotto@tavotto 就能清干净。",
+            "plugin_source_unsupported": "插件市场已登记，但 Codex 没有列出 Tavotto 插件。多半是这个版本的 Codex 不认识市场清单里的插件来源（发行通道用的是 git-subdir 来源），或者本机的市场快照太旧。先在终端里跑 codex plugin marketplace upgrade tavotto；仍然没有就升级 Codex。",
+            "plugin_state_unknown": "问不到插件的安装状态（codex plugin list 没有跑出结论），所以没有动任何东西。展开详情看 Codex 报了什么。",
             "provision_failed": "插件装好了，但没能给它准备一份匹配版本的 Tavotto 引擎。",
             "spawn_failed": "启动 Tavotto 命令行失败。重试一次；仍然如此就在终端里跑 tavotto codex install 看原文。",
             "uninstall_failed": "移除没有完成，下面的详情里是命令的原话。"
@@ -990,6 +996,7 @@ export default interface Resources {
           "healthy": "各项都没问题，不用做任何事。",
           "running": "正在安装…",
           "step": {
+            "canvas": "内嵌画布完整性",
             "codex_cli": "Codex 命令行",
             "engine": "匹配版本的引擎",
             "health": "体检",

@@ -93,6 +93,25 @@ npx codex-marketplace add Tavotto/Tavotto --plugin
 **这不违反「绝不改用户的 `~/.codex/config.toml`」那条纪律**——我们调的是官方 CLI，
 由它去写自己的配置；我们一个字节都不碰。失败时把命令原样显示出来让用户自己敲。
 
+## 5. 发行通道 `plugin-stable`（2026-09-05，ADR 0043）
+
+第 1 条「仓库即市场」的来源形状从 `local ./codex-plugin`（把仓库本体当插件装、画布靠
+版本库里那份）改成指向**机器维护的发行分支**：
+
+```json
+{ "source": "git-subdir", "url": "https://github.com/Tavotto/Tavotto.git",
+  "path": "./codex-plugin", "ref": "plugin-stable" }
+```
+
+codex-cli 0.151.0 实测：`codex plugin add` 对它做 `git clone --filter=blob:none --sparse
+--no-checkout` + `sparse-checkout set --no-cone -- codex-plugin` + `checkout plugin-stable`，
+装进 `~/.codex/plugins/cache/tavotto/tavotto/<版本>/`；`codex plugin marketplace upgrade tavotto`
+刷新快照并按版本刷新插件缓存（旧版本目录被换掉）；`plugin list` 的 PATH 列对 git 来源显示的
+是来源描述而不是路径。用户装到的插件由 release.yml 在固定发行 SHA 上构建、验证、发布——
+**普通用户不需要 Node / pnpm，也不需要编译前端**。分支保护、bootstrap、回退与队列并发的
+步骤在 `docs/ci/plugin-stable-channel.md`。不支持 `git-subdir` 的旧客户端有一条后路：
+`codex plugin marketplace add Tavotto/Tavotto --ref plugin-stable --sparse .agents/plugins --sparse codex-plugin`。
+
 ## 建议顺序
 
 1. **现在**：README 给第 1 条的一行命令（已做）。

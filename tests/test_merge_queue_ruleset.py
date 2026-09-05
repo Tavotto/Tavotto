@@ -432,3 +432,250 @@ class TestTransformSafety:
         b = {"y": [1, 2], "x": 1}
         assert MQ.stable_hash(a) == MQ.stable_hash(b)
         assert MQ.stable_hash(a) != MQ.stable_hash({"x": 2, "y": [1, 2]})
+
+
+# ============================================================ set-build-concurrency（ADR 0043）
+class DecoupledApi(FakeApi):
+    """默认分支上画布不在索引里 / marketplace 已切到发行分支 / plugin-stable 存在——
+    三条各自可开关，缺一条并发就不许调。"""
+
+    def __init__(
+        self, rulesets, *, canvas_tracked=False, stable_source=True, branch_exists=True, **kw
+    ):
+        super().__init__(rulesets, **kw)
+        self.canvas_tracked = canvas_tracked
+        self.stable_source = stable_source
+        self.branch_exists = branch_exists
+
+    def __call__(self, path, *, method="GET", body=None):
+        if method == "GET" and path.startswith(f"repos/{REPO}/contents/{MQ.GENERATED_CANVAS_PATH}"):
+            self.calls.append((method, path))
+            if self.canvas_tracked:
+                return {"content": base64.b64encode(b"<!-- tavotto-mcp-widget x -->").decode()}
+            raise MQ.MigrationError("gh api GET failed: HTTP 404: Not Found")
+        if method == "GET" and path.startswith(f"repos/{REPO}/contents/{MQ.MARKETPLACE_PATH}"):
+            self.calls.append((method, path))
+            src = (
+                {
+                    "source": "git-subdir",
+                    "url": "https://github.com/Tavotto/Tavotto.git",
+                    "path": "./codex-plugin",
+                    "ref": "plugin-stable",
+                }
+                if self.stable_source
+                else {"source": "local", "path": "./codex-plugin"}
+            )
+            text = json.dumps({"name": "tavotto", "plugins": [{"name": "tavotto", "source": src}]})
+            return {"content": base64.b64encode(text.encode()).decode()}
+        if method == "GET" and path == f"repos/{REPO}/branches/{MQ.PLUGIN_STABLE_BRANCH}":
+            self.calls.append((method, path))
+            if self.branch_exists:
+                return {"name": MQ.PLUGIN_STABLE_BRANCH}
+            raise MQ.MigrationError("gh api GET failed: HTTP 404: Branch not found")
+        return super().__call__(path, method=method, body=body)
+
+
+def _queue_ruleset(build=1):
+    rs = _ruleset(merge_queue=True, strict=False, contexts=MQ.GATE_CONTEXTS)
+    for r in rs["rules"]:
+        if r["type"] == "merge_queue":
+            r["parameters"]["max_entries_to_build"] = build
+    return rs
+
+
+def _concurrency(api, plan_dir, n, *, yes=True):
+    plan_file = plan_dir / "plan-concurrency.json"
+    with _patched(api):
+        rc = MQ.main(
+            [
+                "plan",
+                "--phase",
+                "set-build-concurrency",
+                "--max-entries-to-build",
+                str(n),
+                "--plan-file",
+                str(plan_file),
+            ]
+        )
+        if rc != 0:
+            return rc
+        return MQ.main(
+            [
+                "apply",
+                "--phase",
+                "set-build-concurrency",
+                "--max-entries-to-build",
+                str(n),
+                "--plan-file",
+                str(plan_file),
+            ]
+            + (["--yes"] if yes else [])
+        )
+
+
+class TestSetBuildConcurrency:
+    def test_changes_only_max_entries_to_build(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset(build=1)])
+        assert _concurrency(api, plan_dir, 2) == 0
+        assert len(api.writes) == 1
+        body = api.writes[0][1]
+        mq = next(r for r in body["rules"] if r["type"] == "merge_queue")["parameters"]
+        assert mq["max_entries_to_build"] == 2
+        assert mq["max_entries_to_merge"] == 1 and mq["min_entries_to_merge"] == 1
+        assert mq["grouping_strategy"] == "ALLGREEN"
+        rsc = next(r for r in body["rules"] if r["type"] == "required_status_checks")["parameters"]
+        assert [c["context"] for c in rsc["required_status_checks"]] == MQ.GATE_CONTEXTS
+        assert rsc["strict_required_status_checks_policy"] is False
+        assert body["bypass_actors"] == []
+
+    def test_refuses_while_the_canvas_is_still_tracked(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()], canvas_tracked=True)
+        assert _concurrency(api, plan_dir, 2) == 1
+        assert api.writes == []
+
+    def test_refuses_while_the_marketplace_still_points_at_the_source_tree(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()], stable_source=False)
+        assert _concurrency(api, plan_dir, 2) == 1
+        assert api.writes == []
+
+    def test_refuses_while_the_release_branch_does_not_exist(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()], branch_exists=False)
+        assert _concurrency(api, plan_dir, 2) == 1
+        assert api.writes == []
+
+    def test_refuses_absurd_values(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()])
+        assert _concurrency(api, plan_dir, 10) == 1
+        assert _concurrency(api, plan_dir, 0) == 1
+        assert api.writes == []
+
+    def test_without_yes_nothing_is_written(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()])
+        assert _concurrency(api, plan_dir, 2, yes=False) == 3
+        assert api.writes == []
+
+    def test_plan_value_and_flag_must_agree(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()])
+        plan_file = plan_dir / "p.json"
+        with _patched(api):
+            assert (
+                MQ.main(
+                    [
+                        "plan",
+                        "--phase",
+                        "set-build-concurrency",
+                        "--max-entries-to-build",
+                        "2",
+                        "--plan-file",
+                        str(plan_file),
+                    ]
+                )
+                == 0
+            )
+            assert (
+                MQ.main(
+                    [
+                        "apply",
+                        "--phase",
+                        "set-build-concurrency",
+                        "--max-entries-to-build",
+                        "3",
+                        "--plan-file",
+                        str(plan_file),
+                        "--yes",
+                    ]
+                )
+                == 1
+            )
+        assert api.writes == []
+
+    def test_a_drifted_ruleset_is_refused(self, plan_dir):
+        api = DecoupledApi([_queue_ruleset()])
+        plan_file = plan_dir / "p.json"
+        with _patched(api):
+            assert (
+                MQ.main(
+                    [
+                        "plan",
+                        "--phase",
+                        "set-build-concurrency",
+                        "--max-entries-to-build",
+                        "2",
+                        "--plan-file",
+                        str(plan_file),
+                    ]
+                )
+                == 0
+            )
+            api.rulesets[0]["rules"].append({"type": "creation"})  # 别人并发改了
+            assert (
+                MQ.main(
+                    [
+                        "apply",
+                        "--phase",
+                        "set-build-concurrency",
+                        "--max-entries-to-build",
+                        "2",
+                        "--plan-file",
+                        str(plan_file),
+                        "--yes",
+                    ]
+                )
+                == 1
+            )
+        assert api.writes == []
+
+
+class TestSetBuildConcurrencySource:
+    def test_a_foreign_repository_or_other_path_does_not_count_as_switched(self, plan_dir):
+        """url 指向别的仓库、或 path 不是 ./codex-plugin，都不是「入口已切换」（Codex 在 #289 上指出）。"""
+
+        class ForeignApi(DecoupledApi):
+            def __init__(self, rulesets, src, **kw):
+                super().__init__(rulesets, **kw)
+                self.src = src
+
+            def __call__(self, path, *, method="GET", body=None):
+                if method == "GET" and path.startswith(
+                    f"repos/{REPO}/contents/{MQ.MARKETPLACE_PATH}"
+                ):
+                    text = json.dumps(
+                        {"name": "tavotto", "plugins": [{"name": "tavotto", "source": self.src}]}
+                    )
+                    return {"content": base64.b64encode(text.encode()).decode()}
+                return super().__call__(path, method=method, body=body)
+
+        for src in (
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/someone/fork.git",
+                "path": "./codex-plugin",
+                "ref": "plugin-stable",
+            },
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/Tavotto/Tavotto.git",
+                "path": "./elsewhere",
+                "ref": "plugin-stable",
+            },
+        ):
+            api = ForeignApi([_queue_ruleset()], src)
+            assert _concurrency(api, plan_dir, 2) == 1, src
+            assert api.writes == []
+        api = ForeignApi(
+            [_queue_ruleset()],
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/Tavotto/Tavotto.git",
+                "path": "./codex-plugin",
+                "ref": "plugin-stable",
+            },
+        )
+        assert _concurrency(api, plan_dir, 2) == 0
+
+    def test_the_expected_source_matches_brand(self):
+        from tavotto.engine import brand
+
+        assert brand.CODEX_PLUGIN_SOURCE_URL in MQ.PLUGIN_STABLE_URLS
+        assert MQ.PLUGIN_STABLE_SUBDIR == f"./{brand.CODEX_PLUGIN_SUBDIR}"
+        assert MQ.PLUGIN_STABLE_BRANCH == brand.CODEX_PLUGIN_STABLE_BRANCH

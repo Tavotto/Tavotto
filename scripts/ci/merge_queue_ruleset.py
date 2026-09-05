@@ -72,7 +72,22 @@ MERGE_QUEUE_PARAMS = {
     "min_entries_to_merge_wait_minutes": 0,
 }
 
-PHASES = ("enable-queue", "switch-to-gates")
+PHASES = ("enable-queue", "switch-to-gates", "set-build-concurrency")
+
+#: set-build-concurrency 的前置条件要读的三样东西（ADR 0043）：源码分支上画布产物已经
+#: 不在索引里、marketplace 入口已切到发行分支、发行分支存在。三条都满足，两个互不相关的
+#: 前端 PR 才不会因为同一份 HTML 在队列里相撞——并发调到 2 才有意义。
+GENERATED_CANVAS_PATH = "codex-plugin/mcp/widget/canvas.html"
+MARKETPLACE_PATH = ".agents/plugins/marketplace.json"
+PLUGIN_STABLE_BRANCH = "plugin-stable"
+#: 发行来源必须是**本仓库**的这个子目录——另一个仓库的 plugin-stable、或别的 path，
+#: 都不算切换完成（Codex 在 #289 上指出）。与 engine/brand.py 同源，
+#: tests/test_merge_queue_ruleset.py 对拍。
+PLUGIN_STABLE_URLS = (
+    "https://github.com/Tavotto/Tavotto.git",
+    "https://github.com/Tavotto/Tavotto",
+)
+PLUGIN_STABLE_SUBDIR = "./codex-plugin"
 
 
 class MigrationError(Exception):
@@ -188,6 +203,35 @@ def build_switch_to_gates(current: dict) -> dict:
     return updated
 
 
+def build_set_build_concurrency(current: dict, max_entries_to_build: int) -> dict:
+    """当前 Ruleset → 只改 merge_queue.max_entries_to_build，其余逐字保留。
+
+    「构建并发」与「每次合并数」是两个参数：这里**只动前者**；`max_entries_to_merge` /
+    `min_entries_to_merge` / grouping_strategy / 超时原样带回（_assert_untouched 之外再钉一次）。
+    不改 required contexts、不动 strict、不引入 bypass。
+    """
+    if not isinstance(max_entries_to_build, int) or not 1 <= max_entries_to_build <= 5:
+        raise MigrationError(
+            f"max_entries_to_build 只接受 1–5，拿到 {max_entries_to_build!r}——先开 2，不直接开 10"
+        )
+    mq = _rule(current, "merge_queue")
+    if mq is None:
+        raise MigrationError("ruleset 里没有 merge_queue rule——先跑 enable-queue")
+    updated = copy.deepcopy(current)
+    params = _rule(updated, "merge_queue").setdefault("parameters", {})
+    params["max_entries_to_build"] = max_entries_to_build
+    _assert_untouched(current, updated)
+    before = {k: v for k, v in mq.get("parameters", {}).items() if k != "max_entries_to_build"}
+    after = {k: v for k, v in params.items() if k != "max_entries_to_build"}
+    if before != after:
+        raise MigrationError(
+            "变换意外改动了 merge_queue 的其它参数——这个阶段只许动 max_entries_to_build"
+        )
+    if _rule(current, "required_status_checks") != _rule(updated, "required_status_checks"):
+        raise MigrationError("变换意外改动了 required_status_checks")
+    return updated
+
+
 def _assert_untouched(current: dict, updated: dict) -> None:
     """变换只许碰三样东西；这里把「没碰别的」变成硬断言而不是自觉。"""
     for key in ("name", "target", "enforcement", "conditions", "bypass_actors"):
@@ -252,8 +296,52 @@ def check_workflows_listen_to_merge_group(api, repo: str, branch: str) -> list[s
     return problems
 
 
+def check_source_decoupled_from_the_plugin(api, repo: str, branch: str) -> list[str]:
+    """并发调到 2 的前提（ADR 0043）：默认分支上画布产物不在索引里、marketplace 入口指向
+    发行分支、发行分支存在。少一条，两个前端 PR 仍会为同一份 HTML 在队列里相撞。"""
+    problems: list[str] = []
+    try:
+        api(f"repos/{repo}/contents/{GENERATED_CANVAS_PATH}?ref={branch}")
+        problems.append(
+            f"{branch} 上还跟踪着 {GENERATED_CANVAS_PATH}——画布产物还在源码分支里（ADR 0043 的 PR B 未落地）"
+        )
+    except MigrationError as exc:
+        if "404" not in str(exc) and "Not Found" not in str(exc):
+            raise
+    try:
+        raw = api(f"repos/{repo}/contents/{MARKETPLACE_PATH}?ref={branch}")
+        content = base64.b64decode(raw.get("content", "")).decode("utf-8")
+        data = json.loads(content)
+        entry = next(p for p in data.get("plugins", []) if p.get("name") == "tavotto")
+        src = entry.get("source")
+        ok = (
+            isinstance(src, dict)
+            and src.get("source") == "git-subdir"
+            and src.get("ref") == PLUGIN_STABLE_BRANCH
+            and src.get("url") in PLUGIN_STABLE_URLS
+            and src.get("path") in (PLUGIN_STABLE_SUBDIR, PLUGIN_STABLE_SUBDIR[2:])
+        )
+        if not ok:
+            problems.append(
+                f"{MARKETPLACE_PATH} 的插件来源还不是本仓库的 git-subdir {PLUGIN_STABLE_SUBDIR} @ "
+                f"{PLUGIN_STABLE_BRANCH}：{src}"
+            )
+    except (MigrationError, ValueError, StopIteration) as exc:
+        problems.append(f"读不出 {branch} 上的 {MARKETPLACE_PATH}：{exc}")
+    try:
+        api(f"repos/{repo}/branches/{PLUGIN_STABLE_BRANCH}")
+    except MigrationError as exc:
+        problems.append(f"发行分支 {PLUGIN_STABLE_BRANCH} 不存在：{exc}")
+    return problems
+
+
 def preconditions(api, repo: str, branch: str, phase: str, current: dict) -> list[str]:
     problems: list[str] = []
+    if phase == "set-build-concurrency":
+        problems += check_source_decoupled_from_the_plugin(api, repo, branch)
+        if _rule(current, "merge_queue") is None:
+            problems.append("ruleset 里还没有 merge_queue rule")
+        return problems
     if phase == "enable-queue":
         # 队列一开，候选就要在 merge_group 上等 required contexts；
         # workflow 没监听 merge_group 的话，每个候选都白等 90 分钟。
@@ -293,13 +381,24 @@ def cmd_inspect(api, repo: str, name: str) -> int:
     return 0
 
 
-def cmd_plan(api, repo: str, name: str, phase: str, out: Path) -> int:
+def _builder(phase: str, max_entries_to_build: int | None):
+    if phase == "set-build-concurrency":
+        if max_entries_to_build is None:
+            raise MigrationError("set-build-concurrency 需要 --max-entries-to-build N")
+        return lambda current: build_set_build_concurrency(current, max_entries_to_build)
+    return {"enable-queue": build_enable_queue, "switch-to-gates": build_switch_to_gates}[phase]
+
+
+def cmd_plan(
+    api, repo: str, name: str, phase: str, out: Path, max_entries_to_build: int | None = None
+) -> int:
     branch = default_branch(api, repo)
     current = find_ruleset(api, repo, name, branch)
-    build = {"enable-queue": build_enable_queue, "switch-to-gates": build_switch_to_gates}[phase]
+    build = _builder(phase, max_entries_to_build)
     updated = build(current)
     plan = {
         "phase": phase,
+        "max_entries_to_build": max_entries_to_build,
         "repo": repo,
         "default_branch": branch,
         "ruleset_id": current["id"],
@@ -330,6 +429,11 @@ def _describe_diff(current: dict, updated: dict) -> None:
         f"  merge_queue: {'有' if _rule(current, 'merge_queue') else '无'} → "
         f"{'有' if _rule(updated, 'merge_queue') else '无'}"
     )
+    cur_mq = (_rule(current, "merge_queue") or {}).get("parameters", {})
+    new_mq = (_rule(updated, "merge_queue") or {}).get("parameters", {})
+    for key in sorted(set(cur_mq) | set(new_mq)):
+        if cur_mq.get(key) != new_mq.get(key):
+            print(f"  merge_queue.{key}: {cur_mq.get(key)} → {new_mq.get(key)}")
     if cur_ctx != new_ctx:
         print(f"  required contexts: {len(cur_ctx)} 个 → {len(new_ctx)} 个")
         for c in cur_ctx:
@@ -343,12 +447,28 @@ def _describe_diff(current: dict, updated: dict) -> None:
     print("  其余 rules / conditions / bypass_actors：原样保留")
 
 
-def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path, yes: bool) -> int:
+def cmd_apply(
+    api,
+    repo: str,
+    name: str,
+    phase: str,
+    plan_file: Path,
+    yes: bool,
+    max_entries_to_build: int | None = None,
+) -> int:
     if not plan_file.is_file():
         raise MigrationError(f"没有 plan 文件 {plan_file}——先跑 plan --phase {phase}")
     plan = json.loads(plan_file.read_text(encoding="utf-8"))
     if plan.get("phase") != phase:
         raise MigrationError(f"plan 文件是 {plan.get('phase')} 阶段的，与 --phase {phase} 不符")
+    if (
+        phase == "set-build-concurrency"
+        and plan.get("max_entries_to_build") != max_entries_to_build
+    ):
+        raise MigrationError(
+            f"plan 文件是 max_entries_to_build={plan.get('max_entries_to_build')} 的，"
+            f"与 --max-entries-to-build {max_entries_to_build} 不符"
+        )
     if plan.get("repo") != repo:
         raise MigrationError(f"plan 文件属于 {plan.get('repo')}，不是 {repo}")
 
@@ -372,7 +492,7 @@ def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path, yes: bool)
     # 或生成它的脚本版本与现在不同。只抽查 bypass_actors 那种点名单是
     # 挡不住的：被编辑的 plan 可以抹掉 pull_request rule、换掉 conditions
     # 或 contexts，哈希核对的是 current、根本量不到它（#119 评审 P1）。
-    build = {"enable-queue": build_enable_queue, "switch-to-gates": build_switch_to_gates}[phase]
+    build = _builder(phase, max_entries_to_build)
     updated = build(current)
     if plan["updated"] != updated:
         raise MigrationError(
@@ -413,6 +533,12 @@ def main(argv: list[str] | None = None) -> int:
         help="plan 的输出 / apply 的输入（默认 ruleset-plan-<phase>.json）",
     )
     ap.add_argument("--yes", action="store_true", help="apply 时真的写入；不带它 = 只演练")
+    ap.add_argument(
+        "--max-entries-to-build",
+        type=int,
+        default=None,
+        help="set-build-concurrency 阶段的目标值（只改这一个字段；先开 2）",
+    )
     args = ap.parse_args(argv)
 
     try:
@@ -422,8 +548,23 @@ def main(argv: list[str] | None = None) -> int:
             raise MigrationError(f"{args.command} 需要 --phase {'/'.join(PHASES)}")
         plan_file = args.plan_file or plan_path(args.phase)
         if args.command == "plan":
-            return cmd_plan(gh_api, args.repo, args.ruleset_name, args.phase, plan_file)
-        return cmd_apply(gh_api, args.repo, args.ruleset_name, args.phase, plan_file, args.yes)
+            return cmd_plan(
+                gh_api,
+                args.repo,
+                args.ruleset_name,
+                args.phase,
+                plan_file,
+                args.max_entries_to_build,
+            )
+        return cmd_apply(
+            gh_api,
+            args.repo,
+            args.ruleset_name,
+            args.phase,
+            plan_file,
+            args.yes,
+            args.max_entries_to_build,
+        )
     except MigrationError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1

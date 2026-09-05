@@ -1,10 +1,17 @@
 # 多 session 并行开 PR：Stacked PR 与 Train Branch
 
 Merge Queue（见 `merge-queue-rollout.md`）解决了「合一个、其余全部追 main
-重跑」；它解决不了**真正的 Git 冲突**。本仓库的冲突大头不是源码，是受管
+重跑」；它解决不了**真正的 Git 冲突**。本仓库曾经的冲突大头不是源码，是受管
 生成物：`web/src/**` 一动，`scripts/build_mcp_widget.py` 就要重建
 `codex-plugin/mcp/widget/canvas.html`——四个互不相干的前端 PR 各带一份
 重建过的同一个文件，合掉第一个，其余三个全部 DIRTY。
+
+> **2026-09-05（ADR 0043）**：这一类冲突由构造消除。画布产物不再进版本库——CI 从本次
+> checkout 现建并验证完整插件，用户装到的来自发行分支 `plugin-stable`
+> （`docs/ci/plugin-stable-channel.md`）。PR B 落地之后，`mcp-widget` 域不再声明
+> `generated`，两个各改 `web/src` 的 PR 不再被判成「生成物重叠」；下面的 Train 一节
+> 只对**仍然入库的**生成物（playground 由网站仓库提交，不在本仓库）成立，留作历史与
+> 备用。真实源码冲突、协议、锁文件与发布控制面的协调**照旧**。
 
 `.github/conflict-domains.json` 声明了这些热点；每个 PR 上的
 「PR conflict domains」检查（咨询性，不阻断）会列出与你同域的 open PR
