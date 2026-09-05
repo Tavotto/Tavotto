@@ -33,10 +33,40 @@ PLUGIN_JSON = PLUGIN_DIR / ".codex-plugin" / "plugin.json"
 
 #: 清单 schema。改字段语义要 +1，读的一方（update_check.SCHEMA）同步。
 SCHEMA = 1
-#: 这个插件最低要求的 Tavotto 版本 = **第一个带 `tavotto open` 的版本**
-#: （v0.7.0，见 git log src/tavotto/engine/handoff.py）。没有它交接根本无从谈起。
-#: 往上调之前想清楚：这个值会让老用户看到「去升级 Tavotto」的提示。
-MIN_TAVOTTO_VERSION = "0.7.0"
+#: 这个插件最低要求的 Tavotto 版本 = **第一个装得下 `mcp/server.py` 里
+#: `_BRIDGE_IMPORT` 那整组引擎模块的版本**。判据的主语是「桥 import 得动吗」，
+#: 不是「有没有 `tavotto open`」——后者是 v0.7.0 时的理由，在桥只 import
+#: handoff 的年代成立，早已不是真正的下限。
+#: 插件 0.13 的桥新增 import 了 previewbudget / project_refresh / profilestore /
+#: exportjob / exportreq（ef9ac026 / aa61094c / b2a4b156 / 3ff49622），
+#: **五个全部晚于 v0.12.0**，所以 0.7–0.12 的引擎一 import 就 ImportError。
+#: 往上调的代价：本机 Tavotto 更老的用户会看到「去升级 Tavotto」
+#: （`update_check.tavotto_hint`，经 `handoff.py` 打到 stderr）——他们**本来就该
+#: 看到**：不提示的话，他们会照提示只升插件，然后撞上降级 server。
+#: **改 bridge.py 的 import 集时必须回来重估这个值**——`_BRIDGE_IMPORT` 与桥之间
+#: 有对拍（test_mcp_resolver），但它与本常量之间没有，只能靠这条约定。
+MIN_TAVOTTO_VERSION = "0.13.0"
+#: 上面那个版本号是**对着这一组桥 import** 算出来的。改了 `bridge.py` 的
+#: `from tavotto.engine import ...`，`tests/test_codex_plugin.py` 会红，逼你回来
+#: 重估 `MIN_TAVOTTO_VERSION` 再同步这里。散句约定靠人记得，这条靠退出码。
+BRIDGE_IMPORTS_AT_MIN = frozenset(
+    {
+        "config",
+        "exportjob",
+        "exportreq",
+        "handoff",
+        "patchspec",
+        "pool",
+        "preflight",
+        "previewbudget",
+        "profiles",
+        "profilestore",
+        "project_refresh",
+        "readiness",
+        "registry",
+        "telemetry",
+    }
+)
 CHANNEL = "stable"
 REPO = "Tavotto/Tavotto"
 

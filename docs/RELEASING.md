@@ -317,9 +317,17 @@ python scripts/make_plugin_manifest.py --tag v0.7.1 \
 3. 用户下次调用插件时看到提醒，执行
    `codex plugin marketplace upgrade tavotto` 并重载 Codex。
 
-改 `min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
-那个值会让本机 Tavotto 更老的用户看到「去升级 Tavotto」的提示。当前是 `0.7.0`
-——第一个带 `tavotto open` 的版本，没有它交接根本无从谈起。
+`min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）的判据是
+**「桥 import 得动吗」**：它必须等于第一个装得下 `mcp/server.py::_BRIDGE_IMPORT`
+那整组引擎模块的版本。所以——
+
+> **改了 `bridge.py` 的 import 集，就要回来重估 `MIN_TAVOTTO_VERSION`。**
+
+漏掉这一步不会有任何红灯，但会让老引擎的用户按「有新插件」的提示只升插件，
+然后撞上降级 server，而诊断还会把他们误报成「你装的是桌面版」。v0.13.0 就是
+这么一次：桥新增 import 了 `previewbudget` / `profilestore` / `project_refresh`
+（都晚于 v0.12.0），常量却还停在 `0.7.0`——那是桥只 import `handoff` 的年代
+留下的理由。
 
 排障与用户侧开关（`TAVOTTO_UPDATE_URL` / `TAVOTTO_DISABLE_UPDATE_CHECK`）见
 `docs/handoff-protocol.md`。
