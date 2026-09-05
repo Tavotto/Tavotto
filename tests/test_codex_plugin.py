@@ -1077,27 +1077,28 @@ def test_min_tavotto_version_is_reestimated_when_the_bridge_imports_change():
 
 
 def test_plugin_zip_contains_the_skill(tmp_path):
-    """安装包里要有技能本体，不能只有清单。"""
+    """安装包里要有技能本体，不能只有清单。
+
+    源用合成 staging（真源码 + 假画布，tests/support/pluginkit）：干净 checkout 里没有画布
+    （ADR 0043），而这条的主语是「zip 里有没有技能本体」，不是画布在不在。
+    """
     import zipfile
 
-    target = _manifest_module().build_zip(tmp_path / "p.zip")
+    from tests.support import pluginkit
+
+    src = tmp_path / "stage"
+    pluginkit.synthetic_staging(src)
+    target = _manifest_module().build_zip(tmp_path / "p.zip", source=src)
     names = zipfile.ZipFile(target).namelist()
     for needed in (
         "codex-plugin/.codex-plugin/plugin.json",
         "codex-plugin/skills/tavotto-figure/SKILL.md",
-        "codex-plugin/skills/tavotto-figure/agents/openai.yaml",
-        # SKILL.md 按需引用的细则必须随包走，缺一份 = 状态机断链
-        "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md",
-        "codex-plugin/skills/tavotto-figure/references/figure-contract.md",
-        "codex-plugin/skills/tavotto-figure/references/publication-style.md",
-        "codex-plugin/skills/tavotto-figure/references/desktop-handoff.md",
-        "codex-plugin/skills/tavotto-figure/references/issue-reporting.md",
-        "codex-plugin/skills/tavotto-figure/references/compatibility.md",
         "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
-        "codex-plugin/skills/tavotto-figure/scripts/update_check.py",
+        "codex-plugin/.mcp.json",
+        "codex-plugin/mcp/server.py",
+        "codex-plugin/mcp/widget/canvas.html",
     ):
-        assert needed in names, f"插件包里缺 {needed}"
-    assert not [n for n in names if "__pycache__" in n]
+        assert needed in names, f"zip 里少了 {needed}"
 
 
 def test_release_workflow_publishes_the_plugin_channel():

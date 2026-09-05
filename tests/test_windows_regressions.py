@@ -528,7 +528,9 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Python 实现一致" in r.stdout
 
-    # 画布同步门禁：--check 不需要 Node，纯指纹比对
+    # 画布同步门禁：--check 不需要 Node，纯指纹比对。**主语是 stdout 编码**，不是产物
+    # 在不在：画布不入库（ADR 0043），干净 checkout 上它是「还没构建」（2）。三档结论
+    # 都不许死在 UnicodeEncodeError 上，且那句中文真写出来了。
     r = subprocess.run(
         [sys.executable, str(repo / "scripts/build_mcp_widget.py"), "--check"],
         capture_output=True,
@@ -538,8 +540,10 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
         timeout=120,
         env=env,
     )
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "画布产物与源码一致" in r.stdout
+    assert r.returncode in (0, 1, 2), r.stdout + r.stderr
+    assert "UnicodeEncodeError" not in r.stderr, r.stderr
+    verdict = {0: "画布产物与源码一致", 1: "画布产物过期", 2: "画布产物还没构建"}[r.returncode]
+    assert verdict in r.stdout + r.stderr, r.stdout + r.stderr
 
 
 def test_widget_fingerprint_is_the_same_on_windows_and_posix():

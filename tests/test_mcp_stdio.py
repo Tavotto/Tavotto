@@ -161,8 +161,11 @@ def test_engine_mode_reports_the_real_version_and_ui(engine_client):
     assert "tavotto_health" in by_name
     for name in ("tavotto_open_figure", "tavotto_apply_overrides"):
         meta = by_name[name].get("_meta") or {}
-        assert meta.get("ui", {}).get("resourceUri") == WIDGET_URI
-        assert meta.get("openai/outputTemplate") == WIDGET_URI
+        # 画布不入库（ADR 0043）：有产物时必须挂 UI，没有时必须不挂——两头都不许撒谎
+        assert ("_meta" in by_name[name]) is _widget_available(), name
+        if _widget_available():
+            assert meta.get("ui", {}).get("resourceUri") == WIDGET_URI
+            assert meta.get("openai/outputTemplate") == WIDGET_URI
     for name in ("tavotto_preflight", "tavotto_export", "tavotto_close_session"):
         assert "_meta" not in by_name[name], f"{name} 不该挂 UI（画布会不停重建）"
 
@@ -188,7 +191,7 @@ def test_engine_mode_health_tool_says_ready(engine_client, tmp_path):
     assert not res.get("isError")
     body = res["structuredContent"]
     assert body["ok"] is True and body["engine"]["available"] is True
-    assert body["canvas"]["available"] is True
+    assert body["canvas"]["available"] is _widget_available(), "体检必须如实报画布在不在"
     assert str(tmp_path) in body["roots"]
 
 
