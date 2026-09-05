@@ -378,103 +378,98 @@ def serve_check(plugin_dir: Path, python: str, *, timeout: float = 90.0) -> list
     量的是「安装出来的东西真的能把画布交给 host」——不是 `available()` 那一格布尔，
     也不是文件非空。需要 `python` 能 import tavotto.engine（否则 server 降级、
     不声明资源，这里如实报出来）。
-    """
-    import threading
 
+    四条请求一次写进 stdin 再关掉（server 逐行处理、stdin 到头就退出），用
+    `subprocess.run` 的 communicate 排空两条管道——不开一个「稍后再读」的 PIPE
+    （tests/test_source_hygiene.py 对 scripts/ 里的 Popen 一律禁 PIPE，那条纪律的
+    来历是 soak 里 64 KiB 之后的死锁）。
+    """
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return [f"{server} 不存在"]
     env = {**os.environ}
     for name in ("TAVOTTO_MCP_WIDGET", "TAVOTTO_MCP_ROOTS", "TAVOTTO_MCP_WORKSPACE"):
         env.pop(name, None)
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {},
+                "clientInfo": {"name": "plugin_stage", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "resources/list"},
+        {"jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": {"uri": WIDGET_URI}},
+    ]
     with tempfile.TemporaryDirectory(prefix="plugin-serve-") as tmp:
         env["TAVOTTO_MCP_ROOTS"] = tmp
         env["TAVOTTO_DATA_DIR"] = os.path.join(tmp, "data")
         env["TAVOTTO_CONFIG_DIR"] = os.path.join(tmp, "config")
         env["TAVOTTO_NO_TELEMETRY"] = "1"
-        proc = subprocess.Popen(
-            [python, str(server)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            cwd=str(plugin_dir),
-        )
-        problems: list[str] = []
-        n = 0
-
-        def call(method: str, params: dict | None = None) -> dict:
-            nonlocal n
-            n += 1
-            msg: dict = {"jsonrpc": "2.0", "id": n, "method": method}
-            if params is not None:
-                msg["params"] = params
-            assert proc.stdin and proc.stdout
-            proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
-            proc.stdin.flush()
-            line = proc.stdout.readline()
-            if not line:
-                err = proc.stderr.read().decode("utf-8", "replace")[-2000:] if proc.stderr else ""
-                raise StageError(f"server 在 {method} 时挂了：{err}")
-            return json.loads(line.decode("utf-8"))
-
         try:
-            timer = threading.Timer(timeout, proc.kill)
-            timer.start()
-            try:
-                init = call(
-                    "initialize",
-                    {
-                        "protocolVersion": PROTOCOL,
-                        "capabilities": {},
-                        "clientInfo": {"name": "plugin_stage", "version": "1"},
-                    },
-                )
-                info = init.get("result", {}).get("serverInfo", {})
-                if info.get("version") in (None, "0"):
-                    problems.append(
-                        f"server 起来了但是降级模式（serverInfo.version={info.get('version')!r}）"
-                        f"：{python} import 不到 tavotto.engine，验不了资源"
-                    )
-                    return problems
-                tools = call("tools/list").get("result", {}).get("tools", [])
-                by_name = {t.get("name"): t for t in tools}
-                for name in ("tavotto_open_figure", "tavotto_apply_overrides"):
-                    meta = (by_name.get(name) or {}).get("_meta") or {}
-                    if meta.get("ui", {}).get("resourceUri") != WIDGET_URI:
-                        problems.append(f"{name} 没挂画布 _meta（server 认为画布不可用）")
-                listed = call("resources/list").get("result", {}).get("resources", [])
-                if [r.get("uri") for r in listed] != [WIDGET_URI]:
-                    problems.append(
-                        f"resources/list 不是恰好一块画布：{[r.get('uri') for r in listed]}"
-                    )
-                read = call("resources/read", {"uri": WIDGET_URI})
-                if "error" in read:
-                    problems.append(f"resources/read 报错：{read['error']}")
-                    return problems
-                contents = read.get("result", {}).get("contents", [])
-                if len(contents) != 1 or contents[0].get("mimeType") != WIDGET_MIME:
-                    problems.append(f"resources/read 形状不对：{str(contents)[:200]}")
-                    return problems
-                served = contents[0].get("text", "")
-                on_disk = (plugin_dir / GENERATED[0]).read_text(encoding="utf-8")
-                if served != on_disk:
-                    problems.append(
-                        f"server 交出去的画布与 {GENERATED[0]} 不是同一份"
-                        f"（{len(served)} vs {len(on_disk)} 字符）"
-                    )
-            finally:
-                timer.cancel()
-        except StageError as exc:
-            problems.append(str(exc))
-        finally:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-                proc.wait(timeout=30)
-            except (OSError, subprocess.TimeoutExpired):
-                proc.kill()
+            proc = subprocess.run(
+                [python, str(server)],
+                input="".join(json.dumps(r) + "\n" for r in requests),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                cwd=str(plugin_dir),
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return [f"server 在 {timeout}s 内没有处理完四条请求"]
+    replies: dict = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and "id" in msg:
+            replies[msg["id"]] = msg
+    problems: list[str] = []
+    if 1 not in replies:
+        return [f"server 没有回应 initialize（退出码 {proc.returncode}）：{proc.stderr[-2000:]}"]
+    info = replies[1].get("result", {}).get("serverInfo", {})
+    if info.get("version") in (None, "0"):
+        return [
+            f"server 起来了但是降级模式（serverInfo.version={info.get('version')!r}）"
+            f"：{python} import 不到 tavotto.engine，验不了资源"
+        ]
+    tools = replies.get(2, {}).get("result", {}).get("tools", [])
+    by_name = {t.get("name"): t for t in tools}
+    for name in ("tavotto_open_figure", "tavotto_apply_overrides"):
+        meta = (by_name.get(name) or {}).get("_meta") or {}
+        if meta.get("ui", {}).get("resourceUri") != WIDGET_URI:
+            problems.append(f"{name} 没挂画布 _meta（server 认为画布不可用）")
+    listed = replies.get(3, {}).get("result", {}).get("resources", [])
+    if [r.get("uri") for r in listed] != [WIDGET_URI]:
+        problems.append(f"resources/list 不是恰好一块画布：{[r.get('uri') for r in listed]}")
+    read = replies.get(4, {})
+    if "error" in read or not read:
+        problems.append(
+            f"resources/read 报错或没有回应：{read.get('error') if read else proc.stderr[-800:]}"
+        )
         return problems
+    contents = read.get("result", {}).get("contents", [])
+    if len(contents) != 1 or contents[0].get("mimeType") != WIDGET_MIME:
+        problems.append(f"resources/read 形状不对：{str(contents)[:200]}")
+        return problems
+    served = contents[0].get("text", "")
+    on_disk = (plugin_dir / GENERATED[0]).read_text(encoding="utf-8")
+    if served != on_disk:
+        problems.append(
+            f"server 交出去的画布与 {GENERATED[0]} 不是同一份（{len(served)} vs {len(on_disk)} 字符）"
+        )
+    return problems
 
 
 # ------------------------------------------------------------------ CLI

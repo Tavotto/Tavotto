@@ -382,12 +382,16 @@ def _tree_status() -> str:
         ["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout
 
 
 def test_stage_on_the_real_tree_leaves_the_tree_untouched(tmp_path):
     head = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     before = _tree_status()
     widget = kit.write_fake_widget(tmp_path / "canvas.html")
@@ -425,7 +429,10 @@ def test_stage_refuses_a_source_sha_that_is_not_head(tmp_path):
 
 def test_stage_refuses_a_missing_widget_and_leaves_nothing_behind(tmp_path):
     head = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     with pytest.raises(stage.StageError, match="画布"):
         stage.stage(
@@ -442,7 +449,10 @@ def test_stage_refuses_a_missing_widget_and_leaves_nothing_behind(tmp_path):
 
 def test_stage_refuses_a_non_empty_output_directory(tmp_path):
     head = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     widget = kit.write_fake_widget(tmp_path / "canvas.html")
     out = tmp_path / "s"
@@ -457,7 +467,10 @@ def test_stage_refuses_a_non_empty_output_directory(tmp_path):
 def test_stage_takes_sources_from_the_index_not_the_whole_directory(tmp_path):
     """工作区里多放的文件不进 staging；索引说了算。"""
     head = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     stray = ROOT / "codex-plugin" / "mcp" / "stray_untracked_file.txt"
     stray.write_text("do not ship\n", encoding="utf-8")

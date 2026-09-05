@@ -47,7 +47,11 @@ def _widget_builder():
 
 def _head() -> str:
     return subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     ).stdout.strip()
 
 
