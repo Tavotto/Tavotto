@@ -319,11 +319,7 @@ def test_usage_errors_exit_two_and_run_nothing(tmp_path):
     # 把跑测试的解释器所在目录放到最前面，而不是造一个替身文件：venv 的
     # `bin`/`Scripts` 里一定有 `python`(.exe)，两个平台都成立，且它是真解释器
     # （解析那一步真去 exec 它也不会翻车）。
-    env = {
-        "PATH": os.pathsep.join(
-            [os.path.dirname(sys.executable), os.environ.get("PATH", "")]
-        )
-    }
+    env = {"PATH": os.pathsep.join([os.path.dirname(sys.executable), os.environ.get("PATH", "")])}
     for argv, code in cases:
         res = nativekit.run_cli(*argv, cwd=tmp_path, env=env)
         assert res.returncode == runcodes.EXIT_USAGE, f"{argv}: {res.returncode}\n{res.stderr}"
