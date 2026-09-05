@@ -44,6 +44,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -296,7 +297,86 @@ def _tracebacks(text: str) -> list[str]:
 
 # ---------------------------------------------------------------- 两个阶段
 #: N-1 写进去、候选版要读回来的两样东西的名字。
+#: 名字**刻意带非 ASCII 与空格**——中文项目名/布局名是真实用法。
+#: 拼进 URL 路径时必须百分号转义：`http.client` 把请求行按 ascii 编码，
+#: 原样拼会抛 `UnicodeEncodeError`，而它外面裹着 try/except，表现是
+#: `layout_saved=False` 静静记进报告。产品那侧一直是对的
+#: （`web/src/lib/api.ts` 用 `encodeURIComponent`）——这里破的是**同源对**。
 LAYOUT_NAME = "升级布局"
+
+
+def is_offscreen_tick_phantom(el: dict) -> bool:
+    """这个元素是**视区外的幽灵刻度**吗——升级验收里唯一允许消失的一类。
+
+    matplotlib 的 `Axis.get_ticklabels()` 连视区外的刻度一起返回。实测
+    `tests/acceptance/corpus` 的 `c01_bar`：y 视区 `[0, 30.98]`，
+    `get_ticklabels()` 给 5 个（0/10/20/30/40）而 `_update_ticks()` 只有 4 个；
+    第 5 个 `axes_0.yticklabels_4`（刻度 “40”）的 bbox y = **-0.127**，整个在
+    画布下面。v0.12.0 把它列进元素表，v0.13.0 起排除——那是修复。
+
+    **只豁免刻度标签，不是「所有画布外的元素」。** 元素树
+    （`web/src/components/left/ElementTree.tsx`）直接按 `manifest.elements`
+    建树、**不看 bbox**，所以一个画布外的标注或图例用户**选得中也改得了**；
+    把它们一起豁免，等于给真正的丢失开一个洞。规则不能宽过它想守的现象。
+
+    量不出框、或框与画布还有交集的，一律**不算幽灵**（宁可多守）。
+    """
+    if el.get("role") != "ticklabel":
+        return False
+    b = el.get("bbox")
+    if not (isinstance(b, (list, tuple)) and len(b) == 4):
+        return False
+    try:
+        x, y, w, h = (float(v) for v in b)
+    except (TypeError, ValueError):
+        return False
+    intersects = x + w > 0 and y + h > 0 and x < 1 and y < 1
+    return not intersects
+
+
+def reachability_check(
+    want: "list[str]", els_new: "list[dict]", element_count: int
+) -> "tuple[str, bool, str]":
+    """「升级前够得着的元素一个都没丢」这条检查本身。
+
+    抽成纯函数是为了**钉得住空基线那一格**：它嵌在要起服务的函数里时，
+    唯一该拦的那一刻反而测不到。
+    """
+    name = "升级前够得着的元素一个都没丢"
+    if not want:
+        # **无从比对不算通过。** 这条判据的全部内容是「拿 N-1 的元素身份逐个
+        # 对」；基线是空的时候它一个都没对过，却会以「0 个都在」的样子报绿——
+        # 门禁把输入缺失读成了通过。N-1 的 manifest 空/畸形、或者它的元素被
+        # 判据全滤掉，都会走到这里，而那些恰恰是最该停下的时刻。
+        return (
+            name,
+            False,
+            f"N-1 没给出任何可比对的元素身份（它报了 {element_count} 个元素）——无从比对，不判通过",
+        )
+    missing = missing_reachable(want, els_new)
+    return (
+        name,
+        not missing,
+        f"{len(want)} 个都在" if not missing else f"丢了 {len(missing)} 个：{missing[:5]}",
+    )
+
+
+def missing_reachable(want: "list[str]", els_new: "list[dict]") -> "list[str]":
+    """升级前够得着、升级后不见了的元素。空表 = 没丢东西。
+
+    **包含而不是相等**：新版多出元素不是回归（例如寄生轴进 manifest），
+    少掉视区外的幽灵刻度也不是（见 `is_offscreen_tick_phantom`）。会伤到用户的只有一种——
+    他原本看得见、点得到的那个 gid 没了，保存的 override 就落不回去。
+    """
+    new_gids = {e.get("gid") for e in els_new if e.get("gid")}
+    return [g for g in want if g not in new_gids]
+
+
+def _layout_url(base: str) -> str:
+    """布局端点的 URL。转义只此一处，别在调用点各转各的。"""
+    return f"{base}/api/layouts/{urllib.parse.quote(LAYOUT_NAME, safe='')}"
+
+
 AUTOSAVE_ID = "upgrade-doc"
 
 
@@ -371,7 +451,13 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
             f"{s.base}/api/engine/render", {"id": target["id"], "patches": []}, timeout=600
         )
         manifest = first.get("manifest") or {}
-        facts["element_count"] = len(manifest.get("elements", []))
+        els_old = manifest.get("elements", [])
+        facts["element_count"] = len(els_old)
+        # 只记数量的话，判据就只能比数量——而数量分不清「丢了一个真元素」
+        # 和「不再统计幽灵」。记下**够得着的那些 gid**，让判据比身份。
+        facts["reachable_gids"] = sorted(
+            e.get("gid") for e in els_old if e.get("gid") and not is_offscreen_tick_phantom(e)
+        )
 
         import bench_render as BR  # 复用靶子挑选
 
@@ -411,7 +497,7 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
             "updatedAt": now_ms,
         }
         try:
-            SA._post(f"{s.base}/api/layouts/{LAYOUT_NAME}", doc, timeout=120)
+            SA._post(_layout_url(s.base), doc, timeout=120)
             facts["layout_saved"] = True
         except Exception as exc:  # noqa: BLE001
             facts["layout_saved"] = False
@@ -507,15 +593,28 @@ def verify_with_new(
             timeout=600,
         )
         m = res.get("manifest") or {}
-        n = len(m.get("elements", []))
+        els_new = m.get("elements", [])
+        n = len(els_new)
         checks.append(("老 patches 仍可渲染", bool(m), f"{n} 个元素"))
-        checks.append(
-            (
-                "元素数量与升级前一致",
-                n == facts["element_count"],
-                f"{n} vs {facts['element_count']}",
+        # **比身份，不比数量。** 用户会心疼的是「我那个元素不见了」，不是
+        # 「总数少了一个」；而这两件事只有比 gid 集合才分得开。数量相等曾把
+        # v0.13.0 修掉一个视区外幽灵刻度（见 `is_offscreen_tick_phantom`）判成回归——判据量的
+        # 维度错了，不是产品错了。
+        # 新增元素不算回归，所以是**包含**不是相等。
+        want = facts.get("reachable_gids") or []
+        checks.append(reachability_check(want, els_new, facts["element_count"]))
+        # 幽灵消失不是回归，但**要说出来**：静静少掉几个元素，下一个人会以为
+        # 是判据放宽了。
+        unreachable_before = facts["element_count"] - len(want)
+        if n != facts["element_count"]:
+            checks.append(
+                (
+                    "元素总数变化已被解释",
+                    True,
+                    f"{n} vs {facts['element_count']}（够得着的 {len(want)} 个全在；"
+                    f"升级前有 {unreachable_before} 个够不着的元素）",
+                )
             )
-        )
         warn = res.get("warnings") or []
         checks.append(("渲染无 warning", not warn, "无" if not warn else str(warn[:2])))
 
@@ -529,7 +628,7 @@ def verify_with_new(
             try:
                 names = layout_names(SA._get(f"{s.base}/api/layouts"))
                 checks.append(("老布局可列出", LAYOUT_NAME in names, str(names[:4])))
-                opened = SA._get(f"{s.base}/api/layouts/{LAYOUT_NAME}")
+                opened = SA._get(_layout_url(s.base))
                 ok, why = document_readback(opened, facts["panel_id"])
                 checks.append(("老布局可打开", ok, why))
             except Exception as exc:  # noqa: BLE001

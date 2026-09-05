@@ -1718,3 +1718,108 @@ def test_the_font_check_does_not_claim_more_than_it_measures(monkeypatch):
             f"「{check.name}」的措辞里出现了「退回/回退」——那是它量不到的那一维，"
             "不许写进判据说出口的话"
         )
+
+
+def test_only_offscreen_tick_labels_are_exempt_from_the_upgrade_check():
+    """升级验收里唯一允许消失的是**视区外的幽灵刻度**，别的都不许。
+
+    实测 `tests/acceptance/corpus` 的 `c01_bar`：y 视区 `[0, 30.98]`，
+    `get_ticklabels()` 给 5 个而 `_update_ticks()` 只有 4 个；第 5 个
+    （刻度 “40”）bbox 的 y = -0.127，整个在画布下面。v0.12.0 把它列进元素表，
+    v0.13.0 排除——那是修复，判据不该把它当回归。
+
+    但**画布外 ≠ 用户够不着**：元素树（`web/src/components/left/ElementTree.tsx`）
+    直接按 `manifest.elements` 建树、不看 bbox，画布外的标注/图例照样选得中、
+    改得了。豁免必须钉在「刻度标签」这个角色上，不能钉在「画布外」这个位置上，
+    否则真正的丢失会从这个洞里溜走。
+
+    下面的 bbox 是从那张图上实测抄来的。
+    """
+    ghost_tick = {
+        "gid": "axes_0.yticklabels_4",
+        "role": "ticklabel",
+        "bbox": [0.049382716, -0.127266949, 0.048611111, 0.058333333],
+    }
+    real_tick = {
+        "gid": "axes_0.yticklabels_3",
+        "role": "ticklabel",
+        "bbox": [0.049382716, 0.121320621, 0.048611111, 0.058333333],
+    }
+    assert UA.is_offscreen_tick_phantom(ghost_tick) is True
+    assert UA.is_offscreen_tick_phantom(real_tick) is False
+
+    # 画布外的**标注**不是幽灵：用户在元素树里选得中它，丢了必须红
+    offscreen_annotation = dict(ghost_tick, gid="axes_0.texts_0", role="text")
+    assert UA.is_offscreen_tick_phantom(offscreen_annotation) is False
+    offscreen_legend = dict(ghost_tick, gid="axes_0.legend", role="legend")
+    assert UA.is_offscreen_tick_phantom(offscreen_legend) is False
+
+    # 量不出框的一律不算幽灵（宁可多守）
+    assert UA.is_offscreen_tick_phantom({"gid": "x", "role": "ticklabel"}) is False
+    assert UA.is_offscreen_tick_phantom({"gid": "x", "role": "ticklabel", "bbox": "坏的"}) is False
+
+
+def test_layout_url_percent_encodes_the_name():
+    """布局名进 URL 路径必须百分号转义，且与产品同源。
+
+    `LAYOUT_NAME` 刻意带非 ASCII——中文布局名是真实用法。原样拼进 URL 时
+    `http.client` 按 ascii 编码请求行会抛 `UnicodeEncodeError`，而调用点外面
+    裹着 try/except，表现是 `layout_saved=False` 静静记进报告、验收照旧往下走。
+    产品那侧一直是对的（`web/src/lib/api.ts` 用 `encodeURIComponent`）。
+    """
+    import urllib.parse
+
+    assert any(ord(c) > 127 for c in UA.LAYOUT_NAME), "名字不带非 ASCII 的话这条就白守了"
+    url = UA._layout_url("http://127.0.0.1:1234")
+    assert url.isascii(), f"URL 仍含非 ASCII：{url}"
+    tail = url.rsplit("/", 1)[-1]
+    assert urllib.parse.unquote(tail) == UA.LAYOUT_NAME, "转义之后解不回原名"
+    # 请求行真的编得出来（这才是 http.client 那一步做的事）
+    url.encode("ascii")
+
+
+def test_missing_reachable_still_catches_a_real_loss():
+    """换成「包含」之后，**真丢元素仍然必须红**。
+
+    这条判据是从「元素数量严格相等」放宽来的（那条把 v0.13.0 排除幽灵刻度
+    误判成回归）。放宽了就必须证明它守的东西还在：用户原本点得到的 gid 没了，
+    他保存的 override 就落不回去——那才是升级验收要拦的。
+    """
+    want = ["axes_0", "axes_0.title", "axes_0.yticklabels_3"]
+    same = [{"gid": g} for g in want]
+    assert UA.missing_reachable(want, same) == []
+    # 新增不算回归（寄生轴进 manifest 就是这种）
+    assert UA.missing_reachable(want, same + [{"gid": "axes_1"}]) == []
+    # 真丢一个 → 必须报出来，且**点名是哪一个**
+    lost = [e for e in same if e["gid"] != "axes_0.title"]
+    assert UA.missing_reachable(want, lost) == ["axes_0.title"]
+    # 全丢光也不能静静过去
+    assert sorted(UA.missing_reachable(want, [])) == sorted(want)
+
+
+def test_an_empty_baseline_is_not_a_pass():
+    """基线为空时**不许判通过**——那是门禁把输入缺失读成通过。
+
+    这条判据的全部内容是「拿 N-1 的元素身份逐个对」。`want` 是空表时它一个
+    都没对过，却会以「0 个都在」的样子报绿：N-1 的 manifest 空了、畸形了、
+    或者它的元素被判据全滤掉——这些恰恰是最该停下的时刻，而它偏偏在这一刻
+    最安静。判据在，但它唯一该拦的那一刻它是绿的。
+    """
+    els_new = [{"gid": "axes_0"}, {"gid": "figure"}]
+    name, ok, detail = UA.reachability_check([], els_new, element_count=0)
+    assert ok is False, "空基线报了通过"
+    assert "无从比对" in detail
+    # N-1 明明报了元素、却一个身份都没留下：更该红，且要把那个数字说出来
+    name, ok, detail = UA.reachability_check([], els_new, element_count=28)
+    assert ok is False
+    assert "28" in detail, f"没说清 N-1 报了几个：{detail}"
+
+
+def test_reachability_check_passes_and_fails_on_real_shapes():
+    """正常两侧：没丢 → 绿；丢了 → 红且点名。"""
+    want = ["axes_0", "axes_0.title"]
+    same = [{"gid": g} for g in want]
+    _, ok, detail = UA.reachability_check(want, same, element_count=3)
+    assert ok is True and "2 个都在" in detail
+    _, ok, detail = UA.reachability_check(want, [{"gid": "axes_0"}], element_count=3)
+    assert ok is False and "axes_0.title" in detail
