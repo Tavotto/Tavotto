@@ -71,15 +71,42 @@ class FakeGitHub:
 class TestRealConfig:
     def test_config_parses_and_declares_the_hot_domains(self):
         d = _domains()
-        assert "mcp-widget" in d and "ci-control-plane" in d
+        assert "ci-control-plane" in d and "adr-numbering" in d and "root-agent-contract" in d
 
-    def test_web_src_and_canvas_html_share_the_widget_domain(self):
-        """本仓库最热的冲突：web/src 的改动经 build_mcp_widget.py 落进
-        canvas.html。两端必须在同一个域里，否则检查对它视而不见。"""
-        d = _domains()
-        spec = d["mcp-widget"]
-        assert CD.matches("web/src/canvas/ContextBar.tsx", spec["sources"])
-        assert CD.matches("codex-plugin/mcp/widget/canvas.html", spec["generated"])
+    def test_no_domain_declares_an_untracked_generated_path(self):
+        """声明了 `generated` 的域会把两个各改 sources 的 PR 判成「生成物重叠」。这个判定
+        只在生成物**真在索引里**时成立——画布不入库之后（ADR 0043），本仓库没有任何跟踪
+        的前端生成物，`mcp-widget` / `browser-playground` 两个域已删；这条钉住它们不回来。
+        判据用 `git ls-files` 问索引，不读配置写了什么。"""
+        import subprocess
+
+        for name, spec in _domains().items():
+            for pattern in spec.get("generated", []):
+                probe = pattern.split("*")[0].rstrip("/")
+                listed = subprocess.run(
+                    ["git", "-C", str(ROOT), "ls-files", "--", probe],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=True,
+                ).stdout.strip()
+                assert listed, (
+                    f"域 {name} 声明的 generated `{pattern}` 不在索引里——它会把无关的前端 PR "
+                    f"判成生成物重叠。生成物不入库就别声明它。"
+                )
+        assert "mcp-widget" not in _domains()
+        assert "browser-playground" not in _domains()
+
+    def test_two_frontend_prs_touching_different_files_do_not_warn(self, capsys):
+        """本次改造的核心验收（冲突域这一侧）：两个各改 web/src 不同文件的 PR，什么都不报。"""
+        fake = FakeGitHub(
+            {1: ["web/src/canvas/ContextBar.tsx"], 2: ["web/src/store/renderStore.ts"]}
+        )
+        rc = CD.run(REPO, 1, CONFIG, token=None, fetch=fake)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "::warning::" not in out
+        assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == []
 
     def test_every_declared_path_style_matches_something_plausible(self):
         d = _domains()
@@ -178,45 +205,71 @@ class TestGlob:
 
 
 # ============================================================ 重叠判定
+#: 机制用例用的**合成**域：一个声明了 sources + generated 的域。真实配置里已经没有这种域
+#: （生成物不入库了），但判定器的「不同源码、同一生成物」逻辑一个字没变，仍要看住。
+SYNTHETIC_DOMAINS = {
+    "domains": {
+        "synthetic-widget": {
+            "sources": ["web/src/**", "scripts/build_synthetic.py"],
+            "generated": ["generated/bundle.html"],
+            "policy": "stack-or-train",
+        },
+        "root-agent-contract": {"files": ["AGENTS.md", "CLAUDE.md"], "policy": "serialize"},
+    }
+}
+
+
+@pytest.fixture()
+def synthetic_config(tmp_path):
+    p = tmp_path / "conflict-domains.json"
+    p.write_text(json.dumps(SYNTHETIC_DOMAINS), encoding="utf-8")
+    return p
+
+
 class TestOverlaps:
-    def _run(self, my_pr, prs, **kw):
+    def _run(self, my_pr, prs, config=CONFIG, **kw):
         fake = FakeGitHub(prs, **kw)
-        rc = CD.run(REPO, my_pr, CONFIG, token=None, fetch=fake)
+        rc = CD.run(REPO, my_pr, config, token=None, fetch=fake)
         return rc, fake
 
-    def test_two_prs_both_touching_canvas_html(self, capsys):
+    def test_two_prs_both_touching_the_generated_bundle(self, capsys, synthetic_config):
         rc, _ = self._run(
             1,
-            {
-                1: ["codex-plugin/mcp/widget/canvas.html"],
-                2: ["codex-plugin/mcp/widget/canvas.html"],
-            },
+            {1: ["generated/bundle.html"], 2: ["generated/bundle.html"]},
+            config=synthetic_config,
         )
         out = capsys.readouterr().out
         assert rc == 0
-        assert "::warning::" in out and "mcp-widget" in out
+        assert "::warning::" in out and "synthetic-widget" in out
         payload = json.loads(out.strip().splitlines()[-1])
         assert payload["overlapping_prs"] == [2]
 
-    def test_source_change_vs_generated_change_is_an_indirect_overlap(self, capsys):
-        """一个改 web/src、一个带 canvas.html——文件毫无交集，仍然要报。"""
+    def test_source_change_vs_generated_change_is_an_indirect_overlap(
+        self, capsys, synthetic_config
+    ):
+        """一个改 web/src、一个带生成物——文件毫无交集，仍然要报（合成域）。"""
         rc, _ = self._run(
-            1, {1: ["web/src/canvas/ContextBar.tsx"], 2: ["codex-plugin/mcp/widget/canvas.html"]}
+            1,
+            {1: ["web/src/canvas/ContextBar.tsx"], 2: ["generated/bundle.html"]},
+            config=synthetic_config,
         )
         out = capsys.readouterr().out
         assert "生成物重叠" in out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == [2]
 
     def test_two_source_edits_in_a_generated_domain_are_a_generated_overlap(
-        self, capsys, tmp_path, monkeypatch
+        self, capsys, tmp_path, monkeypatch, synthetic_config
     ):
-        """两个 PR 各改 web/src 的**不同**文件、谁都没带 canvas.html——
-        合并时各自重建的仍是同一个 bundle。判定按域声明走（#120 评审 P2）：
-        声明了 generated 的域里 sources×sources 就是生成物重叠，建议 train。"""
+        """两个 PR 各改 web/src 的**不同**文件、谁都没带生成物——在一个**声明了 generated**
+        的域里（合成域），合并时各自重建的仍是同一个 bundle。判定按域声明走（#120 评审 P2）：
+        sources×sources 就是生成物重叠，建议 train。真实配置里已经没有这种域（ADR 0043），
+        所以真实配置下同样的两个 PR 什么都不报——见 TestRealConfig。"""
         summary = tmp_path / "s.md"
         monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
         rc, _ = self._run(
-            1, {1: ["web/src/canvas/ContextBar.tsx"], 2: ["web/src/store/renderStore.ts"]}
+            1,
+            {1: ["web/src/canvas/ContextBar.tsx"], 2: ["web/src/store/renderStore.ts"]},
+            config=synthetic_config,
         )
         out = capsys.readouterr().out
         assert "生成物重叠" in out, "warning 一档就要说出是生成物撞点"
@@ -241,9 +294,11 @@ class TestOverlaps:
         assert "::warning::" not in out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == []
 
-    def test_draft_prs_still_warn(self, capsys):
+    def test_draft_prs_still_warn(self, capsys, synthetic_config):
         """draft 也在开发、也会撞——不因为暂时不能合并就装看不见。"""
-        rc, _ = self._run(1, {1: ["web/src/a.ts"], 2: ["web/src/b.ts"]}, drafts={2})
+        rc, _ = self._run(
+            1, {1: ["web/src/a.ts"], 2: ["web/src/b.ts"]}, config=synthetic_config, drafts={2}
+        )
         out = capsys.readouterr().out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == [2]
 

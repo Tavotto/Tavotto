@@ -1206,7 +1206,9 @@ def test_widget_artifact_is_in_sync_with_the_frontend():
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_mcp_widget
 
-    have = build_mcp_widget.current_fingerprint()
+    override = os.environ.get("TAVOTTO_MCP_WIDGET")
+    out = Path(override) if override else build_mcp_widget.OUT
+    have = build_mcp_widget.current_fingerprint(out)
     if have is None:
         pytest.skip("画布产物未构建（源码检出后跑一次 scripts/build_mcp_widget.py）")
     assert have == build_mcp_widget.source_fingerprint(), (

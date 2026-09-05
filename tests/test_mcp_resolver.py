@@ -302,7 +302,9 @@ def test_health_in_an_engine_environment(capsys):
     assert report["engine_version"] not in (None, "0")
     assert any("新开一次会话" in n or "新开" in n for n in report["notes"])
     assert report["timings"]["health_ms"] < 5000, "体检要快，它是出图前的门槛"
-    assert report["widget"]["available"] is True, "画布产物应随仓库提交"
+    # 画布不再随仓库提交（ADR 0043）：体检报的 available 必须如实反映磁盘上有没有那份产物
+    canvas = PLUGIN / "mcp" / "widget" / "canvas.html"
+    assert report["widget"]["available"] is (canvas.is_file() and canvas.stat().st_size > 0)
 
 
 def test_plugin_version_is_read_from_the_manifest():

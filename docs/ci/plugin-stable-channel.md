@@ -17,8 +17,9 @@ python scripts/build_mcp_widget.py --check    # 0 一致 / 1 过期 / 2 还没�
 python codex-plugin/mcp/server.py --health    # widget.available 应为 true
 ```
 
-想像用户一样装本地版本：`codex plugin marketplace add /path/to/tavotto`（指向工作副本的
-本地市场）+ `codex plugin add tavotto@tavotto`。改了 `web/src` 重跑第一条命令即可，不必发 stable。
+想像用户一样装本地版本：`codex plugin marketplace add /path/to/tavotto/codex-plugin`（插件目录
+里的 dev 市场 `tavotto-dev`，仓库根那份指向发行分支）+ `codex plugin add tavotto@tavotto-dev`。
+改了 `web/src` 重跑第一条命令即可，不必发 stable。
 
 组装一份完整插件看看：
 
@@ -31,9 +32,12 @@ python scripts/plugin_stage.py verify build/plugin-stage --serve .venv/bin/pytho
 
 ## 1. 前置条件（PR A 落地之后、bootstrap 之前）
 
-1. **分支保护**（维护者一次性配置，`gh api` 需要 admin）。`contents: write` 本身写得到
-   任何分支，所以要靠 ruleset 把发行分支管起来：禁止删除、禁止非快进、只允许
-   GitHub Actions 更新。预览 / 执行：
+1. **分支保护**（已建：ruleset **22330299**「plugin-stable: machine maintained」，2026-09-05）。
+   仓库级 ruleset **不能把 GitHub Actions 设为 bypass actor**（API 422：Integration 必须属于
+   组织），所以 `update`（只允许 Actions 更新）那条做不到；现在只有 `deletion` +
+   `non_fast_forward`：分支删不掉、历史改不掉，但有 push 权限的人仍能快进推送。
+   发布器自己的判据（收据、树摘要重算、版本顺序）是第二道；仓库迁到组织之后再补
+   `update` + Actions bypass。当时的请求体：
 
    ```sh
    cat > /tmp/plugin-stable-ruleset.json <<'JSON'
@@ -42,25 +46,20 @@ python scripts/plugin_stage.py verify build/plugin-stage --serve .venv/bin/pytho
      "target": "branch",
      "enforcement": "active",
      "conditions": {"ref_name": {"include": ["refs/heads/plugin-stable"], "exclude": []}},
-     "rules": [
-       {"type": "deletion"},
-       {"type": "non_fast_forward"},
-       {"type": "update"}
-     ],
-     "bypass_actors": [
-       {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
-     ]
+     "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+     "bypass_actors": []
    }
    JSON
    gh api repos/Tavotto/Tavotto/rulesets --jq '.[] | {id,name,target}'          # 先看现状
    gh api -X POST repos/Tavotto/Tavotto/rulesets --input /tmp/plugin-stable-ruleset.json
    ```
-
-   `15368` 是 GitHub Actions app 的 integration id；`update` + bypass 只给 Actions =
-   人不能直接推这条分支。**把返回的 ruleset id 记进本文件下面的「线上状态」。**
 2. **环境**（可选但推荐）：Settings → Environments 建 `plugin-stable`，加 required reviewers；
    然后在 `release.yml` 的 `plugin_stable` job 与 `plugin-stable.yml` 加 `environment: plugin-stable`。
    没配也能跑（凭据仍是 `GITHUB_TOKEN`，只在那两个 job 上有 `contents: write`）。
+   发布器在自己的临时仓库里 push，`actions/checkout` 留在 checkout 本地 config 的凭据对它不可见——
+   两个 workflow 都在真推步骤前把 `GITHUB_TOKEN` 配成全局 `http.https://github.com/.extraheader`
+   （与 `actions/checkout` 同一形态；演练不配）。首次真跑就是这里死在 `could not read Username`，
+   读回报 not_landed（退出码 4），分支没建出来（run 33979476158）。
 3. `release.yml` 的 `plugin_stable` job 已在 `publish=false` 的演练里对临时 bare 仓库跑过
    bootstrap / no-op / 拒绝 / rollback，并对真实远端只读 `plan`。看一次演练的 run 再进入下一步。
 
@@ -167,5 +166,7 @@ ready」，看队列把它们组成一组、`CI fast gate` 在组合提交上绿
 
 ## 线上状态（改动时整段重写，不加行）
 
-- 2026-09-05：**发行分支未创建**；marketplace 入口仍是 `local ./codex-plugin`（PR B 未合）；
-  `plugin-stable` ruleset 未创建；线上合并队列 `max_entries_to_build = 1`（读取值）。
+- 2026-09-05：**发行分支未创建**（PR A #289 已入合并队列，bootstrap 等它落地后经
+  plugin-stable.yml 用 v0.12.0 执行）；marketplace 入口仍是 `local ./codex-plugin`（PR B #290 未合）；
+  `plugin-stable` ruleset 已建（22330299：deletion + non_fast_forward，无 Actions bypass）；
+  线上合并队列 `max_entries_to_build = 1`（读取值）。CodeQL alert #132 已按同族理由标为误报。

@@ -78,6 +78,10 @@ _canonical_yaml = pm.canonical_yaml
 _canonical_mcp = pm.canonical_mcp
 
 PLUGIN_SRC = ROOT / PLUGIN_SUBDIR
+#: `codex-plugin/.agents/plugins/marketplace.json`：开发者把工作副本当本地市场装
+#: （`codex plugin marketplace add /path/to/tavotto/codex-plugin` → `tavotto@tavotto-dev`）。
+#: 它不是插件的一部分，发行件里不带。
+DEV_ONLY_PREFIX = ".agents/"
 #: 确定性 zip 的时间戳（zip 最小合法值）；内容身份由 content_digest 说了算，不靠时间
 ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 #: `--serve` 时给 server 的协议版本（与 tests/test_mcp_stdio.py 一致）
@@ -131,6 +135,8 @@ def tracked_plugin_files(root: Path = ROOT) -> list[tuple[str, str]]:
             raise StageError(f"{path} 的 git 模式 {mode} 不是普通文件")
         if _is_generated(rel):
             continue  # 生成物不从索引取（PR B 之后它根本不在索引里）
+        if rel.startswith(DEV_ONLY_PREFIX):
+            continue  # 开发用的本地市场清单：只服务「指向工作副本」的安装，不随插件发出去
         files.append((rel, mode))
     if not files:
         raise StageError(f"{root} 里 `git ls-files {PLUGIN_SUBDIR}` 一个文件都没有")

@@ -1,16 +1,14 @@
 {
-  "name": "tavotto",
+  "name": "tavotto-dev",
   "interface": {
-    "displayName": "Tavotto"
+    "displayName": "Tavotto（工作副本）"
   },
   "plugins": [
     {
       "name": "tavotto",
       "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/Tavotto/Tavotto.git",
-        "path": "./codex-plugin",
-        "ref": "plugin-stable"
+        "source": "local",
+        "path": "."
       },
       "policy": {
         "installation": "AVAILABLE",

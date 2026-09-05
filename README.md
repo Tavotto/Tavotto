@@ -51,7 +51,7 @@ Pick what you need first:
 Run these in a terminal, one at a time:
 
 ```sh
-codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
 codex plugin add tavotto@tavotto
 pipx install "tavotto[worker]"
 ```
