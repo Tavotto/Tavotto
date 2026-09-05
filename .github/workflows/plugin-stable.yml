@@ -124,6 +124,19 @@ jobs:
           fi
           echo "STAGE=$STAGE" >> "$GITHUB_ENV"
 
+      - name: 给发布器的 git 配本仓库的推送凭据（只在真推时）
+        # 发布器在自己的临时仓库里 push，看不见 actions/checkout 写进 checkout 本地
+        # config 的凭据——首次真跑（run 33979476158）就死在 `could not read Username`，
+        # 读回正确报了 not_landed（退出码 4）。形态与 actions/checkout 一致：只对
+        # github.com 生效的 extraheader，不进任何 URL、不进收据。演练不需要它。
+        if: inputs.confirm == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git config --global "http.https://github.com/.extraheader" "AUTHORIZATION: basic $AUTH"
+
       - name: 发布器
         env:
           MODE: ${{ inputs.mode }}
@@ -184,6 +197,10 @@ jobs:
                   print(f"- {k}: `{p[k]}`")
           PY
           fi
+
+      - name: 撤掉推送凭据
+        if: always()
+        run: git config --global --unset-all "http.https://github.com/.extraheader" || true
 
       - name: 留下收据
         if: always()

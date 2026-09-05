@@ -32,6 +32,7 @@ RELEASE = WF / "release.yml"
 DESKTOP = WF / "desktop-tauri.yml"
 LAB = WF / "lab-ci.yml"
 REUSABLE = WF / "_lab-qualification.yml"
+PLUGIN_STABLE = WF / "plugin-stable.yml"
 
 
 def _strip_comments(text: str) -> str:
@@ -890,3 +891,42 @@ def test_the_gate_message_survives_a_non_utf8_default_encoding(tmp_path):
             "Windows 上这段字节会让父进程的 stderr 静默变成 None"
         ) from None
     assert "v9.9.9" in text, f"报文没说该并到哪一版：{text!r}"
+
+
+def _real_publisher_pushes(wf: _Workflow) -> list[tuple[str, int]]:
+    """真推发行分支的步骤：跑 plugin_publish.py、带 `--yes`（或 `$YES`）、且没有
+    `--remote`（演练用 `--remote "$R"` 指向临时 bare 仓库，只读 plan 没有 `--yes`）。"""
+    out = []
+    for job in wf.jobs:
+        for i, step in enumerate(wf.steps(job)):
+            if "plugin_publish.py" not in step:
+                continue
+            if not re.search(r"--yes|\$YES", step) or "--remote" in step:
+                continue
+            out.append((job, i))
+    return out
+
+
+def test_the_plugin_publisher_has_push_credentials_before_it_pushes():
+    """发布器在**自己的临时仓库**里 push，actions/checkout 写进 checkout 本地 config
+    的凭据对它不可见。首次真跑（plugin-stable.yml run 33979476158）死在
+    `could not read Username for 'https://github.com'`——读回正确报了 not_landed，
+    分支没建出来，但 bootstrap 一步都没往前走。临时 bare 仓库上的演练永远抓不到这
+    件事：file:// 不要凭据。
+
+    判据：每个真推发布器的步骤，同一 job 里**前面**必须有一步把 github.com 的
+    extraheader 配进全局 git config（与 actions/checkout 同一形态）。
+    """
+    found = 0
+    for wf in (_wf(RELEASE), _wf(PLUGIN_STABLE)):
+        pushes = _real_publisher_pushes(wf)
+        for job, i in pushes:
+            found += 1
+            earlier = "\n".join(wf.steps(job)[:i])
+            assert re.search(
+                r'git config --global "?http\.https://github\.com/\.extraheader"?\s+"AUTHORIZATION: basic',
+                earlier,
+            ), f"{wf.path.name}/{job}: 真推发布器的步骤前没有配推送凭据"
+    # release.yml 的 promote + plugin-stable.yml 的手动发布器；数目变了说明选择器或
+    # workflow 形状变了，两种都要人看一眼，而不是让判据静默缩到零
+    assert found == 2, f"真推发布器步骤数 {found} != 2"
