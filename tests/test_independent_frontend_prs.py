@@ -82,6 +82,7 @@ def test_two_frontend_branches_combine_without_a_generated_artifact_conflict(tmp
         ["git", "-C", str(clone), "merge", "--quiet", "--no-edit", "pr-b"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env={
             **os.environ,
             "GIT_AUTHOR_NAME": "t",

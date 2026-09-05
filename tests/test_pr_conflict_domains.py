@@ -87,6 +87,7 @@ class TestRealConfig:
                     ["git", "-C", str(ROOT), "ls-files", "--", probe],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                     check=True,
                 ).stdout.strip()
                 assert listed, (
