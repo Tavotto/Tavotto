@@ -503,13 +503,12 @@ jobs:
       # 根 tsconfig 是 `files: []` + references 的方案文件，--noEmit 不走项目引用、
       # 什么都不编，恒绿——一个报平安的空门禁比没有门禁更坏。
       - run: pnpm build
-      # Codex 内嵌画布是 web/src 打出来的单文件产物，随插件一起提交进仓库。
-      # 改了前端却没重跑它，用户在 Codex 里装到的画布就是上一版——功能全在、
-      # 只是旧，零报错。指纹算法纯 Python，这一步不需要 Node。
-      # （过渡期：ADR 0043 的 PR B 之后画布不再入库，这一步随之退休。）
-      - name: MCP 画布产物与前端源码同步
+      # 画布产物不入库（ADR 0043）：一个功能提交把它加回索引，用户拿不到更新的画布
+      # （安装入口读的是发行分支），只会把合并队列拖回「同一份 HTML 必撞」。在 PR 上就拦，
+      # main 落地审计再查一次。判据问的是索引（git ls-files），不是 .gitignore 写了什么。
+      - name: 发行生成物不许进索引
         working-directory: .
-        run: python3 scripts/build_mcp_widget.py --check
+        run: python3 scripts/ci/check_generated_untracked.py
       # ── 完整插件候选（ADR 0043）─────────────────────────────────────────
       # 从**本次实际 checkout**（PR = 合并提交；merge_group = 队列组合提交）真构建
       # 画布，按 git 清单 + 显式构建物组装完整插件、逐条验证、打成确定性 zip 上传。
@@ -585,6 +584,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # 核心验收要真跑一次 vite（见下面最后一步），所以这个 job 也装 Node
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
       - uses: actions/download-artifact@v4
         with:
           name: codex-plugin-candidate
@@ -600,6 +610,10 @@ jobs:
           python3 scripts/plugin_stage.py verify "$PLUGIN" --source-sha "$SHA" --content-digest "$DIGEST" --serve "$(command -v python)"
           echo "TAVOTTO_PLUGIN_CANDIDATE=$PLUGIN" >> "$GITHUB_ENV"
       - name: 依赖真实插件的用例（在这里必须执行，不许 skip）
+        env:
+          # 源码树里的 server / widget 模块加载**候选**那份画布：test_mcp_stdio /
+          # test_mcp_server 里真验产品画布的用例（干净 checkout 上 skip）在这里必须跑。
+          TAVOTTO_MCP_WIDGET: ${{ env.TAVOTTO_PLUGIN_CANDIDATE }}/mcp/widget/canvas.html
         run: |
           set -euo pipefail
           python -m pytest -q -rA tests/test_plugin_candidate.py 2>&1 | tee "$RUNNER_TEMP/candidate-pytest.log"
@@ -608,12 +622,34 @@ jobs:
             echo "::error::候选验证用例里有 skip——有真实产物时它们必须执行"
             exit 1
           fi
+          python -m pytest -q -rs tests/test_mcp_stdio.py tests/test_mcp_server.py -k "widget or canvas" \
+            2>&1 | tee "$RUNNER_TEMP/widget-pytest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED.*(画布|widget|canvas)" "$RUNNER_TEMP/widget-pytest.log"; then
+            echo "::error::画布用例在有真产物的 job 上 skip 了——它们在这里必须执行"
+            exit 1
+          fi
           {
             echo "### 完整插件候选"
             echo ""
             echo "- 插件目录：\`$TAVOTTO_PLUGIN_CANDIDATE\`"
-            echo "- pytest：$(tail -1 "$RUNNER_TEMP/candidate-pytest.log")"
+            echo "- pytest（候选）：$(tail -1 "$RUNNER_TEMP/candidate-pytest.log")"
+            echo "- pytest（画布用例）：$(tail -1 "$RUNNER_TEMP/widget-pytest.log")"
           } >> "$GITHUB_STEP_SUMMARY"
+      # ── 核心验收（ADR 0043）：两个互不相关的前端分支从同一基线各改一处生产前端位置，
+      # 先合 A、再不改写 B 地合 B，从组合后的树真构建画布、组装插件、真起 server——
+      # 两个改动都必须出现在产物里。这条证明的是生成物冲突的根因已消除；真实 Merge
+      # Queue 的双候选另需两条真实 PR（docs/ci/plugin-stable-channel.md 第 6 节）。
+      - name: 核心验收：两个独立前端分支组合后真构建、真起 server
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rs tests/test_independent_frontend_prs.py 2>&1 | tee "$RUNNER_TEMP/acceptance.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED" "$RUNNER_TEMP/acceptance.log"; then
+            echo "::error::核心验收在有 Node 的 job 上 skip 了——它在这里必须执行"
+            exit 1
+          fi
+          echo "- 核心验收：$(tail -1 "$RUNNER_TEMP/acceptance.log")" >> "$GITHUB_STEP_SUMMARY"
 
   # Rust supervisor 的静态门禁。desktop-tauri.yml 里也有一份，但那个工作流只在
   # 打 tag / workflow_dispatch 时跑——改了 workerd 的 PR 因此一路全绿，要等到
@@ -1445,8 +1481,8 @@ jobs:
               sys.exit("\n".join(bad))
           print("workflow YAML 全部可解析")
           PY
-      - name: 受管生成物一致性（MCP 画布指纹，纯 Python，不需要 Node）
-        run: python3 scripts/build_mcp_widget.py --check
+      - name: 发行生成物不许进索引（ADR 0043）
+        run: python3 scripts/ci/check_generated_untracked.py
       - name: CI 结构契约（不依赖科学栈的那部分）
         # 这些测试只读文件与脚本、纯标准库：Gate 闭集、merge_group 触发、
         # 并发不取消队列、发布编排契约、Ruleset 迁移工具、冲突域检查。

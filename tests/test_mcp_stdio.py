@@ -30,6 +30,13 @@ SERVER = ROOT / "codex-plugin" / "mcp" / "server.py"
 WIDGET_URI = "ui://tavotto/canvas/v1.html"
 
 
+def _widget_available() -> bool:
+    """server 会加载的那份画布在不在（`TAVOTTO_MCP_WIDGET` 可指到候选产物）。"""
+    override = os.environ.get("TAVOTTO_MCP_WIDGET")
+    path = Path(override) if override else ROOT / "codex-plugin" / "mcp" / "widget" / "canvas.html"
+    return path.is_file() and path.stat().st_size > 0
+
+
 class Client:
     def __init__(self, argv_python: str, env: dict, cwd: str | None = None):
         self.proc = subprocess.Popen(
@@ -161,6 +168,10 @@ def test_engine_mode_reports_the_real_version_and_ui(engine_client):
 
 
 def test_engine_mode_serves_the_canvas_resource(engine_client):
+    if not _widget_available():
+        pytest.skip(
+            "画布产物未构建：本地跑一次 scripts/build_mcp_widget.py；CI 在 plugin-candidate job 上对真产物执行"
+        )
     engine_client.call("initialize", {"protocolVersion": "2025-11-25"})
     listed = engine_client.call("resources/list")["result"]["resources"]
     assert [r["uri"] for r in listed] == [WIDGET_URI]
