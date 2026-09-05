@@ -59,7 +59,11 @@ ROLES = {
     "updater-manifest": {"unique": True},
     "sbom": {"unique": False},
     "checksums": {"unique": True},
-    "codex-plugin": {"unique": False},
+    # 完整 Codex 插件（ADR 0043）：zip / 版本清单 / 随包构建清单各恰好一个——
+    # Release 上挂两个 zip、发行分支推其中一个，用户装到的就不是验过的那份。
+    "codex-plugin": {"unique": True},
+    "codex-plugin-manifest": {"unique": True},
+    "codex-plugin-build": {"unique": True},
 }
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
