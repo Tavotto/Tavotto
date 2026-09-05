@@ -430,21 +430,8 @@ def verify_dir(
             f"{path} 的 sha256 对不上（清单 {entry['sha256'][:12]}…，磁盘 {got[:12]}…）"
             + ("——发行文件被改过" if installed else "")
         )
-    if installed and pinned_commands:
-        for path in [r for r in listed if is_pinnable(r)]:
-            if path not in pinned_commands:
-                # 一侧钉了、另一侧还是原值：这正是同源对被拆开的形状
-                spec = manifest.get("pinnable", {}).get(path, {})
-                pinned_commands[path] = list(spec.get("commands", []))
-        mcp_cmds = set(pinned_commands.get(PINNABLE_MCP, []))
-        yaml_cmds = {
-            c for path, cmds in pinned_commands.items() if path != PINNABLE_MCP for c in cmds
-        }
-        if mcp_cmds and yaml_cmds and mcp_cmds != yaml_cmds:
-            problems.append(
-                f".mcp.json 的 command {sorted(mcp_cmds)} 与 openai.yaml 的 {sorted(yaml_cmds)} "
-                f"不一致——严格同源对只钉了一侧"
-            )
+    # 两份启动清单的 command 是否一致在上面 seen_commands 那一段已经判过（有没有清单都判），
+    # 这里不再判第二遍——同一条保证实现两遍，变异反证时会互相掩护。
 
     recomputed = content_digest(
         [(e["path"], e["mode"], e["sha256"]) for e in manifest.get("files", [])]
