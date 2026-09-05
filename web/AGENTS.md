@@ -13,16 +13,16 @@
   什么都不编、恒假绿。
 - 跑过 `scripts/build_frontend.py` 之后包内 `src/tavotto/web/` 优先于 `web/dist`，
   改完前端要么再同步一次，要么把它删掉退回开发态。
-- **改了 web/src 就得重建两个受管产物**：`python scripts/build_mcp_widget.py`
-  （Codex 内嵌画布）与 `python scripts/build_browser_playground.py`（/try），
-  各有 `--check` 防漂移。
+- **改了 web/src**：playground 产物 `python scripts/build_browser_playground.py`（/try，网站
+  仓库提交，`--check` 防漂移）照旧；Codex 内嵌画布 `python scripts/build_mcp_widget.py`
+  **不再入库**（ADR 0043）——本地构建只为试用，CI 从每次 checkout 现建并验证完整插件，
+  两个各改 `web/src` 的 PR 不再为同一份 HTML 相撞。
 - **注释里别写完整的 Tailwind 类名。** 扫描器不分代码和注释：一句文档里出现某个
   「还没人真用过」的工具类名，它就会被当成用到了，往产物 CSS 里凭空加一条规则
   （2026-09-03 实测，#210 的 PR 里踩到——一条 e2e 注释给 `canvas.html` 加了一条
   淡出动画的规则）。要提就写成不成立的形态（`animate-fade-in/out`）或直接用中文
-  描述。重建产物后逐行看一眼 diff：
-  `git diff -U0 --word-diff=porcelain codex-plugin/mcp/widget/canvas.html`，
-  预期只有 `tavotto-mcp-widget <指纹>` 那一行变。
+  描述。画布不再入库，看不到 diff 了——判据换成 CI `plugin-candidate` job 里真起 server 读回
+  的资源与构建物逐字相同；想本地对比就构建两次到不同 `--out` 再 diff。
 - 界面用 agent-browser 实测；黄金路径 E2E `cd web && pnpm e2e`（Playwright，
   先 `python scripts/build_frontend.py`）。
 

@@ -153,8 +153,9 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   是前端「这个字导出后是不是方框」的唯一依据，漂了不看住的表现是
   「预览说画得出、导出上是个方框」。
 - 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
-  **两个受管产物都要重建**——`python scripts/build_mcp_widget.py` 与
-  `python scripts/build_browser_playground.py`（各有 `--check`）。
+  playground 产物 `python scripts/build_browser_playground.py`（网站仓库提交它，`--check`
+  防漂移）；Codex 画布 `python scripts/build_mcp_widget.py` **只为本地试用**——它不进 git
+  （ADR 0043），CI 从每次 checkout 现建并验证，用户装到的来自发行分支 `plugin-stable`。
 - 引擎改动后重启服务：
   `lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
 - 完整验证链（CompatBench / 等价性矩阵 / 不变式 / nightly / E2E / 性能基线）

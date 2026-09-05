@@ -17,8 +17,9 @@ python scripts/build_mcp_widget.py --check    # 0 一致 / 1 过期 / 2 还没�
 python codex-plugin/mcp/server.py --health    # widget.available 应为 true
 ```
 
-想像用户一样装本地版本：`codex plugin marketplace add /path/to/tavotto`（指向工作副本的
-本地市场）+ `codex plugin add tavotto@tavotto`。改了 `web/src` 重跑第一条命令即可，不必发 stable。
+想像用户一样装本地版本：`codex plugin marketplace add /path/to/tavotto/codex-plugin`（插件目录
+里的 dev 市场 `tavotto-dev`，仓库根那份指向发行分支）+ `codex plugin add tavotto@tavotto-dev`。
+改了 `web/src` 重跑第一条命令即可，不必发 stable。
 
 组装一份完整插件看看：
 

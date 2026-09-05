@@ -24,6 +24,7 @@ except ModuleNotFoundError:  # tomllib 是 3.11 才进标准库的；3.10 上只
 import pytest
 
 import tavotto
+from tavotto.engine import brand
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "codex-plugin"
@@ -58,8 +59,21 @@ def test_marketplace_points_at_the_plugin():
     data = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
     entry = data["plugins"][0]
     assert entry["name"] == "tavotto"
-    assert entry["source"] == {"source": "local", "path": "./codex-plugin"}
-    assert (ROOT / entry["source"]["path"]).is_dir()
+    # ADR 0043：插件本体来自发行分支，不再是源码 checkout 里的目录
+    assert entry["source"] == {
+        "source": "git-subdir",
+        "url": brand.CODEX_PLUGIN_SOURCE_URL,
+        "path": f"./{brand.CODEX_PLUGIN_SUBDIR}",
+        "ref": brand.CODEX_PLUGIN_STABLE_BRANCH,
+    }
+    # 开发用的本地市场：根就是插件目录，装的是工作副本
+    dev = json.loads(
+        (PLUGIN / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+    )
+    assert dev["name"] == "tavotto-dev" and dev["plugins"][0]["source"] == {
+        "source": "local",
+        "path": ".",
+    }
 
 
 def test_marketplace_policy_uses_values_codex_accepts():
@@ -194,10 +208,7 @@ def test_skill_entry_requires_a_new_session_when_tools_are_missing():
     assert "不要在旧会话里继续假装工具可用" in text
     # 两条安装命令分开写、sparse 双路径，在恢复 reference 里
     recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
-    assert (
-        "codex plugin marketplace add Tavotto/Tavotto "
-        "--sparse .agents/plugins --sparse codex-plugin"
-    ) in recovery
+    assert SPARSE_CMD in recovery
     assert "codex plugin add tavotto@tavotto" in recovery
     assert "&&" not in recovery.split("```sh")[1].split("```")[0], "安装命令要分开跑，不用 && 串联"
 
@@ -1299,14 +1310,23 @@ def test_plugin_zip_refuses_to_ship_without_the_widget(tmp_path):
     assert not (tmp_path / "nope.zip").exists(), "拦住了就不该留下半个 zip"
 
 
-def test_widget_artifact_is_committed_next_to_the_server():
-    """产物不在仓库里 = 用户装完插件只有一个空目录（server 会如实降级）。"""
-    canvas = PLUGIN / "mcp" / "widget" / "canvas.html"
-    if not canvas.is_file():
-        pytest.skip("画布产物未构建（跑一次 scripts/build_mcp_widget.py）")
-    text = canvas.read_text(encoding="utf-8")
-    assert text.startswith("<!-- tavotto-mcp-widget ")
-    assert '<div id="root">' in text
+def test_widget_artifact_is_not_tracked_and_is_ignored():
+    """画布产物**不进 git**（ADR 0043）：判据问索引（`git ls-files`），不问 .gitignore 写了什么；
+    再问一次 `git check-ignore`——没被忽略的话 `git add -A` 会把它顺手收进提交。"""
+    rel = "codex-plugin/mcp/widget/canvas.html"
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--", rel], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert tracked == "", f"{rel} 还在索引里——用户装到的画布来自发行分支，源码分支不该跟踪它"
+    ignored = subprocess.run(
+        ["git", "-C", str(ROOT), "check-ignore", "-q", rel], capture_output=True
+    )
+    assert ignored.returncode == 0, f"{rel} 没被 .gitignore 挡住，git add -A 会把本地构建物收进提交"
+    # marketplace 入口指向发行分支，而不是源码 checkout
+    data = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
+    src = data["plugins"][0]["source"]
+    assert src["source"] == "git-subdir" and src["ref"] == "plugin-stable", src
+    assert src["url"].endswith("Tavotto/Tavotto.git") and src["path"] == "./codex-plugin"
 
 
 # ------------------------- prefs.py 的行为契约 ----------------------------
@@ -1432,8 +1452,13 @@ READMES = {
     "zh": ROOT / "README.zh-CN.md",
     "en": ROOT / "README.md",
 }
-SPARSE_CMD = (
-    "codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin"
+#: 安装命令由 brand.py 派生（唯一出处）：README / 插件 README / 恢复文档三处必须逐字相同
+SPARSE_CMD = " ".join(
+    [
+        "codex plugin marketplace add",
+        brand.CODEX_MARKETPLACE,
+        *[f"--sparse {p}" for p in brand.CODEX_SPARSE_PATHS],
+    ]
 )
 
 
@@ -1579,13 +1604,14 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     """
     home = tmp_path / "codex-home"
     home.mkdir()
-    proc = _codex(["plugin", "marketplace", "add", str(ROOT)], home)
+    # 仓库根的市场清单指向发行分支（ADR 0043）；「装工作副本」走插件目录里的 dev 市场
+    proc = _codex(["plugin", "marketplace", "add", str(PLUGIN)], home)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    proc = _codex(["plugin", "add", "tavotto@tavotto"], home)
+    proc = _codex(["plugin", "add", "tavotto@tavotto-dev"], home)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     proc = _codex(["plugin", "list"], home)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "tavotto" in proc.stdout
+    assert "tavotto@tavotto-dev" in proc.stdout
 
     # CODEX_HOME 里能找到插件本体的关键文件（缓存布局是实现细节，按内容找）
     found = {name: False for name in ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}

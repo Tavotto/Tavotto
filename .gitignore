@@ -71,7 +71,10 @@ tools/*/target/
 /Magplot Brand System.html
 /Tavotto Brand System.html
 
-# MCP App 画布的中间产物（最终单文件在 codex-plugin/mcp/widget/canvas.html，那个进 git）
+# Codex 内嵌画布（scripts/build_mcp_widget.py 生成）：**不进 git**（ADR 0043）。用户装到的
+# 来自发行分支 plugin-stable，由 CI 从固定源码状态构建、验证、发布；本地构建一次即可试用。
+# web/dist-mcp/ 是旧版构建器的中间目录（现在写临时目录），留着挡住旧工作副本里的残留。
+codex-plugin/mcp/widget/canvas.html
 web/dist-mcp/
 web/dist-playground/
 
