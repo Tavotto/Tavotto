@@ -572,7 +572,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # 全历史：候选用例要把本次 checkout 推成一个临时 bare 仓库的 main（发行分支投影 +
+      # 稀疏克隆回读那一条），浅克隆推不出去（"shallow update not allowed"，2026-09-05 首跑实测）。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

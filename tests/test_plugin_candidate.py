@@ -110,6 +110,11 @@ def test_an_isolated_install_from_a_local_stable_branch(plugin, tmp_path):
     pub = kit.load_script("plugin_publish")
     stage = _stage()
     # 临时远端的 main = 本次 checkout 的 HEAD：候选的 source_sha 必须可达 main 才能发布
+    shallow = kit.git("rev-parse", "--is-shallow-repository", cwd=ROOT)
+    assert shallow != "true", (
+        "本仓库是浅克隆，推不出完整历史（shallow update not allowed）——CI 的 plugin-candidate "
+        "job 用 fetch-depth: 0；本地先 git fetch --unshallow"
+    )
     remote = tmp_path / "remote.git"
     kit.git("init", "--quiet", "--bare", str(remote))
     kit.git("push", "--quiet", str(remote), "HEAD:refs/heads/main", cwd=ROOT)
