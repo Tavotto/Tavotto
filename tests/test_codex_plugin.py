@@ -1316,7 +1316,11 @@ def test_widget_artifact_is_not_tracked_and_is_ignored():
     再问一次 `git check-ignore`——没被忽略的话 `git add -A` 会把它顺手收进提交。"""
     rel = "codex-plugin/mcp/widget/canvas.html"
     tracked = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files", "--", rel], capture_output=True, text=True, check=True
+        ["git", "-C", str(ROOT), "ls-files", "--", rel],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     ).stdout.strip()
     assert tracked == "", f"{rel} 还在索引里——用户装到的画布来自发行分支，源码分支不该跟踪它"
     ignored = subprocess.run(

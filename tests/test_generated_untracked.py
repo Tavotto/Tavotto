@@ -61,6 +61,7 @@ def test_the_real_repository_is_clean():
         ["git", "-C", str(ROOT), "ls-files", "--", "codex-plugin/mcp/widget/canvas.html"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     ).stdout
     assert listed.strip() == ""
