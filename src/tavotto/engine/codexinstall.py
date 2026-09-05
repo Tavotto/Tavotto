@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import atomicio, brand
+from . import atomicio, brand, pluginmanifest
 from .runtime import CREATE_NO_WINDOW
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
@@ -42,6 +42,19 @@ ERR_INTERPRETER = "interpreter_unusable"
 ERR_PIN = "pin_failed"
 ERR_HEALTH = "health_failed"
 ERR_UNINSTALL = "uninstall_failed"
+#: 「不知道」是独立一档，不并进「没有」：`codex plugin … list` 本身失败时，登记状态
+#: 与安装状态都答不上来，这时候跑 add 是在盲改。
+ERR_MARKETPLACE_UNKNOWN = "marketplace_state_unknown"
+ERR_PLUGIN_UNKNOWN = "plugin_state_unknown"
+#: marketplace 已登记，但 Codex 没把 tavotto 列出来：市场清单里的来源类型这个客户端
+#: 不认识（`git-subdir` 需要较新的 Codex），或快照太旧。跑 `plugin add` 只会失败。
+ERR_SOURCE_UNSUPPORTED = "plugin_source_unsupported"
+#: 定位不到**唯一**的已装副本（多份同名缓存、或客户端没报路径）：不按版本号 / mtime 猜
+ERR_PLUGIN_AMBIGUOUS = "plugin_install_ambiguous"
+#: 已装副本的画布缺失 / 空 / 损坏，或与随包清单的摘要不符
+ERR_CANVAS = "canvas_incomplete"
+#: 引擎版本低于已装插件要求的最低版本
+ERR_ENGINE_OLD = "engine_too_old"
 
 #: 单条 Codex 命令的上限。marketplace add 要拉一次稀疏检出，给宽一点；
 #: 但必须有上限——没有网络时它会一直挂着，而调用方在等那行 JSON。
@@ -125,6 +138,24 @@ def _last_json(text: str) -> dict | None:
     return None
 
 
+def _json_output(text: str) -> dict | None:
+    """`codex … --json` 的输出：整段 pretty-printed JSON（多行），前面可能混着 stderr。
+
+    先整段解析；不行就从第一个 `{` 起解析；再不行退回「最后一行」（`--health` 那种）。
+    """
+    stripped = text.strip()
+    for candidate in (stripped, stripped[stripped.find("{") :] if "{" in stripped else ""):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return _last_json(text)
+
+
 def _runs_python(candidate: str) -> bool:
     """`candidate` 是不是一个**跑得起来**的 Python——判据是跑一遍，不是 which。
 
@@ -156,22 +187,209 @@ def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
     return False, f"退出码 {rc}，没有体检 JSON：{(out[-160:] or '（零输出）')}"
 
 
-def installed_plugin_dir() -> Path | None:
-    """已装插件在 Codex 那边的落点（`$CODEX_HOME/plugins/**/.codex-plugin/plugin.json`）。
+def _is_our_plugin_dir(path: Path) -> bool:
+    manifest = path / ".codex-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return data.get("name") == brand.CODEX_PLUGIN_NAME
 
-    按**清单里的 name** 认，不按目录名：目录名带缓存哈希，会随版本变。
+
+def cached_plugin_dirs() -> list[Path]:
+    """Codex 缓存里**我们这个 marketplace 名下**的插件副本（每个版本一个目录）。
+
+    只看 `plugins/cache/<marketplace>/<plugin>/*`——别的 marketplace（用户自己的
+    fork、指向工作副本的本地市场）里同名的 plugin.json 不是我们的对象。
     """
-    root = codex_home() / "plugins"
-    if not root.is_dir():
-        return None
-    for manifest in sorted(root.rglob(".codex-plugin/plugin.json")):
-        try:
-            data = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+    base = (
+        codex_home() / "plugins" / "cache" / brand.CODEX_MARKETPLACE_NAME / brand.CODEX_PLUGIN_NAME
+    )
+    if not base.is_dir():
+        return []
+    return sorted(p for p in base.iterdir() if p.is_dir() and _is_our_plugin_dir(p))
+
+
+def _marketplace_state(codex: str) -> dict:
+    """`codex plugin marketplace list` 里我们这条的**状态**（不是布尔）。
+
+    三档：`registered` / `absent` / `unknown`——命令本身失败时是 unknown，不是 absent，
+    否则 install 会对着一个答不上来的问题跑 `marketplace add`。优先 `--json`（能读到
+    来源类型与快照根目录）；老客户端没有 `--json` 时退回文本表，按 MARKETPLACE 列
+    **整列相等**判（ROOT 列是路径，里面出现 tavotto 太容易了）。
+    """
+    rc, out = _run([codex, "plugin", "marketplace", "list", "--json"])
+    data = _json_output(out) if rc == 0 else None
+    if isinstance(data, dict) and isinstance(data.get("marketplaces"), list):
+        for entry in data["marketplaces"]:
+            if not isinstance(entry, dict) or entry.get("name") != brand.CODEX_MARKETPLACE_NAME:
+                continue
+            src = entry.get("marketplaceSource") or {}
+            return {
+                "state": "registered",
+                "source_type": src.get("sourceType"),
+                "source": src.get("source"),
+                "root": entry.get("root"),
+            }
+        return {"state": "absent", "source_type": None, "source": None, "root": None}
+    rc, out = _run([codex, "plugin", "marketplace", "list"])
+    if rc != 0:
+        return {
+            "state": "unknown",
+            "detail": out[-300:],
+            "source_type": None,
+            "source": None,
+            "root": None,
+        }
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] == brand.CODEX_MARKETPLACE_NAME:
+            root = line[len(parts[0]) :].strip() or None
+            return {"state": "registered", "source_type": None, "source": None, "root": root}
+    return {"state": "absent", "source_type": None, "source": None, "root": None}
+
+
+def _plugin_state(codex: str) -> dict:
+    """`codex plugin list -m tavotto` 里我们这条的状态：`installed` / `available` /
+    `absent` / `unknown`，加版本、来源与（文本表里的）安装路径。
+
+    坑（Codex 在 PR #169 上指出）：marketplace 加好但插件还没装时，`plugin list`
+    **照样会列出** `tavotto@tavotto`，只是 STATUS 是「not installed」——那是 `available`，
+    不是 `installed`。列都不列（`absent`）又是另一件事：这个客户端不认识市场清单里的
+    来源类型，或快照太旧。
+    """
+    state: dict = {
+        "state": "unknown",
+        "version": None,
+        "enabled": None,
+        "source": None,
+        "path": None,
+    }
+    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME, "--json"])
+    data = _json_output(out) if rc == 0 else None
+    if isinstance(data, dict) and isinstance(data.get("installed"), list):
+        hit = None
+        for entry in data.get("installed", []) + data.get("available", []):
+            if isinstance(entry, dict) and entry.get("pluginId") == brand.CODEX_PLUGIN_REF:
+                hit = entry
+                break
+        if hit is None:
+            state["state"] = "absent"
+        else:
+            state["state"] = "installed" if hit.get("installed") else "available"
+            state["version"] = hit.get("version")
+            state["enabled"] = hit.get("enabled")
+            state["source"] = hit.get("source")
+    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME])
+    if rc != 0:
+        if state["state"] == "unknown":
+            state["detail"] = out[-300:]
+        return state
+    path_col = None
+    for line in out.splitlines():
+        if line.startswith("PLUGIN") and "PATH" in line:
+            path_col = line.index("PATH")
             continue
-        if data.get("name") == brand.CODEX_PLUGIN_NAME:
-            return manifest.parent.parent
-    return None
+        parts = line.split()
+        if not parts or parts[0] != brand.CODEX_PLUGIN_REF:
+            continue
+        status = line[len(parts[0]) :].strip().lower()
+        if state["state"] == "unknown":
+            state["state"] = "installed" if status.startswith("installed") else "available"
+        if path_col is not None and len(line) > path_col:
+            state["path"] = line[path_col:].strip() or None
+        if state["version"] is None and len(parts) >= 4:
+            # 文本表：PLUGIN STATUS VERSION PATH（STATUS 可能是「installed, enabled」）
+            for token in parts[1:]:
+                if re.fullmatch(r"\d+\.\d+\.\d+", token):
+                    state["version"] = token
+                    break
+        break
+    else:
+        if state["state"] == "unknown":
+            state["state"] = "absent"
+    return state
+
+
+def locate_installed_plugin(state: dict) -> tuple[Path | None, str, str]:
+    """已装副本在哪：(目录, 说明, 错误码)。
+
+    先信客户端自己报的路径（`plugin list` 的 PATH 列）；报不出来时才看缓存——而且
+    只看我们 marketplace 名下那一层，**恰好一个**才认。多个版本并存（升级后旧缓存
+    还在）时不按最高版本号猜：Codex 用哪个由它说了算，这里报歧义并把候选列出来。
+    """
+    # 1. 本地来源（local marketplace 里的插件目录）：PATH 列就是它加载的那个目录。
+    #    **git 来源时 PATH 列是来源描述**（`file://…, path \`codex-plugin\`, ref …`，
+    #    codex 0.151 实测），不是路径——所以只在它确实是一份插件目录时才信。
+    reported = state.get("path")
+    if reported:
+        p = Path(reported)
+        if p.is_dir() and _is_our_plugin_dir(p):
+            return p, f"Codex 报的安装路径：{p}", ""
+    # 2. git / npm 来源：Codex 装进 cache/<marketplace>/<plugin>/<版本>，`plugin list`
+    #    报的 version 就是它此刻启用的那一份（目录名 == 版本号，codex 0.151 实测）。
+    cached = cached_plugin_dirs()
+    version = state.get("version")
+    if version:
+        by_version = [p for p in cached if p.name == version]
+        if len(by_version) == 1:
+            return by_version[0], f"Codex 启用的版本 {version}：{by_version[0]}", ""
+    # 3. 版本也报不出来：缓存里恰好一份才认；零份或多份都是歧义，不猜
+    if len(cached) == 1:
+        return cached[0], f"缓存里唯一一份：{cached[0]}", ""
+    if not cached:
+        return (
+            None,
+            "Codex 没报出能定位的安装路径或版本，缓存里也没有 tavotto 插件"
+            + (f"（PATH 列：{reported}）" if reported else ""),
+            ERR_PLUGIN_AMBIGUOUS,
+        )
+    return (
+        None,
+        "Codex 没报出能定位的安装路径或版本，缓存里有多份同名插件，不按版本号或时间猜："
+        + "、".join(str(p) for p in cached),
+        ERR_PLUGIN_AMBIGUOUS,
+    )
+
+
+def installed_plugin_dir() -> Path | None:
+    """兼容入口：缓存里**唯一**的一份；零份或多份都回 None（歧义不猜）。"""
+    cached = cached_plugin_dirs()
+    return cached[0] if len(cached) == 1 else None
+
+
+def plugin_channel(marketplace_root: str | None) -> dict:
+    """marketplace 快照里 tavotto 条目的来源形状 → 这份安装走的是哪条通道。
+
+    * `stable`：`git-subdir` 指向官方仓库的发行分支（ADR 0043 的目标形态）；
+    * `legacy-local`：`local ./codex-plugin`（把仓库本体当插件装，画布靠版本库里那份）；
+    * `custom`：别的仓库 / 别的 ref / 本地工作副本——用户自己的选择，不改；
+    * `unknown`：读不到快照。
+    """
+    if not marketplace_root:
+        return {"channel": "unknown", "source": None}
+    p = Path(marketplace_root) / ".agents" / "plugins" / "marketplace.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        entry = next(e for e in data.get("plugins", []) if e.get("name") == brand.CODEX_PLUGIN_NAME)
+    except (OSError, ValueError, StopIteration, AttributeError):
+        return {"channel": "unknown", "source": None}
+    src = entry.get("source")
+    if isinstance(src, str):
+        src = {"source": "local", "path": src}
+    if not isinstance(src, dict):
+        return {"channel": "unknown", "source": None}
+    kind = src.get("source")
+    if kind == "local":
+        legacy = src.get("path") in (f"./{brand.CODEX_PLUGIN_SUBDIR}", brand.CODEX_PLUGIN_SUBDIR)
+        return {"channel": "legacy-local" if legacy else "custom", "source": src}
+    if (
+        kind == "git-subdir"
+        and src.get("url") in (brand.CODEX_PLUGIN_SOURCE_URL, brand.REPO_URL)
+        and src.get("ref") == brand.CODEX_PLUGIN_STABLE_BRANCH
+    ):
+        return {"channel": "stable", "source": src}
+    return {"channel": "custom", "source": src}
 
 
 def plugin_python() -> str | None:
@@ -381,45 +599,54 @@ def _step(name: str, *, ok: bool, skipped: bool = False, detail: str = "", code:
 
 
 def _marketplace_configured(codex: str) -> bool:
-    """`codex plugin marketplace list` 的 MARKETPLACE 列里有没有我们这条。
-
-    按**整列相等**判，不是子串：ROOT 那一列是路径，里面出现 `tavotto` 太容易了
-    （用户的目录名、缓存路径都可能带上它），子串匹配会把「没登记」判成「已登记」，
-    然后 `plugin add` 找不到源而失败——症状离原因很远。
-    """
-    rc, out = _run([codex, "plugin", "marketplace", "list"])
-    if rc != 0:
-        return False
-    for line in out.splitlines():
-        parts = line.split()
-        if parts and parts[0] == brand.CODEX_MARKETPLACE_NAME:
-            return True
-    return False
+    """兼容入口：登记了才 True（unknown 也是 False——调用方要分档就用 `_marketplace_state`）。"""
+    return _marketplace_state(codex)["state"] == "registered"
 
 
 def _plugin_installed(codex: str) -> bool:
-    """`codex plugin list` 里我们这条的 **STATUS 列**是不是「已安装」。
-
-    这里踩过一个坑（Codex 在 PR #169 上指出）：marketplace 加好但插件还没装时，
-    `plugin list` **照样会列出** `tavotto@tavotto`，只是 STATUS 是「not installed」。
-    拿「输出里有没有 tavotto」当判据，全新安装会被判成「已装」而跳过 `plugin add`，
-    后面的 cache 查找与 health 全挂——**主流程反而走不通**。
-    """
-    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME])
-    if rc != 0:
-        return False
-    for line in out.splitlines():
-        parts = line.split()
-        if not parts or parts[0] != brand.CODEX_PLUGIN_REF:
-            continue
-        status = line[len(parts[0]) :].strip().lower()
-        return status.startswith("installed")
-    return False
+    """兼容入口：STATUS 是「已安装」才 True。"""
+    return _plugin_state(codex)["state"] == "installed"
 
 
-def _marketplace_step(codex: str, *, apply: bool) -> dict:
-    if _marketplace_configured(codex):
-        return _step("marketplace", ok=True, skipped=True, detail="已登记")
+def _describe_source(mk: dict) -> str:
+    st, src = mk.get("source_type"), mk.get("source")
+    if not src:
+        return "已登记"
+    official = src in (brand.CODEX_PLUGIN_SOURCE_URL, brand.REPO_URL, brand.CODEX_MARKETPLACE)
+    tag = "官方源" if official else "自定义来源（不改）"
+    return f"已登记：{st or '?'} {src}（{tag}）"
+
+
+def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
+    mk = _marketplace_state(codex)
+    summary["marketplace"] = {
+        "registered": mk["state"] == "registered",
+        "state": mk["state"],
+        "source_type": mk.get("source_type"),
+        "source": mk.get("source"),
+        "root": mk.get("root"),
+    }
+    if mk["state"] == "unknown":
+        # 「不知道」不是「没有」：这时候跑 add 是盲改
+        return _step(
+            "marketplace",
+            ok=False,
+            code=ERR_MARKETPLACE_UNKNOWN,
+            detail="`codex plugin marketplace list` 跑不出结论，登记状态不明："
+            + (mk.get("detail") or "（零输出）"),
+        )
+    if mk["state"] == "registered":
+        channel = plugin_channel(mk.get("root"))
+        summary["channel"] = channel
+        detail = _describe_source(mk)
+        if channel["channel"] == "legacy-local":
+            detail += (
+                "；快照里的插件条目仍是旧的本地来源（把仓库本体当插件装）。"
+                "跑 `codex plugin marketplace upgrade tavotto` 刷新快照即可换到发行通道"
+            )
+        elif channel["channel"] == "stable":
+            detail += f"；插件来源 = 发行分支 {brand.CODEX_PLUGIN_STABLE_BRANCH}"
+        return _step("marketplace", ok=True, skipped=True, detail=detail)
     if not apply:
         return _step("marketplace", ok=False, detail="未登记", code=ERR_MARKETPLACE)
     argv = [codex, "plugin", "marketplace", "add", brand.CODEX_MARKETPLACE]
@@ -428,20 +655,118 @@ def _marketplace_step(codex: str, *, apply: bool) -> dict:
     rc, out = _run(argv)
     if rc != 0:
         return _step("marketplace", ok=False, detail=out[-400:], code=ERR_MARKETPLACE)
+    mk = _marketplace_state(codex)
+    summary["marketplace"].update(
+        {"registered": mk["state"] == "registered", "state": mk["state"], "root": mk.get("root")}
+    )
+    summary["channel"] = plugin_channel(mk.get("root"))
     return _step("marketplace", ok=True, detail="已登记")
 
 
-def _plugin_step(codex: str, *, apply: bool) -> dict:
-    if _plugin_installed(codex):
+def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
+    st = _plugin_state(codex)
+    summary["plugin"] = {
+        "state": st["state"],
+        "version": st.get("version"),
+        "enabled": st.get("enabled"),
+        "source": st.get("source"),
+        "path": st.get("path"),
+    }
+    if st["state"] == "unknown":
+        return _step(
+            "plugin",
+            ok=False,
+            code=ERR_PLUGIN_UNKNOWN,
+            detail="`codex plugin list` 跑不出结论，安装状态不明："
+            + (st.get("detail") or "（零输出）"),
+        )
+    if st["state"] == "installed":
         # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`，
         # 由用户自己决定什么时候做；这条命令的职责是「缺什么补什么」。
-        return _step("plugin", ok=True, skipped=True, detail="已安装")
+        return _step(
+            "plugin",
+            ok=True,
+            skipped=True,
+            detail=f"已安装 {st.get('version') or ''}".strip()
+            + (f"（{st['path']}）" if st.get("path") else ""),
+        )
+    if st["state"] == "absent":
+        return _step(
+            "plugin",
+            ok=False,
+            code=ERR_SOURCE_UNSUPPORTED,
+            detail="marketplace 已登记，但 Codex 没有列出 tavotto 插件——多半是这个 Codex "
+            "版本不认识市场清单里的来源类型（发行通道用 git-subdir，需要较新的 Codex），"
+            "或本机快照太旧。先 `codex plugin marketplace upgrade tavotto`；仍然没有就升级 Codex。",
+        )
     if not apply:
         return _step("plugin", ok=False, detail="未安装", code=ERR_PLUGIN)
     rc, out = _run([codex, "plugin", "add", brand.CODEX_PLUGIN_REF])
     if rc != 0:
         return _step("plugin", ok=False, detail=out[-400:], code=ERR_PLUGIN)
+    st = _plugin_state(codex)
+    summary["plugin"].update(
+        {
+            "state": st["state"],
+            "version": st.get("version"),
+            "enabled": st.get("enabled"),
+            "path": st.get("path"),
+        }
+    )
     return _step("plugin", ok=True, detail="已安装")
+
+
+def _locate_step(summary: dict) -> tuple[Path | None, dict | None]:
+    """定位唯一的已装副本；歧义时给一条失败步骤而不是猜一个。"""
+    plugin_dir, detail, code = locate_installed_plugin(summary.get("plugin") or {})
+    summary.setdefault("plugin", {})["install_dir"] = str(plugin_dir) if plugin_dir else None
+    if plugin_dir is None:
+        return None, _step("plugin", ok=False, code=code, detail=detail)
+    return plugin_dir, None
+
+
+def _canvas_step(plugin_dir: Path | None, summary: dict) -> dict:
+    """已装副本的画布**完整吗**（不是「文件在不在」）。
+
+    随包清单在时按清单核对（允许两份启动清单一起钉 command，其余文件逐字节比）；
+    旧发行件没有清单时至少验画布本身合格、启动清单没有第二份实现改过它。这一步
+    **只读**：不重装、不修补——画布不完整的处方是重新装插件（先 `codex plugin remove`），
+    不是在这里悄悄补文件。
+    """
+    if plugin_dir is None:
+        summary["canvas"] = {"complete": False, "reason": "找不到已装的插件"}
+        return _step("canvas", ok=False, code=ERR_CANVAS, detail="找不到已装的插件，无从检查画布")
+    try:
+        manifest = pluginmanifest.read_manifest(plugin_dir)
+    except pluginmanifest.PluginManifestError as exc:
+        summary["canvas"] = {"complete": False, "reason": str(exc)}
+        return _step("canvas", ok=False, code=ERR_CANVAS, detail=f"随包清单坏了：{exc}")
+    if manifest is None:
+        problems = pluginmanifest.verify_dir(plugin_dir, legacy=True, installed=True)
+        kind = "旧发行件（没有随包清单），只验画布本身与启动清单"
+    else:
+        problems = pluginmanifest.verify_dir(plugin_dir, installed=True)
+        kind = f"按随包清单核对（{manifest.get('plugin_version')} · content {str(manifest.get('content_digest'))[:12]}）"
+    summary["canvas"] = {
+        "complete": not problems,
+        "reason": "；".join(problems) if problems else None,
+        "verified_against_manifest": manifest is not None,
+        "min_tavotto_version": (manifest or {}).get("min_tavotto_version"),
+        "content_digest": (manifest or {}).get("content_digest"),
+        "source_sha": (manifest or {}).get("source_sha"),
+    }
+    if problems:
+        return _step(
+            "canvas",
+            ok=False,
+            code=ERR_CANVAS,
+            detail=kind
+            + "："
+            + "；".join(problems)[:600]
+            + "。处方：`codex plugin remove tavotto@tavotto` 后重新 `codex plugin add tavotto@tavotto`，"
+            "再跑一次 `tavotto codex install`。",
+        )
+    return _step("canvas", ok=True, skipped=True, detail=kind + "：完整")
 
 
 def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dict:
@@ -543,7 +868,7 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
     )
 
 
-def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
+def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict:
     if plugin_dir is None:
         return _step("health", ok=False, detail="找不到已装的插件", code=ERR_HEALTH)
     if py is None:
@@ -555,8 +880,30 @@ def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
         )
     server = plugin_dir / "mcp" / "server.py"
     rc, out = _run([py, str(server), "--health"], timeout=90)
+    report = _last_json(out) or {}
+    engine_version = report.get("engine_version")
+    required = (summary.get("canvas") or {}).get("min_tavotto_version")
+    have = pluginmanifest.semver(engine_version if isinstance(engine_version, str) else None)
+    want = pluginmanifest.semver(required)
+    satisfied = None if (have is None or want is None) else have >= want
+    summary["engine"] = {
+        "version": engine_version,
+        "min_required": required,
+        "satisfied": satisfied,
+        "python": report.get("python"),
+        "mode": report.get("mode"),
+    }
     if rc != 0:
         return _step("health", ok=False, detail=out[-400:], code=ERR_HEALTH)
+    if satisfied is False:
+        return _step(
+            "health",
+            ok=False,
+            code=ERR_ENGINE_OLD,
+            detail=f"引擎 {engine_version} 低于已装插件要求的最低版本 {required}——插件的桥 import "
+            f"不动这么老的引擎。升级引擎（pipx upgrade tavotto / 升级桌面版），"
+            f"或把插件退回与引擎匹配的版本。",
+        )
     return _step("health", ok=True, detail=out[-400:])
 
 
@@ -579,28 +926,48 @@ def _codex_or_fail(steps: list[dict]) -> str | None:
     return codex
 
 
-def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict]]:
+def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict], dict]:
+    """安装 / 诊断流水线。回 (ok, steps, summary)。
+
+    `summary` 回答四个问题：装的是哪份插件（版本、路径）、来自哪里（marketplace
+    来源与通道）、画布完整吗、引擎版本满足要求吗。它是 `--json` 输出的补充字段，
+    `steps` 的契约一个字不变。
+    """
     steps: list[dict] = []
+    summary: dict = {
+        "marketplace": None,
+        "channel": None,
+        "plugin": None,
+        "canvas": None,
+        "engine": None,
+    }
     codex = _codex_or_fail(steps)
     if codex is None:
-        return False, steps
-    steps.append(_marketplace_step(codex, apply=apply))
+        return False, steps, summary
+    steps.append(_marketplace_step(codex, apply=apply, summary=summary))
     if not steps[-1]["ok"]:
-        return False, steps
-    steps.append(_plugin_step(codex, apply=apply))
+        return False, steps, summary
+    steps.append(_plugin_step(codex, apply=apply, summary=summary))
     if not steps[-1]["ok"]:
-        return False, steps
-    plugin_dir = installed_plugin_dir()
+        return False, steps, summary
+    plugin_dir, failure = _locate_step(summary)
+    if failure is not None:
+        steps.append(failure)
+        return False, steps, summary
     py = plugin_python()
     steps.append(_engine_step(plugin_dir, py, apply=apply))
     if not steps[-1]["ok"]:
-        return False, steps
+        return False, steps, summary
     # 引擎之后、体检之前：自管 runtime 这时候才存在，解释器该从它里面挑
     steps.append(_interpreter_step(plugin_dir, py, apply=apply))
     if not steps[-1]["ok"]:
-        return False, steps
-    steps.append(_health_step(plugin_dir, py))
-    return steps[-1]["ok"], steps
+        return False, steps, summary
+    # 钉完启动命令再验完整性：允许的本地修改正是刚才那一步做的
+    steps.append(_canvas_step(plugin_dir, summary))
+    if not steps[-1]["ok"]:
+        return False, steps, summary
+    steps.append(_health_step(plugin_dir, py, summary))
+    return steps[-1]["ok"], steps, summary
 
 
 def uninstall_steps() -> tuple[bool, list[dict]]:
@@ -638,10 +1005,14 @@ def uninstall_steps() -> tuple[bool, list[dict]]:
     return all(s["ok"] for s in steps), steps
 
 
-def _emit(ok: bool, action: str, steps: list[dict], *, as_json: bool) -> int:
+def _emit(
+    ok: bool, action: str, steps: list[dict], *, as_json: bool, summary: dict | None = None
+) -> int:
     failed = next((s for s in steps if not s["ok"]), None)
     if as_json:
         payload = {"ok": ok, "action": action, "steps": steps}
+        if summary is not None:
+            payload["summary"] = summary
         if failed and failed.get("error_code"):
             payload["error_code"] = failed["error_code"]
             payload["error"] = failed.get("detail", "")
@@ -669,6 +1040,7 @@ def cli(argv: list[str]) -> int:
 
     if args.action == "uninstall":
         ok, steps = uninstall_steps()
+        summary = None
     else:
-        ok, steps = _run_pipeline(apply=args.action == "install")
-    return _emit(ok, args.action, steps, as_json=args.json)
+        ok, steps, summary = _run_pipeline(apply=args.action == "install")
+    return _emit(ok, args.action, steps, as_json=args.json, summary=summary)
