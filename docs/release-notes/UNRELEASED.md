@@ -11,21 +11,3 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
-
-## Notes
-
-**Rotated text, shapes and arrows now export in the direction the canvas
-shows them — check documents where you worked around the old behaviour.**
-Symptom: an annotation you rotated to 90° came out of the PDF export
-mirrored, at 270°, so the way to get the angle you wanted was to type the
-opposite one. That is fixed — the exported PDF now matches the canvas.
-Trigger: any document saved before this release that contains a rotated
-text box, shape or arrow whose angle was chosen to compensate; re-exporting
-it now produces the mirrored angle. Tavotto does not correct those angles
-for you: a 270° that was a workaround and a 270° you actually wanted are
-identical in the file, and guessing would silently rewrite your work.
-What to do: open the document and look at the rotated annotations on the
-canvas — the canvas has always shown the angle you typed, so an angle that
-looks wrong there is the old workaround. Set each one to the angle you
-actually want. What you see on the canvas is now what the export produces.
-(#244, follows #215)

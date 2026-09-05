@@ -152,12 +152,36 @@ pip install --index-url https://test.pypi.org/simple/ \
 
 ## 发一个新版本
 
-1. 改 `src/tavotto/__init__.py` 里的 `__version__`（版本号唯一出处）。
-2. 写 `docs/release-notes/vX.Y.Z.md`（见下）：**先把
+这一节的每一步都有一条判据看着它——**下面写的是去哪看，不是把判据的内容
+再抄一遍**。抄一份就是第二份权威，迟早与判据漂开。
+
+1. 改 `src/tavotto/__init__.py` 里的 `__version__`——**版本号唯一权威**。
+
+   发布产物还会在别的文件里把版本号印出去（桌面壳、workerd、Codex 插件清单
+   ……），它们必须跟着一起动。**那些位置不在这份文档里列**：枚举在
+   `tests/test_source_hygiene.py` 的 `_VERSION_SITES`，那条用例逐条看着它们等于
+   `__version__`。改完跑一次，还差谁它会逐个点名：
+
+   ```sh
+   python -m pytest tests/test_source_hygiene.py -k version
+   ```
+
+   这一步此前只写了 `__version__` 一处，照着做在 v0.13.0 上会红五条。漏一处的
+   表现是「装完显示的版本和发布页对不上」，而发布链没有任何一步会失败。
+
+2. 写 `docs/release-notes/vX.Y.Z.md`（体例见下）：**先把
    `docs/release-notes/UNRELEASED.md` 里的待发条目搬进来并从那边删掉**
-   ——那里放的是已经合进 main、但还没有任何一版告诉用户的行为变更与
-   迁移提示。带着没搬走的段落打 tag，`release.yml` 会当场红
-   （`scripts/check_pending_release_notes.py`）。
+   ——那里放的是已经合进 main、但还没有任何一版告诉用户的行为变更与迁移提示
+   （说明注释留在原处，搬走的只是 `## ` 段落）。搬完跑一次，还没并入它会
+   逐条点名：
+
+   ```sh
+   python scripts/check_pending_release_notes.py --tag vX.Y.Z
+   ```
+
+   带着没搬走的段落打 tag，`release.yml` 的「拼 release body」会当场红——
+   这道闸就是这个脚本。
+
 3. 提交、打 tag、推送：
 
    ```sh
@@ -293,9 +317,17 @@ python scripts/make_plugin_manifest.py --tag v0.7.1 \
 3. 用户下次调用插件时看到提醒，执行
    `codex plugin marketplace upgrade tavotto` 并重载 Codex。
 
-改 `min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
-那个值会让本机 Tavotto 更老的用户看到「去升级 Tavotto」的提示。当前是 `0.7.0`
-——第一个带 `tavotto open` 的版本，没有它交接根本无从谈起。
+`min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）的判据是
+**「桥 import 得动吗」**：它必须等于第一个装得下 `mcp/server.py::_BRIDGE_IMPORT`
+那整组引擎模块的版本。所以——
+
+> **改了 `bridge.py` 的 import 集，就要回来重估 `MIN_TAVOTTO_VERSION`。**
+
+漏掉这一步不会有任何红灯，但会让老引擎的用户按「有新插件」的提示只升插件，
+然后撞上降级 server，而诊断还会把他们误报成「你装的是桌面版」。v0.13.0 就是
+这么一次：桥新增 import 了 `previewbudget` / `profilestore` / `project_refresh`
+（都晚于 v0.12.0），常量却还停在 `0.7.0`——那是桥只 import `handoff` 的年代
+留下的理由。
 
 排障与用户侧开关（`TAVOTTO_UPDATE_URL` / `TAVOTTO_DISABLE_UPDATE_CHECK`）见
 `docs/handoff-protocol.md`。

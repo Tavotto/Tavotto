@@ -1029,13 +1029,40 @@ def test_plugin_manifest_min_tavotto_version_is_real(tmp_path):
     """`min_tavotto_version` 必须是真发过的版本，且不高于当前版本。
 
     随手往上调会让一批老用户看到「去升级 Tavotto」，而他们的 Tavotto 可能
-    完全够用。当前值是第一个带 `tavotto open` 的版本。
+    完全够用。**注意这一条只钉了「太高」那一边**，留太低它照样绿——另一边由
+    `test_min_tavotto_version_is_reestimated_when_the_bridge_imports_change` 钉。
     """
     mod, data = _make_manifest(tmp_path, "v" + tavotto.__version__)
     required = data["min_tavotto_version"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", required), required
     assert tuple(map(int, required.split("."))) <= tuple(map(int, tavotto.__version__.split(".")))
     assert mod.MIN_TAVOTTO_VERSION == required
+
+
+def test_min_tavotto_version_is_reestimated_when_the_bridge_imports_change():
+    """`MIN_TAVOTTO_VERSION` 守的是「桥 import 得动吗」，不是「有没有 `tavotto open`」。
+
+    上面那条只钉了「调太高」那一边（`required <= 当前版本`），**留太低照样绿**
+    ——v0.13.0 前夜就是这样：桥早已新增 import 了 previewbudget / profilestore /
+    project_refresh（都晚于 v0.12.0），常量还停在 `0.7.0`。后果不是崩，是老引擎
+    的用户按「有新插件」的提示只升插件，撞上降级 server，而诊断还会把他们误报
+    成「你装的是桌面版」。
+
+    这一条钉另一边：桥的 import 集一变就红，逼人回去重估那个版本号。
+    """
+    src = (PLUGIN / "mcp" / "tavotto_mcp" / "bridge.py").read_text(encoding="utf-8")
+    actual = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom) and node.module == "tavotto.engine":
+            actual |= {a.name for a in node.names}
+    assert actual, "bridge.py 里没找到 tavotto.engine 的 import？"
+    mod = _manifest_module()
+    pinned = set(mod.BRIDGE_IMPORTS_AT_MIN)
+    assert actual == pinned, (
+        f"桥的 import 集变了：多出 {sorted(actual - pinned)}、少了 {sorted(pinned - actual)}。"
+        f"先回答「这个插件最低还能配哪个 Tavotto」再定 MIN_TAVOTTO_VERSION"
+        f"（现在是 {mod.MIN_TAVOTTO_VERSION}），然后把 BRIDGE_IMPORTS_AT_MIN 同步过来。"
+    )
 
 
 def test_plugin_zip_contains_the_skill(tmp_path):
