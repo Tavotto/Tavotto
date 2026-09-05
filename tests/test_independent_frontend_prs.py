@@ -49,8 +49,19 @@ def test_two_frontend_branches_combine_without_a_generated_artifact_conflict(tmp
     kit.git("clone", "--quiet", "--shared", "--no-checkout", str(ROOT), str(clone))
     kit.git("checkout", "--quiet", "-b", "base", cwd=clone)
     base = kit.git("rev-parse", "HEAD", cwd=clone)
-    # node_modules 借本仓库的（pnpm 的 store 链接对 vite 透明），不重新安装
-    os.symlink(ROOT / "web" / "node_modules", clone / "web" / "node_modules")
+    # 克隆里自己 pnpm install：store 已经热了（本仓库刚装过），秒级；软链本仓库的
+    # node_modules 会触发 pnpm 的项目路径核对并要求交互式确认
+    install = subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(clone / "web"),
+        env={**os.environ, "CI": "true"},
+        timeout=600,
+    )
+    assert install.returncode == 0, install.stdout[-1500:] + install.stderr[-1500:]
 
     # ---- 两个分支，各改一个不同的生产前端文件，都不提交 HTML ----
     kit.git("checkout", "--quiet", "-b", "pr-a", "base", cwd=clone)
@@ -103,7 +114,7 @@ def test_two_frontend_branches_combine_without_a_generated_artifact_conflict(tmp
         encoding="utf-8",
         errors="replace",
         cwd=str(clone),
-        env={**os.environ, "NODE_ENV": "production"},
+        env={**os.environ, "NODE_ENV": "production", "CI": "true"},
         timeout=600,
     )
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
