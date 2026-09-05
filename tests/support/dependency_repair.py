@@ -113,9 +113,22 @@ def _site_packages_of(python) -> "list[str]":
 
     不能从当前进程推——`base` 与跑测试的解释器不一定是同一个。
     """
+    # 要的是**那个解释器实际 import 得到东西的地方**，不是「全局 site 目录」。
+    # 漏了 user site 就会漏掉 `pip install --user` 装的科学栈（Debian/Ubuntu
+    # 的系统 Python 上很常见）：探测那一步因为继承了 user site 而成功，挂进
+    # 新环境的却一条都没有——而新 venv 把 user site 关掉了
+    # （实测 `site.ENABLE_USER_SITE = False`），于是 matplotlib 消失。
+    # `getsitepackages` 在个别 virtualenv 造的环境里不存在，取不到就跳过。
     code = (
-        "import json,site,sysconfig;"
-        "print(json.dumps(sorted({*site.getsitepackages(), sysconfig.get_paths()['purelib']})))"
+        "import json,os,site,sysconfig\n"
+        "p=set()\n"
+        "g=getattr(site,'getsitepackages',None)\n"
+        "if g: p.update(g())\n"
+        "for k in ('purelib','platlib'): p.add(sysconfig.get_paths()[k])\n"
+        "if getattr(site,'ENABLE_USER_SITE',False):\n"
+        "    u=site.getusersitepackages()\n"
+        "    p.update([u] if isinstance(u,str) else u)\n"
+        "print(json.dumps(sorted(d for d in p if d and os.path.isdir(d))))\n"
     )
     out = subprocess.run(
         [str(python), "-c", code],
