@@ -136,9 +136,20 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   重型条件，Gate 依旧全绿而它守的东西合并前一次都不验——
   `tests/test_merge_queue_workflows.py::test_every_fast_lane_job_actually_runs_on_a_plain_pull_request`
   逐个比死条件看住这一位。
-- release.yml 生成插件更新清单（`make_plugin_manifest.py` → `out/codex-plugin.json`），
-  **不能挪进 desktop-tauri.yml 的 updater-manifest**（那个 job 没配 minisign
-  私钥就整个跳过，插件更新通道会悄悄停而且全绿）。
+- **完整 Codex 插件（ADR 0043，2026-09-05）**：ci.yml 的 `frontend` job 从本次 checkout 真构建
+  画布 → `scripts/plugin_stage.py` 按 git 清单 + 显式构建物组装、验证、确定性 zip → artifact
+  `codex-plugin-candidate`；`plugin-candidate` job 脱离源码树解包、真起 MCP server 读画布、执行
+  `tests/test_plugin_candidate.py`（有产物时**不许 skip**）。两者都在 `CI fast gate` 的闭集里。
+  候选只作验证，**不向源码分支回写、不发布**。release.yml 的 `build` job 在固定发行 SHA 上
+  同样造一次（`--serve` 用发出去的 wheel），三样进 `dist/`（zip / `codex-plugin.json` /
+  `codex-plugin-build.json`）与产物清单；`validate_artifacts` 成对验证；`plugin_stable` job 在
+  Release 与 PyPI 之后把**同一份** zip 投影到发行分支 `plugin-stable`（publish=false 时对临时
+  bare 仓库演练全部发布行为 + 对真实远端只读 plan）。手动入口 `plugin-stable.yml`
+  （bootstrap / promote / rollback，从 Release 资产取内容）。手册：`docs/ci/plugin-stable-channel.md`。
+  **发行分支不触发任何源码 CI**——没有 workflow 监听它，GITHUB_TOKEN 的推送也不触发。
+- release.yml 的插件版本清单（`codex-plugin.json`）由 `build` job 生成（不再在没有 Node 的
+  `validate_artifacts` 里从源码目录打包），**不能挪进 desktop-tauri.yml 的 updater-manifest**
+  （那个 job 没配 minisign 私钥就整个跳过，插件更新通道会悄悄停而且全绿）。
 - 桌面更新清单 `latest.json` 由 `scripts/make_updater_manifest.py` 在两条
   matrix 腿都跑完后合成；macOS 更新包必须在签名/公证之后重做
   （见 `src-tauri/AGENTS.md`）。
