@@ -10,6 +10,7 @@
 
 import base64
 import hashlib
+import json
 import subprocess
 import time
 import zipfile
@@ -107,6 +108,57 @@ def wheelhouse(tmp_path, monkeypatch):
     return house
 
 
+def _site_packages_of(python) -> "list[str]":
+    """问**那个解释器自己**要它的 site-packages。
+
+    不能从当前进程推——`base` 与跑测试的解释器不一定是同一个。
+    """
+    code = (
+        "import json,site,sysconfig;"
+        "print(json.dumps(sorted({*site.getsitepackages(), sysconfig.get_paths()['purelib']})))"
+    )
+    out = subprocess.run(
+        [str(python), "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    if out.returncode != 0:
+        return []
+    return json.loads(out.stdout)
+
+
+def _graft_host_site_packages(base, new_python) -> "tuple[bool, str]":
+    """把宿主的 site-packages 挂进刚建好的环境（`.pth`）。
+
+    判据的主语是「新环境能不能 import matplotlib」，所以挂完**当场验一次**
+    ——只写文件不验证的话，路径错了会一路静默到用例的断言上，而那时的报错
+    指向的是被测代码。
+    """
+    host = _site_packages_of(base)
+    if not host:
+        return False, f"问不出 {base} 的 site-packages"
+    target_sites = _site_packages_of(new_python)
+    if not target_sites:
+        return False, f"问不出 {new_python} 的 site-packages"
+    pth = Path(target_sites[0]) / "_tavotto_test_host_stack.pth"
+    pth.parent.mkdir(parents=True, exist_ok=True)
+    pth.write_text("\n".join(host) + "\n", encoding="utf-8")
+    probe = subprocess.run(
+        [str(new_python), "-c", "import matplotlib"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if probe.returncode != 0:
+        return False, f"挂了宿主 site-packages 仍 import 不到 matplotlib：{probe.stderr}"
+    return True, ""
+
+
 @pytest.fixture
 def offline_managed_env(monkeypatch):
     """让受管环境**能在离线 CI 里建出来**，同时说清楚这里放宽了什么。
@@ -115,8 +167,15 @@ def offline_managed_env(monkeypatch):
     `pip install matplotlib`——那一步必然联网。CI 不联网，所以这组用例里：
 
     * 基础栈换成空表（不下载任何东西）；
-    * venv 带 `--system-site-packages`，matplotlib 用宿主那份，于是 worker
-      自检仍然是**真跑一次**。
+    * 新环境显式挂上**宿主解释器的 site-packages**（一个 `.pth`），matplotlib
+      用宿主那份，于是 worker 自检仍然是**真跑一次**。
+
+    挂 `.pth` 而不是用 `--system-site-packages`：后者继承的是 `base` 的**基础
+    解释器**，而不是 `base` 自己。`base` 本身是 venv 时（CI 上一直如此——
+    整套测试就跑在一个 venv 里，matplotlib 装在那个 venv 里），新环境拿到的
+    是系统解释器的 site-packages，里面没有 matplotlib，于是 worker 自检失败、
+    修复被判 `dependency_import_still_failed`。这条前提**静默不成立**：本机
+    基础解释器碰巧装了 matplotlib 就一路绿，实验室 runner 上就从没绿过。
 
     被放宽的那两条**另有单元用例逐字节钉住**
     （`test_dependency_repair.py::test_managed_venv_creation_is_isolated_and_minimal`）
@@ -134,14 +193,17 @@ def offline_managed_env(monkeypatch):
             return True, ""
         root.parent.mkdir(parents=True, exist_ok=True)
         out = subprocess.run(
-            [base, "-m", "venv", "--system-site-packages", str(root)],
+            [base, "-m", "venv", str(root)],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=300,
         )
-        return target.is_file(), out.stderr
+        if not target.is_file():
+            return False, out.stderr
+        ok, why = _graft_host_site_packages(base, target)
+        return ok, why or out.stderr
 
     assert original is managedenv.create_venv  # 换的是同一个出处
     monkeypatch.setattr(managedenv, "create_venv", _with_host_stack)

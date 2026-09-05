@@ -311,8 +311,21 @@ def test_usage_errors_exit_two_and_run_nothing(tmp_path):
         (["run", "--", "python", "-c", "print(1)"], runcodes.UNSUPPORTED_PYTHON_OPTION),
         (["run", "--", "python", "nope.py"], runcodes.SCRIPT_TARGET_MISSING),
     ]
+    # `python nope.py` 那一格要求 PATH 上**真有**一个 `python`：解释器解析在
+    # 脚本存在性检查之前，找不到解释器就先报「找不到解释器 python」，这一格
+    # 于是什么都没验到——正向用例被前置校验截断。实验室 runner 上正是这个
+    # 形状：工作流用绝对路径调 venv 里的 python，从不 activate，`bin/` 不在
+    # PATH，这条从没通过过。
+    # 把跑测试的解释器所在目录放到最前面，而不是造一个替身文件：venv 的
+    # `bin`/`Scripts` 里一定有 `python`(.exe)，两个平台都成立，且它是真解释器
+    # （解析那一步真去 exec 它也不会翻车）。
+    env = {
+        "PATH": os.pathsep.join(
+            [os.path.dirname(sys.executable), os.environ.get("PATH", "")]
+        )
+    }
     for argv, code in cases:
-        res = nativekit.run_cli(*argv, cwd=tmp_path)
+        res = nativekit.run_cli(*argv, cwd=tmp_path, env=env)
         assert res.returncode == runcodes.EXIT_USAGE, f"{argv}: {res.returncode}\n{res.stderr}"
         assert res.stdout == "", f"{argv}: 失败信息写到了 stdout: {res.stdout!r}"
         assert _stable_prefix(code) in res.stderr, f"{argv}: {res.stderr}"

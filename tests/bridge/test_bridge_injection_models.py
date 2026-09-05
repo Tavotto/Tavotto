@@ -200,6 +200,29 @@ def test_naive_sitecustomize_breaks_homebrew_python(user_python, tmp_path, sc_na
     if has_own.returncode != 0 or not has_own.stdout.strip():
         pytest.skip("这台机器的 Python 没有自带 sitecustomize（这条只在有人占坑时才有意义）")
 
+    # 「有人占坑」还不够——真正的前提是**那个坑正是 matplotlib 的来路**。
+    # venv 解释器就不是：它有 sitecustomize，但 matplotlib 靠 pyvenv.cfg 进
+    # sys.path，顶掉坑位什么也不会坏。前提不成立时这条演示是空的，而空的
+    # 演示会以 `assert 0 != 0` 的形状红，让人去修一个不存在的问题。
+    # 判据的主语是「顶掉之后 matplotlib 还在不在」，直接量它，别推断。
+    shadow = tmp_path / "shadow-probe"
+    write(shadow / "sitecustomize.py", "")
+    still_there = subprocess.run(
+        [user_python, "-c", "import matplotlib"],
+        env=child_env({"PYTHONPATH": str(shadow)}),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if still_there.returncode == 0:
+        pytest.skip(
+            "顶掉这台机器的 sitecustomize 之后 matplotlib 仍然 import 得到"
+            "（解释器多半是 venv，科学栈由 pyvenv.cfg 带进来）——"
+            "这条演示在这里没有内容"
+        )
+
     proj = tmp_path / "proj"
     write(proj / "fig.py", SHOW_ONLY)
     rb, _ = _run_b(user_python, sc_naive, proj / "fig.py", tmp_path, cwd=str(proj))
