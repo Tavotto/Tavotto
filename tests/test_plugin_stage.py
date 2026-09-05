@@ -257,7 +257,10 @@ def test_yaml_canonical_form_matches_the_installers_scanner(staging):
     assert stage.sha256_bytes(canon) == before
     assert commands == ["/opt/some where/python3"]
     # CRLF 副本同样规范化到同一个值
-    crlf = (d / yaml_rel).read_bytes().replace(b"\n", b"\r\n")
+    # 先归一再造 CRLF：Windows runner 的检出本来就是 CRLF，直接替换会造出 \r\r\n
+    # （merge_group 的 windows-latest 腿抓到过这条）
+    lf = (d / yaml_rel).read_bytes().replace(b"\r\n", b"\n")
+    crlf = lf.replace(b"\n", b"\r\n")
     canon2, _ = stage._canonical_yaml(crlf)
     assert stage.sha256_bytes(canon2) == before
 

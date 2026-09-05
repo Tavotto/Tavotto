@@ -896,7 +896,15 @@ def test_an_autocrlf_checkout_still_matches_the_zip(remote, tmp_path):
     assert _files(checkout) == _files(
         stage.unpack_zip(stage.write_zip(d, tmp_path / "p.zip"), tmp_path / "unz")
     )
-    assert b"\r\n" not in (checkout / ".mcp.json").read_bytes()
+    # 分支里的 blob 也必须与 staging 逐字节相同：提交时没被 autocrlf 改写，检出时也没被
+    # 改写（staging 在 Windows runner 上本身就是 CRLF 检出的，所以这里不断言「没有 CRLF」，
+    # 断言的是三处同一份字节）
+    blob = subprocess.run(
+        ["git", "-C", str(r), "show", f"{tip}:codex-plugin/.mcp.json"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert blob == (d / ".mcp.json").read_bytes() == (checkout / ".mcp.json").read_bytes()
 
 
 def test_a_codex_style_sparse_clone_gets_the_whole_plugin(remote, tmp_path):

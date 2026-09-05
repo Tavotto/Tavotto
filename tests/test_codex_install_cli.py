@@ -912,11 +912,15 @@ def test_a_missing_canvas_is_named_not_folded_into_reinstall(fake_codex):
 
 
 def test_a_pinned_launcher_does_not_make_the_canvas_step_cry_wolf(fake_codex, tmp_path):
-    """已装副本合法的本地修改（两份清单一起钉 command）不算损坏。"""
-    bindir = tmp_path / "bin"
-    _store_alias_shim(bindir, "python3")  # 让 install 走钉解释器那条路
+    """已装副本合法的本地修改（两份清单一起钉 command）不算损坏。
+
+    让 install 走「钉解释器」那条路要用 `_break_the_mcp_command`（绝对路径的坏命令）：
+    往 PATH 前面插 `python3` shim 在真 Windows 上不成立——CreateProcess 只补 `.exe`，
+    看不见 `.cmd`（#256 与本 PR 的 windows-latest 腿都撞过）。
+    """
+    broken = _break_the_mcp_command(fake_codex["plugin"], tmp_path)
     assert _run(["codex", "install", "--json"])[0] == 0
-    assert _mcp_command(fake_codex["plugin"]) != "python3"
+    assert _mcp_command(fake_codex["plugin"]) != str(broken), "启动命令没被换掉"
     rc, data, err = _doctor_json()
     assert rc == 0, err
     assert data["summary"]["canvas"]["complete"] is True
