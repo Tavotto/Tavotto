@@ -32,9 +32,12 @@ python scripts/plugin_stage.py verify build/plugin-stage --serve .venv/bin/pytho
 
 ## 1. 前置条件（PR A 落地之后、bootstrap 之前）
 
-1. **分支保护**（维护者一次性配置，`gh api` 需要 admin）。`contents: write` 本身写得到
-   任何分支，所以要靠 ruleset 把发行分支管起来：禁止删除、禁止非快进、只允许
-   GitHub Actions 更新。预览 / 执行：
+1. **分支保护**（已建：ruleset **22330299**「plugin-stable: machine maintained」，2026-09-05）。
+   仓库级 ruleset **不能把 GitHub Actions 设为 bypass actor**（API 422：Integration 必须属于
+   组织），所以 `update`（只允许 Actions 更新）那条做不到；现在只有 `deletion` +
+   `non_fast_forward`：分支删不掉、历史改不掉，但有 push 权限的人仍能快进推送。
+   发布器自己的判据（收据、树摘要重算、版本顺序）是第二道；仓库迁到组织之后再补
+   `update` + Actions bypass。当时的请求体：
 
    ```sh
    cat > /tmp/plugin-stable-ruleset.json <<'JSON'
@@ -43,22 +46,13 @@ python scripts/plugin_stage.py verify build/plugin-stage --serve .venv/bin/pytho
      "target": "branch",
      "enforcement": "active",
      "conditions": {"ref_name": {"include": ["refs/heads/plugin-stable"], "exclude": []}},
-     "rules": [
-       {"type": "deletion"},
-       {"type": "non_fast_forward"},
-       {"type": "update"}
-     ],
-     "bypass_actors": [
-       {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
-     ]
+     "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+     "bypass_actors": []
    }
    JSON
    gh api repos/Tavotto/Tavotto/rulesets --jq '.[] | {id,name,target}'          # 先看现状
    gh api -X POST repos/Tavotto/Tavotto/rulesets --input /tmp/plugin-stable-ruleset.json
    ```
-
-   `15368` 是 GitHub Actions app 的 integration id；`update` + bypass 只给 Actions =
-   人不能直接推这条分支。**把返回的 ruleset id 记进本文件下面的「线上状态」。**
 2. **环境**（可选但推荐）：Settings → Environments 建 `plugin-stable`，加 required reviewers；
    然后在 `release.yml` 的 `plugin_stable` job 与 `plugin-stable.yml` 加 `environment: plugin-stable`。
    没配也能跑（凭据仍是 `GITHUB_TOKEN`，只在那两个 job 上有 `contents: write`）。
@@ -168,5 +162,7 @@ ready」，看队列把它们组成一组、`CI fast gate` 在组合提交上绿
 
 ## 线上状态（改动时整段重写，不加行）
 
-- 2026-09-05：**发行分支未创建**；marketplace 入口仍是 `local ./codex-plugin`（PR B 未合）；
-  `plugin-stable` ruleset 未创建；线上合并队列 `max_entries_to_build = 1`（读取值）。
+- 2026-09-05：**发行分支未创建**（PR A #289 已入合并队列，bootstrap 等它落地后经
+  plugin-stable.yml 用 v0.12.0 执行）；marketplace 入口仍是 `local ./codex-plugin`（PR B #290 未合）；
+  `plugin-stable` ruleset 已建（22330299：deletion + non_fast_forward，无 Actions bypass）；
+  线上合并队列 `max_entries_to_build = 1`（读取值）。CodeQL alert #132 已按同族理由标为误报。
