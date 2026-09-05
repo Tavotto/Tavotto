@@ -56,6 +56,10 @@ python scripts/plugin_stage.py verify build/plugin-stage --serve .venv/bin/pytho
 2. **环境**（可选但推荐）：Settings → Environments 建 `plugin-stable`，加 required reviewers；
    然后在 `release.yml` 的 `plugin_stable` job 与 `plugin-stable.yml` 加 `environment: plugin-stable`。
    没配也能跑（凭据仍是 `GITHUB_TOKEN`，只在那两个 job 上有 `contents: write`）。
+   发布器在自己的临时仓库里 push，`actions/checkout` 留在 checkout 本地 config 的凭据对它不可见——
+   两个 workflow 都在真推步骤前把 `GITHUB_TOKEN` 配成全局 `http.https://github.com/.extraheader`
+   （与 `actions/checkout` 同一形态；演练不配）。首次真跑就是这里死在 `could not read Username`，
+   读回报 not_landed（退出码 4），分支没建出来（run 33979476158）。
 3. `release.yml` 的 `plugin_stable` job 已在 `publish=false` 的演练里对临时 bare 仓库跑过
    bootstrap / no-op / 拒绝 / rollback，并对真实远端只读 `plan`。看一次演练的 run 再进入下一步。
 
