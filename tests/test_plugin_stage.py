@@ -559,3 +559,51 @@ def test_the_widget_stamp_is_one_string_on_both_sides():
 
     assert widget_builder.STAMP == pluginmanifest.WIDGET_STAMP
     assert stage.pm.WIDGET_STAMP == pluginmanifest.WIDGET_STAMP
+
+
+def test_stage_refuses_when_a_widget_input_is_dirty(tmp_path):
+    """dirty 判据的主语是 staging 的**每一份输入**：改了 web/src 或 LICENSE 而没提交，
+    source_sha 就是假的——不只看 codex-plugin/（Codex 在 #289 上指出）。"""
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    target = ROOT / "web" / "src" / "i18n" / "locales" / "en-US" / "common.json"
+    original = target.read_bytes()
+    widget = kit.write_fake_widget(tmp_path / "canvas.html")
+    try:
+        target.write_bytes(original + b"\n")
+        assert any("common.json" in d for d in stage.plugin_source_dirty(ROOT))
+        with pytest.raises(stage.StageError, match="未提交"):
+            stage.stage(tmp_path / "s", widget, source_sha=head, root=ROOT, skip_fingerprint=True)
+    finally:
+        target.write_bytes(original)
+    lic = ROOT / "LICENSE"
+    lic_bytes = lic.read_bytes()
+    try:
+        lic.write_bytes(lic_bytes + b"\n")
+        assert any(d == "LICENSE" for d in stage.plugin_source_dirty(ROOT))
+    finally:
+        lic.write_bytes(lic_bytes)
+
+
+def test_a_malformed_manifest_is_a_problem_not_a_crash(staging):
+    """`files: null`、条目缺 path、pinnable 不是对象：验证要报出来，不许 TypeError。"""
+    d, _m = staging
+    mp = d / stage.BUILD_MANIFEST
+    good = json.loads(mp.read_text(encoding="utf-8"))
+    for mutate in (
+        lambda m: m.__setitem__("files", None),
+        lambda m: m["files"].__setitem__(0, {"sha256": "0" * 64, "mode": "100644"}),
+        lambda m: m.__setitem__("pinnable", []),
+        lambda m: m.__setitem__("content_digest", None),
+    ):
+        data = json.loads(json.dumps(good))
+        mutate(data)
+        mp.write_text(json.dumps(data), encoding="utf-8")
+        problems = stage.verify_dir(d, installed=True)
+        assert problems and all(isinstance(p, str) for p in problems), problems
+    mp.write_text(json.dumps(good, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    assert stage.verify_dir(d) == []

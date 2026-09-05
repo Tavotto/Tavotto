@@ -624,3 +624,58 @@ class TestSetBuildConcurrency:
                 == 1
             )
         assert api.writes == []
+
+
+class TestSetBuildConcurrencySource:
+    def test_a_foreign_repository_or_other_path_does_not_count_as_switched(self, plan_dir):
+        """url 指向别的仓库、或 path 不是 ./codex-plugin，都不是「入口已切换」（Codex 在 #289 上指出）。"""
+
+        class ForeignApi(DecoupledApi):
+            def __init__(self, rulesets, src, **kw):
+                super().__init__(rulesets, **kw)
+                self.src = src
+
+            def __call__(self, path, *, method="GET", body=None):
+                if method == "GET" and path.startswith(
+                    f"repos/{REPO}/contents/{MQ.MARKETPLACE_PATH}"
+                ):
+                    text = json.dumps(
+                        {"name": "tavotto", "plugins": [{"name": "tavotto", "source": self.src}]}
+                    )
+                    return {"content": base64.b64encode(text.encode()).decode()}
+                return super().__call__(path, method=method, body=body)
+
+        for src in (
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/someone/fork.git",
+                "path": "./codex-plugin",
+                "ref": "plugin-stable",
+            },
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/Tavotto/Tavotto.git",
+                "path": "./elsewhere",
+                "ref": "plugin-stable",
+            },
+        ):
+            api = ForeignApi([_queue_ruleset()], src)
+            assert _concurrency(api, plan_dir, 2) == 1, src
+            assert api.writes == []
+        api = ForeignApi(
+            [_queue_ruleset()],
+            {
+                "source": "git-subdir",
+                "url": "https://github.com/Tavotto/Tavotto.git",
+                "path": "./codex-plugin",
+                "ref": "plugin-stable",
+            },
+        )
+        assert _concurrency(api, plan_dir, 2) == 0
+
+    def test_the_expected_source_matches_brand(self):
+        from tavotto.engine import brand
+
+        assert brand.CODEX_PLUGIN_SOURCE_URL in MQ.PLUGIN_STABLE_URLS
+        assert MQ.PLUGIN_STABLE_SUBDIR == f"./{brand.CODEX_PLUGIN_SUBDIR}"
+        assert MQ.PLUGIN_STABLE_BRANCH == brand.CODEX_PLUGIN_STABLE_BRANCH

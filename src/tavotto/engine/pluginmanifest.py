@@ -291,7 +291,40 @@ def read_manifest(plugin_dir: Path) -> dict | None:
         raise PluginManifestError(f"{p} 读不出来：{exc}") from exc
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         raise PluginManifestError(f"{p} 的 schema 不是 {SCHEMA}")
+    check_manifest_shape(data, p)
     return data
+
+
+def check_manifest_shape(data: dict, where: Path | str = BUILD_MANIFEST) -> None:
+    """清单的形状：合法 JSON、schema 对，不等于**可用**——`files: null`、条目缺 `path`、
+    `pinnable` 不是对象，都会让验证在下游炸成 TypeError / KeyError 而不是一条问题
+    （Codex 在 #289 上指出）。这里一次性把形状问题变成 PluginManifestError。"""
+    for key in ("plugin_version", "source_sha", "content_digest"):
+        if not isinstance(data.get(key), str) or not data[key]:
+            raise PluginManifestError(f"{where} 的 {key} 缺失或不是字符串")
+    files = data.get("files")
+    if not isinstance(files, list) or not files:
+        raise PluginManifestError(f"{where} 的 files 不是非空数组")
+    for i, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            raise PluginManifestError(f"{where} 的 files[{i}] 不是对象")
+        for key in ("path", "sha256", "mode"):
+            if not isinstance(entry.get(key), str) or not entry[key]:
+                raise PluginManifestError(f"{where} 的 files[{i}] 缺 {key}")
+        if not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+            raise PluginManifestError(f"{where} 的 files[{i}].sha256 形状不对")
+        if not re.fullmatch(r"100(644|755)", entry["mode"]):
+            raise PluginManifestError(f"{where} 的 files[{i}].mode 不是 100644/100755")
+    pinnable = data.get("pinnable", {})
+    if not isinstance(pinnable, dict):
+        raise PluginManifestError(f"{where} 的 pinnable 不是对象")
+    for path, spec in pinnable.items():
+        if (
+            not isinstance(spec, dict)
+            or not isinstance(spec.get("canonical_sha256"), str)
+            or not isinstance(spec.get("commands"), list)
+        ):
+            raise PluginManifestError(f"{where} 的 pinnable[{path!r}] 形状不对")
 
 
 # ------------------------------------------------------------------ 验证

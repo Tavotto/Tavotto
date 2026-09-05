@@ -138,19 +138,29 @@ def tracked_plugin_files(root: Path = ROOT) -> list[tuple[str, str]]:
 
 
 def plugin_source_dirty(root: Path = ROOT) -> list[str]:
-    """插件源码目录里**未提交的改动**（生成物除外）。staging 声称的 source_sha
-    是「造它的 commit」，工作区与 commit 不一致时这个声明就是假的。"""
-    out = _git(root, "status", "--porcelain", "-z", "--untracked-files=all", "--", PLUGIN_SUBDIR)
+    """staging 用到的**每一份输入**里未提交的改动（生成物除外）。
+
+    主语不只是 `codex-plugin/`：画布是从 `web/src` + 锁文件 + tsconfig 等输入
+    （`build_mcp_widget.EXTRA_INPUTS`）编出来的，LICENSE 也进包——任何一处工作区
+    与 commit 不一致，staging 声称的 source_sha 就是假的（Codex 在 #289 上指出
+    第一版只看了插件目录）。
+    """
+    scopes = [PLUGIN_SUBDIR, "web/src", "LICENSE", *build_mcp_widget.EXTRA_INPUTS]
+    out = _git(root, "status", "--porcelain", "-z", "--untracked-files=all", "--", *scopes)
     dirty: list[str] = []
     for entry in out.split("\0"):
         if not entry or len(entry) < 4:
             continue
         path = entry[3:]
-        rel = PurePosixPath(path).relative_to(PLUGIN_SUBDIR).as_posix()
-        if _is_generated(rel):
+        parts = PurePosixPath(path).parts
+        if parts and parts[0] == PLUGIN_SUBDIR:
+            rel = PurePosixPath(path).relative_to(PLUGIN_SUBDIR).as_posix()
+            if _is_generated(rel):
+                continue
+        if any(part in pm.IGNORED_LOCAL for part in parts):
             continue
-        if any(part in pm.IGNORED_LOCAL for part in PurePosixPath(rel).parts):
-            continue
+        if build_mcp_widget._is_test_file(Path(path)):
+            continue  # 测试文件不进 bundle
         dirty.append(path)
     return dirty
 

@@ -80,6 +80,14 @@ PHASES = ("enable-queue", "switch-to-gates", "set-build-concurrency")
 GENERATED_CANVAS_PATH = "codex-plugin/mcp/widget/canvas.html"
 MARKETPLACE_PATH = ".agents/plugins/marketplace.json"
 PLUGIN_STABLE_BRANCH = "plugin-stable"
+#: 发行来源必须是**本仓库**的这个子目录——另一个仓库的 plugin-stable、或别的 path，
+#: 都不算切换完成（Codex 在 #289 上指出）。与 engine/brand.py 同源，
+#: tests/test_merge_queue_ruleset.py 对拍。
+PLUGIN_STABLE_URLS = (
+    "https://github.com/Tavotto/Tavotto.git",
+    "https://github.com/Tavotto/Tavotto",
+)
+PLUGIN_STABLE_SUBDIR = "./codex-plugin"
 
 
 class MigrationError(Exception):
@@ -310,10 +318,13 @@ def check_source_decoupled_from_the_plugin(api, repo: str, branch: str) -> list[
             isinstance(src, dict)
             and src.get("source") == "git-subdir"
             and src.get("ref") == PLUGIN_STABLE_BRANCH
+            and src.get("url") in PLUGIN_STABLE_URLS
+            and src.get("path") in (PLUGIN_STABLE_SUBDIR, PLUGIN_STABLE_SUBDIR[2:])
         )
         if not ok:
             problems.append(
-                f"{MARKETPLACE_PATH} 的插件来源还不是 git-subdir → {PLUGIN_STABLE_BRANCH}：{src}"
+                f"{MARKETPLACE_PATH} 的插件来源还不是本仓库的 git-subdir {PLUGIN_STABLE_SUBDIR} @ "
+                f"{PLUGIN_STABLE_BRANCH}：{src}"
             )
     except (MigrationError, ValueError, StopIteration) as exc:
         problems.append(f"读不出 {branch} 上的 {MARKETPLACE_PATH}：{exc}")
