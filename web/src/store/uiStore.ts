@@ -207,6 +207,16 @@ export interface ConfirmRequest {
   resolve: (ok: boolean) => void
 }
 
+/** 进裁剪那一刻的取景窗与包围盒；`crop` 缺省 = 那时整图未裁剪 */
+export interface CropBaseline {
+  id: string
+  crop?: { x: number; y: number; w: number; h: number }
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 interface UiState extends Persisted {
   /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
   status: UiMessage | null
@@ -215,6 +225,13 @@ interface UiState extends Persisted {
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
   cropTargetId: string | null
+  /**
+   * 进裁剪那一刻的取景窗与包围盒——「取消」要还原到**这里**，不是还原到
+   * 「没有裁剪过」（审计 T26）。快照由 `actions.beginCrop` 拍，本 store 只存；
+   * 任何**不**经 `beginCrop` 的进入 / 退出都会把它清成 null，那时取消降级为
+   * 单纯退出裁剪态，不会拿一份过期快照去改文档。
+   */
+  cropBaseline: CropBaseline | null
   /** 进入图内元素编辑的面板（画布对象 id） */
   elementPanelId: string | null
   /** 图内选中的元素 gid（末位为主选；axes 可 shift 多选做对齐） */
@@ -310,7 +327,7 @@ interface UiState extends Persisted {
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
   pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
-  setCropTarget: (id: string | null) => void
+  setCropTarget: (id: string | null, baseline?: CropBaseline | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
   /** 整组替换（图内元素框选用）；顺序即选择顺序，末位是主选 */
@@ -380,6 +397,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusTone: 'info',
   editingTextId: null,
   cropTargetId: null,
+  cropBaseline: null,
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
@@ -533,9 +551,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
   setEditingText: (editingTextId) => set({ editingTextId }),
-  setCropTarget: (cropTargetId) => set({ cropTargetId }),
+  setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
   setElementPanel: (elementPanelId) =>
-    set({ elementPanelId, selectedGids: [], cropTargetId: null }),
+    set({ elementPanelId, selectedGids: [], cropTargetId: null, cropBaseline: null }),
   setSelectedGid: (gid) => {
     const before = get().selectedGids
     set({ selectedGids: gid ? [gid] : [] })

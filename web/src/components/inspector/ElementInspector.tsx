@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CircleQuestionMark,
   CornerUpLeft,
+  Link2,
   MoveDown,
   MoveHorizontal,
   MoveUp,
@@ -88,10 +89,20 @@ import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
-import { controlKindOf, presentFields } from './presentation/registry'
+import {
+  absentAppearance,
+  controlKindOf,
+  fieldHintKey,
+  isPercentField,
+  pairedProp,
+  presentFields,
+} from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
+import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
+import { ProjectionPicker } from './controls/ProjectionPicker'
+import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
 import { EffectToggle } from './controls/EffectToggle'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
@@ -105,6 +116,12 @@ import {
 } from './controls/TickAndSpineDiagram'
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { AspectControl } from './controls/AspectControl'
+import {
+  ErrorBarDiagram,
+  isErrorBarSegment,
+  type ErrorBarSegment,
+} from './controls/ErrorBarDiagram'
+import { PercentField } from './controls/PercentField'
 import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
 import {
   axisTickState,
@@ -124,7 +141,11 @@ import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
+import { overrideCounts } from '@/lib/overrideCounts'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
+import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
+import { ColorScaleLink } from './ColorScaleLink'
+import { ResetChip } from './controls/textRows'
 import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
@@ -250,8 +271,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       ? [...TICK_SPINE_PROPS, ...AXES_RANGE_CARD_PROPS, ...SPINE_FRAME_PROPS]
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
-        : legendCardCoversSelf
-          ? LEGEND_CARD_PROPS
+        : element?.role === 'legend'
+          ? // 排版详情那张卡承接五条间距（审计 T17），与有没有条目无关；
+            // 字号 / 条目顺序只有图例卡在场时才让出来
+            [...LEGEND_SPACING_PROPS, ...(legendCardCoversSelf ? LEGEND_CARD_PROPS : [])]
           : [],
   )
   const buckets =
@@ -347,6 +370,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       {alignGroup || syncing || batch || styleBatch ? null : (
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
+        {/* 色条与它上色的图像共用一份色阶（审计 T22 / T23）：关系说出口，
+            并给一个「选中对方」的入口。没有对家时组件自己不渲染 */}
+        {manifest && element && <ColorScaleLink manifest={manifest} element={element} />}
         {!manifest ? (
           <p className="text-xs text-ink-3">
             {el(render?.status === 'rendering' ? 'building' : 'waiting')}
@@ -364,6 +390,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             panel={panel}
             manifest={manifest}
             host={sideHost}
+            element={element}
+            warnings={render?.warnings ?? []}
+            buckets={buckets}
+          />
+        ) : element?.role === 'errorbar' ? (
+          /* 误差棒：端帽长度 / 端帽线宽配一张示意图（审计 T20） */
+          <ErrorBarPage
+            panel={panel}
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
@@ -397,16 +431,24 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
-              ) : legendCardCoversSelf && element ? (
-                <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+              ) : element?.role === 'axes3d' ? (
+                /* 角度改在数值框里；这个静态示意只是旁注（审计 T24：
+                   「不增加装饰性三维动画」），随数值重画、没有动画 */
+                <ViewAngleRow panel={panel} element={element} />
+              ) : element?.role === 'legend' ? (
+                /* 图例页：条目列表（有项时）+ 排版详情（审计 T17：五条间距
+                   标签独占一行、不截断，默认折叠，改过自动展开） */
+                <>
+                  {legendCardCoversSelf && (
+                    <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+                  )}
+                  <LegendSpacingCard panel={panel} element={element} />
+                </>
               ) : null
             }
           />
         )}
         {element && <UnsupportedNote role={element.role} />}
-        {element?.role === 'image' && (
-          <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('imageHint')}</p>
-        )}
         {/* 改尺寸 / 居中是几何写操作：只认权威那一份（issue #131） */}
         {element?.resizable && exactManifest && (
           <AxesSizeMm
@@ -601,6 +643,12 @@ const PAIR_AXES: Record<string, readonly string[]> = {
   ylim: ['min', 'max'],
 }
 const RECT_AXES = ['x', 'y', 'width', 'height'] as const
+/**
+ * 成对数值框里的**可见**短前缀（审计 T11：图幅两个框光靠顺序分不出宽高）。
+ * W / H 与画布页的写法一致，不随语言变；可达名仍是完整的「图幅 宽 (mm)」。
+ * 范围类（min / max）由 AxesRangeCard 承接，这里不给它们发明缩写。
+ */
+const PAIR_PREFIX: Record<string, string> = { width: 'W', height: 'H' }
 
 function axisAriaLabel(
   field: { prop: string; type: string; unit?: string },
@@ -646,6 +694,210 @@ function FieldBlock({
 }
 
 /**
+ * 三维子图的方向示意（审计 T24）：X / Y / Z 在当前视角下指向屏幕的哪里。
+ *
+ * **它不是控件**——没有点击、没有拖动、没有动画，只是角度数值框的旁注，
+ * 与控件列对齐着摆。角度仍在上面三个数值框里改；这里读的是同一份值
+ * （override 优先），所以「角度与示意一致」不需要第二条同步路径。
+ * 引擎没发 `roll`（matplotlib < 3.6）时按 0 画。
+ */
+function ViewAngleRow({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+  const num = (prop: string) => {
+    const f = element.editable.find((x) => x.prop === prop)
+    return f ? Number(currentValue(panel, element.gid, f) ?? 0) : 0
+  }
+  if (!element.editable.some((x) => x.prop === 'elev' || x.prop === 'azim')) return null
+  return (
+    <div className="flex" style={{ paddingLeft: LABEL_W + 8 }}>
+      <ViewAngleDiagram elev={num('elev')} azim={num('azim')} roll={num('roll')} />
+    </div>
+  )
+}
+
+/**
+ * 并排行的文案：行标题 + 两格的前缀。**每一对在这里点名**（闭集），不按
+ * `pairLabel.${a}_${b}` 动态拼 key——动态拼的键 i18n 门禁看不住，漏一条就是
+ * 界面上一串 `pairLabel.vmin_vmax`。表里没有的对子不并排，各画各的行。
+ */
+interface PairText {
+  /** 显示顺序在这里定（下限在前），不跟着引擎发过来的顺序走 */
+  props: [string, string]
+  label: () => string
+  prefixes: [() => string, () => string]
+}
+
+/** 与 `pairedProp` 无关的查表键：与顺序无关，两条属性名排序后拼起来 */
+const pairKey = (a: string, b: string) => [a, b].sort().join('|')
+
+const PAIR_TEXTS: PairText[] = [
+  {
+    props: ['vmin', 'vmax'],
+    label: () => el('pairColorScale'),
+    prefixes: [() => el('pairMin'), () => el('pairMax')],
+  },
+]
+// 键**由 pairKey 自己生成**：手写字面量键会和它的排序规则悄悄分叉
+// （'vmin|vmax' 排序之后其实是 'vmax|vmin'——第一版就是这么错的，
+// 表查不到于是安静地退回两行，界面上看不出任何异常）
+const PAIR_TEXT: Record<string, PairText> = Object.fromEntries(
+  PAIR_TEXTS.map((t) => [pairKey(t.props[0], t.props[1]), t]),
+)
+
+/**
+ * 两条数值字段并排成一行（审计 T22：色阶上下限并排）。
+ *
+ * 两条仍是**各自的** manifest 字段：各写各的 override、各有各的恢复按钮，
+ * 值也不互相钳制（下限大于上限是 matplotlib 自己的事，界面不替它裁决）。
+ * 这里只管排版：一个行标题 + 两个带前缀的数字框。写入走 `useElementWriter`
+ * ——与刻度卡、边框卡同一份（局部预览 / 事务 / 渲染时机收在一处）。
+ */
+function PairRow({
+  panel,
+  element,
+  a,
+  b,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  a: EditableField
+  b: EditableField
+}) {
+  const w = useElementWriter(panel, element)
+  const text = PAIR_TEXT[pairKey(a.prop, b.prop)]
+  const overridden = (prop: string) =>
+    panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
+  const byProp = (prop: string) => (a.prop === prop ? a : b)
+  const cell = (field: EditableField, prefix: string) => {
+    const label = propLabel(field.prop, element.role)
+    return (
+      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 flex-1 items-center gap-1">
+        <NumberField
+          className="min-w-0 flex-1"
+          prefix={prefix}
+          ariaLabel={label}
+          value={Number(w.read(field.prop) ?? 0)}
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 1}
+          precision={2}
+          suffix={field.unit}
+          onChange={(v) => w.write(field.prop, v)}
+          onScrubStart={() => w.beginGesture()}
+          onScrubEnd={w.endGesture}
+        />
+        {overridden(field.prop) && (
+          <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, field.prop)} />
+        )}
+      </div>
+    )
+  }
+  return (
+    <div data-pair-row={`${text.props[0]}|${text.props[1]}`}>
+      <Row
+        label={labeledWithStateNode(text.label(), overridden(a.prop) || overridden(b.prop))}
+        labelWidth={LABEL_W}
+      >
+        {cell(byProp(text.props[0]), text.prefixes[0]())}
+        {cell(byProp(text.props[1]), text.prefixes[1]())}
+      </Row>
+    </div>
+  )
+}
+
+/**
+ * 误差棒页：三个几何字段配一张示意图（审计 T20）。
+ *
+ * 高亮跟着**焦点或指针**走，而不是让每一行自己带一张小图——一张图上
+ * 三段的相对关系才说得清「长度」和「线宽」量的是同一根横线的两个方向。
+ * 追踪落在容器上读 `data-prop`：字段行照旧是普通的 FieldRow，示意图不
+ * 接管任何写入，也不承接任何字段（拿掉它，能改的东西一个都不少）。
+ */
+function ErrorBarPage({
+  panel,
+  element,
+  warnings,
+  buckets,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  warnings: string[]
+  buckets: { primary: PresentedField[]; more: PresentedField[] }
+}) {
+  const [active, setActive] = useState<ErrorBarSegment | null>(null)
+  const segAt = (target: EventTarget | null): ErrorBarSegment | null => {
+    const row = target instanceof Element ? target.closest('[data-prop]') : null
+    const prop = row instanceof HTMLElement ? row.dataset.prop : undefined
+    return isErrorBarSegment(prop) ? prop : null
+  }
+  return (
+    <div
+      onFocusCapture={(e) => setActive(segAt(e.target))}
+      onBlurCapture={() => setActive(null)}
+      onPointerOver={(e) => setActive(segAt(e.target))}
+      onPointerLeave={() => setActive(null)}
+    >
+      <FieldList
+        panel={panel}
+        element={element}
+        warnings={warnings}
+        buckets={buckets}
+        primaryExtra={
+          <div className="flex justify-center" data-errorbar-figure>
+            <ErrorBarDiagram active={active} />
+          </div>
+        }
+      />
+    </div>
+  )
+}
+
+/**
+ * 「图上有、这里改不了」的一条能力提示 + 源对象入口（审计 T19）。
+ *
+ * 与 `UnsupportedProps` 是**同一种说法的两个来源**：那条的理由来自
+ * manifest 的 `unsupported_props`（引擎说「这个属性在这个对象上没意义」），
+ * 这条来自「引擎根本没发这个字段」。两者视觉一致——属性名置灰 + 一句
+ * 理由——因为对用户来说是同一件事：这一项在这儿改不了，去哪儿改。
+ *
+ * **不摆一个点了没反应的控件，也不装作这个属性不存在**（#76 的老教训）。
+ */
+function AbsentAppearanceNote({ element }: { element: ManifestElement }) {
+  const setAdvancedOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
+  // 角色与字段表都从元素本身取：调用点只递元素，递不错
+  const role = element.role
+  const props = absentAppearance(role, element.editable)
+  if (props.length === 0) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5">
+      {props.map((prop) => (
+        <div key={prop} data-absent-appearance={prop} className="flex flex-col gap-0.5">
+          <span aria-disabled className="text-xs text-ink-faint">
+            {propLabel(prop, role)}
+          </span>
+          <p className="text-xs leading-relaxed text-ink-3">{el('absentAppearance')}</p>
+        </div>
+      ))}
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => {
+          setAdvancedOpen(role, true)
+          // 展开是 store 里的一次状态变化，滚动要等这一帧渲染完
+          requestAnimationFrame(() =>
+            document
+              .querySelector('[data-source-advanced]')
+              ?.scrollIntoView({ block: 'nearest' }),
+          )
+        }}
+      >
+        {el('openSourceAdvanced')}
+      </Button>
+    </div>
+  )
+}
+
+/**
  * 单元素表单：primary 永远展开；「更多」是唯一的中频折叠区，展开状态按角色
  * 持久化（换面板不重置），折叠时标题右侧显示里面有几项被改过——
  * override 不因折叠而不可发现。
@@ -674,19 +926,42 @@ function FieldList({
   const moreOpen = useInspectorPrefs((s) => s.moreOpen[role] ?? false)
   const setMoreOpen = useInspectorPrefs((s) => s.setMoreOpen)
 
-  const rows = (fields: PresentedField[]) => (
-    <div className="flex flex-col gap-1.5">
-      {fields.map(({ field }) => (
-        <FieldBlock
-          key={field.prop}
-          panel={panel}
-          element={element}
-          field={field}
-          warnings={warnings}
-        />
-      ))}
-    </div>
-  )
+  const rows = (fields: PresentedField[]) => {
+    // 并排成一行的字段对（模板的 `pairRows`，如色阶下限 / 上限）：**两条都在
+    // 这一桶里**才并排，否则各画各的——条件显示把其中一条收起来时，剩下那条
+    // 不该跟着消失。两条仍是各自的 manifest 字段、各写各的 override。
+    const paired = new Set<string>()
+    return (
+      <div className="flex flex-col gap-1.5">
+        {fields.map(({ field }) => {
+          if (paired.has(field.prop)) return null
+          const mateProp = pairedProp(role, field.prop)
+          const mate = mateProp ? fields.find((p) => p.field.prop === mateProp)?.field : undefined
+          if (mate && PAIR_TEXT[pairKey(field.prop, mate.prop)]) {
+            paired.add(mate.prop)
+            return (
+              <PairRow
+                key={field.prop}
+                panel={panel}
+                element={element}
+                a={field}
+                b={mate}
+              />
+            )
+          }
+          return (
+            <FieldBlock
+              key={field.prop}
+              panel={panel}
+              element={element}
+              field={field}
+              warnings={warnings}
+            />
+          )
+        })}
+      </div>
+    )
+  }
 
   // 「更多」内部不再有第二层折叠；兜底进来的字段按引擎分组给一行小标题
   const named = buckets.more.filter((pf) => pf.order < 1000)
@@ -714,6 +989,8 @@ function FieldList({
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
+      {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
+      <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">
           <button
@@ -1077,6 +1354,8 @@ function TickPage({
       )}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
+      {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
+      <AbsentAppearanceNote element={element} />
     </div>
   )
 }
@@ -1273,6 +1552,22 @@ function BatchFieldRow({
   const control = () => {
     switch (field.type) {
       case 'number':
+        // 透明度的批量行与单元素行同一种百分比控件（判据同源：isPercentField）
+        if (isPercentField(field)) {
+          return (
+            <PercentField
+              value={first}
+              mixed={mixed}
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              ariaLabel={label}
+              onChange={(v) => write(v)}
+              onScrubStart={gesture.start}
+              onScrubEnd={gesture.end}
+            />
+          )
+        }
         return (
           <NumberField
             value={mixed ? 0 : Number(first ?? 0)}
@@ -1402,6 +1697,32 @@ function currentValue(panel: PanelObject, gid: string, field: EditableField): un
   return ov ? ov.value : field.value
 }
 
+/**
+ * 色条此刻的方向。**多宿主色条不宣称 `orientation`**（引擎的 guard，issue #69
+ * ——反解新矩形时只拿得到第一个宿主，翻转会把排版弄坏），那时从 bbox 反推：
+ * 窄而高 = 竖直。这是观察到的事实，不是猜——它只用来画那几个延伸预览的形状。
+ */
+function colorbarOrientationOf(panel: PanelObject, element: ManifestElement): string {
+  const field = element.editable.find((x) => x.prop === 'orientation')
+  if (field) return String(currentValue(panel, element.gid, field) ?? 'vertical')
+  const box = element.bbox
+  return box && box[2] < box[3] ? 'vertical' : 'horizontal'
+}
+
+/**
+ * 「住在别人里面」的元素的容器名：gid 去掉最后一段就是宿主（`axes_0.legend`
+ * → `axes_0`）。图例的九宫格用它说清参照范围（审计 T17）。宿主不在 manifest
+ * 里（fig.legend、脚本自造）时回 undefined——不写比写一个猜的名字好。
+ */
+function containerLabelOf(
+  manifest: Manifest | null | undefined,
+  element: ManifestElement,
+): string | undefined {
+  const m = element.gid.match(/^(.+)\.[^.]+$/)
+  const host = m ? manifest?.elements.find((e) => e.gid === m[1]) : undefined
+  return host ? engineLabel(host.label) : undefined
+}
+
 function FieldRow({
   panel,
   element,
@@ -1412,6 +1733,11 @@ function FieldRow({
   field: EditableField
 }) {
   const value = currentValue(panel, element.gid, field)
+  /** 同一个元素上另一条字段此刻的值（override 优先）：色条预览要看色图与方向 */
+  const siblingValue = (prop: string) => {
+    const other = element.editable.find((x) => x.prop === prop)
+    return other ? currentValue(panel, element.gid, other) : undefined
+  }
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
@@ -1440,7 +1766,10 @@ function FieldRow({
   // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
   // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
   // 三重表达「这个值来自你的修改，不是脚本」。
-  const labelNode = (
+  // 单位或语义会被读错的字段带一句短提示（没有问号按钮，见展示注册表）
+  const hintKey = fieldHintKey(field.prop)
+  const hint = hintKey ? el(`hint.${hintKey}`) : undefined
+  const labelBody = (
     <span
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${el('modified')}` : label}
@@ -1452,6 +1781,7 @@ function FieldRow({
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
+  const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
 
@@ -1545,6 +1875,38 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'projection':
+      // 透视 / 正交各一个小立方体（审计 T24）；写入值仍是 matplotlib 的 proj_type
+      return wrap(
+        <ProjectionPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'colorbar-orientation':
+      // 用当前色图画的小色条做选项预览（审计 T23），不是两个文字下拉
+      return wrap(
+        <ColorbarOrientationPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+        />,
+      )
+    case 'colorbar-extend':
+      return wrap(
+        <ColorbarExtendPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+          orientation={colorbarOrientationOf(panel, element)}
+        />,
+      )
     case 'legend-position':
       return wrap(
         <LegendPositionPicker
@@ -1552,6 +1914,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
+          containerLabel={containerLabelOf(rowManifest, element)}
         />,
       )
     case 'legend-binding':
@@ -1613,6 +1976,20 @@ function FieldRow({
           )}
           onAdd={() => writeOnce(true)}
           onOff={() => disableTextEffect(panel.id, element.gid, field.prop)}
+        />,
+      )
+    case 'percent':
+      // 透明度：显示 75%、写回 0.75——换算只在 PercentField 一处
+      return wrap(
+        <PercentField
+          value={value}
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          ariaLabel={label}
+          onChange={(v) => write(v)}
+          onScrubStart={beginTxn}
+          onScrubEnd={endTxn}
         />,
       )
     default:
@@ -1677,6 +2054,14 @@ function FieldRow({
             step={field.step ?? 1}
             precision={2}
             suffix={field.unit}
+            // 可达名：标签只是**旁边的一段文字**，没有任何东西把它和这个输入框
+            // 连起来——走查的 AX 树里这些框读出来就是「编辑框 1.1」，用户听不出
+            // 改的是线宽还是端帽长度（axe 的 label 规则按 critical 报）。带单位，
+            // 与成对数值框的写法一致（`axisAriaLabel`）。
+            ariaLabel={field.unit ? `${label} (${field.unit})` : label}
+            // 短提示同时挂在输入框上：标签那个气泡只有鼠标够得着，`title`
+            // 是这个控件的**描述**，键盘与读屏都拿得到
+            title={hint}
             onChange={(v) => write(v)}
             onScrubStart={beginTxn}
             onScrubEnd={endTxn}
@@ -1837,6 +2222,7 @@ function FieldRow({
               <NumberField
                 key={i}
                 ariaLabel={axisAriaLabel(field, label, i)}
+                prefix={field.type === 'pair' ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
                 value={Number(v)}
                 step={step}
                 precision={field.type === 'rect' ? 3 : 2}
@@ -1869,9 +2255,9 @@ function HowItWorks() {
       align="end"
       trigger={
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="w-full text-ink-2"
+          className="self-start text-ink-3"
           aria-label={el('howItWorksAria')}
         >
           <CircleQuestionMark size={13} />
@@ -1880,20 +2266,13 @@ function HowItWorks() {
       }
     >
       <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
-        <div>
-          <p className="font-medium text-ink">{el('howOverrideTitle')}</p>
-          <p className="mt-0.5">{el('howOverrideBody')}</p>
-        </div>
-        <div className="h-px bg-border" />
-        <div>
-          <p className="font-medium text-ink">{el('howAiTitle')}</p>
-          <p className="mt-0.5">{el('howAiBody')}</p>
-        </div>
-        <div className="h-px bg-border" />
-        <div>
-          <p className="font-medium text-ink">{el('howBothTitle')}</p>
-          <p className="mt-0.5">{el('howBothBody')}</p>
-        </div>
+        {(['howOverride', 'howWriteBack', 'howAi', 'howBoth'] as const).map((key, i) => (
+          <div key={key}>
+            {i > 0 && <div className="mb-2 h-px bg-border" />}
+            <p className="font-medium text-ink">{el(`${key}Title`)}</p>
+            <p className="mt-0.5">{el(`${key}Body`)}</p>
+          </div>
+        ))}
       </div>
     </Popover>
   )
@@ -2111,11 +2490,29 @@ function AxesSizeMm({
 
   return (
     <div className="mt-2 border-t border-border pt-2">
-      {proxied && (
-        <p className="mb-1.5 text-xs leading-relaxed text-ink-3">
-          {el('proxiedGeometry', { label: engineLabel(element.label) })}
-        </p>
-      )}
+      {proxied ? (
+        /* 「位置和大小属于宿主子图」原本是两段常驻说明（审计 T22 点名的
+           三段之二）。现在由**组标题**回答作用对象（「子图尺寸 · 子图 1」）、
+           来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
+           按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
+        <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+          <Link2 size={12} className="shrink-0 text-ink-3" aria-hidden />
+          <p className="min-w-0 flex-1 truncate text-xs uppercase tracking-[.06em] text-ink-3">
+            {el('proxiedSizeHead', { label: engineLabel(element.label) })}
+          </p>
+          <Tip label={el('proxiedGeometry', { label: engineLabel(element.label) })}>
+            <Button
+              size="sm"
+              className="shrink-0 text-ink-2"
+              aria-label={el('selectHostAxes', { label: engineLabel(element.label) })}
+              onClick={() => useUiStore.getState().setSelectedGid(element.gid)}
+            >
+              <CornerUpLeft size={11} className="shrink-0" aria-hidden />
+              {el('selectHost')}
+            </Button>
+          </Tip>
+        </div>
+      ) : null}
       <Grid2>
         <NumberField
           prefix="W"
@@ -2189,11 +2586,13 @@ function SourceAdvancedSection({
   const open = useInspectorPrefs((s) => s.advancedOpen[role] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
   const gid = element?.gid
-  const elementCount = gid
-    ? panel.overrides.filter((o) => o.gid === gid).length
-    : 0
+  // 两颗恢复按钮各说各的对象与数量，数字来自同一份判据（审计 T32）
+  const counts = overrideCounts(panel.overrides, gid)
 
   return (
+    /* `data-source-advanced` 是能力提示那个按钮的滚动落点——它要把用户
+       送到「在哪儿改」，而不只是把折叠区打开在视口外 */
+    <div data-source-advanced>
     <Disclosure
       title={el('sourceAdvanced')}
       open={open}
@@ -2209,11 +2608,17 @@ function SourceAdvancedSection({
               ))}
           </div>
         )}
-        {gid && elementCount > 0 && (
+
+        {/* 日常的「恢复」与会动磁盘的「原始文件」分成两组：前者只改这份文档、
+            可撤销；后者覆盖用户的原件。挨在一起时用户分不清按下去清的是哪一层
+            （审计 T32），分组标题就是那层边界，不另加确认。 */}
+        <GroupHead>{el('restoreGroup')}</GroupHead>
+        {gid && counts.element > 0 && (
           <Button
             variant="outline"
             size="sm"
             className="w-full"
+            title={el('resetElementTitle')}
             onClick={() =>
               clearOverrides(
                 panel.id,
@@ -2225,22 +2630,24 @@ function SourceAdvancedSection({
             }
           >
             <RotateCcw size={13} />
-            {el('resetElementCount', { count: elementCount })}
+            {el('resetElementCount', { count: counts.element })}
           </Button>
         )}
         <Button
           variant="outline"
           size="sm"
           className="w-full"
-          disabled={!panel.overrides.length}
+          disabled={!counts.figure}
           title={el('resetTitle')}
           onClick={() => resetOverrides(panel.id)}
         >
           <RotateCcw size={13} />
-          {panel.overrides.length
-            ? el('resetToScriptCount', { count: panel.overrides.length })
-            : el('resetToScript')}
+          {counts.figure ? el('resetToScriptCount', { count: counts.figure }) : el('resetToScript')}
         </Button>
+
+        <div className="mt-1 border-t border-border pt-2">
+          <GroupHead>{el('originalFileGroup')}</GroupHead>
+        </div>
         {panel.script && (
           <div className="flex gap-1.5">
             <UpdateSourceButton panel={panel} />
@@ -2249,13 +2656,23 @@ function SourceAdvancedSection({
         )}
         <SyncOverridesButton panel={panel} />
         <HowItWorks />
+
         {gid && (
-          <p className="truncate font-mono text-xs text-ink-3" title={gid}>
-            {gid}
-          </p>
+          <details className="group">
+            <summary className="flex cursor-default list-none items-center gap-0.5 text-[11px] text-ink-3 outline-none focus-visible:focus-ring">
+              <ChevronRight
+                size={10}
+                aria-hidden
+                className="shrink-0 transition-transform group-open:rotate-90"
+              />
+              {el('techDetails')}
+            </summary>
+            <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-ink-3">{gid}</p>
+          </details>
         )}
       </div>
     </Disclosure>
+    </div>
   )
 }
 

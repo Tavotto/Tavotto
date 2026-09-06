@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from 'lucide-react'
 import { formatCm, formatMm } from '@/lib/units'
@@ -8,7 +8,7 @@ import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/act
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
-import { Disclosure, Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -24,6 +24,12 @@ const PRESETS = [
   { id: 'full', w: 180, h: 240 },
   { id: 'square', w: 100, h: 100 },
 ]
+
+/**
+ * 数值行的标签列宽。默认的 44px 装不下「网格间距」「页边距」这类四字标签，
+ * 320px 属性栏下会折成两行（审计 T31）；开关行不走标签列，见 `ToggleRow`。
+ */
+const LABEL_W = 72
 
 /** 本页文案 inspector:canvas.*，历史标签 inspector:history.* */
 const cv = (key: string, values?: Record<string, unknown>) =>
@@ -48,11 +54,15 @@ export function CanvasPage() {
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
-  const [open, setOpen] = useState<Record<string, boolean>>({})
-  const toggle = (k: string) => setOpen((s) => ({ ...s, [k]: !s[k] }))
+  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const open = (k: string) => openKey === k
+  const toggle = (k: string) => setOpenKey((cur) => (cur === k ? null : k))
 
+  // 收起时也得看得出网格状态（审计 T31 验收）：开着就把间距一起报出来，
+  // 只报「网格」的话用户还得展开才知道它多密
   const aidsSummary =
-    [ui.showRulers && cv('rulers'), ui.showGrid && cv('grid')]
+    [ui.showRulers && cv('rulers'), ui.showGrid && cv('gridSummary', { size: ui.gridSize })]
       .filter(Boolean)
       .join(' · ') || cv('allOff')
   const snapSummary = ui.snapEnabled
@@ -63,7 +73,14 @@ export function CanvasPage() {
 
   return (
     <>
-      <Section title={cv('pageSize')}>
+      <Section
+        title={cv('pageSize')}
+        action={
+          <span className="shrink-0 font-mono text-xs text-ink-3">
+            {translate('measure.cmSizeSpaced', { w: formatCm(page.w), h: formatCm(page.h) })}
+          </span>
+        }
+      >
         <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label={cv('presetGroup')}>
           {PRESETS.map((p) => {
             const on = active?.id === p.id
@@ -106,52 +123,53 @@ export function CanvasPage() {
             )
           })}
         </div>
-        <Grid2>
-          <MmField
-            label="W"
-            historyLabel={hist('setPageW')}
-            min={10}
-            value={page.w}
-            onChange={(v) => setPageSize(v, page.h)}
-          />
-          <MmField
-            label="H"
-            historyLabel={hist('setPageH')}
-            min={10}
-            value={page.h}
-            onChange={(v) => setPageSize(page.w, v)}
-          />
-        </Grid2>
-        <div className="mt-1.5 flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => setPageSize(page.h, page.w)}
-          >
-            <ArrowLeftRight size={13} />
-            {cv('swap')}
-          </Button>
-          <span className="shrink-0 font-mono text-xs text-ink-3">
-            {translate('measure.cmSizeSpaced', { w: formatCm(page.w), h: formatCm(page.h) })}
-          </span>
+        {/* 宽、高与横竖交换同一行：交换是对这两个数的动作，不值得独占一行 */}
+        <div data-page-size-row className="flex items-center gap-1.5">
+          <div className="min-w-0 flex-1">
+            <MmField
+              label="W"
+              historyLabel={hist('setPageW')}
+              min={10}
+              value={page.w}
+              onChange={(v) => setPageSize(v, page.h)}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <MmField
+              label="H"
+              historyLabel={hist('setPageH')}
+              min={10}
+              value={page.h}
+              onChange={(v) => setPageSize(page.w, v)}
+            />
+          </div>
+          <Tip label={cv('swap')} side="left">
+            <Button
+              size="icon-sm"
+              variant="outline"
+              aria-label={cv('swap')}
+              onClick={() => setPageSize(page.h, page.w)}
+            >
+              <ArrowLeftRight size={13} />
+            </Button>
+          </Tip>
         </div>
       </Section>
 
       <Disclosure
         title={cv('background')}
-        open={!!open.bg}
+        open={open('bg')}
         onToggle={() => toggle('bg')}
         summary={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label={cv('transparentBg')}>
+          <ToggleRow label={cv('transparentBg')}>
             <Toggle
               checked={!!page.transparent}
               onChange={(v) => setPageSetup({ transparent: v }, hist('setPageBackground'))}
             />
-          </Row>
-          <Row label={cv('bgColor')}>
+          </ToggleRow>
+          <Row label={cv('bgColor')} labelWidth={LABEL_W}>
             <ColorField
               value={page.bg ?? '#FFFFFF'}
               onChange={(v) => setPageSetup({ bg: v }, hist('setPageBgColor'))}
@@ -166,19 +184,19 @@ export function CanvasPage() {
 
       <Disclosure
         title={cv('viewAids')}
-        open={!!open.aids}
+        open={open('aids')}
         onToggle={() => toggle('aids')}
         summary={aidsSummary}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label={cv('rulers')}>
+          <ToggleRow label={cv('rulers')}>
             <Toggle checked={ui.showRulers} onChange={ui.setShowRulers} />
-          </Row>
-          <Row label={cv('grid')}>
+          </ToggleRow>
+          <ToggleRow label={cv('grid')}>
             <Toggle checked={ui.showGrid} onChange={ui.setShowGrid} />
-          </Row>
+          </ToggleRow>
           {ui.showGrid && (
-            <Row label={cv('gridSize')}>
+            <Row label={cv('gridSize')} labelWidth={LABEL_W}>
               <NumberField
                 value={ui.gridSize}
                 min={1}
@@ -194,32 +212,32 @@ export function CanvasPage() {
 
       <Disclosure
         title={cv('snap')}
-        open={!!open.snap}
+        open={open('snap')}
         onToggle={() => toggle('snap')}
         summary={snapSummary}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label={cv('snapEnable')}>
+          <ToggleRow label={cv('snapEnable')}>
             <Toggle
               checked={ui.snapEnabled}
               onChange={(v) => ui.setCanvasPref({ snapEnabled: v })}
             />
-          </Row>
+          </ToggleRow>
           {ui.snapEnabled && (
             <>
-              <Row label={cv('snapGrid')}>
+              <ToggleRow label={cv('snapGrid')}>
                 <Toggle
                   checked={ui.snapToGrid}
                   onChange={(v) => ui.setCanvasPref({ snapToGrid: v })}
                 />
-              </Row>
-              <Row label={cv('snapGuides')}>
+              </ToggleRow>
+              <ToggleRow label={cv('snapGuides')}>
                 <Toggle
                   checked={ui.snapToGuides}
                   onChange={(v) => ui.setCanvasPref({ snapToGuides: v })}
                 />
-              </Row>
-              <Row label={cv('snapObjects')}>
+              </ToggleRow>
+              <ToggleRow label={cv('snapObjects')}>
                 <Tip label={cv('snapObjectsTip', { mod: MOD })} side="left">
                   <span className="flex">
                     <Toggle
@@ -228,7 +246,7 @@ export function CanvasPage() {
                     />
                   </span>
                 </Tip>
-              </Row>
+              </ToggleRow>
             </>
           )}
         </div>
@@ -236,7 +254,7 @@ export function CanvasPage() {
 
       <Disclosure
         title={cv('guides')}
-        open={!!open.guides}
+        open={open('guides')}
         onToggle={() => toggle('guides')}
         summary={
           guides.length
@@ -246,12 +264,12 @@ export function CanvasPage() {
         }
       >
         <div className="flex items-center gap-2">
-          <Row label={cv('lock')} className="min-w-0 flex-1">
+          <ToggleRow label={cv('lock')} className="min-w-0 flex-1">
             <Toggle
               checked={ui.guidesLocked}
               onChange={(v) => ui.setCanvasPref({ guidesLocked: v })}
             />
-          </Row>
+          </ToggleRow>
           <Button size="sm" disabled={!guides.length} onClick={clearGuides}>
             {cv('clearAll')}
           </Button>
@@ -288,14 +306,14 @@ export function CanvasPage() {
 
       <Disclosure
         title={cv('safeArea')}
-        open={!!open.safe}
+        open={open('safe')}
         onToggle={() => toggle('safe')}
         summary={
           ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')
         }
       >
         <div className="flex flex-col gap-1.5">
-          <Row label={cv('show')}>
+          <ToggleRow label={cv('show')}>
             <Tip label={cv('safeAreaTip')} side="left">
               <span className="flex">
                 <Toggle
@@ -304,8 +322,8 @@ export function CanvasPage() {
                 />
               </span>
             </Tip>
-          </Row>
-          <Row label={cv('margin')}>
+          </ToggleRow>
+          <Row label={cv('margin')} labelWidth={LABEL_W}>
             <NumberField
               value={page.margin ?? 0}
               min={0}
@@ -318,5 +336,30 @@ export function CanvasPage() {
         </div>
       </Disclosure>
     </>
+  )
+}
+
+/**
+ * 开关行：文字占满剩余宽度、开关靠右。开关的标签不该被塞进 44px 的标签列——
+ * 「对齐参考线」在窄栏里会折行，而一个开关根本不需要标签列（审计 T31）。
+ * 整行是一个 `<label>`：点文字也能切换。
+ */
+function ToggleRow({
+  label,
+  children,
+  className,
+}: {
+  label: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <label
+      data-toggle-row
+      className={cn('flex min-h-6 items-center justify-between gap-2', className)}
+    >
+      <span className="min-w-0 truncate text-xs text-ink-2">{label}</span>
+      <span className="flex shrink-0 items-center">{children}</span>
+    </label>
   )
 }

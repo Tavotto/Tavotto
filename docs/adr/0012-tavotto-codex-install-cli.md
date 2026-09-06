@@ -31,7 +31,8 @@ tavotto codex uninstall   # 移除插件与 marketplace 项（不碰引擎）
    `_search_dirs()` 的探测思路，但独立实现在纯标准库层）。找不到报
    `codex_cli_missing` + 安装指引，**不代装 Codex**。
 2. **marketplace add**：`codex plugin marketplace add Tavotto/Tavotto
-   --sparse .agents/plugins --sparse codex-plugin`（已存在则跳过；
+   --sparse .agents/plugins --sparse codex-plugin`（2026-09-05 起只剩 `--sparse .agents/plugins`：
+   插件本体来自发行分支，ADR 0043）（已存在则跳过；
    源与 sparse 路径从 `engine/brand.py` 派生，不在两处手写）。
 3. **plugin add**：`codex plugin add tavotto@tavotto`（已装则按
    `marketplace upgrade` 语义提示，不强制升级）。

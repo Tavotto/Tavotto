@@ -4,16 +4,24 @@ export function Toggle({
   checked,
   onChange,
   disabled,
+  id,
   'aria-label': ariaLabel,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
   disabled?: boolean
+  /**
+   * 给了 id 就能被一个真正的 `<label htmlFor>` 指着——点标签文字等于点开关，
+   * 可达名也就是那行标签本身。**这时不要再传 `aria-label`**：它会盖掉标签，
+   * 于是屏幕阅读器念的名字和用户看见的那个词分叉（审计 T39）。
+   */
+  id?: string
   'aria-label'?: string
 }) {
   return (
     <button
       role="switch"
+      id={id}
       aria-checked={checked}
       aria-label={ariaLabel}
       disabled={disabled}

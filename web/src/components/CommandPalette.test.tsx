@@ -92,7 +92,7 @@ describe('命令集', () => {
     expect(new Set(seen).size).toBe(seen.length)
     expect(seen).toContain('刷新项目（检查新文件）')
     expect(seen).toContain('显示项目接入状态')
-    expect(seen).toContain('重新显示新手提示')
+    expect(seen).toContain('重新显示操作提示')
     expect(seen).toContain('快捷键帮助')
   })
 

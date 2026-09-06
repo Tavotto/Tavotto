@@ -644,7 +644,13 @@ export const propLabel = (prop: string): string =>
  * 脚本自定义的枚举值也不该被吞掉。
  */
 export const optionLabel = (prop: string, value: string): string =>
-  t(`enum.${prop}.${value}`, { ns: 'inspector', defaultValue: value })
+  // `nsSeparator: false`：**枚举值是开集，里面真的有 i18next 的分隔符**。
+  // 默认 nsSeparator 是 `:`，于是 `enum.linestyle.:`（点线）被切成
+  // 命名空间 `enum.linestyle.` + 空 key，查不到就原样回退成 `:`——界面上
+  // 那一格的名字就是一个冒号（审计 T15 点名的「个别辅助标签显示 :」）。
+  // keySeparator 的 `.` 不用关：i18next 的 deepFind 会把剩下的段拼回去，
+  // `marker` 的 `.`（小点）与 `..` 实测都查得到。
+  t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: value })
 
 /**
  * 写入一条图内元素 override 并触发重渲染。
@@ -1765,6 +1771,67 @@ export function setPanelOpacity(ids: string[], v: number) {
 export function setPanelAspectLocked(ids: string[], locked: boolean) {
   updatePanels(ids, hist(locked ? 'lockAspect' : 'unlockAspect'), (o) => {
     o.aspectLocked = locked ? undefined : false
+  })
+}
+
+/* ------------------------------- 裁剪态 ---------------------------------- */
+
+/**
+ * 进入裁剪态，并把**进裁剪那一刻**的取景窗与包围盒记下来。
+ *
+ * 裁剪是即时生效的（拖手柄当场看得见结果，审计 T26 的「确认前可见」本来就
+ * 成立），所以「取消」不能只是退出——它得把这一轮的取景还回去。还回哪里？
+ * **回到进来那一刻**，不是回到「从没裁剪过」（那是「重置裁剪」，另一个动作）。
+ *
+ * 所有进裁剪的入口都走这里：属性页、浮动条、右键菜单、面板上按 Enter。
+ * 不走这里的话基线是 null，取消降级成单纯退出——**宁可少还原，也不拿一份
+ * 过期快照去改文档**。
+ */
+export function beginCrop(id: string) {
+  const o = findObject(id)
+  if (o?.type !== 'panel') return
+  useUiStore.getState().setCropTarget(id, {
+    id,
+    crop: o.crop ? { ...o.crop } : undefined,
+    x: o.x,
+    y: o.y,
+    w: o.w,
+    h: o.h,
+  })
+}
+
+/** 完成：保留当前取景窗，退出裁剪态（不进历史——拖动那几下各自已经进过了） */
+export function finishCrop() {
+  useUiStore.getState().setCropTarget(null)
+}
+
+/** 取消：还原到 `beginCrop` 那一刻，再退出。一条历史；没动过就不进历史 */
+export function cancelCrop() {
+  const ui = useUiStore.getState()
+  const base = ui.cropBaseline
+  const target = ui.cropTargetId
+  ui.setCropTarget(null)
+  // 基线必须还对应着此刻正在裁的那个对象：换过文档 / 换过面板的快照一律不用
+  if (!base || base.id !== target) return
+  const o = findObject(base.id)
+  if (o?.type !== 'panel') return
+  const same =
+    o.x === base.x &&
+    o.y === base.y &&
+    o.w === base.w &&
+    o.h === base.h &&
+    o.crop?.x === base.crop?.x &&
+    o.crop?.y === base.crop?.y &&
+    o.crop?.w === base.crop?.w &&
+    o.crop?.h === base.crop?.h
+  if (same) return
+  updateObject<PanelObject>(base.id, hist('cancelCrop'), (p) => {
+    if (base.crop) p.crop = { ...base.crop }
+    else delete p.crop
+    p.x = base.x
+    p.y = base.y
+    p.w = base.w
+    p.h = base.h
   })
 }
 

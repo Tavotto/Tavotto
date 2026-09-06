@@ -1,5 +1,5 @@
 /**
- * 图内文字的浮动栏（审计 T14）：
+ * 文字的浮动栏（图内文字 = 审计 T14，画布文字 = 审计 T27，**同一条判据**）：
  *   1. 停靠的属性页开着 → 缩减档（只剩字号 / 加粗 / 斜体）；关着 → 完整档；
  *      narrow 断点下侧栏是覆盖层，那时浮动栏整个让位（既有规则），不在这里量；
  *   2. 落位避让同一张图里别的文字：贴上方会压住标题时不再压上去。
@@ -204,6 +204,32 @@ async function mount(ui: Partial<ReturnType<typeof useUiStore.getState>>) {
   })
 }
 
+/**
+ * 画布文字对象（审计 T27）：判据与图内文字共用一份（`ContextBar` 的
+ * `textBarCompact`），所以这里量的是「同一条判据也管到了画布文字」。
+ */
+async function mountCanvasText(ui: Partial<ReturnType<typeof useUiStore.getState>>) {
+  useDocumentStore.getState().commit(literal('加文字'), (d) => {
+    d.objects.push({
+      id: 't1',
+      type: 'text',
+      x: 10,
+      y: 10,
+      w: 40,
+      h: 5,
+      text: 'UI',
+      sizePt: 10,
+    } as never)
+  })
+  await mount({ elementPanelId: null, ...ui })
+  const node = document.createElement('div')
+  node.setAttribute('data-object-id', 't1')
+  document.body.appendChild(node)
+  await act(async () => {
+    useSelectionStore.getState().set(['t1'])
+  })
+}
+
 async function selectGid(gid: string) {
   await act(async () => {
     useUiStore.setState({ selectedGids: [gid] })
@@ -289,6 +315,55 @@ describe('属性页开着时浮动栏缩减', () => {
     })
     expect(byLabel('字体')).toBeNull()
     expect(byLabel('字号')).not.toBeNull()
+  })
+})
+
+describe('画布文字：同一条缩减判据（审计 T27）', () => {
+  it('右栏属性页开着：只剩字号 / 加粗 / 斜体，字体下拉与取色器让给右栏', async () => {
+    await mountCanvasText({ rightOpen: true, rightTab: 'properties' })
+    expect(bar()).not.toBeNull()
+    expect(bar()!.getAttribute('data-context-bar-mode')).toBe('object')
+    expect(bar()!.hasAttribute('data-context-bar-compact')).toBe(true)
+    expect(bar()!.querySelector('[data-text-quick="compact"]')).not.toBeNull()
+    expect(byLabel('字号')).not.toBeNull()
+    expect(byLabel('加粗')).not.toBeNull()
+    expect(byLabel('斜体')).not.toBeNull()
+    expect(byLabel('字体')).toBeNull()
+    expect(bar()!.querySelector('input[type="color"], [data-color-field]')).toBeNull()
+    expect(byLabel('全部属性')).not.toBeNull()
+  })
+
+  it('右栏关着：完整档，字体与颜色都在', async () => {
+    await mountCanvasText({ rightOpen: false })
+    expect(bar()!.hasAttribute('data-context-bar-compact')).toBe(false)
+    expect(bar()!.querySelector('[data-text-quick="full"]')).not.toBeNull()
+    expect(byLabel('字体')).not.toBeNull()
+    expect(bar()!.querySelector('input[type="color"], [data-color-field]')).not.toBeNull()
+  })
+
+  it('标注（箭头 / 形状）不吃这条判据：它的右栏没有铺同一批文字控件', async () => {
+    useDocumentStore.getState().commit(literal('加箭头'), (d) => {
+      d.objects.push({
+        id: 'a1',
+        type: 'arrow',
+        x: 10,
+        y: 40,
+        w: 30,
+        h: 10,
+        start: { x: 10, y: 40 },
+        end: { x: 40, y: 50 },
+        color: '#1B1B18',
+        strokePt: 1,
+      } as never)
+    })
+    await mount({ elementPanelId: null, rightOpen: true, rightTab: 'properties' })
+    const node = document.createElement('div')
+    node.setAttribute('data-object-id', 'a1')
+    document.body.appendChild(node)
+    await act(async () => {
+      useSelectionStore.getState().set(['a1'])
+    })
+    expect(bar()!.hasAttribute('data-context-bar-compact')).toBe(false)
   })
 })
 
