@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n'
 import { FolderOpen, Save } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   ApiError,
   REVISION_ABSENT,
@@ -149,7 +150,7 @@ export function LayoutDialog() {
             loadingLabel={t('dialogs:layout.saving')}
             onClick={() => doSave()}
           >
-            <Save size={14} />
+            <Save size={ICON_SIZE.md} />
             {t('dialogs:layout.saveAs')}
           </Button>
         </>
@@ -191,7 +192,7 @@ export function LayoutDialog() {
                       i > 0 && 'border-t border-border',
                     )}
                   >
-                    <FolderOpen size={12} className="shrink-0 text-ink-3" />
+                    <FolderOpen size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
                     <span className="min-w-0 flex-1 truncate">{n}</span>
                     <span className="shrink-0 text-xs text-ink-3">{t('dialogs:layout.load')}</span>
                   </button>

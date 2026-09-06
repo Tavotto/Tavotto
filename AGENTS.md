@@ -49,7 +49,9 @@
   `original` / `canvas` 两个取值，**`original` 段里没有 x/y/w/h 与页面尺寸**
   （想让画布缩放漏进原图导出得先改结构）；作业生命周期只有
   `engine/exportjob.py` 一份（临时目录 → 原子 replace，`partial` 是独立一档，
-  取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。
+  取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。格式闭集
+  `pdf / png / eps / tiff`（ADR 0046）：TIFF 与 PNG 同一次栅格化，EPS 只有 worker
+  的 matplotlib 写得出——给不出的那一档如实逐项报失败，**不伪称矢量**。
   **用户自建的样式 / 规范**在用户数据目录
   `<data_dir>/profiles/`，磁盘入口只有 `engine/profilestore.py`；「任意 id →
   规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**

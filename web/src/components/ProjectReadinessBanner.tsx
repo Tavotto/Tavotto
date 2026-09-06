@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Images } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { pendingCount } from '@/lib/readinessText'
 import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
@@ -39,7 +40,7 @@ export function ProjectReadinessBanner() {
       role="status"
       className="flex min-h-6 shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-2.5 text-xs text-ink-2"
     >
-      <Images size={12} className="shrink-0 text-ink-3" />
+      <Images size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
       <span className="min-w-0 flex-1 truncate">
         {t('workspace:readiness.bannerSummary', { total, editable, pending, layoutOnly })}
       </span>

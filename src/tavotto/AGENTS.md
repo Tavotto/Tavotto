@@ -62,6 +62,15 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
   看住它与真字体一致）。**本仓库不分发任何字体**，看护
   `tests/test_font_provenance.py`。
+- **图内中文的回退链（ADR 0045）**：脚本跑完、采 baseline 之前
+  （`figsession.instrument_all()`）给每段图内文字的族列表接上 DejaVu Sans + 本机
+  探测到的中日韩脸（`overrides.cjk_fallback_tail()`，候选按平台分组、只有装了的
+  才进链）。**尾巴必须在 `font.family` 列表里**，塞进 `font.sans-serif` 不是回退链
+  （通用族只解析出一个文件）。用户 / 脚本设的族仍是 `get_fontfamily()[0]`；汉字由
+  尾巴画出**不算**「换了脸」，manifest 报 `cjk_family`，`cjk-fallback-missing`
+  的主语是它而不是正文族名。`TAVOTTO_CJK_FALLBACK=0` 关掉尾巴——测试用它造
+  「没有中文字体」的世界（`test_glyph_coverage_figure.py`），不是产品设置。
+  看护 `tests/test_cjk_figure_text.py`。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
   边界废掉。许可证说明见 `docs/legal/LICENSING.md`。
@@ -381,8 +390,26 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   display 空间细分、NaN 拆子路径、超长路径先按段取极值再 RDP（见
   docs/perf-baseline.md 的「路径几何」一节）。它是**渲染派生数据**：不进用户
   文档、不是 override、不参与写回，几何一变下一版自然就是新的。
-  **散点与只有 marker 的曲线有意不给**（bbox 降级，记录在案）；
-  **箭头也不给**（它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
+  **散点（PathCollection）与只有 marker 没有连线的 Line2D 给的是每一颗 marker
+  的轮廓**（2026-09-06，用户反馈「选中散点罩的是一个大矩形」及其延伸
+  「`plot(..., ls="None", marker="o")` 画的散点也要逐颗描」）：两者共用
+  `pathgeom._stamp_markers`，语义按 Agg `draw_path_collection` 走（`paths[i % Np]`
+  × 逐戳记矩阵 `[i % Nt]` × `offsets[i % No]`），**形状只拍平一次**（逐颗
+  `Path.cleaned()` 一颗 1.8ms，500 颗就是 0.9 秒），其余各颗是同一组顶点经
+  `A_i ∘ A_max⁻¹` 的批量仿射，抽稀容差按尺度分档。散点侧 `_marker_subpaths`
+  取 `get_paths()` × `get_transforms()` 的尺寸矩阵 × offsets；Line2D 侧
+  `_line_marker_subpaths` 取 marker 的 `get_path()`/`get_alt_path()` ×
+  `markersize·dpi/72`（`','` 不缩放）× `get_xydata()` 经 `get_transform()` 的落点
+  （忽略 drawstyle、NaN 不出、`markevery` 交给 matplotlib 的 `_mark_every_path`；
+  半填充 marker 每颗两条子路径）。标记数超过 `pathgeom.MAX_MARKERS`（500，
+  **两种 artist 同一个数**）整组退回 bbox 并在 stderr 说明——上限量的是消费侧
+  （每次渲染往返的 manifest JSON、前端每次指针移动沿全部线段算距离、覆盖层的
+  d 串），不是生产侧；散点的 bbox 仍是**圆心**的包围盒（`get_datalim` 的口径），
+  最边上的半颗 marker 伸在 bbox 外是正常的。**既有连线又有 marker 的 Line2D
+  仍只描折线**：折线穿过每颗 marker 的中心、命中容差内每颗都点得中，而 geometry
+  的 `fill` 是整份一个标志、前端把「闭合或 fill」的子路径都按面积算，实心 marker
+  混进来会把那条折线一起变成多边形——要并存得先给 geometry 分层。**箭头不给**
+  （它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
   `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
 - **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
@@ -819,6 +846,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
     `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
     写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
+  * **EPS 与 TIFF（ADR 0046，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
+    新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
+    `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`
+    （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**）；位图源的分辨率
+    标签只写源文件自己声明过的密度。EPS **只有 worker 的 matplotlib 写得出**
+    （PyMuPDF 没有 PostScript 写入器）：`scope=canvas` 逐项报 `eps_not_for_canvas`，
+    没有脚本的图报 `eps_needs_script`，其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
+    也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
+    脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
+    「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
@@ -1018,6 +1055,10 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   桌面壳从 Finder / 开始菜单启动时继承 GUI 的最小 PATH，npm shim 的
   `#!/usr/bin/env node` 解析不到 node（`env: node: No such file or directory`）
   ——把 CLI 所在目录 + 常见安装目录补到 PATH 末尾即可，不改用户已有排序。
+  **`engine/codexinstall.py` 问 Codex 的每一跳也走它**（`_codex_run`，2026-09-06
+  用户反馈 05）：同一台机器终端里 `tavotto codex doctor` 全绿、设置页却报「插件市场
+  登记失败」，差的只是 spawn 它的那个进程的 PATH（桌面壳 `ps -E` 实测只有四个系统
+  目录）。「问不到」是独立一档，detail 里要明说这不等于「没登记」。
 - **CLI 探测（Windows 尤其）**：`search_locations()` 在 PATH 之外把 npm 全局、
   `%LOCALAPPDATA%\Microsoft\WindowsApps`（**商店版 codex 的执行别名——真身在
   受 ACL 保护的 WindowsApps 包体里，只能走这个入口**）、WinGet/scoop/choco/

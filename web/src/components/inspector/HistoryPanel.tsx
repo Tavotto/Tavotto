@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { History, RotateCcw, TriangleAlert } from 'lucide-react'
+import { RotateCcwClock, RotateCcw, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import {
   backendErrorText,
@@ -42,7 +43,7 @@ export function HistoryPanel({ panel }: { panel: PanelObject }) {
       align="end"
       trigger={
         <Button variant="outline" size="sm" className="flex-1">
-          <History size={13} />
+          <RotateCcwClock size={ICON_SIZE.sm} />
           {vh('trigger')}
         </Button>
       }
@@ -222,7 +223,7 @@ function RestoreDialog({
             loadingLabel={vh('rewriting')}
             onClick={run}
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={ICON_SIZE.md} />
             {vh('confirmRestore')}
           </Button>
         </>
@@ -230,7 +231,7 @@ function RestoreDialog({
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-          <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
           <p className="text-xs leading-relaxed text-ink-2">
             {vh('warnBody')}
             <span className="mt-1 block text-ink-3">{vh('warnForward')}</span>
@@ -239,7 +240,7 @@ function RestoreDialog({
 
         {version?.n === -1 && (
           <div className="flex items-start gap-1.5 rounded-sm bg-danger-subtle p-2">
-            <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
             <p className="text-xs leading-relaxed text-danger">
               {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}
               <Trans

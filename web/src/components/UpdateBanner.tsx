@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { RefreshCw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from './ui/Button'
 
 /**
@@ -10,7 +11,7 @@ export function UpdateBanner() {
   const { t } = useTranslation(['workspace', 'common'])
   return (
     <div className="flex h-6 shrink-0 items-center gap-2 border-b border-border bg-accent-subtle px-2.5">
-      <RefreshCw size={12} className="shrink-0 text-accent" />
+      <RefreshCw size={ICON_SIZE.sm} className="shrink-0 text-accent" />
       <span className="min-w-0 flex-1 truncate text-xs text-accent">
         {t('workspace:update.banner')}
       </span>

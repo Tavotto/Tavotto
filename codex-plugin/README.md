@@ -262,8 +262,8 @@ manifest/SVG 更新——iframe 里不保存业务状态。
 ### 导出
 
 `tavotto_export` **先跑一遍预检**，有 `errors` 且没有 `explicit_confirm` 时一张图都不出。
-PDF/SVG 是真矢量，PNG 按给定 dpi 栅格化，同时写一份 proof report（规范身份 + 全部检查
-结果 + 是否强制导出）。缺省落在 `<项目>/tavottofile/export/`——与 Tavotto 画布导出同一个
+PDF/SVG/EPS 是真矢量（EPS 不支持透明度），PNG/TIFF 按给定 dpi 栅格化（TIFF 无损 Deflate 压缩），
+同时写一份 proof report（规范身份 + 全部检查结果 + 是否强制导出）。缺省落在 `<项目>/tavottofile/export/`——与 Tavotto 画布导出同一个
 目录规则。
 
 ### 改了脚本之后：刷新项目

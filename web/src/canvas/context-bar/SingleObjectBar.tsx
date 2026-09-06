@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { Bold, CircleHelp, Crop, Italic, Minimize2, Pencil } from 'lucide-react'
+import { Bold, CircleQuestionMark, Crop, Italic, Minimize2, Pencil } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'
 import { fontStackOf } from '@/components/inspector/controls/fontStack'
@@ -92,14 +93,14 @@ function TextObjectActions({ obj }: { obj: TextObject }) {
         label={translate('textBar.bold', { ns: 'inspector' })}
         onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
       >
-        <Bold size={12} />
+        <Bold size={ICON_SIZE.sm} />
       </StyleToggle>
       <StyleToggle
         state={italicState}
         label={translate('textBar.italic', { ns: 'inspector' })}
         onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
       >
-        <Italic size={12} />
+        <Italic size={ICON_SIZE.sm} />
       </StyleToggle>
       <ColorField
         className="w-[86px] shrink-0"
@@ -125,7 +126,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
     <>
       {obj.script && (
         <Button size="sm" className="gap-1 px-1.5" onClick={() => enterElementEdit(obj.id)}>
-          <Pencil size={12} />
+          <Pencil size={ICON_SIZE.sm} />
           {translate('panel.editElements', { ns: 'inspector' })}
         </Button>
       )}
@@ -137,7 +138,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
           className="gap-1 px-1.5"
           onClick={() => useProjectReadinessStore.getState().focusPanel(obj.fileId, 'quickedit')}
         >
-          <CircleHelp size={12} />
+          <CircleQuestionMark size={ICON_SIZE.sm} />
           {translate('readiness.whyNotEditable', { ns: 'workspace' })}
         </Button>
       )}
@@ -147,7 +148,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
           aria-label={translate('panel.crop', { ns: 'inspector' })}
           onClick={() => useUiStore.getState().setCropTarget(obj.id)}
         >
-          <Crop size={12} />
+          <Crop size={ICON_SIZE.sm} />
         </Button>
       </Tip>
       <Tip label={translate('panel.fitTip', { ns: 'inspector' })} side="bottom">
@@ -156,7 +157,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
           aria-label={translate('panel.fit', { ns: 'inspector' })}
           onClick={() => fitPanels([obj.id])}
         >
-          <Minimize2 size={12} />
+          <Minimize2 size={ICON_SIZE.sm} />
         </Button>
       </Tip>
       <Sep />

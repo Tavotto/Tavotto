@@ -233,6 +233,10 @@ USER_VISIBLE_CODES = {
     "report_write_failed": {"error"},
     "report_missing_payload": set(),
     "source_missing": {"figure"},
+    # --- ADR 0046（EPS / TIFF）：EPS 只有 worker 的 matplotlib 写得出，画布合成
+    #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
+    "eps_not_for_canvas": set(),
+    "eps_needs_script": {"figure"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},

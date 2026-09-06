@@ -9,7 +9,8 @@
  * 「取消」走 PlaygroundApp 的 cancelLoading：真正 dispose 在途 Worker
  * 回到案例库，不是把加载藏起来。
  */
-import { Check, Loader2 } from 'lucide-react'
+import { Check, LoaderCircle } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import type { PlaygroundPhase } from '../protocol'
 import { pg } from '../pgText'
 
@@ -53,9 +54,9 @@ export function PlaygroundLoading({
           return (
             <li key={s.key} className="flex items-center gap-2.5 text-[13px]">
               {state === 'done' ? (
-                <Check size={14} className="shrink-0 text-ink-3" aria-hidden />
+                <Check size={ICON_SIZE.md} className="shrink-0 text-ink-3" aria-hidden />
               ) : state === 'active' ? (
-                <Loader2 size={14} className="shrink-0 animate-spin text-sel" aria-hidden />
+                <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-sel" aria-hidden />
               ) : (
                 <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-border" aria-hidden />
               )}

@@ -1107,3 +1107,73 @@ def test_json_output_parser_handles_pretty_printed_and_last_line_shapes():
     assert codexinstall._json_output('warning: x\n{\n  "a": 1\n}') == {"a": 1}
     assert codexinstall._json_output('noise\n{"ok": true}') == {"ok": True}
     assert codexinstall._json_output("nothing here") is None
+
+
+# --------------------- 从 GUI 的最小 PATH 里问 Codex（用户反馈 05） ---------------------
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="`#!/usr/bin/env node` 这条解析链是 POSIX 的；Windows 的 npm 外壳是 .cmd，node 由外壳自己的目录解析",
+)
+def test_an_npm_codex_shim_is_still_askable_from_the_gui_path(fake_codex, tmp_path):
+    """Codex 里装着、启用着，桌面版设置页却说「插件市场登记失败」（用户反馈 05）。
+
+    桌面壳从 Finder 启动继承的是 launchd 的最小 PATH（本机 `ps -E` 实测
+    `/usr/bin:/bin:/usr/sbin:/sbin`），而 npm 装的 codex 是 `#!/usr/bin/env node` 的
+    脚本：`find_codex()` 靠兜底目录找得到**文件**，子进程里却解析不到 node——
+    `env: node: No such file or directory`、退出码 127（本机原样抓到的输出）。于是
+    marketplace 步是 `marketplace_state_unknown`，界面上是「插件市场登记 失败」。
+
+    夹具按现场的形状摆：codex 与 node 同住一个**不在 PATH 上**的目录（Homebrew 的
+    `/opt/homebrew/bin` 正是这样），PATH 只留系统目录 + 一个真 python3。判据的主语是
+    「从这份环境里 spawn 出来的 doctor，问不问得到 Codex」。
+    """
+    # 先用正常 PATH 把状态摆成「已登记 + 已装」——被测的是问法，不是状态
+    assert _run(["codex", "install", "--json"])[0] == 0
+
+    home = tmp_path / "gui-home"
+    hb = home / ".codex" / "bin"  # find_codex() 的兜底目录之一；PATH 上没有它
+    hb.mkdir(parents=True)
+    codex = hb / "codex"
+    codex.write_text("#!/usr/bin/env node\n" + FAKE_CODEX, encoding="utf-8")
+    codex.chmod(0o755)
+    _real_python_shim(hb, "node")  # 假 node：把脚本交给真 python 跑；只有 PATH 上有它才起得来
+    minbin = tmp_path / "gui-minbin"
+    _real_python_shim(minbin, "python3")  # `.mcp.json` 里钉的名字，让后面几步的结论不挑机器
+    gui_env = {"HOME": str(home), "PATH": f"{minbin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
+
+    # 先证明观测有效：这份 PATH 里 codex 确实起不来，形状与现场一致（127 + node）
+    probe = subprocess.run(
+        [str(codex), "--version"],
+        env={**gui_env, "FAKE_CODEX_STATE": os.environ["FAKE_CODEX_STATE"]},
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert probe.returncode == 127 and "node" in probe.stderr, (probe.returncode, probe.stderr)
+
+    rc, data, err = _doctor_json(gui_env)
+    steps = {s["step"]: s for s in data["steps"]}
+    assert steps["codex_cli"]["detail"] == str(codex), "没走到兜底目录那份 codex，夹具没摆对"
+    assert data["summary"]["marketplace"]["state"] == "registered", (data, err)
+    assert data["summary"]["plugin"]["state"] == "installed", (data, err)
+    assert rc == 0 and data["ok"], (data, err)
+
+
+def test_unknown_state_names_the_missing_node_and_says_it_is_not_absent():
+    """「问不到」那一档的 detail 要把处方说出口，并且明说这不是「没有」。
+
+    残留场景：node 不在任何一个补进去的目录里。这时用户看到的是 env 的一句报错，
+    没有处方就会去重装插件——而插件本来就在。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    real = "env: node: No such file or directory"  # 本机原样抓到的 codex 输出
+    hint = codexinstall._unknown_hint(real, "登记")
+    assert "node" in hint and "PATH" in hint and "不等于没登记" in hint, hint
+    plain = codexinstall._unknown_hint("boom", "装")
+    assert "不等于没装" in plain and "node" not in plain, plain
+    # Windows 的 .cmd 外壳报的是另一句，也要认得
+    assert "PATH" in codexinstall._unknown_hint(
+        "'node' is not recognized as an internal or external command", "登记"
+    )

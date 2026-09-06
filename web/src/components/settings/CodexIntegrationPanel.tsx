@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, MinusCircle, XCircle } from 'lucide-react'
+import { CircleCheck, CircleMinus, CircleX } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   CodexShellError,
   codexErrorText,
@@ -119,11 +120,11 @@ function StepList({ steps }: { steps: CodexStep[] }) {
   return (
     <ul className="flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5">
       {steps.map((s, i) => {
-        const Icon = !s.ok ? XCircle : s.skipped ? MinusCircle : CheckCircle2
+        const Icon = !s.ok ? CircleX : s.skipped ? CircleMinus : CircleCheck
         const tone = !s.ok ? 'text-danger' : s.skipped ? 'text-ink-3' : 'text-ink-2'
         return (
           <li key={`${s.step}-${i}`} className="flex items-start gap-1.5 text-xs">
-            <Icon size={12} className={`mt-0.5 shrink-0 ${tone}`} aria-hidden />
+            <Icon size={ICON_SIZE.sm} className={`mt-0.5 shrink-0 ${tone}`} aria-hidden />
             <span className="min-w-0">
               <span className="text-ink">{codexStepLabel(s.step)}</span>
               <span className={`ml-1 ${tone}`}>{codexStepStateText(s)}</span>

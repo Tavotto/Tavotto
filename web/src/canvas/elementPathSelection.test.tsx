@@ -10,6 +10,8 @@
  * - pickElement 按路径命中（填充算内部，空心只在描边附近）
  * - 框选按路径与框相交
  * - OverlaySvg 画 `<path>` 描示，不再是 `fill-opacity` 的矩形
+ * - 散点的 geometry 是**每一颗 marker 一条闭合轮廓**：命中只在点上，选中描
+ *   的是各个点而不是整组的大包围矩形（用户反馈 2026-09-06）
  * - 文字 / 图例 / 子图 / 组选择**继续**用 bbox（它们本来就是矩形语义）
  *
  * jsdom 说明：这里断言的是结构与数值（选出的 gid、渲染出的 SVG 元素、
@@ -130,12 +132,36 @@ const patchEl: ManifestElement = {
   draggable: false,
 }
 
-/** 散点：**有意**只有 bbox（记录在案的降级） */
+/**
+ * 散点：三颗 marker 各一条闭合轮廓（引擎 `pathgeom._marker_subpaths` 发出来的
+ * 形状：multi_path、每条 closed、fill 为真）。bbox 仍是横跨三颗点的一大条——
+ * 修之前选中画的就是它。
+ */
+const marker = (cx: number, cy: number, r = 0.015): ElementGeometry['paths'][number] => ({
+  points: [
+    [cx - r, cy - r],
+    [cx + r, cy - r],
+    [cx + r, cy + r],
+    [cx - r, cy + r],
+  ],
+  closed: true,
+})
+
+const scatterGeom: ElementGeometry = {
+  kind: 'multi_path',
+  paths: [marker(0.2, 0.875), marker(0.5, 0.875), marker(0.8, 0.875)],
+  fill: true,
+  stroke: true,
+  stroke_pt: 1,
+  clip: [0.1, 0.1, 0.8, 0.8],
+}
+
 const scatterEl: ManifestElement = {
   gid: 'axes_0.scatter_1',
   role: 'scatter',
   label: '散点',
-  bbox: [0.15, 0.85, 0.7, 0.05],
+  bbox: [0.185, 0.86, 0.63, 0.03],
+  geometry: scatterGeom,
   editable: [],
   draggable: false,
 }
@@ -192,8 +218,12 @@ describe('pickElement：曲线按真实路径命中', () => {
     expect(pickElement(manifest, 0.32, 0.58)?.gid).toBe('axes_0')            // bbox 左上空白角
   })
 
-  it('散点仍按 bbox 命中（有意的降级，不是遗漏）', () => {
-    expect(pickElement(manifest, 0.5, 0.87)?.gid).toBe('axes_0.scatter_1')
+  it('散点：点在某一颗 marker 上命中；点在两颗之间的空白（仍在 bbox 里）不命中', () => {
+    expect(pickElement(manifest, 0.5, 0.875)?.gid).toBe('axes_0.scatter_1')   // 第二颗的中心
+    expect(pickElement(manifest, 0.79, 0.865)?.gid).toBe('axes_0.scatter_1')  // 第三颗的边上
+    // (0.35, 0.875)：第一颗与第二颗正中间，离两边的轮廓各 13.5mm——修之前按
+    // bbox 命中，这一点会选中整组散点
+    expect(pickElement(manifest, 0.35, 0.875)?.gid).toBe('axes_0')
   })
 })
 
@@ -288,6 +318,20 @@ describe('OverlaySvg：路径式选中描示', () => {
     expect(outline).toBeTruthy()
     expect(outline!.getAttribute('fill')).toBe('var(--color-accent)')
     expect(outline!.getAttribute('fill-rule')).toBe('evenodd')
+  })
+
+  it('选中散点：每颗 marker 一条闭合子路径，没有罩住整组的矩形框', () => {
+    show(['axes_0.scatter_1'])
+    expect(rects().length).toBe(0)
+    const outline = paths().find((p) => p.getAttribute('d')?.includes('Z'))
+    expect(outline, '散点应当画成 path 而不是 rect').toBeTruthy()
+    const d = outline!.getAttribute('d')!
+    expect(d.match(/M/g)?.length, '三颗点 = 三条子路径').toBe(3)
+    expect(d.match(/Z/g)?.length).toBe(3)
+    // 全部 marker 收在**一个** path 节点里：几百颗点也不会往 DOM 里挂几百个节点
+    expect(paths().filter((p) => p.getAttribute('d')?.startsWith('M')).length).toBe(1)
+    // 第一颗的左上角：分数 (0.185, 0.86) → 面板 (10,20) + 100mm → mm (28.5, 106)
+    expect(d).toContain(`M${px(28.5).toFixed(2)},${px(106).toFixed(2)}`)
   })
 
   it('断开的填充画成多条子路径，不会被连成一块', () => {

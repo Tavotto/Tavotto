@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentCaps } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
@@ -85,7 +86,7 @@ export function AgentList({
             />
           </div>
           <ChevronRight
-            size={14}
+            size={ICON_SIZE.xs}
             aria-hidden
             className="pointer-events-none shrink-0 text-ink-faint"
           />

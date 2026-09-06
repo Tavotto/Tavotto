@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, TriangleAlert } from 'lucide-react'
+import { LoaderCircle, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg } from '@/lib/api'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
@@ -82,7 +83,7 @@ export function NativeConfirmDialog() {
       >
         {head.loading ? (
           <p className="flex items-center gap-2 text-xs text-ink-3">
-            <Loader2 size={13} className="animate-spin" />
+            <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
             {nr('loading')}
           </p>
         ) : (
@@ -214,7 +215,7 @@ function ErrorNote({
       role="alert"
       className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs leading-relaxed text-danger"
     >
-      <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+      <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0" />
       <span className="min-w-0 flex-1">
         {fmt(backendCodeMsg(error.code, error.params, error.message))}
       </span>

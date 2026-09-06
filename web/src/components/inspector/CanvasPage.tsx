@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatCm, formatMm } from '@/lib/units'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
@@ -129,7 +130,7 @@ export function CanvasPage() {
             className="flex-1"
             onClick={() => setPageSize(page.h, page.w)}
           >
-            <ArrowLeftRight size={13} />
+            <ArrowLeftRight size={ICON_SIZE.sm} />
             {cv('swap')}
           </Button>
           <span className="shrink-0 font-mono text-xs text-ink-3">
@@ -278,7 +279,7 @@ export function CanvasPage() {
                     pos: formatMm(g.pos),
                   })}
                 >
-                  <Trash2 size={12} />
+                  <Trash2 size={ICON_SIZE.sm} />
                 </Button>
               </li>
             ))}

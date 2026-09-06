@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Play } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
 import { stemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
@@ -104,7 +105,7 @@ export function FigurePickerDialog() {
                 // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
                 // 如实指去素材库「运行并发现图」
                 <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-                  <Play size={11} />
+                  <Play size={ICON_SIZE.xs} />
                   {fp('needsRun')}
                 </span>
               )}

@@ -254,7 +254,45 @@ def test_cjk_without_fallback_is_reported():
     man = _manifest(family="DejaVu Sans")
     man["elements"][2]["editable"][0]["value"] = "温度 (K)"
     spec = preflight.spec_from_manifest(man)
-    assert "cjk-fallback-missing" in _ids(preflight.run(spec, p))
+    issues = {i["id"]: i for i in preflight.run(spec, p)}
+    assert "cjk-fallback-missing" in issues
+    # 没有任何脸接手：说的是「会是方框」，主语退回正文族
+    assert issues["cjk-fallback-missing"]["message"]["key"] == "cjkFallbackMissing"
+    assert issues["cjk-fallback-missing"]["detail"] == {
+        "family": "DejaVu Sans",
+        "face": "DejaVu Sans",
+    }
+
+
+def test_cjk_drawn_by_an_accepted_fallback_face_is_not_reported():
+    """回退链（ADR 0045）用白名单里的脸画出了汉字：这条**不响**。
+
+    改造前它只看正文族名——DejaVu Sans 不在中日韩白名单里就报「会是方框」，
+    而图上明明画得好好的。一句错的断言比没有断言更坏。
+    """
+    p = profiles.load("lab-publication-v1")
+    man = _manifest(family="DejaVu Sans")
+    man["elements"][2]["editable"][0]["value"] = "温度 (K)"
+    man["elements"][2]["cjk_family"] = "PingFang SC"
+    spec = preflight.spec_from_manifest(man)
+    assert "cjk-fallback-missing" not in _ids(preflight.run(spec, p))
+
+
+def test_cjk_drawn_by_an_unaccepted_face_names_that_face():
+    """接手的脸不在白名单里：报的主语是**那张脸**，措辞不再说「方框」。"""
+    p = profiles.load("lab-publication-v1")
+    man = _manifest(family="Times New Roman")
+    man["elements"][2]["editable"][0]["value"] = "温度 (K)"
+    man["elements"][2]["cjk_family"] = "Nope Sans CJK"
+    spec = preflight.spec_from_manifest(man)
+    issues = {i["id"]: i for i in preflight.run(spec, p)}
+    assert "cjk-fallback-missing" in issues
+    assert issues["cjk-fallback-missing"]["detail"] == {
+        "family": "Times New Roman",
+        "face": "Nope Sans CJK",
+    }
+    assert issues["cjk-fallback-missing"]["message"]["key"] == "cjkFallbackUnaccepted"
+    assert "方框" not in issues["cjk-fallback-missing"]["text"]
 
 
 def test_raster_inner_text_is_not_verifiable_never_silently_passing():

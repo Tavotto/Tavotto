@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
+import { FORMATS } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { SettingRow, SettingSection } from './SettingRow'
@@ -36,7 +37,7 @@ export function ExportSettings() {
       </SettingRow>
       <SettingRow label={st('export.defaultFormats')} help={st('export.formatsHint')}>
         <span className="flex items-center gap-3">
-          {['pdf', 'png'].map((f) => (
+          {FORMATS.map((f) => (
             <label key={f} className="flex items-center gap-1.5 text-xs text-ink-2">
               <input
                 type="checkbox"

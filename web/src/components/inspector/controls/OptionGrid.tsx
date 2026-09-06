@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from '../../ui/Tooltip'
 
@@ -93,7 +94,7 @@ export function OptionGrid<T extends string>({
             >
               {active && (
                 <Check
-                  size={9}
+                  size={ICON_SIZE.xs}
                   aria-hidden
                   className="absolute left-0.5 top-0.5 text-accent"
                 />

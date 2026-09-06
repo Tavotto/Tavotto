@@ -247,6 +247,42 @@
     "pdf"
    ],
    "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.eps",
+   "formats": [
+    "pdf",
+    "eps"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.EPS",
+   "formats": [
+    "pdf"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.tiff",
+   "formats": [
+    "tiff"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.tif",
+   "formats": [
+    "tiff"
+   ],
+   "stripped": "Fig 1"
+  },
+  {
+   "name": "Fig 1.tif.tiff",
+   "formats": [
+    "tiff"
+   ],
+   "stripped": "Fig 1.tif"
   }
  ],
  "output_name": [
@@ -259,6 +295,16 @@
    "base": "Fig 1",
    "format": "png",
    "name": "Fig 1.png"
+  },
+  {
+   "base": "Fig 1",
+   "format": "eps",
+   "name": "Fig 1.eps"
+  },
+  {
+   "base": "Fig 1",
+   "format": "tiff",
+   "name": "Fig 1.tiff"
   }
  ],
  "dedupe": [
@@ -302,6 +348,24 @@
     "图 1 (3).pdf"
    ],
    "name": "图 1 (4).pdf"
+  },
+  {
+   "base": "Fig 1",
+   "format": "tiff",
+   "taken": [
+    "Fig 1.tiff"
+   ],
+   "name": "Fig 1 (2).tiff"
+  },
+  {
+   "base": "Fig 1",
+   "format": "eps",
+   "taken": [
+    "Fig 1.pdf",
+    "Fig 1.eps",
+    "Fig 1 (2).eps"
+   ],
+   "name": "Fig 1 (3).eps"
   }
  ]
 }

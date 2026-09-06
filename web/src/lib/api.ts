@@ -1251,6 +1251,11 @@ export interface ManifestElement {
   /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
   glyphs_fallback?: string[]
   /**
+   * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0045）。正文族自己画得
+   * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
+   */
+  cjk_family?: string
+  /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
    */

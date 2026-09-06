@@ -38,26 +38,38 @@ SCOPE_ORIGINAL = "original"
 SCOPE_CANVAS = "canvas"
 SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 
-#: 输出格式。`pdf` 是矢量载体，`png` 是位图载体。
+#: 输出格式。`pdf` / `eps` 是矢量载体，`png` / `tiff` 是位图载体。
 #: **不许在这里加一个当前管线给不出真矢量的格式**（共享规则 §8：不得伪称矢量）。
+#:
+#: 顺序是结果的一部分（`outputs[]` 与界面上的清单逐项对上），所以新格式
+#: **追加在后面**，不插进老的两个之间——老客户端只勾 pdf+png 时得到的顺序
+#: 一个字节不变。
+#:
+#: `eps`（ADR 0046）在这张表里，但它**不是每条路都给得出**：PyMuPDF 写不出
+#: PostScript，所以画布合成（`scope=canvas`）与没有脚本的图给不出 EPS，只有
+#: 引擎能重新运行脚本的那张图（`scope=original` + 注册表里有它的脚本）才由
+#: matplotlib 直接序列化。**给不出的那一档如实报 `eps_not_for_canvas` /
+#: `eps_needs_script`**，不拿栅格化后的位图裹一层 PostScript 冒充矢量。
 FORMAT_PDF = "pdf"
 FORMAT_PNG = "png"
 FORMAT_SVG = "svg"
-FORMATS = (FORMAT_PDF, FORMAT_PNG)
+FORMAT_EPS = "eps"
+FORMAT_TIFF = "tiff"
+FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF)
 
 #: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）额外认的格式。
 #:
-#: 它**不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
+#: `svg` **不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
 #: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 PyMuPDF，那条路**给不出**
 #: SVG。把它放进全局枚举，导出面板就会摆出一个合成管线兑现不了的选项。
 #: 所以「这次认哪几种格式」是**消费点自己带的参数**
 #: （`normalize(allowed_formats=…)`），而规则（清洗、扩展名、去重、PPI 语义、
 #: 顺序）仍然只有这一份。
-ENGINE_FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_SVG)
+ENGINE_FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_SVG, FORMAT_EPS, FORMAT_TIFF)
 
 #: 哪些格式是位图 —— 「PPI 只在位图输出时有意义」这句话的唯一判据。
-RASTER_FORMATS = frozenset({FORMAT_PNG})
-VECTOR_FORMATS = frozenset({FORMAT_PDF, FORMAT_SVG})
+RASTER_FORMATS = frozenset({FORMAT_PNG, FORMAT_TIFF})
+VECTOR_FORMATS = frozenset({FORMAT_PDF, FORMAT_SVG, FORMAT_EPS})
 
 #: 覆盖已有文件的策略。**默认 `ask`**：静默覆盖用户上一次的成果是不可逆的。
 OVERWRITE_ASK = "ask"
@@ -99,7 +111,8 @@ _RESERVED_NAMES = frozenset(
 _ILLEGAL_CHARS = '<>:"/\\|?*'
 
 #: 输入里允许被识别并剥掉的扩展名。**只剥我们自己会产出的那几个** ——
-#: 用户把图叫做 `v1.2` 时不能把 `.2` 当扩展名剥掉。
+#: 用户把图叫做 `v1.2` 时不能把 `.2` 当扩展名剥掉。`tif` 是 `tiff` 的常见
+#: 别名：我们只产出 `.tiff`，但用户顺手打的 `.tif` 同样得吃掉。
 _STRIPPABLE_EXTS = ("pdf", "png", "svg", "tif", "tiff", "jpg", "jpeg", "eps")
 
 
