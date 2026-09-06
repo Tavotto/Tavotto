@@ -152,9 +152,20 @@ class LiveFigureSession:
         重建等于把编辑丢掉）。
         """
         self._own()
-        for stem, fig in self.capture.items():
-            if stem in self.states:
-                continue
+        fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
+        if fresh:
+            # 字体回退尾巴（ADR 0044）：**脚本跑完之后、采 baseline 之前**给图上
+            # 已有的每一段文字补上 DejaVu Sans + 本机中日韩脸（逐 Text 那一步
+            # 是兑现点，`test_cjk_figure_text.py` 拿掉它就红）。放在 FigState
+            # 之前，originals 采到的就是带尾巴的链——写回重放时同一段代码再补
+            # 一次，热态所见 == 重放所得。只对新图做：已在编辑的图早补过了。
+            # rcParams 那一步是兜底：目前所有已知的事后建 Text 的路（懒建刻度
+            # 从模板 tick 拷字体、图例重建从旧文字拷字体）都不靠它，变异反证里
+            # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
+            # 这条今天还不存在的路。
+            overrides_mod.ensure_rcparams_fallback()
+        for stem, fig in fresh:
+            overrides_mod.ensure_figure_fallback(fig)
             state = overrides_mod.FigState(fig)
             manifest_mod.instrument(state)
             self.states[stem] = state

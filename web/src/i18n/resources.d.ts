@@ -1794,6 +1794,7 @@ export default interface Resources {
       "barWithoutErrorbar": "柱状图没有误差棒——如果这些柱子是多次测量的均值，规范期望标出误差",
       "bitmapEmbed": "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
       "cjkFallbackMissing": "含中日韩字符的文字用的是 {{family}}，没有声明中文 fallback，导出 PDF 里会是方框",
+      "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），它不在规范接受的中文字体里",
       "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
       "exportRasterDpi": "导出 {{formats}} 用的 {{dpi}}dpi 低于规范的 {{min}}dpi",
       "fitWithoutCi": "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",

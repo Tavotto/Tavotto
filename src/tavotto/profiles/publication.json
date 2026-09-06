@@ -34,8 +34,11 @@
         "accepted": [
           "方正小标宋简体", "FZXiaoBiaoSong-B05S",
           "Noto Sans CJK SC", "Noto Serif CJK SC", "Source Han Sans SC",
-          "Source Han Serif SC", "Microsoft YaHei", "SimSun", "PingFang SC",
-          "Songti SC", "STSong"
+          "Source Han Sans CN", "Source Han Serif SC", "Source Han Serif CN",
+          "Microsoft YaHei", "SimSun", "SimHei", "DengXian", "PingFang SC",
+          "Hiragino Sans GB", "Heiti SC", "STHeiti", "Songti SC", "STSong",
+          "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Arial Unicode MS",
+          "Droid Sans Fallback"
         ]
       },
       "default_font_size_pt": 9.0,
