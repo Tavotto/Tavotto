@@ -28,7 +28,7 @@ interface EnvState {
    * 与 `setPython` 的区别只有作用域，但那个区别很大：`setPython` 写的是
    * 全局设置，会连带改变别的项目的渲染环境。
    */
-  setProjectPython: (path: string | null) => Promise<string | null>
+  setProjectPython: (path: string | null, module?: string) => Promise<string | null>
   /** SSE 推进度时调用 */
   onProgress: (p: { state: string; log: string; error: string | null }) => void
 }
@@ -68,9 +68,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
 
-  setProjectPython: async (path) => {
+  setProjectPython: async (path, module) => {
     try {
-      const res = await setProjectEnvironment(path)
+      const res = await setProjectEnvironment(path, module)
       // 项目那半边变了，全局状态里的 project 换成后端刚算出来的那份
       const env = get().env
       if (env) set({ env: { ...env, project: res.project } })

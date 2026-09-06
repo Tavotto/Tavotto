@@ -420,6 +420,28 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
     return [(p, src) for p, src in cands if p]
 
 
+def system_python_candidates() -> list[tuple[str, str]]:
+    """这台机器上已有的解释器——老链条第四、五级（自身 / 系统 Python / Conda）。
+
+    给项目环境接手的第二层用（ADR 0044）：内置 runtime 缺包、项目里又没有
+    venv 时，把这些逐个体检一遍。**不新加任何发现逻辑**：候选就是
+    `_prioritized_candidates()` 已经枚举的那些位置，只是丢掉前三级——环境变量
+    与设置里指定的那个若存在就是当前渲染环境（正是报缺包的那个），内置
+    runtime 永远不缺 matplotlib 却正因缺别的包才走到这里。
+    """
+    out: list[tuple[str, str]] = []
+    for cand, source in _prioritized_candidates():
+        if source not in (SOURCE_CURRENT, SOURCE_SYSTEM):
+            continue
+        try:
+            if not Path(cand).is_file():
+                continue
+        except OSError:
+            continue
+        out.append((cand, source))
+    return out
+
+
 def _candidate_pythons() -> list[str | None]:
     """按优先级列出可能装了 matplotlib 的解释器（跨平台）。
 
@@ -588,8 +610,15 @@ def remembered_source(figures_dir: str | Path, python: str) -> str:
     try:
         managed = str(managedenv.venv_python(figures_dir))
     except (OSError, ValueError):
-        return SOURCE_PROJECT_VENV
-    return SOURCE_MANAGED_PROJECT if same_python(python, managed) else SOURCE_PROJECT_VENV
+        managed = ""
+    if managed and same_python(python, managed):
+        return SOURCE_MANAGED_PROJECT
+    # 项目之外的解释器（用户为这个项目挑的 conda / 系统 Python，或从依赖
+    # 修复面板采用的系统解释器，ADR 0044）：它既不是项目自带的也不归我们管，
+    # 标成「项目自带的虚拟环境」会把一条 `/usr/bin/python3` 显示成 `.venv`。
+    if not projectenv.project_relative(figures_dir, python):
+        return SOURCE_SYSTEM
+    return SOURCE_PROJECT_VENV
 
 
 def note_project_python_ok(python: str) -> None:
@@ -1876,9 +1905,28 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         return {"ok": False, "code": projectenv.ERROR_NOT_FOUND, "module": module}
     if not projectenv.mark_attempted(figures_dir, script_name):
         return {"ok": False, "code": PROJECT_ENV_ALREADY_ATTEMPTED, "module": module}
-    outcome = projectenv.resolve_for_missing_dependency(figures_dir, script_name, module)
+    # 报缺包的那个解释器：第二层体检时跳过它——它就是失败的起点。
+    try:
+        failing = resolve_worker_python(figures_dir)[0]
+    except WorkerError:
+        failing = ""
+    outcome = projectenv.resolve_for_missing_dependency(
+        figures_dir,
+        script_name,
+        module,
+        system_candidates=system_python_candidates(),
+        exclude_python=failing,
+    )
     if not outcome.get("ok"):
-        LOG.info("项目环境自动接手失败（%s）: %s", outcome.get("code"), script_name)
+        system = outcome.get("system") or []
+        found = projectenv.healthy_system_candidate(system)
+        LOG.info(
+            "项目环境自动接手失败（%s）: %s（体检了 %d 个系统解释器%s）",
+            outcome.get("code"),
+            script_name,
+            len(system),
+            f"，{found['python']} 可用、等用户确认" if found else "",
+        )
         return outcome
     python = outcome["python"]
     projectenv.remember(

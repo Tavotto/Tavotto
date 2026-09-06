@@ -90,6 +90,10 @@ ERROR_PACKAGE_NOT_FOUND_AFTER = "package_not_found_after_install"
 # ---------------------------------------------------------------------------
 TARGET_PROJECT_VENV = "project_venv"
 TARGET_MANAGED = "tavotto_managed"
+#: 「这台机器上已有的解释器里已经装着它」（ADR 0044）——**不是安装目标**：
+#: 采用它一个字节都不装，走的是项目环境 PATCH（`app._set_project_environment`），
+#: 所以刻意不进 `TARGETS`：`create_plan` 对它一律 `dependency_install_not_allowed`。
+TARGET_SYSTEM = "system_interpreter"
 TARGETS = (TARGET_PROJECT_VENV, TARGET_MANAGED)
 
 #: 同一个 (项目, 脚本) 上最多修几轮。**不是**「自动装三次」——每一轮都要用户
@@ -326,6 +330,43 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         "rounds_remaining": rounds_remaining(root, script),
         "targets": [],
     }
+    # ---- 0. 这台机器上已有的解释器里已经装着它：采用，不装 ---------------
+    # **排在两个提前返回之前**：采用不需要解析出包名（它什么都不装），也不
+    # 消耗修复轮次——解析不出 / 轮次用完时，这条路正是用户仅剩的那条。
+    # Session 7 的第二层（ADR 0044）在接手失败时已经把系统解释器体检过了，
+    # 结论就在 `project_env["system"]` 里——这里同样**不再起解释器**。健康的
+    # 排在最前：它一个字节都不装、不联网、不改任何环境，比两种安装都便宜。
+    # 探到了但不合格的（版本不支持 / 没有 matplotlib / 起不来）单列在
+    # `system_rejected`：用户手边那套环境为什么没被采用，界面要说出来。
+    detail = project_env or {}
+    system = detail.get("system") if isinstance(detail, dict) else None
+    found = projectenv.healthy_system_candidate(system)
+    if found:
+        out["targets"].append(
+            {
+                "kind": TARGET_SYSTEM,
+                "venv": "",
+                # 项目之外的绝对路径：它本来就不跟项目走，界面上也正该显示
+                # 「/usr/bin/python3」而不是一个相对到项目外的 `../../..`。
+                "python": found["python"],
+                "modifies_user_environment": False,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+                "python_version": found.get("python_version", ""),
+                "matplotlib_version": found.get("matplotlib_version", ""),
+                "support": found.get("support", ""),
+            }
+        )
+    out["system_rejected"] = [
+        {
+            "python": r["python"],
+            "code": r.get("code", ""),
+            "python_version": r.get("python_version", ""),
+        }
+        for r in projectenv.rejected_system_candidates(system)
+    ]
+
     if requirement is None or not requirement.installable:
         out["code"] = ERROR_UNRESOLVED
         return out
@@ -338,7 +379,6 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # 正是「找到了、Python 与 matplotlib 都行、就是没有这个包」。其他失败码
     # （没有 matplotlib / 版本不支持 / 起不来）**不该**提供安装——往一个跑不起
     # worker 的环境里装包，装完还是跑不起来。
-    detail = project_env or {}
     if detail.get("code") == projectenv.ERROR_MODULE_MISSING:
         venv = detail.get("venv") or ""
         python = projectenv.interpreter_of(venv) if venv else None
