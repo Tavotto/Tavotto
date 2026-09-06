@@ -134,6 +134,7 @@ export function MenuItem({
   disabled,
   danger,
   reason,
+  hint,
   icon: Icon,
   ...rest
 }: {
@@ -147,6 +148,11 @@ export function MenuItem({
    * 而且 tooltip 不能是唯一的可访问说明）。给了它通常也给 `disabled`。
    */
   reason?: string
+  /**
+   * 第二行的**辨认信息**（同名项目的父目录之类）：与 `reason` 同一个位置、
+   * 同一种字号，但它不意味着不可用。两者都给时先 reason 后 hint。
+   */
+  hint?: string
   icon?: ComponentType<{ size?: number; className?: string }>
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
@@ -160,6 +166,7 @@ export function MenuItem({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{children}</span>
         {reason && <span className="truncate text-[11px] leading-4 text-ink-3">{reason}</span>}
+        {hint && <span className="truncate font-mono text-[11px] leading-4 text-ink-3">{hint}</span>}
       </span>
       {shortcut && <span className="shrink-0 font-mono text-xs text-ink-3">{shortcut}</span>}
     </DM.Item>
