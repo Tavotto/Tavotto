@@ -1067,7 +1067,7 @@
         "versionAria": "{{name}} 的版本"
       },
       "snapshotDetail": "包操作本身没有回滚（pip 没有事务）。每次改动前后各存一份 pip freeze 作对照（现有 {{count}} 份）——它只是排障时的证据，「重建」不读它，重建依据的是账上记录的包与版本。",
-      "specAria": "要安装的包名或规范",
+      "specAria": "包名或规范（同时过滤下面的清单）",
       "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
       "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
       "status": {

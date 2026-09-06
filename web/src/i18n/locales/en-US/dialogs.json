@@ -1075,9 +1075,9 @@
         "versionAria": "Version of {{name}}"
       },
       "snapshotDetail": "Package operations themselves cannot be rolled back (pip has no transactions). A pip freeze is saved before and after every change ({{count}} so far) purely as evidence for troubleshooting — “Rebuild” does not read it; it reinstalls from the recorded package list.",
-      "specAria": "Package name or spec to install",
+      "specAria": "Package name or requirement (also filters the lists below)",
       "specInvalid": "Only “name” or “name>=version” is accepted — no spaces, paths, URLs or options.",
-      "specPlaceholder": "Package name or spec, e.g. lmfit or lmfit>=1.3",
+      "specPlaceholder": "Package name or requirement, e.g. lmfit or lmfit>=1.3",
       "status": {
         "changed": "Version changed",
         "changedDetail": "was {{recorded}} when installed",
