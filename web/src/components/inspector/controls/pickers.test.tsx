@@ -13,6 +13,7 @@ import { HatchPicker } from './HatchPicker'
 import { LegendPositionPicker } from './LegendPositionPicker'
 import { LineStylePicker } from './LineStylePicker'
 import { MarkerPicker } from './MarkerPicker'
+import { tipLabelOf } from './OptionGrid'
 import { TickAndSpineDiagram, type TickSpineAdapter } from './TickAndSpineDiagram'
 
 declare global {
@@ -326,5 +327,38 @@ describe('TickAndSpineDiagram', () => {
   it('什么都没改过时没有恢复按钮', async () => {
     await mount(<TickAndSpineDiagram adapter={adapterOf()} />)
     expect(host.querySelector('[data-tick-reset-all]')).toBeNull()
+  })
+})
+
+describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', () => {
+  it('tooltip 只说名字，代码落成 data-code', async () => {
+    expect(tipLabelOf({ label: '无', code: 'None' })).toBe('无')
+    expect(tipLabelOf({ label: '点线', code: ':' })).toBe('点线')
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    expect(dotted.getAttribute('data-code')).toBe(':')
+    expect(dotted.getAttribute('aria-label')).toBe('点线')
+  })
+
+  /**
+   * **气泡关着的时候整条判据是恒真的**——Radix 的 Content 只在打开时才进
+   * DOM，所以「页面里没有 `名字 · 代码`」在任何实现下都成立。要判它就得先
+   * 把气泡打开（聚焦触发器），再看气泡里那句话。
+   */
+  it('聚焦弹出的气泡里只有名字，没有 “点线 · :” 这种拼法', async () => {
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    await act(async () => {
+      dotted.focus()
+      dotted.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+      dotted.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    const tip = document.querySelector('[role="tooltip"]')
+    expect(tip, '气泡没打开，这条判据就是恒真的').toBeTruthy()
+    expect(tip!.textContent).toBe('点线')
   })
 })

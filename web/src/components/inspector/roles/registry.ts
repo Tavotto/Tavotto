@@ -57,7 +57,10 @@ export const roleName = (role: string): string =>
  * matplotlib 的标识符，翻译反而让人对不上文档；脚本自定义的枚举值同理。
  */
 export const optionLabel = (prop: string, value: string): string => {
-  const hit = t(`enum.${prop}.${value}`, { ns: 'inspector', defaultValue: '' })
+  // `nsSeparator: false` 的理由与 `store/actions.optionLabel` 同一条：枚举值
+  // 里含 `:`（线型「点线」）时，默认的命名空间分隔符会把键切碎。两处都查
+  // 同一张表，所以两处都得关——只关一处的话回退那一跳又把冒号带回来了。
+  const hit = t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: '' })
   return hit || baseOptionLabel(prop, value)
 }
 

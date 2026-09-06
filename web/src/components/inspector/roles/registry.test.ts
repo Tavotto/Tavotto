@@ -12,6 +12,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
+import enInspector from '@/i18n/locales/en-US/inspector.json'
+import zhInspector from '@/i18n/locales/zh-CN/inspector.json'
 import { engineLabel, groupLabel, groupRank, optionLabel, propLabel, roleName } from './registry'
 
 /** 引擎会发出来的 prop → 它属于哪个角色（只列需要显示名的那些） */
@@ -44,7 +46,14 @@ const ENGINE_PROPS: [string, string][] = [
   ['linestyle', 'patch'], ['fill', 'patch'], ['alpha', 'patch'], ['zorder', 'patch'],
 ]
 
-/** enum 字段 → 引擎会给出的选项（同样抄自 manifest 的字段表） */
+/**
+ * enum 字段 → 引擎会给出的选项（同样抄自 manifest 的字段表）。
+ *
+ * **这张表一度漏掉了 linestyle / marker 那两族**——于是「每个枚举选项都有
+ * 显示名」在整整一年里都是绿的，而线型 `:` 在界面上显示的就是一个冒号
+ * （审计 T15）。手抄的清单天生是子集，所以下面另有一条**反向**用例：
+ * 凡是翻译表里登记过显示名的枚举值，查出来必须**就是**那个显示名。
+ */
 const ENGINE_ENUMS: [string, string[]][] = [
   ['xscale', ['linear', 'log', 'symlog', 'logit']],
   ['yscale', ['linear', 'log', 'symlog', 'logit']],
@@ -54,6 +63,10 @@ const ENGINE_ENUMS: [string, string[]][] = [
   ['minor_format', ['none', 'auto', 'sci']],
   ['orientation', ['vertical', 'horizontal']],
   ['extend', ['neither', 'both', 'min', 'max']],
+  // `_line_fields` / `_collection_fields` / `_patch_fields` 的线型与标记
+  ['linestyle', ['-', '--', '-.', ':']],
+  ['grid_linestyle', ['-', '--', '-.', ':']],
+  ['marker', ['None', 'o', 's', 'D', '^', 'v', '<', '>', 'x', '+', '*', '.', 'p', 'h']],
 ]
 
 /** 引擎发过来的分组字面量（manifest 的 `group` 字段） */
@@ -65,6 +78,10 @@ const ENGINE_GROUPS = [
 ]
 
 const HAN = /[一-鿿]/
+
+/** 某个语言的枚举译文表——判据的集合边界取自这里，不手抄 */
+const enumTable = (locale: 'zh-CN' | 'en-US'): Record<string, Record<string, string>> =>
+  (locale === 'zh-CN' ? zhInspector : enInspector).enum as Record<string, Record<string, string>>
 
 /** 切到某个语言跑一段断言，跑完必定切回来（vitest 把默认语言钉在 zh-CN） */
 async function inLocale(locale: 'zh-CN' | 'en-US', fn: () => void) {
@@ -88,12 +105,40 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
   })
 
   it('每个枚举选项都有显示名', async () => {
+    const table = enumTable(locale)
     await inLocale(locale, () => {
       for (const [prop, values] of ENGINE_ENUMS) {
         for (const v of values) {
-          expect(optionLabel(prop, v), `${prop}.${v} 还在显示原值`).not.toBe(v)
+          // 判据是**登记过而且查得出来**，不是「与原值不同」：英文界面下
+          // `marker.None` 的译文就是 "None"，拿「不等于原值」当判据会把一条
+          // 正确的译文报成漏翻（而真正的漏翻是查表落空、原样回退）。
+          const registered = table[prop]?.[v]
+          expect(registered, `${prop}.${v} 没登记显示名`).toBeTruthy()
+          expect(optionLabel(prop, v), `${prop}.${v} 查不出登记的显示名`).toBe(registered)
         }
       }
+    })
+  })
+
+  /**
+   * 反向门禁：**翻译表是这条判据的集合边界**，不是手抄的清单。
+   *
+   * 抓的是「登记了却查不出来」——键里带 i18next 的分隔符时（线型的 `:` 是
+   * 命名空间分隔符）查表会静默落空，回退成原始代码。手抄的 ENGINE_ENUMS
+   * 看不见这一类：它只列了几个安全的英文单词。
+   */
+  it('翻译表里登记过的枚举值，查出来就是那条译文（键里带分隔符也不例外）', async () => {
+    const table = enumTable(locale)
+    await inLocale(locale, () => {
+      const broken: string[] = []
+      for (const [prop, values] of Object.entries(table)) {
+        for (const [value, expected] of Object.entries(values)) {
+          if (typeof expected !== 'string') continue
+          const got = optionLabel(prop, value)
+          if (got !== expected) broken.push(`${prop}[${JSON.stringify(value)}] → ${JSON.stringify(got)}`)
+        }
+      }
+      expect(broken, '这些枚举值登记了译文却查不出来').toEqual([])
     })
   })
 
