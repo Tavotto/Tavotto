@@ -125,6 +125,12 @@ describe('scope', () => {
 
   it('原图不可用时说得出**为什么**，而不是回一个笼统的 false', () => {
     expect(originalAvailability(null)).toMatchObject({ ok: false, reason: 'no_figure' })
+    // 「没选」与「没得选」是两句话：项目里一张图都没有时不能让用户去"点选一张"
+    expect(originalAvailability(null, { anyFigures: true })).toMatchObject({ reason: 'no_figure' })
+    expect(originalAvailability(null, { anyFigures: false })).toMatchObject({
+      ok: false,
+      reason: 'no_figures',
+    })
     expect(originalAvailability('不存在.pdf')).toMatchObject({
       ok: false,
       reason: 'unknown_figure',

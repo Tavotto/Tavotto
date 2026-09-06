@@ -34,6 +34,7 @@
     },
     "filenameLabel": "File name",
     "filenamePlaceholder": "Figure 1",
+    "figureListLabel": "Figure to export at its original size",
     "formatLabel": "Format",
     "ignored": {
       "crop": "cropping",
@@ -89,7 +90,8 @@
     "scopeOriginalNote": "Exports this figure at its own size: {{w}} × {{h}} mm.",
     "scopeOriginalNoteUnknown": "Exports this figure at its own size.",
     "scopeUnavailable": {
-      "no_figure": "Select a figure first to export it at its original size.",
+      "no_figure": "No figure is chosen yet — pick one below to export it at its original size.",
+      "no_figures": "This project has no figure to export at its original size yet, so only the canvas can be exported.",
       "source_stale": "This figure's source file can't be found right now, so only the canvas can be exported.",
       "unknown_figure": "This figure's details can't be found, so only the canvas can be exported."
     },

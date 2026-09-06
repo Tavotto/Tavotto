@@ -33,6 +33,7 @@ import { runValidation } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { resetExportState } from '@/store/exportStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
 
@@ -238,6 +239,7 @@ beforeEach(() => {
   jobStatus = 'done'
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+  useSelectionStore.getState().clear()
   stubFetch()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -322,11 +324,12 @@ describe('输出范围', () => {
     expect(text()).toContain('缩放')
   })
 
-  it('没有当前图时「原图尺寸」禁用，并**说出原因**（不隐藏、不静默改画布）', async () => {
+  it('画布模式没选中、但项目里只有一张图：就按它导，不再要求「先选中一张图」', async () => {
     await setup(9)
     const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
-    expect(original.hasAttribute('disabled')).toBe(true)
-    expect(text()).toContain('先选中一张图')
+    expect(original.hasAttribute('disabled')).toBe(false)
+    expect(text()).not.toContain('先选中一张图')
+    expect(text()).not.toContain('点选下面的一张图')
   })
 
   it('源文件不见了：禁用 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
@@ -782,5 +785,225 @@ describe('对话框里改规范，不许连带重置用户填过的东西', () =
       await useDocumentStore.getState().switchDocument(emptyProject(), 'd_another')
     })
     expect(filenameInput().value, '换了文档还留着上一份的导出名').not.toBe('我的图名')
+  })
+})
+
+/* ------------------------- 用户反馈 06：原图导出的对象 ------------------------- */
+
+/** 两张图都在画布上（p1 → Fig1.pdf，p2 → Fig2.pdf），素材清单都认识它们 */
+async function setupTwo(opts: { select?: string[]; open?: boolean } = {}) {
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_two')
+  useDocumentStore.getState().commit(literal('准备'), (d) => {
+    // 页面按默认规范的双栏宽 150 mm、4:3——夹具本身不能带阻断项，否则每条
+    // 用例都得先去点确认框，测的就不再是"选对了图"这一件事
+    d.page = { w: 150, h: 112.5 }
+    d.objects = [
+      { ...panel },
+      { ...panel, id: 'p2', fileId: 'Fig2.pdf', nativeW: 65, nativeH: 50, w: 65, h: 50, x: 82 },
+    ]
+  })
+  useAssetStore.setState({
+    byId: {
+      'Fig1.pdf': { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 },
+      'Fig2.pdf': { id: 'Fig2.pdf', kind: 'pdf', mtime: 1 },
+    },
+    panels: [
+      { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 },
+      { id: 'Fig2.pdf', kind: 'pdf', mtime: 1 },
+    ],
+  } as never)
+  const k1 = renderKey('Fig1.pdf', [])
+  const k2 = renderKey('Fig2.pdf', [])
+  const entry = (fileId: string, size: [number, number]) => ({
+    fileId,
+    rev: 1,
+    manifest: { ...manifest(9), size_mm: size },
+    svg: null,
+    status: 'ready',
+    error: null,
+    code: '',
+    module: '',
+    traceback: '',
+    warnings: [],
+    timings: {},
+    stale: false,
+    lastPatches: '[]',
+    wantPatches: '[]',
+    previewDpi: null,
+  })
+  useRenderStore.setState({
+    byKey: { [k1]: entry('Fig1.pdf', [80, 60]), [k2]: entry('Fig2.pdf', [65, 50]) } as never,
+    latest: { 'Fig1.pdf': k1, 'Fig2.pdf': k2 },
+    tracked: {},
+    building: {},
+  })
+  useSelectionStore.getState().set(opts.select ?? [])
+  useUiStore.getState().setExportOpen(opts.open ?? true)
+  await act(async () => {
+    root.render(
+      <TooltipProvider>
+        <ExportDialog />
+      </TooltipProvider>,
+    )
+  })
+}
+
+const originalRadio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
+const figureOptions = () => [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+
+describe('画布模式下选中的图就是要导的那张（用户反馈 06）', () => {
+  it('画布上选中了一个面板：原图尺寸可用，导的就是它', async () => {
+    await setupTwo({ select: ['p2'] })
+    expect(originalRadio().hasAttribute('disabled'), '选中了面板还说「先选中一张图」').toBe(false)
+    expect(text()).not.toContain('先选中一张图')
+    await click(originalRadio())
+    expect(text()).toContain('65 × 50 mm')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig2.pdf')
+  })
+
+  it('主选是文字、多选里混着一张图：导的是那张图', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_mixed')
+    await setupTwo({ select: [] })
+    useDocumentStore.getState().commit(literal('加文字'), (d) => {
+      d.objects.push({ id: 't1', type: 'text', text: '标题', sizePt: 10, x: 0, y: 0, w: 30, h: 8 } as never)
+    })
+    await act(async () => {
+      useSelectionStore.getState().set(['p1', 't1'])
+    })
+    expect(originalRadio().hasAttribute('disabled')).toBe(false)
+    await click(originalRadio())
+    expect(text()).toContain('80 × 60 mm')
+  })
+
+  it('什么都没选、项目里有两张图：列表列出两张，点一张就按它导（不用回画布选）', async () => {
+    await setupTwo({ select: [] })
+    expect(originalRadio().hasAttribute('disabled')).toBe(true)
+    expect(text()).toContain('点选下面的一张图')
+    const options = figureOptions()
+    expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
+    expect(options.every((o) => o.getAttribute('aria-selected') === 'false')).toBe(true)
+
+    await click(options[1])
+    // 点了就是选了：范围切到原图、按钮亮、说的是这张图的尺寸
+    const radios = [...document.body.querySelectorAll('[role="radio"]')]
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+    expect(originalRadio().hasAttribute('disabled')).toBe(false)
+    expect(figureOptions()[1].getAttribute('aria-selected')).toBe('true')
+    expect(text()).toContain('65 × 50 mm')
+    expect(text()).not.toContain('点选下面的一张图')
+
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig2.pdf')
+    // 点缩略图是这一次导出的选择，不改画布选区
+    expect(useSelectionStore.getState().ids).toEqual([])
+  })
+
+  it('画布上选中了 p2，列表里再点 Fig1：以点的为准', async () => {
+    await setupTwo({ select: ['p2'] })
+    await click(originalRadio())
+    await click(figureOptions()[0])
+    expect(text()).toContain('80 × 60 mm')
+    await click(button('开始导出')!)
+    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig1.pdf')
+  })
+
+  it('关掉再打开：上一次点的那张不带过来，重新按上下文', async () => {
+    await setupTwo({ select: ['p2'] })
+    await click(originalRadio())
+    await click(figureOptions()[0])
+    expect(text()).toContain('80 × 60 mm')
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await click(originalRadio())
+    expect(text()).toContain('65 × 50 mm')
+  })
+
+  it('按画布导且当前图可用时列表收起；原图不可用时列表仍在（那句提示得指得到东西）', async () => {
+    await setupTwo({ select: ['p2'] })
+    // 默认按画布，图又有着落：不摆列表
+    expect(figureOptions()).toHaveLength(0)
+    await click(originalRadio())
+    expect(figureOptions()).toHaveLength(2)
+    // 切回画布：收起
+    await click([...document.body.querySelectorAll('[role="radio"]')][1])
+    expect(figureOptions()).toHaveLength(0)
+    // 选中的那张源文件没了：按画布也得把列表摆出来，让用户换一张
+    await act(async () => {
+      useAssetStore.setState({
+        byId: { 'Fig1.pdf': { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 } },
+        panels: [{ id: 'Fig1.pdf', kind: 'pdf', mtime: 1 }],
+      } as never)
+    })
+    expect(text()).toContain('源文件现在找不到了')
+    expect(figureOptions()).toHaveLength(2)
+    await click(figureOptions()[0])
+    expect(originalRadio().hasAttribute('disabled')).toBe(false)
+    expect(text()).toContain('80 × 60 mm')
+  })
+
+  it('项目里一张图都没有：说「还没有可以导的图」，不摆空列表、不说"点选下面"', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_empty')
+    useAssetStore.setState({ byId: {}, panels: [] } as never)
+    useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    useUiStore.getState().setExportOpen(true)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ExportDialog />
+        </TooltipProvider>,
+      )
+    })
+    expect(originalRadio().hasAttribute('disabled')).toBe(true)
+    expect(text()).toContain('项目里还没有可以按原图尺寸导出的图')
+    expect(text()).not.toContain('点选下面')
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  it('缩略图：有图内修改的面板挂 store 里那份 SVG，没有的走素材缩略图地址，不发渲染请求', async () => {
+    await setupTwo({ select: [] })
+    const fetches: string[] = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      fetches.push(String(input))
+      return realFetch(input, init)
+    }) as typeof fetch
+    // p1 改过一个值，且这一版已经画好在 store 里
+    const patched = [{ gid: 'axes_0.xticks', prop: 'fontsize', value: 9 }]
+    const key = renderKey('Fig1.pdf', patched)
+    useRenderStore.setState((s) => ({
+      byKey: {
+        ...s.byKey,
+        [key]: {
+          ...s.byKey[renderKey('Fig1.pdf', [])],
+          svg: '<svg viewBox="0 0 80 60" preserveAspectRatio="none" style="width:100%;height:100%"><rect id="mine" width="80" height="60"/></svg>',
+          lastPatches: JSON.stringify(patched),
+          wantPatches: JSON.stringify(patched),
+        },
+      } as never,
+      latest: { ...s.latest, 'Fig1.pdf': key },
+    }))
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改字号'), (d) => {
+        ;(d.objects[0] as PanelObject).overrides = patched
+      })
+    })
+    const [o1, o2] = figureOptions()
+    const svgThumb = o1.querySelector('[data-export-thumb="svg"]')
+    expect(svgThumb, '有修改的面板该挂引擎 SVG').toBeTruthy()
+    expect(svgThumb!.querySelector('#mine')).toBeTruthy()
+    const img = o2.querySelector('img[data-export-thumb="file"]') as HTMLImageElement
+    expect(img, '没修改的面板走素材缩略图').toBeTruthy()
+    expect(img.getAttribute('src')).toContain('/api/render?id=Fig2.pdf')
+    // 打开列表这一路没有发过任何渲染请求
+    expect(fetches.filter((u) => u.includes('/api/engine/'))).toEqual([])
   })
 })

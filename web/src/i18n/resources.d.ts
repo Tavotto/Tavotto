@@ -202,6 +202,7 @@ export default interface Resources {
       "conflictReplace": "覆盖",
       "editedDuringExport": "导出期间这份文档又被改过——文件里是点「导出」那一刻的内容。",
       "exported": "导出完成：{{files}}",
+      "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
         "control_char": "文件名里有不可见的特殊字符，请重新输入。",
         "dot_only": "这个名字有特殊含义，换一个。",
@@ -269,7 +270,8 @@ export default interface Resources {
       "scopeOriginalNote": "按这张图自己的尺寸出图：{{w}} × {{h}} mm。",
       "scopeOriginalNoteUnknown": "按这张图自己的尺寸出图。",
       "scopeUnavailable": {
-        "no_figure": "先选中一张图，才能按原图尺寸导出。",
+        "no_figure": "还没定要导哪一张：点选下面的一张图，就按它的原图尺寸导出。",
+        "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
         "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
