@@ -5,11 +5,18 @@
  * jsdom 没有布局，量不出缩放后的像素；这里钉的是「预览里的对象与插入的对象
  * 同源」：每格预览里的画布对象节点数、类型与形状序列，与 `insertPreset` 真的
  * 放进文档的那一批逐项相等。把预览换成任何一份手写图标，这条就红。
+ *
+ * 光比「节点数」与「插入的那批签名」还不够——那两条都不看**预览画出来的是
+ * 什么**：把预览喂进一份改过的定义（比如整组转 33°），节点数一样、插入那侧
+ * 也没动，两条照样绿（实测变异存活）。所以再钉一条：把预览渲染出来的每个对象
+ * 节点，与「拿 `buildPreset` 同一份定义直接喂 `ObjectView`」渲出来的节点做
+ * 标记级比对（去掉随机 id）。两侧的渲染器同一个，**喂进去的定义不同就会分叉**。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ObjectView } from '@/canvas/ObjectView'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { buildPreset, insertPreset, PRESET_IDS } from '@/lib/presets'
 import { useDocumentStore } from '@/store/documentStore'
@@ -39,6 +46,13 @@ const signature = (o: CanvasObject): string => {
 
 let container: HTMLDivElement
 let root: Root
+/** 参照渲染用的第二个 root：拿定义直接喂 ObjectView，与预览比标记 */
+let refContainer: HTMLDivElement
+let refRoot: Root
+
+/** 去掉每次 `buildPreset` 都换的随机 id / key，只留结构与样式 */
+const normalize = (el: Element) =>
+  el.outerHTML.replace(/data-object-id="[^"]*"/g, '').replace(/\bid="[^"]*"/g, '')
 
 beforeEach(async () => {
   vi.stubGlobal(
@@ -53,11 +67,16 @@ beforeEach(async () => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+  refContainer = document.createElement('div')
+  document.body.appendChild(refContainer)
+  refRoot = createRoot(refContainer)
 })
 
 afterEach(() => {
   act(() => root.unmount())
+  act(() => refRoot.unmount())
   container.remove()
+  refContainer.remove()
   vi.unstubAllGlobals()
 })
 
@@ -95,6 +114,30 @@ describe('PresetsDialog', () => {
       // 成组落地：同一 groupId
       const groups = new Set(useDocumentStore.getState().doc.objects.slice(before).map((o) => o.groupId))
       expect(groups.size, id).toBe(1)
+    }
+  })
+
+  it('预览画出来的就是那份定义：与直接喂 ObjectView 的渲染逐个节点相同', () => {
+    open()
+    for (const id of PRESET_IDS) {
+      const objs = buildPreset(id, { x: 0, y: 0 })
+      act(() =>
+        refRoot.render(
+          <TooltipProvider>
+            {objs.map((o) => (
+              <ObjectView key={o.id} obj={o} />
+            ))}
+          </TooltipProvider>,
+        ),
+      )
+      const shown = [
+        ...document
+          .querySelector(`[data-preset-preview="${id}"]`)!
+          .querySelectorAll('[data-object-id]'),
+      ].map(normalize)
+      const expected = [...refContainer.querySelectorAll('[data-object-id]')].map(normalize)
+      expect(expected.length, id).toBe(objs.length)
+      expect(shown, id).toEqual(expected)
     }
   })
 
