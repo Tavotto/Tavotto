@@ -240,7 +240,7 @@
 | 检查 | 结果 |
 | --- | --- |
 | `ruff check . && ruff format --check .` | 全过（337 文件） |
-| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | 一致（重建过 canvas.html 一次） |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | 一致（合入 origin/main 的 #290 后 canvas.html 不再入库，由 CI `plugin-candidate` 现建） |
 | `gen_canvas_coverage.py` / `gen_preflight_vectors.py` | 与后端 / Python 实现一致 |
 | 全量 pytest | 只有 1 红：`test_source_hygiene` 抓到第 5 条新用例的 `subprocess.run` 没钉编码，已修，两文件复跑绿 |
 | `pnpm test` | 191 文件 / 2643 条全过 |
@@ -251,3 +251,7 @@
 ADR 0044，重编号为 0045 / 0046；② 第 7 条的图标 AST 门禁抓到第 6 条新加的
 `size={10}`；③ 第 4 条与第 6 条在 `ExportDialog.test.tsx` 末尾各追加一段
 describe，手工保留两段。
+
+补记：合入 origin/main（#290 / #293 / #294）后再跑一遍：ruff、`pnpm i18n:check`、
+`pnpm build`、`pnpm test`（2650 条）、九个针对性 pytest 文件全绿；唯一冲突是
+`canvas.html`（main 侧已移出源码分支），按 main 侧删除。
