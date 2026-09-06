@@ -9,7 +9,7 @@
 
 | # | 反馈（原话） | 分支 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 在新手教学案例中，我双击示例图片，并不能进入图内编辑。 | `uf/01-tutorial-dblclick` | 待处理 |
+| 1 | 在新手教学案例中，我双击示例图片，并不能进入图内编辑。 | `uf/01-tutorial-dblclick` | 已修复 |
 | 2 | 对于散点图而言，在选中时，仍然是一个很大的矩形框将其包裹，而不是所有散点的圆形轮廓出现被选中蓝色框。 | `uf/02-scatter-outline` | 待处理 |
 | 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 待处理 |
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 待处理 |
@@ -48,3 +48,23 @@
   `codex plugin marketplace upgrade tavotto`，未替用户执行。
 - **遗留**：只在 macOS 复现；Windows 快捷方式启动的 PATH 未验。
   `plugin_python()` 在最小 PATH 下取到 `/usr/bin/python3` 的问题不在本条范围。
+
+### 1. 教程画布双击进不了图内编辑——换文档之后没人再对账
+
+- **根因**：随包分发的 `resources/tutorial_project/tavottofile/Tutorial.json` 里
+  p1/p2 面板本来就没有 `script`（静态文件不知道副本落在哪）；`script` 由
+  `store/panelSourceSync.ts` 按 `/api/panels` 原地补，但对账只在 SSE 事件与
+  `Workspace` 挂载那一次触发。第一次从项目选择器进教程恰好赶上挂载，所以能用；
+  「重新开始教程」、在别的项目里点「开始教程」、切回教程项目等都是挂载之后
+  `switchDocument`，没人再对第二次账 → `ObjectView.tsx` 双击判据 `obj.script`
+  缺席 → 走裁剪态而不是 `enterElementEdit`。真浏览器复现：重置后双击 p2 出现
+  「完成裁剪」按钮。
+- **处置**：`store/liveSync.ts` 新增 `startDocumentLoadSync()`，订阅
+  `documentStore.loadSeq`，整份换文档就在下一个微任务里 `syncLoadedDocument()`；
+  `App.tsx` 的 Workspace effect 起停它。挂载那次显式对账保留。
+- **用例**：`useServerEvents.test.ts` +3、`lib/onboarding/tutorial.test.ts` +2、
+  e2e `tutorial.spec.ts` 「重新开始教程」末尾追加双击 p2 必须进入图内编辑。
+  反证：订阅恒早退 → 3 条正向红；App.tsx 拔掉订阅 + 重建 dist → e2e 红。
+- **验证**：`pnpm test` 2591 全过；`pnpm build` 过；e2e 该条 chromium 1 passed；
+  agent-browser 修前/修后截图在 scratchpad/uf-01/s8.png、s11.png。
+- **遗留**：无需用户拍板。
