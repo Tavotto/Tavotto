@@ -157,6 +157,9 @@ const cardToggle = () => card()?.querySelector('button') as HTMLButtonElement | 
 const cardRow = (prop: string) => card()?.querySelector(`[data-prop="${prop}"]`) ?? null
 /** 整个属性页里挂着这条属性的所有行（用来证明没有第二套控件） */
 const allRows = (prop: string) => Array.from(host.querySelectorAll(`[data-prop="${prop}"]`))
+/** 通用列表的「更多」折叠区——重复的控件最容易藏在这里，判据必须把它打开 */
+const moreToggle = () =>
+  Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更多')
 const click = async (el: Element | null | undefined) => {
   if (!el) throw new Error('没有这个按钮')
   await act(async () => {
@@ -193,11 +196,15 @@ describe('图例的排版详情（审计 T17）', () => {
     }
   })
 
-  it('展开后五条都在，且通用列表里没有第二套控件', async () => {
+  it('展开后五条都在，且通用列表里没有第二套控件（「更多」也打开着数）', async () => {
     await mount({ ncol: 2 })
     await click(cardToggle())
+    // **「更多」必须一起打开**：没让出来的字段会落进这个默认折叠的桶，
+    // 只数首屏的话「有没有第二套控件」这条判据在折叠状态下恒真
+    await click(moreToggle())
+    expect(moreToggle()?.getAttribute('aria-expanded')).toBe('true')
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad', 'columnspacing']) {
-      // 恰好一行：卡里那一行。多于一行 = 首屏又铺了一遍
+      // 恰好一行：卡里那一行。多于一行 = 别处又铺了一遍
       expect(allRows(prop)).toHaveLength(1)
       expect(cardRow(prop)).not.toBeNull()
     }
