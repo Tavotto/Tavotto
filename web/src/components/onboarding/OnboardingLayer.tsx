@@ -13,8 +13,8 @@ import {
   type Box,
   type CoachmarkSide,
 } from '@/lib/onboarding/position'
-import { STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
-import { stepById, type AnchorSpec, type StepContext } from '@/lib/onboarding/steps'
+import { REAL_STEP_IDS, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
+import { stepById, type AnchorSpec, type Precondition, type StepContext } from '@/lib/onboarding/steps'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -41,6 +41,14 @@ import { Coachmark } from './Coachmark'
  * 返回 / 跳过——绝不锁死界面。目标在视口外先滚进来；藏在折叠的侧栏里时
  * 步骤自己的 `reveal()` 把它临时露出来（不写偏好）。
  *
+ * ### 前置状态（审计 T36）
+ *
+ * 找锚点之前先问步骤的 `precondition(ctx)`。不满足时**不找锚点、不「等待」**：
+ * 正文照常说这一步要做什么，状态行说清缺什么（「这一步要在 Fig2_correlation 的
+ * 图内编辑里进行」），主按钮是补上它的那一个真实动作（`openFastEdit` /
+ * `addFigureToLayout` / `returnToLayout`），「跳过此步」照旧。「正在等待目标出现」
+ * 只在前置满足之后的短暂窗口里出现，等待计时从那一刻起算。
+ *
  * ### 落位
  *
  * 锚点在普通页面上：portal 到 `body`，`position: fixed`。
@@ -60,7 +68,9 @@ export const WAIT_MS = 1500
 /** 兜底重测周期（抽屉动画、SVG 换代这类没有 store 变化的重排） */
 const TICK_MS = 300
 
-const REAL_STEPS = STEP_IDS.length - 2 // 去掉 welcome / done
+const REAL_STEPS = REAL_STEP_IDS.length
+const NONE: AnchorSpec = { kind: 'none' }
+const OK: Precondition = { ok: true }
 
 interface Measured {
   box: Box | null
@@ -145,15 +155,22 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   const refresh = useCallback(() => {
     const next = currentContext()
     setCtx(next)
-    const spec = def.anchor(next)
-    const m = measure(spec)
-    setMeasured(m)
+    // 前置不满足：指着补前置的那个目标（没有就居中），不去找这一步自己的锚点
+    const pre = def.precondition?.(next) ?? OK
+    const anchorOf = (c: StepContext) => (pre.ok ? def.anchor(c) : (pre.anchor ?? NONE))
+    let m = measure(anchorOf(next))
     // 目标不在 DOM 里（折叠的侧栏 / 还没重排的属性页），或者在画布上但被平移到了
-    // 工作区可见范围之外：第一次先让步骤把它露出来（只做一次，不写偏好）
-    if (!revealed.current && def.reveal && (!m || hiddenInStage(m))) {
+    // 工作区可见范围之外：第一次先让步骤把它露出来（只做一次，不写偏好）。
+    // 露出来之后**当场再量一次**：首次 refresh 跑在订阅挂上之前，reveal 直接
+    // setState 引起的变化这一轮听不到，不补量的话要等下一个 tick 才贴上去
+    if (pre.ok && !revealed.current && def.reveal && (!m || hiddenInStage(m))) {
       revealed.current = true
       def.reveal(next)
+      const again = currentContext()
+      setCtx(again)
+      m = measure(anchorOf(again))
     }
+    setMeasured(m)
   }, [def])
 
   useEffect(() => {
@@ -166,19 +183,31 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
       useValidationStore.subscribe(refresh),
       useRenderStore.subscribe(refresh),
       useProjectStore.subscribe(refresh),
+      // 结束页的计数、返回 / 跳过之后的账都在这里变
+      useOnboardingStore.subscribe(refresh),
     ]
     window.addEventListener('resize', refresh)
     window.addEventListener('scroll', refresh, true)
     const tick = window.setInterval(refresh, TICK_MS)
-    const wait = window.setTimeout(() => setWaitedOut(true), WAIT_MS)
     return () => {
       for (const u of unsubs) u()
       window.removeEventListener('resize', refresh)
       window.removeEventListener('scroll', refresh, true)
       window.clearInterval(tick)
-      window.clearTimeout(wait)
     }
   }, [refresh])
+
+  const pre = def.precondition?.(ctx) ?? OK
+  const blocked = !pre.ok
+
+  // 「等待目标」的计时从**前置满足那一刻**起算：前置不满足的那段时间里根本没在找
+  // 锚点，补上前置之后属性页 / 图内 SVG 还要一拍才出来，不该一到就说「找不到」
+  useEffect(() => {
+    if (blocked) return
+    setWaitedOut(false)
+    const wait = window.setTimeout(() => setWaitedOut(true), WAIT_MS)
+    return () => window.clearTimeout(wait)
+  }, [blocked])
 
   // 目标在视口外：先滚进来（只动视口，不动文档）
   useEffect(() => {
@@ -213,15 +242,21 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     setPlacement(p)
   }, [measured, ctx])
 
-  const missing = measured === null
+  const missing = !blocked && measured === null
   const showMissing = missing && waitedOut
 
   const variant = def.variant ? def.variant(ctx) : stepId
-  const title = ob(`steps.${variant}.title`)
-  const body = ob(`steps.${variant}.body`)
+  const values = def.values?.(ctx)
+  const title = ob(`steps.${variant}.title`, values)
+  const body = ob(`steps.${variant}.body`, values)
   const index = STEP_IDS.indexOf(stepId)
   const progress = index >= 1 && index <= REAL_STEPS ? ob('progress', { n: index, total: REAL_STEPS }) : null
-  const altDone = def.altDone?.(ctx) ?? false
+  const altDone = !blocked && (def.altDone?.(ctx) ?? false)
+  // 主动作：前置缺了 → 补前置的那颗；否则步骤自己给的（比如「加入 Fig1_kinetics」）
+  const stepAction = blocked ? pre.action : def.action?.(ctx)
+  const actionButton = stepAction
+    ? { label: ob(`action.${stepAction.key}`, stepAction.values), onClick: stepAction.run }
+    : null
 
   const onClose = () => useOnboardingStore.getState().pause('user')
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -239,7 +274,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
         ? { label: ob('explore'), onClick: () => useOnboardingStore.getState().complete(), autoFocus: true }
         : altDone
           ? { label: ob('resolvedContinue'), onClick: () => completeStep(stepId) }
-          : null
+          : actionButton
   const secondary =
     stepId === 'done'
       ? {
@@ -303,7 +338,11 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
         onClose={onClose}
         onKeyDown={onKeyDown}
         note={
-          showMissing ? (
+          blocked ? (
+            <span role="status" data-onboarding-precondition={pre.reason}>
+              {ob(`precondition.${pre.reason}`, pre.values)}
+            </span>
+          ) : showMissing ? (
             <span role="status">{ob('targetMissing')}</span>
           ) : missing ? (
             <span role="status">{ob('targetWaiting')}</span>

@@ -275,7 +275,7 @@
         "keywords": "tutorial onboarding resume continue"
       },
       "tutorial-reset": {
-        "label": "Restart tutorial",
+        "label": "Reset tutorial project",
         "keywords": "tutorial onboarding reset restart"
       },
       "refresh-project": {
@@ -1083,7 +1083,7 @@
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
-      "reset": "Restart tutorial",
+      "reset": "Reset tutorial project",
       "hints": "Contextual hints",
       "hintsHint": "One-time hints shown the first time you meet a kind of action; each appears once.",
       "resetHints": "Reset hints"
@@ -1263,6 +1263,20 @@
     "resolvedContinue": "Already fixed, continue",
     "targetWaiting": "Waiting for the target to appear…",
     "targetMissing": "The target for this step is not on screen. You can go back or skip this step.",
+    "precondition": {
+      "editPanelMissing": "{{name}}, the figure this tutorial edits, is not on this canvas. Open it first, or skip this step.",
+      "notInElementEdit": "This step happens inside the figure editor of {{name}}. Open it first, or skip this step.",
+      "noTextSelected": "Select a text inside the figure first (the title or an axis label).",
+      "editPanelNotRendered": "{{name}} has not been rendered yet, so the Problems panel has no results for it. Open it once, or skip this step.",
+      "otherPanelMissing": "Only one tutorial figure is on the canvas; aligning needs at least two. Add {{name}} first, or skip this step.",
+      "notInLayout": "Multi-select happens in the canvas layout. Go back to the canvas first, or skip this step."
+    },
+    "action": {
+      "openFigure": "Open {{name}}",
+      "selectText": "Select a text",
+      "addToLayout": "Add {{name}}",
+      "returnToLayout": "Back to canvas"
+    },
     "progress": "Step {{n}} of {{total}}",
     "hintsReset": "Contextual hints reset; each will show once more",
     "landed": {
@@ -1274,15 +1288,15 @@
       "unavailable": "The tutorial resources in this install are incomplete. Please reinstall Tavotto.",
       "open_failed": "The tutorial project could not be opened. Try again, or open your own project first.",
       "locked": "A file in the tutorial project is in use by another program. Close it and try again.",
-      "document_failed": "The tutorial canvas could not be read (incompatible version or missing file). Try “Restart tutorial”.",
+      "document_failed": "The tutorial canvas could not be read (incompatible version or missing file). Try “Reset tutorial project”.",
       "cancelled": "Cancelled.",
       "no_api": "This environment does not provide the tutorial."
     },
     "reset": {
-      "title": "Restart the tutorial?",
-      "body": "The tutorial project goes back to how it was installed: your edits, written-back figures and progress in it are cleared. Other projects are untouched.",
+      "title": "Reset the tutorial project?",
+      "body": "The tutorial project goes back to how it was installed: your edits, written-back figures and tutorial progress in it are cleared. Other projects are untouched.",
       "bodyWithLayouts": "The tutorial project goes back to how it was installed, and the canvas files you saved inside it are cleared too: {{names}}. Export them first if you want to keep them. Other projects are untouched.",
-      "confirm": "Restart"
+      "confirm": "Reset and start over"
     },
     "steps": {
       "welcome": {
@@ -1323,7 +1337,11 @@
       },
       "add_to_layout": {
         "title": "Add to canvas",
-        "body": "Both figures are already on the canvas. Click “Add to canvas” to go back to the layout and see them."
+        "body": "Both figures are already on the canvas. Click “Add to canvas” to go back to the layout and see them.",
+        "missing": {
+          "title": "Add to canvas",
+          "body": "{{name}} is not on the canvas yet. Select its card in the “Assets” drawer on the left and add it to the canvas; this step completes once both figures are on the layout."
+        }
       },
       "multi_select_align": {
         "title": "Shift-select",
@@ -1343,7 +1361,15 @@
       },
       "done": {
         "title": "Tutorial complete",
-        "body": "You have covered quick edit, locating problems, original and canvas export, and multi-select alignment. Reopen the tutorial any time from the “More” menu."
+        "body": "You have covered quick edit, locating problems, original and canvas export, and multi-select alignment. Reopen the tutorial any time from the “More” menu.",
+        "partial": {
+          "title": "Tutorial finished",
+          "body": "{{done}} of {{total}} steps done, {{skipped}} skipped. You can reopen the tutorial from the “More” menu to revisit the skipped ones."
+        },
+        "allSkipped": {
+          "title": "Tutorial ended",
+          "body": "You skipped all {{total}} steps, so quick edit, locating problems, export and multi-select alignment have not been tried yet. Reopen the tutorial from the “More” menu to walk through them."
+        }
       }
     }
   }

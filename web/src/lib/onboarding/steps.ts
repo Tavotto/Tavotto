@@ -18,6 +18,14 @@
  * `findFigurePanel(file)` 现查，元素靠 manifest 的 role 现查；重置 / 重建之后
  * id 变了也连不错。
  *
+ * ### 前置状态先验，缺了就给一条真实行动（审计 T36）
+ *
+ * 用户跳过前面的步骤是常事。第 2 步的目标是图内的标题，用户还在画布模式里时它
+ * **根本不在 DOM 里**——以前的表现是卡片一直「正在等待目标出现…」。现在每步先
+ * `precondition(ctx)`：不满足就说清缺什么，并给一颗只调稳定动作的按钮
+ * （`openFastEdit` / `addFigureToLayout` / `returnToLayout` / `setSelectedGid`），
+ * 「跳过此步」照旧。「等待」只允许出现在前置满足、目标正在渲染 / 重排的短暂窗口。
+ *
  * ### 不做的事
  *
  * 这里**一个字都不写文档**、不发请求、不改用户偏好；`reveal()` 只做「把折叠的
@@ -26,14 +34,22 @@
 import type { ManifestElement, TutorialMetadata, TutorialPanelMeta } from '@/lib/api'
 import { propertyPathOf } from '@/lib/typography'
 import type { ValidationIssue } from '@/lib/validation'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { findFigurePanel, useWorkspaceStore, type WorkspaceMode } from '@/store/workspace'
+import {
+  addFigureToLayout,
+  findFigurePanel,
+  openFastEdit,
+  returnToLayout,
+  useWorkspaceStore,
+  type WorkspaceMode,
+} from '@/store/workspace'
 import type { PanelObject } from '@/types/document'
-import { STEP_IDS, type StepId } from './stepIds'
+import { STEP_IDS, tallyOutcomes, type StepId, type StepOutcomes } from './stepIds'
 
 /* ------------------------------- 信号累计 --------------------------------- */
 
@@ -90,6 +106,8 @@ export interface StepContext {
   validationReady: boolean
   exportOpen: boolean
   signals: StepSignals
+  /** 这一轮到目前为止「完成 / 跳过」各几步（结束页按它措辞） */
+  outcomes: StepOutcomes
 }
 
 /** 文字类 role：教程 Step 2 认的目标 */
@@ -116,6 +134,7 @@ export function buildContext(meta: TutorialMetadata | null, signals: StepSignals
   const ws = useWorkspaceStore.getState()
   const ui = useUiStore.getState()
   const val = useValidationStore.getState()
+  const ob = useOnboardingStore.getState()
   const editMeta = meta ? editPanelMeta(meta) : undefined
   const edit = refOf(editMeta)
   const other = meta ? refOf(meta.panels.find((p) => p !== editMeta)) : null
@@ -145,6 +164,7 @@ export function buildContext(meta: TutorialMetadata | null, signals: StepSignals
     validationReady: val.ready,
     exportOpen: ui.exportOpen,
     signals,
+    outcomes: tallyOutcomes(ob.completedSteps, ob.skippedSteps),
   }
 }
 
@@ -196,7 +216,43 @@ export const problemsResolved = (ctx: StepContext): boolean =>
 const bothOnCanvas = (ctx: StepContext): boolean =>
   !!ctx.meta && ctx.meta.panels.length >= 2 && ctx.tutorialPanelIds.size >= 2
 
+/**
+ * 元数据里有、文档里却没有的教程图（用户删掉了、或这份画布本来就只放了一张）。
+ * 第 6 / 7 步按它说话：**说「两张图都在画布上」之前先数一数**。
+ */
+export function missingTutorialPanels(ctx: StepContext): TutorialPanelMeta[] {
+  if (!ctx.meta) return []
+  return ctx.meta.panels.filter((pm) => !findFigurePanel(pm.file))
+}
+
 /* -------------------------------- 步骤表 ---------------------------------- */
+
+/**
+ * coachmark 上的一颗真实行动按钮。`run` **只调稳定动作**（工作流出口 / store 的
+ * 既有 action），不在这里拼第二份逻辑；文案 key 在 `dialogs:onboarding.action.<key>`。
+ */
+export interface StepAction {
+  key: string
+  values?: Record<string, unknown>
+  run: () => void
+}
+
+/**
+ * 前置状态的结论。不满足时 `reason` 是 `dialogs:onboarding.precondition.<reason>`
+ * 的 key（说清缺什么），`action` 是补上它的那一颗按钮，`anchor` 是此刻该指着谁
+ * （不给就居中）。**元数据还没到时一律算满足**——那是层里「等待」的合法窗口。
+ */
+export type Precondition =
+  | { ok: true }
+  | {
+      ok: false
+      reason: string
+      values?: Record<string, unknown>
+      action?: StepAction
+      anchor?: AnchorSpec
+    }
+
+const OK: Precondition = { ok: true }
 
 export interface StepDef {
   id: StepId
@@ -204,6 +260,12 @@ export interface StepDef {
   manual?: boolean
   /** 完成条件（manual 的步骤不会被自动判完） */
   done: (ctx: StepContext) => boolean
+  /** 这一步能做的前提。不满足时卡片说原因 + 给行动，不去找锚点、不「等待」 */
+  precondition?: (ctx: StepContext) => Precondition
+  /** 前置满足时仍可提供的主动作（比如替用户把缺的那张图加进画布） */
+  action?: (ctx: StepContext) => StepAction | null
+  /** 文案插值（`{{name}}` / 结束页的计数） */
+  values?: (ctx: StepContext) => Record<string, unknown>
   /** 完成时清零哪些信号（防重放连着完成两步） */
   consumes?: (keyof StepSignals)[]
   anchor: (ctx: StepContext) => AnchorSpec
@@ -240,6 +302,63 @@ function peekProperties(): void {
 
 const objectAnchor = (id: string) => sel(`[data-object-id="${esc(id)}"]`)
 
+/** 素材抽屉开着就指卡片，否则指左轨「素材」 */
+function assetAnchor(file: string): AnchorSpec {
+  const ui = useUiStore.getState()
+  return ui.leftOpen && ui.leftTab === 'assets' ? sel(`[data-card="${esc(file)}"]`) : sel('[data-rail="assets"]')
+}
+
+/** 「打开要编辑的那张图」该指着谁（Step 1 与各步前置共用） */
+function openFastEditAnchor(ctx: StepContext): AnchorSpec {
+  if (!ctx.edit) return ctx.meta ? assetAnchor(editPanelMeta(ctx.meta)?.file ?? '') : sel('[data-rail="assets"]')
+  const ui = useUiStore.getState()
+  if (ui.leftOpen && ui.leftTab === 'assets') return sel(`[data-card="${esc(ctx.edit.meta.file)}"]`)
+  if (ctx.mode === 'layout') return objectAnchor(ctx.edit.panel.id)
+  return sel('[data-rail="assets"]')
+}
+
+/** 把要编辑的那张图打开进图内编辑——与素材卡双击、`tavotto open` 同一个出口 */
+function openEditAction(meta: TutorialMetadata): StepAction | undefined {
+  const pm = editPanelMeta(meta)
+  if (!pm) return undefined
+  return { key: 'openFigure', values: { name: pm.stem }, run: () => void openFastEdit(pm.file) }
+}
+
+/** 把缺的那张图加进画布——与快速编辑条的「添加到画布」同一个出口 */
+function addMissingAction(missing: TutorialPanelMeta): StepAction {
+  return { key: 'addToLayout', values: { name: missing.stem }, run: () => void addFigureToLayout(missing.file) }
+}
+
+/**
+ * 第 2–4 步的共同前提：要编辑的那张图在文档里、并且此刻正处在它的图内编辑态。
+ * 用户跳过第 1 步直接到这里时，目标（图内的标题 / 属性字段）根本不在 DOM 里；
+ * 与其「等待」，不如说清并给一颗「打开 Fig2_correlation」。
+ */
+function requireElementEdit(ctx: StepContext): Precondition {
+  if (!ctx.meta) return OK
+  const pm = editPanelMeta(ctx.meta)
+  if (!pm) return OK
+  if (!ctx.edit) {
+    return {
+      ok: false,
+      reason: 'editPanelMissing',
+      values: { name: pm.stem },
+      action: openEditAction(ctx.meta),
+      anchor: assetAnchor(pm.file),
+    }
+  }
+  if (ctx.elementPanelId !== ctx.edit.panel.id) {
+    return {
+      ok: false,
+      reason: 'notInElementEdit',
+      values: { name: pm.stem },
+      action: openEditAction(ctx.meta),
+      anchor: openFastEditAnchor(ctx),
+    }
+  }
+  return OK
+}
+
 /**
  * 把画布上的某个对象挪进视野。**只动视口**（与 `workspace.revealPanel` 同一条
  * 纪律）：不选中、不改文档——coachmark 指着谁不该顺手替用户选中谁。
@@ -260,13 +379,7 @@ export const STEPS: readonly StepDef[] = [
     id: 'open_fast_edit',
     // 真实状态：那张图的图内编辑态已经进入（只有 enterElementEdit 能产生它）
     done: (ctx) => !!ctx.edit && ctx.elementPanelId === ctx.edit.panel.id,
-    anchor: (ctx) => {
-      if (!ctx.edit) return sel('[data-rail="assets"]')
-      const ui = useUiStore.getState()
-      if (ui.leftOpen && ui.leftTab === 'assets') return sel(`[data-card="${esc(ctx.edit.meta.file)}"]`)
-      if (ctx.mode === 'layout') return objectAnchor(ctx.edit.panel.id)
-      return sel('[data-rail="assets"]')
-    },
+    anchor: openFastEditAnchor,
     variant: (ctx) =>
       ctx.edit && !(useUiStore.getState().leftOpen && useUiStore.getState().leftTab === 'assets') && ctx.mode === 'layout'
         ? 'open_fast_edit.canvas'
@@ -279,6 +392,7 @@ export const STEPS: readonly StepDef[] = [
   },
   {
     id: 'select_text',
+    precondition: requireElementEdit,
     done: (ctx) => {
       if (!ctx.edit || ctx.elementPanelId !== ctx.edit.panel.id) return false
       const role = primaryElementRole(ctx)
@@ -294,6 +408,20 @@ export const STEPS: readonly StepDef[] = [
   },
   {
     id: 'change_typography',
+    // 字号那一行只在选中了文字元素时才在属性页里：没选中就不是「等」，是先选一个
+    precondition: (ctx) => {
+      const edit = requireElementEdit(ctx)
+      if (!edit.ok || !ctx.edit) return edit
+      const role = primaryElementRole(ctx)
+      if (role && TEXT_ROLES.has(role)) return OK
+      const el = preferredTextElement(ctx)
+      return {
+        ok: false,
+        reason: 'noTextSelected',
+        action: el ? { key: 'selectText', run: () => useUiStore.getState().setSelectedGid(el.gid) } : undefined,
+        anchor: el ? { kind: 'element', panelId: ctx.edit.panel.id, bbox: el.bbox } : undefined,
+      }
+    },
     // 信号：改过排版属性 **且** 一条历史真的进了撤销栈（事务结束才算）
     done: (ctx) => ctx.signals.typographyChanged > 0 && ctx.signals.historyPushed > 0,
     consumes: ['typographyChanged', 'historyPushed'],
@@ -302,6 +430,32 @@ export const STEPS: readonly StepDef[] = [
   },
   {
     id: 'locate_problem',
+    // 图内问题从渲染后的 manifest 算：那张图没渲染过（跳过了前面几步）问题面板里
+    // 就不会有它的问题，这一步无从完成——先把它打开一次
+    precondition: (ctx) => {
+      if (!ctx.meta) return OK
+      const pm = editPanelMeta(ctx.meta)
+      if (!pm) return OK
+      if (!ctx.edit) {
+        return {
+          ok: false,
+          reason: 'editPanelMissing',
+          values: { name: pm.stem },
+          action: openEditAction(ctx.meta),
+          anchor: assetAnchor(pm.file),
+        }
+      }
+      if (!ctx.elements) {
+        return {
+          ok: false,
+          reason: 'editPanelNotRendered',
+          values: { name: pm.stem },
+          action: openEditAction(ctx.meta),
+          anchor: openFastEditAnchor(ctx),
+        }
+      }
+      return OK
+    },
     done: (ctx) => ctx.signals.problemFocused > 0,
     consumes: ['problemFocused'],
     altDone: (ctx) => problemsResolved(ctx),
@@ -331,12 +485,51 @@ export const STEPS: readonly StepDef[] = [
   {
     id: 'add_to_layout',
     // 两张图都在文档里且回到了版面。教程画布本来就摆好两张（ADR 0039），所以
-    // 在画布模式到达这一步会直接完成；在快速编辑里则要用户按「加入画布」回去
+    // 在画布模式到达这一步会直接完成；在快速编辑里则要用户按「加入画布」回去。
+    // 文档里只剩一张时（用户删过 / 另存的画布）说的是**另一件事**：把缺的那张
+    // 加进来——文案、锚点、按钮都按 `missingTutorialPanels` 现算，不许说
+    // 「两张都已经在画布上」
     done: (ctx) => bothOnCanvas(ctx) && ctx.mode === 'layout',
-    anchor: (ctx) => (ctx.mode === 'fast_edit' ? sel('[data-onboarding-anchor="add-to-layout"]') : NONE),
+    variant: (ctx) => (missingTutorialPanels(ctx).length ? 'add_to_layout.missing' : 'add_to_layout'),
+    values: (ctx) => ({ name: missingTutorialPanels(ctx)[0]?.stem ?? '' }),
+    action: (ctx) => {
+      const missing = missingTutorialPanels(ctx)[0]
+      return missing ? addMissingAction(missing) : null
+    },
+    anchor: (ctx) => {
+      const missing = missingTutorialPanels(ctx)[0]
+      if (missing) return assetAnchor(missing.file)
+      return ctx.mode === 'fast_edit' ? sel('[data-onboarding-anchor="add-to-layout"]') : NONE
+    },
+    reveal: (ctx) => {
+      if (missingTutorialPanels(ctx).length) peekLeft('assets')
+    },
   },
   {
     id: 'multi_select_align',
+    // 要两张图都在画布上、且人在版面里：快速编辑这一屏上没有第二张图可点
+    precondition: (ctx) => {
+      if (!ctx.meta) return OK
+      const missing = missingTutorialPanels(ctx)[0]
+      if (missing) {
+        return {
+          ok: false,
+          reason: 'otherPanelMissing',
+          values: { name: missing.stem },
+          action: addMissingAction(missing),
+          anchor: assetAnchor(missing.file),
+        }
+      }
+      if (ctx.mode !== 'layout') {
+        return {
+          ok: false,
+          reason: 'notInLayout',
+          action: { key: 'returnToLayout', run: () => returnToLayout() },
+          anchor: sel('[data-onboarding-anchor="to-layout"]'),
+        }
+      }
+      return OK
+    },
     done: (ctx) => ctx.signals.alignedTutorialPanels > 0,
     consumes: ['alignedTutorialPanels'],
     anchor: (ctx) => {
@@ -373,6 +566,11 @@ export const STEPS: readonly StepDef[] = [
     id: 'done',
     manual: true,
     done: () => false,
+    // 结束页按实际的账说话：全做完才用「完成」；跳过了几步就说跳过了几步；
+    // 一步没做的不许说「你已经走过……」
+    variant: (ctx) =>
+      ctx.outcomes.skipped === 0 ? 'done' : ctx.outcomes.done === 0 ? 'done.allSkipped' : 'done.partial',
+    values: (ctx) => ({ ...ctx.outcomes }),
     anchor: () => NONE,
   },
 ]

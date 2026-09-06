@@ -344,6 +344,12 @@ export default interface Resources {
       "title": "用你自己的 Python 运行并连接"
     },
     "onboarding": {
+      "action": {
+        "addToLayout": "加入 {{name}}",
+        "openFigure": "打开 {{name}}",
+        "returnToLayout": "回到画布",
+        "selectText": "选中一段文字"
+      },
       "back": "返回",
       "explore": "继续探索",
       "failure": {
@@ -362,12 +368,20 @@ export default interface Resources {
       },
       "openOwnProject": "打开自己的项目",
       "pause": "暂停教程",
+      "precondition": {
+        "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里。先把它打开，或跳过此步。",
+        "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果。先打开它一次，或跳过此步。",
+        "noTextSelected": "这一步要先选中图里的一段文字（标题或坐标轴标签）。",
+        "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行。先打开它，或跳过此步。",
+        "notInLayout": "多选要在画布排版里进行。先回到画布，或跳过此步。",
+        "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张。先把 {{name}} 加进来，或跳过此步。"
+      },
       "progress": "第 {{n}} 步，共 {{total}} 步",
       "reset": {
-        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和教程进度都会清掉。别的项目不受影响。",
         "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
-        "confirm": "重新开始",
-        "title": "重新开始教程？"
+        "confirm": "重置并重新开始",
+        "title": "重置教程项目？"
       },
       "resolvedContinue": "问题已解决，继续",
       "skipStep": "跳过此步",
@@ -375,6 +389,10 @@ export default interface Resources {
       "steps": {
         "add_to_layout": {
           "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
+          "missing": {
+            "body": "画布上还缺 {{name}}。在左侧「素材」里选中它的卡片，把它加进画布；两张图都在版面上这一步才算完成。",
+            "title": "加入画布"
+          },
           "title": "加入画布"
         },
         "change_typography": {
@@ -382,7 +400,15 @@ export default interface Resources {
           "title": "改字号或字体"
         },
         "done": {
+          "allSkipped": {
+            "body": "你跳过了全部 {{total}} 步，还没有真正试过快速编辑、问题定位、导出和多选对齐。想走一遍，可以在「更多」菜单里重新打开教程。",
+            "title": "教程已结束"
+          },
           "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。",
+          "partial": {
+            "body": "完成 {{done}} 步，跳过 {{skipped}} 步（共 {{total}} 步）。跳过的部分随时可以在「更多」菜单里重新打开教程再看。",
+            "title": "教程结束"
+          },
           "title": "教程完成"
         },
         "export_canvas": {
@@ -544,8 +570,8 @@ export default interface Resources {
           "label": "添加 (a)(b)(c) 序号标签"
         },
         "tutorial-reset": {
-          "keywords": "tutorial onboarding reset jc jiaocheng 重置",
-          "label": "重新开始教程"
+          "keywords": "tutorial onboarding reset restart jc jiaocheng 重置 重新开始",
+          "label": "重置教程项目"
         },
         "tutorial-resume": {
           "keywords": "tutorial onboarding resume jc jiaocheng 继续",
@@ -1311,7 +1337,7 @@ export default interface Resources {
         "hints": "情境提示",
         "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
         "label": "新手教程",
-        "reset": "重新开始教程",
+        "reset": "重置教程项目",
         "resetHints": "重置提示",
         "restart": "再看一遍教程",
         "resume": "继续教程",
