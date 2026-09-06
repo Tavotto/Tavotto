@@ -22,6 +22,12 @@ import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
+import {
+  switchKindLabel,
+  switchObject,
+  switchTargets,
+  type SwitchKind,
+} from '@/lib/shapeSwitch'
 import type {
   ArrowObject,
   CanvasObject,
@@ -612,6 +618,50 @@ export function setObjectsHidden(ids: string[], hidden: boolean) {
       : hist(hidden ? 'hideObjects' : 'showObjects', { count: tids.length })
   updateObjects(tids, label, (o) => {
     o.hidden = hidden
+  })
+}
+
+/**
+ * 换标注类型（矩形 ↔ 椭圆 ↔ …、直线 ↔ 箭头）：**一条 commit、一条历史**。
+ *
+ * 「切成什么样」整段在 `lib/shapeSwitch.switchObject` 里，这里只负责三件事——
+ * 在**当前文档**上算出新对象、把它写回**原来的数组位置**、给这次修改一句话。
+ *
+ * 三条纪律：
+ * * **不换 id**：选择、成组（`groupId`）、布局组（`layoutGroups.order` 记的就是
+ *   id）、锁定、图层树全靠它。换 id 的话上面每一样都会在用户眼皮底下静默掉
+ *   一份，而画面上只看得出「形状变了」。
+ * * **就地替换而不是删了再 push**：数组序即 z 序，push 到末尾等于顺手把它提到
+ *   最上层。
+ * * **算在 draft 外面**：`switchObject` 是拿普通对象写的纯函数，喂 immer 的
+ *   draft 会让它把 draft 子对象（`start` / `end`）塞进新对象里。所以先从当前
+ *   state 取原对象算好，recipe 里只做赋值。
+ */
+export function switchObjectKind(ids: string[], target: SwitchKind) {
+  const selected = doc().objects.filter((o) => ids.includes(o.id))
+  // **与两个入口同一条判据**（`switchTargets`）：跨族、或选区里有不参与切换的
+  // 对象，整个不做。少了这一句，`switchObjectKind(['矩形','箭头'], 'ellipse')`
+  // 会把矩形切了、箭头留着——「点了一下只有一半变了」比什么都不发生更难理解，
+  // 而界面上没有任何地方会说出这件事
+  if (!switchTargets(selected).includes(target)) return
+  const next = new Map<string, CanvasObject>()
+  for (const o of selected) {
+    const switched = switchObject(o, target)
+    if (switched) next.set(o.id, switched)
+  }
+  // 一个都没变（点中的就是当前类型 / 选区里没有可切换的对象）：不开事务、不进历史
+  if (!next.size) return
+  finishActiveGesture()
+  const name = switchKindLabel(target)
+  const label =
+    next.size === 1
+      ? hist('switchKind', { name })
+      : hist('switchKindCount', { name, count: next.size })
+  commit(label, (d) => {
+    d.objects.forEach((o, i) => {
+      const switched = next.get(o.id)
+      if (switched) d.objects[i] = switched
+    })
   })
 }
 

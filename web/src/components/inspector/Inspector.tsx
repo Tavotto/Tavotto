@@ -26,7 +26,6 @@ import { usePanelDisplayManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import {
   objectLabel,
-  objectTypeLabel,
   type ArrowObject,
   type CanvasObject,
   type PanelObject,
@@ -43,6 +42,7 @@ import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
+import { ObjectKindSwitch } from './ObjectKindSwitch'
 import { roleName } from './roles/registry'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
@@ -393,12 +393,10 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       <div className="flex items-center gap-1.5">
         <Icon size={13} className="shrink-0 text-ink-3" />
         {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
-            「我在改的是文字、面板还是标注」（审计 T01） */}
-        {one && (
-          <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
-            {one.type === 'shape' ? translate(`shape.${one.shape}`, { ns: 'common' }) : objectTypeLabel(one.type)}
-          </span>
-        )}
+            「我在改的是文字、面板还是标注」（审计 T01）。这颗徽标同时是**类型
+            切换**的入口——标注能换成同族的另一种时它就是下拉，换不了时还是那颗
+            静态徽标（cap-shape-switch；判据在 lib/shapeSwitch，这里不判） */}
+        <ObjectKindSwitch objs={objs} />
         <h2 className="min-w-0 truncate text-xs font-medium text-ink">
           {one ? objectLabel(one) : translate('count.selectedObjects', { count: objs.length })}
         </h2>

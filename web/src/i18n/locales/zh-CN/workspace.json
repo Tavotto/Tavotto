@@ -272,6 +272,8 @@
     "replaceAsset": "替换素材为 {{name}}",
     "resetCrop": "重置裁剪",
     "resetOverrides": "重置图内修改",
+    "switchKind": "改为{{name}}",
+    "switchKindCount": "把 {{count}} 个对象改为{{name}}",
     "resizeAxes": "缩放 {{count}} 个子图",
     "resizeObjects": "缩放对象",
     "restoreAspect": "恢复原始比例",
@@ -377,6 +379,7 @@
   },
   "quickEdit": {
     "aria": "快捷编辑",
+    "changeKind": "更改为",
     "editElements": "编辑图内元素",
     "hide": "隐藏此元素",
     "hideObject": "隐藏",

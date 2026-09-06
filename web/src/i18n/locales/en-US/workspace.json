@@ -285,6 +285,8 @@
     "replaceAsset": "Replace asset with {{name}}",
     "resetCrop": "Reset crop",
     "resetOverrides": "Reset figure edits",
+    "switchKind": "Change to {{name}}",
+    "switchKindCount": "Change {{count}} objects to {{name}}",
     "resizeAxes": "Resize {{count}} axes",
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",
@@ -395,6 +397,7 @@
   },
   "quickEdit": {
     "aria": "Quick edit",
+    "changeKind": "Change to",
     "editElements": "Edit figure elements",
     "hide": "Hide this element",
     "hideObject": "Hide",

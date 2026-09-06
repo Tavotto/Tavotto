@@ -56,7 +56,12 @@ let root: Root
 let host: HTMLDivElement
 
 const all = (sel: string) => [...host.querySelectorAll(sel)]
-const headings = () => all('h3, button[aria-expanded]').map((el) => el.textContent?.trim() ?? '')
+// 折叠区标题都是 h3 或带 aria-expanded 的按钮。**排除类型徽标**：它也是个带
+// aria-expanded 的按钮（属性栏对象标题兼作类型切换，cap-shape-switch），但它是
+// 「我在改什么」那句话，不是分组标题——不排掉的话下面「分组标题不重复对象类型」
+// 那条会把徽标自己数成重复的那一份
+const headings = () =>
+  all('h3, button[aria-expanded]:not([data-object-kind])').map((el) => el.textContent?.trim() ?? '')
 const disclosure = (title: string) =>
   all('button[aria-expanded]').find((b) => b.textContent?.startsWith(title)) as HTMLButtonElement
 /** 某段可见文字在整棵属性页里的先后位置；找不到返回 -1 */
