@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import { t as translate } from '@/i18n'
@@ -119,16 +119,15 @@ export function ShortcutHelp() {
   const setOpen = useUiStore((s) => s.setShortcutHelpOpen)
   const [query, setQuery] = useState('')
   const shown = useMemo(() => filterGroups(GROUPS, query), [query])
+  // 关掉就清查询：**盯 `open` 而不是 `onOpenChange`**——Esc / 点遮罩会走那个
+  // 回调，而 `?` 的开关、命令面板、其它 store 调用方直接改 `shortcutHelpOpen`，
+  // 一个字都不经过它。挂在回调上的话「下次打开还停在上次的过滤结果」只在
+  // 某几条关闭路径上不发生。
+  useEffect(() => {
+    if (!open) setQuery('')
+  }, [open])
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) setQuery('')
-        setOpen(v)
-      }}
-      title={sc('title')}
-      size="md"
-    >
+    <Dialog open={open} onOpenChange={setOpen} title={sc('title')} size="md">
       <div className="flex flex-col gap-3">
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
