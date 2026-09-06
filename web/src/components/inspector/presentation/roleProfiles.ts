@@ -195,6 +195,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['cmap', 'vmin', 'vmax', 'alpha'],
     more: ['interpolation', 'gradient_color', 'visible'],
     advanced: ['origin'],
+    pairRows: [['vmin', 'vmax']],
   },
   figure: {
     primary: ['size_mm'],
