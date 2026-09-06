@@ -179,6 +179,18 @@ describe('裁剪态：完成 / 取消就在选区旁边', () => {
     expect(past()).toHaveLength(depth)
   })
 
+  it('本来就裁过、这一轮没动：同样不进历史', async () => {
+    // 这条与上一条不是同一件事：上一条压根没有 crop 字段，写回去是个空动作；
+    // 这里 crop 存在，`p.crop = { ...base.crop }` 会造一个**新对象**——内容一样
+    // 但引用不同，immer 照样记一条 patch。挡住它的只有 `cancelCrop` 里的判据。
+    await dragCropTo({ x: 0.2, y: 0.2, w: 0.5, h: 0.5 })
+    await act(async () => beginCrop('p1'))
+    const depth = past().length
+    await act(async () => action('cancel')!.click())
+    expect(past()).toHaveLength(depth)
+    expect(live().crop).toEqual({ x: 0.2, y: 0.2, w: 0.5, h: 0.5 })
+  })
+
   it('取消是可撤销的一条历史', async () => {
     await act(async () => beginCrop('p1'))
     await dragCropTo({ x: 0.1, y: 0.1, w: 0.5, h: 0.5 })
