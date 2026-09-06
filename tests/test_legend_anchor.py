@@ -37,10 +37,11 @@ pytestmark = pytest.mark.skipif(
 SCRIPT_NAME = "fig_legend_anchor.py"
 ENTRY = "main"
 
-#: 三个 stem 分别是三种「脚本原样」：图例在内侧、脚本自己钉了外侧锚点、
-#: 脚本用了这个模型摆不出来的锚框形状。
-PLAIN, ANCHORED, EXOTIC = "Plain", "Anchored", "Exotic"
+#: 五个 stem 各是一种「脚本原样」：图例在内侧、脚本自己钉了外侧锚点、
+#: 两种这个模型摆不出来的锚框形状（4 元组 / 非父容器变换）、figure 级图例。
+PLAIN, ANCHORED, EXOTIC, FOREIGN, FIGLEG = "Plain", "Anchored", "Exotic", "Foreign", "FigLeg"
 LEG = "axes_0.legend"
+FIG_LEG = "fig.legend_0"
 
 LIBRARY = """\
 import matplotlib.pyplot as plt
@@ -66,6 +67,16 @@ def main():
     # 4 元组锚框：这个模型只认「一个点」，摆不出来
     ax.legend(loc="upper left", bbox_to_anchor=(0.1, 0.1, 0.5, 0.5))
     fig.savefig("Exotic.pdf")
+
+    fig, ax = _axes("foreign")
+    # 锚点钉在 figure 分数上、而图例的父容器是子图：数字换算过来此刻落位正确，
+    # 但它钉的是另一个参照系（子图一动两者就分家）
+    ax.legend(loc="upper left", bbox_to_anchor=(0.7, 0.9), bbox_transform=fig.transFigure)
+    fig.savefig("Foreign.pdf")
+
+    fig, ax = _axes("figleg")
+    fig.legend(loc="upper left", bbox_to_anchor=(0.55, 0.95))
+    fig.savefig("FigLeg.pdf")
 """
 
 
@@ -199,7 +210,12 @@ def test_patch_order_does_not_change_the_picture(hot):
     """
     a = [_loc(LEG, "upper left"), _anchor(LEG, [1.02, 1.0])]
     b = [_anchor(LEG, [1.02, 1.0]), _loc(LEG, "upper left")]
-    assert _png(hot, PLAIN, a, "order-a") == _png(hot, PLAIN, b, "order-b")
+    png_a = _png(hot, PLAIN, a, "order-a")
+    assert png_a == _png(hot, PLAIN, b, "order-b")
+    # **两侧同源的对拍单独不成立**：实现要是干脆把锚点丢掉，两个顺序会一起
+    # 塌成同一张「没有锚点」的图，上面那条照样绿。所以还要钉住它确实**不是**
+    # 那张图——这一条是对拍的第二把尺子。
+    assert png_a != _png(hot, PLAIN, [_loc(LEG, "upper left")], "order-noanchor")
 
 
 def test_a_drag_wins_over_the_anchor_and_clears_it(hot):
@@ -275,6 +291,27 @@ def test_an_anchor_shape_this_model_cannot_express_is_declared_unsupported(hot):
     assert el["unsupported_props"] == [{"prop": "loc_anchor", "reason": "legend_anchor_box"}]
     # 脚本原样照常渲染：没人写 override 就没人动它
     assert _val(_man(hot, EXOTIC), LEG, "loc") == "upper left"
+
+
+def test_an_anchor_pinned_to_another_coordinate_system_is_declared_unsupported(hot):
+    """`bbox_transform=fig.transFigure` 而父容器是子图：换算得出的数字此刻
+    落位正确，但它钉的是另一个参照系——照实说不支持，不把它显示成子图分数。
+    """
+    el = _el(_man(hot, FOREIGN), LEG)
+    assert "loc_anchor" not in {f["prop"] for f in el["editable"]}
+    assert el["unsupported_props"] == [{"prop": "loc_anchor", "reason": "legend_anchor_transform"}]
+
+
+def test_a_figure_level_legend_anchors_against_the_figure(hot):
+    """figure 级图例的父容器就是整张图，锚点单位是**图幅**分数——
+    `fig.legend(bbox_to_anchor=(0.55, 0.95))` 原样报出来，也改得动。
+    """
+    man = _man(hot, FIGLEG)
+    assert _val(man, FIG_LEG, "loc_anchor") == [0.55, 0.95]
+    moved = _man(hot, FIGLEG, [_anchor(FIG_LEG, [0.1, 0.2])])
+    assert _val(moved, FIG_LEG, "loc_anchor") == [0.1, 0.2]
+    assert _el(moved, FIG_LEG)["bbox"][0] < _el(man, FIG_LEG)["bbox"][0]
+    _man(hot, FIGLEG)
 
 
 # ---------------------------------------------------------------------------
