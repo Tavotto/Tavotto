@@ -233,6 +233,23 @@ test('重新开始教程：画布恢复原样、onboarding 从头；最近列表
   await page.waitForTimeout(500)
   expect(Math.abs((await fracX()) - frac0)).toBeLessThan(0.01)
 
+  // 用户反馈 01：重开之后装回的是随包分发的干净 Tutorial.json，它的面板没有 `script`。
+  // 工作台此刻早已挂载，挂载那一次对账不会再来——换文档之后必须再对一次，否则
+  // **双击画布上的图**落进裁剪而不是图内编辑（第一次从选择器进教程反而是好的，
+  // 所以只测第一次的用例看不见它）。这里走的是 coachmark 自己说的那条路：双击画布上的图。
+  await coachmark(page).getByRole('button', { name: '开始' }).click()
+  await expect(coachmark(page)).toContainText('打开一张图')
+  await page.getByRole('button', { name: '适应画布' }).click()
+  await page.waitForTimeout(400)
+  await page.locator('[data-object-id="p2"]').dblclick()
+  await expect(
+    page.locator('[data-exit-element-edit]'),
+    '重新开始教程之后双击画布上的图没有进入图内编辑',
+  ).toBeVisible({ timeout: 30_000 })
+  await expect(coachmark(page)).toContainText('选一个文字')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-exit-element-edit]')).toHaveCount(0)
+
   // 项目选择器里教程副本显示「教程项目」而不是数据目录路径
   await page.getByRole('button', { name: /当前项目 Tutorial/ }).click()
   await page.getByRole('menuitem', { name: '全部项目…' }).click()
