@@ -11,6 +11,7 @@ import {
 } from '@/lib/api'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type TextObject } from '@/types/document'
+import { DEFAULT_ASSET_FILTERS, useAssetBrowseStore } from './assetBrowseStore'
 import { useDocumentStore } from './documentStore'
 import { useProjectStore } from './projectStore'
 
@@ -182,6 +183,33 @@ describe('项目失效（409 no_project）的前端出口', () => {
     await fetchPanels().catch(() => {})
     expect(drop).toHaveBeenCalledTimes(2)
     expect(useProjectStore.getState().phase).toBe('none')
+    await tick()
+  })
+})
+
+/**
+ * UI 审计 T06：素材库的搜索词与筛选住在组件外（切页签不丢），但它们说的是
+ * **这个项目**的目录与素材——换项目必须清掉，否则新项目一打开清单就被上一个
+ * 项目的"只看子目录 X"筛成空的。
+ */
+describe('换项目清掉素材库的浏览状态', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    reply = okShapes
+    calls.length = 0
+    useProjectStore.setState({ phase: 'open', project: { open: true, id: 'p_old' }, recent: [], opened: [] })
+    setCurrentProjectId('p_old')
+  })
+  afterEach(() => {
+    setCurrentProjectId(null)
+  })
+
+  it('open() 之后搜索词与筛选回到默认', async () => {
+    useAssetBrowseStore.getState().setQuery('kinetics')
+    useAssetBrowseStore.getState().setFilters((f) => ({ ...f, usedOnly: true, source: 'sub' }))
+    await useProjectStore.getState().open('/figs/new')
+    expect(useAssetBrowseStore.getState().query).toBe('')
+    expect(useAssetBrowseStore.getState().filters).toEqual(DEFAULT_ASSET_FILTERS)
     await tick()
   })
 })

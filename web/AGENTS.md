@@ -755,6 +755,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   参数」，真实入口只有「选择渲染环境」（设置 about 段的
   EngineEnvironmentCard）与「复制诊断」；**native 未落地前不渲染任何
   可点但无功能的按钮**（PR 2 合并后再升级为实际入口）。
+- **素材卡的两个动作各说各的后果（UI 审计 T06）**：「编辑原图」（Enter / 双击）
+  进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
+  对象只能是文档里的面板对象），这一步由 `openFastEdit` 用状态提示
+  `fastEdit.addedForEdit` 说出口，一条历史、撤销即移除；图已在文档里时零文档
+  改动。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
+  `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
+  `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
+  控件。**不许再用一个中性的「打开」承载加入文档。**
+  搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
+  不落 localStorage）。同脚本 + 同 stem 的 runtime 条目紧跟它的磁盘图并写
+  「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
+  重取（只重取已取过的）——「哪张图有原件」正是那一刻变的。
 - **runtime 卡片没有假值**：没跑过的没有尺寸、没有描述符，主动作是
   「运行并发现图」；「添加到画布」只走描述符（`addRuntimePanel`），
   绝不解析 id、绝不指望磁盘路径。运行时图的写回区

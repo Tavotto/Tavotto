@@ -144,6 +144,13 @@ export function handleServerEvent(ev: ServerEvent) {
       // （preflight 的 `missing-asset` + 重新链接）交给用户处置。自动删对象
       // 就是拿一次网盘掉线换用户的排版。
       void refreshAssetsAndSync({ affectedIds: affectedAssetIdsOf(ev) })
+      // runtime 素材清单跟着重取（同 `registry.changed`：只重取已经取过的）。
+      // 「哪张图有自己的原件」正是在素材变化那一刻改变的：脚本在外面 savefig
+      // 出了 PDF，后端清单里那条 runtime 素材就该让位给 FileAsset——不重取的话
+      // 「尚未运行」的运行时卡与同名 PDF 卡会并排挂到下一次注册表变化为止
+      // （UI 审计 T06 看到的正是这一幕）。
+      const runtimeAssets = useRuntimeAssetStore.getState()
+      if (runtimeAssets.assets !== null) void runtimeAssets.loadAssets()
       break
     }
 

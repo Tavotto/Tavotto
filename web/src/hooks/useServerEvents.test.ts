@@ -23,7 +23,7 @@ vi.mock('@/lib/session', async (importOriginal) => ({
   currentProjectId: vi.fn(() => project),
 }))
 
-import { fetchPanels, refreshProject, type PanelInfo, type ServerEvent } from '@/lib/api'
+import { fetchPanels, fetchRuntimeAssets, refreshProject, type PanelInfo, type ServerEvent } from '@/lib/api'
 import type { CanvasData, PanelObject } from '@/types/document'
 import { canvasToDoc } from '@/types/document'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
@@ -36,6 +36,7 @@ import {
 } from '@/store/liveSync'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { handleServerEvent } from './useServerEvents'
@@ -518,5 +519,41 @@ describe('手动刷新', () => {
     await expect(refreshProjectNow()).rejects.toThrow('扫描失败')
     expect(mockPanels).toHaveBeenCalledTimes(1)
     expect(useAssetStore.getState().loaded).toBe(true)
+  })
+})
+
+/**
+ * UI 审计 T06：runtime 素材清单要在 `assets.changed` 时跟着重取。
+ *
+ * 「哪张图有自己的原件」正是在素材变化那一刻改变的（脚本在外面 savefig 出了
+ * PDF）：不重取的话，后端已经让位给 FileAsset 的那条 runtime 条目仍留在前端
+ * 清单里，「尚未运行」的运行时卡与同名 PDF 卡并排挂到下一次注册表变化为止。
+ * 与 `registry.changed` 同一条纪律：只重取**已经取过的**。
+ */
+describe('assets.changed → runtime 素材清单', () => {
+  const mockRuntime = vi.mocked(fetchRuntimeAssets)
+
+  beforeEach(() => {
+    mockRuntime.mockClear()
+    useRuntimeAssetStore.getState().clear()
+    mockPanels.mockResolvedValue(panels([]))
+  })
+
+  it('清单取过 → 重取', async () => {
+    useRuntimeAssetStore.setState({ assets: [] })
+    handleServerEvent(
+      ev({ kind: 'assets.changed', pj: 'p1', ids: ['Fig1.pdf'], added: ['Fig1.pdf'], removed: [], changed: [] }),
+    )
+    await tick()
+    expect(mockRuntime).toHaveBeenCalledTimes(1)
+  })
+
+  it('没打开过素材面板（清单从没取过）→ 不为它发请求', async () => {
+    expect(useRuntimeAssetStore.getState().assets).toBeNull()
+    handleServerEvent(
+      ev({ kind: 'assets.changed', pj: 'p1', ids: ['Fig1.pdf'], added: ['Fig1.pdf'], removed: [], changed: [] }),
+    )
+    await tick()
+    expect(mockRuntime).not.toHaveBeenCalled()
   })
 })
