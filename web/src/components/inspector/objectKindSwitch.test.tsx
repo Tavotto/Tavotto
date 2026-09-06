@@ -209,6 +209,24 @@ describe('徽标：能切换的是按钮，不能切换的还是那颗静态徽�
     expect(host.querySelector('h2')!.textContent).toBe('反应路径')
   })
 
+  /**
+   * 头部那个图标按**它自己那一种**画。判据用「两种形状画出来的不是同一个图形」
+   * ——所有形状共用一个方块时这条当场红，而它不依赖某个图标库的类名叫什么。
+   * 顺带看一眼类名里确实是那个形状（lucide 生成的；它哪天改了命名，改这一半就行）。
+   */
+  it('标注的图标跟着类型走，不是所有形状都画一个方块', async () => {
+    const iconClass = () => host.querySelector('header svg')!.getAttribute('class') ?? ''
+    await mount([shapeOf('s1', { shape: 'triangle' })])
+    const tri = iconClass()
+    await act(async () => root?.unmount())
+    host.remove()
+    await mount([shapeOf('s2', { shape: 'rect' })])
+    const rect = iconClass()
+    expect(tri).not.toBe(rect)
+    expect(tri).toContain('triangle')
+    expect(rect).toContain('square')
+  })
+
   it('文字对象不受影响：类型是「文字」，标题是那句话', async () => {
     await mount([textOf()])
     expect(badge()!.textContent).toBe('文字')
