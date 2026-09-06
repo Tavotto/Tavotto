@@ -34,3 +34,31 @@ export function firstIncomplete(done: ReadonlySet<string>): StepId {
   for (const id of STEP_IDS) if (!done.has(id)) return id
   return 'done'
 }
+
+/** 真正要用户做事的步骤：去掉欢迎页与结束页。进度「第 n 步，共 N 步」与结束页的计数都按它 */
+export const REAL_STEP_IDS: readonly StepId[] = STEP_IDS.filter((id) => id !== 'welcome' && id !== 'done')
+
+export interface StepOutcomes {
+  /** 真的做完的 */
+  done: number
+  /** 用户点「跳过此步」跳过的 */
+  skipped: number
+  total: number
+}
+
+/**
+ * 结束页的账：**已完成与已跳过分别记**。`passed` 是走过的步骤（完成或跳过都算，
+ * 状态机推进用它），`skipped` 是其中被跳过的子集；两者都只数真实步骤。
+ * 一条既在 passed 又在 skipped 里的算跳过——跳过不是完成。
+ */
+export function tallyOutcomes(passed: readonly string[], skipped: readonly string[]): StepOutcomes {
+  const p = new Set(passed)
+  const s = new Set(skipped)
+  let done = 0
+  let skippedCount = 0
+  for (const id of REAL_STEP_IDS) {
+    if (s.has(id)) skippedCount++
+    else if (p.has(id)) done++
+  }
+  return { done, skipped: skippedCount, total: REAL_STEP_IDS.length }
+}

@@ -282,8 +282,7 @@ export default interface Resources {
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "severityCount": "{{count}} {{label}}",
-      "sizeFromAsset": "尺寸取自源文件。",
-      "sizeFromRender": "尺寸取自渲染结果的实际图幅，与文档里记的图幅不同。",
+      "sizeDiskDiffers": "磁盘上的原件是 {{dw}} × {{dh}} mm（脚本保存时裁到了内容范围）；这里按图幅 {{w}} × {{h}} mm 出图。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
       "targetNoFigure": "没有当前图",
@@ -356,11 +355,17 @@ export default interface Resources {
       "title": "用你自己的 Python 运行并连接"
     },
     "onboarding": {
+      "action": {
+        "addToLayout": "加入 {{name}}",
+        "openFigure": "打开 {{name}}",
+        "returnToLayout": "回到画布",
+        "selectText": "选中一段文字"
+      },
       "back": "返回",
       "explore": "继续探索",
       "failure": {
         "cancelled": "已取消。",
-        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重置教程项目」。",
         "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
         "no_api": "这个环境没有提供教程。",
         "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
@@ -374,12 +379,20 @@ export default interface Resources {
       },
       "openOwnProject": "打开自己的项目",
       "pause": "暂停教程",
+      "precondition": {
+        "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里。先把它打开，或跳过此步。",
+        "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果。先打开它一次，或跳过此步。",
+        "noTextSelected": "这一步要先选中图里的一段文字（标题或坐标轴标签）。",
+        "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行。先打开它，或跳过此步。",
+        "notInLayout": "多选要在画布排版里进行。先回到画布，或跳过此步。",
+        "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张。先把 {{name}} 加进来，或跳过此步。"
+      },
       "progress": "第 {{n}} 步，共 {{total}} 步",
       "reset": {
-        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+        "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和教程进度都会清掉。别的项目不受影响。",
         "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
-        "confirm": "重新开始",
-        "title": "重新开始教程？"
+        "confirm": "重置并重新开始",
+        "title": "重置教程项目？"
       },
       "resolvedContinue": "问题已解决，继续",
       "skipStep": "跳过此步",
@@ -387,6 +400,10 @@ export default interface Resources {
       "steps": {
         "add_to_layout": {
           "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
+          "missing": {
+            "body": "画布上还缺 {{name}}。在左侧「素材」里选中它的卡片，把它加进画布；两张图都在版面上这一步才算完成。",
+            "title": "加入画布"
+          },
           "title": "加入画布"
         },
         "change_typography": {
@@ -394,7 +411,15 @@ export default interface Resources {
           "title": "改字号或字体"
         },
         "done": {
+          "allSkipped": {
+            "body": "你跳过了全部 {{total}} 步，还没有真正试过快速编辑、问题定位、导出和多选对齐。想走一遍，可以在「更多」菜单里重新打开教程。",
+            "title": "教程已结束"
+          },
           "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。",
+          "partial": {
+            "body": "完成 {{done}} 步，跳过 {{skipped}} 步（共 {{total}} 步）。跳过的部分随时可以在「更多」菜单里重新打开教程再看。",
+            "title": "教程结束"
+          },
           "title": "教程完成"
         },
         "export_canvas": {
@@ -556,8 +581,8 @@ export default interface Resources {
           "label": "添加 (a)(b)(c) 序号标签"
         },
         "tutorial-reset": {
-          "keywords": "tutorial onboarding reset jc jiaocheng 重置",
-          "label": "重新开始教程"
+          "keywords": "tutorial onboarding reset restart jc jiaocheng 重置 重新开始",
+          "label": "重置教程项目"
         },
         "tutorial-resume": {
           "keywords": "tutorial onboarding resume jc jiaocheng 继续",
@@ -1323,7 +1348,7 @@ export default interface Resources {
         "hints": "情境提示",
         "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
         "label": "新手教程",
-        "reset": "重新开始教程",
+        "reset": "重置教程项目",
         "resetHints": "重置提示",
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -1864,6 +1889,11 @@ export default interface Resources {
         "atLeast": "≥ {{value}}",
         "atMost": "≤ {{value}}"
       },
+      "current": "当前",
+      "cursorAt": "第 {{pos}} / {{total}} 项",
+      "cursorClose": "结束逐项处理",
+      "cursorDone_other": "已处理，还剩 {{count}} 项",
+      "cursorLabel": "逐项处理",
       "failedHint": "这一次没能查完。文档可能正在载入，稍后再试。",
       "failedKeptHint": "这一次没能查完，下面列的是上一次查出来的结果，可能已经过时。",
       "failedTitle": "这一次没查成",
@@ -1888,15 +1918,26 @@ export default interface Resources {
         "not_editable": "这张图没有连上源脚本，进不了图内编辑——可在项目状态里连接",
         "object_deleted": "这个对象已经被删掉了，请刷新问题列表"
       },
+      "groupFix_other": "修复 {{count}} 项",
+      "groupObjects_other": "{{count}} 个对象",
       "listLabel": "问题列表",
+      "next": "下一项",
       "none": "未发现问题",
       "noneHint": "按当前规范检查，这个项目没有需要处理的问题。",
       "noneInFilter": "当前筛选下没有问题",
+      "noneInScope": "这张图上没有问题",
+      "noneInScopeHint_other": "整个文档里还有 {{count}} 项问题。",
       "onCanvas": " · 画布「{{name}}」",
+      "prev": "上一项",
       "readinessTip": "打开项目接入状态",
       "readiness_other": "项目里还有 {{count}} 张图没连上脚本",
       "retry": "重新检查",
       "running": "正在检查…",
+      "scopeDocument": "整个文档",
+      "scopeFigure": "当前图",
+      "scopeFigureTip": "只看「{{name}}」的问题",
+      "scopeFigureUnavailable": "没有正在编辑或选中的图",
+      "scopeLabel": "问题范围",
       "severity": {
         "error": "阻断",
         "notVerifiable": "无法核验",
@@ -3098,16 +3139,24 @@ export default interface Resources {
       "backToCurrent": "返回当前项目",
       "browse": "浏览目录…",
       "create": "新建项目",
+      "filterNoMatch": "没有与“{{query}}”匹配的最近项目",
       "missingDir": "目录不存在",
+      "missingGroup": "已不存在的目录",
+      "missingGroupCollapse": "收起已不存在的目录",
+      "missingGroupExpand": "展开已不存在的目录",
+      "missingHint": "这些目录已经不在磁盘上；从列表移除不会删除任何文件。",
       "nativePickerTitle": "选择论文图所在目录",
       "openButton": "打开",
+      "openMatch": "打开 {{name}}",
       "openProject": "打开项目 {{name}}",
       "opening": "打开中…",
       "pathLabel": "项目路径",
-      "pathPlaceholder": "或直接粘贴路径，如 D:\\research\\figures",
+      "pathPlaceholder": "输入路径打开，或输入名字筛选最近项目",
+      "recentCount": "{{count}} 个",
       "recentHeading": "最近项目",
       "recentLabel": "最近项目",
       "regionLabel": "选择项目",
+      "removeAllMissing": "全部移除",
       "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
       "removeFromListTitle": "从列表移除（不删除磁盘内容）",
       "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。",
@@ -3198,11 +3247,12 @@ export default interface Resources {
     },
     "assets": {
       "activeFilters": "生效中的筛选",
-      "addToCanvas": "加入画布",
+      "addAria": "把 {{name}} 添加到画布",
+      "addToCanvas": "添加到画布",
       "capabilityHeading": "{{name}} · {{status}}",
       "cardParameterizable": "可参数化",
       "cardSize": "{{w}}×{{h}} 厘米",
-      "cardTitle": "{{id}}\n单击选中 · Enter 加入画布 · 空格看大图 · 也可直接拖到画布",
+      "cardTitle": "{{id}}\n单击选中 · Enter 编辑原图 · Shift+Enter 添加到画布 · 空格看大图 · 也可直接拖到画布",
       "cardUsed_other": "当前文档已用 {{count}} 次",
       "emptyHint": "把 matplotlib 输出的 PDF/PNG 放进项目目录即可出现在这里。",
       "emptyTitle": "项目里还没有可用面板",
@@ -3216,8 +3266,8 @@ export default interface Resources {
       "listLabel": "素材面板",
       "loadFailed": "素材库读取失败",
       "noMatch": "没有符合条件的面板",
-      "openAria": "打开 {{name}}（快速编辑）",
-      "openFigure": "打开",
+      "openAria": "编辑原图 {{name}}（进入快速编辑）",
+      "openFigure": "编辑原图",
       "refresh": "刷新项目",
       "refreshFailed": "刷新失败：{{error}}",
       "refreshTip": "检查项目里的新文件与脚本改动",
@@ -3226,17 +3276,19 @@ export default interface Resources {
       "resetFilters": "重置筛选",
       "retry": "重试",
       "runtimeBadge": "运行时图",
-      "runtimeCardTitle": "{{stem}}\n来自 {{script}}\n单击选中 · Enter 加入画布 · 空格看大图",
+      "runtimeCardTitle": "{{stem}}\n来自 {{script}}\n单击选中 · Enter 编辑原图（未运行时先运行） · Shift+Enter 添加到画布 · 空格看大图",
       "runtimeFromScript": "来自脚本 {{script}}",
       "runtimeNeedsRun": "尚未运行，运行后才有预览",
       "runtimeNoFile": "这张图来自脚本运行，没有对应的原始图文件。你仍然可以编辑、组图和导出；导出会创建新文件。",
       "runtimeRunAria": "运行 {{script}} 并发现图",
+      "runtimeSiblingOf": "同源：{{name}}",
       "scriptBadgeTitle": "可参数化：由 matplotlib 脚本生成",
       "scriptOnly": "只看可参数化面板",
       "search": "搜索面板…",
       "searchAria": "搜索面板",
       "sectionFigures": "图",
       "sectionScripts": "脚本",
+      "selectedActionsAria": "所选素材 {{name}} 的操作",
       "sort": "排序",
       "sortAria": "排序方式",
       "sortName": "按名称",
@@ -3322,6 +3374,10 @@ export default interface Resources {
       "conflictStale": "该文档已在其他窗口保存了更新的版本，本窗口的编辑没有写进去",
       "dismiss": "知道了",
       "keepMain": "保留主版本",
+      "lastDocBody": "已先打开一份空白文档；磁盘上的文件没有改动",
+      "lastDocOpen": "打开上次文档",
+      "lastDocTitle": "没能读回这个项目上次打开的文档「{{name}}」",
+      "lastDocUnnamed": "未命名",
       "overwrite": "用我的版本覆盖",
       "recover": "恢复",
       "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
@@ -3377,6 +3433,7 @@ export default interface Resources {
     "fastEdit": {
       "addToCanvas": "添加到画布",
       "added": "{{name}} 已加入画布",
+      "addedForEdit": "这张图刚为编辑加入本文档：撤销即可移除；问题面板也会列出它的问题",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
       "crumbTitle": "回到画布排版",

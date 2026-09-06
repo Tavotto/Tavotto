@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { UiMessage } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import type { Severity } from '@/lib/profile'
+import type { ProblemCursor, ProblemScope } from '@/lib/problemList'
 
 export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -228,6 +229,16 @@ interface UiState extends Persisted {
    * 撤销、不跨会话记——它是"我现在想看哪几类"，不是用户的长期偏好。
    */
   problemFilter: Severity[] | null
+  /**
+   * 问题面板的范围（`lib/problemList.ts`）：`null` = 没选过，跟着现场走——
+   * 有正在编辑的图就看它，否则看整个文档。同 `problemFilter`，UI 会话状态。
+   */
+  problemScope: ProblemScope | null
+  /**
+   * 问题面板里「正在处理的那一条」。定位之后清单**留在原地**，这条带「当前」
+   * 标记，底部给「下一项」——连续处理五条同类问题不必五次重开清单。会话状态。
+   */
+  problemCursor: ProblemCursor | null
   /** 当前绘制工具，画完自动回到 select */
   tool: Tool
   exportOpen: boolean
@@ -291,6 +302,8 @@ interface UiState extends Persisted {
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setProblemFilter: (v: Severity[] | null) => void
+  setProblemScope: (v: ProblemScope | null) => void
+  setProblemCursor: (v: ProblemCursor | null) => void
   setCropTarget: (id: string | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
@@ -365,6 +378,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedGids: [],
   issueHighlight: null,
   problemFilter: null,
+  problemScope: null,
+  problemCursor: null,
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
@@ -505,6 +520,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         : null,
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
+  setProblemScope: (problemScope) => set({ problemScope }),
+  setProblemCursor: (problemCursor) => set({ problemCursor }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId) => set({ cropTargetId }),
   setElementPanel: (elementPanelId) =>

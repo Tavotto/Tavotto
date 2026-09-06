@@ -1,11 +1,19 @@
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushRender, renderTargets, requestRender, syncEngine } from './useEngineSync'
+import { flushRender, renderTargets, requestRender, syncEngine, useEngineSync } from './useEngineSync'
+import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
 
 function panel(id: string, fileId: string, overrides: number): PanelObject {
   return {
@@ -434,5 +442,46 @@ describe("render:'none'：手势期间不麻烦 matplotlib，收尾时定稿一�
     vi.runAllTimers()
     expect(calls).toHaveLength(1)
     vi.useRealTimers()
+  })
+})
+
+describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是它', () => {
+  it('manifest size_mm 与文档不同：nativeW/H 跟着改，高度按新纵横比调，宽度不动', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    // 文档里是上一次同步到的图幅（磁盘 PDF 的页面），渲染回来的是脚本 figsize
+    const p = {
+      ...panel('p1', 'Fig1.pdf', 0),
+      w: 75.26,
+      h: 58.68,
+      nativeW: 75.26,
+      nativeH: 58.68,
+      script: null,
+    } as PanelObject
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_size_sync')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [p]
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const Probe = () => {
+      useEngineSync()
+      return null
+    }
+    await act(async () => {
+      root.render(createElement(Probe))
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 57.6], elements: [] })
+    })
+    const o = useDocumentStore.getState().doc.objects[0] as PanelObject
+    expect([o.nativeW, o.nativeH]).toEqual([80, 57.6])
+    expect(o.w).toBeCloseTo(75.26, 6)
+    // 舞台上的框按渲染回来的纵横比：高 = 宽 × 57.6 / 80
+    expect(o.h).toBeCloseTo((75.26 * 57.6) / 80, 6)
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
   })
 })

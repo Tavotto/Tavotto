@@ -173,7 +173,8 @@ export function evaluate(): void {
 export function completeStep(id: StepDef['id'], via: 'done' | 'skipped' = 'done'): void {
   const ob = useOnboardingStore.getState()
   const def = stepById(id)
-  ob.markStep(id)
+  // 完成与跳过分两本账（结束页要分别说）；状态机推进一样
+  ob.markStep(id, via)
   for (const k of def.consumes ?? []) signals[k] = 0
   if (via === 'done') {
     captureTelemetry('tutorial_step_completed', {

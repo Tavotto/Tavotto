@@ -10,6 +10,7 @@ import {
   saveNow,
   useDocumentStore,
 } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 
@@ -115,7 +116,40 @@ export function DocumentBanner() {
     )
   }
 
-  return null
+  return <LastDocumentBanner />
+}
+
+/**
+ * 切回项目时记着上次开的是哪份文档、却没读回来（T02）。**说出名字**并给
+ * 重试——不说的话用户面对的是一份空白 fig_layout，还以为自己的版没了。
+ */
+function LastDocumentBanner() {
+  const { t } = useTranslation('workspace')
+  const issue = useProjectStore((s) => s.lastDocumentIssue)
+  if (!issue) return null
+  return (
+    <Banner tone="accent" icon={<History size={12} className="shrink-0 text-accent" />}>
+      {/* 文档名是用户内容，作为插值原样透出 */}
+      <span className="min-w-0 flex-1 truncate">
+        {t('docBanner.lastDocTitle', { name: issue.name || t('docBanner.lastDocUnnamed') })}
+      </span>
+      <span className="hidden shrink-0 opacity-80 min-[900px]:inline">{t('docBanner.lastDocBody')}</span>
+      <Button
+        size="sm"
+        className="shrink-0"
+        onClick={() => void useProjectStore.getState().openLastDocument()}
+      >
+        {t('docBanner.lastDocOpen')}
+      </Button>
+      <Button
+        size="sm"
+        className="shrink-0"
+        onClick={() => useProjectStore.getState().dismissLastDocumentIssue()}
+      >
+        {t('docBanner.dismiss')}
+      </Button>
+    </Banner>
+  )
 }
 
 function Banner({

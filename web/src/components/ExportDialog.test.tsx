@@ -35,6 +35,7 @@ import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { resetExportState } from '@/store/exportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -320,6 +321,34 @@ describe('输出范围', () => {
     expect(radios[0].getAttribute('aria-checked')).toBe('true')
     expect(text()).toContain('80 × 60 mm')
     expect(text()).toContain('缩放')
+  })
+
+  it('渲染回来之后尺寸跟着变：对话框开着时 manifest 到位，说的必须是渲染回来的图幅', async () => {
+    await setup(9)
+    // 文档里是上一次同步到的图幅（磁盘上那份 PDF 的页面：脚本存盘时裁到了内容范围）
+    useDocumentStore.getState().commit(literal('图幅'), (d) => {
+      const p0 = d.objects[0] as PanelObject
+      p0.nativeW = 75.26
+      p0.nativeH = 58.68
+    })
+    // 这一变体还没画出来
+    useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(text()).toContain('75.3 × 58.7 mm')
+    // 渲染回来：第 ① 档（manifest size_mm）到位——**没有任何素材清单的变化**。
+    // 以前对话框只在素材清单变化时重算规格，这一刻它继续说 75.3 × 58.7，
+    // 而快速编辑条上已经是 80 × 57.6（审计 T33）
+    await act(async () => {
+      seedExactRender(panel, { ...manifest(9), size_mm: [80, 57.6] } as never)
+    })
+    expect(text()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('75.3 × 58.7 mm')
   })
 
   it('没有当前图时「原图尺寸」禁用，并**说出原因**（不隐藏、不静默改画布）', async () => {
@@ -813,6 +842,8 @@ async function stage(opts: {
   renders: Record<string, unknown>
   page?: { w: number; h: number }
   docId?: string
+  /** 素材清单里的磁盘事实（矢量源的页面尺寸等）；按 fileId 给 */
+  assetSpecs?: Record<string, Record<string, unknown>>
 }) {
   await useDocumentStore.getState().switchDocument(emptyProject(), opts.docId ?? 'd_audit')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
@@ -820,7 +851,12 @@ async function stage(opts: {
     d.objects = opts.panels.map((p) => ({ ...p }))
   })
   useAssetStore.setState({
-    byId: Object.fromEntries(opts.panels.map((p) => [p.fileId, { id: p.fileId, mtime: 1 }])),
+    byId: Object.fromEntries(
+      opts.panels.map((p) => [
+        p.fileId,
+        { id: p.fileId, mtime: 1, ...(opts.assetSpecs?.[p.fileId] ? { original_spec: opts.assetSpecs[p.fileId] } : {}) },
+      ]),
+    ),
   } as never)
   const byKey: Record<string, unknown> = {}
   const latest: Record<string, string> = {}
@@ -922,29 +958,62 @@ describe('T33 · 默认文件名跟着导出对象走', () => {
 describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次', () => {
   const header = () => document.body.querySelector('[data-export-target]')?.textContent ?? ''
 
-  it('原图：图名 + 原图尺寸；文档里记的图幅与渲染回来的一致时不多说', async () => {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 60]) } })
+  const vectorOnDisk = (w: number, h: number) => ({
+    source_kind: 'vector',
+    logical_w_mm: w,
+    logical_h_mm: h,
+    px_w: null,
+    px_h: null,
+    dpi: null,
+    dpi_source: 'unknown',
+    viewport_pt: [(w / 25.4) * 72, (h / 25.4) * 72],
+    transparent: false,
+  })
+
+  it('原图：图名 + 图幅；磁盘原件与图幅一致时不多说', async () => {
+    await stage({
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 60]) },
+      assetSpecs: { 'Fig1.pdf': vectorOnDisk(80, 60) },
+    })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
     expect(header()).toContain('Fig1')
     expect(header()).toContain('原图尺寸')
     expect(header()).toContain('80 × 60 mm')
-    expect(text()).not.toContain('尺寸取自渲染结果')
+    expect(text()).not.toContain('磁盘上的原件')
     expect(document.body.querySelector('[data-export-target] img')).toBeTruthy()
   })
 
-  it('渲染回来的图幅与文档里记的不一样：只显示权威那一个，并说出来源（审计里 80×57.6 vs 75.3×58.7）', async () => {
+  it('磁盘原件被脚本裁过（bbox_inches=tight）：按图幅出图，并说出磁盘那份是多少（审计里 80×57.6 vs 75.3×58.7）', async () => {
+    // 教程 Fig1_kinetics 的真实数字：磁盘 PDF 75.26 × 58.68，figsize 80 × 57.6
     await stage({
       panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [75.3, 58.7]) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 57.6]) },
+      assetSpecs: { 'Fig1.pdf': vectorOnDisk(75.26, 58.68) },
     })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(header()).toContain('75.3 × 58.7 mm')
-    expect(text(), '文档里那份图幅不该再出现第二个数字').not.toContain('80 × 57.6')
-    expect(text()).toContain('尺寸取自渲染结果')
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('磁盘上的原件是 75.3 × 58.7 mm')
+    expect(header()).toContain('按图幅 80 × 57.6 mm 出图')
+    // 权威只有一个：头部之外不再报第二个尺寸
+    expect(text().split('80 × 57.6 mm').length - 1).toBe(2)
+  })
+
+  it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
+    await stage({
+      panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 57.6]) },
+      assetSpecs: { 'Fig1.pdf': { ...vectorOnDisk(75.26, 58.68), source_kind: 'raster', px_w: 890, px_h: 693 } },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('磁盘上的原件')
   })
 
   it('画布：画布名 + 页面尺寸 + 对象数，缩略图是示意不是渲染', async () => {
@@ -1149,7 +1218,11 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
     await act(async () => {
       settingsDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    await act(async () => {})
+    // Radix FocusScope 在卸载后的 **setTimeout(0)** 里才把焦点还回去：只 flush
+    // 微任务的话这一步有时还没跑到（六次里红两次的那种"偶发"）——等一个宏任务
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
     expect(useUiStore.getState().settingsOpen).toBe(false)
     expect(useUiStore.getState().exportOpen).toBe(true)
     expect(dialogCovered(useUiStore.getState().dialogStack, 'export')).toBe(false)

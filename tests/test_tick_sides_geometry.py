@@ -297,3 +297,29 @@ def test_3d_axes_do_not_offer_minor_length_or_width(library):
     props = _props(man, "axes_3.xticks")
     assert "length" in props
     assert "minor_length" not in props and "minor_width" not in props
+
+
+def test_3d_tick_boxes_stay_on_their_projected_labels(library):
+    """mplot3d 的刻度位置由 draw 按投影现算；draw 之后再跑一次
+    `Axis._update_ticks()`（`get_[xyz]ticklabels()` 内部就会跑）会把标签拽回
+    x = 数据 loc 的假位置——z 刻度组的包围盒于是横贯整张图（审计 T25：
+    实测起点在图外 2.6 个图幅、宽达图幅 6 倍，界面上蓝色选区横贯工作区）。
+
+    判据：三条轴的刻度组与每条刻度文字都在图内、宽不超过所在子图、横向
+    落在子图框附近（3D 的刻度文字会探出框外一点，留 1/4 子图宽的余量）。
+    """
+    man = _render(library, "fig_shapes.py", "Shapes")
+    ax_x, _ax_y, ax_w, _ax_h = _el(man, "axes_3")["bbox"]
+    slack = ax_w / 4
+    seen = set()
+    for el in man["elements"]:
+        gid = el["gid"]
+        if not (gid.startswith("axes_3.") and "tick" in gid):
+            continue
+        seen.add(gid.split(".")[1][0])  # x / y / z
+        x, y, w, h = el["bbox"]
+        assert 0.0 <= x and x + w <= 1.0, (gid, el["bbox"])
+        assert 0.0 <= y and y + h <= 1.0, (gid, el["bbox"])
+        assert w < ax_w, (gid, el["bbox"])
+        assert ax_x - slack <= x and x + w <= ax_x + ax_w + slack, (gid, el["bbox"])
+    assert seen == {"x", "y", "z"}

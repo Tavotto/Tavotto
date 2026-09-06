@@ -15,9 +15,13 @@
  *
  * ### 尺寸只有一个出处
  *
- * 原图 = `lib/originalSpec.getOriginalOutputSpec()`，画布 = `doc.page`。界面上
- * 只在对象头部显示一次；规格取自渲染结果而与文档里记的图幅不同时，多说一句
- * 来源（那正是审计里 80×57.6 与 75.3×58.7 并排出现、谁都没解释的那一幕）。
+ * 原图 = `hooks/useOriginalSpec`（第 ① 档 manifest `size_mm` = 脚本 figsize，与
+ * `do_export` 出的页面一致），画布 = `doc.page`。界面上只在对象头部显示一次。
+ * 它与磁盘原件不同**只有一种情况**：脚本保存时 `bbox_inches='tight'` 把页面裁 /
+ * 垫到了内容范围——判据是素材是矢量源且 `logical_w_mm` / `logical_h_mm` 与图幅
+ * 差过 0.05 mm，满足时多说一句「磁盘上的原件是 … ；这里按图幅 … 出图」。审计
+ * 里 80×57.6 与 75.3×58.7 并排出现，前者是图幅、后者是磁盘原件（旧 memo 没重
+ * 算——已由 `useOriginalSpec` 收成一处），现在只显示图幅并解释另一个数从哪来。
  *
  * ### 这里**不做**的事
  *
@@ -41,7 +45,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { panelSrc, type ExportJob, type ExportOutput } from '@/lib/api'
+import { panelSrc, type AssetOriginalSpec, type ExportJob, type ExportOutput, type PanelInfo } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
@@ -60,7 +64,6 @@ import { issueTitle, issueValues, severityLabel, subjectName } from '@/lib/valid
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
-  originalAvailability,
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
@@ -75,6 +78,7 @@ import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
+import { useOriginalAvailability } from '@/hooks/useOriginalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import {
@@ -226,21 +230,15 @@ export function ExportDialog() {
     return o?.type === 'panel' ? o.fileId : null
   }, [activePanelId, doc.objects])
   /*
-   * 这两个 memo 读的是 store 的**当前快照**（`originalAvailability` 问素材
-   * 清单与 runtime 清单，`findFigurePanel` 问文档），所以依赖里必须带上那几份
-   * 状态——只挂 `figureId` 的话，对话框开着时素材被删/掉线，组件重渲染了而
-   * memo 还是旧值：那颗按钮继续亮着，按下去后端报 `source_missing`
-   * （PR #214 复审）。
+   * 规格与可用性由 `hooks/useOriginalSpec` 绑定——它订阅了规格依赖的**每一份**
+   * 状态（文档 / 渲染态 / 素材清单 / runtime 清单）。以前这里只挂素材清单：
+   * 素材被删/掉线时会重算（PR #214 复审），但渲染回来、图幅同步进文档时
+   * **不会**——对话框于是停在打开那一刻的旧尺寸，与快速编辑条上的数对不上
+   * （审计 T33：75.3 × 58.7 对 80 × 57.6）。快速编辑条用的是同一个 hook。
    */
-  const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
+  const availability = useOriginalAvailability(figureId)
+  // 只给缩略图换代用（runtime 素材重跑后换 src）；规格与可用性都从上面那个 hook 来
   const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce)
-  const availability = useMemo(
-    () => originalAvailability(figureId),
-    // `assets` / `runtimeAssets` 是**触发重算的信号**，不是入参：
-    // `originalAvailability()` 读的是 store 的当前快照，linter 看不见那一层
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, assets, runtimeAssets],
-  )
   const panel = useMemo(
     () => (figureId ? (findFigurePanel(figureId)?.panel ?? null) : null),
     // 同上：`findFigurePanel()` 问的是 documentStore 的当前快照
@@ -643,7 +641,7 @@ export function ExportDialog() {
           panel={panel}
           spec={availability.spec}
           doc={doc}
-          mtime={figureId ? assets[figureId]?.mtime : undefined}
+          asset={figureId ? assets[figureId] : undefined}
           previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
         />
 
@@ -976,25 +974,29 @@ function ScopeNote({
 const SIZE_EPS = 0.05
 
 /**
- * 尺寸的来源要不要多说一句。**只在会让人疑惑时说**：规格取自渲染结果
- * （`render_metadata`）而与文档里记的图幅不一致——审计 T33 里 80×57.6 与
- * 75.3×58.7 并排出现、谁都没解释的正是这一幕；取自素材清单（面板还没同步过
- * 图幅）也说一句。占位值另有一句醒目的警告（`ScopeNote`），这里不重复。
+ * 磁盘原件与图幅不一致时多说一句（审计 T33 的 80×57.6 vs 75.3×58.7）。
  *
- * TODO(geom)：「渲染回来的图幅为什么与文档里记的不一样」的根因与最终措辞由
- * 图幅权威那一侧给；这里先只说来源，不解释成因。
+ * **只有一种情况会不一致**：矢量源的脚本保存时 `bbox_inches='tight'` 把页面裁 /
+ * 垫到了内容范围——磁盘上的 PDF 页面于是不等于 figsize，而导出按 figsize 出
+ * （`do_export` 出的页面就是它）。判据：素材是矢量源，且它的 `logical_w_mm` /
+ * `logical_h_mm` 与图幅差过 0.05 mm。位图源没有这回事；图幅还是占位值时另有一句
+ * 醒目的警告（`ScopeNote`），这里不重复。
  */
-export function sizeOriginNote(spec: OriginalOutputSpec, panel: PanelObject | null): string | null {
-  if (spec.fallback) return null
-  if (spec.origin === 'render_metadata') {
-    const differs =
-      !!panel &&
-      (Math.abs(panel.nativeW - spec.widthMm) > SIZE_EPS ||
-        Math.abs(panel.nativeH - spec.heightMm) > SIZE_EPS)
-    return differs ? ex('sizeFromRender') : null
-  }
-  if (spec.origin === 'asset') return ex('sizeFromAsset')
-  return null
+export function diskSizeNote(
+  spec: OriginalOutputSpec,
+  asset: Pick<AssetOriginalSpec, 'source_kind' | 'logical_w_mm' | 'logical_h_mm'> | null | undefined,
+): string | null {
+  if (spec.fallback || !asset || asset.source_kind !== 'vector') return null
+  const differs =
+    Math.abs(asset.logical_w_mm - spec.widthMm) > SIZE_EPS ||
+    Math.abs(asset.logical_h_mm - spec.heightMm) > SIZE_EPS
+  if (!differs) return null
+  return ex('sizeDiskDiffers', {
+    dw: round1(asset.logical_w_mm),
+    dh: round1(asset.logical_h_mm),
+    w: round1(spec.widthMm),
+    h: round1(spec.heightMm),
+  })
 }
 
 /**
@@ -1010,14 +1012,15 @@ function TargetHeader({
   panel,
   spec,
   doc,
-  mtime,
+  asset,
   previewNonce,
 }: {
   scope: ExportScope
   panel: PanelObject | null
   spec: OriginalOutputSpec | null
   doc: FigureDocument
-  mtime: number | undefined
+  /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
+  asset: PanelInfo | undefined
   previewNonce: number | undefined
 }) {
   useTranslation('dialogs')
@@ -1032,9 +1035,9 @@ function TargetHeader({
       ? ex('mmSize', { w: round1(spec.widthMm), h: round1(spec.heightMm) })
       : ex('sizeUnknownShort')
     : ex('mmSize', { w: round1(doc.page.w), h: round1(doc.page.h) })
-  const originNote = original && spec ? sizeOriginNote(spec, panel) : null
+  const originNote = original && spec ? diskSizeNote(spec, asset?.original_spec) : null
   const src = original && panel
-    ? panelSrc(panel.fileId, panel.fileKind, 200, panel.fileKind === 'runtime' ? previewNonce : mtime)
+    ? panelSrc(panel.fileId, panel.fileKind, 200, panel.fileKind === 'runtime' ? previewNonce : asset?.mtime)
     : null
   const visibleObjects = doc.objects.filter((o) => !o.hidden).length
   return (
