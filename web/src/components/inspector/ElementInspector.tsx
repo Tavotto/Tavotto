@@ -1714,6 +1714,11 @@ function FieldRow({
             step={field.step ?? 1}
             precision={2}
             suffix={field.unit}
+            // 可达名：标签只是**旁边的一段文字**，没有任何东西把它和这个输入框
+            // 连起来——走查的 AX 树里这些框读出来就是「编辑框 1.1」，用户听不出
+            // 改的是线宽还是端帽长度（axe 的 label 规则按 critical 报）。带单位，
+            // 与成对数值框的写法一致（`axisAriaLabel`）。
+            ariaLabel={field.unit ? `${label} (${field.unit})` : label}
             onChange={(v) => write(v)}
             onScrubStart={beginTxn}
             onScrubEnd={endTxn}

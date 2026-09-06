@@ -646,7 +646,7 @@
     "bbox_visible": "背景",
     "binding": "与图中对象",
     "borderpad": "内边距",
-    "cap_thickness": "端帽粗细",
+    "cap_thickness": "端帽线宽",
     "capsize": "端帽长度",
     "cmap": "色图",
     "color": "颜色",
@@ -763,19 +763,24 @@
   },
   "propByRole": {
     "bar": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "bar_series": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "fill": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "patch": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "scatter": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     }
   },
   "resize": "调整属性栏宽度（{{min}}–{{max}}px）",

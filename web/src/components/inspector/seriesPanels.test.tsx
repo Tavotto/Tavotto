@@ -367,4 +367,45 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
   })
 })
 
+/* ------------------------------ 宽度的名字 -------------------------------- */
+
+describe('全产品只有一个宽度名词「线宽」，限定词说哪条线（T16 / T20）', () => {
+  it('散点的 linewidth 叫「描边线宽」，紧跟在描边色后面', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    expect(row('linewidth')!.textContent).toContain('描边线宽')
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    expect(props.indexOf('linewidth') - props.indexOf('edgecolor')).toBe(1)
+  })
+
+  it('曲线与误差棒的 linewidth 是那条线本身，仍叫「线宽」', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    await mount(['axes_0.lines_0'])
+    expect(row('linewidth')!.textContent).toContain('线宽')
+    expect(row('linewidth')!.textContent).not.toContain('描边')
+  })
+
+  it('误差棒面板里没有「粗细」这个词——端帽那条也叫线宽', async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+    expect(row('cap_thickness')!.textContent).toContain('端帽线宽')
+    expect(textOf()).not.toContain('粗细')
+  })
+})
+
+/* ------------------------------- 可达名 ---------------------------------- */
+
+describe('数值行的可达名：标签在视觉与辅助技术中一致（T11 验收）', () => {
+  it('误差棒的四个数值框各有自己的名字，带单位', async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+    const named = (prop: string) => inputIn(prop)!.getAttribute('aria-label')
+    expect(named('linewidth')).toBe('线宽 (pt)')
+    expect(named('capsize')).toBe('端帽长度 (pt)')
+    expect(named('cap_thickness')).toBe('端帽线宽 (pt)')
+    // 百分比控件自己带名字（不带单位——单位就在框里那个 %）
+    expect(named('alpha')).toBe('透明度')
+  })
+})
+
 export { textOf, byText, row, inputIn, typeNumber, openMore, host as hostRef }

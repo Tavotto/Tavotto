@@ -664,7 +664,7 @@
     "bbox_visible": "Background",
     "binding": "Source link",
     "borderpad": "Padding",
-    "cap_thickness": "Cap thickness",
+    "cap_thickness": "Cap line width",
     "capsize": "Cap length",
     "cmap": "Colormap",
     "color": "Colour",
@@ -781,19 +781,24 @@
   },
   "propByRole": {
     "bar": {
-      "facecolor": "Fill colour"
+      "facecolor": "Fill colour",
+      "linewidth": "Edge width"
     },
     "bar_series": {
-      "facecolor": "Fill colour"
+      "facecolor": "Fill colour",
+      "linewidth": "Edge width"
     },
     "fill": {
-      "facecolor": "Fill colour"
+      "facecolor": "Fill colour",
+      "linewidth": "Edge width"
     },
     "patch": {
-      "facecolor": "Fill colour"
+      "facecolor": "Fill colour",
+      "linewidth": "Edge width"
     },
     "scatter": {
-      "facecolor": "Fill colour"
+      "facecolor": "Fill colour",
+      "linewidth": "Edge width"
     }
   },
   "resize": "Resize the properties panel ({{min}}–{{max}}px)",

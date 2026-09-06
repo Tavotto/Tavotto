@@ -22,14 +22,22 @@ import { t } from '@/i18n'
 /**
  * 同名属性在不同角色下说的不是一回事：figure/axes 的 facecolor 是背景，
  * 柱/散点/填充的 facecolor 是图元自己的填充色，叫「背景色」会误导。
+ *
+ * `linewidth` 同理，而且更容易读错：在曲线与误差棒上它是**那条线本身**的
+ * 宽度，在这五个角色上它是**描边**的宽度——散点面板里一个光写着「线宽」的
+ * 数字紧挨着「点大小」，用户猜不出它改的是描边（审计 T16）。
+ *
+ * 全产品的宽度只有一个名词：**线宽**。限定词说的是「哪条线」——描边线宽、
+ * 端帽线宽。审计 T20 点名的「线宽与粗细命名不统一」在这条规则下消失：
+ * 界面上再没有第二个词表示同一个量。
  */
 const ROLE_SCOPED_PROPS: Record<string, string[]> = {
-  bar: ['facecolor'],
-  bar_series: ['facecolor'],
-  scatter: ['facecolor'],
-  fill: ['facecolor'],
+  bar: ['facecolor', 'linewidth'],
+  bar_series: ['facecolor', 'linewidth'],
+  scatter: ['facecolor', 'linewidth'],
+  fill: ['facecolor', 'linewidth'],
   // 脚本 add_patch 出的独立形状：facecolor 是它自己的填充
-  patch: ['facecolor'],
+  patch: ['facecolor', 'linewidth'],
 }
 
 /**
