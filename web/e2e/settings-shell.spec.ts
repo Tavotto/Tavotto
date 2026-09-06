@@ -31,13 +31,27 @@ async function openSettings(page: Page, baseURL: string) {
   return dialog
 }
 
-/** 对话框里每一个把布局撑破的元素（与 coding-agents.spec 同一把尺子）。 */
+/**
+ * 对话框里每一个把布局撑破的元素（与 coding-agents.spec 同一把尺子）。
+ *
+ * **只量 HTML 元素**（含最外层的 `<svg>` 自己——它也在 SVG 命名空间里，一起跳过）。
+ * SVG 里的 `scrollWidth` / `clientWidth` 是 viewBox 的用户单位，与页面布局没有
+ * 关系：样式页的示意图声明 `viewBox="0 0 200 128"`，里面一段 `<text>` 报
+ * sw=66 cw=21，而它由外层 SVG 按 viewBox 缩放，页面上一个像素都没溢出。判据的
+ * 主语错了——量的不是「这个盒子在页面上有多宽」。
+ *
+ * 跳过它们**不会漏掉真的溢出**：一张真的画得太宽的图会让**装着它的那个 HTML
+ * 容器** scrollWidth 超出 clientWidth，在这里照样报出来（反证跑过：把示意图
+ * 撑到 2000px，这条用例当场红）。
+ */
 async function horizontalOffenders(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const dlg = document.querySelector('[role="dialog"]')
     if (!dlg) return ['NO DIALOG']
+    const HTML_NS = 'http://www.w3.org/1999/xhtml'
     const out: string[] = []
     for (const el of [document.body, dlg, ...Array.from(dlg.querySelectorAll('*'))]) {
+      if (el.namespaceURI !== HTML_NS) continue
       const e = el as HTMLElement
       if (getComputedStyle(e).overflowX !== 'visible') continue
       if (e.scrollWidth > e.clientWidth + 1) {
@@ -124,10 +138,20 @@ test('设置：方向键在导航里走，Enter 不需要——落地即切页',
   await expect(nav.getByRole('button', { name: '关于与隐私', exact: true })).toHaveAttribute('aria-current', 'true')
 })
 
-test('设置：包管理 / 诊断 / Agent 三页 axe 无 critical/serious', async ({ app, page }) => {
+/**
+ * axe 覆盖的分区清单。
+ *
+ * 「更新」「关于与隐私」是 2026-09-06 补进来的：它们此前从没被 axe 跑过，而
+ * 关于页正好挂着一条 serious（句子里的链接只靠颜色区分）——**没被跑过的门禁
+ * 不会保持正确，它只是没说话**。剩下的分区留给后续，别把这条用例拉成十一页
+ * 串行的慢用例。
+ */
+const AXE_SECTIONS = ['包管理', '诊断', '编码 Agent', '更新', '关于与隐私']
+
+test('设置：五个分区 axe 无 critical/serious', async ({ app, page }) => {
   const a = await app()
   const dialog = await openSettings(page, a.baseURL)
-  for (const label of ['包管理', '诊断', '编码 Agent']) {
+  for (const label of AXE_SECTIONS) {
     await dialog.getByRole('navigation').getByRole('button', { name: label, exact: true }).click()
     await page.waitForTimeout(300)
     const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze()
