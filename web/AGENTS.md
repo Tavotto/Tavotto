@@ -431,8 +431,22 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   一串撤销记录，中间态还会渲染出半跟随半自定义的图例。
 * 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」；九宫格
   那个方框就是参照的容器，框下写出它叫什么（「相对子图 1」），认不出来就不写。
-* 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`；
-  Python 侧 `tests/test_legend_binding.py`。
+* **位置控件是内 / 外两带的一个控件**（2026-09-07，ADR 0034 修订）：内 = 九宫格 +
+  「最佳位置」，外 = 六个常用外侧位（`lib/legendModel.LEGEND_OUTSIDE_PRESETS`，
+  **纯界面预设、不是同源对**）+ 自定义锚点 x / y。写的是 `loc` 与 `loc_anchor`
+  两条 prop，但**一次点击一次 commit**（`store/actions.setLegendPlacement`）：
+  写 `loc`、按需写 `loc_anchor`、把拖动留下的 `loc_frac` 一并删掉——不删的话
+  引擎里拖动压过锚点，用户点了预设看不见任何变化。选内侧时**此刻确实有锚点
+  才写 `loc_anchor: null`**（`null` 是「不要锚框」这个取值，不是「没表态」）。
+  控件里那张示意图按当前值重画（静态内联 SVG、无动画）：虚线框是参照的容器，
+  实心块是图例落点，算法与 matplotlib 同源（锚框上取 `loc` 那个角、图例同名角
+  贴上去），算不出来时只画容器、不画一个猜的方块。三个入口（属性页 /
+  `QuickEdit` / `ElementBar`）与多选路径都给外侧带；多选时锚点**全体一致才给**
+  （与 `sharedMarkerShape` 同一条纪律）。引擎不发 `loc_anchor` 时整带不出现，
+  理由由 `UnsupportedProps` 按 reason code 说出口。
+* 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`、
+  `inspector/controls/pickers.test.tsx`；Python 侧 `tests/test_legend_binding.py`、
+  `tests/test_legend_anchor.py`。
 
 ## 坐标轴边框的语义命中区与四边刻度（2026-09-02，ADR 0035）
 
