@@ -319,13 +319,23 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
     expect(await horizontalOffenders(page, '[role="dialog"][aria-labelledby]')).toEqual([])
   }
 
-  // --- 问号：Tab 到它 → 展开 → Esc 收回 ---
+  // --- 常规页一个问号都没有（审计「说明文字专项补查」）---
   await dialog.getByRole('navigation').getByRole('button', { name: '常规' }).click()
-  const help = dialog.getByRole('button', { name: '关于界面语言' })
+  await expect(dialog.locator('[data-help-tip]')).toHaveCount(0)
+
+  // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
+  await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
+  await page.waitForTimeout(250)
+  const projectScreen = (await dialog.textContent()) ?? ''
+  expect(projectScreen).not.toMatch(/(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/)
+
+  // --- 问号：Tab 到它 → 展开 → Esc 收回。设置里唯一剩下的那个（界面 / 拖动联动）---
+  await dialog.getByRole('navigation').getByRole('button', { name: '界面' }).click()
+  const help = dialog.getByRole('button', { name: '关于拖动时一同移动关联对象' })
   await expect(help).toHaveAttribute('aria-expanded', 'false')
   await help.focus()
   await expect(help).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 })
-  await expect(page.getByText(/只影响界面文字/)).toBeVisible()
+  await expect(page.getByText(/关联元素 = 被你手动摆过位置的标题/)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(help).toHaveAttribute('aria-expanded', 'false', { timeout: 10_000 })
   // Esc 关的是气泡，不是整个设置对话框
