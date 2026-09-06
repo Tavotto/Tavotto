@@ -3,10 +3,12 @@ import {
   cancelPackageJob,
   fetchManagedPackages,
   fetchPackageJob,
+  lookupPackage,
   planPackageJob,
   runPackageJob,
   type ManagedPackages,
   type PackageJob,
+  type PackageLookup,
   type PackageOp,
   type PackageProgress,
 } from '@/lib/api'
@@ -27,6 +29,40 @@ import { useRenderStore } from '@/store/renderStore'
 /** 本标签页经 `run()` 起过的作业号：进度事件只认这里面的 */
 const startedJobs = new Set<string>()
 
+/**
+ * 查找的序号。两次查找重叠时**只有最后一次的答案能落地**——先发的那次回来
+ * 得晚的话，用户会看到自己刚刚已经改掉的那个名字的结果。比较查询串是不够的：
+ * 同一个名字连点两次，两次的串一模一样。
+ */
+let lookupSeq = 0
+
+/** 查找的状态机。四态闭集，界面按它换文案。 */
+export type LookupStatus = 'idle' | 'loading' | 'found' | 'error'
+
+export interface LookupState {
+  /** 这一次查的是哪个名字（用户可能已经把输入框改了，措辞要认这个） */
+  query: string
+  status: LookupStatus
+  result: PackageLookup | null
+  /** 失败的稳定 code（`package_lookup_*` 四档之一，或语法不合法那一条） */
+  code: string
+  /** 后端原文，没有对应文案时的回退 */
+  text: string
+}
+
+const IDLE_LOOKUP: LookupState = { query: '', status: 'idle', result: null, code: '', text: '' }
+
+/**
+ * 过滤 / 查找用的名字：把版本约束切掉。
+ *
+ * 输入框是**一个**（既是安装规范，也是搜索词）。用户输入 `lmfit>=1.3` 时，
+ * 拿整串去过滤清单会一个都匹配不上，拿它去查找会被后端按语法拒掉——两种都
+ * 不是他想要的。切掉约束之后两件事都对：过滤 `lmfit`、查找 `lmfit`，而
+ * **安装仍然用他输入的原串**（那才是他想装的东西）。
+ */
+export const searchTerm = (value: string): string =>
+  value.trim().split(/[<>=!~,;[(]/, 1)[0]?.trim() ?? ''
+
 interface PackageState {
   data: ManagedPackages | null
   loading: boolean
@@ -38,6 +74,8 @@ interface PackageState {
   busy: boolean
   errorCode: string
   errorText: string
+  /** 「在 PyPI 查找」的结果。**出网的动作只有它**，且只由用户点击触发 */
+  lookup: LookupState
   load: () => Promise<void>
   /** 形成作业（不改任何东西）；失败时把 code 记在 store 里并回 null */
   plan: (op: PackageOp, spec: string) => Promise<PackageJob | null>
@@ -46,6 +84,9 @@ interface PackageState {
   poll: () => Promise<void>
   onProgress: (p: PackageProgress) => void
   clearError: () => void
+  /** 按名字问一次索引源。名字是**用户点下去那一刻**的那个，不是输入框的实时值 */
+  runLookup: (name: string) => Promise<void>
+  clearLookup: () => void
 }
 
 const failure = (e: unknown): { code: string; text: string } => {
@@ -72,6 +113,7 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   busy: false,
   errorCode: '',
   errorText: '',
+  lookup: IDLE_LOOKUP,
 
   load: async () => {
     set({ loading: true })
@@ -156,4 +198,27 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   },
 
   clearError: () => set({ errorCode: '', errorText: '' }),
+
+  runLookup: async (name) => {
+    const query = searchTerm(name)
+    if (!query) return
+    const seq = ++lookupSeq
+    set({ lookup: { query, status: 'loading', result: null, code: '', text: '' } })
+    try {
+      const result = await lookupPackage(query)
+      if (seq !== lookupSeq) return // 有更新的一次查找在飞，这次的答案已经过期
+      set({ lookup: { query, status: 'found', result, code: '', text: '' } })
+    } catch (e) {
+      if (seq !== lookupSeq) return
+      const { code, text } = failure(e)
+      // code 拿不到时也要有个落点：否则界面上是一句空白的失败
+      set({ lookup: { query, status: 'error', result: null, code, text } })
+    }
+  },
+
+  clearLookup: () => {
+    // 序号也要往前走：正在飞的那次回来时不该覆盖用户刚清掉的结果
+    lookupSeq += 1
+    set({ lookup: IDLE_LOOKUP })
+  },
 }))
