@@ -62,6 +62,8 @@ export function ProjectPicker() {
   // 从设置「切换项目」进来时后端仍有打开的项目——允许原路返回
   const currentOpen = useProjectStore((s) => s.project?.open === true)
   const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
+  /** 桌面壳：系统选择器选好的上级目录，等用户起个名字（审计 T03） */
+  const [createIn, setCreateIn] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const [typed, setTyped] = useState('')
@@ -99,7 +101,19 @@ export function ProjectPicker() {
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>
 
           <div className="mt-5 flex gap-2">
-            <Button variant="primary" size="md" onClick={() => setBrowse('create')}>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => {
+                // 桌面壳：先用系统目录选择器挑上级目录（与「浏览目录」同一种体验），
+                // 再只问一个名字；浏览器模式仍是服务器端目录浏览器
+                if (isDesktop()) {
+                  void pickDirectory(t('picker.nativeCreateTitle')).then((dir) => {
+                    if (dir) setCreateIn(dir)
+                  })
+                } else setBrowse('create')
+              }}
+            >
               <FolderPlus size={14} />
               {t('picker.create')}
             </Button>
@@ -220,6 +234,16 @@ export function ProjectPicker() {
             onPick={(path, create) => {
               setBrowse(null)
               void openPath(path, create)
+            }}
+          />
+        )}
+        {createIn && (
+          <NewProjectNameDialog
+            parent={createIn}
+            onClose={() => setCreateIn(null)}
+            onCreate={(name) => {
+              setCreateIn(null)
+              void openPath(`${createIn}/${name}`, true)
             }}
           />
         )}
@@ -607,6 +631,64 @@ export function DirBrowser({
           </p>
         )}
       </div>
+    </Dialog>
+  )
+}
+
+/**
+ * 桌面壳「新建项目」的第二步：上级目录已经由系统选择器选好，这里只问名字。
+ * 路径拼接与浏览器模式的 DirBrowser 一致（`parent/name`）。
+ */
+function NewProjectNameDialog({
+  parent,
+  onClose,
+  onCreate,
+}: {
+  parent: string
+  onClose: () => void
+  onCreate: (name: string) => void
+}) {
+  const { t } = useTranslation('project')
+  const [name, setName] = useState('')
+  const clean = name.trim()
+  return (
+    <Dialog
+      open
+      onOpenChange={(v) => !v && onClose()}
+      title={t('browser.titleCreate')}
+      size="sm"
+      footer={
+        <>
+          <Button variant="outline" size="md" onClick={onClose}>
+            {translate('actions.cancel')}
+          </Button>
+          <Button variant="primary" size="md" disabled={!clean} onClick={() => onCreate(clean)}>
+            {t('browser.confirmCreate')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="flex flex-col gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (clean) onCreate(clean)
+        }}
+      >
+        <label className="flex items-center gap-2 text-xs text-ink-2">
+          {t('browser.projectName')}
+          <TextInput
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="my_paper_figures"
+            className="flex-1"
+          />
+        </label>
+        <p className="truncate font-mono text-xs text-ink-3" title={parent}>
+          {t('picker.createIn', { dir: parent })}
+        </p>
+      </form>
     </Dialog>
   )
 }

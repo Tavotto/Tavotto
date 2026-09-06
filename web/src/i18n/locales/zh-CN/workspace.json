@@ -151,6 +151,9 @@
     "tooNewBody": "Tavotto 没有打开它，磁盘上的文件一个字节都没动。升级后再试。",
     "tooNewTitle": "这份文档来自更新的 Tavotto（schema {{schema}}）"
   },
+  "document": {
+    "defaultName": "新文档"
+  },
   "drawer": {
     "pin": "钉住侧栏",
     "pinHint": "钉住：选中对象时不自动收起",
@@ -316,7 +319,6 @@
     "listLabel": "图层",
     "lock": "锁定",
     "lockedState": "已锁定",
-    "openAssets": "打开素材",
     "primary": "基准",
     "rowAria": "{{label}}，{{state}}",
     "show": "显示",
@@ -511,13 +513,15 @@
     "coupled": "（方向随这条轴一起改：{{sides}}）"
   },
   "stage": {
+    "addFigure": "添加图",
     "backToCanvas": "返回画布",
     "elementEditing": "图内编辑",
     "elementEditingName": "：{{name}}",
-    "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
+    "emptyHint": "从素材库选一张图放到画布上，或直接把图拖进来。",
+    "emptyHintNoAssets": "把 matplotlib 输出的 PDF/PNG 或绘图脚本放进项目目录，它们就会出现在素材库里。",
     "emptyTitle": "画布是空的",
     "exitTitle": "退出图内编辑，回到画布层（Esc）",
-    "openAssets": "打开素材库"
+    "tryTutorial": "试用示例"
   },
   "status": {
     "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
@@ -557,7 +561,7 @@
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
     "objectCopied": "已复制 {{name}}",
-    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他布局文档）",
+    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他文档）",
     "overridesCleared": "已清空该面板的图内修改",
     "packageDrift_other": "已打开项目包；{{count}} 个素材与打包时内容不一致（可能已被改动），请核对",
     "packageFailed": "打包失败：{{error}}",
@@ -617,7 +621,6 @@
   "topbar": {
     "addSubLabels": "添加序号标签",
     "annotate": "标注",
-    "canvasFiles": "画布文件",
     "canvasSettings": "画布设置",
     "commandPalette": "命令面板",
     "documentLabel": "文档：{{name}}",
@@ -626,15 +629,18 @@
     "exportPackage": "导出项目包（.tavotto）",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
+    "fromOtherProject": "· 其他项目",
+    "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包（.tavotto）…",
     "insertShape": "插入形状",
-    "loadCanvasFile": "载入画布文件…",
     "more": "更多",
     "moreWithUpdate": "更多（有新版本）",
     "newBlankDocument": "新建空白文档",
     "noOtherDocuments": "暂无其他文档",
+    "openDocument": "打开文档…",
     "paperStyles": "论文样式…",
     "presets": "科研预设与符号…",
+    "projectDocuments": "项目文档",
     "readiness": "项目接入状态",
     "recentDocuments": "最近文档（本机）",
     "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
@@ -643,11 +649,11 @@
     "redoWith": "重做 {{label}}",
     "refreshProject": "刷新项目",
     "renameDocument": "重命名文档…",
-    "saveAsCanvasFile": "保存为画布文件…",
     "saveClean": "已保存 {{time}}",
     "saveCleanNoTime": "已保存",
     "saveConflict": "外部冲突",
     "saveDirty": "有未保存修改",
+    "saveDocumentAs": "另存为文档…",
     "saveError": "保存失败",
     "saveSaved": "已保存",
     "saveSaving": "正在保存…",
@@ -662,7 +668,7 @@
     "undo": "撤销",
     "undoWith": "撤销 {{label}}",
     "updateAvailable": "有新版本 {{version}}",
-    "versionTimeline": "布局版本时间线…",
+    "versionTimeline": "文档版本…",
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomValue": "缩放 {{percent}}%"

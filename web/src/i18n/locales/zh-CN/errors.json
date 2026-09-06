@@ -79,7 +79,7 @@
     "open_project_failed": "打不开这个项目：{{reason}}",
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
-    "package_schema_unsupported": "项目包里的布局既不是 schema 2 也不是 schema 3",
+    "package_schema_unsupported": "项目包里的文档既不是 schema 2 也不是 schema 3",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，要在 {{min}} 到 {{max}} 之间。",
     "probe_in_progress": "这个脚本已有一次运行在进行中：{{script}}",

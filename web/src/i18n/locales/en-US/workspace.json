@@ -159,6 +159,9 @@
     "tooNewBody": "Tavotto did not open it; the file on disk is untouched. Upgrade and try again.",
     "tooNewTitle": "This document comes from a newer Tavotto (schema {{schema}})"
   },
+  "document": {
+    "defaultName": "Untitled"
+  },
   "drawer": {
     "pin": "Pin sidebar",
     "pinHint": "Pin: keep open when an object is selected",
@@ -331,7 +334,6 @@
     "listLabel": "Layers",
     "lock": "Lock",
     "lockedState": "locked",
-    "openAssets": "Open assets",
     "primary": "Reference",
     "rowAria": "{{label}}, {{state}}",
     "show": "Show",
@@ -534,13 +536,15 @@
     "coupled": "(direction is shared along the axis: {{sides}})"
   },
   "stage": {
+    "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
     "elementEditing": "Figure editing",
     "elementEditingName": ": {{name}}",
-    "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
+    "emptyHint": "Pick a figure from the asset library, or drag one straight onto the canvas.",
+    "emptyHintNoAssets": "Put matplotlib's PDF/PNG output or plotting scripts into the project folder and they will show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "openAssets": "Open the asset library"
+    "tryTutorial": "Try the sample project"
   },
   "status": {
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",
@@ -588,7 +592,7 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "objectCopied": "Copied {{name}}",
-    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document",
+    "objectsCopied": "Copied {{count}} objects — they can be pasted into another document",
     "overridesCleared": "Cleared this panel's figure edits",
     "packageDrift_one": "Project package opened; {{count}} asset differs from the packaged copy and may have been edited — please check",
     "packageDrift_other": "Project package opened; {{count}} assets differ from the packaged copies and may have been edited — please check",
@@ -661,7 +665,6 @@
   "topbar": {
     "addSubLabels": "Add panel labels",
     "annotate": "Annotate",
-    "canvasFiles": "Canvas files",
     "canvasSettings": "Canvas settings",
     "commandPalette": "Command palette",
     "documentLabel": "Document: {{name}}",
@@ -670,15 +673,18 @@
     "exportPackage": "Export project package (.tavotto)",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
+    "fromOtherProject": "· another project",
+    "fromProject": "· in {{name}}",
     "importPackage": "Import project package (.tavotto)…",
     "insertShape": "Insert shape",
-    "loadCanvasFile": "Load canvas file…",
     "more": "More",
     "moreWithUpdate": "More (update available)",
     "newBlankDocument": "New blank document",
     "noOtherDocuments": "No other documents",
+    "openDocument": "Open document…",
     "paperStyles": "Paper styles…",
     "presets": "Research presets and symbols…",
+    "projectDocuments": "Project documents",
     "readiness": "Project readiness",
     "recentDocuments": "Recent documents (this machine)",
     "recentEntryMulti_one": "{{name}} · {{canvases}} canvases · {{count}} object",
@@ -689,11 +695,11 @@
     "redoWith": "Redo {{label}}",
     "refreshProject": "Refresh project",
     "renameDocument": "Rename document…",
-    "saveAsCanvasFile": "Save as canvas file…",
     "saveClean": "Saved {{time}}",
     "saveCleanNoTime": "Saved",
     "saveConflict": "External conflict",
     "saveDirty": "Unsaved changes",
+    "saveDocumentAs": "Save document as…",
     "saveError": "Save failed",
     "saveSaved": "Saved",
     "saveSaving": "Saving…",
@@ -708,7 +714,7 @@
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
-    "versionTimeline": "Layout version timeline…",
+    "versionTimeline": "Document versions…",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%"

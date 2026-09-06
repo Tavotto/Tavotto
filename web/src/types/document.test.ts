@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { applyLocale } from '@/i18n'
 import {
   canvasToDoc,
+  defaultDocumentName,
   docToCanvas,
+  emptyDocument,
   emptyProject,
   isRuntimePanel,
   migrateToProject,
@@ -113,5 +116,44 @@ describe('AssetSource 双形态（ADR 0013）', () => {
     const [o] = pd.canvases[0].objects
     expect(o.type === 'panel' && panelKind(o)).toBe('pdf')
     expect((o as PanelObject).source).toBeUndefined()
+  })
+})
+
+/**
+ * 新文档的默认名（审计 T03）。
+ *
+ * 改造前是写死的 `fig_layout`——一个暴露实现习惯的名字，而它同时是顶栏显示的
+ * 文档名、「另存为」的默认文件名和最近文档列表里的那一行。这里守两件事：
+ * 它跟界面语言走（是给人看的），并且**磁盘安全**（它会直接当文件名用）。
+ */
+describe('新文档的默认名', () => {
+  it('两个入口取的是同一个名字，且不是实现习惯里的那个', () => {
+    expect(emptyDocument().name).toBe(defaultDocumentName())
+    expect(emptyProject().project.name).toBe(defaultDocumentName())
+    expect(defaultDocumentName()).not.toBe('fig_layout')
+  })
+
+  it('跟界面语言走', async () => {
+    const zh = defaultDocumentName()
+    await applyLocale('en-US')
+    try {
+      expect(defaultDocumentName()).not.toBe(zh)
+      expect(defaultDocumentName().trim()).not.toBe('')
+    } finally {
+      await applyLocale('zh-CN')
+    }
+  })
+
+  it('磁盘安全：两种语言下都不含路径分隔符与保留字符', async () => {
+    // 「另存为」把它原样当文件名交给后端，净化只该动用户后来自己改的名字
+    for (const lng of ['zh-CN', 'en-US'] as const) {
+      await applyLocale(lng)
+      const name = defaultDocumentName()
+      expect(name, lng).not.toMatch(/[/\\:*?"<>|]/)
+      expect(name, lng).not.toMatch(/^\.+$/)
+      expect(name.trim(), lng).toBe(name)
+      expect(name.length, lng).toBeGreaterThan(0)
+    }
+    await applyLocale('zh-CN')
   })
 })
