@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "branch": "plugin-stable",
+  "plugin": "tavotto",
+  "kind": "bootstrap",
+  "version": "0.13.0",
+  "content_digest": "035b5b6b82e3a032a9376fb9ae0369cb97ca072ef247b4d5be88adb768708683",
+  "source_sha": null,
+  "release_tag": "v0.13.0",
+  "plugin_build": null,
+  "legacy_bootstrap": {
+    "asset_url": "https://github.com/Tavotto/Tavotto/releases/download/v0.13.0/codex-plugin-0.13.0.zip",
+    "sha256": "a12bc8acdde8aa76c65a0ab9c3baf7714ae2f18a7113c7bf436202acd27d3bc8",
+    "release_tag": "v0.13.0",
+    "zip_name": "codex-plugin-0.13.0.zip",
+    "note": "legacy bootstrap: 包内字节原样保留，没有 plugin-build.json"
+  },
+  "engine_check": {
+    "checks": {
+      "github-release": {
+        "url": "https://api.github.com/repos/Tavotto/Tavotto/releases/tags/v0.13.0",
+        "ok": true,
+        "detail": "HTTP 200"
+      },
+      "pypi": {
+        "url": "https://pypi.org/pypi/tavotto/0.13.0/json",
+        "ok": true,
+        "detail": "HTTP 200"
+      }
+    },
+    "skipped_reason": null
+  },
+  "previous": null,
+  "restores": null,
+  "authorization": null,
+  "published_at": "2026-09-06T06:27:13Z",
+  "audit": {
+    "workflow": "plugin-stable",
+    "run_id": "34016512223",
+    "actor": "erwanjun"
+  }
+}
