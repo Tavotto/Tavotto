@@ -417,14 +417,25 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 
 完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
 
-* **一个外壳三种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（单个图内元素 /
-  单个画布对象 / 两个以上画布对象），出现与让位、落位（`position.ts` 纯函数）、
-  Esc、拖动隐藏、portal 都在外壳；三种内容各一个文件。对外仍是 `ContextBar()`。
+* **一个外壳四种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的
+  面板 / 单个图内元素 / 单个画布对象 / 两个以上画布对象），出现与让位、落位
+  （`position.ts` 纯函数）、Esc、拖动隐藏、portal 都在外壳；四种内容各一个文件。
+  对外仍是 `ContextBar()`。裁剪的两条判据**不是同一个**：让位看
+  `cropTargetId` 有没有值，出裁剪条看它指不指得到一个真面板。
+* **进裁剪一律走 `actions.beginCrop`**（属性页 / 浮动条 / 右键菜单 / 面板上按
+  Enter 四个入口），它把进裁剪那一刻的取景窗与包围盒记进 `uiStore.cropBaseline`；
+  `cancelCrop` 还原到**那一刻**（不是还原到「从没裁剪过」——那是 `resetPanelCrop`），
+  `finishCrop` 只退出。直接 `setCropTarget(id)` 不记基线，取消会降级成单纯退出：
+  **宁可少还原，也不拿一份过期快照去改文档**（审计 T26）。
 * **多选栏不是第二套排列系统**：按钮只发意图，落地走 `store/actions.alignSelectedTo`
   / `groupSelected` / `ungroupSelected`——与 `ArrangeSection` 同一个函数、同一条历史
   标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
 * **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
   persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+  **控件也只留一处**（审计 T29）：右栏属性页停靠着时（`ContextBar` 的
+  `multiBarDocked`，与文字栏的 `textBarCompact` 同一条 `inspectorDocked` 判据）
+  浮动栏收成「计数 + 六向对齐 + 成组 + 更多」，参照 / 分布 / 等宽等高的控件让给
+  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。
 * **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
   `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
   后续 coachmark 都锚在这两个节点上，别改名。
