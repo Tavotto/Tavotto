@@ -21,6 +21,9 @@ const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
   return m !== 'None' && m !== 'none' && m !== ''
 }
 
+/** 填充开着（`fill`）才有意义的从属字段共用这一条 */
+const FILLED = (read: (prop: string) => unknown): boolean => read('fill') !== false
+
 /** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
 const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
@@ -101,9 +104,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'cmap', 'vmin', 'vmax', 'marker', 'size', 'edgecolor', 'linewidth', 'alpha'],
     more: ['label', 'hatch', 'linestyle', 'visible'],
   },
+  // 填充区域 / 形状：**填充一组、描边一组**，与画布图形同一套词汇和排版
+  // （审计 T21）。以前纹理夹在描边色与透明度之间——它是填充的一部分，
+  // 该挨着填充色。线型从「更多」提上来，与画布图形的描边组一致。
   fill: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
-    more: ['label', 'linestyle', 'visible'],
+    primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    more: ['label', 'visible'],
   },
   bar_series: {
     primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
@@ -114,8 +120,15 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     more: ['visible'],
   },
   patch: {
-    primary: ['facecolor', 'fill', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
-    more: ['linestyle', 'visible'],
+    primary: ['facecolor', 'fill', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    more: ['visible'],
+    visibleWhen: {
+      // 「填充」关着时填充色与纹理画了也不显形——这是 `fill` 这个开关的定义
+      // （见 engine/manifest.py `_patch_fields` 的实测：fill 关着时 facecolor
+      // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
+      facecolor: FILLED,
+      hatch: FILLED,
+    },
   },
   errorbar: {
     primary: ['color', 'linewidth', 'capsize', 'cap_thickness', 'alpha'],

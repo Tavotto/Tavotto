@@ -111,6 +111,19 @@ export const fillFields = (): EditableField[] => [
   f('hatch', 'enum', '', { options: ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx'], group: '线条与填充' }),
 ]
 
+/** 与 `_patch_fields` 同形（脚本 add_patch 出的独立形状） */
+export const patchFields = (over: { fill?: boolean } = {}): EditableField[] => [
+  f('facecolor', 'color', '#1f77b4'),
+  f('fill', 'bool', over.fill ?? true),
+  f('edgecolor', 'color', '#000000'),
+  num('linewidth', 1),
+  f('linestyle', 'enum', '-', { options: ['-', '--', '-.', ':'] }),
+  f('hatch', 'enum', '', { options: ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx'] }),
+  alpha(1),
+  f('visible', 'bool', true),
+  f('zorder', 'number', 2, { min: -5, max: 50, step: 1, group: '排列' }),
+]
+
 /** 与 `_fields_for(figure)` 同形 */
 export const figureFields = (over: { transparent?: boolean } = {}): EditableField[] => [
   f('size_mm', 'pair', [80, 57.6], { unit: 'mm' }),
@@ -364,6 +377,45 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
     await mount(['axes_0.lines_0'])
     expect(row('markersize')).toBeTruthy()
     expect(row('markerfacecolor')).toBeNull()
+  })
+})
+
+/* ---------------------------- 填充区域与纹理 ------------------------------ */
+
+describe('填充区域：填充一组、描边一组，纹理有名字（T21）', () => {
+  it('中文界面上没有裸露的 hatch，那一行叫「纹理」', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'fill', '填充区域 1', fillFields())]))
+    await mount(['axes_0.collections_0'])
+    await openMore()
+    expect(row('hatch')!.textContent).toContain('纹理')
+    expect(textOf()).not.toContain('hatch')
+    expect(host.querySelector('[aria-label="hatch"]')).toBeNull()
+  })
+
+  it('首屏顺序：填充色 · 纹理 → 描边色 · 线宽 · 线型 → 透明度', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'fill', '填充区域 1', fillFields())]))
+    await mount(['axes_0.collections_0'])
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    expect(props.slice(0, 6)).toEqual([
+      'facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha',
+    ])
+  })
+
+  it('形状：关掉「填充」之后填充色与纹理收起——写了也不显形', async () => {
+    seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields())]))
+    await mount(['axes_0.patches_0'])
+    expect(row('facecolor')).toBeTruthy()
+    expect(row('hatch')).toBeTruthy()
+    const toggle = row('fill')!.querySelector<HTMLElement>('[role="switch"]')!
+    await act(async () => {
+      toggle.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'fill')).toBe(false)
+    expect(row('facecolor')).toBeNull()
+    expect(row('hatch')).toBeNull()
+    // 开关自己当然还在，否则就再也开不回来了
+    expect(row('fill')).toBeTruthy()
+    expect(row('edgecolor')).toBeTruthy()
   })
 })
 

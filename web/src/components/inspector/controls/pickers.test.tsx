@@ -126,22 +126,46 @@ describe('MarkerPicker', () => {
 })
 
 describe('HatchPicker', () => {
-  it('空串是「无花纹」，known 花纹有纹理缩略，点击写原始串', async () => {
+  it('空串是「无」，known 纹理有缩略图，点击写原始串', async () => {
     const onChange = vi.fn()
     await mount(
-      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="花纹" />,
+      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="纹理" />,
     )
-    const trigger = host.querySelector('button[aria-label="花纹"]') as HTMLButtonElement
-    expect(trigger.textContent).toContain('无花纹')
+    const trigger = host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement
+    expect(trigger.textContent).toContain('无')
     await act(async () => {
       trigger.click()
     })
-    const xx = radioByLabel('花纹 xx')!
+    const xx = radioByLabel('密交叉')!
     expect(xx.querySelector('svg pattern')).toBeTruthy()
     await act(async () => {
       xx.click()
     })
     expect(onChange).toHaveBeenCalledWith('xx')
+  })
+
+  /**
+   * 审计 T21 的验收：**所有纹理选项有可理解的名称，图形与底层图案一一对应**。
+   * 引擎的 `HATCHES` 是 16 个代码，逐个查——名字不许等于代码本身，也不许
+   * 落到「纹理 <代码>」那条开集兜底上（那是给脚本自拼的花纹留的）。
+   */
+  it('引擎那 16 个纹理代码逐个有名字，名字里不出现代码', async () => {
+    const HATCHES = ['', '/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', '\\\\', 'xx', '..', '++']
+    const onChange = vi.fn()
+    await mount(
+      <HatchPicker value="" options={HATCHES} onChange={onChange} ariaLabel="纹理" />,
+    )
+    await act(async () => {
+      ;(host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement).click()
+    })
+    const names = radios().map((r) => r.getAttribute('aria-label')!)
+    expect(names).toHaveLength(HATCHES.length)
+    expect(new Set(names).size, '有两个纹理重名，图形与名字对不上').toBe(HATCHES.length)
+    for (const [i, name] of names.entries()) {
+      const code = HATCHES[i]
+      expect(name, `${JSON.stringify(code)} 落到了开集兜底`).not.toContain('纹理 ')
+      if (code) expect(name, `${JSON.stringify(code)} 的名字里带着代码`).not.toContain(code)
+    }
   })
 })
 
