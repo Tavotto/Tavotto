@@ -75,29 +75,46 @@ export function Disclosure({
   )
 }
 
-/** 标签在左、控件在右的紧凑行 */
+/**
+ * 标签在左、控件在右的紧凑行。
+ *
+ * `align='start'` 给**多行高的控件**用（图例位置的内 / 外两带那种）：默认的
+ * 垂直居中会把标签推到控件的半腰，看上去像在给下面那一段命名——真浏览器里
+ * 一眼就看得出来，jsdom 量不到。标签自己用 `leading-6` 对齐到第一行控件的
+ * 中线，而不是顶到最上沿。
+ */
 export function Row({
   label,
   children,
   className,
   labelWidth = 44,
+  align = 'center',
 }: {
   label?: ReactNode
   children: ReactNode
   className?: string
   labelWidth?: number
+  align?: 'center' | 'start'
 }) {
+  const top = align === 'start'
   return (
-    <div className={cn('flex min-h-6 items-center gap-2', className)}>
+    <div className={cn('flex min-h-6 gap-2', top ? 'items-start' : 'items-center', className)}>
       {label != null && (
         <span
           style={{ width: labelWidth }}
-          className="shrink-0 text-xs text-ink-2"
+          className={cn('shrink-0 text-xs text-ink-2', top && 'leading-6')}
         >
           {label}
         </span>
       )}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">{children}</div>
+      <div
+        className={cn(
+          'flex min-w-0 flex-1 gap-1.5',
+          top ? 'items-start' : 'items-center',
+        )}
+      >
+        {children}
+      </div>
     </div>
   )
 }

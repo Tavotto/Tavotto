@@ -295,6 +295,9 @@ export function LegendPositionPicker({
 
       {anchorSupported && (
         <div className="flex flex-col gap-1 border-t border-border pt-1.5">
+          {/* 一条看得见的小标题：光靠一条分割线，「下面这排是图外」只能靠悬停
+              才知道——那不是「看得懂」 */}
+          <p className="text-[10px] leading-3 text-ink-3">{ins('control.legendOutsideBand')}</p>
           <div className="flex items-start gap-2">
             <div
               role="radiogroup"

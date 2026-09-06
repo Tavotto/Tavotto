@@ -2284,6 +2284,7 @@ export default interface Resources {
         "topCenter": "上方居中"
       },
       "legendOutsideAria": "图外位置",
+      "legendOutsideBand": "图外",
       "legendOutsideOverflowHint": "放到外面可能超出图幅，检查会提示。",
       "legendPositionWithin": "相对{{label}}",
       "legendPreviewAria": "位置示意：容器边界与图例此刻的落点",

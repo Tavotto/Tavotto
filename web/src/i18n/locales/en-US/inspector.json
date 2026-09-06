@@ -193,7 +193,8 @@
       "topCenter": "Above, centered",
       "bottomCenter": "Below, centered",
       "leftCenter": "Left, middle"
-    }
+    },
+    "legendOutsideBand": "Outside"
   },
   "element": {
     "absentAppearance": "Visible in the figure, but this version can't edit it here — it comes from the script.",

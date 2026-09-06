@@ -1887,8 +1887,8 @@ function FieldRow({
   const endTxn = gesture.end
 
   /** 每种控件都套同一个壳：标签列 + 控件 + （已修改时）恢复到脚本 */
-  const wrap = (children: ReactNode) => (
-    <Row label={labelNode} labelWidth={LABEL_W}>
+  const wrap = (children: ReactNode, align: 'center' | 'start' = 'center') => (
+    <Row label={labelNode} labelWidth={LABEL_W} align={align}>
       {children}
       {overridden && (
         <Tip label={resetHint(field.prop)} side="left">
@@ -1994,6 +1994,8 @@ function FieldRow({
           anchorSupported={element.editable.some((f) => f.prop === LEGEND_ANCHOR_PROP)}
           onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
         />,
+        // 内 / 外两带有五行高，标签垂直居中会掉到控件半腰上
+        'start',
       )
     case 'legend-binding':
       // 「恢复跟随」是一次多条 override 的结构性动作，走 store 的

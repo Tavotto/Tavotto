@@ -190,7 +190,8 @@
       "topCenter": "上方居中",
       "bottomCenter": "下方居中",
       "leftCenter": "左侧中"
-    }
+    },
+    "legendOutsideBand": "图外"
   },
   "element": {
     "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
