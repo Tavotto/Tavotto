@@ -281,8 +281,18 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
+  不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
+  `activePanelId` → 图内编辑的 `elementPanelId` → 选中的面板，`uiStore.problemScope`
+  为 `null` 时有当前图就看它；抽屉标题的计数与面板同一个范围（`useProblemScope`），
+  **轨道角标仍是全文档数**（它是入口）。② 按 ruleCode 聚合，组头说标题 + 等级 +
+  受影响对象数，行里只说「谁、现在多少、要多少」；叶子行仍带
+  `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
+  `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
+  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 左侧竖条 + 「当前」，
+  底部上一项 / 下一项；那条修好消失后「下一项」指向**顶上来的那条**，不跳回开头。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
-  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 

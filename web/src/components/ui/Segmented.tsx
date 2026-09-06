@@ -13,6 +13,12 @@ export interface SegmentedItem<T extends string> {
    * 一个没有名字的 radio。缺省时退回 `tip`，两者都没有才真的无名。
    */
   ariaLabel?: string
+  /**
+   * 这一档此刻选不了（「当前图」没有正在编辑的图时）。留在原位、灰掉、
+   * 不响应点击；原因走 `title`——原生 title 在禁用按钮上也出得来，tooltip 不行。
+   */
+  disabled?: boolean
+  title?: string
 }
 
 interface SegmentedProps<T extends string> {
@@ -56,9 +62,14 @@ export function Segmented<T extends string>({
           <button
             key={item.value}
             type="button"
-            onClick={() => onChange(item.value)}
+            onClick={() => {
+              if (!item.disabled) onChange(item.value)
+            }}
             role="radio"
             aria-checked={active}
+            aria-disabled={item.disabled || undefined}
+            disabled={item.disabled}
+            title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
               'flex flex-1 items-center justify-center gap-1 whitespace-nowrap outline-none transition-colors',
@@ -69,7 +80,9 @@ export function Segmented<T extends string>({
                 ? tone === 'quiet'
                   ? 'bg-ink/[.06] font-medium text-ink'
                   : 'bg-accent-subtle font-medium text-accent'
-                : 'text-ink-3 hover:bg-ink/[.04] hover:text-ink-2',
+                : item.disabled
+                  ? 'cursor-default text-ink-faint'
+                  : 'text-ink-3 hover:bg-ink/[.04] hover:text-ink-2',
             )}
           >
             {active && item.label != null && <Check size={11} className="shrink-0" aria-hidden />}

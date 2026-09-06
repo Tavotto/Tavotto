@@ -1051,8 +1051,17 @@ export function seedBakedOverrides(panelId: string): number {
   return baked.length
 }
 
-/** 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态 */
-export function enterElementEdit(panelId: string) {
+/**
+ * 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态。
+ *
+ * `leftTab`：宽屏下左栏默认顺手切到元素树（`'elements'`）；从问题面板定位
+ * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
+ * 重新打开问题面板（审计 T09）。
+ */
+export function enterElementEdit(
+  panelId: string,
+  { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
+) {
   const seeded = seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
@@ -1068,9 +1077,11 @@ export function enterElementEdit(panelId: string) {
     })
   }
   // 三栏布局下左栏顺手切到元素树；窄断点不动（左右互斥，抢掉属性页得不偿失）
-  if (ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
+  if (leftTab === 'elements' && ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
     ui.setLeftTab('elements')
   }
+  // 焦点救援的接手者：左栏留在哪一页，就交给那一页的轨道入口
+  const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
   if (seeded) status(note('bakedSeeded', { count: seeded }))
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
   // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
@@ -1080,7 +1091,7 @@ export function enterElementEdit(panelId: string) {
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
   // 交给左轨的「图内元素」入口——它一直在，而且正是键盘用户接下来要去的地方
   // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
-  rescueFocus(() => document.querySelector<HTMLElement>('[data-rail="elements"]'))
+  rescueFocus(() => document.querySelector<HTMLElement>(`[data-rail="${rail}"]`))
 }
 
 /* ------------------------------ 论文样式应用 -------------------------------- */
