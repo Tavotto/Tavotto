@@ -190,3 +190,37 @@ describe('复制诊断', () => {
     expect(byName(st('about.exportBundle'))).toBeTruthy()
   })
 })
+
+describe('异常项给下一步（审计 T47）', () => {
+  it('项目目录不可写：说清接下来做什么，不只是把路径摆出来', async () => {
+    await mount(CHECKS)
+    const line = [...document.querySelectorAll('[data-next-step]')].map((e) => e.textContent)
+    expect(line.join('\n')).toContain(st('diagnostics.nextStep.project_writable'))
+  })
+
+  it('说不出真实动作的那几条不硬编一句（registry_conflicts 没有登记）', async () => {
+    await mount([{ id: 'registry_conflicts', ok: false, label: '注册表 stem 归属', detail: '2 个冲突' }])
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+    expect(text()).toContain('2 个冲突') // 原因照旧说
+  })
+
+  it('正常项不带下一步', async () => {
+    await mount(CHECKS.filter((c) => c.ok))
+    await act(async () => byName(st('diagnostics.okDetails'))!.click())
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+  })
+
+  it('渲染引擎那条只在恢复卡片真的在这一屏上时才指着它说', async () => {
+    // env.ok = true（默认 mount 给的就是好的）→ 卡片在「技术详情」里，首屏没有
+    await mount([{ id: 'matplotlib', ok: false, label: 'matplotlib', detail: '无法导入' }])
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+
+    // env 坏了 → 卡片常驻首屏，这时才说得出「下面那张卡片」。
+    // **在挂载之后改 store**：`mount()` 自己会把 env 摆成好的那一份
+    await act(async () => {
+      useEnvStore.setState({ env: { ...useEnvStore.getState().env!, ok: false } as never })
+    })
+    expect(document.querySelectorAll('[data-engine-env-card]').length).toBeGreaterThan(0)
+    expect(text()).toContain(st('diagnostics.nextStep.engine'))
+  })
+})

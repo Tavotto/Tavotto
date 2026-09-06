@@ -915,6 +915,12 @@
       "fetchedAt": "Data on this page was read at {{time}}",
       "healthTitle": "Health",
       "hidePreview": "Hide",
+      "nextStep": {
+        "engine": "The rendering engine will not start. The environment card below has entries for installing or switching the Python environment.",
+        "project_open": "Open a project first — the project checks have nothing to look at until then.",
+        "project_readable": "This folder cannot be read right now (it may have been moved or deleted). Reopen this project, or pick another one under All projects.",
+        "project_writable": "Writing back to original files needs this folder to be writable. Fix its permissions, then come back and choose “Fetch again”."
+      },
       "okDetails": "Check results",
       "prepareFailed": "Could not generate the diagnostic report. Please try again.",
       "preparing": "Preparing…",

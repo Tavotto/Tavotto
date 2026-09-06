@@ -908,6 +908,12 @@
       "fetchedAt": "本页数据取自 {{time}}",
       "healthTitle": "健康状态",
       "hidePreview": "收起",
+      "nextStep": {
+        "engine": "渲染引擎起不来。下面那张渲染环境卡片里有安装与更换 Python 环境的入口。",
+        "project_open": "先打开一个项目，与项目有关的那几项才有检查对象。",
+        "project_readable": "这个目录现在读不到（可能被移走或删掉了）。重新打开这个项目，或在「全部项目」里换一个。",
+        "project_writable": "「写回原始文件」需要这个目录可写。改掉它的权限之后回到这里点「重新获取」。"
+      },
       "okDetails": "各项检查结果",
       "prepareFailed": "诊断报告生成失败，请重试。",
       "preparing": "正在生成…",

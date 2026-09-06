@@ -86,6 +86,8 @@ export function DiagnosticsSettings() {
 
   const failing = (checks ?? []).filter((c) => !c.ok)
   const passing = (checks ?? []).filter((c) => c.ok)
+  /** 恢复卡片此刻在不在这一屏上——「下一步」指得着它才说得出口 */
+  const repairCard = !!env && !env.ok
 
   return (
     <div className="flex flex-col gap-4" data-diagnostics-page>
@@ -117,7 +119,7 @@ export function DiagnosticsSettings() {
             {failing.length > 0 && (
               <ul className="flex flex-col gap-1">
                 {failing.map((c) => (
-                  <CheckLine key={c.id} check={c} />
+                  <CheckLine key={c.id} check={c} repairCard={repairCard} />
                 ))}
               </ul>
             )}
@@ -125,7 +127,7 @@ export function DiagnosticsSettings() {
               <DiagnosticDisclosure title={st('diagnostics.okDetails')}>
                 <ul className="flex flex-col gap-1">
                   {passing.map((c) => (
-                    <CheckLine key={c.id} check={c} />
+                    <CheckLine key={c.id} check={c} repairCard={repairCard} />
                   ))}
                 </ul>
               </DiagnosticDisclosure>
@@ -188,11 +190,31 @@ export function DiagnosticsSettings() {
   )
 }
 
-/** 一条检查：状态点 + 名字（+ 坏了时的原因，诊断数据不翻）。 */
-function CheckLine({ check: c }: { check: Check }) {
+/** 渲染引擎那一族：它们的下一步都指向这一页上的恢复卡片。 */
+const ENGINE_CHECKS = new Set(['worker_python', 'matplotlib', 'bundled_runtime'])
+
+/**
+ * 异常项的下一步（审计 T47）。
+ *
+ * **只登记确实说得出真实动作的那几条**：说不出来就不说——编一句「请检查配置」
+ * 比不说更坏，它让人以为自己漏了什么。`registry_conflicts` 现在就没有登记，
+ * 那条的处置路径我没能在代码里确认下来。
+ *
+ * 渲染引擎那三条指向的是这一页上的恢复卡片，所以**只在卡片真的在的时候才说**
+ * ——指着一个不存在的东西，比不给下一步更糟。
+ */
+function nextStepOf(id: string, repairCardVisible: boolean): string | null {
+  if (ENGINE_CHECKS.has(id)) return repairCardVisible ? st('diagnostics.nextStep.engine') : null
+  const text = translate(`settings.diagnostics.nextStep.${id}`, { ns: 'dialogs', defaultValue: '' })
+  return text || null
+}
+
+/** 一条检查：状态点 + 名字（+ 坏了时的原因与下一步；原因是诊断数据，不翻）。 */
+function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean }) {
   useTranslation('dialogs')
+  const next = c.ok ? null : nextStepOf(c.id, repairCard)
   return (
-    <li className="flex items-start gap-1.5 text-xs">
+    <li className="flex flex-wrap items-start gap-1.5 text-xs">
       <span
         aria-hidden
         className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', c.ok ? 'bg-ink-3' : 'bg-danger')}
@@ -202,6 +224,11 @@ function CheckLine({ check: c }: { check: Check }) {
         {translate(`settings.about.check.${c.id}`, { ns: 'dialogs', defaultValue: c.label })}
       </span>
       {!c.ok && <span className="min-w-0 flex-1 break-all font-mono text-ink-3">{c.detail}</span>}
+      {next && (
+        <span data-next-step className="w-full pl-3 leading-relaxed text-ink-2">
+          {next}
+        </span>
+      )}
     </li>
   )
 }
