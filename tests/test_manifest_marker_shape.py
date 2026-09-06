@@ -416,3 +416,25 @@ def test_going_back_to_the_script_lands_on_exactly_that_shape(worker):
     assert back["value"] == "original"
     assert back["marker_current"] == promised
     assert "marker_original" not in back, "没有 override 了，这个字段该整个消失"
+
+
+def test_a_failed_override_is_not_an_override(worker):
+    """应用失败的那一条**不算 override**，不许因此冒出一格「脚本原始」。
+
+    这是「判据是 `state.applied` 还是 `state.originals`」那个分岔的可观测处：
+    `apply()` 里原样采在 setter **之前**、`applied` 记在 setter **之后**，
+    所以 setter 抛异常时 originals 留下了一条永远没人回收的记录（它没有对应
+    的 applied 条目，下一轮的清理循环遍历的是 applied）。照 originals 判的话，
+    一次失败的 override 会让这一行**从此**多出一格与当前值一模一样的「脚本
+    原始」——图上一个像素都没变，界面却说它改过。
+    """
+    gid = "axes_0.lines_1"
+    resp = worker.override(STEM, [{"gid": gid, "prop": "marker", "value": "@@"}])
+    assert any("应用失败" in w for w in resp.get("warnings", [])), (
+        f"用例前提失效：这个值居然应用成功了 {resp.get('warnings')}"
+    )
+    f = _field(resp["manifest"], gid)
+    assert f["marker_current"] == {"kind": "none"}, "图上一个像素都不该变"
+    assert "marker_original" not in f, f.get("marker_original")
+    # 后面的用例还在同一个 worker 上跑：把这条失败的 patch 撤掉
+    _manifest(worker)
