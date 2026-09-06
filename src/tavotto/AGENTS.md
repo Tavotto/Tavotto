@@ -194,6 +194,31 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     把 tight 当图幅定义是 ADR 级决定（改的是几何权威的坐标系），**没做**；
     目前由预检 `element-outside-figure` 把裁切说出来。将来无论怎么做，第一步
     都是把 kwargs 记进捕获描述符。
+- **标记形状是只读事实，不是取值（2026-09-06，UI/UX 审计 T16 补做）**：
+  marker 一族的 enum 字段（曲线 / 散点 / 茎叶 markerline / 图例示意标记）带一个
+  `marker_current`，回答「图上此刻画的是什么形状」——而 `value` 回答的是
+  「用户选中的是哪个取值」，**两件事不是一回事**：散点没被整体换过标记时
+  `value` 是 `"original"`（继承脚本），曲线的 `value` 可能是 `(5, 1, 0)` /
+  `$\alpha$` / 一个 Path 的 repr，界面上只剩一行认不出的字。它是**渲染态派生
+  数据**：不进用户文档、不是 override、不参与写回，有 override 时发的就是
+  override 之后的形状。四个消费者只有 `_marker_field()` 一处构造，加第五个
+  也走它。
+  * 认名字的判据是**顶点 + codes 逐个比对**（容差 1e-6），比的是
+    `MarkerStyle(name).get_path().transformed(get_transform())`——`Axes.scatter`
+    与 `overrides._set_scatter_marker` 造路径用的正是这一句，于是散点与曲线
+    两条路给出同一个答案。**不按 `get_marker()` 的字面量认**：散点根本没有
+    那个字面量（脚本写的 marker 在 `ax.scatter` 里当场就化成了路径）。
+  * **只有 `_MARKER_SHAPE_NAMES` 那 13 个名字会以 `named` 发出去**——前端
+    `MarkerPicker.markerShape()` 的那份 switch 逐个画得出它们。表外的
+    （`H` / `8` / `P` / `X` / 元组 / mathtext / 自定义 Path）一律发归一化几何
+    （单位框 `[-0.5, 0.5]`、y 向上、4 位小数，CLOSEPOLY 占位点不参与包围盒
+    也不发真坐标）。两侧万一漂了**只会退回代码字样**，不会画错一个形状，
+    所以这不是一条需要 golden 向量的同源对。
+  * 顶点超过 `_MARKER_PATH_MAX_VERTS`（256，实测 mathtext 标记最贵的
+    `$\int_0^\infty$` 是 132）只说 `too_complex`；一个 collection 里混着两种
+    形状说 `multiple`，不拿第一条冒充全体；**字段整个缺席 = 引擎说不出**，
+    与 `none`（这个对象没有标记）是两个不同的答案。
+  * 看护 `tests/test_manifest_marker_shape.py`。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
