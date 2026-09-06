@@ -371,10 +371,20 @@ describe('该常驻的不许折叠', () => {
     expect(bodyText()).toContain(st('about.telemetry.summary'))
   })
 
-  it('遥测默认关闭的语义没变：开关是 false', async () => {
+  /**
+   * 遥测默认关闭的语义没变。控件在审计 T49 里从二值开关换成了三档单选
+   * （`unset` / `enabled` / `disabled` 必须是三种可辨状态，细则与三档各自的
+   * 用例在 `components/SettingsTelemetry.test.tsx`），所以判据跟着换成
+   * 「哪一档被选中」——这里的夹具是 `consent: 'disabled'`。
+   */
+  it('遥测默认关闭的语义没变：选中的是「关闭」那一档', async () => {
     await open('about')
-    const toggle = byAria(st('about.telemetry.toggle'))!
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    const group = body().querySelector(
+      `[role="radiogroup"][aria-label="${st('about.telemetry.toggle')}"]`,
+    )!
+    const radios = [...group.querySelectorAll('button[role="radio"]')]
+    const checked = radios.filter((b) => b.getAttribute('aria-checked') === 'true')
+    expect(checked.map((b) => b.textContent?.trim())).toEqual([st('about.telemetry.optOut')])
   })
 })
 

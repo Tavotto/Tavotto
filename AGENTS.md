@@ -31,6 +31,7 @@
   | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
   | 上面这一对在**已装副本**里也得同步（`tavotto codex install` 换启动命令时两侧一起改） | `tests/test_codex_install_cli.py` |
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
+  | 遥测 `EVENTS` 表 ↔ `web/src/lib/telemetryDisclosure.ts` + 两份界面文案 | `tests/test_telemetry_disclosure.py`（顺序也比；界面上那份「会发送哪些数据」不许漏一条，也不许多写一条） |
   | `engine/overrides.LEGEND_ENTRY_STYLE_PROPS`+`LEGEND_BINDINGS` ↔ `web/src/lib/legendModel.ts` | `tests/test_legend_model_pairs.py`（顺序也比） |
   | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
   | `engine/originalspec.py` `DPI_SOURCES` ↔ `web/src/lib/api.ts` `dpi_source` 联合 | `test_frontend_and_backend_agree_on_the_dpi_source_set` |
