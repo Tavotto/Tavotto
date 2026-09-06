@@ -31,9 +31,11 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 元素不再出 geometry——前端对没有 geometry 的元素本来就退回 bbox，这是
 **有意的降级**，并会在 stderr 上说明是哪一个元素被降级了。
 
-散点（PathCollection）出的是**每一颗 marker 的轮廓**（`_marker_subpaths`）：
-形状只拍平一次、按尺度分档抽稀、其余各颗是一次批量仿射；标记数超过
-`SCATTER_MAX_MARKERS` 整组退回 bbox，同样在 stderr 上说明。
+散点（PathCollection，`_marker_subpaths`）与**只有 marker 没有连线的 Line2D**
+（`_line_marker_subpaths`）出的是**每一颗 marker 的轮廓**，两者共用同一段盖章
+逻辑 `_stamp_markers`：形状只拍平一次、按尺度分档抽稀、其余各颗是一次批量仿射；
+标记数超过 `MAX_MARKERS`（两种 artist 同一个数）整组退回 bbox，同样在 stderr
+上说明。既有连线又有 marker 的 Line2D 仍只描折线（理由见 `element_geometry`）。
 """
 
 from __future__ import annotations
@@ -42,7 +44,9 @@ import sys
 
 import numpy as np
 from matplotlib.collections import PathCollection, PolyCollection
-from matplotlib.lines import Line2D
+from matplotlib.colors import to_rgba
+from matplotlib.lines import Line2D, _mark_every_path
+from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
 from matplotlib.path import Path
 from matplotlib.transforms import Affine2D
@@ -58,17 +62,19 @@ _TOL_ROUNDS = 8
 _DECIMATE_ABOVE = 4 * _MAX_POINTS
 #: 一份 manifest 的总点数预算（超出的元素退回 bbox）。
 TOTAL_BUDGET = 8000
-#: 散点集合（PathCollection）出标记轮廓的**标记数上限**，超过就整组退回 bbox。
+#: 一个元素逐颗出 marker 轮廓的**标记数上限**（散点 PathCollection 与只有 marker
+#: 的 Line2D 共用这一个数——消费侧的账不分它们来自哪种 artist），超过就整组退回
+#: bbox。
 #:
 #: 上限量的是消费侧，不是生产侧——生产侧每个 marker 只是一次小矩阵乘（形状
-#: 只拍平一次，见 `_marker_subpaths`），两万颗也只要几十毫秒；贵的是下游：
+#: 只拍平一次，见 `_stamp_markers`），两万颗也只要几十毫秒；贵的是下游：
 #: 每次渲染往返都要带的 manifest JSON、前端每次指针移动沿**全部**线段算的距离、
 #: 每次选中都要重建的覆盖层 d 串，三处都随点数线性长。一颗圆 marker 抽稀后
 #: ≈ 11 点，500 颗 ≈ 5500 点、JSON +110KB，仍在 TOTAL_BUDGET 之内并给同图的
 #: 曲线留了余量；再往上就是把 issue #181 的账（4 万次 plot 挂 20 万节点）
 #: 换个形态搬回来。改这个数之前先看 `tests/test_manifest_geometry.py` 里钉它的
 #: 那两条。
-SCATTER_MAX_MARKERS = 500
+MAX_MARKERS = 500
 #: 坐标保留位数（figure 分数）。5 位 ≈ 600px 图上 0.006px，远细于抽稀容差。
 _ND = 5
 
@@ -367,7 +373,7 @@ def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
     """PathCollection（散点）每一颗 marker 的 display 空间轮廓。
 
     返回 [(点数组 (K,2)，是否闭合)]，点是 display 像素、**已经抽稀**；标记数
-    超过 `SCATTER_MAX_MARKERS` 返回 None（调用方退回 bbox）；一颗都画不出来
+    超过 `MAX_MARKERS` 返回 None（调用方退回 bbox）；一颗都画不出来
     返回 []。
 
     渲染语义跟 Agg 的 `draw_path_collection` 走：第 i 颗用 `paths[i % Np]`、
@@ -395,12 +401,78 @@ def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
         toffs = coll.get_offset_transform().transform(offs) if len(offs) else offs
     except Exception:  # noqa: BLE001 — 取不到偏移就按无偏移处理
         toffs = np.zeros((0, 2))
+    return _stamp_markers(paths, np.asarray(master.get_matrix(), dtype=float), per, toffs, budget)
+
+
+def _line_marker_subpaths(line: Line2D, budget: Budget) -> list[tuple] | None:
+    """只有 marker、没有连线的 Line2D 每一颗 marker 的 display 空间轮廓。
+
+    返回值约定与 `_marker_subpaths` 相同（None = 超过 `MAX_MARKERS`，退回 bbox）。
+
+    渲染语义跟 `Line2D.draw` 的 marker 段走：所有点**同一个** marker、同一个
+    尺寸（`markersize` pt × dpi/72，`','` 像素 marker 不缩放）、marker 自己的
+    `get_transform()`；点是 `get_xydata()`（单位换算之后、**忽略 drawstyle**
+    ——阶梯线的 marker 画在数据点上，不在阶梯拐角上，`draw` 里就是为此临时把
+    drawstyle 换回 default 再取点的），经 `get_transform()` 落到 display
+    （非仿射段照旧先作用在路径上）；`markevery` 交给 matplotlib 自己的
+    `_mark_every_path`（int / tuple / slice / 掩码 / 按轴对角线比例的 float 都是
+    它在解释，自己重写一份必然在某一档上分岔）；NaN 点画不出来，不出。
+    半填充（`fillstyle="left"` 等）的 marker 是两个半片各画一次
+    （`get_path()` + `get_alt_path()`），这里也各出一条——每颗点两条子路径，
+    与画出来的墨迹一致。
+
+    形状只有一份、尺寸只有一个，所以这是 `_stamp_markers` 最简单的一档：
+    整体矩阵是单位阵，逐点矩阵只有一个（半填充时两个），偏移就是各数据点。
+    """
+    marker = getattr(line, "_marker", None) or MarkerStyle(line.get_marker(), line.get_fillstyle())
+    if not marker or not line.get_markersize() > 0:
+        return []
+    xy = np.asarray(line.get_xydata(), dtype=float).reshape(-1, 2)
+    if len(xy) == 0:
+        return []
+    trans = line.get_transform()
+    tpath = Path(xy)
+    if not trans.is_affine:
+        tpath = trans.transform_path_non_affine(tpath)
+        trans = trans.get_affine()
+    markevery = line.get_markevery()
+    if markevery is not None:
+        tpath = _mark_every_path(markevery, tpath, trans, line.axes)
+    pts = trans.transform(np.asarray(tpath.vertices, dtype=float).reshape(-1, 2))
+    pts = pts[np.all(np.isfinite(pts), axis=1)]
+    if len(pts) == 0:
+        return []
+
+    fig = line.get_figure()
+    w = float(line.get_markersize()) * (float(fig.dpi) if fig is not None else 72.0) / 72.0
+    scale = 1.0 if str(marker.get_marker()) == "," else w
+    paths = [marker.get_path()]
+    per = [marker.get_transform().scale(scale).get_matrix()]
+    alt = marker.get_alt_path()
+    if alt is not None:
+        paths.append(alt)
+        per.append(marker.get_alt_transform().scale(scale).get_matrix())
+        # 两个半片轮流用：第 i 个戳记取 paths[i % 2]、per[i % 2]、点 pts[i]，
+        # 所以每个点重复一次，让两个半片挨着落在同一个点上
+        pts = np.repeat(pts, 2, axis=0)
+    return _stamp_markers(paths, np.eye(3), np.asarray(per, dtype=float), pts, budget)
+
+
+def _stamp_markers(
+    paths: list, mm: np.ndarray, per: np.ndarray, toffs: np.ndarray, budget: Budget
+) -> list[tuple] | None:
+    """把 `paths` 按「第 i 个戳记 = M · per[i % Nt] 作用在 paths[i % Np] 上，再平移
+    toffs[i % No]」的语义盖成 `max(Np, No)` 个 marker 轮廓（散点与只有 marker 的
+    Line2D 共用这一段；语义与 Agg `draw_path_collection` 同源）。
+
+    `mm` 是整体仿射矩阵（display 空间），`per` 是 (Nt,3,3) 的逐戳记矩阵，`toffs`
+    是 (No,2) 的 display 偏移。返回值约定见 `_marker_subpaths`。
+    """
     n_paths, n_tr, n_off = len(paths), len(per), len(toffs)
     count = max(n_paths, n_off)
-    if count > SCATTER_MAX_MARKERS:
+    if count > MAX_MARKERS:
         return None
 
-    mm = np.asarray(master.get_matrix(), dtype=float)
     if n_tr:
         # 每颗的线性尺度 = √|det|；全零（s=0）的一颗什么都画不出来，直接不出
         dets = np.abs(per[:, 0, 0] * per[:, 1, 1] - per[:, 0, 1] * per[:, 1, 0])
@@ -488,9 +560,9 @@ def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
 def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
     """一个 artist 的路径几何；不支持的类型返回 None（前端退回 bbox）。
 
-    **散点（PathCollection）给的是每一颗 marker 的轮廓**（2026-09-06，用户
-    反馈：选中散点时罩一个大矩形、而不是像曲线那样描出各个点）。标记数超过
-    `SCATTER_MAX_MARKERS` 整组退回 bbox，是**有意的降级**，stderr 上说明。
+    **散点（PathCollection）与只有 marker 的 Line2D 给的是每一颗 marker 的轮廓**
+    （2026-09-06，用户反馈：选中散点时罩一个大矩形、而不是像曲线那样描出各个
+    点）。标记数超过 `MAX_MARKERS` 整组退回 bbox，是**有意的降级**，stderr 上说明。
     **箭头（FancyArrowPatch）不给**：它有自己的 `arrow_endpoints` 契约
     （端点手柄、沿线命中、shift 锁角），通用 geometry 插进来只会两套并存。
     """
@@ -502,8 +574,7 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
             if subs is None:
                 n = max(len(artist.get_paths()), len(np.atleast_2d(artist.get_offsets())))
                 print(
-                    f"[geometry] 散点 {n} 个标记超过 SCATTER_MAX_MARKERS="
-                    f"{SCATTER_MAX_MARKERS}，退回 bbox",
+                    f"[geometry] 散点 {n} 个标记超过 MAX_MARKERS={MAX_MARKERS}，退回 bbox",
                     file=sys.stderr,
                 )
                 return None
@@ -524,11 +595,44 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 thinned=True,
             )
         if isinstance(artist, Line2D):
-            # 只有 marker、没有连线的 Line2D（`plot(..., ls="None", marker="o")`）
-            # 画出来的墨迹是一颗颗点，那条穿过它们的折线图上根本不存在——
-            # 描它等于画一条假线。这一档**有意**退回 bbox（与散点同一取舍）。
             if str(artist.get_linestyle()).lower() in ("none", "", " "):
-                return None
+                # 只有 marker、没有连线的 Line2D（`plot(..., ls="None", marker="o")`）
+                # 画出来的墨迹是一颗颗点，那条穿过它们的折线图上根本不存在——
+                # 描它等于画一条假线。所以出的是**每一颗 marker 的轮廓**（2026-09-06，
+                # 用户反馈：这样画的「散点图」选中时也该逐颗描，不是一个大矩形），
+                # 与散点同一取舍、同一上限。既没线也没 marker 的什么都没画，退回 bbox。
+                subs = _line_marker_subpaths(artist, budget)
+                if subs is None:
+                    print(
+                        f"[geometry] 曲线 {len(artist.get_xydata())} 个标记超过 MAX_MARKERS="
+                        f"{MAX_MARKERS}，退回 bbox",
+                        file=sys.stderr,
+                    )
+                    return None
+                if not subs:
+                    return None
+                alpha = artist.get_alpha()
+                mew = float(artist.get_markeredgewidth() or 0.0)
+                return _pack(
+                    subs,
+                    W,
+                    H,
+                    # `get_markerfacecolor()` 已把 fillstyle="none" 解释成 'none'、
+                    # 'auto' 解释成线色；'x' / '+' 这类不闭合的 marker 没有内部可填
+                    fill=_has_paint(to_rgba(artist.get_markerfacecolor(), alpha))
+                    and any(c for _, c in subs),
+                    stroke=_has_paint(to_rgba(artist.get_markeredgecolor(), alpha)) and mew > 0,
+                    stroke_pt=mew,
+                    clip=_clip_rect(artist, W, H),
+                    budget=budget,
+                    thinned=True,
+                )
+            # 既有连线又有 marker（`plot(..., "-o")`）：**只描折线**，与从前一致。
+            # 折线本来就穿过每颗 marker 的中心，命中容差之内每颗都点得中；再叠一层
+            # marker 轮廓只是多几十条闭合子路径，而 geometry 的 `fill` 是整份一个
+            # 标志、前端把「闭合或 fill」的子路径都按面积算——实心 marker 的 fill
+            # 会把那条折线一起变成多边形。两种语义要并存得先给 geometry 分层，
+            # 不值得为这一档开先例。
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
             return _pack(
                 subs,
