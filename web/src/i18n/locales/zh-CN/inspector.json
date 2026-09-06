@@ -58,7 +58,6 @@
     "spacing": "间距",
     "spacingHTitle": "水平间距：按 X 排序后依次贴齐，第一个对象不动",
     "spacingVTitle": "垂直间距：按 Y 排序后依次贴齐，第一个对象不动",
-    "title": "排列",
     "titleMulti_other": "排列 · 已选 {{count}} 个",
     "ungroup": "取消成组",
     "ungroupTip": "解散选区里的组",
@@ -807,8 +806,7 @@
   "show": "显示",
   "stroke": {
     "addFill": "添加填充",
-    "arrowTitle": "箭头",
-    "clearFill": "清除填充",
+    "appearance": "外观",
     "color": "颜色",
     "cornerRadius": "圆角",
     "dash": "线型",
@@ -827,9 +825,7 @@
       "triangle": "三角"
     },
     "lineWidth": "线宽",
-    "none": "无",
     "reverse": "反转方向",
-    "shapeTitle": "形状",
     "sides": "边数",
     "start": "起点",
     "strokeColor": "描边"

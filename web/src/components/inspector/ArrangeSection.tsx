@@ -88,9 +88,14 @@ export function AlignToCanvasRow() {
 }
 
 /**
- * 排列：紧凑无外框工具带。单选面板只补层级（对齐已在位置组里），
- * 其他单选给「对齐到画布 + 层级」，多选给对齐 / 分布 / 层级；
- * 参照、间距、成组与样式搬运等次级项收进「更多排列」。
+ * 排列：紧凑无外框工具带。
+ *
+ * **单选只常驻层级**，六向「对齐到画布」收进「更多排列」——一个箭头、一段
+ * 文字最常做的是调外观，整套排列摆在那里只是让面板更长（审计 T28：层级压成
+ * 一组，完整排列仅在相关任务出现）。**能力一条不减**，展开就是同一批按钮。
+ * 单选面板连层级都只给层级：对齐已经在它自己的位置组里。
+ * 多选是「相关任务」：对齐 / 分布 / 尺寸常驻，参照、间距、成组与样式搬运
+ * 收进「更多排列」。
  */
 export function ArrangeSection({
   count,
@@ -127,24 +132,37 @@ export function ArrangeSection({
     return <Section title={ar('zorderLabel')}>{zRow}</Section>
   }
 
+  if (!multi) {
+    return (
+      <>
+        {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
+        <Section title={ar('zorderLabel')} className="scroll-mt-2" data-arrange-section="">
+          {zRow}
+        </Section>
+        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
+          <div data-single-align>
+            <AlignToCanvasRow />
+          </div>
+        </Disclosure>
+      </>
+    )
+  }
+
   return (
     <>
-      {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
       <Section
-        title={multi ? ar('titleMulti', { count }) : ar('title')}
+        title={ar('titleMulti', { count })}
         className="scroll-mt-2"
         data-arrange-section=""
       >
         <div className="flex flex-col gap-1.5">
-          {multi ? <MultiAlignRows count={count} /> : <AlignToCanvasRow />}
+          <MultiAlignRows count={count} />
           {zRow}
         </div>
       </Section>
-      {multi && (
-        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
-          <MultiArrangeExtras />
-        </Disclosure>
-      )}
+      <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
+        <MultiArrangeExtras />
+      </Disclosure>
     </>
   )
 }

@@ -58,7 +58,6 @@
     "spacing": "Spacing",
     "spacingHTitle": "Horizontal spacing: sorted by X and packed in order; the first object stays put",
     "spacingVTitle": "Vertical spacing: sorted by Y and packed in order; the first object stays put",
-    "title": "Arrange",
     "titleMulti_one": "Arrange · {{count}} selected",
     "titleMulti_other": "Arrange · {{count}} selected",
     "ungroup": "Ungroup",
@@ -825,8 +824,7 @@
   "show": "Show",
   "stroke": {
     "addFill": "Add fill",
-    "arrowTitle": "Arrow",
-    "clearFill": "Clear fill",
+    "appearance": "Appearance",
     "color": "Colour",
     "cornerRadius": "Corner radius",
     "dash": "Dash",
@@ -845,9 +843,7 @@
       "triangle": "Triangle"
     },
     "lineWidth": "Width",
-    "none": "None",
     "reverse": "Reverse direction",
-    "shapeTitle": "Shape",
     "sides": "Sides",
     "start": "Start",
     "strokeColor": "Stroke"

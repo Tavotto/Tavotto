@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
@@ -7,6 +8,7 @@ import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { ArrowHeadPicker } from './controls/ArrowPickers'
+import { EffectToggle } from './controls/EffectToggle'
 import { LineStylePicker } from './controls/LineStylePicker'
 import { shared } from './common'
 
@@ -15,6 +17,21 @@ const sk = (key: string) => translate(`stroke.${key}`, { ns: 'inspector' })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
 const DASH_VALUES: DashStyle[] = ['solid', 'dashed', 'dotted']
+
+/**
+ * 标注（箭头 / 形状）的外观分组。
+ *
+ * **标题不再重复对象类型**：右栏头部已经写着「箭头」/「矩形」，分组再写一遍
+ * 是同一句话的第二份（审计 T28）。这里叫「外观」——它说的是这一组管什么，
+ * 不是这是个什么对象。
+ */
+function AppearanceSection({ children }: { children: ReactNode }) {
+  return (
+    <Section title={sk('appearance')}>
+      <div className="flex flex-col gap-1.5">{children}</div>
+    </Section>
+  )
+}
 
 /** 与图内元素同一个线型选择器：真实线段预览 + 画布自己的显示名（§16） */
 function DashRow({
@@ -52,26 +69,8 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
     })
 
   return (
-    <Section title={sk('arrowTitle')}>
-      <div className="flex flex-col gap-1.5">
-        <Row label={sk('lineWidth')}>
-          <NumberField
-            value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
-            mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
-            step={0.25}
-            min={0.1}
-            max={20}
-            precision={2}
-            suffix="pt"
-            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-          />
-        </Row>
-        <Row label={sk('color')}>
-          <ColorField
-            value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
-            onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
-          />
-        </Row>
+    <AppearanceSection>
+        {/* 一条箭头最先要定的是它指向谁：端型排在线宽 / 颜色之前（审计 T28） */}
         <Row label={sk('end')}>
           <ArrowHeadPicker
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
@@ -102,28 +101,44 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             ariaLabel={sk('start')}
           />
         </Row>
+        <Row label={sk('color')}>
+          <ColorField
+            value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
+            onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
+          />
+        </Row>
+        <Row label={sk('lineWidth')}>
+          <NumberField
+            value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
+            mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
+            step={0.25}
+            min={0.1}
+            max={20}
+            precision={2}
+            suffix="pt"
+            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
+          />
+        </Row>
         <DashRow
           value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
         />
-        <Row label="">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() =>
-              patch(hist('reverseArrow'), (o) => {
-                const s = o.start
-                o.start = o.end
-                o.end = s
-              })
-            }
-          >
-            {sk('reverse')}
-          </Button>
-        </Row>
-      </div>
-    </Section>
+        {/* 整行按钮不走标签列：空标签会在左边留一块 44px 的白 */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() =>
+            patch(hist('reverseArrow'), (o) => {
+              const s = o.start
+              o.start = o.end
+              o.end = s
+            })
+          }
+        >
+          {sk('reverse')}
+        </Button>
+    </AppearanceSection>
   )
 }
 
@@ -141,8 +156,53 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
     })
 
   return (
-    <Section title={sk('shapeTitle')}>
-      <div className="flex flex-col gap-1.5">
+    <AppearanceSection>
+        {/*
+          填充 → 描边 → 形状本身的参数（审计 T28：矩形突出填充 / 描边 / 圆角）。
+          填充与画布文字的背景同一种模式：关着是「＋添加填充」，开了是真开关，
+          不透明度跟在它下面——三处「添加式扩展」在产品里是同一个控件。
+        */}
+        {hasFillable && (
+          <Row label={sk('fill')}>
+            <EffectToggle
+              on={!!fill}
+              label={sk('fill')}
+              addLabel={sk('addFill')}
+              onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
+              onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
+            />
+            {fill && (
+              <ColorField
+                value={fill}
+                onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
+              />
+            )}
+          </Row>
+        )}
+        {hasFillable && fill && (
+          <Row label={sk('fillOpacity')}>
+            <NumberField
+              value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
+              step={5}
+              min={0}
+              max={100}
+              suffix="%"
+              onChange={(v) =>
+                patch(hist('setFillOpacity'), (o) => {
+                  const f = Math.max(0, Math.min(1, v / 100))
+                  if (f < 1) o.fillOpacity = f
+                  else delete o.fillOpacity
+                })
+              }
+            />
+          </Row>
+        )}
+        <Row label={sk('strokeColor')}>
+          <ColorField
+            value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
+            onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
+          />
+        </Row>
         <Row label={sk('lineWidth')}>
           <NumberField
             value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
@@ -153,12 +213,6 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             precision={2}
             suffix="pt"
             onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-          />
-        </Row>
-        <Row label={sk('strokeColor')}>
-          <ColorField
-            value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
-            onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
         <DashRow
@@ -194,53 +248,6 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             />
           </Row>
         )}
-        {hasFillable && (
-          <Row label={sk('fill')}>
-            {fill ? (
-              <>
-                <ColorField
-                  value={fill}
-                  onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
-                />
-                <Button
-                  size="icon"
-                  onClick={() => patch(hist('clearFill'), (o) => (o.fill = null))}
-                  aria-label={sk('clearFill')}
-                >
-                  <span className="text-xs text-ink-3">{sk('none')}</span>
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
-              >
-                {sk('addFill')}
-              </Button>
-            )}
-          </Row>
-        )}
-        {hasFillable && fill && (
-          <Row label={sk('fillOpacity')}>
-            <NumberField
-              value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
-              step={5}
-              min={0}
-              max={100}
-              suffix="%"
-              onChange={(v) =>
-                patch(hist('setFillOpacity'), (o) => {
-                  const f = Math.max(0, Math.min(1, v / 100))
-                  if (f < 1) o.fillOpacity = f
-                  else delete o.fillOpacity
-                })
-              }
-            />
-          </Row>
-        )}
-      </div>
-    </Section>
+    </AppearanceSection>
   )
 }
