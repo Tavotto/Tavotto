@@ -21,8 +21,10 @@ import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } f
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
 import {
+  beginCrop,
   enterElementEdit,
   fillPanels,
+  finishCrop,
   fitPanels,
   replacePanelAsset,
   resetPanelCrop,
@@ -245,6 +247,36 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         </Tip>
       </Row>
 
+      {/*
+        「原始比例 / 原始尺寸」改的就是上面那两个数，所以它们跟着 W/H 与缩放走
+        （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。它们以前和裁剪、
+        适配挤在「图片」一组里，于是「原始尺寸」看着像是在说裁剪前的画面。
+      */}
+      <div className="mt-1.5 flex gap-1.5">
+        <Tip label={pn('aspectTip')}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => restorePanelAspect(ids)}
+          >
+            <Ratio size={13} />
+            {pn('aspect')}
+          </Button>
+        </Tip>
+        <Tip label={pn('nativeSizeTip')}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => restorePanelNativeSize(ids)}
+          >
+            <Scaling size={13} />
+            {pn('nativeSize')}
+          </Button>
+        </Tip>
+      </div>
+
       {objs.length === 1 && (
         <div className="mt-2">
           <AlignToCanvasRow />
@@ -404,6 +436,11 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
   const cropping = !!one && cropTargetId === one.id
 
   return (
+    /*
+      「图片适配」只管一件事：这张图怎么摆进它的框里——取景（裁剪）、整图放进去
+      （完整放入）、把框填满（填满框）。改框本身大小的两颗（原始比例 / 原始尺寸）
+      已经跟着 W/H 搬到位置与尺寸那一组（审计 T26）。
+    */
     <Section title={pn('image')}>
       <div className="flex gap-1.5">
         <Tip label={pn('cropTip')}>
@@ -413,8 +450,11 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
             className="flex-1"
             disabled={!one}
             active={cropping}
+            data-crop-toggle
             onClick={() => {
-              if (one) useUiStore.getState().setCropTarget(cropping ? null : one.id)
+              if (!one) return
+              if (cropping) finishCrop()
+              else beginCrop(one.id)
             }}
           >
             <Crop size={13} />
@@ -446,28 +486,6 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
           <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
             <Maximize2 size={13} />
             {pn('fill')}
-          </Button>
-        </Tip>
-        <Tip label={pn('aspectTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => restorePanelAspect(ids)}
-          >
-            <Ratio size={13} />
-            {pn('aspect')}
-          </Button>
-        </Tip>
-        <Tip label={pn('nativeSizeTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => restorePanelNativeSize(ids)}
-          >
-            <Scaling size={13} />
-            {pn('nativeSize')}
           </Button>
         </Tip>
       </Grid2>

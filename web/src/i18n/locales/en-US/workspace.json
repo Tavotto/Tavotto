@@ -119,6 +119,8 @@
   "contextBar": {
     "alignMenu": "Align",
     "aria": "Quick edit",
+    "countTitle": "{{hint}} · Align to: {{ref}}",
+    "cropAria": "Crop",
     "distributeMenu": "Distribute",
     "groupMenu": "Group",
     "moreArrange": "More arrange options",
@@ -231,6 +233,7 @@
     "applyStyle": "Apply style \"{{name}}\"",
     "arrowEndpoint": "Adjust arrow endpoint",
     "autoReflow": "Auto re-flow layout group",
+    "cancelCrop": "Cancel crop",
     "clearGuides": "Clear guides",
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
