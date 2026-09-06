@@ -203,8 +203,10 @@ export function CanvasStage() {
           addPanel(info, p.x, p.y)
         }}
       >
-        {/* 唯一的世界变换 */}
+        {/* 唯一的世界变换。`data-world-transform` 是稳定选择器：e2e 靠它量
+            「切模式时画布有没有意外移动」（审计 T01），别改名 */}
         <div
+          data-world-transform
           className="absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
