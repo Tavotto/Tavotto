@@ -139,8 +139,25 @@
   "control": {
     "customColormap": "自定义色图（{{value}}）",
     "customLineStyle": "自定义线型（{{value}}）",
-    "hatchNone": "无花纹",
-    "hatchPattern": "花纹 {{value}}",
+    "hatch": {
+      "back": "反斜线",
+      "backDense": "密反斜线",
+      "circles": "圆圈",
+      "cross": "十字",
+      "crossDense": "密十字",
+      "diagonal": "交叉",
+      "diagonalDense": "密交叉",
+      "dots": "点",
+      "dotsDense": "密点",
+      "forward": "斜线",
+      "forwardDense": "密斜线",
+      "horizontal": "横线",
+      "largeCircles": "大圆圈",
+      "none": "无",
+      "stars": "星形",
+      "vertical": "竖线"
+    },
+    "hatchPattern": "纹理 {{value}}",
     "legendCustomHint": "图例被拖到过自定义位置；点任一预设（含「最佳位置」）即可回到预设定位。",
     "switchOff": "{{label}}：关（点击开启）",
     "switchOn": "{{label}}：开（点击关闭）",
@@ -157,6 +174,7 @@
     "spineSidesDiffer": "各边不同"
   },
   "element": {
+    "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
     "advanced": "高级",
     "alignBaseline": "基准",
     "alignBaselineSize": "等宽/等高基准",
@@ -209,6 +227,9 @@
     "groupTicksGrid": "刻度与网格",
     "groupTransform": "坐标变换",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
+    "hint": {
+      "scatterSize": "pt² 是面积，不是直径：数值翻一倍，点看上去约宽 1.4 倍。"
+    },
     "howAiBody": "直接改写 .py 脚本文件。每次运行前自动留一份快照，任务历史里可以「回滚此次修改」。",
     "howAiTitle": "改图助手的修改",
     "howBothBody": "脚本改动之后，指向已不存在元素的图内修改会被忽略，并在问题面板里提示；其余照常生效。",
@@ -236,6 +257,7 @@
       "empty": "这条轴当前没有刻度",
       "placeholder": "例：0, 0.5, 1"
     },
+    "openSourceAdvanced": "到源文件里改",
     "orderEntry": "条目 {{index}}",
     "originalFileGroup": "原始文件",
     "orphanCount": "{{overrides}} 条 · {{elements}} 个元素",
@@ -491,7 +513,9 @@
     "gridFramePerSide": "边框（逐条）",
     "layout": "布局",
     "legend": "图例",
+    "lineFill": "线条与填充",
     "lineMarker": "线条与标记",
+    "marker": "标记",
     "stroke": "描边",
     "style": "样式",
     "text": "文字",
@@ -652,7 +676,7 @@
     "bbox_visible": "背景",
     "binding": "与图中对象",
     "borderpad": "内边距",
-    "cap_thickness": "端帽粗细",
+    "cap_thickness": "端帽线宽",
     "capsize": "端帽长度",
     "cmap": "色图",
     "color": "颜色",
@@ -688,6 +712,7 @@
     "handle_markersize": "标记大小",
     "handlelength": "示意线长度",
     "handletextpad": "线与文字间距",
+    "hatch": "纹理",
     "interpolation": "插值",
     "invert_x": "反转 X 轴",
     "invert_y": "反转 Y 轴",
@@ -769,19 +794,24 @@
   },
   "propByRole": {
     "bar": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "bar_series": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "fill": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "patch": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     },
     "scatter": {
-      "facecolor": "填充色"
+      "facecolor": "填充色",
+      "linewidth": "描边线宽"
     }
   },
   "resize": "调整属性栏宽度（{{min}}–{{max}}px）",

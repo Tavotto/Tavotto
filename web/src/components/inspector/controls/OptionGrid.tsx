@@ -9,9 +9,17 @@ export interface GridOption<T extends string = string> {
   label: string
   /** 视觉预览；缺省时显示 label 文字 */
   preview?: ReactNode
-  /** tooltip 里补充的原始代码（如 marker 的 "D"、hatch 的 "//"） */
+  /**
+   * 原始代码（marker 的 "D"、hatch 的 "//"）。**只落成 `data-code`，不进
+   * 可见文案**：格子的名字是中文（或当前语言）的图形名，tooltip 也只说名字
+   * ——「无 · None」「点线 · :」这种把实现值贴在名字后面的写法是审计
+   * T15 / T21 点名的噪音。要看代码的人在源文件与高级里看。
+   */
   code?: string
 }
+
+/** 格子的 tooltip / 可达名：只有名字，没有代码 */
+export const tipLabelOf = (opt: { label: string; code?: string }): string => opt.label
 
 /**
  * 视觉选择器共用的网格：radiogroup 语义 + 方向键漫游 + 选中态角标。
@@ -72,13 +80,14 @@ export function OptionGrid<T extends string>({
       {options.map((opt) => {
         const active = opt.value === value
         return (
-          <Tip key={opt.value} label={opt.code ? `${opt.label} · ${opt.code}` : opt.label}>
+          <Tip key={opt.value} label={tipLabelOf(opt)}>
             <button
               type="button"
               role="radio"
               aria-checked={active}
               aria-label={opt.label}
               data-value={opt.value}
+              data-code={opt.code}
               // radiogroup 的漫游焦点：选中项可 Tab 进入，其余用方向键到达
               tabIndex={active || (value == null && opt === options[0]) ? 0 : -1}
               onClick={() => onChange(opt.value)}

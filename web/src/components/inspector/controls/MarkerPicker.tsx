@@ -64,11 +64,29 @@ function MarkerPreview({ code }: { code: string }) {
       </svg>
     )
   }
-  // 无 / 脚本原始 / 未识别：文字表达（tooltip 里有完整说明）
+  /**
+   * `original`（散点没被整体换过标记）是**继承**，不是一个形状。
+   *
+   * 这里画一个小空心状态点（审计 T16「以小状态点表示继承」）。以前画的是
+   * `↺`，一个看起来像「点了会还原」的按钮字形，而它其实什么都不是。
+   *
+   * **图上真正那个形状我们不知道**：manifest 只发 `"original"` 这个字，
+   * 脚本用的 marker 路径没有出口。要显示真形状得给引擎加字段，那是另一件
+   * 事（1.0 收敛纪律：不在文案修复里扩能力）。所以这里画的是「继承」，
+   * 不是假装知道形状。
+   */
+  if (code === 'original') {
+    return (
+      <span aria-hidden data-marker-inherited className="grid h-3 w-3 shrink-0 place-items-center">
+        <span className="h-[7px] w-[7px] rounded-full border border-current opacity-60" />
+      </span>
+    )
+  }
+  // 无 / 未识别：文字表达（名字在旁边，气泡里也是名字）
   const text = code === 'None' || code === 'none' || code === '' ? '—' : code
   return (
     <span aria-hidden className="max-w-10 truncate font-mono text-xs">
-      {code === 'original' ? '↺' : text}
+      {text}
     </span>
   )
 }

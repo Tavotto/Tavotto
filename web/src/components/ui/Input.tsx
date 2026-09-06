@@ -224,7 +224,12 @@ export function NumberField({
         )}
       />
       {suffix != null && (
-        <span className="pr-1.5 text-xs text-ink-3 select-none">{suffix}</span>
+        // `shrink-0 whitespace-nowrap`：单位不是可以折行的正文。窄侧栏里
+        // 「数据单位」被挤成「数据单」+「位」两行，把整行撑破（审计 T19，
+        // 走查截图 95 拍到）。让位的应该是输入框（它 min-w-0），不是单位。
+        <span className="shrink-0 whitespace-nowrap pr-1.5 text-xs text-ink-3 select-none">
+          {suffix}
+        </span>
       )}
     </div>
   )
