@@ -15,7 +15,7 @@
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 已完成 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
 | 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 已修复 |
-| 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 待处理 |
+| 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 已完成，三组图标待拍板 |
 | 8 | （原话为空，用户没有写完） | — | 待用户补充 |
 
 说明：第 4、6、7 条属于 1.0 收敛纪律里的「扩大产品能力」，由产品所有者明确
@@ -175,3 +175,32 @@
   合入集成分支时与第 6 条在 `ExportDialog.test.tsx` 末尾各追加了一段 describe，
   手工保留两段；合并态下三份导出用例 67 条全过。
   集成时把 ADR 编号从 0044 改为 0046。
+
+### 7. 图标不统一——同一套 lucide 被用成 10 种尺寸
+
+- **盘点**（改造前）：lucide-react 直接渲染 323 处 / 101 个图标 / 82 个文件，
+  size 用了 10 种数值（9–18），描边全是默认 2 外加一处手写 3；别名引入 11 个名字
+  32 处；手绘内联 svg 当图标 1 处；浏览器自带 `<details>` 折叠三角 16 处；字符
+  当图标 1 处；emoji / CSS 背景图 / 图标字体 0。src-tauri 壳内无图标。
+  完整表在 `docs/ux/ICONOGRAPHY.md`。
+- **判断**：不换库。morphicons 是 MIT 的变形动画库，底层就是 lucide 这类
+  24×24 描边图标；丑的根源是尺寸与语义散掉了，不是图标库。
+- **纪律**（唯一出处 `web/src/components/ui/Icon.tsx`）：尺寸四档
+  `ICON_SIZE` xs 12 / sm 14（默认）/ md 16 / lg 20；描边 1.75 按比例缩放
+  （在 morphicons 的 1.5–2.5 区间内），加粗 2.5 只给填色方块里的对勾；
+  `IconProvider` 套在三个 React 根上；`ui/Details.tsx` 统一折叠箭头；
+  `ui/iconography.test.tsx` 用 TypeScript AST 守五条规则（内联 svg 按文件按
+  个数豁免、size 只能 `ICON_SIZE.*`、strokeWidth 只能 `ICON_STROKE.*`、规范名
+  引入、无字符 / emoji 图标、无裸 `<summary>`）。对真源码跑过报出 342 处；
+  合入集成分支后它当场抓到第 6 条新加的 `<Check size={10} strokeWidth={3}>`，
+  已改成常量——门禁是活的。
+- **语义统一**：撤销/重做、刷新、复制、外链、编辑、设置、警告各只用一个图标。
+- **morphicons 评估：不接入**。13.3 KB gzip；要另装 vanilla `lucide` 并与
+  lucide-react 对齐版本（多一对同源对）；单 `<path>` 渲染让现有 DOM 用例失效；
+  默认无视 reduced-motion；仓库里可变形的图标对只有四组，且都在密集列表行里。
+- **需用户拍板的三组**：① Sparkles 一图两义（右栏「改图助手」与 Claude 编码
+  Agent 头像框），建议头像换 Bot 或 MessageSquareText；② ShieldAlert 是否保留为
+  「完整性 / 来源变了」专用警告（三处）；③ AI 面板「作用范围·Agent」按钮现为
+  SlidersHorizontal，也可改回 Settings。
+- **验证**：`pnpm test` 2601 全过；`pnpm build`、oxlint 过；真浏览器前后各 7 张
+  截图在 scratchpad/uf-07/shots/{before,after}/（未入库）。
