@@ -899,7 +899,7 @@ function FigurePicker({
                 aria-hidden
                 className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-accent text-white"
               >
-                <Check size={10} strokeWidth={3} />
+                <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />
               </span>
             )}
           </button>
