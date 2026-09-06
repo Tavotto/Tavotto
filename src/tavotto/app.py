@@ -752,6 +752,23 @@ def _worker_error_payload(exc) -> dict:
             "venv": _project_relative(detail.get("venv", "")),
             "candidates": [_project_relative(c) for c in (detail.get("candidates") or [])],
             "python_version": (detail.get("health") or {}).get("python_version", ""),
+            # 第二层的体检表（ADR 0044）：这台机器上已有的解释器各是什么结论。
+            # 路径是项目外的绝对路径——它们本来就不在项目里，而且用户要在
+            # 界面上认出「那是我的 /usr/bin/python3」。只带结论字段，不带
+            # 体检脚本的原始输出。
+            "system": [
+                {
+                    "python": e.get("python", ""),
+                    "source": e.get("source", ""),
+                    "ok": bool(e.get("ok")),
+                    "code": e.get("code", ""),
+                    "support": e.get("support", ""),
+                    "python_version": e.get("python_version", ""),
+                    "matplotlib_version": e.get("matplotlib_version", ""),
+                    "requested_module_ok": e.get("requested_module_ok"),
+                }
+                for e in (detail.get("system") or [])
+            ],
         }
     if exc.code == "missing_dependency" and getattr(exc, "module", ""):
         repair = _dependency_repair_offer(exc, detail)
@@ -4640,7 +4657,7 @@ def api_engine_environment_set():
     body = request.get_json(force=True)
     raw = str(body.get("python") or "").strip()
     if str(body.get("scope") or "global") == "project":
-        return _set_project_environment(raw)
+        return _set_project_environment(raw, module=str(body.get("module") or "").strip())
     if raw:
         p = Path(raw).expanduser()
         if not p.is_file():
@@ -4667,14 +4684,22 @@ def api_engine_environment_set():
     return jsonify(engine_bootstrap.status())
 
 
-def _set_project_environment(raw: str):
+def _set_project_environment(raw: str, *, module: str = ""):
     """设定/清除**当前项目**的渲染解释器。
 
     路径为空 = 回到默认链条（内置 runtime 优先）。给了路径就先真体检一遍：
     「选了但用不了」比「没选」更难查——用户以为设好了，实际每次打开都在报
     另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
+
+    `module` 是用户从依赖修复面板采用系统解释器时带过来的「缺的那个包」
+    （ADR 0044）：体检连它一起验——面板列出候选与用户点下去之间那个环境可能
+    已经变了，那时要报 `project_env_module_missing` 而不是先记下来再让下一次
+    渲染去撞；记录也带上它，诊断包才答得出「为什么这个项目用了系统 Python」。
+    名字不合形状的一律当没给（`valid_module_name` 是唯一判据）。
     """
     root = str(require_project())
+    if module and not engine_projectenv.valid_module_name(module):
+        module = ""
     if not raw:
         engine_projectenv.forget(root)
         engine_pool.reset_worker_python()
@@ -4703,7 +4728,7 @@ def _set_project_environment(raw: str):
                 "params": {"path": str(candidate)},
             }
         ), 400
-    health = engine_projectenv.probe_environment(str(candidate))
+    health = engine_projectenv.probe_environment(str(candidate), module or None)
     if not health.get("ok"):
         return jsonify(
             {
@@ -4716,7 +4741,12 @@ def _set_project_environment(raw: str):
             }
         ), 400
     engine_projectenv.remember(
-        root, str(candidate), automatic=False, trigger="user_selected", health=health
+        root,
+        str(candidate),
+        automatic=False,
+        trigger="missing_dependency" if module else "user_selected",
+        module=module,
+        health=health,
     )
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)

@@ -657,6 +657,22 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **内置 runtime 永远不是安装目标**。它是「重装就能修」这条退路的前提。
   缺包时它只是触发器。安装目标只有两种：用户的项目 `.venv`（要明确确认）
   与 Tavotto 受管环境（我们自己的，可删可重建）。
+- **第三种目标不是安装目标（ADR 0044）**：项目里没有 venv 时，接手那一步
+  （`pool.try_project_env`）会把 `pool.system_python_candidates()`——老链条第四、
+  五级本来就枚举的系统解释器——逐个 `probe_environment(python, module)`，结果挂在
+  失败结构的 `system` 键上；`deprepair.offer()` 把健康的列成 `system_interpreter`
+  目标排在最前，**采用一个字节都不装**，走项目环境 PATCH（`scope=project` +
+  `module`，采用时连缺的那个包再验一次）。它刻意不进 `TARGETS`，`create_plan`
+  对它一律拒绝。**不无感切换**：系统环境在用户交给我们的边界之外。探到了但
+  不合格的（包有、Python 版本不支持 / 没 matplotlib / 起不来）单列
+  `system_rejected`，界面要说出原因。offer 在渲染失败的响应路径上**不起任何
+  解释器**——结论只读接手那一步的体检表。
+- **体检的启动条件与 worker 对齐**：`probe_environment` 不带 `-I`、env 原样继承
+  （`execspec.worker_argv` 起用户解释器就是这样），cwd 换成空临时目录挡住
+  父进程 cwd 进 `sys.path[0]`。以前的 `-I` 关掉了用户 site 与 `PYTHONPATH`，
+  `pip install --user` 的科学栈在体检里「不存在」而 worker 里明明 import 得到。
+  解释器去重 / 缓存键**按路径字符串不 realpath**（`.venv/bin/python` 是指向基础
+  解释器的软链接，realpath 会把 venv 与它的基础 Python 判成同一个）。
 - **import 名不是包名**。只认 `project_declared` / `curated` 两档高置信解析，
   外加用户手填的 `user_specified`。**没有「同名试试看」这一档**——那是抢注
   攻击的入口。依赖声明只读：不改 requirements.txt / pyproject.toml，不

@@ -36,6 +36,12 @@ interface DepRepairState {
     args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
   ) => Promise<void>
   install: () => Promise<void>
+  /**
+   * 采用这台机器上已有的、已经装着那个包的解释器（ADR 0044）。**不是安装**：
+   * 走项目环境 PATCH（带 `module` 让后端连那个包一起验），成功后把失败的
+   * 渲染重新排上——与装完包之后那半边同一件事。
+   */
+  adoptSystemPython: (python: string, module: string) => Promise<void>
   cancel: () => Promise<void>
   rebuildManaged: () => Promise<void>
   onProgress: (p: DependencyProgress) => void
@@ -83,6 +89,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       const { code, text } = failure(e)
       set({ busy: false, progress: null, errorCode: code, errorText: text })
     }
+  },
+
+  adoptSystemPython: async (python, module) => {
+    if (get().busy) return
+    set({ busy: true, errorCode: '', errorText: '' })
+    const error = await useEnvStore.getState().setProjectPython(python, module)
+    if (error) {
+      // `setProjectPython` 已经把后端原文翻成一句话；code 由环境 store 吞掉了，
+      // 这里只有原文可显示——它本来就是 `backendErrorText()` 按 code 翻好的。
+      set({ busy: false, errorCode: '', errorText: error })
+      return
+    }
+    set({ busy: false })
+    useRenderStore.getState().retryEnvironmentFailures()
   },
 
   cancel: async () => {

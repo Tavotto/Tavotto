@@ -21,6 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   installDependencyPlan: vi.fn(),
   cancelDependencyPlan: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
+  setProjectEnvironment: vi.fn(),
 }))
 
 import {
@@ -28,6 +29,7 @@ import {
   createDependencyPlan,
   fetchEngineEnvironment,
   installDependencyPlan,
+  setProjectEnvironment,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
 } from '@/lib/api'
@@ -46,6 +48,7 @@ const planMock = vi.mocked(createDependencyPlan)
 const installMock = vi.mocked(installDependencyPlan)
 const cancelMock = vi.mocked(cancelDependencyPlan)
 const envMock = vi.mocked(fetchEngineEnvironment)
+const adoptMock = vi.mocked(setProjectEnvironment)
 
 const en = (key: string, v?: Record<string, unknown>) =>
   t(`engine.${key}`, { ns: 'errors', ...(v ?? {}) })
@@ -134,6 +137,7 @@ beforeEach(() => {
   cancelMock.mockReset()
   envMock.mockReset()
   envMock.mockResolvedValue({} as never)
+  adoptMock.mockReset()
   useDepRepairStore.getState().reset()
 })
 
@@ -306,6 +310,115 @@ describe('无障碍与窄栏', () => {
     const row = button.parentElement!
     expect(row.className).toContain('flex-col')
     expect(row.textContent).toContain('.venv')
+  })
+})
+
+describe('这台机器上已有的解释器（ADR 0044）', () => {
+  const SYSTEM = {
+    kind: 'system_interpreter' as const,
+    venv: '',
+    python: '/usr/local/bin/python3',
+    modifies_user_environment: false,
+    creates_environment: false,
+    available: true,
+    reason: '',
+    python_version: '3.12.4',
+    matplotlib_version: '3.9.2',
+    support: 'verified',
+  }
+  const WITH_SYSTEM: DependencyRepairOffer = {
+    ...OFFER,
+    targets: [SYSTEM, ...OFFER.targets],
+  }
+
+  it('列成「改用已有环境」：显示路径与版本，一个字都不提安装', async () => {
+    await render(WITH_SYSTEM)
+    const button = byName(en('repairUseSystemPython'))
+    expect(button).toBeTruthy()
+    const row = button!.parentElement!
+    expect(row.textContent).toContain('/usr/local/bin/python3')
+    expect(row.textContent).toContain('Python 3.12.4')
+    // 它是首选：不装、不联网、不改任何环境，比两种安装都便宜
+    expect(button!.className).toContain('text-white') // primary
+    expect(byName(en('repairUseProjectEnv'))!.className).not.toContain('text-white')
+  })
+
+  it('点下去走项目环境 PATCH（带 module），不经安装计划，并把失败的渲染重新排上', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'Fig1.pdf', status: 'error', code: 'missing_dependency',
+          module: 'lmfit', lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    await render(WITH_SYSTEM)
+    await click(en('repairUseSystemPython'))
+    expect(adoptMock).toHaveBeenCalledWith('/usr/local/bin/python3', 'lmfit')
+    expect(planMock).not.toHaveBeenCalled()
+    const after = useRenderStore.getState()
+    expect(after.byKey.k.stale, '没标过期，图永远不会自己出来').toBe(true)
+    expect(after.tracked['Fig1.pdf']).toBe(true)
+  })
+
+  it('采用失败时把后端那句话显示出来，不静默', async () => {
+    adoptMock.mockRejectedValue(new Error('这个环境里也没有 lmfit'))
+    await render(WITH_SYSTEM)
+    await click(en('repairUseSystemPython'))
+    expect(text()).toContain('这个环境里也没有 lmfit')
+  })
+
+  it('「指定安装包」装到第一个**安装**目标，绝不装进系统解释器', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    await render({ ...WITH_SYSTEM, requirement: null, code: 'dependency_unresolved' })
+    const input = document.querySelector('input') as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, 'my-lab-tools')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(en('repairContinue'))
+    expect(planMock.mock.calls[0][0].target).toBe('project_venv')
+  })
+
+  it('探到了但没采用的系统解释器要说明原因，三种原因三句话', async () => {
+    await render({
+      ...OFFER,
+      system_rejected: [
+        { python: '/usr/bin/python3', code: 'project_env_unsupported_python', python_version: '3.9.6' },
+        { python: '/opt/py/bin/python3', code: 'project_env_no_matplotlib', python_version: '3.12.0' },
+      ],
+    })
+    expect(text()).toContain(
+      en('repairSystemRejectedUnsupported', { python: '/usr/bin/python3', module: 'lmfit', version: '3.9.6' }),
+    )
+    expect(text()).toContain(
+      en('repairSystemRejectedNoMatplotlib', { python: '/opt/py/bin/python3', module: 'lmfit' }),
+    )
+  })
+
+  it('解析不出包名 / 轮次用完时照样列出「改用已有环境」——采用不装东西', async () => {
+    // Codex 评审 P2：这条路不依赖包名解析，也不消耗修复轮次；它正是用户仅剩的路
+    for (const offer of [
+      { ...WITH_SYSTEM, requirement: null, code: 'dependency_unresolved' },
+      { ...WITH_SYSTEM, rounds_remaining: 0, code: 'dependency_repair_rounds_exhausted' },
+    ] as DependencyRepairOffer[]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(offer)
+      expect(byName(en('repairUseSystemPython')), offer.code).toBeTruthy()
+      // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
+      expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
+      expect(byName(en('repairCreateManaged'))).toBeUndefined()
+    }
+  })
+
+  it('未经验证的 matplotlib 版本要如实标注', async () => {
+    await render({ ...OFFER, targets: [{ ...SYSTEM, support: 'unverified_but_compatible' }] })
+    expect(text()).toContain(en('repairSystemUnverified'))
   })
 })
 

@@ -191,15 +191,23 @@ function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
   // Tavotto 替这个项目建的环境是另一种局面：它归我们管，所以那一行还带
   // 「装了什么」与「重建」（ADR 0019），由 ManagedEnvironmentRow 单独渲染。
   if (project.source === 'managed_project_env') return <ManagedEnvironmentRow />
-  if (project.source !== 'project_venv') return null
+  // 项目之外的解释器（用户为这个项目挑的，或从依赖修复面板采用的系统 Python，
+  // ADR 0044）与项目自带的 `.venv` 是两种局面：前者显示绝对路径、措辞是
+  // 「你选了」，不能套「项目环境：…」那句——`/usr/bin/python3` 不是项目环境。
+  const system = project.source === 'system'
+  if (project.source !== 'project_venv' && !system) return null
   return (
     <div className="mt-1.5 flex flex-col gap-0.5 border-t border-border pt-1.5">
       <span className="text-xs text-ink-2">
-        {en('projectEnvUsing', { path: project.python || '.venv' })}
+        {system
+          ? en('projectEnvUsingSystem', { path: project.python || '' })
+          : en('projectEnvUsing', { path: project.python || '.venv' })}
       </span>
-      {project.automatic && project.module && (
+      {project.module && (project.automatic || system) && (
         <span className="text-xs text-ink-3">
-          {en('projectEnvWhy', { module: project.module })}
+          {system
+            ? en('projectEnvWhySystem', { module: project.module })
+            : en('projectEnvWhy', { module: project.module })}
         </span>
       )}
       <button

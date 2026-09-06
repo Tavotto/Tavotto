@@ -23,10 +23,11 @@ def load_script(name: str):
     """按路径 import scripts/<name>.py（它们互相 import 靠同目录 sys.path）。"""
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    modname = name.replace("/", "_")
+    spec = importlib.util.spec_from_file_location(modname, SCRIPTS / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
-    sys.modules[name] = mod
+    sys.modules[modname] = mod
     spec.loader.exec_module(mod)
     return mod
 

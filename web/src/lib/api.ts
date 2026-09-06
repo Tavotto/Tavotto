@@ -2367,6 +2367,20 @@ export interface ProjectEnvFailure {
   venv: string
   candidates: string[]
   python_version: string
+  /** 第二层的体检表（ADR 0044）：这台机器上已有的解释器各是什么结论 */
+  system?: SystemInterpreterProbe[]
+}
+
+/** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */
+export interface SystemInterpreterProbe {
+  python: string
+  source: string
+  ok: boolean
+  code: string
+  support: string
+  python_version: string
+  matplotlib_version: string
+  requested_module_ok: boolean | null
 }
 
 export interface EngineEnvironment {
@@ -2420,11 +2434,13 @@ export const setEngineEnvironment = (python: string | null) =>
  * 与 `setEngineEnvironment` 的区别就是作用域：那个写全局设置，会连带改变
  * 别的项目；这个只影响当前项目，且存的是项目相对路径（项目挪走仍然有效）。
  */
-export const setProjectEnvironment = (python: string | null) =>
+export const setProjectEnvironment = (python: string | null, module?: string) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scope: 'project', python }),
+    // `module` 只在「从依赖修复面板采用系统解释器」时带（ADR 0044）：后端
+    // 体检连缺的那个包一起验，并把「为什么这个项目用了系统 Python」记下来。
+    body: JSON.stringify(module ? { scope: 'project', python, module } : { scope: 'project', python }),
   })
 
 // ---------------------------------------------------------------------------
@@ -2448,9 +2464,14 @@ export interface DependencyRequirementInfo {
 
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
-  kind: 'project_venv' | 'tavotto_managed'
+  /**
+   * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
+   * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
+   */
+  kind: 'project_venv' | 'tavotto_managed' | 'system_interpreter'
   /** 项目相对路径（项目 venv 才有） */
   venv: string
+  /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
   python: string
   /** true = 会修改用户自己的环境，界面必须说清楚 */
   modifies_user_environment: boolean
@@ -2458,6 +2479,23 @@ export interface DependencyTarget {
   /** null = 还不知道（后端正在探基础解释器），界面照常列出来 */
   available: boolean | null
   reason: string
+  /** 系统解释器才有：体检当时的事实，界面据此显示「Python 3.12」 */
+  python_version?: string
+  matplotlib_version?: string
+  /** verified / unverified_but_compatible（unsupported 的不会成为目标） */
+  support?: string
+}
+
+/**
+ * 「这台机器上有一个装了那个包的 Python，但 Tavotto 没采用」（ADR 0044）。
+ * 用户手边那套环境为什么被跳过，界面要说出来——否则他只看到「缺包，要不要
+ * 建一个新环境」，而他的 `/usr/bin/python3` 像是被无视了。
+ */
+export interface SystemInterpreterRejection {
+  python: string
+  /** project_env_unsupported_python / project_env_no_matplotlib / project_env_unusable */
+  code: string
+  python_version: string
 }
 
 /**
@@ -2472,6 +2510,8 @@ export interface DependencyRepairOffer {
   targets: DependencyTarget[]
   rounds_remaining: number
   managed?: ManagedEnvironment
+  /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
+  system_rejected?: SystemInterpreterRejection[]
   /** dependency_unresolved / dependency_repair_rounds_exhausted */
   code?: string
 }
