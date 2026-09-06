@@ -331,7 +331,9 @@
     "clearFilter": "显示全部",
     "cmp": {
       "above": "大于 {{value}}",
+      "aboveAtBoundary": "大于 {{value}}（不含等号；当前值四舍五入后恰好落在边界）",
       "atLeast": "≥ {{value}}",
+      "atLeastAtBoundary": "≥ {{value}}（当前值略低于它，显示时被舍入成了同一个数）",
       "atMost": "≤ {{value}}"
     },
     "current": "当前",

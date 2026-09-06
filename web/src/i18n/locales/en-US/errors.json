@@ -331,7 +331,9 @@
     "clearFilter": "Show all",
     "cmp": {
       "above": "above {{value}}",
+      "aboveAtBoundary": "above {{value}} (exclusive; the current value rounds exactly to the boundary)",
       "atLeast": "≥ {{value}}",
+      "atLeastAtBoundary": "≥ {{value}} (the current value is slightly below it; rounding makes them look equal)",
       "atMost": "≤ {{value}}"
     },
     "current": "Current",

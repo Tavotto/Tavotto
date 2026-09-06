@@ -86,11 +86,41 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   }
   const unit = spec.unit ? pr(`unit.${spec.unit}`) : ''
   const withUnit = (v: string | null) => (v == null ? null : unit ? `${v}${unit}` : v)
-  const expected = withUnit(read(spec.expected))
+  const currentRaw = read(spec.current)
+  const expectedRaw = read(spec.expected)
+  const expected = withUnit(expectedRaw)
+  const cmp = expected == null ? null : boundaryComparator(spec.cmp, currentRaw, expectedRaw)
   return {
-    current: withUnit(read(spec.current)),
-    expected: expected == null ? null : spec.cmp ? pr(`cmp.${spec.cmp}`, { value: expected }) : expected,
+    current: withUnit(currentRaw),
+    expected: expected == null ? null : cmp ? pr(`cmp.${cmp}`, { value: expected }) : expected,
   }
+}
+
+/**
+ * 「当前值 → 要求」里那个比较词，**按真实边界说话**（审计 T41）。
+ *
+ * 当前值在 message 里是按两位小数格式化过的（`8.00`），要求是 `8`——两个数
+ * 显示相等时，一行「8.00pt → 大于 8pt」读起来像自相矛盾，而它其实说的是
+ * 判据不含等号（`eff <= floor` 就报）。这时换一句把边界与舍入都说清的话：
+ * 「大于 8pt（不含等号；当前值四舍五入后恰好落在边界）」。同理 `atLeast`
+ * 那条（`eff < min`）的当前值 7.996 会显示成 8.00，说成「略低于」。
+ * 判据一个字没动，动的只是这句话。
+ */
+function boundaryComparator(
+  cmp: string | undefined,
+  current: string | null,
+  expected: string | null,
+): string | undefined {
+  if (!cmp || current == null || expected == null) return cmp
+  const cur = Number(current)
+  const want = Number(expected)
+  if (!Number.isFinite(cur) || !Number.isFinite(want)) return cmp
+  // 显示精度是两位小数：差距小于半个最小显示单位 = 两个数在界面上长得一样
+  const displayedEqual = Math.abs(cur - want) < 0.005
+  if (!displayedEqual) return cmp
+  if (cmp === 'above') return 'aboveAtBoundary'
+  if (cmp === 'atLeast') return 'atLeastAtBoundary'
+  return cmp
 }
 
 /**
