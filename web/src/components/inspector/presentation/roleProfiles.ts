@@ -129,6 +129,8 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['elev', 'azim', 'roll', 'proj_type'],
     more: ['visible'],
   },
+  // 刻度组页把这些再分成「刻度 / 文字」两段（ElementInspector 的 TickPage）：
+  // 这张表只管每个字段可不可见（模式从属）与段内顺序，不管落在哪一段
   ticks: {
     primary: ['major_mode', 'major_step', 'major_values', 'fontsize', 'color'],
     more: [

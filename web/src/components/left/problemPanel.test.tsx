@@ -139,10 +139,10 @@ describe('「还没查」不许掉进绿色空态', () => {
 })
 
 describe('普通界面不出现内部标识', () => {
-  it('列的是人话主语（「X 刻度文字」），不是 gid', async () => {
+  it('列的是人话主语（「X 轴刻度」，引擎串「X 刻度文字」经 engineLabel 翻过），不是 gid', async () => {
     await seed()
     await mount(<ProblemPanel />)
-    expect(text()).toContain('X 刻度文字')
+    expect(text()).toContain('X 轴刻度')
     // gid / 对象 id 只允许出现在收起的技术详情里，不许出现在行本身
     const rows = [...container.querySelectorAll('[data-issue-row]')]
     expect(rows.length).toBeGreaterThan(0)
@@ -211,7 +211,7 @@ describe('无障碍与键盘', () => {
     const row = container.querySelector('[data-issue-row]')!
     const label = row.getAttribute('aria-label') ?? ''
     expect(label).toContain('阻断')
-    expect(label).toContain('X 刻度文字')
+    expect(label).toContain('X 轴刻度')
   })
 
   it('清单可用方向键漫游', async () => {
@@ -310,7 +310,7 @@ describe('这一轮查砸了、上一轮的结果还留着', () => {
     // 藏起来就成了「看得见数字、找不到东西」
     expect(list(), '整屏被换成错误空态，留下来的问题在唯一一份清单里翻不到').toBeTruthy()
     expect(list()!.children.length).toBe(kept)
-    expect(text()).toContain('X 刻度文字')
+    expect(text()).toContain('X 轴刻度')
   })
 
   it('上一轮什么都没有时仍然只出错误空态，不摆一条没有清单的横幅', async () => {

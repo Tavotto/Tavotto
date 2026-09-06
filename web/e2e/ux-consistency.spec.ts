@@ -176,22 +176,16 @@ test('流程 B：选中子图即可设四边刻度、方向与次刻度，示意
   await expect(panel.getByText('方向', { exact: true })).toBeVisible()
 
   // --- 开上边与右边刻度（四边点按这条既有交互必须还在）---
-  await panel.getByRole('switch', { name: '上边刻度线' }).click()
-  await expect(panel.getByRole('switch', { name: '上边刻度线' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-    { timeout: 15_000 },
-  )
-  // Session 16 之后「显示边」按 X 刻度 / Y 刻度两个页签分开：右边那个开关在 Y 页签下，
-  // 开完要切回 X 页签——下面的方向三档与次刻度断言都是对着 X 轴写的
-  await panel.getByRole('radio', { name: 'Y 刻度' }).click()
-  await panel.getByRole('switch', { name: '右边刻度线' }).click()
-  await expect(panel.getByRole('switch', { name: '右边刻度线' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-    { timeout: 15_000 },
-  )
-  await panel.getByRole('radio', { name: 'X 刻度' }).click()
+  // 审计 T13 之后「在哪几条边显示」只在示意图上一处（卡里不再有第二排开关）：
+  // 点那条边框**里侧**的带。这张图刻度朝内（paper_style.py），里侧带 = 这一边的
+  // 向内刻度；打开一条隐藏的边不动轴的方向——下面的方向断言仍对着 X 轴写
+  const zone = (side: string, z: 'inner' | 'outer') =>
+    panel.locator(`[data-tick-zone="${side}:${z}"]`)
+  await expect(panel.getByRole('switch', { name: '上边刻度线' })).toHaveCount(0)
+  await zone('top', 'inner').click()
+  await expect(zone('top', 'inner')).toHaveAttribute('aria-checked', 'true', { timeout: 15_000 })
+  await zone('right', 'inner').click()
+  await expect(zone('right', 'inner')).toHaveAttribute('aria-checked', 'true', { timeout: 15_000 })
 
   // Session 16（ADR 0035）之后示意图按**边 × 内外半区**画：方向不再是一条边上的
   // 一个属性，而是「内半区亮 / 外半区亮 / 都亮」——与 tickTaskCard.test 读同一份锚点

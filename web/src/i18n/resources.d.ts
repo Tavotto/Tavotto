@@ -2113,7 +2113,7 @@ export default interface Resources {
       "hatchNone": "无花纹",
       "hatchPattern": "花纹 {{value}}",
       "legendCustomHint": "图例被拖到过自定义位置；点任一预设（含「最佳位置」）即可回到预设定位。",
-      "resetSide": "恢复{{label}}到脚本",
+      "resetDiagram_other": "恢复刻度与边框到脚本（{{count}} 项）",
       "spinePerSide": "分别设置各边",
       "spineSidesDiffer": "各边不同",
       "switchOff": "{{label}}：关（点击开启）",
@@ -2202,6 +2202,7 @@ export default interface Resources {
       "relatedLegend": "所属图例",
       "relatedSeries": "所属系列",
       "relatedWithHint": "{{hint}}：{{label}}",
+      "resetDiagram": "恢复刻度与边框到脚本",
       "resetElement": "恢复此元素到脚本",
       "resetElementCount_other": "恢复此元素到脚本（{{count}} 项）",
       "resetHint": {
@@ -2258,7 +2259,7 @@ export default interface Resources {
       "scatterSeries": "散点系列 {{value}}",
       "shape": "形状 {{value}}",
       "textNamed": "文字 “{{value}}”",
-      "tickLabels": "{{axis}} 刻度文字",
+      "tickLabels": "{{axis}} 轴刻度",
       "tickNamed": "刻度 “{{value}}”",
       "titleNamed": "标题 “{{value}}”",
       "twinSide": {
@@ -2784,7 +2785,7 @@ export default interface Resources {
       "scatter": "散点系列",
       "text": "文字",
       "ticklabel": "刻度文字",
-      "ticks": "刻度组",
+      "ticks": "轴刻度",
       "title": "标题",
       "unknown": "同类元素"
     },
@@ -2968,15 +2969,14 @@ export default interface Resources {
       "minorOff": "只要主刻度",
       "minorOn": "主刻度 + 次刻度",
       "minorWidth": "次刻度宽度",
+      "sectionLabels": "文字",
+      "sectionMarks": "刻度",
       "side": {
         "bottom": "下边",
         "left": "左边",
         "right": "右边",
         "top": "上边"
       },
-      "sideAria": "{{side}}刻度线",
-      "sides": "显示边",
-      "sidesAria": "在哪几条边显示刻度线",
       "width": "宽度",
       "xTicks": "X 刻度",
       "yTicks": "Y 刻度"

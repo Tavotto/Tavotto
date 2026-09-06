@@ -349,6 +349,16 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                 ——否则这个元素在界面上就只剩一句「点一下开始编辑」 */}
             {element && <UnsupportedProps elements={[element]} />}
           </>
+        ) : tickCardCoversSelf && sideHost && element ? (
+          /* 刻度组页：「刻度 / 文字」两段（审计 T13） */
+          <TickPage
+            panel={panel}
+            manifest={manifest}
+            host={sideHost}
+            element={element}
+            warnings={render?.warnings ?? []}
+            buckets={buckets}
+          />
         ) : (
           <FieldList
             panel={panel}
@@ -786,13 +796,22 @@ function TickControl({
   const model = readAxesTickModel(manifest, panel.overrides, host.gid)
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
 
+  const diagramProps = TICK_SPINE_PROPS.filter(
+    (p) => w.has(p) && panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+  )
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
     toggle: (p, next) => w.writeOnce(p, next),
     labelOf: (p) => propLabel(p, host.role),
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
-    reset: (p) => clearOverride(panel.id, host.gid, p),
+    // 一次恢复示意图承接的全部修改（一条历史）——恢复动作统一，不逐边出 chip
+    resetAll: () =>
+      clearOverrides(
+        panel.id,
+        elMsg('resetDiagram'),
+        diagramProps.map((p) => ({ gid: host.gid, prop: p })),
+      ),
     axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
     model,
     applyPlan,
@@ -926,6 +945,123 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
       <span className="min-w-0 truncate">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
+  )
+}
+
+/* ------------------------------ 刻度组页：刻度 / 文字 ---------------------- */
+
+/** 主刻度的位置字段：跟刻度线一起（它们决定短线落在哪） */
+const TICK_PLACEMENT_PROPS = new Set(['major_mode', 'major_step', 'major_values'])
+/** 次刻度的从属字段：只在次刻度开着（或用户改过）时出现 */
+const TICK_MINOR_PROPS = new Set(['minor_mode', 'minor_step', 'minor_format'])
+
+/**
+ * 刻度组页（审计 T13 / T25）：**「刻度」（线与位置）与「文字」（标签）两段**。
+ *
+ * 修改前标题叫「Y 刻度文字」，主体却大篇幅在编辑刻度线；状态图、方向分段、
+ * 左右开关与恢复标签把同一组设置说了四遍。现在：
+ *
+ *   刻度 —— 示意图（在哪几条边显示）→ 方向 / 长度 / 宽度 → 主刻度方式（间距 /
+ *           固定值随方式条件出现）→ 次刻度开关（长度 / 宽度 / 方式 / 间距 /
+ *           格式随开关条件出现）
+ *   文字 —— 字号 / 颜色 / 数值格式 / 旋转 / 显示
+ *
+ * 字段的可见性（模式从属、已改过的必须
+ * 可见）仍由展示注册表算（`buckets`），这里只决定落在哪一段；两段都没点名的
+ * 字段跟在「文字」后面，绝不丢失。
+ */
+function TickPage({
+  panel,
+  manifest,
+  host,
+  element,
+  warnings,
+  buckets,
+}: {
+  panel: PanelObject
+  manifest: Manifest | null | undefined
+  /** 四边开关与网格的宿主（永远是子图） */
+  host: ManifestElement
+  /** 选中的刻度组 */
+  element: ManifestElement
+  warnings: string[]
+  buckets: { primary: PresentedField[]; more: PresentedField[] }
+}) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, host)
+  const selfAxis = tickHostOf(element.gid)?.axis ?? 'x'
+  // hook 数量固定：两个轴各调一次，元素不在时 adapter 回 null
+  const xAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'x'), 'x')
+  const yAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'y'), 'y')
+  const self = selfAxis === 'x' ? xAdapter : yAdapter
+
+  const model = readAxesTickModel(manifest, panel.overrides, host.gid)
+  const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
+  const diagramProps = TICK_SPINE_PROPS.filter(
+    (p) => w.has(p) && panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+  )
+  const adapter: TickSpineAdapter = {
+    has: (p) => w.has(p),
+    read: (p) => w.read(p),
+    toggle: (p, next) => w.writeOnce(p, next),
+    labelOf: (p) => propLabel(p, host.role),
+    isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+    resetAll: () =>
+      clearOverrides(
+        panel.id,
+        elMsg('resetDiagram'),
+        diagramProps.map((p) => ({ gid: host.gid, prop: p })),
+      ),
+    axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
+    model,
+    applyPlan,
+  }
+
+  const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  const fields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
+  const minorOn = self ? self.read('minor_visible') === true : true
+  const placement = fields.filter((f) => TICK_PLACEMENT_PROPS.has(f.prop))
+  const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop) && (minorOn || overridden(f.prop)))
+  const labels = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
+  const rows = (list: EditableField[]) =>
+    list.length ? (
+      <div className="flex flex-col gap-1.5">
+        {list.map((f) => (
+          <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
+        ))}
+      </div>
+    ) : null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5" data-tick-section="marks">
+        <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
+        <TickAndSpineDiagram adapter={adapter} />
+        {self ? (
+          <TickTaskCard
+            axes={[self]}
+            labelWidth={LABEL_W}
+            model={model}
+            applyPlan={applyPlan}
+            placement={rows(placement)}
+            minorExtra={rows(minor)}
+          />
+        ) : (
+          <>
+            {rows(placement)}
+            {rows(minor)}
+          </>
+        )}
+      </div>
+      {labels.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-tick-section="labels">
+          <GroupHead>{translate('tick.sectionLabels', { ns: 'inspector' })}</GroupHead>
+          {rows(labels)}
+        </div>
+      )}
+      {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
+      <UnsupportedProps elements={[element]} />
+    </div>
   )
 }
 

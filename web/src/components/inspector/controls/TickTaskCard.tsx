@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import type { EditableField } from '@/lib/api'
@@ -9,7 +9,6 @@ import { Toggle } from '../../ui/Toggle'
 import {
   axisChoice,
   axisChoicePlan,
-  sideVisiblePlan,
   sidesOfAxis,
   type AxesTickModel,
   type AxisTickChoice,
@@ -19,19 +18,25 @@ import {
 import { ResetChip, labeledWithState } from './textRows'
 
 /**
- * 刻度任务卡：**「刻度在哪、朝哪、要不要次刻度」在同一处完成**。
+ * 刻度任务卡：**「刻度朝哪、多长多粗、要不要次刻度」在同一处完成**。
  *
  * 修改前这三件事分散在三个地方：四边开关在子图页的状态图上，方向与长宽在
  * 「刻度组」元素的「刻度线」折叠组里，次刻度在同一个元素的「刻度定位」折叠
  * 组里——而「刻度组」这个元素本身要先在元素树里展开「坐标轴」才找得到。
  * 用户得先理解 axes / xticks / yticks 三个内部对象的关系，才能改一件事。
  *
+ * **每组设置只有一处控件**（审计 T13）：方向只有这里的一组分段；「在哪几条边
+ * 显示」只在示意图上点（`TickAndSpineDiagram` 的内 / 外两带，键盘可达）；
+ * 这里不再摆一排与示意图重复的开关。次刻度关着时它的长度 / 线宽 / 方式 /
+ * 格式一并收起——摆一排此刻写了不生效的控件比藏起来更不诚实；用户改过的
+ * 照样显示（不因折叠而不可发现）。
+ *
  * 本组件只负责**摆放与写入**；能力仍由 manifest 说了算：
  * `axis.has(prop)` 为假就整行不画，绝不摆一个「点了不生效」的控件。
  * 主刻度**没有** `major_visible` 字段，所以这里也不造一个——次刻度开关说的
  * 是「只要主刻度 / 主刻度 + 次刻度」，不是「主刻度开关」。
  *
- * 同一个组件被两处复用（`docs/ux/UX_CONSISTENCY_PASS.md`）：
+ * 同一个组件被两处复用：
  *   * 选中子图  → 两个轴都给，顶部出 X / Y 分段切换；
  *   * 选中刻度组 → 只给它自己那个轴，不出切换（切过去会写到另一个元素，
  *     而用户选的是这一个）。
@@ -40,9 +45,11 @@ import { ResetChip, labeledWithState } from './textRows'
 const tk = (key: string, values?: Record<string, unknown>) =>
   translate(`tick.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
+type TickAxis = 'x' | 'y'
+
 /** 一个轴的刻度写入面。由调用方按 host 元素组装（axes 页与刻度组页各一份） */
 export interface TickAxisAdapter {
-  axis: 'x' | 'y'
+  axis: TickAxis
   has: (prop: string) => boolean
   fieldOf: (prop: string) => EditableField | undefined
   read: (prop: string) => unknown
@@ -72,28 +79,37 @@ const DIRECTIONS: TickDirection[] = ['in', 'out', 'inout']
 /** 方向档的显示顺序：三个真方向 + 「隐藏」（两边都不显示刻度线的派生态） */
 const CHOICES: AxisTickChoice[] = ['in', 'out', 'inout', 'hidden']
 
+const AXIS_NAME: Record<TickAxis, string> = { x: 'axisX', y: 'axisY' }
+const AXIS_TAB: Record<TickAxis, string> = { x: 'xTicks', y: 'yTicks' }
+
 export function TickTaskCard({
   axes,
   labelWidth = 72,
   model = null,
   applyPlan,
+  placement,
+  minorExtra,
 }: {
-  /** 一个或两个轴；给两个时顶部出 X / Y 切换 */
+  /** 一个或多个轴；给多个时顶部出 X / Y 切换 */
   axes: TickAxisAdapter[]
   labelWidth?: number
   /**
-   * 宿主子图的四边刻度模型（`readAxesTickModel`）。有它方向档多出「隐藏」、
-   * 并出「显示边」两个开关——与画布命中区 / 示意图同一份计划函数。
+   * 宿主子图的四边刻度模型（`readAxesTickModel`）。有它方向档多出「隐藏」
+   * ——与画布命中区 / 示意图同一份计划函数。
    */
   model?: AxesTickModel | null
   applyPlan?: (plan: SidePlan) => void
+  /** 主刻度的位置字段（方式 / 间距 / 固定值）：排在长宽之后、次刻度之前 */
+  placement?: ReactNode
+  /** 次刻度的从属字段（方式 / 间距 / 格式）：跟在次刻度的长宽后面 */
+  minorExtra?: ReactNode
 }) {
   useTranslation('inspector')
-  const [active, setActive] = useState<'x' | 'y'>(axes[0]?.axis ?? 'x')
+  const [active, setActive] = useState<TickAxis>(axes[0]?.axis ?? 'x')
   const cur = axes.find((a) => a.axis === active) ?? axes[0]
   if (!cur) return null
 
-  // 这个轴一条能力都没有就整块不画（3D 轴的 direction / visible 被引擎摘掉了）
+  // 这个轴一条能力都没有就整块不画
   const usable = TICK_CARD_PROPS.filter((p) => cur.has(p))
   if (!usable.length) return null
 
@@ -107,6 +123,8 @@ export function TickTaskCard({
   const minorLength = cur.fieldOf('minor_length')
   const minorWidth = cur.fieldOf('minor_width')
   const minorOn = cur.read('minor_visible') === true
+  /** 次刻度的从属行：关着时收起；用户改过的照样显示 */
+  const minorRow = (prop: string) => minorOn || cur.isOverridden(prop)
   // 四边模型在、且这条轴在模型里：方向档带「隐藏」，写入走计划（一次 commit
   // 可能同时动方向与两边显隐）；不在：退回只写 direction 的三档
   const modelSides = model ? sidesOfAxis(cur.axis).filter((sd) => model.sides[sd]) : []
@@ -125,7 +143,7 @@ export function TickTaskCard({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-tick-card={cur.axis}>
       {axes.length > 1 && (
         <Segmented
           tone="quiet"
@@ -133,25 +151,8 @@ export function TickTaskCard({
           ariaLabel={tk('axisSwitch')}
           value={active}
           onChange={setActive}
-          items={axes.map((a) => ({ value: a.axis, label: tk(a.axis === 'x' ? 'xTicks' : 'yTicks') }))}
+          items={axes.map((a) => ({ value: a.axis, label: tk(AXIS_TAB[a.axis]) }))}
         />
-      )}
-
-      {cur.has('minor_visible') && (
-        <Row
-          label={labeledWithState(tk('minor'), cur.isOverridden('minor_visible'))}
-          labelWidth={labelWidth}
-        >
-          <Toggle
-            checked={minorOn}
-            onChange={(v) => cur.writeOnce('minor_visible', v)}
-            aria-label={tk('minorAria', { axis: tk(cur.axis === 'x' ? 'axisX' : 'axisY') })}
-          />
-          <span className="text-xs text-ink-3">{tk(minorOn ? 'minorOn' : 'minorOff')}</span>
-          {cur.isOverridden('minor_visible') && (
-            <ResetChip label={tk('minor')} onReset={() => cur.reset('minor_visible')} />
-          )}
-        </Row>
       )}
 
       {dirField && dirOptions.length > 0 && (
@@ -182,31 +183,6 @@ export function TickTaskCard({
         </div>
       )}
 
-      {zoned && (
-        /* 显示边：这条轴的两边各一个开关（上下 / 左右）。与示意图上点边线内外
-           两带是同一份状态、同一份计划——这里是键盘与屏幕阅读器走得通的那条路 */
-        <Row label={tk('sides')} labelWidth={labelWidth}>
-          <div className="flex items-center gap-3" role="group" aria-label={tk('sidesAria')}>
-            {modelSides.map((sd) => {
-              const st = model!.sides[sd]!
-              return (
-                <span key={sd} className="flex items-center gap-1.5 text-xs text-ink-2">
-                  <Toggle
-                    checked={st.visible}
-                    onChange={(v) => {
-                      const plan = sideVisiblePlan(model!, sd, v)
-                      if (plan) applyPlan!(plan)
-                    }}
-                    aria-label={tk('sideAria', { side: tk(`side.${sd}`) })}
-                  />
-                  {tk(`side.${sd}`)}
-                </span>
-              )
-            })}
-          </div>
-        </Row>
-      )}
-
       {length && (
         <NumberRow
           label={tk('length')}
@@ -225,9 +201,30 @@ export function TickTaskCard({
           labelWidth={labelWidth}
         />
       )}
-      {/* 次刻度自己的长度 / 线宽：主刻度那两条只动主刻度。次刻度关着时也给
-          ——值是「开了会是多少」，先调再开与先开再调结果一样 */}
-      {minorLength && (
+
+      {placement}
+
+      {cur.has('minor_visible') && (
+        <div data-prop="minor_visible" data-gid={cur.gid}>
+          <Row
+            label={labeledWithState(tk('minor'), cur.isOverridden('minor_visible'))}
+            labelWidth={labelWidth}
+          >
+            <Toggle
+              checked={minorOn}
+              onChange={(v) => cur.writeOnce('minor_visible', v)}
+              aria-label={tk('minorAria', { axis: tk(AXIS_NAME[cur.axis]) })}
+            />
+            <span className="text-xs text-ink-3">{tk(minorOn ? 'minorOn' : 'minorOff')}</span>
+            {cur.isOverridden('minor_visible') && (
+              <ResetChip label={tk('minor')} onReset={() => cur.reset('minor_visible')} />
+            )}
+          </Row>
+        </div>
+      )}
+      {/* 次刻度自己的长度 / 线宽：主刻度那两条只动主刻度。**关着时收起**
+          ——值虽然是「开了会是多少」，但此刻写了看不见；改过的照样显示 */}
+      {minorLength && minorRow('minor_length') && (
         <NumberRow
           label={tk('minorLength')}
           field={minorLength}
@@ -236,7 +233,7 @@ export function TickTaskCard({
           labelWidth={labelWidth}
         />
       )}
-      {minorWidth && (
+      {minorWidth && minorRow('minor_width') && (
         <NumberRow
           label={tk('minorWidth')}
           field={minorWidth}
@@ -245,6 +242,7 @@ export function TickTaskCard({
           labelWidth={labelWidth}
         />
       )}
+      {minorExtra}
     </div>
   )
 }
@@ -263,23 +261,25 @@ function NumberRow({
   labelWidth: number
 }) {
   return (
-    <Row label={labeledWithState(label, axis.isOverridden(prop))} labelWidth={labelWidth}>
-      <NumberField
-        className="w-[74px] shrink-0"
-        dataProp={prop}
-        ariaLabel={label}
-        value={Number(axis.read(prop) ?? 0)}
-        min={field.min}
-        max={field.max}
-        step={field.step ?? 0.1}
-        precision={2}
-        suffix={field.unit}
-        onChange={(v) => axis.write(prop, v)}
-        onScrubStart={axis.beginGesture}
-        onScrubEnd={axis.endGesture}
-      />
-      {axis.isOverridden(prop) && <ResetChip label={label} onReset={() => axis.reset(prop)} />}
-    </Row>
+    <div data-prop={prop} data-gid={axis.gid}>
+      <Row label={labeledWithState(label, axis.isOverridden(prop))} labelWidth={labelWidth}>
+        <NumberField
+          className="w-[74px] shrink-0"
+          dataProp={prop}
+          ariaLabel={label}
+          value={Number(axis.read(prop) ?? 0)}
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 0.1}
+          precision={2}
+          suffix={field.unit}
+          onChange={(v) => axis.write(prop, v)}
+          onScrubStart={axis.beginGesture}
+          onScrubEnd={axis.endGesture}
+        />
+        {axis.isOverridden(prop) && <ResetChip label={label} onReset={() => axis.reset(prop)} />}
+      </Row>
+    </div>
   )
 }
 
@@ -288,7 +288,7 @@ function NumberRow({
  * **不只靠文字**——「朝内 / 朝外 / 内外」三个词在中英文里都容易看混，
  * 而这件事本来就是图形化的。选中态由 Segmented 统一给（底色 + 字重）。
  */
-function DirectionGlyph({ axis, direction }: { axis: 'x' | 'y'; direction: AxisTickChoice }) {
+function DirectionGlyph({ axis, direction }: { axis: TickAxis; direction: AxisTickChoice }) {
   // X 轴画一条横线（下边框），刻度上下伸；Y 轴画一条竖线（左边框），刻度左右伸。
   // 「内」= 朝坐标框里，对下边框就是往上；轴线本身要够实，否则三档只差
   // 「短线在线的哪一侧」，在 18px 里根本分不出来（实测截图上确实分不出）。
