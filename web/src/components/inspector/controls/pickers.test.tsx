@@ -13,6 +13,7 @@ import { HatchPicker } from './HatchPicker'
 import { LegendPositionPicker } from './LegendPositionPicker'
 import { LineStylePicker } from './LineStylePicker'
 import { MarkerPicker } from './MarkerPicker'
+import { tipLabelOf } from './OptionGrid'
 import { TickAndSpineDiagram, type TickSpineAdapter } from './TickAndSpineDiagram'
 
 declare global {
@@ -125,22 +126,46 @@ describe('MarkerPicker', () => {
 })
 
 describe('HatchPicker', () => {
-  it('空串是「无花纹」，known 花纹有纹理缩略，点击写原始串', async () => {
+  it('空串是「无」，known 纹理有缩略图，点击写原始串', async () => {
     const onChange = vi.fn()
     await mount(
-      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="花纹" />,
+      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="纹理" />,
     )
-    const trigger = host.querySelector('button[aria-label="花纹"]') as HTMLButtonElement
-    expect(trigger.textContent).toContain('无花纹')
+    const trigger = host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement
+    expect(trigger.textContent).toContain('无')
     await act(async () => {
       trigger.click()
     })
-    const xx = radioByLabel('花纹 xx')!
+    const xx = radioByLabel('密交叉')!
     expect(xx.querySelector('svg pattern')).toBeTruthy()
     await act(async () => {
       xx.click()
     })
     expect(onChange).toHaveBeenCalledWith('xx')
+  })
+
+  /**
+   * 审计 T21 的验收：**所有纹理选项有可理解的名称，图形与底层图案一一对应**。
+   * 引擎的 `HATCHES` 是 16 个代码，逐个查——名字不许等于代码本身，也不许
+   * 落到「纹理 <代码>」那条开集兜底上（那是给脚本自拼的花纹留的）。
+   */
+  it('引擎那 16 个纹理代码逐个有名字，名字里不出现代码', async () => {
+    const HATCHES = ['', '/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', '\\\\', 'xx', '..', '++']
+    const onChange = vi.fn()
+    await mount(
+      <HatchPicker value="" options={HATCHES} onChange={onChange} ariaLabel="纹理" />,
+    )
+    await act(async () => {
+      ;(host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement).click()
+    })
+    const names = radios().map((r) => r.getAttribute('aria-label')!)
+    expect(names).toHaveLength(HATCHES.length)
+    expect(new Set(names).size, '有两个纹理重名，图形与名字对不上').toBe(HATCHES.length)
+    for (const [i, name] of names.entries()) {
+      const code = HATCHES[i]
+      expect(name, `${JSON.stringify(code)} 落到了开集兜底`).not.toContain('纹理 ')
+      if (code) expect(name, `${JSON.stringify(code)} 的名字里带着代码`).not.toContain(code)
+    }
   })
 })
 
@@ -326,5 +351,38 @@ describe('TickAndSpineDiagram', () => {
   it('什么都没改过时没有恢复按钮', async () => {
     await mount(<TickAndSpineDiagram adapter={adapterOf()} />)
     expect(host.querySelector('[data-tick-reset-all]')).toBeNull()
+  })
+})
+
+describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', () => {
+  it('tooltip 只说名字，代码落成 data-code', async () => {
+    expect(tipLabelOf({ label: '无', code: 'None' })).toBe('无')
+    expect(tipLabelOf({ label: '点线', code: ':' })).toBe('点线')
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    expect(dotted.getAttribute('data-code')).toBe(':')
+    expect(dotted.getAttribute('aria-label')).toBe('点线')
+  })
+
+  /**
+   * **气泡关着的时候整条判据是恒真的**——Radix 的 Content 只在打开时才进
+   * DOM，所以「页面里没有 `名字 · 代码`」在任何实现下都成立。要判它就得先
+   * 把气泡打开（聚焦触发器），再看气泡里那句话。
+   */
+  it('聚焦弹出的气泡里只有名字，没有 “点线 · :” 这种拼法', async () => {
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    await act(async () => {
+      dotted.focus()
+      dotted.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+      dotted.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    const tip = document.querySelector('[role="tooltip"]')
+    expect(tip, '气泡没打开，这条判据就是恒真的').toBeTruthy()
+    expect(tip!.textContent).toBe('点线')
   })
 })

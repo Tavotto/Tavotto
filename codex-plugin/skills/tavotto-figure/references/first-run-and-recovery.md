@@ -8,12 +8,13 @@
 安装命令（分开跑，别用 `&&`——不同 shell 兼容，也好判断是哪一步失败）：
 
 ```sh
-codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
 codex plugin add tavotto@tavotto
 ```
 
-`--sparse` 必须同时带 `.agents/plugins` 与 `codex-plugin`：市场清单引用的是
-仓库内的本地插件目录，少一个 checkout 里就没有插件本体。
+市场清单指向发行分支 `plugin-stable`（`git-subdir` 来源）：装到的是 CI 构建并验证过的
+完整插件（含内嵌画布），不需要 Node，也不从源码 checkout 里取任何东西。老版本的
+Codex 不认识这种来源时，`codex plugin list` 里不会出现 `tavotto`——让用户升级 Codex。
 
 然后**要求用户新开一个 Codex 会话，并停止当前任务**。已经开着的会话不会
 重新加载插件的 skill 与 MCP 工具；`codex plugin list` 显示 enabled 也不代表

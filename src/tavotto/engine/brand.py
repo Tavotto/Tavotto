@@ -29,8 +29,9 @@ RELEASES_URL = f"{REPO_URL}/releases"
 #: 之后的症状是「照文档做装不上」，用户没法自己发现是哪一边错。
 #: 看护：`tests/test_codex_install_cli.py::test_readme_and_cli_use_the_same_command`
 CODEX_MARKETPLACE = f"{REPO_OWNER}/{REPO_NAME}"
-#: 稀疏检出：只取插件本体与它的注册目录，不把整个仓库拉到用户机器上
-CODEX_SPARSE_PATHS = (".agents/plugins", "codex-plugin")
+#: 稀疏检出：市场快照只需要市场清单——插件本体来自发行分支（`git-subdir → plugin-stable`，
+#: ADR 0043），不再从源码 checkout 里取，所以不必再把 `codex-plugin` 拉到用户机器上。
+CODEX_SPARSE_PATHS = (".agents/plugins",)
 #: **配置后的 marketplace 名**——与源 `Tavotto/Tavotto` 不是一回事：
 #: `codex plugin marketplace remove` 收的是这个名字，给它 `owner/repo` 会被拒
 #: （`/` 不是合法的 marketplace 名）。唯一出处是 `.agents/plugins/marketplace.json`
