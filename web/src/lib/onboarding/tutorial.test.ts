@@ -4,10 +4,17 @@
  * 重置先确认、忘掉本机那格 autosave。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TutorialMetadata } from '@/lib/api'
+import type { PanelInfo, TutorialMetadata } from '@/lib/api'
+import type { PanelObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore, isAutosaveSuspendedFor } from '@/store/documentStore'
-import { configureOnboardingPersistence, ONBOARDING_FLOW_VERSION, useOnboardingStore } from '@/store/onboardingStore'
+import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
+import {
+  configureOnboardingPersistence,
+  ONBOARDING_FLOW_VERSION,
+  useOnboardingStore,
+} from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
@@ -333,5 +340,69 @@ describe('resetTutorial', () => {
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.reason).toBe('locked')
     expect(useOnboardingStore.getState().currentStep).toBe('export_canvas')
+  })
+})
+
+/**
+ * 用户反馈 01：「在新手教学案例中，我双击示例图片，并不能进入图内编辑。」
+ *
+ * 教程的 `Tutorial.json` 里两块面板都**没有** `script`（它是随包分发的静态文件，
+ * 不知道副本落在哪、注册表怎么解析）。`ObjectView` 双击的判据是 `obj.script`：
+ * 缺席就落进裁剪。从选择器第一次进教程能用，只是因为工作台挂载那一次对账
+ * （`syncLoadedDocument`）恰好把它补上了；「重新开始教程」、在别的项目里点
+ * 「开始教程」、切回教程项目——这些路上文档是工作台挂载之后才换进来的，
+ * 没有人再对第二次账，双击就此进不去。这里钉的是：换进来的教程画布也要按
+ * 素材清单补上 `script`。
+ */
+describe('教程画布的面板要带 script（用户反馈 01：双击进不了图内编辑）', () => {
+  const PANEL_INFO: PanelInfo = {
+    id: 'Fig1_kinetics.pdf',
+    name: 'Fig1_kinetics',
+    folder: '.',
+    kind: 'pdf',
+    native_w_mm: 75,
+    native_h_mm: 58,
+    mtime: 1,
+    script: 'fig1_kinetics.py',
+    cost: 'light',
+  }
+  const PANELS = { figures_dir: '/data/tutorial/Tutorial', panels: [PANEL_INFO] }
+  const scriptOfP1 = () => (useDocumentStore.getState().doc.objects[0] as PanelObject).script
+  let stop: (() => void) | null = null
+
+  beforeEach(() => {
+    stubFetch({ '/api/panels': () => json(PANELS) })
+    useAssetStore.setState({ panels: [], byId: {}, loaded: false })
+  })
+  afterEach(() => {
+    stop?.()
+    stop = null
+  })
+
+  it('「重新开始教程」装回的干净画布：面板按素材清单补上 script', async () => {
+    // 第一次从选择器进教程：工作台随后挂载，挂载那一次对账把 script 补上
+    // （这正是第一次能用、重开之后不能用的原因）
+    await startTutorial()
+    syncLoadedDocument()
+    expect(scriptOfP1()).toBe('fig1_kinetics.py')
+    // 工作台挂着：换文档的对账订阅在（App.tsx 的 Workspace effect 起的那一个）
+    stop = startDocumentLoadSync()
+
+    const p = resetTutorial()
+    await new Promise((r) => setTimeout(r, 0))
+    useUiStore.getState().confirm!.resolve(true)
+    expect(await p).toEqual({ ok: true, kind: 'restarted' })
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    // 装回来的是随包分发的干净 Tutorial.json（没有 script）：换文档之后必须再对一次账
+    expect(scriptOfP1()).toBe('fig1_kinetics.py')
+  })
+
+  it('在别的项目里点「开始教程」（工作台已挂载）：教程画布的面板同样带上 script', async () => {
+    useProjectStore.setState({ phase: 'open', project: { open: true, id: 'p_other', name: 'other' } } as never)
+    stop = startDocumentLoadSync()
+    const out = await startTutorial('help')
+    expect(out.ok).toBe(true)
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    expect(scriptOfP1()).toBe('fig1_kinetics.py')
   })
 })

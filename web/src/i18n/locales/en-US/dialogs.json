@@ -28,6 +28,11 @@
     "conflictRename": "Save a copy",
     "conflictReplace": "Replace",
     "editedDuringExport": "This document changed while the export was running — the files hold what it looked like when you pressed Export.",
+    "epsHint": "Vector · no transparency",
+    "epsUnavailable": {
+      "canvas_scope": "EPS is only available at original size for a single figure: the canvas is composed by the PDF engine, which cannot write PostScript.",
+      "no_script": "This figure has no script that can be re-run; EPS can only be written by the script itself."
+    },
     "exported": "Exported: {{files}}",
     "filenameError": {
       "control_char": "That file name contains invisible characters. Type it again.",
@@ -41,6 +46,7 @@
     },
     "filenameLabel": "File name",
     "filenamePlaceholder": "Figure 1",
+    "figureListLabel": "Figure to export at its original size",
     "formatLabel": "Format",
     "ignored": {
       "crop": "cropping",
@@ -99,7 +105,8 @@
     "scopeOriginalFallback": "This figure's size can't be read right now, so a placeholder is being used — check the result.",
     "scopeOriginalNote": "Exports this figure at its own size, regardless of how it's placed on the canvas.",
     "scopeUnavailable": {
-      "no_figure": "Select a figure first to export it at its original size.",
+      "no_figure": "No figure is chosen yet — pick one below to export it at its original size.",
+      "no_figures": "This project has no figure to export at its original size yet, so only the canvas can be exported.",
       "source_stale": "This figure's source file can't be found right now, so only the canvas can be exported.",
       "unknown_figure": "This figure's details can't be found, so only the canvas can be exported."
     },
@@ -108,8 +115,9 @@
     "sizeUnknownShort": "size unknown",
     "start": "Export",
     "targetNoFigure": "No current figure",
+    "tiffHint": "Raster · lossless",
     "title": "Export",
-    "transparent": "Transparent background (PNG only)",
+    "transparent": "Transparent background (PNG / TIFF only)",
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
   },
@@ -725,14 +733,14 @@
           "health_failed": "Everything is installed, but the health check failed — the plugin still cannot find a usable Tavotto engine. Expand the details below for what it reported.",
           "interpreter_unusable": "The plugin's launcher command does not start on this machine — Codex would show no tools at all. (On Windows, python3 is often the Microsoft Store placeholder: it looks present but exits immediately.) Installing swaps it for an interpreter verified to actually run; if none is found, install a Python or point TAVOTTO_MCP_PYTHON at one and try again.",
           "marketplace_add_failed": "Tavotto could not be registered as a Codex plugin marketplace. The usual causes are no network access or no permission to write Codex's config directory.",
-          "marketplace_state_unknown": "Codex's marketplace registration could not be determined (codex plugin marketplace list did not produce a result), so nothing was changed. Expand the details for what Codex reported; usually Codex itself is not set up yet.",
+          "marketplace_state_unknown": "Codex's marketplace registration could not be determined (codex plugin marketplace list did not produce a result), so nothing was changed. That is not the same as not registered. Expand the details for what Codex reported: usually the codex command cannot start from inside Tavotto (for example an npm-installed codex that cannot find node), or Codex itself is not set up yet.",
           "not_desktop": "This action is only available in the desktop app.",
           "other": "The install did not succeed; the command's own words are in the details below.",
           "pin_failed": "The new launcher command could not be written to both of the plugin's manifests, so it was rolled back to the original — no half-updated pair is left behind. The plugin directory is most likely read-only or in use; clear that and try again.",
           "plugin_add_failed": "The marketplace was registered, but the plugin was not installed. Expand the details below for what Codex reported.",
           "plugin_install_ambiguous": "The installed plugin could not be located unambiguously: Codex reported no install path, and the cache holds zero or several same-named copies. This tool does not guess by version number or timestamp; expand the details for the candidates. Usually codex plugin remove tavotto@tavotto followed by codex plugin add tavotto@tavotto clears it up.",
           "plugin_source_unsupported": "The marketplace is registered, but Codex does not list the Tavotto plugin. Most likely this Codex version does not understand the plugin source in the marketplace manifest (the release channel uses a git-subdir source), or the local marketplace snapshot is stale. Run codex plugin marketplace upgrade tavotto in a terminal first; if the plugin still does not appear, update Codex.",
-          "plugin_state_unknown": "The plugin's install state could not be determined (codex plugin list did not produce a result), so nothing was changed. Expand the details for what Codex reported.",
+          "plugin_state_unknown": "The plugin's install state could not be determined (codex plugin list did not produce a result), so nothing was changed. That is not the same as not installed. Expand the details for what Codex reported.",
           "provision_failed": "The plugin is installed, but a matching version of the Tavotto engine could not be prepared for it.",
           "spawn_failed": "The Tavotto command line could not be started. Try again; if it keeps happening, run tavotto codex install in a terminal to see the raw output.",
           "uninstall_failed": "The removal did not finish; the command's own words are in the details below."
@@ -895,8 +903,8 @@
     "export": {
       "defaultDpi": "Default DPI",
       "defaultFormats": "Default formats",
-      "dpiHint": "Affects raster output (PNG) only — PDF is vector, so DPI means nothing for it.",
-      "formatsHint": "PDF keeps everything vector, which journals normally require; PNG is for previews and places that reject vector files.",
+      "dpiHint": "Affects raster output (PNG / TIFF) only — PDF and EPS are vector, so DPI means nothing for them.",
+      "formatsHint": "PDF keeps everything vector, which journals normally require; PNG is for previews and places that reject vector files; EPS is available only when exporting a figure with a script at its original size (no transparency); TIFF is a lossless raster.",
       "hint": "These are the export dialog's starting values; a single export can still change them.",
       "proof": "Proof record",
       "proofAria": "Write a proof report with every export by default",

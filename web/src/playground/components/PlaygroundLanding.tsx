@@ -13,6 +13,7 @@
  */
 import { useRef, useState } from 'react'
 import { Download } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
 import type { PlaygroundExample } from '../examples'
 import { pg } from '../pgText'
@@ -71,7 +72,7 @@ export function PlaygroundLanding({
               href={RELEASES_LATEST_URL}
               className="flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
             >
-              <Download size={12} aria-hidden />
+              <Download size={ICON_SIZE.sm} aria-hidden />
               {pg('downloadDesktop')}
             </a>
           </div>

@@ -1,5 +1,6 @@
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Toggle } from '@/components/ui/Toggle'
 
 /**
@@ -41,7 +42,7 @@ export function EffectToggle({
   }
   return (
     <Button variant="outline" size="sm" className="w-full" data-effect-add onClick={onAdd}>
-      <Plus size={11} aria-hidden />
+      <Plus size={ICON_SIZE.xs} aria-hidden />
       {addLabel}
     </Button>
   )

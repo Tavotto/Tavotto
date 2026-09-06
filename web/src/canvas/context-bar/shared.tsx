@@ -1,4 +1,5 @@
 import { SlidersHorizontal } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '@/components/ui/Button'
 import { Tip } from '@/components/ui/Tooltip'
 import { useUiStore } from '@/store/uiStore'
@@ -18,7 +19,7 @@ export function OpenInspectorButton() {
           ui.setRightTab('properties')
         }}
       >
-        <SlidersHorizontal size={12} />
+        <SlidersHorizontal size={ICON_SIZE.sm} />
       </Button>
     </Tip>
   )

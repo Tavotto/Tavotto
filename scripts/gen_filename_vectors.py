@@ -100,6 +100,12 @@ STRIP = [
     ("archive.tiff", ["png"]),
     (".pdf", ["pdf"]),
     ("Fig 1", ["pdf"]),
+    # ADR 0046：eps / tiff 也是我们自己会产出的扩展名；`.tif` 是 tiff 的别名
+    ("Fig 1.eps", ["pdf", "eps"]),
+    ("Fig 1.EPS", ["pdf"]),
+    ("Fig 1.tiff", ["tiff"]),
+    ("Fig 1.tif", ["tiff"]),
+    ("Fig 1.tif.tiff", ["tiff"]),
 ]
 
 #: 去重：`rename` 策略下已经被占用的名字往后编号。第二列是"已占用"集合。
@@ -109,6 +115,8 @@ DEDUPE = [
     ("Fig 1", "pdf", ["Fig 1.pdf", "Fig 1 (2).pdf"]),
     ("Fig 1", "png", ["Fig 1.pdf"]),
     ("图 1", "pdf", ["图 1.pdf", "图 1 (2).pdf", "图 1 (3).pdf"]),
+    ("Fig 1", "tiff", ["Fig 1.tiff"]),
+    ("Fig 1", "eps", ["Fig 1.pdf", "Fig 1.eps", "Fig 1 (2).eps"]),
 ]
 
 
@@ -131,6 +139,8 @@ def build() -> dict:
         "output_name": [
             {"base": "Fig 1", "format": "pdf", "name": exportreq.output_name("Fig 1", "pdf")},
             {"base": "Fig 1", "format": "png", "name": exportreq.output_name("Fig 1", "png")},
+            {"base": "Fig 1", "format": "eps", "name": exportreq.output_name("Fig 1", "eps")},
+            {"base": "Fig 1", "format": "tiff", "name": exportreq.output_name("Fig 1", "tiff")},
         ],
         "dedupe": [
             {

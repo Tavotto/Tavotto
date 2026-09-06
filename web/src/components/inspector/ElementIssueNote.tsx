@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import type { ManifestElement } from '@/lib/api'
 import { focusIssue, openProblems } from '@/lib/issueFocus'
 import { cn } from '@/lib/utils'
@@ -75,7 +76,7 @@ export function ElementIssueNote({
               issue.severity === 'error' ? 'text-danger' : 'text-ink-3',
             )}
           >
-            <Icon size={12} aria-hidden className="mt-px shrink-0" />
+            <Icon size={ICON_SIZE.xs} aria-hidden className="mt-px shrink-0" />
             <span className="min-w-0 flex-1">
               {issueDetailText(issue)}
               {link && (

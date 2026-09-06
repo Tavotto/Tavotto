@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Folder, SquareArrowOutUpRight } from 'lucide-react'
+import { ChevronDown, ExternalLink, Folder } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorMsg } from '@/lib/api'
 import { disambiguateRecent } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
@@ -68,9 +69,9 @@ export function ProjectSwitcher() {
             )}
             aria-label={t('switcher.trigger', { name: project.name })}
           >
-            <Folder size={13} className="shrink-0 text-ink-3" />
+            <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
             <span className="truncate">{project.name}</span>
-            <ChevronDown size={12} className="shrink-0 text-ink-3" />
+            <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
           </button>
         }
       >
@@ -162,7 +163,7 @@ export function OpenInNewTabButton() {
           'outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
         )}
       >
-        <SquareArrowOutUpRight size={13} />
+        <ExternalLink size={ICON_SIZE.sm} />
       </button>
     </Tip>
   )

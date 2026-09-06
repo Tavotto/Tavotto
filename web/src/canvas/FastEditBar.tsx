@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Info, LayoutGrid, Plus } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '@/components/ui/Button'
 import { formatMm } from '@/lib/units'
 import { useOriginalSpec } from '@/hooks/useOriginalSpec'
@@ -55,7 +56,7 @@ export function FastEditBar() {
             data-onboarding-anchor="add-to-layout"
             onClick={() => void addFigureToLayout(panel.fileId)}
           >
-            <Plus size={12} />
+            <Plus size={ICON_SIZE.sm} />
             {t('fastEdit.addToCanvas')}
           </Button>
           <Button
@@ -64,7 +65,7 @@ export function FastEditBar() {
             data-onboarding-anchor="to-layout"
             onClick={returnToLayout}
           >
-            <LayoutGrid size={12} />
+            <LayoutGrid size={ICON_SIZE.sm} />
             {t('fastEdit.toLayout')}
           </Button>
         </div>
@@ -77,7 +78,7 @@ export function FastEditBar() {
             data-fast-edit-added-note
             className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
           >
-            <Info size={12} className="shrink-0 text-ink-3" aria-hidden />
+            <Info size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
             <span className="min-w-0 truncate">{t('fastEdit.addedForEdit')}</span>
           </div>
         )}

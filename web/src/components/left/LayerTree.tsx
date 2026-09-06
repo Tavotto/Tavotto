@@ -19,6 +19,7 @@ import {
   Triangle,
   Type,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
@@ -252,7 +253,7 @@ function GroupRow({
         tabIndex={-1}
         className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
       >
-        <ChevronRight size={11} className={cn('transition-transform', !collapsed && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', !collapsed && 'rotate-90')} />
       </button>
       <span className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
@@ -361,7 +362,7 @@ function LayerRow({
         dropHint === 'below' && 'shadow-[inset_0_-1px_0_0_var(--color-accent)]',
       )}
     >
-      <Icon size={13} className={cn('shrink-0', selected ? 'text-accent' : 'text-ink-3')} />
+      <Icon size={ICON_SIZE.sm} className={cn('shrink-0', selected ? 'text-accent' : 'text-ink-3')} />
       {editing ? (
         <input
           autoFocus
@@ -389,7 +390,7 @@ function LayerRow({
       )}
       {/* 可参数化徽标与素材卡的 { } 同源；行首的 Braces 是大括号形状的种类图标，
           位置（行尾）与颜色（accent）把两个角色分开 */}
-      {isScript && !editing && <Braces size={12} className="shrink-0 text-accent" />}
+      {isScript && !editing && <Braces size={ICON_SIZE.sm} className="shrink-0 text-accent" />}
       {primary && !editing && (
         <span className="shrink-0 font-mono text-xs text-accent/70">{lt('primary')}</span>
       )}
@@ -408,7 +409,7 @@ function LayerRow({
           onClick={() => toggleLocked(obj.id)}
           aria-label={lt(obj.locked ? 'unlock' : 'lock')}
         >
-          {obj.locked ? <Lock size={12} /> : <LockOpen size={12} className="text-ink-3" />}
+          {obj.locked ? <Lock size={ICON_SIZE.sm} /> : <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />}
         </Button>
         <Button
           size="icon-sm"
@@ -417,7 +418,7 @@ function LayerRow({
           onClick={() => toggleHidden(obj.id)}
           aria-label={lt(obj.hidden ? 'show' : 'hide')}
         >
-          {obj.hidden ? <EyeOff size={12} /> : <Eye size={12} className="text-ink-3" />}
+          {obj.hidden ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} className="text-ink-3" />}
         </Button>
       </div>
     </li>

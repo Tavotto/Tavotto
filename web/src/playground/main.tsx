@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { IconProvider } from '@/components/ui/Icon'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { initI18n, readStoredLocale, systemLocale, t as translate, urlLocale } from '@/i18n'
 import { PRODUCT_NAME, RELEASES_LATEST_URL } from '@/lib/brand'
@@ -51,7 +52,9 @@ if (missing.length) {
       <ErrorBoundary>
         {/* 画布与属性页里有 Tooltip：Provider 必须在根上（与 App.tsx 同） */}
         <TooltipProvider>
-          <PlaygroundApp />
+          <IconProvider>
+            <PlaygroundApp />
+          </IconProvider>
         </TooltipProvider>
       </ErrorBoundary>
     </StrictMode>,

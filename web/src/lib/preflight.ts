@@ -484,11 +484,16 @@ function checkPanelFonts(
           { objectIds: [pid], gids: [gid], detail: { family }, prop: 'fontfamily' },
         )
       }
-      if (hasCjk(text) && cjk.required && !cjkOk.has(low)) {
+      // 中日韩白名单的主语是**真正画出汉字的那张脸**：正文族自己盖得住时是它；
+      // 盖不住、由回退链（ADR 0045）接手时是 manifest 报的 `cjk_family`。
+      // 只看正文族名会把回退链画得好好的中文报成「会是方框」。
+      const face = typeof el.cjk_family === 'string' && el.cjk_family ? el.cjk_family : ''
+      const drawnBy = face || family
+      if (hasCjk(text) && cjk.required && !cjkOk.has(drawnBy.toLowerCase())) {
         sink.add(
           'cjk-fallback-missing',
-          pf('cjkFallbackMissing', { family }),
-          { objectIds: [pid], gids: [gid], detail: { family }, prop: 'fontfamily' },
+          face ? pf('cjkFallbackUnaccepted', { family, face }) : pf('cjkFallbackMissing', { family }),
+          { objectIds: [pid], gids: [gid], detail: { family, face: drawnBy }, prop: 'fontfamily' },
         )
       }
     }

@@ -1,4 +1,5 @@
 import { Check, ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { useState } from 'react'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -78,7 +79,7 @@ export function ColormapPicker({
           <span className="min-w-0 flex-1 truncate text-left font-mono">
             {value === null ? MIXED_TEXT() : value}
           </span>
-          <ChevronDown size={12} className="shrink-0 text-ink-3" />
+          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </button>
       }
     >
@@ -113,7 +114,7 @@ export function ColormapPicker({
               )}
             >
               <span className="flex w-3.5 shrink-0 items-center">
-                {active && <Check size={11} aria-hidden className="text-accent" />}
+                {active && <Check size={ICON_SIZE.xs} aria-hidden className="text-accent" />}
               </span>
               <GradientBar name={name} className="w-16 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left font-mono text-xs text-ink">

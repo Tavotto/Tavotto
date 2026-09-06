@@ -1,4 +1,5 @@
 import { CornerUpLeft, Link2, Unlink2 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { entryBinding, hasStyleOverride } from '@/lib/legendModel'
@@ -43,9 +44,9 @@ export function LegendBindingControl({
     <div className="flex min-w-0 flex-1 flex-col gap-1">
       <div className="flex min-w-0 items-center gap-1.5">
         {binding === 'follow_source' ? (
-          <Link2 size={12} className="shrink-0 text-ink-3" aria-hidden />
+          <Link2 size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
         ) : (
-          <Unlink2 size={12} className="shrink-0 text-accent" aria-hidden />
+          <Unlink2 size={ICON_SIZE.sm} className="shrink-0 text-accent" aria-hidden />
         )}
         <span className="min-w-0 truncate text-xs text-ink" data-binding={binding}>
           {binding === 'follow_source' ? lg('stateFollow') : lg('stateCustom')}
@@ -77,7 +78,7 @@ export function LegendBindingControl({
           className="max-w-full self-start px-1.5 text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(source.gid)}
         >
-          <CornerUpLeft size={11} className="shrink-0" />
+          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
           <span className="truncate">{lg('viewSource', { label: engineLabel(source.label) })}</span>
         </Button>
       )}

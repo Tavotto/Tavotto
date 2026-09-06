@@ -419,15 +419,31 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                     gids=[gid],
                     detail={"family": family},
                 )
-            if has_cjk(text) and cjk.get("required") and low not in cjk_ok:
+            # 中日韩白名单的主语是**真正画出汉字的那张脸**：正文族自己盖得住
+            # 时是它；盖不住、由回退链（ADR 0045）接手时是 manifest 报的
+            # `cjk_family`。只看正文族名的话，回退链画得好好的中文会被报成
+            # 「会是方框」——一句错的断言比没有断言更坏。
+            face = el.get("cjk_family")
+            face = face if isinstance(face, str) and face else ""
+            drawn_by = face or family
+            if has_cjk(text) and cjk.get("required") and drawn_by.lower() not in cjk_ok:
                 sink.add(
                     "cjk-fallback-missing",
-                    f"含中日韩字符的文字用的是 {family}，没有声明中文 fallback，"
-                    "导出 PDF 里会是方框",
-                    message=("cjkFallbackMissing", {"family": family}),
+                    (
+                        f"含中日韩字符的文字由 {face} 画出（正文字体 {family}），"
+                        "它不在规范接受的中文字体里"
+                        if face
+                        else f"含中日韩字符的文字用的是 {family}，没有可用的中文 fallback，"
+                        "导出 PDF 里会是方框"
+                    ),
+                    message=(
+                        ("cjkFallbackUnaccepted", {"family": family, "face": face})
+                        if face
+                        else ("cjkFallbackMissing", {"family": family})
+                    ),
                     object_ids=[pid],
                     gids=[gid],
-                    detail={"family": family},
+                    detail={"family": family, "face": drawn_by},
                 )
         # 字形覆盖：判据是**引擎实际解析到的那套字体画不画得出这些字**
         # （manifest 的 `glyphs_missing` / `glyphs_fallback`，产生者只有

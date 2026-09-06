@@ -5,6 +5,11 @@ matplotlib 会把 `⁵` `⁻` 画成 .notdef 方框（实测三个字符画出�
 一样——那就是同一个空心框），链路全通、渲染成功、界面一句话都不说。
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
+
+**本文件量的是「方框被报成问题」这条路**，所以 worker 跑在中日韩回退链关掉的
+世界里（`TAVOTTO_CJK_FALLBACK=0`，只留 DejaVu Sans 那一段尾巴）：装了中文字体的
+机器上汉字本来就不再是方框（ADR 0045），不关掉的话这里的断言量的是「这台机器
+装没装字体」，不是判据。回退链自己的兑现凭据在 `tests/test_cjk_figure_text.py`。
 """
 
 import pytest
@@ -19,6 +24,13 @@ except pool.WorkerError:
 pytestmark = pytest.mark.skipif(
     WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_cjk_tail(monkeypatch):
+    """worker 在测试函数体内才起，所以这里设的环境变量它继承得到。"""
+    monkeypatch.setenv("TAVOTTO_CJK_FALLBACK", "0")
+
 
 SCRIPT_NAME = "fig_glyphs.py"
 ENTRY = "main"
