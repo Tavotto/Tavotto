@@ -54,7 +54,12 @@ const el = (gid: string, role: string, label: string) => ({
   editable: [{ prop: 'fontsize', type: 'number', value: 7 }],
 })
 
-/** 刻度文字挂在刻度组下，刻度组挂在子图下——默认那两层是收起的 */
+/**
+ * 刻度文字挂在刻度组下，刻度组挂在子图下——默认那两层是收起的。
+ * 子图给 7 个直属元素、三条曲线，`buildTree` 才会加语义聚类那一层
+ * （>4 个直属 + 同类 ≥2）——**聚类行与元素行是两套 onKeyDown**，
+ * 只摆一条曲线的话聚类那一套一次都执行不到（变异反证时发现的）。
+ */
 const manifest = {
   stem: 'Fig1',
   size_mm: [80, 60],
@@ -62,9 +67,13 @@ const manifest = {
     el('figure', 'figure', '整张图'),
     el('axes_0', 'axes', '子图 1'),
     el('axes_0.title', 'title', '标题'),
+    el('axes_0.xlabel', 'axis_label', 'X 轴标题'),
+    el('axes_0.ylabel', 'axis_label', 'Y 轴标题'),
     el('axes_0.yticks', 'ticks', 'Y 刻度'),
     el('axes_0.yticks.label_3', 'ticklabel', '刻度文字 0.75'),
     el('axes_0.lines_0', 'line', '曲线 1'),
+    el('axes_0.lines_1', 'line', '曲线 2'),
+    el('axes_0.lines_2', 'line', '曲线 3'),
   ],
 }
 
@@ -181,9 +190,9 @@ describe('文案与计数', () => {
 
   it('标题上的计数带单位', async () => {
     await mount()
-    // manifest 有 6 条，figure 那条不算
-    expect(heading()).toContain(t('elementTree.count', { ns: 'workspace', count: 5 }))
-    expect(heading()).not.toMatch(/\s5\s*$/)
+    // manifest 有 10 条，figure 那条不算
+    expect(heading()).toContain(t('elementTree.count', { ns: 'workspace', count: 9 }))
+    expect(heading()).not.toMatch(/\s9\s*$/)
   })
 })
 
@@ -195,5 +204,61 @@ describe('结构列表的计数也带单位（T07）', () => {
     expect(t('layerTree.count', { ns: 'workspace', count: 1 })).not.toBe(
       t('elementTree.count', { ns: 'workspace', count: 1 }),
     )
+  })
+})
+
+/**
+ * 键盘可连续浏览父子层级（审计 T08 验收后半句）。树是 `role="tree"` +
+ * `role="treeitem"`，焦点靠 roving tabindex 走，不靠 Tab 一格一格穿。
+ */
+describe('键盘', () => {
+  const row = (gid: string) => host.querySelector(`[data-el="${gid}"]`) as HTMLElement
+  const press = async (el: HTMLElement, key: string) => {
+    await act(async () => {
+      el.focus()
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+    await act(async () => {})
+  }
+
+  it('↓ 走到下一行，↑ 走回来', async () => {
+    await mount()
+    const gids = rowGids()
+    await press(row(gids[0]!), 'ArrowDown')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe(gids[1])
+    await press(document.activeElement as HTMLElement, 'ArrowUp')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe(gids[0])
+  })
+
+  it('→ 展开收起的层级，← 收回去', async () => {
+    await mount()
+    const ticks = row('axes_0.yticks')
+    expect(ticks.getAttribute('aria-expanded')).toBe('false')
+    await press(ticks, 'ArrowRight')
+    expect(rowGids()).toContain('axes_0.yticks.label_3')
+    await press(row('axes_0.yticks'), 'ArrowLeft')
+    expect(rowGids()).not.toContain('axes_0.yticks.label_3')
+  })
+
+  it('展开之后 ↓ 就能走进子层：父子是连着的一条路', async () => {
+    await mount()
+    await press(row('axes_0.yticks'), 'ArrowRight')
+    await press(row('axes_0.yticks'), 'ArrowDown')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks.label_3')
+  })
+
+  it('语义聚类那一行也走同一套键：→ 展开、← 收起', async () => {
+    await mount()
+    // 聚类行的 key 是「父 key#聚类名」，不是 gid
+    const cluster = [...host.querySelectorAll('[data-el]')].find((n) =>
+      (n as HTMLElement).dataset.el!.includes('#'),
+    ) as HTMLElement
+    expect(cluster).toBeTruthy()
+    expect(cluster.getAttribute('aria-expanded')).toBe('false')
+    const collapsed = rowGids().length
+    await press(cluster, 'ArrowRight')
+    expect(rowGids().length).toBeGreaterThan(collapsed)
+    await press(row(cluster.dataset.el!), 'ArrowLeft')
+    expect(rowGids().length).toBe(collapsed)
   })
 })

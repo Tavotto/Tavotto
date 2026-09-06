@@ -90,6 +90,12 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
   const list = page.getByRole('list', { name: '画布列表' })
   await expect(list).toBeVisible()
 
+  // 关闭按钮只在开着两个以上标签时出现（最后一个标签不给关）
+  // 右栏的属性 / 画布也是 role=tab：必须限定在画布标签那条 tablist 里
+  const tabs = page.getByRole('tablist', { name: '画布标签' }).getByRole('tab')
+  await page.getByRole('button', { name: '新建画布', exact: true }).first().click()
+  await expect(tabs).toHaveCount(2)
+
   const long = '超长画布名'.repeat(12)
   const row = list.locator('li').first()
   await row.getByRole('button', { name: /^打开画布/ }).dblclick()
@@ -114,6 +120,14 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
       return ul.scrollWidth > ul.clientWidth + 1
     }),
   ).toBe(false)
+
+  // 审计验收还点了名的另一半：画布标签上的关闭按钮也不许被长名字挤走
+  const tab = tabs.filter({ hasText: '超长画布名' }).first()
+  const closeBtn = tab.getByRole('button', { name: /^关闭标签/ })
+  const tabBox = (await tab.boundingBox())!
+  const closeBox = (await closeBtn.boundingBox())!
+  expect(closeBox.x + closeBox.width).toBeLessThanOrEqual(tabBox.x + tabBox.width + 1)
+  expect(closeBox.width).toBeGreaterThan(10)
 })
 
 test('T01：一条上下文栏、一个返回入口，回来时画布不意外移动', async ({ app, page }) => {
