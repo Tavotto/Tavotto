@@ -324,4 +324,47 @@ describe('整张图：图幅带 W / H，背景在首屏（T11）', () => {
   })
 })
 
+/* --------------------------------- 曲线 ---------------------------------- */
+
+describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T15）', () => {
+  it('marker = None：没有标记大小 / 标记填充 / 标记描边三行', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    await mount(['axes_0.lines_0'])
+    await openMore()
+    expect(row('marker')).toBeTruthy()
+    expect(row('markersize')).toBeNull()
+    expect(row('markerfacecolor')).toBeNull()
+    expect(row('markeredgecolor')).toBeNull()
+  })
+
+  it('marker = o：三行就在首屏（不藏在「更多」里），颜色 / 线宽 / 线型仍排在前', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields({ marker: 'o' }))]),
+    )
+    await mount(['axes_0.lines_0'])
+    // 不点「更多」
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    const idx = (p: string) => props.indexOf(p)
+    for (const p of ['color', 'linewidth', 'linestyle', 'marker', 'markersize', 'markerfacecolor', 'markeredgecolor']) {
+      expect(idx(p), p).toBeGreaterThanOrEqual(0)
+    }
+    expect(idx('color')).toBeLessThan(idx('marker'))
+    expect(idx('marker')).toBeLessThan(idx('markersize'))
+    expect(idx('markersize')).toBeLessThan(idx('markerfacecolor'))
+    // 透明度仍在「更多」里
+    expect(row('alpha')).toBeNull()
+  })
+
+  it('用户改过标记大小后再把标记设为无，那一行照样显示（改过的必须能看到）', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    useDocumentStore.getState().commit(literal('改标记大小'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides.push({ gid: 'axes_0.lines_0', prop: 'markersize', value: 9 })
+    })
+    await mount(['axes_0.lines_0'])
+    expect(row('markersize')).toBeTruthy()
+    expect(row('markerfacecolor')).toBeNull()
+  })
+})
+
 export { textOf, byText, row, inputIn, typeNumber, openMore, host as hostRef }

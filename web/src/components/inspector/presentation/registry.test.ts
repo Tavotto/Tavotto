@@ -17,12 +17,29 @@ describe('presentFields：角色模板分桶', () => {
       f('marker', 'enum'), f('markersize'), f('alpha'),
       f('zorder', 'number', '排列'), f('visible', 'bool'),
     ]
-    const b = presentFields('line', fields, opts())
+    const b = presentFields('line', fields, opts([], { marker: 'o' }))
     expect(b.primary.map((x) => x.field.prop)).toEqual([
       'color', 'linewidth', 'linestyle', 'marker', 'markersize',
     ])
     expect(b.more.map((x) => x.field.prop)).toEqual(['alpha', 'visible'])
     expect(b.advanced.map((x) => x.field.prop)).toEqual(['zorder'])
+  })
+
+  it('line：标记为无（None / none / 空串）时标记大小与填充 / 描边色收起；改过的照样在（审计 T15）', () => {
+    const fields = [
+      f('marker', 'enum'), f('markersize'),
+      f('markerfacecolor', 'color'), f('markeredgecolor', 'color'),
+    ]
+    for (const none of ['None', 'none', '']) {
+      const b = presentFields('line', fields, opts([], { marker: none }))
+      expect(b.primary.map((x) => x.field.prop), none).toEqual(['marker'])
+    }
+    const on = presentFields('line', fields, opts([], { marker: 's' }))
+    expect(on.primary.map((x) => x.field.prop)).toEqual([
+      'marker', 'markersize', 'markerfacecolor', 'markeredgecolor',
+    ])
+    const orphan = presentFields('line', fields, opts(['markersize'], { marker: 'None' }))
+    expect(orphan.primary.map((x) => x.field.prop)).toEqual(['marker', 'markersize'])
   })
 
   it('manifest 没有的属性绝不发明：模板点名而字段缺席的不出现', () => {

@@ -12,6 +12,15 @@ const TEXT_EFFECT_VISIBILITY: NonNullable<RoleProfile['visibleWhen']> = Object.f
   ),
 )
 
+/**
+ * 曲线选了标记（`marker` 不是 None）才有意义的从属字段共用这一条。
+ * matplotlib 的「无标记」有三种写法（'None' / 'none' / ''），三种都算没有
+ */
+const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
+  const m = String(read('marker') ?? 'None')
+  return m !== 'None' && m !== 'none' && m !== ''
+}
+
 /** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
 const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
@@ -70,9 +79,19 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       handle_markersize: (read) => read('handle_marker') !== 'None',
     },
   },
+  // 曲线：颜色 / 线型 / 线宽紧凑在前；标记的尺寸与填充 / 描边色只在选了标记
+  // 之后才铺开（审计 T15）——「无标记」时摆一个标记大小是此刻写了不生效的控件
   line: {
-    primary: ['label', 'color', 'linewidth', 'linestyle', 'marker', 'markersize'],
-    more: ['alpha', 'markerfacecolor', 'markeredgecolor', 'visible'],
+    primary: [
+      'label', 'color', 'linewidth', 'linestyle',
+      'marker', 'markersize', 'markerfacecolor', 'markeredgecolor',
+    ],
+    more: ['alpha', 'visible'],
+    visibleWhen: {
+      markersize: HAS_MARKER,
+      markerfacecolor: HAS_MARKER,
+      markeredgecolor: HAS_MARKER,
+    },
   },
   linecoll: {
     primary: ['color', 'linewidth', 'linestyle'],
