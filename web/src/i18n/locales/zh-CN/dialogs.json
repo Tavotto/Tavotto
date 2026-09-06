@@ -874,9 +874,8 @@
       },
       "title": "编码 Agent",
       "toggleAria": "在 {{product}} 中启用 {{name}}",
-      "useFromAgents": "在编码 Agent 中使用 {{product}}",
-      "useInProduct": "在 {{product}} 中使用编码 Agent",
-      "versionAria": "版本 {{version}}",
+      "useFromAgents": "连接外部工具",
+      "useInProduct": "配置改图助手",
       "viewGuide": "查看使用指南"
     },
     "canvas": {

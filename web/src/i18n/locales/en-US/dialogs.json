@@ -881,9 +881,8 @@
       },
       "title": "Coding Agents",
       "toggleAria": "Enable {{name}} in {{product}}",
-      "useFromAgents": "Use {{product}} from coding agents",
-      "useInProduct": "Use coding agents in {{product}}",
-      "versionAria": "Version {{version}}",
+      "useFromAgents": "Connect an external tool",
+      "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide"
     },
     "canvas": {
