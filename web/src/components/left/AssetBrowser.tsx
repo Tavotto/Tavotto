@@ -1002,7 +1002,8 @@ function CardActions({ selected, children }: { selected: boolean; children: Reac
   return (
     <span
       className={cn(
-        'absolute bottom-1 right-1 flex items-center gap-1',
+        // 双列时卡片只有 ~150px 宽，两个入口放不下一行就换行（图片区 4:3 有两行的高度）
+        'absolute bottom-1 right-1 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center justify-end gap-1',
         'opacity-0 transition-opacity select-none',
         'group-hover:opacity-100 group-focus-visible:opacity-100',
         selected && 'opacity-100',
@@ -1068,11 +1069,23 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
       </span>
       {actionable ? (
         <>
-          <Button size="sm" variant="outline" onClick={() => openFastEdit(itemId(item))}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              openFastEdit(itemId(item))
+            }}
+          >
             <PenLine size={12} />
             {ab('openFigure')}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => addFigureToLayout(itemId(item))}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              addFigureToLayout(itemId(item))
+            }}
+          >
             <Plus size={12} />
             {ab('addToCanvas')}
           </Button>

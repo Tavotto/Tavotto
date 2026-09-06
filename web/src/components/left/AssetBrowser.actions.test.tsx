@@ -225,6 +225,42 @@ describe('运行时图卡', () => {
   })
 })
 
+describe('看大图弹窗的主按钮', () => {
+  const dialogAddButton = () =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+      (b) => b.textContent?.trim() === '添加到画布',
+    )
+
+  it('文件：Space 看大图 → 「添加到画布」走 addFigureToLayout', async () => {
+    seedPanels([panel('Fig1.pdf')])
+    await mount()
+    await key(cardOf('Fig1.pdf'), ' ')
+    const btn = dialogAddButton()!
+    expect(btn).toBeTruthy()
+    await act(async () => btn.click())
+    expect(mockAdd).toHaveBeenCalledWith('Fig1.pdf')
+  })
+
+  it('跑过的运行时图：同一条路（按 id 走 addFigureToLayout，已在文档里就只是聚焦，绝不叠第二份）', async () => {
+    useRuntimeAssetStore.setState({ assets: [runtime('show')] })
+    await mount()
+    await key(cardOf('runtime:fig.py#show'), ' ')
+    const btn = dialogAddButton()!
+    expect(btn.disabled).toBe(false)
+    await act(async () => btn.click())
+    expect(mockAdd).toHaveBeenCalledWith('runtime:fig.py#show')
+  })
+
+  it('没跑过的运行时图：主按钮禁用（没有描述符就没有可添加的东西）', async () => {
+    useRuntimeAssetStore.setState({
+      assets: [runtime('show', { cached: false, descriptor: null, size_mm: null, status: 'needs_rerun' })],
+    })
+    await mount()
+    await key(cardOf('runtime:fig.py#show'), ' ')
+    expect(dialogAddButton()!.disabled).toBe(true)
+  })
+})
+
 describe('同源的运行时图与磁盘图', () => {
   it('runtimeSiblingOf：同一脚本 + 同一 stem 才算同源', () => {
     const a = panel('sub/Fig1.pdf', { folder: 'sub' })

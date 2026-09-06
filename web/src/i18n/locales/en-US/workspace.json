@@ -29,7 +29,7 @@
     "loadFailed": "Could not read the asset library",
     "noMatch": "No panel matches these filters",
     "openAria": "Edit {{name}} (opens quick edit)",
-    "openFigure": "Edit figure",
+    "openFigure": "Edit",
     "refresh": "Refresh project",
     "refreshFailed": "Refresh failed: {{error}}",
     "refreshTip": "Check the project for new files and script changes",
