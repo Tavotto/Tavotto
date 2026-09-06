@@ -145,13 +145,17 @@ export function ContextBar() {
   // （z-40）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
   const overlayDrawerOpen = layout === 'narrow' && (leftOpen || rightOpen)
   /**
-   * 停靠的属性页正开着：文字元素的完整样式行（字体 / 字号 / 字重 / 字形 /
-   * 颜色 / 对齐）就在右栏里，浮动栏再铺一遍是同一批控件的第二份摆放
-   * （审计 T14）。此时浮动栏只留最顺手的三件（字号 / 加粗 / 斜体）——最宽的
-   * 字体下拉与取色器让给右栏，条也因此短了一截、更不容易盖到别的文字。
-   * 右栏关着（或在 narrow 下是覆盖式抽屉、本来就不同时出现）时保持完整。
+   * 停靠的属性页正开着：文字的完整样式行（字体 / 字号 / 字重 / 字形 / 颜色 /
+   * 对齐）就在右栏里，浮动栏再铺一遍是同一批控件的第二份摆放（审计 T14 记的是
+   * 图内文字，T27 记的是画布文字——**同一条判据，不写第二份**）。此时浮动栏
+   * 只留最顺手的三件（字号 / 加粗 / 斜体）：最宽的字体下拉与取色器让给右栏，
+   * 条也因此短了一截、更不容易盖到别的文字。右栏关着（或在 narrow 下是覆盖式
+   * 抽屉、本来就不同时出现）时保持完整。
    */
   const inspectorDocked = rightOpen && rightTab === 'properties' && layout !== 'narrow'
+  /** 缩减只作用在「右栏此刻真的在铺同一批控件」的两种目标上 */
+  const textBarCompact =
+    inspectorDocked && (mode === 'element' || (mode === 'object' && obj?.type === 'text'))
   const active =
     !!targetKey &&
     hasActions &&
@@ -302,7 +306,7 @@ export function ContextBar() {
     variant,
     freeWidth,
     resizeTick,
-    inspectorDocked,
+    textBarCompact,
     manifest,
   ])
 
@@ -316,7 +320,7 @@ export function ContextBar() {
       data-multi-selection-context-bar={mode === 'multi' ? '' : undefined}
       data-variant={mode === 'multi' ? variant : undefined}
       data-placement={pos?.placement}
-      data-context-bar-compact={mode === 'element' && inspectorDocked ? '' : undefined}
+      data-context-bar-compact={textBarCompact ? '' : undefined}
       role="toolbar"
       aria-label={mode === 'multi' ? qb('multiAria') : qb('aria')}
       style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}
@@ -331,12 +335,12 @@ export function ContextBar() {
     >
       {mode === 'element' && panel && gid ? (
         <>
-          <ElementQuickActions panel={panel} gid={gid} compact={inspectorDocked} />
+          <ElementQuickActions panel={panel} gid={gid} compact={textBarCompact} />
           <OpenInspectorButton />
         </>
       ) : mode === 'object' && obj ? (
         <>
-          <ObjectQuickActions obj={obj} />
+          <ObjectQuickActions obj={obj} compact={textBarCompact} />
           <OpenInspectorButton />
         </>
       ) : mode === 'multi' && multi ? (

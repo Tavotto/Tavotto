@@ -2106,6 +2106,7 @@ export default interface Resources {
       "deleteGuide": "删除{{axis}}参考线 {{pos}}mm",
       "grid": "网格",
       "gridSize": "网格间距",
+      "gridSummary": "网格 {{size}} mm",
       "guideCount_other": "{{count}} 条",
       "guideHorizontal": "水平",
       "guideVertical": "垂直",
@@ -2929,12 +2930,11 @@ export default interface Resources {
       "bold": "加粗",
       "border": "描边",
       "case": "大小写",
+      "caseAction": "转换…",
       "caseLower": "全部小写",
       "caseSentence": "每句首字母大写",
       "caseTitle": "每个词首字母大写",
       "caseUpper": "全部大写",
-      "clearBackground": "清除背景",
-      "clearBorder": "清除描边",
       "color": "颜色",
       "fontSize": "字号",
       "glyphFallback": "这些字符会用另一张字体画：{{chars}}",
@@ -2951,7 +2951,6 @@ export default interface Resources {
       "matchHint": "图内正文显示约 {{eff}}pt",
       "matchTitle": "标注字号是页面绝对值；「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}}pt 正文实际显示约 {{eff}}pt。想让标注和图内文字一样大，就用这个值。",
       "newlineTitle": "在光标处插入换行（画布内编辑可用 {{alt}} / {{mod}}）",
-      "none": "无",
       "padding": "内边距",
       "placeholder": "输入文字…",
       "subscript": "下标（H₂O 这类）",
@@ -3046,8 +3045,9 @@ export default interface Resources {
     },
     "transform": {
       "rotation": "旋转",
+      "summary": "X {{x}} · Y {{y}} mm",
       "textHeightAuto": "文字高度由内容自动决定",
-      "title": "变换"
+      "title": "位置与尺寸"
     },
     "unlock": "解锁",
     "unsupported": {

@@ -1,8 +1,11 @@
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { msg, type UiMessage } from '@/i18n'
+import { msg, t as translate, type UiMessage } from '@/i18n'
+import { formatMm } from '@/lib/units'
 import { updateObjects } from '@/store/actions'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import type { CanvasObject } from '@/types/document'
-import { Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { NumberField } from '../ui/Input'
 import { MmField } from './MmField'
 import { shared } from './common'
@@ -11,7 +14,15 @@ import { shared } from './common'
 /** 本组的历史标签都在 inspector:history.* 下 */
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
-export function TransformSection({ objs }: { objs: CanvasObject[] }) {
+/**
+ * 位置与尺寸。
+ *
+ * `foldKey` 给了就折叠成一行 + 现状摘要（`X 43.3 · Y 20.6 mm`），展开状态按这个
+ * 键记忆。**只有文字对象用它**：文字的高频编辑是内容与排版，位置多半是在画布上
+ * 拖出来的，把一整段变换摆在内容前面等于让人每次都往下找（审计 T27）。
+ * 折叠不减能力——展开后还是同一批字段。
+ */
+export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; foldKey?: string }) {
   const { t } = useTranslation('inspector')
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
@@ -23,8 +34,8 @@ export function TransformSection({ objs }: { objs: CanvasObject[] }) {
   const setEach = (label: UiMessage, fn: (o: CanvasObject, index: number) => void) =>
     updateObjects(ids, label, (o) => fn(o, ids.indexOf(o.id)))
 
-  return (
-    <Section title={t('transform.title')}>
+  const body = (
+    <>
       <Grid2>
         <MmField
           label="X"
@@ -91,7 +102,7 @@ export function TransformSection({ objs }: { objs: CanvasObject[] }) {
       </Grid2>
       {rotatable && (
         <div className="mt-1.5">
-          <Row label={t('transform.rotation')}>
+          <Row label={t('transform.rotation')} labelWidth={72}>
             <NumberField
               value={shared(objs, (o) => o.rotationDeg ?? 0) ?? 0}
               mixed={shared(objs, (o) => o.rotationDeg ?? 0) === undefined}
@@ -110,6 +121,53 @@ export function TransformSection({ objs }: { objs: CanvasObject[] }) {
           </Row>
         </div>
       )}
-    </Section>
+    </>
+  )
+
+  if (foldKey) {
+    return (
+      <FoldedTransform title={t('transform.title')} foldKey={foldKey} objs={objs}>
+        {body}
+      </FoldedTransform>
+    )
+  }
+  return <Section title={t('transform.title')}>{body}</Section>
+}
+
+/**
+ * 折叠壳：收起时报出当前 X / Y（多个值时报「多个值」），与画布设置的折叠摘要
+ * 同一种模型。展开状态存 `inspectorPrefs`，与「更多」共用那份持久化偏好。
+ */
+function FoldedTransform({
+  title,
+  foldKey,
+  objs,
+  children,
+}: {
+  title: string
+  foldKey: string
+  objs: CanvasObject[]
+  children: ReactNode
+}) {
+  const open = useInspectorPrefs((s) => s.moreOpen[foldKey] ?? false)
+  const setOpen = useInspectorPrefs((s) => s.setMoreOpen)
+  const mixed = translate('mixed')
+  const x = shared(objs, (o) => o.x)
+  const y = shared(objs, (o) => o.y)
+  const summary = translate('transform.summary', {
+    ns: 'inspector',
+    x: x === undefined ? mixed : formatMm(x),
+    y: y === undefined ? mixed : formatMm(y),
+  })
+
+  return (
+    <Disclosure
+      title={title}
+      open={open}
+      onToggle={() => setOpen(foldKey, !open)}
+      summary={summary}
+    >
+      <div data-transform-folded>{children}</div>
+    </Disclosure>
   )
 }

@@ -904,12 +904,11 @@
     "bold": "Bold",
     "border": "Stroke",
     "case": "Case",
+    "caseAction": "Convert…",
     "caseLower": "lowercase",
     "caseSentence": "Capitalise each sentence",
     "caseTitle": "Capitalise Each Word",
     "caseUpper": "UPPERCASE",
-    "clearBackground": "Clear background",
-    "clearBorder": "Clear stroke",
     "color": "Colour",
     "fontSize": "Size",
     "glyphFallback": "These characters are drawn with a different font: {{chars}}",
@@ -926,7 +925,6 @@
     "matchHint": "Body text in the figure renders at about {{eff}}pt",
     "matchTitle": "Annotation size is absolute on the page. With “{{panel}}” scaled to {{scale}}%, {{base}}pt body text inside the figure renders at about {{eff}}pt. Use this value to match it.",
     "newlineTitle": "Insert a line break at the cursor (on-canvas editing also takes {{alt}} / {{mod}})",
-    "none": "None",
     "padding": "Padding",
     "placeholder": "Type text…",
     "subscript": "Subscript (e.g. H₂O)",
@@ -1021,8 +1019,9 @@
   },
   "transform": {
     "rotation": "Rotation",
+    "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "Text height is determined by the content",
-    "title": "Transform"
+    "title": "Position and size"
   },
   "unlock": "Unlock",
   "unsupported": {
