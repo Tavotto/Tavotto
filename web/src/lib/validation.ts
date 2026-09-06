@@ -485,9 +485,16 @@ export function summaryFor(
 /**
  * 聚合投影按对象裁一刀（按原图导出时写进样式检查报告的那份）。命中了这个对象
  * 的条目留下并**投影到它身上**：`objectIds` 只剩它、`gids` / `occurrences` 只剩
- * 它的；页面级条目（没有对象）不算。聚合项的 `message` / `detail` 是全画布最糟
- * 那一次的，这里原样保留——报告里的量化细节以逐条命中为准，这一刀只保证
- * **条目与对象集合**不混进别的图。
+ * 它的；页面级条目（没有对象）不算。
+ *
+ * **`message` / `detail` 跟着一起重算。** 它们原本是**全画布**最糟那一次的，而
+ * `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）——同一条规则
+ * 命中多个面板、别的面板更糟时，按原图导出的样式检查报告会把别人的测量值记到
+ * 选中的那张图头上（目标自己 7 pt，报告里写成 4 pt）。裁完重挑一次，报告里的数
+ * 就是这张图的数。
+ *
+ * 重挑的尺子与 `Sink` 完全一样（同一条规则只有一个权威）：带排名的取最糟那次，
+ * 不带排名的第一次说了算，并列时先出现的赢。
  */
 export function rawIssuesForObject(raw: PreflightIssue[], objectId: string): PreflightIssue[] {
   return raw
@@ -495,7 +502,20 @@ export function rawIssuesForObject(raw: PreflightIssue[], objectId: string): Pre
     .map((i) => {
       const occurrences = i.occurrences.filter((o) => o.objectId === objectId)
       const gids = [...new Set(occurrences.map((o) => o.gid).filter((g): g is string => !!g))]
-      return { ...i, objectIds: [objectId], gids, occurrences }
+      let best = occurrences[0]
+      for (const occ of occurrences) {
+        if (occ.worse != null && (best?.worse == null || occ.worse > best.worse)) best = occ
+      }
+      return {
+        ...i,
+        objectIds: [objectId],
+        gids,
+        occurrences,
+        // 一条命中都没留下时（`objectIds` 里有它就不该发生）保守地留着聚合项
+        // 那份，绝不编一个空的出来
+        message: best?.message ?? i.message,
+        detail: best?.detail ?? i.detail,
+      }
     })
 }
 

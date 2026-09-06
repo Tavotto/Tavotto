@@ -53,6 +53,16 @@ export interface PreflightOccurrence {
   message: UiMessage
   /** 这一次命中自己的量化细节 */
   detail: Record<string, unknown>
+  /**
+   * 这一次命中的**量化排名**（越大越糟），与聚合项挑「最糟那次」用的是同一把
+   * 尺子；没法比大小的规则（family / cmap / 文本…）不带。
+   *
+   * 存在的理由只有一个：聚合项按对象裁一刀之后（`rawIssuesForObject`）得**重新
+   * 挑一次**最糟的那条命中，而挑的规则必须与 `Sink` 完全一样。不带着排名的话，
+   * 裁完只能沿用整画布最糟那次的文案与 detail——那正是「报告把别的面板的
+   * 测量值记到这张图头上」的成因。
+   */
+  worse?: number
 }
 
 export interface PreflightIssue {
@@ -268,12 +278,16 @@ class Sink {
         : [[null, null]]
     for (const [oid, gid] of pairs) {
       const key = `${item.id}\u0000${oid ?? ''}\u0000${gid ?? ''}\u0000${prop ?? ''}`
+      // 命中对象**只在这里造一次**：新增与顶掉旧条目是同一件事的两条路径，
+      // 各写一份的话下一个字段只会被加进其中一条（`worse` 差点就是这样）
+      const hit: PreflightOccurrence = { objectId: oid, gid, prop, message, detail }
+      if (opts.worse != null) hit.worse = opts.worse
       const idx = item.occurrences.findIndex(
         (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
       )
       if (idx < 0) {
         if (opts.worse != null) this.hitWorst.set(key, opts.worse)
-        item.occurrences.push({ objectId: oid, gid, prop, message, detail })
+        item.occurrences.push(hit)
         continue
       }
       // 已经有一条：只有「带排名且更糟」才顶掉它（与聚合项同一条规则）
@@ -281,7 +295,7 @@ class Sink {
       const prev = this.hitWorst.get(key)
       if (prev != null && opts.worse <= prev) continue
       this.hitWorst.set(key, opts.worse)
-      item.occurrences[idx] = { objectId: oid, gid, prop, message, detail }
+      item.occurrences[idx] = hit
     }
   }
 
