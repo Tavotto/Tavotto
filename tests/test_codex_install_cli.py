@@ -1146,7 +1146,8 @@ def test_an_npm_codex_shim_is_still_askable_from_the_gui_path(fake_codex, tmp_pa
         [str(codex), "--version"],
         env={**gui_env, "FAKE_CODEX_STATE": os.environ["FAKE_CODEX_STATE"]},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert probe.returncode == 127 and "node" in probe.stderr, (probe.returncode, probe.stderr)
 
