@@ -98,13 +98,52 @@ def test_format_order_is_stable_not_click_order():
     """结果里的 outputs[] 要与界面上的清单逐项对上，而点勾选框的先后不是身份。"""
     assert exportreq.normalize(_canvas_spec(formats=["png", "pdf"])).formats == ("pdf", "png")
     assert exportreq.normalize(_canvas_spec(formats=["pdf", "pdf"])).formats == ("pdf",)
+    # 新格式**追加**在老的两个后面：老客户端只勾 pdf+png 时的顺序一个字节不变
+    assert exportreq.normalize(_canvas_spec(formats=["tiff", "eps", "png", "pdf"])).formats == (
+        "pdf",
+        "png",
+        "eps",
+        "tiff",
+    )
+
+
+def test_tiff_is_raster_and_eps_is_vector_for_the_ppi_rule():
+    """「PPI 只在有位图格式时是数字」这句话对新格式同样成立（ADR 0044）。
+
+    `tiff` 单独一个就该让 ppi 变成数字；`eps` 单独一个必须让它是 `None`——
+    把 EPS 误归进位图，界面就会为一份矢量文件摆出一个不起作用的分辨率选择。
+    """
+    assert exportreq.normalize(_canvas_spec(formats=["tiff"])).ppi == 600
+    assert exportreq.normalize(_canvas_spec(formats=["eps"])).ppi is None
+    assert exportreq.normalize(_canvas_spec(formats=["pdf", "eps"])).ppi is None
+    assert exportreq.normalize(_canvas_spec(formats=["eps", "tiff"], ppi=300)).ppi == 300
+    req = exportreq.normalize(_canvas_spec(formats=["eps", "tiff"]))
+    assert req.has_raster and req.has_vector
+    assert exportreq.FORMAT_TIFF in exportreq.RASTER_FORMATS
+    assert exportreq.FORMAT_EPS in exportreq.VECTOR_FORMATS
+    # 引擎直连那条路（MCP）认的集合是画布那条的超集 + svg，两边不许各自漂
+    assert set(exportreq.ENGINE_FORMATS) == set(exportreq.FORMATS) | {exportreq.FORMAT_SVG}
+    assert set(exportreq.FORMATS) | {"svg"} == exportreq.RASTER_FORMATS | exportreq.VECTOR_FORMATS
+
+
+def test_tif_alias_typed_by_the_user_is_stripped_too():
+    """我们只产出 `.tiff`，但用户顺手打的 `.tif` / `.eps` 也得吃掉。"""
+    assert (
+        exportreq.normalize(_canvas_spec(filename="Fig 1.tif", formats=["tiff"])).filename
+        == "Fig 1"
+    )
+    assert (
+        exportreq.normalize(_canvas_spec(filename="Fig 1.eps", formats=["pdf"])).filename == "Fig 1"
+    )
+    assert exportreq.output_name("Fig 1", "tiff") == "Fig 1.tiff"
 
 
 @pytest.mark.parametrize(
     "spec, code",
     [
         ({"formats": []}, "no_format"),
-        ({"formats": ["tiff"]}, "unsupported_format"),
+        ({"formats": ["docx"]}, "unsupported_format"),
+        ({"formats": ["svg"]}, "unsupported_format"),  # 画布合成给不出 svg（只有引擎直连那条路认）
         ({"ppi": "x"}, "bad_ppi"),
         ({"ppi": 5}, "ppi_out_of_range"),
         ({"ppi": 99999}, "ppi_out_of_range"),

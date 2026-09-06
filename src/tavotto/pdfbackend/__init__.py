@@ -27,12 +27,15 @@ AGPL-3.0-only。把「读页面尺寸 / 栅格化 / 按布局合成」这三件�
   original_png(src, out, ppi, transparent)
                                     → 按原图出 PNG（位图**永远**保源像素网格；
                                        JPEG 源换容器不换像素）
+  original_tiff(src, out, ppi, transparent, dpi_meta=)
+                                    → 按原图出 TIFF（同一套规则；Deflate 无损；
+                                       位图源的分辨率标签只写源文件自己声明过的）
   annotate_asset(pdf, png, objs)    → 把画布标注画进单图文件（写回原图带标注）
   BACKEND_NAME / BACKEND_VERSION    → 后端身份（进渲染缓存键：换实现/换版本
                                        出来的像素可能就不一样了）
 
 唯一的例外是 `compose()` 返回的画布对象本身——它由实现模块定义，
-但只通过 place/save_pdf/save_png/close 这几个方法被使用。
+但只通过 place/save_pdf/save_png/save_tiff/close 这几个方法被使用。
 """
 
 from .pymupdf_backend import (  # noqa: F401
@@ -49,6 +52,7 @@ from .pymupdf_backend import (  # noqa: F401
     mm2pt,
     original_pdf,
     original_png,
+    original_tiff,
     probe_asset,
     render_preview_png,
     text_plan,
@@ -69,6 +73,7 @@ __all__ = [
     "mm2pt",
     "original_pdf",
     "original_png",
+    "original_tiff",
     "probe_asset",
     "render_preview_png",
     "text_plan",

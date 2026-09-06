@@ -50,6 +50,7 @@ import { severityLabel } from '@/lib/validationText'
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
+  epsAvailability,
   originalAvailability,
   pixelPreview,
   PPI_DEFAULT,
@@ -343,6 +344,17 @@ export function ExportDialog() {
   /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
   const transparentApplies = raster && !copiesSourceVerbatim
 
+  /**
+   * EPS 这次给不给得出（ADR 0044）。判据在 `epsAvailability()` 一处：画布范围
+   * 没有它（合成走 PyMuPDF），没有脚本的图也没有它。**不隐藏选项**：禁用并
+   * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
+   */
+  const eps = useMemo(
+    () => epsAvailability(scope, figureId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, figureId, assets, runtimeAssets],
+  )
+
   /* ------------------------------ 文件名校验 ------------------------------ */
   const filenameIssue = useMemo(
     () => prepareExport(inputOf()).filenameProblem,
@@ -376,17 +388,16 @@ export function ExportDialog() {
    * `start()` 没有"，第五轮又抓到"两边都有，但 `start()` 那份少了一条"。
    * 一份判断、两个消费点，就没有"少写一条"这回事了。
    */
-  const canStart =
-    formats.length > 0 &&
-    !blocked &&
-    !filenameIssue &&
-    (scope !== 'original' || availability.ok)
-
   const names = useMemo(
     () => prepareExport(inputOf()).names,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filename, formats, scope],
+    [filename, formats, scope, figureId, eps.ok],
   )
+
+  // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
+  // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
+  const canStart =
+    names.length > 0 && !blocked && !filenameIssue && (scope !== 'original' || availability.ok)
 
   /* -------------------------------- 动作 --------------------------------- */
   const applyProfile = (id: string) => {
@@ -604,7 +615,7 @@ export function ExportDialog() {
           />
         )}
 
-        {/* 3. 格式 */}
+        {/* 3. 格式 —— 顺序与 `FORMATS` 同源（结果清单按它排） */}
         <Row label={ex('formatLabel')} labelWidth={56}>
           <FormatToggle
             checked={formats.includes('pdf')}
@@ -618,7 +629,25 @@ export function ExportDialog() {
             title="PNG"
             hint={ex('pngHint')}
           />
+          {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+          <FormatToggle
+            checked={formats.includes('eps') && eps.ok}
+            onClick={() => toggleFormat('eps')}
+            title="EPS"
+            hint={ex('epsHint')}
+            disabled={!eps.ok}
+            reason={eps.ok ? undefined : ex(`epsUnavailable.${eps.reason}`)}
+          />
+          <FormatToggle
+            checked={formats.includes('tiff')}
+            onClick={() => toggleFormat('tiff')}
+            title="TIFF"
+            hint={ex('tiffHint')}
+          />
         </Row>
+        {formats.includes('eps') && !eps.ok && (
+          <p className="pl-[64px] text-xs text-ink-3">{ex(`epsUnavailable.${eps.reason}`)}</p>
+        )}
 
         {/* 4. 分辨率 —— **只在选了位图格式时出现**（§五） */}
         {raster && (
@@ -1268,22 +1297,30 @@ function FormatToggle({
   onClick,
   title,
   hint,
+  disabled = false,
+  reason,
 }: {
   checked: boolean
   onClick: () => void
   title: string
   hint: string
+  disabled?: boolean
+  /** 禁用时的原因（进 `title` 提示）；一个灰掉的按钮解释不了自己 */
+  reason?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={checked}
+      disabled={disabled}
+      title={reason}
       className={cn(
         'flex flex-1 items-center gap-1.5 rounded-sm border px-2 py-1 text-left outline-none transition-colors focus-visible:focus-ring',
         checked
           ? 'border-accent bg-accent-subtle'
           : 'border-border bg-surface hover:border-border-strong',
+        disabled && 'cursor-not-allowed opacity-50 hover:border-border',
       )}
     >
       <span

@@ -8,10 +8,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildExportRequest,
   defaultScope,
+  epsAvailability,
   filenameProblem,
+  FORMATS,
   originalAvailability,
   pixelPreview,
+  RASTER_FORMATS,
   snapshotRevision,
+  VECTOR_FORMATS,
   type ExportRequestInput,
 } from './exportRequest'
 import { useDocumentStore } from '@/store/documentStore'
@@ -246,5 +250,65 @@ describe('像素预览：照抄源文件才报源像素网格', () => {
     )
     // 10.16mm @ 600ppi ≈ 240px
     expect(shown).toContain('240')
+  })
+})
+
+describe('EPS 与 TIFF（ADR 0044）', () => {
+  it('tiff 是位图、eps 是矢量：PPI 规则对新格式同样成立', () => {
+    expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff'])
+    expect([...RASTER_FORMATS, ...VECTOR_FORMATS].sort()).toEqual([...FORMATS].sort())
+    expect(buildExportRequest(inputOf({ formats: ['tiff'] })).request.ppi).toBe(600)
+    expect(buildExportRequest(inputOf({ formats: ['pdf', 'tiff'], ppi: 300 })).request.ppi).toBe(
+      300,
+    )
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+    } as never)
+    const epsOnly = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['eps'] }),
+    )
+    expect(epsOnly.request.ppi, 'EPS 是矢量，PPI 对它没有意义').toBeNull()
+    expect(epsOnly.names).toEqual(['Fig 1.eps'])
+  })
+
+  it('结果顺序来自 FORMATS，不是勾选顺序；四个格式的文件名都能预览', () => {
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+    } as never)
+    const built = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['tiff', 'eps', 'png', 'pdf'] }),
+    )
+    expect(built.request.formats).toEqual(['pdf', 'png', 'eps', 'tiff'])
+    expect(built.names).toEqual(['Fig 1.pdf', 'Fig 1.png', 'Fig 1.eps', 'Fig 1.tiff'])
+    expect(filenameProblem('Fig 1.tif', ['tiff']), '`.tif` 别名也被剥掉').toBeNull()
+    expect(buildExportRequest(inputOf({ filename: 'Fig 1.tiff', formats: ['tiff'] })).request.filename).toBe('Fig 1')
+  })
+
+  it('EPS 只在「原图 + 有脚本」时可用，不可用时说得出原因', () => {
+    expect(epsAvailability('canvas', 'Fig1.pdf')).toEqual({ ok: false, reason: 'canvas_scope' })
+    expect(epsAvailability('original', null)).toEqual({ ok: false, reason: 'no_script' })
+    // 素材清单里没有 script = 注册表没有这张图的脚本
+    expect(epsAvailability('original', 'Fig1.pdf')).toEqual({ ok: false, reason: 'no_script' })
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+    } as never)
+    expect(epsAvailability('original', 'Fig1.pdf')).toEqual({ ok: true, reason: 'none' })
+    // runtime 素材天生有脚本
+    expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
+  })
+
+  it('EPS 不可用时请求里**不带**它（后端会逐项报失败，但界面已经说过一遍了）', () => {
+    const canvas = buildExportRequest(inputOf({ scope: 'canvas', formats: ['pdf', 'eps'] }))
+    expect(canvas.request.formats).toEqual(['pdf'])
+    expect(canvas.names).toEqual(['Fig 1.pdf'])
+    // 只勾了 EPS 又在画布范围：什么都发不出去，names 为空（按钮据此变灰）
+    const nothing = buildExportRequest(inputOf({ scope: 'canvas', formats: ['eps'] }))
+    expect(nothing.request.formats).toEqual([])
+    expect(nothing.names).toEqual([])
+    // 原图 + 没脚本：同样不带
+    const noScript = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['pdf', 'eps', 'tiff'] }),
+    )
+    expect(noScript.request.formats).toEqual(['pdf', 'tiff'])
   })
 })

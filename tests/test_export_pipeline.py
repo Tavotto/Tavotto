@@ -958,7 +958,7 @@ def test_a_raster_panel_with_overrides_is_re_rendered_not_copied(env, tmp_path, 
     doc.save(rendered)
     doc.close()
 
-    def fake_resolve(o, dpi, sink=None, out_dir=None):
+    def fake_resolve(o, dpi, sink=None, out_dir=None, *, rerender=False):
         assert o["id"] == "r1.png" and o["overrides"], "这条用例要走的是「带 override」那一支"
         assert out_dir is not None, "导出路径必须把作业私有的临时目录传下来"
         return rendered
@@ -1158,3 +1158,197 @@ def test_a_live_temp_dir_is_never_swept_by_another_job(env, monkeypatch):
     _, body = _post(client, _canvas())
     assert seen and seen[0], "临时目录在创建的那一瞬被另一次清扫删掉了"
     assert body["status"] == "done"
+
+
+# ============================ ADR 0044：EPS 与 TIFF ==========================
+from tests.support import tiffcheck  # noqa: E402
+
+
+def _png_pixels(path: Path) -> tuple[int, int, int, bytes]:
+    pix = pymupdf.Pixmap(str(path))
+    return pix.width, pix.height, pix.n, bytes(pix.samples)
+
+
+def test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel(env):
+    """TIFF 与 PNG 出自同一次栅格化：像素逐个相同，分辨率标签 = ppi，Deflate 无损。
+
+    读取端是测试自带的独立解析器（与 `tiffwrite` 无共享代码），像素对照物是
+    PyMuPDF 解出来的 PNG——三方互不相识。
+    """
+    client, _ = env
+    _, body = _post(client, _canvas(formats=["png", "tiff"], ppi=150))
+    assert body["status"] == "done", body
+    assert [o["format"] for o in body["outputs"]] == ["png", "tiff"]
+    png, tiff = _out(body, "png"), _out(body, "tiff")
+    assert tiff["vector"] is False
+    assert tiff["dimensions"]["px"] == png["dimensions"]["px"]
+    assert tiff["name"].endswith(".tiff")
+
+    tags, pixels = tiffcheck.decode_samples(_dir(body) / tiff["name"])
+    w, h, n, ref = _png_pixels(_dir(body) / png["name"])
+    assert (tags["width"], tags["height"]) == (w, h) == tuple(png["dimensions"]["px"])
+    assert tags["compression"] == 8
+    assert tags["samples_per_pixel"] == n == 3
+    assert tags["x_resolution"] == 150 and tags["y_resolution"] == 150
+    assert tags["resolution_unit"] == 2
+    assert pixels == ref, "TIFF 与 PNG 的像素不是同一份"
+
+
+def test_canvas_tiff_with_transparent_background_carries_alpha(env):
+    client, _ = env
+    _, body = _post(
+        client, _canvas(formats=["tiff"], ppi=100, background="transparent", filename="T")
+    )
+    tags, pixels = tiffcheck.decode_samples(_dir(body) / _out(body, "tiff")["name"])
+    assert tags["samples_per_pixel"] == 4 and tags["extra_samples"] == 2
+    # 页面右下角没有任何对象，那里必须真的透明（alpha = 0），不是白底
+    w = tags["width"]
+    last_px = pixels[-4:]
+    assert last_px[3] == 0, f"透明背景下空白处 alpha 应为 0，得到 {last_px}（宽 {w}）"
+
+
+def test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi(env):
+    client, _ = env
+    _, body = _post(client, _original(formats=["tiff", "png"], ppi=150))
+    assert body["status"] == "done", body
+    tiff, png = _out(body, "tiff"), _out(body, "png")
+    assert tiff["dimensions"]["px"] == png["dimensions"]["px"]
+    assert abs(tiff["dimensions"]["px"][0] - SRC_W_PT / 72.0 * 150) <= 1
+    tags, pixels = tiffcheck.decode_samples(_dir(body) / tiff["name"])
+    assert tags["x_resolution"] == 150 and tags["resolution_unit"] == 2
+    assert pixels == _png_pixels(_dir(body) / png["name"])[3]
+
+
+def test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density(env):
+    """位图源：像素网格照搬（ppi 不出场）；分辨率标签**只写源文件自己声明过的**。
+
+    两份源：一份 pHYs 写着 300 dpi → TIFF 也写 300；一份没有 pHYs → TIFF 写
+    「没有绝对单位」，而不是把我们按扩展名假定的 600 塞进用户的文件里。
+    """
+    client, figs = env
+    declared = pymupdf.open()
+    pg = declared.new_page(width=120, height=80)
+    pg.draw_rect(pymupdf.Rect(0, 0, 60, 80), color=None, fill=(0, 0, 0))
+    pix = pg.get_pixmap(alpha=False)
+    pix.set_dpi(300, 300)
+    pix.save(figs / "d300.png")
+    declared.close()
+    _strip_phys(figs / "r1.png", figs / "nophys.png")
+
+    for fid, want_unit, want_res in (("d300.png", 2, 300), ("nophys.png", 1, 1)):
+        _, body = _post(
+            client,
+            _original(
+                filename=fid,
+                formats=["tiff"],
+                ppi=600,
+                original={"figure_id": fid, "source_kind": "raster", "px_w": 120, "px_h": 80},
+            ),
+        )
+        assert body["status"] == "done", body
+        tiff = _out(body, "tiff")
+        assert tiff["dimensions"]["px"] == [120, 80], "位图源不许按 ppi 重采样"
+        tags, pixels = tiffcheck.decode_samples(_dir(body) / tiff["name"])
+        assert (tags["width"], tags["height"]) == (120, 80)
+        assert tags["resolution_unit"] == want_unit, fid
+        assert tags["x_resolution"] == want_res, fid
+        assert pixels == _png_pixels(figs / fid)[3]
+
+
+def test_canvas_eps_is_refused_honestly_and_the_rest_is_delivered(env):
+    """画布合成在 PyMuPDF 里，写不出 PostScript。EPS 那一项报 `eps_not_for_canvas`，
+    PDF 照常交付（`partial`），磁盘上**没有**一个冒牌的 .eps。"""
+    client, _ = env
+    _, body = _post(client, _canvas(formats=["pdf", "eps"]))
+    assert body["status"] == "partial", body
+    assert _out(body, "pdf")["status"] == "done"
+    eps = _out(body, "eps")
+    assert eps["status"] == "failed"
+    assert eps["error"]["code"] == "eps_not_for_canvas"
+    assert sorted(p.name for p in _dir(body).iterdir()) == ["Fig 1.pdf"]
+
+
+def test_original_eps_without_a_script_reports_it_and_delivers_the_rest(env):
+    """`p1.pdf` 不在注册表里：没有脚本可跑，EPS 只能如实说给不出。"""
+    client, _ = env
+    _, body = _post(client, _original(formats=["pdf", "eps", "png"], ppi=100))
+    assert body["status"] == "partial", body
+    assert _out(body, "pdf")["status"] == "done"
+    assert _out(body, "png")["status"] == "done"
+    eps = _out(body, "eps")
+    assert eps["error"]["code"] == "eps_needs_script"
+    assert eps["error"]["params"] == {"figure": "p1.pdf"}
+    assert not any(p.suffix == ".eps" for p in _dir(body).iterdir())
+
+
+_FAKE_EPS = (
+    b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 150\n"
+    b"%%HiResBoundingBox: 0.0 0.0 200.0 150.0\n%%EndComments\n"
+    b"0 0 moveto 200 150 lineto stroke\n%%EOF\n"
+)
+
+
+def test_original_eps_comes_from_the_worker_and_the_pdf_is_rerendered_in_the_same_run(
+    env, monkeypatch
+):
+    """有脚本的图：EPS 由 worker 的 matplotlib 直接序列化；**同一次作业里 PDF 也让
+    worker 重画**（哪怕没有 override），四个格式才出自同一次脚本运行。尺寸事实
+    从 EPS 自己的 `%%BoundingBox` 读。"""
+    client, figs = env
+    calls: list[tuple[str, list]] = []
+
+    class FakeWorker:
+        export_dir = figs
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            calls.append((fmt, list(patches)))
+            if fmt == "eps":
+                Path(path).write_bytes(_FAKE_EPS)
+            else:
+                doc = pymupdf.open()
+                doc.new_page(width=SRC_W_PT, height=SRC_H_PT)
+                doc.save(path)
+                doc.close()
+            return {"warnings": [f"fake-{fmt}"]}
+
+    monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
+    monkeypatch.setattr(
+        m,
+        "current_registry",
+        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+    )
+    _, body = _post(client, _original(formats=["pdf", "eps"]))
+    assert body["status"] == "done", body
+    assert [f for f, _ in calls] == ["pdf", "eps"], calls
+    eps = _out(body, "eps")
+    assert eps["vector"] is True
+    assert eps["dimensions"]["px"] is None
+    assert eps["dimensions"]["mm"] == [round(200 * 25.4 / 72, 3), round(150 * 25.4 / 72, 3)]
+    on_disk = _dir(body) / eps["name"]
+    assert on_disk.name == "Fig 1.eps"
+    assert on_disk.read_bytes().startswith(b"%!PS-Adobe")
+    assert set(body["warnings"]) == {"p1.pdf: fake-pdf", "p1.pdf: fake-eps"}
+
+
+def test_pdf_alone_still_uses_the_disk_file_when_nothing_forces_a_rerender(env, monkeypatch):
+    """反面：不要 EPS、也没有 override 时，有脚本的图**仍然**取磁盘上的产物
+    ——`rerender` 只在需要它的那次作业里为真，别处的行为一个字节不变。"""
+    client, figs = env
+    calls: list[str] = []
+
+    class FakeWorker:
+        export_dir = figs
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            calls.append(fmt)
+            return {"warnings": []}
+
+    monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
+    monkeypatch.setattr(
+        m,
+        "current_registry",
+        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+    )
+    _, body = _post(client, _original(formats=["pdf", "png"], ppi=100))
+    assert body["status"] == "done", body
+    assert calls == [], "没有 EPS、没有 override，不该去找 worker"

@@ -822,6 +822,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
     `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
     写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
+  * **EPS 与 TIFF（ADR 0044，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
+    新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
+    `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`
+    （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**）；位图源的分辨率
+    标签只写源文件自己声明过的密度。EPS **只有 worker 的 matplotlib 写得出**
+    （PyMuPDF 没有 PostScript 写入器）：`scope=canvas` 逐项报 `eps_not_for_canvas`，
+    没有脚本的图报 `eps_needs_script`，其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
+    也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
+    脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
+    「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），

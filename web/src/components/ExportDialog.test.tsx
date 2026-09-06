@@ -1007,3 +1007,68 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(fetches.filter((u) => u.includes('/api/engine/'))).toEqual([])
   })
 })
+
+describe('EPS 与 TIFF（ADR 0044）', () => {
+  it('画布范围：EPS 禁用并说出原因，TIFF 是位图（分辨率行随它出现）', async () => {
+    await setup(9)
+    await click(button('PNG')!) // 只剩 PDF
+    expect(text()).not.toContain('分辨率')
+    const eps = button('EPS') as HTMLButtonElement
+    expect(eps.disabled).toBe(true)
+    expect(eps.title).toContain('EPS 只能按「原图尺寸」导出单张图')
+    await click(button('TIFF')!)
+    expect(text(), 'TIFF 是位图，分辨率那一行要出现').toContain('分辨率')
+    expect(text()).toContain('Fig1.tiff'.replace('Fig1', useDocumentStore.getState().doc.name))
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['pdf', 'tiff'])
+    expect(exportBodies[0].ppi).toBe(600)
+  })
+
+  it('原图范围 + 有脚本的图：EPS 可用；只出 EPS 时 ppi 是 null', async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await setup(9)
+    await act(async () => {
+      useAssetStore.setState({
+        byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+      } as never)
+    })
+    const eps = button('EPS') as HTMLButtonElement
+    expect(eps.disabled).toBe(false)
+    await click(eps)
+    await click(button('PNG')!)
+    await click(button('PDF')!)
+    expect(text(), '只剩矢量格式，分辨率那一行不该出现').not.toContain('分辨率')
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('original')
+    expect(exportBodies[0].formats).toEqual(['eps'])
+    expect(exportBodies[0].ppi).toBeNull()
+  })
+
+  it('原图范围 + 没有脚本的图：EPS 禁用，说的是「没有脚本」而不是「只能按原图」', async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await setup(9)
+    const eps = button('EPS') as HTMLButtonElement
+    expect(eps.disabled).toBe(true)
+    expect(eps.title).toContain('没有可重新运行的脚本')
+  })
+
+  it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await setup(9)
+    await act(async () => {
+      useAssetStore.setState({
+        byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+      } as never)
+    })
+    await click(button('EPS')!)
+    await click(button('当前画布')!)
+    expect(text()).toContain('EPS 只能按「原图尺寸」导出单张图')
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('canvas')
+    expect(exportBodies[0].formats).toEqual(['pdf', 'png'])
+    // 再把 PDF / PNG 都取消：只剩一个发不出去的 EPS，主按钮必须灰
+    await click(button('PDF')!)
+    await click(button('PNG')!)
+    expect((button('开始导出') as HTMLButtonElement).disabled).toBe(true)
+  })
+})

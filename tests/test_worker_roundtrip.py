@@ -3154,3 +3154,65 @@ def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
         )
 
     assert not list(pool.ENGINE_CACHE.glob("_replay-*")), "本用例自己建的 replay 目录一个都不该剩下"
+
+
+# ============================ ADR 0044：EPS 与 TIFF ==========================
+def test_export_eps_and_tiff_are_real_matplotlib_files(worker):
+    """worker 的 `export` 对 eps / tiff 直接交给 `savefig`：EPS 是带 DSC 头、
+    Type 42 字体的真 PostScript；TIFF 是 Deflate 压缩、带 dpi 标签的位图。"""
+    import struct
+    import zlib
+
+    proc, _out, tmp = worker
+    _rpc(proc, {"cmd": "build"})
+
+    eps = tmp / "fig.eps"
+    resp = _rpc(
+        proc,
+        {"cmd": "export", "stem": "TestFig_a", "patches": [], "path": str(eps), "format": "eps"},
+    )
+    assert Path(resp["path"]) == eps and eps.is_file()
+    data = eps.read_bytes()
+    assert data.startswith(b"%!PS-Adobe-3.0 EPSF-3.0"), data[:40]
+    assert b"%%BoundingBox: 0 0 216 144" in data, "3 in × 2 in 的图 = 216 × 144 pt"
+    assert b"/FontType 42" in data, "EPS 的文字要按 Type 42 嵌入（T-122 的 fonttype 纪律）"
+    # matplotlib 的 PS 后端以 `showpage` 收尾（不写 %%EOF）；文字按 Type 42 字体的
+    # 字形逐个 `glyphshow`，所以文件里没有字面的 "Original Title"
+    assert data.rstrip().endswith(b"showpage"), data[-60:]
+    assert b"glyphshow" in data, "文字该以嵌入字体的字形画出"
+
+    tiff = tmp / "fig.tiff"
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": [],
+            "path": str(tiff),
+            "format": "tiff",
+            "dpi": 200,
+        },
+    )
+    raw = tiff.read_bytes()
+    assert raw[:4] in (b"II*\x00", b"MM\x00*")
+    # 独立解析第一个 IFD（不借 Pillow：本进程未必装了它）
+    endian = "<" if raw[:2] == b"II" else ">"
+    (ifd,) = struct.unpack(endian + "I", raw[4:8])
+    (n,) = struct.unpack(endian + "H", raw[ifd : ifd + 2])
+    tags = {}
+    for i in range(n):
+        base = ifd + 2 + 12 * i
+        tag, typ, count, val = struct.unpack(endian + "HHII", raw[base : base + 12])
+        if typ == 3 and count == 1:
+            val = struct.unpack(endian + "HH", raw[base + 8 : base + 12])[0]
+        elif typ == 5:
+            num, den = struct.unpack(endian + "II", raw[val : val + 8])
+            val = num / den
+        elif typ == 4 and count > 1:  # 值区里的数组，取第一个元素
+            val = struct.unpack(endian + "I", raw[val : val + 4])[0]
+        tags[tag] = val
+    assert tags[256] == 600 and tags[257] == 400, "3 in × 2 in @ 200 dpi"
+    assert tags[259] == 8, "Deflate（无损），不是 Pillow 缺省的不压缩"
+    assert tags[282] == 200 and tags[283] == 200 and tags[296] == 2, "dpi 标签"
+    # 第一条 strip 真的能用 zlib 解开（压缩方式说的是真话）
+    assert zlib.decompress(raw[tags[273] : tags[273] + tags[279]])

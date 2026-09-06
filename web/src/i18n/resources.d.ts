@@ -201,6 +201,11 @@ export default interface Resources {
       "conflictRename": "另存一份",
       "conflictReplace": "覆盖",
       "editedDuringExport": "导出期间这份文档又被改过——文件里是点「导出」那一刻的内容。",
+      "epsHint": "矢量 · 不支持透明度",
+      "epsUnavailable": {
+        "canvas_scope": "EPS 只能按「原图尺寸」导出单张图：画布由 PDF 引擎合成，写不出 PostScript。",
+        "no_script": "这张图没有可重新运行的脚本，EPS 只能由脚本直接生成。"
+      },
       "exported": "导出完成：{{files}}",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
@@ -277,8 +282,9 @@ export default interface Resources {
       },
       "severityCount": "{{count}} {{label}}",
       "start": "开始导出",
+      "tiffHint": "位图 · 无损压缩",
       "title": "导出",
-      "transparent": "透明背景（仅 PNG）",
+      "transparent": "透明背景（仅 PNG / TIFF）",
       "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
       "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
     },
@@ -1153,8 +1159,8 @@ export default interface Resources {
       "export": {
         "defaultDpi": "默认 DPI",
         "defaultFormats": "默认格式",
-        "dpiHint": "只影响位图（PNG）的分辨率；PDF 是矢量的，DPI 对它没有意义。",
-        "formatsHint": "PDF 保留矢量，投稿一般要它；PNG 用于预览与不接受矢量的平台。",
+        "dpiHint": "只影响位图（PNG / TIFF）的分辨率；PDF 与 EPS 是矢量的，DPI 对它们没有意义。",
+        "formatsHint": "PDF 保留矢量，投稿一般要它；PNG 用于预览与不接受矢量的平台；EPS 只在按原图导出有脚本的图时可用（不支持透明度）；TIFF 是无损压缩的位图。",
         "hint": "这里是导出对话框的初始值；单次导出仍可临时改。",
         "proof": "Proof 留档",
         "proofAria": "默认随导出生成 proof report",
@@ -1549,6 +1555,8 @@ export default interface Resources {
       "endpoint_save_failed": "接口保存失败：{{reason}}",
       "environment_in_use_by_native_session": "这个 Python 环境正在被 Tavotto Run 使用。请先结束正在运行的脚本，再安装依赖。",
       "environment_mutating": "这个 Python 环境正在安装依赖，请稍候再试。",
+      "eps_needs_script": "EPS 只能由这张图的脚本直接生成，而 {{figure}} 没有可重新运行的脚本。其余格式已照常导出。",
+      "eps_not_for_canvas": "EPS 不能按画布导出：画布上的多图与标注由 PDF 引擎合成，它写不出 PostScript。要 EPS 请按「原图尺寸」导出单张有脚本的图。其余格式已照常导出。",
       "execution_cancelled": "试运行被中断（会话在执行期间被终止）",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "export_dir_unwritable": "导出目录写不进去：{{error}}。检查一下磁盘空间和目录权限。",
