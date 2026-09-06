@@ -1,3 +1,4 @@
+import { LEGEND_ENTRY_STYLE_PROPS } from '@/lib/legendModel'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
 import type { RoleProfile } from './types'
 
@@ -66,8 +67,20 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     more: [...(TEXT_PROFILE.more ?? [])],
     visibleWhen: {
       ...TEXT_EFFECT_VISIBILITY,
-      // 标记大小只在有标记时有意义
-      handle_markersize: (read) => read('handle_marker') !== 'None',
+      // 示意线的样式只在**断开链接后**出现（审计 T18）：链接中它由图中对象
+      // 派生，摆一个此刻写了就会改变关系的控件，比收起来更不诚实。判据读的
+      // 是 `binding` 字段（override 优先），与链接开关显示的状态同一个值；
+      // 没有源的项引擎不发 `binding`，读出 undefined ≠ follow_source，样式
+      // 照常在——那种项本来就没什么可跟随的。
+      ...Object.fromEntries(
+        LEGEND_ENTRY_STYLE_PROPS.map((prop) => [
+          prop,
+          (read: (p: string) => unknown) => read('binding') !== 'follow_source',
+        ]),
+      ),
+      // 标记大小还要有标记
+      handle_markersize: (read) =>
+        read('binding') !== 'follow_source' && read('handle_marker') !== 'None',
     },
   },
   line: {

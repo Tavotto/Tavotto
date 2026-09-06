@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import {
+  LEGEND_ENTRY_STYLE_PROPS,
   entryBinding,
   legendDisplayOrder,
   legendEntryViews,
@@ -351,7 +352,8 @@ describe('图例的首屏', () => {
     // 五条间距在通用列表里一条都不出现——它们由排版详情卡承接，
     // 同一属性不出两套控件（`LEGEND_SPACING_PROPS` 在分桶之前就被让出来了）
     const all = [...buckets(2).primary, ...buckets(2).more, ...buckets(2).advanced]
-    expect(all.map((p) => p.field.prop).filter((x) => LEGEND_SPACING_PROPS.includes(x))).toEqual([
+    const spacing = LEGEND_SPACING_PROPS as readonly string[]
+    expect(all.map((p) => p.field.prop).filter((x) => spacing.includes(x))).toEqual([
       // 分桶函数本身不裁能力：这里喂的是**没被让出来**的原始字段表，
       // 五条都还在，只是不在 primary。真正的让出发生在 ElementInspector
       // （见下面「排版详情」一组的 DOM 断言）
@@ -377,19 +379,39 @@ describe('图例的首屏', () => {
     expect(vis(1, true)).toBe(true)
   })
 
-  it('图例项的首屏：文字 + 绑定 + 示意线样式；标记大小只在有标记时出现', () => {
-    const fields = entryFields('sin')
+  it('图例项的首屏：链接中只有文字 + 链接行，断开后才有示意线样式（审计 T18）', () => {
+    const bucketsOf = (binding: string) => {
+      const fields = entryFields('sin', { binding })
+      return presentFields('legend_text', fields, {
+        isOverridden: () => false,
+        read: (prop) => fields.find((x) => x.prop === prop)?.value,
+      })
+    }
+    const linked = bucketsOf('follow_source')
+    const all = (b: ReturnType<typeof bucketsOf>) =>
+      [...b.primary, ...b.more, ...b.advanced].map((p) => p.field.prop)
+    expect(linked.primary.map((p) => p.field.prop)).toContain('binding')
+    // 链接中：示意线的五条一条都不在**任何**桶里（收起来，不是挪进「更多」）
+    for (const prop of LEGEND_ENTRY_STYLE_PROPS) expect(all(linked)).not.toContain(prop)
+
+    const custom = bucketsOf('custom')
+    const primary = custom.primary.map((p) => p.field.prop)
+    expect(primary).toContain('handle_linestyle')
+    // 标记大小仍要有标记（两条前提是与的关系，不是互相取代）
+    expect(all(custom)).not.toContain('handle_markersize')
+    expect(custom.primary.find((p) => p.field.prop === 'binding')?.control).toBe('legend-binding')
+    expect(custom.primary.find((p) => p.field.prop === 'handle_linestyle')?.control).toBe('line-style')
+    expect(custom.primary.find((p) => p.field.prop === 'handle_marker')?.control).toBe('marker')
+  })
+
+  it('改过的示意线样式照常显示，哪怕此刻是链接中', () => {
+    const fields = entryFields('sin', { binding: 'follow_source' })
     const b = presentFields('legend_text', fields, {
-      isOverridden: () => false,
+      isOverridden: (prop) => prop === 'handle_color',
       read: (prop) => fields.find((x) => x.prop === prop)?.value,
     })
-    const primary = b.primary.map((p) => p.field.prop)
-    expect(primary).toContain('binding')
-    expect(primary).toContain('handle_linestyle')
-    expect(primary).not.toContain('handle_markersize')
-    expect(b.primary.find((p) => p.field.prop === 'binding')?.control).toBe('legend-binding')
-    expect(b.primary.find((p) => p.field.prop === 'handle_linestyle')?.control).toBe('line-style')
-    expect(b.primary.find((p) => p.field.prop === 'handle_marker')?.control).toBe('marker')
+    expect(b.primary.map((p) => p.field.prop)).toContain('handle_color')
+    expect(b.primary.map((p) => p.field.prop)).not.toContain('handle_linewidth')
   })
 })
 
@@ -466,15 +488,40 @@ describe('选中图例', () => {
 /* -------------------------------- 图例项页 -------------------------------- */
 
 describe('选中图例项', () => {
-  it('跟随中的项：状态行说「跟随图中对象」，有「查看源对象」', async () => {
+  it('链接中的项：一行写清链接到谁，动作是一个链条开关（审计 T18）', async () => {
     await mount(['axes_0.legend.texts_0'])
-    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')
-    expect(byText('改为自定义')).toBeDefined()
+    const state = host.querySelector('[data-binding]')
+    expect(state?.getAttribute('data-binding')).toBe('follow_source')
+    expect(state?.textContent).toBe('链接到：曲线 “sin”')
+    const toggle = byAria('断开链接')
+    expect(toggle).toBeDefined()
+    expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+    // 关系仍然看得见：来源入口在
     expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
+    // 说明**不常驻**：原理在开关的悬停提示里（Radix 的气泡只在打开时才进 DOM）
+    expect(host.textContent).not.toContain('示意线由图中那个对象派生')
+  })
+
+  it('链接中不摆示意线样式；断开后出现，恢复链接后又收起', async () => {
+    await mount(['axes_0.legend.texts_0'])
+    await click(byText('更多'))
+    expect(propInput('handle_color', 'color')).toBeUndefined()
+    expect(propInput('handle_linewidth')).toBeUndefined()
+
+    await click(byAria('断开链接'))
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
+    expect(host.querySelector('[data-binding]')?.textContent).toBe('已断开 · 来源：曲线 “sin”')
+    expect(propInput('handle_color', 'color')).toBeDefined()
+
+    await click(byAria('恢复链接'))
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')
+    expect(propInput('handle_color', 'color')).toBeUndefined()
   })
 
   it('改示意线颜色 → 立刻是「自定义」，不等渲染回来', async () => {
     await mount(['axes_0.legend.texts_0'])
+    // 先断开才有这个控件（审计 T18）；断开写的是 binding override
+    await click(byAria('断开链接'))
     const color = propInput('handle_color', 'color')
     expect(color).toBeDefined()
     await act(async () => {
@@ -484,11 +531,19 @@ describe('选中图例项', () => {
     })
     expect(overrideOf('axes_0.legend.texts_0', 'handle_color')).toBe('#123456')
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
+    // 判据是「任一 handle_* override 在即 custom」，**不是**「binding override 说了算」：
+    // 把 binding override 拿掉（老文档 / 别处清过一次）状态仍然是自定义
+    useDocumentStore.getState().commit(literal('去掉 binding override'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides = p.overrides.filter((o) => o.prop !== 'binding')
+    })
+    await act(async () => {})
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
   })
 
-  it('「改为自定义」写 binding=custom；「恢复跟随」一次撤销撤掉全部示意线 override', async () => {
+  it('断开写 binding=custom；恢复链接一次撤销撤掉全部示意线 override', async () => {
     await mount(['axes_0.legend.texts_0'])
-    await click(byText('改为自定义'))
+    await click(byAria('断开链接'))
     expect(overrideOf('axes_0.legend.texts_0', 'binding')).toBe('custom')
     useDocumentStore.getState().commit(literal('两条示意线 override'), (d) => {
       const p = d.objects.find((o) => o.id === 'p1') as PanelObject
@@ -497,7 +552,7 @@ describe('选中图例项', () => {
     })
     await act(async () => {})
     const before = useDocumentStore.getState().past.length
-    await click(byText('恢复跟随'))
+    await click(byAria('恢复链接'))
     expect(overridesOf('axes_0.legend.texts_0')).toEqual([])
     const past = useDocumentStore.getState().past
     expect(past.length, JSON.stringify(past.slice(before).map((h) => h.label))).toBe(before + 1)
@@ -509,10 +564,10 @@ describe('选中图例项', () => {
     ])
   })
 
-  it('脚本原样是 custom 的项：「恢复跟随」写 binding=follow_source', async () => {
+  it('脚本原样是 custom 的项：恢复链接写 binding=follow_source', async () => {
     await mount(['axes_0.legend.texts_1'])
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
-    await click(byText('恢复跟随'))
+    await click(byAria('恢复链接'))
     expect(overrideOf('axes_0.legend.texts_1', 'binding')).toBe('follow_source')
   })
 

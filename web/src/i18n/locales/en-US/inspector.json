@@ -1125,13 +1125,15 @@
     },
     "stateFollow": "Follows the plot object",
     "stateCustom": "Custom",
-    "makeCustom": "Make custom",
-    "restoreFollow": "Follow again",
-    "followHint": "The swatch tracks that curve in the plot; editing any style below makes it custom.",
-    "customHint": "The swatch no longer tracks the plot object; “Follow again” re-derives it from the source.",
-    "customHintStyled": "The swatch uses the styles you set here; “Follow again” drops them (one undo).",
+    "followHint": "The handle is derived from that object in the figure. Unlink to give it its own colour, line style and marker.",
+    "customHint": "The handle is no longer derived from the figure object. Relinking restores the derived look.",
+    "customHintStyled": "The handle uses the style you set here. Relinking undoes those changes in one step.",
     "viewSource": "View source: {{label}}",
     "layoutDetails": "Layout details",
-    "spacingUnitNote": "In font-size units: 1 em = one legend font size."
+    "spacingUnitNote": "In font-size units: 1 em = one legend font size.",
+    "linkedTo": "Linked to {{label}}",
+    "unlinkedFrom": "Unlinked · from {{label}}",
+    "unlinkAction": "Unlink",
+    "relinkAction": "Relink"
   }
 }

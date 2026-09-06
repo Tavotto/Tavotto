@@ -1095,13 +1095,15 @@
     },
     "stateFollow": "跟随图中对象",
     "stateCustom": "自定义",
-    "makeCustom": "改为自定义",
-    "restoreFollow": "恢复跟随",
-    "followHint": "示意线跟着图中那条曲线走；改下方任一样式即改为自定义。",
-    "customHint": "示意线不再跟随图中对象；「恢复跟随」会回到由它派生的样子。",
-    "customHintStyled": "示意线用的是你在这里改的样式；「恢复跟随」会撤掉这些修改（一次撤销）。",
+    "followHint": "示意线由图中那个对象派生；断开后才能单独改它的颜色、线型和标记。",
+    "customHint": "示意线不再由图中对象派生；恢复链接会回到由它派生的样子。",
+    "customHintStyled": "示意线用的是你在这里改的样式；恢复链接会撤掉这些修改（一次撤销）。",
     "viewSource": "查看源对象：{{label}}",
     "layoutDetails": "排版详情",
-    "spacingUnitNote": "以图例字号为单位：1 em = 一个字号。"
+    "spacingUnitNote": "以图例字号为单位：1 em = 一个字号。",
+    "linkedTo": "链接到：{{label}}",
+    "unlinkedFrom": "已断开 · 来源：{{label}}",
+    "unlinkAction": "断开链接",
+    "relinkAction": "恢复链接"
   }
 }
