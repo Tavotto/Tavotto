@@ -101,6 +101,36 @@ describe('apply() 的结局', () => {
     expect(s.applyLog).not.toContain('HTTP 500')
   })
 
+  /**
+   * 重试的那一瞬间旧的失败必须先消失。这是 `applyFailed` 唯一**只在飞行中**
+   * 可见的时刻——上面四条用例都是等它落地才看，把开头那次清零改成任何值它们
+   * 都照样绿（变异 M9 实测存活）。没有它，用户点了重试会一边看着「升级中…」
+   * 一边看着上一次的红字，分不清哪一条在说这一次。
+   */
+  it('重试开始的那一刻，上一次的失败先清掉', async () => {
+    let release: (() => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => {
+        release = () =>
+          resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ ok: true, command: '', log: '', restart_required: true }),
+          } as Response)
+      })),
+    )
+    useUpdateStore.setState({ applyFailed: true, applyLog: '上一次的错误' })
+    const inflight = useUpdateStore.getState().apply()
+    // 请求还没回来：这就是那个只能在飞行中观察到的时刻
+    expect(useUpdateStore.getState().applying).toBe(true)
+    expect(useUpdateStore.getState().applyFailed).toBe(false)
+    expect(useUpdateStore.getState().applyLog).toBeNull()
+    release!()
+    await inflight
+    expect(useUpdateStore.getState().applying).toBe(false)
+  })
+
   it('连不上后端（fetch 就抛）：仍然算失败，并留下一句话', async () => {
     vi.stubGlobal(
       'fetch',
