@@ -18,7 +18,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import type { CanvasData, FigureDocument, ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -698,13 +698,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
 let canvasSeq = 0
 
-/** 默认画布名：Fig N，跳过已占用的名字 */
+/** 默认画布名：`defaultCanvasName(N)`（与空文档的第一张同一个格式），跳过已占用的名字 */
 function nextCanvasName(canvases: CanvasData[]): string {
   const used = new Set(canvases.map((c) => c.name))
   for (let n = canvases.length + 1; ; n++) {
-    const name = `Fig ${n}`
+    const name = defaultCanvasName(n)
     if (!used.has(name)) return name
-    if (n > canvases.length + 1000) return `Fig ${++canvasSeq}`
+    if (n > canvases.length + 1000) return defaultCanvasName(++canvasSeq)
   }
 }
 

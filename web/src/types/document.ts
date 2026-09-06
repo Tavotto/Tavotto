@@ -430,6 +430,16 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
 }
 
 /**
+ * 默认画布名（审计 T05）：**全产品只有这一个格式**。第一张画布、新建画布、
+ * 教程项目里的画布都叫「Figure N」——此前空文档叫 Fig 1、新建的叫 Fig 2、
+ * 教程里的叫 Figure 1，三种写法混在一个标签行里。
+ *
+ * 与下面那个**不是一回事**：这是画布名（标签行上那个），下面那个是文档名
+ * （顶栏那个 / 另存的文件名）。
+ */
+export const defaultCanvasName = (n: number): string => `Figure ${n}`
+
+/**
  * 新文档的默认名。**只在创建那一刻取**，之后就是用户内容（重命名、另存、
  * 最近文档列表里显示的都是它），所以按当时的界面语言给一个可读的名字，
  * 而不是 `fig_layout` 那种实现习惯（审计 T03）。它也会成为「另存为」的默认
@@ -441,7 +451,7 @@ export const defaultDocumentName = (): string =>
 export function emptyProject(): ProjectDocument {
   const canvas: CanvasData = {
     id: newId('c'),
-    name: 'Fig 1',
+    name: defaultCanvasName(1),
     page: { w: 150, h: 100 },
     objects: [],
     guides: [],

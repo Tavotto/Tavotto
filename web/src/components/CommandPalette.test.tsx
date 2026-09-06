@@ -140,3 +140,82 @@ describe('命令集', () => {
     expect(labels()).toEqual(['Refresh project (check for new files)'])
   })
 })
+
+/**
+ * 空查询时的顺序（审计 T50）。验收原话：**常用编辑动作无需猜内部关键词**。
+ * 排序判据本身在 `lib/commandRanking.test.ts` 逐条反证过；这里量的是
+ * 「面板真的按它渲染」以及「跑过的命令进了最近使用、且存在本机」。
+ */
+describe('空查询时的顺序（审计 T50）', () => {
+  // 「最近使用」是本机偏好，模块初始化时就从 localStorage 读进来了：
+  // 不清的话上一条用例点过什么，这一条的第一屏就跟着变
+  beforeEach(() => {
+    localStorage.removeItem('tavotto.ui')
+    useUiStore.setState({ recentCommands: [] })
+  })
+
+  const sectionIds = () =>
+    Array.from(document.querySelectorAll('[data-palette-section]')).map(
+      (el) => (el as HTMLElement).dataset.paletteSection,
+    )
+  const cmdIds = () =>
+    Array.from(document.querySelectorAll('[data-cmd-id]')).map(
+      (el) => (el as HTMLElement).dataset.cmdId,
+    )
+  const clickCmd = (id: string) => {
+    const btn = document.querySelector(`[data-cmd-id="${id}"] button`) as HTMLButtonElement
+    act(() => btn.click())
+  }
+
+  it('段标题按固定顺序出现，且都有译文', () => {
+    mount()
+    expect(sectionIds()).toEqual(['common', 'other'])
+    for (const el of document.querySelectorAll('[data-palette-section]')) {
+      expect((el.textContent ?? '').trim()).not.toBe('')
+      expect(el.textContent).not.toContain('palette.section')
+    }
+  })
+
+  it('教程 / 刷新 / 接入状态沉到「其他」，常用编辑动作在它们之前', () => {
+    mount()
+    const ids = cmdIds()
+    for (const low of ['refresh-project', 'readiness', 'tutorial-start']) {
+      expect(ids.indexOf('export')).toBeLessThan(ids.indexOf(low))
+      expect(ids.indexOf('add-text')).toBeLessThan(ids.indexOf(low))
+    }
+  })
+
+  it('跑过一条就进「最近使用」，并排在常用之前', () => {
+    useUiStore.setState({ recentCommands: [] })
+    mount()
+    clickCmd('shortcut-help')
+    expect(useUiStore.getState().recentCommands).toEqual(['shortcut-help'])
+    // 关掉的面板重新挂一次，看它是不是排到了前面
+    act(() => root?.unmount())
+    usePalette.setState({ open: true })
+    mount()
+    expect(sectionIds()[0]).toBe('recent')
+    expect(cmdIds()[0]).toBe('shortcut-help')
+  })
+
+  it('最近使用存本机、不进文档', () => {
+    useUiStore.setState({ recentCommands: [] })
+    mount()
+    clickCmd('shortcut-help')
+    const saved = JSON.parse(localStorage.getItem('tavotto.ui') ?? '{}')
+    expect(saved.recentCommands).toEqual(['shortcut-help'])
+  })
+
+  it('有查询时不显示段标题，但顺序仍是那一份', () => {
+    useUiStore.setState({ recentCommands: [] })
+    mount()
+    const input = document.querySelector('input') as HTMLInputElement
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, '教程')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(sectionIds()).toEqual([])
+    expect(cmdIds().length).toBeGreaterThan(0)
+  })
+})

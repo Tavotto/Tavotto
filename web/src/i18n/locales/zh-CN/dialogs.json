@@ -308,7 +308,13 @@
     "needPanel": "先选中一张可编辑的图（有源脚本的面板）",
     "noMatch": "没有匹配的命令",
     "placeholder": "输入命令…",
-    "searchLabel": "搜索命令"
+    "searchLabel": "搜索命令",
+    "section": {
+      "selection": "当前选区",
+      "recent": "最近使用",
+      "common": "常用",
+      "other": "其他"
+    }
   },
   "playground": {
     "backHome": "Tavotto 官网",

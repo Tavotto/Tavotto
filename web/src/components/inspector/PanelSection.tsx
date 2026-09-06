@@ -41,6 +41,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { overrideCounts } from '@/lib/overrideCounts'
 import type { PanelObject, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
@@ -665,7 +666,9 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
   const buildingFile = useRenderStore((s) => s.building[panel.fileId])
   const building = render?.status === 'rendering' || !!buildingFile
   const cold = !!buildingFile?.cold
-  const overrides = panel.overrides.length
+  // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
+  // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
+  const overrides = overrideCounts(panel.overrides, null).figure
 
   return (
     <Section title={pn('elements')}>
@@ -699,9 +702,14 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           {pn(editing ? 'exitElementEdit' : 'editElements')}
         </Button>
         {overrides > 0 && (
+          /* 「22」孤零零挂在按钮旁会被读成元素数（审计 T07）：徽标自己说清是
+             修改数，与右栏头部的「N 项已修改」同一句话；完整说明在 tooltip */
           <Tip label={pn('overrideCount', { count: overrides })}>
-            <span className="flex h-7 shrink-0 items-center rounded-sm bg-surface-2 px-1.5 font-mono text-xs tabular-nums text-ink-2">
-              {overrides}
+            <span
+              data-override-badge
+              className="flex h-7 shrink-0 items-center rounded-sm bg-accent-subtle px-1.5 text-xs text-accent"
+            >
+              {translate('element.modifiedCount', { ns: 'inspector', count: overrides })}
             </span>
           </Tip>
         )}

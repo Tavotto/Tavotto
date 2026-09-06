@@ -26,6 +26,7 @@ import { usePanelDisplayManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import {
   objectLabel,
+  objectTypeLabel,
   type ArrowObject,
   type CanvasObject,
   type PanelObject,
@@ -42,6 +43,7 @@ import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
+import { roleName } from './roles/registry'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -324,6 +326,12 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       <header className="shrink-0 px-3 pb-2">
         <div className="flex items-center gap-1.5">
           <ImageIcon size={13} className="shrink-0 text-ink-3" />
+          {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
+          {!el && (
+            <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+              {roleName('figure')}
+            </span>
+          )}
           <h2 className="min-w-0 truncate text-xs font-medium text-ink">
             {crumbs.at(-1) ?? t('elementFallback')}
           </h2>
@@ -384,6 +392,13 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     <header className="shrink-0 px-3 pb-2">
       <div className="flex items-center gap-1.5">
         <Icon size={13} className="shrink-0 text-ink-3" />
+        {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
+            「我在改的是文字、面板还是标注」（审计 T01） */}
+        {one && (
+          <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+            {one.type === 'shape' ? translate(`shape.${one.shape}`, { ns: 'common' }) : objectTypeLabel(one.type)}
+          </span>
+        )}
         <h2 className="min-w-0 truncate text-xs font-medium text-ink">
           {one ? objectLabel(one) : translate('count.selectedObjects', { count: objs.length })}
         </h2>

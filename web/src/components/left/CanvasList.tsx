@@ -1,16 +1,27 @@
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { Copy, MoreHorizontal, Pencil, Plus, Search, Trash2,
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
   SearchX,
+  Trash2,
 } from 'lucide-react'
 import {
   activateCanvas,
   createCanvasAndActivate,
   deleteCanvasWithSession,
 } from '@/store/canvasSession'
+import { renderUrl, runtimePreviewUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { Button } from '../ui/Button'
@@ -20,8 +31,8 @@ import { TextInput } from '../ui/Input'
 
 /**
  * 画布列表（项目里的全部画布，含未打开成标签的）。
- * 点击 = 打开成标签并切换；缩略图是对象布局示意（页面比例 + 对象框），
- * 不做真实渲染——识别用，不冒充成图。
+ * 点击 = 打开成标签并切换；缩略图按对象落位画真实内容（面板用现成的预览图，
+ * 文字画文字，标注画轮廓）——三张不同的图仅凭缩略图就分得开（审计 T05）。
  */
 /** 本组文案在 workspace:canvasList.* 下 */
 const cl = (key: string, values?: Record<string, unknown>) =>
@@ -79,6 +90,7 @@ export function CanvasList() {
             index={i}
             active={c.id === activeId}
             filtered={!!query.trim()}
+            count={rows.length}
             renaming={renaming === c.id}
             onOpen={() => open(c.id)}
             onRenameStart={() => setRenaming(c.id)}
@@ -102,6 +114,7 @@ export function CanvasList() {
 function CanvasRow({
   canvas,
   index,
+  count,
   active,
   filtered,
   renaming,
@@ -112,6 +125,8 @@ function CanvasRow({
 }: {
   canvas: CanvasData
   index: number
+  /** 可见行数：上移 / 下移到头就禁用 */
+  count: number
   active: boolean
   /** 搜索过滤中禁用拖动重排（索引对不上真实顺序） */
   filtered: boolean
@@ -164,7 +179,7 @@ function CanvasRow({
       {active && (
         <span aria-hidden className="absolute -left-0.5 top-2 h-8 w-0.5 rounded-full bg-accent" />
       )}
-      <SchemaThumb canvas={canvas} />
+      <CanvasThumb canvas={canvas} />
       <button
         onClick={onOpen}
         onDoubleClick={onRenameStart}
@@ -221,6 +236,25 @@ function CanvasRow({
             {cl('rename')}
           </span>
         </MenuItem>
+        {/* 拖动重排只有鼠标能用：菜单里给键盘一条同样的路（搜索过滤中索引对不上，禁用） */}
+        <MenuItem
+          disabled={filtered || index === 0}
+          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index - 1)}
+        >
+          <span className="flex items-center gap-2">
+            <ArrowUp size={13} className="text-ink-3" />
+            {cl('moveUp')}
+          </span>
+        </MenuItem>
+        <MenuItem
+          disabled={filtered || index >= count - 1}
+          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index + 1)}
+        >
+          <span className="flex items-center gap-2">
+            <ArrowDown size={13} className="text-ink-3" />
+            {cl('moveDown')}
+          </span>
+        </MenuItem>
         <MenuItem
           onSelect={() => {
             const nid = useDocumentStore.getState().duplicateCanvas(canvas.id)
@@ -244,30 +278,82 @@ function CanvasRow({
   )
 }
 
-/** 布局示意缩略图：页面比例 + 对象包围盒（识别用途，非真实渲染） */
-function SchemaThumb({ canvas }: { canvas: CanvasData }) {
+/**
+ * 缩略图：页面比例里按对象落位画**真实内容**。面板用素材库同一张预览图
+ * （`/api/render`，runtime 面板用 cache 预览），文字画文字，标注画轮廓。
+ * 不新起渲染、不冒充导出结果——它回答的是「这是哪一张版」。
+ */
+function CanvasThumb({ canvas }: { canvas: CanvasData }) {
   const { w, h } = canvas.page
+  const byId = useAssetStore((s) => s.byId)
+  const nonce = useRuntimeAssetStore((s) => s.previewNonce)
   return (
     <svg
       viewBox={`0 0 ${w} ${h}`}
       aria-hidden
-      className="h-10 w-14 shrink-0 rounded-[3px] border border-border bg-white"
+      data-canvas-thumb
+      className="h-10 w-14 shrink-0 rounded-[3px] border border-border bg-white text-ink"
       preserveAspectRatio="xMidYMid meet"
     >
       {canvas.objects
         .filter((o) => !o.hidden)
         .slice(0, 40)
-        .map((o) => (
-          <rect
-            key={o.id}
-            x={o.x}
-            y={o.y}
-            width={Math.max(o.w, w / 60)}
-            height={Math.max(o.h, h / 60)}
-            fill="currentColor"
-            className={o.type === 'panel' ? 'text-ink/25' : 'text-ink/12'}
-          />
-        ))}
+        .map((o) => {
+          if (o.type === 'panel') {
+            const href =
+              o.fileKind === 'runtime'
+                ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
+                : renderUrl(o.fileId, 200, byId[o.fileId]?.mtime)
+            return (
+              <image
+                key={o.id}
+                data-thumb-panel={o.fileId}
+                href={href}
+                x={o.x}
+                y={o.y}
+                width={o.w}
+                height={o.h}
+                preserveAspectRatio="none"
+              />
+            )
+          }
+          if (o.type === 'text') {
+            return (
+              <text
+                key={o.id}
+                x={o.x}
+                y={o.y + o.h * 0.8}
+                fontSize={Math.max(o.h * 0.7, h / 20)}
+                fill="currentColor"
+                className="text-ink-2"
+              >
+                {o.text.slice(0, 24)}
+              </text>
+            )
+          }
+          const common = {
+            key: o.id,
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: Math.max(w, h) / 150,
+            className: 'text-ink-3',
+          }
+          if (o.type === 'shape' && o.shape === 'ellipse') {
+            return <ellipse {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />
+          }
+          if (o.type === 'arrow' || (o.type === 'shape' && o.shape === 'line')) {
+            return <line {...common} x1={o.x} y1={o.y} x2={o.x + o.w} y2={o.y + o.h} />
+          }
+          return (
+            <rect
+              {...common}
+              x={o.x}
+              y={o.y}
+              width={Math.max(o.w, w / 60)}
+              height={Math.max(o.h, h / 60)}
+            />
+          )
+        })}
     </svg>
   )
 }
