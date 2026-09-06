@@ -59,12 +59,30 @@ _DYNAMIC_CONTAINERS: dict[str, str] = {
     "engine.sourceLabel": "`EngineEnvironmentCard.tsx` / `PrivacyAboutSettings.tsx` 用 "
     "en(`sourceLabel.${env.source || 'unknown'}`) 拼；闭集出处是 "
     "`web/src/lib/api.ts` 的 EngineSource 联合类型（空串记作 unknown）。",
+    "problems.cmp": "`validationText.ts` 用 pr(`cmp.${comparatorKey(...)}`) 拼——就在边界上的"
+    "那几条（`aboveAtBoundary`…）只由模板串拼出来，逐键的字面量扫描看不见。闭集出处是同"
+    "文件的 `COMPARATORS` 常量：每个比较词恰好两条文案（裸的 + `<cmp>AtBoundary`）。",
 }
 
 #: 容器 → 闭集的取法。返回子键应有的**精确集合**。
 _CLOSED_SETS = {
     "engine.sourceLabel": lambda: _engine_source_values(),
+    "problems.cmp": lambda: _comparator_keys(),
 }
+
+
+def _comparator_keys() -> set[str]:
+    """从 `web/src/lib/validationText.ts` 现取 `COMPARATORS`，展成文案子键。
+
+    每个比较词有**两条**文案：裸的那条（`above`）与就在边界上的那条
+    （`aboveAtBoundary`）。展开规则写在这里而不是抄一份键名清单——抄一份
+    就又多了一个会漂的出处。
+    """
+    src = (ROOT / "web" / "src" / "lib" / "validationText.ts").read_text(encoding="utf-8")
+    body = src.split("export const COMPARATORS = [", 1)[1].split("]", 1)[0]
+    members = re.findall(r"'([A-Za-z]+)'", body)
+    assert members, "没解析出 COMPARATORS 的成员——判据本身坏了"
+    return {m for m in members} | {f"{m}AtBoundary" for m in members}
 
 
 def _engine_source_values() -> set[str]:

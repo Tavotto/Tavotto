@@ -54,8 +54,26 @@ export interface IssueValues {
   expected: string | null
 }
 
+/**
+ * 「要求」那半句用得到的**全部比较词**，闭集。
+ *
+ * 它同时是 `errors:problems.cmp.*` 子键的唯一出处：**每个比较词恰好两条文案**
+ * ——裸的那条（`above`）与就在边界上的那条（`aboveAtBoundary`，见
+ * `comparatorKey`）。`tests/test_i18n_dead_keys.py` 现读这一行核对两种语言的
+ * 文案表，多一条少一条都红：边界那三条只由模板串拼出来，逐键的字面量扫描
+ * 看不见它们，整片放行又会让某个比较词被删掉之后文案静默变成死键。
+ *
+ * 加一个比较词 = 这里加一项 + 两种语言各加两条文案，缺一门禁就红。
+ */
+export const COMPARATORS = ['above', 'atLeast', 'atMost'] as const
+
+export type Comparator = (typeof COMPARATORS)[number]
+
 /** 每条规则的当前值 / 要求分别读哪个参数、带什么单位。没登记的就不显示数字。 */
-const VALUES: Record<string, { current?: string; expected?: string; unit?: string; cmp?: string }> = {
+const VALUES: Record<
+  string,
+  { current?: string; expected?: string; unit?: string; cmp?: Comparator }
+> = {
   'font-too-small': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'font-below-absolute-floor': { current: 'effective', expected: 'floor', unit: 'pt', cmp: 'above' },
   'font-too-large': { current: 'effective', expected: 'max', unit: 'pt', cmp: 'atMost' },
@@ -100,9 +118,6 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   }
 }
 
-/** 有「就在边界上」这一档说法的比较词。其余（没有 cmp 的规则）原样显示。 */
-const BOUNDARY_CMP = new Set(['above', 'atLeast', 'atMost'])
-
 /**
  * 「要求」那半句用哪个说法（审计 T41）。
  *
@@ -124,8 +139,10 @@ const BOUNDARY_CMP = new Set(['above', 'atLeast', 'atMost'])
  *
  * 判据一个字没动，动的只是这句话。
  */
-function comparatorKey(cmp: string, current: string | null, expected: string | null): string {
-  return BOUNDARY_CMP.has(cmp) && looksEqual(current, expected) ? `${cmp}AtBoundary` : cmp
+function comparatorKey(cmp: Comparator, current: string | null, expected: string | null): string {
+  // 每个比较词都有边界那一档（`COMPARATORS` 的注释里写着这条约定），所以这里
+  // 不再另留一张「哪些有边界说法」的名单——两份清单必然漂
+  return looksEqual(current, expected) ? `${cmp}AtBoundary` : cmp
 }
 
 /**
