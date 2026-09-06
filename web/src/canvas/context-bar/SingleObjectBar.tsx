@@ -11,10 +11,9 @@ import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Tip } from '@/components/ui/Tooltip'
-import { enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
+import { beginCrop, enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useUiStore } from '@/store/uiStore'
 import type {
   ArrowObject,
   CanvasObject,
@@ -158,7 +157,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
         <Button
           size="icon-sm"
           aria-label={translate('panel.crop', { ns: 'inspector' })}
-          onClick={() => useUiStore.getState().setCropTarget(obj.id)}
+          onClick={() => beginCrop(obj.id)}
         >
           <Crop size={12} />
         </Button>

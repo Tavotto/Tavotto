@@ -13,6 +13,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
+import { CropBar } from './CropBar'
 import { ElementQuickActions } from './ElementBar'
 import { elementHasQuick } from './elementQuick'
 import { MultiSelectionBar } from './MultiSelectionBar'
@@ -44,6 +45,7 @@ import { qb } from './text'
  *   单个画布对象   → SingleObjectBar（文字 / 面板 / 标注的快捷属性）
  *   单个图内元素   → ElementBar（字号 / 线型 / 图例位置…）
  *   两个以上画布对象 → MultiSelectionBar（对齐 / 分布 / 等宽等高 / 成组 / 更多）
+ *   正在裁剪的面板 → CropBar（完成 / 取消，审计 T26）
  *
  * 外壳负责所有目标共用的事：出现与让位的规则、落位（`position.ts`）、拖动期间
  * 隐藏（pointerdown 即藏、pointerup 再现；任何交互 kind ≠ none 也藏）、Esc 关闭
@@ -51,7 +53,7 @@ import { qb } from './text'
  * ⌘A、图层树、程序化选择，只看选区此刻是什么。
  */
 
-type Mode = 'element' | 'object' | 'multi'
+type Mode = 'element' | 'object' | 'multi' | 'crop'
 
 const rectOf = (r: DOMRect): ScreenRect => ({
   left: r.left,
@@ -109,22 +111,37 @@ export function ContextBar() {
   const [overflow, setOverflow] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // 目标解析：图内编辑态看 gid，否则看画布选区（顺序即选择顺序，末位主选）
-  const panel = objects.find(
-    (o): o is PanelObject => o.id === elementPanelId && o.type === 'panel',
+  // 目标解析：裁剪态最优先（那时选区不该再出别的条），其次图内编辑态看 gid，
+  // 否则看画布选区（顺序即选择顺序，末位主选）
+  const cropping = objects.find(
+    (o): o is PanelObject => o.id === cropTarget && o.type === 'panel',
   )
+  // 让位的判据是「有没有在裁剪」（`cropTarget`），出裁剪条的判据是「裁的是不是
+  // 一个真面板」（`cropping`）——两者不是同一个问题：id 指不到面板时谁都不该出
+  const panel = cropTarget
+    ? undefined
+    : objects.find((o): o is PanelObject => o.id === elementPanelId && o.type === 'panel')
   const gid = panel && gids.length === 1 ? gids[0] : null
   const selected: CanvasObject[] = panel
     ? []
     : ids
         .map((id) => objects.find((o) => o.id === id))
         .filter((o): o is CanvasObject => o != null && !o.hidden)
-  const obj: CanvasObject | null = !panel && ids.length === 1 ? (selected[0] ?? null) : null
+  const obj: CanvasObject | null =
+    !cropTarget && !panel && ids.length === 1 ? (selected[0] ?? null) : null
   // 图内编辑态里 shift 加选的标注是混排选区（归 ElementInspector 的对齐工具条管），
   // 不出多选栏——判据是「在不在图内编辑」，不是「那张面板还在不在」
   const multi: CanvasObject[] | null =
-    !panel && !elementPanelId && selected.length >= 2 ? selected : null
-  const mode: Mode | null = panel && gid ? 'element' : obj ? 'object' : multi ? 'multi' : null
+    !cropTarget && !panel && !elementPanelId && selected.length >= 2 ? selected : null
+  const mode: Mode | null = cropping
+    ? 'crop'
+    : panel && gid
+      ? 'element'
+      : obj
+        ? 'object'
+        : multi
+          ? 'multi'
+          : null
   // 只有真给得出高频动作才出现——一个孤零零的「全部属性」按钮不值得盖住画布
   const manifest = usePanelDisplayManifest(panel)
   const element = gid ? (manifest?.elements.find((e) => e.gid === gid) ?? null) : null
@@ -134,13 +151,15 @@ export function ContextBar() {
       : mode != null
   const idsKey = ids.join(',')
   const targetKey =
-    mode === 'element'
-      ? `el:${panel!.id}:${gid ?? ''}`
-      : mode === 'object'
-        ? `obj:${obj!.id}`
-        : mode === 'multi'
-          ? `multi:${idsKey}`
-          : ''
+    mode === 'crop'
+      ? `crop:${cropping!.id}`
+      : mode === 'element'
+        ? `el:${panel!.id}:${gid ?? ''}`
+        : mode === 'object'
+          ? `obj:${obj!.id}`
+          : mode === 'multi'
+            ? `multi:${idsKey}`
+            : ''
   // narrow 断点下侧栏是盖在画布上的覆盖式抽屉（z-30），portal 出来的工具条
   // （z-40）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
   const overlayDrawerOpen = layout === 'narrow' && (leftOpen || rightOpen)
@@ -167,7 +186,6 @@ export function ContextBar() {
     !!targetKey &&
     hasActions &&
     !editingText &&
-    !cropTarget &&
     !quickOpen &&
     !overlayDrawerOpen &&
     !modalOpen &&
@@ -243,7 +261,9 @@ export function ContextBar() {
       anchor = b ? selectionScreenRect(b, t) : null
     } else {
       const node =
-        mode === 'element' && panel
+        mode === 'crop' && cropping
+          ? document.querySelector(`[data-object-id="${CSS.escape(cropping.id)}"]`)
+          : mode === 'element' && panel
           ? ((gid &&
               document.querySelector(
                 `[data-element-svg="${CSS.escape(panel.id)}"] [id="${CSS.escape(gid)}"]`,
@@ -293,6 +313,7 @@ export function ContextBar() {
   }, [
     visible,
     mode,
+    cropping,
     panel,
     gid,
     obj,
@@ -331,7 +352,9 @@ export function ContextBar() {
       data-placement={pos?.placement}
       data-context-bar-compact={textBarCompact ? '' : undefined}
       role="toolbar"
-      aria-label={mode === 'multi' ? qb('multiAria') : qb('aria')}
+      aria-label={
+        mode === 'multi' ? qb('multiAria') : mode === 'crop' ? qb('cropAria') : qb('aria')
+      }
       style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}
       className={cn(
         // w-max：fixed 盒子的 width:auto 会被「left 到视口右沿」的可用宽度压扁，
@@ -342,7 +365,9 @@ export function ContextBar() {
       )}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {mode === 'element' && panel && gid ? (
+      {mode === 'crop' && cropping ? (
+        <CropBar panelId={cropping.id} />
+      ) : mode === 'element' && panel && gid ? (
         <>
           <ElementQuickActions panel={panel} gid={gid} compact={textBarCompact} />
           <OpenInspectorButton />
