@@ -10,7 +10,6 @@ import {
 } from 'lucide-react'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
-import { fixOptions } from '@/lib/issueFix'
 import {
   cursorFor,
   cursorView,
@@ -18,7 +17,6 @@ import {
   type IssueGroup,
   type ProblemScope,
 } from '@/lib/problemList'
-import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import { SEVERITIES, type Severity } from '@/lib/profile'
 import {
@@ -33,14 +31,13 @@ import {
 } from '@/lib/validationText'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
-import { applyIssueFix, applyIssueFixes } from '@/store/issueFixActions'
-import { toCatalog, useProfileStore } from '@/store/profileStore'
+import { applyIssueFixes } from '@/store/issueFixActions'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem } from '../ui/Menu'
+import { currentProfile, FixButton } from './IssueFixButton'
 import { Segmented } from '../ui/Segmented'
 import { Tip } from '../ui/Tooltip'
 import { useScopedProblems } from './useProblemScope'
@@ -475,42 +472,6 @@ function IssueRow({
   )
 }
 
-function FixButton({ issue }: { issue: ValidationIssue }) {
-  // **订阅 `specs`，不订阅 `catalog()`**：后者每次调用都新建一个数组，
-  // 拿它当 zustand 选择器的返回值 = 每一帧都"变了" = 无限重渲染
-  const specs = useProfileStore((s) => s.specs)
-  const doc = useDocumentStore((s) => s.doc)
-  const profile = useMemo(
-    () => resolveDocumentSpec(doc.profile, toCatalog(specs)).profile,
-    [doc.profile, specs],
-  )
-  if (issue.fixKind === 'none') return null
-  if (issue.fixKind === 'safe_auto') {
-    return (
-      <Button size="sm" className="shrink-0 text-xs" onClick={() => runFix(issue)}>
-        {pr('fix')}
-      </Button>
-    )
-  }
-  const options = fixOptions(issue, profile)
-  return (
-    <Menu
-      width={180}
-      trigger={
-        <Button size="sm" className="shrink-0 text-xs">
-          {pr('fixChoose')}
-        </Button>
-      }
-    >
-      {options.map((o) => (
-        <MenuItem key={o.choice} onSelect={() => runFix(issue, o.choice)}>
-          {pr(`fixOption.${o.labelKey}`, o.params)}
-        </MenuItem>
-      ))}
-    </Menu>
-  )
-}
-
 /** 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。 */
 function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
   const lines = technicalDetailLines(issue)
@@ -624,18 +585,6 @@ function ReadinessLink() {
 }
 
 /* -------------------------------- 动作 ------------------------------------ */
-
-function currentProfile() {
-  const doc = useDocumentStore.getState().doc
-  return resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile
-}
-
-function runFix(issue: ValidationIssue, choice?: string): void {
-  const res = applyIssueFix(issue, currentProfile(), choice)
-  const ui = useUiStore.getState()
-  if (res.ok) ui.setStatus({ key: 'problems.fixed', ns: 'errors', values: { count: res.applied } })
-  else ui.setStatus({ key: `problems.fixFailed.${res.reason}`, ns: 'errors' }, 'error')
-}
 
 function runBatchFix(issues: ValidationIssue[]): void {
   const res = applyIssueFixes(issues, currentProfile())
