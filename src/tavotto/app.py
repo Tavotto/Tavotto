@@ -5744,9 +5744,140 @@ def _version_meta(v: dict) -> dict:
     return meta
 
 
+#: 一条版本草图最多带几个对象 / 一段文字最多带几个字，**上限而不是取值**。
+#:
+#: 取值由调用方随请求给（`?sketch=` / `?sketchText=`）——「一张缩略图画几个
+#: 对象」是**缩略图组件自己的事**，把这个数字在 Python 里再写一遍就是同一条
+#: 规则的第二份权威，而两份权威只会在有人改了其中一份的那天才被发现。
+#: 这里的两个常量是**传输侧的封顶**：挡住 `?sketch=99999` 把 120 条版本的
+#: 全部对象一次发出去，与「画几个」无关。
+VERSION_SKETCH_MAX_OBJECTS = 200
+VERSION_SKETCH_MAX_TEXT = 200
+
+
+def _sketch_num(value: object) -> float:
+    """草图里的一个坐标。**坏值折成 0，绝不让整份列表 500。**
+
+    `validate_document` 只查骨架（那是故意的：逐字段较真会把用户真实的编辑挡在
+    保存之外），所以磁盘上的对象可以缺 x/y/w/h、也可以是字符串。一条画不出来
+    的对象不该让用户**整条时间线**都打不开。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if value != value or value in (float("inf"), float("-inf")):  # NaN / ±inf
+        return 0.0
+    return round(float(value), 2)
+
+
+def _sketch_canvas(doc: dict, canvas_id: object) -> tuple[dict, list] | None:
+    """草图取自**哪一张画布**的页面与对象；取不出来时 `None`。
+
+    缩略图画的是**一张**页面，所以主语必须收窄到一张画布——schema 2 的文档
+    自己就是一张，schema 3 按检查点记下的画布身份找（找不到就退回它自己记的
+    激活画布，再退回第一张）。跨全部画布把对象堆在一个页面上画出来的东西不
+    对应任何一张真实的版，那比不画更坏。
+
+    页面尺寸取不出来就整条 `None`：**「不知道」是独立一档**，替它编一个
+    A4 出来的话，用户看到的是一张比例假的缩略图，而没有任何东西会提醒他。
+    """
+    if doc.get("schema") == engine_documents.SCHEMA_PROJECT:
+        canvases = [c for c in doc.get("canvases", []) if isinstance(c, dict)]
+        if not canvases:
+            return None
+        wanted = canvas_id or doc.get("activeCanvasId")
+        source = next((c for c in canvases if c.get("id") == wanted), canvases[0])
+    else:
+        source = doc
+    page = source.get("page")
+    if not isinstance(page, dict):
+        return None
+    w, h = _sketch_num(page.get("w")), _sketch_num(page.get("h"))
+    if w <= 0 or h <= 0:
+        return None
+    objects = source.get("objects")
+    return {"w": w, "h": h}, objects if isinstance(objects, list) else []
+
+
+def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
+    """一条版本的**草图**：够画一张缩略图的最小事实集合，不含 overrides / 脚本。
+
+    这是版本列表能带上缩略图而**不退化成「打开面板就拉全部版本正文」**的原因
+    ——列表端点为了数对象数本来就已经把整份文件（含每条的整份文档）解析过
+    一遍了（`_load_versions`），草图是那份内存数据的投影，既不多读一次盘也不
+    多解析一遍。按可见行去拉 120 份正文才是新增成本。
+
+    字段名与前端缩略图组件（`web/src/components/CanvasThumb.tsx` 的
+    `ThumbObject`）**逐字相同**：草图对象直接就是那个组件吃的形状，中间没有
+    第二套词汇要维护。
+
+    隐藏对象在这里就滤掉（组件也滤一遍，两处同一判据），**先滤后截**——反过来
+    的话前 40 个全是隐藏对象的那一版会得到一张空缩略图。
+    """
+    doc = v.get("doc")
+    if not isinstance(doc, dict):
+        return None
+    resolved = _sketch_canvas(doc, v.get("canvasId"))
+    if resolved is None:
+        return None
+    page, raw_objects = resolved
+    objects: list[dict] = []
+    for o in raw_objects:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(o, dict) or o.get("hidden"):
+            continue
+        kind = o.get("type")
+        if not isinstance(kind, str):
+            continue
+        item: dict = {
+            "type": kind,
+            "x": _sketch_num(o.get("x")),
+            "y": _sketch_num(o.get("y")),
+            "w": _sketch_num(o.get("w")),
+            "h": _sketch_num(o.get("h")),
+        }
+        if kind == "panel":
+            # 面板挂的是素材库同一条预览链路，所以只要素材身份；**overrides 一条
+            # 都不带**——那是整份正文里最大的一块，而缩略图本来就画不出图内修改。
+            if isinstance(o.get("fileId"), str):
+                item["fileId"] = o["fileId"]
+            if isinstance(o.get("fileKind"), str):
+                item["fileKind"] = o["fileKind"]
+        elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
+            item["text"] = o["text"][:max_text]
+        elif kind == "shape" and isinstance(o.get("shape"), str):
+            item["shape"] = o["shape"]
+        objects.append(item)
+    return {"page": page, "objects": objects}
+
+
+def _sketch_limits() -> tuple[int, int]:
+    """本次请求要多大的草图。`sketch` 缺席 / 非正数 = **不带草图**（默认不带）。"""
+
+    def _arg(name: str, cap: int) -> int:
+        try:
+            n = int(request.args.get(name, 0))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(n, cap))
+
+    return _arg("sketch", VERSION_SKETCH_MAX_OBJECTS), _arg("sketchText", VERSION_SKETCH_MAX_TEXT)
+
+
 @app.get("/api/versions/<doc_id>")
 def api_versions_list(doc_id):
-    return jsonify({"versions": [_version_meta(v) for v in _load_versions(doc_id)]})
+    max_objects, max_text = _sketch_limits()
+    out = []
+    for v in _load_versions(doc_id):
+        meta = _version_meta(v)
+        if max_objects > 0:
+            sketch = _version_sketch(v, max_objects, max_text)
+            # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
+            # 什么都没有」是两件事，前者该显示占位、后者该显示一张空白页。
+            if sketch is not None:
+                meta["sketch"] = sketch
+        out.append(meta)
+    return jsonify({"versions": out})
 
 
 @app.get("/api/versions/<doc_id>/<vid>")
