@@ -569,6 +569,23 @@ def cases() -> list[dict]:
         }
     )
 
+    # 17. 元素超出图幅（审计 T14）：数字取自教程 Fig1_kinetics 的真实 manifest
+    #     （figsize 80 × 57.6，脚本存盘用 bbox_inches="tight" 才没被裁）。
+    #     x 轴标题底边 1.0425 → 探出 2.45 mm，y 轴标题左边 −0.007 → 0.56 mm，
+    #     两条都报、同一条问题、文案与 detail 属于最糟的那条；图例只探出
+    #     0.12 mm（descender 留白那一档）→ 容差之内不报。
+    m = _clean_manifest()
+    m["size_mm"] = [80.0, 57.6]
+    m["elements"][3]["bbox"] = [0.3152, 0.9874, 0.3946, 0.0551]  # xlabel
+    m["elements"][4]["bbox"] = [-0.007, 0.3224, 0.0397, 0.3652]  # ylabel
+    m["elements"][5]["bbox"] = [0.6, -0.002, 0.3, 0.05]  # legend：0.12 mm
+    out.append(
+        {
+            "name": "figure-element-clipped",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
     return out
 
 
