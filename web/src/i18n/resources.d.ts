@@ -149,11 +149,11 @@ export default interface Resources {
     "measure": {
       "cmSize": "{{w}}×{{h}}cm",
       "cmSizeSpaced": "{{w}}×{{h}} cm",
-      "dpi": "{{value}} dpi",
       "mm": "{{value}} mm",
       "mmPair": "{{a}}, {{b}} mm",
       "mmSize": "{{w}}×{{h}} mm",
       "mmSizeSpaced": "{{w}} × {{h}} mm",
+      "ppi": "{{value}} ppi",
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
@@ -1187,15 +1187,9 @@ export default interface Resources {
         "summaryOk": "全部正常"
       },
       "export": {
-        "defaultDpi": "默认 DPI",
         "defaultFormats": "默认格式",
-        "dpiHint": "只影响位图（PNG）的分辨率；PDF 是矢量的，DPI 对它没有意义。",
-        "formatsHint": "PDF 保留矢量，投稿一般要它；PNG 用于预览与不接受矢量的平台。",
-        "hint": "这里是导出对话框的初始值；单次导出仍可临时改。",
-        "proof": "Proof 留档",
-        "proofAria": "默认随导出生成 proof report",
-        "proofHelp": "Proof report 是一份 JSON 留档：记下这次导出用的尺寸、字号、线宽与出版规范检查结果，投稿返修时用来证明图没变过。",
-        "proofHint": "随成图生成 proof report（JSON 留档）"
+        "ppiNotForVector": "只选了矢量格式，分辨率不生效",
+        "reportScope": "记录本次尺寸、样式和检查结果"
       },
       "general": {
         "autosave": "自动保存",

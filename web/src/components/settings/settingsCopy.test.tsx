@@ -40,6 +40,8 @@ globalThis.ResizeObserver ??= class {
 
 const st = (key: string, values?: Record<string, unknown>) =>
   t(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+const ex = (key: string, values?: Record<string, unknown>) =>
+  t(`export.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 const FIGURES = '/Users/me/Library/Application Support/Tavotto/tutorial/v1-a42973/Tutorial'
 const EXPORTS = '/Users/me/Library/Application Support/Tavotto/tutorial/v1-a42973/exports'
@@ -319,3 +321,57 @@ describe('T40 项目：写回权限与真实保护同步', () => {
   })
 })
 
+/* -------------------------------- T43 导出 --------------------------------- */
+
+describe('T43 导出偏好：与导出对话框同名同单位', () => {
+  const defaults = (patch: Record<string, unknown>) =>
+    localStorage.setItem(
+      'tavotto.export.defaults',
+      JSON.stringify({ dpi: '600', formats: ['pdf', 'png'], withProof: false, ...patch }),
+    )
+
+  it('分辨率与样式检查报告用的是导出对话框那两个名字，没有第二套叫法', async () => {
+    defaults({})
+    await open('export')
+    expect(bodyText()).toContain(ex('ppiLabel'))
+    expect(bodyText()).toContain(ex('reportToggle'))
+    // 审计记的原症状：设置里叫「Proof 留档」，导出对话框里叫「样式检查报告」
+    expect(bodyText()).not.toContain('Proof')
+    expect(bodyText()).not.toContain('DPI')
+  })
+
+  it('单位是 ppi', async () => {
+    defaults({ dpi: '600' })
+    await open('export')
+    expect(bodyText()).toContain('600 ppi')
+    expect(bodyText()).not.toContain('600 dpi')
+  })
+
+  it('格式旁标注类型，用词与导出对话框逐字相同', async () => {
+    defaults({})
+    await open('export')
+    expect(bodyText()).toContain(ex('pdfHint'))
+    expect(bodyText()).toContain(ex('pngHint'))
+  })
+
+  it('只选了矢量格式时分辨率停用，并就近说明为什么', async () => {
+    defaults({ formats: ['pdf'] })
+    await open('export')
+    expect(bodyText()).toContain(st('export.ppiNotForVector'))
+    expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('选上位图之后分辨率就可用了（说明上一条量的是格式，不是恒真）', async () => {
+    defaults({ formats: ['pdf', 'png'] })
+    await open('export')
+    expect(bodyText()).not.toContain(st('export.ppiNotForVector'))
+    expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('报告的短说明不承诺「证明图没变过」', async () => {
+    defaults({})
+    await open('export')
+    expect(bodyText()).toContain(st('export.reportScope'))
+    expect(bodyText()).not.toContain('证明图没变过')
+  })
+})

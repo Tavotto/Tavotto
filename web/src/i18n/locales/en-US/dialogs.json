@@ -894,15 +894,9 @@
       "summaryOk": "Everything looks fine"
     },
     "export": {
-      "defaultDpi": "Default DPI",
       "defaultFormats": "Default formats",
-      "dpiHint": "Affects raster output (PNG) only — PDF is vector, so DPI means nothing for it.",
-      "formatsHint": "PDF keeps everything vector, which journals normally require; PNG is for previews and places that reject vector files.",
-      "hint": "These are the export dialog's starting values; a single export can still change them.",
-      "proof": "Proof record",
-      "proofAria": "Write a proof report with every export by default",
-      "proofHelp": "A proof report is a JSON record of this export: the sizes, font sizes, line widths and publication-profile checks it passed. Handy evidence that the figure has not changed when a paper comes back for revision.",
-      "proofHint": "Write a proof report (JSON record) alongside the output"
+      "ppiNotForVector": "Vector formats only — resolution has no effect",
+      "reportScope": "Records this run’s sizes, styles and check results"
     },
     "general": {
       "autosave": "Autosave",
