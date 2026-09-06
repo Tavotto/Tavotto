@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useRef, useState, type ButtonHTMLAttributes } from 'react'
-import { Loader2 } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
+import { ICON_SIZE, type IconSizeStep } from './Icon'
 import { cn } from '@/lib/utils'
 
 type Variant = 'ghost' | 'outline' | 'primary' | 'danger'
@@ -34,7 +35,8 @@ const SIZES: Record<Size, string> = {
   'icon-sm': 'h-7 w-7 rounded-sm',
 }
 
-const SPINNER: Record<Size, number> = { sm: 11, md: 13, icon: 14, 'icon-sm': 12 }
+// 忙碌指示器跟按钮里其它图标同一档：有文字的按钮 sm，纯图标按钮 md
+const SPINNER: Record<Size, IconSizeStep> = { sm: 'sm', md: 'sm', icon: 'md', 'icon-sm': 'sm' }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -93,13 +95,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         )}
         aria-hidden={!busy}
       >
-        <Loader2 size={SPINNER[size]} className="animate-spin" />
+        <LoaderCircle size={ICON_SIZE[SPINNER[size]]} className="animate-spin" />
         {loadingLabel}
       </span>
     </span>
   ) : (
     <>
-      {busy && <Loader2 size={SPINNER[size]} className="animate-spin" />}
+      {busy && <LoaderCircle size={ICON_SIZE[SPINNER[size]]} className="animate-spin" />}
       {children}
     </>
   )

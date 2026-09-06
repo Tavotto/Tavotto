@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Ban, ClipboardCopy, Play, Settings2, Square } from 'lucide-react'
+import { Ban, Copy, Play, Settings, Square } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
@@ -95,16 +97,16 @@ export function ScriptLibrary({ query }: { query: string }) {
       <SafeModeNote />
       {GROUP_ORDER.filter((g) => groups.has(g)).map((g) =>
         g === 'infra' ? (
-          <details key={g} className="mt-0.5">
-            <summary className="cursor-pointer select-none rounded-sm px-1 py-0.5 text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring">
+          <Details key={g} className="mt-0.5">
+            <Summary className="rounded-sm px-1 py-0.5 text-xs text-ink-3 hover:text-ink-2">
               {sc('groupInfra', { count: groups.get(g)!.length })}
-            </summary>
+            </Summary>
             <ul aria-label={sc('groupInfra', { count: groups.get(g)!.length })}>
               {groups.get(g)!.map((entry) => (
                 <ScriptRow key={entry.script} entry={entry} stems={view.scripts[entry.script]?.stems ?? []} />
               ))}
             </ul>
-          </details>
+          </Details>
         ) : (
           <section key={g} className="mt-0.5">
             <h4 className="mb-0.5 px-1 text-xs text-ink-3">
@@ -200,12 +202,12 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
         >
           {busy ? (
             <>
-              <Square size={12} />
+              <Square size={ICON_SIZE.sm} />
               {sc(run?.cancelRequested ? 'cancelling' : 'cancel')}
             </>
           ) : (
             <>
-              <Play size={12} />
+              <Play size={ICON_SIZE.sm} />
               {sc(entry.registered ? 'rerun' : 'run')}
             </>
           )}
@@ -331,23 +333,21 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
           // 渲染环境卡片住在设置的「关于」段（EngineEnvironmentCard）
           onClick={() => useUiStore.getState().setSettingsOpen(true, 'about')}
         >
-          <Settings2 size={12} />
+          <Settings size={ICON_SIZE.sm} />
           {sc('openEnvSettings')}
         </Button>
         <Button variant="outline" size="sm" onClick={() => void copyDiagnostics()}>
-          <ClipboardCopy size={12} />
+          <Copy size={ICON_SIZE.sm} />
           {sc(copied ? 'copied' : 'copyDiagnostics')}
         </Button>
       </div>
       {error?.traceback && (
-        <details className="mt-1">
-          <summary className="cursor-pointer select-none text-xs text-ink-3">
-            {sc('diagnostics')}
-          </summary>
+        <Details className="mt-1">
+          <Summary className="text-xs text-ink-3">{sc('diagnostics')}</Summary>
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-snug text-ink-2">
             {error.traceback}
           </pre>
-        </details>
+        </Details>
       )}
     </div>
   )
@@ -357,10 +357,8 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
 function AdvancedDetails({ entry }: { entry: ScriptInventoryEntry }) {
   useTranslation('workspace')
   return (
-    <details>
-      <summary className="cursor-pointer select-none text-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring">
-        {sc('advanced')}
-      </summary>
+    <Details>
+      <Summary className="text-xs text-ink-3 hover:text-ink">{sc('advanced')}</Summary>
       <dl className="mt-0.5 flex flex-col gap-0.5 text-xs text-ink-3">
         {entry.entry_candidates.length > 0 && (
           <div className="flex gap-1">
@@ -379,7 +377,7 @@ function AdvancedDetails({ entry }: { entry: ScriptInventoryEntry }) {
           <dd className="font-mono">{entry.reason}</dd>
         </div>
       </dl>
-    </details>
+    </Details>
   )
 }
 
@@ -441,7 +439,7 @@ export function ProbeResultsDialog({
       </ul>
       {dropped > 0 && (
         <p className="mt-1.5 flex items-start gap-1 text-xs leading-relaxed text-ink-3">
-          <Ban size={11} className="mt-0.5 shrink-0" />
+          <Ban size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
           {sc('dropped', { count: dropped })}
         </p>
       )}

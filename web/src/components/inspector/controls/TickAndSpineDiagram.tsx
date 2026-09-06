@@ -9,6 +9,8 @@ import {
   type TickDirection,
 } from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
+import { X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Tip } from '../../ui/Tooltip'
 
 /**
@@ -484,7 +486,7 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
             >
               <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
               {adapter.labelOf(p)}
-              <span aria-hidden>×</span>
+              <X size={ICON_SIZE.xs} aria-hidden />
             </button>
           ))}
         </div>

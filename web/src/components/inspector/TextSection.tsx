@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   DEFAULT_INTERPRETATION,
   hasScientificChars,
@@ -163,7 +164,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             onClick={insertNewline}
             title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
           >
-            <CornerDownLeft size={12} />
+            <CornerDownLeft size={ICON_SIZE.sm} />
             {tx('insertNewline')}
           </Button>
         </div>
@@ -192,7 +193,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 }
                 aria-label={tx('underline')}
               >
-                <Underline size={12} />
+                <Underline size={ICON_SIZE.sm} />
               </Button>
               <Button
                 size="icon-sm"
@@ -201,7 +202,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 aria-label={tx('superscript')}
                 title={tx('superscriptTitle', { key: modKey('↑') })}
               >
-                <Superscript size={12} />
+                <Superscript size={ICON_SIZE.sm} />
               </Button>
               <Button
                 size="icon-sm"
@@ -210,7 +211,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 aria-label={tx('subscript')}
                 title={tx('subscriptTitle', { key: modKey('↓') })}
               >
-                <Subscript size={12} />
+                <Subscript size={ICON_SIZE.sm} />
               </Button>
             </>
           }

@@ -1,5 +1,6 @@
 import { Bot, Sparkles, SquareTerminal, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
  * 编码 Agent 的图标。
@@ -36,7 +37,7 @@ export function AgentIcon({
         className,
       )}
     >
-      <Glyph size={Math.round(size * 0.5)} strokeWidth={1.75} />
+      <Glyph size={ICON_SIZE.lg} />
     </span>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link2, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   materializePaste,
   materializeRelink,
@@ -62,7 +63,7 @@ export function RelinkDialog() {
             {t(isPaste ? 'relink.cancelPaste' : 'relink.cancelDoc')}
           </Button>
           <Button variant="primary" size="md" onClick={confirm}>
-            <Link2 size={14} />
+            <Link2 size={ICON_SIZE.md} />
             {t(isPaste ? 'relink.confirmPaste' : 'relink.confirmDoc')}
           </Button>
         </>
@@ -71,7 +72,7 @@ export function RelinkDialog() {
       <ul className="flex flex-col gap-2">
         {choices.map((m, i) => (
           <li key={m.fileId} className="flex items-center gap-2">
-            <TriangleAlert size={13} className="shrink-0 text-danger" />
+            <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-ink" title={m.fileId}>
                 {m.name}

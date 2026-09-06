@@ -1,6 +1,8 @@
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, CircleCheck, ClipboardList, ShieldAlert } from 'lucide-react'
+import { ChevronRight, CircleCheck, ClipboardList, TriangleAlert } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { fixOptions } from '@/lib/issueFix'
@@ -122,7 +124,7 @@ export function ProblemPanel() {
           role="status"
           className="mx-3 mb-2 flex shrink-0 items-center gap-2 rounded-sm border border-warn/30 bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-ink-2"
         >
-          <ShieldAlert size={12} className="shrink-0 text-warn" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn" aria-hidden />
           <span className="flex-1">{pr('failedKeptHint')}</span>
           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => schedule()}>
             {pr('retry')}
@@ -132,7 +134,7 @@ export function ProblemPanel() {
 
       {failed && !retained ? (
         <EmptyState
-          icon={ShieldAlert}
+          icon={TriangleAlert}
           title={pr('failedTitle')}
           /* 「查不了」与「没问题」是两个答案：压成一个的话用户会带着一屏
              静悄悄的绿去投稿 */
@@ -202,7 +204,7 @@ function SeverityChip({
         active ? 'border-accent bg-accent-subtle text-accent' : 'border-border text-ink-2 hover:bg-ink/[.05]',
       )}
     >
-      <Icon size={11} className={cn('shrink-0', toneOf(severity))} aria-hidden />
+      <Icon size={ICON_SIZE.xs} className={cn('shrink-0', toneOf(severity))} aria-hidden />
       <span>{label}</span>
       <span className="font-mono text-ink-3">{count}</span>
     </button>
@@ -246,7 +248,7 @@ function IssueRow({
           title={issueDetailText(issue)}
           className="flex min-w-0 flex-1 items-start gap-1.5 rounded-sm p-0.5 text-left outline-none focus-visible:focus-ring"
         >
-          <Icon size={12} className={cn('mt-0.5 shrink-0', toneOf(issue.severity))} aria-hidden />
+          <Icon size={ICON_SIZE.sm} className={cn('mt-0.5 shrink-0', toneOf(issue.severity))} aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-baseline gap-1.5">
               <span className="min-w-0 truncate text-xs text-ink">{issueTitle(issue)}</span>
@@ -311,17 +313,10 @@ function FixButton({ issue }: { issue: ValidationIssue }) {
 function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
   const lines = technicalDetailLines(issue)
   return (
-    <details className="group ml-5 mt-0.5">
+    <Details className="ml-5 mt-0.5">
       {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
           用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
-      <summary className="flex cursor-default list-none items-center gap-0.5 text-[11px] text-ink-3 outline-none focus-visible:focus-ring">
-        <ChevronRight
-          size={10}
-          aria-hidden
-          className="shrink-0 transition-transform group-open:rotate-90"
-        />
-        {pr('techTitle')}
-      </summary>
+      <Summary className="cursor-default gap-0.5 text-[11px] text-ink-3">{pr('techTitle')}</Summary>
       <ul className="mt-0.5 flex flex-col gap-0.5">
         {lines.map((line) => (
           <li key={line} className="break-all font-mono text-[10px] leading-relaxed text-ink-3">
@@ -329,7 +324,7 @@ function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
           </li>
         ))}
       </ul>
-    </details>
+    </Details>
   )
 }
 
@@ -350,9 +345,9 @@ function ReadinessLink() {
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
         >
-          <ClipboardList size={12} className="shrink-0 text-ink-3" aria-hidden />
+          <ClipboardList size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{pr('readiness', { count: pending })}</span>
-          <ChevronRight size={11} className="shrink-0 text-ink-3" aria-hidden />
+          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
         </button>
       </Tip>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { CircleQuestionMark, TriangleAlert } from 'lucide-react'
+import { ChevronRight, CircleQuestionMark, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Popover } from '../ui/Popover'
@@ -181,7 +182,7 @@ export function HelpTip({
             'outline-none transition-colors hover:text-ink-2 focus-visible:focus-ring',
           )}
         >
-          <CircleQuestionMark size={12} aria-hidden />
+          <CircleQuestionMark size={ICON_SIZE.sm} aria-hidden />
         </button>
       }
     >
@@ -219,7 +220,7 @@ export function InlineWarning({
         tone === 'danger' ? 'bg-danger/[.07] text-danger' : 'bg-ink/[.045] text-ink-2',
       )}
     >
-      <TriangleAlert size={12} className="mt-px shrink-0" aria-hidden />
+      <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0" aria-hidden />
       <span className="min-w-0">{children}</span>
     </p>
   )
@@ -254,27 +255,17 @@ export function DiagnosticDisclosure({
             'text-ink-2 outline-none hover:text-ink focus-visible:focus-ring',
           )}
         >
-          <Chevron open={open} />
+          <ChevronRight
+            size={ICON_SIZE.xs}
+            aria-hidden
+            className={cn('transition-transform', open && 'rotate-90')}
+          />
           <span className="font-medium">{title}</span>
         </button>
         {action}
       </div>
       {open && <div className="flex flex-col gap-1 border-l border-border pl-2">{children}</div>}
     </div>
-  )
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 11 11"
-      aria-hidden
-      className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-    >
-      <path d="M4 2.5 L7.5 5.5 L4 8.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
   )
 }
 

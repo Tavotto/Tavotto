@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import {
@@ -126,7 +127,7 @@ export function TypographyControls({
                     adapter.writeOnce('weight', nextToggle(adapter.valueOf('weight'), 'bold', 'normal'))
                   }
                 >
-                  <Bold size={12} />
+                  <Bold size={ICON_SIZE.sm} />
                 </StyleToggle>
               </Anchor>
             )}
@@ -144,7 +145,7 @@ export function TypographyControls({
                     adapter.writeOnce('style', nextToggle(adapter.valueOf('style'), 'italic', 'normal'))
                   }
                 >
-                  <Italic size={12} />
+                  <Italic size={ICON_SIZE.sm} />
                 </StyleToggle>
               </Anchor>
             )}

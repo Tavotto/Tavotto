@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -129,7 +130,7 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
         <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
-          <ShieldAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+          <ShieldAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
           <span>
             <b className="font-medium">{wb('divergenceTitle')}</b>
             {wb('divergenceBody')}
@@ -285,7 +286,7 @@ export function WriteBackDialog({
               loadingLabel={wb('rewriting')}
               onClick={run}
             >
-              <FileUp size={14} />
+              <FileUp size={ICON_SIZE.md} />
               {wb('confirm')}
             </Button>
           </>
@@ -317,7 +318,7 @@ export function WriteBackDialog({
       ) : (
         <div className="flex flex-col gap-2">
           <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-            <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
             <div className="text-xs leading-relaxed text-ink-2">
               <p>
                 <b className="font-medium text-ink">{wb('overwriteLabel')}</b>
@@ -386,7 +387,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
         )}
         onClick={() => setOpen(true)}
       >
-        <FileUp size={13} />
+        <FileUp size={ICON_SIZE.sm} />
         {wb('buttonLabel')}
       </Button>
       <WriteBackDialog panels={[panel]} open={open} onOpenChange={setOpen} />
@@ -455,7 +456,7 @@ export function WriteBackTopBarButton() {
           aria-label={wb('buttonLabel')}
           onClick={() => setOpen(true)}
         >
-          <FileUp size={14} />
+          <FileUp size={ICON_SIZE.md} />
           {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
         </Button>
       </Tip>
