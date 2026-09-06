@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { UpdateSourceButton } from '@/components/inspector/UpdateSourceButton'
+import { lastSegment } from '@/components/settings/PathValue'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -214,6 +216,106 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
       byText(st('canvas.openCanvasSettings'))!.click()
     })
     expect(useUiStore.getState().rightTab).toBe('canvas')
+  })
+})
+
+/* --------------------------------- T40 项目 -------------------------------- */
+
+describe('T40 项目：路径可核实、默认值由控件表达', () => {
+  it('末级目录的判据认两种分隔符，结尾的分隔符不算一级', () => {
+    expect(lastSegment('/a/b/Tutorial')).toBe('Tutorial')
+    expect(lastSegment('/a/b/Tutorial/')).toBe('Tutorial')
+    expect(lastSegment('C:\\Users\\me\\figs')).toBe('figs')
+    expect(lastSegment('exports')).toBe('exports')
+  })
+
+  it('默认只显示末级目录，展开之后才是完整路径', async () => {
+    await open('project')
+    expect(bodyText()).toContain(lastSegment(FIGURES))
+    expect(bodyText()).not.toContain(FIGURES)
+    const toggle = byAria(st('project.showFullPath', { name: st('project.current') }))!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => {
+      toggle.click()
+    })
+    expect(bodyText()).toContain(FIGURES)
+  })
+
+  it('目录留空时，这一刻真正在用的位置就写在输入框下面', async () => {
+    await open('project')
+    expect(bodyText()).toContain(st('project.effectivePath'))
+    expect(bodyText()).toContain(lastSegment(EXPORTS))
+    // 没设过就没有「恢复默认」——那个按钮只在有东西可恢复时才有意义
+    expect(byText(st('project.useDefault'))).toBeUndefined()
+  })
+
+  it('设过之后出现「恢复默认」，点了清空并回存', async () => {
+    project({ settings: { allow_write_back: true, export_dir: '/tmp/mine' } })
+    await open('project')
+    const reset = byText(st('project.useDefault'))!
+    expect(reset).toBeTruthy()
+    await act(async () => {
+      reset.click()
+    })
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+    const patch = calls.find(([url]) => String(url).includes('/api/project/settings'))!
+    expect(JSON.parse(String((patch[1] as RequestInit).body))).toEqual({ export_dir: '' })
+  })
+
+  it('浏览器模式不渲染系统文件夹选择——点了什么都不会发生的按钮不摆出来', async () => {
+    await open('project')
+    expect(byText(st('project.chooseFolder'))).toBeUndefined()
+  })
+
+  it('源脚本那一行报结果，不讲登记规则', async () => {
+    await open('project')
+    expect(bodyText()).toContain(st('project.scripts'))
+    expect(bodyText()).toContain(st('project.scriptCount', { count: 2 }))
+    expect(bodyText()).toContain(st('project.registry'))
+  })
+})
+
+describe('T40 项目：写回权限与真实保护同步', () => {
+  const panel = (overrides: number) =>
+    ({
+      id: 'o1',
+      type: 'panel',
+      fileId: 'fig1.pdf',
+      fileKind: 'static',
+      overrides: Array.from({ length: overrides }, (_, i) => ({ path: `p${i}` })),
+    }) as never
+
+  it('关掉之后属性栏的写回按钮真的停用，并就近说明原因', async () => {
+    project({ settings: { allow_write_back: false } })
+    await render(<UpdateSourceButton panel={panel(1)} />)
+    const btn = byText(t('writeBack.buttonLabel', { ns: 'inspector' }))!
+    expect(btn.disabled).toBe(true)
+    expect(btn.title).toBe(t('writeBack.readOnlyTitle', { ns: 'inspector' }))
+  })
+
+  it('打开之后同一个按钮可用（说明上一条量的是这个字段，不是「按钮一直是灰的」）', async () => {
+    project({ settings: { allow_write_back: true } })
+    await render(<UpdateSourceButton panel={panel(1)} />)
+    expect(byText(t('writeBack.buttonLabel', { ns: 'inspector' }))!.disabled).toBe(false)
+  })
+
+  it('设置页的开关读的就是那个字段：关着时 aria-checked=false', async () => {
+    project({ settings: { allow_write_back: false } })
+    await open('project')
+    const toggle = document.getElementById('setting-allow-write-back')!
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(bodyText()).toContain(st('project.writeBackOffHint'))
+  })
+
+  it('打开开关发出的是 allow_write_back: true，不是被取反的旧字段', async () => {
+    project({ settings: { allow_write_back: false } })
+    await open('project')
+    await act(async () => {
+      document.getElementById('setting-allow-write-back')!.click()
+    })
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+    const patch = calls.find(([url]) => String(url).includes('/api/project/settings'))!
+    expect(JSON.parse(String((patch[1] as RequestInit).body))).toEqual({ allow_write_back: true })
   })
 })
 

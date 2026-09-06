@@ -313,13 +313,13 @@ describe('该常驻的不许折叠', () => {
       } as never,
     })
     await open('project')
-    expect(bodyText()).toContain(st('project.readOnlyHint'))
+    expect(bodyText()).toContain(st('project.writeBackOffHint'))
   })
 
-  it('允许写回时给的是状态摘要，不是警告', async () => {
+  it('允许写回时不出警告', async () => {
     await open('project')
-    expect(bodyText()).toContain(st('project.writeBackAllowed'))
-    expect(bodyText()).not.toContain(st('project.readOnlyHint'))
+    expect(bodyText()).toContain(st('project.allowWriteBack'))
+    expect(bodyText()).not.toContain(st('project.writeBackOffHint'))
   })
 
   it('隐私最短摘要常驻', async () => {
