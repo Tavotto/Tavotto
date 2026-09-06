@@ -42,6 +42,7 @@ LIBRARY = (
 import matplotlib.pyplot as plt
 from matplotlib.collections import PathCollection
 from matplotlib.markers import MarkerStyle
+from matplotlib.path import Path
 
 
 def _unit(name):
@@ -75,6 +76,19 @@ def main():
         offset_transform=ax.transData,
     )
     ax.add_collection(pc)
+
+    # scatter_3：自定义 Path 标记 —— matplotlib 只缩放不居中（实测包围盒
+    # 落在 [0, 0.5]²），是「归一化到底做没做」的样本。`H` 那种原始路径本来
+    # 就正好铺满单位框的，把归一化整段拿掉都看不出差别。
+    ax.scatter(
+        [0.4, 1.4],
+        [0.9, 1.0],
+        marker=Path([(0, 0), (1, 0), (0.5, 1)], [Path.MOVETO, Path.LINETO, Path.LINETO]),
+        s=[36.0, 36.0],
+    )
+    # scatter_4：`$\\odot$` 的 CLOSEPOLY 占位点落在 x = -0.638，比整个字形还
+    # 靠左 —— 是「占位点有没有被排除在包围盒之外」的样本。
+    ax.scatter([0.8, 1.8], [1.1, 1.2], marker=r"$\\odot$")
 
     ax.stem([0.2, 0.6], [1.2, 1.4], markerfmt="s")
     ax.legend()
@@ -193,16 +207,55 @@ def test_unnamed_marker_ships_its_geometry(worker):
     assert cur["codes"][0] == 1, "第一个点是 MOVETO"
 
 
-def test_geometry_is_normalised_into_the_unit_box(worker):
-    """顶点落在 [-0.5, 0.5]，长的那一维顶到边 —— 前端照着画 12 px 预览。"""
-    cur = _field(_manifest(worker), "axes_0.scatter_1")["marker_current"]
-    assert cur["kind"] == "path"
-    xs = [v[0] for v in cur["vertices"]]
-    ys = [v[1] for v in cur["vertices"]]
-    assert min(xs) >= -0.5 and max(xs) <= 0.5, (min(xs), max(xs))
-    assert min(ys) >= -0.5 and max(ys) <= 0.5, (min(ys), max(ys))
-    span = max(max(xs) - min(xs), max(ys) - min(ys))
+CLOSEPOLY = 79
+
+
+def _drawn(cur):
+    """真正画出来的那些顶点：CLOSEPOLY 那一个是占位，坐标没人读。"""
+    codes = cur["codes"]
+    if codes is None:
+        return list(cur["vertices"])
+    return [v for v, c in zip(cur["vertices"], codes) if c != CLOSEPOLY]
+
+
+def _box(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+@pytest.mark.parametrize("gid", ["axes_0.scatter_1", "axes_0.scatter_3", "axes_0.scatter_4"])
+def test_geometry_is_normalised_into_the_unit_box(worker, gid):
+    """顶点落在 [-0.5, 0.5]、居中、长的那一维顶到边 —— 前端照着画 12 px 预览。
+
+    三个样本各堵一个洞，缺一个这条判据就会在某种变异下恒真：
+
+    * `scatter_1`（`H`）原始路径就正好铺满单位框，**归一化整段拿掉都不红**；
+    * `scatter_3`（自定义 Path）matplotlib 只缩放不居中，钉住「居中」这一半；
+    * `scatter_4`（`$\\odot$`）的 CLOSEPOLY 占位点在字形之外，钉住「占位点
+      不参与包围盒」——把它算进去，形状会缩水而且偏一块。
+    """
+    cur = _field(_manifest(worker), gid)["marker_current"]
+    assert cur["kind"] == "path", cur["kind"]
+    lo_x, hi_x, lo_y, hi_y = _box(_drawn(cur))
+    assert lo_x >= -0.5 and hi_x <= 0.5, (lo_x, hi_x)
+    assert lo_y >= -0.5 and hi_y <= 0.5, (lo_y, hi_y)
+    span = max(hi_x - lo_x, hi_y - lo_y)
     assert abs(span - 1.0) < 1e-9, f"没顶到单位框的边（span={span}）"
+    assert abs(lo_x + hi_x) < 1e-9 and abs(lo_y + hi_y) < 1e-9, "没居中"
+
+
+def test_closepoly_vertices_are_placeholders_not_coordinates(worker):
+    """CLOSEPOLY 那一个顶点一律发 `[0, 0]`。
+
+    它的坐标任何渲染器都不读（画到 CLOSEPOLY 只是闭合子路径），而
+    matplotlib 往那里写的常常在形状之外。照原样发出去，「所有顶点都在
+    单位框内」这句话就不成立，下游任何自己算包围盒的消费者都会被带偏。
+    """
+    cur = _field(_manifest(worker), "axes_0.scatter_4")["marker_current"]
+    closing = [v for v, c in zip(cur["vertices"], cur["codes"]) if c == CLOSEPOLY]
+    assert closing, "用例前提失效：这个标记的路径里没有 CLOSEPOLY"
+    assert all(v == [0.0, 0.0] for v in closing), closing
 
 
 def test_geometry_precision_is_truncated(worker):
