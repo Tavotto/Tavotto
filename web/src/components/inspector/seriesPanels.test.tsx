@@ -380,6 +380,99 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
   })
 })
 
+/* -------------------------------- 误差棒 ---------------------------------- */
+
+describe('误差棒：示意图说清哪个数字改图上的哪一段（T20）', () => {
+  const seed = async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+  }
+  const diagram = () => host.querySelector<SVGElement>('[data-errorbar-diagram]')
+  const segActive = (seg: string) =>
+    diagram()!.querySelector(`[data-seg="${seg}"][data-active="true"]`) !== null
+
+  it('术语保留（端帽长度 / 端帽线宽 / pt），旁边有一张示意图', async () => {
+    await seed()
+    expect(row('capsize')!.textContent).toContain('端帽长度')
+    expect(row('capsize')!.textContent).toContain('pt')
+    expect(row('cap_thickness')!.textContent).toContain('端帽线宽')
+    expect(diagram()).toBeTruthy()
+    // 无装饰、不吃焦点：它是图注，不是控件
+    expect(diagram()!.getAttribute('aria-hidden')).toBe('true')
+    expect(diagram()!.querySelector('[tabindex]')).toBeNull()
+  })
+
+  it('没聚焦时哪一段都不亮', async () => {
+    await seed()
+    expect(diagram()!.getAttribute('data-active')).toBe('')
+    expect(segActive('linewidth')).toBe(false)
+    expect(segActive('cap')).toBe(false)
+  })
+
+  const capStroke = () =>
+    Number(diagram()!.querySelector('[data-seg="cap"]')!.getAttribute('stroke-width'))
+
+  it('聚焦到端帽长度：端帽亮，上方出现水平量尺；线宽那一段不亮', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('capsize')
+    expect(segActive('cap')).toBe(true)
+    expect(segActive('linewidth')).toBe(false)
+    expect(diagram()!.querySelector('[data-seg="capsize-measure"]')).toBeTruthy()
+  })
+
+  /**
+   * 两个端帽档亮的是**同两条线**，区别必须在图上看得出来：长度档给量尺、
+   * 线宽档把线画粗。真浏览器 72 px 实测过——竖向量尺只有 3 px 高，是噪点
+   * 不是说明，所以线宽这一维靠粗细本身表达。
+   */
+  it('聚焦到端帽线宽：同两条端帽亮，但画得明显更粗，且不画水平量尺', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    const thin = capStroke()
+    await act(async () => {
+      inputIn('cap_thickness')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('cap_thickness')
+    expect(segActive('cap')).toBe(true)
+    expect(capStroke(), '两个端帽档在图上长得一样，用户分不出改的是哪一维').toBeGreaterThan(thin * 1.5)
+    expect(diagram()!.querySelector('[data-seg="capsize-measure"]')).toBeNull()
+  })
+
+  it('聚焦到线宽：亮的是竖线，不是端帽', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('linewidth')!.focus()
+    })
+    expect(segActive('linewidth')).toBe(true)
+    expect(segActive('cap')).toBe(false)
+  })
+
+  it('焦点离开后熄灭；颜色 / 透明度这类非几何字段不点亮任何一段', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('capsize')
+    await act(async () => {
+      inputIn('alpha')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('')
+  })
+
+  it('示意图不承接任何字段：三行照旧能改，写回的是 pt 原值', async () => {
+    await seed()
+    await typeNumber(inputIn('capsize')!, '10')
+    expect(overrideOf('axes_0.errorbar_0', 'capsize')).toBe(10)
+    await typeNumber(inputIn('cap_thickness')!, '2.5')
+    expect(overrideOf('axes_0.errorbar_0', 'cap_thickness')).toBe(2.5)
+  })
+})
+
 /* --------------------------------- 柱形 ---------------------------------- */
 
 describe('柱形：单位不折行，纹理有一条能力提示与源对象入口（T19）', () => {

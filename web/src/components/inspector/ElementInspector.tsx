@@ -111,6 +111,11 @@ import {
 } from './controls/TickAndSpineDiagram'
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { AspectControl } from './controls/AspectControl'
+import {
+  ErrorBarDiagram,
+  isErrorBarSegment,
+  type ErrorBarSegment,
+} from './controls/ErrorBarDiagram'
 import { PercentField } from './controls/PercentField'
 import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
 import {
@@ -371,6 +376,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             panel={panel}
             manifest={manifest}
             host={sideHost}
+            element={element}
+            warnings={render?.warnings ?? []}
+            buckets={buckets}
+          />
+        ) : element?.role === 'errorbar' ? (
+          /* 误差棒：端帽长度 / 端帽线宽配一张示意图（审计 T20） */
+          <ErrorBarPage
+            panel={panel}
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
@@ -654,6 +667,53 @@ function FieldBlock({
       {warning && (
         <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
       )}
+    </div>
+  )
+}
+
+/**
+ * 误差棒页：三个几何字段配一张示意图（审计 T20）。
+ *
+ * 高亮跟着**焦点或指针**走，而不是让每一行自己带一张小图——一张图上
+ * 三段的相对关系才说得清「长度」和「线宽」量的是同一根横线的两个方向。
+ * 追踪落在容器上读 `data-prop`：字段行照旧是普通的 FieldRow，示意图不
+ * 接管任何写入，也不承接任何字段（拿掉它，能改的东西一个都不少）。
+ */
+function ErrorBarPage({
+  panel,
+  element,
+  warnings,
+  buckets,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  warnings: string[]
+  buckets: { primary: PresentedField[]; more: PresentedField[] }
+}) {
+  const [active, setActive] = useState<ErrorBarSegment | null>(null)
+  const segAt = (target: EventTarget | null): ErrorBarSegment | null => {
+    const row = target instanceof Element ? target.closest('[data-prop]') : null
+    const prop = row instanceof HTMLElement ? row.dataset.prop : undefined
+    return isErrorBarSegment(prop) ? prop : null
+  }
+  return (
+    <div
+      onFocusCapture={(e) => setActive(segAt(e.target))}
+      onBlurCapture={() => setActive(null)}
+      onPointerOver={(e) => setActive(segAt(e.target))}
+      onPointerLeave={() => setActive(null)}
+    >
+      <FieldList
+        panel={panel}
+        element={element}
+        warnings={warnings}
+        buckets={buckets}
+        primaryExtra={
+          <div className="flex justify-center" data-errorbar-figure>
+            <ErrorBarDiagram active={active} />
+          </div>
+        }
+      />
     </div>
   )
 }
