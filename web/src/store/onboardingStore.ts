@@ -35,8 +35,13 @@ import { create } from 'zustand'
 import { firstIncomplete, isStepId, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
 
 export const ONBOARDING_SCHEMA_VERSION = 1
-/** 步骤内容的版本。改了步骤（增删 / 改完成条件）就升它，**不要改 step id** */
-export const ONBOARDING_FLOW_VERSION = 1
+/**
+ * 步骤内容的版本。改了步骤（增删 / 改完成条件）就升它，**不要改 step id**。
+ *
+ * v2（2026-09-06，审计 T36）：每步多了前置校验与行动按钮、`add_to_layout` 按文档里
+ * 实际有几张教程图出变体、结束页按「完成 / 跳过」分别计数（`skippedSteps`）。
+ */
+export const ONBOARDING_FLOW_VERSION = 2
 
 export const ONBOARDING_KEY = 'tavotto.onboarding'
 
@@ -59,7 +64,17 @@ export interface OnboardingPersisted {
   flowVersion: number
   status: OnboardingStatus
   currentStep: StepId | null
+  /**
+   * **走过**的步骤（真的完成或用户跳过都算）：状态机「下一步是哪一步」与
+   * 迁移时「回到第一个未完成的步骤」都按它。名字是历史遗留（v1 只有它一份账）。
+   */
   completedSteps: StepId[]
+  /**
+   * 其中被用户点「跳过此步」跳过的子集。结束页按它把「完成 n 步」与「跳过 m 步」
+   * 分开说——跳过不是完成，不能用完成式总结一份全跳过的教程。
+   * 重做一步（返回再真的做完）会把它从这里移出。
+   */
+  skippedSteps: StepId[]
   /** 看过的提示 → 看到的时间戳 */
   hintSeen: Partial<Record<HintKind, number>>
   startedAt: number | null
@@ -78,6 +93,7 @@ export const ONBOARDING_DEFAULTS: OnboardingPersisted = {
   status: 'not_started',
   currentStep: null,
   completedSteps: [],
+  skippedSteps: [],
   hintSeen: {},
   startedAt: null,
   completedAt: null,
@@ -136,6 +152,7 @@ const PERSISTED_KEYS: (keyof OnboardingPersisted)[] = [
   'status',
   'currentStep',
   'completedSteps',
+  'skippedSteps',
   'hintSeen',
   'startedAt',
   'completedAt',
@@ -173,6 +190,12 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   const completedSteps = Array.isArray(v.completedSteps)
     ? (v.completedSteps.filter(isStepId) as StepId[])
     : []
+  // v1 的 blob 没有这一项：那时跳过与完成记在同一份账里，分不出来——按「都是
+  // 完成」读（旧数据没说过谁被跳过，不替它编）。只认同时也在 completedSteps 里的
+  const passed = new Set<string>(completedSteps)
+  const skippedSteps = Array.isArray(v.skippedSteps)
+    ? (v.skippedSteps.filter((id): id is StepId => isStepId(id) && passed.has(id)) as StepId[])
+    : []
   const hintSeen: Partial<Record<HintKind, number>> = {}
   if (v.hintSeen && typeof v.hintSeen === 'object' && !Array.isArray(v.hintSeen)) {
     for (const [k, val] of Object.entries(v.hintSeen as Record<string, unknown>)) {
@@ -205,6 +228,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     status,
     currentStep,
     completedSteps,
+    skippedSteps,
     hintSeen,
     startedAt: numOrNull(v.startedAt),
     completedAt: numOrNull(v.completedAt),
@@ -224,8 +248,11 @@ interface OnboardingState extends OnboardingPersisted {
   resume: () => void
   skip: () => void
   complete: () => void
-  /** 某一步的真实完成条件满足了 */
-  markStep: (id: StepId) => void
+  /**
+   * 走过一步：`done` = 真实完成条件满足了；`skipped` = 用户点了「跳过此步」。
+   * 两者都推进状态机，只有后者进 `skippedSteps`；返回再真的做完会把它移出来。
+   */
+  markStep: (id: StepId, via?: 'done' | 'skipped') => void
   /** 把当前步骤挪到这里（前进 / 返回都经它） */
   goTo: (id: StepId) => void
   /** 返回上一步；已在第一步就什么都不做。**不撤销**完成记录 */
@@ -250,6 +277,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       status: 'active',
       currentStep: STEP_IDS[0],
       completedSteps: [],
+      skippedSteps: [],
       startedAt: Date.now(),
       completedAt: null,
       tutorialProjectId: projectId,
@@ -276,6 +304,8 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   complete: () => {
     const s = get().status
     if (s !== 'active' && s !== 'paused') return
+    // 全部步骤记成走过；**跳过的那份账原样保留**——结束之后入口、设置页仍要
+    // 说得出这轮是做完的还是跳完的
     commitState({
       status: 'completed',
       currentStep: null,
@@ -285,9 +315,21 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     })
   },
 
-  markStep: (id) => {
-    if (get().completedSteps.includes(id)) return
-    commitState({ completedSteps: [...get().completedSteps, id] })
+  markStep: (id, via = 'done') => {
+    const passed = get().completedSteps
+    const skipped = get().skippedSteps
+    const wasSkipped = skipped.includes(id)
+    const nextPassed = passed.includes(id) ? passed : [...passed, id]
+    const nextSkipped =
+      via === 'skipped'
+        ? wasSkipped
+          ? skipped
+          : [...skipped, id]
+        : wasSkipped
+          ? skipped.filter((s) => s !== id)
+          : skipped
+    if (nextPassed === passed && nextSkipped === skipped) return
+    commitState({ completedSteps: nextPassed, skippedSteps: nextSkipped })
   },
 
   goTo: (id) => {
