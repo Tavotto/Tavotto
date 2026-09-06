@@ -39,6 +39,59 @@ const CONTROL_BY_PROP: Record<string, ControlKind> = {
   arrowstyle: 'arrow-style',
 }
 
+/**
+ * 0–1 的透明度类字段：界面按百分比显示与输入，写回仍是 0–1（审计 T16 / T20）。
+ * **按 prop 名点名**，不按「min 0 max 1 就是百分比」猜——`framealpha` 与 `alpha`
+ * 是透明度，而一个恰好落在 0–1 的比例（如 `handlelength` 的某些取值）不是。
+ * 换算只在 `controls/PercentField` 一处。
+ */
+const PERCENT_PROPS = new Set(['alpha', 'grid_alpha', 'framealpha', 'bbox_alpha'])
+
+/** 这个数值字段是不是按百分比显示的透明度（批量行与单元素行共用一条判据） */
+export const isPercentField = (field: EditableField): boolean =>
+  field.type === 'number' && PERCENT_PROPS.has(field.prop)
+
+/**
+ * 一句短提示，挂在标签与输入框上（悬停 / 辅助技术），**不加问号按钮**。
+ *
+ * 只给「单位或语义会被读错」的那几条——审计的统一验收规则说得很直接：
+ * 常规字段不默认附带点击式问号，无操作的短提示悬停或聚焦时出现即可。
+ * 表里放的是 i18n key 的尾段（`hint.<key>`），文案在 inspector.json。
+ *
+ * `size`（散点面积）是这一条的由来：单位 pt² 是**面积**不是直径，而
+ * 「点大小 12」看着像个长度（审计 T16：保留面积单位，并用简短提示说明）。
+ */
+const FIELD_HINTS: Record<string, string> = {
+  size: 'scatterSize',
+}
+
+/** 这个字段有没有一句短提示（返回 i18n 的 `hint.<key>` 尾段） */
+export const fieldHintKey = (prop: string): string | undefined => FIELD_HINTS[prop]
+
+/**
+ * 「图上看得见、但引擎没发编辑字段」的外观属性。
+ *
+ * 柱形是现成的例子：脚本给柱子画了斜线纹理，属性面板里却连一行纹理都没有
+ * ——用户会在面板里反复找（审计 T19）。**这里不给引擎加字段**：新增纹理
+ * 编辑能力是另一件事，审计原文明说「不能当作纯文案修复」。能做的是把
+ * 「这一项在这里改不了、它来自脚本」说出口，并给出源对象入口。
+ *
+ * 判据是**这个元素此刻的字段表里没有它**，不是「柱形永远没有纹理」——
+ * 引擎哪天真发了这个字段，这条提示自己就消失了，不需要有人记得回来删。
+ */
+const APPEARANCE_ABSENT: Record<string, string[]> = {
+  bar: ['hatch'],
+  bar_series: ['hatch'],
+}
+
+/** 这个角色该说、而 manifest 此刻没发的外观属性 */
+export function absentAppearance(role: string, fields: EditableField[]): string[] {
+  const listed = APPEARANCE_ABSENT[role]
+  if (!listed) return []
+  const have = new Set(fields.map((f) => f.prop))
+  return listed.filter((p) => !have.has(p))
+}
+
 const CONTROL_BY_TYPE: Record<EditableField['type'], ControlKind> = {
   text: 'text',
   number: 'number',
@@ -68,6 +121,7 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp
+  if (isPercentField(field)) return 'percent'
   // 背景 / 描边的开关：关着的时候不是一个开关，是一条「＋添加背景」入口
   // （与画布文字 `TextSection` 同一种操作模式；表在 `lib/textEffects`）
   if (field.type === 'bool' && isTextEffectSwitch(field.prop)) return 'effect'

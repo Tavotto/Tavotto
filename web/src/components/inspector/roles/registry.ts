@@ -22,14 +22,22 @@ import { t } from '@/i18n'
 /**
  * 同名属性在不同角色下说的不是一回事：figure/axes 的 facecolor 是背景，
  * 柱/散点/填充的 facecolor 是图元自己的填充色，叫「背景色」会误导。
+ *
+ * `linewidth` 同理，而且更容易读错：在曲线与误差棒上它是**那条线本身**的
+ * 宽度，在这五个角色上它是**描边**的宽度——散点面板里一个光写着「线宽」的
+ * 数字紧挨着「点大小」，用户猜不出它改的是描边（审计 T16）。
+ *
+ * 全产品的宽度只有一个名词：**线宽**。限定词说的是「哪条线」——描边线宽、
+ * 端帽线宽。审计 T20 点名的「线宽与粗细命名不统一」在这条规则下消失：
+ * 界面上再没有第二个词表示同一个量。
  */
 const ROLE_SCOPED_PROPS: Record<string, string[]> = {
-  bar: ['facecolor'],
-  bar_series: ['facecolor'],
-  scatter: ['facecolor'],
-  fill: ['facecolor'],
+  bar: ['facecolor', 'linewidth'],
+  bar_series: ['facecolor', 'linewidth'],
+  scatter: ['facecolor', 'linewidth'],
+  fill: ['facecolor', 'linewidth'],
   // 脚本 add_patch 出的独立形状：facecolor 是它自己的填充
-  patch: ['facecolor'],
+  patch: ['facecolor', 'linewidth'],
 }
 
 /**
@@ -55,11 +63,15 @@ export const roleName = (role: string): string =>
 /**
  * enum 选项的显示名。色图名（viridis…）与格式串（%.1f）保持原文——它们是
  * matplotlib 的标识符，翻译反而让人对不上文档；脚本自定义的枚举值同理。
+ *
+ * **查表只有 `store/actions.optionLabel` 一处。** 这里一度自己也查一遍
+ * `enum.<prop>.<value>`——同一个键、同一个命名空间、同一个实例，只是
+ * defaultValue 不同，于是「查不到就回退」的那一跳永远走不到，两段代码
+ * 表达的是同一条保证。冗余的保证杀不死：给其中任何一段做变异，另一段都
+ * 会把结果补回来，用例照样绿（本轮实测两条变异双双存活）。属性名那条
+ * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
-export const optionLabel = (prop: string, value: string): string => {
-  const hit = t(`enum.${prop}.${value}`, { ns: 'inspector', defaultValue: '' })
-  return hit || baseOptionLabel(prop, value)
-}
+export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 
@@ -76,6 +88,10 @@ const ENGINE_GROUP: Record<string, string> = {
   网格与边框: 'gridFrame',
   '边框（逐条）': 'gridFramePerSide',
   线条与标记: 'lineMarker',
+  // 散点 / 填充族的线型与花纹（`_collection_fields`）
+  线条与填充: 'lineFill',
+  // stem 图的标记那一组（`_stem_fields`）
+  标记: 'marker',
   渐变填充: 'gradientFill',
   颜色映射: 'colormap',
   文字: 'text',
@@ -113,6 +129,8 @@ const GROUP_ORDER = [
   '网格与边框',
   '边框（逐条）',
   '线条与标记',
+  '线条与填充',
+  '标记',
   '渐变填充',
   '颜色映射',
   '文字',

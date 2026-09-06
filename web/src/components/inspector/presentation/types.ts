@@ -34,6 +34,11 @@ export type ControlKind =
   | 'aspect'
   /** 图内文字效果的开关（背景 / 描边）：关着画成「＋添加」，开了才是开关 */
   | 'effect'
+  /**
+   * 0–1 的透明度：界面按百分比显示与输入（75%），写回仍是 0–1（审计 T16 / T20）。
+   * 换算只在这一种控件里做，按 prop 名在展示注册表指定——不在各角色的组件里各抄一份
+   */
+  | 'percent'
 
 /** 一条被摆好位置的字段：manifest 的字段本体 + 展示决策 */
 export interface PresentedField {
