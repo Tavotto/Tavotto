@@ -300,7 +300,7 @@
         "keywords": "readiness status editable layout only why not editable"
       },
       "hints-reset": {
-        "label": "Show onboarding hints again",
+        "label": "Show action hints again",
         "keywords": "hints tips reset onboarding"
       }
     },
@@ -872,12 +872,13 @@
     },
     "canvas": {
       "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
-      "dragCompanions": "Drag axes with companions",
-      "dragCompanionsAria": "Bring companion elements along when dragging axes",
-      "dragCompanionsHint": "Companion elements move with the axes",
-      "elsewhere": "Grid, snapping, rulers and the safe area live on the “Canvas” tab of the right panel, next to the canvas itself.",
-      "more": "Other canvas settings",
-      "openCanvasSettings": "Open canvas settings"
+      "dragCompanions": "Move related objects along",
+      "dragCompanionsHint": "Titles, axis labels and legends you placed by hand",
+      "more": "Canvas settings",
+      "openCanvasSettings": "Open canvas settings",
+      "diagramOn": "Diagram: the title and legend move along with the axes",
+      "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
+      "moreScope": "Grid, snapping, rulers and the safe area"
     },
     "copied": "Copied",
     "copy": "Copy",
@@ -893,26 +894,19 @@
       "summaryOk": "Everything looks fine"
     },
     "export": {
-      "defaultDpi": "Default DPI",
       "defaultFormats": "Default formats",
-      "dpiHint": "Affects raster output (PNG) only — PDF is vector, so DPI means nothing for it.",
-      "formatsHint": "PDF keeps everything vector, which journals normally require; PNG is for previews and places that reject vector files.",
-      "hint": "These are the export dialog's starting values; a single export can still change them.",
-      "proof": "Proof record",
-      "proofAria": "Write a proof report with every export by default",
-      "proofHelp": "A proof report is a JSON record of this export: the sizes, font sizes, line widths and publication-profile checks it passed. Handy evidence that the figure has not changed when a paper comes back for revision.",
-      "proofHint": "Write a proof report (JSON record) alongside the output"
+      "ppiNotForVector": "Vector formats only — resolution has no effect",
+      "reportScope": "Records this run’s sizes, styles and check results"
     },
     "general": {
       "autosave": "Autosave",
-      "autosaveHint": "Changes are saved automatically: one second after you stop editing they are written to this machine (layouts/_autosave/). There is nothing to save manually; use “Save as canvas file” for a named version.",
       "autosaveState": "Written to this machine after you pause",
       "language": "Language",
-      "languageHint": "Affects the interface only. Project names, canvas names, scripts and text inside figures are never translated.",
       "layout": "Window layout",
       "layoutReset": "Interface layout reset; reload the page to see it",
       "resetLayout": "Reset the interface layout",
-      "resetLayoutHint": "Sidebar widths, snapping toggles and other interface preferences return to their defaults."
+      "autosaveNamedCopy": "Use “Save as canvas file” for a named copy",
+      "resetLayoutScope": "Sidebar widths, snapping and other interface preferences"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1002,25 +996,26 @@
       "userTitle": "Installed by you"
     },
     "project": {
-      "backupDir": "Backup folder",
-      "backupDirHint": "Originals are copied here before anything is written back. Leave empty for the default location; saved per project.",
+      "backupDir": "Original file backups",
       "current": "Current project",
-      "currentHint": "The figure folder currently open. Switching projects never moves or copies files.",
-      "defaultPlaceholder": "Default {{path}}",
-      "dirHint": "Leave a folder empty to use the default location. These settings are stored per project.",
-      "exportDir": "Export folder",
-      "noScriptsSuffix": " (panels cannot enter figure editing)",
-      "readOnly": "Read-only project",
-      "readOnlyAria": "Read-only project (write-back to original files disabled)",
-      "readOnlyHelp": "Turns off the whole write-back path, so source figures and scripts can never be overwritten. Canvas editing and export are unaffected.",
-      "readOnlyHint": "When on, “Write back to the original file” is disabled and source figures are never overwritten",
-      "registry": "Project readiness…",
-      "scriptCount_one": "{{count}} script registered",
-      "scriptCount_other": "{{count}} scripts registered",
-      "scripts": "Registered source scripts",
-      "scriptsHint": "Registered source scripts. Only figures produced by a registered script can be edited element by element.",
+      "exportDir": "Export location",
+      "noScriptsSuffix": " (figures here cannot be edited element by element yet)",
+      "registry": "Manage sources…",
+      "scriptCount_one": "{{count}} script",
+      "scriptCount_other": "{{count}} scripts",
+      "scripts": "Editable sources",
       "switch": "Switch project…",
-      "writeBackAllowed": "Write-back allowed"
+      "exportDirScope": "Where exported figures go by default",
+      "backupDirScope": "Originals are copied here before any write-back",
+      "dirPlaceholder": "Leave empty for the default location",
+      "effectivePath": "In use",
+      "chooseFolder": "Choose…",
+      "useDefault": "Reset to default",
+      "showFullPath": "Show the full path of {{name}}",
+      "copyPath": "Copy the full path of {{name}}",
+      "allowWriteBack": "Allow writing back to original files",
+      "allowWriteBackScope": "Write-back only; canvas editing and export are unaffected",
+      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled."
     },
     "section": {
       "about": "About & privacy",
@@ -1038,16 +1033,16 @@
       "update": "Updates"
     },
     "shortcuts": {
-      "hint": "Every shortcut is in the cheat sheet (press ? at any time).",
-      "label": "Keyboard shortcuts",
-      "open": "Open the shortcut cheat sheet"
+      "label": "Shortcuts",
+      "open": "Open the cheat sheet"
     },
     "sidebars": {
-      "breakpoints": "At ≥1440px both sides can be pinned at once; between 1024 and 1439px they are mutually exclusive; below that the sidebars show as temporary overlays and pinning has no effect.",
-      "leftPinned": "Pin the left drawer",
-      "leftPinnedHint": "The asset drawer does not step aside when an object is selected",
-      "rightPinned": "Pin the right panel",
-      "rightPinnedHint": "The properties panel stays open when the selection is cleared"
+      "leftPinned": "Pin the left sidebar",
+      "leftPinnedHint": "Stays put when you select an object",
+      "rightPinned": "Pin the properties panel",
+      "rightPinnedHint": "Stays open when you clear the selection",
+      "pinLimitedMedium": "This window fits only one pinned side",
+      "pinLimitedNarrow": "This window is too narrow; pinning has no effect"
     },
     "techDetails": "Technical details",
     "title": "Settings",
@@ -1085,7 +1080,6 @@
     },
     "tutorial": {
       "label": "Tutorial",
-      "hint": "Walk through quick edit, locating problems, export and multi-select alignment on an offline sample project.",
       "state": {
         "not_started": "Not started",
         "active": "In progress",
@@ -1096,10 +1090,11 @@
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
-      "reset": "Reset tutorial project",
-      "hints": "Contextual hints",
-      "hintsHint": "One-time hints shown the first time you meet a kind of action; each appears once.",
-      "resetHints": "Reset hints"
+      "reset": "Reset the tutorial project",
+      "hints": "Action hints",
+      "resetHints": "Show action hints again",
+      "resetAction": "Reset",
+      "resetScope": "The sample project returns to its initial state; your edits in it are lost"
     }
   },
   "style": {
