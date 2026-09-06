@@ -29,7 +29,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
-import { runValidation } from '@/store/validationStore'
+import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { resetExportState } from '@/store/exportStore'
@@ -811,5 +811,426 @@ describe('对话框里改规范，不许连带重置用户填过的东西', () =
       await useDocumentStore.getState().switchDocument(emptyProject(), 'd_another')
     })
     expect(filenameInput().value, '换了文档还留着上一份的导出名').not.toBe('我的图名')
+  })
+})
+
+/* ======================= 审计 T33 / T35（2026-09-06） ======================= */
+
+import { SettingsDialog } from '@/components/SettingsDialog'
+import { dialogCovered } from '@/store/uiStore'
+
+/** 几条 8pt 刻度：每条一个阻断项（`font-below-absolute-floor`） */
+const manifestWithTicks = (n: number, pt = 8, sizeMm: [number, number] = [80, 60]) => ({
+  stem: 'Fig1',
+  size_mm: sizeMm,
+  elements: Array.from({ length: n }, (_, i) => ({
+    gid: `axes_${i}.xticks`,
+    role: 'ticks',
+    label: `x 刻度 ${i + 1}`,
+    bbox: [0.1, 0.9, 0.8, 0.05],
+    draggable: false,
+    editable: [
+      { prop: 'fontsize', type: 'number', value: pt },
+      { prop: 'direction', type: 'enum', value: 'in' },
+    ],
+  })),
+})
+
+/** 摆好文档 + 渲染态 + 素材清单，**不**打开对话框（各用例自己决定何时开、以什么模式开） */
+async function stage(opts: {
+  panels: PanelObject[]
+  renders: Record<string, unknown>
+  page?: { w: number; h: number }
+  docId?: string
+  /** 素材清单里的磁盘事实（矢量源的页面尺寸等）；按 fileId 给 */
+  assetSpecs?: Record<string, Record<string, unknown>>
+}) {
+  await useDocumentStore.getState().switchDocument(emptyProject(), opts.docId ?? 'd_audit')
+  useDocumentStore.getState().commit(literal('准备'), (d) => {
+    d.page = opts.page ?? { w: 80, h: 60 }
+    d.objects = opts.panels.map((p) => ({ ...p }))
+  })
+  useAssetStore.setState({
+    byId: Object.fromEntries(
+      opts.panels.map((p) => [
+        p.fileId,
+        { id: p.fileId, mtime: 1, ...(opts.assetSpecs?.[p.fileId] ? { original_spec: opts.assetSpecs[p.fileId] } : {}) },
+      ]),
+    ),
+  } as never)
+  const byKey: Record<string, unknown> = {}
+  const latest: Record<string, string> = {}
+  for (const p of opts.panels) {
+    const key = renderKey(p.fileId, p.overrides)
+    latest[p.fileId] = key
+    byKey[key] = {
+      fileId: p.fileId,
+      rev: 1,
+      manifest: opts.renders[p.fileId],
+      svg: null,
+      status: 'ready',
+      error: null,
+      code: '',
+      module: '',
+      traceback: '',
+      warnings: [],
+      timings: {},
+      stale: false,
+      lastPatches: '[]',
+      wantPatches: '[]',
+      previewDpi: null,
+    }
+  }
+  useRenderStore.setState({ byKey, latest, tracked: {}, building: {} } as never)
+}
+
+async function mountDialogs(withSettings = false) {
+  await act(async () => {
+    root.render(
+      <TooltipProvider>
+        <ExportDialog />
+        {withSettings && <SettingsDialog />}
+      </TooltipProvider>,
+    )
+  })
+}
+
+const openDialog = async () => {
+  await act(async () => {
+    useUiStore.getState().setExportOpen(true)
+  })
+}
+
+const filenameInput = () =>
+  [...document.body.querySelectorAll('input')].find((i) => i.type !== 'checkbox') as HTMLInputElement
+
+const radios = () => [...document.body.querySelectorAll('[role="radio"]')] as HTMLButtonElement[]
+
+const typeFilename = async (value: string) => {
+  const input = filenameInput()
+  await act(async () => {
+    // React 受控输入：走原生 setter 再派发 input，onChange 才会跑
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+describe('T33 · 默认文件名跟着导出对象走', () => {
+  it('快速编辑里默认是那张图的名字，不是画布名；切到画布再切回来各归各', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(filenameInput().value, '面板没起名就用文件 stem').toBe('Fig1')
+    await click(radios()[1])
+    expect(filenameInput().value).toBe(useDocumentStore.getState().doc.name)
+    await click(radios()[0])
+    expect(filenameInput().value).toBe('Fig1')
+  })
+
+  it('面板起过名就用面板名', async () => {
+    await stage({
+      panels: [{ ...panel, name: 'Fig1_kinetics' }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9) },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(filenameInput().value).toBe('Fig1_kinetics')
+  })
+
+  it('用户改过名字之后切范围**不再替他换**（按标志判，不比字符串）', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    await typeFilename('mine')
+    await click(radios()[1])
+    expect(filenameInput().value).toBe('mine')
+    // 恰好敲回默认值也算改过：切范围仍然不动它
+    await typeFilename('Fig1')
+    await click(radios()[1])
+    expect(filenameInput().value).toBe('Fig1')
+  })
+})
+
+describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次', () => {
+  const header = () => document.body.querySelector('[data-export-target]')?.textContent ?? ''
+
+  const vectorOnDisk = (w: number, h: number) => ({
+    source_kind: 'vector',
+    logical_w_mm: w,
+    logical_h_mm: h,
+    px_w: null,
+    px_h: null,
+    dpi: null,
+    dpi_source: 'unknown',
+    viewport_pt: [(w / 25.4) * 72, (h / 25.4) * 72],
+    transparent: false,
+  })
+
+  it('原图：图名 + 图幅；磁盘原件与图幅一致时不多说', async () => {
+    await stage({
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 60]) },
+      assetSpecs: { 'Fig1.pdf': vectorOnDisk(80, 60) },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain('Fig1')
+    expect(header()).toContain('原图尺寸')
+    expect(header()).toContain('80 × 60 mm')
+    expect(text()).not.toContain('磁盘上的原件')
+    expect(document.body.querySelector('[data-export-target] img')).toBeTruthy()
+  })
+
+  it('磁盘原件被脚本裁过（bbox_inches=tight）：按图幅出图，并说出磁盘那份是多少（审计里 80×57.6 vs 75.3×58.7）', async () => {
+    // 教程 Fig1_kinetics 的真实数字：磁盘 PDF 75.26 × 58.68，figsize 80 × 57.6
+    await stage({
+      panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 57.6]) },
+      assetSpecs: { 'Fig1.pdf': vectorOnDisk(75.26, 58.68) },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('磁盘上的原件是 75.3 × 58.7 mm')
+    expect(header()).toContain('按图幅 80 × 57.6 mm 出图')
+    // 权威只有一个：头部之外不再报第二个尺寸
+    expect(text().split('80 × 57.6 mm').length - 1).toBe(2)
+  })
+
+  it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
+    await stage({
+      panels: [{ ...panel, nativeW: 80, nativeH: 57.6, h: 57.6 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9, [80, 57.6]) },
+      assetSpecs: { 'Fig1.pdf': { ...vectorOnDisk(75.26, 58.68), source_kind: 'raster', px_w: 890, px_h: 693 } },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('磁盘上的原件')
+  })
+
+  it('画布：画布名 + 页面尺寸 + 对象数，缩略图是示意不是渲染', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 180, h: 120 } })
+    await mountDialogs()
+    await openDialog()
+    expect(header()).toContain(useDocumentStore.getState().doc.name)
+    expect(header()).toContain('当前画布')
+    expect(header()).toContain('180 × 120 mm')
+    expect(header()).toContain('1 个对象')
+    expect(document.body.querySelector('[data-export-target] svg')).toBeTruthy()
+    expect(document.body.querySelector('[data-export-target] img')).toBeNull()
+  })
+})
+
+describe('T33 · 检查摘要按导出目标取范围', () => {
+  const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
+
+  it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
+    // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 8pt：一条 error（别的图）
+    await stage({
+      panels: [{ ...panel, h: 40 }, second],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 8) },
+      page: { w: 80, h: 40 },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(text()).toContain('导出前检查通过')
+    expect(text()).toContain('只算这张图')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+
+    await click(radios()[1])
+    expect(text()).toMatch(/\d+ 阻断/)
+    expect(text()).toContain('1 警告')
+    expect(text()).toContain('整个画布')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('按原图时这张图自己的阻断项照样拦住，并且报告里只有它的条目', async () => {
+    await stage({
+      panels: [panel, second],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 8) },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    // 按原图只算这一张图上的阻断项，别的图的一条都不算
+    const errorsOn = (id: string) =>
+      useValidationStore
+        .getState()
+        .issues.filter((i) => i.severity === 'error' && i.objectRef.objectId === id).length
+    expect(errorsOn('p1')).toBeGreaterThan(0)
+    expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
+    expect(text()).toContain(`${errorsOn('p1')} 阻断`)
+    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    const check = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    await act(async () => {
+      check.click()
+    })
+    await click(button('开始导出')!)
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    const checks = report.checks as { id: string; object_ids?: string[]; objectIds?: string[] }[]
+    const floor = checks.filter((c) => c.id === 'font-below-absolute-floor')
+    expect(floor.length, '报告里的阻断项只有这张图的那一条').toBe(1)
+    expect(floor[0].object_ids, '别的图的对象不进这份报告').toEqual(['p1'])
+  })
+})
+
+describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位', () => {
+  const list = () => document.body.querySelector('[aria-label="阻断性问题"]')
+  const rows = () => [...(list()?.querySelectorAll('[data-blocking-issue]') ?? [])]
+  const locateButtons = () => [...document.body.querySelectorAll('button')].filter((b) => b.textContent === '定位')
+
+  it('说清是什么、在哪、当前值 → 要求；警告仍只给数量', async () => {
+    await stage({
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      page: { w: 80, h: 40 },
+    })
+    await mountDialogs()
+    await openDialog()
+    expect(list()).toBeTruthy()
+    // 8pt 撞两条字号规则：一条元素两行，各说各的规则，各有各的「定位」
+    const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error')
+    expect(errors.length).toBeGreaterThan(0)
+    expect(rows()).toHaveLength(errors.length)
+    const row = rows().find((r) => r.getAttribute('data-blocking-issue') === 'font-below-absolute-floor')!
+    expect(row, '每一行带着稳定的规则码').toBeTruthy()
+    expect(row.textContent).toContain('字号低于绝对下限')
+    expect(row.textContent).toContain('x 刻度 1')
+    expect(row.textContent).toContain('8.00pt')
+    expect(locateButtons()).toHaveLength(errors.length)
+    // 列表紧挨着确认框：确认框是它的下一个兄弟
+    expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()
+    // 警告（page-aspect）不逐条列
+    expect(text()).toContain('1 警告')
+    expect(text()).not.toContain('页面比例')
+  })
+
+  it('超过 5 条只列 5 条，其余交给问题面板', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(7, 8) } })
+    await mountDialogs()
+    await openDialog()
+    const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
+    expect(errors).toBeGreaterThan(5)
+    expect(rows()).toHaveLength(5)
+    expect(text()).toContain(`还有 ${errors - 5} 条`)
+  })
+
+  it('进不了图内编辑（没有源脚本）：对话框留在原地并说出原因', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    await mountDialogs()
+    await openDialog()
+    await click(locateButtons()[0])
+    expect(useUiStore.getState().exportOpen).toBe(true)
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('定位成功：对话框让开、真的到了那个元素；再点「导出」填过的东西原样回来', async () => {
+    await stage({
+      panels: [{ ...panel, script: 'fig1.py' }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+    })
+    await mountDialogs()
+    await openDialog()
+    // 用户已经填了一些东西
+    await typeFilename('mine')
+    await click(button('PNG')!) // 关掉 PNG
+    expect(useUiStore.getState().exportOpen).toBe(true)
+
+    await click(locateButtons()[0])
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(useUiStore.getState().elementPanelId).toBe('p1')
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
+    expect(useUiStore.getState().statusTone).toBe('info')
+
+    await openDialog()
+    expect(filenameInput().value, '让开再回来，文件名还在').toBe('mine')
+    expect(button('PNG')!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('「在问题面板中查看」同样让开而不丢状态；换了文档才重置', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    await mountDialogs()
+    await openDialog()
+    await typeFilename('kept')
+    await click(button('在问题面板中查看')!)
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    await openDialog()
+    expect(filenameInput().value).toBe('kept')
+
+    await typeFilename('x')
+    await click(button('在问题面板中查看')!)
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    await act(async () => {
+      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    })
+    await openDialog()
+    expect(filenameInput().value, '换了文档，上一份文档的名字不许带过来').toBe(
+      useDocumentStore.getState().doc.name,
+    )
+  })
+})
+
+describe('T35 · 设置压在导出之上：一次只显示一个主对话框', () => {
+  const dialogs = () => [...document.body.querySelectorAll('[role="dialog"]')] as HTMLElement[]
+  const covered = (el: HTMLElement) => el.hasAttribute('data-covered')
+
+  it('「编辑规范」不关导出面板：设置压在上面，Esc 只退设置，回来时填过的东西与焦点都在', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    await mountDialogs(true)
+    await openDialog()
+    await typeFilename('mine')
+    await click(radios()[0].parentElement!.querySelectorAll('[role="radio"]')[1])
+
+    const edit = document.body.querySelector('button[aria-label="编辑规范"]') as HTMLButtonElement
+    // 真浏览器里 mousedown 会先把焦点给按钮；jsdom 的 click() 不会，这里补上
+    edit.focus()
+    await click(edit)
+    await act(async () => {})
+
+    const s = useUiStore.getState()
+    expect(s.exportOpen, '深链不许先关导出').toBe(true)
+    expect(s.settingsOpen).toBe(true)
+    expect(s.dialogStack).toEqual(['export', 'settings'])
+    const [exportDialog, settingsDialog] = dialogs()
+    expect(dialogs()).toHaveLength(2)
+    expect(covered(exportDialog), '导出面板被盖住：不可见但没卸载').toBe(true)
+    expect(exportDialog.classList.contains('invisible'), '被盖住 = 真的看不见，不只是打个标').toBe(true)
+    expect(covered(settingsDialog)).toBe(false)
+    expect(settingsDialog.classList.contains('invisible')).toBe(false)
+    // 只有一层遮罩看得见
+    const overlays = [...document.body.querySelectorAll('.fixed.inset-0')]
+    expect(overlays.filter((o) => !o.classList.contains('invisible'))).toHaveLength(1)
+
+    // Esc 只关栈顶那一层
+    await act(async () => {
+      settingsDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    // Radix FocusScope 在卸载后的 **setTimeout(0)** 里才把焦点还回去：只 flush
+    // 微任务的话这一步有时还没跑到（六次里红两次的那种"偶发"）——等一个宏任务
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(useUiStore.getState().settingsOpen).toBe(false)
+    expect(useUiStore.getState().exportOpen).toBe(true)
+    expect(dialogCovered(useUiStore.getState().dialogStack, 'export')).toBe(false)
+    expect(dialogs()).toHaveLength(1)
+    expect(covered(dialogs()[0])).toBe(false)
+    expect(filenameInput().value, '被盖住期间状态一个字没丢').toBe('mine')
+    expect(document.activeElement, '焦点回到打开子步骤的那颗按钮').toBe(
+      document.body.querySelector('button[aria-label="编辑规范"]'),
+    )
   })
 })

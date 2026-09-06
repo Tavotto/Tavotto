@@ -11,6 +11,29 @@ export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
 
+/**
+ * 参与「一次只显示一个主对话框」的三个主对话框（审计 T35）。
+ * 导出 → 设置 → 论文样式是一条前进 / 返回的小流程，不是三层叠着的浮层。
+ */
+export type MainDialog = 'export' | 'settings' | 'styles'
+
+/**
+ * 这个主对话框此刻是不是被栈里更靠上的那个盖着。**判据只看栈**：直接
+ * `setState({ settingsOpen: true })` 而没入栈的（旧用例 / 旁路）照常显示。
+ */
+export function dialogCovered(stack: readonly MainDialog[], id: MainDialog): boolean {
+  const at = stack.indexOf(id)
+  return at >= 0 && at < stack.length - 1
+}
+
+/** 入栈：已经在栈里的挪到栈顶（同一个对话框不会出现两次） */
+const pushDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] => [
+  ...stack.filter((d) => d !== id),
+  id,
+]
+const popDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] =>
+  stack.filter((d) => d !== id)
+
 const LS_KEY = 'tavotto.ui'
 
 export const LEFT_MIN = 280
@@ -225,6 +248,19 @@ interface UiState extends Persisted {
   /** 论文样式弹窗 */
   stylesOpen: boolean
   /**
+   * 打开论文样式时预选哪一条已存样式（设置「应用到当前图」带过来的那一条）；
+   * null = 不预选。**它是打开那一刻的意图，不是偏好**——关掉就清。
+   */
+  stylesPresetId: string | null
+  /**
+   * 主对话框栈。栈顶那个显示；下面的**隐藏不销毁**——`exportOpen` /
+   * `settingsOpen` / `stylesOpen` 仍为 true、Radix 那层仍挂着、表单状态照旧，
+   * 只是看不见（`Dialog` 的 `covered`）。栈顶关掉后下一层原样回来，焦点由
+   * Radix 还给打开子步骤的那颗按钮（它一直挂着，不需要找孪生节点）。
+   * Esc 与 Tab 只归栈顶：Radix 的 DismissableLayer / FocusScope 各自维护一个栈。
+   */
+  dialogStack: MainDialog[]
+  /**
    * 「项目接入状态」对话框（Prompt 08 的 readiness center）。
    *
    * 名字留着没改：它是这个对话框**唯一**的开关，项目菜单、设置页、素材说明条
@@ -238,11 +274,6 @@ interface UiState extends Persisted {
   settingsOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
-  /**
-   * 从哪个面板深链进设置的（导出面板的「编辑规范」）。关掉设置时回到那里，
-   * 而不是把用户扔回画布。只认闭集里的值；null = 不回。
-   */
-  settingsReturnTo: 'export' | null
   /** 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
   layoutIntent: 'save' | 'load'
   /** 全局确认框；由 askConfirm() 写入，ConfirmDialog 渲染 */
@@ -283,10 +314,15 @@ interface UiState extends Persisted {
   setExportOpen: (v: boolean) => void
   setLayoutOpen: (v: boolean, intent?: 'save' | 'load') => void
   setVersionsOpen: (v: boolean) => void
-  setStylesOpen: (v: boolean) => void
+  /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
+  setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
-  setSettingsOpen: (v: boolean, section?: string, opts?: { returnTo?: 'export' | null }) => void
+  /**
+   * 从导出面板深链进来时**不要先关导出面板**：设置压在它上面（`dialogStack`），
+   * 关掉设置它自己就回来，用户填过的东西一个不丢。
+   */
+  setSettingsOpen: (v: boolean, section?: string) => void
   setConfirm: (req: ConfirmRequest | null) => void
   setLayout: (layout: WorkspaceLayout) => void
 }
@@ -349,11 +385,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   layoutOpen: false,
   versionsOpen: false,
   stylesOpen: false,
+  stylesPresetId: null,
+  dialogStack: [],
   registryOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
-  settingsReturnTo: null,
   layoutIntent: 'save',
   confirm: null,
   layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
@@ -511,32 +548,36 @@ export const useUiStore = create<UiState>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setExportOpen: (exportOpen) => {
     const was = get().exportOpen
-    set({ exportOpen })
+    set((s) => ({
+      exportOpen,
+      dialogStack: exportOpen
+        ? pushDialog(s.dialogStack, 'export')
+        : popDialog(s.dialogStack, 'export'),
+    }))
     if (exportOpen && !was) emitActivity({ kind: 'export.dialog_opened' })
   },
   setLayoutOpen: (layoutOpen, intent) =>
     set(intent ? { layoutOpen, layoutIntent: intent } : { layoutOpen }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
-  setStylesOpen: (stylesOpen) => set({ stylesOpen }),
+  setStylesOpen: (stylesOpen, opts = undefined) =>
+    set((s) => ({
+      stylesOpen,
+      stylesPresetId: stylesOpen ? (opts?.presetId ?? null) : null,
+      dialogStack: stylesOpen
+        ? pushDialog(s.dialogStack, 'styles')
+        : popDialog(s.dialogStack, 'styles'),
+    })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
-  setSettingsOpen: (settingsOpen, settingsSection = undefined, opts = undefined) =>
-    set((s) => {
-      if (settingsOpen) {
-        return {
-          settingsOpen,
-          ...(settingsSection ? { settingsSection } : {}),
-          settingsReturnTo: opts?.returnTo ?? null,
-        }
-      }
-      // 关闭：深链进来的回到出发的那个面板（只有导出一个来源；其余为 null）
-      const back = s.settingsReturnTo
-      return {
-        settingsOpen,
-        settingsReturnTo: null,
-        ...(back === 'export' ? { exportOpen: true } : {}),
-      }
-    }),
+  setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
+    set((s) => ({
+      settingsOpen,
+      ...(settingsOpen && settingsSection ? { settingsSection } : {}),
+      // 从导出面板深链进来的：导出面板**没关**，只是被盖住；关掉设置它自己回来
+      dialogStack: settingsOpen
+        ? pushDialog(s.dialogStack, 'settings')
+        : popDialog(s.dialogStack, 'settings'),
+    })),
   setConfirm: (confirm) => set({ confirm }),
   // **不 persist、不动 prefOpen**：这里改的是「窗口现在多宽」，
   // 而窗口宽度不是用户对常驻侧栏的偏好。

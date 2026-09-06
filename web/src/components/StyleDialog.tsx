@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
@@ -24,7 +24,7 @@ import { useProfileStore } from '@/store/profileStore'
 import { profileName } from '@/lib/profileText'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { askConfirm, useUiStore } from '@/store/uiStore'
+import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './inspector/roles/registry'
 import { Button } from './ui/Button'
@@ -40,6 +40,13 @@ import { Toggle } from './ui/Toggle'
  *
  * 应用只写 override 与标注属性（一条历史，⌘Z 整体撤销），不写回源文件；
  * 想把结果烙进 figures 里的原图，仍走各面板自己的「写回原始文件」。
+ *
+ * ### 它是设置 / 导出之上的一步，不是叠在它们上面的第三层浮层（审计 T35）
+ *
+ * 从设置「应用到当前图」进来时带着那一条样式（`uiStore.stylesPresetId`）预选；
+ * 设置本身被盖住但没关（`dialogStack`），这里关掉就回到设置、焦点回到那颗按钮。
+ * 没带预选而草稿又是空的，就选第一条已存样式——「空样式」与用户刚才点的那条
+ * 是什么关系，不该让用户猜。
  */
 /** 本对话框的文案在 dialogs:style.* 下 */
 const sd = (key: string, values?: Record<string, unknown>) =>
@@ -48,6 +55,8 @@ const sd = (key: string, values?: Record<string, unknown>) =>
 export function StyleDialog() {
   const { t } = useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.stylesOpen)
+  const presetId = useUiStore((s) => s.stylesPresetId)
+  const covered = useUiStore((s) => dialogCovered(s.dialogStack, 'styles'))
   const setOpen = useUiStore((s) => s.setStylesOpen)
 
   // 清单的唯一持有者是 profileStore（磁盘细节全在后端 engine/profilestore.py）。
@@ -78,6 +87,26 @@ export function StyleDialog() {
     useProfileStore.getState().clearError()
     void useProfileStore.getState().load()
   }, [open])
+
+  /**
+   * 打开时预选一次：带了 `presetId` 就选它，没带而草稿是空的就选第一条已存样式。
+   * 清单可能晚于打开那一刻到达（`load()`），所以盯着 `saved` 重试，选中过一次
+   * 就不再动——用户之后点别的、点「新建样式」都是他的事。
+   */
+  const preselected = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      preselected.current = false
+      return
+    }
+    if (preselected.current) return
+    const want =
+      (presetId ? saved.find((s) => s.id === presetId) : undefined) ??
+      (isEmptyDraft(draft) ? saved[0] : undefined)
+    if (!want) return
+    preselected.current = true
+    setDraft(structuredClone(want))
+  }, [open, presetId, saved, draft])
 
   const doc = useDocumentStore((s) => s.doc)
   const selectedIds = useSelectionStore((s) => s.ids)
@@ -190,6 +219,7 @@ export function StyleDialog() {
         description={sd('descriptionEmpty')}
         width={520}
         busy={busy}
+        covered={covered}
         footer={
           <>
             <Button variant="outline" size="md" onClick={() => setOpen(false)}>
@@ -222,6 +252,7 @@ export function StyleDialog() {
       description={sd('description')}
       width={760}
       busy={busy}
+      covered={covered}
       footer={
         <>
           <Button variant="outline" size="md" onClick={() => setOpen(false)}>
@@ -464,6 +495,15 @@ export function StyleDialog() {
 
           <div className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border p-2">
             <p className="mb-1 text-xs font-medium text-ink">{sd('willAffect')}</p>
+            {/* 作用对象与变化数先说总账，再逐张列：用户要的第一个答案是「会改到几张、改多少」 */}
+            <p data-style-affect-summary className="mb-1 text-xs text-ink-2">
+              {plan.panels.length === 0
+                ? sd('affectNone')
+                : sd('affectSummary', {
+                    count: plan.panels.length,
+                    patches: plan.panels.reduce((t, p) => t + p.patches.length, 0),
+                  })}
+            </p>
             {plan.panels.length === 0 && (
               <p className="text-xs leading-relaxed text-ink-3">
                 {sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')}
@@ -533,6 +573,19 @@ export function StyleDialog() {
 }
 
 const EMPTY: StylePreset = { name: '', element: {} }
+
+/** 草稿是不是一张白纸（没名字、没条目、没配色、没标注 / 序号 / 页面尺寸） */
+function isEmptyDraft(d: StylePreset): boolean {
+  return (
+    !d.id &&
+    !d.name &&
+    Object.keys(d.element).length === 0 &&
+    !d.palette?.length &&
+    !d.annotation &&
+    !d.subLabel &&
+    !d.page
+  )
+}
 
 /** 已知枚举 prop 的选项；其余按值类型渲染 */
 const ENUM_OPTIONS: Record<string, string[]> = {
