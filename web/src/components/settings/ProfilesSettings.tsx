@@ -76,13 +76,14 @@ const SPEC_FIELDS: NumField[] = [
   { path: 'widths_mm.single', labelKey: 'singleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.double', labelKey: 'doubleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
   { path: 'widths_mm.tolerance_mm', labelKey: 'widthTolerance', min: 0, max: 50, step: 0.1, unit: 'mm', group: 'page' },
-  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'dpi', group: 'raster', rule: 'raster-dpi' },
+  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'ppi', group: 'raster', rule: 'raster-dpi' },
   {
     path: 'preferred_formats.export_dpi_default',
     labelKey: 'exportDpi',
     min: 1,
     max: 4800,
     step: 50,
+    unit: 'ppi',
     group: 'raster',
   },
 ]
@@ -173,6 +174,12 @@ function clearPath(obj: Record<string, unknown>, path: string): Record<string, u
   return next
 }
 
+/**
+ * 只读摘要那一列的宽度。**与 `SettingRow` 的默认标签列同值**——两种模式在同一
+ * 个位置来回切换，差几个像素就是整列左右跳一下。
+ */
+const SUMMARY_LABEL_WIDTH = 160
+
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return st('unset')
@@ -208,7 +215,7 @@ function SummaryRow({
 }) {
   return (
     <div className="flex min-h-6 items-baseline gap-2 text-xs">
-      <span style={{ width: 92 }} className="shrink-0 truncate text-ink-2" title={label}>
+      <span style={{ width: SUMMARY_LABEL_WIDTH }} className="shrink-0 truncate text-ink-2" title={label}>
         {label}
       </span>
       <span className="shrink-0 tabular-nums text-ink">{value}</span>
@@ -619,8 +626,9 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
 
               {editable ? (
-                <SettingRow label={st('name')} labelWidth={92}>
+                <SettingRow label={st('name')} controlId="profile-name">
                   <TextInput
+                    id="profile-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     aria-label={st('name')}
@@ -653,7 +661,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                       <SettingRow
                         key={f.path}
                         label={st(`field.${f.labelKey}`)}
-                        labelWidth={92}
                         status={ruleNote(f)}
                       >
                         {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
@@ -714,8 +721,13 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               </DiagnosticDisclosure>
 
               {kind === 'spec' && boundId === selected.id && (
-                <SettingRow label={st('follow')} help={st('followHelp')} labelWidth={92}>
+                <SettingRow
+                  label={st('follow')}
+                  description={st('followDesc')}
+                  controlId="profile-follow"
+                >
                   <Toggle
+                    id="profile-follow"
                     checked={doc.profile?.follow === true}
                     onChange={setFollow}
                     aria-label={st('follow')}

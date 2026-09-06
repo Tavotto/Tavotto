@@ -61,7 +61,7 @@ const VALUES: Record<string, { current?: string; expected?: string; unit?: strin
   'font-too-large': { current: 'effective', expected: 'max', unit: 'pt', cmp: 'atMost' },
   'legend-font-size': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'line-width-off-preset': { current: 'effective', expected: 'presets', unit: 'pt' },
-  'raster-dpi': { current: 'dpi', expected: 'min', unit: 'dpi', cmp: 'atLeast' },
+  'raster-dpi': { current: 'dpi', expected: 'min', unit: 'ppi', cmp: 'atLeast' },
   'page-width': { current: 'actual', expected: 'want', unit: 'mm' },
   'page-aspect': { current: 'ratio', expected: 'allowed' },
   'font-family-substituted': { current: 'family', expected: 'want' },

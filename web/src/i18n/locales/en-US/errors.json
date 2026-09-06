@@ -447,8 +447,8 @@
       "unapplied-override": "Edits not applied"
     },
     "unit": {
-      "dpi": " dpi",
       "mm": " mm",
+      "ppi": " ppi",
       "pt": " pt"
     },
     "valueArrow": "{{current}} → {{expected}}"

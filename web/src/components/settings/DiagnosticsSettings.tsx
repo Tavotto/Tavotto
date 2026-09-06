@@ -11,6 +11,7 @@ import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { CopyButton } from './CopyButton'
+import { PathValue } from './PathValue'
 import { DiagnosticsExportButton } from './PrivacyAboutSettings'
 import { DiagnosticDisclosure, DiagnosticItem, HelpTip, SettingSection } from './SettingRow'
 
@@ -175,8 +176,14 @@ export function DiagnosticsSettings() {
           .map((c) => (
             <DiagnosticItem
               key={c.id}
-              name={translate(`settings.about.check.${c.id}`, { ns: 'dialogs', defaultValue: c.label })}
-              value={c.detail}
+              name={checkLabel(c)}
+              value={
+                DIR_DETAIL_CHECKS.has(c.id) ? (
+                  <PathValue path={c.detail} name={checkLabel(c)} />
+                ) : (
+                  c.detail
+                )
+              }
             />
           ))}
         {/* 解释器绝对路径、「使用其他 Python 环境…」都在这张卡里，**只在这里出现一次** */}
@@ -194,6 +201,16 @@ export function DiagnosticsSettings() {
 const ENGINE_CHECKS = new Set(['worker_python', 'matplotlib', 'bundled_runtime'])
 
 /**
+ * `detail` 是一条**裸的目录路径**的那几项——只有它们能交给 `PathValue`
+ * （末级目录 + 展开看全文 + 复制，与项目设置、写回确认框同一份实现）。
+ *
+ * 这是一张**点名的表，不是形状猜测**：`worker_python` 的 detail 是
+ * `路径（来源）`、`bundled_runtime` 是 `Python 3.13 + 14 个包`，拿末级目录去
+ * 截它们只会截出半句话。后端那几行在 `app.py::api_diagnostics`。
+ */
+const DIR_DETAIL_CHECKS = new Set(['project_readable', 'project_writable'])
+
+/**
  * 异常项的下一步（审计 T47）。
  *
  * **只登记确实说得出真实动作的那几条**：说不出来就不说——编一句「请检查配置」
@@ -209,6 +226,10 @@ function nextStepOf(id: string, repairCardVisible: boolean): string | null {
   return text || null
 }
 
+/** 检查项的名字：登记过的翻，没登记的用后端给的那句（诊断数据，不翻）。 */
+const checkLabel = (c: Check): string =>
+  translate(`settings.about.check.${c.id}`, { ns: 'dialogs', defaultValue: c.label })
+
 /** 一条检查：状态点 + 名字（+ 坏了时的原因与下一步；原因是诊断数据，不翻）。 */
 function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean }) {
   useTranslation('dialogs')
@@ -220,10 +241,13 @@ function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean
         className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', c.ok ? 'bg-ink-3' : 'bg-danger')}
       />
       <span className="sr-only">{st(c.ok ? 'about.checkOk' : 'about.checkFail')}</span>
-      <span className="shrink-0 text-ink-2">
-        {translate(`settings.about.check.${c.id}`, { ns: 'dialogs', defaultValue: c.label })}
-      </span>
-      {!c.ok && <span className="min-w-0 flex-1 break-all font-mono text-ink-3">{c.detail}</span>}
+      <span className="shrink-0 text-ink-2">{checkLabel(c)}</span>
+      {!c.ok &&
+        (DIR_DETAIL_CHECKS.has(c.id) ? (
+          <PathValue path={c.detail} name={checkLabel(c)} className="min-w-0 flex-1" />
+        ) : (
+          <span className="min-w-0 flex-1 break-all font-mono text-ink-3">{c.detail}</span>
+        ))}
       {next && (
         <span data-next-step className="w-full pl-3 leading-relaxed text-ink-2">
           {next}

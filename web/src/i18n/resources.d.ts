@@ -802,7 +802,7 @@ export default interface Resources {
         "baseFont": "正文字号",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
-        "exportDpi": "推荐导出 PPI",
+        "exportDpi": "推荐导出分辨率",
         "floorFont": "绝对下限",
         "legendFont": "图例字号",
         "lineWidth": "线宽",
@@ -816,7 +816,7 @@ export default interface Resources {
         "widthTolerance": "宽度容差"
       },
       "follow": "跟随更新",
-      "followHelp": "默认不跟随：项目里存着选中那一刻的规则，全局改了也不会悄悄改变这张图的结论。打开之后按最新的规则算，不再提示同步。",
+      "followDesc": "默认不跟随：项目按选中那一刻的规则算",
       "group": {
         "fonts": "字号",
         "lines": "线条",
@@ -2031,8 +2031,8 @@ export default interface Resources {
         "unapplied-override": "修改还没应用"
       },
       "unit": {
-        "dpi": "dpi",
         "mm": "mm",
+        "ppi": "ppi",
         "pt": "pt"
       },
       "valueArrow": "{{current}} → {{expected}}"
