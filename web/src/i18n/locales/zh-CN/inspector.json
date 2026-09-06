@@ -155,7 +155,8 @@
     "resetDiagram_other": "恢复刻度与边框到脚本（{{count}} 项）",
     "spinePerSide": "分别设置各边",
     "spineSidesDiffer": "各边不同",
-    "legendPositionWithin": "相对{{label}}"
+    "legendPositionWithin": "相对{{label}}",
+    "viewAngle": "视角示意：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°"
   },
   "element": {
     "advanced": "高级",
@@ -642,7 +643,7 @@
     "arrow_width": "箭头线宽",
     "arrowstyle": "箭头样式",
     "aspect": "纵横比",
-    "axis_arrows": "轴箭头",
+    "axis_arrows": "显示箭头",
     "axline_color": "轴线颜色",
     "axline_width": "轴线线宽",
     "azim": "方位角",
@@ -681,7 +682,7 @@
     "grid_color": "网格颜色",
     "grid_linestyle": "网格线型",
     "grid_linewidth": "网格线宽",
-    "grid_visible": "网格",
+    "grid_visible": "显示网格",
     "grid_x": "X 网格",
     "grid_y": "Y 网格",
     "ha": "水平对齐",
@@ -724,7 +725,7 @@
     "outline_visible": "外框",
     "outline_width": "外框线宽",
     "pane_color": "面板颜色",
-    "pane_visible": "背景面板",
+    "pane_visible": "显示背景面板",
     "pos_frac": "位置",
     "position": "子图占比",
     "proj_type": "投影方式",

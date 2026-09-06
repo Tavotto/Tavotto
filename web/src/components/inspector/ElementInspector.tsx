@@ -94,6 +94,8 @@ import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
 import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
+import { ProjectionPicker } from './controls/ProjectionPicker'
+import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
 import { EffectToggle } from './controls/EffectToggle'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
@@ -408,6 +410,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
+              ) : element?.role === 'axes3d' ? (
+                /* 角度改在数值框里；这个静态示意只是旁注（审计 T24：
+                   「不增加装饰性三维动画」），随数值重画、没有动画 */
+                <ViewAngleRow panel={panel} element={element} />
               ) : element?.role === 'legend' ? (
                 /* 图例页：条目列表（有项时）+ 排版详情（审计 T17：五条间距
                    标签独占一行、不截断，默认折叠，改过自动展开） */
@@ -656,6 +662,27 @@ function FieldBlock({
       {warning && (
         <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
       )}
+    </div>
+  )
+}
+
+/**
+ * 三维子图的方向示意（审计 T24）：X / Y / Z 在当前视角下指向屏幕的哪里。
+ *
+ * **它不是控件**——没有点击、没有拖动、没有动画，只是角度数值框的旁注，
+ * 与控件列对齐着摆。角度仍在上面三个数值框里改；这里读的是同一份值
+ * （override 优先），所以「角度与示意一致」不需要第二条同步路径。
+ * 引擎没发 `roll`（matplotlib < 3.6）时按 0 画。
+ */
+function ViewAngleRow({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+  const num = (prop: string) => {
+    const f = element.editable.find((x) => x.prop === prop)
+    return f ? Number(currentValue(panel, element.gid, f) ?? 0) : 0
+  }
+  if (!element.editable.some((x) => x.prop === 'elev' || x.prop === 'azim')) return null
+  return (
+    <div className="flex" style={{ paddingLeft: LABEL_W + 8 }}>
+      <ViewAngleDiagram elev={num('elev')} azim={num('azim')} roll={num('roll')} />
     </div>
   )
 }
@@ -1714,6 +1741,16 @@ function FieldRow({
     case 'colormap':
       return wrap(
         <ColormapPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'projection':
+      // 透视 / 正交各一个小立方体（审计 T24）；写入值仍是 matplotlib 的 proj_type
+      return wrap(
+        <ProjectionPicker
           value={enumValue}
           options={enumOptions}
           onChange={writeOnce}

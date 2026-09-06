@@ -48,9 +48,12 @@ function rotateAbout(p: V3, k: V3, angle: number): V3 {
 const round6 = (v: number) => Math.round(v * 1e6) / 1e6
 
 export function viewAxes2d(elevDeg: number, azimDeg: number, rollDeg = 0): ViewAxes2d {
-  // 正对着上 / 下看（|elev| 恰好 90°）时 matplotlib 自己的 u 也退化成 NaN；
-  // 示意图往回挪一丁点，画出「几乎正俯视」而不是画不出来
-  const elev = Math.abs(elevDeg) === 90 ? Math.sign(elevDeg) * 89.999 : elevDeg
+  // 正对着上 / 下看（|elev| 恰好 90°）**不会**退化成 NaN，虽然看上去应该会：
+  // `cos(π/2)` 在浮点里是 6.12e-17 而不是 0，叉积因此仍有一个确定的方向。
+  // matplotlib 自己就是这么算的（实测 3.10.8：elev 90 与 89.999 的结果前五位
+  // 相同，z 的屏幕分量落在 0 与 1.7e-5）。这里**不加往回挪一点的护栏**——
+  // 那会让示意图在一个合法视角上与 matplotlib 不是同一套数。
+  const elev = elevDeg
   const e = elev * D2R
   const a = azimDeg * D2R
   const r = rollDeg * D2R

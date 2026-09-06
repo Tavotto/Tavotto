@@ -158,9 +158,20 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       'spine_color', 'spine_linewidth', 'facecolor', 'visible',
     ],
   },
+  // 三维子图（审计 T24）：角度三条 + 投影方式在首屏，旁边一个静态方向示意
+  // （`ViewAngleDiagram`，不是第二个控件）。背景面板 / 网格 / 轴箭头各自是
+  // 一个开关，**关着时从属设置一并收起**——审计点名的正是「关掉箭头仍显示
+  // 颜色、线宽、大小」。这里不点名其余字段：它们按引擎分组落进「更多」，
+  // 组标题（坐标轴 / 轴箭头）就是从那儿来的。
   axes3d: {
     primary: ['elev', 'azim', 'roll', 'proj_type'],
     more: ['visible'],
+    visibleWhen: {
+      pane_color: (read) => read('pane_visible') !== false,
+      arrow_color: (read) => read('axis_arrows') === true,
+      arrow_width: (read) => read('axis_arrows') === true,
+      arrow_head: (read) => read('axis_arrows') === true,
+    },
   },
   // 刻度组页把这些再分成「刻度 / 文字」两段（ElementInspector 的 TickPage）：
   // 这张表只管每个字段可不可见（模式从属）与段内顺序，不管落在哪一段

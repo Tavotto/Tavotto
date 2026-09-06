@@ -158,7 +158,8 @@
     "resetDiagram_other": "Reset ticks and frame to script ({{count}} items)",
     "spinePerSide": "Set each side separately",
     "spineSidesDiffer": "Sides differ",
-    "legendPositionWithin": "Within {{label}}"
+    "legendPositionWithin": "Within {{label}}",
+    "viewAngle": "View: elevation {{elev}}°, azimuth {{azim}}°, roll {{roll}}°"
   },
   "element": {
     "advanced": "Advanced",
@@ -660,7 +661,7 @@
     "arrow_width": "Arrow width",
     "arrowstyle": "Arrow style",
     "aspect": "Aspect ratio",
-    "axis_arrows": "Axis arrows",
+    "axis_arrows": "Show arrows",
     "axline_color": "Axis line colour",
     "axline_width": "Axis line width",
     "azim": "Azimuth",
@@ -699,7 +700,7 @@
     "grid_color": "Grid colour",
     "grid_linestyle": "Grid line style",
     "grid_linewidth": "Grid line width",
-    "grid_visible": "Grid",
+    "grid_visible": "Show grid",
     "grid_x": "X grid",
     "grid_y": "Y grid",
     "ha": "Horizontal align",
@@ -742,7 +743,7 @@
     "outline_visible": "Outline",
     "outline_width": "Outline width",
     "pane_color": "Pane colour",
-    "pane_visible": "Background panes",
+    "pane_visible": "Show background panes",
     "pos_frac": "Position",
     "position": "Axes box",
     "proj_type": "Projection",
