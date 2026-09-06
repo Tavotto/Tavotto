@@ -321,6 +321,20 @@ sys.stdout.write(json.dumps(out))
 """
 
 
+def _probe_scratch_dir() -> str:
+    """体检子进程的 cwd：一个**空的**目录，挡住父进程 cwd 进 `sys.path[0]`。
+
+    先放数据目录（`<data_dir>/cache/probe/`），它不可用时退回系统临时目录；
+    两处都不行就抛 `OSError`，由调用方收成结构化失败。
+    """
+    try:
+        base = config.data_path("cache", "probe")
+        base.mkdir(parents=True, exist_ok=True)
+        return tempfile.mkdtemp(prefix="p-", dir=str(base))
+    except OSError:
+        return tempfile.mkdtemp(prefix="tavotto-probe-")
+
+
 def probe_environment(python: str, module: str | None = None) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
 
@@ -345,8 +359,12 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     argv = [python, "-c", _PROBE_SRC, engine_dir]
     if module:
         argv.append(module)
-    scratch = tempfile.mkdtemp(prefix="tavotto-probe-")
+    scratch = ""
     try:
+        # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
+        # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
+        # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
+        scratch = _probe_scratch_dir()
         proc = subprocess.run(
             argv,
             capture_output=True,
@@ -363,7 +381,8 @@ def probe_environment(python: str, module: str | None = None) -> dict:
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
         return {"ok": False, "code": ERROR_UNUSABLE, "python": python, "detail": str(exc)[:400]}
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
     if proc.returncode != 0:
         return {
             "ok": False,

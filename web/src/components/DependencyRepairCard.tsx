@@ -106,11 +106,18 @@ export function DependencyRepairCard({
   }
 
   // ---- 起点：给出口 -------------------------------------------------------
-  const targets = offer.targets.filter((tg) => tg.available !== false)
+  const exhausted = offer.code === 'dependency_repair_rounds_exhausted'
+  // 采用这台机器上已有的解释器**不需要**解析出包名，也不消耗修复轮次
+  //（它什么都不装）：解析不出 / 轮次用完时它照样列出——那正是用户仅剩的路。
+  // 安装目标则两个前提都要。
+  const targets = offer.targets.filter(
+    (tg) =>
+      tg.available !== false &&
+      (tg.kind === 'system_interpreter' || (offer.requirement && !exhausted)),
+  )
   // 「指定安装包」要装到哪：第一个**安装**目标。系统解释器不是安装目标
   //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
   const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
-  const exhausted = offer.code === 'dependency_repair_rounds_exhausted'
   const rejected = offer.system_rejected ?? []
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
@@ -126,7 +133,7 @@ export function DependencyRepairCard({
         )}
       </div>
 
-      {offer.requirement && !exhausted && targets.length > 0 && (
+      {targets.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {targets.map((tg) => (
             // 一个目标一块：按钮在上、说明在下。**不并排**——Button 是

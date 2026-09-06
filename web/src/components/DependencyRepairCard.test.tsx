@@ -400,6 +400,22 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     )
   })
 
+  it('解析不出包名 / 轮次用完时照样列出「改用已有环境」——采用不装东西', async () => {
+    // Codex 评审 P2：这条路不依赖包名解析，也不消耗修复轮次；它正是用户仅剩的路
+    for (const offer of [
+      { ...WITH_SYSTEM, requirement: null, code: 'dependency_unresolved' },
+      { ...WITH_SYSTEM, rounds_remaining: 0, code: 'dependency_repair_rounds_exhausted' },
+    ] as DependencyRepairOffer[]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(offer)
+      expect(byName(en('repairUseSystemPython')), offer.code).toBeTruthy()
+      // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
+      expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
+      expect(byName(en('repairCreateManaged'))).toBeUndefined()
+    }
+  })
+
   it('未经验证的 matplotlib 版本要如实标注', async () => {
     await render({ ...OFFER, targets: [{ ...SYSTEM, support: 'unverified_but_compatible' }] })
     expect(text()).toContain(en('repairSystemUnverified'))

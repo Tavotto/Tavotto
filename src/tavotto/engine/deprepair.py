@@ -330,21 +330,15 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         "rounds_remaining": rounds_remaining(root, script),
         "targets": [],
     }
-    if requirement is None or not requirement.installable:
-        out["code"] = ERROR_UNRESOLVED
-        return out
-    if out["rounds_remaining"] <= 0:
-        out["code"] = ERROR_ROUNDS_EXHAUSTED
-        return out
-
-    detail = project_env or {}
-
     # ---- 0. 这台机器上已有的解释器里已经装着它：采用，不装 ---------------
+    # **排在两个提前返回之前**：采用不需要解析出包名（它什么都不装），也不
+    # 消耗修复轮次——解析不出 / 轮次用完时，这条路正是用户仅剩的那条。
     # Session 7 的第二层（ADR 0044）在接手失败时已经把系统解释器体检过了，
     # 结论就在 `project_env["system"]` 里——这里同样**不再起解释器**。健康的
     # 排在最前：它一个字节都不装、不联网、不改任何环境，比两种安装都便宜。
     # 探到了但不合格的（版本不支持 / 没有 matplotlib / 起不来）单列在
     # `system_rejected`：用户手边那套环境为什么没被采用，界面要说出来。
+    detail = project_env or {}
     system = detail.get("system") if isinstance(detail, dict) else None
     found = projectenv.healthy_system_candidate(system)
     if found:
@@ -372,6 +366,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         }
         for r in projectenv.rejected_system_candidates(system)
     ]
+
+    if requirement is None or not requirement.installable:
+        out["code"] = ERROR_UNRESOLVED
+        return out
+    if out["rounds_remaining"] <= 0:
+        out["code"] = ERROR_ROUNDS_EXHAUSTED
+        return out
 
     # ---- A. 项目自己的 .venv：只有「除了这个包之外都健康」才提供 ----------
     # Session 7 的体检已经回答过这件事：`project_env_module_missing` 的语义

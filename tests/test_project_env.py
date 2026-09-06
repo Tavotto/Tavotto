@@ -973,6 +973,37 @@ def test_the_probe_does_not_pick_up_modules_from_the_parent_cwd(tmp_path, monkey
     assert health.get("requested_module_ok") is False, health
 
 
+def test_a_missing_scratch_dir_is_a_structured_failure_not_a_500(monkeypatch):
+    """体检承诺的是结构化失败：临时目录分配也在守卫之内（Codex 评审 P1）。"""
+
+    def boom(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(projectenv.tempfile, "mkdtemp", boom)
+    health = projectenv.probe_environment(sys.executable, "lmfit")
+    assert health["ok"] is False
+    assert health["code"] == projectenv.ERROR_UNUSABLE
+    assert "No space left" in health["detail"]
+
+
+def test_the_probe_scratch_dir_lives_under_the_data_dir(tmp_path, monkeypatch):
+    """运行时可写数据一律走 `config.data_dir()`；空目录用完即删。"""
+    if WORKER_PY is None:
+        pytest.skip("需要一个能起的解释器")
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    seen: list[str] = []
+    real_run = subprocess.run
+
+    def spy(argv, *a, **kw):
+        seen.append(kw.get("cwd") or "")
+        return real_run(argv, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    projectenv.probe_environment(WORKER_PY)
+    assert seen and seen[0].startswith(str(tmp_path / "data"))
+    assert not Path(seen[0]).exists(), "体检完的空目录要删掉"
+
+
 def test_remembered_source_tells_outside_interpreters_from_the_project_venv(tmp_path):
     """项目之外的解释器标成「系统 Python / Conda」，不能显示成 `.venv`。"""
     root = tmp_path / "figs"

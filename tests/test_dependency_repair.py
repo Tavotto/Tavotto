@@ -906,6 +906,34 @@ def test_a_rejected_system_interpreter_is_explained_not_hidden(project):
     ]
 
 
+def test_system_adoption_needs_neither_a_package_name_nor_repair_rounds(project, monkeypatch):
+    """采用什么都不装：解析不出包名（私有模块）/ 轮次用完时照样列出，且说明照样给。
+
+    Codex 评审 P2：以前这一段排在两个提前返回之后，私有模块的用户明明有一个能
+    import 它的解释器，界面却只剩「指定安装包」，得手填同一条路径。
+    """
+    system = [_system_entry("/usr/local/bin/python3", ok=True, module_ok=True)]
+    rejected = [
+        _system_entry(
+            "/usr/bin/python3",
+            ok=False,
+            code=projectenv.ERROR_UNSUPPORTED_PYTHON,
+            module_ok=True,
+            version="3.9.6",
+        )
+    ]
+    detail = {"code": projectenv.ERROR_NOT_FOUND, "system": system + rejected}
+    offer = deprepair.offer(str(project), "figure.py", "my_lab_tools", detail)
+    assert offer["requirement"] is None and offer["code"] == deprepair.ERROR_UNRESOLVED
+    assert [t["kind"] for t in offer["targets"]] == [deprepair.TARGET_SYSTEM]
+    assert offer["system_rejected"][0]["python"] == "/usr/bin/python3"
+
+    monkeypatch.setattr(deprepair, "rounds_remaining", lambda *_a: 0)
+    offer = deprepair.offer(str(project), "figure.py", "lmfit", detail)
+    assert offer["code"] == deprepair.ERROR_ROUNDS_EXHAUSTED
+    assert [t["kind"] for t in offer["targets"]] == [deprepair.TARGET_SYSTEM]
+
+
 def test_the_offer_does_not_start_interpreters_for_system_candidates(project, monkeypatch):
     """offer 在渲染失败的响应路径上：结论必须来自接手那一步的体检表，不能在这里再探。"""
     monkeypatch.setattr(
