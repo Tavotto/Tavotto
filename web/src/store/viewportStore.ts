@@ -83,6 +83,7 @@ type Getter = () => ViewportState
  * 否则连按时锚点会以中间帧算，画面会一点点往边上飘。
  */
 function zoomCenteredTo(set: Setter, get: Getter, next: number) {
+  dropPendingFit()
   const s = get()
   const base = animTarget ?? { zoom: s.zoom, panX: s.panX, panY: s.panY }
   if (next === base.zoom) return
@@ -122,6 +123,20 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
   })
 }
 
+/** 舞台量到尺寸之前收到的那次 `fit`；只留最后一次 */
+let pendingFit: { pageW: number; pageH: number; padding: number } | null = null
+
+/**
+ * 用户自己动过视口之后，那次挂起的适配就作废了。
+ *
+ * `stopAnim()` 里做不了这件事——`fit` 自己第一句就是它，挂起的那次会被当场
+ * 抹掉。所以直接操纵各自调一次：不调的话，用户在舞台量到尺寸之前调的缩放
+ * 会在下一帧被补上来的 fit 覆盖掉，而那看起来就是「我的缩放被吃了」。
+ */
+function dropPendingFit() {
+  pendingFit = null
+}
+
 export const useViewportStore = create<ViewportState>((set, get) => ({
   zoom: 1,
   panX: 0,
@@ -132,25 +147,34 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   originY: 0,
   spaceDown: false,
 
-  setViewRect: ({ left, top, width, height }) =>
-    set((s) =>
-      s.viewW === width && s.viewH === height && s.originX === left && s.originY === top
-        ? s
-        : { viewW: width, viewH: height, originX: left, originY: top },
-    ),
+  setViewRect: ({ left, top, width, height }) => {
+    const s = get()
+    if (s.viewW === width && s.viewH === height && s.originX === left && s.originY === top) return
+    set({ viewW: width, viewH: height, originX: left, originY: top })
+    // 舞台第一次量到尺寸：把挂着的那次「适配页面」补上（见 `fit`）。
+    // 清空由 `fit` 自己做——它量到尺寸那条分支上本来就有一句，这里再写一遍
+    // 是同一条保证的第二份实现，谁也变异不掉它。
+    if (pendingFit && width && height) {
+      const { pageW, pageH, padding } = pendingFit
+      get().fit(pageW, pageH, padding)
+    }
+  },
   setSpaceDown: (v) => set((s) => (s.spaceDown === v ? s : { spaceDown: v })),
   // 直接操纵一律先掐断在飞的补间
   setPan: (panX, panY) => {
     stopAnim()
+    dropPendingFit()
     set({ panX, panY })
   },
   panBy: (dx, dy) => {
     stopAnim()
+    dropPendingFit()
     set((s) => ({ panX: s.panX + dx, panY: s.panY + dy }))
   },
 
   zoomAt: (factor, anchorX, anchorY) => {
     stopAnim()
+    dropPendingFit()
     const { zoom, panX, panY } = get()
     const next = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM)
     if (next === zoom) return
@@ -175,7 +199,14 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   fit: (pageW, pageH, padding = 72) => {
     stopAnim()
     const { viewW, viewH } = get()
-    if (!viewW || !viewH) return
+    // 舞台还没挂载（Project Picker → 工作台的那个空档）：现在算不出缩放，
+    // 记下来等 `setViewRect` 第一次量到尺寸再做。丢掉的话新项目会沿用上一个
+    // 项目留下的缩放（审计 T03）。
+    if (!viewW || !viewH) {
+      pendingFit = { pageW, pageH, padding }
+      return
+    }
+    pendingFit = null
     const wPx = mmToWorld(pageW)
     const hPx = mmToWorld(pageH)
     const zoom = clamp(
@@ -191,6 +222,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   fitAnimated: (pageW, pageH, padding = 72) => {
+    dropPendingFit()
     const s = get()
     if (!s.viewW || !s.viewH) return
     const wPx = mmToWorld(pageW)
@@ -209,6 +241,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   revealRect: ({ x, y, w, h }, padding = 96) => {
+    dropPendingFit()
     const { viewW, viewH, zoom } = get()
     if (!viewW || !viewH) return
     // 当前缩放能装下就不动它，装不下才退到刚好装下的比例
@@ -225,6 +258,9 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   restoreView: ({ zoom, panX, panY }) => {
+    // 与其它直接落点同一条纪律：挂起的那次「适配页面」到此作废，
+    // 否则舞台量到尺寸的下一帧会把还原出来的视口盖掉
+    dropPendingFit()
     if (!get().viewW || !get().viewH) return
     animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
   },

@@ -139,6 +139,14 @@ const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name)
 const input = () => document.querySelector<HTMLInputElement>(`input[aria-label="${pk('specAria')}"]`)!
 const rows = (table: string) => [...document.querySelectorAll(`table[aria-label="${table}"] tbody tr`)]
+/** 展开一个折叠区（内置清单与工程细节默认收起，审计 T46）。 */
+const expand = async (title: string) => {
+  const head = [...document.querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === title && b.getAttribute('aria-expanded') !== null,
+  )!
+  if (head.getAttribute('aria-expanded') === 'false') await act(async () => head.click())
+  return head
+}
 
 async function type(value: string) {
   await act(async () => {
@@ -211,8 +219,8 @@ describe('能力与禁用原因', () => {
 describe('两份清单', () => {
   it('内置只读、用户包有升级与卸载；被保护的用户包只读', async () => {
     await mount()
-    expect(text()).toContain(pk('builtinTitle'))
     expect(text()).toContain(pk('userTitle'))
+    await expand(pk('builtinTitleCount', { count: 3 }))
     const builtin = rows(pk('builtinTitle'))
     expect(builtin.map((r) => r.textContent)).toEqual(
       expect.arrayContaining([expect.stringContaining('matplotlib'), expect.stringContaining('numpy')]),
@@ -250,9 +258,26 @@ describe('两份清单', () => {
     expect(byName(pk('env.rebuild'))).toBeTruthy()
   })
 
-  it('没有回滚这句话常驻，并带快照份数', async () => {
+  it('首屏一句说清失败后怎么办；「没有回滚」与快照份数在工程细节里（审计 T46）', async () => {
     await mount()
-    expect(text()).toContain(pk('rollbackNote', { count: 4 }))
+    expect(text()).toContain(pk('recoveryNote'))
+    // 首屏不谈 pip 事务与快照份数——它们解释的是「为什么只能重建」
+    expect(text()).not.toContain(pk('snapshotDetail', { count: 4 }))
+    await expand(pk('techTitle'))
+    expect(text()).toContain(pk('snapshotDetail', { count: 4 }))
+  })
+
+  it('安装入口与用户包排在内置清单之前（审计 T46）', async () => {
+    await mount()
+    const body = document.querySelector('[data-packages-page]')!.textContent ?? ''
+    expect(body.indexOf(pk('userTitle'))).toBeGreaterThan(-1)
+    expect(body.indexOf(pk('userTitle'))).toBeLessThan(
+      body.indexOf(pk('builtinTitleCount', { count: 3 })),
+    )
+    // 安装目标就在安装入口旁边，且名字里说清是**这个项目的**那一个
+    const env = document.querySelector('[data-packages-env]')!
+    expect(env.textContent).toContain('这个项目的')
+    expect(env.textContent).toContain(pk('envTarget'))
   })
 
   it('清单里没有任何路径', async () => {
@@ -287,7 +312,7 @@ describe('安装', () => {
     expect(byName(pk('job.cancel'))).toBeTruthy()
     // 作业期间相关按钮禁用，但页面还在（清单仍显示）
     expect(input().disabled).toBe(true)
-    expect(text()).toContain('matplotlib')
+    expect(text()).toContain('lmfit')
   })
 
   it('形成作业失败：按 code 给下一步，不是一句退出码', async () => {

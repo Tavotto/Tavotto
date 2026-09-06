@@ -19,7 +19,7 @@ import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { AgentIcon } from './AgentIcon'
-import { ag, AgentStateBadge } from './agentState'
+import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 
@@ -119,7 +119,12 @@ export function AgentDetailView({
             <AgentStateBadge state={agent.state} />
           </Field>
           <Field label={ag('detail.version')}>
-            <span className="font-mono">{agent.version ?? ag('detail.none')}</span>
+            {/* 概览说版本号，不说内部包名（`codex-cli 0.151.0` 的前半截不是用户
+                要认的东西，ADR 0038）。抽不出数字时才回原文——那时原文本身就是
+                诊断材料。`--version` 的完整原话在下面的「诊断信息」里。 */}
+            <span className="font-mono">
+              {agentVersionLabel(agent.version) ?? agent.version ?? ag('detail.none')}
+            </span>
           </Field>
           <Field label={ag('detail.executable')}>
             <span className="flex min-w-0 items-center gap-1">

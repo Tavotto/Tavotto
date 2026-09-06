@@ -28,6 +28,8 @@ import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { foreignProjectLabel } from '@/lib/projectLabel'
+import { currentProjectId } from '@/lib/session'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
@@ -288,15 +290,15 @@ function DocumentMenu() {
       <MenuItem onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
 
       <MenuSeparator />
-      <MenuLabel>{t('topbar.canvasFiles')}</MenuLabel>
+      <MenuLabel>{t('topbar.projectDocuments')}</MenuLabel>
       <MenuItem
         onSelect={() => useUiStore.getState().setLayoutOpen(true, 'save')}
         shortcut={`⇧${MOD}S`}
       >
-        {t('topbar.saveAsCanvasFile')}
+        {t('topbar.saveDocumentAs')}
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
-        {t('topbar.loadCanvasFile')}
+        {t('topbar.openDocument')}
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
         {t('topbar.versionTimeline')}
@@ -323,6 +325,14 @@ function DocumentMenu() {
                   count: r.objects,
                 })
               : t('topbar.recentEntry', { name: r.name, count: r.objects })}
+            {/* 索引跨项目共用一份：别的项目的文档要标出来，否则用户会把它当成
+                本项目的一份版本打开，而它引用的素材在这个项目里根本不存在
+                （审计 T04）。归属未记的旧条目**什么都不标**——那是「不知道」。 */}
+            {foreignProjectLabel(r, currentProjectId()) && (
+              <span className="ml-1 shrink-0 text-xs text-ink-faint">
+                {foreignProjectLabel(r, currentProjectId())}
+              </span>
+            )}
           </MenuItem>
         ))
       )}

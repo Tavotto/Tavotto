@@ -5,6 +5,7 @@ import {
   backendCodeMsg,
   backendErrorText,
   fetchRegistry,
+  panelSrc,
   probeScript,
   scanRegistry,
   writeRegistryEntry,
@@ -15,7 +16,13 @@ import {
   type RegistryView,
   type ScriptInventoryEntry,
 } from '@/lib/api'
-import { PENDING_STATUSES, pendingCount, reasonText, statusLabel } from '@/lib/readinessText'
+import {
+  PENDING_STATUSES,
+  allEditable,
+  pendingCount,
+  reasonText,
+  statusLabel,
+} from '@/lib/readinessText'
 import { cn } from '@/lib/utils'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -271,6 +278,7 @@ function ReadinessBody() {
       {view && view.all_scripts.length > 0 && (
         <AllScriptsSection
           scripts={view.all_scripts}
+          knownStems={[...new Set(report.panels.map((p) => p.stem))].sort()}
           busy={busy}
           probed={probed}
           writable={report.project.writable}
@@ -297,6 +305,15 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
   // 与横幅**同一个加法**（`lib/readinessText.ts`）：两处各展开写一遍的话，
   // 将来多一个状态时总有一处会漏掉，而用户看到的是两个界面报出不同的数
   const pending = pendingCount(s)
+  // 全都能编辑时说一句话，不摆四个格子（审计 T10：正常项目也像故障排查页）。
+  // 判据与横幅共用一份（`lib/readinessText.allEditable`）。
+  if (allEditable(s)) {
+    return (
+      <p className="min-w-0 flex-1 text-xs text-ink-2">
+        {rd('allEditable', { count: s.total })}
+      </p>
+    )
+  }
   const cells: { key: string; value: number }[] = [
     { key: 'total', value: s.total },
     { key: 'editable', value: s.editable },
@@ -408,6 +425,27 @@ function StatusBadge({ status }: { status: ReadinessStatus }) {
   )
 }
 
+/**
+ * 图卡的缩略图（审计 T10：缺少缩略图）。
+ *
+ * 走**现有**的那条渲染路径（`panelSrc` → `/api/render`），不新起一条：素材面板、
+ * 多 Figure 选择器、导出面板用的都是它，缓存也是同一份。素材清单里还没有这一项
+ * （就绪度扫描与素材遍历之间新出现 / 刚被删掉的那一档）时画一个占位方块——
+ * **不猜一个地址**，猜出来的是一条 404。
+ */
+function PanelThumb({ panel }: { panel: ReadinessPanel }) {
+  const asset = useAssetStore((s) => s.byId[panel.id])
+  const src = asset ? panelSrc(asset.id, asset.kind, 200, asset.mtime) : null
+  if (!src) return <span className="h-9 w-12 shrink-0 rounded-sm bg-surface-2" aria-hidden />
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-9 w-12 shrink-0 rounded-sm border border-border bg-white object-contain"
+    />
+  )
+}
+
 function PanelRow({
   panel,
   allScripts,
@@ -460,18 +498,32 @@ function PanelRow({
         'focus-visible:focus-ring',
       )}
     >
-      <div className="flex items-baseline gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-ink" title={panel.id}>
-          {fileName(panel.id)}
-        </span>
-        <StatusBadge status={panel.status} />
+      <div className="flex items-start gap-2">
+        <PanelThumb panel={panel} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs text-ink" title={panel.id}>
+              {fileName(panel.id)}
+            </span>
+            <StatusBadge status={panel.status} />
+          </div>
+          {/**
+           * 已经能编辑的那些**不再逐张重复同一句解释**（审计 T10）：那句话
+           * 对每一张都一模一样，说 N 遍不比说一遍多告诉用户任何事，而它让
+           * 一个完全正常的项目看起来像一页故障清单。这一档的信息在分组标题
+           * （「2 张图可编辑」）与角标里，源脚本在技术详情里。
+           *
+           * 其余状态照旧逐条说：那时每张图的原因**确实不一样**，而用户要的
+           * 正是「这一张为什么不行」。
+           */}
+          {panel.status !== 'editable' && (
+            <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(panel)}</p>
+          )}
+          {panel.status === 'needs_probe' && (
+            <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
+          )}
+        </div>
       </div>
-
-      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(panel)}</p>
-
-      {panel.status === 'needs_probe' && (
-        <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
-      )}
 
       <RowActions
         panel={panel}
@@ -503,6 +555,17 @@ function PanelRow({
       <TechnicalDetails panel={panel}>
         {panel.status === 'editable' && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {panel.script && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => onProbe(panel.script as string)}
+              >
+                <Play size={13} className={cn(busy === panel.script && 'animate-pulse')} />
+                {rd(busy === panel.script ? 'running' : 'reprobe')}
+              </Button>
+            )}
             <SourcePicker
               panel={panel}
               allScripts={allScripts}
@@ -548,32 +611,19 @@ function RowActions({
   onRescan: () => void
 }) {
   useTranslation('dialogs')
-  const running = (script: string) => busyKey === script
 
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      {panel.status === 'editable' && (
-        <>
-          {/* 素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
-              新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
-          {hasAsset && (
-            <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
-              <Plus size={13} />
-              {rd('addToCanvas')}
-            </Button>
-          )}
-          {panel.script && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={disabled}
-              onClick={() => onProbe(panel.script as string)}
-            >
-              <Play size={13} className={cn(running(panel.script) && 'animate-pulse')} />
-              {rd(running(panel.script) ? 'running' : 'reprobe')}
-            </Button>
-          )}
-        </>
+      {/* 已经能编辑的那张只留一个动作：把它放上画布（审计 T10——「仅待连接项
+          展示下一步」）。「重新试运行」是排障动作，它和改绑一起收进技术详情：
+          摆在第一层会让一张**已经好了**的图看起来还有事要做。
+          素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
+          新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
+      {panel.status === 'editable' && hasAsset && (
+        <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
+          <Plus size={13} />
+          {rd('addToCanvas')}
+        </Button>
       )}
 
       {panel.status === 'auto_linkable' && (
@@ -801,6 +851,7 @@ function TechnicalDetails({
  */
 function AllScriptsSection({
   scripts,
+  knownStems,
   busy,
   probed,
   writable,
@@ -809,6 +860,8 @@ function AllScriptsSection({
   source,
 }: {
   scripts: ScriptInventoryEntry[]
+  /** 项目里已经有图文件的那些图名，供手工映射直接挑 */
+  knownStems: string[]
   busy: string | null
   probed: Record<string, ProbeNote>
   writable: boolean
@@ -854,6 +907,7 @@ function AllScriptsSection({
             {writable && (
               <ManualStems
                 script={s.script}
+                known={knownStems}
                 disabled={busy !== null}
                 onWrite={(stems) => onWriteStems(s.script, stems)}
               />
@@ -879,42 +933,93 @@ function AllScriptsSection({
  */
 function ManualStems({
   script,
+  known,
   disabled,
   onWrite,
 }: {
   script: string
+  /** 项目里已经存在的图名，供直接挑（审计 T10：不要只有一个手写逗号列表） */
+  known: string[]
   disabled: boolean
   onWrite: (stems: string[]) => void
 }) {
   useTranslation('dialogs')
   const [text, setText] = useState('')
-  const stems = text
-    .split(/[,，\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const stems = parseStems(text)
+  const options = pickableStems(known, stems)
   return (
-    <div className="flex items-center gap-1.5">
-      <TextInput
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={rd('manualPlaceholder')}
-        aria-label={rd('manualAria', { script })}
-        className="h-7 min-w-0 flex-1 font-mono"
-        spellCheck={false}
-      />
-      <Button
-        size="sm"
-        className="shrink-0"
-        disabled={disabled || stems.length === 0}
-        onClick={() => {
-          onWrite(stems)
-          setText('')
-        }}
-      >
-        {rd('write')}
-      </Button>
+    <div className="flex flex-col gap-1">
+      <label className="text-xs text-ink-3" htmlFor={`stems-${script}`}>
+        {rd('manualLabel')}
+      </label>
+      <div className="flex items-center gap-1.5">
+        <TextInput
+          id={`stems-${script}`}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={rd('manualPlaceholder')}
+          aria-label={rd('manualAria', { script })}
+          className="h-7 min-w-0 flex-1 font-mono"
+          spellCheck={false}
+        />
+        {/* 项目里已有的图名直接挑，挑完落进上面那个框（还能接着改）。
+            **不取代手输**：这条兜底路径存在的理由正是那些「产物名要跑起来
+            才知道」的脚本，它们的图名此刻还不在任何清单里。 */}
+        {options.length > 0 && (
+          <Select
+            className="min-w-32 shrink-0 font-mono"
+            value=""
+            onChange={(v) => setText(stems.concat(v).join(', '))}
+            placeholder={rd('manualPick')}
+            ariaLabel={rd('manualPickAria', { script })}
+            options={options.map((k) => ({ value: k, label: k }))}
+          />
+        )}
+        <Button
+          size="sm"
+          className="shrink-0"
+          disabled={disabled || stems.length === 0}
+          onClick={() => {
+            onWrite(stems)
+            setText('')
+          }}
+        >
+          {rd('write')}
+        </Button>
+      </div>
     </div>
   )
+}
+
+/**
+ * 还能从下拉里挑的图名：已经填进框里的那些不再出现（选了等于什么都没加）。
+ *
+ * **判据是「等于某个已填的名字」，不是「是那串文本的子串」。** 用户敲了
+ * `Ok_v2` 之后 `Ok` 仍然该是可挑的——按子串判会把它一起藏掉，而那时用户
+ * 找不到一个明明还在项目里的图名。
+ *
+ * 与 `sourceOptions` 同一个理由抽成纯函数：选项住在 Radix 的弹层里，从触发器
+ * 上根本看不见，用 DOM 去断言「某一项还在不在」是一把量不了这一维的尺子，
+ * 判据会恒真（这一条实测被变异证过：按子串判的版本在 DOM 判据下全绿）。
+ */
+export function pickableStems(known: readonly string[], chosen: readonly string[]): string[] {
+  return known.filter((k) => !chosen.includes(k))
+}
+
+/**
+ * 「一串图名」→ 图名列表。逗号（中英文）与空白都算分隔。
+ *
+ * 抽成导出的纯函数是为了它**量得到**：写进注册表的是这个结果，而它是这条
+ * 兜底路径上唯一一处会把用户敲的字变成键的地方。
+ */
+export function parseStems(text: string): string[] {
+  const out: string[] = []
+  for (const raw of text.split(/[,，\s]+/)) {
+    const s = raw.trim()
+    // 去重：同一个名字写两遍会往注册表里写两条一模一样的键
+    if (s && !out.includes(s)) out.push(s)
+  }
+  return out
 }
 
 /** 试运行结果的一致展示：主文案一行，traceback 收在「诊断详情」里 */

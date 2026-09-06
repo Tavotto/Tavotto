@@ -16,7 +16,7 @@ import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
-import { WorkspaceContextBar } from './WorkspaceContextBar'
+import { FastEditBar } from './FastEditBar'
 import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
@@ -205,10 +205,8 @@ export function CanvasStage() {
           addPanel(info, p.x, p.y)
         }}
       >
-        {/* 唯一的世界变换。`data-world-transform` 是稳定选择器：e2e 靠它量
-            「切模式时画布有没有意外移动」（审计 T01），别改名 */}
+        {/* 唯一的世界变换 */}
         <div
-          data-world-transform
           className="absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
@@ -238,8 +236,7 @@ export function CanvasStage() {
         {!fastEdit && objects.length === 0 && <EmptyHint />}
       </div>
 
-      {/* 「我在改哪一层」只说一遍：快速编辑与图内编辑共用这一条（审计 T01） */}
-      <WorkspaceContextBar />
+      {fastEdit ? <FastEditBar /> : <ElementEditBar />}
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
@@ -309,6 +306,43 @@ function useFrame(
   // 面板可能被拖到过页面左上角外面（x/y 为负）：框至少要有这张图那么大，
   // 否则 fit 出来的比例装不下它。落位由随后的 revealRect 负责。
   return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
+}
+
+/**
+ * 图内编辑态的浮动出口：Esc 之外的显式按钮。退出时顺手选中该面板，
+ * 属性页落在面板上，「写回原始文件」就在手边。
+ */
+function ElementEditBar() {
+  const panelId = useUiStore((s) => s.elementPanelId)
+  const name = useDocumentStore((s) => {
+    const o = s.doc.objects.find((x) => x.id === panelId)
+    return o?.type === 'panel' ? (o.name ?? o.fileId) : null
+  })
+  if (!panelId) return null
+
+  const exit = () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([panelId])
+  }
+
+  return (
+    <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2">
+      <div className="flex h-7 items-center gap-2 rounded-md border border-border bg-surface pl-2.5 pr-1 shadow-pop">
+        <span className="max-w-64 truncate text-xs text-ink-2">
+          {sg('elementEditing')}
+          {name ? <span className="text-ink">{sg('elementEditingName', { name })}</span> : null}
+        </span>
+        <button
+          onClick={exit}
+          title={sg('exitTitle')}
+          className="flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink transition-colors hover:bg-ink/[.055]"
+        >
+          {sg('backToCanvas')}
+          <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
+        </button>
+      </div>
+    </div>
+  )
 }
 
 /** 画布层的文案在 workspace:stage.* 下 */

@@ -128,11 +128,11 @@ describe('编码 Agent 一级页面', () => {
     expect(document.querySelector('.text-danger')).not.toBeNull()
   })
 
-  it('一级页面每行只有名称 · 版本号 · 状态：没有路径、没有内部包名、没有说明段（ADR 0038）', async () => {
+  it('一级页面每行只有名称 · 状态：没有版本、没有路径、没有说明段（ADR 0038；审计 T44）', async () => {
     await open()
     const list = document.querySelector('ul.overflow-hidden')!
     expect(list.textContent).toContain('Codex')
-    expect(list.textContent).toContain('1.2.3')
+    expect(list.textContent).not.toContain('1.2.3')                // 版本号归详情
     expect(list.textContent).not.toContain('codex-cli')           // 内部包名
     expect(list.textContent).not.toContain('/opt/homebrew/bin')    // 安装目录
     expect(text()).not.toContain('自动发现本机已经安装的编码 Agent')  // 长说明
@@ -191,7 +191,7 @@ describe('编码 Agent 一级页面', () => {
     expect(text()).toContain('/opt/homebrew/bin/codex')
     const back = byName(ag('backAria'))!
     await act(async () => back.click())
-    expect(text()).toContain(ag('useInProduct', { product: 'Tavotto' }))
+    expect(text()).toContain(ag('useInProduct'))
   })
 
   it('开关的 aria-label 说清是「在 Tavotto 中启用它」', async () => {
@@ -255,13 +255,14 @@ describe('编码 Agent 一级页面', () => {
 
   it('刷新失败保留上一次结果，并给一条非破坏性提示', async () => {
     await open()
-    expect(text()).toContain('1.2.3')
+    // 「上一次的结果」在列表上就是那两条状态（版本号已归详情，审计 T44）
+    expect(text()).toContain(ag('state.ready'))
     fetchMock.mockRejectedValue(new Error('boom'))
     const rescan = byName(ag('rescan'))!
     await act(async () => rescan.click())
     await act(async () => {})
     expect(text()).toContain(ag('refreshFailed'))
-    expect(text()).toContain('1.2.3')                     // 旧结果还在
+    expect(text()).toContain(ag('state.ready'))           // 旧结果还在
     expect(text()).not.toContain(ag('state.not_installed'))
   })
 
@@ -273,8 +274,12 @@ describe('编码 Agent 一级页面', () => {
 
   it('两个方向分成两个小节，且不混为一谈', async () => {
     await open()
-    expect(text()).toContain(ag('useInProduct', { product: 'Tavotto' }))
-    expect(text()).toContain(ag('useFromAgents', { product: 'Tavotto' }))
+    expect(text()).toContain(ag('useInProduct'))
+    expect(text()).toContain(ag('useFromAgents'))
+    // 两个小标题不许互为镜像：只差语序时读者得逐字比对才分得清（审计 T44）。
+    // 判据是「一句不是另一句的重排」——把两串字符排序后必须不同。
+    const sorted = (s: string) => [...s.replace(/\s/g, '')].sort().join('')
+    expect(sorted(ag('useInProduct'))).not.toBe(sorted(ag('useFromAgents')))
     expect(text()).toContain(ag('codexIntegrationName', { product: 'Tavotto' }))
     // 「本机装了 codex CLI」绝不写成「Tavotto for Codex 已安装」
     const link = [...document.querySelectorAll('a')].find((a) =>
@@ -309,5 +314,53 @@ describe('编码 Agent 一级页面', () => {
   it('最近检测时间用统一的日期格式', async () => {
     await open()
     expect(text()).toContain(ag('lastChecked', { time: '' }).trim().split('{')[0].trim())
+  })
+})
+
+describe('列表与详情不重复（审计 T44）', () => {
+  it('一行只有名称 + 状态 + 启用开关 + 进详情，版本号不在列表上', async () => {
+    await open()
+    const row = [...document.querySelectorAll('li')].find((li) =>
+      li.textContent?.includes('Codex'),
+    )!
+    expect(row.textContent).toContain(ag('state.ready'))
+    expect(row.textContent).not.toContain('1.2.3')
+    expect(row.querySelector('[data-agent-version]')).toBeNull()
+    // 配置入口与开关仍在
+    expect(row.querySelector(`[aria-label="${ag('rowAria', { name: 'Codex' })}"]`)).toBeTruthy()
+    expect(row.querySelector('[role="switch"], button[aria-checked]')).toBeTruthy()
+  })
+
+  it('版本号在详情里，而且说的是版本号不是内部包名', async () => {
+    await open()
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${ag('rowAria', { name: 'Codex' })}"]`)!
+        .click()
+    })
+    expect(text()).toContain('1.2.3')
+    expect(text()).not.toContain('codex-cli 1.2.3')
+  })
+})
+
+describe('三种状态明确区分（审计 T44 验收）', () => {
+  it('未安装 / 需要登录 / 可用是三句不同的话、三个不同的图标', async () => {
+    const labels = ['not_installed', 'needs_auth', 'ready'].map((s) => ag(`state.${s}`))
+    expect(new Set(labels).size).toBe(3)
+    await open(capsOf([agentCaps({ state: 'needs_auth', usable: false }), claudeCaps({ installed: false, state: 'not_installed', usable: false, version: null, executable_path: null })]))
+    const rows = [...document.querySelectorAll('ul.overflow-hidden li')]
+    expect(rows[0].textContent).toContain(ag('state.needs_auth'))
+    expect(rows[1].textContent).toContain(ag('state.not_installed'))
+    // **形状也不同**：等级不只靠颜色（灰度屏与色觉障碍下同样读得出）。
+    // 判据是两个图标的 lucide 类名不相等，不是"有图标"
+    // 量的是**状态徽标里**那个图标：一行里还有 Agent 的品牌图标，
+    // 不指名道姓就会量到它，而它每个 Agent 本来就不一样（恒真）
+    const badgeOf = (r: Element) => r.querySelector('[data-agent-state]')!
+    const iconOf = (r: Element) =>
+      [...(badgeOf(r).querySelector('svg')?.classList ?? [])].find((c) => c.startsWith('lucide-'))
+    expect(iconOf(rows[0])).toBeTruthy()
+    expect(iconOf(rows[0])).not.toBe(iconOf(rows[1]))
+    // 颜色也不同，但它只是佐证——上面那条才是判据
+    expect(badgeOf(rows[0]).className).not.toBe(badgeOf(rows[1]).className)
   })
 })

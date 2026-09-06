@@ -357,6 +357,12 @@ export interface ProjectStatus {
   settings?: { export_dir?: string; backup_dir?: string; allow_write_back?: boolean }
   export_dir?: string
   backup_dir?: string
+  /**
+   * 「另存为」把文档写到哪（审计 T04）。规则的唯一出处是后端
+   * `app.project_layout_dir()`——界面自己拼 `<项目>/tavottofile` 抄不到
+   * 「旧位置只读兼容」与「未打开项目退回数据目录」这两条分支。
+   */
+  document_dir?: string
   /** 打开动作附带：注册表是静态扫描草稿 / stem 归属冲突列表 */
   drafted?: boolean
   conflicts?: string[]
