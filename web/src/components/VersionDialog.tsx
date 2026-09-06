@@ -36,6 +36,11 @@ import {
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { FigureDocument, PanelObject } from '@/types/document'
 import { canvasToDoc, objectLabel } from '@/types/document'
+import {
+  CanvasThumb,
+  THUMB_OBJECT_LIMIT,
+  THUMB_TEXT_CHARS,
+} from './CanvasThumb'
 import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
@@ -88,7 +93,13 @@ export function VersionDrawer() {
 
   const reload = useCallback(async () => {
     try {
-      const list = await fetchVersions(docId)
+      // 草图随列表一次带回来：缩略图不该让「打开版本面板」变成拉 120 份正文，
+      // 而列表端点为了数对象数本来就已经把整份文件解析过一遍了。
+      // 尺寸取值来自缩略图组件自己（那个数字只有那一处）。
+      const list = await fetchVersions(docId, {
+        objects: THUMB_OBJECT_LIMIT,
+        textChars: THUMB_TEXT_CHARS,
+      })
       setVersions(list.slice().reverse()) // 最新在上
       setError(null)
     } catch (e) {
@@ -220,45 +231,64 @@ export function VersionDrawer() {
                 <button
                   onClick={() => setSelected(v.id === selected ? null : v.id)}
                   aria-expanded={v.id === selected}
+                  /* 120 行 × 每行一张 SVG 缩略图：滚出视口的那些不必参与
+                     排版与绘制。挂在**按钮**上而不是 <li> 上——展开的详情面板
+                     在同一个 <li> 里，把它一起跳过会在滚动时抖动。
+                     `auto` 关键字让浏览器记住这一行真实量到的高度。 */
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 56px' }}
                   className={cn(
-                    'flex w-full flex-col gap-0.5 px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
+                    'flex w-full items-start gap-2 px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
                     v.id === selected
                       ? 'border-l-2 border-accent bg-accent-subtle'
                       : 'border-l-2 border-transparent hover:bg-ink/[.04]',
                   )}
                 >
-                  {/* 一行说一件事：什么时候 → 变了什么 → 拍的哪张画布。
-                      自动检查点的名字由后端按时间生成，与这里的时间重复，
-                      所以只显示**用户起的**名字（`versionDisplayName`）。 */}
-                  <span className="flex items-center gap-1.5">
+                  {/* 缩略图 → 时间 → 变化摘要 → 哪张画布。
+                      缩略图与画布列表是**同一个组件**（喂的是列表端点发来的
+                      草图），所以「哪一版」这件事两处长得一样。画不出来的那些
+                      版本（页面尺寸缺席的旧/坏文档）留一个同尺寸的占位，不画
+                      一张比例是编的图。 */}
+                  {v.sketch ? (
+                    <CanvasThumb page={v.sketch.page} objects={v.sketch.objects} />
+                  ) : (
                     <span
-                      className={cn(
-                        'shrink-0 text-xs',
-                        v.id === selected ? 'font-medium text-accent' : 'text-ink',
-                      )}
-                    >
-                      {formatTime(v.ts)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
-                      {versionDisplayName(v)}
-                    </span>
-                    {v.auto && (
-                      <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
-                        {vd('autoBadge')}
+                      aria-hidden
+                      className="h-10 w-14 shrink-0 rounded-[3px] border border-dashed border-border"
+                    />
+                  )}
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    {/* 自动检查点的名字由后端按时间生成，与这里的时间重复，
+                        所以只显示**用户起的**名字（`versionDisplayName`）。 */}
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          'shrink-0 text-xs',
+                          v.id === selected ? 'font-medium text-accent' : 'text-ink',
+                        )}
+                      >
+                        {formatTime(v.ts)}
                       </span>
-                    )}
-                  </span>
-                  <span className="text-xs text-ink-3">
-                    {versionSummaryText(versionSummary(v, comparableEarlier(versions, i)))
-                      .map(formatMessage)
-                      .join(' · ')}
-                  </span>
-                  {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
-                      **照实说"不知道"**，不猜成当前画布。 */}
-                  <span className="truncate text-xs text-ink-faint">
-                    {v.canvasId
-                      ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                      : vd('fromUnknownCanvas')}
+                      <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+                        {versionDisplayName(v)}
+                      </span>
+                      {v.auto && (
+                        <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
+                          {vd('autoBadge')}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-ink-3">
+                      {versionSummaryText(versionSummary(v, comparableEarlier(versions, i)))
+                        .map(formatMessage)
+                        .join(' · ')}
+                    </span>
+                    {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
+                        **照实说"不知道"**，不猜成当前画布。 */}
+                    <span className="truncate text-xs text-ink-faint">
+                      {v.canvasId
+                        ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                        : vd('fromUnknownCanvas')}
+                    </span>
                   </span>
                 </button>
                 {v.id === selected && meta && (

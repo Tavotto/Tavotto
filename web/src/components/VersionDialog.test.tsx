@@ -8,6 +8,9 @@
  *    （写完再存等于存下来的已经是恢复后的内容）。
  * 2. **每行说的是「什么时候 → 变了什么」**，不是把日期说两遍。自动版本的
  *    名字由后端按时间生成，与行内时间重复。
+ * 3. **每行有一张缩略图，而列表一份正文都不拉**（fu-thumbs）。缩略图靠列表
+ *    端点随元信息一起发来的草图画；退化成「按行取正文」的话，打开一次版本
+ *    面板就是 120 份整份文档。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -22,6 +25,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { createVersion, fetchVersionDoc, fetchVersions, type LayoutVersionMeta } from '@/lib/api'
 import { VersionDrawer } from '@/components/VersionDialog'
+import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -151,5 +155,72 @@ describe('列表每行说什么', () => {
   it('用户起的名字照常显示', async () => {
     await mount([meta({ name: '投稿前' })])
     expect(rows()[0].textContent).toContain('投稿前')
+  })
+})
+
+/* --------------------------- 列表里的缩略图 -------------------------------- */
+
+const sketch = (fileId: string, label: string) => ({
+  page: { w: 150, h: 100 },
+  objects: [
+    { type: 'panel', x: 2, y: 2, w: 40, h: 30, fileId, fileKind: 'pdf' },
+    { type: 'text', x: 4, y: 40, w: 30, h: 6, text: label },
+  ],
+})
+
+const thumbs = () => [...document.querySelectorAll('[data-canvas-thumb]')] as SVGElement[]
+
+describe('每行一张缩略图', () => {
+  it('画的是这一版的草图，不同版本的缩略图互不相同', async () => {
+    await mount([
+      meta({ id: 'v1', ts: 1, sketch: sketch('a.pdf', '第一版') }),
+      meta({ id: 'v2', ts: 2, sketch: sketch('b.pdf', '第二版') }),
+    ])
+    const drawn = thumbs()
+    expect(drawn).toHaveLength(2)
+    expect(drawn[0].outerHTML).not.toBe(drawn[1].outerHTML)
+    // 面板挂的是素材库同一条预览链路（与画布列表同一个组件）
+    const hrefs = [...document.querySelectorAll('[data-thumb-panel]')].map((n) =>
+      n.getAttribute('href'),
+    )
+    expect(hrefs.some((h) => h?.includes('a.pdf'))).toBe(true)
+    expect(hrefs.some((h) => h?.includes('b.pdf'))).toBe(true)
+    // 文字画的是文字本身，不是又一个灰方块
+    expect([...document.querySelectorAll('[data-canvas-thumb] text')].map((n) => n.textContent))
+      .toEqual(['第二版', '第一版'])
+  })
+
+  it('打开面板一份正文都不拉：草图跟着列表一次回来', async () => {
+    await mount([
+      meta({ id: 'v1', ts: 1, sketch: sketch('a.pdf', '一') }),
+      meta({ id: 'v2', ts: 2, sketch: sketch('b.pdf', '二') }),
+      meta({ id: 'v3', ts: 3, sketch: sketch('c.pdf', '三') }),
+    ])
+    expect(thumbs()).toHaveLength(3)
+    // 这条判据要挡住的正是「按可见行懒取正文」那个方案：每条版本存的是整份
+    // 文档，为一行缩略图去取它，一次打开就是 120 份。
+    expect(mockDoc).not.toHaveBeenCalled()
+    expect(mockList).toHaveBeenCalledTimes(1)
+    // 展开某一行时才取那一份正文（详情面板要按 overrides 出图）
+    await act(async () => rows()[0].click())
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+  })
+
+  it('要多大的草图由缩略图组件说了算，随请求发给后端', async () => {
+    await mount([meta({ sketch: sketch('a.pdf', '一') })])
+    expect(mockList).toHaveBeenCalledWith('d_versions', {
+      objects: THUMB_OBJECT_LIMIT,
+      textChars: THUMB_TEXT_CHARS,
+    })
+  })
+
+  it('画不出来的版本留同尺寸占位，不画一张比例是编的图', async () => {
+    // 页面尺寸取不出来的旧 / 坏文档：后端整条不发草图
+    await mount([meta({ id: 'v_old', sketch: undefined })])
+    expect(thumbs()).toHaveLength(0)
+    const placeholder = rows()[0].querySelector('span[aria-hidden]')
+    expect(placeholder?.className).toContain('border-dashed')
+    // 行本身照常可用（时间 / 摘要 / 哪张画布都还在）
+    expect(rows()[0].textContent).toContain('Fig 1')
   })
 })

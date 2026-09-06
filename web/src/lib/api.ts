@@ -2,6 +2,7 @@ import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { PreviewMetadata } from '@/lib/previewBudget'
+import type { ThumbObject } from '@/types/thumb'
 
 export interface PanelInfo {
   id: string
@@ -715,6 +716,24 @@ export interface LayoutVersionMeta {
    */
   canvasId?: string
   canvasName?: string
+  /**
+   * 够画一行缩略图的**草图**，只有请求里要了才有（见 `fetchVersions`）。
+   * 画不出来的那些版本**没有这个字段**——空草图与「这一版真的什么都没有」
+   * 是两件事，前者该显示占位、后者该显示一张空白页。
+   */
+  sketch?: VersionSketch
+}
+
+/**
+ * 一条版本的草图：页面尺寸 + 对象落位，**不含 overrides、不含脚本、不含正文**。
+ *
+ * 对象的形状与缩略图组件的 `ThumbObject` 逐字相同（后端按同一组字段名发），
+ * 所以列表行画缩略图不需要任何转换层。缩略图画的是**当前磁盘上的素材**，
+ * 不是那一版当时的图内修改——它回答「哪一版」，不回答「那一版长什么样」。
+ */
+export interface VersionSketch {
+  page: { w: number; h: number }
+  objects: ThumbObject[]
 }
 
 /**
@@ -736,10 +755,23 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
   return res.blob()
 }
 
-export const fetchVersions = (docId: string) =>
-  jsonFetch<{ versions: LayoutVersionMeta[] }>(
-    `/api/versions/${encodeURIComponent(docId)}`,
+/**
+ * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
+ *
+ * 「一行缩略图画几个对象 / 几个字」是缩略图组件自己的事，所以取值随请求给
+ * （`components/CanvasThumb.tsx` 的两个常量），后端不写第二份权威。
+ * 这也是列表能有缩略图而**不退化成「打开面板就拉全部版本正文」**的做法：
+ * 草图是列表端点本来就已经解析出来的那份数据的投影，一次请求，零份正文。
+ */
+export const fetchVersions = (
+  docId: string,
+  sketch?: { objects: number; textChars: number },
+) => {
+  const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
+  return jsonFetch<{ versions: LayoutVersionMeta[] }>(
+    `/api/versions/${encodeURIComponent(docId)}${q}`,
   ).then((r) => r.versions)
+}
 
 export const fetchVersionDoc = (docId: string, vid: string) =>
   jsonFetch<{ doc: FigureDocument } & LayoutVersionMeta>(
