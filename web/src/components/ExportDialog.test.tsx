@@ -35,6 +35,7 @@ import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { resetExportState } from '@/store/exportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -320,6 +321,34 @@ describe('输出范围', () => {
     expect(radios[0].getAttribute('aria-checked')).toBe('true')
     expect(text()).toContain('80 × 60 mm')
     expect(text()).toContain('缩放')
+  })
+
+  it('渲染回来之后尺寸跟着变：对话框开着时 manifest 到位，说的必须是渲染回来的图幅', async () => {
+    await setup(9)
+    // 文档里是上一次同步到的图幅（磁盘上那份 PDF 的页面：脚本存盘时裁到了内容范围）
+    useDocumentStore.getState().commit(literal('图幅'), (d) => {
+      const p0 = d.objects[0] as PanelObject
+      p0.nativeW = 75.26
+      p0.nativeH = 58.68
+    })
+    // 这一变体还没画出来
+    useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(text()).toContain('75.3 × 58.7 mm')
+    // 渲染回来：第 ① 档（manifest size_mm）到位——**没有任何素材清单的变化**。
+    // 以前对话框只在素材清单变化时重算规格，这一刻它继续说 75.3 × 58.7，
+    // 而快速编辑条上已经是 80 × 57.6（审计 T33）
+    await act(async () => {
+      seedExactRender(panel, { ...manifest(9), size_mm: [80, 57.6] } as never)
+    })
+    expect(text()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('75.3 × 58.7 mm')
   })
 
   it('没有当前图时「原图尺寸」禁用，并**说出原因**（不隐藏、不静默改画布）', async () => {
