@@ -1094,6 +1094,7 @@
     "techDetails": "技术详情",
     "title": "设置",
     "update": {
+      "applyFailedRetry": "升级没有完成，当前版本没有改变。可以再点一次「下载并升级」，或按下面的日志排查。",
       "autoCheck": "自动检查",
       "autoCheckAria": "每天自动检查更新",
       "autoCheckHint": "每天一次，关掉后不会有任何联网请求",
@@ -1112,9 +1113,11 @@
       "installMethod": "安装方式",
       "installedHint": "已安装完成——当前窗口仍是旧版本，重启后生效。",
       "lastChecked": "上次检查：{{time}}",
+      "latestUnknown": "还没有检查过，现在无法判断这是不是最新版本。",
       "manualDownload": "连不上更新服务时，也可以去 Releases 手动下载",
       "methodSource": "源码检出（升级请用 git pull）",
       "neverChecked": "尚未检查",
+      "noUpdateAtLastCheck": "{{time}} 检查时没有发现新版本。这是那次检查的结果，不是此刻的发布状态。",
       "relaunch": "重启并使用新版本",
       "releaseNotes": "查看发行说明",
       "restartAfter": "后生效——当前进程仍在运行旧版本代码。",
@@ -1122,7 +1125,6 @@
       "restartStrong": "请重启 Tavotto",
       "signatureNote": "更新包由官方签名，装之前壳会校验签名，校验不过不会安装。项目、画布与设置都在用户数据目录，升级不影响。",
       "sourceUpgrade": "源码检出请自行执行",
-      "upToDate": "已是最新版本。",
       "upgrading": "升级中…"
     },
     "tutorial": {

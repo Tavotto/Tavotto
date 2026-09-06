@@ -19,6 +19,32 @@ const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
+ * 「最新」这句话的作用域（审计 T48）。
+ *
+ * 界面上绝不能出现无条件的「已是最新版本」：那是**上一次检查的回答**，不是
+ * 对发布状态的实时核验。两条不能合并的事实——
+ *   * 从没查过（离线启动、`TAVOTTO_NO_UPDATE_CHECK`、后端 24h 节流下缓存也空）
+ *     → 「不知道是不是最新」，不是「是最新」；
+ *   * 查过了没有新版 → 只能说到那一刻为止。
+ * 所以这里只有两句话，且都由**真实存在的时间戳**决定走哪一句：拿不到时间戳
+ * 就说不知道，不补一个「刚刚」。
+ */
+function LastCheckVerdict({ checkedAtMs }: { checkedAtMs: number | null | undefined }) {
+  return (
+    <p
+      // 结构性标记：判据认它，不去匹配那两句话的散文。用文案当判据的话，
+      // 「不含另一句」在时间参数不同的时候是恒真的
+      data-update-verdict={checkedAtMs ? 'checked' : 'unknown'}
+      className="text-xs text-ink-3"
+    >
+      {checkedAtMs
+        ? st('update.noUpdateAtLastCheck', { time: formatDateTime(checkedAtMs) })
+        : st('update.latestUnknown')}
+    </p>
+  )
+}
+
+/**
  * 检查更新。保留：当前版本、自动检查开关、检查按钮、当前状态。
  * 安装方式、签名校验说明、升级命令进「技术详情」；**错误照旧常驻**。
  */
@@ -30,6 +56,7 @@ export function UpdateSettings() {
     applying,
     restartRequired,
     applyLog,
+    applyFailed,
     checkError,
     check,
     apply,
@@ -51,7 +78,9 @@ export function UpdateSettings() {
       <SettingRow label={st('update.currentVersion')}>
         <span className="font-mono text-xs text-ink">{status?.current ?? '…'}</span>
       </SettingRow>
-      <SettingRow label={st('update.autoCheck')} help={st('update.autoCheckHint')}>
+      {/* 「每天一次、关掉就不联网」是这一项**改的是什么**，属于标签底下的一行
+          短说明，不是需要点开的歧义解释（审计「说明文字专项补查」的统一规则） */}
+      <SettingRow label={st('update.autoCheck')} description={st('update.autoCheckHint')}>
         <Toggle
           checked={status?.auto_check ?? true}
           onChange={(v) => void setAutoCheck(v)}
@@ -117,6 +146,9 @@ export function UpdateSettings() {
               <code className="font-mono">{status.upgrade_command}</code>
             </p>
           )}
+          {/* 失败必须看得出是失败：同一片灰色日志既当成功回执又当错误，
+              用户读不出装没装上，也就不知道该不该再点一次那个按钮 */}
+          {applyFailed && <InlineWarning tone="danger">{st('update.applyFailedRetry')}</InlineWarning>}
           {applyLog && (
             <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs text-ink-3">
               {applyLog}
@@ -124,7 +156,7 @@ export function UpdateSettings() {
           )}
         </div>
       ) : (
-        status && !status.error && <p className="text-xs text-ink-3">{st('update.upToDate')}</p>
+        status && !status.error && <LastCheckVerdict checkedAtMs={status.checked_at_ms} />
       )}
 
       <DiagnosticDisclosure title={st('techDetails')}>
@@ -163,6 +195,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     desktopProgress,
     desktopError,
     desktopChecked,
+    desktopCheckedAtMs,
     checkDesktop,
     installDesktop,
     relaunch,
@@ -182,14 +215,22 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
 
       <SettingRow
         label={st('update.check')}
-        status={
-          desktopChecked && !desktopUpdate && !desktopError ? st('update.upToDate') : undefined
-        }
+        status={st('update.lastChecked', {
+          time: desktopCheckedAtMs
+            ? formatDateTime(desktopCheckedAtMs)
+            : st('update.neverChecked'),
+        })}
       >
         <Button onClick={() => void checkDesktop()} disabled={busy}>
           {st(desktopPhase === 'checking' ? 'update.checking' : 'update.checkNow')}
         </Button>
       </SettingRow>
+
+      {/* 查过、没有新版、也没有错误——只有这一种情况才轮得到那句话，而它说到
+          的也只是那一刻。检查失败时不说（下面那条错误自己会讲），正在查时不说 */}
+      {desktopChecked && !desktopUpdate && !desktopError && desktopPhase === 'idle' && (
+        <LastCheckVerdict checkedAtMs={desktopCheckedAtMs} />
+      )}
 
       {desktopError && (
         <div className="flex flex-col gap-1">

@@ -1103,6 +1103,7 @@
     "techDetails": "Technical details",
     "title": "Settings",
     "update": {
+      "applyFailedRetry": "The upgrade did not finish and the running version is unchanged. You can press “Download and upgrade” again, or read the log below.",
       "autoCheck": "Check automatically",
       "autoCheckAria": "Check for updates daily",
       "autoCheckHint": "Once a day; with this off, no network request is ever made",
@@ -1121,9 +1122,11 @@
       "installMethod": "Installed via",
       "installedHint": "Installed — this window is still the old version; restart to use the new one.",
       "lastChecked": "Last checked: {{time}}",
+      "latestUnknown": "No check has run yet, so whether this is the latest version is unknown.",
       "manualDownload": "If the update service is unreachable, you can also download from Releases manually",
       "methodSource": "source checkout (upgrade with git pull)",
       "neverChecked": "Never checked",
+      "noUpdateAtLastCheck": "No newer version was found when checked at {{time}}. That is the result of that check, not the release status right now.",
       "relaunch": "Restart into the new version",
       "releaseNotes": "Release notes",
       "restartAfter": " to use it — this process is still running the old code.",
@@ -1131,7 +1134,6 @@
       "restartStrong": "Restart Tavotto",
       "signatureNote": "Update packages are officially signed and the shell verifies the signature before installing; a failed check means nothing is installed. Projects, canvases and settings live in the user data folder and are unaffected.",
       "sourceUpgrade": "For a source checkout, run",
-      "upToDate": "You are on the latest version.",
       "upgrading": "Upgrading…"
     },
     "tutorial": {
