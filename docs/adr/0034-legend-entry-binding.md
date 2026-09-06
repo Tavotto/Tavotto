@@ -152,3 +152,108 @@ follow；只指纹相等且唯一 → follow（脚本把 labels 单独传了）�
 `tests/test_legend_model_pairs.py`、`web/src/components/inspector/legendCard.test.tsx`、
 `web/src/components/inspector/legendSpacingCard.test.tsx`、
 `tests/golden/preflight_vectors.json` 的 `legend-entry-custom-handle-width`。
+
+## 7. 2026-09-07 修订：外侧锚点（`bbox_to_anchor`）
+
+用户拍板补上的能力：把图例放到子图**外面**。matplotlib 靠 `bbox_to_anchor`
++ `loc` 两件东西一起说这件事（`loc='upper left', bbox_to_anchor=(1.02, 1)`
+= 「图例的左上角贴在子图右边缘往外 2% 的那条线上」）。
+
+### 值形状
+
+**保持 `loc` 一个字节不动，新增一条独立 override `loc_anchor`。**
+
+* 值是**父容器分数坐标里的一个点** `[x, y]`（Axes 图例参照宿主子图，
+  figure 图例参照整张图；`bbox_transform` 固定为父容器自己的变换）；
+* `null` 是一个**合法取值**——「不要锚框」，即回到容器内侧。它与「没表态」
+  （这条 override 不在，用脚本原样的锚框）**是两个不同的答案**：脚本自己写了
+  `bbox_to_anchor` 的图，两者画出来不一样。
+
+否掉的方案是复合值 `legend_position: {mode, loc, anchor}`：它把老文档里
+`loc` override 的类型改了（老文档全废），而且把两条正交的轴塞进同一个枚举
+——`loc` 的「未表态」与锚点的「未表态」本来就是两件事。
+
+### 一个模型，不是三个 setter
+
+「图例摆在哪」现在有三条 prop（`loc` 预设、`loc_frac` 画布拖动、`loc_anchor`
+锚点），它们改的是同一件事，而且会互相盖写：`set_loc` 之前必须清锚框（否则
+loc 被解释成相对锚框的位置，图例乱飞），设锚框又不能动 loc。三条各自当独立
+setter 的话**谁先谁后就是两张图**——应用顺序在同一档里就是 patch 列表序，
+热会话的增量应用与冷启动的全量重放会在这里分叉。
+
+所以走边框 / 刻度模型那套路数：三条各写自己的槽位（`overrides.legend_pos_cfg`），
+再 `apply_legend_pos_model` **整体重建**。应用顺序从此不影响结果；撤销一条 =
+那个槽位退回「未表态」（落回脚本原样），不是把当前推断出来的值钉死。
+优先级只写在模型里一处：**拖动过就是绝对定位，锚框强制清掉**（前端选预设时
+把 `loc_frac` 那条 override 一并删掉，否则用户点了预设看不见变化）。
+
+### getter 与「可还原的形式」
+
+脚本原样是 `(leg._loc, leg._bbox_to_anchor)` 这一对，锚框存的是**原对象**：
+它多半是 `TransformedBbox`，交给 `set_bbox_to_anchor` 会被再包一层变换、坐标
+当场爆炸，所以还原时只能直接放回属性。这一对存在模型的 `orig` 里
+（`_register_legend` 在 instrument 时采，与 `spine_cfg` 同一个理由）。
+`loc_anchor` 的 getter 回的是**当前可读的值**（`[x, y]` 或 `null`，界面用），
+撤销不走它。
+
+### 能力判据：只有「父容器分数坐标里的一个点」
+
+manifest 发 `loc_anchor` 的条件是锚框能被这个模型表达出来。两种表达不出来的
+形状**不发字段**，改发一条 `unsupported_props`（reason code
+`legend_anchor_box` / `legend_anchor_transform`，界面按 code 翻）：
+
+* 4 元组锚框 `(x, y, w, h)`：逆变换回来是个有尺寸的框，这个模型只认一个点；
+* `bbox_transform` 不是父容器自己的变换（`fig.transFigure` / `ax.transData`）：
+  换算得出的数字此刻落位正确，但它钉的是另一套参照系，改成子图分数就是**换了
+  语义**（子图一动两者就分家）。判据是拿三个点量两个变换的数值等价，不比对象
+  身份。
+
+两种情形下脚本原样照常渲染、撤销照常（模型里存着原对象），少的只是「在这里
+改它」这个能力。把 4 元组锚框显示成「没有锚点」是个语义错的精确值——用户会
+以为图例在内侧。
+
+### 界面
+
+位置控件（`controls/LegendPositionPicker.tsx`）扩成**内 / 外两带**，仍是一个
+控件：内 = 九宫格 + 「最佳位置」（选它清掉锚点），外 = 六个常用外侧位
+（右侧上 / 中 / 下、上方居中、下方居中、左侧中，表在 `lib/legendModel.ts` 的
+`LEGEND_OUTSIDE_PRESETS`，**纯界面预设、不是同源对**——引擎收任意组合）+
+自定义锚点 x / y。控件里那张示意图按当前值重画（静态内联 SVG，无动画）：
+虚线框是参照的容器，实心块是图例此刻的落点，算法与 matplotlib 同源（锚框上取
+`loc` 说的那个角、图例的同名角贴上去），所以自定义锚点也画得对；算不出来
+（`best` / 拖到过自定义位置 / 多选取值不一致）时只画容器。
+
+一次点击 = 一次 commit（`store/actions.setLegendPlacement`）：写 `loc`、
+按需写 `loc_anchor`、删 `loc_frac`。选内侧时**此刻确实有锚点才写
+`loc_anchor: null`**——本来就没有的话写它只会留下一条没有作用的 override。
+三个入口（属性页、快捷编辑、画布浮动栏）与多选路径都给外侧带。
+
+外侧图例很容易探出图幅，导出时那一块会被静默裁掉——预检
+`element-outside-figure`（审计 T14，error 级）本来就会报它，控件里先说一句
+「放到外面可能超出图幅，检查会提示」。
+
+### 顺带修掉的一个真缺陷
+
+`overrides.apply()` 的跳过判据原本写成 `state.applied.get(key) == value`，把
+「这个 key 从没应用过」（`.get` 回 `None`）与「这一次的值就是 `null`」当成了
+同一件事——任何 null 取值的 override 在**第一次**就被静默跳过，setter 从没跑过、
+`applied` 里也没有它，表现是「改了没反应」且没有 warning。判据改成
+「上次应用过 **且** 值没变」。
+
+### 没覆盖到的 matplotlib 组合
+
+* 4 元组 `bbox_to_anchor`（一个有尺寸的锚框）与非父容器 `bbox_transform`：
+  上面那条能力判据把它们挡在外面，只读不改；
+* `loc` 传元组（脚本直接写坐标）：那是 `loc_frac` 的地盘，界面显示「自定义位置」；
+* `bbox_to_anchor` 配 `loc='best'`：实测 3.10.8 不报错，但零尺寸锚框让 best
+  退化成 upper-left + 锚框，语义上没有意义——界面把「最佳位置」放在内侧一带，
+  选它就清锚框；从别处写进来的这种组合照 matplotlib 的行为渲染，引擎不擅自改。
+
+### 看护
+
+`tests/test_legend_anchor.py`（当前值与能力 / 写进去真的动 / **应用顺序无关** /
+撤销退回脚本原样 / 热态 == 全新重放 / 两种表达不出来的形状 / figure 级图例 /
+外侧超出图幅时预检命中）、`tests/golden/patch_vectors.json` 的 `legend_anchor`
+（值形状逐字节，Rust 侧同一份）、
+`web/src/components/inspector/controls/pickers.test.tsx`、
+`web/src/components/inspector/legendCard.test.tsx`。

@@ -16,7 +16,7 @@ import {
   type ManifestElement,
   type PanelInfo,
 } from '@/lib/api'
-import { restoreFollowPlan } from '@/lib/legendModel'
+import { legendPlacementPlan, restoreFollowPlan, type LegendPlacement } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
@@ -877,6 +877,42 @@ export function restoreLegendEntryFollow(panelId: string, element: ManifestEleme
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 图例位置的一次点击（属性页 / 快捷编辑 / 画布浮动栏共用）：内 / 外两带写的
+ * 是同一件事，落进**同一次 commit**——一条撤销、一次渲染。
+ *
+ * 计划由 `legendPlacementPlan` 算（三条规则连同它们的现场都写在那里）；
+ * 这里只负责把 set 与 remove 放进一次修改，并在真的什么都不动时**不留历史**
+ * ——点一个已经选中的档位不该在撤销栈里多一条。
+ */
+export function setLegendPlacement(
+  panelId: string,
+  legends: ManifestElement[],
+  next: LegendPlacement,
+) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !legends.length) return
+  const plan = legendPlacementPlan(panel, legends, next)
+  const removes = plan.remove.filter((t) =>
+    panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
+  )
+  const changes = plan.set.filter((t) => {
+    const cur = panel.overrides.find((p) => p.gid === t.gid && p.prop === t.prop)
+    return !cur || JSON.stringify(cur.value) !== JSON.stringify(t.value)
+  })
+  if (!removes.length && !changes.length) return
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('loc') }), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !removes.some((t) => t.gid === p.gid && t.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
+  })
+  const after = findObject(panelId)
+  if (after?.type === 'panel') requestRender(after, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'loc' })
 }
 
 /**

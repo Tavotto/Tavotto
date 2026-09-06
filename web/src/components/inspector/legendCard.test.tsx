@@ -59,8 +59,9 @@ const f = (prop: string, type: EditableField['type'], value: unknown, extra = {}
 const LOCS = ['best', 'upper right', 'upper left', 'lower left', 'lower right']
 
 /** 与 engine/manifest.py `_legend_fields` 同形 */
-const legendFields = (ncol = 1): EditableField[] => [
+const legendFields = (ncol = 1, anchor: unknown = null): EditableField[] => [
   f('loc', 'enum', 'best', { options: LOCS }),
+  f('loc_anchor', 'pair', anchor, { min: -1, max: 2, step: 0.01 }),
   f('fontsize', 'number', 8, { min: 3, max: 24, step: 0.5, unit: 'pt' }),
   f('frameon', 'bool', true),
   f('visible', 'bool', true),
@@ -341,6 +342,7 @@ describe('图例的首屏', () => {
     const primary = buckets(1).primary.map((p) => p.field.prop)
     expect(primary).toEqual([
       'loc',
+      'loc_anchor',
       'ncol',
       'frameon',
       'frame_linewidth',
@@ -443,6 +445,52 @@ describe('选中图例', () => {
     await mount(['axes_0.legend'])
     const nested = host.querySelectorAll('button button, button input, a button')
     expect(nested.length).toBe(0)
+  })
+
+  // ------------------------------------------------------------------
+  // 外侧锚点（ADR 0034 的 2026-09-07 修订）
+  // ------------------------------------------------------------------
+  it('锚点由位置控件的外侧带承接，通用列表里不出第二套裸 x/y', async () => {
+    await mount(['axes_0.legend'])
+    await click(byText('更多'))
+    expect(labels().filter((p) => p === 'loc_anchor')).toHaveLength(0)
+    expect(byAria('右侧上')).toBeDefined()
+  })
+
+  it('点外侧预设：loc 与锚点落进同一次修改（一条历史、一次渲染）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('点外侧预设会把拖动留下的 loc_frac 一并删掉——不然点了没反应', async () => {
+    useDocumentStore.getState().commit(literal('先拖一下'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'loc_frac', value: [0.2, 0.3] })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc_frac')).toBeUndefined()
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+  })
+
+  it('此刻没有锚点时点九宫格不写 loc_anchor——不留一条没有作用的 override', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('左上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).not.toContain('loc_anchor')
+  })
+
+  it('此刻在外侧时点九宫格写 loc_anchor = null（那是一个取值，不是删掉它）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧中'))
+    await click(byAria('左上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toBeNull()
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).toContain('loc_anchor')
   })
 
   it('点文字选中那一项', async () => {

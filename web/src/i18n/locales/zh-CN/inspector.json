@@ -176,7 +176,22 @@
     "spinePerSide": "分别设置各边",
     "spineSidesDiffer": "各边不同",
     "legendPositionWithin": "相对{{label}}",
-    "viewAngle": "视角示意：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°"
+    "viewAngle": "视角示意：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°",
+    "legendOutsideAria": "图外位置",
+    "legendPreviewAria": "位置示意：容器边界与图例此刻的落点",
+    "legendAnchorLabel": "锚点",
+    "legendAnchorX": "锚点 x（容器分数）",
+    "legendAnchorY": "锚点 y（容器分数）",
+    "legendOutsideOverflowHint": "放到外面可能超出图幅，检查会提示。",
+    "legendOutside": {
+      "rightTop": "右侧上",
+      "rightCenter": "右侧中",
+      "rightBottom": "右侧下",
+      "topCenter": "上方居中",
+      "bottomCenter": "下方居中",
+      "leftCenter": "左侧中"
+    },
+    "legendOutsideBand": "图外"
   },
   "element": {
     "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
@@ -808,7 +823,8 @@
     "xscale": "X 轴缩放",
     "ylim": "Y 范围",
     "yscale": "Y 轴缩放",
-    "zorder": "堆叠层级"
+    "zorder": "堆叠层级",
+    "loc_anchor": "锚点"
   },
   "propByRole": {
     "bar": {
@@ -1059,7 +1075,9 @@
     "parasite_host_draw": "这是 host_subplot 的寄生轴，宿主代它绘制内容、不看它自己的显示开关；要隐藏请逐个关掉它上面的元素",
     "parasite_host_rect": "这是 host_subplot 的寄生轴，落位每次绘制都会被宿主重置——改宿主子图的位置，它会跟着走",
     "partial": "（{{count}}/{{total}} 个元素）",
-    "unknown": "当前版本不支持在这里修改这一项"
+    "unknown": "当前版本不支持在这里修改这一项",
+    "legend_anchor_box": "脚本把图例锚在一个矩形范围上（4 个数），这里只改得动锚在一个点上的图例",
+    "legend_anchor_transform": "脚本把图例的锚点钉在另一套坐标系上，这里只改得动锚在所属容器上的图例"
   },
   "versionHistory": {
     "confirmRestore": "确认恢复",

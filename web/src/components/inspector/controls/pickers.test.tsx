@@ -427,6 +427,183 @@ describe('LegendPositionPicker', () => {
     expect(radioByLabel('右上')).toBeTruthy()
     expect(host.textContent).toContain('拖到过自定义位置')
   })
+
+  // ------------------------------------------------------------------
+  // 外侧锚点（ADR 0034 的 2026-09-07 修订）
+  // ------------------------------------------------------------------
+  it('引擎没宣称锚点能力时整个外侧带不出现——不给一个点了没反应的控件', async () => {
+    await mount(
+      <LegendPositionPicker value="best" options={LOCS} onChange={() => {}} ariaLabel="位置" />,
+    )
+    expect(radioByLabel('右侧上')).toBeUndefined()
+    expect(host.querySelector('svg[role="img"]')).toBeNull()
+  })
+
+  it('外侧预设一次写下 loc + 锚点（两条是同一件事，不是两次修改）', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="best"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    await act(async () => {
+      radioByLabel('右侧上')!.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'upper left', anchor: [1.02, 1] })
+  })
+
+  it('图内的一次点击把锚点清成 null——否则点了九宫格图例还在外面', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    // 摆在外侧时九宫格一个都不标选中：那个 loc 说的是「贴锚点的哪个角」
+    expect(radioByLabel('左上')?.getAttribute('aria-checked')).toBe('false')
+    expect(radioByLabel('右侧上')?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => {
+      radioByLabel('右下')!.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'lower right', anchor: null })
+  })
+
+  it('「最佳位置」也是图内一档：选它同样清掉锚点', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const best = Array.from(host.querySelectorAll('button')).find(
+      (b) => b.textContent === '最佳位置',
+    )!
+    await act(async () => {
+      best.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'best', anchor: null })
+  })
+
+  it('自定义锚点：改 x 只动 x，loc 原样带过去', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="center left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 0.5]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const x = document.querySelector<HTMLInputElement>('input[aria-label="锚点 x（容器分数）"]')!
+    await act(async () => {
+      x.focus()
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(x, '1.2')
+      x.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      x.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'center left', anchor: [1.2, 0.5] })
+  })
+
+  it('外侧时说一句「可能超出图幅」；内侧不说（那时它是句噪音）', async () => {
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    expect(host.textContent).toContain('可能超出图幅')
+  })
+
+  it('内侧不出现那句提示，锚点输入框也不出现', async () => {
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={null}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    expect(host.textContent).not.toContain('可能超出图幅')
+    expect(document.querySelector('input[aria-label="锚点 x（容器分数）"]')).toBeNull()
+  })
+
+  it('示意图按当前值重画：内侧的方块在容器里，外侧的在容器右边', async () => {
+    const chipX = async (anchor: [number, number] | null) => {
+      await mount(
+        <LegendPositionPicker
+          value="upper left"
+          options={LOCS}
+          onChange={() => {}}
+          onPlace={() => {}}
+          anchor={anchor}
+          anchorSupported
+          ariaLabel="位置"
+        />,
+      )
+      const svg = host.querySelector('svg[role="img"]')!
+      const rects = Array.from(svg.querySelectorAll('rect'))
+      // 第一个 rect 是容器边界，第二个（有的话）是图例
+      const chip = rects[1]
+      const x = chip ? Number(chip.getAttribute('x')) : null
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.innerHTML = ''
+      return { x, boxRight: Number(rects[0].getAttribute('x')) + Number(rects[0].getAttribute('width')) }
+    }
+    const inside = await chipX(null)
+    const outside = await chipX([1.02, 1])
+    expect(inside.x).toBeLessThan(inside.boxRight)
+    expect(outside.x).toBeGreaterThanOrEqual(outside.boxRight)
+  })
+
+  it('多选取值不一致（value=null）时不画一个猜的方块，也不标任何外侧位', async () => {
+    await mount(
+      <LegendPositionPicker
+        value={null}
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={null}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const svg = host.querySelector('svg[role="img"]')!
+    expect(svg.querySelectorAll('rect')).toHaveLength(1)
+    expect(radios().filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(0)
+  })
 })
 
 describe('ArrowPickers', () => {
