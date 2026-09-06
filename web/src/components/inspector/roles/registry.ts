@@ -55,14 +55,15 @@ export const roleName = (role: string): string =>
 /**
  * enum 选项的显示名。色图名（viridis…）与格式串（%.1f）保持原文——它们是
  * matplotlib 的标识符，翻译反而让人对不上文档；脚本自定义的枚举值同理。
+ *
+ * **查表只有 `store/actions.optionLabel` 一处。** 这里一度自己也查一遍
+ * `enum.<prop>.<value>`——同一个键、同一个命名空间、同一个实例，只是
+ * defaultValue 不同，于是「查不到就回退」的那一跳永远走不到，两段代码
+ * 表达的是同一条保证。冗余的保证杀不死：给其中任何一段做变异，另一段都
+ * 会把结果补回来，用例照样绿（本轮实测两条变异双双存活）。属性名那条
+ * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
-export const optionLabel = (prop: string, value: string): string => {
-  // `nsSeparator: false` 的理由与 `store/actions.optionLabel` 同一条：枚举值
-  // 里含 `:`（线型「点线」）时，默认的命名空间分隔符会把键切碎。两处都查
-  // 同一张表，所以两处都得关——只关一处的话回退那一跳又把冒号带回来了。
-  const hit = t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: '' })
-  return hit || baseOptionLabel(prop, value)
-}
+export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 
