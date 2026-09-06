@@ -136,6 +136,7 @@ import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
+import { overrideCounts } from '@/lib/overrideCounts'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
@@ -2035,9 +2036,9 @@ function HowItWorks() {
       align="end"
       trigger={
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="w-full text-ink-2"
+          className="self-start text-ink-3"
           aria-label={el('howItWorksAria')}
         >
           <CircleQuestionMark size={13} />
@@ -2046,20 +2047,13 @@ function HowItWorks() {
       }
     >
       <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
-        <div>
-          <p className="font-medium text-ink">{el('howOverrideTitle')}</p>
-          <p className="mt-0.5">{el('howOverrideBody')}</p>
-        </div>
-        <div className="h-px bg-border" />
-        <div>
-          <p className="font-medium text-ink">{el('howAiTitle')}</p>
-          <p className="mt-0.5">{el('howAiBody')}</p>
-        </div>
-        <div className="h-px bg-border" />
-        <div>
-          <p className="font-medium text-ink">{el('howBothTitle')}</p>
-          <p className="mt-0.5">{el('howBothBody')}</p>
-        </div>
+        {(['howOverride', 'howWriteBack', 'howAi', 'howBoth'] as const).map((key, i) => (
+          <div key={key}>
+            {i > 0 && <div className="mb-2 h-px bg-border" />}
+            <p className="font-medium text-ink">{el(`${key}Title`)}</p>
+            <p className="mt-0.5">{el(`${key}Body`)}</p>
+          </div>
+        ))}
       </div>
     </Popover>
   )
@@ -2355,9 +2349,8 @@ function SourceAdvancedSection({
   const open = useInspectorPrefs((s) => s.advancedOpen[role] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
   const gid = element?.gid
-  const elementCount = gid
-    ? panel.overrides.filter((o) => o.gid === gid).length
-    : 0
+  // 两颗恢复按钮各说各的对象与数量，数字来自同一份判据（审计 T32）
+  const counts = overrideCounts(panel.overrides, gid)
 
   return (
     /* `data-source-advanced` 是能力提示那个按钮的滚动落点——它要把用户
@@ -2378,11 +2371,17 @@ function SourceAdvancedSection({
               ))}
           </div>
         )}
-        {gid && elementCount > 0 && (
+
+        {/* 日常的「恢复」与会动磁盘的「原始文件」分成两组：前者只改这份文档、
+            可撤销；后者覆盖用户的原件。挨在一起时用户分不清按下去清的是哪一层
+            （审计 T32），分组标题就是那层边界，不另加确认。 */}
+        <GroupHead>{el('restoreGroup')}</GroupHead>
+        {gid && counts.element > 0 && (
           <Button
             variant="outline"
             size="sm"
             className="w-full"
+            title={el('resetElementTitle')}
             onClick={() =>
               clearOverrides(
                 panel.id,
@@ -2394,22 +2393,24 @@ function SourceAdvancedSection({
             }
           >
             <RotateCcw size={13} />
-            {el('resetElementCount', { count: elementCount })}
+            {el('resetElementCount', { count: counts.element })}
           </Button>
         )}
         <Button
           variant="outline"
           size="sm"
           className="w-full"
-          disabled={!panel.overrides.length}
+          disabled={!counts.figure}
           title={el('resetTitle')}
           onClick={() => resetOverrides(panel.id)}
         >
           <RotateCcw size={13} />
-          {panel.overrides.length
-            ? el('resetToScriptCount', { count: panel.overrides.length })
-            : el('resetToScript')}
+          {counts.figure ? el('resetToScriptCount', { count: counts.figure }) : el('resetToScript')}
         </Button>
+
+        <div className="mt-1 border-t border-border pt-2">
+          <GroupHead>{el('originalFileGroup')}</GroupHead>
+        </div>
         {panel.script && (
           <div className="flex gap-1.5">
             <UpdateSourceButton panel={panel} />
@@ -2418,10 +2419,19 @@ function SourceAdvancedSection({
         )}
         <SyncOverridesButton panel={panel} />
         <HowItWorks />
+
         {gid && (
-          <p className="truncate font-mono text-xs text-ink-3" title={gid}>
-            {gid}
-          </p>
+          <details className="group">
+            <summary className="flex cursor-default list-none items-center gap-0.5 text-[11px] text-ink-3 outline-none focus-visible:focus-ring">
+              <ChevronRight
+                size={10}
+                aria-hidden
+                className="shrink-0 transition-transform group-open:rotate-90"
+              />
+              {el('techDetails')}
+            </summary>
+            <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-ink-3">{gid}</p>
+          </details>
         )}
       </div>
     </Disclosure>

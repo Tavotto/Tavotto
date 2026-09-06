@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { ChevronRight, FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -9,6 +9,7 @@ import {
   collectPanelAnnotations,
   type PanelAnnotations,
 } from '@/lib/writeBackAnnotations'
+import { dirTail } from '@/lib/pathDisplay'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -18,6 +19,7 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 
@@ -160,6 +162,38 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
   return <p className="text-xs text-danger">{wb('updateFailed', { error: error.message })}</p>
 }
 
+/**
+ * 备份位置与恢复办法（审计 T34）。
+ *
+ * 这两件事**必须出现在用户作出覆盖决定的地方**——原来只有设置页「备份目录」
+ * 旁边的问号讲得全，而按下「写回」的人不在设置页。折叠的是**说明**不是事实：
+ * 收起时就写着备份到哪个目录（末级名），展开才是全路径、复制入口和恢复步骤。
+ */
+function BackupDetails({ dir, summary }: { dir: string; summary: string }) {
+  useTranslation('inspector')
+  return (
+    <details className="group rounded-sm border border-border bg-surface-2 px-2 py-1.5">
+      <summary className="flex cursor-default list-none items-center gap-1 text-xs leading-relaxed text-ink-2 outline-none focus-visible:focus-ring">
+        <ChevronRight
+          size={11}
+          aria-hidden
+          className="shrink-0 transition-transform group-open:rotate-90"
+        />
+        {summary}
+      </summary>
+      <div className="mt-1 flex flex-col gap-1 pl-4">
+        <div className="flex items-start gap-1">
+          <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed text-ink-2">
+            {dir}
+          </span>
+          <CopyButton text={dir} label={wb('copyBackupDir')} />
+        </div>
+        <p className="text-xs leading-relaxed text-ink-3">{wb('restoreBody')}</p>
+      </div>
+    </details>
+  )
+}
+
 export function WriteBackDialog({
   panels,
   open,
@@ -178,6 +212,14 @@ export function WriteBackDialog({
   const objects = useDocumentStore((s) => s.doc.objects)
   const assets = useAssetStore((s) => s.byId)
   const stems = panels.map((p) => stemOf(p.fileId))
+  // 短摘要的两个数字（审计 T34）：改了多少项、写进几张图。
+  // **数的是图不是磁盘文件**——后端只覆盖 `<stem>.pdf` / `<stem>.png` 里
+  // 真实存在的那些（`_write_source_files` 的 targets），而前端拿不到「同名
+  // PNG 在不在」；报一个可能不对的精确文件数，比报一个诚实的粗略数更坏。
+  const editCount = panels.reduce((n, p) => n + p.overrides.length, 0)
+  // 会被覆盖的候选文件；两个后缀都列出来（多列一个的方向是保守的，
+  // 少列一个才会让用户以为某个文件不会被动）
+  const targetFiles = stems.flatMap((stem) => [`${stem}.pdf`, `${stem}.png`])
 
   // 与写回目标重叠的画布标注（按重叠面积归属，一条只进一张图）
   const annMap = useMemo(
@@ -263,8 +305,8 @@ export function WriteBackDialog({
       title={wb('title')}
       description={
         panels.length === 1
-          ? wb('descOne', { count: panels[0]?.overrides.length ?? 0 })
-          : wb('descMany', { count: panels.length })
+          ? wb('summaryOne', { count: editCount, stem: stems[0] ?? '' })
+          : wb('summaryMany', { count: editCount, panels: panels.length })
       }
       size="md"
       busy={busy}
@@ -302,11 +344,10 @@ export function WriteBackDialog({
               </li>
             ))}
           </ul>
-          <p className="text-xs leading-relaxed text-ink-3">
-            {wb('backupPrefix')}
-            <span className="mx-1 font-mono text-ink-2">{result.backup_dir}</span>
-            {wb('backupSuffix')}
-          </p>
+          <BackupDetails
+            dir={result.backup_dir}
+            summary={wb('backupDone', { dir: dirTail(result.backup_dir) })}
+          />
           {result.verified !== null && (
             <p className="text-xs text-ink-3">{wb('verified', { count: result.verified })}</p>
           )}
@@ -316,29 +357,24 @@ export function WriteBackDialog({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-            <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
-            <div className="text-xs leading-relaxed text-ink-2">
-              <p>
-                <b className="font-medium text-ink">{wb('overwriteLabel')}</b>
-                {wb('overwriteBody')}
-                <span className="mx-1 font-mono text-ink">
-                  {listJoin(stems.map((stem) => `${stem}.pdf / ${stem}.png`))}
-                </span>
-                {wb('overwriteTail')}
-              </p>
-              <p className="mt-1">
-                <b className="font-medium text-ink">{wb('backupLabel')}</b>
-                {wb('backupBody')}
-                <span className="mx-1 break-all font-mono text-ink-2">{backupDir}</span>
-                {wb('backupTail')}
-              </p>
-              <p className="mt-1">
-                <b className="font-medium text-ink">{wb('restoreLabel')}</b>
-                {wb('restoreBody')}
-              </p>
-            </div>
+          {/* 目标文件一眼可数：不用读段落就知道覆盖的是哪几个（审计 T34） */}
+          <div className="rounded-sm border border-danger/40 bg-surface-2 p-2">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+              <TriangleAlert size={12} aria-hidden className="shrink-0 text-danger" />
+              {wb('targetsLabel')}
+            </p>
+            <ul className="mt-1 flex flex-col gap-0.5 pl-[18px]">
+              {targetFiles.map((f) => (
+                <li key={f} className="break-all font-mono text-xs text-ink">
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 pl-[18px] text-[11px] leading-relaxed text-ink-3">
+              {wb('targetsNote')}
+            </p>
           </div>
+          <BackupDetails dir={backupDir} summary={wb('backupSummary', { dir: dirTail(backupDir) })} />
           {annCount > 0 ? (
             <label
               className="flex items-center gap-1.5 text-xs text-ink-2"
