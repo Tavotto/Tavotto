@@ -20,6 +20,11 @@ const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
  * manifest 的 `marker_current`）：散点没被换过标记时取值是 `"original"`，
  * 曲线的取值可能是 `(5, 1, 0)` / `$\alpha$` / 一个 Path 的 repr。事实里
  * 认得出名字的复用下面这份 switch 的图形，认不出的照顶点画。
+ *
+ * 「脚本原始」那一格还多一份事实（`marker_original`）：换过标记之后
+ * `marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在图上——
+ * 那一格于是只剩一个空的继承状态点，看不出点下去会变成什么。引擎有
+ * override 时才发原样，缺席即「与 current 相同」。
  */
 
 /** 已知 marker → 12×12 viewBox 里的图形 */
@@ -223,10 +228,14 @@ function MarkerPreview({ code, current }: { code: string; current?: MarkerShape 
   )
 }
 
+/** 「脚本原始」那一格的取值（散点专有：整体换过标记之后的还原档） */
+const ORIGINAL = 'original'
+
 export function MarkerPicker({
   value,
   options,
   current,
+  original,
   onChange,
   ariaLabel,
 }: {
@@ -237,21 +246,41 @@ export function MarkerPicker({
   value: string | null
   options: string[]
   /**
-   * 图上此刻画的形状（manifest 的只读事实）。**只描述当前值那一格**：
-   * 用户把散点换成菱形之后，「脚本原始」那一格就说不出形状了——引擎读到的
-   * 是换过之后的路径，脚本原来那条已经不在图上。多选时各成员的事实不一致
-   * 就不给，别拿其中一个冒充全体。
+   * 图上此刻画的形状（manifest 的 `marker_current`）。**只描述当前值那一格**：
+   * 别的格子画的是它们自己的取值，不受事实影响。多选时各成员的事实不一致就
+   * 不给，别拿其中一个冒充全体。
    */
   current?: MarkerShape
+  /**
+   * **override 之前**那个形状（manifest 的 `marker_original`）。
+   *
+   * 换过标记之后 `current` 读的是图上此刻那条路径，脚本原来那条已经不在图上
+   * ——「脚本原始」那一格于是只剩一个空的继承状态点，用户看不出点下去会变成
+   * 什么。这一条补的正是那句话。**没有 override 时引擎不发它**（缺席 = 与
+   * `current` 相同），那时「脚本原始」正好就是当前值那一格，照旧用 `current`。
+   * 多选时各成员不一致同样不给。
+   */
+  original?: MarkerShape
   onChange: (v: string) => void
   ariaLabel: string
 }) {
   const [open, setOpen] = useState(false)
   const all = value && !options.includes(value) ? [value, ...options] : options
+  /**
+   * 一个格子该按哪份事实画。
+   *
+   * 「脚本原始」那一格优先按原样画——它是唯一一个**不描述当前状态**的取值，
+   * 说的是「点下去会回到哪儿」。其余格子照旧：只有当前值那一格有事实可用。
+   */
+  const factOf = (o: string): MarkerShape | undefined =>
+    o === ORIGINAL && original ? original : o === value ? current : undefined
+  /** 「脚本原始」那一格的文字名也把形状说出来，与格子里画的是同一份事实 */
+  const labelOf = (o: string): string =>
+    o === value || o === ORIGINAL ? markerLabel(o, factOf(o)) : optionLabel('marker', o)
   const grid: GridOption[] = all.map((o) => ({
     value: o,
-    label: o === value ? markerLabel(o, current) : optionLabel('marker', o),
-    preview: <MarkerPreview code={o} current={o === value ? current : undefined} />,
+    label: labelOf(o),
+    preview: <MarkerPreview code={o} current={factOf(o)} />,
     code: o || '""',
   }))
 
@@ -273,9 +302,9 @@ export function MarkerPicker({
           )}
         >
           {/* 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形 */}
-          {value !== null && <MarkerPreview code={value} current={current} />}
+          {value !== null && <MarkerPreview code={value} current={factOf(value)} />}
           <span className="min-w-0 flex-1 truncate text-left">
-            {value === null ? MIXED_TEXT() : markerLabel(value, current)}
+            {value === null ? MIXED_TEXT() : labelOf(value)}
           </span>
           <ChevronDown size={12} className="shrink-0 text-ink-3" />
         </button>

@@ -1236,6 +1236,18 @@ export interface EditableField {
    * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
    */
   marker_current?: MarkerShape
+  /**
+   * 同一套结构的第二个只读事实：**override 之前**那个形状。
+   *
+   * `marker_current` 读的是图上此刻那条路径——换过标记之后脚本原来那条已经
+   * 不在图上了，「脚本原始」那一格于是说不出自己会变成什么形状。这一条补的
+   * 正是那句话，取自引擎 `state.originals`（override 系统采下的那份脚本原样，
+   * 撤销时回灌的也是它），所以「回到脚本原始 = 回到这个形状」是可兑现的。
+   *
+   * **没有 override 时它整个缺席，缺席 = 与 `marker_current` 相同**——前端
+   * 不用再判一次「改没改过」，直接 `?? marker_current` 即可。
+   */
+  marker_original?: MarkerShape
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }
