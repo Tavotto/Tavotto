@@ -172,6 +172,9 @@ describe('先选预设，再只填所需的（审计 T45）', () => {
 describe('模型是一串条目，不是一行逗号分隔的字符串', () => {
   it('回车加一条，且不提交对话框；第一个标着「默认」', async () => {
     await mount({ presets: [] })
+    // **名字先填上**：空着的话必填校验会先挡下 submit，「没有提交」这条断言
+    // 就成了恒真——它证明不了回车没顺手提交（审计 T45 的用例自查）
+    await type(ag('endpoint.name'), '我的网关')
     await type(ag('endpoint.modelDraftAria'), 'first-model')
     await act(async () => {
       input(ag('endpoint.modelDraftAria')).dispatchEvent(
