@@ -109,15 +109,20 @@ export function ColorbarExtendPicker({
   onChange: (v: string) => void
   ariaLabel: string
   cmap: string
-  /** 色条此刻的方向：预览要跟它画成一个样子 */
-  orientation: Orientation
+  /**
+   * 色条此刻的方向：预览要跟它画成一个样子。收 string 而不是收窄类型——
+   * **多宿主色条不宣称 `orientation`**（引擎的 guard，issue #69），那时调用方
+   * 给的是从 bbox 反推的值，认不出来就按竖直画（matplotlib 的默认）。
+   */
+  orientation: string
 }) {
+  const dir = asOrientation(orientation)
   const items: GridOption[] = options.map((v) => ({
     value: v,
     label: optionLabel('extend', v),
     preview: (
       <span className="flex flex-col items-center gap-0.5 px-0.5">
-        <BarPreview cmap={cmap} orientation={orientation} extend={asExtend(v)} />
+        <BarPreview cmap={cmap} orientation={dir} extend={asExtend(v)} />
         <span className="text-[10px] leading-3">{optionLabel('extend', v)}</span>
       </span>
     ),

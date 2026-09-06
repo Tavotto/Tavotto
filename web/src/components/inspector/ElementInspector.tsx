@@ -93,6 +93,7 @@ import { controlKindOf, isPercentField, pairedProp, presentFields } from './pres
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
+import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
 import { EffectToggle } from './controls/EffectToggle'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
@@ -1546,6 +1547,18 @@ function currentValue(panel: PanelObject, gid: string, field: EditableField): un
 }
 
 /**
+ * 色条此刻的方向。**多宿主色条不宣称 `orientation`**（引擎的 guard，issue #69
+ * ——反解新矩形时只拿得到第一个宿主，翻转会把排版弄坏），那时从 bbox 反推：
+ * 窄而高 = 竖直。这是观察到的事实，不是猜——它只用来画那几个延伸预览的形状。
+ */
+function colorbarOrientationOf(panel: PanelObject, element: ManifestElement): string {
+  const field = element.editable.find((x) => x.prop === 'orientation')
+  if (field) return String(currentValue(panel, element.gid, field) ?? 'vertical')
+  const box = element.bbox
+  return box && box[2] < box[3] ? 'vertical' : 'horizontal'
+}
+
+/**
  * 「住在别人里面」的元素的容器名：gid 去掉最后一段就是宿主（`axes_0.legend`
  * → `axes_0`）。图例的九宫格用它说清参照范围（审计 T17）。宿主不在 manifest
  * 里（fig.legend、脚本自造）时回 undefined——不写比写一个猜的名字好。
@@ -1569,6 +1582,11 @@ function FieldRow({
   field: EditableField
 }) {
   const value = currentValue(panel, element.gid, field)
+  /** 同一个元素上另一条字段此刻的值（override 优先）：色条预览要看色图与方向 */
+  const siblingValue = (prop: string) => {
+    const other = element.editable.find((x) => x.prop === prop)
+    return other ? currentValue(panel, element.gid, other) : undefined
+  }
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
@@ -1700,6 +1718,28 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
+        />,
+      )
+    case 'colorbar-orientation':
+      // 用当前色图画的小色条做选项预览（审计 T23），不是两个文字下拉
+      return wrap(
+        <ColorbarOrientationPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+        />,
+      )
+    case 'colorbar-extend':
+      return wrap(
+        <ColorbarExtendPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+          orientation={colorbarOrientationOf(panel, element)}
         />,
       )
     case 'legend-position':

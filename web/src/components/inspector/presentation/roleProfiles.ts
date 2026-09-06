@@ -187,9 +187,14 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       minor_step: (read) => MINOR_ON(read) && read('minor_mode') === 'step',
     },
   },
+  // 色条（审计 T23）：名称进主区——它是图上写着的那行字（「Intensity (a.u.)」），
+  // 不该藏在「更多」里。方向与两端延伸用小色条预览（见 `controlKindOf`），
+  // 不是两个文字下拉。与热图共用的那份色阶由 `ColorScaleLink` 说出口，
+  // 字段本身两边照旧各有一份（同一份状态的两个 gid，改哪边另一边都跟着变）。
   colorbar: {
-    primary: ['cmap', 'vmin', 'vmax', 'orientation', 'tick_fontsize'],
-    more: ['label', 'extend', 'tick_color', 'outline_visible', 'outline_width', 'visible'],
+    primary: ['label', 'cmap', 'vmin', 'vmax', 'orientation', 'extend', 'tick_fontsize'],
+    more: ['tick_color', 'outline_visible', 'outline_width', 'visible'],
+    pairRows: [['vmin', 'vmax']],
   },
   image: {
     primary: ['cmap', 'vmin', 'vmax', 'alpha'],

@@ -328,3 +328,79 @@ describe('图像的尺寸区（审计 T22）', () => {
     expect(byText('选中')).toBeUndefined()
   })
 })
+
+/* -------------------------------- 颜色条 ---------------------------------- */
+
+describe('颜色条（审计 T23）', () => {
+  it('名称在主区直接可编辑，不再收在「更多」里', async () => {
+    await mount('axes_1.colorbar')
+    const nameRow = rowOf('label')
+    expect(nameRow).not.toBeNull()
+    // 「更多」还折叠着的时候它就在——说明它在首屏，不是在折叠区里
+    const more = buttons().find((b) => b.textContent?.trim() === '更多')
+    expect(more?.getAttribute('aria-expanded')).toBe('false')
+    const box = nameRow!.querySelector('textarea') as HTMLTextAreaElement
+    expect(box.value).toBe('Intensity (a.u.)')
+  })
+
+  it('方向是一组带小色条预览的选项，不是文字下拉；点一下写 matplotlib 的值', async () => {
+    await mount('axes_1.colorbar')
+    const row = rowOf('orientation')!
+    expect(row.querySelector('select')).toBeNull()
+    const group = row.querySelector('[role="radiogroup"]')
+    expect(group).not.toBeNull()
+    const cells = Array.from(group!.querySelectorAll('[role="radio"]'))
+    expect(cells.map((c) => c.getAttribute('data-value'))).toEqual(['vertical', 'horizontal'])
+    // 图形之外必须有文字名（无障碍名 + 可见的档位名）
+    expect(cells.map((c) => c.getAttribute('aria-label'))).toEqual(['竖直', '水平'])
+    // 预览用的是当前色图
+    const preview = cells[0].querySelector('[data-cb-preview]') as HTMLElement
+    expect(preview.getAttribute('data-cb-preview')).toBe('vertical:neither')
+    // jsdom 把 hex 规范成 rgb()；viridis 的第一个停靠点是 #440154
+    expect(preview.style.background).toContain('rgb(68, 1, 84)')
+    expect(preview.style.background).toContain('to top')
+
+    await click(cells[1])
+    expect(overrideOf('axes_1.colorbar', 'orientation')).toBe('horizontal')
+  })
+
+  it('两端延伸的预览跟着色条此刻的方向画', async () => {
+    await mount('axes_1.colorbar', { manifest: manifestOf(colorbarEl({ orientation: 'horizontal' })) })
+    const cells = Array.from(
+      rowOf('extend')!.querySelectorAll('[role="radio"]'),
+    ) as HTMLElement[]
+    expect(cells.map((c) => c.querySelector('[data-cb-preview]')?.getAttribute('data-cb-preview'))).toEqual([
+      'horizontal:neither',
+      'horizontal:min',
+      'horizontal:max',
+      'horizontal:both',
+    ])
+    await click(cells[3])
+    expect(overrideOf('axes_1.colorbar', 'extend')).toBe('both')
+  })
+
+  it('多宿主色条不宣称方向：延伸预览从 bbox 反推，不摆一个方向控件', async () => {
+    // 引擎的 guard（issue #69）：`orientation` 整条不发
+    const cb = colorbarEl()
+    const noOrientation = {
+      ...cb,
+      editable: cb.editable.filter((x) => x.prop !== 'orientation'),
+    } as ManifestElement
+    await mount('axes_1.colorbar', { manifest: manifestOf(noOrientation) })
+    expect(rowOf('orientation')).toBeNull()
+    const first = rowOf('extend')!.querySelector('[data-cb-preview]')
+    // bbox 是 0.04 宽 × 0.77 高 → 竖直
+    expect(first?.getAttribute('data-cb-preview')).toBe('vertical:neither')
+  })
+
+  it('色条页也写出与图像共用色阶，并且上下限并排', async () => {
+    await mount('axes_1.colorbar')
+    expect(host.querySelector('[data-color-scale-link]')?.getAttribute('data-color-scale-link')).toBe(
+      'axes_0.images_0',
+    )
+    expect(host.querySelector('[data-color-scale-link]')?.textContent).toContain('与图像 1共用色阶')
+    expect(host.querySelector('[data-pair-row="vmin|vmax"]')).not.toBeNull()
+    await click(byAria('选中图像 1'))
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.images_0'])
+  })
+})
