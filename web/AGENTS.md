@@ -438,6 +438,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   无用户内容；核心 action 不 import onboarding；它不是遥测，别往 `telemetry` 里接。
 * **Tooltip 不吃指针**（含 Radix 定位外壳，`index.css` 那条 `:has([role='tooltip'])`）：
   聚焦触发的气泡会停在下一排按钮上，真浏览器里点上去什么都不发生。
+* **`workspace:contextBar.*` 是这条浮动栏的命名空间**（`context-bar/text.ts` 的
+  `qb()`）。画布上方那条工作区上下文栏（审计 T01）用的是 `workspace:stage.*`，
+  别把两组混进同一段——`pnpm i18n:check` 把 `qb()` 这种短助手当成动态前缀，
+  **删掉它的 key 是绿的**，界面上才会显出原始 key（2026-09-06 实际发生过）。
 * 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
   `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
   `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
@@ -672,6 +676,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （键盘 / 顶栏按钮 / 桌面菜单加速键）必须走 `runUndoRedo`（带
   undoRedoBlocked 守卫）；undo/redo 的 applyPatches 有 try/catch，坏补丁丢弃
   该条而不是让栈与文档错位。
+- **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
+  2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
+  「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。
 - **画布标签常驻图层**：每个打开的标签一个图层，非激活的用 canvases 快照渲染
   并 display:none——docToCanvas/canvasToDoc 共享同一 objects 数组引用 +
   ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。
@@ -937,6 +944,14 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 - **快速编辑一个字都不写 x/y/w/h**。「从画布进图内编辑再返回，布局不变」
   不是靠"回来时恢复一下"，而是靠**根本没动过**——恢复式的实现总有一条路径
   会漏掉（旋转、成组、布局组重排），而漏掉的表现是用户的版被悄悄改了。
+- **视口是另一回事，它必须被还原**（2026-09-06，审计 T01）。进快速编辑一定要
+  动视口（那一屏按图自己的图幅框住），所以 `enterFastEdit` 记下当时的排版视口
+  （**记在 store 的 action 里**——问题面板的定位也走它，不是只有 `openFastEdit`），
+  `returnToLayout` 还原。记录带**画布 id**：`openFastEdit` 会为了找图切画布，
+  换了画布之后那一片属于上一张画布。`returnToLayout` 在本来就是排版态时
+  **一个字都不动视口**（onboarding 的前置动作会那样调）。看护：
+  `store/workspace.test.ts` 的「切模式不动用户的视口」六条 + `e2e/nav-audit.spec.ts`
+  （量之前先把视口挪开——不挪的话判据恒等成立，实测放走过变异）。
 - **四个稳定动作是唯一出口**（11 定位 / 12 导出 / 18 QuickEdit / 21 onboarding
   复用它们，别在界面里重新拼一遍"找对象 / 没有就添加 / 切画布 / 选中"）：
   `openFastEdit(figureId)` / `addFigureToLayout(figureId)` / `returnToLayout()`
