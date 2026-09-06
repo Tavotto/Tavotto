@@ -22,25 +22,36 @@ import { Sep } from './shared'
 
 /* ------------------------------- 图内元素 --------------------------------- */
 
-export function ElementQuickActions({ panel, gid }: { panel: PanelObject; gid: string }) {
+export function ElementQuickActions({
+  panel,
+  gid,
+  compact = false,
+}: {
+  panel: PanelObject
+  gid: string
+  /** 停靠的属性页正开着：文字元素只留字号 / 加粗 / 斜体（见 ContextBar） */
+  compact?: boolean
+}) {
   const manifest = usePanelDisplayManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === gid)
   if (!el || !el.editable.length) return null
-  return <ElementQuickInner panel={panel} element={el} />
+  return <ElementQuickInner panel={panel} element={el} compact={compact} />
 }
 
 function ElementQuickInner({
   panel,
   element,
+  compact,
 }: {
   panel: PanelObject
   element: ManifestElement
+  compact: boolean
 }) {
   const w = useElementWriter(panel, element)
   const role = element.role
 
   if (hasTextStyleBar(element)) {
-    return <TextElementActions panel={panel} element={element} />
+    return <TextElementActions panel={panel} element={element} compact={compact} />
   }
 
   if (role === 'line' || role === 'linecoll') {
@@ -148,7 +159,20 @@ function ElementQuickInner({
  * 字号的显示回退 `?? 9` 也与别处的 `?? 8` 不一致。现在四档取值、斜体、字体
  * 都与属性页同一份；布局仍按上下文（这里没有标签列），共享的是数据与 action。
  */
-function TextElementActions({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+function TextElementActions({
+  panel,
+  element,
+  compact,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  /**
+   * 属性页开着时的缩减档：只留字号 / 加粗 / 斜体。**不是第二份实现**——
+   * 同一个适配器、同一批控件，只是少画两个（字体下拉、取色器），它们正在
+   * 右栏里、带着标签、比这里更好用。
+   */
+  compact: boolean
+}) {
   const elements = useMemo(() => [element], [element])
   const a = useFigureTypography(panel, elements, FIGURE_TEXT_SINGLE_PROPS)
   const family = a.fieldOf('fontFamily')
@@ -156,8 +180,8 @@ function TextElementActions({ panel, element }: { panel: PanelObject; element: M
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <>
-      {family && (family.options?.length ?? 0) > 0 && (
+    <span className="contents" data-text-quick={compact ? 'compact' : 'full'}>
+      {!compact && family && (family.options?.length ?? 0) > 0 && (
         <Select
           className="w-[112px] shrink-0"
           ariaLabel={translate('textControls.font', { ns: 'inspector' })}
@@ -202,7 +226,7 @@ function TextElementActions({ panel, element }: { panel: PanelObject; element: M
           <Italic size={12} />
         </StyleToggle>
       )}
-      {a.fieldOf('color') && (
+      {!compact && a.fieldOf('color') && (
         <ColorField
           className="w-[86px] shrink-0"
           value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
@@ -211,6 +235,6 @@ function TextElementActions({ panel, element }: { panel: PanelObject; element: M
         />
       )}
       <Sep />
-    </>
+    </span>
   )
 }

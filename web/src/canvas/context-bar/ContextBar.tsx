@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { usePalette } from '@/components/CommandPalette'
+import { isElementHidden } from '@/lib/elementGeom'
 import { boundsOf } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
@@ -19,8 +20,10 @@ import { ObjectQuickActions } from './SingleObjectBar'
 import {
   MARGIN,
   barVariant,
+  elementObstacles,
   freeWidthOf,
   placeToolbar,
+  placeToolbarAvoiding,
   selectionScreenRect,
   sidebarInsets,
   type Placement,
@@ -49,6 +52,13 @@ import { qb } from './text'
  */
 
 type Mode = 'element' | 'object' | 'multi'
+
+const rectOf = (r: DOMRect): ScreenRect => ({
+  left: r.left,
+  top: r.top,
+  width: r.width,
+  height: r.height,
+})
 
 export function ContextBar() {
   useTranslation('workspace')
@@ -83,6 +93,7 @@ export function ContextBar() {
   const viewW = useViewportStore((s) => s.viewW)
   const viewH = useViewportStore((s) => s.viewH)
   const rightOpen = useUiStore((s) => s.rightOpen)
+  const rightTab = useUiStore((s) => s.rightTab)
   const rightWidth = useUiStore((s) => s.rightWidth)
   const leftOpen = useUiStore((s) => s.leftOpen)
   const leftWidth = useUiStore((s) => s.leftWidth)
@@ -133,6 +144,14 @@ export function ContextBar() {
   // narrow 断点下侧栏是盖在画布上的覆盖式抽屉（z-30），portal 出来的工具条
   // （z-40）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
   const overlayDrawerOpen = layout === 'narrow' && (leftOpen || rightOpen)
+  /**
+   * 停靠的属性页正开着：文字元素的完整样式行（字体 / 字号 / 字重 / 字形 /
+   * 颜色 / 对齐）就在右栏里，浮动栏再铺一遍是同一批控件的第二份摆放
+   * （审计 T14）。此时浮动栏只留最顺手的三件（字号 / 加粗 / 斜体）——最宽的
+   * 字体下拉与取色器让给右栏，条也因此短了一截、更不容易盖到别的文字。
+   * 右栏关着（或在 narrow 下是覆盖式抽屉、本来就不同时出现）时保持完整。
+   */
+  const inspectorDocked = rightOpen && rightTab === 'properties' && layout !== 'narrow'
   const active =
     !!targetKey &&
     hasActions &&
@@ -237,12 +256,22 @@ export function ContextBar() {
       setOverflow(true)
       return
     }
-    const next = placeToolbar(
-      anchor,
-      { w, h },
-      { width: window.innerWidth, height: window.innerHeight },
-      insets,
-    )
+    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    // 图内元素：不盖住同一张图里别的文字（标题 / 轴标题 / 图例 / 刻度），
+    // 贴着锚点的上下两档都盖到东西时退到图的外侧。障碍物按 manifest 的 bbox
+    // 映到 SVG 容器上算——与 OverlaySvg 画选择框是同一份几何
+    const host =
+      mode === 'element' && panel && manifest
+        ? document.querySelector(`[data-element-svg="${CSS.escape(panel.id)}"]`)
+        : null
+    const zone = host ? rectOf(host.getBoundingClientRect()) : null
+    const next =
+      zone && manifest
+        ? placeToolbarAvoiding(anchor, { w, h }, viewport, insets, {
+            obstacles: elementObstacles(manifest.elements, zone, gid, isElementHidden),
+            zone,
+          })
+        : placeToolbar(anchor, { w, h }, viewport, insets)
     setPos((prev) =>
       prev && prev.x === next.x && prev.y === next.y && prev.placement === next.placement
         ? prev
@@ -273,6 +302,8 @@ export function ContextBar() {
     variant,
     freeWidth,
     resizeTick,
+    inspectorDocked,
+    manifest,
   ])
 
   if (!visible) return null
@@ -285,6 +316,7 @@ export function ContextBar() {
       data-multi-selection-context-bar={mode === 'multi' ? '' : undefined}
       data-variant={mode === 'multi' ? variant : undefined}
       data-placement={pos?.placement}
+      data-context-bar-compact={mode === 'element' && inspectorDocked ? '' : undefined}
       role="toolbar"
       aria-label={mode === 'multi' ? qb('multiAria') : qb('aria')}
       style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}
@@ -299,7 +331,7 @@ export function ContextBar() {
     >
       {mode === 'element' && panel && gid ? (
         <>
-          <ElementQuickActions panel={panel} gid={gid} />
+          <ElementQuickActions panel={panel} gid={gid} compact={inspectorDocked} />
           <OpenInspectorButton />
         </>
       ) : mode === 'object' && obj ? (

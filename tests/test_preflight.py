@@ -411,3 +411,39 @@ def test_the_export_context_rule_is_one_rule_on_both_sides():
         ("preferred_formats.raster", "TS 侧读的格式清单"),
     ):
         assert token in ts, f"{where}变了"
+
+
+# ------------------------- 元素超出图幅（审计 T14） -------------------------
+def test_element_outside_the_figure_is_a_blocking_issue_located_on_that_element():
+    """图内元素探出图幅，导出时超出的部分会被**静默**裁掉——必须是阻断级、
+    定位到那个元素、带着探出的毫米数。数字取自教程 Fig1_kinetics 的真实 manifest
+    （figsize 80 × 57.6，x 轴标题底边 1.0425）。"""
+    p = profiles.load("lab-publication-v1")
+    m = _manifest()
+    m["size_mm"] = [80.0, 57.6]
+    xlabel = next(e for e in m["elements"] if e["gid"] == "axes_0.xlabel")
+    xlabel["bbox"] = [0.3152, 0.9874, 0.3946, 0.0551]
+    hit = next(
+        i
+        for i in preflight.run(preflight.spec_from_manifest(m), p)
+        if i["id"] == "element-outside-figure"
+    )
+    assert hit["severity"] == "error"
+    assert hit["gids"] == ["axes_0.xlabel"]
+    assert hit["detail"] == {"overflow_mm": 2.45, "side": "bottom"}
+    assert hit["message"] == {"key": "elementOutsideFigure", "params": {"mm": "2.45"}}
+
+    # 反例：同一张图，标题框收回图内 → 不报
+    xlabel["bbox"] = [0.3152, 0.93, 0.3946, 0.0551]
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 边界：只探出 0.12 mm（布局框的 descender 留白那一档）→ 容差之内，不报
+    xlabel["bbox"] = [0.3152, 0.947, 0.3946, 0.0551]
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 整组刻度文字探出去不报（由单条 ticklabel 代言），隐藏的元素也不报
+    ticks = next(e for e in m["elements"] if e["gid"] == "axes_0.xticks")
+    ticks["bbox"] = [0.1, 0.98, 0.8, 0.06]
+    xlabel["bbox"] = [0.3152, 0.9874, 0.3946, 0.0551]
+    xlabel["editable"].append({"prop": "visible", "value": False})
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))

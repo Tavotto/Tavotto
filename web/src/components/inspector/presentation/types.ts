@@ -32,6 +32,8 @@ export type ControlKind =
   | 'number-list'
   /** 子图纵横比：自动 / 等比例 / 自定义比例——绝不落进文字编辑器 */
   | 'aspect'
+  /** 图内文字效果的开关（背景 / 描边）：关着画成「＋添加」，开了才是开关 */
+  | 'effect'
 
 /** 一条被摆好位置的字段：manifest 的字段本体 + 展示决策 */
 export interface PresentedField {

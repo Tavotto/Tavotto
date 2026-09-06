@@ -185,6 +185,15 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
+  * **拦截丢掉了 savefig 的全部 kwargs**（`_patched_savefig` 只取 stem；
+    `paper_style.save` 更是被整个替换，连 kwargs 都看不见）——`bbox_inches` /
+    `pad_inches` / `dpi` / `transparent` 一个都没记。后果（审计 T14 / T33 实测，
+    教程 Fig1_kinetics）：脚本 `savefig(bbox_inches="tight", pad_inches=0.02)` 的
+    磁盘原件是 75.26 × 58.68 mm，live 图的框却是 figsize 80 × 57.6，紧贴图幅的
+    x 轴标题在原件里完好、在预览与 `do_export` 出的 PDF 里被切掉半截。要不要
+    把 tight 当图幅定义是 ADR 级决定（改的是几何权威的坐标系），**没做**；
+    目前由预检 `element-outside-figure` 把裁切说出来。将来无论怎么做，第一步
+    都是把 kwargs 记进捕获描述符。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
@@ -1115,6 +1124,11 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   8.5pt）。两条检查仍然是两条——规范把两档设成不同值时（`free-form-v1` 6.0/5.0、
   期刊覆盖）各自出场。**阈值一个字都不许写进求值器**，缺键时的兜底只有
   `profiles.FALLBACK_MIN_FONT_SIZE_PT` 一处（TS 侧同名，严格同源对）。
+- **`element-outside-figure`（审计 T14）**：manifest 里可见元素的 bbox 任一边超出
+  [0, 1]，折成**图自身 mm** 后大于 `FIGURE_CLIP_EPS_MM = 0.3`（两侧同名同值，理由
+  写在常量旁：布局框不是墨迹，0.56 mm 的探出已经是肉眼可见的裁切）就报，阻断级、
+  定位到那个元素、不给自动修复；`figure` 与 `ticks` 组不查（前者按定义满幅，
+  后者由单条 `ticklabel` 代言）。它说的是「导出会静默丢内容」，不是规范偏好。
 - 四档：`error`（默认阻止导出，显式确认才放行且写进 proof）/ `warn`（放行必展示）/
   `not_verifiable`（**查不了**，如位图内部文字，需人工确认并写进 proof）/ `suggestion`
   （数据语义类全在这档，**绝不替用户裁决**）。**没登记的检查项兜底为 warn**，

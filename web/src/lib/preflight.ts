@@ -83,6 +83,16 @@ const pf = (key: string, values?: Record<string, unknown>): UiMessage =>
 /** 页面/几何比较的容差（mm）。与 Python 的 EPS_MM 同值。 */
 const EPS_MM = 0.05
 
+/**
+ * 「元素超出图幅」的容差（**图自身的 mm**，不乘面板缩放；与
+ * `engine/preflight.py::FIGURE_CLIP_EPS_MM` 同名同值，理由写在那边：布局框不是
+ * 墨迹，0.56 mm 的探出已经是肉眼可见的裁切，容差只吸收框自己的抖动）。
+ */
+const FIGURE_CLIP_EPS_MM = 0.3
+
+/** 超出图幅不查的角色（`figure` 按定义满幅；`ticks` 组由单条 `ticklabel` 代言） */
+const CLIP_SKIP_ROLES = new Set(['figure', 'ticks'])
+
 const CJK_RE =
   /[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/
 
@@ -843,6 +853,52 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
   }
 }
 
+/**
+ * 图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
+ * 与 `engine/preflight.py::_check_panel_clipping` 逐条同源：bbox 任一边超出
+ * [0, 1] 折成图自身 mm 后大于容差就报，一个元素只报最糟的那一边。
+ */
+function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
+  const manifest = panel.manifest
+  if (!manifest) return
+  const wMm = num(manifest.size_mm?.[0]) ?? 0
+  const hMm = num(manifest.size_mm?.[1]) ?? 0
+  if (wMm <= 0 || hMm <= 0) return
+  const pid = panel.id
+  for (const el of manifest.elements) {
+    if (CLIP_SKIP_ROLES.has(el.role)) continue
+    if (field(el, 'visible') === false) continue
+    const bbox = el.bbox
+    if (!bbox || bbox.length !== 4) continue
+    const x = num(bbox[0])
+    const y = num(bbox[1])
+    const w = num(bbox[2])
+    const h = num(bbox[3])
+    if (x == null || y == null || w == null || h == null) continue
+    // 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
+    let side = 'left'
+    let over = -x * wMm
+    for (const [cand, amount] of [
+      ['top', -y * hMm],
+      ['right', (x + w - 1.0) * wMm],
+      ['bottom', (y + h - 1.0) * hMm],
+    ] as const) {
+      if (amount > over) {
+        side = cand
+        over = amount
+      }
+    }
+    if (over <= FIGURE_CLIP_EPS_MM) continue
+    over = r2(over)!
+    sink.add('element-outside-figure', pf('elementOutsideFigure', { mm: g(over) }), {
+      objectIds: [pid],
+      gids: [el.gid],
+      detail: { overflow_mm: over, side },
+      worse: over,
+    })
+  }
+}
+
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
@@ -863,6 +919,7 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
     else {
       checkPanelFonts(panel, profile, sink)
       checkPanelAxes(panel, profile, sink)
+      checkPanelClipping(panel, sink)
     }
   }
   checkTexts(spec, profile, sink)

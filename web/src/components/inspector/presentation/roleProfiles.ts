@@ -1,4 +1,16 @@
+import { TEXT_EFFECTS } from '@/lib/textEffects'
 import type { RoleProfile } from './types'
+
+/**
+ * 背景 / 描边的从属字段只在对应开关开着时渲染（关着的时候它们写了也不生效）。
+ * 从 `lib/textEffects` 那张表算出来，不手抄——手抄的那份会在引擎多发一条
+ * `bbox_*` 时忘记更新，症状是开关关着却多出一行孤零零的参数。
+ */
+const TEXT_EFFECT_VISIBILITY: NonNullable<RoleProfile['visibleWhen']> = Object.fromEntries(
+  Object.entries(TEXT_EFFECTS).flatMap(([sw, deps]) =>
+    deps.map((dep) => [dep, (read: (prop: string) => unknown) => read(sw) === true] as const),
+  ),
+)
 
 /** title / text / axis_label / legend_text 共用的模板 */
 const TEXT_PROFILE: RoleProfile = {
@@ -13,6 +25,7 @@ const TEXT_PROFILE: RoleProfile = {
     'stroke_enabled', 'stroke_color', 'stroke_width',
     'labelpad', 'visible',
   ],
+  visibleWhen: TEXT_EFFECT_VISIBILITY,
 }
 
 /**
@@ -49,6 +62,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     ],
     more: [...(TEXT_PROFILE.more ?? [])],
     visibleWhen: {
+      ...TEXT_EFFECT_VISIBILITY,
       // 标记大小只在有标记时有意义
       handle_markersize: (read) => read('handle_marker') !== 'None',
     },

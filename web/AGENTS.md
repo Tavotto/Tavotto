@@ -281,8 +281,18 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
+  不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
+  `activePanelId` → 图内编辑的 `elementPanelId` → 选中的面板，`uiStore.problemScope`
+  为 `null` 时有当前图就看它；抽屉标题的计数与面板同一个范围（`useProblemScope`），
+  **轨道角标仍是全文档数**（它是入口）。② 按 ruleCode 聚合，组头说标题 + 等级 +
+  受影响对象数，行里只说「谁、现在多少、要多少」；叶子行仍带
+  `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
+  `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
+  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 左侧竖条 + 「当前」，
+  底部上一项 / 下一项；那条修好消失后「下一项」指向**顶上来的那条**，不跳回开头。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
-  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 
@@ -484,6 +494,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**
+* **前置状态先验，缺了给真实行动（2026-09-06，审计 T36；flow v2）**：每步可有 `precondition(ctx)`，
+  不满足时卡片说清缺什么（`dialogs:onboarding.precondition.<reason>`）、主按钮只调稳定动作
+  （`openFastEdit` / `addFigureToLayout` / `returnToLayout` / `setSelectedGid`），「跳过此步」照旧；
+  「正在等待目标出现」只在前置满足之后的 `WAIT_MS` 窗口出现，计时从那一刻起算。`add_to_layout`
+  按 `missingTutorialPanels()` 出变体——文档里只剩一张时说「还缺哪张」，不许说「两张都在」。
+  **完成与跳过分两本账**：`completedSteps` 是走过的（推进状态机用），`skippedSteps` 是其中跳过的
+  子集；结束页按 `tallyOutcomes()` 分「教程完成 / 完成 n 步跳过 m 步 / 跳过了全部」三种措辞，
+  不用完成式总结一份跳完的教程。
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
@@ -700,6 +718,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
 - **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
+  按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
+  空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
+  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
+  文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
+  （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
+  后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
+  `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
@@ -729,6 +755,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   参数」，真实入口只有「选择渲染环境」（设置 about 段的
   EngineEnvironmentCard）与「复制诊断」；**native 未落地前不渲染任何
   可点但无功能的按钮**（PR 2 合并后再升级为实际入口）。
+- **素材卡的两个动作各说各的后果（UI 审计 T06）**：「编辑原图」（Enter / 双击）
+  进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
+  对象只能是文档里的面板对象），这一步由 `openFastEdit` 用状态提示
+  `fastEdit.addedForEdit` 说出口，一条历史、撤销即移除；图已在文档里时零文档
+  改动。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
+  `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
+  `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
+  控件。**不许再用一个中性的「打开」承载加入文档。**
+  搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
+  不落 localStorage）。同脚本 + 同 stem 的 runtime 条目紧跟它的磁盘图并写
+  「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
+  重取（只重取已取过的）——「哪张图有原件」正是那一刻变的。
 - **runtime 卡片没有假值**：没跑过的没有尺寸、没有描述符，主动作是
   「运行并发现图」；「添加到画布」只走描述符（`addRuntimePanel`），
   绝不解析 id、绝不指望磁盘路径。运行时图的写回区

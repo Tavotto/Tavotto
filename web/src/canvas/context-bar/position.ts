@@ -1,3 +1,4 @@
+import type { ManifestElement } from '@/lib/api'
 import type { Rect } from '@/lib/geometry'
 import { RAIL_W, type WorkspaceLayout } from '@/store/uiStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
@@ -74,6 +75,121 @@ export function placeToolbar(
     placement = 'below'
   }
   return { x, y, placement }
+}
+
+/* ------------------------------ 避让 -------------------------------------- */
+
+/**
+ * 落位时不该被盖住的东西。
+ *
+ * `obstacles` 是别的文字元素在窗口里的矩形；`zone` 是锚点所在的整块区域
+ * （图内元素 = 那张图的 SVG 容器）：贴着锚点的上下两档都盖到东西时，退到这块
+ * 区域外面去——图的正上方 / 正下方通常是空白纸面，而且用户的视线不用离开
+ * 这张图。
+ */
+export interface AvoidOptions {
+  obstacles: readonly ScreenRect[]
+  zone?: ScreenRect | null
+}
+
+const overlapArea = (a: ScreenRect, b: ScreenRect): number => {
+  const w = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)
+  const h = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top)
+  return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * 与 `placeToolbar` 同一套边界规则，多一条：**不盖住别的文字**。
+ *
+ * 候选位按「离锚点近 → 远」试：锚点上方、锚点下方、区域上方、区域下方。
+ * 第一个放得下（不进顶部安全区、不出窗口底边）且与任何障碍物零重叠的胜出；
+ * 都有重叠就取重叠面积最小的；一个都放不下就退回 `placeToolbar` 的夹边逻辑
+ * （宁可盖一点，不许出界）。
+ *
+ * 审计 T14 记的就是这条缺的那一半：选中图例项时工具条贴到它上方，正好压在
+ * 图标题上（`21-legend-entry`）——旧规则只看顶部安全区，不看那里有什么。
+ */
+export function placeToolbarAvoiding(
+  anchor: ScreenRect,
+  size: { w: number; h: number },
+  viewport: { width: number; height: number },
+  insets: Insets,
+  avoid: AvoidOptions,
+): Placement {
+  const minX = insets.left + MARGIN
+  const maxX = viewport.width - insets.right - size.w - MARGIN
+  const x = Math.max(minX, Math.min(anchor.left + anchor.width / 2 - size.w / 2, maxX))
+  const maxY = viewport.height - size.h - MARGIN
+  const zone = avoid.zone ?? null
+  const candidates: { y: number; placement: Placement['placement'] }[] = [
+    { y: anchor.top - size.h - MARGIN, placement: 'above' },
+    { y: anchor.top + anchor.height + MARGIN, placement: 'below' },
+    ...(zone
+      ? [
+          { y: zone.top - size.h - MARGIN, placement: 'above' as const },
+          { y: zone.top + zone.height + MARGIN, placement: 'below' as const },
+        ]
+      : []),
+  ]
+  let best: (typeof candidates)[number] | null = null
+  let bestArea = Number.POSITIVE_INFINITY
+  for (const c of candidates) {
+    if (c.y < TOP_SAFE || c.y > maxY) continue
+    const rect: ScreenRect = { left: x, top: c.y, width: size.w, height: size.h }
+    let area = 0
+    for (const o of avoid.obstacles) area += overlapArea(rect, o)
+    if (area === 0) return { x, y: c.y, placement: c.placement }
+    if (area < bestArea) {
+      bestArea = area
+      best = c
+    }
+  }
+  if (best) return { x, y: best.y, placement: best.placement }
+  return placeToolbar(anchor, size, viewport, insets)
+}
+
+/**
+ * 被盖住会妨碍阅读的角色：文字、图例、刻度、色条。曲线 / 填充 / 子图本身的
+ * bbox 是一大块矩形，把它们也算作障碍物的话工具条在图里就无处可放。
+ */
+export const COVER_SENSITIVE_ROLES: ReadonlySet<string> = new Set([
+  'title',
+  'text',
+  'axis_label',
+  'legend_text',
+  'legend',
+  'ticks',
+  'ticklabel',
+  'colorbar',
+])
+
+/** manifest 的 bbox（占整图的分数，y 向下）→ 窗口矩形；`host` 是那张图的 SVG 容器 */
+export function bboxToScreen(
+  bbox: readonly [number, number, number, number] | readonly number[],
+  host: ScreenRect,
+): ScreenRect {
+  const [bx, by, bw, bh] = bbox
+  return {
+    left: host.left + bx * host.width,
+    top: host.top + by * host.height,
+    width: bw * host.width,
+    height: bh * host.height,
+  }
+}
+
+/**
+ * 图内元素工具条的障碍物：同一张图里**别的**文字类元素。锚点自己不算
+ * （工具条贴着它放，本来就在它旁边），隐藏的不算（画布上看不见它）。
+ */
+export function elementObstacles<T extends Pick<ManifestElement, 'gid' | 'role' | 'bbox'>>(
+  elements: readonly T[],
+  host: ScreenRect,
+  exceptGid: string | null,
+  hidden: (el: T) => boolean = () => false,
+): ScreenRect[] {
+  return elements
+    .filter((e) => e.gid !== exceptGid && COVER_SENSITIVE_ROLES.has(e.role) && !hidden(e))
+    .map((e) => bboxToScreen(e.bbox, host))
 }
 
 export const freeWidthOf = (viewportWidth: number, insets: Insets): number =>

@@ -223,3 +223,15 @@ describe('openProblems', () => {
     expect(useUiStore.getState().problemFilter).toBeNull()
   })
 })
+
+describe('定位不抢左栏（审计 T09）', () => {
+  it('从问题清单定位图内元素：左栏留在「问题」页，元素树不顶上来', async () => {
+    await seed()
+    useUiStore.setState({ layout: 'wide', leftOpen: true, leftTab: 'problems' })
+    const out = focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
+    expect(out.ok).toBe(true)
+    expect(useUiStore.getState().leftTab, '元素树把问题清单顶掉了').toBe('problems')
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().elementPanelId).toBe('p1')
+  })
+})

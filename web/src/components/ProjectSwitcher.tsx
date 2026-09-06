@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Folder, SquareArrowOutUpRight } from 'lucide-react'
 import { backendErrorMsg } from '@/lib/api'
+import { disambiguateRecent } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -27,6 +28,10 @@ export function ProjectSwitcher() {
   const opened = useProjectStore((s) => s.opened)
   const open = useProjectStore((s) => s.open)
   const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
+  // 同名项目的辨认后缀与 Picker 同一份判据（`lib/recentProjects.ts`）——
+  // 按**整份**最近列表算而不是按截断后的六条：菜单里只剩一个 figs 时，
+  // 它仍然是「六个里的那一个」，去掉后缀它就又认不出来了
+  const hints = useMemo(() => disambiguateRecent(recent), [recent])
 
   if (!project?.open) return null
 
@@ -98,7 +103,13 @@ export function ProjectSwitcher() {
             <MenuSeparator />
             <MenuLabel>{t('switcher.recent')}</MenuLabel>
             {recentRest.map((r) => (
-              <MenuItem key={r.path} disabled={!r.exists} onSelect={() => go(r.path)}>
+              <MenuItem
+                key={r.path}
+                disabled={!r.exists}
+                reason={r.exists ? undefined : t('picker.missingDir')}
+                hint={hints.get(r.path)}
+                onSelect={() => go(r.path)}
+              >
                 {r.name}
               </MenuItem>
             ))}
