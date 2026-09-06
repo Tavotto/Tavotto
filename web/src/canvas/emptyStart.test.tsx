@@ -103,7 +103,7 @@ describe('空画布的起步提示', () => {
   })
 
   it('「添加图」打开素材库；「试用示例」走教程的统一入口', async () => {
-    useUiStore.setState({ leftTab: 'structure' })
+    useUiStore.setState({ leftTab: 'layers' })
     await mount(<CanvasStage />)
     await act(async () => byText(sg('addFigure'))[0].click())
     expect(useUiStore.getState().leftTab).toBe('assets')

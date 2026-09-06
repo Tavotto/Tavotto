@@ -1724,6 +1724,12 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         "settings": engine_config.project_settings(str(p)),
         "export_dir": str(project_export_dir(ctx)),
         "backup_dir": str(project_backup_dir(ctx)),
+        # 「另存为」把文档写到哪（审计 T04：另存时只需名字和位置）。
+        # 「命名文档存在项目的 tavottofile/ 里」这条规则的出处只有
+        # `project_layout_dir()`——界面自己拼一个 `<项目>/tavottofile` 就是把
+        # 它抄成了第二份，而旧位置兼容、未打开项目退回数据目录这两条分支
+        # 抄不过去。
+        "document_dir": str(project_layout_dir(ctx)),
         # 教程项目的标记（ADR 0039）：它走的是与普通项目同一条打开路径，
         # 界面上「重新开始教程」「教程角标」只认这一个字段，不自己比路径。
         "tutorial": engine_tutorial.is_tutorial_path(p),

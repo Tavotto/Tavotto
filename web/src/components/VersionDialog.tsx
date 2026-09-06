@@ -16,7 +16,13 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { resolveRestoreTarget } from '@/lib/versionTarget'
-import { msg, t as translate } from '@/i18n'
+import {
+  comparableEarlier,
+  versionDisplayName,
+  versionSummary,
+  versionSummaryText,
+} from '@/lib/versionSummary'
+import { formatMessage, msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -209,7 +215,7 @@ export function VersionDrawer() {
           />
         ) : (
           <ul aria-label={vd('listLabel')}>
-            {versions.map((v) => (
+            {versions.map((v, i) => (
               <li key={v.id}>
                 <button
                   onClick={() => setSelected(v.id === selected ? null : v.id)}
@@ -221,14 +227,20 @@ export function VersionDrawer() {
                       : 'border-l-2 border-transparent hover:bg-ink/[.04]',
                   )}
                 >
+                  {/* 一行说一件事：什么时候 → 变了什么 → 拍的哪张画布。
+                      自动检查点的名字由后端按时间生成，与这里的时间重复，
+                      所以只显示**用户起的**名字（`versionDisplayName`）。 */}
                   <span className="flex items-center gap-1.5">
                     <span
                       className={cn(
-                        'min-w-0 flex-1 truncate text-xs',
+                        'shrink-0 text-xs',
                         v.id === selected ? 'font-medium text-accent' : 'text-ink',
                       )}
                     >
-                      {v.name}
+                      {formatTime(v.ts)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+                      {versionDisplayName(v)}
                     </span>
                     {v.auto && (
                       <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
@@ -237,8 +249,9 @@ export function VersionDrawer() {
                     )}
                   </span>
                   <span className="text-xs text-ink-3">
-                    {vd('metaObjects', { time: formatTime(v.ts), count: v.objects })}
-                    {v.page ? vd('metaPage', { w: v.page.w, h: v.page.h }) : ''}
+                    {versionSummaryText(versionSummary(v, comparableEarlier(versions, i)))
+                      .map(formatMessage)
+                      .join(' · ')}
                   </span>
                   {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
                       **照实说"不知道"**，不猜成当前画布。 */}

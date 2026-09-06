@@ -37,6 +37,7 @@ import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { setCurrentProjectLabel } from '@/lib/projectLabel'
 import { emptyDocument } from '@/types/document'
 import { useWorkspaceStore } from '@/store/workspace'
 
@@ -191,6 +192,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
       }
+      setCurrentProjectLabel(project.open ? project.name : null)
       const [recent, opened] = await Promise.all([
         fetchRecentProjects(),
         fetchOpenProjects().catch(() => []),
@@ -222,6 +224,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   adoptOpenedProject: async (status, opts) => {
     // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
     if (status.id) setCurrentProjectId(status.id)
+    // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
+    // documentStore 只读那份投影（否则两个 store 互相 import 成环）
+    setCurrentProjectLabel(status.name)
     // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
     armNoProjectRecovery()
     // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
