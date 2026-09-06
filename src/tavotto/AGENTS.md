@@ -62,7 +62,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
   看住它与真字体一致）。**本仓库不分发任何字体**，看护
   `tests/test_font_provenance.py`。
-- **图内中文的回退链（ADR 0044）**：脚本跑完、采 baseline 之前
+- **图内中文的回退链（ADR 0045）**：脚本跑完、采 baseline 之前
   （`figsession.instrument_all()`）给每段图内文字的族列表接上 DejaVu Sans + 本机
   探测到的中日韩脸（`overrides.cjk_fallback_tail()`，候选按平台分组、只有装了的
   才进链）。**尾巴必须在 `font.family` 列表里**，塞进 `font.sans-serif` 不是回退链

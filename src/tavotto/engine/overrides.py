@@ -461,10 +461,10 @@ def _mathtext_font_name(fam: str) -> str | None:
 #: 那一批 base-14 缺的字符（`⁵` `⁻` `₂` `μ` `≤` `Å` …）。
 #:
 #: **中日韩不在它的覆盖里**。汉字由后面那段**按平台探测**出来的尾巴
-#: （`cjk_fallback_tail()`）接住，见 ADR 0044。
+#: （`cjk_fallback_tail()`）接住，见 ADR 0045。
 FONT_FALLBACK_TAIL = ("DejaVu Sans",)
 
-#: 中日韩回退候选，**按平台分组、组内按偏好排序**（ADR 0044）。这是候选名单，
+#: 中日韩回退候选，**按平台分组、组内按偏好排序**（ADR 0045）。这是候选名单，
 #: 不是承诺：进链的只有 `findfont(fallback_to_default=False)` 真解析得到的那些，
 #: 所以链上每一环都画得出来，不会产生 matplotlib 的 "Font family not found"。
 #: 本平台那组排最前，其它平台的名字跟在后面——Noto / 思源这类跨平台字体装在

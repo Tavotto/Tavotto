@@ -70,7 +70,7 @@ const VALUES: Record<string, { current?: string; expected?: string; unit?: strin
   'tick-label-count': { current: 'count', expected: 'max' },
   'discouraged-colormap': { current: 'cmap', expected: 'recommended' },
   'unapplied-override': { current: 'count' },
-  // 「当前值」是真正画出汉字的那张脸（回退链接手时 ≠ 正文族，ADR 0044）
+  // 「当前值」是真正画出汉字的那张脸（回退链接手时 ≠ 正文族，ADR 0045）
   'cjk-fallback-missing': { current: 'face' },
   'axis-label-format': { current: 'label', expected: 'want' },
 }

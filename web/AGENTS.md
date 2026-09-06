@@ -330,7 +330,7 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   两句话**（`glyph-missing` / `glyph-substituted`）。
 * 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
   warning**，绝不换掉再改文档。
-* 图内中文（ADR 0044）：引擎给每段文字接了本机的中日韩回退链，manifest 用
+* 图内中文（ADR 0045）：引擎给每段文字接了本机的中日韩回退链，manifest 用
   `cjk_family` 报是哪张脸画的；预检 `cjk-fallback-missing` 的主语是它（不是正文
   族名），`preflight.ts` 与 Python 侧同源，golden 向量看护。
 * 看护：`lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`

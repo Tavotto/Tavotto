@@ -1251,7 +1251,7 @@ export interface ManifestElement {
   /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
   glyphs_fallback?: string[]
   /**
-   * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0044）。正文族自己画得
+   * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0045）。正文族自己画得
    * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
    */
   cjk_family?: string

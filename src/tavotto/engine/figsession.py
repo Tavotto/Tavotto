@@ -154,7 +154,7 @@ class LiveFigureSession:
         self._own()
         fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
         if fresh:
-            # 字体回退尾巴（ADR 0044）：**脚本跑完之后、采 baseline 之前**给图上
+            # 字体回退尾巴（ADR 0045）：**脚本跑完之后、采 baseline 之前**给图上
             # 已有的每一段文字补上 DejaVu Sans + 本机中日韩脸（逐 Text 那一步
             # 是兑现点，`test_cjk_figure_text.py` 拿掉它就红）。放在 FigState
             # 之前，originals 采到的就是带尾巴的链——写回重放时同一段代码再补

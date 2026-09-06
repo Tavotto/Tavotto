@@ -265,7 +265,7 @@ def test_cjk_without_fallback_is_reported():
 
 
 def test_cjk_drawn_by_an_accepted_fallback_face_is_not_reported():
-    """回退链（ADR 0044）用白名单里的脸画出了汉字：这条**不响**。
+    """回退链（ADR 0045）用白名单里的脸画出了汉字：这条**不响**。
 
     改造前它只看正文族名——DejaVu Sans 不在中日韩白名单里就报「会是方框」，
     而图上明明画得好好的。一句错的断言比没有断言更坏。

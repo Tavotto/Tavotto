@@ -1124,7 +1124,7 @@ def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
     解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
     判据去凑数量。
 
-    第三张单子是回退链（ADR 0044）的产物：汉字由链尾的中日韩脸画出来时，
+    第三张单子是回退链（ADR 0045）的产物：汉字由链尾的中日韩脸画出来时，
     它**不算**「换了脸」——那张脸是唯一画得出它的，且对整台机器恒定，逐条
     挂建议只会训练用户忽略问题面板（与画布侧 `glyphplan.substituted_chars`
     同一个裁决）。值得说的是**由谁画的**：manifest 把它报成 `cjk_family`，
@@ -3612,7 +3612,7 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
             if subst:
                 entry["glyphs_fallback"] = subst
-            # 汉字由回退链上哪张脸画的（ADR 0044）：预检拿它对出版规范的
+            # 汉字由回退链上哪张脸画的（ADR 0045）：预检拿它对出版规范的
             # 中日韩白名单，界面拿它回答「我的中文是什么字体」。
             if cjk_faces:
                 entry["cjk_family"] = cjk_faces[0]

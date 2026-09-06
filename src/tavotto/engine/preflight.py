@@ -404,7 +404,7 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                     detail={"family": family},
                 )
             # 中日韩白名单的主语是**真正画出汉字的那张脸**：正文族自己盖得住
-            # 时是它；盖不住、由回退链（ADR 0044）接手时是 manifest 报的
+            # 时是它；盖不住、由回退链（ADR 0045）接手时是 manifest 报的
             # `cjk_family`。只看正文族名的话，回退链画得好好的中文会被报成
             # 「会是方框」——一句错的断言比没有断言更坏。
             face = el.get("cjk_family")

@@ -1,4 +1,4 @@
-"""图内中文（ADR 0044）：标题 / 轴标签 / 图例 / 标注里的汉字不再是方框。
+"""图内中文（ADR 0045）：标题 / 轴标签 / 图例 / 标注里的汉字不再是方框。
 
 改造前的实测（macOS，matplotlib 3.10.8，用户反馈第 3 条）：`plt.title("中文标题")`
 走完引擎，manifest 把四个字全列进 `glyphs_missing`，PDF 里只嵌了 DejaVuSans，
