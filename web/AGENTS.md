@@ -602,8 +602,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
-  `data-element-svg`（+ manifest bbox）。**aria-label / 文案 / class 都不能当选择器。** 改了这些
-  属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+  `data-element-svg`（+ manifest bbox）、`data-world-transform`（`CanvasStage` 唯一的世界变换节点，
+  教程不用它，e2e 靠它量视口有没有被还原——`e2e/nav-audit.spec.ts`，2026-09-06 审计 T01）。
+  **aria-label / 文案 / class 都不能当选择器。** 改了这些属性要同步 `steps.ts` 与
+  `e2e/tutorial.spec.ts`（`data-world-transform` 同步的是 `nav-audit.spec.ts`）。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
