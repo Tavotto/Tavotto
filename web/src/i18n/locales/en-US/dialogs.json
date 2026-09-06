@@ -898,14 +898,19 @@
     "copy": "Copy",
     "diagnostics": {
       "copyReport": "Copy diagnostics",
+      "envNote": "The rendering environment bundled with {{product}} ships with the app and is read-only; installing packages creates a separate “this project’s {{product}} environment”. They are not the same thing and report their state independently.",
+      "fetchedAt": "Data on this page was read at {{time}}",
       "healthTitle": "Health",
       "hidePreview": "Hide",
+      "okDetails": "Check results",
       "prepareFailed": "Could not generate the diagnostic report. Please try again.",
       "preparing": "Preparing…",
       "previewNote": "This is what will be copied (secrets and personal paths are redacted). Review it, then copy.",
+      "refetch": "Fetch again",
       "reportTitle": "Diagnostic report",
+      "scopeNote": "These checks cover the runtime environment only (Python, the rendering engine, project folders). Whether a figure meets its publication spec is checked in the Problems panel; neither result implies the other.",
       "summaryFailing": "{{count}} problem(s)",
-      "summaryOk": "Everything looks fine"
+      "summaryOk": "Runtime environment checks passed"
     },
     "export": {
       "defaultDpi": "Default DPI",
@@ -937,6 +942,7 @@
       "builtinFromManaged": "Ships with the {{product}} environment; read-only.",
       "builtinPlanned": "Creating the environment installs matplotlib and its dependencies.",
       "builtinTitle": "Built-in packages",
+      "builtinTitleCount": "Bundled packages ({{count}}, read-only)",
       "col": {
         "actions": "Actions",
         "name": "Name",
@@ -963,7 +969,8 @@
         "ready": "Ready",
         "rebuild": "Rebuild"
       },
-      "envTitle": "{{product}} environment",
+      "envTarget": "Installs go here",
+      "envTitle": "This project’s {{product}} environment",
       "install": "Install",
       "job": {
         "cancel": "Cancel",
@@ -996,8 +1003,9 @@
         "repair": "Installed by missing-dependency repair",
         "user": "Installed manually"
       },
+      "recoveryNote": "If it breaks, use “Rebuild”: a fresh environment is created and the recorded packages are installed again.",
       "reinstall": "Reinstall",
-      "rollbackNote": "Package operations cannot be rolled back: pip has no transactions. A snapshot of the environment is recorded before and after every change ({{count}} kept); if the environment breaks, “Rebuild” restores what the ledger records.",
+      "snapshotDetail": "Package operations themselves cannot be rolled back (pip has no transactions). A pip freeze is saved before and after every change ({{count}} so far) purely as evidence for troubleshooting — “Rebuild” does not read it; it reinstalls from the recorded package list.",
       "specAria": "Package name or spec to install",
       "specInvalid": "Only “name” or “name>=version” is accepted — no spaces, paths, URLs or options.",
       "specPlaceholder": "Package name or spec, e.g. lmfit or lmfit>=1.3",
@@ -1009,6 +1017,7 @@
         "planned": "Installed on creation",
         "unknown": "Unknown"
       },
+      "techTitle": "Environment and network details",
       "uninstall": "Uninstall",
       "uninstallAria": "Uninstall {{name}}",
       "update": "Upgrade",

@@ -30,7 +30,15 @@ const pk = (key: string, values?: Record<string, unknown>) =>
  * 每个动作都是「形成作业 → 执行」两步（`packageStore.plan` / `run`）；卸载在
  * 中间多一次确认，账上有别的包依赖它时按危险操作问。进度按 state 换文案，
  * 日志折叠可复制；错误给下一步而不只是退出码（`repairCodeMessage`）。
- * 没有回滚（pip 没有事务）——这句话常驻在页面上，并说清每次改动前后都留了快照。
+ *
+ * **版面顺序就是使用顺序**（审计 T46）：安装入口 + 用户自己的包在最上面，
+ * 首屏一句「装坏了可以重建」；内置那 14 条与网络 / 快照那些工程细节折叠在下面。
+ * 修改前首屏被内置清单与反复出现的「已安装 / 只读」占满，用户要装一个包得先
+ * 滚过它们。
+ *
+ * 首屏那句恢复说明**只说重建做什么**：重建是按 `environment.json` 上记的包重装
+ * 一遍，与 snapshots 目录里那些 `pip freeze` 无关——旧文案把两件事写成一件
+ * （「用重建恢复到快照记录的状态」），而 snapshots 根本没有任何读回路径。
  */
 export function PackagesSettings() {
   useTranslation('dialogs')
@@ -92,9 +100,6 @@ export function PackagesSettings() {
 
   return (
     <div data-packages-page className="flex flex-col gap-4">
-      {/* ---------------- 环境与能力 ---------------- */}
-      <EnvironmentLine />
-
       {!available && capability && (
         <p className="text-xs leading-relaxed text-ink-2" data-packages-disabled>
           {capability.reason === 'no_project'
@@ -106,30 +111,10 @@ export function PackagesSettings() {
       )}
       {loadError && !data && <InlineWarning tone="danger">{loadError}</InlineWarning>}
 
-      {/* ---------------- 内置包 ---------------- */}
-      <SettingSection title={pk('builtinTitle')}>
-        <p className="text-xs text-ink-3">
-          {data?.builtin_source === 'managed_env'
-            ? pk('builtinFromManaged', { product: PRODUCT_NAME })
-            : data?.builtin_source === 'bundled_runtime'
-              ? pk('builtinFromBundled', { product: PRODUCT_NAME })
-              : pk('builtinPlanned')}
-        </p>
-        <PackageTable
-          ariaLabel={pk('builtinTitle')}
-          empty={loading && !data ? pk('loading') : pk('builtinEmpty')}
-          rows={(data?.builtin ?? []).map((b) => ({
-            key: b.name,
-            name: b.name,
-            version: b.version || '—',
-            status: <StatusText status={b.status} />,
-            actions: <span className="text-xs text-ink-3">{pk('readOnly')}</span>,
-          }))}
-        />
-      </SettingSection>
-
-      {/* ---------------- 用户安装 ---------------- */}
+      {/* ---------------- 用户安装（置顶：这一页存在的理由） ---------------- */}
       <SettingSection title={pk('userTitle')}>
+        {/* 安装目标就在安装入口旁边，不必去别处对照 */}
+        <EnvironmentLine />
         <form
           className="flex items-center gap-1.5"
           onSubmit={(e) => {
@@ -159,11 +144,7 @@ export function PackagesSettings() {
             {specError}
           </p>
         )}
-        <p className="text-xs text-ink-3">
-          {pk('networkNote')}
-          {data?.network?.proxy ? ` · ${pk('network.proxy')}` : ''}
-          {data?.network?.custom_index ? ` · ${pk('network.customIndex')}` : ''}
-        </p>
+        <p className="text-xs text-ink-3">{pk('networkNote')}</p>
 
         <PackageTable
           ariaLabel={pk('userTitle')}
@@ -196,18 +177,61 @@ export function PackagesSettings() {
         />
       </SettingSection>
 
+      {/* ---------------- 内置包 ---------------- */}
+      {/* 内置那一份折叠为摘要（审计 T46）：条数在标题上，展开才是清单。
+          它是"这个环境里本来就有什么"的背景，不是用户此刻要操作的东西。 */}
+      <DiagnosticDisclosure title={pk('builtinTitleCount', { count: (data?.builtin ?? []).length })}>
+        <p className="text-xs text-ink-3">
+          {data?.builtin_source === 'managed_env'
+            ? pk('builtinFromManaged', { product: PRODUCT_NAME })
+            : data?.builtin_source === 'bundled_runtime'
+              ? pk('builtinFromBundled', { product: PRODUCT_NAME })
+              : pk('builtinPlanned')}
+        </p>
+        <PackageTable
+          ariaLabel={pk('builtinTitle')}
+          empty={loading && !data ? pk('loading') : pk('builtinEmpty')}
+          rows={(data?.builtin ?? []).map((b) => ({
+            key: b.name,
+            name: b.name,
+            version: b.version || '—',
+            status: <StatusText status={b.status} />,
+            actions: <span className="text-xs text-ink-3">{pk('readOnly')}</span>,
+          }))}
+        />
+      </DiagnosticDisclosure>
+
       {/* ---------------- 作业进度 / 结果 ---------------- */}
       <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
 
-      {/* 没有回滚这件事要说出来（ADR 0019 §八）；快照是修复时的对照 */}
-      <p className="text-xs leading-relaxed text-ink-3">
-        {pk('rollbackNote', { count: data?.snapshots ?? 0 })}
-      </p>
+      {/* 一句话说清失败后怎么办（审计 T46）。「没有回滚」与快照份数是工程细节，
+          折在下面——它们解释的是**为什么**只能重建，不是用户此刻要做的事。 */}
+      <p className="text-xs leading-relaxed text-ink-3">{pk('recoveryNote')}</p>
+
+      <DiagnosticDisclosure title={pk('techTitle')}>
+        <p className="text-xs leading-relaxed text-ink-3">
+          {pk('snapshotDetail', { count: data?.snapshots ?? 0 })}
+        </p>
+        {data?.network?.proxy && (
+          <p className="text-xs text-ink-3">{pk('network.proxy')}</p>
+        )}
+        {data?.network?.custom_index && (
+          <p className="text-xs text-ink-3">{pk('network.customIndex')}</p>
+        )}
+      </DiagnosticDisclosure>
     </div>
   )
 }
 
-/** 一行：这个项目的 Tavotto 环境现在什么状态、是不是正在用它、重建入口。 */
+/**
+ * 一行：**这个项目的** Tavotto 环境现在什么状态、是不是正在用它、重建入口。
+ *
+ * 名字里的「这个项目的」不是修辞（审计 T46 / T47）：受管环境在
+ * `<data_dir>/environments/<项目指纹>/`，**每个项目一个**；而诊断页上那句
+ * 「{{product}} 自带的渲染环境」说的是随安装包附带、只读、不能 pip 的另一个。
+ * 两者以前都叫「Tavotto 环境」，于是「尚未创建」与「matplotlib 3.11.1」会同时
+ * 出现在两页上，看起来像自相矛盾。
+ */
 function EnvironmentLine() {
   useTranslation('dialogs')
   const env = usePackageStore((s) => s.data?.environment)
@@ -219,6 +243,7 @@ function EnvironmentLine() {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
       <span className="font-medium text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
+      <span className="text-ink-3">{pk('envTarget')}</span>
       {exists ? (
         <>
           <span className="font-mono text-ink-2">

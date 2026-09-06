@@ -959,7 +959,7 @@ export default interface Resources {
     "settings": {
       "about": {
         "check": {
-          "bundled_runtime": "内置渲染环境",
+          "bundled_runtime": "自带的渲染环境",
           "cli_claude": "Claude CLI",
           "cli_codex": "Codex CLI",
           "matplotlib": "matplotlib",
@@ -1191,14 +1191,19 @@ export default interface Resources {
       "copy": "复制",
       "diagnostics": {
         "copyReport": "复制诊断",
+        "envNote": "「{{product}} 自带的渲染环境」随安装包附带、只读；装包会另建一个「这个项目的 {{product}} 环境」。两者不是同一个，状态各说各的。",
+        "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
         "hidePreview": "收起",
+        "okDetails": "各项检查结果",
         "prepareFailed": "诊断报告生成失败，请重试。",
         "preparing": "正在生成…",
         "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
+        "refetch": "重新获取",
         "reportTitle": "诊断报告",
+        "scopeNote": "这里只检查运行环境（Python、渲染引擎、项目目录）。图本身合不合规范由「问题」面板检查，两者互不代表。",
         "summaryFailing": "{{count}} 项异常",
-        "summaryOk": "全部正常"
+        "summaryOk": "运行环境检查通过"
       },
       "export": {
         "defaultDpi": "默认 DPI",
@@ -1230,6 +1235,7 @@ export default interface Resources {
         "builtinFromManaged": "随 {{product}} 环境提供，只读。",
         "builtinPlanned": "创建环境时会装上 matplotlib 及其依赖。",
         "builtinTitle": "内置包",
+        "builtinTitleCount": "内置包（{{count}} 个，只读）",
         "col": {
           "actions": "操作",
           "name": "名称",
@@ -1256,7 +1262,8 @@ export default interface Resources {
           "ready": "就绪",
           "rebuild": "重建"
         },
-        "envTitle": "{{product}} 环境",
+        "envTarget": "装到这里",
+        "envTitle": "这个项目的 {{product}} 环境",
         "install": "安装",
         "job": {
           "cancel": "取消",
@@ -1289,8 +1296,9 @@ export default interface Resources {
           "repair": "缺包时自动修复安装",
           "user": "手动安装"
         },
+        "recoveryNote": "装坏了可以「重建」：按账上记录的包，在一个新建的环境里重装一遍。",
         "reinstall": "重新安装",
-        "rollbackNote": "包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 {{count}} 份），环境损坏时可用「重建」恢复到账上记录的状态。",
+        "snapshotDetail": "包操作本身没有回滚（pip 没有事务）。每次改动前后各存一份 pip freeze 作对照（现有 {{count}} 份）——它只是排障时的证据，「重建」不读它，重建依据的是账上记录的包与版本。",
         "specAria": "要安装的包名或规范",
         "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
         "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
@@ -1302,6 +1310,7 @@ export default interface Resources {
           "planned": "创建时安装",
           "unknown": "未知"
         },
+        "techTitle": "环境与网络细节",
         "uninstall": "卸载",
         "uninstallAria": "卸载 {{name}}",
         "update": "升级",
@@ -1735,7 +1744,7 @@ export default interface Resources {
       "installing": "正在安装…",
       "managedEnvInstalled": "已安装：{{packages}}",
       "managedEnvRebuild": "重建 Tavotto 环境",
-      "managedEnvUsing": "Tavotto 环境：Python {{version}}",
+      "managedEnvUsing": "这个项目的 {{product}} 环境：Python {{version}}",
       "matplotlibVersion": "matplotlib {{version}}",
       "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
       "missingModuleBody": "Tavotto 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
@@ -1833,7 +1842,7 @@ export default interface Resources {
       "repairWillInstall": "将安装：{{requirement}}",
       "setPythonFailed": "设置失败",
       "sourceLabel": {
-        "bundled": "Tavotto 内置环境",
+        "bundled": "{{product}} 自带的渲染环境",
         "configured": "你指定的环境",
         "current_process": "Tavotto 自身的解释器",
         "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
