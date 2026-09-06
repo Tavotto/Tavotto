@@ -412,3 +412,39 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     expect(rawIssuesForObject(raw, 'nope')).toEqual([])
   })
 })
+
+describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', () => {
+  // 数字取自教程 Fig1_kinetics 的真实 manifest：figsize 80 × 57.6，x 轴标题底边 1.0425
+  const clipped = () => {
+    const m = manifestWith([
+      { gid: 'axes_0.xlabel', role: 'axis_label', label: 'X 轴 “Reaction time (min)”', pt: 9 },
+    ])
+    m.size_mm = [80, 57.6]
+    m.elements[0].bbox = [0.3152, 0.9874, 0.3946, 0.0551]
+    return m
+  }
+  const p = panel()
+  const doc = docWith([p])
+
+  it('阻断级、定位到那个元素（主语是引擎标签）、没有自动修复、带探出的毫米数', () => {
+    const issue = runOne(doc, renderFor(p, clipped())).issues.find(
+      (i) => i.ruleCode === 'element-outside-figure',
+    )!
+    expect(issue).toBeDefined()
+    expect(issue.severity).toBe('error')
+    expect(issue.objectRef).toMatchObject({ canvasId: 'c1', objectId: 'p1', gid: 'axes_0.xlabel' })
+    expect(issue.subject.kind).toBe('element')
+    expect(issue.subject.elementLabel).toBe('X 轴 “Reaction time (min)”')
+    expect(issue.fixKind).toBe('none')
+    expect(issue.message.values).toEqual({ mm: '2.45' })
+    expect(issue.technicalDetails).toEqual({ overflow_mm: 2.45, side: 'bottom' })
+  })
+
+  it('标题框收回图内就不报', () => {
+    const m = clipped()
+    m.elements[0].bbox = [0.3152, 0.93, 0.3946, 0.0551]
+    expect(
+      runOne(doc, renderFor(p, m)).issues.some((i) => i.ruleCode === 'element-outside-figure'),
+    ).toBe(false)
+  })
+})
