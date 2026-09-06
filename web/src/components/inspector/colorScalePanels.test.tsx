@@ -279,6 +279,11 @@ describe('色阶上下限并排（审计 T22）', () => {
     await typeInto(input('vmin')!, '5')
     expect(overrideOf('axes_0.images_0', 'vmin')).toBe(5)
     expect(overrideOf('axes_0.images_0', 'vmax')).toBeUndefined()
+    // **两格都要写对自己那条**：只测第一格的话，「两格写同一个 prop」这种
+    // 实现照样绿（第二格的值会落进第一条，而第一条本来就该有值）
+    await typeInto(input('vmax')!, '40')
+    expect(overrideOf('axes_0.images_0', 'vmax')).toBe(40)
+    expect(overrideOf('axes_0.images_0', 'vmin')).toBe(5)
   })
 
   it('只改了一条时，恢复按钮只出现在那一条上', async () => {
