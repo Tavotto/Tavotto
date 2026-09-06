@@ -28,6 +28,10 @@ export function ProjectSwitcher() {
   const opened = useProjectStore((s) => s.opened)
   const open = useProjectStore((s) => s.open)
   const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
+  // 同名项目的辨认后缀与 Picker 同一份判据（`lib/recentProjects.ts`）——
+  // 按**整份**最近列表算而不是按截断后的六条：菜单里只剩一个 figs 时，
+  // 它仍然是「六个里的那一个」，去掉后缀它就又认不出来了
+  const hints = useMemo(() => disambiguateRecent(recent), [recent])
 
   if (!project?.open) return null
 
@@ -51,10 +55,6 @@ export function ProjectSwitcher() {
   const recentRest = recent
     .filter((r) => r.path !== project.figures_dir && !opened.some((o) => o.figures_dir === r.path))
     .slice(0, RECENT_IN_MENU)
-  // 同名项目的辨认后缀与 Picker 同一份判据（`lib/recentProjects.ts`）——
-  // 按**整份**最近列表算而不是按截断后的六条：菜单里只剩一个 figs 时，
-  // 它仍然是「六个里的那一个」，去掉后缀它就又认不出来了
-  const hints = useMemo(() => disambiguateRecent(recent), [recent])
 
   return (
     <>

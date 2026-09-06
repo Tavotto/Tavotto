@@ -9,7 +9,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RecentProject } from '@/lib/api'
+import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { useProjectStore } from '@/store/projectStore'
 
@@ -48,9 +48,9 @@ function thirtyEntries(): RecentProject[] {
 
 let root: Root
 let host: HTMLDivElement
-const open = vi.fn(async () => ({ open: true }))
-const remove = vi.fn(async () => {})
-const removeMany = vi.fn(async () => {})
+const open = vi.fn(async (_path: string, _create?: boolean): Promise<ProjectStatus> => ({ open: true }))
+const remove = vi.fn(async (_path: string) => {})
+const removeMany = vi.fn(async (_paths: string[]) => {})
 
 async function mount() {
   host = document.createElement('div')
@@ -87,7 +87,7 @@ beforeEach(async () => {
     project: null,
     recent: thirtyEntries(),
     opened: [],
-    open: open as unknown as typeof useProjectStore.getState extends () => infer S ? S extends { open: infer O } ? O : never : never,
+    open,
     remove,
     removeMany,
   })

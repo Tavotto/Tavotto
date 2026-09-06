@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { CanvasObject, Guide } from '@/types/document'
 import {
   documentHasContent,
   forgetProjectDocument,
@@ -27,10 +28,13 @@ describe('projectDocs：按项目记「上次开着哪份文档」', () => {
   })
 
   it('documentHasContent：热态画布、其它画布、画布数三处都看', () => {
-    const empty = { objects: [], guides: [] }
+    // 判据只数个数，不看字段：一个占位对象就够
+    const obj = { id: 'o', type: 'text' } as unknown as CanvasObject
+    const guide = { id: 'g', axis: 'x', pos: 1 } as unknown as Guide
+    const empty = { objects: [] as CanvasObject[], guides: [] as Guide[] }
     expect(documentHasContent({ doc: empty, canvases: [empty] })).toBe(false)
-    expect(documentHasContent({ doc: { objects: [{}], guides: [] }, canvases: [empty] })).toBe(true)
-    expect(documentHasContent({ doc: empty, canvases: [empty, { objects: [], guides: [{}] }] })).toBe(true)
+    expect(documentHasContent({ doc: { objects: [obj], guides: [] }, canvases: [empty] })).toBe(true)
+    expect(documentHasContent({ doc: empty, canvases: [empty, { objects: [], guides: [guide] }] })).toBe(true)
     expect(documentHasContent({ doc: empty, canvases: [empty, empty] })).toBe(true)
   })
 })
