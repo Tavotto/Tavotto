@@ -3538,8 +3538,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
-        # 没有 geometry 的元素（文字、图例、容器、散点）前端照旧用 bbox。
-        if el["role"] in ("line", "fill", "patch"):
+        # 散点给的是每颗 marker 的轮廓（标记数有上限，超了退回 bbox）。
+        # 没有 geometry 的元素（文字、图例、容器）前端照旧用 bbox。
+        if el["role"] in ("line", "fill", "patch", "scatter"):
             geom = pathgeom.element_geometry(artist, W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom

@@ -30,6 +30,10 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 仍超上限才等距抽（保端点）。整份 manifest 另有一个总点数预算，用完之后的
 元素不再出 geometry——前端对没有 geometry 的元素本来就退回 bbox，这是
 **有意的降级**，并会在 stderr 上说明是哪一个元素被降级了。
+
+散点（PathCollection）出的是**每一颗 marker 的轮廓**（`_marker_subpaths`）：
+形状只拍平一次、按尺度分档抽稀、其余各颗是一次批量仿射；标记数超过
+`SCATTER_MAX_MARKERS` 整组退回 bbox，同样在 stderr 上说明。
 """
 
 from __future__ import annotations
@@ -37,10 +41,11 @@ from __future__ import annotations
 import sys
 
 import numpy as np
-from matplotlib.collections import PolyCollection
+from matplotlib.collections import PathCollection, PolyCollection
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
 from matplotlib.path import Path
+from matplotlib.transforms import Affine2D
 
 #: RDP 抽稀容差（display 像素）。0.4px 在任何缩放下都看不出偏差，
 #: 而一条 5000 点的谱线通常能掉到两三百点。
@@ -53,6 +58,17 @@ _TOL_ROUNDS = 8
 _DECIMATE_ABOVE = 4 * _MAX_POINTS
 #: 一份 manifest 的总点数预算（超出的元素退回 bbox）。
 TOTAL_BUDGET = 8000
+#: 散点集合（PathCollection）出标记轮廓的**标记数上限**，超过就整组退回 bbox。
+#:
+#: 上限量的是消费侧，不是生产侧——生产侧每个 marker 只是一次小矩阵乘（形状
+#: 只拍平一次，见 `_marker_subpaths`），两万颗也只要几十毫秒；贵的是下游：
+#: 每次渲染往返都要带的 manifest JSON、前端每次指针移动沿**全部**线段算的距离、
+#: 每次选中都要重建的覆盖层 d 串，三处都随点数线性长。一颗圆 marker 抽稀后
+#: ≈ 11 点，500 颗 ≈ 5500 点、JSON +110KB，仍在 TOTAL_BUDGET 之内并给同图的
+#: 曲线留了余量；再往上就是把 issue #181 的账（4 万次 plot 挂 20 万节点）
+#: 换个形态搬回来。改这个数之前先看 `tests/test_manifest_geometry.py` 里钉它的
+#: 那两条。
+SCATTER_MAX_MARKERS = 500
 #: 坐标保留位数（figure 分数）。5 位 ≈ 600px 图上 0.006px，远细于抽稀容差。
 _ND = 5
 
@@ -256,12 +272,23 @@ def _clip_rect(artist, W: float, H: float):
 
 
 def _pack(
-    subpaths, W, H, *, fill: bool, stroke: bool, clip, budget, stroke_pt: float = 0.0
+    subpaths,
+    W,
+    H,
+    *,
+    fill: bool,
+    stroke: bool,
+    clip,
+    budget,
+    stroke_pt: float = 0.0,
+    thinned: bool = False,
 ) -> dict | None:
+    """子路径 → geometry 字典。`thinned=True` 表示调用方已经抽过稀（散点的几百个
+    副本共用一个抽稀过的形状，再逐个跑一遍 RDP 只是白白多几十毫秒）。"""
     paths = []
     total = 0
     for pts, closed in subpaths:
-        thin = _thin(pts)
+        thin = pts if thinned else _thin(pts)
         if len(thin) < 2:
             continue
         total += len(thin)
@@ -315,12 +342,9 @@ def _collection_subpaths(coll, budget: "Budget | None" = None) -> list[tuple[lis
     # 有了 geometry，前端就不再退回整体 bbox，于是那些**明明画出来的**多边形
     # 变得既点不中也框不到。
     #
-    # **今天还走不到这一格，刻意留着。** manifest 那边更早一步就把带 offset
-    # 的集合丢掉了：`build_manifest` 的兜底分支按 `get_window_extent()` 取
-    # bbox，而 Collection 的默认实现对它们回空框（散点当年就是为此单独开了
-    # 一条 `PathCollection` 分支），于是 hexbin 这类元素根本进不了 manifest。
-    # 那是另一个待补的口子，不在这次评审的范围里；这里先按渲染器的语义写对，
-    # 免得将来补上那条分支时又踩一次。
+    # 这里**不管 `get_transforms()`**：PolyCollection 的逐点变换表是空的
+    # （fill_between / stackplot 的多边形本身就在数据空间里）。带逐点缩放的
+    # 是散点那一族，走 `_marker_subpaths`——它有尺寸矩阵要乘，两条路别合并。
     count = len(paths) if len(toffs) <= 1 else max(len(paths), len(toffs))
     out: list[tuple] = []
     total = 0
@@ -339,18 +363,166 @@ def _collection_subpaths(coll, budget: "Budget | None" = None) -> list[tuple[lis
     return out
 
 
+def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
+    """PathCollection（散点）每一颗 marker 的 display 空间轮廓。
+
+    返回 [(点数组 (K,2)，是否闭合)]，点是 display 像素、**已经抽稀**；标记数
+    超过 `SCATTER_MAX_MARKERS` 返回 None（调用方退回 bbox）；一颗都画不出来
+    返回 []。
+
+    渲染语义跟 Agg 的 `draw_path_collection` 走：第 i 颗用 `paths[i % Np]`、
+    逐点变换 `get_transforms()[i % Nt]`（散点的尺寸就在这里——`set_sizes`
+    把 √s·dpi/72 写成一个缩放矩阵）、偏移 `offsets[i % No]`，总数
+    `max(Np, No)`。整体变换的非仿射段先作用到路径上，仿射段接在逐点变换之后
+    ——与 `Collection._prepare_points` / `_iter_collection_raw_paths` 同一个顺序。
+
+    **形状只拍平一次。** 逐颗调 `Path.cleaned()` 一颗要 1.8ms（500 颗就是
+    0.9 秒，比整次渲染慢一个量级），而每颗 marker 的贝塞尔都是同一条单位路径
+    经不同的仿射变换——仿射映射把曲线映到曲线、把弦映到弦，所以拿**最大**的
+    那颗拍平抽稀之后，其余各颗的顶点 = 同一组顶点经 `A_i ∘ A_max⁻¹`，逐位落在
+    各自的真实曲线上，弦误差只会更小。剩下的就是一次批量矩阵乘加偏移。
+    """
+    paths = list(coll.get_paths())
+    if not paths:
+        return []
+    master = coll.get_transform()
+    if not master.is_affine:
+        paths = [master.transform_path_non_affine(p) for p in paths]
+        master = master.get_affine()
+    per = np.asarray(coll.get_transforms(), dtype=float).reshape(-1, 3, 3)
+    try:
+        offs = np.asarray(coll.get_offsets(), dtype=float).reshape(-1, 2)
+        toffs = coll.get_offset_transform().transform(offs) if len(offs) else offs
+    except Exception:  # noqa: BLE001 — 取不到偏移就按无偏移处理
+        toffs = np.zeros((0, 2))
+    n_paths, n_tr, n_off = len(paths), len(per), len(toffs)
+    count = max(n_paths, n_off)
+    if count > SCATTER_MAX_MARKERS:
+        return None
+
+    mm = np.asarray(master.get_matrix(), dtype=float)
+    if n_tr:
+        # 每颗的线性尺度 = √|det|；全零（s=0）的一颗什么都画不出来，直接不出
+        dets = np.abs(per[:, 0, 0] * per[:, 1, 1] - per[:, 0, 1] * per[:, 1, 0])
+        k = int(np.argmax(dets))
+        if not dets[k] > 0:
+            return []
+        ref = Affine2D(per[k]) + Affine2D(mm)
+        # A_i ∘ A_k⁻¹ = M·P_i·P_k⁻¹·M⁻¹（display → display 的仿射映射）
+        rel = mm @ per @ np.linalg.inv(per[k]) @ np.linalg.inv(mm)
+    else:
+        dets = None
+        ref = Affine2D(mm)
+        rel = np.eye(3)[None]
+
+    idx = np.arange(count)
+    keep = np.ones(count, dtype=bool)
+    if n_off:
+        keep &= np.all(np.isfinite(toffs[idx % n_off]), axis=1)
+    if dets is not None:
+        keep &= dets[idx % n_tr] > 0
+    idx = idx[keep]
+    if len(idx) == 0:
+        return []
+
+    # 抽稀容差按尺度分档：用最大那颗的形状去描一颗只有它 1/5 大的 marker，
+    # 点数是它的两倍而肉眼看不出差别（气泡图上 500 颗就多出四千个点，直接
+    # 撞上 TOTAL_BUDGET）。ρ_i = 线性尺度 / 最大线性尺度 ∈ (0, 1]，第 b 档在
+    # 最大形状的空间里用 `_TOL_PX·_TOL_GROWTH^b` 抽稀，落到第 i 颗自己的空间
+    # 里容差就是 ≤ _TOL_PX（且 > _TOL_PX / _TOL_GROWTH）——绝不比曲线抽得粗。
+    # 每一档只跑一次 RDP（在上一档的结果上继续抽，`_thin` 同一思路）。
+    if dets is not None:
+        rho = np.sqrt(dets[idx % n_tr] / dets[k])
+        bucket = np.floor(np.log(1.0 / rho) / np.log(_TOL_GROWTH)).astype(int)
+        bucket = np.clip(bucket, 0, _TOL_ROUNDS)
+    else:
+        bucket = np.zeros(len(idx), dtype=int)
+
+    # shapes[pi][b] = 第 pi 条路径在第 b 档容差下的 [(点数组, 闭合)]
+    shapes: list[dict[int, list[tuple]]] = []
+    for p in paths:
+        base = [(_thin(pts), closed) for pts, closed in _display_subpaths(p, ref)]
+        shapes.append({0: [(pts, c) for pts, c in base if len(pts) >= 2]})
+
+    def level(pi: int, b: int) -> list[tuple]:
+        cache = shapes[pi]
+        if b not in cache:
+            prev = level(pi, b - 1)
+            tol = _TOL_PX * _TOL_GROWTH**b
+            cache[b] = [
+                (pts, c) for pts, c in ((_rdp(pts, tol), c) for pts, c in prev) if len(pts) >= 2
+            ]
+        return cache[b]
+
+    path_of = idx % n_paths if n_paths > 1 else np.zeros(len(idx), dtype=int)
+    groups: list[tuple[int, int, np.ndarray]] = []
+    total = 0
+    for pi in range(n_paths):
+        for b in np.unique(bucket[path_of == pi]):
+            mine = idx[(path_of == pi) & (bucket == b)]
+            subs = level(pi, int(b))
+            groups.append((pi, int(b), mine))
+            total += len(mine) * sum(len(pts) for pts, _ in subs)
+    # 注定超预算的整组直接收手，不把几百个副本都算完再被 `_pack` 拒掉
+    if total > budget.left:
+        return []
+
+    # 按 marker 原序输出（第 i 颗的子路径挨在一起），不按分档的计算顺序：
+    # 测试与排障都指望「第 i 条路径就是第 i 颗点」，而分档只是计算上的分组
+    slot: dict[int, list[tuple]] = {}
+    for pi, b, mine in groups:
+        subs = level(pi, b)
+        if not subs:
+            continue
+        mats = rel[mine % n_tr] if n_tr else rel[np.zeros(len(mine), dtype=int)]
+        shift = toffs[mine % n_off] if n_off else np.zeros((len(mine), 2))
+        for pts, closed in subs:
+            hom = np.column_stack([pts, np.ones(len(pts))])
+            # (n,3,3) × (K,3) → (n,K,3)：每颗 marker 一份顶点
+            moved = np.einsum("nij,kj->nki", mats, hom)[:, :, :2] + shift[:, None, :]
+            for j, i in enumerate(mine.tolist()):
+                slot.setdefault(i, []).append((moved[j], closed))
+    return [sub for i in sorted(slot) for sub in slot[i]]
+
+
 def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
     """一个 artist 的路径几何；不支持的类型返回 None（前端退回 bbox）。
 
-    **散点（PathCollection）刻意不给**：每个 marker 一条小路径，几百个点位
-    就是几百条路径，既撑爆 manifest 也没人真的需要沿单个 marker 描边。
-    散点继续用 bbox，这是**有意的降级**，不是遗漏（见 tests 里的同名断言）。
-    **箭头（FancyArrowPatch）也不给**：它有自己的 `arrow_endpoints` 契约
+    **散点（PathCollection）给的是每一颗 marker 的轮廓**（2026-09-06，用户
+    反馈：选中散点时罩一个大矩形、而不是像曲线那样描出各个点）。标记数超过
+    `SCATTER_MAX_MARKERS` 整组退回 bbox，是**有意的降级**，stderr 上说明。
+    **箭头（FancyArrowPatch）不给**：它有自己的 `arrow_endpoints` 契约
     （端点手柄、沿线命中、shift 锁角），通用 geometry 插进来只会两套并存。
     """
     try:
         if isinstance(artist, FancyArrowPatch):
             return None
+        if isinstance(artist, PathCollection):
+            subs = _marker_subpaths(artist, budget)
+            if subs is None:
+                n = max(len(artist.get_paths()), len(np.atleast_2d(artist.get_offsets())))
+                print(
+                    f"[geometry] 散点 {n} 个标记超过 SCATTER_MAX_MARKERS="
+                    f"{SCATTER_MAX_MARKERS}，退回 bbox",
+                    file=sys.stderr,
+                )
+                return None
+            lw = np.asarray(artist.get_linewidths(), dtype=float).ravel()
+            lw_max = float(lw.max()) if lw.size else 0.0
+            return _pack(
+                subs,
+                W,
+                H,
+                # 'x' / '+' 这类不闭合的 marker 没有内部可填：facecolor 在集合上
+                # 照样有值（scatter 把 edgecolors 设成 'face'），但填充语义不成立
+                fill=_has_paint(artist.get_facecolor()) and any(c for _, c in subs),
+                stroke=_has_paint(artist.get_edgecolor()) and lw_max > 0,
+                # 逐颗线宽可以不同，命中容差取最宽的那颗（宁可多容一点）
+                stroke_pt=lw_max,
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+                thinned=True,
+            )
         if isinstance(artist, Line2D):
             # 只有 marker、没有连线的 Line2D（`plot(..., ls="None", marker="o")`）
             # 画出来的墨迹是一颗颗点，那条穿过它们的折线图上根本不存在——
