@@ -225,15 +225,19 @@ def test_log_tail_is_this_generation_only_and_decoded_as_utf8(tmp_path):
     """日志目录跨代复用、append 模式：尾部只取这一代之后的字节；按 UTF-8 解码。"""
     log = tmp_path / "worker.log"
     log.write_bytes("上一代: [ERROR] 旧的原因\n".encode("utf-8"))
-    offset = pool._log_size(log)
+    offset = pool._log_size(log, tmp_path)
     with log.open("ab") as f:
         f.write("这一代: 温度 25 µm\n".encode("utf-8") + b"\xff bad byte\n")
-    tail = pool._log_tail_from(log, offset)
+    tail = pool._log_tail_from(log, offset, root=tmp_path)
     assert "上一代" not in tail
     assert "温度 25 µm" in tail
     assert "bad byte" in tail  # 坏字节替换而不是抛
-    assert pool._log_tail_from(log, 0).startswith("上一代")
-    assert pool._log_tail_from(tmp_path / "missing.log", 0) == ""
+    assert pool._log_tail_from(log, 0, root=tmp_path).startswith("上一代")
+    assert pool._log_tail_from(tmp_path / "missing.log", 0, root=tmp_path) == ""
+    # 路径钉在根之内：根之外（默认根是 ENGINE_CACHE）一个字节都不读
+    assert pool._log_tail_from(log, 0) == ""
+    assert pool._log_size(log) == 0
+    assert pool._log_tail_from(log, 0, root=tmp_path / "elsewhere") == ""
 
 
 def test_a_plain_unknown_stem_is_left_alone():

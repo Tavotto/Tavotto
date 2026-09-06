@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -337,14 +338,37 @@ NO_FIGURES_CODE = "no_figures_captured"
 NO_FIGURES_SILENT_CODE = "no_figures_captured_silent"
 
 
-def _log_size(path: Path) -> int:
+def _contained_log(path: Path, root: Path | None) -> str | None:
+    """worker.log 的路径钉在 `root`（默认 `ENGINE_CACHE`）之内，回 realpath；越界回 None。
+
+    路径由 (项目, 脚本) 经 `_cache_slug` 拼出来，脚本名来自 HTTP 请求：
+    `_cache_slug` 的正则已经把分隔符洗掉了，但「洗过了」与「用的是洗过的那一个」
+    是两件事——读之前按真身判一次包含（CodeQL py/path-injection 认的正是
+    realpath + 前缀这一对，与 `ai_agents.validate_executable` 同一套闸）。
+    池里的会话与 `one_shot()` 的重放目录都在 `ENGINE_CACHE` 下；单测的临时
+    目录显式传 `root`。
+    """
     try:
-        return path.stat().st_size
+        real = os.path.realpath(path)
+        real_root = os.path.realpath(root if root is not None else ENGINE_CACHE)
+    except (OSError, ValueError):
+        return None
+    if not real.startswith(real_root + os.sep):
+        return None
+    return real
+
+
+def _log_size(path: Path, root: Path | None = None) -> int:
+    real = _contained_log(path, root)
+    if real is None:
+        return 0
+    try:
+        return os.stat(real).st_size
     except OSError:
         return 0
 
 
-def _log_tail_from(path: Path, offset: int, n: int = 30) -> str:
+def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = None) -> str:
     """worker.log 里**这一代**的最后 `n` 行。
 
     日志按 (项目, 脚本) 落在稳定目录里、两条控制面都是 append 模式：不记
@@ -353,8 +377,12 @@ def _log_tail_from(path: Path, offset: int, n: int = 30) -> str:
     ——`read_text()` 不带 encoding 在 cp936 的 Windows 上会把中文与 `µ` 读成
     乱码，而这段文本正是要给用户看的。
     """
+    real = _contained_log(path, root)
+    if real is None:
+        return ""
     try:
-        data = path.read_bytes()
+        with open(real, "rb") as f:
+            data = f.read()
     except OSError:
         return ""
     text = data[max(0, offset) :].decode("utf-8", errors="replace")
