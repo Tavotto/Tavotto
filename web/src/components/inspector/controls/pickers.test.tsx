@@ -125,6 +125,187 @@ describe('MarkerPicker', () => {
   })
 })
 
+/* ------------------- MarkerPicker：引擎发来的「真实形状」 ------------------- */
+
+const trig = () => host.querySelector('button[aria-label="标记"]') as HTMLButtonElement
+
+/** 一个 5 顶点的闭合三角（单位框 [-0.5, 0.5]，y 向上） */
+const TRIANGLE = {
+  kind: 'path',
+  vertices: [
+    [0, 0.5],
+    [0.5, -0.5],
+    [-0.5, -0.5],
+    [0, 0],
+  ],
+  codes: [1, 2, 2, 79],
+} as const
+
+describe('MarkerPicker：脚本原始也画得出真实形状', () => {
+  it('值 = original 且引擎认出名字：画那个图形，继承状态点仍在', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    // 形状与状态点是**并列**的两件事：形状说图上是个圆，状态点说这是继承来的
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    // 文字名把形状也说出来（网格里那一格的可达名与 tooltip 同一份）
+    expect(trig().textContent).toContain('脚本原始')
+    expect(trig().textContent).toContain('圆点')
+  })
+
+  it('引擎只给几何时照顶点画，路径码逐个翻成 SVG 指令', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    const d = trig().querySelector('[data-marker-preview] path')!.getAttribute('d')!
+    // y 要翻过来：引擎的 y 向上，SVG 的 y 向下 —— 顶点 (0, 0.5) 必须落在**上**边
+    expect(d.startsWith('M6.00 1.80')).toBe(true)
+    expect(d).toContain('L10.20 10.20')
+    expect(d).toContain('L1.80 10.20')
+    expect(d.endsWith('Z')).toBe(true)
+    // 同时填充与描边：开放子路径与来回穿过中心的闭合路径填出来都是零面积
+    const path = trig().querySelector('[data-marker-preview] path')!
+    expect(path.getAttribute('fill')).toBe('currentColor')
+    expect(path.getAttribute('stroke')).toBe('currentColor')
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+  })
+
+  it('codes 为 null = 首点 MOVETO 其余 LINETO，不是「没有路径」', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original']}
+        current={{ kind: 'path', vertices: [[-0.5, -0.5], [0.5, 0.5]], codes: null }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview] path')!.getAttribute('d')).toBe(
+      'M1.80 10.20 L10.20 1.80',
+    )
+  })
+
+  it('多个形状：不画其中任何一个，文字说「多个形状」', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o']}
+        current={{ kind: 'multiple' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(trig().textContent).toContain('多个形状')
+  })
+
+  it('引擎没发事实（老引擎）：退回只有继承状态点，一个字节不变', async () => {
+    await mount(
+      <MarkerPicker value="original" options={['original', 'o']} onChange={() => {}} ariaLabel="标记" />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(trig().textContent).toContain('脚本原始')
+  })
+
+  it('too_complex / none 都不画形状：没有「那一个形状」可画', async () => {
+    for (const current of [{ kind: 'too_complex' } as const, { kind: 'none' } as const]) {
+      await mount(
+        <MarkerPicker
+          value="original"
+          options={['original']}
+          current={current}
+          onChange={() => {}}
+          ariaLabel="标记"
+        />,
+      )
+      expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+      await act(async () => {
+        root?.unmount()
+      })
+      root = null
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('引擎给了这边画不出的名字：退回代码字样，不画错一个形状', async () => {
+    await mount(
+      <MarkerPicker
+        value={'$\\odot$'}
+        options={['None', 'o']}
+        current={{ kind: 'named', name: 'H' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().textContent).toContain('$\\odot$')
+  })
+
+  it('认不出的取值 + 几何：画形状，代码仍在文字里（不丢失）', async () => {
+    await mount(
+      <MarkerPicker
+        value="(5, 1, 0)"
+        options={['None', 'o']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview] path')).toBeTruthy()
+    expect(trig().textContent).toContain('(5, 1, 0)')
+  })
+
+  it('事实只描述当前值那一格：别的格子照旧', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await act(async () => {
+      trig().click()
+    })
+    // 当前那一格（脚本原始）画的是引擎发来的三角
+    const cur = radios().find((r) => r.getAttribute('aria-checked') === 'true')!
+    expect(cur.querySelector('[data-marker-preview] path')!.getAttribute('d')).toContain(
+      'M6.00 1.80',
+    )
+    // 方块那一格仍是方块，没被事实污染
+    expect(radioByLabel('方块')!.querySelector('[data-marker-preview] rect')).toBeTruthy()
+  })
+
+  it('取值自己就是已知图形时不补那半句（「圆点（圆点）」是噪音）', async () => {
+    await mount(
+      <MarkerPicker
+        value="o"
+        options={['None', 'o']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().textContent).toBe('圆点')
+  })
+})
+
 describe('HatchPicker', () => {
   it('空串是「无」，known 纹理有缩略图，点击写原始串', async () => {
     const onChange = vi.fn()

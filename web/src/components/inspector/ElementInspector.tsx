@@ -23,7 +23,7 @@ import {
 import type { AlignMode } from '@/lib/geometry'
 import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
 import { ENVIRONMENT_CODES } from '@/lib/api'
-import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
+import type { EditableField, Manifest, ManifestElement, MarkerShape } from '@/lib/api'
 import { requestRender } from '@/hooks/useEngineSync'
 import { useQuickEdit } from '@/canvas/quickEditStore'
 import { formatNumberList, parseNumberList } from '@/lib/numberList'
@@ -1498,6 +1498,25 @@ function BatchSection({
   )
 }
 
+/**
+ * 多选时的标记形状事实：**全体一致才给**。
+ *
+ * 两个散点都还是「脚本原始」，图上却一个是圆一个是方——拿第一个的形状去画
+ * 就是替另一个撒谎。取值一致（这一行没显示「多个值」）不等于形状一致，
+ * 那是两个不同的维度。不一致就整个不给，退回只有状态点的样子。
+ */
+function sharedMarkerShape(
+  elements: ManifestElement[],
+  prop: string,
+): MarkerShape | undefined {
+  const facts = elements.map(
+    (el) => el.editable.find((f) => f.prop === prop)?.marker_current,
+  )
+  if (!facts.length || facts[0] === undefined) return undefined
+  const head = JSON.stringify(facts[0])
+  return facts.every((f) => JSON.stringify(f) === head) ? facts[0] : undefined
+}
+
 function BatchFieldRow({
   panel,
   elements,
@@ -1613,7 +1632,15 @@ function BatchFieldRow({
             case 'line-style':
               return <LineStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'marker':
-              return <MarkerPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+              return (
+                <MarkerPicker
+                  value={v}
+                  options={opts}
+                  current={sharedMarkerShape(elements, field.prop)}
+                  onChange={writeOnce}
+                  ariaLabel={label}
+                />
+              )
             case 'hatch':
               return <HatchPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'colormap':
@@ -1853,6 +1880,7 @@ function FieldRow({
         <MarkerPicker
           value={enumValue}
           options={enumOptions}
+          current={field.marker_current}
           onChange={writeOnce}
           ariaLabel={label}
         />,
