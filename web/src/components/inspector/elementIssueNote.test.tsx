@@ -1,12 +1,12 @@
 /**
- * 缺字提示就地出现在被选文字旁边（审计 T14）。
+ * 被选元素上的问题就地出现在它旁边（审计 T14）。
  *
  * 要钉住的：
- *   1. 只有落在**这个元素**上的 `glyph-missing` / `glyph-substituted` 才出现——
- *      别的元素、别的规则一条都不进来；
+ *   1. 只有落在**这个元素**上的问题才出现——别的元素、别的面板一条都不进来；
+ *      但**任何规则**都算（缺字、字号、超出图幅…），不只认字形那两条；
  *   2. 措辞是问题面板同一句成文（含逐字列出的那几个字），不另写第二套；
- *   3. 「更换字体」把焦点送到字体那一行（`data-prop="fontfamily"`）；
- *      元素没有字体字段时只提示、不给按钮；
+ *   3. 出口按规则给：能修 → 问题面板同一颗「修复」；字形 → 「更换字体」（焦点落到
+ *      字体那一行）；说得出字段 → 「定位到字段」；说不出 → 「在问题面板查看」；
  *   4. 提示排在内容框之后、文字样式行之前。
  */
 import { literal, msg } from '@/i18n'
@@ -27,7 +27,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ElementInspector } from './ElementInspector'
-import { glyphIssuesFor } from './GlyphIssueNote'
+import { issuesForElement } from './ElementIssueNote'
 
 const engineRender = vi.fn()
 
@@ -50,7 +50,7 @@ const f = (prop: string, type: EditableField['type'], value: unknown, extra = {}
 
 const textFields = (withFamily: boolean) => [
   f('text', 'text', '我是'),
-  f('fontsize', 'number', 9, { min: 3, max: 36, step: 0.5, unit: 'pt' }),
+  f('fontsize', 'number', 6, { min: 3, max: 36, step: 0.5, unit: 'pt' }),
   f('color', 'color', '#000000'),
   f('weight', 'enum', 'normal', { options: ['normal', 'bold'] }),
   ...(withFamily
@@ -58,8 +58,9 @@ const textFields = (withFamily: boolean) => [
     : []),
 ]
 
+const ENTRY = 'axes_0.legend.texts_0'
 const legendText = (withFamily = true): ManifestElement => ({
-  gid: 'axes_0.legend.texts_0',
+  gid: ENTRY,
   role: 'legend_text',
   label: '图例项 “我是”',
   bbox: [0.3, 0.2, 0.3, 0.05],
@@ -107,34 +108,60 @@ const livePanel = (): PanelObject => {
   if (p?.type !== 'panel') throw new Error('测试面板没了')
   return p
 }
+const overrideOf = (prop: string) =>
+  livePanel().overrides.find((o) => o.gid === ENTRY && o.prop === prop)?.value
 
-/** 与 `lib/validation.ts` 接出来的一条 glyph 问题同形（只填这里读得到的字段） */
-const issueOf = (
-  rule: 'glyph-missing' | 'glyph-substituted',
+/** 与 `lib/validation.ts` 接出来的问题同形（只填这里读得到的字段） */
+const baseIssue = (
+  rule: string,
   gid: string,
-  chars: string,
+  over: Partial<ValidationIssue> = {},
   objectId = 'p1',
 ): ValidationIssue => ({
-  issueId: `${rule}|c|${objectId}|${gid}|fontfamily`,
+  issueId: `${rule}|c|${objectId}|${gid}|${over.propertyPath ?? ''}`,
   ruleCode: rule,
-  severity: rule === 'glyph-missing' ? 'error' : 'suggestion',
+  severity: 'warn',
   context: 'document',
   objectRef: {
-    documentId: 'd_glyph_note',
+    documentId: 'd_element_issues',
     canvasId: useDocumentStore.getState().activeCanvasId,
     objectId,
     gid,
   },
   subject: { kind: 'element', elementRole: 'legend_text', elementLabel: '图例项' },
-  propertyPath: 'fontfamily',
-  message: msg(
-    rule === 'glyph-missing' ? 'preflight.glyphMissing' : 'preflight.glyphSubstituted',
-    { chars, count: String(chars.length) },
-    'errors',
-  ),
-  technicalDetails: { chars: [...chars], family: 'sans-serif' },
+  propertyPath: null,
+  message: msg('preflight.fontTooSmall', { effective: '6.00', min: '8' }, 'errors'),
+  technicalDetails: {},
   fixKind: 'none',
+  ...over,
 })
+
+const glyphIssue = (rule: 'glyph-missing' | 'glyph-substituted', gid: string, chars: string, objectId = 'p1') =>
+  baseIssue(rule, gid, {
+    severity: rule === 'glyph-missing' ? 'error' : 'suggestion',
+    propertyPath: 'fontfamily',
+    message: msg(
+      rule === 'glyph-missing' ? 'preflight.glyphMissing' : 'preflight.glyphSubstituted',
+      { chars, count: String(chars.length) },
+      'errors',
+    ),
+    technicalDetails: { chars: [...chars], family: 'sans-serif' },
+  }, objectId)
+
+/** 字号偏小：safe_auto，计划由 `planFontUp` 现算 */
+const fontIssue = (gid: string) =>
+  baseIssue('font-too-small', gid, {
+    propertyPath: 'fontsize',
+    technicalDetails: { effective_pt: 6, min_pt: 8 },
+    fixKind: 'safe_auto',
+  })
+
+/** 同事 geom 正在加的那类：元素超出图幅，导出会被裁切——error、不能自动修、说不出字段 */
+const clippedIssue = (gid: string) =>
+  baseIssue('element-outside-figure', gid, {
+    severity: 'error',
+    message: literal('这个元素超出图幅，导出时会被裁掉'),
+  })
 
 let root: Root
 let host: HTMLDivElement
@@ -161,7 +188,7 @@ async function mount(entry: ManifestElement, gid: string, issues: ValidationIssu
   useRenderStore.setState({ latest: { 'Fig2.pdf': renderKeyOf(livePanel()) } })
   engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
   useValidationStore.setState({ issues, ready: true, failed: false })
-  useUiStore.setState({ elementPanelId: 'p1', selectedGids: [gid] })
+  useUiStore.setState({ elementPanelId: 'p1', selectedGids: [gid], leftOpen: false, leftTab: 'assets' })
   host = document.createElement('div')
   document.body.appendChild(host)
   const svgHost = document.createElement('div')
@@ -174,7 +201,18 @@ async function mount(entry: ManifestElement, gid: string, issues: ValidationIssu
   })
 }
 
-const note = () => host.querySelector('[data-glyph-note]')
+const note = () => host.querySelector('[data-element-issues]')
+const rows = () =>
+  Array.from(note()?.querySelectorAll('[data-element-issue]') ?? []).map((r) => r.getAttribute('data-element-issue'))
+const buttonsIn = (row: Element) => Array.from(row.querySelectorAll('button')).map((b) => b.textContent?.trim())
+const rowOf = (rule: string) => note()!.querySelector(`[data-element-issue="${rule}"]`)!
+
+async function click(el: Element | null) {
+  ;(document.activeElement as HTMLElement | null)?.blur()
+  await act(async () => {
+    ;(el as HTMLElement).click()
+  })
+}
 
 beforeEach(async () => {
   engineRender.mockReset()
@@ -185,7 +223,7 @@ beforeEach(async () => {
   document.body.innerHTML = ''
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
-  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_glyph_note')
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_element_issues')
   useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf())
   })
@@ -201,43 +239,43 @@ afterEach(async () => {
   resetPreview()
 })
 
-describe('glyphIssuesFor：只认落在这个元素上的两条字形规则', () => {
-  it('别的元素 / 别的面板 / 别的规则都不进来', () => {
-    const mine = issueOf('glyph-missing', 'axes_0.legend.texts_0', '我是')
-    const other = issueOf('glyph-missing', 'axes_0.title', '我')
-    const otherPanel = issueOf('glyph-substituted', 'axes_0.legend.texts_0', '是', 'p2')
-    const notGlyph = { ...mine, ruleCode: 'font-too-small', issueId: 'x' }
-    expect(glyphIssuesFor([other, notGlyph, mine, otherPanel], 'p1', 'axes_0.legend.texts_0')).toEqual([mine])
+describe('issuesForElement：按对象 + gid 取，规则不限', () => {
+  it('别的元素 / 别的面板不进来；缺字、字号、裁切三种规则都算', () => {
+    const mine = [glyphIssue('glyph-missing', ENTRY, '我是'), fontIssue(ENTRY), clippedIssue(ENTRY)]
+    const other = glyphIssue('glyph-missing', 'axes_0.title', '我')
+    const otherPanel = glyphIssue('glyph-substituted', ENTRY, '是', 'p2')
+    expect(issuesForElement([other, ...mine, otherPanel], 'p1', ENTRY)).toEqual(mine)
   })
 })
 
 describe('就地提示', () => {
   it('选中出问题的图例项：提示出现，逐字列出画不出来的字，带「更换字体」', async () => {
     const entry = legendText()
-    await mount(entry, entry.gid, [issueOf('glyph-missing', entry.gid, '我是')])
+    await mount(entry, entry.gid, [glyphIssue('glyph-missing', entry.gid, '我是')])
     const n = note()
     expect(n).not.toBeNull()
     expect(n!.textContent).toContain('我是')
     expect(n!.textContent).toContain('画不出来')
-    expect(n!.querySelector('[data-glyph-rule="glyph-missing"]')).not.toBeNull()
-    expect(Array.from(n!.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['更换字体'])
+    expect(rows()).toEqual(['glyph-missing'])
+    expect(buttonsIn(rowOf('glyph-missing'))).toEqual(['更换字体'])
   })
 
-  it('换脸画出来的是另一句、另一种语气；两条同时在就两行', async () => {
+  it('换脸画出来的是另一句；三条同时在就三行，各带各的出口', async () => {
     const entry = legendText()
     await mount(entry, entry.gid, [
-      issueOf('glyph-missing', entry.gid, '我'),
-      issueOf('glyph-substituted', entry.gid, '是'),
+      glyphIssue('glyph-missing', entry.gid, '我'),
+      glyphIssue('glyph-substituted', entry.gid, '是'),
+      clippedIssue(entry.gid),
     ])
-    const rules = Array.from(note()!.querySelectorAll('[data-glyph-rule]')).map((p) =>
-      p.getAttribute('data-glyph-rule'),
-    )
-    expect(rules).toEqual(['glyph-missing', 'glyph-substituted'])
+    expect(rows()).toEqual(['glyph-missing', 'glyph-substituted', 'element-outside-figure'])
+    expect(buttonsIn(rowOf('glyph-substituted'))).toEqual(['更换字体'])
+    // 超出图幅：不能自动修、说不出字段 → 去问题面板
+    expect(buttonsIn(rowOf('element-outside-figure'))).toEqual(['在问题面板查看'])
   })
 
   it('问题落在别的元素上时不出现', async () => {
     const entry = legendText()
-    await mount(entry, entry.gid, [issueOf('glyph-missing', 'axes_0.title', '我')])
+    await mount(entry, entry.gid, [glyphIssue('glyph-missing', 'axes_0.title', '我')])
     expect(note()).toBeNull()
   })
 
@@ -249,30 +287,51 @@ describe('就地提示', () => {
 
   it('「更换字体」把焦点送到字体那一行', async () => {
     const entry = legendText()
-    await mount(entry, entry.gid, [issueOf('glyph-missing', entry.gid, '我是')])
-    const btn = note()!.querySelector('button') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
+    await mount(entry, entry.gid, [glyphIssue('glyph-missing', entry.gid, '我是')])
+    await click(rowOf('glyph-missing').querySelector('button'))
     const fontRow = host.querySelector('[data-prop="fontfamily"]')
     expect(fontRow).not.toBeNull()
     expect(fontRow!.contains(document.activeElement)).toBe(true)
   })
 
-  it('元素没有字体字段：只提示、不给按钮', async () => {
+  it('元素没有字体字段：字形问题只提示、不给按钮', async () => {
     const entry = legendText(false)
-    await mount(entry, entry.gid, [issueOf('glyph-missing', entry.gid, '我是')])
+    await mount(entry, entry.gid, [glyphIssue('glyph-missing', entry.gid, '我是')])
     expect(note()).not.toBeNull()
-    expect(note()!.querySelector('button')).toBeNull()
+    expect(buttonsIn(rowOf('glyph-missing'))).toEqual([])
+  })
+
+  it('能自动修的（字号偏小）给问题面板同一颗「修复」，点下去真的写 override', async () => {
+    const entry = legendText()
+    await mount(entry, entry.gid, [fontIssue(entry.gid)])
+    expect(buttonsIn(rowOf('font-too-small'))).toEqual(['修复'])
+    await click(rowOf('font-too-small').querySelector('button'))
+    // planFontUp：默认规范下限 8pt、边不含等号 → 8.5；面板 1:1 不换算
+    expect(overrideOf('fontsize')).toBe(8.5)
+  })
+
+  it('「在问题面板查看」打开左侧问题页', async () => {
+    const entry = legendText()
+    await mount(entry, entry.gid, [clippedIssue(entry.gid)])
+    await click(rowOf('element-outside-figure').querySelector('button'))
+    const ui = useUiStore.getState()
+    expect(ui.leftOpen && ui.leftTab === 'problems').toBe(true)
+  })
+
+  it('说得出字段但不能自动修的：给「定位到字段」', async () => {
+    const entry = legendText()
+    await mount(entry, entry.gid, [
+      baseIssue('text-weight-policy', entry.gid, { propertyPath: 'weight', message: literal('字重不合规范') }),
+    ])
+    expect(buttonsIn(rowOf('text-weight-policy'))).toEqual(['定位到字段'])
   })
 
   it('提示排在内容框之后、字体那一行之前', async () => {
     const entry = legendText()
-    await mount(entry, entry.gid, [issueOf('glyph-missing', entry.gid, '我是')])
+    await mount(entry, entry.gid, [glyphIssue('glyph-missing', entry.gid, '我是')])
     const content = host.querySelector('[data-prop="text"]')!
     const fontRow = host.querySelector('[data-prop="fontfamily"]')!
     const n = note()!
-    // compareDocumentPosition：FOLLOWING = 4
     expect(content.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(n.compareDocumentPosition(fontRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })

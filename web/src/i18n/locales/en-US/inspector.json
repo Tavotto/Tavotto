@@ -204,6 +204,8 @@
     "howItWorksTrigger": "Where are my edits saved?",
     "howOverrideBody": "These never touch the script file. On every render your changes are layered on top of the script's output; they live in the layout document, go through the undo stack, and \"Reset figure edits\" clears them in one step. On export they are sent to the engine with the panel and re-rendered as full-quality vector.",
     "howOverrideTitle": "Figure edits (overrides)",
+    "issueLocateField": "Go to field",
+    "issueOpenPanel": "Open in problems",
     "imageHint": "Position and size belong to the host axes; colour and visibility belong to this image.",
     "keptPrevious": "The previous image is still shown",
     "mixedValues": "Mixed",

@@ -2187,6 +2187,8 @@ export default interface Resources {
       "howOverrideBody": "不动脚本文件。每次渲染时把你的改动叠加到脚本输出之上，存在布局文档里，进撤销栈，「重置图内修改」可一次清空。导出时会随面板一起发给引擎，按全质量重出矢量。",
       "howOverrideTitle": "图内修改（override）",
       "imageHint": "位置和大小属于宿主子图；颜色与显示属于当前图像。",
+      "issueLocateField": "定位到字段",
+      "issueOpenPanel": "在问题面板查看",
       "keptPrevious": "已保留上一版图像",
       "mixedValues": "多个值",
       "modified": "已修改",

@@ -114,7 +114,7 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
-import { GlyphIssueNote } from './GlyphIssueNote'
+import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { legendEntryElements } from '@/lib/legendModel'
@@ -354,7 +354,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
-            primaryNote={element ? <GlyphIssueNote panel={panel} element={element} /> : null}
+            primaryNote={element ? <ElementIssueNote panel={panel} element={element} /> : null}
             primaryExtra={
               sideHost && element ? (
                 <TickControl
@@ -630,7 +630,7 @@ function FieldList({
   buckets: { primary: PresentedField[]; more: PresentedField[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
-  /** 紧跟在 primary 行（内容框）后面的就地提示（缺字问题），排在文字样式行之前 */
+  /** 紧跟在 primary 行（内容框）后面的就地提示（落在这个元素上的问题），排在文字样式行之前 */
   primaryNote?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
