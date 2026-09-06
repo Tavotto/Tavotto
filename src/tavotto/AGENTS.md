@@ -134,6 +134,14 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `<沙盒>/x.png`——CompatBench 的 minimum 档抓到的正是这个。存在性判据
     **必须按真正的 open 会用的那条路径走**，拿沙盒根去拼的话，脚本
     `os.chdir()` 进子目录后自己写出来的中间结果会被无声换成图库里的原件。
+  * **回退只覆盖 `open` 三个入口**：`os.path.exists` / `os.stat` / `glob` /
+    `os.listdir` 与任何 C++ 读取器（ovito、h5py 的原生打开）都在盲区。用
+    `exists()` 先判再 `open()` 的脚本在沙盒里会把「数据不存在」当真、跳过
+    全部分析、一张图都不画——那时 `known == []` 的 `unknown_stem` 由
+    `pool._explain_empty_capture` 换成 **`no_figures_captured`**，消息说清
+    「脚本跑完但没出图」，worker.log 的尾部进 `traceback_text`（前端错误块
+    的折叠区直接显示）。**只认显式为空的 `known` 列表**：字段缺失分不清
+    「没有」和「没说」。两条控制面各接一处（`_error_of` / `_to_worker_error`）。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python

@@ -327,7 +327,35 @@ class WorkerError(RuntimeError):
         self.script_name = ""
 
 
+#: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
+#: 那边它只是一个普通 `unknown_stem`（`known == []`），但对用户是完全不同的
+#: 一件事：脚本自己多半已经说了为什么（「文件未找到」「没有数据，无法绘图」），
+#: 那几行就在 worker.log 里——报「stem 不存在」等于把答案藏起来。
+NO_FIGURES_CODE = "no_figures_captured"
+
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
+
+
+def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail: str):
+    """`unknown_stem` 且 **`known == []`** → 换成 `no_figures_captured`，带上脚本自己的输出。
+
+    只认**显式为空的列表**：`known` 缺失（老 worker / 精简错误体）分不清
+    「一张都没有」和「没告诉我」，那时维持原样——把一个普通的 stem 拼错
+    报成「脚本没出图」是另一种误导。脚本输出走 `traceback_text`：前端的
+    错误块本来就有一个折叠区显示它，不用新造一块。
+    """
+    if err.code != "unknown_stem" or not (isinstance(known, list) and not known):
+        return err
+    out = WorkerError(
+        f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
+        "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
+        "或分析在画图之前就结束了。",
+        log_tail.strip() or "（脚本没有任何输出）",
+        code=NO_FIGURES_CODE,
+    )
+    out.extra = getattr(err, "extra", {}) or {}
+    out.script_name = script_name
+    return out
 
 
 def missing_module(text: str) -> str:
@@ -913,7 +941,11 @@ class EngineWorker:
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
             return exc
-        return WorkerError(msg, tb, code=code)
+        out = WorkerError(msg, tb, code=code)
+        # v1 信封把 `extra` 平铺进 error 对象（`wireproto`：`err.update(exc.extra)`），
+        # legacy 的扁平形状则在响应顶层。
+        known = err.get("known") if isinstance(err, dict) else resp.get("known")
+        return _explain_empty_capture(out, self.script_name, known, self._log_tail())
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -1377,7 +1409,10 @@ class WorkerdWorker:
         err = _worker_error(str(exc), code, tb, exc.extra)
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
-        return err
+        # ……「脚本跑完没出图」也是同一条纪律：workerd 把 `known` 透传在 extra 里
+        return _explain_empty_capture(
+            err, self.script_name, (exc.extra or {}).get("known"), self._log_tail()
+        )
 
     def _call(
         self, op: str, timeout: float, *, stem: str | None = None, payload: dict | None = None

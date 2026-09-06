@@ -201,6 +201,56 @@ def test_ordinary_errors_keep_their_code_and_traceback():
     assert err.extra["known"] == ["Fig1"]
 
 
+def test_zero_captured_figures_get_their_own_code_and_the_script_output():
+    """脚本跑完一张图都没有时，`unknown_stem` 等于把答案藏起来。
+
+    真实来源（2026-09-06）：九个 ovito 脚本用 `os.path.exists("1/…")` 找数据，
+    沙盒 cwd 下全部「未找到」→ 零张图 → 界面只说「stem 不存在」，而脚本自己
+    那句「[ERROR] 文件未找到」就躺在 worker.log 里。
+    """
+    base = pool._worker_error("stem 不存在: nope", "unknown_stem", "", {"known": []})
+    err = pool._explain_empty_capture(base, "run_all.py", [], "[INFO] 开始\n[ERROR] 文件未找到")
+    assert err.code == pool.NO_FIGURES_CODE == "no_figures_captured"
+    assert "run_all.py" in str(err) and "没有产生任何图" in str(err)
+    assert err.traceback_text.endswith("[ERROR] 文件未找到")
+    assert err.script_name == "run_all.py"
+    # 什么都没打印也要有一句占位，折叠区不能是空的
+    assert pool._explain_empty_capture(base, "x.py", [], "").traceback_text
+
+
+def test_a_plain_unknown_stem_is_left_alone():
+    """有别的图、只是名字不对 → 仍是 `unknown_stem`；`known` 缺失也不动。"""
+    for known in (["Fig1"], None):
+        base = pool._worker_error("stem 不存在: nope", "unknown_stem", "tb", {"known": known})
+        err = pool._explain_empty_capture(base, "x.py", known, "log")
+        assert err is base and err.code == "unknown_stem"
+    other = pool._worker_error("boom", "script_error", "tb", {"known": []})
+    assert pool._explain_empty_capture(other, "x.py", [], "log") is other
+
+
+def test_workerd_side_gives_the_same_answer_for_zero_figures(monkeypatch, tmp_path):
+    """两条控制面在「脚本跑完没出图」上必须给同一个答案。"""
+    w, _ = _worker(
+        monkeypatch,
+        tmp_path,
+        [
+            {"ok": True, "session_id": "s-1"},
+            {"ok": True, "stems": {}},
+            workerd_client.WorkerdError(
+                "stem 不存在: impact", code="unknown_stem", extra={"known": []}
+            ),
+        ],
+    )
+    w.log_path.parent.mkdir(parents=True, exist_ok=True)
+    w.log_path.write_text("[ERROR] 文件未找到!\n", encoding="utf-8")
+    w.ensure_built()
+    with pytest.raises(pool.WorkerError) as e:
+        w.override("impact", [])
+    assert e.value.code == pool.NO_FIGURES_CODE
+    assert "[ERROR] 文件未找到!" in e.value.traceback_text
+    assert w.alive(), "这不是会话故障，不该标死"
+
+
 class _FakeClient:
     """只实现 `WorkerdWorker` 用到的那一个方法。"""
 
