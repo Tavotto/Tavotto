@@ -436,12 +436,11 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
   beforeEach(reset)
   const panelsInDoc = () => s().doc.objects.filter((o) => o.type === 'panel')
 
-  it('编辑已经在文档里的图：不新增对象、不进历史、不置 dirty、不弹「已加入」', () => {
+  it('编辑已经在文档里的图：不新增对象、不进历史、不置 dirty、不挂「刚加入」说明', () => {
     const stopAutosave = startAutosave()
     addFigureToLayout('a.pdf')
     returnToLayout()
     useDocumentStore.setState({ dirty: false })
-    useUiStore.setState({ status: null })
     const past = s().past.length
 
     expect(openFastEdit('a.pdf')).toBe('editing')
@@ -449,7 +448,7 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
     expect(panelsInDoc()).toHaveLength(1)
     expect(s().past.length).toBe(past)
     expect(s().dirty).toBe(false)
-    expect(useUiStore.getState().status).toBeNull()
+    expect(ws().addedForEdit).toBeNull()
     stopAutosave()
   })
 
@@ -464,20 +463,33 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
     expect(panelsInDoc()).toHaveLength(1)
     expect(s().past.length).toBe(past + 1)
     expect(s().dirty).toBe(true)
-    // 那一步必须说出口：用户点的是"编辑"，文档却多了一个对象
-    expect(useUiStore.getState().status).toMatchObject({
-      key: 'fastEdit.addedForEdit',
-      ns: 'workspace',
-      values: { name: 'a' },
-    })
-    expect(useUiStore.getState().statusTone).toBe('info')
+    // 那一步必须说出口：用户点的是"编辑"，文档却多了一个对象——浮动条据此常驻说明
+    expect(ws().addedForEdit).toBe(panelOf('a.pdf').id)
 
     s().undo()
     expect(panelsInDoc()).toHaveLength(0)
     expect(ws().mode).toBe('layout')
+    expect(ws().addedForEdit).toBeNull()
     expect(useUiStore.getState().elementPanelId).toBeNull()
     stopAutosave()
     stopPrune()
+  })
+
+  it('说明只属于这一次进入：回排版即清；再进同一张（已在文档里）不再挂', () => {
+    openFastEdit('a.pdf')
+    expect(ws().addedForEdit).toBe(panelOf('a.pdf').id)
+    returnToLayout()
+    expect(ws().addedForEdit).toBeNull()
+    openFastEdit('a.pdf')
+    expect(ws().addedForEdit).toBeNull()
+  })
+
+  it('换到另一张（也是刚加入的）说明跟着换；换到已在文档里的那张就没有', () => {
+    openFastEdit('a.pdf')
+    openFastEdit('b.pdf')
+    expect(ws().addedForEdit).toBe(panelOf('b.pdf').id)
+    openFastEdit('a.pdf')
+    expect(ws().addedForEdit).toBeNull()
   })
 
   it('没有源脚本的图同样：加进来就要说，一次撤销即移除', () => {
@@ -486,7 +498,7 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
     })
     expect(openFastEdit('c.png')).toBe('layout_only')
     expect(panelsInDoc()).toHaveLength(1)
-    expect(useUiStore.getState().status?.key).toBe('fastEdit.addedForEdit')
+    expect(ws().addedForEdit).toBe(panelOf('c.png').id)
     s().undo()
     expect(panelsInDoc()).toHaveLength(0)
   })

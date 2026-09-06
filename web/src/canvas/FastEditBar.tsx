@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { LayoutGrid, Plus } from 'lucide-react'
+import { Info, LayoutGrid, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { formatMm } from '@/lib/units'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from '@/lib/originalSpec'
@@ -20,6 +20,8 @@ import type { PanelObject } from '@/types/document'
 export function FastEditBar() {
   const { t } = useTranslation('workspace')
   const panelId = useWorkspaceStore((s) => s.activePanelId)
+  // 「编辑原图」这一次把图加进了文档（此前不在）：常驻一行说明，回排版即消失
+  const justAdded = useWorkspaceStore((s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId)
   const panel = useDocumentStore((s) => {
     const o = s.doc.objects.find((x) => x.id === panelId)
     return o?.type === 'panel' ? (o as PanelObject) : null
@@ -64,6 +66,19 @@ export function FastEditBar() {
             {t('fastEdit.toLayout')}
           </Button>
         </div>
+
+        {/* 这张图是为了编辑才刚加进文档的：说出口，并说明怎么撤（UI 审计 T06）。
+            不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉 */}
+        {justAdded && (
+          <div
+            role="status"
+            data-fast-edit-added-note
+            className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
+          >
+            <Info size={12} className="shrink-0 text-ink-3" aria-hidden />
+            <span className="min-w-0 truncate">{t('fastEdit.addedForEdit')}</span>
+          </div>
+        )}
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
         {!editable && (

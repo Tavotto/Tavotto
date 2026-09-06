@@ -14,6 +14,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasStage } from './CanvasStage'
+import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -171,5 +172,38 @@ describe('快速编辑这一屏', () => {
     act(() => openFastEdit('c.pdf'))
     await mount()
     expect(container.textContent).toContain('连接源脚本')
+  })
+})
+
+/**
+ * UI 审计 T06：「编辑原图」把还不在文档里的图加进来时，浮动条常驻一行说明
+ * （撤销即移除）；图本来就在文档里 / 回排版再进来时没有这一行。
+ * 用 DOM 断言而不是 store 字段：store 那一维在 workspace.test.ts 里钉。
+ */
+describe('「刚为编辑加入本文档」的说明', () => {
+  const note = () => container.querySelector('[data-fast-edit-added-note]')
+
+  it('加进来的那一次显示；回排版再进同一张（已在文档里）不显示', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    expect(note()).not.toBeNull()
+    expect(note()!.textContent).toContain('撤销')
+
+    act(() => returnToLayout())
+    act(() => openFastEdit('a.pdf'))
+    expect(note()).toBeNull()
+  })
+
+  it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {
+    // 「对象消失就退出快速编辑」的清扫在 App 层挂（usePruneSelection）：这里手动订阅
+    const stopPrune = subscribePruneSelection()
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    expect(note()).not.toBeNull()
+    act(() => useDocumentStore.getState().undo())
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    expect(useWorkspaceStore.getState().addedForEdit).toBeNull()
+    expect(note()).toBeNull()
+    stopPrune()
   })
 })
