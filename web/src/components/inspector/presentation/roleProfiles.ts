@@ -12,6 +12,9 @@ const TEXT_EFFECT_VISIBILITY: NonNullable<RoleProfile['visibleWhen']> = Object.f
   ),
 )
 
+/** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
+const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
+
 /** title / text / axis_label / legend_text 共用的模板 */
 const TEXT_PROFILE: RoleProfile = {
   // 字体/字号/字形/颜色/对齐通常被 TextStyleBar 承接（进 presentFields 之前
@@ -158,7 +161,14 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       // 照样显示（registry 兜底），不会因折叠而不可发现。
       major_step: (read) => read('major_mode') === 'step',
       major_values: (read) => read('major_mode') === 'fixed',
-      minor_step: (read) => read('minor_mode') === 'step',
+      // 次刻度关着时它的长度 / 线宽 / 方式 / 间距 / 格式一并收起（审计 T13）。
+      // 刻度卡（不走桶）与通用列表共用这一份判据（`registry.fieldVisible`），
+      // 不各写一套——与文字的背景 / 描边从属字段同一种机制
+      minor_length: MINOR_ON,
+      minor_width: MINOR_ON,
+      minor_mode: MINOR_ON,
+      minor_format: MINOR_ON,
+      minor_step: (read) => MINOR_ON(read) && read('minor_mode') === 'step',
     },
   },
   colorbar: {

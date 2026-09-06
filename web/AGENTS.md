@@ -382,13 +382,19 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   固定次序（下、左、上、右）；twinx / secondary 与宿主重合的边同一条规则。
 * **状态是派生的**：matplotlib 的 `direction` 是整条轴的，`ticks_<side>` 是边的，
   `inward = 边可见 && 方向含 in`。**三处同源**——画布命中区、示意图
-  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档 + 「显示边」）都读
+  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档）都读
   `readAxesTickModel`、走 `toggleSidePlan` / `axisChoicePlan` / `sideVisiblePlan`、
   经 `store/actions.applyTickSidePlan` **一次 commit**（方向落刻度元素、显隐落子图，
   拆开会渲染出一帧半新半旧）。计划的 `effect.coupled` 是「方向那一步连带改到的
   同轴另一边」——hover 文字、示意图 tooltip 必须说出来，不装作每边独立。
 * 「隐藏」是四档里的派生态（两边都不显示），不是第四个真值；从它选回方向时
   **删**两边的 `ticks_<side>` override 回到脚本的边，不猜。
+* **每组设置只有一处控件**（审计 T13）：「在哪几条边显示」只在示意图上点
+  （内 / 外两带，键盘可达），刻度卡不再摆第二排「显示边」开关；改过的边由
+  图上那条边自己标（accent + tooltip），恢复只有一个动作（`resetAll`，一条
+  历史），不逐边出 chip。刻度组页分「刻度 / 文字」两段（`TickPage`），X / Y /
+  Z 同一套；次刻度关着时从属字段按展示注册表的 `visibleWhen` 收起——刻度卡
+  与通用列表共用 `registry.fieldVisible` 这一条判据，不各写一套。
 * **不支持就不摆**：manifest 没有 `spines`（极坐标 / 3D / 色条轴）画布无命中区；
   引擎没发某条轴的刻度元素时那两条边方向未知，示意图退回单个 `ticks_<side>`
   开关。刻度卡承接 `minor_length` / `minor_width`（`length` / `width` 只动主刻度），

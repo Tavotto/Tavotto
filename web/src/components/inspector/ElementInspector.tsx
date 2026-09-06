@@ -966,7 +966,7 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
 
 /** 主刻度的位置字段：跟刻度线一起（它们决定短线落在哪） */
 const TICK_PLACEMENT_PROPS = new Set(['major_mode', 'major_step', 'major_values'])
-/** 次刻度的从属字段：只在次刻度开着（或用户改过）时出现 */
+/** 次刻度的从属字段：跟在次刻度开关后面（开没开由展示注册表的 visibleWhen 决定） */
 const TICK_MINOR_PROPS = new Set(['minor_mode', 'minor_step', 'minor_format'])
 
 /**
@@ -1033,11 +1033,11 @@ function TickPage({
     applyPlan,
   }
 
-  const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  // 桶里的字段已经过展示注册表的 visibleWhen（次刻度关着时方式 / 间距 / 格式
+  // 不在桶里；用户改过的仍在）——这里只决定落在哪一段，不再判一遍开关
   const fields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
-  const minorOn = self ? self.read('minor_visible') === true : true
   const placement = fields.filter((f) => TICK_PLACEMENT_PROPS.has(f.prop))
-  const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop) && (minorOn || overridden(f.prop)))
+  const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop))
   const labels = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
   const rows = (list: EditableField[]) =>
     list.length ? (

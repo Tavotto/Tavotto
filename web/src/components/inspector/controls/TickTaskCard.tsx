@@ -53,6 +53,11 @@ export interface TickAxisAdapter {
   has: (prop: string) => boolean
   fieldOf: (prop: string) => EditableField | undefined
   read: (prop: string) => unknown
+  /**
+   * 这个字段此刻该不该显示（展示注册表的 `visibleWhen` + 用户改过的必须能看到）
+   * ——次刻度关着时长度 / 线宽收起，与通用列表同一条判据（`registry.fieldVisible`）
+   */
+  visible: (prop: string) => boolean
   /** 离散写入（方向、次刻度开关）：一次点击 = 一条历史 + 一次渲染 */
   writeOnce: (prop: string, value: unknown) => void
   /** 连续写入（长度 / 宽度 scrub）：整轮一条历史 */
@@ -123,8 +128,6 @@ export function TickTaskCard({
   const minorLength = cur.fieldOf('minor_length')
   const minorWidth = cur.fieldOf('minor_width')
   const minorOn = cur.read('minor_visible') === true
-  /** 次刻度的从属行：关着时收起；用户改过的照样显示 */
-  const minorRow = (prop: string) => minorOn || cur.isOverridden(prop)
   // 四边模型在、且这条轴在模型里：方向档带「隐藏」，写入走计划（一次 commit
   // 可能同时动方向与两边显隐）；不在（Z 轴、没发 spines 的轴）：退回只写 direction 的三档
   const modelSides =
@@ -224,8 +227,9 @@ export function TickTaskCard({
         </div>
       )}
       {/* 次刻度自己的长度 / 线宽：主刻度那两条只动主刻度。**关着时收起**
-          ——值虽然是「开了会是多少」，但此刻写了看不见；改过的照样显示 */}
-      {minorLength && minorRow('minor_length') && (
+          ——值虽然是「开了会是多少」，但此刻写了看不见；改过的照样显示。
+          收不收由展示注册表的 visibleWhen 说（`cur.visible`），这里不另判 */}
+      {minorLength && cur.visible('minor_length') && (
         <NumberRow
           label={tk('minorLength')}
           field={minorLength}
@@ -234,7 +238,7 @@ export function TickTaskCard({
           labelWidth={labelWidth}
         />
       )}
-      {minorWidth && minorRow('minor_width') && (
+      {minorWidth && cur.visible('minor_width') && (
         <NumberRow
           label={tk('minorWidth')}
           field={minorWidth}

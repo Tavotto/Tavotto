@@ -5,6 +5,7 @@ import { clearOverride, setOverride } from '@/store/actions'
 import { previewStyle } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { useFieldGesture } from './elementWrite'
+import { fieldVisible } from './presentation/registry'
 import { propLabel } from './roles/registry'
 import type { TickAxisAdapter } from './controls/TickTaskCard'
 import type { AxisTickState, TickDirection } from './controls/TickAndSpineDiagram'
@@ -69,12 +70,15 @@ export function useTickAxisAdapter(
     setOverride(panel.id, gid, prop, value, previewed ? 'none' : immediate)
     gesture.touch()
   }
+  const isOverridden = (prop: string) => panel.overrides.some((o) => o.gid === gid && o.prop === prop)
   return {
     axis,
     gid,
     has: (prop) => !!fieldOf(prop),
     fieldOf,
     read,
+    // 与通用列表同一条「开关 → 从属字段」判据（次刻度关着收起长宽）
+    visible: (prop) => fieldVisible(role, prop, { read, isOverridden }),
     write: (prop, value) => write(prop, value),
     writeOnce: (prop, value) => {
       write(prop, value, true)
@@ -82,7 +86,7 @@ export function useTickAxisAdapter(
     },
     beginGesture: gesture.start,
     endGesture: gesture.end,
-    isOverridden: (prop) => panel.overrides.some((o) => o.gid === gid && o.prop === prop),
+    isOverridden,
     reset: (prop) => clearOverride(panel.id, gid, prop),
   }
 }
