@@ -574,6 +574,105 @@ describe('与 ArrangeSection 共用参照', () => {
   })
 })
 
+describe('右栏停靠着时浮动栏只留高频动作（审计 T29）', () => {
+  const dock = () =>
+    act(async () => useUiStore.setState({ rightOpen: true, rightTab: 'properties', rightWidth: 320 }))
+
+  it('参照控件、分布、等宽等高让给右栏；对齐 / 成组 / 更多留在手边', async () => {
+    await select(['t1', 't2', 't3'])
+    await dock()
+    const el = multiBar()!
+    expect(el.hasAttribute('data-multi-docked')).toBe(true)
+    expect(el.querySelector('[data-align-ref-picker]')).toBeNull()
+    expect(el.querySelector('[data-align-mode="hdist"]')).toBeNull()
+    expect(el.querySelector('[data-align-mode="samew"]')).toBeNull()
+    expect(el.querySelectorAll('[data-align-mode]')).toHaveLength(6)
+    expect(el.querySelector('[data-group-action="group"]')).toBeTruthy()
+    expect(el.querySelector('[data-multi-more]')).toBeTruthy()
+  })
+
+  it('按钮数比完整档少——这条栏本来就是靠宽度盖住选区的', async () => {
+    await select(['t1', 't2', 't3'])
+    const full = multiBar()!.querySelectorAll('button').length
+    await dock()
+    expect(multiBar()!.querySelectorAll('button').length).toBeLessThan(full)
+  })
+
+  it('参照的控件没了，但当前参照仍报得出（计数上一句 + 每颗对齐按钮的提示）', async () => {
+    await select(['t1', 't2', 't3'])
+    await act(async () => useArrangeStore.getState().setAlignRef('page'))
+    await dock()
+    const el = multiBar()!
+    expect(el.querySelector('[data-selection-count]')!.getAttribute('title')).toContain('画布')
+    // 提示挂在 Tip 上，按钮自己带 aria-label；两者都不该只剩一个图标
+    expect(el.querySelector('[data-align-mode="left"]')!.getAttribute('aria-label')).toBe('左对齐')
+  })
+
+  it('右栏关着 / 停在别的页：完整档照旧（判据与文字栏同一条）', async () => {
+    await select(['t1', 't2', 't3'])
+    expect(multiBar()!.hasAttribute('data-multi-docked')).toBe(false)
+    expect(multiBar()!.querySelector('[data-align-ref-picker]')).toBeTruthy()
+    await act(async () => useUiStore.setState({ rightOpen: true, rightTab: 'canvas' }))
+    expect(multiBar()!.hasAttribute('data-multi-docked')).toBe(false)
+    expect(multiBar()!.querySelector('[data-align-ref-picker]')).toBeTruthy()
+  })
+
+  it('narrow 断点下右栏是覆盖层：那时浮动栏整个让位，不进这一档', async () => {
+    await select(['t1', 't2', 't3'])
+    await act(async () => useUiStore.setState({ layout: 'narrow', rightOpen: true, rightTab: 'properties' }))
+    expect(multiBar()).toBeNull()
+  })
+
+  it('停靠着仍能对齐，动作还是同一个 action', async () => {
+    await select(['t1', 't2', 't3'])
+    await dock()
+    await click(btn('[data-multi-selection-context-bar] [data-align-mode="left"]'))
+    expect(objs().map((o) => o.x)).toEqual([10, 10, 10])
+  })
+})
+
+describe('分布与等宽等高分成两组（审计 T29）', () => {
+  it('浮动栏完整档：两组之间有分隔', async () => {
+    await select(['t1', 't2', 't3'])
+    const el = multiBar()!
+    const dist = el.querySelector('[data-align-mode="hdist"]')!.parentElement!
+    const size = el.querySelector('[data-align-mode="samew"]')!.parentElement!
+    expect(dist).not.toBe(size)
+    // 两组各自成行，中间隔着一根 Sep
+    expect(dist.nextElementSibling).not.toBe(size)
+  })
+
+  it('属性页：分布与统一尺寸是两条各自带名字的工具带', async () => {
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={3} multi />)
+    await select(['t1', 't2', 't3'])
+    const labels = [...mountEl.querySelectorAll('[role="toolbar"]')].map((t) =>
+      t.getAttribute('aria-label'),
+    )
+    expect(labels).toContain('分布')
+    expect(labels).toContain('统一尺寸')
+    const dist = mountEl.querySelector('[role="toolbar"][aria-label="分布"]')!
+    expect(dist.querySelectorAll('button')).toHaveLength(2)
+    const size = mountEl.querySelector('[role="toolbar"][aria-label="统一尺寸"]')!
+    expect(size.querySelectorAll('button')).toHaveLength(2)
+  })
+
+  it('间距的两个方向有明确名字，不再用与「高度」撞车的 H', async () => {
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={3} multi />)
+    await select(['t1', 't2', 't3'])
+    const more = [...mountEl.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find(
+      (b) => b.textContent?.startsWith('更多排列'),
+    )!
+    await click(more)
+    const names = [...mountEl.querySelectorAll('input')].map((i) => i.getAttribute('aria-label'))
+    expect(names).toContain('水平间距')
+    expect(names).toContain('垂直间距')
+    expect(names).not.toContain('H (mm)')
+    expect(names).not.toContain('V (mm)')
+  })
+})
+
 describe('遥测 context_bar_multi_used（ADR 0041）', () => {
   let stopTelemetry: (() => void) | null = null
   beforeEach(() => {

@@ -241,6 +241,12 @@ function PropertiesPage() {
   // 面板选区的位置与尺寸由 PanelSection 自己出（含宽高比锁），
   // 这里再来一份 TransformSection 就重复了
   const panelsOnly = onlyType(panels.length)
+  /**
+   * 文字选区把「内容 + 排版」提到最前，位置与尺寸退成一行折叠摘要（审计 T27）。
+   * 改一段标注最常做的是改字、改字号、改对齐；旧顺序让这三件事排在一整段
+   * 变换之后，每次都得往下找。折叠不减能力，展开还是同一批字段。
+   */
+  const textsOnly = onlyType(texts.length)
 
   if (elementPanel) {
     return (
@@ -266,11 +272,12 @@ function PropertiesPage() {
     <>
       <IdentityHeader objs={objs} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 第一层：位置与尺寸等高频属性 */}
-        {!panelsOnly && <TransformSection objs={objs} />}
+        {/* 第一层：位置与尺寸等高频属性（文字除外，见下） */}
+        {!panelsOnly && !textsOnly && <TransformSection objs={objs} />}
         {/* 第二层：类型专属 */}
         {onlyType(panels.length) && <PanelSection objs={panels} />}
-        {onlyType(texts.length) && <TextSection objs={texts} />}
+        {textsOnly && <TextSection objs={texts} />}
+        {textsOnly && <TransformSection objs={objs} foldKey="text-transform" />}
         {onlyType(arrows.length) && <ArrowSection objs={arrows} />}
         {onlyType(shapes.length) && <ShapeSection objs={shapes} />}
         {/* 第三层：排列与层级（紧凑工具带；单选面板的对齐已在位置组里） */}

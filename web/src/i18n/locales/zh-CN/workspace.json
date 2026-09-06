@@ -112,6 +112,8 @@
   "contextBar": {
     "alignMenu": "对齐",
     "aria": "快速编辑",
+    "countTitle": "{{hint}} · 对齐参照：{{ref}}",
+    "cropAria": "裁剪",
     "distributeMenu": "分布",
     "groupMenu": "成组",
     "moreArrange": "更多排列",
@@ -225,6 +227,7 @@
     "applyStyle": "应用样式「{{name}}」",
     "arrowEndpoint": "调整箭头端点",
     "autoReflow": "自动重排布局组",
+    "cancelCrop": "取消裁剪",
     "clearGuides": "清除参考线",
     "clearProp": "恢复{{prop}}",
     "createLayoutGroup": "创建{{kind}}",

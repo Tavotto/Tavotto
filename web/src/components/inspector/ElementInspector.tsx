@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CircleQuestionMark,
   CornerUpLeft,
+  Link2,
   MoveDown,
   MoveHorizontal,
   MoveUp,
@@ -93,11 +94,15 @@ import {
   controlKindOf,
   fieldHintKey,
   isPercentField,
+  pairedProp,
   presentFields,
 } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
+import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
+import { ProjectionPicker } from './controls/ProjectionPicker'
+import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
 import { EffectToggle } from './controls/EffectToggle'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
@@ -138,6 +143,9 @@ import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
 import { overrideCounts } from '@/lib/overrideCounts'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
+import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
+import { ColorScaleLink } from './ColorScaleLink'
+import { ResetChip } from './controls/textRows'
 import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
@@ -263,8 +271,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       ? [...TICK_SPINE_PROPS, ...AXES_RANGE_CARD_PROPS, ...SPINE_FRAME_PROPS]
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
-        : legendCardCoversSelf
-          ? LEGEND_CARD_PROPS
+        : element?.role === 'legend'
+          ? // 排版详情那张卡承接五条间距（审计 T17），与有没有条目无关；
+            // 字号 / 条目顺序只有图例卡在场时才让出来
+            [...LEGEND_SPACING_PROPS, ...(legendCardCoversSelf ? LEGEND_CARD_PROPS : [])]
           : [],
   )
   const buckets =
@@ -360,6 +370,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       {alignGroup || syncing || batch || styleBatch ? null : (
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
+        {/* 色条与它上色的图像共用一份色阶（审计 T22 / T23）：关系说出口，
+            并给一个「选中对方」的入口。没有对家时组件自己不渲染 */}
+        {manifest && element && <ColorScaleLink manifest={manifest} element={element} />}
         {!manifest ? (
           <p className="text-xs text-ink-3">
             {el(render?.status === 'rendering' ? 'building' : 'waiting')}
@@ -418,16 +431,24 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
-              ) : legendCardCoversSelf && element ? (
-                <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+              ) : element?.role === 'axes3d' ? (
+                /* 角度改在数值框里；这个静态示意只是旁注（审计 T24：
+                   「不增加装饰性三维动画」），随数值重画、没有动画 */
+                <ViewAngleRow panel={panel} element={element} />
+              ) : element?.role === 'legend' ? (
+                /* 图例页：条目列表（有项时）+ 排版详情（审计 T17：五条间距
+                   标签独占一行、不截断，默认折叠，改过自动展开） */
+                <>
+                  {legendCardCoversSelf && (
+                    <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+                  )}
+                  <LegendSpacingCard panel={panel} element={element} />
+                </>
               ) : null
             }
           />
         )}
         {element && <UnsupportedNote role={element.role} />}
-        {element?.role === 'image' && (
-          <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('imageHint')}</p>
-        )}
         {/* 改尺寸 / 居中是几何写操作：只认权威那一份（issue #131） */}
         {element?.resizable && exactManifest && (
           <AxesSizeMm
@@ -673,6 +694,117 @@ function FieldBlock({
 }
 
 /**
+ * 三维子图的方向示意（审计 T24）：X / Y / Z 在当前视角下指向屏幕的哪里。
+ *
+ * **它不是控件**——没有点击、没有拖动、没有动画，只是角度数值框的旁注，
+ * 与控件列对齐着摆。角度仍在上面三个数值框里改；这里读的是同一份值
+ * （override 优先），所以「角度与示意一致」不需要第二条同步路径。
+ * 引擎没发 `roll`（matplotlib < 3.6）时按 0 画。
+ */
+function ViewAngleRow({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+  const num = (prop: string) => {
+    const f = element.editable.find((x) => x.prop === prop)
+    return f ? Number(currentValue(panel, element.gid, f) ?? 0) : 0
+  }
+  if (!element.editable.some((x) => x.prop === 'elev' || x.prop === 'azim')) return null
+  return (
+    <div className="flex" style={{ paddingLeft: LABEL_W + 8 }}>
+      <ViewAngleDiagram elev={num('elev')} azim={num('azim')} roll={num('roll')} />
+    </div>
+  )
+}
+
+/**
+ * 并排行的文案：行标题 + 两格的前缀。**每一对在这里点名**（闭集），不按
+ * `pairLabel.${a}_${b}` 动态拼 key——动态拼的键 i18n 门禁看不住，漏一条就是
+ * 界面上一串 `pairLabel.vmin_vmax`。表里没有的对子不并排，各画各的行。
+ */
+interface PairText {
+  /** 显示顺序在这里定（下限在前），不跟着引擎发过来的顺序走 */
+  props: [string, string]
+  label: () => string
+  prefixes: [() => string, () => string]
+}
+
+/** 与 `pairedProp` 无关的查表键：与顺序无关，两条属性名排序后拼起来 */
+const pairKey = (a: string, b: string) => [a, b].sort().join('|')
+
+const PAIR_TEXTS: PairText[] = [
+  {
+    props: ['vmin', 'vmax'],
+    label: () => el('pairColorScale'),
+    prefixes: [() => el('pairMin'), () => el('pairMax')],
+  },
+]
+// 键**由 pairKey 自己生成**：手写字面量键会和它的排序规则悄悄分叉
+// （'vmin|vmax' 排序之后其实是 'vmax|vmin'——第一版就是这么错的，
+// 表查不到于是安静地退回两行，界面上看不出任何异常）
+const PAIR_TEXT: Record<string, PairText> = Object.fromEntries(
+  PAIR_TEXTS.map((t) => [pairKey(t.props[0], t.props[1]), t]),
+)
+
+/**
+ * 两条数值字段并排成一行（审计 T22：色阶上下限并排）。
+ *
+ * 两条仍是**各自的** manifest 字段：各写各的 override、各有各的恢复按钮，
+ * 值也不互相钳制（下限大于上限是 matplotlib 自己的事，界面不替它裁决）。
+ * 这里只管排版：一个行标题 + 两个带前缀的数字框。写入走 `useElementWriter`
+ * ——与刻度卡、边框卡同一份（局部预览 / 事务 / 渲染时机收在一处）。
+ */
+function PairRow({
+  panel,
+  element,
+  a,
+  b,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  a: EditableField
+  b: EditableField
+}) {
+  const w = useElementWriter(panel, element)
+  const text = PAIR_TEXT[pairKey(a.prop, b.prop)]
+  const overridden = (prop: string) =>
+    panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
+  const byProp = (prop: string) => (a.prop === prop ? a : b)
+  const cell = (field: EditableField, prefix: string) => {
+    const label = propLabel(field.prop, element.role)
+    return (
+      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 flex-1 items-center gap-1">
+        <NumberField
+          className="min-w-0 flex-1"
+          prefix={prefix}
+          ariaLabel={label}
+          value={Number(w.read(field.prop) ?? 0)}
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 1}
+          precision={2}
+          suffix={field.unit}
+          onChange={(v) => w.write(field.prop, v)}
+          onScrubStart={() => w.beginGesture()}
+          onScrubEnd={w.endGesture}
+        />
+        {overridden(field.prop) && (
+          <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, field.prop)} />
+        )}
+      </div>
+    )
+  }
+  return (
+    <div data-pair-row={`${text.props[0]}|${text.props[1]}`}>
+      <Row
+        label={labeledWithStateNode(text.label(), overridden(a.prop) || overridden(b.prop))}
+        labelWidth={LABEL_W}
+      >
+        {cell(byProp(text.props[0]), text.prefixes[0]())}
+        {cell(byProp(text.props[1]), text.prefixes[1]())}
+      </Row>
+    </div>
+  )
+}
+
+/**
  * 误差棒页：三个几何字段配一张示意图（审计 T20）。
  *
  * 高亮跟着**焦点或指针**走，而不是让每一行自己带一张小图——一张图上
@@ -794,19 +926,42 @@ function FieldList({
   const moreOpen = useInspectorPrefs((s) => s.moreOpen[role] ?? false)
   const setMoreOpen = useInspectorPrefs((s) => s.setMoreOpen)
 
-  const rows = (fields: PresentedField[]) => (
-    <div className="flex flex-col gap-1.5">
-      {fields.map(({ field }) => (
-        <FieldBlock
-          key={field.prop}
-          panel={panel}
-          element={element}
-          field={field}
-          warnings={warnings}
-        />
-      ))}
-    </div>
-  )
+  const rows = (fields: PresentedField[]) => {
+    // 并排成一行的字段对（模板的 `pairRows`，如色阶下限 / 上限）：**两条都在
+    // 这一桶里**才并排，否则各画各的——条件显示把其中一条收起来时，剩下那条
+    // 不该跟着消失。两条仍是各自的 manifest 字段、各写各的 override。
+    const paired = new Set<string>()
+    return (
+      <div className="flex flex-col gap-1.5">
+        {fields.map(({ field }) => {
+          if (paired.has(field.prop)) return null
+          const mateProp = pairedProp(role, field.prop)
+          const mate = mateProp ? fields.find((p) => p.field.prop === mateProp)?.field : undefined
+          if (mate && PAIR_TEXT[pairKey(field.prop, mate.prop)]) {
+            paired.add(mate.prop)
+            return (
+              <PairRow
+                key={field.prop}
+                panel={panel}
+                element={element}
+                a={field}
+                b={mate}
+              />
+            )
+          }
+          return (
+            <FieldBlock
+              key={field.prop}
+              panel={panel}
+              element={element}
+              field={field}
+              warnings={warnings}
+            />
+          )
+        })}
+      </div>
+    )
+  }
 
   // 「更多」内部不再有第二层折叠；兜底进来的字段按引擎分组给一行小标题
   const named = buckets.more.filter((pf) => pf.order < 1000)
@@ -1542,6 +1697,32 @@ function currentValue(panel: PanelObject, gid: string, field: EditableField): un
   return ov ? ov.value : field.value
 }
 
+/**
+ * 色条此刻的方向。**多宿主色条不宣称 `orientation`**（引擎的 guard，issue #69
+ * ——反解新矩形时只拿得到第一个宿主，翻转会把排版弄坏），那时从 bbox 反推：
+ * 窄而高 = 竖直。这是观察到的事实，不是猜——它只用来画那几个延伸预览的形状。
+ */
+function colorbarOrientationOf(panel: PanelObject, element: ManifestElement): string {
+  const field = element.editable.find((x) => x.prop === 'orientation')
+  if (field) return String(currentValue(panel, element.gid, field) ?? 'vertical')
+  const box = element.bbox
+  return box && box[2] < box[3] ? 'vertical' : 'horizontal'
+}
+
+/**
+ * 「住在别人里面」的元素的容器名：gid 去掉最后一段就是宿主（`axes_0.legend`
+ * → `axes_0`）。图例的九宫格用它说清参照范围（审计 T17）。宿主不在 manifest
+ * 里（fig.legend、脚本自造）时回 undefined——不写比写一个猜的名字好。
+ */
+function containerLabelOf(
+  manifest: Manifest | null | undefined,
+  element: ManifestElement,
+): string | undefined {
+  const m = element.gid.match(/^(.+)\.[^.]+$/)
+  const host = m ? manifest?.elements.find((e) => e.gid === m[1]) : undefined
+  return host ? engineLabel(host.label) : undefined
+}
+
 function FieldRow({
   panel,
   element,
@@ -1552,6 +1733,11 @@ function FieldRow({
   field: EditableField
 }) {
   const value = currentValue(panel, element.gid, field)
+  /** 同一个元素上另一条字段此刻的值（override 优先）：色条预览要看色图与方向 */
+  const siblingValue = (prop: string) => {
+    const other = element.editable.find((x) => x.prop === prop)
+    return other ? currentValue(panel, element.gid, other) : undefined
+  }
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
@@ -1689,6 +1875,38 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'projection':
+      // 透视 / 正交各一个小立方体（审计 T24）；写入值仍是 matplotlib 的 proj_type
+      return wrap(
+        <ProjectionPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'colorbar-orientation':
+      // 用当前色图画的小色条做选项预览（审计 T23），不是两个文字下拉
+      return wrap(
+        <ColorbarOrientationPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+        />,
+      )
+    case 'colorbar-extend':
+      return wrap(
+        <ColorbarExtendPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+          cmap={String(siblingValue('cmap') ?? '')}
+          orientation={colorbarOrientationOf(panel, element)}
+        />,
+      )
     case 'legend-position':
       return wrap(
         <LegendPositionPicker
@@ -1696,6 +1914,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
+          containerLabel={containerLabelOf(rowManifest, element)}
         />,
       )
     case 'legend-binding':
@@ -2271,11 +2490,29 @@ function AxesSizeMm({
 
   return (
     <div className="mt-2 border-t border-border pt-2">
-      {proxied && (
-        <p className="mb-1.5 text-xs leading-relaxed text-ink-3">
-          {el('proxiedGeometry', { label: engineLabel(element.label) })}
-        </p>
-      )}
+      {proxied ? (
+        /* 「位置和大小属于宿主子图」原本是两段常驻说明（审计 T22 点名的
+           三段之二）。现在由**组标题**回答作用对象（「子图尺寸 · 子图 1」）、
+           来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
+           按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
+        <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+          <Link2 size={12} className="shrink-0 text-ink-3" aria-hidden />
+          <p className="min-w-0 flex-1 truncate text-xs uppercase tracking-[.06em] text-ink-3">
+            {el('proxiedSizeHead', { label: engineLabel(element.label) })}
+          </p>
+          <Tip label={el('proxiedGeometry', { label: engineLabel(element.label) })}>
+            <Button
+              size="sm"
+              className="shrink-0 text-ink-2"
+              aria-label={el('selectHostAxes', { label: engineLabel(element.label) })}
+              onClick={() => useUiStore.getState().setSelectedGid(element.gid)}
+            >
+              <CornerUpLeft size={11} className="shrink-0" aria-hidden />
+              {el('selectHost')}
+            </Button>
+          </Tip>
+        </div>
+      ) : null}
       <Grid2>
         <NumberField
           prefix="W"

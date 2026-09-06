@@ -3,8 +3,11 @@ import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
 import { handleCopyEvent, handlePasteEvent } from '@/lib/clipboard'
 import {
+  beginCrop,
+  cancelCrop,
   changeZOrder,
   enterElementEdit,
+  finishCrop,
   runManualSave,
   deleteSelected,
   duplicateSelected,
@@ -221,7 +224,7 @@ export function useKeyboard() {
             ui.setElementPanel(null)
             useSelectionStore.getState().set([pid])
           }
-        } else if (ui.cropTargetId) ui.setCropTarget(null)
+        } else if (ui.cropTargetId) cancelCrop()
         else if (ui.tool !== 'select') ui.setTool('select')
         else useSelectionStore.getState().clear()
         return
@@ -241,7 +244,7 @@ export function useKeyboard() {
             at.closest('button, a, [role="button"], [role="menuitem"]')) return
         const ids = useSelectionStore.getState().ids
         if (ui.cropTargetId) {
-          ui.setCropTarget(null)
+          finishCrop()
           return
         }
         if (ids.length === 1) {
@@ -252,7 +255,7 @@ export function useKeyboard() {
           } else if (obj?.type === 'panel') {
             e.preventDefault()
             if (obj.script) enterElementEdit(obj.id)
-            else ui.setCropTarget(obj.id)
+            else beginCrop(obj.id)
           }
         }
         return

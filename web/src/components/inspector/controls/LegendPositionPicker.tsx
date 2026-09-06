@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { optionLabel } from '../roles/registry'
@@ -9,6 +10,11 @@ import { Tip } from '../../ui/Tooltip'
  * 写入值仍是 Matplotlib 的 loc 名（"upper right" …）。"custom" 表示用户在
  * 画布上拖过图例（bbox_to_anchor），显示为说明而不是可点的档位——点一个
  * 网格位置即回到预设定位。manifest 没给的档位不渲染。
+ *
+ * 那个方框**就是参照的容器**（九个档位都在它内侧，matplotlib 的 `loc` 只在
+ * 容器内定位）。审计 T17 要的「看得懂所参照的范围」靠 `containerLabel`：
+ * 在框下写出容器叫什么（「相对子图 1」），一行、不是一段说明。容器认不出来
+ * （脚本自己造的图例、fig.legend）时不写——宁可不写，也不写一个猜的名字。
  */
 
 const GRID: string[][] = [
@@ -22,6 +28,7 @@ export function LegendPositionPicker({
   options,
   onChange,
   ariaLabel,
+  containerLabel,
 }: {
   /**
    * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
@@ -31,17 +38,26 @@ export function LegendPositionPicker({
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
+  /** 九个档位参照的容器名（宿主子图）；认不出来时不显示 */
+  containerLabel?: string
 }) {
+  const gridHintId = useId()
   const has = (v: string) => options.includes(v)
   // "right" 是 matplotlib 的历史别名（≈ center right），只有当前值恰好是它时才显示
   const extraChips = ['best', ...(value === 'right' ? ['right'] : [])].filter(has)
 
+  const within = containerLabel
+    ? translate('control.legendPositionWithin', { ns: 'inspector', label: containerLabel })
+    : null
+
   return (
     <div className="flex w-full min-w-0 items-start gap-2">
+      <div className="flex shrink-0 flex-col items-center gap-0.5">
       <div
         role="radiogroup"
         aria-label={ariaLabel}
-        className="grid shrink-0 grid-cols-3 gap-px rounded-sm border border-border bg-surface p-1"
+        aria-describedby={within ? gridHintId : undefined}
+        className="grid grid-cols-3 gap-px rounded-sm border border-border bg-surface p-1"
       >
         {GRID.flat().map((loc) => {
           if (!has(loc)) return <span key={loc} className="h-5 w-6" aria-hidden />
@@ -70,6 +86,12 @@ export function LegendPositionPicker({
             </Tip>
           )
         })}
+      </div>
+      {within && (
+        <span id={gridHintId} className="max-w-[84px] truncate text-[10px] leading-3 text-ink-3" title={within}>
+          {within}
+        </span>
+      )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         {extraChips.map((v) => {

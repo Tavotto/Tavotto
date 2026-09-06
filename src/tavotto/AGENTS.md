@@ -329,7 +329,12 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   摆过色条轴时不动它的落位，交给 position override。翻完要 `invalidate_tick_cfg`
   （locator 被整套换过）并重算 `axes_follow`。色条另有**稳定语义身份**
   `cbar:<宿主 gid>:<序号>`（manifest 的 `colorbar_key`），与 `axes_i.colorbar`
-  一起登记在 index 里。
+  一起登记在 index 里。manifest 还报 **`mappable_gid`**（「我给谁上色」）：
+  由 `cb.mappable` 在 **`state.elements`** 里反查得来——**不是** `state.index`，
+  index 里还有容器消费掉的成员别名，那些 gid 指着同一个 artist 却不在元素表
+  里，界面按它 find 会扑空。脚本自己造的 `ScalarMappable` 没有登记成元素时
+  **整条字段不发**（界面据此不摆那个「选中对方」的入口，见
+  `web/src/components/inspector/ColorScaleLink.tsx`）。
   **两端延伸三角 `extend`**（neither/both/min/max）同样是就地结构改造，两个坑：
   ① `cb._inside` 是按 extend 切出来的那段 boundaries，**只在 `__init__` 里设过
   一次**——只改 `cb.extend` 就 `_draw_all()` 会拿 259 条边界配 256 块颜色，当场

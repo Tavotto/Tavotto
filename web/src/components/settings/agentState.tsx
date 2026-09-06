@@ -43,7 +43,13 @@ export function AgentStateBadge({
 }) {
   const { icon: Icon, tone } = PRESENTATION[state] ?? PRESENTATION.not_installed
   return (
-    <span className={`flex items-center gap-1 text-xs ${tone} ${className ?? ''}`}>
+    // `data-agent-state` 给判据用：一行里还有 Agent 自己的品牌图标，
+    // 不指名道姓地找 svg 会量到那一个（它本来就每个 Agent 各不相同，
+    // 于是「两档的图标不一样」在任何实现下都成立）
+    <span
+      data-agent-state={state}
+      className={`flex items-center gap-1 text-xs ${tone} ${className ?? ''}`}
+    >
       <Icon size={12} strokeWidth={2} aria-hidden />
       {stateLabel(state)}
     </span>

@@ -37,6 +37,7 @@ import {
   alignModeLabel,
   alignRefLabel,
   alignSelectedTo,
+  beginCrop,
   changeZOrder,
   deleteSelected,
   duplicateSelected,
@@ -289,7 +290,7 @@ function CropItem({
       data-quick-item="crop"
       disabled={rotated}
       reason={rotated ? qe('cropRotatedReason') : undefined}
-      onSelect={run(() => useUiStore.getState().setCropTarget(panelId))}
+      onSelect={run(() => beginCrop(panelId))}
     >
       {ins('panel.crop')}
     </MenuItem>

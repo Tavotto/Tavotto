@@ -361,9 +361,9 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
     expect(diag.getAttribute('aria-expanded')).toBe('true')
     expect(bodyText()).toContain(PYTHON_PATH)
     expect(bodyText()).toContain('3.10.8')
-    // 「渲染环境」卡片（okTitle）只出现一次——此前 About 页里有两张
-    const okTitle = t('engine.okTitle', { ns: 'errors' })
-    expect(bodyText().split(okTitle).length - 1).toBe(1)
+    // 渲染环境卡只出现一次——此前 About 页里有两张。**按元素数，不按字符串
+    // 出现次数**：「渲染环境」四个字也出现在别的句子里（审计 T47 的环境说明）
+    expect(document.body.querySelectorAll('[data-engine-env-card]')).toHaveLength(1)
   })
 
   it('About 页只剩产品与隐私两块，不再有渲染环境', async () => {

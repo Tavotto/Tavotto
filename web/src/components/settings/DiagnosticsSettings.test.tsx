@@ -91,13 +91,46 @@ afterEach(() => {
 })
 
 describe('首屏', () => {
-  it('健康状态：异常数在前、异常项说原因、正常项只有名字', async () => {
+  it('异常项在首屏并说原因；正常项默认折叠（审计 T47）', async () => {
     await mount()
     expect(text()).toContain(st('diagnostics.summaryFailing', { count: 1 }))
     expect(text()).toContain(st('about.check.project_writable'))
     expect(text()).toContain('/tmp/figs') // 坏的说原因
+    // 正常项不铺首屏——它们在「技术详情」里还有一份带取值的
+    expect(text()).not.toContain(st('about.check.matplotlib'))
+    await act(async () => byName(st('diagnostics.okDetails'))!.click())
     expect(text()).toContain(st('about.check.matplotlib'))
     expect(text()).not.toContain(PYTHON_PATH) // 好的不摆路径
+  })
+
+  it('说清这一页查的是运行环境，不是图的内容（审计 T47）', async () => {
+    await mount(CHECKS.filter((c) => c.ok))
+    expect(text()).toContain(st('diagnostics.summaryOk'))
+    expect(text()).toContain(st('diagnostics.scopeNote'))
+    // 结论那句话本身不许说成「全部正常」——它会被读成"图没问题"
+    expect(st('diagnostics.summaryOk')).not.toBe('全部正常')
+  })
+
+  it('说清本页数据什么时候取的，并且重取一次真的再发一次请求（审计 T47）', async () => {
+    await mount()
+    expect(text()).toContain(st('diagnostics.fetchedAt', { time: '' }).replace(/\s*$/, ''))
+    const calls = () => (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length
+    const before = calls()
+    await act(async () => byName(st('diagnostics.refetch'))!.click())
+    await act(async () => {})
+    expect(calls()).toBeGreaterThan(before)
+  })
+
+  it('两个环境不再同名，并且说清它们不是同一个（审计 T47）', async () => {
+    await mount()
+    await act(async () => byName(st('techDetails'))!.click())
+    expect(text()).toContain(st('diagnostics.envNote', { product: 'Tavotto' }))
+    // 「自带的」与「这个项目的」是两个不同的名字，不许有一个光叫「Tavotto 环境」
+    const bundled = t('engine.sourceLabel.bundled', { ns: 'errors', product: 'Tavotto' })
+    const managed = t('engine.managedEnvUsing', { ns: 'errors', product: 'Tavotto', version: '3.13' })
+    expect(bundled).not.toBe('Tavotto 环境')
+    expect(managed.startsWith('Tavotto 环境')).toBe(false)
+    expect(bundled).not.toBe(managed)
   })
 
   it('Agent 页已有的 CLI 检查项不在这里重复', async () => {
@@ -116,10 +149,10 @@ describe('首屏', () => {
 
   it('渲染环境卡只在技术详情里、只有一张；内置包版本清单不在这一页', async () => {
     await mount()
-    const okTitle = t('engine.okTitle', { ns: 'errors' })
-    expect(text().split(okTitle).length - 1).toBe(0)
+    // 按元素数，不按字符串出现次数——「渲染环境」四个字也出现在别的句子里
+    expect(document.querySelectorAll('[data-engine-env-card]')).toHaveLength(0)
     await act(async () => byName(st('techDetails'))!.click())
-    expect(text().split(okTitle).length - 1).toBe(1)
+    expect(document.querySelectorAll('[data-engine-env-card]')).toHaveLength(1)
     expect(text()).toContain(PYTHON_PATH)
     expect(text()).not.toContain('2.1.0') // numpy 版本归包管理页
   })
@@ -155,5 +188,42 @@ describe('复制诊断', () => {
   it('导出诊断包的按钮还在', async () => {
     await mount()
     expect(byName(st('about.exportBundle'))).toBeTruthy()
+  })
+})
+
+describe('异常项给下一步（审计 T47）', () => {
+  it('项目目录不可写：说清接下来做什么，不只是把路径摆出来', async () => {
+    await mount(CHECKS)
+    const line = [...document.querySelectorAll('[data-next-step]')].map((e) => e.textContent)
+    expect(line.join('\n')).toContain(st('diagnostics.nextStep.project_writable'))
+  })
+
+  it('说不出真实动作的那几条不硬编一句（registry_conflicts 没有登记）', async () => {
+    await mount([{ id: 'registry_conflicts', ok: false, label: '注册表 stem 归属', detail: '2 个冲突' }])
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+    expect(text()).toContain('2 个冲突') // 原因照旧说
+  })
+
+  it('正常项不带下一步', async () => {
+    // **挑一条登记过下一步的检查，让它是好的**：拿 worker_python 那种本来就
+    // 没登记的来量，「没有下一步」在任何实现下都成立（判据恒真）
+    await mount([{ id: 'project_writable', ok: true, label: '项目目录可写', detail: '/tmp/figs' }])
+    await act(async () => byName(st('diagnostics.okDetails'))!.click())
+    expect(text()).toContain(st('about.check.project_writable'))
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+  })
+
+  it('渲染引擎那条只在恢复卡片真的在这一屏上时才指着它说', async () => {
+    // env.ok = true（默认 mount 给的就是好的）→ 卡片在「技术详情」里，首屏没有
+    await mount([{ id: 'matplotlib', ok: false, label: 'matplotlib', detail: '无法导入' }])
+    expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
+
+    // env 坏了 → 卡片常驻首屏，这时才说得出「下面那张卡片」。
+    // **在挂载之后改 store**：`mount()` 自己会把 env 摆成好的那一份
+    await act(async () => {
+      useEnvStore.setState({ env: { ...useEnvStore.getState().env!, ok: false } as never })
+    })
+    expect(document.querySelectorAll('[data-engine-env-card]').length).toBeGreaterThan(0)
+    expect(text()).toContain(st('diagnostics.nextStep.engine'))
   })
 })

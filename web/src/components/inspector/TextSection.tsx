@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
+import { CaseSensitive, ChevronDown, CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
 import {
   DEFAULT_INTERPRETATION,
   hasScientificChars,
@@ -22,8 +22,10 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
+import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
 import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
+import { EffectToggle } from './controls/EffectToggle'
 import { TypographyControls } from './controls/TypographyControls'
 import { useCanvasTypography } from './typographyAdapter'
 import { shared } from './common'
@@ -49,13 +51,15 @@ export function scriptHotkey(
   return null
 }
 
-/** 大小写是一次性动作而不是状态：转换完就没有「当前处于大写」这回事 */
-const caseItems = () => [
-  { value: 'upper' as const, label: 'AA', tip: tx('caseUpper') },
-  { value: 'lower' as const, label: 'aa', tip: tx('caseLower') },
-  { value: 'title' as const, label: 'Aa', tip: tx('caseTitle') },
-  { value: 'sentence' as const, label: 'A.', tip: tx('caseSentence') },
-]
+/**
+ * 大小写是一次性动作而不是状态：转换完就没有「当前处于大写」这回事——所以它
+ * 不是分段选择器，而是一个菜单。旧版四个格子写着 AA / aa / Aa / A.，四个都长
+ * 得像，得逐个悬停才知道哪个是哪个（审计 T27）；菜单里每一项直接是全名，
+ * 键盘也走得通（方向键 + 首字母）。
+ */
+const CASE_MODES: readonly CaseMode[] = ['upper', 'lower', 'title', 'sentence']
+const caseLabel = (mode: CaseMode) =>
+  tx(`case${mode[0].toUpperCase()}${mode.slice(1)}` as 'caseUpper')
 
 export function TextSection({ objs }: { objs: TextObject[] }) {
   useTranslation('inspector')
@@ -240,15 +244,33 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         </button>
         {moreOpen && (
           <div className="mt-1.5 flex flex-col gap-1.5">
-            <Row label={tx('case')}>
-              <Segmented
-                value={null}
-                onChange={(v) => applyCase(v)}
-                items={caseItems()}
-                className="w-full"
-              />
+            <Row label={tx('case')} labelWidth={72}>
+              <Menu
+                width={200}
+                trigger={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full justify-between"
+                    data-case-menu
+                    aria-label={tx('case')}
+                  >
+                    <span className="flex items-center gap-1">
+                      <CaseSensitive size={13} />
+                      {tx('caseAction')}
+                    </span>
+                    <ChevronDown size={11} aria-hidden className="text-ink-3" />
+                  </Button>
+                }
+              >
+                {CASE_MODES.map((mode) => (
+                  <MenuItem key={mode} data-case-mode={mode} onSelect={() => applyCase(mode)}>
+                    {caseLabel(mode)}
+                  </MenuItem>
+                ))}
+              </Menu>
             </Row>
-            <Row label={tx('lineHeight')}>
+            <Row label={tx('lineHeight')} labelWidth={72}>
               <NumberField
                 value={shared(objs, (o) => (o as TextObject).lineHeight ?? 1.25) ?? 1.25}
                 step={0.05}
@@ -263,75 +285,59 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 }
               />
             </Row>
-            <Row label={tx('background')}>
-              {bg ? (
-                <>
-                  <ColorField
-                    value={bg}
-                    onChange={(v) => patch(hist('setTextBg'), (o) => (o.bg = v))}
-                  />
-                  <Button
-                    size="icon"
-                    onClick={() => patch(hist('clearTextBg'), (o) => delete o.bg)}
-                    aria-label={tx('clearBackground')}
-                  >
-                    <span className="text-xs text-ink-3">{tx('none')}</span>
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() =>
-                    patch(hist('addTextBg'), (o) => {
-                      o.bg = '#FFFFFF'
-                      if (o.padding == null) o.padding = 1
-                    })
-                  }
-                >
-                  {tx('addBackground')}
-                </Button>
+            {/*
+              背景与描边**与图内文字同一个控件**（`EffectToggle`）：关着是一条
+              「＋添加」入口，开了才是真开关，颜色跟在同一行（审计 T27 验收：
+              两处的交互要一致）。关掉走开关而不是另一颗「无」按钮——图内那侧
+              早就是开关，两边各一套的话用户得学两遍。
+            */}
+            <Row label={tx('background')} labelWidth={72}>
+              <EffectToggle
+                on={!!bg}
+                label={tx('background')}
+                addLabel={tx('addBackground')}
+                onAdd={() =>
+                  patch(hist('addTextBg'), (o) => {
+                    o.bg = '#FFFFFF'
+                    if (o.padding == null) o.padding = 1
+                  })
+                }
+                onOff={() => patch(hist('clearTextBg'), (o) => delete o.bg)}
+              />
+              {bg && (
+                <ColorField
+                  value={bg}
+                  onChange={(v) => patch(hist('setTextBg'), (o) => (o.bg = v))}
+                />
               )}
             </Row>
-            <Row label={tx('border')}>
-              {borderColor ? (
-                <>
-                  <ColorField
-                    value={borderColor}
-                    onChange={(v) => patch(hist('setTextBorder'), (o) => (o.borderColor = v))}
-                  />
-                  <Button
-                    size="icon"
-                    onClick={() =>
-                      patch(hist('clearTextBorder'), (o) => {
-                        delete o.borderColor
-                        delete o.borderPt
-                      })
-                    }
-                    aria-label={tx('clearBorder')}
-                  >
-                    <span className="text-xs text-ink-3">{tx('none')}</span>
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() =>
-                    patch(hist('addTextBorder'), (o) => {
-                      o.borderColor = '#1B1B18'
-                      if (o.padding == null) o.padding = 1
-                    })
-                  }
-                >
-                  {tx('addBorder')}
-                </Button>
+            <Row label={tx('border')} labelWidth={72}>
+              <EffectToggle
+                on={!!borderColor}
+                label={tx('border')}
+                addLabel={tx('addBorder')}
+                onAdd={() =>
+                  patch(hist('addTextBorder'), (o) => {
+                    o.borderColor = '#1B1B18'
+                    if (o.padding == null) o.padding = 1
+                  })
+                }
+                onOff={() =>
+                  patch(hist('clearTextBorder'), (o) => {
+                    delete o.borderColor
+                    delete o.borderPt
+                  })
+                }
+              />
+              {borderColor && (
+                <ColorField
+                  value={borderColor}
+                  onChange={(v) => patch(hist('setTextBorder'), (o) => (o.borderColor = v))}
+                />
               )}
             </Row>
             {(bg || borderColor) && (
-              <Row label={tx('padding')}>
+              <Row label={tx('padding')} labelWidth={72}>
                 <NumberField
                   value={shared(objs, (o) => (o as TextObject).padding ?? 0) ?? 0}
                   step={0.5}

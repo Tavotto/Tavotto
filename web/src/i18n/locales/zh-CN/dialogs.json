@@ -497,7 +497,9 @@
     },
     "details": "详情",
     "duplicate": "复制一份",
+    "duplicateToEdit": "复制一份再修改",
     "empty": "还没有配置",
+    "emptyHint": "清单里一条都没有。可以从文件导入一份配置。",
     "export": "导出为文件",
     "field": {
       "annotationFont": "标注字号",
@@ -520,6 +522,14 @@
     },
     "follow": "跟随更新",
     "followHelp": "默认不跟随：项目里存着选中那一刻的规则，全局改了也不会悄悄改变这张图的结论。打开之后按最新的规则算，不再提示同步。",
+    "group": {
+      "fonts": "字号",
+      "lines": "线条",
+      "page": "页面与栏宽",
+      "raster": "位图",
+      "text": "文字",
+      "ticks": "刻度"
+    },
     "import": "从文件导入",
     "inUse": "本项目在用",
     "kind": {
@@ -533,15 +543,21 @@
       "builtin": "内置",
       "user": "自定义"
     },
-    "readOnlyHint": "内置配置只读。想改就复制一份。",
+    "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
+    "previewHint": "示例图按上面的字段现算，字号与线宽的比例和真图一致；真图里有哪些元素以图为准。",
+    "previewTitle": "示例",
+    "readOnlySummary": "内置配置只读，下面是它的规则摘要。想改先复制一份，复制出来的那份可以编辑。",
     "restore": "恢复默认值",
     "restoreBody": "这条配置的内容会换回它复制来源的那一份，改动会丢失。",
     "restoreConfirm": "恢复",
     "restoreNeedsOrigin": "这条不是从内置复制来的，没有可恢复的默认值",
     "restoreTitle": "把「{{name}}」恢复成默认值？",
+    "ruleLine": "检查 {{expect}}，否则记为{{severity}}",
     "save": "保存",
     "saved": "已保存「{{name}}」",
-    "selectOne": "在左边选一条。",
+    "snapshotHint": "项目里存着选中那一刻的规则快照。全局清单里同名的那套后来改了也不影响这些数，除非打开「跟随更新」。",
+    "snapshotTitle": "本项目实际用来检查的规则",
+    "unset": "未设置",
     "useForProject": "本项目用这套规范",
     "usedForProject": "本项目改按「{{name}}」检查",
     "warning": {
@@ -650,7 +666,7 @@
   "settings": {
     "about": {
       "check": {
-        "bundled_runtime": "内置渲染环境",
+        "bundled_runtime": "自带的渲染环境",
         "cli_claude": "Claude CLI",
         "cli_codex": "Codex CLI",
         "matplotlib": "matplotlib",
@@ -801,13 +817,25 @@
         "apiKeySaved": "已保存 {{hint}}，留空则不改",
         "baseUrl": "接口地址",
         "editTitle": "编辑模型服务 — {{label}}",
-        "keyNote": "密钥保存在本机配置文件里（目录权限已收到仅本人可读），只在启动 CLI 时作为环境变量传入，不写进任何命令行、日志或项目文件。",
+        "keyNote": "密钥明文存在本机的配置文件里，只在启动 CLI 时通过环境变量传给它，不会写进命令行或项目文件。",
+        "keyNoteDiagnostics": "导出诊断包或复制诊断时，这个字段会被抹成 ***。",
+        "keyNoteMore": "存在哪里、能被谁读到",
+        "keyNotePerms": "保存后，macOS 与 Linux 上会把配置目录的权限收到仅本人可读；Windows 上不做这一步，请自行确认这台机器只有你在用。",
+        "keyNoteWhere": "写在本机配置目录的 config.json 里，明文（与这两家 CLI 自己的做法一致）。",
+        "manual": "没有合适的预设，手动填写",
+        "modelAdd": "添加",
+        "modelDefault": "默认",
+        "modelDraftAria": "要添加的模型名",
+        "modelPlaceholder": "模型名，回车添加",
+        "modelRemove": "移除模型 {{name}}",
         "models": "模型",
-        "modelsPlaceholder": "逗号分隔；第一个是默认值",
         "name": "名称",
+        "nameRequired": "给这个服务起个名字。",
         "preset": "预设",
         "presetAria": "模型服务预设",
+        "presetFilled": "预设已填好：地址、模型、协议",
         "presetPlaceholder": "选一个预设填好地址…",
+        "requiredAria": "必填",
         "wire": "协议",
         "wireAria": "接口协议",
         "wireChat": "chat（OpenAI Chat Completions 兼容，多数网关）",
@@ -865,9 +893,8 @@
       },
       "title": "编码 Agent",
       "toggleAria": "在 {{product}} 中启用 {{name}}",
-      "useFromAgents": "在编码 Agent 中使用 {{product}}",
-      "useInProduct": "在 {{product}} 中使用编码 Agent",
-      "versionAria": "版本 {{version}}",
+      "useFromAgents": "连接外部工具",
+      "useInProduct": "配置改图助手",
       "viewGuide": "查看使用指南"
     },
     "canvas": {
@@ -884,14 +911,25 @@
     "copy": "复制",
     "diagnostics": {
       "copyReport": "复制诊断",
+      "envNote": "「{{product}} 自带的渲染环境」随安装包附带、只读；装包会另建一个「这个项目的 {{product}} 环境」。两者不是同一个，状态各说各的。",
+      "fetchedAt": "本页数据取自 {{time}}",
       "healthTitle": "健康状态",
       "hidePreview": "收起",
+      "nextStep": {
+        "engine": "渲染引擎起不来。下面那张渲染环境卡片里有安装与更换 Python 环境的入口。",
+        "project_open": "先打开一个项目，与项目有关的那几项才有检查对象。",
+        "project_readable": "这个目录现在读不到（可能被移走或删掉了）。重新打开这个项目，或在「全部项目」里换一个。",
+        "project_writable": "「写回原始文件」需要这个目录可写。改掉它的权限之后回到这里点「重新获取」。"
+      },
+      "okDetails": "各项检查结果",
       "prepareFailed": "诊断报告生成失败，请重试。",
       "preparing": "正在生成…",
       "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
+      "refetch": "重新获取",
       "reportTitle": "诊断报告",
+      "scopeNote": "这里只检查运行环境（Python、渲染引擎、项目目录）。图本身合不合规范由「问题」面板检查，两者互不代表。",
       "summaryFailing": "{{count}} 项异常",
-      "summaryOk": "全部正常"
+      "summaryOk": "运行环境检查通过"
     },
     "export": {
       "defaultFormats": "默认格式",
@@ -916,6 +954,7 @@
       "builtinFromManaged": "随 {{product}} 环境提供，只读。",
       "builtinPlanned": "创建环境时会装上 matplotlib 及其依赖。",
       "builtinTitle": "内置包",
+      "builtinTitleCount": "内置包（{{count}} 个，只读）",
       "col": {
         "actions": "操作",
         "name": "名称",
@@ -942,7 +981,8 @@
         "ready": "就绪",
         "rebuild": "重建"
       },
-      "envTitle": "{{product}} 环境",
+      "envTarget": "装到这里",
+      "envTitle": "这个项目的 {{product}} 环境",
       "install": "安装",
       "job": {
         "cancel": "取消",
@@ -975,8 +1015,9 @@
         "repair": "缺包时自动修复安装",
         "user": "手动安装"
       },
+      "recoveryNote": "装坏了可以「重建」：按账上记录的包，在一个新建的环境里重装一遍。",
       "reinstall": "重新安装",
-      "rollbackNote": "包操作没有回滚：pip 不支持事务。每次改动前后都会记录一份环境快照（现有 {{count}} 份），环境损坏时可用「重建」恢复到账上记录的状态。",
+      "snapshotDetail": "包操作本身没有回滚（pip 没有事务）。每次改动前后各存一份 pip freeze 作对照（现有 {{count}} 份）——它只是排障时的证据，「重建」不读它，重建依据的是账上记录的包与版本。",
       "specAria": "要安装的包名或规范",
       "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
       "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
@@ -988,6 +1029,7 @@
         "planned": "创建时安装",
         "unknown": "未知"
       },
+      "techTitle": "环境与网络细节",
       "uninstall": "卸载",
       "uninstallAria": "卸载 {{name}}",
       "update": "升级",

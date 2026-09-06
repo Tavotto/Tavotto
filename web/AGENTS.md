@@ -355,6 +355,39 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
   `tests/test_typography_families.py`。
 
+## 图内属性的展示注册表（2026-09-06，UI/UX 审计 P1 / P2）
+
+`components/inspector/presentation/` 是**排版决策的唯一出处**：manifest 是能力
+权威，这里只决定「摆在哪一桶、此刻显不显示、长成哪种控件」，**字段进来多少
+出去多少**。
+
+* `roleProfiles.ts` 一个角色一张模板：`primary` / `more` / `advanced` 是顺序与
+  归属；`visibleWhen` 是「开关 → 从属字段」的条件展开（文字的背景 / 描边、
+  次刻度的长宽、三维的箭头与背景面板、图例项断开前的示意线样式，全在这里，
+  **不写第二套判据**）；`pairRows` 是并排成一行的字段对（色阶下限 / 上限）。
+* **条件展开只有 `registry.fieldVisible` 一条判据**：分桶用它，不走桶的复合
+  控件（刻度卡、图例排版详情卡）也用它。「改过的字段永远显示」这条兜底也在
+  它里面——override 不因折叠或条件而不可发现。
+* `controlKindOf` 按 **prop + 角色**认控件形态，不按「值长得像什么」猜：图例
+  位置九宫格、图例项的链接开关、纵横比、色条的方向 / 两端延伸（用当前色图画
+  的小色条）、三维投影（小立方体）、透明度百分比。多数视觉选择器走
+  `controls/OptionGrid`（radiogroup + 方向键漫游 + 选中角标）——线型 / 标记 /
+  纹理 / 箭头 / 色条方向与延伸 / 三维投影；色图选择器与图例九宫格自己实现
+  radiogroup（一个要分组长列表、一个是 3×3 几何）。哪一种都一样：**图形之外
+  必须有文字名与 aria-label**，选中态不只靠颜色。
+* 卡承接掉的字段要在 `ElementInspector` 的「让出」集合里点名，否则同一属性会
+  出两套控件。判「有没有第二套」的用例必须**把「更多」也展开**——没让出来的
+  字段落进那个默认折叠的桶，只数首屏的话那条断言恒真。
+* `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
+  排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
+* 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的
+  `mappable_gid`，不猜「两边 cmap 名字相同」；引擎没给就整行不出现。
+* 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
+  `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
+  `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
+  （三维方向示意的期望值取自真 matplotlib 的 `proj3d._view_axes`，
+  文件头写了重新生成的脚本）。
+
 ## 图例条目与绑定（2026-09-02，ADR 0034）
 
 完整版在 `docs/adr/0034-legend-entry-binding.md`，改动前先读。
@@ -369,12 +402,23 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   于全部项）与 `entry_order`（条目列表的上下移动），通用列表让出这两条
   （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
   预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
+* **排版详情卡**（`controls/LegendSpacingCard.tsx`，审计 T17）承接五条间距
+  （`LEGEND_SPACING_PROPS`），与有没有条目无关。默认折叠、改过任意一条自动
+  展开；标签**不定宽**（72px 的标签列正是把「线与文字间距」截成「线与文字间…」
+  的那个机制）；单位写 `em`——matplotlib 这五条按字号的倍数计，引擎不发 `unit`。
+* **图例项与源对象是一个链条开关**（审计 T18）：一行「链接到：曲线 “sin”」+
+  开关（断开 ↔ 恢复），来源入口两种状态下都在。示意线的五条样式**只在断开后
+  出现**（`visibleWhen`，判据 `binding !== 'follow_source'`）。**脱开的判据没变**
+  ——任一 `handle_*` override 在即 custom（`legendModel.entryBinding`），它仍然
+  管着老文档；变的只是界面上没有「改样式即脱开」这条路，提示文案也跟着改了。
 * **恢复跟随**只有 `store/actions.restoreLegendEntryFollow` 一处：删全部
   `handle_*` override + 按 `binding_default` 决定写 `binding=follow_source` 还是
   删 binding override，**一次 commit**。别在组件里逐条 `clearOverride`——那是
   一串撤销记录，中间态还会渲染出半跟随半自定义的图例。
-* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」。
-* 看护：`inspector/legendCard.test.tsx`；Python 侧 `tests/test_legend_binding.py`。
+* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」；九宫格
+  那个方框就是参照的容器，框下写出它叫什么（「相对子图 1」），认不出来就不写。
+* 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`；
+  Python 侧 `tests/test_legend_binding.py`。
 
 ## 坐标轴边框的语义命中区与四边刻度（2026-09-02，ADR 0035）
 
@@ -417,14 +461,25 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 
 完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
 
-* **一个外壳三种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（单个图内元素 /
-  单个画布对象 / 两个以上画布对象），出现与让位、落位（`position.ts` 纯函数）、
-  Esc、拖动隐藏、portal 都在外壳；三种内容各一个文件。对外仍是 `ContextBar()`。
+* **一个外壳四种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的
+  面板 / 单个图内元素 / 单个画布对象 / 两个以上画布对象），出现与让位、落位
+  （`position.ts` 纯函数）、Esc、拖动隐藏、portal 都在外壳；四种内容各一个文件。
+  对外仍是 `ContextBar()`。裁剪的两条判据**不是同一个**：让位看
+  `cropTargetId` 有没有值，出裁剪条看它指不指得到一个真面板。
+* **进裁剪一律走 `actions.beginCrop`**（属性页 / 浮动条 / 右键菜单 / 面板上按
+  Enter 四个入口），它把进裁剪那一刻的取景窗与包围盒记进 `uiStore.cropBaseline`；
+  `cancelCrop` 还原到**那一刻**（不是还原到「从没裁剪过」——那是 `resetPanelCrop`），
+  `finishCrop` 只退出。直接 `setCropTarget(id)` 不记基线，取消会降级成单纯退出：
+  **宁可少还原，也不拿一份过期快照去改文档**（审计 T26）。
 * **多选栏不是第二套排列系统**：按钮只发意图，落地走 `store/actions.alignSelectedTo`
   / `groupSelected` / `ungroupSelected`——与 `ArrangeSection` 同一个函数、同一条历史
   标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
 * **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
   persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+  **控件也只留一处**（审计 T29）：右栏属性页停靠着时（`ContextBar` 的
+  `multiBarDocked`，与文字栏的 `textBarCompact` 同一条 `inspectorDocked` 判据）
+  浮动栏收成「计数 + 六向对齐 + 成组 + 更多」，参照 / 分布 / 等宽等高的控件让给
+  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。
 * **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
   `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
   后续 coachmark 都锚在这两个节点上，别改名。
