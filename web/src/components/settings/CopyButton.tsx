@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ClipboardCopy } from 'lucide-react'
+import { Check, Copy } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 
@@ -51,7 +52,7 @@ export function CopyButton({
         className,
       )}
     >
-      {done ? <Check size={12} aria-hidden /> : <ClipboardCopy size={12} aria-hidden />}
+      {done ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
       <span>{done ? st('copied') : st('copy')}</span>
     </button>
   )

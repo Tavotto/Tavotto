@@ -18,7 +18,8 @@
  * 不跨会话持久化。浮在画布左下角，不遮画布、不遮右栏、无全屏遮罩。
  */
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, Loader2, X } from 'lucide-react'
+import { Check, Download, LoaderCircle, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { t as translate } from '@/i18n'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
@@ -104,13 +105,13 @@ export function GuidedTask({
         aria-label={translate('actions.close')}
         className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
       >
-        <X size={12} />
+        <X size={ICON_SIZE.sm} />
       </button>
 
       {achieved ? (
         <div aria-live="polite" className="flex flex-col gap-1.5 pr-5">
           <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
-            <Check size={14} className="text-sel" aria-hidden />
+            <Check size={ICON_SIZE.md} className="text-sel" aria-hidden />
             {pg('taskDoneTitle')}
           </p>
           {integrity.verdict === 'unchanged' ? (
@@ -119,7 +120,7 @@ export function GuidedTask({
             </p>
           ) : integrity.verdict === 'checking' ? (
             <p className="flex items-center gap-1.5 text-xs text-ink-3">
-              <Loader2 size={12} className="animate-spin" aria-hidden />
+              <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" aria-hidden />
               {pg('taskChecking')}
             </p>
           ) : (
@@ -148,7 +149,7 @@ export function GuidedTask({
               href={RELEASES_LATEST_URL}
               className="flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
             >
-              <Download size={10} aria-hidden />
+              <Download size={ICON_SIZE.xs} aria-hidden />
               {pg('downloadDesktop')}
             </a>
           </div>

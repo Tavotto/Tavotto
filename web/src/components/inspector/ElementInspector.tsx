@@ -19,6 +19,7 @@ import {
   RotateCcw,
   TriangleAlert,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AlignMode } from '@/lib/geometry'
 import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
 import { ENVIRONMENT_CODES } from '@/lib/api'
@@ -312,7 +313,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <ul className="flex flex-col gap-1">
             {render.warnings.map((w, i) => (
               <li key={i} className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-                <TriangleAlert size={12} className="mt-px shrink-0 text-danger" />
+                <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-danger" />
                 <span>{w}</span>
               </li>
             ))}
@@ -475,7 +476,7 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
           className="max-w-full px-1.5 text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(it.gid)}
         >
-          <CornerUpLeft size={11} className="shrink-0" />
+          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
           <span className="truncate">
             {it.hint ? el('relatedWithHint', { hint: it.hint, label: it.label }) : it.label}
           </span>
@@ -507,7 +508,7 @@ function ErrorBlock({
               onClick={onRetry}
               className="flex items-center gap-1 text-xs text-danger underline-offset-2 hover:underline"
             >
-              <RotateCcw size={11} />
+              <RotateCcw size={ICON_SIZE.xs} />
               {el('retryRender')}
             </button>
           )}
@@ -518,7 +519,7 @@ function ErrorBlock({
               onClick={() => setOpen((v) => !v)}
               className="mt-1 flex items-center gap-0.5 text-xs text-danger/80 hover:text-danger"
             >
-              <ChevronRight size={11} className={cn('transition-transform', open && 'rotate-90')} />
+              <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', open && 'rotate-90')} />
               {el('traceback')}
             </button>
             {open && (
@@ -680,7 +681,7 @@ function FieldList({
             className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
           >
             <ChevronRight
-              size={11}
+              size={ICON_SIZE.xs}
               aria-hidden
               className={cn('shrink-0 transition-transform', moreOpen && 'rotate-90')}
             />
@@ -911,7 +912,7 @@ function BatchSection({
                   className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
                 >
                   <ChevronRight
-                    size={11}
+                    size={ICON_SIZE.xs}
                     className={cn('shrink-0 transition-transform', open && 'rotate-90')}
                   />
                   {groupLabel(name)}
@@ -1204,7 +1205,7 @@ function FieldRow({
             aria-label={el('resetProp', { label })}
             onClick={() => clearOverride(panel.id, element.gid, field.prop)}
           >
-            <RotateCcw size={11} className="text-ink-3" />
+            <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         </Tip>
       )}
@@ -1436,7 +1437,7 @@ function FieldRow({
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
                 >
-                  <MoveUp size={11} />
+                  <MoveUp size={ICON_SIZE.xs} />
                 </Button>
                 <Button
                   size="icon-sm"
@@ -1445,7 +1446,7 @@ function FieldRow({
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
                 >
-                  <MoveDown size={11} />
+                  <MoveDown size={ICON_SIZE.xs} />
                 </Button>
               </li>
             ))}
@@ -1555,7 +1556,7 @@ function HowItWorks() {
           className="w-full text-ink-2"
           aria-label={el('howItWorksAria')}
         >
-          <CircleQuestionMark size={13} />
+          <CircleQuestionMark size={ICON_SIZE.sm} />
           {el('howItWorksTrigger')}
         </Button>
       }
@@ -1720,7 +1721,7 @@ function AlignSection({
                 onClick={() => apply(mode)}
                 aria-label={base}
               >
-                <Icon size={14} />
+                <Icon size={ICON_SIZE.md} />
               </Button>
             </Tip>
           )
@@ -1825,7 +1826,7 @@ function AxesSizeMm({
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
         >
-          <AlignCenterVertical size={13} />
+          <AlignCenterVertical size={ICON_SIZE.sm} />
           {el('centerH')}
         </Button>
         <Button
@@ -1834,7 +1835,7 @@ function AxesSizeMm({
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
         >
-          <AlignCenterHorizontal size={13} />
+          <AlignCenterHorizontal size={ICON_SIZE.sm} />
           {el('centerV')}
         </Button>
       </div>
@@ -1899,7 +1900,7 @@ function SourceAdvancedSection({
               )
             }
           >
-            <RotateCcw size={13} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {el('resetElementCount', { count: elementCount })}
           </Button>
         )}
@@ -1911,7 +1912,7 @@ function SourceAdvancedSection({
           title={el('resetTitle')}
           onClick={() => resetOverrides(panel.id)}
         >
-          <RotateCcw size={13} />
+          <RotateCcw size={ICON_SIZE.sm} />
           {panel.overrides.length
             ? el('resetToScriptCount', { count: panel.overrides.length })
             : el('resetToScript')}
@@ -1972,7 +1973,7 @@ function HiddenElements({ panel, manifest }: { panel: PanelObject; manifest?: Ma
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
       >
-        <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         {el('hiddenElements', { count: hidden.length })}
       </button>
       {open && (

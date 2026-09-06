@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  AlertTriangle,
+  TriangleAlert,
   ArrowUp,
   BookOpen,
   CornerDownLeft,
@@ -11,6 +11,7 @@ import {
   HardDrive,
   X,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,
   ApiError,
@@ -77,7 +78,7 @@ export function ProjectPicker() {
 
         <div className="mt-5 flex gap-2">
           <Button variant="primary" size="md" onClick={() => setBrowse('create')}>
-            <FolderPlus size={14} />
+            <FolderPlus size={ICON_SIZE.md} />
             {t('picker.create')}
           </Button>
           <Button
@@ -93,7 +94,7 @@ export function ProjectPicker() {
               } else setBrowse('open')
             }}
           >
-            <FolderOpen size={14} />
+            <FolderOpen size={ICON_SIZE.md} />
             {t('picker.browse')}
           </Button>
           {currentOpen && (
@@ -125,7 +126,7 @@ export function ProjectPicker() {
             spellCheck={false}
           />
           <Button type="submit" variant="outline" size="md" disabled={!typed.trim()}>
-            <CornerDownLeft size={13} />
+            <CornerDownLeft size={ICON_SIZE.sm} />
             {t('picker.openButton')}
           </Button>
         </form>
@@ -206,7 +207,7 @@ function TutorialEntry() {
           data-onboarding-anchor="tutorial-entry"
           onClick={() => void runTutorialEntry('picker')}
         >
-          <BookOpen size={14} />
+          <BookOpen size={ICON_SIZE.md} />
           {t(`picker.tutorial.${entry}`)}
         </Button>
       </div>
@@ -236,7 +237,7 @@ function RecentRow({
   const { t } = useTranslation('project')
   return (
     <li className="group flex items-center gap-2 border-b border-border py-2 last:border-b-0">
-      <Folder size={14} className="shrink-0 text-ink-3" />
+      <Folder size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
       <button
         onClick={onOpen}
         disabled={busy || !entry.exists}
@@ -250,7 +251,7 @@ function RecentRow({
           <span className="truncate text-xs font-medium text-ink">{entry.name}</span>
           {!entry.exists && (
             <span className="flex shrink-0 items-center gap-1 text-xs text-danger">
-              <AlertTriangle size={11} />
+              <TriangleAlert size={ICON_SIZE.xs} />
               {t('picker.missingDir')}
             </span>
           )}
@@ -273,7 +274,7 @@ function RecentRow({
           'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
         )}
       >
-        <X size={13} />
+        <X size={ICON_SIZE.sm} />
       </button>
     </li>
   )
@@ -378,7 +379,7 @@ export function DirBrowser({
             }}
             aria-label={t('browser.parentDir')}
           >
-            <ArrowUp size={13} />
+            <ArrowUp size={ICON_SIZE.sm} />
           </Button>
           <TextInput
             value={pathText}
@@ -395,7 +396,7 @@ export function DirBrowser({
             spellCheck={false}
           />
           <Button type="submit" size="icon-sm" aria-label={t('browser.goToPath')}>
-            <CornerDownLeft size={13} />
+            <CornerDownLeft size={ICON_SIZE.sm} />
           </Button>
         </form>
 
@@ -423,9 +424,9 @@ export function DirBrowser({
                 )}
               >
                 {state.is_roots ? (
-                  <HardDrive size={13} className="shrink-0 text-ink-3" />
+                  <HardDrive size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
                 ) : (
-                  <Folder size={13} className="shrink-0 text-ink-3" />
+                  <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
                 )}
                 <span className="truncate">{d.name}</span>
               </button>
@@ -479,7 +480,7 @@ function Chip({ entry, icon, onGo }: { entry: DirEntry; icon?: boolean; onGo: ()
         'outline-none hover:border-border-strong hover:text-ink focus-visible:focus-ring',
       )}
     >
-      {icon && <HardDrive size={11} className="text-ink-3" />}
+      {icon && <HardDrive size={ICON_SIZE.xs} className="text-ink-3" />}
       {entry.name}
     </button>
   )

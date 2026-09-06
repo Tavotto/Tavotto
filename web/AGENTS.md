@@ -1107,3 +1107,11 @@ radius：控件 6px、浮层 10px、上限 14px。UI 字号 11-14px；控件高 
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：坐标/选区尺寸只在拖动中出现，
 普通状态走短暂 toast，错误常驻可关，autosave 显示在顶栏文档名旁。
+
+**图标**（2026-09-06，用户反馈第 7 条；细则 `docs/ux/ICONOGRAPHY.md`）：全产品只有
+lucide-react 一套；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}` = 12 / 14 / 16 / 20，默认 sm，
+描边 1.75 按比例缩放，都由 `components/ui/Icon.tsx` 的 `IconProvider` 在三个根上给。
+写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写 strokeWidth；折叠 / 下拉
+箭头一律 xs；折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图
+与品牌标按个数豁免）、不许别名引入、不许拿字符 / emoji 当图标、不许裸 `<summary>`
+——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）。

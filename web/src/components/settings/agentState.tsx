@@ -1,11 +1,12 @@
 import {
-  AlertTriangle,
-  CheckCircle2,
+  TriangleAlert,
+  CircleCheck,
   CircleDashed,
   KeyRound,
-  MinusCircle,
+  CircleMinus,
   type LucideIcon,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import type { AiAgentCaps, AiAgentUiState } from '@/lib/api'
@@ -24,12 +25,12 @@ export const ag = (key: string, values?: Record<string, unknown>) =>
  */
 const PRESENTATION: Record<AiAgentUiState, { icon: LucideIcon; tone: string }> = {
   detecting: { icon: CircleDashed, tone: 'text-ink-3' },
-  ready: { icon: CheckCircle2, tone: 'text-ink' },
-  installed: { icon: CheckCircle2, tone: 'text-ink-2' },
+  ready: { icon: CircleCheck, tone: 'text-ink' },
+  installed: { icon: CircleCheck, tone: 'text-ink-2' },
   needs_auth: { icon: KeyRound, tone: 'text-warn' },
-  broken: { icon: AlertTriangle, tone: 'text-danger' },
+  broken: { icon: TriangleAlert, tone: 'text-danger' },
   not_installed: { icon: CircleDashed, tone: 'text-ink-3' },
-  disabled: { icon: MinusCircle, tone: 'text-ink-3' },
+  disabled: { icon: CircleMinus, tone: 'text-ink-3' },
 }
 
 export const stateLabel = (state: AiAgentUiState): string => ag(`state.${state}`)
@@ -44,7 +45,7 @@ export function AgentStateBadge({
   const { icon: Icon, tone } = PRESENTATION[state] ?? PRESENTATION.not_installed
   return (
     <span className={`flex items-center gap-1 text-xs ${tone} ${className ?? ''}`}>
-      <Icon size={12} strokeWidth={2} aria-hidden />
+      <Icon size={ICON_SIZE.sm} aria-hidden />
       {stateLabel(state)}
     </span>
   )

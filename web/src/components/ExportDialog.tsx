@@ -23,12 +23,14 @@ import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
-  FileWarning,
-  Loader2,
-  Settings2,
+  FileExclamationPoint,
+  LoaderCircle,
+  Pencil,
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
+import { Details, Summary } from '@/components/ui/Details'
 import { panelSrc, type ExportJob, type ExportOutput } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
@@ -529,7 +531,7 @@ export function ExportDialog() {
           </Button>
           {busy ? (
             <Button variant="outline" size="md" onClick={() => void cancelCurrentExport()}>
-              <X size={14} />
+              <X size={ICON_SIZE.md} />
               {ex('cancelExport')}
             </Button>
           ) : (
@@ -540,7 +542,7 @@ export function ExportDialog() {
               onClick={() => void start('ask')}
               title={blocked ? ex('blockedTitle') : undefined}
             >
-              <Download size={14} />
+              <Download size={ICON_SIZE.md} />
               {ex('start')}
             </Button>
           )}
@@ -690,7 +692,7 @@ export function ExportDialog() {
             }}
             className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
           >
-            <Settings2 size={11} className="mr-0.5 inline" aria-hidden />
+            <Pencil size={ICON_SIZE.xs} className="mr-0.5 inline" aria-hidden />
             {ex('profileEdit')}
           </button>
         </Row>
@@ -740,14 +742,12 @@ export function ExportDialog() {
         )}
 
         {/* 7. 高级选项 —— 默认收起 */}
-        <details
+        <Details
           className="rounded-sm"
           open={advancedOpen}
           onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
         >
-          <summary className="cursor-pointer rounded-sm text-xs text-ink-2 outline-none focus-visible:focus-ring">
-            {ex('advanced')}
-          </summary>
+          <Summary className="rounded-sm text-xs text-ink-2">{ex('advanced')}</Summary>
           <div className="mt-1.5 flex flex-col gap-1.5 pl-1">
             <label
               className="flex items-center gap-1.5 text-xs text-ink-2"
@@ -776,7 +776,7 @@ export function ExportDialog() {
               <p className="pl-1 text-xs text-ink-3">{ex('transparentNotForRaster')}</p>
             )}
           </div>
-        </details>
+        </Details>
 
         {/* 进度 / 冲突 / 结果 */}
         {busy && <ProgressRow job={job} />}
@@ -1007,7 +1007,7 @@ function ScopeNote({
           （§五：不隐藏选项、不静默改为画布） */}
       {!available && (
         <span className="flex items-start gap-1.5 text-danger">
-          <TriangleAlert size={11} className="mt-0.5 shrink-0" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
           {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
               「先选中一张图」，用户照做之后按钮还是灰的 */}
           {ex(`scopeUnavailable.${reason}`)}
@@ -1055,7 +1055,7 @@ function CheckRow({
     return (
       <Row label={ex('checkLabel')} labelWidth={56}>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-danger">
-          <TriangleAlert size={12} className="shrink-0" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           {ex(summary.total ? 'preflightFailedKept' : 'preflightFailed')}
         </span>
         <OpenProblems onClick={onOpenPanel} />
@@ -1066,7 +1066,7 @@ function CheckRow({
     return (
       <Row label={ex('checkLabel')} labelWidth={56}>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink-2">
-          <Check size={12} className="shrink-0 text-accent" aria-hidden />
+          <Check size={ICON_SIZE.sm} className="shrink-0 text-accent" aria-hidden />
           {ex('preflightOk')}
         </span>
       </Row>
@@ -1083,7 +1083,7 @@ function CheckRow({
           summary.blocking ? 'text-danger' : 'text-ink-2',
         )}
       >
-        <TriangleAlert size={12} className="shrink-0" aria-hidden />
+        <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
         {parts.join(' · ')}
       </span>
       <OpenProblems onClick={onOpenPanel} />
@@ -1115,7 +1115,7 @@ function ProgressRow({ job }: { job: ExportJob | null }) {
       aria-live="polite"
       className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2"
     >
-      <Loader2 size={12} className="shrink-0 motion-safe:animate-spin" aria-hidden />
+      <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 motion-safe:animate-spin" aria-hidden />
       {ex(`phase.${phase}`, { step, total })}
     </p>
   )
@@ -1138,7 +1138,7 @@ function ConflictBar({
   return (
     <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 px-2 py-1.5">
       <p className="flex items-start gap-1.5 text-xs text-ink-2">
-        <FileWarning size={12} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+        <FileExclamationPoint size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-warn" aria-hidden />
         {ex('conflict', { files: names.join('、') })}
       </p>
       <div className="flex gap-1.5">
@@ -1176,7 +1176,7 @@ function ResultBlock({
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 p-2">
         <p className="flex items-start gap-1.5 text-xs text-ink-2">
-          <TriangleAlert size={12} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-warn" aria-hidden />
           {ex('jobLost')}
         </p>
         <Button variant="outline" size="sm" onClick={onRetry}>
@@ -1236,7 +1236,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   if (out.status === 'failed' || !out.name) {
     return (
       <p className="flex items-start gap-1.5 text-xs text-danger">
-        <TriangleAlert size={11} className="mt-0.5 shrink-0" aria-hidden />
+        <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
         {ex('outputFailed', {
           format: out.format.toUpperCase(),
           reason: translate(`backend.${out.error?.code ?? 'format_failed'}`, {
@@ -1329,7 +1329,7 @@ function FormatToggle({
           checked ? 'border-accent bg-accent text-white' : 'border-border-strong',
         )}
       >
-        {checked && <Check size={10} strokeWidth={3} />}
+        {checked && <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />}
       </span>
       <span className="min-w-0">
         <span className={cn('block text-xs', checked ? 'text-accent' : 'text-ink')}>{title}</span>

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Button } from '../../ui/Button'
@@ -43,7 +44,7 @@ export function ResetChip({ label, onReset }: { label: string; onReset: () => vo
   return (
     <Tip label={translate('element.backToScript', { ns: 'inspector' })} side="left">
       <Button size="icon-sm" className="shrink-0" aria-label={text} onClick={onReset}>
-        <RotateCcw size={11} className="text-ink-3" />
+        <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
       </Button>
     </Tip>
   )
@@ -247,9 +248,9 @@ export function TextColorRow({
 }
 
 export const alignmentItems = (labels: { left: string; center: string; right: string }) => [
-  { value: 'left' as const, icon: <TextAlignStart size={12} />, tip: labels.left },
-  { value: 'center' as const, icon: <TextAlignCenter size={12} />, tip: labels.center },
-  { value: 'right' as const, icon: <TextAlignEnd size={12} />, tip: labels.right },
+  { value: 'left' as const, icon: <TextAlignStart size={ICON_SIZE.sm} />, tip: labels.left },
+  { value: 'center' as const, icon: <TextAlignCenter size={ICON_SIZE.sm} />, tip: labels.center },
+  { value: 'right' as const, icon: <TextAlignEnd size={ICON_SIZE.sm} />, tip: labels.right },
 ]
 
 export function AlignmentRow({

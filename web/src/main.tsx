@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { IconProvider } from './components/ui/Icon'
 import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
 import 'generative-loaders/styles.css'
@@ -46,7 +47,10 @@ void bootstrapDesktopSession().then((r) => {
   createRoot(rootEl).render(
     <StrictMode>
       <ErrorBoundary>
-        <App />
+        {/* 图标默认档在根上给（Icon.tsx）：不写 size 的图标拿到 14px / 1.75 描边 */}
+        <IconProvider>
+          <App />
+        </IconProvider>
       </ErrorBoundary>
     </StrictMode>,
   )

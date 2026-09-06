@@ -3,15 +3,16 @@ import { useTranslation } from 'react-i18next'
 import {
   ArrowUp,
   ChevronRight,
-  FileCode2,
-  History,
+  FileCodeCorner,
+  RotateCcwClock,
   Pin,
   RotateCcw,
-  Settings2,
+  SlidersHorizontal,
   Square,
   Trash2,
   X,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
   agentDisplayName,
@@ -56,7 +57,7 @@ import { Markdown } from './Markdown'
 
 /** 右栏标签名与图标：tab bar 引用这里，改名只改这一处 */
 export const assistantTabLabel = () => translate('tabLabel', { ns: 'ai' })
-export const ASSISTANT_TAB_ICON = FileCode2
+export const ASSISTANT_TAB_ICON = FileCodeCorner
 
 /** 本面板的文案都在 ai 命名空间下 */
 const ai = (key: string, values?: Record<string, unknown>) =>
@@ -241,7 +242,7 @@ export function AssistantPanel() {
             aria-label={ai('panel.taskHistory')}
             aria-expanded={historyOpen}
           >
-            <History size={12} className="text-ink-2" />
+            <RotateCcwClock size={ICON_SIZE.sm} className="text-ink-2" />
           </Button>
         </Tip>
       </div>
@@ -250,13 +251,13 @@ export function AssistantPanel() {
         <div ref={scrollRef} className="h-full overflow-y-auto px-2.5 py-2">
           {!panel ? (
             <EmptyState
-              icon={FileCode2}
+              icon={FileCodeCorner}
               title={ai('panel.noPanelTitle')}
               hint={ai('panel.noPanelHint')}
             />
           ) : mine.length === 0 ? (
             <EmptyState
-              icon={FileCode2}
+              icon={FileCodeCorner}
               title={ai('panel.emptyTitle')}
               hint={ai('panel.emptyHint')}
             />
@@ -357,7 +358,7 @@ export function AssistantPanel() {
                 onClick={send}
                 aria-label={ai('panel.sendAria')}
               >
-                {!(sending || runningHere) && <ArrowUp size={13} />}
+                {!(sending || runningHere) && <ArrowUp size={ICON_SIZE.sm} />}
               </Button>
             </Tip>
           </div>
@@ -401,7 +402,7 @@ function TargetChip({
             'outline-none transition-colors hover:bg-ink/[.06] focus-visible:focus-ring',
           )}
         >
-          <FileCode2 size={12} className="shrink-0 text-ink-3" />
+          <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           <span className="min-w-0 truncate text-xs text-ink">{targetText}</span>
           <span className="ml-auto shrink-0 text-xs text-ink-3">{scopeLabel(scope)}</span>
         </button>
@@ -443,7 +444,7 @@ function ScopeAgentButton({
           disabled={!panel}
           aria-label={ai('panel.scopeAndAgent')}
         >
-          <Settings2 size={12} />
+          <SlidersHorizontal size={ICON_SIZE.sm} />
           <span className="text-xs">
             {scopeLabel(scope)}
             {active ? ` · ${agentDisplayName(caps, active)}` : ''}
@@ -582,7 +583,7 @@ export function ScopeAgentContent({
         className="flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         <ChevronRight
-          size={11}
+          size={ICON_SIZE.xs}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
         {ai('panel.techDetails')}
@@ -723,7 +724,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           onClick={onClose}
           aria-label={ai('history.close')}
         >
-          <X size={12} />
+          <X size={ICON_SIZE.sm} />
         </Button>
       </div>
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
@@ -758,7 +759,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           <p className="py-2 text-xs text-danger">{error}</p>
         ) : entries.length === 0 ? (
           <EmptyState
-            icon={History}
+            icon={RotateCcwClock}
             title={ai(query || status ? 'history.noMatch' : 'history.empty')}
             hint={query || status ? undefined : ai('history.emptyHint')}
           />
@@ -824,7 +825,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
             onClick={() => void pinAiHistory(entry.id, !entry.pinned).then(onChanged)}
           >
-            <Pin size={11} className={entry.pinned ? undefined : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.xs} className={entry.pinned ? undefined : 'text-ink-3'} />
           </Button>
         </Tip>
         {entry.changed && entry.revert_available && (
@@ -840,7 +841,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
                 })
               }
             >
-              <RotateCcw size={11} />
+              <RotateCcw size={ICON_SIZE.xs} />
             </Button>
           </Tip>
         )}
@@ -850,7 +851,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             aria-label={ai('history.delete')}
             onClick={() => void deleteAiHistory(entry.id).then(onChanged)}
           >
-            <Trash2 size={11} className="text-ink-3" />
+            <Trash2 size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         </Tip>
       </div>
@@ -861,7 +862,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
         className="mt-0.5 flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         <ChevronRight
-          size={11}
+          size={ICON_SIZE.xs}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
         {ai('panel.techDetails')}
@@ -972,7 +973,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             onClick={() => void useAiStore.getState().cancel(session.id)}
             aria-label={ai('panel.abort')}
           >
-            <Square size={10} />
+            <Square size={ICON_SIZE.xs} />
           </Button>
         )}
       </div>
@@ -988,7 +989,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             className="w-full text-danger"
             onClick={() => void revertSession(session)}
           >
-            <RotateCcw size={12} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {ai('panel.revert')}
           </Button>
         </>
@@ -1007,7 +1008,7 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-1 text-left text-xs text-ink-3 hover:text-ink-2"
       >
-        <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="truncate">
           {ai('panel.processSteps', { count: items.length })}
           {!open && items.at(-1)

@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check,
   Download,
-  FileCode2,
-  Loader2,
-  RotateCcw,
-  RotateCw,
+  FileCodeCorner,
+  LoaderCircle,
+  Redo2,
+  Undo2,
   ShieldAlert,
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { ElementTree } from '@/components/left/ElementTree'
@@ -306,7 +308,7 @@ export function PlaygroundApp() {
           href={RELEASES_LATEST_URL}
           className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-2.5 text-xs text-white"
         >
-          <Download size={13} />
+          <Download size={ICON_SIZE.sm} />
           {pg('downloadDesktop')}
         </a>
       </header>
@@ -496,7 +498,7 @@ function FailureView({
   const { title, body } = failureText(failure, filename)
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto p-6">
-      <TriangleAlert size={18} className="text-danger" aria-hidden />
+      <TriangleAlert size={ICON_SIZE.lg} className="text-danger" aria-hidden />
       <p className="max-w-lg text-center text-[14px] font-medium" role="alert">
         {title}
       </p>
@@ -511,12 +513,12 @@ function FailureView({
 
 function LogDisclosure({ label, text, open }: { label: string; text: string; open?: boolean }) {
   return (
-    <details className="w-full max-w-lg" open={open}>
-      <summary className="cursor-pointer text-xs text-ink-3">{label}</summary>
+    <Details className="w-full max-w-lg" open={open}>
+      <Summary className="text-xs text-ink-3">{label}</Summary>
       <pre className="mt-1 max-h-48 overflow-auto rounded-[6px] border border-border bg-surface p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2">
         {text}
       </pre>
-    </details>
+    </Details>
   )
 }
 
@@ -646,7 +648,7 @@ function EditorView({
           className="flex h-7 items-center gap-1.5 rounded-sm px-2 font-mono text-[11px] text-ink-2 hover:bg-surface-2"
           title={pg('sourceNote')}
         >
-          <FileCode2 size={12} aria-hidden />
+          <FileCodeCorner size={ICON_SIZE.sm} aria-hidden />
           <span className="max-w-[16ch] truncate">{session.scriptName}</span>
           <IntegrityBadge integrity={integrity} />
         </button>
@@ -659,10 +661,10 @@ function EditorView({
 
         <span className="mx-1 h-4 w-px bg-border" />
         <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => runUndoRedo(false)}>
-          <RotateCcw size={13} />
+          <Undo2 size={ICON_SIZE.md} />
         </IconButton>
         <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => runUndoRedo(true)}>
-          <RotateCw size={13} />
+          <Redo2 size={ICON_SIZE.md} />
         </IconButton>
         <button
           onClick={resetEdits}
@@ -693,7 +695,7 @@ function EditorView({
           role="alert"
           className="flex shrink-0 items-start gap-2 border-b border-danger/40 bg-danger/8 px-3 py-2"
         >
-          <ShieldAlert size={14} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+          <ShieldAlert size={ICON_SIZE.md} className="mt-0.5 shrink-0 text-danger" aria-hidden />
           <div className="min-w-0 text-xs leading-relaxed text-ink-2">
             <p className="font-medium text-danger">
               {session.scriptName} · {pg('changed')}
@@ -758,7 +760,7 @@ function EditorView({
             href={RELEASES_LATEST_URL}
             className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
           >
-            <Download size={11} aria-hidden />
+            <Download size={ICON_SIZE.xs} aria-hidden />
             {pg('downloadDesktop')}
           </a>
           <button
@@ -766,7 +768,7 @@ function EditorView({
             aria-label={translate('actions.close')}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
           >
-            <X size={12} />
+            <X size={ICON_SIZE.sm} />
           </button>
         </footer>
       )}
@@ -810,7 +812,7 @@ function IntegrityBadge({ integrity }: { integrity: SourceIntegrity }) {
         verdict === 'changed' ? 'text-danger' : verdict === 'unchanged' ? 'text-ink-3' : 'text-ink-faint',
       )}
     >
-      {verdict === 'changed' && <ShieldAlert size={11} aria-hidden />}
+      {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.xs} aria-hidden />}
       · {label}
     </span>
   )
@@ -826,8 +828,8 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
         ? pg('integrityUnavailableNote')
         : pg('integrityNote')
   return (
-    <details className="shrink-0 border-t border-border px-4 py-2">
-      <summary className="cursor-pointer text-xs text-ink-3">{pg('integrityTitle')}</summary>
+    <Details className="shrink-0 border-t border-border px-4 py-2">
+      <Summary className="text-xs text-ink-3">{pg('integrityTitle')}</Summary>
       <p className={cn('mt-1.5 text-xs leading-relaxed', verdict === 'changed' ? 'text-danger' : 'text-ink-3')}>
         {note}
       </p>
@@ -839,7 +841,7 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
             : shortHash(workspaceSha256 || originalSha256)}
         </p>
       )}
-    </details>
+    </Details>
   )
 }
 
@@ -885,7 +887,7 @@ function SourceDialog({
             aria-label={translate('actions.close')}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
           >
-            <X size={13} />
+            <X size={ICON_SIZE.sm} />
           </button>
         </div>
         <p className="shrink-0 border-b border-border px-4 py-2 text-xs leading-relaxed text-ink-3">
@@ -937,7 +939,7 @@ function RenderState({
   if (error) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-danger" title={formatMessage(error)}>
-        <TriangleAlert size={12} />
+        <TriangleAlert size={ICON_SIZE.sm} />
         {pg('renderFailed')}
       </span>
     )
@@ -945,14 +947,14 @@ function RenderState({
   if (rendering || pending) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <Loader2 size={12} className={rendering ? 'animate-spin' : ''} />
+        <LoaderCircle size={ICON_SIZE.sm} className={rendering ? 'animate-spin' : ''} />
         {rendering ? pg('rendering') : pg('pendingEdits')}
       </span>
     )
   }
   return (
     <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-      <Check size={12} />
+      <Check size={ICON_SIZE.sm} />
       {pg('synced')}
     </span>
   )

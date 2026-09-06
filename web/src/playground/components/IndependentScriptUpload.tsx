@@ -11,6 +11,8 @@
  */
 import { useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { pg } from '../pgText'
@@ -47,21 +49,21 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
             onClick={() => inputRef.current?.click()}
             className="flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
-            <Upload size={12} aria-hidden />
+            <Upload size={ICON_SIZE.sm} aria-hidden />
             {pg('uploadButton')}
           </button>
         </div>
-        <details className="text-xs text-ink-3">
-          <summary className="cursor-pointer underline-offset-2 hover:text-ink hover:underline">
+        <Details className="text-xs text-ink-3">
+          <Summary className="underline-offset-2 hover:text-ink hover:underline">
             {pg('uploadScope')}
-          </summary>
+          </Summary>
           <div className="mt-1.5 flex flex-col gap-1 leading-relaxed">
             <p>{pg('uploadScopeGood')}</p>
             <p>{pg('uploadScopeBad')}</p>
             {/* 产品名走 brand.ts 常量，不在译文里手写（品牌唯一出处纪律） */}
             <p className="text-ink-2">{pg('uploadDesktop', { product: PRODUCT_NAME })}</p>
           </div>
-        </details>
+        </Details>
       </div>
       <input
         ref={inputRef}
