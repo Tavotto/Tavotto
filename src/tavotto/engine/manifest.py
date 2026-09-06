@@ -27,6 +27,7 @@ import pathgeom
 from overrides import (
     _ARROWSTYLES,
     _CB_EXTENDS,
+    _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
     _TICK_FORMATS,
@@ -59,6 +60,7 @@ from overrides import (
     _stroke_state,
     _tick0,
     bind_legend_entries,
+    cjk_fallback_candidates,
     coincident_shared_axes_pairs,
     collection_caps,
     colorbar_host_count,
@@ -66,6 +68,7 @@ from overrides import (
     colorbar_maps,
     drawn_tick_label_entries,
     follow_map,
+    font_installed,
     gradient_base_hex,
     is_linecoll_family,
     legend_entries,
@@ -1042,45 +1045,24 @@ _GENERIC_FAMILIES = ("serif", "sans-serif", "monospace")
 #: 中文字体可接受」的唯一权威）——这里是**候选名单**，回答的是另一个问题：
 #: 这台机器上哪些画得出来。两个问题不同，所以这不是把规则抄了第二份；真正
 #: 决定列不列的仍然是下面那个探测器。
-_NAMED_FAMILIES = (
-    "Times New Roman",
-    "Arial",
-    "Helvetica",
+_LATIN_NAMED_FAMILIES = ("Times New Roman", "Arial", "Helvetica")
+#: 中日韩具体字体：回退链的候选（`overrides.cjk_fallback_candidates()`，按平台
+#: 排序、只有装了的才进链）加上出版规范 `cjk_fallback.accepted` 里另外几个
+#: 常见名字。**同一张候选表**既决定自动回退到谁、也决定下拉里能钉住谁——
+#: 用户在下拉里选中的，正是自动回退本来会用的那张脸，钉住它只是把「这台
+#: 机器碰巧有」变成「写进脚本里」。
+_CJK_NAMED_FAMILIES = (
     "方正小标宋简体",
-    "Noto Sans CJK SC",
+    *cjk_fallback_candidates(),
     "Noto Serif CJK SC",
-    "Source Han Sans SC",
     "Source Han Serif SC",
-    "PingFang SC",
-    "Songti SC",
     "STSong",
-    "Microsoft YaHei",
-    "SimSun",
 )
-#: 探测结果按进程缓存：一次 manifest 要过很多个 Text，探测结果在一次渲染里
-#: 不会变。（`findfont` 自己也有 lru_cache，这层只是省掉异常构造。）
-_FONT_PRESENT: dict[str, bool] = {}
+_NAMED_FAMILIES = tuple(dict.fromkeys((*_LATIN_NAMED_FAMILIES, *_CJK_NAMED_FAMILIES)))
 
-
-def _font_installed(name: str) -> bool:
-    """这个运行时**画得出来**这个字体名吗？
-
-    走 matplotlib 自己的解析路径，所以「列出来的」== 「画得出来的」。
-    `fallback_to_default=False` 是关键：默认的回退会让任何名字都「成功」，
-    正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
-    override 记下了、图重绘了，只有字形没变，界面还报告成功。
-    """
-    hit = _FONT_PRESENT.get(name)
-    if hit is None:
-        try:
-            font_manager.findfont(
-                font_manager.FontProperties(family=name), fallback_to_default=False
-            )
-            hit = True
-        except (ValueError, RuntimeError):
-            hit = False
-        _FONT_PRESENT[name] = hit
-    return hit
+#: 「这个名字画不画得出」全 worker 只有一个判据（`overrides.font_installed`），
+#: 缓存表也是同一张（`_FONT_PRESENT` 从那边 import 进来，测试清的就是它）。
+_font_installed = font_installed
 
 
 #: 一段文字里最多报几个缺字形的字符。问题面板要把它们逐字列出来，一句
@@ -1128,32 +1110,49 @@ def _resolved_font_paths(families) -> list[str]:
     return [str(f) for f in found]
 
 
-def _glyph_scan(text: str, families) -> tuple[list[str], list[str]]:
-    """(画不出来的, 不是正文那张脸画的) —— 两张单子一次扫出来。
+#: 「这个字符是不是中日韩」——码位判据，**与 `engine/preflight.py` 的 `_CJK`
+#: 同一个字符类**（那边是 Flask 侧、这边是 worker 侧，两个进程各持一份；
+#: `tests/test_cjk_figure_text.py` 看住两份字面相同）。它回答的是「这个字
+#: 该由哪类脸负责」，不是「画不画得出」——后者仍然只问真字体。
+_CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
+
+
+def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
+    """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
-    解析不出任何字体时两张单子都空：**判不了就不判**，不拿一个量错对象的
+    解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
     判据去凑数量。
+
+    第三张单子是回退链（ADR 0044）的产物：汉字由链尾的中日韩脸画出来时，
+    它**不算**「换了脸」——那张脸是唯一画得出它的，且对整台机器恒定，逐条
+    挂建议只会训练用户忽略问题面板（与画布侧 `glyphplan.substituted_chars`
+    同一个裁决）。值得说的是**由谁画的**：manifest 把它报成 `cjk_family`，
+    出版规范的 `cjk_fallback.accepted` 白名单据此判它是否可接受。
     """
     if not isinstance(text, str) or not text.strip():
-        return [], []
+        return [], [], []
     fonts = [f for f in (_ft_font(p) for p in _resolved_font_paths(families)) if f is not None]
     if not fonts:
-        return [], []
+        return [], [], []
     primary, rest = fonts[0], fonts[1:]
     gone: dict[str, None] = {}
     subst: dict[str, None] = {}
+    cjk_faces: dict[str, None] = {}
     for ch in _MATH_SPAN.sub("", text):
         if ch.isspace() or ch in gone or ch in subst:
             continue
         if primary.get_char_index(ord(ch)):
             continue
-        if any(f.get_char_index(ord(ch)) for f in rest):
-            if len(subst) < MAX_MISSING_GLYPHS:
-                subst[ch] = None
-        elif len(gone) < MAX_MISSING_GLYPHS:
-            gone[ch] = None
-    return list(gone), list(subst)
+        face = next((f for f in rest if f.get_char_index(ord(ch))), None)
+        if face is None:
+            if len(gone) < MAX_MISSING_GLYPHS:
+                gone[ch] = None
+        elif _CJK_CHAR.match(ch):
+            cjk_faces.setdefault(str(face.family_name), None)
+        elif len(subst) < MAX_MISSING_GLYPHS:
+            subst[ch] = None
+    return list(gone), list(subst), list(cjk_faces)
 
 
 def missing_glyphs(text: str, families) -> list[str]:
@@ -3603,13 +3602,19 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # 分支已经把「量不出几何 / 文字空了」的元素 `continue` 掉了。
         live_text = artist.live() if el["role"] == "ticklabel" else artist
         if isinstance(live_text, Text):
-            gone, subst = _glyph_scan(live_text.get_text(), live_text.get_fontfamily() or [])
+            gone, subst, cjk_faces = _glyph_scan(
+                live_text.get_text(), live_text.get_fontfamily() or []
+            )
             if gone:
                 entry["glyphs_missing"] = gone
             # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
             # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
             if subst:
                 entry["glyphs_fallback"] = subst
+            # 汉字由回退链上哪张脸画的（ADR 0044）：预检拿它对出版规范的
+            # 中日韩白名单，界面拿它回答「我的中文是什么字体」。
+            if cjk_faces:
+                entry["cjk_family"] = cjk_faces[0]
         elements.append(entry)
 
     if budget.skipped:

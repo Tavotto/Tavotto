@@ -354,6 +354,39 @@ def cases() -> list[dict]:
         }
     )
 
+    # 11b. 回退链接住了（ADR 0044）：汉字由白名单里的脸画出——中日韩那条**不响**
+    # （正文族 DejaVu Sans 仍然会被拉丁白名单那条报，那是另一条规则）
+    m = _clean_manifest()
+    m["elements"][3]["editable"] = [
+        {"prop": "text", "type": "text", "value": "温度 (K)"},
+        {"prop": "fontsize", "type": "number", "value": 9.0},
+        {"prop": "fontfamily", "type": "enum", "value": "DejaVu Sans"},
+    ]
+    m["elements"][3]["cjk_family"] = "PingFang SC"
+    out.append(
+        {
+            "name": "cjk-drawn-by-accepted-fallback-face",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
+    # 11c. 回退链接住了，但那张脸不在白名单里：报的是**那张脸**，不是「会是方框」
+    m = _clean_manifest()
+    m["elements"][3]["editable"] = [
+        {"prop": "text", "type": "text", "value": "温度 (K)"},
+        {"prop": "fontsize", "type": "number", "value": 9.0},
+        {"prop": "fontfamily", "type": "enum", "value": "Times New Roman"},
+    ]
+    m["elements"][3]["cjk_family"] = "Some Other CJK Face"
+    out.append(
+        {
+            "name": "cjk-drawn-by-unaccepted-fallback-face",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
     # 12. 数据语义建议：柱状图无误差棒 + 拟合无置信带 + jet 色谱
     m = _clean_manifest()
     m["elements"] = [

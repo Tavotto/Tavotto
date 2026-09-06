@@ -62,6 +62,15 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
   看住它与真字体一致）。**本仓库不分发任何字体**，看护
   `tests/test_font_provenance.py`。
+- **图内中文的回退链（ADR 0044）**：脚本跑完、采 baseline 之前
+  （`figsession.instrument_all()`）给每段图内文字的族列表接上 DejaVu Sans + 本机
+  探测到的中日韩脸（`overrides.cjk_fallback_tail()`，候选按平台分组、只有装了的
+  才进链）。**尾巴必须在 `font.family` 列表里**，塞进 `font.sans-serif` 不是回退链
+  （通用族只解析出一个文件）。用户 / 脚本设的族仍是 `get_fontfamily()[0]`；汉字由
+  尾巴画出**不算**「换了脸」，manifest 报 `cjk_family`，`cjk-fallback-missing`
+  的主语是它而不是正文族名。`TAVOTTO_CJK_FALLBACK=0` 关掉尾巴——测试用它造
+  「没有中文字体」的世界（`test_glyph_coverage_figure.py`），不是产品设置。
+  看护 `tests/test_cjk_figure_text.py`。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
   边界废掉。许可证说明见 `docs/legal/LICENSING.md`。
