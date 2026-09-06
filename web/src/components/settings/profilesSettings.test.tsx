@@ -263,3 +263,23 @@ describe('无障碍', () => {
     }
   })
 })
+
+describe('「应用到当前图…」交给样式对话框（审计 T35）', () => {
+  it('带着此刻选中的那条样式打开，设置本身不关（样式对话框压在它上面）', async () => {
+    const { useUiStore } = await import('@/store/uiStore')
+    useUiStore.setState({ settingsOpen: true, settingsSection: 'style', stylesOpen: false, dialogStack: ['settings'] })
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    await act(async () => {
+      byText('应用到当前图…')!.click()
+    })
+    const s = useUiStore.getState()
+    expect(s.stylesOpen).toBe(true)
+    expect(s.stylesPresetId, '预选的是刚才在设置里选中的那一条').toBe('s1')
+    expect(s.settingsOpen, '设置不关：样式对话框关掉就回到这里').toBe(true)
+    expect(s.dialogStack).toEqual(['settings', 'styles'])
+    useUiStore.setState({ settingsOpen: false, stylesOpen: false, stylesPresetId: null, dialogStack: [] })
+  })
+})

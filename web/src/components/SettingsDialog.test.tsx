@@ -21,7 +21,7 @@ import {
   SHELL_HEIGHT,
   SHELL_WIDTH,
 } from '@/components/SettingsDialog'
-import { useUiStore } from '@/store/uiStore'
+import { dialogCovered, useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -66,7 +66,7 @@ afterEach(async () => {
     root?.unmount()
   })
   vi.unstubAllGlobals()
-  useUiStore.setState({ settingsOpen: false, settingsSection: null, settingsReturnTo: null, exportOpen: false })
+  useUiStore.setState({ settingsOpen: false, settingsSection: null, exportOpen: false, dialogStack: [] })
   document.body.innerHTML = ''
 })
 
@@ -173,27 +173,48 @@ describe('键盘', () => {
   })
 })
 
-describe('深链的返回', () => {
-  it('从导出面板进来的，关掉设置回到导出面板', async () => {
-    useUiStore.getState().setSettingsOpen(true, 'spec', { returnTo: 'export' })
-    expect(useUiStore.getState().settingsReturnTo).toBe('export')
+describe('深链的返回：主对话框栈（审计 T35）', () => {
+  it('从导出面板进来的：导出面板**没关**、只是被盖住；关掉设置它自己回来', async () => {
+    useUiStore.getState().setExportOpen(true)
+    useUiStore.getState().setSettingsOpen(true, 'spec')
+    const s = useUiStore.getState()
+    expect(s.dialogStack).toEqual(['export', 'settings'])
+    expect(s.exportOpen, '深链不许先关导出面板——那样用户填过的东西全丢').toBe(true)
+    expect(dialogCovered(s.dialogStack, 'export')).toBe(true)
+    expect(dialogCovered(s.dialogStack, 'settings')).toBe(false)
     useUiStore.getState().setSettingsOpen(false)
-    expect(useUiStore.getState().exportOpen).toBe(true)
-    expect(useUiStore.getState().settingsReturnTo).toBeNull()
+    const after = useUiStore.getState()
+    expect(after.dialogStack).toEqual(['export'])
+    expect(after.exportOpen).toBe(true)
+    expect(dialogCovered(after.dialogStack, 'export')).toBe(false)
   })
 
   it('普通打开再关掉，不会冒出导出面板', async () => {
     useUiStore.getState().setSettingsOpen(true, 'spec')
     useUiStore.getState().setSettingsOpen(false)
     expect(useUiStore.getState().exportOpen).toBe(false)
+    expect(useUiStore.getState().dialogStack).toEqual([])
   })
 
-  it('每次打开都重置返回目标：上一次的深链不会带到下一次', async () => {
-    useUiStore.getState().setSettingsOpen(true, 'spec', { returnTo: 'export' })
-    useUiStore.getState().setSettingsOpen(false)
-    useUiStore.setState({ exportOpen: false })
-    useUiStore.getState().setSettingsOpen(true)
-    useUiStore.getState().setSettingsOpen(false)
-    expect(useUiStore.getState().exportOpen).toBe(false)
+  it('设置上面再压一层论文样式：只有栈顶不被盖住，Esc 一层层退', async () => {
+    useUiStore.getState().setExportOpen(true)
+    useUiStore.getState().setSettingsOpen(true, 'style')
+    useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    let s = useUiStore.getState()
+    expect(s.dialogStack).toEqual(['export', 'settings', 'styles'])
+    expect(s.stylesPresetId).toBe('s1')
+    expect(dialogCovered(s.dialogStack, 'settings')).toBe(true)
+    expect(dialogCovered(s.dialogStack, 'styles')).toBe(false)
+    useUiStore.getState().setStylesOpen(false)
+    s = useUiStore.getState()
+    expect(s.dialogStack).toEqual(['export', 'settings'])
+    expect(s.stylesPresetId, '预选是打开那一刻的意图，关掉就清').toBeNull()
+    expect(s.settingsOpen).toBe(true)
+    expect(dialogCovered(s.dialogStack, 'settings')).toBe(false)
+  })
+
+  it('直接 setState 打开（没入栈）的照常显示：判「被盖住」只看栈', async () => {
+    useUiStore.setState({ settingsOpen: true })
+    expect(dialogCovered(useUiStore.getState().dialogStack, 'settings')).toBe(false)
   })
 })

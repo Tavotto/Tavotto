@@ -249,6 +249,7 @@ export default interface Resources {
       "preflightOk": "导出前检查通过",
       "profileAria": "出版规范",
       "profileEdit": "编辑",
+      "profileEditAria": "编辑规范",
       "profileLabel": "规范",
       "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
       "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
@@ -1358,6 +1359,8 @@ export default interface Resources {
       }
     },
     "style": {
+      "affectNone": "这个范围里没有会被改到的图",
+      "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
       "annotationCount_other": "标注文字：{{count}} 条",
       "annotationText": "标注文字",
       "applyScope": "应用范围",
@@ -1407,16 +1410,16 @@ export default interface Resources {
       "saveFailed": "保存失败",
       "saved": "已保存样式「{{name}}」",
       "savedStyles": "已存样式",
-      "scopeDocument": "全文档",
+      "scopeDocument": "整个文档",
       "scopeLabel": {
-        "document": "整份文档",
-        "panel": "当前面板",
-        "sameScript": "同脚本的全部面板",
-        "selection": "选中的面板"
+        "document": "整个文档",
+        "panel": "当前图",
+        "sameScript": "同一脚本的全部图",
+        "selection": "选中的图"
       },
-      "scopePanel": "面板",
-      "scopeSameScript": "同脚本",
-      "scopeSelection": "选区",
+      "scopePanel": "当前图",
+      "scopeSameScript": "同一脚本的图",
+      "scopeSelection": "选中的图",
       "subLabel": "序号标签 (a)(b)(c)",
       "subLabelCount_other": "序号标签：{{count}} 个",
       "title": "论文样式",

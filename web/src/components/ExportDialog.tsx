@@ -70,7 +70,7 @@ import {
 import { useProfileStore } from '@/store/profileStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useUiStore } from '@/store/uiStore'
+import { dialogCovered, useUiStore } from '@/store/uiStore'
 import { findFigurePanel, useWorkspaceStore } from '@/store/workspace'
 import {
   getValidationSummary,
@@ -96,6 +96,8 @@ export function ExportDialog() {
   // 订阅语言变化：文案是模块级 ex() 拼出来的，没有这一句切语言后停在旧语言上
   useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.exportOpen)
+  // 设置 / 论文样式压在上面时整层藏起来（状态不丢），它们关掉就回来（审计 T35）
+  const covered = useUiStore((s) => dialogCovered(s.dialogStack, 'export'))
   const setOpen = useUiStore((s) => s.setExportOpen)
   const doc = useDocumentStore((s) => s.doc)
   const commit = useDocumentStore((s) => s.commit)
@@ -480,6 +482,7 @@ export function ExportDialog() {
       onOpenChange={setOpen}
       title={ex('title')}
       width={480}
+      covered={covered}
       footer={
         <>
           <span className="flex-1" />
@@ -609,10 +612,11 @@ export function ExportDialog() {
           />
           <button
             type="button"
+            aria-label={ex('profileEditAria')}
             onClick={() => {
-              setOpen(false)
-              // 深链到「规范」页；关掉设置时回到这个面板（uiStore.settingsReturnTo）
-              useUiStore.getState().setSettingsOpen(true, 'spec', { returnTo: 'export' })
+              // 深链到「规范」页。**不关这个面板**：设置压在它上面（dialogStack），
+              // 关掉设置它自己回来，用户填过的文件名 / 范围 / 格式一个不丢
+              useUiStore.getState().setSettingsOpen(true, 'spec')
             }}
             className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
           >

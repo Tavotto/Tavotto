@@ -69,6 +69,7 @@
     "preflightOk": "Pre-export checks passed",
     "profileAria": "Publication profile",
     "profileEdit": "Edit",
+    "profileEditAria": "Edit publication profile",
     "profileLabel": "Profile",
     "profileMissing": "This spec is not on this computer; checking against the default spec for now.",
     "profileMissingPinned": "This spec is not on this computer; still checking against the copy saved in this project.",
@@ -1090,6 +1091,9 @@
     }
   },
   "style": {
+    "affectNone": "No figure in this scope would change",
+    "affectSummary_one": "Affects {{count}} figure, {{patches}} changes in total",
+    "affectSummary_other": "Affects {{count}} figures, {{patches}} changes in total",
     "annotationCount_one": "Annotation text: {{count}}",
     "annotationCount_other": "Annotation text: {{count}}",
     "annotationText": "Annotation text",
@@ -1144,16 +1148,16 @@
     "saveFailed": "Could not save",
     "saved": "Saved style “{{name}}”",
     "savedStyles": "Saved styles",
-    "scopeDocument": "Document",
+    "scopeDocument": "Whole document",
     "scopeLabel": {
       "document": "the whole document",
-      "panel": "the current panel",
-      "sameScript": "every panel from the same script",
-      "selection": "the selected panels"
+      "panel": "this figure",
+      "sameScript": "every figure from the same script",
+      "selection": "the selected figures"
     },
-    "scopePanel": "Panel",
+    "scopePanel": "This figure",
     "scopeSameScript": "Same script",
-    "scopeSelection": "Selection",
+    "scopeSelection": "Selected figures",
     "subLabel": "Panel labels (a)(b)(c)",
     "subLabelCount_one": "Panel labels: {{count}}",
     "subLabelCount_other": "Panel labels: {{count}}",
