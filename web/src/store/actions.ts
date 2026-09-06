@@ -649,7 +649,11 @@ export function switchObjectKind(ids: string[], target: SwitchKind) {
     const switched = switchObject(o, target)
     if (switched) next.set(o.id, switched)
   }
-  // 一个都没变（点中的就是当前类型 / 选区里没有可切换的对象）：不开事务、不进历史
+  // 一个都没变 = 选区里每个对象**已经**是这个类型（唯一能走到这里的成因）。
+  // 「不进历史」这半其实下游也保证得了（`commit` 拿到空补丁集就早退），所以
+  // 单独拿掉这一行，只看历史长度的用例是**杀不死的**；它自己那份职责是
+  // **别为一次什么都没发生的点击去收掉用户正开着的那一轮连续编辑**
+  // ——`shapeSwitchActions.test.ts` 的「空操作不打断进行中的手势」盯的正是这个。
   if (!next.size) return
   finishActiveGesture()
   const name = switchKindLabel(target)

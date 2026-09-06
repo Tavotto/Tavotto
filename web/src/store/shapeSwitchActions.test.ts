@@ -6,9 +6,10 @@
  * 判据的主语：每一条问的都是**文档里那个对象**或**历史栈**，不是「函数被调了
  * 几次」。切换成什么样是 `lib/shapeSwitch.test.ts` 的事，这里不重复那一层。
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { switchObjectKind } from '@/store/actions'
+import { finishActiveGesture, hasActiveGesture, registerGesture } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import {
@@ -79,6 +80,8 @@ async function seed(items: CanvasObject[], groups?: LayoutGroup[]) {
 
 beforeEach(() => {
   useSelectionStore.getState().clear()
+  // 上一条用例登记的手势不能漏到下一条：`hasActiveGesture` 是模块级单例
+  finishActiveGesture()
 })
 
 describe('一条 commit、一条历史', () => {
@@ -106,6 +109,24 @@ describe('一条 commit、一条历史', () => {
     await seed([shape('s1')])
     switchObjectKind([], 'ellipse')
     expect(past()).toHaveLength(0)
+  })
+
+  /**
+   * 「不进历史」那一条**杀不死**早退（`commit` 拿到空补丁集自己也会早退，同一条
+   * 保证实现了两遍）。早退自己那份职责在这里：一次什么都没发生的点击不该收掉
+   * 用户正开着的那一轮连续编辑——收掉了的话，正在拖的滑杆会当场定稿，下一次
+   * 拖动变成第二条历史。
+   */
+  it('空操作不打断进行中的手势；真的切了才收掉它', async () => {
+    await seed([shape('s1')])
+    const finish = vi.fn()
+    registerGesture(finish)
+    switchObjectKind(['s1'], 'rect') // 就是当前类型 = 什么都没发生
+    expect(hasActiveGesture()).toBe(true)
+    expect(finish).not.toHaveBeenCalled()
+    switchObjectKind(['s1'], 'ellipse')
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(hasActiveGesture()).toBe(false)
   })
 })
 

@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { applyLocale } from '@/i18n'
 import {
+  arrowHeads,
   canvasToDoc,
   defaultDocumentName,
   docToCanvas,
   emptyDocument,
   emptyProject,
   isRuntimePanel,
+  legacyHead,
   migrateToProject,
   panelKind,
+  type ArrowObject,
   type FigureDocument,
   type PanelObject,
 } from './document'
@@ -155,5 +158,40 @@ describe('新文档的默认名', () => {
       expect(name.length, lng).toBeGreaterThan(0)
     }
     await applyLocale('zh-CN')
+  })
+})
+
+/**
+ * 新旧箭头端型的一对互逆函数。
+ *
+ * `legacyHead` 守的是**老构建 / 老后端读到这份文档时看到什么**——它的效果在
+ * 当前版本的界面上一处都看不见（新字段永远优先），所以只有直接盯着它的用例
+ * 才拦得住「随手改成恒返回 end」这类退化。写在这里而不是某个消费点的用例里：
+ * 属性栏改端型与类型切换成箭头是它的两个调用方，规则本身只有一份。
+ */
+describe('arrowHeads ↔ legacyHead：新旧端型字段互逆', () => {
+  const arrow = (over: Partial<ArrowObject>): ArrowObject =>
+    ({ id: 'a', type: 'arrow', x: 0, y: 0, w: 10, h: 10, start: { rx: 0, ry: 0 }, end: { rx: 1, ry: 1 }, strokePt: 1, color: '#000000', head: 'none', ...over }) as ArrowObject
+
+  it.each([
+    ['两端都有 → both', 'bar', 'triangle', 'both'],
+    ['只有终点 → end', 'none', 'open', 'end'],
+    ['只有起点 → 老字段表达不出「只有起点」，最接近的是 none', 'triangle', 'none', 'none'],
+    ['两端都没有 → none', 'none', 'none', 'none'],
+  ] as const)('%s', (_label, start, end, expected) => {
+    expect(legacyHead({ start, end })).toBe(expected)
+  })
+
+  it('只写老字段时 arrowHeads 按它推导（读的那一半）', () => {
+    expect(arrowHeads(arrow({ head: 'both' }))).toEqual({ start: 'triangle', end: 'triangle' })
+    expect(arrowHeads(arrow({ head: 'end' }))).toEqual({ start: 'none', end: 'triangle' })
+    expect(arrowHeads(arrow({ head: 'none' }))).toEqual({ start: 'none', end: 'none' })
+  })
+
+  it('写了新字段就以新字段为准（老字段只是回退）', () => {
+    expect(arrowHeads(arrow({ head: 'both', headStart: 'none', headEnd: 'bar' }))).toEqual({
+      start: 'none',
+      end: 'bar',
+    })
   })
 })
