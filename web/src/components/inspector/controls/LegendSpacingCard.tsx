@@ -22,6 +22,14 @@ import { ResetChip, labeledWithState } from './textRows'
  * 用户改过任何一条时小节自动展开（override 不因折叠而不可发现，与「更多」
  * 同一条纪律）。列距只在多列时出现（`fieldVisible`，与通用列表同一份判据）。
  */
+/**
+ * 这五条 matplotlib 都按**字号的倍数**计（`handlelength` 等在官方文档里写的是
+ * “in font-size units”），引擎不发 `unit`——单位是 matplotlib 的语义常识，
+ * 不是它从 artist 上量出来的值。界面把它写成 `em`（排版学里就是「一个字号」）
+ * 并在小节顶上说明一次；引擎哪天真发了 `unit`，那份优先。
+ */
+const SPACING_UNIT = 'em'
+
 export const LEGEND_SPACING_PROPS = [
   'handlelength',
   'handletextpad',
@@ -83,7 +91,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                   max={field.max}
                   step={field.step ?? 0.1}
                   precision={2}
-                  suffix={field.unit}
+                  suffix={field.unit ?? SPACING_UNIT}
                   onChange={(v) => w.write(prop, v)}
                   onScrubStart={() => w.beginGesture()}
                   onScrubEnd={w.endGesture}

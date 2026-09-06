@@ -154,7 +154,8 @@
     "aspectRatio": "纵横比数值：一单位 Y 与一单位 X 的显示长度之比",
     "resetDiagram_other": "恢复刻度与边框到脚本（{{count}} 项）",
     "spinePerSide": "分别设置各边",
-    "spineSidesDiffer": "各边不同"
+    "spineSidesDiffer": "各边不同",
+    "legendPositionWithin": "相对{{label}}"
   },
   "element": {
     "advanced": "高级",
@@ -1099,6 +1100,8 @@
     "followHint": "示意线跟着图中那条曲线走；改下方任一样式即改为自定义。",
     "customHint": "示意线不再跟随图中对象；「恢复跟随」会回到由它派生的样子。",
     "customHintStyled": "示意线用的是你在这里改的样式；「恢复跟随」会撤掉这些修改（一次撤销）。",
-    "viewSource": "查看源对象：{{label}}"
+    "viewSource": "查看源对象：{{label}}",
+    "layoutDetails": "排版详情",
+    "spacingUnitNote": "以图例字号为单位：1 em = 一个字号。"
   }
 }

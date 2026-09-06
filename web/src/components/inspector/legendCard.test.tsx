@@ -33,7 +33,8 @@ import { useUiStore } from '@/store/uiStore'
 import { resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ElementInspector } from './ElementInspector'
-import { presentFields } from './presentation/registry'
+import { fieldVisible, presentFields } from './presentation/registry'
+import { LEGEND_SPACING_PROPS } from './controls/LegendSpacingCard'
 
 const engineRender = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -335,14 +336,11 @@ describe('图例的首屏', () => {
       read: (prop) => legendFields(ncol).find((x) => x.prop === prop)?.value,
     })
 
-  it('高频项常驻：位置 / 列数 / 示意线长 / 线与文字间距 / 行距 / 边框四条', () => {
+  it('高频项常驻：位置 / 列数 / 边框四条（间距归排版详情，审计 T17）', () => {
     const primary = buckets(1).primary.map((p) => p.field.prop)
     expect(primary).toEqual([
       'loc',
       'ncol',
-      'handlelength',
-      'handletextpad',
-      'labelspacing',
       'frameon',
       'frame_linewidth',
       'frame_rounded',
@@ -350,12 +348,33 @@ describe('图例的首屏', () => {
       'facecolor',
     ])
     expect(buckets(1).more.map((p) => p.field.prop)).not.toContain('ncol')
+    // 五条间距在通用列表里一条都不出现——它们由排版详情卡承接，
+    // 同一属性不出两套控件（`LEGEND_SPACING_PROPS` 在分桶之前就被让出来了）
+    const all = [...buckets(2).primary, ...buckets(2).more, ...buckets(2).advanced]
+    expect(all.map((p) => p.field.prop).filter((x) => LEGEND_SPACING_PROPS.includes(x))).toEqual([
+      // 分桶函数本身不裁能力：这里喂的是**没被让出来**的原始字段表，
+      // 五条都还在，只是不在 primary。真正的让出发生在 ElementInspector
+      // （见下面「排版详情」一组的 DOM 断言）
+      'borderpad',
+      'labelspacing',
+      'handlelength',
+      'handletextpad',
+      'columnspacing',
+    ])
   })
 
-  it('列距只在多列时出现', () => {
-    expect(buckets(1).primary.map((p) => p.field.prop)).not.toContain('columnspacing')
-    expect(buckets(1).more.map((p) => p.field.prop)).not.toContain('columnspacing')
-    expect(buckets(2).primary.map((p) => p.field.prop)).toContain('columnspacing')
+  it('列距只在多列时出现（判据只有 fieldVisible 一条，卡与通用列表共用）', () => {
+    const read = (ncol: number) => (prop: string) =>
+      legendFields(ncol).find((x) => x.prop === prop)?.value
+    const vis = (ncol: number, over = false) =>
+      fieldVisible('legend', 'columnspacing', {
+        isOverridden: () => over,
+        read: read(ncol),
+      })
+    expect(vis(1)).toBe(false)
+    expect(vis(2)).toBe(true)
+    // 改过的必须能看到，哪怕此刻只有一列
+    expect(vis(1, true)).toBe(true)
   })
 
   it('图例项的首屏：文字 + 绑定 + 示意线样式；标记大小只在有标记时出现', () => {

@@ -106,16 +106,19 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['arrowstyle', 'color', 'linewidth', 'linestyle'],
     more: ['mutation_scale', 'alpha', 'visible'],
   },
-  // 图例（ADR 0034）：科研用户的高频项常驻——位置、列数、示意线长、
-  // 示意线-文字间距、行距、列距、边框。字号由图例卡的 Typography 接管、
-  // 条目顺序由图例卡的条目列表接管（`LEGEND_CARD_PROPS`），两者不在这里。
+  // 图例（ADR 0034）：首屏是位置、列数、边框（审计 T17「主区保留位置、字体、
+  // 列数和条目」）。字号由图例卡的 Typography 接管、条目顺序由图例卡的条目
+  // 列表接管（`LEGEND_CARD_PROPS`）、五条间距由排版详情卡接管
+  // （`LEGEND_SPACING_PROPS`）——三者都在 presentFields 之前就被让出来了，
+  // 所以这张表里不再点名它们；`visibleWhen` 仍然管着它们（卡与通用列表共用
+  // `registry.fieldVisible` 这一条判据）。
   legend: {
     primary: [
-      'loc', 'ncol', 'handlelength', 'handletextpad', 'labelspacing', 'columnspacing',
+      'loc', 'ncol',
       'frameon', 'frame_linewidth', 'frame_rounded', 'edgecolor', 'facecolor',
     ],
     more: [
-      'title', 'title_fontsize', 'fontsize', 'framealpha', 'borderpad',
+      'title', 'title_fontsize', 'fontsize', 'framealpha',
       'entry_order', 'visible',
     ],
     visibleWhen: {

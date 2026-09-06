@@ -157,7 +157,8 @@
     "resetDiagram_one": "Reset ticks and frame to script ({{count}} item)",
     "resetDiagram_other": "Reset ticks and frame to script ({{count}} items)",
     "spinePerSide": "Set each side separately",
-    "spineSidesDiffer": "Sides differ"
+    "spineSidesDiffer": "Sides differ",
+    "legendPositionWithin": "Within {{label}}"
   },
   "element": {
     "advanced": "Advanced",
@@ -1129,6 +1130,8 @@
     "followHint": "The swatch tracks that curve in the plot; editing any style below makes it custom.",
     "customHint": "The swatch no longer tracks the plot object; “Follow again” re-derives it from the source.",
     "customHintStyled": "The swatch uses the styles you set here; “Follow again” drops them (one undo).",
-    "viewSource": "View source: {{label}}"
+    "viewSource": "View source: {{label}}",
+    "layoutDetails": "Layout details",
+    "spacingUnitNote": "In font-size units: 1 em = one legend font size."
   }
 }

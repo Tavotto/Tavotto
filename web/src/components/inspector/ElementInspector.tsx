@@ -126,6 +126,7 @@ import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
+import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { legendEntryElements } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
@@ -251,8 +252,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       ? [...TICK_SPINE_PROPS, ...AXES_RANGE_CARD_PROPS, ...SPINE_FRAME_PROPS]
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
-        : legendCardCoversSelf
-          ? LEGEND_CARD_PROPS
+        : element?.role === 'legend'
+          ? // 排版详情那张卡承接五条间距（审计 T17），与有没有条目无关；
+            // 字号 / 条目顺序只有图例卡在场时才让出来
+            [...LEGEND_SPACING_PROPS, ...(legendCardCoversSelf ? LEGEND_CARD_PROPS : [])]
           : [],
   )
   const buckets =
@@ -398,8 +401,15 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   host={sideHost}
                   element={element}
                 />
-              ) : legendCardCoversSelf && element ? (
-                <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+              ) : element?.role === 'legend' ? (
+                /* 图例页：条目列表（有项时）+ 排版详情（审计 T17：五条间距
+                   标签独占一行、不截断，默认折叠，改过自动展开） */
+                <>
+                  {legendCardCoversSelf && (
+                    <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
+                  )}
+                  <LegendSpacingCard panel={panel} element={element} />
+                </>
               ) : null
             }
           />
@@ -1419,6 +1429,20 @@ function currentValue(panel: PanelObject, gid: string, field: EditableField): un
   return ov ? ov.value : field.value
 }
 
+/**
+ * 「住在别人里面」的元素的容器名：gid 去掉最后一段就是宿主（`axes_0.legend`
+ * → `axes_0`）。图例的九宫格用它说清参照范围（审计 T17）。宿主不在 manifest
+ * 里（fig.legend、脚本自造）时回 undefined——不写比写一个猜的名字好。
+ */
+function containerLabelOf(
+  manifest: Manifest | null | undefined,
+  element: ManifestElement,
+): string | undefined {
+  const m = element.gid.match(/^(.+)\.[^.]+$/)
+  const host = m ? manifest?.elements.find((e) => e.gid === m[1]) : undefined
+  return host ? engineLabel(host.label) : undefined
+}
+
 function FieldRow({
   panel,
   element,
@@ -1569,6 +1593,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
+          containerLabel={containerLabelOf(rowManifest, element)}
         />,
       )
     case 'legend-binding':
