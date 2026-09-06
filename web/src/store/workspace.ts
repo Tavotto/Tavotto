@@ -182,7 +182,7 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  const { panel } = got
+  const { panel, created } = got
   useWorkspaceStore.getState().enterFastEdit(panel.id)
   // 绘制工具画的是画布标注，快速编辑这一屏上根本没有它们的位置——
   // 停在「箭头」工具上进来，光标是十字而点下去什么也看不见
@@ -192,9 +192,11 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   if (panel.script) {
     useWorkspaceStore.getState().setPendingElementEdit(null)
     enterElementEdit(panel.id)
+    announceAddedForEdit(created, panel)
     emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'editing' })
     return 'editing'
   }
+  announceAddedForEdit(created, panel)
   useUiStore.getState().setElementPanel(null)
   // **这一刻**没有源脚本，不代表这张图不可编辑：素材→脚本的关联是异步到达的
   // （后端扫描 / 试运行 → `assets.changed` → `panelSourceSync` 原地补
@@ -204,6 +206,21 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   useWorkspaceStore.getState().setPendingElementEdit(panel.id)
   emitActivity({ kind: 'figure.opened_fast_edit', outcome: 'layout_only' })
   return 'layout_only'
+}
+
+/**
+ * 「编辑原图」把一张**还不在文档里**的图加了进来——这一步必须说出口。
+ *
+ * 结构上它躲不掉（快速编辑的对象只能是文档里的面板对象，见文件头），但
+ * 用户点的是"编辑"，看到的却是版本预览多了一个对象、问题面板多了一批问题
+ * （UI 审计 T06）。一句状态提示把这次加入说清楚：它是一条可撤销的历史，撤销
+ * 即移除。图**已经在文档里**时这里什么都不说——那一次零文档改动。
+ */
+function announceAddedForEdit(created: boolean, panel: PanelObject): void {
+  if (!created) return
+  useUiStore
+    .getState()
+    .setStatus(msg('fastEdit.addedForEdit', { name: panel.name ?? panel.fileId }, 'workspace'))
 }
 
 export type AddToLayoutOutcome = 'added' | 'focused' | 'missing'

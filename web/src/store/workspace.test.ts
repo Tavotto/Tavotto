@@ -421,3 +421,82 @@ describe('跨画布', () => {
     expect(panels).toHaveLength(1)
   })
 })
+
+/**
+ * UI 审计 T06：素材库的「编辑原图」与「添加到画布」是**两个动作、两种后果**。
+ *
+ * 结构上「编辑一张还不在文档里的图」必然把它加进文档（快速编辑的对象只能是
+ * 文档里的面板对象），所以这里钉的不是"不加"，而是：
+ *   * 图已在文档里 → 编辑零文档改动（对象数、历史、dirty 全不动，也不弹提示）；
+ *   * 图不在文档里 → **恰好** +1 个对象、**一条**历史、提示说出口、一次撤销即
+ *     移除并退出快速编辑；
+ *   * 添加到画布 → 恰好 +1、一次撤销即移除。
+ */
+describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', () => {
+  beforeEach(reset)
+  const panelsInDoc = () => s().doc.objects.filter((o) => o.type === 'panel')
+
+  it('编辑已经在文档里的图：不新增对象、不进历史、不置 dirty、不弹「已加入」', () => {
+    const stopAutosave = startAutosave()
+    addFigureToLayout('a.pdf')
+    returnToLayout()
+    useDocumentStore.setState({ dirty: false })
+    useUiStore.setState({ status: null })
+    const past = s().past.length
+
+    expect(openFastEdit('a.pdf')).toBe('editing')
+
+    expect(panelsInDoc()).toHaveLength(1)
+    expect(s().past.length).toBe(past)
+    expect(s().dirty).toBe(false)
+    expect(useUiStore.getState().status).toBeNull()
+    stopAutosave()
+  })
+
+  it('编辑还不在文档里的图：恰好 +1、一条历史、提示说出口、一次撤销即移除并退出快速编辑', () => {
+    const stopPrune = subscribePruneSelection()
+    const stopAutosave = startAutosave()
+    expect(panelsInDoc()).toHaveLength(0)
+    const past = s().past.length
+
+    expect(openFastEdit('a.pdf')).toBe('editing')
+
+    expect(panelsInDoc()).toHaveLength(1)
+    expect(s().past.length).toBe(past + 1)
+    expect(s().dirty).toBe(true)
+    // 那一步必须说出口：用户点的是"编辑"，文档却多了一个对象
+    expect(useUiStore.getState().status).toMatchObject({
+      key: 'fastEdit.addedForEdit',
+      ns: 'workspace',
+      values: { name: 'a' },
+    })
+    expect(useUiStore.getState().statusTone).toBe('info')
+
+    s().undo()
+    expect(panelsInDoc()).toHaveLength(0)
+    expect(ws().mode).toBe('layout')
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+    stopAutosave()
+    stopPrune()
+  })
+
+  it('没有源脚本的图同样：加进来就要说，一次撤销即移除', () => {
+    useAssetStore.setState({
+      byId: { 'c.png': info('c.png', { kind: 'raster', script: undefined }) },
+    })
+    expect(openFastEdit('c.png')).toBe('layout_only')
+    expect(panelsInDoc()).toHaveLength(1)
+    expect(useUiStore.getState().status?.key).toBe('fastEdit.addedForEdit')
+    s().undo()
+    expect(panelsInDoc()).toHaveLength(0)
+  })
+
+  it('添加到画布：恰好 +1、一次撤销即移除', () => {
+    const past = s().past.length
+    expect(addFigureToLayout('b.pdf')).toBe('added')
+    expect(panelsInDoc()).toHaveLength(1)
+    expect(s().past.length).toBe(past + 1)
+    s().undo()
+    expect(panelsInDoc()).toHaveLength(0)
+  })
+})
