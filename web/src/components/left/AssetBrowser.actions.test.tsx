@@ -29,7 +29,8 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 }))
 
 import type { CapturedFigureDescriptor, PanelInfo, RuntimeAssetInfo } from '@/lib/api'
-import { AssetBrowser, runtimeSiblingOf } from '@/components/left/AssetBrowser'
+import { AssetBrowser } from '@/components/left/AssetBrowser'
+import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { DEFAULT_ASSET_FILTERS, useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
