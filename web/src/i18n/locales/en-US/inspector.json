@@ -85,6 +85,7 @@
     "deleteGuide": "Delete {{axis}} guide at {{pos}}mm",
     "grid": "Grid",
     "gridSize": "Grid size",
+    "gridSummary": "Grid {{size}} mm",
     "guideCount_one": "{{count}} guide",
     "guideCount_other": "{{count}} guides",
     "guideHorizontal": "Horizontal",

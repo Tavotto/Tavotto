@@ -84,6 +84,7 @@
     "deleteGuide": "删除{{axis}}参考线 {{pos}}mm",
     "grid": "网格",
     "gridSize": "网格间距",
+    "gridSummary": "网格 {{size}} mm",
     "guideCount_other": "{{count}} 条",
     "guideHorizontal": "水平",
     "guideVertical": "垂直",
