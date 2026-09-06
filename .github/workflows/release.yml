@@ -1167,6 +1167,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.trust.outputs.sha }}
+          # 与 plugin-stable.yml 同理：凭据只留 job 自己配的全局那一份，否则发布器在
+          # checkout 目录里 ls-remote 会带两份 Authorization，GitHub 400
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
