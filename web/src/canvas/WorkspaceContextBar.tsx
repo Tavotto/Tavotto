@@ -88,7 +88,7 @@ export function WorkspaceContextBar() {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center px-2">
       <nav
-        aria-label={t('contextBar.label')}
+        aria-label={t('stage.contextBarLabel')}
         data-workspace-context-bar
         data-workspace-mode={fastEdit ? 'fast_edit' : 'layout'}
         className="pointer-events-auto flex max-w-full flex-col gap-1 rounded-md border border-border bg-surface px-1.5 py-1 shadow-pop"
@@ -110,7 +110,7 @@ export function WorkspaceContextBar() {
             )}
           </Button>
           <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
-          <ol aria-label={t('contextBar.crumbsLabel')} className="flex min-w-0 items-center gap-1 text-xs">
+          <ol aria-label={t('stage.crumbsLabel')} className="flex min-w-0 items-center gap-1 text-xs">
             <li className="flex min-w-0 items-center gap-1.5">
               <span className="min-w-0 truncate font-medium text-ink" title={name}>
                 {name}

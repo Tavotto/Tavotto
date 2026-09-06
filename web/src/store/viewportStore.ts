@@ -42,6 +42,12 @@ interface ViewportState {
   fitAnimated: (pageW: number, pageH: number, padding?: number) => void
   /** 把一块区域挪到视口中央（放不下才缩小），带缓动；「定位到这个对象」用 */
   revealRect: (rect: { x: number; y: number; w: number; h: number }, padding?: number) => void
+  /**
+   * 还原到一个**记下来的**落点，带缓动。只给「把用户原来看的那一片还回去」用
+   * （离开快速编辑回到画布排版，审计 T01）——现算出来的落点走 `fit` /
+   * `revealRect`，它们才知道页面与视口尺寸。
+   */
+  restoreView: (view: ViewTarget) => void
 }
 
 /** 视口的一个落点：补间与瞬时设置共用同一种描述 */
@@ -216,6 +222,11 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
       panX: viewW / 2 - mmToWorld(x + w / 2) * next,
       panY: viewH / 2 - mmToWorld(y + h / 2) * next,
     })
+  },
+
+  restoreView: ({ zoom, panX, panY }) => {
+    if (!get().viewW || !get().viewH) return
+    animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
   },
 }))
 

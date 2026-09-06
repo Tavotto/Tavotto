@@ -112,8 +112,17 @@
     "resetOverridesConfirm": "恢复"
   },
   "contextBar": {
-    "label": "工作区位置",
-    "crumbsLabel": "当前对象"
+    "alignMenu": "对齐",
+    "aria": "快速编辑",
+    "distributeMenu": "分布",
+    "groupMenu": "成组",
+    "moreArrange": "更多排列",
+    "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
+    "multiAria": "多选操作",
+    "openInspector": "全部属性",
+    "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
+    "selectedCount_other": "已选 {{count}} 个",
+    "sizeMenu": "尺寸"
   },
   "crash": {
     "blank": "打开空白文档",
@@ -153,6 +162,7 @@
     "building": "正在构建图表…",
     "clearSearch": "清除搜索",
     "collapse": "折叠",
+    "count_other": "{{count}} 个元素",
     "exitIsolate": "退出",
     "expand": "展开",
     "groupAria_other": "{{label}}（{{count}} 个元素）",
@@ -181,8 +191,7 @@
     "searchAria": "搜索图内元素",
     "unhide": "恢复显示",
     "unlock": "解锁",
-    "unsupportedTip": "{{title}}暂不支持：{{reason}}",
-    "count": "{{count}} 个元素"
+    "unsupportedTip": "{{title}}暂不支持：{{reason}}"
   },
   "fastEdit": {
     "addToCanvas": "添加到画布",
@@ -295,6 +304,7 @@
   },
   "layerTree": {
     "collapseGroup": "折叠组",
+    "count_other": "{{count}} 个对象",
     "emptyTitle": "画布上还没有对象",
     "expandGroup": "展开组",
     "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",
@@ -309,8 +319,7 @@
     "primary": "基准",
     "rowAria": "{{label}}，{{state}}",
     "show": "显示",
-    "unlock": "解锁",
-    "count": "{{count}} 个对象"
+    "unlock": "解锁"
   },
   "layoutKind": {
     "col": "列布局",
@@ -502,6 +511,8 @@
   },
   "stage": {
     "backToCanvas": "返回画布",
+    "contextBarLabel": "工作区位置",
+    "crumbsLabel": "当前对象",
     "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
     "emptyTitle": "画布是空的",
     "exitTitle": "退出图内编辑，回到画布层（Esc）",

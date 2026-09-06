@@ -3384,8 +3384,17 @@ export default interface Resources {
       "resetOverridesTitle": "恢复图内修改？"
     },
     "contextBar": {
-      "crumbsLabel": "当前对象",
-      "label": "工作区位置"
+      "alignMenu": "对齐",
+      "aria": "快速编辑",
+      "distributeMenu": "分布",
+      "groupMenu": "成组",
+      "moreArrange": "更多排列",
+      "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
+      "multiAria": "多选操作",
+      "openInspector": "全部属性",
+      "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
+      "selectedCount_other": "已选 {{count}} 个",
+      "sizeMenu": "尺寸"
     },
     "crash": {
       "blank": "打开空白文档",
@@ -3425,7 +3434,7 @@ export default interface Resources {
       "building": "正在构建图表…",
       "clearSearch": "清除搜索",
       "collapse": "折叠",
-      "count": "{{count}} 个元素",
+      "count_other": "{{count}} 个元素",
       "exitIsolate": "退出",
       "expand": "展开",
       "groupAria_other": "{{label}}（{{count}} 个元素）",
@@ -3574,7 +3583,7 @@ export default interface Resources {
     },
     "layerTree": {
       "collapseGroup": "折叠组",
-      "count": "{{count}} 个对象",
+      "count_other": "{{count}} 个对象",
       "emptyTitle": "画布上还没有对象",
       "expandGroup": "展开组",
       "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",
@@ -3781,6 +3790,8 @@ export default interface Resources {
     },
     "stage": {
       "backToCanvas": "返回画布",
+      "contextBarLabel": "工作区位置",
+      "crumbsLabel": "当前对象",
       "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
       "emptyTitle": "画布是空的",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",

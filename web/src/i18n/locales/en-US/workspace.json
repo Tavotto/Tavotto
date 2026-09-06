@@ -119,8 +119,18 @@
     "resetOverridesConfirm": "Revert"
   },
   "contextBar": {
-    "label": "Where you are",
-    "crumbsLabel": "Current object"
+    "alignMenu": "Align",
+    "aria": "Quick edit",
+    "distributeMenu": "Distribute",
+    "groupMenu": "Group",
+    "moreArrange": "More arrange options",
+    "moreArrangeTip": "Open the full arrange tools in Properties: spacing, layout groups, copy style",
+    "multiAria": "Multi-selection actions",
+    "openInspector": "All properties",
+    "primaryHint": "The last selected object is the primary (thicker outline); the Primary reference aligns to it",
+    "selectedCount_one": "{{count}} selected",
+    "selectedCount_other": "{{count}} selected",
+    "sizeMenu": "Size"
   },
   "crash": {
     "blank": "Open a blank document",
@@ -526,6 +536,8 @@
   },
   "stage": {
     "backToCanvas": "Back to canvas",
+    "contextBarLabel": "Where you are",
+    "crumbsLabel": "Current object",
     "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
