@@ -144,11 +144,20 @@
     "hatchNone": "No hatch",
     "hatchPattern": "Hatch {{value}}",
     "legendCustomHint": "The legend was dragged to a custom spot; pick any preset (including Best fit) to snap back.",
-    "resetSide": "Reset {{label}} to script",
     "switchOff": "{{label}}: off (click to turn on)",
     "switchOn": "{{label}}: on (click to turn off)",
     "tickSpineDiagram": "Tick & frame diagram",
-    "zoneAria": "{{side}} {{dir}} ticks"
+    "zoneAria": "{{side}} {{dir}} ticks",
+    "aspect": {
+      "auto": "Auto",
+      "equal": "Equal",
+      "custom": "Custom ratio"
+    },
+    "aspectRatio": "Aspect ratio value: display length of one Y unit over one X unit",
+    "resetDiagram_one": "Reset ticks and frame to script ({{count}} item)",
+    "resetDiagram_other": "Reset ticks and frame to script ({{count}} items)",
+    "spinePerSide": "Set each side separately",
+    "spineSidesDiffer": "Sides differ"
   },
   "element": {
     "advanced": "Advanced",
@@ -245,8 +254,7 @@
     "retryRender": "Retry render",
     "scaleAxes": "Scale axes",
     "scaleAxesMulti": "Scale {{count}} axes",
-    "scaleHint": "Relative to the current size; returns to 100% once applied",
-    "scaleLabel": "Scale",
+    "scaleLabel": "Scale by",
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
     "setAxesHeight": "Change axes height",
     "setAxesWidth": "Change axes width",
@@ -266,7 +274,15 @@
       "min": "Min",
       "max": "Max",
       "indexed": "Value {{n}}"
-    }
+    },
+    "scaleApply": "Apply",
+    "groupRange": "Range",
+    "groupTransform": "Transform",
+    "groupTicksGrid": "Ticks and grid",
+    "groupFrame": "Frame",
+    "invert": "Invert",
+    "invertAria": "Invert axes",
+    "resetDiagram": "Reset ticks and frame to script"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
@@ -297,7 +313,7 @@
     "scatterSeries": "Scatter series {{value}}",
     "shape": "Shape {{value}}",
     "textNamed": "Text “{{value}}”",
-    "tickLabels": "{{axis}} tick labels",
+    "tickLabels": "{{axis}} axis ticks",
     "tickNamed": "Tick “{{value}}”",
     "titleNamed": "Title “{{value}}”",
     "twinSide": {
@@ -801,7 +817,7 @@
     "scatter": "Scatter series",
     "text": "Text",
     "ticklabel": "Tick label",
-    "ticks": "Tick set",
+    "ticks": "Axis ticks",
     "title": "Title",
     "unknown": "Similar elements"
   },
@@ -994,12 +1010,13 @@
       "left": "left",
       "right": "right"
     },
-    "sideAria": "{{side}} tick marks",
-    "sides": "Show on",
-    "sidesAria": "Which sides show tick marks",
     "width": "Width",
     "xTicks": "X ticks",
-    "yTicks": "Y ticks"
+    "yTicks": "Y ticks",
+    "axisZ": "Z axis",
+    "zTicks": "Z ticks",
+    "sectionMarks": "Tick marks",
+    "sectionLabels": "Labels"
   },
   "transform": {
     "rotation": "Rotation",

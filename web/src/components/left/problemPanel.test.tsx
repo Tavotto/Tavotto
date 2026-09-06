@@ -152,10 +152,10 @@ describe('「还没查」不许掉进绿色空态', () => {
 })
 
 describe('普通界面不出现内部标识', () => {
-  it('列的是人话主语（「X 刻度文字」），不是 gid', async () => {
+  it('列的是人话主语（「X 轴刻度」，引擎串「X 刻度文字」经 engineLabel 翻过），不是 gid', async () => {
     await seed()
     await mount(<ProblemPanel />)
-    expect(text()).toContain('X 刻度文字')
+    expect(text()).toContain('X 轴刻度')
     // gid / 对象 id 只允许出现在收起的技术详情里，不许出现在行本身
     const rows = [...container.querySelectorAll('[data-issue-row]')]
     expect(rows.length).toBeGreaterThan(0)
@@ -224,7 +224,7 @@ describe('无障碍与键盘', () => {
     const row = container.querySelector('[data-issue-row]')!
     const label = row.getAttribute('aria-label') ?? ''
     expect(label).toContain('阻断')
-    expect(label).toContain('X 刻度文字')
+    expect(label).toContain('X 轴刻度')
   })
 
   it('清单可用方向键漫游', async () => {
@@ -323,7 +323,7 @@ describe('这一轮查砸了、上一轮的结果还留着', () => {
     // 藏起来就成了「看得见数字、找不到东西」
     expect(list(), '整屏被换成错误空态，留下来的问题在唯一一份清单里翻不到').toBeTruthy()
     expect(list()!.querySelectorAll('[data-issue-row]').length).toBe(kept)
-    expect(text()).toContain('X 刻度文字')
+    expect(text()).toContain('X 轴刻度')
   })
 
   it('上一轮什么都没有时仍然只出错误空态，不摆一条没有清单的横幅', async () => {
@@ -453,11 +453,11 @@ describe('范围：当前图 / 整个文档（审计 T09）', () => {
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     expect(checkedRadio()?.textContent).toContain('当前图')
-    expect(text()).toContain('X 刻度文字')
-    expect(text()).not.toContain('Y 刻度文字')
+    expect(text()).toContain('X 轴刻度')
+    expect(text()).not.toContain('Y 轴刻度')
     await click(radioNamed('整个文档'))
     expect(useUiStore.getState().problemScope).toBe('document')
-    expect(text()).toContain('Y 刻度文字')
+    expect(text()).toContain('Y 轴刻度')
     // 页面级那条（主语是整张画布）也只在「整个文档」里出现
     expect(rows().length).toBe(total())
     expect(text()).toContain('页面比例不合规范')
@@ -468,8 +468,8 @@ describe('范围：当前图 / 整个文档（审计 T09）', () => {
     useWorkspaceStore.getState().enterFastEdit('p2')
     await mount(<ProblemPanel />)
     expect(checkedRadio()?.textContent).toContain('当前图')
-    expect(text()).toContain('Y 刻度文字')
-    expect(text()).not.toContain('X 刻度文字')
+    expect(text()).toContain('Y 轴刻度')
+    expect(text()).not.toContain('X 轴刻度')
     // 图名就在范围旁边，用户知道「当前图」指的是谁
     expect(text()).toContain('Fig2.pdf')
   })
@@ -520,7 +520,7 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(rows()[0].textContent).toContain('当前')
     expect(rows()[1].getAttribute('aria-current')).toBeNull()
     expect(cursorBar()?.textContent).toContain('第 1 / 2 项')
-    expect(cursorBar()?.textContent).toContain('X 刻度文字')
+    expect(cursorBar()?.textContent).toContain('X 轴刻度')
 
     await click(byText('下一项')!)
     expect(rows()[1].getAttribute('aria-current')).toBe('true')

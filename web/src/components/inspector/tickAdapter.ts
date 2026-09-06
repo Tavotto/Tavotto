@@ -5,6 +5,7 @@ import { clearOverride, setOverride } from '@/store/actions'
 import { previewStyle } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { useFieldGesture } from './elementWrite'
+import { fieldVisible } from './presentation/registry'
 import { propLabel } from './roles/registry'
 import type { TickAxisAdapter } from './controls/TickTaskCard'
 import type { AxisTickState, TickDirection } from './controls/TickAndSpineDiagram'
@@ -23,15 +24,18 @@ import type { AxisTickState, TickDirection } from './controls/TickAndSpineDiagra
 export function tickElementOf(
   manifest: Manifest | null | undefined,
   axesGid: string,
-  axis: 'x' | 'y',
+  axis: TickAxis,
 ): ManifestElement | undefined {
   return manifest?.elements.find((e) => e.gid === `${axesGid}.${axis}ticks` && e.role === 'ticks')
 }
 
+/** 三条轴：Z 只有 3D 图有（`manifest.py` 的 `tick_axes` 在 is3d 时多一条） */
+export type TickAxis = 'x' | 'y' | 'z'
+
 /** 刻度元素 gid → 它属于哪个轴、宿主子图是谁 */
-export function tickHostOf(gid: string): { axesGid: string; axis: 'x' | 'y' | 'z' } | null {
+export function tickHostOf(gid: string): { axesGid: string; axis: TickAxis } | null {
   const m = gid.match(/^(.*)\.([xyz])ticks$/)
-  return m ? { axesGid: m[1], axis: m[2] as 'x' | 'y' | 'z' } : null
+  return m ? { axesGid: m[1], axis: m[2] as TickAxis } : null
 }
 
 /**
@@ -41,7 +45,7 @@ export function tickHostOf(gid: string): { axesGid: string; axis: 'x' | 'y' | 'z
 export function useTickAxisAdapter(
   panel: PanelObject,
   element: ManifestElement | undefined,
-  axis: 'x' | 'y',
+  axis: TickAxis,
 ): TickAxisAdapter | null {
   const gesture = useFieldGesture(panel, msg('element.editElement', undefined, 'inspector'))
   if (!element) return null
@@ -66,12 +70,15 @@ export function useTickAxisAdapter(
     setOverride(panel.id, gid, prop, value, previewed ? 'none' : immediate)
     gesture.touch()
   }
+  const isOverridden = (prop: string) => panel.overrides.some((o) => o.gid === gid && o.prop === prop)
   return {
     axis,
     gid,
     has: (prop) => !!fieldOf(prop),
     fieldOf,
     read,
+    // 与通用列表同一条「开关 → 从属字段」判据（次刻度关着收起长宽）
+    visible: (prop) => fieldVisible(role, prop, { read, isOverridden }),
     write: (prop, value) => write(prop, value),
     writeOnce: (prop, value) => {
       write(prop, value, true)
@@ -79,7 +86,7 @@ export function useTickAxisAdapter(
     },
     beginGesture: gesture.start,
     endGesture: gesture.end,
-    isOverridden: (prop) => panel.overrides.some((o) => o.gid === gid && o.prop === prop),
+    isOverridden,
     reset: (prop) => clearOverride(panel.id, gid, prop),
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from '@/lib/api'
-import { controlKindOf, presentFields } from './registry'
+import { controlKindOf, fieldVisible, presentFields } from './registry'
 
 const f = (prop: string, type: EditableField['type'] = 'number', group?: string): EditableField =>
   ({ prop, type, value: 0, ...(group ? { group } : {}) }) as EditableField
@@ -75,6 +75,36 @@ describe('presentFields：角色模板分桶', () => {
     // override 存在时条件让路：不能因隐藏而不可发现
     const orphan = presentFields('ticks', fields, opts(['major_values'], { major_mode: 'auto' }))
     expect(orphan.primary.map((x) => x.field.prop)).toContain('major_values')
+  })
+
+  it('ticks：次刻度关着时长度 / 线宽 / 方式 / 间距 / 格式都收起；开了才出；改过的照样在（审计 T13）', () => {
+    const fields = [
+      f('minor_visible', 'bool'), f('minor_length'), f('minor_width'),
+      f('minor_mode', 'enum'), f('minor_step'), f('minor_format', 'enum'),
+    ]
+    const off = presentFields('ticks', fields, opts([], { minor_visible: false, minor_mode: 'step' }))
+    expect([...off.primary, ...off.more].map((x) => x.field.prop)).toEqual(['minor_visible'])
+    const on = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'step' }))
+    expect([...on.primary, ...on.more].map((x) => x.field.prop)).toEqual(
+      expect.arrayContaining(['minor_length', 'minor_width', 'minor_mode', 'minor_step', 'minor_format']),
+    )
+    // 次刻度开着但方式不是 step：间距仍收起
+    const auto = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'auto' }))
+    expect([...auto.primary, ...auto.more].map((x) => x.field.prop)).not.toContain('minor_step')
+    // 改过的必须能看到
+    const kept = presentFields('ticks', fields, opts(['minor_length'], { minor_visible: false }))
+    expect([...kept.primary, ...kept.more].map((x) => x.field.prop)).toContain('minor_length')
+  })
+
+  it('fieldVisible 与 presentFields 是同一条判据（刻度卡不走桶也问它）', () => {
+    const o = opts([], { minor_visible: false, major_mode: 'auto' })
+    expect(fieldVisible('ticks', 'minor_length', o)).toBe(false)
+    expect(fieldVisible('ticks', 'major_step', o)).toBe(false)
+    expect(fieldVisible('ticks', 'length', o)).toBe(true)
+    expect(fieldVisible('ticks', 'minor_length', opts(['minor_length'], { minor_visible: false }))).toBe(true)
+    expect(fieldVisible('ticks', 'minor_length', opts([], { minor_visible: true }))).toBe(true)
+    // 没建档的角色 / 没条件的字段：一律显示
+    expect(fieldVisible('some_role', 'anything', o)).toBe(true)
   })
 
   it('axes：裸 position rect 进高级（manifest-first 泄漏，审计 P6）', () => {

@@ -256,7 +256,7 @@ describe('TickAndSpineDiagram', () => {
       toggle: vi.fn(),
       labelOf: (p: string) => `L:${p}`,
       isOverridden: () => false,
-      reset: vi.fn(),
+      resetAll: vi.fn(),
       ...over,
     } satisfies TickSpineAdapter
   }
@@ -303,15 +303,28 @@ describe('TickAndSpineDiagram', () => {
     expect(document.querySelectorAll('[role="switch"]')).toHaveLength(0)
   })
 
-  it('已修改的边给出单项恢复入口', async () => {
+  it('已修改的边在图上自己标出；恢复只有一个动作（不再逐边出 chip）', async () => {
     const a = adapterOf({ isOverridden: (p: string) => p === 'ticks_top' })
     await mount(<TickAndSpineDiagram adapter={a} />)
-    const chip = Array.from(host.querySelectorAll('button')).find((b) =>
-      b.getAttribute('aria-label')?.includes('L:ticks_top'),
-    )!
+    // 修改标记跟着那条边走：只有上边带 data-tick-modified
+    expect(sw('L:ticks_top')?.getAttribute('data-tick-modified')).toBe('true')
+    expect(sw('L:ticks_bottom')?.getAttribute('data-tick-modified')).toBeNull()
+    // 以前这里长出一排「上边刻度线 ×」chip——与图上的状态重复表达同一组设置
+    expect(
+      Array.from(host.querySelectorAll('button')).some((b) =>
+        b.getAttribute('aria-label')?.includes('L:ticks_top'),
+      ),
+    ).toBe(false)
+    const reset = host.querySelector('[data-tick-reset-all]') as HTMLButtonElement
+    expect(reset).toBeTruthy()
     await act(async () => {
-      chip.click()
+      reset.click()
     })
-    expect(a.reset).toHaveBeenCalledWith('ticks_top')
+    expect(a.resetAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('什么都没改过时没有恢复按钮', async () => {
+    await mount(<TickAndSpineDiagram adapter={adapterOf()} />)
+    expect(host.querySelector('[data-tick-reset-all]')).toBeNull()
   })
 })

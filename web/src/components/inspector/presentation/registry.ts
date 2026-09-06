@@ -60,6 +60,12 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   if (field.prop === 'binding' && role === 'legend_text' && field.type === 'enum') {
     return 'legend-binding'
   }
+  // 子图纵横比：引擎按 text 发（'auto' | 'equal' | 数字串），但它不是一段文字
+  // ——落进带上下标 / 换行 / 大小写转换的富文本编辑器是审计 T12 点名的错配。
+  // 按 prop + 角色认，不按「值长得像什么」猜：给它一个明确的控件形态
+  if (field.prop === 'aspect' && role === 'axes' && field.type === 'text') {
+    return 'aspect'
+  }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp
   // 背景 / 描边的开关：关着的时候不是一个开关，是一条「＋添加背景」入口
@@ -78,6 +84,17 @@ export interface PresentOptions {
 /** 桶内排序的大偏移：显式点名的排前（0..n），兜底的按引擎组序 + 出现序跟在后面 */
 const FALLBACK_BASE = 1000
 
+/**
+ * 单个字段此刻该不该显示：模板的 `visibleWhen`（「开关 → 从属字段」那张表）
+ * + 「用户改过的必须能看到」。**只有这一条判据**：`presentFields` 分桶用它，
+ * 不走桶的复合控件（刻度卡的次刻度长宽）也用它——次刻度关着时该收起哪些行，
+ * 通用列表与刻度卡说的必须是同一句话。
+ */
+export function fieldVisible(role: string, prop: string, opts: PresentOptions): boolean {
+  const cond = ROLE_PROFILES[role]?.visibleWhen?.[prop]
+  return !cond || cond(opts.read) || opts.isOverridden(prop)
+}
+
 export function presentFields(
   role: string,
   fields: EditableField[],
@@ -87,10 +104,8 @@ export function presentFields(
   const out: PresentedBuckets = { primary: [], more: [], advanced: [] }
 
   fields.forEach((field, engineIndex) => {
-    const overridden = opts.isOverridden(field.prop)
     // 条件显示：模式从属字段只在对应模式下渲染；用户改过的必须能看到
-    const cond = profile?.visibleWhen?.[field.prop]
-    if (cond && !cond(opts.read) && !overridden) return
+    if (!fieldVisible(role, field.prop, opts)) return
 
     let priority: InspectorPriority
     let order: number

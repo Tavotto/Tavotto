@@ -30,6 +30,8 @@ export type ControlKind =
   | 'rect'
   | 'order'
   | 'number-list'
+  /** 子图纵横比：自动 / 等比例 / 自定义比例——绝不落进文字编辑器 */
+  | 'aspect'
   /** 图内文字效果的开关（背景 / 描边）：关着画成「＋添加」，开了才是开关 */
   | 'effect'
 
