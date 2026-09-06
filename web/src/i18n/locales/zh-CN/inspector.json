@@ -146,7 +146,15 @@
     "switchOff": "{{label}}：关（点击开启）",
     "switchOn": "{{label}}：开（点击关闭）",
     "tickSpineDiagram": "刻度与边框状态图",
-    "zoneAria": "{{side}}{{dir}}刻度"
+    "zoneAria": "{{side}}{{dir}}刻度",
+    "aspect": {
+      "auto": "自动",
+      "equal": "等比例",
+      "custom": "自定义比例"
+    },
+    "aspectRatio": "纵横比数值：一单位 Y 与一单位 X 的显示长度之比",
+    "spinePerSide": "分别设置各边",
+    "spineSidesDiffer": "各边不同"
   },
   "element": {
     "advanced": "高级",
@@ -230,8 +238,7 @@
     "retryRender": "重试渲染",
     "scaleAxes": "缩放子图",
     "scaleAxesMulti": "缩放 {{count}} 个子图",
-    "scaleHint": "相对当前大小；应用后回到 100%",
-    "scaleLabel": "缩放",
+    "scaleLabel": "按比例缩放",
     "scaleTitle": "绕中心缩放，组内相对布局不变",
     "setAxesHeight": "修改子图高度",
     "setAxesWidth": "修改子图宽度",
@@ -249,7 +256,14 @@
       "min": "最小",
       "max": "最大",
       "indexed": "第 {{n}} 项"
-    }
+    },
+    "scaleApply": "应用",
+    "groupRange": "范围",
+    "groupTransform": "坐标变换",
+    "groupTicksGrid": "刻度与网格",
+    "groupFrame": "边框",
+    "invert": "反转",
+    "invertAria": "反转坐标轴"
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",

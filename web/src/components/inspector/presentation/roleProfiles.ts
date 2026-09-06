@@ -111,12 +111,16 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     },
   },
   axes: {
+    // 子图页按任务分三段（审计 T12），各由一张卡承接、从通用列表里让出来：
+    //   范围 / 坐标变换  —— ElementInspector 的 AxesRangeCard
+    //                      （xlim / ylim / xscale / yscale / invert_* / aspect）
+    //   刻度与网格      —— TickAndSpineDiagram（ticks_* / spine_<side> / grid_x / grid_y）
+    //   边框            —— SpineFrameCard（spine_color / spine_linewidth / 逐边）
+    // 这里点名的顺序只对**没被卡承接**的场合生效（卡不渲染时字段仍不丢）。
     // 尺寸（mm）由 AxesSizeMm 组件承接；裸 position rect 是 figure 分数
     // 坐标的诊断视图，进 advanced（manifest-first 泄漏，见审计 P6）。
-    // ticks_* / spine_* / grid_* 的四边开关由 TickAndSpineDiagram 承接。
-    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'grid_x', 'grid_y'],
+    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'aspect', 'grid_x', 'grid_y'],
     more: [
-      'invert_x', 'invert_y', 'aspect',
       'grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha',
       'spine_color', 'spine_linewidth', 'facecolor', 'visible',
     ],

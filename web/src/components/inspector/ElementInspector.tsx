@@ -102,6 +102,8 @@ import {
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
+import { AspectControl } from './controls/AspectControl'
+import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
 import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
 import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
@@ -232,9 +234,11 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
   const legendCardCoversSelf =
     element?.role === 'legend' && !!manifest && legendEntryElements(manifest, element.gid).length > 0
+  // 子图页：四边状态图、范围 / 坐标变换卡、边框卡各承接一组字段——
+  // 同一属性不出两套控件；没被任何卡点名的照旧走通用列表与「更多」
   const consumedBySideDiagram = new Set<string>(
     element?.role === 'axes'
-      ? TICK_SPINE_PROPS
+      ? [...TICK_SPINE_PROPS, ...AXES_RANGE_CARD_PROPS, ...SPINE_FRAME_PROPS]
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
         : legendCardCoversSelf
@@ -352,7 +356,21 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             warnings={render?.warnings ?? []}
             buckets={buckets}
             primaryExtra={
-              sideHost && element ? (
+              element?.role === 'axes' && sideHost ? (
+                /* 子图页三段：范围与坐标变换 → 刻度与网格 → 边框（审计 T12：
+                   范围、比例、边框三类任务互不混杂） */
+                <div className="flex flex-col gap-2">
+                  <AxesRangeCard panel={panel} element={element} warnings={render?.warnings ?? []} />
+                  <div>
+                    <GroupHead>{el('groupTicksGrid')}</GroupHead>
+                    <TickControl panel={panel} manifest={manifest} host={sideHost} element={element} />
+                  </div>
+                  <div>
+                    <GroupHead>{el('groupFrame')}</GroupHead>
+                    <SpineFrameCard panel={panel} element={element} labelWidth={LABEL_W} />
+                  </div>
+                </div>
+              ) : sideHost && element ? (
                 <TickControl
                   panel={panel}
                   manifest={manifest}
@@ -786,6 +804,128 @@ function TickControl({
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
     </div>
+  )
+}
+
+/** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
+function GroupHead({ children }: { children: ReactNode }) {
+  return <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{children}</p>
+}
+
+/* ------------------------------ 子图：范围与坐标变换 ------------------------ */
+
+const AXES_RANGE_PROPS = ['xlim', 'ylim'] as const
+const AXES_SCALE_PROPS = ['xscale', 'yscale'] as const
+const AXES_INVERT_PROPS = ['invert_x', 'invert_y'] as const
+/** 范围卡承接的字段——子图页的通用列表要把它们让出来 */
+const AXES_RANGE_CARD_PROPS = [
+  ...AXES_RANGE_PROPS,
+  ...AXES_SCALE_PROPS,
+  ...AXES_INVERT_PROPS,
+  'aspect',
+] as const
+
+/**
+ * 子图页的「范围」与「坐标变换」两段（审计 T12）。
+ *
+ * 引擎把 xlim / ylim / xscale / yscale / invert_* / aspect 都发在「数据范围」
+ * 一个组里，平铺进列表后「改数据范围」和「换对数轴、反转、纵横比」混在一起，
+ * 后两者还有一半掉进「更多」。这里按任务分两段：**范围** = X / Y 各一对
+ * 最小 / 最大；**坐标变换** = 缩放、反转、纵横比。控件本身仍是通用的
+ * `FieldBlock`（纵横比的三档控件由展示注册表按 `aspect` 分派，见
+ * `presentation/registry.controlKindOf`），这里只管顺序与分段。
+ *
+ * 反转 X / Y 并成一行两个开关：它们是同一件事的两个方向，各占一行只是把
+ * 首屏拉长。能力仍由 manifest 说了算：字段不在就不画。
+ */
+function AxesRangeCard({
+  panel,
+  element,
+  warnings,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  warnings: string[]
+}) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, element)
+  const fieldOf = (p: string) => element.editable.find((f) => f.prop === p)
+  const range = AXES_RANGE_PROPS.map(fieldOf).filter((f): f is EditableField => !!f)
+  const scale = AXES_SCALE_PROPS.map(fieldOf).filter((f): f is EditableField => !!f)
+  const invert = AXES_INVERT_PROPS.filter((p) => !!fieldOf(p))
+  const aspect = fieldOf('aspect')
+  const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  if (!range.length && !scale.length && !invert.length && !aspect) return null
+  const block = (f: EditableField) => (
+    <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
+  )
+  const invertLabel = el('invert')
+  return (
+    <div className="flex flex-col gap-1.5" data-axes-range-card>
+      {range.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-axes-section="range">
+          <GroupHead>{el('groupRange')}</GroupHead>
+          {range.map(block)}
+        </div>
+      )}
+      {(scale.length > 0 || invert.length > 0 || aspect) && (
+        <div className="flex flex-col gap-1.5" data-axes-section="transform">
+          <GroupHead>{el('groupTransform')}</GroupHead>
+          {scale.map(block)}
+          {invert.length > 0 && (
+            <Row
+              label={labeledWithStateNode(invertLabel, invert.some(overridden))}
+              labelWidth={LABEL_W}
+            >
+              <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>
+                {invert.map((p) => (
+                  <span
+                    key={p}
+                    data-prop={p}
+                    data-gid={element.gid}
+                    className="flex items-center gap-1.5 text-xs text-ink-2"
+                  >
+                    <Toggle
+                      checked={w.read(p) === true}
+                      onChange={(v) => w.writeOnce(p, v)}
+                      aria-label={propLabel(p, element.role)}
+                    />
+                    {el(p === 'invert_x' ? 'axis.x' : 'axis.y')}
+                    {overridden(p) && (
+                      <Tip label={resetHint(p)} side="left">
+                        <Button
+                          size="icon-sm"
+                          className="shrink-0"
+                          aria-label={el('resetProp', { label: propLabel(p, element.role) })}
+                          onClick={() => clearOverride(panel.id, element.gid, p)}
+                        >
+                          <RotateCcw size={11} className="text-ink-3" />
+                        </Button>
+                      </Tip>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </Row>
+          )}
+          {aspect && block(aspect)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 与 FieldRow 的标签同一套「已修改」表达（点 + sr-only 文案） */
+function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
+  return (
+    <span
+      className="flex min-w-0 items-center gap-1"
+      title={overridden ? `${label} · ${el('modified')}` : label}
+    >
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      <span className="min-w-0 truncate">{label}</span>
+      {overridden && <span className="sr-only">{el('modified')}</span>}
+    </span>
   )
 }
 
@@ -1296,6 +1436,18 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'aspect':
+      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器
+      return wrap(
+        <AspectControl
+          value={value}
+          label={label}
+          onPick={writeOnce}
+          onRatio={(v) => write(v)}
+          onScrubStart={beginTxn}
+          onScrubEnd={endTxn}
+        />,
+      )
     default:
       break
   }
@@ -1608,38 +1760,44 @@ const ALIGN_BUTTONS: {
 ]
 
 /**
- * 缩放控件：组与单个子图共用。它是**相对**操作——应用完就回到 100%，
- * 所以旁边必须写清楚，否则「再次选中怎么又是 100%」会让人以为没生效。
+ * 按比例缩放：组与单个子图共用。它是**一次性动作**，不是一个持续存在的
+ * 属性——输入比例、按「应用」，做完回到 100%。做成「输入即生效、之后又跳回
+ * 100%」的旋钮时，用户拿它跟图片对象的绝对缩放（一直显示 91%）对照，
+ * 会以为没生效（审计 T12）；一颗明确的按钮把「缩放一次」说清楚，
+ * 也不用再配一句解释文字。
  */
 function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   const [pct, setPct] = useState(100)
-  const apply = (v: number) => {
-    if (v === 100) return
+  const ready = Number.isFinite(pct) && pct !== 100
+  const apply = () => {
+    if (!ready) return
     setOverrides(
       panel.id,
       group.entries.length === 1
         ? elMsg('scaleAxes')
         : elMsg('scaleAxesMulti', { count: group.entries.length }),
-      groupPatches(group, scaleGroupAbout(group.box, v / 100)),
+      groupPatches(group, scaleGroupAbout(group.box, pct / 100)),
     )
     setPct(100)
   }
 
   return (
-    <div className="mt-1.5">
-      <Row label={el('scaleLabel')}>
-        <NumberField
-          value={pct}
-          min={10}
-          max={400}
-          step={5}
-          suffix="%"
-          title={el('scaleTitle')}
-          onChange={apply}
-        />
-      </Row>
-      <p className="mt-1 text-xs leading-relaxed text-ink-3">{el('scaleHint')}</p>
-    </div>
+    <Row label={el('scaleLabel')} className="mt-1.5">
+      <NumberField
+        className="w-[84px] shrink-0"
+        ariaLabel={el('scaleLabel')}
+        value={pct}
+        min={10}
+        max={400}
+        step={5}
+        suffix="%"
+        title={el('scaleTitle')}
+        onChange={setPct}
+      />
+      <Button size="sm" variant="outline" disabled={!ready} onClick={apply} data-scale-apply>
+        {el('scaleApply')}
+      </Button>
+    </Row>
   )
 }
 

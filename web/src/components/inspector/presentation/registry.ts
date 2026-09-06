@@ -59,6 +59,12 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   if (field.prop === 'binding' && role === 'legend_text' && field.type === 'enum') {
     return 'legend-binding'
   }
+  // 子图纵横比：引擎按 text 发（'auto' | 'equal' | 数字串），但它不是一段文字
+  // ——落进带上下标 / 换行 / 大小写转换的富文本编辑器是审计 T12 点名的错配。
+  // 按 prop + 角色认，不按「值长得像什么」猜：给它一个明确的控件形态
+  if (field.prop === 'aspect' && role === 'axes' && field.type === 'text') {
+    return 'aspect'
+  }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp
   return CONTROL_BY_TYPE[field.type] ?? 'text'

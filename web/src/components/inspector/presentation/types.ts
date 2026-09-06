@@ -30,6 +30,8 @@ export type ControlKind =
   | 'rect'
   | 'order'
   | 'number-list'
+  /** 子图纵横比：自动 / 等比例 / 自定义比例——绝不落进文字编辑器 */
+  | 'aspect'
 
 /** 一条被摆好位置的字段：manifest 的字段本体 + 展示决策 */
 export interface PresentedField {

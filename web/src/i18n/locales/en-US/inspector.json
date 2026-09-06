@@ -148,7 +148,15 @@
     "switchOff": "{{label}}: off (click to turn on)",
     "switchOn": "{{label}}: on (click to turn off)",
     "tickSpineDiagram": "Tick & frame diagram",
-    "zoneAria": "{{side}} {{dir}} ticks"
+    "zoneAria": "{{side}} {{dir}} ticks",
+    "aspect": {
+      "auto": "Auto",
+      "equal": "Equal",
+      "custom": "Custom ratio"
+    },
+    "aspectRatio": "Aspect ratio value: display length of one Y unit over one X unit",
+    "spinePerSide": "Set each side separately",
+    "spineSidesDiffer": "Sides differ"
   },
   "element": {
     "advanced": "Advanced",
@@ -241,8 +249,7 @@
     "retryRender": "Retry render",
     "scaleAxes": "Scale axes",
     "scaleAxesMulti": "Scale {{count}} axes",
-    "scaleHint": "Relative to the current size; returns to 100% once applied",
-    "scaleLabel": "Scale",
+    "scaleLabel": "Scale by",
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
     "setAxesHeight": "Change axes height",
     "setAxesWidth": "Change axes width",
@@ -262,7 +269,14 @@
       "min": "Min",
       "max": "Max",
       "indexed": "Value {{n}}"
-    }
+    },
+    "scaleApply": "Apply",
+    "groupRange": "Range",
+    "groupTransform": "Transform",
+    "groupTicksGrid": "Ticks and grid",
+    "groupFrame": "Frame",
+    "invert": "Invert",
+    "invertAria": "Invert axes"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
