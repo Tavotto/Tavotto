@@ -4,7 +4,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { Toggle } from '../ui/Toggle'
 import { AgentIcon } from './AgentIcon'
-import { ag, AgentStateBadge, agentSubtitle, agentVersionLabel } from './agentState'
+import { ag, AgentStateBadge, agentSubtitle } from './agentState'
 
 /**
  * 编码 Agent 的分组列表。
@@ -52,23 +52,16 @@ export function AgentList({
           />
           <AgentIcon iconKey={agent.icon_key} />
           {/*
-            一行只有三件事实：名称 · 版本号 · 状态（ADR 0038）。路径、命令、
-            检测来源全在详情里——「Tavotto 会自动发现……」那种解释也不在这儿。
+            一行只回答用户此刻的问题：**这个能不能用、去哪儿配**——名称 + 状态
+            + 启用开关 + 进详情（ADR 0038；审计 T44 把版本号也移走了：它在列表
+            与详情上重复了一遍，而列表上的那份没有任何可操作性）。路径、命令、
+            检测来源同样只在详情里。
           */}
           <div className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-2">
             <div className="flex min-w-0 items-center gap-3">
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                 {agent.display_name}
               </span>
-              {agent.installed && agentVersionLabel(agent.version) && (
-                <span
-                  data-agent-version
-                  className="max-w-32 shrink-0 truncate font-mono text-xs text-ink-3"
-                  aria-label={ag('versionAria', { version: agentVersionLabel(agent.version) })}
-                >
-                  {agentVersionLabel(agent.version)}
-                </span>
-              )}
               <AgentStateBadge state={agent.state} className="shrink-0 whitespace-nowrap" />
             </div>
             {agentSubtitle(agent) && (

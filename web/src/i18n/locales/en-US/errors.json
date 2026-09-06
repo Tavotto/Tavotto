@@ -164,7 +164,7 @@
     "installing": "Installing…",
     "managedEnvInstalled": "Installed: {{packages}}",
     "managedEnvRebuild": "Rebuild Tavotto environment",
-    "managedEnvUsing": "Tavotto environment: Python {{version}}",
+    "managedEnvUsing": "This project’s {{product}} environment: Python {{version}}",
     "matplotlibVersion": "matplotlib {{version}}",
     "missingBody": "Figure-element editing needs a Python with matplotlib. Tavotto runs your own scripts, so the interpreter has to be able to import the libraries they use. Layout, annotation and export are unaffected.",
     "missingModuleBody": "Tavotto bundles the common scientific stack (numpy / matplotlib / pandas / scipy / seaborn / Pillow). This script needs something else — point the rendering environment at the Python / Conda environment you normally run it in.",
@@ -262,7 +262,7 @@
     "repairWillInstall": "Will install: {{requirement}}",
     "setPythonFailed": "Could not apply the setting",
     "sourceLabel": {
-      "bundled": "Tavotto's bundled environment",
+      "bundled": "The rendering environment bundled with {{product}}",
       "configured": "The environment you chose",
       "current_process": "Tavotto's own interpreter",
       "env_override": "Environment variable TAVOTTO_WORKER_PYTHON",
@@ -331,8 +331,11 @@
     "clearFilter": "Show all",
     "cmp": {
       "above": "above {{value}}",
+      "aboveAtBoundary": "above {{value}} (exactly equal does not pass)",
       "atLeast": "≥ {{value}}",
-      "atMost": "≤ {{value}}"
+      "atLeastAtBoundary": "≥ {{value}} (the value is just below it; the display is rounded)",
+      "atMost": "≤ {{value}}",
+      "atMostAtBoundary": "≤ {{value}} (the value is just above it; the display is rounded)"
     },
     "current": "Current",
     "cursorAt": "{{pos}} of {{total}}",

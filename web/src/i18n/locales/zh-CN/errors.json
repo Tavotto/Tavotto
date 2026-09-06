@@ -164,7 +164,7 @@
     "installing": "正在安装…",
     "managedEnvInstalled": "已安装：{{packages}}",
     "managedEnvRebuild": "重建 Tavotto 环境",
-    "managedEnvUsing": "Tavotto 环境：Python {{version}}",
+    "managedEnvUsing": "这个项目的 {{product}} 环境：Python {{version}}",
     "matplotlibVersion": "matplotlib {{version}}",
     "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
     "missingModuleBody": "Tavotto 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
@@ -262,7 +262,7 @@
     "repairWillInstall": "将安装：{{requirement}}",
     "setPythonFailed": "设置失败",
     "sourceLabel": {
-      "bundled": "Tavotto 内置环境",
+      "bundled": "{{product}} 自带的渲染环境",
       "configured": "你指定的环境",
       "current_process": "Tavotto 自身的解释器",
       "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
@@ -331,8 +331,11 @@
     "clearFilter": "显示全部",
     "cmp": {
       "above": "大于 {{value}}",
+      "aboveAtBoundary": "大于 {{value}}（正好等于不算通过）",
       "atLeast": "≥ {{value}}",
-      "atMost": "≤ {{value}}"
+      "atLeastAtBoundary": "≥ {{value}}（当前值实际略低，显示已四舍五入）",
+      "atMost": "≤ {{value}}",
+      "atMostAtBoundary": "≤ {{value}}（当前值实际略高，显示已四舍五入）"
     },
     "current": "当前",
     "cursorAt": "第 {{pos}} / {{total}} 项",
