@@ -30,6 +30,8 @@
     "endpoint_save_failed": "Could not save the endpoint: {{reason}}",
     "environment_in_use_by_native_session": "This Python environment is in use by Tavotto Run. Stop the running script before installing dependencies.",
     "environment_mutating": "That Python environment is installing dependencies. Try again shortly.",
+    "eps_needs_script": "EPS can only be written by the figure's own script, and {{figure}} has no script that can be re-run. The other formats were exported as usual.",
+    "eps_not_for_canvas": "EPS is not available for canvas export: the canvas is composed by the PDF engine, which cannot write PostScript. For EPS, export a single figure with a script at its original size. The other formats were exported as usual.",
     "execution_cancelled": "The trial run was interrupted (the session was terminated while running)",
     "execution_timeout": "Script execution timed out (entry {{entry}})",
     "export_dir_unwritable": "The export folder can't be written to: {{error}}. Check disk space and folder permissions.",

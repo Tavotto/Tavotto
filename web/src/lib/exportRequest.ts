@@ -32,13 +32,19 @@ import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
-export type ExportFormat = 'pdf' | 'png'
+export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff'
 export type OverwritePolicy = 'ask' | 'replace' | 'rename'
 export type ExportBackground = 'white' | 'transparent'
 
-/** 位图格式的判据。「PPI 有没有意义」全产品只问这一句 */
-export const RASTER_FORMATS: readonly ExportFormat[] = ['png']
-export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf']
+/**
+ * 画布这条入口认的格式，**顺序与 `engine/exportreq.FORMATS` 同源**：结果里的
+ * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0044）。
+ */
+export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff']
+
+/** 位图格式的判据。「PPI 有没有意义」全产品只问这一句（与 `RASTER_FORMATS` 同源） */
+export const RASTER_FORMATS: readonly ExportFormat[] = ['png', 'tiff']
+export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps']
 
 /** 与 `engine/exportreq.py` 的 `PPI_MIN/PPI_MAX/PPI_DEFAULT` 同源 */
 export const PPI_MIN = 36
@@ -117,6 +123,33 @@ function sourceReachable(figureId: string): boolean {
   return useAssetStore.getState().byId[figureId] != null
 }
 
+/**
+ * EPS 为什么不可用。**闭集**，界面按它说一句人话（ADR 0044）。
+ *
+ * EPS 只有 worker 侧的 matplotlib 写得出（PyMuPDF 没有 PostScript 写入器），
+ * 所以它只在「按原图导出一张**有脚本**的图」时存在：
+ *
+ * * `canvas_scope`：画布合成走 PyMuPDF，给不出 EPS；
+ * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
+ *
+ * 与后端 `_serialize_figure()` 的前提逐条对应：runtime id 放行，磁盘面板看
+ * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
+ * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
+ */
+export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script'
+
+export function epsAvailability(
+  scope: ExportScope,
+  figureId: string | null,
+): { ok: boolean; reason: EpsBlockReason } {
+  if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
+  if (!figureId) return { ok: false, reason: 'no_script' }
+  if (figureId.startsWith('runtime:')) return { ok: true, reason: 'none' }
+  const asset = useAssetStore.getState().byId[figureId]
+  if (!asset?.script) return { ok: false, reason: 'no_script' }
+  return { ok: true, reason: 'none' }
+}
+
 export interface ExportRequestInput {
   scope: ExportScope
   formats: readonly string[]
@@ -156,7 +189,10 @@ export function filenameProblem(raw: string, formats: readonly string[]): Filena
  * ——不是"我们记得要一致"，是它们物理上来自同一个数组。
  */
 export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
-  const formats = ['pdf', 'png'].filter((f) => input.formats.includes(f))
+  // EPS 在这次范围 / 这张图上给不出时**不发**它：后端会逐项报 `eps_*` 失败，
+  // 但界面上那个选项已经禁用并说了原因，再发一次等于让用户为同一件事看两遍
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null).ok
+  const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   const filename = stripOutputExtension(input.filename, formats)
   const raster = hasRaster(formats)
   const request: ExportRequest = {

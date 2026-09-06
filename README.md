@@ -190,10 +190,14 @@ result matches what you were looking at, and it can be locked off per project.
 ## Export for publication
 
 PDF export embeds each original vector panel as it was drawn, so **the text stays
-real, selectable, searchable text**. PNG is rasterised from that same PDF, so the two
-can never disagree. Two deliberate exceptions: a panel with opacity below 1, or with
+real, selectable, searchable text**. PNG and TIFF (lossless, Deflate-compressed, with
+the DPI written into the file) are rasterised from that same PDF, so they can never
+disagree with it. Two deliberate exceptions: a panel with opacity below 1, or with
 a flip applied, is embedded as a bitmap at your export DPI — PDF vector content
-supports neither.
+supports neither. EPS is written by matplotlib itself, so it is available when you
+export a single figure that has a script, at its original size; the canvas
+composition and script-less figures cannot produce EPS, and Tavotto says so instead
+of wrapping a bitmap in PostScript.
 
 Before anything is written, Tavotto checks the figure against a publication profile
 and tells you what a reviewer would have told you three weeks later:
@@ -242,7 +246,7 @@ commands and what to say in the first session are in
 above.
 
 It ships a skill, a local MCP server with six tools — open a figure, apply overrides,
-run the preflight, export true-vector PDF/SVG or PNG at an explicit DPI, verify a
+run the preflight, export true-vector PDF/SVG/EPS or PNG/TIFF at an explicit DPI, verify a
 replay, close a session, all usable in hosts with no interface at all — and an
 embedded canvas built from the *same* frontend code the desktop app runs, so dragging,
 snapping and undo have no second implementation. See
