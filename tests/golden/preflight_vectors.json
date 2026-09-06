@@ -9790,6 +9790,475 @@
      }
     }
    ]
+  },
+  {
+   "name": "figure-element-clipped-to-axes",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 150.0,
+     "h_mm": 112.5,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       101.6,
+       76.2
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        101.6,
+        76.2
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.scatter_0",
+         "role": "scatter",
+         "label": "axes_0.scatter_0",
+         "draggable": false,
+         "bbox": [
+          0.203,
+          0.505,
+          774.923,
+          0.308
+         ],
+         "editable": [
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "pts"
+          }
+         ],
+         "clip_bbox": [
+          0.125,
+          0.12,
+          0.775,
+          0.77
+         ]
+        },
+        {
+         "gid": "axes_0.lines_2",
+         "role": "line",
+         "label": "axes_0.lines_2",
+         "draggable": false,
+         "bbox": [
+          0.203,
+          0.197,
+          774.923,
+          0.539
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "None"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "raw"
+          }
+         ],
+         "clip_bbox": [
+          0.125,
+          0.12,
+          0.775,
+          0.77
+         ]
+        },
+        {
+         "gid": "axes_0.texts_0",
+         "role": "text",
+         "label": "axes_0.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.512,
+          -0.379,
+          0.128,
+          0.047
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "outside"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.fill_0",
+         "role": "fill",
+         "label": "axes_0.fill_0",
+         "draggable": false,
+         "bbox": [
+          -2.0,
+          -2.0,
+          4.0,
+          4.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ],
+         "clip_bbox": [
+          0.125,
+          0.12,
+          0.775,
+          0.77
+         ]
+        },
+        {
+         "gid": "axes_0.patches_0",
+         "role": "patch",
+         "label": "axes_0.patches_0",
+         "draggable": false,
+         "bbox": [
+          -0.5,
+          0.3,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ],
+         "clip_bbox": [
+          -0.2,
+          0.12,
+          0.1,
+          0.77
+         ]
+        },
+        {
+         "gid": "axes_0.texts_1",
+         "role": "text",
+         "label": "axes_0.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.512,
+          -0.05,
+          0.128,
+          0.047
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "broken clip"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ],
+         "clip_bbox": [
+          "x",
+          null,
+          1,
+          1
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "bitmap_embed": false,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       101.6,
+       76.2
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "element-outside-figure",
+     "severity": "error",
+     "message": {
+      "key": "elementOutsideFigure",
+      "params": {
+       "mm": "28.88"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.texts_0",
+      "axes_0.texts_1"
+     ],
+     "detail": {
+      "overflow_mm": 28.88,
+      "side": "top"
+     }
+    }
+   ]
   }
  ]
 }

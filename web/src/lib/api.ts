@@ -1231,6 +1231,16 @@ export interface ManifestElement {
   label: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
+  /**
+   * matplotlib 会在这个框处把这个元素切掉，框外一笔都不画（figure 分数、
+   * y 向下，与 `bbox` 同一套坐标）。**缺席 = 不裁 / 裁不掉任何东西。**
+   *
+   * `bbox` 不含这一维：曲线 / 散点 / 填充的包围盒是**未裁剪的整个数据范围**，
+   * 一个 x=1e3 而 xlim=(0,1) 的离群点能把它撑到图幅的几百倍。命中与选中高亮
+   * 仍然用 `bbox`（那是有意的），只有预检的「元素超出图幅」读这一条——它问的
+   * 是「真画出来的那部分到哪儿」。产生者只有 `engine/manifest._clip_bbox()`。
+   */
+  clip_bbox?: [number, number, number, number]
   /** 真实路径（见 ElementGeometry）；没有就退回 bbox */
   geometry?: ElementGeometry
   editable: EditableField[]

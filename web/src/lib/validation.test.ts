@@ -447,4 +447,58 @@ describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', 
       runOne(doc, renderFor(p, m)).issues.some((i) => i.ruleCode === 'element-outside-figure'),
     ).toBe(false)
   })
+
+  /**
+   * **判据的主语是「真画出来的那部分」，不是「数据到哪儿」**（评审 P1）。
+   * 曲线 / 散点的 manifest bbox 是**未裁剪的整个数据范围**：`xlim=(0, 1)` 配一个
+   * x=1e3 的离群点，包围盒会被撑到图幅的几百倍宽，而 matplotlib 在 axes patch
+   * 处就切掉了它。数字取自 matplotlib 3.10.8 的真实 manifest（4×3 in / 100 dpi）。
+   */
+  const AXES_CLIP: [number, number, number, number] = [0.125, 0.12, 0.775, 0.77]
+  const withOutlier = (clip?: [number, number, number, number]) => {
+    const m = manifestWith([{ gid: 'axes_0.scatter_0', role: 'scatter', label: '散点', pt: 9 }])
+    m.size_mm = [101.6, 76.2]
+    m.elements[0].bbox = [0.203, 0.505, 774.923, 0.308]
+    if (clip) (m.elements[0] as { clip_bbox?: number[] }).clip_bbox = clip
+    return m
+  }
+  const fires = (m: ReturnType<typeof withOutlier>) =>
+    runOne(doc, renderFor(p, m)).issues.some((i) => i.ruleCode === 'element-outside-figure')
+
+  it('裁到子图里的离群数据不算超出图幅，同一个框没有 clip_bbox 时照旧报', () => {
+    expect(fires(withOutlier(AXES_CLIP)), '被 axes 裁住了，图幅边界处什么都没丢').toBe(false)
+    // 只差 `clip_bbox` 一个键——没有这一条，上面那个 false 也可能是规则整个不响了
+    expect(fires(withOutlier()), 'clip_on=False 的元素真会画到图幅外').toBe(true)
+  })
+
+  it('裁剪框自己探到图幅外时，折进去的那部分照旧要报', () => {
+    const m = withOutlier([0.9, 0.12, 0.16, 0.77])
+    m.elements[0].bbox = [0.9, 0.3, 774.9, 0.2]
+    const issue = runOne(doc, renderFor(p, m)).issues.find(
+      (i) => i.ruleCode === 'element-outside-figure',
+    )!
+    expect(issue).toBeDefined()
+    expect(issue.technicalDetails).toEqual({ overflow_mm: 6.1, side: 'right' })
+  })
+
+  it('四边都探出图幅、但整个被子图裁住：一边都不报', () => {
+    // 只造「右边探出」的话，另外三条边的 max/min 写反了都不会有任何用例变红
+    const m = withOutlier(AXES_CLIP)
+    m.elements[0].bbox = [-2.0, -2.0, 4.0, 4.0]
+    expect(fires(m)).toBe(false)
+  })
+
+  it('整个被裁掉的元素一笔墨都没画出来，不报', () => {
+    // 裁剪框与元素**都在图幅左侧之外**且不相交——不跳过空交集的话，折出来的框
+    // 左边是 -0.2，会报出 20.32 mm 的「探出左边」
+    const m = withOutlier([-0.2, 0.12, 0.1, 0.77])
+    m.elements[0].bbox = [-0.5, 0.3, 0.2, 0.2]
+    expect(fires(m)).toBe(false)
+  })
+
+  it('读不懂的 clip_bbox 当作「不裁」——盲区宁可多报，绝不静默放行', () => {
+    const m = withOutlier()
+    ;(m.elements[0] as { clip_bbox?: unknown }).clip_bbox = ['x', null, 1, 1]
+    expect(fires(m)).toBe(true)
+  })
 })

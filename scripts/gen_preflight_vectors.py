@@ -586,6 +586,51 @@ def cases() -> list[dict]:
             "spec": _spec([_panel("p1", manifest=m)]),
         }
     )
+
+    # 17b. 被坐标轴裁住的离群数据**不算超出图幅**（评审 P1）。曲线 / 散点的
+    #      bbox 是**未裁剪的整个数据范围**：`scatter(x=[…, 1e3])` 配 `xlim=(0,1)`
+    #      能把它撑到图幅的几百倍，而 matplotlib 在 axes patch 处就切掉了，图幅
+    #      边界处一点内容都没丢。数字取自本机 matplotlib 3.10.8 的真实 manifest
+    #      （figsize 4×3 in / 100 dpi = 101.6 × 76.2 mm，子图 [50,33]–[360,264]）。
+    #      同一张图上放一条 `clip_on=False` 的标注（没有 clip_bbox）：它真的会
+    #      画到图幅外，必须照旧报——**两个方向都要在同一条向量里**，否则「不报」
+    #      也可能是这条规则整个不响了。
+    m = _clean_manifest()
+    m["size_mm"] = [101.6, 76.2]
+    axes_clip = [0.125, 0.12, 0.775, 0.77]  # 子图框折成 figure 分数（top-origin）
+    scatter = _el("axes_0.scatter_0", "scatter", label="pts")
+    scatter["bbox"] = [0.203, 0.505, 774.923, 0.308]  # 离群点把包围盒撑到 774 倍宽
+    scatter["clip_bbox"] = axes_clip
+    line = _el("axes_0.lines_2", "line", linewidth=1.0, marker="None", label="raw")
+    line["bbox"] = [0.203, 0.197, 774.923, 0.539]
+    line["clip_bbox"] = axes_clip
+    noclip = _el("axes_0.texts_0", "text", text="outside", fontsize=9.0)
+    noclip["bbox"] = [0.512, -0.379, 0.128, 0.047]  # clip_on=False：真画到图幅上方
+    # 四边都探出、整个被子图裁住：**四条边分别**都得钉住，只造「右边探出」的话
+    # 另外三条边的取大/取小写反了都不会有任何用例变红
+    allsides = _el("axes_0.fill_0", "fill", linewidth=0.75)
+    allsides["bbox"] = [-2.0, -2.0, 4.0, 4.0]
+    allsides["clip_bbox"] = axes_clip
+    # 裁剪框与元素都在图幅左侧之外且不相交：不跳过空交集的话会报 20.32 mm
+    gone = _el("axes_0.patches_0", "patch", linewidth=0.75)
+    gone["bbox"] = [-0.5, 0.3, 0.2, 0.2]
+    gone["clip_bbox"] = [-0.2, 0.12, 0.1, 0.77]
+    # 读不懂的 clip_bbox 当作「不裁」——盲区宁可多报，绝不静默放行（两侧同一口径）
+    broken = _el("axes_0.texts_1", "text", text="broken clip", fontsize=9.0)
+    broken["bbox"] = [0.512, -0.05, 0.128, 0.047]  # 只探出 3.81 mm，压不过上面那条
+    broken["clip_bbox"] = ["x", None, 1, 1]
+    m["elements"] += [scatter, line, noclip, allsides, gone, broken]
+    out.append(
+        {
+            "name": "figure-element-clipped-to-axes",
+            "profile_id": "lab-publication-v1",
+            # 页面用合规的双栏 150 × 112.5（4:3），免得页宽/比例的噪音盖住这条
+            "spec": _spec(
+                [_panel("p1", manifest=m, rect_mm=[0, 0, 101.6, 76.2])],
+                page=(150.0, 112.5),
+            ),
+        }
+    )
     return out
 
 

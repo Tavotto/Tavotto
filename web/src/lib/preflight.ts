@@ -854,9 +854,25 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
 }
 
 /**
+ * 元素的裁剪框（figure 分数、top-origin）；没有 / 读不懂回 null = 不裁。
+ * 产生者只有 `engine/manifest._clip_bbox()` 一处；与 Python 侧 `_clip_rect` 同源。
+ */
+function clipRect(el: ManifestElement): [number, number, number, number] | null {
+  const rect = el.clip_bbox
+  if (!rect || rect.length !== 4) return null
+  const cx = num(rect[0])
+  const cy = num(rect[1])
+  const cw = num(rect[2])
+  const ch = num(rect[3])
+  if (cx == null || cy == null || cw == null || ch == null) return null
+  return [cx, cy, cw, ch]
+}
+
+/**
  * 图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
- * 与 `engine/preflight.py::_check_panel_clipping` 逐条同源：bbox 任一边超出
- * [0, 1] 折成图自身 mm 后大于容差就报，一个元素只报最糟的那一边。
+ * 与 `engine/preflight.py::_check_panel_clipping` 逐条同源：bbox **先折进
+ * `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边超出 [0, 1] 折成图自身
+ * mm 后大于容差就报，一个元素只报最糟的那一边。
  */
 function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
   const manifest = panel.manifest
@@ -870,11 +886,31 @@ function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
     if (field(el, 'visible') === false) continue
     const bbox = el.bbox
     if (!bbox || bbox.length !== 4) continue
-    const x = num(bbox[0])
-    const y = num(bbox[1])
-    const w = num(bbox[2])
-    const h = num(bbox[3])
+    let x = num(bbox[0])
+    let y = num(bbox[1])
+    let w = num(bbox[2])
+    let h = num(bbox[3])
     if (x == null || y == null || w == null || h == null) continue
+    // **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
+    // bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、显式
+    // 收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，框外一笔
+    // 都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出几万毫米的
+    // 阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被切掉。
+    // `clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是如此，
+    // 它们真的会画到图幅外，照旧要报。
+    const clipped = clipRect(el)
+    if (clipped) {
+      const [cx, cy, cw, ch] = clipped
+      const x0 = Math.max(x, cx)
+      const y0 = Math.max(y, cy)
+      const x1 = Math.min(x + w, cx + cw)
+      const y1 = Math.min(y + h, cy + ch)
+      if (x1 <= x0 || y1 <= y0) continue // 整个被裁掉了，一笔墨都没画出来
+      x = x0
+      y = y0
+      w = x1 - x0
+      h = y1 - y0
+    }
     // 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
     let side = 'left'
     let over = -x * wMm

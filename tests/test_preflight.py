@@ -447,3 +447,91 @@ def test_element_outside_the_figure_is_a_blocking_issue_located_on_that_element(
     xlabel["bbox"] = [0.3152, 0.9874, 0.3946, 0.0551]
     xlabel["editable"].append({"prop": "visible", "value": False})
     assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+
+def test_axes_clipped_data_is_not_an_overflow_but_unclipped_text_still_is():
+    """**判据的主语是「真画出来的那部分」，不是「数据到哪儿」**（评审 P1）。
+
+    曲线 / 散点的 manifest bbox 是**未裁剪的整个数据范围**：`xlim=(0, 1)` 配上
+    一个 x=1e3 的离群点，包围盒会被撑到图幅的几百倍宽。matplotlib 在 axes patch
+    处就把它切掉了，图幅边界处一点内容都没丢——报出来是纯误伤，而且是阻断级的。
+
+    数字取自本机 matplotlib 3.10.8 的真实 manifest（figsize 4×3 in / 100 dpi =
+    101.6 × 76.2 mm，子图 display [50,33]–[360,264]）。
+    """
+    p = profiles.load("lab-publication-v1")
+    axes_clip = [0.125, 0.12, 0.775, 0.77]
+
+    def _fig():
+        m = _manifest()
+        m["size_mm"] = [101.6, 76.2]
+        return m
+
+    def _add(m, gid, role, bbox, clip=None):
+        el = {
+            "gid": gid,
+            "role": role,
+            "label": gid,
+            "draggable": False,
+            "bbox": bbox,
+            "editable": [],
+        }
+        if clip is not None:
+            el["clip_bbox"] = clip
+        m["elements"].append(el)
+        return el
+
+    # 1) 裁到子图里的离群散点：不报
+    m = _fig()
+    _add(m, "axes_0.scatter_0", "scatter", [0.203, 0.505, 774.923, 0.308], axes_clip)
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 2) 同一个包围盒**没有 clip_bbox**（clip_on=False）：照旧报，而且是阻断级。
+    #    这一条与上一条只差 `clip_bbox` 一个键——没有它，第 1 条的「不报」也可能
+    #    是这条规则整个不响了。
+    m = _fig()
+    _add(m, "axes_0.scatter_0", "scatter", [0.203, 0.505, 774.923, 0.308])
+    hit = next(
+        i
+        for i in preflight.run(preflight.spec_from_manifest(m), p)
+        if i["id"] == "element-outside-figure"
+    )
+    assert hit["severity"] == "error"
+    assert hit["detail"]["side"] == "right"
+
+    # 3) 裁剪框自己探到图幅外时，落在框内的那部分**仍然**会被图幅切掉——
+    #    子图被挪到图幅右边界之外 0.06（≈6.1 mm），裁进去之后照旧超出
+    m = _fig()
+    _add(m, "axes_0.lines_9", "line", [0.9, 0.3, 774.9, 0.2], [0.9, 0.12, 0.16, 0.77])
+    hit = next(
+        i
+        for i in preflight.run(preflight.spec_from_manifest(m), p)
+        if i["id"] == "element-outside-figure"
+    )
+    assert hit["detail"] == {"overflow_mm": 6.1, "side": "right"}
+
+    # 4) 四边都探出图幅、但整个被子图裁住：一边都不该报。
+    #    这一条把**四条边分别**钉住——只造「右边探出」的话，另外三条边的
+    #    max/min 写反了都不会有任何用例变红
+    m = _fig()
+    _add(m, "axes_0.lines_8", "line", [-2.0, -2.0, 4.0, 4.0], axes_clip)
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 5) 整个被裁掉的元素（一笔墨都没画出来）：不报。
+    #    数字是刻意挑的：裁剪框与元素**都在图幅左侧之外**且不相交——不跳过空交集
+    #    的话，折出来的框左边是 -0.2，会报出 20.32 mm 的「探出左边」
+    m = _fig()
+    _add(m, "axes_0.lines_9", "line", [-0.5, 0.3, 0.2, 0.2], [-0.2, 0.12, 0.1, 0.77])
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 6) 一个**真的被裁到整幅图**的元素画不出图幅外的东西 → 不报。
+    #    manifest 那侧对这种框根本不发（`_clip_bbox` 判成「什么都没裁掉」），
+    #    这条钉的是规则自己的语义：折进裁剪框之后再量，两侧一致。
+    m = _fig()
+    _add(m, "axes_0.texts_0", "text", [0.512, -0.379, 0.128, 0.047], [0.0, 0.0, 1.0, 1.0])
+    assert "element-outside-figure" not in _ids(preflight.run(preflight.spec_from_manifest(m), p))
+
+    # 7) 读不懂的 clip_bbox 当作「不裁」——盲区宁可多报，绝不静默放行
+    m = _fig()
+    _add(m, "axes_0.texts_0", "text", [0.512, -0.379, 0.128, 0.047], ["x", None, 1, 1])
+    assert "element-outside-figure" in _ids(preflight.run(preflight.spec_from_manifest(m), p))
