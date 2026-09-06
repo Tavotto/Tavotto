@@ -77,6 +77,7 @@ type Getter = () => ViewportState
  * 否则连按时锚点会以中间帧算，画面会一点点往边上飘。
  */
 function zoomCenteredTo(set: Setter, get: Getter, next: number) {
+  dropPendingFit()
   const s = get()
   const base = animTarget ?? { zoom: s.zoom, panX: s.panX, panY: s.panY }
   if (next === base.zoom) return
@@ -119,6 +120,17 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
 /** 舞台量到尺寸之前收到的那次 `fit`；只留最后一次 */
 let pendingFit: { pageW: number; pageH: number; padding: number } | null = null
 
+/**
+ * 用户自己动过视口之后，那次挂起的适配就作废了。
+ *
+ * `stopAnim()` 里做不了这件事——`fit` 自己第一句就是它，挂起的那次会被当场
+ * 抹掉。所以直接操纵各自调一次：不调的话，用户在舞台量到尺寸之前调的缩放
+ * 会在下一帧被补上来的 fit 覆盖掉，而那看起来就是「我的缩放被吃了」。
+ */
+function dropPendingFit() {
+  pendingFit = null
+}
+
 export const useViewportStore = create<ViewportState>((set, get) => ({
   zoom: 1,
   panX: 0,
@@ -144,15 +156,18 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   // 直接操纵一律先掐断在飞的补间
   setPan: (panX, panY) => {
     stopAnim()
+    dropPendingFit()
     set({ panX, panY })
   },
   panBy: (dx, dy) => {
     stopAnim()
+    dropPendingFit()
     set((s) => ({ panX: s.panX + dx, panY: s.panY + dy }))
   },
 
   zoomAt: (factor, anchorX, anchorY) => {
     stopAnim()
+    dropPendingFit()
     const { zoom, panX, panY } = get()
     const next = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM)
     if (next === zoom) return
@@ -200,6 +215,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   fitAnimated: (pageW, pageH, padding = 72) => {
+    dropPendingFit()
     const s = get()
     if (!s.viewW || !s.viewH) return
     const wPx = mmToWorld(pageW)
@@ -218,6 +234,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   revealRect: ({ x, y, w, h }, padding = 96) => {
+    dropPendingFit()
     const { viewW, viewH, zoom } = get()
     if (!viewW || !viewH) return
     // 当前缩放能装下就不动它，装不下才退到刚好装下的比例

@@ -146,3 +146,72 @@ describe('revealRect', () => {
     expect(s.panY + 55 * BASE_PX_PER_MM * s.zoom).toBeCloseTo(300, 3)
   })
 })
+
+/**
+ * 舞台还没量到尺寸时收到的 `fit`（审计 T03）。
+ *
+ * 从 Project Picker 进工作台的那个空档里 `viewW/viewH` 还是 0，算不出缩放。
+ * 改造前那一次 `fit` 就地丢掉，于是新项目沿用上一个项目留下的缩放——用户
+ * 创建完项目第一件事是先把缩放调回来。现在它挂起，舞台第一次上报尺寸时补上。
+ */
+describe('挂起的适配（舞台还没量到尺寸）', () => {
+  /** 回到「舞台未挂载」：视口尺寸为 0，且没有挂起的适配 */
+  function unmounted() {
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 0, height: 0 })
+  }
+
+  it('量不到视口时先记下来，第一次量到尺寸再适配', () => {
+    unmounted()
+    useViewportStore.setState({ zoom: 1.75, panX: 999, panY: 999 })
+    useViewportStore.getState().fit(150, 100)
+    // 还没量到尺寸：一个字段都不该动（此刻算出来的只能是错的）
+    expect(zoom()).toBeCloseTo(1.75, 6)
+
+    useViewportStore.getState().setViewRect(VIEW)
+    const s = useViewportStore.getState()
+    // 与「量到尺寸之后直接 fit」逐位相同
+    const wPx = 150 * BASE_PX_PER_MM
+    const hPx = 100 * BASE_PX_PER_MM
+    const want = Math.min((800 - 72) / wPx, (600 - 72) / hPx)
+    expect(s.zoom).toBeCloseTo(want, 6)
+    expect(s.panX).toBeCloseTo((800 - wPx * want) / 2, 6)
+    expect(s.panY).toBeCloseTo((600 - hPx * want) / 2, 6)
+  })
+
+  it('只补最后一次：连着切两份页面尺寸不同的文档，落在后一份上', () => {
+    unmounted()
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().fit(40, 30)
+    useViewportStore.getState().setViewRect(VIEW)
+    const wPx = 40 * BASE_PX_PER_MM
+    const hPx = 30 * BASE_PX_PER_MM
+    expect(zoom()).toBeCloseTo(
+      Math.min(MAX_ZOOM, Math.min((800 - 72) / wPx, (600 - 72) / hPx)),
+      6,
+    )
+  })
+
+  it('补过一次就没了：之后再上报尺寸（改窗口大小）不重新适配', () => {
+    unmounted()
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().setViewRect(VIEW)
+    useViewportStore.getState().zoomAt(2, 0, 0)
+    const held = zoom()
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
+    expect(zoom(), '窗口变大不该把用户调过的缩放冲掉').toBeCloseTo(held, 6)
+  })
+
+  /**
+   * 判据要量的是「适配有没有被丢掉」，所以这里用**瞬时**的 `zoomAt`：
+   * 换成带缓动的 `setZoomCentered` 会让补间在 fit 之后把 zoom 又写回目标值，
+   * 于是就算适配照常执行，断言也是绿的——一条恒真的用例。
+   */
+  it('用户在量到尺寸之前自己动了缩放：挂起的适配作废', () => {
+    unmounted()
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().zoomAt(3, 0, 0)
+    expect(zoom()).toBeCloseTo(3, 6)
+    useViewportStore.getState().setViewRect(VIEW)
+    expect(zoom(), '用户动过就不该再被适配覆盖').toBeCloseTo(3, 6)
+  })
+})
