@@ -930,3 +930,28 @@ def test_the_plugin_publisher_has_push_credentials_before_it_pushes():
     # release.yml 的 promote + plugin-stable.yml 的手动发布器；数目变了说明选择器或
     # workflow 形状变了，两种都要人看一眼，而不是让判据静默缩到零
     assert found == 2, f"真推发布器步骤数 {found} != 2"
+
+
+def test_a_job_that_configures_global_credentials_keeps_no_local_copy():
+    """第二次真跑（plugin-stable.yml run 34005899795）死在 `remote: Duplicate header:
+    "Authorization"` → HTTP 400：job 给 git 配了全局 extraheader，而 actions/checkout 默认
+    又把同一凭据留在 checkout 的本地 config；发布器在 checkout 目录里跑 `ls-remote`，git
+    把两份都发了出去。
+
+    判据：任何 job 里只要有一步 `git config --global … extraheader`，同一 job 的
+    actions/checkout 必须 `persist-credentials: false`——凭据只留一份。
+    """
+    seen = 0
+    for wf in (_wf(RELEASE), _wf(PLUGIN_STABLE)):
+        for job in wf.jobs:
+            steps = wf.steps(job)
+            if not any(re.search(r"git config --global .*extraheader", s) for s in steps):
+                continue
+            seen += 1
+            checkouts = [s for s in steps if "actions/checkout@" in s]
+            assert checkouts, f"{wf.path.name}/{job}: 没有 checkout 步骤？"
+            for co in checkouts:
+                assert _Workflow.with_scalars(co).get("persist-credentials") == "false", (
+                    f"{wf.path.name}/{job}: checkout 还留着本地凭据，发布器会发两份 Authorization"
+                )
+    assert seen == 2, f"配全局凭据的 job 数 {seen} != 2"
