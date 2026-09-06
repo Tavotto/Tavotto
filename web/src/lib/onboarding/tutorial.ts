@@ -4,7 +4,7 @@
  *
  * ```text
  * startTutorial()   GET/POST /api/tutorial/open → 认领项目 → 装教程画布 → 开始 / 继续 onboarding
- * resetTutorial()   确认 → POST /api/tutorial/reset → 忘掉本机那格 autosave → 重新装 → 从头开始
+ * resetTutorial()   「重置教程项目」：确认 → POST /api/tutorial/reset → 忘掉本机那格 autosave → 重新装 → 从头开始
  * tutorialEntry()   四个入口该显示「开始 / 继续 / 重新开始」哪一个（纯读）
  * ```
  *
@@ -192,7 +192,7 @@ export async function startTutorial(source?: TutorialEntrySource): Promise<Tutor
 }
 
 /**
- * 「重新开始教程」。先确认——教程项目里如果有用户另存的画布文件，确认框会
+ * 「重置教程项目」（换回干净副本 + 进度从头）。先确认——教程项目里如果有用户另存的画布文件，确认框会
  * 点名列出来（重置换的是整个副本目录，它们会一起没）。
  */
 export async function resetTutorial(): Promise<TutorialOutcome> {
@@ -304,7 +304,8 @@ export type TutorialEntryKind = 'start' | 'resume' | 'restart'
 /**
  * 入口该说什么。**纯读**：
  *   * 进行中 / 暂停 → 「继续教程」；
- *   * 已完成 / 已跳过 → 「重新开始教程」（走 start：副本保留进度、onboarding 从头）；
+ *   * 已完成 / 已跳过 → 「再看一遍教程」（走 start：副本保留进度、onboarding 从头；
+ *     与「重置教程项目」是两件事，后者才换副本）；
  *   * 没开始过 → 「开始教程」。
  */
 export function tutorialEntry(

@@ -494,6 +494,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**
+* **前置状态先验，缺了给真实行动（2026-09-06，审计 T36；flow v2）**：每步可有 `precondition(ctx)`，
+  不满足时卡片说清缺什么（`dialogs:onboarding.precondition.<reason>`）、主按钮只调稳定动作
+  （`openFastEdit` / `addFigureToLayout` / `returnToLayout` / `setSelectedGid`），「跳过此步」照旧；
+  「正在等待目标出现」只在前置满足之后的 `WAIT_MS` 窗口出现，计时从那一刻起算。`add_to_layout`
+  按 `missingTutorialPanels()` 出变体——文档里只剩一张时说「还缺哪张」，不许说「两张都在」。
+  **完成与跳过分两本账**：`completedSteps` 是走过的（推进状态机用），`skippedSteps` 是其中跳过的
+  子集；结束页按 `tallyOutcomes()` 分「教程完成 / 完成 n 步跳过 m 步 / 跳过了全部」三种措辞，
+  不用完成式总结一份跳完的教程。
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、

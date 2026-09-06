@@ -5,7 +5,7 @@
  * 靠读代码证明不了的事。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { STEP_IDS } from '@/lib/onboarding/stepIds'
+import { REAL_STEP_IDS, STEP_IDS, tallyOutcomes } from '@/lib/onboarding/stepIds'
 import {
   configureOnboardingPersistence,
   hintSeen,
@@ -96,6 +96,47 @@ describe('状态机', () => {
     expect(s().completedSteps).toEqual(['welcome'])
   })
 
+  it('完成与跳过分两本账：跳过进 skippedSteps，返回再真做完就移出；complete 保留那本账', () => {
+    s().start({ projectId: 'p1', documentId: 'd' })
+    s().markStep('welcome')
+    s().markStep('open_fast_edit', 'skipped')
+    s().markStep('select_text', 'skipped')
+    expect(s().completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
+    expect(s().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
+    expect(stored().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
+    // 再跳一次不重复记
+    s().markStep('select_text', 'skipped')
+    expect(s().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
+    // 返回之后真的做完：从跳过那本账里移出，走过那本账不变
+    s().markStep('open_fast_edit')
+    expect(s().completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
+    expect(s().skippedSteps).toEqual(['select_text'])
+    expect(tallyOutcomes(s().completedSteps, s().skippedSteps)).toEqual({
+      done: 1,
+      skipped: 1,
+      total: REAL_STEP_IDS.length,
+    })
+    // 结束：全部记成走过，但跳过的那本账一条不抹
+    s().complete()
+    expect(s().completedSteps).toEqual([...STEP_IDS])
+    expect(s().skippedSteps).toEqual(['select_text'])
+    expect(tallyOutcomes(s().completedSteps, s().skippedSteps).skipped).toBe(1)
+  })
+
+  it('tallyOutcomes 只数真实步骤：welcome / done 不进账，跳过优先于完成', () => {
+    expect(REAL_STEP_IDS).not.toContain('welcome')
+    expect(REAL_STEP_IDS).not.toContain('done')
+    expect(REAL_STEP_IDS.length).toBe(STEP_IDS.length - 2)
+    expect(tallyOutcomes(['welcome', 'done'], [])).toEqual({ done: 0, skipped: 0, total: REAL_STEP_IDS.length })
+    expect(tallyOutcomes([...STEP_IDS], [...REAL_STEP_IDS])).toEqual({
+      done: 0,
+      skipped: REAL_STEP_IDS.length,
+      total: REAL_STEP_IDS.length,
+    })
+    // 只在 skipped 不在 passed 的（不该出现的形状）也按跳过数——不算成完成
+    expect(tallyOutcomes([], ['open_fast_edit']).skipped).toBe(1)
+  })
+
   it('resetOnboarding 清状态与提示、删掉那格存储；resetHints 只清提示', () => {
     s().start({ projectId: 'p1', documentId: 'd' })
     s().markHintSeen('panel_editable')
@@ -121,6 +162,7 @@ describe('持久化与迁移', () => {
         'status',
         'currentStep',
         'completedSteps',
+        'skippedSteps',
         'hintSeen',
         'startedAt',
         'completedAt',
@@ -166,6 +208,29 @@ describe('持久化与迁移', () => {
     expect(m.startedAt).toBeNull()
     expect(m.tutorialProjectId).toBeNull()
     expect(m.tutorialDocumentId).toBe('tavotto-tutorial')
+  })
+
+  it('v1 的 blob 没有 skippedSteps：按全部完成读；有的话只认同时也走过的那些', () => {
+    const v1 = migratePersisted({
+      schemaVersion: 1,
+      flowVersion: 1,
+      status: 'completed',
+      completedSteps: [...STEP_IDS],
+      completedAt: 5,
+    })
+    expect(v1.skippedSteps).toEqual([])
+    expect(tallyOutcomes(v1.completedSteps, v1.skippedSteps).done).toBe(REAL_STEP_IDS.length)
+    const mixed = migratePersisted({
+      schemaVersion: 1,
+      flowVersion: ONBOARDING_FLOW_VERSION,
+      status: 'active',
+      currentStep: 'locate_problem',
+      completedSteps: ['welcome', 'open_fast_edit', 'select_text'],
+      skippedSteps: ['select_text', 'export_canvas', 'bogus', 3],
+    })
+    // export_canvas 没走过却记成跳过、bogus 不是步骤：都丢
+    expect(mixed.skippedSteps).toEqual(['select_text'])
+    expect(mixed.completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
   })
 
   it('flowVersion 升级：进行中的回到第一个未完成步骤、历史不抹；已完成的不被打扰', () => {
