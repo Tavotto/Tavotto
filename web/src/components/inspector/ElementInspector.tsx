@@ -88,7 +88,7 @@ import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
-import { controlKindOf, isPercentField, presentFields } from './presentation/registry'
+import { controlKindOf, fieldHintKey, isPercentField, presentFields } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
@@ -1463,7 +1463,10 @@ function FieldRow({
   // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
   // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
   // 三重表达「这个值来自你的修改，不是脚本」。
-  const labelNode = (
+  // 单位或语义会被读错的字段带一句短提示（没有问号按钮，见展示注册表）
+  const hintKey = fieldHintKey(field.prop)
+  const hint = hintKey ? el(`hint.${hintKey}`) : undefined
+  const labelBody = (
     <span
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${el('modified')}` : label}
@@ -1475,6 +1478,7 @@ function FieldRow({
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
+  const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
 
@@ -1719,6 +1723,9 @@ function FieldRow({
             // 改的是线宽还是端帽长度（axe 的 label 规则按 critical 报）。带单位，
             // 与成对数值框的写法一致（`axisAriaLabel`）。
             ariaLabel={field.unit ? `${label} (${field.unit})` : label}
+            // 短提示同时挂在输入框上：标签那个气泡只有鼠标够得着，`title`
+            // 是这个控件的**描述**，键盘与读屏都拿得到
+            title={hint}
             onChange={(v) => write(v)}
             onScrubStart={beginTxn}
             onScrubEnd={endTxn}

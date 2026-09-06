@@ -2231,6 +2231,9 @@ export default interface Resources {
       "groupTicksGrid": "刻度与网格",
       "groupTransform": "坐标变换",
       "hiddenElements_other": "已隐藏元素（{{count}}）",
+      "hint": {
+        "scatterSize": "pt² 是面积，不是直径：数值翻一倍，点看上去约宽 1.4 倍。"
+      },
       "howAiBody": "AI 标签页里的修改会直接改写 .py 源文件，属于破坏性改动，但每次都有快照，可以「回滚此次修改」。",
       "howAiTitle": "AI 改脚本",
       "howBothBody": "脚本变了之后，指向已消失元素的 override 会成为孤儿，渲染时以警告列出并自动忽略，其余修改照常生效。",

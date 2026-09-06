@@ -204,6 +204,9 @@
     "glyphChangeFont": "Change font",
     "glyphChangeFontTip": "Jump to the font row and pick a font that can draw these characters",
     "hiddenElements_one": "Hidden elements ({{count}})",
+    "hint": {
+      "scatterSize": "pt² is an area, not a diameter: doubling the value makes the dot about 1.4× wider."
+    },
     "hiddenElements_other": "Hidden elements ({{count}})",
     "howAiBody": "Edits made in the assistant tab rewrite the .py source directly, which is destructive — but every run is snapshotted, so \"Revert this change\" is always available.",
     "howAiTitle": "Assistant edits to the script",

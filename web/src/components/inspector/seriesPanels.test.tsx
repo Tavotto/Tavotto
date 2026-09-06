@@ -367,6 +367,42 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
   })
 })
 
+/* --------------------------------- 散点 ---------------------------------- */
+
+describe('散点：继承有小状态点，面积单位带一句短提示（T16）', () => {
+  it('标记 = 脚本原始：画的是继承状态点，不是 ↺ 那种像按钮的字形', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    expect(marker.textContent).toContain('脚本原始')
+    expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(marker.textContent).not.toContain('↺')
+  })
+
+  it('标记 = o：画真实形状，没有继承状态点', async () => {
+    seedRender(
+      makeManifest([
+        elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields({ marker: 'o' })),
+      ]),
+    )
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    expect(marker.querySelector('svg circle')).toBeTruthy()
+    expect(marker.querySelector('[data-marker-inherited]')).toBeNull()
+  })
+
+  it('点大小保留 pt²，并带一句「这是面积」的短提示；线宽那种没歧义的不带', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    expect(row('size')!.textContent).toContain('pt²')
+    const hinted = inputIn('size')!.closest('[title]')!.getAttribute('title')!
+    expect(hinted).toContain('面积')
+    expect(hinted).toContain('pt²')
+    // 提示是给会被读错的那几条准备的，不是每一行都挂
+    expect(inputIn('linewidth')!.closest('[title]')).toBeNull()
+  })
+})
+
 /* ------------------------------ 宽度的名字 -------------------------------- */
 
 describe('全产品只有一个宽度名词「线宽」，限定词说哪条线（T16 / T20）', () => {

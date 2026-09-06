@@ -51,6 +51,23 @@ const PERCENT_PROPS = new Set(['alpha', 'grid_alpha', 'framealpha', 'bbox_alpha'
 export const isPercentField = (field: EditableField): boolean =>
   field.type === 'number' && PERCENT_PROPS.has(field.prop)
 
+/**
+ * 一句短提示，挂在标签与输入框上（悬停 / 辅助技术），**不加问号按钮**。
+ *
+ * 只给「单位或语义会被读错」的那几条——审计的统一验收规则说得很直接：
+ * 常规字段不默认附带点击式问号，无操作的短提示悬停或聚焦时出现即可。
+ * 表里放的是 i18n key 的尾段（`hint.<key>`），文案在 inspector.json。
+ *
+ * `size`（散点面积）是这一条的由来：单位 pt² 是**面积**不是直径，而
+ * 「点大小 12」看着像个长度（审计 T16：保留面积单位，并用简短提示说明）。
+ */
+const FIELD_HINTS: Record<string, string> = {
+  size: 'scatterSize',
+}
+
+/** 这个字段有没有一句短提示（返回 i18n 的 `hint.<key>` 尾段） */
+export const fieldHintKey = (prop: string): string | undefined => FIELD_HINTS[prop]
+
 const CONTROL_BY_TYPE: Record<EditableField['type'], ControlKind> = {
   text: 'text',
   number: 'number',
