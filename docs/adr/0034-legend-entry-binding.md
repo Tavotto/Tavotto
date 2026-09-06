@@ -23,7 +23,7 @@ Typography 控件）、[0030 统一检查与问题定位](0030-validation-and-pr
 | 隐藏一项 | 整项（示意线 + 文字）从图例盒里拿掉；元素表里**留着它**（框 = 图例的框），否则「恢复显示」没有入口 |
 | 重建型 prop（列数 / 间距 / 顺序 / 隐藏） | 从**源对象或脚本原样快照**派生重建，不再把示意线副本喂回 `_init_legend_box`。误差棒仍是误差棒、markerscale 只乘一次、标题字号不丢——撤销到底逐位回原样，invariants 里那条图例重建豁免已删 |
 | 「自动」这个位置按钮 | 不存在了。matplotlib 的 `best` 叫**最佳位置**（按数据避让），拖动过的叫**自定义位置**；导入原图的 `best` 状态原样保留 |
-| 高频项 | 位置 / 列数 / 示意线长 / 线与文字间距 / 行间距 / 列间距（多列时）/ 边框四条常驻首屏；字号与条目顺序由图例卡接管；标题 / 内边距 / 透明度进「更多」 |
+| 高频项 | 位置 / 列数 / 边框四条常驻首屏；字号与条目顺序由图例卡接管；**五条间距（示意线长 / 线与文字间距 / 行间距 / 列间距 / 内边距）由排版详情卡接管**；标题 / 透明度进「更多」 |
 | 检查 | `line-width-off-preset` 也看**自定义**图例项的示意线宽（定位到那一项）；跟随的项由源那条规则管着，不报两遍 |
 | 磁盘格式 | **不升版**：新增的都是 override（`gid + prop + value`），老文档一个字节不变 |
 
@@ -104,9 +104,23 @@ follow；只指纹相等且唯一 → follow（脚本把 labels 单独传了）�
   判断）、文字、「跟随 / 自定义 / 未关联」徽标、显隐、上下移动。点文字选中那
   一项。卡片承接掉 `fontsize` 与 `entry_order`，通用列表让出来。
 * **图例项页**：`binding` 字段渲染成一行状态 + 动作
-  （`controls/LegendBindingControl.tsx`）：跟随中 → 「改为自定义」；自定义 →
-  「恢复跟随」（`store/actions.restoreLegendEntryFollow`，一次 commit）；另有
-  「查看源对象」。没有源的项引擎不发 `binding`，界面就没有这一行。
+  （`controls/LegendBindingControl.tsx`）：一个链条开关 + 「链接到：曲线 “sin”」
+  （断开后写「已断开 · 来源：…」）；点开关在断开与恢复之间切
+  （恢复走 `store/actions.restoreLegendEntryFollow`，一次 commit）；另有
+  「查看源对象」，**两种状态下都在**。没有源的项引擎不发 `binding`，界面就
+  没有这一行。
+
+> 2026-09-06 补（UI/UX 审计 T17 / T18）：图例项页的两处措辞与显隐改了，
+> 模型一个字没动。
+>
+> * 示意线的五条样式**只在断开后出现**（展示注册表的 `visibleWhen`，判据
+>   `binding !== 'follow_source'`，改过的那条照常显示）。所以「改下方任一样式
+>   即脱开」这条**界面路径**不在了——脱开的判据（任一 `handle_*` override 在
+>   即 custom）一个字没变，它仍然管着老文档与别处写进来的 override。
+> * 原理从常驻段落挪进开关的悬停提示；状态与关系留在正文（一行文字 + 来源
+>   入口），因为它们是「这次选择要看的事实」，不是原理。
+> * 图例页的五条间距移进默认折叠的「排版详情」，带真实单位 `em`（matplotlib
+>   按字号的倍数计）；位置九宫格下面写出参照的容器名。
 * `lib/legendModel.ts` 是前端投影：显示顺序、每项的绑定（与引擎同一条规则——
   用户刚改了颜色，徽标不该等下一帧才变）、恢复跟随的计划。
   `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与 `engine/overrides` 严格同源
@@ -136,4 +150,5 @@ follow；只指纹相等且唯一 → follow（脚本把 labels 单独传了）�
 `tests/test_invariants_engine.py`（能力真实 + 撤销逐位，图例重建豁免已删，
 `test_legend_rebuild_restores_exactly` 钉住误差棒与 markerscale）、
 `tests/test_legend_model_pairs.py`、`web/src/components/inspector/legendCard.test.tsx`、
+`web/src/components/inspector/legendSpacingCard.test.tsx`、
 `tests/golden/preflight_vectors.json` 的 `legend-entry-custom-handle-width`。
