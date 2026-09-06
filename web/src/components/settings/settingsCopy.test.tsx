@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { t } from '@/i18n'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { UpdateSourceButton } from '@/components/inspector/UpdateSourceButton'
-import { lastSegment } from '@/components/settings/PathValue'
+import { dirTail } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -224,16 +224,9 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
 /* --------------------------------- T40 项目 -------------------------------- */
 
 describe('T40 项目：路径可核实、默认值由控件表达', () => {
-  it('末级目录的判据认两种分隔符，结尾的分隔符不算一级', () => {
-    expect(lastSegment('/a/b/Tutorial')).toBe('Tutorial')
-    expect(lastSegment('/a/b/Tutorial/')).toBe('Tutorial')
-    expect(lastSegment('C:\\Users\\me\\figs')).toBe('figs')
-    expect(lastSegment('exports')).toBe('exports')
-  })
-
   it('默认只显示末级目录，展开之后才是完整路径', async () => {
     await open('project')
-    expect(bodyText()).toContain(lastSegment(FIGURES))
+    expect(bodyText()).toContain(dirTail(FIGURES))
     expect(bodyText()).not.toContain(FIGURES)
     const toggle = byAria(st('project.showFullPath', { name: st('project.current') }))!
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
@@ -246,7 +239,7 @@ describe('T40 项目：路径可核实、默认值由控件表达', () => {
   it('目录留空时，这一刻真正在用的位置就写在输入框下面', async () => {
     await open('project')
     expect(bodyText()).toContain(st('project.effectivePath'))
-    expect(bodyText()).toContain(lastSegment(EXPORTS))
+    expect(bodyText()).toContain(dirTail(EXPORTS))
     // 没设过就没有「恢复默认」——那个按钮只在有东西可恢复时才有意义
     expect(byText(st('project.useDefault'))).toBeUndefined()
   })

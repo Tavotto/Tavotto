@@ -15,7 +15,7 @@
       "expect": "给出两条安装命令（分开、带双 sparse），要求新开会话，然后停止",
       "anchors": [
         {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["没有 `tavotto_health` 这个工具", "新开会话", "不要在旧会话里继续假装工具可用"]},
-        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin", "codex plugin add tavotto@tavotto", "停止当前任务"]}
+        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins", "codex plugin add tavotto@tavotto", "停止当前任务"]}
       ]
     },
     {

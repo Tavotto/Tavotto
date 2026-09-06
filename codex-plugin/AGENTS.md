@@ -20,8 +20,9 @@
   重装只有网络开销（tests/test_codex_plugin.py 看护）。
 - 插件安装/升级/引擎装好之后**必须新开 Codex 会话**；`codex plugin list` 的
   enabled ≠ 当前会话拿得到工具。
-- 安装命令两条分开写（不用 `&&`）；GitHub 源的 `--sparse` 必须同时含
-  `.agents/plugins` 与 `codex-plugin`（市场清单引用仓库内的本地插件目录）。
+- 安装命令两条分开写（不用 `&&`）；GitHub 源只需 `--sparse .agents/plugins`：市场清单
+  的插件来源是 `git-subdir → plugin-stable`（ADR 0043），插件本体来自发行分支，不从源码
+  checkout 里取。唯一出处 `brand.CODEX_SPARSE_PATHS`，README / 恢复文档由它派生。
 - SKILL.md 收敛为「触发条件 + 会话入口状态机 + 核心图文件契约 + MCP 工具
   顺序 + 完成判据」，细节按需读 `skills/tavotto-figure/references/`：
   first-run-and-recovery（安装/provision/错误码/新会话）、figure-contract
@@ -183,9 +184,14 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   文件，挂 UI 只会让画布不停重建）；CSP 的 `connectDomains` **是空的**（sidecar 端口动态，
   写不进白名单，这也是必须走 `tools/call` 的原因）；**绝不用「开浏览器」冒充内嵌画布**；
   iframe 的 `localStorage`/`widgetState` **不存业务数据**。
-- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**受管构建物**（进 git）：
-  `python scripts/build_mcp_widget.py`，`--check` 在 CI 的 frontend job 与 pytest 里各看一道。
-  **改了 `web/src` 就得重跑**，否则用户装到的是上一版画布（功能全在、只是旧、零报错）。
+- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**构建物，不进 git**（ADR 0043）：本地
+  `python scripts/build_mcp_widget.py` 构建到原位置试用（`--check` 三档只给本地用）；CI 从
+  本次 checkout 现建并验证完整插件（`scripts/plugin_stage.py`，`plugin-candidate` job），
+  用户装到的来自发行分支 `plugin-stable`（release.yml 在固定发行 SHA 上构建、验证、发布）。
+  **不许把它加回索引**（`scripts/ci/check_generated_untracked.py` 在 PR 与 main 落地审计上看着）。
+  三个路径分清：源码 `codex-plugin/`（无画布）/ staging / 已装副本，见 `docs/ci/plugin-stable-channel.md`。
+  **装工作副本**：`codex plugin marketplace add <仓库>/codex-plugin` + `codex plugin add tavotto@tavotto-dev`
+  （`codex-plugin/.agents/plugins/marketplace.json` 是开发用的本地市场，staging 不带它）。
 - **协议绿灯不能冒充 Codex Desktop iframe 证据**。真实验收必须按
   `docs/acceptance/codex-desktop-canvas.md`：新任务、真实 capability JSON、先取消
   证明 fail-closed、再人工批准精确路径、同一任务里出现并实际交互画布，且保留截图与
