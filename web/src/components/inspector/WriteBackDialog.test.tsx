@@ -13,11 +13,12 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
+import { dirTail, WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
 import { i18n } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 declare global {
@@ -80,6 +81,8 @@ beforeEach(async () => {
   if (i18n.language !== 'zh-CN') await i18n.changeLanguage('zh-CN')
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_writeback')
   useAssetStore.setState({ byId: { 'Fig1.pdf': { mtime: 1755000000 } } } as never)
+  // 备份目录是**每项目**设置：上一条用例塞进去的绝对路径不能漏给下一条
+  useProjectStore.setState({ project: null } as never)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -103,7 +106,7 @@ const render = () =>
 /** 对话框走 Portal，落在 document.body 上 */
 const text = () => document.body.textContent ?? ''
 
-const confirm = async (label = '确认写回') => {
+const confirm = async (label = '写回原始文件') => {
   const btn = [...document.body.querySelectorAll('button')].find((b) =>
     b.textContent?.includes(label),
   )
@@ -258,5 +261,124 @@ describe('前置校验的入参', () => {
     render()
     await confirm()
     expect(JSON.parse(bodies[0]).expected_mtime).toBe(1755000000)
+  })
+})
+
+/**
+ * 确认页的信息结构（审计 T34）。
+ *
+ * 原来这里是三段并排的散文：覆盖什么、备份到哪、怎么恢复，每段都以一个粗体
+ * 词起头，路径整条铺在句子中间。三件事都是真的，但要**读完**才建立得起
+ * 「我按下去会发生什么」——而这正是一个覆盖磁盘原件的确认框最该一眼给出的。
+ *
+ * 现在：短摘要（多少项、写进哪张图）→ 目标文件清单 → 备份与恢复折叠项。
+ * 折叠的是**说明**不是事实：收起时备份到哪个目录就写在那一行上。
+ *
+ * **这几条判据只管信息呈现。** 事务保护（prepare → verify → commit）由上面
+ * 那几个 describe 钉住，任何一条都不许因为「文案更短了」而松口。
+ */
+describe('确认页的信息结构', () => {
+  /** 对话框正文里那个「备份与恢复」折叠项 */
+  const backupDetails = () => {
+    const all = [...document.body.querySelectorAll('details')]
+    return all.find((d) => d.querySelector('summary')?.textContent?.includes('备份')) ?? null
+  }
+
+  it('短摘要说清「多少项修改」与「写进哪张图」，不必读正文', async () => {
+    render()
+    // 1 条 override、面板 Fig1.pdf
+    expect(text()).toContain('将把 1 项修改写回「Fig1」的原始文件')
+  })
+
+  it('目标文件成清单列出，一眼能数出覆盖的是哪几个', async () => {
+    render()
+    const items = [...document.body.querySelectorAll('li')].map((li) => li.textContent)
+    expect(items).toContain('Fig1.pdf')
+    expect(items).toContain('Fig1.png')
+    expect(text()).toContain('将覆盖 figures 目录里的这些文件')
+  })
+
+  it('多个面板时摘要报「几张图」，清单把每张图的两个后缀都列出来', async () => {
+    const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', overrides: [
+      { gid: 'axes_0', prop: 'facecolor', value: '#fff' },
+      { gid: 'axes_0.title', prop: 'text', value: 'x' },
+    ] }
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <WriteBackDialog panels={[panel, second]} open onOpenChange={() => {}} />
+        </TooltipProvider>,
+      ),
+    )
+    // 1 + 2 项修改、2 张图
+    expect(text()).toContain('将把 3 项修改写回 2 张图的原始文件')
+    const items = [...document.body.querySelectorAll('li')].map((li) => li.textContent)
+    expect(items).toEqual(
+      expect.arrayContaining(['Fig1.pdf', 'Fig1.png', 'Fig2.pdf', 'Fig2.png']),
+    )
+  })
+
+  it('备份位置就在这个对话框里：收起时写着末级目录，不是只藏在设置页的问号后面', () => {
+    useProjectStore.setState({
+      project: {
+        backup_dir: '/Users/somebody/Library/Application Support/Tavotto/cache/original_backups',
+      },
+    } as never)
+    render()
+    const summary = backupDetails()?.querySelector('summary')
+    expect(summary, '确认页里找不到备份折叠项').toBeTruthy()
+    expect(summary!.textContent).toContain('original_backups')
+    // 摘要行上不铺全路径——读完那条才看得见「备份」两个字的正是原来的毛病
+    expect(summary!.textContent).not.toContain('/Users/somebody')
+  })
+
+  it('展开项里是全路径 + 复制入口 + 恢复办法', () => {
+    useProjectStore.setState({
+      project: {
+        backup_dir: '/Users/somebody/Library/Application Support/Tavotto/cache/original_backups',
+      },
+    } as never)
+    render()
+    const d = backupDetails()!
+    const body = d.textContent ?? ''
+    expect(body).toContain('/Users/somebody/Library/Application Support/Tavotto/cache/original_backups')
+    expect(body).toContain('复制')
+    // 恢复路径仍然完整可查：历史 + 备份目录 + 脚本不受影响
+    expect(body).toContain('历史')
+    expect(body).toContain('备份目录')
+    expect(body).toContain('脚本不会被改动')
+  })
+
+  it('主动作按钮直说「写回原始文件」，不是含糊的「确认」', () => {
+    render()
+    const primary = [...document.body.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('写回原始文件'),
+    )
+    expect(primary, '找不到主动作按钮').toBeTruthy()
+    expect(text()).not.toContain('确认写回')
+  })
+
+  it('成功回执里的备份位置同样是「末级目录 + 展开看全路径」', async () => {
+    stubFetch(200, OK_BODY)
+    render()
+    await confirm()
+    const d = backupDetails()
+    expect(d, '回执里找不到备份折叠项').toBeTruthy()
+    expect(d!.querySelector('summary')!.textContent).toContain('0818_101010')
+    expect(d!.querySelector('summary')!.textContent).not.toContain('/data/original_backups')
+    expect(d!.textContent).toContain(OK_BODY.backup_dir)
+  })
+})
+
+describe('dirTail', () => {
+  it('取末级目录，末尾斜杠不算一级', () => {
+    expect(dirTail('/a/b/original_backups')).toBe('original_backups')
+    expect(dirTail('cache/original_backups/')).toBe('original_backups')
+    expect(dirTail('C:\\Users\\me\\cache\\original_backups')).toBe('original_backups')
+  })
+
+  it('本来就没有分隔符时原样返回，绝不返回空串', () => {
+    expect(dirTail('original_backups')).toBe('original_backups')
+    expect(dirTail('/')).toBe('/')
   })
 })
