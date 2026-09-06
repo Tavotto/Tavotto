@@ -102,6 +102,8 @@ mkdir -p $CODEX_HOME $HOME
 codex plugin marketplace add Tavotto/Tavotto --ref plugin-stable --sparse .agents/plugins --sparse codex-plugin
 codex plugin add tavotto@tavotto --json          # installedPath → cache/tavotto/tavotto/<版本>
 python scripts/plugin_stage.py verify "$CODEX_HOME/plugins/cache/tavotto/tavotto/<版本>" --installed --serve python3
+#   分支是 legacy bootstrap 出来的（收据里有 legacy_bootstrap、没有 plugin_build）时加 --legacy：
+#   旧 zip 里没有 plugin-build.json 与 LICENSE，不加会红「缺少必需文件 LICENSE / 缺少构建清单」
 tavotto codex doctor --json                      # summary.canvas.complete == true
 ```
 
@@ -168,7 +170,13 @@ ready」，看队列把它们组成一组、`CI fast gate` 在组合提交上绿
 
 ## 线上状态（改动时整段重写，不加行）
 
-- 2026-09-05：**发行分支未创建**（PR A #289 已入合并队列，bootstrap 等它落地后经
-  plugin-stable.yml 用 v0.12.0 执行）；marketplace 入口仍是 `local ./codex-plugin`（PR B #290 未合）；
-  `plugin-stable` ruleset 已建（22330299：deletion + non_fast_forward，无 Actions bypass）；
-  线上合并队列 `max_entries_to_build = 1`（读取值）。CodeQL alert #132 已按同族理由标为误报。
+- 2026-09-06：**发行分支已创建**——`plugin-stable` tip `5466a23e664280c0cebefc2b39fce21b7f413c07`，
+  legacy bootstrap 自 Release v0.13.0（plugin-stable.yml run 34016512223，执行人 erwanjun；
+  收据 `plugin-release.json` kind=bootstrap、version=0.13.0、engine_check 两项 HTTP 200，
+  `inspect` 读回 tree_digest 与收据 content_digest 一致 `035b5b6b…8683`）。§3 隔离安装验收已在
+  本机（codex-cli 0.151.0，`--ref plugin-stable`）跑过：`plugin add` 装到 0.13.0、
+  `verify --installed --legacy --serve` 通过、doctor `canvas.complete == true`（channel 按设计
+  报 `legacy-local`，因为分支根的清单仍是 `local ./codex-plugin`）。marketplace 入口仍是
+  `local ./codex-plugin`（PR B #290 未合）；`plugin-stable` ruleset 已建（22330299：deletion +
+  non_fast_forward，无 Actions bypass；§1 的 update 规则未加）；线上合并队列
+  `max_entries_to_build = 1`（读取值）。CodeQL alert #132 已按同族理由标为误报。

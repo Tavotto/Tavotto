@@ -849,6 +849,13 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      - name: 构建画布产物给 e2e 用
+        # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
+        # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
+        # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
+        # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        run: python scripts/build_mcp_widget.py
+
       # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
       # 失败。**不设 TAVOTTO_WORKERD**——下面的冒烟要验的正是「产物自带的那份
       # 被自动找到并真的用上了」。
@@ -1307,6 +1314,13 @@ jobs:
       - name: 构建前端进包
         # 包内 `src/tavotto/web/` 优先于 `web/dist`——不跑这一步测的是旧界面。
         run: python scripts/build_frontend.py
+
+      - name: 构建画布产物给 e2e 用
+        # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
+        # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
+        # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
+        # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        run: python scripts/build_mcp_widget.py
 
       - name: Playwright 黄金路径（真实界面 + python -m tavotto）
         working-directory: web
