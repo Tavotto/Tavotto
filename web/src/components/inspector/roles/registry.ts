@@ -88,6 +88,10 @@ const ENGINE_GROUP: Record<string, string> = {
   网格与边框: 'gridFrame',
   '边框（逐条）': 'gridFramePerSide',
   线条与标记: 'lineMarker',
+  // 散点 / 填充族的线型与花纹（`_collection_fields`）
+  线条与填充: 'lineFill',
+  // stem 图的标记那一组（`_stem_fields`）
+  标记: 'marker',
   渐变填充: 'gradientFill',
   颜色映射: 'colormap',
   文字: 'text',
@@ -125,6 +129,8 @@ const GROUP_ORDER = [
   '网格与边框',
   '边框（逐条）',
   '线条与标记',
+  '线条与填充',
+  '标记',
   '渐变填充',
   '颜色映射',
   '文字',
