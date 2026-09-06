@@ -19,6 +19,7 @@ import {
 import { restoreFollowPlan } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
+import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
 import type {
@@ -670,6 +671,30 @@ export function setOverride(
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
   // 本地信号只带属性名（matplotlib 的 prop，不是用户内容），不带 gid 与值
+  emitActivity({ kind: 'element.property_changed', prop })
+}
+
+/**
+ * 关掉图内文字的一种效果（背景 / 描边）：写开关 `false`，**并把从属字段的
+ * override 一并清掉**——一条历史、一次渲染。
+ *
+ * 为什么不是普通的 `setOverride(prop, false)`：展示注册表有一条「用户改过的
+ * 字段永远显示」，留着从属字段的 override 的话，效果关了、参数还摆在那里
+ * ——而它们此刻对画面没有任何作用（审计 T14「关闭效果后收起参数」）。
+ * 表在 `lib/textEffects`；不认识的 prop 退化成一条普通开关写入。
+ */
+export function disableTextEffect(panelId: string, gid: string, prop: string) {
+  const dependents = TEXT_EFFECTS[prop] ?? []
+  // 开关是离散动作：先收掉开着的手势，不让它并进上一条历史
+  finishActiveGesture()
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !(p.gid === gid && (p.prop === prop || dependents.includes(p.prop))),
+    )
+    o.overrides.push({ gid, prop, value: false })
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
   emitActivity({ kind: 'element.property_changed', prop })
 }
 

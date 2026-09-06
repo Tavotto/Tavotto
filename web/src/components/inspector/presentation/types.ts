@@ -30,6 +30,8 @@ export type ControlKind =
   | 'rect'
   | 'order'
   | 'number-list'
+  /** 图内文字效果的开关（背景 / 描边）：关着画成「＋添加」，开了才是开关 */
+  | 'effect'
 
 /** 一条被摆好位置的字段：manifest 的字段本体 + 展示决策 */
 export interface PresentedField {

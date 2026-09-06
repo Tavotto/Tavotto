@@ -192,6 +192,8 @@
     "editElement": "Edit figure element",
     "editProp": "Change {{label}}",
     "figureSize": "Figure {{w}}×{{h}} mm",
+    "glyphChangeFont": "Change font",
+    "glyphChangeFontTip": "Jump to the font row and pick a font that can draw these characters",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hiddenElements_other": "Hidden elements ({{count}})",
     "howAiBody": "Edits made in the assistant tab rewrite the .py source directly, which is destructive — but every run is snapshotted, so \"Revert this change\" is always available.",

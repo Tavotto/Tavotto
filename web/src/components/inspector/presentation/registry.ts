@@ -1,4 +1,5 @@
 import type { EditableField } from '@/lib/api'
+import { isTextEffectSwitch } from '@/lib/textEffects'
 import { groupRank } from '../roles/registry'
 import { ROLE_PROFILES } from './roleProfiles'
 import type {
@@ -61,6 +62,9 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp
+  // 背景 / 描边的开关：关着的时候不是一个开关，是一条「＋添加背景」入口
+  // （与画布文字 `TextSection` 同一种操作模式；表在 `lib/textEffects`）
+  if (field.type === 'bool' && isTextEffectSwitch(field.prop)) return 'effect'
   return CONTROL_BY_TYPE[field.type] ?? 'text'
 }
 

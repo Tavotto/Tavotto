@@ -185,6 +185,8 @@
     "editElement": "修改图内元素",
     "editProp": "修改{{label}}",
     "figureSize": "整图 {{w}}×{{h}} mm",
+    "glyphChangeFont": "更换字体",
+    "glyphChangeFontTip": "把焦点移到「字体」一栏，换一个画得出这些字的字体",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
     "howAiBody": "AI 标签页里的修改会直接改写 .py 源文件，属于破坏性改动，但每次都有快照，可以「回滚此次修改」。",
     "howAiTitle": "AI 改脚本",
