@@ -872,12 +872,13 @@
     },
     "canvas": {
       "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
-      "dragCompanions": "Drag axes with companions",
-      "dragCompanionsAria": "Bring companion elements along when dragging axes",
-      "dragCompanionsHint": "Companion elements move with the axes",
-      "elsewhere": "Grid, snapping, rulers and the safe area live on the “Canvas” tab of the right panel, next to the canvas itself.",
-      "more": "Other canvas settings",
-      "openCanvasSettings": "Open canvas settings"
+      "dragCompanions": "Move related objects along",
+      "dragCompanionsHint": "Titles, axis labels and legends you placed by hand",
+      "more": "Canvas settings",
+      "openCanvasSettings": "Open canvas settings",
+      "diagramOn": "Diagram: the title and legend move along with the axes",
+      "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
+      "moreScope": "Grid, snapping, rulers and the safe area"
     },
     "copied": "Copied",
     "copy": "Copy",
@@ -1041,11 +1042,12 @@
       "open": "Open the cheat sheet"
     },
     "sidebars": {
-      "breakpoints": "At ≥1440px both sides can be pinned at once; between 1024 and 1439px they are mutually exclusive; below that the sidebars show as temporary overlays and pinning has no effect.",
-      "leftPinned": "Pin the left drawer",
-      "leftPinnedHint": "The asset drawer does not step aside when an object is selected",
-      "rightPinned": "Pin the right panel",
-      "rightPinnedHint": "The properties panel stays open when the selection is cleared"
+      "leftPinned": "Pin the left sidebar",
+      "leftPinnedHint": "Stays put when you select an object",
+      "rightPinned": "Pin the properties panel",
+      "rightPinnedHint": "Stays open when you clear the selection",
+      "pinLimitedMedium": "This window fits only one pinned side",
+      "pinLimitedNarrow": "This window is too narrow; pinning has no effect"
     },
     "techDetails": "Technical details",
     "title": "Settings",

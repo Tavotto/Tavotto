@@ -1165,11 +1165,12 @@ export default interface Resources {
       },
       "canvas": {
         "companionsExplain": "关联元素 = 被你手动摆过位置的标题 / 轴标签 / 图例，以及色条轴与 twinx 的孪生轴。它们要么钉在 figure 坐标上、要么本就是平级的另一个子图，不带的话挪走子图它们会留在原地。关掉就只动子图本身。",
-        "dragCompanions": "拖动子图联动",
-        "dragCompanionsAria": "拖动子图时带上关联元素",
-        "dragCompanionsHint": "关联元素跟着子图一起走",
-        "elsewhere": "网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。",
-        "more": "其他画布设置",
+        "diagramOff": "示意：只移动子图，标题与图例留在原地",
+        "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
+        "dragCompanions": "拖动时一同移动关联对象",
+        "dragCompanionsHint": "手动摆过的标题、轴标签、图例",
+        "more": "画布设置",
+        "moreScope": "网格、吸附、标尺与安全区域",
         "openCanvasSettings": "打开画布设置"
       },
       "copied": "已复制",
@@ -1333,11 +1334,12 @@ export default interface Resources {
         "open": "打开速查表"
       },
       "sidebars": {
-        "breakpoints": "窗口 ≥1440px 时两侧可同时常驻；1024–1439px 左右互斥；更窄时侧栏以覆盖层临时显示，常驻不生效。",
-        "leftPinned": "左抽屉常驻",
-        "leftPinnedHint": "选中对象时素材抽屉不自动让位",
-        "rightPinned": "右栏常驻",
-        "rightPinnedHint": "清空选择后属性栏保持展开"
+        "leftPinned": "固定左侧栏",
+        "leftPinnedHint": "选中对象时不让位",
+        "pinLimitedMedium": "当前窗口只能固定一侧",
+        "pinLimitedNarrow": "当前窗口太窄，固定不生效",
+        "rightPinned": "固定属性栏",
+        "rightPinnedHint": "取消选择后不收起"
       },
       "techDetails": "技术详情",
       "title": "设置",

@@ -65,6 +65,7 @@ const body = () => document.querySelector('[role="dialog"]') as HTMLElement
 const bodyText = () => body()?.textContent ?? ''
 const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElement[]
 const byText = (s: string) => buttons().find((b) => b.textContent?.trim() === s)
+const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
 
 function project(patch: Record<string, unknown> = {}) {
   useProjectStore.setState({
@@ -140,6 +141,79 @@ describe('T38 常规：说明改成动作与结果', () => {
   it('提示按钮说的是点了会怎样', async () => {
     await open('general')
     expect(byText(st('tutorial.resetHints'))?.textContent).toBe('重新显示操作提示')
+  })
+})
+
+/* --------------------------------- T39 界面 -------------------------------- */
+
+describe('T39 界面：结果式名称 + 条件状态', () => {
+  it('侧栏开关用结果式名称，标签是真的 label 且指着那个开关', async () => {
+    await open('interface')
+    const label = [...body().querySelectorAll('label')].find(
+      (l) => l.textContent?.trim() === st('sidebars.leftPinned'),
+    ) as HTMLLabelElement
+    expect(label).toBeTruthy()
+    const control = document.getElementById(label.htmlFor)
+    expect(control?.getAttribute('role')).toBe('switch')
+    // 可达名 = 看得见的那行标签：开关自己不再另挂一个 aria-label 把它盖掉
+    expect(control?.getAttribute('aria-label')).toBeNull()
+  })
+
+  it('点标签文字等于点开关', async () => {
+    await open('interface')
+    const before = useUiStore.getState().leftPinned
+    const label = [...body().querySelectorAll('label')].find(
+      (l) => l.textContent?.trim() === st('sidebars.leftPinned'),
+    ) as HTMLLabelElement
+    await act(async () => {
+      label.click()
+    })
+    expect(useUiStore.getState().leftPinned).toBe(!before)
+  })
+
+  it('宽窗口下不写任何窗口宽度的限制', async () => {
+    useUiStore.setState({ layout: 'wide' })
+    await open('interface')
+    expect(bodyText()).not.toContain(st('sidebars.pinLimitedMedium'))
+    expect(bodyText()).not.toContain(st('sidebars.pinLimitedNarrow'))
+    // 像素断点整个从界面上撤掉了（旧文案写着 1440，而真实断点是 1280）
+    expect(bodyText()).not.toContain('1440')
+    expect(bodyText()).not.toContain('1280')
+  })
+
+  it('互斥断点下就近说明「只能固定一侧」', async () => {
+    useUiStore.setState({ layout: 'medium' })
+    await open('interface')
+    expect(bodyText()).toContain(st('sidebars.pinLimitedMedium'))
+  })
+
+  it('窄窗口下说明常驻不生效', async () => {
+    useUiStore.setState({ layout: 'narrow' })
+    await open('interface')
+    expect(bodyText()).toContain(st('sidebars.pinLimitedNarrow'))
+  })
+
+  it('联动开关配前后示意，而且随开关换说法', async () => {
+    useUiStore.setState({ dragAxesWithCompanions: true })
+    await open('interface')
+    const svg = body().querySelector('svg[role="img"]')
+    expect(svg?.getAttribute('aria-label')).toBe(st('canvas.diagramOn'))
+    await act(async () => {
+      byAria(st('helpAbout', { label: st('canvas.dragCompanions') }))
+      document.getElementById('setting-drag-companions')?.click()
+    })
+    expect(body().querySelector('svg[role="img"]')?.getAttribute('aria-label')).toBe(
+      st('canvas.diagramOff'),
+    )
+  })
+
+  it('「画布设置」直接到右栏的画布页', async () => {
+    useUiStore.setState({ rightTab: 'properties' })
+    await open('interface')
+    await act(async () => {
+      byText(st('canvas.openCanvasSettings'))!.click()
+    })
+    expect(useUiStore.getState().rightTab).toBe('canvas')
   })
 })
 
