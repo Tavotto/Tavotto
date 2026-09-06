@@ -95,7 +95,7 @@ const buttonByText = (t: string) =>
 beforeEach(async () => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
-  mockCreate.mockResolvedValue({ ok: true, version: meta({ id: 'v_backup' }) })
+  mockCreate.mockResolvedValue({ version: meta({ id: 'v_backup' }) })
   mockDoc.mockResolvedValue({ ...meta(), doc: snapshot() })
   // 当前画布里有一段**不同的**文字：恢复会把它盖掉，那正是要先存一版的理由
   const pd = emptyProject()
