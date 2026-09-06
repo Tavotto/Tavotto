@@ -720,7 +720,7 @@ export function ExportDialog() {
               onChange={setPpi}
               options={PPI_VALUES.map((v) => ({
                 value: v,
-                label: translate('measure.dpi', { value: v }),
+                label: translate('measure.ppi', { value: v }),
               }))}
               ariaLabel={ex('ppiSelectLabel')}
               className="w-28"

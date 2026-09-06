@@ -13,16 +13,16 @@
   什么都不编、恒假绿。
 - 跑过 `scripts/build_frontend.py` 之后包内 `src/tavotto/web/` 优先于 `web/dist`，
   改完前端要么再同步一次，要么把它删掉退回开发态。
-- **改了 web/src 就得重建两个受管产物**：`python scripts/build_mcp_widget.py`
-  （Codex 内嵌画布）与 `python scripts/build_browser_playground.py`（/try），
-  各有 `--check` 防漂移。
+- **改了 web/src**：playground 产物 `python scripts/build_browser_playground.py`（/try，网站
+  仓库提交，`--check` 防漂移）照旧；Codex 内嵌画布 `python scripts/build_mcp_widget.py`
+  **不再入库**（ADR 0043）——本地构建只为试用，CI 从每次 checkout 现建并验证完整插件，
+  两个各改 `web/src` 的 PR 不再为同一份 HTML 相撞。
 - **注释里别写完整的 Tailwind 类名。** 扫描器不分代码和注释：一句文档里出现某个
   「还没人真用过」的工具类名，它就会被当成用到了，往产物 CSS 里凭空加一条规则
   （2026-09-03 实测，#210 的 PR 里踩到——一条 e2e 注释给 `canvas.html` 加了一条
   淡出动画的规则）。要提就写成不成立的形态（`animate-fade-in/out`）或直接用中文
-  描述。重建产物后逐行看一眼 diff：
-  `git diff -U0 --word-diff=porcelain codex-plugin/mcp/widget/canvas.html`，
-  预期只有 `tavotto-mcp-widget <指纹>` 那一行变。
+  描述。画布不再入库，看不到 diff 了——判据换成 CI `plugin-candidate` job 里真起 server 读回
+  的资源与构建物逐字相同；想本地对比就构建两次到不同 `--out` 再 diff。
 - 界面用 agent-browser 实测；黄金路径 E2E `cd web && pnpm e2e`（Playwright，
   先 `python scripts/build_frontend.py`）。
 
@@ -496,6 +496,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
   深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`
   （`errors:engine.repairError.*`，与缺包修复同一张表）。「没有回滚」那句话常驻，别删。
+* **设置里的说明先改控件，改不动才加帮助**（2026-09-06 审计「说明文字专项补查」）：优先级是
+  命名 → 单位 → 对象关系 → 状态 → 条件展开。`SettingRow` 的 `description` 是标签底下的一行短
+  说明（改的是什么、影响哪里），`status` 只在那个状态**真的成立**时出现（「当前窗口只能固定
+  一侧」），`help` 小问号只留给真有歧义的少数几处——**常规字段不默认挂问号**，常规页现在一个
+  都没有（`settingsDisclosure.test.tsx` 按 `[data-help-tip]` 数）。界面上不写像素断点、不写实现
+  词（figure / twinx / JSON 格式）、不承诺兑现不了的事（「证明图没变过」）；会影响这次选择的
+  限制、错误原因、写回范围与备份后果一律就近显示，不许只藏进悬停提示。设置页与它深链过去的
+  对话框（导出偏好 ↔ 导出对话框）**读同一批 key**，不写同义词。
 * **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡只在技术详情里一张，内置包清单归包管理页。
   「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
 * 看护：`SettingsDialog.test.tsx` / `settings/PackagesSettings.test.tsx` /
@@ -567,8 +575,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
   两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。
-* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；注册表对话框那类
-  高级入口说「已登记的源脚本」。
+* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；「已登记的源脚本」
+  这个说法**留在注册表对话框自己身上**——2026-09-06 审计 T40 之后，设置页那个入口改成结果式的
+  「可编辑来源：n 个脚本」+「管理来源…」：登记规则是对话框自己的事，入口只报结果。
 * 看护：`lib/activityTelemetry.test.ts` / `components/CommandPalette.test.tsx` /
   `store/projectReadinessStore.test.ts`「打开接入中心的遥测」/ `hooks/useServerEvents.test.ts`
   「AI 修改之后」。

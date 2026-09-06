@@ -12,6 +12,18 @@ const TEXT_EFFECT_VISIBILITY: NonNullable<RoleProfile['visibleWhen']> = Object.f
   ),
 )
 
+/**
+ * 曲线选了标记（`marker` 不是 None）才有意义的从属字段共用这一条。
+ * matplotlib 的「无标记」有三种写法（'None' / 'none' / ''），三种都算没有
+ */
+const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
+  const m = String(read('marker') ?? 'None')
+  return m !== 'None' && m !== 'none' && m !== ''
+}
+
+/** 填充开着（`fill`）才有意义的从属字段共用这一条 */
+const FILLED = (read: (prop: string) => unknown): boolean => read('fill') !== false
+
 /** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
 const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
@@ -70,9 +82,19 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       handle_markersize: (read) => read('handle_marker') !== 'None',
     },
   },
+  // 曲线：颜色 / 线型 / 线宽紧凑在前；标记的尺寸与填充 / 描边色只在选了标记
+  // 之后才铺开（审计 T15）——「无标记」时摆一个标记大小是此刻写了不生效的控件
   line: {
-    primary: ['label', 'color', 'linewidth', 'linestyle', 'marker', 'markersize'],
-    more: ['alpha', 'markerfacecolor', 'markeredgecolor', 'visible'],
+    primary: [
+      'label', 'color', 'linewidth', 'linestyle',
+      'marker', 'markersize', 'markerfacecolor', 'markeredgecolor',
+    ],
+    more: ['alpha', 'visible'],
+    visibleWhen: {
+      markersize: HAS_MARKER,
+      markerfacecolor: HAS_MARKER,
+      markeredgecolor: HAS_MARKER,
+    },
   },
   linecoll: {
     primary: ['color', 'linewidth', 'linestyle'],
@@ -82,9 +104,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'cmap', 'vmin', 'vmax', 'marker', 'size', 'edgecolor', 'linewidth', 'alpha'],
     more: ['label', 'hatch', 'linestyle', 'visible'],
   },
+  // 填充区域 / 形状：**填充一组、描边一组**，与画布图形同一套词汇和排版
+  // （审计 T21）。以前纹理夹在描边色与透明度之间——它是填充的一部分，
+  // 该挨着填充色。线型从「更多」提上来，与画布图形的描边组一致。
   fill: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
-    more: ['label', 'linestyle', 'visible'],
+    primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    more: ['label', 'visible'],
   },
   bar_series: {
     primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
@@ -95,8 +120,15 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     more: ['visible'],
   },
   patch: {
-    primary: ['facecolor', 'fill', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
-    more: ['linestyle', 'visible'],
+    primary: ['facecolor', 'fill', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    more: ['visible'],
+    visibleWhen: {
+      // 「填充」关着时填充色与纹理画了也不显形——这是 `fill` 这个开关的定义
+      // （见 engine/manifest.py `_patch_fields` 的实测：fill 关着时 facecolor
+      // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
+      facecolor: FILLED,
+      hatch: FILLED,
+    },
   },
   errorbar: {
     primary: ['color', 'linewidth', 'capsize', 'cap_thickness', 'alpha'],
@@ -180,7 +212,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     more: ['interpolation', 'gradient_color', 'visible'],
     advanced: ['origin'],
   },
+  // 整张图只有三件事：图幅、背景色、透明背景——全部在首屏（审计 T11）。
+  // 透明背景开着时背景色画了也不显形，按开关收起；用户改过的照样显示
   figure: {
-    primary: ['size_mm'],
+    primary: ['size_mm', 'facecolor', 'transparent'],
+    visibleWhen: {
+      facecolor: (read) => read('transparent') !== true,
+    },
   },
 }
