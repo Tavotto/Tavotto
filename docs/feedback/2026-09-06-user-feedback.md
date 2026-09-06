@@ -15,7 +15,7 @@
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 已完成 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
 | 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 已修复 |
-| 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 已完成，三组图标待拍板 |
+| 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 已完成 |
 | 8 | （原话为空，用户没有写完） | — | 待用户补充 |
 
 说明：第 4、6、7 条属于 1.0 收敛纪律里的「扩大产品能力」，由产品所有者明确
@@ -198,10 +198,10 @@
 - **morphicons 评估：不接入**。13.3 KB gzip；要另装 vanilla `lucide` 并与
   lucide-react 对齐版本（多一对同源对）；单 `<path>` 渲染让现有 DOM 用例失效；
   默认无视 reduced-motion；仓库里可变形的图标对只有四组，且都在密集列表行里。
-- **需用户拍板的三组**：① Sparkles 一图两义（右栏「改图助手」与 Claude 编码
-  Agent 头像框），建议头像换 Bot 或 MessageSquareText；② ShieldAlert 是否保留为
-  「完整性 / 来源变了」专用警告（三处）；③ AI 面板「作用范围·Agent」按钮现为
-  SlidersHorizontal，也可改回 Settings。
+- **三组拍板（产品所有者 2026-09-06）**：① Claude 编码 Agent 头像框由 Sparkles
+  改为 Bot，Sparkles 只留给右栏「改图助手」入口（已改）；② ShieldAlert 保留为
+  「完整性 / 来源变了」专用警告（三处不动）；③ AI 面板「作用范围·Agent」
+  按钮维持 SlidersHorizontal。
 - **验证**：`pnpm test` 2601 全过；`pnpm build`、oxlint 过；真浏览器前后各 7 张
   截图在 scratchpad/uf-07/shots/{before,after}/（未入库）。
 

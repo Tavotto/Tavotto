@@ -1,4 +1,4 @@
-import { Bot, Sparkles, SquareTerminal, type LucideIcon } from 'lucide-react'
+import { Bot, SquareTerminal, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ICON_SIZE } from '@/components/ui/Icon'
 
@@ -14,7 +14,9 @@ import { ICON_SIZE } from '@/components/ui/Icon'
  */
 const GLYPHS: Record<string, LucideIcon> = {
   codex: SquareTerminal,
-  claude: Sparkles,
+  // Claude 用 Bot（2026-09-06 产品所有者拍板）：Sparkles 留给右栏「改图助手」入口，
+  // 一图不再两义。表外的 key 也落到 Bot，靠名称文本区分。
+  claude: Bot,
 }
 
 export function AgentIcon({
