@@ -16,7 +16,13 @@ import {
   type RegistryView,
   type ScriptInventoryEntry,
 } from '@/lib/api'
-import { PENDING_STATUSES, pendingCount, reasonText, statusLabel } from '@/lib/readinessText'
+import {
+  PENDING_STATUSES,
+  allEditable,
+  pendingCount,
+  reasonText,
+  statusLabel,
+} from '@/lib/readinessText'
 import { cn } from '@/lib/utils'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -299,15 +305,9 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
   // 与横幅**同一个加法**（`lib/readinessText.ts`）：两处各展开写一遍的话，
   // 将来多一个状态时总有一处会漏掉，而用户看到的是两个界面报出不同的数
   const pending = pendingCount(s)
-  /**
-   * 全都能编辑时说一句话，不摆四个格子（审计 T10：正常项目也像故障排查页）。
-   *
-   * 「待连接 0 · 仅排版 0」不是信息，它是把一个**没有问题**的项目画成一张
-   * 需要排查的表。判据是「测出来的 total 就等于测出来的 editable」——
-   * 不是「pending 那个格子看着是零」：报告不在时这个组件根本不渲染，所以
-   * 这里读到的每个数都是真的量过的。
-   */
-  if (s.total > 0 && s.total === s.editable) {
+  // 全都能编辑时说一句话，不摆四个格子（审计 T10：正常项目也像故障排查页）。
+  // 判据与横幅共用一份（`lib/readinessText.allEditable`）。
+  if (allEditable(s)) {
     return (
       <p className="min-w-0 flex-1 text-xs text-ink-2">
         {rd('allEditable', { count: s.total })}
@@ -555,6 +555,17 @@ function PanelRow({
       <TechnicalDetails panel={panel}>
         {panel.status === 'editable' && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {panel.script && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => onProbe(panel.script as string)}
+              >
+                <Play size={13} className={cn(busy === panel.script && 'animate-pulse')} />
+                {rd(busy === panel.script ? 'running' : 'reprobe')}
+              </Button>
+            )}
             <SourcePicker
               panel={panel}
               allScripts={allScripts}
@@ -600,32 +611,19 @@ function RowActions({
   onRescan: () => void
 }) {
   useTranslation('dialogs')
-  const running = (script: string) => busyKey === script
 
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      {panel.status === 'editable' && (
-        <>
-          {/* 素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
-              新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
-          {hasAsset && (
-            <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
-              <Plus size={13} />
-              {rd('addToCanvas')}
-            </Button>
-          )}
-          {panel.script && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={disabled}
-              onClick={() => onProbe(panel.script as string)}
-            >
-              <Play size={13} className={cn(running(panel.script) && 'animate-pulse')} />
-              {rd(running(panel.script) ? 'running' : 'reprobe')}
-            </Button>
-          )}
-        </>
+      {/* 已经能编辑的那张只留一个动作：把它放上画布（审计 T10——「仅待连接项
+          展示下一步」）。「重新试运行」是排障动作，它和改绑一起收进技术详情：
+          摆在第一层会让一张**已经好了**的图看起来还有事要做。
+          素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
+          新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
+      {panel.status === 'editable' && hasAsset && (
+        <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
+          <Plus size={13} />
+          {rd('addToCanvas')}
+        </Button>
       )}
 
       {panel.status === 'auto_linkable' && (

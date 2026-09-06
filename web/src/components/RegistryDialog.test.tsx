@@ -688,3 +688,52 @@ describe('可挑的图名', () => {
     expect(pickableStems(['Fig1'], ['Fig1_kinetics'])).toEqual(['Fig1'])
   })
 })
+
+/**
+ * 「仅待连接项展示下一步」（审计 T10）。
+ *
+ * 一张**已经能编辑**的图第一层只该有一个动作：把它放上画布。「重新试运行」
+ * 是排障动作，摆在第一层会让一张已经好了的图看起来还有事要做。它和「改绑」
+ * 一起收进技术详情——那一段明确是给排障用的。
+ */
+describe('可编辑图的动作层级', () => {
+  /** `<details>` 里的内容照样在 DOM 里，所以判据必须问「它在不在那一层」 */
+  const firstLevelButtons = (id: string) => {
+    const row = rowOf(id)!
+    return [...row.querySelectorAll('button')]
+      .filter((b) => !b.closest('details'))
+      .map((b) => b.textContent?.trim() ?? '')
+  }
+
+  it('第一层只有「添加到画布」', async () => {
+    useAssetStore.setState({
+      panels: [],
+      byId: {
+        'Ok.pdf': {
+          id: 'Ok.pdf', name: 'Ok', folder: '.', kind: 'pdf',
+          native_w_mm: 80, native_h_mm: 60, mtime: 1,
+        },
+      },
+      loaded: true,
+    })
+    await open(reportOf(SIX))
+    expect(firstLevelButtons('Ok.pdf')).toEqual(['添加到画布'])
+  })
+
+  it('「重新试运行」还在，只是收进了技术详情', async () => {
+    await open(reportOf(SIX))
+    const row = rowOf('Ok.pdf')!
+    const reprobe = [...row.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('重新试运行'),
+    )
+    expect(reprobe, '排障动作不该被删掉，只该换个层级').toBeTruthy()
+    expect(reprobe!.closest('details')).not.toBeNull()
+  })
+
+  it('待连接的那些第一层照旧有下一步', async () => {
+    await open(reportOf(SIX))
+    expect(firstLevelButtons('Auto.pdf')).toContain('自动连接')
+    expect(firstLevelButtons('Mystery.pdf').join(' ')).toContain('试运行并连接')
+    expect(firstLevelButtons('Dup.pdf').join(' ')).toContain('用 old.py')
+  })
+})
