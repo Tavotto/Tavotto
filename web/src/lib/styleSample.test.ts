@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cssFamilyOf, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
+import { cssFamilyOf, sampleFitScale, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
 
 describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内容现算）', () => {
   it('每个角色的字号落到示例里自己那一笔；没设的角色回落到正文字号', () => {
@@ -49,5 +49,26 @@ describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内�
     expect(cssFamilyOf('Menlo')).toBe('"Menlo", monospace')
     expect(cssFamilyOf('Arial')).toBe('"Arial", sans-serif')
     expect(cssFamilyOf(null)).toBe('sans-serif')
+  })
+})
+
+describe('sampleFitScale（示例图画得下这套字号吗）', () => {
+  it('常规字号原样画', () => {
+    expect(sampleFitScale(styleSampleGeometry({ element: { text: { fontsize: 9 } } }))).toBe(1)
+  })
+
+  it('大到画不下时整张等比缩——比例是示例的全部价值，不许被缩坏', () => {
+    const g = styleSampleGeometry({
+      element: { title: { fontsize: 56 }, ticks: { fontsize: 28 } },
+    })
+    const k = sampleFitScale(g)
+    expect(k).toBeLessThan(1)
+    expect(g.titlePt * k).toBeCloseTo(14, 6)
+    // 标题是刻度的两倍，缩完还是两倍
+    expect((g.titlePt * k) / (g.tickPt * k)).toBeCloseTo(g.titlePt / g.tickPt, 6)
+  })
+
+  it('线宽不参与：线粗不会把版面撑开', () => {
+    expect(sampleFitScale(styleSampleGeometry({ element: { line: { linewidth: 9.5 } } }))).toBe(1)
   })
 })

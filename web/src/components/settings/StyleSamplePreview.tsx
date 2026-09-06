@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { styleSampleGeometry } from '@/lib/styleSample'
+import { sampleFitScale, styleSampleGeometry } from '@/lib/styleSample'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -15,14 +15,27 @@ const st = (key: string, values?: Record<string, unknown>) =>
  */
 export function StyleSamplePreview({ data }: { data: Record<string, unknown> | null | undefined }) {
   useTranslation('dialogs')
-  const g = styleSampleGeometry(data)
+  const raw = styleSampleGeometry(data)
+  // 读屏那句话说的是**样式里的真实数字**，示例图画的是缩过的——缩放是示例自己
+  // 的排版手段，不该被读成"这套样式的字号是 14pt"。
+  const k = sampleFitScale(raw)
+  const g =
+    k === 1
+      ? raw
+      : {
+          ...raw,
+          titlePt: raw.titlePt * k,
+          axisPt: raw.axisPt * k,
+          tickPt: raw.tickPt * k,
+          legendPt: raw.legendPt * k,
+        }
   const label = st('previewAria', {
-    title: g.titlePt,
-    axis: g.axisPt,
-    tick: g.tickPt,
-    legend: g.legendPt,
-    line: g.lineWidthPt,
-    spine: g.spinePt,
+    title: raw.titlePt,
+    axis: raw.axisPt,
+    tick: raw.tickPt,
+    legend: raw.legendPt,
+    line: raw.lineWidthPt,
+    spine: raw.spinePt,
   })
   const [c1, c2] = g.colors
   // 坐标轴框：留出标题、轴标题与刻度文字的位置

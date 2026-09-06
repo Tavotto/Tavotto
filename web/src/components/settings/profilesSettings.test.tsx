@@ -146,15 +146,32 @@ describe('默认界面不暴露内部身份', () => {
 })
 
 describe('内置只读', () => {
-  it('选中内置时保存与删除都不可用，并说清出口是复制', async () => {
+  it('内置那份只出规则摘要，不摆一整套禁用输入（审计 T41 / T42）', async () => {
     await mount()
     await act(async () => {
       buttons().find((b) => b.textContent?.includes('默认样式'))!.click()
     })
     expect(text()).toContain('内置配置只读')
-    expect(byText('保存')!.disabled).toBe(true)
-    expect(buttons().find((b) => b.textContent?.includes('删除'))!.disabled).toBe(true)
-    expect(buttons().some((b) => b.getAttribute('title') === '复制一份')).toBe(true)
+    // 摘要模式下右栏一个输入框都没有——整页禁用的输入看起来像"我的表单坏了"
+    expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
+    // 规则本身仍然读得到（线宽 0.5 来自 BUILTIN_STYLE.data）
+    expect(text()).toContain('0.5 pt')
+    // 改的动作从「复制一份」开始，而不是一排点了没反应的按钮
+    expect(byText('保存')).toBeUndefined()
+    expect(buttons().find((b) => b.textContent?.includes('删除'))).toBeUndefined()
+    expect(buttons().some((b) => b.textContent?.includes('复制一份再修改'))).toBe(true)
+  })
+
+  it('复制出来的那份进入可编辑状态（摘要换回输入框）', async () => {
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    expect(text()).not.toContain('内置配置只读')
+    expect(
+      document.body.querySelectorAll('input:not([type="file"])').length,
+    ).toBeGreaterThan(1)
+    expect(byText('保存')).toBeTruthy()
   })
 
   it('用户自建的那条可以改名并保存', async () => {
@@ -256,6 +273,10 @@ describe('无障碍', () => {
 
   it('每个数值输入都有可达名', async () => {
     await mount()
+    // 内置那份是只读摘要，没有输入框——要选一条可编辑的才量得到这件事
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
     const inputs = [...document.body.querySelectorAll('input[type="text"], input:not([type])')]
     expect(inputs.length).toBeGreaterThan(0)
     for (const el of inputs) {
@@ -281,5 +302,80 @@ describe('「应用到当前图…」交给样式对话框（审计 T35）', () 
     expect(s.settingsOpen, '设置不关：样式对话框关掉就回到这里').toBe(true)
     expect(s.dialogStack).toEqual(['settings', 'styles'])
     useUiStore.setState({ settingsOpen: false, stylesOpen: false, stylesPresetId: null, dialogStack: [] })
+  })
+})
+
+describe('规范页把边界与快照摊开（审计 T41）', () => {
+  it('两条字号下限的要求不是同一句话：一条含等号、一条不含', async () => {
+    await mount('spec')
+    const rows = [...document.body.querySelectorAll('[data-field-group="fonts"] > div')]
+    const rowFor = (label: string) => rows.find((r) => r.textContent?.startsWith(label))!
+    // 值来自规范自己（两个都是 8），措辞来自措辞层那张规则表
+    expect(rowFor('最小字号').textContent).toContain('8 pt')
+    expect(rowFor('最小字号').textContent).toContain('检查 ≥ 8pt')
+    expect(rowFor('绝对下限').textContent).toContain('检查 大于 8pt')
+    // 「大于」那条不许写成 ≥ ——两个数一样、判据不一样，正是审计指出的那处误导
+    expect(rowFor('绝对下限').textContent).not.toContain('≥')
+    // 等级来自 profile 自己的 severity 表
+    expect(rowFor('绝对下限').textContent).toContain('阻断')
+  })
+
+  it('规范页才有这行；样式页没有可判的规则，不硬造一句', async () => {
+    await mount('style')
+    expect(text()).not.toContain('检查 ')
+  })
+
+  it('本项目实际用来检查的那份规则摊开可查，且来自绑定的解析结果', async () => {
+    await mount('spec')
+    await act(async () => {
+      byText('本项目用这套规范')!.click()
+    })
+    const head = buttons().find((b) => b.textContent?.includes('本项目实际用来检查的规则'))!
+    expect(head.getAttribute('aria-expanded')).toBe('false') // 排障材料，默认折叠
+    await act(async () => head.click())
+    expect(text()).toContain('快照')
+    expect(text()).toContain('80 mm')
+    expect(text()).toContain('300 dpi')
+  })
+})
+
+describe('样式页有示例图，字段按用途分组（审计 T42）', () => {
+  const preview = () => document.body.querySelector('figure[data-style-preview]')
+
+  it('选中一条样式就能预见大致效果，线宽跟着这条样式走', async () => {
+    await mount()
+    // 内置那份 linewidth 0.5
+    expect(preview()).toBeTruthy()
+    expect(preview()!.querySelector('polyline')!.getAttribute('stroke-width')).toBe('0.5')
+
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    expect(preview()!.querySelector('polyline')!.getAttribute('stroke-width')).toBe('1.25')
+  })
+
+  it('示例图有读屏读得出的说明——它不是纯装饰', async () => {
+    await mount()
+    const svg = preview()!.querySelector('svg')!
+    expect(svg.getAttribute('role')).toBe('img')
+    expect(svg.getAttribute('aria-label')).toContain('pt')
+  })
+
+  it('规范页没有示例图（规范不决定图长什么样）', async () => {
+    await mount('spec')
+    expect(preview()).toBeNull()
+  })
+
+  it('字段按文字 / 刻度 / 线条分组，不是一长列数字', async () => {
+    await mount()
+    for (const g of ['text', 'ticks', 'lines']) {
+      expect(document.body.querySelector(`[data-field-group="${g}"]`), g).toBeTruthy()
+    }
+    expect(document.body.querySelector('[data-field-group="text"]')!.textContent).toContain('文字')
+    expect(document.body.querySelector('[data-field-group="lines"]')!.textContent).toContain('线宽')
+    // 规范页是另一组，别把两套字段混在一张表单里
+    await mount('spec')
+    expect(document.body.querySelector('[data-field-group="ticks"]')).toBeNull()
+    expect(document.body.querySelector('[data-field-group="page"]')).toBeTruthy()
   })
 })

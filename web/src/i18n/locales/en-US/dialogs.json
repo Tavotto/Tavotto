@@ -499,9 +499,8 @@
     "details": "Details",
     "duplicate": "Duplicate",
     "duplicateToEdit": "Duplicate to edit",
-    "editTitle": "This profile",
     "empty": "Nothing here yet",
-    "emptyHint": "Start with “New” to duplicate a built-in profile, or import a file.",
+    "emptyHint": "The list is empty. You can import a profile from a file.",
     "export": "Export to a file",
     "field": {
       "annotationFont": "Annotation size",
@@ -522,19 +521,15 @@
       "titleFont": "Title size",
       "widthTolerance": "Width tolerance"
     },
-    "fieldHelp": {
-      "minFont": "The effective size (font size × panel scale) must not go below this number; **equal passes** (≥). Below it is a warning-level issue.",
-      "floorFont": "The effective size must be **strictly above** this number (exclusive): exactly the floor still fails, and it is an error that blocks export."
-    },
     "follow": "Follow updates",
     "followHelp": "Off by default: the project keeps the rules as they were when you picked them, so a change to the global spec never silently changes this figure. Turn it on to always use the latest rules and stop being asked to sync.",
     "group": {
       "fonts": "Font sizes",
+      "lines": "Lines",
       "page": "Page and columns",
       "raster": "Bitmaps",
       "text": "Text",
-      "ticks": "Ticks",
-      "lines": "Lines"
+      "ticks": "Ticks"
     },
     "import": "Import from a file",
     "inUse": "In use here",
@@ -552,21 +547,19 @@
     "previewAria": "Style sample: title {{title}} pt, axis titles {{axis}} pt, ticks {{tick}} pt, legend {{legend}} pt, line width {{line}} pt, frame {{spine}} pt",
     "previewHint": "The sample is computed from the fields above; size and width proportions match a real figure, which elements appear depends on the figure.",
     "previewTitle": "Sample",
-    "readOnlyHint": "Built-in profiles are read-only. Duplicate one to edit it.",
-    "readOnlySummary": "Built-in profiles are read-only; this is a summary of its rules. Duplicate it to edit.",
+    "readOnlySummary": "Built-in profiles are read-only; here is a summary of their rules. Duplicate one first — the copy is editable.",
     "restore": "Restore defaults",
     "restoreBody": "Its contents go back to the profile it was copied from. Your edits are lost.",
     "restoreConfirm": "Restore",
     "restoreNeedsOrigin": "This one was not copied from a built-in profile, so there are no defaults to restore",
     "restoreTitle": "Restore “{{name}}” to its defaults?",
+    "ruleLine": "Checked as {{expect}}; otherwise {{severity}}",
     "save": "Save",
     "saved": "Saved “{{name}}”",
-    "selectOne": "Pick one on the left.",
-    "snapshotHint": "Checks use this snapshot; changes to the same spec in the global list do not affect it unless “Follow updates” is on.",
-    "snapshotTitle": "Rule snapshot stored in this project",
+    "snapshotHint": "The project stores the rules as they were when you picked them. Later edits to the same profile in the global list do not change these numbers unless “Follow updates” is on.",
+    "snapshotTitle": "Rules this project actually checks against",
     "unset": "Not set",
     "useForProject": "Use this spec for the project",
-    "useTitle": "Use",
     "usedForProject": "This project now checks against “{{name}}”",
     "warning": {
       "legacyUnnamed": "One old style had no name and was skipped",

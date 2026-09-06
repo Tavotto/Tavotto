@@ -59,7 +59,7 @@ export function cssFamilyOf(family: string | null): string {
   const low = family.toLowerCase()
   if (low === 'serif' || low === 'sans-serif' || low === 'monospace') return low
   if (/times|georgia|garamond|palatino|book|roman|song|宋/.test(low)) return `"${family}", serif`
-  if (/mono|courier|consolas/.test(low)) return `"${family}", monospace`
+  if (/mono|courier|consolas|menlo/.test(low)) return `"${family}", monospace`
   return `"${family}", sans-serif`
 }
 
@@ -88,4 +88,24 @@ export function styleSampleGeometry(data: Record<string, unknown> | null | undef
     ),
     colors,
   }
+}
+
+/**
+ * 示例图能画下的最大字号（示例自己的 viewBox 单位 = pt）。
+ *
+ * 样式里的字号上限是 72 pt——照原样画的话标题会把整张示例图顶出画框，用户看到
+ * 的是一块空白，而那**不是**「这套样式的样子」。所以整张示例图按同一个系数缩，
+ * **一律等比**：示例存在的意义就是「9pt 与 7pt 差多少」，非等比缩会把这个比例
+ * 弄坏，而弄坏的方式还看不出来。
+ */
+const SAMPLE_FONT_BUDGET_PT = 14
+
+/**
+ * 让这套字号画得进示例图的等比系数（1 = 原样画）。字号最大的那一笔决定它。
+ * 线宽不参与——线宽再粗也只是粗，不会把版面撑开。
+ */
+export function sampleFitScale(g: StyleSampleGeometry): number {
+  const biggest = Math.max(g.titlePt, g.axisPt, g.tickPt, g.legendPt)
+  if (!(biggest > SAMPLE_FONT_BUDGET_PT)) return 1
+  return SAMPLE_FONT_BUDGET_PT / biggest
 }

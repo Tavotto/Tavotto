@@ -794,7 +794,9 @@ export default interface Resources {
       },
       "details": "详情",
       "duplicate": "复制一份",
+      "duplicateToEdit": "复制一份再修改",
       "empty": "还没有配置",
+      "emptyHint": "清单里一条都没有。可以从文件导入一份配置。",
       "export": "导出为文件",
       "field": {
         "annotationFont": "标注字号",
@@ -817,6 +819,14 @@ export default interface Resources {
       },
       "follow": "跟随更新",
       "followHelp": "默认不跟随：项目里存着选中那一刻的规则，全局改了也不会悄悄改变这张图的结论。打开之后按最新的规则算，不再提示同步。",
+      "group": {
+        "fonts": "字号",
+        "lines": "线条",
+        "page": "页面与栏宽",
+        "raster": "位图",
+        "text": "文字",
+        "ticks": "刻度"
+      },
       "import": "从文件导入",
       "inUse": "本项目在用",
       "kind": {
@@ -830,15 +840,21 @@ export default interface Resources {
         "builtin": "内置",
         "user": "自定义"
       },
-      "readOnlyHint": "内置配置只读。想改就复制一份。",
+      "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
+      "previewHint": "示例图按上面的字段现算，字号与线宽的比例和真图一致；真图里有哪些元素以图为准。",
+      "previewTitle": "示例",
+      "readOnlySummary": "内置配置只读，下面是它的规则摘要。想改先复制一份，复制出来的那份可以编辑。",
       "restore": "恢复默认值",
       "restoreBody": "这条配置的内容会换回它复制来源的那一份，改动会丢失。",
       "restoreConfirm": "恢复",
       "restoreNeedsOrigin": "这条不是从内置复制来的，没有可恢复的默认值",
       "restoreTitle": "把「{{name}}」恢复成默认值？",
+      "ruleLine": "检查 {{expect}}，否则记为{{severity}}",
       "save": "保存",
       "saved": "已保存「{{name}}」",
-      "selectOne": "在左边选一条。",
+      "snapshotHint": "项目里存着选中那一刻的规则快照。全局清单里同名的那套后来改了也不影响这些数，除非打开「跟随更新」。",
+      "snapshotTitle": "本项目实际用来检查的规则",
+      "unset": "未设置",
       "useForProject": "本项目用这套规范",
       "usedForProject": "本项目改按「{{name}}」检查",
       "warning": {
@@ -1887,8 +1903,11 @@ export default interface Resources {
       "clearFilter": "显示全部",
       "cmp": {
         "above": "大于 {{value}}",
+        "aboveAtBoundary": "大于 {{value}}（正好等于不算通过）",
         "atLeast": "≥ {{value}}",
-        "atMost": "≤ {{value}}"
+        "atLeastAtBoundary": "≥ {{value}}（当前值实际略低，显示已四舍五入）",
+        "atMost": "≤ {{value}}",
+        "atMostAtBoundary": "≤ {{value}}（当前值实际略高，显示已四舍五入）"
       },
       "current": "当前",
       "cursorAt": "第 {{pos}} / {{total}} 项",
