@@ -7,7 +7,9 @@ import {
   ClipboardPaste,
   Group,
   MoveDown,
+  MoveHorizontal,
   MoveUp,
+  MoveVertical,
   Ungroup,
 } from 'lucide-react'
 import { t as translate } from '@/i18n'
@@ -29,6 +31,7 @@ import {
   toggleLayoutPinned,
   ungroupSelected,
   updateLayoutGroup,
+  type AlignRef,
   type ZMove,
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
@@ -53,8 +56,6 @@ import { useSelectedObjects } from './common'
 /** 本组的文案在 inspector:arrange.* 下；对齐动作名复用 inspector:alignMode.* */
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
-
-const DISTRIBUTE: readonly ArrangeButton[] = [...DISTRIBUTE_BUTTONS, ...SIZE_BUTTONS]
 
 const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
   { move: 'top', icon: ArrowUpToLine, key: 'zTop', shortcut: `⇧${MOD}]` },
@@ -210,37 +211,65 @@ function MultiAlignRows({ count }: { count: number }) {
         })}
       </div>
 
-      <div
-        role="toolbar"
-        aria-label={ar('distributeToolbar')}
-        className="grid grid-cols-6 gap-0.5"
-      >
-        {DISTRIBUTE.map(({ mode, icon: Icon, tipKey, min }) => {
-          const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
-          return (
-            <Tip
-              key={mode}
-              label={
-                mode === 'samew' || mode === 'sameh'
-                  ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(ref) })
-                  : tip
-              }
-              side="left"
-            >
-              <Button
-                size="icon"
-                className="w-full"
-                disabled={count < min}
-                onClick={() => alignSelectedTo(mode, ref)}
-                aria-label={tip}
-              >
-                <Icon size={14} />
-              </Button>
-            </Tip>
-          )
-        })}
-      </div>
+      {/*
+        均匀分布与等宽等高是两件事（审计 T29）：前者动位置、后者动尺寸，
+        挤在同一条工具带里只能靠猜图标分辨。拆成两条各自带名字的工具带。
+      */}
+      <ArrangeToolbar
+        label={ar('distributeToolbar')}
+        buttons={DISTRIBUTE_BUTTONS}
+        refName={ref}
+        count={count}
+      />
+      <ArrangeToolbar
+        label={ar('sizeToolbar')}
+        buttons={SIZE_BUTTONS}
+        refName={ref}
+        count={count}
+      />
     </>
+  )
+}
+
+/** 一条命名的排列工具带；等宽等高的提示要报出参照，分布不用（它只看选区） */
+function ArrangeToolbar({
+  label,
+  buttons,
+  refName,
+  count,
+}: {
+  label: string
+  buttons: readonly ArrangeButton[]
+  refName: AlignRef
+  count: number
+}) {
+  return (
+    <div role="toolbar" aria-label={label} className="grid grid-cols-6 gap-0.5">
+      {buttons.map(({ mode, icon: Icon, tipKey, min }) => {
+        const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
+        return (
+          <Tip
+            key={mode}
+            label={
+              mode === 'samew' || mode === 'sameh'
+                ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(refName) })
+                : tip
+            }
+            side="left"
+          >
+            <Button
+              size="icon"
+              className="w-full"
+              disabled={count < min}
+              onClick={() => alignSelectedTo(mode, refName)}
+              aria-label={tip}
+            >
+              <Icon size={14} />
+            </Button>
+          </Tip>
+        )
+      })}
+    </div>
   )
 }
 
@@ -254,10 +283,16 @@ function MultiArrangeExtras() {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Row label={ar('spacing')}>
+      {/*
+        间距的两个方向以前写作 H / V——而 H 在上面的尺寸里是「高度」，同一个
+        字母在同一个面板里代表两件事（审计 T29）。换成方向图示 + 明确的名字，
+        名字进 aria-label 与提示，图示只是视觉。
+      */}
+      <Row label={ar('spacing')} labelWidth={72}>
         <NumberField
           className="min-w-0 flex-1"
-          prefix="H"
+          prefix={<MoveHorizontal size={12} aria-hidden />}
+          ariaLabel={ar('spacingH')}
           suffix="mm"
           step={0.5}
           precision={1}
@@ -268,7 +303,8 @@ function MultiArrangeExtras() {
         />
         <NumberField
           className="min-w-0 flex-1"
-          prefix="V"
+          prefix={<MoveVertical size={12} aria-hidden />}
+          ariaLabel={ar('spacingV')}
           suffix="mm"
           step={0.5}
           precision={1}

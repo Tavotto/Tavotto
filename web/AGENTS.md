@@ -425,6 +425,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
 * **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
   persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+  **控件也只留一处**（审计 T29）：右栏属性页停靠着时（`ContextBar` 的
+  `multiBarDocked`，与文字栏的 `textBarCompact` 同一条 `inspectorDocked` 判据）
+  浮动栏收成「计数 + 六向对齐 + 成组 + 更多」，参照 / 分布 / 等宽等高的控件让给
+  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。
 * **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
   `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
   后续 coachmark 都锚在这两个节点上，别改名。

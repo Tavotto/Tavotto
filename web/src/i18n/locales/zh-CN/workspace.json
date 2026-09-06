@@ -112,6 +112,7 @@
   "contextBar": {
     "alignMenu": "对齐",
     "aria": "快速编辑",
+    "countTitle": "{{hint}} · 对齐参照：{{ref}}",
     "distributeMenu": "分布",
     "groupMenu": "成组",
     "moreArrange": "更多排列",

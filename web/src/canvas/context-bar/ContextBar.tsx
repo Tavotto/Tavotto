@@ -156,6 +156,13 @@ export function ContextBar() {
   /** 缩减只作用在「右栏此刻真的在铺同一批控件」的两种目标上 */
   const textBarCompact =
     inspectorDocked && (mode === 'element' || (mode === 'object' && obj?.type === 'text'))
+  /**
+   * 多选浮动栏同理（审计 T29）：右栏停靠着时，参照 / 分布 / 等宽等高整套就在
+   * 「排列」组里，浮动栏只留高频的六向对齐 + 成组 + 更多。**参照只设一处**
+   * （ADR 0036 的共享参照仍是同一个 `arrangeStore` 字段，这里去掉的是第二份
+   * 控件，不是第二份状态）；每颗对齐按钮的提示仍报得出当前参照。
+   */
+  const multiBarDocked = inspectorDocked && mode === 'multi'
   const active =
     !!targetKey &&
     hasActions &&
@@ -307,6 +314,7 @@ export function ContextBar() {
     freeWidth,
     resizeTick,
     textBarCompact,
+    multiBarDocked,
     manifest,
   ])
 
@@ -319,6 +327,7 @@ export function ContextBar() {
       data-context-bar-mode={mode ?? undefined}
       data-multi-selection-context-bar={mode === 'multi' ? '' : undefined}
       data-variant={mode === 'multi' ? variant : undefined}
+      data-multi-docked={multiBarDocked ? '' : undefined}
       data-placement={pos?.placement}
       data-context-bar-compact={textBarCompact ? '' : undefined}
       role="toolbar"
@@ -344,7 +353,7 @@ export function ContextBar() {
           <OpenInspectorButton />
         </>
       ) : mode === 'multi' && multi ? (
-        <MultiSelectionBar objs={multi} variant={variant} />
+        <MultiSelectionBar objs={multi} variant={variant} docked={multiBarDocked} />
       ) : null}
     </div>,
     document.body,

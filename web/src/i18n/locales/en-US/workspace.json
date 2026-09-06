@@ -119,6 +119,7 @@
   "contextBar": {
     "alignMenu": "Align",
     "aria": "Quick edit",
+    "countTitle": "{{hint}} · Align to: {{ref}}",
     "distributeMenu": "Distribute",
     "groupMenu": "Group",
     "moreArrange": "More arrange options",
