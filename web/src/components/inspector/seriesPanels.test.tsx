@@ -66,7 +66,13 @@ export const lineFields = (
 
 /** 与 `_collection_fields(label=True)` 的散点形状同形 */
 export const scatterFields = (
-  over: { marker?: string; hint?: string; shape?: EditableField['marker_current'] } = {},
+  over: {
+    marker?: string
+    hint?: string
+    shape?: EditableField['marker_current']
+    /** override 之前那个形状（引擎只在真的改过时才发它） */
+    orig?: EditableField['marker_original']
+  } = {},
 ): EditableField[] => [
   f('label', 'text', 'Observed'),
   f('facecolor', 'color', '#1b3a6b'),
@@ -75,6 +81,7 @@ export const scatterFields = (
     options: ['original', 'o', 's', 'D', '^', 'v', '<', '>', 'x', '+', '*', '.', 'p', 'h'],
     ...(over.hint ? { hint: over.hint } : {}),
     ...(over.shape ? { marker_current: over.shape } : {}),
+    ...(over.orig ? { marker_original: over.orig } : {}),
   }),
   f('edgecolor', 'color', '#1b3a6b'),
   num('linewidth', 1.1),
@@ -687,6 +694,68 @@ describe('散点：继承有小状态点，面积单位带一句短提示（T16�
     await mount(['axes_0.collections_0', 'axes_0.collections_1'])
     const marker = host.querySelector<HTMLElement>('button[aria-label="标记"]')!
     expect(marker.querySelector('[data-marker-preview] circle')).toBeTruthy()
+  })
+
+  it('换过标记之后，「脚本原始」那一格仍画得出脚本原来那个形状（cap-marker-orig）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({
+            marker: '^',
+            shape: { kind: 'named', name: '^' },
+            orig: { kind: 'named', name: 'o' },
+          }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0'])
+    const trigger = row('marker')!.querySelector<HTMLButtonElement>('button[aria-label="标记"]')!
+    await act(async () => {
+      trigger.click()
+    })
+    const orig = document.querySelector<HTMLElement>('[data-value="original"]')!
+    // 「回到脚本原始」会变成什么形状，用户现在看得见
+    expect(orig.querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(orig.getAttribute('aria-label')).toContain('圆点')
+    // 触发按钮仍说当前那个（三角），两个事实各说各的那一半
+    expect(trigger.querySelector('[data-marker-preview] path')).toBeTruthy()
+    expect(trigger.querySelector('[data-marker-preview] circle')).toBeNull()
+  })
+
+  it('多选：一个改过一个没改，原样就谁的都不画（cap-marker-orig）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({
+            marker: '^',
+            shape: { kind: 'named', name: '^' },
+            orig: { kind: 'named', name: 'o' },
+          }),
+        ),
+        // 这一个没改过 —— 引擎根本不发 `marker_original`
+        elementOf(
+          'axes_0.collections_1',
+          'scatter',
+          '散点 “Model”',
+          scatterFields({ shape: { kind: 'named', name: '^' } }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0', 'axes_0.collections_1'])
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="标记"]')!
+    await act(async () => {
+      trigger.click()
+    })
+    const orig = document.querySelector<HTMLElement>('[data-value="original"]')!
+    // 「有的改过有的没改」也是一种不一致：拿改过那个的原样去画就是替另一个撒谎
+    expect(orig.querySelector('[data-marker-preview]')).toBeNull()
+    expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
   })
 
   it('标记 = o：画真实形状，没有继承状态点', async () => {

@@ -392,6 +392,17 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   判据的锚点是 `data-marker-preview`（触发按钮里有下拉箭头、格子里有选中
   角标，两个都是 `<svg>`，按标签名找的断言恒真）。看护
   `controls/pickers.test.tsx` / `seriesPanels.test.tsx`。
+* **「脚本原始」那一格画的是 `marker_original`，不是 `marker_current`**
+  （2026-09-07，cap-marker-orig 补做）：换过标记之后 `marker_current` 读的是
+  图上此刻那条路径，脚本原来那条已经不在图上——那一格于是只剩一个空的继承
+  状态点，用户看不出点下去会变成什么。引擎**只在真的有 override 时才发**
+  `marker_original`（缺席 = 与 current 相同），所以前端的规则就一句：
+  `original` 那一格用 `marker_original ?? （它正好是当前值时的 marker_current）`，
+  **其余格子照旧只有当前值那一格有事实可用**。文字名同理（网格里那一格的
+  可达名与 tooltip 同一份）。缺席时退回今天的样子，漂移只回到原状。
+  多选走 `sharedMarkerShape(elements, prop, 'marker_original')`：两份事实
+  **各自判一致性**（「此刻都是菱形」推不出「原来都是圆」），而且原样多一种
+  不一致——有的成员改过、有的没改，那时同样谁的都不画。
 * `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
 * 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的

@@ -579,3 +579,117 @@ describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', ()
     expect(tip!.textContent).toBe('点线')
   })
 })
+
+/* ---------- MarkerPicker：override 之后「脚本原始」那一格画的是原样 ---------- */
+
+/**
+ * 换过标记之后 `marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在
+ * 图上——「脚本原始」那一格于是只剩一个空的继承状态点，用户看不出点下去会
+ * 变成什么。`marker_original` 补的正是那句话。
+ *
+ * 钉的是坏掉之后会怎样：
+ *
+ * * 那一格改画当前形状 → 界面言之凿凿地承诺「回到这里会变成三角」，点下去
+ *   却回到了圆；
+ * * 原样漏到别的格子 → 方块那一格画成了圆；
+ * * 引擎没发原样时不退回 `current` → 没改过的散点那一格又空了（本轮之前的
+ *   样子），漂移的代价从「回到原状」变成「比原状更差」。
+ */
+const cellOf = (v: string) => document.querySelector<HTMLElement>(`[data-value="${v}"]`)!
+
+async function openGrid() {
+  await act(async () => {
+    trig().click()
+  })
+}
+
+describe('MarkerPicker：override 之后仍看得见脚本原来那个形状', () => {
+  it('换成三角之后，「脚本原始」那一格画的是原来那个圆，不是三角', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', 's', '^']}
+        current={{ kind: 'named', name: '^' }}
+        original={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const orig = cellOf('original')
+    // 画的是圆（原样），不是三角（当前）——两者在 SVG 里是不同的标签
+    expect(orig.querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(orig.querySelector('[data-marker-preview] path')).toBeNull()
+    // 「这一格是继承」没有因此消失：形状说会变成圆，状态点说那是脚本给的
+    expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
+    // 文字名也把形状说出来（图形之外必须有文字名）
+    expect(orig.getAttribute('aria-label')).toContain('脚本原始')
+    expect(orig.getAttribute('aria-label')).toContain('圆点')
+    // 选中的那一格仍画它自己的三角，触发按钮同理
+    expect(cellOf('^').querySelector('[data-marker-preview] path')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeNull()
+  })
+
+  it('原样只喂给「脚本原始」那一格：别的格子照旧画它们自己的取值', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', 's', '^']}
+        current={{ kind: 'named', name: '^' }}
+        original={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    expect(cellOf('s').querySelector('[data-marker-preview] rect')).toBeTruthy()
+    expect(cellOf('s').querySelector('[data-marker-preview] circle')).toBeNull()
+  })
+
+  it('原样是几何：照顶点画，y 仍要翻过来', async () => {
+    await mount(
+      <MarkerPicker
+        value="o"
+        options={['original', 'o']}
+        current={{ kind: 'named', name: 'o' }}
+        original={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const d = cellOf('original').querySelector('[data-marker-preview] path')!.getAttribute('d')!
+    expect(d.startsWith('M6.00 1.80')).toBe(true)
+  })
+
+  it('引擎没发原样、当前值就是脚本原始：那一格退回按 current 画（现有行为）', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    expect(cellOf('original').querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeTruthy()
+  })
+
+  it('引擎没发原样、当前值是别的（老引擎）：那一格退回只剩继承状态点，不谎报当前形状', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', '^']}
+        current={{ kind: 'named', name: '^' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const orig = cellOf('original')
+    expect(orig.querySelector('[data-marker-preview]')).toBeNull()
+    expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
+  })
+})
