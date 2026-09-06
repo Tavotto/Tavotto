@@ -554,6 +554,19 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   对话框（导出偏好 ↔ 导出对话框）**读同一批 key**，不写同义词。
 * **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡只在技术详情里一张，内置包清单归包管理页。
   「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
+* **更新页只说得出「上一次检查的回答」**（2026-09-06 审计 T48）：界面上没有无条件的「已是最新
+  版本」——`LastCheckVerdict` 按**真实存在的时间戳**二选一（没查过 → 「无法判断」，查过 →
+  「{时间} 检查时没有发现新版本」），判据认 `data-update-verdict`，不认那两句散文。桌面通道的
+  时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
+  态、绝不编百分比。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
+  失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
+  `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。
+* **同意是三档，控件也得是三档**（审计 T49）：`unset` / `enabled` / `disabled` 在界面上必须可辨，
+  用 `Segmented` 的 `value=null` 表达「尚未选择」——**可写的只有开 / 关两档**（回不到 unset）。
+  「同意的是上一版采集范围」（`needs_reconsent`）单独一句话，不许画成「已开启」。
+  「会发送哪些数据」是闭集 `lib/telemetryDisclosure.ts`，逐条对应后端 `EVENTS`（严格同源对，见根
+  `AGENTS.md`）——**别再写成一段会过期的散文**，上一版就是这么漂掉九条事件的。
+  看护：`components/SettingsTelemetry.test.tsx` + `tests/test_telemetry_disclosure.py`。
 * 看护：`SettingsDialog.test.tsx` / `settings/PackagesSettings.test.tsx` /
   `settings/DiagnosticsSettings.test.tsx` / `settings/agentState.test.ts` / `e2e/settings-shell.spec.ts`
   （外框逐像素、溢出、窄窗口、英文、方向键、axe——**量之前先等 `getAnimations().finished`**）。
