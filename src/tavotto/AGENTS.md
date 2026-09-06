@@ -142,6 +142,11 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     「脚本跑完但没出图」，worker.log 的尾部进 `traceback_text`（前端错误块
     的折叠区直接显示）。**只认显式为空的 `known` 列表**：字段缺失分不清
     「没有」和「没说」。两条控制面各接一处（`_error_of` / `_to_worker_error`）。
+    一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
+    文案，不塞进 traceback 区）。日志尾部按**这一代的偏移**读（`_log_offset`，
+    两条控制面都在启动前记；目录跨代复用、append 模式，不记的话读到的是上一代
+    的尾巴）、按字节读再 **UTF-8** 解码（cp936 的 Windows 上 `read_text()` 会
+    把中文与 `µ` 读成乱码）。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python

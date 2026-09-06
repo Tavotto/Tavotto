@@ -55,3 +55,28 @@ def test_zero_figures_report_the_script_output_not_unknown_stem(figs):
     assert "[ERROR] 文件未找到" in err.value.traceback_text
     assert "跳过此组合" in err.value.traceback_text
     assert err.value.script_name == "run_all.py"
+
+
+def test_the_second_generation_does_not_show_the_first_generations_output(figs):
+    """日志目录跨代复用、append 模式：重建 worker 之后尾部只有这一代的输出。"""
+    engine_pool.build("run_all.py", str(figs), "__main__")
+    engine_pool.invalidate("run_all.py", str(figs))
+    worker, _ = engine_pool.build("run_all.py", str(figs), "__main__")
+    with pytest.raises(engine_pool.WorkerError) as err:
+        worker.override("impact_histogram", [])
+    assert err.value.traceback_text.count("[ERROR] 文件未找到") == 1
+
+
+def test_a_silent_script_gets_the_silent_code_and_no_placeholder(tmp_path):
+    root = tmp_path / "figs"
+    root.mkdir()
+    (root / "quiet.py").write_text("import matplotlib.pyplot as plt\n", encoding="utf-8")
+    try:
+        worker, resp = engine_pool.build("quiet.py", str(root), "__main__")
+        assert resp.get("stems") == {}
+        with pytest.raises(engine_pool.WorkerError) as err:
+            worker.override("Fig1", [])
+        assert err.value.code == engine_pool.NO_FIGURES_SILENT_CODE
+        assert err.value.traceback_text == ""
+    finally:
+        engine_pool.shutdown_all(str(root), wait=True)

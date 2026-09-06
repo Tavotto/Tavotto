@@ -71,6 +71,7 @@
     "native_session_offline": "这张图来自已结束的 Tavotto Run 会话。重新运行原命令后可继续对象级编辑。",
     "native_session_unknown": "没有这个 Tavotto Run 会话。",
     "no_figures_captured": "脚本跑完了，但没有产生任何图：既没有 savefig，也没有留下 pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，或分析在画图之前就结束了。",
+    "no_figures_captured_silent": "脚本跑完了，但没有产生任何图，也没有任何输出：既没有 savefig，也没有留下 pyplot Figure。",
     "no_format": "至少要选一种输出格式。",
     "no_output": "这次导出没有产出任何文件。",
     "no_project": "尚未打开项目",

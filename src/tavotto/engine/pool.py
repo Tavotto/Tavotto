@@ -332,6 +332,34 @@ class WorkerError(RuntimeError):
 #: 一件事：脚本自己多半已经说了为什么（「文件未找到」「没有数据，无法绘图」），
 #: 那几行就在 worker.log 里——报「stem 不存在」等于把答案藏起来。
 NO_FIGURES_CODE = "no_figures_captured"
+#: 同上，但脚本**一个字都没打印**。分成两个 code 而不是往 `traceback_text` 里塞
+#: 一句占位：占位是界面文案，得跟界面语言走；traceback 区只放脚本自己的输出。
+NO_FIGURES_SILENT_CODE = "no_figures_captured_silent"
+
+
+def _log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _log_tail_from(path: Path, offset: int, n: int = 30) -> str:
+    """worker.log 里**这一代**的最后 `n` 行。
+
+    日志按 (项目, 脚本) 落在稳定目录里、两条控制面都是 append 模式：不记
+    偏移的话，这一代什么都没打印时读到的是上一代的尾巴，陈旧诊断被当成这次
+    失败的原因。按字节读、**按 UTF-8 解码**（worker 把 stderr 钉成了 UTF-8）
+    ——`read_text()` 不带 encoding 在 cp936 的 Windows 上会把中文与 `µ` 读成
+    乱码，而这段文本正是要给用户看的。
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    text = data[max(0, offset) :].decode("utf-8", errors="replace")
+    return "\n".join(text.splitlines()[-n:])
+
 
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
@@ -346,13 +374,23 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     """
     if err.code != "unknown_stem" or not (isinstance(known, list) and not known):
         return err
-    out = WorkerError(
-        f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
-        "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
-        "或分析在画图之前就结束了。",
-        log_tail.strip() or "（脚本没有任何输出）",
-        code=NO_FIGURES_CODE,
-    )
+    tail = log_tail.strip()
+    if tail:
+        out = WorkerError(
+            f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
+            "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
+            "或分析在画图之前就结束了。",
+            tail,
+            code=NO_FIGURES_CODE,
+        )
+    else:
+        # 一个字都没打印：没有可展开的东西，也不造一句占位塞进 traceback 区
+        out = WorkerError(
+            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：既没有 savefig，"
+            "也没有留下 pyplot Figure。",
+            "",
+            code=NO_FIGURES_SILENT_CODE,
+        )
     out.extra = getattr(err, "extra", {}) or {}
     out.script_name = script_name
     return out
@@ -764,6 +802,8 @@ class EngineWorker:
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
         self.last_build_descriptors: list = []
         self.last_used = time.time()
+        # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
+        self._log_offset = _log_size(self.log_path)
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
@@ -841,11 +881,8 @@ class EngineWorker:
             pass
 
     def _log_tail(self, n: int = 30) -> str:
-        try:
-            lines = self.log_path.read_text(errors="replace").splitlines()
-            return "\n".join(lines[-n:])
-        except OSError:
-            return ""
+        # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
+        return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
     def _readline(self, timeout: float) -> str:
         """带超时读一行回应；超时即杀掉 worker 并抛 `worker_timeout`。
@@ -1301,6 +1338,7 @@ class WorkerdWorker:
         self.sandbox = base / "sandbox"
         self.export_dir = base / "export"
         self.log_path = base / "worker.log"
+        self._log_offset = 0
         base.mkdir(parents=True, exist_ok=True)
         self._touched = 0.0
         self._touch()
@@ -1362,6 +1400,8 @@ class WorkerdWorker:
             self.entry,
             self.python_source,
         )
+        # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
+        self._log_offset = _log_size(self.log_path)
         try:
             resp = self._client.call(
                 "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
@@ -1392,11 +1432,8 @@ class WorkerdWorker:
         self.last_build_descriptors = []
 
     def _log_tail(self, n: int = 30) -> str:
-        try:
-            lines = self.log_path.read_text(errors="replace").splitlines()
-            return "\n".join(lines[-n:])
-        except OSError:
-            return ""
+        # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
+        return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
     def _to_worker_error(self, exc) -> WorkerError:
         code = exc.code or ""

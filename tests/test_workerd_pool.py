@@ -214,8 +214,26 @@ def test_zero_captured_figures_get_their_own_code_and_the_script_output():
     assert "run_all.py" in str(err) and "没有产生任何图" in str(err)
     assert err.traceback_text.endswith("[ERROR] 文件未找到")
     assert err.script_name == "run_all.py"
-    # 什么都没打印也要有一句占位，折叠区不能是空的
-    assert pool._explain_empty_capture(base, "x.py", [], "").traceback_text
+    # 什么都没打印是另一个 code：占位是界面文案，不塞进 traceback 区（英文界面
+    # 里会漏出中文）
+    silent = pool._explain_empty_capture(base, "x.py", [], "  \n")
+    assert silent.code == pool.NO_FIGURES_SILENT_CODE == "no_figures_captured_silent"
+    assert silent.traceback_text == ""
+
+
+def test_log_tail_is_this_generation_only_and_decoded_as_utf8(tmp_path):
+    """日志目录跨代复用、append 模式：尾部只取这一代之后的字节；按 UTF-8 解码。"""
+    log = tmp_path / "worker.log"
+    log.write_bytes("上一代: [ERROR] 旧的原因\n".encode("utf-8"))
+    offset = pool._log_size(log)
+    with log.open("ab") as f:
+        f.write("这一代: 温度 25 µm\n".encode("utf-8") + b"\xff bad byte\n")
+    tail = pool._log_tail_from(log, offset)
+    assert "上一代" not in tail
+    assert "温度 25 µm" in tail
+    assert "bad byte" in tail  # 坏字节替换而不是抛
+    assert pool._log_tail_from(log, 0).startswith("上一代")
+    assert pool._log_tail_from(tmp_path / "missing.log", 0) == ""
 
 
 def test_a_plain_unknown_stem_is_left_alone():
@@ -230,6 +248,11 @@ def test_a_plain_unknown_stem_is_left_alone():
 
 def test_workerd_side_gives_the_same_answer_for_zero_figures(monkeypatch, tmp_path):
     """两条控制面在「脚本跑完没出图」上必须给同一个答案。"""
+    # 上一代留下的尾巴：会话在构造时就打开（记偏移），所以要写在 `_worker()` 之前
+    log = pool.ENGINE_CACHE / pool._cache_slug(pool._norm_dir(str(tmp_path)), "fig.py")
+    log = log / "worker.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("[ERROR] 上一代的旧原因\n", encoding="utf-8")
     w, _ = _worker(
         monkeypatch,
         tmp_path,
@@ -241,13 +264,15 @@ def test_workerd_side_gives_the_same_answer_for_zero_figures(monkeypatch, tmp_pa
             ),
         ],
     )
-    w.log_path.parent.mkdir(parents=True, exist_ok=True)
-    w.log_path.write_text("[ERROR] 文件未找到!\n", encoding="utf-8")
+    assert w.log_path == log
     w.ensure_built()
+    with w.log_path.open("a", encoding="utf-8") as f:
+        f.write("[ERROR] 文件未找到!\n")
     with pytest.raises(pool.WorkerError) as e:
         w.override("impact", [])
     assert e.value.code == pool.NO_FIGURES_CODE
     assert "[ERROR] 文件未找到!" in e.value.traceback_text
+    assert "上一代" not in e.value.traceback_text
     assert w.alive(), "这不是会话故障，不该标死"
 
 
