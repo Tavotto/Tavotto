@@ -115,8 +115,36 @@
   4–6 MB，这就是设上限的原因）。
 - **验证**：相关 pytest 全绿；ruff 过；`pnpm test` 2587 全过；`pnpm build` 过；
   e2e 2 passed；截图 scratchpad/uf-02/scatter-selected2-zoom.png。
-- **遗留**：`plot(..., ls="None", marker="o")` 这种只有 marker 的 Line2D 仍退回
-  bbox，用户若这样画「散点图」问题依旧，建议单开一条；散点 bbox 仍是圆心口径。
+- **遗留**：散点 bbox 仍是圆心口径。「只有 marker 的 Line2D 仍退回 bbox」已由
+  追加项 `uf/08-line2d-marker-outline` 处理（见下一节）。
+
+### 2 的追加. 只有 marker 的 Line2D 也逐颗描轮廓（产品所有者追加要求）
+
+- **根因**：`engine/pathgeom.py` `element_geometry()` 的 Line2D 分支对
+  `linestyle="None"` 刻意 `return None`（当时的取舍：那条折线图上不存在，描它是
+  假线；与第 2 条修前的散点同一档）。manifest 的几何闸本来就放行 `line` role，
+  所以只差引擎给几何。
+- **处置**：`_marker_subpaths` 拆成「取散点的 paths / 尺寸矩阵 / offsets」+ 通用的
+  `_stamp_markers`（盖章语义与 Agg `draw_path_collection` 同源）；新增
+  `_line_marker_subpaths` 按 `Line2D.draw` 的 marker 段取 marker 路径 ×
+  `markersize·dpi/72` × `get_xydata()` 经 `get_transform()` 的落点（忽略 drawstyle、
+  NaN 不出、`markevery` 交给 matplotlib 自己的 `_mark_every_path`、半填充每颗两条）。
+  `fill` 由 `get_markerfacecolor()`（已解释 `fillstyle="none"`/`mfc="none"`）决定，
+  `stroke_pt` = `markeredgewidth`。**既有连线又有 marker 的仍只描折线**：折线穿过
+  每颗 marker 中心、容差内都点得中，而 `fill` 是整份一个标志、前端把「闭合或 fill」
+  都按面积算，实心 marker 混进来会把折线变成多边形。上限常量改名
+  `MAX_MARKERS = 500`，两种 artist 共用同一个数。前端源码一字未改。
+- **用例**：`tests/test_manifest_geometry.py` 「有意退回 bbox」那条改成正向 +3
+  （6 颗闭合子路径、中心落在数据点、半径 = 4 pt / `"-o"` 仍是 polyline /
+  `markevery=2` 只出 3 颗 / `mfc="none"` fill 为假），上限用例参数化成散点与
+  marker-only 两档各自两张对照图；e2e `element-path-selection.spec.ts` 现造一张
+  24 颗 marker-only 的图（示例图库里没有这样画的），真浏览器 24 段闭合子路径、
+  0 矩形、空白处不选中。反证：去掉分支 → pytest 4 红、e2e 红（矩形框回来了）；忽略 markersize → 半径红；
+  上限 +1 → 两档都红；markevery 不抽 → 红；fill 恒真 → 红；ls 判据反转 → 10 红。
+- **性能实测**：100 颗 0.6 ms、500 颗 2.1–2.3 ms（`element_geometry` 一次）。
+- **限制**：半填充 marker 每颗算两条子路径，上限按子路径数计；
+  `Line2D` 的 `_marker` / matplotlib 的 `_mark_every_path` 是私有名（3.8–3.11 签名
+  一致，前者有公开退路）。
 
 ### 3. 图内中文画成方框——matplotlib 那一层没有中日韩回退脸
 

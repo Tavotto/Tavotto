@@ -566,11 +566,12 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   再比，与图内箭头同一口径；填充按 nonzero 缠绕数算内部——判据的完整理由见
   `src/tavotto/AGENTS.md` 的「PDF 后端边界」，别在别处另写一份 even-odd 的；
   空心只在描边附近命中；框选是「圈墨迹」不是「戳进去」）；`OverlaySvg` 画
-  `<path>` 并套上引擎给的 clip 框。**散点也走这一套**（2026-09-06）：引擎给
-  每颗 marker 一条闭合子路径（`multi_path`），前端一个字没改——几百颗点仍
-  收在**一个** `<path>` 节点里（d 串多几段，DOM 不多一个节点，别把它拆成每颗
-  一个元素）；标记数超过 `pathgeom.SCATTER_MAX_MARKERS` 时引擎不给 geometry，
-  前端自然退回 bbox 矩形。
+  `<path>` 并套上引擎给的 clip 框。**散点与只有 marker 的 Line2D 也走这一套**
+  （2026-09-06）：引擎给每颗 marker 一条闭合子路径（`multi_path`），前端一个字
+  没改——几百颗点仍收在**一个** `<path>` 节点里（d 串多几段，DOM 不多一个
+  节点，别把它拆成每颗一个元素）；标记数超过 `pathgeom.MAX_MARKERS` 时引擎
+  不给 geometry，前端自然退回 bbox 矩形。既有连线又有 marker 的曲线仍只描
+  折线（理由在 `src/tavotto/AGENTS.md` 散点几何那段）。
 - **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
   ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**

@@ -390,18 +390,26 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   display 空间细分、NaN 拆子路径、超长路径先按段取极值再 RDP（见
   docs/perf-baseline.md 的「路径几何」一节）。它是**渲染派生数据**：不进用户
   文档、不是 override、不参与写回，几何一变下一版自然就是新的。
-  **散点（PathCollection）给的是每一颗 marker 的轮廓**（2026-09-06，用户反馈
-  「选中散点罩的是一个大矩形」）：`pathgeom._marker_subpaths` 按 Agg
-  `draw_path_collection` 的语义走（`paths[i % Np]` × `get_transforms()[i % Nt]`
-  的尺寸矩阵 × `offsets[i % No]`），**形状只拍平一次**（逐颗 `Path.cleaned()`
-  一颗 1.8ms，500 颗就是 0.9 秒），其余各颗是同一组顶点经 `A_i ∘ A_max⁻¹`
-  的批量仿射，抽稀容差按尺度分档。标记数超过 `pathgeom.SCATTER_MAX_MARKERS`
-  （500）整组退回 bbox 并在 stderr 说明——上限量的是消费侧（每次渲染往返的
-  manifest JSON、前端每次指针移动沿全部线段算距离、覆盖层的 d 串），不是
-  生产侧；散点的 bbox 仍是**圆心**的包围盒（`get_datalim` 的口径），最边上的
-  半颗 marker 伸在 bbox 外是正常的。**只有 marker 没有连线的 Line2D 仍有意
-  不给**（bbox 降级）；**箭头也不给**（它有 `arrow_endpoints` 那套契约，两套
-  并存只会打架）。
+  **散点（PathCollection）与只有 marker 没有连线的 Line2D 给的是每一颗 marker
+  的轮廓**（2026-09-06，用户反馈「选中散点罩的是一个大矩形」及其延伸
+  「`plot(..., ls="None", marker="o")` 画的散点也要逐颗描」）：两者共用
+  `pathgeom._stamp_markers`，语义按 Agg `draw_path_collection` 走（`paths[i % Np]`
+  × 逐戳记矩阵 `[i % Nt]` × `offsets[i % No]`），**形状只拍平一次**（逐颗
+  `Path.cleaned()` 一颗 1.8ms，500 颗就是 0.9 秒），其余各颗是同一组顶点经
+  `A_i ∘ A_max⁻¹` 的批量仿射，抽稀容差按尺度分档。散点侧 `_marker_subpaths`
+  取 `get_paths()` × `get_transforms()` 的尺寸矩阵 × offsets；Line2D 侧
+  `_line_marker_subpaths` 取 marker 的 `get_path()`/`get_alt_path()` ×
+  `markersize·dpi/72`（`','` 不缩放）× `get_xydata()` 经 `get_transform()` 的落点
+  （忽略 drawstyle、NaN 不出、`markevery` 交给 matplotlib 的 `_mark_every_path`；
+  半填充 marker 每颗两条子路径）。标记数超过 `pathgeom.MAX_MARKERS`（500，
+  **两种 artist 同一个数**）整组退回 bbox 并在 stderr 说明——上限量的是消费侧
+  （每次渲染往返的 manifest JSON、前端每次指针移动沿全部线段算距离、覆盖层的
+  d 串），不是生产侧；散点的 bbox 仍是**圆心**的包围盒（`get_datalim` 的口径），
+  最边上的半颗 marker 伸在 bbox 外是正常的。**既有连线又有 marker 的 Line2D
+  仍只描折线**：折线穿过每颗 marker 的中心、命中容差内每颗都点得中，而 geometry
+  的 `fill` 是整份一个标志、前端把「闭合或 fill」的子路径都按面积算，实心 marker
+  混进来会把那条折线一起变成多边形——要并存得先给 geometry 分层。**箭头不给**
+  （它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
   `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
 - **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
