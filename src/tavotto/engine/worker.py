@@ -38,6 +38,7 @@ import contextlib
 import importlib
 import json
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -124,6 +125,9 @@ class Worker(wireproto.V1Handler):
         self.figures_dir = Path(args.figures_dir).resolve()
         self.out_dir = Path(args.out_dir).resolve()
         self.sandbox = Path(args.sandbox).resolve()
+        #: 脚本的工作目录（ADR 0045）：默认就是沙盒；`--cwd` 给了就是脚本
+        #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
+        self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
         self.preview_dpi = args.preview_dpi
         self.built = False
@@ -151,7 +155,9 @@ class Worker(wireproto.V1Handler):
             return self._stems_summary()
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.sandbox.mkdir(parents=True, exist_ok=True)
-        os.chdir(self.sandbox)
+        # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
+        # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
+        os.chdir(self.workdir or self.sandbox)
         # 图库根先进 sys.path（脚本 import 同目录的 paper_style / 数据模块），
         # 脚本自己所在目录再插到最前——面板脚本放 panels/ 子目录时，
         # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError。
@@ -175,6 +181,38 @@ class Worker(wireproto.V1Handler):
 
         Path.unlink = _guarded_unlink
 
+        # 同一条守卫扩到 os / shutil 的删除与改名（`os.remove` / `os.unlink` /
+        # `os.rmdir` / `os.rename` / `os.replace` / `shutil.rmtree` /
+        # `shutil.move`）：`Path.unlink` 只是其中一个入口，脚本写
+        # `os.remove("stale.png")` 一样是删真实图库里的文件——沙盒 cwd 下相对
+        # 路径落在沙盒里无害，绝对路径与「在脚本目录里运行」（ADR 0045）时的
+        # 相对路径就直接指向项目。判据一条：**真身落在真实图库里就跳过**。
+        # 带 `dir_fd` 的调用（rmtree 内部）不判——顶层 rmtree 已经拦过了。
+        # 覆盖：脚本用 open('w') / np.save / C++ 写入器**改写**已有文件不拦，
+        # 那是它自己的输出（文案如实说「已有同名文件会被脚本改写」）。
+        def _inside_real(path) -> bool:
+            try:
+                return Path(os.fspath(path)).resolve().is_relative_to(real_figs)
+            except (OSError, TypeError, ValueError):
+                return False
+
+        def _guard_delete(name, real_fn):
+            def guarded(path, *a, **kw):
+                if "dir_fd" not in kw and _inside_real(path):
+                    print(f"[guard] 跳过 {name} 真实图库文件: {path}", file=sys.stderr)
+                    return None
+                return real_fn(path, *a, **kw)
+
+            return guarded
+
+        os.remove = _guard_delete("删除", os.remove)
+        os.unlink = _guard_delete("删除", os.unlink)
+        os.rmdir = _guard_delete("删除目录", os.rmdir)
+        os.rename = _guard_delete("改名", os.rename)
+        os.replace = _guard_delete("改名", os.replace)
+        shutil.rmtree = _guard_delete("删除目录树", shutil.rmtree)
+        shutil.move = _guard_delete("移动", shutil.move)
+
         # 写入守卫：脚本的 write_caption 等用绝对路径 write_text 写真实图库
         # （fig9 的 *_caption.txt），沙盒 cwd 拦不住；导出走 savefig 不受影响
         real_write_text = Path.write_text
@@ -194,7 +232,12 @@ class Worker(wireproto.V1Handler):
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
-        figcapture.install_relative_read_fallback(str(self.script.parent), str(self.figures_dir))
+        if self.workdir is None:
+            figcapture.install_relative_read_fallback(
+                str(self.script.parent), str(self.figures_dir)
+            )
+        # cwd 已经是脚本目录时不装回退：相对路径本来就指向项目，回退只会在
+        # 「沙盒里有同名文件」这种不可能的前提上多一层看不见的改道。
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -400,6 +443,8 @@ def main() -> None:
     ap.add_argument("--figures-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--sandbox", required=True)
+    # ADR 0045：给了就把 cwd 切到这里（脚本目录）而不是沙盒；沙盒仍是写入边界的参照
+    ap.add_argument("--cwd", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

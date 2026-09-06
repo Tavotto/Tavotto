@@ -88,6 +88,7 @@ from .engine import (
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
+    workdir as engine_workdir,
 )
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
@@ -4618,8 +4619,39 @@ def _project_environment_state() -> dict:
         # 只把 `environment.json` 里记的事实交出去：界面据此显示「Tavotto
         # 环境 · 装了什么」与「重建」入口。
         "managed": engine_managedenv.state(root),
+        # safe worker 的工作目录模式（ADR 0045）：沙盒（默认）/ 脚本目录
+        "workdir": engine_workdir.state(root),
     }
     return out
+
+
+@app.patch("/api/engine/workdir")
+def api_engine_workdir_set():
+    """设定**当前项目**的 safe worker 工作目录模式（ADR 0045）。
+
+    `mode` 只认 `sandbox` / `project`。改了就把这个项目的会话全部关掉：
+    cwd 是 spawn 时定下的，活着的会话还端着旧目录。**不是 native**：进程仍
+    是 Tavotto 自己起的 safe worker，守卫与 savefig 捕获一字不动；变的只有
+    「脚本用相对路径写的中间文件落在哪」——确认文案在前端，机制在这里，
+    两边逐条一致。
+    """
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    mode = str(body.get("mode") or "").strip()
+    if mode not in engine_workdir.MODES:
+        return jsonify(
+            {
+                "error": f"不认识的工作目录模式: {mode!r}",
+                "code": engine_workdir.ERROR_MODE_INVALID,
+                "params": {"mode": mode},
+            }
+        ), 400
+    before = engine_workdir.mode_for(root)
+    state = engine_workdir.set_mode(root, mode)
+    if state["mode"] != before:
+        engine_pool.shutdown_all(root)
+        LOG.info("项目工作目录模式: %s → %s（%s）", before, state["mode"], root)
+    return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
 
 
 @app.post("/api/engine/environment/install")

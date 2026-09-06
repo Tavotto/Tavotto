@@ -35,6 +35,10 @@ cwd、argv、env、module invocation 每一项都与 safe worker 不同，逐条
 > 全量 `child_env()`、workerd 只传增量——与落地前的行为一致）。
 > `stable_payload()` 是跨机器稳定字段的子集（fingerprint / 未来持久化
 > 只准用这一档）。native 仍未实现，`worker_argv` 对 native 显式拒绝。
+>
+> **2026-09-06（ADR 0045）**：safe 档多了 `cwd_mode ∈ {sandbox, project}`——项目级
+> 开关「在脚本目录里运行」。默认模式 argv 逐字节不变；project 模式只多 `--cwd`。
+> 守卫 / savefig 捕获 / 解释器链不动。**不是 native**：进程仍是 Tavotto 的 safe worker。
 
 所有"跑一个脚本"的入口统一经过一个不可变描述（字段名可按仓库风格调整）：
 

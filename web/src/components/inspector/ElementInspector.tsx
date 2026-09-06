@@ -66,6 +66,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
+import { WorkdirSuggestion } from '@/components/WorkdirRow'
+import { WORKDIR_CODES } from '@/lib/api'
 import {
   EngineEnvironmentCard,
   MissingDependencyCard,
@@ -304,6 +306,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <ErrorBlock
             error={render.error}
             traceback={render.traceback}
+            code={render.code}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -489,10 +492,12 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
 function ErrorBlock({
   error,
   traceback,
+  code,
   onRetry,
 }: {
   error: UiMessage
   traceback: string
+  code?: string
   onRetry?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -501,6 +506,8 @@ function ErrorBlock({
       <div className="rounded-sm bg-danger-subtle px-2 py-1.5">
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
         <p className="text-xs text-danger">{formatMessage(error)}</p>
+        {/* 「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0045） */}
+        {code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />}
         <div className="mt-0.5 flex items-center gap-2">
           <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
           {onRetry && (

@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, envlease, execspec, patchspec, projectenv, runtime
+from . import config, envlease, execspec, patchspec, projectenv, runtime, workdir
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -857,6 +857,9 @@ class EngineWorker:
             interpreter=python,
             sandbox=str(self.sandbox),
             env=runtime.child_env(base={}) if bundled else None,
+            # 项目级「在脚本目录里运行」（ADR 0045）：两条控制面与 one_shot 都从
+            # 这一个出处取——写回的重放必须和热态用同一个 cwd。
+            cwd_mode=workdir.mode_for(figures_dir),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）", script_name, entry, self.python_source
@@ -1292,6 +1295,7 @@ def _spawn_spec(
         interpreter=python,
         sandbox=str(sandbox),
         env=runtime.child_env(base={}) if bundled else None,
+        cwd_mode=workdir.mode_for(figures_dir),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})

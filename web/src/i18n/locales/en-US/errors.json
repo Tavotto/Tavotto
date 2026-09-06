@@ -146,6 +146,7 @@
     "tutorial_resources_missing": "This installation has no tutorial files. Please reinstall Tavotto: {{reason}}",
     "unsupported_format": "Exporting {{format}} is not supported yet.",
     "unsupported_script_type": "Not a probe-able .py script: {{script}}",
+    "workdir_mode_invalid": "Unknown working-directory mode: {{mode}}",
     "worker_timeout": "The render timed out and the worker was restarted — try again. Repeated timeouts mean the script itself never finishes.",
     "write_back_disabled": "This project is read-only: writing back to original files is disabled (re-enable it in project settings)",
     "write_back_warnings": "Write-back blocked: the engine reported warnings during replay",
@@ -280,7 +281,18 @@
     "useOtherHintAfter": " — it only launches it to render.",
     "useOtherHintBefore": "Switch to your own environment when a script needs packages the bundled one lacks (rdkit, astropy…). Apply with the field empty to go back to the default. Tavotto",
     "useOtherHintStrong": " never modifies the environment you choose",
-    "useOtherLink": "Use a different Python environment…"
+    "useOtherLink": "Use a different Python environment…",
+    "workdirAria": "Run in the script's directory",
+    "workdirConfirmBody": "The script will run in its own directory: data files it reads by relative path are found directly, and files it writes by relative path land in the project directory exactly as in a terminal, overwriting existing files of the same name. Tavotto still does not save its figures for it, and blocks the script from deleting, renaming or moving files in the project. Applies to this project only.",
+    "workdirConfirmOk": "Run in the script's directory",
+    "workdirConfirmTitle": "Run in the script's directory?",
+    "workdirHintProject": "The script runs in its own directory: relative paths find its data; files it writes by relative path land in the project directory, overwriting existing files of the same name. Deletes and renames are still blocked.",
+    "workdirHintSandbox": "The script runs in Tavotto's sandbox directory (default): whatever it writes by relative path stays out of the project, but scripts that locate data with exists / glob will not find their files.",
+    "workdirLabel": "Run in the script's directory",
+    "workdirNowProject": "This project's scripts now run in their own directory; rerunning.",
+    "workdirNowSandbox": "This project's scripts run in the sandbox again.",
+    "workdirSuggest": "Does the script locate its data by relative path (os.path.exists, glob, ovito…)? It currently runs in Tavotto's sandbox directory, where those paths do not reach the project's files.",
+    "workdirSuggestButton": "Run in the script's directory"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” is not in the profile's “{{want}}” form",
