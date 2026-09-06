@@ -392,6 +392,17 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   判据的锚点是 `data-marker-preview`（触发按钮里有下拉箭头、格子里有选中
   角标，两个都是 `<svg>`，按标签名找的断言恒真）。看护
   `controls/pickers.test.tsx` / `seriesPanels.test.tsx`。
+* **「脚本原始」那一格画的是 `marker_original`，不是 `marker_current`**
+  （2026-09-07，cap-marker-orig 补做）：换过标记之后 `marker_current` 读的是
+  图上此刻那条路径，脚本原来那条已经不在图上——那一格于是只剩一个空的继承
+  状态点，用户看不出点下去会变成什么。引擎**只在真的有 override 时才发**
+  `marker_original`（缺席 = 与 current 相同），所以前端的规则就一句：
+  `original` 那一格用 `marker_original ?? （它正好是当前值时的 marker_current）`，
+  **其余格子照旧只有当前值那一格有事实可用**。文字名同理（网格里那一格的
+  可达名与 tooltip 同一份）。缺席时退回今天的样子，漂移只回到原状。
+  多选走 `sharedMarkerShape(elements, prop, 'marker_original')`：两份事实
+  **各自判一致性**（「此刻都是菱形」推不出「原来都是圆」），而且原样多一种
+  不一致——有的成员改过、有的没改，那时同样谁的都不画。
 * `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
 * 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的
@@ -524,8 +535,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `QuickEdit.tsx` 里的 `role="dialog"` 弹层（含控件，不是菜单）。开合都在 `quickEditStore`。
 * **五份清单只发意图**（`data-quick-menu` = `panel` / `panel-layout-only` / `text` / `mark` /
   `multi`）：排列 / 成组走 `alignSelectedTo` / `groupSelected` / `ungroupSelected`，readiness 走
-  `projectReadinessStore.focusPanel`，其余走既有 action。菜单里**不许**出现几何、`!!script`
-  之外的状态判断、第二份按钮表或参照。
+  `projectReadinessStore.focusPanel`，类型切换走 `switchObjectKind`，其余走既有 action。
+  菜单里**不许**出现几何、`!!script` 之外的状态判断、第二份按钮表或参照。
+* **「更改为 ›」**（2026-09-07 修订，见 ADR 0037 末节）：`mark` 与同族 `multi` 多一个类型切换
+  子菜单，子项是 `role="menuitemradio"`（当前那种带勾，多选取值不一致时一个都不勾）。
+  判据与写入都不在这里——见下面「画布标注的类型切换」。
 * **右键的选区规则在 `ObjectView.onContextMenu`**：已在选区里一个字不动；不在 → 换成它 / 整组，
   并与左键一样退出图内编辑态（shift 混排进来的标注除外）。
 * **`rebuildPanel`** = `POST /api/engine/invalidate`（与 `panel.file_changed` 同一个
@@ -845,6 +859,23 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （shapeGeometry.ts ↔ pdfbackend/pymupdf_backend.py `_polygon_points`/`_dash_pattern`
   同名注释），改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
+- **画布标注的类型切换（2026-09-07，cap-shape-switch）**：矩形 ↔ 椭圆 ↔ 其它形状、
+  直线 ↔ 箭头。「能不能切 / 能切成什么 / 切完长什么样」的唯一出处是
+  `lib/shapeSwitch.ts`（纯函数），写入是 `store/actions.switchObjectKind`
+  ——**一次 commit、一条历史、不换对象 id**（选择 / 成组 / 布局组 / 锁定全靠它）、
+  数组位置不动（数组序即 z 序）。两个入口共用这一组函数、各自不许再判一遍：
+  属性栏对象标题那颗类型徽标兼作切换（`inspector/ObjectKindSwitch.tsx`），
+  右键菜单的「更改为 ›」（ADR 0037 的 2026-09-07 修订）。
+  **只在族内互换**：`box`（矩形 / 椭圆 / 三角形 / 菱形 / 多边形 / 大括号）与
+  `linear`（直线 / 箭头）——族内几何一个字不动，跨族等于替用户重画一个。文字与
+  面板不参与，多选**全部同族**才给且作用于全部。字段去留只有一条判据「目标类型
+  会不会读它」（`sides` 只有 polygon 读、`cornerRadius` 只有 rect 读、`head*` 只有
+  arrow 读），删掉的值由撤销负责逐字段还回来。`KIND_FIELDS` 的完整性是**编译期**
+  断言，不靠人记得回来改：给 `ShapeObject` / `ArrowObject` 加字段而没归类，
+  `shapeSwitch.ts` 当场编译不过。磁盘格式不升版。
+  导出侧是**生产者 / 消费者共读一份向量**（`tests/golden/shape_switch_payloads.json`）：
+  前端 `shapeSwitch.golden.test.ts` 断言产出它，`tests/test_compose_switched_shapes.py`
+  断言 pdfbackend 画得出它，**两侧都不重新实现对方那一半**。
 - **混排对齐（2026-08-17）**：图内编辑态里 **shift 点画布标注**（文字/箭头/
   形状）= 加入混排选区、不退编辑态（ObjectView 的唯一例外分支）；元素检查器
   的 AlignSection 接受 `MixedEntry`（元素写 override、标注改画布 x/y），经

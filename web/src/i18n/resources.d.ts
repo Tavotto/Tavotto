@@ -2727,6 +2727,10 @@ export default interface Resources {
       "toggleUnderline": "切换下划线",
       "transformCase": "转换大小写"
     },
+    "kindSwitch": {
+      "aria": "类型：{{name}}，点击更改",
+      "title": "更改为"
+    },
     "legend": {
       "badge": {
         "custom": "自定义",
@@ -3721,6 +3725,8 @@ export default interface Resources {
       "showObjects": "显示 {{count}} 个对象",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
+      "switchKind": "改为{{name}}",
+      "switchKindCount": "把 {{count}} 个对象改为{{name}}",
       "syncPublicationProfile": "同步规范到新版",
       "tickSideHide": "{{side}}：隐藏刻度线",
       "tickSideOff": "{{side}}：不显示{{dir}}刻度",
@@ -3809,6 +3815,7 @@ export default interface Resources {
       "aria": "快捷编辑",
       "arrange": "对齐与分布",
       "arrangeRef": "参照：{{ref}}",
+      "changeKind": "更改为",
       "connectSource": "连接源脚本",
       "cropRotatedReason": "旋转过的面板暂不能裁剪，先取消旋转",
       "deleteCount": "删除 {{count}} 个对象",
