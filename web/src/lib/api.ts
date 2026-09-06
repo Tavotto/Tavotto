@@ -1167,6 +1167,38 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 
+/**
+ * 标记（marker）这一族 enum 字段上的**只读事实**：图上此刻画的是什么形状。
+ *
+ * 为什么需要它：`value` 回答的是「用户选中的是哪个取值」，那不等于形状。
+ * 散点没被整体换过标记时 `value` 是 `"original"`（继承脚本），说不出形状；
+ * 曲线的 `value` 可能是 `(5, 1, 0)` / `$\alpha$` / 一个 Path 的 repr，
+ * 界面上只剩一行认不出的字。
+ *
+ * 约定（与 engine/manifest.py 的 `_marker_field` 同源）：
+ * * 它是**渲染态派生数据**：每次渲染由引擎现读 artist，不进用户文档、
+ *   不是 override、不参与写回。有 override 时它就是 override 之后的形状；
+ * * `named` 只用于引擎确认前端画得出的那些名字。万一两侧漂了
+ *   （这里给了一个 `markerShape()` 没有的名字），**退回代码字样**——
+ *   漂移只会回到没有这个字段时的样子，不会画错一个形状；
+ * * `path` 的顶点已归一化进单位框 `[-0.5, 0.5]`（y 向上，与 matplotlib 同向、
+ *   与 SVG 相反），4 位小数；`codes` 是 matplotlib 的路径码
+ *   （1 MOVETO / 2 LINETO / 3 CURVE3 / 4 CURVE4 / 79 CLOSEPOLY），
+ *   `null` = 「首点 MOVETO，其余 LINETO」。CLOSEPOLY 那一个顶点是占位，
+ *   坐标一律 `[0, 0]`，别读它；
+ * * **字段整个缺席 = 引擎说不出**（老引擎、或构造标记时出了岔子），
+ *   与 `none`（这个对象确实没有标记）是两个不同的答案。
+ */
+export type MarkerShape =
+  | { kind: 'named'; name: string }
+  | { kind: 'path'; vertices: [number, number][]; codes: number[] | null }
+  /** 一个 collection 里混着两种以上形状：说不出「那一个」是什么 */
+  | { kind: 'multiple' }
+  /** 这个对象此刻不画标记 */
+  | { kind: 'none' }
+  /** 有一个叫不出名字的形状，但顶点太多，几何不搬进 manifest */
+  | { kind: 'too_complex' }
+
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
@@ -1199,6 +1231,11 @@ export interface EditableField {
    * 换成别的字体再把文档改掉。
    */
   options_unavailable?: string[]
+  /**
+   * marker 一族字段专有的**只读事实**：图上此刻画的是什么形状（见
+   * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
+   */
+  marker_current?: MarkerShape
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }

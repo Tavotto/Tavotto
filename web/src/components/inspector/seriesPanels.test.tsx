@@ -44,7 +44,9 @@ const num = (prop: string, value: number, extra: Record<string, unknown> = {}) =
 const alpha = (value: number) => f('alpha', 'number', value, { min: 0, max: 1, step: 0.05 })
 
 /** 与 `_line_fields` 同形 */
-export const lineFields = (over: { marker?: string } = {}): EditableField[] => [
+export const lineFields = (
+  over: { marker?: string; shape?: EditableField['marker_current'] } = {},
+): EditableField[] => [
   f('label', 'text', 'Linear fit'),
   f('color', 'color', '#c0562a'),
   num('linewidth', 1.1, { min: 0.1 }),
@@ -54,6 +56,7 @@ export const lineFields = (over: { marker?: string } = {}): EditableField[] => [
   f('marker', 'enum', over.marker ?? 'None', {
     options: ['None', 'o', 's', 'D', '^', 'v', '<', '>', 'x', '+', '*', '.'],
     group: '线条与标记',
+    ...(over.shape ? { marker_current: over.shape } : {}),
   }),
   num('markersize', 6, { max: 20, step: 0.5, group: '线条与标记' }),
   f('markerfacecolor', 'color', '#c0562a', { group: '线条与标记' }),
@@ -62,13 +65,16 @@ export const lineFields = (over: { marker?: string } = {}): EditableField[] => [
 ]
 
 /** 与 `_collection_fields(label=True)` 的散点形状同形 */
-export const scatterFields = (over: { marker?: string; hint?: string } = {}): EditableField[] => [
+export const scatterFields = (
+  over: { marker?: string; hint?: string; shape?: EditableField['marker_current'] } = {},
+): EditableField[] => [
   f('label', 'text', 'Observed'),
   f('facecolor', 'color', '#1b3a6b'),
   f('size', 'number', 12, { min: 1, max: 400, step: 1, unit: 'pt²' }),
   f('marker', 'enum', over.marker ?? 'original', {
     options: ['original', 'o', 's', 'D', '^', 'v', '<', '>', 'x', '+', '*', '.', 'p', 'h'],
     ...(over.hint ? { hint: over.hint } : {}),
+    ...(over.shape ? { marker_current: over.shape } : {}),
   }),
   f('edgecolor', 'color', '#1b3a6b'),
   num('linewidth', 1.1),
@@ -575,6 +581,112 @@ describe('散点：继承有小状态点，面积单位带一句短提示（T16�
     expect(marker.textContent).toContain('脚本原始')
     expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
     expect(marker.textContent).not.toContain('↺')
+  })
+
+  it('标记 = 脚本原始 + 引擎给了形状：形状与继承状态点并列，不互相顶替（fu-marker）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({ shape: { kind: 'named', name: 'o' } }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    // 用户看得见图上是个圆
+    expect(marker.querySelector('[data-marker-preview] circle')).toBeTruthy()
+    // 「这是继承来的」没有因此消失 —— 四档值语义一档都不许压扁
+    expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(marker.textContent).toContain('脚本原始')
+    expect(marker.textContent).toContain('圆点')
+  })
+
+  it('引擎认不出名字时照顶点画（曲线的元组标记也一样，fu-marker）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.lines_0',
+          'line',
+          '曲线 “Linear fit”',
+          lineFields({
+            marker: '(5, 1, 0)',
+            shape: {
+              kind: 'path',
+              vertices: [
+                [0, 0.5],
+                [0.5, -0.5],
+                [-0.5, -0.5],
+              ],
+              codes: null,
+            },
+          }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.lines_0'])
+    const marker = row('marker')!
+    expect(marker.querySelector('[data-marker-preview] path')).toBeTruthy()
+    // 原始代码不丢失：认不出的取值仍旧原样摆在文字里
+    expect(marker.textContent).toContain('(5, 1, 0)')
+  })
+
+  it('引擎没发事实（老引擎）：退回只有继承状态点，一个字节不变（fu-marker）', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    expect(marker.querySelector('[data-marker-preview]')).toBeNull()
+    expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
+  })
+
+  it('多选：两个散点的形状不一样就谁的都不画（fu-marker）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({ shape: { kind: 'named', name: 'o' } }),
+        ),
+        elementOf(
+          'axes_0.collections_1',
+          'scatter',
+          '散点 “Model”',
+          scatterFields({ shape: { kind: 'named', name: 's' } }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0', 'axes_0.collections_1'])
+    // 多选的字段行不挂 `data-prop`（那是单元素定位服务的落点），按可达名找
+    const marker = host.querySelector<HTMLElement>('button[aria-label="标记"]')!
+    // 取值一致（都是「脚本原始」，这一行不显示「多个值」）不等于形状一致
+    expect(marker.textContent).toContain('脚本原始')
+    expect(marker.querySelector('[data-marker-preview]')).toBeNull()
+    expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
+  })
+
+  it('多选：形状一致时照画（否则上一条会恒真）（fu-marker）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({ shape: { kind: 'named', name: 'o' } }),
+        ),
+        elementOf(
+          'axes_0.collections_1',
+          'scatter',
+          '散点 “Model”',
+          scatterFields({ shape: { kind: 'named', name: 'o' } }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0', 'axes_0.collections_1'])
+    const marker = host.querySelector<HTMLElement>('button[aria-label="标记"]')!
+    expect(marker.querySelector('[data-marker-preview] circle')).toBeTruthy()
   })
 
   it('标记 = o：画真实形状，没有继承状态点', async () => {

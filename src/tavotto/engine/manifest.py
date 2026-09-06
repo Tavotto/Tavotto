@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 import sys
+from functools import lru_cache
 
 from matplotlib import font_manager
 from matplotlib.axes import Axes
@@ -20,7 +21,9 @@ from matplotlib.axis import Axis
 from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.lines import Line2D
+from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, Patch
+from matplotlib.path import Path
 from matplotlib.text import Text
 
 import pathgeom
@@ -1361,10 +1364,198 @@ def _text_fields(t) -> list[dict]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# 标记形状：这一行**此刻画的是什么形状**
+# ---------------------------------------------------------------------------
+# `marker` 字段的 `value` 回答的是「用户选中的是哪个取值」，那不等于形状：
+# 散点没被整体换过标记时它是 `"original"`（继承脚本），曲线的它可能是
+# `(5, 1, 0)` / `$\alpha$` / 一个 Path 的 repr。两种情形下界面上都只剩一行
+# 字，用户看不到图上到底是圆是方。`marker_current` 是补上这一句的**只读
+# 事实**——渲染态派生数据，不进用户文档、不是 override、不参与写回。
+
+#: 曲线一族（Line2D）的标记选项。stem 的 markerline 与图例示意标记同一张表
+#: （`overrides._LEGEND_HANDLE_MARKER_OPTS`）。
+_LINE_MARKER_OPTS = ("None", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".")
+#: 散点（PathCollection）的标记选项。`original` = 回到脚本原始路径。
+_SCATTER_MARKER_OPTS = ("original", *_LINE_MARKER_OPTS[1:], "p", "h")
+
+#: **只有这张表里的名字会以 `named` 发出去**：前端 `MarkerPicker.markerShape()`
+#: 的那份 switch 逐个画得出它们。表外的标记（`H` / `8` / `P` / `X` / 元组 /
+#: mathtext / 自定义 Path）一律发几何，前端照着顶点画。
+#:
+#: 两侧万一漂了（这里多一个名字、那边没有对应图形）**只会退回今天的代码
+#: 字样**——前端按名字查不到图形就走原来的文字分支。所以这不是一条会画错
+#: 形状的耦合，不需要 golden 向量看住；它由
+#: `tests/test_manifest_marker_shape.py` 从两侧的选项表反推着钉。
+_MARKER_SHAPE_NAMES = ("o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".", "p", "h")
+
+#: 认名字的容差（绝对值）。实测 matplotlib 3.10：上面 13 个名字两两不相撞，
+#: 其余 24 个内建标记也没有一个撞进来——最近的一对是 `,`（像素）与 `s`
+#: （方块），相差 1e-5，比这条线大一个数量级。
+_MARKER_ATOL = 1e-6
+
+#: 归一化顶点保留的小数位。顶点已经落在 [-0.5, 0.5]，4 位 = 1e-4 的分辨率，
+#: 画进 12 px 的预览是 1.2e-3 px。
+_MARKER_PATH_DECIMALS = 4
+
+#: 发几何的顶点数上限。实测（matplotlib 3.10）：内建具名标记 2–26 个顶点，
+#: 元组标记 7–11 个，最贵的 mathtext 标记 `$\int_0^\infty$` 132 个（约
+#: 2.8 KB JSON）。超过这条线的（超长 mathtext、用户自己塞进来的大 Path）
+#: 只说「有一个叫不出名字的形状」，不把几何搬进 manifest——**预览是 12 px，
+#: 再多的顶点也不多画出一个像素**。
+_MARKER_PATH_MAX_VERTS = 256
+
+
+def _marker_codes(codes) -> tuple[int, ...] | None:
+    """Path.codes 归一成可比较、可序列化的整数元组（`None` 原样传下去：
+    matplotlib 用它表示「首点 MOVETO，其余 LINETO」，那是一种取值不是缺失）。"""
+    return None if codes is None else tuple(int(c) for c in codes)
+
+
+@lru_cache(maxsize=1)
+def _known_marker_shapes() -> tuple[tuple[str, object, tuple[int, ...] | None], ...]:
+    """`_MARKER_SHAPE_NAMES` 的几何对照表（进程内建一次）。
+
+    取的是 `MarkerStyle(name).get_path().transformed(get_transform())`
+    ——`Axes.scatter` 与 `overrides._set_scatter_marker` 造路径用的正是这
+    一句，所以散点那条路上比的是**同一个坐标系里的同一条路径**。
+    """
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    table = []
+    for name in _MARKER_SHAPE_NAMES:
+        ms = MarkerStyle(name)
+        p = ms.get_path().transformed(ms.get_transform())
+        table.append((name, np.asarray(p.vertices, dtype=float), _marker_codes(p.codes)))
+    return tuple(table)
+
+
+def _named_marker(verts, codes) -> str | None:
+    """按**顶点 + codes 逐个比对**认标记名，认不出回 None。
+
+    判据是几何而不是 `get_marker()` 回来的那个字面量：散点根本没有那个
+    字面量（脚本写的 marker 在 `ax.scatter` 里当场就化成了路径），而散点
+    与曲线这两条路必须给出同一个答案。
+    """
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    for name, ref, ref_codes in _known_marker_shapes():
+        if codes != ref_codes or verts.shape != ref.shape:
+            continue
+        if np.allclose(verts, ref, atol=_MARKER_ATOL, rtol=0.0):
+            return name
+    return None
+
+
+def _marker_unit_box(verts, codes) -> list[list[float]]:
+    """等比缩放 + 居中进单位框 [-0.5, 0.5]（y 仍向上，与 matplotlib 同向）。
+
+    **CLOSEPOLY 那一个顶点既不参与包围盒，也不发真坐标（一律 `[0, 0]`）。**
+    它是占位——渲染器画到 CLOSEPOLY 只是闭合子路径，不读它的坐标；而
+    matplotlib 往那里写的常常是子路径起点或原点，实测 `$\odot$` 的占位落在
+    x = -0.638，比整个字形还靠左。算进包围盒会让形状凭空长出一块空白，
+    照原样发出去则会让「所有顶点都落在单位框内」这句话不成立。
+    """
+    closing = [False] * len(verts) if codes is None else [c == Path.CLOSEPOLY for c in codes]
+    box = [v for v, shut in zip(verts, closing) if not shut] or list(verts)
+    xs = [float(v[0]) for v in box]
+    ys = [float(v[1]) for v in box]
+    span = max(max(xs) - min(xs), max(ys) - min(ys))
+    cx = (max(xs) + min(xs)) / 2.0
+    cy = (max(ys) + min(ys)) / 2.0
+    # 退化成一个点时不缩放（缩放因子无从谈起）；前端画出来是空的，那正是
+    # 它本来的样子——比编一个数出来诚实。
+    scale = 1.0 / span if span > 0 else 1.0
+    d = _MARKER_PATH_DECIMALS
+    return [
+        [0.0, 0.0]
+        if shut
+        else [round((float(v[0]) - cx) * scale, d), round((float(v[1]) - cy) * scale, d)]
+        for v, shut in zip(verts, closing)
+    ]
+
+
+def _marker_shape(verts, codes) -> dict:
+    """一条 marker 路径 → 事实字段。四档，一档都不许压扁。"""
+    if len(verts) == 0:
+        return {"kind": "none"}
+    name = _named_marker(verts, codes)
+    if name is not None:
+        return {"kind": "named", "name": name}
+    if len(verts) > _MARKER_PATH_MAX_VERTS:
+        return {"kind": "too_complex"}
+    return {
+        "kind": "path",
+        "vertices": _marker_unit_box(verts, codes),
+        "codes": None if codes is None else list(codes),
+    }
+
+
+def _marker_shape_of_line(ln) -> dict | None:
+    """Line2D（曲线 / 茎叶的 markerline / 图例示意）此刻画的标记形状。
+
+    `fillstyle` 一起带上：半填充标记（`fillstyle="left"` …）的路径本来就
+    只有一半，丢了它画出来的是一个整圆，而图上是半个。
+    """
+    try:
+        ms = MarkerStyle(ln.get_marker(), fillstyle=ln.get_fillstyle())
+        p = ms.get_path().transformed(ms.get_transform())
+    except Exception:  # noqa: BLE001 — 认不出来就是「不知道」，不能让清单构建挂掉
+        return None
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    return _marker_shape(np.asarray(p.vertices, dtype=float), _marker_codes(p.codes))
+
+
+def _marker_shape_of_paths(paths) -> dict | None:
+    """PathCollection（散点）此刻画的标记形状。
+
+    `get_paths()` 可能不止一条：**全都一样才说得出一个形状**，出现第二种
+    就如实说「多个」。拿第一条冒充全体正是「判据量错了对象」那一族——
+    界面会言之凿凿地画一个图上只占一部分点的形状。
+    """
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    try:
+        items = list(paths)
+    except Exception:  # noqa: BLE001
+        return None
+    if not items:
+        return {"kind": "none"}
+    first = np.asarray(items[0].vertices, dtype=float)
+    first_codes = _marker_codes(items[0].codes)
+    for p in items[1:]:
+        verts = np.asarray(p.vertices, dtype=float)
+        if (
+            _marker_codes(p.codes) != first_codes
+            or verts.shape != first.shape
+            or not np.allclose(verts, first, atol=_MARKER_ATOL, rtol=0.0)
+        ):
+            return {"kind": "multiple"}
+    return _marker_shape(first, first_codes)
+
+
+def _marker_field(prop: str, value: str, options: list[str], shape: dict | None, **extra) -> dict:
+    """marker 这一族 enum 字段的唯一构造处（曲线 / 散点 / 茎叶 / 图例示意）。
+
+    `marker_current` 是**只读事实**，不是 override 的落点：`value` 说的是
+    「用户选中的是哪个取值」，它说的是「图上此刻画的是什么形状」。有
+    override 时它自然就是 override 之后的形状——manifest 本来就是渲染态。
+
+    引擎说不出形状时**这个键整个不出现**：「不知道」与「这个对象没有标记」
+    （`{"kind": "none"}`）是两个不同的答案，合并进同一档的话老引擎发来的
+    清单会被读成「图上没有标记」。
+    """
+    field = {"prop": prop, "type": "enum", "value": value, "options": options, **extra}
+    if shape is not None:
+        field["marker_current"] = shape
+    return field
+
+
 def _line_fields(ln) -> list[dict]:
     lab = str(ln.get_label())
     marker = str(ln.get_marker())
-    m_opts = ["None", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", "."]
+    m_opts = list(_LINE_MARKER_OPTS)
     if marker not in m_opts:
         m_opts = [marker] + m_opts
     return [
@@ -1394,13 +1585,7 @@ def _line_fields(ln) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(ln.get_visible())},
-        {
-            "prop": "marker",
-            "type": "enum",
-            "value": marker,
-            "options": m_opts,
-            "group": "线条与标记",
-        },
+        _marker_field("marker", marker, m_opts, _marker_shape_of_line(ln), group="线条与标记"),
         {
             "prop": "markersize",
             "type": "number",
@@ -1481,16 +1666,18 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
             }
         )
     if "marker" in caps:
-        # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径
+        # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径。
+        # **`"original"` 说不出形状**——它是「继承脚本」这一档，不是一个图形。
+        # 图上此刻真正画的那个形状由 `marker_current` 从 `get_paths()` 现读。
         cur = getattr(coll, "_mm_marker", None) or "original"
-        m_opts = ["original", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".", "p", "h"]
+        m_opts = list(_SCATTER_MARKER_OPTS)
         fields.append(
-            {
-                "prop": "marker",
-                "type": "enum",
-                "value": cur,
-                "options": ([cur] if cur not in m_opts else []) + m_opts,
-            }
+            _marker_field(
+                "marker",
+                cur,
+                ([cur] if cur not in m_opts else []) + m_opts,
+                _marker_shape_of_paths(coll.get_paths()),
+            )
         )
     fields += [
         # 描边：`TriMesh` 连边都不画（`draw_gouraud_triangles` 只接顶点颜色），
@@ -2357,13 +2544,7 @@ def _legend_entry_fields(t) -> list[dict]:
         if marker not in m_opts:
             m_opts = [marker] + m_opts
         fields.append(
-            {
-                "prop": "handle_marker",
-                "type": "enum",
-                "value": marker,
-                "options": m_opts,
-                "group": "图例项",
-            }
+            _marker_field("handle_marker", marker, m_opts, _marker_shape_of_line(h), group="图例项")
         )
     if "handle_markersize" in props:
         fields.append(
@@ -3001,7 +3182,7 @@ def _stem_fields(grp) -> list[dict]:
     if hasattr(lw, "__len__"):
         lw = lw[0] if len(lw) else 1.0
     m_name = str(marker.get_marker()) if marker is not None else "None"
-    m_opts = ["None", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", "."]
+    m_opts = list(_LINE_MARKER_OPTS)
     if m_name not in m_opts:
         m_opts = [m_name] + m_opts
     return [
@@ -3026,7 +3207,15 @@ def _stem_fields(grp) -> list[dict]:
             "value": _linecoll_linestyle_name(stem0) if stem0 is not None else "-",
             "options": ["-", "--", "-.", ":"],
         },
-        {"prop": "marker", "type": "enum", "value": m_name, "options": m_opts, "group": "标记"},
+        _marker_field(
+            "marker",
+            m_name,
+            m_opts,
+            # markerline 整条不在（`ax.stem(..., markerfmt=" ")`）时图上确实
+            # 一个标记都没有——那是 `none`，不是「不知道」。
+            _marker_shape_of_line(marker) if marker is not None else {"kind": "none"},
+            group="标记",
+        ),
         {
             "prop": "markersize",
             "type": "number",
