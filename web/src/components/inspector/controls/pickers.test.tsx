@@ -12,6 +12,7 @@ import { colormapGradient, COLORMAP_STOPS } from './colormapStops'
 import { HatchPicker } from './HatchPicker'
 import { LegendPositionPicker } from './LegendPositionPicker'
 import { LineStylePicker } from './LineStylePicker'
+import type { MarkerShape } from '@/lib/api'
 import { MarkerPicker } from './MarkerPicker'
 import { tipLabelOf } from './OptionGrid'
 import { TickAndSpineDiagram, type TickSpineAdapter } from './TickAndSpineDiagram'
@@ -129,8 +130,8 @@ describe('MarkerPicker', () => {
 
 const trig = () => host.querySelector('button[aria-label="标记"]') as HTMLButtonElement
 
-/** 一个 5 顶点的闭合三角（单位框 [-0.5, 0.5]，y 向上） */
-const TRIANGLE = {
+/** 一个闭合三角（单位框 [-0.5, 0.5]，y 向上；末尾那个是 CLOSEPOLY 占位点） */
+const TRIANGLE: MarkerShape = {
   kind: 'path',
   vertices: [
     [0, 0.5],
@@ -139,7 +140,17 @@ const TRIANGLE = {
     [0, 0],
   ],
   codes: [1, 2, 2, 79],
-} as const
+}
+
+/** codes 为 null = 「首点 MOVETO，其余 LINETO」，不是「没有路径」 */
+const DIAGONAL: MarkerShape = {
+  kind: 'path',
+  vertices: [
+    [-0.5, -0.5],
+    [0.5, 0.5],
+  ],
+  codes: null,
+}
 
 describe('MarkerPicker：脚本原始也画得出真实形状', () => {
   it('值 = original 且引擎认出名字：画那个图形，继承状态点仍在', async () => {
@@ -188,7 +199,7 @@ describe('MarkerPicker：脚本原始也画得出真实形状', () => {
       <MarkerPicker
         value="original"
         options={['original']}
-        current={{ kind: 'path', vertices: [[-0.5, -0.5], [0.5, 0.5]], codes: null }}
+        current={DIAGONAL}
         onChange={() => {}}
         ariaLabel="标记"
       />,
@@ -223,7 +234,8 @@ describe('MarkerPicker：脚本原始也画得出真实形状', () => {
   })
 
   it('too_complex / none 都不画形状：没有「那一个形状」可画', async () => {
-    for (const current of [{ kind: 'too_complex' } as const, { kind: 'none' } as const]) {
+    const cases: MarkerShape[] = [{ kind: 'too_complex' }, { kind: 'none' }]
+    for (const current of cases) {
       await mount(
         <MarkerPicker
           value="original"
