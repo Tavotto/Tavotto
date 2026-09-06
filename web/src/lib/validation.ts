@@ -458,18 +458,42 @@ export function summaryFor(
   opts: {
     /** 只看这张画布；不给就是整个项目 */
     canvasId?: string
+    /**
+     * 只看这一个画布对象（按原图导出时 = 那张图，审计 T33）。页面级问题
+     * （`objectId` 为 null）不算——这次导出的不是那张页面。要配合 `canvasId`
+     */
+    objectId?: string
     extra?: ValidationIssue[]
     ready: boolean
     failed: boolean
   },
 ): ValidationSummary {
-  const base = opts.canvasId
-    ? issues.filter((i) => i.objectRef.canvasId === opts.canvasId)
-    : issues
+  const base = issues.filter(
+    (i) =>
+      (!opts.canvasId || i.objectRef.canvasId === opts.canvasId) &&
+      (!opts.objectId || i.objectRef.objectId === opts.objectId),
+  )
   return summarizeIssues(mergeExportIssues(base, opts.extra ?? []), {
     ready: opts.ready,
     failed: opts.failed,
   })
+}
+
+/**
+ * 聚合投影按对象裁一刀（按原图导出时写进样式检查报告的那份）。命中了这个对象
+ * 的条目留下并**投影到它身上**：`objectIds` 只剩它、`gids` / `occurrences` 只剩
+ * 它的；页面级条目（没有对象）不算。聚合项的 `message` / `detail` 是全画布最糟
+ * 那一次的，这里原样保留——报告里的量化细节以逐条命中为准，这一刀只保证
+ * **条目与对象集合**不混进别的图。
+ */
+export function rawIssuesForObject(raw: PreflightIssue[], objectId: string): PreflightIssue[] {
+  return raw
+    .filter((i) => i.objectIds.includes(objectId))
+    .map((i) => {
+      const occurrences = i.occurrences.filter((o) => o.objectId === objectId)
+      const gids = [...new Set(occurrences.map((o) => o.gid).filter((g): g is string => !!g))]
+      return { ...i, objectIds: [objectId], gids, occurrences }
+    })
 }
 
 /* ------------------------------- 筛选 ------------------------------------- */

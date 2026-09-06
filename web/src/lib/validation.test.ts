@@ -19,6 +19,7 @@ import {
   mergeExportIssues,
   ruleEntry,
   summarizeIssues,
+  rawIssuesForObject,
   summaryFor,
   validateCanvas,
   validateProject,
@@ -333,5 +334,81 @@ describe('汇总与筛选', () => {
     expect(filterIssues(all, { canvasId: 'c1' })).toEqual(all)
     expect(filterIssues(all, { ruleCode: 'font-below-absolute-floor' }).length).toBeGreaterThan(0)
     expect(filterIssues(all, { severities: [] })).toEqual(all)
+  })
+})
+
+describe('摘要按导出目标取范围（审计 T33）', () => {
+  it('给了 objectId 就只算那个对象的；页面级问题（没有对象）不算', () => {
+    const p1 = panel()
+    const p2 = panel({ id: 'p2', fileId: 'Fig2.pdf' })
+    const doc = docWith([p1, p2])
+    doc.page = { w: 80, h: 40 } // 页面比例一条 warn（页面级，objectId 为 null）
+    const render = {
+      byKey: {
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+      },
+      latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
+    }
+    const all = validateCanvas(
+      { canvasId: 'c1', canvasName: '画布 1', doc, profile },
+      'doc-1',
+      { ...assets, 'Fig2.pdf': { id: 'Fig2.pdf', mtime: 1 } as never },
+      render,
+    ).issues
+    expect(all.some((i) => i.objectRef.objectId === null), '夹具里得有一条页面级问题').toBe(true)
+    // 8pt 同时撞两条字号规则（默认规范两档同值，ADR 0029）：每张图各 n 条阻断
+    const perPanel = all.filter((i) => i.severity === 'error' && i.objectRef.objectId === 'p1').length
+    expect(perPanel).toBeGreaterThan(0)
+
+    const whole = summaryFor(all, { canvasId: 'c1', ready: true, failed: false })
+    const mine = summaryFor(all, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(whole.counts.error).toBe(perPanel * 2)
+    expect(mine.counts.error, '别的图的阻断项不算').toBe(perPanel)
+    expect(mine.issues.every((i) => i.objectRef.objectId === 'p1')).toBe(true)
+    expect(
+      mine.issues.some((i) => i.objectRef.objectId === null),
+      '页面级问题不算进按原图导出',
+    ).toBe(false)
+    expect(whole.issues.some((i) => i.objectRef.objectId === null)).toBe(true)
+    // 导出上下文那条（没有对象）仍然算：它说的是这次请求本身
+    const withExtra = summaryFor(all, {
+      canvasId: 'c1',
+      objectId: 'p1',
+      extra: whole.issues.slice(0, 1).map((i) => ({ ...i, issueId: 'extra-1', context: 'export' as const })),
+      ready: true,
+      failed: false,
+    })
+    expect(withExtra.total).toBe(mine.total + 1)
+  })
+
+  it('聚合投影按对象裁同一刀：命中了它的条目留下，页面级不算', () => {
+    const p1 = panel()
+    const p2 = panel({ id: 'p2', fileId: 'Fig2.pdf' })
+    const doc = docWith([p1, p2])
+    doc.page = { w: 80, h: 40 }
+    const render = {
+      byKey: {
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+      },
+      latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
+    }
+    const raw = validateCanvas(
+      { canvasId: 'c1', canvasName: '画布 1', doc, profile },
+      'doc-1',
+      { ...assets, 'Fig2.pdf': { id: 'Fig2.pdf', mtime: 1 } as never },
+      render,
+    ).raw
+    expect(raw.some((i) => i.objectIds.length === 0)).toBe(true)
+    const shared = raw.find((i) => i.objectIds.includes('p1') && i.objectIds.includes('p2'))
+    expect(shared, '夹具里得有一条两张图都命中的聚合项').toBeTruthy()
+    const mine = rawIssuesForObject(raw, 'p1')
+    expect(mine.length).toBeGreaterThan(0)
+    // 投影到这一个对象身上：别的图的对象 / gid / 命中都不带
+    expect(mine.every((i) => i.objectIds.length === 1 && i.objectIds[0] === 'p1')).toBe(true)
+    expect(mine.every((i) => i.occurrences.every((o) => o.objectId === 'p1'))).toBe(true)
+    expect(mine.every((i) => i.gids.every((g) => g === 'axes_0.xticks'))).toBe(true)
+    expect(rawIssuesForObject(raw, 'nope')).toEqual([])
   })
 })

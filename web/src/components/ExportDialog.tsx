@@ -4,17 +4,28 @@
  * ### 信息优先级
  *
  * ```text
- * 文件名 → 输出范围 → 格式 → 分辨率（仅位图）→ 规范 → 检查 → 高级选项
+ * 导出对象（缩略图 · 名字 · 范围 · 最终尺寸）→ 输出范围 → 文件名 → 格式
+ *   → 分辨率（仅位图）→ 规范 → 检查（阻断项逐条 + 知情确认）→ 高级选项
  * ```
  *
- * 这个顺序不是排版偏好，是**用户做决定的顺序**：先决定这个文件叫什么、
- * 按哪个尺寸出、要什么格式，才轮到"够不够清晰"和"合不合规范"。
+ * 这个顺序不是排版偏好，是**用户做决定的顺序**：先看清这次导的是哪一张、
+ * 多大，再决定文件叫什么、要什么格式，才轮到"够不够清晰"和"合不合规范"
+ * （审计 T33：以前文件名在最上面而对象与尺寸要到第二行才出现，正在编
+ * Fig1_kinetics 时默认名却是画布名「Figure 1」）。
+ *
+ * ### 尺寸只有一个出处
+ *
+ * 原图 = `lib/originalSpec.getOriginalOutputSpec()`，画布 = `doc.page`。界面上
+ * 只在对象头部显示一次；规格取自渲染结果而与文档里记的图幅不同时，多说一句
+ * 来源（那正是审计里 80×57.6 与 75.3×58.7 并排出现、谁都没解释的那一幕）。
  *
  * ### 这里**不做**的事
  *
  * * 不现算「这个值合不合规范」。阈值一个字都不进组件；要判就加一条规则进
  *   `lib/validation.exportContextRaw()`（Session 11 的第 19 条）。
  * * 不列第二套问题清单。摘要 + 「查看问题」，完整清单在左侧问题面板（§四）。
+ *   **唯一例外是阻断项**：它们逐条列在知情确认框上方（无筛选、无修复、一个
+ *   「定位」入口）——用户在点头之前得看见自己在为什么点头。
  * * 不拼载荷。请求的构造只有 `lib/exportRequest.buildExportRequest()` 一处。
  * * 不出现内部标识：库名、gid、对象 id、绝对路径一个都不进这个界面（§五）。
  */
@@ -24,23 +35,28 @@ import {
   Check,
   Download,
   FileWarning,
+  ImageOff,
   Loader2,
   Settings2,
   TriangleAlert,
   X,
 } from 'lucide-react'
-import type { ExportJob, ExportOutput } from '@/lib/api'
+import { panelSrc, type ExportJob, type ExportOutput } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { openProblems } from '@/lib/issueFocus'
+import { focusFailureMessage, focusIssue, openProblems } from '@/lib/issueFocus'
+import { stemOf } from '@/lib/openRequest'
+import type { OriginalOutputSpec } from '@/lib/originalSpec'
 import {
   exportContextIssues,
   exportContextRaw,
+  rawIssuesForObject,
   summaryFor,
+  type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
-import { severityLabel } from '@/lib/validationText'
+import { issueTitle, issueValues, severityLabel, subjectName } from '@/lib/validationText'
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
@@ -72,6 +88,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
 import { findFigurePanel, useWorkspaceStore } from '@/store/workspace'
+import type { FigureDocument, PanelObject } from '@/types/document'
 import {
   getValidationSummary,
   rawIssuesFor,
@@ -91,6 +108,48 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 
 /** 可选的位图分辨率。**没有第二份**——数字进不了组件之外的任何地方 */
 const PPI_VALUES = ['300', '600', '900', '1200'] as const
+
+/** 知情确认框上方逐条列出的阻断项上限；再多的进问题面板 */
+const BLOCKING_SHOWN = 5
+
+/**
+ * 默认文件名**跟着导出对象走**（审计 T33）：按原图 = 那张图的名字（面板名，
+ * 否则文件 stem），按画布 = 画布名。用户改过之后就不再动它（`filenameTouched`
+ * ——按标志不按字符串：他恰好敲回默认值也算改过）。合法性不在这里判，那是
+ * `lib/exportName.ts` 的事（严格同源对）。
+ */
+export function defaultExportName(
+  scope: ExportScope,
+  panel: PanelObject | null,
+  doc: Pick<FigureDocument, 'name'>,
+): string {
+  if (scope === 'original' && panel) return panel.name ?? stemOf(panel.fileId)
+  return doc.name
+}
+
+/**
+ * 「定位」/「查看问题」把对话框让开时留下的表单状态。对话框组件本身一直挂着
+ * （`App` 里无条件渲染），所以这只是一个 ref，不进 store、不落盘；再点「导出」
+ * 时原样还回去（确认态除外——问题集合可能已经变了）。换了文档就作废。
+ */
+interface ParkedState {
+  documentId: string | null
+  scope: ExportScope
+  formats: string[]
+  ppi: string
+  filename: string
+  filenameTouched: boolean
+  withReport: boolean
+  transparent: boolean
+}
+
+/** 此刻快速编辑正在编的那张图（打开对话框那一刻现取，不从渲染闭包里拿） */
+function currentFigurePanel(): PanelObject | null {
+  const id = useWorkspaceStore.getState().activePanelId
+  if (!id) return null
+  const o = useDocumentStore.getState().doc.objects.find((x) => x.id === id)
+  return o?.type === 'panel' ? o : null
+}
 
 export function ExportDialog() {
   // 订阅语言变化：文案是模块级 ex() 拼出来的，没有这一句切语言后停在旧语言上
@@ -118,7 +177,10 @@ export function ExportDialog() {
   const [formats, setFormats] = useState<string[]>(() => readExportDefaults().formats)
   const [ppi, setPpi] = useState(() => readExportDefaults().dpi)
   const [filename, setFilename] = useState(doc.name)
+  /** 用户亲手改过文件名（之后切范围不再替他换默认名） */
+  const [filenameTouched, setFilenameTouched] = useState(false)
   const [scope, setScope] = useState<ExportScope>(() => defaultScope(mode))
+  const parked = useRef<ParkedState | null>(null)
   const [withReport, setWithReport] = useState(() => readExportDefaults().withProof)
   const [transparent, setTransparent] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -171,6 +233,7 @@ export function ExportDialog() {
    * （PR #214 复审）。
    */
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
+  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce)
   const availability = useMemo(
     () => originalAvailability(figureId),
     // `assets` / `runtimeAssets` 是**触发重算的信号**，不是入参：
@@ -211,12 +274,28 @@ export function ExportDialog() {
      * 一次重渲染）。现取只是把这件事写明白，顺便挡住以后加依赖时的走样
      */
     const snap = useDocumentStore.getState().doc
-    setFilename(snap.name)
     setConfirmed(false)
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId)
+    // 从「定位」/「查看问题」回来：把用户填过的东西原样还回去。换了文档不还
+    const restore = parked.current
+    parked.current = null
+    if (restore && restore.documentId === useDocumentStore.getState().documentId) {
+      setScope(restore.scope)
+      setFormats(restore.formats)
+      setPpi(restore.ppi)
+      setFilename(restore.filename)
+      setFilenameTouched(restore.filenameTouched)
+      setWithReport(restore.withReport)
+      setTransparent(restore.transparent)
+      return
+    }
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
     // 那样用户会拿到一张他没要的图。可用性由下面那一行说出来
-    setScope(defaultScope(useWorkspaceStore.getState().mode))
+    const scope0 = defaultScope(useWorkspaceStore.getState().mode)
+    setScope(scope0)
+    // 默认文件名跟着导出对象走：正在编 Fig1_kinetics 就叫 Fig1_kinetics，不叫画布名
+    setFilenameTouched(false)
+    setFilename(defaultExportName(scope0, currentFigurePanel(), snap))
     /*
      * **依赖只有「打开」与「换文档」，没有 `doc.profile`。**
      * 在对话框里挑一套出版规范会 `commit()` 一个新的 `d.profile`，把它列进
@@ -247,15 +326,22 @@ export function ExportDialog() {
       }),
     [formats, ppi, profile, documentId, activeCanvasId],
   )
+  /**
+   * 摘要**按导出目标取范围**（审计 T33）：按原图导出只算那张图上的问题——
+   * 别的图的字号、页面的比例都不是这次要出的东西；按画布算整张画布。
+   * 范围的裁法在 `summaryFor()` 一处，对话框不自己筛。
+   */
+  const targetObjectId = scope === 'original' && panel ? panel.id : undefined
   const summary = useMemo(
     () =>
       summaryFor(validationIssues, {
         canvasId: activeCanvasId,
+        objectId: targetObjectId,
         extra: exportIssues,
         ready: validationReady,
         failed: validationFailed,
       }),
-    [validationIssues, activeCanvasId, exportIssues, validationReady, validationFailed],
+    [validationIssues, activeCanvasId, targetObjectId, exportIssues, validationReady, validationFailed],
   )
   const errors = useMemo(
     () => summary.issues.filter((i) => i.severity === 'error'),
@@ -402,7 +488,10 @@ export function ExportDialog() {
             doc,
             assets,
             [
-              ...rawIssuesFor(activeCanvasId),
+              // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
+              ...(targetObjectId
+                ? rawIssuesForObject(rawIssuesFor(activeCanvasId), targetObjectId)
+                : rawIssuesFor(activeCanvasId)),
               ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
             ],
             { dpi: Number(ppi), formats, stem: filename },
@@ -454,8 +543,46 @@ export function ExportDialog() {
       panel,
       availability.spec,
       canStart,
+      targetObjectId,
     ],
   )
+
+  /* ------------------------------ 让开与回来 ------------------------------ */
+  /** 关掉对话框去别处（定位 / 问题面板），但把填过的东西留下 */
+  const park = () => {
+    parked.current = {
+      documentId,
+      scope,
+      formats,
+      ppi: String(ppi),
+      filename,
+      filenameTouched,
+      withReport,
+      transparent,
+    }
+    setOpen(false)
+  }
+
+  /**
+   * 定位一条阻断项。先定位再让开：定位失败（对象已删 / 进不了图内编辑）时
+   * 对话框留在原地并说出原因，不把用户扔到一个什么都没发生的画布上。
+   */
+  const locateBlocking = (issue: ValidationIssue) => {
+    const outcome = focusIssue(issue)
+    const ui = useUiStore.getState()
+    if (!outcome.ok) {
+      ui.setStatus(focusFailureMessage(outcome.reason), 'error')
+      return
+    }
+    park()
+    ui.setStatus(msg('export.locatedHint', undefined, 'dialogs'))
+  }
+
+  /** 切换输出范围：用户没碰过文件名的话，默认名跟着换 */
+  const changeScope = (next: ExportScope) => {
+    setScope(next)
+    if (!filenameTouched) setFilename(defaultExportName(next, panel, doc))
+  }
 
   /** 导出完成时报一次状态。**只在终局报一次**，不在每次进度推送上报 */
   const announced = useRef<string | null>(null)
@@ -510,25 +637,17 @@ export function ExportDialog() {
       }
     >
       <div className="flex flex-col gap-2.5">
-        {/* 1. 文件名 —— 最上方（§五）。校验在**输入的那一刻**就地给出 */}
-        <Row label={ex('filenameLabel')} labelWidth={56}>
-          <TextInput
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            placeholder={ex('filenamePlaceholder')}
-            aria-invalid={filenameIssue ? true : undefined}
-            aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
-          />
-        </Row>
-        {filenameIssue ? (
-          <p id="export-filename-error" className="pl-[64px] text-xs text-danger">
-            {ex(`filenameError.${filenameIssue}`)}
-          </p>
-        ) : (
-          <p className="pl-[64px] font-mono text-xs text-ink-3">{names.join('  ')}</p>
-        )}
+        {/* 0. 导出对象 —— 缩略图 · 名字 · 范围 · 最终尺寸，一眼看清这次出的是什么 */}
+        <TargetHeader
+          scope={scope}
+          panel={panel}
+          spec={availability.spec}
+          doc={doc}
+          mtime={figureId ? assets[figureId]?.mtime : undefined}
+          previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+        />
 
-        {/* 2. 输出范围 —— 默认跟着工作流，用户随时切 */}
+        {/* 1. 输出范围 —— 默认跟着工作流，用户随时切 */}
         <Row label={ex('scopeLabel')} labelWidth={56}>
           {/* `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
           <div
@@ -541,12 +660,12 @@ export function ExportDialog() {
               active={scope === 'original'}
               disabled={!availability.ok}
               label={ex('scopeOriginal')}
-              onClick={() => setScope('original')}
+              onClick={() => changeScope('original')}
             />
             <ScopeButton
               active={scope === 'canvas'}
               label={ex('scopeCanvas')}
-              onClick={() => setScope('canvas')}
+              onClick={() => changeScope('canvas')}
             />
           </div>
         </Row>
@@ -555,12 +674,29 @@ export function ExportDialog() {
           available={availability.ok}
           reason={availability.reason}
           ignored={availability.spec?.ignored ?? []}
-          widthMm={availability.spec?.widthMm ?? null}
-          heightMm={availability.spec?.heightMm ?? null}
           fallback={availability.spec?.fallback ?? false}
-          pageW={doc.page.w}
-          pageH={doc.page.h}
         />
+
+        {/* 2. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
+        <Row label={ex('filenameLabel')} labelWidth={56}>
+          <TextInput
+            value={filename}
+            onChange={(e) => {
+              setFilenameTouched(true)
+              setFilename(e.target.value)
+            }}
+            placeholder={ex('filenamePlaceholder')}
+            aria-invalid={filenameIssue ? true : undefined}
+            aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
+          />
+        </Row>
+        {filenameIssue ? (
+          <p id="export-filename-error" className="pl-[64px] text-xs text-danger">
+            {ex(`filenameError.${filenameIssue}`)}
+          </p>
+        ) : (
+          <p className="pl-[64px] font-mono text-xs text-ink-3">{names.join('  ')}</p>
+        )}
 
         {/* 3. 格式 */}
         <Row label={ex('formatLabel')} labelWidth={56}>
@@ -638,14 +774,28 @@ export function ExportDialog() {
           </p>
         )}
 
-        {/* 6. 检查 —— 只有摘要，完整清单在左侧问题面板（§四） */}
+        {/* 6. 检查 —— 摘要按导出目标取范围；完整清单在左侧问题面板（§四） */}
         <CheckRow
           summary={summary}
+          scopeHint={ex(scope === 'original' && panel ? 'checkScopeFigure' : 'checkScopeCanvas')}
           onOpenPanel={() => {
-            setOpen(false)
+            park()
             openProblems()
           }}
         />
+
+        {/* 阻断项逐条列出，紧挨着知情确认框：点头之前先看见自己在为什么点头。
+            只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
+        {errors.length > 0 && (
+          <BlockingList
+            issues={errors}
+            onLocate={locateBlocking}
+            onMore={() => {
+              park()
+              openProblems({ severities: ['error'] })
+            }}
+          />
+        )}
 
         {needsConfirm && (
           <label className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
@@ -774,28 +924,20 @@ function ScopeButton({
  * 范围说明。**不可用时说出原因，不隐藏选项、不静默改成画布**（§五）。
  *
  * 原图范围下还要把「画布上设了、这次不套用」的变换逐项说出来：
- * 忽略而不说等于骗人（ADR 0028）。
+ * 忽略而不说等于骗人（ADR 0028）。尺寸**不在这里**——它只在对象头部出现一次。
  */
 function ScopeNote({
   scope,
   available,
   reason,
   ignored,
-  widthMm,
-  heightMm,
   fallback,
-  pageW,
-  pageH,
 }: {
   scope: ExportScope
   available: boolean
   reason: string
   ignored: readonly string[]
-  widthMm: number | null
-  heightMm: number | null
   fallback: boolean
-  pageW: number
-  pageH: number
 }) {
   useTranslation('dialogs')
   return (
@@ -812,16 +954,12 @@ function ScopeNote({
         </span>
       )}
       {scope === 'canvas' ? (
-        <span>{ex('scopeCanvasNote', { w: round1(pageW), h: round1(pageH) })}</span>
+        <span>{ex('scopeCanvasNote')}</span>
       ) : (
         <>
-          <span>
-            {widthMm != null && heightMm != null
-              ? ex('scopeOriginalNote', { w: round1(widthMm), h: round1(heightMm) })
-              : ex('scopeOriginalNoteUnknown')}
-          </span>
+          <span>{ex('scopeOriginalNote')}</span>
           {fallback && <span className="text-warn">{ex('scopeOriginalFallback')}</span>}
-              {ignored.length > 0 && (
+          {ignored.length > 0 && (
             <span>
               {ex('scopeIgnored', {
                 list: ignored.map((k) => ex(`ignored.${k}`)).join('、'),
@@ -834,6 +972,204 @@ function ScopeNote({
   )
 }
 
+/** 尺寸比较的容差（mm），与 `originalSpec` 的图幅同步同一档 */
+const SIZE_EPS = 0.05
+
+/**
+ * 尺寸的来源要不要多说一句。**只在会让人疑惑时说**：规格取自渲染结果
+ * （`render_metadata`）而与文档里记的图幅不一致——审计 T33 里 80×57.6 与
+ * 75.3×58.7 并排出现、谁都没解释的正是这一幕；取自素材清单（面板还没同步过
+ * 图幅）也说一句。占位值另有一句醒目的警告（`ScopeNote`），这里不重复。
+ *
+ * TODO(geom)：「渲染回来的图幅为什么与文档里记的不一样」的根因与最终措辞由
+ * 图幅权威那一侧给；这里先只说来源，不解释成因。
+ */
+export function sizeOriginNote(spec: OriginalOutputSpec, panel: PanelObject | null): string | null {
+  if (spec.fallback) return null
+  if (spec.origin === 'render_metadata') {
+    const differs =
+      !!panel &&
+      (Math.abs(panel.nativeW - spec.widthMm) > SIZE_EPS ||
+        Math.abs(panel.nativeH - spec.heightMm) > SIZE_EPS)
+    return differs ? ex('sizeFromRender') : null
+  }
+  if (spec.origin === 'asset') return ex('sizeFromAsset')
+  return null
+}
+
+/**
+ * 导出对象头部：缩略图 · 名字 · 范围 · 最终尺寸。**尺寸只在这里出现一次**
+ * （原图 = `OriginalOutputSpec`，画布 = 页面尺寸），别处只说话不报数。
+ *
+ * 缩略图不新起渲染：磁盘素材走现成的 `/api/render` 分档缩略图（素材库同一张），
+ * runtime 素材走 materialized cache 预览；画布范围画一张按页面比例的示意
+ * （对象落位的方块），不合成整页。
+ */
+function TargetHeader({
+  scope,
+  panel,
+  spec,
+  doc,
+  mtime,
+  previewNonce,
+}: {
+  scope: ExportScope
+  panel: PanelObject | null
+  spec: OriginalOutputSpec | null
+  doc: FigureDocument
+  mtime: number | undefined
+  previewNonce: number | undefined
+}) {
+  useTranslation('dialogs')
+  const original = scope === 'original'
+  const name = original
+    ? panel
+      ? (panel.name ?? stemOf(panel.fileId))
+      : ex('targetNoFigure')
+    : doc.name
+  const size = original
+    ? spec && !spec.fallback
+      ? ex('mmSize', { w: round1(spec.widthMm), h: round1(spec.heightMm) })
+      : ex('sizeUnknownShort')
+    : ex('mmSize', { w: round1(doc.page.w), h: round1(doc.page.h) })
+  const originNote = original && spec ? sizeOriginNote(spec, panel) : null
+  const src = original && panel
+    ? panelSrc(panel.fileId, panel.fileKind, 200, panel.fileKind === 'runtime' ? previewNonce : mtime)
+    : null
+  const visibleObjects = doc.objects.filter((o) => !o.hidden).length
+  return (
+    <div
+      data-export-target
+      className="flex items-center gap-3 rounded-sm border border-border bg-surface-2 p-2"
+    >
+      <div className="flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[3px] border border-border bg-white">
+        {original ? (
+          src ? (
+            <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
+          ) : (
+            <ImageOff size={14} className="text-ink-faint" aria-hidden />
+          )
+        ) : (
+          <PageSchematic doc={doc} />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-ink" title={name}>
+          {name}
+        </p>
+        <p className="text-xs text-ink-2">
+          {ex(original ? 'scopeOriginal' : 'scopeCanvas')}
+          {' · '}
+          <span className="font-mono">{size}</span>
+          {!original && (
+            <>
+              {' · '}
+              {ex('canvasObjects', { count: visibleObjects })}
+            </>
+          )}
+        </p>
+        {originNote && <p className="text-xs leading-relaxed text-ink-3">{originNote}</p>}
+      </div>
+    </div>
+  )
+}
+
+/** 画布范围的示意：页面比例 + 对象落位的方块。纯几何，零渲染。 */
+function PageSchematic({ doc }: { doc: FigureDocument }) {
+  const { w, h } = doc.page
+  if (!(w > 0 && h > 0)) return null
+  const stroke = Math.max(w, h) / 120
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="max-h-full max-w-full p-0.5" aria-hidden>
+      <rect x={0} y={0} width={w} height={h} fill="#fff" stroke="#cfcfc7" strokeWidth={stroke} />
+      {doc.objects
+        .filter((o) => !o.hidden)
+        .slice(0, 80)
+        .map((o) => (
+          <rect
+            key={o.id}
+            x={o.x}
+            y={o.y}
+            width={o.w}
+            height={o.h}
+            fill="#1b1b18"
+            fillOpacity={o.type === 'panel' ? 0.3 : 0.14}
+          />
+        ))}
+    </svg>
+  )
+}
+
+/**
+ * 阻断项清单（审计 T33）：标题 · 主语 · 当前值 → 要求，每条一个「定位」。
+ * 只列阻断级、只列前几条、不筛选、不修复——那些都在左侧问题面板。
+ * 等级不只靠颜色：图标 + 「阻断」标签 + 颜色三重表达。
+ */
+function BlockingList({
+  issues,
+  onLocate,
+  onMore,
+}: {
+  issues: ValidationIssue[]
+  onLocate: (issue: ValidationIssue) => void
+  onMore: () => void
+}) {
+  useTranslation(['dialogs', 'errors'])
+  const shown = issues.slice(0, BLOCKING_SHOWN)
+  const rest = issues.length - shown.length
+  return (
+    <ul
+      aria-label={ex('blockingListLabel')}
+      className="ml-[64px] flex flex-col gap-1 rounded-sm border border-danger/30 bg-surface-2 px-2 py-1.5"
+    >
+      {shown.map((issue) => {
+        const values = issueValues(issue)
+        const title = issueTitle(issue)
+        const subject = subjectName(issue)
+        return (
+          <li key={issue.issueId} data-blocking-issue={issue.ruleCode} className="flex items-start gap-1.5 text-xs">
+            <TriangleAlert size={11} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <span className="min-w-0 flex-1 leading-relaxed">
+              <span className="text-ink">{title}</span>
+              <span className="text-ink-3">{` · ${subject}`}</span>
+              {values.current && (
+                <span className="ml-1 font-mono text-[10px] text-ink-3">
+                  {values.expected
+                    ? translate('problems.valueArrow', {
+                        ns: 'errors',
+                        current: values.current,
+                        expected: values.expected,
+                      })
+                    : values.current}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onLocate(issue)}
+              aria-label={ex('locateAria', { subject, title })}
+              className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+            >
+              {ex('locate')}
+            </button>
+          </li>
+        )
+      })}
+      {rest > 0 && (
+        <li className="pl-4">
+          <button
+            type="button"
+            onClick={onMore}
+            className="rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+          >
+            {ex('blockingMore', { count: rest })}
+          </button>
+        </li>
+      )}
+    </ul>
+  )
+}
+
 const round1 = (v: number) => Math.round(v * 10) / 10
 
 /**
@@ -842,9 +1178,12 @@ const round1 = (v: number) => Math.round(v * 10) / 10
  */
 function CheckRow({
   summary,
+  scopeHint,
   onOpenPanel,
 }: {
   summary: ValidationSummary
+  /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
+  scopeHint: string
   onOpenPanel: () => void
 }) {
   useTranslation(['dialogs', 'errors'])
@@ -866,6 +1205,7 @@ function CheckRow({
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink-2">
           <Check size={12} className="shrink-0 text-accent" aria-hidden />
           {ex('preflightOk')}
+          <span className="text-ink-3">{`· ${scopeHint}`}</span>
         </span>
       </Row>
     )
@@ -883,6 +1223,7 @@ function CheckRow({
       >
         <TriangleAlert size={12} className="shrink-0" aria-hidden />
         {parts.join(' · ')}
+        <span className="text-ink-3">{`· ${scopeHint}`}</span>
       </span>
       <OpenProblems onClick={onOpenPanel} />
     </Row>
