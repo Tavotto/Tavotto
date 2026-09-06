@@ -111,6 +111,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
   clear: () => {
+    // 第二道保险，**没有用例杀得掉它**：新文档的画布 id 是新生成的，
+    // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
+    // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。
     parkedLayoutView = null
     set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
   },
@@ -305,7 +308,9 @@ export function returnToLayout(): void {
   // **先还原用户进来之前看的那一片**（审计 T01）：他没缩放没平移，画面就不该变。
   // 记录对不上（换过画布 / 会话恢复时本来就在快速编辑里）才现算一个落点。
   const parked = takeParkedLayoutView()
-  if (wasFastEdit && parked) {
+  if (!wasFastEdit) {
+    // 一次什么都没切的「切换」：视口一个字不动
+  } else if (parked) {
     useViewportStore.getState().restoreView(parked)
   } else if (panel) {
     revealPanel(panel)

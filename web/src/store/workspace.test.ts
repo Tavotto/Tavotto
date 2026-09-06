@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { emptyProject, type PanelObject } from '@/types/document'
 import type { PanelInfo } from '@/lib/api'
@@ -6,6 +6,7 @@ import { useAssetStore } from './assetStore'
 import { startAutosave, useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
+import { useViewportStore } from './viewportStore'
 import { enterElementEdit } from './actions'
 import {
   addFigureToLayout,
@@ -16,6 +17,7 @@ import {
   startWorkspacePersistence,
   useWorkspaceStore,
 } from './workspace'
+import { activateCanvas, createCanvasAndActivate } from './canvasSession'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { syncLoadedDocument } from './liveSync'
 
@@ -510,5 +512,110 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
     expect(s().past.length).toBe(past + 1)
     s().undo()
     expect(panelsInDoc()).toHaveLength(0)
+  })
+})
+
+/**
+ * 切换模式不许把画布挪走（审计 T01 验收：**切换模式时画布不意外移动**）。
+ *
+ * 进快速编辑一定要动视口——那一屏按图自己的图幅单独摆出来。回来时此前一律
+ * `revealRect` 把那张图挪到视口中央：用户没缩放没平移，画面却换成了以某张图
+ * 为中心的另一片。现在回来还原进去之前的那一片。
+ *
+ * 动画在 reduced-motion 下同步落终态（`lib/motion.tween`），所以这里直接量
+ * 落点，不等 rAF。
+ */
+describe('切模式不动用户的视口', () => {
+  const vp = () => useViewportStore.getState()
+  const view = () => ({ zoom: vp().zoom, panX: vp().panX, panY: vp().panY })
+
+  beforeEach(async () => {
+    await reset()
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q.includes('reduce'),
+      media: q,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    }))
+    // 视口尺寸为 0 时所有视口动作都是 no-op，量不到任何东西
+    vp().setViewRect({ left: 0, top: 0, width: 900, height: 600 })
+    vp().setPan(0, 0)
+    vp().setZoomCentered(1)
+  })
+
+  it('回到画布排版时还原进快速编辑前看的那一片', () => {
+    openFastEdit('a.pdf')
+    addFigureToLayout('b.pdf')
+    // 用户在排版上自己摆好的视角
+    useWorkspaceStore.getState().exitToLayout()
+    vp().setPan(-321, 77)
+    vp().setZoomCentered(2)
+    const before = view()
+
+    openFastEdit('a.pdf')
+    expect(view()).not.toEqual(before) // 进快速编辑确实框住了那张图
+
+    returnToLayout()
+    expect(view()).toEqual(before)
+  })
+
+  it('没记过就现算一个落点，不是什么都不做', () => {
+    openFastEdit('a.pdf')
+    // 会话恢复：本来就在快速编辑里，没有「进来之前」那一片
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: panelOf('a.pdf').id })
+    vp().setPan(-999, -999)
+    returnToLayout()
+    expect(view().panX).not.toBe(-999)
+  })
+
+  it('本来就在排版上时不动视口（onboarding 的前置动作会这么调）', () => {
+    openFastEdit('a.pdf')
+    returnToLayout()
+    vp().setPan(-42, -42)
+    const before = view()
+    returnToLayout()
+    expect(view()).toEqual(before)
+  })
+
+  it('问题面板的定位也走同一条路：它调的是 enterFastEdit', () => {
+    addFigureToLayout('a.pdf')
+    vp().setPan(-150, -60)
+    const before = view()
+    useWorkspaceStore.getState().enterFastEdit(panelOf('a.pdf').id)
+    vp().setPan(0, 0)
+    returnToLayout()
+    expect(view()).toEqual(before)
+  })
+
+  it('换过画布就不还原：记下的那一片属于上一张画布', () => {
+    addFigureToLayout('a.pdf')
+    const c1 = s().activeCanvasId
+    const c2 = createCanvasAndActivate()
+    activateCanvas(c1)
+    vp().setPan(-200, -100)
+    const onC1 = view()
+
+    // 问题面板定位那条路：进快速编辑（记下 c1 的视角），之后用户切了画布标签
+    useWorkspaceStore.getState().enterFastEdit(panelOf('a.pdf').id)
+    activateCanvas(c2)
+    returnToLayout()
+    // 把 c1 的视角还给 c2 就是把用户送到别处
+    expect(view()).not.toEqual(onC1)
+  })
+
+  it('换文档之后不把上一份文档的视角还回来', async () => {
+    openFastEdit('a.pdf')
+    const inFastEdit = view()
+    await reset()
+    vp().setViewRect({ left: 0, top: 0, width: 900, height: 600 })
+    vp().setPan(-7, -7)
+    const before = view()
+    returnToLayout()
+    expect(view()).toEqual(before)
+    expect(view()).not.toEqual(inFastEdit)
   })
 })
