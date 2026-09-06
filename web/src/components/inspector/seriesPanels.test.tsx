@@ -758,6 +758,40 @@ describe('散点：继承有小状态点，面积单位带一句短提示（T16�
     expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
   })
 
+  it('多选：两个都改过且原样一致时照画（否则上一条会恒真）（cap-marker-orig）', async () => {
+    seedRender(
+      makeManifest([
+        elementOf(
+          'axes_0.collections_0',
+          'scatter',
+          '散点 “Observed”',
+          scatterFields({
+            marker: '^',
+            shape: { kind: 'named', name: '^' },
+            orig: { kind: 'named', name: 'o' },
+          }),
+        ),
+        elementOf(
+          'axes_0.collections_1',
+          'scatter',
+          '散点 “Model”',
+          scatterFields({
+            marker: '^',
+            shape: { kind: 'named', name: '^' },
+            orig: { kind: 'named', name: 'o' },
+          }),
+        ),
+      ]),
+    )
+    await mount(['axes_0.collections_0', 'axes_0.collections_1'])
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="标记"]')!
+    await act(async () => {
+      trigger.click()
+    })
+    const orig = document.querySelector<HTMLElement>('[data-value="original"]')!
+    expect(orig.querySelector('[data-marker-preview] circle')).toBeTruthy()
+  })
+
   it('标记 = o：画真实形状，没有继承状态点', async () => {
     seedRender(
       makeManifest([
