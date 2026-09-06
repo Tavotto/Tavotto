@@ -331,10 +331,11 @@
     "clearFilter": "显示全部",
     "cmp": {
       "above": "大于 {{value}}",
-      "aboveAtBoundary": "大于 {{value}}（不含等号；当前值四舍五入后恰好落在边界）",
+      "aboveAtBoundary": "大于 {{value}}（正好等于不算通过）",
       "atLeast": "≥ {{value}}",
-      "atLeastAtBoundary": "≥ {{value}}（当前值略低于它，显示时被舍入成了同一个数）",
-      "atMost": "≤ {{value}}"
+      "atLeastAtBoundary": "≥ {{value}}（当前值实际略低，显示已四舍五入）",
+      "atMost": "≤ {{value}}",
+      "atMostAtBoundary": "≤ {{value}}（当前值实际略高，显示已四舍五入）"
     },
     "current": "当前",
     "cursorAt": "第 {{pos}} / {{total}} 项",

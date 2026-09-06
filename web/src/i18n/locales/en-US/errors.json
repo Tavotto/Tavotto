@@ -331,10 +331,11 @@
     "clearFilter": "Show all",
     "cmp": {
       "above": "above {{value}}",
-      "aboveAtBoundary": "above {{value}} (exclusive; the current value rounds exactly to the boundary)",
+      "aboveAtBoundary": "above {{value}} (exactly equal does not pass)",
       "atLeast": "≥ {{value}}",
-      "atLeastAtBoundary": "≥ {{value}} (the current value is slightly below it; rounding makes them look equal)",
-      "atMost": "≤ {{value}}"
+      "atLeastAtBoundary": "≥ {{value}} (the value is just below it; the display is rounded)",
+      "atMost": "≤ {{value}}",
+      "atMostAtBoundary": "≤ {{value}} (the value is just above it; the display is rounded)"
     },
     "current": "Current",
     "cursorAt": "{{pos}} of {{total}}",
