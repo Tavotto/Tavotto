@@ -34,6 +34,7 @@
     },
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
+    "figureListLabel": "要按原图尺寸导出的图",
     "formatLabel": "格式",
     "ignored": {
       "crop": "裁剪",
@@ -89,7 +90,8 @@
     "scopeOriginalNote": "按这张图自己的尺寸出图：{{w}} × {{h}} mm。",
     "scopeOriginalNoteUnknown": "按这张图自己的尺寸出图。",
     "scopeUnavailable": {
-      "no_figure": "先选中一张图，才能按原图尺寸导出。",
+      "no_figure": "还没定要导哪一张：点选下面的一张图，就按它的原图尺寸导出。",
+      "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
       "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },

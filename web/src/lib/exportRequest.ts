@@ -66,8 +66,13 @@ export function defaultScope(mode: WorkspaceMode): ExportScope {
  */
 export type OriginalBlockReason =
   | 'none'
-  /** 这次没有"当前这张图"（画布上没选中面板，也没在快速编辑里） */
+  /**
+   * 这次没有"当前这张图"（没在快速编辑里、画布上也没选中面板），但项目里
+   * **有**图可挑——对话框里的列表让用户点一张（用户反馈 06）
+   */
   | 'no_figure'
+  /** 项目里根本没有可按原图导的图：列表是空的，点无可点 */
+  | 'no_figures'
   /** 文档与素材清单都不认识它：不发明一张不存在的图 */
   | 'unknown_figure'
   /** 源文件此刻不可用（掉线 / 被删）。规格还在（上一次已知的那份），但导不出来 */
@@ -86,8 +91,14 @@ export interface OriginalAvailability {
  * 一个消失的按钮无法解释自己，而一次悄悄换掉的范围会让用户拿到一张
  * 他没要的图。
  */
-export function originalAvailability(figureId: string | null): OriginalAvailability {
-  if (!figureId) return { ok: false, reason: 'no_figure', spec: null }
+export function originalAvailability(
+  figureId: string | null,
+  opts: { anyFigures?: boolean } = {},
+): OriginalAvailability {
+  // 「没选」与「没得选」是两句不同的话：前者让用户去点一张，后者点无可点
+  if (!figureId) {
+    return { ok: false, reason: opts.anyFigures === false ? 'no_figures' : 'no_figure', spec: null }
+  }
   const spec = getOriginalOutputSpec(figureId)
   if (!spec) return { ok: false, reason: 'unknown_figure', spec: null }
   /*

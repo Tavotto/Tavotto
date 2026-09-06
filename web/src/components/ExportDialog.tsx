@@ -29,10 +29,16 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import type { ExportJob, ExportOutput } from '@/lib/api'
+import { panelSrc, type ExportJob, type ExportOutput } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
+import { engineTransport } from '@/lib/engineTransport'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
+import {
+  contextFigureId,
+  listExportableFigures,
+  type ExportableFigure,
+} from '@/lib/exportFigures'
 import { openProblems } from '@/lib/issueFocus'
 import {
   exportContextIssues,
@@ -59,8 +65,11 @@ import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
+import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import {
   cancelCurrentExport,
   prepareExport,
@@ -154,27 +163,47 @@ export function ExportDialog() {
   const profile: PublicationProfile = resolved.profile
 
   /* --------------------------- 这次要导的是什么 --------------------------- */
-  /** 快速编辑正在编的那张图；画布模式下取选中的那个面板 */
-  const figureId = useMemo(() => {
-    const panelId = activePanelId
-    if (!panelId) return null
-    const o = doc.objects.find((x) => x.id === panelId)
-    return o?.type === 'panel' ? o.fileId : null
-  }, [activePanelId, doc.objects])
   /*
-   * 这两个 memo 读的是 store 的**当前快照**（`originalAvailability` 问素材
-   * 清单与 runtime 清单，`findFigurePanel` 问文档），所以依赖里必须带上那几份
-   * 状态——只挂 `figureId` 的话，对话框开着时素材被删/掉线，组件重渲染了而
-   * memo 还是旧值：那颗按钮继续亮着，按下去后端报 `source_missing`
-   * （PR #214 复审）。
+   * 下面几个 memo 读的是 store 的**当前快照**（候选清单问文档 / 素材清单 /
+   * runtime 清单，`contextFigureId` 问工作区与选区，`originalAvailability`
+   * 问素材清单，`findFigurePanel` 问文档），所以依赖里必须带上那几份状态——
+   * 只挂 `figureId` 的话，对话框开着时素材被删/掉线，组件重渲染了而 memo
+   * 还是旧值：那颗按钮继续亮着，按下去后端报 `source_missing`（PR #214 复审）。
+   * 那几份状态是**触发重算的信号**，不是入参，linter 看不见那一层。
    */
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
-  const availability = useMemo(
-    () => originalAvailability(figureId),
-    // `assets` / `runtimeAssets` 是**触发重算的信号**，不是入参：
-    // `originalAvailability()` 读的是 store 的当前快照，linter 看不见那一层
+  const runtimeById = useRuntimeAssetStore((s) => s.byId)
+  const assetPanels = useAssetStore((s) => s.panels)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const selectedIds = useSelectionStore((s) => s.ids)
+  /** 项目里能按原图导的图：文档里的面板优先，其次素材清单里还没上画布的 */
+  const figures = useMemo(
+    () => listExportableFigures(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, assets, runtimeAssets],
+    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById],
+  )
+  /**
+   * 用户在对话框列表里点过的那张。**对话框本地状态**，打开时清空：它是这一次
+   * 导出的选择，不是画布选区，也不进工作区——点缩略图不该改画布上选中了什么。
+   */
+  const [pickedFigureId, setPickedFigureId] = useState<string | null>(null)
+  /**
+   * 这次导的是哪一张：用户点过的优先（还在清单里才算数——对话框开着时素材
+   * 被删了，点过的那张不能变成一个凭空的 id）；没点过就按上下文
+   * （快速编辑正在编的 → 画布上选中的面板 → 项目里只有一张时就是它）。
+   */
+  const figureId = useMemo(
+    () =>
+      pickedFigureId && figures.some((f) => f.figureId === pickedFigureId)
+        ? pickedFigureId
+        : contextFigureId(figures),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pickedFigureId, figures, activePanelId, selectedIds, doc.objects],
+  )
+  const availability = useMemo(
+    () => originalAvailability(figureId, { anyFigures: figures.length > 0 }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [figureId, figures, assets, runtimeAssets],
   )
   const panel = useMemo(
     () => (figureId ? (findFigurePanel(figureId)?.panel ?? null) : null),
@@ -211,6 +240,7 @@ export function ExportDialog() {
     const snap = useDocumentStore.getState().doc
     setFilename(snap.name)
     setConfirmed(false)
+    setPickedFigureId(null)
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId)
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
     // 那样用户会拿到一张他没要的图。可用性由下面那一行说出来
@@ -558,6 +588,21 @@ export function ExportDialog() {
           pageW={doc.page.w}
           pageH={doc.page.h}
         />
+        {/* 2b. 要导的是哪一张 —— 项目里的图直接列出来点选（用户反馈 06）。
+            按原图导时总是显示；按画布导但原图此刻不可用时也显示，因为上面那句
+            「点选下面的一张」得指得到东西。清单为空时一个字都不出现：空态由
+            `scopeUnavailable.no_figures` 那一句说 */}
+        {figures.length > 0 && (scope === 'original' || !availability.ok) && (
+          <FigurePicker
+            figures={figures}
+            selectedId={figureId}
+            onPick={(id) => {
+              setPickedFigureId(id)
+              // 点了一张图，意思就是「按它的原图尺寸导」——不让用户再去点一次范围
+              setScope('original')
+            }}
+          />
+        )}
 
         {/* 3. 格式 */}
         <Row label={ex('formatLabel')} labelWidth={56}>
@@ -763,6 +808,138 @@ function ScopeButton({
     >
       {label}
     </button>
+  )
+}
+
+/**
+ * 项目里的图，点一张就是这次「按原图尺寸」要导的那张（用户反馈 06）。
+ *
+ * 之前的流程要求用户关掉对话框、回画布选中、再打开——而画布模式下就算选中了，
+ * 对话框也读不到（只认快速编辑的 `activePanelId`）。现在候选就摆在这里。
+ *
+ * 缩略图**复用已有的东西**：面板有图内修改时挂 `renderStore` 里已经画好的那份
+ * SVG（与画布同一份，不再发渲染请求）；其余走素材库同一条缩略图地址
+ * （`panelSrc`，磁盘文件的分档缩略图）。`role=listbox`——不是 radio，范围那一组
+ * 才是 radio，两组混在一起屏幕阅读器会数出四个「范围」。
+ */
+function FigurePicker({
+  figures,
+  selectedId,
+  onPick,
+}: {
+  figures: readonly ExportableFigure[]
+  selectedId: string | null
+  onPick: (figureId: string) => void
+}) {
+  useTranslation('dialogs')
+  return (
+    <div
+      role="listbox"
+      aria-label={ex('figureListLabel')}
+      className="ml-[64px] flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto"
+    >
+      {figures.map((f) => {
+        const selected = f.figureId === selectedId
+        return (
+          <button
+            key={f.figureId}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            title={f.name}
+            onClick={() => onPick(f.figureId)}
+            className={cn(
+              'relative flex w-[92px] shrink-0 flex-col gap-1 rounded-sm border p-1 text-left outline-none transition-colors focus-visible:focus-ring',
+              selected
+                ? 'border-accent bg-accent-subtle'
+                : 'border-border bg-surface hover:border-border-strong',
+            )}
+          >
+            <FigureThumb figure={f} />
+            <span
+              className={cn(
+                'block w-full truncate text-[11px] leading-tight',
+                selected ? 'text-accent' : 'text-ink-2',
+              )}
+            >
+              {f.name}
+            </span>
+            {/* 选中态不只靠颜色：右上角一个勾（web/AGENTS.md UI 视觉纪律） */}
+            {selected && (
+              <span
+                aria-hidden
+                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-accent text-white"
+              >
+                <Check size={10} strokeWidth={3} />
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 一张图的缩略图。**不发新的渲染请求**：
+ *
+ * * 面板需要引擎产物（有图内修改且不是刚烙下的基线 / 脚本已领先磁盘 / runtime）
+ *   且 store 里有这一版（或 Phase F 退路那一版）的 SVG → 内联它，与画布同源；
+ * * 否则挂素材库同一条缩略图地址（磁盘原图的分档缩略图 / 位图原文件 /
+ *   runtime 的 materialized 预览）；
+ * * 什么都拿不到（runtime 还没物化、未知形态、Codex 内嵌画布里没有 HTTP）→
+ *   诚实的空位，不挂一个碎图标。
+ *
+ * 有图内修改却拿不到引擎 SVG（位图档 / 已被内存预算清掉）时退到磁盘原图：
+ * 缩略图在这里的职责是**认出是哪张图**，不是核对修改——核对归画布。
+ */
+function FigureThumb({ figure }: { figure: ExportableFigure }) {
+  const render = usePanelRender(figure.panel)
+  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId])
+  const panel = figure.panel
+  const needsEngine =
+    !!panel &&
+    ((panel.overrides.length > 0 && !isJustBakedBaseline(panel)) ||
+      tracked ||
+      figure.kind === 'runtime')
+  const svg = needsEngine ? (render?.svg ?? null) : null
+  const transport = engineTransport()
+  const src =
+    figure.kind === 'unknown' || (figure.kind === 'runtime' && !figure.cached)
+      ? null
+      : transport
+        ? transport.panelSrc(figure.figureId, figure.kind, 160, figure.stamp)
+        : panelSrc(figure.figureId, figure.kind, 160, figure.stamp)
+  const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm
+  const ratio = sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3
+  return (
+    <span className="flex h-14 w-full items-center justify-center overflow-hidden rounded-[3px] border border-border bg-white">
+      {svg ? (
+        // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
+        // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
+        <span
+          data-export-thumb="svg"
+          className="block"
+          style={{
+            aspectRatio: String(ratio),
+            ...(ratio >= 1 ? { width: '100%' } : { height: '100%' }),
+            maxWidth: '100%',
+            maxHeight: '100%',
+          }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : src ? (
+        <img
+          data-export-thumb="file"
+          src={src}
+          alt=""
+          draggable={false}
+          className="max-h-full max-w-full object-contain"
+        />
+      ) : (
+        <span data-export-thumb="none" className="h-full w-full bg-surface-2" />
+      )}
+    </span>
   )
 }
 
