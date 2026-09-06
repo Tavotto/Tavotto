@@ -15,6 +15,7 @@ import {
   type SidePlan,
   type TickDirection,
 } from '@/lib/tickSides'
+import type { TickAxis } from '../tickAdapter'
 import { ResetChip, labeledWithState } from './textRows'
 
 /**
@@ -32,7 +33,8 @@ import { ResetChip, labeledWithState } from './textRows'
  * 照样显示（不因折叠而不可发现）。
  *
  * 本组件只负责**摆放与写入**；能力仍由 manifest 说了算：
- * `axis.has(prop)` 为假就整行不画，绝不摆一个「点了不生效」的控件。
+ * `axis.has(prop)` 为假就整行不画，绝不摆一个「点了不生效」的控件。3D 的
+ * Z 轴由此天然只剩长度 / 宽度 / 次刻度（引擎摘掉了 direction 与 minor_*）。
  * 主刻度**没有** `major_visible` 字段，所以这里也不造一个——次刻度开关说的
  * 是「只要主刻度 / 主刻度 + 次刻度」，不是「主刻度开关」。
  *
@@ -44,8 +46,6 @@ import { ResetChip, labeledWithState } from './textRows'
 
 const tk = (key: string, values?: Record<string, unknown>) =>
   translate(`tick.${key}`, { ns: 'inspector', ...(values ?? {}) })
-
-type TickAxis = 'x' | 'y'
 
 /** 一个轴的刻度写入面。由调用方按 host 元素组装（axes 页与刻度组页各一份） */
 export interface TickAxisAdapter {
@@ -79,8 +79,8 @@ const DIRECTIONS: TickDirection[] = ['in', 'out', 'inout']
 /** 方向档的显示顺序：三个真方向 + 「隐藏」（两边都不显示刻度线的派生态） */
 const CHOICES: AxisTickChoice[] = ['in', 'out', 'inout', 'hidden']
 
-const AXIS_NAME: Record<TickAxis, string> = { x: 'axisX', y: 'axisY' }
-const AXIS_TAB: Record<TickAxis, string> = { x: 'xTicks', y: 'yTicks' }
+const AXIS_NAME: Record<TickAxis, string> = { x: 'axisX', y: 'axisY', z: 'axisZ' }
+const AXIS_TAB: Record<TickAxis, string> = { x: 'xTicks', y: 'yTicks', z: 'zTicks' }
 
 export function TickTaskCard({
   axes,
@@ -126,16 +126,17 @@ export function TickTaskCard({
   /** 次刻度的从属行：关着时收起；用户改过的照样显示 */
   const minorRow = (prop: string) => minorOn || cur.isOverridden(prop)
   // 四边模型在、且这条轴在模型里：方向档带「隐藏」，写入走计划（一次 commit
-  // 可能同时动方向与两边显隐）；不在：退回只写 direction 的三档
-  const modelSides = model ? sidesOfAxis(cur.axis).filter((sd) => model.sides[sd]) : []
+  // 可能同时动方向与两边显隐）；不在（Z 轴、没发 spines 的轴）：退回只写 direction 的三档
+  const modelSides =
+    model && cur.axis !== 'z' ? sidesOfAxis(cur.axis).filter((sd) => model.sides[sd]) : []
   const zoned = !!model && !!applyPlan && modelSides.length > 0
   const choice: AxisTickChoice = zoned
-    ? (axisChoice(model!, cur.axis) ?? 'out')
+    ? (axisChoice(model!, cur.axis as 'x' | 'y') ?? 'out')
     : (String(cur.read('direction') ?? 'out') as TickDirection)
   const choices: AxisTickChoice[] = zoned ? CHOICES : dirOptions
   const pickChoice = (v: AxisTickChoice) => {
     if (zoned) {
-      const plan = axisChoicePlan(model!, cur.axis, v)
+      const plan = axisChoicePlan(model!, cur.axis as 'x' | 'y', v)
       if (plan) applyPlan!(plan)
     } else if (v !== 'hidden') {
       cur.writeOnce('direction', v)
@@ -289,7 +290,7 @@ function NumberRow({
  * 而这件事本来就是图形化的。选中态由 Segmented 统一给（底色 + 字重）。
  */
 function DirectionGlyph({ axis, direction }: { axis: TickAxis; direction: AxisTickChoice }) {
-  // X 轴画一条横线（下边框），刻度上下伸；Y 轴画一条竖线（左边框），刻度左右伸。
+  // X 轴画一条横线（下边框），刻度上下伸；Y / Z 轴画一条竖线（左边框），刻度左右伸。
   // 「内」= 朝坐标框里，对下边框就是往上；轴线本身要够实，否则三档只差
   // 「短线在线的哪一侧」，在 18px 里根本分不出来（实测截图上确实分不出）。
   // 「隐藏」= 只有轴线、没有短线。

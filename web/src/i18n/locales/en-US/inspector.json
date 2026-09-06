@@ -1009,6 +1009,8 @@
     "width": "Width",
     "xTicks": "X ticks",
     "yTicks": "Y ticks",
+    "axisZ": "Z axis",
+    "zTicks": "Z ticks",
     "sectionMarks": "Tick marks",
     "sectionLabels": "Labels"
   },

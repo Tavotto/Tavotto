@@ -3,7 +3,7 @@
  *
  * 审计 T13 / T25 之后的三条：每组设置只有一处控件（显示边只在示意图上，方向
  * 只有一组分段，恢复只有一个动作）；次刻度关着时从属字段收起；刻度组页分
- * 「刻度 / 文字」两段。
+ * 「刻度 / 文字」两段，X / Y / Z 同一套页、字段名相同，Z 没有的由 manifest 说了算。
  *
  * 要钉住的（修改前全部不成立，见
  * `docs/ux/img/ux-consistency-pass/before/zh-1440-axes-ticks.png`——
@@ -770,27 +770,31 @@ describe('3D 图的 Z 刻度', () => {
     expect(host.querySelectorAll('[role="switch"][aria-label="X 轴的次刻度"]')).toHaveLength(0)
   })
 
-  it('Z 自己的长度 / 宽度 / 次刻度仍然可达（不被 consumed 规则吃掉）', async () => {
+  it('Z 与 X / Y 同一套页、同一套字段名（长度 / 宽度 / 次刻度），没有的能力由 manifest 说了算', async () => {
     await mount3d()
-    await openMore()
-    const text = textOf()
-    // 通用列表用的是完整属性名（卡里那套「长度 / 宽度」是任务卡内部的短标签）
-    expect(text).toContain('刻度长度')
-    expect(text).toContain('刻度粗细')
-    expect(text).toContain('次刻度')
+    const card = host.querySelector('[data-tick-card="z"]')!
+    expect(card).toBeTruthy()
+    expect(countLabel('长度')).toBe(1)
+    expect(countLabel('宽度')).toBe(1)
+    expect(textOf()).toContain('次刻度')
+    // 二维那套的完整属性名不再在这里出现（同一件事两个名字）
+    expect(textOf()).not.toContain('刻度长度')
+    expect(textOf()).not.toContain('刻度粗细')
+    // 3D 没有 direction / minor_length：不摆
+    expect(host.querySelector('[data-prop="direction"]')).toBeNull()
+    expect(host.querySelector('[data-prop="minor_length"]')).toBeNull()
+    expect(byAria('Z 轴的次刻度')).toBeTruthy()
+    // 两段顺序与二维一致
+    expect(
+      Array.from(host.querySelectorAll('[data-tick-section]')).map((s) => s.getAttribute('data-tick-section')),
+    ).toEqual(['marks', 'labels'])
   })
 
   it('改 Z 的长度写到 zticks，不碰 xticks / yticks', async () => {
     await mount3d()
-    await openMore()
-    // 通用 FieldRow 的可见标签就是可达名的来源，输入框自己没有 aria-label：
-    // 从标签所在的行往上找，再取行里的输入框
-    const label = Array.from(host.querySelectorAll('span')).find(
-      (x) => x.textContent?.trim() === '刻度长度' && x.children.length === 0,
-    )!
-    expect(label).toBeTruthy()
-    const row = label.closest('div')!.parentElement!
-    const len = row.querySelector('input') as HTMLInputElement
+    const len = host.querySelector(
+      '[data-tick-card="z"] input[data-inspector-prop="length"]',
+    ) as HTMLInputElement
     expect(len).toBeTruthy()
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!

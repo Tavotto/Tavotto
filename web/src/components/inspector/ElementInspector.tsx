@@ -104,7 +104,13 @@ import {
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { AspectControl } from './controls/AspectControl'
 import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
-import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
+import {
+  axisTickState,
+  tickElementOf,
+  tickHostOf,
+  useTickAxisAdapter,
+  type TickAxis,
+} from './tickAdapter'
 import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
 import { isTextLikeSelection } from './textStyleModel'
@@ -225,11 +231,11 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
   // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
   // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
-  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。Z 刻度（3D）没有
-  // 对应的卡，字段必须原样留在通用列表里——否则能力凭空消失（#142 评审 P1）
-  const tickAxisOfSelf =
-    element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
-  const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
+  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。X / Y / Z 三条轴
+  // 同一套页（`TickPage`），Z 由 `has()` 自然少掉 3D 没有的字段；gid 不成
+  // `<axes>.<xyz>ticks` 形状的刻度元素（引擎将来的新形态）退回通用列表
+  // ——字段必须留在界面上，能力凭空消失是最坏的那种（#142 评审 P1）
+  const tickCardCoversSelf = element?.role === 'ticks' && !!tickHostOf(element.gid)
   // 图例卡只在图例**有项**时出现；没有项的图例（脚本只放了标题）字号照旧
   // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
   const legendCardCoversSelf =
@@ -350,7 +356,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             {element && <UnsupportedProps elements={[element]} />}
           </>
         ) : tickCardCoversSelf && sideHost && element ? (
-          /* 刻度组页：「刻度 / 文字」两段（审计 T13） */
+          /* 刻度组页：「刻度 / 文字」两段（审计 T13），X / Y / Z 同一套 */
           <TickPage
             panel={panel}
             manifest={manifest}
@@ -966,7 +972,8 @@ const TICK_MINOR_PROPS = new Set(['minor_mode', 'minor_step', 'minor_format'])
  *           格式随开关条件出现）
  *   文字 —— 字号 / 颜色 / 数值格式 / 旋转 / 显示
  *
- * 字段的可见性（模式从属、已改过的必须
+ * X / Y / Z 同一套：Z（3D）没有的字段由 `has()` 自然少掉——判据是 manifest
+ * 发没发这个字段，不是「3D 就隐藏」。字段的可见性（模式从属、已改过的必须
  * 可见）仍由展示注册表算（`buckets`），这里只决定落在哪一段；两段都没点名的
  * 字段跟在「文字」后面，绝不丢失。
  */
@@ -989,11 +996,12 @@ function TickPage({
 }) {
   useTranslation('inspector')
   const w = useElementWriter(panel, host)
-  const selfAxis = tickHostOf(element.gid)?.axis ?? 'x'
-  // hook 数量固定：两个轴各调一次，元素不在时 adapter 回 null
+  const selfAxis: TickAxis = tickHostOf(element.gid)?.axis ?? 'x'
+  // hook 数量固定：三个轴各调一次，元素不在时 adapter 回 null
   const xAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'x'), 'x')
   const yAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'y'), 'y')
-  const self = selfAxis === 'x' ? xAdapter : yAdapter
+  const zAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'z'), 'z')
+  const self = selfAxis === 'x' ? xAdapter : selfAxis === 'y' ? yAdapter : zAdapter
 
   const model = readAxesTickModel(manifest, panel.overrides, host.gid)
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)

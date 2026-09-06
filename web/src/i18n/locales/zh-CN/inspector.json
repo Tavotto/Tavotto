@@ -988,6 +988,8 @@
     "width": "宽度",
     "xTicks": "X 刻度",
     "yTicks": "Y 刻度",
+    "axisZ": "Z 轴",
+    "zTicks": "Z 刻度",
     "sectionMarks": "刻度",
     "sectionLabels": "文字"
   },

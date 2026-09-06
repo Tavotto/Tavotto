@@ -2955,6 +2955,7 @@ export default interface Resources {
       "axisSwitch": "选择要配置的轴",
       "axisX": "X 轴",
       "axisY": "Y 轴",
+      "axisZ": "Z 轴",
       "dir": {
         "hidden": "隐藏",
         "in": "朝内",
@@ -2979,7 +2980,8 @@ export default interface Resources {
       },
       "width": "宽度",
       "xTicks": "X 刻度",
-      "yTicks": "Y 刻度"
+      "yTicks": "Y 刻度",
+      "zTicks": "Z 刻度"
     },
     "transform": {
       "rotation": "旋转",
