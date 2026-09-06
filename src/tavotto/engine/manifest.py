@@ -3360,6 +3360,12 @@ def _build_manifest(state: FigState, stem: str) -> dict:
     #: 消费掉的成员别名（`_alias_consumed_member`），那些 gid 指着同一个
     #: artist 却**不在元素表里**——发出去的话界面按它去 find 会扑空。这里要
     #: 回答的是「界面能选中的那一条是谁」，所以就从界面拿到的那张表反查。
+    #:
+    #: 说清楚：**这一条没有用例守着**。要让两种写法算出不同答案，得有一个
+    #: 既被容器消费掉、又是 ScalarMappable、还挂着色条的 artist——现有的图
+    #: 一张都造不出来，硬造一个也不代表用户会遇到。所以它靠的是结构上的
+    #: 正确（从界面拿到的那张表反查），不是靠一条断言。改动这里的人别指望
+    #: 测试会拦你。
     gid_by_artist_id: dict[int, str] = {}
     for el in state.elements:
         gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
