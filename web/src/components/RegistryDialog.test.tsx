@@ -33,7 +33,12 @@ import {
   type ReadinessPanel,
   type ReadinessReport,
 } from '@/lib/api'
-import { RegistryDialog, parseStems, sourceOptions } from '@/components/RegistryDialog'
+import {
+  RegistryDialog,
+  parseStems,
+  pickableStems,
+  sourceOptions,
+} from '@/components/RegistryDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
 import {
@@ -662,5 +667,24 @@ describe('手工映射：从项目已有的图名里挑', () => {
     const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
     await typeStems(input, SIX.map((p) => p.stem).join(', ') + '，')
     expect(pickerIn(input.closest('li'))).toBeNull()
+  })
+})
+
+/**
+ * 可挑的图名（纯函数）。
+ *
+ * 用 DOM 量不到这一维：选项住在 Radix 的弹层里，触发器上看不见。实测过
+ * ——把判据换成「是那串文本的子串」之后，上面那几条 DOM 用例全绿。
+ */
+describe('可挑的图名', () => {
+  it('已经填进去的那些不再出现', () => {
+    expect(pickableStems(['Ok', 'Auto'], ['Ok'])).toEqual(['Auto'])
+    expect(pickableStems(['Ok', 'Auto'], ['Ok', 'Auto'])).toEqual([])
+    expect(pickableStems(['Ok', 'Auto'], [])).toEqual(['Ok', 'Auto'])
+  })
+
+  it('判「等于」不判「子串」：填了 Ok_v2 之后 Ok 仍然可挑', () => {
+    expect(pickableStems(['Ok', 'Ok_v2'], ['Ok_v2'])).toEqual(['Ok'])
+    expect(pickableStems(['Fig1'], ['Fig1_kinetics'])).toEqual(['Fig1'])
   })
 })

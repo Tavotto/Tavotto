@@ -948,12 +948,7 @@ function ManualStems({
   useTranslation('dialogs')
   const [text, setText] = useState('')
   const stems = parseStems(text)
-  /**
-   * 挑过的不再出现在下拉里。判据用**解析后的名字**而不是原始文本：
-   * 用户敲了 `a，` 之后 `a` 已经在列表里了，而按子串判会让它继续出现在
-   * 可选项里（选了等于什么都没加）。
-   */
-  const options = known.filter((k) => !stems.includes(k))
+  const options = pickableStems(known, stems)
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs text-ink-3" htmlFor={`stems-${script}`}>
@@ -996,6 +991,21 @@ function ManualStems({
       </div>
     </div>
   )
+}
+
+/**
+ * 还能从下拉里挑的图名：已经填进框里的那些不再出现（选了等于什么都没加）。
+ *
+ * **判据是「等于某个已填的名字」，不是「是那串文本的子串」。** 用户敲了
+ * `Ok_v2` 之后 `Ok` 仍然该是可挑的——按子串判会把它一起藏掉，而那时用户
+ * 找不到一个明明还在项目里的图名。
+ *
+ * 与 `sourceOptions` 同一个理由抽成纯函数：选项住在 Radix 的弹层里，从触发器
+ * 上根本看不见，用 DOM 去断言「某一项还在不在」是一把量不了这一维的尺子，
+ * 判据会恒真（这一条实测被变异证过：按子串判的版本在 DOM 判据下全绿）。
+ */
+export function pickableStems(known: readonly string[], chosen: readonly string[]): string[] {
+  return known.filter((k) => !chosen.includes(k))
 }
 
 /**
