@@ -9,6 +9,7 @@ import {
   collectPanelAnnotations,
   type PanelAnnotations,
 } from '@/lib/writeBackAnnotations'
+import { dirTail } from '@/lib/pathDisplay'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -23,16 +24,6 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
-
-/**
- * 目录的末级名（`/a/b/original_backups/` → `original_backups`）。
- *
- * 备份目录在 macOS 上是 `/Users/<你>/Library/Application Support/Tavotto/cache/
- * original_backups` 这种长度——把它整条铺在确认框里，用户读完才看得见「备份」
- * 两个字，而那正是他要的信息。所以正文只显示末级目录，全路径与复制入口收进
- * 展开项（审计 T34）。
- */
-export const dirTail = (dir: string) => dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || dir
 
 /** 本组文案在 inspector:writeBack.* 下 */
 const wb = (key: string, values?: Record<string, unknown>) =>

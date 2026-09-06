@@ -13,7 +13,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { dirTail, WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
+import { WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
 import { i18n } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
@@ -367,18 +367,5 @@ describe('确认页的信息结构', () => {
     expect(d!.querySelector('summary')!.textContent).toContain('0818_101010')
     expect(d!.querySelector('summary')!.textContent).not.toContain('/data/original_backups')
     expect(d!.textContent).toContain(OK_BODY.backup_dir)
-  })
-})
-
-describe('dirTail', () => {
-  it('取末级目录，末尾斜杠不算一级', () => {
-    expect(dirTail('/a/b/original_backups')).toBe('original_backups')
-    expect(dirTail('cache/original_backups/')).toBe('original_backups')
-    expect(dirTail('C:\\Users\\me\\cache\\original_backups')).toBe('original_backups')
-  })
-
-  it('本来就没有分隔符时原样返回，绝不返回空串', () => {
-    expect(dirTail('original_backups')).toBe('original_backups')
-    expect(dirTail('/')).toBe('/')
   })
 })
