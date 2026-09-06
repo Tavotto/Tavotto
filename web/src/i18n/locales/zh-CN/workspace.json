@@ -558,7 +558,7 @@
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
     "objectCopied": "已复制 {{name}}",
-    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他布局文档）",
+    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他文档）",
     "overridesCleared": "已清空该面板的图内修改",
     "packageDrift_other": "已打开项目包；{{count}} 个素材与打包时内容不一致（可能已被改动），请核对",
     "packageFailed": "打包失败：{{error}}",

@@ -239,7 +239,7 @@
         "label": "Open structure (layers)"
       },
       "load-layout": {
-        "keywords": "open load layout canvas file",
+        "keywords": "open load document canvas file",
         "label": "Load canvas file…"
       },
       "new-doc": {
@@ -255,7 +255,7 @@
         "label": "Save this document"
       },
       "save-layout": {
-        "keywords": "save layout canvas file",
+        "keywords": "save as document canvas file",
         "label": "Save as canvas file…"
       },
       "select-all": {
@@ -280,7 +280,7 @@
       },
       "versions": {
         "keywords": "version history timeline snapshot",
-        "label": "Layout version timeline…"
+        "label": "Document versions…"
       },
       "tutorial-start": {
         "label": "Start tutorial",
@@ -644,7 +644,7 @@
     "cancelPaste": "Cancel paste",
     "confirmDoc": "Relink the selected assets",
     "confirmPaste": "Paste with these choices",
-    "descDoc": "This layout references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you leave alone stay missing and will be flagged by the pre-export check.",
+    "descDoc": "This document references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you skip stay missing and are flagged in the pre-export check.",
     "descPaste": "Panels on the clipboard reference files that do not exist in the current figure library. Pick a replacement for each, or skip that panel.",
     "footnote": "Relinking resets the figure edits to the new asset's size and script (overrides are bound to elements of the original script, so they do not transfer reliably). Position, size, stacking order and grouping are kept.",
     "keepMissing": "Leave missing",
@@ -1209,7 +1209,7 @@
     "beforeRestore": "Before restore ({{time}})",
     "close": "Close document versions",
     "compareAria": "Overlay comparison",
-    "compareDescription": "Base = this version; translucent outline = current layout",
+    "compareDescription": "Base = this version; translucent outline = current canvas",
     "compareTip": "Large overlay comparison (base = this version, outline = current)",
     "compareTitle": "Overlay comparison",
     "delete": "Delete version",
@@ -1250,7 +1250,7 @@
     "listLabel": "Version list",
     "loadingSnapshot": "Loading the snapshot…",
     "namePlaceholder": "Version name (optional)",
-    "noDiff": "No differences from the current layout",
+    "noDiff": "No differences from the current canvas",
     "previewApproximate": "Figure-edit preview unavailable; the thumbnail below shows the original file (approximate).",
     "rename": "Rename version",
     "restore": "Restore as a new version",

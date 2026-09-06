@@ -79,7 +79,7 @@
     "open_project_failed": "Cannot open this project: {{reason}}",
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
-    "package_schema_unsupported": "The layout in this package is neither schema 2 nor schema 3",
+    "package_schema_unsupported": "The document in this package is neither schema 2 nor schema 3",
     "permission_denied": "No permission to read: {{path}}",
     "ppi_out_of_range": "Resolution {{value}} is out of range — it must be between {{min}} and {{max}}.",
     "probe_in_progress": "A run of this script is already in progress: {{script}}",

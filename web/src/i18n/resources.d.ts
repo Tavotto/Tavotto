@@ -599,7 +599,7 @@ export default interface Resources {
         },
         "versions": {
           "keywords": "version history timeline bb sjx banben",
-          "label": "布局版本时间线…"
+          "label": "文档版本…"
         }
       },
       "listLabel": "命令",
@@ -935,7 +935,7 @@ export default interface Resources {
       "cancelPaste": "取消粘贴",
       "confirmDoc": "重新链接所选素材",
       "confirmPaste": "按上述处置粘贴",
-      "descDoc": "布局引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
+      "descDoc": "文档引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
       "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
       "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
       "keepMissing": "保持缺失",
@@ -1491,7 +1491,7 @@ export default interface Resources {
       "beforeRestore": "恢复前（{{time}}）",
       "close": "关闭文档版本",
       "compareAria": "叠加对比",
-      "compareDescription": "底图 = 该版本；半透明描边 = 当前布局",
+      "compareDescription": "底图 = 该版本；半透明描边 = 当前画布",
       "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
       "compareTitle": "叠加对比",
       "delete": "删除版本",
@@ -1532,7 +1532,7 @@ export default interface Resources {
       "listLabel": "版本列表",
       "loadingSnapshot": "正在载入快照…",
       "namePlaceholder": "版本名称（可留空）",
-      "noDiff": "与当前布局没有差异",
+      "noDiff": "与当前画布没有差异",
       "previewApproximate": "图内修改预览不可用，下方缩略图为磁盘原图（近似）。",
       "rename": "重命名版本",
       "restore": "恢复为新版本",
@@ -1641,7 +1641,7 @@ export default interface Resources {
       "open_project_failed": "打不开这个项目：{{reason}}",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
-      "package_schema_unsupported": "项目包里的布局既不是 schema 2 也不是 schema 3",
+      "package_schema_unsupported": "项目包里的文档既不是 schema 2 也不是 schema 3",
       "permission_denied": "无权限读取：{{path}}",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，要在 {{min}} 到 {{max}} 之间。",
       "probe_in_progress": "这个脚本已有一次运行在进行中：{{script}}",
@@ -3269,7 +3269,7 @@ export default interface Resources {
       "view": "视图"
     },
     "key": {
-      "copyPaste": "复制 / 粘贴对象（可跨布局文档）",
+      "copyPaste": "复制 / 粘贴对象（可跨文档）",
       "cycleOverlap": "在重叠的图内元素之间轮换选中（双纵轴的两个子图容器）",
       "delete": "删除对象；图内编辑时 = 隐藏元素（可恢复）",
       "duplicate": "原位复制所选",
@@ -3866,7 +3866,7 @@ export default interface Resources {
       "nothingToRedo": "没有可重做的操作",
       "nothingToUndo": "没有可撤销的操作",
       "objectCopied": "已复制 {{name}}",
-      "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他布局文档）",
+      "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他文档）",
       "overridesCleared": "已清空该面板的图内修改",
       "packageDrift_other": "已打开项目包；{{count}} 个素材与打包时内容不一致（可能已被改动），请核对",
       "packageFailed": "打包失败：{{error}}",

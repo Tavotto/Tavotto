@@ -589,7 +589,7 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "objectCopied": "Copied {{name}}",
-    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document",
+    "objectsCopied": "Copied {{count}} objects — they can be pasted into another document",
     "overridesCleared": "Cleared this panel's figure edits",
     "packageDrift_one": "Project package opened; {{count}} asset differs from the packaged copy and may have been edited — please check",
     "packageDrift_other": "Project package opened; {{count}} assets differ from the packaged copies and may have been edited — please check",

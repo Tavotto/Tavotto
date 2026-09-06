@@ -277,7 +277,7 @@
       },
       "versions": {
         "keywords": "version history timeline bb sjx banben",
-        "label": "布局版本时间线…"
+        "label": "文档版本…"
       },
       "tutorial-start": {
         "label": "开始教程",
@@ -637,7 +637,7 @@
     "cancelPaste": "取消粘贴",
     "confirmDoc": "重新链接所选素材",
     "confirmPaste": "按上述处置粘贴",
-    "descDoc": "布局引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
+    "descDoc": "文档引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
     "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
     "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
     "keepMissing": "保持缺失",
@@ -1193,7 +1193,7 @@
     "beforeRestore": "恢复前（{{time}}）",
     "close": "关闭文档版本",
     "compareAria": "叠加对比",
-    "compareDescription": "底图 = 该版本；半透明描边 = 当前布局",
+    "compareDescription": "底图 = 该版本；半透明描边 = 当前画布",
     "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
     "compareTitle": "叠加对比",
     "delete": "删除版本",
@@ -1234,7 +1234,7 @@
     "listLabel": "版本列表",
     "loadingSnapshot": "正在载入快照…",
     "namePlaceholder": "版本名称（可留空）",
-    "noDiff": "与当前布局没有差异",
+    "noDiff": "与当前画布没有差异",
     "previewApproximate": "图内修改预览不可用，下方缩略图为磁盘原图（近似）。",
     "rename": "重命名版本",
     "restore": "恢复为新版本",

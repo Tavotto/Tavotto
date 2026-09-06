@@ -19,7 +19,7 @@
     "tutorial": "Tutorial"
   },
   "key": {
-    "copyPaste": "Copy / paste objects (works across layout documents)",
+    "copyPaste": "Copy / paste objects (works across documents)",
     "delete": "Delete objects; in figure editing this hides the element instead (restorable)",
     "duplicate": "Duplicate the selection in place",
     "enter": "Edit the selection: text enters editing, parameterizable panels enter figure editing",
