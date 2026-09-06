@@ -2,7 +2,8 @@ import { useTranslation } from 'react-i18next'
 import { LayoutGrid, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { formatMm } from '@/lib/units'
-import { getOriginalOutputSpec, type OriginalOutputSpec } from '@/lib/originalSpec'
+import { useOriginalSpec } from '@/hooks/useOriginalSpec'
+import type { OriginalOutputSpec } from '@/lib/originalSpec'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -26,9 +27,10 @@ export function FastEditBar() {
   })
   // capability 缺席 = 这一轮还不知道，什么都不说（不补默认值）
   const capability = useAssetStore((s) => (panel ? s.byId[panel.fileId]?.capability : undefined))
+  // 与导出对话框同一个 hook：渲染回来 / 图幅同步时两处一起重算，数不可能对不上
+  const spec = useOriginalSpec(panel?.fileId ?? null)
   if (!panel) return null
 
-  const spec = getOriginalOutputSpec(panel.fileId)
   const name = panel.name ?? panel.fileId
   const editable = !!panel.script
 

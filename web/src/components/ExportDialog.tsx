@@ -44,7 +44,6 @@ import { severityLabel } from '@/lib/validationText'
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
-  originalAvailability,
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
@@ -59,8 +58,8 @@ import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
+import { useOriginalAvailability } from '@/hooks/useOriginalSpec'
 import { useAssetStore } from '@/store/assetStore'
-import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import {
   cancelCurrentExport,
   prepareExport,
@@ -162,20 +161,13 @@ export function ExportDialog() {
     return o?.type === 'panel' ? o.fileId : null
   }, [activePanelId, doc.objects])
   /*
-   * 这两个 memo 读的是 store 的**当前快照**（`originalAvailability` 问素材
-   * 清单与 runtime 清单，`findFigurePanel` 问文档），所以依赖里必须带上那几份
-   * 状态——只挂 `figureId` 的话，对话框开着时素材被删/掉线，组件重渲染了而
-   * memo 还是旧值：那颗按钮继续亮着，按下去后端报 `source_missing`
-   * （PR #214 复审）。
+   * 规格与可用性由 `hooks/useOriginalSpec` 绑定——它订阅了规格依赖的**每一份**
+   * 状态（文档 / 渲染态 / 素材清单 / runtime 清单）。以前这里只挂素材清单：
+   * 素材被删/掉线时会重算（PR #214 复审），但渲染回来、图幅同步进文档时
+   * **不会**——对话框于是停在打开那一刻的旧尺寸，与快速编辑条上的数对不上
+   * （审计 T33：75.3 × 58.7 对 80 × 57.6）。快速编辑条用的是同一个 hook。
    */
-  const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
-  const availability = useMemo(
-    () => originalAvailability(figureId),
-    // `assets` / `runtimeAssets` 是**触发重算的信号**，不是入参：
-    // `originalAvailability()` 读的是 store 的当前快照，linter 看不见那一层
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, assets, runtimeAssets],
-  )
+  const availability = useOriginalAvailability(figureId)
   const panel = useMemo(
     () => (figureId ? (findFigurePanel(figureId)?.panel ?? null) : null),
     // 同上：`findFigurePanel()` 问的是 documentStore 的当前快照
