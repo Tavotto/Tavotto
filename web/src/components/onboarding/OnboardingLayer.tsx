@@ -242,7 +242,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     setPlacement(p)
   }, [measured, ctx])
 
-  const missing = !blocked && measured === null
+  const missing = measured === null
   const showMissing = missing && waitedOut
 
   const variant = def.variant ? def.variant(ctx) : stepId
