@@ -512,6 +512,9 @@ describe('选中图例项', () => {
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
     expect(host.querySelector('[data-binding]')?.textContent).toBe('已断开 · 来源：曲线 “sin”')
     expect(propInput('handle_color', 'color')).toBeDefined()
+    // **断开之后关系仍然看得见**：来源入口留着。藏起来的话，改这一项就像是
+    // 在改那条曲线本身——那正是这一条的验收（审计 T18）
+    expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
 
     await click(byAria('恢复链接'))
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')
