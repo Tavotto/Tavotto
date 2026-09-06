@@ -34,6 +34,12 @@ export type ControlKind =
   | 'aspect'
   /** 图内文字效果的开关（背景 / 描边）：关着画成「＋添加」，开了才是开关 */
   | 'effect'
+  /** 色条方向：竖直 / 水平，用当前色图画的小色条预览 */
+  | 'colorbar-orientation'
+  /** 色条两端的延伸三角：无 / 下端 / 上端 / 两端，小色条预览 */
+  | 'colorbar-extend'
+  /** 三维投影方式：透视 / 正交，两个小立方体预览 */
+  | 'projection'
 
 /** 一条被摆好位置的字段：manifest 的字段本体 + 展示决策 */
 export interface PresentedField {
@@ -68,4 +74,9 @@ export interface RoleProfile {
    * 摆一个此刻写了也不生效的控件，比藏起来更不诚实。
    */
   visibleWhen?: Record<string, (read: (prop: string) => unknown) => boolean>
+  /**
+   * 并排成一行的字段对（「色阶下限 / 上限」）。两条仍是各自的 manifest 字段、
+   * 各写各的 override；只在两条都在同一个桶里时并排，缺一条就各画各的。
+   */
+  pairRows?: [string, string][]
 }

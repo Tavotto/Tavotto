@@ -56,6 +56,15 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   if (field.prop === 'loc' && role === 'legend' && field.type === 'enum') {
     return 'legend-position'
   }
+  // 色条的方向 / 两端延伸：用当前色图画的小色条预览，不是两个文字下拉（审计 T23）
+  if (role === 'colorbar' && field.type === 'enum') {
+    if (field.prop === 'orientation') return 'colorbar-orientation'
+    if (field.prop === 'extend') return 'colorbar-extend'
+  }
+  // 三维子图的投影方式：透视 / 正交各一个小立方体（审计 T24）
+  if (field.prop === 'proj_type' && role === 'axes3d' && field.type === 'enum') {
+    return 'projection'
+  }
   // 图例项的绑定：一行状态 + 动作（跟随 / 自定义），不是一个下拉
   if (field.prop === 'binding' && role === 'legend_text' && field.type === 'enum') {
     return 'legend-binding'
@@ -93,6 +102,18 @@ const FALLBACK_BASE = 1000
 export function fieldVisible(role: string, prop: string, opts: PresentOptions): boolean {
   const cond = ROLE_PROFILES[role]?.visibleWhen?.[prop]
   return !cond || cond(opts.read) || opts.isOverridden(prop)
+}
+
+/**
+ * 这个角色里与 `prop` 并排成一行的另一条字段（模板 `pairRows`）；没有就 null。
+ * 只回答「谁和谁一对」，画不画在一行由列表按「两条都在同一桶里」决定。
+ */
+export function pairedProp(role: string, prop: string): string | null {
+  for (const [a, b] of ROLE_PROFILES[role]?.pairRows ?? []) {
+    if (a === prop) return b
+    if (b === prop) return a
+  }
+  return null
 }
 
 export function presentFields(

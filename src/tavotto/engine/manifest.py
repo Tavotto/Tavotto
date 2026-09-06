@@ -3351,6 +3351,14 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         key = (f"{cls.__module__}.{cls.__qualname__}", el["gid"].split(".", 1)[0], why)
         dropped[key] = dropped.get(key, 0) + 1
 
+    #: artist → 它登记时的第一个 gid（`state.index` 里别名在后，`setdefault`
+    #: 取的就是原名）。色条要报「我给谁上色」（`mappable_gid`）——色条与它的
+    #: mappable 是同一份颜色映射状态的两个 gid（`ALIAS_GROUPS`），界面上
+    #: 「与图像共用色阶」这句话的依据就是这条反查，不是猜 cmap 名相同。
+    gid_by_artist_id: dict[int, str] = {}
+    for gid, a in state.index.items():
+        gid_by_artist_id.setdefault(id(a), gid)
+
     for el in state.elements:
         artist = el["artist"]
         entry = {
@@ -3470,6 +3478,11 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
             entry["colorbar_key"] = artist.identity
             entry["host_gid"] = artist.host_gid
+            # 这条色条给哪个元素上色。可选字段：mappable 没登记成元素（脚本
+            # 自己造的 ScalarMappable）时就不发，界面不摆一个指向空处的链接
+            mappable_gid = gid_by_artist_id.get(id(artist.cb.mappable))
+            if mappable_gid:
+                entry["mappable_gid"] = mappable_gid
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
             # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。

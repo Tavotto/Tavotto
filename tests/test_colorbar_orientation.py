@@ -203,6 +203,19 @@ def test_semantic_identity_is_stable_and_points_at_the_host(library):
         assert el["host_gid"] == "axes_0"
 
 
+def test_colorbar_reports_which_element_it_colours(library):
+    """色条给谁上色（`mappable_gid`）要说出口：界面上「与图像共用色阶」这句话与
+    「选中图像」那个入口靠的就是它，不是猜两边 cmap 名字相同。翻转方向不改这层关系。"""
+    for patches in ([], HORIZONTAL):
+        man = _render(library, patches)
+        el = _el(man, CB)
+        assert el["mappable_gid"] == "axes_0.images_0"
+        image = _el(man, "axes_0.images_0")
+        assert image["role"] == "image"
+        # 两个 gid 是同一份颜色映射状态：色图字段在两边都在、值相同
+        assert _field(man, CB, "cmap") == _field(man, "axes_0.images_0", "cmap")
+
+
 def test_axes_follow_still_links_host_and_colorbar(library):
     """拖宿主时色条要跟着走——翻转之后这条随行关系必须重算并仍然成立。"""
     man = _render(library, HORIZONTAL)
