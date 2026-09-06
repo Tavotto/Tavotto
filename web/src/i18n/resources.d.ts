@@ -354,7 +354,7 @@ export default interface Resources {
       "explore": "继续探索",
       "failure": {
         "cancelled": "已取消。",
-        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+        "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重置教程项目」。",
         "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
         "no_api": "这个环境没有提供教程。",
         "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
