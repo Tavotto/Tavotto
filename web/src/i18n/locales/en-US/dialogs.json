@@ -300,7 +300,7 @@
         "keywords": "readiness status editable layout only why not editable"
       },
       "hints-reset": {
-        "label": "Show onboarding hints again",
+        "label": "Show action hints again",
         "keywords": "hints tips reset onboarding"
       }
     },
@@ -905,14 +905,13 @@
     },
     "general": {
       "autosave": "Autosave",
-      "autosaveHint": "Changes are saved automatically: one second after you stop editing they are written to this machine (layouts/_autosave/). There is nothing to save manually; use “Save as canvas file” for a named version.",
       "autosaveState": "Written to this machine after you pause",
       "language": "Language",
-      "languageHint": "Affects the interface only. Project names, canvas names, scripts and text inside figures are never translated.",
       "layout": "Window layout",
       "layoutReset": "Interface layout reset; reload the page to see it",
       "resetLayout": "Reset the interface layout",
-      "resetLayoutHint": "Sidebar widths, snapping toggles and other interface preferences return to their defaults."
+      "autosaveNamedCopy": "Use “Save as canvas file” for a named copy",
+      "resetLayoutScope": "Sidebar widths, snapping and other interface preferences"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1038,9 +1037,8 @@
       "update": "Updates"
     },
     "shortcuts": {
-      "hint": "Every shortcut is in the cheat sheet (press ? at any time).",
-      "label": "Keyboard shortcuts",
-      "open": "Open the shortcut cheat sheet"
+      "label": "Shortcuts",
+      "open": "Open the cheat sheet"
     },
     "sidebars": {
       "breakpoints": "At ≥1440px both sides can be pinned at once; between 1024 and 1439px they are mutually exclusive; below that the sidebars show as temporary overlays and pinning has no effect.",
@@ -1085,7 +1083,6 @@
     },
     "tutorial": {
       "label": "Tutorial",
-      "hint": "Walk through quick edit, locating problems, export and multi-select alignment on an offline sample project.",
       "state": {
         "not_started": "Not started",
         "active": "In progress",
@@ -1096,10 +1093,11 @@
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
-      "reset": "Reset tutorial project",
-      "hints": "Contextual hints",
-      "hintsHint": "One-time hints shown the first time you meet a kind of action; each appears once.",
-      "resetHints": "Reset hints"
+      "reset": "Reset the tutorial project",
+      "hints": "Action hints",
+      "resetHints": "Show action hints again",
+      "resetAction": "Reset",
+      "resetScope": "The sample project returns to its initial state; your edits in it are lost"
     }
   },
   "style": {

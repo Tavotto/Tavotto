@@ -135,18 +135,17 @@ describe('各分区首屏没有说明文字墙', () => {
     })
   }
 
-  it('常规分区的三段解释都在问号里，不在页面上', async () => {
+  /**
+   * 审计「说明文字专项补查」之后，常规页**一个问号都不该有**：那六段说明
+   * 要么是标题的同义反复（界面语言）、要么在介绍另一个帮助入口（快捷键）、
+   * 要么在定义名词（情境提示），全部删掉或改成标签底下的一行短说明。
+   *
+   * 判据不写成「不含那几段旧文案」——旧 key 都删了，那种断言恒真。改判
+   * **这一页有没有问号按钮**：只要有人再挂一个回来，这条就红。
+   */
+  it('常规分区一个问号都没有', async () => {
     await open('general')
-    expect(bodyText()).not.toContain(st('general.languageHint'))
-    expect(bodyText()).not.toContain(st('general.autosaveHint'))
-    expect(bodyText()).not.toContain(st('general.resetLayoutHint'))
-    // 但确实点得到
-    const help = byAria(st('helpAbout', { label: st('general.language') }))!
-    expect(help).toBeTruthy()
-    await act(async () => {
-      help.click()
-    })
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(0)
   })
 
   it('画布分区那段「关联元素是什么」进了问号', async () => {
@@ -162,11 +161,17 @@ describe('各分区首屏没有说明文字墙', () => {
 
 /* -------------------------------- 小问号 --------------------------------- */
 
+/**
+ * 小问号的行为用**界面页那唯一的一个**（「拖动时一同移动关联对象」）来验：
+ * 常规页已经一个问号都不剩，拿它当夹具的话这一组会变成空跑。
+ */
 describe('小问号四种触发方式', () => {
-  const helpBtn = () => byAria(st('helpAbout', { label: st('general.language') }))!
+  const HELP_ROW = 'canvas.dragCompanions'
+  const HELP_TEXT = 'canvas.companionsExplain'
+  const helpBtn = () => byAria(st('helpAbout', { label: st(HELP_ROW) }))!
 
   it('鼠标悬停即展开，移开后收回', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     // React 的 onPointerEnter 是用冒泡的 pointerover 委托实现的，
     // 直接派 pointerenter 谁也收不到（那样写这条用例会「通过」但什么也没测）
@@ -174,11 +179,11 @@ describe('小问号四种触发方式', () => {
       b.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     })
     expect(b.getAttribute('aria-expanded')).toBe('true')
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(allText()).toContain(st(HELP_TEXT))
   })
 
   it('触摸（pointerType=touch）不走悬停，但点击能开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await act(async () => {
       b.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'touch' }))
@@ -193,14 +198,14 @@ describe('小问号四种触发方式', () => {
   })
 
   it('键盘聚焦即展开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     expect(b.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('Esc 关闭', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await act(async () => {
       b.click()
@@ -209,7 +214,7 @@ describe('小问号四种触发方式', () => {
     // 浮层内容真的挂上来了才算「开着」；Radix 的 dismissable layer 是在
     // 内容挂载后的一个微任务里才注册 Escape 监听——不等它就是在赛跑，
     // 表现为这条用例偶发红（实测三轮里红一轮）
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(allText()).toContain(st(HELP_TEXT))
     await act(async () => {
       await Promise.resolve()
     })
@@ -243,7 +248,7 @@ describe('小问号四种触发方式', () => {
    * 三轮里红一轮——那不是「偶发」，是断言与缺陷在赛跑）。
    */
   it('Esc 之后不会被「焦点还回来」重新打开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     // 点开：焦点留在 body 上，与真实鼠标操作一致
     await act(async () => {
@@ -264,7 +269,7 @@ describe('小问号四种触发方式', () => {
   })
 
   it('焦点真的离开过之后，再 Tab 回来仍然展开（闸只吃那一次）', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     await act(async () => {
@@ -282,14 +287,12 @@ describe('小问号四种触发方式', () => {
   })
 
   it('问号有明确的可达名，不是一个无名图标', async () => {
-    await open('general')
-    expect(helpBtn().getAttribute('aria-label')).toBe(
-      st('helpAbout', { label: st('general.language') }),
-    )
+    await open('interface')
+    expect(helpBtn().getAttribute('aria-label')).toBe(st('helpAbout', { label: st(HELP_ROW) }))
   })
 
   it('展开时焦点留在问号上，不被搬进浮层（Tab 顺序不乱）', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     expect(document.activeElement).toBe(b)
@@ -387,6 +390,6 @@ describe('SettingRow 布局稳定', () => {
       })
       document.body.innerHTML = ''
     }
-    expect([...widths]).toEqual(['112px'])
+    expect([...widths]).toEqual(['160px'])
   })
 })
