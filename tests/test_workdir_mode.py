@@ -37,6 +37,7 @@ needs_worker = pytest.mark.skipif(
 SCRIPT = """\
 import glob
 import os
+import shutil
 from pathlib import Path
 import matplotlib.pyplot as plt
 
@@ -51,6 +52,9 @@ if found and globbed and listed:
     with open("cache/impact.txt", "w") as f:
         f.write(str(n))
     Path("stale_output.png").unlink()   # 守卫：真实图库里的文件不许删
+    os.remove("stale_output.png")       # 同一条守卫的另外几个入口
+    shutil.rmtree("1")
+    os.rename("stale_output.png", "renamed.png")
     fig, ax = plt.subplots()
     ax.plot([1, 2], [3, n])
     fig.savefig("impact_histogram.png")  # 捕获，不落盘
@@ -193,8 +197,11 @@ def test_project_mode_runs_the_script_where_it_lives(figs):
     assert os.path.realpath(str(figs)) in tail  # cwd 就是脚本目录
     # 定义，不是漏洞：相对路径**写**的中间文件落进项目
     assert (figs / "cache" / "impact.txt").read_text(encoding="utf-8") == "4"
-    # 守卫一字不动：真实图库里的文件不许删
+    # 守卫一字不动，而且不止 Path.unlink 一个入口：删除 / 删目录树 / 改名全被拦下
     assert (figs / "stale_output.png").read_bytes() == b"orig"
+    assert (figs / "1" / "etch_5-5.lammpstrj").is_file()
+    assert not (figs / "renamed.png").exists()
+    assert tail.count("[guard]") >= 4
     # savefig 仍是捕获、不落盘
     assert not (figs / "impact_histogram.png").exists()
     # 沙盒目录仍然存在（写入边界的参照），但脚本没往里写任何东西

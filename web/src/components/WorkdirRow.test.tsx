@@ -136,6 +136,24 @@ describe('在脚本目录里运行', () => {
     expect(text()).not.toContain(en('workdirSuggest'))
   })
 
+  it('换项目时 env.project 立刻清掉并按新项目重取（Codex 评审 P1）', async () => {
+    const { fetchEngineEnvironment } = await import('@/lib/api')
+    const fetchMock = vi.mocked(fetchEngineEnvironment)
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue(envWith('sandbox'))
+    useEnvStore.setState({ env: envWith('project') })
+    await render(<WorkdirSuggestion />)
+    expect(text()).not.toContain(en('workdirSuggest'))
+    await act(async () => {
+      useEnvStore.getState().resetProject()
+    })
+    // 清掉的那一刻就不再声称旧项目的模式；请求回来后是新项目的
+    expect(fetchMock).toHaveBeenCalled()
+    await act(async () => {})
+    expect(useEnvStore.getState().env?.project?.workdir?.mode).toBe('sandbox')
+    expect(text()).toContain(en('workdirSuggest'))
+  })
+
   it('英文界面没有中文泄漏', async () => {
     await i18n.changeLanguage('en-US')
     await render(<WorkdirRow />)

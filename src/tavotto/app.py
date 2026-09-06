@@ -4642,8 +4642,7 @@ def api_engine_workdir_set():
         return jsonify(
             {
                 "error": f"不认识的工作目录模式: {mode!r}",
-                # 字面量：`test_error_codes` 的门禁按字面量扫源码，写成常量它就看不见
-                "code": "workdir_mode_invalid",
+                "code": engine_workdir.ERROR_MODE_INVALID,
                 "params": {"mode": mode},
             }
         ), 400

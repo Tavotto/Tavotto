@@ -31,8 +31,10 @@ MODE_SANDBOX = execspec.CWD_SANDBOX
 MODE_PROJECT = execspec.CWD_PROJECT
 MODES = execspec.CWD_MODES
 
-#: 稳定错误码（协议契约）。
+#: 稳定错误码（协议契约）。`ERROR_CODES` 是给 `test_error_codes` 门禁读的注册表
+#: ——它按字面量扫源码，端点里用常量它就看不见；注册表让它看**真正的出处**。
 ERROR_MODE_INVALID = "workdir_mode_invalid"
+ERROR_CODES = (ERROR_MODE_INVALID,)
 
 
 def mode_for(figures_dir: str | Path) -> str:

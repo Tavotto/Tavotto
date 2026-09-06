@@ -38,6 +38,7 @@ import contextlib
 import importlib
 import json
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -179,6 +180,38 @@ class Worker(wireproto.V1Handler):
             return real_unlink(p, missing_ok=missing_ok)
 
         Path.unlink = _guarded_unlink
+
+        # 同一条守卫扩到 os / shutil 的删除与改名（`os.remove` / `os.unlink` /
+        # `os.rmdir` / `os.rename` / `os.replace` / `shutil.rmtree` /
+        # `shutil.move`）：`Path.unlink` 只是其中一个入口，脚本写
+        # `os.remove("stale.png")` 一样是删真实图库里的文件——沙盒 cwd 下相对
+        # 路径落在沙盒里无害，绝对路径与「在脚本目录里运行」（ADR 0045）时的
+        # 相对路径就直接指向项目。判据一条：**真身落在真实图库里就跳过**。
+        # 带 `dir_fd` 的调用（rmtree 内部）不判——顶层 rmtree 已经拦过了。
+        # 覆盖：脚本用 open('w') / np.save / C++ 写入器**改写**已有文件不拦，
+        # 那是它自己的输出（文案如实说「已有同名文件会被脚本改写」）。
+        def _inside_real(path) -> bool:
+            try:
+                return Path(os.fspath(path)).resolve().is_relative_to(real_figs)
+            except (OSError, TypeError, ValueError):
+                return False
+
+        def _guard_delete(name, real_fn):
+            def guarded(path, *a, **kw):
+                if "dir_fd" not in kw and _inside_real(path):
+                    print(f"[guard] 跳过 {name} 真实图库文件: {path}", file=sys.stderr)
+                    return None
+                return real_fn(path, *a, **kw)
+
+            return guarded
+
+        os.remove = _guard_delete("删除", os.remove)
+        os.unlink = _guard_delete("删除", os.unlink)
+        os.rmdir = _guard_delete("删除目录", os.rmdir)
+        os.rename = _guard_delete("改名", os.rename)
+        os.replace = _guard_delete("改名", os.replace)
+        shutil.rmtree = _guard_delete("删除目录树", shutil.rmtree)
+        shutil.move = _guard_delete("移动", shutil.move)
 
         # 写入守卫：脚本的 write_caption 等用绝对路径 write_text 写真实图库
         # （fig9 的 *_caption.txt），沙盒 cwd 拦不住；导出走 savefig 不受影响

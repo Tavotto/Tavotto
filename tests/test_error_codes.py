@@ -52,7 +52,12 @@ _SOURCE_FILES = (
 #: 正则扫源码在这两个模块上**看不见东西**：`exportreq._one_of()` 收的 code 是
 #: 一个变量，`exportjob` 是 `job.error_code = …` 的赋值。所以它们各自导出一个
 #: `ERROR_CODES` 元组，门禁直接读那个元组——比正则强，因为它不可能与实现漂移。
-_CODE_REGISTRIES = ("tavotto.engine.exportreq", "tavotto.engine.exportjob")
+_CODE_REGISTRIES = (
+    "tavotto.engine.exportreq",
+    "tavotto.engine.exportjob",
+    # safe 档工作目录模式（ADR 0045）：端点用 `workdir.ERROR_MODE_INVALID` 常量
+    "tavotto.engine.workdir",
+)
 
 
 def _all_error_sources() -> str:

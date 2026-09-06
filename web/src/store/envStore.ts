@@ -40,6 +40,12 @@ interface EnvState {
    * 成功后把「脚本跑完没出图」那些面板重新排上。
    */
   setWorkdirMode: (mode: WorkdirMode) => Promise<string | null>
+  /**
+   * 换项目：`env.project`（项目环境 / 工作目录模式）属于旧项目，立刻清掉再按
+   * 新项目重取。不清的话在请求回来之前，开关与错误块的建议说的都是上一个
+   * 项目的模式（Codex 评审 P1）。
+   */
+  resetProject: () => void
   /** SSE 推进度时调用 */
   onProgress: (p: { state: string; log: string; error: string | null }) => void
 }
@@ -118,6 +124,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     } catch (e) {
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
     }
+  },
+
+  resetProject: () => {
+    const env = get().env
+    if (env) set({ env: { ...env, project: { open: false } } })
+    void get().refresh()
   },
 
   onProgress: (p) => {
