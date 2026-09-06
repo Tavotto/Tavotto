@@ -3351,13 +3351,18 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         key = (f"{cls.__module__}.{cls.__qualname__}", el["gid"].split(".", 1)[0], why)
         dropped[key] = dropped.get(key, 0) + 1
 
-    #: artist → 它登记时的第一个 gid（`state.index` 里别名在后，`setdefault`
-    #: 取的就是原名）。色条要报「我给谁上色」（`mappable_gid`）——色条与它的
-    #: mappable 是同一份颜色映射状态的两个 gid（`ALIAS_GROUPS`），界面上
-    #: 「与图像共用色阶」这句话的依据就是这条反查，不是猜 cmap 名相同。
+    #: artist → 它在**元素表**里的 gid。色条要报「我给谁上色」
+    #: （`mappable_gid`）——色条与它的 mappable 是同一份颜色映射状态的两个 gid
+    #: （`ALIAS_GROUPS`），界面上「与图像共用色阶」这句话与「选中它」那个入口
+    #: 的依据就是这条反查，不是猜两边 cmap 名字相同。
+    #:
+    #: **从 `state.elements` 建，不从 `state.index` 建。** index 里还有容器
+    #: 消费掉的成员别名（`_alias_consumed_member`），那些 gid 指着同一个
+    #: artist 却**不在元素表里**——发出去的话界面按它去 find 会扑空。这里要
+    #: 回答的是「界面能选中的那一条是谁」，所以就从界面拿到的那张表反查。
     gid_by_artist_id: dict[int, str] = {}
-    for gid, a in state.index.items():
-        gid_by_artist_id.setdefault(id(a), gid)
+    for el in state.elements:
+        gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
 
     for el in state.elements:
         artist = el["artist"]

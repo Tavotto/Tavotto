@@ -44,9 +44,15 @@ STEM_NATIVE = "CbarNative"
 #: 而翻转的落位规则一度只会算出 right/bottom。
 STEM_LEFT = "CbarLeft"
 
+#: 色条挂在一个**脚本自己造的 ScalarMappable** 上：它不是图里的 artist，
+#: 元素表里没有它。`mappable_gid` 那条降级路径的尺子。
+STEM_PROXY = "CbarProxy"
+
 LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 
 def _draw(stem, **kw):
@@ -58,10 +64,20 @@ def _draw(stem, **kw):
     fig.savefig(stem + ".pdf")
 
 
+def _draw_proxy(stem):
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    sm = ScalarMappable(norm=Normalize(0.0, 1.0), cmap="viridis")
+    cb = fig.colorbar(sm, ax=ax)
+    cb.set_label("intensity")
+    fig.savefig(stem + ".pdf")
+
+
 def main():
     _draw("CbarFig")
     _draw("CbarNative", extend="both")
     _draw("CbarLeft", location="left")
+    _draw_proxy("CbarProxy")
 """
 
 
@@ -214,6 +230,19 @@ def test_colorbar_reports_which_element_it_colours(library):
         assert image["role"] == "image"
         # 两个 gid 是同一份颜色映射状态：色图字段在两边都在、值相同
         assert _field(man, CB, "cmap") == _field(man, "axes_0.images_0", "cmap")
+        # 报出去的 gid 必须是**元素表里真有的那一条**（界面要按它选中对方）
+        assert any(e["gid"] == el["mappable_gid"] for e in man["elements"])
+
+
+def test_colorbar_without_a_registered_mappable_says_nothing(library):
+    """脚本自己造的 `ScalarMappable` 不是图里的 artist，元素表里没有它。
+    这时**整条字段不发**——发一个空串或一个指向空处的 gid，界面就会摆一个
+    点了什么都不会发生的「选中对方」按钮。"""
+    man = _render(library, stem=STEM_PROXY)
+    el = _el(man, CB)
+    assert "mappable_gid" not in el, el.get("mappable_gid")
+    # 这条色条本身是正常的：色图仍然可改（降级的是那层关系，不是能力）
+    assert _field(man, CB, "cmap") == "viridis"
 
 
 def test_axes_follow_still_links_host_and_colorbar(library):
@@ -577,6 +606,8 @@ SINGLE_STEM = "CbarSingleForContrast"
 MULTI_LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 
 def main():
