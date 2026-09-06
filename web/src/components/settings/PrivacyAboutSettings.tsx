@@ -65,7 +65,10 @@ function ProductBlock({ version }: { version?: string }) {
             href="https://github.com/Tavotto/Tavotto"
             target="_blank"
             rel="noreferrer"
-            className="text-accent hover:underline"
+            // 正文句子里的链接必须**不靠颜色**也能认出来（axe
+            // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
+            // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
+            className="text-accent underline underline-offset-2"
           >
             {st('about.source')}
           </a>
