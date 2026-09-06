@@ -737,10 +737,19 @@ export type FlushResult = 'saved' | 'empty' | 'error' | 'skipped'
  *
  * 名字记的是当时那个名字，项目后来改名不追认。
  */
-let docProject: { id: string | null; name: string | null } = {
-  id: currentProjectId(),
-  name: currentProjectLabel(),
-}
+let docProject: { id: string | null; name: string | null } | null = null
+
+/**
+ * `null` = 这份文档还没被 `switchDocument` 换进来过（应用刚起、还停在初始的
+ * 空白文档上）。那一档回落到「现在开着哪个项目」——此刻还没发生过任何项目
+ * 切换，所以现问是对的。
+ *
+ * **不在模块初始化时求值**：`currentProjectId()` 在 import 阶段就被调用的话，
+ * 谁 mock 了 `@/lib/session` 谁就会撞上自己的 TDZ（模块图里 documentStore 先
+ * 于测试文件的 `let` 求值）。实测过：`useServerEvents.test.ts` 会以
+ * 「Cannot access 'project' before initialization」整文件失败。
+ */
+const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: currentProjectLabel() }
 
 const slotKey = (id: string) => SLOT_PREFIX + id
 const TABS_PREFIX = 'tavotto.tabs.'
@@ -1194,6 +1203,7 @@ export function flushAutosave(): FlushResult {
   }
   scheduleDiskWrite(state.documentId, pd)
   if (!localOk) return 'error'
+  const pj = projectOfDoc()
   const entry: RecentDoc = {
     id: state.documentId,
     name: pd.project.name,
@@ -1201,8 +1211,8 @@ export function flushAutosave(): FlushResult {
     objects: countObjects(pd),
     canvases: pd.canvases.length,
     // 没打开项目时（纯排版）两个字段都不写：那是「不知道」，不是空字符串
-    ...(docProject.id ? { projectId: docProject.id } : {}),
-    ...(docProject.id && docProject.name ? { projectName: docProject.name } : {}),
+    ...(pj.id ? { projectId: pj.id } : {}),
+    ...(pj.id && pj.name ? { projectName: pj.name } : {}),
   }
   const before = readIndex()
   const kept = writeIndex([entry, ...before.filter((e) => e.id !== state.documentId)])
