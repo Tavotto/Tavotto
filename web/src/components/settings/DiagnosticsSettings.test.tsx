@@ -205,8 +205,11 @@ describe('异常项给下一步（审计 T47）', () => {
   })
 
   it('正常项不带下一步', async () => {
-    await mount(CHECKS.filter((c) => c.ok))
+    // **挑一条登记过下一步的检查，让它是好的**：拿 worker_python 那种本来就
+    // 没登记的来量，「没有下一步」在任何实现下都成立（判据恒真）
+    await mount([{ id: 'project_writable', ok: true, label: '项目目录可写', detail: '/tmp/figs' }])
     await act(async () => byName(st('diagnostics.okDetails'))!.click())
+    expect(text()).toContain(st('about.check.project_writable'))
     expect(document.querySelectorAll('[data-next-step]')).toHaveLength(0)
   })
 
