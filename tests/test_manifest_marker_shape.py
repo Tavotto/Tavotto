@@ -294,3 +294,125 @@ def test_two_shapes_in_one_collection_report_multiple(worker):
     """一个 collection 里混着圆和方：拿第一条冒充全体就是量错了对象。"""
     cur = _field(_manifest(worker), "axes_0.scatter_2")["marker_current"]
     assert cur == {"kind": "multiple"}
+
+
+# ---------------------------------------------------------------------------
+# `marker_original`：override 之前那个形状（「回到脚本原始 = 回到这个形状」）
+# ---------------------------------------------------------------------------
+# `marker_current` 读的是图上此刻那条路径，override 之后脚本原来那条已经不在
+# 图上——于是「脚本原始」那一格说不出自己会变成什么形状，用户看到的是一个空
+# 的继承状态点。这一族用例钉的是补上那句话之后的四件事：
+#
+# * 有 override 时说得出原来那个形状（四个消费者一个都不许漏）；
+# * **没有 override 时字段整个缺席**——缺席 = 与 current 相同，前端不用再判
+#   一次「改没改过」；发一份重复的只会让两个事实有机会说出不同的话；
+# * 原样取的是 override 系统采下的那一份（`state.originals`），不是另算一遍：
+#   真的撤销回去之后 `marker_current` 必须落在同一个值上；
+# * 取值本身说不出形状的那些（元组标记）原样也得说得出——那正是这个字段
+#   存在的理由。
+
+
+def _no_override_field(worker, gid, prop="marker"):
+    return _field(_manifest(worker), gid, prop)
+
+
+def test_no_override_means_the_field_is_absent(worker):
+    """没改过就不发 `marker_original`。
+
+    缺席的含义是「与 `marker_current` 相同」。发一份重复的不是更保险而是
+    更坏：两个字段从此有机会说出不同的话，而前端已经按「缺席 = 相同」写了
+    退回分支。四个消费者一起钉——漏掉任何一个的表现都是那一格凭空多出一个
+    与当前值一模一样的「脚本原始」形状。
+    """
+    man = _manifest(worker)
+    stem = next(e for e in man["elements"] if e["gid"].startswith("axes_0.stemseries_"))
+    checked = 0
+    for gid in ("axes_0.lines_0", "axes_0.scatter_0", stem["gid"]):
+        f = _field(man, gid)
+        assert "marker_current" in f, gid
+        assert "marker_original" not in f, (gid, f.get("marker_original"))
+        checked += 1
+    for e in man["elements"]:
+        for f in e["editable"]:
+            if f["prop"] == "handle_marker":
+                assert "marker_original" not in f, (e["gid"], f.get("marker_original"))
+                checked += 1
+    assert checked == 7, f"消费者少数了，判据可能量错了对象：{checked}"
+
+
+def test_scatter_says_the_shape_it_would_go_back_to(worker):
+    """本轮的原始缺陷：散点换成菱形之后，「脚本原始」那一格说不出形状。
+
+    脚本写的是 `D`。换成 `^` 之后 `marker_current` 是 `^`（图上那个），
+    `marker_original` 必须仍是 `D`——两个事实各说各的那一半，谁都不顶替谁。
+    """
+    gid = "axes_0.scatter_0"
+    f = _field(_manifest(worker, [{"gid": gid, "prop": "marker", "value": "^"}]), gid)
+    assert f["value"] == "^"
+    assert f["marker_current"] == {"kind": "named", "name": "^"}
+    assert f["marker_original"] == {"kind": "named", "name": "D"}
+
+
+def test_line_original_survives_even_when_the_value_cannot_say_it(worker):
+    """曲线：脚本原样是元组标记 `(5, 1, 0)`，**它自己说不出形状**。
+
+    这正是这个字段存在的理由——换成 `o` 之后，那一行的取值与「回到脚本原始」
+    两句话都只剩代码字样。原样必须照样发几何，且与没改过时 `marker_current`
+    发的那份**逐字节相同**：两边读的是同一条路径，不是各算一遍。
+    """
+    gid = "axes_0.lines_2"
+    before = _no_override_field(worker, gid)["marker_current"]
+    assert before["kind"] == "path" and len(before["vertices"]) == 11, before
+
+    f = _field(_manifest(worker, [{"gid": gid, "prop": "marker", "value": "o"}]), gid)
+    assert f["marker_current"] == {"kind": "named", "name": "o"}
+    assert f["marker_original"] == before
+
+
+def test_stem_and_legend_handle_carry_the_original_too(worker):
+    """同一条判据的另外两个消费者：茎叶 markerline 与图例示意标记。
+
+    共享判据修一处不算修完——漏掉哪个，表现都是「有的面板回得去、有的面板
+    只剩一个空的继承点」。
+    """
+    man = _manifest(worker)
+    stem_gid = next(e["gid"] for e in man["elements"] if e["gid"].startswith("axes_0.stemseries_"))
+    entry_gid = next(
+        e["gid"]
+        for e in man["elements"]
+        if e["role"] == "legend_text" and any(f["prop"] == "handle_marker" for f in e["editable"])
+    )
+
+    man = _manifest(
+        worker,
+        [
+            {"gid": stem_gid, "prop": "marker", "value": "^"},
+            {"gid": entry_gid, "prop": "handle_marker", "value": "x"},
+        ],
+    )
+    stem_f = _field(man, stem_gid)
+    assert stem_f["marker_current"] == {"kind": "named", "name": "^"}
+    assert stem_f["marker_original"] == {"kind": "named", "name": "s"}, "脚本写的是 markerfmt='s'"
+
+    entry_f = _field(man, entry_gid, "handle_marker")
+    assert entry_f["marker_current"] == {"kind": "named", "name": "x"}
+    assert entry_f["marker_original"] == {"kind": "named", "name": "o"}
+
+
+def test_going_back_to_the_script_lands_on_exactly_that_shape(worker):
+    """重放一致性：撤销之后 `marker_current` **落在** `marker_original` 上。
+
+    这才是「回到脚本原始 = 回到这个形状」那句话的兑现处。两个值来自同一份
+    `state.originals`（override 系统在第一次应用之前采的那份，撤销时回灌的
+    也是它），所以它们必须相等——不相等的话界面画的是一个承诺，而点下去
+    得到的是另一个东西。撤销之后原样字段本身也要跟着消失。
+    """
+    gid = "axes_0.scatter_0"
+    promised = _field(_manifest(worker, [{"gid": gid, "prop": "marker", "value": "*"}]), gid)[
+        "marker_original"
+    ]
+
+    back = _field(_manifest(worker), gid)
+    assert back["value"] == "original"
+    assert back["marker_current"] == promised
+    assert "marker_original" not in back, "没有 override 了，这个字段该整个消失"
