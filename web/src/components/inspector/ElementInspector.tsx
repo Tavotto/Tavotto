@@ -88,7 +88,7 @@ import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
-import { controlKindOf, presentFields } from './presentation/registry'
+import { controlKindOf, isPercentField, presentFields } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
@@ -105,6 +105,7 @@ import {
 } from './controls/TickAndSpineDiagram'
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
 import { AspectControl } from './controls/AspectControl'
+import { PercentField } from './controls/PercentField'
 import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
 import {
   axisTickState,
@@ -1273,6 +1274,22 @@ function BatchFieldRow({
   const control = () => {
     switch (field.type) {
       case 'number':
+        // 透明度的批量行与单元素行同一种百分比控件（判据同源：isPercentField）
+        if (isPercentField(field)) {
+          return (
+            <PercentField
+              value={first}
+              mixed={mixed}
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              ariaLabel={label}
+              onChange={(v) => write(v)}
+              onScrubStart={gesture.start}
+              onScrubEnd={gesture.end}
+            />
+          )
+        }
         return (
           <NumberField
             value={mixed ? 0 : Number(first ?? 0)}
@@ -1613,6 +1630,20 @@ function FieldRow({
           )}
           onAdd={() => writeOnce(true)}
           onOff={() => disableTextEffect(panel.id, element.gid, field.prop)}
+        />,
+      )
+    case 'percent':
+      // 透明度：显示 75%、写回 0.75——换算只在 PercentField 一处
+      return wrap(
+        <PercentField
+          value={value}
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          ariaLabel={label}
+          onChange={(v) => write(v)}
+          onScrubStart={beginTxn}
+          onScrubEnd={endTxn}
         />,
       )
     default:

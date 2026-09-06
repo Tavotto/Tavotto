@@ -39,6 +39,18 @@ const CONTROL_BY_PROP: Record<string, ControlKind> = {
   arrowstyle: 'arrow-style',
 }
 
+/**
+ * 0–1 的透明度类字段：界面按百分比显示与输入，写回仍是 0–1（审计 T16 / T20）。
+ * **按 prop 名点名**，不按「min 0 max 1 就是百分比」猜——`framealpha` 与 `alpha`
+ * 是透明度，而一个恰好落在 0–1 的比例（如 `handlelength` 的某些取值）不是。
+ * 换算只在 `controls/PercentField` 一处。
+ */
+const PERCENT_PROPS = new Set(['alpha', 'grid_alpha', 'framealpha', 'bbox_alpha'])
+
+/** 这个数值字段是不是按百分比显示的透明度（批量行与单元素行共用一条判据） */
+export const isPercentField = (field: EditableField): boolean =>
+  field.type === 'number' && PERCENT_PROPS.has(field.prop)
+
 const CONTROL_BY_TYPE: Record<EditableField['type'], ControlKind> = {
   text: 'text',
   number: 'number',
@@ -77,6 +89,7 @@ export function controlKindOf(role: string, field: EditableField): ControlKind {
   }
   const byProp = CONTROL_BY_PROP[field.prop]
   if (byProp && field.type === 'enum') return byProp
+  if (isPercentField(field)) return 'percent'
   // 背景 / 描边的开关：关着的时候不是一个开关，是一条「＋添加背景」入口
   // （与画布文字 `TextSection` 同一种操作模式；表在 `lib/textEffects`）
   if (field.type === 'bool' && isTextEffectSwitch(field.prop)) return 'effect'
