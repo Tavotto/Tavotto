@@ -14,7 +14,7 @@
 | 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 待处理 |
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 待处理 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
-| 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 待处理 |
+| 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 已修复 |
 | 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 待处理 |
 | 8 | （原话为空，用户没有写完） | — | 待用户补充 |
 
@@ -68,3 +68,27 @@
 - **验证**：`pnpm test` 2591 全过；`pnpm build` 过；e2e 该条 chromium 1 passed；
   agent-browser 修前/修后截图在 scratchpad/uf-01/s8.png、s11.png。
 - **遗留**：无需用户拍板。
+
+### 6. 「先选中一张图」——对话框只读快速编辑的 activePanelId，看不见画布选区
+
+- **根因**：`ExportDialog.tsx` 的 `figureId` 只从 `workspaceStore.activePanelId` 取，
+  而按 ADR 0028 它只在 `fast_edit` 模式非空；画布排版模式的选区在
+  `selectionStore.ids`，对话框从没读过。真浏览器复现：画布点中 Fig2_yield
+  （属性栏已显示它）→ 导出 → 原图尺寸灰、红字「先选中一张图」
+  （scratchpad/uf-06/03-export-bug.png）。
+- **处置**：新增 `web/src/lib/exportFigures.ts`，「按原图导哪一张」只在这里判：
+  候选 = 文档面板（激活画布优先）+ 还没上画布的素材；上下文 = 快速编辑中的
+  → 画布主选（主选是文字则退到选区第一个面板）→ 项目里只有一张图时就是它。
+  对话框在此之上叠一层「列表里点过哪一张」（对话框本地状态，不改画布选区，
+  点即 `setScope('original')`）。原图尺寸区块下方 `role=listbox` 缩略图卡片，
+  缩略图复用 renderStore 的 SVG 或素材库同一条 `panelSrc`，不发渲染请求。
+  「没选」与「没得选」分成两句（`no_figure` / 新增 `no_figures`）；
+  `ExportRequest.original` 段一个字段没加。
+- **用例**：`exportFigures.test.ts` 9 条（新）、`ExportDialog.test.tsx` 改 1 增 8、
+  `exportRequest.test.ts` +1。反证 7 组变异（选区分支 / 记选择 / 并档 /
+  单图兜底 / 切范围 / 缩略图来源 / 列表显隐）各有 1~6 条红；第一版只拿掉主选
+  那一行仅 1 条红，是被兜底盖住的语义 no-op，已换成整段变异。
+- **验证**：`pnpm test` 2603 全过；`pnpm build`、`pnpm i18n:check` 过；
+  真浏览器三张截图（无选区列 3 张 / 真点后勾选并切范围 / 画布选中后高亮同一张）。
+- **遗留**：有 override 但 renderStore 无 SVG 的面板缩略图退到磁盘原图；素材多时
+  列表限高可滚动、无搜索；Codex 内嵌画布下未实测缩略图。
