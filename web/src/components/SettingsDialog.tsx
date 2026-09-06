@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { useUiStore } from '@/store/uiStore'
+import { dialogCovered, useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
 import { CodingAgentsSection } from './settings/CodingAgentsSection'
 import { DiagnosticsSettings } from './settings/DiagnosticsSettings'
@@ -90,6 +90,8 @@ export function SettingsDialog() {
   const open = useUiStore((s) => s.settingsOpen)
   const setOpen = useUiStore((s) => s.setSettingsOpen)
   const requested = useUiStore((s) => s.settingsSection)
+  // 上面还压着论文样式对话框时整层藏起来（状态不丢），它关掉就回来
+  const covered = useUiStore((s) => dialogCovered(s.dialogStack, 'settings'))
   const [section, setSection] = useState<SectionId>('general')
   const navRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -135,6 +137,7 @@ export function SettingsDialog() {
       title={st('title')}
       width={SHELL_WIDTH}
       height={SHELL_HEIGHT}
+      covered={covered}
     >
       <div data-settings-shell className="flex h-full min-h-0 flex-col gap-2 sm:flex-row sm:gap-3">
         <nav
