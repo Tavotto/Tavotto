@@ -572,6 +572,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
   深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`
   （`errors:engine.repairError.*`，与缺包修复同一张表）。「没有回滚」那句话常驻，别删。
+* **查找是两层，只有第二层出网**（ADR 0038 的 2026-09-07 修订）：打字只在本地过滤两份
+  清单（PEP 503 归一后的子串），**界面上没有任何随输入自动触发的请求**——在设置页里
+  打字不许悄悄变成对外发送，前后端各有一条用例钉着它。出网只发生在用户点「在 PyPI
+  查找」那一下（`packageStore.runLookup` → `lookupPackage()`）。输入框只有**一个**
+  （既是安装规范也是搜索词），**回车仍然是安装**；切版本约束的判据只有
+  `packageStore.searchTerm()` 一处，组件把原串原样交给 store，别在组件里再切一次。
+  结果卡上的安装走**既有**的 `plan → run`，不复制第二条路径；选「最新版」交给 pip 的
+  是**裸包名**（安装 argv 带 `--only-binary=:all:`，钉死一个只有 sdist 的版本会当场
+  失败），选了具体版本才钉 `==`。两次查找重叠时按序号只落最后一次。首屏只留短句
+  「查找会访问 PyPI 或你配置的软件源」，「打字不出网」这条**为什么**折进技术详情
+  ——首屏最多一段长文，名额已经归「装坏了可以重建」。看护
+  `settings/PackagesSearch.test.tsx`（27 条）。
 * **设置里的说明先改控件，改不动才加帮助**（2026-09-06 审计「说明文字专项补查」）：优先级是
   命名 → 单位 → 对象关系 → 状态 → 条件展开。`SettingRow` 的 `description` 是标签底下的一行短
   说明（改的是什么、影响哪里），`status` 只在那个状态**真的成立**时出现（「当前窗口只能固定

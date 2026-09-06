@@ -4799,6 +4799,39 @@ def api_packages_list():
     return resp
 
 
+#: 查找失败的四个码 -> HTTP 状态。**每一个都要与「下一步做什么」对得上**：
+#: 404 = 换个名字；503 = 检查网络 / 镜像源；504 = 重试；502 = 索引源答的话
+#: 我们没读懂。语法不合法走 400（请求畸形，与 plan 那一条同一个码）。
+_LOOKUP_STATUS = {
+    engine_deprepair.ERROR_LOOKUP_NOT_FOUND: 404,
+    engine_deprepair.ERROR_LOOKUP_OFFLINE: 503,
+    engine_deprepair.ERROR_LOOKUP_TIMEOUT: 504,
+    engine_deprepair.ERROR_LOOKUP_FAILED: 502,
+    engine_deprepair.ERROR_REQUIREMENT_INVALID: 400,
+}
+
+
+@app.get("/api/engine/packages/lookup")
+def api_packages_lookup():
+    """按名字问一次索引源：`?name=lmfit` -> `{name, versions, latest, installed, source}`。
+
+    **只读**：不装任何东西、不碰受管环境的磁盘、不改任何账。会出网（走的是
+    用户自己的 pip 索引配置，可能是镜像源），因此它**只在用户明确点查找时被
+    调用**——界面上没有任何自动触发的路径。
+
+    响应里没有地址、没有项目路径、没有解释器路径：只有包名、版本表，以及
+    「配没配自定义源」这一个布尔（`source`，三档）。
+    """
+    root = str(require_project())
+    try:
+        payload = engine_deprepair.lookup_package(root, request.args.get("name", ""))
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, _LOOKUP_STATUS.get(exc.code, 502))
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.post("/api/engine/packages/plan")
 def api_packages_plan():
     """形成一个包操作作业：`{op: install|update|uninstall, spec}` → `{job}`。

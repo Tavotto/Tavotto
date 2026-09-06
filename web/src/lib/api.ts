@@ -2736,6 +2736,30 @@ export interface PackageProgress {
 export const fetchManagedPackages = () =>
   jsonFetch<ManagedPackages>('/api/engine/packages')
 
+/**
+ * 「按名字问一次索引源」的回答（ADR 0038 的 2026-09-07 修订）。
+ *
+ * **只有名字与版本**：没有地址、没有路径、没有 pip 的原文——后端结构上就不发
+ * 它们。`source` 是三档而不是两档，「问不出来」不许并进「就是官方 PyPI」。
+ */
+export interface PackageLookup {
+  /** PEP 503 归一之后的名字（安装用的就是这个身份） */
+  name: string
+  /** 索引源给的顺序，新的在前。**前端不重排**：版本比较要 PEP 440 的规则 */
+  versions: string[]
+  latest: string
+  /** 这个项目的受管环境里已装的版本；环境不在 / 问不出来时是空串 */
+  installed: string
+  source: 'pypi' | 'custom_index' | 'unknown'
+}
+
+/**
+ * 按名字查找。**会出网**（走用户自己的 pip 索引配置，可能是镜像源），所以
+ * 只在用户明确点「查找」时调用——界面上没有任何自动触发的路径。
+ */
+export const lookupPackage = (name: string) =>
+  jsonFetch<PackageLookup>(`/api/engine/packages/lookup?name=${encodeURIComponent(name)}`)
+
 export const planPackageJob = (op: PackageOp, spec: string) =>
   jsonFetch<{ job: PackageJob }>('/api/engine/packages/plan', {
     method: 'POST',

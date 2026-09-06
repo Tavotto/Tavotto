@@ -1046,8 +1046,28 @@
       },
       "recoveryNote": "装坏了可以「重建」：按账上记录的包，在一个新建的环境里重装一遍。",
       "reinstall": "重新安装",
+      "search": {
+        "action": "在 PyPI 查找",
+        "alreadyInstalled": "这个环境里已经装了 {{version}}。",
+        "builtinTitleMatch": "内置包（匹配 {{count}} 个，共 {{total}} 个，只读）",
+        "exactOnly": "只按完整包名查找：软件源没有全文搜索，我们也不会猜相近的名字。",
+        "failed": "没有查到 {{name}}。",
+        "installHere": "安装到这个项目的环境",
+        "latest": "最新版 {{version}}",
+        "latestOption": "最新版（{{version}}）",
+        "loading": "正在查找 {{name}}…",
+        "networkNote": "查找会访问 PyPI 或你配置的软件源。",
+        "noMatch": "已装的包里没有匹配「{{term}}」的。",
+        "privacyDetail": "只有你点「在 PyPI 查找」时才会发出那个请求；在输入框里打字只在本地过滤已经装上的包，不出网。",
+        "source": {
+          "custom_index": "答案来自你配置的软件源。",
+          "pypi": "答案来自官方 PyPI。",
+          "unknown": "问不出这个环境用的是哪个软件源。"
+        },
+        "versionAria": "{{name}} 的版本"
+      },
       "snapshotDetail": "包操作本身没有回滚（pip 没有事务）。每次改动前后各存一份 pip freeze 作对照（现有 {{count}} 份）——它只是排障时的证据，「重建」不读它，重建依据的是账上记录的包与版本。",
-      "specAria": "要安装的包名或规范",
+      "specAria": "包名或规范（同时过滤下面的清单）",
       "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
       "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
       "status": {

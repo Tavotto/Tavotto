@@ -159,3 +159,96 @@ uninstall 后必须没有（`package_still_installed`）；随后 `probe_environ
 * 环境状态 API（`managedenv.state()`）多带了 `reason` 枚举（两值，不是用户内容）。
 * 卸载不可逆这件事写在页面上而不是藏在确认框里。用户看到「没有回滚」四个字会犹豫
   ——这是正确的犹豫。
+
+## 2026-09-07 修订：包查找（cap-pkg-search）
+
+原版的包管理只有「装 / 升 / 卸」，没有「这个包叫什么、有哪些版本」——用户只能凭
+记忆输入包名，拼错了要等一次真实的 pip 安装失败才知道。这一节补上查找。
+
+### 两层，且只有第二层出网
+
+* **本地过滤**（纯前端）：输入框里的名字即时过滤「用户安装」与「内置」两份清单，
+  判据是 PEP 503 归一后的子串。「我是不是已经装过了」不该为此发一个请求。
+* **远端查找**：`GET /api/engine/packages/lookup?name=<pkg>` →
+  `{name, versions, latest, installed, source}`。**只在用户点「在 PyPI 查找」时
+  发生**——界面上没有任何随输入自动触发的路径。在设置页里打字这件事不许悄悄变成
+  对外发送，所以这条性质在前后端各有一条用例钉着。
+
+按**名字**查，不做模糊搜索：PyPI 早已下线全文搜索 API，而「猜一个相近的名字」正是
+抢注攻击的入口（同一条理由让 `depresolve` 没有「同名试试看」那一档）。查不到就说
+「软件源上没有这个名字」，界面上把这条限制直说出来，免得用户以为是搜索坏了。
+
+### 为什么走 `pip index versions` 而不是 pypi.org 的 JSON API
+
+* **查找必须问安装会问的那个源。** 用户配了镜像 / 内网 index（`pip.conf`、
+  `PIP_INDEX_URL`）时，直连 pypi.org 会给出与 `pip install` 不一致的答案：
+  「PyPI 上没有这个名字」而 pip 装得上，或者反过来。代理、TLS、私有源认证也一并
+  继承，不必在 Flask 里再实现一遍。
+* **实测（2026-09-07，开发机）**：`pip index versions numpy` 冷启 4.2 s、热
+  0.7 s、`lmfit` 0.7 s；同一个 numpy 的 `pypi.org/pypi/numpy/json` 有几十 MB，
+  10 s 都读不完（`TimeoutError`）。JSON 那条路在大包上根本走不通。
+  `--disable-pip-version-check` 是必须的：少了它 numpy 那次要 10.6 s。
+
+代价写在明处：**`pip index` 的输出不是契约**（与 `inventory()` 刻意不解析
+`pip list` 是同一条纪律的反面）。所以 ① 解析只认 `Available versions:` /
+`INSTALLED:` 两行前缀，认不出一律 `package_lookup_failed`，**绝不回一个空版本表
+冒充「找到了」**；② 查找失败从不影响安装——用户照样可以直接输入包名装，这条功能
+是纯增量的，`pip` 哪天真把 `index` 拿掉，页面退化成原来的样子。
+
+### 失败是四档闭集，各对应一个不同的下一步
+
+| code | 用户的下一步 | HTTP |
+| --- | --- | --- |
+| `package_lookup_not_found` | 核对完整包名 | 404 |
+| `package_lookup_offline` | 检查网络或镜像源 | 503 |
+| `package_lookup_timeout` | 稍后重试 | 504 |
+| `package_lookup_failed` | 直接输入包名安装 | 502 |
+
+语法不合法走既有的 `package_requirement_invalid` + 400。全部经既有的
+`app._repair_error` 漏斗，文案与缺包修复同一张表（`errors:engine.repairError.*`），
+前端 `repairCodeMessage()` 一份。
+
+**有一档刻意的不对称。** `pip index versions` 在「连不上索引」与「索引上没有这个
+名字」两种情况下的**最后一行逐字相同**（`ERROR: No matching distribution found
+for X`，两种都实测过），唯一的差别是前者多一行连接失败的重试警告。于是网络抖了
+一下、重试却成功并确实查到「没有这个包」时，我们会报 offline。选这个方向是因为
+反向的错误代价更高：把「网断了」说成「PyPI 上没有这个名字」会让用户去改一个本来
+就对的包名，而反过来只是让他重试一次。**`--retries 1` 因此是判据的一部分**：
+`--retries 0` 时连接失败连那行警告都没有，两种情况再也分不开。
+
+### 出网范围与隐私
+
+* argv 里只有一个包名（PEP 503 归一后），`shell=False`、`stdin` 关掉；包名进 argv
+  之前过**两次**同一道白名单语法（原样一次、归一之后再一次）。
+* **响应结构上不含地址、路径与 pip 原文**：只有 `name` / `versions` / `latest` /
+  `installed` / `source`。`source` 是三档 `pypi` / `custom_index` / `unknown`
+  ——「问不出这个环境用的是哪个源」不许并进「就是官方 PyPI」。
+* pip 的输出只进日志，且先过既有的 `_sanitize`（index 地址可能带凭据）。
+* **没有加遥测事件**（EVENTS 扩容要升 `CONSENT_VERSION`，理由见 ADR 0019 §十二）。
+* 不新增依赖：`_run_lookup` 是标准库 `subprocess`，Flask 进程的 import 链没动。
+
+### 界面
+
+结果卡给名字、最新版、答案来自哪种源、这个环境里已有的版本，以及一个版本下拉；
+安装走**同一条** `plan → run`，不复制第二条安装路径。选「最新版」交给 pip 的是
+**裸包名**而不是 `==<那个版本号>`：安装 argv 带 `--only-binary=:all:`，钉死一个只有
+sdist 的版本会当场失败，裸名字让 pip 自己挑最新的、有轮子的那一版；选了具体版本
+才是明确的钉住。
+
+输入框仍然只有一个（既是安装规范也是搜索词），**回车仍然是「安装」**——那是这个
+表单一直以来的主动作，查找有自己的按钮。切版本约束这件事只有 `searchTerm()` 一处
+判据：组件把原串原样交给 store，store 切完再问后端。
+
+`installed` 的主语是**这个项目的受管环境**。环境不在时我们退到基础解释器去取版本表
+（那部分与解释器无关），但「已经装了哪一版」与解释器强相关，那种情况下它是空串
+——拿基础解释器的答案回答这一页的问题就是量错了对象。
+
+首屏只留一句「查找会访问 PyPI 或你配置的软件源」（短句）；「打字不出网」这条
+**为什么**折进技术详情——首屏最多一段长文，而那一段已经归「装坏了可以重建」
+（`settingsDisclosure.test.tsx` 按 30 字数段数）。
+
+看护：`tests/test_package_lookup.py`（43 条，**一次网络请求都不发**：`_run_lookup`
+是唯一执行点，用例全部换掉它；失败输出用真机实测的原样文本）+
+`web/src/components/settings/PackagesSearch.test.tsx`（27 条）。两侧各做过一轮手工
+变异反证（15 + 15 条，全部打红）。真实联网只在开发时手工验证过：`numpy` /
+`lmfit` 查到、不存在的名字报 not_found、不可达的索引报 offline。
