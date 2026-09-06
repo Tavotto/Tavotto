@@ -281,8 +281,18 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
+  不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
+  `activePanelId` → 图内编辑的 `elementPanelId` → 选中的面板，`uiStore.problemScope`
+  为 `null` 时有当前图就看它；抽屉标题的计数与面板同一个范围（`useProblemScope`），
+  **轨道角标仍是全文档数**（它是入口）。② 按 ruleCode 聚合，组头说标题 + 等级 +
+  受影响对象数，行里只说「谁、现在多少、要多少」；叶子行仍带
+  `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
+  `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
+  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 左侧竖条 + 「当前」，
+  底部上一项 / 下一项；那条修好消失后「下一项」指向**顶上来的那条**，不跳回开头。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
-  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 
@@ -700,6 +710,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
 - **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
+  按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
+  空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
+  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
+  文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
+  （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
+  后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
+  `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
