@@ -1002,6 +1002,10 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   桌面壳从 Finder / 开始菜单启动时继承 GUI 的最小 PATH，npm shim 的
   `#!/usr/bin/env node` 解析不到 node（`env: node: No such file or directory`）
   ——把 CLI 所在目录 + 常见安装目录补到 PATH 末尾即可，不改用户已有排序。
+  **`engine/codexinstall.py` 问 Codex 的每一跳也走它**（`_codex_run`，2026-09-06
+  用户反馈 05）：同一台机器终端里 `tavotto codex doctor` 全绿、设置页却报「插件市场
+  登记失败」，差的只是 spawn 它的那个进程的 PATH（桌面壳 `ps -E` 实测只有四个系统
+  目录）。「问不到」是独立一档，detail 里要明说这不等于「没登记」。
 - **CLI 探测（Windows 尤其）**：`search_locations()` 在 PATH 之外把 npm 全局、
   `%LOCALAPPDATA%\Microsoft\WindowsApps`（**商店版 codex 的执行别名——真身在
   受 ACL 保护的 WindowsApps 包体里，只能走这个入口**）、WinGet/scoop/choco/
