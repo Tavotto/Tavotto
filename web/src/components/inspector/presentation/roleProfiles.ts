@@ -159,7 +159,9 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   // `registry.fieldVisible` 这一条判据）。
   legend: {
     primary: [
-      'loc', 'ncol',
+      // `loc_anchor` 紧跟着 `loc`：位置控件的外侧带承接掉它（在 presentFields
+      // 之前就让出来了），这里点名只是让「控件不在场时字段仍在它该在的位置」
+      'loc', 'loc_anchor', 'ncol',
       'frameon', 'frame_linewidth', 'frame_rounded', 'edgecolor', 'facecolor',
     ],
     more: [

@@ -7,8 +7,15 @@ import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
+import { LEGEND_ANCHOR_PROP, toLegendAnchor } from '@/lib/legendModel'
 import { cn } from '@/lib/utils'
-import { clearOverrides, hideElement, setOverride, unhideElement } from '@/store/actions'
+import {
+  clearOverrides,
+  hideElement,
+  setLegendPlacement,
+  setOverride,
+  unhideElement,
+} from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
@@ -275,7 +282,9 @@ function ElementQuick({
         </div>
       )}
       {isGeometric(el) && <GeomControls panel={panel} el={el} />}
-      {el.role === 'legend' && <LegendControls read={read} field={field} write={write} />}
+      {el.role === 'legend' && (
+        <LegendControls panel={panel} element={el} read={read} field={field} write={write} />
+      )}
 
       {(field('visible') || own.length > 0) && <Divider />}
       {own.length > 0 && (
@@ -413,12 +422,16 @@ function GeomControls({
   )
 }
 
-/** 图例：位置预设 + 字号 */
+/** 图例：位置预设（内 / 外两带）+ 字号 */
 function LegendControls({
+  panel,
+  element,
   read,
   field,
   write,
 }: {
+  panel: PanelObject
+  element: ManifestElement
   read: (prop: string) => unknown
   field: (prop: string) => EditableField | undefined
   write: (prop: string, value: unknown, immediate?: boolean) => void
@@ -431,12 +444,16 @@ function LegendControls({
     <>
       {!!loc?.options?.length && (
         <Line label={propLabel('loc')}>
-          {/* 与属性页同一个 3×3 位置网格（§16：同一概念同一控件） */}
+          {/* 与属性页同一个控件（§16：同一概念同一控件）——外侧带也一样，
+              少给一半在这里就等于「快捷编辑里图例只能放在图内」 */}
           <LegendPositionPicker
             value={cur}
             options={loc.options}
             onChange={(v) => write('loc', v)}
             ariaLabel={propLabel('loc')}
+            anchor={toLegendAnchor(read(LEGEND_ANCHOR_PROP))}
+            anchorSupported={!!field(LEGEND_ANCHOR_PROP)}
+            onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
           />
         </Line>
       )}

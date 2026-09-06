@@ -55,6 +55,7 @@ import {
   clearOverrides,
   disableTextEffect,
   resetOverrides,
+  setLegendPlacement,
   setOverride,
   setOverrides,
   unhideElement,
@@ -146,7 +147,13 @@ import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { ColorScaleLink } from './ColorScaleLink'
 import { ResetChip } from './controls/textRows'
-import { legendEntryElements } from '@/lib/legendModel'
+import {
+  LEGEND_ANCHOR_PROP,
+  legendEntryElements,
+  legendPlacementOf,
+  toLegendAnchor,
+  type LegendAnchor,
+} from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
@@ -273,8 +280,13 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         ? TICK_CARD_PROPS
         : element?.role === 'legend'
           ? // 排版详情那张卡承接五条间距（审计 T17），与有没有条目无关；
-            // 字号 / 条目顺序只有图例卡在场时才让出来
-            [...LEGEND_SPACING_PROPS, ...(legendCardCoversSelf ? LEGEND_CARD_PROPS : [])]
+            // 字号 / 条目顺序只有图例卡在场时才让出来；锚点由位置控件的
+            // 外侧带承接——`loc` 不在场时**不让**，否则能力会连同控件一起消失
+            [
+              ...LEGEND_SPACING_PROPS,
+              ...(legendCardCoversSelf ? LEGEND_CARD_PROPS : []),
+              ...(element.editable.some((f) => f.prop === 'loc') ? [LEGEND_ANCHOR_PROP] : []),
+            ]
           : [],
   )
   const buckets =
@@ -1435,7 +1447,13 @@ function BatchSection({
   skip?: ReadonlySet<string>
 }) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
-  const fields = commonFields(elements).filter((f) => !skip?.has(f.prop))
+  const shared = commonFields(elements)
+  // 位置控件的外侧带承接掉锚点（多选路径同样，见 `sharedLegendAnchor`）：
+  // 同一属性不出两套控件，而一个裸的 x/y 数字对说不出它是「图外」
+  const hasLoc = shared.some((f) => f.prop === 'loc')
+  const fields = shared.filter(
+    (f) => !skip?.has(f.prop) && !(hasLoc && f.prop === LEGEND_ANCHOR_PROP),
+  )
   const flat = fields.filter((f) => !f.group)
   const groups = new Map<string, EditableField[]>()
   for (const f of fields) {
@@ -1515,6 +1533,18 @@ function sharedMarkerShape(
   if (!facts.length || facts[0] === undefined) return undefined
   const head = JSON.stringify(facts[0])
   return facts.every((f) => JSON.stringify(f) === head) ? facts[0] : undefined
+}
+
+/**
+ * 多选时的锚点：**全体一致才给**（与 `sharedMarkerShape` 同一条纪律）。
+ *
+ * 两个图例一个在右侧、一个在下方，拿第一个的锚点去画示意图就是替另一个
+ * 撒谎。不一致回 null：一个外侧位都不标选中，示意图只画容器。
+ */
+function sharedLegendAnchor(panel: PanelObject, elements: ManifestElement[]): LegendAnchor | null {
+  const anchors = elements.map((el) => legendPlacementOf(panel, el).anchor)
+  const head = JSON.stringify(anchors[0] ?? null)
+  return anchors.every((a) => JSON.stringify(a ?? null) === head) ? (anchors[0] ?? null) : null
 }
 
 function BatchFieldRow({
@@ -1646,7 +1676,22 @@ function BatchFieldRow({
             case 'colormap':
               return <ColormapPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'legend-position':
-              return <LegendPositionPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+              // **多选也要给外侧带**：能力凭空消失是最坏的那种（#142 评审 P1）。
+              // 锚点取值不一致时传 null——那时一个外侧位都不标选中，示意图
+              // 也只画容器，不画一个猜的方块
+              return (
+                <LegendPositionPicker
+                  value={v}
+                  options={opts}
+                  onChange={writeOnce}
+                  ariaLabel={label}
+                  anchor={sharedLegendAnchor(panel, elements)}
+                  anchorSupported={elements.every((e) =>
+                    e.editable.some((f) => f.prop === LEGEND_ANCHOR_PROP),
+                  )}
+                  onPlace={(next) => setLegendPlacement(panel.id, elements, next)}
+                />
+              )
             case 'arrow-style':
               return <ArrowStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'font':
@@ -1936,6 +1981,8 @@ function FieldRow({
         />,
       )
     case 'legend-position':
+      // 内 / 外两带是同一个控件：`loc` 与 `loc_anchor` 一次写下（一条撤销、
+      // 一次渲染），锚点那条字段在不在决定外侧带出不出现
       return wrap(
         <LegendPositionPicker
           value={enumValue}
@@ -1943,6 +1990,9 @@ function FieldRow({
           onChange={writeOnce}
           ariaLabel={label}
           containerLabel={containerLabelOf(rowManifest, element)}
+          anchor={toLegendAnchor(siblingValue(LEGEND_ANCHOR_PROP))}
+          anchorSupported={element.editable.some((f) => f.prop === LEGEND_ANCHOR_PROP)}
+          onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
         />,
       )
     case 'legend-binding':

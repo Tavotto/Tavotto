@@ -179,7 +179,21 @@
     "spinePerSide": "Set each side separately",
     "spineSidesDiffer": "Sides differ",
     "legendPositionWithin": "Within {{label}}",
-    "viewAngle": "View: elevation {{elev}}°, azimuth {{azim}}°, roll {{roll}}°"
+    "viewAngle": "View: elevation {{elev}}°, azimuth {{azim}}°, roll {{roll}}°",
+    "legendOutsideAria": "Position outside",
+    "legendPreviewAria": "Position preview: the container bounds and where the legend sits",
+    "legendAnchorLabel": "Anchor",
+    "legendAnchorX": "Anchor x (container fraction)",
+    "legendAnchorY": "Anchor y (container fraction)",
+    "legendOutsideOverflowHint": "Placing it outside may run past the figure; the checks will say so.",
+    "legendOutside": {
+      "rightTop": "Right, top",
+      "rightCenter": "Right, middle",
+      "rightBottom": "Right, bottom",
+      "topCenter": "Above, centered",
+      "bottomCenter": "Below, centered",
+      "leftCenter": "Left, middle"
+    }
   },
   "element": {
     "absentAppearance": "Visible in the figure, but this version can't edit it here — it comes from the script.",
@@ -826,7 +840,8 @@
     "xscale": "X scale",
     "ylim": "Y range",
     "yscale": "Y scale",
-    "zorder": "Stacking order"
+    "zorder": "Stacking order",
+    "loc_anchor": "Anchor"
   },
   "propByRole": {
     "bar": {
@@ -1080,7 +1095,9 @@
     "parasite_host_draw": "This is a parasite axes from host_subplot; the host draws its contents and never checks this switch — hide the individual elements on it instead",
     "parasite_host_rect": "This is a parasite axes from host_subplot; its position is reset by the host on every draw — move the host subplot and it follows along",
     "partial": "({{count}} of {{total}} elements)",
-    "unknown": "Changing this here is not supported in this version"
+    "unknown": "Changing this here is not supported in this version",
+    "legend_anchor_box": "The script anchors this legend to a rectangle (four numbers); only legends anchored to a single point can be edited here",
+    "legend_anchor_transform": "The script pins this legend's anchor to a different coordinate system; only legends anchored to their own container can be edited here"
   },
   "versionHistory": {
     "confirmRestore": "Restore",
