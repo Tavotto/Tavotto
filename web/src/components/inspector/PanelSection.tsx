@@ -41,6 +41,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { overrideCounts } from '@/lib/overrideCounts'
 import type { PanelObject, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
@@ -665,7 +666,9 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
   const buildingFile = useRenderStore((s) => s.building[panel.fileId])
   const building = render?.status === 'rendering' || !!buildingFile
   const cold = !!buildingFile?.cold
-  const overrides = panel.overrides.length
+  // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
+  // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
+  const overrides = overrideCounts(panel.overrides, null).figure
 
   return (
     <Section title={pn('elements')}>
