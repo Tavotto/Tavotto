@@ -124,6 +124,9 @@ class Worker(wireproto.V1Handler):
         self.figures_dir = Path(args.figures_dir).resolve()
         self.out_dir = Path(args.out_dir).resolve()
         self.sandbox = Path(args.sandbox).resolve()
+        #: 脚本的工作目录（ADR 0045）：默认就是沙盒；`--cwd` 给了就是脚本
+        #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
+        self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
         self.preview_dpi = args.preview_dpi
         self.built = False
@@ -151,7 +154,9 @@ class Worker(wireproto.V1Handler):
             return self._stems_summary()
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.sandbox.mkdir(parents=True, exist_ok=True)
-        os.chdir(self.sandbox)
+        # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
+        # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
+        os.chdir(self.workdir or self.sandbox)
         # 图库根先进 sys.path（脚本 import 同目录的 paper_style / 数据模块），
         # 脚本自己所在目录再插到最前——面板脚本放 panels/ 子目录时，
         # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError。
@@ -194,7 +199,12 @@ class Worker(wireproto.V1Handler):
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
-        figcapture.install_relative_read_fallback(str(self.script.parent), str(self.figures_dir))
+        if self.workdir is None:
+            figcapture.install_relative_read_fallback(
+                str(self.script.parent), str(self.figures_dir)
+            )
+        # cwd 已经是脚本目录时不装回退：相对路径本来就指向项目，回退只会在
+        # 「沙盒里有同名文件」这种不可能的前提上多一层看不见的改道。
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -400,6 +410,8 @@ def main() -> None:
     ap.add_argument("--figures-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--sandbox", required=True)
+    # ADR 0045：给了就把 cwd 切到这里（脚本目录）而不是沙盒；沙盒仍是写入边界的参照
+    ap.add_argument("--cwd", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

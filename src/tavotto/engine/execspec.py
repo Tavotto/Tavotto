@@ -57,8 +57,25 @@ TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
 #: spec 序列化形态的版本。加可选字段不升；改语义 / 删字段才升。
 SPEC_VERSION = 1
 
+#: safe 档的工作目录模式（ADR 0045）。`sandbox` = 会话沙盒（默认，写入边界）；
+#: `project` = 脚本自己所在的目录——脚本用相对路径找数据（`exists` / `glob` /
+#: C++ 读取器）时唯一能让它们全部成立的形态。守卫、savefig 捕获、解释器链
+#: 一字不动；变的只有 cwd。
+CWD_SANDBOX = "sandbox"
+CWD_PROJECT = "project"
+CWD_MODES = (CWD_SANDBOX, CWD_PROJECT)
+
 #: `stable_payload()` 覆盖的字段——**跨机器稳定**的那部分执行语义。
-STABLE_FIELDS = ("profile", "target_kind", "target", "entry", "argv", "passthrough_savefig")
+#: `cwd_mode` 在列：它改变脚本看到的世界（相对路径指到哪），是语义不是路径。
+STABLE_FIELDS = (
+    "profile",
+    "target_kind",
+    "target",
+    "entry",
+    "argv",
+    "passthrough_savefig",
+    "cwd_mode",
+)
 
 
 def _normalize_target(target: str, target_kind: str) -> str:
@@ -95,6 +112,13 @@ class ExecutionSpec:
     #: 会让脚本里的 `os.path.dirname(sys.argv[0])` 指到别处。
     #: 机器相关，**不进 `stable_payload()`**。
     raw_target: str = ""
+    #: safe 档：cwd 是沙盒还是脚本目录（ADR 0045）。native 恒 `sandbox` 占位
+    #: （它的 cwd 是用户的，没有这个维度）。
+    cwd_mode: str = CWD_SANDBOX
+    #: safe 档的会话沙盒目录（机器相关）。`cwd_mode == sandbox` 时与 `cwd`
+    #: 相同；`project` 时 cwd 是脚本目录，而写入边界的目录仍要交给 worker
+    #: （`--sandbox`）。空串 = 与 `cwd` 相同（老 payload 的形态）。
+    sandbox: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -119,7 +143,13 @@ class ExecutionSpec:
             raise ValueError("passthrough_savefig 必须是布尔值")
         if not isinstance(self.raw_target, str):
             raise ValueError("raw_target 必须是字符串")
+        if self.cwd_mode not in CWD_MODES:
+            raise ValueError(f"cwd_mode 非法: {self.cwd_mode!r}（可选 {CWD_MODES}）")
+        if not isinstance(self.sandbox, str):
+            raise ValueError("sandbox 必须是字符串")
         if self.profile == PROFILE_NATIVE:
+            if self.cwd_mode != CWD_SANDBOX:
+                raise ValueError("native profile 没有 cwd_mode 这个维度（cwd 是用户的）")
             if self.entry is not None:
                 raise ValueError("native profile 没有 entry 概念（恒 None）")
             if not self.passthrough_savefig:
@@ -170,6 +200,8 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         project_root=data.get("project_root", ""),
         passthrough_savefig=bool(data.get("passthrough_savefig", False)),
         raw_target=data.get("raw_target", "") or "",
+        cwd_mode=data.get("cwd_mode", CWD_SANDBOX) or CWD_SANDBOX,
+        sandbox=data.get("sandbox", "") or "",
     )
 
 
@@ -181,6 +213,7 @@ def safe_spec(
     interpreter: str,
     sandbox: str,
     env: dict[str, str] | None = None,
+    cwd_mode: str = CWD_SANDBOX,
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
@@ -188,7 +221,18 @@ def safe_spec(
     脚本自身（`sys.argv[1:]` 为空，由 worker 落实）、cwd 是会话沙盒（写入
     边界）、savefig 吞掉捕获（passthrough=False）。`env` 只接受增量
     （bundled runtime 时传 `runtime.child_env(base={})`，其余场合 None）。
+
+    `cwd_mode=project`（ADR 0045）时 cwd 换成**脚本自己所在的目录**，其余
+    一字不变：沙盒目录仍交给 worker 当写入边界的参照，守卫与 savefig 捕获
+    照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
+    这是这个模式的定义，不是漏洞；文案里要如实说。
     """
+    if cwd_mode not in CWD_MODES:
+        raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
+    if cwd_mode == CWD_PROJECT:
+        cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+    else:
+        cwd = sandbox
     return ExecutionSpec(
         profile=PROFILE_SAFE,
         interpreter=interpreter,
@@ -196,10 +240,12 @@ def safe_spec(
         target=script,
         entry=entry,
         argv=(),
-        cwd=sandbox,
+        cwd=cwd,
         env=env,
         project_root=str(figures_dir),
         passthrough_savefig=False,
+        cwd_mode=cwd_mode,
+        sandbox=sandbox,
     )
 
 
@@ -314,7 +360,7 @@ def worker_argv(
     """
     if spec.profile != PROFILE_SAFE or spec.target_kind != TARGET_SCRIPT:
         raise ValueError("worker_argv 目前只服务 safe/script（native 是 PR 2）")
-    return [
+    out = [
         spec.interpreter,
         *runtime_args,
         str(worker_py),
@@ -325,7 +371,11 @@ def worker_argv(
         "--out-dir",
         str(out_dir),
         "--sandbox",
-        spec.cwd,
+        spec.sandbox or spec.cwd,
         "--entry",
         spec.entry,
     ]
+    if spec.cwd_mode == CWD_PROJECT:
+        # 只在非默认模式下多两个 token：默认模式的 argv 逐字节不变（golden）。
+        out += ["--cwd", spec.cwd]
+    return out

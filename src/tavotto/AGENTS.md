@@ -151,6 +151,9 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     「脚本跑完但没出图」，worker.log 的尾部进 `traceback_text`（前端错误块
     的折叠区直接显示）。**只认显式为空的 `known` 列表**：字段缺失分不清
     「没有」和「没说」。两条控制面各接一处（`_error_of` / `_to_worker_error`）。
+    **根治是 ADR 0045 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
+    不装回退，守卫与 savefig 捕获不动；错误块直接给这个入口。**不扩回退到
+    `exists` / `glob`**——救不了 C++ 读取器，只会让脚本「以为」数据在。
     一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
     文案，不塞进 traceback 区）。日志尾部按**这一代的偏移**读（`_log_offset`，
     两条控制面都在启动前记；目录跨代复用、append 模式，不记的话读到的是上一代
@@ -166,7 +169,12 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
     （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
     新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
-    序列化绝不携带整份父进程环境。
+    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0045）**：
+    `sandbox`（默认）/ `project`（脚本所在目录），唯一出处 `engine/workdir.py`
+    （项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
+    `_spawn_spec` / `one_shot`）都从它取——写回的重放必须和热态用同一个 cwd。
+    默认模式 argv 逐字节不变，project 模式只多 `--cwd`。切换走
+    `PATCH /api/engine/workdir`，改了就 `shutdown_all(root)`。
   * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
     `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
     刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据

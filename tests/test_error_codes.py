@@ -140,6 +140,8 @@ USER_VISIBLE_CODES = {
     "sync_different_scripts": set(),
     "python_missing": set(),
     "interpreter_not_found": {"path"},
+    # safe 档工作目录模式（ADR 0045）
+    "workdir_mode_invalid": {"mode"},
     "interpreter_no_matplotlib": {"path"},
     "invalid_consent": set(),
     "name_missing": set(),

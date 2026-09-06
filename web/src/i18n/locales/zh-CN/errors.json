@@ -146,6 +146,7 @@
     "tutorial_resources_missing": "这份安装里没有教程资源，请重新安装 Tavotto：{{reason}}",
     "unsupported_format": "还不支持导出 {{format}} 格式。",
     "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
+    "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
     "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
     "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
     "write_back_warnings": "写回被阻止：引擎在重放时报告了警告",
@@ -280,7 +281,18 @@
     "useOtherHintAfter": "，只是启动它来渲染。",
     "useOtherHintBefore": "脚本用到内置环境里没有的包（rdkit、astropy…）时换成你自己那套。留空并应用即可恢复默认。Tavotto",
     "useOtherHintStrong": "不会改动你选中的环境",
-    "useOtherLink": "使用其他 Python 环境…"
+    "useOtherLink": "使用其他 Python 环境…",
+    "workdirAria": "在脚本目录里运行",
+    "workdirConfirmBody": "脚本将在它自己所在的目录里运行：它用相对路径读取的数据文件能直接找到；它用相对路径写出的文件会像在终端里一样落进项目目录。Tavotto 仍然不会替它保存图片，也不会删除或改写项目里已有的文件。只对这个项目生效。",
+    "workdirConfirmOk": "在脚本目录里运行",
+    "workdirConfirmTitle": "改为在脚本目录里运行？",
+    "workdirHintProject": "脚本在自己所在的目录里运行：相对路径读得到数据；它用相对路径写出的文件会落进项目目录。",
+    "workdirHintSandbox": "脚本在 Tavotto 的沙盒目录里运行（默认）：它用相对路径写出的东西不会碰项目目录，但用 exists / glob 找数据的脚本会找不到文件。",
+    "workdirLabel": "在脚本目录里运行",
+    "workdirNowProject": "这个项目的脚本改为在自己的目录里运行，正在重新运行。",
+    "workdirNowSandbox": "这个项目的脚本改回在沙盒里运行。",
+    "workdirSuggest": "脚本是不是用相对路径找数据（os.path.exists、glob、ovito 之类）？它现在在 Tavotto 的沙盒目录里运行，那些路径指不到项目里的文件。",
+    "workdirSuggestButton": "改为在脚本目录里运行"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
