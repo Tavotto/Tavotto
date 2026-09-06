@@ -71,8 +71,10 @@ from overrides import (
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
+    legend_anchor_state,
     legend_entries,
     legend_handle_props,
+    legend_pos_cfg,
     remember_axis_directions,
     scale_options,
     spine_all_color,
@@ -842,6 +844,9 @@ def _register_legend(state: FigState, gid: str, leg) -> None:
     _register(state, gid, leg, "legend", "图例", draggable=True)
     model = LegendEntries(leg, state)
     leg._mm_entries = model  # noqa: SLF001
+    # 位置模型（loc / loc_frac / loc_anchor 共用一份 cfg）：`orig` 必须在任何
+    # override 之前采，与 `spine_cfg(ax)` 同一个理由
+    legend_pos_cfg(leg)
     title = leg.get_title()
     if title is not None and title.get_text():
         _register(
@@ -2341,7 +2346,8 @@ def _legend_fields(leg) -> list[dict]:
     frame = leg.get_frame()
     loc_name = _legend_loc_name(leg)
     loc_opts = (["custom"] if loc_name == "custom" else []) + _LEGEND_LOCS
-    return [
+    anchor, anchor_reason = legend_anchor_state(leg)
+    fields = [
         {"prop": "loc", "type": "enum", "value": loc_name, "options": loc_opts},
         {
             "prop": "fontsize",
@@ -2468,6 +2474,25 @@ def _legend_fields(leg) -> list[dict]:
             "group": "样式",
         },
     ]
+    if anchor_reason is None:
+        # 外侧锚点（ADR 0034 的 2026-09-07 修订）：父容器分数坐标里的一个点，
+        # `None` = 没有锚框（图例在子图内侧）。**紧跟着 loc**——界面上它们是
+        # 同一个控件的两半（内 / 外两带），不是两条独立字段。
+        # 表达不出来的锚框（4 元组 / 非父容器变换）不发这条字段，改发一条
+        # `unsupported_props`（见 `build_manifest`）——照实说「这里改不了」，
+        # 而不是把它显示成「没有锚点」。
+        fields.insert(
+            1,
+            {
+                "prop": "loc_anchor",
+                "type": "pair",
+                "value": anchor,
+                "min": -1.0,
+                "max": 2.0,
+                "step": 0.01,
+            },
+        )
+    return fields
 
 
 def _legend_entry_labels(leg) -> list[str]:
@@ -3579,6 +3604,16 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             info = _legend_entry_info(artist)
             if info is not None:
                 entry["legend_entry"] = info
+        if el["role"] == "legend":
+            # 脚本的锚框这个模型摆不出来时**说得出为什么**（4 元组锚框 /
+            # 非父容器变换，判据见 `overrides.legend_anchor_state`）。字段
+            # 已经在 `_legend_fields` 里让出来了，这里补上那句理由——少一个
+            # 控件而不给理由，用户只会以为漏了或坏了（#76 的老账）。
+            reason = legend_anchor_state(artist)[1]
+            if reason:
+                entry.setdefault("unsupported_props", []).append(
+                    {"prop": "loc_anchor", "reason": reason}
+                )
         if el["role"] in ("axes", "axes3d"):
             # 前端可拖动/缩放子图占比（override axes position）。子 axes 的
             # 落位归父级的 locator 管，给不了这个能力——`_axes_fields` 那边

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import math
 import re
 import sys
 import threading
@@ -568,29 +569,6 @@ def _restore_text_fontfamily(t: Text, orig) -> None:
     fam, math = orig
     t.set_fontfamily(fam)
     t.set_math_fontfamily(math)
-
-
-def _set_legend_loc_frac(leg: Legend, value) -> None:
-    """拖动图例。若脚本用了 bbox_to_anchor（如 fig11 把图例锚在轴上方），
-    必须先清掉锚框——否则 loc 坐标会被解释为相对锚框的位置，图例乱飞。"""
-    fig = leg.get_figure()
-    disp = _frac_to_display(fig, float(value[0]), float(value[1]))
-    parent = leg.parent  # Axes 或 Figure
-    trans = parent.transAxes if isinstance(parent, Axes) else fig.transFigure
-    leg.set_bbox_to_anchor(None)
-    leg.set_loc(tuple(trans.inverted().transform(disp)))
-
-
-def _get_legend_loc(leg: Legend):
-    # 原生状态 = (loc, 锚框)，两者都要随快照恢复
-    return (leg._loc, leg._bbox_to_anchor)  # noqa: SLF001
-
-
-def _restore_legend_loc(leg: Legend, orig) -> None:
-    loc, bta = orig
-    # 原对象直接放回：set_bbox_to_anchor 会把 TransformedBbox 再包一层变换，坐标爆炸
-    leg._bbox_to_anchor = bta  # noqa: SLF001
-    leg.set_loc(loc)
 
 
 # ---------------------------------------------------------------------------
@@ -2921,9 +2899,174 @@ _LEGEND_LOCS = [
 ]
 
 
-def _set_legend_loc_preset(leg: Legend, v) -> None:
-    leg.set_bbox_to_anchor(None)
-    leg.set_loc(str(v))
+# ---------------------------------------------------------------------------
+# 图例位置模型（2026-09-07，ADR 0034 修订：外侧锚点）
+#
+# 「图例摆在哪」有三条 prop，它们改的是**同一件事**：
+#
+#   loc         预设档位（九宫格 + best），matplotlib 的 `Legend.set_loc`
+#   loc_frac    画布上拖出来的绝对位置（figure 分数，见 `_FRAC_ANCHORED`）
+#   loc_anchor  锚点 `bbox_to_anchor`（父容器分数坐标）——把图例放到子图**外面**
+#
+# 三条各自当独立 setter 的话它们会互相盖写：`set_loc` 之前必须清锚框
+# （否则 loc 被解释成相对锚框的位置，图例乱飞），而设锚框又不能动 loc。
+# 于是**谁先谁后就是两张图**——而应用顺序在同一档里就是 patch 列表序，
+# 热会话的增量应用与冷启动的全量重放会在这里分叉，写回自检报 divergence
+# （运气不好时几何差在容差内，静默写出与用户所见不同的图）。
+#
+# 所以走边框 / 刻度那套路数：**三条 prop 各写自己的槽位，再整体重建**。
+# 顺序从此不影响结果，撤销一条 = 那个槽位退回「未表态」（落回脚本原样），
+# 而不是把当前推断出来的值钉死。
+#
+# 优先级（写在这里，不写在三个 setter 里）：
+#   * 拖动过（loc_frac 在）→ 位置就是那个点，**锚框强制清掉**——拖动是绝对
+#     定位，留着锚框的话那个点会被解释成相对锚框，图例飞出画面。
+#   * 否则位置看 loc 槽、锚框看 anchor 槽；两个槽都空 = 脚本原样。
+# 前端选预设时会把 loc_frac 那条 override 一起删掉（`setLegendPlacement`），
+# 否则用户点了预设却看不见变化。
+# ---------------------------------------------------------------------------
+
+#: 「这个槽位没人表态」。**不能用 None 代替**：`loc_anchor` 的 `None` 是一个
+#: 合法取值（「不要锚框，回到子图内侧」），与「没表态」（用脚本原样的锚框）
+#: 是两个不同的答案——脚本自己写了 bbox_to_anchor 时两者画出来的图不一样。
+_POS_UNSET = object()
+
+_LEGEND_POS_SLOTS = ("loc", "loc_frac", "anchor")
+
+
+def legend_pos_cfg(leg: Legend) -> dict:
+    """取（必要时新建）一个图例的位置模型。
+
+    `orig` 是**脚本原样**的 `(loc, 锚框)`——`_register_legend` 在 instrument
+    时调一次，保证采的是任何 override 之前的样子。锚框存的是**原对象**：
+    它多半是个 `TransformedBbox`，交给 `set_bbox_to_anchor` 会被再包一层
+    变换，坐标当场爆炸，所以还原时只能直接放回属性。
+    """
+    cfg = getattr(leg, "_mm_pos_cfg", None)
+    if cfg is None:
+        cfg = {k: _POS_UNSET for k in _LEGEND_POS_SLOTS}
+        cfg["orig"] = (leg._loc, leg._bbox_to_anchor)  # noqa: SLF001
+        leg._mm_pos_cfg = cfg  # noqa: SLF001
+    return cfg
+
+
+def _legend_parent_transform(leg: Legend):
+    """锚点坐标的参照系：Axes 图例是子图分数，figure 图例是图幅分数。
+
+    与 `set_bbox_to_anchor(bbox, transform=None)` 的默认值（`BboxTransformTo`
+    of `parent.bbox`）是同一个变换——`legend_anchor_state` 的同源判据就是拿它
+    去比的。
+    """
+    parent = leg.parent  # Axes 或 Figure
+    return parent.transAxes if isinstance(parent, Axes) else parent.transFigure
+
+
+def apply_legend_pos_model(leg: Legend) -> None:
+    """按 cfg **整体重建**图例的位置与锚框（优先级见本节顶部）。"""
+    cfg = legend_pos_cfg(leg)
+    orig_loc, orig_bbox = cfg["orig"]
+    frac = cfg["loc_frac"]
+    anchor = cfg["anchor"]
+
+    if frac is not _POS_UNSET or anchor is None:
+        leg.set_bbox_to_anchor(None)
+    elif anchor is _POS_UNSET:
+        leg._bbox_to_anchor = orig_bbox  # noqa: SLF001
+    else:
+        leg.set_bbox_to_anchor(
+            (float(anchor[0]), float(anchor[1])), transform=_legend_parent_transform(leg)
+        )
+
+    if frac is not _POS_UNSET:
+        fig = leg.get_figure()
+        disp = _frac_to_display(fig, float(frac[0]), float(frac[1]))
+        leg.set_loc(tuple(_legend_parent_transform(leg).inverted().transform(disp)))
+    elif cfg["loc"] is _POS_UNSET:
+        leg.set_loc(orig_loc)
+    else:
+        leg.set_loc(str(cfg["loc"]))
+    leg.stale = True
+
+
+def _mk_legend_pos_setter(slot: str):
+    def setter(leg: Legend, v) -> None:
+        legend_pos_cfg(leg)[slot] = v
+        apply_legend_pos_model(leg)
+
+    return setter
+
+
+def _mk_legend_pos_restore(slot: str):
+    """撤销一条位置 prop = 那个槽位**退回未表态**，整份模型重建一次。
+
+    不是「把此刻推断出来的值钉死」：`loc` 撤掉之后该回到脚本原样的 loc，
+    而不是回到「刚才那个锚点算出来的落位」。
+    """
+
+    def restore(leg: Legend, _orig) -> None:
+        legend_pos_cfg(leg)[slot] = _POS_UNSET
+        apply_legend_pos_model(leg)
+
+    return restore
+
+
+#: 锚点**表达不出来**的两种形状，各带一个 reason code（界面按 code 翻，
+#: 出口 `web/src/components/inspector/UnsupportedProps.tsx`）。判不出就别判，
+#: 把盲点写在明处——把一个 4 元组锚框显示成「没有锚点」是个语义错的精确值。
+LEGEND_ANCHOR_UNSUPPORTED = ("legend_anchor_box", "legend_anchor_transform")
+
+
+def _same_transform(a, b) -> bool:
+    """两个变换在数值上是不是同一个（拿三个点量，不比对象身份）。"""
+    pts = [(0.0, 0.0), (1.0, 1.0), (0.37, 0.62)]
+    try:
+        return bool(np.allclose(a.transform(pts), b.transform(pts), atol=1e-6))
+    except Exception:  # noqa: BLE001 — 量不了就当不同源
+        return False
+
+
+def legend_anchor_state(leg: Legend) -> tuple[list[float] | None, str | None]:
+    """`(锚点 [x, y] 或 None, 表达不出来的原因 code 或 None)`。
+
+    只有**父容器分数坐标里的一个点**才是这个模型认的锚点。实测 3.10.8：
+
+      * `bbox_to_anchor=(1.02, 1)` → `TransformedBbox(Bbox(1.02,1,1.02,1),
+        BboxTransformTo(parent.bbox))`，零尺寸，逆变换回来就是 `[1.02, 1.0]`；
+      * 4 元组 `(0.1, 0.1, 0.5, 0.5)` → 逆变换回来是个**有尺寸的框**，
+        这个模型摆不出来（`legend_anchor_box`）；
+      * `bbox_transform=fig.transFigure` / `ax.transData` → 逆变换回来的数字
+        此刻落位正确，但它钉的是另一个参照系，改成子图分数就是**换了语义**
+        （子图一动两者就分家）——照实说不支持（`legend_anchor_transform`）。
+
+    这两种形状**不发字段**：脚本原样照常渲染（没人写 override 就没人动它），
+    撤销也照常（模型里存着原对象）。少的只是「在这里改它」这个能力。
+    """
+    bbox = leg._bbox_to_anchor  # noqa: SLF001
+    if bbox is None:
+        return None, None
+    trans = getattr(bbox, "_transform", None)
+    if trans is None or not _same_transform(trans, _legend_parent_transform(leg)):
+        return None, "legend_anchor_transform"
+    inv = _legend_parent_transform(leg).inverted()
+    try:
+        (x0, y0), (x1, y1) = inv.transform([(bbox.x0, bbox.y0), (bbox.x1, bbox.y1)])
+    except Exception:  # noqa: BLE001 — 算不出就当表达不出来
+        return None, "legend_anchor_transform"
+    if not all(math.isfinite(float(v)) for v in (x0, y0, x1, y1)):
+        return None, "legend_anchor_transform"
+    if abs(float(x1) - float(x0)) > 1e-6 or abs(float(y1) - float(y0)) > 1e-6:
+        return None, "legend_anchor_box"
+    return [round(float(x0), 4), round(float(y0), 4)], None
+
+
+def _get_legend_loc(leg: Legend):
+    """`state.originals` 里存的「脚本原样」。
+
+    **撤销不走它**——三条位置 prop 的还原都是 `_mk_legend_pos_restore`
+    （槽位退回未表态 + 整体重建），脚本原样存在模型的 `orig` 里。这里回同
+    一个形状只是为了让 originals 表里那条记录说得出它记的是什么。
+    """
+    return (leg._loc, leg._bbox_to_anchor)  # noqa: SLF001
 
 
 def _legend_loc_name(leg: Legend) -> str:
@@ -4276,7 +4419,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: [t.get_fontsize() for t in a.get_texts()],
         lambda a, v: _set_legend_fontsize(a, v),
     ),
-    ("legend", "loc_frac"): (_get_legend_loc, _set_legend_loc_frac),
+    ("legend", "loc_frac"): (_get_legend_loc, _mk_legend_pos_setter("loc_frac")),
     # 坐标范围的 getter 回**可回灌**的表示：脚本没有显式设过范围时，那个
     # 「原样」不是一对数字，而是「自动缩放」这个**模式**。见 `_get_axes_lim`。
     ("axes", "xlim"): (_get_axes_lim("x"), _set_axes_lim("x")),
@@ -4482,8 +4625,16 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ),
     ("linecoll", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     ("linecoll", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-    # ---- legend: 预设位置 / 标题 / 边框样式 ----
-    ("legend", "loc"): (_get_legend_loc, _set_legend_loc_preset),
+    # ---- legend: 预设位置 / 外侧锚点 / 标题 / 边框样式 ----
+    # 三条位置 prop 共用一个模型（见「图例位置模型」一节）：各写自己的槽位，
+    # 再整体重建——应用顺序不影响结果。
+    ("legend", "loc"): (_get_legend_loc, _mk_legend_pos_setter("loc")),
+    # 锚点的 getter 回**当前可读的值**（[x, y] 或 None，界面用）；表达不出来的
+    # 形状回 None + 一个 reason code，那时 manifest 根本不发这条字段。
+    ("legend", "loc_anchor"): (
+        lambda a: legend_anchor_state(a)[0],
+        _mk_legend_pos_setter("anchor"),
+    ),
     ("legend", "title"): (lambda a: a.get_title().get_text(), lambda a, v: a.set_title(str(v))),
     ("legend", "title_fontsize"): (
         lambda a: float(a.get_title().get_fontsize()),
@@ -4755,8 +4906,10 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("image", "gradient_color"): _restore_image_gradient,
-    ("legend", "loc_frac"): _restore_legend_loc,
-    ("legend", "loc"): _restore_legend_loc,  # loc 预设的原生值同为 (loc, 锚框)
+    # 位置模型的三条：槽位退回未表态 + 整体重建（脚本原样存在模型的 orig 里）
+    ("legend", "loc_frac"): _mk_legend_pos_restore("loc_frac"),
+    ("legend", "loc"): _mk_legend_pos_restore("loc"),
+    ("legend", "loc_anchor"): _mk_legend_pos_restore("anchor"),
     ("ticklabel", "text"): _restore_ticklabel_text,
     ("colorbar", "orientation"): _restore_cb_orientation,
     ("colorbar", "extend"): _restore_cb_extend,
@@ -5289,7 +5442,13 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     state.fig.draw_without_rendering()
                 except Exception:  # noqa: BLE001 — 布局刷新失败不拦渲染
                     pass
-            if state.applied.get(key) == value:
+            # **判据是「上次应用过 **且** 值没变」，不是 `.get(key) == value`**：
+            # 后者把「这个 key 从没应用过」（`.get` 回 None）与「这一次的值
+            # 就是 null」当成了同一件事，于是任何 null 取值的 override 在
+            # **第一次**就被跳过——setter 从没跑过、`applied` 里也没有它，
+            # 表现是「改了没反应」，而且没有任何 warning。
+            # `loc_anchor = null`（把外侧图例收回子图内）第一次就撞上它。
+            if key in state.applied and state.applied[key] == value:
                 # 值没变也要重放：① figure 锚定的位置（几何动过，本地坐标已失效）；
                 # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）；
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
