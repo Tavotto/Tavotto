@@ -552,14 +552,15 @@
   },
   "readiness": {
     "addToCanvas": "添加到画布",
-    "allScriptsHint": "项目里的每个 .py 都在这里，包括静态识别不出产物的（show-only、运行时命名、工具脚本）。任选一个「试运行」即可按真实产出连接。",
+    "allEditable_other": "{{count}} 张图都可以编辑。",
+    "allScriptsHint": "项目里的每个 .py 都在这里，包括那些只看脚本看不出会画出哪张图的。任选一个「试运行」，Tavotto 按它真实画出来的图建立关系。",
     "allScriptsTitle": "全部脚本（{{n}}）",
     "autoLink": "自动连接",
     "detail": {
       "candidates": "候选脚本",
       "cost": "运行成本",
       "entry": "入口函数",
-      "reasonCode": "reason code",
+      "reasonCode": "状态代码",
       "scope": "候选范围",
       "script": "源脚本",
       "stem": "图名"
@@ -577,7 +578,10 @@
     "loadFailed": "读不到项目接入状态",
     "loading": "正在读取项目接入状态…",
     "manualAria": "{{script}} 生成的图名",
-    "manualPlaceholder": "手工填图名，逗号分隔",
+    "manualLabel": "这个脚本画出哪些图",
+    "manualPick": "从项目里挑",
+    "manualPickAria": "从项目已有的图名里挑一个给 {{script}}",
+    "manualPlaceholder": "图名（去掉扩展名），多个用逗号分隔",
     "none": "—",
     "nothingNew": "扫描完成，没有发现新的可连接脚本",
     "orphanConflicts": "这些图名有不止一个脚本声称生成：{{stems}}。项目里还没有对应的图文件，可以在下面的「全部脚本」里指定。",
@@ -602,9 +606,9 @@
       "panel": "这张图的候选",
       "project": "项目里的脚本清单"
     },
-    "sourcePrefix": "来源记录：",
+    "sourcePrefix": "这些关系记在：",
     "staleReport": "显示的是上一次成功取回的状态，可能已经旧了。",
-    "subtitle": "每张图与生成它的脚本之间的关系，以及下一步能做什么。",
+    "subtitle": "每张图能不能直接改，以及还差什么。",
     "summary": {
       "editable": "可编辑",
       "layoutOnly": "仅排版",

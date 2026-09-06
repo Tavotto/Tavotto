@@ -556,14 +556,16 @@
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
-    "allScriptsHint": "Every .py in the project is listed here, including ones static analysis cannot resolve (show-only, runtime-named, tooling scripts). Pick any of them and “Test run” to connect it from its real output.",
+    "allEditable_one": "{{count}} figure, and it is editable.",
+    "allEditable_other": "All {{count}} figures are editable.",
+    "allScriptsHint": "Every .py in the project is here, including the ones whose figures cannot be told from the source alone. Run any of them once and Tavotto links it by what it actually draws.",
     "allScriptsTitle": "All scripts ({{n}})",
     "autoLink": "Connect automatically",
     "detail": {
       "candidates": "Candidate scripts",
       "cost": "Run cost",
       "entry": "Entry function",
-      "reasonCode": "Reason code",
+      "reasonCode": "Status code",
       "scope": "Candidate scope",
       "script": "Source script",
       "stem": "Figure name"
@@ -582,7 +584,10 @@
     "loadFailed": "Could not load project readiness",
     "loading": "Loading project readiness…",
     "manualAria": "Figure names produced by {{script}}",
-    "manualPlaceholder": "Or type figure names, comma separated",
+    "manualLabel": "Figures this script draws",
+    "manualPick": "Pick from project",
+    "manualPickAria": "Pick a figure name already in the project for {{script}}",
+    "manualPlaceholder": "Figure names without extension, separated by commas",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
     "orphanConflicts": "More than one script claims these figure names: {{stems}}. There is no matching file in the project yet; you can assign them under “All scripts” below.",
@@ -608,9 +613,9 @@
       "panel": "candidates for this figure",
       "project": "scripts found in the project"
     },
-    "sourcePrefix": "Recorded source: ",
+    "sourcePrefix": "These links are stored in: ",
     "staleReport": "Showing the last state we managed to load — it may be out of date.",
-    "subtitle": "How each figure relates to the script that makes it, and what you can do next.",
+    "subtitle": "Whether each figure can be edited directly, and what is still missing.",
     "summary": {
       "editable": "Editable",
       "layoutOnly": "Layout only",

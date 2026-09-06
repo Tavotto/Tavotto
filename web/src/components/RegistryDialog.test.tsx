@@ -33,7 +33,7 @@ import {
   type ReadinessPanel,
   type ReadinessReport,
 } from '@/lib/api'
-import { RegistryDialog, sourceOptions } from '@/components/RegistryDialog'
+import { RegistryDialog, parseStems, sourceOptions } from '@/components/RegistryDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
 import {
@@ -496,5 +496,171 @@ describe('取不到就绪度', () => {
     })
     expect(dialog().textContent).toContain('后端没起来')
     expect(buttonsIn(dialog()).some((l) => l.includes('重试'))).toBe(true)
+  })
+})
+
+/**
+ * 正常项目不该长得像故障排查页（审计 T10）。
+ *
+ * 全部可编辑时，四个计数格里有两个恒为零——「待连接 0 · 仅排版 0」不是信息，
+ * 它把一个没有问题的项目画成一张需要排查的表。而每张可编辑图下面那句解释
+ * 对每一张都一模一样，说 N 遍不比说一遍多告诉用户任何事。
+ */
+describe('正常状态', () => {
+  const ALL_OK: ReadinessPanel[] = [
+    P({ id: 'Fig1_kinetics.pdf', stem: 'Fig1_kinetics', status: 'editable',
+      reason_code: 'registered_source', script: 'fig1_kinetics.py', details: { entry: 'main' } }),
+    P({ id: 'Fig2_correlation.pdf', stem: 'Fig2_correlation', status: 'editable',
+      reason_code: 'registered_source', script: 'fig2_correlation.py', details: { entry: 'main' } }),
+  ]
+
+  it('全都能编辑：一句话说完，不摆四个格子', async () => {
+    await open(reportOf(ALL_OK))
+    const text = dialog().textContent ?? ''
+    expect(text).toContain('2 张图都可以编辑')
+    expect(text).not.toContain('待连接')
+    expect(text).not.toContain('仅排版')
+  })
+
+  it('有待连接项时照旧摆四个格子（那时零和非零都要看得见）', async () => {
+    await open(reportOf(SIX))
+    const text = dialog().textContent ?? ''
+    expect(text).toContain('待连接')
+    expect(text).toContain('仅排版')
+    expect(text).not.toContain('都可以编辑')
+  })
+
+  it('可编辑那些不再逐张重复同一句解释；分组标题已经说了几张', async () => {
+    await open(reportOf(ALL_OK))
+    const text = dialog().textContent ?? ''
+    expect(text).toContain('可编辑（2）')
+    // 那句话（`readinessText.reasonText` 的 registered_source）一次都不出现
+    expect(text).not.toContain('可以直接改图里的内容')
+  })
+
+  it('不能编辑的那些照旧逐条说清「这一张为什么不行」', async () => {
+    await open(reportOf(SIX))
+    // 五种不可编辑状态各有各的原因，一条都不许被合并掉
+    const reasons = new Set(
+      SIX.filter((p) => p.status !== 'editable').map(
+        (p) => rowOf(p.id)?.querySelector('p')?.textContent ?? '',
+      ),
+    )
+    expect(reasons.size).toBe(5)
+    expect([...reasons].every((r) => r.length > 0)).toBe(true)
+  })
+})
+
+describe('图卡的缩略图', () => {
+  it('素材清单里有它就画缩略图，走的是既有的渲染地址', async () => {
+    useAssetStore.setState({
+      panels: [],
+      byId: {
+        'Ok.pdf': {
+          id: 'Ok.pdf', name: 'Ok', folder: '.', kind: 'pdf',
+          native_w_mm: 80, native_h_mm: 60, mtime: 42,
+        },
+      },
+      loaded: true,
+    })
+    await open(reportOf(SIX))
+    const img = rowOf('Ok.pdf')!.querySelector('img')!
+    expect(img).not.toBeNull()
+    expect(img.getAttribute('src')).toContain('Ok.pdf')
+    expect(img.getAttribute('src')).toContain('42') // mtime 进 URL：文件变了就换一张
+    expect(img.getAttribute('alt')).toBe('') // 装饰性，读屏不念
+  })
+
+  it('素材清单里没有它就画占位方块，不猜一个会 404 的地址', async () => {
+    useAssetStore.setState({ panels: [], byId: {}, loaded: true })
+    await open(reportOf(SIX))
+    expect(rowOf('Ok.pdf')!.querySelector('img')).toBeNull()
+  })
+})
+
+/**
+ * 高级段的手工映射（审计 T10：手写逗号列表进了配置界面）。
+ *
+ * 这条兜底路径不能去掉——「产物名要跑起来才知道」的脚本，它的图名此刻不在
+ * 任何清单里。能做的是：给输入框一个真正的标签（而不是拿 placeholder 当
+ * 标签），并且把**项目里已有的图名**做成可选项，常见情形不必手打。
+ */
+describe('手工映射：图名列表', () => {
+  const writable = () => reportOf(SIX)
+
+  it('解析：中英文逗号与空白都算分隔，去重，空段丢掉', () => {
+    expect(parseStems('a, b')).toEqual(['a', 'b'])
+    expect(parseStems('a，b  c')).toEqual(['a', 'b', 'c'])
+    expect(parseStems('  ')).toEqual([])
+    expect(parseStems('a, a, b')).toEqual(['a', 'b'])
+  })
+
+  it('输入框有真正的标签，不是拿 placeholder 顶替', async () => {
+    await open(writable())
+    const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
+    expect(input).not.toBeNull()
+    const label = dialog().querySelector(`label[for="stems-ok.py"]`)
+    expect(label?.textContent).toBe('这个脚本画出哪些图')
+  })
+
+  it('写入的是解析后的那几个名字', async () => {
+    await open(writable())
+    const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, 'Alpha，Beta  Alpha')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const row = input.closest('li')!
+    await clickIn(row, '写入')
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ script: 'ok.py', stems: ['Alpha', 'Beta'] }),
+    )
+  })
+
+  it('只读项目上根本不给这个控件（按了才发现存不下更糟）', async () => {
+    await open(
+      reportOf(SIX, {
+        project: { writable: false, registry_valid: true, scan_ok: true, can_rescan: true },
+      }),
+    )
+    expect(dialog().querySelector('#stems-ok\\.py')).toBeNull()
+  })
+})
+
+describe('手工映射：从项目已有的图名里挑', () => {
+  const pickerIn = (row: Element | null) =>
+    row?.querySelector('[aria-label="从项目已有的图名里挑一个给 ok.py"]') ?? null
+
+  const typeStems = async (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('项目里还有没被挑过的图名时给挑选入口', async () => {
+    await open(reportOf(SIX))
+    const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
+    expect(pickerIn(input.closest('li'))).not.toBeNull()
+  })
+
+  it('已经填进去的名字不再出现在可选项里；全填完了入口就收起', async () => {
+    await open(reportOf(SIX))
+    const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
+    // SIX 的六个 stem 全填进去 → 一个可挑的都不剩
+    await typeStems(input, SIX.map((p) => p.stem).join(', '))
+    expect(pickerIn(input.closest('li'))).toBeNull()
+    // 去掉一个 → 它又可以挑了
+    await typeStems(input, SIX.slice(1).map((p) => p.stem).join(', '))
+    expect(pickerIn(input.closest('li'))).not.toBeNull()
+  })
+
+  it('判据用解析后的名字：敲到一半的分隔符不会让已填的名字又冒出来', async () => {
+    await open(reportOf(SIX))
+    const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
+    await typeStems(input, SIX.map((p) => p.stem).join(', ') + '，')
+    expect(pickerIn(input.closest('li'))).toBeNull()
   })
 })
