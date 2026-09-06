@@ -100,7 +100,7 @@ STRIP = [
     ("archive.tiff", ["png"]),
     (".pdf", ["pdf"]),
     ("Fig 1", ["pdf"]),
-    # ADR 0044：eps / tiff 也是我们自己会产出的扩展名；`.tif` 是 tiff 的别名
+    # ADR 0046：eps / tiff 也是我们自己会产出的扩展名；`.tif` 是 tiff 的别名
     ("Fig 1.eps", ["pdf", "eps"]),
     ("Fig 1.EPS", ["pdf"]),
     ("Fig 1.tiff", ["tiff"]),

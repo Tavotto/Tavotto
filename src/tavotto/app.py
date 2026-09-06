@@ -1024,7 +1024,7 @@ def _serialize_figure(
 
     这是「谁来渲染」那扇门（`_engine_worker` / `_safe_worker` →
     `enginesession.resolve()`）在导出路上的**唯一**调用点：画布合成与原图导出
-    重渲染中间 PDF 走它，EPS（ADR 0044：PyMuPDF 写不出 PostScript，EPS 只能
+    重渲染中间 PDF 走它，EPS（ADR 0046：PyMuPDF 写不出 PostScript，EPS 只能
     从这里出）也走它。这里曾经是两段各自 `pool.get()` 的复制品，于是同一张
     native 图「预览是 native 的、画布导出是 safe 的」——两张不一样的图。
 
@@ -1284,7 +1284,7 @@ def _declared_density(source_path: Path) -> float | None:
 
 
 def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
-    """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0044）。
+    """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
 
     父进程没有 PostScript 写入器，所以这一格**只有一条路**：注册表里有这张图的
     脚本（或它是 runtime 素材）。没有就如实报 `eps_needs_script`，别的格式照常

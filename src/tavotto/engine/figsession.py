@@ -90,7 +90,7 @@ def export_font_context(fmt: str):
     """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。
 
     EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
-    画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0044。"""
+    画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
     import contextlib
 
     if str(fmt).lower() not in ("pdf", "ps", "eps"):

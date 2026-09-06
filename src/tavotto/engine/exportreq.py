@@ -45,7 +45,7 @@ SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 #: **追加在后面**，不插进老的两个之间——老客户端只勾 pdf+png 时得到的顺序
 #: 一个字节不变。
 #:
-#: `eps`（ADR 0044）在这张表里，但它**不是每条路都给得出**：PyMuPDF 写不出
+#: `eps`（ADR 0046）在这张表里，但它**不是每条路都给得出**：PyMuPDF 写不出
 #: PostScript，所以画布合成（`scope=canvas`）与没有脚本的图给不出 EPS，只有
 #: 引擎能重新运行脚本的那张图（`scope=original` + 注册表里有它的脚本）才由
 #: matplotlib 直接序列化。**给不出的那一档如实报 `eps_not_for_canvas` /

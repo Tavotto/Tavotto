@@ -878,7 +878,7 @@ class Canvas:
     def save_tiff(self, path: Path, dpi: int) -> dict:
         """与 `save_png` **同一页、同一次栅格化参数**出的 TIFF（Deflate 无损，
         分辨率标签 = dpi）。两份位图的像素逐个相同——不是"记得要一致"，是同一个
-        `get_pixmap` 调用序列（ADR 0044）。回 `tiffwrite.write_tiff()` 的事实。"""
+        `get_pixmap` 调用序列（ADR 0046）。回 `tiffwrite.write_tiff()` 的事实。"""
         return _pixmap_to_tiff(self._pixmap(dpi), path, dpi)
 
     def _pixmap(self, dpi: int) -> pymupdf.Pixmap:
@@ -1033,7 +1033,7 @@ def original_tiff(
     *,
     dpi_meta: float | None = None,
 ) -> dict:
-    """把一张图**按它自己的尺寸**写成 TIFF（ADR 0044）。与 `original_png` 同一套
+    """把一张图**按它自己的尺寸**写成 TIFF（ADR 0046）。与 `original_png` 同一套
     规则，只换容器：
 
     * **矢量源**：按 `ppi` 栅格化，分辨率标签 = `ppi`；`transparent` 时带 alpha。

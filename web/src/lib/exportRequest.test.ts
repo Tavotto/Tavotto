@@ -253,7 +253,7 @@ describe('像素预览：照抄源文件才报源像素网格', () => {
   })
 })
 
-describe('EPS 与 TIFF（ADR 0044）', () => {
+describe('EPS 与 TIFF（ADR 0046）', () => {
   it('tiff 是位图、eps 是矢量：PPI 规则对新格式同样成立', () => {
     expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff'])
     expect([...RASTER_FORMATS, ...VECTOR_FORMATS].sort()).toEqual([...FORMATS].sort())

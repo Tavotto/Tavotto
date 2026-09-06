@@ -345,7 +345,7 @@ export function ExportDialog() {
   const transparentApplies = raster && !copiesSourceVerbatim
 
   /**
-   * EPS 这次给不给得出（ADR 0044）。判据在 `epsAvailability()` 一处：画布范围
+   * EPS 这次给不给得出（ADR 0046）。判据在 `epsAvailability()` 一处：画布范围
    * 没有它（合成走 PyMuPDF），没有脚本的图也没有它。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */

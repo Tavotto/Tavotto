@@ -1,4 +1,4 @@
-"""EPS 文件头的只读解析 —— 导出回执里「这张 EPS 多大」的唯一出处（ADR 0044）。
+"""EPS 文件头的只读解析 —— 导出回执里「这张 EPS 多大」的唯一出处（ADR 0046）。
 
 EPS 由 worker 侧的 matplotlib 直接序列化（父进程没有 matplotlib，也没有任何
 PostScript 写入器），父进程拿到文件之后只需要两件事实：它**是不是** EPS、

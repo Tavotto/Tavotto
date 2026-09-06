@@ -822,7 +822,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
     `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
     写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
-  * **EPS 与 TIFF（ADR 0044，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
+  * **EPS 与 TIFF（ADR 0046，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
     新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
     `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`
     （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**）；位图源的分辨率

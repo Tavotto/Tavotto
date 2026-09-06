@@ -1,4 +1,4 @@
-"""`engine/epsfile.py`：EPS 头的只读解析（ADR 0044）。"""
+"""`engine/epsfile.py`：EPS 头的只读解析（ADR 0046）。"""
 
 from __future__ import annotations
 

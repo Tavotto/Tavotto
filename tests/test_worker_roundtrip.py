@@ -3156,7 +3156,7 @@ def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
     assert not list(pool.ENGINE_CACHE.glob("_replay-*")), "本用例自己建的 replay 目录一个都不该剩下"
 
 
-# ============================ ADR 0044：EPS 与 TIFF ==========================
+# ============================ ADR 0046：EPS 与 TIFF ==========================
 def test_export_eps_and_tiff_are_real_matplotlib_files(worker):
     """worker 的 `export` 对 eps / tiff 直接交给 `savefig`：EPS 是带 DSC 头、
     Type 42 字体的真 PostScript；TIFF 是 Deflate 压缩、带 dpi 标签的位图。"""

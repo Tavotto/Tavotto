@@ -1160,7 +1160,7 @@ def test_a_live_temp_dir_is_never_swept_by_another_job(env, monkeypatch):
     assert body["status"] == "done"
 
 
-# ============================ ADR 0044：EPS 与 TIFF ==========================
+# ============================ ADR 0046：EPS 与 TIFF ==========================
 from tests.support import tiffcheck  # noqa: E402
 
 

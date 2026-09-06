@@ -1,4 +1,4 @@
-# ADR 0044：导出格式加 EPS 与 TIFF——同一个请求结构，两条不同的出图路
+# ADR 0046：导出格式加 EPS 与 TIFF——同一个请求结构，两条不同的出图路
 
 日期：2026-09-06 · 状态：**Accepted**
 相关：[0031 统一导出管线](0031-unified-export-pipeline.md)（`ExportRequest` / 作业生命周期 /

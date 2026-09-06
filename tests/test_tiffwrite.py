@@ -1,4 +1,4 @@
-"""`tavotto/tiffwrite.py`：纯标准库 TIFF 编码器（ADR 0044）。
+"""`tavotto/tiffwrite.py`：纯标准库 TIFF 编码器（ADR 0046）。
 
 读取端是 `tests/support/tiffcheck.py`——与写入端**无一行共享代码**；Pillow 在场
 （`ci` extra / 本机 .venv）时再用它解一遍当第三把尺。两把尺都是「按 TIFF 6.0

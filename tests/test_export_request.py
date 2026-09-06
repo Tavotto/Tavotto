@@ -108,7 +108,7 @@ def test_format_order_is_stable_not_click_order():
 
 
 def test_tiff_is_raster_and_eps_is_vector_for_the_ppi_rule():
-    """「PPI 只在有位图格式时是数字」这句话对新格式同样成立（ADR 0044）。
+    """「PPI 只在有位图格式时是数字」这句话对新格式同样成立（ADR 0046）。
 
     `tiff` 单独一个就该让 ppi 变成数字；`eps` 单独一个必须让它是 `None`——
     把 EPS 误归进位图，界面就会为一份矢量文件摆出一个不起作用的分辨率选择。

@@ -38,7 +38,7 @@ export type ExportBackground = 'white' | 'transparent'
 
 /**
  * 画布这条入口认的格式，**顺序与 `engine/exportreq.FORMATS` 同源**：结果里的
- * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0044）。
+ * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0046）。
  */
 export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff']
 
@@ -135,7 +135,7 @@ function sourceReachable(figureId: string): boolean {
 }
 
 /**
- * EPS 为什么不可用。**闭集**，界面按它说一句人话（ADR 0044）。
+ * EPS 为什么不可用。**闭集**，界面按它说一句人话（ADR 0046）。
  *
  * EPS 只有 worker 侧的 matplotlib 写得出（PyMuPDF 没有 PostScript 写入器），
  * 所以它只在「按原图导出一张**有脚本**的图」时存在：

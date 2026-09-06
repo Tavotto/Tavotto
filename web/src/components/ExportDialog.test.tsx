@@ -1008,7 +1008,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
   })
 })
 
-describe('EPS 与 TIFF（ADR 0044）', () => {
+describe('EPS 与 TIFF（ADR 0046）', () => {
   it('画布范围：EPS 禁用并说出原因，TIFF 是位图（分辨率行随它出现）', async () => {
     await setup(9)
     await click(button('PNG')!) // 只剩 PDF
