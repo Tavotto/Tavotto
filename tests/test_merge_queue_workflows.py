@@ -578,7 +578,9 @@ class TestLandingAudit:
         不打包、不跑冒烟。"""
         block = _code(_job(CI, "main-landing-audit"))
         assert re.search(r"(?m)^\s+if: github\.event_name == 'push'$", block)
-        assert "build_mcp_widget.py --check" in block, "受管生成物一致性掉了"
+        # ADR 0043：画布不再入库，指纹对比退休；换成「发行生成物不许进索引」
+        assert "build_mcp_widget.py --check" not in block, "画布不入库了，这条 --check 会恒红"
+        assert "check_generated_untracked.py" in block, "「发行生成物不许进索引」那一步掉了"
         assert "pytest" in block, "结构契约那一步掉了"
         for heavy_marker in ("pyinstaller", "smoke_app.py", "python -m build", "matplotlib"):
             assert heavy_marker not in block, f"landing audit 里混进了重活：{heavy_marker}"
