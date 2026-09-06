@@ -7,7 +7,7 @@ import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { LEGEND_ANCHOR_PROP, toLegendAnchor } from '@/lib/legendModel'
+import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
 import { cn } from '@/lib/utils'
 import {
   clearOverrides,
@@ -453,6 +453,7 @@ function LegendControls({
             ariaLabel={propLabel('loc')}
             anchor={toLegendAnchor(read(LEGEND_ANCHOR_PROP))}
             anchorSupported={!!field(LEGEND_ANCHOR_PROP)}
+            anchorRange={legendAnchorRange(element)}
             onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
           />
         </Line>

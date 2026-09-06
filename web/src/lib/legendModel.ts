@@ -302,3 +302,14 @@ export function legendPlacementPlan(
   }
   return { remove, set }
 }
+
+/**
+ * 锚点两个数字的取值范围：**manifest 那条字段说了算**，界面不另写一份
+ * ——抄第二份，引擎改了范围界面就会漂。字段不在（不支持）时回 undefined。
+ */
+export function legendAnchorRange(
+  legend: ManifestElement,
+): { min?: number; max?: number } | undefined {
+  const f = legend.editable.find((x) => x.prop === LEGEND_ANCHOR_PROP)
+  return f ? { min: f.min, max: f.max } : undefined
+}

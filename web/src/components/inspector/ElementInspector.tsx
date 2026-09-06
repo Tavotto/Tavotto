@@ -149,6 +149,7 @@ import { ColorScaleLink } from './ColorScaleLink'
 import { ResetChip } from './controls/textRows'
 import {
   LEGEND_ANCHOR_PROP,
+  legendAnchorRange,
   legendEntryElements,
   legendPlacementOf,
   toLegendAnchor,
@@ -1695,6 +1696,7 @@ function BatchFieldRow({
                   anchorSupported={elements.every((e) =>
                     e.editable.some((f) => f.prop === LEGEND_ANCHOR_PROP),
                   )}
+                  anchorRange={legendAnchorRange(elements[0])}
                   onPlace={(next) => setLegendPlacement(panel.id, elements, next)}
                 />
               )
@@ -1999,6 +2001,7 @@ function FieldRow({
           containerLabel={containerLabelOf(rowManifest, element)}
           anchor={toLegendAnchor(siblingValue(LEGEND_ANCHOR_PROP))}
           anchorSupported={element.editable.some((f) => f.prop === LEGEND_ANCHOR_PROP)}
+          anchorRange={legendAnchorRange(element)}
           onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
         />,
         // 内 / 外两带有五行高，标签垂直居中会掉到控件半腰上

@@ -172,6 +172,7 @@ export function LegendPositionPicker({
   containerLabel,
   anchor = null,
   anchorSupported = false,
+  anchorRange,
   onPlace,
 }: {
   /**
@@ -189,6 +190,11 @@ export function LegendPositionPicker({
   anchor?: LegendAnchor | null
   /** 引擎宣称了 `loc_anchor` 这条能力——没有它整个外侧带不出现 */
   anchorSupported?: boolean
+  /**
+   * 锚点两个数字的取值范围。**取自 manifest 那条字段**（`min` / `max`），
+   * 不在这里另写一份——范围是引擎说了算的，抄第二份就会漂。
+   */
+  anchorRange?: { min?: number; max?: number }
   /** 一次写下整个摆法（内 / 外都走它）；没给就退回只写 `loc` */
   onPlace?: (next: LegendPlacement) => void
 }) {
@@ -341,6 +347,8 @@ export function LegendPositionPicker({
                   className="min-w-0 flex-1"
                   ariaLabel={ins('control.legendAnchorX')}
                   value={anchor[0]}
+                  min={anchorRange?.min}
+                  max={anchorRange?.max}
                   step={0.01}
                   precision={2}
                   onChange={(v) => place({ loc: value ?? 'upper left', anchor: [v, anchor[1]] })}
@@ -349,6 +357,8 @@ export function LegendPositionPicker({
                   className="min-w-0 flex-1"
                   ariaLabel={ins('control.legendAnchorY')}
                   value={anchor[1]}
+                  min={anchorRange?.min}
+                  max={anchorRange?.max}
                   step={0.01}
                   precision={2}
                   onChange={(v) => place({ loc: value ?? 'upper left', anchor: [anchor[0], v] })}
