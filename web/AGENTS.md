@@ -742,7 +742,12 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   画进 PDF、PNG 由注好的 PDF 重栅格化（两载体同源）；只有 PNG 的素材回
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
-- **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作
+  +≤1 条**次级文字链接**）。次级那一条只给「起步」空态用（画布空时的
+  「试用示例」，走 `runTutorialEntry` 统一入口），画成裸文字链接而不是第二颗
+  按钮——一屏只有一个看起来像行动的东西。**工作台的起步屏一共只有一个动作**
+  （画布中央的「添加图」）：图层树 / 元素树 / 素材库 / 检查器的空态一律是
+  轻量占位，一颗按钮都不配（审计 T03）。
 - **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
   按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
   空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
@@ -751,6 +756,22 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
   后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
   `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
+- **项目就位后按文档页面适配一次视口（2026-09-06，审计 T03）**：这一次挂在
+  「项目就位」上（`adoptOpenedProject`），与舞台挂没挂载无关——`CanvasStage`
+  自己那次只在首次挂载时跑，而顶栏项目切换器**不经过 `phase: 'none'`**，工作台
+  整个不卸载，新项目于是沿用上一个项目的缩放。舞台还量不到视口时
+  `viewportStore.fit` 把这次适配**挂起**（模块级 `pendingFit`），`setViewRect`
+  第一次量到尺寸时补上；清空只在 `fit` 一处，直接操纵（平移 / 缩放 / 适应 /
+  定位）各自 `dropPendingFit()` 作废它。
+- **新文档的默认名跟界面语言走**（`types/document.defaultDocumentName()`）：
+  只在创建那一刻取一次，之后是用户内容（不翻、不追认）。它同时是「另存为」的
+  默认文件名，所以取值必须磁盘安全。
+- **「最近文档」标出所属项目（2026-09-06，审计 T04）**：`tavotto.docIndex` 跨项目
+  共用一份，条目里记 `projectId` / `projectName`。归属在文档**换进来那一刻**定
+  （`documentStore` 的 `docProject`），不在落盘那一刻现问——切项目的顺序是先认领
+  新项目再换空白文档，而换文档第一句就是把旧文档冲刷落盘。当前项目名的投影在
+  `lib/projectLabel.ts`（由 `projectStore` 写、`documentStore` 读，避免两个 store
+  互相 import 成环）。旧条目没有这两个字段 = **不知道**，什么都不标。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
@@ -860,8 +881,13 @@ descriptor 文件读。
 
 - **句子与「待连接」只有一份实现**：`lib/readinessText.ts` 的 `statusLabel()`
   （读 `status`）、`reasonText()`（读 **`reason_code`**，不读 `status`），
-  以及 `PENDING_STATUSES` / `pendingCount(summary)`——横幅与接入中心顶部说的
-  是同一个数，各展开写一遍的话，多一个状态时总有一处会漏掉。四个出口共用它：
+  以及 `PENDING_STATUSES` / `pendingCount(summary)` / `allEditable(summary)`
+  ——横幅与接入中心顶部说的是同一个数，各展开写一遍的话，多一个状态时总有
+  一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：横幅整条不说话
+  （`bannerReport` 回 null），接入中心把四个计数换成一句「N 张图都可以编辑」
+  （审计 T10：正常项目不该长得像故障排查页）。这一档里**可编辑的图不再逐张
+  重复同一句解释**（那句话对每一张一模一样），第一层也只留「添加到画布」——
+  「重新试运行」是排障动作，与改绑一起收在技术详情里。四个出口共用它：
   素材卡角标、素材说明条、接入中心每一行、属性栏那条提示。按状态查句子会让
   只读项目里的用户一直等一个永远不来的结果（`auto_linkable` 有四个 code，
   一个是"马上就好"、三个是"不做点什么永远不会好"）。

@@ -831,7 +831,10 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
-  布局版本历史 `tavottofile/versions/`。旧位置（项目 `canvases/`、项目同级
+  布局版本历史 `tavottofile/versions/`。**这条规则的唯一出处是
+  `project_layout_dir()`**，`project_status()` 用 `document_dir` 把它交给界面
+  （「另存为」那一屏要回答「存到哪」，审计 T04）——前端自己拼
+  `<项目>/tavottofile` 抄不到下面这两条分支。旧位置（项目 `canvases/`、项目同级
   `<项目名>-exports/`、数据目录 layouts/ 与 layouts/_versions/）只读兼容、
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
