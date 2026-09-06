@@ -429,10 +429,17 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
   return null
 }
 
+/**
+ * 默认画布名（审计 T05）：**全产品只有这一个格式**。第一张画布、新建画布、
+ * 教程项目里的画布都叫「Figure N」——此前空文档叫 Fig 1、新建的叫 Fig 2、
+ * 教程里的叫 Figure 1，三种写法混在一个标签行里。
+ */
+export const defaultCanvasName = (n: number): string => `Figure ${n}`
+
 export function emptyProject(): ProjectDocument {
   const canvas: CanvasData = {
     id: newId('c'),
-    name: 'Fig 1',
+    name: defaultCanvasName(1),
     page: { w: 150, h: 100 },
     objects: [],
     guides: [],

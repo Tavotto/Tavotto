@@ -105,12 +105,12 @@ describe('快速编辑这一屏', () => {
     expect(container.querySelector('[data-page-sheet]')).not.toBeNull()
   })
 
-  it('两个出口都在：添加到画布 / 回到画布排版', async () => {
+  it('两个出口都在：添加到画布 / 返回画布', async () => {
     act(() => openFastEdit('a.pdf'))
     await mount()
     const labels = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '')
     expect(labels.some((l) => l.includes('添加到画布'))).toBe(true)
-    expect(labels.some((l) => l.includes('画布排版'))).toBe(true)
+    expect(labels.some((l) => l.includes('返回画布'))).toBe(true)
   })
 
   it('切进切出不动文档：对象、位置、历史长度全都一样', async () => {

@@ -681,9 +681,14 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           {pn(editing ? 'exitElementEdit' : 'editElements')}
         </Button>
         {overrides > 0 && (
+          /* 「22」孤零零挂在按钮旁会被读成元素数（审计 T07）：徽标自己说清是
+             修改数，与右栏头部的「N 项已修改」同一句话；完整说明在 tooltip */
           <Tip label={pn('overrideCount', { count: overrides })}>
-            <span className="flex h-7 shrink-0 items-center rounded-sm bg-surface-2 px-1.5 font-mono text-xs tabular-nums text-ink-2">
-              {overrides}
+            <span
+              data-override-badge
+              className="flex h-7 shrink-0 items-center rounded-sm bg-accent-subtle px-1.5 text-xs text-accent"
+            >
+              {translate('element.modifiedCount', { ns: 'inspector', count: overrides })}
             </span>
           </Tip>
         )}

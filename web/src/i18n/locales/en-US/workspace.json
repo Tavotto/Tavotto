@@ -100,7 +100,9 @@
     "rename": "Rename",
     "rowActions": "Actions for canvas {{name}}",
     "search": "Search canvases…",
-    "searchAria": "Search canvases"
+    "searchAria": "Search canvases",
+    "moveUp": "Move up",
+    "moveDown": "Move down"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so after switching you will not be able to get this document back from \"Recent documents\". Continue anyway?",
@@ -117,18 +119,8 @@
     "resetOverridesConfirm": "Revert"
   },
   "contextBar": {
-    "alignMenu": "Align",
-    "aria": "Quick edit",
-    "distributeMenu": "Distribute",
-    "groupMenu": "Group",
-    "moreArrange": "More arrange options",
-    "moreArrangeTip": "Open the full arrange tools in Properties: spacing, layout groups, copy style",
-    "multiAria": "Multi-selection actions",
-    "openInspector": "All properties",
-    "primaryHint": "The last selected object is the primary (thicker outline); the Primary reference aligns to it",
-    "selectedCount_one": "{{count}} selected",
-    "selectedCount_other": "{{count}} selected",
-    "sizeMenu": "Size"
+    "label": "Where you are",
+    "crumbsLabel": "Current object"
   },
   "crash": {
     "blank": "Open a blank document",
@@ -193,11 +185,13 @@
     "rowAria": "{{label}} ({{role}})",
     "rowAriaHidden": ", hidden",
     "rowAriaLocked": ", locked",
-    "search": "Search name / role / gid",
+    "search": "Search figure elements",
     "searchAria": "Search figure elements",
     "unhide": "Show again",
     "unlock": "Unlock",
-    "unsupportedTip": "{{title}} is not supported yet: {{reason}}"
+    "unsupportedTip": "{{title}} is not supported yet: {{reason}}",
+    "count_one": "{{count}} element",
+    "count_other": "{{count}} elements"
   },
   "fastEdit": {
     "addToCanvas": "Add to canvas",
@@ -207,7 +201,6 @@
     "connectSource": "Link a source script",
     "crumbTitle": "Back to canvas layout",
     "figureMissing": "{{name}} is not in this project",
-    "layoutMode": "Canvas layout",
     "layoutOnly": "No source script is linked, so this figure can be laid out but not edited inside.",
     "mode": "Quick edit",
     "originalSize": "Original {{w}} × {{h}} mm",
@@ -216,8 +209,7 @@
     "sizeStale": "Last known",
     "sizeStaleTitle": "The source file is unavailable; showing the last known original spec.",
     "sizeUnknown": "Size unknown",
-    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm.",
-    "toLayout": "Canvas layout"
+    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm."
   },
   "history": {
     "addArrow": "Add arrow",
@@ -332,7 +324,9 @@
     "primary": "Reference",
     "rowAria": "{{label}}, {{state}}",
     "show": "Show",
-    "unlock": "Unlock"
+    "unlock": "Unlock",
+    "count_one": "{{count}} object",
+    "count_other": "{{count}} objects"
   },
   "layoutKind": {
     "col": "column layout",
@@ -532,8 +526,6 @@
   },
   "stage": {
     "backToCanvas": "Back to canvas",
-    "elementEditing": "Figure editing",
-    "elementEditingName": ": {{name}}",
     "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",

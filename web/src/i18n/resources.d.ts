@@ -605,7 +605,13 @@ export default interface Resources {
       "needPanel": "先选中一张可编辑的图（有源脚本的面板）",
       "noMatch": "没有匹配的命令",
       "placeholder": "输入命令…",
-      "searchLabel": "搜索命令"
+      "searchLabel": "搜索命令",
+      "section": {
+        "common": "常用",
+        "other": "其他",
+        "recent": "最近使用",
+        "selection": "当前选区"
+      }
     },
     "playground": {
       "backHome": "Tavotto 官网",
@@ -3223,8 +3229,9 @@ export default interface Resources {
     },
     "group": {
       "arrange": "排列与层级",
-      "editing": "选择与编辑",
-      "general": "通用",
+      "editing": "编辑",
+      "file": "文件",
+      "selection": "选择",
       "tools": "工具",
       "tutorial": "教程",
       "view": "视图"
@@ -3258,6 +3265,9 @@ export default interface Resources {
       "zoom": "放大 / 缩小",
       "zoomPresets": "100% / 适应画布"
     },
+    "noMatch": "没有匹配的快捷键",
+    "search": "搜索快捷键…",
+    "searchAria": "搜索快捷键",
     "title": "快捷键"
   },
   "workspace": {
@@ -3351,6 +3361,8 @@ export default interface Resources {
       "keepOne": "项目至少保留一张画布",
       "listLabel": "画布列表",
       "meta_other": "{{w}}×{{h}} mm · {{count}} 对象",
+      "moveDown": "下移",
+      "moveUp": "上移",
       "newCanvas": "新建画布",
       "noMatch": "没有匹配「{{query}}」的画布",
       "openCanvas": "打开画布 {{name}}",
@@ -3372,17 +3384,8 @@ export default interface Resources {
       "resetOverridesTitle": "恢复图内修改？"
     },
     "contextBar": {
-      "alignMenu": "对齐",
-      "aria": "快速编辑",
-      "distributeMenu": "分布",
-      "groupMenu": "成组",
-      "moreArrange": "更多排列",
-      "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
-      "multiAria": "多选操作",
-      "openInspector": "全部属性",
-      "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
-      "selectedCount_other": "已选 {{count}} 个",
-      "sizeMenu": "尺寸"
+      "crumbsLabel": "当前对象",
+      "label": "工作区位置"
     },
     "crash": {
       "blank": "打开空白文档",
@@ -3422,6 +3425,7 @@ export default interface Resources {
       "building": "正在构建图表…",
       "clearSearch": "清除搜索",
       "collapse": "折叠",
+      "count": "{{count}} 个元素",
       "exitIsolate": "退出",
       "expand": "展开",
       "groupAria_other": "{{label}}（{{count}} 个元素）",
@@ -3446,7 +3450,7 @@ export default interface Resources {
       "rowAria": "{{label}}（{{role}}）",
       "rowAriaHidden": "，已隐藏",
       "rowAriaLocked": "，已锁定",
-      "search": "搜索名称 / 角色 / gid",
+      "search": "搜索图内元素",
       "searchAria": "搜索图内元素",
       "unhide": "恢复显示",
       "unlock": "解锁",
@@ -3460,7 +3464,6 @@ export default interface Resources {
       "connectSource": "连接源脚本",
       "crumbTitle": "回到画布排版",
       "figureMissing": "项目里找不到 {{name}}",
-      "layoutMode": "画布排版",
       "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
       "mode": "快速编辑",
       "originalSize": "原图 {{w}} × {{h}} mm",
@@ -3469,8 +3472,7 @@ export default interface Resources {
       "sizeStale": "上次已知",
       "sizeStaleTitle": "源文件此刻不可用，显示的是上一次已知的原图规格。",
       "sizeUnknown": "尺寸未知",
-      "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。",
-      "toLayout": "画布排版"
+      "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。"
     },
     "hints": {
       "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
@@ -3572,6 +3574,7 @@ export default interface Resources {
     },
     "layerTree": {
       "collapseGroup": "折叠组",
+      "count": "{{count}} 个对象",
       "emptyTitle": "画布上还没有对象",
       "expandGroup": "展开组",
       "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",
@@ -3778,8 +3781,6 @@ export default interface Resources {
     },
     "stage": {
       "backToCanvas": "返回画布",
-      "elementEditing": "图内编辑",
-      "elementEditingName": "：{{name}}",
       "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
       "emptyTitle": "画布是空的",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",

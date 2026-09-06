@@ -194,6 +194,17 @@ function isolateTree(nodes: TreeNode[], gid: string): TreeNode[] {
   return out
 }
 
+/** 某个 gid 所在行的祖先 key 链（不含自己）；树里没有它就是 null */
+function ancestorKeys(nodes: TreeNode[], gid: string, parentKey = ''): string[] | null {
+  for (const n of nodes) {
+    const key = nodeKey(n, parentKey)
+    if (n.el?.gid === gid) return []
+    const below = ancestorKeys(n.children, gid, key)
+    if (below) return [key, ...below]
+  }
+  return null
+}
+
 const canHide = (el: ManifestElement) =>
   el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
 
@@ -280,14 +291,26 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
     [shown, open, q, isolated],
   )
 
-  // 画布上点选元素后，树滚动到该行（但不抢焦点）
+  // 画布 / 属性页上选中的元素可能藏在折叠的聚类或刻度组里（审计 T08）：
+  // 先把它的祖先链全部展开，行出来之后再滚到它（但不抢焦点）
   const primaryGid = selectedGids.at(-1)
+  useEffect(() => {
+    if (!primaryGid) return
+    const keys = ancestorKeys(tree, primaryGid)
+    if (!keys?.length) return
+    setOpen((s) => {
+      if (keys.every((k) => s[k] === true)) return s
+      const next = { ...s }
+      for (const k of keys) next[k] = true
+      return next
+    })
+  }, [primaryGid, tree])
   useEffect(() => {
     if (!primaryGid) return
     listRef.current
       ?.querySelector(`[data-el="${CSS.escape(primaryGid)}"]`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [primaryGid])
+  }, [primaryGid, rows])
 
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(key)}"]`)?.focus()

@@ -308,7 +308,13 @@
     "needPanel": "Select an editable figure first (a panel with a source script)",
     "noMatch": "No matching command",
     "placeholder": "Type a command…",
-    "searchLabel": "Search commands"
+    "searchLabel": "Search commands",
+    "section": {
+      "selection": "Current selection",
+      "recent": "Recent",
+      "common": "Common",
+      "other": "Other"
+    }
   },
   "playground": {
     "backHome": "Tavotto homepage",

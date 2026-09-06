@@ -53,8 +53,9 @@ export function LeftPanel({
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
         <h2 className="text-xs font-medium text-ink">{t(`rail.${tab}`)}</h2>
+        {/* 计数带单位（审计 T07 / T08）：光一个「20」分不清是对象、元素还是修改 */}
         {tab === 'layers' && objectCount > 0 && (
-          <span className="font-mono text-xs text-ink-3">{objectCount}</span>
+          <span className="text-xs text-ink-3">{t('layerTree.count', { count: objectCount })}</span>
         )}
         {tab === 'elements' && <ElementCount />}
         {tab === 'problems' && <ProblemCount />}
@@ -99,6 +100,7 @@ function ProblemCount() {
 
 /** 元素计数进标题：树里不再重复统计行 */
 function ElementCount() {
+  const { t } = useTranslation('workspace')
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedIds = useSelectionStore((s) => s.ids)
   const objects = useDocumentStore((s) => s.doc.objects)
@@ -109,7 +111,7 @@ function ElementCount() {
   const panel = byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   const n = usePanelDisplayManifest(panel)?.elements.length ?? 0
   if (!n) return null
-  return <span className="font-mono text-xs text-ink-3">{n - 1}</span>
+  return <span className="text-xs text-ink-3">{t('elementTree.count', { count: n - 1 })}</span>
 }
 
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */

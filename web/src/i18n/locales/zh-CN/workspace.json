@@ -95,7 +95,9 @@
     "rename": "重命名",
     "rowActions": "画布 {{name}} 的操作",
     "search": "搜索画布…",
-    "searchAria": "搜索画布"
+    "searchAria": "搜索画布",
+    "moveUp": "上移",
+    "moveDown": "下移"
   },
   "confirm": {
     "docLossBody": "浏览器存储不可用或已写满，切换后将无法从「最近文档」取回当前文档。仍要继续吗？",
@@ -110,17 +112,8 @@
     "resetOverridesConfirm": "恢复"
   },
   "contextBar": {
-    "alignMenu": "对齐",
-    "aria": "快速编辑",
-    "distributeMenu": "分布",
-    "groupMenu": "成组",
-    "moreArrange": "更多排列",
-    "moreArrangeTip": "在属性页打开完整的排列工具：间距、布局组、复制样式",
-    "multiAria": "多选操作",
-    "openInspector": "全部属性",
-    "primaryHint": "最后选中的对象是主选（轮廓更粗），「主选」参照以它为基准",
-    "selectedCount_other": "已选 {{count}} 个",
-    "sizeMenu": "尺寸"
+    "label": "工作区位置",
+    "crumbsLabel": "当前对象"
   },
   "crash": {
     "blank": "打开空白文档",
@@ -184,11 +177,12 @@
     "rowAria": "{{label}}（{{role}}）",
     "rowAriaHidden": "，已隐藏",
     "rowAriaLocked": "，已锁定",
-    "search": "搜索名称 / 角色 / gid",
+    "search": "搜索图内元素",
     "searchAria": "搜索图内元素",
     "unhide": "恢复显示",
     "unlock": "解锁",
-    "unsupportedTip": "{{title}}暂不支持：{{reason}}"
+    "unsupportedTip": "{{title}}暂不支持：{{reason}}",
+    "count": "{{count}} 个元素"
   },
   "fastEdit": {
     "addToCanvas": "添加到画布",
@@ -198,7 +192,6 @@
     "connectSource": "连接源脚本",
     "crumbTitle": "回到画布排版",
     "figureMissing": "项目里找不到 {{name}}",
-    "layoutMode": "画布排版",
     "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
     "mode": "快速编辑",
     "originalSize": "原图 {{w}} × {{h}} mm",
@@ -207,8 +200,7 @@
     "sizeStale": "上次已知",
     "sizeStaleTitle": "源文件此刻不可用，显示的是上一次已知的原图规格。",
     "sizeUnknown": "尺寸未知",
-    "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。",
-    "toLayout": "画布排版"
+    "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。"
   },
   "history": {
     "addArrow": "添加箭头",
@@ -317,7 +309,8 @@
     "primary": "基准",
     "rowAria": "{{label}}，{{state}}",
     "show": "显示",
-    "unlock": "解锁"
+    "unlock": "解锁",
+    "count": "{{count}} 个对象"
   },
   "layoutKind": {
     "col": "列布局",
@@ -509,8 +502,6 @@
   },
   "stage": {
     "backToCanvas": "返回画布",
-    "elementEditing": "图内编辑",
-    "elementEditingName": "：{{name}}",
     "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
     "emptyTitle": "画布是空的",
     "exitTitle": "退出图内编辑，回到画布层（Esc）",

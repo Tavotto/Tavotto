@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { pushRecent } from '@/lib/commandRanking'
 import type { UiMessage } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import type { Severity } from '@/lib/profile'
@@ -91,6 +92,8 @@ interface Persisted {
   guidesLocked: boolean
   /** 显示页面安全区域（页边距）参考框 */
   showSafeArea: boolean
+  /** 命令面板最近用过的命令 id，最近一次在前（审计 T50）；本机偏好，不进文档 */
+  recentCommands: string[]
   /**
    * 拖动子图时带上随行元素：被手动摆过位置的标题 / 轴标签 / 图例，
    * 以及色条轴、twinx 的孪生轴。关掉就只动子图本身。
@@ -120,6 +123,7 @@ const DEFAULTS: Persisted = {
   snapToObjects: true,
   guidesLocked: false,
   showSafeArea: false,
+  recentCommands: [],
   dragAxesWithCompanions: true,
   rightOpen: true,
   leftTab: 'assets',
@@ -303,6 +307,8 @@ interface UiState extends Persisted {
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
+  /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
+  pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
   setCropTarget: (id: string | null) => void
   setElementPanel: (id: string | null) => void
@@ -336,7 +342,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands',
   ]
   try {
     localStorage.setItem(
@@ -521,6 +527,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   setProblemScope: (problemScope) => set({ problemScope }),
+  pushRecentCommand: (id) => {
+    set({ recentCommands: pushRecent(get().recentCommands, id) })
+    persist(get())
+  },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId) => set({ cropTargetId }),
