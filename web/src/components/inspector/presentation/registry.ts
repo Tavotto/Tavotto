@@ -68,6 +68,30 @@ const FIELD_HINTS: Record<string, string> = {
 /** 这个字段有没有一句短提示（返回 i18n 的 `hint.<key>` 尾段） */
 export const fieldHintKey = (prop: string): string | undefined => FIELD_HINTS[prop]
 
+/**
+ * 「图上看得见、但引擎没发编辑字段」的外观属性。
+ *
+ * 柱形是现成的例子：脚本给柱子画了斜线纹理，属性面板里却连一行纹理都没有
+ * ——用户会在面板里反复找（审计 T19）。**这里不给引擎加字段**：新增纹理
+ * 编辑能力是另一件事，审计原文明说「不能当作纯文案修复」。能做的是把
+ * 「这一项在这里改不了、它来自脚本」说出口，并给出源对象入口。
+ *
+ * 判据是**这个元素此刻的字段表里没有它**，不是「柱形永远没有纹理」——
+ * 引擎哪天真发了这个字段，这条提示自己就消失了，不需要有人记得回来删。
+ */
+const APPEARANCE_ABSENT: Record<string, string[]> = {
+  bar: ['hatch'],
+  bar_series: ['hatch'],
+}
+
+/** 这个角色该说、而 manifest 此刻没发的外观属性 */
+export function absentAppearance(role: string, fields: EditableField[]): string[] {
+  const listed = APPEARANCE_ABSENT[role]
+  if (!listed) return []
+  const have = new Set(fields.map((f) => f.prop))
+  return listed.filter((p) => !have.has(p))
+}
+
 const CONTROL_BY_TYPE: Record<EditableField['type'], ControlKind> = {
   text: 'text',
   number: 'number',

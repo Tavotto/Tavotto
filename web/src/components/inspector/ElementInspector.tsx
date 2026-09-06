@@ -88,7 +88,13 @@ import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
-import { controlKindOf, fieldHintKey, isPercentField, presentFields } from './presentation/registry'
+import {
+  absentAppearance,
+  controlKindOf,
+  fieldHintKey,
+  isPercentField,
+  presentFields,
+} from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
@@ -653,6 +659,52 @@ function FieldBlock({
 }
 
 /**
+ * 「图上有、这里改不了」的一条能力提示 + 源对象入口（审计 T19）。
+ *
+ * 与 `UnsupportedProps` 是**同一种说法的两个来源**：那条的理由来自
+ * manifest 的 `unsupported_props`（引擎说「这个属性在这个对象上没意义」），
+ * 这条来自「引擎根本没发这个字段」。两者视觉一致——属性名置灰 + 一句
+ * 理由——因为对用户来说是同一件事：这一项在这儿改不了，去哪儿改。
+ *
+ * **不摆一个点了没反应的控件，也不装作这个属性不存在**（#76 的老教训）。
+ */
+function AbsentAppearanceNote({ element }: { element: ManifestElement }) {
+  const setAdvancedOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
+  // 角色与字段表都从元素本身取：调用点只递元素，递不错
+  const role = element.role
+  const props = absentAppearance(role, element.editable)
+  if (props.length === 0) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5">
+      {props.map((prop) => (
+        <div key={prop} data-absent-appearance={prop} className="flex flex-col gap-0.5">
+          <span aria-disabled className="text-xs text-ink-faint">
+            {propLabel(prop, role)}
+          </span>
+          <p className="text-xs leading-relaxed text-ink-3">{el('absentAppearance')}</p>
+        </div>
+      ))}
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        onClick={() => {
+          setAdvancedOpen(role, true)
+          // 展开是 store 里的一次状态变化，滚动要等这一帧渲染完
+          requestAnimationFrame(() =>
+            document
+              .querySelector('[data-source-advanced]')
+              ?.scrollIntoView({ block: 'nearest' }),
+          )
+        }}
+      >
+        {el('openSourceAdvanced')}
+      </Button>
+    </div>
+  )
+}
+
+/**
  * 单元素表单：primary 永远展开；「更多」是唯一的中频折叠区，展开状态按角色
  * 持久化（换面板不重置），折叠时标题右侧显示里面有几项被改过——
  * override 不因折叠而不可发现。
@@ -721,6 +773,8 @@ function FieldList({
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
+      {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
+      <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">
           <button
@@ -1084,6 +1138,8 @@ function TickPage({
       )}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
+      {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
+      <AbsentAppearanceNote element={element} />
     </div>
   )
 }
@@ -2244,6 +2300,9 @@ function SourceAdvancedSection({
     : 0
 
   return (
+    /* `data-source-advanced` 是能力提示那个按钮的滚动落点——它要把用户
+       送到「在哪儿改」，而不只是把折叠区打开在视口外 */
+    <div data-source-advanced>
     <Disclosure
       title={el('sourceAdvanced')}
       open={open}
@@ -2306,6 +2365,7 @@ function SourceAdvancedSection({
         )}
       </div>
     </Disclosure>
+    </div>
   )
 }
 

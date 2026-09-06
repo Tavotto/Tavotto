@@ -2196,6 +2196,7 @@ export default interface Resources {
       "zoneAria": "{{side}}{{dir}}刻度"
     },
     "element": {
+      "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
       "advanced": "高级",
       "alignBaseline": "基准",
       "alignBaselineSize": "等宽/等高基准",
@@ -2276,6 +2277,7 @@ export default interface Resources {
         "empty": "这条轴当前没有刻度",
         "placeholder": "例：0, 0.5, 1"
       },
+      "openSourceAdvanced": "到源文件里改",
       "orderEntry": "条目 {{index}}",
       "orphanCount": "{{overrides}} 条 · {{elements}} 个元素",
       "proxiedGeometry": "位置与大小作用于宿主子图「{{label}}」。",

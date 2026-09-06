@@ -380,6 +380,59 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
   })
 })
 
+/* --------------------------------- 柱形 ---------------------------------- */
+
+describe('柱形：单位不折行，纹理有一条能力提示与源对象入口（T19）', () => {
+  it('柱宽的「数据单位」不折行——让位的是输入框', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
+    )
+    await mount(['axes_0.bars_0'])
+    await openMore()
+    const unit = Array.from(row('bar_width')!.querySelectorAll('span')).find(
+      (e) => e.textContent === '数据单位',
+    )!
+    expect(unit, '柱宽那一行没有完整的单位').toBeTruthy()
+    // jsdom 没有布局引擎，量不出折行（真浏览器截图 95 里它被挤成了两行）。
+    // 能判的是规则本身：单位不收缩、不折行。
+    expect(unit.className).toContain('whitespace-nowrap')
+    expect(unit.className).toContain('shrink-0')
+  })
+
+  it('引擎没发纹理字段时说一句为什么，并给「到源文件里改」的入口', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
+    )
+    await mount(['axes_0.bars_0'])
+    const note = host.querySelector('[data-absent-appearance="hatch"]')!
+    expect(note, '柱形面板里连一句「纹理在哪儿改」都没有').toBeTruthy()
+    expect(note.textContent).toContain('纹理')
+    expect(note.textContent).toContain('来自脚本')
+    // 不是摆一个点了没反应的控件
+    expect(host.querySelector('[aria-label="纹理"]')).toBeNull()
+
+    expect(useInspectorPrefs.getState().advancedOpen['bar_series']).toBeFalsy()
+    await act(async () => {
+      byText('到源文件里改')!.click()
+    })
+    expect(useInspectorPrefs.getState().advancedOpen['bar_series']).toBe(true)
+  })
+
+  it('引擎哪天真发了纹理字段，这条提示自己就没了——不用有人回来删', async () => {
+    const withHatch = [
+      ...barSeriesFields(),
+      f('hatch', 'enum', '//', { options: ['', '/', '//', 'xx'] }),
+    ]
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', withHatch)]),
+    )
+    await mount(['axes_0.bars_0'])
+    expect(host.querySelector('[data-absent-appearance="hatch"]')).toBeNull()
+    await openMore()
+    expect(row('hatch')).toBeTruthy()
+  })
+})
+
 /* ---------------------------- 填充区域与纹理 ------------------------------ */
 
 describe('填充区域：填充一组、描边一组，纹理有名字（T21）', () => {

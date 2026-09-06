@@ -177,6 +177,7 @@
     "spineSidesDiffer": "Sides differ"
   },
   "element": {
+    "absentAppearance": "Visible in the figure, but this version can't edit it here \u2014 it comes from the script.",
     "advanced": "Advanced",
     "alignBaseline": "Reference",
     "alignBaselineSize": "Size reference",
@@ -250,6 +251,7 @@
       "empty": "This axis has no ticks right now",
       "placeholder": "e.g. 0, 0.5, 1"
     },
+    "openSourceAdvanced": "Change it in the source file",
     "orderEntry": "Entry {{index}}",
     "orphanCount": "{{overrides}} edits · {{elements}} elements",
     "proxiedGeometry": "Position and size apply to the host axes “{{label}}”.",
