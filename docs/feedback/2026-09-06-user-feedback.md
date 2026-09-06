@@ -11,7 +11,7 @@
 | --- | --- | --- | --- |
 | 1 | 在新手教学案例中，我双击示例图片，并不能进入图内编辑。 | `uf/01-tutorial-dblclick` | 已修复 |
 | 2 | 对于散点图而言，在选中时，仍然是一个很大的矩形框将其包裹，而不是所有散点的圆形轮廓出现被选中蓝色框。 | `uf/02-scatter-outline` | 已修复 |
-| 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 待处理 |
+| 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 已修复 |
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 待处理 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
 | 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 已修复 |
@@ -117,3 +117,33 @@
   e2e 2 passed；截图 scratchpad/uf-02/scatter-selected2-zoom.png。
 - **遗留**：`plot(..., ls="None", marker="o")` 这种只有 marker 的 Line2D 仍退回
   bbox，用户若这样画「散点图」问题依旧，建议单开一条；散点 bbox 仍是圆心口径。
+
+### 3. 图内中文画成方框——matplotlib 那一层没有中日韩回退脸
+
+- **四层诊断**：① matplotlib 图内文字**坏**：`engine/overrides.py` 的
+  `FONT_FALLBACK_TAIL = ("DejaVu Sans",)` 没有中日韩脸，且尾巴只在用户改字体时
+  才接；PNG 上「中」与「文」逐像素相同（同一个 .notdef 框），PDF 只嵌 DejaVu。
+  ② 预检此刻报得对，但 `cjk-fallback-missing` 的主语是正文族名，回退链落地后
+  会把画得好好的中文误报成「会是方框」，必须改主语。③ 画布文字（pdfbackend）
+  **没坏**，一行未改。④ 前端只需认新字段 + 镜像预检规则。
+- **处置（ADR 0045，取代 ADR 0033 §7 第 1 条）**：`overrides.CJK_FALLBACK_CANDIDATES`
+  按平台分组（macOS PingFang SC / Hiragino Sans GB / STHeiti / Songti SC…，
+  Windows Microsoft YaHei / SimHei / DengXian / SimSun…，Linux Noto Sans CJK SC /
+  Source Han Sans / WenQuanYi…），只有 `findfont(fallback_to_default=False)` 真解析
+  到的才进链；接入点 `figsession.instrument_all()` 脚本跑完、采 baseline 前逐 Text
+  补尾巴，用户族仍在最前。manifest 新报 `cjk_family`（哪张脸画的），汉字由尾巴
+  画出不算「换了脸」；预检 py↔ts 主语改为 `cjk_family`，脸不在白名单时报
+  `cjkFallbackUnaccepted` 而不是「会是方框」；golden 向量 +2；默认规范
+  `cjk_fallback.accepted` 补各平台系统字体。不内置字体；`TAVOTTO_CJK_FALLBACK=0`
+  可关。拉丁图有无尾巴 PNG 逐像素相同。
+  集成时把 ADR 编号从 0044 改为 0045：0044 已被在飞的 PR #294 占用。
+- **用例**：`tests/test_cjk_figure_text.py`（新）：manifest 无缺字 / PDF 文本层
+  读回原串且嵌非 DejaVu 字体 / PNG「中」≠「文」/ 预检不响 / 关尾巴的反向对照 /
+  拉丁像素不变 / worker 内幂等与用户族在最前；skip 判据是独立探针。
+  反证 7 条 6 红；rcParams 兜底那条存活，注释写明它兜的是今天不存在的路。
+- **验证**：ruff 全过；针对性 pytest 43 passed；更宽 19 文件只有 canvas.html
+  同步门禁 2 红（受管产物未重建，集成时重建）；`pnpm test` 2588 全过；
+  `pnpm build`、`pnpm i18n:check` 过。
+- **遗留**：Windows / Linux 候选只按 findfont 语义写，本机只验 macOS；ubuntu
+  runner 无 Noto CJK 时该用例会 skip（skip 不是绿）；Pyodide playground 没有中文
+  字体，行为与改前相同；多张脸同时有字形只报第一张。
