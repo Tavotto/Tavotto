@@ -180,7 +180,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     more: ['interpolation', 'gradient_color', 'visible'],
     advanced: ['origin'],
   },
+  // 整张图只有三件事：图幅、背景色、透明背景——全部在首屏（审计 T11）。
+  // 透明背景开着时背景色画了也不显形，按开关收起；用户改过的照样显示
   figure: {
-    primary: ['size_mm'],
+    primary: ['size_mm', 'facecolor', 'transparent'],
+    visibleWhen: {
+      facecolor: (read) => read('transparent') !== true,
+    },
   },
 }

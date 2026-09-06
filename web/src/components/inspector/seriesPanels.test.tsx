@@ -291,4 +291,37 @@ describe('透明度按百分比显示与输入（T16 / T20）', () => {
   })
 })
 
+/* -------------------------------- 整张图 --------------------------------- */
+
+describe('整张图：图幅带 W / H，背景在首屏（T11）', () => {
+  it('图幅两个框有可见的 W / H 前缀，可达名仍是完整的宽 / 高', async () => {
+    seedRender(makeManifest([]))
+    await mount(['figure'])
+    const size = row('size_mm')!
+    expect(size).toBeTruthy()
+    const inputs = Array.from(size.querySelectorAll('input'))
+    expect(inputs.map((i) => i.getAttribute('aria-label'))).toEqual(['图幅 宽 (mm)', '图幅 高 (mm)'])
+    const prefixes = Array.from(size.querySelectorAll('span'))
+      .map((s) => s.textContent?.trim())
+      .filter((t) => t === 'W' || t === 'H')
+    expect(prefixes).toEqual(['W', 'H'])
+  })
+
+  it('背景色与透明背景不用打开「更多」就在；透明背景开着时背景色收起', async () => {
+    seedRender(makeManifest([]))
+    await mount(['figure'])
+    expect(row('facecolor')).toBeTruthy()
+    expect(row('transparent')).toBeTruthy()
+    // 没有需要折叠的东西时不该出现「更多」
+    expect(byText('更多')).toBeUndefined()
+
+    const toggle = row('transparent')!.querySelector<HTMLElement>('[role="switch"], button, input')!
+    await act(async () => {
+      toggle.click()
+    })
+    expect(overrideOf('figure', 'transparent')).toBe(true)
+    expect(row('facecolor')).toBeNull()
+  })
+})
+
 export { textOf, byText, row, inputIn, typeNumber, openMore, host as hostRef }

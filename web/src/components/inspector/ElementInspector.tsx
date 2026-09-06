@@ -602,6 +602,12 @@ const PAIR_AXES: Record<string, readonly string[]> = {
   ylim: ['min', 'max'],
 }
 const RECT_AXES = ['x', 'y', 'width', 'height'] as const
+/**
+ * 成对数值框里的**可见**短前缀（审计 T11：图幅两个框光靠顺序分不出宽高）。
+ * W / H 与画布页的写法一致，不随语言变；可达名仍是完整的「图幅 宽 (mm)」。
+ * 范围类（min / max）由 AxesRangeCard 承接，这里不给它们发明缩写。
+ */
+const PAIR_PREFIX: Record<string, string> = { width: 'W', height: 'H' }
 
 function axisAriaLabel(
   field: { prop: string; type: string; unit?: string },
@@ -1868,6 +1874,7 @@ function FieldRow({
               <NumberField
                 key={i}
                 ariaLabel={axisAriaLabel(field, label, i)}
+                prefix={field.type === 'pair' ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
                 value={Number(v)}
                 step={step}
                 precision={field.type === 'rect' ? 3 : 2}
