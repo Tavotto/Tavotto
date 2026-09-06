@@ -22,6 +22,8 @@ import { useProjectStore } from '@/store/projectStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
+import { useAiStore } from '@/store/aiStore'
+import { agentCaps, capsOf } from './testCaps'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -146,6 +148,48 @@ describe('各分区首屏没有说明文字墙', () => {
   it('常规分区一个问号都没有', async () => {
     await open('general')
     expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(0)
+  })
+
+  /**
+   * P2 那几页按同一条口径收：样式 / 规范 / 编码 Agent / 包管理一个问号都不该
+   * 有——它们那几段说明要么变成了标签底下的一行短说明（规范页的「跟随更新」），
+   * 要么变成了页面本身的一部分（规范页的规则快照折叠区、包管理页的工程细节
+   * 折叠区）。诊断页留着**唯一那一个**：导出诊断包会把本机信息交出去，说明
+   * 带链接、要在按下之前读到，那正是问号该在的地方。
+   */
+  it('P2 那几页里只有诊断页留了一个问号（导出诊断包那条）', async () => {
+    // 分区 id 写错时那一格什么都不渲染，「没有问号」就恒真——所以每一格先
+    // 证明**正文真的换成了那一页**。第一版把编码 Agent 的 id 写成了 `agents`
+    // （真实 id 是 `ai`），那一格于是白绿了一轮
+    // 编码 Agent 那一页要一份能用的 caps，否则它渲染的是骨架屏——骨架屏上
+    // 当然没有问号，那又是一次恒真。它挂载后会自己再探一次，所以连
+    // `/api/ai/capabilities` 的回包一起摆好
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    useAiStore.setState({ caps, agent: 'codex' })
+    const shown = (id: string) =>
+      body().querySelector(`[data-section="${id}"]`)?.getAttribute('aria-current')
+    for (const section of ['style', 'spec', 'ai', 'packages']) {
+      await open(section)
+      expect(shown(section), `分区 id 写错了：${section}`).toBe('true')
+      expect(body().querySelectorAll('[data-help-tip]'), section).toHaveLength(0)
+      await act(async () => {
+        root.unmount()
+      })
+      document.body.innerHTML = ''
+    }
+    await open('diagnostics')
+    expect(shown('diagnostics')).toBe('true')
+    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(1)
   })
 
   it('画布分区那段「关联元素是什么」进了问号', async () => {
@@ -379,7 +423,9 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
 describe('SettingRow 布局稳定', () => {
   it('不同分区的标签列宽一致', async () => {
     const widths = new Set<string>()
-    for (const section of ['general', 'project', 'export', 'interface']) {
+    // 「样式」「规范」两页也进这张单子：那两页的只读摘要有自己的一列标签，
+    // 与 SettingRow 差几个像素就是「摘要 ↔ 输入框」切换时整列左右跳一下
+    for (const section of ['general', 'project', 'export', 'interface', 'style', 'spec']) {
       await open(section)
       for (const el of body().querySelectorAll('span[style*="width"]')) {
         const w = (el as HTMLElement).style.width

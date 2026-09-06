@@ -253,6 +253,12 @@ describe('警告与项目绑定', () => {
     })
     expect(useDocumentStore.getState().doc.profile!.follow).toBeUndefined()
 
+    // 说明改成了标签底下的一行短说明，不再是一个问号（settings-a 的统一口径）。
+    // **这条判据只能写在这里**：那一行要「项目已绑定这套规范」才渲染，
+    // settingsDisclosure 里数整页问号时它根本不在场
+    expect(text()).toContain('默认不跟随：项目按选中那一刻的规则算')
+    expect(document.body.querySelectorAll('[data-help-tip]')).toHaveLength(0)
+
     const toggle = document.body.querySelector<HTMLElement>('[aria-label="跟随更新"]')!
     await act(async () => {
       toggle.click()
@@ -371,7 +377,7 @@ describe('规范页把边界与快照摊开（审计 T41）', () => {
     await act(async () => head.click())
     expect(text()).toContain('快照')
     expect(text()).toContain('80 mm')
-    expect(text()).toContain('300 dpi')
+    expect(text()).toContain('300 ppi') // 分辨率的单位统一写 ppi
   })
 })
 

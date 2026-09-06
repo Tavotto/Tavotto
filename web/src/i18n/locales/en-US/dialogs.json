@@ -508,7 +508,7 @@
       "baseFont": "Body font size",
       "defaultFont": "Body font size",
       "doubleWidth": "Double column",
-      "exportDpi": "Suggested export PPI",
+      "exportDpi": "Suggested export resolution",
       "floorFont": "Absolute floor",
       "legendFont": "Legend size",
       "lineWidth": "Line width",
@@ -522,7 +522,7 @@
       "widthTolerance": "Width tolerance"
     },
     "follow": "Follow updates",
-    "followHelp": "Off by default: the project keeps the rules as they were when you picked them, so a change to the global spec never silently changes this figure. Turn it on to always use the latest rules and stop being asked to sync.",
+    "followDesc": "Off by default: the project uses the rules as they were when you picked them",
     "group": {
       "fonts": "Font sizes",
       "lines": "Lines",

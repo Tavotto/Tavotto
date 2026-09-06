@@ -95,7 +95,17 @@ describe('首屏', () => {
     await mount()
     expect(text()).toContain(st('diagnostics.summaryFailing', { count: 1 }))
     expect(text()).toContain(st('about.check.project_writable'))
-    expect(text()).toContain('/tmp/figs') // 坏的说原因
+    // 目录走 `PathValue`：默认只给末级目录，全路径展开可见（与项目设置同一份实现）
+    expect(text()).toContain('figs')
+    expect(text()).not.toContain('/tmp/figs')
+    await act(async () =>
+      document.body
+        .querySelector<HTMLElement>(
+          `[aria-label="${st('project.showFullPath', { name: st('about.check.project_writable') })}"]`,
+        )!
+        .click(),
+    )
+    expect(text()).toContain('/tmp/figs') // 全路径不许消失
     // 正常项不铺首屏——它们在「技术详情」里还有一份带取值的
     expect(text()).not.toContain(st('about.check.matplotlib'))
     await act(async () => byName(st('diagnostics.okDetails'))!.click())
