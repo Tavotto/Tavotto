@@ -745,6 +745,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 - **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
   2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
   「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。
+- **「这是哪一张版」的缩略图全产品只有一份组件** `components/CanvasThumb.tsx`
+  （2026-09-06 审计 T04 补做）：画布列表与**版本列表**共用它，喂进去的是
+  `types/thumb.ts` 的 `ThumbObject`——内存里的 `CanvasObject` 与后端草图的公共
+  最小形状（字段名逐字相同，两侧都不需要转换层）。它画的是**当前磁盘上的
+  素材**，回答「哪一版」；「那一版长什么样」是版本详情里的 `LayoutSnapshot`
+  （按 overrides 出图，出不来时明确标「近似预览」），两者不许互相冒充。
+  「一张缩略图画几个对象 / 几个字」这两个数字**只在这个组件里**，版本列表把
+  它们随请求发给后端（`/api/versions/<id>?sketch=&sketchText=`，后端的两个
+  常量只是传输封顶）——写进 Python 就是同一条规则的第二份权威。
+  **列表缩略图靠草图，不靠正文**：每条版本存的是整份文档，按行去取一次打开
+  就是 120 份；草图是列表端点本来就已经解析出来的那份数据的投影
+  （实测 24 MB 预算下 170 → 183 ms，`_version_sketch`）。
 - **画布标签常驻图层**：每个打开的标签一个图层，非激活的用 canvases 快照渲染
   并 display:none——docToCanvas/canvasToDoc 共享同一 objects 数组引用 +
   ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。

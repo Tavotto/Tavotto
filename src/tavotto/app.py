@@ -5779,6 +5779,12 @@ def _sketch_canvas(doc: dict, canvas_id: object) -> tuple[dict, list] | None:
 
     页面尺寸取不出来就整条 `None`：**「不知道」是独立一档**，替它编一个
     A4 出来的话，用户看到的是一张比例假的缩略图，而没有任何东西会提醒他。
+
+    schema 3 上这里给得出页面而 `_version_meta` 的 `page` 仍是 `None`
+    （它读的是文档根上的 `page`，项目文档没有那个键）。这不是两个答案打架：
+    一边是「这张画布的图幅是 200×120」，另一边是「不知道」，而摘要那句话
+    宁可少说也不能猜。真要补，得连 `objects`（现在数的是**全部画布**）一起
+    换主语——两个字段一个按单张画布、一个按整个项目才是真的量错了对象。
     """
     if doc.get("schema") == engine_documents.SCHEMA_PROJECT:
         canvases = [c for c in doc.get("canvases", []) if isinstance(c, dict)]
