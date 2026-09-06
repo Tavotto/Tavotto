@@ -204,3 +204,22 @@
   SlidersHorizontal，也可改回 Settings。
 - **验证**：`pnpm test` 2601 全过；`pnpm build`、oxlint 过；真浏览器前后各 7 张
   截图在 scratchpad/uf-07/shots/{before,after}/（未入库）。
+
+## 集成验证（合并态，集成分支 `feat/user-feedback-2026-09-06`）
+
+七条串行合回后在同一棵树上跑：
+
+| 检查 | 结果 |
+| --- | --- |
+| `ruff check . && ruff format --check .` | 全过（337 文件） |
+| `build_mcp_widget.py --check` / `build_browser_playground.py --check` | 一致（重建过 canvas.html 一次） |
+| `gen_canvas_coverage.py` / `gen_preflight_vectors.py` | 与后端 / Python 实现一致 |
+| 全量 pytest | 只有 1 红：`test_source_hygiene` 抓到第 5 条新用例的 `subprocess.run` 没钉编码，已修，两文件复跑绿 |
+| `pnpm test` | 191 文件 / 2643 条全过 |
+| `pnpm build` / `pnpm i18n:check` | 过（`resources.d.ts` 合并后重生成过一次） |
+| e2e `tutorial.spec.ts` + `element-path-selection.spec.ts`（chromium） | 6 passed |
+
+合并态才暴露、各分支单独看不到的三件事：① 两个 Agent 与在飞的 PR #294 三份
+ADR 0044，重编号为 0045 / 0046；② 第 7 条的图标 AST 门禁抓到第 6 条新加的
+`size={10}`；③ 第 4 条与第 6 条在 `ExportDialog.test.tsx` 末尾各追加一段
+describe，手工保留两段。
