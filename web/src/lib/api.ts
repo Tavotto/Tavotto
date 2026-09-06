@@ -1266,6 +1266,13 @@ export interface ManifestElement {
   colorbar_key?: string
   host_gid?: string
   /**
+   * 色条**给谁上色**：那个 image / 集合元素的 gid。色条与它是同一份颜色映射
+   * 状态的两个 gid（引擎 `ALIAS_GROUPS`），界面上「与图像共用色阶」这句话与
+   * 「选中图像」那个入口靠的就是它。可选：脚本自己造的 ScalarMappable 没有
+   * 登记成元素时不发，界面不摆一个指向空处的链接。
+   */
+  mappable_gid?: string
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，
