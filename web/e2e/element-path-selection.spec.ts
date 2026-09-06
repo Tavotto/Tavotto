@@ -118,3 +118,100 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
     `点 bbox 空白角（离曲线 ${Math.round(corner.dist)}px）不该还选中曲线`,
   ).toBe(0)
 })
+
+/**
+ * 散点（PathCollection）：选中时描的是**每一颗 marker 的轮廓**，不是罩住整组
+ * 的大矩形（用户反馈 2026-09-06）。jsdom 那条用例喂的是手写 geometry；这里要
+ * 回答的是「引擎真的把每颗 marker 的轮廓发过来了吗」「点在两颗点之间的空白
+ * （仍在整组 bbox 里）真的不再选中整组散点了吗」。
+ *
+ * marker 的屏幕位置从 matplotlib SVG 的 `<use>` 上量（散点的 SVG 是一个 `<defs>`
+ * 模板 + 每颗一个 `<use>`），不猜 bbox 中点。
+ */
+test('图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命中', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.getByText('Fig2_correlation.pdf').dblclick({ timeout: 30_000 })
+  const svgWrap = page.locator('[data-element-svg]').first()
+  await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
+  await page.waitForTimeout(1500)
+
+  /** 每颗 marker 的屏幕中心 + 拟合线上的采样点 */
+  const probe = await page.evaluate(() => {
+    const svg = document.querySelector('[data-element-svg] svg')
+    if (!svg) return null
+    const group = [...svg.querySelectorAll('[id^="axes_"]')].find((g) =>
+      /\.scatter_\d+$/.test(g.id),
+    )
+    if (!group) return null
+    const markers = [...group.querySelectorAll('use')].map((u) => {
+      const r = u.getBoundingClientRect()
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, r: Math.max(r.width, r.height) / 2 }
+    })
+    const avoid: { x: number; y: number }[] = []
+    for (const g of svg.querySelectorAll('[id^="axes_"]')) {
+      if (!/\.lines_\d+$/.test(g.id)) continue
+      const path = g.querySelector('path') as SVGPathElement | null
+      if (!path?.getTotalLength) continue
+      const ctm = path.getScreenCTM()
+      if (!ctm) continue
+      const len = path.getTotalLength()
+      for (let i = 0; i <= 200; i++) {
+        const q = path.getPointAtLength((len * i) / 200)
+        avoid.push({ x: q.x * ctm.a + q.y * ctm.c + ctm.e, y: q.x * ctm.b + q.y * ctm.d + ctm.f })
+      }
+    }
+    return { id: group.id, markers, avoid }
+  })
+  expect(probe, '图里应当有一组散点').not.toBeNull()
+  expect(probe!.markers.length).toBeGreaterThan(10)
+
+  const overlay = () =>
+    page.evaluate(() => {
+      const svg = document.querySelector('svg.pointer-events-none') as SVGSVGElement | null
+      const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
+        .map((p) => p.getAttribute('d') ?? '')
+        .filter((d) => d.startsWith('M'))
+      const rects = svg?.querySelectorAll('rect[fill-opacity]').length ?? 0
+      return { paths: ds.length, subpaths: ds.map((d) => d.match(/M/g)?.length ?? 0), rects }
+    })
+
+  // 1) 点在某一颗 marker 的正中 → 一条 path 里有「每颗一段」的闭合子路径，没有矩形框
+  const m = probe!.markers[Math.floor(probe!.markers.length / 2)]
+  await page.mouse.click(m.x, m.y)
+  await page.waitForTimeout(300)
+  const onMarker = await overlay()
+  expect(onMarker.rects, '散点不该再有罩住整组的矩形选中框').toBe(0)
+  expect(onMarker.paths, '选中散点应当画出沿 marker 轮廓的 path').toBeGreaterThan(0)
+  expect(
+    Math.max(...onMarker.subpaths),
+    '子路径数应当等于 marker 数（每颗一条），且全部收在一个 path 节点里',
+  ).toBe(probe!.markers.length)
+
+  // 2) 点在整组 bbox 里、离每颗 marker 与拟合线都最远的空白处 → 不再选中散点
+  const gap = (() => {
+    const xs = probe!.markers.map((p) => p.x)
+    const ys = probe!.markers.map((p) => p.y)
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+    let best = { x: x0, y: y0, dist: -1 }
+    for (let i = 1; i < 40; i++) {
+      for (let j = 1; j < 40; j++) {
+        const c = { x: x0 + ((x1 - x0) * i) / 40, y: y0 + ((y1 - y0) * j) / 40 }
+        const d = Math.min(
+          ...probe!.markers.map((q) => Math.hypot(q.x - c.x, q.y - c.y) - q.r),
+          ...probe!.avoid.map((q) => Math.hypot(q.x - c.x, q.y - c.y)),
+        )
+        if (d > best.dist) best = { ...c, dist: d }
+      }
+    }
+    return best
+  })()
+  expect(gap.dist, '散点之间应当有一块足够大的空白才算得上「空白」').toBeGreaterThan(12)
+  await page.mouse.click(gap.x, gap.y)
+  await page.waitForTimeout(300)
+  const atGap = await overlay()
+  expect(
+    Math.max(0, ...atGap.subpaths),
+    `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap.dist)}px）不该还选中整组散点`,
+  ).toBeLessThan(probe!.markers.length)
+})
