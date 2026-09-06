@@ -231,11 +231,6 @@ export function VersionDrawer() {
                 <button
                   onClick={() => setSelected(v.id === selected ? null : v.id)}
                   aria-expanded={v.id === selected}
-                  /* 120 行 × 每行一张 SVG 缩略图：滚出视口的那些不必参与
-                     排版与绘制。挂在**按钮**上而不是 <li> 上——展开的详情面板
-                     在同一个 <li> 里，把它一起跳过会在滚动时抖动。
-                     `auto` 关键字让浏览器记住这一行真实量到的高度。 */
-                  style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 56px' }}
                   className={cn(
                     'flex w-full items-start gap-2 px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
                     v.id === selected

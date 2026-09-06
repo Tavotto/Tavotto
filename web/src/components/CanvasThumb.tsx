@@ -55,6 +55,19 @@ export function CanvasThumb({
       viewBox={`0 0 ${w} ${h}`}
       aria-hidden
       data-canvas-thumb
+      /*
+       * 版本列表可以有 120 行，每行一张缩略图 × 最多 40 个对象。滚出视口的
+       * 那些不必参与排版与绘制。
+       *
+       * 挂在**这个 svg** 上而不是外面那一行上：跳过的是 svg 的子元素，而它
+       * 自己的盒子尺寸来自 CSS（`h-10 w-14`），所以既不需要
+       * `contain-intrinsic-size`、也不会有布局跳动；行里的时间与摘要照常参与
+       * 排版、照常进可访问性树（把整行跳过就得赌浏览器怎么对待被跳过内容的
+       * 可访问名）。这个 svg 本来就是 `aria-hidden` 的装饰。
+       *
+       * **尺寸必须来自 CSS**：调用方给的 className 不带宽高的话，盒子会塌。
+       */
+      style={{ contentVisibility: 'auto' }}
       className={cn(
         'shrink-0 rounded-[3px] border border-border bg-white text-ink',
         className ?? 'h-10 w-14',
