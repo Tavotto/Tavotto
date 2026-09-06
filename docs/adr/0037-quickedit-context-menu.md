@@ -70,3 +70,21 @@ src/tavotto/app.py                  POST /api/engine/invalidate
 `tests/test_engine_invalidate.py`（4）、既有 `canvas/hitTest.test.tsx` 的右键一条；
 真浏览器 `e2e/quick-menu.spec.ts`（子菜单上的 Esc / 越界翻转 / 重新构建真跑脚本 / 多选对齐——
 前两件 jsdom 量不到）。变异反证 22 条：19 红、3 存活且成因说得清（`TEST_MATRIX.md`）。
+
+## 2026-09-07 修订：菜单里多一个「更改为 ›」（cap-shape-switch）
+
+用户拍板补齐「画布形状对象的类型切换」（审计 T28 当时按 1.0 收敛纪律没做的那半）：
+**对象标题兼作类型切换**，右键菜单同步给一个入口。本 ADR 的动作集合因此变化，其余裁决不动。
+
+| 问题 | 裁决 |
+|---|---|
+| 菜单里多了什么 | `mark` 形态与「全部同族」的 `multi` 形态多一个子菜单 **「更改为 ›」**（`data-quick-item="change-kind"`），子项 `data-quick-item="change-to-<类型>"`。子项是 **`role="menuitemradio"`**（一组互斥取值，当前那种带勾）而不是普通 `menuitem`——在菜单里也得看得出现在是哪一种，否则用户要退出菜单去右栏确认。多选取值不一致时一个都不勾 |
+| 它是不是第二套动作 | **不是**，与本 ADR 原来那条同一句话。「能不能切 / 能切成什么 / 切完什么样」三个问题的唯一出处是 `web/src/lib/shapeSwitch.ts`，写入是 `store/actions.switchObjectKind`（一次 commit、一条历史）。菜单只发意图，属性栏那颗类型徽标（`ObjectKindSwitch`）走的是**同一组函数**，两个入口没有各自的判据 |
+| 什么时候不出现 | `switchTargets()` 返回空数组时整个子菜单不渲染：文字 / 面板不参与、多选跨了族（矩形 + 箭头）、选区里混着不参与的对象。**不做 disabled + 原因**——「为什么这个不能换」在这里没有一句用户想读的话，出现一个永远点不动的子菜单只是噪音 |
+| 族的划分 | 两族：`box`（矩形 / 椭圆 / 三角形 / 菱形 / 多边形 / 大括号）与 `linear`（直线 / 箭头）。**族内几何一个字不动**是模型层的不变式；跨族要么得凭空替用户决定那条线从哪画到哪，要么把箭头那个被钳到 0.01mm 的包围盒变成一条细缝，两次都不是「换个样子」而是「替用户重画了一个」 |
+| 磁盘格式 | **不升版**，不新增文档字段、不新增后端端点、无新错误码。切换只改已有字段的**集合**：目标类型读不到的一律删掉（`sides` 只有 polygon 读、`cornerRadius` 只有 rect 读、`head*` 只有 arrow 读），丢掉的值由撤销负责 |
+| 看护 | `web/src/lib/shapeSwitch.test.ts`（模型层）、`store/shapeSwitchActions.test.ts`（一条历史 / 不换 id / 撤销逐字回来）、`components/inspector/objectKindSwitch.test.tsx`（属性栏入口）、`canvas/objectContextMenu.test.tsx` 的「更改为 ›」一节（本菜单入口）；导出侧共享向量 `tests/golden/shape_switch_payloads.json` + `tests/test_compose_switched_shapes.py` |
+
+稳定锚点补三个（Prompt 21 的引导按 `data-quick-item` 挂钩，别改名）：`change-kind` /
+`change-to-<类型>`；属性栏那颗徽标是 `data-object-kind` 上加 `data-kind-switch`，
+每一格 `data-kind-target="<类型>"`。

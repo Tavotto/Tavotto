@@ -118,6 +118,18 @@ const BUDGETS: Budget[] = [
   ['errors', 'problems.fixChoose', 10, '问题行上的修复按钮（要先选）'],
   ['errors', 'problems.retry', 14, '检查失败后的重试'],
   ['errors', 'problems.clearFilter', 12, '筛选为空时的出口'],
+  // 类型徽标（cap-shape-switch）：右栏头部那一行里，对象名（用户内容，`truncate`）
+  // 左边的 `shrink-0` 小块。它长一个字，用户自己的文件名就少看见一个字——
+  // 而且它现在还带一个 10px 的下拉箭头。八种取值都在这一个位置出现
+  ['common', 'shape.rect', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.ellipse', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.line', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.triangle', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.diamond', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.polygon', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.brace', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'objectType.arrow', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'mixed', 12, '多选取值不一致时的类型徽标'],
 ]
 
 describe('紧位置的英文文案有字数上限', () => {

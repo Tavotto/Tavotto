@@ -257,6 +257,22 @@ export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHe
   }
 }
 
+/**
+ * `arrowHeads` 的逆：把两个新端型压回旧 `head` 字段。
+ *
+ * 写新端型的每一处都得顺手维护它——旧构建、旧后端读到这份文档时只认 `head`，
+ * 不维护的话一支「起点开口 V、终点无」的箭头在老版本里会变回默认的实心三角。
+ * 规则只有这一份：属性栏改端型（`StrokeSection`）与直线切换成箭头
+ * （`lib/shapeSwitch`）读的是同一个函数。
+ */
+export function legacyHead(heads: {
+  start: ArrowHeadType
+  end: ArrowHeadType
+}): ArrowObject['head'] {
+  const { start, end } = heads
+  return start !== 'none' && end !== 'none' ? 'both' : end !== 'none' ? 'end' : 'none'
+}
+
 /** 直线形状（端点语义只对这一种 shape 生效） */
 export type LineShape = ShapeObject & { shape: 'line' }
 

@@ -19,6 +19,7 @@ import {
   Pencil,
   RefreshCw,
   RotateCcw,
+  Shapes,
   SlidersHorizontal,
   Trash2,
   Ungroup,
@@ -32,7 +33,16 @@ import {
   SIZE_BUTTONS,
   type ArrangeButton,
 } from '@/components/inspector/arrangeButtons'
-import { MenuHeading, MenuItem, MenuSeparator, MenuSub, PointMenu } from '@/components/ui/Menu'
+import {
+  MenuHeading,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSub,
+  PointMenu,
+} from '@/components/ui/Menu'
+import { KIND_SWITCH_ICON } from '@/components/inspector/kindSwitchIcons'
 import {
   alignModeLabel,
   alignRefLabel,
@@ -49,12 +59,19 @@ import {
   selectionHasGroupIn,
   setObjectsHidden,
   setObjectsLocked,
+  switchObjectKind,
   toggleHidden,
   toggleLocked,
   triStateOf,
   ungroupSelected,
   type ZMove,
 } from '@/store/actions'
+import {
+  sharedSwitchKind,
+  switchKindLabel,
+  switchTargets,
+  type SwitchKind,
+} from '@/lib/shapeSwitch'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -188,6 +205,8 @@ export function ObjectContextMenu({
         </MenuItem>
       )}
       {kind === 'multi' && <MultiItems selected={selected} run={run} />}
+
+      {kind === 'mark' && <ChangeKindSub objs={[obj]} run={run} />}
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
@@ -355,6 +374,7 @@ function MultiItems({
           {ins('arrange.ungroup')}
         </MenuItem>
       )}
+      <ChangeKindSub objs={selected} run={run} />
       <MenuItem
         icon={SlidersHorizontal}
         data-quick-item="open-arrange"
@@ -363,6 +383,49 @@ function MultiItems({
         {qe('openArrange')}
       </MenuItem>
     </>
+  )
+}
+
+/**
+ * 「更改为 ›」：把选中的标注换成同族的另一种类型（矩形 ↔ 椭圆 ↔ …、直线 ↔ 箭头）。
+ *
+ * **与属性栏那颗类型徽标是同一个动作**——能不能切、能切成什么、切完什么样，
+ * 三个问题全部由 `lib/shapeSwitch` 回答（`switchTargets` 返回空数组时整个子菜单
+ * 不出现：文字 / 面板不参与，多选跨了族也不给）。这里照 ADR 0037 的规矩只发意图，
+ * 不判形状、不算几何。
+ *
+ * 用 radio 而不是普通菜单项：这一组取值互斥，当前那种带勾——**在菜单里也要看得出
+ * 现在是哪一种**，否则用户得先退出菜单去右栏确认。多选取值不一致时一个都不勾。
+ */
+function ChangeKindSub({
+  objs,
+  run,
+}: {
+  objs: CanvasObject[]
+  run: (fn: () => void) => () => void
+}) {
+  const targets = switchTargets(objs)
+  if (!targets.length) return null
+  const current = sharedSwitchKind(objs)
+  const ids = objs.map((o) => o.id)
+  return (
+    <MenuSub label={qe('changeKind')} icon={Shapes} data-quick-item="change-kind">
+      <MenuRadioGroup
+        value={current ?? undefined}
+        onValueChange={(v) => run(() => switchObjectKind(ids, v as SwitchKind))()}
+      >
+        {targets.map((k) => (
+          <MenuRadioItem
+            key={k}
+            value={k}
+            icon={KIND_SWITCH_ICON[k]}
+            data-quick-item={`change-to-${k}`}
+          >
+            {switchKindLabel(k)}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </MenuSub>
   )
 }
 
