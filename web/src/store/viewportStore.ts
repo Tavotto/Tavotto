@@ -145,10 +145,11 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     const s = get()
     if (s.viewW === width && s.viewH === height && s.originX === left && s.originY === top) return
     set({ viewW: width, viewH: height, originX: left, originY: top })
-    // 舞台第一次量到尺寸：把挂着的那次「适配页面」补上（见 `fit`）
+    // 舞台第一次量到尺寸：把挂着的那次「适配页面」补上（见 `fit`）。
+    // 清空由 `fit` 自己做——它量到尺寸那条分支上本来就有一句，这里再写一遍
+    // 是同一条保证的第二份实现，谁也变异不掉它。
     if (pendingFit && width && height) {
       const { pageW, pageH, padding } = pendingFit
-      pendingFit = null
       get().fit(pageW, pageH, padding)
     }
   },

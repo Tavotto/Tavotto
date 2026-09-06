@@ -191,14 +191,17 @@ describe('挂起的适配（舞台还没量到尺寸）', () => {
     )
   })
 
+  /**
+   * 中间**不许**插任何直接操纵：`zoomAt` 那些会自己 `dropPendingFit()`，
+   * 于是就算 `fit` 忘了清空，这条也照样绿——判据会被另一条保证顶掉。
+   */
   it('补过一次就没了：之后再上报尺寸（改窗口大小）不重新适配', () => {
     unmounted()
     useViewportStore.getState().fit(150, 100)
     useViewportStore.getState().setViewRect(VIEW)
-    useViewportStore.getState().zoomAt(2, 0, 0)
     const held = zoom()
     useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
-    expect(zoom(), '窗口变大不该把用户调过的缩放冲掉').toBeCloseTo(held, 6)
+    expect(zoom(), '窗口变大不该再适配一次').toBeCloseTo(held, 6)
   })
 
   /**
