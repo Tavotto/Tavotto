@@ -12,7 +12,7 @@
 | 1 | 在新手教学案例中，我双击示例图片，并不能进入图内编辑。 | `uf/01-tutorial-dblclick` | 已修复 |
 | 2 | 对于散点图而言，在选中时，仍然是一个很大的矩形框将其包裹，而不是所有散点的圆形轮廓出现被选中蓝色框。 | `uf/02-scatter-outline` | 已修复 |
 | 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 已修复 |
-| 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 待处理 |
+| 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 已完成 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
 | 6 | 导出中的原图尺寸导出还不好用，我目前已经选中了一个原图，但是还是显示「先选中一张图，才能按原图尺寸导出。」我希望这里做的更好一点，可以直接预览目前的几个图片，用户直接点击就可以。 | `uf/06-original-size-picker` | 已修复 |
 | 7 | 目前 Tavotto 里面的图标非常不统一，太丑了，参考 morphicons.com 来统一图标。 | `uf/07-icon-unify` | 待处理 |
@@ -147,3 +147,31 @@
 - **遗留**：Windows / Linux 候选只按 findfont 语义写，本机只验 macOS；ubuntu
   runner 无 Noto CJK 时该用例会 skip（skip 不是绿）；Pyodide playground 没有中文
   字体，行为与改前相同；多张脸同时有字形只报第一张。
+
+### 4. 导出增加 EPS 与 TIFF（ADR 0046）
+
+- **管线**：Flask 父进程（只有 flask + pymupdf）在 PyMuPDF 里合成画布 / 搬运原图，
+  PNG 是同一页栅格化；只有 worker 侧的 matplotlib 会 `savefig`。所以 TIFF 是
+  「再多一个编码器」，EPS 只有 worker 那条路给得出。
+- **TIFF（位图）**：`Canvas.save_tiff` / `pdfbackend.original_tiff` 与 PNG 出自同一次
+  `get_pixmap`（逐像素对拍过）；编码器是新写的纯标准库 `src/tavotto/tiffwrite.py`
+  （Baseline TIFF + Deflate 无损，RGBA 非预乘），父进程不引入 Pillow。MCP 直连
+  那条路由 matplotlib 经 Pillow 写，压缩钉成 tiff_adobe_deflate。位图源只写源
+  文件自己声明过的密度，未知时 ResolutionUnit=1。
+- **EPS（矢量）**：只在 `scope=original` 且注册表里有这张图的脚本时由 worker
+  `savefig(format="eps")`（`ps.fonttype 42`）；画布范围逐项报 `eps_not_for_canvas`，
+  无脚本报 `eps_needs_script`，其余格式照常交付（partial）；不做位图裹 PS 冒充
+  矢量。要了 EPS 时 PDF/PNG/TIFF 也让 worker 同次重画，四个格式出自同一次脚本
+  运行。界面上 EPS 不可用时禁用并说原因，`buildExportRequest` 不发不可用的 EPS。
+- **已知限制**：matplotlib PS 后端把半透明画成不透明，只做了按钮上的静态提示；
+  画布范围结构性拿不到真矢量 EPS（PyMuPDF 无 PS 写入器）；遥测
+  `export_completed` 仍只有 pdf/png 两个布尔，没动。
+- **用例**：`test_tiffwrite.py` 9 条（独立读取端 + Pillow 第三把尺）、`test_epsfile.py`
+  5 条、`test_export_pipeline.py` +9、`test_worker_roundtrip.py` +1 真 matplotlib 出
+  EPS/TIFF、`test_export_request.py` +3、golden `filename_vectors.json` 加 eps/tif/tiff；
+  前端 `exportRequest.test.ts` +4、`ExportDialog.test.tsx` +4。反证 10 条全红。
+- **验证**：ruff 全过；针对性 pytest 只有 canvas.html 同步门禁 2 红（受管产物
+  未重建）；`pnpm test` 2603 全过；`pnpm build`、`pnpm i18n:check` 过。
+  合入集成分支时与第 6 条在 `ExportDialog.test.tsx` 末尾各追加了一段 describe，
+  手工保留两段；合并态下三份导出用例 67 条全过。
+  集成时把 ADR 编号从 0044 改为 0046。
