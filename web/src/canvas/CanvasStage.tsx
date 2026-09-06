@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Images } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { addPanel } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
@@ -347,6 +349,12 @@ function ElementEditBar() {
 const sg = (key: string, values?: Record<string, unknown>) =>
   translate(`stage.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
+/**
+ * 空画布的起步提示：**一个**主要行动「添加图」（打开素材库），旁边一条
+ * 「试用示例」（走教程的统一入口）。项目里一张图都没有时，说明改成告诉用户
+ * 把什么文件放进项目目录——那是唯一能让「添加图」有东西可添的路（审计 T03）。
+ * 教程项目自己不再提供「试用示例」。
+ */
 function EmptyHint() {
   useTranslation('workspace')
   const setLeftTab = useUiStore((s) => s.setLeftTab)
@@ -355,6 +363,9 @@ function EmptyHint() {
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
   const page = useDocumentStore((s) => s.doc.page)
+  const assetsLoaded = useAssetStore((s) => s.loaded)
+  const hasAssets = useAssetStore((s) => s.panels.length > 0)
+  const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
   // 锚在纸面中心而不是视口中心：侧栏一开、画布被挤到一边时，
   // 提示跟着纸面走，而不是飘在灰色工作区中央
@@ -369,8 +380,14 @@ function EmptyHint() {
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}
-          hint={sg('emptyHint')}
-          action={{ label: sg('openAssets'), onClick: () => setLeftTab('assets') }}
+          // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
+          hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}
+          action={{ label: sg('addFigure'), onClick: () => setLeftTab('assets') }}
+          secondary={
+            inTutorial
+              ? undefined
+              : { label: sg('tryTutorial'), onClick: () => void runTutorialEntry('canvas') }
+          }
         />
       </div>
     </div>

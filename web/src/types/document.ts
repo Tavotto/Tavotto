@@ -429,6 +429,15 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
   return null
 }
 
+/**
+ * 新文档的默认名。**只在创建那一刻取**，之后就是用户内容（重命名、另存、
+ * 最近文档列表里显示的都是它），所以按当时的界面语言给一个可读的名字，
+ * 而不是 `fig_layout` 那种实现习惯（审计 T03）。它也会成为「另存为」的默认
+ * 文件名，所以取值必须磁盘安全：不含路径分隔符与保留字符。
+ */
+export const defaultDocumentName = (): string =>
+  t('document.defaultName', { ns: 'workspace' })
+
 export function emptyProject(): ProjectDocument {
   const canvas: CanvasData = {
     id: newId('c'),
@@ -439,7 +448,7 @@ export function emptyProject(): ProjectDocument {
   }
   return {
     schema: 3,
-    project: { id: newId('p'), name: 'fig_layout' },
+    project: { id: newId('p'), name: defaultDocumentName() },
     canvases: [canvas],
     activeCanvasId: canvas.id,
     createdAt: Date.now(),
@@ -457,7 +466,7 @@ export const objectTypeLabel = (type: ObjectType): string =>
 export function emptyDocument(): FigureDocument {
   return {
     schema: 2,
-    name: 'fig_layout',
+    name: defaultDocumentName(),
     page: { w: 150, h: 100 },
     objects: [],
     guides: [],

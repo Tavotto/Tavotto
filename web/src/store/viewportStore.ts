@@ -116,6 +116,9 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
   })
 }
 
+/** 舞台量到尺寸之前收到的那次 `fit`；只留最后一次 */
+let pendingFit: { pageW: number; pageH: number; padding: number } | null = null
+
 export const useViewportStore = create<ViewportState>((set, get) => ({
   zoom: 1,
   panX: 0,
@@ -126,12 +129,17 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   originY: 0,
   spaceDown: false,
 
-  setViewRect: ({ left, top, width, height }) =>
-    set((s) =>
-      s.viewW === width && s.viewH === height && s.originX === left && s.originY === top
-        ? s
-        : { viewW: width, viewH: height, originX: left, originY: top },
-    ),
+  setViewRect: ({ left, top, width, height }) => {
+    const s = get()
+    if (s.viewW === width && s.viewH === height && s.originX === left && s.originY === top) return
+    set({ viewW: width, viewH: height, originX: left, originY: top })
+    // 舞台第一次量到尺寸：把挂着的那次「适配页面」补上（见 `fit`）
+    if (pendingFit && width && height) {
+      const { pageW, pageH, padding } = pendingFit
+      pendingFit = null
+      get().fit(pageW, pageH, padding)
+    }
+  },
   setSpaceDown: (v) => set((s) => (s.spaceDown === v ? s : { spaceDown: v })),
   // 直接操纵一律先掐断在飞的补间
   setPan: (panX, panY) => {
@@ -169,7 +177,14 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   fit: (pageW, pageH, padding = 72) => {
     stopAnim()
     const { viewW, viewH } = get()
-    if (!viewW || !viewH) return
+    // 舞台还没挂载（Project Picker → 工作台的那个空档）：现在算不出缩放，
+    // 记下来等 `setViewRect` 第一次量到尺寸再做。丢掉的话新项目会沿用上一个
+    // 项目留下的缩放（审计 T03）。
+    if (!viewW || !viewH) {
+      pendingFit = { pageW, pageH, padding }
+      return
+    }
+    pendingFit = null
     const wPx = mmToWorld(pageW)
     const hPx = mmToWorld(pageH)
     const zoom = clamp(

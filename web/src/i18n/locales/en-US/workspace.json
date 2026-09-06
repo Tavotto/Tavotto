@@ -157,6 +157,9 @@
     "tooNewBody": "Tavotto did not open it; the file on disk is untouched. Upgrade and try again.",
     "tooNewTitle": "This document comes from a newer Tavotto (schema {{schema}})"
   },
+  "document": {
+    "defaultName": "Untitled"
+  },
   "drawer": {
     "pin": "Pin sidebar",
     "pinHint": "Pin: keep open when an object is selected",
@@ -328,7 +331,6 @@
     "listLabel": "Layers",
     "lock": "Lock",
     "lockedState": "locked",
-    "openAssets": "Open assets",
     "primary": "Reference",
     "rowAria": "{{label}}, {{state}}",
     "show": "Show",
@@ -531,13 +533,15 @@
     "coupled": "(direction is shared along the axis: {{sides}})"
   },
   "stage": {
+    "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
     "elementEditing": "Figure editing",
     "elementEditingName": ": {{name}}",
-    "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
+    "emptyHint": "Pick a figure from the asset library, or drag one straight onto the canvas.",
+    "emptyHintNoAssets": "Put matplotlib's PDF/PNG output or plotting scripts into the project folder and they will show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "openAssets": "Open the asset library"
+    "tryTutorial": "Try the sample project"
   },
   "status": {
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",

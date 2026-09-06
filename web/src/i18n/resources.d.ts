@@ -3161,12 +3161,14 @@ export default interface Resources {
       "backToCurrent": "返回当前项目",
       "browse": "浏览目录…",
       "create": "新建项目",
+      "createIn": "将在 {{dir}} 下新建",
       "filterNoMatch": "没有与“{{query}}”匹配的最近项目",
       "missingDir": "目录不存在",
       "missingGroup": "已不存在的目录",
       "missingGroupCollapse": "收起已不存在的目录",
       "missingGroupExpand": "展开已不存在的目录",
       "missingHint": "这些目录已经不在磁盘上；从列表移除不会删除任何文件。",
+      "nativeCreateTitle": "选择新项目所在的上级目录",
       "nativePickerTitle": "选择论文图所在目录",
       "openButton": "打开",
       "openMatch": "打开 {{name}}",
@@ -3411,6 +3413,9 @@ export default interface Resources {
       "tooNewBody": "Tavotto 没有打开它，磁盘上的文件一个字节都没动。升级后再试。",
       "tooNewTitle": "这份文档来自更新的 Tavotto（schema {{schema}}）"
     },
+    "document": {
+      "defaultName": "新文档"
+    },
     "drawer": {
       "pin": "钉住侧栏",
       "pinHint": "钉住：选中对象时不自动收起",
@@ -3582,7 +3587,6 @@ export default interface Resources {
       "listLabel": "图层",
       "lock": "锁定",
       "lockedState": "已锁定",
-      "openAssets": "打开素材",
       "primary": "基准",
       "rowAria": "{{label}}，{{state}}",
       "show": "显示",
@@ -3777,13 +3781,15 @@ export default interface Resources {
       "willOn": "点击显示"
     },
     "stage": {
+      "addFigure": "添加图",
       "backToCanvas": "返回画布",
       "elementEditing": "图内编辑",
       "elementEditingName": "：{{name}}",
-      "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
+      "emptyHint": "从素材库选一张图放到画布上，或直接把图拖进来。",
+      "emptyHintNoAssets": "把 matplotlib 输出的 PDF/PNG 或绘图脚本放进项目目录，它们就会出现在素材库里。",
       "emptyTitle": "画布是空的",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
-      "openAssets": "打开素材库"
+      "tryTutorial": "试用示例"
     },
     "status": {
       "alignAllLocked": "选中的对象都已锁定，先解锁再排列",

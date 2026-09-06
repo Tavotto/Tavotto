@@ -36,6 +36,8 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
+import { emptyDocument } from '@/types/document'
 import { useWorkspaceStore } from '@/store/workspace'
 
 /**
@@ -151,10 +153,7 @@ async function resetForNewProject() {
   // 导出了"，文件该照常写完（与 native 会话同一条纪律，ADR 0021 §14）。
   resetExportState()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
-  await useDocumentStore.getState().switchDocument(
-    { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },
-    newId('d'),
-  )
+  await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'))
   // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
   // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
   //
@@ -235,6 +234,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     let issue: ProjectDocumentRef | null = null
     if (opts?.prepareDocument) await opts.prepareDocument()
     else if (last && !(await restoreProjectDocument(last))) issue = last
+    // 文档就位了就按它的页面适配视口。从 Project Picker 进来时舞台还没挂载
+    // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
+    // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
+    {
+      const page = useDocumentStore.getState().doc.page
+      useViewportStore.getState().fit(page.w, page.h)
+    }
     set({ project: status, phase: 'open', lastDocumentIssue: issue })
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
