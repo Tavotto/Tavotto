@@ -121,6 +121,23 @@ def test_open_project_and_recent(client, tmp_path, monkeypatch):
     assert recent[0]["current"] is True and recent[0]["exists"] is True
 
 
+def test_status_says_where_documents_are_saved(client, tmp_path):
+    """「另存为」把文档写到哪，由后端说（审计 T04）。
+
+    界面要在另存那一屏回答「位置」。让它自己拼 `<项目>/tavottofile` 就是把
+    `project_layout_dir()` 抄成第二份——而那个函数还有「未打开项目退回数据
+    目录」这条分支，抄不过去。所以这里守两件事：字段在，且它与真正的落盘
+    目录**是同一个**（不是一个长得像的字符串）。
+    """
+    figs = _make_figs(tmp_path)
+    body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+    assert body["document_dir"] == str(m.project_layout_dir())
+    # 真的存一份进去，落点就在它说的那个目录里
+    doc = {"schema": 2, "name": "x", "page": {"w": 100, "h": 50}, "objects": [], "guides": []}
+    assert client.post("/api/layouts/Fig%201", json=doc).status_code == 200
+    assert (Path(body["document_dir"]) / "Fig_1.json").exists()
+
+
 def test_open_missing_dir_keeps_current(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))
