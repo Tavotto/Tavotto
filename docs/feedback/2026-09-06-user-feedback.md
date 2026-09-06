@@ -10,7 +10,7 @@
 | # | 反馈（原话） | 分支 | 状态 |
 | --- | --- | --- | --- |
 | 1 | 在新手教学案例中，我双击示例图片，并不能进入图内编辑。 | `uf/01-tutorial-dblclick` | 已修复 |
-| 2 | 对于散点图而言，在选中时，仍然是一个很大的矩形框将其包裹，而不是所有散点的圆形轮廓出现被选中蓝色框。 | `uf/02-scatter-outline` | 待处理 |
+| 2 | 对于散点图而言，在选中时，仍然是一个很大的矩形框将其包裹，而不是所有散点的圆形轮廓出现被选中蓝色框。 | `uf/02-scatter-outline` | 已修复 |
 | 3 | 目前对于图内中文无法正常渲染，需要增加其适配性。 | `uf/03-cjk-fonts` | 待处理 |
 | 4 | 导出功能要增加 eps 和 Tiff 格式。 | `uf/04-eps-tiff-export` | 待处理 |
 | 5 | 我目前电脑上明明安装了 Tavotto 的 codex 插件，为什么在编码 Agent 里面还是显示插件市场登记失败未登记。 | `uf/05-codex-marketplace` | 已修复 |
@@ -92,3 +92,28 @@
   真浏览器三张截图（无选区列 3 张 / 真点后勾选并切范围 / 画布选中后高亮同一张）。
 - **遗留**：有 override 但 renderStore 无 SVG 的面板缩略图退到磁盘原图；素材多时
   列表限高可滚动、无搜索；Codex 内嵌画布下未实测缩略图。
+
+### 2. 散点选中只有大矩形——manifest 对 PathCollection 刻意不给几何
+
+- **根因**：`engine/pathgeom.py` 的 `element_geometry()` 对 PathCollection 刻意返回
+  None，`engine/manifest.py` 的闸也不含 `scatter` 角色；散点在 manifest 里只有
+  `bbox`（且是 `get_datalim` 口径的圆心包围盒）。前端对带 `geometry` 的元素
+  一律走路径描示与命中，所以前端源码一字未改，几何权威仍只有一份。
+- **处置**：新增 `pathgeom._marker_subpaths()`，按 Agg `draw_path_collection`
+  语义还原每颗 marker（path × 尺寸矩阵 × offset）；只对最大那颗拍平抽稀，
+  其余颗用同一组顶点经仿射批量映射，避免逐颗 `Path.cleaned()`（500 颗 915 ms
+  → 2.6 ms）。**上限 `SCATTER_MAX_MARKERS = 500`**（量的是 manifest JSON /
+  指针距离计算 / 覆盖层 d 串三处消费侧），超过整组退回 bbox；几百颗仍收在
+  一个 `<path>` 节点里。空心 marker `fill` 为假，s=0 / NaN offset 不出。
+- **用例**：`tests/test_manifest_geometry.py` 删「散点有意留在 bbox」加 3 条
+  （逐颗落点与半径递增 / 空心语义 / 上限正好 500 有 501 无）；
+  `elementPathSelection.test.tsx` 散点夹具换 3 颗 marker 并加命中/不命中；
+  e2e `element-path-selection.spec.ts` 真浏览器 60 颗 → 60 段子路径 0 矩形。
+  反证：闸去 scatter → 3 红；上限 +1 → 第一版存活（预算与上限是冗余保证），
+  拆成两张图后红；忽略尺寸矩阵 → 红；夹具去 geometry → 2 红。
+- **性能实测**：100 颗 ≤1 ms、500 颗 2.6–3.3 ms、20000 颗约 130 ms（但 JSON
+  4–6 MB，这就是设上限的原因）。
+- **验证**：相关 pytest 全绿；ruff 过；`pnpm test` 2587 全过；`pnpm build` 过；
+  e2e 2 passed；截图 scratchpad/uf-02/scatter-selected2-zoom.png。
+- **遗留**：`plot(..., ls="None", marker="o")` 这种只有 marker 的 Line2D 仍退回
+  bbox，用户若这样画「散点图」问题依旧，建议单开一条；散点 bbox 仍是圆心口径。
