@@ -2356,6 +2356,8 @@ export default interface Resources {
       "issueLocateField": "定位到字段",
       "issueOpenPanel": "在问题面板查看",
       "keptPrevious": "已保留上一版图像",
+      "markerShapeMultiple": "多个形状",
+      "markerValueWithShape": "{{value}}（{{shape}}）",
       "mixedValues": "多个值",
       "modified": "已修改",
       "modifiedCount_other": "{{count}} 项已修改",

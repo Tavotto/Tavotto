@@ -2,6 +2,7 @@ import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { PreviewMetadata } from '@/lib/previewBudget'
+import type { ThumbObject } from '@/types/thumb'
 
 export interface PanelInfo {
   id: string
@@ -715,6 +716,24 @@ export interface LayoutVersionMeta {
    */
   canvasId?: string
   canvasName?: string
+  /**
+   * 够画一行缩略图的**草图**，只有请求里要了才有（见 `fetchVersions`）。
+   * 画不出来的那些版本**没有这个字段**——空草图与「这一版真的什么都没有」
+   * 是两件事，前者该显示占位、后者该显示一张空白页。
+   */
+  sketch?: VersionSketch
+}
+
+/**
+ * 一条版本的草图：页面尺寸 + 对象落位，**不含 overrides、不含脚本、不含正文**。
+ *
+ * 对象的形状与缩略图组件的 `ThumbObject` 逐字相同（后端按同一组字段名发），
+ * 所以列表行画缩略图不需要任何转换层。缩略图画的是**当前磁盘上的素材**，
+ * 不是那一版当时的图内修改——它回答「哪一版」，不回答「那一版长什么样」。
+ */
+export interface VersionSketch {
+  page: { w: number; h: number }
+  objects: ThumbObject[]
 }
 
 /**
@@ -736,10 +755,23 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
   return res.blob()
 }
 
-export const fetchVersions = (docId: string) =>
-  jsonFetch<{ versions: LayoutVersionMeta[] }>(
-    `/api/versions/${encodeURIComponent(docId)}`,
+/**
+ * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
+ *
+ * 「一行缩略图画几个对象 / 几个字」是缩略图组件自己的事，所以取值随请求给
+ * （`components/CanvasThumb.tsx` 的两个常量），后端不写第二份权威。
+ * 这也是列表能有缩略图而**不退化成「打开面板就拉全部版本正文」**的做法：
+ * 草图是列表端点本来就已经解析出来的那份数据的投影，一次请求，零份正文。
+ */
+export const fetchVersions = (
+  docId: string,
+  sketch?: { objects: number; textChars: number },
+) => {
+  const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
+  return jsonFetch<{ versions: LayoutVersionMeta[] }>(
+    `/api/versions/${encodeURIComponent(docId)}${q}`,
   ).then((r) => r.versions)
+}
 
 export const fetchVersionDoc = (docId: string, vid: string) =>
   jsonFetch<{ doc: FigureDocument } & LayoutVersionMeta>(
@@ -1135,6 +1167,38 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 
+/**
+ * 标记（marker）这一族 enum 字段上的**只读事实**：图上此刻画的是什么形状。
+ *
+ * 为什么需要它：`value` 回答的是「用户选中的是哪个取值」，那不等于形状。
+ * 散点没被整体换过标记时 `value` 是 `"original"`（继承脚本），说不出形状；
+ * 曲线的 `value` 可能是 `(5, 1, 0)` / `$\alpha$` / 一个 Path 的 repr，
+ * 界面上只剩一行认不出的字。
+ *
+ * 约定（与 engine/manifest.py 的 `_marker_field` 同源）：
+ * * 它是**渲染态派生数据**：每次渲染由引擎现读 artist，不进用户文档、
+ *   不是 override、不参与写回。有 override 时它就是 override 之后的形状；
+ * * `named` 只用于引擎确认前端画得出的那些名字。万一两侧漂了
+ *   （这里给了一个 `markerShape()` 没有的名字），**退回代码字样**——
+ *   漂移只会回到没有这个字段时的样子，不会画错一个形状；
+ * * `path` 的顶点已归一化进单位框 `[-0.5, 0.5]`（y 向上，与 matplotlib 同向、
+ *   与 SVG 相反），4 位小数；`codes` 是 matplotlib 的路径码
+ *   （1 MOVETO / 2 LINETO / 3 CURVE3 / 4 CURVE4 / 79 CLOSEPOLY），
+ *   `null` = 「首点 MOVETO，其余 LINETO」。CLOSEPOLY 那一个顶点是占位，
+ *   坐标一律 `[0, 0]`，别读它；
+ * * **字段整个缺席 = 引擎说不出**（老引擎、或构造标记时出了岔子），
+ *   与 `none`（这个对象确实没有标记）是两个不同的答案。
+ */
+export type MarkerShape =
+  | { kind: 'named'; name: string }
+  | { kind: 'path'; vertices: [number, number][]; codes: number[] | null }
+  /** 一个 collection 里混着两种以上形状：说不出「那一个」是什么 */
+  | { kind: 'multiple' }
+  /** 这个对象此刻不画标记 */
+  | { kind: 'none' }
+  /** 有一个叫不出名字的形状，但顶点太多，几何不搬进 manifest */
+  | { kind: 'too_complex' }
+
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
@@ -1167,6 +1231,11 @@ export interface EditableField {
    * 换成别的字体再把文档改掉。
    */
   options_unavailable?: string[]
+  /**
+   * marker 一族字段专有的**只读事实**：图上此刻画的是什么形状（见
+   * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
+   */
+  marker_current?: MarkerShape
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }

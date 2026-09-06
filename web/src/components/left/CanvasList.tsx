@@ -17,14 +17,12 @@ import {
   createCanvasAndActivate,
   deleteCanvasWithSession,
 } from '@/store/canvasSession'
-import { renderUrl, runtimePreviewUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { Button } from '../ui/Button'
+import { CanvasThumb } from '../CanvasThumb'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { TextInput } from '../ui/Input'
@@ -33,6 +31,8 @@ import { TextInput } from '../ui/Input'
  * 画布列表（项目里的全部画布，含未打开成标签的）。
  * 点击 = 打开成标签并切换；缩略图按对象落位画真实内容（面板用现成的预览图，
  * 文字画文字，标注画轮廓）——三张不同的图仅凭缩略图就分得开（审计 T05）。
+ * 缩略图本身在 `components/CanvasThumb.tsx`：版本列表里的每一行画的是同一份
+ * 组件（喂给它的是后端草图），不许另画一份。
  */
 /** 本组文案在 workspace:canvasList.* 下 */
 const cl = (key: string, values?: Record<string, unknown>) =>
@@ -179,7 +179,7 @@ function CanvasRow({
       {active && (
         <span aria-hidden className="absolute -left-0.5 top-2 h-8 w-0.5 rounded-full bg-accent" />
       )}
-      <CanvasThumb canvas={canvas} />
+      <CanvasThumb page={canvas.page} objects={canvas.objects} />
       <button
         onClick={onOpen}
         onDoubleClick={onRenameStart}
@@ -275,85 +275,5 @@ function CanvasRow({
         </MenuItem>
       </Menu>
     </li>
-  )
-}
-
-/**
- * 缩略图：页面比例里按对象落位画**真实内容**。面板用素材库同一张预览图
- * （`/api/render`，runtime 面板用 cache 预览），文字画文字，标注画轮廓。
- * 不新起渲染、不冒充导出结果——它回答的是「这是哪一张版」。
- */
-function CanvasThumb({ canvas }: { canvas: CanvasData }) {
-  const { w, h } = canvas.page
-  const byId = useAssetStore((s) => s.byId)
-  const nonce = useRuntimeAssetStore((s) => s.previewNonce)
-  return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      aria-hidden
-      data-canvas-thumb
-      className="h-10 w-14 shrink-0 rounded-[3px] border border-border bg-white text-ink"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {canvas.objects
-        .filter((o) => !o.hidden)
-        .slice(0, 40)
-        .map((o) => {
-          if (o.type === 'panel') {
-            const href =
-              o.fileKind === 'runtime'
-                ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
-                : renderUrl(o.fileId, 200, byId[o.fileId]?.mtime)
-            return (
-              <image
-                key={o.id}
-                data-thumb-panel={o.fileId}
-                href={href}
-                x={o.x}
-                y={o.y}
-                width={o.w}
-                height={o.h}
-                preserveAspectRatio="none"
-              />
-            )
-          }
-          if (o.type === 'text') {
-            return (
-              <text
-                key={o.id}
-                x={o.x}
-                y={o.y + o.h * 0.8}
-                fontSize={Math.max(o.h * 0.7, h / 20)}
-                fill="currentColor"
-                className="text-ink-2"
-              >
-                {o.text.slice(0, 24)}
-              </text>
-            )
-          }
-          const common = {
-            key: o.id,
-            fill: 'none',
-            stroke: 'currentColor',
-            strokeWidth: Math.max(w, h) / 150,
-            className: 'text-ink-3',
-          }
-          if (o.type === 'shape' && o.shape === 'ellipse') {
-            return <ellipse {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />
-          }
-          if (o.type === 'arrow' || (o.type === 'shape' && o.shape === 'line')) {
-            return <line {...common} x1={o.x} y1={o.y} x2={o.x + o.w} y2={o.y + o.h} />
-          }
-          return (
-            <rect
-              {...common}
-              x={o.x}
-              y={o.y}
-              width={Math.max(o.w, w / 60)}
-              height={Math.max(o.h, h / 60)}
-            />
-          )
-        })}
-    </svg>
   )
 }
