@@ -710,6 +710,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
 - **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
+  按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
+  空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
+  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
+  文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
+  （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
+  后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
+  `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
