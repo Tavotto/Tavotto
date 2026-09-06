@@ -1168,6 +1168,10 @@
     "withAnnotations_one": "Write the canvas annotation back too ({{count}})",
     "withAnnotations_other": "Write the canvas annotations back too ({{count}})"
   },
+  "kindSwitch": {
+    "aria": "Type: {{name}}, click to change",
+    "title": "Change to"
+  },
   "legend": {
     "typography": "Text",
     "entries_one": "Entry ({{count}})",

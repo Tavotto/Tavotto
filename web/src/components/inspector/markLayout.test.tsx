@@ -56,7 +56,12 @@ let root: Root
 let host: HTMLDivElement
 
 const all = (sel: string) => [...host.querySelectorAll(sel)]
-const headings = () => all('h3, button[aria-expanded]').map((el) => el.textContent?.trim() ?? '')
+// 折叠区标题都是 h3 或带 aria-expanded 的按钮。**排除类型徽标**：它也是个带
+// aria-expanded 的按钮（属性栏对象标题兼作类型切换，cap-shape-switch），但它是
+// 「我在改什么」那句话，不是分组标题——不排掉的话下面「分组标题不重复对象类型」
+// 那条会把徽标自己数成重复的那一份
+const headings = () =>
+  all('h3, button[aria-expanded]:not([data-object-kind])').map((el) => el.textContent?.trim() ?? '')
 const disclosure = (title: string) =>
   all('button[aria-expanded]').find((b) => b.textContent?.startsWith(title)) as HTMLButtonElement
 /** 某段可见文字在整棵属性页里的先后位置；找不到返回 -1 */
@@ -96,16 +101,27 @@ afterEach(async () => {
 })
 
 describe('标题不重复对象类型', () => {
-  it('箭头：头部写「箭头」，分组标题是「外观」，没有第二个「箭头」标题', async () => {
+  /**
+   * 「头部写着箭头」现在由**类型徽标**承担，不再是 h2——没起过名字的标注，
+   * `objectLabel` 的兜底就是类型名，徽标和 h2 会并排写同一个词
+   * （cap-shape-switch 把徽标变成类型切换之后，那份重复更扎眼）。所以这里查
+   * 的是整个头部，而不是某一个标签名：断言的是「说没说出口」，不是「摆在哪个
+   * 元素里」。
+   */
+  const header = () => host.querySelector('header')!.textContent ?? ''
+
+  it('箭头：头部写「箭头」且只写一次，分组标题是「外观」', async () => {
     await mount(arrowOf())
-    expect(host.querySelector('h2')!.textContent).toContain('箭头')
+    expect(header()).toContain('箭头')
+    expect(header().match(/箭头/g)).toHaveLength(1)
     expect(headings()).toContain('外观')
     expect(headings().filter((h) => h === '箭头')).toHaveLength(0)
   })
 
-  it('矩形：头部写「矩形」，分组标题同样是「外观」', async () => {
+  it('矩形：头部写「矩形」且只写一次，分组标题同样是「外观」', async () => {
     await mount(rectOf())
-    expect(host.querySelector('h2')!.textContent).toContain('矩形')
+    expect(header()).toContain('矩形')
+    expect(header().match(/矩形/g)).toHaveLength(1)
     expect(headings()).toContain('外观')
     expect(headings().filter((h) => h === '形状')).toHaveLength(0)
   })

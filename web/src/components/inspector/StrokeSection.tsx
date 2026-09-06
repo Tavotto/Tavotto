@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
-import { arrowHeads } from '@/types/document'
+import { arrowHeads, legacyHead } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
@@ -54,10 +54,9 @@ function DashRow({
   )
 }
 
-/** 写新端型时同步维护旧 head 字段（旧版本读档 / 旧后端导出仍有合理行为） */
+/** 写新端型时同步维护旧 head 字段；规则在 `types/document.legacyHead` 一份 */
 function syncLegacyHead(o: ArrowObject): void {
-  const { start, end } = arrowHeads(o)
-  o.head = start !== 'none' && end !== 'none' ? 'both' : end !== 'none' ? 'end' : 'none'
+  o.head = legacyHead(arrowHeads(o))
 }
 
 export function ArrowSection({ objs }: { objs: ArrowObject[] }) {

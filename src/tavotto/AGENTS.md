@@ -218,6 +218,23 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `$\int_0^\infty$` 是 132）只说 `too_complex`；一个 collection 里混着两种
     形状说 `multiple`，不拿第一条冒充全体；**字段整个缺席 = 引擎说不出**，
     与 `none`（这个对象没有标记）是两个不同的答案。
+  * **override 之后「脚本原始」那一格说不出形状**（2026-09-07，cap-marker-orig
+    补做）：`marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在图上。
+    同一个字段因此多发一个 `marker_original`——同一套五档结构，**唯一出处是
+    `state.originals`**：override 系统在第一次应用**之前**采下的那份脚本原样
+    （`apply()` 里 `state.originals[key] = getter(...)` 排在 `setter(...)` 之前），
+    撤销时回灌的也是它。两边同一份值，「回到脚本原始 = 回到这个形状」这句话
+    因此可兑现，不是另算一遍的巧合（`_marker_shape_of_spec()` 是此刻与原样
+    共用的那一句 `MarkerStyle(...)`）。
+  * **发不发的判据是 `state.applied` 里有这条 `(gid, prop)`，不是 `originals`
+    里有**：① 广播型 prop 会替组员代采一份原样（`alias_seeded`，marker 经 stem
+    系列就是广播）；② setter 抛异常时原样已经采下、`applied` 还没记——照
+    `originals` 判的话，一次**失败**的 override 会让那一行从此显示「改过」，
+    而图上一个像素都没变。**没有 override 时字段整个缺席**（缺席 = 与
+    `marker_current` 相同），前端不用再判一次「改没改过」。原值的类型由
+    `overrides.HANDLERS` 那侧的 getter 决定（曲线 / 图例示意是 marker 规格、
+    散点是 Path 列表、茎叶是按成员列表的一份规格），四个消费者各自对着写。
+    也因此 `_fields_for` 收的是 `(el, state)`：原样不在 artist 上，只有 state 里有。
   * 看护 `tests/test_manifest_marker_shape.py`。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。

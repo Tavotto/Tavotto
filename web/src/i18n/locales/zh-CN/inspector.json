@@ -1139,6 +1139,10 @@
     "verified_other": "已通过干净重放校验（{{count}} 个元素一致）",
     "withAnnotations_other": "连同画布标注一并写回（{{count}} 条）"
   },
+  "kindSwitch": {
+    "aria": "类型：{{name}}，点击更改",
+    "title": "更改为"
+  },
   "legend": {
     "typography": "文字",
     "entries_other": "图例项（{{count}}）",

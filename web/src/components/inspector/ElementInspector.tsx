@@ -1522,14 +1522,19 @@ function BatchSection({
  * 两个散点都还是「脚本原始」，图上却一个是圆一个是方——拿第一个的形状去画
  * 就是替另一个撒谎。取值一致（这一行没显示「多个值」）不等于形状一致，
  * 那是两个不同的维度。不一致就整个不给，退回只有状态点的样子。
+ *
+ * `which` 选的是哪一份事实：图上此刻那个（`marker_current`），还是 override
+ * 之前那个（`marker_original`，「脚本原始」那一格点下去会回到的形状）。
+ * 两份各自判一致性——「此刻都是菱形」推不出「原来都是圆」，反过来也一样。
+ * 原样那一份还多一种不一致：有的成员改过、有的没改（没改的那些引擎根本不发
+ * 这个字段），那时同样谁的都不画。
  */
 function sharedMarkerShape(
   elements: ManifestElement[],
   prop: string,
+  which: 'marker_current' | 'marker_original' = 'marker_current',
 ): MarkerShape | undefined {
-  const facts = elements.map(
-    (el) => el.editable.find((f) => f.prop === prop)?.marker_current,
-  )
+  const facts = elements.map((el) => el.editable.find((f) => f.prop === prop)?.[which])
   if (!facts.length || facts[0] === undefined) return undefined
   const head = JSON.stringify(facts[0])
   return facts.every((f) => JSON.stringify(f) === head) ? facts[0] : undefined
@@ -1667,6 +1672,7 @@ function BatchFieldRow({
                   value={v}
                   options={opts}
                   current={sharedMarkerShape(elements, field.prop)}
+                  original={sharedMarkerShape(elements, field.prop, 'marker_original')}
                   onChange={writeOnce}
                   ariaLabel={label}
                 />
@@ -1926,6 +1932,7 @@ function FieldRow({
           value={enumValue}
           options={enumOptions}
           current={field.marker_current}
+          original={field.marker_original}
           onChange={writeOnce}
           ariaLabel={label}
         />,

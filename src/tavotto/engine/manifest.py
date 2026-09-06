@@ -135,8 +135,8 @@ def _register(
 
     `flags` 是挂在元素上的**编辑能力标记**（`position_locked` /
     `limits_slaved`），由 `_fields_for` 与 `build_manifest` 读取。它们必须
-    挂在元素上而不是现算：`_fields_for(el)` 只拿得到 el，而「这个 axes 是不是
-    子 axes」是遍历时才知道的信息。`sync_tick_elements` 重建刻度伪元素时
+    挂在元素上而不是现算：`_fields_for` 只拿得到 el 与 state，而「这个 axes
+    是不是子 axes」是遍历时才知道的信息。`sync_tick_elements` 重建刻度伪元素时
     原样保留非 TickLabel 的元素对象，所以标记不会在同步中丢。
     """
     artist.set_gid(gid)
@@ -1496,20 +1496,30 @@ def _marker_shape(verts, codes) -> dict:
     }
 
 
-def _marker_shape_of_line(ln) -> dict | None:
-    """Line2D（曲线 / 茎叶的 markerline / 图例示意）此刻画的标记形状。
+def _marker_shape_of_spec(marker, fillstyle) -> dict | None:
+    """一个 marker **规格**（`get_marker()` 回的那个值）→ 形状。
 
-    `fillstyle` 一起带上：半填充标记（`fillstyle="left"` …）的路径本来就
-    只有一半，丢了它画出来的是一个整圆，而图上是半个。
+    Line2D 那一族此刻的形状走这里，`state.originals` 里存着的**脚本原样**
+    也走这里——两条路必须是同一句 `MarkerStyle(...)`，否则「回到脚本原始」
+    那一格画的形状，与真的回去之后画出来的会是两个东西。
+
+    `fillstyle` 得一起带上：半填充标记（`fillstyle="left"` …）的路径本来就
+    只有一半，丢了它画出来的是一个整圆，而图上是半个。**fillstyle 自己不是
+    override 的落点**，所以脚本原样那条路用的也是此刻这个 fillstyle。
     """
     try:
-        ms = MarkerStyle(ln.get_marker(), fillstyle=ln.get_fillstyle())
+        ms = MarkerStyle(marker, fillstyle=fillstyle)
         p = ms.get_path().transformed(ms.get_transform())
     except Exception:  # noqa: BLE001 — 认不出来就是「不知道」，不能让清单构建挂掉
         return None
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
 
     return _marker_shape(np.asarray(p.vertices, dtype=float), _marker_codes(p.codes))
+
+
+def _marker_shape_of_line(ln) -> dict | None:
+    """Line2D（曲线 / 茎叶的 markerline / 图例示意）此刻画的标记形状。"""
+    return _marker_shape_of_spec(ln.get_marker(), ln.get_fillstyle())
 
 
 def _marker_shape_of_paths(paths) -> dict | None:
@@ -1540,29 +1550,75 @@ def _marker_shape_of_paths(paths) -> dict | None:
     return _marker_shape(first, first_codes)
 
 
-def _marker_field(prop: str, value: str, options: list[str], shape: dict | None, **extra) -> dict:
+def _marker_original(state: FigState, gid: str, prop: str, to_shape) -> dict | None:
+    """**override 之前**那个标记的形状；没有 override 时是 `None`（字段不出现）。
+
+    `marker_current` 读的是图上此刻那条路径，而 override 之后脚本原来那条已经
+    不在图上了——于是「回到脚本原始」那一格说不出自己会变成什么形状。这一条
+    补的正是那句话，唯一出处是 `state.originals`：override 系统在**第一次应用
+    之前**采下的那份脚本原样（`apply()` 里 `state.originals[key] = getter(...)`
+    排在 `setter(...)` 之前），撤销时回灌的也是它。两边同一份值，于是
+    「回到脚本原始 = 回到这个形状」这句话是可兑现的，不是另算一遍的巧合。
+
+    **判据是 `state.applied` 里有这条 `(gid, prop)`，不是 `state.originals`
+    里有。** 广播型 prop 会替组员**代采**一份脚本原样（`alias_seeded`，marker
+    经 stem 系列就是广播），那些条目没有对应的 applied 记录——照 originals 判
+    的话，用户什么都没改也会冒出一格「脚本原始」，而它与 `marker_current`
+    永远相同，是纯噪音。
+
+    `to_shape` 把 `originals` 里那份**原值**翻成形状：原值的类型由
+    `overrides.HANDLERS` 那一侧的 getter 决定（曲线 / 图例示意是 marker 规格、
+    散点是 Path 列表、茎叶是按成员列表的一份规格），四个消费者各自对着写。
+    """
+    key = (gid, prop)
+    if key not in state.applied or key not in state.originals:
+        return None
+    try:
+        return to_shape(state.originals[key])
+    except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉
+        return None
+
+
+def _marker_field(
+    prop: str,
+    value: str,
+    options: list[str],
+    shape: dict | None,
+    original: dict | None = None,
+    **extra,
+) -> dict:
     """marker 这一族 enum 字段的唯一构造处（曲线 / 散点 / 茎叶 / 图例示意）。
 
     `marker_current` 是**只读事实**，不是 override 的落点：`value` 说的是
     「用户选中的是哪个取值」，它说的是「图上此刻画的是什么形状」。有
     override 时它自然就是 override 之后的形状——manifest 本来就是渲染态。
 
-    引擎说不出形状时**这个键整个不出现**：「不知道」与「这个对象没有标记」
-    （`{"kind": "none"}`）是两个不同的答案，合并进同一档的话老引擎发来的
-    清单会被读成「图上没有标记」。
+    `marker_original` 是同一套五档结构的第二个只读事实：**override 之前**
+    那个形状。**没有 override 时它整个不出现**——缺席的含义就是「与
+    `marker_current` 相同」，前端不用再判一次「改没改过」。
+
+    引擎说不出形状时**这两个键都整个不出现**：「不知道」与「这个对象没有
+    标记」（`{"kind": "none"}`）是两个不同的答案，合并进同一档的话老引擎发来
+    的清单会被读成「图上没有标记」。
     """
     field = {"prop": prop, "type": "enum", "value": value, "options": options, **extra}
     if shape is not None:
         field["marker_current"] = shape
+    if original is not None:
+        field["marker_original"] = original
     return field
 
 
-def _line_fields(ln) -> list[dict]:
+def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
     lab = str(ln.get_label())
     marker = str(ln.get_marker())
     m_opts = list(_LINE_MARKER_OPTS)
     if marker not in m_opts:
         m_opts = [marker] + m_opts
+    # 脚本原样：`("line", "marker")` 的 getter 存的是 `ln.get_marker()` 那份规格
+    m_orig = _marker_original(
+        state, gid, "marker", lambda o: _marker_shape_of_spec(o, ln.get_fillstyle())
+    )
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         {"prop": "color", "type": "color", "value": to_hex(ln.get_color())},
@@ -1590,7 +1646,9 @@ def _line_fields(ln) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(ln.get_visible())},
-        _marker_field("marker", marker, m_opts, _marker_shape_of_line(ln), group="线条与标记"),
+        _marker_field(
+            "marker", marker, m_opts, _marker_shape_of_line(ln), m_orig, group="线条与标记"
+        ),
         {
             "prop": "markersize",
             "type": "number",
@@ -1625,7 +1683,7 @@ def _line_fields(ln) -> list[dict]:
     ]
 
 
-def _collection_fields(coll, *, label: bool) -> list[dict]:
+def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[dict]:
     """Collection family 的字段表——**由能力探针驱动，不由类名驱动**。
 
     `collection_caps()` 读的是这个对象此刻真实的 getter 实况，所以：
@@ -1673,7 +1731,10 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
     if "marker" in caps:
         # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径。
         # **`"original"` 说不出形状**——它是「继承脚本」这一档，不是一个图形。
-        # 图上此刻真正画的那个形状由 `marker_current` 从 `get_paths()` 现读。
+        # 图上此刻真正画的那个形状由 `marker_current` 从 `get_paths()` 现读，
+        # 换过之后**脚本原来那条路径已经不在图上**——「脚本原始」那一格会变成
+        # 什么形状由 `marker_original` 从 `state.originals` 读（那一族的 getter
+        # 存的就是 `list(coll.get_paths())`，与 `_mm_orig_paths` 同一批 Path）。
         cur = getattr(coll, "_mm_marker", None) or "original"
         m_opts = list(_SCATTER_MARKER_OPTS)
         fields.append(
@@ -1682,6 +1743,7 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
                 cur,
                 ([cur] if cur not in m_opts else []) + m_opts,
                 _marker_shape_of_paths(coll.get_paths()),
+                _marker_original(state, gid, "marker", _marker_shape_of_paths),
             )
         )
     fields += [
@@ -2503,7 +2565,7 @@ def _legend_entry_labels(leg) -> list[str]:
     return [t.get_text() for t in model.texts]
 
 
-def _legend_entry_fields(t) -> list[dict]:
+def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
     """图例项的条目那半：绑定 / 示意线样式 / 隐藏。
 
     示意线支持哪几条按它的 artist 类型给（`legend_handle_props`）：曲线的示意
@@ -2569,7 +2631,20 @@ def _legend_entry_fields(t) -> list[dict]:
         if marker not in m_opts:
             m_opts = [marker] + m_opts
         fields.append(
-            _marker_field("handle_marker", marker, m_opts, _marker_shape_of_line(h), group="图例项")
+            _marker_field(
+                "handle_marker",
+                marker,
+                m_opts,
+                _marker_shape_of_line(h),
+                # 脚本原样：`handle_marker` 的 getter 存的是 `h.get_marker()`
+                _marker_original(
+                    state,
+                    gid,
+                    "handle_marker",
+                    lambda o: _marker_shape_of_spec(o, h.get_fillstyle()),
+                ),
+                group="图例项",
+            )
         )
     if "handle_markersize" in props:
         fields.append(
@@ -3183,7 +3258,7 @@ def _axes3d_fields(ax) -> list[dict]:
     return fields
 
 
-def _stem_fields(grp) -> list[dict]:
+def _stem_fields(grp, state: FigState, gid: str) -> list[dict]:
     """茎叶系列（StemContainer）：markerline + stemlines 统一改。
 
     baseline 不在这里——它是零线，以普通曲线的身份单独可编辑。
@@ -3210,6 +3285,20 @@ def _stem_fields(grp) -> list[dict]:
     m_opts = list(_LINE_MARKER_OPTS)
     if m_name not in m_opts:
         m_opts = [m_name] + m_opts
+
+    def _stem_orig(o) -> dict | None:
+        """茎叶的原值是**按成员列表**采的（`_eb_handler` 的 getter 逐个成员取）。
+
+        成员是 `_stem_markers`：markerline 在就一条，`markerfmt=" "` 那种整条
+        不在的图是空列表——那时脚本原样确实是「一个标记都没有」，是 `none`
+        而不是「不知道」（与 `marker_current` 那一侧同一条纪律）。
+        """
+        items = list(o)
+        if not items:
+            return {"kind": "none"}
+        return _marker_shape_of_spec(items[0], marker.get_fillstyle())
+
+    m_orig = _marker_original(state, gid, "marker", _stem_orig)
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         {"prop": "color", "type": "color", "value": to_hex(color)},
@@ -3239,6 +3328,7 @@ def _stem_fields(grp) -> list[dict]:
             # markerline 整条不在（`ax.stem(..., markerfmt=" ")`）时图上确实
             # 一个标记都没有——那是 `none`，不是「不知道」。
             _marker_shape_of_line(marker) if marker is not None else {"kind": "none"},
+            m_orig,
             group="标记",
         ),
         {
@@ -3294,8 +3384,8 @@ def _generic_fields(a) -> list[dict]:
     ]
 
 
-def _fields_for(el) -> list[dict]:
-    artist, role = el["artist"], el["role"]
+def _fields_for(el, state: FigState) -> list[dict]:
+    artist, role, gid = el["artist"], el["role"], el["gid"]
     if role == "figure":
         w, h = artist.get_size_inches()
         return [
@@ -3329,10 +3419,10 @@ def _fields_for(el) -> list[dict]:
         # 一段文字 + 一个条目。`visible` 由条目级的实现接管（整项进出图例盒），
         # 文字自己那条不再单独出现——同一个名字两套语义是最坏的那种冗余
         return [f for f in _text_fields(artist) if f["prop"] != "visible"] + _legend_entry_fields(
-            artist
+            artist, state, gid
         )
     if key == "line":
-        return _line_fields(artist)
+        return _line_fields(artist, state, gid)
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
@@ -3345,13 +3435,13 @@ def _fields_for(el) -> list[dict]:
         return _patch_fields(artist)
     if key == "collection":
         # 历史上「填充区域」没有 label 字段，保持原样；其余 Collection 都给
-        return _collection_fields(artist, label=(role != "fill"))
+        return _collection_fields(artist, state, gid, label=(role != "fill"))
     if key == "linecoll":
         return _linecoll_fields(artist)
     if key == "artist":
         return _generic_fields(artist)
     if key == "stem_series":
-        return _stem_fields(artist)
+        return _stem_fields(artist, state, gid)
     if key == "bar_series":
         return _bar_series_fields(artist)
     if key == "bar":
@@ -3591,7 +3681,7 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             "role": el["role"],
             "label": el["label"],
             "draggable": el["draggable"],
-            "editable": _fields_for(el),
+            "editable": _fields_for(el, state),
         }
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
