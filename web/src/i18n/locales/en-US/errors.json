@@ -72,6 +72,8 @@
     "native_session_not_at_barrier": "The script is running and waiting for the next Matplotlib figure. Editing resumes when it stops.",
     "native_session_offline": "This figure came from a Tavotto Run session that has ended. Re-run the original command to resume object-level editing.",
     "native_session_unknown": "No such Tavotto Run session.",
+    "no_figures_captured": "The script finished without producing any figure: no savefig call, and no pyplot Figure left open. Expand the output below to see what it said — usually a data file was not found, or the analysis stopped before plotting.",
+    "no_figures_captured_silent": "The script finished without producing any figure and without printing anything: no savefig call, and no pyplot Figure left open.",
     "no_format": "Pick at least one output format.",
     "no_output": "This export produced no files.",
     "no_project": "No project is open yet",
