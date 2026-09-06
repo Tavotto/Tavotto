@@ -190,6 +190,30 @@ describe('徽标：能切换的是按钮，不能切换的还是那颗静态徽�
     await mount([shapeOf('s1'), arrowOf()])
     expect(badge()).toBeNull()
   })
+
+  /**
+   * 标题那一格是**用户内容**。没起过名字的标注，`objectLabel` 的兜底正是类型名，
+   * 与徽标撞成同一个词——真浏览器里看到的是「三角形 ⌄ 三角形」，像个 bug。
+   * 起了名字才两格都有话说。
+   */
+  it('没起名字：类型只说一次，标题那一格不出现', async () => {
+    await mount([shapeOf('s1', { shape: 'triangle' })])
+    const header = host.querySelector('header')!.textContent ?? ''
+    expect(header.match(/三角形/g)).toHaveLength(1)
+    expect(host.querySelector('h2')).toBeNull()
+  })
+
+  it('起了名字：徽标说类型，标题说名字，两格各说各的', async () => {
+    await mount([shapeOf('s1', { shape: 'triangle', name: '反应路径' })])
+    expect(badge()!.textContent).toContain('三角形')
+    expect(host.querySelector('h2')!.textContent).toBe('反应路径')
+  })
+
+  it('文字对象不受影响：类型是「文字」，标题是那句话', async () => {
+    await mount([textOf()])
+    expect(badge()!.textContent).toBe('文字')
+    expect(host.querySelector('h2')!.textContent).toContain('一段标注')
+  })
 })
 
 /* -------------------------------------------------------------------------- */

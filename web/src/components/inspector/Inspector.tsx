@@ -16,6 +16,7 @@ import {
   Type as TypeIcon,
   X,
 } from 'lucide-react'
+import { switchKindOf } from '@/lib/shapeSwitch'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -42,6 +43,7 @@ import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
+import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
 import { roleName } from './roles/registry'
 import { PanelSection } from './PanelSection'
@@ -383,7 +385,28 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
 
   const one = objs.length === 1 ? objs[0] : null
   const kinds = [...new Set(objs.map((o) => o.type))]
-  const Icon = one ? TYPE_ICON[one.type] : kinds.length === 1 ? TYPE_ICON[kinds[0]] : Copy
+  // 标注的图标按**它自己那一种**画，不是所有形状都用一个方块：三角形旁边摆
+  // 一个正方形，图标说的和徽标说的是两件事（与 MarkerPicker 同一条纪律——
+  // 形状是事实，不该拿一个通用图形代替）
+  const oneKind = one ? switchKindOf(one) : null
+  const Icon = one
+    ? oneKind
+      ? KIND_SWITCH_ICON[oneKind]
+      : TYPE_ICON[one.type]
+    : kinds.length === 1
+      ? TYPE_ICON[kinds[0]]
+      : Copy
+  /**
+   * 标题 = **用户内容**。没起过名字的标注，`objectLabel` 的兜底正是类型名，
+   * 而类型徽标已经在说它了——两格并排写着同一个词（「三角形 ⌄ 三角形」）看起来
+   * 像个 bug。这一格没有新话要说时就整个不出现，让徽标独自承担（文字与面板不受
+   * 影响：它们的名字是那句话 / 那个文件名，与类型不是一回事）。
+   */
+  const title = one
+    ? oneKind && !one.name
+      ? null
+      : objectLabel(one)
+    : translate('count.selectedObjects', { count: objs.length })
   const locked = objs.length > 0 && objs.every((o) => o.locked)
   const hidden = objs.length > 0 && objs.every((o) => o.hidden)
   const ids = objs.map((o) => o.id)
@@ -397,9 +420,9 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             切换**的入口——标注能换成同族的另一种时它就是下拉，换不了时还是那颗
             静态徽标（cap-shape-switch；判据在 lib/shapeSwitch，这里不判） */}
         <ObjectKindSwitch objs={objs} />
-        <h2 className="min-w-0 truncate text-xs font-medium text-ink">
-          {one ? objectLabel(one) : translate('count.selectedObjects', { count: objs.length })}
-        </h2>
+        {title != null && (
+          <h2 className="min-w-0 truncate text-xs font-medium text-ink">{title}</h2>
+        )}
         {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
         {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
         {!one && <span className="shrink-0 text-xs text-ink-3">{summarize(objs)}</span>}

@@ -21,6 +21,7 @@ import {
   switchTargets,
   type SwitchKind,
 } from './shapeSwitch'
+import { buildPreset, PRESET_IDS, type PresetId } from './presets'
 import type {
   ArrowObject,
   CanvasObject,
@@ -396,5 +397,63 @@ describe('绕一圈回到原类型', () => {
     const back = switchObject(switchObject(src, 'arrow')!, 'line')! as ShapeObject
     expect(back.start).toEqual({ rx: 0.25, ry: 0.75 })
     expect(back.end).toEqual({ rx: 0.75, ry: 0.25 })
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/*  科研预设                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 预设插进来的是**普通的 arrow / shape / text 对象**（`lib/presets` 只是参数组合，
+ * 没有自己的对象类型），所以它们按同一套判据参与切换——这一节把「按同一套判据」
+ * 兑现成可跑的断言，而不是一句说法。
+ *
+ * 两个层次要分开：
+ *   * **整组选中**（画布上点一下 = 选中整组）：只有全体同族的预设给切换。
+ *     箭头 + 文字、矩形 + 直线这些混排的整组不给——那正是 `switchTargets` 的
+ *     规则，不是预设的特例。
+ *   * **单独选中一个成员**（图层树的行选的是单个对象，不扩成整组）：只要它是
+ *     形状或箭头就照常给。
+ */
+describe('科研预设：整组按同族判、单个成员照常给', () => {
+  const preset = (id: PresetId) => buildPreset(id, { x: 50, y: 50 })
+
+  /** 整组选中时给不给切换。**写成表而不是「算一遍再比一遍」**：照着实现算出
+   *  期望值的话，实现错了期望值跟着错，这条用例恒真 */
+  const WHOLE_GROUP: Record<PresetId, 'box' | 'linear' | null> = {
+    reversible: 'linear', // 两支箭头
+    dimension: 'linear', // 箭头 + 两条界线
+    scalebar: null, // 直线 + 文字
+    axes: null, // 两支箭头 + 两段文字
+    crystal: null, // 箭头 + 文字
+    errorbar: null, // 箭头 + 文字
+    magnifier: null, // 两个矩形 + 一条直线（跨族）
+    callout: null, // 引线 + 文字
+    braceGroup: null, // 大括号 + 文字
+  }
+
+  it('清单没漏项（新增预设时这条先红，逼着回答它属于哪一档）', () => {
+    expect(Object.keys(WHOLE_GROUP).sort()).toEqual([...PRESET_IDS].sort())
+  })
+
+  it.each(PRESET_IDS)('%s：整组选中时的目标集合与表一致', (id) => {
+    const family = WHOLE_GROUP[id]
+    expect(switchTargets(preset(id))).toEqual(family ? SWITCH_FAMILY_KINDS[family] : [])
+  })
+
+  it.each(PRESET_IDS)('%s：单独选中任一形状 / 箭头成员，照常给它那一族', (id) => {
+    for (const o of preset(id)) {
+      const kind = switchKindOf(o)
+      if (kind == null) continue // 文字成员不参与，与别处一样
+      expect(switchTargets([o])).toEqual(SWITCH_FAMILY_KINDS[switchFamilyOf(kind)])
+    }
+  })
+
+  it('预设成员切换之后仍在原来那个组里（成组不因换类型而散架）', () => {
+    const [top] = preset('reversible')
+    const out = switchObject(top, 'line')!
+    expect(out.groupId).toBe(top.groupId)
+    expect(out.id).toBe(top.id)
   })
 })
