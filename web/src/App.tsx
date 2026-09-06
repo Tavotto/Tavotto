@@ -40,7 +40,7 @@ import { startOnboardingEngine } from '@/lib/onboarding/flow'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
-import { syncLoadedDocument } from '@/store/liveSync'
+import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -137,6 +137,8 @@ function Workspace() {
       syncLoadedDocument()
     })
     const stopAutosave = startAutosave()
+    // 挂载之后再换进来的文档（教程重开 / 载入画布文件 / 最近文档 …）同样要对账
+    const stopLoadSync = startDocumentLoadSync()
     const stopPrune = subscribePruneSelection()
     const stopCheckpoints = startVersionCheckpoints()
     const stopReflow = startLayoutAutoReflow()
@@ -187,6 +189,7 @@ function Workspace() {
     window.addEventListener('tavotto:doc-conflict', onDocConflict)
     return () => {
       stopAutosave()
+      stopLoadSync()
       stopPrune()
       stopCheckpoints()
       stopReflow()
