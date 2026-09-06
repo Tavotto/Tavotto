@@ -162,7 +162,43 @@ describe('内置只读', () => {
     expect(buttons().some((b) => b.textContent?.includes('复制一份再修改'))).toBe(true)
   })
 
-  it('复制出来的那份进入可编辑状态（摘要换回输入框）', async () => {
+  it('点「复制一份再修改」：复制出来的那份被选中，并且是可编辑的（审计 T41 / T42 验收）', async () => {
+    const copy = envelope({
+      id: 's-copy',
+      display_name: '默认样式 副本',
+      derived_from: 'builtin-default-style',
+      data: { element: { line: { linewidth: 0.5 } } },
+    })
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body =
+        init?.method === 'POST' && String(input).includes('/duplicate')
+          ? { profile: copy }
+          : { profiles: String(input).includes('/style') ? [BUILTIN_STYLE, USER_STYLE] : BUILTIN_SPECS }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('默认样式'))!.click()
+    })
+    expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
+
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('复制一份再修改'))!.click()
+    })
+    // 复制出来的那份被选中，摘要换回输入框，保存按钮出现
+    expect(text()).toContain('默认样式 副本')
+    expect(text()).not.toContain('内置配置只读')
+    expect(
+      document.body.querySelectorAll('input:not([type="file"])').length,
+    ).toBeGreaterThan(1)
+    expect(byText('保存')).toBeTruthy()
+  })
+
+  it('用户自建的那份也是可编辑状态（摘要换回输入框）', async () => {
     await mount()
     await act(async () => {
       buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
