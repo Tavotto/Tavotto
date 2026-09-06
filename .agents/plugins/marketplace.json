@@ -7,8 +7,10 @@
     {
       "name": "tavotto",
       "source": {
-        "source": "local",
-        "path": "./codex-plugin"
+        "source": "git-subdir",
+        "url": "https://github.com/Tavotto/Tavotto.git",
+        "path": "./codex-plugin",
+        "ref": "plugin-stable"
       },
       "policy": {
         "installation": "AVAILABLE",

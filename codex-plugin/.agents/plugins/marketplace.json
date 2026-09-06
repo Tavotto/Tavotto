@@ -1,0 +1,20 @@
+{
+  "name": "tavotto-dev",
+  "interface": {
+    "displayName": "Tavotto（工作副本）"
+  },
+  "plugins": [
+    {
+      "name": "tavotto",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

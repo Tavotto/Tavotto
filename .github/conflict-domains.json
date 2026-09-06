@@ -10,20 +10,13 @@
     "  coordinate      不必串行也不必 train，但两边共享一个**命名/编号空间**，",
     "                  开工前要互相看一眼错开。撞的不是文本，是名字。",
     "sources/generated 成对声明的域还能查出「不同源码、同一生成物」的间接重叠",
-    "——canvas.html 冲突的多数形态正是它。glob 语法：** 跨路径段，* 段内。",
-    "格式是 JSON 不是 YAML：检查脚本与它的测试都要纯标准库（.venv 无 PyYAML）。"
+    "格式是 JSON 不是 YAML：检查脚本与它的测试都要纯标准库（.venv 无 PyYAML）。",
+    "2026-09-05（ADR 0043）：mcp-widget / browser-playground 两个 sources/generated 域已删除——",
+    "画布不再入库、playground 产物由网站仓库提交，本仓库里没有任何跟踪的前端生成物，",
+    "两个各改 web/src 的 PR 之间不再有生成物重叠；tests/test_pr_conflict_domains.py 钉着",
+    "「声明 generated 的路径必须真在索引里」，免得这类误报再回来。"
   ],
   "domains": {
-    "mcp-widget": {
-      "sources": ["web/src/**", "scripts/build_mcp_widget.py"],
-      "generated": ["codex-plugin/mcp/widget/canvas.html"],
-      "policy": "stack-or-train"
-    },
-    "browser-playground": {
-      "sources": ["web/src/**", "src/tavotto/engine/browser.py", "scripts/build_browser_playground.py"],
-      "generated": ["web/dist-playground/**"],
-      "policy": "stack-or-train"
-    },
     "adr-numbering": {
       "_why": [
         "2026-08-28 实测撞过一次：两个并行 PR 各自新增 ADR 0021（一个是",
@@ -39,28 +32,49 @@
         "的那句话）。真去解析编号要把域特有的逻辑塞进通用脚本，而这个检查",
         "是导航不是门禁——让人看一眼编号，成本已经足够低。"
       ],
-      "files": ["docs/adr/**"],
+      "files": [
+        "docs/adr/**"
+      ],
       "policy": "coordinate",
       "advice": "**核对两边的 ADR 编号**——同号就是撞了，而 git 不会告诉你：文件名不同，merge-tree 报零冲突、rebase 也不报冲突，合完 main 上却有两个同号 ADR。撞了就让先开的那个保留编号（改号配方见 docs/ci/parallel-prs.md）；编号本来就不同则无事。"
     },
     "root-agent-contract": {
-      "files": ["AGENTS.md", "CLAUDE.md"],
+      "files": [
+        "AGENTS.md",
+        "CLAUDE.md"
+      ],
       "policy": "serialize"
     },
     "ci-control-plane": {
-      "files": [".github/workflows/**", ".github/conflict-domains.json", "scripts/ci/**", "tests/test_ci_qualification.py"],
+      "files": [
+        ".github/workflows/**",
+        ".github/conflict-domains.json",
+        "scripts/ci/**",
+        "tests/test_ci_qualification.py"
+      ],
       "policy": "serialize"
     },
     "release-control-plane": {
-      "files": [".github/workflows/release.yml", "docs/RELEASING.md", "docs/release-notes/**"],
+      "files": [
+        ".github/workflows/release.yml",
+        "docs/RELEASING.md",
+        "docs/release-notes/**"
+      ],
       "policy": "serialize"
     },
     "golden-vectors": {
-      "files": ["tests/golden/**"],
+      "files": [
+        "tests/golden/**"
+      ],
       "policy": "serialize"
     },
     "lockfiles": {
-      "files": ["web/pnpm-lock.yaml", "workerd/Cargo.lock", "src-tauri/Cargo.lock", "packaging/runtime-lock.json"],
+      "files": [
+        "web/pnpm-lock.yaml",
+        "workerd/Cargo.lock",
+        "src-tauri/Cargo.lock",
+        "packaging/runtime-lock.json"
+      ],
       "policy": "serialize"
     }
   }

@@ -610,3 +610,15 @@ def test_a_malformed_manifest_is_a_problem_not_a_crash(staging):
         assert problems and all(isinstance(p, str) for p in problems), problems
     mp.write_text(json.dumps(good, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     assert stage.verify_dir(d) == []
+
+
+def test_the_dev_marketplace_never_ships(tmp_path):
+    """`codex-plugin/.agents/plugins/marketplace.json` 只服务「装工作副本」，发行件里不带。"""
+    assert (ROOT / "codex-plugin" / ".agents" / "plugins" / "marketplace.json").is_file()
+    rels = {rel for rel, _mode in stage.tracked_plugin_files(ROOT)}
+    assert not any(r.startswith(".agents/") for r in rels), sorted(
+        r for r in rels if r.startswith(".agents/")
+    )
+    d = tmp_path / "s"
+    kit.synthetic_staging(d)
+    assert not (d / ".agents").exists()

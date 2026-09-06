@@ -111,6 +111,19 @@ export const fillFields = (): EditableField[] => [
   f('hatch', 'enum', '', { options: ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx'], group: '线条与填充' }),
 ]
 
+/** 与 `_patch_fields` 同形（脚本 add_patch 出的独立形状） */
+export const patchFields = (over: { fill?: boolean } = {}): EditableField[] => [
+  f('facecolor', 'color', '#1f77b4'),
+  f('fill', 'bool', over.fill ?? true),
+  f('edgecolor', 'color', '#000000'),
+  num('linewidth', 1),
+  f('linestyle', 'enum', '-', { options: ['-', '--', '-.', ':'] }),
+  f('hatch', 'enum', '', { options: ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx'] }),
+  alpha(1),
+  f('visible', 'bool', true),
+  f('zorder', 'number', 2, { min: -5, max: 50, step: 1, group: '排列' }),
+]
+
 /** 与 `_fields_for(figure)` 同形 */
 export const figureFields = (over: { transparent?: boolean } = {}): EditableField[] => [
   f('size_mm', 'pair', [80, 57.6], { unit: 'mm' }),
@@ -288,6 +301,344 @@ describe('透明度按百分比显示与输入（T16 / T20）', () => {
     await typeNumber(input, '30')
     expect(overrideOf('axes_0.lines_0', 'alpha')).toBe(0.3)
     expect(overrideOf('axes_0.lines_1', 'alpha')).toBe(0.3)
+  })
+})
+
+/* -------------------------------- 整张图 --------------------------------- */
+
+describe('整张图：图幅带 W / H，背景在首屏（T11）', () => {
+  it('图幅两个框有可见的 W / H 前缀，可达名仍是完整的宽 / 高', async () => {
+    seedRender(makeManifest([]))
+    await mount(['figure'])
+    const size = row('size_mm')!
+    expect(size).toBeTruthy()
+    const inputs = Array.from(size.querySelectorAll('input'))
+    expect(inputs.map((i) => i.getAttribute('aria-label'))).toEqual(['图幅 宽 (mm)', '图幅 高 (mm)'])
+    const prefixes = Array.from(size.querySelectorAll('span'))
+      .map((s) => s.textContent?.trim())
+      .filter((t) => t === 'W' || t === 'H')
+    expect(prefixes).toEqual(['W', 'H'])
+  })
+
+  it('背景色与透明背景不用打开「更多」就在；透明背景开着时背景色收起', async () => {
+    seedRender(makeManifest([]))
+    await mount(['figure'])
+    expect(row('facecolor')).toBeTruthy()
+    expect(row('transparent')).toBeTruthy()
+    // 没有需要折叠的东西时不该出现「更多」
+    expect(byText('更多')).toBeUndefined()
+
+    const toggle = row('transparent')!.querySelector<HTMLElement>('[role="switch"], button, input')!
+    await act(async () => {
+      toggle.click()
+    })
+    expect(overrideOf('figure', 'transparent')).toBe(true)
+    expect(row('facecolor')).toBeNull()
+  })
+})
+
+/* --------------------------------- 曲线 ---------------------------------- */
+
+describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T15）', () => {
+  it('marker = None：没有标记大小 / 标记填充 / 标记描边三行', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    await mount(['axes_0.lines_0'])
+    await openMore()
+    expect(row('marker')).toBeTruthy()
+    expect(row('markersize')).toBeNull()
+    expect(row('markerfacecolor')).toBeNull()
+    expect(row('markeredgecolor')).toBeNull()
+  })
+
+  it('marker = o：三行就在首屏（不藏在「更多」里），颜色 / 线宽 / 线型仍排在前', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields({ marker: 'o' }))]),
+    )
+    await mount(['axes_0.lines_0'])
+    // 不点「更多」
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    const idx = (p: string) => props.indexOf(p)
+    for (const p of ['color', 'linewidth', 'linestyle', 'marker', 'markersize', 'markerfacecolor', 'markeredgecolor']) {
+      expect(idx(p), p).toBeGreaterThanOrEqual(0)
+    }
+    expect(idx('color')).toBeLessThan(idx('marker'))
+    expect(idx('marker')).toBeLessThan(idx('markersize'))
+    expect(idx('markersize')).toBeLessThan(idx('markerfacecolor'))
+    // 透明度仍在「更多」里
+    expect(row('alpha')).toBeNull()
+  })
+
+  it('用户改过标记大小后再把标记设为无，那一行照样显示（改过的必须能看到）', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    useDocumentStore.getState().commit(literal('改标记大小'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides.push({ gid: 'axes_0.lines_0', prop: 'markersize', value: 9 })
+    })
+    await mount(['axes_0.lines_0'])
+    expect(row('markersize')).toBeTruthy()
+    expect(row('markerfacecolor')).toBeNull()
+  })
+})
+
+/* -------------------------------- 误差棒 ---------------------------------- */
+
+describe('误差棒：示意图说清哪个数字改图上的哪一段（T20）', () => {
+  const seed = async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+  }
+  const diagram = () => host.querySelector<SVGElement>('[data-errorbar-diagram]')
+  const segActive = (seg: string) =>
+    diagram()!.querySelector(`[data-seg="${seg}"][data-active="true"]`) !== null
+
+  it('术语保留（端帽长度 / 端帽线宽 / pt），旁边有一张示意图', async () => {
+    await seed()
+    expect(row('capsize')!.textContent).toContain('端帽长度')
+    expect(row('capsize')!.textContent).toContain('pt')
+    expect(row('cap_thickness')!.textContent).toContain('端帽线宽')
+    expect(diagram()).toBeTruthy()
+    // 无装饰、不吃焦点：它是图注，不是控件
+    expect(diagram()!.getAttribute('aria-hidden')).toBe('true')
+    expect(diagram()!.querySelector('[tabindex]')).toBeNull()
+  })
+
+  it('没聚焦时哪一段都不亮', async () => {
+    await seed()
+    expect(diagram()!.getAttribute('data-active')).toBe('')
+    expect(segActive('linewidth')).toBe(false)
+    expect(segActive('cap')).toBe(false)
+  })
+
+  const capStroke = () =>
+    Number(diagram()!.querySelector('[data-seg="cap"]')!.getAttribute('stroke-width'))
+
+  it('聚焦到端帽长度：端帽亮，上方出现水平量尺；线宽那一段不亮', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('capsize')
+    expect(segActive('cap')).toBe(true)
+    expect(segActive('linewidth')).toBe(false)
+    expect(diagram()!.querySelector('[data-seg="capsize-measure"]')).toBeTruthy()
+  })
+
+  /**
+   * 两个端帽档亮的是**同两条线**，区别必须在图上看得出来：长度档给量尺、
+   * 线宽档把线画粗。真浏览器 72 px 实测过——竖向量尺只有 3 px 高，是噪点
+   * 不是说明，所以线宽这一维靠粗细本身表达。
+   */
+  it('聚焦到端帽线宽：同两条端帽亮，但画得明显更粗，且不画水平量尺', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    const thin = capStroke()
+    await act(async () => {
+      inputIn('cap_thickness')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('cap_thickness')
+    expect(segActive('cap')).toBe(true)
+    expect(capStroke(), '两个端帽档在图上长得一样，用户分不出改的是哪一维').toBeGreaterThan(thin * 1.5)
+    expect(diagram()!.querySelector('[data-seg="capsize-measure"]')).toBeNull()
+  })
+
+  it('聚焦到线宽：亮的是竖线，不是端帽', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('linewidth')!.focus()
+    })
+    expect(segActive('linewidth')).toBe(true)
+    expect(segActive('cap')).toBe(false)
+  })
+
+  it('焦点离开后熄灭；颜色 / 透明度这类非几何字段不点亮任何一段', async () => {
+    await seed()
+    await act(async () => {
+      inputIn('capsize')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('capsize')
+    await act(async () => {
+      inputIn('alpha')!.focus()
+    })
+    expect(diagram()!.getAttribute('data-active')).toBe('')
+  })
+
+  it('示意图不承接任何字段：三行照旧能改，写回的是 pt 原值', async () => {
+    await seed()
+    await typeNumber(inputIn('capsize')!, '10')
+    expect(overrideOf('axes_0.errorbar_0', 'capsize')).toBe(10)
+    await typeNumber(inputIn('cap_thickness')!, '2.5')
+    expect(overrideOf('axes_0.errorbar_0', 'cap_thickness')).toBe(2.5)
+  })
+})
+
+/* --------------------------------- 柱形 ---------------------------------- */
+
+describe('柱形：单位不折行，纹理有一条能力提示与源对象入口（T19）', () => {
+  it('柱宽的「数据单位」不折行——让位的是输入框', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
+    )
+    await mount(['axes_0.bars_0'])
+    await openMore()
+    const unit = Array.from(row('bar_width')!.querySelectorAll('span')).find(
+      (e) => e.textContent === '数据单位',
+    )!
+    expect(unit, '柱宽那一行没有完整的单位').toBeTruthy()
+    // jsdom 没有布局引擎，量不出折行（真浏览器截图 95 里它被挤成了两行）。
+    // 能判的是规则本身：单位不收缩、不折行。
+    expect(unit.className).toContain('whitespace-nowrap')
+    expect(unit.className).toContain('shrink-0')
+  })
+
+  it('引擎没发纹理字段时说一句为什么，并给「到源文件里改」的入口', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
+    )
+    await mount(['axes_0.bars_0'])
+    const note = host.querySelector('[data-absent-appearance="hatch"]')!
+    expect(note, '柱形面板里连一句「纹理在哪儿改」都没有').toBeTruthy()
+    expect(note.textContent).toContain('纹理')
+    expect(note.textContent).toContain('来自脚本')
+    // 不是摆一个点了没反应的控件
+    expect(host.querySelector('[aria-label="纹理"]')).toBeNull()
+
+    expect(useInspectorPrefs.getState().advancedOpen['bar_series']).toBeFalsy()
+    await act(async () => {
+      byText('到源文件里改')!.click()
+    })
+    expect(useInspectorPrefs.getState().advancedOpen['bar_series']).toBe(true)
+  })
+
+  it('引擎哪天真发了纹理字段，这条提示自己就没了——不用有人回来删', async () => {
+    const withHatch = [
+      ...barSeriesFields(),
+      f('hatch', 'enum', '//', { options: ['', '/', '//', 'xx'] }),
+    ]
+    seedRender(
+      makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', withHatch)]),
+    )
+    await mount(['axes_0.bars_0'])
+    expect(host.querySelector('[data-absent-appearance="hatch"]')).toBeNull()
+    await openMore()
+    expect(row('hatch')).toBeTruthy()
+  })
+})
+
+/* ---------------------------- 填充区域与纹理 ------------------------------ */
+
+describe('填充区域：填充一组、描边一组，纹理有名字（T21）', () => {
+  it('中文界面上没有裸露的 hatch，那一行叫「纹理」', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'fill', '填充区域 1', fillFields())]))
+    await mount(['axes_0.collections_0'])
+    await openMore()
+    expect(row('hatch')!.textContent).toContain('纹理')
+    expect(textOf()).not.toContain('hatch')
+    expect(host.querySelector('[aria-label="hatch"]')).toBeNull()
+  })
+
+  it('首屏顺序：填充色 · 纹理 → 描边色 · 线宽 · 线型 → 透明度', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'fill', '填充区域 1', fillFields())]))
+    await mount(['axes_0.collections_0'])
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    expect(props.slice(0, 6)).toEqual([
+      'facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha',
+    ])
+  })
+
+  it('形状：关掉「填充」之后填充色与纹理收起——写了也不显形', async () => {
+    seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields())]))
+    await mount(['axes_0.patches_0'])
+    expect(row('facecolor')).toBeTruthy()
+    expect(row('hatch')).toBeTruthy()
+    const toggle = row('fill')!.querySelector<HTMLElement>('[role="switch"]')!
+    await act(async () => {
+      toggle.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'fill')).toBe(false)
+    expect(row('facecolor')).toBeNull()
+    expect(row('hatch')).toBeNull()
+    // 开关自己当然还在，否则就再也开不回来了
+    expect(row('fill')).toBeTruthy()
+    expect(row('edgecolor')).toBeTruthy()
+  })
+})
+
+/* --------------------------------- 散点 ---------------------------------- */
+
+describe('散点：继承有小状态点，面积单位带一句短提示（T16）', () => {
+  it('标记 = 脚本原始：画的是继承状态点，不是 ↺ 那种像按钮的字形', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    expect(marker.textContent).toContain('脚本原始')
+    expect(marker.querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(marker.textContent).not.toContain('↺')
+  })
+
+  it('标记 = o：画真实形状，没有继承状态点', async () => {
+    seedRender(
+      makeManifest([
+        elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields({ marker: 'o' })),
+      ]),
+    )
+    await mount(['axes_0.collections_0'])
+    const marker = row('marker')!
+    expect(marker.querySelector('svg circle')).toBeTruthy()
+    expect(marker.querySelector('[data-marker-inherited]')).toBeNull()
+  })
+
+  it('点大小保留 pt²，并带一句「这是面积」的短提示；线宽那种没歧义的不带', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    expect(row('size')!.textContent).toContain('pt²')
+    const hinted = inputIn('size')!.closest('[title]')!.getAttribute('title')!
+    expect(hinted).toContain('面积')
+    expect(hinted).toContain('pt²')
+    // 提示是给会被读错的那几条准备的，不是每一行都挂
+    expect(inputIn('linewidth')!.closest('[title]')).toBeNull()
+  })
+})
+
+/* ------------------------------ 宽度的名字 -------------------------------- */
+
+describe('全产品只有一个宽度名词「线宽」，限定词说哪条线（T16 / T20）', () => {
+  it('散点的 linewidth 叫「描边线宽」，紧跟在描边色后面', async () => {
+    seedRender(makeManifest([elementOf('axes_0.collections_0', 'scatter', '散点 “Observed”', scatterFields())]))
+    await mount(['axes_0.collections_0'])
+    expect(row('linewidth')!.textContent).toContain('描边线宽')
+    const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+    expect(props.indexOf('linewidth') - props.indexOf('edgecolor')).toBe(1)
+  })
+
+  it('曲线与误差棒的 linewidth 是那条线本身，仍叫「线宽」', async () => {
+    seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
+    await mount(['axes_0.lines_0'])
+    expect(row('linewidth')!.textContent).toContain('线宽')
+    expect(row('linewidth')!.textContent).not.toContain('描边')
+  })
+
+  it('误差棒面板里没有「粗细」这个词——端帽那条也叫线宽', async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+    expect(row('cap_thickness')!.textContent).toContain('端帽线宽')
+    expect(textOf()).not.toContain('粗细')
+  })
+})
+
+/* ------------------------------- 可达名 ---------------------------------- */
+
+describe('数值行的可达名：标签在视觉与辅助技术中一致（T11 验收）', () => {
+  it('误差棒的四个数值框各有自己的名字，带单位', async () => {
+    seedRender(makeManifest([elementOf('axes_0.errorbar_0', 'errorbar', '误差棒 2', errorbarFields())]))
+    await mount(['axes_0.errorbar_0'])
+    const named = (prop: string) => inputIn(prop)!.getAttribute('aria-label')
+    expect(named('linewidth')).toBe('线宽 (pt)')
+    expect(named('capsize')).toBe('端帽长度 (pt)')
+    expect(named('cap_thickness')).toBe('端帽线宽 (pt)')
+    // 百分比控件自己带名字（不带单位——单位就在框里那个 %）
+    expect(named('alpha')).toBe('透明度')
   })
 })
 
