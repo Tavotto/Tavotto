@@ -528,7 +528,9 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Python 实现一致" in r.stdout
 
-    # 画布同步门禁：--check 不需要 Node，纯指纹比对
+    # 画布同步门禁：--check 不需要 Node，纯指纹比对。**主语是 stdout 编码**，不是产物
+    # 在不在：画布不入库（ADR 0043），干净 checkout 上它是「还没构建」（2）。三档结论
+    # 都不许死在 UnicodeEncodeError 上，且那句中文真写出来了。
     r = subprocess.run(
         [sys.executable, str(repo / "scripts/build_mcp_widget.py"), "--check"],
         capture_output=True,
@@ -538,8 +540,10 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
         timeout=120,
         env=env,
     )
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "画布产物与源码一致" in r.stdout
+    assert r.returncode in (0, 1, 2), r.stdout + r.stderr
+    assert "UnicodeEncodeError" not in r.stderr, r.stderr
+    verdict = {0: "画布产物与源码一致", 1: "画布产物过期", 2: "画布产物还没构建"}[r.returncode]
+    assert verdict in r.stdout + r.stderr, r.stdout + r.stderr
 
 
 def test_widget_fingerprint_is_the_same_on_windows_and_posix():
@@ -1373,8 +1377,6 @@ def _byte_compared_generated_files() -> list[str]:
     return [
         # `pnpm i18n:check` 的第一步就是 `i18next-cli types --ci`
         "web/src/i18n/resources.d.ts",
-        # `python scripts/build_mcp_widget.py --check` 比的是源码指纹
-        "codex-plugin/mcp/widget/canvas.html",
         # CLA 正文：SHA-256 记在 .github/cla-policy.json，判据逐字节核对。
         # 不是生成物，是人写的法律文本——但同样「字节必须确定」，而且
         # 2026-08-28 就是在 Windows 那条腿上红过（policy 是 LF 哈希、
