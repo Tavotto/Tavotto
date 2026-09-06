@@ -259,6 +259,8 @@
     "issueLocateField": "Go to field",
     "issueOpenPanel": "Open in problems",
     "keptPrevious": "The previous image is still shown",
+    "markerShapeMultiple": "multiple shapes",
+    "markerValueWithShape": "{{value}} ({{shape}})",
     "mixedValues": "Mixed",
     "modified": "Modified",
     "modifiedCount_one": "{{count}} modified",
