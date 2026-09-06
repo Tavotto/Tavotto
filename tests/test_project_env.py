@@ -789,3 +789,255 @@ def test_diagnostics_explains_why_this_python_was_chosen(client, project):
     # 项目内的解释器只出项目相对路径：用户主目录名不该无谓地进诊断包
     assert res["executable"].startswith(".venv")
     assert not Path(res["executable"]).is_absolute()
+
+
+# ------------------------------------------- 第二层：这台机器上已有的解释器（ADR 0044）
+def _fake_health(python: str, *, ok: bool, code: str = "", module_ok, version="3.12.4") -> dict:
+    return {
+        "ok": ok,
+        "code": code,
+        "python": python,
+        "support": projectenv.SUPPORT_VERIFIED if ok else projectenv.SUPPORT_UNSUPPORTED,
+        "python_version": version,
+        "matplotlib_version": "3.9.2",
+        "requested_module_ok": module_ok,
+    }
+
+
+def _touch(path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    return str(path)
+
+
+@needs_worker
+def test_system_interpreters_are_probed_when_no_venv_is_found(project, tmp_path, monkeypatch):
+    """项目里没有 venv → 把这台机器上已有的解释器体检一遍 → **列成候选，不自动切**。
+
+    这是 2026-09-06 那个真实目录的形状：`2d 处理/` 里一个 venv 都没有，能跑
+    脚本的是系统 Python。以前这一步直接 `project_env_not_found` 收场，用户手边
+    那套环境从没被看过一眼。
+    """
+    elsewhere = real_venv(tmp_path / "elsewhere")  # 项目**之外**，扮演系统解释器
+    python = projectenv.interpreter_of(elsewhere)
+    monkeypatch.setattr(
+        engine_pool, "system_python_candidates", lambda: [(python, engine_pool.SOURCE_SYSTEM)]
+    )
+    outcome = engine_pool.try_project_env(str(project), "figure.py", FIXTURE_MODULE)
+    assert outcome["ok"] is False
+    assert outcome["code"] == projectenv.ERROR_NOT_FOUND
+    found = projectenv.healthy_system_candidate(outcome["system"])
+    assert found and engine_pool.same_python(found["python"], python)
+    assert found["source"] == engine_pool.SOURCE_SYSTEM
+    assert found["requested_module_ok"] is True
+    # **不无感切换**：系统环境在用户交给我们的边界之外，采用要他点一次
+    assert projectenv.remembered(project) is None
+
+    # build 那条主路上同一份结论挂在异常上，前端的修复面板据此列出「采用」
+    projectenv.reset_cache(project)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("figure.py", str(project), "__main__")
+    assert err.value.code == "missing_dependency"
+    assert projectenv.healthy_system_candidate(err.value.project_env["system"])
+
+
+@needs_worker
+def test_the_interpreter_that_reported_the_missing_module_is_not_probed_again(project, monkeypatch):
+    """报缺包的那个解释器就是失败的起点，再体检一遍只会得出同一个答案。"""
+    failing = engine_pool.resolve_worker_python(str(project))[0]
+    monkeypatch.setattr(
+        engine_pool, "system_python_candidates", lambda: [(failing, engine_pool.SOURCE_SYSTEM)]
+    )
+    probed: list[str] = []
+    real_probe = projectenv.probe_environment
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None: probed.append(python) or real_probe(python, module),
+    )
+    outcome = engine_pool.try_project_env(str(project), "figure.py", FIXTURE_MODULE)
+    assert outcome["system"] == []
+    assert not any(engine_pool.same_python(p, failing) for p in probed)
+
+
+def test_system_probing_stops_at_the_first_healthy_one_and_keeps_the_rejected(
+    tmp_path, monkeypatch
+):
+    """候选按优先级排好：第一个健康的就停；探过的不合格者留在表里说明原因。
+
+    体检每个最长 60s，全探一遍是分钟级；而「找到了但 Python 版本不支持」
+    这种正是界面要单独说出来的那一类，不能因为后面找到了健康的就丢掉。
+    """
+    a, b, c, d = (_touch(tmp_path / n / "python") for n in ("a", "b", "c", "d"))
+    table = {
+        a: _fake_health(a, ok=False, code=projectenv.ERROR_NO_MATPLOTLIB, module_ok=False),
+        b: _fake_health(
+            b, ok=False, code=projectenv.ERROR_UNSUPPORTED_PYTHON, module_ok=True, version="3.9.6"
+        ),
+        c: _fake_health(c, ok=True, module_ok=True),
+        d: _fake_health(d, ok=True, module_ok=True),
+    }
+    probed: list[str] = []
+
+    def fake_probe(python, module=None):
+        probed.append(python)
+        return dict(table[python])
+
+    monkeypatch.setattr(projectenv, "probe_environment", fake_probe)
+    cands = [(p, engine_pool.SOURCE_SYSTEM) for p in (a, b, c, d)]
+    system = projectenv.probe_system_candidates(cands, "lmfit")
+    assert probed == [a, b, c], "第一个健康的（c）之后不该再探 d"
+    assert [e["python"] for e in system] == [a, b, c]
+    assert projectenv.healthy_system_candidate(system)["python"] == c
+    # 「包有、环境不合格」才算 rejected；a 只是也没有那个包，不值得单列
+    assert [e["python"] for e in projectenv.rejected_system_candidates(system)] == [b]
+    assert projectenv.rejected_system_candidates(system)[0]["python_version"] == "3.9.6"
+    # 表里只有结论字段，没有体检脚本的原始输出
+    assert "executable" not in system[0] and "prefix" not in system[0]
+
+    # 同一台机器同一个解释器同一个包：第二次不再起子进程
+    probed.clear()
+    projectenv.probe_system_candidates(cands, "lmfit")
+    assert probed == []
+    # 用户点「重试」（reset_cache）= 推翻旧结论，重新体检
+    projectenv.reset_cache()
+    projectenv.probe_system_candidates(cands, "lmfit")
+    assert probed == [a, b, c]
+
+
+def test_system_probing_never_runs_without_a_verifiable_module(tmp_path, monkeypatch):
+    """认不出缺的是哪个包（或名字不合形状）就没有可验证的目标——一个解释器都不起。"""
+    a = _touch(tmp_path / "a" / "python")
+    monkeypatch.setattr(projectenv, "probe_environment", lambda *_a, **_k: pytest.fail("不该体检"))
+    for bad in ("", "os; import shutil", "not-a-module"):
+        assert projectenv.probe_system_candidates([(a, "system")], bad) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="软链接语义是 POSIX 的")
+def test_dedupe_is_by_path_not_by_realpath(tmp_path, monkeypatch):
+    """`.venv/bin/python` 是指向基础解释器的软链接——按 realpath 去重会把一个
+    venv 和它的基础 Homebrew Python 判成同一个，后者整个从候选表里消失（实测）。
+    两条路径是两个环境，site-packages 完全不同。"""
+    base = _touch(tmp_path / "base" / "bin" / "python3")
+    link = tmp_path / "proj" / ".venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(base)
+    probed: list[str] = []
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None: (
+            probed.append(python)
+            or _fake_health(python, ok=False, code=projectenv.ERROR_MODULE_MISSING, module_ok=False)
+        ),
+    )
+    projectenv.probe_system_candidates([(str(link), "x"), (base, "y")], "lmfit")
+    assert probed == [str(link), base]
+    # 同一条路径写两遍才算重复（老链条里 `shutil.which` 常与显式路径撞车）
+    probed.clear()
+    projectenv.reset_cache()
+    projectenv.probe_system_candidates([(base, "x"), (base, "y")], "lmfit")
+    assert probed == [base]
+
+
+@needs_worker
+def test_the_health_probe_sees_what_the_worker_would_see(tmp_path, monkeypatch):
+    """体检的启动条件必须与真正起 worker 的一样（`execspec.worker_argv` 不带 `-I`）。
+
+    以前体检加了 `-I`：它顺手关掉用户 site 目录与 `PYTHONPATH`，于是
+    `pip install --user` 装的科学栈在体检里「不存在」，而同一个解释器起 worker
+    时明明 import 得到——量的是另一个对象。这里用 `PYTHONPATH` 造「worker 看
+    得见」的那份包：体检若还隔离着，`requested_module_ok` 就是 False。
+    """
+    extra = tmp_path / "usersite"
+    extra.mkdir()
+    (extra / f"{FIXTURE_MODULE}.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(extra))
+    health = projectenv.probe_environment(WORKER_PY, FIXTURE_MODULE)
+    assert health["ok"], health
+    assert health["requested_module_ok"] is True
+
+
+def test_the_probe_does_not_pick_up_modules_from_the_parent_cwd(tmp_path, monkeypatch):
+    """去掉 `-I` 之后，挡住 cwd 进 `sys.path[0]` 的是「cwd 换成空临时目录」。
+
+    Flask 进程的 cwd 是任意的：里面放一个 `matplotlib.py` 就能把体检骗过去。
+    """
+    if WORKER_PY is None:
+        pytest.skip("需要一个能起的解释器")
+    trap = tmp_path / "trap"
+    trap.mkdir()
+    (trap / f"{FIXTURE_MODULE}.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.chdir(trap)
+    health = projectenv.probe_environment(WORKER_PY, FIXTURE_MODULE)
+    assert health.get("requested_module_ok") is False, health
+
+
+def test_remembered_source_tells_outside_interpreters_from_the_project_venv(tmp_path):
+    """项目之外的解释器标成「系统 Python / Conda」，不能显示成 `.venv`。"""
+    root = tmp_path / "figs"
+    root.mkdir()
+    inside = str(root / ".venv" / "bin" / "python")
+    outside = str(tmp_path / "usr" / "bin" / "python3")
+    assert engine_pool.remembered_source(root, inside) == engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.remembered_source(root, outside) == engine_pool.SOURCE_SYSTEM
+
+
+@needs_worker
+def test_adopting_a_system_interpreter_from_the_panel_verifies_the_module(
+    client, project, tmp_path
+):
+    """面板列出候选与用户点下去之间那个环境可能变了：采用时连缺的那个包一起验。
+
+    验过了才记，记的是绝对路径 + 「因为缺 X」——诊断包要答得出「为什么这个
+    项目用了系统 Python」。
+    """
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    without = projectenv.interpreter_of(real_venv(tmp_path / "bare", with_fixture=False))
+    resp = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "python": without, "module": FIXTURE_MODULE},
+    )
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()["code"] == projectenv.ERROR_MODULE_MISSING
+    assert projectenv.remembered(project) is None
+
+    with_it = projectenv.interpreter_of(real_venv(tmp_path / "full"))
+    resp = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "python": with_it, "module": FIXTURE_MODULE},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()["project"]
+    assert body["source"] == engine_pool.SOURCE_SYSTEM
+    assert body["automatic"] is False
+    assert body["trigger"] == "missing_dependency"
+    assert body["module"] == FIXTURE_MODULE
+    assert engine_pool.same_python(body["python"], with_it)
+    # 全局设置一个字节都没动——那才是 A 污染 B 的地方
+    assert engine_config.worker_python() is None
+    # 从此这个脚本就用它跑
+    worker, resp = engine_pool.build("figure.py", str(project), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["Fig1"]
+    assert worker.python_source == engine_pool.SOURCE_SYSTEM
+
+
+def test_a_hostile_module_name_is_dropped_by_the_adopt_endpoint(client, project, monkeypatch):
+    """`module` 来自请求体：不合形状的名字不进体检命令行，也不进记录。"""
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    seen: list = []
+    monkeypatch.setattr(
+        m.engine_projectenv,
+        "probe_environment",
+        lambda python, module=None: seen.append(module) or {"ok": False, "code": "x"},
+    )
+    (project / "py").write_text("", encoding="utf-8")
+    client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "python": "py", "module": "os; import shutil"},
+    )
+    assert seen == [None]

@@ -831,6 +831,94 @@ def test_managed_environment_is_not_offered_without_a_base_python(project, monke
 
 
 # ===========================================================================
+# 六b、这台机器上已有的解释器：采用，不装（ADR 0044）
+# ===========================================================================
+def _system_entry(python: str, *, ok: bool, code: str = "", module_ok, version="3.12.4"):
+    return {
+        "python": python,
+        "source": engine_pool.SOURCE_SYSTEM,
+        "ok": ok,
+        "code": code,
+        "support": projectenv.SUPPORT_VERIFIED if ok else projectenv.SUPPORT_UNSUPPORTED,
+        "python_version": version,
+        "matplotlib_version": "3.9.2",
+        "requested_module_ok": module_ok,
+    }
+
+
+def test_a_healthy_system_interpreter_is_offered_as_adoption_not_installation(project):
+    """接手失败的结构里带着「/usr/local/bin/python3 已经装着它」→ 排在最前，
+    一个字节都不装；它**不是安装目标**，拿它建计划一律拒绝。"""
+    python = "/usr/local/bin/python3"
+    detail = {
+        "code": projectenv.ERROR_NOT_FOUND,
+        "module": "lmfit",
+        "system": [_system_entry(python, ok=True, module_ok=True)],
+    }
+    offer = deprepair.offer(str(project), "figure.py", "lmfit", detail)
+    first = offer["targets"][0]
+    assert first["kind"] == deprepair.TARGET_SYSTEM
+    assert first["python"] == python  # 项目外的绝对路径，界面上要认得出
+    assert first["modifies_user_environment"] is False
+    assert first["creates_environment"] is False
+    assert first["python_version"] == "3.12.4"
+    assert offer["system_rejected"] == []
+    # 受管环境那条路仍然并列在面板里
+    assert deprepair.TARGET_MANAGED in {t["kind"] for t in offer["targets"]}
+    assert deprepair.TARGET_SYSTEM not in deprepair.TARGETS
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.create_plan(
+            str(project), "figure.py", "lmfit", target_kind=deprepair.TARGET_SYSTEM
+        )
+    assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+
+
+def test_a_rejected_system_interpreter_is_explained_not_hidden(project):
+    """「找到 /usr/bin/python3 装了 ovito，但 Python 3.9 不在支持范围内」要说出来；
+    「别的 Python 也没有那个包」不值得一条一条列。"""
+    detail = {
+        "code": projectenv.ERROR_NOT_FOUND,
+        "module": "lmfit",
+        "system": [
+            _system_entry(
+                "/opt/homebrew/bin/python3",
+                ok=False,
+                code=projectenv.ERROR_MODULE_MISSING,
+                module_ok=False,
+            ),
+            _system_entry(
+                "/usr/bin/python3",
+                ok=False,
+                code=projectenv.ERROR_UNSUPPORTED_PYTHON,
+                module_ok=True,
+                version="3.9.6",
+            ),
+        ],
+    }
+    offer = deprepair.offer(str(project), "figure.py", "lmfit", detail)
+    assert deprepair.TARGET_SYSTEM not in {t["kind"] for t in offer["targets"]}
+    assert offer["system_rejected"] == [
+        {
+            "python": "/usr/bin/python3",
+            "code": projectenv.ERROR_UNSUPPORTED_PYTHON,
+            "python_version": "3.9.6",
+        }
+    ]
+
+
+def test_the_offer_does_not_start_interpreters_for_system_candidates(project, monkeypatch):
+    """offer 在渲染失败的响应路径上：结论必须来自接手那一步的体检表，不能在这里再探。"""
+    monkeypatch.setattr(
+        projectenv, "probe_environment", lambda *_a, **_k: pytest.fail("offer 不该起解释器")
+    )
+    monkeypatch.setattr(
+        projectenv, "probe_system_candidates", lambda *_a, **_k: pytest.fail("offer 不该再探")
+    )
+    offer = deprepair.offer(str(project), "figure.py", "lmfit", {"code": "x", "system": None})
+    assert offer["system_rejected"] == []
+
+
+# ===========================================================================
 # 七、诊断与隐私
 # ===========================================================================
 def test_install_logs_never_carry_the_package_index(tmp_path):

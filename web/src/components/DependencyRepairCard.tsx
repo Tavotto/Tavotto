@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import type { DependencyRepairOffer, DependencyTarget } from '@/lib/api'
+import type {
+  DependencyRepairOffer,
+  DependencyTarget,
+  SystemInterpreterRejection,
+} from '@/lib/api'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
@@ -46,8 +50,18 @@ export function DependencyRepairCard({
   script: string
 }) {
   useTranslation('errors')
-  const { plan, progress, busy, errorCode, errorText, makePlan, install, cancel, reset } =
-    useDepRepairStore()
+  const {
+    plan,
+    progress,
+    busy,
+    errorCode,
+    errorText,
+    makePlan,
+    install,
+    adoptSystemPython,
+    cancel,
+    reset,
+  } = useDepRepairStore()
   const [manual, setManual] = useState('')
   const running = isRepairRunning(progress)
   const pkg = offer.requirement?.distribution || module
@@ -93,7 +107,11 @@ export function DependencyRepairCard({
 
   // ---- 起点：给出口 -------------------------------------------------------
   const targets = offer.targets.filter((tg) => tg.available !== false)
+  // 「指定安装包」要装到哪：第一个**安装**目标。系统解释器不是安装目标
+  //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
+  const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
   const exhausted = offer.code === 'dependency_repair_rounds_exhausted'
+  const rejected = offer.system_rejected ?? []
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
@@ -119,12 +137,32 @@ export function DependencyRepairCard({
                 className="self-start"
                 variant={tg.kind === targets[0].kind ? 'primary' : 'ghost'}
                 disabled={busy}
-                onClick={() => makePlan({ module, script, target: tg.kind })}
+                onClick={() =>
+                  tg.kind === 'system_interpreter'
+                    ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
+                      void adoptSystemPython(tg.python, module)
+                    : makePlan({ module, script, target: tg.kind })
+                }
               >
                 {label(tg)}
               </Button>
-              <span className="truncate text-xs text-ink-3">{hint(tg)}</span>
+              <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
+                {hint(tg)}
+              </span>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* 探到了但没采用的系统解释器（ADR 0044）：用户手边明明有一套装了那个包
+          的 Python，Tavotto 为什么没用它——不说出来，他看到的就是「缺包，
+          要不要建一个新环境」，而自己的环境像是被无视了。 */}
+      {rejected.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {rejected.map((r) => (
+            <p key={r.python} className="text-xs leading-relaxed text-ink-3">
+              {rejectionText(r, pkg)}
+            </p>
           ))}
         </div>
       )}
@@ -146,7 +184,8 @@ export function DependencyRepairCard({
                 makePlan({
                   module,
                   script,
-                  target: offer.targets[0]?.kind ?? 'tavotto_managed',
+                  target:
+                    installTarget?.kind === 'project_venv' ? 'project_venv' : 'tavotto_managed',
                   distribution: manual.trim(),
                 })
               }
@@ -203,13 +242,40 @@ function OtherPython() {
 /** 目标环境的按钮文案。**必须短**：按钮不换行，长文案会撑破右栏。 */
 function label(target: DependencyTarget): string {
   if (target.kind === 'project_venv') return en('repairUseProjectEnv')
+  if (target.kind === 'system_interpreter') return en('repairUseSystemPython')
   return target.creates_environment ? en('repairCreateManaged') : en('repairUseManaged')
 }
 
 /** 按钮旁边那句「装到哪 / 会不会动你已有的东西」，长了就截断 */
 function hint(target: DependencyTarget): string {
   if (target.kind === 'project_venv') return target.venv || '.venv'
+  if (target.kind === 'system_interpreter') {
+    const base = en('repairSystemHint', {
+      python: target.python,
+      version: target.python_version || '?',
+    })
+    // 钉版之外但能 import 的 matplotlib 照用，但要如实标注（ADR 0018 §十）
+    return target.support === 'unverified_but_compatible'
+      ? `${base} · ${en('repairSystemUnverified')}`
+      : base
+  }
   return en('repairManagedHint')
+}
+
+/** 「找到了 X 装了这个包，但没采用」——三种原因三句话，用户的下一步各不相同 */
+function rejectionText(r: SystemInterpreterRejection, pkg: string): string {
+  switch (r.code) {
+    case 'project_env_unsupported_python':
+      return en('repairSystemRejectedUnsupported', {
+        python: r.python,
+        module: pkg,
+        version: r.python_version || '?',
+      })
+    case 'project_env_no_matplotlib':
+      return en('repairSystemRejectedNoMatplotlib', { python: r.python, module: pkg })
+    default:
+      return en('repairSystemRejectedUnusable', { python: r.python, module: pkg })
+  }
 }
 
 /**

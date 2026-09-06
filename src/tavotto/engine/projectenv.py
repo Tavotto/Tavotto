@@ -36,6 +36,28 @@
 解析任何工具自己的元数据。Poetry / Conda / pyenv / pixi / hatch 都要先问它们
 自己的 CLI 才知道环境在哪（`conda env list` 可能几秒），而且环境往往在项目
 之外——那是另一个安全模型。等真实用户数据表明有需要再加。
+
+## 第二层：这台机器上已有的解释器（ADR 0044）
+
+真实用户数据来了：一个目录里没有任何 venv，能跑那些脚本的是系统
+`/usr/bin/python3` 加用户 site 里的 ovito——`pool` 的老链条第五级本来就枚举
+了这些位置，但它只问「谁有 matplotlib」，内置 runtime 永远有，于是第五级在
+桌面版里事实上从没起过作用；本模块只找项目内 venv，两头都把它漏掉了。
+
+所以 venv 那一层没接手成之后，**再把老链条枚举出来的系统解释器逐个体检一遍**
+（`probe_system_candidates`）。与 venv 那一层的两点不同，都来自「它在用户交给
+我们的边界之外」：
+
+* **不无感切换**。项目内 venv 无感是因为它在边界之内；系统环境一台机器上
+  往往好几个，静默选中哪个都可能不是用户想的那个。体检结果只是**候选**，
+  挂在接手失败的结构上交给依赖修复面板，用户点一次才记进项目设置
+  （`app._set_project_environment`，绝对路径——它本来就不跟项目走）。
+* **探到了但不合格的也要说出来**。「找到 /usr/bin/python3 装了 ovito，但
+  Python 3.9 低于支持下限」比一句「缺 ovito」有解释力得多——用户明明有一套
+  能跑的环境，界面却只提议建受管环境，那才是困惑的来源。
+
+候选来自 `pool.system_python_candidates()`（本模块不 import pool：pool
+import 本模块），本模块只负责体检、去重、缓存与排序。
 """
 
 from __future__ import annotations
@@ -44,7 +66,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -311,9 +335,17 @@ def probe_environment(python: str, module: str | None = None) -> dict:
         # 不合形状的名字连体检都不做（注入面），当作「没法确认」。
         module = None
     engine_dir = str(Path(__file__).resolve().parent)
-    argv = [python, "-I", "-c", _PROBE_SRC, engine_dir]
+    # **体检的启动条件必须与真正起 worker 的一样**（`execspec.worker_argv`：
+    # 用户解释器不带 `-I` / `-s` / `-E`，env 原样继承）。以前这里加了 `-I`，
+    # 它顺手关掉了用户 site 目录——`pip install --user` 装的科学栈（系统 Python
+    # 上很常见）于是在体检里「不存在」，而同一个解释器起 worker 时明明
+    # import 得到：体检量的是另一个对象。`-I` 真正想挡的只是 cwd 被塞进
+    # `sys.path[0]`（Flask 进程的 cwd 是任意的，里面一个 `matplotlib.py`
+    # 就能把体检骗过去），这件事改由把 cwd 换成一个**空的临时目录**来做。
+    argv = [python, "-c", _PROBE_SRC, engine_dir]
     if module:
         argv.append(module)
+    scratch = tempfile.mkdtemp(prefix="tavotto-probe-")
     try:
         proc = subprocess.run(
             argv,
@@ -323,12 +355,15 @@ def probe_environment(python: str, module: str | None = None) -> dict:
             errors="replace",
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            cwd=scratch,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
         return {"ok": False, "code": ERROR_UNUSABLE, "python": python, "detail": str(exc)[:400]}
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     if proc.returncode != 0:
         return {
             "ok": False,
@@ -362,6 +397,121 @@ def probe_environment(python: str, module: str | None = None) -> dict:
         return info
     info.update(ok=True, code="", support=support_status(version, info.get("matplotlib_version")))
     return info
+
+
+#: 系统解释器的体检缓存：(解释器 realpath, 模块) → 体检结果。一次接手失败
+#: 最多探六七个解释器、每个最长 60s；同一个项目里第二个脚本也缺同一个包时
+#: 不该再付一遍。`reset_cache()` 一并清掉（用户手动重试 = 重新体检）。
+_system_probe_cache: dict[tuple[str, str], dict] = {}
+
+#: 一次最多体检多少个系统解释器。Windows 上 `C:\Python*` 的 glob 可能翻出
+#: 一堆，全探一遍是分钟级；候选已经按优先级排好，靠前的几个覆盖了绝大多数
+#: 真实安装。
+SYSTEM_PROBE_LIMIT = 8
+
+
+def _executable_key(python: str) -> str:
+    """去重与缓存用的键：**规范化的路径字符串，绝不 realpath**。
+
+    `.venv/bin/python` 在 POSIX 上是指向基础解释器的软链接——按 realpath 去重
+    会把一个项目 venv 和它的基础 Homebrew Python 判成同一个解释器，于是后者
+    被跳过（实测：候选表里 Homebrew 的 3.13 整个消失）。两条路径是两个环境，
+    site-packages 完全不同，键必须按路径本身。
+    """
+    try:
+        return os.path.normcase(os.path.abspath(python))
+    except (OSError, ValueError):
+        return os.path.normcase(python)
+
+
+def _same_executable(a: str, b: str) -> bool:
+    return _executable_key(a) == _executable_key(b)
+
+
+def probe_system_candidates(
+    candidates: list[tuple[str, str]], module: str, *, exclude: str = ""
+) -> list[dict]:
+    """把这台机器上已有的解释器逐个体检一遍，回**按候选顺序**的结果表。
+
+    `candidates` 是 `(解释器路径, 来源)`，来源只是回显给界面 / 诊断用
+    （`pool.SOURCE_*` 那套字符串）。`exclude` 是刚刚报缺包的那个解释器——
+    它就是失败的起点，再体检一遍只会得出同一个答案。
+
+    * **第一个健康的就停**（与 venv 那一层同一条纪律）：候选已经按优先级
+      排好，继续体检剩下的只是白白多起几个解释器。
+    * 不健康的**也留在表里**：`code` 说明为什么没采用。其中「缺的那个包
+      其实 import 得到、只是环境本身不合格」（Python 版本不支持 / 没有
+      matplotlib / 起不来）是界面要单独说出来的那一类。
+    * 每个条目都带 `ok` / `code` / `support` / `python_version` /
+      `matplotlib_version` / `requested_module_ok`，**不带** `executable` /
+      `prefix`（那是体检脚本的原始输出，界面用不上，诊断也不该多带路径）。
+
+    这里**只体检不决策**：谁被采用由用户在界面上点，记录由 `remember()`
+    完成——与 venv 那一层「本模块只做发现与体检」的分工一致。
+    """
+    if not module or not valid_module_name(module):
+        return []
+    out: list[dict] = []
+    seen: list[str] = []
+    for python, source in candidates:
+        if not python or len(out) >= SYSTEM_PROBE_LIMIT:
+            continue
+        if exclude and _same_executable(python, exclude):
+            continue
+        if any(_same_executable(python, s) for s in seen):
+            continue
+        try:
+            if not Path(python).is_file():
+                continue
+        except OSError:
+            continue
+        seen.append(python)
+        key = (_executable_key(python), module)
+        with _lock:
+            health = _system_probe_cache.get(key)
+        if health is None:
+            health = probe_environment(python, module)
+            with _lock:
+                _system_probe_cache[key] = health
+        entry = {
+            "python": python,
+            "source": source,
+            "ok": bool(health.get("ok")),
+            "code": health.get("code", ""),
+            "support": health.get("support", ""),
+            "python_version": health.get("python_version", ""),
+            "matplotlib_version": health.get("matplotlib_version") or "",
+            "requested_module_ok": health.get("requested_module_ok"),
+        }
+        out.append(entry)
+        if entry["ok"]:
+            break
+    return out
+
+
+def healthy_system_candidate(system: list[dict] | None) -> dict | None:
+    """体检表里第一个健康的条目（没有回 None）。表是按候选顺序的，所以
+    「第一个」就是优先级最高的那个。"""
+    for entry in system or []:
+        if entry.get("ok"):
+            return entry
+    return None
+
+
+def rejected_system_candidates(system: list[dict] | None) -> list[dict]:
+    """体检表里「缺的那个包其实有、但环境本身不合格」的条目。
+
+    这是界面要单独说出来的那一类：用户明明有一套装了那个包的 Python，
+    Tavotto 没采用它是有具体原因的（版本不支持 / 没有 matplotlib / 起不来），
+    不说出来的话用户只看到「缺包，要不要建一个新环境」，而他手边那套环境
+    像是被无视了。**包本来就没有的不算**——那只是「这台机器上别的 Python
+    也没有它」，不值得一条一条列。
+    """
+    return [
+        entry
+        for entry in system or []
+        if not entry.get("ok") and entry.get("requested_module_ok") is True
+    ]
 
 
 def _mpl_tuple(text: str | None) -> tuple[int, ...]:
@@ -509,6 +659,9 @@ def reset_cache(figures_dir: str | Path | None = None) -> None:
     """丢弃进程内解析缓存（改了设置、装完环境、测试之间）。"""
     key = _key(figures_dir) if figures_dir is not None else None
     with _lock:
+        # 系统解释器的体检结果不分项目（同一台机器同一个解释器），任何一次
+        # 重置都清：用户点「重试」多半是刚装了什么，旧结论正是他要推翻的。
+        _system_probe_cache.clear()
         if key is None:
             _resolved.clear()
             _attempted.clear()
@@ -531,13 +684,37 @@ def mark_attempted(figures_dir: str | Path, script: str) -> bool:
         return True
 
 
-def resolve_for_missing_dependency(figures_dir: str | Path, script: str, module: str) -> dict:
+def resolve_for_missing_dependency(
+    figures_dir: str | Path,
+    script: str,
+    module: str,
+    *,
+    system_candidates: list[tuple[str, str]] | None = None,
+    exclude_python: str = "",
+) -> dict:
     """内置环境缺 `module` 时，看看这个项目自己的 venv 能不能顶上。
 
     回 `{"ok": True, "python": …, "venv": …, "health": {…}}`，或
     `{"ok": False, "code": …, …}`（code 见模块头）。**只做判断不改状态**：
     记住决策与作废 worker 由 `pool` 完成——那边才是解释器决策的权威。
+
+    venv 那一层没成（找不到 / 也缺包 / 不合格）时，`system_candidates` 给了
+    就再把这台机器上已有的解释器体检一遍，结果挂在失败结构的 `system` 键上
+    （ADR 0044）。**`ok` 仍是 False**：系统解释器只是候选，采用要用户点。
+    `exclude_python` 是刚报缺包的那个解释器，不再体检。
     """
+    outcome = _resolve_project_venv(figures_dir, script, module)
+    if outcome.get("ok"):
+        return outcome
+    if system_candidates:
+        outcome["system"] = probe_system_candidates(
+            system_candidates, module, exclude=exclude_python
+        )
+    return outcome
+
+
+def _resolve_project_venv(figures_dir: str | Path, script: str, module: str) -> dict:
+    """venv 那一层：发现 → 体检 → 第一个健康的就采用。"""
     candidates = discover(figures_dir, script)
     if not candidates:
         return {"ok": False, "code": ERROR_NOT_FOUND, "module": module}
