@@ -454,8 +454,10 @@ function IssueRow({
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-baseline gap-1.5">
               <span className="min-w-0 truncate text-xs text-ink">{subjectName(issue)}</span>
+              {/* 「当前」与等级筛选的选中态同一套配色（accent 字 + 淡底 + 描边），
+                  对比度已在那儿量过；白字压在 accent 上没量过，不冒这个险 */}
               {current && (
-                <span className="shrink-0 rounded-[3px] bg-accent px-1 text-[10px] leading-4 text-white">
+                <span className="shrink-0 rounded-[3px] border border-accent bg-accent-subtle px-1 text-[10px] leading-4 text-accent">
                   {pr('current')}
                 </span>
               )}
