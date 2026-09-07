@@ -49,6 +49,13 @@ DELTA_TOL = 0.006  # 同轴成员漂移一致性的容差（figure 分数）
 MIN_DELTA = 0.002  # 小于它视作没漂，不改写
 
 
+# Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
+# 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
+# 做完了却以非零退出，而父进程只看得见「它挂了」。写法与 build_frontend.py 同源。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 会话凭据（ADR 0008）。装载判据只有一处——`smoke_app.adopt_session_credentials`
 # ——所以这里代理过去而不是自己再解析一遍凭据文件（`smoke_app` 纯标准库，
 # 白拿这一份实现不额外引入任何依赖）。

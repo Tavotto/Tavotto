@@ -22,6 +22,13 @@ import re
 import sys
 from pathlib import Path
 
+# Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
+# 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
+# 做完了却以非零退出，而父进程只看得见「它挂了」。写法与 build_frontend.py 同源。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 文件名 → Tauri 的平台标识。macOS 只发 arm64（sidecar 由 arm64 runner 上的
 # PyInstaller 打出来，本来就跑不了 Intel），所以不给 darwin-x86_64 ——
 # 给了等于把一个装不上的包推给 Intel 用户。
