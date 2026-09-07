@@ -24,30 +24,34 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()} title={t('presets.title')} size="md">
       <div className="flex flex-col gap-3">
-        <div className="grid grid-cols-3 gap-1.5" role="list" aria-label={t('presets.title')}>
+        {/* 列表语义走 ul/li，**不往按钮身上写 `role`**：显式 role 会替换掉
+            按钮的原生语义，读屏用户遇到的就成了一个可聚焦的列表项，而不是
+            一个能激活的控件。`role="list"` 是显式写的——Tailwind 的
+            `list-style: none` 会让 Safari/VoiceOver 丢掉 ul 的列表语义 */}
+        <ul className="grid grid-cols-3 gap-1.5" role="list" aria-label={t('presets.title')}>
           {PRESET_IDS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              role="listitem"
-              data-preset={id}
-              title={presetHint(id)}
-              aria-label={presetLabel(id)}
-              onClick={() => {
-                insertPreset(id)
-                onClose()
-              }}
-              className={cn(
-                'flex flex-col items-center gap-1 rounded-sm border border-border bg-surface px-1 pb-1.5 pt-1',
-                'text-xs text-ink outline-none transition-colors',
-                'hover:border-border-strong hover:bg-surface-2 focus-visible:focus-ring',
-              )}
-            >
-              <PresetPreview id={id} />
-              <span className="max-w-full truncate">{presetLabel(id)}</span>
-            </button>
+            <li key={id} role="listitem" className="flex">
+              <button
+                type="button"
+                data-preset={id}
+                title={presetHint(id)}
+                aria-label={presetLabel(id)}
+                onClick={() => {
+                  insertPreset(id)
+                  onClose()
+                }}
+                className={cn(
+                  'flex w-full flex-col items-center gap-1 rounded-sm border border-border bg-surface px-1 pb-1.5 pt-1',
+                  'text-xs text-ink outline-none transition-colors',
+                  'hover:border-border-strong hover:bg-surface-2 focus-visible:focus-ring',
+                )}
+              >
+                <PresetPreview id={id} />
+                <span className="max-w-full truncate">{presetLabel(id)}</span>
+              </button>
+            </li>
           ))}
-        </div>
+        </ul>
         <div>
           <h3 className="mb-1 text-xs font-medium text-ink-2">{t('presets.symbolsHeading')}</h3>
           <div className="grid grid-cols-8 gap-0.5">
