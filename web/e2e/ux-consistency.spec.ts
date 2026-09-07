@@ -322,11 +322,20 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await dialog.getByRole('navigation').getByRole('button', { name: '常规' }).click()
   await expect(dialog.locator('[data-help-tip]')).toHaveCount(0)
 
+  // 绝对路径的判据。**读的是 innerText 不是 textContent**：`textContent()` 把相邻
+  // 元素的文字无分隔地粘在一起，于是「渲染引擎 Python」的末字符直接顶在
+  // `/opt/hostedtoolcache/...` 前面，而这条正则要求路径前面是行首或非词字符
+  // ——粘住之后前一个字符是 `n`，永远匹不上。三条反向断言因此一直在假绿
+  // （`textContent()` 连折叠起来的技术详情一起读了，里面就有绝对路径），
+  // 正向那条则在 CI 上必红。`innerText` 按渲染结果给出换行，且**只含可见文字**，
+  // 这正是 T40 要判的东西：用户看得见的首屏里没有全路径。
+  const absolutePath = /(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/
+
   // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
   await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
   await page.waitForTimeout(250)
-  const projectScreen = (await dialog.textContent()) ?? ''
-  expect(projectScreen).not.toMatch(/(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/)
+  const projectScreen = await dialog.innerText()
+  expect(projectScreen).not.toMatch(absolutePath)
 
   // --- 问号：Tab 到它 → 展开 → Esc 收回。设置里唯一剩下的那个（界面 / 拖动联动）---
   await dialog.getByRole('navigation').getByRole('button', { name: '界面' }).click()
@@ -344,19 +353,18 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await dialog.getByRole('navigation').getByRole('button', { name: '关于与隐私' }).click()
   await expect(dialog.getByText(/仅在你明确开启后发送匿名功能使用情况/)).toBeVisible()
 
-  const absolutePath = /(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/
-  const aboutScreen = (await dialog.textContent()) ?? ''
+  const aboutScreen = await dialog.innerText()
   expect(aboutScreen).not.toMatch(absolutePath)
 
   // --- 诊断：完整解释器路径只在折叠的「技术详情」里（Session 19 把诊断拆成独立分区）---
   await dialog.getByRole('navigation').getByRole('button', { name: '诊断', exact: true }).click()
   const diag = dialog.getByRole('button', { name: '技术详情' })
   await expect(diag).toHaveAttribute('aria-expanded', 'false')
-  const firstScreen = (await dialog.textContent()) ?? ''
+  const firstScreen = await dialog.innerText()
   expect(firstScreen).not.toMatch(absolutePath)
   await diag.click()
   await expect(diag).toHaveAttribute('aria-expanded', 'true')
   await page.waitForTimeout(500)
-  const expanded = (await dialog.textContent()) ?? ''
+  const expanded = await dialog.innerText()
   expect(expanded).toMatch(absolutePath)
 })
