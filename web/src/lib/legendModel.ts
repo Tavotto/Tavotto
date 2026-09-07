@@ -197,6 +197,23 @@ export const LEGEND_ANCHOR_PROP = 'loc_anchor'
 /** 位置控件承接掉的两条字段——同一属性不出两套控件。 */
 export const LEGEND_POSITION_PROPS = ['loc', LEGEND_ANCHOR_PROP] as const
 
+/**
+ * 位置控件**拥有**的全部落位 prop——`legendPlacementPlan` 只碰这三条，
+ * 「恢复到脚本」也就必须清这三条。**唯一出处**，重置那一侧不许再抄一份。
+ *
+ * 与上面那份 `LEGEND_POSITION_PROPS` 答的是两个问题，别合并：
+ *
+ *   * `LEGEND_POSITION_PROPS`：**通用列表里让出哪些字段**。只能是 editable
+ *     字段（`loc_frac` 不是，它是 `drag_prop`，本来就没有行）；
+ *   * `LEGEND_PLACEMENT_PROPS`：**这个控件写过哪些 override**。拖动留下的
+ *     `loc_frac` 归它——`legendPlacementPlan` 每次都把那条删掉，那么「把这个
+ *     控件还原到脚本」也该把它删掉。
+ *
+ * 合并式的重置只清 `loc` 是本轮评审抓到的缺陷：`loc_anchor` 被这个控件承接
+ * 之后在通用列表里没有第二个入口，清不掉它 = 图例回不到图内。
+ */
+export const LEGEND_PLACEMENT_PROPS = ['loc', LEGEND_ANCHOR_PROP, 'loc_frac'] as const
+
 /** 锚点：父容器（宿主子图 / 整张图）分数坐标里的一个点。 */
 export type LegendAnchor = [number, number]
 
