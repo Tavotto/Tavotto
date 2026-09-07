@@ -5,7 +5,7 @@
 > 编号更正（2026-09-07）：本文最初以 0009 落地，与同日落地的
 > `0009-codex-workspace-root-authority.md` 撞号——两个 PR 当时各自按「目录里最大号 + 1」
 > 取号，看到的最大号是同一个。内容一字未改，只换号；改这一份而不是另一份，是因为指向
-> 它的路径链接更少（3 对 5）。判据见 `tests/test_adr_numbering.py`。
+> 它的路径链接更少（3 对 5）。判据见 `tests/test_docs_references.py`。
 
 ## 背景
 

@@ -1,4 +1,9 @@
-"""ADR 编号不许重复——一条枚举判据，替掉「取号时记得看一眼」。
+"""`docs/` 的交叉引用：ADR 号不许重复，文档间的相对链接必须解析得开。
+
+两条判据同一个成因——**改名与取号都是在共享命名空间上的读改写**，靠「记得回来改」
+维持不住。它们各自都在落地前抓到过真东西（见下）。
+
+## 一、ADR 编号不许重复
 
 **为什么值得有**：2026-09-06/07 真的撞了两次（`0045` 与 `0046` 各有两份），而且
 重号**穿过了完整的 PR 门禁合进 main**，19 项检查一项都没响，是评审时人眼看出来的。
@@ -10,6 +15,16 @@
 
 判据只有一条，也只该有一条：**文件名前四位数字在 `docs/adr/` 内唯一**。不检查内容、
 不检查连续、不检查有没有跳号——那些都不是缺陷（一个被否掉的 ADR 留个空号完全正常）。
+
+## 二、文档之间的相对链接必须解析得开
+
+文件名唯一 ≠ 链接指得到。改名漏改引用在这仓库**已经发生过**：
+`0035-axis-tick-direct-manipulation.md` 指着 `0017-exact-manifest-authority.md`，而实际
+文件叫 `0017-display-fallback-vs-geometry-authority.md`——本轮之前就断着，没人发现。
+
+这条判据与上一条是搭档：改号必然要动引用，而「引用还指得到吗」只有它答得出。范围是
+`docs/` 下所有 Markdown 里的相对 `.md` 链接（外链、锚点不管——那是另一件事，需要联网
+或解析标题，不该混进一条判据里）。
 """
 
 import re
@@ -62,3 +77,39 @@ def test_every_markdown_file_here_is_either_an_adr_or_a_known_exception():
         p.name for p in ADR_DIR.glob("*.md") if not ADR_NAME.match(p.name) and p.name not in allowed
     )
     assert not stray, f"docs/adr/ 里这些文件不合 `NNNN-slug.md` 形状，也没登记为例外: {stray}"
+
+
+# ---------------------------------------------------------------- 二、链接
+DOCS = ADR_DIR.parent
+#: `[文字](相对路径.md)` 与 `[文字](相对路径.md#锚点)`。绝对 URL 不匹配（`://`），
+#: 锚点部分丢掉——判的是「文件在不在」，不是「标题在不在」。
+MD_LINK = re.compile(r"\]\(((?!\w+://)[^)#\s]+\.md)(?:#[^)]*)?\)")
+
+
+def _links() -> list[tuple[Path, str, Path]]:
+    out = []
+    for doc in sorted(DOCS.rglob("*.md")):
+        for m in MD_LINK.finditer(doc.read_text(encoding="utf-8")):
+            out.append((doc, m.group(1), (doc.parent / m.group(1)).resolve()))
+    return out
+
+
+def test_there_are_links_to_check():
+    """判据的前提：真的扫到了链接。正则写错时这条先红，而不是让下面那条空转。"""
+    found = _links()
+    assert len(found) >= 100, f"只扫到 {len(found)} 条相对链接，判据多半已经量在空集合上"
+
+
+def test_every_relative_doc_link_resolves():
+    """`docs/` 里指向别的 Markdown 的相对链接，目标文件必须真的在。
+
+    改名漏改引用的表现是**读的人点开 404**，而写的人永远看不到——他改完就走了。
+    """
+    broken = [
+        f"{doc.relative_to(DOCS.parent)} → {target}"
+        for doc, target, resolved in _links()
+        if not resolved.is_file()
+    ]
+    assert not broken, "这些相对链接指向不存在的文件（多半是改名漏改引用）:\n  " + "\n  ".join(
+        broken
+    )
