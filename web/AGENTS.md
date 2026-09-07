@@ -609,6 +609,15 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   「查找会访问 PyPI 或你配置的软件源」，「打字不出网」这条**为什么**折进技术详情
   ——首屏最多一段长文，名额已经归「装坏了可以重建」。看护
   `settings/PackagesSearch.test.tsx`（27 条）。
+* **`packageStore` 也有项目代际**（本轮评审 P2）：`clear()` 换代 + 把清单 / 查找结果 /
+  上一次的错误整份丢掉，`resetForNewProject()` 调它。查找结果里的 `installed` 与
+  `source` 说的是**发请求那个项目**的受管环境，开在另一个项目的包页面上就是假的，而
+  那一页的安装按钮作用在当前项目上。**代际与 `lookupSeq` 是两条轴，不许合并**：序号答
+  「同一个项目里哪一次最新」，代际答「这个响应属于哪个项目」——只有序号的话，A 那次
+  查找在 B 里仍然是最新的一次，照样落地。`clear()` 只换代、**不动 `lookupSeq`**：两条
+  保证各由一条判据负责，做两遍的话拆掉其中一遍会照样全绿。`progress` 与已起过的作业号
+  刻意不清（作业改的是旧项目的环境、还在后端跑，`job_id` 是唯一的把手；与导出作业 /
+  native 会话同一条纪律）。看护 `store/projectSwitchPackages.test.ts`（6 条）。
 * **设置里的说明先改控件，改不动才加帮助**（2026-09-06 审计「说明文字专项补查」）：优先级是
   命名 → 单位 → 对象关系 → 状态 → 条件展开。`SettingRow` 的 `description` 是标签底下的一行短
   说明（改的是什么、影响哪里），`status` 只在那个状态**真的成立**时出现（「当前窗口只能固定
@@ -987,7 +996,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
   **三个 store 都有项目代际（epoch）**：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
-  落进 B（Session 6 评审修复；vitest 各有作废用例看护）。
+  落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
+  按同一条纪律换代（见「设置外壳与包管理」那节）——**新写一个会在项目之间
+  存活的 store 时，先回来把它加进这份名单**。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、

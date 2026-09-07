@@ -30,6 +30,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { usePackageStore } from '@/store/packageStore'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -136,6 +137,10 @@ async function resetForNewProject() {
   // 项目环境 / 工作目录模式是项目级的（ADR 0018 / 0045）：清掉旧项目的，按新
   // 项目重取——否则开关与错误块的建议说的是上一个项目的模式
   useEnvStore.getState().resetProject()
+  // 包管理换代：清单与「在 PyPI 查找」的结果都属于旧项目那个受管环境。查找结果
+  // 带着 A 环境里的 `installed` 版本与 A 的索引源，而这一页的安装按钮作用在
+  // **当前**项目上；在途的那次查找回来时同样按代际作废（ADR 0038）。
+  usePackageStore.getState().clear()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()
