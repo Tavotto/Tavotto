@@ -7,7 +7,7 @@ import { startAutosave, useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { enterElementEdit } from './actions'
+import { beginCrop, enterElementEdit } from './actions'
 import {
   addFigureToLayout,
   findFigurePanel,
@@ -194,7 +194,7 @@ describe('源脚本关联迟到（issue #267）', () => {
     useAssetStore.setState({ byId: { 'late.pdf': info('late.pdf', { script: undefined }) } })
     openFastEdit('late.pdf')
     const id = panelOf('late.pdf').id
-    useUiStore.getState().setCropTarget(id) // 属性页的「裁剪」/ Enter
+    beginCrop(id) // 属性页的「裁剪」/ 浮动条 / 双击 / Enter 共用的唯一入口
 
     scriptArrives('late.pdf')
 
