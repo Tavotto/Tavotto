@@ -2382,7 +2382,7 @@ def api_projects_recent():
     return resp
 
 
-def _unsafe_new_project_part(p: Path) -> str | None:
+def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:
     """`create=true` 时，这条路径新建出来的那一级安不安全。安全回 None。
 
     **判据的主语**：客户端发来的是「用户选的上级目录」+「用户输入的名字」
@@ -2396,12 +2396,20 @@ def _unsafe_new_project_part(p: Path) -> str | None:
     在本仓库只有那一份权威（按最严的平台写，且与 `web/src/lib/exportName.ts`
     由 `tests/golden/filename_vectors.json` 钉在一起）。
 
+    **`leaf` 必须是没被 `str.strip()` 动过的那个末位分量**，两个参数因此分开传。
+    端点开头对整条路径做的 `raw.strip()` 是 Python 的内建函数，它认的空白字符集
+    与 JavaScript 的 `trim()` **不一样**（`\x1c`–`\x1f` 只有 Python 认，
+    `\ufeff` 只有 JS 认）。拿 strip 过的末位分量去判，两侧的口径就分家了：
+    实测 `parent/figs\x1c` 在前端是 `control_char`（拒），在后端却被 strip 成
+    `figs` 建了出来。判据要判的是用户真的输进来的那个串，所以谁的内建函数都
+    不许先碰它——`check_filename` 自己带着一份写死的空白集合，正是为这件事。
+
     回的是**出问题的那一段**，直接进 `params.name` 给用户看。
     """
     for part in p.parts:
         if part in (".", ".."):
             return part
-    return p.name if engine_exportreq.check_filename(p.name) else None
+    return leaf if engine_exportreq.check_filename(leaf) else None
 
 
 @app.post("/api/projects/open")
@@ -2412,12 +2420,15 @@ def api_projects_open():
     「只给本标签页用」，不改动新标签页的默认落点。
     """
     body = request.get_json(force=True)
-    raw = str(body.get("path") or "").strip()
+    typed = str(body.get("path") or "")
+    raw = typed.strip()
     if not raw:
         return jsonify({"error": "缺少项目路径", "code": "missing_path"}), 400
     p = Path(raw).expanduser()
     if body.get("create"):
-        bad = _unsafe_new_project_part(p)
+        # 末位分量取自**没被 strip 过**的原串：`.strip()` 是 Python 的内建函数，
+        # 它与前端的 `trim()` 认的空白集合不一样，先 strip 再判等于两侧换了尺子
+        bad = _unsafe_new_project_part(p, Path(typed).name)
         if bad is not None:
             return jsonify(
                 {
