@@ -17,7 +17,18 @@ import path from 'node:path'
 
 const DIST = path.resolve(import.meta.dirname, '..', 'dist-playground')
 
-let server: Server
+// 产物缺席时跳过——**写在文件层，不写在 `beforeAll` 里**（issue #311）。
+// `test.skip()` 从钩子中间抛出去时 `server` 永远没被赋值，而 `afterAll` 照样
+// 执行：那里的 `server?.close(() => ok())` 里的 `?.` 把 `close` 连同它的回调
+// 一起短路，Promise 永不 settle，钩子挂满 180s 才超时。Playwright 把钩子错误
+// 报在**文件最后一条用例**上，而那条用例根本没跑过，于是耗时是 `(0ms)`——
+// 「用例体之前挂掉」的那个形状。重试那一遍同样被跳过（= 不算失败），所以
+// `retries: 1` 下它显示成 flaky 绿，每轮还白烧 3 分钟。写在文件层则
+// `beforeAll` / `afterAll` 一次都不执行。
+test.skip(!existsSync(path.join(DIST, 'index.html')),
+  '先跑 python scripts/build_browser_playground.py 生成 dist-playground')
+
+let server: Server | undefined
 let origin = ''
 
 const MIME: Record<string, string> = {
@@ -30,9 +41,7 @@ const MIME: Record<string, string> = {
 }
 
 test.beforeAll(async () => {
-  test.skip(!existsSync(path.join(DIST, 'index.html')),
-    '先跑 python scripts/build_browser_playground.py 生成 dist-playground')
-  server = createServer((req, res) => {
+  const s = createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://x').pathname
     const file = path.join(DIST, pathname === '/' ? '/index.html' : pathname)
     if (!file.startsWith(DIST) || !existsSync(file)) {
@@ -42,12 +51,18 @@ test.beforeAll(async () => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' })
     res.end(readFileSync(file))
   })
-  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
-  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  server = s
+  await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok))
+  origin = `http://127.0.0.1:${(s.address() as AddressInfo).port}`
 })
 
 test.afterAll(async () => {
-  await new Promise<void>((ok) => server?.close(() => ok()))
+  // 别写回 `server?.close(() => ok())`：server 缺席时那个 `?.` 会把回调一起
+  // 短路掉，Promise 永不 settle（issue #311）。先取本地常量再判，让「没有
+  // server 就直接返回」是一条看得见、也走得完的路径；close 出错不吞。
+  const s = server
+  if (!s) return
+  await new Promise<void>((ok, fail) => s.close((e) => (e ? fail(e) : ok())))
 })
 
 const noHorizontalOverflow = async (page: Page) => {
