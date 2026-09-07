@@ -634,8 +634,15 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   「一级页面不许有输入框」这条现在量的是 `[data-endpoint-step]`（端点编辑器整个不在这一层，
   锚点在 `EndpointDialog`）与 `[data-agent-field]`（概览字段只在详情里），不是「某两句话没出现」。
   分区导航认 `[data-section="ai"]`（分区 id 是持久化格式的一部分），不认导航项的文案。
-  **仍然认可见文案的只剩顶栏那颗「设置」**：它是 19 个 spec 共用的入口写法，在一个文件里
-  单方面换掉等于立两套约定；要换就一次换全部，单开一笔。
+* **左栏那两颗循环外的按钮补进了既有的 `data-rail` 约定**（2026-09-07，同一族收尾）：
+  `LeftRail` 的 `ITEMS.map` 里每颗都带 `data-rail={id}`，注释也写着「aria-label 是本地化
+  文案，不能当选择器」；但「接入状态」与「设置」是循环外单独写的两颗，**漏了这个属性**，
+  于是三个 spec 只能退回按中文文案找它们（同一个赌注在三处各下了一次）。现在是
+  `data-rail="readiness" | "settings"`，id 与 rail 文案键的末段对齐。
+  连带两处：覆盖式抽屉的遮罩认 `[data-scrim]`（`App.tsx`，判「左抽屉此刻盖住了下面的
+  东西」，原先按「收起侧栏」这句话），设置对话框按**里面装着 `[data-settings-shell]`**
+  与帮助气泡消歧，不按对话框的名字。`e2e/` 里已经没有按可见文案定位的入口了
+  （`i18n.spec.ts` 里那张 `settings: '设置'` 是**语言切换的期望值表**，不是定位，别动它）。
 * **同一族在英文侧与「只有 Windows 跑」的用例里各还有一处**（2026-09-07，#299 windows 腿）：
   审计 T34 把写回确认按钮从「Write back」改成「Write back to the original files」，
   `e2e/error-recovery-en.spec.ts` 的 `/^Write back$/` 当场匹配不到、等满 180 秒。锚点换成

@@ -297,9 +297,10 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
 }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByRole('button', { name: '设置', exact: true }).first().click()
-  // 帮助气泡也是 role=dialog，按名字消歧
-  const dialog = page.getByRole('dialog', { name: '设置' })
+  await page.locator('[data-rail="settings"]').click()
+  // 帮助气泡也是 role=dialog：按**里面装着设置外壳**消歧，不按对话框的名字
+  // ——那个名字是本地化文案，与顶栏那颗按钮同一个赌注（#299）
+  const dialog = page.getByRole('dialog').filter({ has: page.locator('[data-settings-shell]') })
   await expect(dialog).toBeVisible({ timeout: 30_000 })
 
   /** 对话框正文里独立成段的长解释有几段 */

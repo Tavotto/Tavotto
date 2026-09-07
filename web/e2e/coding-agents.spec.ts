@@ -21,7 +21,7 @@ import type { Page } from '@playwright/test'
  */
 async function openAgentSettings(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByRole('button', { name: '设置', exact: true }).first().click()
+  await page.locator('[data-rail="settings"]').click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
   // 分区 id 是持久化格式的一部分（AiPanel 的「打开设置」按它跳转），

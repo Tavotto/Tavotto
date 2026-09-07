@@ -19,8 +19,8 @@ async function openSettings(page: Page, baseURL: string) {
   // <1024 时左栏是覆盖式抽屉，首屏开着、遮罩盖住了设置按钮（遮罩自身的淡入
   // 动画让 Playwright 一直判它"不稳定"）。设置对话框是 z-50 的 portal，在抽屉之上，
   // 所以这里绕过指针拦截直接派发 click——测的是对话框，不是抽屉
-  const settings = page.getByRole('button', { name: '设置', exact: true }).first()
-  if (await page.getByRole('button', { name: '收起侧栏' }).count()) {
+  const settings = page.locator('[data-rail="settings"]')
+  if (await page.locator('[data-scrim]').count()) {
     await settings.dispatchEvent('click')
   } else {
     await settings.click()
