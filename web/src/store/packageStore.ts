@@ -36,6 +36,22 @@ const startedJobs = new Set<string>()
  */
 let lookupSeq = 0
 
+/**
+ * 项目代际。`clear()`（换项目）加一——A 项目的清单 / 查找响应在途时切到 B，
+ * 落地必须作废（与 `scriptLibraryStore` / `runtimeAssetStore` / `scriptRunStore`
+ * 同一条纪律，见 `web/AGENTS.md`「三个 store 都有项目代际」那条）。
+ *
+ * **与 `lookupSeq` 是两条独立的轴，不能合并成一个**：序号答的是「同一个项目里
+ * 哪一次查找最新」，代际答的是「这个响应属于哪个项目」。只有序号的话，A 项目
+ * 那次查找在 B 里**仍然是最新的一次**——它会带着 A 环境里的 `installed` 版本
+ * 与 A 的索引源落进 B 的包页面，而那一页的安装按钮作用在 B 上。
+ *
+ * 反过来也一样：`clear()` **只**换代、不动 `lookupSeq`。两件事各由一条判据
+ * 负责，拆掉任何一条都要有用例红——两条都做同一件事的话，拆掉其中一条会照样
+ * 全绿（同一条保证实现两遍 = 谁也杀不死）。
+ */
+let projectEpoch = 0
+
 /** 查找的状态机。四态闭集，界面按它换文案。 */
 export type LookupStatus = 'idle' | 'loading' | 'found' | 'error'
 
@@ -87,6 +103,8 @@ interface PackageState {
   /** 按名字问一次索引源。名字是**用户点下去那一刻**的那个，不是输入框的实时值 */
   runLookup: (name: string) => Promise<void>
   clearLookup: () => void
+  /** 换项目：项目级状态整份丢掉 + 换代，在途响应绝不落进新项目 */
+  clear: () => void
 }
 
 const failure = (e: unknown): { code: string; text: string } => {
@@ -116,10 +134,14 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   lookup: IDLE_LOOKUP,
 
   load: async () => {
+    const epoch = projectEpoch
     set({ loading: true })
     try {
-      set({ data: await fetchManagedPackages(), loading: false, loadError: '' })
+      const data = await fetchManagedPackages()
+      if (epoch !== projectEpoch) return // 切过项目：这份清单说的是旧项目的环境
+      set({ data, loading: false, loadError: '' })
     } catch (e) {
+      if (epoch !== projectEpoch) return
       // 保留上一次成功的清单：清空的话用户会看到「什么都没装」，那是假的
       set({ loading: false, loadError: failure(e).text })
     }
@@ -203,13 +225,16 @@ export const usePackageStore = create<PackageState>((set, get) => ({
     const query = searchTerm(name)
     if (!query) return
     const seq = ++lookupSeq
+    // 发请求那一刻的项目代际：答案回来时项目可能已经换了
+    const epoch = projectEpoch
     set({ lookup: { query, status: 'loading', result: null, code: '', text: '' } })
     try {
       const result = await lookupPackage(query)
       if (seq !== lookupSeq) return // 有更新的一次查找在飞，这次的答案已经过期
+      if (epoch !== projectEpoch) return // 这是上一个项目问的，答案不归这一页
       set({ lookup: { query, status: 'found', result, code: '', text: '' } })
     } catch (e) {
-      if (seq !== lookupSeq) return
+      if (seq !== lookupSeq || epoch !== projectEpoch) return
       const { code, text } = failure(e)
       // code 拿不到时也要有个落点：否则界面上是一句空白的失败
       set({ lookup: { query, status: 'error', result: null, code, text } })
@@ -220,5 +245,20 @@ export const usePackageStore = create<PackageState>((set, get) => ({
     // 序号也要往前走：正在飞的那次回来时不该覆盖用户刚清掉的结果
     lookupSeq += 1
     set({ lookup: IDLE_LOOKUP })
+  },
+
+  clear: () => {
+    // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
+    projectEpoch += 1
+    // 清单、查找结果、上一次的错误——三份说的都是旧项目那个环境。查找结果
+    // 尤其危险：它带着 A 环境里的 `installed` 版本与 A 的索引源，而这一页的
+    // 安装按钮作用在**当前**项目上（本轮评审 P2）。
+    //
+    // **`progress` / 已起过的作业号刻意不动。** 那个作业改的是 A 的环境、还在
+    // 后端跑着（切个项目不等于「我不要那次安装了」，与导出作业、native 会话
+    // 同一条纪律，ADR 0021 §14），而 `progress.job_id` 是前端手里唯一的把手
+    // ——丢掉它就再也接不回去了。「B 的页面上不该显示 A 的作业」是另一个问题，
+    // 它要的是重新对上账的能力，不是在这里把把手扔掉。
+    set({ data: null, loading: false, loadError: '', errorCode: '', errorText: '', lookup: IDLE_LOOKUP })
   },
 }))
