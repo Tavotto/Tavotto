@@ -11,6 +11,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Check, Copy, Play } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Dialog } from '@/components/ui/Dialog'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
@@ -75,14 +76,14 @@ export function ExampleCodeSheet({
             onClick={() => void copy()}
             className="flex h-7 items-center gap-1.5 rounded-[6px] border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
-            {copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
+            {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
             {copied ? pg('copied') : pg('copyCode')}
           </button>
           <button
             onClick={() => onStart(example)}
             className="flex h-7 items-center gap-1.5 rounded-[6px] bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
           >
-            <Play size={12} aria-hidden />
+            <Play size={ICON_SIZE.sm} aria-hidden />
             {pg('codeStart')}
           </button>
         </>

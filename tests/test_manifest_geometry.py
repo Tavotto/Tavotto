@@ -3,8 +3,8 @@
 钉三件事：
 
 1. **形状对**——曲线、含 NaN 的曲线、fill_between、`ax.fill()` 的 Polygon、
-   带贝塞尔的 PathPatch 各自出什么；箭头与散点**有意不出**（各有各的契约 /
-   有意的 bbox 降级）。
+   带贝塞尔的 PathPatch 各自出什么；散点出的是**每一颗 marker 的轮廓**（标记数
+   有上限，超了整组退回 bbox）；箭头**有意不出**（它有自己的契约）。
 2. **坐标约定对**——figure 分数、**y 向下**（top-origin），与 bbox 同一套；
    每个点都落在自己 bbox 的范围内。
 3. **是派生数据**——xlim / scale / axes position / figure 尺寸一变就跟着重算，
@@ -12,6 +12,9 @@
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
+import re
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +33,19 @@ SCRIPT_NAME = "fig_geometry.py"
 ENTRY = "main"
 STEM = "GeomFig"
 
+#: 一个元素逐颗描 marker 轮廓的标记数上限（散点与只有 marker 的 Line2D **共用
+#: 这一个数**），从 `engine/pathgeom.py` 的源码里读——本进程不 import matplotlib，
+#: 也就 import 不了 pathgeom；正则钉死常量名，谁改名这里就先红。
+MAX_MARKERS = int(
+    re.search(
+        r"^MAX_MARKERS = (\d+)$",
+        (Path(__file__).resolve().parents[1] / "src/tavotto/engine/pathgeom.py").read_text(
+            encoding="utf-8"
+        ),
+        re.M,
+    ).group(1)
+)
+
 LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
@@ -47,8 +63,8 @@ def main():
     y = np.sin(x) * 0.3 + 0.5
     y[20:25] = np.nan
     ax.plot(x, y, label="wave")
-    # lines_2：只有 marker 没有连线 → **有意**不出 geometry（那条折线图上不存在）
-    ax.plot(x[::10], np.full(6, 0.9), linestyle="None", marker="o")
+    # lines_2：只有 marker 没有连线 → 每颗 marker 一条闭合轮廓（不是穿过它们的折线）
+    ax.plot(x[::10], np.full(6, 0.9), linestyle="None", marker="o", ms=8)
 
     # fill_0：fill_between，同样被 NaN 断成两块
     ax.fill_between(x, 0.0, y, alpha=0.3)
@@ -67,18 +83,42 @@ def main():
     rng = np.random.RandomState(0)
     dense = np.linspace(0.0, 10.0, 20000)
     ax.plot(dense, 0.6 + np.sin(dense * 3.0) * 0.2 + rng.normal(0, 0.03, dense.size))
-    ax.scatter([2.0, 4.0, 6.0], [0.2, 0.4, 0.6], label="pts")
+    # lines_4：既有连线又有 marker（"-o"）→ 只描折线，行为与从前一致
+    ax.plot(x[::10], np.full(6, 1.0), "-o", ms=8)
+    # lines_5：只有 marker + markevery=2 → 只出真被画出来的那几颗
+    ax.plot(x[::10], np.full(6, 0.8), linestyle="None", marker="o", ms=8, markevery=2)
+    # lines_6：空心 marker（mfc="none"）→ 只描边、没有填充语义
+    ax.plot(x[::10], np.full(6, 0.7), linestyle="None", marker="o", ms=8, mfc="none")
+    # scatter_1：三颗大小不同的圆 marker → 每颗一条闭合轮廓，位置就是数据点
+    ax.scatter([2.0, 4.0, 6.0], [0.2, 0.4, 0.6], s=[30.0, 120.0, 400.0], label="pts")
+    # scatter_2：空心 marker（facecolors="none"）→ 只描边、没有填充语义
+    ax.scatter([8.0, 9.0], [0.3, 0.5], s=80.0, facecolors="none", edgecolors="#2A6F3C")
     ax.set_xlim(0.0, 10.0)
     ax.set_ylim(-0.2, 1.1)
     ax.legend()
     fig.savefig("GeomFig.pdf")
+
+    # 标记数上限的两张对照图，**各自单独一张**：同一张图上两组加起来会先撞上
+    # TOTAL_BUDGET，那时「超过上限的那组没有 geometry」就成了预算在替上限挡，
+    # 上限本身写错一位也测不出来（第一版就是这么在变异下活下来的）。
+    rng2 = np.random.RandomState(1)
+    for stem, n in (("CapFig", __CAP__), ("OverCapFig", __CAP__ + 1)):
+        fig2, ax2 = plt.subplots(figsize=(4.0, 3.0))
+        ax2.scatter(rng2.uniform(0.0, 1.0, n), rng2.uniform(0.0, 1.0, n), s=4)
+        fig2.savefig(f"{stem}.pdf")
+    # 只有 marker 的 Line2D 与散点**共用同一个上限**：同样两张对照图
+    for stem, n in (("LineCapFig", __CAP__), ("LineOverCapFig", __CAP__ + 1)):
+        fig3, ax3 = plt.subplots(figsize=(4.0, 3.0))
+        ax3.plot(rng2.uniform(0.0, 1.0, n), rng2.uniform(0.0, 1.0, n),
+                 ls="None", marker="o", ms=2)
+        fig3.savefig(f"{stem}.pdf")
 """
 
 
 @pytest.fixture(scope="module")
 def library(tmp_path_factory):
     figs = tmp_path_factory.mktemp("geom-figures")
-    (figs / SCRIPT_NAME).write_text(LIBRARY, encoding="utf-8")
+    (figs / SCRIPT_NAME).write_text(LIBRARY.replace("__CAP__", str(MAX_MARKERS)), encoding="utf-8")
     return figs
 
 
@@ -88,10 +128,10 @@ def _worker(figs):
     return w
 
 
-def _manifest(figs, patches=()):
+def _manifest(figs, patches=(), stem=STEM):
     w = _worker(figs)
     try:
-        resp = w.override(STEM, list(patches))
+        resp = w.override(stem, list(patches))
         assert not resp.get("warnings"), resp["warnings"]
         return resp["manifest"]
     finally:
@@ -137,12 +177,86 @@ def test_nan_breaks_a_line_into_several_subpaths(library):
     assert gap > 0.02, f"NaN 断口没断开（gap={gap}）"
 
 
-def test_marker_only_line_falls_back_to_bbox_on_purpose(library):
-    """`linestyle="None"` 的曲线画出来是一颗颗点，那条穿过它们的折线并不存在。
-    **有意**不出 geometry（描它等于画一条假线），退回 bbox。"""
-    el = _el(_manifest(library), "axes_0.lines_2")
-    assert "geometry" not in el
-    assert el["bbox"]
+#: lines_2 / lines_5 / lines_6 的六个数据点（x = linspace(0, 10, 60)[::10]）
+_MARKER_XS = [10.0 / 59 * i for i in (0, 10, 20, 30, 40, 50)]
+
+
+def _marker_centers_and_radii(geom):
+    """每条子路径的中心（figure 分数）与 x 向半径换算成的 **pt**（图宽 4.0 in）。"""
+    out = []
+    for path in geom["paths"]:
+        pts = path["points"]
+        cx = sum(px for px, _ in pts) / len(pts)
+        cy = sum(py for _, py in pts) / len(pts)
+        rx = max(abs(px - cx) for px, _ in pts)
+        out.append((cx, cy, rx * 4.0 * 72.0))
+    return out
+
+
+def _data_to_frac(man, dx, dy):
+    """数据 → figure 分数：x ∈ [0,10]、y ∈ [-0.2,1.1]，axes 框来自 manifest。"""
+    ax_x, ax_y, ax_w, ax_h = _el(man, "axes_0")["bbox"]
+    return ax_x + ax_w * dx / 10.0, ax_y + ax_h * (1.0 - (dy + 0.2) / 1.3)
+
+
+def test_marker_only_line_outlines_every_marker(library):
+    """`plot(..., ls="None", marker="o", ms=8)`（用户反馈 2026-09-06 第 2 条的延伸）：
+    画出来的墨迹是一颗颗点，选中时也要**逐颗描 marker 的轮廓**，而不是一个大
+    包围矩形，更不是那条图上并不存在的折线。
+
+    三件事一起钉：颗数（6 个数据点 = 6 条闭合子路径）、位置（每条的中心就是
+    那个数据点）、大小（半径 = ms/2 = 4 pt——`markersize` 是 pt，要乘 dpi/72
+    落到像素再换成 figure 分数，忽略它半径就不是这个数）。
+    """
+    man = _manifest(library)
+    el = _el(man, "axes_0.lines_2")
+    assert el["role"] == "line"
+    geom = el["geometry"]
+    assert geom["kind"] == "multi_path"
+    assert geom["fill"] is True and geom["stroke"] is True
+    assert len(geom["paths"]) == 6, "六个数据点就是六条轮廓"
+    assert all(p["closed"] and len(p["points"]) >= 6 for p in geom["paths"]), geom["paths"]
+    for (cx, cy, r_pt), dx in zip(_marker_centers_and_radii(geom), _MARKER_XS, strict=True):
+        ex, ey = _data_to_frac(man, dx, 0.9)
+        assert cx == pytest.approx(ex, abs=3e-3)
+        assert cy == pytest.approx(ey, abs=3e-3)
+        assert r_pt == pytest.approx(4.0, abs=0.15), f"ms=8 的轮廓半径应当是 4 pt，得到 {r_pt}"
+
+
+def test_line_with_markers_still_traces_only_the_polyline(library):
+    """`plot(..., "-o")` 既有连线又有 marker：**行为不变**，只描那条折线。
+
+    折线本来就穿过每颗 marker 的中心，命中容差之内每颗都点得中；再叠一层
+    marker 轮廓只会多出几十条闭合子路径，而 geometry 的 `fill` 是整份一个标志，
+    前端把「闭合或 fill」的子路径都当面积——混在一起会让那条折线被当成多边形。
+    """
+    man = _manifest(library)
+    geom = _el(man, "axes_0.lines_4")["geometry"]
+    assert geom["kind"] == "polyline"
+    assert len(geom["paths"]) == 1 and not geom["paths"][0]["closed"]
+    assert geom["fill"] is False and geom["stroke"] is True
+    # 六个点共线，RDP 合法地只留首尾；钉的是「一条从第一个点到最后一个点的折线」
+    pts = geom["paths"][0]["points"]
+    assert pts[0][0] == pytest.approx(_data_to_frac(man, _MARKER_XS[0], 1.0)[0], abs=3e-3)
+    assert pts[-1][0] == pytest.approx(_data_to_frac(man, _MARKER_XS[-1], 1.0)[0], abs=3e-3)
+
+
+def test_markevery_only_outlines_the_markers_actually_drawn(library):
+    """`markevery=2`：六个点里只画了第 0/2/4 颗，轮廓也只能有这三颗。"""
+    man = _manifest(library)
+    geom = _el(man, "axes_0.lines_5")["geometry"]
+    assert len(geom["paths"]) == 3, "markevery=2 只抽到三颗"
+    got = [cx for cx, _, _ in _marker_centers_and_radii(geom)]
+    want = [_data_to_frac(man, _MARKER_XS[i], 0.8)[0] for i in (0, 2, 4)]
+    assert got == pytest.approx(want, abs=3e-3)
+
+
+def test_hollow_marker_line_has_stroke_but_no_fill_semantics(library):
+    """`mfc="none"` 的 marker 是空心圈：命中只该在描边附近、选中不该铺底色
+    （与空心散点同一语义）。"""
+    geom = _el(_manifest(library), "axes_0.lines_6")["geometry"]
+    assert geom["fill"] is False and geom["stroke"] is True
+    assert len(geom["paths"]) == 6
 
 
 def test_fill_between_gives_closed_paths(library):
@@ -190,12 +304,76 @@ def test_arrow_keeps_its_own_contract_and_gets_no_geometry(library):
     assert len(el["arrow_endpoints"]) == 2
 
 
-def test_scatter_stays_on_bbox_deliberately(library):
-    """散点**有意**不出 geometry：一个 marker 一条小路径会撑爆 manifest，
-    而沿单个 marker 描边也没人需要。这是记录在案的降级，不是遗漏。"""
-    el = next(e for e in _manifest(library)["elements"] if e["role"] == "scatter")
-    assert "geometry" not in el
-    assert el["bbox"]
+def test_scatter_outlines_every_marker_where_the_data_puts_it(library):
+    """散点的 geometry 是**每一颗 marker 各一条闭合轮廓**（用户反馈：选中散点
+    罩的是一个大矩形，而不是像曲线那样描出各个点）。
+
+    三件事一起钉：颗数对（3 颗 = 3 条路径）、位置对（每条轮廓的中心就是那
+    个数据点在 figure 分数里的落点，y 向下）、大小对（s 越大轮廓越大——
+    `set_sizes` 的 √s 缩放矩阵没被漏掉的证据）。
+    """
+    man = _manifest(library)
+    el = _el(man, "axes_0.scatter_1")
+    assert el["role"] == "scatter"
+    geom = el["geometry"]
+    assert geom["kind"] == "multi_path"
+    assert geom["fill"] is True and geom["stroke"] is True
+    assert len(geom["paths"]) == 3, "三颗点就是三条轮廓"
+    assert all(p["closed"] and len(p["points"]) >= 6 for p in geom["paths"]), geom["paths"]
+    # 数据 → figure 分数：x ∈ [0,10]、y ∈ [-0.2,1.1]，axes 框来自 manifest
+    ax_x, ax_y, ax_w, ax_h = _el(man, "axes_0")["bbox"]
+    radii = []
+    for path, (dx, dy) in zip(geom["paths"], [(2.0, 0.2), (4.0, 0.4), (6.0, 0.6)], strict=True):
+        pts = path["points"]
+        cx = sum(px for px, _ in pts) / len(pts)
+        cy = sum(py for _, py in pts) / len(pts)
+        assert cx == pytest.approx(ax_x + ax_w * dx / 10.0, abs=3e-3)
+        assert cy == pytest.approx(ax_y + ax_h * (1.0 - (dy + 0.2) / 1.3), abs=3e-3)
+        radii.append(max(abs(px - cx) for px, _ in pts))
+    assert radii[0] < radii[1] < radii[2], f"s=30/120/400 的轮廓应当依次变大：{radii}"
+    # 散点的 bbox 是**圆心**的包围盒（`Collection.get_datalim` 对 display 空间的
+    # marker 只算 offsets，不算 marker 本身的墨迹），所以钉的是「每颗的中心在
+    # bbox 里」，而不是像曲线那样「每个点都在 bbox 里」——最边上那颗有半个
+    # marker 伸在 bbox 之外，这是 matplotlib 的口径，不是几何算错了
+    bx, by, bw, bh = el["bbox"]
+    for path in geom["paths"]:
+        pts = path["points"]
+        cx = sum(px for px, _ in pts) / len(pts)
+        cy = sum(py for _, py in pts) / len(pts)
+        assert bx - 3e-3 <= cx <= bx + bw + 3e-3
+        assert by - 3e-3 <= cy <= by + bh + 3e-3
+
+
+def test_hollow_scatter_has_stroke_but_no_fill_semantics(library):
+    """`facecolors="none"` 的散点是空心圈：命中只该在描边附近、选中不该铺底色。"""
+    geom = _el(_manifest(library), "axes_0.scatter_2")["geometry"]
+    assert geom["fill"] is False and geom["stroke"] is True
+    assert len(geom["paths"]) == 2
+
+
+@pytest.mark.parametrize(
+    "stems,gid",
+    [
+        (("CapFig", "OverCapFig"), "axes_0.scatter_0"),
+        (("LineCapFig", "LineOverCapFig"), "axes_0.lines_0"),
+    ],
+    ids=["scatter", "marker-only-line"],
+)
+def test_marker_cap_is_one_number(library, stems, gid):
+    """标记数上限：正好 `MAX_MARKERS` 颗仍出轮廓，多一颗就整组退回 bbox；散点与
+    只有 marker 的 Line2D **是同一个数**（消费侧的账不分它们来自哪种 artist）。
+
+    这条钉的是**那个常量本身**：上限是消费侧的账（manifest JSON / 每次指针
+    移动的距离计算 / 覆盖层 d 串都随点数线性长），改它之前先看 pathgeom 里
+    它抬头的那段理由。
+    """
+    at_cap = _el(_manifest(library, stem=stems[0]), gid)
+    over_cap = _el(_manifest(library, stem=stems[1]), gid)
+    assert len(at_cap["geometry"]["paths"]) == MAX_MARKERS
+    # 多一颗就没有——而且那张图上只有它，点数远在 TOTAL_BUDGET 之内，
+    # 挡下它的只能是标记数上限本身
+    assert "geometry" not in over_cap, "超过上限的标记组应当退回 bbox"
+    assert over_cap["bbox"]
 
 
 def test_geometry_carries_the_axes_clip_box(library):
@@ -262,6 +440,7 @@ def test_hot_geometry_matches_a_fresh_worker_replay(library, name, patches):
         "axes_0.fill_0",
         "axes_0.patches_0",
         "axes_0.patches_1",
+        "axes_0.scatter_1",
     ):
         a = _el(man_hot, gid).get("geometry")
         b = _el(man_fresh, gid).get("geometry")

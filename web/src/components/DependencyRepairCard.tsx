@@ -11,6 +11,7 @@ import { useEnvStore } from '@/store/envStore'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
+import { Details, Summary } from '@/components/ui/Details'
 
 /**
  * 「这个项目还缺 lmfit」→ 点一次 →「安装并继续」→ 图出来（ADR 0019）。
@@ -335,14 +336,12 @@ function RepairProgress({
         )}
       </div>
       {progress.log && (
-        <details className="text-xs text-ink-3">
-          <summary className="cursor-pointer select-none text-ink-2">
-            {en('repairDetails')}
-          </summary>
+        <Details className="text-xs text-ink-3">
+          <Summary className="text-ink-2">{en('repairDetails')}</Summary>
           <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs">
             {progress.log}
           </pre>
-        </details>
+        </Details>
       )}
     </div>
   )

@@ -12,6 +12,7 @@ import {
   MoveVertical,
   Ungroup,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { MOD } from '@/lib/utils'
 import {
@@ -79,7 +80,7 @@ export function AlignToCanvasRow() {
             onClick={() => alignSelectedTo(mode, 'page')}
             aria-label={label}
           >
-            <Icon size={14} />
+            <Icon size={ICON_SIZE.md} />
           </Button>
         </Tip>
         )
@@ -121,7 +122,7 @@ export function ArrangeSection({
               onClick={() => changeZOrder(move)}
               aria-label={tip}
             >
-              <Icon size={14} />
+              <Icon size={ICON_SIZE.md} />
             </Button>
           </Tip>
         )
@@ -204,7 +205,7 @@ function MultiAlignRows({ count }: { count: number }) {
                 onClick={() => alignSelectedTo(mode, ref)}
                 aria-label={tip}
               >
-                <Icon size={14} />
+                <Icon size={ICON_SIZE.md} />
               </Button>
             </Tip>
           )
@@ -264,7 +265,7 @@ function ArrangeToolbar({
               onClick={() => alignSelectedTo(mode, refName)}
               aria-label={tip}
             >
-              <Icon size={14} />
+              <Icon size={ICON_SIZE.md} />
             </Button>
           </Tip>
         )
@@ -291,7 +292,7 @@ function MultiArrangeExtras() {
       <Row label={ar('spacing')} labelWidth={72}>
         <NumberField
           className="min-w-0 flex-1"
-          prefix={<MoveHorizontal size={12} aria-hidden />}
+          prefix={<MoveHorizontal size={ICON_SIZE.xs} aria-hidden />}
           ariaLabel={ar('spacingH')}
           suffix="mm"
           step={0.5}
@@ -303,7 +304,7 @@ function MultiArrangeExtras() {
         />
         <NumberField
           className="min-w-0 flex-1"
-          prefix={<MoveVertical size={12} aria-hidden />}
+          prefix={<MoveVertical size={ICON_SIZE.xs} aria-hidden />}
           ariaLabel={ar('spacingV')}
           suffix="mm"
           step={0.5}
@@ -318,7 +319,7 @@ function MultiArrangeExtras() {
       <div className="flex gap-1.5">
         <Tip label={ar('groupTip')}>
           <Button variant="outline" size="sm" className="flex-1" onClick={groupSelected}>
-            <Group size={13} />
+            <Group size={ICON_SIZE.sm} />
             {ar('group')}
           </Button>
         </Tip>
@@ -330,7 +331,7 @@ function MultiArrangeExtras() {
             disabled={!grouped}
             onClick={ungroupSelected}
           >
-            <Ungroup size={13} />
+            <Ungroup size={ICON_SIZE.sm} />
             {ar('ungroup')}
           </Button>
         </Tip>
@@ -349,7 +350,7 @@ function MultiArrangeExtras() {
               bump((n) => n + 1)
             }}
           >
-            <Clipboard size={13} />
+            <Clipboard size={ICON_SIZE.sm} />
             {ar('copyStyle')}
           </Button>
         </Tip>
@@ -367,7 +368,7 @@ function MultiArrangeExtras() {
             disabled={!clip}
             onClick={pasteSelectionStyle}
           >
-            <ClipboardPaste size={13} />
+            <ClipboardPaste size={ICON_SIZE.sm} />
             {ar('pasteStyle')}
           </Button>
         </Tip>

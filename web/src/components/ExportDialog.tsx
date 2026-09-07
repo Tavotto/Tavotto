@@ -38,17 +38,31 @@ import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
-  FileWarning,
+  FileExclamationPoint,
   ImageOff,
-  Loader2,
-  Settings2,
+  LoaderCircle,
+  Pencil,
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { panelSrc, type AssetOriginalSpec, type ExportJob, type ExportOutput, type PanelInfo } from '@/lib/api'
+import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
+import { Details, Summary } from '@/components/ui/Details'
+import {
+  panelSrc,
+  type AssetOriginalSpec,
+  type ExportJob,
+  type ExportOutput,
+  type PanelInfo,
+} from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
+import { engineTransport } from '@/lib/engineTransport'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
+import {
+  contextFigureId,
+  listExportableFigures,
+  type ExportableFigure,
+} from '@/lib/exportFigures'
 import { focusFailureMessage, focusIssue, openProblems } from '@/lib/issueFocus'
 import { stemOf } from '@/lib/openRequest'
 import type { OriginalOutputSpec } from '@/lib/originalSpec'
@@ -64,6 +78,7 @@ import { issueTitle, issueValues, severityLabel, subjectName } from '@/lib/valid
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
+  epsAvailability,
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
@@ -79,8 +94,11 @@ import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { useOriginalAvailability } from '@/hooks/useOriginalSpec'
+import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import {
   cancelCurrentExport,
   prepareExport,
@@ -222,21 +240,52 @@ export function ExportDialog() {
   const profile: PublicationProfile = resolved.profile
 
   /* --------------------------- 这次要导的是什么 --------------------------- */
-  /** 快速编辑正在编的那张图；画布模式下取选中的那个面板 */
-  const figureId = useMemo(() => {
-    const panelId = activePanelId
-    if (!panelId) return null
-    const o = doc.objects.find((x) => x.id === panelId)
-    return o?.type === 'panel' ? o.fileId : null
-  }, [activePanelId, doc.objects])
   /*
-   * 规格与可用性由 `hooks/useOriginalSpec` 绑定——它订阅了规格依赖的**每一份**
-   * 状态（文档 / 渲染态 / 素材清单 / runtime 清单）。以前这里只挂素材清单：
-   * 素材被删/掉线时会重算（PR #214 复审），但渲染回来、图幅同步进文档时
-   * **不会**——对话框于是停在打开那一刻的旧尺寸，与快速编辑条上的数对不上
-   * （审计 T33：75.3 × 58.7 对 80 × 57.6）。快速编辑条用的是同一个 hook。
+   * 下面几个 memo 读的是 store 的**当前快照**（候选清单问文档 / 素材清单 /
+   * runtime 清单，`contextFigureId` 问工作区与选区，`findFigurePanel` 问文档），
+   * 所以依赖里必须带上那几份状态——只挂 `figureId` 的话，对话框开着时素材被
+   * 删/掉线，组件重渲染了而 memo 还是旧值：那颗按钮继续亮着，按下去后端报
+   * `source_missing`（PR #214 复审）。那几份状态是**触发重算的信号**，不是入参，
+   * linter 看不见那一层。
    */
-  const availability = useOriginalAvailability(figureId)
+  const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
+  const runtimeById = useRuntimeAssetStore((s) => s.byId)
+  const assetPanels = useAssetStore((s) => s.panels)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const selectedIds = useSelectionStore((s) => s.ids)
+  /** 项目里能按原图导的图：文档里的面板优先，其次素材清单里还没上画布的 */
+  const figures = useMemo(
+    () => listExportableFigures(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById],
+  )
+  /**
+   * 用户在对话框列表里点过的那张。**对话框本地状态**，打开时清空：它是这一次
+   * 导出的选择，不是画布选区，也不进工作区——点缩略图不该改画布上选中了什么。
+   */
+  const [pickedFigureId, setPickedFigureId] = useState<string | null>(null)
+  /**
+   * 这次导的是哪一张：用户点过的优先（还在清单里才算数——对话框开着时素材
+   * 被删了，点过的那张不能变成一个凭空的 id）；没点过就按上下文
+   * （快速编辑正在编的 → 画布上选中的面板 → 项目里只有一张时就是它）。
+   */
+  const figureId = useMemo(
+    () =>
+      pickedFigureId && figures.some((f) => f.figureId === pickedFigureId)
+        ? pickedFigureId
+        : contextFigureId(figures),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pickedFigureId, figures, activePanelId, selectedIds, doc.objects],
+  )
+  /*
+   * 可用性与规格走 `hooks/useOriginalSpec` 那一份绑定——它订阅了规格依赖的
+   * **每一份**状态（文档 / 渲染态 / 素材清单 / runtime 清单）。这里从前只挂
+   * 素材清单：素材被删/掉线时会重算，但渲染回来、图幅同步进文档时**不会**
+   * ——对话框于是停在打开那一刻的旧尺寸，与快速编辑条上的数对不上（审计 T33：
+   * 75.3 × 58.7 对 80 × 57.6）。快速编辑条用的是同一个 hook，两处不可能再各挂
+   * 各的依赖。`anyFigures` 仍要给：**「没选」与「没得选」是两句不同的话**。
+   */
+  const availability = useOriginalAvailability(figureId, { anyFigures: figures.length > 0 })
   // 只给缩略图换代用（runtime 素材重跑后换 src）；规格与可用性都从上面那个 hook 来
   const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce)
   const panel = useMemo(
@@ -273,6 +322,7 @@ export function ExportDialog() {
      */
     const snap = useDocumentStore.getState().doc
     setConfirmed(false)
+    setPickedFigureId(null)
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId)
     // 从「定位」/「查看问题」回来：把用户填过的东西原样还回去。换了文档不还
     const restore = parked.current
@@ -399,6 +449,17 @@ export function ExportDialog() {
   /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
   const transparentApplies = raster && !copiesSourceVerbatim
 
+  /**
+   * EPS 这次给不给得出（ADR 0046）。判据在 `epsAvailability()` 一处：画布范围
+   * 没有它（合成走 PyMuPDF），没有脚本的图也没有它。**不隐藏选项**：禁用并
+   * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
+   */
+  const eps = useMemo(
+    () => epsAvailability(scope, figureId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, figureId, assets, runtimeAssets],
+  )
+
   /* ------------------------------ 文件名校验 ------------------------------ */
   const filenameIssue = useMemo(
     () => prepareExport(inputOf()).filenameProblem,
@@ -432,17 +493,16 @@ export function ExportDialog() {
    * `start()` 没有"，第五轮又抓到"两边都有，但 `start()` 那份少了一条"。
    * 一份判断、两个消费点，就没有"少写一条"这回事了。
    */
-  const canStart =
-    formats.length > 0 &&
-    !blocked &&
-    !filenameIssue &&
-    (scope !== 'original' || availability.ok)
-
   const names = useMemo(
     () => prepareExport(inputOf()).names,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filename, formats, scope],
+    [filename, formats, scope, figureId, eps.ok],
   )
+
+  // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
+  // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
+  const canStart =
+    names.length > 0 && !blocked && !filenameIssue && (scope !== 'original' || availability.ok)
 
   /* -------------------------------- 动作 --------------------------------- */
   const applyProfile = (id: string) => {
@@ -616,7 +676,7 @@ export function ExportDialog() {
           </Button>
           {busy ? (
             <Button variant="outline" size="md" onClick={() => void cancelCurrentExport()}>
-              <X size={14} />
+              <X size={ICON_SIZE.md} />
               {ex('cancelExport')}
             </Button>
           ) : (
@@ -627,7 +687,7 @@ export function ExportDialog() {
               onClick={() => void start('ask')}
               title={blocked ? ex('blockedTitle') : undefined}
             >
-              <Download size={14} />
+              <Download size={ICON_SIZE.md} />
               {ex('start')}
             </Button>
           )}
@@ -674,6 +734,21 @@ export function ExportDialog() {
           ignored={availability.spec?.ignored ?? []}
           fallback={availability.spec?.fallback ?? false}
         />
+        {/* 2b. 要导的是哪一张 —— 项目里的图直接列出来点选（用户反馈 06）。
+            按原图导时总是显示；按画布导但原图此刻不可用时也显示，因为上面那句
+            「点选下面的一张」得指得到东西。清单为空时一个字都不出现：空态由
+            `scopeUnavailable.no_figures` 那一句说 */}
+        {figures.length > 0 && (scope === 'original' || !availability.ok) && (
+          <FigurePicker
+            figures={figures}
+            selectedId={figureId}
+            onPick={(id) => {
+              setPickedFigureId(id)
+              // 点了一张图，意思就是「按它的原图尺寸导」——不让用户再去点一次范围
+              setScope('original')
+            }}
+          />
+        )}
 
         {/* 2. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
         <Row label={ex('filenameLabel')} labelWidth={56}>
@@ -696,7 +771,7 @@ export function ExportDialog() {
           <p className="pl-[64px] font-mono text-xs text-ink-3">{names.join('  ')}</p>
         )}
 
-        {/* 3. 格式 */}
+        {/* 3. 格式 —— 顺序与 `FORMATS` 同源（结果清单按它排） */}
         <Row label={ex('formatLabel')} labelWidth={56}>
           <FormatToggle
             checked={formats.includes('pdf')}
@@ -710,7 +785,25 @@ export function ExportDialog() {
             title="PNG"
             hint={ex('pngHint')}
           />
+          {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+          <FormatToggle
+            checked={formats.includes('eps') && eps.ok}
+            onClick={() => toggleFormat('eps')}
+            title="EPS"
+            hint={ex('epsHint')}
+            disabled={!eps.ok}
+            reason={eps.ok ? undefined : ex(`epsUnavailable.${eps.reason}`)}
+          />
+          <FormatToggle
+            checked={formats.includes('tiff')}
+            onClick={() => toggleFormat('tiff')}
+            title="TIFF"
+            hint={ex('tiffHint')}
+          />
         </Row>
+        {formats.includes('eps') && !eps.ok && (
+          <p className="pl-[64px] text-xs text-ink-3">{ex(`epsUnavailable.${eps.reason}`)}</p>
+        )}
 
         {/* 4. 分辨率 —— **只在选了位图格式时出现**（§五） */}
         {raster && (
@@ -754,7 +847,7 @@ export function ExportDialog() {
             }}
             className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
           >
-            <Settings2 size={11} className="mr-0.5 inline" aria-hidden />
+            <Pencil size={ICON_SIZE.xs} className="mr-0.5 inline" aria-hidden />
             {ex('profileEdit')}
           </button>
         </Row>
@@ -818,14 +911,12 @@ export function ExportDialog() {
         )}
 
         {/* 7. 高级选项 —— 默认收起 */}
-        <details
+        <Details
           className="rounded-sm"
           open={advancedOpen}
           onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
         >
-          <summary className="cursor-pointer rounded-sm text-xs text-ink-2 outline-none focus-visible:focus-ring">
-            {ex('advanced')}
-          </summary>
+          <Summary className="rounded-sm text-xs text-ink-2">{ex('advanced')}</Summary>
           <div className="mt-1.5 flex flex-col gap-1.5 pl-1">
             <label
               className="flex items-center gap-1.5 text-xs text-ink-2"
@@ -854,7 +945,7 @@ export function ExportDialog() {
               <p className="pl-1 text-xs text-ink-3">{ex('transparentNotForRaster')}</p>
             )}
           </div>
-        </details>
+        </Details>
 
         {/* 进度 / 冲突 / 结果 */}
         {busy && <ProgressRow job={job} />}
@@ -919,6 +1010,138 @@ function ScopeButton({
 }
 
 /**
+ * 项目里的图，点一张就是这次「按原图尺寸」要导的那张（用户反馈 06）。
+ *
+ * 之前的流程要求用户关掉对话框、回画布选中、再打开——而画布模式下就算选中了，
+ * 对话框也读不到（只认快速编辑的 `activePanelId`）。现在候选就摆在这里。
+ *
+ * 缩略图**复用已有的东西**：面板有图内修改时挂 `renderStore` 里已经画好的那份
+ * SVG（与画布同一份，不再发渲染请求）；其余走素材库同一条缩略图地址
+ * （`panelSrc`，磁盘文件的分档缩略图）。`role=listbox`——不是 radio，范围那一组
+ * 才是 radio，两组混在一起屏幕阅读器会数出四个「范围」。
+ */
+function FigurePicker({
+  figures,
+  selectedId,
+  onPick,
+}: {
+  figures: readonly ExportableFigure[]
+  selectedId: string | null
+  onPick: (figureId: string) => void
+}) {
+  useTranslation('dialogs')
+  return (
+    <div
+      role="listbox"
+      aria-label={ex('figureListLabel')}
+      className="ml-[64px] flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto"
+    >
+      {figures.map((f) => {
+        const selected = f.figureId === selectedId
+        return (
+          <button
+            key={f.figureId}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            title={f.name}
+            onClick={() => onPick(f.figureId)}
+            className={cn(
+              'relative flex w-[92px] shrink-0 flex-col gap-1 rounded-sm border p-1 text-left outline-none transition-colors focus-visible:focus-ring',
+              selected
+                ? 'border-accent bg-accent-subtle'
+                : 'border-border bg-surface hover:border-border-strong',
+            )}
+          >
+            <FigureThumb figure={f} />
+            <span
+              className={cn(
+                'block w-full truncate text-[11px] leading-tight',
+                selected ? 'text-accent' : 'text-ink-2',
+              )}
+            >
+              {f.name}
+            </span>
+            {/* 选中态不只靠颜色：右上角一个勾（web/AGENTS.md UI 视觉纪律） */}
+            {selected && (
+              <span
+                aria-hidden
+                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-accent text-white"
+              >
+                <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 一张图的缩略图。**不发新的渲染请求**：
+ *
+ * * 面板需要引擎产物（有图内修改且不是刚烙下的基线 / 脚本已领先磁盘 / runtime）
+ *   且 store 里有这一版（或 Phase F 退路那一版）的 SVG → 内联它，与画布同源；
+ * * 否则挂素材库同一条缩略图地址（磁盘原图的分档缩略图 / 位图原文件 /
+ *   runtime 的 materialized 预览）；
+ * * 什么都拿不到（runtime 还没物化、未知形态、Codex 内嵌画布里没有 HTTP）→
+ *   诚实的空位，不挂一个碎图标。
+ *
+ * 有图内修改却拿不到引擎 SVG（位图档 / 已被内存预算清掉）时退到磁盘原图：
+ * 缩略图在这里的职责是**认出是哪张图**，不是核对修改——核对归画布。
+ */
+function FigureThumb({ figure }: { figure: ExportableFigure }) {
+  const render = usePanelRender(figure.panel)
+  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId])
+  const panel = figure.panel
+  const needsEngine =
+    !!panel &&
+    ((panel.overrides.length > 0 && !isJustBakedBaseline(panel)) ||
+      tracked ||
+      figure.kind === 'runtime')
+  const svg = needsEngine ? (render?.svg ?? null) : null
+  const transport = engineTransport()
+  const src =
+    figure.kind === 'unknown' || (figure.kind === 'runtime' && !figure.cached)
+      ? null
+      : transport
+        ? transport.panelSrc(figure.figureId, figure.kind, 160, figure.stamp)
+        : panelSrc(figure.figureId, figure.kind, 160, figure.stamp)
+  const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm
+  const ratio = sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3
+  return (
+    <span className="flex h-14 w-full items-center justify-center overflow-hidden rounded-[3px] border border-border bg-white">
+      {svg ? (
+        // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
+        // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
+        <span
+          data-export-thumb="svg"
+          className="block"
+          style={{
+            aspectRatio: String(ratio),
+            ...(ratio >= 1 ? { width: '100%' } : { height: '100%' }),
+            maxWidth: '100%',
+            maxHeight: '100%',
+          }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : src ? (
+        <img
+          data-export-thumb="file"
+          src={src}
+          alt=""
+          draggable={false}
+          className="max-h-full max-w-full object-contain"
+        />
+      ) : (
+        <span data-export-thumb="none" className="h-full w-full bg-surface-2" />
+      )}
+    </span>
+  )
+}
+
+/**
  * 范围说明。**不可用时说出原因，不隐藏选项、不静默改成画布**（§五）。
  *
  * 原图范围下还要把「画布上设了、这次不套用」的变换逐项说出来：
@@ -945,7 +1168,7 @@ function ScopeNote({
           （§五：不隐藏选项、不静默改为画布） */}
       {!available && (
         <span className="flex items-start gap-1.5 text-danger">
-          <TriangleAlert size={11} className="mt-0.5 shrink-0" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
           {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
               「先选中一张图」，用户照做之后按钮还是灰的 */}
           {ex(`scopeUnavailable.${reason}`)}
@@ -1050,7 +1273,7 @@ function TargetHeader({
           src ? (
             <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
           ) : (
-            <ImageOff size={14} className="text-ink-faint" aria-hidden />
+            <ImageOff size={ICON_SIZE.sm} className="text-ink-faint" aria-hidden />
           )
         ) : (
           <PageSchematic doc={doc} />
@@ -1131,7 +1354,7 @@ function BlockingList({
         const subject = subjectName(issue)
         return (
           <li key={issue.issueId} data-blocking-issue={issue.ruleCode} className="flex items-start gap-1.5 text-xs">
-            <TriangleAlert size={11} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0 text-danger" aria-hidden />
             <span className="min-w-0 flex-1 leading-relaxed">
               <span className="text-ink">{title}</span>
               <span className="text-ink-3">{` · ${subject}`}</span>
@@ -1195,7 +1418,7 @@ function CheckRow({
     return (
       <Row label={ex('checkLabel')} labelWidth={56}>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-danger">
-          <TriangleAlert size={12} className="shrink-0" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           {ex(summary.total ? 'preflightFailedKept' : 'preflightFailed')}
         </span>
         <OpenProblems onClick={onOpenPanel} />
@@ -1206,7 +1429,7 @@ function CheckRow({
     return (
       <Row label={ex('checkLabel')} labelWidth={56}>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink-2">
-          <Check size={12} className="shrink-0 text-accent" aria-hidden />
+          <Check size={ICON_SIZE.sm} className="shrink-0 text-accent" aria-hidden />
           {ex('preflightOk')}
           <span className="text-ink-3">{`· ${scopeHint}`}</span>
         </span>
@@ -1224,7 +1447,7 @@ function CheckRow({
           summary.blocking ? 'text-danger' : 'text-ink-2',
         )}
       >
-        <TriangleAlert size={12} className="shrink-0" aria-hidden />
+        <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
         {parts.join(' · ')}
         <span className="text-ink-3">{`· ${scopeHint}`}</span>
       </span>
@@ -1257,7 +1480,7 @@ function ProgressRow({ job }: { job: ExportJob | null }) {
       aria-live="polite"
       className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2"
     >
-      <Loader2 size={12} className="shrink-0 motion-safe:animate-spin" aria-hidden />
+      <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 motion-safe:animate-spin" aria-hidden />
       {ex(`phase.${phase}`, { step, total })}
     </p>
   )
@@ -1280,7 +1503,7 @@ function ConflictBar({
   return (
     <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 px-2 py-1.5">
       <p className="flex items-start gap-1.5 text-xs text-ink-2">
-        <FileWarning size={12} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+        <FileExclamationPoint size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-warn" aria-hidden />
         {ex('conflict', { files: names.join('、') })}
       </p>
       <div className="flex gap-1.5">
@@ -1318,7 +1541,7 @@ function ResultBlock({
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 p-2">
         <p className="flex items-start gap-1.5 text-xs text-ink-2">
-          <TriangleAlert size={12} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-warn" aria-hidden />
           {ex('jobLost')}
         </p>
         <Button variant="outline" size="sm" onClick={onRetry}>
@@ -1378,7 +1601,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   if (out.status === 'failed' || !out.name) {
     return (
       <p className="flex items-start gap-1.5 text-xs text-danger">
-        <TriangleAlert size={11} className="mt-0.5 shrink-0" aria-hidden />
+        <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
         {ex('outputFailed', {
           format: out.format.toUpperCase(),
           reason: translate(`backend.${out.error?.code ?? 'format_failed'}`, {
@@ -1439,22 +1662,30 @@ function FormatToggle({
   onClick,
   title,
   hint,
+  disabled = false,
+  reason,
 }: {
   checked: boolean
   onClick: () => void
   title: string
   hint: string
+  disabled?: boolean
+  /** 禁用时的原因（进 `title` 提示）；一个灰掉的按钮解释不了自己 */
+  reason?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={checked}
+      disabled={disabled}
+      title={reason}
       className={cn(
         'flex flex-1 items-center gap-1.5 rounded-sm border px-2 py-1 text-left outline-none transition-colors focus-visible:focus-ring',
         checked
           ? 'border-accent bg-accent-subtle'
           : 'border-border bg-surface hover:border-border-strong',
+        disabled && 'cursor-not-allowed opacity-50 hover:border-border',
       )}
     >
       <span
@@ -1463,7 +1694,7 @@ function FormatToggle({
           checked ? 'border-accent bg-accent text-white' : 'border-border-strong',
         )}
       >
-        {checked && <Check size={10} strokeWidth={3} />}
+        {checked && <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />}
       </span>
       <span className="min-w-0">
         <span className={cn('block text-xs', checked ? 'text-accent' : 'text-ink')}>{title}</span>

@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import goldenVectors from '../../../tests/golden/preflight_vectors.json'
 import { loadProfile } from './profile'
-import { buildSpec, runSpec, type PreflightSpec } from './preflight'
+import { buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
 import {
   canvasInput,
   exportContextIssues,
@@ -411,6 +411,104 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     expect(mine.every((i) => i.gids.every((g) => g === 'axes_0.xticks'))).toBe(true)
     expect(rawIssuesForObject(raw, 'nope')).toEqual([])
   })
+
+  /**
+   * **裁完的报告里，数必须是这张图的数**（评审 P1）。
+   *
+   * 聚合项的 `message` / `detail` 属于**全画布最糟那一次**，而
+   * `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）。同一条规则
+   * 命中两个面板、别的面板更糟时，按原图导出的样式检查报告会把别人的测量值记到
+   * 选中的那张图头上——目标自己 7 pt，报告里写成 4 pt。
+   */
+  /*
+   * 夹具里**三个数各司其职**：p1 自己有两条命中（7 pt 与 5 pt），p2 一条（4 pt）。
+   *   4 = 全画布最糟 → 聚合项那份（缺陷把它记到了 p1 头上）
+   *   7 = p1 的第一条命中 → 只挑「第一条」的写法会停在这儿
+   *   5 = p1 自己最糟的那条 → 唯一正确的答案
+   * 少了任何一个数，实现写错都还能有一半用例是绿的。
+   */
+  const twoPanelsWithDifferentSizes = () => {
+    const p1 = panel()
+    const p2 = panel({ id: 'p2', fileId: 'Fig2.pdf' })
+    const doc = docWith([p1, p2])
+    doc.page = { w: 80, h: 40 }
+    const render = {
+      byKey: {
+        ...renderFor(
+          p1,
+          manifestWith([
+            { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7 },
+            { gid: 'axes_0.yticks', role: 'ticks', label: 'Y 刻度文字', pt: 5 },
+          ]),
+        ).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 4 }])).byKey,
+      },
+      latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
+    }
+    return validateCanvas(
+      { canvasId: 'c1', canvasName: '画布 1', doc, profile },
+      'doc-1',
+      { ...assets, 'Fig2.pdf': { id: 'Fig2.pdf', mtime: 1 } as never },
+      render,
+    ).raw
+  }
+
+  it('裁完之后 message / detail 重算成这张图自己最糟的那条，不再挂别人的测量值', () => {
+    const raw = twoPanelsWithDifferentSizes()
+    const agg = raw.find((i) => i.id === 'font-below-absolute-floor')!
+    // 前提：聚合项属于**全画布最糟的那次**（p2 的 4 pt）。这一条不成立的话，
+    // 下面的断言即使实现写错也会绿
+    expect(agg.objectIds).toEqual(['p1', 'p2'])
+    expect(agg.detail).toMatchObject({ effective_pt: 4 })
+    expect(agg.message.values).toMatchObject({ effective: '4.00' })
+
+    const mine = rawIssuesForObject(raw, 'p1').find((i) => i.id === 'font-below-absolute-floor')!
+    expect(mine.occurrences.map((o) => o.detail.effective_pt)).toEqual([7, 5])
+    expect(mine.detail).toMatchObject({ effective_pt: 5 })
+    expect(mine.message.values).toMatchObject({ effective: '5.00' })
+    const theirs = rawIssuesForObject(raw, 'p2').find((i) => i.id === 'font-below-absolute-floor')!
+    expect(theirs.detail).toMatchObject({ effective_pt: 4 })
+    expect(theirs.message.values).toMatchObject({ effective: '4.00' })
+  })
+
+  it('被顶掉过的那条命中也带着自己的排名（同一个 gid 命中两次）', () => {
+    /*
+     * `Sink` 对「同一个规则 + 对象 + 元素 + 字段」只留一条，带排名时最糟的那次
+     * 顶掉先来的。顶掉之后**新造的那条也得带着 worse**——否则裁完重挑时它成了
+     * 「没有排名」的一条，会被同一张图上更轻的那条顶走（这里就是 5 pt 让位给
+     * 6 pt）。manifest 的 gid 来自另一个进程，求值器不该假设它一定唯一。
+     */
+    const p1 = panel()
+    const doc = docWith([p1])
+    const m = manifestWith([
+      { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7 },
+      { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 5 },
+      { gid: 'axes_0.yticks', role: 'ticks', label: 'Y 刻度文字', pt: 6 },
+    ])
+    const raw = runOne(doc, renderFor(p1, m)).raw
+    const agg = raw.find((i) => i.id === 'font-below-absolute-floor')!
+    // 前提：重复 gid 真的被并成了一条，且留下的是更糟的 5 pt
+    expect(agg.occurrences.map((o) => o.detail.effective_pt)).toEqual([5, 6])
+    const mine = rawIssuesForObject(raw, 'p1').find((i) => i.id === 'font-below-absolute-floor')!
+    expect(mine.detail).toMatchObject({ effective_pt: 5 })
+  })
+
+  it('proof report 落盘的那两个字段就是裁完的值（报告认 message/detail，不认 occurrences）', () => {
+    const raw = twoPanelsWithDifferentSizes()
+    const doc = docWith([panel()])
+    const report = buildProofPayload(
+      doc,
+      assets,
+      rawIssuesForObject(raw, 'p1'),
+      { dpi: 300, formats: ['pdf'], stem: 'Fig1' },
+      profile,
+    ) as { checks: { id: string; text: string; detail: Record<string, unknown> }[] }
+    const check = report.checks.find((c) => c.id === 'font-below-absolute-floor')!
+    expect(check.detail).toMatchObject({ effective_pt: 5 })
+    expect(check.text).toContain('5.00')
+    expect(check.text).not.toContain('4.00')
+    expect(check.text).not.toContain('7.00')
+  })
 })
 
 describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', () => {
@@ -446,5 +544,59 @@ describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', 
     expect(
       runOne(doc, renderFor(p, m)).issues.some((i) => i.ruleCode === 'element-outside-figure'),
     ).toBe(false)
+  })
+
+  /**
+   * **判据的主语是「真画出来的那部分」，不是「数据到哪儿」**（评审 P1）。
+   * 曲线 / 散点的 manifest bbox 是**未裁剪的整个数据范围**：`xlim=(0, 1)` 配一个
+   * x=1e3 的离群点，包围盒会被撑到图幅的几百倍宽，而 matplotlib 在 axes patch
+   * 处就切掉了它。数字取自 matplotlib 3.10.8 的真实 manifest（4×3 in / 100 dpi）。
+   */
+  const AXES_CLIP: [number, number, number, number] = [0.125, 0.12, 0.775, 0.77]
+  const withOutlier = (clip?: [number, number, number, number]) => {
+    const m = manifestWith([{ gid: 'axes_0.scatter_0', role: 'scatter', label: '散点', pt: 9 }])
+    m.size_mm = [101.6, 76.2]
+    m.elements[0].bbox = [0.203, 0.505, 774.923, 0.308]
+    if (clip) (m.elements[0] as { clip_bbox?: number[] }).clip_bbox = clip
+    return m
+  }
+  const fires = (m: ReturnType<typeof withOutlier>) =>
+    runOne(doc, renderFor(p, m)).issues.some((i) => i.ruleCode === 'element-outside-figure')
+
+  it('裁到子图里的离群数据不算超出图幅，同一个框没有 clip_bbox 时照旧报', () => {
+    expect(fires(withOutlier(AXES_CLIP)), '被 axes 裁住了，图幅边界处什么都没丢').toBe(false)
+    // 只差 `clip_bbox` 一个键——没有这一条，上面那个 false 也可能是规则整个不响了
+    expect(fires(withOutlier()), 'clip_on=False 的元素真会画到图幅外').toBe(true)
+  })
+
+  it('裁剪框自己探到图幅外时，折进去的那部分照旧要报', () => {
+    const m = withOutlier([0.9, 0.12, 0.16, 0.77])
+    m.elements[0].bbox = [0.9, 0.3, 774.9, 0.2]
+    const issue = runOne(doc, renderFor(p, m)).issues.find(
+      (i) => i.ruleCode === 'element-outside-figure',
+    )!
+    expect(issue).toBeDefined()
+    expect(issue.technicalDetails).toEqual({ overflow_mm: 6.1, side: 'right' })
+  })
+
+  it('四边都探出图幅、但整个被子图裁住：一边都不报', () => {
+    // 只造「右边探出」的话，另外三条边的 max/min 写反了都不会有任何用例变红
+    const m = withOutlier(AXES_CLIP)
+    m.elements[0].bbox = [-2.0, -2.0, 4.0, 4.0]
+    expect(fires(m)).toBe(false)
+  })
+
+  it('整个被裁掉的元素一笔墨都没画出来，不报', () => {
+    // 裁剪框与元素**都在图幅左侧之外**且不相交——不跳过空交集的话，折出来的框
+    // 左边是 -0.2，会报出 20.32 mm 的「探出左边」
+    const m = withOutlier([-0.2, 0.12, 0.1, 0.77])
+    m.elements[0].bbox = [-0.5, 0.3, 0.2, 0.2]
+    expect(fires(m)).toBe(false)
+  })
+
+  it('读不懂的 clip_bbox 当作「不裁」——盲区宁可多报，绝不静默放行', () => {
+    const m = withOutlier()
+    ;(m.elements[0] as { clip_bbox?: unknown }).clip_bbox = ['x', null, 1, 1]
+    expect(fires(m)).toBe(true)
   })
 })

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Pin } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
@@ -69,7 +70,7 @@ export function LeftPanel({
               aria-label={pinned ? t('drawer.unpin') : t('drawer.pin')}
               onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
             >
-              <Pin size={12} className={pinned ? undefined : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.sm} className={pinned ? undefined : 'text-ink-3'} />
             </Button>
           </Tip>
         )}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -63,7 +64,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
         aria-expanded={open}
         className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
       >
-        <ChevronRight size={11} aria-hidden className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="font-medium">{lg('layoutDetails')}</span>
         {!open && modified > 0 && (
           <span className="ml-auto shrink-0 text-xs text-ink-3">

@@ -21,7 +21,7 @@ from typing import Callable
 
 import pymupdf
 
-from .. import glyphplan, richtext
+from .. import glyphplan, richtext, tiffwrite
 
 BACKEND_NAME = "pymupdf"
 #: 本后端实现的版本号。它属于契约层是因为**渲染缓存的身份需要它**：
@@ -823,14 +823,26 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
 # ---------------------------------------------------------------------------
 # 合成画布
 # ---------------------------------------------------------------------------
+def _pixmap_to_tiff(pix: pymupdf.Pixmap, out: Path, dpi: float | None) -> dict:
+    """PyMuPDF 位图 → TIFF 文件。**RGB / RGBA 之外先转成 RGB**（灰度、CMYK、
+    带 alpha 的灰度都可能从位图素材里读出来），alpha 通道按原样保留。
+    `dpi=None` 时不编分辨率（`tiffwrite` 写成「没有绝对单位」）。"""
+    if pix.colorspace is None or pix.colorspace.n != 3:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+    return tiffwrite.write_tiff(
+        out, pix.width, pix.height, pix.samples, pix.n, stride=pix.stride, dpi=dpi
+    )
+
+
 class Canvas:
     """一页合成画布。用法：
 
     with compose(page_w_mm, page_h_mm) as canvas:
         for o in objects:
             canvas.place(o, dpi=dpi, resolve_panel=resolve)
-        canvas.save_pdf(path)      # 真矢量
-        canvas.save_png(path, dpi) # 由同一页渲染，保证两份完全一致
+        canvas.save_pdf(path)       # 真矢量
+        canvas.save_png(path, dpi)  # 由同一页渲染，保证两份完全一致
+        canvas.save_tiff(path, dpi) # 同一页、同一参数，与 PNG 逐像素相同
 
     `transparent=True` 时**不画白底矩形**，PNG 也带 alpha 通道。透明背景是
     位图才有的能力；PDF 上"透明"只是没有底色，两者都由这同一页出，所以两份
@@ -861,9 +873,17 @@ class Canvas:
         self._doc.save(str(path), deflate=True)
 
     def save_png(self, path: Path, dpi: int) -> None:
+        self._pixmap(dpi).save(str(path))
+
+    def save_tiff(self, path: Path, dpi: int) -> dict:
+        """与 `save_png` **同一页、同一次栅格化参数**出的 TIFF（Deflate 无损，
+        分辨率标签 = dpi）。两份位图的像素逐个相同——不是"记得要一致"，是同一个
+        `get_pixmap` 调用序列（ADR 0046）。回 `tiffwrite.write_tiff()` 的事实。"""
+        return _pixmap_to_tiff(self._pixmap(dpi), path, dpi)
+
+    def _pixmap(self, dpi: int) -> pymupdf.Pixmap:
         zoom = dpi / 72.0
-        pix = self._page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=self._transparent)
-        pix.save(str(path))
+        return self._page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=self._transparent)
 
     @property
     def size_pt(self) -> tuple[float, float]:
@@ -1002,6 +1022,44 @@ def original_png(src: Path, out: Path, ppi: int | None, transparent: bool = Fals
     # JPEG（或将来别的位图容器）：换容器，**不换像素**
     pix = pymupdf.Pixmap(str(src))
     pix.save(str(out))
+    return {"px_w": pix.width, "px_h": pix.height, "resampled": False, "transcoded": True}
+
+
+def original_tiff(
+    src: Path,
+    out: Path,
+    ppi: int | None,
+    transparent: bool = False,
+    *,
+    dpi_meta: float | None = None,
+) -> dict:
+    """把一张图**按它自己的尺寸**写成 TIFF（ADR 0046）。与 `original_png` 同一套
+    规则，只换容器：
+
+    * **矢量源**：按 `ppi` 栅格化，分辨率标签 = `ppi`；`transparent` 时带 alpha。
+    * **位图源**：**保源像素网格**（不重采样），只换容器；分辨率标签写调用方给的
+      `dpi_meta`（由 `engine/originalspec` 从源文件的元数据读出来——**只在源文件
+      自己声明过密度时才给**，假定值不进文件），没给就写「没有绝对单位」。这个
+      模块仍然**不认识任何密度常量**（PR #214 评审那条）。
+
+    位图源没有"逐字节复制"这一档：源是 PNG/JPEG 时容器必换，源是 TIFF 时重新
+    编码一遍也只是换压缩方式（像素、alpha 一个不动）。
+
+    回 `{px_w, px_h, resampled, transcoded}`（`resampled` 恒 False）。
+    """
+    src, out = Path(src), Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if src.suffix.lower() == ".pdf":
+        if not ppi:
+            raise ValueError("矢量源栅格化必须给 ppi")
+        with pymupdf.open(src) as doc:
+            zoom = ppi / 72.0
+            pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=bool(transparent))
+            _pixmap_to_tiff(pix, out, float(ppi))
+            return {"px_w": pix.width, "px_h": pix.height, "resampled": False, "transcoded": True}
+
+    pix = pymupdf.Pixmap(str(src))
+    _pixmap_to_tiff(pix, out, dpi_meta)
     return {"px_w": pix.width, "px_h": pix.height, "resampled": False, "transcoded": True}
 
 

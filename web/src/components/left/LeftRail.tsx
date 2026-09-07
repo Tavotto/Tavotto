@@ -8,6 +8,7 @@ import {
   Settings,
   TriangleAlert,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
@@ -76,7 +77,7 @@ export function LeftRail() {
                   className="absolute -left-1.5 top-1.5 h-5 w-0.5 rounded-full bg-accent"
                 />
               )}
-              <Icon size={16} />
+              <Icon size={ICON_SIZE.md} />
               {id === 'problems' && problems > 0 && (
                 /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
                    而且用形状（实心点）+ 数字两重表达，不只靠颜色 */
@@ -109,7 +110,7 @@ export function LeftRail() {
             'focus-visible:focus-ring',
           )}
         >
-          <ClipboardList size={16} />
+          <ClipboardList size={ICON_SIZE.md} />
         </button>
       </Tip>
       <Tip label={t('rail.settings')} side="right">
@@ -122,7 +123,7 @@ export function LeftRail() {
             'focus-visible:focus-ring',
           )}
         >
-          <Settings size={16} />
+          <Settings size={ICON_SIZE.md} />
         </button>
       </Tip>
     </nav>

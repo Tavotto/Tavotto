@@ -1,4 +1,5 @@
 import { Check, RotateCcw, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
 import { Tip } from '@/components/ui/Tooltip'
@@ -30,7 +31,7 @@ export function CropBar({ panelId }: { panelId: string }) {
           data-crop-action="reset"
           onClick={() => resetPanelCrop([panelId])}
         >
-          <RotateCcw size={12} />
+          <RotateCcw size={ICON_SIZE.sm} />
           {pn('resetCrop')}
         </Button>
       </Tip>
@@ -42,7 +43,7 @@ export function CropBar({ panelId }: { panelId: string }) {
           data-crop-action="cancel"
           onClick={cancelCrop}
         >
-          <X size={12} />
+          <X size={ICON_SIZE.sm} />
           {translate('actions.cancel')}
         </Button>
       </Tip>
@@ -55,7 +56,7 @@ export function CropBar({ panelId }: { panelId: string }) {
           data-crop-action="done"
           onClick={finishCrop}
         >
-          <Check size={12} />
+          <Check size={ICON_SIZE.sm} />
           {pn('cropDone')}
         </Button>
       </Tip>

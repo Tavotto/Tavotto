@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Maximize2 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
@@ -64,7 +65,7 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
           </span>
           <Tip label={translate('diff.zoomTip', { ns: 'ai' })}>
             <Button size="icon-sm" className="-mr-1 h-5 w-5" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
-              <Maximize2 size={11} />
+              <Maximize2 size={ICON_SIZE.xs} />
             </Button>
           </Tip>
         </div>

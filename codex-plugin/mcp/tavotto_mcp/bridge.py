@@ -1349,7 +1349,7 @@ def export(
                     tmp_path=tmp,
                     width_mm=size_mm[0],
                     height_mm=size_mm[1],
-                    # PDF/SVG 是 matplotlib 直接序列化的真矢量；PNG 才吃 dpi
+                    # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
                     vector=fmt in engine_exportreq.VECTOR_FORMATS,
                 )
             )
@@ -1393,7 +1393,7 @@ def export(
             "format": o.format,
             "path": str(target_dir / o.name) if o.name else None,
             "bytes": o.bytes or 0,
-            # PDF/SVG 是 matplotlib 直接序列化的真矢量；PNG 才吃 dpi
+            # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
             "vector": o.vector,
             "dpi": job.request.ppi if o.format in engine_exportreq.RASTER_FORMATS else None,
             "status": o.status,

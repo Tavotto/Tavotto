@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,
   deleteAiEndpoint,
@@ -40,12 +42,12 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 
 /** `<details>` 折叠块：高级设置与诊断默认收起，一级页面不制造噪音 */
 const Fold = ({ summary, children }: { summary: string; children: React.ReactNode }) => (
-  <details className="rounded-sm border border-border bg-surface px-2 py-1.5">
-    <summary className="cursor-default text-xs text-ink-2 outline-none focus-visible:focus-ring">
+  <Details className="rounded-sm border border-border bg-surface px-2 py-1.5">
+    <Summary className="cursor-default text-xs text-ink-2">
       {summary}
-    </summary>
+    </Summary>
     <div className="mt-1.5 flex flex-col gap-1.5">{children}</div>
-  </details>
+  </Details>
 )
 
 /**
@@ -99,7 +101,7 @@ export function AgentDetailView({
         {/* aria-label 与左侧导航的同名项区分开：读屏里两个「编码 Agent」
             听不出差别，用例也选不中正确的那个 */}
         <Button variant="ghost" size="sm" aria-label={ag('backAria')} onClick={onBack}>
-          <ArrowLeft size={12} aria-hidden />
+          <ArrowLeft size={ICON_SIZE.sm} aria-hidden />
           {ag('backToList')}
         </Button>
       </div>
@@ -526,14 +528,14 @@ function InstallPanel({
         </p>
       )}
       {live?.log && (
-        <details>
-          <summary className="cursor-default text-xs text-ink-3 outline-none focus-visible:focus-ring">
+        <Details>
+          <Summary className="cursor-default text-xs text-ink-3">
             {ag('install.log')}
-          </summary>
+          </Summary>
           <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-surface p-1.5 font-mono text-xs text-ink-3">
             {live.log}
           </pre>
-        </details>
+        </Details>
       )}
       {confirming && (
         <Dialog

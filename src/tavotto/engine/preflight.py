@@ -419,15 +419,31 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                     gids=[gid],
                     detail={"family": family},
                 )
-            if has_cjk(text) and cjk.get("required") and low not in cjk_ok:
+            # 中日韩白名单的主语是**真正画出汉字的那张脸**：正文族自己盖得住
+            # 时是它；盖不住、由回退链（ADR 0045）接手时是 manifest 报的
+            # `cjk_family`。只看正文族名的话，回退链画得好好的中文会被报成
+            # 「会是方框」——一句错的断言比没有断言更坏。
+            face = el.get("cjk_family")
+            face = face if isinstance(face, str) and face else ""
+            drawn_by = face or family
+            if has_cjk(text) and cjk.get("required") and drawn_by.lower() not in cjk_ok:
                 sink.add(
                     "cjk-fallback-missing",
-                    f"含中日韩字符的文字用的是 {family}，没有声明中文 fallback，"
-                    "导出 PDF 里会是方框",
-                    message=("cjkFallbackMissing", {"family": family}),
+                    (
+                        f"含中日韩字符的文字由 {face} 画出（正文字体 {family}），"
+                        "它不在规范接受的中文字体里"
+                        if face
+                        else f"含中日韩字符的文字用的是 {family}，没有可用的中文 fallback，"
+                        "导出 PDF 里会是方框"
+                    ),
+                    message=(
+                        ("cjkFallbackUnaccepted", {"family": family, "face": face})
+                        if face
+                        else ("cjkFallbackMissing", {"family": family})
+                    ),
                     object_ids=[pid],
                     gids=[gid],
-                    detail={"family": family},
+                    detail={"family": family, "face": drawn_by},
                 )
         # 字形覆盖：判据是**引擎实际解析到的那套字体画不画得出这些字**
         # （manifest 的 `glyphs_missing` / `glyphs_fallback`，产生者只有
@@ -895,6 +911,23 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
             )
 
 
+def _clip_rect(el: dict) -> tuple[float, float, float, float] | None:
+    """元素的裁剪框（figure 分数、top-origin）；没有 / 读不懂回 None = 不裁。
+
+    产生者只有 `engine/manifest._clip_bbox()` 一处；与 TS 侧 `clipRect` 同源。
+    """
+    rect = el.get("clip_bbox")
+    if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+        return None
+    try:
+        cx, cy, cw, ch = (float(v) for v in rect)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (cx, cy, cw, ch)):
+        return None
+    return cx, cy, cw, ch
+
+
 def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
     """图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
 
@@ -903,9 +936,9 @@ def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
     不看 kwargs）。于是一条紧贴图幅的轴标题在用户自己的 PDF 里完好，在这里的预览
     与导出里却被切掉半截，且没有任何东西会说出来。这条规则就是那句话。
 
-    判据：bbox（figure 归一化坐标，top-origin）任一边超出 [0, 1] 折成图自身 mm 后
-    大于 `FIGURE_CLIP_EPS_MM`；一个元素只报最糟的那一边。与 TS 侧
-    `checkPanelClipping` 逐条同源（golden vectors 看护）。
+    判据：bbox **先折进 `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边
+    超出 [0, 1] 多少、折成图自身 mm 后大于 `FIGURE_CLIP_EPS_MM` 就报；一个元素
+    只报最糟的那一边。与 TS 侧 `checkPanelClipping` 逐条同源（golden vectors 看护）。
     """
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -930,6 +963,21 @@ def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
             continue
         if not all(math.isfinite(v) for v in (x, y, w, h)):
             continue
+        # **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
+        # bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、
+        # 显式收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，
+        # 框外一笔都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出
+        # 几万毫米的阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被
+        # 切掉。`clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是
+        # 如此，它们真的会画到图幅外，照旧要报。
+        clipped = _clip_rect(el)
+        if clipped is not None:
+            cx, cy, cw, ch = clipped
+            x0, y0 = max(x, cx), max(y, cy)
+            x1, y1 = min(x + w, cx + cw), min(y + h, cy + ch)
+            if x1 <= x0 or y1 <= y0:
+                continue  # 整个被裁掉了，一笔墨都没画出来
+            x, y, w, h = x0, y0, x1 - x0, y1 - y0
         # 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
         side, over = "left", -x * w_mm
         for cand, amount in (

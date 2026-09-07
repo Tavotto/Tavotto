@@ -4,13 +4,14 @@ import {
   Check,
   Download,
   Lightbulb,
-  Loader2,
-  RotateCcw,
-  RotateCw,
+  LoaderCircle,
+  Redo2,
+  Undo2,
   ShieldCheck,
-  ShieldQuestion,
+  ShieldQuestionMark,
   TriangleAlert,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
@@ -173,10 +174,10 @@ export function McpApp({
 
         <span className="mx-1 h-4 w-px bg-border" />
         <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => undo()}>
-          <RotateCcw size={13} />
+          <Undo2 size={ICON_SIZE.md} />
         </IconButton>
         <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => redo()}>
-          <RotateCw size={13} />
+          <Redo2 size={ICON_SIZE.md} />
         </IconButton>
 
         <span className="flex-1" />
@@ -200,7 +201,7 @@ export function McpApp({
           }
           onClick={() => void runExport(['pdf', 'png'])}
         >
-          {busy === 'export' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+          {busy === 'export' ? <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" /> : <Download size={ICON_SIZE.sm} />}
           {mc('exportBoth')}
         </button>
       </header>
@@ -291,7 +292,7 @@ function RenderState({
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-danger"
             title={formatMessage(error)}>
-        <TriangleAlert size={12} />
+        <TriangleAlert size={ICON_SIZE.sm} />
         {mc('renderFailed')}
       </span>
     )
@@ -299,7 +300,7 @@ function RenderState({
   if (rendering) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <Loader2 size={12} className="animate-spin" />
+        <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
         {mc('rendering')}
       </span>
     )
@@ -307,14 +308,14 @@ function RenderState({
   if (pending) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <Loader2 size={12} />
+        <LoaderCircle size={ICON_SIZE.sm} />
         {mc('pending')}
       </span>
     )
   }
   return (
     <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-      <Check size={12} />
+      <Check size={ICON_SIZE.sm} />
       {mc('synced')}
     </span>
   )
@@ -349,13 +350,13 @@ function PreflightPill({
       title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
       {loading ? (
-        <Loader2 size={12} className="animate-spin" />
+        <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
       ) : err ? (
-        <TriangleAlert size={12} />
+        <TriangleAlert size={ICON_SIZE.sm} />
       ) : nv ? (
-        <ShieldQuestion size={12} />
+        <ShieldQuestionMark size={ICON_SIZE.sm} />
       ) : (
-        <ShieldCheck size={12} />
+        <ShieldCheck size={ICON_SIZE.sm} />
       )}
       {stale
         ? mc('pillStale')
@@ -373,7 +374,7 @@ const mc = (key: string, values?: Record<string, unknown>) =>
 const SEVERITY_ICON = {
   error: TriangleAlert,
   warn: TriangleAlert,
-  not_verifiable: ShieldQuestion,
+  not_verifiable: ShieldQuestionMark,
   suggestion: Lightbulb,
 } as const
 
@@ -421,7 +422,7 @@ function IssueList({
                 className="flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 disabled:cursor-default"
               >
                 <Icon
-                  size={12}
+                  size={ICON_SIZE.sm}
                   className={cn(
                     'mt-px shrink-0',
                     it.severity === 'error' ? 'text-danger' : 'text-ink-3',

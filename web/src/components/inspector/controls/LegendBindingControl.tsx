@@ -1,4 +1,5 @@
 import { CornerUpLeft, Link2, Unlink2 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { entryBinding, hasStyleOverride } from '@/lib/legendModel'
@@ -77,9 +78,9 @@ export function LegendBindingControl({
           >
             {/* 状态不只靠颜色：断开是另一个图形，旁边那句文字也换了 */}
             {linked ? (
-              <Link2 size={12} className="text-accent" aria-hidden />
+              <Link2 size={ICON_SIZE.xs} className="text-accent" aria-hidden />
             ) : (
-              <Unlink2 size={12} className="text-ink-3" aria-hidden />
+              <Unlink2 size={ICON_SIZE.xs} className="text-ink-3" aria-hidden />
             )}
           </Button>
         </Tip>
@@ -97,7 +98,7 @@ export function LegendBindingControl({
           className="max-w-full self-start px-1.5 text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(source.gid)}
         >
-          <CornerUpLeft size={11} className="shrink-0" />
+          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
           <span className="truncate">{lg('viewSource', { label: engineLabel(source.label) })}</span>
         </Button>
       )}

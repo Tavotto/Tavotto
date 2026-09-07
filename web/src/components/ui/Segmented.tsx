@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Check } from 'lucide-react'
+import { ICON_SIZE } from './Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from './Tooltip'
 
@@ -85,7 +86,7 @@ export function Segmented<T extends string>({
                   : 'text-ink-3 hover:bg-ink/[.04] hover:text-ink-2',
             )}
           >
-            {active && item.label != null && <Check size={11} className="shrink-0" aria-hidden />}
+            {active && item.label != null && <Check size={ICON_SIZE.xs} className="shrink-0" aria-hidden />}
             {item.icon}
             {item.label}
           </button>

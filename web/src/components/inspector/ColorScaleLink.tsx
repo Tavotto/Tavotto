@@ -1,4 +1,5 @@
 import { CornerUpLeft, Link2 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { useUiStore } from '@/store/uiStore'
@@ -47,7 +48,7 @@ export function ColorScaleLink({
       data-color-scale-link={partner.gid}
       className="mb-2 flex min-w-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1"
     >
-      <Link2 size={12} className="shrink-0 text-ink-3" aria-hidden />
+      <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
       <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={el('colorScaleTip')}>
         {el('colorScaleLinked', { label })}
       </span>
@@ -58,7 +59,7 @@ export function ColorScaleLink({
           onClick={() => useUiStore.getState().setSelectedGid(partner.gid)}
           aria-label={el('selectScalePartner', { label })}
         >
-          <CornerUpLeft size={11} className="shrink-0" aria-hidden />
+          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
           {el('selectScalePartnerShort')}
         </Button>
       </Tip>

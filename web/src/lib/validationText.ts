@@ -12,7 +12,7 @@
  * 3. **不存翻译后的字符串**。这里全是现算的读法，问题本身存的是 message key
  *    与结构化参数（`ValidationIssue.message`）。
  */
-import { Lightbulb, ShieldQuestion, TriangleAlert } from 'lucide-react'
+import { Lightbulb, ShieldQuestionMark, TriangleAlert } from 'lucide-react'
 import { formatMessage, t as translate } from '@/i18n'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import type { Severity } from './profile'
@@ -25,7 +25,7 @@ const pr = (key: string, values?: Record<string, unknown>): string =>
 export const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
   error: TriangleAlert,
   warn: TriangleAlert,
-  not_verifiable: ShieldQuestion,
+  not_verifiable: ShieldQuestionMark,
   suggestion: Lightbulb,
 }
 
@@ -88,7 +88,8 @@ const VALUES: Record<
   'tick-label-count': { current: 'count', expected: 'max' },
   'discouraged-colormap': { current: 'cmap', expected: 'recommended' },
   'unapplied-override': { current: 'count' },
-  'cjk-fallback-missing': { current: 'family' },
+  // 「当前值」是真正画出汉字的那张脸（回退链接手时 ≠ 正文族，ADR 0045）
+  'cjk-fallback-missing': { current: 'face' },
   'axis-label-format': { current: 'label', expected: 'want' },
 }
 

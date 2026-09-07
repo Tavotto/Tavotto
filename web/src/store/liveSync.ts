@@ -18,6 +18,7 @@
 import { refreshProject } from '@/lib/api'
 import { msg } from '@/i18n'
 import { useAssetStore } from './assetStore'
+import { useDocumentStore } from './documentStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
 import { useProjectReadinessStore } from './projectReadinessStore'
 import { useProjectStore } from './projectStore'
@@ -167,6 +168,36 @@ export async function refreshProjectNow(): Promise<void> {
  */
 export function syncLoadedDocument(): void {
   applyPanelSync(syncPanelSourceMetadata(useAssetStore.getState().byId))
+}
+
+/**
+ * 工作台**挂载之后**再换进来的文档也要对账。
+ *
+ * 上面那一次只在 `Workspace` 挂载时跑一遍；之后经 `switchDocument` 换进来的
+ * 文档——教程「重新开始」装回的干净 `Tutorial.json`、在别的项目里点「开始教程」、
+ * 切回教程项目时装回教程画布、载入画布文件、最近文档——没有任何人再对第二次账。
+ * 随包分发的教程画布里两块面板本来就**没有** `script`（静态文件不知道副本落在哪），
+ * 于是双击画布上的图落进裁剪而不是图内编辑，而从选择器第一次进教程是好的
+ * （用户反馈 01）。判据是 `loadSeq`：它只在整份换文档时 +1，用户编辑与派生同步
+ * 都不动它——所以这里不会被自己触发的 `applyDerivedUpdate` 再叫一遍。
+ *
+ * 挪到微任务里跑：`subscribe` 的回调在 `set()` 里同步执行，在里面再 `set()`
+ * 会让同一轮通知里排在后面的订阅方拿到一份已经过时的 `state`。晚一个微任务，
+ * 换文档那一步自己的收尾（写 currentDoc、广播、立刻落一次快照）先做完，
+ * 对账的结果再由自动保存的订阅按「派生同步」那一档排队落盘。
+ */
+export function startDocumentLoadSync(): () => void {
+  let stopped = false
+  const unsubscribe = useDocumentStore.subscribe((state, prev) => {
+    if (state.loadSeq === prev.loadSeq) return
+    queueMicrotask(() => {
+      if (!stopped) syncLoadedDocument()
+    })
+  })
+  return () => {
+    stopped = true
+    unsubscribe()
+  }
 }
 
 /* -------------------------------------------------------------------------- */

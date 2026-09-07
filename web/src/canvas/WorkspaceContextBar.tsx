@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Info, Plus } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
 import { engineLabel } from '@/components/inspector/roles/registry'
@@ -103,7 +104,7 @@ export function WorkspaceContextBar() {
             title={fastEdit ? t('fastEdit.crumbTitle') : t('stage.exitTitle')}
             onClick={back}
           >
-            <ArrowLeft size={12} />
+            <ArrowLeft size={ICON_SIZE.sm} />
             {t('stage.backToCanvas')}
             {editingHere && (
               <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
@@ -143,7 +144,7 @@ export function WorkspaceContextBar() {
                 data-onboarding-anchor="add-to-layout"
                 onClick={() => void addFigureToLayout(panel.fileId)}
               >
-                <Plus size={12} />
+                <Plus size={ICON_SIZE.sm} />
                 {t('fastEdit.addToCanvas')}
               </Button>
             </>
@@ -158,7 +159,7 @@ export function WorkspaceContextBar() {
             data-fast-edit-added-note
             className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
           >
-            <Info size={12} className="shrink-0 text-ink-3" aria-hidden />
+            <Info size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
             <span className="min-w-0 truncate">{t('fastEdit.addedForEdit')}</span>
           </div>
         )}
