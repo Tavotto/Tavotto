@@ -549,6 +549,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   顺序相关**，「the status region」这个说法本身不成立，所以这条规则是绝对的、豁免为零。
   `role=dialog` 那一族不进这条门禁：它还有「把 axe 扫描收进对话框」这类正当的限定用法，
   判不死，硬加只会逼出一张越来越长的豁免表。
+  jsdom 单测**整片**不进（那 5 处此刻都对：三处 scope 在自己的渲染根里，两处只挂一个设置页
+  组件），但门禁另钉一条**真的变了的交集**：`CanvasStage` 自带一块常驻活动区
+  （`data-fast-edit-live`），所以挂载它的单测里「一次只挂一个组件、`document` 就是渲染根」
+  **不再成立**——那些文件不许用活动区的 role 当选择器。今天这个交集是空的（3 个文件挂载
+  `CanvasStage`，0 个这么写），两条规则的豁免都是零。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。

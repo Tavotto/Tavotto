@@ -37,6 +37,12 @@ const E2E_SOURCES = import.meta.glob('/e2e/**/*.ts', {
   import: 'default',
 }) as Record<string, string>
 
+const UNIT_TESTS = import.meta.glob('/src/**/*.test.{ts,tsx}', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>
+
 /** 活动区的 role：命名其中任何一个都等于在赌 DOM 顺序 */
 const LIVE_ROLES = ['status', 'alert', 'log', 'marquee', 'timer']
 
@@ -61,6 +67,37 @@ function stringLiterals(source: string, path: string): string[] {
 describe('e2e 选择器：活动区不能用 role 指代', () => {
   it('扫到了 e2e 源码（判据本身得先是活的）', () => {
     expect(Object.keys(E2E_SOURCES).length).toBeGreaterThan(10)
+  })
+
+  /**
+   * jsdom 单测**整片**不进这条门禁：那 5 处（`ProjectReadinessBanner` /
+   * `RegistryDialog` / `panelCapabilityNote` / `AgentDetailView` /
+   * `CodexIntegrationPanel`）此刻都是对的——前三处 scope 在自己的渲染根里，
+   * 后两处只挂载一个设置页组件。把它们点名要开 5 条豁免，那就不是门禁了。
+   *
+   * **但「一次只挂载一个组件、document 就是渲染根」这个理由已经不是无条件的了**：
+   * `CanvasStage` 现在自带一块常驻活动区（T06 的 `data-fast-edit-live`），凡是挂载
+   * 它的单测，document 里就不止一个 `role="status"`。所以这里只钉那个**真的变了
+   * 的交集**：挂载 `CanvasStage` 的单测不许再用活动区的 role 当选择器。
+   * 今天这个交集是空的（3 个文件挂载 `CanvasStage`，0 个用 role 取活动区），
+   * 豁免同样为零。
+   */
+  it('挂载 CanvasStage 的单测不用活动区 role 当选择器（它自带一块常驻活动区）', () => {
+    const offenders: string[] = []
+    let mounts = 0
+    for (const [path, src] of Object.entries(UNIT_TESTS)) {
+      if (!/\bCanvasStage\b/.test(src)) continue
+      mounts++
+      for (const lit of stringLiterals(src, path)) {
+        if (LIVE_ROLE_SELECTOR.test(lit)) offenders.push(`${path}: ${lit}`)
+      }
+    }
+    expect(mounts, '应当确实扫到了挂载 CanvasStage 的单测（判据得先是活的）').toBeGreaterThan(0)
+    expect(
+      offenders,
+      'CanvasStage 自带一块常驻 role="status"（T06 播报区），所以在这些用例里\n' +
+        '「document 就是渲染根、主语唯一」不成立。改认 data-status-live / data-fast-edit-live。',
+    ).toEqual([])
   })
 
   it('没有任何 e2e 用 [role=status|alert|log|marquee|timer] 当选择器', () => {
