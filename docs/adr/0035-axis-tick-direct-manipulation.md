@@ -2,7 +2,7 @@
 
 状态：**Accepted**
 日期：2026-09-02
-相关：[0017 几何权威](0017-exact-manifest-authority.md)（命中层只在精确 manifest 就位时
+相关：[0017 几何权威](0017-display-fallback-vs-geometry-authority.md)（命中层只在精确 manifest 就位时
 工作，边框几何随它下发）、[0032 属性能力层](0032-typography-capability-layer.md)
 （「不支持」「没设过」是不同的答案；这里「方向未知」的边同样不摆假开关）、
 [0030 统一检查与问题定位](0030-validation-and-problem-navigation.md)

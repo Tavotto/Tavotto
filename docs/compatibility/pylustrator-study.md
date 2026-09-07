@@ -122,7 +122,7 @@ undo/redo（`addEdit`/`backEdit`/`forwardEdit`）是进程内闭包栈，跨会�
 
 Tavotto 不走这条路（override 是全量列表语义 + 写回事务改**产物**而非
 源码，源码写回是显式、可验证、可回滚的独立动作）。理由在
-`docs/adr/0009-write-back-pixel-verification.md` 与写回事务一节：改写用户
+`docs/adr/0049-write-back-pixel-verification.md` 与写回事务一节：改写用户
 源码的默认行为与"0 次静默源码损坏"的完成定义直接冲突。
 
 ## 吸收对照表

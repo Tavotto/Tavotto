@@ -1524,7 +1524,7 @@ export interface WriteBackResponse {
     elements: number
     reason?: string
     /**
-     * 像素门（ADR 0009）：ok = 热态与重放的探针图比过且一致；
+     * 像素门（ADR 0049）：ok = 热态与重放的探针图比过且一致；
      * hot_rebuilt = 热会话在探针中途被重开，本次像素比对作废（如实报告）。
      * replay 为 fresh_only 时该键不出现。
      */
@@ -1540,7 +1540,7 @@ export interface WriteBackDiff {
   field: string
   hot: unknown
   fresh: unknown
-  /** field === 'pixels'（像素门，ADR 0009）时的指标 / 越界项 / 阈值 */
+  /** field === 'pixels'（像素门，ADR 0049）时的指标 / 越界项 / 阈值 */
   metrics?: Record<string, number | string | boolean>
   exceeded?: Record<string, number>
   tolerance?: Record<string, number>
