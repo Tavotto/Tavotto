@@ -1577,6 +1577,47 @@ LOOKUP_MAX_VERSIONS = 300
 _AVAILABLE_PREFIX = "available versions:"
 _INSTALLED_PREFIX = "installed:"
 
+#: 进 argv 的包名允许出现的**全部**字符。PEP 503 归一之后
+#: （`depresolve.normalize_distribution` 把 `[-_.]+` 折成 `-` 再小写）剩下的
+#: 就只有这些——比 `_NAME_RE` 窄一档是刻意的：进命令行的那个串已经归过一次。
+_ARGV_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-"
+#: 首字符另算一张表：**必须是字母或数字**。挡参数注入的就是这一条——`-` 开头
+#: 的串会被 pip 当成选项（`--index-url=http://evil/simple` 这一族），而位置参数
+#: 在不在最后一位与它无关。
+_ARGV_NAME_FIRST_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def argv_package_name(name: str) -> str:
+    """把包名**按上面那两张常量表重拼一遍**，拼不出来就拒。
+
+    为什么是「重拼」而不是「校验一下放行」——两条理由，缺一条都不足以这么写：
+
+    * **校验与使用是两个动作**，中间隔着的每一行代码都可能换掉那个值
+      （`lookup_package` 里「归一化之后再过一次同一道语法」就是这条纪律的
+      上一版）。重拼把两个动作合成一个：出去的那个串**由常量表拼出来**，
+      它含什么字符不取决于谁在上游验过什么。
+    * 它同时是给静态分析看的：CodeQL 的 `py/command-line-injection` 报的是
+      「用户输入流进了子进程 argv」这条**数据流**，而不是「这里真能注入」。
+      正则校验在它的模型里不是净化器（判据落在另一个值上），所以那条告警
+      不会因为上游多验一次而消失。从常量表取字符则把那条流真的切断了——
+      这不是为了讨好扫描器改代码：切断的是同一条真实的因果链。
+
+    **不做替换、不做截断**：认不出的字符一律抛 `RepairError`。悄悄改掉用户
+    输入的名字会让界面上的名字与真正查的那个身份对不上，而那正是
+    `lookup_package` 自己做归一化（而不是让 pip 做）的理由。
+    """
+    text = str(name or "")
+    if not text:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "空的包名不能进命令行")
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        table = _ARGV_NAME_FIRST_CHARS if i == 0 else _ARGV_NAME_CHARS
+        pos = table.find(ch)
+        if pos < 0:
+            raise RepairError(ERROR_REQUIREMENT_INVALID, "这个包名里有不能进命令行的字符")
+        out.append(table[pos])
+    return "".join(out)
+
 
 def pip_index_argv(python: str, name: str) -> list[str]:
     """查找命令——**唯一出处**，测试逐字节钉住。
@@ -1586,8 +1627,15 @@ def pip_index_argv(python: str, name: str) -> list[str]:
       一次查找从 0.7 s 拖到 10.6 s；
     * `--no-input`：私有源要密码时子进程里没人能回答，只会挂着；
     * `--retries` / `--timeout`：见上面常量的注释，**重试次数是判据的一部分**；
-    * 包名放**最后**且已过 `depresolve.parse_requirement`（首字符必须是字母
-      数字），所以它不可能被 pip 当成选项。
+    * `--`：选项解析到此为止。有了它，「名字会不会被当成选项」这件事就不再
+      依赖名字本身长什么样——判据从「上游验过了」变成「pip 不可能这么解释」。
+      2026-09-07 实测 pip 25.3：`pip index versions -- <name>` 与不带 `--`
+      逐字同输出，两个位置参数才会报 `You need to specify exactly one argument`
+      （证明 `--` 被吃掉了、没当成第二个参数）；
+    * 包名放**最后**，且由 `argv_package_name` 从常量字母表重拼出来。
+
+    名字拼不出来时**抛异常，不返回一个凑合的 argv**：这个函数是 argv 的唯一
+    出处，让它有能力回一个不合规的 argv 等于把上面那句保证作废。
     """
     return [
         str(python),
@@ -1601,7 +1649,8 @@ def pip_index_argv(python: str, name: str) -> list[str]:
         str(LOOKUP_PIP_RETRIES),
         "--timeout",
         str(LOOKUP_PIP_TIMEOUT_S),
-        name,
+        "--",
+        argv_package_name(name),
     ]
 
 

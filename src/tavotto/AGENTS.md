@@ -813,13 +813,16 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   （镜像 / 内网 index / 代理都由 pip 的配置说了算），而 numpy 的 pypi.org JSON 有
   几十 MB、10 s 读不完（实测）。`pip_index_argv` 是唯一出处、逐字节钉住；
   **`--retries 1` 是判据的一部分**：`--retries 0` 时「连不上索引」与「索引上没有
-  这个名字」的输出逐字相同，离线就再也认不出来。失败四档闭集
+  这个名字」的输出逐字相同，离线就再也认不出来。进 argv 的包名由
+  `argv_package_name()` **按常量字母表重拼**（首字符另一张表，只有字母数字），
+  拼不出来就抛——校验与使用之间隔着归一化，重拼把两个动作合成一个；argv 里
+  还有一个 `--`，「名字会不会被当成选项」从此不取决于名字长什么样。失败四档闭集
   `LOOKUP_ERROR_CODES`（not_found / offline / timeout / failed），网络判据排在
   「没有这个包」之前——不确定时**宁可报 offline**，反向的错误会让用户去改一个本来
   就对的包名。解析只认两行前缀，认不出一律 failed，**绝不回空版本表冒充「找到了」**；
   `installed` 只在受管环境自己回答时才有值。响应结构上没有地址 / 路径 / pip 原文，
   `source` 三档（`unknown` 不许并进 `pypi`）。唯一执行点 `_run_lookup`（也是测试的
-  唯一注入点）。看护 `tests/test_package_lookup.py`（43 条，一次网络请求都不发）。
+  唯一注入点）。看护 `tests/test_package_lookup.py`（71 条，一次网络请求都不发）。
 - `GET /api/diagnostics/summary`：诊断包同一份 `build_report()` 摊平成文本
   （`diagnostics.render_text`），给设置里「复制诊断」用；project 段由
   `app._diagnostics_project_status()` 与 zip 端点共用。
