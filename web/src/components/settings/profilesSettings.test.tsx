@@ -151,7 +151,18 @@ describe('内置只读', () => {
     await act(async () => {
       buttons().find((b) => b.textContent?.includes('默认样式'))!.click()
     })
-    expect(text()).toContain('内置配置只读')
+    // 「改不了」是**状态 + 动作**，不是一段散文（2026-09-07，#299：那句 37 字的
+    // 解释和分区说明叠成两段，把 e2e 的「一个分区最多一段长解释」顶红了）。
+    // 判据认锚点与徽标，不认某一句话——文案下一轮还会被审计改。
+    const readOnly = document.body.querySelector('[data-profile-readonly]')
+    expect(readOnly).not.toBeNull()
+    expect(readOnly!.textContent).toContain('只读')
+    // 那颗按钮就在徽标旁边，不用滚到所有字段下面才找得到
+    expect(
+      [...readOnly!.querySelectorAll('button')].some((b) =>
+        b.textContent?.includes('复制一份再修改'),
+      ),
+    ).toBe(true)
     // 摘要模式下右栏一个输入框都没有——整页禁用的输入看起来像"我的表单坏了"
     expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
     // 规则本身仍然读得到（线宽 0.5 来自 BUILTIN_STYLE.data）

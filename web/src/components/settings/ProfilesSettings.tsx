@@ -639,7 +639,28 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               ) : (
                 <>
                   <SummaryRow label={st('name')} value={name} />
-                  <p className="text-xs leading-relaxed text-ink-3">{st('readOnlySummary')}</p>
+                  {/*
+                    「这份改不了、想改按这里」是**状态 + 动作**，不是一段散文
+                    （审计统一规则第一条：先改善控件，仍有必要才补文字）。原先
+                    这里是一句 37 字的解释，和分区顶上那句 43 字的说明叠成两段
+                    文字墙——用户得读完整句才知道下一步按哪儿，而流程 D 的
+                    「一个分区最多一段长解释」就是这么被顶破的。
+                    信息一个字没丢：只读这个事实变成常驻徽标，「复制出来的那份
+                    可以编辑」变成一颗就在旁边的按钮（同一个 `duplicate` 动作，
+                    原先摆在所有字段下面，要滚很远才看得见）。
+                  */}
+                  <div
+                    data-profile-readonly
+                    className="flex min-h-6 flex-wrap items-center gap-2 text-xs"
+                  >
+                    <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
+                      {selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}
+                    </span>
+                    <Button variant="outline" size="sm" onClick={duplicate} loading={busy}>
+                      <Copy size={ICON_SIZE.xs} />
+                      {st('duplicateToEdit')}
+                    </Button>
+                  </div>
                 </>
               )}
 
@@ -694,16 +715,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                   })}
                 </FieldGroup>
               ))}
-
-              {/* 内置的一份只读，改的动作从「复制一份」那一刻开始（审计 T41 / T42）。 */}
-              {!editable && (
-                <div>
-                  <Button variant="outline" size="sm" onClick={duplicate} loading={busy}>
-                    <Copy size={ICON_SIZE.xs} />
-                    {st('duplicateToEdit')}
-                  </Button>
-                </div>
-              )}
 
               {!!selected.warnings.length && (
                 <ul className="flex flex-col gap-0.5 text-xs text-ink-3">
