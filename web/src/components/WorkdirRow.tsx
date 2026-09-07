@@ -9,7 +9,7 @@ const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
 
 /**
- * 「在脚本目录里运行」——safe worker 工作目录模式的项目级开关（ADR 0045）。
+ * 「在脚本目录里运行」——safe worker 工作目录模式的项目级开关（ADR 0047）。
  *
  * 文案与机制逐条一致：开了之后脚本用相对路径读的数据找得到、用相对路径写的
  * 文件落进项目目录；Tavotto 仍然不替它保存图片、不删不改项目里的文件。

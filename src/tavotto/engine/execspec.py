@@ -57,7 +57,7 @@ TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
 #: spec 序列化形态的版本。加可选字段不升；改语义 / 删字段才升。
 SPEC_VERSION = 1
 
-#: safe 档的工作目录模式（ADR 0045）。`sandbox` = 会话沙盒（默认，写入边界）；
+#: safe 档的工作目录模式（ADR 0047）。`sandbox` = 会话沙盒（默认，写入边界）；
 #: `project` = 脚本自己所在的目录——脚本用相对路径找数据（`exists` / `glob` /
 #: C++ 读取器）时唯一能让它们全部成立的形态。守卫、savefig 捕获、解释器链
 #: 一字不动；变的只有 cwd。
@@ -112,7 +112,7 @@ class ExecutionSpec:
     #: 会让脚本里的 `os.path.dirname(sys.argv[0])` 指到别处。
     #: 机器相关，**不进 `stable_payload()`**。
     raw_target: str = ""
-    #: safe 档：cwd 是沙盒还是脚本目录（ADR 0045）。native 恒 `sandbox` 占位
+    #: safe 档：cwd 是沙盒还是脚本目录（ADR 0047）。native 恒 `sandbox` 占位
     #: （它的 cwd 是用户的，没有这个维度）。
     cwd_mode: str = CWD_SANDBOX
     #: safe 档的会话沙盒目录（机器相关）。`cwd_mode == sandbox` 时与 `cwd`
@@ -222,7 +222,7 @@ def safe_spec(
     边界）、savefig 吞掉捕获（passthrough=False）。`env` 只接受增量
     （bundled runtime 时传 `runtime.child_env(base={})`，其余场合 None）。
 
-    `cwd_mode=project`（ADR 0045）时 cwd 换成**脚本自己所在的目录**，其余
+    `cwd_mode=project`（ADR 0047）时 cwd 换成**脚本自己所在的目录**，其余
     一字不变：沙盒目录仍交给 worker 当写入边界的参照，守卫与 savefig 捕获
     照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
     这是这个模式的定义，不是漏洞；文案里要如实说。

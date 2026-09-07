@@ -151,7 +151,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     「脚本跑完但没出图」，worker.log 的尾部进 `traceback_text`（前端错误块
     的折叠区直接显示）。**只认显式为空的 `known` 列表**：字段缺失分不清
     「没有」和「没说」。两条控制面各接一处（`_error_of` / `_to_worker_error`）。
-    **根治是 ADR 0045 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
+    **根治是 ADR 0047 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
     不装回退，守卫与 savefig 捕获不动；错误块直接给这个入口。**不扩回退到
     `exists` / `glob`**——救不了 C++ 读取器，只会让脚本「以为」数据在。
     一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
@@ -169,7 +169,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
     （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
     新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
-    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0045）**：
+    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0047）**：
     `sandbox`（默认）/ `project`（脚本所在目录），唯一出处 `engine/workdir.py`
     （项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
     `_spawn_spec` / `one_shot`）都从它取——写回的重放必须和热态用同一个 cwd。
@@ -224,7 +224,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   （test_export_is_state_neutral 看护）。
 - **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`；
   build 按注册表 cost 分档 `build_timeout_for(script_cost(...))`，light ⅓ / medium 1 /
-  heavy 4 倍基数，两条控制面同一条——ADR 0046，
+  heavy 4 倍基数，两条控制面同一条——ADR 0048，
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个

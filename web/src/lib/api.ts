@@ -2323,7 +2323,7 @@ export interface BundledRuntime {
  * 项目自带 `.venv` 时 Tavotto 会自动换过去，用户也可以只为这个项目指定。
  */
 /**
- * safe worker 的工作目录模式（ADR 0045）。`project` = 脚本在自己的目录里跑：
+ * safe worker 的工作目录模式（ADR 0047）。`project` = 脚本在自己的目录里跑：
  * 它用相对路径读的数据（exists / glob / C++ 读取器）都能找到；它用相对路径
  * **写**的中间文件会像终端里一样落进项目目录。守卫、savefig 捕获、解释器链不变。
  */
@@ -2351,7 +2351,7 @@ export interface ProjectEnvironment {
   module?: string
   /** 在这个项目里发现到的候选虚拟环境（项目相对路径），可能是空表 */
   can_use_project_venv?: string[]
-  /** safe worker 的工作目录模式（ADR 0045）：沙盒（默认）/ 脚本目录 */
+  /** safe worker 的工作目录模式（ADR 0047）：沙盒（默认）/ 脚本目录 */
   workdir?: WorkdirState
   /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
   managed?: ManagedEnvironment
@@ -2459,7 +2459,7 @@ export const setProjectEnvironment = (python: string | null, module?: string) =>
     body: JSON.stringify(module ? { scope: 'project', python, module } : { scope: 'project', python }),
   })
 
-/** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0045）。改了后端会关掉该项目的会话。 */
+/** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */
 export const setProjectWorkdir = (mode: WorkdirMode) =>
   jsonFetch<{ ok: boolean; workdir: WorkdirState; project: ProjectEnvironment }>(
     '/api/engine/workdir',

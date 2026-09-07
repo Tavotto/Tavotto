@@ -13,7 +13,7 @@
     main/render 只会让「按自己习惯命名入口」的图库整个用不了
   * script 键是**图库相对路径**（POSIX 分隔符），子目录里的脚本照样登记
   * cost: "light" 秒级 | "medium" 十秒级 | "heavy" 分钟级（冷启动，
-    会话建立后 override 均为亚秒级）。**build 超时按它分档**（ADR 0046，
+    会话建立后 override 均为亚秒级）。**build 超时按它分档**（ADR 0048，
     `pool.build_timeout_for`）：light 5 分钟、medium 15 分钟、heavy 1 小时——
     脚本本来就要跑很久的，在注册表里标 heavy，别改脚本
   * notes: "3d" = 仅文字类元素可编辑；"dead" = 产物已不在磁盘

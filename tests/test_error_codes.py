@@ -55,7 +55,7 @@ _SOURCE_FILES = (
 _CODE_REGISTRIES = (
     "tavotto.engine.exportreq",
     "tavotto.engine.exportjob",
-    # safe 档工作目录模式（ADR 0045）：端点用 `workdir.ERROR_MODE_INVALID` 常量
+    # safe 档工作目录模式（ADR 0047）：端点用 `workdir.ERROR_MODE_INVALID` 常量
     "tavotto.engine.workdir",
 )
 
@@ -145,7 +145,7 @@ USER_VISIBLE_CODES = {
     "sync_different_scripts": set(),
     "python_missing": set(),
     "interpreter_not_found": {"path"},
-    # safe 档工作目录模式（ADR 0045）
+    # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
     "interpreter_no_matplotlib": {"path"},
     "invalid_consent": set(),

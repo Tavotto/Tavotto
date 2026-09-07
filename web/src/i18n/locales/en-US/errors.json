@@ -147,7 +147,8 @@
     "unsupported_format": "Exporting {{format}} is not supported yet.",
     "unsupported_script_type": "Not a probe-able .py script: {{script}}",
     "workdir_mode_invalid": "Unknown working-directory mode: {{mode}}",
-    "worker_timeout": "The render timed out and the worker was restarted — try again. Repeated timeouts mean the script itself never finishes. If it legitimately runs long, mark it heavy in the script registry and the limit grows to one hour.",
+    "worker_build_timeout": "The script timed out while running and the worker was restarted — try again. If this script legitimately takes a long time, mark it heavy in the script registry and the cold-start limit grows to one hour.",
+    "worker_timeout": "The render timed out and the worker was restarted — try again. Repeated timeouts mean the script itself never finishes.",
     "write_back_disabled": "This project is read-only: writing back to original files is disabled (re-enable it in project settings)",
     "write_back_warnings": "Write-back blocked: the engine reported warnings during replay",
     "write_failed": "Writing to disk failed. Your local copy is still here — try again: {{reason}}"

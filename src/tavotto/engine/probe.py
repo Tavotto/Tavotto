@@ -103,7 +103,9 @@ def _error_from_worker(
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
         return out
-    if exc.code == "worker_timeout":
+    # build 超时有自己的码（ADR 0048）；试运行走的正是 build，两个都要认——
+    # 漏掉的话「脚本执行超时」会退化成一句通用的「试运行失败」。
+    if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):
         return _err(
             ERROR_TIMEOUT,
             f"脚本执行超时（入口 {entry}）",

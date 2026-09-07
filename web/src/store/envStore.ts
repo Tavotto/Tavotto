@@ -34,7 +34,7 @@ interface EnvState {
    */
   setProjectPython: (path: string | null, module?: string) => Promise<string | null>
   /**
-   * 切当前项目 safe worker 的工作目录模式（ADR 0045）。开到 `project` 要先
+   * 切当前项目 safe worker 的工作目录模式（ADR 0047）。开到 `project` 要先
    * 确认一次——文案与机制逐条一致：相对路径读得到、相对路径写的文件落进项目、
    * 守卫与 savefig 捕获不变。用户取消回 `null` 且什么都不改；失败回错误文案。
    * 成功后把「脚本跑完没出图」那些面板重新排上。
