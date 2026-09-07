@@ -480,6 +480,361 @@ def test_support_probes_reconfigure_stdout_to_utf8():
     )
 
 
+# ── scripts/ 的子进程入口：输出编码必须钉住（issue #284） ──────────────────
+#
+# **判据的主语**：`scripts/**/*.py` 里**每一个会被当子进程 spawn 的入口**（AST 判出
+# `if __name__ == "__main__"`），问的是「进程走到自己的输出之前，stdout/stderr 有
+# 没有被钉成 UTF-8」——**不是**「这个文件的源码里有没有中文」。
+#
+# 为什么主语选结构、不选内容（#284 的粗扫用的是后者，它只是粗扫）：
+#
+#   * 「源码含非 ASCII」会被**散文**满足——注释、docstring，乃至这段说明自己。
+#     判源码内容的判据早晚会咬到解释它的那句话（根 AGENTS.md「判据的主语」）。
+#   * 今天没中文不代表明天不加，而**加中文的那次改动不会有任何东西提醒你回来钉
+#     编码**。`check_pending_release_notes.py` 正是这么逃出去的。
+#   * 非 ASCII 也不是唯一的触发条件：`✓ ↓ ——` 在 cp1252 下同样编不出，而 `——` 还
+#     能编成单字节 `0x97`——父进程按 UTF-8 严格解就炸在那个字节上，**而这个异常
+#     没人接**：Windows 的 `communicate()` 在 `_readerthread` 里解码，线程死掉、
+#     缓冲区留空，`subprocess.run` 照常返回，`returncode` 对、`stderr` 是 `None`。
+#     退出码那一维全绿，报文那一维静默消失（2026-09-04，PR #253 实测）。
+#
+# **名单是扫出来的，不是手写的**：上面 `test_packaging_entry_points_...` 是手写清单，
+# 它自己的 docstring 就写着「靠『记得』维持的纪律等于没有」——而它九条里只有七条
+# 落在 `scripts/` 下，`scripts/` 的 53 个入口另外 46 个没有任何东西看着。
+# 加一个脚本自动进这份名单。
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+_CI_COMMON = "_common"
+
+
+#: 要钉住的两条流。**stderr 不是可选的**：#284 的原始现场里，Windows 的
+#: `communicate()` 在 `_readerthread` 里解码，线程死掉之后 `stderr` 静默变成
+#: `None` 而 `returncode` 照常——诊断信息全在 stderr，只钉 stdout 的脚本
+#: 复现的正是同一个「退出码全绿、报文消失」。
+_REQUIRED_STREAMS = frozenset({"stdout", "stderr"})
+
+
+def _sys_stream(expr: ast.expr) -> str | None:
+    """`sys.stdout` / `sys.stderr` → `"stdout"` / `"stderr"`；别的一律 None。"""
+    if (
+        isinstance(expr, ast.Attribute)
+        and expr.attr in _REQUIRED_STREAMS
+        and isinstance(expr.value, ast.Name)
+        and expr.value.id == "sys"
+    ):
+        return expr.attr
+    return None
+
+
+def _is_utf8_reconfigure(call: ast.Call) -> bool:
+    """这个 Call 是不是 `<x>.reconfigure(encoding="utf-8", ...)`。
+
+    要 AST 的 Call，不要子串：注释、docstring、以及「告诉用户去加这一行」的那句
+    `print` 全都满足子串判据。`encoding` 还必须是 utf-8 **字面量**——`encoding=None`
+    就是「按系统默认」，而那正是这个 bug 本身。
+    """
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "reconfigure":
+        return False
+    enc = next((k.value for k in call.keywords if k.arg == "encoding"), None)
+    return (
+        isinstance(enc, ast.Constant)
+        and isinstance(enc.value, str)
+        and enc.value.lower().replace("-", "").replace("_", "") == "utf8"
+    )
+
+
+def _statically_dead(test: ast.expr) -> bool:
+    """`if False:` / `if 0:` / `while None:` ——静态就走不到的分支。"""
+    return isinstance(test, ast.Constant) and not test.value
+
+
+def _statically_taken(test: ast.expr) -> bool:
+    """`if True:` / `if 1:` ——`orelse` 静态就走不到。"""
+    return isinstance(test, ast.Constant) and bool(test.value)
+
+
+def _scan(node: ast.AST, aliases: dict[str, set[str]]) -> tuple[set[str], set[str]]:
+    """扫一个节点，返回（**被钉住的流**, 出现过的被调函数名）。
+
+    两件事在这里同时做，因为它们要共享同一份「剪过死分支」的遍历：
+
+    * **接收者要认**。`.reconfigure(encoding="utf-8")` 挂在什么上决定它钉了谁：
+      `sys.stdout` / `sys.stderr` 直接认；`for _stream in (sys.stdout, sys.stderr):`
+      这种循环别名跟一层（仓库里 40 处 reconfigure 全是这两种形状之一）。
+      **判不出的接收者一律不算钉住**（fail closed）——写成别的形状会被打红，
+      而不是安静放行；要支持新形状就回来扩这里，别放宽判据。
+    * **静态死分支要剪**。`if False:` 里的那一钉进程永远走不到，AGENTS.md
+      「判源码结构用 AST」那条明写了要剪掉它。这与下面调用图那层是**两个不同的
+      维度**：那层问「这个函数被调到了吗」，这层问「走到这个函数里之后，这条语句
+      会不会执行」，缺哪一个都能让门禁把没钉住的读成钉住了。
+
+    函数 / 类定义体不下钻——**定义不是执行**，要不要看它们由调用图那一层决定。
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return set(), set()
+
+    pinned: set[str] = set()
+    calls: set[str] = set()
+
+    def merge(child: ast.AST, env: dict[str, set[str]] | None = None) -> None:
+        p, c = _scan(child, aliases if env is None else env)
+        pinned.update(p)
+        calls.update(c)
+
+    if isinstance(node, ast.Call):
+        calls.add(getattr(node.func, "attr", getattr(node.func, "id", "")) or "")
+        if _is_utf8_reconfigure(node):
+            receiver = node.func.value  # type: ignore[union-attr]
+            named = _sys_stream(receiver)
+            if named:
+                pinned.add(named)
+            elif isinstance(receiver, ast.Name):
+                pinned.update(aliases.get(receiver.id, ()))
+        for child in ast.iter_child_nodes(node):
+            merge(child)
+        return pinned, calls
+
+    if isinstance(node, ast.If):
+        merge(node.test)
+        if not _statically_dead(node.test):
+            for st in node.body:
+                merge(st)
+        if not _statically_taken(node.test):
+            for st in node.orelse:
+                merge(st)
+        return pinned, calls
+
+    if isinstance(node, ast.While):
+        merge(node.test)
+        if not _statically_dead(node.test):
+            for st in node.body:
+                merge(st)
+        for st in node.orelse:
+            merge(st)
+        return pinned, calls
+
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        merge(node.iter)
+        inner = dict(aliases)
+        if isinstance(node.target, ast.Name):
+            bound: set[str] | None = None
+            if isinstance(node.iter, (ast.Tuple, ast.List)):
+                named = [_sys_stream(e) for e in node.iter.elts]
+                if named and all(named):
+                    bound = {n for n in named if n}
+            if bound:
+                inner[node.target.id] = bound
+            else:
+                inner.pop(node.target.id, None)  # 重绑成了别的东西，旧别名作废
+        for st in node.body:
+            merge(st, inner)
+        for st in node.orelse:
+            merge(st)
+        return pinned, calls
+
+    # 其余语法（try / with / match / 普通语句）按子节点通用递归：将来新增一种
+    # 复合语法时它不会变成一个「不剪死分支」的洞。
+    for child in ast.iter_child_nodes(node):
+        merge(child)
+    return pinned, calls
+
+
+def _pinned_streams(tree: ast.Module) -> set[str]:
+    """这份模块跑起来时，**哪几条流**真的被钉成了 UTF-8。
+
+    「跑起来时」= 在本模块的调用图上从进程入口到得了：直接钉在模块作用域
+    （`build_frontend.py` 那一段），或者钉在一个从模块作用域可达的本模块函数里
+    （`_force_utf8()` 定义在上面、`main()` 里调一次——仓库里九个脚本是这个形状）。
+
+    **这一层可达性不能省**：只写 `def _force_utf8(): ...` 而从不调用它，子串判据
+    照样绿，而进程该炸还是炸——「定义满足了判据」是本仓库反复踩的那个洞。控制流
+    方向的死分支由 `_scan` 剪掉，两层是不同的维度。
+
+    盲点写在明处：判到**函数**粒度为止。运行期才定的分支（`if os.name == "nt":`
+    之类）两侧都算走得到；按名字动态取出来再调、跨模块的间接钉法都判不出——
+    判不出的一律**不算钉住**，行为级那三条抽样（下面）是它们的兜底。
+    """
+    funcs = {
+        st.name: st for st in tree.body if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    pinned: set[str] = set()
+    queue: list[str] = []
+    for st in tree.body:
+        p, c = _scan(st, {})
+        pinned |= p
+        queue.extend(c)
+
+    seen: set[str] = set()
+    while queue:
+        name = queue.pop()
+        if name in seen or name not in funcs:
+            continue
+        seen.add(name)
+        for st in funcs[name].body:
+            p, c = _scan(st, {})
+            pinned |= p
+            queue.extend(c)
+    return pinned
+
+
+def _imports_the_ci_common_module(tree: ast.Module) -> bool:
+    """模块作用域上真的 `import _common` / `from _common import ...`。
+
+    **这是本门禁唯一的豁免**，覆盖 `scripts/ci/` 下十一个脚本。
+
+    理由：`scripts/ci/_common.py` 在 **import 期**调一次 `use_utf8_streams()`，
+    于是 import 它的脚本连 argparse 之前就已经钉好——要求它们再显式写一遍，是让
+    同一条保证实现两遍，而两遍会各自漂。
+
+    **它的前提**：`_common` 那一句留在 import 期。前提失效（挪进函数、改名、被删）
+    时这条豁免会**安静地变成盲区**，因此它由
+    `test_the_ci_common_module_still_pins_utf8_at_import_time` 单独钉住——前提没了，
+    那条先红，而不是这十一个脚本一起变成没人看着的。
+
+    判的是 AST 的 Import 节点，不是子串：docstring 里写 `import _common` 不算。
+    """
+    for st in tree.body:
+        if isinstance(st, ast.Import) and any(
+            a.name == _CI_COMMON or a.name.startswith(_CI_COMMON + ".") for a in st.names
+        ):
+            return True
+        if isinstance(st, ast.ImportFrom) and (st.module or "") == _CI_COMMON:
+            return True
+    return False
+
+
+def _script_entry_points() -> list[Path]:
+    """`scripts/**/*.py` 里有 `if __name__ == "__main__"` 的——**扫出来的名单**。"""
+    found = []
+    for path in sorted(_SCRIPTS_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(st, ast.If)
+            and {"__name__", "__main__"} <= set(re.findall(r"\w+", ast.unparse(st.test)))
+            for st in ast.walk(tree)
+        ):
+            found.append(path)
+    return found
+
+
+def test_the_script_entry_point_scan_actually_sees_the_scripts():
+    """**先证明观测有效，再解释零值。**
+
+    下面那条是「名单上每个都要钉住」——名单空了它就恒真，而恒真在报告里和全部
+    通过长得一模一样。目录搬家、`rglob` 写错、`__main__` 的写法变了，症状都是
+    「门禁还在，只是什么都没扫」。2026-09-07 实测 53 个；45 留给删脚本的余量。
+    """
+    assert _SCRIPTS_DIR.is_dir(), f"{_SCRIPTS_DIR} 不在了——下面那条判据在扫空气"
+    n = len(_script_entry_points())
+    assert n >= 45, f"只扫到 {n} 个 scripts/ 入口——rglob 坏了，还是 __main__ 的写法变了？"
+
+
+def test_script_entry_points_pin_their_output_encoding():
+    """`scripts/` 下每一个会被 spawn 的入口都必须钉住自己的 stdout **和** stderr。
+
+    主语与理由见本节抬头。缺口的形状：Windows 上流一旦不是真控制台就退回系统区域
+    编码，第一句中文输出要么 `UnicodeEncodeError` 打死脚本，要么按 `backslashreplace`
+    编出父进程解不了的字节——两种都让**报文**消失而**退出码**看不出异样。
+
+    **两条流都要，stderr 不是可选的**：#284 的原始现场里，父进程炸在
+    `_readerthread` 之后 `stderr` 静默变成 `None` 而 `returncode` 照常。脚本的
+    诊断信息全在 stderr——只钉 stdout 的话，报文照样在同一个地方消失，而这条门禁
+    会替它作证。判据落在 `_pinned_streams()`：它认接收者、并剪掉静态死分支。
+
+    豁免只有一条（`import _common`，见 `_imports_the_ci_common_module` 的
+    docstring），**写在判据里、带前提、前提由另一条用例钉住**——不靠「这个文件不
+    算入口」的口头约定。要放行一个新文件，得在这里写下理由，而不是把它从名单里
+    拿掉。
+    """
+    missing = []
+    for path in _script_entry_points():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if _imports_the_ci_common_module(tree):
+            continue
+        absent = _REQUIRED_STREAMS - _pinned_streams(tree)
+        if not absent:
+            continue
+        rel = str(path.relative_to(_SCRIPTS_DIR.parent))
+        missing.append(f"{rel}（没钉住：{'、'.join(sorted(absent))}）")
+    assert not missing, (
+        "这些入口脚本没把 stdout/stderr 都钉成 UTF-8，Windows 上被捕获/重定向时"
+        "中文输出会静默丢掉（甚至炸掉父进程的读线程）：\n  "
+        + "\n  ".join(missing)
+        + "\n**两条流都要钉**——诊断信息全在 stderr，只钉 stdout 会让报文照样消失。"
+        "\n照 scripts/build_frontend.py 抬头那段加上：\n"
+        "  for _stream in (sys.stdout, sys.stderr):\n"
+        '      if hasattr(_stream, "reconfigure"):\n'
+        '          _stream.reconfigure(encoding="utf-8", errors="replace")'
+    )
+
+
+def test_the_ci_common_module_still_pins_utf8_at_import_time():
+    """上面那条豁免的**前提**：`scripts/ci/_common.py` 在 import 期就钉住 UTF-8。
+
+    十一个 `scripts/ci/` 脚本靠的是 `import _common` 的副作用。那一句一旦被挪进
+    函数、改名或删掉，它们会**同时**失去保护，而上面那条门禁**照样绿**——豁免的
+    前提失效时没有任何机制会提醒你，所以在这里把前提本身变成一条会红的判据。
+    """
+    common = _SCRIPTS_DIR / "ci" / "_common.py"
+    assert common.is_file(), f"{common} 不在了——上面那条豁免正在放行十一个没人看着的脚本"
+    tree = ast.parse(common.read_text(encoding="utf-8"))
+    absent = _REQUIRED_STREAMS - _pinned_streams(tree)
+    assert not absent, (
+        f"_common.py 不再在 import 期钉住 {'、'.join(sorted(absent))} 了——"
+        "`import _common` 那条豁免的前提没了。要么把那一句放回模块作用域，"
+        "要么删掉豁免、让那十一个脚本各自显式钉一次。"
+    )
+
+
+#: 行为级抽样：**真的用那个编码起一个子进程，量它吐出来的字节**。
+#:
+#: 源码级那条只证明「那一行在」，证明不了输出真的写得出去（换个写法就漏）。
+#: `PYTHONIOENCODING` 正是 CPython 用来设定 stdout 编码的那个开关，与 Windows
+#: runner 上管道退回代码页的行为同源——所以这三条**在 macOS/Linux 上就能红**，
+#: 不必等 Windows 腿。实测（2026-09-07、macOS）：修之前裸着的那 25 个入口里，
+#: 有 20 个连 `--help` 都当场 `UnicodeEncodeError`。
+#:
+#: 三条各覆盖一种「怎么钉住的」，抽样不是清单：
+_CODEPAGE_SAMPLES = [
+    # 模块作用域直接钉（本 PR 新加的 25 个都是这个形状）。锚点里那个 `——` 就是
+    # #253 上编成 `0x97`、炸掉父进程读线程的那个字符。
+    ("scripts/ci/release_blockers.py", "退出条件——系统"),
+    # 钉在 main() 里（逃出去的就是这一个，#253 的 46081fce 修的）。
+    ("scripts/check_pending_release_notes.py", "待发条目"),
+    # 豁免那一档：靠 `import _common` 的 import 期副作用——这条让那个前提**被行为
+    # 验证过**，而不只是被静态判据相信。
+    ("scripts/ci/lab_preflight.py", "开跑前体检"),
+]
+
+
+@pytest.mark.parametrize("rel,needle", _CODEPAGE_SAMPLES, ids=[r for r, _ in _CODEPAGE_SAMPLES])
+def test_script_entry_points_survive_a_windows_codepage(rel, needle):
+    """在 cp1252 的 stdout 上跑 `--help`，那句中文必须以 **UTF-8 字节**出现。
+
+    `capture_output` 后**不进文本模式**：要量的是子进程写出去的字节，`text=True`
+    会先按我们指定的编码解一遍，把「它写出了什么」换成「我们打算怎么读」。
+
+    `needle` 是这条判据的锚点，取自各自 `--help` 的正文；改了那段措辞就把它一起改。
+    """
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}  # 复现 runner 上的默认编码
+    r = subprocess.run(
+        [sys.executable, str(_SCRIPTS_DIR.parent / rel), "--help"],
+        capture_output=True,  # 刻意不给 text/encoding：拿原始字节
+        env=env,
+        timeout=120,
+    )
+    err = r.stderr.decode("utf-8", "replace")
+    assert b"UnicodeEncodeError" not in r.stderr, f"{rel} 在 cp1252 stdout 上打死了：\n{err}"
+    assert r.returncode == 0, f"{rel} --help 退出码 {r.returncode}：\n{err}"
+    assert needle.encode("utf-8") in r.stdout, (
+        f"{rel} 的 --help 里找不到 {needle!r} 的 UTF-8 字节——"
+        "要么它没钉住编码（中文被 replace 成了问号），要么那段措辞改了。\n"
+        f"实际前 300 字节：{r.stdout[:300]!r}"
+    )
+
+
 def test_codex_handoff_json_survives_cp1252_stdout():
     """Codex 插件的交接脚本在非 UTF-8 stdout 下必须照样吐出那行 JSON。
 

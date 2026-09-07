@@ -59,6 +59,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+# Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
+# 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
+# 做完了却以非零退出，而父进程只看得见「它挂了」。写法与 build_frontend.py 同源。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_OWNER = "Tavotto"
 REPO_NAME = "Tavotto"
 PYPI_PACKAGE = "tavotto"
