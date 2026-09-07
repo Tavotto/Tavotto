@@ -107,7 +107,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
             <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
           )}
           <ProjectEnvironmentLine compact={compact} />
-          {/* safe worker 在哪个目录里跑（ADR 0045）：项目级开关，设置页才显示 */}
+          {/* safe worker 在哪个目录里跑（ADR 0047）：项目级开关，设置页才显示 */}
           {!compact && <WorkdirRow />}
         </div>
         {/* 内置包版本清单在设置 → 包管理（ADR 0038）；这张卡只说环境本身 */}

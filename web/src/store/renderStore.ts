@@ -678,7 +678,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       if (
         v.status === 'error' &&
         ((ENVIRONMENT_CODES as readonly string[]).includes(v.code) ||
-          // 「脚本跑完没出图」在换了工作目录模式之后同样值得重跑（ADR 0045）
+          // 「脚本跑完没出图」在换了工作目录模式之后同样值得重跑（ADR 0047）
           (WORKDIR_CODES as readonly string[]).includes(v.code))
       ) {
         ids.add(v.fileId)

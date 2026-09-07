@@ -66,6 +66,17 @@ _RMTREE_BACKOFF = (0.0, 0.05, 0.1, 0.2)
 #: 各档按「正常情况下最坏要多久」给：build 要跑用户整个脚本（heavy 分钟级），
 #: 导出是 600dpi 全质量出图，override / 预览是热态操作。
 BUILD_TIMEOUT = 900.0
+#: build 超时**按注册表的 cost 分档**（ADR 0048）：`BUILD_TIMEOUT` 是 medium 档的
+#: 基数，其余档按倍数缩放——用例把基数 monkeypatch 成 2 秒时各档一起缩，不用
+#: 各改一处。heavy 是「分钟级」（注册表头的定义），4 倍 = 1 小时：九条轨迹 ×
+#: 100 帧的邻居搜索这种真实脚本在 15 分钟内跑不完，而它没有死循环。
+#: light 缩到 5 分钟：秒级脚本卡 15 分钟才报，等于把一个死循环当正常。
+#: 不认识的 cost（没有注册表 / 没登记的脚本 / 一次性重放）一律 medium。
+BUILD_TIMEOUT_FACTORS = {"light": 1.0 / 3.0, "medium": 1.0, "heavy": 4.0}
+#: **build 超时有自己的稳定码**：只有它能靠「把脚本标成 heavy」解决。
+#: `override` / `export` / 预览走的是 `REQUEST_TIMEOUT` / `EXPORT_TIMEOUT`，
+#: 对它们说「标 heavy」是把用户支到一个改了也没用的设置上。
+BUILD_TIMEOUT_CODE = "worker_build_timeout"
 REQUEST_TIMEOUT = 300.0  # override / render_png / preview_png
 EXPORT_TIMEOUT = 600.0
 #: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
@@ -284,6 +295,31 @@ def _next_generation(key: tuple[str, str]) -> int:
         gen = _generations.get(key, 0) + 1
         _generations[key] = gen
         return gen
+
+
+def build_timeout_for(cost: str | None) -> float:
+    """这个 cost 档的 build 超时（秒）。基数是 `BUILD_TIMEOUT` 的**当前**值。"""
+    return BUILD_TIMEOUT * BUILD_TIMEOUT_FACTORS.get(cost or "", 1.0)
+
+
+def script_cost(figures_dir: str | Path, script_name: str) -> str:
+    """注册表里这条脚本的 cost；没有注册表 / 没登记 / 注册表坏了一律 `medium`。
+
+    这里读的是**磁盘上的**注册表而不是 app 端着的实例：pool 不 import app，
+    而且注册表随图库走、多项目并存——按 (项目, 脚本) 现读一次最不会拿错
+    （文件几 KB，每个会话只在 build 时读一次）。
+    """
+    from . import registry
+
+    try:
+        reg = registry.open_registry(figures_dir)
+    except (FileNotFoundError, RuntimeError, OSError, ValueError):
+        return "medium"
+    # 注册表键是图库相对 POSIX 路径；与 `_cache_slug` 同一写法把反斜杠归一
+    # （`Path.as_posix()` 在 POSIX 上不会碰反斜杠——那里它是合法文件名字符）
+    key = script_name.replace("\\", "/")
+    cost = (reg.entries().get(key) or {}).get("cost")
+    return cost if cost in registry.VALID_COSTS else "medium"
 
 
 def _cache_slug(figures_dir: str, script_name: str) -> str:
@@ -857,7 +893,7 @@ class EngineWorker:
             interpreter=python,
             sandbox=str(self.sandbox),
             env=runtime.child_env(base={}) if bundled else None,
-            # 项目级「在脚本目录里运行」（ADR 0045）：两条控制面与 one_shot 都从
+            # 项目级「在脚本目录里运行」（ADR 0047）：两条控制面与 one_shot 都从
             # 这一个出处取——写回的重放必须和热态用同一个 cwd。
             cwd_mode=workdir.mode_for(figures_dir),
         )
@@ -915,8 +951,10 @@ class EngineWorker:
         # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
         return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
-    def _readline(self, timeout: float) -> str:
+    def _readline(self, timeout: float, *, is_build: bool = False) -> str:
         """带超时读一行回应；超时即杀掉 worker 并抛 `worker_timeout`。
+
+        `is_build` 决定报哪个码与说不说那句「标 heavy」——见 `BUILD_TIMEOUT_CODE`。
 
         超时用「读线程 + join」而不是 `select`：Windows 的 select 只接受 socket，
         对管道直接 WinError 10038，而这条路径必须跨平台一致。
@@ -942,12 +980,18 @@ class EngineWorker:
                 self.proc.wait(timeout=_SHUTDOWN_JOIN_TIMEOUT)
             except (OSError, subprocess.SubprocessError):
                 pass
+            hint = (
+                f"若它本来就要跑很久，在脚本注册表里把 cost 标为 heavy"
+                f"（上限 {int(build_timeout_for('heavy'))} 秒）。"
+                if is_build
+                else ""
+            )
             raise WorkerError(
                 f"渲染超时（等了 {int(timeout)} 秒）。脚本可能陷入死循环，"
                 f"或这一步本身极慢；渲染会话已重启，可以重试。"
-                f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。",
+                f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。{hint}",
                 self._log_tail(),
-                code="worker_timeout",
+                code=BUILD_TIMEOUT_CODE if is_build else "worker_timeout",
             )
         return box[0] if box else ""
 
@@ -1033,7 +1077,7 @@ class EngineWorker:
                 raise WorkerError("worker 进程已退出", self._log_tail())
             self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
             self.proc.stdin.flush()
-            line = self._readline(timeout)
+            line = self._readline(timeout, is_build=obj.get("cmd") == "build")
             if not line:
                 # **判死要在锁内、且是同步的。**
                 #
@@ -1079,8 +1123,9 @@ class EngineWorker:
         )
 
     def ensure_built(self) -> dict:
-        # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
-        resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
+        # build 要跑用户整个脚本：超时按注册表的 cost 分档（ADR 0048）
+        self.build_timeout = build_timeout_for(script_cost(self.figures_dir, self.script_name))
+        resp = self.request({"cmd": "build"}, self.build_timeout)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
@@ -1262,6 +1307,7 @@ _FATAL_CODES = frozenset(
         "handshake_timeout",
         "protocol_mismatch",
         "worker_timeout",
+        BUILD_TIMEOUT_CODE,
         "workerd_dead",
         "workerd_unavailable",
     }
@@ -1467,8 +1513,12 @@ class WorkerdWorker:
         # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
         return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
-    def _to_worker_error(self, exc) -> WorkerError:
+    def _to_worker_error(self, exc, *, is_build: bool = False) -> WorkerError:
         code = exc.code or ""
+        if is_build and code == "worker_timeout":
+            # 两条控制面同一个答案：workerd 只知道「超时」，是不是 build 只有
+            # 这边知道（ADR 0048）。
+            code = BUILD_TIMEOUT_CODE
         if code in _FATAL_CODES:
             # 状态未知的会话绝不复用（与 Python 池的超时/错乱路径同纪律）
             self._dead = True
@@ -1508,7 +1558,7 @@ class WorkerdWorker:
                     LOG.warning("workerd 会话已失效，重开: %s", self.script_name)
                     self._open()
                     continue
-                raise self._to_worker_error(exc) from exc
+                raise self._to_worker_error(exc, is_build=op == "build") from exc
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
                 LOG.warning(
@@ -1547,7 +1597,9 @@ class WorkerdWorker:
             pass
 
     def ensure_built(self) -> dict:
-        resp = self._call("build", BUILD_TIMEOUT)
+        # 与 Python 池同一条分档（ADR 0048）
+        self.build_timeout = build_timeout_for(script_cost(self.figures_dir, self.script_name))
+        resp = self._call("build", self.build_timeout)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
