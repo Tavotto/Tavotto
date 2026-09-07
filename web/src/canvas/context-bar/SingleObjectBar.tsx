@@ -114,6 +114,7 @@ function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean
       </StyleToggle>
       {!compact && (
         <ColorField
+          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
           className="w-[86px] shrink-0"
           value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
           onChange={(v) => a.write('color', v, true)}
@@ -185,6 +186,7 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
   return (
     <>
       <ColorField
+        ariaLabel={translate(obj.type === 'arrow' ? 'stroke.color' : 'stroke.strokeColor', { ns: 'inspector' })}
         className="w-[86px] shrink-0"
         value={obj.color}
         onChange={(v) => patch(hist(obj.type === 'arrow' ? 'setArrowColor' : 'setStrokeColor'), (o) => (o.color = v))}

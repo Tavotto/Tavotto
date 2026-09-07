@@ -488,7 +488,11 @@ function LayoutGroupControls() {
         />
       </Row>
       <label className="flex items-center gap-1.5 text-xs text-ink-2">
-        <Toggle checked={anyPinned} onChange={() => toggleLayoutPinned(selIds)} />
+        <Toggle
+          aria-label={ar('pinMembers')}
+          checked={anyPinned}
+          onChange={() => toggleLayoutPinned(selIds)}
+        />
         {ar('pinMembers')}
       </label>
       <div className="flex gap-1.5">

@@ -9,6 +9,10 @@
     "reload": "Reload",
     "save": "Save"
   },
+  "colorField": {
+    "hex": "{{label}}: hex value",
+    "picker": "{{label}}: colour picker"
+  },
   "count": {
     "selectedObjects_one": "{{count}} object selected",
     "selectedObjects_other": "{{count}} objects selected"

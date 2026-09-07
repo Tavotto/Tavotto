@@ -27,6 +27,19 @@
   先 `python scripts/build_frontend.py`）。`e2e/mcp-canvas.spec.ts` 还要
   `python scripts/build_mcp_widget.py`——`canvas.html` 不再入库（ADR 0043），没建过的
   工作区上那四条会以 ENOENT 红，CI 每次 checkout 现建所以看不到这一幕。
+- **控件的可访问名是必填的，靠外面包一层 `<label>` 不算数**（2026-09-07，#299 webkit 腿）：
+  HTML-AAM 给 `button` 的取名方式是「name from content」，`Toggle` 那颗 `<button role="switch">`
+  的内容只有两个装饰用的 `<span>`——`<label>` 包着它只保证点文字能切换，**不给它取名**。
+  chromium 大方地把标签文字算了进去，所以 posix 腿一直是绿的；webkit 按规范办事，axe 当场
+  报 `button-name` critical。同一屏还有 `ColorField` 的两个输入框（取色盘 + 十六进制），
+  一行可见标签既不是 `<label for>` 也指不了两个控件，报 `label` critical。
+  **两个组件的名字现在是类型必填的**：`ColorField` 要 `ariaLabel`，`Toggle` 要
+  `aria-label` 或 `aria-labelledby`（二选一，联合类型）——一次性补齐会漏，类型必填才不会烂。
+  给名字时**用渲染那句可见文字的同一个表达式**，别另写一句同义的（审计 T39 担心的分叉）；
+  `SettingRow` 的标签自带 `settingRowLabelId(controlId)`，那一族用 `aria-labelledby` 指它。
+  看护：`e2e/a11y.spec.ts` 的「图内编辑的属性栏」——它把属性栏里每个折叠区**一个不剩地展开**
+  再扫（`aria-expanded="false"` 且非弹层触发器、非禁用），收起来的控件 axe 看不见，
+  「这一屏干净」原本只说明「默认展开的那部分干净」。锚点 `data-inspector-panel`。
 - **横向溢出只有一把尺子：`e2e/overflow.ts` 的 `horizontalOffenders(page, rootSel)`。**
   逐个元素扫、只认 `overflow-x: visible`，并且**只量 HTML 元素**——SVG 里的
   `scrollWidth` / `clientWidth` 量的不是页面宽度（样式页示例图那条 `rotate(-90)` 的轴标题

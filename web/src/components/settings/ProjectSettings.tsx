@@ -9,7 +9,7 @@ import { Button } from '../ui/Button'
 import { TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { PathValue } from './PathValue'
-import { InlineWarning, SettingRow, SettingSection } from './SettingRow'
+import { InlineWarning, SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -129,6 +129,7 @@ export function ProjectSettings() {
         danger={!allowWriteBack}
       >
         <Toggle
+          aria-labelledby={settingRowLabelId('setting-allow-write-back')}
           id="setting-allow-write-back"
           checked={allowWriteBack}
           onChange={(v) => void save({ allow_write_back: v })}

@@ -63,6 +63,7 @@ function ElementQuickInner({
       <>
         {w.has('color') && (
           <ColorField
+            ariaLabel={propLabel('color', role)}
             className="w-[86px] shrink-0"
             value={String(w.read('color') ?? '#000000')}
             onChange={(v) => w.write('color', v, true)}
@@ -237,6 +238,7 @@ function TextElementActions({
       )}
       {!compact && a.fieldOf('color') && (
         <ColorField
+          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
           className="w-[86px] shrink-0"
           value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
           onChange={(v) => a.write('color', v, true)}

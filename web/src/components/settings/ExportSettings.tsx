@@ -5,7 +5,7 @@ import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { FORMATS, hasRaster } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
-import { SettingRow, SettingSection } from './SettingRow'
+import { SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -82,6 +82,7 @@ export function ExportSettings() {
         controlId="setting-export-report"
       >
         <Toggle
+          aria-labelledby={settingRowLabelId('setting-export-report')}
           id="setting-export-report"
           checked={defaults.withProof}
           onChange={(v) => update({ withProof: v })}

@@ -54,9 +54,18 @@ export function SettingSection({
  *     常规字段**不默认**挂问号；
  *   * `status` 仍是控件后面的现状摘要（「当前窗口太窄，固定不生效」），
  *     只在那个状态真的成立时给，不是常驻解释；
- *   * `controlId` 让标签成为真正的 `<label>`：点标签文字 = 点开关，读屏念的
- *     名字也就是标签本身。
+ *   * `controlId` 让标签成为真正的 `<label>`：点标签文字 = 点开关。
+ *
+ * **`<label htmlFor>` 不负责给 `<button>` 取名。** HTML-AAM 给 `button` 的取名
+ * 方式是「name from content」，`Toggle` 那颗按钮的内容只有两个装饰用的 `<span>`
+ * ——chromium 大方地把标签文字算进去了，webkit 按规范办事，于是同一颗开关在
+ * chromium 上有名字、在 webkit 上是 `button-name` critical（#299，Windows 腿）。
+ * 所以标签自己带一个稳定 id（`settingRowLabelId(controlId)`），控件用
+ * `aria-labelledby` 指着它：名字与看见的那行字**是同一份**，不会分叉。
  */
+/** 这一行标签的 id：控件用 `aria-labelledby` 指它，名字就是看见的那行字 */
+export const settingRowLabelId = (controlId: string) => `${controlId}-label`
+
 export function SettingRow({
   label,
   description,
@@ -99,6 +108,7 @@ export function SettingRow({
       >
         <span className="flex min-w-0 flex-col">
           <LabelTag
+            id={controlId ? settingRowLabelId(controlId) : undefined}
             htmlFor={controlId}
             className={cn('min-w-0 truncate leading-5', controlId && 'cursor-pointer')}
             title={labelText || undefined}

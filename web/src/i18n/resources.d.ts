@@ -137,6 +137,10 @@ export default interface Resources {
       "reload": "重新加载",
       "save": "保存"
     },
+    "colorField": {
+      "hex": "{{label}}：十六进制值",
+      "picker": "{{label}}：取色盘"
+    },
     "count": {
       "selectedObjects_other": "已选 {{count}} 个对象"
     },
@@ -1527,6 +1531,7 @@ export default interface Resources {
       "noSavedStyles": "还没有保存的样式",
       "pageSizeSuffix": "（{{w}}×{{h}} mm）",
       "pageSizeTo": "页面尺寸 → {{w}}×{{h}} mm",
+      "paletteSwatchAria": "配色第 {{index}} 色",
       "paletteTitle": "系列配色（按曲线 / 散点 / 柱形出现顺序循环）",
       "panelOverwrites_other": "（覆盖 {{count}} 项已有修改）",
       "panelPatches_other": "：{{count}} 项",
@@ -1560,6 +1565,7 @@ export default interface Resources {
       "scopeSelection": "选中的图",
       "subLabel": "序号标签 (a)(b)(c)",
       "subLabelCount_other": "序号标签：{{count}} 个",
+      "textColorAria": "文字颜色",
       "title": "论文样式",
       "unmappableDetails": "无法映射的明细",
       "unmappableEntry": "{{label}}：无「{{prop}}」",

@@ -90,6 +90,7 @@ export function Inspector({
   return (
     <aside
       {...motion}
+      data-inspector-panel
       aria-label={t('panelLabel')}
       className={cn(
         // overflow-hidden 是动效的一部分，见 drawerMotion 的注释

@@ -250,6 +250,48 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   })
 })
 
+test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
+    .toBeVisible({ timeout: 60_000 })
+
+  const inspector = page.locator('[data-inspector-panel]')
+  await expect(inspector).toHaveCount(1)
+
+  // **把折叠区一个不剩地展开再扫。** 收起来的控件 axe 看不见，于是「这一屏干净」
+  // 只说明「默认展开的那部分干净」。2026-09-07 的 webkit 真红就藏在这里：背景色
+  // 那格（`ColorField` 的两个输入框）与「透明背景」开关一个可访问名都没有，
+  // 而它们默认收在「背景」折叠区里——posix 腿扫过同一屏，一次都没扫到它们。
+  // 按 `aria-expanded` 展开，不按标题文案：文案下一轮还会被审计改。
+  for (let i = 0; i < 16; i++) {
+    // 只认真正的折叠区：带 `aria-haspopup` 的是弹层触发器（写回、菜单），
+    // 禁用的点不动——两者都会让这个循环卡死在同一颗按钮上
+    const collapsed = inspector
+      .locator('button[aria-expanded="false"]:not([disabled]):not([aria-haspopup])')
+      .first()
+    if (!(await collapsed.count())) break
+    await collapsed.click()
+    await page.waitForTimeout(80)
+  }
+
+  // 这一屏最容易犯的是「控件没有名字」：颜色格是两个输入框（取色盘 + 十六进制），
+  // 开关是 `<button role="switch">`——`<label>` 包着它**不**给它取名（HTML-AAM
+  // 给 button 的取名方式是 name from content），chromium 大方、webkit 按规范办事。
+  const named = await new AxeBuilder({ page }).withRules(['button-name', 'label']).analyze()
+  expect(
+    named.violations.map((v) => ({
+      id: v.id,
+      nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+    })),
+  ).toEqual([])
+
+  await expectAccessible(page, {
+    allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+})
+
 test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
   app,
   page,

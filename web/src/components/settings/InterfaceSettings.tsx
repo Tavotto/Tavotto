@@ -4,7 +4,7 @@ import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import { CompanionDiagram } from './CompanionDiagram'
-import { SettingRow, SettingSection } from './SettingRow'
+import { SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -45,6 +45,7 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           status={pinLimit}
         >
           <Toggle
+            aria-labelledby={settingRowLabelId('setting-left-pinned')}
             id="setting-left-pinned"
             checked={leftPinned}
             onChange={(v) => useUiStore.getState().setLeftPinned(v)}
@@ -57,6 +58,7 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           status={pinLimit}
         >
           <Toggle
+            aria-labelledby={settingRowLabelId('setting-right-pinned')}
             id="setting-right-pinned"
             checked={rightPinned}
             onChange={(v) => useUiStore.getState().setRightPinned(v)}
@@ -75,6 +77,7 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           controlId="setting-drag-companions"
         >
           <Toggle
+            aria-labelledby={settingRowLabelId('setting-drag-companions')}
             id="setting-drag-companions"
             checked={withCompanions}
             onChange={(v) => useUiStore.getState().setCanvasPref({ dragAxesWithCompanions: v })}

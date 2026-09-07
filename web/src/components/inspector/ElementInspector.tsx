@@ -1651,6 +1651,7 @@ function BatchFieldRow({
         return (
           <>
             <ColorField
+              ariaLabel={label}
               value={mixed ? '#000000' : String(first ?? '#000000')}
               onChange={(v) => write(v, true)}
               onGestureEnd={gesture.end}
@@ -1661,7 +1662,7 @@ function BatchFieldRow({
       case 'bool':
         return (
           <>
-            <Toggle checked={!mixed && !!first} onChange={writeOnce} />
+            <Toggle aria-label={label} checked={!mixed && !!first} onChange={writeOnce} />
             {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
           </>
         )
@@ -2201,6 +2202,7 @@ function FieldRow({
               每次变化只贴 SVG，blur 或安静一会儿才定稿——否则拖一次颜色就是
               十几条撤销 + 十几次 matplotlib 渲染 */}
           <ColorField
+            ariaLabel={label}
             value={String(value ?? '#000000')}
             onChange={(v) => write(v, true)}
             onGestureEnd={gesture.end}
@@ -2211,7 +2213,7 @@ function FieldRow({
     case 'bool':
       return wrap(
         <>
-          <Toggle checked={!!value} onChange={writeOnce} />
+          <Toggle aria-label={label} checked={!!value} onChange={writeOnce} />
         </>
       )
 

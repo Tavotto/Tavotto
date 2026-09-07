@@ -307,6 +307,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               />
               {bg && (
                 <ColorField
+                  ariaLabel={tx('background')}
                   value={bg}
                   onChange={(v) => patch(hist('setTextBg'), (o) => (o.bg = v))}
                 />
@@ -332,6 +333,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               />
               {borderColor && (
                 <ColorField
+                  ariaLabel={tx('border')}
                   value={borderColor}
                   onChange={(v) => patch(hist('setTextBorder'), (o) => (o.borderColor = v))}
                 />

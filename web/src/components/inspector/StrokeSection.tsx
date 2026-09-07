@@ -102,6 +102,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
         </Row>
         <Row label={sk('color')}>
           <ColorField
+            ariaLabel={sk('color')}
             value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
             onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
           />
@@ -172,6 +173,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             />
             {fill && (
               <ColorField
+                ariaLabel={sk('fill')}
                 value={fill}
                 onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
               />
@@ -198,6 +200,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         )}
         <Row label={sk('strokeColor')}>
           <ColorField
+            ariaLabel={sk('strokeColor')}
             value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
             onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />

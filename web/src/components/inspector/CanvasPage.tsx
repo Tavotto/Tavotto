@@ -166,12 +166,14 @@ export function CanvasPage() {
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('transparentBg')}>
             <Toggle
+              aria-label={cv('transparentBg')}
               checked={!!page.transparent}
               onChange={(v) => setPageSetup({ transparent: v }, hist('setPageBackground'))}
             />
           </ToggleRow>
           <Row label={cv('bgColor')} labelWidth={LABEL_W}>
             <ColorField
+              ariaLabel={cv('bgColor')}
               value={page.bg ?? '#FFFFFF'}
               onChange={(v) => setPageSetup({ bg: v }, hist('setPageBgColor'))}
               className={page.transparent ? 'pointer-events-none opacity-40' : undefined}
@@ -191,10 +193,10 @@ export function CanvasPage() {
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('rulers')}>
-            <Toggle checked={ui.showRulers} onChange={ui.setShowRulers} />
+            <Toggle aria-label={cv('rulers')} checked={ui.showRulers} onChange={ui.setShowRulers} />
           </ToggleRow>
           <ToggleRow label={cv('grid')}>
-            <Toggle checked={ui.showGrid} onChange={ui.setShowGrid} />
+            <Toggle aria-label={cv('grid')} checked={ui.showGrid} onChange={ui.setShowGrid} />
           </ToggleRow>
           {ui.showGrid && (
             <Row label={cv('gridSize')} labelWidth={LABEL_W}>
@@ -220,6 +222,7 @@ export function CanvasPage() {
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('snapEnable')}>
             <Toggle
+              aria-label={cv('snapEnable')}
               checked={ui.snapEnabled}
               onChange={(v) => ui.setCanvasPref({ snapEnabled: v })}
             />
@@ -228,12 +231,14 @@ export function CanvasPage() {
             <>
               <ToggleRow label={cv('snapGrid')}>
                 <Toggle
+                  aria-label={cv('snapGrid')}
                   checked={ui.snapToGrid}
                   onChange={(v) => ui.setCanvasPref({ snapToGrid: v })}
                 />
               </ToggleRow>
               <ToggleRow label={cv('snapGuides')}>
                 <Toggle
+                  aria-label={cv('snapGuides')}
                   checked={ui.snapToGuides}
                   onChange={(v) => ui.setCanvasPref({ snapToGuides: v })}
                 />
@@ -242,6 +247,7 @@ export function CanvasPage() {
                 <Tip label={cv('snapObjectsTip', { mod: MOD })} side="left">
                   <span className="flex">
                     <Toggle
+                      aria-label={cv('snapObjects')}
                       checked={ui.snapToObjects}
                       onChange={(v) => ui.setCanvasPref({ snapToObjects: v })}
                     />
@@ -267,6 +273,7 @@ export function CanvasPage() {
         <div className="flex items-center gap-2">
           <ToggleRow label={cv('lock')} className="min-w-0 flex-1">
             <Toggle
+              aria-label={cv('lock')}
               checked={ui.guidesLocked}
               onChange={(v) => ui.setCanvasPref({ guidesLocked: v })}
             />
@@ -318,6 +325,7 @@ export function CanvasPage() {
             <Tip label={cv('safeAreaTip')} side="left">
               <span className="flex">
                 <Toggle
+                  aria-label={cv('show')}
                   checked={ui.showSafeArea}
                   onChange={(v) => ui.setCanvasPref({ showSafeArea: v })}
                 />
