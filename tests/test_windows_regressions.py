@@ -507,70 +507,174 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 _CI_COMMON = "_common"
 
 
-def _utf8_reconfigure_sites(node: ast.AST) -> list[ast.Call]:
-    """`<stream>.reconfigure(encoding="utf-8", ...)` 的**真实 Call 节点**。
+#: 要钉住的两条流。**stderr 不是可选的**：#284 的原始现场里，Windows 的
+#: `communicate()` 在 `_readerthread` 里解码，线程死掉之后 `stderr` 静默变成
+#: `None` 而 `returncode` 照常——诊断信息全在 stderr，只钉 stdout 的脚本
+#: 复现的正是同一个「退出码全绿、报文消失」。
+_REQUIRED_STREAMS = frozenset({"stdout", "stderr"})
+
+
+def _sys_stream(expr: ast.expr) -> str | None:
+    """`sys.stdout` / `sys.stderr` → `"stdout"` / `"stderr"`；别的一律 None。"""
+    if (
+        isinstance(expr, ast.Attribute)
+        and expr.attr in _REQUIRED_STREAMS
+        and isinstance(expr.value, ast.Name)
+        and expr.value.id == "sys"
+    ):
+        return expr.attr
+    return None
+
+
+def _is_utf8_reconfigure(call: ast.Call) -> bool:
+    """这个 Call 是不是 `<x>.reconfigure(encoding="utf-8", ...)`。
 
     要 AST 的 Call，不要子串：注释、docstring、以及「告诉用户去加这一行」的那句
     `print` 全都满足子串判据。`encoding` 还必须是 utf-8 **字面量**——`encoding=None`
     就是「按系统默认」，而那正是这个 bug 本身。
     """
-    sites = []
-    for sub in ast.walk(node):
-        if not isinstance(sub, ast.Call) or getattr(sub.func, "attr", None) != "reconfigure":
-            continue
-        enc = next((k.value for k in sub.keywords if k.arg == "encoding"), None)
-        if (
-            isinstance(enc, ast.Constant)
-            and isinstance(enc.value, str)
-            and enc.value.lower().replace("-", "").replace("_", "") == "utf8"
-        ):
-            sites.append(sub)
-    return sites
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "reconfigure":
+        return False
+    enc = next((k.value for k in call.keywords if k.arg == "encoding"), None)
+    return (
+        isinstance(enc, ast.Constant)
+        and isinstance(enc.value, str)
+        and enc.value.lower().replace("-", "").replace("_", "") == "utf8"
+    )
 
 
-def _pins_utf8_on_the_way_in(tree: ast.Module) -> bool:
-    """这份模块跑起来时，那一钉**够得着**吗。
+def _statically_dead(test: ast.expr) -> bool:
+    """`if False:` / `if 0:` / `while None:` ——静态就走不到的分支。"""
+    return isinstance(test, ast.Constant) and not test.value
 
-    「够得着」= 在本模块的调用图上从进程入口到得了：直接钉在模块作用域
+
+def _statically_taken(test: ast.expr) -> bool:
+    """`if True:` / `if 1:` ——`orelse` 静态就走不到。"""
+    return isinstance(test, ast.Constant) and bool(test.value)
+
+
+def _scan(node: ast.AST, aliases: dict[str, set[str]]) -> tuple[set[str], set[str]]:
+    """扫一个节点，返回（**被钉住的流**, 出现过的被调函数名）。
+
+    两件事在这里同时做，因为它们要共享同一份「剪过死分支」的遍历：
+
+    * **接收者要认**。`.reconfigure(encoding="utf-8")` 挂在什么上决定它钉了谁：
+      `sys.stdout` / `sys.stderr` 直接认；`for _stream in (sys.stdout, sys.stderr):`
+      这种循环别名跟一层（仓库里 40 处 reconfigure 全是这两种形状之一）。
+      **判不出的接收者一律不算钉住**（fail closed）——写成别的形状会被打红，
+      而不是安静放行；要支持新形状就回来扩这里，别放宽判据。
+    * **静态死分支要剪**。`if False:` 里的那一钉进程永远走不到，AGENTS.md
+      「判源码结构用 AST」那条明写了要剪掉它。这与下面调用图那层是**两个不同的
+      维度**：那层问「这个函数被调到了吗」，这层问「走到这个函数里之后，这条语句
+      会不会执行」，缺哪一个都能让门禁把没钉住的读成钉住了。
+
+    函数 / 类定义体不下钻——**定义不是执行**，要不要看它们由调用图那一层决定。
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return set(), set()
+
+    pinned: set[str] = set()
+    calls: set[str] = set()
+
+    def merge(child: ast.AST, env: dict[str, set[str]] | None = None) -> None:
+        p, c = _scan(child, aliases if env is None else env)
+        pinned.update(p)
+        calls.update(c)
+
+    if isinstance(node, ast.Call):
+        calls.add(getattr(node.func, "attr", getattr(node.func, "id", "")) or "")
+        if _is_utf8_reconfigure(node):
+            receiver = node.func.value  # type: ignore[union-attr]
+            named = _sys_stream(receiver)
+            if named:
+                pinned.add(named)
+            elif isinstance(receiver, ast.Name):
+                pinned.update(aliases.get(receiver.id, ()))
+        for child in ast.iter_child_nodes(node):
+            merge(child)
+        return pinned, calls
+
+    if isinstance(node, ast.If):
+        merge(node.test)
+        if not _statically_dead(node.test):
+            for st in node.body:
+                merge(st)
+        if not _statically_taken(node.test):
+            for st in node.orelse:
+                merge(st)
+        return pinned, calls
+
+    if isinstance(node, ast.While):
+        merge(node.test)
+        if not _statically_dead(node.test):
+            for st in node.body:
+                merge(st)
+        for st in node.orelse:
+            merge(st)
+        return pinned, calls
+
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        merge(node.iter)
+        inner = dict(aliases)
+        if isinstance(node.target, ast.Name):
+            bound: set[str] | None = None
+            if isinstance(node.iter, (ast.Tuple, ast.List)):
+                named = [_sys_stream(e) for e in node.iter.elts]
+                if named and all(named):
+                    bound = {n for n in named if n}
+            if bound:
+                inner[node.target.id] = bound
+            else:
+                inner.pop(node.target.id, None)  # 重绑成了别的东西，旧别名作废
+        for st in node.body:
+            merge(st, inner)
+        for st in node.orelse:
+            merge(st)
+        return pinned, calls
+
+    # 其余语法（try / with / match / 普通语句）按子节点通用递归：将来新增一种
+    # 复合语法时它不会变成一个「不剪死分支」的洞。
+    for child in ast.iter_child_nodes(node):
+        merge(child)
+    return pinned, calls
+
+
+def _pinned_streams(tree: ast.Module) -> set[str]:
+    """这份模块跑起来时，**哪几条流**真的被钉成了 UTF-8。
+
+    「跑起来时」= 在本模块的调用图上从进程入口到得了：直接钉在模块作用域
     （`build_frontend.py` 那一段），或者钉在一个从模块作用域可达的本模块函数里
     （`_force_utf8()` 定义在上面、`main()` 里调一次——仓库里九个脚本是这个形状）。
 
     **这一层可达性不能省**：只写 `def _force_utf8(): ...` 而从不调用它，子串判据
-    照样绿，而进程该炸还是炸——「定义满足了判据」是本仓库反复踩的那个洞。
+    照样绿，而进程该炸还是炸——「定义满足了判据」是本仓库反复踩的那个洞。控制流
+    方向的死分支由 `_scan` 剪掉，两层是不同的维度。
 
-    盲点写在明处：判到**函数**粒度为止。「函数被调到了，但那句 reconfigure 在一条
-    没走的分支里」「按名字动态取出来再调」这两种静态判不出，不假装覆盖到了；行为级
-    那条抽样（下面）才是它们的兜底。
+    盲点写在明处：判到**函数**粒度为止。运行期才定的分支（`if os.name == "nt":`
+    之类）两侧都算走得到；按名字动态取出来再调、跨模块的间接钉法都判不出——
+    判不出的一律**不算钉住**，行为级那三条抽样（下面）是它们的兜底。
     """
     funcs = {
         st.name: st for st in tree.body if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-
-    def called_names(node: ast.AST) -> set[str]:
-        return {
-            getattr(c.func, "attr", getattr(c.func, "id", "")) or ""
-            for c in ast.walk(node)
-            if isinstance(c, ast.Call)
-        }
-
-    # 种子 = 模块作用域真正会执行的语句，含 `if __name__ == "__main__":` 那一块。
-    seeds = [
-        st
-        for st in tree.body
-        if not isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    ]
-    if any(_utf8_reconfigure_sites(st) for st in seeds):
-        return True
+    pinned: set[str] = set()
+    queue: list[str] = []
+    for st in tree.body:
+        p, c = _scan(st, {})
+        pinned |= p
+        queue.extend(c)
 
     seen: set[str] = set()
-    queue = [n for st in seeds for n in called_names(st)]
     while queue:
         name = queue.pop()
         if name in seen or name not in funcs:
             continue
         seen.add(name)
-        queue.extend(called_names(funcs[name]))
-    return any(_utf8_reconfigure_sites(funcs[n]) for n in seen)
+        for st in funcs[name].body:
+            p, c = _scan(st, {})
+            pinned |= p
+            queue.extend(c)
+    return pinned
 
 
 def _imports_the_ci_common_module(tree: ast.Module) -> bool:
@@ -628,12 +732,16 @@ def test_the_script_entry_point_scan_actually_sees_the_scripts():
 
 
 def test_script_entry_points_pin_their_output_encoding():
-    """`scripts/` 下每一个会被 spawn 的入口都必须钉住自己的 stdout/stderr 编码。
+    """`scripts/` 下每一个会被 spawn 的入口都必须钉住自己的 stdout **和** stderr。
 
-    主语与理由见本节抬头。缺口的形状：Windows 上 stdout 一旦不是真控制台就退回
-    系统区域编码，第一句中文输出要么 `UnicodeEncodeError` 打死脚本，要么按
-    `backslashreplace` 编出父进程解不了的字节——两种都让**报文**消失而**退出码**
-    看不出异样。
+    主语与理由见本节抬头。缺口的形状：Windows 上流一旦不是真控制台就退回系统区域
+    编码，第一句中文输出要么 `UnicodeEncodeError` 打死脚本，要么按 `backslashreplace`
+    编出父进程解不了的字节——两种都让**报文**消失而**退出码**看不出异样。
+
+    **两条流都要，stderr 不是可选的**：#284 的原始现场里，父进程炸在
+    `_readerthread` 之后 `stderr` 静默变成 `None` 而 `returncode` 照常。脚本的
+    诊断信息全在 stderr——只钉 stdout 的话，报文照样在同一个地方消失，而这条门禁
+    会替它作证。判据落在 `_pinned_streams()`：它认接收者、并剪掉静态死分支。
 
     豁免只有一条（`import _common`，见 `_imports_the_ci_common_module` 的
     docstring），**写在判据里、带前提、前提由另一条用例钉住**——不靠「这个文件不
@@ -643,14 +751,19 @@ def test_script_entry_points_pin_their_output_encoding():
     missing = []
     for path in _script_entry_points():
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        if _pins_utf8_on_the_way_in(tree) or _imports_the_ci_common_module(tree):
+        if _imports_the_ci_common_module(tree):
             continue
-        missing.append(str(path.relative_to(_SCRIPTS_DIR.parent)))
+        absent = _REQUIRED_STREAMS - _pinned_streams(tree)
+        if not absent:
+            continue
+        rel = str(path.relative_to(_SCRIPTS_DIR.parent))
+        missing.append(f"{rel}（没钉住：{'、'.join(sorted(absent))}）")
     assert not missing, (
-        "这些入口脚本没把 stdout/stderr 钉成 UTF-8，Windows 上被捕获/重定向时"
+        "这些入口脚本没把 stdout/stderr 都钉成 UTF-8，Windows 上被捕获/重定向时"
         "中文输出会静默丢掉（甚至炸掉父进程的读线程）：\n  "
         + "\n  ".join(missing)
-        + "\n照 scripts/build_frontend.py 抬头那段加上：\n"
+        + "\n**两条流都要钉**——诊断信息全在 stderr，只钉 stdout 会让报文照样消失。"
+        "\n照 scripts/build_frontend.py 抬头那段加上：\n"
         "  for _stream in (sys.stdout, sys.stderr):\n"
         '      if hasattr(_stream, "reconfigure"):\n'
         '          _stream.reconfigure(encoding="utf-8", errors="replace")'
@@ -667,9 +780,11 @@ def test_the_ci_common_module_still_pins_utf8_at_import_time():
     common = _SCRIPTS_DIR / "ci" / "_common.py"
     assert common.is_file(), f"{common} 不在了——上面那条豁免正在放行十一个没人看着的脚本"
     tree = ast.parse(common.read_text(encoding="utf-8"))
-    assert _pins_utf8_on_the_way_in(tree), (
-        "_common.py 不再在 import 期钉 UTF-8 了——`import _common` 那条豁免的前提没了。"
-        "要么把那一句放回模块作用域，要么删掉豁免、让那十一个脚本各自显式钉一次。"
+    absent = _REQUIRED_STREAMS - _pinned_streams(tree)
+    assert not absent, (
+        f"_common.py 不再在 import 期钉住 {'、'.join(sorted(absent))} 了——"
+        "`import _common` 那条豁免的前提没了。要么把那一句放回模块作用域，"
+        "要么删掉豁免、让那十一个脚本各自显式钉一次。"
     )
 
 
