@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { enterElementEdit, groupMates } from '@/store/actions'
+import { beginCrop, enterElementEdit, groupMates } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject } from '@/types/document'
@@ -99,7 +99,7 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
       // 可参数化面板双击进图内编辑，普通面板双击进裁剪
       // （旋转过的面板裁剪框方向会与画布对不上，先不进裁剪态）
       if (obj.script) enterElementEdit(obj.id)
-      else if (!panelRotation(obj)) useUiStore.getState().setCropTarget(obj.id)
+      else if (!panelRotation(obj)) beginCrop(obj.id)
     }
   }
 
