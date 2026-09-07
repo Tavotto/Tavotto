@@ -13,6 +13,7 @@ stderr 与用户脚本的 stdout 都落进那个文件，所以「有没有新�
 """
 
 import json
+import os
 import threading
 import time
 
@@ -132,6 +133,55 @@ def test_without_a_watchdog_the_behaviour_is_the_old_flat_one(worker):
     waited, silent = worker._wait_with_watchdog(blocked, timeout=0.2, idle=None)
     assert 0.2 <= time.monotonic() - started < 1.5
     assert waited >= 0.2 and silent == 0.0
+
+
+# ------------------------------------------------- 看门狗看得见真实的那个日志
+def test_the_watchdog_can_see_the_real_log(worker):
+    """`_log_size` 对**真实 worker 的 log_path、走默认根**必须量得到、且会变大。
+
+    这是本判据唯一会**静默**坏掉的地方。`_log_size` 走 `_contained_log`：先
+    `realpath` 再按前缀把路径钉在 `ENGINE_CACHE` 内（CodeQL 那条路径注入的解药）。
+    如果哪天归一化行为变了——Windows 的盘符大小写、8.3 短名、`RUNNER_TEMP` 那种
+    junction、UNC——它会开始**误拒真实路径**，于是 `_log_size` 恒回 0，看门狗
+    再也看不见进展，`build` 静默退化成 4 小时的平坦上限。
+
+    **那一刻不会有任何东西变红**：没有异常、没有报错，只是用户从等 20 分钟变成等
+    4 小时。端到端冒烟也发现不了——它跑得快，根本不会等到上限，所以它没有机会
+    区分「看门狗在工作」和「看门狗瞎了但兜底还在」。
+
+    此前的用例只钉了**拒绝**方向（越界路径回 0），接受方向一条都没有——
+    「判据只钉了一条边」，反方向坏掉时它不响。这一条补的就是那另一条边。
+    """
+    assert pool._log_size(worker.log_path) == 0  # 空文件
+    worker.log_path.write_bytes(b"[INFO] 1\n")
+    first = pool._log_size(worker.log_path)
+    assert first > 0, (
+        "默认根下量不到真实 worker 的日志——看门狗此刻已经瞎了，而 build 会静默退化成平坦上限"
+    )
+    with worker.log_path.open("ab") as f:
+        f.write(b"[INFO] 2\n")
+    assert pool._log_size(worker.log_path) > first, "日志长大了却量不出变化"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="符号链接根是 POSIX 上 junction 的等价物")
+def test_a_symlinked_cache_root_still_resolves(tmp_path, monkeypatch):
+    """缓存根本身是个符号链接时也要量得到。
+
+    CI runner 的临时目录常是 junction / symlink（macOS 上 `/tmp` → `/private/tmp`
+    就是），而包含判断两侧都过 `realpath`——**只有两侧都过才成立**。这条钉住
+    「根是链接」这个真实形状，而不是只在规整目录上验过就宣布安全。
+    """
+    real = tmp_path / "real-cache"
+    real.mkdir()
+    link = tmp_path / "linked-cache"
+    link.symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(pool, "ENGINE_CACHE", link)
+    log = real / "s1" / "worker.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"x" * 7)
+    # 通过链接那条路径去问，答案必须与实体一致
+    assert pool._log_size(link / "s1" / "worker.log") == 7
+    assert pool._log_tail_from(link / "s1" / "worker.log", 0) == "xxxxxxx"
 
 
 # --------------------------------------------------------------- 只对 build
