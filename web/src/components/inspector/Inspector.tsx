@@ -106,6 +106,7 @@ export function Inspector({
             <button
               key={id}
               role="tab"
+              data-inspector-tab={id}
               aria-selected={tab === id}
               onClick={() => setTab(id)}
               className={cn(

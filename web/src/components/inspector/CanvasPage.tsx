@@ -201,6 +201,7 @@ export function CanvasPage() {
           {ui.showGrid && (
             <Row label={cv('gridSize')} labelWidth={LABEL_W}>
               <NumberField
+                ariaLabel={cv('gridSize')}
                 value={ui.gridSize}
                 min={1}
                 max={50}
@@ -334,6 +335,7 @@ export function CanvasPage() {
           </ToggleRow>
           <Row label={cv('margin')} labelWidth={LABEL_W}>
             <NumberField
+              ariaLabel={cv('margin')}
               value={page.margin ?? 0}
               min={0}
               max={40}
