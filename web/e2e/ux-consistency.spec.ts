@@ -329,7 +329,12 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   // （`textContent()` 连折叠起来的技术详情一起读了，里面就有绝对路径），
   // 正向那条则在 CI 上必红。`innerText` 按渲染结果给出换行，且**只含可见文字**，
   // 这正是 T40 要判的东西：用户看得见的首屏里没有全路径。
-  const absolutePath = /(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/
+  // 形状要同时认 POSIX 的 `/opt/...` 与 Windows 的 `D:\a\...`。原先枚举的是
+  // POSIX 顶级目录名（usr|opt|home|Users|private|tmp），windows-exe-smoke 上
+  // 打包产物报的是 `D:\a\Tavotto\...\runtime\python.exe`，`\a\` 不在那张表里
+  // ——**产品没问题，是判据只认得一种平台的路径长相**。
+  // 前导守卫排除 `:` 与 `/`，挡掉 `https://…` 这类 URL 的双斜杠。
+  const absolutePath = /(^|[^\w:/])(?:[A-Za-z]:)?[/\\][^\s]{8,}/
 
   // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
   await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
