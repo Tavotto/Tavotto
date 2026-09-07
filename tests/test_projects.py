@@ -184,6 +184,31 @@ def test_create_rejects_a_leaf_that_is_not_a_legal_folder_name(client, tmp_path)
     assert not (tmp_path / "CON").exists()  # 拒了就一个字节都别写
 
 
+def test_create_judges_the_leaf_the_user_actually_typed(client, tmp_path):
+    """两侧判据必须用**同一把尺子**，谁的内建函数都不许先碰那个串。
+
+    端点开头对整条路径做 `raw.strip()`。Python 的 `str.strip()` 与 JavaScript
+    的 `String.trim()` 认的空白字符集不一样——`\x1c`–`\x1f` 只有 Python 认，
+    `\ufeff` 只有 JS 认。先 strip 再判的话，`parent/figs\x1c` 在前端是
+    `control_char`（拒），到后端被 strip 成 `figs` 建了出来：同一个输入，两侧
+    两个答案，而这正是「界面挡住了」被当成安全边界时最容易漏掉的一格。
+
+    所以末位分量取自没被 strip 过的原串，合法性交给 `exportreq.check_filename`
+    ——它自己带一份写死的空白集合，两侧同源。
+    """
+    hidden = tmp_path / "figs\x1c"
+    resp = client.post("/api/projects/open", json={"path": str(hidden), "create": True})
+    assert resp.status_code == 400, "只有 Python 的 strip 认的那种空白被吃掉了"
+    assert resp.get_json()["code"] == "unsafe_project_name"
+    assert not (tmp_path / "figs").exists()  # 也没有被 strip 成一个「差不多」的名字
+
+    # 另一个方向：只有 JS 的 trim 认的那种（strip 留得住），同样拒
+    bom = tmp_path / "figs\ufeff"
+    resp = client.post("/api/projects/open", json={"path": str(bom), "create": True})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "unsafe_project_name"
+
+
 def test_create_still_accepts_a_normal_name(client, tmp_path):
     """反向：正常名字照旧能建——判据别宽到把正常用法也拦了。"""
     for name in ("figs", "论文插图", "fig-1.v2", "COM10"):
