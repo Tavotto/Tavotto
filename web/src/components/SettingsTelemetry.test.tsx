@@ -207,6 +207,61 @@ describe('可撤销：两个方向都写得回后端', () => {
     ])
   })
 
+  /**
+   * 设置还没载入完就点得动 = 与在途的 `load()` 赛跑（评审 #300-4）。
+   *
+   * `settings` 是 null 时 `hard` 算出来是 false，于是两档都可点。那一下点下去
+   * PATCH 先回来写下同意态，随后那份**陈旧**的 GET 响应把 store 里的
+   * `settings` 连同 `lib/telemetry` 的缓存一起覆盖回去——界面显示的与后端
+   * 刚存下的同意状态从此对不上，而且用户以为自己已经表过态了。
+   *
+   * 判据**真的把请求悬在半空**（GET 的 promise 不 resolve 就点），不是断言
+   * `disabled` 属性：属性写对了而 `onChange` 那条路没被挡住，缺陷照样在。
+   */
+  it('设置还没载入完：那一下点不出去（GET 真的悬在半空）', async () => {
+    let settle!: (v: Awaited<ReturnType<typeof fetchTelemetrySettings>>) => void
+    fetchMock.mockReturnValue(
+      new Promise<Awaited<ReturnType<typeof fetchTelemetrySettings>>>((res) => {
+        settle = res
+      }),
+    )
+    patchMock.mockResolvedValue(settings({ consent: 'enabled', enabled: true }))
+    useTelemetryStore.setState({ settings: null, askOpen: false })
+    useUiStore.setState({ settingsOpen: true, settingsSection: 'about' })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <SettingsDialog />
+        </TooltipProvider>,
+      )
+    })
+
+    // 前提：这一刻 GET 确实还没回来（不然下面这一条什么都没证明）
+    expect(fetchMock).toHaveBeenCalled()
+    expect(useTelemetryStore.getState().settings).toBeNull()
+
+    expect(radios()).toHaveLength(2)
+    await act(async () => {
+      seg(st('about.telemetry.optIn'))?.click()
+      seg(st('about.telemetry.optOut'))?.click()
+    })
+    expect(patchMock).not.toHaveBeenCalled()
+
+    // 载入完成之后照常可点，而且不会被那份 GET 再覆盖回去
+    await act(async () => {
+      settle(settings({ consent: 'unset', enabled: false }))
+    })
+    await act(async () => {
+      seg(st('about.telemetry.optIn'))?.click()
+    })
+    expect(patchMock).toHaveBeenCalledWith('enabled', 'settings')
+    expect(useTelemetryStore.getState().settings?.consent).toBe('enabled')
+    expect(chosen()).toBe(seg(st('about.telemetry.optIn')))
+  })
+
   it('TAVOTTO_NO_TELEMETRY 关着时两档都点不动，并说明是谁关的', async () => {
     await open(settings({ consent: 'unset', enabled: false, hard_disabled: true }))
     expect(radios().every((b) => b.disabled)).toBe(true)
