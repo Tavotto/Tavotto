@@ -11,15 +11,16 @@
     "altClick": "{{alt}}+点击"
   },
   "group": {
+    "file": "文件",
+    "selection": "选择",
+    "editing": "编辑",
     "arrange": "排列与层级",
-    "editing": "选择与编辑",
-    "general": "通用",
-    "tools": "工具",
     "view": "视图",
+    "tools": "工具",
     "tutorial": "教程"
   },
   "key": {
-    "copyPaste": "复制 / 粘贴对象（可跨布局文档）",
+    "copyPaste": "复制 / 粘贴对象（可跨文档）",
     "delete": "删除对象；图内编辑时 = 隐藏元素（可恢复）",
     "duplicate": "原位复制所选",
     "enter": "编辑所选：文字进入编辑，可参数化面板进图内编辑",
@@ -47,5 +48,8 @@
     "tutorialPause": "暂停教程（焦点在教程卡片上时）",
     "cycleOverlap": "在重叠的图内元素之间轮换选中（双纵轴的两个子图容器）"
   },
-  "title": "快捷键"
+  "title": "快捷键",
+  "search": "搜索快捷键…",
+  "searchAria": "搜索快捷键",
+  "noMatch": "没有匹配的快捷键"
 }

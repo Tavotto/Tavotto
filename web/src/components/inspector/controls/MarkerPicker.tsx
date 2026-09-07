@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useState } from 'react'
 import { t as translate } from '@/i18n'
+import type { MarkerShape } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { optionLabel } from '../roles/registry'
 import { Popover } from '../../ui/Popover'
@@ -14,8 +15,17 @@ const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
 /**
  * Marker 选择器：图形网格，不再要求用户记住 "D" 是菱形、"^" 是上三角。
  * 写入值仍是 Matplotlib 原始 marker 字符；"original" 表示回到脚本原始
- * 路径（散点整体替换过 marker 之后的还原档）；认不出的 marker 显示原始
- * 代码字样，选它 = 保持原样。
+ * 路径（散点整体替换过 marker 之后的还原档）。
+ *
+ * **取值说不出形状的那两种情形，形状由引擎的只读事实补上**（`MarkerShape`，
+ * manifest 的 `marker_current`）：散点没被换过标记时取值是 `"original"`，
+ * 曲线的取值可能是 `(5, 1, 0)` / `$\alpha$` / 一个 Path 的 repr。事实里
+ * 认得出名字的复用下面这份 switch 的图形，认不出的照顶点画。
+ *
+ * 「脚本原始」那一格还多一份事实（`marker_original`）：换过标记之后
+ * `marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在图上——
+ * 那一格于是只剩一个空的继承状态点，看不出点下去会变成什么。引擎有
+ * override 时才发原样，缺席即「与 current 相同」。
  */
 
 /** 已知 marker → 12×12 viewBox 里的图形 */
@@ -56,27 +66,177 @@ function markerShape(code: string): React.ReactNode | null {
   }
 }
 
-function MarkerPreview({ code }: { code: string }) {
-  const shape = markerShape(code)
-  if (shape) {
+/* -------------------- 引擎发来的几何 → 同一个 12×12 viewBox ------------------ */
+
+/** 单位框四周留的边距：让照顶点画出来的形状与上面那份手绘图形份量相当 */
+const PAD = 1.8
+const SPAN = 12 - PAD * 2
+/** 引擎的单位框是 [-0.5, 0.5] 且 **y 向上**；SVG 的 y 向下，所以 y 要翻过来 */
+const sx = (v: number) => (PAD + (v + 0.5) * SPAN).toFixed(2)
+const sy = (v: number) => (PAD + (0.5 - v) * SPAN).toFixed(2)
+
+/** matplotlib 的路径码（`engine/manifest.py` 原样发过来的那几个数） */
+const MOVETO = 1
+const LINETO = 2
+const CURVE3 = 3
+const CURVE4 = 4
+const CLOSEPOLY = 79
+
+/**
+ * 顶点 + codes → SVG 的 `d`。
+ *
+ * `codes` 为 null 是一种取值不是缺失：matplotlib 用它表示「首点 MOVETO，
+ * 其余 LINETO」。CLOSEPOLY 那一个顶点是占位（引擎发的就是 `[0, 0]`），
+ * 只闭合、不读坐标。认不出的码（STOP 之类）跳过——宁可少画一段也不猜。
+ */
+function toSvgPath(vertices: [number, number][], codes: number[] | null): string {
+  const out: string[] = []
+  let i = 0
+  while (i < vertices.length) {
+    const code = codes ? codes[i] : i === 0 ? MOVETO : LINETO
+    const v = vertices[i]
+    if (code === MOVETO || code === LINETO) {
+      out.push(`${code === MOVETO ? 'M' : 'L'}${sx(v[0])} ${sy(v[1])}`)
+      i += 1
+    } else if (code === CURVE3) {
+      const end = vertices[i + 1]
+      if (!end) break
+      out.push(`Q${sx(v[0])} ${sy(v[1])} ${sx(end[0])} ${sy(end[1])}`)
+      i += 2
+    } else if (code === CURVE4) {
+      const c2 = vertices[i + 1]
+      const end = vertices[i + 2]
+      if (!c2 || !end) break
+      out.push(`C${sx(v[0])} ${sy(v[1])} ${sx(c2[0])} ${sy(c2[1])} ${sx(end[0])} ${sy(end[1])}`)
+      i += 3
+    } else if (code === CLOSEPOLY) {
+      out.push('Z')
+      i += 1
+    } else {
+      i += 1
+    }
+  }
+  return out.join(' ')
+}
+
+/**
+ * 事实 → 一个形状（画不出就是 null）。
+ *
+ * **同时填充与描边**，不去猜这个标记「是不是实心的」：闭合的字形照常填出来；
+ * `x` / `+` 那种开放子路径填出来是零面积（看不见），靠描边画；而星形元组标记
+ * （`(4, 2, 0)`）是一条来回穿过中心的闭合路径，填出来同样是零面积——
+ * 只填的话它会整个消失。一条规则同时罩住这三类。
+ */
+function shapeOfFact(fact: MarkerShape | undefined): React.ReactNode | null {
+  if (!fact) return null
+  if (fact.kind === 'named') {
+    // 引擎给的名字这边画不出（两侧漂了）→ 退回没有这个字段时的样子
+    return markerShape(fact.name)
+  }
+  if (fact.kind === 'path' && fact.vertices.length) {
     return (
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden className="shrink-0">
-        {shape}
-      </svg>
+      <path
+        d={toSvgPath(fact.vertices, fact.codes)}
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth={1}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
     )
   }
-  // 无 / 脚本原始 / 未识别：文字表达（tooltip 里有完整说明）
+  // none / multiple / too_complex：都没有「那一个形状」可画
+  return null
+}
+
+/**
+ * 预览图形的外壳。`data-marker-preview` 是给判据用的锚点：触发按钮里还有
+ * 下拉箭头、格子里还有选中角标，两个都是 `<svg>`——按标签名找的断言会被它们
+ * 咬到，于是「没画形状」这句话永远为假。
+ */
+const Svg = ({ children }: { children: React.ReactNode }) => (
+  <svg
+    width="12"
+    height="12"
+    viewBox="0 0 12 12"
+    aria-hidden
+    data-marker-preview
+    className="shrink-0"
+  >
+    {children}
+  </svg>
+)
+
+/**
+ * 取值之外，事实还多说了什么 —— 补进文字名里的那半句。
+ *
+ * 只在**取值自己说不出形状**时才补（`original` 那一档，以及认不出的代码）。
+ * 取值本身就是已知图形时补一句「（圆点）」是纯噪音。
+ */
+function shapeNote(value: string, fact: MarkerShape | undefined): string | null {
+  if (!fact || markerShape(value)) return null
+  if (fact.kind === 'named' && markerShape(fact.name)) return optionLabel('marker', fact.name)
+  if (fact.kind === 'multiple') return translate('element.markerShapeMultiple', { ns: 'inspector' })
+  return null
+}
+
+/** 文字名：取值的名字，必要时带上事实补的那半句（网格里的可达名与 tooltip 同一份） */
+function markerLabel(value: string, fact: MarkerShape | undefined): string {
+  const base = optionLabel('marker', value)
+  const note = shapeNote(value, fact)
+  return note
+    ? translate('element.markerValueWithShape', { ns: 'inspector', value: base, shape: note })
+    : base
+}
+
+function MarkerPreview({ code, current }: { code: string; current?: MarkerShape }) {
+  const shape = markerShape(code)
+  if (shape) {
+    return <Svg>{shape}</Svg>
+  }
+  const drawn = shapeOfFact(current)
+  /**
+   * `original`（散点没被整体换过标记）是**继承**，不是一个形状。
+   *
+   * 小空心状态点表示的正是「继承」（审计 T16）；以前画的是 `↺`，一个看起来
+   * 像「点了会还原」的按钮字形，而它其实什么都不是。
+   *
+   * 图上真正那个形状由引擎的 `marker_current` 补上，画在状态点**旁边**——
+   * 两件事是并列的：形状说「图上是个圆」，状态点说「这个圆是脚本给的、
+   * 你没设过」。把状态点换成形状会让继承这一档消失。
+   */
+  if (code === 'original') {
+    return (
+      <span className="flex shrink-0 items-center gap-0.5">
+        {drawn && <Svg>{drawn}</Svg>}
+        <span
+          aria-hidden
+          data-marker-inherited
+          className="grid h-3 w-3 shrink-0 place-items-center"
+        >
+          <span className="h-[7px] w-[7px] rounded-full border border-current opacity-60" />
+        </span>
+      </span>
+    )
+  }
+  // 认不出的取值：引擎给了几何就照着画，否则退回文字（名字在旁边，气泡里也是名字）
+  if (drawn) return <Svg>{drawn}</Svg>
   const text = code === 'None' || code === 'none' || code === '' ? '—' : code
   return (
     <span aria-hidden className="max-w-10 truncate font-mono text-xs">
-      {code === 'original' ? '↺' : text}
+      {text}
     </span>
   )
 }
 
+/** 「脚本原始」那一格的取值（散点专有：整体换过标记之后的还原档） */
+const ORIGINAL = 'original'
+
 export function MarkerPicker({
   value,
   options,
+  current,
+  original,
   onChange,
   ariaLabel,
 }: {
@@ -86,15 +246,42 @@ export function MarkerPicker({
    */
   value: string | null
   options: string[]
+  /**
+   * 图上此刻画的形状（manifest 的 `marker_current`）。**只描述当前值那一格**：
+   * 别的格子画的是它们自己的取值，不受事实影响。多选时各成员的事实不一致就
+   * 不给，别拿其中一个冒充全体。
+   */
+  current?: MarkerShape
+  /**
+   * **override 之前**那个形状（manifest 的 `marker_original`）。
+   *
+   * 换过标记之后 `current` 读的是图上此刻那条路径，脚本原来那条已经不在图上
+   * ——「脚本原始」那一格于是只剩一个空的继承状态点，用户看不出点下去会变成
+   * 什么。这一条补的正是那句话。**没有 override 时引擎不发它**（缺席 = 与
+   * `current` 相同），那时「脚本原始」正好就是当前值那一格，照旧用 `current`。
+   * 多选时各成员不一致同样不给。
+   */
+  original?: MarkerShape
   onChange: (v: string) => void
   ariaLabel: string
 }) {
   const [open, setOpen] = useState(false)
   const all = value && !options.includes(value) ? [value, ...options] : options
+  /**
+   * 一个格子该按哪份事实画。
+   *
+   * 「脚本原始」那一格优先按原样画——它是唯一一个**不描述当前状态**的取值，
+   * 说的是「点下去会回到哪儿」。其余格子照旧：只有当前值那一格有事实可用。
+   */
+  const factOf = (o: string): MarkerShape | undefined =>
+    o === ORIGINAL && original ? original : o === value ? current : undefined
+  /** 「脚本原始」那一格的文字名也把形状说出来，与格子里画的是同一份事实 */
+  const labelOf = (o: string): string =>
+    o === value || o === ORIGINAL ? markerLabel(o, factOf(o)) : optionLabel('marker', o)
   const grid: GridOption[] = all.map((o) => ({
     value: o,
-    label: optionLabel('marker', o),
-    preview: <MarkerPreview code={o} />,
+    label: labelOf(o),
+    preview: <MarkerPreview code={o} current={factOf(o)} />,
     code: o || '""',
   }))
 
@@ -116,9 +303,9 @@ export function MarkerPicker({
           )}
         >
           {/* 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形 */}
-          {value !== null && <MarkerPreview code={value} />}
+          {value !== null && <MarkerPreview code={value} current={factOf(value)} />}
           <span className="min-w-0 flex-1 truncate text-left">
-            {value === null ? MIXED_TEXT() : optionLabel('marker', value)}
+            {value === null ? MIXED_TEXT() : labelOf(value)}
           </span>
           <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </button>

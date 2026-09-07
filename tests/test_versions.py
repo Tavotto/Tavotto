@@ -240,3 +240,196 @@ def test_the_newest_entry_never_gets_sacrificed_even_when_it_is_auto(client, mon
     _auto(client, "d8", 1)
     versions = client.get("/api/versions/d8").get_json()["versions"]
     assert [v["auto"] for v in versions] == [True], "留下的不是最新那条"
+
+
+# --------------------------- 列表里的缩略图草图 -------------------------------
+# 列表要能画出缩略图，但**不许退化成「打开面板就拉全部版本正文」**。草图是
+# 列表端点本来就已经解析出来的那份内存数据的投影（`_load_versions` 为了数
+# 对象数就得整份解析），所以它既不多读一次盘也不多解析一遍。
+
+
+def _panel(i, file_id="a.pdf"):
+    return {
+        "id": f"p{i}",
+        "type": "panel",
+        "fileId": file_id,
+        "fileKind": "pdf",
+        "nativeW": 40,
+        "nativeH": 30,
+        "x": float(i),
+        "y": 2.0,
+        "w": 40.0,
+        "h": 30.0,
+        # 正文里最大的一块：草图一条都不该带
+        "overrides": [{"gid": "g1", "prop": "pos_frac", "value": [0.1, 0.2]}],
+        "script": "print('hi')",
+    }
+
+
+def _text(i, s="标题文字"):
+    return {
+        "id": f"t{i}",
+        "type": "text",
+        "text": s,
+        "x": 1.0,
+        "y": 1.0,
+        "w": 30.0,
+        "h": 6.0,
+        "sizePt": 9,
+        "bold": False,
+        "color": "#000",
+        "align": "left",
+    }
+
+
+def _doc_with(objects, page=None):
+    return {
+        "schema": 2,
+        "name": "fig",
+        "page": page if page is not None else {"w": 150, "h": 100},
+        "objects": objects,
+        "guides": [],
+    }
+
+
+def test_the_list_carries_no_sketch_unless_the_caller_asks_for_one(client):
+    """默认不带草图：只有需要画缩略图的调用方才付那份字节。"""
+    client.post("/api/versions/d1", json={"doc": _doc_with([_panel(0), _text(0)])})
+    plain = client.get("/api/versions/d1").get_json()["versions"]
+    assert "sketch" not in plain[0]
+    asked = client.get("/api/versions/d1?sketch=40").get_json()["versions"]
+    assert "sketch" in asked[0]
+
+
+def test_the_sketch_draws_a_thumbnail_without_carrying_the_body(client):
+    """草图够画一张缩略图，而 overrides / 脚本 / 整份正文一个字节都不在里面。"""
+    client.post(
+        "/api/versions/d1",
+        json={
+            "doc": _doc_with(
+                [
+                    _panel(0),
+                    _text(0),
+                    {
+                        "id": "s0",
+                        "type": "shape",
+                        "shape": "ellipse",
+                        "x": 5,
+                        "y": 5,
+                        "w": 9,
+                        "h": 9,
+                    },
+                ]
+            )
+        },
+    )
+    resp = client.get("/api/versions/d1?sketch=40&sketchText=24")
+    meta = resp.get_json()["versions"][0]
+    sketch = meta["sketch"]
+    assert sketch["page"] == {"w": 150.0, "h": 100.0}
+    kinds = [o["type"] for o in sketch["objects"]]
+    assert kinds == ["panel", "text", "shape"]
+    panel, text, shape = sketch["objects"]
+    # 画得出来所需的：落位 + 面板的素材身份 + 文字 + 形状种类
+    assert (panel["x"], panel["y"], panel["w"], panel["h"]) == (0.0, 2.0, 40.0, 30.0)
+    assert (panel["fileId"], panel["fileKind"]) == ("a.pdf", "pdf")
+    assert text["text"] == "标题文字"
+    assert shape["shape"] == "ellipse"
+    # 正文没有跟着来：整条响应里既没有版本文档，也没有 overrides / 脚本
+    assert "doc" not in meta
+    body = resp.get_data(as_text=True)
+    assert "overrides" not in body
+    assert "pos_frac" not in body
+    assert "print(" not in body
+
+
+def test_a_schema3_snapshot_sketches_the_canvas_the_checkpoint_came_from(client):
+    """schema 3 也出得了摘要，而且出的是**这个检查点那张画布**，不是第一张。"""
+    pd = {
+        "schema": 3,
+        "project": {"id": "p", "name": "n"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "A",
+                "page": {"w": 80, "h": 60},
+                "objects": [_text(1, "第一张")],
+                "guides": [],
+            },
+            {
+                "id": "c2",
+                "name": "B",
+                "page": {"w": 200, "h": 120},
+                "objects": [_text(2, "第二张"), _panel(2)],
+                "guides": [],
+            },
+        ],
+        "activeCanvasId": "c1",
+        "createdAt": 0,
+        "updatedAt": 0,
+    }
+    client.post("/api/versions/d1", json={"doc": pd, "canvasId": "c2", "canvasName": "B"})
+    sketch = client.get("/api/versions/d1?sketch=40&sketchText=24").get_json()["versions"][0][
+        "sketch"
+    ]
+    assert sketch["page"] == {"w": 200.0, "h": 120.0}
+    assert [o.get("text") for o in sketch["objects"] if o["type"] == "text"] == ["第二张"]
+
+
+def test_a_broken_document_costs_one_thumbnail_not_the_whole_list(client):
+    """一份坏文档只赔掉自己那张缩略图。整份时间线打不开比少一张图坏得多。"""
+    # 页面尺寸缺席 → 这一条没有草图（不替它编一个 A4 出来）
+    client.post("/api/versions/d1", json={"doc": _doc_with([_text(0)], page={"w": "宽"})})
+    # 对象缺 x/y/w/h、type 不是字符串、根本不是对象 → 画得出的照画，画不出的跳过
+    client.post(
+        "/api/versions/d1",
+        json={"doc": _doc_with(["不是对象", {"id": "x", "type": 7}, {"id": "y", "type": "text"}])},
+    )
+    resp = client.get("/api/versions/d1?sketch=40&sketchText=24")
+    assert resp.status_code == 200
+    first, second = resp.get_json()["versions"]
+    assert "sketch" not in first
+    assert second["sketch"]["objects"] == [{"type": "text", "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}]
+
+
+def test_the_sketch_is_cut_to_the_size_the_caller_asked_for(client):
+    """「一张缩略图画几个对象」是调用方说了算——后端不写第二份权威。"""
+    client.post("/api/versions/d1", json={"doc": _doc_with([_panel(i) for i in range(50)])})
+    assert (
+        len(client.get("/api/versions/d1?sketch=3").get_json()["versions"][0]["sketch"]["objects"])
+        == 3
+    )
+    assert (
+        len(client.get("/api/versions/d1?sketch=9").get_json()["versions"][0]["sketch"]["objects"])
+        == 9
+    )
+
+
+def test_the_text_in_a_sketch_is_cut_to_the_length_the_caller_asked_for(client):
+    client.post("/api/versions/d1", json={"doc": _doc_with([_text(0, "一二三四五六七八九十")])})
+    got = client.get("/api/versions/d1?sketch=40&sketchText=4").get_json()
+    assert got["versions"][0]["sketch"]["objects"][0]["text"] == "一二三四"
+    # 没要文字就不带文字（缩略图不画文字时那些字节纯属浪费）
+    silent = client.get("/api/versions/d1?sketch=40").get_json()
+    assert "text" not in silent["versions"][0]["sketch"]["objects"][0]
+
+
+def test_hidden_objects_are_dropped_before_the_cut_not_after(client):
+    """先滤隐藏再截断。反过来的话「前 N 个全是隐藏对象」的版本得到一张空图。"""
+    objects = [{**_panel(i), "hidden": True} for i in range(5)] + [_text(9, "看得见")]
+    client.post("/api/versions/d1", json={"doc": _doc_with(objects)})
+    sketch = client.get("/api/versions/d1?sketch=2&sketchText=24").get_json()["versions"][0][
+        "sketch"
+    ]
+    assert [o["type"] for o in sketch["objects"]] == ["text"]
+
+
+def test_the_transport_cap_holds_even_when_the_caller_asks_for_everything(client):
+    """`?sketch=99999` 不许把 120 条版本的全部对象一次发出去。"""
+    n = m.VERSION_SKETCH_MAX_OBJECTS + 20
+    client.post("/api/versions/d1", json={"doc": _doc_with([_panel(i) for i in range(n)])})
+    got = client.get(f"/api/versions/d1?sketch={n}&sketchText=99999").get_json()
+    assert len(got["versions"][0]["sketch"]["objects"]) == m.VERSION_SKETCH_MAX_OBJECTS
+    # 非法取值当成「不要草图」，不是当成「要最大的那份」
+    assert "sketch" not in client.get("/api/versions/d1?sketch=abc").get_json()["versions"][0]
+    assert "sketch" not in client.get("/api/versions/d1?sketch=-5").get_json()["versions"][0]

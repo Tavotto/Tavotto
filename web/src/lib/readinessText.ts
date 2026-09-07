@@ -62,3 +62,17 @@ export const PENDING_STATUSES: readonly ReadinessStatus[] = [
  */
 export const pendingCount = (summary: ReadinessSummary): number =>
   PENDING_STATUSES.reduce((n, s) => n + summary[s], 0)
+
+/**
+ * 「这个项目全都能编辑」——横幅与接入中心用**同一个判据**（审计 T10）。
+ *
+ * 两处都要在这一档换成一句话（「2 张图都可以编辑」），而不是摆一排里有两个
+ * 恒为零的计数。各写一遍的话，将来判据一变总有一处会漏掉，而用户看到的是
+ * 一个界面说「全都好了」、另一个还在列「待连接 0」。
+ *
+ * 判的是**量出来的两个数相等**，不是「待连接那个格子看着是零」：`summary`
+ * 只在报告存在时才拿得到，所以这里每个数都是真的量过的。`total === 0` 的
+ * 空项目不算——那时该说的是「这个项目里还没有图」。
+ */
+export const allEditable = (summary: ReadinessSummary): boolean =>
+  summary.total > 0 && summary.total === summary.editable

@@ -545,6 +545,74 @@
       "dropped": [],
       "canonical_json": "[{\"gid\":\"A\",\"prop\":\"text\",\"value\":5},{\"gid\":\"Z\",\"prop\":\"text\",\"value\":2},{\"gid\":\"a\",\"prop\":\"Text\",\"value\":4},{\"gid\":\"a\",\"prop\":\"text\",\"value\":3},{\"gid\":\"轴\",\"prop\":\"text\",\"value\":1}]",
       "hash": "sha256:f7e4bb2a70c6b8e17bbcdfb254ff230ebc8e6bb646c3dd8a9646cbf414bb53d2"
+    },
+    {
+      "name": "legend_anchor",
+      "description": "图例外侧锚点（ADR 0034 修订）：value 是父容器分数坐标里的一个点 [x, y]，null 表示「不要锚框」——它是一个取值，不是缺失，规范化后必须原样留着",
+      "input": [
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_anchor",
+          "value": [
+            1.02,
+            1.0
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc",
+          "value": "upper left"
+        },
+        {
+          "gid": "axes_1.legend",
+          "prop": "loc_anchor",
+          "value": null
+        },
+        {
+          "gid": "axes_1.legend",
+          "prop": "loc_anchor",
+          "value": [
+            -0.02,
+            0.5
+          ]
+        },
+        {
+          "gid": "fig.legend_0",
+          "prop": "loc_anchor",
+          "value": null
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc",
+          "value": "upper left"
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_anchor",
+          "value": [
+            1.02,
+            1.0
+          ]
+        },
+        {
+          "gid": "axes_1.legend",
+          "prop": "loc_anchor",
+          "value": [
+            -0.02,
+            0.5
+          ]
+        },
+        {
+          "gid": "fig.legend_0",
+          "prop": "loc_anchor",
+          "value": null
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"axes_0.legend\",\"prop\":\"loc\",\"value\":\"upper left\"},{\"gid\":\"axes_0.legend\",\"prop\":\"loc_anchor\",\"value\":[1.02,1.0]},{\"gid\":\"axes_1.legend\",\"prop\":\"loc_anchor\",\"value\":[-0.02,0.5]},{\"gid\":\"fig.legend_0\",\"prop\":\"loc_anchor\",\"value\":null}]",
+      "hash": "sha256:402168c950e88015be3b9b89148711ff50b7eb0547807a00059c2a3c9d56b135"
     }
   ]
 }

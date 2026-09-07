@@ -129,10 +129,13 @@ export function insertSymbol(sym: string): void {
   place([obj], msg('history.insertSymbol', { symbol: sym }, 'workspace'), sym)
 }
 
-export function insertPreset(id: PresetId): void {
-  const c = dropPoint()
+/**
+ * 一个预设 = 以 `c` 为中心落下的一组既有对象（成组）。**这是唯一的定义**：
+ * 插入走它，「科研预设」对话框里的结构预览也走它——预览由同一批对象经画布
+ * 对象视图缩放画出来，不另画一套图标（审计 T30：预览必须对应实际插入结果）。
+ */
+export function buildPreset(id: PresetId, c: { x: number; y: number }): CanvasObject[] {
   const g = newId('g')
-  const name = presetLabel(id)
   const objs: CanvasObject[] = []
   const grouped = <T extends CanvasObject>(o: T): T => ({ ...o, groupId: g })
 
@@ -224,5 +227,10 @@ export function insertPreset(id: PresetId): void {
       break
     }
   }
-  place(objs, msg('history.insertPreset', { name }, 'workspace'), name)
+  return objs
+}
+
+export function insertPreset(id: PresetId): void {
+  const name = presetLabel(id)
+  place(buildPreset(id, dropPoint()), msg('history.insertPreset', { name }, 'workspace'), name)
 }

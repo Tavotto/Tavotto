@@ -22,8 +22,10 @@ import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } f
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
 import {
+  beginCrop,
   enterElementEdit,
   fillPanels,
+  finishCrop,
   fitPanels,
   replacePanelAsset,
   resetPanelCrop,
@@ -40,6 +42,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { overrideCounts } from '@/lib/overrideCounts'
 import type { PanelObject, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
@@ -246,6 +249,36 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         </Tip>
       </Row>
 
+      {/*
+        「原始比例 / 原始尺寸」改的就是上面那两个数，所以它们跟着 W/H 与缩放走
+        （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。它们以前和裁剪、
+        适配挤在「图片」一组里，于是「原始尺寸」看着像是在说裁剪前的画面。
+      */}
+      <div className="mt-1.5 flex gap-1.5">
+        <Tip label={pn('aspectTip')}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => restorePanelAspect(ids)}
+          >
+            <Ratio size={ICON_SIZE.sm} />
+            {pn('aspect')}
+          </Button>
+        </Tip>
+        <Tip label={pn('nativeSizeTip')}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => restorePanelNativeSize(ids)}
+          >
+            <Scaling size={ICON_SIZE.sm} />
+            {pn('nativeSize')}
+          </Button>
+        </Tip>
+      </div>
+
       {objs.length === 1 && (
         <div className="mt-2">
           <AlignToCanvasRow />
@@ -405,6 +438,11 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
   const cropping = !!one && cropTargetId === one.id
 
   return (
+    /*
+      「图片适配」只管一件事：这张图怎么摆进它的框里——取景（裁剪）、整图放进去
+      （完整放入）、把框填满（填满框）。改框本身大小的两颗（原始比例 / 原始尺寸）
+      已经跟着 W/H 搬到位置与尺寸那一组（审计 T26）。
+    */
     <Section title={pn('image')}>
       <div className="flex gap-1.5">
         <Tip label={pn('cropTip')}>
@@ -414,8 +452,11 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
             className="flex-1"
             disabled={!one}
             active={cropping}
+            data-crop-toggle
             onClick={() => {
-              if (one) useUiStore.getState().setCropTarget(cropping ? null : one.id)
+              if (!one) return
+              if (cropping) finishCrop()
+              else beginCrop(one.id)
             }}
           >
             <Crop size={ICON_SIZE.sm} />
@@ -447,28 +488,6 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
           <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
             <Maximize2 size={ICON_SIZE.sm} />
             {pn('fill')}
-          </Button>
-        </Tip>
-        <Tip label={pn('aspectTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => restorePanelAspect(ids)}
-          >
-            <Ratio size={ICON_SIZE.sm} />
-            {pn('aspect')}
-          </Button>
-        </Tip>
-        <Tip label={pn('nativeSizeTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => restorePanelNativeSize(ids)}
-          >
-            <Scaling size={ICON_SIZE.sm} />
-            {pn('nativeSize')}
           </Button>
         </Tip>
       </Grid2>
@@ -648,7 +667,9 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
   const buildingFile = useRenderStore((s) => s.building[panel.fileId])
   const building = render?.status === 'rendering' || !!buildingFile
   const cold = !!buildingFile?.cold
-  const overrides = panel.overrides.length
+  // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
+  // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
+  const overrides = overrideCounts(panel.overrides, null).figure
 
   return (
     <Section title={pn('elements')}>
@@ -682,9 +703,14 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           {pn(editing ? 'exitElementEdit' : 'editElements')}
         </Button>
         {overrides > 0 && (
+          /* 「22」孤零零挂在按钮旁会被读成元素数（审计 T07）：徽标自己说清是
+             修改数，与右栏头部的「N 项已修改」同一句话；完整说明在 tooltip */
           <Tip label={pn('overrideCount', { count: overrides })}>
-            <span className="flex h-7 shrink-0 items-center rounded-sm bg-surface-2 px-1.5 font-mono text-xs tabular-nums text-ink-2">
-              {overrides}
+            <span
+              data-override-badge
+              className="flex h-7 shrink-0 items-center rounded-sm bg-accent-subtle px-1.5 text-xs text-accent"
+            >
+              {translate('element.modifiedCount', { ns: 'inspector', count: overrides })}
             </span>
           </Tip>
         )}

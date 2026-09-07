@@ -75,10 +75,42 @@ function HatchPreview({ code }: { code: string }) {
   )
 }
 
-const hatchLabel = (code: string): string =>
-  code
-    ? translate('control.hatchPattern', { ns: 'inspector', value: code })
-    : translate('control.hatchNone', { ns: 'inspector' })
+/**
+ * matplotlib 的 hatch 代码 → 名字的 i18n 尾段。
+ *
+ * 键是**引擎 `HATCHES` 里那 16 个代码**（`engine/overrides.HATCHES`），
+ * 值是人看得懂的名字：审计 T21 的验收要求「所有纹理选项有可理解的名称，
+ * 图形与底层图案一一对应」，而以前界面上写的是「花纹 //」——那是把实现值
+ * 换了个前缀又端出来。
+ *
+ * 表里没有的代码（脚本自己拼的 `'/o'` 这类）回退成「纹理 <代码>」：hatch
+ * 是开集，认不出的原样显示比显示空白诚实，选它 = 保持原样。
+ */
+const HATCH_NAMES: Record<string, string> = {
+  '': 'none',
+  '/': 'forward',
+  '\\': 'back',
+  '|': 'vertical',
+  '-': 'horizontal',
+  '+': 'cross',
+  x: 'diagonal',
+  o: 'circles',
+  O: 'largeCircles',
+  '.': 'dots',
+  '*': 'stars',
+  '//': 'forwardDense',
+  '\\\\': 'backDense',
+  xx: 'diagonalDense',
+  '..': 'dotsDense',
+  '++': 'crossDense',
+}
+
+const hatchLabel = (code: string): string => {
+  const key = HATCH_NAMES[code]
+  return key
+    ? translate(`control.hatch.${key}`, { ns: 'inspector' })
+    : translate('control.hatchPattern', { ns: 'inspector', value: code })
+}
 
 export function HatchPicker({
   value,
@@ -101,7 +133,7 @@ export function HatchPicker({
     value: o,
     label: hatchLabel(o),
     preview: <HatchPreview code={o} />,
-    code: o ? o : '""',
+    code: o || '""',
   }))
 
   return (

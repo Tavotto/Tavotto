@@ -250,6 +250,65 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   })
 })
 
+test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
+    .toBeVisible({ timeout: 60_000 })
+
+  const inspector = page.locator('[data-inspector-panel]')
+  await expect(inspector).toHaveCount(1)
+
+  // **要扫的是「画布」页签，不是默认那个。** 颜色格与开关最密集的一屏在这里
+  // （图幅 / 背景色 / 透明背景 / 吸附 / 安全区），而默认页签「属性」在没有选中
+  // 元素时**一个 `<input>` 都没有**——本轮实测过：只扫默认页的话 `label` 规则整条
+  // inapplicable，2026-09-07 那两个缺陷一个都碰不到，把所有名字摘掉也照样绿。
+  for (const tab of ['canvas'] as const) {
+    await inspector.locator(`[data-inspector-tab="${tab}"]`).click()
+    await page.waitForTimeout(150)
+
+    // **把折叠区一个不剩地展开再扫。** 收起来的控件 axe 看不见，于是「这一屏
+    // 干净」只说明「默认展开的那部分干净」——webkit 那条真红就藏在「背景」
+    // 折叠区里。按 `aria-expanded` 展开，不按标题文案：文案还会被审计改。
+    for (let i = 0; i < 16; i++) {
+      // 只认真正的折叠区：带 `aria-haspopup` 的是弹层触发器（写回、菜单），
+      // 禁用的点不动——两者都会让这个循环卡死在同一颗按钮上
+      const collapsed = inspector
+        .locator('button[aria-expanded="false"]:not([disabled]):not([aria-haspopup])')
+        .first()
+      if (!(await collapsed.count())) break
+      await collapsed.click()
+      await page.waitForTimeout(80)
+    }
+
+    // **先证明这一屏真的有控件可扫。** `label` 规则对一个输入框都没有的页面是
+    // inapplicable，那时扫出来的空数组只说明「没东西」，不说明「都有名字」——
+    // 少了这一句，把所有名字摘掉这条用例照样绿（本轮变异实测过）。
+    const controls = await inspector.locator('input, [role="switch"]').count()
+    expect(controls, `${tab} 页签里一个控件都没有，这一遍扫描是恒真的`).toBeGreaterThan(0)
+
+    // 这一屏最容易犯的是「控件没有名字」：颜色格是两个输入框（取色盘 + 十六进制），
+    // 开关是 `<button role="switch">`——`<label>` 包着它**不**给它取名（HTML-AAM
+    // 给 button 的取名方式是 name from content），chromium 大方、webkit 按规范办事。
+    const named = await new AxeBuilder({ page })
+      .include('[data-inspector-panel]')
+      .withRules(['button-name', 'label'])
+      .analyze()
+    expect(
+      named.violations.map((v) => ({
+        id: v.id,
+        nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+      })),
+      `${tab} 页签`,
+    ).toEqual([])
+  }
+
+  await expectAccessible(page, {
+    allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+})
+
 test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
   app,
   page,

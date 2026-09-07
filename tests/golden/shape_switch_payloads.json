@@ -1,0 +1,175 @@
+{
+ "note": "画布标注换类型之后的导出载荷（cap-shape-switch）。**生产者与消费者各断言一次**：前端 web/src/lib/shapeSwitch.golden.test.ts 断言 switchObject + toExportObjects 逐字段产出它；后端 tests/test_compose_switched_shapes.py 断言 pdfbackend 把它们都画得出来。改了 lib/shapeSwitch 或 lib/exportPayload 之后，前端那条先红，更新本文件再跑后端那条——两侧都不许自己重新实现对方那一半。",
+ "page_w_mm": 100,
+ "page_h_mm": 100,
+ "chains": [
+  {
+   "name": "box",
+   "comment": "矩形 → 椭圆 → 多边形 → 回矩形：圆角只有矩形读，绕一圈之后不许还在",
+   "from": {
+    "id": "s1",
+    "type": "shape",
+    "shape": "rect",
+    "x": 10,
+    "y": 10,
+    "w": 40,
+    "h": 30,
+    "strokePt": 1.5,
+    "color": "#3366CC",
+    "fill": "#FFEE88",
+    "fillOpacity": 0.5,
+    "dash": "dashed",
+    "cornerRadius": 3
+   },
+   "steps": [
+    "ellipse",
+    "polygon",
+    "rect"
+   ],
+   "payloads": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 40,
+     "h_mm": 30,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": "#FFEE88",
+     "corner_radius_mm": 3,
+     "fill_opacity": 0.5,
+     "dash": "dashed"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 40,
+     "h_mm": 30,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": "#FFEE88",
+     "fill_opacity": 0.5,
+     "dash": "dashed"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 40,
+     "h_mm": 30,
+     "type": "shape",
+     "shape": "polygon",
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": "#FFEE88",
+     "sides": 6,
+     "fill_opacity": 0.5,
+     "dash": "dashed"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 40,
+     "h_mm": 30,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": "#FFEE88",
+     "fill_opacity": 0.5,
+     "dash": "dashed"
+    }
+   ]
+  },
+  {
+   "name": "linear",
+   "comment": "直线 → 箭头 → 回直线：端点一路不动，端型只有箭头读",
+   "from": {
+    "id": "ln",
+    "type": "shape",
+    "shape": "line",
+    "x": 10,
+    "y": 60,
+    "w": 40,
+    "h": 20,
+    "strokePt": 1.5,
+    "color": "#3366CC",
+    "fill": null,
+    "start": {
+     "rx": 0.1,
+     "ry": 0.2
+    },
+    "end": {
+     "rx": 0.9,
+     "ry": 0.8
+    }
+   },
+   "steps": [
+    "arrow",
+    "line"
+   ],
+   "payloads": [
+    {
+     "x_mm": 10,
+     "y_mm": 60,
+     "w_mm": 40,
+     "h_mm": 20,
+     "type": "shape",
+     "shape": "line",
+     "start": {
+      "rx": 0.1,
+      "ry": 0.2
+     },
+     "end": {
+      "rx": 0.9,
+      "ry": 0.8
+     },
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": null
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 60,
+     "w_mm": 40,
+     "h_mm": 20,
+     "type": "arrow",
+     "start": {
+      "rx": 0.1,
+      "ry": 0.2
+     },
+     "end": {
+      "rx": 0.9,
+      "ry": 0.8
+     },
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "head": "end",
+     "head_start": "none",
+     "head_end": "triangle"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 60,
+     "w_mm": 40,
+     "h_mm": 20,
+     "type": "shape",
+     "shape": "line",
+     "start": {
+      "rx": 0.1,
+      "ry": 0.2
+     },
+     "end": {
+      "rx": 0.9,
+      "ry": 0.8
+     },
+     "stroke_pt": 1.5,
+     "color": "#3366CC",
+     "fill": null
+    }
+   ]
+  }
+ ]
+}

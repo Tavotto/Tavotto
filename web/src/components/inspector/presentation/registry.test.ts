@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from '@/lib/api'
-import { controlKindOf, fieldVisible, presentFields } from './registry'
+import { controlKindOf, fieldVisible, isPercentField, presentFields } from './registry'
 
 const f = (prop: string, type: EditableField['type'] = 'number', group?: string): EditableField =>
   ({ prop, type, value: 0, ...(group ? { group } : {}) }) as EditableField
@@ -17,12 +17,29 @@ describe('presentFields：角色模板分桶', () => {
       f('marker', 'enum'), f('markersize'), f('alpha'),
       f('zorder', 'number', '排列'), f('visible', 'bool'),
     ]
-    const b = presentFields('line', fields, opts())
+    const b = presentFields('line', fields, opts([], { marker: 'o' }))
     expect(b.primary.map((x) => x.field.prop)).toEqual([
       'color', 'linewidth', 'linestyle', 'marker', 'markersize',
     ])
     expect(b.more.map((x) => x.field.prop)).toEqual(['alpha', 'visible'])
     expect(b.advanced.map((x) => x.field.prop)).toEqual(['zorder'])
+  })
+
+  it('line：标记为无（None / none / 空串）时标记大小与填充 / 描边色收起；改过的照样在（审计 T15）', () => {
+    const fields = [
+      f('marker', 'enum'), f('markersize'),
+      f('markerfacecolor', 'color'), f('markeredgecolor', 'color'),
+    ]
+    for (const none of ['None', 'none', '']) {
+      const b = presentFields('line', fields, opts([], { marker: none }))
+      expect(b.primary.map((x) => x.field.prop), none).toEqual(['marker'])
+    }
+    const on = presentFields('line', fields, opts([], { marker: 's' }))
+    expect(on.primary.map((x) => x.field.prop)).toEqual([
+      'marker', 'markersize', 'markerfacecolor', 'markeredgecolor',
+    ])
+    const orphan = presentFields('line', fields, opts(['markersize'], { marker: 'None' }))
+    expect(orphan.primary.map((x) => x.field.prop)).toEqual(['marker', 'markersize'])
   })
 
   it('manifest 没有的属性绝不发明：模板点名而字段缺席的不出现', () => {
@@ -193,5 +210,20 @@ describe('图内文字的背景 / 描边：开关 + 从属字段（审计 T14）
     expect(controlKindOf('legend_text', f('stroke_enabled', 'bool'))).toBe('effect')
     expect(controlKindOf('title', f('bbox_rounded', 'bool'))).toBe('toggle')
     expect(controlKindOf('title', f('visible', 'bool'))).toBe('toggle')
+  })
+})
+
+describe('controlKindOf：透明度按百分比（审计 T16 / T20）', () => {
+  it('alpha / framealpha / grid_alpha / bbox_alpha 的数值字段分派到 percent', () => {
+    for (const prop of ['alpha', 'framealpha', 'grid_alpha', 'bbox_alpha']) {
+      expect(controlKindOf('line', f(prop))).toBe('percent')
+      expect(isPercentField(f(prop))).toBe(true)
+    }
+  })
+
+  it('不按取值范围猜：别的 0–1 数值字段仍是普通数字，非数值的 alpha 也不是', () => {
+    expect(controlKindOf('line', f('linewidth'))).toBe('number')
+    expect(controlKindOf('legend', { ...f('handlelength'), min: 0, max: 1 })).toBe('number')
+    expect(controlKindOf('line', f('alpha', 'text'))).toBe('text')
   })
 })

@@ -317,10 +317,14 @@ test('原图被独占占用（file_locked）：英文报错说清该关掉谁，
     // 句柄真的开出来再动手（起 PowerShell 比点一次按钮慢得多）
     await page.waitForTimeout(3_000)
 
-    await page.getByRole('button', { name: /Write back to the original file/i }).first().click()
+    // 锚点是稳定 `data-*`，不是英文按钮名：审计 T34 把确认按钮从「Write back」
+    // 改成了「Write back to the original files」，`/^Write back$/` 当场匹配不到，
+    // 这条用例在 Windows 腿上等满 180 秒（#299）。**这条腿是它唯一的家**
+    // ——posix 上它是 skip，本机全绿证明不了它。
+    await page.locator('[data-write-back="open"]').first().click()
     const dialog = page.getByRole('dialog').first()
     await expect(dialog).toBeVisible()
-    await dialog.getByRole('button', { name: /^Write back$/ }).click()
+    await dialog.locator('[data-write-back="confirm"]').click()
 
     // 稳定的英文文案（errors:backend.file_locked），不是后端拼好的中文原句
     await expect(

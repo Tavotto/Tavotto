@@ -118,6 +118,19 @@ describe('ProjectPicker', () => {
 })
 
 describe('TopBar', () => {
+  /**
+   * 顶栏里有一样东西**不该**跟着界面语言变：文档名。它是用户内容
+   * （AGENTS.md：项目 / 画布 / 文档名不翻），新文档的默认名按创建那一刻的
+   * 界面语言取一次，之后就是用户自己的字。所以量「一个汉字都不剩」之前先把
+   * 它换成一个 ASCII 名字——不换的话，这条用例量的是「界面 + 用户内容」，
+   * 而它对用户内容的期望本来就是错的。
+   */
+  beforeEach(() => {
+    useDocumentStore.setState({
+      projectMeta: { ...useDocumentStore.getState().projectMeta, name: 'fig-a' },
+    })
+  })
+
   it('中文 / 英文各渲染一遍，导出按钮跟着换', async () => {
     mount(<TopBar />)
     expect(uiText()).toContain('导出')

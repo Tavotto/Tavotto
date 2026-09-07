@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from './fixtures'
 import { lowContrastNodes as sharedLowContrastNodes } from './contrast'
+import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
 
 /**
@@ -10,38 +11,23 @@ import type { Page } from '@playwright/test'
  * 滚动位置还在」这类断言只有在这里才是真的**。列表内容随跑测试的机器变化
  * （装没装 codex / claude 都可能），所以断言全部打在「结构与行为」上，
  * 不打在具体某个 Agent 的状态上。
+ *
+ * **定位一律走稳定 `data-*`，不拿可见文案当选择器**（清单在 web/AGENTS.md）。
+ * 2026-09-07 这条纪律是被打红打出来的：审计 T44 把两个小标题按用户目标改了
+ * 名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图助手 / 连接外部工具」），
+ * 两条用例当场找不到元素。把字符串换成新文案只是**把同一个赌注再下一次**；
+ * 更糟的是那两条 `toHaveCount(0)` 的反向断言——文案一改它们恒真，红都不会红
+ * 一下，直接从「守着」变成「假绿」。
  */
 async function openAgentSettings(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByRole('button', { name: '设置', exact: true }).first().click()
+  await page.locator('[data-rail="settings"]').click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
-  await dialog.getByRole('navigation').getByRole('button', { name: '编码 Agent' }).click()
+  // 分区 id 是持久化格式的一部分（AiPanel 的「打开设置」按它跳转），
+  // 比导航项上那句会被改名的文案稳得多
+  await dialog.getByRole('navigation').locator('[data-section="ai"]').click()
   return dialog
-}
-
-/**
- * 对话框里**每一个**把布局撑破的元素（真布局才量得出来）。
- *
- * 只量 body 与 dialog 两层是不够的：中间任何一个可滚/裁切的容器都会把里面的
- * 溢出吸收掉，外面两层永远是干净的——往行里塞一个 900px 不收缩的元素，那种写法
- * 照样绿（变异验过）。所以这里逐个元素扫，只认 `overflow-x: visible` 的那些：
- * 裁切（`truncate` 就是 hidden + 省略号）与有意可滚的容器本来就不该算撑破。
- */
-async function horizontalOffenders(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const dlg = document.querySelector('[role="dialog"]')
-    if (!dlg) return ['NO DIALOG']
-    const out: string[] = []
-    for (const el of [document.body, dlg, ...Array.from(dlg.querySelectorAll('*'))]) {
-      const e = el as HTMLElement
-      if (getComputedStyle(e).overflowX !== 'visible') continue
-      if (e.scrollWidth > e.clientWidth + 1) {
-        out.push(`${e.tagName}.${String(e.className).slice(0, 60)} sw=${e.scrollWidth} cw=${e.clientWidth}`)
-      }
-    }
-    return out
-  })
 }
 
 test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', async ({ app, page }) => {
@@ -49,36 +35,46 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
   const dialog = await openAgentSettings(page, a.baseURL)
 
   // 一级页面：分组列表 + 两个方向的小节
-  await expect(dialog.getByText('在 Tavotto 中使用编码 Agent')).toBeVisible()
-  await expect(dialog.getByText('在编码 Agent 中使用 Tavotto')).toBeVisible()
-  await expect(dialog.getByText('Tavotto for Codex')).toBeVisible()
+  await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible()
+  await expect(dialog.locator('[data-agent-section="external"]')).toBeVisible()
+  // 反方向那一行**在反方向那一节里**——两节的归属才是这条用例要守的东西
+  await expect(
+    dialog.locator('[data-agent-section="external"] [data-agent-codex-integration]'),
+  ).toBeVisible()
 
-  // **一级页面不许有任何输入框**（路径 / Base URL / 密钥全在详情里）
+  // **一级页面不许有任何输入框**（路径 / Base URL / 密钥全在详情里）。
+  // 后两条量的是**端点编辑器与概览字段整个不在这一层**，不是「某两句话没出现」：
+  // 后者在文案改名后恒真，守不住任何东西。
   await expect(dialog.locator('input[type="text"], input[type="password"]')).toHaveCount(0)
-  await expect(dialog.getByText('接口地址')).toHaveCount(0)
-  await expect(dialog.getByText('密钥')).toHaveCount(0)
+  await expect(page.locator('[data-endpoint-step]')).toHaveCount(0)
+  await expect(dialog.locator('[data-agent-field]')).toHaveCount(0)
 
   // 行主体点进详情
-  const row = dialog.getByRole('button', { name: /Codex 的详情/ }).first()
+  const row = dialog.locator('[data-agent-open="codex"]')
   await expect(row).toBeVisible()
   await row.click()
-  await expect(dialog.getByText('概览')).toBeVisible()
-  await expect(dialog.getByText('检测来源')).toBeVisible()
+  await expect(dialog.locator('[data-agent-detail="codex"]')).toBeVisible()
+  await expect(dialog.locator('[data-agent-field="source"]')).toBeVisible()
   // 高级设置默认折叠。**直接量 `<details>` 的 open**，不拿「输入框不在」当代理：
   // 那个输入框要点过「使用自定义可执行文件」才渲染，折叠与否它都不在——用它当
   // 判据，把 details 强行改成默认展开也照样绿（变异验过，就是这么漏的）。
-  await expect(dialog.locator('summary', { hasText: '自定义可执行文件' })).toBeVisible()
+  await expect(dialog.locator('[data-agent-fold="custom-executable"] summary')).toBeVisible()
   const folds = dialog.locator('details')
   expect(await folds.count()).toBeGreaterThan(0)
   for (const fold of await folds.all()) {
     expect(await fold.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false)
   }
-  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现
-  await expect(dialog.getByRole('button', { name: '使用自定义可执行文件' })).toBeHidden()
+  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现。
+  // **先钉住它确实在 DOM 里**：`toBeHidden()` 对一个根本不存在的元素同样通过，
+  // 只写后半句的话，这颗按钮被删掉、锚点被摘掉都是绿的——那是这一轮到处在修的
+  // 同一种假绿（这条锚点没有别的正向断言替它兜底，所以得自己钉）。
+  const customExe = dialog.locator('[data-agent-custom-exe]')
+  await expect(customExe).toHaveCount(1)
+  await expect(customExe).toBeHidden()
 
   // 返回：列表还在
-  await dialog.getByRole('button', { name: '返回编码 Agent 列表' }).click()
-  await expect(dialog.getByText('在 Tavotto 中使用编码 Agent')).toBeVisible()
+  await dialog.locator('[data-agent-back]').click()
+  await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible()
 })
 
 test('编码 Agent：开关是独立控件，不会顺手打开详情', async ({ app, page }) => {
@@ -93,7 +89,7 @@ test('编码 Agent：开关是独立控件，不会顺手打开详情', async ({
   if (await toggle.isEnabled()) {
     const before = await toggle.getAttribute('aria-checked')
     await toggle.click()
-    await expect(dialog.getByText('概览')).toHaveCount(0)     // 没进详情
+    await expect(dialog.locator('[data-agent-detail]')).toHaveCount(0) // 没进详情
     await expect(toggle).not.toHaveAttribute('aria-checked', before ?? '')
     await toggle.click()                                      // 还原，别留状态
   }
@@ -103,14 +99,23 @@ test('编码 Agent：重新检测有播报，且不发生布局跳动', async ({
   const a = await app()
   const dialog = await openAgentSettings(page, a.baseURL)
 
-  const list = dialog.locator('ul').first()
+  // 量的必须是**同一个东西**：`ul` 的第一个在探测没回来时是骨架屏、回来之后
+  // 才是真列表，那样量到的是两个元素，不是同一块内容有没有跳。
+  const list = dialog.locator('[data-agent-section="in-app"] ul')
+  await expect(list).toBeVisible({ timeout: 30_000 })
   const before = await list.boundingBox()
-  await dialog.getByRole('button', { name: '重新检测' }).click()
-  await expect(dialog.getByText(/最近检测/)).toBeVisible({ timeout: 30_000 })
+  await dialog.locator('[data-agent-rescan]').click()
+  await expect(dialog.locator('[data-agent-last-checked]')).toBeVisible({ timeout: 30_000 })
   const after = await list.boundingBox()
+  // **先证明两次都真的量到了。** `boundingBox()` 量不到时返回 null，原先那句
+  // `?? 0` 会把「什么都没量到」记成「x = 0」：一侧为 null 就是一次假红（实测
+  // 报过 |433 - 0|），两侧都为 null 则是一次假绿——0 - 0 永远小于 2，判据在
+  // 一个字都没量到的情况下照样通过。
+  expect(before, '重新检测前没量到列表').not.toBeNull()
+  expect(after, '重新检测后没量到列表').not.toBeNull()
   // 高度可以随内容变，但不该整块跳走（左边缘与宽度稳定）
-  expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(2)
-  expect(Math.abs((after?.width ?? 0) - (before?.width ?? 0))).toBeLessThan(2)
+  expect(Math.abs(after!.x - before!.x)).toBeLessThan(2)
+  expect(Math.abs(after!.width - before!.width)).toBeLessThan(2)
 
   // aria-live 区在（检测完成 / 失败都要说一声）
   await expect(dialog.locator('[aria-live="polite"]')).toHaveCount(1)
@@ -121,13 +126,13 @@ test('编码 Agent：1024×768 窄窗口不横向溢出', async ({ app, page }) 
   await page.setViewportSize({ width: 1024, height: 768 })
   const dialog = await openAgentSettings(page, a.baseURL)
 
-  await expect(dialog.getByText('在 Tavotto 中使用编码 Agent')).toBeVisible()
-  expect(await horizontalOffenders(page)).toEqual([])
+  await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible()
+  expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 
   // 详情页同样：长路径靠省略，不把面板撑开
-  await dialog.getByRole('button', { name: /的详情/ }).first().click()
-  await expect(dialog.getByText('概览')).toBeVisible()
-  expect(await horizontalOffenders(page)).toEqual([])
+  await dialog.locator('[data-agent-open]').first().click()
+  await expect(dialog.locator('[data-agent-detail]')).toBeVisible()
+  expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 })
 
 test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次）', async ({ app, page }) => {
@@ -148,8 +153,8 @@ test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次�
   expect(await sharedLowContrastNodes(page, '[role="dialog"]')).toEqual([])
 
   // 详情页：概览、模型服务单选、两个折叠区
-  await dialog.getByRole('button', { name: /的详情/ }).first().click()
-  await expect(dialog.getByText('概览')).toBeVisible()
+  await dialog.locator('[data-agent-open]').first().click()
+  await expect(dialog.locator('[data-agent-detail]')).toBeVisible()
   for (const d of await dialog.locator('details').all()) {
     await d.locator('summary').click()
   }

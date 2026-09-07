@@ -1,8 +1,16 @@
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { Copy, Ellipsis, Pencil, Plus, Search, Trash2,
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  Ellipsis,
+  Pencil,
+  Plus,
+  Search,
   SearchX,
+  Trash2,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -15,14 +23,17 @@ import { useDocumentStore } from '@/store/documentStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { Button } from '../ui/Button'
+import { CanvasThumb } from '../CanvasThumb'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { TextInput } from '../ui/Input'
 
 /**
  * 画布列表（项目里的全部画布，含未打开成标签的）。
- * 点击 = 打开成标签并切换；缩略图是对象布局示意（页面比例 + 对象框），
- * 不做真实渲染——识别用，不冒充成图。
+ * 点击 = 打开成标签并切换；缩略图按对象落位画真实内容（面板用现成的预览图，
+ * 文字画文字，标注画轮廓）——三张不同的图仅凭缩略图就分得开（审计 T05）。
+ * 缩略图本身在 `components/CanvasThumb.tsx`：版本列表里的每一行画的是同一份
+ * 组件（喂给它的是后端草图），不许另画一份。
  */
 /** 本组文案在 workspace:canvasList.* 下 */
 const cl = (key: string, values?: Record<string, unknown>) =>
@@ -80,6 +91,7 @@ export function CanvasList() {
             index={i}
             active={c.id === activeId}
             filtered={!!query.trim()}
+            count={rows.length}
             renaming={renaming === c.id}
             onOpen={() => open(c.id)}
             onRenameStart={() => setRenaming(c.id)}
@@ -103,6 +115,7 @@ export function CanvasList() {
 function CanvasRow({
   canvas,
   index,
+  count,
   active,
   filtered,
   renaming,
@@ -113,6 +126,8 @@ function CanvasRow({
 }: {
   canvas: CanvasData
   index: number
+  /** 可见行数：上移 / 下移到头就禁用 */
+  count: number
   active: boolean
   /** 搜索过滤中禁用拖动重排（索引对不上真实顺序） */
   filtered: boolean
@@ -165,7 +180,7 @@ function CanvasRow({
       {active && (
         <span aria-hidden className="absolute -left-0.5 top-2 h-8 w-0.5 rounded-full bg-accent" />
       )}
-      <SchemaThumb canvas={canvas} />
+      <CanvasThumb page={canvas.page} objects={canvas.objects} />
       <button
         onClick={onOpen}
         onDoubleClick={onRenameStart}
@@ -222,6 +237,25 @@ function CanvasRow({
             {cl('rename')}
           </span>
         </MenuItem>
+        {/* 拖动重排只有鼠标能用：菜单里给键盘一条同样的路（搜索过滤中索引对不上，禁用） */}
+        <MenuItem
+          disabled={filtered || index === 0}
+          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index - 1)}
+        >
+          <span className="flex items-center gap-2">
+            <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
+            {cl('moveUp')}
+          </span>
+        </MenuItem>
+        <MenuItem
+          disabled={filtered || index >= count - 1}
+          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index + 1)}
+        >
+          <span className="flex items-center gap-2">
+            <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
+            {cl('moveDown')}
+          </span>
+        </MenuItem>
         <MenuItem
           onSelect={() => {
             const nid = useDocumentStore.getState().duplicateCanvas(canvas.id)
@@ -242,33 +276,5 @@ function CanvasRow({
         </MenuItem>
       </Menu>
     </li>
-  )
-}
-
-/** 布局示意缩略图：页面比例 + 对象包围盒（识别用途，非真实渲染） */
-function SchemaThumb({ canvas }: { canvas: CanvasData }) {
-  const { w, h } = canvas.page
-  return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      aria-hidden
-      className="h-10 w-14 shrink-0 rounded-[3px] border border-border bg-white"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {canvas.objects
-        .filter((o) => !o.hidden)
-        .slice(0, 40)
-        .map((o) => (
-          <rect
-            key={o.id}
-            x={o.x}
-            y={o.y}
-            width={Math.max(o.w, w / 60)}
-            height={Math.max(o.h, h / 60)}
-            fill="currentColor"
-            className={o.type === 'panel' ? 'text-ink/25' : 'text-ink/12'}
-          />
-        ))}
-    </svg>
   )
 }

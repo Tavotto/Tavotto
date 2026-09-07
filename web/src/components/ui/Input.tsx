@@ -224,7 +224,12 @@ export function NumberField({
         )}
       />
       {suffix != null && (
-        <span className="pr-1.5 text-xs text-ink-3 select-none">{suffix}</span>
+        // `shrink-0 whitespace-nowrap`：单位不是可以折行的正文。窄侧栏里
+        // 「数据单位」被挤成「数据单」+「位」两行，把整行撑破（审计 T19，
+        // 走查截图 95 拍到）。让位的应该是输入框（它 min-w-0），不是单位。
+        <span className="shrink-0 whitespace-nowrap pr-1.5 text-xs text-ink-3 select-none">
+          {suffix}
+        </span>
       )}
     </div>
   )
@@ -235,6 +240,7 @@ export function ColorField({
   onChange,
   onGestureEnd,
   className,
+  ariaLabel,
 }: {
   value: string
   onChange: (v: string) => void
@@ -246,6 +252,19 @@ export function ColorField({
    */
   onGestureEnd?: () => void
   className?: string
+  /**
+   * 无障碍名，**必填**。这一格是**两个**输入框（取色盘 + 十六进制文本框），
+   * 外面那行可见标签既不是 `<label for>` 也指不了两个控件，所以名字只能显式给。
+   *
+   * 为什么是必填而不是可选：2026-09-07 之前 18 个调用点一个都没给，读屏里
+   * 它们全是「编辑文本」（axe `label` critical）。改成可选加一次性补齐的话，
+   * 下一个调用点照样会漏——类型必填才是不会烂掉的那种纪律。
+   *
+   * chromium 上一直是绿的，webkit（Windows）第一次跑就报出来：`input[type=color]`
+   * 在那儿退化成普通文本框，axe 的 `label` 规则才落到它头上。**引擎不同，
+   * 能看见的维度也不同**，别拿「chromium 绿」当「没有这个缺陷」。
+   */
+  ariaLabel: string
 }) {
   return (
     <div
@@ -262,6 +281,7 @@ export function ColorField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onGestureEnd}
+          aria-label={t('colorField.picker', { label: ariaLabel })}
           className="absolute inset-0 cursor-pointer opacity-0"
         />
       </div>
@@ -273,6 +293,7 @@ export function ColorField({
         }}
         onBlur={onGestureEnd}
         onKeyDown={(e) => e.stopPropagation()}
+        aria-label={t('colorField.hex', { label: ariaLabel })}
         className="num-input w-full min-w-0 bg-transparent uppercase text-ink outline-none"
       />
     </div>

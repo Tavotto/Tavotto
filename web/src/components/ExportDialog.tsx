@@ -813,7 +813,7 @@ export function ExportDialog() {
               onChange={setPpi}
               options={PPI_VALUES.map((v) => ({
                 value: v,
-                label: translate('measure.dpi', { value: v }),
+                label: translate('measure.ppi', { value: v }),
               }))}
               ariaLabel={ex('ppiSelectLabel')}
               className="w-28"
@@ -922,7 +922,12 @@ export function ExportDialog() {
               className="flex items-center gap-1.5 text-xs text-ink-2"
               title={ex('reportTitle')}
             >
-              <Toggle checked={reportOn} onChange={setWithReport} disabled={reportRequired} />
+              <Toggle
+                aria-label={ex('reportToggle')}
+                checked={reportOn}
+                onChange={setWithReport}
+                disabled={reportRequired}
+              />
               {ex('reportToggle')}
             </label>
             {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
@@ -935,6 +940,7 @@ export function ExportDialog() {
               )}
             >
               <Toggle
+                aria-label={ex('transparent')}
                 checked={transparent && transparentApplies}
                 onChange={setTransparent}
                 disabled={!transparentApplies}

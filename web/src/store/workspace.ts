@@ -95,6 +95,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   addedForEdit: null,
   enterFastEdit: (panelId) => {
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
+    // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
+    // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
+    parkLayoutView()
     // 换了一张图：上一张的「刚加入」说明不跟过来
     set({ mode: 'fast_edit', activePanelId: panelId, ...(changed ? { addedForEdit: null } : {}) })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
@@ -107,9 +110,56 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
-  clear: () =>
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null }),
+  clear: () => {
+    // 第二道保险，**没有用例杀得掉它**：新文档的画布 id 是新生成的，
+    // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
+    // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。
+    parkedLayoutView = null
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
+  },
 }))
+
+/* -------------------------- 排版视口的寄存处 ------------------------------ */
+
+/**
+ * 进快速编辑那一刻用户在画布排版上看的是哪一片（审计 T01：**切换模式时画布
+ * 不意外移动**）。
+ *
+ * 为什么必须记：快速编辑把那张图单独摆出来、按它自己的图幅框住，这一步一定
+ * 要动视口；回来时如果只会「把那张图挪到视口中央」，用户精心摆好的排版视角
+ * 就被换成了以某一张图为中心的另一片——他没做任何缩放平移，画面却变了。
+ * ADR 0028 的「布局不变靠根本没动过」说的是文档，视口这一侧此前没人管。
+ *
+ * **带上画布 id**：`openFastEdit` 会为了找到那张图切画布（`ensurePanel`），
+ * 换了画布之后记下的那一片属于**上一张画布**，还回去就是把用户送到别处。
+ * 这里的主语是「哪一张画布的、哪一刻的视口」，两者缺一不可。
+ */
+let parkedLayoutView: { canvasId: string; view: ViewTarget } | null = null
+
+interface ViewTarget {
+  zoom: number
+  panX: number
+  panY: number
+}
+
+/** 只在**从排版进入**快速编辑时记一次；已经在快速编辑里换图不覆盖 */
+function parkLayoutView(): void {
+  if (useWorkspaceStore.getState().mode === 'fast_edit') return
+  const { zoom, panX, panY, viewW, viewH } = useViewportStore.getState()
+  if (!viewW || !viewH) return
+  parkedLayoutView = {
+    canvasId: useDocumentStore.getState().activeCanvasId,
+    view: { zoom, panX, panY },
+  }
+}
+
+/** 取出并清空；画布对不上就当没记过 */
+function takeParkedLayoutView(): ViewTarget | null {
+  const parked = parkedLayoutView
+  parkedLayoutView = null
+  if (!parked) return null
+  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked.view : null
+}
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
 export function activeFigurePanel(): PanelObject | null {
@@ -248,11 +298,21 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
 
 /** 回到画布排版；当前那张图仍然选中，位置与尺寸一个字节没动过 */
 export function returnToLayout(): void {
+  // 本来就在排版上（onboarding 的前置动作会这么调）：那不是一次模式切换，
+  // 不许拿一条陈旧的记录去动用户此刻的视口
+  const wasFastEdit = useWorkspaceStore.getState().mode === 'fast_edit'
   const panel = activeFigurePanel()
   useWorkspaceStore.getState().exitToLayout()
   useUiStore.getState().setElementPanel(null)
-  if (panel) {
-    useSelectionStore.getState().set([panel.id])
+  if (panel) useSelectionStore.getState().set([panel.id])
+  // **先还原用户进来之前看的那一片**（审计 T01）：他没缩放没平移，画面就不该变。
+  // 记录对不上（换过画布 / 会话恢复时本来就在快速编辑里）才现算一个落点。
+  const parked = takeParkedLayoutView()
+  if (!wasFastEdit) {
+    // 一次什么都没切的「切换」：视口一个字不动
+  } else if (parked) {
+    useViewportStore.getState().restoreView(parked)
+  } else if (panel) {
     revealPanel(panel)
   } else {
     const page = useDocumentStore.getState().doc.page

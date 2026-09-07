@@ -20,10 +20,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import {
+  LEGEND_ENTRY_STYLE_PROPS,
+  LEGEND_OUTSIDE_PRESETS,
+  LEGEND_PLACEMENT_PROPS,
+  LEGEND_PLACEMENT_SLOTS,
   entryBinding,
   legendDisplayOrder,
   legendEntryViews,
+  legendPlacementPlan,
+  placementPlanFrom,
+  placementPropsOf,
   restoreFollowPlan,
+  type LegendPlacementSlot,
 } from '@/lib/legendModel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,7 +41,8 @@ import { useUiStore } from '@/store/uiStore'
 import { resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ElementInspector } from './ElementInspector'
-import { presentFields } from './presentation/registry'
+import { fieldVisible, presentFields } from './presentation/registry'
+import { LEGEND_SPACING_PROPS } from './controls/LegendSpacingCard'
 
 const engineRender = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -56,9 +65,19 @@ const f = (prop: string, type: EditableField['type'], value: unknown, extra = {}
 
 const LOCS = ['best', 'upper right', 'upper left', 'lower left', 'lower right']
 
+/** 落位模型的源码原文——「清单是算出来的」那条判据读它 */
+const LEGEND_MODEL_SRC = Object.values(
+  import.meta.glob('/src/lib/legendModel.ts', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }) as Record<string, string>,
+)[0] as string
+
 /** 与 engine/manifest.py `_legend_fields` 同形 */
-const legendFields = (ncol = 1): EditableField[] => [
+const legendFields = (ncol = 1, anchor: unknown = null): EditableField[] => [
   f('loc', 'enum', 'best', { options: LOCS }),
+  f('loc_anchor', 'pair', anchor, { min: -1, max: 2, step: 0.01 }),
   f('fontsize', 'number', 8, { min: 3, max: 24, step: 0.5, unit: 'pt' }),
   f('frameon', 'bool', true),
   f('visible', 'bool', true),
@@ -335,14 +354,12 @@ describe('图例的首屏', () => {
       read: (prop) => legendFields(ncol).find((x) => x.prop === prop)?.value,
     })
 
-  it('高频项常驻：位置 / 列数 / 示意线长 / 线与文字间距 / 行距 / 边框四条', () => {
+  it('高频项常驻：位置 / 列数 / 边框四条（间距归排版详情，审计 T17）', () => {
     const primary = buckets(1).primary.map((p) => p.field.prop)
     expect(primary).toEqual([
       'loc',
+      'loc_anchor',
       'ncol',
-      'handlelength',
-      'handletextpad',
-      'labelspacing',
       'frameon',
       'frame_linewidth',
       'frame_rounded',
@@ -350,27 +367,69 @@ describe('图例的首屏', () => {
       'facecolor',
     ])
     expect(buckets(1).more.map((p) => p.field.prop)).not.toContain('ncol')
+    // 五条间距在通用列表里一条都不出现——它们由排版详情卡承接，
+    // 同一属性不出两套控件（`LEGEND_SPACING_PROPS` 在分桶之前就被让出来了）
+    const all = [...buckets(2).primary, ...buckets(2).more, ...buckets(2).advanced]
+    const spacing = LEGEND_SPACING_PROPS as readonly string[]
+    expect(all.map((p) => p.field.prop).filter((x) => spacing.includes(x))).toEqual([
+      // 分桶函数本身不裁能力：这里喂的是**没被让出来**的原始字段表，
+      // 五条都还在，只是不在 primary。真正的让出发生在 ElementInspector
+      // （见下面「排版详情」一组的 DOM 断言）
+      'borderpad',
+      'labelspacing',
+      'handlelength',
+      'handletextpad',
+      'columnspacing',
+    ])
   })
 
-  it('列距只在多列时出现', () => {
-    expect(buckets(1).primary.map((p) => p.field.prop)).not.toContain('columnspacing')
-    expect(buckets(1).more.map((p) => p.field.prop)).not.toContain('columnspacing')
-    expect(buckets(2).primary.map((p) => p.field.prop)).toContain('columnspacing')
+  it('列距只在多列时出现（判据只有 fieldVisible 一条，卡与通用列表共用）', () => {
+    const read = (ncol: number) => (prop: string) =>
+      legendFields(ncol).find((x) => x.prop === prop)?.value
+    const vis = (ncol: number, over = false) =>
+      fieldVisible('legend', 'columnspacing', {
+        isOverridden: () => over,
+        read: read(ncol),
+      })
+    expect(vis(1)).toBe(false)
+    expect(vis(2)).toBe(true)
+    // 改过的必须能看到，哪怕此刻只有一列
+    expect(vis(1, true)).toBe(true)
   })
 
-  it('图例项的首屏：文字 + 绑定 + 示意线样式；标记大小只在有标记时出现', () => {
-    const fields = entryFields('sin')
+  it('图例项的首屏：链接中只有文字 + 链接行，断开后才有示意线样式（审计 T18）', () => {
+    const bucketsOf = (binding: string) => {
+      const fields = entryFields('sin', { binding })
+      return presentFields('legend_text', fields, {
+        isOverridden: () => false,
+        read: (prop) => fields.find((x) => x.prop === prop)?.value,
+      })
+    }
+    const linked = bucketsOf('follow_source')
+    const all = (b: ReturnType<typeof bucketsOf>) =>
+      [...b.primary, ...b.more, ...b.advanced].map((p) => p.field.prop)
+    expect(linked.primary.map((p) => p.field.prop)).toContain('binding')
+    // 链接中：示意线的五条一条都不在**任何**桶里（收起来，不是挪进「更多」）
+    for (const prop of LEGEND_ENTRY_STYLE_PROPS) expect(all(linked)).not.toContain(prop)
+
+    const custom = bucketsOf('custom')
+    const primary = custom.primary.map((p) => p.field.prop)
+    expect(primary).toContain('handle_linestyle')
+    // 标记大小仍要有标记（两条前提是与的关系，不是互相取代）
+    expect(all(custom)).not.toContain('handle_markersize')
+    expect(custom.primary.find((p) => p.field.prop === 'binding')?.control).toBe('legend-binding')
+    expect(custom.primary.find((p) => p.field.prop === 'handle_linestyle')?.control).toBe('line-style')
+    expect(custom.primary.find((p) => p.field.prop === 'handle_marker')?.control).toBe('marker')
+  })
+
+  it('改过的示意线样式照常显示，哪怕此刻是链接中', () => {
+    const fields = entryFields('sin', { binding: 'follow_source' })
     const b = presentFields('legend_text', fields, {
-      isOverridden: () => false,
+      isOverridden: (prop) => prop === 'handle_color',
       read: (prop) => fields.find((x) => x.prop === prop)?.value,
     })
-    const primary = b.primary.map((p) => p.field.prop)
-    expect(primary).toContain('binding')
-    expect(primary).toContain('handle_linestyle')
-    expect(primary).not.toContain('handle_markersize')
-    expect(b.primary.find((p) => p.field.prop === 'binding')?.control).toBe('legend-binding')
-    expect(b.primary.find((p) => p.field.prop === 'handle_linestyle')?.control).toBe('line-style')
-    expect(b.primary.find((p) => p.field.prop === 'handle_marker')?.control).toBe('marker')
+    expect(b.primary.map((p) => p.field.prop)).toContain('handle_color')
+    expect(b.primary.map((p) => p.field.prop)).not.toContain('handle_linewidth')
   })
 })
 
@@ -402,6 +461,178 @@ describe('选中图例', () => {
     await mount(['axes_0.legend'])
     const nested = host.querySelectorAll('button button, button input, a button')
     expect(nested.length).toBe(0)
+  })
+
+  // ------------------------------------------------------------------
+  // 外侧锚点（ADR 0034 的 2026-09-07 修订）
+  // ------------------------------------------------------------------
+  it('锚点由位置控件的外侧带承接，通用列表里不出第二套裸 x/y', async () => {
+    await mount(['axes_0.legend'])
+    await click(byText('更多'))
+    expect(labels().filter((p) => p === 'loc_anchor')).toHaveLength(0)
+    expect(byAria('右侧上')).toBeDefined()
+  })
+
+  it('点外侧预设：loc 与锚点落进同一次修改（一条历史、一次渲染）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('点外侧预设会把拖动留下的 loc_frac 一并删掉——不然点了没反应', async () => {
+    useDocumentStore.getState().commit(literal('先拖一下'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'loc_frac', value: [0.2, 0.3] })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc_frac')).toBeUndefined()
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+  })
+
+  it('此刻没有锚点时点九宫格不写 loc_anchor——不留一条没有作用的 override', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('左上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).not.toContain('loc_anchor')
+  })
+
+  it('此刻在外侧时点九宫格写 loc_anchor = null（那是一个取值，不是删掉它）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧中'))
+    await click(byAria('左上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toBeNull()
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).toContain('loc_anchor')
+  })
+
+  it('重置位置：loc 与 loc_anchor 一起回到脚本原值（图例回到图内）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+
+    // 位置那一行的恢复按钮：`loc_anchor` 被这个控件承接了，通用列表里没有
+    // 第二个入口能清它——只清 `loc` 的话锚框还在，图例仍然在图外
+    await click(byAria('恢复位置'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBeUndefined()
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).not.toContain('loc_anchor')
+  })
+
+  it('重置位置只动落位那一组，别的 override 一条不碰', async () => {
+    useDocumentStore.getState().commit(literal('先改点别的'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'fontsize', value: 12 })
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'ncol', value: 2 })
+      panel.overrides.push({ gid: 'axes_0.lines_0', prop: 'color', value: '#00ff00' })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend').map((o) => o.prop).sort()).toEqual(['fontsize', 'ncol'])
+    expect(overrideOf('axes_0.lines_0', 'color')).toBe('#00ff00')
+  })
+
+  it('重置位置把拖动留下的 loc_frac 也清掉——控件写过它，就该清它', async () => {
+    useDocumentStore.getState().commit(literal('先拖一下'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'loc_frac', value: [0.2, 0.3] })
+    })
+    await mount(['axes_0.legend'])
+    // 只拖过、没点过预设：位置那行照样算「已修改」，恢复按钮就在那儿
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend')).toHaveLength(0)
+  })
+
+  it('一次重置 = 一条历史（不是三条）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    const before = useDocumentStore.getState().past.length
+    await click(byAria('恢复位置'))
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('清单只有一份：位置控件写过的 prop 全在 LEGEND_PLACEMENT_PROPS 里', () => {
+    // 结构判据。绕开槽位表直接 `set.push` 一条新 prop 时在这里红——那是
+    // 「加了第四条落位 prop 却没进那张表」唯一还能溜进来的路。
+    const panel = panelOf()
+    const touched = new Set<string>()
+    for (const next of [
+      { loc: 'upper left', anchor: [1.02, 1] as [number, number] },
+      { loc: 'upper left', anchor: null },
+      ...LEGEND_OUTSIDE_PRESETS.map((preset) => ({ loc: preset.loc, anchor: preset.anchor })),
+    ]) {
+      const plan = legendPlacementPlan(panel, [legendEl], next)
+      for (const r of plan.remove) touched.add(r.prop)
+      for (const w of plan.set) touched.add(w.prop)
+    }
+    expect(touched.size).toBeGreaterThan(1)
+    expect([...touched].filter((p) => !LEGEND_PLACEMENT_PROPS.includes(p))).toEqual([])
+  })
+
+  it('往槽位表加一条 prop：写入面与重置面同时变大（不是回来手改白名单）', () => {
+    // 这条钉的是**推导关系本身**，不是今天那三条 prop 的取值。手写两份清单
+    // 时，下次加落位 prop 的人不会自动想起还有个重置清单——重置漏掉它而且
+    // 不会红，白名单式的判据只挡得住「已知那几条丢了」，挡不住「新增了第二类」。
+    const extra: LegendPlacementSlot = { prop: 'loc_pad', plan: () => ({ value: 1 }) }
+    const slots = [...LEGEND_PLACEMENT_SLOTS, extra]
+
+    // 生产那份重置清单就是从这张表算出来的（不是另抄的一份字面量）
+    expect(placementPropsOf(LEGEND_PLACEMENT_SLOTS)).toEqual([...LEGEND_PLACEMENT_PROPS])
+    // 表长一条 → 清单跟着长一条
+    expect(placementPropsOf(slots)).toContain('loc_pad')
+    expect(placementPropsOf(slots)).toHaveLength(LEGEND_PLACEMENT_PROPS.length + 1)
+    // 而且新槽位真的会被写出来——证明两侧读的确实是同一张表，不是各走各的
+    const plan = placementPlanFrom(slots, panelOf(), [legendEl], {
+      loc: 'upper left',
+      anchor: [1.02, 1],
+    })
+    const touched = [...plan.remove, ...plan.set].map((t) => t.prop)
+    expect(touched).toContain('loc_pad')
+    expect(touched.filter((p) => !placementPropsOf(slots).includes(p))).toEqual([])
+  })
+
+  it('重置清单是**算出来的**，不是一份碰巧相等的字面量', () => {
+    // 上一条用例只看得见取值：把 `placementPropsOf(...)` 换成一份今天恰好相等
+    // 的手写数组，它照样绿——而那正是「退化回白名单」的样子。差别只在构造上，
+    // 判据也只能落在构造上（读源码走 `?raw`，与 `ui/nativeSelect.test.ts` 同
+    // 一手法：src 归 tsconfig.app.json 管，那儿不该有 node 的 types）。
+    const DEFINED_BY_DERIVATION = /export const LEGEND_PLACEMENT_PROPS = placementPropsOf\(/
+    expect(
+      LEGEND_MODEL_SRC,
+      '重置清单必须从 LEGEND_PLACEMENT_SLOTS 推导；手写第二份的话，下次加落位 '
+        + 'prop 时重置会漏掉它而且不会红',
+    ).toMatch(DEFINED_BY_DERIVATION)
+    // 自检：判据认得出退化成字面量的写法（不是空门禁）
+    expect(
+      DEFINED_BY_DERIVATION.test(
+        "export const LEGEND_PLACEMENT_PROPS = ['loc', 'loc_anchor', 'loc_frac']",
+      ),
+    ).toBe(false)
+  })
+
+  it('重置的覆盖面由清单说了算：里面的每一条都被清掉', async () => {
+    // **遍历 `LEGEND_PLACEMENT_PROPS` 造 override**，不是手写三条。以后槽位表
+    // 长一条，这条用例自动多造一条、也自动多要求清掉一条——覆盖面跟着变。
+    const seed: Record<string, unknown> = {
+      loc: 'upper left',
+      loc_anchor: [1.02, 1],
+      loc_frac: [0.2, 0.3],
+    }
+    useDocumentStore.getState().commit(literal('每条落位 prop 各造一条'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      for (const prop of LEGEND_PLACEMENT_PROPS) {
+        panel.overrides.push({ gid: 'axes_0.legend', prop, value: seed[prop] ?? 1 })
+      }
+      // 对照组：不属于这个控件的那条必须活下来
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'fontsize', value: 12 })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).toEqual(['fontsize'])
   })
 
   it('点文字选中那一项', async () => {
@@ -447,15 +678,43 @@ describe('选中图例', () => {
 /* -------------------------------- 图例项页 -------------------------------- */
 
 describe('选中图例项', () => {
-  it('跟随中的项：状态行说「跟随图中对象」，有「查看源对象」', async () => {
+  it('链接中的项：一行写清链接到谁，动作是一个链条开关（审计 T18）', async () => {
     await mount(['axes_0.legend.texts_0'])
-    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')
-    expect(byText('改为自定义')).toBeDefined()
+    const state = host.querySelector('[data-binding]')
+    expect(state?.getAttribute('data-binding')).toBe('follow_source')
+    expect(state?.textContent).toBe('链接到：曲线 “sin”')
+    const toggle = byAria('断开链接')
+    expect(toggle).toBeDefined()
+    expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+    // 关系仍然看得见：来源入口在
     expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
+    // 说明**不常驻**：原理在开关的悬停提示里（Radix 的气泡只在打开时才进 DOM）
+    expect(host.textContent).not.toContain('示意线由图中那个对象派生')
+  })
+
+  it('链接中不摆示意线样式；断开后出现，恢复链接后又收起', async () => {
+    await mount(['axes_0.legend.texts_0'])
+    await click(byText('更多'))
+    expect(propInput('handle_color', 'color')).toBeUndefined()
+    expect(propInput('handle_linewidth')).toBeUndefined()
+
+    await click(byAria('断开链接'))
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
+    expect(host.querySelector('[data-binding]')?.textContent).toBe('已断开 · 来源：曲线 “sin”')
+    expect(propInput('handle_color', 'color')).toBeDefined()
+    // **断开之后关系仍然看得见**：来源入口留着。藏起来的话，改这一项就像是
+    // 在改那条曲线本身——那正是这一条的验收（审计 T18）
+    expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
+
+    await click(byAria('恢复链接'))
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')
+    expect(propInput('handle_color', 'color')).toBeUndefined()
   })
 
   it('改示意线颜色 → 立刻是「自定义」，不等渲染回来', async () => {
     await mount(['axes_0.legend.texts_0'])
+    // 先断开才有这个控件（审计 T18）；断开写的是 binding override
+    await click(byAria('断开链接'))
     const color = propInput('handle_color', 'color')
     expect(color).toBeDefined()
     await act(async () => {
@@ -465,11 +724,19 @@ describe('选中图例项', () => {
     })
     expect(overrideOf('axes_0.legend.texts_0', 'handle_color')).toBe('#123456')
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
+    // 判据是「任一 handle_* override 在即 custom」，**不是**「binding override 说了算」：
+    // 把 binding override 拿掉（老文档 / 别处清过一次）状态仍然是自定义
+    useDocumentStore.getState().commit(literal('去掉 binding override'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides = p.overrides.filter((o) => o.prop !== 'binding')
+    })
+    await act(async () => {})
+    expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
   })
 
-  it('「改为自定义」写 binding=custom；「恢复跟随」一次撤销撤掉全部示意线 override', async () => {
+  it('断开写 binding=custom；恢复链接一次撤销撤掉全部示意线 override', async () => {
     await mount(['axes_0.legend.texts_0'])
-    await click(byText('改为自定义'))
+    await click(byAria('断开链接'))
     expect(overrideOf('axes_0.legend.texts_0', 'binding')).toBe('custom')
     useDocumentStore.getState().commit(literal('两条示意线 override'), (d) => {
       const p = d.objects.find((o) => o.id === 'p1') as PanelObject
@@ -478,7 +745,7 @@ describe('选中图例项', () => {
     })
     await act(async () => {})
     const before = useDocumentStore.getState().past.length
-    await click(byText('恢复跟随'))
+    await click(byAria('恢复链接'))
     expect(overridesOf('axes_0.legend.texts_0')).toEqual([])
     const past = useDocumentStore.getState().past
     expect(past.length, JSON.stringify(past.slice(before).map((h) => h.label))).toBe(before + 1)
@@ -490,10 +757,10 @@ describe('选中图例项', () => {
     ])
   })
 
-  it('脚本原样是 custom 的项：「恢复跟随」写 binding=follow_source', async () => {
+  it('脚本原样是 custom 的项：恢复链接写 binding=follow_source', async () => {
     await mount(['axes_0.legend.texts_1'])
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
-    await click(byText('恢复跟随'))
+    await click(byAria('恢复链接'))
     expect(overrideOf('axes_0.legend.texts_1', 'binding')).toBe('follow_source')
   })
 

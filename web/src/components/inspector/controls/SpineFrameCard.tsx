@@ -119,6 +119,7 @@ export function SpineFrameCard({
         >
           <div data-prop="spine_color" data-gid={element.gid} className="flex min-w-0 flex-1 items-center gap-1.5">
             <ColorField
+              ariaLabel={propLabel('spine_color', element.role)}
               value={String(color.value ?? '#000000')}
               onChange={(v) => {
                 unifySides('color')
@@ -266,6 +267,7 @@ function SideRow({
       {colorField && (
         <div data-prop={colorProp} data-gid={gid} className="flex min-w-0 items-center">
           <ColorField
+            ariaLabel={`${sideName} ${propLabel(colorProp, role)}`}
             value={String(read(colorProp) ?? '#000000')}
             onChange={(v) => write(colorProp, v, true)}
             onGestureEnd={endGesture}

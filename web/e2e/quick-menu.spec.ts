@@ -17,7 +17,7 @@ test('右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚�
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-  await page.getByRole('button', { name: '画布排版' }).first().click()
+  await page.getByRole('button', { name: /返回画布/ }).first().click()
 
   const panel = page.locator('[data-object-id]').first()
   await expect(panel).toBeVisible()

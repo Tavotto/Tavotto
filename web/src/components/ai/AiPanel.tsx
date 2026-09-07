@@ -72,6 +72,20 @@ const LOADER_COLOR = 'var(--color-ink-3)'
 
 const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
 
+/**
+ * 「执行器 · 模型」合成选择器的值编码（审计 T37）。
+ *
+ * 呈现上是一个控件，存下去仍是 aiStore 的两个字段。Agent id 是后端注册表里的
+ * 短标识（`codex` / `claude`），不含 `/`；模型名整段留给右边，所以按**第一个**
+ * `/` 切开，模型名里真出现斜杠也不会被截断。
+ */
+const PAIR_SEP = '/'
+const pairValue = (agentId: string, model: string) => `${agentId}${PAIR_SEP}${model}`
+const splitPair = (v: string): [string, string] => {
+  const i = v.indexOf(PAIR_SEP)
+  return i < 0 ? [v, ''] : [v.slice(0, i), v.slice(i + 1)]
+}
+
 const scopeItems = () =>
   SCOPE_VALUES.map((value) => ({ value, label: ai(`scope.${value}`) }))
 
@@ -250,29 +264,34 @@ export function AssistantPanel() {
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} className="h-full overflow-y-auto px-2.5 py-2">
           {!panel ? (
+            /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState
               icon={FileCodeCorner}
               title={ai('panel.noPanelTitle')}
               hint={ai('panel.noPanelHint')}
             />
-          ) : mine.length === 0 ? (
-            <EmptyState
-              icon={FileCodeCorner}
-              title={ai('panel.emptyTitle')}
-              hint={ai('panel.emptyHint')}
-            />
           ) : (
-            <div className="flex flex-col gap-3">
-              {mine.map((s) => (
-                <SessionBlock key={s.id} session={s} />
-              ))}
-            </div>
+            /* 有可编辑的图、还没发过任务时**这里什么都不放**（审计 T37）：
+               起手式和「助手会做什么」都挪到了输入框旁边，注意力集中在一处。
+               这块留白正是会话到来时它出现的地方 */
+            mine.length > 0 && (
+              <div className="flex flex-col gap-3">
+                {mine.map((s) => (
+                  <SessionBlock key={s.id} session={s} />
+                ))}
+              </div>
+            )
           )}
         </div>
         {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
       </div>
 
       <div className="shrink-0 px-3 pb-3 pt-1">
+        {/* 「助手会做什么」挪到输入框上方一行（审计 T37）：原来它在面板正中，
+            与底部的起手式和输入框各占一头，注意力被扯成两处 */}
+        {panel && mine.length === 0 && (
+          <p className="mb-1.5 text-xs leading-relaxed text-ink-3">{ai('panel.emptyHint')}</p>
+        )}
         {panel && mine.length === 0 && !prompt.trim() && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {chipsFor(scope, element, !!axes).map((c) => (
@@ -445,8 +464,10 @@ function ScopeAgentButton({
           aria-label={ai('panel.scopeAndAgent')}
         >
           <SlidersHorizontal size={ICON_SIZE.sm} />
+          {/* 「作用于：当前元素」而不是光一个「当前元素」（审计 T37）：
+              发送前这一行要能独立回答「按下去会改什么」 */}
           <span className="text-xs">
-            {scopeLabel(scope)}
+            {ai('panel.actsOn', { scope: scopeLabel(scope) })}
             {active ? ` · ${agentDisplayName(caps, active)}` : ''}
           </span>
         </Button>
@@ -478,6 +499,7 @@ export function ScopeAgentContent({
   const models = useAiStore((s) => s.models)
   const efforts = useAiStore((s) => s.efforts)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [effortOpen, setEffortOpen] = useState(false)
 
   // 只展示**可用**的 Agent（装了、没被关掉、也没在等登录）；顺序沿用后端注册表。
   // 模型 / 强度选项完全由该 Agent 自己声明的能力决定，不在前端列第二份名单。
@@ -491,6 +513,26 @@ export function ScopeAgentContent({
   // 绝不凭字符串造一个数组里没有的档位
   const effortList: string[] = cur?.efforts ?? []
   const effortIndex = Math.max(0, effortList.indexOf(effort))
+  // 「执行器 · 模型」的候选。装了两个 Agent 时每一项都带执行器名，只装一个时
+  // 不重复它（触发按钮上已经写着）。**模型清单为空 = 跟随 CLI 默认**，给一条
+  // 只有执行器名的项，绝不伪造一个模型名。
+  const pairs = usable.flatMap((a) =>
+    a.models.length
+      ? a.models.map((m: string) => ({
+          value: pairValue(a.id, m),
+          label: usable.length > 1 ? `${a.display_name} · ${m}` : m,
+        }))
+      : [{ value: pairValue(a.id, ''), label: a.display_name }],
+  )
+  const currentPair = active ? pairValue(active, model) : ''
+  // 记忆里（或 CLI 默认里）那个模型已经不在清单里时**照实把它显示出来**，
+  // 不静默换成清单里的另一项：控件上写着 A、任务却交给 B 是最难查的一类错。
+  if (currentPair && cur && !pairs.some((p) => p.value === currentPair)) {
+    pairs.unshift({
+      value: currentPair,
+      label: usable.length > 1 ? `${cur.display_name} · ${model}` : model,
+    })
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -517,6 +559,7 @@ export function ScopeAgentContent({
           <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
           <div>
             <Button
+              data-ai-open-settings
               variant="outline"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
@@ -527,50 +570,73 @@ export function ScopeAgentContent({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {/* 只装了一个 Agent 时不摆一个只有一项的「双选」——那个控件没有第二个
-              选项可选，纯粹占地方。它是谁在弹层触发按钮上已经写着了 */}
-          {usable.length > 1 && (
-            <Segmented
-              tone="quiet"
-              className="w-full"
-              ariaLabel={ai('panel.agentTitle')}
-              value={active ?? ''}
-              onChange={(v) => useAiStore.getState().setAgent(v)}
-              items={usable.map((a) => ({ value: a.id, label: a.display_name }))}
-            />
-          )}
-          {/* 模型清单为空 = 跟随 CLI 默认，不伪造一个模型名 */}
-          {cur && cur.models.length > 0 && (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{ai('panel.model')}</span>
+          {/* 执行器与模型合成一个紧凑选择器（审计 T37）。**只是呈现合并**：
+              底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
+              各写各的，切回另一个 Agent 时它自己的模型记忆还在。
+              只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要
+              看得见**，退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块
+              不出现——执行器是谁，弹层触发按钮上已经写着了 */}
+          {pairs.length > 1 ? (
+            <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
               <Select
                 className="min-w-0 flex-1"
-                ariaLabel={ai('panel.model')}
-                value={model}
-                onChange={(v) => active && useAiStore.getState().setModel(active, v)}
-                options={cur.models.map((m: string) => ({ value: m, label: m }))}
+                ariaLabel={ai('panel.agentModel')}
+                value={currentPair}
+                onChange={(v) => {
+                  const [id, m] = splitPair(v)
+                  useAiStore.getState().setAgent(id)
+                  if (m) useAiStore.getState().setModel(id, m)
+                }}
+                options={pairs}
               />
             </div>
-          )}
-          {/* 推理强度：档位来自 caps 的真实数组，一格一个值。
-              只有一档时给一个不可调的静态显示（不是一个假装能拖的滑杆）；
-              一档都没有时整块不出现 */}
-          {effortList.length > 0 && (
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <div className="flex min-w-0 items-baseline justify-between gap-2">
-                <span className="shrink-0 text-xs text-ink-2">{ai('panel.effort')}</span>
-                <span className="min-w-0 truncate text-xs font-medium text-ink" title={effortLabel(effortList[effortIndex])}>
-                  {effortLabel(effortList[effortIndex])}
+          ) : (
+            cur &&
+            model && (
+              <div data-ai-agent-model="static" className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-ink" title={model}>
+                  {`${cur.display_name} · ${model}`}
                 </span>
               </div>
-              <StepSlider
-                value={effortIndex}
-                count={effortList.length}
-                disabled={effortList.length === 1}
-                ariaLabel={ai('panel.effort')}
-                valueText={effortLabel(effortList[effortIndex])}
-                onChange={(i) => active && useAiStore.getState().setEffort(active, effortList[i])}
-              />
+            )
+          )}
+          {/* 推理强度：档位来自 caps 的真实数组，一格一个值。
+              **控件按需展示，当前值不藏**（审计 T37）——收起时那一行就写着
+              「推理强度 · 高」，要动它才展开滑杆。只有一档时滑杆不可调
+              （不是一个假装能拖的滑杆）；一档都没有时整块不出现 */}
+          {effortList.length > 0 && (
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <button
+                data-ai-effort="disclosure"
+                onClick={() => setEffortOpen((v) => !v)}
+                aria-expanded={effortOpen}
+                className="flex min-w-0 items-center gap-1 text-left outline-none focus-visible:focus-ring"
+              >
+                <ChevronRight
+                  size={ICON_SIZE.xs}
+                  aria-hidden
+                  className={cn('shrink-0 text-ink-3 transition-transform', effortOpen && 'rotate-90')}
+                />
+                <span className="shrink-0 text-xs text-ink-2">{ai('panel.effort')}</span>
+                <span
+                  className="ml-auto min-w-0 truncate text-xs font-medium text-ink"
+                  title={effortLabel(effortList[effortIndex])}
+                >
+                  {effortLabel(effortList[effortIndex])}
+                </span>
+              </button>
+              {effortOpen && (
+                <StepSlider
+                  value={effortIndex}
+                  count={effortList.length}
+                  disabled={effortList.length === 1}
+                  ariaLabel={ai('panel.effort')}
+                  valueText={effortLabel(effortList[effortIndex])}
+                  onChange={(i) => active && useAiStore.getState().setEffort(active, effortList[i])}
+                />
+              )}
             </div>
           )}
         </div>
@@ -696,6 +762,14 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // 第一次查回来之前什么都不判断：还不知道有没有记录时既不该摆筛选，
+  // 也不该先闪一句「还没有改图任务」
+  const [loaded, setLoaded] = useState(false)
+  const filtering = !!query || !!status
+  // 一条记录都没有时不渲染搜索与筛选（审计 T37）——搜一个空库、按状态筛
+  // 一个空库，两个动作都不会有任何结果。**筛出零条时它们必须留着**，
+  // 否则用户没有办法把筛选条件取消掉。
+  const showFilters = loaded && (filtering || total > 0)
 
   const load = async (q: string, st: string, off: number) => {
     try {
@@ -705,6 +779,8 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
       setError(null)
     } catch (e) {
       setError(backendErrorText(e))
+    } finally {
+      setLoaded(true)
     }
   }
 
@@ -727,6 +803,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           <X size={ICON_SIZE.sm} />
         </Button>
       </div>
+      {showFilters && (
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
         <input
           value={query}
@@ -754,15 +831,13 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           className="h-6 w-auto shrink-0"
         />
       </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2">
         {error ? (
           <p className="py-2 text-xs text-danger">{error}</p>
-        ) : entries.length === 0 ? (
-          <EmptyState
-            icon={RotateCcwClock}
-            title={ai(query || status ? 'history.noMatch' : 'history.empty')}
-            hint={query || status ? undefined : ai('history.emptyHint')}
-          />
+        ) : !loaded ? null : entries.length === 0 ? (
+          /* 空状态只给一句（审计 T37）：怎么开始，输入框自己说 */
+          <EmptyState icon={RotateCcwClock} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
         ) : (
           <div className="flex flex-col gap-2 pt-1">
             {entries.map((s) => (

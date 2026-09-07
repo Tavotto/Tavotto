@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { pushRecent } from '@/lib/commandRanking'
 import type { UiMessage } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import type { Severity } from '@/lib/profile'
@@ -91,6 +92,8 @@ interface Persisted {
   guidesLocked: boolean
   /** 显示页面安全区域（页边距）参考框 */
   showSafeArea: boolean
+  /** 命令面板最近用过的命令 id，最近一次在前（审计 T50）；本机偏好，不进文档 */
+  recentCommands: string[]
   /**
    * 拖动子图时带上随行元素：被手动摆过位置的标题 / 轴标签 / 图例，
    * 以及色条轴、twinx 的孪生轴。关掉就只动子图本身。
@@ -120,6 +123,7 @@ const DEFAULTS: Persisted = {
   snapToObjects: true,
   guidesLocked: false,
   showSafeArea: false,
+  recentCommands: [],
   dragAxesWithCompanions: true,
   rightOpen: true,
   leftTab: 'assets',
@@ -203,6 +207,16 @@ export interface ConfirmRequest {
   resolve: (ok: boolean) => void
 }
 
+/** 进裁剪那一刻的取景窗与包围盒；`crop` 缺省 = 那时整图未裁剪 */
+export interface CropBaseline {
+  id: string
+  crop?: { x: number; y: number; w: number; h: number }
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 interface UiState extends Persisted {
   /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
   status: UiMessage | null
@@ -211,6 +225,13 @@ interface UiState extends Persisted {
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
   cropTargetId: string | null
+  /**
+   * 进裁剪那一刻的取景窗与包围盒——「取消」要还原到**这里**，不是还原到
+   * 「没有裁剪过」（审计 T26）。快照由 `actions.beginCrop` 拍，本 store 只存；
+   * 任何**不**经 `beginCrop` 的进入 / 退出都会把它清成 null，那时取消降级为
+   * 单纯退出裁剪态，不会拿一份过期快照去改文档。
+   */
+  cropBaseline: CropBaseline | null
   /** 进入图内元素编辑的面板（画布对象 id） */
   elementPanelId: string | null
   /** 图内选中的元素 gid（末位为主选；axes 可 shift 多选做对齐） */
@@ -303,8 +324,10 @@ interface UiState extends Persisted {
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
+  /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
+  pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
-  setCropTarget: (id: string | null) => void
+  setCropTarget: (id: string | null, baseline?: CropBaseline | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
   /** 整组替换（图内元素框选用）；顺序即选择顺序，末位是主选 */
@@ -336,7 +359,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands',
   ]
   try {
     localStorage.setItem(
@@ -374,6 +397,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusTone: 'info',
   editingTextId: null,
   cropTargetId: null,
+  cropBaseline: null,
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
@@ -521,11 +545,15 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   setProblemScope: (problemScope) => set({ problemScope }),
+  pushRecentCommand: (id) => {
+    set({ recentCommands: pushRecent(get().recentCommands, id) })
+    persist(get())
+  },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
   setEditingText: (editingTextId) => set({ editingTextId }),
-  setCropTarget: (cropTargetId) => set({ cropTargetId }),
+  setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
   setElementPanel: (elementPanelId) =>
-    set({ elementPanelId, selectedGids: [], cropTargetId: null }),
+    set({ elementPanelId, selectedGids: [], cropTargetId: null, cropBaseline: null }),
   setSelectedGid: (gid) => {
     const before = get().selectedGids
     set({ selectedGids: gid ? [gid] : [] })

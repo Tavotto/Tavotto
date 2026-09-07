@@ -7,7 +7,9 @@ import {
   ClipboardPaste,
   Group,
   MoveDown,
+  MoveHorizontal,
   MoveUp,
+  MoveVertical,
   Ungroup,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -30,6 +32,7 @@ import {
   toggleLayoutPinned,
   ungroupSelected,
   updateLayoutGroup,
+  type AlignRef,
   type ZMove,
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
@@ -54,8 +57,6 @@ import { useSelectedObjects } from './common'
 /** 本组的文案在 inspector:arrange.* 下；对齐动作名复用 inspector:alignMode.* */
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
-
-const DISTRIBUTE: readonly ArrangeButton[] = [...DISTRIBUTE_BUTTONS, ...SIZE_BUTTONS]
 
 const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
   { move: 'top', icon: ArrowUpToLine, key: 'zTop', shortcut: `⇧${MOD}]` },
@@ -89,9 +90,14 @@ export function AlignToCanvasRow() {
 }
 
 /**
- * 排列：紧凑无外框工具带。单选面板只补层级（对齐已在位置组里），
- * 其他单选给「对齐到画布 + 层级」，多选给对齐 / 分布 / 层级；
- * 参照、间距、成组与样式搬运等次级项收进「更多排列」。
+ * 排列：紧凑无外框工具带。
+ *
+ * **单选只常驻层级**，六向「对齐到画布」收进「更多排列」——一个箭头、一段
+ * 文字最常做的是调外观，整套排列摆在那里只是让面板更长（审计 T28：层级压成
+ * 一组，完整排列仅在相关任务出现）。**能力一条不减**，展开就是同一批按钮。
+ * 单选面板连层级都只给层级：对齐已经在它自己的位置组里。
+ * 多选是「相关任务」：对齐 / 分布 / 尺寸常驻，参照、间距、成组与样式搬运
+ * 收进「更多排列」。
  */
 export function ArrangeSection({
   count,
@@ -128,24 +134,37 @@ export function ArrangeSection({
     return <Section title={ar('zorderLabel')}>{zRow}</Section>
   }
 
+  if (!multi) {
+    return (
+      <>
+        {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
+        <Section title={ar('zorderLabel')} className="scroll-mt-2" data-arrange-section="">
+          {zRow}
+        </Section>
+        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
+          <div data-single-align>
+            <AlignToCanvasRow />
+          </div>
+        </Disclosure>
+      </>
+    )
+  }
+
   return (
     <>
-      {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
       <Section
-        title={multi ? ar('titleMulti', { count }) : ar('title')}
+        title={ar('titleMulti', { count })}
         className="scroll-mt-2"
         data-arrange-section=""
       >
         <div className="flex flex-col gap-1.5">
-          {multi ? <MultiAlignRows count={count} /> : <AlignToCanvasRow />}
+          <MultiAlignRows count={count} />
           {zRow}
         </div>
       </Section>
-      {multi && (
-        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
-          <MultiArrangeExtras />
-        </Disclosure>
-      )}
+      <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
+        <MultiArrangeExtras />
+      </Disclosure>
     </>
   )
 }
@@ -193,37 +212,65 @@ function MultiAlignRows({ count }: { count: number }) {
         })}
       </div>
 
-      <div
-        role="toolbar"
-        aria-label={ar('distributeToolbar')}
-        className="grid grid-cols-6 gap-0.5"
-      >
-        {DISTRIBUTE.map(({ mode, icon: Icon, tipKey, min }) => {
-          const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
-          return (
-            <Tip
-              key={mode}
-              label={
-                mode === 'samew' || mode === 'sameh'
-                  ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(ref) })
-                  : tip
-              }
-              side="left"
-            >
-              <Button
-                size="icon"
-                className="w-full"
-                disabled={count < min}
-                onClick={() => alignSelectedTo(mode, ref)}
-                aria-label={tip}
-              >
-                <Icon size={ICON_SIZE.md} />
-              </Button>
-            </Tip>
-          )
-        })}
-      </div>
+      {/*
+        均匀分布与等宽等高是两件事（审计 T29）：前者动位置、后者动尺寸，
+        挤在同一条工具带里只能靠猜图标分辨。拆成两条各自带名字的工具带。
+      */}
+      <ArrangeToolbar
+        label={ar('distributeToolbar')}
+        buttons={DISTRIBUTE_BUTTONS}
+        refName={ref}
+        count={count}
+      />
+      <ArrangeToolbar
+        label={ar('sizeToolbar')}
+        buttons={SIZE_BUTTONS}
+        refName={ref}
+        count={count}
+      />
     </>
+  )
+}
+
+/** 一条命名的排列工具带；等宽等高的提示要报出参照，分布不用（它只看选区） */
+function ArrangeToolbar({
+  label,
+  buttons,
+  refName,
+  count,
+}: {
+  label: string
+  buttons: readonly ArrangeButton[]
+  refName: AlignRef
+  count: number
+}) {
+  return (
+    <div role="toolbar" aria-label={label} className="grid grid-cols-6 gap-0.5">
+      {buttons.map(({ mode, icon: Icon, tipKey, min }) => {
+        const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
+        return (
+          <Tip
+            key={mode}
+            label={
+              mode === 'samew' || mode === 'sameh'
+                ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(refName) })
+                : tip
+            }
+            side="left"
+          >
+            <Button
+              size="icon"
+              className="w-full"
+              disabled={count < min}
+              onClick={() => alignSelectedTo(mode, refName)}
+              aria-label={tip}
+            >
+              <Icon size={ICON_SIZE.md} />
+            </Button>
+          </Tip>
+        )
+      })}
+    </div>
   )
 }
 
@@ -237,10 +284,16 @@ function MultiArrangeExtras() {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Row label={ar('spacing')}>
+      {/*
+        间距的两个方向以前写作 H / V——而 H 在上面的尺寸里是「高度」，同一个
+        字母在同一个面板里代表两件事（审计 T29）。换成方向图示 + 明确的名字，
+        名字进 aria-label 与提示，图示只是视觉。
+      */}
+      <Row label={ar('spacing')} labelWidth={72}>
         <NumberField
           className="min-w-0 flex-1"
-          prefix="H"
+          prefix={<MoveHorizontal size={ICON_SIZE.xs} aria-hidden />}
+          ariaLabel={ar('spacingH')}
           suffix="mm"
           step={0.5}
           precision={1}
@@ -251,7 +304,8 @@ function MultiArrangeExtras() {
         />
         <NumberField
           className="min-w-0 flex-1"
-          prefix="V"
+          prefix={<MoveVertical size={ICON_SIZE.xs} aria-hidden />}
+          ariaLabel={ar('spacingV')}
           suffix="mm"
           step={0.5}
           precision={1}
@@ -434,7 +488,11 @@ function LayoutGroupControls() {
         />
       </Row>
       <label className="flex items-center gap-1.5 text-xs text-ink-2">
-        <Toggle checked={anyPinned} onChange={() => toggleLayoutPinned(selIds)} />
+        <Toggle
+          aria-label={ar('pinMembers')}
+          checked={anyPinned}
+          onChange={() => toggleLayoutPinned(selIds)}
+        />
         {ar('pinMembers')}
       </label>
       <div className="flex gap-1.5">

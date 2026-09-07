@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Images } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { addPanel } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
@@ -14,7 +16,7 @@ import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
-import { FastEditBar } from './FastEditBar'
+import { WorkspaceContextBar } from './WorkspaceContextBar'
 import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
@@ -34,7 +36,7 @@ export function CanvasStage() {
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
-  // 「这一次把图加进了文档」——只用来播报，可见那一行在 FastEditBar
+  // 「这一次把图加进了文档」——只用来播报，可见那一行在 WorkspaceContextBar
   const addedForEdit = useWorkspaceStore(
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
@@ -208,8 +210,10 @@ export function CanvasStage() {
           addPanel(info, p.x, p.y)
         }}
       >
-        {/* 唯一的世界变换 */}
+        {/* 唯一的世界变换。`data-world-transform` 是稳定选择器：e2e 靠它量
+            「切模式时画布有没有意外移动」（审计 T01），别改名 */}
         <div
+          data-world-transform
           className="absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
@@ -241,16 +245,17 @@ export function CanvasStage() {
 
       {/* 「这张图是刚为编辑加进文档的」这条提示的**读屏播报**（UI 审计 T06）。
           读屏播报的是活动区**内容的变化**，所以这块区必须比内容先在 DOM 里。
-          它挂在 `CanvasStage` 而不是 `FastEditBar` 里：后者是进快速编辑那一刻才
-          挂上的，活动区跟它一起插进来的话，插进来时就已经填好了字——那种「带着
-          内容整个插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个
-          role 承诺了一件它并没有做的事。`CanvasStage` 两种模式下都常驻，区先在、
-          内容后变，这条提示才真的会被读出来。可见的那一份在 `FastEditBar`。 */}
+          它挂在 `CanvasStage` 而不是上下文条里：后者是进快速编辑那一刻才挂上的，
+          活动区跟它一起插进来的话，插进来时就已经填好了字——那种「带着内容整个
+          插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个 role 承诺
+          了一件它并没有做的事。`CanvasStage` 两种模式下都常驻，区先在、内容后变，
+          这条提示才真的会被读出来。可见的那一份在 `WorkspaceContextBar`。 */}
       <div role="status" data-fast-edit-live className="sr-only">
         {addedForEdit ? t('fastEdit.addedForEdit') : ''}
       </div>
 
-      {fastEdit ? <FastEditBar /> : <ElementEditBar />}
+      {/* 「我在改哪一层」只说一遍：快速编辑与图内编辑共用这一条（审计 T01） */}
+      <WorkspaceContextBar />
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
@@ -322,47 +327,16 @@ function useFrame(
   return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
 }
 
-/**
- * 图内编辑态的浮动出口：Esc 之外的显式按钮。退出时顺手选中该面板，
- * 属性页落在面板上，「写回原始文件」就在手边。
- */
-function ElementEditBar() {
-  const panelId = useUiStore((s) => s.elementPanelId)
-  const name = useDocumentStore((s) => {
-    const o = s.doc.objects.find((x) => x.id === panelId)
-    return o?.type === 'panel' ? (o.name ?? o.fileId) : null
-  })
-  if (!panelId) return null
-
-  const exit = () => {
-    useUiStore.getState().setElementPanel(null)
-    useSelectionStore.getState().set([panelId])
-  }
-
-  return (
-    <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2">
-      <div className="flex h-7 items-center gap-2 rounded-md border border-border bg-surface pl-2.5 pr-1 shadow-pop">
-        <span className="max-w-64 truncate text-xs text-ink-2">
-          {sg('elementEditing')}
-          {name ? <span className="text-ink">{sg('elementEditingName', { name })}</span> : null}
-        </span>
-        <button
-          onClick={exit}
-          title={sg('exitTitle')}
-          className="flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink transition-colors hover:bg-ink/[.055]"
-        >
-          {sg('backToCanvas')}
-          <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
-        </button>
-      </div>
-    </div>
-  )
-}
-
 /** 画布层的文案在 workspace:stage.* 下 */
 const sg = (key: string, values?: Record<string, unknown>) =>
   translate(`stage.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
+/**
+ * 空画布的起步提示：**一个**主要行动「添加图」（打开素材库），旁边一条
+ * 「试用示例」（走教程的统一入口）。项目里一张图都没有时，说明改成告诉用户
+ * 把什么文件放进项目目录——那是唯一能让「添加图」有东西可添的路（审计 T03）。
+ * 教程项目自己不再提供「试用示例」。
+ */
 function EmptyHint() {
   useTranslation('workspace')
   const setLeftTab = useUiStore((s) => s.setLeftTab)
@@ -371,6 +345,9 @@ function EmptyHint() {
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
   const page = useDocumentStore((s) => s.doc.page)
+  const assetsLoaded = useAssetStore((s) => s.loaded)
+  const hasAssets = useAssetStore((s) => s.panels.length > 0)
+  const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
   // 锚在纸面中心而不是视口中心：侧栏一开、画布被挤到一边时，
   // 提示跟着纸面走，而不是飘在灰色工作区中央
@@ -385,8 +362,14 @@ function EmptyHint() {
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}
-          hint={sg('emptyHint')}
-          action={{ label: sg('openAssets'), onClick: () => setLeftTab('assets') }}
+          // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
+          hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}
+          action={{ label: sg('addFigure'), onClick: () => setLeftTab('assets') }}
+          secondary={
+            inTutorial
+              ? undefined
+              : { label: sg('tryTutorial'), onClick: () => void runTutorialEntry('canvas') }
+          }
         />
       </div>
     </div>

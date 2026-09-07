@@ -98,10 +98,16 @@ export function LeftRail() {
       })}
 
       {/* 项目级入口与上面四个上下文分组：它开的是对话框不是抽屉，所以不进
-          ITEMS，也不参与「再点一次收起」那套语义 */}
+          ITEMS，也不参与「再点一次收起」那套语义。
+          **`data-rail` 照给**：这两颗在循环外单独写，2026-09-07 之前漏了这个属性，
+          于是三个 spec 只能退回按 `aria-label` 的中文文案找它们（#299 那一族的
+          同一个赌注在三处各下了一次）。id 与 rail 文案键的末段对齐。
+          （这里不写成完整的翻译调用形态：i18n 检查是按字面量扫的，注释里出现
+          一个带通配的 key 会被当成真的用到了，构建当场红。） */}
       <span className="mt-auto h-px w-6 bg-border" aria-hidden />
       <Tip label={t('rail.readiness')} side="right">
         <button
+          data-rail="readiness"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
           className={cn(
@@ -115,6 +121,7 @@ export function LeftRail() {
       </Tip>
       <Tip label={t('rail.settings')} side="right">
         <button
+          data-rail="settings"
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
           className={cn(

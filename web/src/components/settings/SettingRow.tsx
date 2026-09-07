@@ -46,17 +46,40 @@ export function SettingSection({
 /**
  * 一行设置。行高、标签列宽、对齐在这里统一——修改前每个分区各写各的
  * `<label className="flex min-h-7 …">`，换个分区标签列就差几个像素。
+ *
+ * **标签先说结果，短说明贴着标签**（UI 审计「说明文字专项补查」）：
+ *   * `description` 是标签下面的一行小字，说这一项「改的是什么、影响哪里」，
+ *     ≤ 一句话；它和标签在同一列，读一行不用左右扫视；
+ *   * `help`（小问号）只留给真有歧义、且说明里带链接 / 按钮的少数几处，
+ *     常规字段**不默认**挂问号；
+ *   * `status` 仍是控件后面的现状摘要（「当前窗口太窄，固定不生效」），
+ *     只在那个状态真的成立时给，不是常驻解释；
+ *   * `controlId` 让标签成为真正的 `<label>`：点标签文字 = 点开关。
+ *
+ * **`<label htmlFor>` 不负责给 `<button>` 取名。** HTML-AAM 给 `button` 的取名
+ * 方式是「name from content」，`Toggle` 那颗按钮的内容只有两个装饰用的 `<span>`
+ * ——chromium 大方地把标签文字算进去了，webkit 按规范办事，于是同一颗开关在
+ * chromium 上有名字、在 webkit 上是 `button-name` critical（#299，Windows 腿）。
+ * 所以标签自己带一个稳定 id（`settingRowLabelId(controlId)`），控件用
+ * `aria-labelledby` 指着它：名字与看见的那行字**是同一份**，不会分叉。
  */
+/** 这一行标签的 id：控件用 `aria-labelledby` 指它，名字就是看见的那行字 */
+export const settingRowLabelId = (controlId: string) => `${controlId}-label`
+
 export function SettingRow({
   label,
+  description,
   help,
   helpLabel,
   status,
   children,
   danger,
-  labelWidth = 112,
+  controlId,
+  labelWidth = 160,
 }: {
   label: ReactNode
+  /** 标签下面的一行短说明：改的是什么、影响哪里。不是解释段 */
+  description?: ReactNode
   /** 解释性内容。给了就在标签后放一个小问号，**不在行下再堆一段** */
   help?: ReactNode
   /** 问号的可达名；缺省用「关于<标签>」 */
@@ -66,25 +89,47 @@ export function SettingRow({
   children: ReactNode
   /** 这一行的当前状态有真实副作用（只读模式、写源文件…） */
   danger?: boolean
+  /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件 */
+  controlId?: string
   labelWidth?: number
 }) {
   const labelText = typeof label === 'string' ? label : ''
+  const LabelTag = controlId ? 'label' : 'span'
   return (
-    <div className="flex min-h-7 items-center gap-2">
+    <div className="flex min-h-7 items-start gap-2">
+      {/* 标签列：py-1 + leading-5 让第一行正好落在 28px 行高的中线上，
+          于是有说明的行与没说明的行，标签与控件仍然对齐在同一条线上 */}
       <span
         style={{ width: labelWidth }}
-        className={cn('flex shrink-0 items-center gap-1 text-xs', danger ? 'text-ink' : 'text-ink-2')}
+        className={cn(
+          'flex shrink-0 items-start gap-1 py-1 text-xs',
+          danger ? 'text-ink' : 'text-ink-2',
+        )}
       >
-        <span className="min-w-0 truncate" title={labelText || undefined}>
-          {label}
+        <span className="flex min-w-0 flex-col">
+          <LabelTag
+            id={controlId ? settingRowLabelId(controlId) : undefined}
+            htmlFor={controlId}
+            className={cn('min-w-0 truncate leading-5', controlId && 'cursor-pointer')}
+            title={labelText || undefined}
+          >
+            {label}
+          </LabelTag>
+          {description != null && (
+            <span className="mt-px text-[11px] leading-snug text-ink-3">{description}</span>
+          )}
         </span>
         {help != null && (
-          <HelpTip label={helpLabel ?? st('helpAbout', { label: labelText })}>{help}</HelpTip>
+          <span className="flex h-5 items-center">
+            <HelpTip label={helpLabel ?? st('helpAbout', { label: labelText })}>{help}</HelpTip>
+          </span>
         )}
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
+      <span className="flex min-h-7 min-w-0 flex-1 items-center gap-2">{children}</span>
       {status != null && (
-        <span className="min-w-0 shrink truncate text-right text-xs text-ink-3">{status}</span>
+        <span className="min-w-0 shrink truncate py-1 text-right text-xs leading-5 text-ink-3">
+          {status}
+        </span>
       )}
     </div>
   )
@@ -150,6 +195,8 @@ export function HelpTip({
       trigger={
         <button
           type="button"
+          // 结构性标记：「这一页还有几个问号」的判据认它，不去猜可达名的前缀
+          data-help-tip
           aria-label={label}
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}

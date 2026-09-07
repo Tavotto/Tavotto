@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import { captureTelemetry } from '@/lib/telemetry'
-import { applyUpdate, checkUpdate, patchUpdateSettings, type UpdateStatus } from '@/lib/api'
+import { ApiError, applyUpdate, checkUpdate, patchUpdateSettings, type UpdateStatus } from '@/lib/api'
 import {
   checkDesktopUpdate,
   installDesktopUpdate,
@@ -35,6 +35,13 @@ interface UpdateState {
   /** 升级成功后为 true——进程还跑着旧代码，界面要一直提示重启 */
   restartRequired: boolean
   applyLog: string | null
+  /**
+   * 上一次 `apply()` 的结局。**与 applyLog 是两件事**：失败时后端把原因放在
+   * 响应体的 `log` 里、`error` 字段是空的，于是 jsonFetch 只留下「HTTP 500」，
+   * 界面把它和成功的安装日志画成同一片灰字——用户看不出装没装上，也就不知道
+   * 该不该再点一次（审计 T48「失败保留重试路径」）。
+   */
+  applyFailed: boolean
   /** 用户手动关掉本次顶栏提示（不改设置，仅本次会话） */
   dismissed: boolean
   /** 手动「立即检查」在 fetch 层就失败时的提示（连不上后端等）；自动检查不写 */
@@ -53,6 +60,12 @@ interface UpdateState {
   desktopError: string | null
   /** 查过一次没有新版（用来把「已是最新版本」和「还没查」分开） */
   desktopChecked: boolean
+  /**
+   * 上一次**成功**查询完成的时刻。界面上的「最新」只能说到这一刻为止——
+   * 它是那次查询的回答，不是对发布状态的实时核验（审计 T48）。查询失败时
+   * 不更新：拿一个失败的时刻去支撑「那时是最新的」就是在编。
+   */
+  desktopCheckedAtMs: number | null
   checkDesktop: () => Promise<void>
   installDesktop: () => Promise<void>
   relaunch: () => Promise<void>
@@ -64,6 +77,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   applying: false,
   restartRequired: false,
   applyLog: null,
+  applyFailed: false,
   dismissed: false,
   checkError: null,
   desktopPhase: 'idle',
@@ -71,6 +85,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   desktopProgress: null,
   desktopError: null,
   desktopChecked: false,
+  desktopCheckedAtMs: null,
 
   check: async (force = false) => {
     if (get().checking) return
@@ -97,12 +112,19 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
   apply: async () => {
     if (get().applying) return
-    set({ applying: true, applyLog: null })
+    set({ applying: true, applyLog: null, applyFailed: false })
     try {
       const res = await applyUpdate()
-      set({ applyLog: res.log, restartRequired: res.restart_required })
+      set({ applyLog: res.log, restartRequired: res.restart_required, applyFailed: !res.ok })
     } catch (e) {
-      set({ applyLog: e instanceof Error ? e.message : t('update.applyFailed', { ns: 'errors' }) })
+      // 后端失败走 500，原因在响应体的 `log` 里而不是 `error`——不取出来的话
+      // 用户读到的是「HTTP 500」，pip 真正说的那句话被扔掉了
+      const log = e instanceof ApiError && typeof e.body.log === 'string' ? e.body.log : null
+      set({
+        applyLog:
+          log ?? (e instanceof Error ? e.message : t('update.applyFailed', { ns: 'errors' })),
+        applyFailed: true,
+      })
     } finally {
       set({ applying: false })
     }
@@ -121,7 +143,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     set({ desktopPhase: 'checking', desktopError: null })
     try {
       const info = await checkDesktopUpdate()
-      set({ desktopUpdate: info, desktopChecked: true, dismissed: false })
+      set({
+        desktopUpdate: info,
+        desktopChecked: true,
+        desktopCheckedAtMs: Date.now(),
+        dismissed: false,
+      })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
       set({

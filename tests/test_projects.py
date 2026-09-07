@@ -121,6 +121,23 @@ def test_open_project_and_recent(client, tmp_path, monkeypatch):
     assert recent[0]["current"] is True and recent[0]["exists"] is True
 
 
+def test_status_says_where_documents_are_saved(client, tmp_path):
+    """「另存为」把文档写到哪，由后端说（审计 T04）。
+
+    界面要在另存那一屏回答「位置」。让它自己拼 `<项目>/tavottofile` 就是把
+    `project_layout_dir()` 抄成第二份——而那个函数还有「未打开项目退回数据
+    目录」这条分支，抄不过去。所以这里守两件事：字段在，且它与真正的落盘
+    目录**是同一个**（不是一个长得像的字符串）。
+    """
+    figs = _make_figs(tmp_path)
+    body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+    assert body["document_dir"] == str(m.project_layout_dir())
+    # 真的存一份进去，落点就在它说的那个目录里
+    doc = {"schema": 2, "name": "x", "page": {"w": 100, "h": 50}, "objects": [], "guides": []}
+    assert client.post("/api/layouts/Fig%201", json=doc).status_code == 200
+    assert (Path(body["document_dir"]) / "Fig_1.json").exists()
+
+
 def test_open_missing_dir_keeps_current(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))
@@ -135,6 +152,71 @@ def test_create_project(client, tmp_path):
     assert resp.status_code == 200
     assert target.is_dir()
     assert resp.get_json()["open"] is True
+
+
+def test_create_rejects_traversal_and_keeps_the_parent_untouched(client, tmp_path):
+    """`create=true` 的路径里出现 `..` 一律拒（评审 #299-2）。
+
+    界面挡住了不是安全边界：桌面新建流程把「用户选的上级目录」与「用户输入的
+    名字」拼成一条路径发过来，`mkdir(parents=True, exist_ok=True)` 会把 `..`
+    解析掉——落点跑到对话框上写着的目录**之外**，而且 `exist_ok=True` 让一个
+    **已经存在**的上级目录被当成新项目初始化，用户看不出发生过什么。
+
+    所以判据不只看状态码：还要证明那个上级目录**没有**被打开成项目。
+    """
+    parent = tmp_path / "parent"
+    (parent / "chosen").mkdir(parents=True)
+    resp = client.post(
+        "/api/projects/open", json={"path": str(parent / "chosen" / ".."), "create": True}
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == "unsafe_project_name"
+    assert body["params"]["name"] == ".."
+    assert m.default_project_path() != parent  # 上级目录没被当成项目打开
+
+
+def test_create_rejects_a_leaf_that_is_not_a_legal_folder_name(client, tmp_path):
+    """末位分量走 `exportreq.check_filename`（路径分量合法性的唯一权威）。"""
+    resp = client.post("/api/projects/open", json={"path": str(tmp_path / "CON"), "create": True})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "unsafe_project_name"
+    assert not (tmp_path / "CON").exists()  # 拒了就一个字节都别写
+
+
+def test_create_judges_the_leaf_the_user_actually_typed(client, tmp_path):
+    """两侧判据必须用**同一把尺子**，谁的内建函数都不许先碰那个串。
+
+    端点开头对整条路径做 `raw.strip()`。Python 的 `str.strip()` 与 JavaScript
+    的 `String.trim()` 认的空白字符集不一样——`\x1c`–`\x1f` 只有 Python 认，
+    `\ufeff` 只有 JS 认。先 strip 再判的话，`parent/figs\x1c` 在前端是
+    `control_char`（拒），到后端被 strip 成 `figs` 建了出来：同一个输入，两侧
+    两个答案，而这正是「界面挡住了」被当成安全边界时最容易漏掉的一格。
+
+    所以末位分量取自没被 strip 过的原串，合法性交给 `exportreq.check_filename`
+    ——它自己带一份写死的空白集合，两侧同源。
+    """
+    hidden = tmp_path / "figs\x1c"
+    resp = client.post("/api/projects/open", json={"path": str(hidden), "create": True})
+    assert resp.status_code == 400, "只有 Python 的 strip 认的那种空白被吃掉了"
+    assert resp.get_json()["code"] == "unsafe_project_name"
+    assert not (tmp_path / "figs").exists()  # 也没有被 strip 成一个「差不多」的名字
+
+    # 另一个方向：只有 JS 的 trim 认的那种（strip 留得住），同样拒
+    bom = tmp_path / "figs\ufeff"
+    resp = client.post("/api/projects/open", json={"path": str(bom), "create": True})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "unsafe_project_name"
+
+
+def test_create_still_accepts_a_normal_name(client, tmp_path):
+    """反向：正常名字照旧能建——判据别宽到把正常用法也拦了。"""
+    for name in ("figs", "论文插图", "fig-1.v2", "COM10"):
+        resp = client.post(
+            "/api/projects/open", json={"path": str(tmp_path / name), "create": True}
+        )
+        assert resp.status_code == 200, name
+        assert (tmp_path / name).is_dir()
 
 
 def test_remove_recent_keeps_disk(client, tmp_path):

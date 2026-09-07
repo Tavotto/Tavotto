@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { ManagedEnvironmentRow } from './DependencyRepairCard'
 import { WorkdirRow } from './WorkdirRow'
 import { Button } from './ui/Button'
@@ -28,9 +29,10 @@ import { TextInput } from './ui/Input'
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
 
-/** 后端给的是稳定的 source 枚举，人话在这里按当前语言取 */
+/** 后端给的是稳定的 source 枚举，人话在这里按当前语言取。
+ *  产品名走 `brand.ts`——界面文案里不手写它（根 AGENTS.md）。 */
 const sourceLabel = (source: EngineSource): string =>
-  en(`sourceLabel.${source || 'unknown'}`)
+  en(`sourceLabel.${source || 'unknown'}`, { product: PRODUCT_NAME })
 
 export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   useTranslation('errors')
@@ -90,7 +92,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (env.ok) {
     const label = sourceLabel(env.source)
     return (
-      <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+      <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
         <div>
           <h3 className="text-xs font-medium text-ink">{en('okTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -119,7 +121,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   // ---- 3. 内置环境缺失 / 损坏（桌面版）-----------------------------------
   if (env.runtime?.expected) {
     return (
-      <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+      <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
         <div>
           <h3 className="text-xs font-medium text-ink">{en('incompleteTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -136,7 +138,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
 
   // ---- 2. 缺环境（源码 / pip 安装）---------------------------------------
   return (
-    <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+    <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
         <h3 className="text-xs font-medium text-ink">{en('missingTitle')}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>

@@ -411,6 +411,7 @@ export function StyleDialog() {
                       {draft.palette.map((c, i) => (
                         <span key={i} className="flex items-center gap-0.5">
                           <ColorField
+                            ariaLabel={sd('paletteSwatchAria', { index: i + 1 })}
                             value={c}
                             onChange={(v) =>
                               setDraft((d) => ({
@@ -454,6 +455,7 @@ export function StyleDialog() {
 
             <div className="mt-1.5 flex h-6 items-center gap-1.5 border-t border-border pt-1.5">
               <Toggle
+                aria-label={sd('includePageSize')}
                 checked={!!draft.page}
                 onChange={(v) =>
                   setDraft((d) => ({
@@ -491,7 +493,11 @@ export function StyleDialog() {
             ]}
           />
           <label className="flex items-center gap-1.5 text-xs text-ink-2">
-            <Toggle checked={withAnnotations} onChange={setWithAnnotations} />
+            <Toggle
+              aria-label={sd('withAnnotations')}
+              checked={withAnnotations}
+              onChange={setWithAnnotations}
+            />
             {sd('withAnnotations')}
           </label>
 
@@ -605,12 +611,13 @@ function EntryEditor({
   value: unknown
   onChange: (v: unknown) => void
 }) {
-  if (typeof value === 'boolean') return <Toggle checked={value} onChange={onChange} />
+  if (typeof value === 'boolean')
+    return <Toggle aria-label={propLabel(prop)} checked={value} onChange={onChange} />
   if (typeof value === 'number') {
     return <NumberField value={value} step={prop.includes('size') ? 0.5 : 0.1} onChange={onChange} />
   }
   if (typeof value === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
-    return <ColorField value={value} onChange={onChange} />
+    return <ColorField ariaLabel={propLabel(prop)} value={value} onChange={onChange} />
   }
   const options = ENUM_OPTIONS[prop]
   if (options && typeof value === 'string') {
@@ -654,6 +661,7 @@ function TextStylePart({
     <div className="mt-1.5 border-t border-border pt-1.5">
       <div className="flex h-6 items-center gap-1.5">
         <Toggle
+          aria-label={label}
           checked={!!value}
           onChange={(v) =>
             onChange(v ? { sizePt: 9, bold: boldByDefault, color: '#000000' } : undefined)
@@ -672,10 +680,15 @@ function TextStylePart({
             onChange={(v) => onChange({ ...value, sizePt: v })}
           />
           <label className="flex items-center gap-1 text-xs text-ink-2">
-            <Toggle checked={!!value.bold} onChange={(v) => onChange({ ...value, bold: v })} />
+            <Toggle
+              aria-label={sd('bold')}
+              checked={!!value.bold}
+              onChange={(v) => onChange({ ...value, bold: v })}
+            />
             {sd('bold')}
           </label>
           <ColorField
+            ariaLabel={sd('textColorAria')}
             value={value.color ?? '#000000'}
             onChange={(v) => onChange({ ...value, color: v })}
           />

@@ -8,6 +8,7 @@ import type {
 } from '@/lib/api'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { Details, Summary } from '@/components/ui/Details'
@@ -377,7 +378,7 @@ export function ManagedEnvironmentRow() {
   return (
     <div className="mt-1.5 flex flex-col gap-0.5 border-t border-border pt-1.5">
       <span className="text-xs text-ink-2">
-        {en('managedEnvUsing', { version: managed.python_version || '?' })}
+        {en('managedEnvUsing', { version: managed.python_version || '?', product: PRODUCT_NAME })}
       </span>
       {managed.installed.length > 0 && (
         <span className="text-xs text-ink-3">

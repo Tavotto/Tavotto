@@ -11,8 +11,9 @@
 """
 
 import ast
-import re
 from pathlib import Path
+
+from tests.support.tsconst import exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = ROOT / "src" / "tavotto" / "engine" / "overrides.py"
@@ -32,10 +33,14 @@ def _py_tuple(name: str) -> tuple[str, ...]:
 
 
 def _ts_list(name: str) -> tuple[str, ...]:
-    src = TS.read_text(encoding="utf-8")
-    m = re.search(rf"export const {name} = \[([^\]]+)\] as const", src)
-    assert m, f"legendModel.ts 里找不到 {name}"
-    return tuple(re.findall(r"'([^']+)'", m.group(1)))
+    r"""TS 侧用 `tests/support/tsconst.py` 结构性地读（评审 #300-5 的同族）。
+
+    从前是 `re.search(r"export const … = \[([^\]]+)\]")` + `re.findall(r"'([^']+)'")`
+    ——正则看不见语法结构，注释与无关的字符串字面量都满足它，而 `re.search`
+    取的是**第一处**匹配。Python 侧一直是真 AST（`ast.literal_eval`），
+    两侧不对称：一边严一边松，松的那边先失守。
+    """
+    return tuple(exported_string_array(TS.read_text(encoding="utf-8"), name))
 
 
 def test_entry_style_props_are_the_same_closed_set_in_order():

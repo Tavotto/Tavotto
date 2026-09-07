@@ -71,14 +71,8 @@ function HistoryBody({ panel, onDone }: { panel: PanelObject; onDone: () => void
 
   if (error) return <p className="text-xs text-danger">{vh('loadFailed', { error })}</p>
   if (!versions) return <p className="text-xs text-ink-3">{vh('loading')}</p>
-  if (!versions.length) {
-    return (
-      <div className="flex flex-col gap-1">
-        <p className="text-xs text-ink-2">{vh('emptyTitle')}</p>
-        <p className="text-xs leading-relaxed text-ink-3">{vh('emptyHint')}</p>
-      </div>
-    )
-  }
+  // 空状态只说一句「暂无写回记录」（审计 T32）：写回怎么用，写回按钮自己说
+  if (!versions.length) return <p className="text-xs text-ink-2">{vh('emptyTitle')}</p>
 
   // 起点 + 各版本，末位是当前基线
   const rows = [ORIGIN, ...versions]

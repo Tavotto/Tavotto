@@ -105,12 +105,12 @@ describe('快速编辑这一屏', () => {
     expect(container.querySelector('[data-page-sheet]')).not.toBeNull()
   })
 
-  it('两个出口都在：添加到画布 / 回到画布排版', async () => {
+  it('两个出口都在：添加到画布 / 返回画布', async () => {
     act(() => openFastEdit('a.pdf'))
     await mount()
     const labels = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '')
     expect(labels.some((l) => l.includes('添加到画布'))).toBe(true)
-    expect(labels.some((l) => l.includes('画布排版'))).toBe(true)
+    expect(labels.some((l) => l.includes('返回画布'))).toBe(true)
   })
 
   it('切进切出不动文档：对象、位置、历史长度全都一样', async () => {
@@ -203,11 +203,11 @@ describe('「刚为编辑加入本文档」的说明', () => {
    *
    * **主路径 = 排版模式下点素材卡的「编辑原图」，那张图还不在文档里**：
    * `openFastEdit` 同时建面板 + 切模式。这条路径上区必须**早就在**了——所以它
-   * 挂在常驻的 `CanvasStage` 上，不在 `FastEditBar` 里（后者正是这一刻才挂上
-   * 的，区跟它一起插进来的话就是「带着内容整个插入」，等于没做）。
+   * 挂在常驻的 `CanvasStage` 上，不在上下文条（`WorkspaceContextBar`）里——后者
+   * 正是这一刻才挂上的，区跟它一起插进来的话就是「带着内容整个插入」，等于没做。
    *
-   * 不用「回排版再进来」那种往返来钉：`FastEditBar` 往返一次必然重挂，那条路
-   * 径上的节点身份本来就不可能守恒，拿它当判据是在钉一件不成立的事。
+   * 不用「回排版再进来」那种往返来钉：上下文条往返一次必然重挂，那条路径上的
+   * 节点身份本来就不可能守恒，拿它当判据是在钉一件不成立的事。
    */
   const live = () => container.querySelector('[data-fast-edit-live]')
 
