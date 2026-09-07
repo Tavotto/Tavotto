@@ -608,7 +608,7 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   失败），选了具体版本才钉 `==`。两次查找重叠时按序号只落最后一次。首屏只留短句
   「查找会访问 PyPI 或你配置的软件源」，「打字不出网」这条**为什么**折进技术详情
   ——首屏最多一段长文，名额已经归「装坏了可以重建」。看护
-  `settings/PackagesSearch.test.tsx`（27 条）。
+  `settings/PackagesSearch.test.tsx`（29 条）。
 * **`packageStore` 也有项目代际**（本轮评审 P2）：`clear()` 换代 + 把清单 / 查找结果 /
   上一次的错误整份丢掉，`resetForNewProject()` 调它。查找结果里的 `installed` 与
   `source` 说的是**发请求那个项目**的受管环境，开在另一个项目的包页面上就是假的，而
