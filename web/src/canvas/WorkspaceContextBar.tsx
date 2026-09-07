@@ -155,7 +155,6 @@ export function WorkspaceContextBar() {
             不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉 */}
         {justAdded && (
           <div
-            role="status"
             data-fast-edit-added-note
             className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
           >

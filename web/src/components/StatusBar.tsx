@@ -89,8 +89,12 @@ export function StatusToasts() {
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
-      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化 */}
-      <div aria-live="polite" role="status" className="sr-only">
+      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
+          `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
+          产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
+          `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
+          「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
+      <div aria-live="polite" role="status" data-status-live className="sr-only">
         {tone === 'info' ? liveText : ''}
       </div>
       <div aria-live="assertive" role="alert" className="sr-only">
