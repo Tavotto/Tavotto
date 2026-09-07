@@ -950,14 +950,19 @@ def test_request_timeout_kills_and_rebuilds_worker(tmp_path, monkeypatch):
     figs.mkdir()
     (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
 
-    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 2.0)  # 否则用例要干等 15 分钟
+    # 看门狗登场之后（ADR 0050）要钉的是这两个：静默阈值决定「多久没输出算卡死」，
+    # 兜底上限拦一直打印的循环。只钉 `BUILD_TIMEOUT` 的话这条用例会干等 20 分钟——
+    # HANG_SCRIPT 是完全静默的死循环，正好落在静默那一档上。
+    monkeypatch.setattr(pool, "BUILD_IDLE_TIMEOUT", 2.0)
+    monkeypatch.setattr(pool, "BUILD_HARD_TIMEOUT", 20.0)
     w = pool.get("fig_hang.py", str(figs), "main")
     try:
         with pytest.raises(pool.WorkerError) as e:
             w.ensure_built()
         assert e.value.code == pool.BUILD_TIMEOUT_CODE
-        assert "重试" in str(e.value)  # 告诉用户能怎么办
-        assert "heavy" in str(e.value)  # 本来就慢的脚本有出路
+        # 判死的是静默看门狗，所以措辞说的是判据本身，并给出下一步
+        assert "没有任何输出" in str(e.value)
+        assert "打一行进度输出" in str(e.value)
 
         assert w.proc.wait(timeout=10) is not None  # 已被 kill 并回收
         assert not w.alive()
@@ -1789,14 +1794,16 @@ def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
-    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 3.0)  # 否则要干等 15 分钟
+    monkeypatch.setattr(pool, "BUILD_IDLE_TIMEOUT", 3.0)  # 静默看门狗，ADR 0050
+    monkeypatch.setattr(pool, "BUILD_HARD_TIMEOUT", 30.0)
     try:
         w = pool.get("fig_hang.py", str(figs), "main")
         assert isinstance(w, pool.WorkerdWorker)
         with pytest.raises(pool.WorkerError) as e:
             w.ensure_built()
-        assert e.value.code == "worker_timeout"
-        assert "重试" in str(e.value)
+        assert e.value.code == pool.BUILD_TIMEOUT_CODE
+        # workerd 那侧同一条判据（`session.rs` 的 `await_response`）
+        assert "没有任何输出" in str(e.value)
         assert not w.alive()
 
         w2 = pool.get("fig_hang.py", str(figs), "main")

@@ -65,17 +65,28 @@ _RMTREE_BACKOFF = (0.0, 0.05, 0.1, 0.2)
 #: 不复用（kill 之后下一次 `get()` 自动重建）。
 #: 各档按「正常情况下最坏要多久」给：build 要跑用户整个脚本（heavy 分钟级），
 #: 导出是 600dpi 全质量出图，override / 预览是热态操作。
+#: 冷启动 build 的**平坦**预算。safe 档已经改用静默看门狗（见下），这个常量留给
+#: 没有看门狗的那些消费者（native 会话与 barrier，`nativesession` / `bridge`）。
 BUILD_TIMEOUT = 900.0
-#: build 超时**按注册表的 cost 分档**（ADR 0048）：`BUILD_TIMEOUT` 是 medium 档的
-#: 基数，其余档按倍数缩放——用例把基数 monkeypatch 成 2 秒时各档一起缩，不用
-#: 各改一处。heavy 是「分钟级」（注册表头的定义），4 倍 = 1 小时：九条轨迹 ×
-#: 100 帧的邻居搜索这种真实脚本在 15 分钟内跑不完，而它没有死循环。
-#: light 缩到 5 分钟：秒级脚本卡 15 分钟才报，等于把一个死循环当正常。
-#: 不认识的 cost（没有注册表 / 没登记的脚本 / 一次性重放）一律 medium。
-BUILD_TIMEOUT_FACTORS = {"light": 1.0 / 3.0, "medium": 1.0, "heavy": 4.0}
-#: **build 超时有自己的稳定码**：只有它能靠「把脚本标成 heavy」解决。
-#: `override` / `export` / 预览走的是 `REQUEST_TIMEOUT` / `EXPORT_TIMEOUT`，
-#: 对它们说「标 heavy」是把用户支到一个改了也没用的设置上。
+
+#: **「它是卡死了还是在慢慢算」——这个问题不该由用户先回答一遍**（ADR 0050）。
+#:
+#: worker 的 stderr 直接落进 `worker.log`，而用户脚本的 stdout 也被 worker
+#: 重定向到 stderr——所以**日志文件长大了就是脚本还在往前跑**。卡死的脚本
+#: 不会再有任何输出；慢脚本（那九个 ovito 分析每 50 帧打一行）会一直打。
+#: 两者用这一条就分得开，不需要注册表里先有人把它归类。
+#:
+#: 判据换成「**多久没有任何动静**」之后：会打进度的脚本实际上不再有总时长上限，
+#: 完全静默的脚本仍有 `BUILD_IDLE_TIMEOUT` 这一档（比换掉的那个平坦 900 秒宽）。
+BUILD_IDLE_TIMEOUT = 1200.0
+#: 兜底：`while True: print(i)` 这种一直有输出的死循环，看门狗永远等不到静默。
+#: 它罕见，但不能没有头——真撞上时用户看到的仍是一条说得清的超时。
+BUILD_HARD_TIMEOUT = 4 * 3600.0
+#: 看门狗多久看一眼日志。一次 `stat`，几十微秒；给得再密也没有意义。
+_PROGRESS_POLL = 2.0
+
+#: **build 超时有自己的稳定码**：它的下一步（读脚本自己的输出）与热态操作超时
+#: 完全不同。`override` / `export` / 预览走 `REQUEST_TIMEOUT` / `EXPORT_TIMEOUT`。
 BUILD_TIMEOUT_CODE = "worker_build_timeout"
 REQUEST_TIMEOUT = 300.0  # override / render_png / preview_png
 EXPORT_TIMEOUT = 600.0
@@ -295,31 +306,6 @@ def _next_generation(key: tuple[str, str]) -> int:
         gen = _generations.get(key, 0) + 1
         _generations[key] = gen
         return gen
-
-
-def build_timeout_for(cost: str | None) -> float:
-    """这个 cost 档的 build 超时（秒）。基数是 `BUILD_TIMEOUT` 的**当前**值。"""
-    return BUILD_TIMEOUT * BUILD_TIMEOUT_FACTORS.get(cost or "", 1.0)
-
-
-def script_cost(figures_dir: str | Path, script_name: str) -> str:
-    """注册表里这条脚本的 cost；没有注册表 / 没登记 / 注册表坏了一律 `medium`。
-
-    这里读的是**磁盘上的**注册表而不是 app 端着的实例：pool 不 import app，
-    而且注册表随图库走、多项目并存——按 (项目, 脚本) 现读一次最不会拿错
-    （文件几 KB，每个会话只在 build 时读一次）。
-    """
-    from . import registry
-
-    try:
-        reg = registry.open_registry(figures_dir)
-    except (FileNotFoundError, RuntimeError, OSError, ValueError):
-        return "medium"
-    # 注册表键是图库相对 POSIX 路径；与 `_cache_slug` 同一写法把反斜杠归一
-    # （`Path.as_posix()` 在 POSIX 上不会碰反斜杠——那里它是合法文件名字符）
-    key = script_name.replace("\\", "/")
-    cost = (reg.entries().get(key) or {}).get("cost")
-    return cost if cost in registry.VALID_COSTS else "medium"
 
 
 def _cache_slug(figures_dir: str, script_name: str) -> str:
@@ -951,10 +937,15 @@ class EngineWorker:
         # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
         return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
-    def _readline(self, timeout: float, *, is_build: bool = False) -> str:
-        """带超时读一行回应；超时即杀掉 worker 并抛 `worker_timeout`。
+    def _readline(self, timeout: float, *, idle: float | None = None) -> str:
+        """带超时读一行回应；超时即杀掉 worker 并抛错。
 
-        `is_build` 决定报哪个码与说不说那句「标 heavy」——见 `BUILD_TIMEOUT_CODE`。
+        两种判死方式：
+
+        * `idle=None`（热态操作）——平坦上限，等满 `timeout` 就判死；
+        * `idle=<秒>`（build，ADR 0050）——**静默看门狗**：只要 `worker.log`
+          还在长，就一直等下去；连着 `idle` 秒一个字节都没多出来才判死。
+          `timeout` 退化成兜底上限（拦一直打印的死循环）。
 
         超时用「读线程 + join」而不是 `select`：Windows 的 select 只接受 socket，
         对管道直接 WinError 10038，而这条路径必须跨平台一致。
@@ -972,28 +963,77 @@ class EngineWorker:
 
         t = threading.Thread(target=read, daemon=True, name="mm-worker-read")
         t.start()
-        t.join(timeout)
+        waited, silent_for = self._wait_with_watchdog(t, timeout, idle)
         if t.is_alive():
-            LOG.warning("worker 请求超时（%.0fs），强制 kill: %s", timeout, self.script_name)
+            LOG.warning(
+                "worker 请求超时（等了 %.0fs，静默 %.0fs），强制 kill: %s",
+                waited,
+                silent_for,
+                self.script_name,
+            )
             try:
                 self.proc.kill()
                 self.proc.wait(timeout=_SHUTDOWN_JOIN_TIMEOUT)
             except (OSError, subprocess.SubprocessError):
                 pass
-            hint = (
-                f"若它本来就要跑很久，在脚本注册表里把 cost 标为 heavy"
-                f"（上限 {int(build_timeout_for('heavy'))} 秒）。"
-                if is_build
-                else ""
-            )
-            raise WorkerError(
-                f"渲染超时（等了 {int(timeout)} 秒）。脚本可能陷入死循环，"
-                f"或这一步本身极慢；渲染会话已重启，可以重试。"
-                f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。{hint}",
-                self._log_tail(),
-                code=BUILD_TIMEOUT_CODE if is_build else "worker_timeout",
-            )
+            raise self._timeout_error(waited, silent_for, idle is not None)
         return box[0] if box else ""
+
+    def _wait_with_watchdog(
+        self, t: threading.Thread, timeout: float, idle: float | None
+    ) -> tuple[float, float]:
+        """等这条读线程；回 (总共等了多久, 最后一次有输出到现在多久)。
+
+        `idle` 给了就分片等，每片看一眼日志大小——**长大了就把静默计时清零**。
+        没给就一次 `join(timeout)`，与看门狗登场之前逐字节相同。
+        """
+        started = time.monotonic()
+        if idle is None:
+            t.join(timeout)
+            return time.monotonic() - started, 0.0
+        size = _log_size(self.log_path)
+        last_progress = started
+        while True:
+            now = time.monotonic()
+            silent_for = now - last_progress
+            if not t.is_alive() or silent_for >= idle or (now - started) >= timeout:
+                return now - started, silent_for
+            t.join(min(_PROGRESS_POLL, idle - silent_for, timeout - (now - started)))
+            grown = _log_size(self.log_path)
+            if grown != size:
+                # 脚本还在往前跑（worker 的 stderr 与脚本的 stdout 都落在这里）
+                size, last_progress = grown, time.monotonic()
+
+    def _timeout_error(self, waited: float, silent_for: float, is_build: bool) -> "WorkerError":
+        """超时的用户可读形态。**说的是判据本身**，不是一个抽象的秒数上限。
+
+        看门狗判死时，用户下一步要做的事写在错误里：展开输出看它最后停在哪。
+        日志尾部本来就随 `traceback_text` 一起给了。
+        """
+        if not is_build:
+            return WorkerError(
+                f"渲染超时（等了 {int(waited)} 秒）。脚本可能陷入死循环，"
+                f"或这一步本身极慢；渲染会话已重启，可以重试。"
+                f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。",
+                self._log_tail(),
+                code="worker_timeout",
+            )
+        if silent_for >= BUILD_IDLE_TIMEOUT:
+            return WorkerError(
+                f"{self.script_name} 连着 {int(silent_for / 60)} 分钟没有任何输出，"
+                f"当作卡住处理，渲染会话已重启。展开下面的输出看它最后停在哪一步；"
+                f"如果它本来就要静默算很久，在那一段里打一行进度输出，"
+                f"Tavotto 就会一直等下去。",
+                self._log_tail(),
+                code=BUILD_TIMEOUT_CODE,
+            )
+        return WorkerError(
+            f"{self.script_name} 已经跑了 {int(waited / 3600)} 小时还没结束，到了上限，"
+            f"渲染会话已重启。它一直有输出，所以不是卡死——多半是循环停不下来。"
+            f"展开下面的输出看它在重复什么。",
+            self._log_tail(),
+            code=BUILD_TIMEOUT_CODE,
+        )
 
     def _envelope(self, obj: dict) -> dict:
         return build_envelope(obj, generation=self.generation, revision=self.rev)
@@ -1077,7 +1117,9 @@ class EngineWorker:
                 raise WorkerError("worker 进程已退出", self._log_tail())
             self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
             self.proc.stdin.flush()
-            line = self._readline(timeout, is_build=obj.get("cmd") == "build")
+            # build 跑的是用户整个脚本 → 静默看门狗；热态操作走平坦上限。
+            is_build = obj.get("cmd") == "build"
+            line = self._readline(timeout, idle=BUILD_IDLE_TIMEOUT if is_build else None)
             if not line:
                 # **判死要在锁内、且是同步的。**
                 #
@@ -1123,9 +1165,9 @@ class EngineWorker:
         )
 
     def ensure_built(self) -> dict:
-        # build 要跑用户整个脚本：超时按注册表的 cost 分档（ADR 0048）
-        self.build_timeout = build_timeout_for(script_cost(self.figures_dir, self.script_name))
-        resp = self.request({"cmd": "build"}, self.build_timeout)
+        # build 要跑用户整个脚本。传的是**兜底上限**——真正判死的是静默看门狗
+        # （ADR 0050），所以这里不再需要先知道这个脚本有多慢。
+        resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
@@ -1534,7 +1576,13 @@ class WorkerdWorker:
         )
 
     def _call(
-        self, op: str, timeout: float, *, stem: str | None = None, payload: dict | None = None
+        self,
+        op: str,
+        timeout: float,
+        *,
+        stem: str | None = None,
+        payload: dict | None = None,
+        idle_timeout: float | None = None,
     ) -> dict:
         from . import workerd_client
 
@@ -1550,6 +1598,7 @@ class WorkerdWorker:
                     stem=stem,
                     payload=payload or {},
                     timeout=timeout,
+                    idle_timeout=idle_timeout,
                 )
             except workerd_client.WorkerdError as exc:
                 # workerd 重启过 → session_id 作废。这条**透明重开一次**：
@@ -1597,9 +1646,9 @@ class WorkerdWorker:
             pass
 
     def ensure_built(self) -> dict:
-        # 与 Python 池同一条分档（ADR 0048）
-        self.build_timeout = build_timeout_for(script_cost(self.figures_dir, self.script_name))
-        resp = self._call("build", self.build_timeout)
+        # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
+        # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
+        resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
