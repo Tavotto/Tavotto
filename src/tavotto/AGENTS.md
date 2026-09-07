@@ -222,7 +222,9 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
   前端的 lastPatches 与 worker 真实状态错位，「全量列表」的还原就还错了东西
   （test_export_is_state_neutral 看护）。
-- **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`，
+- **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`；
+  build 按注册表 cost 分档 `build_timeout_for(script_cost(...))`，light ⅓ / medium 1 /
+  heavy 4 倍基数，两条控制面同一条——ADR 0046，
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
