@@ -544,6 +544,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
   什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
   的 `host.querySelector`）可以继续用 role：那里主语唯一。
+  看护：`lib/liveRegionSelector.test.ts` 用 AST 扫 `e2e/` 的字符串字面量，任何
+  `[role=status|alert|log|marquee|timer]` 当选择器都点名——**活动区天生是复数且与 DOM
+  顺序相关**，「the status region」这个说法本身不成立，所以这条规则是绝对的、豁免为零。
+  `role=dialog` 那一族不进这条门禁：它还有「把 axe 扫描收进对话框」这类正当的限定用法，
+  判不死，硬加只会逼出一张越来越长的豁免表。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
