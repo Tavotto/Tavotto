@@ -769,7 +769,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   - **`data-dialog-close` = 对话框右上角的关闭按钮**（同一个文件的 `RD.Close`）。
     它的 `aria-label` 是 `actions.close` 的译文，换语言就选不中。
   - **`data-overlay-svg` = 画布覆盖层 SVG**（`canvas/OverlaySvg.tsx`）：选中描示、参考线、
-    手柄都画在它里面。`svg.pointer-events-none` 是排版手段，不是标识。
+    手柄都画在它里面。以前拿那个「不吃指针事件」的工具类（`pointer-events` 加 `-none`）
+    当选择器——CSS class 是排版手段不是标识。**这里和 `OverlaySvg.tsx` 的注释里都刻意
+    不写出完整类名**：Tailwind 的扫描器正则扫文本、连 `.md` 也扫（实测：把 `web/src`
+    里 40 处真实用法全中和掉之后，产物里那条规则仍然被本行吊着），真实用法删光了
+    规则还会留在产物里。
   - **`data-inspector-panel` = 右侧检查器栏**（`components/inspector/Inspector.tsx` 的 `aside`）：
     左抽屉（`data-left-drawer`）、版本面板、快捷任务卡也都是 `aside`。
   - **`data-prop` = 属性字段行**（`inspector/ElementInspector.tsx` 的 `FieldBlock`、
