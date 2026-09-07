@@ -161,7 +161,7 @@ python3 scripts/handoff.py <脚本路径>
 | 刻度朝内朝外、刻度标签字号 | `tavotto_apply_overrides` |
 | 标题、轴标签的文字与位置 | `tavotto_apply_overrides` |
 | 「这图合不合投稿规范」 | `tavotto_preflight` |
-| 出图 | `tavotto_export`（PDF 是真矢量） |
+| 出图 | `tavotto_export`（PDF/SVG/EPS 是真矢量，PNG/TIFF 按 dpi 栅格化） |
 | 多图拼版、加箭头标注、加 (a)(b) 编号、写回原图 | Tavotto 桌面窗口（`handoff.py`） |
 | 数据本身、坐标范围、对数/线性、加一条新曲线 | 代码（回来改脚本） |
 | colorbar 方向、子图数量与结构 | 代码 |

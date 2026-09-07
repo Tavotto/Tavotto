@@ -261,7 +261,12 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
   投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份——**按导出目标
   取范围**（`objectId`：按原图导出只算那张图，页面级问题不算；按画布算整张
-  画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。
+  画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**裁完
+  `message` / `detail` 要按留下来的那些命中重挑一次**（尺子与 `Sink` 完全一样：
+  带排名的取最糟那次，不带排名的第一次说了算）——它们原本属于**全画布**最糟
+  那一次，而 `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）；
+  不重挑的话，按原图导出的样式检查报告会把别的面板的测量值记到选中的那张图
+  头上（目标自己 7 pt，报告里写成 4 pt）。
   它**不列第二套清单**（ADR 0031 §四），只有一个例外：**阻断项逐条列出**
   （最多 5 条，无筛选无修复，每条一个「定位」入口，紧挨着知情确认框——用户
   在点头之前得看见自己在为什么点头）；其余等级只给数量 + 「查看问题」，
@@ -277,7 +282,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   窗口里说出一句假话。
 * **逐条命中**（`PreflightOccurrence`）是 TS 侧的展开层，**不进跨语言合同**：
   golden vectors 比的仍是聚合投影。看护用例盯着两者一致（命中的 objectId /
-  gid 并起来必须与聚合项逐字相等）。
+  gid 并起来必须与聚合项逐字相等）。每条命中带着自己那次的 `worse`（量化排名，
+  没法比大小的规则不带）——上一条的「裁完重挑」靠它，两处不许各排一套序。
+  命中对象**只在 `Sink.record` 里造一次**（新增与顶掉旧条目共用同一个字面量）：
+  各写一份的话，下一个新增的字段只会被加进其中一条。
 * **定位只有 `lib/issueFocus.focusObject()` 一处**：切画布 → 切工作流模式 →
   选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
   （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
@@ -350,6 +358,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   两句话**（`glyph-missing` / `glyph-substituted`）。
 * 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
   warning**，绝不换掉再改文档。
+* 图内中文（ADR 0045）：引擎给每段文字接了本机的中日韩回退链，manifest 用
+  `cjk_family` 报是哪张脸画的；预检 `cjk-fallback-missing` 的主语是它（不是正文
+  族名），`preflight.ts` 与 Python 侧同源，golden 向量看护。
 * 看护：`lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`
   / `lib/canvasTextFont.test.ts` / `TextSection.test.tsx` / `textStyleBar.test.tsx`
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
@@ -681,7 +692,12 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   再比，与图内箭头同一口径；填充按 nonzero 缠绕数算内部——判据的完整理由见
   `src/tavotto/AGENTS.md` 的「PDF 后端边界」，别在别处另写一份 even-odd 的；
   空心只在描边附近命中；框选是「圈墨迹」不是「戳进去」）；`OverlaySvg` 画
-  `<path>` 并套上引擎给的 clip 框。
+  `<path>` 并套上引擎给的 clip 框。**散点与只有 marker 的 Line2D 也走这一套**
+  （2026-09-06）：引擎给每颗 marker 一条闭合子路径（`multi_path`），前端一个字
+  没改——几百颗点仍收在**一个** `<path>` 节点里（d 串多几段，DOM 不多一个
+  节点，别把它拆成每颗一个元素）；标记数超过 `pathgeom.MAX_MARKERS` 时引擎
+  不给 geometry，前端自然退回 bbox 矩形。既有连线又有 marker 的曲线仍只描
+  折线（理由在 `src/tavotto/AGENTS.md` 散点几何那段）。
 - **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
   ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**
@@ -1040,6 +1056,15 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   不许退回 `String.trim()`（它与 Python 的 `str.strip()` 认的集合不同）。
 - **原图不可用时说出原因，不隐藏选项、不静默改成画布**：一个消失的按钮
   无法解释自己，一次悄悄换掉的范围会让用户拿到一张他没要的图。
+- **「这次按原图导的是哪一张」只在 `lib/exportFigures.ts` 判**（2026-09-06，
+  用户反馈 06）：候选 = 文档里的面板（所有画布）+ 素材 / runtime 清单里还没上
+  画布的；默认对象 = 快速编辑正在编的 → **画布上选中的面板**（主选优先）→
+  项目里只有一张时就是它；对话框在这之上只叠一层「列表里点过哪一张」
+  （对话框本地状态，打开时清空，不改画布选区）。之前只读 `activePanelId`，
+  而它按 ADR 0028 只在快速编辑里非空——画布模式选中了面板仍说「先选中一张图」。
+  列表的缩略图**不发渲染请求**：有图内修改的面板挂 `renderStore` 里已画好的
+  SVG，其余走素材库同一条 `panelSrc`。「没选」（`no_figure`，让用户点一张）与
+  「没得选」（`no_figures`，项目里一张图都没有）是两句话。
 
 ## 两条工作流与原图规格（2026-08-29，Prompt 09；ADR 0028）
 
@@ -1278,3 +1303,11 @@ radius：控件 6px、浮层 10px、上限 14px。UI 字号 11-14px；控件高 
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：坐标/选区尺寸只在拖动中出现，
 普通状态走短暂 toast，错误常驻可关，autosave 显示在顶栏文档名旁。
+
+**图标**（2026-09-06，用户反馈第 7 条；细则 `docs/ux/ICONOGRAPHY.md`）：全产品只有
+lucide-react 一套；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}` = 12 / 14 / 16 / 20，默认 sm，
+描边 1.75 按比例缩放，都由 `components/ui/Icon.tsx` 的 `IconProvider` 在三个根上给。
+写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写 strokeWidth；折叠 / 下拉
+箭头一律 xs；折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图
+与品牌标按个数豁免）、不许别名引入、不许拿字符 / emoji 当图标、不许裸 `<summary>`
+——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）。

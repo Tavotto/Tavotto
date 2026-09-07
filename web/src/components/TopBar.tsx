@@ -7,7 +7,7 @@ import {
   Download,
   Maximize2,
   Minus,
-  MoreHorizontal,
+  Ellipsis,
   Plus,
   Redo2,
   Slash,
@@ -17,6 +17,7 @@ import {
   Type,
   Undo2,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   addSubLabels,
   newBlankDocument,
@@ -282,7 +283,7 @@ function DocumentMenu() {
       trigger={
         <Button size="sm" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
-          <ChevronDown size={12} className="shrink-0 text-ink-faint" />
+          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-faint" />
         </Button>
       }
     >
@@ -369,7 +370,7 @@ function ToolCluster({ layoutTools }: { layoutTools: boolean }) {
           onClick={runUndo}
           aria-label={t('workspace:topbar.undo')}
         >
-          <Undo2 size={15} />
+          <Undo2 size={ICON_SIZE.md} />
         </Button>
       </Tip>
       <Tip
@@ -386,7 +387,7 @@ function ToolCluster({ layoutTools }: { layoutTools: boolean }) {
           onClick={runRedo}
           aria-label={t('workspace:topbar.redo')}
         >
-          <Redo2 size={15} />
+          <Redo2 size={ICON_SIZE.md} />
         </Button>
       </Tip>
 
@@ -419,7 +420,7 @@ function MarkTools() {
           onClick={() => setTool(tool === 'text' ? 'select' : 'text')}
           aria-label={t('common:objectType.text')}
         >
-          <Type size={15} />
+          <Type size={ICON_SIZE.md} />
         </Button>
       </Tip>
 
@@ -428,9 +429,9 @@ function MarkTools() {
         align="center"
         trigger={
           <Button size="sm" active={markActive} aria-label={t('workspace:topbar.annotate')}>
-            {ActiveMark ? <ActiveMark size={15} /> : <Shapes size={15} />}
+            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} /> : <Shapes size={ICON_SIZE.md} />}
             <span className="text-xs">{t('workspace:topbar.annotate')}</span>
-            <ChevronDown size={12} className="text-ink-faint" />
+            <ChevronDown size={ICON_SIZE.xs} className="text-ink-faint" />
           </Button>
         }
       >
@@ -441,7 +442,7 @@ function MarkTools() {
             onSelect={() => setTool(tool === mark ? 'select' : mark)}
           >
             <span className="flex items-center gap-2">
-              <Icon size={13} className={tool === mark ? 'text-accent' : 'text-ink-3'} />
+              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-accent' : 'text-ink-3'} />
               {t(markToolKey(mark))}
             </span>
           </MenuItem>
@@ -460,7 +461,7 @@ function MarkTools() {
 
       <Tip label={t('workspace:topbar.subLabelsTip')}>
         <Button size="icon" onClick={addSubLabels} aria-label={t('workspace:topbar.addSubLabels')}>
-          <Tags size={15} />
+          <Tags size={ICON_SIZE.md} />
         </Button>
       </Tip>
     </>
@@ -482,7 +483,7 @@ function ZoomControls() {
           onClick={() => useViewportStore.getState().zoomBy(1 / 1.25)}
           aria-label={t('topbar.zoomOut')}
         >
-          <Minus size={13} />
+          <Minus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
       <Popover
@@ -533,7 +534,7 @@ function ZoomControls() {
           onClick={() => useViewportStore.getState().zoomBy(1.25)}
           aria-label={t('topbar.zoomIn')}
         >
-          <Plus size={13} />
+          <Plus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
       <Tip label={t('topbar.fitCanvas')} shortcut={`${MOD}1`}>
@@ -543,7 +544,7 @@ function ZoomControls() {
           onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           aria-label={t('topbar.fitCanvas')}
         >
-          <Maximize2 size={13} />
+          <Maximize2 size={ICON_SIZE.sm} />
         </Button>
       </Tip>
     </div>
@@ -560,7 +561,7 @@ function ExportButton() {
         data-onboarding-anchor="export"
         onClick={() => useUiStore.getState().setExportOpen(true)}
       >
-        <Download size={14} />
+        <Download size={ICON_SIZE.md} />
         {t('topbar.export')}
       </Button>
     </Tip>
@@ -584,7 +585,7 @@ function MoreMenu() {
       trigger={
         <Button size="icon" aria-label={t(hasUpdate ? 'topbar.moreWithUpdate' : 'topbar.more')}>
           <span className="relative">
-            <MoreHorizontal size={15} className="text-ink-2" />
+            <Ellipsis size={ICON_SIZE.md} className="text-ink-2" />
             {hasUpdate && (
               <span
                 aria-hidden

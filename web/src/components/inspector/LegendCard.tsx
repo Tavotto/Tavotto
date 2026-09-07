@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff, MoveDown, MoveUp } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { legendEntryViews, type LegendEntryView } from '@/lib/legendModel'
@@ -115,7 +116,7 @@ export function LegendCard({
                   aria-pressed={v.hidden}
                   onClick={() => toggleHidden(v)}
                 >
-                  {v.hidden ? <EyeOff size={11} /> : <Eye size={11} />}
+                  {v.hidden ? <EyeOff size={ICON_SIZE.xs} /> : <Eye size={ICON_SIZE.xs} />}
                 </Button>
               </Tip>
               <Button
@@ -125,7 +126,7 @@ export function LegendCard({
                 onClick={() => move(i, -1)}
                 aria-label={lg('moveUp', { label: v.text })}
               >
-                <MoveUp size={11} />
+                <MoveUp size={ICON_SIZE.xs} />
               </Button>
               <Button
                 size="icon-sm"
@@ -134,7 +135,7 @@ export function LegendCard({
                 onClick={() => move(i, 1)}
                 aria-label={lg('moveDown', { label: v.text })}
               >
-                <MoveDown size={11} />
+                <MoveDown size={ICON_SIZE.xs} />
               </Button>
             </li>
           ))}

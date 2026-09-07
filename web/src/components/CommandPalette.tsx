@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { msg, t as translate } from '@/i18n'
 import { Search } from 'lucide-react'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn, MOD } from '@/lib/utils'
 import {
   addSubLabels,
@@ -252,7 +253,7 @@ export function CommandPalette() {
     >
       <div className="w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-surface shadow-pop animate-pop-in">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <Search size={14} className="shrink-0 text-ink-3" />
+          <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
           <input
             ref={inputRef}
             value={query}

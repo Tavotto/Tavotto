@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
+import { Details, Summary } from '../ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { AiAgentId, AiEndpoint, AiEndpointPreset, saveAiEndpoint } from '@/lib/api'
 import { Button } from '../ui/Button'
@@ -177,7 +179,7 @@ export function EndpointDialog({
                     onClick={() => setModels(models.filter((x) => x !== m))}
                     className="text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
                   >
-                    <X size={10} aria-hidden />
+                    <X size={ICON_SIZE.xs} aria-hidden />
                   </button>
                 </span>
               ))}
@@ -292,12 +294,12 @@ export function EndpointDialog({
           </Row>
 
           {fromPreset ? (
-            <details className="rounded-sm border border-border px-2 py-1.5">
-              <summary className="cursor-default text-xs text-ink-2 outline-none focus-visible:focus-ring">
+            <Details className="rounded-sm border border-border px-2 py-1.5">
+              <Summary className="cursor-default text-xs text-ink-2">
                 {ag('endpoint.presetFilled')}
-              </summary>
+              </Summary>
               <div className="mt-1.5 flex flex-col gap-2">{connectionFields}</div>
-            </details>
+            </Details>
           ) : (
             connectionFields
           )}
@@ -307,16 +309,14 @@ export function EndpointDialog({
               核过（审计 T45）。特别是权限那条：`_harden()` 在 Windows 上
               直接 return，所以那句话不能说成"已经收好了"。 */}
           <p className="text-xs leading-relaxed text-ink-3">{ag('endpoint.keyNote')}</p>
-          <details className="text-xs leading-relaxed text-ink-3">
-            <summary className="cursor-default outline-none focus-visible:focus-ring">
-              {ag('endpoint.keyNoteMore')}
-            </summary>
+          <Details className="text-xs leading-relaxed text-ink-3">
+            <Summary className="cursor-default">{ag('endpoint.keyNoteMore')}</Summary>
             <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4">
               <li>{ag('endpoint.keyNoteWhere')}</li>
               <li>{ag('endpoint.keyNotePerms')}</li>
               <li>{ag('endpoint.keyNoteDiagnostics')}</li>
             </ul>
-          </details>
+          </Details>
         </div>
       )}
     </Dialog>

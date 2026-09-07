@@ -26,6 +26,11 @@
     "conflictRename": "另存一份",
     "conflictReplace": "覆盖",
     "editedDuringExport": "导出期间这份文档又被改过——文件里是点「导出」那一刻的内容。",
+    "epsHint": "矢量 · 不支持透明度",
+    "epsUnavailable": {
+      "canvas_scope": "EPS 只能按「原图尺寸」导出单张图：画布由 PDF 引擎合成，写不出 PostScript。",
+      "no_script": "这张图没有可重新运行的脚本，EPS 只能由脚本直接生成。"
+    },
     "exported": "导出完成：{{files}}",
     "filenameError": {
       "control_char": "文件名里有不可见的特殊字符，请重新输入。",
@@ -39,6 +44,7 @@
     },
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
+    "figureListLabel": "要按原图尺寸导出的图",
     "formatLabel": "格式",
     "ignored": {
       "crop": "裁剪",
@@ -97,7 +103,8 @@
     "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是一个占位值——导出后请核对一下。",
     "scopeOriginalNote": "按这张图自己的尺寸出图，不受它在画布上摆放的影响。",
     "scopeUnavailable": {
-      "no_figure": "先选中一张图，才能按原图尺寸导出。",
+      "no_figure": "还没定要导哪一张：点选下面的一张图，就按它的原图尺寸导出。",
+      "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
       "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },
@@ -106,8 +113,9 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "没有当前图",
+    "tiffHint": "位图 · 无损压缩",
     "title": "导出",
-    "transparent": "透明背景（仅 PNG）",
+    "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
   },
@@ -747,14 +755,14 @@
           "health_failed": "组件都装上了，但体检没过——插件还找不到能用的 Tavotto 引擎。展开下面的详情看它报了什么。",
           "interpreter_unusable": "插件的启动命令在这台机器上跑不起来——那样 Codex 里会一个工具都没有。（Windows 上的 python3 常常是微软商店的占位命令：看着存在，一跑就退。）安装会把它换成一个验证过真能跑的解释器；换不成就装一个 Python，或用 TAVOTTO_MCP_PYTHON 指一个再试。",
           "marketplace_add_failed": "没能把 Tavotto 登记成 Codex 的插件市场。常见原因是没有网络或没有权限写 Codex 的配置目录。",
-          "marketplace_state_unknown": "问不到 Codex 的插件市场登记状态（codex plugin marketplace list 没有跑出结论），所以没有动任何东西。展开详情看 Codex 报了什么，多半是 Codex 本身没启动好。",
+          "marketplace_state_unknown": "问不到 Codex 的插件市场登记状态（codex plugin marketplace list 没有跑出结论），所以没有动任何东西。这不等于没登记。展开详情看 Codex 报了什么：常见原因是 codex 命令在 Tavotto 这边跑不起来（例如 npm 装的 codex 找不到 node），或 Codex 本身没启动好。",
           "not_desktop": "这个操作只在桌面版里可用。",
           "other": "没能装好，下面的详情里是命令的原话。",
           "pin_failed": "没能把新的启动命令写进插件的两份清单，已经回滚到原样——不会留下半新半旧的一对。多半是插件目录只读或正被占用，处理掉再重试。",
           "plugin_add_failed": "市场登记好了，但插件没装上。展开下面的详情看 Codex 报了什么。",
           "plugin_install_ambiguous": "定位不到唯一的一份已装插件：Codex 没有报出安装路径，而缓存里有零份或多份同名副本。这里不按版本号或修改时间猜，展开详情看候选路径；通常先 codex plugin remove tavotto@tavotto 再重新 codex plugin add tavotto@tavotto 就能清干净。",
           "plugin_source_unsupported": "插件市场已登记，但 Codex 没有列出 Tavotto 插件。多半是这个版本的 Codex 不认识市场清单里的插件来源（发行通道用的是 git-subdir 来源），或者本机的市场快照太旧。先在终端里跑 codex plugin marketplace upgrade tavotto；仍然没有就升级 Codex。",
-          "plugin_state_unknown": "问不到插件的安装状态（codex plugin list 没有跑出结论），所以没有动任何东西。展开详情看 Codex 报了什么。",
+          "plugin_state_unknown": "问不到插件的安装状态（codex plugin list 没有跑出结论），所以没有动任何东西。这不等于没装。展开详情看 Codex 报了什么。",
           "provision_failed": "插件装好了，但没能给它准备一份匹配版本的 Tavotto 引擎。",
           "spawn_failed": "启动 Tavotto 命令行失败。重试一次；仍然如此就在终端里跑 tavotto codex install 看原文。",
           "uninstall_failed": "移除没有完成，下面的详情里是命令的原话。"

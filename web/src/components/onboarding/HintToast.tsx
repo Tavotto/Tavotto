@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Lightbulb, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { useHintStore } from '@/lib/onboarding/hints'
 import { DURATION, usePresence } from '@/lib/motion'
@@ -35,7 +36,7 @@ export function HintToast() {
             'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
           )}
         >
-          <Lightbulb size={13} className="mt-px shrink-0 text-ink-3" aria-hidden />
+          <Lightbulb size={ICON_SIZE.sm} className="mt-px shrink-0 text-ink-3" aria-hidden />
           <span className="min-w-0 flex-1 leading-relaxed">{text}</span>
           <button
             type="button"
@@ -43,7 +44,7 @@ export function HintToast() {
             aria-label={translate('actions.close')}
             className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
           >
-            <X size={12} />
+            <X size={ICON_SIZE.sm} />
           </button>
         </div>
       )}

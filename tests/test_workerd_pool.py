@@ -201,6 +201,85 @@ def test_ordinary_errors_keep_their_code_and_traceback():
     assert err.extra["known"] == ["Fig1"]
 
 
+def test_zero_captured_figures_get_their_own_code_and_the_script_output():
+    """脚本跑完一张图都没有时，`unknown_stem` 等于把答案藏起来。
+
+    真实来源（2026-09-06）：九个 ovito 脚本用 `os.path.exists("1/…")` 找数据，
+    沙盒 cwd 下全部「未找到」→ 零张图 → 界面只说「stem 不存在」，而脚本自己
+    那句「[ERROR] 文件未找到」就躺在 worker.log 里。
+    """
+    base = pool._worker_error("stem 不存在: nope", "unknown_stem", "", {"known": []})
+    err = pool._explain_empty_capture(base, "run_all.py", [], "[INFO] 开始\n[ERROR] 文件未找到")
+    assert err.code == pool.NO_FIGURES_CODE == "no_figures_captured"
+    assert "run_all.py" in str(err) and "没有产生任何图" in str(err)
+    assert err.traceback_text.endswith("[ERROR] 文件未找到")
+    assert err.script_name == "run_all.py"
+    # 什么都没打印是另一个 code：占位是界面文案，不塞进 traceback 区（英文界面
+    # 里会漏出中文）
+    silent = pool._explain_empty_capture(base, "x.py", [], "  \n")
+    assert silent.code == pool.NO_FIGURES_SILENT_CODE == "no_figures_captured_silent"
+    assert silent.traceback_text == ""
+
+
+def test_log_tail_is_this_generation_only_and_decoded_as_utf8(tmp_path):
+    """日志目录跨代复用、append 模式：尾部只取这一代之后的字节；按 UTF-8 解码。"""
+    log = tmp_path / "worker.log"
+    log.write_bytes("上一代: [ERROR] 旧的原因\n".encode("utf-8"))
+    offset = pool._log_size(log, tmp_path)
+    with log.open("ab") as f:
+        f.write("这一代: 温度 25 µm\n".encode("utf-8") + b"\xff bad byte\n")
+    tail = pool._log_tail_from(log, offset, root=tmp_path)
+    assert "上一代" not in tail
+    assert "温度 25 µm" in tail
+    assert "bad byte" in tail  # 坏字节替换而不是抛
+    assert pool._log_tail_from(log, 0, root=tmp_path).startswith("上一代")
+    assert pool._log_tail_from(tmp_path / "missing.log", 0, root=tmp_path) == ""
+    # 路径钉在根之内：根之外（默认根是 ENGINE_CACHE）一个字节都不读
+    assert pool._log_tail_from(log, 0) == ""
+    assert pool._log_size(log) == 0
+    assert pool._log_tail_from(log, 0, root=tmp_path / "elsewhere") == ""
+
+
+def test_a_plain_unknown_stem_is_left_alone():
+    """有别的图、只是名字不对 → 仍是 `unknown_stem`；`known` 缺失也不动。"""
+    for known in (["Fig1"], None):
+        base = pool._worker_error("stem 不存在: nope", "unknown_stem", "tb", {"known": known})
+        err = pool._explain_empty_capture(base, "x.py", known, "log")
+        assert err is base and err.code == "unknown_stem"
+    other = pool._worker_error("boom", "script_error", "tb", {"known": []})
+    assert pool._explain_empty_capture(other, "x.py", [], "log") is other
+
+
+def test_workerd_side_gives_the_same_answer_for_zero_figures(monkeypatch, tmp_path):
+    """两条控制面在「脚本跑完没出图」上必须给同一个答案。"""
+    # 上一代留下的尾巴：会话在构造时就打开（记偏移），所以要写在 `_worker()` 之前
+    log = pool.ENGINE_CACHE / pool._cache_slug(pool._norm_dir(str(tmp_path)), "fig.py")
+    log = log / "worker.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("[ERROR] 上一代的旧原因\n", encoding="utf-8")
+    w, _ = _worker(
+        monkeypatch,
+        tmp_path,
+        [
+            {"ok": True, "session_id": "s-1"},
+            {"ok": True, "stems": {}},
+            workerd_client.WorkerdError(
+                "stem 不存在: impact", code="unknown_stem", extra={"known": []}
+            ),
+        ],
+    )
+    assert w.log_path == log
+    w.ensure_built()
+    with w.log_path.open("a", encoding="utf-8") as f:
+        f.write("[ERROR] 文件未找到!\n")
+    with pytest.raises(pool.WorkerError) as e:
+        w.override("impact", [])
+    assert e.value.code == pool.NO_FIGURES_CODE
+    assert "[ERROR] 文件未找到!" in e.value.traceback_text
+    assert "上一代" not in e.value.traceback_text
+    assert w.alive(), "这不是会话故障，不该标死"
+
+
 class _FakeClient:
     """只实现 `WorkerdWorker` 用到的那一个方法。"""
 

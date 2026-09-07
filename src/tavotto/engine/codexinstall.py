@@ -17,6 +17,18 @@ Codex 集成」按钮——**如果按钮另写一套安装器，它就会与 RE
 
 安装参数（marketplace 源、sparse 路径、插件引用）全部从 `brand.py` 派生——README
 与这条命令共用同一份，看护在 `tests/test_codex_install_cli.py`。
+
+## 问 Codex 之前先让它跑得起来（2026-09-06，用户反馈 05）
+
+判据的主语是「**Codex 自己**认为登记 / 装了没有」，问法是起一个 `codex` 子进程。
+桌面壳从 Finder / Dock 启动时继承的是 launchd 的最小 PATH（macOS 实测
+`/usr/bin:/bin:/usr/sbin:/sbin`），`tavotto-cli codex doctor` 从壳里 spawn 出来拿的
+也是这份环境：`find_codex()` 靠兜底目录找得到 `/opt/homebrew/bin/codex`，但它是 npm
+shim（`#!/usr/bin/env node`），子进程里解析不到 `node`——退出码 127、输出
+`env: node: No such file or directory`。于是「问不到」，界面上就是「插件市场登记
+失败」，而用户的 Codex 里明明装着、启用着。所以起 codex 一律用
+`ai_agents.spawn_env()` 补过常见安装目录的 PATH（与 AI 桥同一份，不抄第二份）。
+**只补 codex 那几跳**：插件启动命令那一步量的是「Codex 会怎么起它」，不能替它补环境。
 """
 
 from __future__ import annotations
@@ -30,7 +42,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import atomicio, brand, pluginmanifest
+from . import ai_agents, atomicio, brand, pluginmanifest
 from .runtime import CREATE_NO_WINDOW
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
@@ -98,7 +110,9 @@ def find_codex() -> tuple[str | None, list[str]]:
     return None, searched
 
 
-def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
+def _run(
+    argv: list[str], timeout: int = _TIMEOUT, env: dict[str, str] | None = None
+) -> tuple[int, str]:
     """跑一条命令，回 (退出码, 合并输出)。绝不抛——失败也是一种结论。"""
     try:
         p = subprocess.run(
@@ -108,6 +122,7 @@ def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=env,
             creationflags=CREATE_NO_WINDOW,
         )
     except FileNotFoundError:
@@ -117,6 +132,44 @@ def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
     except OSError as exc:
         return 126, f"{type(exc).__name__}: {exc}"
     return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+
+
+def codex_env(codex: str) -> dict[str, str]:
+    """起 `codex` 子进程用的环境：**把常见安装目录补进 PATH**（只补缺，不改顺序）。
+
+    `find_codex()` 找到的是文件，能不能**跑**是另一件事：npm 装的 codex 是
+    `#!/usr/bin/env node` 的脚本，`node` 得在**子进程的** PATH 上。桌面壳从 Finder
+    启动时 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`（本机 `ps -E` 实测），于是同一台
+    机器上终端里全绿、设置页里「问不到」。与 AI 桥起 codex/claude CLI 用的是同一份
+    `spawn_env`：CLI 自己所在目录 + Homebrew / npm 全局 / nvm / volta 等落点。
+    """
+    return ai_agents.spawn_env(codex)
+
+
+def _codex_run(codex: str, args: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
+    """跑一条 `codex …`。**所有问 Codex 的地方都走这里**，没有裸的 `_run([codex, …])`。"""
+    return _run([codex, *args], timeout=timeout, env=codex_env(codex))
+
+
+#: `codex` 起不来时最常见的那一句：npm shim 在子进程里解析不到 node。
+#: macOS / Linux 是 `env: node: No such file or directory`，Windows 的 .cmd 外壳是
+#: `'node' is not recognized as an internal or external command`（中文系统是
+#: 「不是内部或外部命令」）。认出它就把处方说出口，别让用户对着一句 env 报错猜。
+_NODE_MISSING = re.compile(
+    r"\bnode\b.*(No such file|not found|not recognized|不是内部或外部命令)", re.I
+)
+
+
+def _unknown_hint(detail: str, noun: str) -> str:
+    """「问不到」那一档的处方。`noun` 是「登记」/「装」——两步的否定词不一样。"""
+    tail = f"。这不等于没{noun}：是问不到，不是 Codex 答了「没有」。"
+    if _NODE_MISSING.search(detail or ""):
+        return (
+            "。codex 是 npm 装的脚本，启动时要在 PATH 上找到 node；这次已经把常见安装目录"
+            "（Homebrew、npm 全局、nvm、volta）补进 PATH 仍没找到——把 node 所在目录加进"
+            " PATH（或用原生安装包装 Codex）后重试" + tail
+        )
+    return tail
 
 
 #: 探测一个可执行文件是不是**真的能跑的 Python** 时让它回显的记号。
@@ -218,7 +271,7 @@ def _marketplace_state(codex: str) -> dict:
     来源类型与快照根目录）；老客户端没有 `--json` 时退回文本表，按 MARKETPLACE 列
     **整列相等**判（ROOT 列是路径，里面出现 tavotto 太容易了）。
     """
-    rc, out = _run([codex, "plugin", "marketplace", "list", "--json"])
+    rc, out = _codex_run(codex, ["plugin", "marketplace", "list", "--json"])
     data = _json_output(out) if rc == 0 else None
     if isinstance(data, dict) and isinstance(data.get("marketplaces"), list):
         for entry in data["marketplaces"]:
@@ -232,7 +285,7 @@ def _marketplace_state(codex: str) -> dict:
                 "root": entry.get("root"),
             }
         return {"state": "absent", "source_type": None, "source": None, "root": None}
-    rc, out = _run([codex, "plugin", "marketplace", "list"])
+    rc, out = _codex_run(codex, ["plugin", "marketplace", "list"])
     if rc != 0:
         return {
             "state": "unknown",
@@ -265,7 +318,7 @@ def _plugin_state(codex: str) -> dict:
         "source": None,
         "path": None,
     }
-    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME, "--json"])
+    rc, out = _codex_run(codex, ["plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME, "--json"])
     data = _json_output(out) if rc == 0 else None
     if isinstance(data, dict) and isinstance(data.get("installed"), list):
         hit = None
@@ -280,7 +333,7 @@ def _plugin_state(codex: str) -> dict:
             state["version"] = hit.get("version")
             state["enabled"] = hit.get("enabled")
             state["source"] = hit.get("source")
-    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME])
+    rc, out = _codex_run(codex, ["plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME])
     if rc != 0:
         if state["state"] == "unknown":
             state["detail"] = out[-300:]
@@ -633,7 +686,8 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
             ok=False,
             code=ERR_MARKETPLACE_UNKNOWN,
             detail="`codex plugin marketplace list` 跑不出结论，登记状态不明："
-            + (mk.get("detail") or "（零输出）"),
+            + (mk.get("detail") or "（零输出）")
+            + _unknown_hint(mk.get("detail") or "", "登记"),
         )
     if mk["state"] == "registered":
         channel = plugin_channel(mk.get("root"))
@@ -649,10 +703,10 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
         return _step("marketplace", ok=True, skipped=True, detail=detail)
     if not apply:
         return _step("marketplace", ok=False, detail="未登记", code=ERR_MARKETPLACE)
-    argv = [codex, "plugin", "marketplace", "add", brand.CODEX_MARKETPLACE]
+    argv = ["plugin", "marketplace", "add", brand.CODEX_MARKETPLACE]
     for sparse in brand.CODEX_SPARSE_PATHS:
         argv += ["--sparse", sparse]
-    rc, out = _run(argv)
+    rc, out = _codex_run(codex, argv)
     if rc != 0:
         return _step("marketplace", ok=False, detail=out[-400:], code=ERR_MARKETPLACE)
     mk = _marketplace_state(codex)
@@ -678,7 +732,8 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
             ok=False,
             code=ERR_PLUGIN_UNKNOWN,
             detail="`codex plugin list` 跑不出结论，安装状态不明："
-            + (st.get("detail") or "（零输出）"),
+            + (st.get("detail") or "（零输出）")
+            + _unknown_hint(st.get("detail") or "", "装"),
         )
     if st["state"] == "installed":
         # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`，
@@ -701,7 +756,7 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
         )
     if not apply:
         return _step("plugin", ok=False, detail="未安装", code=ERR_PLUGIN)
-    rc, out = _run([codex, "plugin", "add", brand.CODEX_PLUGIN_REF])
+    rc, out = _codex_run(codex, ["plugin", "add", brand.CODEX_PLUGIN_REF])
     if rc != 0:
         return _step("plugin", ok=False, detail=out[-400:], code=ERR_PLUGIN)
     st = _plugin_state(codex)
@@ -977,7 +1032,7 @@ def uninstall_steps() -> tuple[bool, list[dict]]:
     if codex is None:
         return False, steps
     if _plugin_installed(codex):
-        rc, out = _run([codex, "plugin", "remove", brand.CODEX_PLUGIN_REF])
+        rc, out = _codex_run(codex, ["plugin", "remove", brand.CODEX_PLUGIN_REF])
         steps.append(
             _step(
                 "plugin",
@@ -991,7 +1046,9 @@ def uninstall_steps() -> tuple[bool, list[dict]]:
     if _marketplace_configured(codex):
         # **收的是配置后的 marketplace 名，不是源。** 给 `Tavotto/Tavotto` 会被
         # 直接拒（`/` 不是合法名字），于是插件删掉了、marketplace 却永远留着。
-        rc, out = _run([codex, "plugin", "marketplace", "remove", brand.CODEX_MARKETPLACE_NAME])
+        rc, out = _codex_run(
+            codex, ["plugin", "marketplace", "remove", brand.CODEX_MARKETPLACE_NAME]
+        )
         steps.append(
             _step(
                 "marketplace",

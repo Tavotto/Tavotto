@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { useEnvStore } from '@/store/envStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '../ui/Button'
 import { CopyButton } from './CopyButton'
 import { PathValue } from './PathValue'
@@ -109,7 +110,7 @@ export function DiagnosticsSettings() {
                 </span>
               )}
               <Button variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
-                <RefreshCw size={12} aria-hidden />
+                <RefreshCw size={ICON_SIZE.sm} aria-hidden />
                 {st('diagnostics.refetch')}
               </Button>
             </div>

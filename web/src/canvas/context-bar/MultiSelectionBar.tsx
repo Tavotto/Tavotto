@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Group, SlidersHorizontal, Ungroup } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { captureContextBarMore, fromContextBar } from '@/lib/activityTelemetry'
 import { cn } from '@/lib/utils'
@@ -189,7 +190,7 @@ function AlignRow({
                 fromContextBar(() => alignSelectedTo(mode, refName))
               }}
             >
-              <Icon size={12} />
+              <Icon size={ICON_SIZE.sm} />
             </Button>
           </Tip>
         )
@@ -209,7 +210,7 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
           aria-label={ar('group')}
           onClick={() => fromContextBar(() => groupSelected())}
         >
-          <Group size={12} />
+          <Group size={ICON_SIZE.sm} />
         </Button>
       </Tip>
       {grouped && (
@@ -220,7 +221,7 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
             aria-label={ar('ungroup')}
             onClick={() => fromContextBar(() => ungroupSelected())}
           >
-            <Ungroup size={12} />
+            <Ungroup size={ICON_SIZE.sm} />
           </Button>
         </Tip>
       )}
@@ -241,7 +242,7 @@ function MoreButton({ count }: { count: number }) {
           captureContextBarMore(count)
         }}
       >
-        <SlidersHorizontal size={12} />
+        <SlidersHorizontal size={ICON_SIZE.sm} />
       </Button>
     </Tip>
   )
@@ -266,7 +267,7 @@ function MenuPopover({
       trigger={
         <Button size="sm" className="gap-0.5 px-1.5" data-multi-menu={testId} aria-label={label}>
           {label}
-          <ChevronDown size={11} aria-hidden />
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden />
         </Button>
       }
     >

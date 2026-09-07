@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Braces, ListFilter, PenLine, Plus, RotateCw, Search, X,
+import { Braces, ListFilter, Pencil, Plus, RefreshCw, Search, X,
   SearchX,
   ImageOff,
   Play,
   TriangleAlert,
   Zap,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorMsg,
   renderUrl,
@@ -252,7 +253,7 @@ export function AssetBrowser() {
       <div className="flex flex-col gap-1.5 px-3 pb-2">
         <div className="flex items-center gap-1">
           <div className="relative flex-1">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+            <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -278,7 +279,7 @@ export function AssetBrowser() {
               aria-label={ab('scriptOnly')}
               aria-pressed={type === 'script'}
             >
-              <Braces size={12} />
+              <Braces size={ICON_SIZE.sm} />
             </Button>
           </Tip>
           <FilterButton
@@ -307,8 +308,8 @@ export function AssetBrowser() {
               aria-label={ab('refresh')}
             >
               {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
-                  Loader2，28px 的图标按钮里挤两个图标就是布局跳变 */}
-              <RotateCw size={12} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
+                  LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
+              <RefreshCw size={ICON_SIZE.sm} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
             </Button>
           </Tip>
         </div>
@@ -326,7 +327,7 @@ export function AssetBrowser() {
                 )}
               >
                 {c.label}
-                <X size={10} />
+                <X size={ICON_SIZE.xs} />
               </button>
             ))}
           </div>
@@ -455,7 +456,7 @@ export function AssetBrowser() {
               setZoomed(null)
             }}
           >
-            <Plus size={14} />
+            <Plus size={ICON_SIZE.md} />
             {ab('addToCanvas')}
           </Button>
         }
@@ -509,7 +510,7 @@ function FilterButton({
           active={activeCount > 0}
           aria-label={activeCount ? ab('filterActiveAria', { count: activeCount }) : ab('filterAria')}
         >
-          <ListFilter size={13} className={activeCount ? undefined : 'text-ink-2'} />
+          <ListFilter size={ICON_SIZE.sm} className={activeCount ? undefined : 'text-ink-2'} />
         </Button>
       }
     >
@@ -704,7 +705,7 @@ function AssetCard({
               className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
               title={ab('scriptBadgeTitle')}
             >
-              <Braces size={10} />
+              <Braces size={ICON_SIZE.xs} />
             </span>
           )}
           {/* 接入状态角标。**只在需要说话时说话**：`editable` 已经有 `{}` 那个
@@ -738,11 +739,11 @@ function AssetCard({
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
         <CardActions selected={selected}>
           <CardAction title={ab('openAria', { name })} onClick={onOpen}>
-            <PenLine size={11} />
+            <Pencil size={ICON_SIZE.xs} />
             {ab('openFigure')}
           </CardAction>
           <CardAction title={ab('addAria', { name })} onClick={onAdd}>
-            <Plus size={11} />
+            <Plus size={ICON_SIZE.xs} />
             {ab('addToCanvas')}
           </CardAction>
         </CardActions>
@@ -895,14 +896,14 @@ function RuntimeAssetCard({
           />
         ) : (
           <span className="flex flex-col items-center gap-1 p-2 text-center text-xs text-ink-3">
-            <Play size={16} className="text-ink-faint" />
+            <Play size={ICON_SIZE.md} className="text-ink-faint" />
             {ab('runtimeNeedsRun')}
           </span>
         )}
 
         <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-1">
           <span className="flex items-center gap-0.5 rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white">
-            <Zap size={9} />
+            <Zap size={ICON_SIZE.xs} />
             {ab('runtimeBadge')}
           </span>
         </span>
@@ -922,17 +923,17 @@ function RuntimeAssetCard({
           {asset.descriptor ? (
             <>
               <CardAction title={ab('openAria', { name: asset.stem })} onClick={primary}>
-                <PenLine size={11} />
+                <Pencil size={ICON_SIZE.xs} />
                 {ab('openFigure')}
               </CardAction>
               <CardAction title={ab('addAria', { name: asset.stem })} onClick={add}>
-                <Plus size={11} />
+                <Plus size={ICON_SIZE.xs} />
                 {ab('addToCanvas')}
               </CardAction>
             </>
           ) : (
             <CardAction title={ab('runtimeRunAria', { script: asset.script })} onClick={primary}>
-              <Play size={11} />
+              <Play size={ICON_SIZE.xs} />
               {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
             </CardAction>
           )}
@@ -1063,7 +1064,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
               openFastEdit(itemId(item))
             }}
           >
-            <PenLine size={12} />
+            <Pencil size={ICON_SIZE.xs} />
             {ab('openFigure')}
           </Button>
           <Button
@@ -1073,7 +1074,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
               addFigureToLayout(itemId(item))
             }}
           >
-            <Plus size={12} />
+            <Plus size={ICON_SIZE.xs} />
             {ab('addToCanvas')}
           </Button>
         </>
@@ -1084,7 +1085,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
           disabled={busy}
           onClick={() => void useScriptRunStore.getState().run(item.asset.script)}
         >
-          <Play size={12} />
+          <Play size={ICON_SIZE.xs} />
           {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
         </Button>
       )}

@@ -9,12 +9,13 @@ import {
   EyeOff,
   Lock,
   LockOpen,
-  MoreHorizontal,
+  Ellipsis,
   Search,
   TriangleAlert,
   X,
   SearchX,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn } from '@/lib/utils'
@@ -248,7 +249,7 @@ export function ElementTree() {
           </p>
         ) : (
           <Button variant="outline" size="sm" onClick={() => enterElementEdit(panel.id)}>
-            <Braces size={13} />
+            <Braces size={ICON_SIZE.sm} />
             {et('load')}
           </Button>
         )}
@@ -335,7 +336,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1.5">
         <div className="relative flex-1">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+          <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -364,7 +365,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               aria-label={et('clearSearch')}
               className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm text-ink-3 hover:text-ink"
             >
-              <X size={12} />
+              <X size={ICON_SIZE.sm} />
             </button>
           )}
         </div>
@@ -372,7 +373,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 
       {isolated && (
         <div className="flex shrink-0 items-center gap-1.5 bg-accent-subtle px-3 py-1">
-          <Crosshair size={11} className="shrink-0 text-accent" />
+          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate text-xs text-accent">
             {et('isolated', {
               label: (() => {
@@ -482,7 +483,7 @@ function ClusterRow({
       className="flex h-7 cursor-default items-center gap-1 border-l-2 border-transparent pr-1.5 text-xs text-ink-2 outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
-        <ChevronRight size={11} className={cn('transition-transform', expanded && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', expanded && 'rotate-90')} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <span className="shrink-0 font-mono text-xs text-ink-3">{count}</span>
@@ -593,7 +594,7 @@ function ElementRow({
           className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
         >
           <ChevronRight
-            size={11}
+            size={ICON_SIZE.xs}
             className={cn('transition-transform', expanded && 'rotate-90')}
           />
         </button>
@@ -616,14 +617,14 @@ function ElementRow({
           })}
           side="right"
         >
-          <TriangleAlert size={11} className="shrink-0 text-ink-3" />
+          <TriangleAlert size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </Tip>
       )}
       {readonly && <span className="shrink-0 text-xs text-ink-3">{et('readonly')}</span>}
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
-      {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
-      {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
+      {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
+      {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
       <span
         className={cn(
@@ -642,13 +643,13 @@ function ElementRow({
               onPointerDown={(e) => e.stopPropagation()}
               aria-label={et('rowActions', { label: engineLabel(el.label) })}
             >
-              <MoreHorizontal size={12} className="text-ink-3" />
+              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
             </Button>
           }
         >
           <MenuItem onSelect={onIsolate}>
             <span className="flex items-center gap-2">
-              <Crosshair size={12} className="text-ink-3" />
+              <Crosshair size={ICON_SIZE.sm} className="text-ink-3" />
               {et('isolateBranch')}
             </span>
           </MenuItem>
@@ -656,9 +657,9 @@ function ElementRow({
             <MenuItem onSelect={() => toggleElementLocked(panel.id, el.gid, el.label)}>
               <span className="flex items-center gap-2">
                 {locked ? (
-                  <LockOpen size={12} className="text-ink-3" />
+                  <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />
                 ) : (
-                  <Lock size={12} className="text-ink-3" />
+                  <Lock size={ICON_SIZE.sm} className="text-ink-3" />
                 )}
                 {et(locked ? 'unlock' : 'lock')}
               </span>
@@ -672,9 +673,9 @@ function ElementRow({
             >
               <span className="flex items-center gap-2">
                 {hidden ? (
-                  <Eye size={12} className="text-ink-3" />
+                  <Eye size={ICON_SIZE.sm} className="text-ink-3" />
                 ) : (
-                  <EyeOff size={12} className="text-ink-3" />
+                  <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />
                 )}
                 {et(hidden ? 'unhide' : 'hide')}
               </span>

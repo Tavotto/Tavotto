@@ -1,5 +1,6 @@
 import { forwardRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { CoachmarkSide } from '@/lib/onboarding/position'
@@ -146,7 +147,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         title={ob('pause')}
         className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
       >
-        <X size={13} />
+        <X size={ICON_SIZE.sm} />
       </button>
     </div>
   )

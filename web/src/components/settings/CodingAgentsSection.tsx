@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, RefreshCw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
   backendErrorText,
@@ -137,7 +138,7 @@ export function CodingAgentsSection() {
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <Button variant="outline" size="sm" loading={busy} onClick={() => void reload(true)}>
-            <RefreshCw size={12} aria-hidden />
+            <RefreshCw size={ICON_SIZE.sm} aria-hidden />
             {ag('rescan')}
           </Button>
           {/* 最近检测时间跟着「重新检测」走：它说明的是那个动作上次什么时候
@@ -206,7 +207,7 @@ export function CodingAgentsSection() {
                 className="inline-flex shrink-0 items-center gap-1 text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
               >
                 {ag('viewGuide')}
-                <ExternalLink size={11} aria-hidden />
+                <ExternalLink size={ICON_SIZE.xs} aria-hidden />
               </a>
             </div>
             {/* 桌面版才有的安装入口：spawn `tavotto-cli codex install --json`。

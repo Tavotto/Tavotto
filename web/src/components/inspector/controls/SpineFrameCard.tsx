@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -193,7 +194,7 @@ export function SpineFrameCard({
             className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring disabled:hover:text-ink-2"
           >
             <ChevronRight
-              size={11}
+              size={ICON_SIZE.xs}
               aria-hidden
               className={cn('shrink-0 transition-transform', open && 'rotate-90')}
             />

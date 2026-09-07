@@ -19,6 +19,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Copy, Download, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
@@ -549,7 +550,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           </ul>
           <div className="flex gap-1">
             <Button variant="outline" size="sm" onClick={create} loading={busy}>
-              <Plus size={12} />
+              <Plus size={ICON_SIZE.sm} />
               {st('new')}
             </Button>
             <Button
@@ -560,7 +561,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               aria-label={st('duplicate')}
               title={st('duplicate')}
             >
-              <Copy size={12} />
+              <Copy size={ICON_SIZE.sm} />
             </Button>
             <Button
               variant="outline"
@@ -570,7 +571,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               aria-label={st('export')}
               title={st('export')}
             >
-              <Download size={12} />
+              <Download size={ICON_SIZE.sm} />
             </Button>
             <Button
               variant="outline"
@@ -579,7 +580,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               aria-label={st('import')}
               title={st('import')}
             >
-              <Upload size={12} />
+              <Upload size={ICON_SIZE.sm} />
             </Button>
             <input
               ref={fileRef}
@@ -685,7 +686,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                             aria-label={st('clearField', { field: st(`field.${f.labelKey}`) })}
                             onClick={() => setDraft((d) => (d ? clearPath(d, f.path) : d))}
                           >
-                            <X size={11} className="text-ink-3" />
+                            <X size={ICON_SIZE.xs} className="text-ink-3" />
                           </Button>
                         )}
                       </SettingRow>
@@ -698,7 +699,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               {!editable && (
                 <div>
                   <Button variant="outline" size="sm" onClick={duplicate} loading={busy}>
-                    <Copy size={12} />
+                    <Copy size={ICON_SIZE.xs} />
                     {st('duplicateToEdit')}
                   </Button>
                 </div>
@@ -774,11 +775,11 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     onClick={restore}
                     title={selected.derived_from ? undefined : st('restoreNeedsOrigin')}
                   >
-                    <RotateCcw size={12} />
+                    <RotateCcw size={ICON_SIZE.sm} />
                     {st('restore')}
                   </Button>
                   <Button variant="outline" size="sm" onClick={remove}>
-                    <Trash2 size={12} className="text-danger" />
+                    <Trash2 size={ICON_SIZE.sm} className="text-danger" />
                     {st('delete')}
                   </Button>
                 </div>

@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { useState } from 'react'
 import { t as translate } from '@/i18n'
 import type { MarkerShape } from '@/lib/api'
@@ -277,7 +278,7 @@ export function MarkerPicker({
           <span className="min-w-0 flex-1 truncate text-left">
             {value === null ? MIXED_TEXT() : markerLabel(value, current)}
           </span>
-          <ChevronDown size={12} className="shrink-0 text-ink-3" />
+          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </button>
       }
     >

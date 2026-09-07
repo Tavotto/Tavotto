@@ -3,15 +3,16 @@ import { useTranslation } from 'react-i18next'
 import {
   ArrowUp,
   ChevronRight,
-  FileCode2,
-  History,
+  FileCodeCorner,
+  RotateCcwClock,
   Pin,
   RotateCcw,
-  Settings2,
+  SlidersHorizontal,
   Square,
   Trash2,
   X,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
   agentDisplayName,
@@ -56,7 +57,7 @@ import { Markdown } from './Markdown'
 
 /** 右栏标签名与图标：tab bar 引用这里，改名只改这一处 */
 export const assistantTabLabel = () => translate('tabLabel', { ns: 'ai' })
-export const ASSISTANT_TAB_ICON = FileCode2
+export const ASSISTANT_TAB_ICON = FileCodeCorner
 
 /** 本面板的文案都在 ai 命名空间下 */
 const ai = (key: string, values?: Record<string, unknown>) =>
@@ -255,7 +256,7 @@ export function AssistantPanel() {
             aria-label={ai('panel.taskHistory')}
             aria-expanded={historyOpen}
           >
-            <History size={12} className="text-ink-2" />
+            <RotateCcwClock size={ICON_SIZE.sm} className="text-ink-2" />
           </Button>
         </Tip>
       </div>
@@ -265,7 +266,7 @@ export function AssistantPanel() {
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState
-              icon={FileCode2}
+              icon={FileCodeCorner}
               title={ai('panel.noPanelTitle')}
               hint={ai('panel.noPanelHint')}
             />
@@ -376,7 +377,7 @@ export function AssistantPanel() {
                 onClick={send}
                 aria-label={ai('panel.sendAria')}
               >
-                {!(sending || runningHere) && <ArrowUp size={13} />}
+                {!(sending || runningHere) && <ArrowUp size={ICON_SIZE.sm} />}
               </Button>
             </Tip>
           </div>
@@ -420,7 +421,7 @@ function TargetChip({
             'outline-none transition-colors hover:bg-ink/[.06] focus-visible:focus-ring',
           )}
         >
-          <FileCode2 size={12} className="shrink-0 text-ink-3" />
+          <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           <span className="min-w-0 truncate text-xs text-ink">{targetText}</span>
           <span className="ml-auto shrink-0 text-xs text-ink-3">{scopeLabel(scope)}</span>
         </button>
@@ -462,7 +463,7 @@ function ScopeAgentButton({
           disabled={!panel}
           aria-label={ai('panel.scopeAndAgent')}
         >
-          <Settings2 size={12} />
+          <SlidersHorizontal size={ICON_SIZE.sm} />
           {/* 「作用于：当前元素」而不是光一个「当前元素」（审计 T37）：
               发送前这一行要能独立回答「按下去会改什么」 */}
           <span className="text-xs">
@@ -612,7 +613,7 @@ export function ScopeAgentContent({
                 className="flex min-w-0 items-center gap-1 text-left outline-none focus-visible:focus-ring"
               >
                 <ChevronRight
-                  size={11}
+                  size={ICON_SIZE.xs}
                   aria-hidden
                   className={cn('shrink-0 text-ink-3 transition-transform', effortOpen && 'rotate-90')}
                 />
@@ -646,7 +647,7 @@ export function ScopeAgentContent({
         className="flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         <ChevronRight
-          size={11}
+          size={ICON_SIZE.xs}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
         {ai('panel.techDetails')}
@@ -797,7 +798,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           onClick={onClose}
           aria-label={ai('history.close')}
         >
-          <X size={12} />
+          <X size={ICON_SIZE.sm} />
         </Button>
       </div>
       {showFilters && (
@@ -834,7 +835,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           <p className="py-2 text-xs text-danger">{error}</p>
         ) : !loaded ? null : entries.length === 0 ? (
           /* 空状态只给一句（审计 T37）：怎么开始，输入框自己说 */
-          <EmptyState icon={History} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
+          <EmptyState icon={RotateCcwClock} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
         ) : (
           <div className="flex flex-col gap-2 pt-1">
             {entries.map((s) => (
@@ -897,7 +898,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
             onClick={() => void pinAiHistory(entry.id, !entry.pinned).then(onChanged)}
           >
-            <Pin size={11} className={entry.pinned ? undefined : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.xs} className={entry.pinned ? undefined : 'text-ink-3'} />
           </Button>
         </Tip>
         {entry.changed && entry.revert_available && (
@@ -913,7 +914,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
                 })
               }
             >
-              <RotateCcw size={11} />
+              <RotateCcw size={ICON_SIZE.xs} />
             </Button>
           </Tip>
         )}
@@ -923,7 +924,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             aria-label={ai('history.delete')}
             onClick={() => void deleteAiHistory(entry.id).then(onChanged)}
           >
-            <Trash2 size={11} className="text-ink-3" />
+            <Trash2 size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         </Tip>
       </div>
@@ -934,7 +935,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
         className="mt-0.5 flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         <ChevronRight
-          size={11}
+          size={ICON_SIZE.xs}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
         {ai('panel.techDetails')}
@@ -1045,7 +1046,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             onClick={() => void useAiStore.getState().cancel(session.id)}
             aria-label={ai('panel.abort')}
           >
-            <Square size={10} />
+            <Square size={ICON_SIZE.xs} />
           </Button>
         )}
       </div>
@@ -1061,7 +1062,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             className="w-full text-danger"
             onClick={() => void revertSession(session)}
           >
-            <RotateCcw size={12} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {ai('panel.revert')}
           </Button>
         </>
@@ -1080,7 +1081,7 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-1 text-left text-xs text-ink-3 hover:text-ink-2"
       >
-        <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="truncate">
           {ai('panel.processSteps', { count: items.length })}
           {!open && items.at(-1)

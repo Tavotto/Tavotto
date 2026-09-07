@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
@@ -130,7 +131,7 @@ export function ShortcutHelp() {
     <Dialog open={open} onOpenChange={setOpen} title={sc('title')} size="md">
       <div className="flex flex-col gap-3">
         <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+          <Search size={ICON_SIZE.xs} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}

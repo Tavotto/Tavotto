@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { hasRaster } from '@/lib/exportRequest'
+import { FORMATS, hasRaster } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { SettingRow, SettingSection } from './SettingRow'
@@ -43,7 +43,7 @@ export function ExportSettings() {
     <SettingSection>
       <SettingRow label={st('export.defaultFormats')}>
         <span className="flex items-center gap-3">
-          {(['pdf', 'png'] as const).map((f) => (
+          {FORMATS.map((f) => (
             <label key={f} className="flex items-center gap-1.5 text-xs text-ink-2">
               <input
                 type="checkbox"
@@ -52,8 +52,10 @@ export function ExportSettings() {
               />
               {f.toUpperCase()}
               {/* 「PDF 保留矢量，投稿一般要它」那段建议不属于通用设置——
-                  规范由规范说。这里只标类型，用词与导出对话框逐字相同 */}
-              <span className="text-ink-3">· {ex(f === 'pdf' ? 'pdfHint' : 'pngHint')}</span>
+                  规范由规范说。这里只标类型，用词与导出对话框逐字相同。
+                  格式清单来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时
+                  这里自动跟上，不用再补一处硬编码的两格清单 */}
+              <span className="text-ink-3">· {ex(`${f}Hint`)}</span>
             </label>
           ))}
         </span>

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bookmark, Copy, Layers2, Pencil, RotateCcw, Trash2, X,
-  History,
+  RotateCcwClock,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,
   createVersion,
@@ -193,7 +194,7 @@ export function VersionDrawer() {
           onClick={() => setOpen(false)}
           aria-label={vd('close')}
         >
-          <X size={14} className="text-ink-3" />
+          <X size={ICON_SIZE.md} className="text-ink-3" />
         </Button>
       </div>
       <p className="shrink-0 px-3 pb-2 text-xs leading-relaxed text-ink-3">
@@ -212,7 +213,7 @@ export function VersionDrawer() {
           className="min-w-0 flex-1"
         />
         <Button variant="outline" size="sm" loading={busy} onClick={saveNow}>
-          <Bookmark size={12} />
+          <Bookmark size={ICON_SIZE.sm} />
           {vd('save')}
         </Button>
       </div>
@@ -220,7 +221,7 @@ export function VersionDrawer() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {versions.length === 0 ? (
           <EmptyState
-            icon={History}
+            icon={RotateCcwClock}
             title={vd('emptyTitle')}
             hint={vd('emptyHint')}
           />
@@ -509,7 +510,7 @@ function VersionDetail({
         )}
         <Tip label={vd('rename')}>
           <Button size="icon-sm" onClick={() => setRenaming(true)} aria-label={vd('rename')}>
-            <Pencil size={12} className="text-ink-3" />
+            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
           </Button>
         </Tip>
         <Tip label={vd('duplicate')}>
@@ -521,7 +522,7 @@ function VersionDetail({
             }}
             aria-label={vd('duplicate')}
           >
-            <Copy size={12} className="text-ink-3" />
+            <Copy size={ICON_SIZE.sm} className="text-ink-3" />
           </Button>
         </Tip>
         {meta.auto && (
@@ -539,7 +540,7 @@ function VersionDetail({
         )}
         <Tip label={vd('delete')}>
           <Button size="icon-sm" onClick={remove} aria-label={vd('delete')}>
-            <Trash2 size={12} className="text-danger" />
+            <Trash2 size={ICON_SIZE.sm} className="text-danger" />
           </Button>
         </Tip>
       </div>
@@ -563,7 +564,7 @@ function VersionDetail({
                 onClick={() => setCompareOpen(true)}
                 aria-label={vd('compareAria')}
               >
-                <Layers2 size={13} className="text-ink-2" />
+                <Layers2 size={ICON_SIZE.sm} className="text-ink-2" />
               </Button>
             </Tip>
           </div>
@@ -578,7 +579,7 @@ function VersionDetail({
           )}
 
           <Button variant="primary" size="sm" className="w-full" onClick={restore}>
-            <RotateCcw size={12} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {vd('restore')}
           </Button>
 

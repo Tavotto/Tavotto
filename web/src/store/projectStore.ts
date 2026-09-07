@@ -30,6 +30,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { resetPreview } from '@/store/svgPreviewStore'
@@ -132,6 +133,9 @@ async function resetForNewProject() {
   // ——那些进程是他自己在终端里起的，切个项目不该杀掉它们（ADR 0021 §14）。
   // 切回去时 refresh() 会把它们重新对上账。
   useNativeSessionStore.getState().clear()
+  // 项目环境 / 工作目录模式是项目级的（ADR 0018 / 0045）：清掉旧项目的，按新
+  // 项目重取——否则开关与错误块的建议说的是上一个项目的模式
+  useEnvStore.getState().resetProject()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()

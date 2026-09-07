@@ -1,5 +1,6 @@
 import * as RS from '@radix-ui/react-select'
 import { Check, ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from './Icon'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -51,7 +52,7 @@ export function Select<T extends string>({
         <span className="min-w-0 flex-1 truncate text-left">
           <RS.Value placeholder={placeholder} />
         </span>
-        <ChevronDown size={12} className="shrink-0 text-ink-3" />
+        <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
       </RS.Trigger>
       <RS.Portal>
         <RS.Content
@@ -76,7 +77,7 @@ export function Select<T extends string>({
                 )}
               >
                 <RS.ItemIndicator className="absolute left-1.5 flex items-center">
-                  <Check size={12} />
+                  <Check size={ICON_SIZE.sm} />
                 </RS.ItemIndicator>
                 <RS.ItemText>{opt.label}</RS.ItemText>
                 {opt.hint && <span className="ml-auto font-mono text-xs text-ink-3">{opt.hint}</span>}

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import os
 import re
 import sys
 import threading
@@ -504,23 +505,164 @@ def _mathtext_font_name(fam: str) -> str | None:
     return fam
 
 
-#: 字体回退尾巴：正文那张脸缺字形时，逐字形退到这里。
+#: 字体回退尾巴里**平台无关**的那一段：正文那张脸缺字形时，逐字形先退到这里。
 #:
 #: **只有 DejaVu Sans 一个**，理由是三条同时成立：matplotlib 自己就带着它
-#: （我们不新增、不捆绑任何字体，见 `00_SHARED_RULES` §10），它在每个平台上
-#: 都在（回退结果因此是确定的，不会「这台机器有那台没有」），而且实测它盖住
-#: 了科学文本里那一批 base-14 缺的字符（`⁵` `⁻` `₂` `μ` `≤` `Å` …）。
+#: （我们不新增、不捆绑任何字体，见 `tests/test_font_provenance.py`），它在每个
+#: 平台上都在（这一段的回退结果因此是确定的），而且实测它盖住了科学文本里
+#: 那一批 base-14 缺的字符（`⁵` `⁻` `₂` `μ` `≤` `Å` …）。
 #:
-#: **中日韩不在它的覆盖里**，本尾巴治不了中文方框——那要用户选一个装了中文
-#: 的字体（选项由 `manifest._family_options()` 按运行时探测给出）。往这里塞
-#: 一个平台相关的中文字体会让同一份文档在两台机器上画出不同的字，比一条
-#: 说得清楚的问题项更坏。
+#: **中日韩不在它的覆盖里**。汉字由后面那段**按平台探测**出来的尾巴
+#: （`cjk_fallback_tail()`）接住，见 ADR 0045。
 FONT_FALLBACK_TAIL = ("DejaVu Sans",)
 
+#: 中日韩回退候选，**按平台分组、组内按偏好排序**（ADR 0045）。这是候选名单，
+#: 不是承诺：进链的只有 `findfont(fallback_to_default=False)` 真解析得到的那些，
+#: 所以链上每一环都画得出来，不会产生 matplotlib 的 "Font family not found"。
+#: 本平台那组排最前，其它平台的名字跟在后面——Noto / 思源这类跨平台字体装在
+#: 哪台机器上都该认。**本仓库不分发任何字体**：名字全是系统自带或用户自装的。
+#:
+#: 组内顺序的理由：无衬线优先（与 matplotlib 默认的 DejaVu Sans 一致），
+#: 简体优先，操作系统自带的排在需要另装的前面。
+#: macOS 上 `PingFang SC` 只在部分系统版本里被 matplotlib 扫得到（.ttc 只读
+#: 第一张脸，不少版本上那张脸叫 PingFang HK），所以紧跟着 Hiragino Sans GB。
+CJK_FALLBACK_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "darwin": (
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "STHeiti",
+        "Heiti SC",
+        "Songti SC",
+        "Arial Unicode MS",
+    ),
+    "win32": ("Microsoft YaHei", "SimHei", "DengXian", "SimSun", "KaiTi"),
+    "linux": (
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "Source Han Sans CN",
+        "WenQuanYi Zen Hei",
+        "WenQuanYi Micro Hei",
+        "Noto Serif CJK SC",
+        "Source Han Serif SC",
+        "Droid Sans Fallback",
+        "AR PL UMing CN",
+    ),
+}
 
-def _family_chain(fam: str) -> list[str]:
-    """正文族 + 回退尾巴。已经点了名的不重复加。"""
-    return [fam, *(f for f in FONT_FALLBACK_TAIL if f != fam)]
+#: 设成 `0` 关掉中日韩尾巴（只留 DejaVu Sans）。这是**诊断 / 测试开关**：
+#: 「方框要被报成问题」那一族用例需要一个确定没有中文字体的世界，而 CI 机器
+#: 装没装 Noto CJK 我们说了不算。它不是产品设置，界面上没有它。
+CJK_FALLBACK_ENV = "TAVOTTO_CJK_FALLBACK"
+
+
+def cjk_fallback_candidates() -> tuple[str, ...]:
+    """本平台那组在前、其它平台的跟在后面，去重、保序。"""
+    here = sys.platform if sys.platform in CJK_FALLBACK_CANDIDATES else "linux"
+    seen: dict[str, None] = {}
+    for plat in (here, *(p for p in CJK_FALLBACK_CANDIDATES if p != here)):
+        for name in CJK_FALLBACK_CANDIDATES[plat]:
+            seen.setdefault(name, None)
+    return tuple(seen)
+
+
+#: 探测结果按进程缓存：字体装没装在一个 worker 的生命周期里不会变。
+#: （`manifest._font_installed` 读的也是这一张表——「这个名字画不画得出」
+#: 全 worker 只有一个判据。）
+_FONT_PRESENT: dict[str, bool] = {}
+
+
+def font_installed(name: str) -> bool:
+    """这个运行时**画得出来**这个字体名吗？
+
+    走 matplotlib 自己的解析路径，所以「列出来的」== 「画得出来的」。
+    `fallback_to_default=False` 是关键：默认的回退会让任何名字都「成功」，
+    正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
+    override 记下了、图重绘了，只有字形没变，界面还报告成功。
+    """
+    hit = _FONT_PRESENT.get(name)
+    if hit is None:
+        from matplotlib import font_manager
+
+        try:
+            font_manager.findfont(
+                font_manager.FontProperties(family=name), fallback_to_default=False
+            )
+            hit = True
+        except (ValueError, RuntimeError):
+            hit = False
+        _FONT_PRESENT[name] = hit
+    return hit
+
+
+_CJK_TAIL: tuple[str, ...] | None = None
+
+
+def cjk_fallback_tail() -> tuple[str, ...]:
+    """这台机器上**装了的**中日韩候选，按偏好顺序。没装一个就是空元组。
+
+    进程内缓存一次：它跟在每一段文字的族列表后面，一次 build 要问几百遍。
+    """
+    global _CJK_TAIL
+    if _CJK_TAIL is None:
+        if os.environ.get(CJK_FALLBACK_ENV, "").strip() == "0":
+            _CJK_TAIL = ()
+        else:
+            _CJK_TAIL = tuple(n for n in cjk_fallback_candidates() if font_installed(n))
+    return _CJK_TAIL
+
+
+def fallback_tail() -> tuple[str, ...]:
+    """完整的回退尾巴：平台无关的 DejaVu Sans，再接本机探测到的中日韩脸。"""
+    return (*FONT_FALLBACK_TAIL, *cjk_fallback_tail())
+
+
+def _family_chain(fam) -> list[str]:
+    """正文族（一个名字或一条链）+ 回退尾巴。已经点了名的不重复加。
+
+    用户 / 脚本给的名字**原样留在最前**：`get_fontfamily()[0]` 仍然是它，
+    manifest 与预检报的都是它；尾巴只在正文那张脸缺字形时逐字形接手。
+    """
+    head = [str(f) for f in fam] if isinstance(fam, (list, tuple)) else [str(fam)]
+    return head + [f for f in fallback_tail() if f not in head]
+
+
+def ensure_text_fallback(t: Text) -> bool:
+    """给一个 Text 的族列表补上回退尾巴；已经齐了就什么都不动。返回是否动过。"""
+    fams = [str(f) for f in (t.get_fontfamily() or [])]
+    chain = _family_chain(fams) if fams else _family_chain(list(mpl.rcParams["font.family"]))
+    if chain == fams:
+        return False
+    t.set_fontfamily(chain)
+    return True
+
+
+def ensure_figure_fallback(fig) -> int:
+    """脚本跑完、采 baseline 之前：给图上**已经存在**的每一段文字补尾巴。
+
+    为什么在这个时刻、而不是在脚本跑之前改 rcParams：脚本自己会改
+    `font.family`（中文用户最常见的写法 `rcParams['font.family'] = 'SimHei'`
+    会整个覆盖掉我们事先放进去的列表），也会给单个 Text 传
+    `fontfamily=`——那两种都只有事后逐个补才管用。返回补过的个数。
+    """
+    n = 0
+    for t in fig.findobj(Text):
+        if ensure_text_fallback(t):
+            n += 1
+    return n
+
+
+def ensure_rcparams_fallback() -> None:
+    """给 rcParams 的 `font.family` 补尾巴：之后**才**用默认 FontProperties 新建的
+    Text 读的是它。幂等。
+
+    这是兜底，不是兑现点：懒建的刻度标签从模板 tick 拷字体属性、图例重建
+    （`rebuild_legend`）从旧文字拷，都不经 rcParams。今天没有哪条产品路径
+    依赖它——`test_cjk_figure_text.py` 的变异反证里拿掉它不会红，那是已知的。
+    """
+    cur = [str(f) for f in mpl.rcParams["font.family"]]
+    chain = _family_chain(cur)
+    if chain != cur:
+        mpl.rcParams["font.family"] = chain
 
 
 def _set_text_fontfamily(t: Text, v) -> None:
@@ -543,8 +685,8 @@ def _set_text_fontfamily(t: Text, v) -> None:
     fam = str(v[0]) if isinstance(v, (list, tuple)) else str(v)
     # **按回退链设，不按单个名字设**：matplotlib 3.6 起 family 是一条逐字形
     # 回退链，只给一个名字时缺的字形画成 .notdef 方框（实测 Times New Roman
-    # 画 `×10⁵` 的 `⁵` `⁻` 是三个一模一样的空心框）。`get_fontfamily()[0]`
-    # 仍然是用户选的那个，manifest / 预检报的都是它。
+    # 画 `×10⁵` 的 `⁵` `⁻` 是三个一模一样的空心框；任何拉丁字体画汉字都是）。
+    # `get_fontfamily()[0]` 仍然是用户选的那个，manifest / 预检报的都是它。
     t.set_fontfamily(_family_chain(fam))
     math_name = _mathtext_font_name(fam)
     if not math_name:

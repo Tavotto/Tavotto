@@ -1306,6 +1306,16 @@ export interface ManifestElement {
   label: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
+  /**
+   * matplotlib 会在这个框处把这个元素切掉，框外一笔都不画（figure 分数、
+   * y 向下，与 `bbox` 同一套坐标）。**缺席 = 不裁 / 裁不掉任何东西。**
+   *
+   * `bbox` 不含这一维：曲线 / 散点 / 填充的包围盒是**未裁剪的整个数据范围**，
+   * 一个 x=1e3 而 xlim=(0,1) 的离群点能把它撑到图幅的几百倍。命中与选中高亮
+   * 仍然用 `bbox`（那是有意的），只有预检的「元素超出图幅」读这一条——它问的
+   * 是「真画出来的那部分到哪儿」。产生者只有 `engine/manifest._clip_bbox()`。
+   */
+  clip_bbox?: [number, number, number, number]
   /** 真实路径（见 ElementGeometry）；没有就退回 bbox */
   geometry?: ElementGeometry
   editable: EditableField[]
@@ -1325,6 +1335,11 @@ export interface ManifestElement {
   glyphs_missing?: string[]
   /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
   glyphs_fallback?: string[]
+  /**
+   * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0045）。正文族自己画得
+   * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
+   */
+  cjk_family?: string
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
@@ -2399,6 +2414,20 @@ export interface BundledRuntime {
  * 当前项目的渲染环境（ADR 0018）。全局环境之外**每个项目还有自己的一份**：
  * 项目自带 `.venv` 时 Tavotto 会自动换过去，用户也可以只为这个项目指定。
  */
+/**
+ * safe worker 的工作目录模式（ADR 0045）。`project` = 脚本在自己的目录里跑：
+ * 它用相对路径读的数据（exists / glob / C++ 读取器）都能找到；它用相对路径
+ * **写**的中间文件会像终端里一样落进项目目录。守卫、savefig 捕获、解释器链不变。
+ */
+export type WorkdirMode = 'sandbox' | 'project'
+export interface WorkdirState {
+  mode: WorkdirMode
+  modes: string[]
+}
+
+/** 「脚本跑完没出图」——多半是沙盒 cwd 下相对路径找不到数据，给「在脚本目录里运行」的出口 */
+export const WORKDIR_CODES = ['no_figures_captured', 'no_figures_captured_silent'] as const
+
 export interface ProjectEnvironment {
   open: boolean
   /** 稳定枚举，与全局那份同一套（`project_venv` / `bundled` / …） */
@@ -2414,6 +2443,8 @@ export interface ProjectEnvironment {
   module?: string
   /** 在这个项目里发现到的候选虚拟环境（项目相对路径），可能是空表 */
   can_use_project_venv?: string[]
+  /** safe worker 的工作目录模式（ADR 0045）：沙盒（默认）/ 脚本目录 */
+  workdir?: WorkdirState
   /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
   managed?: ManagedEnvironment
 }
@@ -2519,6 +2550,17 @@ export const setProjectEnvironment = (python: string | null, module?: string) =>
     // 体检连缺的那个包一起验，并把「为什么这个项目用了系统 Python」记下来。
     body: JSON.stringify(module ? { scope: 'project', python, module } : { scope: 'project', python }),
   })
+
+/** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0045）。改了后端会关掉该项目的会话。 */
+export const setProjectWorkdir = (mode: WorkdirMode) =>
+  jsonFetch<{ ok: boolean; workdir: WorkdirState; project: ProjectEnvironment }>(
+    '/api/engine/workdir',
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    },
+  )
 
 // ---------------------------------------------------------------------------
 // 受控依赖修复（ADR 0019）
