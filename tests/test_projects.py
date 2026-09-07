@@ -154,6 +154,46 @@ def test_create_project(client, tmp_path):
     assert resp.get_json()["open"] is True
 
 
+def test_create_rejects_traversal_and_keeps_the_parent_untouched(client, tmp_path):
+    """`create=true` 的路径里出现 `..` 一律拒（评审 #299-2）。
+
+    界面挡住了不是安全边界：桌面新建流程把「用户选的上级目录」与「用户输入的
+    名字」拼成一条路径发过来，`mkdir(parents=True, exist_ok=True)` 会把 `..`
+    解析掉——落点跑到对话框上写着的目录**之外**，而且 `exist_ok=True` 让一个
+    **已经存在**的上级目录被当成新项目初始化，用户看不出发生过什么。
+
+    所以判据不只看状态码：还要证明那个上级目录**没有**被打开成项目。
+    """
+    parent = tmp_path / "parent"
+    (parent / "chosen").mkdir(parents=True)
+    resp = client.post(
+        "/api/projects/open", json={"path": str(parent / "chosen" / ".."), "create": True}
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == "unsafe_project_name"
+    assert body["params"]["name"] == ".."
+    assert m.default_project_path() != parent  # 上级目录没被当成项目打开
+
+
+def test_create_rejects_a_leaf_that_is_not_a_legal_folder_name(client, tmp_path):
+    """末位分量走 `exportreq.check_filename`（路径分量合法性的唯一权威）。"""
+    resp = client.post("/api/projects/open", json={"path": str(tmp_path / "CON"), "create": True})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "unsafe_project_name"
+    assert not (tmp_path / "CON").exists()  # 拒了就一个字节都别写
+
+
+def test_create_still_accepts_a_normal_name(client, tmp_path):
+    """反向：正常名字照旧能建——判据别宽到把正常用法也拦了。"""
+    for name in ("figs", "论文插图", "fig-1.v2", "COM10"):
+        resp = client.post(
+            "/api/projects/open", json={"path": str(tmp_path / name), "create": True}
+        )
+        assert resp.status_code == 200, name
+        assert (tmp_path / name).is_dir()
+
+
 def test_remove_recent_keeps_disk(client, tmp_path):
     figs = _make_figs(tmp_path)
     engine_config.touch_recent(str(figs))

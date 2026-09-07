@@ -2278,6 +2278,28 @@ def api_projects_recent():
     return resp
 
 
+def _unsafe_new_project_part(p: Path) -> str | None:
+    """`create=true` 时，这条路径新建出来的那一级安不安全。安全回 None。
+
+    **判据的主语**：客户端发来的是「用户选的上级目录」+「用户输入的名字」
+    拼成的**整条路径**，后端看不见那两半分别是什么——所以这里守的不是前端
+    `lib/projectName.ts` 那条规则的镜像（那条判的是叶子名），而是**越界**
+    这一件事本身：路径里只要出现 `.` / `..` 分量，
+    `mkdir(parents=True, exist_ok=True)` 就会把它们解析掉，项目落到对话框上
+    写着的目录之外，甚至把一个已经存在的上级目录当成新项目初始化。
+
+    末位分量的合法性复用 `exportreq.check_filename`——「一个路径分量合不合法」
+    在本仓库只有那一份权威（按最严的平台写，且与 `web/src/lib/exportName.ts`
+    由 `tests/golden/filename_vectors.json` 钉在一起）。
+
+    回的是**出问题的那一段**，直接进 `params.name` 给用户看。
+    """
+    for part in p.parts:
+        if part in (".", ".."):
+            return part
+    return p.name if engine_exportreq.check_filename(p.name) else None
+
+
 @app.post("/api/projects/open")
 def api_projects_open():
     """打开（或 create=true 时先创建）一个项目目录。
@@ -2291,6 +2313,15 @@ def api_projects_open():
         return jsonify({"error": "缺少项目路径", "code": "missing_path"}), 400
     p = Path(raw).expanduser()
     if body.get("create"):
+        bad = _unsafe_new_project_part(p)
+        if bad is not None:
+            return jsonify(
+                {
+                    "error": f"项目名不是一个合法的目录名: {bad}",
+                    "code": "unsafe_project_name",
+                    "params": {"name": bad},
+                }
+            ), 400
         try:
             p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:

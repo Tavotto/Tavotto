@@ -103,6 +103,8 @@ USER_VISIBLE_CODES = {
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
+    # 评审 #299-2：create=true 的路径里出现 `.` / `..`，或末位分量不是合法目录名
+    "unsafe_project_name": {"name"},
     "open_project_failed": {"reason"},
     "invalid_path": set(),
     "dir_missing": {"path"},
