@@ -532,8 +532,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
-  `data-element-svg`（+ manifest bbox）。**aria-label / 文案 / class 都不能当选择器。** 改了这些
-  属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+  `data-element-svg`（+ manifest bbox）、`data-status-live`。**aria-label / 文案 / class / ARIA role
+  都不能当选择器。** 改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+* **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
+  `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的
+  `role="alert"` 里）。问「**应用刚说了什么**」的一律认它——`e2e/twin-axes-pick.spec.ts`（⌥ 轮换
+  播报 `status.elementCycled`）与 `e2e/cross-tab-paste.spec.ts`（已复制 / 已粘贴）靠它。
+  **`role="status"` 不是唯一的**：快速编辑那行常驻说明、素材库、导出面板、问题面板、设置页、
+  onboarding 层…… 十几处都在产出，所以 `[role="status"]` / `getByRole('status')` 拿到的是
+  「文档里排在最前的那个」，不是播报区。T06 给 `FastEditBar` 加的那行 `fastEdit.addedForEdit`
+  排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
+  什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
+  的 `host.querySelector`）可以继续用 role：那里主语唯一。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。

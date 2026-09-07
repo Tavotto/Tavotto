@@ -95,9 +95,17 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   /** 属性页此刻挂在哪个元素上（属性行的 data-gid，见 ElementInspector） */
   const shownGid = () =>
     page.evaluate(() => document.querySelector('[data-gid]')?.getAttribute('data-gid') ?? null)
-  /** toast 的无障碍播报（常驻在 DOM 里的 aria-live 区） */
+  /**
+   * **应用刚播报了什么**：`StatusToasts` 里那块常驻的 aria-live 区（内容来自
+   * `uiStore.setStatus`）。
+   *
+   * 认 `data-status-live`，**不认 `[role="status"]`**——后者全产品十几个产出点，取第一个
+   * 拿到的是「文档里排在最前的那个 status」。快速编辑那行常驻说明
+   * （`fastEdit.addedForEdit`，UI 审计 T06）就排在播报区前面，一加进来这个判据的主语
+   * 就从「刚播报了什么」变成「那行说明写着什么」，而轮换播报本身好好的。
+   */
   const announced = () =>
-    page.evaluate(() => document.querySelector('[role="status"]')?.textContent?.trim() ?? '')
+    page.evaluate(() => document.querySelector('[data-status-live]')?.textContent?.trim() ?? '')
 
   // 1) 普通点击：选中先登记的宿主，没有轮换 toast
   await page.mouse.click(at.x, at.y)
