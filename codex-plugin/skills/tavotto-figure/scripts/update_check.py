@@ -36,10 +36,13 @@
 
 * `TAVOTTO_UPDATE_URL` —— 自定义清单地址（自建分发、内网镜像、测试）
 * `TAVOTTO_DISABLE_UPDATE_CHECK=1` —— 完全关掉（一个包都不发）
-* `TAVOTTO_UPDATE_TIMEOUT` —— 覆盖那条墙钟预算（秒）。**这是给测试用的旋钮**，
-  不是给用户的开关：起子进程跑脚本的用例吃的是同一条生产预算，而它在负载高
-  的 CI 机器上真的会被吃掉（见 `TIMEOUT` 旁边的证据指针）。解析见
-  `resolve_timeout()`——设错一律回落到默认值。
+
+**就这两个。那条 1.5 秒预算没有、也不许有环境变量能放宽它**——环境变量是生产
+表面，在注释里写「给测试用」不构成任何约束：用户、CI、某个父进程都可能设上它，
+而这次检查是**同步跑在出图那条路上**的（`handoff.emit()`），放宽它等于把「不阻塞
+出图」那条底线让出去。测试要更长的预算就起一个 driver、在**子进程里**覆盖模块级
+`TIMEOUT`（见 `tests/test_plugin_update_check.py` 的 `_driver`）——那条缝只存在于
+测试里，`test_no_environment_variable_can_widen_the_production_budget` 看着。
 
 纯标准库，Python 3.8+。
 """
@@ -76,13 +79,9 @@ RETRY_INTERVAL = 3600
 #: `backend-platforms (windows-latest, 3.13)`，headSha 5d149755）在跑完 4012 条
 #: 用例、耗时 2006 秒之后，连 127.0.0.1 上的 `ThreadingHTTPServer` 都没能在
 #: 1.5 秒内答完，`test_explicit_entry_point_human` 拿到 `查不到最新版本`
-#: （issue #286）。所以测试用 `TIMEOUT_ENV` 把预算调大，**生产默认值不变**。
+#: （issue #286）。所以起子进程的用例经 driver 在**子进程里**把这个模块级常量
+#: 改掉——**生产路径上没有任何旋钮**，见模块 docstring 的「环境变量」一节。
 TIMEOUT = 1.5
-#: 覆盖上面那条预算的环境变量。**给测试用**：生产不设它，默认路径一个字不变。
-TIMEOUT_ENV = "TAVOTTO_UPDATE_TIMEOUT"
-#: 旋钮的上限。再怎么调也不许把「绝不阻塞出图」那条底线让出去——一个拼错的
-#: 环境变量不能把生产路径变成「永不超时」。
-MAX_TIMEOUT = 60.0
 #: 这个插件的升级方式（比一个 zip 链接有用：它就是用户要敲的那一行）
 UPGRADE_COMMAND = "codex plugin marketplace upgrade tavotto"
 
@@ -192,25 +191,6 @@ def write_cache(path: str, data: dict) -> None:
 _CHUNK = 8 * 1024
 
 
-def resolve_timeout(environ: dict | None = None) -> float:
-    """**这一次检查**的总墙钟预算（秒）：默认 `TIMEOUT`，`TIMEOUT_ENV` 可覆盖。
-
-    判据只有一条：**解不出一个落在 `(0, MAX_TIMEOUT]` 里的有限数，就用默认值。**
-    空串、垃圾串、`0`、负数、`inf`/`nan`、大得离谱的值一律回落到 1.5 秒——这条
-    路是**生产路径**（`emit()` 到点就查一次），一个拼错的环境变量不许把它变成
-    「永不超时」。`inf` 与 `nan` 走的正是那个区间比较：对它们两个都是 False。
-    """
-    env = os.environ if environ is None else environ
-    raw = (env.get(TIMEOUT_ENV) or "").strip()
-    if not raw:
-        return TIMEOUT
-    try:
-        value = float(raw)
-    except ValueError:
-        return TIMEOUT
-    return value if 0 < value <= MAX_TIMEOUT else TIMEOUT
-
-
 def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
     """拉清单。**任何失败都回 None**，不抛、不打日志、不拖时间。
 
@@ -282,7 +262,7 @@ def check(
 
     due = force or _due(cache, url, now)
     if due:
-        fresh = fetcher(url, resolve_timeout(env))
+        fresh = fetcher(url, TIMEOUT)
         entry = {
             "schema": SCHEMA,
             "url": url,

@@ -29,6 +29,22 @@ sys.path.insert(0, str(PLUGIN / "mcp"))
 
 launcher = importlib.import_module("server")
 
+#: **每个被 spawn 的假 CLI 都先钉住自己的 stdout**，形状照 `engine/cli.py::
+#: use_utf8_streams()` 与 `scripts/ci/_common.py`（#284 已把它做成 scripts/ 的全仓门禁，
+#: 而 tests/ 下的夹具不在那条覆盖里）。真 CLI 钉了、假 CLI 不钉，夹具就比它模拟的东西
+#: **更容易失败**：Windows 的默认编码是 cp1252，子进程打一句中文当场 UnicodeEncodeError
+#: 死掉，后面那行 JSON 根本没打出来，父进程拿到空输出——红的却是产品代码
+#: （#314 的 Windows 腿实测；本机 `PYTHONIOENCODING=cp1252` 一模一样）。
+PIN_UTF8 = (
+    "import sys\n"
+    "for _s in (sys.stdout, sys.stderr):\n"
+    "    if hasattr(_s, 'reconfigure'):\n"
+    "        try:\n"
+    "            _s.reconfigure(encoding='utf-8', errors='replace')\n"
+    "        except (OSError, ValueError):\n"
+    "            pass\n"
+)
+
 #: 「一个候选都没探通」的 resolver 结论——第四态与原来三态共同的前提
 NOTHING_IMPORTABLE = {
     "python": None,
@@ -237,7 +253,7 @@ def test_the_probe_asks_doctor_json_and_ignores_the_exit_code(tmp_path):
     log = tmp_path / "argv.json"
     fake = tmp_path / "fake_cli.py"
     fake.write_text(
-        "import json, sys\n"
+        PIN_UTF8 + "import json, sys\n"
         f"open({str(log)!r}, 'w', encoding='utf-8').write(json.dumps(sys.argv[1:]))\n"
         "print('体检发现 1 个问题')\n"  # 那行 JSON 前面还可能有别的输出
         "print(json.dumps({'ok': False, 'version': '0.10.0'}, ensure_ascii=False))\n"
@@ -253,7 +269,7 @@ def test_the_probe_says_unknown_when_it_cannot_ask(tmp_path):
     assert launcher._tavotto_cli_version([str(tmp_path / "not-here")]) is None
 
     silent = tmp_path / "silent.py"
-    silent.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+    silent.write_text(PIN_UTF8 + "sys.exit(2)\n", encoding="utf-8")
     assert launcher._tavotto_cli_version([sys.executable, str(silent)]) is None
 
 
@@ -280,7 +296,7 @@ def test_the_version_comparison_ships_in_the_bundle():
 def _fresh_probe(plugin_dir, cli, snippet_tail):
     """在**全新解释器**里 import 启动器并跑一句，回 (returncode, stdout)。"""
     code = (
-        "import json, sys\n"
+        PIN_UTF8 + "import json, sys\n"
         f"sys.path.insert(0, {str(plugin_dir / 'mcp')!r})\n"
         "import server\n" + snippet_tail
     )
@@ -323,7 +339,12 @@ def test_the_version_comparison_import_resolves_in_a_fresh_interpreter(tmp_path)
     )
     cli = tmp_path / "fake_tavotto.py"
     cli.write_text(
-        "import json, sys\nprint(json.dumps({'ok': True, 'version': '0.10.0'}))\n",
+        PIN_UTF8
+        + "import json, sys\n"
+        # 与另一条探针用例同一个形状：真 doctor 在那行 JSON 之前还会说中文，
+        # 夹具照做才试得出「按 UTF-8 解码」与「从后往前找 JSON」这两件事
+        + "print('体检发现 1 个问题')\n"
+        + "print(json.dumps({'ok': True, 'version': '0.10.0'}))\n",
         encoding="utf-8",
     )
     tail = f"print(json.dumps(server.engine_too_old([{sys.executable!r}, {str(cli)!r}])))\n"
