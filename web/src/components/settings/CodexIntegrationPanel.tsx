@@ -17,7 +17,8 @@ import { Button } from '../ui/Button'
 import { ag } from './agentState'
 
 /**
- * 设置 → 编码 Agent →「在编码 Agent 中使用 Tavotto」里的安装入口（issue #170）。
+ * 设置 → 编码 Agent →「连接外部工具」小节（`data-agent-section="external"`）里的
+ * 安装入口（issue #170）。审计 T44 改名前它叫「在编码 Agent 中使用 Tavotto」。
  *
  * ## 按钮背后是那条命令，不是第二套安装器
  *

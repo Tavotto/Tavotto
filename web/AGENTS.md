@@ -593,6 +593,26 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
   就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
   用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
+* **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e
+  真红）：审计 T44 把两个小节按用户目标改了名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图
+  助手 / 连接外部工具」），`e2e/coding-agents.spec.ts` 里两条认文案的用例当场找不到元素。
+  换成新文案只是把同一个赌注再下一次；**更糟的是那两条 `toHaveCount(0)` 的反向断言**
+  ——文案一改它们恒真，连红都不会红一下，直接从「守着」变成假绿。清单（都归
+  `e2e/coding-agents.spec.ts` 用，改属性要同步它）：
+  `data-agent-section="in-app" | "external"`（`CodingAgentsSection`，两个小节）、
+  `data-agent-codex-integration`（② 里那一行）、
+  `data-agent-rescan`（列表头与详情概览各一颗「重新检测」）、
+  `data-agent-last-checked`（那颗按钮旁边的时间戳）、
+  `data-agent-open="<agent id>"`（`AgentList` 覆盖整行的进详情按钮）、
+  `data-agent-detail="<agent id>"`（`AgentDetailView` 根节点 = 「此刻在详情页」）、
+  `data-agent-back`（返回列表）、`data-agent-field="state | version | executable | source |
+  checked-at"`（概览的「标签 / 值」行）、`data-agent-fold="custom-executable" | "diagnostics"`
+  （两个 `<details>`）、`data-agent-custom-exe`（「使用自定义可执行文件」）。
+  「一级页面不许有输入框」这条现在量的是 `[data-endpoint-step]`（端点编辑器整个不在这一层，
+  锚点在 `EndpointDialog`）与 `[data-agent-field]`（概览字段只在详情里），不是「某两句话没出现」。
+  分区导航认 `[data-section="ai"]`（分区 id 是持久化格式的一部分），不认导航项的文案。
+  **仍然认可见文案的只剩顶栏那颗「设置」**：它是 19 个 spec 共用的入口写法，在一个文件里
+  单方面换掉等于立两套约定；要换就一次换全部，单开一笔。
 * **包管理只操作当前项目的 Tavotto 受管环境**：`store/packageStore.ts` 的 `plan(op, spec)` →
   `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
   深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`

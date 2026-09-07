@@ -25,9 +25,22 @@ import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 
-/** 概览里的一行「标签 / 值」 */
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="flex min-h-6 items-baseline gap-2">
+/**
+ * 概览里的一行「标签 / 值」。
+ *
+ * `name` 是 e2e 的稳定锚点（`data-agent-field`）：`label` 是会被文案改动
+ * 重写的那句话，拿它定位等于每改一次文案就重新下一次赌注。
+ */
+const Field = ({
+  name,
+  label,
+  children,
+}: {
+  name: string
+  label: string
+  children: React.ReactNode
+}) => (
+  <div data-agent-field={name} className="flex min-h-6 items-baseline gap-2">
     <span className="w-20 shrink-0 text-xs text-ink-3">{label}</span>
     <span className="min-w-0 flex-1 break-all text-xs text-ink-2">{children}</span>
   </div>
@@ -41,8 +54,16 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 )
 
 /** `<details>` 折叠块：高级设置与诊断默认收起，一级页面不制造噪音 */
-const Fold = ({ summary, children }: { summary: string; children: React.ReactNode }) => (
-  <Details className="rounded-sm border border-border bg-surface px-2 py-1.5">
+const Fold = ({
+  name,
+  summary,
+  children,
+}: {
+  name: string
+  summary: string
+  children: React.ReactNode
+}) => (
+  <Details data-agent-fold={name} className="rounded-sm border border-border bg-surface px-2 py-1.5">
     <Summary className="cursor-default text-xs text-ink-2">
       {summary}
     </Summary>
@@ -96,11 +117,17 @@ export function AgentDetailView({
   const usingEndpoint = !!agent.active_endpoint_id
 
   return (
-    <div className="flex flex-col gap-3">
+    <div data-agent-detail={agent.id} className="flex flex-col gap-3">
       <div>
         {/* aria-label 与左侧导航的同名项区分开：读屏里两个「编码 Agent」
             听不出差别，用例也选不中正确的那个 */}
-        <Button variant="ghost" size="sm" aria-label={ag('backAria')} onClick={onBack}>
+        <Button
+          data-agent-back
+          variant="ghost"
+          size="sm"
+          aria-label={ag('backAria')}
+          onClick={onBack}
+        >
           <ArrowLeft size={ICON_SIZE.sm} aria-hidden />
           {ag('backToList')}
         </Button>
@@ -117,10 +144,10 @@ export function AgentDetailView({
       {/* ---------------- 概览 ---------------- */}
       <Section title={ag('detail.overview')}>
         <div className="rounded-sm border border-border bg-surface p-2">
-          <Field label={ag('detail.state')}>
+          <Field name="state" label={ag('detail.state')}>
             <AgentStateBadge state={agent.state} />
           </Field>
-          <Field label={ag('detail.version')}>
+          <Field name="version" label={ag('detail.version')}>
             {/* 概览说版本号，不说内部包名（`codex-cli 0.151.0` 的前半截不是用户
                 要认的东西，ADR 0038）。抽不出数字时才回原文——那时原文本身就是
                 诊断材料。`--version` 的完整原话在下面的「诊断信息」里。 */}
@@ -128,7 +155,7 @@ export function AgentDetailView({
               {agentVersionLabel(agent.version) ?? agent.version ?? ag('detail.none')}
             </span>
           </Field>
-          <Field label={ag('detail.executable')}>
+          <Field name="executable" label={ag('detail.executable')}>
             <span className="flex min-w-0 items-center gap-1">
               <span className="min-w-0 flex-1 break-all font-mono" title={agent.executable_path ?? undefined}>
                 {agent.executable_path ?? ag('detail.none')}
@@ -138,21 +165,27 @@ export function AgentDetailView({
               )}
             </span>
           </Field>
-          <Field label={ag('detail.source')}>
+          <Field name="source" label={ag('detail.source')}>
             {agent.detection_source
               ? ag(`source.${agent.detection_source}`, {
                   defaultValue: agent.detection_source,
                 })
               : ag('detail.none')}
           </Field>
-          <Field label={ag('detail.checkedAt')}>
+          <Field name="checked-at" label={ag('detail.checkedAt')}>
             {caps.checked_at_ms ? formatDateTime(caps.checked_at_ms) : ag('detail.none')}
           </Field>
         </div>
         <div>
           {/* 直接调 onRefreshed（父级会强制重探测）；套一层 run() 会让它
               跑两遍——每一遍都是两个真子进程 */}
-          <Button variant="outline" size="sm" loading={busy} onClick={() => void run(onRefreshed)}>
+          <Button
+            data-agent-rescan
+            variant="outline"
+            size="sm"
+            loading={busy}
+            onClick={() => void run(onRefreshed)}
+          >
             {ag('rescan')}
           </Button>
         </div>
@@ -246,10 +279,10 @@ export function AgentDetailView({
 
       {/* ---------------- 高级设置 ---------------- */}
       <Section title={ag('detail.advanced')}>
-        <Fold summary={ag('detail.customExecutable')}>
+        <Fold name="custom-executable" summary={ag('detail.customExecutable')}>
           <CustomExecutable agent={agent} onRefreshed={onRefreshed} />
         </Fold>
-        <Fold summary={ag('detail.diagnostics')}>
+        <Fold name="diagnostics" summary={ag('detail.diagnostics')}>
           <Diagnostics agent={agent} />
         </Fold>
       </Section>
@@ -335,6 +368,7 @@ function CustomExecutable({
       {draft === null ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
+            data-agent-custom-exe
             variant="outline"
             size="sm"
             onClick={() => setDraft(agent.path_override ?? '')}
@@ -419,7 +453,7 @@ function Diagnostics({ agent }: { agent: AiAgentCaps }) {
       <div className="flex justify-end">
         <CopyButton text={asText} label={ag('detail.copyDiagnostics')} />
       </div>
-      <Field label={ag('detail.readiness')}>
+      <Field name="readiness" label={ag('detail.readiness')}>
         {ag(`readiness.${d.readiness}`)}
         {d.readiness_detail ? (
           <span className="ml-1 font-mono text-ink-3">{d.readiness_detail}</span>

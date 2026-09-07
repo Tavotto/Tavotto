@@ -44,9 +44,14 @@ export function AgentList({
           {/*
             覆盖整行的点击区。放在 DOM 最前面 = Tab 先到它、再到开关，
             与视觉顺序一致。可访问名带上状态，读屏不必再去猜右边那个图标。
+
+            `data-agent-open` 是 e2e 的稳定锚点（值 = Agent id）：可访问名
+            里带着**会被文案改动重写**的那句话，用它定位等于每次改文案都
+            重新下一次赌注（2026-09-07 就是这么红的）。
           */}
           <button
             type="button"
+            data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
             className="absolute inset-0 rounded-md outline-none hover:bg-ink/[.025] focus-visible:focus-ring"
