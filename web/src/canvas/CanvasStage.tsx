@@ -36,7 +36,7 @@ export function CanvasStage() {
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
-  // 「这一次把图加进了文档」——只用来播报，可见那一行在 FastEditBar
+  // 「这一次把图加进了文档」——只用来播报，可见那一行在 WorkspaceContextBar
   const addedForEdit = useWorkspaceStore(
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )

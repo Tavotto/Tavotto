@@ -435,11 +435,6 @@ function RecentRow({
 }
 
 /**
- * 放不下时**留尾巴**的路径：`/Users/…/pytest-12/figs` 里能认出项目的是尾部，
- * 默认的省略号却切掉的正是尾部。`dir="rtl"` 让溢出从左边裁；两端的 U+200E
- * 把路径钉在从左到右，免得末尾的 `/` 或 `.` 被双向算法搬到另一头。
- */
-/**
  * 项目名被拒的原因 → 一句本地化的话。动态子键，闭集来自
  * `lib/projectName.ProjectNameProblem`（i18n-check 按前缀
  * `project:browser.nameError.` 认这一片）。
@@ -447,6 +442,11 @@ function RecentRow({
 const nameErrorText = (reason: ProjectNameProblem) =>
   translate(`browser.nameError.${reason}`, { ns: 'project' })
 
+/**
+ * 放不下时**留尾巴**的路径：`/Users/…/pytest-12/figs` 里能认出项目的是尾部，
+ * 默认的省略号却切掉的正是尾部。`dir="rtl"` 让溢出从左边裁；两端的 U+200E
+ * 把路径钉在从左到右，免得末尾的 `/` 或 `.` 被双向算法搬到另一头。
+ */
 function TailPath({ path }: { path: string }) {
   return (
     <span dir="rtl" className="block truncate text-left font-mono text-xs text-ink-3">
