@@ -27,12 +27,92 @@ import subprocess
 import sys
 from pathlib import Path
 
-WF = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+WF = ROOT / ".github" / "workflows"
+SCRIPTS = ROOT / "scripts"
 RELEASE = WF / "release.yml"
 DESKTOP = WF / "desktop-tauri.yml"
 LAB = WF / "lab-ci.yml"
 REUSABLE = WF / "_lab-qualification.yml"
 PLUGIN_STABLE = WF / "plugin-stable.yml"
+
+#: 本模块直接读 / 直接跑的仓库级文件——少一个，靠它的那几条判据就没有主语。
+_NEEDED = {
+    WF: (
+        "release.yml",
+        "desktop-tauri.yml",
+        "lab-ci.yml",
+        "_lab-qualification.yml",
+        "plugin-stable.yml",
+    ),
+    SCRIPTS: ("check_pending_release_notes.py",),
+}
+
+# 本模块的输入是**仓库级**的 `.github/workflows` 与 `scripts`，而 sdist 只带
+# `tests` / `src/tavotto` / `web/src`（`[tool.hatch.build.targets.sdist].include`）。
+# 从 sdist 解出来跑时这两个目录根本不存在——不接住的话，读 workflow 的那些用例
+# 崩在 `FileNotFoundError` 上、跑 `scripts/` 的那两条崩在「子进程找不到脚本」上，
+# 报的都不是真正的成因（issue #269）。
+#
+# 「读不到」有两种成因，它们把人送去的方向相反，所以必须分开报：
+#   * 整个目录不在 → **这个环境里没有这些输入**（sdist 布局），如实跳过并点名
+#     缺的是哪些目录，别去找一个不存在的重命名；
+#   * 目录在、单个文件不在 → **路径真的变了**（重命名 / 挪走），当场抛并点名
+#     是哪个文件——这种情况不该被跳过糊过去。
+#
+# 守卫的前提由 `test_the_skip_premise_still_holds` 钉住：哪天 sdist 带上了
+# `.github` 或 `scripts`，这个 skip 就是多余的，而**一个多余的 skip 会在本该
+# 跑得动的环境里安静地关掉整组判据**。
+_MISSING = [str(d.relative_to(ROOT)) for d in _NEEDED if not d.is_dir()]
+if _MISSING:
+    pytest.skip(
+        f"当前环境里没有 {_MISSING}——本模块的判据是仓库级发布编排契约，"
+        "只在**源码检出**里有意义（sdist 只带 tests / src/tavotto / web/src）。"
+        "这不是「路径变了」，别去找重命名。",
+        allow_module_level=True,
+    )
+
+_RENAMED = [
+    str((d / name).relative_to(ROOT))
+    for d, names in _NEEDED.items()
+    for name in names
+    if not (d / name).is_file()
+]
+assert not _RENAMED, (
+    f"目录都在，但读不到 {_RENAMED}——这是**路径变了**（被重命名或挪走），"
+    "去找那个新名字。「这个环境里根本没有这些目录」是另一回事，"
+    "由上面的 skip 守卫接住。"
+)
+
+
+def _sdist_include() -> list[str]:
+    """读 pyproject 的 sdist include 列表；**只认列表项，不认注释里的散文**。"""
+    body = re.search(
+        r"(?ms)^\[tool\.hatch\.build\.targets\.sdist\]\n(.*?)^\[",
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+    )
+    assert body, "pyproject 里切不出 [tool.hatch.build.targets.sdist] 段"
+    entries = re.findall(r'(?m)^\s*"([^"]+)",\s*$', body.group(1))
+    assert entries, "sdist 段里一个 include 条目都读不出来——列表的写法变了？"
+    return entries
+
+
+def test_the_skip_premise_still_holds():
+    """守卫的前提：sdist 确实带 `tests`、确实不带 `.github` / `scripts`。
+
+    前提一变，这里当场红——那时模块顶上的 skip 就多余了，而多余的 skip 会在
+    **本该跑得动**的环境里安静地关掉整组判据。与
+    `tests/test_e2e_leg_topology.py` 的同名判据同一形状（issue #269）。
+    """
+    include = _sdist_include()
+    assert "tests" in include, "sdist 不再带 tests——本模块根本不会被解出来，这个守卫也就没有主语了"
+    for shipped in (".github", "scripts"):
+        assert not any(e == shipped or e.startswith(shipped + "/") for e in include), (
+            f"sdist 现在带上了 {shipped}——模块顶上的 skip 守卫已经多余。"
+            "留着它等于在一个本该能跑的环境里安静地关掉整组判据"
+        )
 
 
 def _strip_comments(text: str) -> str:

@@ -252,6 +252,8 @@ USER_VISIBLE_CODES = {
     "tutorial_resources_invalid": {"reason"},
     "tutorial_copy_failed": {"reason"},
     "tutorial_locked": {"reason"},
+    # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
+    "versions_unreadable": set(),
 }
 
 pytestmark = pytest.mark.skipif(

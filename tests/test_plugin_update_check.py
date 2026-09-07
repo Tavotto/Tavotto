@@ -5,7 +5,8 @@
 失败，而失败原因跟画图毫无关系。所以下面的用例基本都在验「它不作恶」：
 
   * 不打印到 stdout（调用方读的是那一行 JSON）
-  * 不联网超过 2 秒，网络挂了不报错、不阻塞
+  * 不联网超过 2 秒，网络挂了不报错、不阻塞（**用例自己不吃这条预算**——经
+    `_driver` 在子进程里覆盖模块级 `TIMEOUT`，而不是给生产加一个环境变量）
   * 不往插件目录里写任何东西（那目录归 Codex 管，可能只读）
   * 不按字符串比版本号（0.10.0 vs 0.9.0）
   * 不把插件版本当成 Tavotto 版本
@@ -22,6 +23,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -67,17 +69,33 @@ def serve_manifest():
     告诉不了你为什么。2026-08-28 它在合并队列的 Windows 腿上红过一次。
 
     改用 loopback HTTP 之后，那条预算恢复了它本来的语义（它防的是"挂了的代理、
-    被限速的镜像"，见脚本 docstring），而本地回环快到不可能吃掉 1.5 秒。
+    被限速的镜像"，见脚本 docstring）。**但当初那句"本地回环快到不可能吃掉
+    1.5 秒"是个假设，已经被实测证伪**：2026-09-05 合并组的 Windows 腿
+    （run 33937703910，`backend-platforms (windows-latest, 3.13)`，
+    headSha 5d149755）跑完 4012 条用例、耗时 2006 秒之后，
+    `test_explicit_entry_point_human` 还是拿到了 `查不到最新版本`——重载下这个
+    `ThreadingHTTPServer` 的服务线程被饿一下，就够越过那条硬预算（issue #286）。
+
+    所以**起子进程的用例一律不吃生产预算**：经 `_driver()` 在子进程里把模块级
+    `update_check.TIMEOUT` 覆盖掉。**那条缝只存在于测试里**——生产代码里一个能
+    放宽这条预算的环境变量都没有（#314 的 P1 评审：环境变量是生产表面，注释里
+    写「给测试用」拦不住谁去设它，而这条检查是同步跑在出图那条路上的）。
+    `test_no_environment_variable_can_widen_the_production_budget` 看着这件事。
     """
-    box = {"body": b"{}"}
+    box = {"body": b"{}", "delay": 0.0}
 
     class _H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler 的接口
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(box["body"])))
-            self.end_headers()
-            self.wfile.write(box["body"])
+            if box["delay"]:
+                time.sleep(box["delay"])  # 让墙钟预算成为决定因素，见 _SLOW
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(box["body"])))
+                self.end_headers()
+                self.wfile.write(box["body"])
+            except OSError:
+                pass  # 客户端按预算掐断了连接——那正是慢响应那条用例要的结果
 
         def log_message(self, *a):  # 别把 CI 日志刷满
             pass
@@ -86,8 +104,9 @@ def serve_manifest():
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
 
-    def publish(obj) -> str:
+    def publish(obj, delay: float = 0.0) -> str:
         box["body"] = json.dumps(obj).encode("utf-8")
+        box["delay"] = delay
         return f"http://127.0.0.1:{srv.server_address[1]}/latest.json"
 
     try:
@@ -110,6 +129,41 @@ def manifest(version="0.9.9", **extra):
     }
     out.update(extra)
     return out
+
+
+#: 起子进程的用例给脚本的墙钟预算（秒）。远宽于生产的 1.5 秒——那条预算是给
+#: 「挂了的代理、被限速的镜像」定的，不是给测试计时的（见 `serve_manifest`）。
+_RELAXED_BUDGET = 30.0
+#: 「慢服务器」用例里服务端响应前先睡多久，以及那一跑给的预算。**只有这一对数字
+#: 是有意让预算成为决定因素的**：`_TIGHT` 远小于 `_SLOW`（红那侧在负载下只会更红，
+#: 我们断言的就是「超了」），`_RELAXED_BUDGET` 远大于它（绿那侧留着 60 倍余量）。
+_SLOW = 0.5
+_TIGHT = 0.2
+
+
+def _driver(entry: str, argv: list, budget: float) -> str:
+    """**测试专用的那条缝**：起一个子进程，进去先把模块级 `TIMEOUT` 换掉再调入口。
+
+    为什么不是环境变量：环境变量是**生产表面**。一个用户、一台 CI、某个父进程
+    设上它，`handoff.emit()` 里那条同步检查就能按它的值阻塞出图，而
+    `codex-plugin/AGENTS.md` 把「1.5 秒超时 / 不阻塞出图」写成了四条底线里的两条。
+    在注释里管它叫「测试旋钮」不构成任何约束（#314 的 P1 评审）。
+
+    这条缝没有这个问题：它是**测试自己写的那几行 driver 代码**，生产代码里一个
+    字都没有（`test_no_environment_variable_can_widen_the_production_budget` 用
+    AST 钉住这一点）。`update_check` 先 import，所以 `handoff` 里那句延迟的
+    `import update_check` 拿到的是 `sys.modules` 里同一个、已经改过的模块对象。
+    """
+    return "\n".join(
+        [
+            "import sys",
+            f"sys.path.insert(0, {str(SCRIPTS)!r})",
+            "import update_check",
+            f"update_check.TIMEOUT = {budget!r}",
+            f"import {entry}",
+            f"sys.exit({entry}.main({argv!r}))",
+        ]
+    )
 
 
 def fetcher_for(payload, calls=None):
@@ -350,6 +404,73 @@ def test_network_timeout_is_short(uc):
     assert 0 < uc.TIMEOUT <= 2.0
 
 
+def test_check_hands_the_fetcher_the_production_budget(uc, tmp_path):
+    """`check()` 交给 fetcher 的就是那条生产预算——**运行时**量一次。
+
+    下面那条 AST 用例判的是「源码里写的是不是 `TIMEOUT` 这个名字」，这条判的是
+    「跑起来之后 fetcher 真的收到 1.5 秒」。两条主语不同：一个是文本，一个是
+    这次调用；只留前者的话，把常量本身改掉不会有任何东西红。
+    """
+    calls = []
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
+    uc.check(environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1000.0)
+    assert calls[0][1] == uc.TIMEOUT == 1.5
+
+
+def test_no_environment_variable_can_widen_the_production_budget():
+    """契约：更新检查 **1.5 秒超时**、**不阻塞出图**（`codex-plugin/AGENTS.md` 四条底线）。
+
+    这条挡的是一类修法而不是某个变量名：**环境变量是生产表面**。谁都可能设上它
+    （用户、CI、某个父进程），而这次检查是同步跑在出图那条路上的，于是「测试用的
+    旋钮」当场变成「阻塞出图 N 秒」的开关——在注释里声明它只给测试用不构成约束
+    （#314 的 P1 评审，原本的 `TAVOTTO_UPDATE_TIMEOUT` 就是这么错的）。
+
+    三条判据，主语各自说得出，都用 AST 而不是子串（散文、docstring、注释里出现
+    这些名字都不该算数）：
+
+    1. `os.environ` 在整份源码里只出现一次，且在 `check()` 里——它拿的是「哪份
+       环境」，不是「多长的预算」。这一条**故意比最小必要判据严**：静态判不出
+       「这次读环境是不是为了放宽预算」，那就收窄被判对象——这个脚本一共只读一次
+       环境，多出来的第二处一律要人看一眼，而不是让判据假装自己看得懂；
+    2. `check()` 交给 fetcher 的预算实参是 `TIMEOUT` **这个名字本身**，不是调用、
+       不是算式（那两种都能把一个环境值捎进来）；
+    3. `fetch()` 的 `timeout` 默认值同样是 `TIMEOUT`。
+
+    测试要更长的预算走 `_driver()`：那几行代码在测试文件里，生产装出去的副本里
+    一个字都没有。
+    """
+    tree = ast.parse((SCRIPTS / "update_check.py").read_text(encoding="utf-8"))
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+    environ = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute)
+        and n.attr == "environ"
+        and isinstance(n.value, ast.Name)
+        and n.value.id == "os"
+    ]
+    assert len(environ) == 1, f"os.environ 出现 {len(environ)} 次，多出来的那处是干什么的？"
+    assert environ[0] in set(ast.walk(funcs["check"])), "os.environ 跑到 check() 外面去了"
+
+    sends = [
+        n
+        for n in ast.walk(funcs["check"])
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "fetcher"
+    ]
+    assert len(sends) == 1, "check() 里的发射点不止一处，判据的主语就不唯一了"
+    budget = sends[0].args[1]
+    assert isinstance(budget, ast.Name) and budget.id == "TIMEOUT", (
+        f"交给 fetcher 的预算不是那个常量本身：{ast.dump(budget)}"
+    )
+
+    names = [a.arg for a in funcs["fetch"].args.args]
+    defaults = dict(
+        zip(names[len(names) - len(funcs["fetch"].args.defaults) :], funcs["fetch"].args.defaults)
+    )
+    assert isinstance(defaults["timeout"], ast.Name) and defaults["timeout"].id == "TIMEOUT"
+
+
 def test_manifest_from_another_schema_is_ignored(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     got = uc.check(
@@ -441,7 +562,12 @@ def test_hint_only_speaks_when_there_is_an_update(uc):
 
 
 # ------------------------- 与 handoff.py 的接线 ---------------------------
-def _run_handoff(tmp_path, target, env_extra, *args):
+def _run_handoff(tmp_path, target, env_extra, *args, budget=None):
+    """跑一次交接。`budget` 非 None 时经 `_driver` 换掉子进程里的墙钟预算。
+
+    只有真去取清单的那条用例需要 `budget`：另外两条一条压根不发请求、一条故意指
+    向死地址，它们**要的就是**生产那条预算下的行为，别顺手也给它们放宽。
+    """
     env = {
         **os.environ,
         "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
@@ -450,8 +576,14 @@ def _run_handoff(tmp_path, target, env_extra, *args):
     }
     env.pop("TAVOTTO_CLI", None)
     env.update(env_extra)
+    argv = [str(target), *args]
+    cmd = (
+        [sys.executable, str(SCRIPTS / "handoff.py"), *argv]
+        if budget is None
+        else [sys.executable, "-c", _driver("handoff", argv, budget)]
+    )
     return subprocess.run(
-        [sys.executable, str(SCRIPTS / "handoff.py"), str(target), *args],
+        cmd,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -480,6 +612,7 @@ def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project, serve_m
         tmp_path,
         project / "Fig1.pdf",
         {"TAVOTTO_UPDATE_URL": url, "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")},
+        budget=_RELAXED_BUDGET,
     )
     lines = proc.stdout.strip().splitlines()
     assert len(lines) == 1, f"stdout 不止一行: {lines}"
@@ -520,19 +653,28 @@ def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
 
 
 # ------------------------------ 显式入口 ---------------------------------
-def test_explicit_entry_point_json(tmp_path, serve_manifest):
-    env = {
-        **os.environ,
-        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-        "TAVOTTO_UPDATE_URL": serve_manifest(manifest("1.0.0")),
-    }
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "update_check.py"), "--json", "--force"],
+def _run_update_check(tmp_path, env_extra, *args, budget=_RELAXED_BUDGET):
+    """跑一次显式入口，经 `_driver` 把子进程里的墙钟预算换成 `budget`。
+
+    配置目录跟着 `tmp_path` 走——不同的 `tmp_path` = 不同的缓存。
+    """
+    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"), **env_extra}
+    return subprocess.run(
+        [sys.executable, "-c", _driver("update_check", list(args), budget)],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         env=env,
+    )
+
+
+def test_explicit_entry_point_json(tmp_path, serve_manifest):
+    proc = _run_update_check(
+        tmp_path,
+        {"TAVOTTO_UPDATE_URL": serve_manifest(manifest("1.0.0"))},
+        "--json",
+        "--force",
     )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -545,21 +687,39 @@ def test_explicit_entry_point_json(tmp_path, serve_manifest):
 
 
 def test_explicit_entry_point_human(tmp_path, serve_manifest):
-    env = {
-        **os.environ,
-        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-        "TAVOTTO_UPDATE_URL": serve_manifest(manifest(tavotto.__version__)),
-    }
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "update_check.py"), "--force"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
+    proc = _run_update_check(
+        tmp_path,
+        {"TAVOTTO_UPDATE_URL": serve_manifest(manifest(tavotto.__version__))},
+        "--force",
     )
     assert proc.returncode == 0, proc.stderr
     assert "已是最新" in proc.stdout
+
+
+def test_the_seam_is_the_budget_the_script_actually_uses(tmp_path, serve_manifest):
+    """那条缝得真的到达**子进程里的取清单路径**，否则上面几条只是把它摆着好看。
+
+    判据是同一个**慢服务器**（响应前先睡 `_SLOW` 秒）上的两次跑：预算 `_TIGHT`
+    小于它 → 必须 `查不到最新版本`；预算 `_RELAXED_BUDGET` 远大于它 → 必须
+    `已是最新`。两次各用自己的配置目录，免得后一次读到前一次的缓存
+    （`check()` 取不到清单时会回落到缓存，那会把红的一侧变成假绿）。
+
+    **为什么不是「把预算调到 0.001 看它红」**：那个做法在本机证不出任何东西。
+    实测（macOS，2026-09-07）连 `1e-09` 都是绿的——loopback 上 connect/send/recv
+    一次都不阻塞，socket 超时因此永远不触发，而 `fetch()` 的墙钟还有
+    `max(0.1, timeout)` 的地板。要让预算成为决定因素，只能让服务器真的慢下来。
+    """
+    url = serve_manifest(manifest(tavotto.__version__), delay=_SLOW)
+
+    tight = _run_update_check(
+        tmp_path / "tight", {"TAVOTTO_UPDATE_URL": url}, "--force", budget=_TIGHT
+    )
+    assert tight.returncode == 0, tight.stderr
+    assert "查不到最新版本" in tight.stdout, f"预算 {_TIGHT} 秒没能掐断一个睡 {_SLOW} 秒的服务器"
+
+    loose = _run_update_check(tmp_path / "loose", {"TAVOTTO_UPDATE_URL": url}, "--force")
+    assert loose.returncode == 0, loose.stderr
+    assert "已是最新" in loose.stdout, f"预算 {_RELAXED_BUDGET} 秒也没等到同一个服务器"
 
 
 def test_no_download_or_execution_anywhere():

@@ -699,15 +699,32 @@ jobs:
   # **刻意不做 paths 过滤**（同 workerd）：漏配一条路径换来的是「改了壳却没人跑
   # Rust」，而静默不跑的门禁与空转的门禁一样坏。
   #
-  # 只跑一条 Linux 腿：贵的那部分（真打包、签名、NSIS/dmg）仍在
-  # desktop-tauri.yml。这一格只要求「编译得过 + 判据跑得出结论」。
-  # **已知边界**：`main.rs` 里有 `#[cfg(target_os = "macos")]` 的应用菜单分支，
-  # 在 Linux 上不参与编译，这一格看不到它——那部分仍由 desktop-tauri.yml 的
-  # macOS 腿覆盖（发布链）。写在这里，免得下一个人以为「壳全都验过了」。
+  # 只做「编译得过 + 判据跑得出结论」：贵的那部分（真打包、签名、NSIS/dmg）
+  # 仍在 desktop-tauri.yml。
+  #
+  # **两条腿，因为 clippy 只看得见参与编译的那一支**（issue #282）。`main.rs`
+  # 里的应用菜单有 `#[cfg(target_os = "macos")]` 分支，在 Linux 上根本不进
+  # 编译单元——只跑 Linux 腿的话，那一支的 lint 在**任何**工作流里都没有执行
+  # 位置：desktop-tauri.yml 的 macOS 腿只跑 `cargo test`，不 deny warnings，
+  # 编译错误抓得到、lint 抓不到。这正是 #275 那条大缺口的形状（「在某处登记了」
+  # ≠「在某处执行了」），所以不留成已知边界，直接给它一个 PR 档的执行位置。
+  # 本机（macOS 26）实测：把一条 `format!("{}", "x")` 塞进
+  # `#[cfg(target_os = "macos")]` 块里，clippy 退 101；塞进
+  # `#[cfg(not(target_os = "macos"))]` 块里，同一条命令退 0——尺子是活的，
+  # 瞎的只是被 cfg 关掉的那一侧。
+  #
+  # `cargo fmt` 不吃 cfg（rustfmt 解析整个文件），所以它本来就两支都看得见；
+  # 真正需要第二条腿的是 clippy 与 cargo test。
   desktop-shell:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    timeout-minutes: 20  # 本机实测冷编译 37 秒；上限是防挂死、不是性能预算
-    runs-on: ubuntu-latest
+    timeout-minutes: 20  # 本机（macOS）实测冷编译 37 秒；上限是防挂死、不是性能预算
+    strategy:
+      # fail-fast: false —— 一条腿红不许掐掉另一条：两支的 lint 是两个结论，
+      # 掐掉就又回到「那一支没有执行位置」。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -716,7 +733,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.os }}  # 两个平台的 target/ 不通用，缓存键必须分开
       - name: 装 Tauri 在 Linux 上的系统依赖
+        # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           sudo apt-get update

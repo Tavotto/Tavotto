@@ -1,5 +1,7 @@
 """布局版本时间线 API：创建 / 去重 / 列表 / 重命名 / 复制 / 删除 / 裁剪。"""
 
+import json
+
 import pytest
 
 from tavotto import app as m
@@ -433,3 +435,107 @@ def test_the_transport_cap_holds_even_when_the_caller_asks_for_everything(client
     # 非法取值当成「不要草图」，不是当成「要最大的那份」
     assert "sketch" not in client.get("/api/versions/d1?sketch=abc").get_json()["versions"][0]
     assert "sketch" not in client.get("/api/versions/d1?sketch=-5").get_json()["versions"][0]
+
+
+# ---------------------------------------------------------------------------
+# issue #264：空历史 + 整份写回的写入侧防线
+# ---------------------------------------------------------------------------
+# `_load_versions` 把「截断 / 乱码 / 不是 JSON」静默折成 `[]`（读侧那一档这一轮
+# **不动**：连旧坏文件的出路一起改是另一件事）。于是时间线显示"没有版本"，用户
+# 接着编辑，下一次自动检查点在那个空列表上追加一条、整份写回，之前全部的检查点
+# 当场没了——而且是原子写。这批用例守的是写入侧那道闸：**判的是磁盘上那个文件
+# 此刻装着什么，不是读出来是不是空的**。
+
+_CORRUPT = b'{"versions": [{"id": "v1", "doc": {"schema": 2, "nam'  # 写到一半断电
+
+
+def _write_timeline(path, raw: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+
+def test_the_first_checkpoint_still_works_when_there_is_no_history_file(client):
+    """最常走的那条路：磁盘上根本没有这份历史 → 照常建第一条。**一个字不变。**
+
+    （`test_create_and_list` 也覆盖了它，但那条没把主语说出口：这里先断言
+    磁盘上确实什么都没有，闸门放行的理由才是"文件不存在"而不是别的。）
+    """
+    assert m._versions_source_path("d264a") is None, "摆场景失败：磁盘上已经有这份历史了"
+    resp = client.post("/api/versions/d264a", json={"doc": _doc(), "name": "初稿"})
+    assert resp.status_code == 200, resp.get_json()
+    assert m._versions_path("d264a").is_file(), "第一条检查点没落盘"
+    assert [v["name"] for v in client.get("/api/versions/d264a").get_json()["versions"]] == ["初稿"]
+
+
+def test_a_corrupt_timeline_is_refused_and_left_byte_for_byte_untouched(client):
+    """核心反向用例：坏文件躺在磁盘上 → 409，且**那份坏文件逐字节没被动过**。
+
+    这条 bug 的伤害在文件上，不在响应上：只断言状态码的话，把 409 改成"先写
+    再报错"照样绿。
+    """
+    path = m._versions_path("d264b")
+    _write_timeline(path, _CORRUPT)
+    # ① 摆的场景真的成立：坏文件在那儿，而读侧确实把它折成了「没有版本」
+    #    ——那正是缺陷的入口。少了这两条，下面的 409 可能是别的原因红的。
+    assert path.read_bytes() == _CORRUPT
+    assert m._load_versions("d264b") == [], "读侧没有折成空历史，这条用例量的不是 #264"
+
+    resp = client.post("/api/versions/d264b", json={"doc": _doc(), "auto": True})
+
+    # ② 先量伤害面，再量响应：这条 bug 的伤害在文件上，不在响应上。反过来写的话
+    #    变异（拆掉闸门）红在"状态码不是 409"，看不出磁盘上发生了什么。
+    assert path.read_bytes() == _CORRUPT, "坏文件被整份覆盖了——这正是 #264 的数据丢失"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "versions_unreadable", resp.get_json()
+    assert resp.get_json()["error"], "没有 error 原文：装旧前端的用户会看到一片空白"
+
+
+def test_a_history_emptied_by_deleting_every_version_can_still_grow_again(client):
+    """反方向的边：磁盘上是一份**真的**空历史（用户把最后一版删光了）→ 放行。
+
+    闸门写成「文件存在就拒」的话这条当场红：用户删完最后一个检查点之后再也
+    存不进新的——把一个数据丢失换成一个死锁。
+    """
+    created = _create(client, doc_id="d264c")["version"]
+    resp = client.delete(f"/api/versions/d264c/{created['id']}")
+    assert resp.status_code == 200, resp.get_json()
+    path = m._versions_path("d264c")
+    assert path.is_file() and json.loads(path.read_bytes()) == {"versions": []}, (
+        "摆场景失败：磁盘上不是一份空历史"
+    )
+
+    assert client.post("/api/versions/d264c", json={"doc": _doc()}).status_code == 200
+    assert len(client.get("/api/versions/d264c").get_json()["versions"]) == 1
+
+
+def test_an_object_without_a_versions_key_is_refused_too(client):
+    """「是对象但没有 `versions` 键」和乱码同属"内容坏了"：`_save_versions`
+    写不出这个形状，它读出来的空历史一样不可信。"""
+    path = m._versions_path("d264d")
+    _write_timeline(path, b'{"schema": 2}')
+    assert m._load_versions("d264d") == [], "摆场景失败：读侧没有折成空历史"
+
+    resp = client.post("/api/versions/d264d", json={"doc": _doc()})
+    assert resp.status_code == 409, resp.get_json()
+    assert path.read_bytes() == b'{"schema": 2}'
+
+
+def test_the_guard_looks_at_the_file_the_reader_actually_read(client, monkeypatch, tmp_path):
+    """判据的主语：**读侧此刻读的那个文件**，不是写入要落到的那个路径。
+
+    升级前的历史躺在旧位置（`layouts/_versions/`），项目里还没有这份文档的
+    版本文件——`_load_versions` 读的是旧那份。只盯写入路径的闸会说"目标文件
+    不存在，放行"，于是新历史从空开始、旧那份被永久遮住，而用户一句话都没听到。
+    """
+    monkeypatch.setattr(m, "project_store_dir", lambda *a, **k: tmp_path / "store")
+    legacy = m.VERSIONS_DIR / "d264e.json"
+    _write_timeline(legacy, _CORRUPT)
+    target = m._versions_path("d264e")
+    assert not target.exists(), "摆场景失败：写入路径上已经有文件了"
+    assert m._versions_source_path("d264e") == legacy, "读侧读的不是旧位置那份"
+    assert m._load_versions("d264e") == []
+
+    resp = client.post("/api/versions/d264e", json={"doc": _doc()})
+    assert resp.status_code == 409, resp.get_json()
+    assert legacy.read_bytes() == _CORRUPT
+    assert not target.exists(), "新历史被建了出来——旧那份就此被遮住"

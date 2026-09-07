@@ -37,6 +37,13 @@
 * `TAVOTTO_UPDATE_URL` —— 自定义清单地址（自建分发、内网镜像、测试）
 * `TAVOTTO_DISABLE_UPDATE_CHECK=1` —— 完全关掉（一个包都不发）
 
+**就这两个。那条 1.5 秒预算没有、也不许有环境变量能放宽它**——环境变量是生产
+表面，在注释里写「给测试用」不构成任何约束：用户、CI、某个父进程都可能设上它，
+而这次检查是**同步跑在出图那条路上**的（`handoff.emit()`），放宽它等于把「不阻塞
+出图」那条底线让出去。测试要更长的预算就起一个 driver、在**子进程里**覆盖模块级
+`TIMEOUT`（见 `tests/test_plugin_update_check.py` 的 `_driver`）——那条缝只存在于
+测试里，`test_no_environment_variable_can_widen_the_production_budget` 看着。
+
 纯标准库，Python 3.8+。
 """
 
@@ -63,7 +70,17 @@ CACHE_NAME = "codex-plugin-update.json"
 INTERVAL = 24 * 3600
 #: 失败之后多久再问一次（比成功短得多：离线只是暂时的）
 RETRY_INTERVAL = 3600
-#: 网络超时。**这是硬上限**，用户在等着看图
+#: 网络超时的默认值（**总墙钟**，不只是 socket 超时，见 `fetch`）。
+#: **这是硬上限**，用户在等着看图。
+#:
+#: 它防的是「挂了的代理、被限速的镜像」，**不是用来给测试计时的**——起子进程
+#: 跑脚本的用例吃的是同一条生产预算，而「本地回环快到不可能吃掉 1.5 秒」是个
+#: 已被证伪的假设：2026-09-05 合并组的 Windows 腿（run 33937703910，
+#: `backend-platforms (windows-latest, 3.13)`，headSha 5d149755）在跑完 4012 条
+#: 用例、耗时 2006 秒之后，连 127.0.0.1 上的 `ThreadingHTTPServer` 都没能在
+#: 1.5 秒内答完，`test_explicit_entry_point_human` 拿到 `查不到最新版本`
+#: （issue #286）。所以起子进程的用例经 driver 在**子进程里**把这个模块级常量
+#: 改掉——**生产路径上没有任何旋钮**，见模块 docstring 的「环境变量」一节。
 TIMEOUT = 1.5
 #: 这个插件的升级方式（比一个 zip 链接有用：它就是用户要敲的那一行）
 UPGRADE_COMMAND = "codex plugin marketplace upgrade tavotto"

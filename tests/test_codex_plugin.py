@@ -1167,8 +1167,14 @@ def test_mcp_json_shape_matches_what_codex_reads():
 def test_launcher_is_stdlib_only_and_parses():
     """启动器跑在**用户机器上的任意 python3**（可能没装 tavotto）。
 
-    `handoff` 是插件自带的那份定位器（同一个包里，按相对路径 import），
-    不是第三方依赖。
+    `handoff`（定位器）与 `update_check`（版本比较）都是插件自带的脚本，同一个包里、
+    按相对路径 import，不是第三方依赖。**这张表只放插件自己的模块**：多一个名字就是
+    多一条「用户机器上必须有这个文件、且 import 得到」的隐性要求，而这里只看得见
+    源码里的 import 语句，看不见运行时。那两条前提各由一条用例钉住——
+    `test_mcp_diagnose.py::test_the_version_comparison_ships_in_the_bundle`（真进发行件）
+    与 `::test_the_version_comparison_import_resolves_in_a_fresh_interpreter`（全新解释器
+    里真 import 得到，且 import 不到时回「不知道」而不是崩）。往这张表加名字的人要
+    连着补这两条，否则门禁绿而用户那边「一个工具都没有」。
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -1189,6 +1195,7 @@ def test_launcher_is_stdlib_only_and_parses():
         "tavotto",
         "tavotto_mcp",
         "handoff",
+        "update_check",
     }
     assert not (imported - allowed), f"启动器引入了非标准库: {sorted(imported - allowed)}"
 
@@ -1225,7 +1232,8 @@ def test_launcher_tells_desktop_only_users_the_truth():
 
     交接只要能*执行* `tavotto open`，桌面版带的 `tavotto-cli` 就够；但 MCP
     server 要 `import tavotto` 在进程内驱动引擎，而那个 CLI 是 frozen 的，
-    给不出解释器。三态互斥，各有各的下一步动作。
+    给不出解释器。各态互斥，各有各的下一步动作；第四态 `engine_too_old`（装了但太旧）
+    连同它的判别顺序在 `tests/test_mcp_diagnose.py`。
     """
     sys.path.insert(0, str(PLUGIN / "mcp"))
     import importlib
