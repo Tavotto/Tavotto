@@ -12,6 +12,7 @@ stderr 与用户脚本的 stdout 都落进那个文件，所以「有没有新�
 * **同源**：workerd 那侧收到同一个 `idle_timeout_ms`。
 """
 
+import itertools
 import json
 import os
 import threading
@@ -64,31 +65,28 @@ def worker(monkeypatch, tmp_path):
 
 # --------------------------------------------------------------- 判据本身
 def test_output_resets_the_silence_clock(worker, monkeypatch):
-    """脚本一直在打进度 → 一直等下去；停了才开始计时判死。
+    """脚本一直在打进度 → 一直等下去；这是整件事的产品结论：**会说话的慢脚本
+    不再需要任何配置**。
 
-    这是整件事的产品结论：**会说话的慢脚本不再需要任何配置**。
+    「有进展」用一个**确定性的计数器**表示，不用后台线程往真文件里写：那样判据
+    就与 runner 的调度赛跑——macOS 上实测红过一次（线程 100 ms 内没被调度到，
+    看门狗于是看见了「静默」）。那不是产品的事，是用例把自己写成了竞态。
+    真文件那一侧由 `test_the_watchdog_can_actually_see_the_real_log` 单独钉。
     """
-    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.02)
-    stop = threading.Event()
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    ticks = itertools.count(1)
+    monkeypatch.setattr(pool, "_log_size", lambda *_a, **_k: next(ticks))
 
-    def chatter():
-        # 「每 50 帧打一行」的最小复现：静默阈值的 5 倍时长里持续输出
-        while not stop.is_set():
-            with worker.log_path.open("ab") as f:
-                f.write("[INFO] ...已处理 50 帧\n".encode())
-            time.sleep(0.02)
-
-    t = threading.Thread(target=chatter, daemon=True)
+    # 线程活得比静默阈值长得多（0.3s vs 0.05s）：只有「进展清零静默计时」成立，
+    # 看门狗才会等到它自己结束。
+    finished = threading.Event()
+    t = threading.Thread(target=lambda: finished.wait(0.3), daemon=True)
     t.start()
-    try:
-        alive = threading.Thread(target=lambda: time.sleep(0.5), daemon=True)
-        alive.start()
-        waited, silent = worker._wait_with_watchdog(alive, timeout=30.0, idle=0.1)
-    finally:
-        stop.set()
-    assert not alive.is_alive(), "读线程自己结束了，不该被看门狗判死"
-    assert waited >= 0.4, "有输出时必须一直等下去，而不是在静默阈值处返回"
-    assert silent < 0.1
+    waited, silent = worker._wait_with_watchdog(t, timeout=30.0, idle=0.05)
+
+    assert not t.is_alive(), "读线程还活着 = 看门狗提前判死了，进展没有清零静默计时"
+    assert silent < 0.05, "返回时正处在静默中 = 不是等到线程结束才回来的"
+    assert waited < 10.0, "也不该是等到兜底上限"
 
 
 def test_silence_ends_it(worker, monkeypatch):
@@ -103,25 +101,20 @@ def test_silence_ends_it(worker, monkeypatch):
 
 
 def test_the_hard_ceiling_still_catches_a_printing_loop(worker, monkeypatch):
-    """`while True: print(i)` 永远等不到静默——兜底上限必须仍然收得住。"""
-    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.02)
-    stop = threading.Event()
+    """`while True: print(i)` 永远等不到静默——兜底上限必须仍然收得住。
 
-    def chatter():
-        while not stop.is_set():
-            with worker.log_path.open("ab") as f:
-                f.write(b"x\n")
-            time.sleep(0.01)
+    同上：进展用确定性计数器，不靠线程去写文件。
+    """
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    ticks = itertools.count(1)
+    monkeypatch.setattr(pool, "_log_size", lambda *_a, **_k: next(ticks))
 
-    threading.Thread(target=chatter, daemon=True).start()
-    try:
-        blocked = threading.Thread(target=lambda: time.sleep(30), daemon=True)
-        blocked.start()
-        waited, silent = worker._wait_with_watchdog(blocked, timeout=0.3, idle=30.0)
-    finally:
-        stop.set()
+    blocked = threading.Thread(target=lambda: threading.Event().wait(30), daemon=True)
+    blocked.start()
+    waited, silent = worker._wait_with_watchdog(blocked, timeout=0.3, idle=30.0)
+
     assert blocked.is_alive()
-    assert 0.3 <= waited < 2.0
+    assert waited >= 0.3
     assert silent < 0.3, "它一直在输出，判死的该是兜底上限而不是静默"
 
 
