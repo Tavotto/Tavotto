@@ -232,22 +232,37 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
   await expect(popover.getByText(/自动快照/)).toHaveCount(0)
   await expect(popover.getByRole('button', { name: '技术详情' })).toBeVisible()
 
-  const slider = popover.getByRole('slider', { name: '推理强度' })
-  const providerGroup = popover.getByRole('radiogroup', { name: '执行改动的命令行工具' })
-  const recovery = popover.getByRole('button', { name: '打开编码 Agent 设置' })
+  // **锚点全是稳定 `data-*`。** 这一段原先按可见文案与 role 定位，审计 T37 把执行器
+  // 从「双选 radiogroup」换成了「执行器与模型」一个 Select、把推理强度收进了折叠区，
+  // 于是 `getByRole('radiogroup', { name: '执行改动的命令行工具' })` 与
+  // `getByRole('slider', …)` 双双匹配到 0 个元素——而它们都写在 `if (…)` 里，
+  // **一条都没红，全部静默跳过**：用例名字里的「模型与推理强度、键盘可调、偏好保持」
+  // 一个字都没在验（2026-09-07 复核发现）。条件分支里的定位是假绿最好的藏身处。
+  const agentSelect = popover.locator('[data-ai-agent-model="select"]')
+  const agentStatic = popover.locator('[data-ai-agent-model="static"]')
+  const effortDisclosure = popover.locator('[data-ai-effort="disclosure"]')
+  const recovery = popover.locator('[data-ai-open-settings]')
 
-  const hasSlider = (await slider.count()) > 0
-  const providers = await providerGroup.count()
-
-  if (!hasSlider && !providers && (await recovery.count())) {
-    // 这台机器上一个可用 Agent 都没有：恢复入口必须在，且不摆一个死掉的双选
+  const nSelect = await agentSelect.count()
+  const nStatic = await agentStatic.count()
+  // 执行器与模型只有三种合法形态：可选时给选择器、只有一项时写成静态文字、
+  // 一个可用 Agent 都没有时什么都不摆。**绝不摆一个选不动的选择器。**
+  expect(nSelect + nStatic, '执行器与模型同时出现了选择器和静态文字').toBeLessThanOrEqual(1)
+  if (!nSelect && !nStatic) {
+    // 这台机器上一个可用 Agent 都没有：恢复入口必须在
     await expect(recovery).toBeVisible()
   }
-  // 只有一个 Provider 时不摆只有一项的「双选」
-  if (providers) {
-    const items = await providerGroup.getByRole('radio').count()
-    expect(items).toBeGreaterThan(1)
+
+  // 推理强度默认收起，**当前值不藏**（审计 T37）：折叠行上就写着档位名，
+  // 展开之后才有滑杆。原先的用例直接找滑杆，于是永远找不到。
+  const hasEffort = (await effortDisclosure.count()) > 0
+  if (hasEffort) {
+    await expect(effortDisclosure).toHaveAttribute('aria-expanded', 'false')
+    await effortDisclosure.click()
+    await expect(effortDisclosure).toHaveAttribute('aria-expanded', 'true')
   }
+  const slider = popover.getByRole('slider', { name: '推理强度' })
+  const hasSlider = hasEffort && (await slider.count()) > 0 && (await slider.isEnabled())
 
   if (hasSlider) {
     const before = await slider.getAttribute('aria-valuetext')
@@ -257,12 +272,16 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
     await expect(slider).not.toHaveAttribute('aria-valuetext', before ?? '', { timeout: 10_000 })
     const after = await slider.getAttribute('aria-valuetext')
 
-    // 关掉再打开：偏好还在
+    // 关掉再打开：偏好还在（折叠区要再展开一次才看得到滑杆）
     await page.keyboard.press('Escape')
     await openPopover()
-    await expect(
-      page.locator('[data-radix-popper-content-wrapper]').first().getByRole('slider', { name: '推理强度' }),
-    ).toHaveAttribute('aria-valuetext', after ?? '', { timeout: 10_000 })
+    const again = page.locator('[data-radix-popper-content-wrapper]').first()
+    await again.locator('[data-ai-effort="disclosure"]').click()
+    await expect(again.getByRole('slider', { name: '推理强度' })).toHaveAttribute(
+      'aria-valuetext',
+      after ?? '',
+      { timeout: 10_000 },
+    )
   }
 
   // 弹层无横向溢出（真布局才量得出来；修改前六档按钮在这里两头被切掉）

@@ -174,6 +174,48 @@ describe('执行器与模型（一个选择器）', () => {
     expect(buttons().some((b) => b.textContent?.includes('打开编码 Agent 设置'))).toBe(true)
   })
 
+  /**
+   * e2e 的三个锚点在这里钉住。
+   *
+   * `e2e/ux-consistency.spec.ts` 的流程 C 必须按机器上装没装 Agent 分支
+   * （CI runner 上可能一个都没有），而**条件分支里的定位是假绿最好的藏身处**：
+   * 审计 T37 把执行器从 radiogroup 换成 Select、把推理强度收进折叠区之后，
+   * 那条用例按旧 role/文案找到 0 个元素，于是每一条断言都被静默跳过，
+   * CI 一路绿（2026-09-07 复核才发现）。所以锚点的存在性由这里的正向用例负责，
+   * e2e 那边的 `if` 才是安全的。
+   */
+  it('三个 e2e 锚点各自出现在它该出现的形态里', async () => {
+    // 两个 Agent → 选择器形态
+    useAiStore.setState({ caps: capsOf(codexSix, claudeCaps()) })
+    await mount()
+    expect(document.body.querySelector('[data-ai-agent-model="select"]')).toBeTruthy()
+    expect(document.body.querySelector('[data-ai-agent-model="static"]')).toBeNull()
+    // codex 支持推理强度 → 折叠入口在，默认收起
+    const disclosure = document.body.querySelector('[data-ai-effort="disclosure"]')
+    expect(disclosure).toBeTruthy()
+    expect(disclosure!.getAttribute('aria-expanded')).toBe('false')
+
+    // 一个 Agent 一个模型 → 静态文字形态
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    useAiStore.setState({ caps: capsOf(codexSix) })
+    await mount()
+    expect(document.body.querySelector('[data-ai-agent-model="select"]')).toBeNull()
+    expect(document.body.querySelector('[data-ai-agent-model="static"]')).toBeTruthy()
+
+    // 一个可用的都没有 → 两种形态都不出现，只剩恢复入口
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    useAiStore.setState({ caps: capsOf(agentCaps({ usable: false, installed: false })) })
+    await mount()
+    expect(document.body.querySelector('[data-ai-agent-model]')).toBeNull()
+    expect(document.body.querySelector('[data-ai-open-settings]')).toBeTruthy()
+  })
+
   it('每个 Agent 各自保留模型与强度偏好', async () => {
     useAiStore.setState({ caps: capsOf(codexSix, claudeCaps()) })
     useAiStore.getState().setEffort('codex', 'low')

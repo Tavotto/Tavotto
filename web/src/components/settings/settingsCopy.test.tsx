@@ -294,6 +294,21 @@ describe('T40 项目：写回权限与真实保护同步', () => {
     expect(byText(t('writeBack.buttonLabel', { ns: 'inspector' }))!.disabled).toBe(false)
   })
 
+  /**
+   * e2e 锚点钉在这里：用到 `data-write-back="open"` 的是
+   * `error-recovery-en.spec.ts` 的 file_locked 那条，而它**只在 Windows 腿上真跑**
+   * （posix 是 skip）。没有一条天天在跑的正向断言的话，锚点被删掉要等到下一次
+   * Windows 腿才发现——那正是 #299 里那条用例等满 180 秒的成因家族。
+   */
+  it('写回入口带着 e2e 锚点 data-write-back="open"', async () => {
+    project({ settings: { allow_write_back: true } })
+    await render(<UpdateSourceButton panel={panel(1)} />)
+    const anchored = document.body.querySelector('[data-write-back="open"]')
+    expect(anchored, '写回入口上没有 data-write-back 锚点').toBeTruthy()
+    // 锚点与那句话指的是同一颗按钮
+    expect(anchored).toBe(byText(t('writeBack.buttonLabel', { ns: 'inspector' })))
+  })
+
   it('设置页的开关读的就是那个字段：关着时 aria-checked=false', async () => {
     project({ settings: { allow_write_back: false } })
     await open('project')

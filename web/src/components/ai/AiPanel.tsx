@@ -559,6 +559,7 @@ export function ScopeAgentContent({
           <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
           <div>
             <Button
+              data-ai-open-settings
               variant="outline"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
@@ -576,7 +577,7 @@ export function ScopeAgentContent({
               看得见**，退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块
               不出现——执行器是谁，弹层触发按钮上已经写着了 */}
           {pairs.length > 1 ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
               <Select
                 className="min-w-0 flex-1"
@@ -593,7 +594,7 @@ export function ScopeAgentContent({
           ) : (
             cur &&
             model && (
-              <div className="flex min-w-0 items-center gap-2">
+              <div data-ai-agent-model="static" className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-ink" title={model}>
                   {`${cur.display_name} · ${model}`}
@@ -608,6 +609,7 @@ export function ScopeAgentContent({
           {effortList.length > 0 && (
             <div className="flex min-w-0 flex-col gap-0.5">
               <button
+                data-ai-effort="disclosure"
                 onClick={() => setEffortOpen((v) => !v)}
                 aria-expanded={effortOpen}
                 className="flex min-w-0 items-center gap-1 text-left outline-none focus-visible:focus-ring"

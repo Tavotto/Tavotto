@@ -358,6 +358,24 @@ describe('确认页的信息结构', () => {
     expect(text()).not.toContain('确认写回')
   })
 
+  /**
+   * 这颗按钮的 e2e 锚点在这里钉住。
+   *
+   * `error-recovery-en.spec.ts` 的 file_locked 那条**只在 Windows 上真跑**
+   * （posix 上是 skip），所以它是唯一用到这个锚点的地方，而那条腿一天只跑一次。
+   * 审计 T34 把英文文案从「Write back」改成「Write back to the original files」
+   * 之后，那条用例按 `/^Write back$/` 找不到按钮、等满 180 秒（#299）——
+   * 换成锚点之后，锚点自己得有一个天天在跑的正向断言，不然它照样会被人删掉。
+   */
+  it('确认按钮带着 e2e 锚点 data-write-back="confirm"', () => {
+    render()
+    const anchored = document.body.querySelector('[data-write-back="confirm"]')
+    expect(anchored, '确认按钮上没有 data-write-back 锚点').toBeTruthy()
+    expect(anchored!.tagName).toBe('BUTTON')
+    // 锚点与那句话指的是同一颗按钮，不是两颗
+    expect(anchored!.textContent).toContain('写回原始文件')
+  })
+
   it('成功回执里的备份位置同样是「末级目录 + 展开看全路径」', async () => {
     stubFetch(200, OK_BODY)
     render()

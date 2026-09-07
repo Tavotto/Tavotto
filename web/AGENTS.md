@@ -636,6 +636,21 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   分区导航认 `[data-section="ai"]`（分区 id 是持久化格式的一部分），不认导航项的文案。
   **仍然认可见文案的只剩顶栏那颗「设置」**：它是 19 个 spec 共用的入口写法，在一个文件里
   单方面换掉等于立两套约定；要换就一次换全部，单开一笔。
+* **同一族在英文侧与「只有 Windows 跑」的用例里各还有一处**（2026-09-07，#299 windows 腿）：
+  审计 T34 把写回确认按钮从「Write back」改成「Write back to the original files」，
+  `e2e/error-recovery-en.spec.ts` 的 `/^Write back$/` 当场匹配不到、等满 180 秒。锚点换成
+  `data-write-back="open" | "confirm"`（`UpdateSourceButton`）。那条用例**只在 Windows 腿上真跑**
+  （posix 是 skip），所以锚点另在两条天天跑的 jsdom 用例里钉住正向存在性
+  （`WriteBackDialog.test.tsx` / `settingsCopy.test.tsx`）——只被一条隔天跑的用例引用的锚点，
+  被删掉了没人会知道。
+* **条件分支里的定位是假绿最好的藏身处**（2026-09-07 复核，同一族）：`e2e/ux-consistency.spec.ts`
+  流程 C 按 `getByRole('radiogroup', { name: '执行改动的命令行工具' })` 与
+  `getByRole('slider', …)` 取控件，审计 T37 把执行器换成了一个 `Select`、把推理强度收进了
+  折叠区，两个定位都匹配到 0 个元素——而它们写在 `if (…)` 里，**一条都没红，全部静默跳过**，
+  用例名字里的「模型与推理强度、键盘可调、偏好保持」一个字都没在验，CI 一路绿。
+  现在锚点是 `data-ai-agent-model="select" | "static"`、`data-ai-effort="disclosure"`、
+  `data-ai-open-settings`，机器上装没装 Agent 的分支保留（CI runner 上可能一个都没有），
+  但**锚点的存在性由 `aiModelPicker.test.tsx` 的正向用例负责**，e2e 那边的 `if` 才是安全的。
 * **包管理只操作当前项目的 Tavotto 受管环境**：`store/packageStore.ts` 的 `plan(op, spec)` →
   `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
   深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`

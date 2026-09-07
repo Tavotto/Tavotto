@@ -316,6 +316,7 @@ export function WriteBackDialog({
               {translate('actions.cancel')}
             </Button>
             <Button
+              data-write-back="confirm"
               variant="primary"
               size="md"
               loading={busy}
@@ -375,7 +376,11 @@ export function WriteBackDialog({
               className="flex items-center gap-1.5 text-xs text-ink-2"
               title={wb('annotationsTitle')}
             >
-              <Toggle checked={withAnnotations} onChange={setWithAnnotations} />
+              <Toggle
+                aria-label={wb('withAnnotations', { count: annCount })}
+                checked={withAnnotations}
+                onChange={setWithAnnotations}
+              />
               {wb('withAnnotations', { count: annCount })}
             </label>
           ) : (
@@ -415,6 +420,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
               ? 'hasOverridesTitle'
               : 'noOverridesTitle',
         )}
+        data-write-back="open"
         onClick={() => setOpen(true)}
       >
         <FileUp size={ICON_SIZE.sm} />
@@ -480,6 +486,7 @@ export function WriteBackTopBarButton() {
     <>
       <Tip label={tip}>
         <Button
+          data-write-back="open"
           variant="outline"
           size="md"
           disabled={disabled}
