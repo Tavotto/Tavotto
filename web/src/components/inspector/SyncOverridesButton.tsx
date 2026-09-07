@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, TriangleAlert } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
@@ -95,7 +96,7 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
                   : sy('tip')
             }
           >
-            <ArrowLeftRight size={13} />
+            <ArrowLeftRight size={ICON_SIZE.sm} />
             {sy('trigger')}
           </Button>
         }
@@ -280,7 +281,7 @@ function ResultDialog({
 
           {!!mapped.length && !onCanvas && !done && (
             <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-              <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+              <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
               <p className="text-xs leading-relaxed text-ink-2">{sy('notOnCanvas')}</p>
             </div>
           )}

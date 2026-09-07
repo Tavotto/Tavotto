@@ -4,6 +4,8 @@ import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
   Paintbrush,
 } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   draftToData,
   extractFromManifest,
@@ -232,7 +234,7 @@ export function StyleDialog() {
               title={primaryManifest ? undefined : sd('needPanel')}
               onClick={extract}
             >
-              <Pipette size={14} />
+              <Pipette size={ICON_SIZE.md} />
               {sd('extract')}
             </Button>
           </>
@@ -259,7 +261,7 @@ export function StyleDialog() {
             {t('common:actions.close')}
           </Button>
           <Button variant="primary" size="md" disabled={!applicable} onClick={apply}>
-            <Check size={14} />
+            <Check size={ICON_SIZE.md} />
             {sd('applyTo', { scope: styleScopeLabel(scope) })}
           </Button>
         </>
@@ -315,13 +317,13 @@ export function StyleDialog() {
                     if (draft.id === s.id) setDraft(EMPTY)
                   }}
                 >
-                  <Trash2 size={11} className="text-danger" />
+                  <Trash2 size={ICON_SIZE.xs} className="text-danger" />
                 </Button>
               </li>
             ))}
           </ul>
           <Button variant="outline" size="sm" onClick={() => setDraft(EMPTY)}>
-            <Plus size={12} />
+            <Plus size={ICON_SIZE.sm} />
             {sd('newStyle')}
           </Button>
         </div>
@@ -346,11 +348,11 @@ export function StyleDialog() {
               }
               onClick={extract}
             >
-              <Pipette size={12} />
+              <Pipette size={ICON_SIZE.sm} />
               {sd('extract')}
             </Button>
             <Button variant="outline" size="sm" loading={busy} onClick={save}>
-              <Save size={12} />
+              <Save size={ICON_SIZE.sm} />
               {t('common:actions.save')}
             </Button>
           </div>
@@ -397,7 +399,7 @@ export function StyleDialog() {
                         })
                       }
                     >
-                      <X size={11} className="text-ink-3" />
+                      <X size={ICON_SIZE.xs} className="text-ink-3" />
                     </Button>
                   </div>
                 ))}
@@ -427,7 +429,7 @@ export function StyleDialog() {
                             }
                             className="text-ink-3 hover:text-ink"
                           >
-                            <X size={10} />
+                            <X size={ICON_SIZE.xs} />
                           </button>
                         </span>
                       ))}
@@ -528,7 +530,7 @@ export function StyleDialog() {
               ))}
               {plan.unrendered.map((p: PanelObject) => (
                 <li key={p.id} className="flex items-start gap-1 text-xs leading-relaxed text-ink-3">
-                  <TriangleAlert size={11} className="mt-0.5 shrink-0" />
+                  <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
                   <span>{sd('unrendered', { name: p.name ?? p.fileId })}</span>
                 </li>
               ))}
@@ -549,10 +551,10 @@ export function StyleDialog() {
               )}
             </ul>
             {plan.panels.some((p) => p.unmappable.length > 0) && (
-              <details className="mt-1.5">
-                <summary className="cursor-pointer text-xs text-ink-3 hover:text-ink">
+              <Details className="mt-1.5">
+                <Summary className="text-xs text-ink-3 hover:text-ink">
                   {sd('unmappableDetails')}
-                </summary>
+                </Summary>
                 <ul className="mt-1 flex flex-col gap-0.5">
                   {plan.panels.flatMap((p) =>
                     p.unmappable.slice(0, 20).map((u, i) => (
@@ -562,7 +564,7 @@ export function StyleDialog() {
                     )),
                   )}
                 </ul>
-              </details>
+              </Details>
             )}
           </div>
         </div>

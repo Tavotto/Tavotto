@@ -50,7 +50,9 @@
   `original` / `canvas` 两个取值，**`original` 段里没有 x/y/w/h 与页面尺寸**
   （想让画布缩放漏进原图导出得先改结构）；作业生命周期只有
   `engine/exportjob.py` 一份（临时目录 → 原子 replace，`partial` 是独立一档，
-  取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。
+  取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。格式闭集
+  `pdf / png / eps / tiff`（ADR 0046）：TIFF 与 PNG 同一次栅格化，EPS 只有 worker
+  的 matplotlib 写得出——给不出的那一档如实逐项报失败，**不伪称矢量**。
   **用户自建的样式 / 规范**在用户数据目录
   `<data_dir>/profiles/`，磁盘入口只有 `engine/profilestore.py`；「任意 id →
   规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**
@@ -65,7 +67,8 @@
   与 `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——**前端摆得出的，后端必须
   画得出**。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
-  `Path.unlink` 守卫不放松；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
+  `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0045——
+  守卫原样，变的只是相对路径写到哪，且要用户按项目确认）；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
   import pymupdf 的模块。
 - **隐私**：遥测三档同意（unset ≠ 同意）、白名单结构性防线、
   `TAVOTTO_NO_TELEMETRY=1` 硬开关；用户脚本/路径/图内文字在结构上就发不出去。

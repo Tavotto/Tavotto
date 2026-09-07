@@ -62,6 +62,7 @@ from .engine import (
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
+    epsfile as engine_epsfile,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     handoff as engine_handoff,
@@ -87,6 +88,7 @@ from .engine import (
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
+    workdir as engine_workdir,
 )
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
@@ -980,10 +982,21 @@ def api_file():
 
 
 def _resolve_panel_source(
-    o: dict, dpi: int, sink: list | None = None, out_dir: Path | None = None
+    o: dict,
+    dpi: int,
+    sink: list | None = None,
+    out_dir: Path | None = None,
+    *,
+    rerender: bool = False,
 ) -> Path:
     """面板对象 → 待嵌入的源文件路径。带 override 的 ⚡ 面板先由引擎按全质量
     重渲染成临时 PDF，导出的永远是矢量而不是画布上的预览位图。
+
+    `rerender=True`：**有脚本就重渲染，哪怕没有 override**。同一次作业里还要
+    出 EPS 时用它——EPS 只能由 worker 现画（见 `_serialize_figure`），若 PDF/PNG
+    仍取磁盘上那份旧产物，两个格式就出自两个时刻的脚本（「一个作业 = 一份
+    快照」被破坏，ADR 0031 §3）。没有脚本的图仍取磁盘文件，EPS 那一项自己报
+    `eps_needs_script`。
 
     `sink` 收集 worker 的 warnings（哪些 override 没写进去）。导出**不因此
     中断**——用户要的成图已经出来了，但不能像以前那样把它们直接扔掉：
@@ -1005,48 +1018,69 @@ def _resolve_panel_source(
     共享路径**：那是老调用点的行为，一个字节没动。
     """
     rel_id = str(o.get("id", ""))
-    if engine_runtimeasset.is_runtime_id(rel_id):
-        # **走同一扇门**（`_engine_worker` → `enginesession.resolve`）：这里曾经
-        # 直接 `pool.get()`，于是同一张 native 图「预览是 native 的、画布导出
-        # 是 safe 的」——两张不一样的图，而界面上什么都没说。
-        worker, stem = _engine_worker(rel_id)
-        tmp = _panel_render_target(worker, stem, out_dir)
-        resp = worker.export(stem, o.get("overrides") or [], str(tmp), "pdf", dpi)
-        if sink is not None:
-            for w in resp.get("warnings") or []:
-                msg = f"{rel_id}: {w}"
-                if msg not in sink:
-                    sink.append(msg)
-        return tmp
-    path = safe_resolve(o["id"])
     overrides = o.get("overrides") or []
-    if overrides:
-        info = current_registry().for_stem(path.stem)
-        if info is not None:
-            worker = _safe_worker(info["script"], info["entry"], path.stem)
-            tmp = _panel_render_target(worker, path.stem, out_dir)
-            resp = worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
-            if sink is not None:
-                for w in resp.get("warnings") or []:
-                    msg = f"{o.get('id', path.name)}: {w}"
-                    if msg not in sink:
-                        sink.append(msg)
-            path = tmp
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        # runtime 素材没有磁盘原件，**永远**由 worker 现画
+        return _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
+    path = safe_resolve(o["id"])
+    if overrides or rerender:
+        rendered = _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
+        if rendered is not None:
+            path = rendered
     return path
 
 
-def _panel_render_target(worker, stem: str, out_dir: Path | None) -> Path:
-    """重渲染那份中间 PDF 写到哪。
+def _serialize_figure(
+    rel_id: str,
+    overrides: list,
+    fmt: str,
+    dpi: int,
+    sink: list | None = None,
+    out_dir: Path | None = None,
+) -> Path | None:
+    """让引擎按 `fmt` **直接序列化**一张图（matplotlib `savefig`，worker 侧）。
+
+    这是「谁来渲染」那扇门（`_engine_worker` / `_safe_worker` →
+    `enginesession.resolve()`）在导出路上的**唯一**调用点：画布合成与原图导出
+    重渲染中间 PDF 走它，EPS（ADR 0046：PyMuPDF 写不出 PostScript，EPS 只能
+    从这里出）也走它。这里曾经是两段各自 `pool.get()` 的复制品，于是同一张
+    native 图「预览是 native 的、画布导出是 safe 的」——两张不一样的图。
+
+    磁盘面板在注册表里没有脚本时回 `None`（调用方决定是退回磁盘文件还是报
+    `eps_needs_script`）；runtime 素材解析不到由 `_engine_worker` 直接 404。
+    `sink` 收 worker 的 warnings（哪些 override 没写进去），前缀是面板 id。
+    """
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        worker, stem = _engine_worker(rel_id)
+    else:
+        path = safe_resolve(rel_id)
+        info = current_registry().for_stem(path.stem)
+        if info is None:
+            return None
+        stem = path.stem
+        worker = _safe_worker(info["script"], info["entry"], stem)
+    tmp = _panel_render_target(worker, stem, out_dir, fmt)
+    resp = worker.export(stem, overrides, str(tmp), fmt, dpi)
+    if sink is not None:
+        for w in resp.get("warnings") or []:
+            msg = f"{rel_id}: {w}"
+            if msg not in sink:
+                sink.append(msg)
+    return tmp
+
+
+def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pdf") -> Path:
+    """重渲染那份中间文件写到哪。
 
     **同一次作业里同一张图也可能出现两次**（画布上放了两份、各带一套
     override），所以 `out_dir` 里的名字还要再唯一一层——只按 stem 命名的话，
     同一次合成的第二个实例会盖掉第一个。
     """
     if out_dir is None:
-        return worker.export_dir / f"{stem}.pdf"
+        return worker.export_dir / f"{stem}.{fmt}"
     out_dir.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^\w\-]+", "_", stem) or "panel"
-    return out_dir / f"src-{safe}-{uuid.uuid4().hex[:8]}.pdf"
+    return out_dir / f"src-{safe}-{uuid.uuid4().hex[:8]}.{fmt}"
 
 
 # --------------------------- 统一导出管线（ADR 0031）-------------------------
@@ -1085,6 +1119,17 @@ def _export_produce_canvas(job, tmp_dir: Path) -> list:
         for fmt in req.formats:
             job.check_cancelled()
             tmp = tmp_dir / f"out.{fmt}"
+            if fmt == engine_exportreq.FORMAT_EPS:
+                # 画布合成在 PyMuPDF 里，它写不出 PostScript；把这一页栅格化再裹一层
+                # PS 冒充矢量正是 §8 禁止的事。**如实报这一项给不出**，PDF/PNG/TIFF
+                # 照常交付（`partial`，ADR 0031 §4）。界面在勾选那一刻就禁用了它，
+                # 这里是老客户端 / 脚本直接 POST 时的兜底
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt, error_code="eps_not_for_canvas", error_params={}
+                    )
+                )
+                continue
             try:
                 if fmt == engine_exportreq.FORMAT_PDF:
                     canvas.save_pdf(tmp)
@@ -1098,7 +1143,10 @@ def _export_produce_canvas(job, tmp_dir: Path) -> list:
                         )
                     )
                 else:
-                    canvas.save_png(tmp, dpi)
+                    if fmt == engine_exportreq.FORMAT_TIFF:
+                        canvas.save_tiff(tmp, dpi)
+                    else:
+                        canvas.save_png(tmp, dpi)
                     produced.append(
                         engine_exportjob.Produced(
                             format=fmt,
@@ -1137,9 +1185,16 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
     req = job.request
     src = req.original
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     job.check_cancelled()
+    # 要 EPS 时 PDF/PNG/TIFF 也让 worker 现画（`rerender`），四个格式才出自同一次
+    # 脚本运行；没有脚本的图退回磁盘文件，EPS 那一项下面自己报 `eps_needs_script`
     source_path = _resolve_panel_source(
-        {"id": src.figure_id, "overrides": src.overrides}, dpi, job.warnings, tmp_dir
+        {"id": src.figure_id, "overrides": src.overrides},
+        dpi,
+        job.warnings,
+        tmp_dir,
+        rerender=wants_eps,
     )
     if not source_path.is_file():
         raise engine_exportreq.ExportRequestError(
@@ -1152,7 +1207,9 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
         job.check_cancelled()
         tmp = tmp_dir / f"out.{fmt}"
         try:
-            if fmt == engine_exportreq.FORMAT_PDF:
+            if fmt == engine_exportreq.FORMAT_EPS:
+                produced.append(_produce_original_eps(job, src, dpi, tmp_dir))
+            elif fmt == engine_exportreq.FORMAT_PDF:
                 facts = pdfbackend.original_pdf(source_path, tmp, page_pt)
                 produced.append(
                     engine_exportjob.Produced(
@@ -1170,12 +1227,17 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
                 # 一张 300×200 的图放大成糊图，而用户要的恰恰是"原图"。
                 # 透明背景只对"矢量源栅格化"那一档有意义——位图源出来的就是
                 # 那张图本身，背景是它自己的（界面上那个开关跟着这条纪律禁用）
-                facts = pdfbackend.original_png(
-                    source_path,
-                    tmp,
-                    dpi,
-                    transparent=req.background == engine_exportreq.BACKGROUND_TRANSPARENT,
-                )
+                transparent = req.background == engine_exportreq.BACKGROUND_TRANSPARENT
+                if fmt == engine_exportreq.FORMAT_TIFF:
+                    facts = pdfbackend.original_tiff(
+                        source_path,
+                        tmp,
+                        dpi,
+                        transparent=transparent,
+                        dpi_meta=_declared_density(source_path) if raster_source else None,
+                    )
+                else:
+                    facts = pdfbackend.original_png(source_path, tmp, dpi, transparent=transparent)
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
@@ -1219,6 +1281,48 @@ def _original_page_pt(source_path: Path, src) -> tuple[float, float]:
     return (
         pdfbackend.mm2pt(float(spec["logical_w_mm"])),
         pdfbackend.mm2pt(float(spec["logical_h_mm"])),
+    )
+
+
+def _declared_density(source_path: Path) -> float | None:
+    """位图源文件**自己声明**的密度（pHYs / JFIF / Exif），供 TIFF 的分辨率标签。
+
+    只认 `dpi_source == "metadata"`：`assumed` 是我们按扩展名猜的（PNG 600 /
+    其余 300），猜的数不进用户的文件——写进去之后它就成了"文件说的"，下一个
+    读它的人再也分不出来。解析仍然只有 `engine/originalspec` 一处。
+    """
+    try:
+        probe = pdfbackend.probe_asset(source_path, "raster")
+        spec = engine_originalspec.asset_spec(source_path, "raster", probe)
+    except Exception:  # noqa: BLE001 —— 读不出元数据 = 不知道，不是导出失败
+        return None
+    if spec.get("dpi_source") != "metadata" or not spec.get("dpi"):
+        return None
+    return float(spec["dpi"])
+
+
+def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
+    """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
+
+    父进程没有 PostScript 写入器，所以这一格**只有一条路**：注册表里有这张图的
+    脚本（或它是 runtime 素材）。没有就如实报 `eps_needs_script`，别的格式照常
+    交付。尺寸事实从 EPS 自己的 `%%BoundingBox` 读（`engine/epsfile`），不拿
+    请求里的 mm 数冒充测量值。
+    """
+    path = _serialize_figure(src.figure_id, src.overrides, "eps", dpi, job.warnings, tmp_dir)
+    if path is None or not path.is_file():
+        return engine_exportjob.Produced(
+            format=engine_exportreq.FORMAT_EPS,
+            error_code="eps_needs_script",
+            error_params={"figure": src.figure_id},
+        )
+    bbox = engine_epsfile.bounding_box_pt(path)
+    return engine_exportjob.Produced(
+        format=engine_exportreq.FORMAT_EPS,
+        tmp_path=path,
+        width_mm=round(bbox[0] * 25.4 / 72.0, 3) if bbox else None,
+        height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
+        vector=True,
     )
 
 
@@ -4521,8 +4625,39 @@ def _project_environment_state() -> dict:
         # 只把 `environment.json` 里记的事实交出去：界面据此显示「Tavotto
         # 环境 · 装了什么」与「重建」入口。
         "managed": engine_managedenv.state(root),
+        # safe worker 的工作目录模式（ADR 0045）：沙盒（默认）/ 脚本目录
+        "workdir": engine_workdir.state(root),
     }
     return out
+
+
+@app.patch("/api/engine/workdir")
+def api_engine_workdir_set():
+    """设定**当前项目**的 safe worker 工作目录模式（ADR 0045）。
+
+    `mode` 只认 `sandbox` / `project`。改了就把这个项目的会话全部关掉：
+    cwd 是 spawn 时定下的，活着的会话还端着旧目录。**不是 native**：进程仍
+    是 Tavotto 自己起的 safe worker，守卫与 savefig 捕获一字不动；变的只有
+    「脚本用相对路径写的中间文件落在哪」——确认文案在前端，机制在这里，
+    两边逐条一致。
+    """
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    mode = str(body.get("mode") or "").strip()
+    if mode not in engine_workdir.MODES:
+        return jsonify(
+            {
+                "error": f"不认识的工作目录模式: {mode!r}",
+                "code": engine_workdir.ERROR_MODE_INVALID,
+                "params": {"mode": mode},
+            }
+        ), 400
+    before = engine_workdir.mode_for(root)
+    state = engine_workdir.set_mode(root, mode)
+    if state["mode"] != before:
+        engine_pool.shutdown_all(root)
+        LOG.info("项目工作目录模式: %s → %s（%s）", before, state["mode"], root)
+    return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
 
 
 @app.post("/api/engine/environment/install")

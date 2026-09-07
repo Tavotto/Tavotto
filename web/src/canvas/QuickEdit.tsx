@@ -4,6 +4,7 @@ import { msg, t as translate } from '@/i18n'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
 import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
@@ -290,7 +291,7 @@ function ElementQuick({
       {own.length > 0 && (
         <Item onClick={resetElement} data-quick-item="reset-element">
           <span className="flex items-center gap-1.5">
-            <RotateCcw size={12} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
           </span>
         </Item>
@@ -298,14 +299,14 @@ function ElementQuick({
       {field('visible') && (
         <Item onClick={toggleVisible}>
           <span className="flex items-center gap-1.5">
-            {hidden ? <Eye size={12} /> : <EyeOff size={12} />}
+            {hidden ? <Eye size={ICON_SIZE.sm} /> : <EyeOff size={ICON_SIZE.sm} />}
             {qe(hidden ? 'unhide' : 'hide')}
           </span>
         </Item>
       )}
       <Item onClick={openInPanel}>
         <span className="flex items-center gap-1.5">
-          <ExternalLink size={12} />
+          <ExternalLink size={ICON_SIZE.sm} />
           {qe('openInspector')}
         </span>
       </Item>
@@ -410,10 +411,10 @@ function GeomControls({
       }
     >
       <Button size="icon-sm" aria-label={qe('scaleDown')} onClick={() => scale(0.95)}>
-        <Minus size={12} />
+        <Minus size={ICON_SIZE.sm} />
       </Button>
       <Button size="icon-sm" aria-label={qe('scaleUp')} onClick={() => scale(1.05)}>
-        <Plus size={12} />
+        <Plus size={ICON_SIZE.sm} />
       </Button>
       <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-ink-3">
         {qe('widthShare', { percent: Math.round(pos[2] * 100) })}

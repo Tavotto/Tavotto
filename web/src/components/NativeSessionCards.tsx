@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { Loader2, Pause, Play, TriangleAlert, Unplug, X } from 'lucide-react'
+import { LoaderCircle, Pause, Play, TriangleAlert, Unplug, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
   isNativeTerminal,
@@ -113,7 +114,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             aria-label={translate('actions.close')}
             onClick={() => store.dismiss(session.session_id)}
           >
-            <X size={12} />
+            <X size={ICON_SIZE.sm} />
           </Button>
         )}
       </header>
@@ -132,7 +133,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           role="alert"
           className="mt-1 flex items-start gap-1 text-[11px] leading-relaxed text-danger"
         >
-          <TriangleAlert size={11} className="mt-0.5 shrink-0" />
+          <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
             {fmt(backendCodeMsg(error.code, error.params, error.message) as UiMessage)}
           </span>
@@ -155,11 +156,11 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             onClick={act(store.resume)}
             title={ns('resumeHint')}
           >
-            <Play size={11} />
+            <Play size={ICON_SIZE.xs} />
             {ns('resume')}
           </Button>
           <Button variant="outline" size="sm" disabled={busy} onClick={act(store.detach)}>
-            <Unplug size={11} />
+            <Unplug size={ICON_SIZE.xs} />
             {ns('detach')}
           </Button>
           <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
@@ -174,10 +175,10 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
 function StateIcon({ state }: { state: NativeSessionState }) {
   const tone = TONE[state]
   if (tone === 'busy') {
-    return <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin text-ink-3" />
+    return <LoaderCircle size={ICON_SIZE.sm} className="mt-0.5 shrink-0 animate-spin text-ink-3" />
   }
-  if (tone === 'ready') return <Pause size={13} className="mt-0.5 shrink-0 text-accent" />
-  if (tone === 'bad') return <TriangleAlert size={13} className="mt-0.5 shrink-0 text-danger" />
+  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-accent" />
+  if (tone === 'bad') return <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
   return <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-border-strong" />
 }
 

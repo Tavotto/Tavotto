@@ -1,5 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from './Icon'
 import { cn } from '@/lib/utils'
 
 /** Inspector 分组：标题 + 内容。组间靠留白分层，不再画分隔线 */
@@ -61,7 +62,7 @@ export function Disclosure({
         className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
       >
         <ChevronRight
-          size={11}
+          size={ICON_SIZE.xs}
           aria-hidden
           className={cn('shrink-0 transition-transform', open && 'rotate-90')}
         />

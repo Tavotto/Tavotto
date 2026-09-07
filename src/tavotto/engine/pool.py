@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, envlease, execspec, patchspec, projectenv, runtime
+from . import config, envlease, execspec, patchspec, projectenv, runtime, workdir
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -327,7 +328,100 @@ class WorkerError(RuntimeError):
         self.script_name = ""
 
 
+#: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
+#: 那边它只是一个普通 `unknown_stem`（`known == []`），但对用户是完全不同的
+#: 一件事：脚本自己多半已经说了为什么（「文件未找到」「没有数据，无法绘图」），
+#: 那几行就在 worker.log 里——报「stem 不存在」等于把答案藏起来。
+NO_FIGURES_CODE = "no_figures_captured"
+#: 同上，但脚本**一个字都没打印**。分成两个 code 而不是往 `traceback_text` 里塞
+#: 一句占位：占位是界面文案，得跟界面语言走；traceback 区只放脚本自己的输出。
+NO_FIGURES_SILENT_CODE = "no_figures_captured_silent"
+
+
+def _contained_log(path: Path, root: Path | None) -> str | None:
+    """worker.log 的路径钉在 `root`（默认 `ENGINE_CACHE`）之内，回 realpath；越界回 None。
+
+    路径由 (项目, 脚本) 经 `_cache_slug` 拼出来，脚本名来自 HTTP 请求：
+    `_cache_slug` 的正则已经把分隔符洗掉了，但「洗过了」与「用的是洗过的那一个」
+    是两件事——读之前按真身判一次包含（CodeQL py/path-injection 认的正是
+    realpath + 前缀这一对，与 `ai_agents.validate_executable` 同一套闸）。
+    池里的会话与 `one_shot()` 的重放目录都在 `ENGINE_CACHE` 下；单测的临时
+    目录显式传 `root`。
+    """
+    try:
+        real = os.path.realpath(path)
+        real_root = os.path.realpath(root if root is not None else ENGINE_CACHE)
+    except (OSError, ValueError):
+        return None
+    if not real.startswith(real_root + os.sep):
+        return None
+    return real
+
+
+def _log_size(path: Path, root: Path | None = None) -> int:
+    real = _contained_log(path, root)
+    if real is None:
+        return 0
+    try:
+        return os.stat(real).st_size
+    except OSError:
+        return 0
+
+
+def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = None) -> str:
+    """worker.log 里**这一代**的最后 `n` 行。
+
+    日志按 (项目, 脚本) 落在稳定目录里、两条控制面都是 append 模式：不记
+    偏移的话，这一代什么都没打印时读到的是上一代的尾巴，陈旧诊断被当成这次
+    失败的原因。按字节读、**按 UTF-8 解码**（worker 把 stderr 钉成了 UTF-8）
+    ——`read_text()` 不带 encoding 在 cp936 的 Windows 上会把中文与 `µ` 读成
+    乱码，而这段文本正是要给用户看的。
+    """
+    real = _contained_log(path, root)
+    if real is None:
+        return ""
+    try:
+        with open(real, "rb") as f:
+            data = f.read()
+    except OSError:
+        return ""
+    text = data[max(0, offset) :].decode("utf-8", errors="replace")
+    return "\n".join(text.splitlines()[-n:])
+
+
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
+
+
+def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail: str):
+    """`unknown_stem` 且 **`known == []`** → 换成 `no_figures_captured`，带上脚本自己的输出。
+
+    只认**显式为空的列表**：`known` 缺失（老 worker / 精简错误体）分不清
+    「一张都没有」和「没告诉我」，那时维持原样——把一个普通的 stem 拼错
+    报成「脚本没出图」是另一种误导。脚本输出走 `traceback_text`：前端的
+    错误块本来就有一个折叠区显示它，不用新造一块。
+    """
+    if err.code != "unknown_stem" or not (isinstance(known, list) and not known):
+        return err
+    tail = log_tail.strip()
+    if tail:
+        out = WorkerError(
+            f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
+            "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
+            "或分析在画图之前就结束了。",
+            tail,
+            code=NO_FIGURES_CODE,
+        )
+    else:
+        # 一个字都没打印：没有可展开的东西，也不造一句占位塞进 traceback 区
+        out = WorkerError(
+            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：既没有 savefig，"
+            "也没有留下 pyplot Figure。",
+            "",
+            code=NO_FIGURES_SILENT_CODE,
+        )
+    out.extra = getattr(err, "extra", {}) or {}
+    out.script_name = script_name
+    return out
 
 
 def missing_module(text: str) -> str:
@@ -736,6 +830,8 @@ class EngineWorker:
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
         self.last_build_descriptors: list = []
         self.last_used = time.time()
+        # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
+        self._log_offset = _log_size(self.log_path)
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
@@ -761,6 +857,9 @@ class EngineWorker:
             interpreter=python,
             sandbox=str(self.sandbox),
             env=runtime.child_env(base={}) if bundled else None,
+            # 项目级「在脚本目录里运行」（ADR 0045）：两条控制面与 one_shot 都从
+            # 这一个出处取——写回的重放必须和热态用同一个 cwd。
+            cwd_mode=workdir.mode_for(figures_dir),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）", script_name, entry, self.python_source
@@ -813,11 +912,8 @@ class EngineWorker:
             pass
 
     def _log_tail(self, n: int = 30) -> str:
-        try:
-            lines = self.log_path.read_text(errors="replace").splitlines()
-            return "\n".join(lines[-n:])
-        except OSError:
-            return ""
+        # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
+        return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
     def _readline(self, timeout: float) -> str:
         """带超时读一行回应；超时即杀掉 worker 并抛 `worker_timeout`。
@@ -913,7 +1009,11 @@ class EngineWorker:
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
             return exc
-        return WorkerError(msg, tb, code=code)
+        out = WorkerError(msg, tb, code=code)
+        # v1 信封把 `extra` 平铺进 error 对象（`wireproto`：`err.update(exc.extra)`），
+        # legacy 的扁平形状则在响应顶层。
+        known = err.get("known") if isinstance(err, dict) else resp.get("known")
+        return _explain_empty_capture(out, self.script_name, known, self._log_tail())
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -1195,6 +1295,7 @@ def _spawn_spec(
         interpreter=python,
         sandbox=str(sandbox),
         env=runtime.child_env(base={}) if bundled else None,
+        cwd_mode=workdir.mode_for(figures_dir),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -1269,6 +1370,7 @@ class WorkerdWorker:
         self.sandbox = base / "sandbox"
         self.export_dir = base / "export"
         self.log_path = base / "worker.log"
+        self._log_offset = 0
         base.mkdir(parents=True, exist_ok=True)
         self._touched = 0.0
         self._touch()
@@ -1330,6 +1432,8 @@ class WorkerdWorker:
             self.entry,
             self.python_source,
         )
+        # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
+        self._log_offset = _log_size(self.log_path)
         try:
             resp = self._client.call(
                 "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
@@ -1360,11 +1464,8 @@ class WorkerdWorker:
         self.last_build_descriptors = []
 
     def _log_tail(self, n: int = 30) -> str:
-        try:
-            lines = self.log_path.read_text(errors="replace").splitlines()
-            return "\n".join(lines[-n:])
-        except OSError:
-            return ""
+        # 偏移带默认值：协议用例用 `__new__` 绕过构造器造 worker
+        return _log_tail_from(self.log_path, getattr(self, "_log_offset", 0), n)
 
     def _to_worker_error(self, exc) -> WorkerError:
         code = exc.code or ""
@@ -1377,7 +1478,10 @@ class WorkerdWorker:
         err = _worker_error(str(exc), code, tb, exc.extra)
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
-        return err
+        # ……「脚本跑完没出图」也是同一条纪律：workerd 把 `known` 透传在 extra 里
+        return _explain_empty_capture(
+            err, self.script_name, (exc.extra or {}).get("known"), self._log_tail()
+        )
 
     def _call(
         self, op: str, timeout: float, *, stem: str | None = None, payload: dict | None = None

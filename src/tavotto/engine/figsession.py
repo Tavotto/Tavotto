@@ -87,7 +87,10 @@ EXPORT_FONTTYPE = 42
 
 
 def export_font_context(fmt: str):
-    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。"""
+    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。
+
+    EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
+    画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
     import contextlib
 
     if str(fmt).lower() not in ("pdf", "ps", "eps"):
@@ -95,6 +98,20 @@ def export_font_context(fmt: str):
     import matplotlib
 
     return matplotlib.rc_context({"pdf.fonttype": EXPORT_FONTTYPE, "ps.fonttype": EXPORT_FONTTYPE})
+
+
+#: TIFF 由 matplotlib 经 Pillow 写。Pillow 的缺省是**不压缩**（一张 600 ppi 的整页
+#: 几十 MB），这里钉成 Adobe Deflate（无损）——与父进程 `tavotto/tiffwrite.py` 写的
+#: 画布 TIFF 同一种压缩，两条路出来的文件读取端一视同仁。分辨率标签由 matplotlib
+#: 自己按 `dpi` 写（`image.imsave` 的 `pil_kwargs["dpi"]`），不用在这里重复。
+TIFF_PIL_KWARGS = {"compression": "tiff_adobe_deflate"}
+
+
+def export_format_kwargs(fmt: str) -> dict:
+    """`savefig` 按格式额外要带的参数。只有 TIFF 需要（压缩方式）。"""
+    if str(fmt).lower() in ("tif", "tiff"):
+        return {"pil_kwargs": dict(TIFF_PIL_KWARGS)}
+    return {}
 
 
 class LiveFigureSession:
@@ -152,9 +169,20 @@ class LiveFigureSession:
         重建等于把编辑丢掉）。
         """
         self._own()
-        for stem, fig in self.capture.items():
-            if stem in self.states:
-                continue
+        fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
+        if fresh:
+            # 字体回退尾巴（ADR 0045）：**脚本跑完之后、采 baseline 之前**给图上
+            # 已有的每一段文字补上 DejaVu Sans + 本机中日韩脸（逐 Text 那一步
+            # 是兑现点，`test_cjk_figure_text.py` 拿掉它就红）。放在 FigState
+            # 之前，originals 采到的就是带尾巴的链——写回重放时同一段代码再补
+            # 一次，热态所见 == 重放所得。只对新图做：已在编辑的图早补过了。
+            # rcParams 那一步是兜底：目前所有已知的事后建 Text 的路（懒建刻度
+            # 从模板 tick 拷字体、图例重建从旧文字拷字体）都不靠它，变异反证里
+            # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
+            # 这条今天还不存在的路。
+            overrides_mod.ensure_rcparams_fallback()
+        for stem, fig in fresh:
+            overrides_mod.ensure_figure_fallback(fig)
             state = overrides_mod.FigState(fig)
             manifest_mod.instrument(state)
             self.states[stem] = state
@@ -443,7 +471,7 @@ class LiveFigureSession:
             t1 = time.perf_counter()
             out.parent.mkdir(parents=True, exist_ok=True)
             with self.real_output(), export_font_context(fmt):
-                state.fig.savefig(out, format=fmt, dpi=int(dpi))
+                state.fig.savefig(out, format=fmt, dpi=int(dpi), **export_format_kwargs(fmt))
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
                 # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的

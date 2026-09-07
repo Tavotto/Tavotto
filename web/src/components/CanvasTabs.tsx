@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Plus, X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
@@ -74,7 +75,7 @@ export function CanvasTabs() {
           aria-label={t('tabs.newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
-          <Plus size={13} />
+          <Plus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
 
@@ -210,7 +211,7 @@ function TabItem({
             'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
           )}
         >
-          <X size={11} />
+          <X size={ICON_SIZE.xs} />
         </button>
       )}
     </div>
@@ -232,7 +233,7 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
       align="end"
       trigger={
         <Button size="icon-sm" aria-label={t('tabs.allCanvases')}>
-          <ChevronDown size={13} className="text-ink-2" />
+          <ChevronDown size={ICON_SIZE.xs} className="text-ink-2" />
         </Button>
       }
     >

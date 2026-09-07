@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Bold, Italic } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
@@ -222,7 +223,7 @@ function TextElementActions({
           label={translate('textBar.bold', { ns: 'inspector' })}
           onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
         >
-          <Bold size={12} />
+          <Bold size={ICON_SIZE.sm} />
         </StyleToggle>
       )}
       {a.fieldOf('style') && (
@@ -231,7 +232,7 @@ function TextElementActions({
           label={translate('textBar.italic', { ns: 'inspector' })}
           onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
         >
-          <Italic size={12} />
+          <Italic size={ICON_SIZE.sm} />
         </StyleToggle>
       )}
       {!compact && a.fieldOf('color') && (

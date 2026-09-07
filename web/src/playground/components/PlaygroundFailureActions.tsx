@@ -8,6 +8,7 @@
  * ②仍然给——重试同一条路是合理出口。
  */
 import { Download } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
 import { FEATURED_EXAMPLE, type PlaygroundExample } from '../examples'
 import { pg } from '../pgText'
@@ -37,7 +38,7 @@ export function PlaygroundFailureActions({
         href={RELEASES_LATEST_URL}
         className="flex h-7 items-center gap-1.5 rounded-[6px] bg-ink px-3 text-xs text-white transition-opacity hover:opacity-90"
       >
-        <Download size={12} aria-hidden />
+        <Download size={ICON_SIZE.sm} aria-hidden />
         {pg('downloadDesktop')}
       </a>
     </div>

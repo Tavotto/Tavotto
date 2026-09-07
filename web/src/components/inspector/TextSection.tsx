@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CaseSensitive, ChevronDown, CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   DEFAULT_INTERPRETATION,
   hasScientificChars,
@@ -167,7 +168,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             onClick={insertNewline}
             title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
           >
-            <CornerDownLeft size={12} />
+            <CornerDownLeft size={ICON_SIZE.sm} />
             {tx('insertNewline')}
           </Button>
         </div>
@@ -196,7 +197,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 }
                 aria-label={tx('underline')}
               >
-                <Underline size={12} />
+                <Underline size={ICON_SIZE.sm} />
               </Button>
               <Button
                 size="icon-sm"
@@ -205,7 +206,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 aria-label={tx('superscript')}
                 title={tx('superscriptTitle', { key: modKey('↑') })}
               >
-                <Superscript size={12} />
+                <Superscript size={ICON_SIZE.sm} />
               </Button>
               <Button
                 size="icon-sm"
@@ -214,7 +215,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 aria-label={tx('subscript')}
                 title={tx('subscriptTitle', { key: modKey('↓') })}
               >
-                <Subscript size={12} />
+                <Subscript size={ICON_SIZE.sm} />
               </Button>
             </>
           }
@@ -256,10 +257,10 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                     aria-label={tx('case')}
                   >
                     <span className="flex items-center gap-1">
-                      <CaseSensitive size={13} />
+                      <CaseSensitive size={ICON_SIZE.sm} />
                       {tx('caseAction')}
                     </span>
-                    <ChevronDown size={11} aria-hidden className="text-ink-3" />
+                    <ChevronDown size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
                   </Button>
                 }
               >

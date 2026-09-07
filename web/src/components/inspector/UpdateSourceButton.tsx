@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { Details, Summary } from '../ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -131,7 +133,7 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
         <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
-          <ShieldAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+          <ShieldAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
           <span>
             <b className="font-medium">{wb('divergenceTitle')}</b>
             {wb('divergenceBody')}
@@ -172,15 +174,8 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
 function BackupDetails({ dir, summary }: { dir: string; summary: string }) {
   useTranslation('inspector')
   return (
-    <details className="group rounded-sm border border-border bg-surface-2 px-2 py-1.5">
-      <summary className="flex cursor-default list-none items-center gap-1 text-xs leading-relaxed text-ink-2 outline-none focus-visible:focus-ring">
-        <ChevronRight
-          size={11}
-          aria-hidden
-          className="shrink-0 transition-transform group-open:rotate-90"
-        />
-        {summary}
-      </summary>
+    <Details className="rounded-sm border border-border bg-surface-2 px-2 py-1.5">
+      <Summary className="cursor-default text-xs leading-relaxed text-ink-2">{summary}</Summary>
       <div className="mt-1 flex flex-col gap-1 pl-4">
         <div className="flex items-start gap-1">
           <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed text-ink-2">
@@ -190,7 +185,7 @@ function BackupDetails({ dir, summary }: { dir: string; summary: string }) {
         </div>
         <p className="text-xs leading-relaxed text-ink-3">{wb('restoreBody')}</p>
       </div>
-    </details>
+    </Details>
   )
 }
 
@@ -327,7 +322,7 @@ export function WriteBackDialog({
               loadingLabel={wb('rewriting')}
               onClick={run}
             >
-              <FileUp size={14} />
+              <FileUp size={ICON_SIZE.md} />
               {wb('confirm')}
             </Button>
           </>
@@ -360,7 +355,7 @@ export function WriteBackDialog({
           {/* 目标文件一眼可数：不用读段落就知道覆盖的是哪几个（审计 T34） */}
           <div className="rounded-sm border border-danger/40 bg-surface-2 p-2">
             <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
-              <TriangleAlert size={12} aria-hidden className="shrink-0 text-danger" />
+              <TriangleAlert size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-danger" />
               {wb('targetsLabel')}
             </p>
             <ul className="mt-1 flex flex-col gap-0.5 pl-[18px]">
@@ -422,7 +417,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
         )}
         onClick={() => setOpen(true)}
       >
-        <FileUp size={13} />
+        <FileUp size={ICON_SIZE.sm} />
         {wb('buttonLabel')}
       </Button>
       <WriteBackDialog panels={[panel]} open={open} onOpenChange={setOpen} />
@@ -491,7 +486,7 @@ export function WriteBackTopBarButton() {
           aria-label={wb('buttonLabel')}
           onClick={() => setOpen(true)}
         >
-          <FileUp size={14} />
+          <FileUp size={ICON_SIZE.md} />
           {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
         </Button>
       </Tip>

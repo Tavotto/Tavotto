@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import { ICON_SIZE } from './Icon'
 import { Button } from './Button'
 
 /**
@@ -22,7 +23,7 @@ export function EmptyState({
 }) {
   return (
     <div className="flex h-full min-h-32 flex-1 flex-col items-center justify-center gap-1.5 px-6 py-8 text-center">
-      <Icon size={20} className="text-ink-faint" aria-hidden />
+      <Icon size={ICON_SIZE.lg} className="text-ink-faint" aria-hidden />
       <p className="text-xs font-medium text-ink-2">{title}</p>
       {hint && <p className="max-w-60 text-xs leading-relaxed text-ink-3">{hint}</p>}
       {action && (

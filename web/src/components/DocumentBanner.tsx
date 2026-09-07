@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, History, Lock } from 'lucide-react'
+import { TriangleAlert, RotateCcwClock, Lock } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatTime } from '@/i18n/format'
 import {
   discardLocalCopy,
@@ -35,7 +36,7 @@ export function DocumentBanner() {
   if (saveState === 'conflict') {
     const disk = saveIssue?.disk
     return (
-      <Banner tone="danger" icon={<AlertTriangle size={12} className="shrink-0 text-danger" />}>
+      <Banner tone="danger" icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
         <span className="min-w-0 flex-1 truncate">
           {t(saveIssue?.kind === 'stale' ? 'docBanner.conflictStale' : 'docBanner.conflictExternal')}
         </span>
@@ -67,7 +68,7 @@ export function DocumentBanner() {
 
   if (saveState === 'save_error') {
     return (
-      <Banner tone="danger" icon={<AlertTriangle size={12} className="shrink-0 text-danger" />}>
+      <Banner tone="danger" icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
         <span className="min-w-0 flex-1 truncate">{t('docBanner.saveErrorBody')}</span>
         <Button size="sm" className="shrink-0" onClick={() => void saveNow()}>
           {t('docBanner.retry')}
@@ -79,7 +80,7 @@ export function DocumentBanner() {
   if (notice?.kind === 'recovery') {
     const s = notice.summary
     return (
-      <Banner tone="accent" icon={<History size={12} className="shrink-0 text-accent" />}>
+      <Banner tone="accent" icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
         <span className="min-w-0 flex-1 truncate">{t('docBanner.recoveryTitle')}</span>
         {/* 文档名是用户内容，作为插值原样透出 */}
         <span className="hidden shrink-0 opacity-80 min-[900px]:inline">
@@ -102,7 +103,7 @@ export function DocumentBanner() {
 
   if (notice?.kind === 'schema_too_new') {
     return (
-      <Banner tone="accent" icon={<Lock size={12} className="shrink-0 text-accent" />}>
+      <Banner tone="accent" icon={<Lock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
         <span className="min-w-0 flex-1 truncate">
           {t('docBanner.tooNewTitle', { schema: notice.schema })}
         </span>
@@ -128,7 +129,7 @@ function LastDocumentBanner() {
   const issue = useProjectStore((s) => s.lastDocumentIssue)
   if (!issue) return null
   return (
-    <Banner tone="accent" icon={<History size={12} className="shrink-0 text-accent" />}>
+    <Banner tone="accent" icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
       {/* 文档名是用户内容，作为插值原样透出 */}
       <span className="min-w-0 flex-1 truncate">
         {t('docBanner.lastDocTitle', { name: issue.name || t('docBanner.lastDocUnnamed') })}

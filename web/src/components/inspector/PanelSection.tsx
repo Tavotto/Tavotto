@@ -15,6 +15,7 @@ import {
   Scaling,
   Unlink2,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
@@ -194,7 +195,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
             aria-label={pn('lockAspect')}
             onClick={() => setPanelAspectLocked(ids, !locked)}
           >
-            {locked ? <Link2 size={12} /> : <Unlink2 size={12} />}
+            {locked ? <Link2 size={ICON_SIZE.sm} /> : <Unlink2 size={ICON_SIZE.sm} />}
           </Button>
         </Tip>
         <div className="min-w-0 flex-1">
@@ -261,7 +262,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
             className="flex-1"
             onClick={() => restorePanelAspect(ids)}
           >
-            <Ratio size={13} />
+            <Ratio size={ICON_SIZE.sm} />
             {pn('aspect')}
           </Button>
         </Tip>
@@ -272,7 +273,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
             className="flex-1"
             onClick={() => restorePanelNativeSize(ids)}
           >
-            <Scaling size={13} />
+            <Scaling size={ICON_SIZE.sm} />
             {pn('nativeSize')}
           </Button>
         </Tip>
@@ -348,7 +349,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
                 })
               }
             >
-              <FlipHorizontal2 size={13} />
+              <FlipHorizontal2 size={ICON_SIZE.sm} />
               {pn('flipHorizontal')}
             </Button>
             <Button
@@ -362,7 +363,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
                 })
               }
             >
-              <FlipVertical2 size={13} />
+              <FlipVertical2 size={ICON_SIZE.sm} />
               {pn('flipVertical')}
             </Button>
           </div>
@@ -412,7 +413,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
             disabled={!one}
             onClick={() => setReplacing(true)}
           >
-            <Replace size={13} />
+            <Replace size={ICON_SIZE.sm} />
             {pn('replace')}
           </Button>
         </Tip>
@@ -458,7 +459,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
               else beginCrop(one.id)
             }}
           >
-            <Crop size={13} />
+            <Crop size={ICON_SIZE.sm} />
             {pn(cropping ? 'cropDone' : 'crop')}
           </Button>
         </Tip>
@@ -470,7 +471,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
               onClick={() => resetPanelCrop(ids)}
               aria-label={pn('resetCrop')}
             >
-              <RotateCcw size={13} />
+              <RotateCcw size={ICON_SIZE.sm} />
             </Button>
           </Tip>
         )}
@@ -479,13 +480,13 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
       <Grid2 className="mt-1.5">
         <Tip label={pn('fitTip')}>
           <Button variant="outline" size="sm" className="w-full" onClick={() => fitPanels(ids)}>
-            <Minimize2 size={13} />
+            <Minimize2 size={ICON_SIZE.sm} />
             {pn('fit')}
           </Button>
         </Tip>
         <Tip label={pn('fillTip')}>
           <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
-            <Maximize2 size={13} />
+            <Maximize2 size={ICON_SIZE.sm} />
             {pn('fill')}
           </Button>
         </Tip>
@@ -698,7 +699,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
             })
           }}
         >
-          <Pencil size={13} />
+          <Pencil size={ICON_SIZE.sm} />
           {pn(editing ? 'exitElementEdit' : 'editElements')}
         </Button>
         {overrides > 0 && (
@@ -801,7 +802,7 @@ function RuntimeSourceArea({ panel }: { panel: PanelObject }) {
           disabled={!script || busy}
           onClick={() => void useScriptRunStore.getState().run(script)}
         >
-          <RotateCcw size={12} className={cn(busy && 'animate-spin')} />
+          <RotateCcw size={ICON_SIZE.sm} className={cn(busy && 'animate-spin')} />
           {translate(`scripts.${busy ? 'running' : 'rerun'}`, { ns: 'workspace' })}
         </Button>
       </div>

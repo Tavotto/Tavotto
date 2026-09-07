@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Braces, Play, Plus, RefreshCw } from 'lucide-react'
+import { TriangleAlert, Braces, Play, Plus, RefreshCw } from 'lucide-react'
+import { Details, Summary } from '@/components/ui/Details'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
   backendErrorText,
@@ -198,7 +200,7 @@ function ReadinessBody() {
     if (loadError) {
       return (
         <EmptyState
-          icon={AlertTriangle}
+          icon={TriangleAlert}
           title={rd('loadFailed')}
           hint={loadError}
           action={{
@@ -231,7 +233,7 @@ function ReadinessBody() {
           disabled={busy !== null || !report.project.can_rescan}
           onClick={() => void scan()}
         >
-          <RefreshCw size={13} className={cn(busy === 'scan' && 'animate-spin')} />
+          <RefreshCw size={ICON_SIZE.sm} className={cn(busy === 'scan' && 'animate-spin')} />
           {rd('rescan')}
         </Button>
       </div>
@@ -368,7 +370,7 @@ function ProjectNotices({
     <ul className="flex flex-col gap-1 rounded-md border border-border bg-surface-2 p-2">
       {notes.map((n) => (
         <li key={n} className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-          <AlertTriangle size={12} className="mt-0.5 shrink-0 text-ink-3" />
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-3" />
           {n}
         </li>
       ))}
@@ -562,7 +564,7 @@ function PanelRow({
                 disabled={disabled}
                 onClick={() => onProbe(panel.script as string)}
               >
-                <Play size={13} className={cn(busy === panel.script && 'animate-pulse')} />
+                <Play size={ICON_SIZE.sm} className={cn(busy === panel.script && 'animate-pulse')} />
                 {rd(busy === panel.script ? 'running' : 'reprobe')}
               </Button>
             )}
@@ -621,14 +623,14 @@ function RowActions({
           新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
       {panel.status === 'editable' && hasAsset && (
         <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
-          <Plus size={13} />
+          <Plus size={ICON_SIZE.sm} />
           {rd('addToCanvas')}
         </Button>
       )}
 
       {panel.status === 'auto_linkable' && (
         <Button variant="outline" size="sm" disabled={disabled} onClick={onRescan}>
-          <RefreshCw size={13} className={cn(busyKey === 'scan' && 'animate-spin')} />
+          <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
           {rd('autoLink')}
         </Button>
       )}
@@ -659,7 +661,7 @@ function RowActions({
 
       {panel.status === 'source_missing' && (
         <Button variant="outline" size="sm" disabled={disabled} onClick={onRescan}>
-          <RefreshCw size={13} className={cn(busyKey === 'scan' && 'animate-spin')} />
+          <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
           {rd('rescan')}
         </Button>
       )}
@@ -716,7 +718,7 @@ function ProbePicker({
         disabled={disabled}
         onClick={() => onProbe(script)}
       >
-        <Play size={13} className={cn(busyKey === script && 'animate-pulse')} />
+        <Play size={ICON_SIZE.sm} className={cn(busyKey === script && 'animate-pulse')} />
         {rd(busyKey === script ? 'running' : 'probeAndLink')}
       </Button>
     </>
@@ -821,10 +823,10 @@ function TechnicalDetails({
   rows.push({ key: 'reasonCode', value: panel.reason_code })
 
   return (
-    <details className="mt-1">
-      <summary className="cursor-pointer select-none text-xs text-ink-3 outline-none focus-visible:focus-ring">
+    <Details className="mt-1">
+      <Summary className="text-xs text-ink-3">
         {rd('technicalDetails')}
-      </summary>
+      </Summary>
       <dl className="mt-1 flex flex-col gap-0.5">
         {rows.map((r) => (
           <div key={r.key} className="flex items-baseline gap-2">
@@ -836,7 +838,7 @@ function TechnicalDetails({
         ))}
       </dl>
       {children}
-    </details>
+    </Details>
   )
 }
 
@@ -871,10 +873,10 @@ function AllScriptsSection({
 }) {
   useTranslation('dialogs')
   return (
-    <details className="rounded-md border border-border">
-      <summary className="cursor-pointer select-none px-2 py-1 text-xs font-medium text-ink-2 outline-none focus-visible:focus-ring">
+    <Details className="rounded-md border border-border">
+      <Summary className="px-2 py-1 text-xs font-medium text-ink-2">
         {rd('allScriptsTitle', { n: scripts.length })}
-      </summary>
+      </Summary>
       <p className="px-2 pb-1 text-xs leading-relaxed text-ink-3">{rd('allScriptsHint')}</p>
       <ul className="max-h-52 overflow-y-auto">
         {scripts.map((s) => (
@@ -920,7 +922,7 @@ function AllScriptsSection({
         {rd('sourcePrefix')}
         <span className="font-mono">{source || rd('none')}</span>
       </p>
-    </details>
+    </Details>
   )
 }
 
@@ -1051,14 +1053,14 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
         </div>
       )}
       {note.traceback && (
-        <details className="mt-0.5">
-          <summary className="cursor-pointer select-none">
+        <Details className="mt-0.5">
+          <Summary>
             {translate('registry.probeTraceback', { ns: 'dialogs' })}
-          </summary>
+          </Summary>
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug">
             {note.traceback}
           </pre>
-        </details>
+        </Details>
       )}
     </div>
   )

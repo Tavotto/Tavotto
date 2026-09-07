@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { dirTail } from '@/lib/pathDisplay'
 import { cn } from '@/lib/utils'
@@ -45,15 +47,11 @@ export function PathValue({
             'outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
           )}
         >
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 11 11"
+          <ChevronRight
+            size={ICON_SIZE.xs}
             aria-hidden
             className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')}
-          >
-            <path d="M4 2.5 L7.5 5.5 L4 8.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-          </svg>
+          />
           <span className="min-w-0 truncate font-mono">{dirTail(path)}</span>
         </button>
         <CopyButton text={path} label={st('project.copyPath', { name })} />

@@ -217,7 +217,8 @@ def _tools() -> list[dict]:
             "title": "导出成图（先预检）",
             "description": (
                 "导出当前会话的图。**先跑一遍预检**：有 error 且没有 explicit_confirm 时"
-                "一张图都不出。PDF/SVG 是真矢量，PNG 按给定 dpi 栅格化。"
+                "一张图都不出。PDF/SVG/EPS 是真矢量（EPS 不支持透明度），"
+                "PNG/TIFF 按给定 dpi 栅格化（TIFF 无损压缩）。"
                 "同时写一份 proof report（规范身份 + 全部检查结果 + 是否强制导出）。"
                 "不会用浏览器打开文件，也不会改用户的源码。"
             ),
@@ -229,7 +230,7 @@ def _tools() -> list[dict]:
                         "type": "array",
                         "items": {"type": "string", "enum": list(bridge.EXPORT_FORMATS)},
                     },
-                    "dpi": {"type": "integer", "description": "PNG 的分辨率，默认 600"},
+                    "dpi": {"type": "integer", "description": "位图（PNG/TIFF）的分辨率，默认 600"},
                     "stem": {"type": "string", "description": "输出文件名主干"},
                     "out_dir": {
                         "type": "string",

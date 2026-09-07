@@ -23,8 +23,14 @@ vi.mock('@/lib/session', async (importOriginal) => ({
   currentProjectId: vi.fn(() => project),
 }))
 
-import { fetchPanels, fetchRuntimeAssets, refreshProject, type PanelInfo, type ServerEvent } from '@/lib/api'
-import type { CanvasData, PanelObject } from '@/types/document'
+import {
+  fetchPanels,
+  fetchRuntimeAssets,
+  refreshProject,
+  type PanelInfo,
+  type ServerEvent,
+} from '@/lib/api'
+import type { CanvasData, PanelObject, ProjectDocument } from '@/types/document'
 import { canvasToDoc } from '@/types/document'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -32,6 +38,7 @@ import {
   recoverAfterReconnect,
   refreshProjectNow,
   resetReconnectThrottle,
+  startDocumentLoadSync,
   syncLoadedDocument,
 } from '@/store/liveSync'
 import { useProjectStore } from '@/store/projectStore'
@@ -400,6 +407,75 @@ describe('项目打开时的对账', () => {
 
     expect((useDocumentStore.getState().doc.objects[0] as PanelObject).script).toBe('fig1.py')
     expect(useDocumentStore.getState().derivedSeq).toBe(0)
+  })
+})
+
+/**
+ * 工作台**已经挂载之后**才换进来的文档（教程「重新开始」/ 在别的项目里点「开始教程」/
+ * 切回教程项目 / 载入画布文件 / 最近文档）：挂载那一次对账早就跑完了，这些文档
+ * 里的面板要是没带 `script`（教程的 Tutorial.json 就是这样），双击就落进裁剪而不是
+ * 图内编辑——用户反馈 01「新手教学里双击示例图进不了图内编辑」的根因。
+ */
+describe('换文档之后的对账（loadSeq 变了就按手里的清单对一次）', () => {
+  const pristine = (script: string | null | undefined): ProjectDocument => ({
+    schema: 3,
+    project: { id: 'tut', name: 'Tutorial' },
+    canvases: [
+      {
+        id: 'c1',
+        name: 'Figure 1',
+        page: { w: 180, h: 90 },
+        objects: [panelObj('p1', 'Fig1.pdf', script === undefined ? {} : { script })],
+        guides: [],
+      },
+    ],
+    activeCanvasId: 'c1',
+    createdAt: 1,
+    updatedAt: 1,
+  })
+
+  it('switchDocument 换进来的面板没有 script：按清单原地补上，不发请求', async () => {
+    useAssetStore.setState({ byId: { 'Fig1.pdf': info('Fig1.pdf', { script: 'fig1.py' }) }, loaded: true })
+    const stop = startDocumentLoadSync()
+    try {
+      await useDocumentStore.getState().switchDocument(pristine(undefined), 'doc-late')
+      await tick()
+      expect((useDocumentStore.getState().doc.objects[0] as PanelObject).script).toBe('fig1.py')
+      expect(mockPanels).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
+
+  it('停掉订阅之后换文档不再对账（工作台卸载 = 没有人替它对账）', async () => {
+    useAssetStore.setState({ byId: { 'Fig1.pdf': info('Fig1.pdf', { script: 'fig1.py' }) }, loaded: true })
+    const stop = startDocumentLoadSync()
+    stop()
+    await useDocumentStore.getState().switchDocument(pristine(null), 'doc-stopped')
+    await tick()
+    expect((useDocumentStore.getState().doc.objects[0] as PanelObject).script).toBeNull()
+  })
+
+  it('不是换文档的普通编辑不触发（对账只认 loadSeq，不认 doc 引用变化）', async () => {
+    useAssetStore.setState({ byId: { 'Fig1.pdf': info('Fig1.pdf', { script: 'fig1.py' }) }, loaded: true })
+    const stop = startDocumentLoadSync()
+    try {
+      await useDocumentStore.getState().switchDocument(pristine(null), 'doc-edit')
+      await tick()
+      // 先把对账的结果抹回去，再做一次普通编辑：编辑不该把它再补回来
+      useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, objects: st.doc.objects.map((o) => (o.type === 'panel' ? { ...o, script: null } : o)) },
+      }))
+      const seq = useDocumentStore.getState().derivedSeq
+      useDocumentStore.getState().commit({ key: 'literal', ns: 'common', values: { text: 'x' } }, (d) => {
+        d.guides.push({ axis: 'x', pos: 5 })
+      })
+      await tick()
+      expect((useDocumentStore.getState().doc.objects[0] as PanelObject).script).toBeNull()
+      expect(useDocumentStore.getState().derivedSeq).toBe(seq)
+    } finally {
+      stop()
+    }
   })
 })
 

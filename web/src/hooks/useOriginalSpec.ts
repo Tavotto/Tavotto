@@ -42,13 +42,23 @@ export function useOriginalSpec(figureId: string | null): OriginalOutputSpec | n
   )
 }
 
-/** 「按原图导出」现在能不能用 + 它的规格（`lib/exportRequest.originalAvailability`） */
-export function useOriginalAvailability(figureId: string | null): OriginalAvailability {
+/**
+ * 「按原图导出」现在能不能用 + 它的规格（`lib/exportRequest.originalAvailability`）。
+ *
+ * `anyFigures` 原样转给求值那一份：**「没选」与「没得选」是两句不同的话**——
+ * 前者让用户去点一张，后者点无可点。项目里到底有没有候选只有调用方知道，
+ * 这里不猜。
+ */
+export function useOriginalAvailability(
+  figureId: string | null,
+  opts: { anyFigures?: boolean } = {},
+): OriginalAvailability {
   const signals = useSpecSignals()
+  const anyFigures = opts.anyFigures
   return useMemo(
-    () => originalAvailability(figureId),
+    () => originalAvailability(figureId, { anyFigures }),
     // 同上：信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, ...signals],
+    [figureId, anyFigures, ...signals],
   )
 }

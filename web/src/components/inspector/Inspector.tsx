@@ -6,7 +6,7 @@ import {
   Image as ImageIcon,
   Lock,
   LockOpen,
-  MoreHorizontal,
+  Ellipsis,
   MousePointerClick,
   MoveUpRight,
   Pin,
@@ -16,6 +16,7 @@ import {
   Type as TypeIcon,
   X,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { switchKindOf } from '@/lib/shapeSwitch'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { msg, t as translate } from '@/i18n'
@@ -127,7 +128,7 @@ export function Inspector({
             className="relative gap-1 px-1.5 text-xs"
             onClick={() => setTab(tab === 'assistant' ? 'properties' : 'assistant')}
           >
-            <Sparkles size={12} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
+            <Sparkles size={ICON_SIZE.sm} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
             {assistantTabLabel()}
             {runningAi && (
               <span
@@ -150,7 +151,7 @@ export function Inspector({
               aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
-              <Pin size={11} className={pinned ? undefined : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.xs} className={pinned ? undefined : 'text-ink-3'} />
             </Button>
           </Tip>
         ) : (
@@ -165,7 +166,7 @@ export function Inspector({
             aria-label={t('closePanel')}
             onClick={() => useUiStore.getState().toggleRight()}
           >
-            <X size={13} className="text-ink-3" />
+            <X size={ICON_SIZE.sm} className="text-ink-3" />
           </Button>
         </Tip>
       </div>
@@ -327,7 +328,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     return (
       <header className="shrink-0 px-3 pb-2">
         <div className="flex items-center gap-1.5">
-          <ImageIcon size={13} className="shrink-0 text-ink-3" />
+          <ImageIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
           {!el && (
             <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
@@ -348,7 +349,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
                   }}
                   aria-label={t('hideElement')}
                 >
-                  <EyeOff size={12} className="text-ink-3" />
+                  <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />
                 </Button>
               </Tip>
             )}
@@ -360,7 +361,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
                 onClick={() => useUiStore.getState().setElementPanel(null)}
                 aria-label={t('exitElementEdit')}
               >
-                <X size={12} className="text-ink-3" />
+                <X size={ICON_SIZE.sm} className="text-ink-3" />
               </Button>
             </Tip>
           </span>
@@ -414,7 +415,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
   return (
     <header className="shrink-0 px-3 pb-2">
       <div className="flex items-center gap-1.5">
-        <Icon size={13} className="shrink-0 text-ink-3" />
+        <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
         {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
             「我在改的是文字、面板还是标注」（审计 T01）。这颗徽标同时是**类型
             切换**的入口——标注能换成同族的另一种时它就是下拉，换不了时还是那颗
@@ -423,21 +424,21 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
         {title != null && (
           <h2 className="min-w-0 truncate text-xs font-medium text-ink">{title}</h2>
         )}
-        {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
-        {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
+        {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
+        {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
         {!one && <span className="shrink-0 text-xs text-ink-3">{summarize(objs)}</span>}
         <Menu
           width={172}
           align="end"
           trigger={
             <Button size="icon-sm" className="-mr-1 ml-auto" aria-label={t('objectActions')}>
-              <MoreHorizontal size={13} className="text-ink-3" />
+              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
             </Button>
           }
         >
           <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected}>
             <span className="flex items-center gap-2">
-              <Copy size={13} className="text-ink-3" />
+              <Copy size={ICON_SIZE.sm} className="text-ink-3" />
               {translate('actions.copy')}
             </span>
           </MenuItem>
@@ -449,7 +450,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             }
           >
             <span className="flex items-center gap-2">
-              {hidden ? <Eye size={13} className="text-ink-3" /> : <EyeOff size={13} className="text-ink-3" />}
+              {hidden ? <Eye size={ICON_SIZE.sm} className="text-ink-3" /> : <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />}
               {t(hidden ? 'show' : 'hide')}
             </span>
           </MenuItem>
@@ -461,14 +462,14 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             }
           >
             <span className="flex items-center gap-2">
-              {locked ? <LockOpen size={13} className="text-ink-3" /> : <Lock size={13} className="text-ink-3" />}
+              {locked ? <LockOpen size={ICON_SIZE.sm} className="text-ink-3" /> : <Lock size={ICON_SIZE.sm} className="text-ink-3" />}
               {t(locked ? 'unlock' : 'lock')}
             </span>
           </MenuItem>
           <MenuSeparator />
           <MenuItem danger shortcut="⌫" onSelect={deleteSelected}>
             <span className="flex items-center gap-2">
-              <Trash2 size={13} />
+              <Trash2 size={ICON_SIZE.sm} />
               {translate('actions.delete')}
             </span>
           </MenuItem>

@@ -1,5 +1,6 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from 'lucide-react'
+import { ICON_SIZE } from './Icon'
 import { useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -162,7 +163,7 @@ export function MenuItem({
       onSelect={onSelect}
       className={cn(ITEM_CLASS, danger ? 'text-danger' : 'text-ink')}
     >
-      {Icon && <Icon size={12} className="shrink-0 text-ink-2" />}
+      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{children}</span>
         {reason && <span className="truncate text-[11px] leading-4 text-ink-3">{reason}</span>}
@@ -196,9 +197,9 @@ export function MenuSub({
         disabled={disabled}
         className={cn(ITEM_CLASS, 'text-ink data-[state=open]:bg-ink/[.055]')}
       >
-        {Icon && <Icon size={12} className="shrink-0 text-ink-2" />}
+        {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <ChevronRight size={12} className="shrink-0 text-ink-3" aria-hidden />
+        <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
       </DM.SubTrigger>
       <DM.Portal>
         <DM.SubContent
@@ -243,7 +244,7 @@ export function MenuCheckItem({
       )}
     >
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
-        <Check size={12} />
+        <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {children}
     </DM.CheckboxItem>

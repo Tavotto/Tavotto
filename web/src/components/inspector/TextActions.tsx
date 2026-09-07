@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CaseSensitive, CornerDownLeft, Subscript, Superscript } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { toggleMathScript, transformCase, type CaseMode } from '@/lib/richText'
 import { ALT, combo, modKey } from '@/lib/utils'
@@ -68,7 +69,7 @@ export function TextActionRow({
         title={ta('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
         aria-label={ta('newline')}
       >
-        <CornerDownLeft size={12} />
+        <CornerDownLeft size={ICON_SIZE.sm} />
       </Button>
       <Button
         size="icon-sm"
@@ -77,7 +78,7 @@ export function TextActionRow({
         title={ta('supTitle')}
         aria-label={ta('sup')}
       >
-        <Superscript size={12} />
+        <Superscript size={ICON_SIZE.sm} />
       </Button>
       <Button
         size="icon-sm"
@@ -86,7 +87,7 @@ export function TextActionRow({
         title={ta('subTitle')}
         aria-label={ta('sub')}
       >
-        <Subscript size={12} />
+        <Subscript size={ICON_SIZE.sm} />
       </Button>
       <Menu
         align="end"
@@ -98,7 +99,7 @@ export function TextActionRow({
             title={ta('caseTitle')}
             aria-label={ta('caseTitle')}
           >
-            <CaseSensitive size={12} />
+            <CaseSensitive size={ICON_SIZE.sm} />
           </Button>
         }
       >

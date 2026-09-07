@@ -30,6 +30,7 @@ import pathgeom
 from overrides import (
     _ARROWSTYLES,
     _CB_EXTENDS,
+    _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
     _TICK_FORMATS,
@@ -62,6 +63,7 @@ from overrides import (
     _stroke_state,
     _tick0,
     bind_legend_entries,
+    cjk_fallback_candidates,
     coincident_shared_axes_pairs,
     collection_caps,
     colorbar_host_count,
@@ -69,6 +71,7 @@ from overrides import (
     colorbar_maps,
     drawn_tick_label_entries,
     follow_map,
+    font_installed,
     gradient_base_hex,
     is_linecoll_family,
     legend_anchor_state,
@@ -1050,45 +1053,24 @@ _GENERIC_FAMILIES = ("serif", "sans-serif", "monospace")
 #: 中文字体可接受」的唯一权威）——这里是**候选名单**，回答的是另一个问题：
 #: 这台机器上哪些画得出来。两个问题不同，所以这不是把规则抄了第二份；真正
 #: 决定列不列的仍然是下面那个探测器。
-_NAMED_FAMILIES = (
-    "Times New Roman",
-    "Arial",
-    "Helvetica",
+_LATIN_NAMED_FAMILIES = ("Times New Roman", "Arial", "Helvetica")
+#: 中日韩具体字体：回退链的候选（`overrides.cjk_fallback_candidates()`，按平台
+#: 排序、只有装了的才进链）加上出版规范 `cjk_fallback.accepted` 里另外几个
+#: 常见名字。**同一张候选表**既决定自动回退到谁、也决定下拉里能钉住谁——
+#: 用户在下拉里选中的，正是自动回退本来会用的那张脸，钉住它只是把「这台
+#: 机器碰巧有」变成「写进脚本里」。
+_CJK_NAMED_FAMILIES = (
     "方正小标宋简体",
-    "Noto Sans CJK SC",
+    *cjk_fallback_candidates(),
     "Noto Serif CJK SC",
-    "Source Han Sans SC",
     "Source Han Serif SC",
-    "PingFang SC",
-    "Songti SC",
     "STSong",
-    "Microsoft YaHei",
-    "SimSun",
 )
-#: 探测结果按进程缓存：一次 manifest 要过很多个 Text，探测结果在一次渲染里
-#: 不会变。（`findfont` 自己也有 lru_cache，这层只是省掉异常构造。）
-_FONT_PRESENT: dict[str, bool] = {}
+_NAMED_FAMILIES = tuple(dict.fromkeys((*_LATIN_NAMED_FAMILIES, *_CJK_NAMED_FAMILIES)))
 
-
-def _font_installed(name: str) -> bool:
-    """这个运行时**画得出来**这个字体名吗？
-
-    走 matplotlib 自己的解析路径，所以「列出来的」== 「画得出来的」。
-    `fallback_to_default=False` 是关键：默认的回退会让任何名字都「成功」，
-    正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
-    override 记下了、图重绘了，只有字形没变，界面还报告成功。
-    """
-    hit = _FONT_PRESENT.get(name)
-    if hit is None:
-        try:
-            font_manager.findfont(
-                font_manager.FontProperties(family=name), fallback_to_default=False
-            )
-            hit = True
-        except (ValueError, RuntimeError):
-            hit = False
-        _FONT_PRESENT[name] = hit
-    return hit
+#: 「这个名字画不画得出」全 worker 只有一个判据（`overrides.font_installed`），
+#: 缓存表也是同一张（`_FONT_PRESENT` 从那边 import 进来，测试清的就是它）。
+_font_installed = font_installed
 
 
 #: 一段文字里最多报几个缺字形的字符。问题面板要把它们逐字列出来，一句
@@ -1136,32 +1118,49 @@ def _resolved_font_paths(families) -> list[str]:
     return [str(f) for f in found]
 
 
-def _glyph_scan(text: str, families) -> tuple[list[str], list[str]]:
-    """(画不出来的, 不是正文那张脸画的) —— 两张单子一次扫出来。
+#: 「这个字符是不是中日韩」——码位判据，**与 `engine/preflight.py` 的 `_CJK`
+#: 同一个字符类**（那边是 Flask 侧、这边是 worker 侧，两个进程各持一份；
+#: `tests/test_cjk_figure_text.py` 看住两份字面相同）。它回答的是「这个字
+#: 该由哪类脸负责」，不是「画不画得出」——后者仍然只问真字体。
+_CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
+
+
+def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
+    """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
-    解析不出任何字体时两张单子都空：**判不了就不判**，不拿一个量错对象的
+    解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
     判据去凑数量。
+
+    第三张单子是回退链（ADR 0045）的产物：汉字由链尾的中日韩脸画出来时，
+    它**不算**「换了脸」——那张脸是唯一画得出它的，且对整台机器恒定，逐条
+    挂建议只会训练用户忽略问题面板（与画布侧 `glyphplan.substituted_chars`
+    同一个裁决）。值得说的是**由谁画的**：manifest 把它报成 `cjk_family`，
+    出版规范的 `cjk_fallback.accepted` 白名单据此判它是否可接受。
     """
     if not isinstance(text, str) or not text.strip():
-        return [], []
+        return [], [], []
     fonts = [f for f in (_ft_font(p) for p in _resolved_font_paths(families)) if f is not None]
     if not fonts:
-        return [], []
+        return [], [], []
     primary, rest = fonts[0], fonts[1:]
     gone: dict[str, None] = {}
     subst: dict[str, None] = {}
+    cjk_faces: dict[str, None] = {}
     for ch in _MATH_SPAN.sub("", text):
         if ch.isspace() or ch in gone or ch in subst:
             continue
         if primary.get_char_index(ord(ch)):
             continue
-        if any(f.get_char_index(ord(ch)) for f in rest):
-            if len(subst) < MAX_MISSING_GLYPHS:
-                subst[ch] = None
-        elif len(gone) < MAX_MISSING_GLYPHS:
-            gone[ch] = None
-    return list(gone), list(subst)
+        face = next((f for f in rest if f.get_char_index(ord(ch))), None)
+        if face is None:
+            if len(gone) < MAX_MISSING_GLYPHS:
+                gone[ch] = None
+        elif _CJK_CHAR.match(ch):
+            cjk_faces.setdefault(str(face.family_name), None)
+        elif len(subst) < MAX_MISSING_GLYPHS:
+            subst[ch] = None
+    return list(gone), list(subst), list(cjk_faces)
 
 
 def missing_glyphs(text: str, families) -> list[str]:
@@ -3458,7 +3457,7 @@ _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 def _finite_geometry(entry: dict) -> bool:
     """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
-    for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+    for field in ("bbox", "anchor", "arrow_endpoints", "geometry", "clip_bbox"):
         v = entry.get(field)
         if v is None:
             continue
@@ -3596,6 +3595,90 @@ def _collection_bbox(coll, renderer):
     except Exception:  # noqa: BLE001
         return None
     return bb if _ok(bb) else None
+
+
+def _clip_extents(artist):
+    """artist 真正被裁到的 display 矩形 `(x0, y0, x1, y1)`；不裁 / 说不清回 None。
+
+    **判据有两个维度，缺一不可**（matplotlib 3.10.8 实测，见本函数的看护用例）：
+
+    * `get_clip_on()` 为 **False** 时 `get_clip_box()` **照样是子图框**——
+      `Axes.text()` 默认就是这个组合（`clip_on=False` + clipbox = `ax.bbox`）。
+      只看框，会把「真的画到图幅外的标注」当成被裁住了而放行；
+    * `get_clip_on()` 为 **True** 时框却可能整个是 None——标题 / 轴标题 / 图例 /
+      刻度线 / spine / axes patch 全是这样（`Artist._clipon` 默认 True，
+      `_clipbox` 默认 None）。只看开关，会把它们当成裁进了子图里而放行。
+
+    这两个维度正是 matplotlib 自己在 `Artist.get_tightbbox` 里用的那一对，
+    这里照它的语义求交（clip box ∩ clip path 的包围盒）。直角的
+    `set_clip_path(Rectangle)` 会被 matplotlib 折成 clipbox（`get_clip_path()`
+    回 None）；只有非矩形（圆形…）才留下一条真 path，取它的**包围盒**是保守
+    方向——框大于真实可见区，宁可多报也不漏报。
+
+    说不出裁到哪就回 None（= 当作不裁）。**这个方向是有意的**：这条事实唯一
+    的消费者是「元素超出图幅」那条阻断级检查，多报一次是误伤，漏报一次是
+    静默丢内容。
+    """
+    try:
+        if not artist.get_clip_on():
+            return None
+        box = artist.get_clip_box()
+        path = artist.get_clip_path()
+    except (AttributeError, TypeError):
+        return None  # 伪元素（刻度组 / 色条代理…）问不出裁剪，当作不裁
+    boxes = []
+    if box is not None:
+        boxes.append(box)
+    if path is not None:
+        try:
+            boxes.append(path.get_fully_transformed_path().get_extents())
+        except Exception:  # noqa: BLE001
+            return None
+    if not boxes:
+        return None
+    try:
+        x0 = max(float(b.xmin) for b in boxes)
+        y0 = max(float(b.ymin) for b in boxes)
+        x1 = min(float(b.xmax) for b in boxes)
+        y1 = min(float(b.ymax) for b in boxes)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+        return None
+    return x0, y0, x1, y1
+
+
+def _clip_bbox(artist, W: float, H: float):
+    """元素的裁剪框（figure 分数、top-origin，与 bbox 同一套坐标）；不裁回 None。
+
+    **不改 `bbox`，另发一条事实。** bbox 同时是前端的命中框与选中高亮框，把它
+    换成「裁剪之后真正画出来的那部分」会连带改掉命中几何与写回自检比对的那个
+    框；而这里要回答的只有一个问题：导出时**图幅边界**处会不会静默丢内容。
+    两件事分开，消费者只有 `preflight` 的 `element-outside-figure` 一条。
+
+    裁剪框把整幅图都包住时不发——那等于什么都没裁掉，发出去只是噪音。
+    """
+    if isinstance(artist, SeriesGroup):
+        members = artist.artists if artist.kind == "bar_series" else artist.members()
+        rects = [_clip_extents(m) for m in members]
+        if not rects or any(r is None for r in rects):
+            # 有一个成员不被裁 = 这组整体有内容能画到框外，别声称它被裁住了
+            return None
+        ext = (
+            min(r[0] for r in rects),
+            min(r[1] for r in rects),
+            max(r[2] for r in rects),
+            max(r[3] for r in rects),
+        )
+    else:
+        ext = _clip_extents(artist)
+    if ext is None:
+        return None
+    x0, y0, x1, y1 = ext
+    rect = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
+    if rect[0] <= 0.0 and rect[1] <= 0.0 and rect[0] + rect[2] >= 1.0 and rect[1] + rect[3] >= 1.0:
+        return None
+    return rect
 
 
 def _ensure_agg_canvas(fig):
@@ -3876,8 +3959,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
-        # 没有 geometry 的元素（文字、图例、容器、散点）前端照旧用 bbox。
-        if el["role"] in ("line", "fill", "patch"):
+        # 散点给的是每颗 marker 的轮廓（标记数有上限，超了退回 bbox）。
+        # 没有 geometry 的元素（文字、图例、容器）前端照旧用 bbox。
+        if el["role"] in ("line", "fill", "patch", "scatter"):
             geom = pathgeom.element_geometry(artist, W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
@@ -3894,6 +3978,16 @@ def _build_manifest(state: FigState, stem: str) -> dict:
                     ]
                 except Exception:
                     pass
+        # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
+        # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
+        # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
+        # 整个数据范围**，于是 xlim 之外的一个离群点能把 bbox 撑到图幅的几百倍，
+        # 而图幅边界处其实一点内容都没丢。预检的「元素超出图幅」据此把主语从
+        # 「这个元素的数据到哪儿」换成「这个元素真画出来的那部分到哪儿」。
+        # 缺席 = 不裁 / 裁不掉任何东西。
+        clip = _clip_bbox(artist, W, H)
+        if clip is not None:
+            entry["clip_bbox"] = clip
         # ---- 几何总闸：非有限值一个都不许出去 ----
         # 逐个分支补 `isfinite` 是补不完的（分支还会再长），而漏一个的后果
         # **取决于走哪条控制面**：Python 的 `json.dumps` 照写 `NaN` /
@@ -3941,13 +4035,19 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # 分支已经把「量不出几何 / 文字空了」的元素 `continue` 掉了。
         live_text = artist.live() if el["role"] == "ticklabel" else artist
         if isinstance(live_text, Text):
-            gone, subst = _glyph_scan(live_text.get_text(), live_text.get_fontfamily() or [])
+            gone, subst, cjk_faces = _glyph_scan(
+                live_text.get_text(), live_text.get_fontfamily() or []
+            )
             if gone:
                 entry["glyphs_missing"] = gone
             # 「退到别的脸画出来了」与「画不出来」是两句话。压成一句的话，
             # 用户看到红灯却发现图上好好的，下一次就不看这盏灯了。
             if subst:
                 entry["glyphs_fallback"] = subst
+            # 汉字由回退链上哪张脸画的（ADR 0045）：预检拿它对出版规范的
+            # 中日韩白名单，界面拿它回答「我的中文是什么字体」。
+            if cjk_faces:
+                entry["cjk_family"] = cjk_faces[0]
         elements.append(entry)
 
     if budget.skipped:

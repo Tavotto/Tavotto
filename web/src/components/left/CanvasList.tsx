@@ -5,13 +5,14 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
-  MoreHorizontal,
+  Ellipsis,
   Pencil,
   Plus,
   Search,
   SearchX,
   Trash2,
 } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   activateCanvas,
   createCanvasAndActivate,
@@ -64,7 +65,7 @@ export function CanvasList() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2">
         <div className="relative min-w-0 flex-1">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+          <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -78,7 +79,7 @@ export function CanvasList() {
           aria-label={cl('newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
-          <Plus size={14} />
+          <Plus size={ICON_SIZE.md} />
         </Button>
       </div>
 
@@ -226,13 +227,13 @@ function CanvasRow({
             aria-label={cl('rowActions', { name: canvas.name })}
             className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           >
-            <MoreHorizontal size={13} className="text-ink-3" />
+            <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
           </Button>
         }
       >
         <MenuItem onSelect={onRenameStart}>
           <span className="flex items-center gap-2">
-            <Pencil size={13} className="text-ink-3" />
+            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
             {cl('rename')}
           </span>
         </MenuItem>
@@ -242,7 +243,7 @@ function CanvasRow({
           onSelect={() => useDocumentStore.getState().reorderCanvases(index, index - 1)}
         >
           <span className="flex items-center gap-2">
-            <ArrowUp size={13} className="text-ink-3" />
+            <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
             {cl('moveUp')}
           </span>
         </MenuItem>
@@ -251,7 +252,7 @@ function CanvasRow({
           onSelect={() => useDocumentStore.getState().reorderCanvases(index, index + 1)}
         >
           <span className="flex items-center gap-2">
-            <ArrowDown size={13} className="text-ink-3" />
+            <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
             {cl('moveDown')}
           </span>
         </MenuItem>
@@ -262,14 +263,14 @@ function CanvasRow({
           }}
         >
           <span className="flex items-center gap-2">
-            <Copy size={13} className="text-ink-3" />
+            <Copy size={ICON_SIZE.sm} className="text-ink-3" />
             {cl('duplicate')}
           </span>
         </MenuItem>
         <MenuSeparator />
         <MenuItem danger onSelect={() => void remove()}>
           <span className="flex items-center gap-2">
-            <Trash2 size={13} />
+            <Trash2 size={ICON_SIZE.sm} />
             {cl('delete')}
           </span>
         </MenuItem>

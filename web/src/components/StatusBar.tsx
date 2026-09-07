@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import { DURATION, usePresence } from '@/lib/motion'
@@ -113,7 +114,7 @@ export function StatusToasts() {
               aria-label={t('status.dismissError')}
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-danger/10"
             >
-              <X size={12} />
+              <X size={ICON_SIZE.sm} />
             </button>
           )}
         </div>

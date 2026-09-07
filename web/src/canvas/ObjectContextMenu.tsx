@@ -5,7 +5,7 @@ import {
   ArrowUpToLine,
   ChevronDown,
   ChevronUp,
-  CircleHelp,
+  CircleQuestionMark,
   Copy,
   Crop,
   Eye,
@@ -278,7 +278,7 @@ function LayoutOnlyPanelItems({
   return (
     <>
       {explainable && (
-        <MenuItem icon={CircleHelp} data-quick-item="why-not-editable" onSelect={focus}>
+        <MenuItem icon={CircleQuestionMark} data-quick-item="why-not-editable" onSelect={focus}>
           {translate('readiness.whyNotEditable', { ns: 'workspace' })}
         </MenuItem>
       )}
