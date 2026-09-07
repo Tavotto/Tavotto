@@ -20,14 +20,92 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-WF = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+WF = ROOT / ".github" / "workflows"
+
+#: 模块级读进来的 workflow——少一个，下面 41 条判据全部没有主语。
+_NEEDED = ("ci.yml", "codeql.yml")
+
+# 本模块的输入是**仓库级**的 workflow 文件，而 sdist 只带 `tests` /
+# `src/tavotto` / `web/src`（`[tool.hatch.build.targets.sdist].include`）。
+# 从 sdist 解出来跑时 `.github/` 根本不存在，而这两行是**模块级**语句——
+# 不接住就崩在收集期：pytest 报 `ERROR collecting <file>`，栈顶停在 pathlib，
+# 不指向任何一条用例，整组判据一起消失（issue #269）。
+#
+# 「读不到」有两种成因，它们把人送去的方向相反，所以必须分开报：
+#   * 整个 `.github/workflows/` 不在 → **这个环境里没有这些输入**（sdist 布局），
+#     如实跳过并点名缺的是什么，别去找一个不存在的重命名；
+#   * 目录在、单个文件不在 → **路径真的变了**（重命名 / 挪走），当场抛并点名
+#     是哪个文件——这种情况不该被跳过糊过去。
+#
+# 守卫的前提由 `test_the_skip_premise_still_holds` 钉住：哪天 sdist 带上了
+# `.github`，这个 skip 就是多余的，而**一个多余的 skip 会在本该跑得动的环境里
+# 安静地关掉整组判据**（`tests/test_blame_ignore_revs.py` 的浅克隆 skip 是同族
+# 先例：把盲点写在明处不等于补上了）。
+if not WF.is_dir():
+    pytest.skip(
+        f"当前环境里没有 {WF.relative_to(ROOT)}/（本模块要读 {', '.join(_NEEDED)}）"
+        "——本模块的判据是仓库级 workflow 契约，只在**源码检出**里有意义"
+        "（sdist 只带 tests / src/tavotto / web/src）。这不是「路径变了」，"
+        "别去找重命名。",
+        allow_module_level=True,
+    )
+
+_RENAMED = [name for name in _NEEDED if not (WF / name).is_file()]
+assert not _RENAMED, (
+    f"{WF.relative_to(ROOT)}/ 在，但里面读不到 {_RENAMED}——这是**路径变了**"
+    "（workflow 被重命名或挪走），去找那个新名字。"
+    "「这个环境里根本没有 .github」是另一回事，由上面的 skip 守卫接住。"
+)
+
 CI = (WF / "ci.yml").read_text(encoding="utf-8")
 CODEQL = (WF / "codeql.yml").read_text(encoding="utf-8")
+
+
+def _sdist_include() -> list[str]:
+    """读 pyproject 的 sdist include 列表；**只认列表项，不认注释里的散文**。"""
+    body = re.search(
+        r"(?ms)^\[tool\.hatch\.build\.targets\.sdist\]\n(.*?)^\[",
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+    )
+    assert body, "pyproject 里切不出 [tool.hatch.build.targets.sdist] 段"
+    entries = re.findall(r'(?m)^\s*"([^"]+)",\s*$', body.group(1))
+    assert entries, "sdist 段里一个 include 条目都读不出来——列表的写法变了？"
+    return entries
+
+
+def test_the_skip_premise_still_holds():
+    """守卫的前提：sdist 确实带 `tests`、确实不带 `.github`。
+
+    前提一变（比如以后把 `.github` 也打进 sdist），这里当场红——那时模块顶上的
+    skip 就多余了，而多余的 skip 会在**本该跑得动**的环境里安静地关掉整组判据。
+    与 `tests/test_e2e_leg_topology.py` 的同名判据同一形状（issue #269）。
+    """
+    include = _sdist_include()
+    assert "tests" in include, "sdist 不再带 tests——本模块根本不会被解出来，这个守卫也就没有主语了"
+    for shipped in (".github",):
+        assert not any(e == shipped or e.startswith(shipped + "/") for e in include), (
+            f"sdist 现在带上了 {shipped}——模块顶上的 skip 守卫已经多余。"
+            "留着它等于在一个本该能跑的环境里安静地关掉整组判据"
+        )
+
 
 #: ruleset 收敛后的三个 required contexts；名字改动 = 仓库锁死，
 #: 与 scripts/ci/merge_queue_ruleset.py 的 GATE_CONTEXTS 对拍。
 GATES_IN_CI = ("CI fast gate", "CI integration gate")
 GATE_IN_CODEQL = "CodeQL gate"
+
+#: `desktop-shell` 的 matrix 里每个 runner → 它是不是 macOS。判据只关心这一个
+#: 维度，因为 `main.rs` 的 cfg 分岔就在 `target_os = "macos"` 这一维上
+#: （issue #282）。这是**枚举**不是白名单：加一个新 runner 就必须回到这里，
+#: 顺便被问一句「它属于哪一类」。
+_RUNNER_IS_MACOS = {
+    "ubuntu-latest": False,
+    "macos-latest": True,
+    "windows-latest": False,
+}
 
 
 def _code(text: str) -> str:
@@ -271,6 +349,55 @@ class TestGates:
         assert "desktop-shell" in _needs_of(_job(CI, "ci-fast-gate")), (
             "跑了但没接进 Gate：它红了没人看得见"
         )
+
+    def test_desktop_shell_lints_both_sides_of_the_macos_cfg(self):
+        """`#[cfg(target_os = "macos")]` 那一支必须有 clippy 的执行位置（#282）。
+
+        **clippy 只看得见参与编译的那一支。** 只跑一条 Linux 腿时，`main.rs`
+        的应用菜单分支（`about_with_text` / `hide_with_text` / …）不进编译单元，
+        它的 lint 在**任何**工作流里都没有执行位置——`desktop-tauri.yml` 的
+        macOS 腿只跑 `cargo test`，不 deny warnings，编译错误抓得到、lint 抓不到。
+        本机实测过这把尺子是活的：同一条 `format!("{}", "x")` 塞进 macos 块里
+        clippy 退 101，塞进 not(macos) 块里退 0。
+
+        判据钉的是**两类各要有一条腿**：只钉一侧的门禁，反方向越界时不会响。
+        """
+        block = _code(_job(CI, "desktop-shell"))
+        assert re.search(r"(?m)^    runs-on: \$\{\{ matrix\.os \}\}$", block), (
+            "desktop-shell 不再按 matrix.os 分腿——它退回单平台了，"
+            "另一侧 cfg 分支的 clippy 又没有执行位置了（issue #282）"
+        )
+        m = re.search(r"(?m)^        os: \[([^\]]+)\]$", block)
+        assert m, "desktop-shell 里读不出 strategy.matrix.os —— 缩进形状变了？"
+        oses = [o.strip() for o in m.group(1).split(",")]
+        unknown = [o for o in oses if o not in _RUNNER_IS_MACOS]
+        assert not unknown, (
+            f"desktop-shell 的 matrix 里有没见过的 runner {unknown}——"
+            "先在 _RUNNER_IS_MACOS 里说清它属不属于 macOS 那一类，再加腿"
+        )
+        assert {_RUNNER_IS_MACOS[o] for o in oses} == {True, False}, (
+            f"desktop-shell 的腿只覆盖了 {oses}——`main.rs` 里另一侧 cfg 分支"
+            "在这些 runner 上不参与编译，它的 clippy 又变成一条永远不执行的"
+            "判据了（issue #282）"
+        )
+
+    def test_the_rust_gates_run_on_every_desktop_shell_leg(self):
+        """三条 cargo 命令不许被 `if:` 收窄到某一条腿上。
+
+        收窄任意一条，它守的那一侧就重新变成「登记了但不执行」——而 matrix
+        还在、Gate 照绿，上面那条按 runner 数腿的判据也照样过。这是同一个
+        缺陷的第二个消费点。
+        """
+        block = _code(_job(CI, "desktop-shell"))
+        steps = re.split(r"(?m)^      - ", block)[1:]
+        cargo = [st for st in steps if re.search(r"(?m)^\s*run: cargo ", st)]
+        assert len(cargo) == 3, f"desktop-shell 里的 cargo 步骤有 {len(cargo)} 条，预期 3 条"
+        for st in cargo:
+            cmd = re.search(r"(?m)^\s*run: (cargo .*)$", st).group(1)
+            assert not re.search(r"(?m)^\s*if:", st), (
+                f"`{cmd}` 被 `if:` 收窄到了某一条腿上——它守的那一侧就没有执行"
+                "位置了（issue #282）。要按平台分岔就分在 cargo 那一侧，别关掉整步"
+            )
 
     def test_integration_gate_covers_the_heavy_layer(self):
         assert {"package", "windows-exe-smoke", "macos-app-smoke"} <= _needs_of(

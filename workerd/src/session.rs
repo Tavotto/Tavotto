@@ -583,14 +583,21 @@ fn await_response(
         let now = Instant::now();
         let remaining = deadline.saturating_duration_since(now);
         if remaining.is_zero() {
-            return Err(timeout_error(inner, now - started, idle.is_some()));
+            // 兜底上限到点。**判哪一句话不看「是谁到点了」，看静默了多久**——
+            // 一直有输出的死循环正是从这里出去的，它绝不能说成「没有任何输出」。
+            return Err(timeout_error(
+                inner,
+                now - started,
+                now - last_progress,
+                idle,
+            ));
         }
         let slice = match idle {
             None => remaining,
             Some(limit) => {
                 let silent_for = now - last_progress;
                 if silent_for >= limit {
-                    return Err(timeout_error(inner, silent_for, true));
+                    return Err(timeout_error(inner, now - started, silent_for, idle));
                 }
                 remaining.min(PROGRESS_POLL).min(limit - silent_for)
             }
@@ -675,7 +682,12 @@ fn await_response(
                 // 看门狗模式下这只是「这一片没等到回应」，不是判死：先看日志有没有
                 // 长——长了就把静默计时清零，继续等。平坦模式下才是真的到点了。
                 if idle.is_none() {
-                    return Err(timeout_error(inner, started.elapsed(), false));
+                    return Err(timeout_error(
+                        inner,
+                        started.elapsed(),
+                        Duration::ZERO,
+                        None,
+                    ));
                 }
                 let grown = log_size(inner);
                 if grown != size {
@@ -699,13 +711,25 @@ fn await_response(
     }
 }
 
-/// 超时的用户可读形态。`watchdog` = 是不是静默看门狗判的死（ADR 0050）——
-/// 两种判据下用户的下一步完全不同，所以措辞也必须不同：看门狗说的是「多久
-/// 没有任何输出」，平坦上限说的是「等了多久」。
+/// 超时的用户可读形态。**三种判据，三句话**（ADR 0050）——用户的下一步完全
+/// 不同，合成一句等于把两个方向的排查指到同一处：
 ///
-/// **文案与 Python 池同源**（`EngineWorker._timeout_error`）：两条控制面在
-/// 「为什么被判死」上给同一个答案，否则换个控制面就换一套解释。
-fn timeout_error(inner: &Arc<Inner>, waited: Duration, watchdog: bool) -> ProtoError {
+/// * `idle` 为 `None` = 热态操作的平坦上限，说的是「等了多久」；
+/// * `silent_for >= idle` = 静默看门狗判的死，说的是「多久没有任何输出」，
+///   下一步是展开输出看它停在哪；
+/// * 否则 = 兜底上限收掉了一个**一直有输出**的循环，下一步是看它在重复什么。
+///   这一条从前被并进了第二条，于是 4 小时的打印死循环会被报成「连着 240
+///   分钟没有任何输出」——判据的主语从 `silent_for` 滑到了 `waited`。
+///
+/// **判据与文案都与 Python 池同源**（`EngineWorker._timeout_error`，
+/// `pool.py` 里是 `silent_for >= BUILD_IDLE_TIMEOUT`）：阈值只有下发的这一个，
+/// 这边不许再有第二套数。
+fn timeout_error(
+    inner: &Arc<Inner>,
+    waited: Duration,
+    silent_for: Duration,
+    idle: Option<Duration>,
+) -> ProtoError {
     let wrote = inner
         .proc
         .lock()
@@ -714,15 +738,23 @@ fn timeout_error(inner: &Arc<Inner>, waited: Duration, watchdog: bool) -> ProtoE
         .map(|p| p.wrote_last())
         .unwrap_or(true);
     kill_and_forget(inner);
-    if watchdog {
-        return ProtoError::new(
-            CODE_WORKER_TIMEOUT,
-            true,
+    if let Some(limit) = idle {
+        let message = if silent_for >= limit {
             format!(
-                "脚本连着 {} 分钟没有任何输出，当作卡住处理，渲染会话已重启。                 展开输出看它最后停在哪一步；如果它本来就要静默算很久，                 在那一段里打一行进度输出，Tavotto 就会一直等下去。",
-                waited.as_secs() / 60
-            ),
-        );
+                "脚本连着 {} 分钟没有任何输出，当作卡住处理，渲染会话已重启。\
+                 展开输出看它最后停在哪一步；如果它本来就要静默算很久，\
+                 在那一段里打一行进度输出，Tavotto 就会一直等下去。",
+                silent_for.as_secs() / 60
+            )
+        } else {
+            format!(
+                "脚本已经跑了 {} 小时还没结束，到了上限，渲染会话已重启。\
+                 它一直有输出，所以不是卡死——多半是循环停不下来。\
+                 展开输出看它在重复什么。",
+                waited.as_secs() / 3600
+            )
+        };
+        return ProtoError::new(CODE_WORKER_TIMEOUT, true, message);
     }
     let hint = if wrote {
         "脚本可能陷入死循环，或这一步本身极慢"
@@ -955,6 +987,59 @@ mod tests {
         assert!(
             err.message.contains("没有任何输出"),
             "看门狗判死要说判据本身: {}",
+            err.message
+        );
+    }
+
+    /// 兜底上限收掉的是一个**一直有输出**的循环——那句话不许说成「没有任何输出」。
+    ///
+    /// 这条以前没有：硬上限那个出口把 `waited` 当成 `silent_for` 传进了同一句
+    /// 文案，于是 4 小时的打印死循环会被报成「连着 240 分钟没有任何输出」。
+    /// 判据的主语从「静默了多久」滑到了「等了多久」，而上面两条用例都只走
+    /// 静默分支，谁也看不见它。
+    #[test]
+    fn the_hard_ceiling_says_the_script_kept_printing() {
+        let log = std::env::temp_dir().join(format!("tavotto-wd-loop-{}.log", std::process::id()));
+        std::fs::write(&log, b"").unwrap();
+        let (inner, _out) = test_inner_with_log(1, Some(log.to_string_lossy().into_owned()));
+        let (_tx, rx) = channel::<WorkerEvent>();
+
+        // 每 20ms 打一行 → 静默计时一直被清零，先到点的必然是 240ms 的兜底上限。
+        let writer_log = log.clone();
+        let stop = Arc::new(AtomicU64::new(0));
+        let stop_writer = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            while stop_writer.load(Ordering::SeqCst) == 0 {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&writer_log)
+                    .unwrap();
+                let _ = f.write_all(b"[INFO] round\n");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let err = await_response(
+            &inner,
+            &rx,
+            1,
+            "r-1",
+            Duration::from_millis(240),
+            Some(Duration::from_millis(150)),
+        )
+        .unwrap_err();
+        stop.store(1, Ordering::SeqCst);
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(err.code, CODE_WORKER_TIMEOUT);
+        assert!(
+            err.message.contains("一直有输出"),
+            "兜底上限判死要说「它一直有输出」: {}",
+            err.message
+        );
+        assert!(
+            !err.message.contains("没有任何输出"),
+            "兜底上限判死不许说成静默: {}",
             err.message
         );
     }

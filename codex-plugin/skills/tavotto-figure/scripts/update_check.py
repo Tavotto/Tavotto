@@ -36,6 +36,10 @@
 
 * `TAVOTTO_UPDATE_URL` —— 自定义清单地址（自建分发、内网镜像、测试）
 * `TAVOTTO_DISABLE_UPDATE_CHECK=1` —— 完全关掉（一个包都不发）
+* `TAVOTTO_UPDATE_TIMEOUT` —— 覆盖那条墙钟预算（秒）。**这是给测试用的旋钮**，
+  不是给用户的开关：起子进程跑脚本的用例吃的是同一条生产预算，而它在负载高
+  的 CI 机器上真的会被吃掉（见 `TIMEOUT` 旁边的证据指针）。解析见
+  `resolve_timeout()`——设错一律回落到默认值。
 
 纯标准库，Python 3.8+。
 """
@@ -63,8 +67,22 @@ CACHE_NAME = "codex-plugin-update.json"
 INTERVAL = 24 * 3600
 #: 失败之后多久再问一次（比成功短得多：离线只是暂时的）
 RETRY_INTERVAL = 3600
-#: 网络超时。**这是硬上限**，用户在等着看图
+#: 网络超时的默认值（**总墙钟**，不只是 socket 超时，见 `fetch`）。
+#: **这是硬上限**，用户在等着看图。
+#:
+#: 它防的是「挂了的代理、被限速的镜像」，**不是用来给测试计时的**——起子进程
+#: 跑脚本的用例吃的是同一条生产预算，而「本地回环快到不可能吃掉 1.5 秒」是个
+#: 已被证伪的假设：2026-09-05 合并组的 Windows 腿（run 33937703910，
+#: `backend-platforms (windows-latest, 3.13)`，headSha 5d149755）在跑完 4012 条
+#: 用例、耗时 2006 秒之后，连 127.0.0.1 上的 `ThreadingHTTPServer` 都没能在
+#: 1.5 秒内答完，`test_explicit_entry_point_human` 拿到 `查不到最新版本`
+#: （issue #286）。所以测试用 `TIMEOUT_ENV` 把预算调大，**生产默认值不变**。
 TIMEOUT = 1.5
+#: 覆盖上面那条预算的环境变量。**给测试用**：生产不设它，默认路径一个字不变。
+TIMEOUT_ENV = "TAVOTTO_UPDATE_TIMEOUT"
+#: 旋钮的上限。再怎么调也不许把「绝不阻塞出图」那条底线让出去——一个拼错的
+#: 环境变量不能把生产路径变成「永不超时」。
+MAX_TIMEOUT = 60.0
 #: 这个插件的升级方式（比一个 zip 链接有用：它就是用户要敲的那一行）
 UPGRADE_COMMAND = "codex plugin marketplace upgrade tavotto"
 
@@ -174,6 +192,25 @@ def write_cache(path: str, data: dict) -> None:
 _CHUNK = 8 * 1024
 
 
+def resolve_timeout(environ: dict | None = None) -> float:
+    """**这一次检查**的总墙钟预算（秒）：默认 `TIMEOUT`，`TIMEOUT_ENV` 可覆盖。
+
+    判据只有一条：**解不出一个落在 `(0, MAX_TIMEOUT]` 里的有限数，就用默认值。**
+    空串、垃圾串、`0`、负数、`inf`/`nan`、大得离谱的值一律回落到 1.5 秒——这条
+    路是**生产路径**（`emit()` 到点就查一次），一个拼错的环境变量不许把它变成
+    「永不超时」。`inf` 与 `nan` 走的正是那个区间比较：对它们两个都是 False。
+    """
+    env = os.environ if environ is None else environ
+    raw = (env.get(TIMEOUT_ENV) or "").strip()
+    if not raw:
+        return TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return TIMEOUT
+    return value if 0 < value <= MAX_TIMEOUT else TIMEOUT
+
+
 def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
     """拉清单。**任何失败都回 None**，不抛、不打日志、不拖时间。
 
@@ -245,7 +282,7 @@ def check(
 
     due = force or _due(cache, url, now)
     if due:
-        fresh = fetcher(url, TIMEOUT)
+        fresh = fetcher(url, resolve_timeout(env))
         entry = {
             "schema": SCHEMA,
             "url": url,

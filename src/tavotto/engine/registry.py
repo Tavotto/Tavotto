@@ -13,9 +13,12 @@
     main/render 只会让「按自己习惯命名入口」的图库整个用不了
   * script 键是**图库相对路径**（POSIX 分隔符），子目录里的脚本照样登记
   * cost: "light" 秒级 | "medium" 十秒级 | "heavy" 分钟级（冷启动，
-    会话建立后 override 均为亚秒级）。**build 超时按它分档**（ADR 0048，
-    `pool.build_timeout_for`）：light 5 分钟、medium 15 分钟、heavy 1 小时——
-    脚本本来就要跑很久的，在注册表里标 heavy，别改脚本
+    会话建立后 override 均为亚秒级）。它是**预期时长的标注**：界面用它给冷启动
+    提示（`useServerEvents.ts` 的 coldHint）与面板角标，前端那条「请求是不是
+    悬挂了」的看门狗按它取 2/5/15 分钟（`renderStore.ts` 的 WATCHDOG_MS）。
+    **引擎的 build 超时不看它**——那边按「worker.log 还在不在长」判卡死
+    （ADR 0050 的静默看门狗，`pool.BUILD_IDLE_TIMEOUT` / `BUILD_HARD_TIMEOUT`），
+    ADR 0048 的分档已删除，标 heavy 不再改变任何超时
   * notes: "3d" = 仅文字类元素可编辑；"dead" = 产物已不在磁盘
 
 **一个进程可以同时端着多个项目的注册表**（不同标签页各开各的图库），所以

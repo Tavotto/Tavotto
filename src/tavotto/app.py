@@ -5842,12 +5842,26 @@ def _versions_path(doc_id: str) -> Path:
     return base / f"{doc_id}.json"
 
 
-def _load_versions(doc_id: str) -> list[dict]:
+def _versions_source_path(doc_id: str) -> Path | None:
+    """时间线**此刻实际会读哪个文件**；两个候选都不在就是 `None`。
+
+    读侧（`_load_versions`）与写入侧那道闸（`_refuse_blind_full_overwrite`）
+    共用这一份，**不许各写一份**：两处对「读的是哪个文件」答得不一样的话，
+    闸门量的就是另一个文件的存在性，而它照样是绿的（判据的主语滑走了）。
+    """
     p = _versions_path(doc_id)
-    if not p.is_file():
-        # 升级前的历史在数据目录 layouts/_versions/：项目里还没有这份文档的
-        # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
-        p = VERSIONS_DIR / p.name
+    if p.is_file():
+        return p
+    # 升级前的历史在数据目录 layouts/_versions/：项目里还没有这份文档的
+    # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
+    legacy = VERSIONS_DIR / p.name
+    return legacy if legacy.is_file() else None
+
+
+def _load_versions(doc_id: str) -> list[dict]:
+    p = _versions_source_path(doc_id)
+    if p is None:
+        return []
     try:
         raw = p.read_bytes()
     except OSError:
@@ -5864,6 +5878,54 @@ def _load_versions(doc_id: str) -> list[dict]:
     except ValueError:
         return []
     return data.get("versions", []) if isinstance(data, dict) else []
+
+
+def _refuse_blind_full_overwrite(doc_id: str):
+    """空历史 + 整份写回之前的最后一道闸：拒了就回 409，放行回 `None`。
+
+    **判据的主语是磁盘上那个文件此刻装着什么，不是 `_load_versions` 读出来
+    是不是空的。** 这两件事正是 issue #264 的分界线：`_load_versions` 把
+    「截断 / 乱码 / 不是 JSON」静默折成 `[]`（那一档今天仍然折——读侧要连
+    旧坏文件的出路一起改，不在这一轮），于是 `api_versions_create` 在一个
+    看起来是空的历史上追加一条、`_save_versions` **整份写回**，用户之前
+    全部的检查点当场没了，而且是原子写，干干净净地没了。
+    只问「读出来是不是空的」的闸永远拦不住它——它读出来确实是空的。
+
+    「历史是空的」只有两种正当来路，这里**枚举**它们，不给新形状开白名单：
+
+    * 磁盘上根本没有这份历史（`None`）——第一次建版本，最常走的那条路。
+      整份写回不会盖掉任何东西，**行为一个字不变**。
+    * 文件在，而它装的确实是一份空历史（`{"versions": []}`，正是
+      `_save_versions` 在用户把最后一版删光之后写下的形状）。
+
+    除此之外——读不动、不是 JSON、不是对象、没有 `versions` 键——一律拒绝：
+    文件在那儿却读不出一个版本列表，说明**读侧出了问题**，此时整份写回就是
+    在拿一份读不懂的历史换一条新记录。按写回事务不变式：409，原文件零改动
+    （这条路上一个 `_save_versions` 都不会被调到）。
+
+    下一个人很容易顺手把它简化成「`versions` 为空就放行」——那正是这条 bug。
+    """
+    src = _versions_source_path(doc_id)
+    if src is None:
+        return None
+    try:
+        data = engine_documents.loads_document(src.read_bytes())
+    except engine_documents.DocumentError:
+        raise  # 非有限数那一档由 `_load_versions` 先抛掉，走不到这里；抛也别吞
+    except (OSError, ValueError):
+        data = None
+    # 「键在且是空列表」——`{}`（没有 versions 键）与 `{"versions": {}}` 都
+    # 不是 `_save_versions` 写得出的形状，它们和乱码同属「内容坏了」。
+    if isinstance(data, dict) and data.get("versions") == []:
+        return None
+    LOG.warning("版本时间线读不出来，已拒绝整份写回（原文件未动）: %s", src)
+    return jsonify(
+        {
+            "error": "这份文档的版本历史读不出来，这次的检查点没有写入——"
+            "磁盘上那份历史一个字节都没动，仍在原处。",
+            "code": "versions_unreadable",
+        }
+    ), 409
 
 
 def _save_versions(doc_id: str, versions: list[dict]) -> None:
@@ -6123,6 +6185,14 @@ def api_versions_create(doc_id):
         ver["canvasName"] = str(body["canvasName"])
     with _VERSIONS_LOCK:
         versions = _load_versions(doc_id)
+        if not versions:
+            # 空历史是唯一一条「整份写回会把别人的东西盖掉」的路（rename /
+            # duplicate / delete 在空列表上都先 404，一个 `_save_versions`
+            # 都走不到）。闸在锁里：判据与写入之间放开一瞬，就够另一个请求
+            # 在这中间落盘。
+            refusal = _refuse_blind_full_overwrite(doc_id)
+            if refusal is not None:
+                return refusal
         # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）
         if ver["auto"] and versions:
             last = versions[-1]

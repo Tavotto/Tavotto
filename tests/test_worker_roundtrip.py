@@ -944,7 +944,8 @@ def test_request_timeout_kills_and_rebuilds_worker(tmp_path, monkeypatch):
     旧实现里 `request()` 持着 `w.lock` 无超时阻塞 readline：一个死循环脚本就
     让这个 (项目, 脚本) 的会话从此谁也用不了，连 `shutdown()` 都抢不到锁。
     看护三件事：报超时 code、进程真被杀掉、下一次 get() 能重建。这一跳是 build，
-    所以码是 build 专用的那个（ADR 0048）——「标 heavy」只对它有意义。
+    所以码是 build 专用的那个（ADR 0050）——build 走静默看门狗，报文说的是
+    「多久没有输出」，与热态的 `worker_timeout` 不是同一句话。
     """
     figs = tmp_path / "figures"
     figs.mkdir()

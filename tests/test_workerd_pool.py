@@ -328,8 +328,9 @@ def test_fatal_codes_mark_the_session_dead_so_get_rebuilds(monkeypatch, tmp_path
         assert w.alive()
         with pytest.raises(pool.WorkerError) as e:
             w.ensure_built()
-        # 这一跳是 build：超时在这里换成 build 专用码（ADR 0048——只有它能靠
-        # 「标 heavy」解决），其余码原样透传。两者都必须让会话判死。
+        # 这一跳是 build：超时在这里换成 build 专用码（ADR 0050——build 走静默
+        # 看门狗，判据与下一步都和热态超时不同），其余码原样透传。两者都必须
+        # 让会话判死。
         want = pool.BUILD_TIMEOUT_CODE if code == "worker_timeout" else code
         assert e.value.code == want
         assert not w.alive(), f"{code} 之后会话必须被标死"

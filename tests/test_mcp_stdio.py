@@ -330,6 +330,11 @@ def test_degraded_mode_over_real_stdio(degraded_client):
         "desktop_only",
         "desktop_found_cli_missing",
         "engine_unavailable",
+        # 第四态（#285）：装了引擎但比插件的下限旧。开发树里没有
+        # plugin-build.json，这一格在这条用例里不会触发——但**枚举得全**，
+        # 少一个取值的清单会在它第一次出现时把用例判成「没见过的 code」。
+        # 权威是 server.diagnose() 的 docstring（四态互斥）。
+        "engine_too_old",
     )
     assert body["canvas"]["available"] is False
     assert body["recovery"]
