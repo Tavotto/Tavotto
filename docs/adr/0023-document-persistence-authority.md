@@ -3,7 +3,7 @@
 状态：**Accepted**
 日期：2026-08-29
 相关：[0001 项目/画布/标签/对象层级](0001-project-canvas-tab-object.md)（文档模型）、
-[0009 写回像素验证](0009-write-back-pixel-verification.md)（另一条写盘链路，
+[0049 写回像素验证](0049-write-back-pixel-verification.md)（另一条写盘链路，
 它管的是**用户源文件**，本条管的是**Tavotto 自己的文档**）、
 本轨道文档 [`docs/implementation/product-ux-reliability/`](../implementation/product-ux-reliability/STATUS.md)。
 

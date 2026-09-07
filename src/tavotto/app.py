@@ -4667,7 +4667,7 @@ def _project_environment_state() -> dict:
         # 只把 `environment.json` 里记的事实交出去：界面据此显示「Tavotto
         # 环境 · 装了什么」与「重建」入口。
         "managed": engine_managedenv.state(root),
-        # safe worker 的工作目录模式（ADR 0045）：沙盒（默认）/ 脚本目录
+        # safe worker 的工作目录模式（ADR 0047）：沙盒（默认）/ 脚本目录
         "workdir": engine_workdir.state(root),
     }
     return out
@@ -4675,7 +4675,7 @@ def _project_environment_state() -> dict:
 
 @app.patch("/api/engine/workdir")
 def api_engine_workdir_set():
-    """设定**当前项目**的 safe worker 工作目录模式（ADR 0045）。
+    """设定**当前项目**的 safe worker 工作目录模式（ADR 0047）。
 
     `mode` 只认 `sandbox` / `project`。改了就把这个项目的会话全部关掉：
     cwd 是 spawn 时定下的，活着的会话还端着旧目录。**不是 native**：进程仍

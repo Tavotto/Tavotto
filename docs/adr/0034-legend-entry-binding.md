@@ -4,7 +4,7 @@
 日期：2026-09-02
 相关：[0032 属性能力层](0032-typography-capability-layer.md)（图例文字的排版走同一份
 Typography 控件）、[0030 统一检查与问题定位](0030-validation-and-problem-navigation.md)
-（图例项的线宽规则定位到图例项本身）、[0009 写回像素门](0009-write-back-pixel-verification.md)
+（图例项的线宽规则定位到图例项本身）、[0049 写回像素门](0049-write-back-pixel-verification.md)
 （跟随同步是派生显示，热态 == 重放必须继续成立），
 本轨道文档 [`docs/implementation/product-ux-reliability/`](../implementation/product-ux-reliability/STATUS.md)。
 

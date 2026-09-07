@@ -125,7 +125,7 @@ class Worker(wireproto.V1Handler):
         self.figures_dir = Path(args.figures_dir).resolve()
         self.out_dir = Path(args.out_dir).resolve()
         self.sandbox = Path(args.sandbox).resolve()
-        #: 脚本的工作目录（ADR 0045）：默认就是沙盒；`--cwd` 给了就是脚本
+        #: 脚本的工作目录（ADR 0047）：默认就是沙盒；`--cwd` 给了就是脚本
         #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
         self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
@@ -185,7 +185,7 @@ class Worker(wireproto.V1Handler):
         # `os.rmdir` / `os.rename` / `os.replace` / `shutil.rmtree` /
         # `shutil.move`）：`Path.unlink` 只是其中一个入口，脚本写
         # `os.remove("stale.png")` 一样是删真实图库里的文件——沙盒 cwd 下相对
-        # 路径落在沙盒里无害，绝对路径与「在脚本目录里运行」（ADR 0045）时的
+        # 路径落在沙盒里无害，绝对路径与「在脚本目录里运行」（ADR 0047）时的
         # 相对路径就直接指向项目。判据一条：**真身落在真实图库里就跳过**。
         # 带 `dir_fd` 的调用（rmtree 内部）不判——顶层 rmtree 已经拦过了。
         # 覆盖：脚本用 open('w') / np.save / C++ 写入器**改写**已有文件不拦，
@@ -443,7 +443,7 @@ def main() -> None:
     ap.add_argument("--figures-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--sandbox", required=True)
-    # ADR 0045：给了就把 cwd 切到这里（脚本目录）而不是沙盒；沙盒仍是写入边界的参照
+    # ADR 0047：给了就把 cwd 切到这里（脚本目录）而不是沙盒；沙盒仍是写入边界的参照
     ap.add_argument("--cwd", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)

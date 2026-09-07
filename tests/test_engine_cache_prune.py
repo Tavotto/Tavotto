@@ -64,6 +64,10 @@ def _stub_worker(base, replies=()):
     w.script_name = base.name
     w.generation = 1  # v1 信封字段：真 __init__ 里由 _next_generation() 给
     w.rev = 0
+    # build 的静默看门狗要 stat 这个文件（ADR 0050）。同上：真 __init__ 里有，
+    # 这个 stub 是手工造的半个 worker，缺了它 `request({"cmd": "build"})` 会 AttributeError。
+    w.log_path = base / "worker.log"
+    w._log_offset = 0
     return w
 
 

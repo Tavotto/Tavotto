@@ -151,7 +151,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     「脚本跑完但没出图」，worker.log 的尾部进 `traceback_text`（前端错误块
     的折叠区直接显示）。**只认显式为空的 `known` 列表**：字段缺失分不清
     「没有」和「没说」。两条控制面各接一处（`_error_of` / `_to_worker_error`）。
-    **根治是 ADR 0045 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
+    **根治是 ADR 0047 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
     不装回退，守卫与 savefig 捕获不动；错误块直接给这个入口。**不扩回退到
     `exists` / `glob`**——救不了 C++ 读取器，只会让脚本「以为」数据在。
     一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
@@ -169,7 +169,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
     （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
     新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
-    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0045）**：
+    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0047）**：
     `sandbox`（默认）/ `project`（脚本所在目录），唯一出处 `engine/workdir.py`
     （项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
     `_spawn_spec` / `one_shot`）都从它取——写回的重放必须和热态用同一个 cwd。
@@ -273,7 +273,12 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
   前端的 lastPatches 与 worker 真实状态错位，「全量列表」的还原就还错了东西
   （test_export_is_state_neutral 看护）。
-- **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`，
+- **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`；
+  build 用**静默看门狗**而不是平坦上限（ADR 0050）：`worker.log` 还在长就一直等，
+  连着 `BUILD_IDLE_TIMEOUT`（20 分钟）没长才判死，`BUILD_HARD_TIMEOUT`（4 小时）
+  兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
+  workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
+  超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
@@ -1447,7 +1452,7 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
     manifest 逐元素比 bbox/anchor（容差 0.5% figure 分数）与 size_mm（0.01mm），
     有分歧回 409 `replay_divergence` + 分歧清单。几何过了还要过**像素门**
-    （ADR 0009，issue #81）：两侧各出一张 `render_png` 探针图逐像素比——
+    （ADR 0049，issue #81）：两侧各出一张 `render_png` 探针图逐像素比——
     颜色 / 线型 / 字体 / 透明度这类几何不变的纯属性分歧只有像素量得到
     （PR #49 的 facecolor 恢复顺序 bug 报了 0 处分歧）。比较器是
     `pdfbackend.compare_png`（判据结构与 `scripts/ci/pixelcompare.py` 同构但

@@ -67,7 +67,7 @@
   与 `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——**前端摆得出的，后端必须
   画得出**。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
-  `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0045——
+  `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0047——
   守卫原样，变的只是相对路径写到哪，且要用户按项目确认）；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
   import pymupdf 的模块。
 - **隐私**：遥测三档同意（unset ≠ 同意）、白名单结构性防线、

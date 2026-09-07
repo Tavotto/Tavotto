@@ -148,6 +148,7 @@
     "unsupported_format": "还不支持导出 {{format}} 格式。",
     "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
     "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
+    "worker_build_timeout": "脚本运行超时，工作进程已重启——请重试。这个脚本本来就要跑很久的话，在脚本注册表里把它标为 heavy，冷启动上限会放宽到 1 小时。",
     "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
     "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
     "write_back_warnings": "写回被阻止：引擎在重放时报告了警告",
