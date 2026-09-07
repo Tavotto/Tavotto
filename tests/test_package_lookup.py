@@ -110,7 +110,9 @@ def test_lookup_argv_is_pinned():
       索引也只打一句 `No matching distribution found`，与「这个包不存在」
       逐字相同（2026-09-07 实测），离线就再也认不出来了；
     * `--timeout 3`：与 8 s 的墙上预算配套（0.3 启动 + 3 × 2 次 ≈ 6.3 s）；
-    * 包名在**最后**，且首字符必然是字母数字，不可能被 pip 当成选项。
+    * **`--`**：选项解析到此为止，「名字会不会被当成选项」不再取决于名字长
+      什么样。删掉它这条断言就红——那正是它存在的理由；
+    * 包名在**最后**，且由 `argv_package_name` 从常量字母表重拼出来。
     """
     assert deprepair.pip_index_argv("/env/bin/python", "lmfit") == [
         "/env/bin/python",
@@ -124,8 +126,149 @@ def test_lookup_argv_is_pinned():
         "1",
         "--timeout",
         "3",
+        "--",
         "lmfit",
     ]
+
+
+def test_the_option_terminator_sits_immediately_before_the_name():
+    """`--` 与包名**相邻**，而不是「argv 里某处有个 `--`」。
+
+    位置是判据的一部分：`--` 排在别的选项后面、名字前面才终止解析。写成
+    「包含 `--`」的话，把它挪到 argv 开头（那样 `--retries` 会被当成位置参数）
+    也照样绿。
+    """
+    argv = deprepair.pip_index_argv("/env/bin/python", "lmfit")
+    assert argv[-2:] == ["--", "lmfit"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "-i",
+        "-r",
+        "--index-url=http://evil.example/simple",
+        "--extra-index-url",
+        "--trusted-host",
+        "-",
+        "--",
+    ],
+)
+def test_a_dash_leading_name_can_never_reach_argv(name):
+    """`-` 开头的名字在**拼 argv 那一步**就死。
+
+    上游 `parse_requirement` 已经挡过一次（`_NAME_RE` 要求首字符是字母数字，
+    `test_a_hostile_name_dies_before_any_subprocess` 看着那一层）。这条看的是
+    **另一层**：argv 的唯一出处自己有没有能力吐出一个以 `-` 开头的参数。两层
+    是两个主语——上游那层守的是「用户输入」，这层守的是「进子进程的那个串」，
+    中间隔着归一化。
+    """
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.pip_index_argv("/env/bin/python", name)
+    assert err.value.code == deprepair.ERROR_REQUIREMENT_INVALID
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "lmfit;whoami",
+        "lmfit rm",
+        "lmfit`whoami`",
+        "lmfit$(id)",
+        "lmfit\n--index-url=http://evil",
+        "lmfit\x00",
+        "LMFIT",  # 归一化的活不在这里干：大写到不了 argv
+        "lmfit_x",  # 归一化之后没有下划线
+        "lmfit.x",  # 也没有点
+        "lm\u00e9fit",
+        "",
+        "   ",
+    ],
+)
+def test_only_the_constant_alphabet_gets_through(name):
+    """字母表外的字符一律抛，**不替换也不截断**。
+
+    悄悄改掉名字比拒掉更坏：界面上显示的名字与真正查的那个身份会对不上，
+    而那正是 `lookup_package` 自己做 PEP 503 归一（不让 pip 去做）的理由。
+    """
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.argv_package_name(name)
+    assert err.value.code == deprepair.ERROR_REQUIREMENT_INVALID
+
+
+def test_the_argv_name_is_rebuilt_and_never_the_input_string():
+    """`argv_package_name` 回的是**拼出来**的串，不是验过的那个串。
+
+    这条只有 AST 判得了。把重拼换成「验一遍就 `return text`」在运行时**逐字
+    等价**——同样的输入同样的输出，上面那十九条行为用例一条都不会红
+    （变异跑绿的第四种成因：语义 no-op）。而两者的差别正是这次改动买的那样
+    东西：出去的每个字符取自模块级常量表，不取自用户那个对象。差别既然只在
+    构造上，判据也只能落在构造上。
+
+    三条一起看，少一条就能被绕过：
+      * 每条 `return` 都读不到参数（挡「直接回原串」）；
+      * 往结果里 append 的必须是一个下标取值（挡 `out.append(ch)`）；
+      * 那个下标取的表只能来自两张模块级常量（挡「从别处换一张表进来」）。
+    """
+    tree = ast.parse(DEPREPAIR_SRC.read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "argv_package_name"
+    )
+    params = {a.arg for a in fn.args.args} | {"text"}
+
+    returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return) and n.value is not None]
+    assert returns, "argv_package_name 没有任何返回值"
+    for ret in returns:
+        read = {x.id for x in ast.walk(ret.value) if isinstance(x, ast.Name)}
+        assert not (read & params), f"直接回了输入串：{ast.unparse(ret)}"
+
+    appended = [
+        c.args[0]
+        for c in ast.walk(fn)
+        if isinstance(c, ast.Call)
+        and isinstance(c.func, ast.Attribute)
+        and c.func.attr == "append"
+        and c.args
+    ]
+    assert appended, "argv_package_name 没有往结果里逐字符拼"
+    tables: set[str] = set()
+    for expr in appended:
+        assert isinstance(expr, ast.Subscript), f"拼进去的不是下标取值：{ast.unparse(expr)}"
+        assert isinstance(expr.value, ast.Name), f"下标取的不是一个名字：{ast.unparse(expr)}"
+        tables.add(expr.value.id)
+
+    def value_names(expr: ast.expr) -> set[str]:
+        """这个表达式**求值结果**可能来自哪些名字。
+
+        条件表达式只看两个分支：`A if i == 0 else B` 的结果是 A 或 B，
+        `i` 只是选哪一个。整棵子树一把抓会把 `i` 也算成来源，判据就会在一份
+        完全正确的实现上报红。
+        """
+        if isinstance(expr, ast.IfExp):
+            return value_names(expr.body) | value_names(expr.orelse)
+        return {x.id for x in ast.walk(expr) if isinstance(x, ast.Name)}
+
+    sources: set[str] = set()
+    for asg in (n for n in ast.walk(fn) if isinstance(n, ast.Assign)):
+        if any(isinstance(t, ast.Name) and t.id in tables for t in asg.targets):
+            sources |= value_names(asg.value)
+    sources |= tables & {"_ARGV_NAME_CHARS", "_ARGV_NAME_FIRST_CHARS"}
+    assert sources and sources <= {
+        "_ARGV_NAME_CHARS",
+        "_ARGV_NAME_FIRST_CHARS",
+    }, f"拼字符用的表不只来自那两张常量：{sources}"
+
+
+@pytest.mark.parametrize("name", ["lmfit", "scikit-learn", "numpy", "a", "x0", "a-b-c", "0x"])
+def test_a_normalised_name_survives_the_rebuild_byte_for_byte(name):
+    """合法名字重拼回来**逐字节相同**——白名单不是「差不多能用」。
+
+    没有这一条，上面那组拒绝用例可以被一个「全都拒掉」的实现骗过去。
+    """
+    assert deprepair.argv_package_name(name) == name
+    assert deprepair.pip_index_argv("/env/bin/python", name)[-1] == name
 
 
 def test_lookup_runs_a_list_argv_and_never_a_shell(monkeypatch):

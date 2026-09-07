@@ -153,6 +153,7 @@ import { ColorScaleLink } from './ColorScaleLink'
 import { ResetChip } from './controls/textRows'
 import {
   LEGEND_ANCHOR_PROP,
+  LEGEND_PLACEMENT_PROPS,
   legendAnchorRange,
   legendEntryElements,
   legendPlacementOf,
@@ -1849,9 +1850,37 @@ function FieldRow({
     [element.gid],
   )
   const label = propLabel(field.prop, element.role)
-  const overridden = panel.overrides.some(
-    (o) => o.gid === element.gid && o.prop === field.prop,
+  // enum 的视觉控件按展示注册表分派；剩下的按字段类型走。**这一句必须排在
+  // 「已修改」之前**：图例位置那行是合并控件，它拥有的 prop 不止一条，而
+  // 「已修改」与恢复按钮都要按那一组算。
+  const kind = controlKindOf(element.role, field)
+  /**
+   * 这一行的控件**拥有**哪些 prop。
+   *
+   * 绝大多数字段只拥有它自己。图例位置那行是个合并控件：`LegendPositionPicker`
+   * 一次写下 `loc` + `loc_anchor`，并顺手删掉拖动留下的 `loc_frac`
+   * （`legendPlacementPlan`）。而 `loc_anchor` 正因为被它承接了，通用列表里
+   * **没有第二个入口**能清——只清 `field.prop` 的话，「恢复位置」之后锚框还在，
+   * 图例仍然在图外，用户除非连带重置别的无关 override，否则没有任何办法把这
+   * 一组属性单独还原回脚本原值（本轮评审 P2）。
+   *
+   * 清单只有 `LEGEND_PLACEMENT_PROPS` 那一份，这里**不抄第二份**：一个控件写
+   * 了哪些 prop 与它的重置清哪些 prop 必须是同一句话，分成两份写就会漂。
+   */
+  const ownedProps: readonly string[] =
+    kind === 'legend-position' ? LEGEND_PLACEMENT_PROPS : [field.prop]
+  const overridden = ownedProps.some((prop) =>
+    panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
   )
+  /** 恢复到脚本：这个控件拥有的**全部** override 进同一次修改（一条历史、一次渲染） */
+  const resetOwned = () => {
+    if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
+    clearOverrides(
+      panel.id,
+      elMsg('resetProp', { label }),
+      ownedProps.map((prop) => ({ gid: element.gid, prop })),
+    )
+  }
   // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
   // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
   // 三重表达「这个值来自你的修改，不是脚本」。
@@ -1913,7 +1942,7 @@ function FieldRow({
             size="icon-sm"
             className="shrink-0 self-start"
             aria-label={el('resetProp', { label })}
-            onClick={() => clearOverride(panel.id, element.gid, field.prop)}
+            onClick={resetOwned}
           >
             <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
@@ -1922,9 +1951,6 @@ function FieldRow({
     </Row>
   )
 
-
-  // enum 的视觉控件按展示注册表分派；剩下的按字段类型走
-  const kind = controlKindOf(element.role, field)
   const enumValue = String(value ?? '')
   const enumOptions = field.options ?? []
   switch (kind) {

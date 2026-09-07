@@ -21,9 +21,12 @@ import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import {
   LEGEND_ENTRY_STYLE_PROPS,
+  LEGEND_OUTSIDE_PRESETS,
+  LEGEND_PLACEMENT_PROPS,
   entryBinding,
   legendDisplayOrder,
   legendEntryViews,
+  legendPlacementPlan,
   restoreFollowPlan,
 } from '@/lib/legendModel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -491,6 +494,71 @@ describe('选中图例', () => {
     expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
     expect(overrideOf('axes_0.legend', 'loc_anchor')).toBeNull()
     expect(overridesOf('axes_0.legend').map((o) => o.prop)).toContain('loc_anchor')
+  })
+
+  it('重置位置：loc 与 loc_anchor 一起回到脚本原值（图例回到图内）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBe('upper left')
+    expect(overrideOf('axes_0.legend', 'loc_anchor')).toEqual([1.02, 1])
+
+    // 位置那一行的恢复按钮：`loc_anchor` 被这个控件承接了，通用列表里没有
+    // 第二个入口能清它——只清 `loc` 的话锚框还在，图例仍然在图外
+    await click(byAria('恢复位置'))
+    expect(overrideOf('axes_0.legend', 'loc')).toBeUndefined()
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).not.toContain('loc_anchor')
+  })
+
+  it('重置位置只动落位那一组，别的 override 一条不碰', async () => {
+    useDocumentStore.getState().commit(literal('先改点别的'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'fontsize', value: 12 })
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'ncol', value: 2 })
+      panel.overrides.push({ gid: 'axes_0.lines_0', prop: 'color', value: '#00ff00' })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend').map((o) => o.prop).sort()).toEqual(['fontsize', 'ncol'])
+    expect(overrideOf('axes_0.lines_0', 'color')).toBe('#00ff00')
+  })
+
+  it('重置位置把拖动留下的 loc_frac 也清掉——控件写过它，就该清它', async () => {
+    useDocumentStore.getState().commit(literal('先拖一下'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'loc_frac', value: [0.2, 0.3] })
+    })
+    await mount(['axes_0.legend'])
+    // 只拖过、没点过预设：位置那行照样算「已修改」，恢复按钮就在那儿
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend')).toHaveLength(0)
+  })
+
+  it('一次重置 = 一条历史（不是三条）', async () => {
+    await mount(['axes_0.legend'])
+    await click(byAria('右侧上'))
+    const before = useDocumentStore.getState().past.length
+    await click(byAria('恢复位置'))
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('清单只有一份：位置控件写过的 prop 全在 LEGEND_PLACEMENT_PROPS 里', () => {
+    // 结构判据。以后给这个控件加第四条 prop 时，光改 `legendPlacementPlan`
+    // 会在这里红——重置那一侧不会再被漏掉（评审 P2 的根因就是漏了第二条）。
+    const panel = panelOf()
+    const touched = new Set<string>()
+    for (const next of [
+      { loc: 'upper left', anchor: [1.02, 1] as [number, number] },
+      { loc: 'upper left', anchor: null },
+      ...LEGEND_OUTSIDE_PRESETS.map((preset) => ({ loc: preset.loc, anchor: preset.anchor })),
+    ]) {
+      const plan = legendPlacementPlan(panel, [legendEl], next)
+      for (const r of plan.remove) touched.add(r.prop)
+      for (const w of plan.set) touched.add(w.prop)
+    }
+    expect(touched.size).toBeGreaterThan(1)
+    const owned: readonly string[] = LEGEND_PLACEMENT_PROPS
+    expect([...touched].filter((p) => !owned.includes(p))).toEqual([])
   })
 
   it('点文字选中那一项', async () => {
