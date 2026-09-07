@@ -23,11 +23,15 @@ import {
   LEGEND_ENTRY_STYLE_PROPS,
   LEGEND_OUTSIDE_PRESETS,
   LEGEND_PLACEMENT_PROPS,
+  LEGEND_PLACEMENT_SLOTS,
   entryBinding,
   legendDisplayOrder,
   legendEntryViews,
   legendPlacementPlan,
+  placementPlanFrom,
+  placementPropsOf,
   restoreFollowPlan,
+  type LegendPlacementSlot,
 } from '@/lib/legendModel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -60,6 +64,15 @@ const f = (prop: string, type: EditableField['type'], value: unknown, extra = {}
   ({ prop, type, value, ...extra }) as EditableField
 
 const LOCS = ['best', 'upper right', 'upper left', 'lower left', 'lower right']
+
+/** 落位模型的源码原文——「清单是算出来的」那条判据读它 */
+const LEGEND_MODEL_SRC = Object.values(
+  import.meta.glob('/src/lib/legendModel.ts', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }) as Record<string, string>,
+)[0] as string
 
 /** 与 engine/manifest.py `_legend_fields` 同形 */
 const legendFields = (ncol = 1, anchor: unknown = null): EditableField[] => [
@@ -543,8 +556,8 @@ describe('选中图例', () => {
   })
 
   it('清单只有一份：位置控件写过的 prop 全在 LEGEND_PLACEMENT_PROPS 里', () => {
-    // 结构判据。以后给这个控件加第四条 prop 时，光改 `legendPlacementPlan`
-    // 会在这里红——重置那一侧不会再被漏掉（评审 P2 的根因就是漏了第二条）。
+    // 结构判据。绕开槽位表直接 `set.push` 一条新 prop 时在这里红——那是
+    // 「加了第四条落位 prop 却没进那张表」唯一还能溜进来的路。
     const panel = panelOf()
     const touched = new Set<string>()
     for (const next of [
@@ -557,8 +570,69 @@ describe('选中图例', () => {
       for (const w of plan.set) touched.add(w.prop)
     }
     expect(touched.size).toBeGreaterThan(1)
-    const owned: readonly string[] = LEGEND_PLACEMENT_PROPS
-    expect([...touched].filter((p) => !owned.includes(p))).toEqual([])
+    expect([...touched].filter((p) => !LEGEND_PLACEMENT_PROPS.includes(p))).toEqual([])
+  })
+
+  it('往槽位表加一条 prop：写入面与重置面同时变大（不是回来手改白名单）', () => {
+    // 这条钉的是**推导关系本身**，不是今天那三条 prop 的取值。手写两份清单
+    // 时，下次加落位 prop 的人不会自动想起还有个重置清单——重置漏掉它而且
+    // 不会红，白名单式的判据只挡得住「已知那几条丢了」，挡不住「新增了第二类」。
+    const extra: LegendPlacementSlot = { prop: 'loc_pad', plan: () => ({ value: 1 }) }
+    const slots = [...LEGEND_PLACEMENT_SLOTS, extra]
+
+    // 生产那份重置清单就是从这张表算出来的（不是另抄的一份字面量）
+    expect(placementPropsOf(LEGEND_PLACEMENT_SLOTS)).toEqual([...LEGEND_PLACEMENT_PROPS])
+    // 表长一条 → 清单跟着长一条
+    expect(placementPropsOf(slots)).toContain('loc_pad')
+    expect(placementPropsOf(slots)).toHaveLength(LEGEND_PLACEMENT_PROPS.length + 1)
+    // 而且新槽位真的会被写出来——证明两侧读的确实是同一张表，不是各走各的
+    const plan = placementPlanFrom(slots, panelOf(), [legendEl], {
+      loc: 'upper left',
+      anchor: [1.02, 1],
+    })
+    const touched = [...plan.remove, ...plan.set].map((t) => t.prop)
+    expect(touched).toContain('loc_pad')
+    expect(touched.filter((p) => !placementPropsOf(slots).includes(p))).toEqual([])
+  })
+
+  it('重置清单是**算出来的**，不是一份碰巧相等的字面量', () => {
+    // 上一条用例只看得见取值：把 `placementPropsOf(...)` 换成一份今天恰好相等
+    // 的手写数组，它照样绿——而那正是「退化回白名单」的样子。差别只在构造上，
+    // 判据也只能落在构造上（读源码走 `?raw`，与 `ui/nativeSelect.test.ts` 同
+    // 一手法：src 归 tsconfig.app.json 管，那儿不该有 node 的 types）。
+    const DEFINED_BY_DERIVATION = /export const LEGEND_PLACEMENT_PROPS = placementPropsOf\(/
+    expect(
+      LEGEND_MODEL_SRC,
+      '重置清单必须从 LEGEND_PLACEMENT_SLOTS 推导；手写第二份的话，下次加落位 '
+        + 'prop 时重置会漏掉它而且不会红',
+    ).toMatch(DEFINED_BY_DERIVATION)
+    // 自检：判据认得出退化成字面量的写法（不是空门禁）
+    expect(
+      DEFINED_BY_DERIVATION.test(
+        "export const LEGEND_PLACEMENT_PROPS = ['loc', 'loc_anchor', 'loc_frac']",
+      ),
+    ).toBe(false)
+  })
+
+  it('重置的覆盖面由清单说了算：里面的每一条都被清掉', async () => {
+    // **遍历 `LEGEND_PLACEMENT_PROPS` 造 override**，不是手写三条。以后槽位表
+    // 长一条，这条用例自动多造一条、也自动多要求清掉一条——覆盖面跟着变。
+    const seed: Record<string, unknown> = {
+      loc: 'upper left',
+      loc_anchor: [1.02, 1],
+      loc_frac: [0.2, 0.3],
+    }
+    useDocumentStore.getState().commit(literal('每条落位 prop 各造一条'), (d) => {
+      const panel = d.objects.find((o) => o.id === 'p1') as PanelObject
+      for (const prop of LEGEND_PLACEMENT_PROPS) {
+        panel.overrides.push({ gid: 'axes_0.legend', prop, value: seed[prop] ?? 1 })
+      }
+      // 对照组：不属于这个控件的那条必须活下来
+      panel.overrides.push({ gid: 'axes_0.legend', prop: 'fontsize', value: 12 })
+    })
+    await mount(['axes_0.legend'])
+    await click(byAria('恢复位置'))
+    expect(overridesOf('axes_0.legend').map((o) => o.prop)).toEqual(['fontsize'])
   })
 
   it('点文字选中那一项', async () => {
