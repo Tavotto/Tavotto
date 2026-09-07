@@ -30,6 +30,8 @@ pub struct Job {
     pub stem: Option<String>,
     pub payload: Value,
     pub timeout: Duration,
+    /// 静默看门狗（ADR 0050）。`None` = 平坦上限，与看门狗登场之前相同。
+    pub idle: Option<Duration>,
 }
 
 pub enum JobKind {
@@ -121,6 +123,7 @@ impl Session {
             stem: None,
             payload: json!({}),
             timeout: inner.spec.handshake_timeout(),
+            idle: None,
         });
 
         let worker_inner = Arc::clone(&inner);
@@ -426,6 +429,7 @@ fn execute(
                 job.stem.as_deref(),
                 &job.payload,
                 job.timeout,
+                job.idle,
             )?;
             if cmd == "render" {
                 inner.revision.fetch_add(1, Ordering::SeqCst);
@@ -478,6 +482,7 @@ fn ensure_worker(
         None,
         &json!({}),
         inner.spec.handshake_timeout(),
+        None, // 握手是一次 ping，没有用户脚本在跑，不用看门狗
     ) {
         Ok(_) => Ok(()),
         Err(mut err) => {
@@ -507,6 +512,7 @@ fn request(
     stem: Option<&str>,
     payload: &Value,
     timeout: Duration,
+    idle: Option<Duration>,
 ) -> Result<Value, ProtoError> {
     let generation = inner.generation.load(Ordering::SeqCst);
     let revision = inner.revision.load(Ordering::SeqCst);
@@ -520,7 +526,7 @@ fn request(
         // 写只是往写线程的 channel 里塞一条——**永不阻塞**。
         proc.send_line(line);
     }
-    let response = await_response(inner, events_rx, generation, &request_id, timeout)?;
+    let response = await_response(inner, events_rx, generation, &request_id, timeout, idle)?;
 
     let mut result = serde_json::Map::new();
     if let Some(fields) = response.as_object() {
@@ -541,20 +547,55 @@ fn request(
     Ok(Value::Object(result))
 }
 
+/// 看门狗多久看一眼日志。与 Python 池的 `_PROGRESS_POLL` 同一个数。
+const PROGRESS_POLL: Duration = Duration::from_secs(2);
+
+/// `worker.log` 现在多大；读不到（还没建、被删）回 0。
+///
+/// **这就是「它还在动吗」的全部判据**，与 Python 池逐字相同（ADR 0050）：
+/// worker 的 stderr 与用户脚本的 stdout 都落进这个文件，长大了就是还在跑。
+fn log_size(inner: &Arc<Inner>) -> u64 {
+    inner
+        .spec
+        .log_path
+        .as_ref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .unwrap_or(0)
+}
+
 fn await_response(
     inner: &Arc<Inner>,
     events_rx: &Receiver<WorkerEvent>,
     generation: u64,
     request_id: &str,
     timeout: Duration,
+    idle: Option<Duration>,
 ) -> Result<Value, ProtoError> {
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
+    // 静默看门狗（ADR 0050）：只要日志还在长就把静默计时清零，`timeout` 退化
+    // 成兜底上限。`idle` 为 None 时下面那段 `slice` 恒等于 `remaining`，
+    // 行为与看门狗登场之前逐字节相同。
+    let mut last_progress = started;
+    let mut size = if idle.is_some() { log_size(inner) } else { 0 };
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let now = Instant::now();
+        let remaining = deadline.saturating_duration_since(now);
         if remaining.is_zero() {
-            return Err(timeout_error(inner, timeout));
+            return Err(timeout_error(inner, now - started, idle.is_some()));
         }
-        match events_rx.recv_timeout(remaining) {
+        let slice = match idle {
+            None => remaining,
+            Some(limit) => {
+                let silent_for = now - last_progress;
+                if silent_for >= limit {
+                    return Err(timeout_error(inner, silent_for, true));
+                }
+                remaining.min(PROGRESS_POLL).min(limit - silent_for)
+            }
+        };
+        match events_rx.recv_timeout(slice) {
             // 上一代的迟到响应：直接丢弃，绝不拿去覆盖新会话的状态
             Ok(WorkerEvent::Line(gen, _))
             | Ok(WorkerEvent::Garbage(gen, _))
@@ -630,7 +671,19 @@ fn await_response(
                     )
                 });
             }
-            Err(RecvTimeoutError::Timeout) => return Err(timeout_error(inner, timeout)),
+            Err(RecvTimeoutError::Timeout) => {
+                // 看门狗模式下这只是「这一片没等到回应」，不是判死：先看日志有没有
+                // 长——长了就把静默计时清零，继续等。平坦模式下才是真的到点了。
+                if idle.is_none() {
+                    return Err(timeout_error(inner, started.elapsed(), false));
+                }
+                let grown = log_size(inner);
+                if grown != size {
+                    size = grown;
+                    last_progress = Instant::now();
+                }
+                continue;
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 // 读线程整个没了 —— 与 EOF 同一个判定，同样就地摘掉进程。
                 if let Some(proc) = inner.proc.lock().unwrap().take() {
@@ -646,7 +699,13 @@ fn await_response(
     }
 }
 
-fn timeout_error(inner: &Arc<Inner>, timeout: Duration) -> ProtoError {
+/// 超时的用户可读形态。`watchdog` = 是不是静默看门狗判的死（ADR 0050）——
+/// 两种判据下用户的下一步完全不同，所以措辞也必须不同：看门狗说的是「多久
+/// 没有任何输出」，平坦上限说的是「等了多久」。
+///
+/// **文案与 Python 池同源**（`EngineWorker._timeout_error`）：两条控制面在
+/// 「为什么被判死」上给同一个答案，否则换个控制面就换一套解释。
+fn timeout_error(inner: &Arc<Inner>, waited: Duration, watchdog: bool) -> ProtoError {
     let wrote = inner
         .proc
         .lock()
@@ -655,6 +714,16 @@ fn timeout_error(inner: &Arc<Inner>, timeout: Duration) -> ProtoError {
         .map(|p| p.wrote_last())
         .unwrap_or(true);
     kill_and_forget(inner);
+    if watchdog {
+        return ProtoError::new(
+            CODE_WORKER_TIMEOUT,
+            true,
+            format!(
+                "脚本连着 {} 分钟没有任何输出，当作卡住处理，渲染会话已重启。                 展开输出看它最后停在哪一步；如果它本来就要静默算很久，                 在那一段里打一行进度输出，Tavotto 就会一直等下去。",
+                waited.as_secs() / 60
+            ),
+        );
+    }
     let hint = if wrote {
         "脚本可能陷入死循环，或这一步本身极慢"
     } else {
@@ -666,7 +735,7 @@ fn timeout_error(inner: &Arc<Inner>, timeout: Duration) -> ProtoError {
         true,
         format!(
             "渲染超时（等了 {} 秒）。{hint}；渲染会话已重启，可以重试。",
-            timeout.as_secs()
+            waited.as_secs()
         ),
     )
 }
@@ -782,10 +851,21 @@ mod tests {
     /// 回 (Inner, 响应通道的接收端)——接收端必须被调用方持住，丢掉它
     /// `out.send` 就会失败，本组用例的断言会莫名其妙地变成「什么都没发生」。
     fn test_inner(generation: u64) -> (Arc<Inner>, Receiver<Response>) {
+        test_inner_with_log(generation, None)
+    }
+
+    fn test_inner_with_log(
+        generation: u64,
+        log_path: Option<String>,
+    ) -> (Arc<Inner>, Receiver<Response>) {
         let (out, rx) = channel();
+        let spec = SpawnSpec {
+            log_path,
+            ..SpawnSpec::default()
+        };
         let inner = Arc::new(Inner {
             id: "s-test".into(),
-            spec: SpawnSpec::default(),
+            spec,
             out,
             state: Mutex::new(State {
                 queue: VecDeque::new(),
@@ -809,6 +889,76 @@ mod tests {
                "manifest": {"elements": []}})
     }
 
+    /// 静默看门狗（ADR 0050）：**日志还在长就一直等**，别把慢当成卡死。
+    ///
+    /// 这条与 Python 池的 `test_output_resets_the_silence_clock` 是同一件事的
+    /// 两侧实现——判据分叉的话，换个控制面同一个脚本一个能跑一个被杀。
+    #[test]
+    fn output_resets_the_silence_clock() {
+        let log = std::env::temp_dir().join(format!("tavotto-wd-{}.log", std::process::id()));
+        std::fs::write(&log, b"").unwrap();
+        let (inner, _out) = test_inner_with_log(1, Some(log.to_string_lossy().into_owned()));
+        let (tx, rx) = channel();
+
+        // 静默阈值 120ms，但每 20ms 就有新输出；400ms 后才回应。
+        let writer_log = log.clone();
+        let stop = Arc::new(AtomicU64::new(0));
+        let stop_writer = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            while stop_writer.load(Ordering::SeqCst) == 0 {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&writer_log)
+                    .unwrap();
+                let _ = f.write_all(b"[INFO] still working\n");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = tx.send(WorkerEvent::Line(1, ok_line("r-1")));
+        });
+
+        let got = await_response(
+            &inner,
+            &rx,
+            1,
+            "r-1",
+            Duration::from_secs(30),
+            Some(Duration::from_millis(120)),
+        );
+        stop.store(1, Ordering::SeqCst);
+        let _ = std::fs::remove_file(&log);
+        assert!(got.is_ok(), "一直有输出时不该判死: {got:?}");
+    }
+
+    /// 一个字节都不多出来 → 到点判死，而且说的是「多久没有任何输出」。
+    #[test]
+    fn silence_ends_it_and_says_so() {
+        let log =
+            std::env::temp_dir().join(format!("tavotto-wd-silent-{}.log", std::process::id()));
+        std::fs::write(&log, b"").unwrap();
+        let (inner, _out) = test_inner_with_log(1, Some(log.to_string_lossy().into_owned()));
+        let (_tx, rx) = channel::<WorkerEvent>();
+        let err = await_response(
+            &inner,
+            &rx,
+            1,
+            "r-1",
+            Duration::from_secs(30),
+            Some(Duration::from_millis(80)),
+        )
+        .unwrap_err();
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(err.code, CODE_WORKER_TIMEOUT);
+        assert!(
+            err.message.contains("没有任何输出"),
+            "看门狗判死要说判据本身: {}",
+            err.message
+        );
+    }
+
     /// **数据损坏级**：会话被超时 kill 后原地重建，上一代的迟到响应必须被认出来
     /// 丢弃。不丢的话新会话会被旧 manifest 污染，而且一声不吭。
     #[test]
@@ -824,7 +974,7 @@ mod tests {
         tx.send(WorkerEvent::Eof(1)).unwrap();
         tx.send(WorkerEvent::Line(2, ok_line("r-当代"))).unwrap();
 
-        let got = await_response(&inner, &rx, 2, "r-当代", Duration::from_secs(2))
+        let got = await_response(&inner, &rx, 2, "r-当代", Duration::from_secs(2), None)
             .expect("当代的响应必须被采用");
         assert_eq!(got["manifest"]["elements"], json!([]));
     }
@@ -835,7 +985,8 @@ mod tests {
         let (inner, _out) = test_inner(2);
         let (tx, rx) = channel();
         tx.send(WorkerEvent::Line(2, ok_line("r-别人的"))).unwrap();
-        let err = await_response(&inner, &rx, 2, "r-当代", Duration::from_secs(2)).unwrap_err();
+        let err =
+            await_response(&inner, &rx, 2, "r-当代", Duration::from_secs(2), None).unwrap_err();
         assert_eq!(err.code, CODE_PROTOCOL_MISMATCH);
         assert!(err.message.contains("重试"));
     }
@@ -849,7 +1000,7 @@ mod tests {
             json!({"ok": true, "protocol_version": 2, "request_id": "r-1"}),
         ))
         .unwrap();
-        let err = await_response(&inner, &rx, 1, "r-1", Duration::from_secs(2)).unwrap_err();
+        let err = await_response(&inner, &rx, 1, "r-1", Duration::from_secs(2), None).unwrap_err();
         assert_eq!(err.code, CODE_PROTOCOL_MISMATCH);
     }
 
@@ -858,13 +1009,13 @@ mod tests {
         let (inner, _out) = test_inner(1);
         let (tx, rx) = channel();
         tx.send(WorkerEvent::Eof(1)).unwrap();
-        let err = await_response(&inner, &rx, 1, "r-1", Duration::from_secs(2)).unwrap_err();
+        let err = await_response(&inner, &rx, 1, "r-1", Duration::from_secs(2), None).unwrap_err();
         assert_eq!(err.code, CODE_SESSION_DEAD);
 
         inner.state.lock().unwrap().cancel_in_flight = true;
         let (tx2, rx2) = channel();
         tx2.send(WorkerEvent::Eof(1)).unwrap();
-        let err = await_response(&inner, &rx2, 1, "r-1", Duration::from_secs(2)).unwrap_err();
+        let err = await_response(&inner, &rx2, 1, "r-1", Duration::from_secs(2), None).unwrap_err();
         assert_eq!(err.code, CODE_CANCELLED);
         // 标记是一次性的，不许粘在会话上让下一条请求也报「取消」
         assert!(!inner.state.lock().unwrap().cancel_in_flight);
@@ -874,7 +1025,8 @@ mod tests {
     fn a_silent_worker_times_out_instead_of_waiting_forever() {
         let (inner, _out) = test_inner(1);
         let (_tx, rx) = channel::<WorkerEvent>();
-        let err = await_response(&inner, &rx, 1, "r-1", Duration::from_millis(120)).unwrap_err();
+        let err =
+            await_response(&inner, &rx, 1, "r-1", Duration::from_millis(120), None).unwrap_err();
         assert_eq!(err.code, CODE_WORKER_TIMEOUT);
     }
 

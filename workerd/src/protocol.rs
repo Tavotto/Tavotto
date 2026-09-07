@@ -96,6 +96,10 @@ pub struct Request {
     /// 超时**由调用方携带**：档位（BUILD / REQUEST / EXPORT / SHUTDOWN）是
     /// Flask 的策略，workerd 只负责执行。0 或缺省表示用默认档。
     pub timeout_ms: u64,
+    /// 静默看门狗的阈值（毫秒，0 = 不用看门狗，按 `timeout_ms` 平坦判死）。
+    /// 语义与 Python 池的 `BUILD_IDLE_TIMEOUT` 逐字相同（ADR 0050）：
+    /// **只要 worker.log 还在长就一直等**，连着这么久没长才算卡死。
+    pub idle_timeout_ms: u64,
 }
 
 impl Request {
@@ -187,6 +191,10 @@ impl Request {
                 payload
             },
             timeout_ms: obj.get("timeout_ms").and_then(Value::as_u64).unwrap_or(0),
+            idle_timeout_ms: obj
+                .get("idle_timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         })
     }
 

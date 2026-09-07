@@ -386,7 +386,8 @@ def test_the_timeout_tier_travels_with_each_request(monkeypatch, tmp_path):
     w.export("Fig1", [], "/tmp/x.pdf")
     tiers = {op: kw["timeout"] for op, kw in client.calls if op != "open_session"}
     assert tiers == {
-        "build": pool.BUILD_TIMEOUT,
+        # build 传的是兜底上限；真正判死的是静默看门狗（ADR 0050）
+        "build": pool.BUILD_HARD_TIMEOUT,
         "render": pool.REQUEST_TIMEOUT,
         "export": pool.EXPORT_TIMEOUT,
     }

@@ -364,6 +364,7 @@ class WorkerdClient:
         stem: str | None = None,
         payload: dict | None = None,
         timeout: float | None = None,
+        idle_timeout: float | None = None,
         slack: float | None = None,
     ) -> dict:
         """发一条请求并等它的响应；失败抛 `WorkerdError`。
@@ -376,10 +377,18 @@ class WorkerdClient:
             proc = self._proc
         if proc is None or proc.poll() is not None:
             raise WorkerdError("workerd 进程不可用", code="workerd_unavailable", retryable=True)
-        return self._call_on(proc, op, session_id, stem, payload, timeout, slack)
+        return self._call_on(proc, op, session_id, stem, payload, timeout, slack, idle_timeout)
 
     def _call_on(
-        self, proc, op, session_id, stem, payload, timeout, slack: float | None = None
+        self,
+        proc,
+        op,
+        session_id,
+        stem,
+        payload,
+        timeout,
+        slack: float | None = None,
+        idle_timeout: float | None = None,
     ) -> dict:
         rid = self._next_id()
         req = {
@@ -394,6 +403,10 @@ class WorkerdClient:
             req["stem"] = stem
         if timeout:
             req["timeout_ms"] = int(timeout * 1000)
+        if idle_timeout:
+            # 静默看门狗（ADR 0050）：workerd 只要看到 worker.log 还在长就一直等，
+            # 连着这么久没长才判死。判据与 Python 池逐字相同。
+            req["idle_timeout_ms"] = int(idle_timeout * 1000)
 
         slot = {"event": threading.Event(), "resp": None}
         # 先登记再写：反过来的话响应可能先于登记到达，reader 找不到收件人就把

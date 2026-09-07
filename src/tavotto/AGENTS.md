@@ -232,8 +232,11 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   前端的 lastPatches 与 worker 真实状态错位，「全量列表」的还原就还错了东西
   （test_export_is_state_neutral 看护）。
 - **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`；
-  build 按注册表 cost 分档 `build_timeout_for(script_cost(...))`，light ⅓ / medium 1 /
-  heavy 4 倍基数，两条控制面同一条——ADR 0048，
+  build 用**静默看门狗**而不是平坦上限（ADR 0050）：`worker.log` 还在长就一直等，
+  连着 `BUILD_IDLE_TIMEOUT`（20 分钟）没长才判死，`BUILD_HARD_TIMEOUT`（4 小时）
+  兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
+  workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
+  超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个

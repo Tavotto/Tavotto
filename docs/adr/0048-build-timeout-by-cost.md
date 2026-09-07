@@ -1,6 +1,11 @@
 # ADR 0048：build 超时按注册表的 cost 分档
 
-日期：2026-09-07 · 状态：**Accepted**
+日期：2026-09-07 · 状态：**已被 [ADR 0050](0050-build-silence-watchdog.md) 取代**（同日）
+
+> 取代的是**机制**，不是问题陈述：下面对「一刀切的 900 秒把慢脚本当死循环杀掉」的
+> 分析仍然成立。变的是解法——0048 让用户在注册表里把脚本标成 heavy，0050 改成看
+> `worker.log` 还在不在长，不问用户。分档的三个出处（`BUILD_TIMEOUT_FACTORS` /
+> `build_timeout_for` / `script_cost`）已随 0050 删除。
 
 ## 背景
 

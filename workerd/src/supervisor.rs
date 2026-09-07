@@ -313,6 +313,8 @@ impl Supervisor {
             } else {
                 DEFAULT_TIMEOUT_MS
             }),
+            // 静默看门狗（ADR 0050）：Flask 只在 build 上给这个数。
+            idle: (req.idle_timeout_ms > 0).then(|| Duration::from_millis(req.idle_timeout_ms)),
         };
         match session.enqueue(job) {
             Ok(()) => None,

@@ -499,7 +499,9 @@ class TestErrorModel:
         assert err["params"]["module"] == "tavotto_definitely_missing_pkg"
 
     def test_timeout_maps_to_execution_timeout(self, figs, monkeypatch):
-        monkeypatch.setattr(engine_pool, "BUILD_TIMEOUT", 8)
+        # 静默看门狗（ADR 0050）：sleepy.py 什么都不打印，落在静默那一档
+        monkeypatch.setattr(engine_pool, "BUILD_IDLE_TIMEOUT", 8)
+        monkeypatch.setattr(engine_pool, "BUILD_HARD_TIMEOUT", 60)
         write(figs, "sleepy.py", "import time\ntime.sleep(60)\n")
         result = engine_probe.probe(figs, "sleepy.py")
         assert result["error"]["code"] == engine_probe.ERROR_TIMEOUT
