@@ -60,7 +60,12 @@ const button = (label: string) =>
   )
 
 /** 弹窗里那个输入框（`type` 是属性默认值，DOM 上没这个 attribute，选不中） */
-const nameInput = () => document.querySelector<HTMLInputElement>('[role="dialog"] input')!
+const nameInput = () =>
+  document.querySelector<HTMLInputElement>('[role="dialog"] input[placeholder="my_paper_figures"]')!
+
+/** 就近那句拒绝原因（两个弹窗用同一个 role） */
+const alertText = () =>
+  document.querySelector<HTMLElement>('[role="dialog"] [role="alert"]')?.textContent ?? null
 
 const typeInto = (input: HTMLInputElement, value: string) => {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -133,5 +138,65 @@ describe('桌面壳的「新建项目」', () => {
     expect(dlg.textContent).toContain('Desktop')
     // 只问名字的那个弹窗会说「将在 … 下新建」；目录浏览器不说这句
     expect(dlg.textContent).not.toContain('将在')
+  })
+})
+
+/**
+ * 项目名必须是**一个路径分量**（评审 #299-2）。
+ *
+ * 之前这两个弹窗只判「trim 完非空」，于是 `..` / `../other` / `nested/name`
+ * 会被原样拼在所选上级目录后面发给 `/api/projects/open?create=true`，
+ * 后端 `mkdir(parents=True, exist_ok=True)` 把它们解析掉——项目落在了
+ * 对话框上写着的那个目录**之外**，甚至把一个已经存在的上级目录当成新项目
+ * 初始化。
+ *
+ * 判据钉的是**发出去的那条路径**（`open` 的实参），不是「按钮的 disabled
+ * 属性」：属性对了而闸没接上去，这个缺陷照样在。
+ */
+describe('项目名必须是一个路径分量', () => {
+  it.each(['..', '.', '../other', '..\\other', 'nested/name', 'nested\\name', '/abs', 'CON', 'figs.', 'figs '])(
+    '桌面新建拒绝 %j：按钮点不动，什么都不发出去',
+    async (bad) => {
+      await act(async () => button('新建项目')!.click())
+      typeInto(nameInput(), bad)
+      expect(button('在此新建')!.disabled).toBe(true)
+      await act(async () => button('在此新建')!.click())
+      expect(open).not.toHaveBeenCalled()
+    },
+  )
+
+  it('桌面新建就近给出拒绝的原因（不是只把按钮变灰）', async () => {
+    await act(async () => button('新建项目')!.click())
+    expect(alertText()).toBeNull() // 空着不算错
+    typeInto(nameInput(), '../other')
+    expect(alertText()).toContain('一级目录')
+    typeInto(nameInput(), '..')
+    expect(alertText()).toContain('上一级')
+    typeInto(nameInput(), 'CON')
+    expect(alertText()).toContain('保留')
+  })
+
+  it('回车提交也过同一道闸', async () => {
+    await act(async () => button('新建项目')!.click())
+    typeInto(nameInput(), '../other')
+    await act(async () => {
+      document
+        .querySelector<HTMLFormElement>('[role="dialog"] form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('浏览器模式的目录浏览器是同一道闸（同一份判据，两个消费点）', async () => {
+    desktop.isDesktop.mockReturnValue(false)
+    await act(async () => button('新建项目')!.click())
+    typeInto(nameInput(), 'nested/name')
+    expect(button('在此新建')!.disabled).toBe(true)
+    expect(alertText()).toContain('一级目录')
+
+    typeInto(nameInput(), 'my_paper_figures')
+    expect(button('在此新建')!.disabled).toBe(false)
+    await act(async () => button('在此新建')!.click())
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/my_paper_figures', true)
   })
 })

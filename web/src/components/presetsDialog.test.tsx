@@ -148,6 +148,33 @@ describe('PresetsDialog', () => {
     expect(preview.getAttribute('aria-hidden')).toBe('true')
   })
 
+  /**
+   * 九格的可访问 role 必须是 button（评审 #299-3）。
+   *
+   * 之前每个 `<button>` 上直接写了 `role="listitem"`——显式 role **替换**
+   * 掉原生语义，于是辅助技术树里那九格成了可聚焦的列表项，而不是能激活的
+   * 控件；读屏用户听不到「按钮」，也拿不到「按回车会发生什么」这条信息。
+   *
+   * 判据量的是**可访问 role**（显式 role 赢，没有才用标签的隐式 role），
+   * 不是「有没有写 role 属性」：写成 `role="option"` / `role="link"` 同样
+   * 是这个缺陷，而「没写 role 属性」那条判据看不见它们。
+   */
+  it('九格的可访问 role 是 button，外层的列表语义还在', () => {
+    open()
+    /** 标签的隐式 role（只列这几格用到的） */
+    const IMPLICIT: Record<string, string> = { BUTTON: 'button', LI: 'listitem', UL: 'list' }
+    const roleOf = (el: Element) => el.getAttribute('role') ?? IMPLICIT[el.tagName] ?? null
+
+    const cells = [...document.querySelectorAll('[data-preset]')]
+    expect(cells.length).toBe(PRESET_IDS.length)
+    for (const cell of cells) {
+      expect(roleOf(cell), cell.getAttribute('data-preset') ?? '').toBe('button')
+      // 列表语义没有因此丢掉：每格被一个 listitem 包着，外层是 list
+      expect(roleOf(cell.parentElement!)).toBe('listitem')
+      expect(roleOf(cell.parentElement!.parentElement!)).toBe('list')
+    }
+  })
+
   it('每格是带名字的可点按钮：点击插入并成组', () => {
     open()
     const cell = document.querySelector<HTMLButtonElement>('[data-preset="scalebar"]')!

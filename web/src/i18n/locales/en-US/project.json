@@ -4,6 +4,16 @@
     "confirmOpen": "Open this folder",
     "goTo": "Go to {{path}}",
     "goToPath": "Go to this path",
+    "nameError": {
+      "control_char": "The name contains invisible control characters. Please retype it.",
+      "dot_only": "“.” and “..” mean this folder and its parent — they cannot be a project name.",
+      "empty": "Enter a project name.",
+      "illegal_char": "The project name is a single folder name; it cannot contain < > : \" / \\ | ? * .",
+      "reserved_name": "That name is reserved by the system. Pick another one.",
+      "too_long": "The project name is too long. Please shorten it.",
+      "trailing_dot": "The project name cannot end with a period.",
+      "whitespace_edge": "The project name cannot start or end with a space."
+    },
     "noSubdirs": "No subfolders",
     "parentDir": "Parent folder",
     "pathLabel": "Current path",

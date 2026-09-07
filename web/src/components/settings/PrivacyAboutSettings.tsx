@@ -109,6 +109,12 @@ function PrivacyBlock() {
   }, [settings, load])
 
   const hard = settings?.hard_disabled ?? false
+  // 首次 `load()` 还在路上时 `settings` 是 null，`hard` 算出来是 false——两档
+  // 都点得动。那一下会与在途的 GET 赛跑：PATCH 先回来写下同意态，随后那份
+  // **陈旧**的 GET 响应把它连同 `lib/telemetry` 的缓存一起覆盖掉，界面与后端
+  // 里刚存下的同意状态从此对不上。二值开关时代这里靠 `!settings` 显式禁用，
+  // 换成三档 `Segmented` 时丢了这道守卫（评审 #300-4）。
+  const pending = !settings
   return (
     <SettingSection title={st('about.privacyTitle')}>
       <SettingRow label={st('about.telemetry.title')} status={consentStatus(settings)}>
@@ -118,8 +124,16 @@ function PrivacyBlock() {
           value={settings && settings.consent !== 'unset' ? settings.consent : null}
           onChange={(v) => void choose(v, 'settings')}
           items={[
-            { value: 'enabled' as const, label: st('about.telemetry.optIn'), disabled: hard },
-            { value: 'disabled' as const, label: st('about.telemetry.optOut'), disabled: hard },
+            {
+              value: 'enabled' as const,
+              label: st('about.telemetry.optIn'),
+              disabled: hard || pending,
+            },
+            {
+              value: 'disabled' as const,
+              label: st('about.telemetry.optOut'),
+              disabled: hard || pending,
+            },
           ]}
           ariaLabel={st('about.telemetry.toggle')}
         />

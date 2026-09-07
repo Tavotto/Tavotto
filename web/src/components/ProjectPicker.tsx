@@ -31,6 +31,7 @@ import {
   tutorialEntry,
   useTutorialStore,
 } from '@/lib/onboarding/tutorial'
+import { checkProjectName, type ProjectNameProblem } from '@/lib/projectName'
 import { disambiguateRecent, splitRecent, submitTargetFor } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -438,6 +439,14 @@ function RecentRow({
  * 默认的省略号却切掉的正是尾部。`dir="rtl"` 让溢出从左边裁；两端的 U+200E
  * 把路径钉在从左到右，免得末尾的 `/` 或 `.` 被双向算法搬到另一头。
  */
+/**
+ * 项目名被拒的原因 → 一句本地化的话。动态子键，闭集来自
+ * `lib/projectName.ProjectNameProblem`（i18n-check 按前缀
+ * `project:browser.nameError.` 认这一片）。
+ */
+const nameErrorText = (reason: ProjectNameProblem) =>
+  translate(`browser.nameError.${reason}`, { ns: 'project' })
+
 function TailPath({ path }: { path: string }) {
   return (
     <span dir="rtl" className="block truncate text-left font-mono text-xs text-ink-3">
@@ -495,7 +504,10 @@ export function DirBrowser({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const createDisabled = mode === 'create' && !name.trim()
+  // 名字栏收的是**叶子名**，不是路径：`..` / `nested/name` 会把项目建到
+  // 上面那个目录之外（评审 #299-2）。判据只有 `checkProjectName` 一份。
+  const nameProblem = mode === 'create' ? checkProjectName(name) : null
+  const createDisabled = mode === 'create' && nameProblem !== null
   const target = state?.is_roots ? '' : (state?.path ?? '')
 
   return (
@@ -515,7 +527,7 @@ export function DirBrowser({
             disabled={!target || createDisabled}
             onClick={() => {
               if (!target) return
-              onPick(mode === 'create' ? `${target}/${name.trim()}` : target, mode === 'create')
+              onPick(mode === 'create' ? `${target}/${name}` : target, mode === 'create')
             }}
           >
             {t(mode === 'create' ? 'browser.confirmCreate' : 'browser.confirmOpen')}
@@ -606,16 +618,28 @@ export function DirBrowser({
         </ul>
 
         {mode === 'create' && (
-          <label className="flex items-center gap-2 text-xs text-ink-2">
-            {t('browser.projectName')}
-            <TextInput
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my_paper_figures"
-              className="flex-1"
-            />
-          </label>
+          <div className="flex flex-col gap-1">
+            <label className="flex items-center gap-2 text-xs text-ink-2">
+              {t('browser.projectName')}
+              <TextInput
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="my_paper_figures"
+                className="flex-1"
+                aria-invalid={nameProblem && nameProblem !== 'empty' ? true : undefined}
+                aria-describedby={
+                  nameProblem && nameProblem !== 'empty' ? 'dir-browser-name-error' : undefined
+                }
+              />
+            </label>
+            {/* 空着不算错（按钮已经是禁用的），只有真输错了才出话 */}
+            {nameProblem && nameProblem !== 'empty' && (
+              <p id="dir-browser-name-error" role="alert" className="text-xs text-danger">
+                {nameErrorText(nameProblem)}
+              </p>
+            )}
+          </div>
         )}
 
         {error && (
@@ -651,7 +675,10 @@ function NewProjectNameDialog({
 }) {
   const { t } = useTranslation('project')
   const [name, setName] = useState('')
-  const clean = name.trim()
+  // 上级目录已经定了，这里收的是**叶子名**：`..` / `nested/name` 拼进去之后
+  // 项目会建在 `parent` 之外（评审 #299-2）。与 DirBrowser 同一份判据。
+  const problem = checkProjectName(name)
+  const showProblem = problem !== null && problem !== 'empty'
   return (
     <Dialog
       open
@@ -663,7 +690,12 @@ function NewProjectNameDialog({
           <Button variant="outline" size="md" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
-          <Button variant="primary" size="md" disabled={!clean} onClick={() => onCreate(clean)}>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={problem !== null}
+            onClick={() => onCreate(name)}
+          >
             {t('browser.confirmCreate')}
           </Button>
         </>
@@ -673,7 +705,7 @@ function NewProjectNameDialog({
         className="flex flex-col gap-2"
         onSubmit={(e) => {
           e.preventDefault()
-          if (clean) onCreate(clean)
+          if (!problem) onCreate(name)
         }}
       >
         <label className="flex items-center gap-2 text-xs text-ink-2">
@@ -684,8 +716,15 @@ function NewProjectNameDialog({
             onChange={(e) => setName(e.target.value)}
             placeholder="my_paper_figures"
             className="flex-1"
+            aria-invalid={showProblem ? true : undefined}
+            aria-describedby={showProblem ? 'new-project-name-error' : undefined}
           />
         </label>
+        {showProblem && (
+          <p id="new-project-name-error" role="alert" className="text-xs text-danger">
+            {nameErrorText(problem)}
+          </p>
+        )}
         <p className="truncate font-mono text-xs text-ink-3" title={parent}>
           {t('picker.createIn', { dir: parent })}
         </p>
