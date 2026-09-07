@@ -335,11 +335,16 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     })
   }
 
-  /** 「应用样式到当前图」：交给样式对话框——那里才看得见影响范围与冲突。 */
+  /**
+   * 「应用样式到当前图」：交给样式对话框——那里才看得见影响范围与冲突。
+   *
+   * 设置**不关**：样式对话框是压在它上面的一步（`uiStore.dialogStack`），关掉
+   * 就回到这里、焦点回到这颗按钮；并且带着此刻选中的这一条——「空样式」与
+   * 刚才在设置里点的那条是什么关系，不该让用户猜（审计 T35）。
+   */
   const applyToFigure = () => {
     if (kind !== 'style') return
-    useUiStore.getState().setSettingsOpen(false)
-    useUiStore.getState().setStylesOpen(true)
+    useUiStore.getState().setStylesOpen(true, { presetId: selected?.id ?? null })
   }
 
   const boundId = doc.profile?.id

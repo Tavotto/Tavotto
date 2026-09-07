@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useValidationStore } from '@/store/validationStore'
 import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Tip } from '../ui/Tooltip'
@@ -15,6 +14,7 @@ import { CanvasList } from './CanvasList'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
+import { useScopedProblems } from './useProblemScope'
 
 /**
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
@@ -91,9 +91,9 @@ export function LeftPanel({
   )
 }
 
-/** 问题计数进标题：抽屉展开时不必再看轨道角标 */
+/** 问题计数进标题：与面板同一个范围（当前图 / 整个文档）；轨道角标仍是全文档 */
 function ProblemCount() {
-  const n = useValidationStore((s) => s.issues.length)
+  const n = useScopedProblems().issues.length
   if (!n) return null
   return <span className="font-mono text-xs text-ink-3">{n}</span>
 }

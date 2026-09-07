@@ -1,6 +1,10 @@
 /**
  * 刻度任务卡：「刻度在哪、朝哪、要不要次刻度」在同一处完成。
  *
+ * 审计 T13 / T25 之后的三条：每组设置只有一处控件（显示边只在示意图上，方向
+ * 只有一组分段，恢复只有一个动作）；次刻度关着时从属字段收起；刻度组页分
+ * 「刻度 / 文字」两段，X / Y / Z 同一套页、字段名相同，Z 没有的由 manifest 说了算。
+ *
  * 要钉住的（修改前全部不成立，见
  * `docs/ux/img/ux-consistency-pass/before/zh-1440-axes-ticks.png`——
  * 子图页只有四边开关，刻度短线固定画在框外，方向与次刻度在别的元素里）：
@@ -517,16 +521,43 @@ describe('刻度卡的方向四档与显示边', () => {
     expect(livePanel().overrides.some((o) => o.value === 'hidden')).toBe(false)
   })
 
-  it('「显示边」开关写 ticks_<side>，键盘走得通', async () => {
+  it('「在哪几条边显示」只在示意图上一处：卡里没有第二排开关，示意图的带键盘可切', async () => {
     await mount('axes_0')
-    const top = byAria('上边刻度线')!
-    expect(top.getAttribute('role')).toBe('switch')
-    expect(top.getAttribute('aria-checked')).toBe('false')
+    // 以前这里有一排「上边 / 下边」Toggle，与示意图的内 / 外两带重复表达同一组设置
+    expect(byAria('上边刻度线')).toBeUndefined()
+    expect(host.querySelectorAll('[role="group"][aria-label="在哪几条边显示刻度线"]')).toHaveLength(0)
+    const outer = host.querySelector('[data-tick-zone="top:outer"]') as SVGGElement
+    expect(outer.getAttribute('aria-checked')).toBe('false')
     await act(async () => {
-      top.click()
+      outer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
     expect(overrideOf('axes_0', 'ticks_top')).toBe(true)
-    expect(byAria('上边刻度线')!.getAttribute('aria-checked')).toBe('true')
+    expect(
+      (host.querySelector('[data-tick-zone="top:outer"]') as SVGGElement).getAttribute('aria-checked'),
+    ).toBe('true')
+  })
+
+  it('改过的边在示意图上标出，恢复只有一个动作：一次把示意图承接的修改全部回到脚本', async () => {
+    await mount('axes_0')
+    const outer = host.querySelector('[data-tick-zone="top:outer"]') as SVGGElement
+    await act(async () => {
+      outer.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBe(true)
+    expect(
+      (host.querySelector('[data-tick-zone="top:outer"]') as SVGGElement).getAttribute('data-tick-modified'),
+    ).toBe('true')
+    // 没有逐边的「上边刻度线 ×」chip
+    expect(byAria('恢复上边刻度线到脚本')).toBeUndefined()
+    const reset = host.querySelector('[data-tick-reset-all]') as HTMLButtonElement
+    expect(reset).toBeTruthy()
+    const before = useDocumentStore.getState().past.length
+    await act(async () => {
+      reset.click()
+    })
+    expect(overrideOf('axes_0', 'ticks_top')).toBeUndefined()
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+    expect(host.querySelector('[data-tick-reset-all]')).toBeNull()
   })
 
   it('次刻度长度 / 宽度是自己的字段，写 minor_length / minor_width', async () => {
@@ -535,11 +566,21 @@ describe('刻度卡的方向四档与显示边', () => {
       yTicksEl,
     )
     useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest })
+    // 开次刻度会触发一次渲染：mock 得回**这份**manifest，否则渲染回来的
+    // 又是没有 minor_length 字段的那份，行就消失了（fixture 与被测代码无关）
+    engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
     await mount('axes_0')
+    // 次刻度关着：它的长度 / 宽度收起（写了看不见）
+    expect(host.querySelector('input[data-inspector-prop="minor_length"]')).toBeNull()
+    expect(host.querySelector('input[data-inspector-prop="minor_width"]')).toBeNull()
+    await act(async () => {
+      byAria('X 轴的次刻度')!.click()
+    })
     const input = host.querySelector(
       'input[data-inspector-prop="minor_length"]',
     ) as HTMLInputElement
     expect(input).toBeTruthy()
+    expect(host.querySelector('input[data-inspector-prop="minor_width"]')).toBeTruthy()
     await act(async () => {
       input.focus()
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -627,11 +668,44 @@ describe('刻度组元素页', () => {
     expect(countLabel('宽度')).toBe(1)
   })
 
-  it('没被承接的能力仍然可达：主刻度方式在首屏，次刻度方式在「更多」里', async () => {
+  it('没被承接的能力仍然可达：主刻度方式在「刻度」段；次刻度方式随次刻度开关条件出现', async () => {
     await mount('axes_0.xticks')
-    expect(textOf()).toContain('主刻度方式')
-    await openMore()
-    expect(textOf()).toContain('次刻度方式')
+    const marks = host.querySelector('[data-tick-section="marks"]')!
+    expect(marks.textContent).toContain('主刻度方式')
+    // 次刻度关着：方式 / 格式收起
+    expect(textOf()).not.toContain('次刻度方式')
+    await act(async () => {
+      byAria('X 轴的次刻度')!.click()
+    })
+    expect(host.querySelector('[data-tick-section="marks"]')!.textContent).toContain('次刻度方式')
+  })
+
+  it('页面分「刻度 / 文字」两段，刻度在前；字号 / 颜色在「文字」段，方向 / 长度在「刻度」段', async () => {
+    await mount('axes_0.yticks')
+    const sections = Array.from(host.querySelectorAll('[data-tick-section]')).map((s) =>
+      s.getAttribute('data-tick-section'),
+    )
+    expect(sections).toEqual(['marks', 'labels'])
+    const marks = host.querySelector('[data-tick-section="marks"]')!
+    const labels = host.querySelector('[data-tick-section="labels"]')!
+    expect(marks.querySelector('[data-prop="direction"]')).toBeTruthy()
+    expect(marks.querySelector('[data-prop="length"]')).toBeTruthy()
+    expect(labels.querySelector('[data-prop="fontsize"]')).toBeTruthy()
+    expect(labels.querySelector('[data-prop="color"]')).toBeTruthy()
+    expect(labels.querySelector('[data-prop="direction"]')).toBeNull()
+    // 没有「更多」折叠：两段之外没有第三处
+    expect(buttons().some((b) => b.textContent?.trim() === '更多')).toBe(false)
+  })
+
+  it('改过的次刻度从属字段即使次刻度关着也显示（不因折叠而不可发现）', async () => {
+    await mount('axes_0.xticks')
+    expect(textOf()).not.toContain('次刻度方式')
+    useDocumentStore.getState().commit(literal('改次刻度方式'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1')
+      if (p?.type === 'panel') p.overrides.push({ gid: 'axes_0.xticks', prop: 'minor_mode', value: 'step' })
+    })
+    await act(async () => {})
+    expect(host.querySelector('[data-tick-section="marks"]')!.textContent).toContain('次刻度方式')
   })
 
   it('逐字段恢复到脚本仍在：改过方向后出现恢复按钮，点掉即回退', async () => {
@@ -696,27 +770,31 @@ describe('3D 图的 Z 刻度', () => {
     expect(host.querySelectorAll('[role="switch"][aria-label="X 轴的次刻度"]')).toHaveLength(0)
   })
 
-  it('Z 自己的长度 / 宽度 / 次刻度仍然可达（不被 consumed 规则吃掉）', async () => {
+  it('Z 与 X / Y 同一套页、同一套字段名（长度 / 宽度 / 次刻度），没有的能力由 manifest 说了算', async () => {
     await mount3d()
-    await openMore()
-    const text = textOf()
-    // 通用列表用的是完整属性名（卡里那套「长度 / 宽度」是任务卡内部的短标签）
-    expect(text).toContain('刻度长度')
-    expect(text).toContain('刻度粗细')
-    expect(text).toContain('次刻度')
+    const card = host.querySelector('[data-tick-card="z"]')!
+    expect(card).toBeTruthy()
+    expect(countLabel('长度')).toBe(1)
+    expect(countLabel('宽度')).toBe(1)
+    expect(textOf()).toContain('次刻度')
+    // 二维那套的完整属性名不再在这里出现（同一件事两个名字）
+    expect(textOf()).not.toContain('刻度长度')
+    expect(textOf()).not.toContain('刻度粗细')
+    // 3D 没有 direction / minor_length：不摆
+    expect(host.querySelector('[data-prop="direction"]')).toBeNull()
+    expect(host.querySelector('[data-prop="minor_length"]')).toBeNull()
+    expect(byAria('Z 轴的次刻度')).toBeTruthy()
+    // 两段顺序与二维一致
+    expect(
+      Array.from(host.querySelectorAll('[data-tick-section]')).map((s) => s.getAttribute('data-tick-section')),
+    ).toEqual(['marks', 'labels'])
   })
 
   it('改 Z 的长度写到 zticks，不碰 xticks / yticks', async () => {
     await mount3d()
-    await openMore()
-    // 通用 FieldRow 的可见标签就是可达名的来源，输入框自己没有 aria-label：
-    // 从标签所在的行往上找，再取行里的输入框
-    const label = Array.from(host.querySelectorAll('span')).find(
-      (x) => x.textContent?.trim() === '刻度长度' && x.children.length === 0,
-    )!
-    expect(label).toBeTruthy()
-    const row = label.closest('div')!.parentElement!
-    const len = row.querySelector('input') as HTMLInputElement
+    const len = host.querySelector(
+      '[data-tick-card="z"] input[data-inspector-prop="length"]',
+    ) as HTMLInputElement
     expect(len).toBeTruthy()
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!

@@ -14,6 +14,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasStage } from './CanvasStage'
+import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -171,5 +172,70 @@ describe('快速编辑这一屏', () => {
     act(() => openFastEdit('c.pdf'))
     await mount()
     expect(container.textContent).toContain('连接源脚本')
+  })
+})
+
+/**
+ * UI 审计 T06：「编辑原图」把还不在文档里的图加进来时，浮动条常驻一行说明
+ * （撤销即移除）；图本来就在文档里 / 回排版再进来时没有这一行。
+ * 用 DOM 断言而不是 store 字段：store 那一维在 workspace.test.ts 里钉。
+ */
+describe('「刚为编辑加入本文档」的说明', () => {
+  const note = () => container.querySelector('[data-fast-edit-added-note]')
+
+  it('加进来的那一次显示；回排版再进同一张（已在文档里）不显示', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    expect(note()).not.toBeNull()
+    expect(note()!.textContent).toContain('撤销')
+
+    act(() => returnToLayout())
+    act(() => openFastEdit('a.pdf'))
+    expect(note()).toBeNull()
+  })
+
+  /**
+   * 活动区必须**先在、后变**，而且要在**主路径**上成立。
+   *
+   * 读屏播报的是活动区**内容的变化**：把一个已经填好字的 `role="status"` 整个插
+   * 进 DOM，各家 AT 行为不一致、很可能一声不吭。所以这条钉的不是「有没有这段
+   * 文字」（那一维上面两条钉了），而是「用户真正走的那条路上，区比内容先在」。
+   *
+   * **主路径 = 排版模式下点素材卡的「编辑原图」，那张图还不在文档里**：
+   * `openFastEdit` 同时建面板 + 切模式。这条路径上区必须**早就在**了——所以它
+   * 挂在常驻的 `CanvasStage` 上，不在 `FastEditBar` 里（后者正是这一刻才挂上
+   * 的，区跟它一起插进来的话就是「带着内容整个插入」，等于没做）。
+   *
+   * 不用「回排版再进来」那种往返来钉：`FastEditBar` 往返一次必然重挂，那条路
+   * 径上的节点身份本来就不可能守恒，拿它当判据是在钉一件不成立的事。
+   */
+  const live = () => container.querySelector('[data-fast-edit-live]')
+
+  it('主路径：进快速编辑之前播报区就已在 DOM 里，进去之后是同一个节点被填上', async () => {
+    // 排版模式，用户还没点「编辑原图」：区已经在，且是空的
+    await mount()
+    expect(useWorkspaceStore.getState().mode, '起点是排版模式').toBe('layout')
+    const before = live()
+    expect(before, '排版模式下播报区就该在 DOM 里（内容还没出现）').not.toBeNull()
+    expect(before!.textContent?.trim(), '没话说时它是空的').toBe('')
+
+    // 「编辑原图」一张还不在文档里的图 —— 这就是主路径
+    act(() => openFastEdit('b.pdf'))
+    expect(useWorkspaceStore.getState().addedForEdit, '这一次确实把图加进了文档').not.toBeNull()
+    expect(live()!.textContent, '这一刻区被填上').toContain('撤销')
+    expect(live(), '是同一个节点被填上，不是新插进来一个').toBe(before)
+  })
+
+  it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {
+    // 「对象消失就退出快速编辑」的清扫在 App 层挂（usePruneSelection）：这里手动订阅
+    const stopPrune = subscribePruneSelection()
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    expect(note()).not.toBeNull()
+    act(() => useDocumentStore.getState().undo())
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    expect(useWorkspaceStore.getState().addedForEdit).toBeNull()
+    expect(note()).toBeNull()
+    stopPrune()
   })
 })

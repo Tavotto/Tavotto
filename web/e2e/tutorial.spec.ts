@@ -12,7 +12,7 @@ import type { Page } from '@playwright/test'
  *   * coachmark 贴着真实锚点、没有遮罩、导出面板开着时它在面板里（模态对话框外面
  *     的东西点不到）；
  *   * 刷新页面回到同一步；Esc 暂停后刷新不再出现；「更多」菜单里继续；
- *   * 「重新开始教程」把画布恢复原样、onboarding 从头；
+ *   * 「重置教程项目」把画布恢复原样、onboarding 从头；
  *   * axe 无 critical / serious。
  *
  * 全程不联网（后端本地、教程资源在包内）。
@@ -194,7 +194,7 @@ test('刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单�
   await expect(coachmark(page)).toContainText('打开一张图')
 })
 
-test('重新开始教程：画布恢复原样、onboarding 从头；最近列表里带「教程项目」标记', async ({
+test('重置教程项目：画布恢复原样、onboarding 从头；最近列表里带「教程项目」标记', async ({
   app,
   page,
 }) => {
@@ -223,12 +223,12 @@ test('重新开始教程：画布恢复原样、onboarding 从头；最近列表
   await page.waitForTimeout(1500) // 自动保存防抖：让改动真的落盘，重置才有东西可恢复
   expect((await fracX()) - frac0).toBeGreaterThan(0.05)
 
-  // ⌘K → 重新开始教程 → 确认
+  // ⌘K → 重置教程项目 → 确认（动作名说的是被重置的对象：副本 + 进度）
   await page.keyboard.press('ControlOrMeta+k')
-  await page.getByRole('option', { name: '重新开始教程' }).click()
-  const confirm = page.getByRole('dialog').filter({ hasText: '重新开始教程？' })
+  await page.getByRole('option', { name: '重置教程项目' }).click()
+  const confirm = page.getByRole('dialog').filter({ hasText: '重置教程项目？' })
   await expect(confirm).toBeVisible()
-  await confirm.getByRole('button', { name: '重新开始' }).click()
+  await confirm.getByRole('button', { name: '重置并重新开始' }).click()
   await expect(coachmark(page)).toContainText('用示例了解 Tavotto', { timeout: 60_000 })
   await page.waitForTimeout(500)
   expect(Math.abs((await fracX()) - frac0)).toBeLessThan(0.01)

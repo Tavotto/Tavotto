@@ -84,7 +84,7 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
   await expect(card).toBeVisible({ timeout: 30_000 })
   await expect(card.getByText('运行时图')).toBeVisible()
 
-  // 打开（双击卡片 = 主动作）。Prompt 09 起它落在快速编辑工作区，
+  // 编辑原图（双击卡片 = 主动作；T06 起与「添加到画布」分开）。Prompt 09 起它落在快速编辑工作区，
   // **当场就在图内编辑态**——不再需要先加入画布再点一次「编辑图内元素」。
   await card.dblclick()
   await expect(page.getByText('画布是空的')).toHaveCount(0)

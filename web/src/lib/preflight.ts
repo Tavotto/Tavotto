@@ -53,6 +53,16 @@ export interface PreflightOccurrence {
   message: UiMessage
   /** 这一次命中自己的量化细节 */
   detail: Record<string, unknown>
+  /**
+   * 这一次命中的**量化排名**（越大越糟），与聚合项挑「最糟那次」用的是同一把
+   * 尺子；没法比大小的规则（family / cmap / 文本…）不带。
+   *
+   * 存在的理由只有一个：聚合项按对象裁一刀之后（`rawIssuesForObject`）得**重新
+   * 挑一次**最糟的那条命中，而挑的规则必须与 `Sink` 完全一样。不带着排名的话，
+   * 裁完只能沿用整画布最糟那次的文案与 detail——那正是「报告把别的面板的
+   * 测量值记到这张图头上」的成因。
+   */
+  worse?: number
 }
 
 export interface PreflightIssue {
@@ -82,6 +92,16 @@ const pf = (key: string, values?: Record<string, unknown>): UiMessage =>
 
 /** 页面/几何比较的容差（mm）。与 Python 的 EPS_MM 同值。 */
 const EPS_MM = 0.05
+
+/**
+ * 「元素超出图幅」的容差（**图自身的 mm**，不乘面板缩放；与
+ * `engine/preflight.py::FIGURE_CLIP_EPS_MM` 同名同值，理由写在那边：布局框不是
+ * 墨迹，0.56 mm 的探出已经是肉眼可见的裁切，容差只吸收框自己的抖动）。
+ */
+const FIGURE_CLIP_EPS_MM = 0.3
+
+/** 超出图幅不查的角色（`figure` 按定义满幅；`ticks` 组由单条 `ticklabel` 代言） */
+const CLIP_SKIP_ROLES = new Set(['figure', 'ticks'])
 
 const CJK_RE =
   /[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/
@@ -258,12 +278,16 @@ class Sink {
         : [[null, null]]
     for (const [oid, gid] of pairs) {
       const key = `${item.id}\u0000${oid ?? ''}\u0000${gid ?? ''}\u0000${prop ?? ''}`
+      // 命中对象**只在这里造一次**：新增与顶掉旧条目是同一件事的两条路径，
+      // 各写一份的话下一个字段只会被加进其中一条（`worse` 差点就是这样）
+      const hit: PreflightOccurrence = { objectId: oid, gid, prop, message, detail }
+      if (opts.worse != null) hit.worse = opts.worse
       const idx = item.occurrences.findIndex(
         (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
       )
       if (idx < 0) {
         if (opts.worse != null) this.hitWorst.set(key, opts.worse)
-        item.occurrences.push({ objectId: oid, gid, prop, message, detail })
+        item.occurrences.push(hit)
         continue
       }
       // 已经有一条：只有「带排名且更糟」才顶掉它（与聚合项同一条规则）
@@ -271,7 +295,7 @@ class Sink {
       const prev = this.hitWorst.get(key)
       if (prev != null && opts.worse <= prev) continue
       this.hitWorst.set(key, opts.worse)
-      item.occurrences[idx] = { objectId: oid, gid, prop, message, detail }
+      item.occurrences[idx] = hit
     }
   }
 
@@ -848,6 +872,88 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
   }
 }
 
+/**
+ * 元素的裁剪框（figure 分数、top-origin）；没有 / 读不懂回 null = 不裁。
+ * 产生者只有 `engine/manifest._clip_bbox()` 一处；与 Python 侧 `_clip_rect` 同源。
+ */
+function clipRect(el: ManifestElement): [number, number, number, number] | null {
+  const rect = el.clip_bbox
+  if (!rect || rect.length !== 4) return null
+  const cx = num(rect[0])
+  const cy = num(rect[1])
+  const cw = num(rect[2])
+  const ch = num(rect[3])
+  if (cx == null || cy == null || cw == null || ch == null) return null
+  return [cx, cy, cw, ch]
+}
+
+/**
+ * 图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
+ * 与 `engine/preflight.py::_check_panel_clipping` 逐条同源：bbox **先折进
+ * `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边超出 [0, 1] 折成图自身
+ * mm 后大于容差就报，一个元素只报最糟的那一边。
+ */
+function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
+  const manifest = panel.manifest
+  if (!manifest) return
+  const wMm = num(manifest.size_mm?.[0]) ?? 0
+  const hMm = num(manifest.size_mm?.[1]) ?? 0
+  if (wMm <= 0 || hMm <= 0) return
+  const pid = panel.id
+  for (const el of manifest.elements) {
+    if (CLIP_SKIP_ROLES.has(el.role)) continue
+    if (field(el, 'visible') === false) continue
+    const bbox = el.bbox
+    if (!bbox || bbox.length !== 4) continue
+    let x = num(bbox[0])
+    let y = num(bbox[1])
+    let w = num(bbox[2])
+    let h = num(bbox[3])
+    if (x == null || y == null || w == null || h == null) continue
+    // **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
+    // bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、显式
+    // 收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，框外一笔
+    // 都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出几万毫米的
+    // 阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被切掉。
+    // `clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是如此，
+    // 它们真的会画到图幅外，照旧要报。
+    const clipped = clipRect(el)
+    if (clipped) {
+      const [cx, cy, cw, ch] = clipped
+      const x0 = Math.max(x, cx)
+      const y0 = Math.max(y, cy)
+      const x1 = Math.min(x + w, cx + cw)
+      const y1 = Math.min(y + h, cy + ch)
+      if (x1 <= x0 || y1 <= y0) continue // 整个被裁掉了，一笔墨都没画出来
+      x = x0
+      y = y0
+      w = x1 - x0
+      h = y1 - y0
+    }
+    // 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
+    let side = 'left'
+    let over = -x * wMm
+    for (const [cand, amount] of [
+      ['top', -y * hMm],
+      ['right', (x + w - 1.0) * wMm],
+      ['bottom', (y + h - 1.0) * hMm],
+    ] as const) {
+      if (amount > over) {
+        side = cand
+        over = amount
+      }
+    }
+    if (over <= FIGURE_CLIP_EPS_MM) continue
+    over = r2(over)!
+    sink.add('element-outside-figure', pf('elementOutsideFigure', { mm: g(over) }), {
+      objectIds: [pid],
+      gids: [el.gid],
+      detail: { overflow_mm: over, side },
+      worse: over,
+    })
+  }
+}
+
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
@@ -868,6 +974,7 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
     else {
       checkPanelFonts(panel, profile, sink)
       checkPanelAxes(panel, profile, sink)
+      checkPanelClipping(panel, sink)
     }
   }
   checkTexts(spec, profile, sink)

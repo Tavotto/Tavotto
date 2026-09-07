@@ -19,6 +19,7 @@ fontsize 会让「缩一缩就放行」成为常态，而那正是投稿被拒�
 
 from __future__ import annotations
 
+import math
 import re
 
 from .. import glyphplan
@@ -51,6 +52,21 @@ figure spec（两侧同源的规范化输入）：
 
 #: 页面/几何比较的容差（mm）。比 0.05 更小会被浮点噪音刷屏。
 EPS_MM = 0.05
+
+#: 「元素超出图幅」的容差（**图自身的 mm**，不乘面板缩放；与 TS 侧同名同值）。
+#: manifest 的 bbox 是 `get_window_extent` 那类**布局框**，不是墨迹。教程
+#: Fig1_kinetics 实测：x 轴标题框超出底边 2.45 mm、墨迹 2.33 mm（descender 留白
+#: 0.12 mm）；y 轴标题框只超出左边 0.56 mm，墨迹却有 0.85 mm——字母顶端真的被裁
+#: 掉了（放大 PDF 可见）。所以容差只能吸收布局框自己的抖动（descender 留白、
+#: 坐标取整），不能大到把 0.56 mm 这种真裁切放过去：取 0.3 mm。零厚度元素的
+#: 4 px 最小命中厚度（120 dpi 下每边 0.42 mm）会越过它——但那种元素恰好压在
+#: 图幅边线上的情况极少，而漏报一条真裁切的代价是一张缺了轴标题的成图。
+FIGURE_CLIP_EPS_MM = 0.3
+
+#: 超出图幅不查的角色：`figure` 的 bbox 按定义就是 [0,0,1,1]；`ticks` 是整组刻度
+#: 文字的并集，探出去的那一条会以自己的 `ticklabel` 身份被报出来（可定位到
+#: 单条），整组再报一次只是同一件事说两遍。
+_CLIP_SKIP_ROLES = ("figure", "ticks")
 
 _CJK = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
 
@@ -895,6 +911,96 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
             )
 
 
+def _clip_rect(el: dict) -> tuple[float, float, float, float] | None:
+    """元素的裁剪框（figure 分数、top-origin）；没有 / 读不懂回 None = 不裁。
+
+    产生者只有 `engine/manifest._clip_bbox()` 一处；与 TS 侧 `clipRect` 同源。
+    """
+    rect = el.get("clip_bbox")
+    if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+        return None
+    try:
+        cx, cy, cw, ch = (float(v) for v in rect)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (cx, cy, cw, ch)):
+        return None
+    return cx, cy, cw, ch
+
+
+def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
+    """图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
+
+    live 图的框是脚本的 figsize；脚本存盘时若用了 `bbox_inches="tight"`，磁盘
+    原件的页面会被裁/垫到内容范围，而引擎渲染与导出都不套用它（`_patched_savefig`
+    不看 kwargs）。于是一条紧贴图幅的轴标题在用户自己的 PDF 里完好，在这里的预览
+    与导出里却被切掉半截，且没有任何东西会说出来。这条规则就是那句话。
+
+    判据：bbox **先折进 `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边
+    超出 [0, 1] 多少、折成图自身 mm 后大于 `FIGURE_CLIP_EPS_MM` 就报；一个元素
+    只报最糟的那一边。与 TS 侧 `checkPanelClipping` 逐条同源（golden vectors 看护）。
+    """
+    manifest = panel.get("manifest")
+    if not isinstance(manifest, dict):
+        return
+    size = manifest.get("size_mm") or [0.0, 0.0]
+    w_mm = _num_or(size[0] if len(size) > 0 else None, 0.0)
+    h_mm = _num_or(size[1] if len(size) > 1 else None, 0.0)
+    if w_mm <= 0 or h_mm <= 0:
+        return
+    pid = panel.get("id", "")
+    for el in manifest.get("elements") or []:
+        if el.get("role") in _CLIP_SKIP_ROLES:
+            continue
+        if _field(el, "visible") is False:
+            continue
+        bbox = el.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            x, y, w, h = (float(v) for v in bbox)
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            continue
+        # **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
+        # bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、
+        # 显式收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，
+        # 框外一笔都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出
+        # 几万毫米的阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被
+        # 切掉。`clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是
+        # 如此，它们真的会画到图幅外，照旧要报。
+        clipped = _clip_rect(el)
+        if clipped is not None:
+            cx, cy, cw, ch = clipped
+            x0, y0 = max(x, cx), max(y, cy)
+            x1, y1 = min(x + w, cx + cw), min(y + h, cy + ch)
+            if x1 <= x0 or y1 <= y0:
+                continue  # 整个被裁掉了，一笔墨都没画出来
+            x, y, w, h = x0, y0, x1 - x0, y1 - y0
+        # 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
+        side, over = "left", -x * w_mm
+        for cand, amount in (
+            ("top", -y * h_mm),
+            ("right", (x + w - 1.0) * w_mm),
+            ("bottom", (y + h - 1.0) * h_mm),
+        ):
+            if amount > over:
+                side, over = cand, amount
+        if over <= FIGURE_CLIP_EPS_MM:
+            continue
+        over = _r2(over)
+        sink.add(
+            "element-outside-figure",
+            f"元素超出图幅 {over:g} mm（{side}），导出时超出的部分会被裁掉",
+            message=("elementOutsideFigure", {"mm": f"{over:g}"}),
+            object_ids=[pid],
+            gids=[str(el.get("gid", ""))],
+            detail={"overflow_mm": over, "side": side},
+            worse=over,
+        )
+
+
 def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     sink.add(
         "panel-text-not-verifiable",
@@ -919,6 +1025,7 @@ def run(spec: dict, profile: dict) -> list[dict]:
         else:
             _check_panel_fonts(panel, profile, sink)
             _check_panel_axes(panel, profile, sink)
+            _check_panel_clipping(panel, sink)
     _check_texts(spec, profile, sink)
     _check_geometry(spec, sink)
     return sink.result()

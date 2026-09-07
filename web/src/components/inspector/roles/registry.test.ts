@@ -137,6 +137,19 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
     })
   })
 
+  it('刻度组叫「轴刻度」（刻度线 + 文字都在它身上），不再叫「刻度文字」（审计 T13）', async () => {
+    await inLocale(locale, () => {
+      const y = engineLabel('Y 刻度文字')
+      if (locale === 'en-US') {
+        expect(y).not.toMatch(HAN)
+        expect(y).toBe('Y axis ticks')
+      } else {
+        expect(y).toBe('Y 轴刻度')
+      }
+      expect(engineLabel('Z 刻度文字')).toContain('Z')
+    })
+  })
+
   it('新角色 patch 有名字', async () => {
     await inLocale(locale, () => {
       const name = roleName('patch')

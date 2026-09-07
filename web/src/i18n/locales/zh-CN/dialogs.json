@@ -9,10 +9,15 @@
   "export": {
     "advanced": "高级选项",
     "blockedTitle": "存在阻断性问题或无法自动核验的项，先在上方勾选确认再导出",
+    "blockingListLabel": "阻断性问题",
+    "blockingMore_other": "还有 {{count}} 条，在问题面板中查看",
     "cancelExport": "取消导出",
     "cancelled": "已取消导出",
     "cancelledNote": "已取消，没有写出任何文件。",
+    "canvasObjects_other": "{{count}} 个对象",
     "checkLabel": "检查",
+    "checkScopeCanvas": "整个画布",
+    "checkScopeFigure": "只算这张图",
     "confirmBoth": "我已知悉上述 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项，仍然导出。确认记录会写进样式检查报告。",
     "confirmCheckFailed": "预检这次没查成，我已自行确认这张图可以导出",
     "confirmErrors": "我已知悉上述 {{errors}} 类阻断性问题，仍然导出。确认记录会写进样式检查报告。",
@@ -49,6 +54,9 @@
       "scale": "缩放"
     },
     "jobLost": "这次导出的作业在服务器上找不到了（服务可能重启过）。文件有没有写出来不确定——去导出目录看一眼，或者直接重试。",
+    "locate": "定位",
+    "locateAria": "定位到{{subject}}：{{title}}",
+    "locatedHint": "已定位到问题；再点「导出」回到导出面板，填过的设置还在。",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
     "operationFailed": "操作失败：{{error}}",
@@ -75,6 +83,7 @@
     "preflightOk": "导出前检查通过",
     "profileAria": "出版规范",
     "profileEdit": "编辑",
+    "profileEditAria": "编辑规范",
     "profileLabel": "规范",
     "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
     "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
@@ -87,13 +96,12 @@
     "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
     "savedTo": "已保存到 {{dir}}",
     "scopeCanvas": "当前画布",
-    "scopeCanvasNote": "按画布出图：{{w}} × {{h}} mm，包含画布上的全部内容。",
+    "scopeCanvasNote": "按画布尺寸出图，包含画布上的全部内容。",
     "scopeIgnored": "画布上的{{list}}不会带进这次导出。",
     "scopeLabel": "输出范围",
     "scopeOriginal": "原图尺寸",
     "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是一个占位值——导出后请核对一下。",
-    "scopeOriginalNote": "按这张图自己的尺寸出图：{{w}} × {{h}} mm。",
-    "scopeOriginalNoteUnknown": "按这张图自己的尺寸出图。",
+    "scopeOriginalNote": "按这张图自己的尺寸出图，不受它在画布上摆放的影响。",
     "scopeUnavailable": {
       "no_figure": "还没定要导哪一张：点选下面的一张图，就按它的原图尺寸导出。",
       "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
@@ -101,7 +109,10 @@
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },
     "severityCount": "{{count}} {{label}}",
+    "sizeDiskDiffers": "磁盘上的原件是 {{dw}} × {{dh}} mm（脚本保存时裁到了内容范围）；这里按图幅 {{w}} × {{h}} mm 出图。",
+    "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
+    "targetNoFigure": "没有当前图",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",
@@ -282,8 +293,8 @@
         "keywords": "tutorial onboarding resume jc jiaocheng 继续"
       },
       "tutorial-reset": {
-        "label": "重新开始教程",
-        "keywords": "tutorial onboarding reset jc jiaocheng 重置"
+        "label": "重置教程项目",
+        "keywords": "tutorial onboarding reset restart jc jiaocheng 重置 重新开始"
       },
       "refresh-project": {
         "label": "刷新项目（检查新文件）",
@@ -1085,13 +1096,15 @@
       "start": "开始教程",
       "resume": "继续教程",
       "restart": "再看一遍教程",
-      "reset": "重新开始教程",
+      "reset": "重置教程项目",
       "hints": "情境提示",
       "hintsHint": "第一次遇到某类操作时出现的一次性提示，每类只出现一次。",
       "resetHints": "重置提示"
     }
   },
   "style": {
+    "affectNone": "这个范围里没有会被改到的图",
+    "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
     "annotationCount_other": "标注文字：{{count}} 条",
     "annotationText": "标注文字",
     "applyScope": "应用范围",
@@ -1141,16 +1154,16 @@
     "saveFailed": "保存失败",
     "saved": "已保存样式「{{name}}」",
     "savedStyles": "已存样式",
-    "scopeDocument": "全文档",
+    "scopeDocument": "整个文档",
     "scopeLabel": {
-      "document": "整份文档",
-      "panel": "当前面板",
-      "sameScript": "同脚本的全部面板",
-      "selection": "选中的面板"
+      "document": "整个文档",
+      "panel": "当前图",
+      "sameScript": "同一脚本的全部图",
+      "selection": "选中的图"
     },
-    "scopePanel": "面板",
-    "scopeSameScript": "同脚本",
-    "scopeSelection": "选区",
+    "scopePanel": "当前图",
+    "scopeSameScript": "同一脚本的图",
+    "scopeSelection": "选中的图",
     "subLabel": "序号标签 (a)(b)(c)",
     "subLabelCount_other": "序号标签：{{count}} 个",
     "title": "论文样式",
@@ -1258,6 +1271,20 @@
     "resolvedContinue": "问题已解决，继续",
     "targetWaiting": "正在等待目标出现…",
     "targetMissing": "找不到这一步的目标。可以返回上一步或跳过此步。",
+    "precondition": {
+      "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里。先把它打开，或跳过此步。",
+      "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行。先打开它，或跳过此步。",
+      "noTextSelected": "这一步要先选中图里的一段文字（标题或坐标轴标签）。",
+      "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果。先打开它一次，或跳过此步。",
+      "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张。先把 {{name}} 加进来，或跳过此步。",
+      "notInLayout": "多选要在画布排版里进行。先回到画布，或跳过此步。"
+    },
+    "action": {
+      "openFigure": "打开 {{name}}",
+      "selectText": "选中一段文字",
+      "addToLayout": "加入 {{name}}",
+      "returnToLayout": "回到画布"
+    },
     "progress": "第 {{n}} 步，共 {{total}} 步",
     "hintsReset": "情境提示已重置，会再各出现一次",
     "landed": {
@@ -1269,15 +1296,15 @@
       "unavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。",
       "open_failed": "教程项目没能打开。可以再试一次，或先打开自己的项目。",
       "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
-      "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重新开始教程」。",
+      "document_failed": "教程画布读不出来（版本不兼容或文件缺失）。试试「重置教程项目」。",
       "cancelled": "已取消。",
       "no_api": "这个环境没有提供教程。"
     },
     "reset": {
-      "title": "重新开始教程？",
-      "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和进度都会清掉。别的项目不受影响。",
+      "title": "重置教程项目？",
+      "body": "教程项目会恢复成刚安装时的样子：你在教程里的改动、写回的图和教程进度都会清掉。别的项目不受影响。",
       "bodyWithLayouts": "教程项目会恢复成刚安装时的样子，你在里面另存的画布文件也会一起清掉：{{names}}。要保留请先导出。别的项目不受影响。",
-      "confirm": "重新开始"
+      "confirm": "重置并重新开始"
     },
     "steps": {
       "welcome": {
@@ -1318,7 +1345,11 @@
       },
       "add_to_layout": {
         "title": "加入画布",
-        "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。"
+        "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
+        "missing": {
+          "title": "加入画布",
+          "body": "画布上还缺 {{name}}。在左侧「素材」里选中它的卡片，把它加进画布；两张图都在版面上这一步才算完成。"
+        }
       },
       "multi_select_align": {
         "title": "Shift 多选",
@@ -1338,7 +1369,15 @@
       },
       "done": {
         "title": "教程完成",
-        "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。"
+        "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。以后在「更多」菜单里可以随时重新打开教程。",
+        "partial": {
+          "title": "教程结束",
+          "body": "完成 {{done}} 步，跳过 {{skipped}} 步（共 {{total}} 步）。跳过的部分随时可以在「更多」菜单里重新打开教程再看。"
+        },
+        "allSkipped": {
+          "title": "教程已结束",
+          "body": "你跳过了全部 {{total}} 步，还没有真正试过快速编辑、问题定位、导出和多选对齐。想走一遍，可以在「更多」菜单里重新打开教程。"
+        }
       }
     }
   }

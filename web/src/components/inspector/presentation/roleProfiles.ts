@@ -1,4 +1,19 @@
+import { TEXT_EFFECTS } from '@/lib/textEffects'
 import type { RoleProfile } from './types'
+
+/**
+ * 背景 / 描边的从属字段只在对应开关开着时渲染（关着的时候它们写了也不生效）。
+ * 从 `lib/textEffects` 那张表算出来，不手抄——手抄的那份会在引擎多发一条
+ * `bbox_*` 时忘记更新，症状是开关关着却多出一行孤零零的参数。
+ */
+const TEXT_EFFECT_VISIBILITY: NonNullable<RoleProfile['visibleWhen']> = Object.fromEntries(
+  Object.entries(TEXT_EFFECTS).flatMap(([sw, deps]) =>
+    deps.map((dep) => [dep, (read: (prop: string) => unknown) => read(sw) === true] as const),
+  ),
+)
+
+/** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
+const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
 /** title / text / axis_label / legend_text 共用的模板 */
 const TEXT_PROFILE: RoleProfile = {
@@ -13,6 +28,7 @@ const TEXT_PROFILE: RoleProfile = {
     'stroke_enabled', 'stroke_color', 'stroke_width',
     'labelpad', 'visible',
   ],
+  visibleWhen: TEXT_EFFECT_VISIBILITY,
 }
 
 /**
@@ -49,6 +65,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     ],
     more: [...(TEXT_PROFILE.more ?? [])],
     visibleWhen: {
+      ...TEXT_EFFECT_VISIBILITY,
       // 标记大小只在有标记时有意义
       handle_markersize: (read) => read('handle_marker') !== 'None',
     },
@@ -111,12 +128,16 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     },
   },
   axes: {
+    // 子图页按任务分三段（审计 T12），各由一张卡承接、从通用列表里让出来：
+    //   范围 / 坐标变换  —— ElementInspector 的 AxesRangeCard
+    //                      （xlim / ylim / xscale / yscale / invert_* / aspect）
+    //   刻度与网格      —— TickAndSpineDiagram（ticks_* / spine_<side> / grid_x / grid_y）
+    //   边框            —— SpineFrameCard（spine_color / spine_linewidth / 逐边）
+    // 这里点名的顺序只对**没被卡承接**的场合生效（卡不渲染时字段仍不丢）。
     // 尺寸（mm）由 AxesSizeMm 组件承接；裸 position rect 是 figure 分数
     // 坐标的诊断视图，进 advanced（manifest-first 泄漏，见审计 P6）。
-    // ticks_* / spine_* / grid_* 的四边开关由 TickAndSpineDiagram 承接。
-    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'grid_x', 'grid_y'],
+    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'aspect', 'grid_x', 'grid_y'],
     more: [
-      'invert_x', 'invert_y', 'aspect',
       'grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha',
       'spine_color', 'spine_linewidth', 'facecolor', 'visible',
     ],
@@ -125,6 +146,8 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['elev', 'azim', 'roll', 'proj_type'],
     more: ['visible'],
   },
+  // 刻度组页把这些再分成「刻度 / 文字」两段（ElementInspector 的 TickPage）：
+  // 这张表只管每个字段可不可见（模式从属）与段内顺序，不管落在哪一段
   ticks: {
     primary: ['major_mode', 'major_step', 'major_values', 'fontsize', 'color'],
     more: [
@@ -138,7 +161,14 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       // 照样显示（registry 兜底），不会因折叠而不可发现。
       major_step: (read) => read('major_mode') === 'step',
       major_values: (read) => read('major_mode') === 'fixed',
-      minor_step: (read) => read('minor_mode') === 'step',
+      // 次刻度关着时它的长度 / 线宽 / 方式 / 间距 / 格式一并收起（审计 T13）。
+      // 刻度卡（不走桶）与通用列表共用这一份判据（`registry.fieldVisible`），
+      // 不各写一套——与文字的背景 / 描边从属字段同一种机制
+      minor_length: MINOR_ON,
+      minor_width: MINOR_ON,
+      minor_mode: MINOR_ON,
+      minor_format: MINOR_ON,
+      minor_step: (read) => MINOR_ON(read) && read('minor_mode') === 'step',
     },
   },
   colorbar: {

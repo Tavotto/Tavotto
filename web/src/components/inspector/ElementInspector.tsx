@@ -53,6 +53,7 @@ import {
   applyTickSidePlan,
   clearOverride,
   clearOverrides,
+  disableTextEffect,
   resetOverrides,
   setOverride,
   setOverrides,
@@ -94,6 +95,7 @@ import { controlKindOf, presentFields } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
+import { EffectToggle } from './controls/EffectToggle'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
 import { LegendPositionPicker } from './controls/LegendPositionPicker'
@@ -105,7 +107,15 @@ import {
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
 import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
-import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
+import { AspectControl } from './controls/AspectControl'
+import { SPINE_FRAME_PROPS, SpineFrameCard } from './controls/SpineFrameCard'
+import {
+  axisTickState,
+  tickElementOf,
+  tickHostOf,
+  useTickAxisAdapter,
+  type TickAxis,
+} from './tickAdapter'
 import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
 import { isTextLikeSelection } from './textStyleModel'
@@ -115,6 +125,7 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
+import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { legendEntryElements } from '@/lib/legendModel'
@@ -226,18 +237,20 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
   // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
   // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
-  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。Z 刻度（3D）没有
-  // 对应的卡，字段必须原样留在通用列表里——否则能力凭空消失（#142 评审 P1）
-  const tickAxisOfSelf =
-    element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
-  const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
+  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。X / Y / Z 三条轴
+  // 同一套页（`TickPage`），Z 由 `has()` 自然少掉 3D 没有的字段；gid 不成
+  // `<axes>.<xyz>ticks` 形状的刻度元素（引擎将来的新形态）退回通用列表
+  // ——字段必须留在界面上，能力凭空消失是最坏的那种（#142 评审 P1）
+  const tickCardCoversSelf = element?.role === 'ticks' && !!tickHostOf(element.gid)
   // 图例卡只在图例**有项**时出现；没有项的图例（脚本只放了标题）字号照旧
   // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
   const legendCardCoversSelf =
     element?.role === 'legend' && !!manifest && legendEntryElements(manifest, element.gid).length > 0
+  // 子图页：四边状态图、范围 / 坐标变换卡、边框卡各承接一组字段——
+  // 同一属性不出两套控件；没被任何卡点名的照旧走通用列表与「更多」
   const consumedBySideDiagram = new Set<string>(
     element?.role === 'axes'
-      ? TICK_SPINE_PROPS
+      ? [...TICK_SPINE_PROPS, ...AXES_RANGE_CARD_PROPS, ...SPINE_FRAME_PROPS]
       : tickCardCoversSelf
         ? TICK_CARD_PROPS
         : legendCardCoversSelf
@@ -349,14 +362,39 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                 ——否则这个元素在界面上就只剩一句「点一下开始编辑」 */}
             {element && <UnsupportedProps elements={[element]} />}
           </>
+        ) : tickCardCoversSelf && sideHost && element ? (
+          /* 刻度组页：「刻度 / 文字」两段（审计 T13），X / Y / Z 同一套 */
+          <TickPage
+            panel={panel}
+            manifest={manifest}
+            host={sideHost}
+            element={element}
+            warnings={render?.warnings ?? []}
+            buckets={buckets}
+          />
         ) : (
           <FieldList
             panel={panel}
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
+            primaryNote={element ? <ElementIssueNote panel={panel} element={element} /> : null}
             primaryExtra={
-              sideHost && element ? (
+              element?.role === 'axes' && sideHost ? (
+                /* 子图页三段：范围与坐标变换 → 刻度与网格 → 边框（审计 T12：
+                   范围、比例、边框三类任务互不混杂） */
+                <div className="flex flex-col gap-2">
+                  <AxesRangeCard panel={panel} element={element} warnings={render?.warnings ?? []} />
+                  <div>
+                    <GroupHead>{el('groupTicksGrid')}</GroupHead>
+                    <TickControl panel={panel} manifest={manifest} host={sideHost} element={element} />
+                  </div>
+                  <div>
+                    <GroupHead>{el('groupFrame')}</GroupHead>
+                    <SpineFrameCard panel={panel} element={element} labelWidth={LABEL_W} />
+                  </div>
+                </div>
+              ) : sideHost && element ? (
                 <TickControl
                   panel={panel}
                   manifest={manifest}
@@ -626,6 +664,7 @@ function FieldList({
   warnings,
   buckets,
   primaryExtra,
+  primaryNote,
 }: {
   panel: PanelObject
   element: ManifestElement
@@ -633,6 +672,8 @@ function FieldList({
   buckets: { primary: PresentedField[]; more: PresentedField[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
+  /** 紧跟在 primary 行（内容框）后面的就地提示（落在这个元素上的问题），排在文字样式行之前 */
+  primaryNote?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
   // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
@@ -672,6 +713,7 @@ function FieldList({
   return (
     <>
       {rows(buckets.primary)}
+      {primaryNote && <div className="mt-1">{primaryNote}</div>}
       {bar && (
         <div className={cn(buckets.primary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} />
@@ -776,13 +818,22 @@ function TickControl({
   const model = readAxesTickModel(manifest, panel.overrides, host.gid)
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
 
+  const diagramProps = TICK_SPINE_PROPS.filter(
+    (p) => w.has(p) && panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+  )
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
     toggle: (p, next) => w.writeOnce(p, next),
     labelOf: (p) => propLabel(p, host.role),
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
-    reset: (p) => clearOverride(panel.id, host.gid, p),
+    // 一次恢复示意图承接的全部修改（一条历史）——恢复动作统一，不逐边出 chip
+    resetAll: () =>
+      clearOverrides(
+        panel.id,
+        elMsg('resetDiagram'),
+        diagramProps.map((p) => ({ gid: host.gid, prop: p })),
+      ),
     axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
     model,
     applyPlan,
@@ -793,6 +844,247 @@ function TickControl({
       {axes.length > 0 && (
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
+    </div>
+  )
+}
+
+/** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
+function GroupHead({ children }: { children: ReactNode }) {
+  return <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{children}</p>
+}
+
+/* ------------------------------ 子图：范围与坐标变换 ------------------------ */
+
+const AXES_RANGE_PROPS = ['xlim', 'ylim'] as const
+const AXES_SCALE_PROPS = ['xscale', 'yscale'] as const
+const AXES_INVERT_PROPS = ['invert_x', 'invert_y'] as const
+/** 范围卡承接的字段——子图页的通用列表要把它们让出来 */
+const AXES_RANGE_CARD_PROPS = [
+  ...AXES_RANGE_PROPS,
+  ...AXES_SCALE_PROPS,
+  ...AXES_INVERT_PROPS,
+  'aspect',
+] as const
+
+/**
+ * 子图页的「范围」与「坐标变换」两段（审计 T12）。
+ *
+ * 引擎把 xlim / ylim / xscale / yscale / invert_* / aspect 都发在「数据范围」
+ * 一个组里，平铺进列表后「改数据范围」和「换对数轴、反转、纵横比」混在一起，
+ * 后两者还有一半掉进「更多」。这里按任务分两段：**范围** = X / Y 各一对
+ * 最小 / 最大；**坐标变换** = 缩放、反转、纵横比。控件本身仍是通用的
+ * `FieldBlock`（纵横比的三档控件由展示注册表按 `aspect` 分派，见
+ * `presentation/registry.controlKindOf`），这里只管顺序与分段。
+ *
+ * 反转 X / Y 并成一行两个开关：它们是同一件事的两个方向，各占一行只是把
+ * 首屏拉长。能力仍由 manifest 说了算：字段不在就不画。
+ */
+function AxesRangeCard({
+  panel,
+  element,
+  warnings,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  warnings: string[]
+}) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, element)
+  const fieldOf = (p: string) => element.editable.find((f) => f.prop === p)
+  const range = AXES_RANGE_PROPS.map(fieldOf).filter((f): f is EditableField => !!f)
+  const scale = AXES_SCALE_PROPS.map(fieldOf).filter((f): f is EditableField => !!f)
+  const invert = AXES_INVERT_PROPS.filter((p) => !!fieldOf(p))
+  const aspect = fieldOf('aspect')
+  const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  if (!range.length && !scale.length && !invert.length && !aspect) return null
+  const block = (f: EditableField) => (
+    <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
+  )
+  const invertLabel = el('invert')
+  return (
+    <div className="flex flex-col gap-1.5" data-axes-range-card>
+      {range.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-axes-section="range">
+          <GroupHead>{el('groupRange')}</GroupHead>
+          {range.map(block)}
+        </div>
+      )}
+      {(scale.length > 0 || invert.length > 0 || aspect) && (
+        <div className="flex flex-col gap-1.5" data-axes-section="transform">
+          <GroupHead>{el('groupTransform')}</GroupHead>
+          {scale.map(block)}
+          {invert.length > 0 && (
+            <Row
+              label={labeledWithStateNode(invertLabel, invert.some(overridden))}
+              labelWidth={LABEL_W}
+            >
+              <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>
+                {invert.map((p) => (
+                  <span
+                    key={p}
+                    data-prop={p}
+                    data-gid={element.gid}
+                    className="flex items-center gap-1.5 text-xs text-ink-2"
+                  >
+                    <Toggle
+                      checked={w.read(p) === true}
+                      onChange={(v) => w.writeOnce(p, v)}
+                      aria-label={propLabel(p, element.role)}
+                    />
+                    {el(p === 'invert_x' ? 'axis.x' : 'axis.y')}
+                    {overridden(p) && (
+                      <Tip label={resetHint(p)} side="left">
+                        <Button
+                          size="icon-sm"
+                          className="shrink-0"
+                          aria-label={el('resetProp', { label: propLabel(p, element.role) })}
+                          onClick={() => clearOverride(panel.id, element.gid, p)}
+                        >
+                          <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
+                        </Button>
+                      </Tip>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </Row>
+          )}
+          {aspect && block(aspect)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 与 FieldRow 的标签同一套「已修改」表达（点 + sr-only 文案） */
+function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
+  return (
+    <span
+      className="flex min-w-0 items-center gap-1"
+      title={overridden ? `${label} · ${el('modified')}` : label}
+    >
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      <span className="min-w-0 truncate">{label}</span>
+      {overridden && <span className="sr-only">{el('modified')}</span>}
+    </span>
+  )
+}
+
+/* ------------------------------ 刻度组页：刻度 / 文字 ---------------------- */
+
+/** 主刻度的位置字段：跟刻度线一起（它们决定短线落在哪） */
+const TICK_PLACEMENT_PROPS = new Set(['major_mode', 'major_step', 'major_values'])
+/** 次刻度的从属字段：跟在次刻度开关后面（开没开由展示注册表的 visibleWhen 决定） */
+const TICK_MINOR_PROPS = new Set(['minor_mode', 'minor_step', 'minor_format'])
+
+/**
+ * 刻度组页（审计 T13 / T25）：**「刻度」（线与位置）与「文字」（标签）两段**。
+ *
+ * 修改前标题叫「Y 刻度文字」，主体却大篇幅在编辑刻度线；状态图、方向分段、
+ * 左右开关与恢复标签把同一组设置说了四遍。现在：
+ *
+ *   刻度 —— 示意图（在哪几条边显示）→ 方向 / 长度 / 宽度 → 主刻度方式（间距 /
+ *           固定值随方式条件出现）→ 次刻度开关（长度 / 宽度 / 方式 / 间距 /
+ *           格式随开关条件出现）
+ *   文字 —— 字号 / 颜色 / 数值格式 / 旋转 / 显示
+ *
+ * X / Y / Z 同一套：Z（3D）没有的字段由 `has()` 自然少掉——判据是 manifest
+ * 发没发这个字段，不是「3D 就隐藏」。字段的可见性（模式从属、已改过的必须
+ * 可见）仍由展示注册表算（`buckets`），这里只决定落在哪一段；两段都没点名的
+ * 字段跟在「文字」后面，绝不丢失。
+ */
+function TickPage({
+  panel,
+  manifest,
+  host,
+  element,
+  warnings,
+  buckets,
+}: {
+  panel: PanelObject
+  manifest: Manifest | null | undefined
+  /** 四边开关与网格的宿主（永远是子图） */
+  host: ManifestElement
+  /** 选中的刻度组 */
+  element: ManifestElement
+  warnings: string[]
+  buckets: { primary: PresentedField[]; more: PresentedField[] }
+}) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, host)
+  const selfAxis: TickAxis = tickHostOf(element.gid)?.axis ?? 'x'
+  // hook 数量固定：三个轴各调一次，元素不在时 adapter 回 null
+  const xAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'x'), 'x')
+  const yAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'y'), 'y')
+  const zAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'z'), 'z')
+  const self = selfAxis === 'x' ? xAdapter : selfAxis === 'y' ? yAdapter : zAdapter
+
+  const model = readAxesTickModel(manifest, panel.overrides, host.gid)
+  const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
+  const diagramProps = TICK_SPINE_PROPS.filter(
+    (p) => w.has(p) && panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+  )
+  const adapter: TickSpineAdapter = {
+    has: (p) => w.has(p),
+    read: (p) => w.read(p),
+    toggle: (p, next) => w.writeOnce(p, next),
+    labelOf: (p) => propLabel(p, host.role),
+    isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+    resetAll: () =>
+      clearOverrides(
+        panel.id,
+        elMsg('resetDiagram'),
+        diagramProps.map((p) => ({ gid: host.gid, prop: p })),
+      ),
+    axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
+    model,
+    applyPlan,
+  }
+
+  // 桶里的字段已经过展示注册表的 visibleWhen（次刻度关着时方式 / 间距 / 格式
+  // 不在桶里；用户改过的仍在）——这里只决定落在哪一段，不再判一遍开关
+  const fields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
+  const placement = fields.filter((f) => TICK_PLACEMENT_PROPS.has(f.prop))
+  const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop))
+  const labels = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
+  const rows = (list: EditableField[]) =>
+    list.length ? (
+      <div className="flex flex-col gap-1.5">
+        {list.map((f) => (
+          <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
+        ))}
+      </div>
+    ) : null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5" data-tick-section="marks">
+        <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
+        <TickAndSpineDiagram adapter={adapter} />
+        {self ? (
+          <TickTaskCard
+            axes={[self]}
+            labelWidth={LABEL_W}
+            model={model}
+            applyPlan={applyPlan}
+            placement={rows(placement)}
+            minorExtra={rows(minor)}
+          />
+        ) : (
+          <>
+            {rows(placement)}
+            {rows(minor)}
+          </>
+        )}
+      </div>
+      {labels.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-tick-section="labels">
+          <GroupHead>{translate('tick.sectionLabels', { ns: 'inspector' })}</GroupHead>
+          {rows(labels)}
+        </div>
+      )}
+      {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
+      <UnsupportedProps elements={[element]} />
     </div>
   )
 }
@@ -1304,6 +1596,33 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
+    case 'aspect':
+      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器
+      return wrap(
+        <AspectControl
+          value={value}
+          label={label}
+          onPick={writeOnce}
+          onRatio={(v) => write(v)}
+          onScrubStart={beginTxn}
+          onScrubEnd={endTxn}
+        />,
+      )
+    case 'effect':
+      // 背景 / 描边：关着只给「＋添加」，开了才铺参数（从属字段由展示注册表
+      // 按开关收放）。关掉连同从属字段的 override 一起清——一条历史、一次渲染
+      return wrap(
+        <EffectToggle
+          on={value === true}
+          label={label}
+          addLabel={translate(
+            field.prop === 'stroke_enabled' ? 'text.addBorder' : 'text.addBackground',
+            { ns: 'inspector' },
+          )}
+          onAdd={() => writeOnce(true)}
+          onOff={() => disableTextEffect(panel.id, element.gid, field.prop)}
+        />,
+      )
     default:
       break
   }
@@ -1616,38 +1935,44 @@ const ALIGN_BUTTONS: {
 ]
 
 /**
- * 缩放控件：组与单个子图共用。它是**相对**操作——应用完就回到 100%，
- * 所以旁边必须写清楚，否则「再次选中怎么又是 100%」会让人以为没生效。
+ * 按比例缩放：组与单个子图共用。它是**一次性动作**，不是一个持续存在的
+ * 属性——输入比例、按「应用」，做完回到 100%。做成「输入即生效、之后又跳回
+ * 100%」的旋钮时，用户拿它跟图片对象的绝对缩放（一直显示 91%）对照，
+ * 会以为没生效（审计 T12）；一颗明确的按钮把「缩放一次」说清楚，
+ * 也不用再配一句解释文字。
  */
 function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   const [pct, setPct] = useState(100)
-  const apply = (v: number) => {
-    if (v === 100) return
+  const ready = Number.isFinite(pct) && pct !== 100
+  const apply = () => {
+    if (!ready) return
     setOverrides(
       panel.id,
       group.entries.length === 1
         ? elMsg('scaleAxes')
         : elMsg('scaleAxesMulti', { count: group.entries.length }),
-      groupPatches(group, scaleGroupAbout(group.box, v / 100)),
+      groupPatches(group, scaleGroupAbout(group.box, pct / 100)),
     )
     setPct(100)
   }
 
   return (
-    <div className="mt-1.5">
-      <Row label={el('scaleLabel')}>
-        <NumberField
-          value={pct}
-          min={10}
-          max={400}
-          step={5}
-          suffix="%"
-          title={el('scaleTitle')}
-          onChange={apply}
-        />
-      </Row>
-      <p className="mt-1 text-xs leading-relaxed text-ink-3">{el('scaleHint')}</p>
-    </div>
+    <Row label={el('scaleLabel')} className="mt-1.5">
+      <NumberField
+        className="w-[84px] shrink-0"
+        ariaLabel={el('scaleLabel')}
+        value={pct}
+        min={10}
+        max={400}
+        step={5}
+        suffix="%"
+        title={el('scaleTitle')}
+        onChange={setPct}
+      />
+      <Button size="sm" variant="outline" disabled={!ready} onClick={apply} data-scale-apply>
+        {el('scaleApply')}
+      </Button>
+    </Row>
   )
 }
 

@@ -244,14 +244,65 @@ def _ticklabels(ax: Axes, which: str, *, minor: bool = False) -> list:
     get = getattr(ax, f"get_{which}ticklabels")
     table = getattr(_ticklabel_memo, "table", None)
     if table is None:  # 不在作用域里（restore / 手工调用）：照旧现算
-        return list(get(minor=True)) if minor else list(get())
+        with _keep_projected_ticks(ax, which):
+            return list(get(minor=True)) if minor else list(get())
     key = (id(ax), which, minor)
     hit = table.get(key)
     if hit is not None and hit[0] is ax:
         return hit[1]
-    labels = list(get(minor=True)) if minor else list(get())
+    with _keep_projected_ticks(ax, which):
+        labels = list(get(minor=True)) if minor else list(get())
     table[key] = (ax, labels)
     return labels
+
+
+def _is_axes3d(ax) -> bool:
+    """mplot3d 的 Axes3D——与 `manifest` 同一条判据：有 `zaxis` 的就是。"""
+    return getattr(ax, "zaxis", None) is not None
+
+
+@contextlib.contextmanager
+def _keep_projected_ticks(ax: Axes, which: str):
+    """3D 轴上跑 `Axis._update_ticks()` 的前后，把刻度的**投影位置**存回去。
+
+    `_update_ticks` 是 2D 轴的常规步骤：`XTick.update_position(loc)` 把刻度线
+    与标签写到 x = loc（数据坐标，配 blended transform）。mplot3d 的三条轴都
+    继承自 `XAxis`，刻度对象的 transform 却被 `axis3d.get_major_ticks` 换成了
+    投影平面的 `transData`，真正的位置由 `axis3d.Axis._draw_ticks` 在 draw 里
+    按投影现算再写回。于是 draw 之后任何一次 `_update_ticks`——包括
+    `get_[xyz]ticklabels()` 内部那一次——都会把标签拽回 x = loc 这个在投影
+    平面上毫无意义的点：z 刻度 −1…1 落成一条横贯整张图的带子，
+    `get_window_extent` 量出来的刻度组包围盒起点在图外 2.6 个图幅、宽达
+    图幅的 6 倍（审计 T25：选中 Z 刻度，蓝色选区横贯工作区）。
+
+    2D 轴不需要：draw 走的就是同一步，重算是幂等的。这里只存 draw 留下的
+    几何（线段端点、标签位置），不碰 `_loc`——那正是 `_update_ticks` 该算的。
+    """
+    if not _is_axes3d(ax):
+        yield
+        return
+    axis = _axis_of(ax, which)
+    ticks = [*axis.get_major_ticks(), *axis.get_minor_ticks()]
+    saved = [
+        (
+            t,
+            t.tick1line.get_data(),
+            t.tick2line.get_data(),
+            t.gridline.get_data(),
+            t.label1.get_position(),
+            t.label2.get_position(),
+        )
+        for t in ticks
+    ]
+    try:
+        yield
+    finally:
+        for t, l1, l2, g, p1, p2 in saved:
+            t.tick1line.set_data(*l1)
+            t.tick2line.set_data(*l2)
+            t.gridline.set_data(*g)
+            t.label1.set_position(p1)
+            t.label2.set_position(p2)
 
 
 def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> list[tuple]:
@@ -288,7 +339,8 @@ def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> li
     try:
         if not axis.get_visible() or not ax.get_visible():
             return []
-        to_draw = {id(t) for t in axis._update_ticks()}  # noqa: SLF001 — 渲染器自己的取舍
+        with _keep_projected_ticks(ax, which):
+            to_draw = {id(t) for t in axis._update_ticks()}  # noqa: SLF001 — 渲染器自己的取舍
         ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
         # `get_ticklabels()` 的口径：label1 可见的在前、label2 可见的接后。
         # 逐位按身份对拍，拼不回同一个列表就说明口径变了——放弃过滤。

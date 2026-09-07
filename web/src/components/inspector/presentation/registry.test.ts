@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from '@/lib/api'
-import { controlKindOf, presentFields } from './registry'
+import { controlKindOf, fieldVisible, presentFields } from './registry'
 
 const f = (prop: string, type: EditableField['type'] = 'number', group?: string): EditableField =>
   ({ prop, type, value: 0, ...(group ? { group } : {}) }) as EditableField
@@ -77,6 +77,36 @@ describe('presentFields：角色模板分桶', () => {
     expect(orphan.primary.map((x) => x.field.prop)).toContain('major_values')
   })
 
+  it('ticks：次刻度关着时长度 / 线宽 / 方式 / 间距 / 格式都收起；开了才出；改过的照样在（审计 T13）', () => {
+    const fields = [
+      f('minor_visible', 'bool'), f('minor_length'), f('minor_width'),
+      f('minor_mode', 'enum'), f('minor_step'), f('minor_format', 'enum'),
+    ]
+    const off = presentFields('ticks', fields, opts([], { minor_visible: false, minor_mode: 'step' }))
+    expect([...off.primary, ...off.more].map((x) => x.field.prop)).toEqual(['minor_visible'])
+    const on = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'step' }))
+    expect([...on.primary, ...on.more].map((x) => x.field.prop)).toEqual(
+      expect.arrayContaining(['minor_length', 'minor_width', 'minor_mode', 'minor_step', 'minor_format']),
+    )
+    // 次刻度开着但方式不是 step：间距仍收起
+    const auto = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'auto' }))
+    expect([...auto.primary, ...auto.more].map((x) => x.field.prop)).not.toContain('minor_step')
+    // 改过的必须能看到
+    const kept = presentFields('ticks', fields, opts(['minor_length'], { minor_visible: false }))
+    expect([...kept.primary, ...kept.more].map((x) => x.field.prop)).toContain('minor_length')
+  })
+
+  it('fieldVisible 与 presentFields 是同一条判据（刻度卡不走桶也问它）', () => {
+    const o = opts([], { minor_visible: false, major_mode: 'auto' })
+    expect(fieldVisible('ticks', 'minor_length', o)).toBe(false)
+    expect(fieldVisible('ticks', 'major_step', o)).toBe(false)
+    expect(fieldVisible('ticks', 'length', o)).toBe(true)
+    expect(fieldVisible('ticks', 'minor_length', opts(['minor_length'], { minor_visible: false }))).toBe(true)
+    expect(fieldVisible('ticks', 'minor_length', opts([], { minor_visible: true }))).toBe(true)
+    // 没建档的角色 / 没条件的字段：一律显示
+    expect(fieldVisible('some_role', 'anything', o)).toBe(true)
+  })
+
   it('axes：裸 position rect 进高级（manifest-first 泄漏，审计 P6）', () => {
     const fields = [f('position', 'rect'), f('xlim', 'pair'), f('grid_x', 'bool')]
     const b = presentFields('axes', fields, opts())
@@ -111,5 +141,57 @@ describe('controlKindOf：enum 不再无条件落成 Select', () => {
 
   it('prop 名撞车但类型不是 enum 时不误判：数值型的 marker 仍是 number', () => {
     expect(controlKindOf('x', f('marker', 'number'))).toBe('number')
+  })
+})
+
+describe('图内文字的背景 / 描边：开关 + 从属字段（审计 T14）', () => {
+  const textFields = () => [
+    f('text', 'text'),
+    f('fontsize'),
+    f('bbox_visible', 'bool', '背景'),
+    f('bbox_facecolor', 'color', '背景'),
+    f('bbox_alpha', 'number', '背景'),
+    f('bbox_edgecolor', 'color', '背景'),
+    f('bbox_linewidth', 'number', '背景'),
+    f('bbox_pad', 'number', '背景'),
+    f('bbox_rounded', 'bool', '背景'),
+    f('stroke_enabled', 'bool', '描边'),
+    f('stroke_color', 'color', '描边'),
+    f('stroke_width', 'number', '描边'),
+  ]
+  const moreProps = (role: string, values: Record<string, unknown>, overridden: string[] = []) =>
+    presentFields(role, textFields(), opts(overridden, values)).more.map((x) => x.field.prop)
+
+  it.each(['title', 'text', 'axis_label', 'legend_text'])(
+    '%s：开关关着时从属字段收起，只剩两个开关',
+    (role) => {
+      expect(moreProps(role, { bbox_visible: false, stroke_enabled: false })).toEqual([
+        'bbox_visible',
+        'stroke_enabled',
+      ])
+    },
+  )
+
+  it('背景开了铺背景的参数，描边仍收着；反之亦然', () => {
+    expect(moreProps('title', { bbox_visible: true, stroke_enabled: false })).toEqual([
+      'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
+      'bbox_linewidth', 'bbox_pad', 'bbox_rounded', 'stroke_enabled',
+    ])
+    expect(moreProps('title', { bbox_visible: false, stroke_enabled: true })).toEqual([
+      'bbox_visible', 'stroke_enabled', 'stroke_color', 'stroke_width',
+    ])
+  })
+
+  it('用户改过的从属字段照旧显示（override 不因折叠而不可发现）', () => {
+    expect(moreProps('title', { bbox_visible: false, stroke_enabled: false }, ['bbox_pad'])).toEqual([
+      'bbox_visible', 'bbox_pad', 'stroke_enabled',
+    ])
+  })
+
+  it('开关的控件形态是 effect（关着画「＋添加」），别的 bool 仍是开关', () => {
+    expect(controlKindOf('title', f('bbox_visible', 'bool'))).toBe('effect')
+    expect(controlKindOf('legend_text', f('stroke_enabled', 'bool'))).toBe('effect')
+    expect(controlKindOf('title', f('bbox_rounded', 'bool'))).toBe('toggle')
+    expect(controlKindOf('title', f('visible', 'bool'))).toBe('toggle')
   })
 })

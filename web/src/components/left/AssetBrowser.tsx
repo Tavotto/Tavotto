@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Braces, ListFilter, Pencil, Plus, RefreshCw, Search, X,
@@ -16,11 +16,18 @@ import {
   type PanelInfo,
   type RuntimeAssetInfo,
 } from '@/lib/api'
+import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
-import { addRuntimePanel } from '@/store/actions'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
 import { reasonText, statusLabel } from '@/lib/readinessText'
+import {
+  DEFAULT_ASSET_FILTERS,
+  useAssetBrowseStore,
+  type AssetFilters,
+  type AssetSortKey,
+  type AssetTypeFilter,
+} from '@/store/assetBrowseStore'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
@@ -42,8 +49,8 @@ import { ScriptLibrary } from './ScriptLibrary'
 const fileName = (id: string) => id.split('/').pop() ?? id
 const formatOf = (p: PanelInfo) => (p.kind === 'pdf' ? 'PDF' : 'PNG')
 
-type TypeFilter = 'all' | 'pdf' | 'raster' | 'script' | 'runtime'
-type SortKey = 'name' | 'recent' | 'used'
+type TypeFilter = AssetTypeFilter
+type SortKey = AssetSortKey
 
 /** 本组文案在 workspace:assets.* 下 */
 const ab = (key: string, values?: Record<string, unknown>) =>
@@ -71,21 +78,20 @@ const sortLabel = (v: SortKey) =>
 const typeOptions = () => TYPE_VALUES.map((value) => ({ value, label: typeLabel(value) }))
 const sortOptions = () => SORT_VALUES.map((value) => ({ value, label: sortLabel(value) }))
 
-interface Filters {
-  source: string
-  type: TypeFilter
-  sort: SortKey
-  usedOnly: boolean
-}
+type Filters = AssetFilters
 
-const DEFAULT_FILTERS: Filters = { source: 'all', type: 'all', sort: 'name', usedOnly: false }
+const DEFAULT_FILTERS = DEFAULT_ASSET_FILTERS
 
-/** 「图」区的一张卡：磁盘文件（FileAsset）或运行时图（RuntimeFigureAsset） */
+/**
+ * 「图」区的一张卡：磁盘文件（FileAsset）或运行时图（RuntimeFigureAsset）。
+ * runtime 条目可带 `sibling`——同一脚本、同一 stem 的磁盘图（见 `runtimeSiblingOf`）。
+ */
 type LibraryItem =
   | { kind: 'file'; panel: PanelInfo }
-  | { kind: 'runtime'; asset: RuntimeAssetInfo }
+  | { kind: 'runtime'; asset: RuntimeAssetInfo; sibling?: PanelInfo }
 
 const itemId = (it: LibraryItem) => (it.kind === 'file' ? it.panel.id : it.asset.id)
+
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)
@@ -97,12 +103,16 @@ export function AssetBrowser() {
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
 
-  const [query, setQuery] = useState('')
+  // 搜索词与筛选住在组件外（`store/assetBrowseStore`）：切左轨页签 / 收起抽屉
+  // 会把这个组件整个卸掉，放在组件 state 里的输入就跟着没了
+  const query = useAssetBrowseStore((s) => s.query)
+  const setQuery = useAssetBrowseStore((s) => s.setQuery)
   // 「刷新项目」按钮自己的忙碌态：它等的是 POST /api/project/refresh 走完
   // （静态扫描 + 合并注册表），而 assetStore 的 `loading` 只覆盖后半段的
   //  /api/panels。只看后者的话，按钮在最慢的那一步上是**不转**的。
   const [refreshing, setRefreshing] = useState(false)
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
+  const filters = useAssetBrowseStore((s) => s.filters)
+  const setFilters = useAssetBrowseStore((s) => s.setFilters)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState<LibraryItem | null>(null)
   /** 后端刷新与素材重取合起来才是用户眼里的「正在刷新」 */
@@ -175,10 +185,23 @@ export function AssetBrowser() {
       rt.sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0))
     else rt.sort((a, b) => a.stem.localeCompare(b.stem))
 
-    return [
-      ...list.map((panel): LibraryItem => ({ kind: 'file', panel })),
-      ...rt.map((asset): LibraryItem => ({ kind: 'runtime', asset })),
-    ]
+    // 同源的 runtime 条目紧跟在它的磁盘图后面（关系一眼可见）；其余运行时图
+    // 仍排在文件之后。同源判据只看**当前显示的**文件：磁盘图被筛掉时 runtime
+    // 条目回到末尾，不会指着一张看不见的卡
+    const out: LibraryItem[] = []
+    const placed = new Set<string>()
+    for (const panel of list) {
+      out.push({ kind: 'file', panel })
+      for (const asset of rt) {
+        if (placed.has(asset.id) || runtimeSiblingOf(asset, [panel]) !== panel) continue
+        out.push({ kind: 'runtime', asset, sibling: panel })
+        placed.add(asset.id)
+      }
+    }
+    for (const asset of rt) {
+      if (!placed.has(asset.id)) out.push({ kind: 'runtime', asset })
+    }
+    return out
   }, [panels, runtimeAssets, query, source, type, sort, usedOnly, usage, recentlyUsed])
 
   // 列数按实测宽度算：<344px 单列大预览，更宽才双列
@@ -371,6 +394,7 @@ export function AssetBrowser() {
                     tabbable={focusId === it.panel.id}
                     onSelect={() => setActiveId(it.panel.id)}
                     onOpen={() => openFastEdit(it.panel.id)}
+                    onAdd={() => addFigureToLayout(it.panel.id)}
                     onZoom={() => setZoomed(it)}
                     onMove={(d) => move(it.panel.id, d)}
                     columns={columns}
@@ -379,10 +403,12 @@ export function AssetBrowser() {
                   <RuntimeAssetCard
                     key={it.asset.id}
                     asset={it.asset}
+                    sibling={it.sibling}
                     used={usage.get(it.asset.id) ?? 0}
                     selected={activeId === it.asset.id}
                     tabbable={focusId === it.asset.id}
                     onSelect={() => setActiveId(it.asset.id)}
+                    onAdd={() => addFigureToLayout(it.asset.id)}
                     onZoom={() => setZoomed(it)}
                     onMove={(d) => move(it.asset.id, d)}
                     columns={columns}
@@ -398,8 +424,10 @@ export function AssetBrowser() {
         <ScriptLibrary query={query} />
       </div>
 
-      {/* 选中卡片的接入说明。**在 listbox 之外**：option 里不许再嵌可 Tab 的
-          控件（axe nested-interactive，serious），而这条说明需要一个真按钮 */}
+      {/* 选中卡片的两个动作（真按钮）与接入说明。**都在 listbox 之外**：option
+          里不许再嵌可 Tab 的控件（axe nested-interactive，serious），而键盘 /
+          读屏用户必须到得了「编辑原图」与「添加到画布」这两个不同的动作 */}
+      <SelectedAssetActions item={items.find((it) => itemId(it) === activeId)} />
       <AssetCapabilityNotice panel={panels.find((p) => p.id === activeId)} />
 
       {figuresDir && <FolderInfo dir={figuresDir} shown={items.length} total={panels.length + (runtimeAssets?.length ?? 0)} />}
@@ -422,9 +450,9 @@ export function AssetBrowser() {
             size="md"
             disabled={zoomed?.kind === 'runtime' && !zoomed.asset.descriptor}
             onClick={() => {
-              if (zoomed?.kind === 'file') addFigureToLayout(zoomed.panel.id)
-              else if (zoomed?.kind === 'runtime' && zoomed.asset.descriptor)
-                addRuntimePanel(zoomed.asset.descriptor)
+              // 文件与 runtime 同一条路：已经在文档里就只是聚焦它，绝不叠第二份
+              if (zoomed && (zoomed.kind === 'file' || zoomed.asset.descriptor))
+                addFigureToLayout(itemId(zoomed))
               setZoomed(null)
             }}
           >
@@ -557,12 +585,18 @@ function GridSkeleton({ columns }: { columns: number }) {
 
 /**
  * 一张素材卡：图片占绝大部分面积，识别靠图不靠文件名。
- * 单击选中、Enter **打开**（进快速编辑工作区）、Space 看大图、方向键在网格里走；
- * 双击与拖拽保留为快捷方式（拖到画布上仍然是"加到这张版上"）。
  *
- * 主动作从"加入画布"换成"打开"是 Prompt 09 的产品决定：普通用户要做的事
- * 是"改这张图"，先摆到一张版上再双击进图内编辑是多绕的一步。加入画布仍有
- * 三条路——快速编辑条上的按钮、拖拽到画布、看大图弹窗的主按钮。
+ * **两个明确的动作，各说各的后果**（UI 审计 T06）：
+ *
+ * * **编辑原图**（Enter / 双击 / 就近按钮）——进快速编辑工作区。图还不在
+ *   文档里时它会把图加进来（快速编辑的对象只能是文档里的面板对象，ADR 0028），
+ *   而这一步由 `openFastEdit` 用一条状态提示说出口、一次撤销可移除；
+ * * **添加到画布**（Shift+Enter / 就近按钮 / 拖拽 / 看大图弹窗）——文档变更，
+ *   已经在文档里就只是聚焦它。
+ *
+ * 从前这两件事共用一个叫「打开」的动作：用户以为在看图，版本预览里却多了一个
+ * 对象、问题面板多了一批问题。普通用户要做的事仍然是"改这张图"，所以编辑
+ * 仍是主动作——但它不能再把加入文档这件事藏在一个中性的词后面。
  */
 function AssetCard({
   panel,
@@ -571,6 +605,7 @@ function AssetCard({
   tabbable,
   onSelect,
   onOpen,
+  onAdd,
   onZoom,
   onMove,
   columns,
@@ -581,6 +616,7 @@ function AssetCard({
   tabbable: boolean
   onSelect: () => void
   onOpen: () => void
+  onAdd: () => void
   onZoom: () => void
   onMove: (delta: number) => void
   columns: number
@@ -609,6 +645,7 @@ function AssetCard({
       role="option"
       aria-selected={selected}
       aria-label={label}
+      aria-keyshortcuts={CARD_KEYSHORTCUTS}
       tabIndex={tabbable ? 0 : -1}
       data-card={panel.id}
       draggable
@@ -628,7 +665,9 @@ function AssetCard({
         }
         if (e.key === 'Enter') {
           e.preventDefault()
-          onOpen()
+          // Enter = 编辑原图；Shift+Enter = 添加到画布（两个动作，两个键）
+          if (e.shiftKey) onAdd()
+          else onOpen()
         } else if (e.key === ' ') {
           e.preventDefault()
           onZoom()
@@ -695,26 +734,19 @@ function AssetCard({
         )}
 
         {/* 不是 <button>：option 里不许再嵌交互控件（axe nested-interactive，
-            serious）——哪怕 tabIndex=-1 也算。它只是鼠标用户的就近入口，
-            键盘/读屏用户在 option 上按 Enter 走的就是同一个 onAdd（可达名
-            由 openAria 落在 option 的 aria-keyshortcuts 语境里，能力没少）。 */}
-        <span
-          title={ab('openAria', { name })}
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpen()
-          }}
-          className={cn(
-            'absolute bottom-1 right-1 flex h-6 cursor-pointer items-center gap-1 rounded-sm',
-            'border border-border bg-surface px-1.5 text-xs text-ink hover:border-border-strong hover:bg-surface-2',
-            'opacity-0 transition-opacity select-none',
-            'group-hover:opacity-100 group-focus-visible:opacity-100',
-            selected && 'opacity-100',
-          )}
-        >
-          <Pencil size={ICON_SIZE.xs} />
-          {ab('openFigure')}
-        </span>
+            serious）——哪怕 tabIndex=-1 也算。这两个只是鼠标用户的就近入口；
+            键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
+            列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
+        <CardActions selected={selected}>
+          <CardAction title={ab('openAria', { name })} onClick={onOpen}>
+            <Pencil size={ICON_SIZE.xs} />
+            {ab('openFigure')}
+          </CardAction>
+          <CardAction title={ab('addAria', { name })} onClick={onAdd}>
+            <Plus size={ICON_SIZE.xs} />
+            {ab('addToCanvas')}
+          </CardAction>
+        </CardActions>
       </div>
 
       {/* 文字区压到最薄：图片区要占到卡片约 80%，识别靠图不靠字 */}
@@ -739,25 +771,33 @@ function AssetCard({
 
 /**
  * 一张运行时图卡（RuntimeFigureAsset，ADR 0013）：没有磁盘原件，预览来自
- * materialized cache。有描述符（跑过）→ Enter/双击加入画布；还没跑过 →
- * 主动作变成「运行并发现图」（尺寸与内容只有运行后才知道，绝不给假路径 /
- * 假尺寸——负向反证 #2：这里要求磁盘 path 的话加入画布当场断）。
+ * materialized cache。有描述符（跑过）→ Enter/双击编辑原图、Shift+Enter 添加到
+ * 画布（与文件卡同一对动作）；还没跑过 → 主动作变成「运行并发现图」（尺寸与
+ * 内容只有运行后才知道，绝不给假路径 / 假尺寸——负向反证 #2：这里要求磁盘
+ * path 的话加入画布当场断）。
+ *
+ * `sibling` = 同一脚本、同一 stem 的磁盘图（`runtimeSiblingOf`）：有的话第二行
+ * 写「同源：X.pdf」而不是脚本路径——两张卡并排时用户要的是关系，不是来源。
  */
 function RuntimeAssetCard({
   asset,
+  sibling,
   used,
   selected,
   tabbable,
   onSelect,
+  onAdd,
   onZoom,
   onMove,
   columns,
 }: {
   asset: RuntimeAssetInfo
+  sibling?: PanelInfo
   used: number
   selected: boolean
   tabbable: boolean
   onSelect: () => void
+  onAdd: () => void
   onZoom: () => void
   onMove: (delta: number) => void
   columns: number
@@ -768,10 +808,14 @@ function RuntimeAssetCard({
   const busy = !!run && isBusyPhase(run.phase)
 
   const primary = () => {
-    // 跑过的运行时图与磁盘素材同一条路：打开 → 快速编辑。还没跑过的那一档
+    // 跑过的运行时图与磁盘素材同一条路：编辑原图 → 快速编辑。还没跑过的那一档
     // 主动作仍然是"运行并发现图"——尺寸与内容只有运行后才知道。
     if (asset.descriptor) openFastEdit(asset.id)
     else if (!busy) void useScriptRunStore.getState().run(asset.script)
+  }
+  const add = () => {
+    // 没有描述符就没有可添加的东西（尺寸未知）——Shift+Enter 落到这里时安静地不做
+    if (asset.descriptor) onAdd()
   }
   const rerun = () => {
     if (!busy) void useScriptRunStore.getState().run(asset.script)
@@ -794,6 +838,7 @@ function RuntimeAssetCard({
     asset.size_mm
       ? ab('cardSize', { w: formatCm(asset.size_mm[0]), h: formatCm(asset.size_mm[1]) })
       : ab('runtimeNeedsRun'),
+    sibling ? ab('runtimeSiblingOf', { name: fileName(sibling.id) }) : null,
     staleKey ? translate(`panelBadge.${staleKey}`, { ns: 'workspace' }) : null,
     used ? ab('cardUsed', { count: used }) : null,
   ]
@@ -805,6 +850,7 @@ function RuntimeAssetCard({
       role="option"
       aria-selected={selected}
       aria-label={label}
+      aria-keyshortcuts={asset.descriptor ? CARD_KEYSHORTCUTS : 'Enter Space'}
       tabIndex={tabbable ? 0 : -1}
       data-card={asset.id}
       onClick={onSelect}
@@ -819,7 +865,8 @@ function RuntimeAssetCard({
         }
         if (e.key === 'Enter') {
           e.preventDefault()
-          primary()
+          if (e.shiftKey) add()
+          else primary()
         } else if (e.key === ' ') {
           e.preventDefault()
           onZoom()
@@ -870,33 +917,27 @@ function RuntimeAssetCard({
           </span>
         )}
 
-        {/* 主动作（与文件卡同款的就近入口，非嵌套控件）：有描述符 = 打开
-            （快速编辑）；没有 = 运行并发现图 */}
-        <span
-          title={
-            asset.descriptor
-              ? ab('openAria', { name: asset.stem })
-              : ab('runtimeRunAria', { script: asset.script })
-          }
-          onClick={(e) => {
-            e.stopPropagation()
-            primary()
-          }}
-          className={cn(
-            'absolute bottom-1 right-1 flex h-6 cursor-pointer items-center gap-1 rounded-sm',
-            'border border-border bg-surface px-1.5 text-xs text-ink hover:border-border-strong hover:bg-surface-2',
-            'opacity-0 transition-opacity select-none',
-            'group-hover:opacity-100 group-focus-visible:opacity-100',
-            selected && 'opacity-100',
+        {/* 就近入口（与文件卡同款，非嵌套控件）：有描述符 = 编辑原图 + 添加到
+            画布；没有 = 只有「运行并发现图」 */}
+        <CardActions selected={selected}>
+          {asset.descriptor ? (
+            <>
+              <CardAction title={ab('openAria', { name: asset.stem })} onClick={primary}>
+                <Pencil size={ICON_SIZE.xs} />
+                {ab('openFigure')}
+              </CardAction>
+              <CardAction title={ab('addAria', { name: asset.stem })} onClick={add}>
+                <Plus size={ICON_SIZE.xs} />
+                {ab('addToCanvas')}
+              </CardAction>
+            </>
+          ) : (
+            <CardAction title={ab('runtimeRunAria', { script: asset.script })} onClick={primary}>
+              <Play size={ICON_SIZE.xs} />
+              {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+            </CardAction>
           )}
-        >
-          {asset.descriptor ? <Pencil size={ICON_SIZE.xs} /> : <Play size={ICON_SIZE.xs} />}
-          {busy
-            ? translate('scripts.running', { ns: 'workspace' })
-            : asset.descriptor
-              ? ab('openFigure')
-              : translate('scripts.run', { ns: 'workspace' })}
-        </span>
+        </CardActions>
       </div>
 
       <div className="px-1.5 py-0.5">
@@ -906,13 +947,17 @@ function RuntimeAssetCard({
         >
           {asset.stem}
         </p>
+        {/* 第二行：有同源磁盘图先说关系（脚本路径在 title 与可达名里仍然有）；
+            否则尺寸（跑过）或脚本路径（没跑过） */}
         <p className="truncate font-mono text-xs leading-4 text-ink-3" title={asset.script}>
-          {asset.size_mm
-            ? translate('measure.cmSize', {
-                w: formatCm(asset.size_mm[0]),
-                h: formatCm(asset.size_mm[1]),
-              })
-            : asset.script}
+          {sibling
+            ? ab('runtimeSiblingOf', { name: fileName(sibling.id) })
+            : asset.size_mm
+              ? translate('measure.cmSize', {
+                  w: formatCm(asset.size_mm[0]),
+                  h: formatCm(asset.size_mm[1]),
+                })
+              : asset.script}
           {used ? ab('usedSuffix', { count: used }) : ''}
         </p>
         {staleKey && (
@@ -934,6 +979,117 @@ function RuntimeAssetCard({
         )}
       </div>
     </li>
+  )
+}
+
+/** 卡片可达名旁的键位说明（aria-keyshortcuts 的语法：空格分隔的组合键） */
+const CARD_KEYSHORTCUTS = 'Enter Shift+Enter Space'
+
+/** 卡片右下角的就近入口容器：悬停 / 聚焦 / 选中时出现 */
+function CardActions({ selected, children }: { selected: boolean; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        // 双列时卡片只有 ~150px 宽，两个入口放不下一行就换行（图片区 4:3 有两行的高度）
+        'absolute bottom-1 right-1 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center justify-end gap-1',
+        'opacity-0 transition-opacity select-none',
+        'group-hover:opacity-100 group-focus-visible:opacity-100',
+        selected && 'opacity-100',
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** 一个就近入口。不是 <button>——option 里不许再嵌交互控件（axe nested-interactive） */
+function CardAction({
+  title,
+  onClick,
+  children,
+}: {
+  title: string
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <span
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      className={cn(
+        'flex h-6 cursor-pointer items-center gap-1 rounded-sm',
+        'border border-border bg-surface px-1.5 text-xs text-ink hover:border-border-strong hover:bg-surface-2',
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * 选中卡片的两个动作，**真按钮**，住在 listbox 外面（同 `AssetCapabilityNotice`
+ * 的理由：option 里不许再嵌可 Tab 的控件）。鼠标用户有卡片上的就近入口，键盘
+ * 用户有 Enter / Shift+Enter；这一条是读屏与"只想点按钮"的人的入口，三条路
+ * 落到同一对 action 上。没跑过的 runtime 图只有「运行并发现图」——没有描述符
+ * 就没有能编辑、能添加的东西。
+ */
+function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
+  useTranslation('workspace')
+  const run = useScriptRunStore((s) =>
+    item?.kind === 'runtime' ? s.byScript[item.asset.script] : undefined,
+  )
+  if (!item) return null
+  const name = item.kind === 'file' ? fileName(item.panel.id) : item.asset.stem
+  const actionable = item.kind === 'file' || !!item.asset.descriptor
+  const busy = !!run && isBusyPhase(run.phase)
+  return (
+    <div
+      role="group"
+      aria-label={ab('selectedActionsAria', { name })}
+      data-selected-asset-actions
+      className="flex shrink-0 items-center gap-1 border-t border-border px-3 py-1.5"
+    >
+      <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={name}>
+        {name}
+      </span>
+      {actionable ? (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              openFastEdit(itemId(item))
+            }}
+          >
+            <Pencil size={ICON_SIZE.xs} />
+            {ab('openFigure')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              addFigureToLayout(itemId(item))
+            }}
+          >
+            <Plus size={ICON_SIZE.xs} />
+            {ab('addToCanvas')}
+          </Button>
+        </>
+      ) : (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void useScriptRunStore.getState().run(item.asset.script)}
+        >
+          <Play size={ICON_SIZE.xs} />
+          {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+        </Button>
+      )}
+    </div>
   )
 }
 

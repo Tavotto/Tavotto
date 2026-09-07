@@ -133,6 +133,9 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
   'glyph-missing': { context: 'document', fix: 'none' },
   'glyph-substituted': { context: 'document', fix: 'none' },
+  // 能修的动作是「把元素挪回图内 / 放大图幅 / 让脚本用 tight_layout」，
+  // 哪一种对只有用户说得出；自动挪一条轴标题等于替用户改版式。
+  'element-outside-figure': { context: 'document', fix: 'none' },
   'text-weight-policy': { context: 'document', fix: 'safe_auto' },
   'legend-frame': { context: 'document', fix: 'safe_auto' },
   'legend-font-size': { context: 'document', fix: 'safe_auto' },
@@ -458,18 +461,62 @@ export function summaryFor(
   opts: {
     /** 只看这张画布；不给就是整个项目 */
     canvasId?: string
+    /**
+     * 只看这一个画布对象（按原图导出时 = 那张图，审计 T33）。页面级问题
+     * （`objectId` 为 null）不算——这次导出的不是那张页面。要配合 `canvasId`
+     */
+    objectId?: string
     extra?: ValidationIssue[]
     ready: boolean
     failed: boolean
   },
 ): ValidationSummary {
-  const base = opts.canvasId
-    ? issues.filter((i) => i.objectRef.canvasId === opts.canvasId)
-    : issues
+  const base = issues.filter(
+    (i) =>
+      (!opts.canvasId || i.objectRef.canvasId === opts.canvasId) &&
+      (!opts.objectId || i.objectRef.objectId === opts.objectId),
+  )
   return summarizeIssues(mergeExportIssues(base, opts.extra ?? []), {
     ready: opts.ready,
     failed: opts.failed,
   })
+}
+
+/**
+ * 聚合投影按对象裁一刀（按原图导出时写进样式检查报告的那份）。命中了这个对象
+ * 的条目留下并**投影到它身上**：`objectIds` 只剩它、`gids` / `occurrences` 只剩
+ * 它的；页面级条目（没有对象）不算。
+ *
+ * **`message` / `detail` 跟着一起重算。** 它们原本是**全画布**最糟那一次的，而
+ * `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）——同一条规则
+ * 命中多个面板、别的面板更糟时，按原图导出的样式检查报告会把别人的测量值记到
+ * 选中的那张图头上（目标自己 7 pt，报告里写成 4 pt）。裁完重挑一次，报告里的数
+ * 就是这张图的数。
+ *
+ * 重挑的尺子与 `Sink` 完全一样（同一条规则只有一个权威）：带排名的取最糟那次，
+ * 不带排名的第一次说了算，并列时先出现的赢。
+ */
+export function rawIssuesForObject(raw: PreflightIssue[], objectId: string): PreflightIssue[] {
+  return raw
+    .filter((i) => i.objectIds.includes(objectId))
+    .map((i) => {
+      const occurrences = i.occurrences.filter((o) => o.objectId === objectId)
+      const gids = [...new Set(occurrences.map((o) => o.gid).filter((g): g is string => !!g))]
+      let best = occurrences[0]
+      for (const occ of occurrences) {
+        if (occ.worse != null && (best?.worse == null || occ.worse > best.worse)) best = occ
+      }
+      return {
+        ...i,
+        objectIds: [objectId],
+        gids,
+        occurrences,
+        // 一条命中都没留下时（`objectIds` 里有它就不该发生）保守地留着聚合项
+        // 那份，绝不编一个空的出来
+        message: best?.message ?? i.message,
+        detail: best?.detail ?? i.detail,
+      }
+    })
 }
 
 /* ------------------------------- 筛选 ------------------------------------- */

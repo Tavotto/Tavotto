@@ -3153,7 +3153,7 @@ _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 def _finite_geometry(entry: dict) -> bool:
     """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
-    for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+    for field in ("bbox", "anchor", "arrow_endpoints", "geometry", "clip_bbox"):
         v = entry.get(field)
         if v is None:
             continue
@@ -3291,6 +3291,90 @@ def _collection_bbox(coll, renderer):
     except Exception:  # noqa: BLE001
         return None
     return bb if _ok(bb) else None
+
+
+def _clip_extents(artist):
+    """artist 真正被裁到的 display 矩形 `(x0, y0, x1, y1)`；不裁 / 说不清回 None。
+
+    **判据有两个维度，缺一不可**（matplotlib 3.10.8 实测，见本函数的看护用例）：
+
+    * `get_clip_on()` 为 **False** 时 `get_clip_box()` **照样是子图框**——
+      `Axes.text()` 默认就是这个组合（`clip_on=False` + clipbox = `ax.bbox`）。
+      只看框，会把「真的画到图幅外的标注」当成被裁住了而放行；
+    * `get_clip_on()` 为 **True** 时框却可能整个是 None——标题 / 轴标题 / 图例 /
+      刻度线 / spine / axes patch 全是这样（`Artist._clipon` 默认 True，
+      `_clipbox` 默认 None）。只看开关，会把它们当成裁进了子图里而放行。
+
+    这两个维度正是 matplotlib 自己在 `Artist.get_tightbbox` 里用的那一对，
+    这里照它的语义求交（clip box ∩ clip path 的包围盒）。直角的
+    `set_clip_path(Rectangle)` 会被 matplotlib 折成 clipbox（`get_clip_path()`
+    回 None）；只有非矩形（圆形…）才留下一条真 path，取它的**包围盒**是保守
+    方向——框大于真实可见区，宁可多报也不漏报。
+
+    说不出裁到哪就回 None（= 当作不裁）。**这个方向是有意的**：这条事实唯一
+    的消费者是「元素超出图幅」那条阻断级检查，多报一次是误伤，漏报一次是
+    静默丢内容。
+    """
+    try:
+        if not artist.get_clip_on():
+            return None
+        box = artist.get_clip_box()
+        path = artist.get_clip_path()
+    except (AttributeError, TypeError):
+        return None  # 伪元素（刻度组 / 色条代理…）问不出裁剪，当作不裁
+    boxes = []
+    if box is not None:
+        boxes.append(box)
+    if path is not None:
+        try:
+            boxes.append(path.get_fully_transformed_path().get_extents())
+        except Exception:  # noqa: BLE001
+            return None
+    if not boxes:
+        return None
+    try:
+        x0 = max(float(b.xmin) for b in boxes)
+        y0 = max(float(b.ymin) for b in boxes)
+        x1 = min(float(b.xmax) for b in boxes)
+        y1 = min(float(b.ymax) for b in boxes)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+        return None
+    return x0, y0, x1, y1
+
+
+def _clip_bbox(artist, W: float, H: float):
+    """元素的裁剪框（figure 分数、top-origin，与 bbox 同一套坐标）；不裁回 None。
+
+    **不改 `bbox`，另发一条事实。** bbox 同时是前端的命中框与选中高亮框，把它
+    换成「裁剪之后真正画出来的那部分」会连带改掉命中几何与写回自检比对的那个
+    框；而这里要回答的只有一个问题：导出时**图幅边界**处会不会静默丢内容。
+    两件事分开，消费者只有 `preflight` 的 `element-outside-figure` 一条。
+
+    裁剪框把整幅图都包住时不发——那等于什么都没裁掉，发出去只是噪音。
+    """
+    if isinstance(artist, SeriesGroup):
+        members = artist.artists if artist.kind == "bar_series" else artist.members()
+        rects = [_clip_extents(m) for m in members]
+        if not rects or any(r is None for r in rects):
+            # 有一个成员不被裁 = 这组整体有内容能画到框外，别声称它被裁住了
+            return None
+        ext = (
+            min(r[0] for r in rects),
+            min(r[1] for r in rects),
+            max(r[2] for r in rects),
+            max(r[3] for r in rects),
+        )
+    else:
+        ext = _clip_extents(artist)
+    if ext is None:
+        return None
+    x0, y0, x1, y1 = ext
+    rect = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
+    if rect[0] <= 0.0 and rect[1] <= 0.0 and rect[0] + rect[2] >= 1.0 and rect[1] + rect[3] >= 1.0:
+        return None
+    return rect
 
 
 def _ensure_agg_canvas(fig):
@@ -3556,6 +3640,16 @@ def _build_manifest(state: FigState, stem: str) -> dict:
                     ]
                 except Exception:
                     pass
+        # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
+        # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
+        # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
+        # 整个数据范围**，于是 xlim 之外的一个离群点能把 bbox 撑到图幅的几百倍，
+        # 而图幅边界处其实一点内容都没丢。预检的「元素超出图幅」据此把主语从
+        # 「这个元素的数据到哪儿」换成「这个元素真画出来的那部分到哪儿」。
+        # 缺席 = 不裁 / 裁不掉任何东西。
+        clip = _clip_bbox(artist, W, H)
+        if clip is not None:
+            entry["clip_bbox"] = clip
         # ---- 几何总闸：非有限值一个都不许出去 ----
         # 逐个分支补 `isfinite` 是补不完的（分支还会再长），而漏一个的后果
         # **取决于走哪条控制面**：Python 的 `json.dumps` 照写 `NaN` /

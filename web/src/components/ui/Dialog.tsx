@@ -31,6 +31,13 @@ interface DialogProps {
   busy?: boolean
   /** 与 busy 分开：不忙但也不许随手关（例如必须做出选择的确认框） */
   blockDismiss?: boolean
+  /**
+   * 被主对话框栈里更靠上的那个盖着（`uiStore.dialogStack`，审计 T35）：整层
+   * 不可见，但**不卸载**——表单状态、滚动位置与打开子步骤的那颗按钮都还在，
+   * 栈顶关掉后原样回来、焦点回到那颗按钮。遮罩也一起藏：屏幕上只有一层遮罩、
+   * 一个右上角 ×。Radix 自己会把它 aria-hidden，焦点圈与 Esc 都归栈顶。
+   */
+  covered?: boolean
 }
 
 export function Dialog({
@@ -45,6 +52,7 @@ export function Dialog({
   height,
   busy = false,
   blockDismiss = false,
+  covered = false,
 }: DialogProps) {
   const locked = busy || blockDismiss
   // 本仓库的对话框全部由 store 驱动、没有 Radix Trigger：关闭时 Radix 找不到
@@ -59,11 +67,13 @@ export function Dialog({
           className={cn(
             'fixed inset-0 z-40 bg-ink/20 backdrop-blur-[1px]',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
+            covered && 'invisible',
           )}
         />
         <RD.Content
           style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}) }}
           aria-busy={busy || undefined}
+          data-covered={covered || undefined}
           onKeyDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={() => {
             if (document.activeElement instanceof HTMLElement)
@@ -100,6 +110,7 @@ export function Dialog({
             // 退场靠 Radix 的 Presence 保活（它会等 animationend）——**不要**改成条件
             // 渲染，那样只有进场、没有退场，浮层会「淡入之后瞬间消失」
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
+            covered && 'invisible',
           )}
         >
           <div className="flex items-start justify-between gap-3 px-4 pb-1 pt-3.5">

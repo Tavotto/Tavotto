@@ -37,7 +37,9 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   await tabA.getByRole('button', { name: '画布排版' }).click()
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   await tabA.keyboard.press('ControlOrMeta+c')
-  await expect(tabA.getByRole('status')).toHaveText(/已复制/)
+  // 播报区认 `data-status-live`（`StatusToasts` 那块 aria-live），不认 `role="status"`：
+  // 后者不唯一，`getByRole('status')` 撞上第二个产出点就是 strict 违例或量错对象。
+  await expect(tabA.locator('[data-status-live]')).toHaveText(/已复制/)
 
   // **等标签 A 的自动保存真的落盘**，再开标签 B（#141）。
   //
@@ -64,7 +66,9 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   await tabB.bringToFront()
   await tabB.locator('[data-canvas-stage]').click({ position: { x: 300, y: 200 } })
   await tabB.keyboard.press('ControlOrMeta+v')
-  await expect(tabB.getByRole('status')).toHaveText(/已粘贴 1 个对象/, { timeout: 10_000 })
+  await expect(tabB.locator('[data-status-live]')).toHaveText(/已粘贴 1 个对象/, {
+    timeout: 10_000,
+  })
   // 断言的是**这次粘贴多出来一个**，不是「一共只有一个」
   await expect(tabB.locator('[data-object-id]')).toHaveCount(2)
 

@@ -10,7 +10,11 @@ import { setTelemetryEnabled } from '@/lib/telemetry'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore, isAutosaveSuspendedFor } from '@/store/documentStore'
 import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
-import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
+import {
+  configureOnboardingPersistence,
+  ONBOARDING_FLOW_VERSION,
+  useOnboardingStore,
+} from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
@@ -128,7 +132,7 @@ describe('tutorial_started 遥测（ADR 0041）', () => {
     expect(posts).toHaveLength(1)
     expect(posts[0]).toMatchObject({
       event: 'tutorial_started',
-      properties: { source: 'picker', tutorial_version: 1 },
+      properties: { source: 'picker', tutorial_version: ONBOARDING_FLOW_VERSION },
     })
     expect(JSON.stringify(posts[0])).not.toContain('p_tut')
     expect(JSON.stringify(posts[0])).not.toContain('tavotto-tutorial')

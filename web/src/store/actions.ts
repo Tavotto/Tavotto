@@ -19,6 +19,7 @@ import {
 import { restoreFollowPlan } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
+import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
 import type {
@@ -674,6 +675,30 @@ export function setOverride(
 }
 
 /**
+ * 关掉图内文字的一种效果（背景 / 描边）：写开关 `false`，**并把从属字段的
+ * override 一并清掉**——一条历史、一次渲染。
+ *
+ * 为什么不是普通的 `setOverride(prop, false)`：展示注册表有一条「用户改过的
+ * 字段永远显示」，留着从属字段的 override 的话，效果关了、参数还摆在那里
+ * ——而它们此刻对画面没有任何作用（审计 T14「关闭效果后收起参数」）。
+ * 表在 `lib/textEffects`；不认识的 prop 退化成一条普通开关写入。
+ */
+export function disableTextEffect(panelId: string, gid: string, prop: string) {
+  const dependents = TEXT_EFFECTS[prop] ?? []
+  // 开关是离散动作：先收掉开着的手势，不让它并进上一条历史
+  finishActiveGesture()
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !(p.gid === gid && (p.prop === prop || dependents.includes(p.prop))),
+    )
+    o.overrides.push({ gid, prop, value: false })
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop })
+}
+
+/**
  * 「删除」图内元素 = 写 visible:false override。
  * 非破坏、进撤销、导出与写回原始文件都生效，随时可从「已隐藏元素」恢复。
  */
@@ -1051,8 +1076,17 @@ export function seedBakedOverrides(panelId: string): number {
   return baked.length
 }
 
-/** 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态 */
-export function enterElementEdit(panelId: string) {
+/**
+ * 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态。
+ *
+ * `leftTab`：宽屏下左栏默认顺手切到元素树（`'elements'`）；从问题面板定位
+ * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
+ * 重新打开问题面板（审计 T09）。
+ */
+export function enterElementEdit(
+  panelId: string,
+  { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
+) {
   const seeded = seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
@@ -1068,9 +1102,11 @@ export function enterElementEdit(panelId: string) {
     })
   }
   // 三栏布局下左栏顺手切到元素树；窄断点不动（左右互斥，抢掉属性页得不偿失）
-  if (ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
+  if (leftTab === 'elements' && ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
     ui.setLeftTab('elements')
   }
+  // 焦点救援的接手者：左栏留在哪一页，就交给那一页的轨道入口
+  const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
   if (seeded) status(note('bakedSeeded', { count: seeded }))
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
   // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
@@ -1080,7 +1116,7 @@ export function enterElementEdit(panelId: string) {
   // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
   // 交给左轨的「图内元素」入口——它一直在，而且正是键盘用户接下来要去的地方
   // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
-  rescueFocus(() => document.querySelector<HTMLElement>('[data-rail="elements"]'))
+  rescueFocus(() => document.querySelector<HTMLElement>(`[data-rail="${rail}"]`))
 }
 
 /* ------------------------------ 论文样式应用 -------------------------------- */

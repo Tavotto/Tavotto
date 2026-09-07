@@ -1,9 +1,10 @@
 import { useTranslation } from 'react-i18next'
-import { LayoutGrid, Plus } from 'lucide-react'
+import { Info, LayoutGrid, Plus } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '@/components/ui/Button'
 import { formatMm } from '@/lib/units'
-import { getOriginalOutputSpec, type OriginalOutputSpec } from '@/lib/originalSpec'
+import { useOriginalSpec } from '@/hooks/useOriginalSpec'
+import type { OriginalOutputSpec } from '@/lib/originalSpec'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -21,15 +22,18 @@ import type { PanelObject } from '@/types/document'
 export function FastEditBar() {
   const { t } = useTranslation('workspace')
   const panelId = useWorkspaceStore((s) => s.activePanelId)
+  // 「编辑原图」这一次把图加进了文档（此前不在）：常驻一行说明，回排版即消失
+  const justAdded = useWorkspaceStore((s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId)
   const panel = useDocumentStore((s) => {
     const o = s.doc.objects.find((x) => x.id === panelId)
     return o?.type === 'panel' ? (o as PanelObject) : null
   })
   // capability 缺席 = 这一轮还不知道，什么都不说（不补默认值）
   const capability = useAssetStore((s) => (panel ? s.byId[panel.fileId]?.capability : undefined))
+  // 与导出对话框同一个 hook：渲染回来 / 图幅同步时两处一起重算，数不可能对不上
+  const spec = useOriginalSpec(panel?.fileId ?? null)
   if (!panel) return null
 
-  const spec = getOriginalOutputSpec(panel.fileId)
   const name = panel.name ?? panel.fileId
   const editable = !!panel.script
 
@@ -65,6 +69,22 @@ export function FastEditBar() {
             {t('fastEdit.toLayout')}
           </Button>
         </div>
+
+        {/* 这张图是为了编辑才刚加进文档的：说出口，并说明怎么撤（UI 审计 T06）。
+            不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉。
+            这一份只负责**看得见**，不带 role：读屏播报归 `CanvasStage` 里那块常驻
+            活动区（`data-fast-edit-live`）。放在那儿而不是这儿，是因为这个浮动条
+            本身就是进快速编辑那一刻才挂上的——活动区跟着它一起插进 DOM 的话，
+            插进来时就已经填好了字，读屏多半一声不吭。 */}
+        {justAdded && (
+          <div
+            data-fast-edit-added-note
+            className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
+          >
+            <Info size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+            <span className="min-w-0 truncate">{t('fastEdit.addedForEdit')}</span>
+          </div>
+        )}
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
         {!editable && (

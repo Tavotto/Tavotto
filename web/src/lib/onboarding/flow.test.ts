@@ -24,6 +24,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { addFigureToLayout, openFastEdit, returnToLayout, useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { migratePersisted } from '@/store/onboardingStore'
 import {
   completeStep,
   currentContext,
@@ -31,9 +32,20 @@ import {
   inTutorial,
   resetSignalsForTest,
   signalSnapshot,
+  skipStep,
   startOnboardingEngine,
 } from './flow'
-import { buildContext, EMPTY_SIGNALS, problemsResolved, STEP_TABLE_MATCHES_IDS, STEPS, TYPOGRAPHY_PROPS_FIGURE } from './steps'
+import { REAL_STEP_IDS, type StepId } from './stepIds'
+import {
+  buildContext,
+  EMPTY_SIGNALS,
+  missingTutorialPanels,
+  problemsResolved,
+  STEP_TABLE_MATCHES_IDS,
+  STEPS,
+  stepById,
+  TYPOGRAPHY_PROPS_FIGURE,
+} from './steps'
 import { useTutorialStore } from './tutorial'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -385,6 +397,230 @@ describe('完整流程：每一步都由真实动作完成', () => {
     returnToLayout()
     await tick()
     expect(ob().currentStep).toBe('multi_select_align')
+  })
+})
+
+/** 一步的前置结论（不满足时带原因） */
+const pre = (id: StepId) => stepById(id).precondition?.(currentContext()) ?? { ok: true }
+const reasonOf = (id: StepId) => {
+  const p = pre(id)
+  return p.ok ? null : p.reason
+}
+const runAction = (id: StepId) => {
+  const p = pre(id)
+  if (p.ok || !p.action) throw new Error(`step ${id} has no precondition action`)
+  p.action.run()
+}
+
+describe('前置状态先验：缺了就说清并给真实行动，不「等待」', () => {
+  it('select_text / change_typography / locate_problem：还在画布模式时说「要在图内编辑里」，按钮打开那张图', async () => {
+    completeStep('welcome')
+    // 跳过第 1 步：人还在画布模式
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    for (const id of ['select_text', 'change_typography'] as const) {
+      const p = pre(id)
+      expect(p.ok).toBe(false)
+      if (p.ok) continue
+      expect(p.reason).toBe('notInElementEdit')
+      expect(p.values).toEqual({ name: 'Fig2_correlation' })
+      expect(p.action?.key).toBe('openFigure')
+      // 装置里素材抽屉开着：指那张卡（选择器经 CSS.escape，点号带转义）
+      expect(p.anchor).toEqual({ kind: 'selector', selector: `[data-card="${CSS.escape('Fig2_correlation.pdf')}"]` })
+    }
+    // 行动按钮 = 稳定动作 openFastEdit：进了 Fig2 的图内编辑，前置随之满足
+    runAction('select_text')
+    await tick()
+    expect(useUiStore.getState().elementPanelId).toBe('p2')
+    expect(pre('select_text').ok).toBe(true)
+    // 第 3 步还要选中一段文字：没选时说清，按钮替用户选首选的文字元素（标题）
+    expect(reasonOf('change_typography')).toBe('noTextSelected')
+    expect(pre('change_typography')).toMatchObject({ action: { key: 'selectText' } })
+    runAction('change_typography')
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title'])
+    expect(pre('change_typography').ok).toBe(true)
+    // 选了曲线也不算文字
+    useUiStore.getState().setSelectedGid('axes_0.lines_0')
+    expect(reasonOf('change_typography')).toBe('noTextSelected')
+  })
+
+  it('locate_problem：那张图没渲染过 → 问题面板里不会有它的问题，先打开它一次', async () => {
+    completeStep('welcome')
+    useRenderStore.getState().clear()
+    expect(currentContext().elements).toBeNull()
+    expect(reasonOf('locate_problem')).toBe('editPanelNotRendered')
+    expect(pre('locate_problem')).toMatchObject({ action: { key: 'openFigure', values: { name: 'Fig2_correlation' } } })
+    const p2 = useDocumentStore.getState().doc.objects.find((o) => o.id === 'p2') as PanelObject
+    seedExactRender(p2, manifest)
+    expect(pre('locate_problem').ok).toBe(true)
+  })
+
+  it('要编辑的那张图不在文档里：说「不在这份画布里」，按钮把它打开（经素材表加进来）', async () => {
+    completeStep('welcome')
+    const s = useDocumentStore.getState()
+    useDocumentStore.setState({ doc: { ...s.doc, objects: s.doc.objects.filter((o) => o.id !== 'p2') } })
+    expect(currentContext().edit).toBeNull()
+    expect(reasonOf('select_text')).toBe('editPanelMissing')
+    expect(reasonOf('locate_problem')).toBe('editPanelMissing')
+    runAction('select_text')
+    await tick()
+    const ctx = currentContext()
+    expect(ctx.edit?.meta.key).toBe('second')
+    expect(ctx.elementPanelId).toBe(ctx.edit?.panel.id)
+  })
+
+  it('multi_select_align：在快速编辑里说「要回到画布」，按钮回排版；只剩一张时说「先加 Fig1_kinetics」', async () => {
+    completeStep('welcome')
+    openFastEdit('Fig2_correlation.pdf')
+    await tick()
+    expect(reasonOf('multi_select_align')).toBe('notInLayout')
+    expect(pre('multi_select_align')).toMatchObject({
+      action: { key: 'returnToLayout' },
+      anchor: { kind: 'selector', selector: '[data-onboarding-anchor="to-layout"]' },
+    })
+    runAction('multi_select_align')
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    expect(pre('multi_select_align').ok).toBe(true)
+    // 删掉 Fig1：缺一张
+    const s = useDocumentStore.getState()
+    useDocumentStore.setState({ doc: { ...s.doc, objects: s.doc.objects.filter((o) => o.id !== 'p1') } })
+    expect(missingTutorialPanels(currentContext()).map((m) => m.stem)).toEqual(['Fig1_kinetics'])
+    expect(pre('multi_select_align')).toMatchObject({
+      reason: 'otherPanelMissing',
+      values: { name: 'Fig1_kinetics' },
+      action: { key: 'addToLayout', values: { name: 'Fig1_kinetics' } },
+    })
+    runAction('multi_select_align')
+    expect(currentContext().tutorialPanelIds.size).toBe(2)
+    expect(pre('multi_select_align').ok).toBe(true)
+  })
+
+  it('没有元数据时不下结论（那是「等待」的合法窗口）', () => {
+    completeStep('welcome')
+    useTutorialStore.setState({ meta: null })
+    for (const id of ['select_text', 'change_typography', 'locate_problem', 'multi_select_align'] as const) {
+      expect(pre(id).ok).toBe(true)
+    }
+  })
+})
+
+describe('add_to_layout 按文档里实际有几张图说话', () => {
+  it('只剩一张：变体说「还缺 Fig1_kinetics」、锚点指素材、按钮把它加进来；加完回到原文案并完成', async () => {
+    completeStep('welcome')
+    const s = useDocumentStore.getState()
+    useDocumentStore.setState({ doc: { ...s.doc, objects: s.doc.objects.filter((o) => o.id !== 'p1') } })
+    ob().goTo('add_to_layout')
+    await tick()
+    const def = stepById('add_to_layout')
+    let ctx = currentContext()
+    expect(def.done(ctx)).toBe(false)
+    expect(def.variant?.(ctx)).toBe('add_to_layout.missing')
+    expect(def.values?.(ctx)).toEqual({ name: 'Fig1_kinetics' })
+    expect(def.anchor(ctx)).toEqual({ kind: 'selector', selector: `[data-card="${CSS.escape('Fig1_kinetics.pdf')}"]` })
+    const action = def.action?.(ctx)
+    expect(action?.key).toBe('addToLayout')
+    action!.run()
+    await tick()
+    ctx = currentContext()
+    expect(ctx.tutorialPanelIds.size).toBe(2)
+    expect(def.variant?.(ctx)).toBe('add_to_layout')
+    expect(def.action?.(ctx)).toBeNull()
+    // 两张都在、人在版面 → 引擎把这一步判完
+    expect(ob().currentStep).toBe('multi_select_align')
+  })
+
+  it('两张都在但在快速编辑里：锚点是快速编辑条的「添加到画布」，没有多余的按钮', async () => {
+    completeStep('welcome')
+    openFastEdit('Fig2_correlation.pdf')
+    await tick()
+    const def = stepById('add_to_layout')
+    const ctx = currentContext()
+    expect(def.variant?.(ctx)).toBe('add_to_layout')
+    expect(def.anchor(ctx)).toEqual({ kind: 'selector', selector: '[data-onboarding-anchor="add-to-layout"]' })
+    expect(def.action?.(ctx)).toBeNull()
+  })
+})
+
+describe('四条结束路径：完成与跳过分别记账，结束页按账说话', () => {
+  const doneDef = stepById('done')
+  const outcomesNow = () => currentContext().outcomes
+
+  it('全做：结束页是「完成」变体，跳过 0', async () => {
+    completeStep('welcome')
+    for (const id of REAL_STEP_IDS) completeStep(id)
+    expect(ob().currentStep).toBe('done')
+    expect(outcomesNow()).toEqual({ done: REAL_STEP_IDS.length, skipped: 0, total: REAL_STEP_IDS.length })
+    expect(doneDef.variant?.(currentContext())).toBe('done')
+    completeStep('done')
+    expect(ob().status).toBe('completed')
+    expect(ob().skippedSteps).toEqual([])
+  })
+
+  it('全跳：每一步都能跳、结束页说「跳过了全部」，不用完成式', async () => {
+    completeStep('welcome')
+    for (let i = 0; i < REAL_STEP_IDS.length; i++) {
+      expect(stepById(ob().currentStep!).manual).toBeFalsy()
+      skipStep()
+    }
+    expect(ob().currentStep).toBe('done')
+    expect(outcomesNow()).toEqual({ done: 0, skipped: REAL_STEP_IDS.length, total: REAL_STEP_IDS.length })
+    expect(doneDef.variant?.(currentContext())).toBe('done.allSkipped')
+    expect(doneDef.values?.(currentContext())).toEqual(outcomesNow())
+    completeStep('done')
+    expect(ob().status).toBe('completed')
+    // 结束之后那本账还在：入口 / 设置页说得出这轮是跳完的
+    expect(ob().skippedSteps).toEqual([...REAL_STEP_IDS])
+  })
+
+  it('部分完成后退出再进入：进度与两本账都在，继续到结束页说「完成 n 步，跳过 m 步」', async () => {
+    completeStep('welcome')
+    openFastEdit('Fig2_correlation.pdf')
+    await tick()
+    expect(ob().completedSteps).toContain('open_fast_edit')
+    // 用户关掉 coachmark = 暂停；本机那格的往返（迁移）保住两本账
+    ob().pause('user')
+    const persisted = migratePersisted(JSON.parse(JSON.stringify(ob())))
+    expect(persisted.status).toBe('paused')
+    expect(persisted.currentStep).toBe('select_text')
+    expect(persisted.completedSteps).toEqual(['welcome', 'open_fast_edit'])
+    expect(persisted.skippedSteps).toEqual([])
+    ob().resume()
+    expect(ob().currentStep).toBe('select_text')
+    // 剩下的全跳
+    while (ob().currentStep !== 'done') skipStep()
+    expect(outcomesNow()).toEqual({ done: 1, skipped: REAL_STEP_IDS.length - 1, total: REAL_STEP_IDS.length })
+    expect(doneDef.variant?.(currentContext())).toBe('done.partial')
+    completeStep('done')
+    expect(ob().status).toBe('completed')
+  })
+
+  it('中途切走项目再回来：系统暂停 → 自动继续 → 能走到结束', async () => {
+    completeStep('welcome')
+    openFastEdit('Fig2_correlation.pdf')
+    await tick()
+    useProjectStore.setState({ project: { open: true, id: 'p_other' } })
+    await tick()
+    expect(ob().status).toBe('paused')
+    useProjectStore.setState({ project: { open: true, id: 'p_tut', tutorial: true } })
+    await tick()
+    expect(ob().status).toBe('active')
+    expect(ob().currentStep).toBe('select_text')
+    while (ob().currentStep !== 'done') skipStep()
+    completeStep('done')
+    expect(ob().status).toBe('completed')
+    expect(outcomesNow().done).toBe(1)
+  })
+
+  it('返回再真的做完一步：从跳过那本账里移出', async () => {
+    completeStep('welcome')
+    skipStep() // open_fast_edit
+    expect(ob().skippedSteps).toEqual(['open_fast_edit'])
+    ob().back()
+    expect(ob().currentStep).toBe('open_fast_edit')
+    openFastEdit('Fig2_correlation.pdf')
+    await tick()
+    expect(ob().currentStep).toBe('select_text')
+    expect(ob().skippedSteps).toEqual([])
+    expect(outcomesNow().done).toBe(1)
   })
 })
 

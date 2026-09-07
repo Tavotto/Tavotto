@@ -12,8 +12,16 @@ import {
   type ProjectStatus,
   type RecentProject,
 } from '@/lib/api'
+import {
+  documentHasContent,
+  readProjectDocument,
+  rememberProjectDocument,
+  type ProjectDocumentRef,
+} from '@/lib/projectDocs'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { flushAutosave, useDocumentStore } from '@/store/documentStore'
+import { openRecentDocument } from '@/store/actions'
+import { useAssetBrowseStore } from '@/store/assetBrowseStore'
+import { flushAutosave, readAutosaveDoc, useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
@@ -66,8 +74,34 @@ interface ProjectState {
     },
   ) => Promise<ProjectStatus>
   remove: (path: string) => Promise<void>
+  /** 一次从最近列表移除多条（失效项分组的「全部移除」）；同样不删磁盘内容 */
+  removeMany: (paths: string[]) => Promise<void>
+  /**
+   * 切回项目时记着「上次开的是这份」、却没能把它换回来（自动保存槽位读不到 /
+   * 后端不可达）。**不静默开一份空白了事**：顶部横幅指名那份文档，给一个
+   * 「打开上次文档」重试与一个「知道了」。
+   */
+  lastDocumentIssue: ProjectDocumentRef | null
+  /** 横幅上的重试：再读一次自动保存槽位；成功就换过去并收起横幅 */
+  openLastDocument: () => Promise<boolean>
+  dismissLastDocumentIssue: () => void
   /** 后端不认本标签页的项目了（409 no_project）：退回 Project Picker */
   dropProject: () => void
+}
+
+/**
+ * 把这个项目上次开着的文档换回来。读的是它的自动保存槽位（磁盘优先、本机
+ * 副本兜底——`readAutosaveDoc` 那套既有规则），换的是**同一个 documentId**，
+ * 所以槽位不会分叉。任何一步失败都回 false，由调用方决定怎么说。
+ */
+async function restoreProjectDocument(ref: ProjectDocumentRef): Promise<boolean> {
+  try {
+    const { doc } = await readAutosaveDoc(ref.id)
+    if (!doc) return false
+    return await useDocumentStore.getState().switchDocument(doc, ref.id)
+  } catch {
+    return false
+  }
 }
 
 /** 换项目时把属于旧项目的前端会话状态全部丢掉。 */
@@ -82,6 +116,8 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 素材库的搜索词与筛选说的是旧项目的目录与素材，跟着清
+  useAssetBrowseStore.getState().clear()
   // 版本缩略图按 (项目, 素材版本, 变体) 缓存 blob：换项目时整表释放，
   // 既是回收 blob，也是防止旧项目的图被当成新项目某个版本的预览
   clearVariantPngCache()
@@ -142,6 +178,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   project: null,
   recent: [],
   opened: [],
+  lastDocumentIssue: null,
 
   init: async () => {
     try {
@@ -192,11 +229,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (status.id) setCurrentProjectId(status.id)
     // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
     armNoProjectRecovery()
+    // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
+    // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
+    // 才不依赖这条细节。
+    const last = status.id ? readProjectDocument(status.id) : null
     await resetForNewProject()
     // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
     // 必须赶在 `phase: 'open'` 之前（见接口注释）
+    let issue: ProjectDocumentRef | null = null
     if (opts?.prepareDocument) await opts.prepareDocument()
-    set({ project: status, phase: 'open' })
+    else if (last && !(await restoreProjectDocument(last))) issue = last
+    set({ project: status, phase: 'open', lastDocumentIssue: issue })
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
@@ -206,6 +249,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await removeRecentProject(path)
     await get().refreshRecent()
   },
+
+  removeMany: async (paths) => {
+    // 后端一次只移一条；失败的那几条留在列表里，下一次刷新如实显示
+    await Promise.allSettled(paths.map((p) => removeRecentProject(p)))
+    await get().refreshRecent()
+  },
+
+  openLastDocument: async () => {
+    const ref = get().lastDocumentIssue
+    if (!ref) return false
+    // 走「最近文档」同一条路（读槽位 → 换文档 → 适配视口 → 说一句话）；
+    // 它失败时自己会报「本机副本已不存在」那句
+    await openRecentDocument(ref.id)
+    const ok = useDocumentStore.getState().documentId === ref.id
+    if (ok) set({ lastDocumentIssue: null })
+    return ok
+  },
+
+  dismissLastDocumentIssue: () => set({ lastDocumentIssue: null }),
 
   /**
    * 后端不认本标签页记着的 pj 了（进程重启 / 项目被别处关掉）：忘掉这个 id，
@@ -221,7 +283,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     flushAutosave()
     // 先冲刷再忘掉 pj：反过来的话这份自动保存会落到后端的默认项目里去。
     setCurrentProjectId(null)
-    set({ project: null, phase: 'none' })
+    set({ project: null, phase: 'none', lastDocumentIssue: null })
     // 选择器要用「最近 / 已打开」两份列表；这两个端点与项目无关，不会再 409
     void get().refreshRecent()
   },
@@ -229,3 +291,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
 // 任何一个请求撞上 409 no_project 都会走到这里（检测在 lib/api.ts 的请求出口）
 setNoProjectHandler(() => useProjectStore.getState().dropProject())
+
+/**
+ * 记「这个项目现在开着哪份文档」（`lib/projectDocs.ts`）。
+ *
+ * 键取**本标签页此刻认领的项目**（`currentProjectId()`），不取 `project`
+ * 字段：`adoptOpenedProject` 先 `setCurrentProjectId(新)` 再换代，而 `project`
+ * 要到最后一步才更新——换代期间那份空白文档若按 `project` 记，会记到**旧**
+ * 项目名下，把用户在旧项目里停的那份顶掉。
+ *
+ * 只记有内容的文档（理由见 `projectDocs.ts`）；已经记着同一份 (id, 名字) 就
+ * 不再写——文档 store 每次拖动都会变，不能每帧写一次 localStorage。
+ */
+useDocumentStore.subscribe((s, prev) => {
+  if (
+    s.documentId === prev.documentId &&
+    s.doc === prev.doc &&
+    s.canvases === prev.canvases &&
+    s.projectMeta.name === prev.projectMeta.name
+  ) {
+    return
+  }
+  const pj = currentProjectId()
+  if (!pj || !documentHasContent(s)) return
+  const name = s.projectMeta.name
+  // 与**存着的**那份比，不与内存里的缓存比：缓存会在站点数据被清掉之后
+  // 继续说「已经记过了」，而一次 getItem 比一帧拖动便宜得多
+  const cur = readProjectDocument(pj)
+  if (cur && cur.id === s.documentId && cur.name === name) return
+  rememberProjectDocument(pj, { id: s.documentId, name })
+})

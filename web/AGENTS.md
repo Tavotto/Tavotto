@@ -259,15 +259,33 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
 
 * **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
   与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
-  投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份。
-  它也**不列第二套清单**（ADR 0031 §四）：只给数量 + 「查看问题」，
-  完整清单、筛选与修复都在左侧问题面板。
+  投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份——**按导出目标
+  取范围**（`objectId`：按原图导出只算那张图，页面级问题不算；按画布算整张
+  画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**裁完
+  `message` / `detail` 要按留下来的那些命中重挑一次**（尺子与 `Sink` 完全一样：
+  带排名的取最糟那次，不带排名的第一次说了算）——它们原本属于**全画布**最糟
+  那一次，而 `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）；
+  不重挑的话，按原图导出的样式检查报告会把别的面板的测量值记到选中的那张图
+  头上（目标自己 7 pt，报告里写成 4 pt）。
+  它**不列第二套清单**（ADR 0031 §四），只有一个例外：**阻断项逐条列出**
+  （最多 5 条，无筛选无修复，每条一个「定位」入口，紧挨着知情确认框——用户
+  在点头之前得看见自己在为什么点头）；其余等级只给数量 + 「查看问题」，
+  完整清单、筛选与修复都在左侧问题面板。「定位」与「查看问题」关掉对话框时
+  把用户填的东西留在组件里（`parked`），再点导出原样回来。
+* **主对话框栈**（`uiStore.dialogStack`，审计 T35）：导出 → 设置 → 论文样式
+  是一条前进 / 返回的小流程。任何时刻只显示栈顶；下面的用 `Dialog` 的
+  `covered` 藏起来**但不卸载**（状态、滚动、触发按钮都在，Radix 把焦点还给
+  那颗按钮）。从导出深链进设置**不先关导出**；设置「应用到当前图」带着选中的
+  样式 id 打开样式对话框（`stylesPresetId`），也不关设置。
 * **`ready` / `failed` 不许压扁成「没问题」**：`total === 0` 单独看不足以说
   「检查通过」。打开导出对话框时**当场同步跑一遍**，就是为了不让那 250ms 防抖
   窗口里说出一句假话。
 * **逐条命中**（`PreflightOccurrence`）是 TS 侧的展开层，**不进跨语言合同**：
   golden vectors 比的仍是聚合投影。看护用例盯着两者一致（命中的 objectId /
-  gid 并起来必须与聚合项逐字相等）。
+  gid 并起来必须与聚合项逐字相等）。每条命中带着自己那次的 `worse`（量化排名，
+  没法比大小的规则不带）——上一条的「裁完重挑」靠它，两处不许各排一套序。
+  命中对象**只在 `Sink.record` 里造一次**（新增与顶掉旧条目共用同一个字面量）：
+  各写一份的话，下一个新增的字段只会被加进其中一条。
 * **定位只有 `lib/issueFocus.focusObject()` 一处**：切画布 → 切工作流模式 →
   选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
   （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
@@ -281,8 +299,18 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
+* **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
+  不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
+  `activePanelId` → 图内编辑的 `elementPanelId` → 选中的面板，`uiStore.problemScope`
+  为 `null` 时有当前图就看它；抽屉标题的计数与面板同一个范围（`useProblemScope`），
+  **轨道角标仍是全文档数**（它是入口）。② 按 ruleCode 聚合，组头说标题 + 等级 +
+  受影响对象数，行里只说「谁、现在多少、要多少」；叶子行仍带
+  `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
+  `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
+  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 左侧竖条 + 「当前」，
+  底部上一项 / 下一项；那条修好消失后「下一项」指向**顶上来的那条**，不跳回开头。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
-  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` /
+  `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 
@@ -375,13 +403,19 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   固定次序（下、左、上、右）；twinx / secondary 与宿主重合的边同一条规则。
 * **状态是派生的**：matplotlib 的 `direction` 是整条轴的，`ticks_<side>` 是边的，
   `inward = 边可见 && 方向含 in`。**三处同源**——画布命中区、示意图
-  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档 + 「显示边」）都读
+  （`TickAndSpineDiagram` 的内 / 外两带）、刻度卡（方向四档）都读
   `readAxesTickModel`、走 `toggleSidePlan` / `axisChoicePlan` / `sideVisiblePlan`、
   经 `store/actions.applyTickSidePlan` **一次 commit**（方向落刻度元素、显隐落子图，
   拆开会渲染出一帧半新半旧）。计划的 `effect.coupled` 是「方向那一步连带改到的
   同轴另一边」——hover 文字、示意图 tooltip 必须说出来，不装作每边独立。
 * 「隐藏」是四档里的派生态（两边都不显示），不是第四个真值；从它选回方向时
   **删**两边的 `ticks_<side>` override 回到脚本的边，不猜。
+* **每组设置只有一处控件**（审计 T13）：「在哪几条边显示」只在示意图上点
+  （内 / 外两带，键盘可达），刻度卡不再摆第二排「显示边」开关；改过的边由
+  图上那条边自己标（accent + tooltip），恢复只有一个动作（`resetAll`，一条
+  历史），不逐边出 chip。刻度组页分「刻度 / 文字」两段（`TickPage`），X / Y /
+  Z 同一套；次刻度关着时从属字段按展示注册表的 `visibleWhen` 收起——刻度卡
+  与通用列表共用 `registry.fieldVisible` 这一条判据，不各写一套。
 * **不支持就不摆**：manifest 没有 `spines`（极坐标 / 3D / 色条轴）画布无命中区；
   引擎没发某条轴的刻度元素时那两条边方向未知，示意图退回单个 `ticks_<side>`
   开关。刻度卡承接 `minor_length` / `minor_width`（`length` / `width` 只动主刻度），
@@ -487,11 +521,39 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**
+* **前置状态先验，缺了给真实行动（2026-09-06，审计 T36；flow v2）**：每步可有 `precondition(ctx)`，
+  不满足时卡片说清缺什么（`dialogs:onboarding.precondition.<reason>`）、主按钮只调稳定动作
+  （`openFastEdit` / `addFigureToLayout` / `returnToLayout` / `setSelectedGid`），「跳过此步」照旧；
+  「正在等待目标出现」只在前置满足之后的 `WAIT_MS` 窗口出现，计时从那一刻起算。`add_to_layout`
+  按 `missingTutorialPanels()` 出变体——文档里只剩一张时说「还缺哪张」，不许说「两张都在」。
+  **完成与跳过分两本账**：`completedSteps` 是走过的（推进状态机用），`skippedSteps` 是其中跳过的
+  子集；结束页按 `tallyOutcomes()` 分「教程完成 / 完成 n 步跳过 m 步 / 跳过了全部」三种措辞，
+  不用完成式总结一份跳完的教程。
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
-  `data-element-svg`（+ manifest bbox）。**aria-label / 文案 / class 都不能当选择器。** 改了这些
-  属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+  `data-element-svg`（+ manifest bbox）、`data-status-live`。**aria-label / 文案 / class / ARIA role
+  都不能当选择器。** 改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+* **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
+  `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的
+  `role="alert"` 里）。问「**应用刚说了什么**」的一律认它——`e2e/twin-axes-pick.spec.ts`（⌥ 轮换
+  播报 `status.elementCycled`）与 `e2e/cross-tab-paste.spec.ts`（已复制 / 已粘贴）靠它。
+  **`role="status"` 不是唯一的**：快速编辑那行常驻说明、素材库、导出面板、问题面板、设置页、
+  onboarding 层…… 十几处都在产出，所以 `[role="status"]` / `getByRole('status')` 拿到的是
+  「文档里排在最前的那个」，不是播报区。T06 给 `FastEditBar` 加的那行 `fastEdit.addedForEdit`
+  排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
+  什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
+  的 `host.querySelector`）可以继续用 role：那里主语唯一。
+  看护：`lib/liveRegionSelector.test.ts` 用 AST 扫 `e2e/` 的字符串字面量，任何
+  `[role=status|alert|log|marquee|timer]` 当选择器都点名——**活动区天生是复数且与 DOM
+  顺序相关**，「the status region」这个说法本身不成立，所以这条规则是绝对的、豁免为零。
+  `role=dialog` 那一族不进这条门禁：它还有「把 axe 扫描收进对话框」这类正当的限定用法，
+  判不死，硬加只会逼出一张越来越长的豁免表。
+  jsdom 单测**整片**不进（那 5 处此刻都对：三处 scope 在自己的渲染根里，两处只挂一个设置页
+  组件），但门禁另钉一条**真的变了的交集**：`CanvasStage` 自带一块常驻活动区
+  （`data-fast-edit-live`），所以挂载它的单测里「一次只挂一个组件、`document` 就是渲染根」
+  **不再成立**——那些文件不许用活动区的 role 当选择器。今天这个交集是空的（3 个文件挂载
+  `CanvasStage`，0 个这么写），两条规则的豁免都是零。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
@@ -708,6 +770,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
 - **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
+  按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
+  空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
+  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
+  文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
+  （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
+  后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
+  `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
@@ -737,6 +807,25 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   参数」，真实入口只有「选择渲染环境」（设置 about 段的
   EngineEnvironmentCard）与「复制诊断」；**native 未落地前不渲染任何
   可点但无功能的按钮**（PR 2 合并后再升级为实际入口）。
+- **素材卡的两个动作各说各的后果（UI 审计 T06）**：「编辑原图」（Enter / 双击）
+  进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
+  对象只能是文档里的面板对象），这一步由 `openFastEdit` 用状态提示
+  `fastEdit.addedForEdit` 说出口，一条历史、撤销即移除；图已在文档里时零文档
+  改动。**这句话分两份，别合成一份**：可见的常驻说明在 `FastEditBar`
+  （`data-fast-edit-added-note`，**不带 role**），读屏播报在 `CanvasStage` 的
+  `data-fast-edit-live`（`role="status"`，sr-only）。播报那份挂在 `CanvasStage`
+  而不是浮动条里，是因为浮动条本身就是进快速编辑那一刻才挂上的——活动区跟它一起
+  插进 DOM 的话，插进来时就已经填好了字，而读屏播报的是**区内内容的变化**，
+  「带着内容整个插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个
+  role 承诺了一件它并没有做的事。区先在、内容后变，由
+  `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
+  `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
+  `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
+  控件。**不许再用一个中性的「打开」承载加入文档。**
+  搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
+  不落 localStorage）。同脚本 + 同 stem 的 runtime 条目紧跟它的磁盘图并写
+  「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
+  重取（只重取已取过的）——「哪张图有原件」正是那一刻变的。
 - **runtime 卡片没有假值**：没跑过的没有尺寸、没有描述符，主动作是
   「运行并发现图」；「添加到画布」只走描述符（`addRuntimePanel`），
   绝不解析 id、绝不指望磁盘路径。运行时图的写回区

@@ -69,6 +69,15 @@ interface WorkspaceState {
    * 补进去就是把界面从他手里抢走。
    */
   pendingElementEdit: string | null
+  /**
+   * 「编辑原图」这一次把图**加进了文档**（它此前不在）——记下是哪个面板，
+   * 快速编辑浮动条据此常驻一行说明（UI 审计 T06）。
+   *
+   * 为什么不是一条状态 toast：进快速编辑紧接着就是「渲染完成」那条状态，
+   * 单槽位的 toast 一秒之内就被盖掉（真浏览器实测），用户根本看不见。
+   * 回到画布排版 / 换文档即清；撤销把面板撤掉时快速编辑自己会退出，同一条路。
+   */
+  addedForEdit: string | null
   /** 进入快速编辑（对象必须已经在激活画布里） */
   enterFastEdit: (panelId: string) => void
   /** 设置 / 清除「等源脚本到了再进图内编辑」的待办 */
@@ -83,20 +92,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   mode: 'layout',
   activePanelId: null,
   pendingElementEdit: null,
+  addedForEdit: null,
   enterFastEdit: (panelId) => {
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
-    set({ mode: 'fast_edit', activePanelId: panelId })
+    // 换了一张图：上一张的「刚加入」说明不跟过来
+    set({ mode: 'fast_edit', activePanelId: panelId, ...(changed ? { addedForEdit: null } : {}) })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
   },
   setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
   exitToLayout: () => {
     const changed = get().mode !== 'layout'
     // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null })
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
-  clear: () => set({ mode: 'layout', activePanelId: null, pendingElementEdit: null }),
+  clear: () =>
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null }),
 }))
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
@@ -182,8 +194,13 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  const { panel } = got
+  const { panel, created } = got
   useWorkspaceStore.getState().enterFastEdit(panel.id)
+  // 「编辑原图」把还不在文档里的图加了进来——这一步必须说出口（结构上躲不掉：
+  // 快速编辑的对象只能是文档里的面板对象，见文件头；但用户点的是"编辑"，看到
+  // 的却是版本预览多了一个对象、问题面板多了一批问题，UI 审计 T06）。它是一条
+  // 可撤销的历史，撤销即移除。图**已经在文档里**时什么都不说——那一次零文档改动。
+  useWorkspaceStore.setState({ addedForEdit: created ? panel.id : null })
   // 绘制工具画的是画布标注，快速编辑这一屏上根本没有它们的位置——
   // 停在「箭头」工具上进来，光标是十字而点下去什么也看不见
   useUiStore.getState().setTool('select')

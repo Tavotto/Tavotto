@@ -9,8 +9,6 @@ import {
   type TickDirection,
 } from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
-import { X } from 'lucide-react'
-import { ICON_SIZE } from '@/components/ui/Icon'
 import { Tip } from '../../ui/Tooltip'
 
 /**
@@ -54,8 +52,13 @@ export interface TickSpineAdapter {
   toggle: (prop: string, next: boolean) => void
   labelOf: (prop: string) => string
   isOverridden: (prop: string) => boolean
-  /** 单独恢复一条到脚本值（clearOverride） */
-  reset: (prop: string) => void
+  /**
+   * 把示意图承接的全部已修改字段一次恢复到脚本（一条历史）。**恢复动作统一**
+   * （审计 T13）：每条边各出一枚「× 恢复」chip 时，示意图下面会长出一排与
+   * 图上状态重复表达的标签；改过哪条边由图上那条边自己说（accent 色 +
+   * tooltip 里的「已修改」）。
+   */
+  resetAll: () => void
   /**
    * 该轴刻度的真实朝向与次刻度状态。**不给就按 out / 无次刻度画**——
    * 旧实现把刻度写死在框外侧，用户把 direction 改成 in 之后示意图纹丝不动，
@@ -198,19 +201,22 @@ function SvgSwitch({
 }) {
   const [focused, setFocused] = useState(false)
   const name = ctl(on ? 'switchOn' : 'switchOff', { label: adapter.labelOf(prop) })
+  const modified = adapter.isOverridden(prop)
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== 'Enter' && e.key !== ' ') return
     e.preventDefault()
     adapter.toggle(prop, !on)
   }
   return (
-    <Tip label={adapter.isOverridden(prop) ? `${name} · ${translate('element.modified', { ns: 'inspector' })}` : name}>
+    <Tip label={modified ? `${name} · ${translate('element.modified', { ns: 'inspector' })}` : name}>
       <g
         role="switch"
         aria-checked={on}
         aria-label={adapter.labelOf(prop)}
         tabIndex={0}
-        className="cursor-pointer outline-none"
+        // 修改标记跟着这条边走（颜色 + tooltip 文字两重表达），不另列一排标签
+        data-tick-modified={modified ? 'true' : undefined}
+        className={cn('cursor-pointer outline-none', modified && 'text-accent')}
         onClick={() => adapter.toggle(prop, !on)}
         onKeyDown={onKey}
         onFocus={() => setFocused(true)}
@@ -280,14 +286,17 @@ function ZoneSwitch({
   }
   const hit = hitRect(side, zone)
   const sideOn = state.visible
+  const modified = adapter.isOverridden(`ticks_${side}`)
+  const tipText = modified ? `${tip} · ${translate('element.modified', { ns: 'inspector' })}` : tip
   return (
-    <Tip label={tip}>
+    <Tip label={tipText}>
       <g
         role="switch"
         aria-checked={on}
         aria-label={name}
         tabIndex={0}
-        className="cursor-pointer outline-none"
+        data-tick-modified={modified ? 'true' : undefined}
+        className={cn('cursor-pointer outline-none', modified && 'text-accent')}
         data-tick-zone={`${side}:${zone}`}
         data-tick-coupled={plan?.effect.coupled.length ? plan.effect.coupled.join(',') : undefined}
         onClick={fire}
@@ -469,27 +478,22 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
         </div>
       )}
 
-      {/* 已修改的边逐条列出，点 × 单独恢复到脚本——折叠进图形的属性也保有
-          「一眼可辨来源 + 单项恢复」这两条契约 */}
+      {/* 改过的边在图上自己说（accent 色 + tooltip「已修改」）；恢复只有一个动作
+          ——一次把示意图承接的全部修改回到脚本（一条历史）。以前这里逐条列
+          「上边刻度线 ×」chips，与图上的状态重复表达同一组设置（审计 T13） */}
       {modified.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {modified.map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => adapter.reset(p)}
-              aria-label={ctl('resetSide', { label: adapter.labelOf(p) })}
-              className={cn(
-                'flex h-5 items-center gap-1 rounded-sm bg-accent-subtle px-1.5 text-xs text-accent',
-                'outline-none transition-colors hover:bg-accent/15 focus-visible:focus-ring',
-              )}
-            >
-              <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
-              {adapter.labelOf(p)}
-              <X size={ICON_SIZE.xs} aria-hidden />
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={adapter.resetAll}
+          data-tick-reset-all
+          className={cn(
+            'flex h-6 items-center gap-1 self-start rounded-sm px-1.5 text-xs text-accent',
+            'outline-none transition-colors hover:bg-accent-subtle focus-visible:focus-ring',
+          )}
+        >
+          <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
+          {ctl('resetDiagram', { count: modified.length })}
+        </button>
       )}
     </div>
   )
