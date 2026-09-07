@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
 
 from tavotto.engine import telemetry
+from tests.support.tsconst import exported_string_array
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web" / "src"
@@ -35,13 +35,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _frontend_events() -> list[str]:
-    """从 TS 现取那个闭集。**不在这里抄第二份**——抄一份就又多了一个会漂的出处。"""
-    src = DISCLOSURE_TS.read_text(encoding="utf-8")
-    block = re.search(r"TELEMETRY_DISCLOSED_EVENTS = \[(.*?)\] as const", src, re.S)
-    assert block, "没解析出 TELEMETRY_DISCLOSED_EVENTS——判据本身坏了"
-    names = re.findall(r"'([a-z_]+)'", block.group(1))
-    assert names, "闭集解析成空的——判据本身坏了"
-    return names
+    r"""从 TS 现取那个闭集。**不在这里抄第二份**——抄一份就又多了一个会漂的出处。
+
+    读法是结构性的（`tests/support/tsconst.py`）：先把注释与字符串字面量抹掉，
+    再在剩下的代码上找**导出的**那一处声明、配对方括号、取里面的字符串。
+    从前这里是 `re.search(r"TELEMETRY_DISCLOSED_EVENTS = \[(.*?)\]")`——正则看不见
+    语法结构，注释满足它，而 `re.search` 取的是**第一处**匹配：在活声明前面留
+    一份注释掉的旧数组，门禁读的就是那段注释，界面已经与 `EVENTS` 漂开了它却
+    照样绿（评审 #300-5）。
+    """
+    return exported_string_array(
+        DISCLOSURE_TS.read_text(encoding="utf-8"), "TELEMETRY_DISCLOSED_EVENTS"
+    )
 
 
 def _sends(locale: str) -> dict[str, str]:
