@@ -668,6 +668,7 @@ export function ExportDialog() {
       title={ex('title')}
       width={480}
       covered={covered}
+      anchor="export"
       footer={
         <>
           <span className="flex-1" />

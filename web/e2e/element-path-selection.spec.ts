@@ -67,7 +67,7 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
   /** 覆盖层里当前有几条沿路径的描示 / 几个带底色的矩形选中框 */
   const overlay = () =>
     page.evaluate(() => {
-      const svg = document.querySelector('svg.pointer-events-none') as SVGSVGElement | null
+      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
       const paths = [...(svg?.querySelectorAll('path[d]') ?? [])].filter(
         (p) => (p.getAttribute('d') ?? '').startsWith('M'),
       ).length
@@ -172,7 +172,7 @@ test('图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命
 
   const overlay = () =>
     page.evaluate(() => {
-      const svg = document.querySelector('svg.pointer-events-none') as SVGSVGElement | null
+      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
       const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
         .map((p) => p.getAttribute('d') ?? '')
         .filter((d) => d.startsWith('M'))
@@ -296,7 +296,7 @@ test('图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那�
 
   const overlay = () =>
     page.evaluate(() => {
-      const svg = document.querySelector('svg.pointer-events-none') as SVGSVGElement | null
+      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
       const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
         .map((p) => p.getAttribute('d') ?? '')
         .filter((d) => d.startsWith('M'))

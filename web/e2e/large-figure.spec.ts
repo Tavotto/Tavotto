@@ -258,19 +258,86 @@ test("大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点�
 });
 
 test("降档之后：选中图内元素、属性面板打得开、撤销回得去", async ({ page }) => {
-  const { panel } = await openLargePanel(app, page);
+  // 面板本身的可见性由 `openLargePanel` 断言过了，这里不再解构它：
+  // 下面的点击目标是从图内 SVG 里算出来的，不用面板的外框尺寸
+  await openLargePanel(app, page);
 
   // 第四格那两条普通曲线与图例**没有被 rasterize**（hybrid 的契约），
-  // 所以图内元素照常选得中。点画布中心附近，取第一个可命中的元素。
-  const box = await panel.boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  // 所以图内元素照常选得中。
+  //
+  // **点击目标从 DOM 算出来，不写死「面板中心」**（#319 评审 P1 顺带查出来的）：
+  // 面板中心实测落在四格之间的**空白沟**里——实测 hostRect 488×390、中心
+  // (636, 356)，而四个子图是 (395,181) / (664,181) / (395,367) / (664,367)
+  // 各 213×180。也就是说这一下点击**从来就没选中过任何东西**，检查器一直显示
+  // 的是「整张图」回退；而旧判据只断言「面板可见」，对此完全没有反应。
+  // 现在拿第四格那条真实曲线上的一点（`getPointAtLength` 取中点，与
+  // `element-path-selection.spec.ts` 同一套办法），点在曲线**本身**上。
+  const hit = await page.evaluate(() => {
+    const svg = document.querySelector("[data-element-svg] svg");
+    const group = [...(svg?.querySelectorAll("g[id]") ?? [])].find((g) =>
+      /\.lines_\d+$/.test(g.id),
+    );
+    const path = group?.querySelector("path") as SVGPathElement | null;
+    const ctm = path?.getScreenCTM();
+    if (!group || !path || !ctm) return null;
+    const p = path.getPointAtLength(path.getTotalLength() / 2);
+    return {
+      gid: group.id,
+      x: p.x * ctm.a + p.y * ctm.c + ctm.e,
+      y: p.x * ctm.b + p.y * ctm.d + ctm.f,
+    };
+  });
+  expect(
+    hit,
+    "图内 SVG 里应当有一条没被 rasterize 的普通曲线（`*.lines_N`）可点——" +
+      "找不到的话说明 hybrid 的契约破了（该保矢量的那部分也被栅格化了），" +
+      "不是性能问题",
+  ).not.toBeNull();
+  console.log(`[e2e-large] 点击目标 ${hit!.gid} @ ${hit!.x.toFixed(0)},${hit!.y.toFixed(0)}`);
+  await page.mouse.click(hit!.x, hit!.y);
 
-  // 属性面板打得开 = 语义编辑这条路没断
-  const inspector = page
-    .locator('[data-testid="inspector"], aside, [role="complementary"]')
-    .first();
-  await expect(inspector).toBeVisible({ timeout: 15_000 });
+  // 属性面板打得开 = 语义编辑这条路没断。
+  //
+  // **判据必须是「选中特有」的，锚点对了不等于维度对了**（#319 评审 P1）。
+  // 这里踩过两级：
+  //   ① 旧写法 `'[data-testid="inspector"], aside, [role="complementary"]'`
+  //      + `.first()`——裸 `aside` 指代不了检查器，左抽屉、版本面板、快捷
+  //      任务卡也都是 `aside`（issue #307）。换成锚点 `data-inspector-panel`
+  //      修好了**主语**。
+  //   ② 但那个锚点挂在**常驻外壳**上：`uiStore` 的 `rightOpen` 默认 `true`
+  //      （`store/uiStore.ts`），所以「面板可见」在命中测试坏掉、这一下点击
+  //      什么都没选中时**照样成立**——主语对了，**维度退了一格**。
+  //
+  // 也不能只数 `[data-prop]`：没选中任何元素时 `ElementInspector` 会回退到
+  // `figure` 那个元素（`ElementInspector.tsx` 的
+  // `selected.at(-1) ?? manifest?.elements.find((e) => e.gid === 'figure')`），
+  // 属性行照样渲染出来，判据照样绿。回退那一份的 `data-gid` 是 `figure`。
+  //
+  // 所以判据是**属性行的 gid 集合里含不含刚才点中的那个 gid**——它一次钉住
+  // 三件事：这一下点击命中了目标、命中的就是瞄准的那一个、它的属性真的渲染
+  // 出来了。收的是**集合**不是「第一个匹配」，所以没有 issue #307 那个赌注；
+  // 红的时候报文里带着收到的 gid 列表，`["figure"]` 一眼就能认出是回退态。
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          [
+            ...(document
+              .querySelector("[data-inspector-panel]")
+              ?.querySelectorAll("[data-prop][data-gid]") ?? []),
+          ]
+            .map((n) => n.getAttribute("data-gid"))
+            .filter((g, i, a) => a.indexOf(g) === i),
+        ),
+      {
+        timeout: 15_000,
+        message:
+          `检查器里没有属于 ${hit!.gid} 的属性行——要么这一下点击没选中它` +
+          `（命中层坏了），要么它的属性没渲染出来。收到的 gid 列表见下：` +
+          `只有 ["figure"] 就是「什么都没选中」的回退态`,
+      },
+    )
+    .toContain(hit!.gid);
 
   // **撤销把「双击加面板」那一步撤掉，画布回到空——这正是它该做的。**
   // 第一版在这里断言「面板还在」，红了；红得有道理，是断言写错了不是产品错了。

@@ -136,6 +136,18 @@ export function OverlaySvg() {
 
   return (
     <svg
+      /* `data-overlay-svg` 是覆盖层的稳定锚点。e2e 以前拿下面那个「不吃指针
+         事件」的工具类（`pointer-events` 加 `-none`）当选择器指代它——CSS
+         class 是排版手段不是标识，画布上再来一层同样不吃事件的 svg 就会被
+         `querySelector` 先捡走（issue #307）。
+
+         **注释里刻意不写出那个完整的类名**：Tailwind 的扫描器不解析 JS/JSX
+         语法，它就是正则扫文本，注释里的完整类名会被当成候选源——真实用法
+         哪天被删光或改名，规则还会被这句注释一直吊在产物里（#319 评审 P1）。
+         实测：把 `web/src` 里 40 处真实用法全中和掉、只留这句注释，产物里那条
+         工具类规则**仍然是 1**；把类名拆开写才降到 0。（写这段注释时自己又踩了
+         一次——第一版把那条规则原样抄成 `.＜类名＞{}`，计数当场从 40 变 41。） */
+      data-overlay-svg
       className="pointer-events-none absolute inset-0"
       width={viewW}
       height={viewH}

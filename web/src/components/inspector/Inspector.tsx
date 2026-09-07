@@ -90,6 +90,11 @@ export function Inspector({
   return (
     <aside
       {...motion}
+      /* `data-inspector-panel` 是右侧检查器栏的稳定锚点。裸 `aside` 指代不了它
+         ——左抽屉（`data-left-drawer`）、版本面板、快捷任务卡也都是 `aside`
+         （issue #307）。**一个对象只留一个锚点名**：#299 与 #307 曾各给这个
+         元素加过一个（`data-inspector-panel` / `data-inspector`），先到的那个
+         赢；两个都留下的话，下一个人不知道该用哪个，而两个都不会被维护。 */
       data-inspector-panel
       aria-label={t('panelLabel')}
       className={cn(
