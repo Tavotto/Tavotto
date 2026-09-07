@@ -33,8 +33,13 @@ export function CanvasStage() {
   // 它们是排版的语言，而这条工作流里用户还没有画布这个概念。
   // **只改这一屏怎么画，不改文档**：面板的 x/y/w/h 一个字节没动，
   // 切回排版模式看到的还是原来那张版。
+  const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
+  // 「这一次把图加进了文档」——只用来播报，可见那一行在 FastEditBar
+  const addedForEdit = useWorkspaceStore(
+    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
+  )
   const showRulers = useUiStore((s) => s.showRulers) && !fastEdit
   const showGrid = useUiStore((s) => s.showGrid) && !fastEdit
   const gridSize = useUiStore((s) => s.gridSize)
@@ -236,6 +241,17 @@ export function CanvasStage() {
         <OverlaySvg />
 
         {!fastEdit && objects.length === 0 && <EmptyHint />}
+      </div>
+
+      {/* 「这张图是刚为编辑加进文档的」这条提示的**读屏播报**（UI 审计 T06）。
+          读屏播报的是活动区**内容的变化**，所以这块区必须比内容先在 DOM 里。
+          它挂在 `CanvasStage` 而不是上下文条里：后者是进快速编辑那一刻才挂上的，
+          活动区跟它一起插进来的话，插进来时就已经填好了字——那种「带着内容整个
+          插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个 role 承诺
+          了一件它并没有做的事。`CanvasStage` 两种模式下都常驻，区先在、内容后变，
+          这条提示才真的会被读出来。可见的那一份在 `WorkspaceContextBar`。 */}
+      <div role="status" data-fast-edit-live className="sr-only">
+        {addedForEdit ? t('fastEdit.addedForEdit') : ''}
       </div>
 
       {/* 「我在改哪一层」只说一遍：快速编辑与图内编辑共用这一条（审计 T01） */}

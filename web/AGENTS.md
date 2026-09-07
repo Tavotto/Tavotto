@@ -614,9 +614,29 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
   `data-element-svg`（+ manifest bbox）、`data-world-transform`（`CanvasStage` 唯一的世界变换节点，
-  教程不用它，e2e 靠它量视口有没有被还原——`e2e/nav-audit.spec.ts`，2026-09-06 审计 T01）。
-  **aria-label / 文案 / class 都不能当选择器。** 改了这些属性要同步 `steps.ts` 与
-  `e2e/tutorial.spec.ts`（`data-world-transform` 同步的是 `nav-audit.spec.ts`）。
+  教程不用它，e2e 靠它量视口有没有被还原——`e2e/nav-audit.spec.ts`，2026-09-06 审计 T01）、
+  `data-status-live`、`data-fast-edit-live`。**aria-label / 文案 / class / ARIA role 都不能当选择器。**
+  改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`（`data-world-transform` 同步的是
+  `nav-audit.spec.ts`）。
+* **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
+  `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的
+  `role="alert"` 里）。问「**应用刚说了什么**」的一律认它——`e2e/twin-axes-pick.spec.ts`（⌥ 轮换
+  播报 `status.elementCycled`）与 `e2e/cross-tab-paste.spec.ts`（已复制 / 已粘贴）靠它。
+  **`role="status"` 不是唯一的**：快速编辑那行常驻说明、素材库、导出面板、问题面板、设置页、
+  onboarding 层…… 十几处都在产出，所以 `[role="status"]` / `getByRole('status')` 拿到的是
+  「文档里排在最前的那个」，不是播报区。T06 给上下文条加的那行 `fastEdit.addedForEdit`
+  排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
+  什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
+  的 `host.querySelector`）可以继续用 role：那里主语唯一。
+  看护：`lib/liveRegionSelector.test.ts` 用 AST 扫 `e2e/` 的字符串字面量，任何
+  `[role=status|alert|log|marquee|timer]` 当选择器都点名——**活动区天生是复数且与 DOM
+  顺序相关**，「the status region」这个说法本身不成立，所以这条规则是绝对的、豁免为零。
+  `role=dialog` 那一族不进这条门禁：它还有「把 axe 扫描收进对话框」这类正当的限定用法，
+  判不死，硬加只会逼出一张越来越长的豁免表。
+* **`data-fast-edit-live` = 「这张图刚为编辑加进文档」的读屏播报**：挂在 `CanvasStage`（两种模式
+  都常驻），**不在上下文条里**——后者是进快速编辑那一刻才挂上的，活动区跟它一起插进来时就已经
+  填好了字，那种「带着内容整个插入」的活动区各家 AT 很可能一声不吭。可见的那一份在
+  `WorkspaceContextBar`，锚点 `data-fast-edit-added-note`，**不带 role**：一条提示不播两遍。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
@@ -911,7 +931,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
   对象只能是文档里的面板对象），这一步由 `openFastEdit` 用状态提示
   `fastEdit.addedForEdit` 说出口，一条历史、撤销即移除；图已在文档里时零文档
-  改动。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
+  改动。**这句话分两份，别合成一份**：可见的常驻说明在 `FastEditBar`
+  （`data-fast-edit-added-note`，**不带 role**），读屏播报在 `CanvasStage` 的
+  `data-fast-edit-live`（`role="status"`，sr-only）。播报那份挂在 `CanvasStage`
+  而不是浮动条里，是因为浮动条本身就是进快速编辑那一刻才挂上的——活动区跟它一起
+  插进 DOM 的话，插进来时就已经填好了字，而读屏播报的是**区内内容的变化**，
+  「带着内容整个插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个
+  role 承诺了一件它并没有做的事。区先在、内容后变，由
+  `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
   `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
   `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
   控件。**不许再用一个中性的「打开」承载加入文档。**
