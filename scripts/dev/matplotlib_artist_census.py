@@ -139,7 +139,7 @@ def census(fig) -> dict:
             "role": el["role"],
             "cls": _qual(el["artist"]),
             "family": _cls_key(el["artist"]),
-            "fields": len(manifest_mod._fields_for(el)),
+            "fields": len(manifest_mod._fields_for(el, state)),
         }  # noqa: SLF001
         for el in state.elements
     ]

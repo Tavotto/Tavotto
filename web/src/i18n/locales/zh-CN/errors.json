@@ -83,7 +83,7 @@
     "open_project_failed": "打不开这个项目：{{reason}}",
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
-    "package_schema_unsupported": "项目包里的布局既不是 schema 2 也不是 schema 3",
+    "package_schema_unsupported": "项目包里的文档既不是 schema 2 也不是 schema 3",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，要在 {{min}} 到 {{max}} 之间。",
     "probe_in_progress": "这个脚本已有一次运行在进行中：{{script}}",
@@ -144,6 +144,7 @@
     "tutorial_locked": "教程项目里有文件正被其他程序占用，关掉后再试：{{reason}}",
     "tutorial_resources_invalid": "这份安装里的教程资源不完整，请重新安装 Tavotto：{{reason}}",
     "tutorial_resources_missing": "这份安装里没有教程资源，请重新安装 Tavotto：{{reason}}",
+    "unsafe_project_name": "「{{name}}」不是一个合法的目录名：项目名只能是一级目录的名字，不能包含路径分隔符或 ..",
     "unsupported_format": "还不支持导出 {{format}} 格式。",
     "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
     "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
@@ -170,7 +171,7 @@
     "installing": "正在安装…",
     "managedEnvInstalled": "已安装：{{packages}}",
     "managedEnvRebuild": "重建 Tavotto 环境",
-    "managedEnvUsing": "Tavotto 环境：Python {{version}}",
+    "managedEnvUsing": "这个项目的 {{product}} 环境：Python {{version}}",
     "matplotlibVersion": "matplotlib {{version}}",
     "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
     "missingModuleBody": "Tavotto 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
@@ -232,6 +233,10 @@
       "managed_env_unavailable": "这台机器上没有可以用来创建环境的 Python。请先安装 Python 3.10 以上，或选择一个已有的环境。",
       "package_disk_low": "磁盘剩余空间不足 200 MB，先清理一些空间再安装。",
       "package_env_missing": "这个项目还没有 Tavotto 环境。先安装一个包，环境会随之创建。",
+      "package_lookup_failed": "没有读懂软件源的回答。可以直接输入包名安装。",
+      "package_lookup_not_found": "软件源上没有这个名字的包。查找不做模糊匹配，请核对完整包名。",
+      "package_lookup_offline": "连不上软件源。检查网络或你配置的镜像源之后重试。",
+      "package_lookup_timeout": "查找超时。稍后重试，或者直接输入包名安装。",
       "package_not_found_after_install": "pip 结束了，但环境里没有这个包——可能装到了别处或名字对上了另一个包。详细日志里有完整输出。",
       "package_not_installed": "这个环境里没有这个包。",
       "package_op_invalid": "不支持的包操作。",
@@ -268,7 +273,7 @@
     "repairWillInstall": "将安装：{{requirement}}",
     "setPythonFailed": "设置失败",
     "sourceLabel": {
-      "bundled": "Tavotto 内置环境",
+      "bundled": "{{product}} 自带的渲染环境",
       "configured": "你指定的环境",
       "current_process": "Tavotto 自身的解释器",
       "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
@@ -349,8 +354,11 @@
     "clearFilter": "显示全部",
     "cmp": {
       "above": "大于 {{value}}",
+      "aboveAtBoundary": "大于 {{value}}（正好等于不算通过）",
       "atLeast": "≥ {{value}}",
-      "atMost": "≤ {{value}}"
+      "atLeastAtBoundary": "≥ {{value}}（当前值实际略低，显示已四舍五入）",
+      "atMost": "≤ {{value}}",
+      "atMostAtBoundary": "≤ {{value}}（当前值实际略高，显示已四舍五入）"
     },
     "current": "当前",
     "cursorAt": "第 {{pos}} / {{total}} 项",
@@ -455,8 +463,8 @@
       "unapplied-override": "修改还没应用"
     },
     "unit": {
-      "dpi": "dpi",
       "mm": "mm",
+      "ppi": "ppi",
       "pt": "pt"
     },
     "valueArrow": "{{current}} → {{expected}}"

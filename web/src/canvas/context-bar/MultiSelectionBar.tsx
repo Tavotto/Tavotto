@@ -42,6 +42,12 @@ import { qb } from './text'
  * 取，不再抄一份。
  *
  * 宽度不够（`variant === 'compact'`）时压成三个弹层入口 + 成组 + 更多。
+ *
+ * `docked`：右栏属性页正停靠着——参照三选一、分布、等宽等高整套就在那边的
+ * 「排列」组里，这条再铺一遍是同一批控件的第二份摆放（审计 T29）。此时只留
+ * 计数 + 六向对齐 + 成组 + 更多：**参照只留一处控件**（状态仍是
+ * `arrangeStore` 那一个字段，ADR 0036 不变），当前参照由每颗对齐按钮的提示
+ * 报出来。栏也因此短了一截，3 个与 10 个对象下更不容易盖住选区。
  */
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
@@ -49,9 +55,11 @@ const ar = (key: string, values?: Record<string, unknown>) =>
 export function MultiSelectionBar({
   objs,
   variant,
+  docked = false,
 }: {
   objs: CanvasObject[]
   variant: BarVariant
+  docked?: boolean
 }) {
   useTranslation('workspace')
   useTranslation('inspector')
@@ -62,12 +70,27 @@ export function MultiSelectionBar({
   const countEl = (
     <span
       data-selection-count={count}
-      title={qb('primaryHint')}
+      /* 参照的控件让给了右栏，但当前值不能跟着消失：计数上常驻一句，
+         每颗对齐按钮的提示里也各报一次 */
+      title={qb('countTitle', { hint: qb('primaryHint'), ref: alignRefLabel(ref) })}
       className="whitespace-nowrap px-1 text-ink-2"
     >
       {qb('selectedCount', { count })}
     </span>
   )
+
+  if (docked) {
+    return (
+      <>
+        {countEl}
+        <Sep />
+        <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
+        <Sep />
+        <GroupButtons grouped={grouped} />
+        <MoreButton count={count} />
+      </>
+    )
+  }
 
   if (variant === 'compact') {
     return (
@@ -99,7 +122,9 @@ export function MultiSelectionBar({
       <Sep />
       <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
       <Sep />
+      {/* 均匀分布与等宽等高是两件事，中间给一道分隔线（审计 T29） */}
       <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
+      <Sep />
       <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
       <Sep />
       <GroupButtons grouped={grouped} />

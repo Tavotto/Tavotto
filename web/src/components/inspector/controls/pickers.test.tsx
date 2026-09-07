@@ -12,7 +12,9 @@ import { colormapGradient, COLORMAP_STOPS } from './colormapStops'
 import { HatchPicker } from './HatchPicker'
 import { LegendPositionPicker } from './LegendPositionPicker'
 import { LineStylePicker } from './LineStylePicker'
+import type { MarkerShape } from '@/lib/api'
 import { MarkerPicker } from './MarkerPicker'
+import { tipLabelOf } from './OptionGrid'
 import { TickAndSpineDiagram, type TickSpineAdapter } from './TickAndSpineDiagram'
 
 declare global {
@@ -124,23 +126,239 @@ describe('MarkerPicker', () => {
   })
 })
 
+/* ------------------- MarkerPicker：引擎发来的「真实形状」 ------------------- */
+
+const trig = () => host.querySelector('button[aria-label="标记"]') as HTMLButtonElement
+
+/** 一个闭合三角（单位框 [-0.5, 0.5]，y 向上；末尾那个是 CLOSEPOLY 占位点） */
+const TRIANGLE: MarkerShape = {
+  kind: 'path',
+  vertices: [
+    [0, 0.5],
+    [0.5, -0.5],
+    [-0.5, -0.5],
+    [0, 0],
+  ],
+  codes: [1, 2, 2, 79],
+}
+
+/** codes 为 null = 「首点 MOVETO，其余 LINETO」，不是「没有路径」 */
+const DIAGONAL: MarkerShape = {
+  kind: 'path',
+  vertices: [
+    [-0.5, -0.5],
+    [0.5, 0.5],
+  ],
+  codes: null,
+}
+
+describe('MarkerPicker：脚本原始也画得出真实形状', () => {
+  it('值 = original 且引擎认出名字：画那个图形，继承状态点仍在', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    // 形状与状态点是**并列**的两件事：形状说图上是个圆，状态点说这是继承来的
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    // 文字名把形状也说出来（网格里那一格的可达名与 tooltip 同一份）
+    expect(trig().textContent).toContain('脚本原始')
+    expect(trig().textContent).toContain('圆点')
+  })
+
+  it('引擎只给几何时照顶点画，路径码逐个翻成 SVG 指令', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    const d = trig().querySelector('[data-marker-preview] path')!.getAttribute('d')!
+    // y 要翻过来：引擎的 y 向上，SVG 的 y 向下 —— 顶点 (0, 0.5) 必须落在**上**边
+    expect(d.startsWith('M6.00 1.80')).toBe(true)
+    expect(d).toContain('L10.20 10.20')
+    expect(d).toContain('L1.80 10.20')
+    expect(d.endsWith('Z')).toBe(true)
+    // 同时填充与描边：开放子路径与来回穿过中心的闭合路径填出来都是零面积
+    const path = trig().querySelector('[data-marker-preview] path')!
+    expect(path.getAttribute('fill')).toBe('currentColor')
+    expect(path.getAttribute('stroke')).toBe('currentColor')
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+  })
+
+  it('codes 为 null = 首点 MOVETO 其余 LINETO，不是「没有路径」', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original']}
+        current={DIAGONAL}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview] path')!.getAttribute('d')).toBe(
+      'M1.80 10.20 L10.20 1.80',
+    )
+  })
+
+  it('多个形状：不画其中任何一个，文字说「多个形状」', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o']}
+        current={{ kind: 'multiple' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(trig().textContent).toContain('多个形状')
+  })
+
+  it('引擎没发事实（老引擎）：退回只有继承状态点，一个字节不变', async () => {
+    await mount(
+      <MarkerPicker value="original" options={['original', 'o']} onChange={() => {}} ariaLabel="标记" />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().querySelector('[data-marker-inherited]')).toBeTruthy()
+    expect(trig().textContent).toContain('脚本原始')
+  })
+
+  it('too_complex / none 都不画形状：没有「那一个形状」可画', async () => {
+    const cases: MarkerShape[] = [{ kind: 'too_complex' }, { kind: 'none' }]
+    for (const current of cases) {
+      await mount(
+        <MarkerPicker
+          value="original"
+          options={['original']}
+          current={current}
+          onChange={() => {}}
+          ariaLabel="标记"
+        />,
+      )
+      expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+      await act(async () => {
+        root?.unmount()
+      })
+      root = null
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('引擎给了这边画不出的名字：退回代码字样，不画错一个形状', async () => {
+    await mount(
+      <MarkerPicker
+        value={'$\\odot$'}
+        options={['None', 'o']}
+        current={{ kind: 'named', name: 'H' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview]')).toBeNull()
+    expect(trig().textContent).toContain('$\\odot$')
+  })
+
+  it('认不出的取值 + 几何：画形状，代码仍在文字里（不丢失）', async () => {
+    await mount(
+      <MarkerPicker
+        value="(5, 1, 0)"
+        options={['None', 'o']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().querySelector('[data-marker-preview] path')).toBeTruthy()
+    expect(trig().textContent).toContain('(5, 1, 0)')
+  })
+
+  it('事实只描述当前值那一格：别的格子照旧', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await act(async () => {
+      trig().click()
+    })
+    // 当前那一格（脚本原始）画的是引擎发来的三角
+    const cur = radios().find((r) => r.getAttribute('aria-checked') === 'true')!
+    expect(cur.querySelector('[data-marker-preview] path')!.getAttribute('d')).toContain(
+      'M6.00 1.80',
+    )
+    // 方块那一格仍是方块，没被事实污染
+    expect(radioByLabel('方块')!.querySelector('[data-marker-preview] rect')).toBeTruthy()
+  })
+
+  it('取值自己就是已知图形时不补那半句（「圆点（圆点）」是噪音）', async () => {
+    await mount(
+      <MarkerPicker
+        value="o"
+        options={['None', 'o']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    expect(trig().textContent).toBe('圆点')
+  })
+})
+
 describe('HatchPicker', () => {
-  it('空串是「无花纹」，known 花纹有纹理缩略，点击写原始串', async () => {
+  it('空串是「无」，known 纹理有缩略图，点击写原始串', async () => {
     const onChange = vi.fn()
     await mount(
-      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="花纹" />,
+      <HatchPicker value="" options={['', '/', 'xx', '..']} onChange={onChange} ariaLabel="纹理" />,
     )
-    const trigger = host.querySelector('button[aria-label="花纹"]') as HTMLButtonElement
-    expect(trigger.textContent).toContain('无花纹')
+    const trigger = host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement
+    expect(trigger.textContent).toContain('无')
     await act(async () => {
       trigger.click()
     })
-    const xx = radioByLabel('花纹 xx')!
+    const xx = radioByLabel('密交叉')!
     expect(xx.querySelector('svg pattern')).toBeTruthy()
     await act(async () => {
       xx.click()
     })
     expect(onChange).toHaveBeenCalledWith('xx')
+  })
+
+  /**
+   * 审计 T21 的验收：**所有纹理选项有可理解的名称，图形与底层图案一一对应**。
+   * 引擎的 `HATCHES` 是 16 个代码，逐个查——名字不许等于代码本身，也不许
+   * 落到「纹理 <代码>」那条开集兜底上（那是给脚本自拼的花纹留的）。
+   */
+  it('引擎那 16 个纹理代码逐个有名字，名字里不出现代码', async () => {
+    const HATCHES = ['', '/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', '\\\\', 'xx', '..', '++']
+    const onChange = vi.fn()
+    await mount(
+      <HatchPicker value="" options={HATCHES} onChange={onChange} ariaLabel="纹理" />,
+    )
+    await act(async () => {
+      ;(host.querySelector('button[aria-label="纹理"]') as HTMLButtonElement).click()
+    })
+    const names = radios().map((r) => r.getAttribute('aria-label')!)
+    expect(names).toHaveLength(HATCHES.length)
+    expect(new Set(names).size, '有两个纹理重名，图形与名字对不上').toBe(HATCHES.length)
+    for (const [i, name] of names.entries()) {
+      const code = HATCHES[i]
+      expect(name, `${JSON.stringify(code)} 落到了开集兜底`).not.toContain('纹理 ')
+      if (code) expect(name, `${JSON.stringify(code)} 的名字里带着代码`).not.toContain(code)
+    }
   })
 })
 
@@ -208,6 +426,183 @@ describe('LegendPositionPicker', () => {
     expect(radioByLabel('左上')).toBeUndefined()
     expect(radioByLabel('右上')).toBeTruthy()
     expect(host.textContent).toContain('拖到过自定义位置')
+  })
+
+  // ------------------------------------------------------------------
+  // 外侧锚点（ADR 0034 的 2026-09-07 修订）
+  // ------------------------------------------------------------------
+  it('引擎没宣称锚点能力时整个外侧带不出现——不给一个点了没反应的控件', async () => {
+    await mount(
+      <LegendPositionPicker value="best" options={LOCS} onChange={() => {}} ariaLabel="位置" />,
+    )
+    expect(radioByLabel('右侧上')).toBeUndefined()
+    expect(host.querySelector('svg[role="img"]')).toBeNull()
+  })
+
+  it('外侧预设一次写下 loc + 锚点（两条是同一件事，不是两次修改）', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="best"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    await act(async () => {
+      radioByLabel('右侧上')!.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'upper left', anchor: [1.02, 1] })
+  })
+
+  it('图内的一次点击把锚点清成 null——否则点了九宫格图例还在外面', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    // 摆在外侧时九宫格一个都不标选中：那个 loc 说的是「贴锚点的哪个角」
+    expect(radioByLabel('左上')?.getAttribute('aria-checked')).toBe('false')
+    expect(radioByLabel('右侧上')?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => {
+      radioByLabel('右下')!.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'lower right', anchor: null })
+  })
+
+  it('「最佳位置」也是图内一档：选它同样清掉锚点', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const best = Array.from(host.querySelectorAll('button')).find(
+      (b) => b.textContent === '最佳位置',
+    )!
+    await act(async () => {
+      best.click()
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'best', anchor: null })
+  })
+
+  it('自定义锚点：改 x 只动 x，loc 原样带过去', async () => {
+    const onPlace = vi.fn()
+    await mount(
+      <LegendPositionPicker
+        value="center left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={onPlace}
+        anchor={[1.02, 0.5]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const x = document.querySelector<HTMLInputElement>('input[aria-label="锚点 x（容器分数）"]')!
+    await act(async () => {
+      x.focus()
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(x, '1.2')
+      x.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      x.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onPlace).toHaveBeenCalledWith({ loc: 'center left', anchor: [1.2, 0.5] })
+  })
+
+  it('外侧时说一句「可能超出图幅」；内侧不说（那时它是句噪音）', async () => {
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={[1.02, 1]}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    expect(host.textContent).toContain('可能超出图幅')
+  })
+
+  it('内侧不出现那句提示，锚点输入框也不出现', async () => {
+    await mount(
+      <LegendPositionPicker
+        value="upper left"
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={null}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    expect(host.textContent).not.toContain('可能超出图幅')
+    expect(document.querySelector('input[aria-label="锚点 x（容器分数）"]')).toBeNull()
+  })
+
+  it('示意图按当前值重画：内侧的方块在容器里，外侧的在容器右边', async () => {
+    const chipX = async (anchor: [number, number] | null) => {
+      await mount(
+        <LegendPositionPicker
+          value="upper left"
+          options={LOCS}
+          onChange={() => {}}
+          onPlace={() => {}}
+          anchor={anchor}
+          anchorSupported
+          ariaLabel="位置"
+        />,
+      )
+      const svg = host.querySelector('svg[role="img"]')!
+      const rects = Array.from(svg.querySelectorAll('rect'))
+      // 第一个 rect 是容器边界，第二个（有的话）是图例
+      const chip = rects[1]
+      const x = chip ? Number(chip.getAttribute('x')) : null
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.innerHTML = ''
+      return { x, boxRight: Number(rects[0].getAttribute('x')) + Number(rects[0].getAttribute('width')) }
+    }
+    const inside = await chipX(null)
+    const outside = await chipX([1.02, 1])
+    expect(inside.x).toBeLessThan(inside.boxRight)
+    expect(outside.x).toBeGreaterThanOrEqual(outside.boxRight)
+  })
+
+  it('多选取值不一致（value=null）时不画一个猜的方块，也不标任何外侧位', async () => {
+    await mount(
+      <LegendPositionPicker
+        value={null}
+        options={LOCS}
+        onChange={() => {}}
+        onPlace={() => {}}
+        anchor={null}
+        anchorSupported
+        ariaLabel="位置"
+      />,
+    )
+    const svg = host.querySelector('svg[role="img"]')!
+    expect(svg.querySelectorAll('rect')).toHaveLength(1)
+    expect(radios().filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(0)
   })
 })
 
@@ -326,5 +721,152 @@ describe('TickAndSpineDiagram', () => {
   it('什么都没改过时没有恢复按钮', async () => {
     await mount(<TickAndSpineDiagram adapter={adapterOf()} />)
     expect(host.querySelector('[data-tick-reset-all]')).toBeNull()
+  })
+})
+
+describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', () => {
+  it('tooltip 只说名字，代码落成 data-code', async () => {
+    expect(tipLabelOf({ label: '无', code: 'None' })).toBe('无')
+    expect(tipLabelOf({ label: '点线', code: ':' })).toBe('点线')
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    expect(dotted.getAttribute('data-code')).toBe(':')
+    expect(dotted.getAttribute('aria-label')).toBe('点线')
+  })
+
+  /**
+   * **气泡关着的时候整条判据是恒真的**——Radix 的 Content 只在打开时才进
+   * DOM，所以「页面里没有 `名字 · 代码`」在任何实现下都成立。要判它就得先
+   * 把气泡打开（聚焦触发器），再看气泡里那句话。
+   */
+  it('聚焦弹出的气泡里只有名字，没有 “点线 · :” 这种拼法', async () => {
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
+    )
+    const dotted = radioByLabel('点线')!
+    await act(async () => {
+      dotted.focus()
+      dotted.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+      dotted.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    const tip = document.querySelector('[role="tooltip"]')
+    expect(tip, '气泡没打开，这条判据就是恒真的').toBeTruthy()
+    expect(tip!.textContent).toBe('点线')
+  })
+})
+
+/* ---------- MarkerPicker：override 之后「脚本原始」那一格画的是原样 ---------- */
+
+/**
+ * 换过标记之后 `marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在
+ * 图上——「脚本原始」那一格于是只剩一个空的继承状态点，用户看不出点下去会
+ * 变成什么。`marker_original` 补的正是那句话。
+ *
+ * 钉的是坏掉之后会怎样：
+ *
+ * * 那一格改画当前形状 → 界面言之凿凿地承诺「回到这里会变成三角」，点下去
+ *   却回到了圆；
+ * * 原样漏到别的格子 → 方块那一格画成了圆；
+ * * 引擎没发原样时不退回 `current` → 没改过的散点那一格又空了（本轮之前的
+ *   样子），漂移的代价从「回到原状」变成「比原状更差」。
+ */
+const cellOf = (v: string) => document.querySelector<HTMLElement>(`[data-value="${v}"]`)!
+
+async function openGrid() {
+  await act(async () => {
+    trig().click()
+  })
+}
+
+describe('MarkerPicker：override 之后仍看得见脚本原来那个形状', () => {
+  it('换成三角之后，「脚本原始」那一格画的是原来那个圆，不是三角', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', 's', '^']}
+        current={{ kind: 'named', name: '^' }}
+        original={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const orig = cellOf('original')
+    // 画的是圆（原样），不是三角（当前）——两者在 SVG 里是不同的标签
+    expect(orig.querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(orig.querySelector('[data-marker-preview] path')).toBeNull()
+    // 「这一格是继承」没有因此消失：形状说会变成圆，状态点说那是脚本给的
+    expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
+    // 文字名也把形状说出来（图形之外必须有文字名）
+    expect(orig.getAttribute('aria-label')).toContain('脚本原始')
+    expect(orig.getAttribute('aria-label')).toContain('圆点')
+    // 选中的那一格仍画它自己的三角，触发按钮同理
+    expect(cellOf('^').querySelector('[data-marker-preview] path')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeNull()
+  })
+
+  it('原样只喂给「脚本原始」那一格：别的格子照旧画它们自己的取值', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', 's', '^']}
+        current={{ kind: 'named', name: '^' }}
+        original={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    expect(cellOf('s').querySelector('[data-marker-preview] rect')).toBeTruthy()
+    expect(cellOf('s').querySelector('[data-marker-preview] circle')).toBeNull()
+  })
+
+  it('原样是几何：照顶点画，y 仍要翻过来', async () => {
+    await mount(
+      <MarkerPicker
+        value="o"
+        options={['original', 'o']}
+        current={{ kind: 'named', name: 'o' }}
+        original={TRIANGLE}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const d = cellOf('original').querySelector('[data-marker-preview] path')!.getAttribute('d')!
+    expect(d.startsWith('M6.00 1.80')).toBe(true)
+  })
+
+  it('引擎没发原样、当前值就是脚本原始：那一格退回按 current 画（现有行为）', async () => {
+    await mount(
+      <MarkerPicker
+        value="original"
+        options={['original', 'o', 's']}
+        current={{ kind: 'named', name: 'o' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    expect(cellOf('original').querySelector('[data-marker-preview] circle')).toBeTruthy()
+    expect(trig().querySelector('[data-marker-preview] circle')).toBeTruthy()
+  })
+
+  it('引擎没发原样、当前值是别的（老引擎）：那一格退回只剩继承状态点，不谎报当前形状', async () => {
+    await mount(
+      <MarkerPicker
+        value="^"
+        options={['original', 'o', '^']}
+        current={{ kind: 'named', name: '^' }}
+        onChange={() => {}}
+        ariaLabel="标记"
+      />,
+    )
+    await openGrid()
+    const orig = cellOf('original')
+    expect(orig.querySelector('[data-marker-preview]')).toBeNull()
+    expect(orig.querySelector('[data-marker-inherited]')).toBeTruthy()
   })
 })

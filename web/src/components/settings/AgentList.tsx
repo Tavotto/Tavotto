@@ -5,7 +5,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { Toggle } from '../ui/Toggle'
 import { AgentIcon } from './AgentIcon'
-import { ag, AgentStateBadge, agentSubtitle, agentVersionLabel } from './agentState'
+import { ag, AgentStateBadge, agentSubtitle } from './agentState'
 
 /**
  * 编码 Agent 的分组列表。
@@ -44,32 +44,30 @@ export function AgentList({
           {/*
             覆盖整行的点击区。放在 DOM 最前面 = Tab 先到它、再到开关，
             与视觉顺序一致。可访问名带上状态，读屏不必再去猜右边那个图标。
+
+            `data-agent-open` 是 e2e 的稳定锚点（值 = Agent id）：可访问名
+            里带着**会被文案改动重写**的那句话，用它定位等于每次改文案都
+            重新下一次赌注（2026-09-07 就是这么红的）。
           */}
           <button
             type="button"
+            data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
             className="absolute inset-0 rounded-md outline-none hover:bg-ink/[.025] focus-visible:focus-ring"
           />
           <AgentIcon iconKey={agent.icon_key} />
           {/*
-            一行只有三件事实：名称 · 版本号 · 状态（ADR 0038）。路径、命令、
-            检测来源全在详情里——「Tavotto 会自动发现……」那种解释也不在这儿。
+            一行只回答用户此刻的问题：**这个能不能用、去哪儿配**——名称 + 状态
+            + 启用开关 + 进详情（ADR 0038；审计 T44 把版本号也移走了：它在列表
+            与详情上重复了一遍，而列表上的那份没有任何可操作性）。路径、命令、
+            检测来源同样只在详情里。
           */}
           <div className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-2">
             <div className="flex min-w-0 items-center gap-3">
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                 {agent.display_name}
               </span>
-              {agent.installed && agentVersionLabel(agent.version) && (
-                <span
-                  data-agent-version
-                  className="max-w-32 shrink-0 truncate font-mono text-xs text-ink-3"
-                  aria-label={ag('versionAria', { version: agentVersionLabel(agent.version) })}
-                >
-                  {agentVersionLabel(agent.version)}
-                </span>
-              )}
               <AgentStateBadge state={agent.state} className="shrink-0 whitespace-nowrap" />
             </div>
             {agentSubtitle(agent) && (

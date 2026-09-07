@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { switchKindOf } from '@/lib/shapeSwitch'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -43,6 +44,9 @@ import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
+import { KIND_SWITCH_ICON } from './kindSwitchIcons'
+import { ObjectKindSwitch } from './ObjectKindSwitch'
+import { roleName } from './roles/registry'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -86,6 +90,7 @@ export function Inspector({
   return (
     <aside
       {...motion}
+      data-inspector-panel
       aria-label={t('panelLabel')}
       className={cn(
         // overflow-hidden 是动效的一部分，见 drawerMotion 的注释
@@ -101,6 +106,7 @@ export function Inspector({
             <button
               key={id}
               role="tab"
+              data-inspector-tab={id}
               aria-selected={tab === id}
               onClick={() => setTab(id)}
               className={cn(
@@ -242,6 +248,12 @@ function PropertiesPage() {
   // 面板选区的位置与尺寸由 PanelSection 自己出（含宽高比锁），
   // 这里再来一份 TransformSection 就重复了
   const panelsOnly = onlyType(panels.length)
+  /**
+   * 文字选区把「内容 + 排版」提到最前，位置与尺寸退成一行折叠摘要（审计 T27）。
+   * 改一段标注最常做的是改字、改字号、改对齐；旧顺序让这三件事排在一整段
+   * 变换之后，每次都得往下找。折叠不减能力，展开还是同一批字段。
+   */
+  const textsOnly = onlyType(texts.length)
 
   if (elementPanel) {
     return (
@@ -267,11 +279,12 @@ function PropertiesPage() {
     <>
       <IdentityHeader objs={objs} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 第一层：位置与尺寸等高频属性 */}
-        {!panelsOnly && <TransformSection objs={objs} />}
+        {/* 第一层：位置与尺寸等高频属性（文字除外，见下） */}
+        {!panelsOnly && !textsOnly && <TransformSection objs={objs} />}
         {/* 第二层：类型专属 */}
         {onlyType(panels.length) && <PanelSection objs={panels} />}
-        {onlyType(texts.length) && <TextSection objs={texts} />}
+        {textsOnly && <TextSection objs={texts} />}
+        {textsOnly && <TransformSection objs={objs} foldKey="text-transform" />}
         {onlyType(arrows.length) && <ArrowSection objs={arrows} />}
         {onlyType(shapes.length) && <ShapeSection objs={shapes} />}
         {/* 第三层：排列与层级（紧凑工具带；单选面板的对齐已在位置组里） */}
@@ -318,6 +331,12 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       <header className="shrink-0 px-3 pb-2">
         <div className="flex items-center gap-1.5">
           <ImageIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
+          {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
+          {!el && (
+            <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+              {roleName('figure')}
+            </span>
+          )}
           <h2 className="min-w-0 truncate text-xs font-medium text-ink">
             {crumbs.at(-1) ?? t('elementFallback')}
           </h2>
@@ -369,7 +388,28 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
 
   const one = objs.length === 1 ? objs[0] : null
   const kinds = [...new Set(objs.map((o) => o.type))]
-  const Icon = one ? TYPE_ICON[one.type] : kinds.length === 1 ? TYPE_ICON[kinds[0]] : Copy
+  // 标注的图标按**它自己那一种**画，不是所有形状都用一个方块：三角形旁边摆
+  // 一个正方形，图标说的和徽标说的是两件事（与 MarkerPicker 同一条纪律——
+  // 形状是事实，不该拿一个通用图形代替）
+  const oneKind = one ? switchKindOf(one) : null
+  const Icon = one
+    ? oneKind
+      ? KIND_SWITCH_ICON[oneKind]
+      : TYPE_ICON[one.type]
+    : kinds.length === 1
+      ? TYPE_ICON[kinds[0]]
+      : Copy
+  /**
+   * 标题 = **用户内容**。没起过名字的标注，`objectLabel` 的兜底正是类型名，
+   * 而类型徽标已经在说它了——两格并排写着同一个词（「三角形 ⌄ 三角形」）看起来
+   * 像个 bug。这一格没有新话要说时就整个不出现，让徽标独自承担（文字与面板不受
+   * 影响：它们的名字是那句话 / 那个文件名，与类型不是一回事）。
+   */
+  const title = one
+    ? oneKind && !one.name
+      ? null
+      : objectLabel(one)
+    : translate('count.selectedObjects', { count: objs.length })
   const locked = objs.length > 0 && objs.every((o) => o.locked)
   const hidden = objs.length > 0 && objs.every((o) => o.hidden)
   const ids = objs.map((o) => o.id)
@@ -378,9 +418,14 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     <header className="shrink-0 px-3 pb-2">
       <div className="flex items-center gap-1.5">
         <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
-        <h2 className="min-w-0 truncate text-xs font-medium text-ink">
-          {one ? objectLabel(one) : translate('count.selectedObjects', { count: objs.length })}
-        </h2>
+        {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
+            「我在改的是文字、面板还是标注」（审计 T01）。这颗徽标同时是**类型
+            切换**的入口——标注能换成同族的另一种时它就是下拉，换不了时还是那颗
+            静态徽标（cap-shape-switch；判据在 lib/shapeSwitch，这里不判） */}
+        <ObjectKindSwitch objs={objs} />
+        {title != null && (
+          <h2 className="min-w-0 truncate text-xs font-medium text-ink">{title}</h2>
+        )}
         {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
         {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
         {!one && <span className="shrink-0 text-xs text-ink-3">{summarize(objs)}</span>}

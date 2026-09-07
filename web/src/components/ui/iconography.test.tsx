@@ -62,10 +62,20 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/LineStylePicker.tsx': 1, // 线型样本
   '/src/components/inspector/controls/MarkerPicker.tsx': 1, // 标记形状样本
   '/src/components/inspector/LegendCard.tsx': 1, // 图例句柄样本（跟着 handle_* 走）
-  '/src/components/left/CanvasList.tsx': 1, // 画布布局缩略图
+  // 画布缩略图：页面比例里按对象落位画这份文档的真实内容（审计 T04 之后
+  // 画布列表与版本列表共用这一份，原来那条豁免在 left/CanvasList.tsx 上）
+  '/src/components/CanvasThumb.tsx': 1,
+  '/src/components/inspector/controls/ErrorBarDiagram.tsx': 1, // 误差棒的线 / 端帽示意
+  '/src/components/inspector/controls/ProjectionPicker.tsx': 1, // 三维投影小立方体
+  '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
+  '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
+  '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 「当前画布」范围的版面示意：页面比例 + 每个对象的落位方块，画的是这份
   // 文档的几何，换成任何一个 lucide 图标都会把它变成一张与内容无关的图
   '/src/components/ExportDialog.tsx': 1,
+  // 图例位置：一张是子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走），
+  // 一张是六个外侧预设各自的缩略示意。画的是这张图自己的几何，不是图标
+  '/src/components/inspector/controls/LegendPositionPicker.tsx': 2,
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */

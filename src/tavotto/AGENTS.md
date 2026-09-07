@@ -224,6 +224,48 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     把 tight 当图幅定义是 ADR 级决定（改的是几何权威的坐标系），**没做**；
     目前由预检 `element-outside-figure` 把裁切说出来。将来无论怎么做，第一步
     都是把 kwargs 记进捕获描述符。
+- **标记形状是只读事实，不是取值（2026-09-06，UI/UX 审计 T16 补做）**：
+  marker 一族的 enum 字段（曲线 / 散点 / 茎叶 markerline / 图例示意标记）带一个
+  `marker_current`，回答「图上此刻画的是什么形状」——而 `value` 回答的是
+  「用户选中的是哪个取值」，**两件事不是一回事**：散点没被整体换过标记时
+  `value` 是 `"original"`（继承脚本），曲线的 `value` 可能是 `(5, 1, 0)` /
+  `$\alpha$` / 一个 Path 的 repr，界面上只剩一行认不出的字。它是**渲染态派生
+  数据**：不进用户文档、不是 override、不参与写回，有 override 时发的就是
+  override 之后的形状。四个消费者只有 `_marker_field()` 一处构造，加第五个
+  也走它。
+  * 认名字的判据是**顶点 + codes 逐个比对**（容差 1e-6），比的是
+    `MarkerStyle(name).get_path().transformed(get_transform())`——`Axes.scatter`
+    与 `overrides._set_scatter_marker` 造路径用的正是这一句，于是散点与曲线
+    两条路给出同一个答案。**不按 `get_marker()` 的字面量认**：散点根本没有
+    那个字面量（脚本写的 marker 在 `ax.scatter` 里当场就化成了路径）。
+  * **只有 `_MARKER_SHAPE_NAMES` 那 13 个名字会以 `named` 发出去**——前端
+    `MarkerPicker.markerShape()` 的那份 switch 逐个画得出它们。表外的
+    （`H` / `8` / `P` / `X` / 元组 / mathtext / 自定义 Path）一律发归一化几何
+    （单位框 `[-0.5, 0.5]`、y 向上、4 位小数，CLOSEPOLY 占位点不参与包围盒
+    也不发真坐标）。两侧万一漂了**只会退回代码字样**，不会画错一个形状，
+    所以这不是一条需要 golden 向量的同源对。
+  * 顶点超过 `_MARKER_PATH_MAX_VERTS`（256，实测 mathtext 标记最贵的
+    `$\int_0^\infty$` 是 132）只说 `too_complex`；一个 collection 里混着两种
+    形状说 `multiple`，不拿第一条冒充全体；**字段整个缺席 = 引擎说不出**，
+    与 `none`（这个对象没有标记）是两个不同的答案。
+  * **override 之后「脚本原始」那一格说不出形状**（2026-09-07，cap-marker-orig
+    补做）：`marker_current` 读的是图上此刻那条路径，脚本原来那条已经不在图上。
+    同一个字段因此多发一个 `marker_original`——同一套五档结构，**唯一出处是
+    `state.originals`**：override 系统在第一次应用**之前**采下的那份脚本原样
+    （`apply()` 里 `state.originals[key] = getter(...)` 排在 `setter(...)` 之前），
+    撤销时回灌的也是它。两边同一份值，「回到脚本原始 = 回到这个形状」这句话
+    因此可兑现，不是另算一遍的巧合（`_marker_shape_of_spec()` 是此刻与原样
+    共用的那一句 `MarkerStyle(...)`）。
+  * **发不发的判据是 `state.applied` 里有这条 `(gid, prop)`，不是 `originals`
+    里有**：① 广播型 prop 会替组员代采一份原样（`alias_seeded`，marker 经 stem
+    系列就是广播）；② setter 抛异常时原样已经采下、`applied` 还没记——照
+    `originals` 判的话，一次**失败**的 override 会让那一行从此显示「改过」，
+    而图上一个像素都没变。**没有 override 时字段整个缺席**（缺席 = 与
+    `marker_current` 相同），前端不用再判一次「改没改过」。原值的类型由
+    `overrides.HANDLERS` 那侧的 getter 决定（曲线 / 图例示意是 marker 规格、
+    散点是 Path 列表、茎叶是按成员列表的一份规格），四个消费者各自对着写。
+    也因此 `_fields_for` 收的是 `(el, state)`：原样不在 artist 上，只有 state 里有。
+  * 看护 `tests/test_manifest_marker_shape.py`。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
@@ -354,6 +396,21 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   消失。隐藏的项 Text 留在 index 里、manifest 报图例的框（否则「恢复显示」
   没入口）。前端投影 `web/src/lib/legendModel.ts`，两侧常量严格同源
   （`tests/test_legend_model_pairs.py`）。
+- **图例位置模型（2026-09-07，ADR 0034 修订）**：「图例摆在哪」的三条 prop
+  （`loc` 预设 / `loc_frac` 画布拖动 / `loc_anchor` 外侧锚点）改的是同一件事，
+  而且会互相盖写（`set_loc` 之前必须清锚框，设锚框又不能动 loc）——所以走边框 /
+  刻度那套路数：各写自己的槽位（`legend_pos_cfg`，`instrument` 时采 `orig`），
+  再 `apply_legend_pos_model` **整体重建**。**应用顺序不影响结果**（三条同在
+  `_RANK_REST` 一档，各自当 setter 的话谁在列表里靠后谁赢，热态与全量重放当场
+  分岔）；撤销一条 = 那个槽位退回未表态。优先级只写在模型里一处：**拖动过就是
+  绝对定位，锚框强制清掉**。`loc_anchor` 的值是**父容器分数坐标里的一个点**
+  `[x, y]`，`null` 是一个取值（不要锚框），与「没表态」（用脚本原样的锚框）
+  不是一回事。脚本原样是 `(leg._loc, leg._bbox_to_anchor)` 这一对，**锚框存原
+  对象**（`set_bbox_to_anchor` 会把 `TransformedBbox` 再包一层，坐标爆炸）。
+  能力判据 `legend_anchor_state`：只有「父容器分数坐标里的一个点」才发字段，
+  4 元组锚框与非父容器 `bbox_transform`（拿三个点量数值等价，不比对象身份）
+  **不发字段、改发 `unsupported_props`**——把 4 元组显示成「没有锚点」是个语义
+  错的精确值。看护 `tests/test_legend_anchor.py`。
 - **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
   重建。`overrides._cb_reorient` 在同一个 Axes 对象上换 orientation/ticklocation
   → 按 `_cb_place` 重算落位（竖↔横逐位可逆）→ `_reset_locator_formatter_scale()`
@@ -364,7 +421,12 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   摆过色条轴时不动它的落位，交给 position override。翻完要 `invalidate_tick_cfg`
   （locator 被整套换过）并重算 `axes_follow`。色条另有**稳定语义身份**
   `cbar:<宿主 gid>:<序号>`（manifest 的 `colorbar_key`），与 `axes_i.colorbar`
-  一起登记在 index 里。
+  一起登记在 index 里。manifest 还报 **`mappable_gid`**（「我给谁上色」）：
+  由 `cb.mappable` 在 **`state.elements`** 里反查得来——**不是** `state.index`，
+  index 里还有容器消费掉的成员别名，那些 gid 指着同一个 artist 却不在元素表
+  里，界面按它 find 会扑空。脚本自己造的 `ScalarMappable` 没有登记成元素时
+  **整条字段不发**（界面据此不摆那个「选中对方」的入口，见
+  `web/src/components/inspector/ColorScaleLink.tsx`）。
   **两端延伸三角 `extend`**（neither/both/min/max）同样是就地结构改造，两个坑：
   ① `cb._inside` 是按 extend 切出来的那段 boundaries，**只在 `__init__` 里设过
   一次**——只改 `cb.extend` 就 `_draw_all()` 会拿 259 条边界配 256 块颜色，当场
@@ -749,6 +811,23 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `probe_environment` + `worker_self_test` 仍过，否则标 `incomplete`。端点
   `GET /api/engine/packages`、`POST …/plan|run|cancel`、`GET …/job`，进度 SSE
   `engine.package`。看护 `tests/test_package_management.py`（45 条，含离线真安装）。
+- **包查找（ADR 0038 的 2026-09-07 修订）是这一页唯一会出网的动作**：
+  `GET /api/engine/packages/lookup?name=<pkg>` → `{name, versions, latest,
+  installed, source}`，`lookup_package()` 只读、一个字节都不装。**走
+  `pip index versions` 而不是直连 pypi.org 的 JSON**——查找必须问安装会问的那个源
+  （镜像 / 内网 index / 代理都由 pip 的配置说了算），而 numpy 的 pypi.org JSON 有
+  几十 MB、10 s 读不完（实测）。`pip_index_argv` 是唯一出处、逐字节钉住；
+  **`--retries 1` 是判据的一部分**：`--retries 0` 时「连不上索引」与「索引上没有
+  这个名字」的输出逐字相同，离线就再也认不出来。进 argv 的包名由
+  `argv_package_name()` **按常量字母表重拼**（首字符另一张表，只有字母数字），
+  拼不出来就抛——校验与使用之间隔着归一化，重拼把两个动作合成一个；argv 里
+  还有一个 `--`，「名字会不会被当成选项」从此不取决于名字长什么样。失败四档闭集
+  `LOOKUP_ERROR_CODES`（not_found / offline / timeout / failed），网络判据排在
+  「没有这个包」之前——不确定时**宁可报 offline**，反向的错误会让用户去改一个本来
+  就对的包名。解析只认两行前缀，认不出一律 failed，**绝不回空版本表冒充「找到了」**；
+  `installed` 只在受管环境自己回答时才有值。响应结构上没有地址 / 路径 / pip 原文，
+  `source` 三档（`unknown` 不许并进 `pypi`）。唯一执行点 `_run_lookup`（也是测试的
+  唯一注入点）。看护 `tests/test_package_lookup.py`（71 条，一次网络请求都不发）。
 - `GET /api/diagnostics/summary`：诊断包同一份 `build_report()` 摊平成文本
   （`diagnostics.render_text`），给设置里「复制诊断」用；project 段由
   `app._diagnostics_project_status()` 与 zip 端点共用。
@@ -856,6 +935,18 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   = 约 140 MB / 单次追加 547 ms）。`_save_versions` 逐条序列化再拼，**量大小与
   写文件共用同一批字节**（分两次序列化的话，削掉的开销会原样回来），拼出来的
   与 `dumps_json({"versions": kept})` 逐字节相同。至少留最新一条。
+  **列表可以带「草图」而不带正文**（2026-09-06 审计 T04 补做）：
+  `?sketch=<对象数>&sketchText=<字数>` 时每条元信息多一个 `sketch`
+  （页面尺寸 + 每个对象的 type/x/y/w/h，面板另带 fileId/fileKind），
+  **overrides / 脚本一个字节都不带**。这是前端列表能画缩略图而不退化成
+  「一次打开拉 120 份整份文档」的做法——列表端点为了数对象数本来就已经把
+  整份文件解析过一遍，草图是那份内存数据的投影（实测 24 MB 预算下
+  170 → 183 ms，不需要缓存）。**尺寸由调用方给**：「一张缩略图画几个对象」
+  是前端 `components/CanvasThumb.tsx` 的事，Python 侧的
+  `VERSION_SKETCH_MAX_*` 只是传输封顶，不是第二份权威。schema 3 按检查点的
+  `canvasId` 取那**一张**画布（缩略图画的是一张页面）；页面尺寸取不出来就
+  整条不发草图——**「不知道」是独立一档**，编一个 A4 出来的话用户会看到一张
+  比例是假的图而没有任何提示。坏文档只赔掉自己那张缩略图，不让整条时间线 500。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
@@ -894,7 +985,10 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
-  布局版本历史 `tavottofile/versions/`。旧位置（项目 `canvases/`、项目同级
+  布局版本历史 `tavottofile/versions/`。**这条规则的唯一出处是
+  `project_layout_dir()`**，`project_status()` 用 `document_dir` 把它交给界面
+  （「另存为」那一屏要回答「存到哪」，审计 T04）——前端自己拼
+  `<项目>/tavottofile` 抄不到下面这两条分支。旧位置（项目 `canvases/`、项目同级
   `<项目名>-exports/`、数据目录 layouts/ 与 layouts/_versions/）只读兼容、
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等

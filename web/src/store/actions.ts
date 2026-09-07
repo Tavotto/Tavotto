@@ -16,12 +16,18 @@ import {
   type ManifestElement,
   type PanelInfo,
 } from '@/lib/api'
-import { restoreFollowPlan } from '@/lib/legendModel'
+import { legendPlacementPlan, restoreFollowPlan, type LegendPlacement } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
+import {
+  switchKindLabel,
+  switchObject,
+  switchTargets,
+  type SwitchKind,
+} from '@/lib/shapeSwitch'
 import type {
   ArrowObject,
   CanvasObject,
@@ -615,6 +621,54 @@ export function setObjectsHidden(ids: string[], hidden: boolean) {
   })
 }
 
+/**
+ * 换标注类型（矩形 ↔ 椭圆 ↔ …、直线 ↔ 箭头）：**一条 commit、一条历史**。
+ *
+ * 「切成什么样」整段在 `lib/shapeSwitch.switchObject` 里，这里只负责三件事——
+ * 在**当前文档**上算出新对象、把它写回**原来的数组位置**、给这次修改一句话。
+ *
+ * 三条纪律：
+ * * **不换 id**：选择、成组（`groupId`）、布局组（`layoutGroups.order` 记的就是
+ *   id）、锁定、图层树全靠它。换 id 的话上面每一样都会在用户眼皮底下静默掉
+ *   一份，而画面上只看得出「形状变了」。
+ * * **就地替换而不是删了再 push**：数组序即 z 序，push 到末尾等于顺手把它提到
+ *   最上层。
+ * * **算在 draft 外面**：`switchObject` 是拿普通对象写的纯函数，喂 immer 的
+ *   draft 会让它把 draft 子对象（`start` / `end`）塞进新对象里。所以先从当前
+ *   state 取原对象算好，recipe 里只做赋值。
+ */
+export function switchObjectKind(ids: string[], target: SwitchKind) {
+  const selected = doc().objects.filter((o) => ids.includes(o.id))
+  // **与两个入口同一条判据**（`switchTargets`）：跨族、或选区里有不参与切换的
+  // 对象，整个不做。少了这一句，`switchObjectKind(['矩形','箭头'], 'ellipse')`
+  // 会把矩形切了、箭头留着——「点了一下只有一半变了」比什么都不发生更难理解，
+  // 而界面上没有任何地方会说出这件事
+  if (!switchTargets(selected).includes(target)) return
+  const next = new Map<string, CanvasObject>()
+  for (const o of selected) {
+    const switched = switchObject(o, target)
+    if (switched) next.set(o.id, switched)
+  }
+  // 一个都没变 = 选区里每个对象**已经**是这个类型（唯一能走到这里的成因）。
+  // 「不进历史」这半其实下游也保证得了（`commit` 拿到空补丁集就早退），所以
+  // 单独拿掉这一行，只看历史长度的用例是**杀不死的**；它自己那份职责是
+  // **别为一次什么都没发生的点击去收掉用户正开着的那一轮连续编辑**
+  // ——`shapeSwitchActions.test.ts` 的「空操作不打断进行中的手势」盯的正是这个。
+  if (!next.size) return
+  finishActiveGesture()
+  const name = switchKindLabel(target)
+  const label =
+    next.size === 1
+      ? hist('switchKind', { name })
+      : hist('switchKindCount', { name, count: next.size })
+  commit(label, (d) => {
+    d.objects.forEach((o, i) => {
+      const switched = next.get(o.id)
+      if (switched) d.objects[i] = switched
+    })
+  })
+}
+
 export function renameObject(id: string, name: string) {
   updateObject(id, hist('renameObject'), (o) => {
     o.name = name.trim() || undefined
@@ -644,7 +698,13 @@ export const propLabel = (prop: string): string =>
  * 脚本自定义的枚举值也不该被吞掉。
  */
 export const optionLabel = (prop: string, value: string): string =>
-  t(`enum.${prop}.${value}`, { ns: 'inspector', defaultValue: value })
+  // `nsSeparator: false`：**枚举值是开集，里面真的有 i18next 的分隔符**。
+  // 默认 nsSeparator 是 `:`，于是 `enum.linestyle.:`（点线）被切成
+  // 命名空间 `enum.linestyle.` + 空 key，查不到就原样回退成 `:`——界面上
+  // 那一格的名字就是一个冒号（审计 T15 点名的「个别辅助标签显示 :」）。
+  // keySeparator 的 `.` 不用关：i18next 的 deepFind 会把剩下的段拼回去，
+  // `marker` 的 `.`（小点）与 `..` 实测都查得到。
+  t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: value })
 
 /**
  * 写入一条图内元素 override 并触发重渲染。
@@ -817,6 +877,42 @@ export function restoreLegendEntryFollow(panelId: string, element: ManifestEleme
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 图例位置的一次点击（属性页 / 快捷编辑 / 画布浮动栏共用）：内 / 外两带写的
+ * 是同一件事，落进**同一次 commit**——一条撤销、一次渲染。
+ *
+ * 计划由 `legendPlacementPlan` 算（三条规则连同它们的现场都写在那里）；
+ * 这里只负责把 set 与 remove 放进一次修改，并在真的什么都不动时**不留历史**
+ * ——点一个已经选中的档位不该在撤销栈里多一条。
+ */
+export function setLegendPlacement(
+  panelId: string,
+  legends: ManifestElement[],
+  next: LegendPlacement,
+) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !legends.length) return
+  const plan = legendPlacementPlan(panel, legends, next)
+  const removes = plan.remove.filter((t) =>
+    panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
+  )
+  const changes = plan.set.filter((t) => {
+    const cur = panel.overrides.find((p) => p.gid === t.gid && p.prop === t.prop)
+    return !cur || JSON.stringify(cur.value) !== JSON.stringify(t.value)
+  })
+  if (!removes.length && !changes.length) return
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('loc') }), (o) => {
+    o.overrides = o.overrides.filter(
+      (p) => !removes.some((t) => t.gid === p.gid && t.prop === p.prop),
+    )
+    upsertOverrides(o, plan.set)
+  })
+  const after = findObject(panelId)
+  if (after?.type === 'panel') requestRender(after, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'loc' })
 }
 
 /**
@@ -1765,6 +1861,68 @@ export function setPanelOpacity(ids: string[], v: number) {
 export function setPanelAspectLocked(ids: string[], locked: boolean) {
   updatePanels(ids, hist(locked ? 'lockAspect' : 'unlockAspect'), (o) => {
     o.aspectLocked = locked ? undefined : false
+  })
+}
+
+/* ------------------------------- 裁剪态 ---------------------------------- */
+
+/**
+ * 进入裁剪态，并把**进裁剪那一刻**的取景窗与包围盒记下来。
+ *
+ * 裁剪是即时生效的（拖手柄当场看得见结果，审计 T26 的「确认前可见」本来就
+ * 成立），所以「取消」不能只是退出——它得把这一轮的取景还回去。还回哪里？
+ * **回到进来那一刻**，不是回到「从没裁剪过」（那是「重置裁剪」，另一个动作）。
+ *
+ * 所有进裁剪的入口都走这里：属性页、浮动条、右键菜单、面板上按 Enter、
+ * 画布上双击普通面板（`canvas/ObjectView.tsx`）。
+ * 不走这里的话基线是 null，取消降级成单纯退出——**宁可少还原，也不拿一份
+ * 过期快照去改文档**。
+ */
+export function beginCrop(id: string) {
+  const o = findObject(id)
+  if (o?.type !== 'panel') return
+  useUiStore.getState().setCropTarget(id, {
+    id,
+    crop: o.crop ? { ...o.crop } : undefined,
+    x: o.x,
+    y: o.y,
+    w: o.w,
+    h: o.h,
+  })
+}
+
+/** 完成：保留当前取景窗，退出裁剪态（不进历史——拖动那几下各自已经进过了） */
+export function finishCrop() {
+  useUiStore.getState().setCropTarget(null)
+}
+
+/** 取消：还原到 `beginCrop` 那一刻，再退出。一条历史；没动过就不进历史 */
+export function cancelCrop() {
+  const ui = useUiStore.getState()
+  const base = ui.cropBaseline
+  const target = ui.cropTargetId
+  ui.setCropTarget(null)
+  // 基线必须还对应着此刻正在裁的那个对象：换过文档 / 换过面板的快照一律不用
+  if (!base || base.id !== target) return
+  const o = findObject(base.id)
+  if (o?.type !== 'panel') return
+  const same =
+    o.x === base.x &&
+    o.y === base.y &&
+    o.w === base.w &&
+    o.h === base.h &&
+    o.crop?.x === base.crop?.x &&
+    o.crop?.y === base.crop?.y &&
+    o.crop?.w === base.crop?.w &&
+    o.crop?.h === base.crop?.h
+  if (same) return
+  updateObject<PanelObject>(base.id, hist('cancelCrop'), (p) => {
+    if (base.crop) p.crop = { ...base.crop }
+    else delete p.crop
+    p.x = base.x
+    p.y = base.y
+    p.w = base.w
+    p.h = base.h
   })
 }
 

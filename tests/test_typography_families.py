@@ -12,7 +12,6 @@ Prompt 13 之前画布文字（标注 / 自由文字）**只有一个字体**—
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pymupdf
@@ -20,6 +19,7 @@ import pytest
 
 from tavotto import pdfbackend
 from tavotto.pdfbackend import pymupdf_backend as impl
+from tests.support.tsconst import exported_string, exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,16 +31,16 @@ def test_the_family_set_is_one_closed_set_on_both_sides():
     两侧不一致的后果不是崩溃，是一个选得中却画不出来的选项——用户点了、
     界面显示成功了、导出的图一个像素没变。
     """
+    # TS 侧结构性地读（`tests/support/tsconst.py`，评审 #300-5 的同族）：
+    # 从前的 `re.search(r"export const … = \[([^\]]+)\]")` 认不出语法结构，
+    # 注释满足它、`re.search` 又只取第一处——在活声明上面留一份注释掉的旧表，
+    # 门禁读的就是那段注释，两侧已经漂开了它还是绿的。
     src = (ROOT / "web" / "src" / "lib" / "typography.ts").read_text(encoding="utf-8")
-    m = re.search(r"export const CANVAS_TEXT_FAMILIES = \[([^\]]+)\] as const", src)
-    assert m, "web/src/lib/typography.ts 里找不到 CANVAS_TEXT_FAMILIES"
-    front = tuple(v.strip().strip("'\"") for v in m.group(1).split(",") if v.strip())
+    front = tuple(exported_string_array(src, "CANVAS_TEXT_FAMILIES"))
     assert front == pdfbackend.CANVAS_TEXT_FAMILIES
 
-    d = re.search(r"export const CANVAS_TEXT_DEFAULT_FAMILY: CanvasTextFamily = '([a-z-]+)'", src)
-    assert d, "找不到 CANVAS_TEXT_DEFAULT_FAMILY"
     # 默认族必须是闭集里的第一个——`latin_family()` 认不出来时回的就是它
-    assert d.group(1) == pdfbackend.CANVAS_TEXT_FAMILIES[0]
+    assert exported_string(src, "CANVAS_TEXT_DEFAULT_FAMILY") == pdfbackend.CANVAS_TEXT_FAMILIES[0]
 
 
 @pytest.mark.parametrize(

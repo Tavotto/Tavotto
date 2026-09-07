@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { postDiagnosticsBundle } from '@/lib/api'
+import { postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
 import { buildDiagnosticPayload } from '@/diagnostics'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
-import { Toggle } from '../ui/Toggle'
-import { InlineWarning, SettingRow, SettingSection } from './SettingRow'
+import { Segmented } from '../ui/Segmented'
+import {
+  DiagnosticDisclosure,
+  InlineWarning,
+  SettingRow,
+  SettingSection,
+} from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -23,7 +29,9 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *
  * 现在这一页只有两块（导航 id 仍是 `about`，不动 schema）：
  *   1. 产品与版本；
- *   2. 隐私与匿名数据——**最短摘要常驻**，「会发送什么 / 绝不发送什么」进问号。
+ *   2. 隐私与匿名数据——**最短摘要常驻**，逐条数据清单进默认折叠的
+ *      「会发送哪些数据」（审计 T49；此前那两段清单在小问号里，且已经与
+ *      后端 `EVENTS` 表漂开了九条事件）。
  *
  * 渲染环境、健康检查、诊断包在 Session 19 起搬到了独立的「诊断」分区
  * （`DiagnosticsSettings.tsx`，ADR 0038）；内置包版本搬到了「包管理」。
@@ -57,7 +65,10 @@ function ProductBlock({ version }: { version?: string }) {
             href="https://github.com/Tavotto/Tavotto"
             target="_blank"
             rel="noreferrer"
-            className="text-accent hover:underline"
+            // 正文句子里的链接必须**不靠颜色**也能认出来（axe
+            // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
+            // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
+            className="text-accent underline underline-offset-2"
           >
             {st('about.source')}
           </a>
@@ -72,8 +83,21 @@ function ProductBlock({ version }: { version?: string }) {
  * 隐私与匿名数据。
  *
  * **最短摘要必须常驻**——它是用户判断「这东西会不会上传我的图」的依据，
- * 属于隐私授权，不许折叠。完整的「会发送什么」「绝不发送什么」进问号：
- * 那两段是清单，读一次就够，不该每次打开设置都占半屏。
+ * 属于隐私授权，不许折叠。
+ *
+ * 两处在审计 T49 里改掉：
+ *
+ * ① **同意是三档，控件也得是三档。** 之前这里是个二值开关：`unset`（还没
+ *    问过）与 `disabled`（问过了，用户说不）画出来一模一样。那正是后端刻意
+ *    分开的两件事——只有前者才该弹询问，后者再弹就是骚扰——被界面重新合并
+ *    了一次。现在用 `Segmented`，`value=null` 就是「尚未选择」：同一个控件，
+ *    三种可辨状态，而**可写的仍然只有开 / 关两档**（回不到 unset 是对的，
+ *    表过态就是表过态）。
+ *    还有第四种情形不能画成「已开启」：同意过、但同意的是上一版采集范围
+ *    （后端升了 `CONSENT_VERSION`），此刻一个字节都不发。
+ *
+ * ② **「会发送什么」不再是一段会过期的散文。** 见 `lib/telemetryDisclosure.ts`：
+ *    每条事件一行，与后端 `EVENTS` 表严格同源，默认折叠。
  */
 function PrivacyBlock() {
   useTranslation('dialogs')
@@ -85,46 +109,39 @@ function PrivacyBlock() {
   }, [settings, load])
 
   const hard = settings?.hard_disabled ?? false
+  // 首次 `load()` 还在路上时 `settings` 是 null，`hard` 算出来是 false——两档
+  // 都点得动。那一下会与在途的 GET 赛跑：PATCH 先回来写下同意态，随后那份
+  // **陈旧**的 GET 响应把它连同 `lib/telemetry` 的缓存一起覆盖掉，界面与后端
+  // 里刚存下的同意状态从此对不上。二值开关时代这里靠 `!settings` 显式禁用，
+  // 换成三档 `Segmented` 时丢了这道守卫（评审 #300-4）。
+  const pending = !settings
   return (
     <SettingSection title={st('about.privacyTitle')}>
-      <SettingRow
-        label={st('about.telemetry.title')}
-        helpLabel={st('about.telemetry.helpAria')}
-        help={
-          <>
-            {/*
-              「跨会话稳定」这一句要突出：它是这段话诚实性的关键——没有它，读者会
-              以为每次启动都是全新的匿名身份，而我们确实靠它算留存。
-              **强调走 JSX 的 <strong>，不是文案里的 Markdown `**`**：这些是纯文本
-              插值，不是 Markdown 渲染器。
-            */}
-            <p>
-              {st('about.telemetry.sendsBefore')}
-              <strong className="font-medium text-ink">{st('about.telemetry.sendsPersist')}</strong>
-              {st('about.telemetry.sendsAfter')}
-            </p>
-            <p>
-              <strong className="font-medium text-ink">{st('about.telemetry.neverLabel')}</strong>
-              {st('about.telemetry.never')}
-            </p>
-            {/* 「本机优先」这条完整承诺原来常驻在首屏，现在收进来读一次就够 */}
-            <p>{st('about.privacy')}</p>
-          </>
-        }
-        status={st(settings?.enabled ? 'about.telemetry.on' : 'about.telemetry.off')}
-      >
-        <Toggle
-          checked={settings?.enabled ?? false}
-          // 管理员关掉时开关是死的：还能点的话用户会以为自己打开了，
-          // 而实际上一个字节都不会发
-          disabled={hard || !settings}
-          aria-label={st('about.telemetry.toggle')}
-          onChange={(v) => void choose(v ? 'enabled' : 'disabled', 'settings')}
+      <SettingRow label={st('about.telemetry.title')} status={consentStatus(settings)}>
+        <Segmented
+          // 「尚未选择」= 一档都没选中。`choose` 只收得到开 / 关两档，
+          // 所以界面上说得出 unset，却写不回 unset
+          value={settings && settings.consent !== 'unset' ? settings.consent : null}
+          onChange={(v) => void choose(v, 'settings')}
+          items={[
+            {
+              value: 'enabled' as const,
+              label: st('about.telemetry.optIn'),
+              disabled: hard || pending,
+            },
+            {
+              value: 'disabled' as const,
+              label: st('about.telemetry.optOut'),
+              disabled: hard || pending,
+            },
+          ]}
+          ariaLabel={st('about.telemetry.toggle')}
         />
       </SettingRow>
       {/* 一句话摘要：常驻。这是隐私承诺，不是说明文字 */}
       <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.summary')}</p>
       {hard && <InlineWarning>{st('about.telemetry.hardDisabled')}</InlineWarning>}
+      <TelemetryDataDisclosure />
       <a
         href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"
         target="_blank"
@@ -134,6 +151,63 @@ function PrivacyBlock() {
         {st('about.telemetry.policy')}
       </a>
     </SettingSection>
+  )
+}
+
+/**
+ * 控件说不出来的那两档。
+ *
+ * 开 / 关两档由 `Segmented` 自己带 check 标记表达，再配一句「已开启」是同义
+ * 反复（`SettingRow.status` 的约定：只在那个状态**真的成立**时给，不当常驻
+ * 解释）。真正需要一句话的是控件表达不了的两种：
+ *   * `unset` —— 一档都没选中，得说清那是「还没问过」，不是「用户说了不」；
+ *   * 同意过、但同意的是**上一版采集范围**（后端升了 `CONSENT_VERSION`）——
+ *     选中的还是「开启」，可此刻一个字节都不发，不说就是一句假话。
+ * 硬开关那一档不在这里：它有自己那条常驻警示，说的是「不是你关的」。
+ */
+function consentStatus(settings: TelemetrySettings | null): string | undefined {
+  if (!settings) return undefined
+  if (settings.consent === 'unset') return st('about.telemetry.unset')
+  if (settings.consent === 'enabled' && settings.needs_reconsent)
+    return st('about.telemetry.needsReconsent')
+  return undefined
+}
+
+/**
+ * 「会发送哪些数据」。默认折叠——它是一张清单，读一次就够，不该每次打开设置
+ * 都占半屏；但它必须**在同意之前就读得到**，所以留在这一页上而不是文档里。
+ *
+ * 列的是 `EVENTS` 的每一条，逐条说清它带的字段（见 `lib/telemetryDisclosure.ts`
+ * 的同源约定）。「跨启动稳定」那句要突出：没有它，读者会以为每次启动都是全新
+ * 的匿名身份，而我们确实靠它算留存。
+ */
+function TelemetryDataDisclosure() {
+  useTranslation('dialogs')
+  return (
+    <DiagnosticDisclosure title={st('about.telemetry.detailsTitle')}>
+      <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.autoProps')}</p>
+      <p className="text-xs leading-relaxed text-ink-3">
+        {st('about.telemetry.sendsBefore')}
+        <strong className="font-medium text-ink">{st('about.telemetry.sendsPersist')}</strong>
+        {st('about.telemetry.sendsAfter')}
+      </p>
+      <ul
+        data-telemetry-disclosure
+        className="flex list-inside list-disc flex-col gap-0.5 text-xs leading-relaxed text-ink-3"
+      >
+        {TELEMETRY_DISCLOSED_EVENTS.map((event) => (
+          <li key={event} data-telemetry-event={event}>
+            {st(`about.telemetry.sends.${event}`)}
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs leading-relaxed text-ink-3">
+        <strong className="font-medium text-ink">{st('about.telemetry.neverLabel')}</strong>
+        {st('about.telemetry.never')}
+      </p>
+      {/* 「本机优先」这条完整承诺 */}
+      <p className="text-xs leading-relaxed text-ink-3">{st('about.privacy')}</p>
+    </DiagnosticDisclosure>
   )
 }
 

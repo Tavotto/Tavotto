@@ -1,6 +1,10 @@
 /**
  * 「另存为」的外部修改检测（issue #222 §1）。
  *
+ * 2026-09-06（审计 T04）起「另存为」与「打开」是同一个组件的两种形态，按
+ * `uiStore.layoutIntent` 分：另存那屏只有名字和位置，打开那屏一个能写盘的
+ * 控件都没有。下面每条用例都说清自己进的是哪一屏。
+ *
  * 改造前这条路一个基线都不带：两个窗口对同名画布各存一次，后写的整份盖掉
  * 先写的，**而两边都收到 200**。判据在后端只有一份（`_revision_conflict`），
  * 这里守的是**前端真的把基线带过去了**，以及 409 之后的那条出口：
@@ -26,6 +30,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { ApiError, REVISION_ABSENT, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { forgetLayoutRevisions } from '@/lib/layoutRevision'
+import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
 declare global {
@@ -58,9 +63,9 @@ const conflictError = (revision: string) =>
 
 let root: Root
 
-async function open(names: string[] = ['Fig 1']) {
+async function open(names: string[] = ['Fig 1'], intent: 'save' | 'load' = 'save') {
   mockNames.mockResolvedValue(names)
-  useUiStore.setState({ layoutOpen: true, layoutIntent: 'save' })
+  useUiStore.setState({ layoutOpen: true, layoutIntent: intent })
   const mountEl = document.createElement('div')
   document.body.appendChild(mountEl)
   root = createRoot(mountEl)
@@ -78,13 +83,14 @@ const buttonByText = (text: string) =>
 
 const clickSave = async () => {
   await act(async () => {
-    buttonByText('保存为画布文件')!.click()
+    buttonByText('另存为')!.click()
   })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   forgetLayoutRevisions()
+  useProjectStore.setState({ project: { open: true, id: 'p1', document_dir: '/figs/a/tavottofile' } })
   mockSave.mockResolvedValue({ ok: true, revision: 'rev-new' })
   mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk' })
 })
@@ -117,11 +123,12 @@ describe('另存为的基线', () => {
   })
 
   it('载入过的名字用它读到的那一份当基线（不再多打扰用户一次）', async () => {
-    await open(['Fig 1'])
+    // 「打开」和「另存为」现在是两屏（审计 T04）：先从打开那屏载入
+    await open(['Fig 1'], 'load')
     await act(async () => {
       buttonByText('载入')!.click()
     })
-    useUiStore.setState({ layoutOpen: true })
+    useUiStore.setState({ layoutOpen: true, layoutIntent: 'save' })
     await act(async () => {
       await Promise.resolve()
     })
@@ -159,5 +166,55 @@ describe('409 之后的出口', () => {
     await clickSave()
     expect(buttonByText('仍然覆盖')).toBeUndefined()
     expect(dialog().textContent).toContain('写入磁盘失败')  // backendErrorText 按 code 翻的那一句
+  })
+})
+
+/**
+ * 另存与打开分成两屏（审计 T04）。
+ *
+ * 改造前一个弹窗上下两截：上面是保存表单、下面是可载入的文件列表，底部一颗
+ * 会写盘的主按钮。从「载入」进来的用户正对着保存表单，而那颗按钮会把当前
+ * 文档写到框里的名字下——两件后果相反的事共用一屏。
+ */
+describe('另存 / 打开是两屏', () => {
+  it('另存这屏：只有名字和位置，没有可载入的列表', async () => {
+    useProjectStore.setState({
+      project: { open: true, id: 'p1', document_dir: '/figs/a/tavottofile' },
+    })
+    await open(['Fig 1', 'Fig 2'], 'save')
+    const d = dialog()
+    expect(d.querySelector('#layout-save-name')).not.toBeNull()
+    // 位置说的是后端给的那个目录，不是界面自己拼的
+    expect(d.textContent).toContain('/figs/a/tavottofile')
+    expect(buttonByText('另存为')).toBeTruthy()
+    // 一份都载入不了：那是另一屏的事
+    expect(buttonByText('载入')).toBeUndefined()
+    expect(d.textContent).not.toContain('Fig 2')
+  })
+
+  it('打开这屏：只有文档列表，一个能写盘的控件都没有', async () => {
+    await open(['Fig 1', 'Fig 2'], 'load')
+    const d = dialog()
+    expect(buttonByText('载入')).toBeTruthy()
+    expect(d.textContent).toContain('Fig 2')
+    expect(buttonByText('另存为')).toBeUndefined()
+    expect(d.querySelector('#layout-save-name')).toBeNull()
+  })
+
+  it('后端没给目录时不编一个出来', async () => {
+    useProjectStore.setState({ project: { open: true, id: 'p1' } })
+    await open(['Fig 1'], 'save')
+    expect(dialog().textContent).not.toContain('保存到')
+  })
+
+  it('名字撞上已有文档时当场说出来（写盘之前）', async () => {
+    await open(['Fig 1'], 'save')
+    expect(dialog().textContent).toContain('已经有一份文档')
+    expect(mockSave).not.toHaveBeenCalled()
+  })
+
+  it('名字没撞上就不吓唬用户', async () => {
+    await open(['Something Else'], 'save')
+    expect(dialog().textContent).not.toContain('已经有一份文档')
   })
 })

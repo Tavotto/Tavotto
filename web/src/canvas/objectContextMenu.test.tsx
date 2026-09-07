@@ -84,7 +84,7 @@ const panel = (id: string, over: Partial<PanelObject> = {}): PanelObject =>
     ...over,
   }) as PanelObject
 
-const arrow = (id: string): ArrowObject => ({
+const arrow = (id: string, over: Partial<ArrowObject> = {}): ArrowObject => ({
   id,
   type: 'arrow',
   x: 10,
@@ -96,9 +96,10 @@ const arrow = (id: string): ArrowObject => ({
   strokePt: 1,
   color: '#111111',
   head: 'end',
+  ...over,
 })
 
-const shape = (id: string): ShapeObject => ({
+const shape = (id: string, over: Partial<ShapeObject> = {}): ShapeObject => ({
   id,
   type: 'shape',
   shape: 'rect',
@@ -109,6 +110,7 @@ const shape = (id: string): ShapeObject => ({
   strokePt: 1,
   color: '#111111',
   fill: null,
+  ...over,
 })
 
 const cap = (over: Partial<PanelCapability> = {}): PanelCapability => ({
@@ -560,12 +562,23 @@ describe('文字 / 箭头 / 形状', () => {
     expect(useUiStore.getState().editingTextId).toBe('t1')
   })
 
-  it.each(['a1', 's1'])('%s：全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）', async (id) => {
-    await openOn(id)
-    expect(menu()?.dataset.quickMenu).toBe('mark')
-    expect(itemKeys()).toEqual(['open-inspector', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
-    expect(menu()?.querySelector('input')).toBeNull()
-  })
+  it.each(['a1', 's1'])(
+    '%s：更改为 > / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
+    async (id) => {
+      await openOn(id)
+      expect(menu()?.dataset.quickMenu).toBe('mark')
+      expect(itemKeys()).toEqual([
+        'change-kind',
+        'open-inspector',
+        'duplicate',
+        'lock',
+        'hide',
+        'z-order',
+        'delete',
+      ])
+      expect(menu()?.querySelector('input')).toBeNull()
+    },
+  )
 
   it('创建副本 → duplicateSelected：副本成为选区，一条历史', async () => {
     await openOn('t1')
@@ -633,6 +646,145 @@ describe('文字 / 箭头 / 形状', () => {
     expect(byId('a1')).toBeUndefined()
     expect(menu()).toBeNull()
     expect(past()[0].label.key).toBe('history.deleteObject')
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/*  「更改为 ›」类型切换（cap-shape-switch）                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 判据的主语说在前面：这几条问的是**文档里那个对象的类型**变没变、**历史栈**长
+ * 了几条，不是「菜单里有没有出现那个词」。菜单出现了但点下去什么都没写进文档，
+ * 只看措辞的用例照样绿。
+ */
+describe('更改为 ›：类型切换', () => {
+  beforeEach(async () => {
+    await seed([
+      shape('s1', { shape: 'rect', cornerRadius: 3 }),
+      shape('s2', { shape: 'ellipse' }),
+      shape('ln', { shape: 'line' }),
+      arrow('a1'),
+      text('t1'),
+      panel('p1'),
+    ])
+    await mount()
+  })
+
+  /** 打开「更改为 ›」子菜单，返回它的触发项 */
+  async function openChangeKind() {
+    const sub = item('change-kind')!
+    expect(sub.getAttribute('aria-haspopup')).toBe('menu')
+    await act(async () => sub.focus())
+    await key('ArrowRight', sub)
+    return sub
+  }
+
+  const kindItems = () =>
+    itemKeys()
+      .filter((k): k is string => !!k?.startsWith('change-to-'))
+      .map((k) => k.slice('change-to-'.length))
+
+  it('形状：子菜单给整个形状族，当前那一种带勾（radio 语义）', async () => {
+    await openOn('s1')
+    await openChangeKind()
+    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'])
+    for (const el of items().filter((e) => e.dataset.quickItem?.startsWith('change-to-'))) {
+      expect(el.getAttribute('role')).toBe('menuitemradio')
+    }
+    expect(item('change-to-rect')?.getAttribute('aria-checked')).toBe('true')
+    expect(item('change-to-ellipse')?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('箭头与直线是同一族：只给这两个（不给矩形）', async () => {
+    await openOn('a1')
+    await openChangeKind()
+    expect(kindItems()).toEqual(['line', 'arrow'])
+    expect(item('change-to-arrow')?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('点「椭圆」：文档里那个对象换了类型、id 与几何不动、圆角没跟过来、一条历史', async () => {
+    await openOn('s1')
+    await openChangeKind()
+    const before = byId<ShapeObject>('s1')
+    await click(item('change-to-ellipse'))
+    const after = byId<ShapeObject>('s1')
+    expect(after.shape).toBe('ellipse')
+    expect(after.id).toBe('s1')
+    expect({ x: after.x, y: after.y, w: after.w, h: after.h }).toEqual({
+      x: before.x,
+      y: before.y,
+      w: before.w,
+      h: before.h,
+    })
+    expect('cornerRadius' in after).toBe(false)
+    expect(past()).toHaveLength(1)
+    expect(past()[0].label).toMatchObject({
+      key: 'history.switchKind',
+      values: { name: '椭圆' },
+    })
+  })
+
+  it('撤销回到原类型，圆角逐字回来', async () => {
+    await openOn('s1')
+    await openChangeKind()
+    await click(item('change-to-triangle'))
+    expect(byId<ShapeObject>('s1').shape).toBe('triangle')
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+    const back = byId<ShapeObject>('s1')
+    expect(back.shape).toBe('rect')
+    expect(back.cornerRadius).toBe(3)
+  })
+
+  it('直线 → 箭头：换 type，端型给默认，一条历史', async () => {
+    await openOn('ln')
+    await openChangeKind()
+    await click(item('change-to-arrow'))
+    const after = byId<ArrowObject>('ln')
+    expect(after.type).toBe('arrow')
+    expect(after.headEnd).toBe('triangle')
+    expect(past()).toHaveLength(1)
+  })
+
+  it('文字 / 面板：整个子菜单不出现', async () => {
+    await openOn('t1')
+    expect(item('change-kind')).toBeNull()
+    await act(async () => useQuickEdit.getState().close())
+    await openOn('p1')
+    expect(item('change-kind')).toBeNull()
+  })
+
+  it('多选同族：给切换，且作用于全部——一条历史', async () => {
+    await openOn('s1', ['s1', 's2'])
+    expect(menu()?.dataset.quickMenu).toBe('multi')
+    await openChangeKind()
+    // 取值不一致（矩形 + 椭圆）：一个都不勾
+    expect(item('change-to-rect')?.getAttribute('aria-checked')).toBe('false')
+    expect(item('change-to-ellipse')?.getAttribute('aria-checked')).toBe('false')
+    await click(item('change-to-diamond'))
+    expect(byId<ShapeObject>('s1').shape).toBe('diamond')
+    expect(byId<ShapeObject>('s2').shape).toBe('diamond')
+    expect(past()).toHaveLength(1)
+    expect(past()[0].label).toMatchObject({
+      key: 'history.switchKindCount',
+      values: { count: 2, name: '菱形' },
+    })
+  })
+
+  it('多选跨族（矩形 + 箭头）：整个子菜单不出现', async () => {
+    await openOn('s1', ['s1', 'a1'])
+    expect(menu()?.dataset.quickMenu).toBe('multi')
+    expect(item('change-kind')).toBeNull()
+  })
+
+  it('点中的就是当前类型：不进历史（撤销不该多出一条什么都没干的记录）', async () => {
+    await openOn('s2')
+    await openChangeKind()
+    await click(item('change-to-ellipse'))
+    expect(byId<ShapeObject>('s2').shape).toBe('ellipse')
+    expect(past()).toHaveLength(0)
   })
 })
 

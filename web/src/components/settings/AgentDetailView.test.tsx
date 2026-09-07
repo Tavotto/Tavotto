@@ -116,7 +116,9 @@ describe('Agent 详情', () => {
   it('概览给出状态、版本、可执行文件、来源和最后检测', async () => {
     await openDetail()
     expect(text()).toContain(ag('state.ready'))
-    expect(text()).toContain('codex-cli 1.2.3')
+    // 概览说的是版本号，不是 `--version` 的原话（内部包名归诊断信息，审计 T44）
+    expect(text()).toContain('1.2.3')
+    expect(text()).not.toContain('codex-cli 1.2.3')
     expect(text()).toContain('/opt/homebrew/bin/codex')
     expect(text()).toContain(ag('source.path'))
     expect(text()).toContain(ag('detail.checkedAt'))
@@ -303,6 +305,7 @@ describe('Agent 详情', () => {
   it('claude 那侧不显示推理强度（能力由后端声明）', async () => {
     await openDetail(capsOf([claudeCaps()]))
     expect(text()).toContain('Claude Code')
-    expect(text()).toContain('claude 2.0.0')
+    expect(text()).toContain('2.0.0')
+    expect(text()).not.toContain('claude 2.0.0')
   })
 })

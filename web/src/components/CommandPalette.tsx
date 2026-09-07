@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { msg, t as translate } from '@/i18n'
 import { Search } from 'lucide-react'
+import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn, MOD } from '@/lib/utils'
 import {
@@ -174,6 +175,7 @@ export function CommandPalette() {
   const open = usePalette((s) => s.open)
   const setOpen = usePalette((s) => s.setOpen)
   const hasSelection = useSelectionStore((s) => s.ids.length > 0)
+  const recent = useUiStore((s) => s.recentCommands)
   // 教程状态变了要重算可用命令（三条互斥）；项目开合决定项目命令出不出现
   const onboardingStatus = useOnboardingStore((s) => s.status)
   const projectPhase = useProjectStore((s) => s.phase)
@@ -202,8 +204,9 @@ export function CommandPalette() {
   }, [open, setOpen])
 
   // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
-  // 中文界面下输拼音首字母也能中
-  const matches = useMemo(() => {
+  // 中文界面下输拼音首字母也能中。顺序（选区 / 最近 / 常用 / 其他）由
+  // `lib/commandRanking` 一处决定，有没有查询都一样；段标题只在空查询时显示
+  const sections = useMemo(() => {
     const q = query.trim().toLowerCase()
     const pool = COMMANDS.filter((c) => (!c.needsSelection || hasSelection) && (c.available?.() ?? true)).map(
       (c) => ({
@@ -212,13 +215,15 @@ export function CommandPalette() {
         keywords: commandKeywords(t, c.id),
       }),
     )
-    if (!q) return pool
-    return pool.filter(
-      (c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q),
-    )
+    const hit = q
+      ? pool.filter((c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q))
+      : pool
+    return rankCommands(hit, { hasSelection, recent })
     // `onboardingStatus` / `projectPhase` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, hasSelection, t, onboardingStatus, projectPhase])
+  }, [query, hasSelection, recent, t, onboardingStatus, projectPhase])
+  const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
+  const showHeaders = !query.trim()
 
   useEffect(() => {
     setActive((a) => Math.min(a, Math.max(0, matches.length - 1)))
@@ -232,10 +237,12 @@ export function CommandPalette() {
 
   if (!open) return null
 
-  const runCommand = (c: { run: () => void }) => {
+  const runCommand = (c: { id: string; run: () => void }) => {
     setOpen(false)
+    useUiStore.getState().pushRecentCommand(c.id)
     c.run()
   }
+  const sectionLabel = (s: PaletteSection) => t(`palette.section.${s}`)
 
   return (
     <div
@@ -282,23 +289,41 @@ export function CommandPalette() {
           {matches.length === 0 && (
             <li className="px-3 py-2 text-xs text-ink-3">{t('palette.noMatch')}</li>
           )}
-          {matches.map((c, i) => (
-            <li key={c.id} role="option" aria-selected={i === active} data-cmd-index={i}>
-              <button
-                onPointerMove={() => setActive(i)}
-                onClick={() => runCommand(c)}
-                className={cn(
-                  'flex h-7 w-full items-center gap-2 px-3 text-left text-xs',
-                  i === active ? 'bg-accent-subtle text-accent' : 'text-ink',
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                {c.shortcut && (
-                  <span className="shrink-0 font-mono text-xs text-ink-3">{c.shortcut}</span>
-                )}
-              </button>
-            </li>
-          ))}
+          {sections.map((section) => {
+            const offset = matches.indexOf(section.items[0])
+            return [
+              showHeaders ? (
+                <li
+                  key={`h:${section.section}`}
+                  role="presentation"
+                  data-palette-section={section.section}
+                  className="px-3 pb-0.5 pt-1.5 text-xs text-ink-3"
+                >
+                  {sectionLabel(section.section)}
+                </li>
+              ) : null,
+              ...section.items.map((c, j) => {
+                const i = offset + j
+                return (
+                  <li key={c.id} role="option" aria-selected={i === active} data-cmd-index={i} data-cmd-id={c.id}>
+                    <button
+                      onPointerMove={() => setActive(i)}
+                      onClick={() => runCommand(c)}
+                      className={cn(
+                        'flex h-7 w-full items-center gap-2 px-3 text-left text-xs',
+                        i === active ? 'bg-accent-subtle text-accent' : 'text-ink',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                      {c.shortcut && (
+                        <span className="shrink-0 font-mono text-xs text-ink-3">{c.shortcut}</span>
+                      )}
+                    </button>
+                  </li>
+                )
+              }),
+            ]
+          })}
         </ul>
       </div>
     </div>

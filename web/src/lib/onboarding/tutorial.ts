@@ -177,7 +177,7 @@ const inTutorialProject = (projectId: string | undefined | null) =>
  * 教程是从哪个入口开始的（遥测 `tutorial_started.source` 的闭集）。
  * `picker` 项目选择页；`help` 顶栏「更多」；`settings` 设置页；`palette` 命令面板。
  */
-export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette'
+export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette' | 'canvas'
 
 export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
   if (useTutorialStore.getState().busy) return fail('open_failed')

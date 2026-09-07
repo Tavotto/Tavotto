@@ -30,6 +30,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { usePackageStore } from '@/store/packageStore'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -37,6 +38,9 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
+import { setCurrentProjectLabel } from '@/lib/projectLabel'
+import { emptyDocument } from '@/types/document'
 import { useWorkspaceStore } from '@/store/workspace'
 
 /**
@@ -133,6 +137,10 @@ async function resetForNewProject() {
   // 项目环境 / 工作目录模式是项目级的（ADR 0018 / 0045）：清掉旧项目的，按新
   // 项目重取——否则开关与错误块的建议说的是上一个项目的模式
   useEnvStore.getState().resetProject()
+  // 包管理换代：清单与「在 PyPI 查找」的结果都属于旧项目那个受管环境。查找结果
+  // 带着 A 环境里的 `installed` 版本与 A 的索引源，而这一页的安装按钮作用在
+  // **当前**项目上；在途的那次查找回来时同样按代际作废（ADR 0038）。
+  usePackageStore.getState().clear()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()
@@ -155,10 +163,7 @@ async function resetForNewProject() {
   // 导出了"，文件该照常写完（与 native 会话同一条纪律，ADR 0021 §14）。
   resetExportState()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
-  await useDocumentStore.getState().switchDocument(
-    { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },
-    newId('d'),
-  )
+  await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'))
   // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
   // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
   //
@@ -196,6 +201,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
       }
+      setCurrentProjectLabel(project.open ? project.name : null)
       const [recent, opened] = await Promise.all([
         fetchRecentProjects(),
         fetchOpenProjects().catch(() => []),
@@ -227,6 +233,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   adoptOpenedProject: async (status, opts) => {
     // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
     if (status.id) setCurrentProjectId(status.id)
+    // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
+    // documentStore 只读那份投影（否则两个 store 互相 import 成环）
+    setCurrentProjectLabel(status.name)
     // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
     armNoProjectRecovery()
     // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
@@ -239,6 +248,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     let issue: ProjectDocumentRef | null = null
     if (opts?.prepareDocument) await opts.prepareDocument()
     else if (last && !(await restoreProjectDocument(last))) issue = last
+    // 文档就位了就按它的页面适配视口。从 Project Picker 进来时舞台还没挂载
+    // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
+    // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
+    {
+      const page = useDocumentStore.getState().doc.page
+      useViewportStore.getState().fit(page.w, page.h)
+    }
     set({ project: status, phase: 'open', lastDocumentIssue: issue })
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })

@@ -257,6 +257,22 @@ export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHe
   }
 }
 
+/**
+ * `arrowHeads` 的逆：把两个新端型压回旧 `head` 字段。
+ *
+ * 写新端型的每一处都得顺手维护它——旧构建、旧后端读到这份文档时只认 `head`，
+ * 不维护的话一支「起点开口 V、终点无」的箭头在老版本里会变回默认的实心三角。
+ * 规则只有这一份：属性栏改端型（`StrokeSection`）与直线切换成箭头
+ * （`lib/shapeSwitch`）读的是同一个函数。
+ */
+export function legacyHead(heads: {
+  start: ArrowHeadType
+  end: ArrowHeadType
+}): ArrowObject['head'] {
+  const { start, end } = heads
+  return start !== 'none' && end !== 'none' ? 'both' : end !== 'none' ? 'end' : 'none'
+}
+
 /** 直线形状（端点语义只对这一种 shape 生效） */
 export type LineShape = ShapeObject & { shape: 'line' }
 
@@ -429,17 +445,36 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
   return null
 }
 
+/**
+ * 默认画布名（审计 T05）：**全产品只有这一个格式**。第一张画布、新建画布、
+ * 教程项目里的画布都叫「Figure N」——此前空文档叫 Fig 1、新建的叫 Fig 2、
+ * 教程里的叫 Figure 1，三种写法混在一个标签行里。
+ *
+ * 与下面那个**不是一回事**：这是画布名（标签行上那个），下面那个是文档名
+ * （顶栏那个 / 另存的文件名）。
+ */
+export const defaultCanvasName = (n: number): string => `Figure ${n}`
+
+/**
+ * 新文档的默认名。**只在创建那一刻取**，之后就是用户内容（重命名、另存、
+ * 最近文档列表里显示的都是它），所以按当时的界面语言给一个可读的名字，
+ * 而不是 `fig_layout` 那种实现习惯（审计 T03）。它也会成为「另存为」的默认
+ * 文件名，所以取值必须磁盘安全：不含路径分隔符与保留字符。
+ */
+export const defaultDocumentName = (): string =>
+  t('document.defaultName', { ns: 'workspace' })
+
 export function emptyProject(): ProjectDocument {
   const canvas: CanvasData = {
     id: newId('c'),
-    name: 'Fig 1',
+    name: defaultCanvasName(1),
     page: { w: 150, h: 100 },
     objects: [],
     guides: [],
   }
   return {
     schema: 3,
-    project: { id: newId('p'), name: 'fig_layout' },
+    project: { id: newId('p'), name: defaultDocumentName() },
     canvases: [canvas],
     activeCanvasId: canvas.id,
     createdAt: Date.now(),
@@ -457,7 +492,7 @@ export const objectTypeLabel = (type: ObjectType): string =>
 export function emptyDocument(): FigureDocument {
   return {
     schema: 2,
-    name: 'fig_layout',
+    name: defaultDocumentName(),
     page: { w: 150, h: 100 },
     objects: [],
     guides: [],

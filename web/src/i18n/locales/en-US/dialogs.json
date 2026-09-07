@@ -122,19 +122,22 @@
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
   },
   "layout": {
-    "conflict": "A canvas file named “{{name}}” already exists on disk and was not written by this window (another window, or a tool outside Tavotto, changed it).",
+    "conflict": "A document named “{{name}}” already exists on disk and this window did not write it (another window, or a tool outside Tavotto, changed it).",
     "conflictDisk": "On disk: {{canvases}} canvas(es) / {{objects}} objects",
-    "description": "A canvas file is a named saved version you can load at any time; everyday edits are already autosaved on this machine",
-    "empty": "No canvas file has been saved yet",
+    "empty": "No named documents in this project yet",
     "load": "Load",
-    "loadHeading": "Load a canvas file",
-    "namePlaceholder": "Layout name",
+    "nameLabel": "Document name",
+    "namePlaceholder": "Document name",
+    "nameTaken": "A document with this name already exists; saving replaces it.",
+    "openDescription": "Switch to another named document in this project; the current one is already autosaved on this machine",
+    "openTitle": "Open document",
     "overwrite": "Overwrite anyway",
-    "saveAs": "Save as canvas file",
-    "saveHeading": "Save as canvas file",
-    "saved": "Saved as canvas file: {{name}}",
-    "saving": "Saving…",
-    "title": "Canvas files"
+    "saveAs": "Save as",
+    "saveDescription": "Save the current document, with all of its canvases, as a named document in this project",
+    "saveTitle": "Save document as",
+    "saved": "Saved as document: {{name}}",
+    "savesInto": "Saves into {{dir}}",
+    "saving": "Saving…"
   },
   "mcp": {
     "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that cannot be verified automatically. The confirmation is recorded in the proof report.",
@@ -244,7 +247,7 @@
         "label": "Open structure (layers)"
       },
       "load-layout": {
-        "keywords": "open load layout canvas file",
+        "keywords": "open load document canvas file",
         "label": "Load canvas file…"
       },
       "new-doc": {
@@ -260,7 +263,7 @@
         "label": "Save this document"
       },
       "save-layout": {
-        "keywords": "save layout canvas file",
+        "keywords": "save as document canvas file",
         "label": "Save as canvas file…"
       },
       "select-all": {
@@ -285,7 +288,7 @@
       },
       "versions": {
         "keywords": "version history timeline snapshot",
-        "label": "Layout version timeline…"
+        "label": "Document versions…"
       },
       "tutorial-start": {
         "label": "Start tutorial",
@@ -308,7 +311,7 @@
         "keywords": "readiness status editable layout only why not editable"
       },
       "hints-reset": {
-        "label": "Show onboarding hints again",
+        "label": "Show action hints again",
         "keywords": "hints tips reset onboarding"
       }
     },
@@ -316,7 +319,13 @@
     "needPanel": "Select an editable figure first (a panel with a source script)",
     "noMatch": "No matching command",
     "placeholder": "Type a command…",
-    "searchLabel": "Search commands"
+    "searchLabel": "Search commands",
+    "section": {
+      "selection": "Current selection",
+      "recent": "Recent",
+      "common": "Common",
+      "other": "Other"
+    }
   },
   "playground": {
     "backHome": "Tavotto homepage",
@@ -506,7 +515,9 @@
     },
     "details": "Details",
     "duplicate": "Duplicate",
+    "duplicateToEdit": "Duplicate to edit",
     "empty": "Nothing here yet",
+    "emptyHint": "The list is empty. You can import a profile from a file.",
     "export": "Export to a file",
     "field": {
       "annotationFont": "Annotation size",
@@ -514,7 +525,7 @@
       "baseFont": "Body font size",
       "defaultFont": "Body font size",
       "doubleWidth": "Double column",
-      "exportDpi": "Suggested export PPI",
+      "exportDpi": "Suggested export resolution",
       "floorFont": "Absolute floor",
       "legendFont": "Legend size",
       "lineWidth": "Line width",
@@ -528,7 +539,15 @@
       "widthTolerance": "Width tolerance"
     },
     "follow": "Follow updates",
-    "followHelp": "Off by default: the project keeps the rules as they were when you picked them, so a change to the global spec never silently changes this figure. Turn it on to always use the latest rules and stop being asked to sync.",
+    "followDesc": "Off by default: the project uses the rules as they were when you picked them",
+    "group": {
+      "fonts": "Font sizes",
+      "lines": "Lines",
+      "page": "Page and columns",
+      "raster": "Bitmaps",
+      "text": "Text",
+      "ticks": "Ticks"
+    },
     "import": "Import from a file",
     "inUse": "In use here",
     "kind": {
@@ -542,15 +561,22 @@
       "builtin": "Built-in",
       "user": "Custom"
     },
-    "readOnlyHint": "Built-in profiles are read-only. Duplicate one to edit it.",
+    "previewAria": "Style sample: title {{title}} pt, axis titles {{axis}} pt, ticks {{tick}} pt, legend {{legend}} pt, line width {{line}} pt, frame {{spine}} pt",
+    "previewHint": "The sample is computed from the fields above; size and width proportions match a real figure, which elements appear depends on the figure.",
+    "previewTitle": "Sample",
+    "readOnlyBadge": "Read-only",
+    "readOnlyBuiltinBadge": "Built-in · read-only",
     "restore": "Restore defaults",
     "restoreBody": "Its contents go back to the profile it was copied from. Your edits are lost.",
     "restoreConfirm": "Restore",
     "restoreNeedsOrigin": "This one was not copied from a built-in profile, so there are no defaults to restore",
     "restoreTitle": "Restore “{{name}}” to its defaults?",
+    "ruleLine": "Checked as {{expect}}; otherwise {{severity}}",
     "save": "Save",
     "saved": "Saved “{{name}}”",
-    "selectOne": "Pick one on the left.",
+    "snapshotHint": "The project stores the rules as they were when you picked them. Later edits to the same profile in the global list do not change these numbers unless “Follow updates” is on.",
+    "snapshotTitle": "Rules this project actually checks against",
+    "unset": "Not set",
     "useForProject": "Use this spec for the project",
     "usedForProject": "This project now checks against “{{name}}”",
     "warning": {
@@ -561,14 +587,16 @@
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
-    "allScriptsHint": "Every .py in the project is listed here, including ones static analysis cannot resolve (show-only, runtime-named, tooling scripts). Pick any of them and “Test run” to connect it from its real output.",
+    "allEditable_one": "{{count}} figure, and it is editable.",
+    "allEditable_other": "All {{count}} figures are editable.",
+    "allScriptsHint": "Every .py in the project is here, including the ones whose figures cannot be told from the source alone. Run any of them once and Tavotto links it by what it actually draws.",
     "allScriptsTitle": "All scripts ({{n}})",
     "autoLink": "Connect automatically",
     "detail": {
       "candidates": "Candidate scripts",
       "cost": "Run cost",
       "entry": "Entry function",
-      "reasonCode": "Reason code",
+      "reasonCode": "Status code",
       "scope": "Candidate scope",
       "script": "Source script",
       "stem": "Figure name"
@@ -587,7 +615,10 @@
     "loadFailed": "Could not load project readiness",
     "loading": "Loading project readiness…",
     "manualAria": "Figure names produced by {{script}}",
-    "manualPlaceholder": "Or type figure names, comma separated",
+    "manualLabel": "Figures this script draws",
+    "manualPick": "Pick from project",
+    "manualPickAria": "Pick a figure name already in the project for {{script}}",
+    "manualPlaceholder": "Figure names without extension, separated by commas",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
     "orphanConflicts": "More than one script claims these figure names: {{stems}}. There is no matching file in the project yet; you can assign them under “All scripts” below.",
@@ -613,9 +644,9 @@
       "panel": "candidates for this figure",
       "project": "scripts found in the project"
     },
-    "sourcePrefix": "Recorded source: ",
+    "sourcePrefix": "These links are stored in: ",
     "staleReport": "Showing the last state we managed to load — it may be out of date.",
-    "subtitle": "How each figure relates to the script that makes it, and what you can do next.",
+    "subtitle": "Whether each figure can be edited directly, and what is still missing.",
     "summary": {
       "editable": "Editable",
       "layoutOnly": "Layout only",
@@ -644,7 +675,7 @@
     "cancelPaste": "Cancel paste",
     "confirmDoc": "Relink the selected assets",
     "confirmPaste": "Paste with these choices",
-    "descDoc": "This layout references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you leave alone stay missing and will be flagged by the pre-export check.",
+    "descDoc": "This document references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you skip stay missing and are flagged in the pre-export check.",
     "descPaste": "Panels on the clipboard reference files that do not exist in the current figure library. Pick a replacement for each, or skip that panel.",
     "footnote": "Relinking resets the figure edits to the new asset's size and script (overrides are bound to elements of the original script, so they do not transfer reliably). Position, size, stacking order and grouping are kept.",
     "keepMissing": "Leave missing",
@@ -682,24 +713,47 @@
       "exporting": "Building…",
       "licenseAfter": ".",
       "licenseBefore": "Free software, released under AGPL-3.0-only —",
-      "privacy": "All data and rendering stay on this machine; nothing is uploaded. The assistant runs the Codex / Claude command-line tools installed locally. There are only two outbound requests: the update check (which you can turn off under “Updates”) and the anonymous usage statistics below, which stay off until you explicitly opt in.",
+      "privacy": "All data and rendering stay on this machine; nothing is uploaded. The assistant runs the Codex / Claude command-line tools installed locally. There are only two outbound requests: the update check (which you can turn off under “Updates”) and the anonymous usage statistics described here, which stay off until you explicitly opt in.",
       "privacyTitle": "Privacy and data",
       "source": "get the source",
       "tagline": "Figure layout and parameterized chart editing for papers",
       "telemetry": {
+        "autoProps": "Every record carries: app version, operating system, CPU architecture, and how it was installed (desktop, pipx, pip, source). Deliberately absent: hostname, user name, Python path, interface language, time zone and screen size.",
+        "detailsTitle": "What gets sent",
         "hardDisabled": "Disabled on this machine by TAVOTTO_NO_TELEMETRY=1; this switch has no effect.",
-        "helpAria": "About anonymous usage statistics",
+        "needsReconsent": "Scope changed, waiting for you to confirm again",
         "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
         "neverLabel": "Never sent: ",
-        "off": "Off",
-        "on": "On",
+        "optIn": "On",
+        "optOut": "Off",
         "policy": "Privacy policy",
+        "sends": {
+          "ai_assistant_invoked": "Invoking the assistant: whether it ran Codex, Claude or something else (prompts, scripts and session content are never sent).",
+          "app_started": "App start: whether this session is the desktop build or the browser build.",
+          "canvas_created": "A new canvas: blank, from the project, or a duplicate of an existing one.",
+          "context_bar_multi_used": "Which kind of button was used on the multi-selection bar, and which bucket the selection size fell into.",
+          "document_saved": "A document write to disk: manual save or autosave, and whether it ended ok, in a conflict, or failed.",
+          "export_completed": "A successful export: whether it produced a PDF, a PNG and a proof report, and how many panels it covered.",
+          "figure_edit_completed": "One completed edit: which kind (text, series, axes, annotation, layout, style, other) and how many changes it contained.",
+          "figure_opened": "Entering in-figure editing for a panel: whether it is a PDF or a raster image, and whether it is editable.",
+          "package_action": "A managed-environment package job: install, update or remove, and whether it ended ok, failed or was cancelled (never the package name).",
+          "preflight_completed": "A finished check: how many errors, warnings, not-verifiable items and suggestions, and whether it passed overall.",
+          "project_readiness_opened": "Opening the project readiness view: which entry point, and which bucket the project falls into (all editable, mixed, layout only).",
+          "project_refresh_completed": "A successful project refresh: which entry point triggered it (file watcher, manual, Codex, assistant) and which bucket the number of changes fell into.",
+          "recovery_action": "Which side you chose on the crash-recovery banner: restore, or keep the current file.",
+          "telemetry_enabled": "Turning anonymous statistics on for the first time: whether from the first-run prompt or from settings.",
+          "tutorial_completed": "Finishing the tutorial: the tutorial flow version.",
+          "tutorial_started": "The tutorial starting: which entry point, and the tutorial flow version.",
+          "tutorial_step_completed": "One finished tutorial step: which of the ten fixed steps, and the flow version (skipped steps send nothing).",
+          "update_completed": "A finished update: which channel (desktop, pip, pipx) and the version it installed."
+        },
         "sendsAfter": " (otherwise “did they come back a week later” cannot be answered). It is not tied to any account, and carries no hardware serial, MAC address or other identifier that could single out a specific device.",
-        "sendsBefore": "Sent: app version, operating system and architecture, which broad features are used, whether preflight and export succeed, how far the tutorial got, which entry point triggered a project refresh or the readiness view and how it went, which kind of multi-selection arrange button was used, and how saves, recoveries and package operations ended. The identifier is a random UUID generated on this machine that ",
+        "sendsBefore": "The identifier is a random UUID generated on this machine that ",
         "sendsPersist": "stays the same across restarts",
         "summary": "Anonymous feature usage is sent only after you turn this on. Never your figures, scripts, file names, paths, research data or prompts.",
         "title": "Anonymous usage statistics",
-        "toggle": "Share anonymous usage statistics"
+        "toggle": "Share anonymous usage statistics",
+        "unset": "Not chosen yet"
       }
     },
     "agents": {
@@ -809,13 +863,25 @@
         "apiKeySaved": "{{hint}} saved; leave empty to keep it",
         "baseUrl": "Base URL",
         "editTitle": "Edit model service — {{label}}",
-        "keyNote": "The key is stored in a local config file (the folder is readable only by you) and is passed to the CLI as an environment variable at launch. It never appears in a command line, a log or a project file.",
+        "keyNote": "The key is stored in plain text in a local config file and passed to the CLI as an environment variable at launch. It never goes into a command line or a project file.",
+        "keyNoteDiagnostics": "When you export or copy diagnostics, this field is replaced with ***.",
+        "keyNoteMore": "Where it is stored and who can read it",
+        "keyNotePerms": "After saving, the config directory is set to owner-only on macOS and Linux. Windows gets no permission change, so make sure this machine is only used by you.",
+        "keyNoteWhere": "In config.json under this machine’s config directory, in plain text (the same as what both CLIs do themselves).",
+        "manual": "No preset fits — fill it in manually",
+        "modelAdd": "Add",
+        "modelDefault": "default",
+        "modelDraftAria": "Model name to add",
+        "modelPlaceholder": "Model name, press Enter to add",
+        "modelRemove": "Remove model {{name}}",
         "models": "Models",
-        "modelsPlaceholder": "Comma separated; the first one is the default",
         "name": "Name",
+        "nameRequired": "Give this service a name.",
         "preset": "Preset",
         "presetAria": "Model service preset",
+        "presetFilled": "Filled in by the preset: address, models, protocol",
         "presetPlaceholder": "Pick a preset to fill in the address…",
+        "requiredAria": "required",
         "wire": "Protocol",
         "wireAria": "Wire protocol",
         "wireChat": "chat (OpenAI Chat Completions compatible — most gateways)",
@@ -873,54 +939,58 @@
       },
       "title": "Coding Agents",
       "toggleAria": "Enable {{name}} in {{product}}",
-      "useFromAgents": "Use {{product}} from coding agents",
-      "useInProduct": "Use coding agents in {{product}}",
-      "versionAria": "Version {{version}}",
+      "useFromAgents": "Connect an external tool",
+      "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide"
     },
     "canvas": {
       "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
-      "dragCompanions": "Drag axes with companions",
-      "dragCompanionsAria": "Bring companion elements along when dragging axes",
-      "dragCompanionsHint": "Companion elements move with the axes",
-      "elsewhere": "Grid, snapping, rulers and the safe area live on the “Canvas” tab of the right panel, next to the canvas itself.",
-      "more": "Other canvas settings",
-      "openCanvasSettings": "Open canvas settings"
+      "dragCompanions": "Move related objects along",
+      "dragCompanionsHint": "Titles, axis labels and legends you placed by hand",
+      "more": "Canvas settings",
+      "openCanvasSettings": "Open canvas settings",
+      "diagramOn": "Diagram: the title and legend move along with the axes",
+      "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
+      "moreScope": "Grid, snapping, rulers and the safe area"
     },
     "copied": "Copied",
     "copy": "Copy",
     "diagnostics": {
       "copyReport": "Copy diagnostics",
+      "envNote": "The rendering environment bundled with {{product}} ships with the app and is read-only; installing packages creates a separate “this project’s {{product}} environment”. They are not the same thing and report their state independently.",
+      "fetchedAt": "Data on this page was read at {{time}}",
       "healthTitle": "Health",
       "hidePreview": "Hide",
+      "nextStep": {
+        "engine": "The rendering engine will not start. The environment card below has entries for installing or switching the Python environment.",
+        "project_open": "Open a project first — the project checks have nothing to look at until then.",
+        "project_readable": "This folder cannot be read right now (it may have been moved or deleted). Reopen this project, or pick another one under All projects.",
+        "project_writable": "Writing back to original files needs this folder to be writable. Fix its permissions, then come back and choose “Fetch again”."
+      },
+      "okDetails": "Check results",
       "prepareFailed": "Could not generate the diagnostic report. Please try again.",
       "preparing": "Preparing…",
       "previewNote": "This is what will be copied (secrets and personal paths are redacted). Review it, then copy.",
+      "refetch": "Fetch again",
       "reportTitle": "Diagnostic report",
+      "scopeNote": "These checks cover the runtime environment only (Python, the rendering engine, project folders). Whether a figure meets its publication spec is checked in the Problems panel; neither result implies the other.",
       "summaryFailing": "{{count}} problem(s)",
-      "summaryOk": "Everything looks fine"
+      "summaryOk": "Runtime environment checks passed"
     },
     "export": {
-      "defaultDpi": "Default DPI",
       "defaultFormats": "Default formats",
-      "dpiHint": "Affects raster output (PNG / TIFF) only — PDF and EPS are vector, so DPI means nothing for them.",
-      "formatsHint": "PDF keeps everything vector, which journals normally require; PNG is for previews and places that reject vector files; EPS is available only when exporting a figure with a script at its original size (no transparency); TIFF is a lossless raster.",
-      "hint": "These are the export dialog's starting values; a single export can still change them.",
-      "proof": "Proof record",
-      "proofAria": "Write a proof report with every export by default",
-      "proofHelp": "A proof report is a JSON record of this export: the sizes, font sizes, line widths and publication-profile checks it passed. Handy evidence that the figure has not changed when a paper comes back for revision.",
-      "proofHint": "Write a proof report (JSON record) alongside the output"
+      "ppiNotForVector": "Vector formats only — resolution has no effect",
+      "reportScope": "Records this run’s sizes, styles and check results"
     },
     "general": {
       "autosave": "Autosave",
-      "autosaveHint": "Changes are saved automatically: one second after you stop editing they are written to this machine (layouts/_autosave/). There is nothing to save manually; use “Save as canvas file” for a named version.",
       "autosaveState": "Written to this machine after you pause",
       "language": "Language",
-      "languageHint": "Affects the interface only. Project names, canvas names, scripts and text inside figures are never translated.",
       "layout": "Window layout",
       "layoutReset": "Interface layout reset; reload the page to see it",
       "resetLayout": "Reset the interface layout",
-      "resetLayoutHint": "Sidebar widths, snapping toggles and other interface preferences return to their defaults."
+      "autosaveNamedCopy": "Use “Save as canvas file” for a named copy",
+      "resetLayoutScope": "Sidebar widths, snapping and other interface preferences"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -930,6 +1000,7 @@
       "builtinFromManaged": "Ships with the {{product}} environment; read-only.",
       "builtinPlanned": "Creating the environment installs matplotlib and its dependencies.",
       "builtinTitle": "Built-in packages",
+      "builtinTitleCount": "Bundled packages ({{count}}, read-only)",
       "col": {
         "actions": "Actions",
         "name": "Name",
@@ -956,7 +1027,8 @@
         "ready": "Ready",
         "rebuild": "Rebuild"
       },
-      "envTitle": "{{product}} environment",
+      "envTarget": "Installs go here",
+      "envTitle": "This project’s {{product}} environment",
       "install": "Install",
       "job": {
         "cancel": "Cancel",
@@ -989,11 +1061,32 @@
         "repair": "Installed by missing-dependency repair",
         "user": "Installed manually"
       },
+      "recoveryNote": "If it breaks, use “Rebuild”: a fresh environment is created and the recorded packages are installed again.",
       "reinstall": "Reinstall",
-      "rollbackNote": "Package operations cannot be rolled back: pip has no transactions. A snapshot of the environment is recorded before and after every change ({{count}} kept); if the environment breaks, “Rebuild” restores what the ledger records.",
-      "specAria": "Package name or spec to install",
+      "search": {
+        "action": "Look up on PyPI",
+        "alreadyInstalled": "This environment already has {{version}}.",
+        "builtinTitleMatch": "Built-in packages ({{count}} of {{total}} match, read-only)",
+        "exactOnly": "Lookup is by exact package name: the index has no full-text search, and we do not guess similar names.",
+        "failed": "Could not look up {{name}}.",
+        "installHere": "Install into this project’s environment",
+        "latest": "Latest {{version}}",
+        "latestOption": "Latest ({{version}})",
+        "loading": "Looking up {{name}}…",
+        "networkNote": "Lookup contacts PyPI or your configured index.",
+        "noMatch": "No installed package matches “{{term}}”.",
+        "privacyDetail": "That request goes out only when you press “Look up on PyPI”. Typing in the box filters the installed packages locally and never leaves this machine.",
+        "source": {
+          "custom_index": "Answered by the package index you configured.",
+          "pypi": "Answered by the official PyPI.",
+          "unknown": "Cannot tell which package index this environment uses."
+        },
+        "versionAria": "Version of {{name}}"
+      },
+      "snapshotDetail": "Package operations themselves cannot be rolled back (pip has no transactions). A pip freeze is saved before and after every change ({{count}} so far) purely as evidence for troubleshooting — “Rebuild” does not read it; it reinstalls from the recorded package list.",
+      "specAria": "Package name or requirement (also filters the lists below)",
       "specInvalid": "Only “name” or “name>=version” is accepted — no spaces, paths, URLs or options.",
-      "specPlaceholder": "Package name or spec, e.g. lmfit or lmfit>=1.3",
+      "specPlaceholder": "Package name or requirement, e.g. lmfit or lmfit>=1.3",
       "status": {
         "changed": "Version changed",
         "changedDetail": "was {{recorded}} when installed",
@@ -1002,6 +1095,7 @@
         "planned": "Installed on creation",
         "unknown": "Unknown"
       },
+      "techTitle": "Environment and network details",
       "uninstall": "Uninstall",
       "uninstallAria": "Uninstall {{name}}",
       "update": "Upgrade",
@@ -1010,25 +1104,26 @@
       "userTitle": "Installed by you"
     },
     "project": {
-      "backupDir": "Backup folder",
-      "backupDirHint": "Originals are copied here before anything is written back. Leave empty for the default location; saved per project.",
+      "backupDir": "Original file backups",
       "current": "Current project",
-      "currentHint": "The figure folder currently open. Switching projects never moves or copies files.",
-      "defaultPlaceholder": "Default {{path}}",
-      "dirHint": "Leave a folder empty to use the default location. These settings are stored per project.",
-      "exportDir": "Export folder",
-      "noScriptsSuffix": " (panels cannot enter figure editing)",
-      "readOnly": "Read-only project",
-      "readOnlyAria": "Read-only project (write-back to original files disabled)",
-      "readOnlyHelp": "Turns off the whole write-back path, so source figures and scripts can never be overwritten. Canvas editing and export are unaffected.",
-      "readOnlyHint": "When on, “Write back to the original file” is disabled and source figures are never overwritten",
-      "registry": "Project readiness…",
-      "scriptCount_one": "{{count}} script registered",
-      "scriptCount_other": "{{count}} scripts registered",
-      "scripts": "Registered source scripts",
-      "scriptsHint": "Registered source scripts. Only figures produced by a registered script can be edited element by element.",
+      "exportDir": "Export location",
+      "noScriptsSuffix": " (figures here cannot be edited element by element yet)",
+      "registry": "Manage sources…",
+      "scriptCount_one": "{{count}} script",
+      "scriptCount_other": "{{count}} scripts",
+      "scripts": "Editable sources",
       "switch": "Switch project…",
-      "writeBackAllowed": "Write-back allowed"
+      "exportDirScope": "Where exported figures go by default",
+      "backupDirScope": "Originals are copied here before any write-back",
+      "dirPlaceholder": "Leave empty for the default location",
+      "effectivePath": "In use",
+      "chooseFolder": "Choose…",
+      "useDefault": "Reset to default",
+      "showFullPath": "Show the full path of {{name}}",
+      "copyPath": "Copy the full path of {{name}}",
+      "allowWriteBack": "Allow writing back to original files",
+      "allowWriteBackScope": "Write-back only; canvas editing and export are unaffected",
+      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled."
     },
     "section": {
       "about": "About & privacy",
@@ -1046,20 +1141,21 @@
       "update": "Updates"
     },
     "shortcuts": {
-      "hint": "Every shortcut is in the cheat sheet (press ? at any time).",
-      "label": "Keyboard shortcuts",
-      "open": "Open the shortcut cheat sheet"
+      "label": "Shortcuts",
+      "open": "Open the cheat sheet"
     },
     "sidebars": {
-      "breakpoints": "At ≥1440px both sides can be pinned at once; between 1024 and 1439px they are mutually exclusive; below that the sidebars show as temporary overlays and pinning has no effect.",
-      "leftPinned": "Pin the left drawer",
-      "leftPinnedHint": "The asset drawer does not step aside when an object is selected",
-      "rightPinned": "Pin the right panel",
-      "rightPinnedHint": "The properties panel stays open when the selection is cleared"
+      "leftPinned": "Pin the left sidebar",
+      "leftPinnedHint": "Stays put when you select an object",
+      "rightPinned": "Pin the properties panel",
+      "rightPinnedHint": "Stays open when you clear the selection",
+      "pinLimitedMedium": "This window fits only one pinned side",
+      "pinLimitedNarrow": "This window is too narrow; pinning has no effect"
     },
     "techDetails": "Technical details",
     "title": "Settings",
     "update": {
+      "applyFailedRetry": "The upgrade did not finish and the running version is unchanged. You can press “Download and upgrade” again, or read the log below.",
       "autoCheck": "Check automatically",
       "autoCheckAria": "Check for updates daily",
       "autoCheckHint": "Once a day; with this off, no network request is ever made",
@@ -1078,9 +1174,11 @@
       "installMethod": "Installed via",
       "installedHint": "Installed — this window is still the old version; restart to use the new one.",
       "lastChecked": "Last checked: {{time}}",
+      "latestUnknown": "No check has run yet, so whether this is the latest version is unknown.",
       "manualDownload": "If the update service is unreachable, you can also download from Releases manually",
       "methodSource": "source checkout (upgrade with git pull)",
       "neverChecked": "Never checked",
+      "noUpdateAtLastCheck": "No newer version was found when checked at {{time}}. That is the result of that check, not the release status right now.",
       "relaunch": "Restart into the new version",
       "releaseNotes": "Release notes",
       "restartAfter": " to use it — this process is still running the old code.",
@@ -1088,12 +1186,10 @@
       "restartStrong": "Restart Tavotto",
       "signatureNote": "Update packages are officially signed and the shell verifies the signature before installing; a failed check means nothing is installed. Projects, canvases and settings live in the user data folder and are unaffected.",
       "sourceUpgrade": "For a source checkout, run",
-      "upToDate": "You are on the latest version.",
       "upgrading": "Upgrading…"
     },
     "tutorial": {
       "label": "Tutorial",
-      "hint": "Walk through quick edit, locating problems, export and multi-select alignment on an offline sample project.",
       "state": {
         "not_started": "Not started",
         "active": "In progress",
@@ -1104,10 +1200,11 @@
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
-      "reset": "Reset tutorial project",
-      "hints": "Contextual hints",
-      "hintsHint": "One-time hints shown the first time you meet a kind of action; each appears once.",
-      "resetHints": "Reset hints"
+      "reset": "Reset the tutorial project",
+      "hints": "Action hints",
+      "resetHints": "Show action hints again",
+      "resetAction": "Reset",
+      "resetScope": "The sample project returns to its initial state; your edits in it are lost"
     }
   },
   "style": {
@@ -1144,6 +1241,7 @@
     "noSavedStyles": "No styles saved yet",
     "pageSizeSuffix": " ({{w}}×{{h}} mm)",
     "pageSizeTo": "Page size → {{w}}×{{h}} mm",
+    "paletteSwatchAria": "Palette colour {{index}}",
     "paletteTitle": "Series palette (cycled in the order lines / scatters / bars appear)",
     "panelOverwrites_one": " (overwrites {{count}} existing edit)",
     "panelOverwrites_other": " (overwrites {{count}} existing edits)",
@@ -1181,6 +1279,7 @@
     "subLabel": "Panel labels (a)(b)(c)",
     "subLabelCount_one": "Panel labels: {{count}}",
     "subLabelCount_other": "Panel labels: {{count}}",
+    "textColorAria": "Text colour",
     "title": "Paper styles",
     "unmappableDetails": "Unmappable details",
     "unmappableEntry": "{{label}}: no “{{prop}}”",
@@ -1210,11 +1309,11 @@
     "title": "Help improve Tavotto"
   },
   "versions": {
-    "autoBadge": "auto",
+    "autoBadge": "Auto",
     "beforeRestore": "Before restore ({{time}})",
-    "close": "Close layout versions",
+    "close": "Close document versions",
     "compareAria": "Overlay comparison",
-    "compareDescription": "Base = this version; translucent outline = current layout",
+    "compareDescription": "Base = this version; translucent outline = current canvas",
     "compareTip": "Large overlay comparison (base = this version, outline = current)",
     "compareTitle": "Overlay comparison",
     "delete": "Delete version",
@@ -1243,36 +1342,44 @@
       "unlocked": "{{name}}: unlocked",
       "zorder": "Stacking order differs"
     },
-    "drawerLabel": "Layout version timeline",
+    "drawerLabel": "Document versions",
     "duplicate": "Duplicate version",
-    "emptyHint": "Use “Save version”, or keep editing and checkpoints appear automatically after a few minutes.",
+    "emptyHint": "Use “Save version” to keep a named one; one is also saved automatically after a few minutes of editing.",
     "emptyTitle": "No versions yet",
     "fromCanvas": "From canvas “{{name}}”",
     "fromUnknownCanvas": "Older checkpoint — canvas unknown",
-    "intro": "Server-side snapshots of the whole layout. Restoring creates a new version, is undoable, and never touches a source file.",
+    "intro": "Autosaved versions of this document. Restoring saves the current state as a version first, can be undone, and never touches your source files.",
     "keep": "Keep",
     "keepTitle": "Automatic checkpoints are cleaned up over time; promoting one keeps it like a manual version",
     "listLabel": "Version list",
     "loadingSnapshot": "Loading the snapshot…",
-    "metaObjects_one": "{{time}} · {{count}} object",
-    "metaObjects_other": "{{time}} · {{count}} objects",
-    "metaPage": " · {{w}}×{{h}}mm",
     "namePlaceholder": "Version name (optional)",
-    "noDiff": "No differences from the current layout",
+    "noDiff": "No differences from the current canvas",
     "previewApproximate": "Figure-edit preview unavailable; the thumbnail below shows the original file (approximate).",
     "rename": "Rename version",
     "restore": "Restore as a new version",
-    "restoreHistory": "Restore layout version “{{name}}”",
+    "restoreHistory": "Restore document version “{{name}}”",
     "restoreMissingCanvasBody": "This checkpoint came from canvas “{{from}}”, which has been deleted. Continuing writes into the current canvas “{{to}}”, replacing what is there.",
     "restoreMissingCanvasTitle": "Original canvas is gone",
     "restoreOtherCanvasBody": "This checkpoint was taken on canvas “{{from}}” while you are on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
     "restoreOtherCanvasTitle": "Restore into canvas “{{name}}”?",
     "restoreUnknownCanvasBody": "It was left by an older version and does not record which canvas it came from. Continuing writes into the current canvas “{{to}}”, replacing what is there.",
     "restoreUnknownCanvasTitle": "This checkpoint has no canvas identity",
-    "restored": "Restored layout version “{{name}}” (undoable; no source file was touched)",
+    "restored": "Restored document version “{{name}}” (undoable; no source file was touched)",
     "save": "Save version",
-    "saved": "Saved the current layout as a new version",
-    "title": "Layout versions",
+    "saved": "Current document saved as a new version",
+    "summary": {
+      "added_one": "{{count}} object added",
+      "added_other": "{{count}} objects added",
+      "baseline_one": "{{count}} object",
+      "baseline_other": "{{count}} objects",
+      "page": "{{w}}×{{h}} mm",
+      "removed_one": "{{count}} object removed",
+      "removed_other": "{{count}} objects removed",
+      "resized": "Figure size {{fromW}}×{{fromH}} → {{toW}}×{{toH}} mm",
+      "sameMetrics": "Same object count and figure size"
+    },
+    "title": "Document versions",
     "versionName": "Version name",
     "viewCurrent": "Current",
     "viewVersion": "This version"

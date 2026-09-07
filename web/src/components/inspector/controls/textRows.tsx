@@ -240,7 +240,7 @@ export function TextColorRow({
   const mixedText = translate('element.mixedValues', { ns: 'inspector' })
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
-      <ColorField value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
+      <ColorField ariaLabel={label} value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
       {mixed && <span className="shrink-0 text-xs text-ink-3">{mixedText}</span>}
       {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
     </Row>

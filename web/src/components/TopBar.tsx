@@ -29,6 +29,8 @@ import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { foreignProjectLabel } from '@/lib/projectLabel'
+import { currentProjectId } from '@/lib/session'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
@@ -40,7 +42,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
-import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
+import { useWorkspaceStore } from '@/store/workspace'
 import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { BrandMark } from './ui/BrandMark'
@@ -95,7 +97,6 @@ export function TopBar() {
         <ProjectSwitcher />
         <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
-        <WorkspaceCrumb />
         <SaveStateLabel />
       </div>
 
@@ -290,15 +291,15 @@ function DocumentMenu() {
       <MenuItem onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
 
       <MenuSeparator />
-      <MenuLabel>{t('topbar.canvasFiles')}</MenuLabel>
+      <MenuLabel>{t('topbar.projectDocuments')}</MenuLabel>
       <MenuItem
         onSelect={() => useUiStore.getState().setLayoutOpen(true, 'save')}
         shortcut={`⇧${MOD}S`}
       >
-        {t('topbar.saveAsCanvasFile')}
+        {t('topbar.saveDocumentAs')}
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
-        {t('topbar.loadCanvasFile')}
+        {t('topbar.openDocument')}
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
         {t('topbar.versionTimeline')}
@@ -325,6 +326,14 @@ function DocumentMenu() {
                   count: r.objects,
                 })
               : t('topbar.recentEntry', { name: r.name, count: r.objects })}
+            {/* 索引跨项目共用一份：别的项目的文档要标出来，否则用户会把它当成
+                本项目的一份版本打开，而它引用的素材在这个项目里根本不存在
+                （审计 T04）。归属未记的旧条目**什么都不标**——那是「不知道」。 */}
+            {foreignProjectLabel(r, currentProjectId()) && (
+              <span className="ml-1 shrink-0 text-xs text-ink-faint">
+                {foreignProjectLabel(r, currentProjectId())}
+              </span>
+            )}
           </MenuItem>
         ))
       )}
@@ -455,51 +464,6 @@ function MarkTools() {
           <Tags size={ICON_SIZE.md} />
         </Button>
       </Tip>
-    </>
-  )
-}
-
-/**
- * 「现在在哪条工作流上」。一个标签，不解释：
- *
- * ```text
- * Fig3  快速编辑      ← 点一下回到画布排版
- *       画布排版      ← 排版模式：只是个名字，不是按钮
- * ```
- *
- * 左边的项目 / 文档面包屑回答「在哪一份文档里」，这里回答「在做哪件事」。
- * 两条工作流各有一个名字是这一阶段的产品前提——只给快速编辑一个标签的话，
- * 用户会以为那是个临时状态而不是两条并列的路。
- */
-function WorkspaceCrumb() {
-  const { t } = useTranslation('workspace')
-  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
-  const panelId = useWorkspaceStore((s) => s.activePanelId)
-  const name = useDocumentStore((s) => {
-    const o = s.doc.objects.find((x) => x.id === panelId)
-    return o?.type === 'panel' ? (o.name ?? o.fileId) : null
-  })
-
-  if (!fastEdit || !name) {
-    return (
-      <span className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
-        {t('fastEdit.layoutMode')}
-      </span>
-    )
-  }
-  return (
-    <>
-      <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
-      <button
-        onClick={returnToLayout}
-        title={t('fastEdit.crumbTitle')}
-        className="flex min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs transition-colors hover:bg-ink/[.055]"
-      >
-        <span className="min-w-0 max-w-40 truncate text-ink">{name}</span>
-        <span className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-ink-2">
-          {t('fastEdit.mode')}
-        </span>
-      </button>
     </>
   )
 }

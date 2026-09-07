@@ -84,6 +84,21 @@ ERROR_PACKAGE_DISK_LOW = "package_disk_low"
 ERROR_PACKAGE_OP_INVALID = "package_op_invalid"
 ERROR_PACKAGE_STILL_INSTALLED = "package_still_installed"
 ERROR_PACKAGE_NOT_FOUND_AFTER = "package_not_found_after_install"
+#: 包查找（设置 -> 包管理的搜索，ADR 0038 的 2026-09-07 修订）的**闭集四档**。
+#: 分成四条而不是一条「查不到」，是因为四种下一步动作完全不同：换个名字 /
+#: 检查网络与镜像源 / 稍后重试 / 直接输入包名安装。
+ERROR_LOOKUP_NOT_FOUND = "package_lookup_not_found"
+ERROR_LOOKUP_OFFLINE = "package_lookup_offline"
+ERROR_LOOKUP_TIMEOUT = "package_lookup_timeout"
+ERROR_LOOKUP_FAILED = "package_lookup_failed"
+#: 端点按这张表定 HTTP 状态（`app.api_packages_lookup`）。**闭集**：查找只会
+#: 用这四个码，加上语法不合法的 `package_requirement_invalid`。
+LOOKUP_ERROR_CODES = (
+    ERROR_LOOKUP_NOT_FOUND,
+    ERROR_LOOKUP_OFFLINE,
+    ERROR_LOOKUP_TIMEOUT,
+    ERROR_LOOKUP_FAILED,
+)
 
 # ---------------------------------------------------------------------------
 # 目标环境
@@ -1522,6 +1537,243 @@ def list_managed_packages(project: str | Path | None) -> dict:
         "snapshots": len(managedenv.list_snapshots(root)),
         # 卸载没有回滚这件事要在界面上**说出来**（ADR 0019 §八）
         "rollback": "snapshot_only",
+    }
+
+
+# --------------------------------------------------------------- 查找
+#
+# 「这个包叫什么、有哪些版本」——设置 → 包管理的搜索框那一半（ADR 0038
+# 2026-09-07 修订）。**只读：一个字节都不装**，也不碰受管环境的磁盘。
+#
+# 为什么走 `pip index versions` 而不是自己请求 `https://pypi.org/pypi/<name>/json`：
+#
+#   * **查找必须问安装会问的那个源。** 用户配了镜像 / 内网 index（`pip.conf`、
+#     `PIP_INDEX_URL`）时，直连 pypi.org 会给出与 `pip install` 不一致的答案：
+#     「PyPI 上没有这个名字」而 pip 装得上，或者反过来。同一个问题只该有一个
+#     出处，而这里的出处就是 pip 自己的索引配置。
+#   * **代理 / 离线配置也一起继承**，我们不必在 Flask 里再实现一遍 proxy、
+#     TLS、重试、私有源认证。
+#   * **实测（2026-09-07，本机）**：`pip index versions numpy` 冷启 4.2 s、
+#     热 0.7 s；同一个 numpy 的 `pypi.org/pypi/numpy/json` 有几十 MB，10 s 都
+#     读不完（`TimeoutError`）。JSON 那条路在大包上根本走不通。
+#
+# 代价写在明处：`pip index` 的输出不是契约（与 `inventory()` 刻意不解析
+# `pip list` 是同一条纪律的反面）。所以 ① 解析只认一行固定前缀，认不出一律
+# `package_lookup_failed`，**绝不回一个空版本表冒充「找到了」**；② 查找失败
+# 从不影响安装——用户照样可以直接输入包名装，这条功能是纯增量的。
+#: pip 自己的 socket 超时与重试。**`--retries 1` 是判据的一部分**：
+#: `--retries 0` 时 pip 连不上索引也只打一句 `No matching distribution found`，
+#: 与「这个包不存在」逐字相同（2026-09-07 实测），离线就再也认不出来了。
+LOOKUP_PIP_TIMEOUT_S = 3
+LOOKUP_PIP_RETRIES = 1
+#: 整个子进程的墙上时间预算。算术：pip 启动 ~0.3 s + 两次 socket 等待
+#: （3 s × (1 + 重试 1)）= 6.3 s，留一点余量给慢磁盘。
+LOOKUP_TIMEOUT_S = 8
+#: 版本表的上限。numpy 有 120 个版本，几百个是想得到的上界；截断只是防一个
+#: 畸形索引把响应撑爆，正常包一个版本都不会少。
+LOOKUP_MAX_VERSIONS = 300
+
+#: `pip index versions` 的两行输出前缀。**只认这两个**，认不出就是解析失败。
+_AVAILABLE_PREFIX = "available versions:"
+_INSTALLED_PREFIX = "installed:"
+
+#: 进 argv 的包名允许出现的**全部**字符。PEP 503 归一之后
+#: （`depresolve.normalize_distribution` 把 `[-_.]+` 折成 `-` 再小写）剩下的
+#: 就只有这些——比 `_NAME_RE` 窄一档是刻意的：进命令行的那个串已经归过一次。
+_ARGV_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-"
+#: 首字符另算一张表：**必须是字母或数字**。挡参数注入的就是这一条——`-` 开头
+#: 的串会被 pip 当成选项（`--index-url=http://evil/simple` 这一族），而位置参数
+#: 在不在最后一位与它无关。
+_ARGV_NAME_FIRST_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def argv_package_name(name: str) -> str:
+    """把包名**按上面那两张常量表重拼一遍**，拼不出来就拒。
+
+    为什么是「重拼」而不是「校验一下放行」——两条理由，缺一条都不足以这么写：
+
+    * **校验与使用是两个动作**，中间隔着的每一行代码都可能换掉那个值
+      （`lookup_package` 里「归一化之后再过一次同一道语法」就是这条纪律的
+      上一版）。重拼把两个动作合成一个：出去的那个串**由常量表拼出来**，
+      它含什么字符不取决于谁在上游验过什么。
+    * 它同时是给静态分析看的：CodeQL 的 `py/command-line-injection` 报的是
+      「用户输入流进了子进程 argv」这条**数据流**，而不是「这里真能注入」。
+      正则校验在它的模型里不是净化器（判据落在另一个值上），所以那条告警
+      不会因为上游多验一次而消失。从常量表取字符则把那条流真的切断了——
+      这不是为了讨好扫描器改代码：切断的是同一条真实的因果链。
+
+    **不做替换、不做截断**：认不出的字符一律抛 `RepairError`。悄悄改掉用户
+    输入的名字会让界面上的名字与真正查的那个身份对不上，而那正是
+    `lookup_package` 自己做归一化（而不是让 pip 做）的理由。
+    """
+    text = str(name or "")
+    if not text:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "空的包名不能进命令行")
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        table = _ARGV_NAME_FIRST_CHARS if i == 0 else _ARGV_NAME_CHARS
+        pos = table.find(ch)
+        if pos < 0:
+            raise RepairError(ERROR_REQUIREMENT_INVALID, "这个包名里有不能进命令行的字符")
+        out.append(table[pos])
+    return "".join(out)
+
+
+def pip_index_argv(python: str, name: str) -> list[str]:
+    """查找命令——**唯一出处**，测试逐字节钉住。
+
+    * `-m pip`：绝不用 PATH 上的 `pip`（那个 pip 属于哪个解释器全看 PATH）；
+    * `--disable-pip-version-check`：它自己要再发一次网络请求，实测能把
+      一次查找从 0.7 s 拖到 10.6 s；
+    * `--no-input`：私有源要密码时子进程里没人能回答，只会挂着；
+    * `--retries` / `--timeout`：见上面常量的注释，**重试次数是判据的一部分**；
+    * `--`：选项解析到此为止。有了它，「名字会不会被当成选项」这件事就不再
+      依赖名字本身长什么样——判据从「上游验过了」变成「pip 不可能这么解释」。
+      2026-09-07 实测 pip 25.3：`pip index versions -- <name>` 与不带 `--`
+      逐字同输出，两个位置参数才会报 `You need to specify exactly one argument`
+      （证明 `--` 被吃掉了、没当成第二个参数）；
+    * 包名放**最后**，且由 `argv_package_name` 从常量字母表重拼出来。
+
+    名字拼不出来时**抛异常，不返回一个凑合的 argv**：这个函数是 argv 的唯一
+    出处，让它有能力回一个不合规的 argv 等于把上面那句保证作废。
+    """
+    return [
+        str(python),
+        "-m",
+        "pip",
+        "index",
+        "versions",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--retries",
+        str(LOOKUP_PIP_RETRIES),
+        "--timeout",
+        str(LOOKUP_PIP_TIMEOUT_S),
+        "--",
+        argv_package_name(name),
+    ]
+
+
+def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
+    """跑一次查找子进程 → `(退出码, 合并输出, 是不是超时)`。
+
+    比 `_run()` 多回一个 `timed_out` 是有理由的：`_run` 把超时压成
+    `(1, "超时（8s）")`，而判「是不是超时」去匹配那句中文属于**拿判据去匹配
+    散文**——换一句话、翻译一次，判据就静默失效。这里给结构化的信号。
+
+    测试的**唯一注入点**也是它：包查找的用例一律 monkeypatch 这个函数，
+    CI 里一次网络请求都不发。
+    """
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=LOOKUP_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return 1, "", True
+    except OSError as exc:
+        return 1, str(exc), False
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or ""), False
+
+
+def classify_lookup_failure(text: str) -> str:
+    """查找失败的输出 → 稳定 code。
+
+    **网络判据排在「没有这个包」之前**，与 `classify_pip_failure` 同一条理由
+    再加一条更强的：`pip index versions` 在「索引连不上」与「索引上没有这个
+    名字」两种情况下打出的**最后一行完全一样**（`ERROR: No matching
+    distribution found for X`，2026-09-07 实测），唯一的差别是前者多一行连接
+    失败的重试警告。
+
+    于是有一档刻意的不对称：网络抖了一下、但重试成功并确实查到「没有这个包」
+    时，我们会报 `offline`。**这个方向是选的**——把「网断了」说成「PyPI 上
+    没有这个名字」会让用户去改一个本来就对的包名，而反过来只是让他重试一次。
+    """
+    low = (text or "").lower()
+    if any(m in low for m in _NETWORK_MARKERS):
+        return ERROR_LOOKUP_OFFLINE
+    if "no matching distribution" in low or "could not find a version" in low:
+        return ERROR_LOOKUP_NOT_FOUND
+    return ERROR_LOOKUP_FAILED
+
+
+def parse_index_versions(text: str) -> tuple[list[str], str]:
+    """`pip index versions` 的输出 → `(版本表, 环境里已装的版本)`。
+
+    版本表按 pip 给的顺序（新的在前）原样保留，**不排序**：比较版本号要
+    PEP 440 的规则，而那正是 pip 已经替我们做过的事，自己再排一遍只会排错。
+    认不出「Available versions:」那一行时回空表——调用方据此报解析失败，
+    绝不把空表当成「查到了，但一个版本都没有」。
+    """
+    versions: list[str] = []
+    installed = ""
+    for line in (text or "").splitlines():
+        low = line.strip().lower()
+        if not versions and low.startswith(_AVAILABLE_PREFIX):
+            body = line.strip()[len(_AVAILABLE_PREFIX) :]
+            versions = [v.strip() for v in body.split(",") if v.strip()]
+        elif not installed and low.startswith(_INSTALLED_PREFIX):
+            rest = line.strip()[len(_INSTALLED_PREFIX) :].strip().split()
+            installed = rest[0] if rest else ""
+    return versions, installed
+
+
+def lookup_package(project: str | Path, name: str) -> dict:
+    """按名字问一次索引源：这个包有哪些版本。**不装任何东西。**
+
+    只按**名字**查，不做模糊搜索：PyPI 早已下线全文搜索 API，而「猜一个相近
+    的名字」正是抢注攻击的入口（同一条理由让 `depresolve` 没有「同名试试看」
+    那一档）。名字按 PEP 503 归一后再查，`SciKit_Learn` 与 `scikit-learn`
+    是同一个问题——pip 自己会归一，但它把用户原样输入的那个名字回显出来，
+    所以归一化必须由我们做，否则界面上的名字与安装用的身份会对不上。
+
+    用哪个解释器问：这个项目的受管环境在就用它（顺带拿到「这个环境里已经装了
+    哪一版」），不在就退到基础解释器。**`installed` 只在前一种情况下有值**
+    ——基础解释器里装着什么与这一页要装到的那个环境无关，拿它回答会答错主语。
+    """
+    parsed = depresolve.parse_requirement(str(name or "").strip())
+    if parsed is None or parsed[1]:
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "查找只接受包名，不接受版本、路径或地址")
+    canonical = depresolve.normalize_distribution(parsed[0])
+    # 归一化之后**再过一次同一道语法**：进 argv 的是它，不是上面验过的那个串
+    # （与 `_pip_install` 在执行前再验一次是同一条纪律）
+    if depresolve.parse_requirement(canonical) != (canonical, ""):
+        raise RepairError(ERROR_REQUIREMENT_INVALID, "这个包名归一化之后不是一个合法的包名")
+
+    managed_python = managedenv.python_of(project)
+    python = managed_python or base_python() or ""
+    if not python:
+        raise RepairError(ERROR_LOOKUP_FAILED, "这台机器上没有可以用来查找的 Python")
+
+    rc, text, timed_out = _run_lookup(pip_index_argv(python, canonical))
+    if timed_out:
+        raise RepairError(ERROR_LOOKUP_TIMEOUT, "查找超时")
+    if rc != 0:
+        code = classify_lookup_failure(text)
+        # 输出里可能带 index 地址（甚至凭据）：进日志之前先脱敏，且**不进响应**
+        LOG.info("包查找失败 %s → %s: %s", canonical, code, _sanitize(text)[:400])
+        raise RepairError(code, "没有查到这个包")
+    versions, installed = parse_index_versions(text)
+    if not versions:
+        LOG.info("包查找的输出没解析出版本表 %s: %s", canonical, _sanitize(text)[:400])
+        raise RepairError(ERROR_LOOKUP_FAILED, "没有读懂索引源的回答")
+
+    index = custom_package_index(python)
+    return {
+        "name": canonical,
+        "versions": versions[:LOOKUP_MAX_VERSIONS],
+        "latest": versions[0],
+        # 「这个环境里已经装了哪一版」——问不出 / 问的不是这个环境时是空串
+        "installed": installed if managed_python else "",
+        # 三档而不是两档：「配没配自定义源」问不出来的时候它就是问不出来
+        # （[[unknown-is-its-own-value]]）。**这里只有真假，绝不回地址。**
+        "source": "unknown" if index is None else ("custom_index" if index else "pypi"),
     }
 
 

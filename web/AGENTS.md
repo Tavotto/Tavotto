@@ -24,7 +24,28 @@
   描述。画布不再入库，看不到 diff 了——判据换成 CI `plugin-candidate` job 里真起 server 读回
   的资源与构建物逐字相同；想本地对比就构建两次到不同 `--out` 再 diff。
 - 界面用 agent-browser 实测；黄金路径 E2E `cd web && pnpm e2e`（Playwright，
-  先 `python scripts/build_frontend.py`）。
+  先 `python scripts/build_frontend.py`）。`e2e/mcp-canvas.spec.ts` 还要
+  `python scripts/build_mcp_widget.py`——`canvas.html` 不再入库（ADR 0043），没建过的
+  工作区上那四条会以 ENOENT 红，CI 每次 checkout 现建所以看不到这一幕。
+- **控件的可访问名是必填的，靠外面包一层 `<label>` 不算数**（2026-09-07，#299 webkit 腿）：
+  HTML-AAM 给 `button` 的取名方式是「name from content」，`Toggle` 那颗 `<button role="switch">`
+  的内容只有两个装饰用的 `<span>`——`<label>` 包着它只保证点文字能切换，**不给它取名**。
+  chromium 大方地把标签文字算了进去，所以 posix 腿一直是绿的；webkit 按规范办事，axe 当场
+  报 `button-name` critical。同一屏还有 `ColorField` 的两个输入框（取色盘 + 十六进制），
+  一行可见标签既不是 `<label for>` 也指不了两个控件，报 `label` critical。
+  **两个组件的名字现在是类型必填的**：`ColorField` 要 `ariaLabel`，`Toggle` 要
+  `aria-label` 或 `aria-labelledby`（二选一，联合类型）——一次性补齐会漏，类型必填才不会烂。
+  给名字时**用渲染那句可见文字的同一个表达式**，别另写一句同义的（审计 T39 担心的分叉）；
+  `SettingRow` 的标签自带 `settingRowLabelId(controlId)`，那一族用 `aria-labelledby` 指它。
+  看护：`e2e/a11y.spec.ts` 的「图内编辑的属性栏」——它把属性栏里每个折叠区**一个不剩地展开**
+  再扫（`aria-expanded="false"` 且非弹层触发器、非禁用），收起来的控件 axe 看不见，
+  「这一屏干净」原本只说明「默认展开的那部分干净」。锚点 `data-inspector-panel`。
+- **横向溢出只有一把尺子：`e2e/overflow.ts` 的 `horizontalOffenders(page, rootSel)`。**
+  逐个元素扫、只认 `overflow-x: visible`，并且**只量 HTML 元素**——SVG 里的
+  `scrollWidth` / `clientWidth` 量的不是页面宽度（样式页示例图那条 `rotate(-90)` 的轴标题
+  报 `sw=66 cw=21`，两个数是同一段字的两种量法），主语错了只会产出假红。这条原先只补进了
+  `settings-shell.spec.ts` 那一份抄本，另外两份带着盲区活到 2026-09-07 才被发现（#299），
+  所以现在只留一份，新用例一律 import 它、别再抄第四份。
 
 ## 渲染态：按「文件 + 变体」分键（2026-08-18，Phase F）
 
@@ -366,6 +387,64 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
   `tests/test_typography_families.py`。
 
+## 图内属性的展示注册表（2026-09-06，UI/UX 审计 P1 / P2）
+
+`components/inspector/presentation/` 是**排版决策的唯一出处**：manifest 是能力
+权威，这里只决定「摆在哪一桶、此刻显不显示、长成哪种控件」，**字段进来多少
+出去多少**。
+
+* `roleProfiles.ts` 一个角色一张模板：`primary` / `more` / `advanced` 是顺序与
+  归属；`visibleWhen` 是「开关 → 从属字段」的条件展开（文字的背景 / 描边、
+  次刻度的长宽、三维的箭头与背景面板、图例项断开前的示意线样式，全在这里，
+  **不写第二套判据**）；`pairRows` 是并排成一行的字段对（色阶下限 / 上限）。
+* **条件展开只有 `registry.fieldVisible` 一条判据**：分桶用它，不走桶的复合
+  控件（刻度卡、图例排版详情卡）也用它。「改过的字段永远显示」这条兜底也在
+  它里面——override 不因折叠或条件而不可发现。
+* `controlKindOf` 按 **prop + 角色**认控件形态，不按「值长得像什么」猜：图例
+  位置九宫格、图例项的链接开关、纵横比、色条的方向 / 两端延伸（用当前色图画
+  的小色条）、三维投影（小立方体）、透明度百分比。多数视觉选择器走
+  `controls/OptionGrid`（radiogroup + 方向键漫游 + 选中角标）——线型 / 标记 /
+  纹理 / 箭头 / 色条方向与延伸 / 三维投影；色图选择器与图例九宫格自己实现
+  radiogroup（一个要分组长列表、一个是 3×3 几何）。哪一种都一样：**图形之外
+  必须有文字名与 aria-label**，选中态不只靠颜色。
+* 卡承接掉的字段要在 `ElementInspector` 的「让出」集合里点名，否则同一属性会
+  出两套控件。判「有没有第二套」的用例必须**把「更多」也展开**——没让出来的
+  字段落进那个默认折叠的桶，只数首屏的话那条断言恒真。
+* **标记这一行的形状来自 manifest 的只读事实 `marker_current`，不是猜的**
+  （2026-09-06，审计 T16 补做）：`value` 说的是「选中的是哪个取值」，形状是
+  另一件事。`MarkerPicker` 的规则——取值本身就是已知图形时照旧；取值说不出
+  形状时按事实画（`named` 复用同一份 switch 图形，`path` 照顶点画，
+  **引擎的 y 向上、SVG 的 y 向下，要翻**）。`original` 那一档形状与 P2 加的
+  继承状态点**并列**，谁都不顶替谁：形状说「图上是个圆」，状态点说「这个圆
+  是脚本给的、你没设过」。文字名也把形状说出来（网格里那一格的可达名与
+  tooltip 同一份）——图形之外必须有文字名。
+  引擎没发事实、给了这边画不出的名字、`multiple` / `too_complex`——**一律
+  退回没有这个字段时的样子**，漂移只回到原状。多选时各成员事实不一致就谁的
+  都不画（`sharedMarkerShape`）：取值一致不等于形状一致，那是两个维度。
+  判据的锚点是 `data-marker-preview`（触发按钮里有下拉箭头、格子里有选中
+  角标，两个都是 `<svg>`，按标签名找的断言恒真）。看护
+  `controls/pickers.test.tsx` / `seriesPanels.test.tsx`。
+* **「脚本原始」那一格画的是 `marker_original`，不是 `marker_current`**
+  （2026-09-07，cap-marker-orig 补做）：换过标记之后 `marker_current` 读的是
+  图上此刻那条路径，脚本原来那条已经不在图上——那一格于是只剩一个空的继承
+  状态点，用户看不出点下去会变成什么。引擎**只在真的有 override 时才发**
+  `marker_original`（缺席 = 与 current 相同），所以前端的规则就一句：
+  `original` 那一格用 `marker_original ?? （它正好是当前值时的 marker_current）`，
+  **其余格子照旧只有当前值那一格有事实可用**。文字名同理（网格里那一格的
+  可达名与 tooltip 同一份）。缺席时退回今天的样子，漂移只回到原状。
+  多选走 `sharedMarkerShape(elements, prop, 'marker_original')`：两份事实
+  **各自判一致性**（「此刻都是菱形」推不出「原来都是圆」），而且原样多一种
+  不一致——有的成员改过、有的没改，那时同样谁的都不画。
+* `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
+  排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
+* 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的
+  `mappable_gid`，不猜「两边 cmap 名字相同」；引擎没给就整行不出现。
+* 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
+  `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
+  `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
+  （三维方向示意的期望值取自真 matplotlib 的 `proj3d._view_axes`，
+  文件头写了重新生成的脚本）。
+
 ## 图例条目与绑定（2026-09-02，ADR 0034）
 
 完整版在 `docs/adr/0034-legend-entry-binding.md`，改动前先读。
@@ -380,12 +459,37 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   于全部项）与 `entry_order`（条目列表的上下移动），通用列表让出这两条
   （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
   预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
+* **排版详情卡**（`controls/LegendSpacingCard.tsx`，审计 T17）承接五条间距
+  （`LEGEND_SPACING_PROPS`），与有没有条目无关。默认折叠、改过任意一条自动
+  展开；标签**不定宽**（72px 的标签列正是把「线与文字间距」截成「线与文字间…」
+  的那个机制）；单位写 `em`——matplotlib 这五条按字号的倍数计，引擎不发 `unit`。
+* **图例项与源对象是一个链条开关**（审计 T18）：一行「链接到：曲线 “sin”」+
+  开关（断开 ↔ 恢复），来源入口两种状态下都在。示意线的五条样式**只在断开后
+  出现**（`visibleWhen`，判据 `binding !== 'follow_source'`）。**脱开的判据没变**
+  ——任一 `handle_*` override 在即 custom（`legendModel.entryBinding`），它仍然
+  管着老文档；变的只是界面上没有「改样式即脱开」这条路，提示文案也跟着改了。
 * **恢复跟随**只有 `store/actions.restoreLegendEntryFollow` 一处：删全部
   `handle_*` override + 按 `binding_default` 决定写 `binding=follow_source` 还是
   删 binding override，**一次 commit**。别在组件里逐条 `clearOverride`——那是
   一串撤销记录，中间态还会渲染出半跟随半自定义的图例。
-* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」。
-* 看护：`inspector/legendCard.test.tsx`；Python 侧 `tests/test_legend_binding.py`。
+* 位置控件没有「自动」：`best` 叫「最佳位置」，拖过叫「自定义位置」；九宫格
+  那个方框就是参照的容器，框下写出它叫什么（「相对子图 1」），认不出来就不写。
+* **位置控件是内 / 外两带的一个控件**（2026-09-07，ADR 0034 修订）：内 = 九宫格 +
+  「最佳位置」，外 = 六个常用外侧位（`lib/legendModel.LEGEND_OUTSIDE_PRESETS`，
+  **纯界面预设、不是同源对**）+ 自定义锚点 x / y。写的是 `loc` 与 `loc_anchor`
+  两条 prop，但**一次点击一次 commit**（`store/actions.setLegendPlacement`）：
+  写 `loc`、按需写 `loc_anchor`、把拖动留下的 `loc_frac` 一并删掉——不删的话
+  引擎里拖动压过锚点，用户点了预设看不见任何变化。选内侧时**此刻确实有锚点
+  才写 `loc_anchor: null`**（`null` 是「不要锚框」这个取值，不是「没表态」）。
+  控件里那张示意图按当前值重画（静态内联 SVG、无动画）：虚线框是参照的容器，
+  实心块是图例落点，算法与 matplotlib 同源（锚框上取 `loc` 那个角、图例同名角
+  贴上去），算不出来时只画容器、不画一个猜的方块。三个入口（属性页 /
+  `QuickEdit` / `ElementBar`）与多选路径都给外侧带；多选时锚点**全体一致才给**
+  （与 `sharedMarkerShape` 同一条纪律）。引擎不发 `loc_anchor` 时整带不出现，
+  理由由 `UnsupportedProps` 按 reason code 说出口。
+* 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`、
+  `inspector/controls/pickers.test.tsx`；Python 侧 `tests/test_legend_binding.py`、
+  `tests/test_legend_anchor.py`。
 
 ## 坐标轴边框的语义命中区与四边刻度（2026-09-02，ADR 0035）
 
@@ -428,14 +532,25 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 
 完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
 
-* **一个外壳三种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（单个图内元素 /
-  单个画布对象 / 两个以上画布对象），出现与让位、落位（`position.ts` 纯函数）、
-  Esc、拖动隐藏、portal 都在外壳；三种内容各一个文件。对外仍是 `ContextBar()`。
+* **一个外壳四种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的
+  面板 / 单个图内元素 / 单个画布对象 / 两个以上画布对象），出现与让位、落位
+  （`position.ts` 纯函数）、Esc、拖动隐藏、portal 都在外壳；四种内容各一个文件。
+  对外仍是 `ContextBar()`。裁剪的两条判据**不是同一个**：让位看
+  `cropTargetId` 有没有值，出裁剪条看它指不指得到一个真面板。
+* **进裁剪一律走 `actions.beginCrop`**（属性页 / 浮动条 / 右键菜单 / 面板上按
+  Enter 四个入口），它把进裁剪那一刻的取景窗与包围盒记进 `uiStore.cropBaseline`；
+  `cancelCrop` 还原到**那一刻**（不是还原到「从没裁剪过」——那是 `resetPanelCrop`），
+  `finishCrop` 只退出。直接 `setCropTarget(id)` 不记基线，取消会降级成单纯退出：
+  **宁可少还原，也不拿一份过期快照去改文档**（审计 T26）。
 * **多选栏不是第二套排列系统**：按钮只发意图，落地走 `store/actions.alignSelectedTo`
   / `groupSelected` / `ungroupSelected`——与 `ArrangeSection` 同一个函数、同一条历史
   标签。按钮表在 `inspector/arrangeButtons.ts` **一份**，别在组件里再抄图标与顺序。
 * **参照只有一份**：`store/arrangeStore`（UI 会话状态：不进文档、不进撤销、不
   persist、切文档不重置）。要读「此刻按什么对齐」就订阅它，不要再造模块级变量。
+  **控件也只留一处**（审计 T29）：右栏属性页停靠着时（`ContextBar` 的
+  `multiBarDocked`，与文字栏的 `textBarCompact` 同一条 `inspectorDocked` 判据）
+  浮动栏收成「计数 + 六向对齐 + 成组 + 更多」，参照 / 分布 / 等宽等高的控件让给
+  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。
 * **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
   `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
   后续 coachmark 都锚在这两个节点上，别改名。
@@ -449,6 +564,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   无用户内容；核心 action 不 import onboarding；它不是遥测，别往 `telemetry` 里接。
 * **Tooltip 不吃指针**（含 Radix 定位外壳，`index.css` 那条 `:has([role='tooltip'])`）：
   聚焦触发的气泡会停在下一排按钮上，真浏览器里点上去什么都不发生。
+* **`workspace:contextBar.*` 是这条浮动栏的命名空间**（`context-bar/text.ts` 的
+  `qb()`）。画布上方那条工作区上下文栏（审计 T01）用的是 `workspace:stage.*`，
+  别把两组混进同一段——`pnpm i18n:check` 把 `qb()` 这种短助手当成动态前缀，
+  **删掉它的 key 是绿的**，界面上才会显出原始 key（2026-09-06 实际发生过）。
 * 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
   `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
   `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
@@ -462,8 +581,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `QuickEdit.tsx` 里的 `role="dialog"` 弹层（含控件，不是菜单）。开合都在 `quickEditStore`。
 * **五份清单只发意图**（`data-quick-menu` = `panel` / `panel-layout-only` / `text` / `mark` /
   `multi`）：排列 / 成组走 `alignSelectedTo` / `groupSelected` / `ungroupSelected`，readiness 走
-  `projectReadinessStore.focusPanel`，其余走既有 action。菜单里**不许**出现几何、`!!script`
-  之外的状态判断、第二份按钮表或参照。
+  `projectReadinessStore.focusPanel`，类型切换走 `switchObjectKind`，其余走既有 action。
+  菜单里**不许**出现几何、`!!script` 之外的状态判断、第二份按钮表或参照。
+* **「更改为 ›」**（2026-09-07 修订，见 ADR 0037 末节）：`mark` 与同族 `multi` 多一个类型切换
+  子菜单，子项是 `role="menuitemradio"`（当前那种带勾，多选取值不一致时一个都不勾）。
+  判据与写入都不在这里——见下面「画布标注的类型切换」。
 * **右键的选区规则在 `ObjectView.onContextMenu`**：已在选区里一个字不动；不在 → 换成它 / 整组，
   并与左键一样退出图内编辑态（shift 混排进来的标注除外）。
 * **`rebuildPanel`** = `POST /api/engine/invalidate`（与 `panel.file_changed` 同一个
@@ -492,12 +614,105 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
   就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
   用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
+* **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e
+  真红）：审计 T44 把两个小节按用户目标改了名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图
+  助手 / 连接外部工具」），`e2e/coding-agents.spec.ts` 里两条认文案的用例当场找不到元素。
+  换成新文案只是把同一个赌注再下一次；**更糟的是那两条 `toHaveCount(0)` 的反向断言**
+  ——文案一改它们恒真，连红都不会红一下，直接从「守着」变成假绿。清单（都归
+  `e2e/coding-agents.spec.ts` 用，改属性要同步它）：
+  `data-agent-section="in-app" | "external"`（`CodingAgentsSection`，两个小节）、
+  `data-agent-codex-integration`（② 里那一行）、
+  `data-agent-rescan`（列表头与详情概览各一颗「重新检测」）、
+  `data-agent-last-checked`（那颗按钮旁边的时间戳）、
+  `data-agent-open="<agent id>"`（`AgentList` 覆盖整行的进详情按钮）、
+  `data-agent-detail="<agent id>"`（`AgentDetailView` 根节点 = 「此刻在详情页」）、
+  `data-agent-back`（返回列表）、`data-agent-field="state | version | executable | source |
+  checked-at | readiness"`（概览与诊断里的「标签 / 值」行）、
+  `data-agent-fold="custom-executable" | "diagnostics"`（两个 `<details>`）、
+  `data-agent-custom-exe`（「使用自定义可执行文件」——它只被一条 `toBeHidden()` 用到，
+  所以那条断言先 `toHaveCount(1)` 再判隐藏：`toBeHidden()` 对不存在的元素同样通过）。
+  「一级页面不许有输入框」这条现在量的是 `[data-endpoint-step]`（端点编辑器整个不在这一层，
+  锚点在 `EndpointDialog`）与 `[data-agent-field]`（概览字段只在详情里），不是「某两句话没出现」。
+  分区导航认 `[data-section="ai"]`（分区 id 是持久化格式的一部分），不认导航项的文案。
+* **左栏那两颗循环外的按钮补进了既有的 `data-rail` 约定**（2026-09-07，同一族收尾）：
+  `LeftRail` 的 `ITEMS.map` 里每颗都带 `data-rail={id}`，注释也写着「aria-label 是本地化
+  文案，不能当选择器」；但「接入状态」与「设置」是循环外单独写的两颗，**漏了这个属性**，
+  于是三个 spec 只能退回按中文文案找它们（同一个赌注在三处各下了一次）。现在是
+  `data-rail="readiness" | "settings"`，id 与 rail 文案键的末段对齐。
+  连带两处：覆盖式抽屉的遮罩认 `[data-scrim]`（`App.tsx`，判「左抽屉此刻盖住了下面的
+  东西」，原先按「收起侧栏」这句话），设置对话框按**里面装着 `[data-settings-shell]`**
+  与帮助气泡消歧，不按对话框的名字。`e2e/` 里已经没有按可见文案定位的入口了
+  （`i18n.spec.ts` 里那张 `settings: '设置'` 是**语言切换的期望值表**，不是定位，别动它）。
+* **同一族在英文侧与「只有 Windows 跑」的用例里各还有一处**（2026-09-07，#299 windows 腿）：
+  审计 T34 把写回确认按钮从「Write back」改成「Write back to the original files」，
+  `e2e/error-recovery-en.spec.ts` 的 `/^Write back$/` 当场匹配不到、等满 180 秒。锚点换成
+  `data-write-back="open" | "confirm"`（`UpdateSourceButton`）。那条用例**只在 Windows 腿上真跑**
+  （posix 是 skip），所以锚点另在两条天天跑的 jsdom 用例里钉住正向存在性
+  （`WriteBackDialog.test.tsx` / `settingsCopy.test.tsx`）——只被一条隔天跑的用例引用的锚点，
+  被删掉了没人会知道。
+* **条件分支里的定位是假绿最好的藏身处**（2026-09-07 复核，同一族）：`e2e/ux-consistency.spec.ts`
+  流程 C 按 `getByRole('radiogroup', { name: '执行改动的命令行工具' })` 与
+  `getByRole('slider', …)` 取控件，审计 T37 把执行器换成了一个 `Select`、把推理强度收进了
+  折叠区，两个定位都匹配到 0 个元素——而它们写在 `if (…)` 里，**一条都没红，全部静默跳过**，
+  用例名字里的「模型与推理强度、键盘可调、偏好保持」一个字都没在验，CI 一路绿。
+  现在锚点是 `data-ai-agent-model="select" | "static"`、`data-ai-effort="disclosure"`、
+  `data-ai-open-settings`，机器上装没装 Agent 的分支保留（CI runner 上可能一个都没有），
+  但**锚点的存在性由 `aiModelPicker.test.tsx` 的正向用例负责**，e2e 那边的 `if` 才是安全的。
 * **包管理只操作当前项目的 Tavotto 受管环境**：`store/packageStore.ts` 的 `plan(op, spec)` →
   `run(jobId)` 两步，**`run` 只在 `PackagesSettings` 里被调**——教程 / readiness / watcher 只能
   深链到包管理页，不许替用户点 run。错误文案走 `DependencyRepairCard.repairCodeMessage`
   （`errors:engine.repairError.*`，与缺包修复同一张表）。「没有回滚」那句话常驻，别删。
+* **查找是两层，只有第二层出网**（ADR 0038 的 2026-09-07 修订）：打字只在本地过滤两份
+  清单（PEP 503 归一后的子串），**界面上没有任何随输入自动触发的请求**——在设置页里
+  打字不许悄悄变成对外发送，前后端各有一条用例钉着它。出网只发生在用户点「在 PyPI
+  查找」那一下（`packageStore.runLookup` → `lookupPackage()`）。输入框只有**一个**
+  （既是安装规范也是搜索词），**回车仍然是安装**；切版本约束的判据只有
+  `packageStore.searchTerm()` 一处，组件把原串原样交给 store，别在组件里再切一次。
+  结果卡上的安装走**既有**的 `plan → run`，不复制第二条路径；选「最新版」交给 pip 的
+  是**裸包名**（安装 argv 带 `--only-binary=:all:`，钉死一个只有 sdist 的版本会当场
+  失败），选了具体版本才钉 `==`。两次查找重叠时按序号只落最后一次。首屏只留短句
+  「查找会访问 PyPI 或你配置的软件源」，「打字不出网」这条**为什么**折进技术详情
+  ——首屏最多一段长文，名额已经归「装坏了可以重建」。看护
+  `settings/PackagesSearch.test.tsx`（29 条）。
+* **`packageStore` 也有项目代际**（本轮评审 P2）：`clear()` 换代 + 把清单 / 查找结果 /
+  上一次的错误整份丢掉，`resetForNewProject()` 调它。查找结果里的 `installed` 与
+  `source` 说的是**发请求那个项目**的受管环境，开在另一个项目的包页面上就是假的，而
+  那一页的安装按钮作用在当前项目上。**代际与 `lookupSeq` 是两条轴，不许合并**：序号答
+  「同一个项目里哪一次最新」，代际答「这个响应属于哪个项目」——只有序号的话，A 那次
+  查找在 B 里仍然是最新的一次，照样落地。`clear()` 只换代、**不动 `lookupSeq`**：两条
+  保证各由一条判据负责，做两遍的话拆掉其中一遍会照样全绿。`progress` 与已起过的作业号
+  刻意不清（作业改的是旧项目的环境、还在后端跑，`job_id` 是唯一的把手；与导出作业 /
+  native 会话同一条纪律）。看护 `store/projectSwitchPackages.test.ts`（6 条）。
+* **设置里的说明先改控件，改不动才加帮助**（2026-09-06 审计「说明文字专项补查」）：优先级是
+  命名 → 单位 → 对象关系 → 状态 → 条件展开。`SettingRow` 的 `description` 是标签底下的一行短
+  说明（改的是什么、影响哪里），`status` 只在那个状态**真的成立**时出现（「当前窗口只能固定
+  一侧」），`help` 小问号只留给真有歧义的少数几处——**常规字段不默认挂问号**，常规页现在一个
+  都没有（`settingsDisclosure.test.tsx` 按 `[data-help-tip]` 数）。界面上不写像素断点、不写实现
+  词（figure / twinx / JSON 格式）、不承诺兑现不了的事（「证明图没变过」）；会影响这次选择的
+  限制、错误原因、写回范围与备份后果一律就近显示，不许只藏进悬停提示。设置页与它深链过去的
+  对话框（导出偏好 ↔ 导出对话框）**读同一批 key**，不写同义词。
+  这条规则**对审计自己新加的文字同样成立**：T41 给只读配置补的那句「内置配置只读……想改先
+  复制一份」（37 字）和分区说明（43 字）在样式页叠成了两段散文，把 `e2e/ux-consistency.spec.ts`
+  的「一个分区最多一段长解释」顶红（2026-09-07，#299）。**解法是按第一条走、不是把阈值抬到 2**
+  ——阈值一抬，新加的文案就单方面推翻了一条已经生效、审计自己在别处反复引用的约束。
+  现在它是**状态 + 动作**：一枚常驻徽标（`profiles.readOnlyBuiltinBadge` / `readOnlyBadge`）
+  加旁边一颗「复制一份再修改」（接的还是原来那个 `duplicate`，原先摆在所有字段下面、要滚很远）。
+  信息一个字没丢，锚点 `data-profile-readonly`。
 * **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡只在技术详情里一张，内置包清单归包管理页。
   「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
+* **更新页只说得出「上一次检查的回答」**（2026-09-06 审计 T48）：界面上没有无条件的「已是最新
+  版本」——`LastCheckVerdict` 按**真实存在的时间戳**二选一（没查过 → 「无法判断」，查过 →
+  「{时间} 检查时没有发现新版本」），判据认 `data-update-verdict`，不认那两句散文。桌面通道的
+  时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
+  态、绝不编百分比。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
+  失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
+  `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。
+* **同意是三档，控件也得是三档**（审计 T49）：`unset` / `enabled` / `disabled` 在界面上必须可辨，
+  用 `Segmented` 的 `value=null` 表达「尚未选择」——**可写的只有开 / 关两档**（回不到 unset）。
+  「同意的是上一版采集范围」（`needs_reconsent`）单独一句话，不许画成「已开启」。
+  「会发送哪些数据」是闭集 `lib/telemetryDisclosure.ts`，逐条对应后端 `EVENTS`（严格同源对，见根
+  `AGENTS.md`）——**别再写成一段会过期的散文**，上一版就是这么漂掉九条事件的。
+  看护：`components/SettingsTelemetry.test.tsx` + `tests/test_telemetry_disclosure.py`。
 * 看护：`SettingsDialog.test.tsx` / `settings/PackagesSettings.test.tsx` /
   `settings/DiagnosticsSettings.test.tsx` / `settings/agentState.test.ts` / `e2e/settings-shell.spec.ts`
   （外框逐像素、溢出、窄窗口、英文、方向键、axe——**量之前先等 `getAnimations().finished`**）。
@@ -532,15 +747,18 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
-  `data-element-svg`（+ manifest bbox）、`data-status-live`。**aria-label / 文案 / class / ARIA role
-  都不能当选择器。** 改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`。
+  `data-element-svg`（+ manifest bbox）、`data-world-transform`（`CanvasStage` 唯一的世界变换节点，
+  教程不用它，e2e 靠它量视口有没有被还原——`e2e/nav-audit.spec.ts`，2026-09-06 审计 T01）、
+  `data-status-live`、`data-fast-edit-live`。**aria-label / 文案 / class / ARIA role 都不能当选择器。**
+  改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`（`data-world-transform` 同步的是
+  `nav-audit.spec.ts`）。
 * **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
   `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的
   `role="alert"` 里）。问「**应用刚说了什么**」的一律认它——`e2e/twin-axes-pick.spec.ts`（⌥ 轮换
   播报 `status.elementCycled`）与 `e2e/cross-tab-paste.spec.ts`（已复制 / 已粘贴）靠它。
   **`role="status"` 不是唯一的**：快速编辑那行常驻说明、素材库、导出面板、问题面板、设置页、
   onboarding 层…… 十几处都在产出，所以 `[role="status"]` / `getByRole('status')` 拿到的是
-  「文档里排在最前的那个」，不是播报区。T06 给 `FastEditBar` 加的那行 `fastEdit.addedForEdit`
+  「文档里排在最前的那个」，不是播报区。T06 给上下文条加的那行 `fastEdit.addedForEdit`
   排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
   什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
   的 `host.querySelector`）可以继续用 role：那里主语唯一。
@@ -554,6 +772,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （`data-fast-edit-live`），所以挂载它的单测里「一次只挂一个组件、`document` 就是渲染根」
   **不再成立**——那些文件不许用活动区的 role 当选择器。今天这个交集是空的（3 个文件挂载
   `CanvasStage`，0 个这么写），两条规则的豁免都是零。
+* **`data-fast-edit-live` = 「这张图刚为编辑加进文档」的读屏播报**：挂在 `CanvasStage`（两种模式
+  都常驻），**不在上下文条里**——后者是进快速编辑那一刻才挂上的，活动区跟它一起插进来时就已经
+  填好了字，那种「带着内容整个插入」的活动区各家 AT 很可能一声不吭。可见的那一份在
+  `WorkspaceContextBar`，锚点 `data-fast-edit-added-note`，**不带 role**：一条提示不播两遍。
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
@@ -587,8 +809,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
   两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。
-* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；注册表对话框那类
-  高级入口说「已登记的源脚本」。
+* **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；「已登记的源脚本」
+  这个说法**留在注册表对话框自己身上**——2026-09-06 审计 T40 之后，设置页那个入口改成结果式的
+  「可编辑来源：n 个脚本」+「管理来源…」：登记规则是对话框自己的事，入口只报结果。
 * 看护：`lib/activityTelemetry.test.ts` / `components/CommandPalette.test.tsx` /
   `store/projectReadinessStore.test.ts`「打开接入中心的遥测」/ `hooks/useServerEvents.test.ts`
   「AI 修改之后」。
@@ -708,6 +931,21 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （键盘 / 顶栏按钮 / 桌面菜单加速键）必须走 `runUndoRedo`（带
   undoRedoBlocked 守卫）；undo/redo 的 applyPatches 有 try/catch，坏补丁丢弃
   该条而不是让栈与文档错位。
+- **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
+  2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
+  「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。
+- **「这是哪一张版」的缩略图全产品只有一份组件** `components/CanvasThumb.tsx`
+  （2026-09-06 审计 T04 补做）：画布列表与**版本列表**共用它，喂进去的是
+  `types/thumb.ts` 的 `ThumbObject`——内存里的 `CanvasObject` 与后端草图的公共
+  最小形状（字段名逐字相同，两侧都不需要转换层）。它画的是**当前磁盘上的
+  素材**，回答「哪一版」；「那一版长什么样」是版本详情里的 `LayoutSnapshot`
+  （按 overrides 出图，出不来时明确标「近似预览」），两者不许互相冒充。
+  「一张缩略图画几个对象 / 几个字」这两个数字**只在这个组件里**，版本列表把
+  它们随请求发给后端（`/api/versions/<id>?sketch=&sketchText=`，后端的两个
+  常量只是传输封顶）——写进 Python 就是同一条规则的第二份权威。
+  **列表缩略图靠草图，不靠正文**：每条版本存的是整份文档，按行去取一次打开
+  就是 120 份；草图是列表端点本来就已经解析出来的那份数据的投影
+  （实测 24 MB 预算下 170 → 183 ms，`_version_sketch`）。
 - **画布标签常驻图层**：每个打开的标签一个图层，非激活的用 canvases 快照渲染
   并 display:none——docToCanvas/canvasToDoc 共享同一 objects 数组引用 +
   ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。
@@ -757,6 +995,23 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （shapeGeometry.ts ↔ pdfbackend/pymupdf_backend.py `_polygon_points`/`_dash_pattern`
   同名注释），改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
+- **画布标注的类型切换（2026-09-07，cap-shape-switch）**：矩形 ↔ 椭圆 ↔ 其它形状、
+  直线 ↔ 箭头。「能不能切 / 能切成什么 / 切完长什么样」的唯一出处是
+  `lib/shapeSwitch.ts`（纯函数），写入是 `store/actions.switchObjectKind`
+  ——**一次 commit、一条历史、不换对象 id**（选择 / 成组 / 布局组 / 锁定全靠它）、
+  数组位置不动（数组序即 z 序）。两个入口共用这一组函数、各自不许再判一遍：
+  属性栏对象标题那颗类型徽标兼作切换（`inspector/ObjectKindSwitch.tsx`），
+  右键菜单的「更改为 ›」（ADR 0037 的 2026-09-07 修订）。
+  **只在族内互换**：`box`（矩形 / 椭圆 / 三角形 / 菱形 / 多边形 / 大括号）与
+  `linear`（直线 / 箭头）——族内几何一个字不动，跨族等于替用户重画一个。文字与
+  面板不参与，多选**全部同族**才给且作用于全部。字段去留只有一条判据「目标类型
+  会不会读它」（`sides` 只有 polygon 读、`cornerRadius` 只有 rect 读、`head*` 只有
+  arrow 读），删掉的值由撤销负责逐字段还回来。`KIND_FIELDS` 的完整性是**编译期**
+  断言，不靠人记得回来改：给 `ShapeObject` / `ArrowObject` 加字段而没归类，
+  `shapeSwitch.ts` 当场编译不过。磁盘格式不升版。
+  导出侧是**生产者 / 消费者共读一份向量**（`tests/golden/shape_switch_payloads.json`）：
+  前端 `shapeSwitch.golden.test.ts` 断言产出它，`tests/test_compose_switched_shapes.py`
+  断言 pdfbackend 画得出它，**两侧都不重新实现对方那一半**。
 - **混排对齐（2026-08-17）**：图内编辑态里 **shift 点画布标注**（文字/箭头/
   形状）= 加入混排选区、不退编辑态（ObjectView 的唯一例外分支）；元素检查器
   的 AlignSection 接受 `MixedEntry`（元素写 override、标注改画布 x/y），经
@@ -769,7 +1024,12 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   画进 PDF、PNG 由注好的 PDF 重栅格化（两载体同源）；只有 PNG 的素材回
   `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
   翻转不支持（UI 给原因）。
-- **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
+- **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作
+  +≤1 条**次级文字链接**）。次级那一条只给「起步」空态用（画布空时的
+  「试用示例」，走 `runTutorialEntry` 统一入口），画成裸文字链接而不是第二颗
+  按钮——一屏只有一个看起来像行动的东西。**工作台的起步屏一共只有一个动作**
+  （画布中央的「添加图」）：图层树 / 元素树 / 素材库 / 检查器的空态一律是
+  轻量占位，一颗按钮都不配（审计 T03）。
 - **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
   按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
   空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
@@ -778,6 +1038,22 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
   后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
   `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
+- **项目就位后按文档页面适配一次视口（2026-09-06，审计 T03）**：这一次挂在
+  「项目就位」上（`adoptOpenedProject`），与舞台挂没挂载无关——`CanvasStage`
+  自己那次只在首次挂载时跑，而顶栏项目切换器**不经过 `phase: 'none'`**，工作台
+  整个不卸载，新项目于是沿用上一个项目的缩放。舞台还量不到视口时
+  `viewportStore.fit` 把这次适配**挂起**（模块级 `pendingFit`），`setViewRect`
+  第一次量到尺寸时补上；清空只在 `fit` 一处，直接操纵（平移 / 缩放 / 适应 /
+  定位）各自 `dropPendingFit()` 作废它。
+- **新文档的默认名跟界面语言走**（`types/document.defaultDocumentName()`）：
+  只在创建那一刻取一次，之后是用户内容（不翻、不追认）。它同时是「另存为」的
+  默认文件名，所以取值必须磁盘安全。
+- **「最近文档」标出所属项目（2026-09-06，审计 T04）**：`tavotto.docIndex` 跨项目
+  共用一份，条目里记 `projectId` / `projectName`。归属在文档**换进来那一刻**定
+  （`documentStore` 的 `docProject`），不在落盘那一刻现问——切项目的顺序是先认领
+  新项目再换空白文档，而换文档第一句就是把旧文档冲刷落盘。当前项目名的投影在
+  `lib/projectLabel.ts`（由 `projectStore` 写、`documentStore` 读，避免两个 store
+  互相 import 成环）。旧条目没有这两个字段 = **不知道**，什么都不标。
 
 ## 素材库普通入口（2026-08-26，Compatibility Bridge Session 5）
 
@@ -792,7 +1068,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
   **三个 store 都有项目代际（epoch）**：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
-  落进 B（Session 6 评审修复；vitest 各有作废用例看护）。
+  落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
+  按同一条纪律换代（见「设置外壳与包管理」那节）——**新写一个会在项目之间
+  存活的 store 时，先回来把它加进这份名单**。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、
@@ -894,8 +1172,13 @@ descriptor 文件读。
 
 - **句子与「待连接」只有一份实现**：`lib/readinessText.ts` 的 `statusLabel()`
   （读 `status`）、`reasonText()`（读 **`reason_code`**，不读 `status`），
-  以及 `PENDING_STATUSES` / `pendingCount(summary)`——横幅与接入中心顶部说的
-  是同一个数，各展开写一遍的话，多一个状态时总有一处会漏掉。四个出口共用它：
+  以及 `PENDING_STATUSES` / `pendingCount(summary)` / `allEditable(summary)`
+  ——横幅与接入中心顶部说的是同一个数，各展开写一遍的话，多一个状态时总有
+  一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：横幅整条不说话
+  （`bannerReport` 回 null），接入中心把四个计数换成一句「N 张图都可以编辑」
+  （审计 T10：正常项目不该长得像故障排查页）。这一档里**可编辑的图不再逐张
+  重复同一句解释**（那句话对每一张一模一样），第一层也只留「添加到画布」——
+  「重新试运行」是排障动作，与改绑一起收在技术详情里。四个出口共用它：
   素材卡角标、素材说明条、接入中心每一行、属性栏那条提示。按状态查句子会让
   只读项目里的用户一直等一个永远不来的结果（`auto_linkable` 有四个 code，
   一个是"马上就好"、三个是"不做点什么永远不会好"）。
@@ -989,6 +1272,14 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 - **快速编辑一个字都不写 x/y/w/h**。「从画布进图内编辑再返回，布局不变」
   不是靠"回来时恢复一下"，而是靠**根本没动过**——恢复式的实现总有一条路径
   会漏掉（旋转、成组、布局组重排），而漏掉的表现是用户的版被悄悄改了。
+- **视口是另一回事，它必须被还原**（2026-09-06，审计 T01）。进快速编辑一定要
+  动视口（那一屏按图自己的图幅框住），所以 `enterFastEdit` 记下当时的排版视口
+  （**记在 store 的 action 里**——问题面板的定位也走它，不是只有 `openFastEdit`），
+  `returnToLayout` 还原。记录带**画布 id**：`openFastEdit` 会为了找图切画布，
+  换了画布之后那一片属于上一张画布。`returnToLayout` 在本来就是排版态时
+  **一个字都不动视口**（onboarding 的前置动作会那样调）。看护：
+  `store/workspace.test.ts` 的「切模式不动用户的视口」六条 + `e2e/nav-audit.spec.ts`
+  （量之前先把视口挪开——不挪的话判据恒等成立，实测放走过变异）。
 - **四个稳定动作是唯一出口**（11 定位 / 12 导出 / 18 QuickEdit / 21 onboarding
   复用它们，别在界面里重新拼一遍"找对象 / 没有就添加 / 切画布 / 选中"）：
   `openFastEdit(figureId)` / `addFigureToLayout(figureId)` / `returnToLayout()`

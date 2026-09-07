@@ -227,6 +227,10 @@ function Workspace() {
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
             <button
+              // `data-scrim` 是「左抽屉此刻是覆盖式的、盖住了它下面的东西」这件事
+              // 的稳定判据（e2e 用它决定绕不绕过指针拦截）；aria-label 是本地化文案，
+              // 不能当选择器（与 LeftRail 的 data-rail 同一条约定）
+              data-scrim
               aria-label={t('scrim.collapse')}
               data-state={scrim.state}
               onClick={() => {

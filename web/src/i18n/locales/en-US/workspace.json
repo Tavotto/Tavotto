@@ -100,7 +100,9 @@
     "rename": "Rename",
     "rowActions": "Actions for canvas {{name}}",
     "search": "Search canvases…",
-    "searchAria": "Search canvases"
+    "searchAria": "Search canvases",
+    "moveUp": "Move up",
+    "moveDown": "Move down"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so after switching you will not be able to get this document back from \"Recent documents\". Continue anyway?",
@@ -119,6 +121,8 @@
   "contextBar": {
     "alignMenu": "Align",
     "aria": "Quick edit",
+    "countTitle": "{{hint}} · Align to: {{ref}}",
+    "cropAria": "Crop",
     "distributeMenu": "Distribute",
     "groupMenu": "Group",
     "moreArrange": "More arrange options",
@@ -157,6 +161,9 @@
     "tooNewBody": "Tavotto did not open it; the file on disk is untouched. Upgrade and try again.",
     "tooNewTitle": "This document comes from a newer Tavotto (schema {{schema}})"
   },
+  "document": {
+    "defaultName": "Untitled"
+  },
   "drawer": {
     "pin": "Pin sidebar",
     "pinHint": "Pin: keep open when an object is selected",
@@ -193,11 +200,13 @@
     "rowAria": "{{label}} ({{role}})",
     "rowAriaHidden": ", hidden",
     "rowAriaLocked": ", locked",
-    "search": "Search name / role / gid",
+    "search": "Search figure elements",
     "searchAria": "Search figure elements",
     "unhide": "Show again",
     "unlock": "Unlock",
-    "unsupportedTip": "{{title}} is not supported yet: {{reason}}"
+    "unsupportedTip": "{{title}} is not supported yet: {{reason}}",
+    "count_one": "{{count}} element",
+    "count_other": "{{count}} elements"
   },
   "fastEdit": {
     "addToCanvas": "Add to canvas",
@@ -207,7 +216,6 @@
     "connectSource": "Link a source script",
     "crumbTitle": "Back to canvas layout",
     "figureMissing": "{{name}} is not in this project",
-    "layoutMode": "Canvas layout",
     "layoutOnly": "No source script is linked, so this figure can be laid out but not edited inside.",
     "mode": "Quick edit",
     "originalSize": "Original {{w}} × {{h}} mm",
@@ -216,8 +224,7 @@
     "sizeStale": "Last known",
     "sizeStaleTitle": "The source file is unavailable; showing the last known original spec.",
     "sizeUnknown": "Size unknown",
-    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm.",
-    "toLayout": "Canvas layout"
+    "sizeUnknownTitle": "No reliable original size; using {{size}} for now — please confirm."
   },
   "history": {
     "addArrow": "Add arrow",
@@ -231,6 +238,7 @@
     "applyStyle": "Apply style \"{{name}}\"",
     "arrowEndpoint": "Adjust arrow endpoint",
     "autoReflow": "Auto re-flow layout group",
+    "cancelCrop": "Cancel crop",
     "clearGuides": "Clear guides",
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
@@ -277,6 +285,8 @@
     "replaceAsset": "Replace asset with {{name}}",
     "resetCrop": "Reset crop",
     "resetOverrides": "Reset figure edits",
+    "switchKind": "Change to {{name}}",
+    "switchKindCount": "Change {{count}} objects to {{name}}",
     "resizeAxes": "Resize {{count}} axes",
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",
@@ -328,11 +338,12 @@
     "listLabel": "Layers",
     "lock": "Lock",
     "lockedState": "locked",
-    "openAssets": "Open assets",
     "primary": "Reference",
     "rowAria": "{{label}}, {{state}}",
     "show": "Show",
-    "unlock": "Unlock"
+    "unlock": "Unlock",
+    "count_one": "{{count}} object",
+    "count_other": "{{count}} objects"
   },
   "layoutKind": {
     "col": "column layout",
@@ -386,6 +397,7 @@
   },
   "quickEdit": {
     "aria": "Quick edit",
+    "changeKind": "Change to",
     "editElements": "Edit figure elements",
     "hide": "Hide this element",
     "hideObject": "Hide",
@@ -531,13 +543,15 @@
     "coupled": "(direction is shared along the axis: {{sides}})"
   },
   "stage": {
+    "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
-    "elementEditing": "Figure editing",
-    "elementEditingName": ": {{name}}",
-    "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
+    "contextBarLabel": "Where you are",
+    "crumbsLabel": "Current object",
+    "emptyHint": "Pick a figure from the asset library, or drag one straight onto the canvas.",
+    "emptyHintNoAssets": "Put matplotlib's PDF/PNG output or plotting scripts into the project folder and they will show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "openAssets": "Open the asset library"
+    "tryTutorial": "Try the sample project"
   },
   "status": {
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",
@@ -585,7 +599,7 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "objectCopied": "Copied {{name}}",
-    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document",
+    "objectsCopied": "Copied {{count}} objects — they can be pasted into another document",
     "overridesCleared": "Cleared this panel's figure edits",
     "packageDrift_one": "Project package opened; {{count}} asset differs from the packaged copy and may have been edited — please check",
     "packageDrift_other": "Project package opened; {{count}} assets differ from the packaged copies and may have been edited — please check",
@@ -658,7 +672,6 @@
   "topbar": {
     "addSubLabels": "Add panel labels",
     "annotate": "Annotate",
-    "canvasFiles": "Canvas files",
     "canvasSettings": "Canvas settings",
     "commandPalette": "Command palette",
     "documentLabel": "Document: {{name}}",
@@ -667,15 +680,18 @@
     "exportPackage": "Export project package (.tavotto)",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
+    "fromOtherProject": "· another project",
+    "fromProject": "· in {{name}}",
     "importPackage": "Import project package (.tavotto)…",
     "insertShape": "Insert shape",
-    "loadCanvasFile": "Load canvas file…",
     "more": "More",
     "moreWithUpdate": "More (update available)",
     "newBlankDocument": "New blank document",
     "noOtherDocuments": "No other documents",
+    "openDocument": "Open document…",
     "paperStyles": "Paper styles…",
     "presets": "Research presets and symbols…",
+    "projectDocuments": "Project documents",
     "readiness": "Project readiness",
     "recentDocuments": "Recent documents (this machine)",
     "recentEntryMulti_one": "{{name}} · {{canvases}} canvases · {{count}} object",
@@ -686,11 +702,11 @@
     "redoWith": "Redo {{label}}",
     "refreshProject": "Refresh project",
     "renameDocument": "Rename document…",
-    "saveAsCanvasFile": "Save as canvas file…",
     "saveClean": "Saved {{time}}",
     "saveCleanNoTime": "Saved",
     "saveConflict": "External conflict",
     "saveDirty": "Unsaved changes",
+    "saveDocumentAs": "Save document as…",
     "saveError": "Save failed",
     "saveSaved": "Saved",
     "saveSaving": "Saving…",
@@ -705,7 +721,7 @@
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
-    "versionTimeline": "Layout version timeline…",
+    "versionTimeline": "Document versions…",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%"

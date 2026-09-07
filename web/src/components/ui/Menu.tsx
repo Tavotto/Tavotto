@@ -251,6 +251,52 @@ export function MenuCheckItem({
   )
 }
 
+/**
+ * 单选组（`role="menuitemradio"`）：一组互斥取值，当前那个带勾。
+ *
+ * 与 `MenuCheckItem` 的区别不只是图标：那个是「开 / 关」，选中它不该关掉菜单
+ * （所以它 `preventDefault`）；这个是「换成哪一个」，选完就该走人。语义也不同
+ * ——屏幕阅读器会把一组 radio 念成「N 之 K」，把一排 checkbox 念成 N 个各自
+ * 独立的开关。取值不一致（多选）时把 `value` 留空，一个都不勾。
+ */
+export function MenuRadioGroup({
+  value,
+  onValueChange,
+  children,
+  ...rest
+}: {
+  value?: string
+  onValueChange: (value: string) => void
+  children: ReactNode
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
+  return (
+    <DM.RadioGroup {...rest} value={value} onValueChange={onValueChange}>
+      {children}
+    </DM.RadioGroup>
+  )
+}
+
+export function MenuRadioItem({
+  value,
+  children,
+  icon: Icon,
+  ...rest
+}: {
+  value: string
+  children: ReactNode
+  icon?: ComponentType<{ size?: number; className?: string }>
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
+  return (
+    <DM.RadioItem {...rest} value={value} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
+      <DM.ItemIndicator className="absolute left-1.5 flex items-center">
+        <Check size={ICON_SIZE.sm} />
+      </DM.ItemIndicator>
+      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+    </DM.RadioItem>
+  )
+}
+
 export const MenuSeparator = () => <DM.Separator className="my-1 h-px bg-border" />
 
 export const MenuLabel = ({ children }: { children: ReactNode }) => (

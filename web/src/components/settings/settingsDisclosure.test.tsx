@@ -22,6 +22,8 @@ import { useProjectStore } from '@/store/projectStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
+import { useAiStore } from '@/store/aiStore'
+import { agentCaps, capsOf } from './testCaps'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -135,18 +137,59 @@ describe('各分区首屏没有说明文字墙', () => {
     })
   }
 
-  it('常规分区的三段解释都在问号里，不在页面上', async () => {
+  /**
+   * 审计「说明文字专项补查」之后，常规页**一个问号都不该有**：那六段说明
+   * 要么是标题的同义反复（界面语言）、要么在介绍另一个帮助入口（快捷键）、
+   * 要么在定义名词（情境提示），全部删掉或改成标签底下的一行短说明。
+   *
+   * 判据不写成「不含那几段旧文案」——旧 key 都删了，那种断言恒真。改判
+   * **这一页有没有问号按钮**：只要有人再挂一个回来，这条就红。
+   */
+  it('常规分区一个问号都没有', async () => {
     await open('general')
-    expect(bodyText()).not.toContain(st('general.languageHint'))
-    expect(bodyText()).not.toContain(st('general.autosaveHint'))
-    expect(bodyText()).not.toContain(st('general.resetLayoutHint'))
-    // 但确实点得到
-    const help = byAria(st('helpAbout', { label: st('general.language') }))!
-    expect(help).toBeTruthy()
-    await act(async () => {
-      help.click()
-    })
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(0)
+  })
+
+  /**
+   * P2 那几页按同一条口径收：样式 / 规范 / 编码 Agent / 包管理一个问号都不该
+   * 有——它们那几段说明要么变成了标签底下的一行短说明（规范页的「跟随更新」），
+   * 要么变成了页面本身的一部分（规范页的规则快照折叠区、包管理页的工程细节
+   * 折叠区）。诊断页留着**唯一那一个**：导出诊断包会把本机信息交出去，说明
+   * 带链接、要在按下之前读到，那正是问号该在的地方。
+   */
+  it('P2 那几页里只有诊断页留了一个问号（导出诊断包那条）', async () => {
+    // 分区 id 写错时那一格什么都不渲染，「没有问号」就恒真——所以每一格先
+    // 证明**正文真的换成了那一页**。第一版把编码 Agent 的 id 写成了 `agents`
+    // （真实 id 是 `ai`），那一格于是白绿了一轮
+    // 编码 Agent 那一页要一份能用的 caps，否则它渲染的是骨架屏——骨架屏上
+    // 当然没有问号，那又是一次恒真。它挂载后会自己再探一次，所以连
+    // `/api/ai/capabilities` 的回包一起摆好
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    useAiStore.setState({ caps, agent: 'codex' })
+    const shown = (id: string) =>
+      body().querySelector(`[data-section="${id}"]`)?.getAttribute('aria-current')
+    for (const section of ['style', 'spec', 'ai', 'packages']) {
+      await open(section)
+      expect(shown(section), `分区 id 写错了：${section}`).toBe('true')
+      expect(body().querySelectorAll('[data-help-tip]'), section).toHaveLength(0)
+      await act(async () => {
+        root.unmount()
+      })
+      document.body.innerHTML = ''
+    }
+    await open('diagnostics')
+    expect(shown('diagnostics')).toBe('true')
+    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(1)
   })
 
   it('画布分区那段「关联元素是什么」进了问号', async () => {
@@ -162,11 +205,17 @@ describe('各分区首屏没有说明文字墙', () => {
 
 /* -------------------------------- 小问号 --------------------------------- */
 
+/**
+ * 小问号的行为用**界面页那唯一的一个**（「拖动时一同移动关联对象」）来验：
+ * 常规页已经一个问号都不剩，拿它当夹具的话这一组会变成空跑。
+ */
 describe('小问号四种触发方式', () => {
-  const helpBtn = () => byAria(st('helpAbout', { label: st('general.language') }))!
+  const HELP_ROW = 'canvas.dragCompanions'
+  const HELP_TEXT = 'canvas.companionsExplain'
+  const helpBtn = () => byAria(st('helpAbout', { label: st(HELP_ROW) }))!
 
   it('鼠标悬停即展开，移开后收回', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     // React 的 onPointerEnter 是用冒泡的 pointerover 委托实现的，
     // 直接派 pointerenter 谁也收不到（那样写这条用例会「通过」但什么也没测）
@@ -174,11 +223,11 @@ describe('小问号四种触发方式', () => {
       b.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
     })
     expect(b.getAttribute('aria-expanded')).toBe('true')
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(allText()).toContain(st(HELP_TEXT))
   })
 
   it('触摸（pointerType=touch）不走悬停，但点击能开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await act(async () => {
       b.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'touch' }))
@@ -193,14 +242,14 @@ describe('小问号四种触发方式', () => {
   })
 
   it('键盘聚焦即展开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     expect(b.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('Esc 关闭', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await act(async () => {
       b.click()
@@ -209,7 +258,7 @@ describe('小问号四种触发方式', () => {
     // 浮层内容真的挂上来了才算「开着」；Radix 的 dismissable layer 是在
     // 内容挂载后的一个微任务里才注册 Escape 监听——不等它就是在赛跑，
     // 表现为这条用例偶发红（实测三轮里红一轮）
-    expect(allText()).toContain(st('general.languageHint'))
+    expect(allText()).toContain(st(HELP_TEXT))
     await act(async () => {
       await Promise.resolve()
     })
@@ -243,7 +292,7 @@ describe('小问号四种触发方式', () => {
    * 三轮里红一轮——那不是「偶发」，是断言与缺陷在赛跑）。
    */
   it('Esc 之后不会被「焦点还回来」重新打开', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     // 点开：焦点留在 body 上，与真实鼠标操作一致
     await act(async () => {
@@ -264,7 +313,7 @@ describe('小问号四种触发方式', () => {
   })
 
   it('焦点真的离开过之后，再 Tab 回来仍然展开（闸只吃那一次）', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     await act(async () => {
@@ -282,14 +331,12 @@ describe('小问号四种触发方式', () => {
   })
 
   it('问号有明确的可达名，不是一个无名图标', async () => {
-    await open('general')
-    expect(helpBtn().getAttribute('aria-label')).toBe(
-      st('helpAbout', { label: st('general.language') }),
-    )
+    await open('interface')
+    expect(helpBtn().getAttribute('aria-label')).toBe(st('helpAbout', { label: st(HELP_ROW) }))
   })
 
   it('展开时焦点留在问号上，不被搬进浮层（Tab 顺序不乱）', async () => {
-    await open('general')
+    await open('interface')
     const b = helpBtn()
     await focusIt(b)
     expect(document.activeElement).toBe(b)
@@ -310,13 +357,13 @@ describe('该常驻的不许折叠', () => {
       } as never,
     })
     await open('project')
-    expect(bodyText()).toContain(st('project.readOnlyHint'))
+    expect(bodyText()).toContain(st('project.writeBackOffHint'))
   })
 
-  it('允许写回时给的是状态摘要，不是警告', async () => {
+  it('允许写回时不出警告', async () => {
     await open('project')
-    expect(bodyText()).toContain(st('project.writeBackAllowed'))
-    expect(bodyText()).not.toContain(st('project.readOnlyHint'))
+    expect(bodyText()).toContain(st('project.allowWriteBack'))
+    expect(bodyText()).not.toContain(st('project.writeBackOffHint'))
   })
 
   it('隐私最短摘要常驻', async () => {
@@ -324,10 +371,20 @@ describe('该常驻的不许折叠', () => {
     expect(bodyText()).toContain(st('about.telemetry.summary'))
   })
 
-  it('遥测默认关闭的语义没变：开关是 false', async () => {
+  /**
+   * 遥测默认关闭的语义没变。控件在审计 T49 里从二值开关换成了三档单选
+   * （`unset` / `enabled` / `disabled` 必须是三种可辨状态，细则与三档各自的
+   * 用例在 `components/SettingsTelemetry.test.tsx`），所以判据跟着换成
+   * 「哪一档被选中」——这里的夹具是 `consent: 'disabled'`。
+   */
+  it('遥测默认关闭的语义没变：选中的是「关闭」那一档', async () => {
     await open('about')
-    const toggle = byAria(st('about.telemetry.toggle'))!
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    const group = body().querySelector(
+      `[role="radiogroup"][aria-label="${st('about.telemetry.toggle')}"]`,
+    )!
+    const radios = [...group.querySelectorAll('button[role="radio"]')]
+    const checked = radios.filter((b) => b.getAttribute('aria-checked') === 'true')
+    expect(checked.map((b) => b.textContent?.trim())).toEqual([st('about.telemetry.optOut')])
   })
 })
 
@@ -358,9 +415,9 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
     expect(diag.getAttribute('aria-expanded')).toBe('true')
     expect(bodyText()).toContain(PYTHON_PATH)
     expect(bodyText()).toContain('3.10.8')
-    // 「渲染环境」卡片（okTitle）只出现一次——此前 About 页里有两张
-    const okTitle = t('engine.okTitle', { ns: 'errors' })
-    expect(bodyText().split(okTitle).length - 1).toBe(1)
+    // 渲染环境卡只出现一次——此前 About 页里有两张。**按元素数，不按字符串
+    // 出现次数**：「渲染环境」四个字也出现在别的句子里（审计 T47 的环境说明）
+    expect(document.body.querySelectorAll('[data-engine-env-card]')).toHaveLength(1)
   })
 
   it('About 页只剩产品与隐私两块，不再有渲染环境', async () => {
@@ -376,7 +433,9 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
 describe('SettingRow 布局稳定', () => {
   it('不同分区的标签列宽一致', async () => {
     const widths = new Set<string>()
-    for (const section of ['general', 'project', 'export', 'interface']) {
+    // 「样式」「规范」两页也进这张单子：那两页的只读摘要有自己的一列标签，
+    // 与 SettingRow 差几个像素就是「摘要 ↔ 输入框」切换时整列左右跳一下
+    for (const section of ['general', 'project', 'export', 'interface', 'style', 'spec']) {
       await open(section)
       for (const el of body().querySelectorAll('span[style*="width"]')) {
         const w = (el as HTMLElement).style.width
@@ -387,6 +446,6 @@ describe('SettingRow 布局稳定', () => {
       })
       document.body.innerHTML = ''
     }
-    expect([...widths]).toEqual(['112px'])
+    expect([...widths]).toEqual(['160px'])
   })
 })

@@ -16,7 +16,7 @@
  * 磁盘一律走 `store/profileStore` → `/api/profiles/*` → `engine/profilestore.py`。
  * 这个组件里没有一行 fetch，也没有任何磁盘格式的知识。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Copy, Download, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -28,6 +28,8 @@ import {
   profileTechnicalDetail,
   profileWarningText,
 } from '@/lib/profileText'
+import { severityOf, type PublicationProfile } from '@/lib/profile'
+import { ruleExpectation, severityLabel } from '@/lib/validationText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
@@ -38,6 +40,7 @@ import { EmptyState } from '../ui/EmptyState'
 import { NumberField, TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, DiagnosticItem, SettingRow, SettingSection } from './SettingRow'
+import { StyleSamplePreview } from './StyleSamplePreview'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -56,30 +59,40 @@ interface NumField {
   max: number
   step: number
   unit?: string
+  /** 归到哪一组（`profiles.group.*`）。分组只影响排版，写进磁盘的内容一个字不变 */
+  group: string
+  /**
+   * 这个阈值喂给哪条检查规则（规范页专用）。有它才说得出「填 8 的时候检查是
+   * ≥ 8 还是 大于 8」——**边界的包含性只问 `validationText.ruleExpectation`**，
+   * 设置页不许照着求值器的判据再抄一遍（审计 T41）。
+   */
+  rule?: string
 }
 
 const SPEC_FIELDS: NumField[] = [
-  { path: 'min_effective_font_size_pt', labelKey: 'minFont', min: 1, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'absolute_min_font_size_pt', labelKey: 'floorFont', min: 0, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'default_font_size_pt', labelKey: 'defaultFont', min: 1, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'max_font_size_pt', labelKey: 'maxFont', min: 1, max: 200, step: 1, unit: 'pt' },
-  { path: 'widths_mm.single', labelKey: 'singleWidth', min: 10, max: 1000, step: 1, unit: 'mm' },
-  { path: 'widths_mm.double', labelKey: 'doubleWidth', min: 10, max: 1000, step: 1, unit: 'mm' },
-  { path: 'widths_mm.tolerance_mm', labelKey: 'widthTolerance', min: 0, max: 50, step: 0.1, unit: 'mm' },
-  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50 },
+  { path: 'min_effective_font_size_pt', labelKey: 'minFont', min: 1, max: 72, step: 0.5, unit: 'pt', group: 'fonts', rule: 'font-too-small' },
+  { path: 'absolute_min_font_size_pt', labelKey: 'floorFont', min: 0, max: 72, step: 0.5, unit: 'pt', group: 'fonts', rule: 'font-below-absolute-floor' },
+  { path: 'default_font_size_pt', labelKey: 'defaultFont', min: 1, max: 72, step: 0.5, unit: 'pt', group: 'fonts' },
+  { path: 'max_font_size_pt', labelKey: 'maxFont', min: 1, max: 200, step: 1, unit: 'pt', group: 'fonts', rule: 'font-too-large' },
+  { path: 'widths_mm.single', labelKey: 'singleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
+  { path: 'widths_mm.double', labelKey: 'doubleWidth', min: 10, max: 1000, step: 1, unit: 'mm', group: 'page' },
+  { path: 'widths_mm.tolerance_mm', labelKey: 'widthTolerance', min: 0, max: 50, step: 0.1, unit: 'mm', group: 'page' },
+  { path: 'min_raster_dpi', labelKey: 'minDpi', min: 1, max: 4800, step: 50, unit: 'ppi', group: 'raster', rule: 'raster-dpi' },
   {
     path: 'preferred_formats.export_dpi_default',
     labelKey: 'exportDpi',
     min: 1,
     max: 4800,
     step: 50,
+    unit: 'ppi',
+    group: 'raster',
   },
 ]
 
 /** 样式里最常改的那几项。角色 → prop 的含义见 `lib/stylePresets.STYLE_ROLE_PROPS`。 */
 const STYLE_FIELDS: NumField[] = [
-  { path: 'element.text.fontsize', labelKey: 'baseFont', min: 3, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'element.title.fontsize', labelKey: 'titleFont', min: 3, max: 72, step: 0.5, unit: 'pt' },
+  { path: 'element.text.fontsize', labelKey: 'baseFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
+  { path: 'element.title.fontsize', labelKey: 'titleFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
   {
     path: 'element.axis_label.fontsize',
     labelKey: 'axisFont',
@@ -87,10 +100,12 @@ const STYLE_FIELDS: NumField[] = [
     max: 72,
     step: 0.5,
     unit: 'pt',
+    group: 'text',
   },
-  { path: 'element.ticks.fontsize', labelKey: 'tickFont', min: 3, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'element.legend.fontsize', labelKey: 'legendFont', min: 3, max: 72, step: 0.5, unit: 'pt' },
-  { path: 'element.line.linewidth', labelKey: 'lineWidth', min: 0.1, max: 10, step: 0.05, unit: 'pt' },
+  { path: 'element.legend.fontsize', labelKey: 'legendFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
+  { path: 'annotation.sizePt', labelKey: 'annotationFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
+  { path: 'element.ticks.fontsize', labelKey: 'tickFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'ticks' },
+  { path: 'element.line.linewidth', labelKey: 'lineWidth', min: 0.1, max: 10, step: 0.05, unit: 'pt', group: 'lines' },
   {
     path: 'element.axes.spine_linewidth',
     labelKey: 'spineWidth',
@@ -98,9 +113,18 @@ const STYLE_FIELDS: NumField[] = [
     max: 10,
     step: 0.05,
     unit: 'pt',
+    group: 'lines',
   },
-  { path: 'annotation.sizePt', labelKey: 'annotationFont', min: 3, max: 72, step: 0.5, unit: 'pt' },
 ]
+
+/** 分组的显示顺序（表里出现的顺序不算数：加一条字段不该悄悄换掉版面）。 */
+const GROUP_ORDER = ['fonts', 'page', 'raster', 'text', 'ticks', 'lines']
+
+/** 按 `group` 归并，顺序取 `GROUP_ORDER`。 */
+function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[] {
+  return GROUP_ORDER.map((group) => ({ group, fields: fields.filter((f) => f.group === group) }))
+    .filter((g) => g.fields.length > 0)
+}
 
 function readPath(obj: Record<string, unknown>, path: string): unknown {
   return path.split('.').reduce<unknown>(
@@ -151,6 +175,60 @@ function clearPath(obj: Record<string, unknown>, path: string): Record<string, u
   return next
 }
 
+/**
+ * 只读摘要那一列的宽度。**与 `SettingRow` 的默认标签列同值**——两种模式在同一
+ * 个位置来回切换，差几个像素就是整列左右跳一下。
+ */
+const SUMMARY_LABEL_WIDTH = 160
+
+/** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
+function formatValue(raw: unknown, unit?: string): string {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return st('unset')
+  return unit ? `${raw} ${unit}` : String(raw)
+}
+
+/** 一组字段：一条极淡的小标题 + 若干行。分组只影响排版（审计 T41 / T42）。 */
+function FieldGroup({ group, children }: { group: string; children: ReactNode }) {
+  return (
+    <div data-field-group={group} className="flex flex-col gap-1">
+      <span className="text-[11px] font-medium uppercase tracking-[.06em] text-ink-3">
+        {st(`group.${group}`)}
+      </span>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * 只读摘要里的一行：名字 + 值 +（规范页）这条阈值会怎么判。
+ *
+ * **刻意不是一个 disabled 的输入框**：整页禁用输入看起来像"我的表单坏了"，
+ * 而它其实是"这份是内置的、想改先复制一份"（审计 T41 / T42）。
+ */
+function SummaryRow({
+  label,
+  value,
+  note,
+}: {
+  label: string
+  value: string
+  note?: string | null
+}) {
+  return (
+    <div className="flex min-h-6 items-baseline gap-2 text-xs">
+      <span style={{ width: SUMMARY_LABEL_WIDTH }} className="shrink-0 truncate text-ink-2" title={label}>
+        {label}
+      </span>
+      <span className="shrink-0 tabular-nums text-ink">{value}</span>
+      {note && (
+        <span className="min-w-0 flex-1 truncate text-right text-ink-3" title={note}>
+          {note}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
   useTranslation('dialogs')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -195,6 +273,26 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
       name.trim() !== profileName(selected))
 
   const fields = kind === 'spec' ? SPEC_FIELDS : STYLE_FIELDS
+  const grouped = useMemo(() => groupFields(fields), [fields])
+
+  /**
+   * 「填了这个数之后，检查会怎么判」（审计 T41）。
+   *
+   * 两件事都来自**这份规范自己**：边界的包含性问 `validationText.ruleExpectation`
+   * （它读的是措辞层那张规则表，与问题面板同一份），等级问 profile 自己的
+   * `severity` 表。设置页一个阈值、一个符号都不硬写。
+   */
+  const ruleNote = (f: NumField): string | null => {
+    if (kind !== 'spec' || !f.rule || !draft) return null
+    const value = readPath(draft, f.path)
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null
+    const expect = ruleExpectation(f.rule, value)
+    if (!expect) return null
+    return st('ruleLine', {
+      expect,
+      severity: severityLabel(severityOf(draft as unknown as PublicationProfile, f.rule)),
+    })
+  }
 
   /** 一次会写盘的操作：期间禁用按钮，无论成败都恢复。 */
   const withBusy = async <T,>(op: () => Promise<T>): Promise<T> => {
@@ -400,6 +498,24 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           )}
         </div>
       )}
+      {/* 项目里存的是**绑定 + 规则全文快照**（ADR 0029）。检查用的就是下面这几个
+          数，全局清单里的同名规范改了也不影响它——这层关系在这里摊开，别让用户
+          去导出面板里猜（审计 T41）。解析只有 `resolveDocumentSpec` 一份判据。 */}
+      {resolved && (
+        <DiagnosticDisclosure title={st('snapshotTitle')}>
+          <p className="text-xs leading-relaxed text-ink-3">{st('snapshotHint')}</p>
+          {SPEC_FIELDS.map((f) => (
+            <DiagnosticItem
+              key={f.path}
+              name={st(`field.${f.labelKey}`)}
+              value={formatValue(
+                readPath(resolved.profile as unknown as Record<string, unknown>, f.path),
+                f.unit,
+              )}
+            />
+          ))}
+        </DiagnosticDisclosure>
+      )}
 
       <div className="flex gap-3">
         {/* 左：清单 */}
@@ -485,53 +601,120 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
         {/* 右：编辑区（Style 与 Spec 各是各的一套字段） */}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           {!selected ? (
-            <p className="text-xs text-ink-3">{st('selectOne')}</p>
+            /* 一条都没有时不摆一整套禁用的输入框，只给出口（审计 T42）。
+               入口是**导入**不是「新建」：新建等于从选中的那条复制一份，清单空着
+               的时候它没有可复制的来源，摆上去就是一颗按了没反应的按钮。
+               还没加载完时什么都不画——那不是空，是"还不知道"。 */
+            loaded && (
+              <EmptyState
+                icon={FileSliders}
+                title={st('empty')}
+                hint={st('emptyHint')}
+                action={{ label: st('import'), onClick: () => fileRef.current?.click() }}
+              />
+            )
           ) : (
             <>
-              <SettingRow label={st('name')} labelWidth={92}>
-                <TextInput
-                  value={name}
-                  disabled={!editable}
-                  onChange={(e) => setName(e.target.value)}
-                  aria-label={st('name')}
-                  className="h-6 w-48"
-                />
-              </SettingRow>
+              {/* 样式页的示例图（审计 T42）：字号 / 线宽 / 边框 / 字体族按**当前
+                  草稿**现算，所以「把刻度字号调到 7」当场看得见。纯几何、不跑引擎。 */}
+              {kind === 'style' && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] font-medium uppercase tracking-[.06em] text-ink-3">
+                    {st('previewTitle')}
+                  </span>
+                  <StyleSamplePreview data={draft} />
+                </div>
+              )}
 
-              {fields.map((f) => {
-                const raw = readPath(draft ?? {}, f.path)
-                const set = typeof raw === 'number' && Number.isFinite(raw)
-                return (
-                  <SettingRow key={f.path} label={st(`field.${f.labelKey}`)} labelWidth={92}>
-                    {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
-                        `mixed` 让输入框留空而不是谎报一个值；旁边的 × 是回到
-                        那一档的唯一出口（否则设过一次就再也撤不回来）。 */}
-                    <NumberField
-                      value={set ? (raw as number) : f.min}
-                      mixed={!set}
-                      disabled={!editable}
-                      min={f.min}
-                      max={f.max}
-                      step={f.step}
-                      precision={f.step < 1 ? 2 : 0}
-                      suffix={f.unit}
-                      ariaLabel={st(`field.${f.labelKey}`)}
-                      className="w-28"
-                      onChange={(v) => setDraft((d) => (d ? writePath(d, f.path, v) : d))}
-                    />
-                    {set && editable && (
-                      <Button
-                        size="icon-sm"
-                        className="h-5 w-5"
-                        aria-label={st('clearField', { field: st(`field.${f.labelKey}`) })}
-                        onClick={() => setDraft((d) => (d ? clearPath(d, f.path) : d))}
+              {editable ? (
+                <SettingRow label={st('name')} controlId="profile-name">
+                  <TextInput
+                    id="profile-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    aria-label={st('name')}
+                    className="h-6 w-48"
+                  />
+                </SettingRow>
+              ) : (
+                <>
+                  <SummaryRow label={st('name')} value={name} />
+                  {/*
+                    「这份改不了、想改按这里」是**状态 + 动作**，不是一段散文
+                    （审计统一规则第一条：先改善控件，仍有必要才补文字）。原先
+                    这里是一句 37 字的解释，和分区顶上那句 43 字的说明叠成两段
+                    文字墙——用户得读完整句才知道下一步按哪儿，而流程 D 的
+                    「一个分区最多一段长解释」就是这么被顶破的。
+                    信息一个字没丢：只读这个事实变成常驻徽标，「复制出来的那份
+                    可以编辑」变成一颗就在旁边的按钮（同一个 `duplicate` 动作，
+                    原先摆在所有字段下面，要滚很远才看得见）。
+                  */}
+                  <div
+                    data-profile-readonly
+                    className="flex min-h-6 flex-wrap items-center gap-2 text-xs"
+                  >
+                    <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
+                      {selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}
+                    </span>
+                    <Button variant="outline" size="sm" onClick={duplicate} loading={busy}>
+                      <Copy size={ICON_SIZE.xs} />
+                      {st('duplicateToEdit')}
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {grouped.map(({ group, fields: groupFields }) => (
+                <FieldGroup key={group} group={group}>
+                  {groupFields.map((f) => {
+                    const raw = readPath(draft ?? {}, f.path)
+                    const set = typeof raw === 'number' && Number.isFinite(raw)
+                    if (!editable) {
+                      return (
+                        <SummaryRow
+                          key={f.path}
+                          label={st(`field.${f.labelKey}`)}
+                          value={formatValue(raw, f.unit)}
+                          note={ruleNote(f)}
+                        />
+                      )
+                    }
+                    return (
+                      <SettingRow
+                        key={f.path}
+                        label={st(`field.${f.labelKey}`)}
+                        status={ruleNote(f)}
                       >
-                        <X size={ICON_SIZE.xs} className="text-ink-3" />
-                      </Button>
-                    )}
-                  </SettingRow>
-                )
-              })}
+                        {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
+                            `mixed` 让输入框留空而不是谎报一个值；旁边的 × 是回到
+                            那一档的唯一出口（否则设过一次就再也撤不回来）。 */}
+                        <NumberField
+                          value={set ? (raw as number) : f.min}
+                          mixed={!set}
+                          min={f.min}
+                          max={f.max}
+                          step={f.step}
+                          precision={f.step < 1 ? 2 : 0}
+                          suffix={f.unit}
+                          ariaLabel={st(`field.${f.labelKey}`)}
+                          className="w-28"
+                          onChange={(v) => setDraft((d) => (d ? writePath(d, f.path, v) : d))}
+                        />
+                        {set && (
+                          <Button
+                            size="icon-sm"
+                            className="h-5 w-5"
+                            aria-label={st('clearField', { field: st(`field.${f.labelKey}`) })}
+                            onClick={() => setDraft((d) => (d ? clearPath(d, f.path) : d))}
+                          >
+                            <X size={ICON_SIZE.xs} className="text-ink-3" />
+                          </Button>
+                        )}
+                      </SettingRow>
+                    )
+                  })}
+                </FieldGroup>
+              ))}
 
               {!!selected.warnings.length && (
                 <ul className="flex flex-col gap-0.5 text-xs text-ink-3">
@@ -550,8 +733,13 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               </DiagnosticDisclosure>
 
               {kind === 'spec' && boundId === selected.id && (
-                <SettingRow label={st('follow')} help={st('followHelp')} labelWidth={92}>
+                <SettingRow
+                  label={st('follow')}
+                  description={st('followDesc')}
+                  controlId="profile-follow"
+                >
                   <Toggle
+                    id="profile-follow"
                     checked={doc.profile?.follow === true}
                     onChange={setFollow}
                     aria-label={st('follow')}
@@ -559,7 +747,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 </SettingRow>
               )}
 
-              {!editable && <p className="text-xs text-ink-3">{st('readOnlyHint')}</p>}
               {conflict && (
                 <p className="text-xs text-danger">
                   {st('conflict', { name: conflict.display_name })}
@@ -567,16 +754,10 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
               {error && !conflict && <p className="text-xs text-danger">{error.message}</p>}
 
+              {/* 「保存」是改这份配置，「应用 / 使用」是对当前图或当前项目做一件事
+                  ——两件事分成两排，别挤在一行里（审计 T42）。只读的那份没有可
+                  保存的东西，整排编辑动作就不出现，不摆一排禁用按钮。 */}
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!editable || !dirty}
-                  loading={busy}
-                  onClick={save}
-                >
-                  {st('save')}
-                </Button>
                 {kind === 'spec' ? (
                   <Button variant="outline" size="sm" onClick={useForProject}>
                     {st('useForProject')}
@@ -586,21 +767,34 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     {st('applyToFigure')}
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!editable || !selected.derived_from}
-                  onClick={restore}
-                  title={selected.derived_from ? undefined : st('restoreNeedsOrigin')}
-                >
-                  <RotateCcw size={ICON_SIZE.sm} />
-                  {st('restore')}
-                </Button>
-                <Button variant="outline" size="sm" disabled={!editable} onClick={remove}>
-                  <Trash2 size={ICON_SIZE.sm} className="text-danger" />
-                  {st('delete')}
-                </Button>
               </div>
+              {editable && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!dirty}
+                    loading={busy}
+                    onClick={save}
+                  >
+                    {st('save')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!selected.derived_from}
+                    onClick={restore}
+                    title={selected.derived_from ? undefined : st('restoreNeedsOrigin')}
+                  >
+                    <RotateCcw size={ICON_SIZE.sm} />
+                    {st('restore')}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={remove}>
+                    <Trash2 size={ICON_SIZE.sm} className="text-danger" />
+                    {st('delete')}
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>

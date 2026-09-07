@@ -25,7 +25,6 @@ import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Button } from '../ui/Button'
@@ -73,18 +72,9 @@ export function LayerTree() {
   // 顶层在最上面，与画布的视觉层级一致
   const zOrder = [...objects].reverse()
 
-  if (!zOrder.length) {
-    return (
-      <EmptyState
-        icon={Layers}
-        title={lt('emptyTitle')}
-        action={{
-          label: lt('openAssets'),
-          onClick: () => useUiStore.getState().railClick('assets'),
-        }}
-      />
-    )
-  }
+  // 轻量占位：起步的那个主要行动（「添加图」）只在画布中央出现一次（审计 T03），
+  // 侧栏不再各配一颗按钮
+  if (!zOrder.length) return <EmptyState icon={Layers} title={lt('emptyTitle')} />
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）
   const rows: TreeRow[] = []

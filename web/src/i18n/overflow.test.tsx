@@ -97,10 +97,9 @@ const BUDGETS: Budget[] = [
   ['workspace', 'readiness.whyNotEditable', 26, '画布工具条上的解释入口'],
   // 快速编辑（Prompt 09）：模式标签在顶栏那一行里，两个出口在画布上方那条
   // 浮动条上——它必须能整条塞进窄画布，所以按钮文案压得比一般按钮还紧
-  ['workspace', 'fastEdit.mode', 14, '顶栏模式标签 / 浮动条上的模式角标'],
-  ['workspace', 'fastEdit.layoutMode', 16, '顶栏模式标签（画布排版）'],
-  ['workspace', 'fastEdit.addToCanvas', 16, '快速编辑浮动条上的主动作'],
-  ['workspace', 'fastEdit.toLayout', 16, '快速编辑浮动条上的返回出口'],
+  ['workspace', 'fastEdit.mode', 14, '上下文栏上的模式角标'],
+  ['workspace', 'fastEdit.addToCanvas', 16, '上下文栏上的主动作'],
+  ['workspace', 'stage.backToCanvas', 16, '上下文栏上唯一的返回入口'],
   ['workspace', 'fastEdit.connectSource', 24, '降级说明条上的下一步'],
   ['workspace', 'assets.openFigure', 8, '素材卡悬停时右下角那个就近入口'],
   ['workspace', 'assets.addToCanvas', 16, '素材卡右下角的第二个就近入口 / 看大图弹窗主按钮'],
@@ -119,6 +118,18 @@ const BUDGETS: Budget[] = [
   ['errors', 'problems.fixChoose', 10, '问题行上的修复按钮（要先选）'],
   ['errors', 'problems.retry', 14, '检查失败后的重试'],
   ['errors', 'problems.clearFilter', 12, '筛选为空时的出口'],
+  // 类型徽标（cap-shape-switch）：右栏头部那一行里，对象名（用户内容，`truncate`）
+  // 左边的 `shrink-0` 小块。它长一个字，用户自己的文件名就少看见一个字——
+  // 而且它现在还带一个 10px 的下拉箭头。八种取值都在这一个位置出现
+  ['common', 'shape.rect', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.ellipse', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.line', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.triangle', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.diamond', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.polygon', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'shape.brace', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'objectType.arrow', 12, '属性栏对象标题里的类型徽标'],
+  ['common', 'mixed', 12, '多选取值不一致时的类型徽标'],
 ]
 
 describe('紧位置的英文文案有字数上限', () => {

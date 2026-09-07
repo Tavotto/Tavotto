@@ -1828,6 +1828,12 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         "settings": engine_config.project_settings(str(p)),
         "export_dir": str(project_export_dir(ctx)),
         "backup_dir": str(project_backup_dir(ctx)),
+        # 「另存为」把文档写到哪（审计 T04：另存时只需名字和位置）。
+        # 「命名文档存在项目的 tavottofile/ 里」这条规则的出处只有
+        # `project_layout_dir()`——界面自己拼一个 `<项目>/tavottofile` 就是把
+        # 它抄成了第二份，而旧位置兼容、未打开项目退回数据目录这两条分支
+        # 抄不过去。
+        "document_dir": str(project_layout_dir(ctx)),
         # 教程项目的标记（ADR 0039）：它走的是与普通项目同一条打开路径，
         # 界面上「重新开始教程」「教程角标」只认这一个字段，不自己比路径。
         "tutorial": engine_tutorial.is_tutorial_path(p),
@@ -2376,6 +2382,36 @@ def api_projects_recent():
     return resp
 
 
+def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:
+    """`create=true` 时，这条路径新建出来的那一级安不安全。安全回 None。
+
+    **判据的主语**：客户端发来的是「用户选的上级目录」+「用户输入的名字」
+    拼成的**整条路径**，后端看不见那两半分别是什么——所以这里守的不是前端
+    `lib/projectName.ts` 那条规则的镜像（那条判的是叶子名），而是**越界**
+    这一件事本身：路径里只要出现 `.` / `..` 分量，
+    `mkdir(parents=True, exist_ok=True)` 就会把它们解析掉，项目落到对话框上
+    写着的目录之外，甚至把一个已经存在的上级目录当成新项目初始化。
+
+    末位分量的合法性复用 `exportreq.check_filename`——「一个路径分量合不合法」
+    在本仓库只有那一份权威（按最严的平台写，且与 `web/src/lib/exportName.ts`
+    由 `tests/golden/filename_vectors.json` 钉在一起）。
+
+    **`leaf` 必须是没被 `str.strip()` 动过的那个末位分量**，两个参数因此分开传。
+    端点开头对整条路径做的 `raw.strip()` 是 Python 的内建函数，它认的空白字符集
+    与 JavaScript 的 `trim()` **不一样**（`\x1c`–`\x1f` 只有 Python 认，
+    `\ufeff` 只有 JS 认）。拿 strip 过的末位分量去判，两侧的口径就分家了：
+    实测 `parent/figs\x1c` 在前端是 `control_char`（拒），在后端却被 strip 成
+    `figs` 建了出来。判据要判的是用户真的输进来的那个串，所以谁的内建函数都
+    不许先碰它——`check_filename` 自己带着一份写死的空白集合，正是为这件事。
+
+    回的是**出问题的那一段**，直接进 `params.name` 给用户看。
+    """
+    for part in p.parts:
+        if part in (".", ".."):
+            return part
+    return leaf if engine_exportreq.check_filename(leaf) else None
+
+
 @app.post("/api/projects/open")
 def api_projects_open():
     """打开（或 create=true 时先创建）一个项目目录。
@@ -2384,11 +2420,23 @@ def api_projects_open():
     「只给本标签页用」，不改动新标签页的默认落点。
     """
     body = request.get_json(force=True)
-    raw = str(body.get("path") or "").strip()
+    typed = str(body.get("path") or "")
+    raw = typed.strip()
     if not raw:
         return jsonify({"error": "缺少项目路径", "code": "missing_path"}), 400
     p = Path(raw).expanduser()
     if body.get("create"):
+        # 末位分量取自**没被 strip 过**的原串：`.strip()` 是 Python 的内建函数，
+        # 它与前端的 `trim()` 认的空白集合不一样，先 strip 再判等于两侧换了尺子
+        bad = _unsafe_new_project_part(p, Path(typed).name)
+        if bad is not None:
+            return jsonify(
+                {
+                    "error": f"项目名不是一个合法的目录名: {bad}",
+                    "code": "unsafe_project_name",
+                    "params": {"name": bad},
+                }
+            ), 400
         try:
             p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -4928,6 +4976,39 @@ def api_packages_list():
     return resp
 
 
+#: 查找失败的四个码 -> HTTP 状态。**每一个都要与「下一步做什么」对得上**：
+#: 404 = 换个名字；503 = 检查网络 / 镜像源；504 = 重试；502 = 索引源答的话
+#: 我们没读懂。语法不合法走 400（请求畸形，与 plan 那一条同一个码）。
+_LOOKUP_STATUS = {
+    engine_deprepair.ERROR_LOOKUP_NOT_FOUND: 404,
+    engine_deprepair.ERROR_LOOKUP_OFFLINE: 503,
+    engine_deprepair.ERROR_LOOKUP_TIMEOUT: 504,
+    engine_deprepair.ERROR_LOOKUP_FAILED: 502,
+    engine_deprepair.ERROR_REQUIREMENT_INVALID: 400,
+}
+
+
+@app.get("/api/engine/packages/lookup")
+def api_packages_lookup():
+    """按名字问一次索引源：`?name=lmfit` -> `{name, versions, latest, installed, source}`。
+
+    **只读**：不装任何东西、不碰受管环境的磁盘、不改任何账。会出网（走的是
+    用户自己的 pip 索引配置，可能是镜像源），因此它**只在用户明确点查找时被
+    调用**——界面上没有任何自动触发的路径。
+
+    响应里没有地址、没有项目路径、没有解释器路径：只有包名、版本表，以及
+    「配没配自定义源」这一个布尔（`source`，三档）。
+    """
+    root = str(require_project())
+    try:
+        payload = engine_deprepair.lookup_package(root, request.args.get("name", ""))
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, _LOOKUP_STATUS.get(exc.code, 502))
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.post("/api/engine/packages/plan")
 def api_packages_plan():
     """形成一个包操作作业：`{op: install|update|uninstall, spec}` → `{job}`。
@@ -5873,9 +5954,146 @@ def _version_meta(v: dict) -> dict:
     return meta
 
 
+#: 一条版本草图最多带几个对象 / 一段文字最多带几个字，**上限而不是取值**。
+#:
+#: 取值由调用方随请求给（`?sketch=` / `?sketchText=`）——「一张缩略图画几个
+#: 对象」是**缩略图组件自己的事**，把这个数字在 Python 里再写一遍就是同一条
+#: 规则的第二份权威，而两份权威只会在有人改了其中一份的那天才被发现。
+#: 这里的两个常量是**传输侧的封顶**：挡住 `?sketch=99999` 把 120 条版本的
+#: 全部对象一次发出去，与「画几个」无关。
+VERSION_SKETCH_MAX_OBJECTS = 200
+VERSION_SKETCH_MAX_TEXT = 200
+
+
+def _sketch_num(value: object) -> float:
+    """草图里的一个坐标。**坏值折成 0，绝不让整份列表 500。**
+
+    `validate_document` 只查骨架（那是故意的：逐字段较真会把用户真实的编辑挡在
+    保存之外），所以磁盘上的对象可以缺 x/y/w/h、也可以是字符串。一条画不出来
+    的对象不该让用户**整条时间线**都打不开。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if value != value or value in (float("inf"), float("-inf")):  # NaN / ±inf
+        return 0.0
+    return round(float(value), 2)
+
+
+def _sketch_canvas(doc: dict, canvas_id: object) -> tuple[dict, list] | None:
+    """草图取自**哪一张画布**的页面与对象；取不出来时 `None`。
+
+    缩略图画的是**一张**页面，所以主语必须收窄到一张画布——schema 2 的文档
+    自己就是一张，schema 3 按检查点记下的画布身份找（找不到就退回它自己记的
+    激活画布，再退回第一张）。跨全部画布把对象堆在一个页面上画出来的东西不
+    对应任何一张真实的版，那比不画更坏。
+
+    页面尺寸取不出来就整条 `None`：**「不知道」是独立一档**，替它编一个
+    A4 出来的话，用户看到的是一张比例假的缩略图，而没有任何东西会提醒他。
+
+    schema 3 上这里给得出页面而 `_version_meta` 的 `page` 仍是 `None`
+    （它读的是文档根上的 `page`，项目文档没有那个键）。这不是两个答案打架：
+    一边是「这张画布的图幅是 200×120」，另一边是「不知道」，而摘要那句话
+    宁可少说也不能猜。真要补，得连 `objects`（现在数的是**全部画布**）一起
+    换主语——两个字段一个按单张画布、一个按整个项目才是真的量错了对象。
+    """
+    if doc.get("schema") == engine_documents.SCHEMA_PROJECT:
+        canvases = [c for c in doc.get("canvases", []) if isinstance(c, dict)]
+        if not canvases:
+            return None
+        wanted = canvas_id or doc.get("activeCanvasId")
+        source = next((c for c in canvases if c.get("id") == wanted), canvases[0])
+    else:
+        source = doc
+    page = source.get("page")
+    if not isinstance(page, dict):
+        return None
+    w, h = _sketch_num(page.get("w")), _sketch_num(page.get("h"))
+    if w <= 0 or h <= 0:
+        return None
+    objects = source.get("objects")
+    return {"w": w, "h": h}, objects if isinstance(objects, list) else []
+
+
+def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
+    """一条版本的**草图**：够画一张缩略图的最小事实集合，不含 overrides / 脚本。
+
+    这是版本列表能带上缩略图而**不退化成「打开面板就拉全部版本正文」**的原因
+    ——列表端点为了数对象数本来就已经把整份文件（含每条的整份文档）解析过
+    一遍了（`_load_versions`），草图是那份内存数据的投影，既不多读一次盘也不
+    多解析一遍。按可见行去拉 120 份正文才是新增成本。
+
+    字段名与前端缩略图组件（`web/src/components/CanvasThumb.tsx` 的
+    `ThumbObject`）**逐字相同**：草图对象直接就是那个组件吃的形状，中间没有
+    第二套词汇要维护。
+
+    隐藏对象在这里就滤掉（组件也滤一遍，两处同一判据），**先滤后截**——反过来
+    的话前 40 个全是隐藏对象的那一版会得到一张空缩略图。
+    """
+    doc = v.get("doc")
+    if not isinstance(doc, dict):
+        return None
+    resolved = _sketch_canvas(doc, v.get("canvasId"))
+    if resolved is None:
+        return None
+    page, raw_objects = resolved
+    objects: list[dict] = []
+    for o in raw_objects:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(o, dict) or o.get("hidden"):
+            continue
+        kind = o.get("type")
+        if not isinstance(kind, str):
+            continue
+        item: dict = {
+            "type": kind,
+            "x": _sketch_num(o.get("x")),
+            "y": _sketch_num(o.get("y")),
+            "w": _sketch_num(o.get("w")),
+            "h": _sketch_num(o.get("h")),
+        }
+        if kind == "panel":
+            # 面板挂的是素材库同一条预览链路，所以只要素材身份；**overrides 一条
+            # 都不带**——那是整份正文里最大的一块，而缩略图本来就画不出图内修改。
+            if isinstance(o.get("fileId"), str):
+                item["fileId"] = o["fileId"]
+            if isinstance(o.get("fileKind"), str):
+                item["fileKind"] = o["fileKind"]
+        elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
+            item["text"] = o["text"][:max_text]
+        elif kind == "shape" and isinstance(o.get("shape"), str):
+            item["shape"] = o["shape"]
+        objects.append(item)
+    return {"page": page, "objects": objects}
+
+
+def _sketch_limits() -> tuple[int, int]:
+    """本次请求要多大的草图。`sketch` 缺席 / 非正数 = **不带草图**（默认不带）。"""
+
+    def _arg(name: str, cap: int) -> int:
+        try:
+            n = int(request.args.get(name, 0))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(n, cap))
+
+    return _arg("sketch", VERSION_SKETCH_MAX_OBJECTS), _arg("sketchText", VERSION_SKETCH_MAX_TEXT)
+
+
 @app.get("/api/versions/<doc_id>")
 def api_versions_list(doc_id):
-    return jsonify({"versions": [_version_meta(v) for v in _load_versions(doc_id)]})
+    max_objects, max_text = _sketch_limits()
+    out = []
+    for v in _load_versions(doc_id):
+        meta = _version_meta(v)
+        if max_objects > 0:
+            sketch = _version_sketch(v, max_objects, max_text)
+            # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
+            # 什么都没有」是两件事，前者该显示占位、后者该显示一张空白页。
+            if sketch is not None:
+                meta["sketch"] = sketch
+        out.append(meta)
+    return jsonify({"versions": out})
 
 
 @app.get("/api/versions/<doc_id>/<vid>")

@@ -11,13 +11,14 @@ import {
 } from '@/lib/api'
 import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
+import { currentProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import type { CanvasData, FigureDocument, ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -38,6 +39,17 @@ export interface RecentDoc {
   objects: number
   /** 画布数；旧条目无此字段 = 1 */
   canvases?: number
+  /**
+   * 写下这一条时开着的是哪个项目（审计 T04）。索引是**跨项目共用一份**的
+   * （localStorage 一个键），不记的话别的项目的文档混在列表里没人认得出。
+   *
+   * **旧条目没有这两个字段，而缺席就是缺席**：那是「不知道属于哪个项目」，
+   * 既不能当成「属于当前项目」，也不能当成「属于别的项目」——补一个默认值
+   * 就是替它编一个归属出来。
+   */
+  projectId?: string
+  /** 写下那一刻这个项目叫什么（项目后来改名不追认） */
+  projectName?: string
 }
 
 /**
@@ -651,6 +663,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!pd) return false
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
+    // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
+    // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
+    docProject = { id: currentProjectId(), name: currentProjectLabel() }
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
     set({
       doc: canvasToDoc(active),
@@ -683,13 +698,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
 let canvasSeq = 0
 
-/** 默认画布名：Fig N，跳过已占用的名字 */
+/** 默认画布名：`defaultCanvasName(N)`（与空文档的第一张同一个格式），跳过已占用的名字 */
 function nextCanvasName(canvases: CanvasData[]): string {
   const used = new Set(canvases.map((c) => c.name))
   for (let n = canvases.length + 1; ; n++) {
-    const name = `Fig ${n}`
+    const name = defaultCanvasName(n)
     if (!used.has(name)) return name
-    if (n > canvases.length + 1000) return `Fig ${++canvasSeq}`
+    if (n > canvases.length + 1000) return defaultCanvasName(++canvasSeq)
   }
 }
 
@@ -710,6 +725,31 @@ const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
 
 export type FlushResult = 'saved' | 'empty' | 'error' | 'skipped'
+
+/**
+ * **这份文档**属于哪个项目（审计 T04）——在它被换进来那一刻定下，不是落盘
+ * 那一刻现问 `currentProjectId()`。
+ *
+ * 切项目的顺序是「先认领新项目 → 再换空白文档」，而换文档第一句就是把旧文档
+ * 冲刷落盘。落盘那一刻现问的话，旧项目最后一份文档会被记成新项目的
+ * （与 `lib/session.ts` 里那两个 `*For` 变体同一条纪律：一次写入属于**排队
+ * 那一刻**的那个项目）。
+ *
+ * 名字记的是当时那个名字，项目后来改名不追认。
+ */
+let docProject: { id: string | null; name: string | null } | null = null
+
+/**
+ * `null` = 这份文档还没被 `switchDocument` 换进来过（应用刚起、还停在初始的
+ * 空白文档上）。那一档回落到「现在开着哪个项目」——此刻还没发生过任何项目
+ * 切换，所以现问是对的。
+ *
+ * **不在模块初始化时求值**：`currentProjectId()` 在 import 阶段就被调用的话，
+ * 谁 mock 了 `@/lib/session` 谁就会撞上自己的 TDZ（模块图里 documentStore 先
+ * 于测试文件的 `let` 求值）。实测过：`useServerEvents.test.ts` 会以
+ * 「Cannot access 'project' before initialization」整文件失败。
+ */
+const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: currentProjectLabel() }
 
 const slotKey = (id: string) => SLOT_PREFIX + id
 const TABS_PREFIX = 'tavotto.tabs.'
@@ -1163,12 +1203,16 @@ export function flushAutosave(): FlushResult {
   }
   scheduleDiskWrite(state.documentId, pd)
   if (!localOk) return 'error'
+  const pj = projectOfDoc()
   const entry: RecentDoc = {
     id: state.documentId,
     name: pd.project.name,
     savedAt,
     objects: countObjects(pd),
     canvases: pd.canvases.length,
+    // 没打开项目时（纯排版）两个字段都不写：那是「不知道」，不是空字符串
+    ...(pj.id ? { projectId: pj.id } : {}),
+    ...(pj.id && pj.name ? { projectName: pj.name } : {}),
   }
   const before = readIndex()
   const kept = writeIndex([entry, ...before.filter((e) => e.id !== state.documentId)])

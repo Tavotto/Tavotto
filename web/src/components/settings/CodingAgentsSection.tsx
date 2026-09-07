@@ -39,9 +39,18 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * 之后什么都不用配，页面本身就是那句话的兑现（ADR 0015 / 0038）。
  *
  * 页面分成两个方向明确的小节，**它们是两件事**：
- *   ① 在 Tavotto 中使用编码 Agent —— 借本机的 CLI 改图脚本；
- *   ② 在编码 Agent 中使用 Tavotto —— 把 Tavotto 装进 Codex（插件 / 画布）。
+ *   ① 配置改图助手 —— 借本机的 CLI 改图脚本；
+ *   ② 连接外部工具 —— 把 Tavotto 装进 Codex（插件 / 画布）。
+ * 小标题按**用户想完成什么**命名，不再是「在 A 中使用 B / 在 B 中使用 A」那样
+ * 互为镜像的一对——两句话只差语序时，读者得逐字比对才分得清（审计 T44）。
+ * 方向由小节里的内容承担：② 里那一行就叫「Tavotto for Codex」。
  * 「本机装了 codex CLI」不等于「装了 Tavotto for Codex」，两个状态绝不合并。
+ *
+ * **e2e 锚点**（清单见 web/AGENTS.md）：`data-agent-section="in-app" | "external"`
+ * 标住这两节，`data-agent-codex-integration` 标住 ② 里那一行，
+ * `data-agent-rescan` / `data-agent-last-checked` 标住重新检测那对控件。
+ * 小标题的**文字**归审计管、随时可以再改一次——用例认的是这几个属性，
+ * 不认那句话（T44 改名时它们就是靠认文案红的）。
  */
 export function CodingAgentsSection() {
   useTranslation('dialogs')
@@ -134,14 +143,20 @@ export function CodingAgentsSection() {
           <h3 className="text-sm font-medium text-ink">{ag('title')}</h3>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Button variant="outline" size="sm" loading={busy} onClick={() => void reload(true)}>
+          <Button
+            data-agent-rescan
+            variant="outline"
+            size="sm"
+            loading={busy}
+            onClick={() => void reload(true)}
+          >
             <RefreshCw size={ICON_SIZE.sm} aria-hidden />
             {ag('rescan')}
           </Button>
           {/* 最近检测时间跟着「重新检测」走：它说明的是那个动作上次什么时候
               发生过，摆在列表底下会被读成列表的脚注 */}
           {caps && caps.checked_at_ms > 0 && (
-            <span className="text-xs text-ink-3">
+            <span data-agent-last-checked className="text-xs text-ink-3">
               {ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })}
             </span>
           )}
@@ -175,8 +190,8 @@ export function CodingAgentsSection() {
         <>
           <DefaultAgentPicker />
 
-          <section className="flex flex-col gap-1.5">
-            <h4 className="text-xs font-medium text-ink-2">{ag('useInProduct', { product: PRODUCT_NAME })}</h4>
+          <section data-agent-section="in-app" className="flex flex-col gap-1.5">
+            <h4 className="text-xs font-medium text-ink-2">{ag('useInProduct')}</h4>
             <AgentList
               agents={caps.agents}
               onOpen={openDetail}
@@ -191,9 +206,9 @@ export function CodingAgentsSection() {
           {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
               一行：名字 + 外链。没有卡片外框、没有说明段（ADR 0038）——
               「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
-          <section className="flex flex-col gap-1.5">
-            <h4 className="text-xs font-medium text-ink-2">{ag('useFromAgents', { product: PRODUCT_NAME })}</h4>
-            <div className="flex min-h-7 items-center gap-3 px-1">
+          <section data-agent-section="external" className="flex flex-col gap-1.5">
+            <h4 className="text-xs font-medium text-ink-2">{ag('useFromAgents')}</h4>
+            <div data-agent-codex-integration className="flex min-h-7 items-center gap-3 px-1">
               <span className="min-w-0 flex-1 truncate text-sm text-ink">
                 {ag('codexIntegrationName', { product: PRODUCT_NAME })}
               </span>

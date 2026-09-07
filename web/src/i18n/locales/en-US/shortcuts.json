@@ -11,15 +11,16 @@
     "altClick": "{{alt}}+click"
   },
   "group": {
+    "file": "File",
+    "selection": "Selection",
+    "editing": "Editing",
     "arrange": "Arrange and stacking",
-    "editing": "Selection and editing",
-    "general": "General",
-    "tools": "Tools",
     "view": "View",
+    "tools": "Tools",
     "tutorial": "Tutorial"
   },
   "key": {
-    "copyPaste": "Copy / paste objects (works across layout documents)",
+    "copyPaste": "Copy / paste objects (works across documents)",
     "delete": "Delete objects; in figure editing this hides the element instead (restorable)",
     "duplicate": "Duplicate the selection in place",
     "enter": "Edit the selection: text enters editing, parameterizable panels enter figure editing",
@@ -47,5 +48,8 @@
     "tutorialPause": "Pause the tutorial (when the tutorial card has focus)",
     "cycleOverlap": "Cycle the selection through overlapping figure elements (both axes of a twin-axis plot)"
   },
-  "title": "Keyboard shortcuts"
+  "title": "Keyboard shortcuts",
+  "search": "Search shortcuts…",
+  "searchAria": "Search shortcuts",
+  "noMatch": "No shortcut matches"
 }

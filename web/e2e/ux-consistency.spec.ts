@@ -1,4 +1,5 @@
 import { expect, test, type RunningApp } from './fixtures'
+import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
 
 /**
@@ -49,28 +50,6 @@ async function openTree(page: Page) {
 }
 
 const inspector = (page: Page) => page.getByLabel('右侧面板', { exact: true })
-
-/**
- * 把布局撑破的元素（真布局才量得出来）。只认 `overflow-x: visible` 的那些：
- * 裁切（truncate 是 hidden + 省略号）与有意可滚的容器本来就不该算撑破。
- */
-async function horizontalOffenders(page: Page, rootSel: string): Promise<string[]> {
-  return page.evaluate((sel) => {
-    const rootEl = document.querySelector(sel)
-    if (!rootEl) return ['NO ROOT: ' + sel]
-    const out: string[] = []
-    for (const el of [rootEl, ...Array.from(rootEl.querySelectorAll('*'))]) {
-      const e = el as HTMLElement
-      if (getComputedStyle(e).overflowX !== 'visible') continue
-      if (e.scrollWidth > e.clientWidth + 1) {
-        out.push(
-          `${e.tagName}.${String(e.className).slice(0, 60)} sw=${e.scrollWidth} cw=${e.clientWidth}`,
-        )
-      }
-    }
-    return out
-  }, rootSel)
-}
 
 /* ============================ 流程 A：统一图中文字 ========================== */
 
@@ -253,22 +232,37 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
   await expect(popover.getByText(/自动快照/)).toHaveCount(0)
   await expect(popover.getByRole('button', { name: '技术详情' })).toBeVisible()
 
-  const slider = popover.getByRole('slider', { name: '推理强度' })
-  const providerGroup = popover.getByRole('radiogroup', { name: '执行改动的命令行工具' })
-  const recovery = popover.getByRole('button', { name: '打开编码 Agent 设置' })
+  // **锚点全是稳定 `data-*`。** 这一段原先按可见文案与 role 定位，审计 T37 把执行器
+  // 从「双选 radiogroup」换成了「执行器与模型」一个 Select、把推理强度收进了折叠区，
+  // 于是 `getByRole('radiogroup', { name: '执行改动的命令行工具' })` 与
+  // `getByRole('slider', …)` 双双匹配到 0 个元素——而它们都写在 `if (…)` 里，
+  // **一条都没红，全部静默跳过**：用例名字里的「模型与推理强度、键盘可调、偏好保持」
+  // 一个字都没在验（2026-09-07 复核发现）。条件分支里的定位是假绿最好的藏身处。
+  const agentSelect = popover.locator('[data-ai-agent-model="select"]')
+  const agentStatic = popover.locator('[data-ai-agent-model="static"]')
+  const effortDisclosure = popover.locator('[data-ai-effort="disclosure"]')
+  const recovery = popover.locator('[data-ai-open-settings]')
 
-  const hasSlider = (await slider.count()) > 0
-  const providers = await providerGroup.count()
-
-  if (!hasSlider && !providers && (await recovery.count())) {
-    // 这台机器上一个可用 Agent 都没有：恢复入口必须在，且不摆一个死掉的双选
+  const nSelect = await agentSelect.count()
+  const nStatic = await agentStatic.count()
+  // 执行器与模型只有三种合法形态：可选时给选择器、只有一项时写成静态文字、
+  // 一个可用 Agent 都没有时什么都不摆。**绝不摆一个选不动的选择器。**
+  expect(nSelect + nStatic, '执行器与模型同时出现了选择器和静态文字').toBeLessThanOrEqual(1)
+  if (!nSelect && !nStatic) {
+    // 这台机器上一个可用 Agent 都没有：恢复入口必须在
     await expect(recovery).toBeVisible()
   }
-  // 只有一个 Provider 时不摆只有一项的「双选」
-  if (providers) {
-    const items = await providerGroup.getByRole('radio').count()
-    expect(items).toBeGreaterThan(1)
+
+  // 推理强度默认收起，**当前值不藏**（审计 T37）：折叠行上就写着档位名，
+  // 展开之后才有滑杆。原先的用例直接找滑杆，于是永远找不到。
+  const hasEffort = (await effortDisclosure.count()) > 0
+  if (hasEffort) {
+    await expect(effortDisclosure).toHaveAttribute('aria-expanded', 'false')
+    await effortDisclosure.click()
+    await expect(effortDisclosure).toHaveAttribute('aria-expanded', 'true')
   }
+  const slider = popover.getByRole('slider', { name: '推理强度' })
+  const hasSlider = hasEffort && (await slider.count()) > 0 && (await slider.isEnabled())
 
   if (hasSlider) {
     const before = await slider.getAttribute('aria-valuetext')
@@ -278,12 +272,16 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
     await expect(slider).not.toHaveAttribute('aria-valuetext', before ?? '', { timeout: 10_000 })
     const after = await slider.getAttribute('aria-valuetext')
 
-    // 关掉再打开：偏好还在
+    // 关掉再打开：偏好还在（折叠区要再展开一次才看得到滑杆）
     await page.keyboard.press('Escape')
     await openPopover()
-    await expect(
-      page.locator('[data-radix-popper-content-wrapper]').first().getByRole('slider', { name: '推理强度' }),
-    ).toHaveAttribute('aria-valuetext', after ?? '', { timeout: 10_000 })
+    const again = page.locator('[data-radix-popper-content-wrapper]').first()
+    await again.locator('[data-ai-effort="disclosure"]').click()
+    await expect(again.getByRole('slider', { name: '推理强度' })).toHaveAttribute(
+      'aria-valuetext',
+      after ?? '',
+      { timeout: 10_000 },
+    )
   }
 
   // 弹层无横向溢出（真布局才量得出来；修改前六档按钮在这里两头被切掉）
@@ -299,9 +297,10 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
 }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByRole('button', { name: '设置', exact: true }).first().click()
-  // 帮助气泡也是 role=dialog，按名字消歧
-  const dialog = page.getByRole('dialog', { name: '设置' })
+  await page.locator('[data-rail="settings"]').click()
+  // 帮助气泡也是 role=dialog：按**里面装着设置外壳**消歧，不按对话框的名字
+  // ——那个名字是本地化文案，与顶栏那颗按钮同一个赌注（#299）
+  const dialog = page.getByRole('dialog').filter({ has: page.locator('[data-settings-shell]') })
   await expect(dialog).toBeVisible({ timeout: 30_000 })
 
   /** 对话框正文里独立成段的长解释有几段 */
@@ -319,13 +318,37 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
     expect(await horizontalOffenders(page, '[role="dialog"][aria-labelledby]')).toEqual([])
   }
 
-  // --- 问号：Tab 到它 → 展开 → Esc 收回 ---
+  // --- 常规页一个问号都没有（审计「说明文字专项补查」）---
   await dialog.getByRole('navigation').getByRole('button', { name: '常规' }).click()
-  const help = dialog.getByRole('button', { name: '关于界面语言' })
+  await expect(dialog.locator('[data-help-tip]')).toHaveCount(0)
+
+  // 绝对路径的判据。**读的是 innerText 不是 textContent**：`textContent()` 把相邻
+  // 元素的文字无分隔地粘在一起，于是「渲染引擎 Python」的末字符直接顶在
+  // `/opt/hostedtoolcache/...` 前面，而这条正则要求路径前面是行首或非词字符
+  // ——粘住之后前一个字符是 `n`，永远匹不上。三条反向断言因此一直在假绿
+  // （`textContent()` 连折叠起来的技术详情一起读了，里面就有绝对路径），
+  // 正向那条则在 CI 上必红。`innerText` 按渲染结果给出换行，且**只含可见文字**，
+  // 这正是 T40 要判的东西：用户看得见的首屏里没有全路径。
+  // 形状要同时认 POSIX 的 `/opt/...` 与 Windows 的 `D:\a\...`。原先枚举的是
+  // POSIX 顶级目录名（usr|opt|home|Users|private|tmp），windows-exe-smoke 上
+  // 打包产物报的是 `D:\a\Tavotto\...\runtime\python.exe`，`\a\` 不在那张表里
+  // ——**产品没问题，是判据只认得一种平台的路径长相**。
+  // 前导守卫排除 `:` 与 `/`，挡掉 `https://…` 这类 URL 的双斜杠。
+  const absolutePath = /(^|[^\w:/])(?:[A-Za-z]:)?[/\\][^\s]{8,}/
+
+  // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
+  await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
+  await page.waitForTimeout(250)
+  const projectScreen = await dialog.innerText()
+  expect(projectScreen).not.toMatch(absolutePath)
+
+  // --- 问号：Tab 到它 → 展开 → Esc 收回。设置里唯一剩下的那个（界面 / 拖动联动）---
+  await dialog.getByRole('navigation').getByRole('button', { name: '界面' }).click()
+  const help = dialog.getByRole('button', { name: '关于拖动时一同移动关联对象' })
   await expect(help).toHaveAttribute('aria-expanded', 'false')
   await help.focus()
   await expect(help).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 })
-  await expect(page.getByText(/只影响界面文字/)).toBeVisible()
+  await expect(page.getByText(/关联元素 = 被你手动摆过位置的标题/)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(help).toHaveAttribute('aria-expanded', 'false', { timeout: 10_000 })
   // Esc 关的是气泡，不是整个设置对话框
@@ -335,19 +358,18 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await dialog.getByRole('navigation').getByRole('button', { name: '关于与隐私' }).click()
   await expect(dialog.getByText(/仅在你明确开启后发送匿名功能使用情况/)).toBeVisible()
 
-  const absolutePath = /(^|[^\w])[/\\](?:usr|opt|home|Users|private|tmp)[/\\][^\s]{8,}/
-  const aboutScreen = (await dialog.textContent()) ?? ''
+  const aboutScreen = await dialog.innerText()
   expect(aboutScreen).not.toMatch(absolutePath)
 
   // --- 诊断：完整解释器路径只在折叠的「技术详情」里（Session 19 把诊断拆成独立分区）---
   await dialog.getByRole('navigation').getByRole('button', { name: '诊断', exact: true }).click()
   const diag = dialog.getByRole('button', { name: '技术详情' })
   await expect(diag).toHaveAttribute('aria-expanded', 'false')
-  const firstScreen = (await dialog.textContent()) ?? ''
+  const firstScreen = await dialog.innerText()
   expect(firstScreen).not.toMatch(absolutePath)
   await diag.click()
   await expect(diag).toHaveAttribute('aria-expanded', 'true')
   await page.waitForTimeout(500)
-  const expanded = (await dialog.textContent()) ?? ''
+  const expanded = await dialog.innerText()
   expect(expanded).toMatch(absolutePath)
 })

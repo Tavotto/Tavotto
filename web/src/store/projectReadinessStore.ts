@@ -16,6 +16,7 @@
  * 「聚焦哪一张」，`focusPanel()` 顺手把那个既有标志打开。
  */
 import { create } from 'zustand'
+import { allEditable } from '@/lib/readinessText'
 import { fetchReadiness, type ReadinessReport } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { captureTelemetry, readinessStatusBucket } from '@/lib/telemetry'
@@ -225,7 +226,10 @@ export function bannerReport(s: {
   const r = s.report
   if (!r) return null
   if (r.summary.total <= 0) return null
-  if (r.summary.editable >= r.summary.total) return null
+  // 「全都能编辑」的判据只有 `lib/readinessText.allEditable` 一份：接入中心
+  // 顶部在这一档把四个计数换成一句话，这里干脆一个字不说（审计 T10）。
+  // 各写一遍的话，将来判据一变总有一处会漏掉。
+  if (allEditable(r.summary)) return null
   if (s.dismissed === r.fingerprint) return null
   return r
 }

@@ -12,10 +12,9 @@ import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Tip } from '@/components/ui/Tooltip'
-import { enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
+import { beginCrop, enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useUiStore } from '@/store/uiStore'
 import type {
   ArrowObject,
   CanvasObject,
@@ -28,10 +27,17 @@ import { hist } from './text'
 
 /* ------------------------------- 画布对象 --------------------------------- */
 
-export function ObjectQuickActions({ obj }: { obj: CanvasObject }) {
+export function ObjectQuickActions({
+  obj,
+  compact = false,
+}: {
+  obj: CanvasObject
+  /** 停靠的属性页正铺着同一批文字控件时缩减（判据在 `ContextBar` 一处） */
+  compact?: boolean
+}) {
   switch (obj.type) {
     case 'text':
-      return <TextObjectActions obj={obj} />
+      return <TextObjectActions obj={obj} compact={compact} />
     case 'panel':
       return <PanelObjectActions obj={obj} />
     case 'arrow':
@@ -51,8 +57,12 @@ export function ObjectQuickActions({ obj }: { obj: CanvasObject }) {
  * 现在两边看到的是同一个适配器，一处改另一处当场就是新值。
  *
  * 布局按上下文不同（这里没有标签列），**数据与 action 共享**。
+ *
+ * `compact`：右栏属性页正开着——字体 / 字号 / B / I / 颜色 那一整行就在
+ * 那里，这条再铺一遍是第二份摆放（审计 T27，与图内文字 T14 同一条判据）。
+ * 缩减档只留字号 / 加粗 / 斜体，把最宽的字体下拉与取色器让给右栏。
  */
-function TextObjectActions({ obj }: { obj: TextObject }) {
+function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean }) {
   const objs = useMemo(() => [obj], [obj])
   const a = useCanvasTypography(objs)
   const family = a.fieldOf('fontFamily')
@@ -60,8 +70,8 @@ function TextObjectActions({ obj }: { obj: TextObject }) {
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <>
-      {family && (
+    <span className="contents" data-text-quick={compact ? 'compact' : 'full'}>
+      {!compact && family && (
         <Select
           className="w-[92px] shrink-0"
           ariaLabel={translate('textControls.font', { ns: 'inspector' })}
@@ -102,14 +112,17 @@ function TextObjectActions({ obj }: { obj: TextObject }) {
       >
         <Italic size={ICON_SIZE.sm} />
       </StyleToggle>
-      <ColorField
-        className="w-[86px] shrink-0"
-        value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
-        onChange={(v) => a.write('color', v, true)}
-        onGestureEnd={a.endGesture}
-      />
+      {!compact && (
+        <ColorField
+          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
+          className="w-[86px] shrink-0"
+          value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
+          onChange={(v) => a.write('color', v, true)}
+          onGestureEnd={a.endGesture}
+        />
+      )}
       <Sep />
-    </>
+    </span>
   )
 }
 
@@ -146,7 +159,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
         <Button
           size="icon-sm"
           aria-label={translate('panel.crop', { ns: 'inspector' })}
-          onClick={() => useUiStore.getState().setCropTarget(obj.id)}
+          onClick={() => beginCrop(obj.id)}
         >
           <Crop size={ICON_SIZE.sm} />
         </Button>
@@ -173,6 +186,7 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
   return (
     <>
       <ColorField
+        ariaLabel={translate(obj.type === 'arrow' ? 'stroke.color' : 'stroke.strokeColor', { ns: 'inspector' })}
         className="w-[86px] shrink-0"
         value={obj.color}
         onChange={(v) => patch(hist(obj.type === 'arrow' ? 'setArrowColor' : 'setStrokeColor'), (o) => (o.color = v))}

@@ -9,6 +9,10 @@
     "reload": "Reload",
     "save": "Save"
   },
+  "colorField": {
+    "hex": "{{label}}: hex value",
+    "picker": "{{label}}: colour picker"
+  },
   "count": {
     "selectedObjects_one": "{{count}} object selected",
     "selectedObjects_other": "{{count}} objects selected"
@@ -20,11 +24,11 @@
   "measure": {
     "cmSize": "{{w}}×{{h}}cm",
     "cmSizeSpaced": "{{w}}×{{h}} cm",
-    "dpi": "{{value}} dpi",
     "mm": "{{value}} mm",
     "mmPair": "{{a}}, {{b}} mm",
     "mmSize": "{{w}}×{{h}} mm",
     "mmSizeSpaced": "{{w}} × {{h}} mm",
+    "ppi": "{{value}} ppi",
     "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "Mixed",

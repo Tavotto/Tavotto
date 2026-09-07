@@ -123,6 +123,35 @@ test('流程 B+C：曲线首屏（视觉线型选择器）与图例 3×3 位置�
   await expect(panel.getByText('字号', { exact: true })).toBeVisible()
 })
 
+test('流程 C2：图例放到子图外面（外侧锚点），检查随即报「超出图幅」', async ({ app, page }) => {
+  const a = await app()
+  await openFigure(page, a)
+  await openTree(page)
+  await page.getByRole('treeitem', { name: /^图例（图例）/ }).click()
+  const panel = inspector(page)
+
+  // 外侧带在首屏（不用展开任何折叠组），六个位各是一个 radio
+  const rightTop = panel.getByRole('radio', { name: '右侧上' })
+  await expect(rightTop).toBeVisible({ timeout: 15_000 })
+  // 图内摆着的时候不说那句「可能超出图幅」——那时它是句噪音
+  await expect(panel.getByText(/可能超出图幅/)).toHaveCount(0)
+
+  await rightTop.click()
+  await expect(rightTop).toHaveAttribute('aria-checked', 'true', { timeout: 15_000 })
+  // 锚点那两个数字是父容器分数坐标：1.02 = 子图右边缘往外 2%
+  await expect(panel.getByRole('textbox', { name: /锚点 x/ })).toHaveValue('1.02')
+  await expect(panel.getByText(/可能超出图幅/)).toBeVisible()
+
+  // **真的跑到图幅外面了**：预检的 element-outside-figure 报出来（审计 T14）。
+  // 这一条是 jsdom 量不到的那半——它要真的渲染一遍、真的量元素的框。
+  await expect(panel.getByText(/有元素超出图幅/)).toBeVisible({ timeout: 30_000 })
+
+  // 点回九宫格 = 回到子图内侧：那句提示与超出图幅的问题一起消失
+  await panel.getByRole('radio', { name: '左上' }).click()
+  await expect(panel.getByText(/可能超出图幅/)).toHaveCount(0)
+  await expect(panel.getByText(/有元素超出图幅/)).toHaveCount(0, { timeout: 30_000 })
+})
+
 test('1366×768：左树、画布与属性栏三者共存', async ({ app, page }) => {
   await page.setViewportSize({ width: 1366, height: 768 })
   const a = await app()

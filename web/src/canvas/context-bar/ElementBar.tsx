@@ -6,6 +6,8 @@ import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
+import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
+import { setLegendPlacement } from '@/store/actions'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
 import { fontStackOf } from '@/components/inspector/controls/fontStack'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography } from '@/components/inspector/typographyAdapter'
@@ -61,6 +63,7 @@ function ElementQuickInner({
       <>
         {w.has('color') && (
           <ColorField
+            ariaLabel={propLabel('color', role)}
             className="w-[86px] shrink-0"
             value={String(w.read('color') ?? '#000000')}
             onChange={(v) => w.write('color', v, true)}
@@ -120,11 +123,17 @@ function ElementQuickInner({
               </Button>
             }
           >
+            {/* 内 / 外两带：浮动栏与属性页是同一个控件，少给一半就等于
+                「选中图例时只能放在图内」 */}
             <LegendPositionPicker
               value={String(w.read('loc') ?? 'best')}
               options={loc.options ?? []}
               onChange={(v) => w.writeOnce('loc', v)}
               ariaLabel={propLabel('loc', role)}
+              anchor={toLegendAnchor(w.read(LEGEND_ANCHOR_PROP))}
+              anchorSupported={w.has(LEGEND_ANCHOR_PROP)}
+              anchorRange={legendAnchorRange(element)}
+              onPlace={(next) => setLegendPlacement(panel.id, [element], next)}
             />
           </Popover>
         )}
@@ -229,6 +238,7 @@ function TextElementActions({
       )}
       {!compact && a.fieldOf('color') && (
         <ColorField
+          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
           className="w-[86px] shrink-0"
           value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
           onChange={(v) => a.write('color', v, true)}
