@@ -243,24 +243,24 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // ── 4a. 文字属性：元素树里选「标题」，改字号 ─────────────────────────
   await tabTo(page, 'css=[role="treeitem"]')
   await arrowToTreeitem(page, /标题/)
-  await tabTo(page, 'css=input[aria-label="字号"]')
+  await tabTo(page, 'css=[data-prop="fontsize"] input')
   const sizeBefore = await focusedValue(page)
   expect(sizeBefore).not.toBe('')
   const sizeAfter = String(Number(sizeBefore) + 2)
   await typeValue(page, sizeAfter)
   // NumberField 的契约是「Enter 提交并失焦」：重新走到字段核对提交结果
-  await tabTo(page, 'css=input[aria-label="字号"]', 160)
+  await tabTo(page, 'css=[data-prop="fontsize"] input', 160)
   expect(await focusedValue(page)).toBe(sizeAfter)
 
   // ── 4b. 图形属性：元素树里选一条曲线，改线宽 ─────────────────────────
   await tabTo(page, 'css=[role="treeitem"]', 160)
   await arrowToTreeitem(page, /曲线|线段|散点/)
-  await tabTo(page, 'css=input[aria-label="线宽"]')
+  await tabTo(page, 'css=[data-prop="linewidth"] input')
   const widthBefore = await focusedValue(page)
   expect(widthBefore).not.toBe('')
   const widthAfter = String(Number(widthBefore) + 1)
   await typeValue(page, widthAfter)
-  await tabTo(page, 'css=input[aria-label="线宽"]', 160)
+  await tabTo(page, 'css=[data-prop="linewidth"] input', 160)
   expect(await focusedValue(page)).toBe(widthAfter)
 
   // ── 5. undo / redo（快捷键）──────────────────────────────────────────
@@ -299,13 +299,13 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 字号回到原值：重新走到标题的字号框核对
   await tabTo(page, 'css=[role="treeitem"]', 160)
   await arrowToTreeitem(page, /标题/)
-  await tabTo(page, 'css=input[aria-label="字号"]')
+  await tabTo(page, 'css=[data-prop="fontsize"] input')
   expect(await focusedValue(page)).toBe(sizeBefore)
   await page.keyboard.press(tabKey())
   await settleAfter(() => page.keyboard.press('Shift+ControlOrMeta+z')) // 重做字号
   await tabTo(page, 'css=[role="treeitem"]', 160)
   await arrowToTreeitem(page, /标题/)
-  await tabTo(page, 'css=input[aria-label="字号"]')
+  await tabTo(page, 'css=[data-prop="fontsize"] input')
   expect(await focusedValue(page)).toBe(sizeAfter)
 
   // ── 6+7. 导出：⌘E 打开对话框，键盘操作到「导出」──────────────────────

@@ -38,6 +38,15 @@ interface DialogProps {
    * 一个右上角 ×。Radix 自己会把它 aria-hidden，焦点圈与 Esc 都归栈顶。
    */
   covered?: boolean
+  /**
+   * 稳定锚点：落在 `RD.Content` 上的 `data-dialog="<anchor>"`。e2e 要指代
+   * **某一个具体的对话框**时认它——`[role=dialog]` 在这个应用里有五个产出点
+   * （本组件、快速编辑、onboarding coachmark、版本面板、playground），
+   * `querySelector('[role=dialog]')` 拿到的是「文档里排在最前的那个」，
+   * 不是你想要的那个（issue #307）。不给就只落一个空的 `data-dialog`，
+   * 仍然把「共用对话框外壳」这一类与上面那四个区分开。
+   */
+  anchor?: string
 }
 
 export function Dialog({
@@ -53,6 +62,7 @@ export function Dialog({
   busy = false,
   blockDismiss = false,
   covered = false,
+  anchor,
 }: DialogProps) {
   const locked = busy || blockDismiss
   // 本仓库的对话框全部由 store 驱动、没有 Radix Trigger：关闭时 Radix 找不到
@@ -73,6 +83,7 @@ export function Dialog({
         <RD.Content
           style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}) }}
           aria-busy={busy || undefined}
+          data-dialog={anchor ?? ''}
           data-covered={covered || undefined}
           onKeyDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={() => {
@@ -122,6 +133,10 @@ export function Dialog({
             </div>
             {!locked && (
               <RD.Close
+                /* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
+                   本地化文案（`actions.close`），换语言就选不中——e2e 里
+                   `[aria-label=关闭]` 是明文禁止的写法（issue #307）。 */
+                data-dialog-close
                 className="-mr-1.5 -mt-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm text-ink-3 hover:bg-ink/[.055] hover:text-ink"
                 aria-label={t('actions.close')}
               >

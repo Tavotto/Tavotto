@@ -749,9 +749,35 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
   `data-element-svg`（+ manifest bbox）、`data-world-transform`（`CanvasStage` 唯一的世界变换节点，
   教程不用它，e2e 靠它量视口有没有被还原——`e2e/nav-audit.spec.ts`，2026-09-06 审计 T01）、
-  `data-status-live`、`data-fast-edit-live`。**aria-label / 文案 / class / ARIA role 都不能当选择器。**
+  `data-status-live`、`data-fast-edit-live`、`data-dialog[="<名字>"]`、`data-dialog-close`、
+  `data-overlay-svg`、`data-inspector-panel`、`data-prop`。
+  **aria-label / 文案 / class / ARIA role 都不能当选择器。**
   改了这些属性要同步 `steps.ts` 与 `e2e/tutorial.spec.ts`（`data-world-transform` 同步的是
   `nav-audit.spec.ts`）。
+* **指代一个具体单例，就不许用「取第一个匹配」（issue #307）**：`querySelector` / `.first()`
+  配一个不唯一的语义（role / class / 裸标签 / 本地化文案），赌的是「以后不会有人在它前面插一个
+  同类」——那个赌注在写下的当天是对的，一直对到某个无关的改动插进来为止（PR #296 已经输过一次）。
+  扫集合（`querySelectorAll`）、同质列表里「随便哪一行」（`[role="treeitem"]).first()`）、
+  谓词（`el.closest('[role=dialog]')`）、把一次扫描限定进某个容器（`AxeBuilder.include`）不在此列。
+  这一族的锚点：
+  - **`data-dialog` = 共用对话框外壳**（`components/ui/Dialog.tsx` 的 `RD.Content`），
+    `anchor` prop 给它一个名字（`data-dialog="export"` = 导出对话框）。`role="dialog"` 在这个
+    应用里有**五个**产出点（本组件、`canvas/QuickEdit.tsx`、`onboarding/Coachmark.tsx`、
+    `components/VersionDialog.tsx`、`playground/PlaygroundApp.tsx`），所以
+    `querySelector('[role=dialog]')` 拿到的是「排在最前的那个」——`e2e/tutorial.spec.ts` 被迫
+    写成 `:not([data-onboarding-coachmark])` 就是撞过的证据。
+  - **`data-dialog-close` = 对话框右上角的关闭按钮**（同一个文件的 `RD.Close`）。
+    它的 `aria-label` 是 `actions.close` 的译文，换语言就选不中。
+  - **`data-overlay-svg` = 画布覆盖层 SVG**（`canvas/OverlaySvg.tsx`）：选中描示、参考线、
+    手柄都画在它里面。`svg.pointer-events-none` 是排版手段，不是标识。
+  - **`data-inspector-panel` = 右侧检查器栏**（`components/inspector/Inspector.tsx` 的 `aside`）：
+    左抽屉（`data-left-drawer`）、版本面板、快捷任务卡也都是 `aside`。
+  - **`data-prop` = 属性字段行**（`inspector/ElementInspector.tsx` 的 `FieldBlock`、
+    `inspector/controls/TypographyControls.tsx` 的 `Anchor`，值一律从
+    `lib/typography.propertyPathOf()` 出）：e2e 要走到字号 / 线宽输入框时用
+    `[data-prop="fontsize"] input` / `[data-prop="linewidth"] input`，不是
+    `input[aria-label="字号"]`。同一条规则在下一节「属性能力层」里已经写着，
+    这里只是把 e2e 侧的落点点名。
 * **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
   `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的
   `role="alert"` 里）。问「**应用刚说了什么**」的一律认它——`e2e/twin-axes-pick.spec.ts`（⌥ 轮换

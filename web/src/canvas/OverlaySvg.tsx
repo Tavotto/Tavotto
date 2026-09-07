@@ -136,6 +136,10 @@ export function OverlaySvg() {
 
   return (
     <svg
+      /* `data-overlay-svg` 是覆盖层的稳定锚点。e2e 以前拿 `svg.pointer-events-none`
+         指代它——CSS class 是排版手段不是标识，画布上再来一层不吃事件的 svg
+         就会被 `querySelector` 先捡走（issue #307）。 */
+      data-overlay-svg
       className="pointer-events-none absolute inset-0"
       width={viewW}
       height={viewH}

@@ -10,6 +10,11 @@ import { expect, test } from './fixtures'
  * 这条用例抓到过一次真的：给 Dialog 的关键帧补 `translate(-50%,-50%)` 时，
  * Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，两者叠加，
  * 播放期间弹窗偏出去 250px。单测怎么写都照不到。
+ *
+ * 定位一律走稳定锚点：`[data-dialog="export"]` = 导出对话框、`[data-dialog-close]`
+ * = 它的关闭按钮。以前这里写 `[role=dialog]` 与 `[aria-label=关闭]`——前者在这个
+ * 应用里有五个产出点、`querySelector` 拿的是排在最前的那个，后者是本地化文案
+ * （issue #307）。锚点登记在 `web/AGENTS.md`。
  */
 test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保持居中', async ({ app, page }) => {
   const a = await app()
@@ -25,7 +30,7 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
     const out: { dx: number; dy: number; state?: string; anim: string; op: string }[] = []
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => requestAnimationFrame(r))
-      const d = document.querySelector('[role=dialog]') as HTMLElement | null
+      const d = document.querySelector('[data-dialog="export"]') as HTMLElement | null
       if (!d) continue
       const r = d.getBoundingClientRect()
       const cs = getComputedStyle(d)
@@ -34,7 +39,7 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
         dy: Math.abs(r.y + r.height / 2 - innerHeight / 2),
         state: d.dataset.state,
         anim: cs.animationName,
-        op: getComputedStyle(document.querySelector('[role=dialog]')!.parentElement!).opacity,
+        op: getComputedStyle(document.querySelector('[data-dialog="export"]')!.parentElement!).opacity,
       })
     }
     return out
@@ -49,15 +54,15 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
 
   // ---- 弹窗退场：Radix Presence 应当把节点留到动画播完
   const exit = await page.evaluate(async () => {
-    const close = document.querySelector('[role=dialog] [aria-label=关闭]') as HTMLElement
+    const close = document.querySelector('[data-dialog="export"] [data-dialog-close]') as HTMLElement
     close.click()
     const seen: { state?: string; anim: string }[] = []
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => requestAnimationFrame(r))
-      const d = document.querySelector('[role=dialog]') as HTMLElement | null
+      const d = document.querySelector('[data-dialog="export"]') as HTMLElement | null
       if (d) seen.push({ state: d.dataset.state, anim: getComputedStyle(d).animationName })
     }
-    return { seen, goneAfter: !document.querySelector('[role=dialog]') }
+    return { seen, goneAfter: !document.querySelector('[data-dialog="export"]') }
   })
   console.log(`[动效] 弹窗退场：留存 ${exit.seen.length} 帧，动画=${exit.seen[0]?.anim}，state=${exit.seen[0]?.state}，最终卸载=${exit.goneAfter}`)
   expect(exit.seen.length, '退场时节点应当被保活播完，而不是瞬间消失').toBeGreaterThan(0)
@@ -114,22 +119,82 @@ test('prefers-reduced-motion：动画一帧都不播，浮层立刻消失', asyn
   await page.waitForTimeout(1500)
 
   const r = await page.evaluate(async () => {
+    const dialog = () => document.querySelector('[data-dialog="export"]') as HTMLElement | null
     const btn = [...document.querySelectorAll('button')].find(
       (b) => b.textContent?.trim() === '导出',
     ) as HTMLButtonElement
     btn.click()
     await new Promise((rr) => requestAnimationFrame(rr))
-    const d = document.querySelector('[role=dialog]') as HTMLElement
+    const d = dialog()!
     const dur = getComputedStyle(d).animationDuration
-    ;(document.querySelector('[role=dialog] [aria-label=关闭]') as HTMLElement).click()
+    ;(document.querySelector('[data-dialog="export"] [data-dialog-close]') as HTMLElement).click()
+    // **主判据在这一刻取样：点完关闭、只让出微任务，一帧都不让。**
+    //
+    // 两条互相制约的时限，取样点必须落在中间：
+    //   ① React 的离散更新走**微任务**刷新——`close.click()` 返回时 DOM 还没换成
+    //      `data-state=closed`，直接读只能读到进场那条 `pop-in`（实测就是这么红的）；
+    //   ② 让出一帧就晚了——关掉动效后退场只有 0.01ms，早已播完，而没有 fill-mode
+    //      的 CSS 动画一播完就从 `getAnimations()` 里消失，拿到空数组。
+    // 微任务**不推进动画时间轴**（`document.timeline` 只在帧边界前进），所以在这里
+    // 等多少个微任务都不会让 0.01ms 的退场动画播完：既等到了 React 换类名，又没
+    // 让动画有机会结束。`getAnimations()` 按规范自己会先刷一次样式，类名一换就建得出。
+    const seen = new Map<string, number>()
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve()
+      const el = dialog()
+      if (!el) break
+      for (const anim of el.getAnimations()) {
+        seen.set(
+          (anim as unknown as { animationName?: string }).animationName ?? '',
+          Number(anim.effect?.getComputedTiming().activeDuration ?? NaN),
+        )
+      }
+    }
+    const exitAnims = [...seen].map(([name, activeDuration]) => ({ name, activeDuration }))
     let frames = 0
     for (let i = 0; i < 10; i++) {
       await new Promise((rr) => requestAnimationFrame(rr))
-      if (document.querySelector('[role=dialog]')) frames++
+      if (dialog()) frames++
     }
-    return { dur, frames }
+    return { dur, frames, exitAnims }
   })
-  console.log(`[动效] reduced-motion：animation-duration=${r.dur}，退场留存 ${r.frames} 帧`)
+  console.log(
+    `[动效] reduced-motion：animation-duration=${r.dur}，` +
+      `退场动画=${JSON.stringify(r.exitAnims)}，退场留存 ${r.frames} 帧`,
+  )
+  // ── 主判据：退场动画的**有效时长**（issue #308）────────────────────────
+  // 它与下面两条判的是同一件事，区别在量程：开着动效读到 90（`--duration-exit`），
+  // 关掉读到 0.01，九千倍的间隔，且**完全不受 runner 的调度抖动影响**——
+  // 它读的是动画自己的时间轴，不是「浏览器几帧之内做完了什么」。
+  //
+  // **排在最前面是有意的。** 变异时（停掉 index.css 的 reduced-motion override）
+  // 三条会一起红，而 expect 一抛后面就不执行了：主判据排在后面的话，它在变异下
+  // 一次都执行不到，「变异后用例红了」于是变成对它的假确认（同族：「正向用例
+  // 被前置校验截断」，下面那段注释里记着上一轮踩到的现场）。
+  //
+  // **`length > 0` 这条不是凑数的**：探针晚一步元素就卸载了，`getAnimations()`
+  // 返回空数组，`Math.max(...[])` 是 -Infinity、`.every()` 是 true——判据会静默
+  // 变成恒真。
+  //
+  // 两条反证（2026-09-08，本机 chromium，都用退出码判）：
+  //   ① **杀得死真缺陷**：停掉 `web/src/index.css` 的 reduced-motion 全局 override
+  //      并真正重新构建（构建退 0、包内产物指纹 c793cc19→fd199c7f、产物里那条
+  //      `prefers-reduced-motion:reduce){*,:before,:after{` 规则计数 1→0），本行读到
+  //      `[{"name":"pop-out","activeDuration":90}]`，`Expected: < 1 / Received: 90`，
+  //      **报错行就是本行**（主判据排在最前，没被前面的断言截断）。还原后重新构建，
+  //      指纹与规则计数原样回来，读回 0.01。开着 90 / 关掉 0.01 = 九千倍。
+  //   ② **防恒真那条自己也验过**：把取样人为挪到 4 帧之后（元素已卸载），日志打印
+  //      `退场动画=[]`，本段第一行当场红（`Expected: > 0 / Received: 0`）。
+  expect(r.exitAnims.length, '关闭那一刻应当取到退场动画（空数组会让下面两条恒真）')
+    .toBeGreaterThan(0)
+  expect(
+    r.exitAnims.map((a) => a.name),
+    '取到的应当是退场动画 pop-out',
+  ).toContain('pop-out')
+  expect(
+    Math.max(...r.exitAnims.map((a) => a.activeDuration)),
+    `退场动画的有效时长应当被压到 0（实得 ${JSON.stringify(r.exitAnims)}）`,
+  ).toBeLessThan(1)
   // index.css 的全局 override 把时长压到 0.01ms —— 动画不再有可感知的时长
   expect(parseFloat(r.dur)).toBeLessThan(0.001)
   // 这一行判别的是「有没有在播」，两档之间隔着一条缝：
@@ -155,9 +220,13 @@ test('prefers-reduced-motion：动画一帧都不播，浮层立刻消失', asyn
   //      这一族叫「正向用例被前置校验截断」，前置先抛时后面那条什么都没证明。
   // 还原后重新构建，指纹与规则计数原样回来，用例三轮全绿。放宽之后判据仍然杀得死真缺陷。
   //
-  // 与上一行的时长断言不重复，两条都要留：时长断言看 CSS override 生没生效，
+  // 与上面几行不重复，都要留：时长断言看 CSS override 生没生效，
   // 这一条看**有没有别的东西**（例如写死 setTimeout 的保活）在关掉动效后还留着浮层，
   // 那种缺陷时长断言看不见。
+  //
+  // 2026-09-08 加 `getAnimations` 主判据时复核过这条的量程有没有被挪动：主判据的
+  // 取样只让出微任务、不跨帧，所以帧数的起点没变。同一轮实测，变异下打印 8，
+  // 还原后打印 1–2——两档仍然分得开，阈值 5 仍在缝里。
   expect(r.frames, '关掉动效后不该还有可感知的保活期').toBeLessThanOrEqual(5)
 })
 

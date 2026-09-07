@@ -267,9 +267,11 @@ test("降档之后：选中图内元素、属性面板打得开、撤销回得�
   await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
 
   // 属性面板打得开 = 语义编辑这条路没断
-  const inspector = page
-    .locator('[data-testid="inspector"], aside, [role="complementary"]')
-    .first();
+  // 锚点是 `data-inspector-panel`（`components/inspector/Inspector.tsx`）。
+  // 旧写法的回退链里有裸 `aside`——左抽屉、版本面板、快捷任务卡也都是
+  // `aside`，`.first()` 拿到的是「文档里排在最前的那个」，属性面板压根
+  // 没打开也能绿（issue #307）。
+  const inspector = page.locator("[data-inspector-panel]");
   await expect(inspector).toBeVisible({ timeout: 15_000 });
 
   // **撤销把「双击加面板」那一步撤掉，画布回到空——这正是它该做的。**
