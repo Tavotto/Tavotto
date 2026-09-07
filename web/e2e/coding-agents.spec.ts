@@ -64,8 +64,13 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
   for (const fold of await folds.all()) {
     expect(await fold.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false)
   }
-  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现
-  await expect(dialog.locator('[data-agent-custom-exe]')).toBeHidden()
+  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现。
+  // **先钉住它确实在 DOM 里**：`toBeHidden()` 对一个根本不存在的元素同样通过，
+  // 只写后半句的话，这颗按钮被删掉、锚点被摘掉都是绿的——那是这一轮到处在修的
+  // 同一种假绿（这条锚点没有别的正向断言替它兜底，所以得自己钉）。
+  const customExe = dialog.locator('[data-agent-custom-exe]')
+  await expect(customExe).toHaveCount(1)
+  await expect(customExe).toBeHidden()
 
   // 返回：列表还在
   await dialog.locator('[data-agent-back]').click()

@@ -24,7 +24,15 @@
   描述。画布不再入库，看不到 diff 了——判据换成 CI `plugin-candidate` job 里真起 server 读回
   的资源与构建物逐字相同；想本地对比就构建两次到不同 `--out` 再 diff。
 - 界面用 agent-browser 实测；黄金路径 E2E `cd web && pnpm e2e`（Playwright，
-  先 `python scripts/build_frontend.py`）。
+  先 `python scripts/build_frontend.py`）。`e2e/mcp-canvas.spec.ts` 还要
+  `python scripts/build_mcp_widget.py`——`canvas.html` 不再入库（ADR 0043），没建过的
+  工作区上那四条会以 ENOENT 红，CI 每次 checkout 现建所以看不到这一幕。
+- **横向溢出只有一把尺子：`e2e/overflow.ts` 的 `horizontalOffenders(page, rootSel)`。**
+  逐个元素扫、只认 `overflow-x: visible`，并且**只量 HTML 元素**——SVG 里的
+  `scrollWidth` / `clientWidth` 量的不是页面宽度（样式页示例图那条 `rotate(-90)` 的轴标题
+  报 `sw=66 cw=21`，两个数是同一段字的两种量法），主语错了只会产出假红。这条原先只补进了
+  `settings-shell.spec.ts` 那一份抄本，另外两份带着盲区活到 2026-09-07 才被发现（#299），
+  所以现在只留一份，新用例一律 import 它、别再抄第四份。
 
 ## 渲染态：按「文件 + 变体」分键（2026-08-18，Phase F）
 
@@ -606,8 +614,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   `data-agent-open="<agent id>"`（`AgentList` 覆盖整行的进详情按钮）、
   `data-agent-detail="<agent id>"`（`AgentDetailView` 根节点 = 「此刻在详情页」）、
   `data-agent-back`（返回列表）、`data-agent-field="state | version | executable | source |
-  checked-at"`（概览的「标签 / 值」行）、`data-agent-fold="custom-executable" | "diagnostics"`
-  （两个 `<details>`）、`data-agent-custom-exe`（「使用自定义可执行文件」）。
+  checked-at | readiness"`（概览与诊断里的「标签 / 值」行）、
+  `data-agent-fold="custom-executable" | "diagnostics"`（两个 `<details>`）、
+  `data-agent-custom-exe`（「使用自定义可执行文件」——它只被一条 `toBeHidden()` 用到，
+  所以那条断言先 `toHaveCount(1)` 再判隐藏：`toBeHidden()` 对不存在的元素同样通过）。
   「一级页面不许有输入框」这条现在量的是 `[data-endpoint-step]`（端点编辑器整个不在这一层，
   锚点在 `EndpointDialog`）与 `[data-agent-field]`（概览字段只在详情里），不是「某两句话没出现」。
   分区导航认 `[data-section="ai"]`（分区 id 是持久化格式的一部分），不认导航项的文案。
