@@ -132,9 +132,26 @@ test('prefers-reduced-motion：动画一帧都不播，浮层立刻消失', asyn
   console.log(`[动效] reduced-motion：animation-duration=${r.dur}，退场留存 ${r.frames} 帧`)
   // index.css 的全局 override 把时长压到 0.01ms —— 动画不再有可感知的时长
   expect(parseFloat(r.dur)).toBeLessThan(0.001)
-  // 2 帧是 Radix 收到 animationend 再走 React 卸载的固有开销，不是「在播动画」；
-  // 真播的话是 pop-out 的 90ms ≈ 6 帧起（上一条用例实测 7 帧）
-  expect(r.frames, '关掉动效后不该还有可感知的保活期').toBeLessThanOrEqual(3)
+  // 这一行判别的是「有没有在播」，两档之间隔着一条缝：
+  //   **不播** = Radix 收到 animationend 再走 React 卸载的固有开销，量到的其实是
+  //   runner 的调度节奏——本机 chromium 1–2 帧，CI runner 3 帧、抖得到 4；
+  //   **在播** = pop-out 那 90ms，6 帧起（上一条用例实测 7 帧）。
+  // 阈值取 5 是**落在缝里**，不是「放宽到绿为止」。原来写 `<= 3`，贴着固有开销的
+  // 上沿、余量为零：它量的是调度抖动，不是产品播没播动画。2026-09-07 的 CI 日志，
+  // 三棵树、五条腿打印的都是 3——无关判据 PR 的合并组（run 34081435324）posix / windows
+  // 各 3，本分支 PR 头 07b7f283（run 34079798346）posix / windows 各 3，本分支合并组
+  // （run 34083038739）的 posix 腿也是 3；**同一棵树**的 windows 腿却打印 4，初次与重试
+  // 都 4，于是 `<= 3` 把整队无关的 PR 挡在合并队列外。判据的主语没错，是量程贴了边。
+  //
+  // 变异反证（2026-09-07，本机 chromium）：把 web/src/index.css 里那段
+  // `@media (prefers-reduced-motion: reduce)` 的全局 override 停掉再重新构建，
+  // 5 轮打印 6/6/6/7/7，这一行在阈值 5 下每轮都红（`Expected: <= 5  Received: 6`）。
+  // 放宽之后它仍然杀得死真缺陷；两档之间的缝还在。
+  //
+  // 与上一行的时长断言不重复，两条都要留：时长断言看 CSS override 生没生效，
+  // 这一条看**有没有别的东西**（例如写死 setTimeout 的保活）在关掉动效后还留着浮层，
+  // 那种缺陷时长断言看不见。
+  expect(r.frames, '关掉动效后不该还有可感知的保活期').toBeLessThanOrEqual(5)
 })
 
 /**
