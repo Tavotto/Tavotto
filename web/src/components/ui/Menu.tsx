@@ -289,9 +289,9 @@ export function MenuRadioItem({
   return (
     <DM.RadioItem {...rest} value={value} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
-        <Check size={12} />
+        <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
-      {Icon && <Icon size={12} className="shrink-0 text-ink-2" aria-hidden />}
+      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
     </DM.RadioItem>
   )

@@ -12,6 +12,7 @@ import {
 import { switchObjectKind } from '@/store/actions'
 import type { CanvasObject } from '@/types/document'
 import { objectTypeLabel } from '@/types/document'
+import { ICON_SIZE } from '../ui/Icon'
 import { Menu, MenuHeading, MenuRadioGroup, MenuRadioItem } from '../ui/Menu'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 
@@ -65,7 +66,7 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
           )}
         >
           {currentLabel}
-          <ChevronDown size={10} className="text-ink-3" aria-hidden />
+          <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" aria-hidden />
         </button>
       }
     >
