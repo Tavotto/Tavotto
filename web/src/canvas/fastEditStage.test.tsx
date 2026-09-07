@@ -194,6 +194,34 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(note()).toBeNull()
   })
 
+  /**
+   * 活动区必须**先在、后变**。
+   *
+   * 读屏播报的是活动区**内容的变化**：把一个已经填好字的 `role="status"` 整个插
+   * 进 DOM，各家 AT 行为不一致、很可能一声不吭。所以这条断言钉的不是「有没有这
+   * 段文字」（那一维上面两条已经钉了），而是**那块区在没话说的时候也在**——正是
+   * 这一维塌了的话，提示会静默失效，而界面看上去完全正常。
+   */
+  const live = () => container.querySelector('[data-fast-edit-live]')
+
+  it('播报区常驻：没话说时它是空的，但节点在；有话说时同一个节点被填上', async () => {
+    // 图本来就在文档里（不是这次加进来的）：没话说
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    act(() => returnToLayout())
+    act(() => openFastEdit('a.pdf'))
+    expect(note(), '这一次不该有可见的说明').toBeNull()
+    expect(live(), '没话说时播报区也必须在 DOM 里').not.toBeNull()
+    expect(live()!.textContent?.trim(), '没话说时它是空的').toBe('')
+
+    // 换一张还不在文档里的：同一个节点被填上，而不是新插一个
+    const before = live()
+    act(() => returnToLayout())
+    act(() => openFastEdit('b.pdf'))
+    expect(live()!.textContent, '有话说时播报区被填上').toContain('撤销')
+    expect(live(), '必须是同一个节点被填上，不能是新插进来的').toBe(before)
+  })
+
   it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {
     // 「对象消失就退出快速编辑」的清扫在 App 层挂（usePruneSelection）：这里手动订阅
     const stopPrune = subscribePruneSelection()

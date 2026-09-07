@@ -71,10 +71,13 @@ export function FastEditBar() {
         </div>
 
         {/* 这张图是为了编辑才刚加进文档的：说出口，并说明怎么撤（UI 审计 T06）。
-            不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉 */}
+            不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉。
+            这一份只负责**看得见**，不带 role：读屏播报归 `CanvasStage` 里那块常驻
+            活动区（`data-fast-edit-live`）。放在那儿而不是这儿，是因为这个浮动条
+            本身就是进快速编辑那一刻才挂上的——活动区跟着它一起插进 DOM 的话，
+            插进来时就已经填好了字，读屏多半一声不吭。 */}
         {justAdded && (
           <div
-            role="status"
             data-fast-edit-added-note
             className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
           >

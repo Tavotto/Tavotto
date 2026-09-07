@@ -806,7 +806,14 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
   对象只能是文档里的面板对象），这一步由 `openFastEdit` 用状态提示
   `fastEdit.addedForEdit` 说出口，一条历史、撤销即移除；图已在文档里时零文档
-  改动。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
+  改动。**这句话分两份，别合成一份**：可见的常驻说明在 `FastEditBar`
+  （`data-fast-edit-added-note`，**不带 role**），读屏播报在 `CanvasStage` 的
+  `data-fast-edit-live`（`role="status"`，sr-only）。播报那份挂在 `CanvasStage`
+  而不是浮动条里，是因为浮动条本身就是进快速编辑那一刻才挂上的——活动区跟它一起
+  插进 DOM 的话，插进来时就已经填好了字，而读屏播报的是**区内内容的变化**，
+  「带着内容整个插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个
+  role 承诺了一件它并没有做的事。区先在、内容后变，由
+  `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
   `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
   `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
   控件。**不许再用一个中性的「打开」承载加入文档。**
