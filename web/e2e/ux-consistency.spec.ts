@@ -1,4 +1,5 @@
 import { expect, test, type RunningApp } from './fixtures'
+import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
 
 /**
@@ -49,28 +50,6 @@ async function openTree(page: Page) {
 }
 
 const inspector = (page: Page) => page.getByLabel('右侧面板', { exact: true })
-
-/**
- * 把布局撑破的元素（真布局才量得出来）。只认 `overflow-x: visible` 的那些：
- * 裁切（truncate 是 hidden + 省略号）与有意可滚的容器本来就不该算撑破。
- */
-async function horizontalOffenders(page: Page, rootSel: string): Promise<string[]> {
-  return page.evaluate((sel) => {
-    const rootEl = document.querySelector(sel)
-    if (!rootEl) return ['NO ROOT: ' + sel]
-    const out: string[] = []
-    for (const el of [rootEl, ...Array.from(rootEl.querySelectorAll('*'))]) {
-      const e = el as HTMLElement
-      if (getComputedStyle(e).overflowX !== 'visible') continue
-      if (e.scrollWidth > e.clientWidth + 1) {
-        out.push(
-          `${e.tagName}.${String(e.className).slice(0, 60)} sw=${e.scrollWidth} cw=${e.clientWidth}`,
-        )
-      }
-    }
-    return out
-  }, rootSel)
-}
 
 /* ============================ 流程 A：统一图中文字 ========================== */
 

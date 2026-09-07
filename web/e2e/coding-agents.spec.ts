@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from './fixtures'
 import { lowContrastNodes as sharedLowContrastNodes } from './contrast'
+import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
 
 /**
@@ -27,30 +28,6 @@ async function openAgentSettings(page: Page, baseURL: string) {
   // 比导航项上那句会被改名的文案稳得多
   await dialog.getByRole('navigation').locator('[data-section="ai"]').click()
   return dialog
-}
-
-/**
- * 对话框里**每一个**把布局撑破的元素（真布局才量得出来）。
- *
- * 只量 body 与 dialog 两层是不够的：中间任何一个可滚/裁切的容器都会把里面的
- * 溢出吸收掉，外面两层永远是干净的——往行里塞一个 900px 不收缩的元素，那种写法
- * 照样绿（变异验过）。所以这里逐个元素扫，只认 `overflow-x: visible` 的那些：
- * 裁切（`truncate` 就是 hidden + 省略号）与有意可滚的容器本来就不该算撑破。
- */
-async function horizontalOffenders(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const dlg = document.querySelector('[role="dialog"]')
-    if (!dlg) return ['NO DIALOG']
-    const out: string[] = []
-    for (const el of [document.body, dlg, ...Array.from(dlg.querySelectorAll('*'))]) {
-      const e = el as HTMLElement
-      if (getComputedStyle(e).overflowX !== 'visible') continue
-      if (e.scrollWidth > e.clientWidth + 1) {
-        out.push(`${e.tagName}.${String(e.className).slice(0, 60)} sw=${e.scrollWidth} cw=${e.clientWidth}`)
-      }
-    }
-    return out
-  })
 }
 
 test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', async ({ app, page }) => {
@@ -117,14 +94,23 @@ test('编码 Agent：重新检测有播报，且不发生布局跳动', async ({
   const a = await app()
   const dialog = await openAgentSettings(page, a.baseURL)
 
-  const list = dialog.locator('ul').first()
+  // 量的必须是**同一个东西**：`ul` 的第一个在探测没回来时是骨架屏、回来之后
+  // 才是真列表，那样量到的是两个元素，不是同一块内容有没有跳。
+  const list = dialog.locator('[data-agent-section="in-app"] ul')
+  await expect(list).toBeVisible({ timeout: 30_000 })
   const before = await list.boundingBox()
   await dialog.locator('[data-agent-rescan]').click()
   await expect(dialog.locator('[data-agent-last-checked]')).toBeVisible({ timeout: 30_000 })
   const after = await list.boundingBox()
+  // **先证明两次都真的量到了。** `boundingBox()` 量不到时返回 null，原先那句
+  // `?? 0` 会把「什么都没量到」记成「x = 0」：一侧为 null 就是一次假红（实测
+  // 报过 |433 - 0|），两侧都为 null 则是一次假绿——0 - 0 永远小于 2，判据在
+  // 一个字都没量到的情况下照样通过。
+  expect(before, '重新检测前没量到列表').not.toBeNull()
+  expect(after, '重新检测后没量到列表').not.toBeNull()
   // 高度可以随内容变，但不该整块跳走（左边缘与宽度稳定）
-  expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(2)
-  expect(Math.abs((after?.width ?? 0) - (before?.width ?? 0))).toBeLessThan(2)
+  expect(Math.abs(after!.x - before!.x)).toBeLessThan(2)
+  expect(Math.abs(after!.width - before!.width)).toBeLessThan(2)
 
   // aria-live 区在（检测完成 / 失败都要说一声）
   await expect(dialog.locator('[aria-live="polite"]')).toHaveCount(1)
@@ -136,12 +122,12 @@ test('编码 Agent：1024×768 窄窗口不横向溢出', async ({ app, page }) 
   const dialog = await openAgentSettings(page, a.baseURL)
 
   await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible()
-  expect(await horizontalOffenders(page)).toEqual([])
+  expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 
   // 详情页同样：长路径靠省略，不把面板撑开
   await dialog.locator('[data-agent-open]').first().click()
   await expect(dialog.locator('[data-agent-detail]')).toBeVisible()
-  expect(await horizontalOffenders(page)).toEqual([])
+  expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 })
 
 test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次）', async ({ app, page }) => {
