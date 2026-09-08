@@ -152,12 +152,22 @@ jobs:
       #
       # 一句话：不变式验的是引擎自己的契约，而**契约的对手方会随版本变**。
       # 只在一个版本上验它，等于只验了一半。
+      #
+      # `test_legend_binding.py` 在这里是**这次事故加的**：`legend_fresh_handle`
+      # 写死了 `get_figure(root=False)`（3.10 才有的关键字），而 3.8 / 3.9 上那个
+      # TypeError 被 `bind_legend_entries` 的 `except Exception` 咽掉，于是整套
+      # 「图例项 ↔ 图中源对象」在宣称的下界上**整片失效**、一句报错都没有。
+      # 这一档当时唯一的红是不变式里一条远端症状（撤销后示意线换了个类），
+      # 报文指向 `axes_0.legend.texts_2` ——离病因十万八千里，连红十一天没人读懂。
+      # 直接盯着这条契约的判据是这个文件：修之前它在 3.8.4 上红 12 条，修之后
+      # 29 条全绿。
       - name: 结构性不变式（本 target 的 matplotlib 版本）
         run: |
           set -euo pipefail
           python -m pytest -q \
             tests/test_invariants_engine.py \
-            tests/test_artist_families.py
+            tests/test_artist_families.py \
+            tests/test_legend_binding.py
 
       - name: CompatBench
         run: |
