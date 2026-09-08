@@ -1077,9 +1077,13 @@ _font_installed = font_installed
 #: 「缺 200 个字符」既没法读也没法修；超出的部分由数量说话。
 MAX_MISSING_GLYPHS = 12
 
-#: 字体文件 → FT2Font 的进程内缓存。一次 manifest 要过很多个 Text，而
+#: (字体文件, 面索引) → FT2Font 的进程内缓存。一次 manifest 要过很多个 Text，而
 #: 打开字体文件是几毫秒级的。
-_FT_FONTS: dict[str, object] = {}
+#:
+#: **键必须带面索引**：字体集（`.ttc` / `.otc`）一个文件里装着好几张脸，
+#: 只按路径缓存会让先问到的那张脸顶掉后面全部——Noto CJK 的七张脸共用一个
+#: `NotoSansCJK-Regular.ttc`。
+_FT_FONTS: dict[tuple[str, int], object] = {}
 
 #: `$…$` 之间的片段。matplotlib 用 **mathtext 字体集**画它们（不是正文那张
 #: 脸），拿正文字体去判它们的覆盖会报出一批不存在的缺字。**判不了就不判**，
@@ -1087,25 +1091,47 @@ _FT_FONTS: dict[str, object] = {}
 _MATH_SPAN = re.compile(r"(?<!\\)\$.*?(?<!\\)\$", re.S)
 
 
-def _ft_font(path: str):
-    hit = _FT_FONTS.get(path)
+def _ft_font(path: str, face_index: int = 0):
+    """打开**这一张脸**，不是这个文件的第一张脸。
+
+    `face_index` 是字体集里的位置。漏掉它的后果不是打不开，是安静地读错一张
+    脸：matplotlib 3.11 起会把 `.ttc` 里的每张脸各注册一个名字，七个
+    `Noto Sans CJK {JP,SC,TC,HK,KR}` 全指向同一个 `NotoSansCJK-Regular.ttc`，
+    `FT2Font(path)` 一律给第 0 张（JP）。3.10 及以前只认第 0 张，所以那时
+    索引恒为 0——这个参数在旧版上不改变任何行为。
+    """
+    key = (path, face_index)
+    hit = _FT_FONTS.get(key)
     if hit is None:
         from matplotlib.ft2font import FT2Font
 
         try:
-            hit = FT2Font(path)
+            # 索引非 0 只可能来自 3.11+ 的 `FontPath`，那些版本一定有这个关键字；
+            # 旧版走上面那支，签名与从前逐字相同。**不吞 TypeError**：真出现了
+            # 「有索引却传不进去」，宁可当场炸，也不要退回去读错的那张脸。
+            hit = FT2Font(path, face_index=face_index) if face_index else FT2Font(path)
         except (OSError, RuntimeError):  # 坏字体文件不该带着整次渲染一起死
             hit = False
-        _FT_FONTS[path] = hit
+        _FT_FONTS[key] = hit
     return hit or None
 
 
-def _resolved_font_paths(families) -> list[str]:
-    """这段文字**真正会用到**的字体文件，按 matplotlib 自己的回退顺序。
+def _resolved_font_paths(families) -> list[tuple[str, int]]:
+    """这段文字**真正会用到**的 (字体文件, 面索引)，按 matplotlib 自己的回退顺序。
 
     走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
     「我们说画得出的」== 「渲染时画得出的」。私有接口不在时退回单点解析
     ——那时链只有一环，判据会偏严（多报），不会偏松（漏报）。
+
+    **面索引不能丢**。matplotlib 3.11 起解析结果是 `FontPath`（`str` 的子类，
+    带 `.face_index`），字体集里的每张脸各注册一个名字却共用一个路径：
+    `Noto Sans CJK SC` 与 `Noto Sans CJK JP` 都是
+    `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`，只有索引分得开
+    （SC 是第 2 张）。`str(f)` 与 `FT2Font(f)` **都**只留路径、都读第 0 张——
+    实测（Debian trixie + fonts-noto-cjk + matplotlib 3.11.1）：请求 SC 拿回
+    的脸自称 JP。索引丢在这里，`cjk_family` 就会报出一张用户没选、规范也不
+    认的脸，`cjk-fallback-missing` 于是对着画得好好的中文亮红灯。
+    3.10 及以前返回的是普通 `str`，没有这个属性，索引恒为 0。
     """
     prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
@@ -1115,7 +1141,7 @@ def _resolved_font_paths(families) -> list[str]:
             found = [font_manager.findfont(prop)]
         except (ValueError, RuntimeError):
             return []
-    return [str(f) for f in found]
+    return [(str(f), int(getattr(f, "face_index", 0) or 0)) for f in found]
 
 
 #: 「这个字符是不是中日韩」——码位判据，**与 `engine/preflight.py` 的 `_CJK`
@@ -1140,7 +1166,9 @@ def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
     """
     if not isinstance(text, str) or not text.strip():
         return [], [], []
-    fonts = [f for f in (_ft_font(p) for p in _resolved_font_paths(families)) if f is not None]
+    fonts = [
+        f for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families)) if f is not None
+    ]
     if not fonts:
         return [], [], []
     primary, rest = fonts[0], fonts[1:]
