@@ -28,7 +28,19 @@ def remote(tmp_path):
     return kit.bare_remote_with_main(tmp_path)
 
 
-def _staging(tmp_path, name, *, sha, version=None, salt=""):
+#: 夹具里的「旧版」。这个文件的用例讲的全是**旧版 → 新版**这条关系，
+#: 与产品此刻的 `__version__` 无关，所以两端都必须是写死的字面量。
+#:
+#: 从前 `_staging` 的默认是 `None`，`kit.synthetic_staging` 于是照抄插件清单里的
+#: 版本 —— 也就是产品的 `__version__`。六处「bootstrap 用默认版本、promote 一个
+#: 写死的 `0.14.0`」因此赌着「产品版本 < 0.14.0」：产品号涨到 0.14.0 的当天，
+#: promote 先被幂等检查判成 `noop`（「0.14.0 已发布，内容一致」）回 0，四条断言
+#: 拒绝码的用例当场变红，而红的位置在发版 PR 上、离病因很远。2026-09-08 发
+#: v0.14.0 时真的踩到了。默认写死之后这个耦合从形状上不存在。
+OLD_VERSION = "0.13.0"
+
+
+def _staging(tmp_path, name, *, sha, version=OLD_VERSION, salt=""):
     d = tmp_path / name
     kit.synthetic_staging(d, source_sha=sha, version=version, widget_salt=salt)
     return d
