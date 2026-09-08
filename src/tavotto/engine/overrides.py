@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import inspect
 import math
 import os
 import re
@@ -3362,6 +3363,23 @@ def _legend_handle_box_geometry(leg: Legend) -> tuple[float, float, float]:
     return leg.handlelength * fontsize, height, descent
 
 
+#: `Artist.get_figure()` 认不认 `root=` 关键字。**matplotlib 3.10 才加的**：
+#: 3.10 起它默认回**根** figure，要拿 artist 自己所在的子图必须显式
+#: `root=False`；3.8 / 3.9 没有这个形参，传了当场 `TypeError`。
+#:
+#: 直接写 `root=False` 的那一版在 pyproject 宣称的下界（`matplotlib>=3.8`）上
+#: 把整个「图例项 ↔ 图中源对象」绑定**整片打掉**：`bind_legend_entries` 的
+#: `except Exception: h = None` 把这个 TypeError 当成「这个候选造不出示意线」
+#: 咽了，于是每一项的指纹都是 None、每一项都绑不上源。没有任何报错——只有
+#: 撤销之后示意线换了个类（`LineCollection` → `Line2D`）这一个远端症状。
+_GET_FIGURE_TAKES_ROOT = "root" in inspect.signature(Artist.get_figure).parameters
+
+
+def _owning_figure(art: Artist):
+    """artist 自己所在的那张（子）figure，跨 matplotlib 版本同义。"""
+    return art.get_figure(root=False) if _GET_FIGURE_TAKES_ROOT else art.get_figure()
+
+
 def legend_fresh_handle(leg: Legend, orig, box=None):
     """按 matplotlib 自己的 handler 从 `orig` 造一份图例示意线。
 
@@ -3378,7 +3396,7 @@ def legend_fresh_handle(leg: Legend, orig, box=None):
     width, height, descent = _legend_handle_box_geometry(leg)
     if box is None:
         box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
-        box.set_figure(leg.get_figure(root=False))
+        box.set_figure(_owning_figure(leg))
     return handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
 
 
