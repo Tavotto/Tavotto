@@ -363,3 +363,76 @@ def test_cjk_character_class_is_the_same_on_both_processes():
     b = re.search(r'_CJK = re\.compile\("(\[[^"]+\])"\)', pf)
     assert a and b, (a, b)
     assert a.group(1) == b.group(1)
+
+
+#: 「我们打开的那张脸 == matplotlib 注册它时叫的名字」——跑在 worker 解释器里。
+#:
+#: 两侧独立：一侧是 matplotlib 自己的字体注册表（扫描时由 `ttfFontProperty`
+#: 写下的 `name`），另一侧是 `manifest._ft_font` 现打开这个文件读回的
+#: `family_name`。索引丢掉时后者会安静地退回第 0 张脸，而前者不会跟着错。
+_FACE_PROBE = """\
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import font_manager
+import manifest
+rows = []
+seen = set()
+for e in font_manager.fontManager.ttflist:
+    path = str(e.fname)
+    idx = int(getattr(e, "index", 0) or 0)
+    if (path, idx) in seen:
+        continue
+    seen.add((path, idx))
+    if not path.lower().endswith((".ttc", ".otc")):
+        continue
+    f = manifest._ft_font(path, idx)
+    rows.append(
+        {
+            "registered": str(e.name),
+            "index": idx,
+            "opened": None if f is None else str(f.family_name),
+            "path": path,
+        }
+    )
+print(json.dumps(rows, ensure_ascii=False))
+"""
+
+
+def test_font_collections_open_the_face_matplotlib_named_not_the_first_one():
+    """字体集（`.ttc` / `.otc`）里的每张脸都要按**它自己的索引**打开。
+
+    一个 `.ttc` 里装着好几张脸共用一个路径：matplotlib 3.11 起把它们各注册成
+    一个名字（`Noto Sans CJK` 的 SC / TC / HK / JP / KR 全指向同一个
+    `NotoSansCJK-Regular.ttc`），解析结果 `FontPath` 上带着 `.face_index`。
+    丢掉那个索引不会报错，只会**读错一张脸**：请求 SC 拿回来的自称 JP。
+
+    后果不在诊断的精度上，在问题面板上：`cjk_family` 报出一张用户没选、
+    出版规范也不认的脸，`cjk-fallback-missing` 于是对着画得好好的中文亮红灯
+    ——一句错的断言比没有断言更坏。实测环境：Debian trixie + fonts-noto-cjk +
+    matplotlib 3.11.1（实验室 runner 与桌面内置 runtime 都是 3.11.x）。
+
+    matplotlib 3.10 及以前只认字体集的第 0 张脸，索引恒为 0，这条判据在那些
+    版本上恒真——**它咬人的地方是发行版真正跑的那一档**。
+    """
+    out = subprocess.run(
+        [WORKER_PY, "-c", _FACE_PROBE, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout.strip().splitlines()[-1])
+    if not rows:
+        pytest.skip("worker 的解释器上一个字体集（.ttc/.otc）都没有：这条判据没有量的对象")
+    wrong = [r for r in rows if r["opened"] != r["registered"]]
+    assert not wrong, (
+        f"{len(wrong)}/{len(rows)} 张脸打开的不是 matplotlib 注册的那一张"
+        f"（索引丢了的典型形状是全部退回第 0 张）：\n  "
+        + "\n  ".join(
+            f"{r['registered']!r}(index={r['index']}) 打开后自称 {r['opened']!r} —— {r['path']}"
+            for r in wrong[:8]
+        )
+    )
