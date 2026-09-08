@@ -20,7 +20,7 @@ Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `.mcp.json`），而�
 每个候选都要真的跑一遍 `import tavotto.engine` 才算数。**frozen 的
 `tavotto-cli`（桌面版带的）永远给不出解释器**：它是 PyInstaller 单件，没有
 shebang、旁边没有 python——交接（`tavotto open`）用它绰绰有余，MCP server
-却要在进程内 import 引擎，这两件事不能混。见 `diagnose()` 的三态。
+却要在进程内 import 引擎，这两件事不能混。见 `diagnose()` 的四态。
 
 ## 插件自管 runtime（`--provision`）
 
@@ -332,18 +332,153 @@ def resolve(found: dict) -> dict:
     return {"python": None, "source": None, "tried": tried}
 
 
-# ------------------------------- 诊断三态 -----------------------------------
+# ------------------------------- 诊断四态 -----------------------------------
+#: 已装插件里那份构建清单的文件名（ADR 0043）。**它是 `engine/pluginmanifest.BUILD_MANIFEST`
+#: 的镜像**：这里要诊断的恰恰是「import 不到 tavotto」的机器，跨过去读那个常量做不到，
+#: 只能把这个名字重复一遍（两侧由 tests/test_mcp_diagnose.py 对拍）。
+BUILD_MANIFEST = "plugin-build.json"
+
+#: 问引擎版本用的子命令。`tavotto doctor --json` 自 0.8.0 起就在，跑在纯标准库那一层
+#: （不 import Flask / matplotlib），而且**只读**（写安装清单要另给 `--write-manifest`）。
+#: 要问的偏偏是旧引擎，所以不能用只有新版本才认得的入口。
+_VERSION_ARGV = ("doctor", "--json")
+
+
+def required_tavotto_version() -> "str | None":
+    """本插件要求的最低引擎版本；读不到 / 形状不对回 None（= **不知道**，不是 0）。
+
+    唯一出处是构建时写进 `plugin-build.json` 的 `min_tavotto_version`，那个值来自
+    `scripts/make_plugin_manifest.MIN_TAVOTTO_VERSION`——**这里不写第二份版本号**。
+    清单是构建物，源码目录里没有：开发态一律「不知道」，诊断退回原来的三态。
+    """
+    path = os.path.join(HERE, "..", BUILD_MANIFEST)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    required = data.get("min_tavotto_version") if isinstance(data, dict) else None
+    return required if isinstance(required, str) and required.strip() else None
+
+
+def _tavotto_cli_version(cmd: "list[str]", timeout: float = 30.0) -> "str | None":
+    """这台机器上的 `tavotto` 自报的版本；问不出来回 None（= **不知道**）。
+
+    **退出码不作数**：`doctor` 发现问题时返回非 0，而那行 JSON 照样带着版本号，
+    我们要的只有 `version` 这一个字段。输出按 UTF-8 解码（子进程那侧由
+    `cli.use_utf8_streams()` 钉住），不吃这台机器的区域编码。
+    """
+    try:
+        proc = subprocess.run(
+            [*cmd, *_VERSION_ARGV],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    # 那行 JSON 在最后；旧版本可能在它前面还写了别的，所以从后往前找第一行认得的
+    for line in reversed((proc.stdout or b"").decode("utf-8", "replace").splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        version = data.get("version") if isinstance(data, dict) else None
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+    return None
+
+
+def _plugin_update_check():
+    """插件自带的那份版本比较（`update_check.parse_version` / `is_newer`）；
+    **import 不到就回 None**（= 不知道）。
+
+    `0.10.0 < 0.9.0` 在**字符串**序里成立，而两位数小版本正是本格的现场——版本
+    比较不在这里写第二份。
+
+    它不是第三方依赖：`update_check.py` 与 `handoff.py` 同一个目录、同属这个插件包，
+    随插件一起发行（`tests/test_mcp_diagnose.py::test_the_version_comparison_ships_
+    in_the_bundle`），而那个目录由 `_plugin_locator()` 挂上 sys.path——所以先调它，
+    这一步同时是 `diagnose()` 的第一句，import 之前一定跑过。
+
+    仍然接住 ImportError：这一句跑在**降级路径**上，异常逃出去就是 server 起不来，
+    用户看到的是「插件一个工具都没有」——比一句不精确的诊断严重得多。装残的目录
+    回「不知道」，不回崩溃。
+    """
+    _plugin_locator()
+    try:
+        import update_check  # noqa: PLC0415
+    except ImportError:
+        return None
+    return update_check
+
+
+def engine_too_old(cmd: "list[str]") -> "tuple[str, str] | None":
+    """这台机器上的引擎比插件要求的下限还旧吗？是则回 (它的版本, 要求的版本)。
+
+    **三环缺一就回 None**：清单里没写下限、CLI 问不出版本、版本号解不出来——那些都是
+    「不知道」，不是「太旧」。把不知道折进这一格等于再造一个万能兜底，而 #285 的根因
+    正是有人把一条正交的轴折进了最近的那个取值。
+
+    先读清单再起子进程，**顺序不能反**：清单是一次本地文件读，读不到就一个进程都不起
+    （降级判定有时间预算，见 tests/test_mcp_stdio.py）。
+    """
+    required = required_tavotto_version()
+    if not required:
+        return None
+    have = _tavotto_cli_version(cmd)
+    if not have:
+        return None
+    compare = _plugin_update_check()
+    # 比不了（模块不在）与 is_newer 回 None（有一侧解不出来）都是「不知道」，不是「太旧」
+    if compare is None or compare.is_newer(required, have) is not True:
+        return None
+    return have, required
+
+
+def engine_too_old_hint(have: str, required: str, plugin: "str | None" = None) -> str:
+    """`engine_too_old` 的话术：**两个版本号都要说出口**。
+
+    「你的引擎太旧了」里没有用户能执行的东西——他要知道自己现在是哪一版、这个插件
+    要的是哪一版，才判断得出该升引擎还是该把插件退回去。
+    """
+    # 版本号两侧都要留空格：中文里数字紧贴汉字会读成一个词（实测「插件 0.13.0需要」）
+    who = f"插件 {plugin} 需要" if plugin else "这个插件需要"
+    return (
+        f"这台机器上的 Tavotto 是 {have}，而{who} {required} 或更新的引擎："
+        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与七个"
+        "工具都起不来（交接——把图交给 Tavotto 窗口打开——不受影响，那条路只要求 CLI "
+        "能执行）。恢复：**升级引擎**（`pipx upgrade tavotto`，或 `pip install -U "
+        "tavotto`；桌面版用户升级桌面版），或者反过来把插件退回与这台引擎匹配的那一版。"
+        "升完**新开一次 Codex 会话**——已开的会话不会重新加载工具。"
+    )
+
+
 def diagnose(found: dict) -> "tuple[str, str]":
     """定位结果 + 找不到解释器 → (机器可读 code, 说人话的 hint)。
 
-    三态互斥，**不许混成一句「没装 Tavotto」**：
+    四态互斥，**不许混成一句「没装 Tavotto」**：
       tavotto_missing            真没装
       desktop_found_cli_missing  桌面版装了，但那一版没带 tavotto-cli（旧安装）
       desktop_only               装的是桌面版：交接能用，但 MCP 要 Python 环境
+      engine_too_old             装了，但那个引擎比插件要求的下限还旧（#285）
     显式指了解释器却用不了的另算：engine_unavailable（见 `diagnose_resolved`）。
+
+    **判别顺序：`engine_too_old` 必须排在 `desktop_only` 前面。** 两格的前提是同一个
+    （`found["cmd"]` 有东西），而 `desktop_only` 只问「PATH / 安装位置上有没有 tavotto」
+    ——它是更宽的那一格，排在前面就会把每一个更窄的答案吃掉。#285 就是这么来的：
+    `pip install tavotto==0.10` 的用户被告知「这台机器上装的是 Tavotto 桌面版」。
+    窄的先判、宽的兜底。
+
+    反过来，它排在 `engine_unavailable`（在 `diagnose_resolved` 里）**后面**：用户显式
+    设了 `TAVOTTO_MCP_PYTHON` 却用不了时，该修的是那个变量，与 PATH 上那个 tavotto 是
+    哪一版无关——先报版本会把他支去升级一个可能完全够用的引擎。
     """
     handoff = _plugin_locator()
     if found.get("cmd"):
+        too_old = engine_too_old(found["cmd"])
+        if too_old is not None:
+            return "engine_too_old", engine_too_old_hint(*too_old, plugin=_plugin_version())
         return "desktop_only", DESKTOP_ONLY_HINT
     if found.get("desktop"):
         return "desktop_found_cli_missing", handoff.UPGRADE_HINT
@@ -392,7 +527,16 @@ NORMAL_TOOLS = (
 #: 恢复步骤（结构化，降级 server 与 --health 共用一份）
 def _recovery_steps(code: str) -> "list[str]":
     steps = []
-    if code in (
+    if code == "engine_too_old":
+        # 这一格的用户**已经装了**引擎，缺的不是「一个环境」而是「新一点的版本」。
+        # 给 `--provision` 会让他在旁边再建一个环境，原来那个照样旧——一台装了两份
+        # tavotto 的机器比一台装旧了的机器更难查。
+        steps.append(
+            "升级引擎：pipx upgrade tavotto（或 pip install -U tavotto）；"
+            "桌面版用户升级桌面版到匹配的版本"
+        )
+        steps.append("或者反过来：把插件退回与这台机器上的引擎匹配的那一版")
+    elif code in (
         "desktop_only",
         "engine_unavailable",
         "tavotto_missing",

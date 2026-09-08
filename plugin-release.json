@@ -3,41 +3,43 @@
   "channel": "stable",
   "branch": "plugin-stable",
   "plugin": "tavotto",
-  "kind": "bootstrap",
-  "version": "0.13.0",
-  "content_digest": "035b5b6b82e3a032a9376fb9ae0369cb97ca072ef247b4d5be88adb768708683",
-  "source_sha": null,
-  "release_tag": "v0.13.0",
-  "plugin_build": null,
-  "legacy_bootstrap": {
-    "asset_url": "https://github.com/Tavotto/Tavotto/releases/download/v0.13.0/codex-plugin-0.13.0.zip",
-    "sha256": "a12bc8acdde8aa76c65a0ab9c3baf7714ae2f18a7113c7bf436202acd27d3bc8",
-    "release_tag": "v0.13.0",
-    "zip_name": "codex-plugin-0.13.0.zip",
-    "note": "legacy bootstrap: 包内字节原样保留，没有 plugin-build.json"
+  "kind": "promote",
+  "version": "0.14.0",
+  "content_digest": "788785cfa7326078267deaf15256129ebfd209e63581d2ac4f8b2beaf898baff",
+  "source_sha": "bb736c3e537c401114a618c8db17e91b012453dc",
+  "release_tag": "v0.14.0",
+  "plugin_build": {
+    "build_inputs_fingerprint": "4b7baf6a65d7b595",
+    "lockfile_sha256": "55512a0a6a2a0db6c7bb7f8b9705c22d2aae8c3cf189c5ec41dd7779adbee213",
+    "toolchain": {
+      "python": "3.13.15",
+      "node": "22.23.2",
+      "pnpm": "11.26.0"
+    },
+    "min_tavotto_version": "0.13.0"
   },
+  "legacy_bootstrap": null,
   "engine_check": {
     "checks": {
       "github-release": {
-        "url": "https://api.github.com/repos/Tavotto/Tavotto/releases/tags/v0.13.0",
+        "url": "https://api.github.com/repos/Tavotto/Tavotto/releases/tags/v0.14.0",
         "ok": true,
         "detail": "HTTP 200"
       },
       "pypi": {
-        "url": "https://pypi.org/pypi/tavotto/0.13.0/json",
+        "url": "https://pypi.org/pypi/tavotto/0.14.0/json",
         "ok": true,
         "detail": "HTTP 200"
       }
     },
     "skipped_reason": null
   },
-  "previous": null,
+  "previous": "5466a23e664280c0cebefc2b39fce21b7f413c07",
   "restores": null,
   "authorization": null,
-  "published_at": "2026-09-06T06:27:13Z",
+  "published_at": "2026-09-08T16:49:15Z",
   "audit": {
-    "workflow": "plugin-stable",
-    "run_id": "34016512223",
-    "actor": "erwanjun"
+    "run_id": "34246587488",
+    "workflow": "release"
   }
 }

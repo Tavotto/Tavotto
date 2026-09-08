@@ -29,18 +29,20 @@ tavotto open: 交给 Tavotto 桌面窗口接着排
 本仓库同时是一个 Codex 插件市场（仓库根的 `.agents/plugins/marketplace.json`）：
 
 ```bash
-# 从 GitHub 装（两条分开跑，别用 &&——好判断是哪一步失败；
-# --sparse 必须同时带 .agents/plugins 与 codex-plugin：市场清单引用的是
-# 仓库内的本地插件目录，少一个 checkout 里就没有插件本体）
-codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+# 从 GitHub 装（两条分开跑，别用 &&——好判断是哪一步失败）。市场清单指向
+# 发行分支 plugin-stable（git-subdir 来源，ADR 0043）：装到的是 CI 构建并验证过的
+# 完整插件（含内嵌画布），不需要 Node，也不从源码 checkout 里取任何东西。
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
 codex plugin add tavotto@tavotto
 
 # 更新
 codex plugin marketplace upgrade tavotto
 
-# 本地开发时指向工作副本（本地路径不需要 --sparse）
-codex plugin marketplace add /path/to/tavotto
-codex plugin add tavotto@tavotto
+# 本地开发时装工作副本：仓库根的市场清单指向发行分支，所以要用插件目录里的 dev 市场
+# （codex-plugin/.agents/plugins/marketplace.json，名字 tavotto-dev，不随插件发出去）；
+# 先 python scripts/build_mcp_widget.py 构建一次画布——它不进 git，装到的是你刚构建的那份
+codex plugin marketplace add /path/to/tavotto/codex-plugin
+codex plugin add tavotto@tavotto-dev
 ```
 
 装完（以及每次升级插件、装好引擎之后）**必须新开一个 Codex 会话/线程**：
@@ -260,8 +262,8 @@ manifest/SVG 更新——iframe 里不保存业务状态。
 ### 导出
 
 `tavotto_export` **先跑一遍预检**，有 `errors` 且没有 `explicit_confirm` 时一张图都不出。
-PDF/SVG 是真矢量，PNG 按给定 dpi 栅格化，同时写一份 proof report（规范身份 + 全部检查
-结果 + 是否强制导出）。缺省落在 `<项目>/tavottofile/export/`——与 Tavotto 画布导出同一个
+PDF/SVG/EPS 是真矢量（EPS 不支持透明度），PNG/TIFF 按给定 dpi 栅格化（TIFF 无损 Deflate 压缩），
+同时写一份 proof report（规范身份 + 全部检查结果 + 是否强制导出）。缺省落在 `<项目>/tavottofile/export/`——与 Tavotto 画布导出同一个
 目录规则。
 
 ### 改了脚本之后：刷新项目
