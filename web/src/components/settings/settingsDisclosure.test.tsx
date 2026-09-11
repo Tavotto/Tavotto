@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
 import { CONTENT_MAX_WIDTH, CONTENT_MODE, SECTIONS, SettingsDialog } from '@/components/SettingsDialog'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { SETTING_CONTROL_WIDTH } from '@/components/settings/SettingRow'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -55,7 +56,11 @@ async function open(section: string) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }

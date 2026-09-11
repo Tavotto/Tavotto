@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { builtinCatalog } from '@/lib/specBinding'
 import { useDocumentStore } from '@/store/documentStore'
@@ -93,7 +94,11 @@ const byText = (label: string) => buttons().find((b) => b.textContent?.trim() ==
 
 async function mount(kind: 'style' | 'spec' = 'style') {
   await act(async () => {
-    root.render(<ProfilesSettings kind={kind} />)
+    root.render(
+      <TooltipProvider>
+        <ProfilesSettings kind={kind} />
+      </TooltipProvider>,
+    )
   })
 }
 

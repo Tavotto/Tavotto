@@ -14,11 +14,12 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * 用户看到的是「这一档关联还在不在」，不是一段说明。
  *
  * 只有透明度过渡，走 --duration-fast；`prefers-reduced-motion` 由全局规则接管。
- * 外层 78×38 的占位容器 `shrink-0`、无背景：它跟在开关旁边，不参与那一行的伸缩。
+ * Session 6 起它坐在 `SettingRow` 的 `illustration` 槽里（标题列、说明下方），
+ * 是说明的图示，不再跟在开关旁边；无背景、无边框，72×32 的原尺寸。
  */
 export function CompanionDiagram({ on }: { on: boolean }) {
   return (
-    <span className="grid h-[38px] w-[78px] shrink-0 place-items-center">
+    <span className="inline-flex shrink-0">
       <svg
         width="72"
         height="32"

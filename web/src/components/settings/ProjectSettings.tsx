@@ -5,7 +5,9 @@ import { backendErrorText, patchProjectSettings } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
+import { FolderOpen } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { Button, IconButton } from '../ui/Button'
 import { TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { PathValue } from './PathValue'
@@ -33,6 +35,19 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * **后端字段名一个字没动**（仍是 `allow_write_back`）：这里改的是界面表达。
  * 关掉之后写回按钮是真的停用（`inspector/UpdateSourceButton` 读同一个字段），
  * `settingsCopy.test.tsx` 里有一条用例把设置页的开关与那两个按钮连起来判。
+ *
+ * Session 6 的形态：**值在标题列、动作在控件列**。「当前项目」「可编辑来源」的值
+ * （目录名 / 脚本数）是这一行的现状，落在标题下的 `status`；「切换项目…」「管理来源…」
+ * 是明确的 secondary 动作，独占控件列。两条目录行走 `control="fill"`：
+ *
+ * ```text
+ * 导出位置
+ * [ 留空使用默认位置                          ] [📁]  恢复默认
+ * 实际位置  › export  复制
+ * ```
+ *
+ * 写回开关**开着**时也说一句（`status`，低调的一行，不套框）：修改可直接写入原始
+ * 脚本——这是这一页唯一会碰用户源文件的设置；关着时那句副作用照旧是 InlineWarning。
  */
 export function ProjectSettings() {
   useTranslation('dialogs')
@@ -66,12 +81,10 @@ export function ProjectSettings() {
 
   return (
     <SettingSection>
-      <SettingRow label={st('project.current')}>
-        <PathValue
-          path={project?.figures_dir}
-          name={st('project.current')}
-          className="flex-1"
-        />
+      <SettingRow
+        label={st('project.current')}
+        status={<PathValue path={project?.figures_dir} name={st('project.current')} />}
+      >
         <Button
           variant="secondary"
           size="sm"
@@ -86,11 +99,15 @@ export function ProjectSettings() {
 
       {/* 「只有登记过的脚本，其产出的图才能进入图内编辑」是登记规则，属于
           注册表对话框自己的事。这一行只报结果：有几个可编辑来源 */}
-      <SettingRow label={st('project.scripts')}>
-        <span className="flex-1 text-xs text-ink-2">
-          {st('project.scriptCount', { count: project?.scripts ?? 0 })}
-          {(project?.scripts ?? 0) === 0 && st('project.noScriptsSuffix')}
-        </span>
+      <SettingRow
+        label={st('project.scripts')}
+        status={
+          <>
+            {st('project.scriptCount', { count: project?.scripts ?? 0 })}
+            {(project?.scripts ?? 0) === 0 && st('project.noScriptsSuffix')}
+          </>
+        }
+      >
         <Button
           variant="secondary"
           size="sm"
@@ -123,7 +140,7 @@ export function ProjectSettings() {
       <SettingRow
         label={st('project.allowWriteBack')}
         controlId="setting-allow-write-back"
-        danger={!allowWriteBack}
+        status={allowWriteBack ? st('project.writeBackOnHint') : undefined}
       >
         <Toggle
           aria-labelledby={settingRowLabelId('setting-allow-write-back')}
@@ -141,8 +158,8 @@ export function ProjectSettings() {
 }
 
 /**
- * 一个目录设置：输入框 + 系统选择器（桌面版）+ 恢复默认，下面一行是**这一刻
- * 真正会用的位置**。
+ * 一个目录设置：整行宽的输入框 + 系统选择器（桌面版，图标钮）+ 恢复默认，
+ * 下面一行是**这一刻真正会用的位置**。
  *
  * 输入框留着不是为了对称：浏览器模式没有原生选择器（`pickDirectory()` 在那里
  * 返回 null），手敲路径是那条路上唯一的改法。所以「选择…」只在桌面版渲染——
@@ -166,7 +183,7 @@ function DirectoryRow({
   effective?: string
 }) {
   return (
-    <SettingRow label={label} controlId={id}>
+    <SettingRow label={label} controlId={id} control="fill">
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex min-w-0 items-center gap-1.5">
           <TextInput
@@ -178,9 +195,9 @@ function DirectoryRow({
             className="min-w-0 flex-1"
           />
           {isDesktop() && (
-            <Button
+            <IconButton
               variant="secondary"
-              size="sm"
+              label={st('project.chooseFolder')}
               onClick={async () => {
                 const picked = await pickDirectory(label)
                 if (picked == null) return // 取消不是错误
@@ -188,8 +205,8 @@ function DirectoryRow({
                 onCommit(picked)
               }}
             >
-              {st('project.chooseFolder')}
-            </Button>
+              <FolderOpen size={ICON_SIZE.md} aria-hidden />
+            </IconButton>
           )}
           {value !== '' && (
             <Button
@@ -204,7 +221,7 @@ function DirectoryRow({
             </Button>
           )}
         </span>
-        <span className="flex min-w-0 items-center gap-1 text-xs text-ink-3">
+        <span className="type-meta flex min-w-0 items-center gap-1.5">
           {st('project.effectivePath')}
           <PathValue path={effective} name={label} />
         </span>

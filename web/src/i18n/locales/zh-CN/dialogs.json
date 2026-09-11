@@ -567,7 +567,12 @@
       "legacyUnnamed": "有一条旧样式没有名称，已跳过",
       "other": "有一项需要留意：{{code}}",
       "unmappedField": "有一项没能识别，已原样保留：{{field}}"
-    }
+    },
+    "library": {
+      "style": "样式库",
+      "spec": "规范库"
+    },
+    "keyRules": "关键要求"
   },
   "readiness": {
     "addToCanvas": "添加到画布",
@@ -916,7 +921,8 @@
       "more": "画布设置",
       "openCanvasSettings": "打开画布设置",
       "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
-      "diagramOff": "示意：只移动子图，标题与图例留在原地"
+      "diagramOff": "示意：只移动子图，标题与图例留在原地",
+      "dragCompanionsDesc": "标题、图例等手动摆过位置的对象随子图一起移动"
     },
     "copied": "已复制",
     "copy": "复制",
@@ -943,7 +949,11 @@
     },
     "export": {
       "defaultFormats": "默认格式",
-      "ppiNotForVector": "只选了矢量格式，分辨率不生效"
+      "ppiNotForVector": "只选了矢量格式，分辨率不生效",
+      "sectionFormats": "格式",
+      "formatsDesc": "导出对话框打开时预选这些格式",
+      "sectionRaster": "位图输出",
+      "sectionChecks": "检查"
     },
     "general": {
       "autosave": "自动保存",
@@ -1080,7 +1090,8 @@
       "showFullPath": "显示 {{name}} 的完整路径",
       "copyPath": "复制 {{name}} 的完整路径",
       "allowWriteBack": "允许写回原始文件",
-      "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。"
+      "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
+      "writeBackOnHint": "修改可直接写入原始脚本。"
     },
     "section": {
       "about": "关于与隐私",

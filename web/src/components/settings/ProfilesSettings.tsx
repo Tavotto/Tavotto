@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Copy, Download, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
+import { listRowClass } from '../ui/listRow'
 import { msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
@@ -34,15 +35,15 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { NumberField, TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import {
   DiagnosticDisclosure,
   DiagnosticItem,
+  InlineWarning,
   SettingRow,
-  SettingSection,
   settingControlStyle,
   settingRowGrid,
 } from './SettingRow'
@@ -184,39 +185,63 @@ function formatValue(raw: unknown, unit?: string): string {
   return unit ? `${raw} ${unit}` : String(raw)
 }
 
-/** 一组字段：一条极淡的小标题 + 若干行。分组只影响排版（审计 T41 / T42）。 */
+/** 一组字段：一条 type-section 小标题 + 若干 compact 行。分组只影响排版（审计 T41 / T42）。 */
 function FieldGroup({ group, children }: { group: string; children: ReactNode }) {
   return (
-    <div data-field-group={group} className="flex flex-col gap-1">
-      <span className="type-section">
-        {st(`group.${group}`)}
-      </span>
+    <div data-field-group={group} className="flex flex-col">
+      <span className="type-section mb-1">{st(`group.${group}`)}</span>
       {children}
     </div>
   )
 }
 
 /**
- * 只读摘要里的一行：名字 + 值 +（规范页）这条阈值会怎么判。
+ * 只读摘要里的一行：名字 + 值。
  *
  * **刻意不是一个 disabled 的输入框**：整页禁用输入看起来像"我的表单坏了"，
  * 而它其实是"这份是内置的、想改先复制一份"（审计 T41 / T42）。
  */
 function SummaryRow({ label, value }: { label: string; value: string }) {
-  // **与 `SettingRow` 同一份网格**（标题列弹性、控件列 `SETTING_CONTROL_WIDTH`）：
-  // 「摘要 ↔ 输入框」两种模式在同一位置来回切换，值与输入框从同一条竖线起排，
-  // 差几个像素就是整列左右跳一下（`settingsDisclosure.test` 量它）
+  // **与 `SettingRow` 同一份网格**（标题列弹性、控件列 `SETTING_CONTROL_WIDTH`）、
+  // 同一档行高（compact 32px）：「摘要 ↔ 输入框」两种模式在同一位置来回切换，
+  // 值与输入框从同一条竖线起排，差几个像素就是整列左右跳一下（`settingsDisclosure.test` 量它）
   return (
     <div
       data-summary-row
       style={settingControlStyle}
-      className={cn('grid min-h-6 items-baseline gap-x-6 text-xs', settingRowGrid)}
+      className={cn('grid min-h-8 items-center gap-x-6 py-0.5 text-sm', settingRowGrid)}
     >
-      <span className="min-w-0 truncate text-ink-2" title={label}>
+      <span className="min-w-0 truncate text-ink" title={label}>
         {label}
       </span>
       <span className="tabular-nums text-ink">{value}</span>
     </div>
+  )
+}
+
+/**
+ * 规范页顶部的四个关键数（Session 6）：最小字号 / 单栏宽 / 双栏宽 / 最低分辨率。
+ * 这是「规范 = 图要满足什么」的第一眼——与样式页（图长什么样、先看示例图）在认知上
+ * 分开。数字来自 `resolveDocumentSpec` 解析出的**本项目实际在用**的那份，不是清单里
+ * 选中的那条；全部规则仍在下面的折叠区里。
+ */
+const KEY_RULES = ['minFont', 'singleWidth', 'doubleWidth', 'minDpi'] as const
+
+function KeyRules({ profile }: { profile: Record<string, unknown> }) {
+  return (
+    <dl data-spec-key-rules className="flex flex-wrap gap-x-8 gap-y-2">
+      {KEY_RULES.map((key) => {
+        const f = SPEC_FIELDS.find((x) => x.labelKey === key)!
+        return (
+          <div key={key} className="flex min-w-24 flex-col">
+            <dd className="text-lg font-medium tabular-nums text-ink">
+              {formatValue(readPath(profile, f.path), f.unit)}
+            </dd>
+            <dt className="type-meta">{st(`field.${f.labelKey}`)}</dt>
+          </div>
+        )
+      })}
+    </dl>
   )
 }
 
@@ -443,54 +468,64 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     })
   }
 
+  /**
+   * 读屏与视觉都只有一个主动作（Design Constitution 第五节）：规范页里「本项目用
+   * 这套规范」在选中那条还没被项目采用时是主动作；样式页 / 已采用的规范页里，
+   * 只读那份的主动作是「复制一份再修改」，可编辑那份的是「保存」。
+   */
+  const bound = kind === 'spec' && !!selected && boundId === selected.id
+  const useForProjectPrimary = kind === 'spec' && !editable && !bound
+
   return (
-    <SettingSection>
+    <>
+      {/* 规范页顶部：本项目按哪套检查 + 四个关键数 + 全部规则（折叠）。
+          项目里存的是**绑定 + 规则全文快照**（ADR 0029）。检查用的就是这几个数，
+          全局清单里的同名规范改了也不影响它——这层关系在这里摊开，别让用户去
+          导出面板里猜（审计 T41）。解析只有 `resolveDocumentSpec` 一份判据。 */}
       {resolved && (
-        <div data-spec-binding className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          <span className="text-ink-2">
-            {st('binding.current', {
-              name: boundRecord
+        <section data-spec-binding className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="type-title">
+              {boundRecord
                 ? profileName(boundRecord)
                 : resolved.source === 'builtin'
                   ? st('binding.builtinDefault')
-                  : (boundId ?? ''),
-            })}
-          </span>
-          <span className="text-ink-3">{st(`binding.source.${resolved.source}`)}</span>
-          {resolved.globalMissing && <span className="text-ink-3">{st('binding.globalMissing')}</span>}
-          {resolved.updateAvailable && (
-            <>
-              <span className="text-ink-2">{st('binding.updateAvailable')}</span>
-              <Button variant="secondary" size="sm" onClick={syncToGlobal}>
-                {st('binding.sync')}
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-      {/* 项目里存的是**绑定 + 规则全文快照**（ADR 0029）。检查用的就是下面这几个
-          数，全局清单里的同名规范改了也不影响它——这层关系在这里摊开，别让用户
-          去导出面板里猜（审计 T41）。解析只有 `resolveDocumentSpec` 一份判据。 */}
-      {resolved && (
-        <DiagnosticDisclosure title={st('snapshotTitle')}>
-          <p className="text-xs leading-relaxed text-ink-3">{st('snapshotHint')}</p>
-          {SPEC_FIELDS.map((f) => (
-            <DiagnosticItem
-              key={f.path}
-              name={st(`field.${f.labelKey}`)}
-              value={formatValue(
-                readPath(resolved.profile as unknown as Record<string, unknown>, f.path),
-                f.unit,
-              )}
-            />
-          ))}
-        </DiagnosticDisclosure>
+                  : (boundId ?? '')}
+            </span>
+            <span className="type-meta">{st(`binding.source.${resolved.source}`)}</span>
+            {resolved.globalMissing && <span className="type-meta">{st('binding.globalMissing')}</span>}
+            {resolved.updateAvailable && (
+              <>
+                <span className="type-caption">{st('binding.updateAvailable')}</span>
+                <Button variant="secondary" size="sm" onClick={syncToGlobal}>
+                  {st('binding.sync')}
+                </Button>
+              </>
+            )}
+          </div>
+          <KeyRules profile={resolved.profile as unknown as Record<string, unknown>} />
+          <DiagnosticDisclosure title={st('snapshotTitle')}>
+            <p className="type-caption">{st('snapshotHint')}</p>
+            {SPEC_FIELDS.map((f) => (
+              <DiagnosticItem
+                key={f.path}
+                name={st(`field.${f.labelKey}`)}
+                value={formatValue(
+                  readPath(resolved.profile as unknown as Record<string, unknown>, f.path),
+                  f.unit,
+                )}
+              />
+            ))}
+          </DiagnosticDisclosure>
+        </section>
       )}
 
-      <div className="flex gap-3">
-        {/* 左：清单 */}
-        <div className="flex w-48 shrink-0 flex-col gap-1.5">
-          <ul className="max-h-64 min-h-0 flex-1 overflow-y-auto rounded-sm border border-border">
+      <div className="flex gap-6">
+        {/* 左：库。行是 listRowClass 那一种（28px、selected 轻 tint + 字重），不套外框：
+            只有一条内置样式时，一个带边框的大空盒子读作「没做完」（Session 6） */}
+        <aside className="flex w-44 shrink-0 flex-col gap-1" aria-label={st(`library.${kind}`)}>
+          <span className="type-section mb-1">{st(`library.${kind}`)}</span>
+          <ul className="flex flex-col gap-px">
             {loaded && records.length === 0 && (
               <li>
                 <EmptyState icon={FileSliders} title={st('empty')} />
@@ -499,59 +534,36 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
             {records.map((r) => (
               <li key={r.id}>
                 <button
+                  type="button"
                   onClick={() => setSelectedId(r.id)}
                   aria-current={selected?.id === r.id || undefined}
-                  className={cn(
-                    'flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs',
-                    selected?.id === r.id
-                      ? 'bg-selected text-ink'
-                      : 'text-ink hover:bg-surface-hover',
-                  )}
+                  className={cn(listRowClass({ selected: selected?.id === r.id }), 'mx-0 w-full px-2 text-left')}
                   title={profileTechnicalDetail(r)}
                 >
                   <span className="min-w-0 flex-1 truncate">{profileName(r)}</span>
-                  {r.built_in && <span className="shrink-0 text-xs text-ink-3">{st('builtin')}</span>}
+                  {r.built_in && <span className="type-meta shrink-0 font-normal">{st('builtin')}</span>}
                   {kind === 'spec' && boundId === r.id && (
-                    <span className="shrink-0 text-xs text-ink-2">{st('inUse')}</span>
+                    <span className="type-meta shrink-0 font-normal">{st('inUse')}</span>
                   )}
                 </button>
               </li>
             ))}
           </ul>
-          <div className="flex gap-1">
-            <Button variant="secondary" size="sm" onClick={create} loading={busy}>
-              <Plus size={ICON_SIZE.sm} />
+          {/* 新建是这一栏的动作；复制 / 导出 / 导入是低频的图标钮，不与主动作抢视觉 */}
+          <div className="mt-1 flex items-center gap-0.5">
+            <Button variant="secondary" size="sm" onClick={create} loading={busy} className="mr-1">
+              <Plus size={ICON_SIZE.sm} aria-hidden />
               {st('new')}
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={duplicate}
-              disabled={!selected}
-              aria-label={st('duplicate')}
-              title={st('duplicate')}
-            >
-              <Copy size={ICON_SIZE.sm} />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={exportOne}
-              disabled={!selected}
-              aria-label={st('export')}
-              title={st('export')}
-            >
-              <Download size={ICON_SIZE.sm} />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => fileRef.current?.click()}
-              aria-label={st('import')}
-              title={st('import')}
-            >
-              <Upload size={ICON_SIZE.sm} />
-            </Button>
+            <IconButton label={st('duplicate')} iconSize="sm" onClick={duplicate} disabled={!selected}>
+              <Copy size={ICON_SIZE.sm} aria-hidden />
+            </IconButton>
+            <IconButton label={st('export')} iconSize="sm" onClick={exportOne} disabled={!selected}>
+              <Download size={ICON_SIZE.sm} aria-hidden />
+            </IconButton>
+            <IconButton label={st('import')} iconSize="sm" onClick={() => fileRef.current?.click()}>
+              <Upload size={ICON_SIZE.sm} aria-hidden />
+            </IconButton>
             <input
               ref={fileRef}
               type="file"
@@ -566,10 +578,10 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               }}
             />
           </div>
-        </div>
+        </aside>
 
         {/* 右：编辑区（Style 与 Spec 各是各的一套字段） */}
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-5">
           {!selected ? (
             /* 一条都没有时不摆一整套禁用的输入框，只给出口（审计 T42）。
                入口是**导入**不是「新建」：新建等于从选中的那条复制一份，清单空着
@@ -584,17 +596,18 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
             )
           ) : (
             <>
-              {/* 样式页的示例图（审计 T42）：字号 / 线宽 / 边框 / 字体族按**当前
-                  草稿**现算，所以「把刻度字号调到 7」当场看得见。纯几何、不跑引擎。 */}
+              {/* 样式页先看图（审计 T42）：字号 / 线宽 / 边框 / 字体族按**当前草稿**现算，
+                  所以「把刻度字号调到 7」当场看得见。纯几何、不跑引擎。 */}
               {kind === 'style' && (
-                <div className="flex flex-col gap-1">
-                  <span className="type-section">
-                    {st('previewTitle')}
-                  </span>
+                <div className="flex flex-col gap-1.5">
+                  <span className="type-section">{st('previewTitle')}</span>
                   <StyleSamplePreview data={draft} />
                 </div>
               )}
 
+              {/* 身份行：名字 + 来源 + 这一份的主动作。
+                  只读那份：「这份改不了、想改按这里」是**状态 + 动作**，不是一段散文
+                  ——只读这个事实是徽标，「复制出来的那份可以编辑」是就在旁边的按钮。 */}
               {editable ? (
                 <SettingRow label={st('name')} controlId="profile-name">
                   <TextInput
@@ -602,89 +615,91 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     aria-label={st('name')}
-                    className="h-6 w-48"
                   />
                 </SettingRow>
               ) : (
-                <>
-                  <SummaryRow label={st('name')} value={name} />
-                  {/*
-                    「这份改不了、想改按这里」是**状态 + 动作**，不是一段散文
-                    （审计统一规则第一条：先改善控件，仍有必要才补文字）。原先
-                    这里是一句 37 字的解释，和分区顶上那句 43 字的说明叠成两段
-                    文字墙——用户得读完整句才知道下一步按哪儿，而流程 D 的
-                    「一个分区最多一段长解释」就是这么被顶破的。
-                    信息一个字没丢：只读这个事实变成常驻徽标，「复制出来的那份
-                    可以编辑」变成一颗就在旁边的按钮（同一个 `duplicate` 动作，
-                    原先摆在所有字段下面，要滚很远才看得见）。
-                  */}
-                  <div
-                    data-profile-readonly
-                    className="flex min-h-6 flex-wrap items-center gap-2 text-xs"
-                  >
-                    <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
-                    <Button variant="secondary" size="sm" onClick={duplicate} loading={busy}>
-                      <Copy size={ICON_SIZE.xs} />
+                <div data-profile-readonly className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
+                  <span className="type-title min-w-0 truncate">{name}</span>
+                  <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
+                  {bound && <Badge tone="accent">{st('inUse')}</Badge>}
+                  <span className="flex items-center gap-1.5">
+                    {kind === 'spec' && (
+                      <Button
+                        variant={useForProjectPrimary ? 'primary' : 'secondary'}
+                        size="sm"
+                        onClick={useForProject}
+                      >
+                        {st('useForProject')}
+                      </Button>
+                    )}
+                    <Button
+                      variant={useForProjectPrimary ? 'secondary' : 'primary'}
+                      size="sm"
+                      onClick={duplicate}
+                      loading={busy}
+                    >
+                      <Copy size={ICON_SIZE.sm} aria-hidden />
                       {st('duplicateToEdit')}
                     </Button>
-                  </div>
-                </>
+                  </span>
+                </div>
               )}
 
-              {grouped.map(({ group, fields: groupFields }) => (
-                <FieldGroup key={group} group={group}>
-                  {groupFields.map((f) => {
-                    const raw = readPath(draft ?? {}, f.path)
-                    const set = typeof raw === 'number' && Number.isFinite(raw)
-                    if (!editable) {
+              <div className="flex flex-col gap-4">
+                {grouped.map(({ group, fields: groupFields }) => (
+                  <FieldGroup key={group} group={group}>
+                    {groupFields.map((f) => {
+                      const raw = readPath(draft ?? {}, f.path)
+                      const set = typeof raw === 'number' && Number.isFinite(raw)
+                      if (!editable) {
+                        return (
+                          <SummaryRow
+                            key={f.path}
+                            label={st(`field.${f.labelKey}`)}
+                            value={formatValue(raw, f.unit)}
+                          />
+                        )
+                      }
                       return (
-                        <SummaryRow
-                          key={f.path}
-                          label={st(`field.${f.labelKey}`)}
-                          value={formatValue(raw, f.unit)}
-                        />
+                        <SettingRow key={f.path} label={st(`field.${f.labelKey}`)} density="compact">
+                          {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
+                              `mixed` 让输入框留空而不是谎报一个值；旁边的 × 是回到
+                              那一档的唯一出口（否则设过一次就再也撤不回来）。 */}
+                          <NumberField
+                            value={set ? (raw as number) : f.min}
+                            mixed={!set}
+                            min={f.min}
+                            max={f.max}
+                            step={f.step}
+                            precision={f.step < 1 ? 2 : 0}
+                            unit={f.unit}
+                            fill
+                            ariaLabel={st(`field.${f.labelKey}`)}
+                            className="w-28"
+                            onChange={(v) => setDraft((d) => (d ? writePath(d, f.path, v) : d))}
+                          />
+                          {set && (
+                            <IconButton
+                              iconSize="sm"
+                              label={st('clearField', { field: st(`field.${f.labelKey}`) })}
+                              onClick={() => setDraft((d) => (d ? clearPath(d, f.path) : d))}
+                            >
+                              <X size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
+                            </IconButton>
+                          )}
+                        </SettingRow>
                       )
-                    }
-                    return (
-                      <SettingRow
-                        key={f.path}
-                        label={st(`field.${f.labelKey}`)}
-                      >
-                        {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
-                            `mixed` 让输入框留空而不是谎报一个值；旁边的 × 是回到
-                            那一档的唯一出口（否则设过一次就再也撤不回来）。 */}
-                        <NumberField
-                          value={set ? (raw as number) : f.min}
-                          mixed={!set}
-                          min={f.min}
-                          max={f.max}
-                          step={f.step}
-                          precision={f.step < 1 ? 2 : 0}
-                          suffix={f.unit}
-                          ariaLabel={st(`field.${f.labelKey}`)}
-                          className="w-28"
-                          onChange={(v) => setDraft((d) => (d ? writePath(d, f.path, v) : d))}
-                        />
-                        {set && (
-                          <Button
-                            size="icon-sm"
-                            className="h-5 w-5"
-                            aria-label={st('clearField', { field: st(`field.${f.labelKey}`) })}
-                            onClick={() => setDraft((d) => (d ? clearPath(d, f.path) : d))}
-                          >
-                            <X size={ICON_SIZE.xs} className="text-ink-3" />
-                          </Button>
-                        )}
-                      </SettingRow>
-                    )
-                  })}
-                </FieldGroup>
-              ))}
+                    })}
+                  </FieldGroup>
+                ))}
+              </div>
 
               {!!selected.warnings.length && (
-                <ul className="flex flex-col gap-0.5 text-xs text-ink-3">
+                <ul className="flex flex-col gap-0.5">
                   {selected.warnings.map((w) => (
-                    <li key={w}>{profileWarningText(w)}</li>
+                    <li key={w} className="type-caption">
+                      {profileWarningText(w)}
+                    </li>
                   ))}
                 </ul>
               )}
@@ -697,11 +712,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 <DiagnosticItem name={st('detail.origin')} value={profileOriginLabel(selected)} />
               </DiagnosticDisclosure>
 
-              {kind === 'spec' && boundId === selected.id && (
-                <SettingRow
-                  label={st('follow')}
-                  controlId="profile-follow"
-                >
+              {bound && (
+                <SettingRow label={st('follow')} controlId="profile-follow">
                   <Toggle
                     id="profile-follow"
                     checked={doc.profile?.follow === true}
@@ -712,35 +724,30 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
 
               {conflict && (
-                <p className="text-xs text-danger">
-                  {st('conflict', { name: conflict.display_name })}
-                </p>
+                <InlineWarning tone="danger">{st('conflict', { name: conflict.display_name })}</InlineWarning>
               )}
-              {error && !conflict && <p className="text-xs text-danger">{error.message}</p>}
+              {error && !conflict && <InlineWarning tone="danger">{error.message}</InlineWarning>}
 
               {/* 「保存」是改这份配置，「应用 / 使用」是对当前图或当前项目做一件事
                   ——两件事分成两排，别挤在一行里（审计 T42）。只读的那份没有可
-                  保存的东西，整排编辑动作就不出现，不摆一排禁用按钮。 */}
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {kind === 'spec' ? (
-                  <Button variant="secondary" size="sm" onClick={useForProject}>
-                    {st('useForProject')}
-                  </Button>
-                ) : (
-                  <Button variant="secondary" size="sm" onClick={applyToFigure}>
-                    {st('applyToFigure')}
-                  </Button>
-                )}
-              </div>
+                  保存的东西，整排编辑动作就不出现，不摆一排禁用按钮；只读规范的
+                  「本项目用这套规范」已经在身份行里。 */}
+              {(kind === 'style' || editable) && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {kind === 'spec' ? (
+                    <Button variant="secondary" size="sm" onClick={useForProject}>
+                      {st('useForProject')}
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={applyToFigure}>
+                      {st('applyToFigure')}
+                    </Button>
+                  )}
+                </div>
+              )}
               {editable && (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={!dirty}
-                    loading={busy}
-                    onClick={save}
-                  >
+                  <Button variant="primary" size="sm" disabled={!dirty} loading={busy} onClick={save}>
                     {st('save')}
                   </Button>
                   <Button
@@ -750,11 +757,11 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     onClick={restore}
                     title={selected.derived_from ? undefined : st('restoreNeedsOrigin')}
                   >
-                    <RotateCcw size={ICON_SIZE.sm} />
+                    <RotateCcw size={ICON_SIZE.sm} aria-hidden />
                     {st('restore')}
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={remove}>
-                    <Trash2 size={ICON_SIZE.sm} className="text-danger" />
+                  <Button variant="danger" size="sm" onClick={remove}>
+                    <Trash2 size={ICON_SIZE.sm} aria-hidden />
                     {st('delete')}
                   </Button>
                 </div>
@@ -763,6 +770,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           )}
         </div>
       </div>
-    </SettingSection>
+    </>
   )
 }

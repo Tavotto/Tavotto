@@ -571,7 +571,12 @@
       "legacyUnnamed": "One old style had no name and was skipped",
       "other": "One entry needs a look: {{code}}",
       "unmappedField": "One entry was not recognised and was kept as-is: {{field}}"
-    }
+    },
+    "library": {
+      "style": "Style library",
+      "spec": "Spec library"
+    },
+    "keyRules": "Key requirements"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
@@ -924,7 +929,8 @@
       "more": "Canvas settings",
       "openCanvasSettings": "Open canvas settings",
       "diagramOn": "Diagram: the title and legend move along with the axes",
-      "diagramOff": "Diagram: only the axes move; the title and legend stay behind"
+      "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
+      "dragCompanionsDesc": "Titles, legends and other hand-placed objects move with the axes"
     },
     "copied": "Copied",
     "copy": "Copy",
@@ -951,7 +957,11 @@
     },
     "export": {
       "defaultFormats": "Default formats",
-      "ppiNotForVector": "Vector formats only — resolution has no effect"
+      "ppiNotForVector": "Vector formats only — resolution has no effect",
+      "sectionFormats": "Formats",
+      "formatsDesc": "Preselected when the export dialog opens",
+      "sectionRaster": "Raster output",
+      "sectionChecks": "Checks"
     },
     "general": {
       "autosave": "Autosave",
@@ -1089,7 +1099,8 @@
       "showFullPath": "Show the full path of {{name}}",
       "copyPath": "Copy the full path of {{name}}",
       "allowWriteBack": "Allow writing back to original files",
-      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled."
+      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled.",
+      "writeBackOnHint": "Edits can be written straight into the original scripts."
     },
     "section": {
       "about": "About & privacy",

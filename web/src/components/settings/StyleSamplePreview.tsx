@@ -47,7 +47,7 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
         role="img"
         aria-label={label}
         viewBox="0 0 200 128"
-        className="h-auto w-full max-w-[320px] rounded-sm border border-border bg-white"
+        className="h-auto w-full max-w-[360px] rounded-sm border border-border bg-white"
         style={{ fontFamily: g.fontFamily }}
       >
         <text x={box.x + box.w / 2} y={6 + g.titlePt} fontSize={g.titlePt} textAnchor="middle" fill="#111">

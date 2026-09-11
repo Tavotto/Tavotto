@@ -27,6 +27,10 @@ const ex = (key: string, values?: Record<string, unknown>) =>
  * 有意义，所以只选了矢量格式时那一行是停用的，并就近说明为什么——ADR 0031 的
  * 「PPI 只在有位图格式时是数字」在界面这一侧的样子。摆一个不影响任何结果的
  * 输入框，等于说了而不做。
+ *
+ * Session 6 起分成三个分区（格式 / 位图输出 / 检查）：三行平铺在一个没有标题的
+ * 分区里时，「分辨率只管位图」这层依赖读不出来，页面也显得没做完。分区只是
+ * 分组，`readExportDefaults` / `writeExportDefaults` 的合同一个字没动。
  */
 export function ExportSettings() {
   useTranslation('dialogs')
@@ -41,46 +45,51 @@ export function ExportSettings() {
   // 「有没有位图格式」的判据与导出请求同一处，不在这里另写一遍格式清单
   const raster = hasRaster(defaults.formats)
   return (
-    <SettingSection>
-      <SettingRow label={st('export.defaultFormats')}>
-        <span className="flex items-center gap-3">
-          {FORMATS.map((f) => (
-            <label key={f} className="flex items-center gap-1.5 text-xs text-ink-2">
-              <Checkbox checked={defaults.formats.includes(f)} onChange={() => toggleFormat(f)} />
-              {/* 只列格式名，「矢量 / 位图」的类型旁注按 2026-09-11 设计包去掉；
-                  格式清单仍来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
-              {f.toUpperCase()}
-            </label>
-          ))}
-        </span>
-      </SettingRow>
-      <SettingRow
-        label={ex('ppiLabel')}
-        status={raster ? undefined : st('export.ppiNotForVector')}
-      >
-        <Select
-          className="w-[120px]"
-          ariaLabel={ex('ppiSelectLabel')}
-          disabled={!raster}
-          value={defaults.dpi}
-          onChange={(v) => update({ dpi: v })}
-          options={['300', '600', '900', '1200'].map((d) => ({
-            value: d,
-            label: translate('measure.ppi', { value: d }),
-          }))}
-        />
-      </SettingRow>
-      <SettingRow
-        label={ex('reportToggle')}
-        controlId="setting-export-report"
-      >
-        <Toggle
-          aria-labelledby={settingRowLabelId('setting-export-report')}
-          id="setting-export-report"
-          checked={defaults.withProof}
-          onChange={(v) => update({ withProof: v })}
-        />
-      </SettingRow>
-    </SettingSection>
+    <>
+      <SettingSection title={st('export.sectionFormats')}>
+        <SettingRow label={st('export.defaultFormats')} description={st('export.formatsDesc')}>
+          <span className="flex items-center gap-3">
+            {FORMATS.map((f) => (
+              <label key={f} className="flex h-7 items-center gap-1.5 text-xs text-ink">
+                <Checkbox checked={defaults.formats.includes(f)} onChange={() => toggleFormat(f)} />
+                {/* 只列格式名，「矢量 / 位图」的类型旁注按 2026-09-11 设计包去掉；
+                    格式清单仍来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
+                {f.toUpperCase()}
+              </label>
+            ))}
+          </span>
+        </SettingRow>
+      </SettingSection>
+
+      <SettingSection title={st('export.sectionRaster')}>
+        <SettingRow
+          label={ex('ppiLabel')}
+          status={raster ? undefined : st('export.ppiNotForVector')}
+        >
+          <Select
+            className="w-full"
+            ariaLabel={ex('ppiSelectLabel')}
+            disabled={!raster}
+            value={defaults.dpi}
+            onChange={(v) => update({ dpi: v })}
+            options={['300', '600', '900', '1200'].map((d) => ({
+              value: d,
+              label: translate('measure.ppi', { value: d }),
+            }))}
+          />
+        </SettingRow>
+      </SettingSection>
+
+      <SettingSection title={st('export.sectionChecks')}>
+        <SettingRow label={ex('reportToggle')} controlId="setting-export-report">
+          <Toggle
+            aria-labelledby={settingRowLabelId('setting-export-report')}
+            id="setting-export-report"
+            checked={defaults.withProof}
+            onChange={(v) => update({ withProof: v })}
+          />
+        </SettingRow>
+      </SettingSection>
+    </>
   )
 }

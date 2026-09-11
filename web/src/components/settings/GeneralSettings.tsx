@@ -11,6 +11,7 @@ import {
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import { Kbd } from '../ui/Kbd'
 import { Select } from '../ui/Select'
 import { SettingRow, SettingSection } from './SettingRow'
 
@@ -34,7 +35,7 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *
  * Session 5 起这一页走标准 `SettingRow`（标题列弹性、控件列定宽 240、行高 48、
  * 行间 hairline）：语言下拉铺满控件列，按钮 / 快捷键 / 现状都从同一条竖线起排。
- * `description` 槽已经在 primitive 上，这一页要不要补说明由页面级 Session 定。
+ * Session 6 复核：六行标签都读得出后果，一句 `description` 都不补。
  */
 export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
@@ -86,10 +87,9 @@ export function GeneralSettings({ close }: { close: () => void }) {
         >
           {st('shortcuts.open')}
         </Button>
-        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法 */}
-        <kbd className="rounded-sm border border-border px-1 font-mono text-xs leading-5 text-ink-3">
-          ?
-        </kbd>
+        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法——
+            画成键帽（`Kbd`），不画成一颗带边框的钮：Session 6 之前它长得像帮助按钮 */}
+        <Kbd>?</Kbd>
       </SettingRow>
       <TutorialRows close={close} />
     </SettingSection>

@@ -21,6 +21,7 @@ import {
   SHELL_HEIGHT,
   SHELL_WIDTH,
 } from '@/components/SettingsDialog'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
 
 declare global {
@@ -41,7 +42,11 @@ async function open(section: string | null = null) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }

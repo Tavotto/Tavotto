@@ -71,8 +71,12 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             界面这一层交给示意图——空间关系用图讲，比两行字快 */}
         <SettingRow
           label={st('canvas.dragCompanions')}
+          description={st('canvas.dragCompanionsDesc')}
           help={st('canvas.companionsExplain')}
           controlId="setting-drag-companions"
+          // 示意图是说明的一部分，坐在标题列的说明下方（Session 6）；此前它与开关、
+          // 问号挤在控件列同一条基线上，读起来像一个奇怪的大图标
+          illustration={<CompanionDiagram on={withCompanions} />}
         >
           <Toggle
             aria-labelledby={settingRowLabelId('setting-drag-companions')}
@@ -80,7 +84,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             checked={withCompanions}
             onChange={(v) => useUiStore.getState().setCanvasPref({ dragAxesWithCompanions: v })}
           />
-          <CompanionDiagram on={withCompanions} />
         </SettingRow>
         <SettingRow label={st('canvas.more')}>
           <Button

@@ -842,6 +842,11 @@ export default interface Resources {
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
+      "keyRules": "关键要求",
+      "library": {
+        "spec": "规范库",
+        "style": "样式库"
+      },
       "name": "名称",
       "new": "新建",
       "newName": "新配置",
@@ -1217,6 +1222,7 @@ export default interface Resources {
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
         "dragCompanions": "拖动时一同移动关联对象",
+        "dragCompanionsDesc": "标题、图例等手动摆过位置的对象随子图一起移动",
         "more": "画布设置",
         "openCanvasSettings": "打开画布设置"
       },
@@ -1245,7 +1251,11 @@ export default interface Resources {
       },
       "export": {
         "defaultFormats": "默认格式",
-        "ppiNotForVector": "只选了矢量格式，分辨率不生效"
+        "formatsDesc": "导出对话框打开时预选这些格式",
+        "ppiNotForVector": "只选了矢量格式，分辨率不生效",
+        "sectionChecks": "检查",
+        "sectionFormats": "格式",
+        "sectionRaster": "位图输出"
       },
       "general": {
         "autosave": "自动保存",
@@ -1388,7 +1398,8 @@ export default interface Resources {
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。"
+        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
+        "writeBackOnHint": "修改可直接写入原始脚本。"
       },
       "section": {
         "about": "关于与隐私",

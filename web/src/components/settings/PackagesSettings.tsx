@@ -128,9 +128,11 @@ export function PackagesSettings() {
   }
 
   return (
-    <div data-packages-page className="flex flex-col gap-4">
+    // 分区之间的间距由外壳统一给（`display: contents`）；这一页是管理页，信息架构不动，
+    // 只把字级 / 按钮 / 折叠区收到与别的分区同一套
+    <div data-packages-page className="contents">
       {!available && capability && (
-        <p className="text-xs leading-relaxed text-ink-2" data-packages-disabled>
+        <p className="type-caption" data-packages-disabled>
           {capability.reason === 'no_project'
             ? pk('disabled.noProject', { product: PRODUCT_NAME })
             : capability.reason === 'managed_env_unavailable'
@@ -185,7 +187,7 @@ export function PackagesSettings() {
             {specError}
           </p>
         )}
-        <p className="text-xs text-ink-3">{pk('networkNote')}</p>
+        <p className="type-meta">{pk('networkNote')}</p>
 
         <LookupPanel locked={locked} onInstall={start} />
 
@@ -258,7 +260,7 @@ export function PackagesSettings() {
 
       {/* 一句话说清失败后怎么办（审计 T46）。「没有回滚」与快照份数是工程细节，
           折在下面——它们解释的是**为什么**只能重建，不是用户此刻要做的事。 */}
-      <p className="text-xs leading-relaxed text-ink-3">{pk('recoveryNote')}</p>
+      <p className="type-caption">{pk('recoveryNote')}</p>
 
       <DiagnosticDisclosure title={pk('techTitle')}>
         <p className="text-xs leading-relaxed text-ink-3">
@@ -294,8 +296,8 @@ function EnvironmentLine() {
   if (!capability || capability.reason === 'no_project') return null
   const exists = !!env?.exists
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
-      <span className="font-medium text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
+    <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
+      <span className="text-sm text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
       <span className="text-ink-3">{pk('envTarget')}</span>
       {exists ? (
         <>

@@ -88,7 +88,10 @@ export function AgentList({
             {onSetDefault && (
               <Button
                 size="sm"
-                variant={agent.id === defaultId ? 'primary' : 'secondary'}
+                variant="secondary"
+                // 当前默认是「选中态」不是「主动作」：selected 轻 tint + 字重（第五节），
+                // 不给每一行都摆一颗近黑填色的钮
+                active={agent.id === defaultId}
                 aria-pressed={agent.id === defaultId}
                 aria-label={ag('setDefaultAria', { name: agent.display_name })}
                 disabled={!agent.usable}

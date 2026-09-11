@@ -40,8 +40,9 @@ const st = (key: string, values?: Record<string, unknown>) =>
 export function PrivacyAboutSettings() {
   useTranslation('dialogs')
   const version = useUpdateStore((s) => s.status?.current)
+  // 分区之间的间距由外壳统一给（`display: contents`）
   return (
-    <div className="flex flex-col gap-4">
+    <div className="contents">
       <ProductBlock version={version} />
       <PrivacyBlock />
     </div>
@@ -50,16 +51,16 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-4">
       {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
       <BrandMark size={54} />
-      <div className="min-w-0">
-        <p className="text-xs text-ink">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <p className="type-title">
           {PRODUCT_NAME}
-          {version && <span className="ml-1.5 font-mono text-ink-2">v{version}</span>}
+          {version && <span className="ml-1.5 font-mono text-sm font-normal text-ink-2">v{version}</span>}
         </p>
-        <p className="mt-0.5 text-xs text-ink-3">{st('about.tagline')}</p>
-        <p className="mt-1 text-xs text-ink-3">
+        <p className="type-caption">{st('about.tagline')}</p>
+        <p className="type-meta">
           {st('about.licenseBefore')}{' '}
           <a
             href="https://github.com/Tavotto/Tavotto"
@@ -119,7 +120,12 @@ function PrivacyBlock() {
   const enabled = settings?.consent === 'enabled'
   return (
     <SettingSection title={st('about.privacyTitle')}>
-      <SettingRow label={st('about.telemetry.title')} status={consentStatus(settings)}>
+      {/* 一句话摘要是这一行的说明（常驻，不折叠）：它是隐私承诺，不是说明文字 */}
+      <SettingRow
+        label={st('about.telemetry.title')}
+        description={st('about.telemetry.summary')}
+        status={consentStatus(settings)}
+      >
         {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），完整状态由
             行内 status 那句话说。`choose` 只收得到开 / 关两档，所以界面上说
             得出 unset，却写不回 unset */}
@@ -130,15 +136,13 @@ function PrivacyBlock() {
           onChange={(next) => void choose(next ? 'enabled' : 'disabled', 'settings')}
         />
       </SettingRow>
-      {/* 一句话摘要：常驻。这是隐私承诺，不是说明文字 */}
-      <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.summary')}</p>
       {hard && <InlineWarning>{st('about.telemetry.hardDisabled')}</InlineWarning>}
       <TelemetryDataDisclosure />
       <a
         href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"
         target="_blank"
         rel="noreferrer"
-        className="self-start text-xs text-accent hover:underline"
+        className="self-start text-xs text-accent underline underline-offset-2"
       >
         {st('about.telemetry.policy')}
       </a>
@@ -177,15 +181,15 @@ function TelemetryDataDisclosure() {
   useTranslation('dialogs')
   return (
     <DiagnosticDisclosure title={st('about.telemetry.detailsTitle')}>
-      <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.autoProps')}</p>
-      <p className="text-xs leading-relaxed text-ink-3">
+      <p className="type-caption">{st('about.telemetry.autoProps')}</p>
+      <p className="type-caption">
         {st('about.telemetry.sendsBefore')}
         <strong className="font-medium text-ink">{st('about.telemetry.sendsPersist')}</strong>
         {st('about.telemetry.sendsAfter')}
       </p>
       <ul
         data-telemetry-disclosure
-        className="flex list-inside list-disc flex-col gap-0.5 text-xs leading-relaxed text-ink-3"
+        className="type-caption flex list-inside list-disc flex-col gap-0.5"
       >
         {TELEMETRY_DISCLOSED_EVENTS.map((event) => (
           <li key={event} data-telemetry-event={event}>
@@ -193,12 +197,12 @@ function TelemetryDataDisclosure() {
           </li>
         ))}
       </ul>
-      <p className="text-xs leading-relaxed text-ink-3">
+      <p className="type-caption">
         <strong className="font-medium text-ink">{st('about.telemetry.neverLabel')}</strong>
         {st('about.telemetry.never')}
       </p>
       {/* 「本机优先」这条完整承诺 */}
-      <p className="text-xs leading-relaxed text-ink-3">{st('about.privacy')}</p>
+      <p className="type-caption">{st('about.privacy')}</p>
     </DiagnosticDisclosure>
   )
 }

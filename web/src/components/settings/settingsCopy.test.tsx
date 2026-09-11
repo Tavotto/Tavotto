@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { UpdateSourceButton } from '@/components/inspector/UpdateSourceButton'
 import { dirTail } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
@@ -55,7 +56,7 @@ async function render(node: React.ReactNode) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(node)
+    root.render(<TooltipProvider>{node}</TooltipProvider>)
   })
   await act(async () => {})
 }
@@ -357,9 +358,14 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
   it('格式旁不再标注类型（2026-09-11 设计包）：只有格式名', async () => {
     defaults({})
     await open('export')
-    expect(bodyText()).toContain('PDF')
-    expect(bodyText()).not.toContain(ex('pdfHint'))
-    expect(bodyText()).not.toContain(ex('pngHint'))
+    // 判据只看**格式那一行**：Session 6 起「位图输出」是一个分区标题，合法地含
+    // 「位图」二字；这条守的是复选框旁边不再有「矢量 / 位图」旁注
+    const formatsRow = [...body().querySelectorAll('[data-setting-row]')].find((r) =>
+      r.textContent?.includes('PDF'),
+    )!
+    expect(formatsRow).toBeTruthy()
+    expect(formatsRow.textContent).not.toContain(ex('pdfHint'))
+    expect(formatsRow.textContent).not.toContain(ex('pngHint'))
   })
 
   it('只选了矢量格式时分辨率停用，并就近说明为什么', async () => {

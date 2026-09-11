@@ -1521,14 +1521,18 @@ Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）�
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
-设置窗口（Session 5）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
+设置窗口（Session 5 / 6）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
 （`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 最大宽 640 / wide 铺满）；一行设置是
 `settings/SettingRow`（标题列弹性 + 控件列定宽 240、normal 48 / compact 32、`control="fill"`
-整行宽），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）。细则在
-Design Constitution 第十二节。
+整行宽；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status` / `illustration`
+都在标题列），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）；页面
+不带页标题、不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是
+「左库（`listRowClass` 行）右编辑器」，规范页顶部四个关键数；`CopyButton` 建在 `Button` 上；
+键位提示用 `ui/Kbd`。细则在 Design Constitution 第十二、十三节。**用例里渲染任何含
+`IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
 
 公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
-NumberField（框内 `unit`）、Select、Checkbox、Toggle、Badge、Tabs、`listRowClass`、
+NumberField（框内 `unit`）、Select、Checkbox、Toggle、Badge、Kbd、Tabs、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
 Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
