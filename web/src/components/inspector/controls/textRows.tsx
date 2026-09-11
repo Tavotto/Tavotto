@@ -195,7 +195,7 @@ export function FontSizeRow({
   onChange: (v: number) => void
   onScrubStart?: () => void
   onScrubEnd?: () => void
-  labelWidth?: number
+  labelWidth?: number | 'auto'
   overridden?: boolean
   onReset?: () => void
   /** 字形按钮（B / I / U / 上下标）跟在字号后面 */

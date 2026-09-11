@@ -484,10 +484,6 @@
   },
   "scripts": {
     "addToCanvas": "Add to canvas",
-    "advEntry": "Entry candidates",
-    "advReason": "Status code",
-    "advStems": "Statically detected outputs",
-    "advanced": "Advanced details",
     "cancel": "Cancel",
     "cancelAria": "Cancel the run of {{script}}",
     "cancelledNote": "Cancelled",

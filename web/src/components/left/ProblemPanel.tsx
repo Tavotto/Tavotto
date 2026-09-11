@@ -57,7 +57,7 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  *   下面一行说「当前画布可自动修复 N 项」并给一颗按钮。
  * * **按规则聚合**：组头 = 等级角标 + 标题 + 「N 个对象」+ 该组的「全部修复」，
  *   滚动时钉在顶上；组内一行一个真实对象，只说「谁、现在多少 → 要多少」，
- *   左侧一条竖线把它们挂在组头下面。标题在组头说一遍，不再逐行重复、也不截断。
+ *   缩进一档挂在组头下面（不画竖线）。标题在组头说一遍，不再逐行重复、也不截断。
  * * **定位后清单留在原地**：`issueFocus` 不再让元素树顶掉左栏；正在处理的那一条
  *   带浅灰底 + 「当前」字样（不只靠颜色），底部给「上一项 / 下一项」。修好一条
  *   它会消失，「下一项」指向顶上来的那一条。
@@ -420,7 +420,7 @@ function GroupBlock({
         )}
       </div>
       {open && (
-        <ul className="ml-3 border-l border-border pl-3">
+        <ul className="ml-6">
           {group.issues.map((issue) => (
             <IssueRow
               key={issue.issueId}

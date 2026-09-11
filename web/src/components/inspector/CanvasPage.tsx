@@ -125,25 +125,21 @@ export function CanvasPage() {
           })}
         </div>
         {/* 宽、高与横竖交换同一行：交换是对这两个数的动作，不值得独占一行 */}
-        <div data-page-size-row className="flex items-center gap-1.5">
-          <div className="min-w-0 flex-1">
-            <MmField
-              label="W"
-              historyLabel={hist('setPageW')}
-              min={10}
-              value={page.w}
-              onChange={(v) => setPageSize(v, page.h)}
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <MmField
-              label="H"
-              historyLabel={hist('setPageH')}
-              min={10}
-              value={page.h}
-              onChange={(v) => setPageSize(page.w, v)}
-            />
-          </div>
+        <div data-page-size-row className="flex items-center justify-end gap-1.5">
+          <MmField
+            label="W"
+            historyLabel={hist('setPageW')}
+            min={10}
+            value={page.w}
+            onChange={(v) => setPageSize(v, page.h)}
+          />
+          <MmField
+            label="H"
+            historyLabel={hist('setPageH')}
+            min={10}
+            value={page.h}
+            onChange={(v) => setPageSize(page.w, v)}
+          />
           <Tip label={cv('swap')} side="left">
             <Button
               size="icon-sm"

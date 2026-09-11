@@ -3908,10 +3908,6 @@ export default interface Resources {
     },
     "scripts": {
       "addToCanvas": "添加到画布",
-      "advEntry": "入口候选",
-      "advReason": "状态码",
-      "advStems": "静态识别的输出",
-      "advanced": "高级详情",
       "cancel": "取消",
       "cancelAria": "取消 {{script}} 的运行",
       "cancelledNote": "已取消",

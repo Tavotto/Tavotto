@@ -95,9 +95,11 @@ export function TypographyControls({
         </Anchor>
       )}
       {size && (
-        <Anchor adapter={adapter} prop="sizePt" className="min-w-0 flex-1">
+        <Anchor adapter={adapter} prop="sizePt" className="shrink-0">
+          {/* 字号只占自己的宽度、标签紧挨输入框，剩余宽度全给字体下拉
+              （2026-09-11 用户反馈） */}
           <FontSizeRow
-            labelWidth={labelWidth}
+            labelWidth="auto"
             // mixed 时 NumberField 留空 + 占位符；**绝不退回 9 pt 那种默认值**
             value={sizeVal.kind === 'mixed' ? NaN : Number(displayValueOf(sizeVal) ?? 9)}
             mixed={sizeVal.kind === 'mixed'}

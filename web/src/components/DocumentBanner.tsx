@@ -3,10 +3,8 @@ import { TriangleAlert, RotateCcwClock, Lock } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatTime } from '@/i18n/format'
 import {
-  discardLocalCopy,
   dismissDocNotice,
   overwriteDisk,
-  recoverLocalCopy,
   reloadFromDisk,
   saveNow,
   useDocumentStore,
@@ -82,29 +80,8 @@ export function DocumentBanner() {
     )
   }
 
-  if (notice?.kind === 'recovery') {
-    const s = notice.summary
-    return (
-      <Banner icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}>
-        <span className="min-w-0 flex-1 truncate">{t('docBanner.recoveryTitle')}</span>
-        {/* 文档名是用户内容，作为插值原样透出 */}
-        <span className="hidden shrink-0 opacity-80 min-[900px]:inline">
-          {t('docBanner.recoveryBody', {
-            name: s.name,
-            canvases: s.canvases,
-            objects: s.objects,
-            time: formatTime(s.savedAt),
-          })}
-        </span>
-        <Button size="sm" className="shrink-0" onClick={() => void recoverLocalCopy()}>
-          {t('docBanner.recover')}
-        </Button>
-        <Button size="sm" className="shrink-0" onClick={discardLocalCopy}>
-          {t('docBanner.keepMain')}
-        </Button>
-      </Banner>
-    )
-  }
+  // 「发现未恢复的编辑」不再是横幅：它挂在顶栏「已保存」右侧（TopBar 的
+  // RecoveryNotice，2026-09-11 用户反馈）
 
   if (notice?.kind === 'schema_too_new') {
     return (

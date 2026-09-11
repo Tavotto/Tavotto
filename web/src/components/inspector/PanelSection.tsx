@@ -39,7 +39,6 @@ import {
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { overrideCounts } from '@/lib/overrideCounts'
@@ -48,13 +47,11 @@ import {
   panelAspectLocked,
   panelFullSize,
   panelRotation,
-  ROTATIONS,
 } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { NumberField, TextInput } from '../ui/Input'
-import { Segmented } from '../ui/Segmented'
 import { Tip } from '../ui/Tooltip'
 import { AlignToCanvasRow } from './ArrangeSection'
 import { HistoryPanel } from './HistoryPanel'
@@ -157,16 +154,18 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Section title={pn('geometry')}>
-      {/* 两行共用一张三列网格：左右两列等宽，中列只放宽高比锁（第一行留同宽的空位），
-          于是 Y 与 H、X 与 W 各自对齐在同一条竖线上，锁正好落在 W 与 H 的正中 */}
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
+      {/* 两行共用一张三列网格：左右两列按内容定宽、贴着两边，中列吃掉剩余宽度、
+          只放宽高比锁（第一行留空位）——于是 Y 与 H 右对齐在同一条竖线上，锁正好
+          落在 W 的单位与 H 的标签的正中（2026-09-11 用户反馈：之前中列 auto、两侧
+          1fr，W 那格右边留白把锁挤向了 H） */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-1.5">
         <MmField
           label="X"
           historyLabel={hist('setX')}
           value={sharedPanel(objs, (o) => o.x)}
           onChange={(v) => setAxis('x', v)}
         />
-        <span aria-hidden className="w-7" />
+        <span aria-hidden />
         <MmField
           label="Y"
           historyLabel={hist('setY')}
@@ -188,6 +187,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         />
         <Tip label={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}>
           <Button
+            className="justify-self-center"
             size="icon-sm"
             active={locked}
             aria-pressed={locked}
@@ -320,16 +320,22 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
       summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
     >
       <div className="flex flex-col gap-1.5">
+        {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，
+            步进 90、写回前吸附到这四档 */}
         <Row label={translate('transform.rotation', { ns: 'inspector' })}>
-          <Segmented
-            className="w-full"
-            value={rot === undefined ? null : String(rot)}
-            onChange={(v) => rotatePanels(ids, Number(v) as PanelRotation)}
-            items={ROTATIONS.map((r) => ({
-              value: String(r),
-              label: `${r}°`,
-              tip: pn('rotationTip'),
-            }))}
+          <NumberField
+            value={rot ?? 0}
+            mixed={rot === undefined}
+            min={-360}
+            max={360}
+            step={90}
+            precision={0}
+            suffix="°"
+            title={pn('rotationTip')}
+            onChange={(v) => {
+              const snapped = ((Math.round(v / 90) * 90) % 360 + 360) % 360
+              rotatePanels(ids, snapped as PanelRotation)
+            }}
           />
         </Row>
 
@@ -366,24 +372,10 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           </div>
         </Row>
 
+        {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
         <Row label={pn('opacity')}>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={opacity ?? 100}
-            aria-label={pn('opacity')}
-            style={{ accentColor: 'var(--color-ink)' }}
-            className="h-4 min-w-0 flex-1 cursor-pointer"
-            onPointerDown={() =>
-              useDocumentStore.getState().beginTxn(msg('history.setOpacity', undefined, 'workspace'))
-            }
-            onPointerUp={() => useDocumentStore.getState().endTxn()}
-            onChange={(e) => setPanelOpacity(ids, Number(e.target.value) / 100)}
-          />
           <NumberField
-            className="w-[58px] shrink-0"
+            ariaLabel={pn('opacity')}
             value={opacity ?? 100}
             mixed={opacity === undefined}
             min={0}

@@ -523,8 +523,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 <EmptyState icon={FileSliders} title={st('empty')} />
               </li>
             )}
-            {records.map((r, i) => (
-              <li key={r.id} className={cn(i > 0 && 'border-t border-border')}>
+            {records.map((r) => (
+              <li key={r.id}>
                 <button
                   onClick={() => setSelectedId(r.id)}
                   aria-current={selected?.id === r.id || undefined}

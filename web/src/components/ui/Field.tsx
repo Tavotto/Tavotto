@@ -94,7 +94,8 @@ export function Row({
   label?: ReactNode
   children: ReactNode
   className?: string
-  labelWidth?: number
+  /** 'auto' = 标签只占自己的宽度（字号那种紧挨着输入框的短标签） */
+  labelWidth?: number | 'auto'
   align?: 'center' | 'start'
 }) {
   const top = align === 'start'
@@ -102,15 +103,17 @@ export function Row({
     <div className={cn('flex min-h-6 gap-2', top ? 'items-start' : 'items-center', className)}>
       {label != null && (
         <span
-          style={{ width: labelWidth }}
+          style={labelWidth === 'auto' ? undefined : { width: labelWidth }}
           className={cn('shrink-0 text-xs text-ink-2', top && 'leading-6')}
         >
           {label}
         </span>
       )}
+      {/* 控件一律靠右贴齐（2026-09-11 用户反馈：设置项都在行内右对齐）；
+          撑满的控件（Select / Segmented / 文本框）不受影响 */}
       <div
         className={cn(
-          'flex min-w-0 flex-1 gap-1.5',
+          'flex min-w-0 flex-1 justify-end gap-1.5',
           top ? 'items-start' : 'items-center',
         )}
       >

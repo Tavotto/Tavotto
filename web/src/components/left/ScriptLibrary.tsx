@@ -216,7 +216,6 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
 
       <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
       <FailureRecovery script={entry.script} run={run} />
-      <AdvancedDetails entry={entry} />
 
       {run && run.descriptors.length > 0 && (
         <ProbeResultsDialog
@@ -350,34 +349,6 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
         </Details>
       )}
     </div>
-  )
-}
-
-/** 高级详情（默认折叠）：entry 候选、静态识别的输出——内部术语只住在这里 */
-function AdvancedDetails({ entry }: { entry: ScriptInventoryEntry }) {
-  useTranslation('workspace')
-  return (
-    <Details>
-      <Summary className="text-xs text-ink-3 hover:text-ink">{sc('advanced')}</Summary>
-      <dl className="mt-0.5 flex flex-col gap-0.5 text-xs text-ink-3">
-        {entry.entry_candidates.length > 0 && (
-          <div className="flex gap-1">
-            <dt className="shrink-0">{sc('advEntry')}</dt>
-            <dd className="min-w-0 truncate font-mono">{entry.entry_candidates.join(', ')}</dd>
-          </div>
-        )}
-        {entry.static_stems.length > 0 && (
-          <div className="flex gap-1">
-            <dt className="shrink-0">{sc('advStems')}</dt>
-            <dd className="min-w-0 truncate font-mono">{entry.static_stems.join(', ')}</dd>
-          </div>
-        )}
-        <div className="flex gap-1">
-          <dt className="shrink-0">{sc('advReason')}</dt>
-          <dd className="font-mono">{entry.reason}</dd>
-        </div>
-      </dl>
-    </Details>
   )
 }
 

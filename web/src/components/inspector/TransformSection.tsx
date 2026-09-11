@@ -36,7 +36,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
 
   const body = (
     <>
-      <Grid2>
+      <Grid2 className="justify-items-end">
         <MmField
           label="X"
           historyLabel={hist('setX')}

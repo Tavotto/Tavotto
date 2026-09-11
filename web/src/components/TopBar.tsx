@@ -16,6 +16,7 @@ import {
   Tags,
   Type,
   Undo2,
+  RotateCcwClock,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -39,7 +40,7 @@ import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { discardLocalCopy, recoverLocalCopy, useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -98,6 +99,7 @@ export function TopBar() {
         <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
         <SaveStateLabel />
+        <RecoveryNotice />
       </div>
 
       <ToolCluster layoutTools={!fastEdit} />
@@ -200,6 +202,39 @@ function Brand() {
  * 「已自动保存 14:03」在写盘失败之后照样显示（`dirty` 被 flush 清掉了，
  * 失败只派了一个 4.5 秒后消失的事件）。用户看不出磁盘上到底是哪一版。
  */
+/**
+ * 「发现未恢复的编辑」：贴在保存状态右侧的一句话 + 两个出口，不再是整条横幅
+ * （2026-09-11 用户反馈）。摘要（几张画布、几个对象、存于几点）走 title。
+ */
+function RecoveryNotice() {
+  const { t } = useTranslation('workspace')
+  const notice = useDocumentStore((s) => s.docNotice)
+  if (notice?.kind !== 'recovery') return null
+  const s = notice.summary
+  return (
+    <span
+      role="status"
+      className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ink-2"
+      // 文档名是用户内容，作为插值原样透出
+      title={t('docBanner.recoveryBody', {
+        name: s.name,
+        canvases: s.canvases,
+        objects: s.objects,
+        time: formatTime(s.savedAt),
+      })}
+    >
+      <RotateCcwClock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+      <span className="truncate">{t('docBanner.recoveryTitle')}</span>
+      <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => void recoverLocalCopy()}>
+        {t('docBanner.recover')}
+      </Button>
+      <Button size="sm" className="h-6 text-xs" onClick={discardLocalCopy}>
+        {t('docBanner.keepMain')}
+      </Button>
+    </span>
+  )
+}
+
 function SaveStateLabel() {
   const { t } = useTranslation('workspace')
   const saveState = useDocumentStore((s) => s.saveState)

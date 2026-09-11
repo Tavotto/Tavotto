@@ -437,12 +437,13 @@ function StatusBadge({ status }: { status: ReadinessStatus }) {
 function PanelThumb({ panel }: { panel: ReadinessPanel }) {
   const asset = useAssetStore((s) => s.byId[panel.id])
   const src = asset ? panelSrc(asset.id, asset.kind, 200, asset.mtime) : null
-  if (!src) return <span className="h-9 w-12 shrink-0 rounded-sm bg-surface-2" aria-hidden />
+  // 缩略图占卡片左半（2026-09-11 用户反馈），动作在右半从上往下排
+  if (!src) return <span className="aspect-[4/3] w-1/2 shrink-0 rounded-sm bg-surface-2" aria-hidden />
   return (
     <img
       src={src}
       alt=""
-      className="h-9 w-12 shrink-0 rounded-sm border border-border bg-white object-contain"
+      className="w-1/2 shrink-0 self-start rounded-sm border border-border bg-white object-contain"
     />
   )
 }
@@ -499,9 +500,9 @@ function PanelRow({
         'focus-visible:focus-ring',
       )}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-3">
         <PanelThumb panel={panel} />
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex items-baseline gap-2">
             <span className="min-w-0 flex-1 truncate text-xs text-ink" title={panel.id}>
               {fileName(panel.id)}
@@ -511,10 +512,8 @@ function PanelRow({
           {/* 每张图的原因句不再逐条列出（2026-09-11 设计包）：状态在角标与分组标题里，
               原因仍由预检横幅与素材卡（`reasonText`）在别处说 */}
           {panel.status === 'needs_probe' && (
-            <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
+            <p className="text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
           )}
-        </div>
-      </div>
 
       <RowActions
         panel={panel}
@@ -545,11 +544,12 @@ function PanelRow({
           折叠段里；那一段按 2026-09-11 设计包整个去掉，这两个动作直接跟在行尾。
           其余状态的关联控件在 RowActions 里 */}
       {panel.status === 'editable' && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-col gap-1.5">
           {panel.script && (
             <Button
               variant="outline"
               size="sm"
+              className="w-full"
               disabled={disabled}
               onClick={() => onProbe(panel.script as string)}
             >
@@ -567,6 +567,8 @@ function PanelRow({
           />
         </div>
       )}
+        </div>
+      </div>
     </li>
   )
 }
@@ -603,14 +605,14 @@ function RowActions({
   useTranslation('dialogs')
 
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-col items-stretch gap-1.5 empty:hidden">
       {/* 已经能编辑的那张只留一个动作：把它放上画布（审计 T10——「仅待连接项
           展示下一步」）。「重新试运行」是排障动作，它和改绑一起收进技术详情：
           摆在第一层会让一张**已经好了**的图看起来还有事要做。
           素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
           新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
       {panel.status === 'editable' && hasAsset && (
-        <Button variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
+        <Button variant="outline" size="sm" className="w-full" disabled={disabled} onClick={onAdd}>
           <Plus size={ICON_SIZE.sm} />
           {rd('addToCanvas')}
         </Button>
@@ -766,20 +768,21 @@ function SourcePicker({
   const script = options.includes(picked) ? picked : ''
 
   if (!writable || !panel.can_manual_link || options.length === 0) return null
+  // 下拉与「改为这个脚本」同一行：卡片右半是一列动作，这一行是其中一行
   return (
-    <>
+    <div className="flex items-center gap-1.5">
       <Select
-        className="min-w-40 flex-1 font-mono"
+        className="min-w-0 flex-1 font-mono"
         value={script}
         onChange={setPicked}
         placeholder={rd(linkLabel === 'relink' ? 'relinkPlaceholder' : 'pickSourcePlaceholder')}
         ariaLabel={rd('pickSourceAria', { name: fileName(panel.id) })}
         options={options.map((s) => ({ value: s, label: s }))}
       />
-      <Button size="sm" disabled={disabled || !script} onClick={() => onLink(script)}>
+      <Button size="sm" className="shrink-0" disabled={disabled || !script} onClick={() => onLink(script)}>
         {rd(linkLabel)}
       </Button>
-    </>
+    </div>
   )
 }
 
