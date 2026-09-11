@@ -50,11 +50,12 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 树行、菜单项全部同高，一行里的东西天然在一条中线上。行内 gap 按 4 / 8 走
 （`gap-1` / `gap-1.5` / `gap-2`），分区之间靠 `Section` 的固定留白。
 
-三档定义（供页面级 Session 落地，目前只有第一档有消费者）：
+三档定义：
 
 - compact row 28：控件与列表行（已落地）
 - normal control 32：对话框脚部主动作（待定，看真实页面再决定要不要拉高）
-- setting row 48：设置页一行（待定；`SettingRow` 现在 min-h 28 + 标签 py-1）
+- setting row 48：设置页一行（Session 5 落地：`SettingRow` `density="normal"` 最小 48px，
+  `compact` 最小 32px；见第十二节）
 
 不允许某个页面自己决定按钮高度。
 
@@ -159,3 +160,32 @@ opacity + ≤4px 位移 + scale 0.97~1；没有弹簧、缩放炫技、漂浮。
 
 改了什么、哪些页面自动受益、哪些留给后续 Session，见同日提交信息与
 `web/AGENTS.md` 的「UI 视觉纪律」段。
+
+## 十二、设置窗口（Session 5 定下的形态）
+
+设置是「成熟桌面设置窗口」那一档，不是全屏面板、也不是内容撑高的对话框。
+
+- **外壳**：`SettingsDialog` 固定 **1000×680**（`SHELL_WIDTH` / `SHELL_HEIGHT`），由 `Dialog` 的
+  `max-w-[calc(100vw-2rem)]` / `max-h-[86vh]` 在小窗口上收缩，外框永远在视口内；圆角 `lg`、
+  hairline 边框、`shadow-pop`，纸白 surface，没有玻璃。`Dialog chrome="shell"`：44px 标题栏
+  （type-title「设置」+ ghost `IconButton` 关闭）+ 一根 hairline，正文不带内边距、不滚，
+  子树自己决定哪一列滚。
+- **导航**：左列固定 192px（`sm:w-48`），与内容之间一根 hairline。十一个分区按 `NAV_GROUPS`
+  分四组：通用（常规 / 界面 / 项目）· 工作流（样式 / 规范 / 导出）· 集成（编码 Agent / 包管理）·
+  系统（诊断 / 更新 / 关于与隐私）；组名是 type-section，只在 ≥640px 显示，组间 16px。
+  项 28px、`rounded-sm`；当前项 = `selected` 轻 tint + 字重，hover = `surface-hover`，
+  没有深灰块、没有蓝。<640px 时导航变顶部一条可横滚，组名藏起来只留组间距。
+- **内容区**：`[data-settings-content]` 独立滚动，`px-6 py-5`，`scrollbar-gutter: stable`
+  （有没有滚动条内容都从同一条竖线起排），底部 `mb-2` 让滚动条在圆角之前结束。分区之间
+  `gap-7`（28px）由这里统一给，页面自己不带外层 gap。**内容模式**由 `CONTENT_MODE` 按分区
+  声明：`normal` 最大宽 `CONTENT_MAX_WIDTH` = 640（常规 / 界面 / 项目 / 导出 / 编码 Agent /
+  诊断 / 更新 / 关于）；`wide` 铺满（样式 / 规范 / 包管理：左清单 + 右编辑器 / 预览 / 表格）。
+  不给每一页自己随意布局。
+- **SettingSection**：type-section 小标题 + 可选一句 type-caption 说明 + 若干行；相邻两个
+  `SettingRow` 之间一根 hairline（行与警示条 / 折叠区之间不画）。**不是卡片**。
+- **SettingRow**：`标题 [?] / 说明 / 现状 ‖ 控件` 的两列网格——标题列弹性，**控件列定宽
+  `SETTING_CONTROL_WIDTH` = 240**，开关 / 下拉 / 按钮 / 数字框都从同一条竖线起排、左起对齐。
+  标题 type-body（12 / ink），说明 type-caption，现状 type-meta。`density="normal"` 最小 48px
+  （默认）、`compact` 最小 32px（密集字段清单，不放说明）；`control="fill"` 时控件整行宽、落到
+  标题下一行（路径输入框那种）。样式 / 规范页的只读摘要行（`SummaryRow`）共用同一份网格，
+  「摘要 ↔ 输入框」切换时整列不跳（`settingsDisclosure.test` 量它）。

@@ -13,8 +13,8 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * 界面。原来的「侧栏行为」与「画布与编辑」两个分区合成一页（ADR 0038）。
  *
  * 三个开关都改成**结果式名称**（审计 T39）：「左抽屉常驻」「右栏常驻」
- * 「拖动子图联动」是我们内部叫法，用户读不出开了之后会怎样。现在标签说结果、
- * 标签底下一行短说明说影响谁，开关统一对齐在同一列。
+ * 「拖动子图联动」是我们内部叫法，用户读不出开了之后会怎样。现在标签说结果，
+ * 开关统一落在 `SettingRow` 的控件列（Session 5 的标准行：标题列弹性、控件列定宽）。
  *
  * **像素断点不再写在界面上。** 改动前两个侧栏各挂一段「窗口 ≥1440px 时……」
  * ——那串数字既是开发口径（真实断点在 `uiStore` 是 WIDE=1280 / MEDIUM=1024，
@@ -35,8 +35,9 @@ export function InterfaceSettings({ close }: { close: () => void }) {
       : layout === 'medium'
         ? st('sidebars.pinLimitedMedium')
         : undefined
+  // 分区之间的间距由外壳的内容容器统一给，这里不再自带一层 gap
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <SettingSection title={st('section.sidebars')}>
         <SettingRow
           label={st('sidebars.leftPinned')}
@@ -94,6 +95,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           </Button>
         </SettingRow>
       </SettingSection>
-    </div>
+    </>
   )
 }

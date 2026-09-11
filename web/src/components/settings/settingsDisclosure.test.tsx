@@ -16,7 +16,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
-import { SettingsDialog } from '@/components/SettingsDialog'
+import { CONTENT_MAX_WIDTH, CONTENT_MODE, SECTIONS, SettingsDialog } from '@/components/SettingsDialog'
+import { SETTING_CONTROL_WIDTH } from '@/components/settings/SettingRow'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -431,21 +432,53 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
 /* ------------------------------- 行的一致性 ------------------------------- */
 
 describe('SettingRow 布局稳定', () => {
-  it('不同分区的标签列宽一致', async () => {
+  it('不同分区的控件列宽一致（含样式 / 规范页的只读摘要行）', async () => {
     const widths = new Set<string>()
-    // 「样式」「规范」两页也进这张单子：那两页的只读摘要有自己的一列标签，
-    // 与 SettingRow 差几个像素就是「摘要 ↔ 输入框」切换时整列左右跳一下
+    let rows = 0
+    // 「样式」「规范」两页也进这张单子：那两页的只读摘要行与 SettingRow 共用同一份
+    // 网格，「摘要 ↔ 输入框」切换时值与输入框从同一条竖线起排，差几个像素就是整列左右跳一下
     for (const section of ['general', 'project', 'export', 'interface', 'style', 'spec']) {
       await open(section)
-      for (const el of body().querySelectorAll('span[style*="width"]')) {
-        const w = (el as HTMLElement).style.width
-        if (w) widths.add(w)
+      for (const el of body().querySelectorAll('[data-setting-row], [data-summary-row]')) {
+        rows += 1
+        widths.add((el as HTMLElement).style.getPropertyValue('--setting-control'))
       }
       await act(async () => {
         root.unmount()
       })
       document.body.innerHTML = ''
     }
-    expect([...widths]).toEqual(['160px'])
+    expect(rows).toBeGreaterThan(10)
+    expect([...widths]).toEqual([`${SETTING_CONTROL_WIDTH}px`])
+  })
+
+  it('普通分区的内容有最大宽度，样式 / 规范 / 包管理铺满', async () => {
+    // 期望值写死在这里，不从 `CONTENT_MODE` 读——否则改了表判据跟着变，永远绿
+    const WIDE = ['style', 'spec', 'packages']
+    expect(Object.keys(CONTENT_MODE).sort()).toEqual([...SECTIONS].sort())
+    // 「编码 Agent」页要一份能用的 caps，且挂载后会自己再探一次：回包一起摆好
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    useAiStore.setState({ caps, agent: 'codex' })
+    for (const section of SECTIONS) {
+      const mode = WIDE.includes(section) ? 'wide' : 'normal'
+      await open(section)
+      const wrap = body().querySelector('[data-content-mode]') as HTMLElement
+      expect(wrap.dataset.contentMode, section).toBe(mode)
+      expect(wrap.style.maxWidth, section).toBe(mode === 'normal' ? `${CONTENT_MAX_WIDTH}px` : '')
+      await act(async () => {
+        root.unmount()
+      })
+      document.body.innerHTML = ''
+    }
   })
 })

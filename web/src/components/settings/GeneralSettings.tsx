@@ -31,6 +31,10 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *     提示是什么」，而用户要的是「点了会怎样」，所以按钮改叫「重新显示操作提示」。
  * 标签下面原本各有一行短说明（重置动作影响哪些东西、自动保存与命名副本的分工），
  * 2026-09-11 的组件工作台设计包把它们一并去掉：这一页只剩标签与动作。
+ *
+ * Session 5 起这一页走标准 `SettingRow`（标题列弹性、控件列定宽 240、行高 48、
+ * 行间 hairline）：语言下拉铺满控件列，按钮 / 快捷键 / 现状都从同一条竖线起排。
+ * `description` 槽已经在 primitive 上，这一页要不要补说明由页面级 Session 定。
  */
 export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
@@ -44,7 +48,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
       */}
       <SettingRow label={st('general.language')}>
         <Select
-          className="w-[160px]"
+          className="w-full"
           ariaLabel={st('general.language')}
           value={locale}
           onChange={(v) => void setLocale(v as (typeof SUPPORTED_LOCALES)[number])}
@@ -53,7 +57,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
       </SettingRow>
       {/* 自动保存没有开关可调，它是一句现状。目录与写盘时机进帮助文档 */}
       <SettingRow label={st('general.autosave')}>
-        <span className="text-xs text-ink-3">{st('general.autosaveState')}</span>
+        <span className="type-meta">{st('general.autosaveState')}</span>
       </SettingRow>
       <SettingRow label={st('general.layout')}>
         <Button

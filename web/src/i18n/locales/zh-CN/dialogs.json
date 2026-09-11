@@ -1151,6 +1151,12 @@
       "hints": "操作提示",
       "resetHints": "重新显示操作提示",
       "resetAction": "重置"
+    },
+    "navGroup": {
+      "general": "通用",
+      "workflow": "工作流",
+      "integrations": "集成",
+      "system": "系统"
     }
   },
   "style": {

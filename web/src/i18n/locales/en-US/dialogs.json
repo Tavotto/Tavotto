@@ -1160,6 +1160,12 @@
       "hints": "Action hints",
       "resetHints": "Show action hints again",
       "resetAction": "Reset"
+    },
+    "navGroup": {
+      "general": "General",
+      "workflow": "Workflow",
+      "integrations": "Integrations",
+      "system": "System"
     }
   },
   "style": {

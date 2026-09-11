@@ -1256,6 +1256,12 @@ export default interface Resources {
         "resetLayout": "恢复界面默认布局"
       },
       "helpAbout": "关于{{label}}",
+      "navGroup": {
+        "general": "通用",
+        "integrations": "集成",
+        "system": "系统",
+        "workflow": "工作流"
+      },
       "navLabel": "设置分区",
       "packages": {
         "builtinEmpty": "没有内置包信息。",

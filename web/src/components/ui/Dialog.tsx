@@ -48,6 +48,13 @@ interface DialogProps {
    * 仍然把「共用对话框外壳」这一类与上面那四个区分开。
    */
   anchor?: string
+  /**
+   * 外壳形态。`default`：标题 + 可滚的正文（带内边距）+ 脚部，绝大多数对话框。
+   * `shell`：给「左导航 + 右内容」这种自己管布局与滚动的窗口（设置）——标题栏
+   * 收成 44px 一条、下面一根 hairline，正文**不带内边距也不滚**，子树自己铺满、
+   * 自己决定哪一列滚。
+   */
+  chrome?: 'default' | 'shell'
 }
 
 export function Dialog({
@@ -64,7 +71,9 @@ export function Dialog({
   blockDismiss = false,
   covered = false,
   anchor,
+  chrome = 'default',
 }: DialogProps) {
+  const shell = chrome === 'shell'
   const locked = busy || blockDismiss
   // 本仓库的对话框全部由 store 驱动、没有 Radix Trigger：关闭时 Radix 找不到
   // 触发元素，焦点会掉回 body——键盘用户按 Esc 后不知道自己在哪（审计 P1-09）。
@@ -125,7 +134,14 @@ export function Dialog({
             covered && 'invisible',
           )}
         >
-          <div className="flex items-start justify-between gap-3 px-4 pb-1 pt-3.5">
+          <div
+            className={cn(
+              'flex justify-between gap-3',
+              shell
+                ? 'h-11 shrink-0 items-center border-b border-border px-4'
+                : 'items-start px-4 pb-1 pt-3.5',
+            )}
+          >
             <div className="min-w-0">
               <RD.Title className="type-title">{title}</RD.Title>
               {description && (
@@ -142,14 +158,21 @@ export function Dialog({
                   data-dialog-close
                   label={t('actions.close')}
                   tip={false}
-                  className="-mr-1.5 -mt-1 text-ink-3 hover:text-ink"
+                  className={cn('-mr-1.5 text-ink-3 hover:text-ink', !shell && '-mt-1')}
                 >
                   <X size={ICON_SIZE.md} />
                 </IconButton>
               </RD.Close>
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
+          <div
+            className={cn(
+              'min-h-0 flex-1',
+              shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-4 py-3',
+            )}
+          >
+            {children}
+          </div>
           {footer && (
             <div className="flex items-center justify-end gap-2 px-4 pb-3.5 pt-1">
               {footer}

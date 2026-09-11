@@ -1521,6 +1521,12 @@ Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）�
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
+设置窗口（Session 5）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
+（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 最大宽 640 / wide 铺满）；一行设置是
+`settings/SettingRow`（标题列弹性 + 控件列定宽 240、normal 48 / compact 32、`control="fill"`
+整行宽），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）。细则在
+Design Constitution 第十二节。
+
 公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Toggle、Badge、Tabs、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、

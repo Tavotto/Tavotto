@@ -38,7 +38,14 @@ import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { NumberField, TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
-import { DiagnosticDisclosure, DiagnosticItem, SettingRow, SettingSection } from './SettingRow'
+import {
+  DiagnosticDisclosure,
+  DiagnosticItem,
+  SettingRow,
+  SettingSection,
+  settingControlStyle,
+  settingRowGrid,
+} from './SettingRow'
 import { StyleSamplePreview } from './StyleSamplePreview'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -170,11 +177,6 @@ function clearPath(obj: Record<string, unknown>, path: string): Record<string, u
   return next
 }
 
-/**
- * 只读摘要那一列的宽度。**与 `SettingRow` 的默认标签列同值**——两种模式在同一
- * 个位置来回切换，差几个像素就是整列左右跳一下。
- */
-const SUMMARY_LABEL_WIDTH = 160
 
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
@@ -201,12 +203,19 @@ function FieldGroup({ group, children }: { group: string; children: ReactNode })
  * 而它其实是"这份是内置的、想改先复制一份"（审计 T41 / T42）。
  */
 function SummaryRow({ label, value }: { label: string; value: string }) {
+  // **与 `SettingRow` 同一份网格**（标题列弹性、控件列 `SETTING_CONTROL_WIDTH`）：
+  // 「摘要 ↔ 输入框」两种模式在同一位置来回切换，值与输入框从同一条竖线起排，
+  // 差几个像素就是整列左右跳一下（`settingsDisclosure.test` 量它）
   return (
-    <div className="flex min-h-6 items-baseline gap-2 text-xs">
-      <span style={{ width: SUMMARY_LABEL_WIDTH }} className="shrink-0 truncate text-ink-2" title={label}>
+    <div
+      data-summary-row
+      style={settingControlStyle}
+      className={cn('grid min-h-6 items-baseline gap-x-6 text-xs', settingRowGrid)}
+    >
+      <span className="min-w-0 truncate text-ink-2" title={label}>
         {label}
       </span>
-      <span className="shrink-0 tabular-nums text-ink">{value}</span>
+      <span className="tabular-nums text-ink">{value}</span>
     </div>
   )
 }
