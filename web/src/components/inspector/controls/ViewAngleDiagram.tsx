@@ -27,7 +27,7 @@ export function ViewAngleDiagram({ elev, azim, roll = 0 }: { elev: number; azim:
       width={SIZE}
       height={SIZE}
       viewBox={`0 0 ${SIZE} ${SIZE}`}
-      className="shrink-0 rounded-sm border border-border bg-surface text-ink-2"
+      className="shrink-0 rounded-sm bg-surface text-ink-2"
       data-view-angle
     >
       {entries.map(({ name, dir }) => {

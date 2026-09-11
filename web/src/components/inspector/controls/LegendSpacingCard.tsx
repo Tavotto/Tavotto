@@ -84,8 +84,9 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                 <span className="min-w-0 flex-1 text-xs text-ink-2">
                   {labeledWithState(label, overridden(prop))}
                 </span>
+                {/* 数字框比通用的 4ch 略宽（2026-09-11 设计包量的 40px），单位仍在框外 */}
                 <NumberField
-                  className="w-[120px] shrink-0"
+                  className="w-[120px] shrink-0 [&_input]:w-10"
                   ariaLabel={label}
                   value={Number(w.read(prop) ?? 0)}
                   min={field.min}

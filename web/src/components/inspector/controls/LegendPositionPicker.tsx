@@ -333,24 +333,8 @@ export function LegendPositionPicker({
     target.focus()
   }
 
-  // 状态行：不靠悬停也知道此刻选的是什么
-  let kind: string | null = null
-  let name: string
-  if (value === null) {
-    name = ins('element.mixedValues')
-  } else if (anchor !== null) {
-    if (activePreset) {
-      kind = ins('control.legendOutsideBand')
-      name = ins(`control.legendOutside.${activePreset}`)
-    } else {
-      // 不属于任何预设的锚点：报数字，不冒充某个方位
-      kind = ins('control.legendAnchorLabel')
-      name = `${anchor[0].toFixed(2)}, ${anchor[1].toFixed(2)}`
-    }
-  } else {
-    name = optionLabel('loc', value)
-  }
-  const statusTitle = kind ? `${kind} · ${name}` : name
+  // 九宫格下面原有一行「此刻选的是什么」的状态文字，按 2026-09-11 设计包去掉：
+  // 选中格子已经高亮，radio 的 aria-checked 也在说同一件事。锚点展开钮留下。
 
   const showRefine = anchorSupported && canPlace && value !== null && anchor !== null
   // 只在锚点确实探到容器外时提一句「可能超出」；是否真溢出由预检说了算
@@ -484,19 +468,8 @@ export function LegendPositionPicker({
         )}
       </div>
 
-      <div className="flex min-h-6 items-center justify-between gap-2">
-        <span className="flex min-w-0 items-baseline gap-1 text-xs" title={statusTitle}>
-          {kind && (
-            <>
-              <span className="shrink-0 text-ink-3">{kind}</span>
-              <span aria-hidden className="text-border-strong">
-                ·
-              </span>
-            </>
-          )}
-          <span className="truncate font-medium text-ink">{name}</span>
-        </span>
-        {showRefine && (
+      {showRefine && (
+        <div className="flex min-h-6 items-center justify-end gap-2">
           <button
             type="button"
             aria-expanded={refined}
@@ -507,8 +480,8 @@ export function LegendPositionPicker({
             {ins('control.legendAnchorLabel')}
             <Chevron open={refined} />
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {showRefine && anchor !== null && value !== null && (
         // 收起时留在 DOM 里（hidden），展开与否不影响受控值
