@@ -122,7 +122,6 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
           Conversion
         </text>
       </svg>
-      <figcaption className="text-[11px] leading-relaxed text-ink-3">{st('previewHint')}</figcaption>
     </figure>
   )
 }

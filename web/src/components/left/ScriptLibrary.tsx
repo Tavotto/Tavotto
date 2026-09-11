@@ -87,7 +87,7 @@ export function ScriptLibrary({ query }: { query: string }) {
       <p className="px-3 py-1.5 text-xs text-ink-3">{sc('noMatch')}</p>
     ) : (
       <div className="px-3">
-        <EmptyState icon={Play} title={sc('emptyTitle')} hint={sc('emptyHint')} />
+        <EmptyState icon={Play} title={sc('emptyTitle')} />
       </div>
     )
   }

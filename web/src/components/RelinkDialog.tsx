@@ -55,7 +55,6 @@ export function RelinkDialog() {
       open
       onOpenChange={(v) => !v && setPending(null)}
       title={t(isPaste ? 'relink.titlePaste' : 'relink.titleDoc')}
-      description={t(isPaste ? 'relink.descPaste' : 'relink.descDoc')}
       size="lg"
       footer={
         <>
@@ -101,7 +100,6 @@ export function RelinkDialog() {
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs leading-relaxed text-ink-3">{t('relink.footnote')}</p>
     </Dialog>
   )
 }

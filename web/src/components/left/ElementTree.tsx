@@ -228,11 +228,7 @@ export function ElementTree() {
 
   if (!panel) {
     return (
-      <EmptyState
-        icon={Braces}
-        title={et('noPanelTitle')}
-        hint={et('noPanelHint')}
-      />
+      <EmptyState icon={Braces} title={et('noPanelTitle')} />
     )
   }
 

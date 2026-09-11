@@ -472,9 +472,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
 
   return (
     <SettingSection>
-      <p className="text-xs leading-relaxed text-ink-3">
-        {kind === 'style' ? st('kind.styleHint') : st('kind.specHint')}
-      </p>
       {resolved && (
         <div data-spec-binding className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <span className="text-ink-2">
@@ -609,7 +606,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               <EmptyState
                 icon={FileSliders}
                 title={st('empty')}
-                hint={st('emptyHint')}
                 action={{ label: st('import'), onClick: () => fileRef.current?.click() }}
               />
             )
@@ -735,7 +731,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               {kind === 'spec' && boundId === selected.id && (
                 <SettingRow
                   label={st('follow')}
-                  description={st('followDesc')}
                   controlId="profile-follow"
                 >
                   <Toggle

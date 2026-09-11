@@ -113,10 +113,9 @@ describe('首屏', () => {
     expect(text()).not.toContain(PYTHON_PATH) // 好的不摆路径
   })
 
-  it('说清这一页查的是运行环境，不是图的内容（审计 T47）', async () => {
+  it('结论那句话不说成「全部正常」（审计 T47）', async () => {
     await mount(CHECKS.filter((c) => c.ok))
     expect(text()).toContain(st('diagnostics.summaryOk'))
-    expect(text()).toContain(st('diagnostics.scopeNote'))
     // 结论那句话本身不许说成「全部正常」——它会被读成"图没问题"
     expect(st('diagnostics.summaryOk')).not.toBe('全部正常')
   })

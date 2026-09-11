@@ -101,7 +101,9 @@ export function NativeConfirmDialog() {
       blockDismiss
       busy={busy}
       title={nr('title')}
-      description={nr(queued > 1 ? 'descriptionQueued' : 'description', { queued: queued - 1 })}
+      // 「还没开始运行」那句说明按 2026-09-11 设计包去掉；排队里还有别的交接时
+      // 仍要说出来——悄悄压着第二条等于让用户以为只有这一条
+      description={queued > 1 ? nr('descriptionQueued', { queued: queued - 1 }) : undefined}
       size="lg"
       footer={
         <>
@@ -177,10 +179,7 @@ export function NativeConfirmDialog() {
           onChange={(e) => setRemember(e.target.checked)}
           className="mt-0.5 shrink-0"
         />
-        <span className="min-w-0 flex-1">
-          {nr('remember')}
-          <span className="block text-ink-3">{nr('rememberHint')}</span>
-        </span>
+        <span className="min-w-0 flex-1">{nr('remember')}</span>
       </label>
 
       {head.error && (

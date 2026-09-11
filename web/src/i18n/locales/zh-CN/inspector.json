@@ -91,7 +91,6 @@
     "guideHorizontal": "水平",
     "guideVertical": "垂直",
     "guides": "参考线",
-    "guidesHint": "从标尺往画布里拖即可拉出参考线。",
     "guidesLockedSuffix": " · 已锁定",
     "guidesNone": "无",
     "lock": "锁定",
@@ -135,7 +134,6 @@
     "swap": "横竖交换",
     "transparent": "透明",
     "transparentBg": "透明背景",
-    "transparentHint": "导出 PNG 不铺底色，PDF 本身即无背景；画布上的棋盘格只是示意。",
     "viewAids": "查看辅助"
   },
   "closePanel": "关闭右侧面板",
@@ -190,8 +188,7 @@
       "topCenter": "上方居中",
       "bottomCenter": "下方居中",
       "leftCenter": "左侧中"
-    },
-    "legendOutsideBand": "图外"
+    }
   },
   "element": {
     "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
@@ -240,8 +237,6 @@
     "editElement": "修改图内元素",
     "editProp": "修改{{label}}",
     "figureSize": "整图 {{w}}×{{h}} mm",
-    "glyphChangeFont": "更换字体",
-    "glyphChangeFontTip": "把焦点移到「字体」一栏，换一个画得出这些字的字体",
     "groupFrame": "边框",
     "groupRange": "范围",
     "groupTicksGrid": "刻度与网格",
@@ -262,8 +257,6 @@
     "howWriteBackTitle": "写回原始文件",
     "invert": "反转",
     "invertAria": "反转坐标轴",
-    "issueLocateField": "定位到字段",
-    "issueOpenPanel": "在问题面板查看",
     "keptPrevious": "已保留上一版图像",
     "markerShapeMultiple": "多个形状",
     "markerValueWithShape": "{{value}}（{{shape}}）",
@@ -1127,7 +1120,6 @@
     "summaryMany_other": "将把 {{count}} 项修改写回 {{panels}} 张图的原始文件",
     "summaryOne_other": "将把 {{count}} 项修改写回「{{stem}}」的原始文件",
     "targetsLabel": "将覆盖 figures 目录里的这些文件",
-    "targetsNote": "同名的 PDF 与 PNG，存在哪个就覆盖哪个。",
     "title": "写回原始文件",
     "topBarMany_other": "写回原始文件：{{count}} 个面板",
     "topBarOne": "写回原始文件：{{stem}}",

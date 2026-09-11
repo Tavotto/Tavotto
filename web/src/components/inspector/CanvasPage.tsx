@@ -179,9 +179,6 @@ export function CanvasPage() {
               className={page.transparent ? 'pointer-events-none opacity-40' : undefined}
             />
           </Row>
-          {page.transparent && (
-            <p className="text-xs leading-relaxed text-ink-3">{cv('transparentHint')}</p>
-          )}
         </div>
       </Disclosure>
 
@@ -283,9 +280,7 @@ export function CanvasPage() {
             {cv('clearAll')}
           </Button>
         </div>
-        {guides.length === 0 ? (
-          <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{cv('guidesHint')}</p>
-        ) : (
+        {guides.length > 0 && (
           <ul className="mt-1.5 flex flex-col gap-0.5">
             {guides.map((g, i) => (
               <li key={`${g.axis}-${i}`} className="flex items-center gap-1.5">

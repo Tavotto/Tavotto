@@ -46,6 +46,7 @@ import {
   useProjectReadinessStore,
 } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
+import { reasonText, statusLabel } from '@/lib/readinessText'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -338,18 +339,14 @@ describe('手工选择源脚本', () => {
     await clickIn(row, '写入')
   }
 
-  it('已经连上的图也能改绑，但收在技术详情里（第一层不该盖过"它已经好了"）', async () => {
+  it('已经连上的图也能改绑；技术详情段已去掉，改绑控件直接在行里', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
-    const details = row.querySelector('details')!
-    await act(async () => {
-      details.open = true
-    })
     const picker = row.querySelector('[role="combobox"]')
     expect(picker, '可编辑的图也该给得出改绑').not.toBeNull()
-    // 关键是它**收在技术详情里**，而不是摆在第一层
-    expect(picker!.closest('details')).toBe(details)
-    expect(details.textContent).toContain('改绑到其它脚本')
+    // 2026-09-11 设计包去掉了「技术详情」折叠段：行里不再有 <details>
+    expect(picker!.closest('details')).toBeNull()
+    expect(row.textContent).toContain('改绑到其它脚本')
   })
 
   // 选项住在 Radix 的弹层里，从 DOM 上量不到——所以判据打在那个纯函数上
@@ -388,23 +385,14 @@ describe('手工选择源脚本', () => {
   })
 })
 
-describe('技术详情', () => {
-  it('默认收起', async () => {
+describe('技术详情（2026-09-11 设计包已去掉）', () => {
+  it('行里没有折叠段，也不出现 stem / 入口 / reason code 这些实现词', async () => {
     await open(reportOf(SIX))
-    const details = rowOf('Ok.pdf')!.querySelector('details')!
-    expect(details.open).toBe(false)
-  })
-
-  it('展开后才出现源脚本 / 入口 / 成本 / reason code', async () => {
-    await open(reportOf(SIX))
-    const details = rowOf('Ok.pdf')!.querySelector('details')!
-    await act(async () => {
-      details.open = true
-    })
-    const text = details.textContent ?? ''
-    expect(text).toContain('ok.py')
-    expect(text).toContain('main')
-    expect(text).toContain('registered_source')
+    const row = rowOf('Ok.pdf')!
+    expect(row.querySelector('details')).toBeNull()
+    const text = row.textContent ?? ''
+    expect(text).not.toContain('registered_source')
+    expect(text).not.toContain('技术详情')
   })
 })
 
@@ -543,16 +531,12 @@ describe('正常状态', () => {
     expect(text).not.toContain('可以直接改图里的内容')
   })
 
-  it('不能编辑的那些照旧逐条说清「这一张为什么不行」', async () => {
+  it('不能编辑的那些不再逐条印原因句（2026-09-11 设计包）：状态只在角标与分组标题里', async () => {
     await open(reportOf(SIX))
-    // 五种不可编辑状态各有各的原因，一条都不许被合并掉
-    const reasons = new Set(
-      SIX.filter((p) => p.status !== 'editable').map(
-        (p) => rowOf(p.id)?.querySelector('p')?.textContent ?? '',
-      ),
-    )
-    expect(reasons.size).toBe(5)
-    expect([...reasons].every((r) => r.length > 0)).toBe(true)
+    for (const p of SIX.filter((p) => p.status !== 'editable')) {
+      expect(rowOf(p.id)?.textContent ?? '', p.id).not.toContain(reasonText(p))
+      expect(rowOf(p.id)?.textContent ?? '', p.id).toContain(statusLabel(p.status))
+    }
   })
 })
 
@@ -705,7 +689,7 @@ describe('可编辑图的动作层级', () => {
       .map((b) => b.textContent?.trim() ?? '')
   }
 
-  it('第一层只有「添加到画布」', async () => {
+  it('第一层第一颗是「添加到画布」', async () => {
     useAssetStore.setState({
       panels: [],
       byId: {
@@ -717,17 +701,17 @@ describe('可编辑图的动作层级', () => {
       loaded: true,
     })
     await open(reportOf(SIX))
-    expect(firstLevelButtons('Ok.pdf')).toEqual(['添加到画布'])
+    expect(firstLevelButtons('Ok.pdf')[0]).toBe('添加到画布')
   })
 
-  it('「重新试运行」还在，只是收进了技术详情', async () => {
+  it('「重新试运行」还在，技术详情段去掉后直接在行里', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
     const reprobe = [...row.querySelectorAll('button')].find((b) =>
       b.textContent?.includes('重新试运行'),
     )
-    expect(reprobe, '排障动作不该被删掉，只该换个层级').toBeTruthy()
-    expect(reprobe!.closest('details')).not.toBeNull()
+    expect(reprobe, '排障动作不该被删掉').toBeTruthy()
+    expect(reprobe!.closest('details')).toBeNull()
   })
 
   it('待连接的那些第一层照旧有下一步', async () => {

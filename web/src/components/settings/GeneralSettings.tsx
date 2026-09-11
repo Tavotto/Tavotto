@@ -29,8 +29,8 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *     起始页讲，这里的任务是让人进得去；
  *   * 「情境提示」→「第一次遇到某类操作时出现的一次性提示」——它定义「一次性
  *     提示是什么」，而用户要的是「点了会怎样」，所以按钮改叫「重新显示操作提示」。
- * 剩下真正有价值的那点（重置动作影响哪些东西、自动保存与命名副本的分工）改成
- * 标签下面的一行短说明，读一行就够，不用先点开什么。
+ * 标签下面原本各有一行短说明（重置动作影响哪些东西、自动保存与命名副本的分工），
+ * 2026-09-11 的组件工作台设计包把它们一并去掉：这一页只剩标签与动作。
  */
 export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
@@ -51,12 +51,11 @@ export function GeneralSettings({ close }: { close: () => void }) {
           options={SUPPORTED_LOCALES.map((l) => ({ value: l, label: LOCALE_LABELS[l] }))}
         />
       </SettingRow>
-      {/* 自动保存没有开关可调，它是一句现状。目录与写盘时机进帮助文档；
-          这里只留「不用手动保存」与「命名副本走哪儿」这两件当下用得上的事 */}
-      <SettingRow label={st('general.autosave')} description={st('general.autosaveNamedCopy')}>
+      {/* 自动保存没有开关可调，它是一句现状。目录与写盘时机进帮助文档 */}
+      <SettingRow label={st('general.autosave')}>
         <span className="text-xs text-ink-3">{st('general.autosaveState')}</span>
       </SettingRow>
-      <SettingRow label={st('general.layout')} description={st('general.resetLayoutScope')}>
+      <SettingRow label={st('general.layout')}>
         <Button
           variant="outline"
           size="sm"
@@ -94,12 +93,11 @@ export function GeneralSettings({ close }: { close: () => void }) {
 }
 
 /**
- * 教程三行：进入教程（状态在右）、重置示例项目、重新显示操作提示。
+ * 教程三行：进入教程、重置示例项目、重新显示操作提示。
  *
  * 状态与动作都来自 `lib/onboarding/tutorial`——四个入口共用，这里不判状态。
  * **重置单独一行**（审计 T38 / 说明文字第 5 条）：改动前它是主入口旁边的一个
- * 幽灵按钮，「再看一遍教程」与它的区别得点开问号才知道；现在它自己一行，
- * 标签下面直接写清重置的是哪个对象、代价是什么。
+ * 幽灵按钮，「再看一遍教程」与它的区别得点开问号才知道；现在它自己一行。
  */
 function TutorialRows({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
@@ -108,7 +106,7 @@ function TutorialRows({ close }: { close: () => void }) {
   const entry = tutorialEntry(status)
   return (
     <>
-      <SettingRow label={st('tutorial.label')} status={st(`tutorial.state.${status}`)}>
+      <SettingRow label={st('tutorial.label')}>
         <Button
           variant="outline"
           size="sm"
@@ -124,7 +122,7 @@ function TutorialRows({ close }: { close: () => void }) {
         </Button>
       </SettingRow>
       {hasTutorial && (
-        <SettingRow label={st('tutorial.reset')} description={st('tutorial.resetScope')}>
+        <SettingRow label={st('tutorial.reset')}>
           <Button
             variant="outline"
             size="sm"

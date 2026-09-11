@@ -22,7 +22,6 @@ import {
   PENDING_STATUSES,
   allEditable,
   pendingCount,
-  reasonText,
   statusLabel,
 } from '@/lib/readinessText'
 import { cn } from '@/lib/utils'
@@ -509,18 +508,8 @@ function PanelRow({
             </span>
             <StatusBadge status={panel.status} />
           </div>
-          {/**
-           * 已经能编辑的那些**不再逐张重复同一句解释**（审计 T10）：那句话
-           * 对每一张都一模一样，说 N 遍不比说一遍多告诉用户任何事，而它让
-           * 一个完全正常的项目看起来像一页故障清单。这一档的信息在分组标题
-           * （「2 张图可编辑」）与角标里，源脚本在技术详情里。
-           *
-           * 其余状态照旧逐条说：那时每张图的原因**确实不一样**，而用户要的
-           * 正是「这一张为什么不行」。
-           */}
-          {panel.status !== 'editable' && (
-            <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(panel)}</p>
-          )}
+          {/* 每张图的原因句不再逐条列出（2026-09-11 设计包）：状态在角标与分组标题里，
+              原因仍由预检横幅与素材卡（`reasonText`）在别处说 */}
           {panel.status === 'needs_probe' && (
             <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
           )}
@@ -552,33 +541,32 @@ function PanelRow({
           .find(Boolean)}
       />
 
-      {/* `editable` 的「改为其它源脚本」收在这里：它已经好了，改绑是少数动作，
-          摆在第一层会盖过"它已经好了"这句话。其余状态的关联控件在 RowActions 里 */}
-      <TechnicalDetails panel={panel}>
-        {panel.status === 'editable' && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {panel.script && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={disabled}
-                onClick={() => onProbe(panel.script as string)}
-              >
-                <Play size={ICON_SIZE.sm} className={cn(busy === panel.script && 'animate-pulse')} />
-                {rd(busy === panel.script ? 'running' : 'reprobe')}
-              </Button>
-            )}
-            <SourcePicker
-              panel={panel}
-              allScripts={allScripts}
-              writable={writable}
+      {/* `editable` 的「重新试运行 / 改为其它源脚本」是少数动作，原本收在「技术详情」
+          折叠段里；那一段按 2026-09-11 设计包整个去掉，这两个动作直接跟在行尾。
+          其余状态的关联控件在 RowActions 里 */}
+      {panel.status === 'editable' && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {panel.script && (
+            <Button
+              variant="outline"
+              size="sm"
               disabled={disabled}
-              onLink={onLink}
-              linkLabel="relink"
-            />
-          </div>
-        )}
-      </TechnicalDetails>
+              onClick={() => onProbe(panel.script as string)}
+            >
+              <Play size={ICON_SIZE.sm} className={cn(busy === panel.script && 'animate-pulse')} />
+              {rd(busy === panel.script ? 'running' : 'reprobe')}
+            </Button>
+          )}
+          <SourcePicker
+            panel={panel}
+            allScripts={allScripts}
+            writable={writable}
+            disabled={disabled}
+            onLink={onLink}
+            linkLabel="relink"
+          />
+        </div>
+      )}
     </li>
   )
 }
@@ -795,52 +783,6 @@ function SourcePicker({
   )
 }
 
-/**
- * 技术详情：源脚本、入口函数、运行成本、候选脚本、reason code。
- *
- * **默认收起。** 这一段是给排障与高级用户的——普通用户不需要理解 stem、
- * entry 或者 reason code 才能把图连上。
- */
-function TechnicalDetails({
-  panel,
-  children,
-}: {
-  panel: ReadinessPanel
-  /** 收进这一段的动作（`editable` 的改绑就住在这里） */
-  children?: React.ReactNode
-}) {
-  useTranslation('dialogs')
-  const rows: { key: string; value: string }[] = []
-  if (panel.script) rows.push({ key: 'script', value: panel.script })
-  if (panel.details.entry) rows.push({ key: 'entry', value: panel.details.entry })
-  if (panel.details.cost) rows.push({ key: 'cost', value: panel.details.cost })
-  if (panel.candidates.length) {
-    rows.push({ key: 'candidates', value: listJoin(panel.candidates) })
-    if (panel.details.candidate_scope)
-      rows.push({ key: 'scope', value: rd(`scope.${panel.details.candidate_scope}`) })
-  }
-  rows.push({ key: 'stem', value: panel.stem })
-  rows.push({ key: 'reasonCode', value: panel.reason_code })
-
-  return (
-    <Details className="mt-1">
-      <Summary className="text-xs text-ink-3">
-        {rd('technicalDetails')}
-      </Summary>
-      <dl className="mt-1 flex flex-col gap-0.5">
-        {rows.map((r) => (
-          <div key={r.key} className="flex items-baseline gap-2">
-            <dt className="shrink-0 text-xs text-ink-3">{rd(`detail.${r.key}`)}</dt>
-            <dd className="min-w-0 flex-1 truncate font-mono text-xs text-ink-2" title={r.value}>
-              {r.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-      {children}
-    </Details>
-  )
-}
 
 /* -------------------------------------------------------------------------- */
 /*  高级段：项目里的全部脚本                                                    */

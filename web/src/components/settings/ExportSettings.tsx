@@ -50,12 +50,9 @@ export function ExportSettings() {
                 checked={defaults.formats.includes(f)}
                 onChange={() => toggleFormat(f)}
               />
+              {/* 只列格式名，「矢量 / 位图」的类型旁注按 2026-09-11 设计包去掉；
+                  格式清单仍来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
               {f.toUpperCase()}
-              {/* 「PDF 保留矢量，投稿一般要它」那段建议不属于通用设置——
-                  规范由规范说。这里只标类型，用词与导出对话框逐字相同。
-                  格式清单来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时
-                  这里自动跟上，不用再补一处硬编码的两格清单 */}
-              <span className="text-ink-3">· {ex(`${f}Hint`)}</span>
             </label>
           ))}
         </span>
@@ -78,7 +75,6 @@ export function ExportSettings() {
       </SettingRow>
       <SettingRow
         label={ex('reportToggle')}
-        description={st('export.reportScope')}
         controlId="setting-export-report"
       >
         <Toggle

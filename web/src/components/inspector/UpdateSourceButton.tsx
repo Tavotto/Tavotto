@@ -366,9 +366,6 @@ export function WriteBackDialog({
                 </li>
               ))}
             </ul>
-            <p className="mt-1 pl-[18px] text-[11px] leading-relaxed text-ink-3">
-              {wb('targetsNote')}
-            </p>
           </div>
           <BackupDetails dir={backupDir} summary={wb('backupSummary', { dir: dirTail(backupDir) })} />
           {annCount > 0 ? (

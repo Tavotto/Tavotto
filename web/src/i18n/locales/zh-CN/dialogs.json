@@ -127,11 +127,9 @@
     "nameLabel": "文档名",
     "namePlaceholder": "文档名",
     "nameTaken": "这个名字已经有一份文档了；继续会覆盖它。",
-    "openDescription": "换成项目里另一份命名文档；当前文档已自动保存在本机",
     "openTitle": "打开文档",
     "overwrite": "仍然覆盖",
     "saveAs": "另存为",
-    "saveDescription": "把当前文档（含它的全部画布）另存成项目里的一份命名文档",
     "saveTitle": "另存为文档",
     "saved": "已另存为文档：{{name}}",
     "savesInto": "保存到 {{dir}}",
@@ -165,8 +163,7 @@
     "approving": "正在连接…",
     "argCount_other": "{{count}} 个（参数值不经过这个窗口）",
     "cancel": "取消",
-    "description": "这条命令还没有开始运行——你确认之后才会。",
-    "descriptionQueued": "这条命令还没有开始运行——你确认之后才会。还有 {{queued}} 条在排队。",
+    "descriptionQueued": "还有 {{queued}} 条在排队。",
     "fields": {
       "args": "参数",
       "cwd": "工作目录",
@@ -178,7 +175,6 @@
     "permissionNotice": "此模式使用项目自己的 Python。脚本拥有与你在终端中直接运行时相同的文件权限。Tavotto 只接管当前 Python 进程中的 Matplotlib Figure。仅运行你信任的代码。",
     "pythonVersion": "Python {{version}}",
     "remember": "记住此项目和此 Python",
-    "rememberHint": "下次同一个图库配同一个解释器就不再询问。解释器换了、图库移动了、或者权限规则升级之后会重新询问；随时可以在设置里撤销。",
     "targetKind": {
       "module": "模块",
       "script": "脚本"
@@ -513,7 +509,6 @@
     "duplicate": "复制一份",
     "duplicateToEdit": "复制一份再修改",
     "empty": "还没有配置",
-    "emptyHint": "清单里一条都没有。可以从文件导入一份配置。",
     "export": "导出为文件",
     "field": {
       "annotationFont": "标注字号",
@@ -535,7 +530,6 @@
       "widthTolerance": "宽度容差"
     },
     "follow": "跟随更新",
-    "followDesc": "默认不跟随：项目按选中那一刻的规则算",
     "group": {
       "fonts": "字号",
       "lines": "线条",
@@ -546,10 +540,6 @@
     },
     "import": "从文件导入",
     "inUse": "本项目在用",
-    "kind": {
-      "specHint": "规范决定图要满足什么：字号下限、栏宽、最低分辨率。只用于检查，不会改动你的图。",
-      "styleHint": "样式决定图长什么样：字号、字体、线宽、刻度、图例、背景。应用到图上是一次可撤销的修改。"
-    },
     "name": "名称",
     "new": "新建",
     "newName": "新配置",
@@ -558,7 +548,6 @@
       "user": "自定义"
     },
     "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
-    "previewHint": "示例图按上面的字段现算，字号与线宽的比例和真图一致；真图里有哪些元素以图为准。",
     "previewTitle": "示例",
     "readOnlyBadge": "只读",
     "readOnlyBuiltinBadge": "内置 · 只读",
@@ -587,15 +576,6 @@
     "allScriptsHint": "项目里的每个 .py 都在这里，包括那些只看脚本看不出会画出哪张图的。任选一个「试运行」，Tavotto 按它真实画出来的图建立关系。",
     "allScriptsTitle": "全部脚本（{{n}}）",
     "autoLink": "自动连接",
-    "detail": {
-      "candidates": "候选脚本",
-      "cost": "运行成本",
-      "entry": "入口函数",
-      "reasonCode": "状态代码",
-      "scope": "候选范围",
-      "script": "源脚本",
-      "stem": "图名"
-    },
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
     "emptyTitle": "这个项目里还没有图",
     "group": {
@@ -646,7 +626,6 @@
       "pending": "待连接",
       "total": "总计"
     },
-    "technicalDetails": "技术详情",
     "title": "项目接入状态",
     "useScript": "用 {{script}}",
     "write": "写入"
@@ -668,9 +647,6 @@
     "cancelPaste": "取消粘贴",
     "confirmDoc": "重新链接所选素材",
     "confirmPaste": "按上述处置粘贴",
-    "descDoc": "文档引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
-    "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
-    "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
     "keepMissing": "保持缺失",
     "refCount_other": "（{{count}} 个面板引用）",
     "selectAria": "为 {{name}} 选择替代素材",
@@ -938,12 +914,10 @@
     "canvas": {
       "companionsExplain": "关联元素 = 被你手动摆过位置的标题 / 轴标签 / 图例，以及色条轴与 twinx 的孪生轴。它们要么钉在 figure 坐标上、要么本就是平级的另一个子图，不带的话挪走子图它们会留在原地。关掉就只动子图本身。",
       "dragCompanions": "拖动时一同移动关联对象",
-      "dragCompanionsHint": "手动摆过的标题、轴标签、图例",
       "more": "画布设置",
       "openCanvasSettings": "打开画布设置",
       "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
-      "diagramOff": "示意：只移动子图，标题与图例留在原地",
-      "moreScope": "网格、吸附、标尺与安全区域"
+      "diagramOff": "示意：只移动子图，标题与图例留在原地"
     },
     "copied": "已复制",
     "copy": "复制",
@@ -965,14 +939,12 @@
       "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
       "refetch": "重新获取",
       "reportTitle": "诊断报告",
-      "scopeNote": "这里只检查运行环境（Python、渲染引擎、项目目录）。图本身合不合规范由「问题」面板检查，两者互不代表。",
       "summaryFailing": "{{count}} 项异常",
       "summaryOk": "运行环境检查通过"
     },
     "export": {
       "defaultFormats": "默认格式",
-      "ppiNotForVector": "只选了矢量格式，分辨率不生效",
-      "reportScope": "记录本次尺寸、样式和检查结果"
+      "ppiNotForVector": "只选了矢量格式，分辨率不生效"
     },
     "general": {
       "autosave": "自动保存",
@@ -980,9 +952,7 @@
       "language": "界面语言",
       "layout": "界面布局",
       "layoutReset": "界面布局已重置，刷新页面后生效",
-      "resetLayout": "恢复界面默认布局",
-      "autosaveNamedCopy": "命名副本用「保存为画布文件」",
-      "resetLayoutScope": "侧栏宽度、吸附等界面偏好回到默认"
+      "resetLayout": "恢复界面默认布局"
     },
     "helpAbout": "关于{{label}}",
     "navLabel": "设置分区",
@@ -1104,8 +1074,6 @@
       "scriptCount_other": "{{count}} 个脚本",
       "scripts": "可编辑来源",
       "switch": "切换项目…",
-      "exportDirScope": "导出的图默认写到这里",
-      "backupDirScope": "写回前先把原件复制到这里",
       "dirPlaceholder": "留空使用默认位置",
       "effectivePath": "实际位置",
       "chooseFolder": "选择…",
@@ -1113,7 +1081,6 @@
       "showFullPath": "显示 {{name}} 的完整路径",
       "copyPath": "复制 {{name}} 的完整路径",
       "allowWriteBack": "允许写回原始文件",
-      "allowWriteBackScope": "只管写回；画布编辑与导出不受影响",
       "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。"
     },
     "section": {
@@ -1137,9 +1104,7 @@
     },
     "sidebars": {
       "leftPinned": "固定左侧栏",
-      "leftPinnedHint": "选中对象时不让位",
       "rightPinned": "固定属性栏",
-      "rightPinnedHint": "取消选择后不收起",
       "pinLimitedMedium": "当前窗口只能固定一侧",
       "pinLimitedNarrow": "当前窗口太窄，固定不生效"
     },
@@ -1149,7 +1114,6 @@
       "applyFailedRetry": "升级没有完成，当前版本没有改变。可以再点一次「下载并升级」，或按下面的日志排查。",
       "autoCheck": "自动检查",
       "autoCheckAria": "每天自动检查更新",
-      "autoCheckHint": "每天一次，关掉后不会有任何联网请求",
       "available": "有新版本",
       "channelNote": "只查 GitHub Releases 的最新正式版；关掉自动检查后不会有任何联网请求。",
       "check": "检查更新",
@@ -1181,21 +1145,13 @@
     },
     "tutorial": {
       "label": "新手教程",
-      "state": {
-        "not_started": "未开始",
-        "active": "进行中",
-        "paused": "已暂停",
-        "completed": "已完成",
-        "skipped": "已跳过"
-      },
       "start": "开始教程",
       "resume": "继续教程",
       "restart": "再看一遍教程",
       "reset": "重置教程项目",
       "hints": "操作提示",
       "resetHints": "重新显示操作提示",
-      "resetAction": "重置",
-      "resetScope": "示例项目回到初始状态，你在它里面的修改会丢失"
+      "resetAction": "重置"
     }
   },
   "style": {
@@ -1328,11 +1284,9 @@
     },
     "drawerLabel": "文档版本",
     "duplicate": "复制版本",
-    "emptyHint": "点「存版本」留一个自己命名的版本；编辑几分钟后也会自动存一版。",
     "emptyTitle": "还没有版本",
     "fromCanvas": "来自画布「{{name}}」",
     "fromUnknownCanvas": "旧检查点，不知道来自哪张画布",
-    "intro": "这份文档的自动保存版本；恢复会先把当前状态存成一版，可撤销，不改动任何源文件。",
     "keep": "保留",
     "keepTitle": "自动检查点会滚动清理；转正后按手动版本保留",
     "listLabel": "版本列表",

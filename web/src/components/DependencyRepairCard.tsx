@@ -235,12 +235,8 @@ function OtherPython() {
   const [error, setError] = useState<string | null>(null)
   return (
     <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
-      {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚。
-          `defaultValue` 同样是文案表补上 `engine.repairUseOtherPythonShort`
-          之前的兜底。 */}
-      <span className="text-xs text-ink-2">
-        {en('repairUseOtherPythonShort', { defaultValue: '或者使用您的已有 Python 环境' })}
-      </span>
+      {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚 */}
+      <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>
       {/* 占位符是「这里还没填」的提示，不是要读的正文，压到 faint 一档。写在行
           容器上（而不是传 className）是因为 placeholder 的样式归 TextInput 自己
           管，这条后代变体的特指度更高，能盖住它的默认色。 */}
@@ -273,18 +269,11 @@ function OtherPython() {
  * 受管环境这条点名要装的是哪个包（「将 lmfit 安装到 Tavotto 环境」）：主动作
  * 自己就是一句完整的话，用户不用回头找上面的标题确认主语。新建还是复用受管
  * 环境对他没有区别——两种情况都不碰他自己的 Python，所以合成同一句。
- *
- * `defaultValue` 是 errors 文案表补上 `engine.repairInstallToManaged`（各语言
- * 都要）之前的兜底，那条加好之后应当删掉。
  */
 function label(target: DependencyTarget, pkg: string): string {
   if (target.kind === 'project_venv') return en('repairUseProjectEnv')
   if (target.kind === 'system_interpreter') return en('repairUseSystemPython')
-  return en('repairInstallToManaged', {
-    module: pkg,
-    product: PRODUCT_NAME,
-    defaultValue: '将 {{module}} 安装到 {{product}} 环境',
-  })
+  return en('repairInstallToManaged', { module: pkg, product: PRODUCT_NAME })
 }
 
 /**

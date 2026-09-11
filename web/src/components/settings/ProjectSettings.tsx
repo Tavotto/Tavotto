@@ -106,7 +106,6 @@ export function ProjectSettings() {
       <DirectoryRow
         id="setting-export-dir"
         label={st('project.exportDir')}
-        description={st('project.exportDirScope')}
         value={exportDir}
         onValue={setExportDir}
         onCommit={(v) => void save({ export_dir: v })}
@@ -115,7 +114,6 @@ export function ProjectSettings() {
       <DirectoryRow
         id="setting-backup-dir"
         label={st('project.backupDir')}
-        description={st('project.backupDirScope')}
         value={backupDir}
         onValue={setBackupDir}
         onCommit={(v) => void save({ backup_dir: v })}
@@ -124,7 +122,6 @@ export function ProjectSettings() {
 
       <SettingRow
         label={st('project.allowWriteBack')}
-        description={st('project.allowWriteBackScope')}
         controlId="setting-allow-write-back"
         danger={!allowWriteBack}
       >
@@ -154,7 +151,6 @@ export function ProjectSettings() {
 function DirectoryRow({
   id,
   label,
-  description,
   value,
   onValue,
   onCommit,
@@ -162,7 +158,6 @@ function DirectoryRow({
 }: {
   id: string
   label: string
-  description: string
   /** 用户设过的值（空 = 用默认） */
   value: string
   onValue: (v: string) => void
@@ -171,7 +166,7 @@ function DirectoryRow({
   effective?: string
 }) {
   return (
-    <SettingRow label={label} description={description} controlId={id}>
+    <SettingRow label={label} controlId={id}>
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex min-w-0 items-center gap-1.5">
           <TextInput

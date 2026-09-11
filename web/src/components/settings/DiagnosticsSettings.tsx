@@ -114,8 +114,6 @@ export function DiagnosticsSettings() {
                 {st('diagnostics.refetch')}
               </Button>
             </div>
-            {/* 「运行环境检查通过」很容易被读成"图没问题"（审计 T47） */}
-            <p className="text-xs leading-relaxed text-ink-3">{st('diagnostics.scopeNote')}</p>
             {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
                 取值的，铺在首屏等于同一件事说两遍。 */}
             {failing.length > 0 && (

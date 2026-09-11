@@ -185,7 +185,6 @@
     "lockedState": "已锁定",
     "needRender": "「{{name}}」的元素清单需要引擎渲染一次。",
     "noMatch": "没有匹配的元素",
-    "noPanelHint": "带 { } 标记的面板由脚本生成，这里会列出它的全部图内元素。",
     "noPanelTitle": "选中一个可参数化面板",
     "readonly": "只读",
     "rowActions": "{{label}} 的操作",
@@ -206,15 +205,7 @@
     "connectSource": "连接源脚本",
     "crumbTitle": "回到画布排版",
     "figureMissing": "项目里找不到 {{name}}",
-    "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
-    "mode": "快速编辑",
-    "originalSize": "原图 {{w}} × {{h}} mm",
-    "sizeAssumed": "假定密度",
-    "sizeAssumedTitle": "这张位图没有写物理密度，毫米尺寸按假定的 {{dpi}} dpi 算。",
-    "sizeStale": "上次已知",
-    "sizeStaleTitle": "源文件此刻不可用，显示的是上一次已知的原图规格。",
-    "sizeUnknown": "尺寸未知",
-    "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。"
+    "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。"
   },
   "history": {
     "addArrow": "添加箭头",
@@ -485,7 +476,6 @@
     "copyDiagnostics": "复制诊断",
     "diagnostics": "诊断详情",
     "dropped_other": "还有 {{count}} 张未捕获（显式 savefig 不受限）",
-    "emptyHint": "把绘图脚本放进项目目录即可出现在这里。",
     "emptyTitle": "项目里没有发现 Python 脚本",
     "groupInfra_other": "工具与配置脚本（{{count}}）",
     "group_linked": "已关联",

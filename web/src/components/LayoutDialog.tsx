@@ -160,7 +160,6 @@ export function LayoutDialog() {
       open={open}
       onOpenChange={setOpen}
       title={t(saving ? 'dialogs:layout.saveTitle' : 'dialogs:layout.openTitle')}
-      description={t(saving ? 'dialogs:layout.saveDescription' : 'dialogs:layout.openDescription')}
       size="md"
       busy={busy}
       footer={

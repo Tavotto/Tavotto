@@ -197,10 +197,6 @@ export function VersionDrawer() {
           <X size={ICON_SIZE.md} className="text-ink-3" />
         </Button>
       </div>
-      <p className="shrink-0 px-3 pb-2 text-xs leading-relaxed text-ink-3">
-        {vd('intro')}
-      </p>
-
       <div className="flex shrink-0 gap-1.5 px-3 pb-2">
         <TextInput
           value={saveName}
@@ -220,11 +216,7 @@ export function VersionDrawer() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {versions.length === 0 ? (
-          <EmptyState
-            icon={RotateCcwClock}
-            title={vd('emptyTitle')}
-            hint={vd('emptyHint')}
-          />
+          <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} />
         ) : (
           <ul aria-label={vd('listLabel')}>
             {versions.map((v, i) => (

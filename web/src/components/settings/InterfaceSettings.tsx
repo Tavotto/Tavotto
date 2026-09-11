@@ -40,7 +40,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
       <SettingSection title={st('section.sidebars')}>
         <SettingRow
           label={st('sidebars.leftPinned')}
-          description={st('sidebars.leftPinnedHint')}
           controlId="setting-left-pinned"
           status={pinLimit}
         >
@@ -53,7 +52,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
         </SettingRow>
         <SettingRow
           label={st('sidebars.rightPinned')}
-          description={st('sidebars.rightPinnedHint')}
           controlId="setting-right-pinned"
           status={pinLimit}
         >
@@ -72,7 +70,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             界面这一层交给示意图——空间关系用图讲，比两行字快 */}
         <SettingRow
           label={st('canvas.dragCompanions')}
-          description={st('canvas.dragCompanionsHint')}
           help={st('canvas.companionsExplain')}
           controlId="setting-drag-companions"
         >
@@ -84,7 +81,7 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           />
           <CompanionDiagram on={withCompanions} />
         </SettingRow>
-        <SettingRow label={st('canvas.more')} description={st('canvas.moreScope')}>
+        <SettingRow label={st('canvas.more')}>
           <Button
             variant="outline"
             size="sm"

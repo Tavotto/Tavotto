@@ -78,9 +78,7 @@ export function UpdateSettings() {
       <SettingRow label={st('update.currentVersion')}>
         <span className="font-mono text-xs text-ink">{status?.current ?? '…'}</span>
       </SettingRow>
-      {/* 「每天一次、关掉就不联网」是这一项**改的是什么**，属于标签底下的一行
-          短说明，不是需要点开的歧义解释（审计「说明文字专项补查」的统一规则） */}
-      <SettingRow label={st('update.autoCheck')} description={st('update.autoCheckHint')}>
+      <SettingRow label={st('update.autoCheck')}>
         <Toggle
           checked={status?.auto_check ?? true}
           onChange={(v) => void setAutoCheck(v)}

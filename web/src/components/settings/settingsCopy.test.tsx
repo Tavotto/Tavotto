@@ -127,19 +127,18 @@ describe('T38 常规：说明改成动作与结果', () => {
     expect(kbd?.textContent?.trim()).toBe('?')
   })
 
-  it('有教程项目时「重置」单独一行，标签底下写清重置的是哪个对象', async () => {
+  it('有教程项目时「重置」单独一行', async () => {
     useOnboardingStore.setState({ status: 'completed', tutorialProjectId: 'p1' } as never)
     await open('general')
     // 进入教程与重置是两件事，各自一行：改动前它们挤在同一行，
     // 「再看一遍教程」与「重置教程项目」的区别得点开问号才知道
     expect(byText(st('tutorial.restart'))).toBeTruthy()
     expect(bodyText()).toContain(st('tutorial.reset'))
-    expect(bodyText()).toContain(st('tutorial.resetScope'))
   })
 
   it('没有教程项目时不出现重置行', async () => {
     await open('general')
-    expect(bodyText()).not.toContain(st('tutorial.resetScope'))
+    expect(bodyText()).not.toContain(st('tutorial.reset'))
   })
 
   it('提示按钮说的是点了会怎样', async () => {
@@ -355,11 +354,12 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(bodyText()).not.toContain('600 dpi')
   })
 
-  it('格式旁标注类型，用词与导出对话框逐字相同', async () => {
+  it('格式旁不再标注类型（2026-09-11 设计包）：只有格式名', async () => {
     defaults({})
     await open('export')
-    expect(bodyText()).toContain(ex('pdfHint'))
-    expect(bodyText()).toContain(ex('pngHint'))
+    expect(bodyText()).toContain('PDF')
+    expect(bodyText()).not.toContain(ex('pdfHint'))
+    expect(bodyText()).not.toContain(ex('pngHint'))
   })
 
   it('只选了矢量格式时分辨率停用，并就近说明为什么', async () => {
@@ -374,12 +374,5 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     await open('export')
     expect(bodyText()).not.toContain(st('export.ppiNotForVector'))
     expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(false)
-  })
-
-  it('报告的短说明不承诺「证明图没变过」', async () => {
-    defaults({})
-    await open('export')
-    expect(bodyText()).toContain(st('export.reportScope'))
-    expect(bodyText()).not.toContain('证明图没变过')
   })
 })
