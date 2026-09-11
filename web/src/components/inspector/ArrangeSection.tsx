@@ -177,12 +177,13 @@ function AlignToolbar({
     </Tip>
   )
   return (
-    <div role="toolbar" aria-label={label} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-      <div className="flex gap-0.5">{horizontal.map(render)}</div>
+    // 六颗按钮撑满整行、等距分布（2026-09-11 用户反馈）：两组各占一半，组内 justify-between
+    <div role="toolbar" aria-label={label} className="flex w-full items-center gap-x-1.5">
+      <div className="flex flex-1 items-center justify-between">{horizontal.map(render)}</div>
       {horizontal.length > 0 && vertical.length > 0 && (
         <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
       )}
-      <div className="flex gap-0.5">{vertical.map(render)}</div>
+      <div className="flex flex-1 items-center justify-between">{vertical.map(render)}</div>
     </div>
   )
 }

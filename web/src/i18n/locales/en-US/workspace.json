@@ -721,7 +721,9 @@
     "zoomValue": "Zoom {{percent}}%"
   },
   "update": {
-    "banner": "Tavotto has been updated. Reload to use the new version."
+    "banner": "Tavotto has been updated. Reload to use the new version.",
+    "later": "Later",
+    "title": "Tool updated"
   },
   "hints": {
     "panel_editable": "Double-click this figure to edit inside it.",

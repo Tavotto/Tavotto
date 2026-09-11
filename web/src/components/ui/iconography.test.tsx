@@ -68,6 +68,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ErrorBarDiagram.tsx': 1, // 误差棒的线 / 端帽示意
   '/src/components/inspector/controls/ProjectionPicker.tsx': 1, // 三维投影小立方体
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
+  '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 「当前画布」范围的版面示意：页面比例 + 每个对象的落位方块，画的是这份

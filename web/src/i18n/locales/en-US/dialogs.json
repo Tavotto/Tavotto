@@ -793,8 +793,7 @@
         }
       },
       "codexIntegrationName": "{{product}} for Codex",
-      "defaultAgent": "Default agent",
-      "defaultAgentAria": "Default coding agent",
+      "defaultButton": "Default",
       "detail": {
         "addEndpoint": "Add a service…",
         "advanced": "Advanced",
@@ -880,7 +879,6 @@
       },
       "lastChecked": "Last checked {{time}}",
       "noUsableAgent": "No usable coding agent was detected. Install one, then hit Rescan.",
-      "noUsableAgentShort": "None available",
       "readiness": {
         "needs_auth": "Sign-in required",
         "ready": "Signed in",
@@ -889,6 +887,7 @@
       "refreshFailed": "The rescan failed; what you see below is the previous result.",
       "rescan": "Rescan",
       "rowAria": "{{name}} details",
+      "setDefaultAria": "Make {{name}} the default coding agent",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
         "common_location": "Common install location",

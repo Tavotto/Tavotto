@@ -791,9 +791,9 @@ function PairRow({
   const cell = (field: EditableField, prefix: string) => {
     const label = propLabel(field.prop, element.role)
     return (
-      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 flex-1 items-center gap-1">
+      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 shrink-0 items-center gap-1">
         <NumberField
-          className="min-w-0 flex-1"
+          className="min-w-0"
           prefix={prefix}
           ariaLabel={label}
           value={Number(w.read(field.prop) ?? 0)}
@@ -818,8 +818,11 @@ function PairRow({
         label={labeledWithStateNode(text.label(), overridden(a.prop) || overridden(b.prop))}
         labelWidth={LABEL_W}
       >
-        {cell(byProp(text.props[0]), text.prefixes[0]())}
-        {cell(byProp(text.props[1]), text.prefixes[1]())}
+        {/* 两个数值框靠右贴齐、不再各占半行（2026-09-11 用户反馈：右侧不留空隙） */}
+        <div className="flex w-full min-w-0 items-center justify-end gap-1.5">
+          {cell(byProp(text.props[0]), text.prefixes[0]())}
+          {cell(byProp(text.props[1]), text.prefixes[1]())}
+        </div>
       </Row>
     </div>
   )
@@ -995,14 +998,19 @@ function FieldList({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
   ).length
 
+  // 有文字工具条时，首屏顺序是「内容 → 字体行 → 其余首屏字段（背景等）」：
+  // 工具条承接的字体字段已从列表里滤掉，剩下排在 `text` 之后的按模板顺序跟在工具条后面
+  const headPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop === 'text') : buckets.primary
+  const tailPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop !== 'text') : []
   return (
     <>
-      {rows(buckets.primary)}
+      {rows(headPrimary)}
       {bar && (
-        <div className={cn(buckets.primary.length > 0 && 'mt-1.5')}>
+        <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} />
         </div>
       )}
+      {tailPrimary.length > 0 && <div className="mt-1.5">{rows(tailPrimary)}</div>}
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
@@ -2160,7 +2168,9 @@ function FieldRow({
               onChange={(next, immediate) => write(next, immediate)}
             />
           </div>
-        </>
+        </>,
+        // 标签与多行输入框顶对齐（2026-09-11 用户反馈）：居中会让「内容」悬在框的半腰
+        'start',
       )
     }
 

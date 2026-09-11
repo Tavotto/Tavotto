@@ -7,14 +7,12 @@ import {
   backendErrorText,
   effectiveAgent,
   patchAiAgent,
-  usableAgents,
   type AiAgentId,
 } from '@/lib/api'
 import { CODEX_GUIDE_URL, PRODUCT_NAME } from '@/lib/brand'
 import { formatDateTime } from '@/i18n/format'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../ui/Button'
-import { Select } from '../ui/Select'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
@@ -188,15 +186,18 @@ export function CodingAgentsSection() {
         </>
       ) : (
         <>
-          <DefaultAgentPicker />
-
           <section data-agent-section="in-app" className="flex flex-col gap-1.5">
             <h4 className="text-xs font-medium text-ink-2">{ag('useInProduct')}</h4>
+            {/* 默认 Agent 不再单独一行（2026-09-11 用户反馈）：每行自带「默认」按钮。
+                首选那个暂时不可用时**按下态落在第一个可用的，但不改用户存着的首选值**
+                （它恢复以后还该是默认项） */}
             <AgentList
               agents={caps.agents}
               onOpen={openDetail}
               onToggle={(id, v) => void toggle(id, v)}
               busyAgent={busyAgent}
+              defaultId={effective}
+              onSetDefault={(id) => useAiStore.getState().setAgent(id)}
             />
             {effective === null && (
               <p className="text-xs text-ink-3">{ag('noUsableAgent')}</p>
@@ -239,34 +240,3 @@ export function CodingAgentsSection() {
   )
 }
 
-/**
- * 默认 Agent。只列 `usable` 的那些；只有一个时显示成只读——为一个选项画一个
- * 下拉框是纯粹的噪音。首选那个暂时不可用时**自动用第一个可用的，但不改
- * 用户存着的首选值**（它恢复以后还该是默认项）。
- */
-function DefaultAgentPicker() {
-  useTranslation('dialogs')
-  const caps = useAiStore((s) => s.caps)
-  const preferred = useAiStore((s) => s.agent)
-  const list = usableAgents(caps)
-  const effective = effectiveAgent(preferred, caps)
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-ink-2">{ag('defaultAgent')}</span>
-      {list.length === 0 ? (
-        <span className="text-xs text-ink-3">{ag('noUsableAgentShort')}</span>
-      ) : list.length === 1 ? (
-        <span className="text-xs text-ink">{list[0].display_name}</span>
-      ) : (
-        <Select
-          value={effective ?? ''}
-          onChange={(v) => useAiStore.getState().setAgent(v)}
-          options={list.map((a) => ({ value: a.id, label: a.display_name }))}
-          ariaLabel={ag('defaultAgentAria')}
-          className="min-w-32"
-        />
-      )}
-    </div>
-  )
-}

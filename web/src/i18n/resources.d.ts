@@ -1087,8 +1087,7 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "defaultAgent": "默认 Agent",
-        "defaultAgentAria": "默认编码 Agent",
+        "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
           "advanced": "高级设置",
@@ -1174,7 +1173,6 @@ export default interface Resources {
         },
         "lastChecked": "最近检测 {{time}}",
         "noUsableAgent": "未检测到可用的编码 Agent。装好任意一个之后点「重新检测」。",
-        "noUsableAgentShort": "暂无可用",
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -1183,6 +1181,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败，下面仍是上一次的结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
+        "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "common_location": "常见安装位置",
@@ -4118,7 +4117,9 @@ export default interface Resources {
       "zoomValue": "缩放 {{percent}}%"
     },
     "update": {
-      "banner": "工具已更新，刷新后使用新版本"
+      "banner": "工具已更新，刷新后使用新版本",
+      "later": "稍后",
+      "title": "工具已更新"
     }
   }
 }

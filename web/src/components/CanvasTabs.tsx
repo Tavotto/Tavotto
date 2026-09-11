@@ -43,7 +43,7 @@ export function CanvasTabs() {
         ref={strip}
         role="tablist"
         aria-label={t('tabs.listLabel')}
-        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+        className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto"
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -69,6 +69,7 @@ export function CanvasTabs() {
         ))}
       </div>
 
+      {/* 「+」紧跟最后一个标签（2026-09-11 用户反馈），画布总览菜单仍靠右 */}
       <Tip label={t('tabs.newCanvas')}>
         <Button
           size="icon-sm"
@@ -78,6 +79,7 @@ export function CanvasTabs() {
           <Plus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
+      <span className="flex-1" />
 
       {canvases.length > openTabs.length || canvases.length > 6 ? (
         <AllCanvasesMenu activate={activate} />

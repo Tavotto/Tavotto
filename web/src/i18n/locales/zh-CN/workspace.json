@@ -673,7 +673,9 @@
     "zoomValue": "缩放 {{percent}}%"
   },
   "update": {
-    "banner": "工具已更新，刷新后使用新版本"
+    "banner": "工具已更新，刷新后使用新版本",
+    "later": "稍后",
+    "title": "工具已更新"
   },
   "hints": {
     "panel_editable": "双击这张图可以进入图内编辑。",

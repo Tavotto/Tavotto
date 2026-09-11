@@ -157,37 +157,35 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Section title={pn('geometry')}>
-      <Grid2>
+      {/* 两行共用一张三列网格：左右两列等宽，中列只放宽高比锁（第一行留同宽的空位），
+          于是 Y 与 H、X 与 W 各自对齐在同一条竖线上，锁正好落在 W 与 H 的正中 */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
         <MmField
           label="X"
           historyLabel={hist('setX')}
           value={sharedPanel(objs, (o) => o.x)}
           onChange={(v) => setAxis('x', v)}
         />
+        <span aria-hidden className="w-7" />
         <MmField
           label="Y"
           historyLabel={hist('setY')}
           value={sharedPanel(objs, (o) => o.y)}
           onChange={(v) => setAxis('y', v)}
         />
-      </Grid2>
-
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <div className="min-w-0 flex-1">
-          <MmField
-            label="W"
-            historyLabel={hist('setWidth')}
-            min={1}
-            value={sharedPanel(objs, (o) => o.w)}
-            onChange={(v) =>
-              setEach(hist('setWidth'), (o) => {
-                const k = v / o.w
-                o.w = v
-                if (panelAspectLocked(o)) o.h *= k
-              })
-            }
-          />
-        </div>
+        <MmField
+          label="W"
+          historyLabel={hist('setWidth')}
+          min={1}
+          value={sharedPanel(objs, (o) => o.w)}
+          onChange={(v) =>
+            setEach(hist('setWidth'), (o) => {
+              const k = v / o.w
+              o.w = v
+              if (panelAspectLocked(o)) o.h *= k
+            })
+          }
+        />
         <Tip label={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}>
           <Button
             size="icon-sm"
@@ -199,21 +197,19 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
             {locked ? <Link2 size={ICON_SIZE.sm} /> : <Unlink2 size={ICON_SIZE.sm} />}
           </Button>
         </Tip>
-        <div className="min-w-0 flex-1">
-          <MmField
-            label="H"
-            historyLabel={hist('setHeight')}
-            min={1}
-            value={sharedPanel(objs, (o) => o.h)}
-            onChange={(v) =>
-              setEach(hist('setHeight'), (o) => {
-                const k = v / o.h
-                o.h = v
-                if (panelAspectLocked(o)) o.w *= k
-              })
-            }
-          />
-        </div>
+        <MmField
+          label="H"
+          historyLabel={hist('setHeight')}
+          min={1}
+          value={sharedPanel(objs, (o) => o.h)}
+          onChange={(v) =>
+            setEach(hist('setHeight'), (o) => {
+              const k = v / o.h
+              o.h = v
+              if (panelAspectLocked(o)) o.w *= k
+            })
+          }
+        />
       </div>
 
       <Row className="mt-1.5" label={pn('scale')}>

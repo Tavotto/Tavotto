@@ -61,7 +61,7 @@ export function TextActionRow({
 
   return (
     // 按下时一律不抢焦点：textarea 的编辑事务不该因为点了按钮就提交
-    <div className="flex shrink-0 justify-end gap-0.5">
+    <div className="flex w-full shrink-0 items-center justify-between">
       <Button
         size="icon-sm"
         onPointerDown={(e) => e.preventDefault()}
