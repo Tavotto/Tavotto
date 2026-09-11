@@ -374,7 +374,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
             step={1}
             value={opacity ?? 100}
             aria-label={pn('opacity')}
-            style={{ accentColor: 'var(--color-accent)' }}
+            style={{ accentColor: 'var(--color-ink)' }}
             className="h-4 min-w-0 flex-1 cursor-pointer"
             onPointerDown={() =>
               useDocumentStore.getState().beginTxn(msg('history.setOpacity', undefined, 'workspace'))
@@ -705,7 +705,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           <Tip label={pn('overrideCount', { count: overrides })}>
             <span
               data-override-badge
-              className="flex h-7 shrink-0 items-center rounded-sm bg-accent-subtle px-1.5 text-xs text-accent"
+              className="flex h-7 shrink-0 items-center rounded-sm bg-selected px-1.5 text-xs text-ink"
             >
               {translate('element.modifiedCount', { ns: 'inspector', count: overrides })}
             </span>
@@ -749,7 +749,6 @@ export function SourceSection({
       title={pn('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen('panel', !open)}
-      summary={panel?.script?.split('/').pop()}
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (

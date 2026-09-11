@@ -266,36 +266,32 @@ export function ColorField({
   value: string
   onChange: (v: string) => void
   /**
-   * 这一轮取色结束（两个输入框任一失焦）。取色是连续动作：系统取色盘拖着走
-   * 会发一串 change，调用方靠它把整轮压成一条历史 + 一次定稿渲染。
-   * 原生对话框不保证发 blur，所以调用方另有安静计时兜底——这里只管报告
-   * 确实发生了的失焦。
+   * 这一轮取色结束（取色盘失焦）。取色是连续动作：系统取色盘拖着走会发一串
+   * change，调用方靠它把整轮压成一条历史 + 一次定稿渲染。原生对话框不保证发
+   * blur，所以调用方另有安静计时兜底——这里只管报告确实发生了的失焦。
    */
   onGestureEnd?: () => void
   className?: string
   /**
-   * 无障碍名，**必填**。这一格是**两个**输入框（取色盘 + 十六进制文本框），
-   * 外面那行可见标签既不是 `<label for>` 也指不了两个控件，所以名字只能显式给。
-   *
-   * 为什么是必填而不是可选：2026-09-07 之前 18 个调用点一个都没给，读屏里
-   * 它们全是「编辑文本」（axe `label` critical）。改成可选加一次性补齐的话，
-   * 下一个调用点照样会漏——类型必填才是不会烂掉的那种纪律。
+   * 无障碍名，**必填**。外面那行可见标签不是 `<label for>`，取色盘的名字只能
+   * 显式给。2026-09-07 之前 18 个调用点一个都没给，读屏里它们全是「编辑文本」
+   * （axe `label` critical）；类型必填才是不会烂掉的那种纪律。
    *
    * chromium 上一直是绿的，webkit（Windows）第一次跑就报出来：`input[type=color]`
-   * 在那儿退化成普通文本框，axe 的 `label` 规则才落到它头上。**引擎不同，
-   * 能看见的维度也不同**，别拿「chromium 绿」当「没有这个缺陷」。
+   * 在那儿退化成普通文本框，axe 的 `label` 规则才落到它头上。
    */
   ariaLabel: string
 }) {
   return (
-    // 外层只管排布：色块在框外，所以背景 / 边框 / focus 态都不在这一层。
-    // 高度写在这里——它是组件根，调用方的 className 也落在这里。
-    <div className={cn('flex h-7 items-center gap-1.5', className)}>
-      {/* 色块移到框外：框只圈住真正可编辑的色号。取色盘是**透明盖在色块上的真控件**，
-          原来靠外层的 focus-within 边框顺带提示焦点；移出去之后必须自带一圈 focus
-          ring，否则纯键盘 Tab 到它时屏幕上没有任何反馈。overflow-hidden 只裁子元素，
-          不会吃掉这一层自己的 outline。 */}
-      <div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-[3px] border border-border-strong has-[:focus-visible]:focus-ring">
+    // 只剩一块色块（2026-09-11 用户反馈：去掉色号框，点色块取色）。
+    // 取色盘是**透明盖在色块上的真控件**，自带一圈 focus ring——纯键盘 Tab 到它
+    // 时屏幕上得有反馈；overflow-hidden 只裁子元素，不会吃掉这一层自己的 outline。
+    // 当前色号走 title：鼠标悬停仍看得到精确值。
+    <div className={cn('flex h-7 items-center', className)}>
+      <div
+        title={value.toUpperCase()}
+        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border-strong transition-colors hover:border-ink/45 has-[:focus-visible]:focus-ring"
+      >
         <div className="absolute inset-0" style={{ background: value }} />
         <input
           type="color"
@@ -304,26 +300,6 @@ export function ColorField({
           onBlur={onGestureEnd}
           aria-label={t('colorField.picker', { label: ariaLabel })}
           className="absolute inset-0 cursor-pointer opacity-0"
-        />
-      </div>
-      {/* 十六进制框才是「框」：hover / focus-within 挂在这一层，色块移出去之后
-          焦点高亮不该再把它一起框住。min-w-0 让框在窄行里先让位（色块 shrink-0）。 */}
-      <div
-        className={cn(
-          'flex h-full min-w-0 flex-1 items-center rounded-sm border border-transparent bg-surface-2 px-1.5',
-          'transition-colors hover:border-border focus-within:border-accent focus-within:bg-surface',
-        )}
-      >
-        <input
-          value={value.toUpperCase()}
-          onChange={(e) => {
-            const v = e.target.value
-            if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v)
-          }}
-          onBlur={onGestureEnd}
-          onKeyDown={(e) => e.stopPropagation()}
-          aria-label={t('colorField.hex', { label: ariaLabel })}
-          className="num-input h-full w-full min-w-0 bg-transparent uppercase text-ink outline-none"
         />
       </div>
     </div>

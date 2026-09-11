@@ -154,7 +154,7 @@ export function BindingBadge({ binding }: { binding: LegendEntryView['binding'] 
         binding === 'follow_source'
           ? 'border-border text-ink-3'
           : binding === 'custom'
-            ? 'border-accent/40 text-accent'
+            ? 'border-border-strong bg-selected text-ink'
             : 'border-dashed border-border text-ink-3',
       )}
     >

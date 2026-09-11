@@ -130,7 +130,7 @@ function PrivacyBlock() {
           disabled={hard || pending}
           onClick={() => void choose(enabled ? 'disabled' : 'enabled', 'settings')}
           className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors duration-[var(--duration-fast)] focus-visible:focus-ring disabled:opacity-50 ${
-            enabled ? 'bg-accent' : 'bg-border-strong'
+            enabled ? 'bg-ink' : 'bg-border-strong'
           }`}
         >
           <span

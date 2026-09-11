@@ -132,7 +132,7 @@ function SlotGlyph({ slot }: { slot: Slot }) {
   if (slot.active) {
     return (
       <g>
-        <rect x={l} y={t} width={MARK.w} height={MARK.h} rx={2} className="fill-accent" />
+        <rect x={l} y={t} width={MARK.w} height={MARK.h} rx={2} className="fill-ink" />
         <g strokeWidth={1.2} strokeLinecap="round" className="stroke-surface">
           <line x1={l + 3} x2={l + 11} y1={y - 1.5} y2={y - 1.5} />
           <line x1={l + 3} x2={l + 9} y1={y + 1.5} y2={y + 1.5} />
@@ -372,7 +372,7 @@ export function LegendPositionPicker({
                   'relative flex h-6 shrink-0 items-center justify-center rounded-sm border px-5 text-xs outline-none transition-colors',
                   'focus-visible:focus-ring disabled:opacity-40',
                   bestActive
-                    ? 'border-transparent bg-accent-subtle font-medium text-accent'
+                    ? 'border-transparent bg-selected font-medium text-ink'
                     : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
                 )}
               >
@@ -439,7 +439,7 @@ export function LegendPositionPicker({
                 className={cn(
                   'absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-sm outline-none transition-colors',
                   'focus-visible:focus-ring disabled:opacity-40',
-                  slot.active ? 'bg-accent-subtle' : 'enabled:hover:bg-ink/[.05]',
+                  slot.active ? 'bg-selected' : 'enabled:hover:bg-ink/[.05]',
                 )}
               />
             </Tip>
@@ -459,7 +459,7 @@ export function LegendPositionPicker({
               'flex h-6 items-center self-start rounded-sm border px-1.5 text-xs outline-none transition-colors',
               'focus-visible:focus-ring disabled:opacity-40',
               legacyActive
-                ? 'border-transparent bg-accent-subtle text-accent'
+                ? 'border-transparent bg-selected text-ink'
                 : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
             )}
           >

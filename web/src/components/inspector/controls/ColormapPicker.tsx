@@ -72,7 +72,7 @@ export function ColormapPicker({
             'flex h-7 w-full items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
             'text-xs text-ink outline-none transition-colors hover:border-border',
             'focus-visible:focus-ring',
-            open && 'border-accent',
+            open && 'border-border-strong',
           )}
         >
           {value !== null && <GradientBar name={value} className="w-12 shrink-0" />}
@@ -109,12 +109,12 @@ export function ColormapPicker({
                 'flex h-7 items-center gap-2 rounded-sm border px-1.5 outline-none transition-colors',
                 'focus-visible:focus-ring',
                 active
-                  ? 'border-accent bg-accent-subtle'
+                  ? 'border-transparent bg-selected'
                   : 'border-transparent hover:bg-ink/[.045]',
               )}
             >
               <span className="flex w-3.5 shrink-0 items-center">
-                {active && <Check size={ICON_SIZE.xs} aria-hidden className="text-accent" />}
+                {active && <Check size={ICON_SIZE.xs} aria-hidden className="text-ink" />}
               </span>
               <GradientBar name={name} className="w-16 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left font-mono text-xs text-ink">

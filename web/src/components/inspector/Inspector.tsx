@@ -140,7 +140,7 @@ export function Inspector({
             {runningAi && (
               <span
                 aria-hidden
-                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-ink"
               />
             )}
           </Button>
@@ -382,7 +382,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
               </span>
             )}
             {modified > 0 && (
-              <span className="shrink-0 rounded-sm bg-accent-subtle px-1 py-px text-accent">
+              <span className="shrink-0 rounded-sm bg-selected px-1 py-px text-ink">
                 {t('element.modifiedCount', { count: modified })}
               </span>
             )}

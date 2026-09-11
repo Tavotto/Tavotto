@@ -162,16 +162,10 @@ export function SettingsDialog() {
               className={cn(
                 'relative h-7 shrink-0 whitespace-nowrap rounded-sm px-2 text-left text-xs outline-none focus-visible:focus-ring',
                 section === id
-                  ? 'bg-accent-subtle font-medium text-ink'
+                  ? 'bg-selected font-medium text-ink'
                   : 'text-ink-2 hover:bg-ink/[.045]',
               )}
             >
-              {section === id && (
-                <span
-                  aria-hidden
-                  className="absolute left-0 top-1.5 hidden h-4 w-0.5 rounded-full bg-accent sm:block"
-                />
-              )}
               {st(`section.${id}`)}
             </button>
           ))}

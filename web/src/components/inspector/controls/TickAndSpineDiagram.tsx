@@ -222,9 +222,9 @@ const haloRect = (
     : { x: lo, y: y + INSET, width: t, height: h - INSET * 2 }
 }
 
-/** 每个开关的外壳：悬停 / 聚焦整体变 accent，路径都用 currentColor */
+/** 每个开关的外壳：悬停 / 聚焦整体变深（ink），路径都用 currentColor */
 const SWITCH_CLS =
-  'group cursor-pointer outline-none transition-colors hover:text-accent focus-visible:text-accent'
+  'group cursor-pointer outline-none transition-colors hover:text-ink focus-visible:text-ink'
 /** 开关里的线：不吃指针（命中只认 hit 矩形）；悬停 / 聚焦时不管开关全亮 */
 const MARK_CLS = 'pointer-events-none group-hover:opacity-100 group-focus-visible:opacity-100'
 
@@ -242,7 +242,7 @@ function Halo({ hit, halo }: { hit: Rect; halo?: Rect }) {
         strokeWidth="1"
         className={cn(
           'pointer-events-none fill-transparent stroke-transparent transition-colors',
-          'group-hover:fill-accent-subtle group-focus-visible:fill-accent-subtle group-focus-visible:stroke-accent',
+          'group-hover:fill-selected group-focus-visible:fill-selected group-focus-visible:stroke-ink',
         )}
       />
       <rect {...hit} fill="transparent" />
@@ -285,7 +285,7 @@ function SvgSwitch({
         tabIndex={0}
         // 修改标记跟着这条边走（颜色 + tooltip 文字两重表达），不另列一排标签
         data-tick-modified={modified ? 'true' : undefined}
-        className={cn(SWITCH_CLS, modified && 'text-accent')}
+        className={cn(SWITCH_CLS, modified && 'text-ink')}
         onClick={() => adapter.toggle(prop, !on)}
         onKeyDown={onKey}
       >
@@ -351,7 +351,7 @@ function ZoneSwitch({
         aria-label={name}
         tabIndex={0}
         data-tick-modified={modified ? 'true' : undefined}
-        className={cn(SWITCH_CLS, modified && 'text-accent')}
+        className={cn(SWITCH_CLS, modified && 'text-ink')}
         data-tick-zone={`${side}:${zone}`}
         data-tick-coupled={coupled.length ? coupled.join(',') : undefined}
         onClick={fire}
@@ -574,7 +574,7 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
                       'flex h-7 min-w-14 items-center justify-center gap-1.5 rounded-sm px-2 text-sm',
                       'outline-none transition-colors focus-visible:focus-ring',
                       on(p)
-                        ? 'bg-accent-subtle text-accent'
+                        ? 'bg-selected text-ink'
                         : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
                     )}
                   >

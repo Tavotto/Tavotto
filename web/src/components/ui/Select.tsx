@@ -86,7 +86,7 @@ export function Select<T extends string>({
                 className={cn(
                   'relative flex h-7 cursor-default select-none items-center gap-2 rounded-sm',
                   'pl-6 pr-2 text-xs text-ink outline-none',
-                  'data-[highlighted]:bg-ink/[.055] data-[state=checked]:text-accent',
+                  'data-[highlighted]:bg-ink/[.055] data-[state=checked]:font-medium data-[state=checked]:text-ink',
                 )}
               >
                 <RS.ItemIndicator className="absolute left-1.5 flex items-center">

@@ -277,7 +277,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
                 className="h-1 overflow-hidden rounded-full bg-surface-2"
               >
                 <div
-                  className={cn('h-full bg-accent', pct === null && 'w-1/3 animate-pulse')}
+                  className={cn('h-full bg-ink', pct === null && 'w-1/3 animate-pulse')}
                   style={pct === null ? undefined : { width: `${pct}%` }}
                 />
               </div>

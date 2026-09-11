@@ -374,8 +374,7 @@
     "failedTitle": "This check did not finish",
     "filterAria": "Show only {{label}} ({{count}})",
     "fix": "Fix",
-    "fixAll_one": "Fix {{count}} on this canvas",
-    "fixAll_other": "Fix {{count}} on this canvas",
+    "fixAuto": "Fix auto-fixable",
     "fixChoose": "Fix…",
     "fixFailed": {
       "canvas_missing": "The canvas this problem lives on could not be found — refresh the list",
@@ -387,6 +386,8 @@
       "double": "Set to double-column width {{mm}} mm",
       "single": "Set to single-column width {{mm}} mm"
     },
+    "fixableHere_one": "{{count}} issue on this canvas can be fixed automatically",
+    "fixableHere_other": "{{count}} issues on this canvas can be fixed automatically",
     "fixed_one": "Fixed {{count}} problem (undoable)",
     "fixed_other": "Fixed {{count}} problems (undoable)",
     "focusFailed": {
@@ -395,8 +396,7 @@
       "not_editable": "This figure has no source script, so in-figure editing is unavailable — connect one from project status",
       "object_deleted": "That object has been deleted — refresh the list"
     },
-    "groupFix_one": "Fix {{count}}",
-    "groupFix_other": "Fix {{count}}",
+    "groupFixAll": "Fix all",
     "groupObjects_one": "{{count}} object",
     "groupObjects_other": "{{count}} objects",
     "listLabel": "Problems",
@@ -425,6 +425,7 @@
       "suggestion": "Suggestion",
       "warn": "Warning"
     },
+    "severityLabel": "Issue severity",
     "subjectArrow": "Arrow",
     "subjectElement": "Figure element",
     "subjectObject": "Object",

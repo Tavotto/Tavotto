@@ -438,7 +438,7 @@ describe('按规则聚合（审计 T09）', () => {
     await seed()
     await mount(<ProblemPanel />)
     const past = useDocumentStore.getState().past.length
-    await click(byText('修复 2 项')!)
+    await click(byText('全部修复')!)
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
     const p = useDocumentStore.getState().doc.objects[0] as PanelObject
     expect(p.overrides.length).toBe(2)

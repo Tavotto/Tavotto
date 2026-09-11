@@ -191,7 +191,7 @@ function TabItem({
           ? 'text-ink after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
           : 'text-ink-3 hover:text-ink-2',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
-        dragOver && 'rounded-sm bg-accent-subtle text-accent',
+        dragOver && 'rounded-sm bg-selected text-ink',
       )}
       title={name}
     >

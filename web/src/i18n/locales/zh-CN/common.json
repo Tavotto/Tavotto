@@ -10,7 +10,6 @@
     "save": "保存"
   },
   "colorField": {
-    "hex": "{{label}}：十六进制值",
     "picker": "{{label}}：取色盘"
   },
   "count": {

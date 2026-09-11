@@ -322,8 +322,8 @@ export function AssetBrowser() {
                 onClick={() => clearChip(c.key)}
                 aria-label={ab('removeFilter', { label: c.label })}
                 className={cn(
-                  'flex h-6 items-center gap-1 rounded-sm bg-accent-subtle px-1.5 text-xs text-accent',
-                  'outline-none transition-colors hover:bg-accent/15 focus-visible:focus-ring',
+                  'flex h-6 items-center gap-1 rounded-sm bg-selected px-1.5 text-xs text-ink',
+                  'outline-none transition-colors hover:bg-border-strong focus-visible:focus-ring',
                 )}
               >
                 {c.label}
@@ -681,7 +681,7 @@ function AssetCard({
         'group relative cursor-grab overflow-hidden rounded-sm border bg-surface outline-none',
         'transition-colors active:cursor-grabbing',
         selected
-          ? 'border-accent bg-accent-subtle'
+          ? 'border-border-strong bg-selected'
           : 'border-border hover:border-border-strong',
         'focus-visible:focus-ring',
       )}
@@ -752,7 +752,7 @@ function AssetCard({
       {/* 文字区压到最薄：图片区要占到卡片约 80%，识别靠图不靠字 */}
       <div className="px-1.5 py-0.5">
         <p
-          className={cn('truncate text-xs leading-4', selected ? 'text-accent' : 'text-ink')}
+          className={cn('truncate text-xs leading-4', selected ? 'font-medium text-ink' : 'text-ink')}
           title={name}
         >
           {name}
@@ -881,7 +881,7 @@ function RuntimeAssetCard({
       className={cn(
         'group relative overflow-hidden rounded-sm border bg-surface outline-none transition-colors',
         selected
-          ? 'border-accent bg-accent-subtle'
+          ? 'border-border-strong bg-selected'
           : 'border-border hover:border-border-strong',
         'focus-visible:focus-ring',
       )}
@@ -944,7 +944,7 @@ function RuntimeAssetCard({
 
       <div className="px-1.5 py-0.5">
         <p
-          className={cn('truncate text-xs leading-4', selected ? 'text-accent' : 'text-ink')}
+          className={cn('truncate text-xs leading-4', selected ? 'font-medium text-ink' : 'text-ink')}
           title={asset.stem}
         >
           {asset.stem}

@@ -62,7 +62,7 @@ const TONE: Record<NativeSessionState, 'busy' | 'ready' | 'done' | 'bad'> = {
 
 const BORDER: Record<'busy' | 'ready' | 'done' | 'bad', string> = {
   busy: 'border-border',
-  ready: 'border-accent/50',
+  ready: 'border-border-strong',
   done: 'border-border',
   bad: 'border-danger/50',
 }
@@ -177,7 +177,7 @@ function StateIcon({ state }: { state: NativeSessionState }) {
   if (tone === 'busy') {
     return <LoaderCircle size={ICON_SIZE.sm} className="mt-0.5 shrink-0 animate-spin text-ink-3" />
   }
-  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-accent" />
+  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-2" />
   if (tone === 'bad') return <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
   return <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-border-strong" />
 }

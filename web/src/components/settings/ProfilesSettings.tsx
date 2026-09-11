@@ -531,7 +531,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                   className={cn(
                     'flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs',
                     selected?.id === r.id
-                      ? 'bg-accent-subtle text-accent'
+                      ? 'bg-selected text-ink'
                       : 'text-ink hover:bg-ink/[.04]',
                   )}
                   title={profileTechnicalDetail(r)}
@@ -539,7 +539,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                   <span className="min-w-0 flex-1 truncate">{profileName(r)}</span>
                   {r.built_in && <span className="shrink-0 text-[10px] text-ink-3">{st('builtin')}</span>}
                   {kind === 'spec' && boundId === r.id && (
-                    <span className="shrink-0 text-[10px] text-accent">{st('inUse')}</span>
+                    <span className="shrink-0 text-[10px] text-ink-2">{st('inUse')}</span>
                   )}
                 </button>
               </li>

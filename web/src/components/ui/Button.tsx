@@ -127,7 +127,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         'disabled:cursor-not-allowed disabled:opacity-35',
         VARIANTS[variant],
         SIZES[size],
-        active && variant !== 'primary' && 'bg-accent-subtle text-accent hover:bg-accent-subtle',
+        active && variant !== 'primary' && 'bg-selected text-ink hover:bg-selected',
         className,
       )}
       {...props}

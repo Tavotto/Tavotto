@@ -74,7 +74,7 @@ export function Segmented<T extends string>({
               active
                 ? tone === 'quiet'
                   ? 'font-medium text-ink opacity-100'
-                  : 'font-medium text-accent opacity-100'
+                  : 'font-medium text-ink opacity-100'
                 : item.disabled
                   ? 'cursor-default text-ink-faint opacity-50'
                   : 'text-ink opacity-50 hover:opacity-100',
@@ -87,7 +87,7 @@ export function Segmented<T extends string>({
                 aria-hidden
                 className={cn(
                   'absolute inset-x-0 -bottom-px h-[1.5px]',
-                  tone === 'quiet' ? 'bg-ink' : 'bg-accent',
+                  'bg-ink',
                 )}
               />
             )}

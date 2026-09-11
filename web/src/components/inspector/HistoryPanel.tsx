@@ -120,7 +120,7 @@ function VersionRow({
     <div
       className={cn(
         'flex items-stretch gap-2 rounded-sm border p-1',
-        isCurrent ? 'border-accent bg-accent-subtle/40' : 'border-border',
+        isCurrent ? 'border-border-strong bg-selected' : 'border-border',
       )}
     >
       <img
@@ -130,7 +130,7 @@ function VersionRow({
         className="h-14 w-[92px] shrink-0 rounded-[3px] border border-border bg-white object-contain"
       />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-        <p className={cn('truncate text-xs', isCurrent ? 'text-accent' : 'text-ink-2')}>
+        <p className={cn('truncate text-xs', isCurrent ? 'text-ink' : 'text-ink-2')}>
           {isOrigin ? vh('origin') : vh('editCount', { count: version.count })}
           {isCurrent && vh('currentSuffix')}
         </p>

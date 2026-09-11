@@ -42,7 +42,7 @@ export function CompanionDiagram({ on }: { on: boolean }) {
         </g>
         {/* 关联线：唯一用品牌蓝的地方。关着 → 变虚并淡出 */}
         <g
-          className="text-accent transition-opacity duration-(--duration-fast)"
+          className="text-ink transition-opacity duration-(--duration-fast)"
           opacity={on ? 1 : 0.14}
           stroke="currentColor"
           strokeWidth="1.25"

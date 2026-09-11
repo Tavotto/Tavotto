@@ -42,7 +42,7 @@ export function ErrorBarDiagram({ active }: { active: ErrorBarSegment | null }) 
   const lineOn = active === 'linewidth'
   const capOn = active === 'capsize' || active === 'cap_thickness'
   // 底色用 ink-3 而不是 ink-faint：没聚焦时这张图也得看得见，它是图注不是水印
-  const seg = (on: boolean) => (on ? 'text-accent' : 'text-ink-3')
+  const seg = (on: boolean) => (on ? 'text-ink' : 'text-ink-3')
 
   return (
     <svg
@@ -91,7 +91,7 @@ export function ErrorBarDiagram({ active }: { active: ErrorBarSegment | null }) 
           stroke="currentColor"
           strokeWidth="1"
           fill="none"
-          className="text-accent"
+          className="text-ink"
         />
       )}
     </svg>

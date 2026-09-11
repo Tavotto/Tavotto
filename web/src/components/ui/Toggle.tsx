@@ -57,7 +57,7 @@ export function Toggle({
       <span
         className={cn(
           'relative h-[14px] w-[24px] rounded-full transition-colors',
-          checked ? 'bg-accent' : 'bg-border-strong',
+          checked ? 'bg-ink' : 'bg-border-strong',
         )}
       >
         <span

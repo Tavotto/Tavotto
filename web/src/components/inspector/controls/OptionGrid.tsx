@@ -25,7 +25,7 @@ export const tipLabelOf = (opt: { label: string; code?: string }): string => opt
 /**
  * 视觉选择器共用的网格：radiogroup 语义 + 方向键漫游 + 选中态角标。
  *
- * 选中态不只靠颜色：accent 边框之外还有左上角的 check 角标；
+ * 选中态不只靠颜色：浅灰底之外还有左上角的 check 角标；
  * 每个格子的名字是文字 label（aria-label + tooltip），图形只是预览。
  */
 export function OptionGrid<T extends string>({
@@ -96,7 +96,7 @@ export function OptionGrid<T extends string>({
                 'relative flex h-8 items-center justify-center rounded-sm border outline-none transition-colors',
                 'focus-visible:focus-ring',
                 active
-                  ? 'border-accent bg-accent-subtle text-ink'
+                  ? 'border-transparent bg-selected text-ink'
                   : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
                 cellClassName,
               )}
@@ -105,7 +105,7 @@ export function OptionGrid<T extends string>({
                 <Check
                   size={ICON_SIZE.xs}
                   aria-hidden
-                  className="absolute left-0.5 top-0.5 text-accent"
+                  className="absolute left-0.5 top-0.5 text-ink"
                 />
               )}
               {opt.preview ?? <span className="truncate px-1 text-xs">{opt.label}</span>}

@@ -130,7 +130,7 @@ export function StepSlider({
             的尖头。宽度与白钮的 left 用同一档时长和缓动过渡，蓝色边界始终贴着钮走，不会
             先到或落后半拍。 */}
         <span
-          className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width] duration-[var(--duration-base)] ease-[var(--ease-pop)]"
+          className="absolute inset-y-0 left-0 rounded-full bg-ink transition-[width] duration-[var(--duration-base)] ease-[var(--ease-pop)]"
           style={{ width: fillTo(value) }}
         />
       </span>
@@ -145,7 +145,7 @@ export function StepSlider({
             className={cn(
               'pointer-events-none absolute top-1/2 h-[var(--dot)] w-[var(--dot)] -translate-x-1/2 -translate-y-1/2 rounded-full',
               'transition-[background-color,scale] duration-[var(--duration-base)] ease-[var(--ease-pop)]',
-              i <= value ? 'bg-accent-subtle' : 'bg-ink-faint',
+              i <= value ? 'bg-selected' : 'bg-ink-faint',
             )}
             // scale 是独立属性，与 -translate-x-1/2 用的 translate 属性互不干扰，放大时
             // 圆心不会跑偏（换成 transform: scale 就会顶掉那半格居中位移）。

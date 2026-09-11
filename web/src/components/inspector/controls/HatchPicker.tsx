@@ -150,7 +150,7 @@ export function HatchPicker({
             'flex h-7 w-full items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
             'text-xs text-ink outline-none transition-colors hover:border-border',
             'focus-visible:focus-ring',
-            open && 'border-accent',
+            open && 'border-border-strong',
           )}
         >
           {value !== null && <HatchPreview code={value} />}

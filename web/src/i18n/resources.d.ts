@@ -138,7 +138,6 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
-      "hex": "{{label}}：十六进制值",
       "picker": "{{label}}：取色盘"
     },
     "count": {
@@ -1996,7 +1995,7 @@ export default interface Resources {
       "failedTitle": "这一次没查成",
       "filterAria": "只看{{label}}（{{count}} 项）",
       "fix": "修复",
-      "fixAll_other": "修复本画布 {{count}} 项",
+      "fixAuto": "修复可自动处理项",
       "fixChoose": "修复…",
       "fixFailed": {
         "canvas_missing": "找不到这条问题所在的画布，请先刷新问题列表",
@@ -2008,6 +2007,7 @@ export default interface Resources {
         "double": "改成双栏宽 {{mm}}mm",
         "single": "改成单栏宽 {{mm}}mm"
       },
+      "fixableHere_other": "当前画布可自动修复 {{count}} 项",
       "fixed_other": "已修复 {{count}} 项（可撤销）",
       "focusFailed": {
         "canvas_missing": "这条问题所在的画布已经不在项目里了",
@@ -2015,7 +2015,7 @@ export default interface Resources {
         "not_editable": "这张图没有连上源脚本，进不了图内编辑——可在项目状态里连接",
         "object_deleted": "这个对象已经被删掉了，请刷新问题列表"
       },
-      "groupFix_other": "修复 {{count}} 项",
+      "groupFixAll": "全部修复",
       "groupObjects_other": "{{count}} 个对象",
       "listLabel": "问题列表",
       "next": "下一项",
@@ -2041,6 +2041,7 @@ export default interface Resources {
         "suggestion": "建议",
         "warn": "警告"
       },
+      "severityLabel": "问题严重程度",
       "subjectArrow": "箭头",
       "subjectElement": "图内元素",
       "subjectObject": "对象",

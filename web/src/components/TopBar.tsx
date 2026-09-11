@@ -442,7 +442,7 @@ function MarkTools() {
             onSelect={() => setTool(tool === mark ? 'select' : mark)}
           >
             <span className="flex items-center gap-2">
-              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-accent' : 'text-ink-3'} />
+              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-ink' : 'text-ink-3'} />
               {t(markToolKey(mark))}
             </span>
           </MenuItem>
@@ -589,7 +589,7 @@ function MoreMenu() {
             {hasUpdate && (
               <span
                 aria-hidden
-                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-ink"
               />
             )}
           </span>
@@ -600,7 +600,7 @@ function MoreMenu() {
         <>
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'update')}>
             <span className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink" aria-hidden />
               {t('topbar.updateAvailable', { version: latest })}
             </span>
           </MenuItem>

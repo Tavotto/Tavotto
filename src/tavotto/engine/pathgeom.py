@@ -43,7 +43,7 @@ from __future__ import annotations
 import sys
 
 import numpy as np
-from matplotlib.collections import PathCollection, PolyCollection
+from matplotlib.collections import Collection, PathCollection, PolyCollection, QuadMesh
 from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
@@ -329,8 +329,18 @@ def _has_paint(color) -> bool:
     return True
 
 
-def _collection_subpaths(coll, budget: "Budget | None" = None) -> list[tuple[list, bool]]:
-    """Collection 的全部路径（含 offsets 平移），与 `_iter_collection` 同一口径。"""
+def _collection_subpaths(
+    coll, budget: "Budget | None" = None, *, thin: bool = False
+) -> list[tuple[list, bool]]:
+    """Collection 的全部路径（含 offsets 平移），与 `_iter_collection` 同一口径。
+
+    `thin=True`：每条子路径**先抽稀再记账**。等值线（`contour`）一条 level 的
+    原始顶点动辄上千（`axes_0.collections_0` 实测 8 条 level 共 14 391 点、抽稀
+    后 527 点），按原始点数对预算的话整组在这里就被判超预算、退回 bbox——而
+    bbox 正是它整块盖住宿主子图、把底下热力图的点击偷走的原因（2026-09-11，
+    用户的地形图 / 热力图拖不动、等值线选不准）。填充多边形那一族仍按原始点数
+    早退：hexbin 那种一条基路径配上万个 offset 的集合，逐个抽稀只是白白空转。
+    """
     trans = coll.get_transform()
     paths = coll.get_paths()
     if not paths:
@@ -359,6 +369,10 @@ def _collection_subpaths(coll, budget: "Budget | None" = None) -> list[tuple[lis
         for pts, closed in _display_subpaths(paths[i % len(paths)], trans):
             if dx or dy:
                 pts = pts + np.asarray([float(dx), float(dy)])
+            if thin:
+                pts = _thin(pts)
+                if len(pts) < 2:
+                    continue
             out.append((pts, closed))
             total += len(pts)
         # 超预算就**当场收手**。`_pack` 最后也会用 `budget.take()` 拒掉整份，
@@ -656,6 +670,33 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 stroke_pt=float(lw[0]) if len(lw) else 0.0,
                 clip=_clip_rect(artist, W, H),
                 budget=budget,
+            )
+        if isinstance(artist, Collection) and not isinstance(artist, QuadMesh):
+            # 其余 Collection：等值线（`ContourSet`，matplotlib 3.8 起本身就是
+            # Collection）、线组（`LineCollection` / `EventCollection`）、三角网
+            # ……凡是 `get_paths()` 给得出路径的都描真实路径。**`QuadMesh` 除外**：
+            # 它的路径是每个 cell 一条（`pcolormesh` 22 万个 cell 就是 22 万条），
+            # 而它铺满一块矩形，bbox 本来就是准的、也没有「选到空白」的问题。
+            #
+            # 没有 geometry 的等值线是**整块 bbox**：它盖住宿主子图，点热力图
+            # 命中的是等值线，而等值线既不能拖也不能缩——用户看到的就是「热力图
+            # 拖不动」（2026-09-11，analysis_peak_valley 项目）。
+            subs = _collection_subpaths(artist, budget, thin=True)
+            if not subs:
+                return None
+            lw = np.asarray(artist.get_linewidths(), dtype=float).ravel()
+            lw_max = float(lw.max()) if lw.size else 0.0
+            return _pack(
+                subs,
+                W,
+                H,
+                fill=_has_paint(artist.get_facecolor()),
+                stroke=_has_paint(artist.get_edgecolor()) and lw_max > 0,
+                # 逐条线宽可以不同（`contour(linewidths=[…])`），命中容差取最宽的那条
+                stroke_pt=lw_max,
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+                thinned=True,
             )
         if isinstance(artist, (Polygon, PathPatch)):
             subs = _display_subpaths(artist.get_path(), artist.get_transform())

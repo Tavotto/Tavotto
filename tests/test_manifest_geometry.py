@@ -112,6 +112,18 @@ def main():
         ax3.plot(rng2.uniform(0.0, 1.0, n), rng2.uniform(0.0, 1.0, n),
                  ls="None", marker="o", ms=2)
         fig3.savefig(f"{stem}.pdf")
+
+    # ContourFig：热力图上压等值线 + 一组竖参考线——两者从前都只有 bbox，
+    # 而那个 bbox 就是整个子图，把底下位图的点击整个偷走
+    fig4, ax4 = plt.subplots(figsize=(4.0, 3.0))
+    gx, gy = np.meshgrid(np.linspace(0.0, 1.0, 40), np.linspace(0.0, 1.0, 30))
+    field = np.sin(gx * 6.0) * np.cos(gy * 4.0)
+    ax4.imshow(field, extent=[0.0, 1.0, 0.0, 1.0], origin="lower", cmap="magma")
+    # collections_0：三条 level 的等值线
+    ax4.contour(gx, gy, field, levels=[-0.5, 0.0, 0.5], colors="#EEF4F8", linewidths=1.2)
+    # linecoll_1：两条竖参考线（LineCollection）
+    ax4.vlines([0.25, 0.75], 0.0, 1.0, colors="#2A6F3C", linewidths=0.8)
+    fig4.savefig("ContourFig.pdf")
 """
 
 
@@ -476,3 +488,51 @@ def test_geometry_point_count_stays_bounded(library):
             continue
         for path in geom["paths"]:
             assert len(path["points"]) <= 600, (el["gid"], len(path["points"]))
+
+
+# ---------------------------------------------------------------------------
+# 等值线与线组：Collection 那一族也要有真实路径
+# ---------------------------------------------------------------------------
+def _inside(box, pt):
+    x, y, w, h = box
+    return x - 1e-6 <= pt[0] <= x + w + 1e-6 and y - 1e-6 <= pt[1] <= y + h + 1e-6
+
+
+def test_contour_lines_trace_their_real_paths_not_the_axes_box(library):
+    """等值线（ContourSet）出的是每一段线的折线，而不是盖住整个子图的 bbox。
+
+    2026-09-11 用户的 analysis_peak_valley：热力图上压着等值线，等值线只有
+    bbox、bbox 又与子图同大，于是点热力图命中的永远是等值线——它既不能拖也
+    不能缩，用户看到的就是「热力图拖不动」；等值线自己也只能框选、描不出轮廓。
+    """
+    man = _manifest(library, stem="ContourFig")
+    el = _el(man, "axes_0.collections_0")
+    assert el["role"] == "collection"
+    geom = el["geometry"]
+    assert geom["fill"] is False and geom["stroke"] is True
+    assert geom["stroke_pt"] == pytest.approx(1.2)
+    assert len(geom["paths"]) >= 3, "三条 level 至少三段"
+    assert not any(p["closed"] for p in geom["paths"])
+    ax_box = _el(man, "axes_0")["bbox"]
+    pts = [pt for p in geom["paths"] for pt in p["points"]]
+    assert all(_inside(ax_box, pt) for pt in pts)
+    # 真实路径远小于子图：任何一条子路径的包围盒都不会与子图同大
+    for p in geom["paths"]:
+        xs = [q[0] for q in p["points"]]
+        ys = [q[1] for q in p["points"]]
+        assert (max(xs) - min(xs)) * (max(ys) - min(ys)) < ax_box[2] * ax_box[3] * 0.9
+    # 位图仍然只有 bbox（它就该整块命中，几何编辑代理回宿主子图）
+    assert "geometry" not in _el(man, "axes_0.images_0")
+
+
+def test_line_collection_traces_each_line(library):
+    """`vlines` 的线组（LineCollection）：两条竖线各一段，不再是一整块矩形。"""
+    man = _manifest(library, stem="ContourFig")
+    el = _el(man, "axes_0.linecoll_1")
+    assert el["role"] == "linecoll"
+    geom = el["geometry"]
+    assert geom["stroke"] is True and geom["fill"] is False
+    assert len(geom["paths"]) == 2
+    for p in geom["paths"]:
+        xs = {round(q[0], 4) for q in p["points"]}
+        assert len(xs) == 1, "竖线的 x 处处相同"

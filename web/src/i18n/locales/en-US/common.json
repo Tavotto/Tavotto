@@ -10,7 +10,6 @@
     "save": "Save"
   },
   "colorField": {
-    "hex": "{{label}}: hex value",
     "picker": "{{label}}: colour picker"
   },
   "count": {

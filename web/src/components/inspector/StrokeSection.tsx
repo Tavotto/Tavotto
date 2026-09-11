@@ -194,7 +194,7 @@ function GlyphSelect<T extends string>({
                 onClick={() => pick(h)}
                 className={`flex h-7 cursor-default items-center justify-center gap-2 rounded-sm px-1.5 text-xs ${
                   isActive ? 'bg-surface-2' : ''
-                } ${selected ? 'text-accent' : 'text-ink'}`}
+                } ${selected ? 'font-medium text-ink' : 'text-ink'}`}
               >
                 {glyphOf(h)}
                 <span className="truncate">{labelOf(h)}</span>

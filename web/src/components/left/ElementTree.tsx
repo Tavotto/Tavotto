@@ -368,9 +368,9 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
       </div>
 
       {isolated && (
-        <div className="flex shrink-0 items-center gap-1.5 bg-accent-subtle px-3 py-1">
-          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-accent" />
-          <span className="min-w-0 flex-1 truncate text-xs text-accent">
+        <div className="flex shrink-0 items-center gap-1.5 bg-selected px-3 py-1">
+          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-ink-2" />
+          <span className="min-w-0 flex-1 truncate text-xs text-ink">
             {et('isolated', {
               label: (() => {
                 const hit = manifest.elements.find((e) => e.gid === isolated)
@@ -380,7 +380,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
           </span>
           <button
             onClick={() => setIsolated(null)}
-            className="shrink-0 text-xs text-accent underline-offset-2 hover:underline"
+            className="shrink-0 text-xs text-ink underline underline-offset-2"
           >
             {et('exitIsolate')}
           </button>
@@ -476,7 +476,7 @@ function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle()
       }}
-      className="flex h-7 cursor-default items-center gap-1 border-l-2 border-transparent pr-1.5 text-xs text-ink-2 outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
+      className="mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm pr-1.5 text-xs text-ink-2 outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
         <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', expanded && 'rotate-90')} />
@@ -574,10 +574,10 @@ function ElementRow({
         onSelect(e.shiftKey)
       }}
       className={cn(
-        'group relative flex h-7 cursor-default items-center gap-1 border-l-2 pr-1 text-xs outline-none focus-visible:focus-ring',
+        'group relative mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm pr-1 text-xs outline-none focus-visible:focus-ring',
         selected
-          ? 'border-accent bg-accent-subtle text-accent'
-          : 'border-transparent text-ink hover:bg-ink/[.04]',
+          ? 'bg-selected text-ink'
+          : 'text-ink hover:bg-ink/[.04]',
         hidden && 'opacity-45',
       )}
     >

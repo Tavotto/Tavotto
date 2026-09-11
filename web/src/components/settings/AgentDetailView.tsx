@@ -232,7 +232,7 @@ export function AgentDetailView({
                 name={radioName}
                 checked={!usingEndpoint}
                 onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
-                className="accent-accent"
+                className="accent-ink"
               />
               <span className="min-w-0 flex-1 text-sm text-ink">
                 {ag('detail.useAgentLogin', { name: agent.display_name })}
@@ -248,7 +248,7 @@ export function AgentDetailView({
                       name={radioName}
                       checked={selected}
                       onChange={() => void run(() => setAiEndpointActive(agent.id, e.id))}
-                      className="accent-accent"
+                      className="accent-ink"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-ink">{e.label}</span>

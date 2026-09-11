@@ -626,7 +626,7 @@ function JobPanel({
           aria-label={pk('job.progressAria')}
           className="h-1 overflow-hidden rounded-full bg-surface-2"
         >
-          <div className="h-full w-1/3 animate-pulse bg-accent" />
+          <div className="h-full w-1/3 animate-pulse bg-ink" />
         </div>
       )}
       {failure && (

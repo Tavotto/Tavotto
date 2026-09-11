@@ -18,7 +18,6 @@ import {
   MoveUp,
   MoveVertical,
   RotateCcw,
-  TriangleAlert,
 } from 'lucide-react'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -361,19 +360,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           />
         )
       )}
-      {!!render?.warnings.length && (
-        <Section>
-          <ul className="flex flex-col gap-1">
-            {render.warnings.map((w, i) => (
-              <li key={i} className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-                <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-danger" />
-                <span>{w}</span>
-              </li>
-            ))}
-          </ul>
-          <OrphanOverrides panel={panel} manifest={exactManifest} />
-        </Section>
-      )}
+      {/* 引擎的 warnings（「应用失败 gid.prop: …」）不再在属性页顶上整段列出
+          （2026-09-11 用户反馈）：与某个字段对得上的那条仍在那个字段下面说，
+          孤儿 override 的清理入口单独保留。 */}
+      <OrphanOverrides panel={panel} manifest={exactManifest} />
 
       {/* 三层顺序：公共文字样式 → 其余公共属性 → 对齐与排列。
           三者互相独立，谁在谁不在只看选择本身，不再互斥。
@@ -507,7 +497,8 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
   if (!orphans.length) return null
   const gids = new Set(orphans.map((o) => o.gid))
   return (
-    <div className="mt-1.5 flex items-center gap-2">
+    <Section>
+      <div className="flex items-center gap-2">
       <Button
         size="sm"
         variant="outline"
@@ -524,7 +515,8 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
       <span className="text-xs text-ink-3">
         {el('orphanCount', { overrides: orphans.length, elements: gids.size })}
       </span>
-    </div>
+      </div>
+    </Section>
   )
 }
 
@@ -793,7 +785,8 @@ function PairRow({
     return (
       <div key={field.prop} data-prop={field.prop} className="flex min-w-0 shrink-0 items-center gap-1">
         <NumberField
-          className="min-w-0"
+          // 图幅那一对是「393.7」这种五位带小数的数：4ch 只剩「39」（2026-09-11 用户反馈）
+          className="min-w-0 [&_input]:w-[calc(6ch+0.75rem)]"
           prefix={prefix}
           ariaLabel={label}
           value={Number(w.read(field.prop) ?? 0)}
@@ -1257,7 +1250,7 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${el('modified')}` : label}
     >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
@@ -1773,7 +1766,7 @@ function BatchFieldRow({
               overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
             )
           }
-          className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-accent"
+          className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-ink"
         >
           {overridden.length === elements.length
             ? el('backToScript')
@@ -1896,7 +1889,7 @@ function FieldRow({
       title={overridden ? `${label} · ${el('modified')}` : label}
     >
       {overridden && (
-        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />
+        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
       )}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
@@ -2352,6 +2345,9 @@ function FieldRow({
             {arr.map((v, i) => (
               <NumberField
                 key={i}
+                // 图幅是「393.7」这种五位带小数的数：默认 4ch 只剩「393.」
+                // （2026-09-11 用户反馈）；rect 四格并排放不下，维持默认
+                className={field.type === 'pair' ? '[&_input]:w-[calc(6ch+0.75rem)]' : undefined}
                 ariaLabel={axisAriaLabel(field, label, i)}
                 prefix={field.type === 'pair' ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
                 value={Number(v)}
@@ -2582,7 +2578,7 @@ function AlignSection({
               位置类对齐用的是选区边界，末位元素并不特殊。
             */}
             {i === items.length - 1 && allResizable && (
-              <span className="ml-auto shrink-0 font-mono text-xs text-accent/70">
+              <span className="ml-auto shrink-0 font-mono text-xs text-ink-3">
                 {el('alignBaselineSize')}
               </span>
             )}
@@ -2728,7 +2724,6 @@ function SourceAdvancedSection({
       title={el('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen(role, !open)}
-      summary={panel.script?.split('/').pop()}
     >
       <div className="flex flex-col gap-1.5">
         {advanced.length > 0 && (

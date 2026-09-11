@@ -96,7 +96,7 @@ export function CanvasPage() {
                   className={cn(
                     'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors focus-visible:focus-ring',
                     on
-                      ? 'border-accent bg-accent-subtle text-accent'
+                      ? 'border-transparent bg-selected text-ink'
                       : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
                   )}
                 >
@@ -110,7 +110,7 @@ export function CanvasPage() {
                       className={cn(
                         'block border',
                         // 选中不只换颜色：空心变实心，色觉障碍下也分得出
-                        on ? 'border-accent bg-accent/25' : 'border-ink-faint bg-surface',
+                        on ? 'border-ink bg-ink/25' : 'border-ink-faint bg-surface',
                       )}
                       style={{
                         width: p.w * PREVIEW_SCALE,

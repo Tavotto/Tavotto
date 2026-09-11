@@ -85,7 +85,7 @@ export function DocumentBanner() {
   if (notice?.kind === 'recovery') {
     const s = notice.summary
     return (
-      <Banner icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
+      <Banner icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}>
         <span className="min-w-0 flex-1 truncate">{t('docBanner.recoveryTitle')}</span>
         {/* 文档名是用户内容，作为插值原样透出 */}
         <span className="hidden shrink-0 opacity-80 min-[900px]:inline">
@@ -108,7 +108,7 @@ export function DocumentBanner() {
 
   if (notice?.kind === 'schema_too_new') {
     return (
-      <Banner icon={<Lock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
+      <Banner icon={<Lock size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}>
         <span className="min-w-0 flex-1 truncate">
           {t('docBanner.tooNewTitle', { schema: notice.schema })}
         </span>
@@ -134,7 +134,7 @@ function LastDocumentBanner() {
   const issue = useProjectStore((s) => s.lastDocumentIssue)
   if (!issue) return null
   return (
-    <Banner icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-accent" />}>
+    <Banner icon={<RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}>
       {/* 文档名是用户内容，作为插值原样透出 */}
       <span className="min-w-0 flex-1 truncate">
         {t('docBanner.lastDocTitle', { name: issue.name || t('docBanner.lastDocUnnamed') })}

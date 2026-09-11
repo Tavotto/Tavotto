@@ -288,7 +288,7 @@ export function StyleDialog() {
                   onClick={() => setDraft(structuredClone(s))}
                   className={cn(
                     'h-7 min-w-0 flex-1 truncate px-2 text-left text-xs',
-                    draft.id === s.id ? 'bg-accent-subtle text-accent' : 'text-ink hover:bg-ink/[.04]',
+                    draft.id === s.id ? 'bg-selected text-ink' : 'text-ink hover:bg-ink/[.04]',
                   )}
                 >
                   {nameOf(s)}

@@ -225,10 +225,10 @@ export function VersionDrawer() {
                   onClick={() => setSelected(v.id === selected ? null : v.id)}
                   aria-expanded={v.id === selected}
                   className={cn(
-                    'flex w-full items-start gap-2 px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
+                    'flex w-full items-start gap-2 rounded-sm px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
                     v.id === selected
-                      ? 'border-l-2 border-accent bg-accent-subtle'
-                      : 'border-l-2 border-transparent hover:bg-ink/[.04]',
+                      ? 'bg-selected'
+                      : 'hover:bg-ink/[.04]',
                   )}
                 >
                   {/* 缩略图 → 时间 → 变化摘要 → 哪张画布。
@@ -251,7 +251,7 @@ export function VersionDrawer() {
                       <span
                         className={cn(
                           'shrink-0 text-xs',
-                          v.id === selected ? 'font-medium text-accent' : 'text-ink',
+                          v.id === selected ? 'font-medium text-ink' : 'text-ink',
                         )}
                       >
                         {formatTime(v.ts)}

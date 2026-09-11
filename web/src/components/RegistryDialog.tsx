@@ -404,7 +404,7 @@ function entryOf(view: RegistryView | null, script: string): string | undefined 
 
 /** 状态角标：颜色**不是唯一表达**，文字本身就是状态名 */
 const BADGE_TONE: Record<ReadinessStatus, string> = {
-  editable: 'bg-accent-subtle text-accent',
+  editable: 'bg-selected text-ink',
   auto_linkable: 'bg-surface-2 text-ink-2',
   needs_probe: 'bg-surface-2 text-ink-2',
   conflict: 'bg-danger-subtle text-danger',
@@ -495,7 +495,7 @@ function PanelRow({
       data-panel-row={panel.id}
       className={cn(
         'rounded-md border p-2 outline-none',
-        highlight ? 'border-accent bg-accent-subtle' : 'border-border',
+        highlight ? 'border-border-strong bg-selected' : 'border-border',
         'focus-visible:focus-ring',
       )}
     >

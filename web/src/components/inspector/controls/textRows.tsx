@@ -30,7 +30,7 @@ export function labeledWithState(label: string, overridden?: boolean): ReactNode
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${translate('element.modified', { ns: 'inspector' })}` : label}
     >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && (
         <span className="sr-only">{translate('element.modified', { ns: 'inspector' })}</span>
