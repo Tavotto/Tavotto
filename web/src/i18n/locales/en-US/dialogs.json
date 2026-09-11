@@ -560,7 +560,6 @@
     "restoreConfirm": "Restore",
     "restoreNeedsOrigin": "This one was not copied from a built-in profile, so there are no defaults to restore",
     "restoreTitle": "Restore “{{name}}” to its defaults?",
-    "ruleLine": "Checked as {{expect}}; otherwise {{severity}}",
     "save": "Save",
     "saved": "Saved “{{name}}”",
     "snapshotHint": "The project stores the rules as they were when you picked them. Later edits to the same profile in the global list do not change these numbers unless “Follow updates” is on.",

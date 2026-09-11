@@ -51,7 +51,7 @@ function ProductBlock({ version }: { version?: string }) {
   return (
     <div className="flex items-center gap-3">
       {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
-      <BrandMark size={54} variant="full" />
+      <BrandMark size={54} />
       <div className="min-w-0">
         <p className="text-xs text-ink">
           {PRODUCT_NAME}

@@ -358,23 +358,14 @@ describe('「应用到当前图…」交给样式对话框（审计 T35）', () 
 })
 
 describe('规范页把边界与快照摊开（审计 T41）', () => {
-  it('两条字号下限的要求不是同一句话：一条含等号、一条不含', async () => {
+  it('数值来自规范自己，行内不再复述检查判据（2026-09-11 用户反馈：去掉「检查 ≥ 6pt，否则记为警告」这类行）', async () => {
     await mount('spec')
     const rows = [...document.body.querySelectorAll('[data-field-group="fonts"] > div')]
     const rowFor = (label: string) => rows.find((r) => r.textContent?.startsWith(label))!
-    // 值来自规范自己（两个都是 8），措辞来自措辞层那张规则表
     expect(rowFor('最小字号').textContent).toContain('8 pt')
-    expect(rowFor('最小字号').textContent).toContain('检查 ≥ 8pt')
-    expect(rowFor('绝对下限').textContent).toContain('检查 大于 8pt')
-    // 「大于」那条不许写成 ≥ ——两个数一样、判据不一样，正是审计指出的那处误导
-    expect(rowFor('绝对下限').textContent).not.toContain('≥')
-    // 等级来自 profile 自己的 severity 表
-    expect(rowFor('绝对下限').textContent).toContain('阻断')
-  })
-
-  it('规范页才有这行；样式页没有可判的规则，不硬造一句', async () => {
-    await mount('style')
+    expect(rowFor('绝对下限').textContent).toContain('8 pt')
     expect(text()).not.toContain('检查 ')
+    expect(text()).not.toContain('否则记为')
   })
 
   it('本项目实际用来检查的那份规则摊开可查，且来自绑定的解析结果', async () => {

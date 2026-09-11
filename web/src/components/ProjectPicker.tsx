@@ -97,7 +97,7 @@ export function ProjectPicker() {
         <header className="shrink-0 pt-10">
           {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
           <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-ink">
-            <BrandMark size={24} variant="compact" tone="paper" />
+            <BrandMark size={24} tone="paper" />
             {PRODUCT_NAME}
           </h1>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>

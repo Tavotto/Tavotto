@@ -228,7 +228,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
       </div>
 
       {/* 与图内元素同一个「更多」模型：按角色记忆，折叠给现状摘要 */}
-      <div className="mt-1.5 border-t border-border pt-1.5">
+      <div className="mt-1.5">
         <button
           onClick={() => setMoreOpen('text-object', !moreOpen)}
           aria-expanded={moreOpen}

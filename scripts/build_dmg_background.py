@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """生成 macOS 安装 .dmg 的窗口背景图（assets/brand/dmg-background.png）。
 
-设计遵循 Tavotto Brand System：纸色 #f2f2ef 底、左上角 compact 标志 + 字标、
+设计遵循 Tavotto Brand System：纸色 #f2f2ef 底、左上角 标志 + 字标、
 中部「App → Applications」的极简引导箭头、下方一行说明文字。图标落点必须
 与 scripts/make_dmg.sh 里 Finder 的 icon position 保持一致（app 165,190 /
 Applications 495,190，窗口内容 660×400）。
@@ -21,7 +21,7 @@ from pathlib import Path
 import pymupdf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_brand_assets import GEOMETRY, PALETTES  # noqa: E402
+from build_brand_assets import draw_mark  # noqa: E402
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -46,24 +46,6 @@ APP_POS = (165.0, 190.0)
 FOLDER_POS = (495.0, 190.0)
 
 
-def hex_rgb(s: str) -> tuple[float, float, float]:
-    return tuple(int(s[i : i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
-
-
-def draw_mark(page: pymupdf.Page, x: float, y: float, size: float) -> None:
-    """compact 标志：几何与 build_brand_assets 同一张表（viewBox 1024）。"""
-    k = size / 1024.0
-    palette = PALETTES["paper"]
-    for role, g in GEOMETRY["compact"]:
-        rect = pymupdf.Rect(
-            x + g["x"] * k, y + g["y"] * k, x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k
-        )
-        if role == "ink-stroke":
-            page.draw_rect(rect, color=hex_rgb(palette["ink"]), width=g["sw"] * k, fill=None)
-        else:
-            page.draw_rect(rect, color=None, fill=hex_rgb(palette[role]))
-
-
 def centered(
     page: pymupdf.Page,
     font: pymupdf.Font,
@@ -84,7 +66,7 @@ def main() -> int:
     page = doc.new_page(width=W, height=H)
     page.draw_rect(page.rect, color=None, fill=PAPER)
 
-    # 左上角品牌：compact 标志 + 字标
+    # 左上角品牌：标志 + 字标
     draw_mark(page, 28, 26, 26)
     helv_bold = pymupdf.Font("helvetica-bold")
     tw = pymupdf.TextWriter(page.rect, color=INK)

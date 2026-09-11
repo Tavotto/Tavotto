@@ -2,8 +2,8 @@
 """生成 Windows NSIS 安装器的品牌位图（assets/brand/installer-*.bmp）。
 
 MUI2 的经典尺寸：头图 150×57、欢迎/完成页侧栏 164×314（24 位 BMP）。
-设计遵循 Tavotto Brand System：纸色底、compact 标志、字标；几何从
-build_brand_assets 导入。PyMuPDF 绘制，BMP 编码内置（bottom-up BGR——
+设计遵循 Tavotto Brand System：纸色底、标志、字标；标志路径从
+build_brand_assets 导入（draw_mark）。PyMuPDF 绘制，BMP 编码内置（bottom-up BGR——
 NSIS 吃的是最保守的 BMP3 形态，sips 输出的 top-down DIB 反而有兼容风险）。
 产物提交进仓库，Windows 构建直接取用。
 
@@ -19,7 +19,7 @@ from pathlib import Path
 import pymupdf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_brand_assets import GEOMETRY, PALETTES  # noqa: E402
+from build_brand_assets import draw_mark  # noqa: E402
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -34,27 +34,6 @@ BRAND = ROOT / "assets" / "brand"
 PAPER = (0xF2 / 255, 0xF2 / 255, 0xEF / 255)
 INK = (0x1B / 255, 0x1B / 255, 0x18 / 255)
 INK3 = (0x6B / 255, 0x6B / 255, 0x64 / 255)
-
-
-def hex_rgb(s: str) -> tuple[float, float, float]:
-    return tuple(int(s[i : i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
-
-
-def draw_mark(
-    page: pymupdf.Page, x: float, y: float, size: float, variant: str = "compact"
-) -> None:
-    k = size / 1024.0
-    palette = PALETTES["paper"]
-    for role, g in GEOMETRY[variant]:
-        rect = pymupdf.Rect(
-            x + g["x"] * k, y + g["y"] * k, x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k
-        )
-        if role == "ink-stroke":
-            page.draw_rect(
-                rect, color=hex_rgb(palette["ink"]), width=max(g["sw"] * k, 0.6), fill=None
-            )
-        else:
-            page.draw_rect(rect, color=None, fill=hex_rgb(palette[role]))
 
 
 def save_bmp(page: pymupdf.Page, out: Path) -> None:
@@ -91,7 +70,7 @@ def sidebar() -> None:
     doc = pymupdf.open()
     page = doc.new_page(width=164, height=314)
     page.draw_rect(page.rect, color=None, fill=PAPER)
-    draw_mark(page, 50, 92, 64, variant="full")
+    draw_mark(page, 50, 92, 64)
     helv_bold = pymupdf.Font("helvetica-bold")
     name = "Tavotto"
     w = helv_bold.text_length(name, fontsize=15)

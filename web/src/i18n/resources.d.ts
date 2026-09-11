@@ -857,7 +857,6 @@ export default interface Resources {
       "restoreConfirm": "恢复",
       "restoreNeedsOrigin": "这条不是从内置复制来的，没有可恢复的默认值",
       "restoreTitle": "把「{{name}}」恢复成默认值？",
-      "ruleLine": "检查 {{expect}}，否则记为{{severity}}",
       "save": "保存",
       "saved": "已保存「{{name}}」",
       "snapshotHint": "项目里存着选中那一刻的规则快照。全局清单里同名的那套后来改了也不影响这些数，除非打开「跟随更新」。",

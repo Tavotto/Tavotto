@@ -125,7 +125,7 @@ export function CanvasPage() {
           })}
         </div>
         {/* 宽、高与横竖交换同一行：交换是对这两个数的动作，不值得独占一行 */}
-        <div data-page-size-row className="flex items-center justify-end gap-1.5">
+        <div data-page-size-row className="flex items-center justify-between gap-1.5">
           <MmField
             label="W"
             historyLabel={hist('setPageW')}

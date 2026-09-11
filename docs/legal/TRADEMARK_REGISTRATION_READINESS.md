@@ -68,7 +68,7 @@ All created for the project; no stock or third-party artwork was found (see
 | Asset | Path |
 |---|---|
 | Primary mark | `assets/brand/tavotto-mark.svg` |
-| Variants | `tavotto-mark-compact.svg`, `-mini.svg`, `-mono.svg`, `-paper.svg`, `-reverse.svg` |
+| Variants | `tavotto-mark-mono.svg`, `tavotto-mark-reverse.svg`; horizontal lockup `tavotto-lockup.svg`, `tavotto-lockup-reverse.svg` |
 | Application icons | `assets/icon/icon.svg`, `icon-1024.png`, `icon-512.png`, `icon-256.png`, `icon.icns`, `icon.ico` |
 | Installer artwork | `assets/brand/dmg-background.png` |
 | Plugin mark | `codex-plugin/assets/tavotto.svg` |

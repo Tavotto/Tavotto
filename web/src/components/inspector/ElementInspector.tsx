@@ -1010,7 +1010,7 @@ function FieldList({
       {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
       <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
-        <div className="mt-1.5 border-t border-border pt-1.5">
+        <div className="mt-1.5">
           <button
             onClick={() => setMoreOpen(role, !moreOpen)}
             aria-expanded={moreOpen}
@@ -2727,7 +2727,7 @@ function SourceAdvancedSection({
     >
       <div className="flex flex-col gap-1.5">
         {advanced.length > 0 && (
-          <div className="flex flex-col gap-1.5 border-b border-border pb-2">
+          <div className="flex flex-col gap-1.5">
             {element &&
               advanced.map(({ field }) => (
                 <FieldRow key={field.prop} panel={panel} element={element} field={field} />
@@ -2771,7 +2771,7 @@ function SourceAdvancedSection({
           {counts.figure ? el('resetToScriptCount', { count: counts.figure }) : el('resetToScript')}
         </Button>
 
-        <div className="mt-1 border-t border-border pt-2">
+        <div className="mt-1">
           <GroupHead>{el('originalFileGroup')}</GroupHead>
         </div>
         {panel.script && (

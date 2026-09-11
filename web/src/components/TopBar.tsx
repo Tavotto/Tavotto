@@ -183,11 +183,11 @@ function importPackage() {
   input.click()
 }
 
-/** 图形标 + 实时文字：20px compact 是规范的显式例外（阈值本该给 mini） */
+/** 图形标 + 实时文字 */
 function Brand() {
   return (
     <span className="flex shrink-0 items-center gap-[7px] text-sm font-semibold tracking-tight text-ink">
-      <BrandMark size={20} variant="compact" />
+      <BrandMark size={20} />
       {PRODUCT_NAME}
     </span>
   )

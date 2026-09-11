@@ -28,8 +28,6 @@ import {
   profileTechnicalDetail,
   profileWarningText,
 } from '@/lib/profileText'
-import { severityOf, type PublicationProfile } from '@/lib/profile'
-import { ruleExpectation, severityLabel } from '@/lib/validationText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
@@ -61,11 +59,7 @@ interface NumField {
   unit?: string
   /** 归到哪一组（`profiles.group.*`）。分组只影响排版，写进磁盘的内容一个字不变 */
   group: string
-  /**
-   * 这个阈值喂给哪条检查规则（规范页专用）。有它才说得出「填 8 的时候检查是
-   * ≥ 8 还是 大于 8」——**边界的包含性只问 `validationText.ruleExpectation`**，
-   * 设置页不许照着求值器的判据再抄一遍（审计 T41）。
-   */
+  /** 这个阈值喂给哪条检查规则（规范页专用；只做标注，设置页不复述判据） */
   rule?: string
 }
 
@@ -205,26 +199,13 @@ function FieldGroup({ group, children }: { group: string; children: ReactNode })
  * **刻意不是一个 disabled 的输入框**：整页禁用输入看起来像"我的表单坏了"，
  * 而它其实是"这份是内置的、想改先复制一份"（审计 T41 / T42）。
  */
-function SummaryRow({
-  label,
-  value,
-  note,
-}: {
-  label: string
-  value: string
-  note?: string | null
-}) {
+function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-h-6 items-baseline gap-2 text-xs">
       <span style={{ width: SUMMARY_LABEL_WIDTH }} className="shrink-0 truncate text-ink-2" title={label}>
         {label}
       </span>
       <span className="shrink-0 tabular-nums text-ink">{value}</span>
-      {note && (
-        <span className="min-w-0 flex-1 truncate text-right text-ink-3" title={note}>
-          {note}
-        </span>
-      )}
     </div>
   )
 }
@@ -275,24 +256,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
   const fields = kind === 'spec' ? SPEC_FIELDS : STYLE_FIELDS
   const grouped = useMemo(() => groupFields(fields), [fields])
 
-  /**
-   * 「填了这个数之后，检查会怎么判」（审计 T41）。
-   *
-   * 两件事都来自**这份规范自己**：边界的包含性问 `validationText.ruleExpectation`
-   * （它读的是措辞层那张规则表，与问题面板同一份），等级问 profile 自己的
-   * `severity` 表。设置页一个阈值、一个符号都不硬写。
-   */
-  const ruleNote = (f: NumField): string | null => {
-    if (kind !== 'spec' || !f.rule || !draft) return null
-    const value = readPath(draft, f.path)
-    if (typeof value !== 'number' || !Number.isFinite(value)) return null
-    const expect = ruleExpectation(f.rule, value)
-    if (!expect) return null
-    return st('ruleLine', {
-      expect,
-      severity: severityLabel(severityOf(draft as unknown as PublicationProfile, f.rule)),
-    })
-  }
 
   /** 一次会写盘的操作：期间禁用按钮，无论成败都恢复。 */
   const withBusy = async <T,>(op: () => Promise<T>): Promise<T> => {
@@ -671,7 +634,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                           key={f.path}
                           label={st(`field.${f.labelKey}`)}
                           value={formatValue(raw, f.unit)}
-                          note={ruleNote(f)}
                         />
                       )
                     }
@@ -679,7 +641,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                       <SettingRow
                         key={f.path}
                         label={st(`field.${f.labelKey}`)}
-                        status={ruleNote(f)}
                       >
                         {/* **「这份配置没管这一项」是独立一档**，不是"等于某个数"。
                             `mixed` 让输入框留空而不是谎报一个值；旁边的 × 是回到
