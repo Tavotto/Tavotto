@@ -363,7 +363,7 @@ export function LegendPositionPicker({
                 disabled={!insideEnabled}
                 onClick={() => pickInside('best')}
                 className={cn(
-                  'relative flex h-6 shrink-0 items-center justify-center rounded-sm border px-5 text-xs outline-none transition-colors',
+                  'relative flex h-7 shrink-0 items-center justify-center rounded-sm border px-5 text-xs outline-none transition-colors',
                   'focus-visible:focus-ring disabled:opacity-40',
                   bestActive
                     ? 'border-transparent bg-selected font-medium text-ink'
@@ -441,7 +441,7 @@ export function LegendPositionPicker({
             disabled={!insideEnabled}
             onClick={() => pickInside('right')}
             className={cn(
-              'flex h-6 items-center self-start rounded-sm border px-1.5 text-xs outline-none transition-colors',
+              'flex h-7 items-center self-start rounded-sm border px-2 text-xs outline-none transition-colors',
               'focus-visible:focus-ring disabled:opacity-40',
               legacyActive
                 ? 'border-transparent bg-selected text-ink'
@@ -454,13 +454,13 @@ export function LegendPositionPicker({
       </div>
 
       {showRefine && (
-        <div className="flex min-h-6 items-center justify-end gap-2">
+        <div className="flex min-h-7 items-center justify-end gap-2">
           <button
             type="button"
             aria-expanded={refined}
             aria-controls={panelId}
             onClick={() => setRefined((r) => !r)}
-            className="flex h-6 shrink-0 items-center gap-0.5 rounded-sm px-1 text-xs text-ink-2 outline-none transition-colors hover:text-ink focus-visible:focus-ring"
+            className="flex h-7 shrink-0 items-center gap-0.5 rounded-sm px-1 text-xs text-ink-2 outline-none transition-colors hover:text-ink focus-visible:focus-ring"
           >
             {ins('control.legendAnchorLabel')}
             <Chevron open={refined} />

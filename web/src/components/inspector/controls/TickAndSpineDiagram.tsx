@@ -574,9 +574,9 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
                   >
                     <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden>
                       {p === 'grid_x' ? (
-                        <path d="M5 2V12M9 2V12" stroke="currentColor" strokeWidth="1.05" />
+                        <path d="M5 2V12M9 2V12" stroke="currentColor" strokeWidth="1.4" />
                       ) : (
-                        <path d="M2 5H12M2 9H12" stroke="currentColor" strokeWidth="1.05" />
+                        <path d="M2 5H12M2 9H12" stroke="currentColor" strokeWidth="1.4" />
                       )}
                     </svg>
                     {translate(p === 'grid_x' ? 'tick.axisX' : 'tick.axisY', { ns: 'inspector' })}

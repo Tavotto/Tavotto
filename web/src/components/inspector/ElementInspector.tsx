@@ -794,7 +794,7 @@ function PairRow({
           max={field.max}
           step={field.step ?? 1}
           precision={2}
-          suffix={field.unit}
+          unit={field.unit}
           onChange={(v) => w.write(field.prop, v)}
           onScrubStart={() => w.beginGesture()}
           onScrubEnd={w.endGesture}
@@ -1014,7 +1014,7 @@ function FieldList({
           <button
             onClick={() => setMoreOpen(role, !moreOpen)}
             aria-expanded={moreOpen}
-            className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+            className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
           >
             <ChevronRight
               size={ICON_SIZE.xs}
@@ -1636,7 +1636,7 @@ function BatchFieldRow({
             max={field.max}
             step={field.step ?? 1}
             precision={2}
-            suffix={field.unit}
+            unit={field.unit}
             onChange={(v) => write(v)}
             onScrubStart={gesture.start}
             onScrubEnd={gesture.end}
@@ -2176,7 +2176,7 @@ function FieldRow({
             max={field.max}
             step={field.step ?? 1}
             precision={2}
-            suffix={field.unit}
+            unit={field.unit}
             // 可达名：标签只是**旁边的一段文字**，没有任何东西把它和这个输入框
             // 连起来——走查的 AX 树里这些框读出来就是「编辑框 1.1」，用户听不出
             // 改的是线宽还是端帽长度（axe 的 label 规则按 critical 报）。带单位，
@@ -2250,7 +2250,7 @@ function FieldRow({
               <li
                 key={`${origIdx}-${i}`}
                 className={cn(
-                  'flex h-6 items-center gap-1 px-1.5',
+                  'flex h-7 items-center gap-1 pl-1.5 pr-0.5',
                   i > 0 && 'border-t border-border',
                 )}
               >
@@ -2259,7 +2259,6 @@ function FieldRow({
                 </span>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   disabled={i === 0}
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
@@ -2268,7 +2267,6 @@ function FieldRow({
                 </Button>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   disabled={i === perm.length - 1}
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
@@ -2457,13 +2455,14 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   return (
     <Row label={el('scaleLabel')} className="mt-1.5">
       <NumberField
+        fill
         className="w-[84px] shrink-0"
         ariaLabel={el('scaleLabel')}
         value={pct}
         min={10}
         max={400}
         step={5}
-        suffix="%"
+        unit="%"
         title={el('scaleTitle')}
         onChange={setPct}
       />
@@ -2642,8 +2641,9 @@ function AxesSizeMm({
       ) : null}
       <Grid2>
         <NumberField
+          fill
           prefix="W"
-          suffix="mm"
+          unit="mm"
           value={fracToMm(rect[2], figW)}
           step={0.5}
           min={1}
@@ -2651,8 +2651,9 @@ function AxesSizeMm({
           onChange={(v) => write([rect[0], rect[1], mmToFrac(v, figW), rect[3]], 'setAxesWidth')}
         />
         <NumberField
+          fill
           prefix="H"
-          suffix="mm"
+          unit="mm"
           value={fracToMm(rect[3], figH)}
           step={0.5}
           min={1}

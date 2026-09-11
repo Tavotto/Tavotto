@@ -37,7 +37,7 @@ function LinePreview({ style }: { style: string }) {
         x2="33"
         y2="5"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="1.5"
         strokeLinecap={style === ':' ? 'round' : 'butt'}
         strokeDasharray={known ? DASH[style] : '4 2 1 2 1 2'}
       />

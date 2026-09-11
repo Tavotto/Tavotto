@@ -320,7 +320,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
                 min={0.1}
                 max={20}
                 precision={2}
-                suffix="pt"
+                unit="pt"
                 onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
               />
             </div>
@@ -407,7 +407,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               min={0.1}
               max={20}
               precision={2}
-              suffix="pt"
+              unit="pt"
               onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
             />
             {hasFillable && fill && (
@@ -418,7 +418,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
                   step={5}
                   min={0}
                   max={100}
-                  suffix="%"
+                  unit="%"
                   onChange={(v) =>
                     patch(hist('setFillOpacity'), (o) => {
                       const f = Math.max(0, Math.min(1, v / 100))
@@ -443,7 +443,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               min={0}
               max={50}
               precision={1}
-              suffix="mm"
+              unit="mm"
               onChange={(v) =>
                 patch(hist('setCornerRadius'), (o) => {
                   if (v > 0) o.cornerRadius = v

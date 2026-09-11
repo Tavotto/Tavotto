@@ -1337,7 +1337,7 @@ function TargetHeader({
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-lg font-medium text-ink" title={name}>
+        <p className="truncate type-title" title={name}>
           {name}
         </p>
         <p className="mt-0.5 text-xs text-ink-2">

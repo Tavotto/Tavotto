@@ -88,13 +88,14 @@ function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean
       )}
       {size && (
         <NumberField
-          className="w-[64px] shrink-0"
+          fill
+          className="w-[68px] shrink-0"
           value={Number(displayValueOf(a.valueOf('sizePt')) ?? 10)}
           min={size.min}
           max={size.max}
           step={size.step ?? 0.5}
           precision={1}
-          suffix={size.unit}
+          unit={size.unit}
           title={translate('textControls.size', { ns: 'inspector' })}
           onChange={(v) => a.write('sizePt', v)}
           onScrubStart={a.beginGesture}
@@ -195,13 +196,14 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
         onChange={(v) => patch(hist(obj.type === 'arrow' ? 'setArrowColor' : 'setStrokeColor'), (o) => (o.color = v))}
       />
       <NumberField
-        className="w-[70px] shrink-0"
+        fill
+        className="w-[76px] shrink-0"
         value={obj.strokePt}
         min={0.1}
         max={20}
         step={0.25}
         precision={2}
-        suffix="pt"
+        unit="pt"
         title={translate('stroke.lineWidth', { ns: 'inspector' })}
         onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
       />

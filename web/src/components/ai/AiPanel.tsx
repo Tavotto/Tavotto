@@ -46,6 +46,7 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { SearchInput } from '../ui/SearchInput'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
@@ -291,17 +292,9 @@ export function AssistantPanel() {
         {panel && mine.length === 0 && !prompt.trim() && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {chipsFor(scope, element, !!axes).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => fillPrompt(c)}
-                className={cn(
-                  'h-6 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink-2',
-                  'transition-colors hover:border-border-strong hover:text-ink',
-                )}
-              >
+              <Button key={c} variant="secondary" size="sm" className="text-ink-2 hover:text-ink" onClick={() => fillPrompt(c)}>
                 {c}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -742,8 +735,8 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-surface">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-2.5">
-        <h3 className="text-xs text-ink">{ai('history.title')}</h3>
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2.5">
+        <h3 className="text-xs font-medium text-ink">{ai('history.title')}</h3>
         <Button
           size="icon-sm"
           className="-mr-1 ml-auto"
@@ -755,15 +748,14 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
       </div>
       {showFilters && (
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
-        <input
+        <SearchInput
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
+          onValueChange={(v) => {
+            setQuery(v)
             setOffset(0)
           }}
           placeholder={ai('history.searchPlaceholder')}
           aria-label={ai('history.searchAria')}
-          className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-accent"
         />
         <Select
           value={status || ALL_STATUSES}
@@ -778,7 +770,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
             ...HISTORY_STATUSES.map((v) => ({ value: v, label: statusLabel(v) })),
           ]}
           ariaLabel={ai('history.filterAria')}
-          className="h-6 w-auto shrink-0"
+          className="w-auto shrink-0"
         />
       </div>
       )}

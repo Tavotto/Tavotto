@@ -186,7 +186,7 @@ function importPackage() {
 /** 图形标 + 实时文字 */
 function Brand() {
   return (
-    <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+    <span className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-tight text-ink">
       <BrandMark size={20} />
       {PRODUCT_NAME}
     </span>
@@ -225,10 +225,10 @@ function RecoveryNotice() {
     >
       <RotateCcwClock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
       <span className="truncate">{t('docBanner.recoveryTitle')}</span>
-      <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={() => void recoverLocalCopy()}>
+      <Button size="sm" variant="secondary" onClick={() => void recoverLocalCopy()}>
         {t('docBanner.recover')}
       </Button>
-      <Button size="sm" className="h-6 text-xs" onClick={discardLocalCopy}>
+      <Button size="sm" onClick={discardLocalCopy}>
         {t('docBanner.keepMain')}
       </Button>
     </span>

@@ -39,7 +39,7 @@ export function PlaygroundLanding({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-7 px-4 py-8 sm:px-6">
         <header className="flex flex-col gap-1.5">
-          <h1 className="text-[19px] font-semibold tracking-tight text-ink">
+          <h1 className="text-[19px] font-medium tracking-tight text-ink">
             {pg('landingTitle')}
           </h1>
           <p className="max-w-[52ch] text-base leading-relaxed text-ink-2">

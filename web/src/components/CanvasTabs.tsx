@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
+import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE } from './ui/tabClass'
 import { Tip } from './ui/Tooltip'
@@ -128,7 +129,7 @@ function TabItem({
 
   if (renaming) {
     return (
-      <input
+      <TextInput
         autoFocus
         value={draft}
         aria-label={t('tabs.canvasName')}
@@ -139,7 +140,7 @@ function TabItem({
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') onRenamed(null)
         }}
-        className="h-6 w-28 shrink-0 rounded-sm border border-accent bg-surface px-1.5 text-xs text-ink outline-none"
+        className="w-28 shrink-0"
       />
     )
   }

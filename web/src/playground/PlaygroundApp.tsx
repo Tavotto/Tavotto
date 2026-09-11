@@ -78,7 +78,7 @@ function BrandLink() {
       href={homeHref()}
       title={pg('backHome')}
       aria-label={pg('backHome')}
-      className="shrink-0 rounded-sm text-base font-semibold tracking-tight text-ink transition-colors hover:text-sel"
+      className="shrink-0 rounded-sm text-base font-medium tracking-tight text-ink transition-colors hover:text-sel"
     >
       {PRODUCT_NAME}
     </a>

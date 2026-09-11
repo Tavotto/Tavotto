@@ -345,7 +345,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                   min={0}
                   max={10}
                   precision={1}
-                  suffix="mm"
+                  unit="mm"
                   onChange={(v) =>
                     patch(hist('setPadding'), (o) => {
                       if (v > 0) o.padding = v

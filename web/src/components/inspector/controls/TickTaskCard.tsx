@@ -299,9 +299,9 @@ function NumberCell({ item, axis }: { item: NumberItem; axis: TickAxisAdapter })
   return (
     <span className="flex shrink-0 items-center gap-1" data-prop={prop} data-gid={axis.gid}>
       <NumberField
-        // 宽度约束打在内部的 <input> 上：外框里还有单位后缀，只定外框宽度
-        // 输入框自己会被挤窄（实测只剩 26px）
-        className="shrink-0 [&_input]:w-10 [&_input]:min-w-10 [&_input]:shrink-0"
+        // 定宽 96px、框吃满：单位在框里，数字位不会被挤到只剩两位（以前实测 26px）
+        fill
+        className="w-24 shrink-0"
         dataProp={prop}
         ariaLabel={label}
         value={Number(axis.read(prop) ?? 0)}
@@ -309,7 +309,7 @@ function NumberCell({ item, axis }: { item: NumberItem; axis: TickAxisAdapter })
         max={field.max}
         step={field.step ?? 0.1}
         precision={2}
-        suffix={field.unit}
+        unit={field.unit}
         onChange={(v) => axis.write(prop, v)}
         onScrubStart={axis.beginGesture}
         onScrubEnd={axis.endGesture}
@@ -343,14 +343,14 @@ function DirectionGlyph({ axis, direction }: { axis: TickAxis; direction: AxisTi
       <path
         d={horizontal ? 'M2 9 H16' : 'M9 2 V16'}
         stroke="currentColor"
-        strokeWidth="1.3"
+        strokeWidth="1.5"
         fill="none"
       />
       {marks.length > 0 && (
         <path
           d={marks.join(' ')}
           stroke="currentColor"
-          strokeWidth="1.3"
+          strokeWidth="1.5"
           strokeOpacity="0.75"
           fill="none"
         />

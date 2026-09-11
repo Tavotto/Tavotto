@@ -1,4 +1,4 @@
-import { ChevronLeft } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -66,10 +66,11 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
           )}
         >
           {currentLabel}
-          {/* 收起时朝左，菜单展开（Radix 触发器 data-state=open）时转成朝下 */}
-          <ChevronLeft
+          {/* 下拉的记号只有 chevron-down（Design Constitution 第四节）：收起朝下，
+              菜单展开（Radix 触发器 data-state=open）时转成朝上 */}
+          <ChevronDown
             size={ICON_SIZE.xs}
-            className="text-ink-3 transition-transform group-data-[state=open]:-rotate-90"
+            className="text-ink-3 transition-transform duration-fast group-data-[state=open]:rotate-180"
             aria-hidden
           />
         </button>

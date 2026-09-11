@@ -322,7 +322,7 @@ export function AssetBrowser() {
                 onClick={() => clearChip(c.key)}
                 aria-label={ab('removeFilter', { label: c.label })}
                 className={cn(
-                  'flex h-5 items-center gap-1 rounded-sm bg-selected px-1.5 text-xs text-ink',
+                  'flex h-6 items-center gap-1 rounded-sm bg-selected px-1.5 text-xs text-ink',
                   'outline-none transition-colors duration-fast hover:bg-surface-active focus-visible:focus-ring',
                 )}
               >

@@ -105,7 +105,7 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   if (panel.script || !cap || cap.status === 'editable') return null
   return (
     <div className="mx-3 mb-1.5 rounded-md border border-border bg-surface-2 p-2">
-      <p className="text-xs font-semibold text-ink">{statusLabel(cap.status)}</p>
+      <p className="text-xs font-medium text-ink">{statusLabel(cap.status)}</p>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
         variant="secondary"

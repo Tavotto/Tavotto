@@ -205,7 +205,8 @@ export function FontSizeRow({
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
       <NumberField
-        className="w-[74px] shrink-0"
+        fill
+        className="w-[76px] shrink-0"
         dataProp="fontsize"
         ariaLabel={label}
         value={value}
@@ -214,7 +215,7 @@ export function FontSizeRow({
         max={max}
         step={step}
         precision={1}
-        suffix={suffix}
+        unit={suffix}
         onChange={onChange}
         onScrubStart={onScrubStart}
         onScrubEnd={onScrubEnd}

@@ -84,16 +84,17 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                 <span className="min-w-0 flex-1 text-xs text-ink-2">
                   {labeledWithState(label, overridden(prop))}
                 </span>
-                {/* 数字框比通用的 4ch 略宽（2026-09-11 设计包量的 40px），单位仍在框外 */}
+                {/* 定宽 112px、框吃满：数字右对齐、单位坐在框里靠右 */}
                 <NumberField
-                  className="w-[120px] shrink-0 [&_input]:w-10"
+                  fill
+                  className="w-[112px] shrink-0"
                   ariaLabel={label}
                   value={Number(w.read(prop) ?? 0)}
                   min={field.min}
                   max={field.max}
                   step={field.step ?? 0.1}
                   precision={2}
-                  suffix={field.unit ?? SPACING_UNIT}
+                  unit={field.unit ?? SPACING_UNIT}
                   onChange={(v) => w.write(prop, v)}
                   onScrubStart={() => w.beginGesture()}
                   onScrubEnd={w.endGesture}

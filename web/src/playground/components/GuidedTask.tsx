@@ -110,7 +110,7 @@ export function GuidedTask({
 
       {achieved ? (
         <div aria-live="polite" className="flex flex-col gap-1.5 pr-5">
-          <p className="flex items-center gap-1.5 text-base font-semibold text-ink">
+          <p className="flex items-center gap-1.5 text-base font-medium text-ink">
             <Check size={ICON_SIZE.md} className="text-sel" aria-hidden />
             {pg('taskDoneTitle')}
           </p>
@@ -156,7 +156,7 @@ export function GuidedTask({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5 pr-5">
-          <p className="text-base font-semibold text-ink">{pg('taskTitle')}</p>
+          <p className="text-base font-medium text-ink">{pg('taskTitle')}</p>
           <p className="type-section">
             {pg('taskStep', { n: step })}
           </p>

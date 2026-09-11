@@ -181,7 +181,7 @@ export function SpineFrameCard({
                   max={widthField.max}
                   step={widthField.step ?? 0.1}
                   precision={2}
-                  suffix={widthField.unit}
+                  unit={widthField.unit}
                   onChange={(v) => {
                     unifySides('linewidth')
                     w.write('spine_linewidth', v)
@@ -285,7 +285,7 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
         stroke={all ? 'currentColor' : 'var(--color-border-strong)'}
         strokeWidth={all ? 1.2 : 1}
       />
-      {!all && <path d={edge[side]} stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />}
+      {!all && <path d={edge[side]} stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
     </svg>
   )
 }
@@ -375,7 +375,7 @@ function SideRow({
         widthField && (
           <NumberField
             // 逐边线宽的定位落点与颜色一样是 data-prop（issueFocus 认它）
-            className="w-full min-w-0"
+            fill
             dataProp={widthProp}
             ariaLabel={propLabel(widthProp, role)}
             value={Number(read(widthProp) ?? 0)}
@@ -383,7 +383,7 @@ function SideRow({
             max={widthField.max}
             step={widthField.step ?? 0.1}
             precision={2}
-            suffix={widthField.unit}
+            unit={widthField.unit}
             onChange={(v) => write(widthProp, v)}
             onScrubStart={beginGesture}
             onScrubEnd={endGesture}

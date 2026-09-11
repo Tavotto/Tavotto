@@ -69,11 +69,7 @@ export function DocumentBanner() {
       <Banner icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
         <span className="min-w-0 flex-1 truncate">{t('docBanner.saveErrorBody')}</span>
         {/* 唯一出口，给实心黑：白底条上只有它是要按的 */}
-        <Button
-          size="sm"
-          className="h-6! min-h-0! shrink-0 border-ink! bg-ink! py-0! text-surface! hover:bg-ink/90!"
-          onClick={() => void saveNow()}
-        >
+        <Button variant="primary" size="sm" className="shrink-0" onClick={() => void saveNow()}>
           {t('docBanner.retry')}
         </Button>
       </Banner>

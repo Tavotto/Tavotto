@@ -91,14 +91,14 @@ export function LegendCard({
             <li
               key={v.element.gid}
               className={cn(
-                'flex h-7 items-center gap-1 rounded-sm px-1.5 hover:bg-surface-2',
+                'flex h-7 items-center gap-1 rounded-sm px-1 hover:bg-surface-hover',
                 v.hidden && 'text-ink-3',
               )}
             >
               <HandleSwatch panel={panel} entry={v} />
               <button
                 type="button"
-                className="flex h-6 min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
+                className="flex h-full min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
                 onClick={() => useUiStore.getState().setSelectedGid(v.element.gid)}
                 aria-label={lg('selectEntry', { label: v.text })}
               >
@@ -110,7 +110,6 @@ export function LegendCard({
               <Tip label={v.hidden ? lg('show') : lg('hide')}>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   aria-label={v.hidden ? lg('showEntry', { label: v.text }) : lg('hideEntry', { label: v.text })}
                   aria-pressed={v.hidden}
                   onClick={() => toggleHidden(v)}
@@ -120,7 +119,6 @@ export function LegendCard({
               </Tip>
               <Button
                 size="icon-sm"
-                className="h-5 w-5"
                 disabled={i === 0}
                 onClick={() => move(i, -1)}
                 aria-label={lg('moveUp', { label: v.text })}
@@ -129,7 +127,6 @@ export function LegendCard({
               </Button>
               <Button
                 size="icon-sm"
-                className="h-5 w-5"
                 disabled={i === views.length - 1}
                 onClick={() => move(i, 1)}
                 aria-label={lg('moveDown', { label: v.text })}

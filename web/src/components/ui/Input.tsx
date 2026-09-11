@@ -118,13 +118,10 @@ interface NumberFieldProps {
   precision?: number
   prefix?: ReactNode
   /**
-   * 框外的单位 / 说明（`[393.7] mm`）。1.0 之前的形态；页面级 Session 逐页迁到
-   * `unit`（框内），迁完这个字段就删。新代码不要再用它。
-   */
-  suffix?: ReactNode
-  /**
    * 框内单位：`[ 393.7      mm ]`。数字右对齐、单位靠右坐在同一个框里，
    * 一列数字框的单位就排成一条稳定的竖线（Design Constitution 第五节）。
+   * 框外的 `suffix`（`[393.7] mm`）是 1.0 前的形态，2026-09-11 全部迁完后删掉——
+   * 单位漂在框外是「控件漂在空白里」的最小形态，新代码没有这个选项。
    */
   unit?: ReactNode
   /** 撑满所在格：框吃掉剩余宽度（X / Y / W / H 这类网格里的字段），默认只包住数字 */
@@ -134,7 +131,7 @@ interface NumberFieldProps {
   mixed?: boolean
   className?: string
   title?: string
-  /** 无障碍名。缺省时从字符串 prefix/suffix 推导（"X (mm)"）；prefix 不是
+  /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
    *  字符串又不给这个的话，屏幕阅读器只会念「编辑文本」——axe critical */
   ariaLabel?: string
   /** 拖动改数时把连续修改合并成一条撤销记录 */
@@ -156,7 +153,6 @@ export function NumberField({
   max = 100000,
   precision = 1,
   prefix,
-  suffix,
   unit,
   fill,
   disabled,
@@ -168,7 +164,7 @@ export function NumberField({
   onScrubEnd,
   dataProp,
 }: NumberFieldProps) {
-  const unitText = typeof unit === 'string' && unit ? unit : typeof suffix === 'string' && suffix ? suffix : ''
+  const unitText = typeof unit === 'string' && unit ? unit : ''
   const derivedLabel =
     ariaLabel ??
     (typeof prefix === 'string' && prefix
@@ -327,15 +323,6 @@ export function NumberField({
           </span>
         )}
       </div>
-      {suffix != null && (
-        // 单位放在框外，与前缀标签对称：框只圈住可编辑的数字，「pt」读作框后的说明。
-        // `shrink-0 whitespace-nowrap`：单位不是可以折行的正文。窄侧栏里
-        // 「数据单位」被挤成「数据单」+「位」两行，把整行撑破（审计 T19，
-        // 走查截图 95 拍到）。让位的应该是输入框（它 min-w-0），不是单位。
-        <span className="shrink-0 whitespace-nowrap text-xs text-ink-3 select-none">
-          {suffix}
-        </span>
-      )}
     </div>
   )
 }

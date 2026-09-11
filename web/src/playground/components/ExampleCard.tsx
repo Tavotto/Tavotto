@@ -176,7 +176,7 @@ export function ExampleCard({
 
       <div className="flex flex-1 flex-col gap-1.5 p-3">
         <div className="flex items-baseline gap-2">
-          <h3 className="text-base font-semibold text-ink">{title}</h3>
+          <h3 className="text-base font-medium text-ink">{title}</h3>
           {example.difficulty === 'starter' && (
             <span className="rounded-sm bg-sel/10 px-1.5 py-0.5 text-xs font-medium text-sel">
               {pg('starterBadge')}
