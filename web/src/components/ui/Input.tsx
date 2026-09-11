@@ -233,10 +233,12 @@ export function NumberField({
             }
           }}
           className={cn(
-            // 框里只剩它一个（标签、单位都在框外）。宽度固定为等宽字体 4 个字符
-            // （12 / 1000 / 12.5 这类常见值刚好放下）+ 对称内边距，框就只比数字大一圈，
-            // 不再按文本框默认的 20 字符固有宽度（≈170px）撑开；数字居中。
-            'num-input h-full w-[4ch] min-w-0 bg-transparent px-1.5 text-center text-ink outline-none',
+            // 框里只剩它一个（标签、单位都在框外）。宽度 = 等宽字体 4 个字符
+            // （12 / 1000 / 12.5 这类常见值刚好放下）+ 左右内边距 0.75rem——Tailwind 的
+            // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
+            // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
+            // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
+            'num-input h-full w-[calc(4ch+0.75rem)] min-w-0 bg-transparent px-1.5 text-center text-ink outline-none',
             'placeholder:font-sans placeholder:text-ink-3',
           )}
         />

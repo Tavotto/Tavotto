@@ -26,22 +26,22 @@ export function MmField({
   title?: string
 }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-24 shrink-0 [&_input]:text-center">
-        <NumberField
-          prefix={label}
-          value={value ?? 0}
-          mixed={value === undefined}
-          step={step}
-          min={min}
-          disabled={disabled}
-          title={title}
-          onChange={onChange}
-          onScrubStart={() => useDocumentStore.getState().beginTxn(historyLabel)}
-          onScrubEnd={() => useDocumentStore.getState().endTxn()}
-        />
-      </div>
-      {suffix && <span className="shrink-0 text-xs text-ink-3">{suffix}</span>}
-    </div>
+    // 毫米值常见「-12.3」「393.7」这种五六位，通用的 4 字符框放不下；这里把输入框
+    // 放到 6 个字符 + 内边距，单位「mm」由 NumberField 自己贴在框后，不另套固定宽度的壳
+    // （之前套的 96px 壳把单位推到壳外，标签、框、单位三者之间留着一大段空白）。
+    <NumberField
+      className="[&_input]:w-[calc(6ch+0.75rem)]"
+      prefix={label}
+      suffix={suffix || undefined}
+      value={value ?? 0}
+      mixed={value === undefined}
+      step={step}
+      min={min}
+      disabled={disabled}
+      title={title}
+      onChange={onChange}
+      onScrubStart={() => useDocumentStore.getState().beginTxn(historyLabel)}
+      onScrubEnd={() => useDocumentStore.getState().endTxn()}
+    />
   )
 }
