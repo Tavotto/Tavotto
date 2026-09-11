@@ -2,24 +2,41 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
+  Box,
   Braces,
-  ChevronRight,
+  ChartArea,
+  ChartColumn,
+  ChartLine,
+  ChartScatter,
   Crosshair,
+  Ellipsis,
   Eye,
   EyeOff,
+  Frame,
+  GitCommitVertical,
+  Image,
+  LayoutList,
   Lock,
   LockOpen,
-  Ellipsis,
-  Search,
-  TriangleAlert,
-  X,
+  Minus,
+  MoveUpRight,
+  Blend,
+  Ruler,
   SearchX,
+  Shapes,
+  Square,
+  TriangleAlert,
+  Type,
+  WavesHorizontal,
+  type LucideIcon,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { SearchInput } from '@/components/ui/SearchInput'
+import { TreeChevron, TreeCount, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import {
   enterElementEdit,
   hideElement,
@@ -32,7 +49,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { engineLabel, roleName, unsupportedOf } from '../inspector/roles/registry'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
@@ -76,21 +93,56 @@ function parentGid(gid: string, byGid: ReadonlySet<string>): string | null {
 const et = (key: string, values?: Record<string, unknown>) =>
   translate(`elementTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
+/**
+ * 元素类型图标：一种角色一个低调的 lucide 图标，与图层树的对象图标同一套尺寸
+ * （sm 14，坐在 16px 列里）。文字类的角色都是 `Type`——标题 / 轴标题 / 刻度文字
+ * 的区别由标签说，图标只回答「这是什么类的东西」。认不出的角色回落到 `Shapes`。
+ */
+const ROLE_ICONS: Record<string, LucideIcon> = {
+  figure: Frame,
+  axes: Square,
+  axes3d: Box,
+  text: Type,
+  title: Type,
+  axis_label: Type,
+  ticklabel: Type,
+  legend_text: Type,
+  image: Image,
+  line: ChartLine,
+  scatter: ChartScatter,
+  bar: ChartColumn,
+  bar_series: ChartColumn,
+  errorbar: GitCommitVertical,
+  fill: ChartArea,
+  linecoll: WavesHorizontal,
+  ticks: Ruler,
+  spine: Minus,
+  grid: Ruler,
+  legend: LayoutList,
+  colorbar: Blend,
+  patch: Shapes,
+  arrow_patch: MoveUpRight,
+}
+const roleIcon = (role: string): LucideIcon => ROLE_ICONS[role] ?? Shapes
+
 /** 语义聚类：子图直属元素按角色归组，找不准的元素靠类别缩小范围 */
-const CLUSTERS: { key: string; labelKey: string; roles: Set<string> }[] = [
-  { key: 'text', labelKey: 'groupText', roles: new Set(['text', 'title', 'axis_label']) },
+const CLUSTERS: { key: string; labelKey: string; icon: LucideIcon; roles: Set<string> }[] = [
+  { key: 'text', labelKey: 'groupText', icon: Type, roles: new Set(['text', 'title', 'axis_label']) },
   {
     key: 'series',
     labelKey: 'groupSeries',
+    icon: ChartLine,
     roles: new Set(['line', 'scatter', 'bar_series', 'bar', 'errorbar', 'fill', 'image']),
   },
-  { key: 'axis', labelKey: 'groupAxis', roles: new Set(['ticks', 'spine', 'grid']) },
+  { key: 'axis', labelKey: 'groupAxis', icon: Ruler, roles: new Set(['ticks', 'spine', 'grid']) },
   {
     key: 'legend',
     labelKey: 'groupLegend',
+    icon: LayoutList,
     roles: new Set(['legend', 'legend_text', 'colorbar']),
   },
 ]
+const clusterIcon = (key: string): LucideIcon => CLUSTERS.find((c) => c.key === key)?.icon ?? Shapes
 
 const clusterOf = (role: string): (typeof CLUSTERS)[number] | undefined =>
   CLUSTERS.find((c) => c.roles.has(role))
@@ -331,46 +383,24 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1.5">
-        <div className="relative flex-1">
-          <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Escape') {
-                if (query) setQuery('')
-                else (e.target as HTMLInputElement).blur()
-              }
-              if (e.key === 'ArrowDown' && rows.length) {
-                e.preventDefault()
-                focusRow(rows[0].key)
-              }
-            }}
-            placeholder={et('search')}
-            aria-label={et('searchAria')}
-            className={cn(
-              'h-7 w-full rounded-sm border border-transparent bg-surface-2 pl-6.5 pr-6 text-xs',
-              'text-ink placeholder:text-ink-faint outline-none transition-colors',
-              'hover:border-border focus:border-accent focus:bg-surface',
-            )}
-          />
-          {query && (
-            <button
-              onClick={() => setQuery('')}
-              aria-label={et('clearSearch')}
-              className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm text-ink-3 hover:text-ink"
-            >
-              <X size={ICON_SIZE.sm} />
-            </button>
-          )}
-        </div>
+      <div className="flex shrink-0 items-center px-3 pb-1.5">
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && rows.length) {
+              e.preventDefault()
+              focusRow(rows[0].key)
+            }
+          }}
+          placeholder={et('search')}
+          aria-label={et('searchAria')}
+        />
       </div>
 
       {isolated && (
-        <div className="flex shrink-0 items-center gap-1.5 bg-selected px-3 py-1">
-          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-ink-2" />
+        <div className="flex h-7 shrink-0 items-center gap-1.5 border-y border-border bg-surface-2 pl-3 pr-1">
+          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
           <span className="min-w-0 flex-1 truncate text-xs text-ink">
             {et('isolated', {
               label: (() => {
@@ -379,12 +409,9 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               })(),
             })}
           </span>
-          <button
-            onClick={() => setIsolated(null)}
-            className="shrink-0 text-xs text-ink underline underline-offset-2"
-          >
+          <Button size="sm" className="text-ink-2" onClick={() => setIsolated(null)}>
             {et('exitIsolate')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -405,6 +432,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               key={key}
               rowKey={key}
               label={et(node.cluster.labelKey)}
+              icon={clusterIcon(node.cluster.key)}
               count={node.children.length}
               depth={depth}
               expanded={isOpen(node, key)}
@@ -438,6 +466,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 function ClusterRow({
   rowKey,
   label,
+  icon,
   count,
   depth,
   expanded,
@@ -447,6 +476,7 @@ function ClusterRow({
 }: {
   rowKey: string
   label: string
+  icon: LucideIcon
   count: number
   depth: number
   expanded: boolean
@@ -461,7 +491,7 @@ function ClusterRow({
       aria-label={et('groupAria', { label, count })}
       tabIndex={tabbable ? 0 : -1}
       data-el={rowKey}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      style={treeIndent(depth)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -477,13 +507,12 @@ function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle()
       }}
-      className={cn(listRowClass({ muted: true }), 'pr-1.5')}
+      className={cn(listRowClass({ muted: true }), 'pr-2')}
     >
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
-        <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', expanded && 'rotate-90')} />
-      </span>
+      <TreeChevron expanded={expanded} />
+      <TreeIcon icon={icon} />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 font-mono text-xs text-ink-3">{count}</span>
+      <TreeCount>{count}</TreeCount>
     </li>
   )
 }
@@ -535,7 +564,7 @@ function ElementRow({
       }
       tabIndex={tabbable ? 0 : -1}
       data-el={rowKey}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      style={treeIndent(depth)}
       onFocus={(e) => {
         if (e.target !== e.currentTarget || selected) return
         // 焦点漫游即选中，与图层树一致
@@ -574,24 +603,14 @@ function ElementRow({
         if (e.button !== 0) return
         onSelect(e.shiftKey)
       }}
-      className={cn(listRowClass({ selected, hidden }), 'pr-1')}
+      className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
     >
-      {expanded !== undefined ? (
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onToggle}
-          aria-label={et(expanded ? 'collapse' : 'expand')}
-          tabIndex={-1}
-          className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
-        >
-          <ChevronRight
-            size={ICON_SIZE.xs}
-            className={cn('transition-transform', expanded && 'rotate-90')}
-          />
-        </button>
-      ) : (
-        <span className="w-4 shrink-0" />
-      )}
+      <TreeChevron
+        expanded={expanded}
+        onToggle={expanded === undefined ? undefined : onToggle}
+        label={expanded === undefined ? undefined : et(expanded ? 'collapse' : 'expand')}
+      />
+      <TreeIcon icon={roleIcon(el.role)} selected={selected} />
 
       <span
         className="min-w-0 flex-1 truncate"
@@ -611,65 +630,47 @@ function ElementRow({
           <TriangleAlert size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </Tip>
       )}
-      {readonly && <span className="shrink-0 text-xs text-ink-3">{et('readonly')}</span>}
+      {readonly && <span className="shrink-0 type-meta">{et('readonly')}</span>}
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
       {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
-      <span
-        className={cn(
-          'shrink-0',
-          'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
-        )}
-      >
+      {/* 低频操作收进 ⋯，hover / 键盘落到行里才出现 */}
+      <span className="shrink-0 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
         <Menu
           width={168}
           align="end"
           trigger={
-            <Button
-              size="icon-sm"
-              className="h-7 w-6"
+            <IconButton
+              iconSize="sm"
               tabIndex={-1}
               onPointerDown={(e) => e.stopPropagation()}
-              aria-label={et('rowActions', { label: engineLabel(el.label) })}
+              label={et('rowActions', { label: engineLabel(el.label) })}
             >
               <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-            </Button>
+            </IconButton>
           }
         >
-          <MenuItem onSelect={onIsolate}>
-            <span className="flex items-center gap-2">
-              <Crosshair size={ICON_SIZE.sm} className="text-ink-3" />
-              {et('isolateBranch')}
-            </span>
+          <MenuItem icon={Crosshair} onSelect={onIsolate}>
+            {et('isolateBranch')}
           </MenuItem>
           {el.gid !== 'figure' && (
-            <MenuItem onSelect={() => toggleElementLocked(panel.id, el.gid, el.label)}>
-              <span className="flex items-center gap-2">
-                {locked ? (
-                  <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />
-                ) : (
-                  <Lock size={ICON_SIZE.sm} className="text-ink-3" />
-                )}
-                {et(locked ? 'unlock' : 'lock')}
-              </span>
+            <MenuItem
+              icon={locked ? LockOpen : Lock}
+              onSelect={() => toggleElementLocked(panel.id, el.gid, el.label)}
+            >
+              {et(locked ? 'unlock' : 'lock')}
             </MenuItem>
           )}
           {canHide(el) && (
             <MenuItem
+              icon={hidden ? Eye : EyeOff}
               onSelect={() =>
                 hidden ? unhideElement(panel.id, el.gid) : hideElement(panel.id, el.gid, el.label)
               }
             >
-              <span className="flex items-center gap-2">
-                {hidden ? (
-                  <Eye size={ICON_SIZE.sm} className="text-ink-3" />
-                ) : (
-                  <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />
-                )}
-                {et(hidden ? 'unhide' : 'hide')}
-              </span>
+              {et(hidden ? 'unhide' : 'hide')}
             </MenuItem>
           )}
         </Menu>

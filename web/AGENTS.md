@@ -1523,6 +1523,7 @@ Document 字体（Times）与 UI 字体严格分离。
 
 公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Toggle、Badge、Tabs、`listRowClass`、
+TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
 Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
 

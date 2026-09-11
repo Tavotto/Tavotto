@@ -4,7 +4,6 @@ import { t as translate } from '@/i18n'
 import {
   ArrowUpRight,
   Braces,
-  ChevronRight,
   Circle,
   Diamond,
   Eye,
@@ -22,13 +21,15 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
-import { Button } from '../ui/Button'
+import { Badge } from '../ui/Badge'
+import { IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 
 const ICONS = {
@@ -230,25 +231,19 @@ function GroupRow({
           selectAllMembers()
         }
       }}
-      className={cn(listRowClass({ selected: allSelected, muted: true }), 'px-1.5')}
+      style={treeIndent(0)}
+      className={cn(listRowClass({ selected: allSelected, muted: true }), 'gap-1.5 pr-2')}
     >
-      <button
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={onToggle}
-        aria-label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
-        tabIndex={-1}
-        className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
-      >
-        <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', !collapsed && 'rotate-90')} />
-      </button>
+      <TreeChevron
+        expanded={!collapsed}
+        onToggle={onToggle}
+        label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
+      />
+      <TreeIcon icon={Layers} selected={allSelected} />
       <span className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
-      {layout && (
-        <span className="shrink-0 rounded-xs border border-border px-1 text-xs text-ink-3">
-          {layoutKindLabel(layout.kind)}
-        </span>
-      )}
+      {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
     </li>
   )
 }
@@ -337,15 +332,17 @@ function LayerRow({
         else sel.set([obj.id])
       }}
       onDoubleClick={() => setEditing(true)}
-      style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
+      style={treeIndent(depth)}
       className={cn(
         listRowClass({ selected, hidden: obj.hidden }),
-        'gap-1.5 px-2',
+        'gap-1.5 pr-0.5',
         dropHint === 'above' && 'shadow-[inset_0_1px_0_0_var(--color-accent)]',
         dropHint === 'below' && 'shadow-[inset_0_-1px_0_0_var(--color-accent)]',
       )}
     >
-      <Icon size={ICON_SIZE.sm} className={cn('shrink-0', selected ? 'text-ink' : 'text-ink-3')} />
+      {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
+      <TreeChevron />
+      <TreeIcon icon={Icon} selected={selected} />
       {editing ? (
         <input
           autoFocus
@@ -378,31 +375,30 @@ function LayerRow({
         <span className="shrink-0 font-mono text-xs text-ink-3">{lt('primary')}</span>
       )}
 
+      {/* 锁定 / 隐藏：hover 或键盘落到行里才出现；已锁 / 已隐藏的常驻，状态得看得见 */}
       <div
         className={cn(
-          'ml-auto flex shrink-0 items-center',
+          'ml-auto flex shrink-0 items-center transition-opacity duration-fast',
           !editing && 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
           obj.locked || obj.hidden ? 'opacity-100' : '',
         )}
       >
-        <Button
-          size="icon-sm"
-          className="h-7 w-6"
+        <IconButton
+          iconSize="sm"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => toggleLocked(obj.id)}
-          aria-label={lt(obj.locked ? 'unlock' : 'lock')}
+          label={lt(obj.locked ? 'unlock' : 'lock')}
         >
           {obj.locked ? <Lock size={ICON_SIZE.sm} /> : <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />}
-        </Button>
-        <Button
-          size="icon-sm"
-          className="h-7 w-6"
+        </IconButton>
+        <IconButton
+          iconSize="sm"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => toggleHidden(obj.id)}
-          aria-label={lt(obj.hidden ? 'show' : 'hide')}
+          label={lt(obj.hidden ? 'show' : 'hide')}
         >
           {obj.hidden ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} className="text-ink-3" />}
-        </Button>
+        </IconButton>
       </div>
     </li>
   )

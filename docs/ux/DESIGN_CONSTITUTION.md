@@ -80,6 +80,13 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Badge**：胶囊、16px 高、五种语义色。
 - **Tabs / tabClass**：下划线标签页，选中 = 字重 + 2px 近黑线。
 - **listRowClass**：树行 / 列表行的共同外观（28px、hover / selected / hidden 三态）。
+- **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
+  缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
+  元素树共用；叶子行留空的箭头列，同层的图标才对得齐。层级只靠缩进与箭头，不靠留白。
+- **SearchInput**：面板顶部的搜索框，唯一的一种——安静的 surface-2 填充框，hover 才有
+  hairline、聚焦才白底 + accent 边；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
+- **Notice**：低权重说明条（Info + caption + 至多一个 ghost 小动作），surface-2 底、无边框；
+  它是脚注不是卡片。要警告语义用设置页的 `InlineWarning`。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 
 状态四态必须可辨：hover（surface-hover）< active（surface-active）≈ selected（selected +
@@ -114,7 +121,21 @@ opacity + ≤4px 位移 + scale 0.97~1；没有弹簧、缩放炫技、漂浮。
 留白、对齐、字体层级、hairline 优先；卡片只给「真的是一张卡」的东西（注册表条目、
 会话卡）。一个页面里所有东西都有框，说明设计失败。
 
-## 九、2026-09-11 Session 1 的处置记录
+## 九、素材库 / 脚本区 / 树（Session 3 定下的形态）
+
+- **素材卡**：预览 3:2 白底，上面**不压任何标签**（格式 / 尺寸 / 接入状态 / 使用次数全在
+  下方两行文字里，用「·」串起来，使用次数靠右）；hairline 常态、hover 加深一档、选中是
+  selected 轻 tint + 名字加粗。抽屉最窄 280px 也是双列——这是素材库不是看图器。
+  悬停时右下角的就近入口是 24px 图标小片（名字在 title 与读屏文本里）。
+- **脚本行（File Row）**：`● 文件名   状态一句话   ▶`，28px 一行，状态点 6px 坐在 16px 列里
+  （实心 = 已关联、空心 = 未运行、呼吸 = 运行中、红 = 失败），运行 / 取消是同一颗
+  IconButton，常态 ink-3、行 hover 才与文字同色。分组名 + 计数是 type-meta，不是标题。
+  恢复路径（可能需要原环境）是这一行的第二行，缩进到文件名列，不套框。
+- **抽屉标题**：`名字  计数`，计数只是一个 type-meta 数字，完整的「N 个元素」给读屏；
+  钉住是 IconButton。
+- **树**：TreeRow 四列；聚类行有类型图标与右对齐计数；⋯ 菜单 hover / 键盘落到行里才出现。
+
+## 十、2026-09-11 Session 1 的处置记录
 
 改了什么、哪些页面自动受益、哪些留给后续 Session，见同日提交信息与
 `web/AGENTS.md` 的「UI 视觉纪律」段。

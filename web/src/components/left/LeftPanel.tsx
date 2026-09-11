@@ -7,8 +7,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
-import { Tip } from '../ui/Tooltip'
+import { IconButton } from '../ui/Button'
 import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { ElementTree } from './ElementTree'
@@ -52,28 +51,30 @@ export function LeftPanel({
       )}
     >
       <div className="flex h-full flex-col" style={{ width }}>
+      {/* 标题行：名字 + 低权重计数 + 钉住。计数只是一个数字（type-meta），
+          单位进读屏用的隐藏文本——审计 T07 / T08 要的是**可达名**里分得清对象 /
+          元素 / 修改，不是让视觉上多四个字 */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
         <h2 className="text-xs font-medium text-ink">{t(`rail.${tab}`)}</h2>
-        {/* 计数带单位（审计 T07 / T08）：光一个「20」分不清是对象、元素还是修改 */}
         {tab === 'layers' && objectCount > 0 && (
-          <span className="text-xs text-ink-3">{t('layerTree.count', { count: objectCount })}</span>
+          <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
         )}
         {tab === 'elements' && <ElementCount />}
         {tab === 'problems' && <ProblemCount />}
         <span className="flex-1" />
         {wide && (
-          <Tip label={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')} side="bottom">
-            <Button
-              size="icon-sm"
-              aria-pressed={pinned}
-              aria-label={pinned ? t('drawer.unpin') : t('drawer.pin')}
-              // 钉住态不用品牌蓝：灰 / 深灰两档区分即可
-              className={pinned ? 'bg-surface-2 text-ink' : 'text-ink-3'}
-              onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
-            >
-              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
-            </Button>
-          </Tip>
+          <IconButton
+            iconSize="sm"
+            side="bottom"
+            label={pinned ? t('drawer.unpin') : t('drawer.pin')}
+            tip={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')}
+            active={pinned}
+            aria-pressed={pinned}
+            className="-mr-1.5"
+            onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
+          >
+            <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+          </IconButton>
         )}
       </div>
       {tab === 'canvases' ? (
@@ -93,11 +94,25 @@ export function LeftPanel({
   )
 }
 
+/**
+ * 标题旁的计数：视觉上只有数字，完整的「N 个元素」给读屏（与 title）。
+ * 两份文本同时在 DOM 里，一份 aria-hidden、一份 sr-only——数字与单位在不同语言里
+ * 的顺序不一样，拆不开 i18n 串，只能整句藏起来给辅助技术。
+ */
+function DrawerCount({ value, label }: { value: number; label?: string }) {
+  return (
+    <span className="type-meta tabular-nums" title={label}>
+      <span aria-hidden={label ? true : undefined}>{value}</span>
+      {label && <span className="sr-only">{label}</span>}
+    </span>
+  )
+}
+
 /** 问题计数进标题：与面板同一个范围（当前图 / 整个文档）；轨道角标仍是全文档 */
 function ProblemCount() {
   const n = useScopedProblems().issues.length
   if (!n) return null
-  return <span className="font-mono text-xs text-ink-3">{n}</span>
+  return <DrawerCount value={n} />
 }
 
 /** 元素计数进标题：树里不再重复统计行 */
@@ -113,7 +128,7 @@ function ElementCount() {
   const panel = byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   const n = usePanelDisplayManifest(panel)?.elements.length ?? 0
   if (!n) return null
-  return <span className="text-xs text-ink-3">{t('elementTree.count', { count: n - 1 })}</span>
+  return <DrawerCount value={n - 1} label={t('elementTree.count', { count: n - 1 })} />
 }
 
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */

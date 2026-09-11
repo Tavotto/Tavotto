@@ -32,6 +32,7 @@ import {
 } from '@/lib/api'
 import { i18n } from '@/i18n'
 import { ScriptLibrary } from '@/components/left/ScriptLibrary'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 
@@ -102,17 +103,30 @@ async function mount(query = '') {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<ScriptLibrary query={query} />)
+    // 运行 / 取消是 IconButton（自带气泡），与真实的 App 根一样要套 TooltipProvider
+    root.render(
+      <TooltipProvider>
+        <ScriptLibrary query={query} />
+      </TooltipProvider>,
+    )
   })
   await flush()
 }
 
+// 按可见文字**或**可达名找：运行 / 取消是图标钮，名字在 aria-label 里
 const buttonByText = (text: string): HTMLButtonElement => {
-  const btn = [...host.querySelectorAll('button')].find((b) =>
-    (b.textContent ?? '').includes(text),
+  const btn = [...host.querySelectorAll('button')].find(
+    (b) => (b.textContent ?? '').includes(text) || (b.getAttribute('aria-label') ?? '').includes(text),
   )
   if (!btn) throw new Error(`没有找到按钮: ${text}`)
   return btn as HTMLButtonElement
+}
+
+/** 运行钮是图标钮：可达名是「运行 <脚本> 并发现图」，按后缀找（每个用例只有一个脚本） */
+const runButton = (): HTMLButtonElement => {
+  const btn = host.querySelector<HTMLButtonElement>('button[aria-label$="并发现图"]')
+  if (!btn) throw new Error('没有找到运行钮')
+  return btn
 }
 
 beforeEach(() => {
@@ -185,7 +199,7 @@ describe('运行 / 取消 / 结果', () => {
     mockProbe.mockImplementation(() => new Promise((r) => (resolveProbe = r)))
     await mount()
 
-    const btn = buttonByText('运行并发现图')
+    const btn = runButton()
     await act(async () => {
       btn.focus()
       btn.click()
@@ -193,7 +207,7 @@ describe('运行 / 取消 / 结果', () => {
     expect(mockProbe).toHaveBeenCalledWith('show.py')
     expect(host.textContent).toContain('正在启动渲染环境')
     // busy 态同一个按钮翻转成「取消」——focus 不搬家
-    expect(btn.textContent).toContain('取消')
+    expect(btn.getAttribute('aria-label')).toContain('取消')
     expect(document.activeElement).toBe(btn)
 
     await act(async () => btn.click()) // 取消
@@ -214,7 +228,7 @@ describe('运行 / 取消 / 结果', () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     mockProbe.mockImplementation(() => new Promise(() => {}))
     await mount()
-    await act(async () => buttonByText('运行并发现图').click())
+    await act(async () => runButton().click())
     expect(host.textContent).toContain('正在启动渲染环境')
     await act(async () => useScriptRunStore.getState().markRunning('show.py'))
     expect(host.textContent).toContain('正在运行脚本')
@@ -224,7 +238,7 @@ describe('运行 / 取消 / 结果', () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     mockProbe.mockResolvedValue(ok([desc('a'), desc('b'), desc('c')], 1))
     await mount()
-    await act(async () => buttonByText('运行并发现图').click())
+    await act(async () => runButton().click())
     await flush()
     expect(host.textContent).toContain('已发现 3 张图')
     await act(async () => buttonByText('查看捕获结果').click())
@@ -253,7 +267,7 @@ describe('运行 / 取消 / 结果', () => {
       },
     })
     await mount()
-    await act(async () => buttonByText('运行并发现图').click())
+    await act(async () => runButton().click())
     await flush()
     expect(host.textContent).toContain('pandas')
     expect(host.textContent).toContain('可能依赖原来的 Python 环境')
@@ -276,7 +290,7 @@ describe('运行 / 取消 / 结果', () => {
       error: { code: 'script_no_figure', message: '没有捕获到任何 Figure', params: { entry: '__main__' } },
     })
     await mount()
-    await act(async () => buttonByText('运行并发现图').click())
+    await act(async () => runButton().click())
     await flush()
     expect(host.textContent).not.toContain('可能需要原环境')
     expect(host.textContent).toContain('没有捕获到任何 Figure')

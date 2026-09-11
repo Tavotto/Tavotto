@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Ban, Copy, Play, Settings, Square } from 'lucide-react'
+import { listRowClass } from '@/components/ui/listRow'
+import { Notice } from '@/components/ui/Notice'
+import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
@@ -15,7 +18,7 @@ import {
   type ScriptRunState,
 } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
 
@@ -93,12 +96,12 @@ export function ScriptLibrary({ query }: { query: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-1 px-3 pb-2">
+    <div className="flex flex-col px-2 pb-2">
       <SafeModeNote />
       {GROUP_ORDER.filter((g) => groups.has(g)).map((g) =>
         g === 'infra' ? (
-          <Details key={g} className="mt-0.5">
-            <Summary className="rounded-sm px-1 py-0.5 text-xs text-ink-3 hover:text-ink-2">
+          <Details key={g} className="mt-1">
+            <Summary className="mx-1 h-6 rounded-xs px-1 type-meta hover:text-ink-2">
               {sc('groupInfra', { count: groups.get(g)!.length })}
             </Summary>
             <ul aria-label={sc('groupInfra', { count: groups.get(g)!.length })}>
@@ -108,10 +111,11 @@ export function ScriptLibrary({ query }: { query: string }) {
             </ul>
           </Details>
         ) : (
-          <section key={g} className="mt-0.5">
-            <h4 className="mb-0.5 px-1 text-xs text-ink-3">
+          <section key={g} className="mt-1">
+            {/* 分组名 + 计数是一行元数据，不是又一级标题 */}
+            <h4 className="flex h-6 items-center gap-1.5 px-2 type-meta">
               {sc(`group_${g}`)}
-              <span className="ml-1 font-mono">{groups.get(g)!.length}</span>
+              <span className="tabular-nums">{groups.get(g)!.length}</span>
             </h4>
             <ul aria-label={sc(`group_${g}`)}>
               {groups.get(g)!.map((entry) => (
@@ -140,31 +144,41 @@ function SafeModeNote() {
   })
   if (dismissed) return null
   return (
-    <div className="rounded-sm border border-border bg-surface-2 p-2">
-      <p className="text-xs leading-relaxed text-ink-2">{sc('safeNoteBody')}</p>
-      <button
-        onClick={() => {
-          setDismissed(true)
-          try {
-            localStorage.setItem(SAFE_NOTE_KEY, '1')
-          } catch {
-            /* 存不下就只在本次会话里生效 */
-          }
-        }}
-        className="mt-1 rounded-sm text-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
-      >
-        {sc('safeNoteDismiss')}
-      </button>
-    </div>
+    <Notice
+      className="mx-1"
+      action={
+        <Button
+          size="sm"
+          className="text-ink-3"
+          onClick={() => {
+            setDismissed(true)
+            try {
+              localStorage.setItem(SAFE_NOTE_KEY, '1')
+            } catch {
+              /* 存不下就只在本次会话里生效 */
+            }
+          }}
+        >
+          {sc('safeNoteDismiss')}
+        </Button>
+      }
+    >
+      {sc('safeNoteBody')}
+    </Notice>
   )
 }
 
 /**
- * 一行脚本：路径 + 状态 + 「运行并发现图」。
+ * 一行脚本（Tavotto File Row）：状态点 | 文件名 | 状态一句话 | 运行图标钮。
  *
- * 运行/取消是**同一个按钮**（busy 态翻转成取消）：取消后焦点自然留在原
- * 脚本行的这个按钮上，不需要任何焦点搬运。状态行 aria-live=polite——只在
- * 相位变化时更新一次，不高频播报。
+ *   ● plot.py            已关联 2 张图     ▶
+ *   ○ analyze.py         这个脚本尚未运行   ▶
+ *
+ * 28px 一行，与树行、列表行同一种外观（`listRowClass`）。运行 / 取消是**同一个
+ * 按钮**（busy 态翻转成取消）：取消后焦点自然留在原脚本行的这个按钮上，不需要
+ * 任何焦点搬运。它常驻但常态是 ink-3，行 hover 时才与文字同色——它是这一行唯一
+ * 的操作，不该比文件名更响。状态那一段 aria-live=polite——只在相位变化时更新
+ * 一次，不高频播报。
  */
 function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: string[] }) {
   useTranslation('workspace')
@@ -179,42 +193,32 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
   }
 
   return (
-    <li className="flex flex-col gap-0.5 rounded-sm border border-transparent px-1 py-1 hover:border-border">
-      <div className="flex flex-wrap items-center gap-1.5">
+    <li className="flex flex-col">
+      <div className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
+        <StatusDot entry={entry} run={run} />
         <span
-          className="min-w-0 flex-1 basis-32 truncate font-mono text-xs text-ink"
+          className="min-w-0 flex-1 truncate font-mono text-xs text-ink"
           title={entry.script}
         >
           {entry.script}
         </span>
-        {/* 窄视口下按钮换行而不是被挤出可视区（flex-wrap + basis） */}
-        <Button
-          variant="secondary"
-          size="sm"
-          className="shrink-0"
-          onClick={onRunOrCancel}
-          disabled={!!run?.cancelRequested}
-          aria-label={
+        <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
+        <IconButton
+          iconSize="sm"
+          label={
             busy
               ? sc('cancelAria', { script: entry.script })
               : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
           }
+          tip={busy ? sc(run?.cancelRequested ? 'cancelling' : 'cancel') : sc(entry.registered ? 'rerun' : 'run')}
+          disabled={!!run?.cancelRequested}
+          onClick={onRunOrCancel}
+          className={cn(!busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink')}
         >
-          {busy ? (
-            <>
-              <Square size={ICON_SIZE.sm} />
-              {sc(run?.cancelRequested ? 'cancelling' : 'cancel')}
-            </>
-          ) : (
-            <>
-              <Play size={ICON_SIZE.sm} />
-              {sc(entry.registered ? 'rerun' : 'run')}
-            </>
-          )}
-        </Button>
+          {busy ? <Square size={ICON_SIZE.sm} /> : <Play size={ICON_SIZE.sm} />}
+        </IconButton>
       </div>
 
-      <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
       <FailureRecovery script={entry.script} run={run} />
 
       {run && run.descriptors.length > 0 && (
@@ -230,7 +234,36 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
   )
 }
 
-/** 状态一行话：不暴露内部术语，错误按稳定 code 翻成当前语言 */
+/**
+ * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
+ * 呼吸 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
+ */
+function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
+  const phase = run?.phase ?? 'idle'
+  const running = phase === 'starting_runtime' || phase === 'running'
+  const failed = !running && !!run?.error
+  return (
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
+      <span
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          running
+            ? 'animate-pulse bg-ink-2'
+            : failed
+              ? 'bg-danger'
+              : entry.registered
+                ? 'bg-ink-2'
+                : 'border border-ink-faint',
+        )}
+      />
+    </span>
+  )
+}
+
+/**
+ * 状态一句话（元数据档，靠右、单行截断）：不暴露内部术语，错误按稳定 code
+ * 翻成当前语言。发现了图时那句话本身就是「查看捕获结果」的入口。
+ */
 function StatusLine({
   entry,
   stems,
@@ -246,50 +279,45 @@ function StatusLine({
   const phase = run?.phase ?? 'idle'
 
   let body: React.ReactNode = null
+  let title: string | undefined
   if (phase === 'starting_runtime' || phase === 'running') {
-    body = (
-      <span className="flex items-center gap-1.5 text-ink-2">
-        <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-        {sc(phase === 'running' ? 'running' : 'starting')}
-      </span>
-    )
+    body = sc(phase === 'running' ? 'running' : 'starting')
   } else if (phase === 'captured_one' || phase === 'captured_many') {
     body = (
-      <span className="flex flex-wrap items-center gap-1.5">
-        <span className="text-ink-2">{sc('captured', { count: run!.descriptors.length })}</span>
-        {run!.droppedFigures > 0 && (
-          <span className="text-ink-3">{sc('dropped', { count: run!.droppedFigures })}</span>
-        )}
-        <button
-          onClick={onViewResults}
-          className="rounded-sm text-accent outline-none hover:underline focus-visible:focus-ring"
-        >
-          {sc('viewResults')}
-        </button>
-      </span>
+      // 可见的是结果本身（「已发现 3 张图」），动作名「查看捕获结果」给读屏与气泡
+      <button
+        onClick={onViewResults}
+        className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
+        title={sc('viewResults')}
+      >
+        {sc('captured', { count: run!.descriptors.length })}
+        <span className="sr-only">，{sc('viewResults')}</span>
+      </button>
     )
   } else if (phase === 'cancelled') {
-    body = <span className="text-ink-3">{sc('cancelledNote')}</span>
+    body = sc('cancelledNote')
   } else if (run?.error) {
-    body = (
-      <span className="text-danger">
-        {formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))}
-      </span>
-    )
+    const text = formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))
+    title = text
+    body = <span className="text-danger">{text}</span>
   } else if (entry.registered) {
-    body = <span className="text-ink-3">{sc('linkedCount', { count: stems.length })}</span>
+    body = sc('linkedCount', { count: stems.length })
   } else if (entry.reason === 'dynamic_stems' || entry.reason === 'unparseable') {
-    body = <span className="text-ink-3">{sc('runtimeNamesNote')}</span>
+    body = sc('runtimeNamesNote')
   } else {
-    body = <span className="text-ink-3">{sc('notRunNote')}</span>
+    body = sc('notRunNote')
   }
 
   // aria-live 挂在常驻容器上（内容只随相位变化）：loading / 完成 / 失败
   // 各播报一次，绝不逐帧刷
   return (
-    <p aria-live="polite" className="text-xs leading-relaxed">
+    <span
+      aria-live="polite"
+      title={title}
+      className="flex min-w-0 max-w-[55%] shrink items-center truncate type-meta"
+    >
       {body}
-    </p>
+    </span>
   )
 }
 
@@ -323,9 +351,10 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
   }
 
   return (
-    <div className="rounded-sm border border-border bg-surface-2 p-1.5">
-      <p className="text-xs leading-relaxed text-ink-2">{sc('recoveryBody')}</p>
-      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+    // 缩进到文件名那一列（状态点列 + 间距），不套框：它是这一行的第二行，不是另一张卡
+    <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2">
+      <p className="type-caption">{sc('recoveryBody')}</p>
+      <div className="flex flex-wrap items-center gap-1.5">
         <Button
           variant="secondary"
           size="sm"
@@ -341,8 +370,8 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
         </Button>
       </div>
       {error?.traceback && (
-        <Details className="mt-1">
-          <Summary className="text-xs text-ink-3">{sc('diagnostics')}</Summary>
+        <Details>
+          <Summary className="type-meta">{sc('diagnostics')}</Summary>
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-ink-2">
             {error.traceback}
           </pre>
@@ -380,16 +409,13 @@ export function ProbeResultsDialog({
       description={sc('captured', { count: descriptors.length })}
       size="md"
     >
-      <ul className="flex flex-col gap-1" aria-label={sc('resultsListAria')}>
+      <ul className="flex flex-col divide-y divide-border" aria-label={sc('resultsListAria')}>
         {descriptors.map((d) => (
-          <li
-            key={d.asset_id}
-            className="flex items-center gap-2 rounded-sm border border-border px-2 py-1"
-          >
+          <li key={d.asset_id} className="flex items-center gap-2 py-1">
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={d.stem}>
               {d.stem}
             </span>
-            <span className="shrink-0 font-mono text-xs text-ink-3">
+            <span className="shrink-0 type-meta tabular-nums">
               {translate('measure.cmSize', {
                 w: formatCm(d.size_mm[0]),
                 h: formatCm(d.size_mm[1]),
@@ -409,7 +435,7 @@ export function ProbeResultsDialog({
         ))}
       </ul>
       {dropped > 0 && (
-        <p className="mt-1.5 flex items-start gap-1 text-xs leading-relaxed text-ink-3">
+        <p className="mt-1.5 flex items-start gap-1 type-meta">
           <Ban size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
           {sc('dropped', { count: dropped })}
         </p>

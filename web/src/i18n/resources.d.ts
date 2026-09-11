@@ -129,6 +129,7 @@ export default interface Resources {
   "common": {
     "actions": {
       "cancel": "取消",
+      "clearSearch": "清除搜索",
       "close": "关闭",
       "continue": "继续",
       "copy": "复制",
@@ -3604,7 +3605,6 @@ export default interface Resources {
     },
     "elementTree": {
       "building": "正在构建图表…",
-      "clearSearch": "清除搜索",
       "collapse": "折叠",
       "count_other": "{{count}} 个元素",
       "exitIsolate": "退出",

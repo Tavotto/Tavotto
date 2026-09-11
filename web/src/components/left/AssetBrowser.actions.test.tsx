@@ -129,8 +129,12 @@ const seedPanels = (panels: PanelInfo[]) =>
 
 const cardOf = (id: string) => host.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)!
 const cardIds = () => [...host.querySelectorAll<HTMLElement>('[data-card]')].map((c) => c.dataset.card)
+// 就近入口锚在结构（`data-card-actions`）：文字区的文件名 / 状态也带 title，
+// 光按 `span[title]` 找会把它们数进来
 const chips = (card: HTMLElement) =>
-  [...card.querySelectorAll<HTMLElement>('span[title]')].filter((s) => s.textContent?.trim())
+  [...card.querySelectorAll<HTMLElement>('[data-card-actions] span[title]')].filter((s) =>
+    s.textContent?.trim(),
+  )
 const actionsBar = () => host.querySelector<HTMLElement>('[data-selected-asset-actions]')
 const key = (card: HTMLElement, k: string, shift = false) =>
   act(async () => {

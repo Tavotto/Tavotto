@@ -1,6 +1,7 @@
 {
   "actions": {
     "cancel": "Cancel",
+    "clearSearch": "Clear search",
     "close": "Close",
     "continue": "Continue",
     "copy": "Copy",
