@@ -8,7 +8,7 @@ import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Disclosure, Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
@@ -27,10 +27,13 @@ const PRESETS = [
 ]
 
 /**
- * 数值行的标签列宽。默认的 44px 装不下「网格间距」「页边距」这类四字标签，
- * 320px 属性栏下会折成两行（审计 T31）；开关行不走标签列，见 `ToggleRow`。
+ * 本页所有设置行共用的标签列宽：数值行走 `Row`（内联宽度），开关行走 `ToggleRow`
+ * （同宽的类名 `w-18` = 72px）。默认的 44px 装不下「网格间距」「页边距」这类
+ * 四字标签，320px 属性栏下会折成两行（审计 T31）。两种行的控件从同一条竖线起排
+ * ——折叠区里「透明背景 / 背景色」上下两行的控件才对得齐（Session 2）。
  */
 const LABEL_W = 72
+const LABEL_COL = 'w-18'
 
 /** 本页文案 inspector:canvas.*，历史标签 inspector:history.* */
 const cv = (key: string, values?: Record<string, unknown>) =>
@@ -94,9 +97,10 @@ export function CanvasPage() {
                   aria-checked={on}
                   aria-label={cv('presetAria', { label, w: p.w, h: p.h })}
                   className={cn(
-                    'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors focus-visible:focus-ring',
+                    'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors duration-fast focus-visible:focus-ring',
+                    // 选中：轻 tint + 稍强的边 + 稍强的预览线 + 字重，不用大灰块
                     on
-                      ? 'border-transparent bg-selected text-ink'
+                      ? 'border-border-strong bg-selected text-ink'
                       : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
                   )}
                 >
@@ -110,7 +114,7 @@ export function CanvasPage() {
                       className={cn(
                         'block border',
                         // 选中不只换颜色：空心变实心，色觉障碍下也分得出
-                        on ? 'border-ink bg-ink/25' : 'border-ink-faint bg-surface',
+                        on ? 'border-ink bg-ink/15' : 'border-ink-faint bg-surface',
                       )}
                       style={{
                         width: p.w * PREVIEW_SCALE,
@@ -124,8 +128,9 @@ export function CanvasPage() {
             )
           })}
         </div>
-        {/* 宽、高与横竖交换同一行：交换是对这两个数的动作，不值得独占一行 */}
-        <div data-page-size-row className="flex items-center justify-between gap-1.5">
+        {/* 宽、高与横竖交换同一行：两个字段与检查器的 X/Y/W/H 同一个 primitive
+            （单位在框里），交换是个小 ghost 图标钮 */}
+        <div data-page-size-row className="flex items-center gap-1.5">
           <MmField
             label="W"
             historyLabel={hist('setPageW')}
@@ -140,16 +145,14 @@ export function CanvasPage() {
             value={page.h}
             onChange={(v) => setPageSize(page.w, v)}
           />
-          <Tip label={cv('swap')} side="left">
-            <Button
-              size="icon-sm"
-              variant="secondary"
-              aria-label={cv('swap')}
-              onClick={() => setPageSize(page.h, page.w)}
-            >
-              <ArrowLeftRight size={ICON_SIZE.sm} />
-            </Button>
-          </Tip>
+          <IconButton
+            label={cv('swap')}
+            iconSize="sm"
+            side="left"
+            onClick={() => setPageSize(page.h, page.w)}
+          >
+            <ArrowLeftRight size={ICON_SIZE.sm} />
+          </IconButton>
         </div>
       </Section>
 
@@ -199,7 +202,7 @@ export function CanvasPage() {
                 min={1}
                 max={50}
                 step={1}
-                suffix="mm"
+                unit="mm"
                 onChange={(v) => ui.setCanvasPref({ gridSize: v })}
               />
             </Row>
@@ -264,44 +267,49 @@ export function CanvasPage() {
             : cv('guidesNone')
         }
       >
-        <div className="flex items-center gap-2">
-          <ToggleRow label={cv('lock')} className="min-w-0 flex-1">
+        <div className="flex flex-col gap-1.5">
+          <ToggleRow label={cv('lock')}>
             <Toggle
               aria-label={cv('lock')}
               checked={ui.guidesLocked}
               onChange={(v) => ui.setCanvasPref({ guidesLocked: v })}
             />
           </ToggleRow>
-          <Button size="sm" disabled={!guides.length} onClick={clearGuides}>
-            {cv('clearAll')}
-          </Button>
+          {guides.length > 0 && (
+            <ul className="flex flex-col">
+              {guides.map((g, i) => (
+                <li key={`${g.axis}-${i}`} className="flex h-7 items-center gap-2">
+                  <span className={cn(LABEL_COL, 'shrink-0 truncate text-xs text-ink-2')}>
+                    {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
+                  </span>
+                  <span className="min-w-0 flex-1 font-mono text-xs tabular-nums text-ink">
+                    {translate('measure.mm', { value: formatMm(g.pos) })}
+                  </span>
+                  <IconButton
+                    label={cv('deleteGuide', {
+                      axis: cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal'),
+                      pos: formatMm(g.pos),
+                    })}
+                    tip={false}
+                    iconSize="sm"
+                    className="text-ink-3 hover:text-danger"
+                    disabled={ui.guidesLocked}
+                    onClick={() => removeGuide(i)}
+                  >
+                    <Trash2 size={ICON_SIZE.sm} />
+                  </IconButton>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* 「全部清除」对齐到控件列，不与开关抢同一行 */}
+          <div className="flex items-center gap-2">
+            <span className={cn(LABEL_COL, 'shrink-0')} aria-hidden />
+            <Button variant="ghost" size="sm" className="-ml-2" disabled={!guides.length} onClick={clearGuides}>
+              {cv('clearAll')}
+            </Button>
+          </div>
         </div>
-        {guides.length > 0 && (
-          <ul className="mt-1.5 flex flex-col gap-0.5">
-            {guides.map((g, i) => (
-              <li key={`${g.axis}-${i}`} className="flex items-center gap-1.5">
-                <span className="w-8 shrink-0 text-xs text-ink-2">
-                  {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
-                </span>
-                <span className="flex-1 font-mono text-xs text-ink">
-                  {translate('measure.mm', { value: formatMm(g.pos) })}
-                </span>
-                <Button
-                  size="icon-sm"
-                  className="text-ink-3 hover:text-danger"
-                  disabled={ui.guidesLocked}
-                  onClick={() => removeGuide(i)}
-                  aria-label={cv('deleteGuide', {
-                    axis: cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal'),
-                    pos: formatMm(g.pos),
-                  })}
-                >
-                  <Trash2 size={ICON_SIZE.sm} />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
       </Disclosure>
 
       <Disclosure
@@ -331,7 +339,7 @@ export function CanvasPage() {
               min={0}
               max={40}
               step={1}
-              suffix="mm"
+              unit="mm"
               onChange={(v) => setPageSetup({ margin: v }, hist('setPageMargin'))}
             />
           </Row>
@@ -342,9 +350,9 @@ export function CanvasPage() {
 }
 
 /**
- * 开关行：文字占满剩余宽度、开关靠右。开关的标签不该被塞进 44px 的标签列——
- * 「对齐参考线」在窄栏里会折行，而一个开关根本不需要标签列（审计 T31）。
- * 整行是一个 `<label>`：点文字也能切换。
+ * 开关行：标签列与本页的数值行同宽（`LABEL_COL` = `LABEL_W`），开关从同一条控件列
+ * 起排——不再把开关推到侧栏最右边让它漂着（Session 2；审计 T31 的「不折行」靠的
+ * 是 72px 的列宽本身，「对齐参考线」放得下）。整行是一个 `<label>`：点文字也能切换。
  */
 function ToggleRow({
   label,
@@ -356,11 +364,8 @@ function ToggleRow({
   className?: string
 }) {
   return (
-    <label
-      data-toggle-row
-      className={cn('flex min-h-6 items-center justify-between gap-2', className)}
-    >
-      <span className="min-w-0 truncate text-xs text-ink-2">{label}</span>
+    <label data-toggle-row className={cn('flex min-h-7 items-center gap-2', className)}>
+      <span className={cn(LABEL_COL, 'min-w-0 shrink-0 truncate text-xs text-ink-2')}>{label}</span>
       <span className="flex shrink-0 items-center">{children}</span>
     </label>
   )

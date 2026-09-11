@@ -86,14 +86,16 @@ describe('CanvasPage', () => {
     expect(header.querySelector('header')!.textContent).toContain(String(page.w / 10))
   })
 
-  it('开关行：标签不占固定宽度的标签列，整行可点', () => {
+  it('开关行：标签列与数值行同宽（控件从同一条竖线起排），整行可点', () => {
     act(() => disclosure('吸附').click())
     const rows = [...container.querySelectorAll<HTMLLabelElement>('[data-toggle-row]')]
     const guides = rows.find((r) => r.textContent?.includes('对齐参考线'))
     expect(guides).toBeDefined()
     expect(guides!.tagName).toBe('LABEL')
     const label = guides!.querySelector('span')!
-    expect(label.style.width).toBe('')
+    // 列宽走类名（w-18 = 72px），与数值行 `Row` 的 labelWidth={72} 是同一个数；
+    // 标签仍可截断（min-w-0），窄栏里不把开关挤出行外
+    expect(label.className).toContain('w-18')
     expect(label.className).toContain('min-w-0')
     const before = useUiStore.getState().snapToGuides
     act(() => label.click())

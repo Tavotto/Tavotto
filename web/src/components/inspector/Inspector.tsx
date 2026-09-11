@@ -36,7 +36,7 @@ import {
 } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Tab, TabList } from '../ui/Tabs'
@@ -139,33 +139,33 @@ export function Inspector({
              助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
              量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
              tooltip 与无障碍名里，那两处不占版面。 */
-          <Tip label={t(pinned ? 'pinnedTip' : 'autoHideTip')} side="bottom">
-            <Button
-              size="icon-sm"
-              aria-pressed={pinned}
-              aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
-              /* 常驻态用灰底而不是品牌蓝：这只是一个视图开关，不是主动作强调 */
-              className={cn(pinned && 'bg-selected text-ink')}
-              onClick={() => useUiStore.getState().setRightPinned(!pinned)}
-            >
-              <Pin size={ICON_SIZE.xs} className={pinned ? 'text-ink' : 'text-ink-3'} />
-            </Button>
-          </Tip>
+          <IconButton
+            label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
+            tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
+            side="bottom"
+            iconSize="sm"
+            active={pinned}
+            aria-pressed={pinned}
+            onClick={() => useUiStore.getState().setRightPinned(!pinned)}
+          >
+            {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
+            <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+          </IconButton>
         ) : (
           <Tip label={t('overlayTip')} side="bottom">
             <span className="text-xs text-ink-3">{t('overlay')}</span>
           </Tip>
         )}
-        <Tip label={translate('actions.close')} side="bottom">
-          <Button
-            size="icon-sm"
-            className="-mr-1.5"
-            aria-label={t('closePanel')}
-            onClick={() => useUiStore.getState().toggleRight()}
-          >
-            <X size={ICON_SIZE.sm} className="text-ink-3" />
-          </Button>
-        </Tip>
+        <IconButton
+          label={t('closePanel')}
+          tip={translate('actions.close')}
+          side="bottom"
+          iconSize="sm"
+          className="-mr-1.5 text-ink-3 hover:text-ink"
+          onClick={() => useUiStore.getState().toggleRight()}
+        >
+          <X size={ICON_SIZE.sm} />
+        </IconButton>
       </div>
 
       {tab === 'assistant' ? (

@@ -166,8 +166,11 @@ export interface IconButtonProps extends Omit<ButtonProps, 'size' | 'aria-label'
   label: string
   /** 图标档：默认 md（16px）；与 11–12px 文字并排的小钮用 sm（14px） */
   iconSize?: 'md' | 'sm'
-  /** 气泡：默认显示 `label`；传 false 关掉（旁边已有可见文字时） */
-  tip?: boolean
+  /**
+   * 气泡：默认显示 `label`；传 false 关掉（旁边已有可见文字时）；传字符串则气泡说
+   * 另一句（只给「名字是动作、气泡讲当前状态」的开关钮，如钉住 / 宽高比锁）。
+   */
+  tip?: boolean | string
   shortcut?: string
   side?: 'top' | 'bottom' | 'left' | 'right'
   children: React.ReactNode
@@ -183,7 +186,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     </Button>
   )
   return tip ? (
-    <Tip label={label} shortcut={shortcut} side={side}>
+    <Tip label={typeof tip === 'string' ? tip : label} shortcut={shortcut} side={side}>
       {btn}
     </Tip>
   ) : (

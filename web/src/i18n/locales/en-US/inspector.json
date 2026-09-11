@@ -694,7 +694,9 @@
     "sourceAdvanced": "Source & advanced",
     "sourceHint": "Writing back overwrites the original PDF/PNG file. A backup is kept so you can restore it.",
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "restore": "Restore",
+    "replaceAction": "Choose…"
   },
   "panelLabel": "Right panel",
   "pinnedAria": "Right panel is pinned; click to auto-hide it",

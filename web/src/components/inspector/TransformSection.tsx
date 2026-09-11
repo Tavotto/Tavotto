@@ -5,9 +5,9 @@ import { formatMm } from '@/lib/units'
 import { updateObjects } from '@/store/actions'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import type { CanvasObject } from '@/types/document'
-import { Disclosure, Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Row, Section } from '../ui/Field'
 import { NumberField } from '../ui/Input'
-import { MmField } from './MmField'
+import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
 import { shared } from './common'
 
 /** X / Y / W / H —— 面板与形状改宽高时按比例联动，文字高度由内容决定 */
@@ -36,7 +36,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
 
   const body = (
     <>
-      <Grid2 className="justify-items-end">
+      <GeometryGrid>
         <MmField
           label="X"
           historyLabel={hist('setX')}
@@ -54,6 +54,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
             })
           }}
         />
+        <GeometrySpacer />
         <MmField
           label="Y"
           historyLabel={hist('setY')}
@@ -83,6 +84,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
             })
           }
         />
+        <GeometrySpacer />
         <MmField
           label="H"
           historyLabel={hist('setHeight')}
@@ -99,7 +101,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
             })
           }
         />
-      </Grid2>
+      </GeometryGrid>
       {rotatable && (
         <div className="mt-1.5">
           <Row label={t('transform.rotation')} labelWidth={72}>
@@ -109,7 +111,8 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
               step={15}
               min={-360}
               max={360}
-              suffix="°"
+              unit="°"
+              ariaLabel={t('transform.rotation')}
               onChange={(v) =>
                 setEach(hist('rotateObject'), (o) => {
                   const deg = ((Math.round(v * 10) / 10) % 360 + 360) % 360

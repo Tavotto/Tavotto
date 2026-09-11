@@ -46,9 +46,9 @@
   --color-accent-subtle: #e9f0f9;
   /* 列表 / 分段 / 选项格的**选中态**：浅灰圆角块，不再用品牌蓝、不再画左侧竖条
      （2026-09-11 用户反馈）。蓝只剩链接、焦点、画布上的选择框。
-     Visual Consolidation Session 1 把它从 #d7d7cf 收浅：选中面只比普通背景稍深，
+     Visual Consolidation Session 1/2 把它从 #d7d7cf 收浅两档：选中面只比普通背景稍深，
      与 hover 拉开一档就够，「是哪一个」由字重 / 对勾 / 形状再说一遍，不靠大块深灰。 */
-  --color-selected: #e6e6e0;
+  --color-selected: #ebebe6;
   --color-danger: #c4442a;
   --color-danger-subtle: #fbeeeb;
   /* 警示（「需要处理，但还没坏」）：编码 Agent 的「需要登录」用它。

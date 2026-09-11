@@ -127,6 +127,8 @@ interface NumberFieldProps {
    * 一列数字框的单位就排成一条稳定的竖线（Design Constitution 第五节）。
    */
   unit?: ReactNode
+  /** 撑满所在格：框吃掉剩余宽度（X / Y / W / H 这类网格里的字段），默认只包住数字 */
+  fill?: boolean
   disabled?: boolean
   /** 多选且取值不一致：留空并显示占位符，而不是谎报一个数 */
   mixed?: boolean
@@ -156,6 +158,7 @@ export function NumberField({
   prefix,
   suffix,
   unit,
+  fill,
   disabled,
   mixed,
   className,
@@ -240,6 +243,7 @@ export function NumberField({
       title={title}
       className={cn(
         'group flex h-7 items-center gap-1.5',
+        fill && 'w-full min-w-0',
         disabled && 'pointer-events-none opacity-40',
         className,
       )}
@@ -264,6 +268,7 @@ export function NumberField({
         className={cn(
           'flex h-full min-w-0 items-center rounded-sm border border-transparent bg-surface-2',
           'transition-colors duration-fast hover:border-border focus-within:border-accent focus-within:bg-surface',
+          fill && 'flex-1',
         )}
       >
         <input
@@ -309,7 +314,8 @@ export function NumberField({
             // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
             // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
             // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
-            'num-input h-full w-[calc(4ch+0.75rem)] min-w-0 bg-transparent px-1.5 text-ink outline-none',
+            'num-input h-full min-w-0 bg-transparent px-1.5 text-ink outline-none',
+            fill ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
             unit != null ? 'pr-1 text-right' : 'text-center',

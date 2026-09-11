@@ -676,7 +676,9 @@
     "sourceAdvanced": "源文件与高级",
     "sourceHint": "写回会覆盖原始的 PDF/PNG 文件，同时会留下备份，可以恢复。",
     "staleScript": "脚本已更新，进入编辑会自动重建",
-    "unknown": "未知"
+    "unknown": "未知",
+    "restore": "恢复",
+    "replaceAction": "选择…"
   },
   "panelLabel": "右侧面板",
   "pinnedAria": "右栏常驻中，点击改为自动收起",

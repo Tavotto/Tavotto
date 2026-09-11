@@ -77,7 +77,9 @@ export function Disclosure({
 }
 
 /**
- * 标签在左、控件在右的紧凑行。
+ * 标签在左、控件在右的紧凑行：标签列定宽，控件从同一条竖线起排（固定的控件列），
+ * **不**把控件推到侧栏最右边——那样每行的控件各漂各的，读不出一列
+ * （Design Constitution 第三节；2026-09-11 Session 2 把第四批的 justify-end 改回来）。
  *
  * `align='start'` 给**多行高的控件**用（图例位置的内 / 外两带那种）：默认的
  * 垂直居中会把标签推到控件的半腰，看上去像在给下面那一段命名——真浏览器里
@@ -100,7 +102,7 @@ export function Row({
 }) {
   const top = align === 'start'
   return (
-    <div className={cn('flex min-h-6 gap-2', top ? 'items-start' : 'items-center', className)}>
+    <div className={cn('flex min-h-7 gap-2', top ? 'items-start' : 'items-center', className)}>
       {label != null && (
         <span
           style={labelWidth === 'auto' ? undefined : { width: labelWidth }}
@@ -109,11 +111,9 @@ export function Row({
           {label}
         </span>
       )}
-      {/* 控件一律靠右贴齐（2026-09-11 用户反馈：设置项都在行内右对齐）；
-          撑满的控件（Select / Segmented / 文本框）不受影响 */}
       <div
         className={cn(
-          'flex min-w-0 flex-1 justify-end gap-1.5',
+          'flex min-w-0 flex-1 gap-1.5',
           top ? 'items-start' : 'items-center',
         )}
       >
