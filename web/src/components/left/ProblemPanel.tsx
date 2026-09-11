@@ -148,22 +148,26 @@ export function ProblemPanel() {
     <div className="flex min-h-0 flex-1 flex-col">
       <ScopeBar figureId={figureId} figureName={figureName} scope={scope} />
 
-      <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pb-2">
-        {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
-          <SeverityChip key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
-        ))}
-        <span className="flex-1" />
-        {fixableHere.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs"
-            onClick={() => runBatchFix(fixableHere)}
-          >
-            {pr('fixAll', { count: fixableHere.length })}
-          </Button>
-        )}
-      </div>
+      {/* 等级筛选与「全部修复」只在这一轮结果就绪后出现：还在检查时挂着一条
+          计数芯片，与下面的「正在检查…」是两句互相打架的话（2026-09-11 设计包） */}
+      {ready && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pb-2">
+          {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
+            <SeverityChip key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
+          ))}
+          <span className="flex-1" />
+          {fixableHere.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => runBatchFix(fixableHere)}
+            >
+              {pr('fixAll', { count: fixableHere.length })}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/*
         这一轮查砸了、但上一轮的结果**留着**（`ready && issues.length`）：
