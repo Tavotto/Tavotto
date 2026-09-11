@@ -2715,9 +2715,13 @@ def test_line_collections_expose_style_only_never_data(tmp_path):
         el = next(e for e in man["elements"] if e["role"] == "linecoll")
         props = {f["prop"] for f in el["editable"]}
         assert props == {"color", "linewidth", "linestyle", "alpha", "visible", "zorder"}, props
-        # 路径几何刻意不给（pathgeom 是按单条路径写的，线组有 N 条），
-        # 降级成 bbox 并如实记录
-        assert "geometry" not in el
+        # 路径几何**要给**（2026-09-11 第三批 a0a96a12：pathgeom 会按 N 条子路径出
+        # `multi_path`）——线组的 bbox 常常就是整个子图，只给 bbox 会把底下热力图 /
+        # 位图的点击偷走。给几何不等于开数据：上面那行 props 才是这条边界。
+        geom = el.get("geometry")
+        assert geom, "线组没有路径几何，命中区退回整块 bbox 会偷走底下元素的点击"
+        assert geom["kind"] in ("multi_path", "polyline"), geom["kind"]
+        assert geom["stroke"] and not geom["fill"], geom
         assert el.get("bbox"), "线组连 bbox 都没有，前端选不中它"
     finally:
         pool.discard(w)
