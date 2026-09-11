@@ -8,7 +8,7 @@ import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { literal, setLocale } from '@/i18n'
-import { ProblemPanel } from './ProblemPanel'
+import { PREVIEW_ROWS, ProblemPanel } from './ProblemPanel'
 import { LeftPanel } from './LeftPanel'
 import { LeftRail } from './LeftRail'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -565,5 +565,88 @@ describe('定位后清单留在原地（审计 T09）', () => {
       '[data-issue-row][data-issue-rule="font-below-absolute-floor"][data-issue-object="p1"]',
     )
     expect(row).toBeTruthy()
+  })
+})
+
+/* ------------------- 长列表（Visual Consolidation Session 4） ------------------- */
+
+/** 一张图上八处 6 pt 的文字：同一条规则、同一组、八行几乎一样的东西 */
+const MANY = 8
+const manifestMany = {
+  stem: 'Fig1',
+  size_mm: [80, 60],
+  elements: Array.from({ length: MANY }, (_, i) => ({
+    gid: `axes_0.text_${i}`,
+    role: 'annotation',
+    label: `标注 ${i + 1}`,
+    bbox: [0.1, 0.1 + i * 0.08, 0.3, 0.05],
+    draggable: false,
+    editable: [{ prop: 'fontsize', type: 'number', value: 6 }],
+  })),
+}
+
+async function seedMany() {
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_many')
+  useDocumentStore.getState().commit(literal('准备'), (d) => {
+    d.page = { w: 80, h: 60 }
+    d.objects = [{ ...panel }]
+  })
+  useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 } } } as never)
+  seedExactRender(panel, manifestMany as never)
+  runValidation()
+}
+
+const showRest = () => container.querySelector<HTMLButtonElement>('[data-issue-show-rest]')
+const groupRows = (rule: string) =>
+  container.querySelectorAll(`[data-issue-group="${rule}"] [data-issue-row]`).length
+
+describe('长列表：一组默认只展开前几行', () => {
+  it('八条同类问题默认只列前 5 条，其余收进「显示其余 3 项」；点开后全在', async () => {
+    await seedMany()
+    await mount(<ProblemPanel />)
+    const rule = 'font-below-absolute-floor'
+    expect(
+      useValidationStore.getState().issues.filter((i) => i.ruleCode === rule).length,
+      '夹具没有产出足够多的同类问题，下面的判据量不到折叠',
+    ).toBe(MANY)
+    expect(groupRows(rule)).toBe(PREVIEW_ROWS)
+    // 组头照旧报全部对象数：折起来的是行，不是事实
+    expect(container.querySelector(`[data-issue-group="${rule}"]`)?.textContent).toContain(
+      `${MANY} 个对象`,
+    )
+    const more = showRest()
+    expect(more?.textContent).toContain(`显示其余 ${MANY - PREVIEW_ROWS} 项`)
+    await click(more!)
+    expect(groupRows(rule)).toBe(MANY)
+    expect(showRest()).toBeNull()
+  })
+
+  it('只差一两条就不折：省下的那一行不值得多一次点击', async () => {
+    // 6 条：折了只剩「显示其余 1 项」，比直接列出来更啰嗦
+    const six = { ...manifestMany, elements: manifestMany.elements.slice(0, PREVIEW_ROWS + 1) }
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_six')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.page = { w: 80, h: 60 }
+      d.objects = [{ ...panel }]
+    })
+    useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 } } } as never)
+    seedExactRender(panel, six as never)
+    runValidation()
+    await mount(<ProblemPanel />)
+    expect(groupRows('font-below-absolute-floor')).toBe(PREVIEW_ROWS + 1)
+    expect(showRest()).toBeNull()
+  })
+
+  it('「下一项」走进折起的那部分时整组自动展开，当前行看得见', async () => {
+    await seedMany()
+    await mount(<ProblemPanel />)
+    await click(rows()[PREVIEW_ROWS - 1])
+    expect(rows()[PREVIEW_ROWS - 1].getAttribute('aria-current')).toBe('true')
+    expect(rows().length).toBe(PREVIEW_ROWS)
+    await click(byText('下一项')!)
+    // 第 6 条成了「当前」：它必须在 DOM 里且带标记，而不是消失在折叠之后
+    expect(rows().length).toBe(MANY)
+    expect(rows()[PREVIEW_ROWS].getAttribute('aria-current')).toBe('true')
+    expect(showRest()).toBeNull()
   })
 })

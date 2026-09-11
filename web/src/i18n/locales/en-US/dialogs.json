@@ -575,8 +575,8 @@
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
-    "allEditable_one": "{{count}} figure, and it is editable.",
-    "allEditable_other": "All {{count}} figures are editable.",
+    "allEditable_one": "{{count}} figure ready",
+    "allEditable_other": "{{count}} figures ready",
     "allScriptsHint": "Every .py in the project is here, including the ones whose figures cannot be told from the source alone. Run any of them once and Tavotto links it by what it actually draws.",
     "allScriptsTitle": "All scripts ({{n}})",
     "autoLink": "Connect automatically",
@@ -598,6 +598,7 @@
     "manualPick": "Pick from project",
     "manualPickAria": "Pick a figure name already in the project for {{script}}",
     "manualPlaceholder": "Figure names without extension, separated by commas",
+    "moreAria": "More actions for {{name}}",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
     "orphanConflicts": "More than one script claims these figure names: {{stems}}. There is no matching file in the project yet; you can assign them under “All scripts” below.",

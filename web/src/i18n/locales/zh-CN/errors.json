@@ -373,7 +373,7 @@
     "failedTitle": "这一次没查成",
     "filterAria": "只看{{label}}（{{count}} 项）",
     "fix": "修复",
-    "fixAuto": "修复可自动处理项",
+    "fixAuto": "全部处理",
     "fixChoose": "修复…",
     "fixFailed": {
       "canvas_missing": "找不到这条问题所在的画布，请先刷新问题列表",
@@ -385,7 +385,7 @@
       "double": "改成双栏宽 {{mm}}mm",
       "single": "改成单栏宽 {{mm}}mm"
     },
-    "fixableHere_other": "当前画布可自动修复 {{count}} 项",
+    "fixableHere_other": "{{count}} 项可自动处理",
     "fixed_other": "已修复 {{count}} 项（可撤销）",
     "focusFailed": {
       "canvas_missing": "这条问题所在的画布已经不在项目里了",
@@ -420,6 +420,7 @@
       "warn": "警告"
     },
     "severityLabel": "问题严重程度",
+    "showRest_other": "显示其余 {{count}} 项",
     "subjectArrow": "箭头",
     "subjectElement": "图内元素",
     "subjectObject": "对象",

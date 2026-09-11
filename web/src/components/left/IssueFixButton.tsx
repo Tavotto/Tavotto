@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
 import { fixOptions } from '@/lib/issueFix'
 import { resolveDocumentSpec } from '@/lib/specBinding'
+import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
 import { applyIssueFix } from '@/store/issueFixActions'
@@ -21,7 +22,7 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * 上的问题就地显示，能修的给同一颗按钮）。各写一遍的后果是两处的成功 / 失败
  * 提示、`user_choice` 的菜单、规范的解析方式各自漂移。
  */
-export function FixButton({ issue }: { issue: ValidationIssue }) {
+export function FixButton({ issue, className }: { issue: ValidationIssue; className?: string }) {
   // **订阅 `specs`，不订阅 `catalog()`**：后者每次调用都新建一个数组，
   // 拿它当 zustand 选择器的返回值 = 每一帧都"变了" = 无限重渲染
   const specs = useProfileStore((s) => s.specs)
@@ -33,7 +34,7 @@ export function FixButton({ issue }: { issue: ValidationIssue }) {
   if (issue.fixKind === 'none') return null
   if (issue.fixKind === 'safe_auto') {
     return (
-      <Button size="sm" className="shrink-0 text-xs" onClick={() => runFix(issue)}>
+      <Button size="sm" className={cn('shrink-0', className)} onClick={() => runFix(issue)}>
         {pr('fix')}
       </Button>
     )
@@ -43,7 +44,7 @@ export function FixButton({ issue }: { issue: ValidationIssue }) {
     <Menu
       width={180}
       trigger={
-        <Button size="sm" className="shrink-0 text-xs">
+        <Button size="sm" className={cn('shrink-0', className)}>
           {pr('fixChoose')}
         </Button>
       }

@@ -571,7 +571,7 @@
   },
   "readiness": {
     "addToCanvas": "添加到画布",
-    "allEditable_other": "{{count}} 张图都可以编辑。",
+    "allEditable_other": "{{count}} 张图已就绪",
     "allScriptsHint": "项目里的每个 .py 都在这里，包括那些只看脚本看不出会画出哪张图的。任选一个「试运行」，Tavotto 按它真实画出来的图建立关系。",
     "allScriptsTitle": "全部脚本（{{n}}）",
     "autoLink": "自动连接",
@@ -592,6 +592,7 @@
     "manualPick": "从项目里挑",
     "manualPickAria": "从项目已有的图名里挑一个给 {{script}}",
     "manualPlaceholder": "图名（去掉扩展名），多个用逗号分隔",
+    "moreAria": "{{name}} 的更多操作",
     "none": "—",
     "nothingNew": "扫描完成，没有发现新的可连接脚本",
     "orphanConflicts": "这些图名有不止一个脚本声称生成：{{stems}}。项目里还没有对应的图文件，可以在下面的「全部脚本」里指定。",

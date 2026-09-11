@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { TriangleAlert, Braces, Play, Plus, RefreshCw } from 'lucide-react'
+import {
+  Braces,
+  CircleCheck,
+  CircleDashed,
+  CircleMinus,
+  Ellipsis,
+  Play,
+  Plus,
+  RefreshCw,
+  TriangleAlert,
+} from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -32,9 +42,10 @@ import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
+import { Menu, MenuItem, MenuSub } from './ui/Menu'
 import { Select } from './ui/Select'
 import { TextInput } from './ui/Input'
 
@@ -56,6 +67,13 @@ import { TextInput } from './ui/Input'
  *
  * 每次成功之后走**统一刷新**（`refreshAssetsAndSync`），不手拼状态：就绪度、
  * 素材清单、画布上面板的派生元数据由那一条路径一并更新。
+ *
+ * ### 呈现（2026-09-11 Visual Consolidation Session 4）
+ *
+ * 一张图一行：`[缩略图] 文件名 / ✓ 状态 · 脚本名   [主动作] ⋯`。一行只有**一个**
+ * 主动作（这个状态下最可能对的那一个）；重新试运行、改绑脚本这类低频动作收进
+ * 行尾的 ⋯ 菜单——三张可编辑的图各摆四颗按钮，看起来像一页运维面板，而它们其实
+ * 都已经好了。顶部全部就绪时只说一句「N 张图已就绪」。
  *
  * 文件名与导出名保留为 `RegistryDialog`：`uiStore.registryOpen` 是这个对话框
  * 唯一的开关，项目菜单与设置页都在用它。再造一个同义标志等于给同一件事两个
@@ -79,7 +97,8 @@ export function RegistryDialog() {
       }}
       title={rd('title')}
       description={rd('subtitle')}
-      width={640}
+      size="lg"
+      anchor="readiness"
     >
       <ReadinessBody />
     </Dialog>
@@ -223,7 +242,7 @@ function ReadinessBody() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex min-h-7 items-center justify-between gap-3">
         <SummaryStrip report={report} />
         <Button
           variant="secondary"
@@ -252,10 +271,10 @@ function ReadinessBody() {
           ({ key, panels }) =>
             panels.length > 0 && (
               <section key={key}>
-                <h3 className="mb-1 text-xs font-medium text-ink-2">
+                <h3 className="type-section mb-0.5 tabular-nums">
                   {rd(`group.${key}`, { n: panels.length })}
                 </h3>
-                <ul className="flex flex-col gap-1.5">
+                <ul className="flex flex-col divide-y divide-border">
                   {panels.map((p) => (
                     <PanelRow
                       key={p.id}
@@ -310,8 +329,9 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
   // 判据与横幅共用一份（`lib/readinessText.allEditable`）。
   if (allEditable(s)) {
     return (
-      <p className="min-w-0 flex-1 text-xs text-ink-2">
-        {rd('allEditable', { count: s.total })}
+      <p className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink">
+        <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ok" aria-hidden />
+        <span className="tabular-nums">{rd('allEditable', { count: s.total })}</span>
       </p>
     )
   }
@@ -325,8 +345,8 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
     <dl className="flex min-w-0 flex-wrap gap-x-4 gap-y-1">
       {cells.map((c) => (
         <div key={c.key} className="flex items-baseline gap-1">
-          <dt className="text-xs text-ink-3">{rd(`summary.${c.key}`)}</dt>
-          <dd className="font-mono text-xs text-ink">{c.value}</dd>
+          <dt className="type-meta">{rd(`summary.${c.key}`)}</dt>
+          <dd className="text-xs tabular-nums text-ink">{c.value}</dd>
         </div>
       ))}
     </dl>
@@ -366,10 +386,10 @@ function ProjectNotices({
   if (staleError && !refreshing) notes.push(rd('staleReport'))
   if (!notes.length) return null
   return (
-    <ul className="flex flex-col gap-1 rounded-md border border-border bg-surface-2 p-2">
+    <ul className="flex flex-col gap-1 rounded-sm bg-surface-2 px-2 py-1.5">
       {notes.map((n) => (
-        <li key={n} className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-          <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-3" />
+        <li key={n} className="type-caption flex items-start gap-1.5">
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-warn" aria-hidden />
           {n}
         </li>
       ))}
@@ -402,25 +422,29 @@ function entryOf(view: RegistryView | null, script: string): string | undefined 
   return view?.all_scripts.find((s) => s.script === script)?.entry_candidates[0]
 }
 
-/** 状态角标：颜色**不是唯一表达**，文字本身就是状态名 */
-const BADGE_TONE: Record<ReadinessStatus, string> = {
-  editable: 'bg-selected text-ink',
-  auto_linkable: 'bg-surface-2 text-ink-2',
-  needs_probe: 'bg-surface-2 text-ink-2',
-  conflict: 'bg-danger-subtle text-danger',
-  source_missing: 'bg-danger-subtle text-danger',
-  layout_only: 'bg-surface-2 text-ink-3',
+/**
+ * 状态记号：12px 的一个图标 + 状态名，坐在元数据那一行里。
+ * 颜色**不是唯一表达**——文字本身就是状态名；图标只分三档：好了 / 还差一步 /
+ * 出了岔子（冲突、脚本丢了），仅排版是「没有源脚本、也不需要」的一横。
+ */
+const STATUS_MARK: Record<
+  ReadinessStatus,
+  { icon: typeof CircleCheck; tone: string }
+> = {
+  editable: { icon: CircleCheck, tone: 'text-ok' },
+  auto_linkable: { icon: CircleDashed, tone: 'text-ink-3' },
+  needs_probe: { icon: CircleDashed, tone: 'text-ink-3' },
+  conflict: { icon: TriangleAlert, tone: 'text-danger' },
+  source_missing: { icon: TriangleAlert, tone: 'text-danger' },
+  layout_only: { icon: CircleMinus, tone: 'text-ink-faint' },
 }
 
-function StatusBadge({ status }: { status: ReadinessStatus }) {
+function StatusMark({ status }: { status: ReadinessStatus }) {
   useTranslation('workspace')
+  const { icon: Icon, tone } = STATUS_MARK[status]
   return (
-    <span
-      className={cn(
-        'shrink-0 rounded-sm px-1 text-xs leading-4',
-        BADGE_TONE[status],
-      )}
-    >
+    <span className="flex shrink-0 items-center gap-1">
+      <Icon size={ICON_SIZE.xs} className={tone} aria-hidden />
       {statusLabel(status)}
     </span>
   )
@@ -437,15 +461,10 @@ function StatusBadge({ status }: { status: ReadinessStatus }) {
 function PanelThumb({ panel }: { panel: ReadinessPanel }) {
   const asset = useAssetStore((s) => s.byId[panel.id])
   const src = asset ? panelSrc(asset.id, asset.kind, 200, asset.mtime) : null
-  // 缩略图占卡片左半（2026-09-11 用户反馈），动作在右半从上往下排
-  if (!src) return <span className="aspect-[4/3] w-1/2 shrink-0 rounded-sm bg-surface-2" aria-hidden />
-  return (
-    <img
-      src={src}
-      alt=""
-      className="w-1/2 shrink-0 self-start rounded-sm border border-border bg-white object-contain"
-    />
-  )
+  // 64×48 的一小格：行里的识别记号，不是看图器
+  const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-white'
+  if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
+  return <img src={src} alt="" className={cn(box, 'object-contain')} />
 }
 
 function PanelRow({
@@ -476,7 +495,7 @@ function PanelRow({
   const disabled = busy !== null
 
   // 「为什么不能编辑？」进来的那一次：滚到它、把焦点放上去、短暂高亮。
-  // 高亮是**静态描边**不是动画——reduced-motion 下不需要另写一份。
+  // 高亮是**静态底色**不是动画——reduced-motion 下不需要另写一份。
   useEffect(() => {
     if (!focused) return
     const el = ref.current
@@ -489,185 +508,218 @@ function PanelRow({
     return () => window.clearTimeout(timer)
   }, [focused])
 
+  // 这一行上刚跑过的那个脚本的结果：已绑定的优先，其次是候选里跑过的
+  // 那一个。一行只显示一条——两条并排的话，用户分不出哪条对应刚才那次点击
+  const note = [panel.script, ...panel.candidates]
+    .map((s) => (s ? probed[s] : undefined))
+    .find(Boolean)
+
   return (
     <li
       ref={ref}
       tabIndex={-1}
       data-panel-row={panel.id}
       className={cn(
-        'rounded-md border p-2 outline-none',
-        highlight ? 'border-border-strong bg-selected' : 'border-border',
-        'focus-visible:focus-ring',
+        '-mx-2 rounded-sm px-2 py-2 outline-none transition-colors duration-fast focus-visible:focus-ring',
+        highlight && 'bg-selected',
       )}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-3">
         <PanelThumb panel={panel} />
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <div className="flex items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-xs text-ink" title={panel.id}>
-              {fileName(panel.id)}
-            </span>
-            <StatusBadge status={panel.status} />
-          </div>
-          {/* 每张图的原因句不再逐条列出（2026-09-11 设计包）：状态在角标与分组标题里，
-              原因仍由预检横幅与素材卡（`reasonText`）在别处说 */}
-          {panel.status === 'needs_probe' && (
-            <p className="text-xs leading-relaxed text-ink-3">{rd('probeWarning')}</p>
-          )}
-
-      <RowActions
-        panel={panel}
-        allScripts={allScripts}
-        writable={writable}
-        disabled={disabled}
-        busyKey={busy}
-        hasAsset={!!asset}
-        onAdd={() => {
-          if (!asset) return
-          addPanel(asset)
-          useProjectReadinessStore.getState().closeCenter()
-        }}
-        onProbe={onProbe}
-        onLink={onLink}
-        onRescan={onRescan}
-      />
-
-      {/* 这一行上刚跑过的那个脚本的结果：已绑定的优先，其次是候选里跑过的
-          那一个。一行只显示一条——两条并排的话，用户分不出哪条对应刚才那次点击 */}
-      <ProbeNoteView
-        note={[panel.script, ...panel.candidates]
-          .map((s) => (s ? probed[s] : undefined))
-          .find(Boolean)}
-      />
-
-      {/* `editable` 的「重新试运行 / 改为其它源脚本」是少数动作，原本收在「技术详情」
-          折叠段里；那一段按 2026-09-11 设计包整个去掉，这两个动作直接跟在行尾。
-          其余状态的关联控件在 RowActions 里 */}
-      {panel.status === 'editable' && (
-        <div className="flex flex-col gap-1.5">
-          {panel.script && (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="w-full"
-              disabled={disabled}
-              onClick={() => onProbe(panel.script as string)}
-            >
-              <Play size={ICON_SIZE.sm} className={cn(busy === panel.script && 'animate-pulse')} />
-              {rd(busy === panel.script ? 'running' : 'reprobe')}
-            </Button>
-          )}
-          <SourcePicker
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs text-ink" title={panel.id}>
+            {fileName(panel.id)}
+          </p>
+          <p className="type-meta mt-0.5 flex min-w-0 items-center gap-1">
+            <StatusMark status={panel.status} />
+            {panel.script && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="min-w-0 truncate font-mono" title={panel.script}>
+                  {panel.script}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <PrimaryAction
+            panel={panel}
+            disabled={disabled}
+            busyKey={busy}
+            hasAsset={!!asset}
+            onAdd={() => {
+              if (!asset) return
+              addPanel(asset)
+              useProjectReadinessStore.getState().closeCenter()
+            }}
+            onProbe={onProbe}
+            onRescan={onRescan}
+          />
+          <MoreMenu
             panel={panel}
             allScripts={allScripts}
             writable={writable}
             disabled={disabled}
+            onProbe={onProbe}
             onLink={onLink}
-            linkLabel="relink"
           />
         </div>
-      )}
-        </div>
       </div>
+
+      {/* 冲突：候选**逐个列出来**，一个都不替用户选。文件名更像"新版本"的
+          那一个也不许赢——那是猜，而猜错的代价是用户此后每次编辑都改错脚本。
+          这是唯一一种「一行不止一个动作」的状态，摆在第二行、缩进到文件名列 */}
+      {panel.status === 'conflict' && panel.candidates.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5 pl-19">
+          {panel.candidates.map((script) => (
+            <Button
+              key={script}
+              variant="secondary"
+              size="sm"
+              disabled={disabled || !panel.can_manual_link}
+              onClick={() => onLink(script)}
+            >
+              {rd('useScript', { script })}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {/* 每张图的原因句不再逐条列出（2026-09-11 设计包）：状态在记号与分组标题里，
+          原因仍由预检横幅与素材卡（`reasonText`）在别处说。试运行的那句提醒例外——
+          它说的是「点下去会发生什么」 */}
+      {panel.status === 'needs_probe' && (
+        <p className="type-caption mt-1 pl-19">{rd('probeWarning')}</p>
+      )}
+
+      {note && (
+        <div className="pl-19">
+          <ProbeNoteView note={note} />
+        </div>
+      )}
     </li>
   )
 }
 
 /**
- * 每个状态的下一步动作。
+ * 每个状态的**那一个**主动作。
  *
- * 排列的规矩只有一条：**先摆这个状态下最可能对的那一个**。
- * `conflict` 是唯一没有"最可能对"的——候选逐个列出来，机器一个都不选。
+ * 排列的规矩只有一条：**摆这个状态下最可能对的那一个**。
+ * `conflict` 是唯一没有"最可能对"的——候选在行的第二行逐个列出，机器一个都不选。
  */
-function RowActions({
+function PrimaryAction({
   panel,
-  allScripts,
-  writable,
   disabled,
   busyKey,
   hasAsset,
   onAdd,
   onProbe,
-  onLink,
   onRescan,
 }: {
   panel: ReadinessPanel
-  allScripts: string[]
-  writable: boolean
   disabled: boolean
   busyKey: string | null
   hasAsset: boolean
   onAdd: () => void
   onProbe: (script: string) => void
-  onLink: (script: string) => void
   onRescan: () => void
 }) {
   useTranslation('dialogs')
 
+  // 已经能编辑的那张只留一个动作：把它放上画布（审计 T10——「仅待连接项
+  // 展示下一步」）。素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材
+  // 遍历之间新出现 / 刚被删掉的那一档，点下去只会是一条错误
+  if (panel.status === 'editable') {
+    if (!hasAsset) return null
+    return (
+      <Button variant="secondary" size="sm" disabled={disabled} onClick={onAdd}>
+        <Plus size={ICON_SIZE.sm} />
+        {rd('addToCanvas')}
+      </Button>
+    )
+  }
+
+  if (panel.status === 'auto_linkable' || panel.status === 'source_missing') {
+    return (
+      <Button variant="secondary" size="sm" disabled={disabled} onClick={onRescan}>
+        <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
+        {rd(panel.status === 'auto_linkable' ? 'autoLink' : 'rescan')}
+      </Button>
+    )
+  }
+
+  if (panel.status === 'needs_probe') {
+    return (
+      <ProbePicker
+        candidates={panel.candidates}
+        disabled={disabled}
+        busyKey={busyKey}
+        onProbe={onProbe}
+      />
+    )
+  }
+
+  return null
+}
+
+/**
+ * 行尾的 ⋯：低频动作都在这里——重新试运行（排障）、改绑 / 选择源脚本（手工关联）。
+ * 一个都没有时不渲染：空菜单比没有菜单更糟。
+ */
+function MoreMenu({
+  panel,
+  allScripts,
+  writable,
+  disabled,
+  onProbe,
+  onLink,
+}: {
+  panel: ReadinessPanel
+  allScripts: string[]
+  writable: boolean
+  disabled: boolean
+  onProbe: (script: string) => void
+  onLink: (script: string) => void
+}) {
+  useTranslation('dialogs')
+  const options = useMemo(() => sourceOptions(panel, allScripts), [panel, allScripts])
+  const canReprobe = panel.status === 'editable' && !!panel.script
+  // 手工关联：**只读项目上不给**——给出一个按了才发现存不下的入口，比没有更糟
+  // （那时用户会以为是自己操作错了）。冲突那一档的候选已经在行里逐个列出。
+  const canPick =
+    writable && panel.can_manual_link && panel.status !== 'conflict' && options.length > 0
+  if (!canReprobe && !canPick) return null
   return (
-    <div className="flex flex-col items-stretch gap-1.5 empty:hidden">
-      {/* 已经能编辑的那张只留一个动作：把它放上画布（审计 T10——「仅待连接项
-          展示下一步」）。「重新试运行」是排障动作，它和改绑一起收进技术详情：
-          摆在第一层会让一张**已经好了**的图看起来还有事要做。
-          素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
-          新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
-      {panel.status === 'editable' && hasAsset && (
-        <Button variant="secondary" size="sm" className="w-full" disabled={disabled} onClick={onAdd}>
-          <Plus size={ICON_SIZE.sm} />
-          {rd('addToCanvas')}
-        </Button>
-      )}
-
-      {panel.status === 'auto_linkable' && (
-        <Button variant="secondary" size="sm" disabled={disabled} onClick={onRescan}>
-          <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
-          {rd('autoLink')}
-        </Button>
-      )}
-
-      {panel.status === 'needs_probe' && (
-        <ProbePicker
-          candidates={panel.candidates}
+    <Menu
+      align="end"
+      width={200}
+      trigger={
+        <IconButton
+          iconSize="sm"
+          label={rd('moreAria', { name: fileName(panel.id) })}
           disabled={disabled}
-          busyKey={busyKey}
-          onProbe={onProbe}
-        />
+          className="text-ink-3 hover:text-ink"
+        >
+          <Ellipsis size={ICON_SIZE.sm} />
+        </IconButton>
+      }
+    >
+      {canReprobe && (
+        <MenuItem icon={Play} onSelect={() => onProbe(panel.script as string)}>
+          {rd('reprobe')}
+        </MenuItem>
       )}
-
-      {/* 冲突：候选**逐个列出来**，一个都不替用户选。文件名更像"新版本"的
-          那一个也不许赢——那是猜，而猜错的代价是用户此后每次编辑都改错脚本 */}
-      {panel.status === 'conflict' &&
-        panel.candidates.map((script) => (
-          <Button
-            key={script}
-            variant="secondary"
-            size="sm"
-            disabled={disabled || !panel.can_manual_link}
-            onClick={() => onLink(script)}
-          >
-            {rd('useScript', { script })}
-          </Button>
-        ))}
-
-      {panel.status === 'source_missing' && (
-        <Button variant="secondary" size="sm" disabled={disabled} onClick={onRescan}>
-          <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
-          {rd('rescan')}
-        </Button>
+      {canPick && (
+        <MenuSub label={rd(panel.status === 'editable' ? 'relinkPlaceholder' : 'pickSourcePlaceholder')}>
+          {options.map((s) => (
+            <MenuItem key={s} onSelect={() => onLink(s)}>
+              <span className="font-mono">{s}</span>
+            </MenuItem>
+          ))}
+        </MenuSub>
       )}
-
-      {/* 手工关联：四个还没连上的状态都给，`editable` 收进技术详情（改绑是
-          少数动作，摆在第一层会盖过"它已经好了"这句话） */}
-      {panel.status !== 'editable' && panel.status !== 'conflict' && (
-        <SourcePicker
-          panel={panel}
-          allScripts={allScripts}
-          writable={writable}
-          disabled={disabled}
-          onLink={onLink}
-        />
-      )}
-    </div>
+    </Menu>
   )
 }
 
@@ -695,7 +747,7 @@ function ProbePicker({
     <>
       {candidates.length > 1 && (
         <Select
-          className="min-w-40 flex-1 font-mono"
+          className="w-36 font-mono"
           value={script}
           onChange={setPicked}
           ariaLabel={rd('probePickAria')}
@@ -739,54 +791,6 @@ export function sourceOptions(
   return [...panel.candidates, ...rest]
 }
 
-/**
- * 手工选择源脚本。**只读项目上不渲染**——给出一个按了才发现存不下的按钮，
- * 比没有这个按钮更糟（那时用户会以为是自己操作错了）。
- */
-function SourcePicker({
-  panel,
-  allScripts,
-  writable,
-  disabled,
-  onLink,
-  linkLabel = 'link',
-}: {
-  panel: ReadinessPanel
-  allScripts: string[]
-  writable: boolean
-  disabled: boolean
-  onLink: (script: string) => void
-  /** 按钮文案：还没连上是「连接」，已经连上（改绑）是「改为这个脚本」 */
-  linkLabel?: 'link' | 'relink'
-}) {
-  useTranslation('dialogs')
-  const options = useMemo(
-    () => sourceOptions(panel, allScripts),
-    [panel, allScripts],
-  )
-  const [picked, setPicked] = useState('')
-  const script = options.includes(picked) ? picked : ''
-
-  if (!writable || !panel.can_manual_link || options.length === 0) return null
-  // 下拉与「改为这个脚本」同一行：卡片右半是一列动作，这一行是其中一行
-  return (
-    <div className="flex items-center gap-1.5">
-      <Select
-        className="min-w-0 flex-1 font-mono"
-        value={script}
-        onChange={setPicked}
-        placeholder={rd(linkLabel === 'relink' ? 'relinkPlaceholder' : 'pickSourcePlaceholder')}
-        ariaLabel={rd('pickSourceAria', { name: fileName(panel.id) })}
-        options={options.map((s) => ({ value: s, label: s }))}
-      />
-      <Button size="sm" className="shrink-0" disabled={disabled || !script} onClick={() => onLink(script)}>
-        {rd(linkLabel)}
-      </Button>
-    </div>
-  )
-}
-
-
 /* -------------------------------------------------------------------------- */
 /*  高级段：项目里的全部脚本                                                    */
 /* -------------------------------------------------------------------------- */
@@ -818,36 +822,35 @@ function AllScriptsSection({
 }) {
   useTranslation('dialogs')
   return (
-    <Details className="rounded-md border border-border">
-      <Summary className="px-2 py-1 text-xs font-medium text-ink-2">
+    <Details className="border-t border-border pt-2">
+      <Summary className="type-section h-7 gap-1 rounded-sm px-1 hover:text-ink-2">
         {rd('allScriptsTitle', { n: scripts.length })}
       </Summary>
-      <p className="px-2 pb-1 text-xs leading-relaxed text-ink-3">{rd('allScriptsHint')}</p>
+      <p className="type-caption px-1 pb-1">{rd('allScriptsHint')}</p>
       <ul className="max-h-52 overflow-y-auto">
         {scripts.map((s) => (
-          <li key={s.script} className="flex flex-col gap-0.5 border-t border-border px-2 py-1">
-            <div className="flex items-baseline gap-2">
+          <li key={s.script} className="flex flex-col gap-0.5 border-t border-border px-1 py-1.5">
+            <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={s.script}>
                 {s.script}
               </span>
-              <span className="shrink-0 rounded-sm bg-surface-2 px-1 text-xs leading-4 text-ink-3">
+              <span className="type-meta shrink-0">
                 {translate(`registry.reason_${s.reason}`, { ns: 'dialogs' })}
               </span>
               {s.can_probe && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="-my-1 text-ink-2 hover:text-ink"
                   disabled={busy !== null}
                   onClick={() => onProbe(s.script)}
-                  className={cn(
-                    'shrink-0 text-xs text-ink-3 outline-none',
-                    'hover:text-ink focus-visible:focus-ring disabled:opacity-40',
-                  )}
                 >
                   {rd(busy === s.script ? 'running' : s.registered ? 'reprobe' : 'probeAndLink')}
-                </button>
+                </Button>
               )}
             </div>
             {s.static_stems.length > 0 && (
-              <span className="truncate text-xs text-ink-3" title={listJoin(s.static_stems)}>
+              <span className="type-meta truncate" title={listJoin(s.static_stems)}>
                 {listJoin(s.static_stems)}
               </span>
             )}
@@ -863,7 +866,7 @@ function AllScriptsSection({
           </li>
         ))}
       </ul>
-      <p className="border-t border-border px-2 py-1 text-xs leading-relaxed text-ink-3">
+      <p className="type-meta border-t border-border px-1 py-1.5">
         {rd('sourcePrefix')}
         <span className="font-mono">{source || rd('none')}</span>
       </p>
@@ -896,7 +899,7 @@ function ManualStems({
   const options = pickableStems(known, stems)
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-ink-3" htmlFor={`stems-${script}`}>
+      <label className="type-meta" htmlFor={`stems-${script}`}>
         {rd('manualLabel')}
       </label>
       <div className="flex items-center gap-1.5">
@@ -924,6 +927,7 @@ function ManualStems({
         )}
         <Button
           size="sm"
+          variant="secondary"
           className="shrink-0"
           disabled={disabled || stems.length === 0}
           onClick={() => {
@@ -975,7 +979,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
   const setStatus = useUiStore((s) => s.setStatus)
   if (!note) return null
   return (
-    <div className="mt-1 text-xs text-ink-3">
+    <div className="type-caption mt-1">
       <p className="whitespace-pre-wrap">{note.text}</p>
       {/* 捕获成功的每张图可以直接作为 runtime 面板放上画布。没有磁盘产物的
           show-only 图从这里第一次真正进入产品。 */}
@@ -999,10 +1003,10 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
       )}
       {note.traceback && (
         <Details className="mt-0.5">
-          <Summary>
+          <Summary className="type-meta h-5 w-fit">
             {translate('registry.probeTraceback', { ns: 'dialogs' })}
           </Summary>
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug">
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-ink-3">
             {note.traceback}
           </pre>
         </Details>

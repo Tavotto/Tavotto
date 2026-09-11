@@ -374,7 +374,7 @@
     "failedTitle": "This check did not finish",
     "filterAria": "Show only {{label}} ({{count}})",
     "fix": "Fix",
-    "fixAuto": "Fix auto-fixable",
+    "fixAuto": "Fix all automatically",
     "fixChoose": "Fix…",
     "fixFailed": {
       "canvas_missing": "The canvas this problem lives on could not be found — refresh the list",
@@ -386,8 +386,8 @@
       "double": "Set to double-column width {{mm}} mm",
       "single": "Set to single-column width {{mm}} mm"
     },
-    "fixableHere_one": "{{count}} issue on this canvas can be fixed automatically",
-    "fixableHere_other": "{{count}} issues on this canvas can be fixed automatically",
+    "fixableHere_one": "{{count}} can be fixed automatically",
+    "fixableHere_other": "{{count}} can be fixed automatically",
     "fixed_one": "Fixed {{count}} problem (undoable)",
     "fixed_other": "Fixed {{count}} problems (undoable)",
     "focusFailed": {
@@ -426,6 +426,8 @@
       "warn": "Warning"
     },
     "severityLabel": "Issue severity",
+    "showRest_one": "Show {{count}} more",
+    "showRest_other": "Show {{count}} more",
     "subjectArrow": "Arrow",
     "subjectElement": "Figure element",
     "subjectObject": "Object",

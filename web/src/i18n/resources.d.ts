@@ -873,7 +873,7 @@ export default interface Resources {
     },
     "readiness": {
       "addToCanvas": "添加到画布",
-      "allEditable_other": "{{count}} 张图都可以编辑。",
+      "allEditable_other": "{{count}} 张图已就绪",
       "allScriptsHint": "项目里的每个 .py 都在这里，包括那些只看脚本看不出会画出哪张图的。任选一个「试运行」，Tavotto 按它真实画出来的图建立关系。",
       "allScriptsTitle": "全部脚本（{{n}}）",
       "autoLink": "自动连接",
@@ -894,6 +894,7 @@ export default interface Resources {
       "manualPick": "从项目里挑",
       "manualPickAria": "从项目已有的图名里挑一个给 {{script}}",
       "manualPlaceholder": "图名（去掉扩展名），多个用逗号分隔",
+      "moreAria": "{{name}} 的更多操作",
       "none": "—",
       "nothingNew": "扫描完成，没有发现新的可连接脚本",
       "orphanConflicts": "这些图名有不止一个脚本声称生成：{{stems}}。项目里还没有对应的图文件，可以在下面的「全部脚本」里指定。",
@@ -1995,7 +1996,7 @@ export default interface Resources {
       "failedTitle": "这一次没查成",
       "filterAria": "只看{{label}}（{{count}} 项）",
       "fix": "修复",
-      "fixAuto": "修复可自动处理项",
+      "fixAuto": "全部处理",
       "fixChoose": "修复…",
       "fixFailed": {
         "canvas_missing": "找不到这条问题所在的画布，请先刷新问题列表",
@@ -2007,7 +2008,7 @@ export default interface Resources {
         "double": "改成双栏宽 {{mm}}mm",
         "single": "改成单栏宽 {{mm}}mm"
       },
-      "fixableHere_other": "当前画布可自动修复 {{count}} 项",
+      "fixableHere_other": "{{count}} 项可自动处理",
       "fixed_other": "已修复 {{count}} 项（可撤销）",
       "focusFailed": {
         "canvas_missing": "这条问题所在的画布已经不在项目里了",
@@ -2042,6 +2043,7 @@ export default interface Resources {
         "warn": "警告"
       },
       "severityLabel": "问题严重程度",
+      "showRest_other": "显示其余 {{count}} 项",
       "subjectArrow": "箭头",
       "subjectElement": "图内元素",
       "subjectObject": "对象",

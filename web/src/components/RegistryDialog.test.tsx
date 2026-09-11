@@ -190,6 +190,27 @@ const clickIn = async (el: Element | null, label: string) => {
     await Promise.resolve()
   })
 }
+/** 行尾的 ⋯（2026-09-11 Session 4）：可达名是「<文件名> 的更多操作」 */
+const moreButton = (row: Element) =>
+  [...row.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+    (b.getAttribute('aria-label') ?? '').endsWith('的更多操作'),
+  ) ?? null
+/**
+ * 打开一行的 ⋯ 菜单并返回菜单节点（Radix 把它 portal 到 body 上，不在行里）。
+ * Radix 的触发器认 pointerdown（button 0），jsdom 没有 PointerEvent 构造器——
+ * 同名的 MouseEvent 照样按事件名派发。
+ */
+const openMore = async (row: Element) => {
+  const btn = moreButton(row)
+  expect(btn, '这一行没有 ⋯').toBeTruthy()
+  await act(async () => {
+    btn!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await Promise.resolve()
+  })
+  const menu = document.querySelector('[role="menu"]')
+  expect(menu, '⋯ 没有打开菜单').toBeTruthy()
+  return menu!
+}
 
 beforeEach(() => {
   localStorage.clear()
@@ -309,14 +330,17 @@ describe('绝不替用户决定', () => {
 })
 
 describe('手工选择源脚本', () => {
-  it('可写项目上给出下拉；选中后「连接」写的是 stem，入口取自那个脚本自己的', async () => {
+  it('可写项目上 ⋯ 菜单里给得出「选择源脚本」；选中后写的是 stem，入口取自那个脚本自己的', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Photo.png')!
-    const trigger = row.querySelector<HTMLElement>('[role="combobox"]')
-    expect(trigger, '仅排版的图应该给得出「选择源脚本」').toBeTruthy()
-    // Radix Select 的弹层在 jsdom 里不好点，直接驱动被测的写入路径：
-    // 这里要钉的是「写进去的是什么」，不是 Radix 的开合
-    expect(row.textContent).toContain('选择源脚本')
+    // 2026-09-11 Session 4：手工关联收进行尾的 ⋯ 菜单（低频动作不占第一层）
+    const menu = await openMore(row)
+    const sub = [...menu.querySelectorAll('[role="menuitem"]')].find((m) =>
+      m.textContent?.includes('选择源脚本'),
+    )
+    expect(sub, '仅排版的图应该给得出「选择源脚本」').toBeTruthy()
+    // 这里要钉的是「写进去的是什么」，不是 Radix 子菜单的开合：
+    // 候选顺序与「不列当前脚本」由下面那条纯函数用例看住
   })
 
   /** 「全部脚本」段里第 n 行的手工填名 → 写入，走的是同一条写入路径 */
@@ -339,14 +363,16 @@ describe('手工选择源脚本', () => {
     await clickIn(row, '写入')
   }
 
-  it('已经连上的图也能改绑；技术详情段已去掉，改绑控件直接在行里', async () => {
+  it('已经连上的图也能改绑；技术详情段已去掉，改绑入口在行尾的 ⋯ 菜单里', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
-    const picker = row.querySelector('[role="combobox"]')
-    expect(picker, '可编辑的图也该给得出改绑').not.toBeNull()
     // 2026-09-11 设计包去掉了「技术详情」折叠段：行里不再有 <details>
-    expect(picker!.closest('details')).toBeNull()
-    expect(row.textContent).toContain('改绑到其它脚本')
+    expect(row.querySelector('details')).toBeNull()
+    const menu = await openMore(row)
+    const sub = [...menu.querySelectorAll('[role="menuitem"]')].find((m) =>
+      m.textContent?.includes('改绑到其它脚本'),
+    )
+    expect(sub, '可编辑的图也该给得出改绑').toBeTruthy()
   })
 
   // 选项住在 Radix 的弹层里，从 DOM 上量不到——所以判据打在那个纯函数上
@@ -447,8 +473,8 @@ describe('项目级状态', () => {
     )
     expect(conflictButtons.length).toBeGreaterThan(0)
     expect(conflictButtons.every((b) => b.disabled)).toBe(true)
-    // 手工选择的下拉整个不渲染
-    expect(rowOf('Photo.png')!.querySelector('[role="combobox"]')).toBeNull()
+    // 手工选择的入口整个不渲染：只读项目上仅排版的图连 ⋯ 都没有
+    expect(moreButton(rowOf('Photo.png')!)).toBeNull()
   })
 
   it('这一轮没扫成：说「可能不完整」，不冒充"没有候选"', async () => {
@@ -510,7 +536,7 @@ describe('正常状态', () => {
   it('全都能编辑：一句话说完，不摆四个格子', async () => {
     await open(reportOf(ALL_OK))
     const text = dialog().textContent ?? ''
-    expect(text).toContain('2 张图都可以编辑')
+    expect(text).toContain('2 张图已就绪')
     expect(text).not.toContain('待连接')
     expect(text).not.toContain('仅排版')
   })
@@ -520,7 +546,7 @@ describe('正常状态', () => {
     const text = dialog().textContent ?? ''
     expect(text).toContain('待连接')
     expect(text).toContain('仅排版')
-    expect(text).not.toContain('都可以编辑')
+    expect(text).not.toContain('已就绪')
   })
 
   it('可编辑那些不再逐张重复同一句解释；分组标题已经说了几张', async () => {
@@ -704,14 +730,30 @@ describe('可编辑图的动作层级', () => {
     expect(firstLevelButtons('Ok.pdf')[0]).toBe('添加到画布')
   })
 
-  it('「重新试运行」还在，技术详情段去掉后直接在行里', async () => {
+  it('「重新试运行」还在：收进行尾的 ⋯ 菜单，点了跑的是既有的试运行端点', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
-    const reprobe = [...row.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('重新试运行'),
+    // 第一层不再有它——一张已经好了的图不该看起来还有事要做
+    expect(firstLevelButtons('Ok.pdf').join(' ')).not.toContain('重新试运行')
+    const menu = await openMore(row)
+    const reprobe = [...menu.querySelectorAll('[role="menuitem"]')].find((m) =>
+      m.textContent?.includes('重新试运行'),
     )
     expect(reprobe, '排障动作不该被删掉').toBeTruthy()
-    expect(reprobe!.closest('details')).toBeNull()
+    await act(async () => {
+      reprobe!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(mockProbe).toHaveBeenCalledWith('ok.py')
+  })
+
+  it('没有任何低频动作可放时（只读项目上的仅排版图）就没有 ⋯', async () => {
+    await open(
+      reportOf([P({ id: 'Photo.png', stem: 'Photo' })], {
+        project: { writable: false, registry_valid: true, scan_ok: true, can_rescan: true },
+      }),
+    )
+    expect(moreButton(rowOf('Photo.png')!)).toBeNull()
   })
 
   it('待连接的那些第一层照旧有下一步', async () => {
