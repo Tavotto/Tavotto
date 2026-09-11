@@ -228,7 +228,6 @@ async function setupRaster(overrides: { gid: string; prop: string; value: unknow
 const button = (label: string) =>
   [...document.body.querySelectorAll('button')].find((b) => b.textContent?.includes(label))
 
-const FORMAT_TITLES = ['PDF', 'PNG', 'EPS', 'TIFF']
 /** 格式复选框（组件工作台批次把 aria-pressed 的按钮改成了普通复选框，`FormatCheck`） */
 const formatBox = (title: string) =>
   [...document.body.querySelectorAll('label')]
@@ -236,11 +235,9 @@ const formatBox = (title: string) =>
     ?.querySelector('input[type="checkbox"]') as HTMLInputElement
 /** 位图分辨率下拉：只在选了位图格式时出现（工作台批次起它坐在文件名那一行右侧，没有「分辨率」文字标签） */
 const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-label="位图分辨率"]')
-/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗** */
+/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
 const confirmBox = () =>
-  ([...document.body.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[]).find(
-    (i) => !FORMAT_TITLES.includes(i.closest('label')?.textContent?.trim() ?? ''),
-  ) ?? null
+  document.body.querySelector<HTMLInputElement>('input[data-export-confirm]')
 
 const click = async (el: Element) => {
   await act(async () => {

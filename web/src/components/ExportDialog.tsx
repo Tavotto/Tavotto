@@ -933,7 +933,10 @@ export function ExportDialog() {
 
           {needsConfirm && (
             <label className="flex items-start gap-2 pt-1 text-xs leading-relaxed text-ink-2">
+              {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
+                  「页面里第一颗 checkbox」早就不是它了 */}
               <Checkbox
+                data-export-confirm
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
                 className="mt-0.5"
