@@ -323,6 +323,10 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects"
   },
+  "hud": {
+    "cursor": "Cursor",
+    "size": "Size"
+  },
   "layerTree": {
     "collapseGroup": "Collapse group",
     "emptyTitle": "No objects on the canvas yet",

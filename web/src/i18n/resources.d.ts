@@ -3807,6 +3807,10 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
+    "hud": {
+      "cursor": "光标",
+      "size": "尺寸"
+    },
     "layerTree": {
       "collapseGroup": "折叠组",
       "count_other": "{{count}} 个对象",
