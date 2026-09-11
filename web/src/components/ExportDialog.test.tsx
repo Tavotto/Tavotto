@@ -228,6 +228,20 @@ async function setupRaster(overrides: { gid: string; prop: string; value: unknow
 const button = (label: string) =>
   [...document.body.querySelectorAll('button')].find((b) => b.textContent?.includes(label))
 
+const FORMAT_TITLES = ['PDF', 'PNG', 'EPS', 'TIFF']
+/** 格式复选框（组件工作台批次把 aria-pressed 的按钮改成了普通复选框，`FormatCheck`） */
+const formatBox = (title: string) =>
+  [...document.body.querySelectorAll('label')]
+    .find((l) => l.textContent?.trim() === title)
+    ?.querySelector('input[type="checkbox"]') as HTMLInputElement
+/** 位图分辨率下拉：只在选了位图格式时出现（工作台批次起它坐在文件名那一行右侧，没有「分辨率」文字标签） */
+const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-label="位图分辨率"]')
+/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗** */
+const confirmBox = () =>
+  ([...document.body.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[]).find(
+    (i) => !FORMAT_TITLES.includes(i.closest('label')?.textContent?.trim() ?? ''),
+  ) ?? null
+
 const click = async (el: Element) => {
   await act(async () => {
     ;(el as HTMLElement).click()
@@ -254,14 +268,15 @@ afterEach(() => {
 })
 
 describe('信息架构：删掉的东西不许回来', () => {
-  it('文件名在最上方，且预览出这次会写哪几个文件', async () => {
+  it('文件名在最上方（第一个可输入的控件）', async () => {
     await setup(9)
     const inputs = [...document.body.querySelectorAll('input')].filter(
       (i) => i.type !== 'checkbox',
     )
-    // 第一个可输入的控件就是文件名（`d_export` 文档名）
+    // 第一个可输入的控件就是文件名（`d_export` 文档名）。文件名下面那行
+    // 「这次会写哪几个文件」的预览按 2026-09-11 组件工作台批次去掉了——扩展名
+    // 由格式复选框直接说出来，不再复述一遍
     expect((inputs[0] as HTMLInputElement).value).toBe(useDocumentStore.getState().doc.name)
-    expect(text()).toContain('.pdf')
   })
 
   it('§五的删除清单逐条不在界面上', async () => {
@@ -445,7 +460,7 @@ describe('阻断与确认', () => {
     const go = button('开始导出')!
     expect(go.hasAttribute('disabled')).toBe(true)
 
-    const check = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = confirmBox()!
     expect(check, '缺少显式确认勾选框').toBeTruthy()
     await act(async () => {
       check.click()
@@ -481,7 +496,7 @@ describe('阻断与确认', () => {
 describe('确认只对"这一批"问题有效', () => {
   it('问题集合变了，那个勾必须掉（否则新问题会不经确认被导出）', async () => {
     await setup(8) // 8pt 刻度 → 一条阻断项
-    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = () => confirmBox()!
     await act(async () => {
       check().click()
     })
@@ -517,14 +532,14 @@ describe('确认只对"这一批"问题有效', () => {
       await new Promise<void>((r) => setTimeout(r, 0))
     })
     expect(text(), '这一步得真的改变问题集合，不然这条用例是空的').not.toBe(before)
-    const after = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement | null
+    const after = confirmBox()
     expect(after, '还应该要确认').toBeTruthy()
     expect(after!.checked, '问题集合变了，勾还留着 = 新问题不经确认就放行').toBe(false)
   })
 
   it('导出一次之后要重新确认（一次点头只对那一次有效）', async () => {
     await setup(8)
-    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = () => confirmBox()!
     await act(async () => {
       check().click()
     })
@@ -547,8 +562,8 @@ describe('统一 ExportRequest', () => {
 
   it('只出 PDF 时 ppi 是 null，分辨率那一行**不出现**', async () => {
     await setup(9)
-    await click(button('PNG')!)          // 取消 PNG，只剩 PDF
-    expect(text()).not.toContain('分辨率')
+    await click(formatBox('PNG'))          // 取消 PNG，只剩 PDF
+    expect(ppiSelect()).toBeNull()
     await click(button('开始导出')!)
     expect(exportBodies[0].ppi).toBeNull()
     expect(exportBodies[0].formats).toEqual(['pdf'])
@@ -556,7 +571,7 @@ describe('统一 ExportRequest', () => {
 
   it('选了位图才出现分辨率，且发的是数字', async () => {
     await setup(9)
-    expect(text()).toContain('分辨率')
+    expect(ppiSelect()).toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies[0].ppi).toBe(600)
   })
@@ -603,7 +618,7 @@ describe('阻断闸没有第二条路绕过去', () => {
   it('撞名之后点「覆盖」，不许把同一批阻断项不经确认再导一次', async () => {
     jobStatus = 'conflict'
     await setup(8) // 一条阻断项
-    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = () => confirmBox()!
     await act(async () => {
       check().click()
     })
@@ -625,7 +640,7 @@ describe('阻断闸没有第二条路绕过去', () => {
   it('撞名之后问题集合变了 → 「覆盖」这条路也必须被闸挡住', async () => {
     jobStatus = 'conflict'
     await setup(8)
-    const check = () => document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = () => confirmBox()!
     await act(async () => {
       check().click()
     })
@@ -1139,7 +1154,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(text()).toContain(`${errorsOn('p1')} 阻断`)
     expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    const check = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    const check = confirmBox()!
     await act(async () => {
       check.click()
     })
@@ -1211,7 +1226,7 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     await openDialog()
     // 用户已经填了一些东西
     await typeFilename('mine')
-    await click(button('PNG')!) // 关掉 PNG
+    await click(formatBox('PNG')) // 关掉 PNG
     expect(useUiStore.getState().exportOpen).toBe(true)
 
     await click(locateButtons()[0])
@@ -1223,7 +1238,7 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
 
     await openDialog()
     expect(filenameInput().value, '让开再回来，文件名还在').toBe('mine')
-    expect(button('PNG')!.getAttribute('aria-pressed')).toBe('false')
+    expect(formatBox('PNG').checked).toBe(false)
   })
 
   it('「在问题面板中查看」同样让开而不丢状态；换了文档才重置', async () => {
@@ -1465,14 +1480,14 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
 describe('EPS 与 TIFF（ADR 0046）', () => {
   it('画布范围：EPS 禁用并说出原因，TIFF 是位图（分辨率行随它出现）', async () => {
     await setup(9)
-    await click(button('PNG')!) // 只剩 PDF
-    expect(text()).not.toContain('分辨率')
-    const eps = button('EPS') as HTMLButtonElement
+    await click(formatBox('PNG')) // 只剩 PDF
+    expect(ppiSelect()).toBeNull()
+    const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.title).toContain('EPS 只能按「原图尺寸」导出单张图')
-    await click(button('TIFF')!)
-    expect(text(), 'TIFF 是位图，分辨率那一行要出现').toContain('分辨率')
-    expect(text()).toContain('Fig1.tiff'.replace('Fig1', useDocumentStore.getState().doc.name))
+    expect(eps.closest('label')!.title).toContain('EPS 只能按「原图尺寸」导出单张图')
+    await click(formatBox('TIFF'))
+    expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
+    // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
     await click(button('开始导出')!)
     expect(exportBodies[0].formats).toEqual(['pdf', 'tiff'])
     expect(exportBodies[0].ppi).toBe(600)
@@ -1486,12 +1501,12 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
         byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
       } as never)
     })
-    const eps = button('EPS') as HTMLButtonElement
+    const eps = formatBox('EPS')
     expect(eps.disabled).toBe(false)
     await click(eps)
-    await click(button('PNG')!)
-    await click(button('PDF')!)
-    expect(text(), '只剩矢量格式，分辨率那一行不该出现').not.toContain('分辨率')
+    await click(formatBox('PNG'))
+    await click(formatBox('PDF'))
+    expect(ppiSelect(), '只剩矢量格式，分辨率那一行不该出现').toBeNull()
     await click(button('开始导出')!)
     expect(exportBodies[0].scope).toBe('original')
     expect(exportBodies[0].formats).toEqual(['eps'])
@@ -1501,9 +1516,9 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
   it('原图范围 + 没有脚本的图：EPS 禁用，说的是「没有脚本」而不是「只能按原图」', async () => {
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await setup(9)
-    const eps = button('EPS') as HTMLButtonElement
+    const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.title).toContain('没有可重新运行的脚本')
+    expect(eps.closest('label')!.title).toContain('没有可重新运行的脚本')
   })
 
   it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {
@@ -1514,15 +1529,15 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
         byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
       } as never)
     })
-    await click(button('EPS')!)
+    await click(formatBox('EPS'))
     await click(button('当前画布')!)
     expect(text()).toContain('EPS 只能按「原图尺寸」导出单张图')
     await click(button('开始导出')!)
     expect(exportBodies[0].scope).toBe('canvas')
     expect(exportBodies[0].formats).toEqual(['pdf', 'png'])
     // 再把 PDF / PNG 都取消：只剩一个发不出去的 EPS，主按钮必须灰
-    await click(button('PDF')!)
-    await click(button('PNG')!)
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
     expect((button('开始导出') as HTMLButtonElement).disabled).toBe(true)
   })
 })

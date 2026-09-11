@@ -1,4 +1,6 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react'
+import { Check, ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import {
   LEGEND_OUTSIDE_PRESETS,
@@ -163,22 +165,14 @@ function SlotGlyph({ slot }: { slot: Slot }) {
   )
 }
 
+/** 展开 / 收起的记号：与全产品的下拉记号同一枚 chevron-down（第四节），展开时转到朝上 */
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg
+    <ChevronDown
+      size={ICON_SIZE.xs}
       aria-hidden
-      viewBox="0 0 12 12"
-      fill="none"
-      className={cn('h-2.5 w-2.5 transition-transform', open && 'rotate-180')}
-    >
-      <path
-        d="m3 4.5 3 3 3-3"
-        stroke="currentColor"
-        strokeWidth={1.2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      className={cn('shrink-0 transition-transform duration-fast', open && 'rotate-180')}
+    />
   )
 }
 
@@ -376,20 +370,11 @@ export function LegendPositionPicker({
                     : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
                 )}
               >
-                <svg
+                <Check
+                  size={ICON_SIZE.xs}
                   aria-hidden
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  className={cn('absolute left-1.5 h-2.5 w-2.5', !bestActive && 'invisible')}
-                >
-                  <path
-                    d="m2.3 6.1 2.4 2.4 5-5"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                  className={cn('absolute left-1.5', !bestActive && 'invisible')}
+                />
                 {optionLabel('loc', 'best')}
               </button>
             )}

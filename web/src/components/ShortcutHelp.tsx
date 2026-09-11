@@ -6,6 +6,7 @@ import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
+import { Kbd } from './ui/Kbd'
 import { TextInput } from './ui/Input'
 
 /**
@@ -160,9 +161,7 @@ export function ShortcutHelp() {
                   >
                     {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
                     <span className="order-last shrink-0">
-                      <kbd className="inline-flex h-[22px] min-w-[23px] items-center justify-center rounded-xs border border-border border-b-2 border-b-border-strong bg-surface-2 px-1.5 font-mono text-xs font-medium leading-none text-ink-2">
-                        {keyText(r)}
-                      </kbd>
+                      <Kbd size="md">{keyText(r)}</Kbd>
                     </span>
                     {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
                     <span className="min-w-0 flex-1 whitespace-normal break-words text-base leading-5 text-ink-2">
@@ -175,9 +174,7 @@ export function ShortcutHelp() {
           ))}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border pt-3 text-xs text-ink-3">
-          <kbd className="inline-flex h-[18px] min-w-7 items-center justify-center rounded-sm border border-border bg-surface-2 px-1 font-mono text-xs font-medium leading-none text-ink-2">
-            {translate('keycap.esc', { ns: 'common' })}
-          </kbd>
+          <Kbd>{translate('keycap.esc', { ns: 'common' })}</Kbd>
           <span>{translate('actions.close', { ns: 'common' })}</span>
         </div>
       </div>

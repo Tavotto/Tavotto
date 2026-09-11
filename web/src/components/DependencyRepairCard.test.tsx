@@ -34,6 +34,7 @@ import {
   type DependencyRepairPlan,
 } from '@/lib/api'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { i18n, t } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -161,7 +162,7 @@ describe('缺依赖的修复卡片', () => {
   it('两个目标都列出来：装进项目环境 / 建一个 Tavotto 环境', async () => {
     await render()
     expect(byName(en('repairUseProjectEnv'))).toBeTruthy()
-    expect(byName(en('repairCreateManaged'))).toBeTruthy()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeTruthy()
   })
 
   it('装进项目环境之前先说清楚「这会修改你的环境」，按钮不是「确定」', async () => {
@@ -185,7 +186,7 @@ describe('缺依赖的修复卡片', () => {
               creates_environment: true, modifies_user_environment: false },
     })
     await render()
-    await click(en('repairCreateManaged'))
+    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
     expect(text()).toContain(en('repairConfirmManaged'))
     expect(text()).not.toContain(en('repairModifiesEnv'))
     expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
@@ -205,7 +206,7 @@ describe('缺依赖的修复卡片', () => {
     await render({ ...OFFER, requirement: null, targets: [], code: 'dependency_unresolved' })
     expect(text()).toContain(en('repairUnresolved', { module: 'lmfit' }))
     expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
-    expect(byName(en('repairCreateManaged'))).toBeUndefined()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(text()).toContain(en('repairSpecifyPackage'))
   })
 
@@ -215,7 +216,7 @@ describe('缺依赖的修复卡片', () => {
     // 而不是「有地方可以装」。这一条守的正是那个前提。
     await render({ ...OFFER, requirement: null, code: 'dependency_unresolved' })
     expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
-    expect(byName(en('repairCreateManaged'))).toBeUndefined()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(text()).toContain(en('repairSpecifyPackage'))
   })
 
@@ -263,7 +264,7 @@ describe('缺依赖的修复卡片', () => {
         { ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' },
       ],
     })
-    expect(byName(en('repairCreateManaged'))).toBeUndefined()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(byName(en('repairUseProjectEnv'))).toBeTruthy()
   })
 })
@@ -412,7 +413,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       expect(byName(en('repairUseSystemPython')), offer.code).toBeTruthy()
       // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
       expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
-      expect(byName(en('repairCreateManaged'))).toBeUndefined()
+      expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     }
   })
 

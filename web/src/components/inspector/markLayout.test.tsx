@@ -128,10 +128,13 @@ describe('标题不重复对象类型', () => {
 })
 
 describe('高频属性排在前面', () => {
-  it('箭头：终点 / 起点在颜色与线宽之前', async () => {
+  it('箭头：终点 / 起点在线宽（与色块）之前', async () => {
     await mount(arrowOf())
+    // 颜色是「线宽」那一行里的色块（2026-09-11 用户反馈：色号框只留色块），
+    // 没有自己的可见标签；判序用「线宽」这一行
     expect(orderOf('终点')).toBeGreaterThan(0)
-    expect(orderOf('终点')).toBeLessThan(orderOf('颜色'))
+    expect(orderOf('线宽')).toBeGreaterThan(0)
+    expect(orderOf('终点')).toBeLessThan(orderOf('线宽'))
     expect(orderOf('起点')).toBeLessThan(orderOf('线宽'))
   })
 
@@ -176,31 +179,33 @@ describe('单选：层级常驻，完整排列收进「更多排列」', () => {
 })
 
 describe('图形选择有名称和键盘路径', () => {
-  it('端型是 radiogroup，每一格都有文字名，不只有图形', async () => {
+  /** 端型选择器（组件工作台批次起）是一个 combobox：触发钮 + 打开后的 listbox */
+  const endCombo = () =>
+    host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="终点"]')!
+
+  it('端型是 combobox，打开后每一格都有文字名，不只有图形', async () => {
     await mount(arrowOf())
-    const group = [...host.querySelectorAll('[role="radiogroup"]')].find(
-      (g) => g.getAttribute('aria-label') === '终点',
-    )!
-    const radios = [...group.querySelectorAll('[role="radio"]')]
-    expect(radios).toHaveLength(4)
-    for (const r of radios) {
-      expect(r.getAttribute('aria-label')?.length).toBeGreaterThan(0)
+    expect(endCombo()).toBeTruthy()
+    await act(async () => endCombo().click())
+    const options = [...host.querySelectorAll('[role="listbox"][aria-label="终点"] [role="option"]')]
+    expect(options).toHaveLength(4)
+    for (const o of options) {
+      expect(o.textContent?.trim().length).toBeGreaterThan(0)
     }
   })
 
-  it('方向键在格子间漫游并改值，不用鼠标点图标', async () => {
+  it('方向键在选项间漫游并改值，不用鼠标点图标', async () => {
     await mount(arrowOf())
-    const group = [...host.querySelectorAll('[role="radiogroup"]')].find(
-      (g) => g.getAttribute('aria-label') === '终点',
-    )! as HTMLElement
     const before = (
       useDocumentStore.getState().doc.objects.find((o) => o.id === 'a1') as ArrowObject
     ).headEnd
-    await act(async () => {
-      group.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
-      )
-    })
+    const key = (k: string) =>
+      act(async () => {
+        endCombo().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+      })
+    await key('ArrowDown') // 打开（当前项成为活动项）
+    await key('ArrowDown') // 移到下一档
+    await key('Enter') // 选中
     const after = (
       useDocumentStore.getState().doc.objects.find((o) => o.id === 'a1') as ArrowObject
     ).headEnd

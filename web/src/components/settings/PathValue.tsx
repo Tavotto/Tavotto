@@ -43,8 +43,8 @@ export function PathValue({
           aria-label={st('project.showFullPath', { name })}
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            // 24px 高：它是一行 type-meta 里的内联展开钮，不是 28px 的控件
-            'flex h-6 min-w-0 items-center gap-1 rounded-sm px-1 text-xs text-ink-2',
+            // 28px：与旁边的 CopyButton（建在 Button 上）同高，一行里的东西在一条中线上
+            'flex h-7 min-w-0 items-center gap-1 rounded-sm px-1 text-xs text-ink-2',
             'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
           )}
         >

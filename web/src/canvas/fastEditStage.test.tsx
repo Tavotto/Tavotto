@@ -127,7 +127,13 @@ describe('快速编辑这一屏', () => {
     expect(useDocumentStore.getState().past.length).toBe(past)
   })
 
-  it('位图没写物理密度时，尺寸旁边说出来它是假定的', async () => {
+  /**
+   * 2026-09-11 组件工作台批次改版了上下文栏：这一屏**不再打印任何毫米尺寸**
+   * （`fastEdit.size*` 那八个键随之删除），尺寸与来源在导出对话框里说。
+   * 原来那三条（假定密度 / 上次已知 / 尺寸未知）守的是「不显示一个编出来的尺寸」，
+   * 现在的形态下判据变成：三种来源都不该在这一屏冒出一个 mm 数。
+   */
+  it('位图没写物理密度：不在这一屏冒出一个按假定密度算出来的毫米尺寸', async () => {
     const r = {
       ...info('r.png'),
       kind: 'raster' as const,
@@ -146,24 +152,26 @@ describe('快速编辑这一屏', () => {
     useAssetStore.setState({ panels: [r], byId: { 'r.png': r } })
     act(() => openFastEdit('r.png'))
     await mount()
-    expect(container.textContent).toContain('假定密度')
+    expect(container.textContent).not.toContain('50.8')
+    expect(container.textContent).not.toContain('mm')
   })
 
-  it('源文件不在了：显示的是上一次已知的规格，并且说出来', async () => {
+  it('源文件不在了：不显示一个陈旧的尺寸', async () => {
     act(() => openFastEdit('a.pdf'))
     // 素材从清单里消失（文件被删 / 网盘掉线）——文档里那个面板一个字节没动
     useAssetStore.setState({ panels: [], byId: {} })
     await mount()
-    expect(container.textContent).toContain('上次已知')
+    expect(container.textContent).not.toContain('mm')
   })
 
-  it('一个来源都没有时不显示一个编出来的尺寸，而是说"尺寸未知"', async () => {
+  it('一个来源都没有时不显示一个编出来的尺寸', async () => {
     // 素材清单里有这张图（所以打得开），但它一个尺寸维度都没有
     const blank = { ...info('x.pdf', 'fig.py'), native_w_mm: 0, native_h_mm: 0 }
     useAssetStore.setState({ panels: [blank], byId: { 'x.pdf': blank } })
     act(() => openFastEdit('x.pdf'))
     await mount()
-    expect(container.textContent).toContain('尺寸未知')
+    expect(container.textContent).not.toContain('mm')
+    expect(container.textContent).not.toContain('0 ×')
   })
 
   it('没有源脚本的图：说清原因并给出下一步，不画成错误', async () => {

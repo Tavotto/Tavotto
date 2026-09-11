@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertCircle, Check, X } from 'lucide-react'
+import { Check, CircleAlert, X } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
@@ -144,7 +144,7 @@ export function StatusToasts() {
           )}
         >
           {shown.tone === 'error' ? (
-            <AlertCircle size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+            <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           ) : (
             <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           )}

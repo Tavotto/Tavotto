@@ -7,7 +7,7 @@ import {
   CircleMinus,
   type LucideIcon,
 } from 'lucide-react'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import type { AiAgentCaps, AiAgentUiState } from '@/lib/api'
@@ -63,7 +63,7 @@ export function AgentStateBadge({
           aria-hidden
           className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-ok text-surface"
         >
-          <Icon size={ICON_SIZE.sm} strokeWidth={2.5} />
+          <Icon size={ICON_SIZE.sm} strokeWidth={ICON_STROKE.emphasis} />
         </span>
       ) : (
         <Icon size={ICON_SIZE.sm} aria-hidden />

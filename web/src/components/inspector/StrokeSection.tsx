@@ -4,6 +4,9 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads, legacyHead } from '@/types/document'
+import { ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
@@ -156,22 +159,14 @@ function GlyphSelect<T extends string>({
             <span className="truncate">{labelOf(value)}</span>
           </>
         )}
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          aria-hidden="true"
-          className="absolute right-2 top-1/2 shrink-0 -translate-y-1/2 text-ink-3"
-        >
-          <path
-            d="M2 3.5 L5 6.5 L8 3.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.25"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <ChevronDown
+          size={ICON_SIZE.xs}
+          aria-hidden
+          className={cn(
+            'absolute right-2 top-1/2 shrink-0 -translate-y-1/2 text-ink-3 transition-transform duration-fast',
+            open && 'rotate-180',
+          )}
+        />
       </button>
       {open && (
         <ul

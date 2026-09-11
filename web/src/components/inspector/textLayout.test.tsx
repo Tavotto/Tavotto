@@ -112,11 +112,11 @@ describe('位置与尺寸：折叠成一行 + 现状摘要', () => {
   it('展开后字段一条不少（X / Y / W / H / 旋转），能力没丢', async () => {
     await act(async () => disclosure('位置与尺寸').click())
     const body = q('[data-transform-folded]')!
-    const prefixes = [...body.querySelectorAll('input')].map((i) =>
-      i.closest('label, div')?.textContent ?? '',
-    )
+    // 标签在框外（Session 2 的 GeometryGrid：`X [ 43.3  mm ]`），输入框的可达名
+    // 由 NumberField 从前缀 + 单位推出来（「X (mm)」）——认可达名，不认相邻文字
+    const names = [...body.querySelectorAll('input')].map((i) => i.getAttribute('aria-label') ?? '')
     expect(body.querySelectorAll('input').length).toBeGreaterThanOrEqual(5)
-    expect(prefixes.join(' ')).toContain('X')
+    expect(names.join(' ')).toContain('X')
     expect(body.textContent).toContain('旋转')
   })
 

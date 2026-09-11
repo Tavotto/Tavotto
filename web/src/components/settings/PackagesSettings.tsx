@@ -360,7 +360,7 @@ function LookupPanel({
     return (
       <div
         data-packages-lookup-panel="loading"
-        className="rounded-md border border-border p-2.5 text-xs text-ink-2"
+        className="rounded-sm bg-surface-2 px-2.5 py-2 text-xs text-ink-2"
         role="status"
         aria-live="polite"
       >
@@ -376,7 +376,7 @@ function LookupPanel({
     return (
       <div
         data-packages-lookup-panel="error"
-        className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+        className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
         role="status"
         aria-live="polite"
       >
@@ -405,7 +405,7 @@ function LookupPanel({
   return (
     <div
       data-packages-lookup-panel="found"
-      className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+      className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
       role="status"
       aria-live="polite"
     >
@@ -596,7 +596,7 @@ function JobPanel({
   return (
     <div
       data-packages-job
-      className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+      className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
       role="status"
       aria-live="polite"
     >

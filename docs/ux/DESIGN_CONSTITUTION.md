@@ -203,7 +203,11 @@ opacity + ≤4px 位移 + scale 0.97~1；没有弹簧、缩放炫技、漂浮。
 - **副作用一句话不套框**：开关开着时的低调提醒（「修改可直接写入原始脚本」）是 `status`；
   `InlineWarning` 只给关掉 / 错误 / 缺件那一档，底色是 `surface-hover` token，不是黄块。
 - **小问号是 20px 的 IconButton**（透明底、hover 浮 surface-hover、6px 圆角）；键位提示用
-  `ui/Kbd`（16px、xs 圆角、surface-2 底、无边框），不再长得像一颗按钮。
+  `ui/Kbd`（`sm` 16px 内联小片、无边框；`md` 22px 键帽只给快捷键速查表），不再长得像一颗按钮。
+- **单选用 `ui/Radio`**（14px 圆、与 Checkbox 同一套状态；编码 Agent 详情的模型服务），不用
+  原生 `accent-*` 单选；选项行的选中态是 `selected` 轻 tint。
+- **状态区不是卡片**：包管理的查找结果 / 作业进度是 surface-2 底的一条（与 Notice 同一档），
+  不带边框。
 - **分区标题一律 type-section**；页面自己不带页标题（导航项已经是它的名字）、不带外层 gap
   （`display: contents` 让分区直接成为外壳内容容器的子项，分区间距全仓统一 28px）。
 - **样式 / 规范是「左库右编辑器」**：库 176px、行是 `listRowClass`（不套外框，一条内置样式

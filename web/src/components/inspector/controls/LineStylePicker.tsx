@@ -1,4 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { t as translate } from '@/i18n'
 import { optionLabel } from '../roles/registry'
 import { OptionGrid, type GridOption } from './OptionGrid'
@@ -130,22 +133,12 @@ export function LineStylePicker({
             {translate('mixed', { ns: 'common' })}
           </span>
         )}
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
+        {/* 下拉的记号只有 chevron-down（Design Constitution 第四节）：展开时转到朝上 */}
+        <ChevronDown
+          size={ICON_SIZE.xs}
           aria-hidden
-          className="shrink-0 text-ink-3"
-        >
-          <path
-            d="M2 3.5 5 6.5 8 3.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+          className={cn('shrink-0 text-ink-3 transition-transform duration-fast', open && 'rotate-180')}
+        />
       </button>
       {open && (
         <div

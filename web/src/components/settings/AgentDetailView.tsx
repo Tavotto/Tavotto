@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, Plus, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Plus, RefreshCw, TriangleAlert } from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -17,6 +17,7 @@ import {
 } from '@/lib/api'
 import { formatDateTime } from '@/i18n/format'
 import { Button } from '../ui/Button'
+import { Radio } from '../ui/Radio'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { AgentIcon } from './AgentIcon'
@@ -137,9 +138,9 @@ export function AgentDetailView({
   const sourceLabel = agent.detection_source
     ? ag(`source.${agent.detection_source}`, { defaultValue: agent.detection_source })
     : ag('detail.none')
-  /** 模型服务的一行：选中行用 surface-2 垫底，未选中行只在 hover 时轻微提示 */
+  /** 模型服务的一行：选中 = selected 轻 tint（第五节的三档），未选中只在 hover 时浮出 surface-hover */
   const optionClass = (selected: boolean) =>
-    `flex items-center gap-3 rounded-sm px-2.5 py-2 ${selected ? 'bg-surface-2' : 'hover:bg-surface-2'}`
+    `flex min-h-7 items-center gap-3 rounded-sm px-2 py-1 ${selected ? 'bg-selected' : 'hover:bg-surface-hover'}`
 
   return (
     <div data-agent-detail={agent.id} className="flex flex-col gap-5">
@@ -163,7 +164,7 @@ export function AgentDetailView({
         <AgentIcon iconKey={agent.icon_key} size={36} />
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-            <h3 className="text-lg font-semibold tracking-tight text-ink">{agent.display_name}</h3>
+            <h3 className="type-title">{agent.display_name}</h3>
             {/* 说版本号，不说内部包名（`codex-cli 0.151.0` 的前半截不是用户
                 要认的东西，ADR 0038）。抽不出数字时才回原文——那时原文本身就是
                 诊断材料。`--version` 的完整原话在下面的「诊断信息」里。 */}
@@ -199,7 +200,7 @@ export function AgentDetailView({
 
       {error && (
         <p role="alert" className="flex items-start gap-1.5 text-xs text-danger">
-          <AlertTriangle size={ICON_SIZE.sm} aria-hidden className="mt-px shrink-0" />
+          <TriangleAlert size={ICON_SIZE.sm} aria-hidden className="mt-px shrink-0" />
           <span className="min-w-0 flex-1">{error}</span>
         </p>
       )}
@@ -227,12 +228,10 @@ export function AgentDetailView({
               {ag('detail.serviceAria', { name: agent.display_name })}
             </legend>
             <label className={optionClass(!usingEndpoint)}>
-              <input
-                type="radio"
+              <Radio
                 name={radioName}
                 checked={!usingEndpoint}
                 onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
-                className="accent-ink"
               />
               <span className="min-w-0 flex-1 text-sm text-ink">
                 {ag('detail.useAgentLogin', { name: agent.display_name })}
@@ -243,12 +242,10 @@ export function AgentDetailView({
               return (
                 <div key={e.id} className={optionClass(selected)}>
                   <label className="flex min-w-0 flex-1 items-center gap-3">
-                    <input
-                      type="radio"
+                    <Radio
                       name={radioName}
                       checked={selected}
                       onChange={() => void run(() => setAiEndpointActive(agent.id, e.id))}
-                      className="accent-ink"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-ink">{e.label}</span>
@@ -263,18 +260,12 @@ export function AgentDetailView({
                     </span>
                   </label>
                   <span className="flex shrink-0 items-center gap-0.5">
-                    <button
-                      onClick={() => setEditing({ id: e.id })}
-                      className="rounded-sm px-1.5 py-1 text-xs text-ink-3 outline-none hover:bg-surface hover:text-ink focus-visible:focus-ring"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => setEditing({ id: e.id })}>
                       {ag('detail.edit')}
-                    </button>
-                    <button
-                      onClick={() => void run(() => deleteAiEndpoint(e.id))}
-                      className="rounded-sm px-1.5 py-1 text-xs text-ink-3 outline-none hover:bg-surface hover:text-danger focus-visible:focus-ring"
-                    >
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => void run(() => deleteAiEndpoint(e.id))}>
                       {ag('detail.delete')}
-                    </button>
+                    </Button>
                   </span>
                 </div>
               )

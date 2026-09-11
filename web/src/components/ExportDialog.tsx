@@ -89,6 +89,7 @@ import {
 import type { OverwritePolicy } from '@/lib/exportRequest'
 import type { PublicationProfile } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
+import { severityLabel } from '@/lib/validationText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
@@ -846,6 +847,7 @@ export function ExportDialog() {
                 title="EPS"
                 hint={eps.ok ? ex('epsHint') : ex(`epsUnavailable.${eps.reason}`)}
                 disabled={!eps.ok}
+                describedBy={formats.includes('eps') && !eps.ok ? 'export-eps-reason' : undefined}
               />
               <FormatCheck
                 checked={formats.includes('tiff')}
@@ -855,6 +857,13 @@ export function ExportDialog() {
               />
             </div>
           </fieldset>
+          {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
+              不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
+          {formats.includes('eps') && !eps.ok && (
+            <p id="export-eps-reason" className="type-caption">
+              {ex(`epsUnavailable.${eps.reason}`)}
+            </p>
+          )}
         </section>
 
         {/* 3. 规范 —— 标题在左（与文件名 / 格式同级），下拉与编辑入口在右；
@@ -1490,8 +1499,28 @@ function CheckRow({
       </div>
     )
   }
-  // 有问题时不再出摘要行：阻断项由下方的清单逐条列出，完整清单归左侧问题面板
-  return null
+  // 有问题：一行只给**数量**（阻断 / 警告 / 无法核验 / 建议）+ 这份摘要算的是哪个范围
+  // + 问题面板入口。阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——
+  // 数量这一行不能省：只有警告时没有它，用户看到的就是一片空白，既不知道有警告、
+  // 也没有去问题面板的路
+  const parts = (['error', 'warn', 'not_verifiable', 'suggestion'] as (keyof ValidationSummary['counts'])[])
+    .filter((s) => summary.counts[s] > 0)
+    .map((s) => ex('severityCount', { count: summary.counts[s], label: severityLabel(s) }))
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span
+        className={cn(
+          'flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-sm',
+          summary.blocking ? 'text-danger' : 'text-ink',
+        )}
+      >
+        <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        <span className="tabular-nums">{parts.join(' · ')}</span>
+        <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
+      </span>
+      <OpenProblems onClick={onOpenPanel} />
+    </div>
+  )
 }
 
 function OpenProblems({ onClick }: { onClick: () => void }) {

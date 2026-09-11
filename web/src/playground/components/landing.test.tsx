@@ -98,20 +98,14 @@ describe('PlaygroundLanding', () => {
     expect(onLaunch.mock.calls[0][0].id).toBe('calibration')
   })
 
-  it('上传入口是次级：边界说明在上传前可见，支持范围可展开', () => {
+  it('上传入口是次级：边界说明在上传前可见，不再展开「适合 / 不适合」清单', () => {
     renderLanding()
     expect(container.textContent).toContain('已有一个独立脚本？')
     expect(container.textContent).toContain('仅适合不依赖本地数据、同目录模块或本地资源的单文件脚本')
     expect(buttonsNamed('上传独立脚本')).toHaveLength(1)
-    // disclosure 展开后能读到「不适合」清单
-    const details = [...container.querySelectorAll('details')].find((d) =>
-      d.textContent?.includes('查看支持范围'),
-    )!
-    act(() => {
-      details.open = true
-    })
-    expect(details.textContent).toContain('不适合')
-    expect(details.textContent).toContain('read_csv')
+    // 2026-09-11 组件工作台批次：只保留一行常驻说明，「查看支持范围」的 disclosure 去掉了
+    expect(container.querySelector('details')).toBeNull()
+    expect(container.textContent).not.toContain('查看支持范围')
   })
 
   it('选择文件走 onFile（校验链在 PlaygroundApp）', () => {

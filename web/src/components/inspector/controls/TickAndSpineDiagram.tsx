@@ -1,4 +1,6 @@
 import type { KeyboardEvent } from 'react'
+import { RotateCcw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
@@ -540,15 +542,7 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
                 'outline-none transition-colors hover:bg-surface-2 hover:text-ink focus-visible:focus-ring',
               )}
             >
-              <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden>
-                <path
-                  d="M5.2 5.5A6 6 0 1 1 4.1 12.8M5.2 2.6v3.9H1.4"
-                  stroke="currentColor"
-                  strokeWidth="1.45"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <RotateCcw size={ICON_SIZE.sm} aria-hidden />
             </button>
           </Tip>
         )}
