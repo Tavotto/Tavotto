@@ -230,10 +230,8 @@ function GroupRow({
         }
       }}
       className={cn(
-        'group flex h-7 cursor-default items-center gap-1 border-l-2 px-1.5 text-xs outline-none focus-visible:focus-ring',
-        allSelected
-          ? 'border-accent bg-accent-subtle text-accent'
-          : 'border-transparent text-ink-2 hover:bg-ink/[.04]',
+        'group mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm px-1.5 text-xs outline-none focus-visible:focus-ring',
+        allSelected ? 'bg-ink/[.08] text-ink' : 'text-ink-2 hover:bg-ink/[.04]',
       )}
     >
       <button
@@ -343,16 +341,14 @@ function LayerRow({
       onDoubleClick={() => setEditing(true)}
       style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
       className={cn(
-        'group relative flex h-7 items-center gap-1.5 border-l-2 px-2 text-xs outline-none focus-visible:focus-ring',
-        selected
-          ? 'border-accent bg-accent-subtle text-accent'
-          : 'border-transparent text-ink hover:bg-ink/[.04]',
+        'group relative mx-1 flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs outline-none focus-visible:focus-ring',
+        selected ? 'bg-ink/[.08] text-ink' : 'text-ink hover:bg-ink/[.04]',
         obj.hidden && 'opacity-45',
         dropHint === 'above' && 'shadow-[inset_0_1px_0_0_var(--color-accent)]',
         dropHint === 'below' && 'shadow-[inset_0_-1px_0_0_var(--color-accent)]',
       )}
     >
-      <Icon size={ICON_SIZE.sm} className={cn('shrink-0', selected ? 'text-accent' : 'text-ink-3')} />
+      <Icon size={ICON_SIZE.sm} className={cn('shrink-0', selected ? 'text-ink' : 'text-ink-3')} />
       {editing ? (
         <input
           autoFocus
@@ -379,8 +375,8 @@ function LayerRow({
         <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
       {/* 可参数化徽标与素材卡的 { } 同源；行首的 Braces 是大括号形状的种类图标，
-          位置（行尾）与颜色（accent）把两个角色分开 */}
-      {isScript && !editing && <Braces size={ICON_SIZE.sm} className="shrink-0 text-accent" />}
+          靠位置（行尾）把两个角色分开，颜色与行内文字同为墨色 */}
+      {isScript && !editing && <Braces size={ICON_SIZE.sm} className="shrink-0 text-ink" />}
       {primary && !editing && (
         <span className="shrink-0 font-mono text-xs text-accent/70">{lt('primary')}</span>
       )}

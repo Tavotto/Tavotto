@@ -65,12 +65,13 @@ export function LeftPanel({
           <Tip label={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')} side="bottom">
             <Button
               size="icon-sm"
-              active={pinned}
               aria-pressed={pinned}
               aria-label={pinned ? t('drawer.unpin') : t('drawer.pin')}
+              // 钉住态不用品牌蓝：灰 / 深灰两档区分即可
+              className={pinned ? 'bg-surface-2 text-ink' : 'text-ink-3'}
               onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
             >
-              <Pin size={ICON_SIZE.sm} className={pinned ? undefined : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
             </Button>
           </Tip>
         )}

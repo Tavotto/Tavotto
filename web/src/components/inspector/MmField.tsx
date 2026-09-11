@@ -26,18 +26,22 @@ export function MmField({
   title?: string
 }) {
   return (
-    <NumberField
-      prefix={label}
-      suffix={suffix}
-      value={value ?? 0}
-      mixed={value === undefined}
-      step={step}
-      min={min}
-      disabled={disabled}
-      title={title}
-      onChange={onChange}
-      onScrubStart={() => useDocumentStore.getState().beginTxn(historyLabel)}
-      onScrubEnd={() => useDocumentStore.getState().endTxn()}
-    />
+    <div className="flex items-center gap-1.5">
+      <div className="w-24 shrink-0 [&_input]:text-center">
+        <NumberField
+          prefix={label}
+          value={value ?? 0}
+          mixed={value === undefined}
+          step={step}
+          min={min}
+          disabled={disabled}
+          title={title}
+          onChange={onChange}
+          onScrubStart={() => useDocumentStore.getState().beginTxn(historyLabel)}
+          onScrubEnd={() => useDocumentStore.getState().endTxn()}
+        />
+      </div>
+      {suffix && <span className="shrink-0 text-xs text-ink-3">{suffix}</span>}
+    </div>
   )
 }

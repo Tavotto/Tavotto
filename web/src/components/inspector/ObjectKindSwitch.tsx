@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -60,13 +60,18 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
           data-kind-switch
           aria-label={translate('kindSwitch.aria', { ns: 'inspector', name: currentLabel })}
           className={cn(
-            'flex shrink-0 items-center gap-0.5 rounded-sm bg-ink/[.055] py-px pl-1 pr-0.5 text-xs text-ink-2',
+            'group flex shrink-0 items-center gap-0.5 rounded-sm bg-ink/[.055] py-px pl-1 pr-0.5 text-xs text-ink-2',
             'outline-none transition-colors hover:bg-ink/[.09] hover:text-ink focus-visible:focus-ring',
             'data-[state=open]:bg-ink/[.09] data-[state=open]:text-ink',
           )}
         >
           {currentLabel}
-          <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" aria-hidden />
+          {/* 收起时朝左，菜单展开（Radix 触发器 data-state=open）时转成朝下 */}
+          <ChevronLeft
+            size={ICON_SIZE.xs}
+            className="text-ink-3 transition-transform group-data-[state=open]:-rotate-90"
+            aria-hidden
+          />
         </button>
       }
     >

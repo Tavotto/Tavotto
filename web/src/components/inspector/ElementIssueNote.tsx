@@ -72,11 +72,14 @@ export function ElementIssueNote({
             key={issue.issueId}
             data-element-issue={issue.ruleCode}
             className={cn(
-              'flex items-start gap-1.5 text-xs leading-relaxed',
+              'flex items-start gap-1.5 text-xs leading-5',
               issue.severity === 'error' ? 'text-danger' : 'text-ink-3',
             )}
           >
-            <Icon size={ICON_SIZE.xs} aria-hidden className="mt-px shrink-0" />
+            {/* 图标与「修复」都锁在首行的 20px 行高盒子里：文字换行、按钮再高，都与第一行同一条中线 */}
+            <span className="flex h-5 shrink-0 items-center">
+              <Icon size={ICON_SIZE.xs} aria-hidden />
+            </span>
             <span className="min-w-0 flex-1">
               {issueDetailText(issue)}
               {link && (
@@ -90,7 +93,9 @@ export function ElementIssueNote({
                 </button>
               )}
             </span>
-            <FixButton issue={issue} />
+            <span className="flex h-5 shrink-0 items-center">
+              <FixButton issue={issue} />
+            </span>
           </div>
         )
       })}

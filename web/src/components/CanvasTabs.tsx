@@ -181,7 +181,9 @@ function TabItem({
         }
       }}
       className={cn(
-        'group relative flex h-8 max-w-44 shrink-0 cursor-default items-center gap-1 px-2.5',
+        'group relative flex h-8 max-w-44 shrink-0 cursor-default items-center justify-center gap-1',
+        // 关闭键改为绝对定位后左右留同样的量：标题与激活下划线共用一条中轴
+        closable ? 'px-6' : 'px-2.5',
         'outline-none focus-visible:focus-ring',
         active
           ? 'text-ink after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
@@ -191,7 +193,7 @@ function TabItem({
       )}
       title={name}
     >
-      <span className="truncate text-xs">{name}</span>
+      <span className="truncate text-center text-xs">{name}</span>
       {dirty && (
         <span
           aria-label={t('tabs.unsaved')}
@@ -206,6 +208,7 @@ function TabItem({
             onClose()
           }}
           className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2',
             'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-ink-3',
             'opacity-0 outline-none hover:bg-ink/[.08] hover:text-ink',
             'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',

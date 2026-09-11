@@ -163,71 +163,90 @@ export function NumberField({
   }
 
   return (
+    // 外层只管排布：标签在框外，所以背景 / 边框 / focus 态都不在这一层。
+    // 高度与禁用态仍写在这里——它是组件根，调用方的 className 也落在这里。
     <div
       title={title}
       className={cn(
-        'group flex h-7 items-center rounded-sm border border-transparent bg-surface-2',
-        'transition-colors hover:border-border focus-within:border-accent focus-within:bg-surface',
+        'group flex h-7 items-center gap-1.5',
         disabled && 'pointer-events-none opacity-40',
         className,
       )}
     >
       {prefix != null && (
+        // 标签放在框外：框只圈住真正可编辑的部分，「字号」这类词读作行首的
+        // 说明文字，而不是框里的一截。仍然是拖动改数的手柄（startScrub 没动）。
+        // `min-w-5` 保留单字符标记（X / Y / W）的 20px 对齐宽度；
+        // `whitespace-nowrap` 保证两字及以上的标签横排、不被折成上下两行。
         <span
           onPointerDown={startScrub}
-          className="flex h-full w-5 shrink-0 cursor-ew-resize items-center justify-center text-xs text-ink-3 select-none"
+          className="flex h-full min-w-5 shrink-0 cursor-ew-resize items-center justify-center whitespace-nowrap text-xs text-ink-3 select-none"
         >
           {prefix}
         </span>
       )}
-      <input
-        ref={inputRef}
-        type="text"
-        inputMode="decimal"
-        data-inspector-prop={dataProp}
-        aria-label={derivedLabel}
-        disabled={disabled}
-        value={text}
-        placeholder={mixed ? t('mixed') : undefined}
-        onChange={(e) => setText(e.target.value)}
-        onFocus={(e) => {
-          setFocused(true)
-          e.target.select()
-        }}
-        onBlur={() => {
-          setFocused(false)
-          if (skipBlurSubmit.current) skipBlurSubmit.current = false
-          else submit(text)
-        }}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === 'Enter') {
-            submit(text)
-            skipBlurSubmit.current = true
-            ;(e.target as HTMLInputElement).blur()
-          } else if (e.key === 'Escape') {
-            setText(display)
-            skipBlurSubmit.current = true
-            ;(e.target as HTMLInputElement).blur()
-          } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-            e.preventDefault()
-            const mult = e.shiftKey ? 10 : 1
-            const next = clampVal(value + (e.key === 'ArrowUp' ? step : -step) * mult)
-            onChange(next)
-            setText(String(Number(next.toFixed(precision))))
-          }
-        }}
+      {/* 只有输入框才是「框」：hover / focus-within 挂在这一层，标签与单位都移到
+          框外之后，焦点高亮只圈住真正可编辑的数字。框不再 flex-1 撑满整行——
+          宽度由里面的输入框决定，刚好包住数字；min-w-0 让框在窄行里仍先让位
+          （标签、单位都是 shrink-0）。 */}
+      <div
         className={cn(
-          'num-input h-full w-full min-w-0 bg-transparent px-1 text-ink outline-none',
-          'placeholder:font-sans placeholder:text-ink-3',
-          !prefix && 'pl-1.5',
+          'flex h-full min-w-0 items-center rounded-sm border border-transparent bg-surface-2',
+          'transition-colors hover:border-border focus-within:border-accent focus-within:bg-surface',
         )}
-      />
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="decimal"
+          data-inspector-prop={dataProp}
+          aria-label={derivedLabel}
+          disabled={disabled}
+          value={text}
+          placeholder={mixed ? t('mixed') : undefined}
+          onChange={(e) => setText(e.target.value)}
+          onFocus={(e) => {
+            setFocused(true)
+            e.target.select()
+          }}
+          onBlur={() => {
+            setFocused(false)
+            if (skipBlurSubmit.current) skipBlurSubmit.current = false
+            else submit(text)
+          }}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              submit(text)
+              skipBlurSubmit.current = true
+              ;(e.target as HTMLInputElement).blur()
+            } else if (e.key === 'Escape') {
+              setText(display)
+              skipBlurSubmit.current = true
+              ;(e.target as HTMLInputElement).blur()
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+              e.preventDefault()
+              const mult = e.shiftKey ? 10 : 1
+              const next = clampVal(value + (e.key === 'ArrowUp' ? step : -step) * mult)
+              onChange(next)
+              setText(String(Number(next.toFixed(precision))))
+            }
+          }}
+          className={cn(
+            // 框里只剩它一个（标签、单位都在框外）。宽度固定为等宽字体 4 个字符
+            // （12 / 1000 / 12.5 这类常见值刚好放下）+ 对称内边距，框就只比数字大一圈，
+            // 不再按文本框默认的 20 字符固有宽度（≈170px）撑开；数字居中。
+            'num-input h-full w-[4ch] min-w-0 bg-transparent px-1.5 text-center text-ink outline-none',
+            'placeholder:font-sans placeholder:text-ink-3',
+          )}
+        />
+      </div>
       {suffix != null && (
+        // 单位放在框外，与前缀标签对称：框只圈住可编辑的数字，「pt」读作框后的说明。
         // `shrink-0 whitespace-nowrap`：单位不是可以折行的正文。窄侧栏里
         // 「数据单位」被挤成「数据单」+「位」两行，把整行撑破（审计 T19，
         // 走查截图 95 拍到）。让位的应该是输入框（它 min-w-0），不是单位。
-        <span className="shrink-0 whitespace-nowrap pr-1.5 text-xs text-ink-3 select-none">
+        <span className="shrink-0 whitespace-nowrap text-xs text-ink-3 select-none">
           {suffix}
         </span>
       )}
@@ -267,14 +286,14 @@ export function ColorField({
   ariaLabel: string
 }) {
   return (
-    <div
-      className={cn(
-        'flex h-7 items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
-        'transition-colors hover:border-border focus-within:border-accent',
-        className,
-      )}
-    >
-      <div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-[3px] border border-border-strong">
+    // 外层只管排布：色块在框外，所以背景 / 边框 / focus 态都不在这一层。
+    // 高度写在这里——它是组件根，调用方的 className 也落在这里。
+    <div className={cn('flex h-7 items-center gap-1.5', className)}>
+      {/* 色块移到框外：框只圈住真正可编辑的色号。取色盘是**透明盖在色块上的真控件**，
+          原来靠外层的 focus-within 边框顺带提示焦点；移出去之后必须自带一圈 focus
+          ring，否则纯键盘 Tab 到它时屏幕上没有任何反馈。overflow-hidden 只裁子元素，
+          不会吃掉这一层自己的 outline。 */}
+      <div className="relative h-3.5 w-3.5 shrink-0 overflow-hidden rounded-[3px] border border-border-strong has-[:focus-visible]:focus-ring">
         <div className="absolute inset-0" style={{ background: value }} />
         <input
           type="color"
@@ -285,17 +304,26 @@ export function ColorField({
           className="absolute inset-0 cursor-pointer opacity-0"
         />
       </div>
-      <input
-        value={value.toUpperCase()}
-        onChange={(e) => {
-          const v = e.target.value
-          if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v)
-        }}
-        onBlur={onGestureEnd}
-        onKeyDown={(e) => e.stopPropagation()}
-        aria-label={t('colorField.hex', { label: ariaLabel })}
-        className="num-input w-full min-w-0 bg-transparent uppercase text-ink outline-none"
-      />
+      {/* 十六进制框才是「框」：hover / focus-within 挂在这一层，色块移出去之后
+          焦点高亮不该再把它一起框住。min-w-0 让框在窄行里先让位（色块 shrink-0）。 */}
+      <div
+        className={cn(
+          'flex h-full min-w-0 flex-1 items-center rounded-sm border border-transparent bg-surface-2 px-1.5',
+          'transition-colors hover:border-border focus-within:border-accent focus-within:bg-surface',
+        )}
+      >
+        <input
+          value={value.toUpperCase()}
+          onChange={(e) => {
+            const v = e.target.value
+            if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v)
+          }}
+          onBlur={onGestureEnd}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={t('colorField.hex', { label: ariaLabel })}
+          className="num-input h-full w-full min-w-0 bg-transparent uppercase text-ink outline-none"
+        />
+      </div>
     </div>
   )
 }

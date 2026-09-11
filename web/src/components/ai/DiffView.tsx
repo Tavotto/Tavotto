@@ -25,7 +25,7 @@ const DEL = '#96594C'
 const STYLES: Record<LineKind, string> = {
   add: 'bg-[#EEF3EF] text-[#4C6B55]',
   del: 'bg-[#F6EEEC] text-[#96594C]',
-  hunk: 'bg-surface-2 text-ink-3',
+  hunk: 'text-ink-3',
   meta: 'text-ink-3',
   ctx: 'text-ink-2',
 }
@@ -54,9 +54,9 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
 
   return (
     <>
-      <div className="overflow-hidden rounded-sm border border-border">
-        <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-2 py-1">
-          <span className="text-xs text-ink-2">{translate('diff.title', { ns: 'ai' })}</span>
+      <div className="overflow-hidden rounded-sm border border-border bg-surface">
+        <div className="flex items-center gap-2 border-b border-border px-2 py-1">
+          <span className="text-xs font-medium text-ink">{translate('diff.title', { ns: 'ai' })}</span>
           <span className="ml-auto font-mono text-xs" style={{ color: ADD }}>
             +{added}
           </span>
@@ -84,7 +84,7 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
           </Button>
         }
       >
-        <div className="overflow-hidden rounded-sm border border-border">
+        <div className="overflow-hidden rounded-sm border border-border bg-surface">
           <DiffBody lines={lines} maxH="max-h-[58vh]" />
         </div>
       </Dialog>

@@ -86,13 +86,12 @@ export function LegendCard({
         <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
           {lg('entries', { count: views.length })}
         </p>
-        <ul className="rounded-sm border border-border" aria-label={lg('entriesAria')}>
+        <ul className="rounded-sm border border-border p-0.5" aria-label={lg('entriesAria')}>
           {views.map((v, i) => (
             <li
               key={v.element.gid}
               className={cn(
-                'flex h-7 items-center gap-1 px-1.5',
-                i > 0 && 'border-t border-border',
+                'flex h-7 items-center gap-1 rounded-sm px-1.5 hover:bg-surface-2',
                 v.hidden && 'text-ink-3',
               )}
             >

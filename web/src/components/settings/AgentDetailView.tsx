@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Plus, RefreshCw } from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -19,7 +19,6 @@ import { formatDateTime } from '@/i18n/format'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
-import { Select } from '../ui/Select'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
@@ -40,15 +39,29 @@ const Field = ({
   label: string
   children: React.ReactNode
 }) => (
-  <div data-agent-field={name} className="flex min-h-6 items-baseline gap-2">
-    <span className="w-20 shrink-0 text-xs text-ink-3">{label}</span>
+  <div data-agent-field={name} className="flex min-h-6 items-baseline gap-3">
+    <span className="w-24 shrink-0 text-xs text-ink-3">{label}</span>
     <span className="min-w-0 flex-1 break-all text-xs text-ink-2">{children}</span>
   </div>
 )
 
-const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <section className="flex flex-col gap-1.5">
-    <h4 className="text-xs font-medium text-ink-2">{title}</h4>
+/** 分区：标题行左标题、右可选动作（如「添加服务」），下面是内容 */
+const Section = ({
+  title,
+  action,
+  className,
+  children,
+}: {
+  title: string
+  action?: React.ReactNode
+  className?: string
+  children: React.ReactNode
+}) => (
+  <section className={`flex flex-col gap-2 ${className ?? ''}`}>
+    <div className="flex min-h-7 items-center justify-between gap-3">
+      <h4 className="text-xs font-medium text-ink-2">{title}</h4>
+      {action}
+    </div>
     {children}
   </section>
 )
@@ -57,17 +70,21 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 const Fold = ({
   name,
   summary,
+  value,
   children,
 }: {
   name: string
   summary: string
+  /** 收起时显示在右侧的摘要值（如当前来源 / 是否已设置） */
+  value?: string
   children: React.ReactNode
 }) => (
-  <Details data-agent-fold={name} className="rounded-sm border border-border bg-surface px-2 py-1.5">
-    <Summary className="cursor-default text-xs text-ink-2">
-      {summary}
+  <Details data-agent-fold={name} className="border-b border-border last:border-b-0">
+    <Summary className="flex min-h-9 cursor-default items-center gap-2.5 py-2 text-sm text-ink-2 hover:text-ink">
+      <span className="min-w-0 flex-1">{summary}</span>
+      {value ? <span className="max-w-[45%] truncate text-xs text-ink-3">{value}</span> : null}
     </Summary>
-    <div className="mt-1.5 flex flex-col gap-1.5">{children}</div>
+    <div className="flex flex-col gap-2 pb-3">{children}</div>
   </Details>
 )
 
@@ -114,10 +131,18 @@ export function AgentDetailView({
   }
 
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
+  const activeId = agent.active_endpoint_id ?? ''
   const usingEndpoint = !!agent.active_endpoint_id
+  const radioName = `endpoint-${agent.id}`
+  const sourceLabel = agent.detection_source
+    ? ag(`source.${agent.detection_source}`, { defaultValue: agent.detection_source })
+    : ag('detail.none')
+  /** 模型服务的一行：选中行用 surface-2 垫底，未选中行只在 hover 时轻微提示 */
+  const optionClass = (selected: boolean) =>
+    `flex items-center gap-3 rounded-sm px-2.5 py-2 ${selected ? 'bg-surface-2' : 'hover:bg-surface-2'}`
 
   return (
-    <div data-agent-detail={agent.id} className="flex flex-col gap-3">
+    <div data-agent-detail={agent.id} className="flex flex-col gap-5">
       <div>
         {/* aria-label 与左侧导航的同名项区分开：读屏里两个「编码 Agent」
             听不出差别，用例也选不中正确的那个 */}
@@ -133,165 +158,164 @@ export function AgentDetailView({
         </Button>
       </div>
 
-      <header className="flex items-center gap-3">
-        <AgentIcon iconKey={agent.icon_key} size={40} />
+      {/* ---------------- 头部：身份 + 状态 + 重新检测 ---------------- */}
+      <header className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+        <AgentIcon iconKey={agent.icon_key} size={36} />
         <div className="min-w-0">
-          <h3 className="text-sm font-medium text-ink">{agent.display_name}</h3>
-          <AgentStateBadge state={agent.state} className="mt-0.5" />
-        </div>
-      </header>
-
-      {/* ---------------- 概览 ---------------- */}
-      <Section title={ag('detail.overview')}>
-        <div className="rounded-sm border border-border bg-surface p-2">
-          <Field name="state" label={ag('detail.state')}>
-            <AgentStateBadge state={agent.state} />
-          </Field>
-          <Field name="version" label={ag('detail.version')}>
-            {/* 概览说版本号，不说内部包名（`codex-cli 0.151.0` 的前半截不是用户
+          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <h3 className="text-lg font-semibold tracking-tight text-ink">{agent.display_name}</h3>
+            {/* 说版本号，不说内部包名（`codex-cli 0.151.0` 的前半截不是用户
                 要认的东西，ADR 0038）。抽不出数字时才回原文——那时原文本身就是
                 诊断材料。`--version` 的完整原话在下面的「诊断信息」里。 */}
-            <span className="font-mono">
+            <span data-agent-field="version" className="break-all font-mono text-xs text-ink-3">
               {agentVersionLabel(agent.version) ?? agent.version ?? ag('detail.none')}
             </span>
-          </Field>
-          <Field name="executable" label={ag('detail.executable')}>
-            <span className="flex min-w-0 items-center gap-1">
-              <span className="min-w-0 flex-1 break-all font-mono" title={agent.executable_path ?? undefined}>
-                {agent.executable_path ?? ag('detail.none')}
-              </span>
-              {agent.executable_path && (
-                <CopyButton text={agent.executable_path} label={ag('detail.copyPath')} />
-              )}
+          </div>
+          <div className="mt-1 flex min-h-4 flex-wrap items-center gap-2 text-xs text-ink-3">
+            <span data-agent-field="state" className="inline-flex">
+              <AgentStateBadge state={agent.state} />
             </span>
-          </Field>
-          <Field name="source" label={ag('detail.source')}>
-            {agent.detection_source
-              ? ag(`source.${agent.detection_source}`, {
-                  defaultValue: agent.detection_source,
-                })
-              : ag('detail.none')}
-          </Field>
-          <Field name="checked-at" label={ag('detail.checkedAt')}>
-            {caps.checked_at_ms ? formatDateTime(caps.checked_at_ms) : ag('detail.none')}
-          </Field>
+            <span aria-hidden className="text-ink-faint">·</span>
+            <span>
+              {caps.checked_at_ms
+                ? ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })
+                : ag('detail.none')}
+            </span>
+          </div>
         </div>
-        <div>
-          {/* 直接调 onRefreshed（父级会强制重探测）；套一层 run() 会让它
-              跑两遍——每一遍都是两个真子进程 */}
-          <Button
-            data-agent-rescan
-            variant="outline"
-            size="sm"
-            loading={busy}
-            onClick={() => void run(onRefreshed)}
-          >
-            {ag('rescan')}
-          </Button>
-        </div>
-      </Section>
+        {/* 直接调 onRefreshed（父级会强制重探测）；套一层 run() 会让它
+            跑两遍——每一遍都是两个真子进程 */}
+        <Button
+          data-agent-rescan
+          variant="outline"
+          size="sm"
+          loading={busy}
+          onClick={() => void run(onRefreshed)}
+        >
+          <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+          {ag('rescan')}
+        </Button>
+      </header>
+
+      {error && (
+        <p role="alert" className="flex items-start gap-1.5 text-xs text-danger">
+          <AlertTriangle size={ICON_SIZE.sm} aria-hidden className="mt-px shrink-0" />
+          <span className="min-w-0 flex-1">{error}</span>
+        </p>
+      )}
 
       {/* ---------------- 一键安装（没装才给） ---------------- */}
       {!agent.installed && agent.install && (
-        <Section title={ag('detail.install')}>
+        <Section title={ag('detail.install')} className="border-t border-border pt-4">
           <InstallPanel agent={agent} onRefreshed={onRefreshed} />
         </Section>
       )}
 
-      {/* ---------------- 登录与模型 ---------------- */}
+      {/* ---------------- 模型服务 ---------------- */}
       {agent.features.third_party_endpoints && (
-        <Section title={ag('detail.loginAndModels')}>
-          <fieldset className="flex flex-col gap-1 rounded-sm border border-border bg-surface p-2">
-            <legend className="px-1 text-xs text-ink-3">{ag('detail.modelService')}</legend>
-            <label className="flex items-center gap-1.5 text-xs text-ink-2">
+        <Section
+          title={ag('detail.modelService')}
+          action={
+            <Button variant="ghost" size="sm" onClick={() => setEditing({})}>
+              <Plus size={ICON_SIZE.sm} aria-hidden />
+              {ag('detail.addEndpoint')}
+            </Button>
+          }
+        >
+          <fieldset className="flex min-w-0 flex-col gap-0.5">
+            <legend className="sr-only">
+              {ag('detail.serviceAria', { name: agent.display_name })}
+            </legend>
+            <label className={optionClass(!usingEndpoint)}>
               <input
                 type="radio"
-                name={`endpoint-${agent.id}`}
+                name={radioName}
                 checked={!usingEndpoint}
                 onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
                 className="accent-accent"
               />
-              {ag('detail.useAgentLogin', { name: agent.display_name })}
+              <span className="min-w-0 flex-1 text-sm text-ink">
+                {ag('detail.useAgentLogin', { name: agent.display_name })}
+              </span>
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-ink-2">
-              <input
-                type="radio"
-                name={`endpoint-${agent.id}`}
-                checked={usingEndpoint}
-                disabled={mine.length === 0}
-                onChange={() => {
-                  const first = mine[0]
-                  if (first) void run(() => setAiEndpointActive(agent.id, first.id))
-                }}
-                className="accent-accent"
-              />
-              {ag('detail.useCustomService')}
-            </label>
-            {usingEndpoint && mine.length > 1 && (
-              <label className="mt-1 flex items-center gap-2 text-xs text-ink-2">
-                {ag('detail.service')}
-                <Select
-                  value={agent.active_endpoint_id ?? ''}
-                  onChange={(v) => void run(() => setAiEndpointActive(agent.id, v))}
-                  options={mine.map((e) => ({
-                    value: e.id,
-                    label: `${e.label}${e.has_key ? '' : ag('detail.noKeySuffix')}`,
-                  }))}
-                  ariaLabel={ag('detail.serviceAria', { name: agent.display_name })}
-                  className="min-w-0 flex-1"
-                />
-              </label>
-            )}
-            {mine.length > 0 && (
-              <ul className="mt-1 flex flex-col gap-0.5">
-                {mine.map((e) => (
-                  <li key={e.id} className="flex items-center gap-2">
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3"
-                      title={e.base_url}
-                    >
-                      {e.label} · {e.base_url || ag('detail.officialBaseUrl')}
+            {mine.map((e) => {
+              const selected = activeId === e.id
+              return (
+                <div key={e.id} className={optionClass(selected)}>
+                  <label className="flex min-w-0 flex-1 items-center gap-3">
+                    <input
+                      type="radio"
+                      name={radioName}
+                      checked={selected}
+                      onChange={() => void run(() => setAiEndpointActive(agent.id, e.id))}
+                      className="accent-accent"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-ink">{e.label}</span>
+                      <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs text-ink-3">
+                        <span className="min-w-0 truncate font-mono" title={e.base_url || undefined}>
+                          {e.base_url || ag('detail.officialBaseUrl')}
+                        </span>
+                        {!e.has_key && (
+                          <span className="shrink-0 text-warn">{ag('detail.noKeySuffix')}</span>
+                        )}
+                      </span>
                     </span>
+                  </label>
+                  <span className="flex shrink-0 items-center gap-0.5">
                     <button
                       onClick={() => setEditing({ id: e.id })}
-                      className="shrink-0 text-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
+                      className="rounded-sm px-1.5 py-1 text-xs text-ink-3 outline-none hover:bg-surface hover:text-ink focus-visible:focus-ring"
                     >
                       {ag('detail.edit')}
                     </button>
                     <button
                       onClick={() => void run(() => deleteAiEndpoint(e.id))}
-                      className="shrink-0 text-xs text-ink-3 outline-none hover:text-danger focus-visible:focus-ring"
+                      className="rounded-sm px-1.5 py-1 text-xs text-ink-3 outline-none hover:bg-surface hover:text-danger focus-visible:focus-ring"
                     >
                       {ag('detail.delete')}
                     </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-1">
-              <Button variant="outline" size="sm" onClick={() => setEditing({})}>
-                {ag('detail.addEndpoint')}
-              </Button>
-            </div>
+                  </span>
+                </div>
+              )
+            })}
           </fieldset>
         </Section>
       )}
 
       {/* ---------------- 高级设置 ---------------- */}
-      <Section title={ag('detail.advanced')}>
-        <Fold name="custom-executable" summary={ag('detail.customExecutable')}>
-          <CustomExecutable agent={agent} onRefreshed={onRefreshed} />
-        </Fold>
-        <Fold name="diagnostics" summary={ag('detail.diagnostics')}>
-          <Diagnostics agent={agent} />
-        </Fold>
+      <Section title={ag('detail.advanced')} className="border-t border-border pt-4">
+        <div className="flex flex-col">
+          <Fold name="overview" summary={ag('detail.overview')} value={sourceLabel}>
+            <Field name="executable" label={ag('detail.executable')}>
+              <span className="flex min-w-0 items-start gap-1">
+                <span className="min-w-0 flex-1 break-all font-mono" title={agent.executable_path ?? undefined}>
+                  {agent.executable_path ?? ag('detail.none')}
+                </span>
+                {agent.executable_path && (
+                  <CopyButton text={agent.executable_path} label={ag('detail.copyPath')} />
+                )}
+              </span>
+            </Field>
+            <Field name="source" label={ag('detail.source')}>
+              {sourceLabel}
+            </Field>
+            <Field name="checked-at" label={ag('detail.checkedAt')}>
+              {caps.checked_at_ms ? formatDateTime(caps.checked_at_ms) : ag('detail.none')}
+            </Field>
+          </Fold>
+          <Fold
+            name="custom-executable"
+            summary={ag('detail.customExecutable')}
+            value={agent.path_override ? ag('detail.currentOverride') : ag('detail.autoDetected')}
+          >
+            <CustomExecutable agent={agent} onRefreshed={onRefreshed} />
+          </Fold>
+          <Fold name="diagnostics" summary={ag('detail.diagnostics')}>
+            <Diagnostics agent={agent} />
+          </Fold>
+        </div>
       </Section>
-
-      {error && (
-        <p role="alert" className="text-xs text-danger">
-          {error}
-        </p>
-      )}
 
       {editing && (
         <EndpointDialog
@@ -388,13 +412,13 @@ function CustomExecutable({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          <label className="flex items-center gap-2">
-            <span className="w-20 shrink-0 text-xs text-ink-2">{ag('detail.customPath')}</span>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-ink-2">{ag('detail.customPath')}</span>
             <TextInput
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={ag('detail.pathPlaceholder')}
-              className="flex-1 font-mono"
+              className="w-full font-mono"
               spellCheck={false}
             />
           </label>
@@ -450,9 +474,6 @@ function Diagnostics({ agent }: { agent: AiAgentCaps }) {
       .join('\n')
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex justify-end">
-        <CopyButton text={asText} label={ag('detail.copyDiagnostics')} />
-      </div>
       <Field name="readiness" label={ag('detail.readiness')}>
         {ag(`readiness.${d.readiness}`)}
         {d.readiness_detail ? (
@@ -479,6 +500,9 @@ function Diagnostics({ agent }: { agent: AiAgentCaps }) {
           </ul>
         </div>
       )}
+      <div className="flex items-center">
+        <CopyButton text={asText} label={ag('detail.copyDiagnostics')} />
+      </div>
     </div>
   )
 }

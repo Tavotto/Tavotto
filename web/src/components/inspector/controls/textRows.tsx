@@ -86,8 +86,15 @@ export function StyleToggle({
         aria-pressed={state === 'mixed' ? 'mixed' : state === 'on'}
         aria-label={name}
         onClick={onClick}
-        // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
-        className="relative"
+        className={cn(
+          // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
+          'relative',
+          // 按下时字形自己跟着变重：B 真的加粗。状态不只写在底色上——
+          // 图标就是它所描述的那件事，低对比屏与色觉差异下也读得出来。
+          // 文字子节点走 font-bold，lucide 图标走 stroke-width（CSS 覆盖
+          // SVG 的表现属性），按钮尺寸由 icon-sm 固定，不会因此位移。
+          state === 'on' && 'font-bold [&_svg]:[stroke-width:2.5]',
+        )}
       >
         {children}
         {state === 'mixed' && (

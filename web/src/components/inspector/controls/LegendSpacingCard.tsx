@@ -85,7 +85,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                   {labeledWithState(label, overridden(prop))}
                 </span>
                 <NumberField
-                  className="w-[96px] shrink-0"
+                  className="w-[120px] shrink-0"
                   ariaLabel={label}
                   value={Number(w.read(prop) ?? 0)}
                   min={field.min}

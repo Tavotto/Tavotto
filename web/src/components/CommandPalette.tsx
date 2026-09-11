@@ -305,13 +305,20 @@ export function CommandPalette() {
               ...section.items.map((c, j) => {
                 const i = offset + j
                 return (
-                  <li key={c.id} role="option" aria-selected={i === active} data-cmd-index={i} data-cmd-id={c.id}>
+                  <li
+                    key={c.id}
+                    role="option"
+                    aria-selected={i === active}
+                    data-cmd-index={i}
+                    data-cmd-id={c.id}
+                    className="px-1"
+                  >
                     <button
                       onPointerMove={() => setActive(i)}
                       onClick={() => runCommand(c)}
                       className={cn(
-                        'flex h-7 w-full items-center gap-2 px-3 text-left text-xs',
-                        i === active ? 'bg-accent-subtle text-accent' : 'text-ink',
+                        'flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs text-ink',
+                        i === active && 'bg-surface-2',
                       )}
                     >
                       <span className="min-w-0 flex-1 truncate">{c.label}</span>

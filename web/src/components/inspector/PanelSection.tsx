@@ -108,11 +108,12 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   if (panel.script || !cap || cap.status === 'editable') return null
   return (
     <div className="mx-3 mb-1.5 rounded-md border border-border bg-surface-2 p-2">
-      <p className="text-xs text-ink">{statusLabel(cap.status)}</p>
+      <p className="text-xs font-semibold text-ink">{statusLabel(cap.status)}</p>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
+        variant="outline"
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="mt-1.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
@@ -757,10 +758,14 @@ export function SourceSection({
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (
         <>
-          <div className="flex gap-1.5">
-            <UpdateSourceButton panel={panel} />
-            <HistoryPanel panel={panel} />
-          </div>
+          <Grid2>
+            <div className="flex min-w-0 *:w-full">
+              <UpdateSourceButton panel={panel} />
+            </div>
+            <div className="flex min-w-0 *:w-full">
+              <HistoryPanel panel={panel} />
+            </div>
+          </Grid2>
           {overrides > 0 && (
             <p className="mt-1.5 text-xs text-ink-3">
               {pn('overrideCount', { count: overrides })}

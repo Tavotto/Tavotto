@@ -40,14 +40,14 @@
     "layout": "Layout",
     "layoutCol": "Column",
     "layoutGrid": "Grid",
-    "layoutGroup": "Layout group",
+    "layoutGroup": "Layout",
     "layoutRow": "Row",
     "more": "More arrange options",
     "pasteStyle": "Paste style",
     "pasteStyleEmpty": "No style has been copied yet",
     "pasteStyleTip": "Paste onto the {{kind}} in the selection",
     "pinMembers": "Pin selected members (ignore re-flow)",
-    "refLabel": "Reference",
+    "refLabel": "Align to",
     "refTip": {
       "page": "Use the whole canvas as the reference",
       "primary": "Use the last-selected object as the reference; it stays put",
@@ -74,7 +74,7 @@
     "zDown": "Send backward",
     "zTop": "Bring to front",
     "zUp": "Bring forward",
-    "zorderLabel": "Stacking order"
+    "zorderLabel": "Layer"
   },
   "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
@@ -699,7 +699,7 @@
     "searchAssets": "Search file names…",
     "source": "Source file",
     "sourceAdvanced": "Source & advanced",
-    "sourceHint": "Writing back overwrites the original PDF/PNG in figures with your current figure edits (backed up automatically, restorable from history).",
+    "sourceHint": "Writing back overwrites the original PDF/PNG file. A backup is kept so you can restore it.",
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
     "unknown": "Unknown"
   },

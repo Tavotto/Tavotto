@@ -9,7 +9,6 @@ import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
-import { Segmented } from '../ui/Segmented'
 import {
   DiagnosticDisclosure,
   InlineWarning,
@@ -87,12 +86,13 @@ function ProductBlock({ version }: { version?: string }) {
  *
  * 两处在审计 T49 里改掉：
  *
- * ① **同意是三档，控件也得是三档。** 之前这里是个二值开关：`unset`（还没
+ * ① **同意是三档，界面也得说得出三档。** 之前这里是个二值开关：`unset`（还没
  *    问过）与 `disabled`（问过了，用户说不）画出来一模一样。那正是后端刻意
  *    分开的两件事——只有前者才该弹询问，后者再弹就是骚扰——被界面重新合并
- *    了一次。现在用 `Segmented`，`value=null` 就是「尚未选择」：同一个控件，
- *    三种可辨状态，而**可写的仍然只有开 / 关两档**（回不到 unset 是对的，
- *    表过态就是表过态）。
+ *    了一次。现在控件是一个**滑动开关**（`role="switch"`，只表达开 / 关），
+ *    当前状态由 `SettingRow.status` 那句话表达：开启 / 关闭 /
+ *    尚未选择，三种可辨状态，而**可写的仍然只有开 / 关两档**（回不到 unset
+ *    是对的，表过态就是表过态）。
  *    还有第四种情形不能画成「已开启」：同意过、但同意的是上一版采集范围
  *    （后端升了 `CONSENT_VERSION`），此刻一个字节都不发。
  *
@@ -115,28 +115,31 @@ function PrivacyBlock() {
   // 里刚存下的同意状态从此对不上。二值开关时代这里靠 `!settings` 显式禁用，
   // 换成三档 `Segmented` 时丢了这道守卫（评审 #300-4）。
   const pending = !settings
+  const enabled = settings?.consent === 'enabled'
   return (
     <SettingSection title={st('about.privacyTitle')}>
       <SettingRow label={st('about.telemetry.title')} status={consentStatus(settings)}>
-        <Segmented
-          // 「尚未选择」= 一档都没选中。`choose` 只收得到开 / 关两档，
-          // 所以界面上说得出 unset，却写不回 unset
-          value={settings && settings.consent !== 'unset' ? settings.consent : null}
-          onChange={(v) => void choose(v, 'settings')}
-          items={[
-            {
-              value: 'enabled' as const,
-              label: st('about.telemetry.optIn'),
-              disabled: hard || pending,
-            },
-            {
-              value: 'disabled' as const,
-              label: st('about.telemetry.optOut'),
-              disabled: hard || pending,
-            },
-          ]}
-          ariaLabel={st('about.telemetry.toggle')}
-        />
+        {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），完整状态由
+            行内 status 那句话说。`choose` 只收得到开 / 关两档，所以界面上说
+            得出 unset，却写不回 unset */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          aria-label={st('about.telemetry.toggle')}
+          disabled={hard || pending}
+          onClick={() => void choose(enabled ? 'disabled' : 'enabled', 'settings')}
+          className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors duration-[var(--duration-fast)] focus-visible:focus-ring disabled:opacity-50 ${
+            enabled ? 'bg-accent' : 'bg-border-strong'
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`inline-block size-3 rounded-full bg-surface transition-transform duration-[var(--duration-fast)] ${
+              enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
       </SettingRow>
       {/* 一句话摘要：常驻。这是隐私承诺，不是说明文字 */}
       <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.summary')}</p>
@@ -155,14 +158,12 @@ function PrivacyBlock() {
 }
 
 /**
- * 控件说不出来的那两档。
- *
- * 开 / 关两档由 `Segmented` 自己带 check 标记表达，再配一句「已开启」是同义
- * 反复（`SettingRow.status` 的约定：只在那个状态**真的成立**时给，不当常驻
- * 解释）。真正需要一句话的是控件表达不了的两种：
- *   * `unset` —— 一档都没选中，得说清那是「还没问过」，不是「用户说了不」；
+ * 行内状态。控件是个二值开关，说不出 unset 与待重新确认，所以这里得把
+ * 当前状态说全：
+ *   * `unset` —— 得说清那是「还没问过」，不是「用户说了不」；
  *   * 同意过、但同意的是**上一版采集范围**（后端升了 `CONSENT_VERSION`）——
- *     选中的还是「开启」，可此刻一个字节都不发，不说就是一句假话。
+ *     此刻一个字节都不发，只写「开启」就是一句假话；
+ *   * 其余两档如实写「开启」/「关闭」。
  * 硬开关那一档不在这里：它有自己那条常驻警示，说的是「不是你关的」。
  */
 function consentStatus(settings: TelemetrySettings | null): string | undefined {
@@ -170,7 +171,9 @@ function consentStatus(settings: TelemetrySettings | null): string | undefined {
   if (settings.consent === 'unset') return st('about.telemetry.unset')
   if (settings.consent === 'enabled' && settings.needs_reconsent)
     return st('about.telemetry.needsReconsent')
-  return undefined
+  return settings.consent === 'enabled'
+    ? st('about.telemetry.optIn')
+    : st('about.telemetry.optOut')
 }
 
 /**

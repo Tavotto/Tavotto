@@ -186,10 +186,6 @@ export function PackagesSettings() {
           </p>
         )}
         <p className="text-xs text-ink-3">{pk('networkNote')}</p>
-        {/* 「点了会发生什么」就近说清：那颗按钮会出网。**为什么打字不出网**是
-            工程细节，折在下面的技术详情里——首屏留给此刻要做的事（审计 T46 的
-            那条纪律，`settingsDisclosure.test.tsx` 数首屏长文的段数）。 */}
-        <p className="text-xs text-ink-3">{pk('search.networkNote')}</p>
 
         <LookupPanel locked={locked} onInstall={start} />
 

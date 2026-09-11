@@ -10,14 +10,14 @@ import { Button } from './ui/Button'
 export function UpdateBanner() {
   const { t } = useTranslation(['workspace', 'common'])
   return (
-    <div className="flex h-6 shrink-0 items-center gap-2 border-b border-border bg-accent-subtle px-2.5">
+    <div className="flex h-6 shrink-0 items-center gap-2 rounded-md border border-border bg-surface px-2.5">
       <RefreshCw size={ICON_SIZE.sm} className="shrink-0 text-accent" />
-      <span className="min-w-0 flex-1 truncate text-xs text-accent">
+      <span className="min-w-0 flex-1 truncate text-xs text-ink">
         {t('workspace:update.banner')}
       </span>
       <Button
         size="sm"
-        className="shrink-0 text-accent hover:bg-accent/10"
+        className="shrink-0 text-ink hover:bg-surface-2"
         onClick={() => location.reload()}
       >
         {t('common:actions.refresh')}

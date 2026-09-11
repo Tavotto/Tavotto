@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react'
-import { Check } from 'lucide-react'
-import { ICON_SIZE } from './Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from './Tooltip'
 
@@ -35,9 +33,9 @@ interface SegmentedProps<T extends string> {
 }
 
 /**
- * 单选分段控件：整体一个 1px 边框，内部用分隔线。
- * 选中态除颜色外还带 check 标记（有文字时）或加重底色 + 字重（仅图标时），
- * 不单靠颜色区分。
+ * 单选下划线 Tabs：整组只有一条底部基线，选中项在基线上压一段实线。
+ * 选中态除颜色外还有下划线与字重两重线索（未选中的文字压到 50% 不透明度），
+ * 不单靠颜色区分。整组默认撑满容器宽度，各档等分。
  */
 export function Segmented<T extends string>({
   value,
@@ -52,12 +50,9 @@ export function Segmented<T extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className={cn(
-        'inline-flex items-stretch overflow-hidden rounded-sm border border-border bg-surface',
-        className,
-      )}
+      className={cn('flex w-full items-stretch border-b border-border', className)}
     >
-      {items.map((item, i) => {
+      {items.map((item) => {
         const active = item.value === value
         const btn = (
           <button
@@ -73,22 +68,29 @@ export function Segmented<T extends string>({
             title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
-              'flex flex-1 items-center justify-center gap-1 whitespace-nowrap outline-none transition-colors',
-              'focus-visible:focus-ring',
-              size === 'sm' ? 'h-[26px] min-w-[26px] px-1.5 text-xs' : 'h-7 min-w-7 px-2 text-xs',
-              i > 0 && 'border-l border-border',
+              'relative flex flex-1 items-center justify-center gap-1 whitespace-nowrap outline-none',
+              'transition-[color,opacity] focus-visible:focus-ring',
+              size === 'sm' ? 'h-7 min-w-7 px-2 text-xs' : 'h-8 min-w-8 px-2.5 text-xs',
               active
                 ? tone === 'quiet'
-                  ? 'bg-ink/[.06] font-medium text-ink'
-                  : 'bg-accent-subtle font-medium text-accent'
+                  ? 'font-medium text-ink opacity-100'
+                  : 'font-medium text-accent opacity-100'
                 : item.disabled
-                  ? 'cursor-default text-ink-faint'
-                  : 'text-ink-3 hover:bg-ink/[.04] hover:text-ink-2',
+                  ? 'cursor-default text-ink-faint opacity-50'
+                  : 'text-ink opacity-50 hover:opacity-100',
             )}
           >
-            {active && item.label != null && <Check size={ICON_SIZE.xs} className="shrink-0" aria-hidden />}
             {item.icon}
             {item.label}
+            {active && (
+              <span
+                aria-hidden
+                className={cn(
+                  'absolute inset-x-0 -bottom-px h-[1.5px]',
+                  tone === 'quiet' ? 'bg-ink' : 'bg-accent',
+                )}
+              />
+            )}
           </button>
         )
         return item.tip ? (

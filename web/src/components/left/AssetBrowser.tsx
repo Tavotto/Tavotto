@@ -479,7 +479,7 @@ export function AssetBrowser() {
 /** 区标题：图 / 脚本 两个区的分隔（计数可选） */
 function SectionHeading({ label, count }: { label: string; count?: number }) {
   return (
-    <h3 className="flex items-center gap-1.5 px-3 pb-1 pt-1.5 text-xs font-medium text-ink-2">
+    <h3 className="flex items-center justify-center gap-1.5 px-3 pb-1 pt-1.5 text-xs font-medium text-ink-2">
       {label}
       {count !== undefined && <span className="font-mono text-ink-3">{count}</span>}
     </h3>
@@ -687,13 +687,13 @@ function AssetCard({
       )}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '150px' }}
     >
-      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-white">
+      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-white">
         <img
           loading="lazy"
           src={renderUrl(panel.id, 400, panel.mtime)}
           alt=""
           draggable={false}
-          className="max-h-full max-w-full object-contain p-1"
+          className="h-full w-full object-contain p-1"
         />
 
         <span className="pointer-events-none absolute left-1 top-1 flex max-w-[calc(100%-2.25rem)] items-center gap-1">
@@ -757,12 +757,14 @@ function AssetCard({
         >
           {name}
         </p>
-        <p className="truncate font-mono text-xs leading-4 text-ink-3">
-          {translate('measure.cmSize', {
-            w: formatCm(panel.native_w_mm),
-            h: formatCm(panel.native_h_mm),
-          })}
-          {used ? ab('usedSuffix', { count: used }) : ''}
+        <p className="flex items-center justify-between gap-1 font-mono text-xs leading-4 text-ink-3">
+          <span className="min-w-0 truncate">
+            {translate('measure.cmSize', {
+              w: formatCm(panel.native_w_mm),
+              h: formatCm(panel.native_h_mm),
+            })}
+          </span>
+          {used > 0 && <span className="shrink-0">{ab('usedSuffix', { count: used })}</span>}
         </p>
       </div>
     </li>
@@ -885,14 +887,14 @@ function RuntimeAssetCard({
       )}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '150px' }}
     >
-      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-white">
+      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-white">
         {asset.cached ? (
           <img
             loading="lazy"
             src={runtimePreviewUrl(asset.id, nonce)}
             alt=""
             draggable={false}
-            className="max-h-full max-w-full object-contain p-1"
+            className="h-full w-full object-contain p-1"
           />
         ) : (
           <span className="flex flex-col items-center gap-1 p-2 text-center text-xs text-ink-3">
@@ -949,16 +951,21 @@ function RuntimeAssetCard({
         </p>
         {/* 第二行：有同源磁盘图先说关系（脚本路径在 title 与可达名里仍然有）；
             否则尺寸（跑过）或脚本路径（没跑过） */}
-        <p className="truncate font-mono text-xs leading-4 text-ink-3" title={asset.script}>
-          {sibling
-            ? ab('runtimeSiblingOf', { name: fileName(sibling.id) })
-            : asset.size_mm
-              ? translate('measure.cmSize', {
-                  w: formatCm(asset.size_mm[0]),
-                  h: formatCm(asset.size_mm[1]),
-                })
-              : asset.script}
-          {used ? ab('usedSuffix', { count: used }) : ''}
+        <p
+          className="flex items-center justify-between gap-1 font-mono text-xs leading-4 text-ink-3"
+          title={asset.script}
+        >
+          <span className="min-w-0 truncate">
+            {sibling
+              ? ab('runtimeSiblingOf', { name: fileName(sibling.id) })
+              : asset.size_mm
+                ? translate('measure.cmSize', {
+                    w: formatCm(asset.size_mm[0]),
+                    h: formatCm(asset.size_mm[1]),
+                  })
+                : asset.script}
+          </span>
+          {used > 0 && <span className="shrink-0">{ab('usedSuffix', { count: used })}</span>}
         </p>
         {staleKey && (
           <p className="flex items-center justify-between gap-1 pb-0.5 text-xs leading-4">
@@ -991,7 +998,7 @@ function CardActions({ selected, children }: { selected: boolean; children: Reac
     <span
       className={cn(
         // 双列时卡片只有 ~150px 宽，两个入口放不下一行就换行（图片区 4:3 有两行的高度）
-        'absolute bottom-1 right-1 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center justify-end gap-1',
+        'absolute bottom-2 right-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center justify-end gap-1',
         'opacity-0 transition-opacity select-none',
         'group-hover:opacity-100 group-focus-visible:opacity-100',
         selected && 'opacity-100',

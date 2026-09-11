@@ -162,14 +162,30 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         />
       )}
       {one && (
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-center justify-start gap-1">
           <Button
-            size="sm"
+            size="icon-sm"
+            onClick={() => wrapScript('sup')}
+            aria-label={tx('superscript')}
+            title={tx('superscriptTitle', { key: modKey('↑') })}
+          >
+            <Superscript size={ICON_SIZE.sm} />
+          </Button>
+          <Button
+            size="icon-sm"
+            onClick={() => wrapScript('sub')}
+            aria-label={tx('subscript')}
+            title={tx('subscriptTitle', { key: modKey('↓') })}
+          >
+            <Subscript size={ICON_SIZE.sm} />
+          </Button>
+          <Button
+            size="icon-sm"
             onClick={insertNewline}
+            aria-label={tx('insertNewline')}
             title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
           >
             <CornerDownLeft size={ICON_SIZE.sm} />
-            {tx('insertNewline')}
           </Button>
         </div>
       )}
@@ -198,24 +214,6 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 aria-label={tx('underline')}
               >
                 <Underline size={ICON_SIZE.sm} />
-              </Button>
-              <Button
-                size="icon-sm"
-                disabled={!one}
-                onClick={() => wrapScript('sup')}
-                aria-label={tx('superscript')}
-                title={tx('superscriptTitle', { key: modKey('↑') })}
-              >
-                <Superscript size={ICON_SIZE.sm} />
-              </Button>
-              <Button
-                size="icon-sm"
-                disabled={!one}
-                onClick={() => wrapScript('sub')}
-                aria-label={tx('subscript')}
-                title={tx('subscriptTitle', { key: modKey('↓') })}
-              >
-                <Subscript size={ICON_SIZE.sm} />
               </Button>
             </>
           }

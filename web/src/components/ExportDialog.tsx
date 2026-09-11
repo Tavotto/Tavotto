@@ -74,7 +74,7 @@ import {
   type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
-import { issueTitle, issueValues, severityLabel, subjectName } from '@/lib/validationText'
+import { issueTitle, issueValues, subjectName } from '@/lib/validationText'
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
@@ -86,7 +86,7 @@ import {
   type ExportRequestInput,
 } from '@/lib/exportRequest'
 import type { OverwritePolicy } from '@/lib/exportRequest'
-import type { PublicationProfile, Severity } from '@/lib/profile'
+import type { PublicationProfile } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { apiUrl } from '@/lib/session'
@@ -119,7 +119,6 @@ import {
 } from '@/store/validationStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
-import { Row } from './ui/Field'
 import { TextInput } from './ui/Input'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
@@ -450,6 +449,16 @@ export function ExportDialog() {
   const transparentApplies = raster && !copiesSourceVerbatim
 
   /**
+   * 位图产物的像素数，显示在对象头部那一行里。**只在选了位图格式时算**（§五）。
+   * 出来多少像素**按这次的范围算**：原图范围下拿画布页面尺寸乘一遍是在报另一张
+   * 图的数字（一张 70.6mm 的图摆在 180mm 画布上，600ppi 会显示成 4252px，而真实
+   * 产物约 1668px）；位图原图更是照抄源像素网格，与 ppi 无关。
+   */
+  const pixels = raster
+    ? pixelPreview(scope, Number(ppi), doc.page, availability.spec, copiesSourceVerbatim)
+    : null
+
+  /**
    * EPS 这次给不给得出（ADR 0046）。判据在 `epsAvailability()` 一处：画布范围
    * 没有它（合成走 PyMuPDF），没有脚本的图也没有它。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
@@ -666,7 +675,7 @@ export function ExportDialog() {
       open={open}
       onOpenChange={setOpen}
       title={ex('title')}
-      width={480}
+      width={560}
       covered={covered}
       anchor="export"
       footer={
@@ -695,284 +704,310 @@ export function ExportDialog() {
         </>
       }
     >
-      <div className="flex flex-col gap-2.5">
-        {/* 0. 导出对象 —— 缩略图 · 名字 · 范围 · 最终尺寸，一眼看清这次出的是什么 */}
-        <TargetHeader
-          scope={scope}
-          panel={panel}
-          spec={availability.spec}
-          doc={doc}
-          asset={figureId ? assets[figureId] : undefined}
-          previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
-        />
-
-        {/* 1. 输出范围 —— 默认跟着工作流，用户随时切 */}
-        <Row label={ex('scopeLabel')} labelWidth={56}>
-          {/* `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
-          <div
-            role="radiogroup"
-            aria-label={ex('scopeLabel')}
-            data-onboarding-anchor="export-scope"
-            className="flex gap-1"
-          >
-            <ScopeButton
-              active={scope === 'original'}
-              disabled={!availability.ok}
-              label={ex('scopeOriginal')}
-              onClick={() => changeScope('original')}
-            />
-            <ScopeButton
-              active={scope === 'canvas'}
-              label={ex('scopeCanvas')}
-              onClick={() => changeScope('canvas')}
-            />
+      <div className="flex flex-col gap-5">
+        {/* 0. 导出内容 —— 范围切换在右上，对象（缩略图 · 名字 · 最终尺寸）在下面一眼看清 */}
+        <section aria-label={ex('scopeLabel')} className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs font-medium text-ink-2">{ex('scopeLabel')}</span>
+            {/* `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+            <div
+              role="radiogroup"
+              aria-label={ex('scopeLabel')}
+              data-onboarding-anchor="export-scope"
+              className="flex gap-1"
+            >
+              <ScopeButton
+                active={scope === 'original'}
+                disabled={!availability.ok}
+                label={ex('scopeOriginal')}
+                onClick={() => changeScope('original')}
+              />
+              <ScopeButton
+                active={scope === 'canvas'}
+                label={ex('scopeCanvas')}
+                onClick={() => changeScope('canvas')}
+              />
+            </div>
           </div>
-        </Row>
-        <ScopeNote
-          scope={scope}
-          available={availability.ok}
-          reason={availability.reason}
-          ignored={availability.spec?.ignored ?? []}
-          fallback={availability.spec?.fallback ?? false}
-        />
-        {/* 2b. 要导的是哪一张 —— 项目里的图直接列出来点选（用户反馈 06）。
-            按原图导时总是显示；按画布导但原图此刻不可用时也显示，因为上面那句
-            「点选下面的一张」得指得到东西。清单为空时一个字都不出现：空态由
-            `scopeUnavailable.no_figures` 那一句说 */}
-        {figures.length > 0 && (scope === 'original' || !availability.ok) && (
-          <FigurePicker
-            figures={figures}
-            selectedId={figureId}
-            onPick={(id) => {
-              setPickedFigureId(id)
-              // 点了一张图，意思就是「按它的原图尺寸导」——不让用户再去点一次范围
-              setScope('original')
-            }}
+          <TargetHeader
+            scope={scope}
+            panel={panel}
+            spec={availability.spec}
+            doc={doc}
+            asset={figureId ? assets[figureId] : undefined}
+            previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+            pixels={pixels}
           />
-        )}
+          <ScopeNote
+            scope={scope}
+            available={availability.ok}
+            reason={availability.reason}
+            ignored={availability.spec?.ignored ?? []}
+            fallback={availability.spec?.fallback ?? false}
+          />
+          {/* 2b. 要导的是哪一张 —— 项目里的图直接列出来点选（用户反馈 06）。
+              原图不可用时清单直接展开（上面那句「点选下面的一张」得指得到东西）；
+              已经选好且项目里不止一张时收进折叠项，不抢主界面；只有一张时不出现。
+              清单为空时一个字都不出现：空态由 `scopeUnavailable.no_figures` 那一句说 */}
+          {figures.length > 0 &&
+            (scope === 'original' || !availability.ok) &&
+            (!availability.ok ? (
+              <FigurePicker
+                figures={figures}
+                selectedId={figureId}
+                onPick={(id) => {
+                  setPickedFigureId(id)
+                  // 点了一张图，意思就是「按它的原图尺寸导」——不让用户再去点一次范围
+                  setScope('original')
+                }}
+              />
+            ) : figures.length > 1 ? (
+              // key 跟着选中的图走：点过一张之后折叠项重新收起
+              <Details key={figureId} className="rounded-sm">
+                <Summary className="rounded-sm text-xs text-ink-2">{ex('figureListLabel')}</Summary>
+                <div className="mt-2">
+                  <FigurePicker
+                    figures={figures}
+                    selectedId={figureId}
+                    onPick={(id) => {
+                      setPickedFigureId(id)
+                      setScope('original')
+                    }}
+                  />
+                </div>
+              </Details>
+            ) : null)}
+        </section>
 
-        {/* 2. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
-        <Row label={ex('filenameLabel')} labelWidth={56}>
-          <TextInput
-            value={filename}
-            onChange={(e) => {
-              setFilenameTouched(true)
-              setFilename(e.target.value)
-            }}
-            placeholder={ex('filenamePlaceholder')}
-            aria-invalid={filenameIssue ? true : undefined}
-            aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
-          />
-        </Row>
-        {filenameIssue ? (
-          <p id="export-filename-error" className="pl-[64px] text-xs text-danger">
-            {ex(`filenameError.${filenameIssue}`)}
-          </p>
-        ) : (
-          <p className="pl-[64px] font-mono text-xs text-ink-3">{names.join('  ')}</p>
-        )}
-
-        {/* 3. 格式 —— 顺序与 `FORMATS` 同源（结果清单按它排） */}
-        <Row label={ex('formatLabel')} labelWidth={56}>
-          <FormatToggle
-            checked={formats.includes('pdf')}
-            onClick={() => toggleFormat('pdf')}
-            title="PDF"
-            hint={ex('pdfHint')}
-          />
-          <FormatToggle
-            checked={formats.includes('png')}
-            onClick={() => toggleFormat('png')}
-            title="PNG"
-            hint={ex('pngHint')}
-          />
-          {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
-          <FormatToggle
-            checked={formats.includes('eps') && eps.ok}
-            onClick={() => toggleFormat('eps')}
-            title="EPS"
-            hint={ex('epsHint')}
-            disabled={!eps.ok}
-            reason={eps.ok ? undefined : ex(`epsUnavailable.${eps.reason}`)}
-          />
-          <FormatToggle
-            checked={formats.includes('tiff')}
-            onClick={() => toggleFormat('tiff')}
-            title="TIFF"
-            hint={ex('tiffHint')}
-          />
-        </Row>
-        {formats.includes('eps') && !eps.ok && (
-          <p className="pl-[64px] text-xs text-ink-3">{ex(`epsUnavailable.${eps.reason}`)}</p>
-        )}
-
-        {/* 4. 分辨率 —— **只在选了位图格式时出现**（§五） */}
-        {raster && (
-          <Row label={ex('ppiLabel')} labelWidth={56}>
-            <Select
-              value={String(ppi)}
-              onChange={setPpi}
-              options={PPI_VALUES.map((v) => ({
-                value: v,
-                label: translate('measure.ppi', { value: v }),
-              }))}
-              ariaLabel={ex('ppiSelectLabel')}
-              className="w-28"
-            />
-            {/* 出来多少像素**按这次的范围算**。原图范围下拿画布页面尺寸乘一遍
-                是在报另一张图的数字（一张 70.6mm 的图摆在 180mm 画布上，
-                600ppi 会显示成 4252px，而真实产物约 1668px）；位图原图更是
-                照抄源像素网格，与 ppi 无关。 */}
-            <span className="shrink-0 font-mono text-xs text-ink-3">
-              {pixelPreview(scope, Number(ppi), doc.page, availability.spec, copiesSourceVerbatim)}
-            </span>
-          </Row>
-        )}
-
-        {/* 5. 规范 —— 只出现自然名称，id 与版本号在设置里 */}
-        <Row label={ex('profileLabel')} labelWidth={56}>
-          <Select
-            value={doc.profile?.id ?? profileId}
-            onChange={applyProfile}
-            options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
-            ariaLabel={ex('profileAria')}
-            className="w-40"
-          />
-          <button
-            type="button"
-            aria-label={ex('profileEditAria')}
-            onClick={() => {
-              // 深链到「规范」页。**不关这个面板**：设置压在它上面（dialogStack），
-              // 关掉设置它自己回来，用户填过的文件名 / 范围 / 格式一个不丢
-              useUiStore.getState().setSettingsOpen(true, 'spec')
-            }}
-            className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
-          >
-            <Pencil size={ICON_SIZE.xs} className="mr-0.5 inline" aria-hidden />
-            {ex('profileEdit')}
-          </button>
-        </Row>
-        {resolved.updateAvailable && (
-          <p className="flex items-center gap-2 pl-[64px] text-xs leading-relaxed text-ink-2">
-            {ex('profileUpdateAvailable')}
-            <Button variant="outline" size="sm" onClick={syncProfile}>
-              {ex('profileSync')}
-            </Button>
-          </p>
-        )}
-        {resolved.globalMissing && (
-          <p className="pl-[64px] text-xs leading-relaxed text-ink-3">
-            {resolved.source === 'snapshot' ? ex('profileMissingPinned') : ex('profileMissing')}
-          </p>
-        )}
-
-        {/* 6. 检查 —— 摘要按导出目标取范围；完整清单在左侧问题面板（§四） */}
-        <CheckRow
-          summary={summary}
-          scopeHint={ex(scope === 'original' && panel ? 'checkScopeFigure' : 'checkScopeCanvas')}
-          onOpenPanel={() => {
-            park()
-            openProblems()
-          }}
-        />
-
-        {/* 阻断项逐条列出，紧挨着知情确认框：点头之前先看见自己在为什么点头。
-            只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
-        {errors.length > 0 && (
-          <BlockingList
-            issues={errors}
-            onLocate={locateBlocking}
-            onMore={() => {
-              park()
-              openProblems({ severities: ['error'] })
-            }}
-          />
-        )}
-
-        {needsConfirm && (
-          <label className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              onChange={(e) => setConfirmed(e.target.checked)}
-              className="mt-0.5 shrink-0"
-            />
-            {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
-                英文的从句位置不一样，拼出来的句子读着就是机翻 */}
-            <span className="min-w-0 flex-1">
-              {errors.length > 0 && notVerifiable.length > 0
-                ? ex('confirmBoth', { errors: errors.length, notVerifiable: notVerifiable.length })
-                : errors.length > 0
-                  ? ex('confirmErrors', { errors: errors.length })
-                  : notVerifiable.length > 0
-                    ? ex('confirmNotVerifiable', { notVerifiable: notVerifiable.length })
-                    : ex('confirmCheckFailed')}
-            </span>
+        {/* 1. 文件名 —— 顶置标签 + 半行输入，同一行右侧是位图分辨率（仅位图格式下出现）；
+            默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
+        <section className="flex flex-col gap-1.5">
+          <label htmlFor="export-filename" className="text-sm font-medium text-ink">
+            {ex('filenameLabel')}
           </label>
-        )}
+          <div className="flex items-center justify-between gap-4">
+            <div className="w-1/2 min-w-0">
+              <TextInput
+                id="export-filename"
+                value={filename}
+                onChange={(e) => {
+                  setFilenameTouched(true)
+                  setFilename(e.target.value)
+                }}
+                placeholder={ex('filenamePlaceholder')}
+                aria-invalid={filenameIssue ? true : undefined}
+                aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
+              />
+            </div>
+            {raster && (
+              <Select
+                value={String(ppi)}
+                onChange={setPpi}
+                options={PPI_VALUES.map((v) => ({
+                  value: v,
+                  label: translate('measure.ppi', { value: v }),
+                }))}
+                ariaLabel={ex('ppiSelectLabel')}
+                className="w-28 shrink-0"
+              />
+            )}
+          </div>
+          {filenameIssue && (
+            <p id="export-filename-error" className="text-xs text-danger">
+              {ex(`filenameError.${filenameIssue}`)}
+            </p>
+          )}
+        </section>
 
-        {/* 7. 高级选项 —— 默认收起 */}
+        {/* 2. 格式 —— 一行普通复选框，顺序与 `FORMATS` 同源（结果清单按它排） */}
+        <section className="flex flex-col gap-2">
+          <fieldset className="m-0 min-w-0 border-0 p-0">
+            <legend className="mb-2 block w-full p-0 text-sm font-medium text-ink">
+              {ex('formatLabel')}
+            </legend>
+            <div className="grid grid-cols-4 gap-x-4 gap-y-2">
+              <FormatCheck
+                checked={formats.includes('pdf')}
+                onChange={() => toggleFormat('pdf')}
+                title="PDF"
+                hint={ex('pdfHint')}
+              />
+              <FormatCheck
+                checked={formats.includes('png')}
+                onChange={() => toggleFormat('png')}
+                title="PNG"
+                hint={ex('pngHint')}
+              />
+              {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+              <FormatCheck
+                checked={formats.includes('eps') && eps.ok}
+                onChange={() => toggleFormat('eps')}
+                title="EPS"
+                hint={eps.ok ? ex('epsHint') : ex(`epsUnavailable.${eps.reason}`)}
+                disabled={!eps.ok}
+              />
+              <FormatCheck
+                checked={formats.includes('tiff')}
+                onChange={() => toggleFormat('tiff')}
+                title="TIFF"
+                hint={ex('tiffHint')}
+              />
+            </div>
+          </fieldset>
+        </section>
+
+        {/* 3. 规范 —— 标题在左（与文件名 / 格式同级），下拉与编辑入口在右；
+            只出现自然名称，id 与版本号在设置里 */}
+        <section className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-4">
+            <span className="shrink-0 text-sm font-medium text-ink">{ex('profileLabel')}</span>
+            <div className="flex min-w-0 items-center gap-3">
+              <Select
+                value={doc.profile?.id ?? profileId}
+                onChange={applyProfile}
+                options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
+                ariaLabel={ex('profileAria')}
+                className="w-48 min-w-0"
+              />
+              <button
+                type="button"
+                aria-label={ex('profileEditAria')}
+                onClick={() => {
+                  // 深链到「规范」页。**不关这个面板**：设置压在它上面（dialogStack），
+                  // 关掉设置它自己回来，用户填过的文件名 / 范围 / 格式一个不丢
+                  useUiStore.getState().setSettingsOpen(true, 'spec')
+                }}
+                className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+              >
+                <Pencil size={ICON_SIZE.xs} className="mr-0.5 inline" aria-hidden />
+                {ex('profileEdit')}
+              </button>
+            </div>
+          </div>
+          {/* 规范异常提示不藏起来 */}
+          {resolved.updateAvailable && (
+            <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
+              {ex('profileUpdateAvailable')}
+              <Button variant="outline" size="sm" onClick={syncProfile}>
+                {ex('profileSync')}
+              </Button>
+            </p>
+          )}
+        </section>
+
+        {/* 4. 检查 —— 标题在上，下方是摘要行 + 阻断项清单 + 知情确认；
+            摘要按导出目标取范围，完整清单在左侧问题面板（§四） */}
+        <section aria-label={ex('checkLabel')} className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-ink">{ex('checkLabel')}</span>
+          <CheckRow
+            summary={summary}
+            scopeHint={ex(scope === 'original' && panel ? 'checkScopeFigure' : 'checkScopeCanvas')}
+            onOpenPanel={() => {
+              park()
+              openProblems()
+            }}
+          />
+
+          {/* 阻断项逐条列出，紧挨着知情确认框：点头之前先看见自己在为什么点头。
+              只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
+          {errors.length > 0 && (
+            <BlockingList
+              issues={errors}
+              onLocate={locateBlocking}
+              onMore={() => {
+                park()
+                openProblems({ severities: ['error'] })
+              }}
+            />
+          )}
+
+          {needsConfirm && (
+            <label className="flex items-start gap-2 pt-1 text-xs leading-relaxed text-ink-2">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-ink-2"
+              />
+              {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
+                  英文的从句位置不一样，拼出来的句子读着就是机翻 */}
+              <span className="min-w-0 flex-1">
+                {errors.length > 0 && notVerifiable.length > 0
+                  ? ex('confirmBoth', { errors: errors.length, notVerifiable: notVerifiable.length })
+                  : errors.length > 0
+                    ? ex('confirmErrors', { errors: errors.length })
+                    : notVerifiable.length > 0
+                      ? ex('confirmNotVerifiable', { notVerifiable: notVerifiable.length })
+                      : ex('confirmCheckFailed')}
+              </span>
+            </label>
+          )}
+        </section>
+
+        {/* 5. 高级选项 —— 默认收起；开关靠右 */}
         <Details
           className="rounded-sm"
           open={advancedOpen}
           onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
         >
           <Summary className="rounded-sm text-xs text-ink-2">{ex('advanced')}</Summary>
-          <div className="mt-1.5 flex flex-col gap-1.5 pl-1">
+          <div className="mt-2 flex flex-col gap-3">
             <label
-              className="flex items-center gap-1.5 text-xs text-ink-2"
+              className="flex items-center justify-between gap-4 text-xs text-ink-2"
               title={ex('reportTitle')}
             >
+              <span>{ex('reportToggle')}</span>
               <Toggle
                 aria-label={ex('reportToggle')}
                 checked={reportOn}
                 onChange={setWithReport}
                 disabled={reportRequired}
               />
-              {ex('reportToggle')}
             </label>
             {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
                 原图 + 位图源出来的就是那张图本身（我们只换容器不换像素），
                 背景是它自己的——开着一个不起作用的开关就是说了而不做 */}
             <label
               className={cn(
-                'flex items-center gap-1.5 text-xs',
+                'flex items-center justify-between gap-4 text-xs',
                 transparentApplies ? 'text-ink-2' : 'text-ink-3',
               )}
             >
+              <span>{ex('transparent')}</span>
               <Toggle
                 aria-label={ex('transparent')}
                 checked={transparent && transparentApplies}
                 onChange={setTransparent}
                 disabled={!transparentApplies}
               />
-              {ex('transparent')}
             </label>
             {raster && !transparentApplies && (
-              <p className="pl-1 text-xs text-ink-3">{ex('transparentNotForRaster')}</p>
+              <p className="text-xs text-ink-3">{ex('transparentNotForRaster')}</p>
             )}
           </div>
         </Details>
 
-        {/* 进度 / 冲突 / 结果 */}
-        {busy && <ProgressRow job={job} />}
-        {!!conflicts.length && (
-          <ConflictBar
-            names={conflicts}
-            onReplace={() => void start('replace')}
-            onRename={() => void start('rename')}
-          />
-        )}
-        {startError && (
-          <p className="text-xs text-danger">
-            {startError.code === 'bad_filename'
-              ? ex(`filenameError.${startError.message}`)
-              : ex('operationFailed', { error: startError.message })}
-          </p>
-        )}
-        {job && !busy && job.status !== 'conflict' && (
-          <ResultBlock job={job} edited={editedDuringExport} onRetry={() => void start('ask')} />
-        )}
+        {/* 进度 / 冲突 / 结果（什么都没有时这一层不占位） */}
+        <div className="flex flex-col gap-2 empty:hidden">
+          {busy && <ProgressRow job={job} />}
+          {!!conflicts.length && (
+            <ConflictBar
+              names={conflicts}
+              onReplace={() => void start('replace')}
+              onRename={() => void start('rename')}
+            />
+          )}
+          {startError && (
+            <p className="text-xs text-danger">
+              {startError.code === 'bad_filename'
+                ? ex(`filenameError.${startError.message}`)
+                : ex('operationFailed', { error: startError.message })}
+            </p>
+          )}
+          {job && !busy && job.status !== 'conflict' && (
+            <ResultBlock job={job} edited={editedDuringExport} onRetry={() => void start('ask')} />
+          )}
+        </div>
       </div>
     </Dialog>
   )
@@ -1006,7 +1041,7 @@ function ScopeButton({
       className={cn(
         'h-6 rounded-sm border px-2.5 text-xs outline-none transition-colors focus-visible:focus-ring',
         active
-          ? 'border-accent bg-accent-subtle text-accent'
+          ? 'border-border-strong bg-surface-2 text-ink'
           : 'border-border bg-surface text-ink-2 hover:border-border-strong',
         disabled && 'cursor-not-allowed opacity-50',
       )}
@@ -1041,7 +1076,7 @@ function FigurePicker({
     <div
       role="listbox"
       aria-label={ex('figureListLabel')}
-      className="ml-[64px] flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto"
+      className="flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto"
     >
       {figures.map((f) => {
         const selected = f.figureId === selectedId
@@ -1056,7 +1091,7 @@ function FigurePicker({
             className={cn(
               'relative flex w-[92px] shrink-0 flex-col gap-1 rounded-sm border p-1 text-left outline-none transition-colors focus-visible:focus-ring',
               selected
-                ? 'border-accent bg-accent-subtle'
+                ? 'border-border-strong bg-surface-2'
                 : 'border-border bg-surface hover:border-border-strong',
             )}
           >
@@ -1064,7 +1099,7 @@ function FigurePicker({
             <span
               className={cn(
                 'block w-full truncate text-[11px] leading-tight',
-                selected ? 'text-accent' : 'text-ink-2',
+                selected ? 'text-ink' : 'text-ink-2',
               )}
             >
               {f.name}
@@ -1073,7 +1108,7 @@ function FigurePicker({
             {selected && (
               <span
                 aria-hidden
-                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-accent text-white"
+                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-ink-2 text-white"
               >
                 <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />
               </span>
@@ -1169,7 +1204,7 @@ function ScopeNote({
 }) {
   useTranslation('dialogs')
   return (
-    <div className="flex flex-col gap-0.5 pl-[64px] text-xs leading-relaxed text-ink-3">
+    <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3 empty:hidden">
       {/* 原图不可用时**总是**说出原因，与当前选的是哪个范围无关：
           一个禁用的按钮解释不了自己，而"为什么灰着"正是用户此刻要问的
           （§五：不隐藏选项、不静默改为画布） */}
@@ -1244,6 +1279,7 @@ function TargetHeader({
   doc,
   asset,
   previewNonce,
+  pixels = null,
 }: {
   scope: ExportScope
   panel: PanelObject | null
@@ -1252,6 +1288,8 @@ function TargetHeader({
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined
   previewNonce: number | undefined
+  /** 位图产物的像素数（只在选了位图格式时给），跟在尺寸 / 对象数之后 */
+  pixels?: ReturnType<typeof pixelPreview> | null
 }) {
   useTranslation('dialogs')
   const original = scope === 'original'
@@ -1273,9 +1311,9 @@ function TargetHeader({
   return (
     <div
       data-export-target
-      className="flex items-center gap-3 rounded-sm border border-border bg-surface-2 p-2"
+      className="flex items-center gap-4"
     >
-      <div className="flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[3px] border border-border bg-white">
+      <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border bg-white">
         {original ? (
           src ? (
             <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
@@ -1287,10 +1325,10 @@ function TargetHeader({
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-ink" title={name}>
+        <p className="truncate text-lg font-medium text-ink" title={name}>
           {name}
         </p>
-        <p className="text-xs text-ink-2">
+        <p className="mt-0.5 text-xs text-ink-2">
           {ex(original ? 'scopeOriginal' : 'scopeCanvas')}
           {' · '}
           <span className="font-mono">{size}</span>
@@ -1298,6 +1336,14 @@ function TargetHeader({
             <>
               {' · '}
               {ex('canvasObjects', { count: visibleObjects })}
+            </>
+          )}
+          {pixels && (
+            <>
+              {' · '}
+              <span id="export-pixel-preview" className="font-mono text-ink-3">
+                {pixels}
+              </span>
             </>
           )}
         </p>
@@ -1353,14 +1399,14 @@ function BlockingList({
   return (
     <ul
       aria-label={ex('blockingListLabel')}
-      className="ml-[64px] flex flex-col gap-1 rounded-sm border border-danger/30 bg-surface-2 px-2 py-1.5"
+      className="flex flex-col gap-0.5"
     >
       {shown.map((issue) => {
         const values = issueValues(issue)
         const title = issueTitle(issue)
         const subject = subjectName(issue)
         return (
-          <li key={issue.issueId} data-blocking-issue={issue.ruleCode} className="flex items-start gap-1.5 text-xs">
+          <li key={issue.issueId} data-blocking-issue={issue.ruleCode} className="flex items-start gap-2 py-1 text-xs">
             <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0 text-danger" aria-hidden />
             <span className="min-w-0 flex-1 leading-relaxed">
               <span className="text-ink">{title}</span>
@@ -1381,7 +1427,7 @@ function BlockingList({
               type="button"
               onClick={() => onLocate(issue)}
               aria-label={ex('locateAria', { subject, title })}
-              className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+              className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
             >
               {ex('locate')}
             </button>
@@ -1389,11 +1435,11 @@ function BlockingList({
         )
       })}
       {rest > 0 && (
-        <li className="pl-4">
+        <li className="py-1 pl-5">
           <button
             type="button"
             onClick={onMore}
-            className="rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+            className="rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
           >
             {ex('blockingMore', { count: rest })}
           </button>
@@ -1423,44 +1469,29 @@ function CheckRow({
   // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
   if (summary.failed || !summary.ready) {
     return (
-      <Row label={ex('checkLabel')} labelWidth={56}>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-danger">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-danger">
           <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           {ex(summary.total ? 'preflightFailedKept' : 'preflightFailed')}
         </span>
         <OpenProblems onClick={onOpenPanel} />
-      </Row>
+      </div>
     )
   }
   if (summary.total === 0) {
+    // 通过态用中性图标，不做绿色横幅：这只是「没查出问题」，不是庆祝
     return (
-      <Row label={ex('checkLabel')} labelWidth={56}>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink-2">
-          <Check size={ICON_SIZE.sm} className="shrink-0 text-accent" aria-hidden />
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-ink">
+          <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />
           {ex('preflightOk')}
-          <span className="text-ink-3">{`· ${scopeHint}`}</span>
+          <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
         </span>
-      </Row>
+      </div>
     )
   }
-  const parts = (['error', 'warn', 'not_verifiable', 'suggestion'] as Severity[])
-    .filter((s) => summary.counts[s] > 0)
-    .map((s) => ex('severityCount', { count: summary.counts[s], label: severityLabel(s) }))
-  return (
-    <Row label={ex('checkLabel')} labelWidth={56}>
-      <span
-        className={cn(
-          'flex min-w-0 flex-1 items-center gap-1.5 text-xs',
-          summary.blocking ? 'text-danger' : 'text-ink-2',
-        )}
-      >
-        <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-        {parts.join(' · ')}
-        <span className="text-ink-3">{`· ${scopeHint}`}</span>
-      </span>
-      <OpenProblems onClick={onOpenPanel} />
-    </Row>
-  )
+  // 有问题时不再出摘要行：阻断项由下方的清单逐条列出，完整清单归左侧问题面板
+  return null
 }
 
 function OpenProblems({ onClick }: { onClick: () => void }) {
@@ -1468,7 +1499,7 @@ function OpenProblems({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="shrink-0 rounded-sm text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+      className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
     >
       {ex('openProblems')}
     </button>
@@ -1640,7 +1671,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
                 if (!ok) setRevealError(ex('revealFailed', { path: `${dir}/${out.name}` }))
               })
             }}
-            className="min-w-0 truncate rounded-sm font-mono text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+            className="min-w-0 truncate rounded-sm font-mono text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
           >
             {out.name}
           </button>
@@ -1651,7 +1682,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             href={apiUrl(out.url ?? '')}
             target="_blank"
             rel="noreferrer"
-            className="min-w-0 truncate font-mono text-xs text-accent hover:underline"
+            className="min-w-0 truncate font-mono text-xs text-ink-2 hover:underline"
           >
             {out.name}
           </a>
@@ -1664,49 +1695,44 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   )
 }
 
-function FormatToggle({
+/**
+ * 一种输出格式：普通复选框 + 名字。格式是多选，所以就用复选框的语法，不做成
+ * 大卡片。说明（矢量 / 位图 …）进 `title`；禁用的**原因**由调用方写成可见文字，
+ * 这里只用 `describedBy` 把它接上——一个灰掉的复选框解释不了自己。
+ */
+function FormatCheck({
   checked,
-  onClick,
+  onChange,
   title,
   hint,
   disabled = false,
-  reason,
+  describedBy,
 }: {
   checked: boolean
-  onClick: () => void
+  onChange: () => void
   title: string
   hint: string
   disabled?: boolean
-  /** 禁用时的原因（进 `title` 提示）；一个灰掉的按钮解释不了自己 */
-  reason?: string
+  /** 禁用原因那段可见文字的 id */
+  describedBy?: string
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={checked}
-      disabled={disabled}
-      title={reason}
+    <label
+      title={hint}
       className={cn(
-        'flex flex-1 items-center gap-1.5 rounded-sm border px-2 py-1 text-left outline-none transition-colors focus-visible:focus-ring',
-        checked
-          ? 'border-accent bg-accent-subtle'
-          : 'border-border bg-surface hover:border-border-strong',
-        disabled && 'cursor-not-allowed opacity-50 hover:border-border',
+        'flex min-h-6 items-center gap-2 text-sm font-medium',
+        disabled ? 'cursor-not-allowed text-ink-faint' : 'text-ink',
       )}
     >
-      <span
-        className={cn(
-          'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border',
-          checked ? 'border-accent bg-accent text-white' : 'border-border-strong',
-        )}
-      >
-        {checked && <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />}
-      </span>
-      <span className="min-w-0">
-        <span className={cn('block text-xs', checked ? 'text-accent' : 'text-ink')}>{title}</span>
-        <span className="block text-xs text-ink-3">{hint}</span>
-      </span>
-    </button>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled}
+        aria-describedby={describedBy}
+        className={cn('h-3.5 w-3.5 shrink-0 accent-ink-2', disabled && 'opacity-60')}
+      />
+      <span>{title}</span>
+    </label>
   )
 }

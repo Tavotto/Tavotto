@@ -70,7 +70,10 @@ function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <span className="contents" data-text-quick={compact ? 'compact' : 'full'}>
+    <span
+      className="flex items-center gap-1.5"
+      data-text-quick={compact ? 'compact' : 'full'}
+    >
       {!compact && family && (
         <Select
           className="w-[92px] shrink-0"
@@ -136,7 +139,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   // 「编辑图内元素」与「为什么不能编辑？」两个按钮。
   const explainable = !obj.script && !!cap && cap.status !== 'editable'
   return (
-    <>
+    <div className="flex items-center gap-1.5">
       {obj.script && (
         <Button size="sm" className="gap-1 px-1.5" onClick={() => enterElementEdit(obj.id)}>
           <Pencil size={ICON_SIZE.sm} />
@@ -174,7 +177,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
         </Button>
       </Tip>
       <Sep />
-    </>
+    </div>
   )
 }
 
@@ -184,7 +187,7 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
       if (o.type === 'arrow' || o.type === 'shape') fn(o as ArrowObject | ShapeObject)
     })
   return (
-    <>
+    <div className="flex items-center gap-1.5">
       <ColorField
         ariaLabel={translate(obj.type === 'arrow' ? 'stroke.color' : 'stroke.strokeColor', { ns: 'inspector' })}
         className="w-[86px] shrink-0"
@@ -203,7 +206,7 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
         onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
       />
       <Sep />
-    </>
+    </div>
   )
 }
 

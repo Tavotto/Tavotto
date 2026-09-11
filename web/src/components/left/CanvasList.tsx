@@ -174,12 +174,9 @@ function CanvasRow({
       }}
       className={cn(
         'group relative flex items-center gap-2 rounded-sm px-1.5 py-1.5',
-        active ? 'bg-accent-subtle' : 'hover:bg-ink/[.035]',
+        active ? 'bg-ink/[.07]' : 'hover:bg-ink/[.035]',
       )}
     >
-      {active && (
-        <span aria-hidden className="absolute -left-0.5 top-2 h-8 w-0.5 rounded-full bg-accent" />
-      )}
       <CanvasThumb page={canvas.page} objects={canvas.objects} />
       <button
         onClick={onOpen}

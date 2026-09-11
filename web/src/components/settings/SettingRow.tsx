@@ -311,7 +311,7 @@ export function DiagnosticDisclosure({
         </button>
         {action}
       </div>
-      {open && <div className="flex flex-col gap-1 border-l border-border pl-2">{children}</div>}
+      {open && <div className="flex flex-col gap-1 pl-2">{children}</div>}
     </div>
   )
 }

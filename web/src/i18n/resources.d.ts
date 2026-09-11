@@ -1514,7 +1514,7 @@ export default interface Resources {
       "deleteBody": "删除后无法找回（已应用到文档的修改不受影响）。",
       "deleteStyleAria": "删除样式 {{name}}",
       "deleteTitle": "删除样式「{{name}}」？",
-      "description": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件",
+      "description": "将排版规格存为命名样式并批量应用到面板，只改图不改源文件。",
       "descriptionEmpty": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件",
       "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
       "emptyDraft": "空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，删掉不想统一的项后保存。",
@@ -1833,7 +1833,7 @@ export default interface Resources {
       "autoInstallHintStrong": "不会改动你现有的任何 Python 环境",
       "bundledHint": "常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）已随 Tavotto 一起安装，不需要你另外装 Python，首次渲染也不联网。",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，安装后把 Tavotto 的安装目录加入白名单。",
-      "incompleteBefore": "Tavotto 自带的渲染环境",
+      "incompleteBefore": "Tavotto 渲染环境",
       "incompleteHint": "排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
       "incompleteInvalid": "已损坏",
       "incompleteMissing": "不见了",
@@ -1845,7 +1845,7 @@ export default interface Resources {
       "managedEnvUsing": "这个项目的 {{product}} 环境：Python {{version}}",
       "matplotlibVersion": "matplotlib {{version}}",
       "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
-      "missingModuleBody": "Tavotto 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
+      "missingModuleBody": "这个脚本涉及到额外的 Python 包，切换到你常用的 Python 或 Conda 环境即可。",
       "missingModuleNoteAfter": "。",
       "missingModuleNoteBefore": "Tavotto 只是启动它来渲染，",
       "missingModuleNoteStrong": "不会往里面安装任何东西",
@@ -1857,7 +1857,7 @@ export default interface Resources {
       "noPythonLink": "Python 3.10 以上",
       "okTitle": "渲染环境",
       "pathAria": "渲染解释器路径",
-      "pathPlaceholder": "/path/to/python 或 conda 环境里的 python",
+      "pathPlaceholder": "/path/to/python",
       "projectEnvAlsoMissing": "找到了项目环境 {{venv}}，但它里面也没有 {{module}}。",
       "projectEnvNoMatplotlib": "找到了项目环境 {{venv}}，但它导入不了 matplotlib——它不是一个可用的绘图环境。",
       "projectEnvNotFound": "内置环境里没有 {{module}}，这个项目附近也没有找到可用的 Python 虚拟环境。",
@@ -1944,7 +1944,7 @@ export default interface Resources {
       "repairWillInstall": "将安装：{{requirement}}",
       "setPythonFailed": "设置失败",
       "sourceLabel": {
-        "bundled": "{{product}} 自带的渲染环境",
+        "bundled": "{{product}} 渲染环境",
         "configured": "你指定的环境",
         "current_process": "Tavotto 自身的解释器",
         "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
@@ -1964,7 +1964,7 @@ export default interface Resources {
       "workdirConfirmOk": "在脚本目录里运行",
       "workdirConfirmTitle": "改为在脚本目录里运行？",
       "workdirHintProject": "脚本在自己所在的目录里运行：相对路径读得到数据；它用相对路径写出的文件会落进项目目录，已有的同名文件会被改写。删除、改名仍会被拦下。",
-      "workdirHintSandbox": "脚本在 Tavotto 的沙盒目录里运行（默认）：它用相对路径写出的东西不会碰项目目录，但用 exists / glob 找数据的脚本会找不到文件。",
+      "workdirHintSandbox": "打开此开关使用本地环境运行，以提高兼容性。",
       "workdirLabel": "在脚本目录里运行",
       "workdirNowProject": "这个项目的脚本改为在自己的目录里运行，正在重新运行。",
       "workdirNowSandbox": "这个项目的脚本改回在沙盒里运行。",
@@ -2210,7 +2210,7 @@ export default interface Resources {
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
       "pinMembers": "固定选中成员（不随重排）",
-      "refLabel": "参照",
+      "refLabel": "对齐到",
       "refTip": {
         "page": "以整个画布为基准",
         "primary": "以最后选中的那个对象为基准，它自己不动",
@@ -2877,7 +2877,7 @@ export default interface Resources {
       "searchAssets": "搜索文件名…",
       "source": "源文件",
       "sourceAdvanced": "源文件与高级",
-      "sourceHint": "写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。",
+      "sourceHint": "写回会覆盖原始的 PDF/PNG 文件，同时会留下备份，可以恢复。",
       "staleScript": "脚本已更新，进入编辑会自动重建",
       "unknown": "未知"
     },
@@ -3556,7 +3556,7 @@ export default interface Resources {
       "usedChip": "已使用",
       "usedOnly": "已使用",
       "usedOnlyAria": "只看当前文档已使用的素材",
-      "usedSuffix_other": " · 已用 {{count}} 次",
+      "usedSuffix_other": "已用 {{count}} 次",
       "zoomAlt": "{{name}} 大图预览"
     },
     "autosave": {
@@ -3806,6 +3806,10 @@ export default interface Resources {
       "zDown": "下移一层",
       "zTop": "置于顶层",
       "zUp": "上移一层"
+    },
+    "hud": {
+      "cursor": "光标",
+      "size": "尺寸"
     },
     "layerTree": {
       "collapseGroup": "折叠组",
@@ -4176,7 +4180,7 @@ export default interface Resources {
       "zoomValue": "缩放 {{percent}}%"
     },
     "update": {
-      "banner": "工具已更新，刷新后使用新版本（当前页面仍可继续操作）"
+      "banner": "工具已更新，刷新后使用新版本"
     }
   }
 }

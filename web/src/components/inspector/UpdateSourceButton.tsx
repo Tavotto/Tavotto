@@ -411,7 +411,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
       <Button
         variant="outline"
         size="sm"
-        className="flex-1"
+        className="w-fit"
         disabled={!panel.overrides.length || readOnly}
         title={wb(
           readOnly

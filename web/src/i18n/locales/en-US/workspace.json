@@ -68,8 +68,8 @@
     "usedChip": "Used",
     "usedOnly": "Used",
     "usedOnlyAria": "Show only assets used in the current document",
-    "usedSuffix_one": " · used {{count}}×",
-    "usedSuffix_other": " · used {{count}}×",
+    "usedSuffix_one": "used {{count}}×",
+    "usedSuffix_other": "used {{count}}×",
     "zoomAlt": "Large preview of {{name}}"
   },
   "autosave": {
@@ -322,6 +322,10 @@
     "unlockObjects": "Unlock {{count}} objects",
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects"
+  },
+  "hud": {
+    "cursor": "Cursor",
+    "size": "Size"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -727,7 +731,7 @@
     "zoomValue": "Zoom {{percent}}%"
   },
   "update": {
-    "banner": "Tavotto has been updated. Reload to use the new version — this page still works in the meantime."
+    "banner": "Tavotto has been updated. Reload to use the new version."
   },
   "hints": {
     "panel_editable": "Double-click this figure to edit inside it.",

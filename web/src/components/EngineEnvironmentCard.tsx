@@ -97,15 +97,9 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           <h3 className="text-xs font-medium text-ink">{en('okTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {label}
-            {env.matplotlib && (
-              <span className="ml-1.5 font-mono text-ink-3">
-                {en('matplotlibVersion', { version: env.matplotlib })}
-              </span>
-            )}
           </p>
-          {env.bundled ? (
-            <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('bundledHint')}</p>
-          ) : (
+          {/* 内置环境不再重复说明自带科学栈；只有外部解释器才需要露出具体路径 */}
+          {!env.bundled && (
             <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
           )}
           <ProjectEnvironmentLine compact={compact} />
@@ -329,11 +323,6 @@ export function MissingDependencyCard({
       </div>
 
       {error && <p className="text-xs text-danger">{error}</p>}
-      <p className="text-xs leading-relaxed text-ink-3">
-        {en('missingModuleNoteBefore')}
-        <strong className="font-medium text-ink-2">{en('missingModuleNoteStrong')}</strong>
-        {en('missingModuleNoteAfter')}
-      </p>
     </div>
   )
 }

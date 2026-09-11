@@ -60,7 +60,7 @@ function ElementQuickInner({
   if (role === 'line' || role === 'linecoll') {
     const ls = w.fieldOf('linestyle')
     return (
-      <>
+      <span className="flex items-center gap-1.5">
         {w.has('color') && (
           <ColorField
             ariaLabel={propLabel('color', role)}
@@ -104,7 +104,7 @@ function ElementQuickInner({
           </Popover>
         )}
         <Sep />
-      </>
+      </span>
     )
   }
 
@@ -112,7 +112,7 @@ function ElementQuickInner({
     const loc = w.fieldOf('loc')
     const size = w.fieldOf('fontsize')
     return (
-      <>
+      <span className="flex items-center gap-1.5">
         {loc && (
           <Popover
             width={196}
@@ -153,7 +153,7 @@ function ElementQuickInner({
           />
         )}
         <Sep />
-      </>
+      </span>
     )
   }
 
@@ -190,7 +190,7 @@ function TextElementActions({
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <span className="contents" data-text-quick={compact ? 'compact' : 'full'}>
+    <span className="flex items-center gap-1.5" data-text-quick={compact ? 'compact' : 'full'}>
       {!compact && family && (family.options?.length ?? 0) > 0 && (
         <Select
           className="w-[112px] shrink-0"
@@ -218,23 +218,27 @@ function TextElementActions({
           onScrubEnd={a.endGesture}
         />
       )}
-      {a.fieldOf('weight') && (
-        <StyleToggle
-          state={boldState}
-          label={translate('textBar.bold', { ns: 'inspector' })}
-          onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
-        >
-          <Bold size={ICON_SIZE.sm} />
-        </StyleToggle>
-      )}
-      {a.fieldOf('style') && (
-        <StyleToggle
-          state={italicState}
-          label={translate('textBar.italic', { ns: 'inspector' })}
-          onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
-        >
-          <Italic size={ICON_SIZE.sm} />
-        </StyleToggle>
+      {(a.fieldOf('weight') || a.fieldOf('style')) && (
+        <span className="flex items-center gap-0.5">
+          {a.fieldOf('weight') && (
+            <StyleToggle
+              state={boldState}
+              label={translate('textBar.bold', { ns: 'inspector' })}
+              onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
+            >
+              <Bold size={ICON_SIZE.sm} />
+            </StyleToggle>
+          )}
+          {a.fieldOf('style') && (
+            <StyleToggle
+              state={italicState}
+              label={translate('textBar.italic', { ns: 'inspector' })}
+              onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
+            >
+              <Italic size={ICON_SIZE.sm} />
+            </StyleToggle>
+          )}
+        </span>
       )}
       {!compact && a.fieldOf('color') && (
         <ColorField

@@ -37,6 +37,10 @@
      5.9:1（白）/ 5.3:1（暖灰底），两处都过普通文字的 4.5:1。 */
   --color-warn: #8a5a00;
   --color-warn-subtle: #f7efe0;
+  /* 成功 / 就绪（「已经好了，不用管」）：编码 Agent 的「可用」用它。
+     只做小面积图标底色（白对勾压在上面 ≈4.9:1），不用于大段文字。 */
+  --color-ok: #2e7d4f;
+  --color-ok-subtle: #e6f3ea;
   --color-sel: #2f6fed;
 
   --radius-sm: 6px;
@@ -319,6 +323,31 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--text-xs);
+}
+
+/* 位置与尺寸（TransformSection）：X / Y / W / H 四个输入框固定 50px，
+   直接包住 input 的容器随之收紧，让输入框贴在标签与单位「mm」之间，
+   而不是撑满整行把单位推到行末。旋转输入框不在此范围内。 */
+[data-transform-fields] input {
+  width: 50px;
+  min-width: 0;
+  flex: 0 0 50px;
+}
+[data-transform-fields] :has(> input) {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+/* 形状外观（ShapeSection）：线宽与填充不透明度同一行，两个输入框固定 40px，
+   与上面 TransformSection 的做法一致。 */
+[data-stroke-fields] input {
+  width: 40px;
+  min-width: 0;
+  flex: 0 0 40px;
+}
+[data-stroke-fields] :has(> input) {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 /* 气泡（Tooltip）不是控件：连 Radix 的定位外壳一起不吃指针。

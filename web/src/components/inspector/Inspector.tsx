@@ -153,12 +153,13 @@ export function Inspector({
           <Tip label={t(pinned ? 'pinnedTip' : 'autoHideTip')} side="bottom">
             <Button
               size="icon-sm"
-              active={pinned}
               aria-pressed={pinned}
               aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
+              /* 常驻态用灰底而不是品牌蓝：这只是一个视图开关，不是主动作强调 */
+              className={cn(pinned && 'bg-ink/[.055] text-ink')}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
-              <Pin size={ICON_SIZE.xs} className={pinned ? undefined : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.xs} className={pinned ? 'text-ink' : 'text-ink-3'} />
             </Button>
           </Tip>
         ) : (

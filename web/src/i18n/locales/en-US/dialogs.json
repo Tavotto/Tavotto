@@ -1224,7 +1224,7 @@
     "deleteBody": "It cannot be recovered (edits already applied to the document are unaffected).",
     "deleteStyleAria": "Delete style {{name}}",
     "deleteTitle": "Delete style “{{name}}”?",
-    "description": "Save font sizes, line widths, ticks and palettes as a named style and apply it to panels in bulk. Only figure edits are written; source files are never touched.",
+    "description": "Save typography settings as a named style and apply it to panels in bulk, without touching source files.",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style and apply it in bulk. Only figure edits are written; source files are never touched.",
     "emptyBody": "No styles saved yet. Select a rendered, editable figure and extract its font sizes, line widths, ticks and palette as a starting point.",
     "emptyDraft": "Empty style. Click “Extract from the current panel” to read the selected panel's font sizes, line widths, ticks and palette, then delete anything you don't want to unify and save.",

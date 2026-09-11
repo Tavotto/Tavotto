@@ -47,7 +47,7 @@
     "pasteStyleEmpty": "还没有复制过样式",
     "pasteStyleTip": "粘贴到选区里的{{kind}}",
     "pinMembers": "固定选中成员（不随重排）",
-    "refLabel": "参照",
+    "refLabel": "对齐到",
     "refTip": {
       "page": "以整个画布为基准",
       "primary": "以最后选中的那个对象为基准，它自己不动",
@@ -681,7 +681,7 @@
     "searchAssets": "搜索文件名…",
     "source": "源文件",
     "sourceAdvanced": "源文件与高级",
-    "sourceHint": "写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。",
+    "sourceHint": "写回会覆盖原始的 PDF/PNG 文件，同时会留下备份，可以恢复。",
     "staleScript": "脚本已更新，进入编辑会自动重建",
     "unknown": "未知"
   },

@@ -69,8 +69,8 @@ function HatchPreview({ code }: { code: string }) {
           {lines}
         </pattern>
       </defs>
-      <rect x="0.5" y="0.5" width="25" height="15" rx="1" fill={`url(#${pid})`}
-        stroke="currentColor" strokeOpacity="0.35" strokeWidth="0.6" />
+      {/* 只填花纹本身，不描外框：外框会和选项格 / 触发器自己的边框叠成双框 */}
+      <rect x="0" y="0" width="26" height="16" fill={`url(#${pid})`} />
     </svg>
   )
 }

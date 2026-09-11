@@ -36,6 +36,8 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
 
   const body = (
     <>
+      {/* data-transform-fields：见 index.css，X/Y/W/H 输入框固定 50px 并贴在标签与单位之间 */}
+      <div data-transform-fields>
       <Grid2>
         <MmField
           label="X"
@@ -100,6 +102,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           }
         />
       </Grid2>
+      </div>
       {rotatable && (
         <div className="mt-1.5">
           <Row label={t('transform.rotation')} labelWidth={72}>
