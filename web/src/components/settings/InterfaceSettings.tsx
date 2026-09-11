@@ -83,7 +83,7 @@ export function InterfaceSettings({ close }: { close: () => void }) {
         </SettingRow>
         <SettingRow label={st('canvas.more')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               close()

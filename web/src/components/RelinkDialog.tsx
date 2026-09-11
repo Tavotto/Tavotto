@@ -58,7 +58,7 @@ export function RelinkDialog() {
       size="lg"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => setPending(null)}>
+          <Button variant="secondary" size="md" onClick={() => setPending(null)}>
             {t(isPaste ? 'relink.cancelPaste' : 'relink.cancelDoc')}
           </Button>
           <Button variant="primary" size="md" onClick={confirm}>

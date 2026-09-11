@@ -160,7 +160,7 @@ export function ShortcutHelp() {
                   >
                     {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
                     <span className="order-last shrink-0">
-                      <kbd className="inline-flex h-[22px] min-w-[23px] items-center justify-center rounded-[5px] border border-border border-b-2 border-b-border-strong bg-surface-2 px-1.5 font-mono text-xs font-medium leading-none text-ink-2">
+                      <kbd className="inline-flex h-[22px] min-w-[23px] items-center justify-center rounded-xs border border-border border-b-2 border-b-border-strong bg-surface-2 px-1.5 font-mono text-xs font-medium leading-none text-ink-2">
                         {keyText(r)}
                       </kbd>
                     </span>
@@ -175,7 +175,7 @@ export function ShortcutHelp() {
           ))}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border pt-3 text-xs text-ink-3">
-          <kbd className="inline-flex h-[18px] min-w-7 items-center justify-center rounded-sm border border-border bg-surface-2 px-1 font-mono text-[10px] font-medium leading-none text-ink-2">
+          <kbd className="inline-flex h-[18px] min-w-7 items-center justify-center rounded-sm border border-border bg-surface-2 px-1 font-mono text-xs font-medium leading-none text-ink-2">
             {translate('keycap.esc', { ns: 'common' })}
           </kbd>
           <span>{translate('actions.close', { ns: 'common' })}</span>

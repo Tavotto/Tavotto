@@ -79,7 +79,7 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
         description={`${script ?? ''} · +${added} −${removed}`}
         width={760}
         footer={
-          <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
             {translate('actions.close')}
           </Button>
         }

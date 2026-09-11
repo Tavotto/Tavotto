@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Play } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
 import { stemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
@@ -94,16 +95,14 @@ export function FigurePickerDialog() {
                     {e.stem}
                   </span>
                   {e.kind === 'runtime' && (
-                    <span className="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 text-[10px] text-ink-3">
-                      {fp('runtimeBadge')}
-                    </span>
+                    <Badge>{fp('runtimeBadge')}</Badge>
                   )}
                 </div>
                 <div className="mt-auto flex flex-wrap items-center gap-2">
                   <EntrySize entry={e} />
                   <span className="ml-auto flex shrink-0 items-center">
                     {e.kind === 'panel' || e.asset.descriptor ? (
-                      <Button variant="outline" size="sm" onClick={() => pickEntry(e)}>
+                      <Button variant="secondary" size="sm" onClick={() => pickEntry(e)}>
                         {fp('addToCanvas')}
                       </Button>
                     ) : (

@@ -4,6 +4,7 @@ import { t as translate } from '@/i18n'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { FORMATS, hasRaster } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
+import { Checkbox } from '../ui/Checkbox'
 import { Toggle } from '../ui/Toggle'
 import { SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
 
@@ -45,11 +46,7 @@ export function ExportSettings() {
         <span className="flex items-center gap-3">
           {FORMATS.map((f) => (
             <label key={f} className="flex items-center gap-1.5 text-xs text-ink-2">
-              <input
-                type="checkbox"
-                checked={defaults.formats.includes(f)}
-                onChange={() => toggleFormat(f)}
-              />
+              <Checkbox checked={defaults.formats.includes(f)} onChange={() => toggleFormat(f)} />
               {/* 只列格式名，「矢量 / 位图」的类型旁注按 2026-09-11 设计包去掉；
                   格式清单仍来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
               {f.toUpperCase()}

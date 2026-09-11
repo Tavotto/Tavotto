@@ -439,7 +439,7 @@ export function LegendPositionPicker({
                 className={cn(
                   'absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-sm outline-none transition-colors',
                   'focus-visible:focus-ring disabled:opacity-40',
-                  slot.active ? 'bg-selected' : 'enabled:hover:bg-ink/[.05]',
+                  slot.active ? 'bg-selected' : 'enabled:hover:bg-surface-hover',
                 )}
               />
             </Tip>
@@ -491,7 +491,7 @@ export function LegendPositionPicker({
           className="grid grid-cols-2 gap-1.5 border-t border-border pt-1.5"
         >
           <div className="flex min-w-0 items-center gap-1">
-            <span aria-hidden className="shrink-0 text-[11px] text-ink-3">
+            <span aria-hidden className="shrink-0 text-xs text-ink-3">
               X
             </span>
             <NumberField
@@ -506,7 +506,7 @@ export function LegendPositionPicker({
             />
           </div>
           <div className="flex min-w-0 items-center gap-1">
-            <span aria-hidden className="shrink-0 text-[11px] text-ink-3">
+            <span aria-hidden className="shrink-0 text-xs text-ink-3">
               Y
             </span>
             <NumberField
@@ -526,7 +526,7 @@ export function LegendPositionPicker({
       {mayOverflow && (
         // 外侧图例很容易探出图幅，导出时那一块会被静默裁掉——预检
         // `element-outside-figure` 会把它报出来，这里只先说一句「可能」
-        <p className="text-[11px] leading-snug text-ink-3">
+        <p className="text-xs leading-snug text-ink-3">
           {ins('control.legendOutsideOverflowHint')}
         </p>
       )}

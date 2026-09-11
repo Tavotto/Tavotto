@@ -67,8 +67,8 @@ export function LeftRail() {
                 'relative flex h-8 w-8 items-center justify-center rounded-sm outline-none',
                 'transition-colors focus-visible:focus-ring',
                 active
-                  ? 'bg-ink/[.08] text-ink'
-                  : 'text-ink-2 hover:bg-ink/[.05] hover:text-ink',
+                  ? 'bg-selected text-ink'
+                  : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
               )}
             >
               <Icon size={ICON_SIZE.md} />
@@ -106,7 +106,7 @@ export function LeftRail() {
           aria-label={t('rail.readiness')}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-ink/[.05] hover:text-ink',
+            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
         >
@@ -120,7 +120,7 @@ export function LeftRail() {
           aria-label={t('rail.settings')}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-ink/[.05] hover:text-ink',
+            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
         >

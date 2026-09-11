@@ -73,7 +73,7 @@ export function ProjectSettings() {
           className="flex-1"
         />
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             useUiStore.getState().setSettingsOpen(false)
@@ -92,7 +92,7 @@ export function ProjectSettings() {
           {(project?.scripts ?? 0) === 0 && st('project.noScriptsSuffix')}
         </span>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             useUiStore.getState().setSettingsOpen(false)
@@ -179,7 +179,7 @@ function DirectoryRow({
           />
           {isDesktop() && (
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={async () => {
                 const picked = await pickDirectory(label)
@@ -204,7 +204,7 @@ function DirectoryRow({
             </Button>
           )}
         </span>
-        <span className="flex min-w-0 items-center gap-1 text-[11px] text-ink-3">
+        <span className="flex min-w-0 items-center gap-1 text-xs text-ink-3">
           {st('project.effectivePath')}
           <PathValue path={effective} name={label} />
         </span>

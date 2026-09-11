@@ -39,6 +39,7 @@ import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { Tab, TabList } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
@@ -106,25 +107,13 @@ export function Inspector({
     >
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-3 px-3">
-        <div role="tablist" aria-label={t('tabsLabel')} className="flex h-full items-center gap-3">
+        <TabList label={t('tabsLabel')}>
           {TABS.map((id) => (
-            <button
-              key={id}
-              role="tab"
-              data-inspector-tab={id}
-              aria-selected={tab === id}
-              onClick={() => setTab(id)}
-              className={cn(
-                'relative h-full text-xs outline-none transition-colors focus-visible:focus-ring',
-                tab === id
-                  ? 'font-medium text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
-                  : 'text-ink-3 hover:text-ink-2',
-              )}
-            >
+            <Tab key={id} data-inspector-tab={id} active={tab === id} onClick={() => setTab(id)}>
               {tabLabel(id)}
-            </button>
+            </Tab>
           ))}
-        </div>
+        </TabList>
         <span className="flex-1" />
         <Tip label={runningAi ? t('assistantRunningTip') : assistantTabLabel()} side="bottom">
           <Button
@@ -156,7 +145,7 @@ export function Inspector({
               aria-pressed={pinned}
               aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
               /* 常驻态用灰底而不是品牌蓝：这只是一个视图开关，不是主动作强调 */
-              className={cn(pinned && 'bg-ink/[.055] text-ink')}
+              className={cn(pinned && 'bg-selected text-ink')}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={ICON_SIZE.xs} className={pinned ? 'text-ink' : 'text-ink-3'} />
@@ -339,7 +328,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
           <ImageIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
           {!el && (
-            <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+            <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
               {roleName('figure')}
             </span>
           )}

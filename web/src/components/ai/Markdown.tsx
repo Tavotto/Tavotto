@@ -62,7 +62,7 @@ const components: Components = {
     const fenced = /language-/.test(className ?? '')
     if (!fenced) {
       return (
-        <code className="rounded-[3px] bg-surface-2 px-1 py-px font-mono text-xs text-ink [overflow-wrap:anywhere]">
+        <code className="rounded-xs bg-surface-2 px-1 py-px font-mono text-xs text-ink [overflow-wrap:anywhere]">
           {children}
         </code>
       )

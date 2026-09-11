@@ -163,7 +163,7 @@ export function SettingsDialog() {
                 'relative h-7 shrink-0 whitespace-nowrap rounded-sm px-2 text-left text-xs outline-none focus-visible:focus-ring',
                 section === id
                   ? 'bg-selected font-medium text-ink'
-                  : 'text-ink-2 hover:bg-ink/[.045]',
+                  : 'text-ink-2 hover:bg-surface-hover',
               )}
             >
               {st(`section.${id}`)}

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Copy, Download, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Badge } from '../ui/Badge'
 import { msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
@@ -185,7 +186,7 @@ function formatValue(raw: unknown, unit?: string): string {
 function FieldGroup({ group, children }: { group: string; children: ReactNode }) {
   return (
     <div data-field-group={group} className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium uppercase tracking-[.06em] text-ink-3">
+      <span className="type-section">
         {st(`group.${group}`)}
       </span>
       {children}
@@ -451,7 +452,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           {resolved.updateAvailable && (
             <>
               <span className="text-ink-2">{st('binding.updateAvailable')}</span>
-              <Button variant="outline" size="sm" onClick={syncToGlobal}>
+              <Button variant="secondary" size="sm" onClick={syncToGlobal}>
                 {st('binding.sync')}
               </Button>
             </>
@@ -495,26 +496,26 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     'flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs',
                     selected?.id === r.id
                       ? 'bg-selected text-ink'
-                      : 'text-ink hover:bg-ink/[.04]',
+                      : 'text-ink hover:bg-surface-hover',
                   )}
                   title={profileTechnicalDetail(r)}
                 >
                   <span className="min-w-0 flex-1 truncate">{profileName(r)}</span>
-                  {r.built_in && <span className="shrink-0 text-[10px] text-ink-3">{st('builtin')}</span>}
+                  {r.built_in && <span className="shrink-0 text-xs text-ink-3">{st('builtin')}</span>}
                   {kind === 'spec' && boundId === r.id && (
-                    <span className="shrink-0 text-[10px] text-ink-2">{st('inUse')}</span>
+                    <span className="shrink-0 text-xs text-ink-2">{st('inUse')}</span>
                   )}
                 </button>
               </li>
             ))}
           </ul>
           <div className="flex gap-1">
-            <Button variant="outline" size="sm" onClick={create} loading={busy}>
+            <Button variant="secondary" size="sm" onClick={create} loading={busy}>
               <Plus size={ICON_SIZE.sm} />
               {st('new')}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={duplicate}
               disabled={!selected}
@@ -524,7 +525,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               <Copy size={ICON_SIZE.sm} />
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={exportOne}
               disabled={!selected}
@@ -534,7 +535,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               <Download size={ICON_SIZE.sm} />
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => fileRef.current?.click()}
               aria-label={st('import')}
@@ -578,7 +579,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                   草稿**现算，所以「把刻度字号调到 7」当场看得见。纯几何、不跑引擎。 */}
               {kind === 'style' && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-medium uppercase tracking-[.06em] text-ink-3">
+                  <span className="type-section">
                     {st('previewTitle')}
                   </span>
                   <StyleSamplePreview data={draft} />
@@ -612,10 +613,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     data-profile-readonly
                     className="flex min-h-6 flex-wrap items-center gap-2 text-xs"
                   >
-                    <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
-                      {selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}
-                    </span>
-                    <Button variant="outline" size="sm" onClick={duplicate} loading={busy}>
+                    <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
+                    <Button variant="secondary" size="sm" onClick={duplicate} loading={busy}>
                       <Copy size={ICON_SIZE.xs} />
                       {st('duplicateToEdit')}
                     </Button>
@@ -715,11 +714,11 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                   保存的东西，整排编辑动作就不出现，不摆一排禁用按钮。 */}
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 {kind === 'spec' ? (
-                  <Button variant="outline" size="sm" onClick={useForProject}>
+                  <Button variant="secondary" size="sm" onClick={useForProject}>
                     {st('useForProject')}
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={applyToFigure}>
+                  <Button variant="secondary" size="sm" onClick={applyToFigure}>
                     {st('applyToFigure')}
                   </Button>
                 )}
@@ -736,7 +735,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     {st('save')}
                   </Button>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     disabled={!selected.derived_from}
                     onClick={restore}
@@ -745,7 +744,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     <RotateCcw size={ICON_SIZE.sm} />
                     {st('restore')}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={remove}>
+                  <Button variant="secondary" size="sm" onClick={remove}>
                     <Trash2 size={ICON_SIZE.sm} className="text-danger" />
                     {st('delete')}
                   </Button>

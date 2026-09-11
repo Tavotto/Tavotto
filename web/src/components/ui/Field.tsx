@@ -24,13 +24,13 @@ export function Section({
       {title && (
         <header className="mb-2 flex h-4 items-center justify-between">
           <h3
-          className={cn(
-            'min-w-0 truncate text-xs font-medium',
-            plainTitle ? 'text-ink-2' : 'uppercase tracking-[.06em] text-ink-3',
-          )}
-        >
-          {title}
-        </h3>
+            className={cn(
+              'min-w-0 truncate',
+              plainTitle ? 'text-xs font-medium text-ink-2' : 'type-section',
+            )}
+          >
+            {title}
+          </h3>
           {action}
         </header>
       )}

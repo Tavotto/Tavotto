@@ -65,7 +65,7 @@ export function ProjectSwitcher() {
           <button
             className={cn(
               'flex h-7 min-w-0 max-w-56 shrink items-center gap-1 rounded-md px-1.5 text-xs',
-              'text-ink-2 outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
+              'text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
             )}
             aria-label={t('switcher.trigger', { name: project.name })}
           >
@@ -160,7 +160,7 @@ export function OpenInNewTabButton() {
         aria-label={t('switcher.newTabLabel')}
         className={cn(
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3',
-          'outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
+          'outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
         )}
       >
         <ExternalLink size={ICON_SIZE.sm} />

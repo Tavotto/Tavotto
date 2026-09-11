@@ -19,6 +19,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn } from '@/lib/utils'
+import { listRowClass } from '@/components/ui/listRow'
 import {
   enterElementEdit,
   hideElement,
@@ -244,7 +245,7 @@ export function ElementTree() {
             {et('building')}
           </p>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => enterElementEdit(panel.id)}>
+          <Button variant="secondary" size="sm" onClick={() => enterElementEdit(panel.id)}>
             <Braces size={ICON_SIZE.sm} />
             {et('load')}
           </Button>
@@ -476,7 +477,7 @@ function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle()
       }}
-      className="mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm pr-1.5 text-xs text-ink-2 outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
+      className={cn(listRowClass({ muted: true }), 'pr-1.5')}
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
         <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', expanded && 'rotate-90')} />
@@ -573,13 +574,7 @@ function ElementRow({
         if (e.button !== 0) return
         onSelect(e.shiftKey)
       }}
-      className={cn(
-        'group relative mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm pr-1 text-xs outline-none focus-visible:focus-ring',
-        selected
-          ? 'bg-selected text-ink'
-          : 'text-ink hover:bg-ink/[.04]',
-        hidden && 'opacity-45',
-      )}
+      className={cn(listRowClass({ selected, hidden }), 'pr-1')}
     >
       {expanded !== undefined ? (
         <button

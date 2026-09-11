@@ -226,7 +226,7 @@ function ReadinessBody() {
       <div className="flex items-start justify-between gap-3">
         <SummaryStrip report={report} />
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="shrink-0"
           disabled={busy !== null || !report.project.can_rescan}
@@ -547,7 +547,7 @@ function PanelRow({
         <div className="flex flex-col gap-1.5">
           {panel.script && (
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               className="w-full"
               disabled={disabled}
@@ -612,14 +612,14 @@ function RowActions({
           素材清单里没有它时**不渲染这个按钮**：就绪度扫描与素材遍历之间
           新出现 / 刚被删掉的那一档，点下去只会是一条错误 */}
       {panel.status === 'editable' && hasAsset && (
-        <Button variant="outline" size="sm" className="w-full" disabled={disabled} onClick={onAdd}>
+        <Button variant="secondary" size="sm" className="w-full" disabled={disabled} onClick={onAdd}>
           <Plus size={ICON_SIZE.sm} />
           {rd('addToCanvas')}
         </Button>
       )}
 
       {panel.status === 'auto_linkable' && (
-        <Button variant="outline" size="sm" disabled={disabled} onClick={onRescan}>
+        <Button variant="secondary" size="sm" disabled={disabled} onClick={onRescan}>
           <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
           {rd('autoLink')}
         </Button>
@@ -640,7 +640,7 @@ function RowActions({
         panel.candidates.map((script) => (
           <Button
             key={script}
-            variant="outline"
+            variant="secondary"
             size="sm"
             disabled={disabled || !panel.can_manual_link}
             onClick={() => onLink(script)}
@@ -650,7 +650,7 @@ function RowActions({
         ))}
 
       {panel.status === 'source_missing' && (
-        <Button variant="outline" size="sm" disabled={disabled} onClick={onRescan}>
+        <Button variant="secondary" size="sm" disabled={disabled} onClick={onRescan}>
           <RefreshCw size={ICON_SIZE.sm} className={cn(busyKey === 'scan' && 'animate-spin')} />
           {rd('rescan')}
         </Button>
@@ -703,7 +703,7 @@ function ProbePicker({
         />
       )}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         disabled={disabled}
         onClick={() => onProbe(script)}
@@ -984,7 +984,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
           {note.descriptors.map((d) => (
             <Button
               key={d.asset_id}
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 addRuntimePanel(d)

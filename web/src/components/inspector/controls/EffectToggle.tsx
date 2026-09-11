@@ -41,7 +41,7 @@ export function EffectToggle({
     )
   }
   return (
-    <Button variant="outline" size="sm" className="w-full" data-effect-add onClick={onAdd}>
+    <Button variant="secondary" size="sm" className="w-full" data-effect-add onClick={onAdd}>
       <Plus size={ICON_SIZE.xs} aria-hidden />
       {addLabel}
     </Button>

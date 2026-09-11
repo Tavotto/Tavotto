@@ -279,7 +279,7 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {phase !== 'ready' ? (
-          <Button variant="outline" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+          <Button variant="secondary" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
             {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
           </Button>
         ) : (
@@ -300,7 +300,7 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
       {phase === 'ready' && (
         <div className="flex flex-col gap-1" data-diagnostics-preview>
           <p className="text-xs text-ink-3">{st('diagnostics.previewNote')}</p>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-[11px] leading-relaxed text-ink-3">
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-xs leading-relaxed text-ink-3">
             {text}
           </pre>
         </div>

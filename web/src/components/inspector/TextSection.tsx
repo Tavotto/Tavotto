@@ -248,7 +248,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 width={200}
                 trigger={
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     className="w-full justify-between"
                     data-case-menu

@@ -23,7 +23,7 @@ function GradientBar({ name, className }: { name: string; className?: string }) 
       <span
         aria-hidden
         className={cn(
-          'flex h-3.5 items-center justify-center rounded-[2px] border border-dashed border-border font-mono text-[9px] text-ink-3',
+          'flex h-3.5 items-center justify-center rounded-xs border border-dashed border-border font-mono text-xs leading-none text-ink-3',
           className,
         )}
       >
@@ -34,7 +34,7 @@ function GradientBar({ name, className }: { name: string; className?: string }) 
   return (
     <span
       aria-hidden
-      className={cn('block h-3.5 rounded-[2px] border border-border-strong/40', className)}
+      className={cn('block h-3.5 rounded-xs border border-border-strong/40', className)}
       style={{ background: grad }}
     />
   )
@@ -110,7 +110,7 @@ export function ColormapPicker({
                 'focus-visible:focus-ring',
                 active
                   ? 'border-transparent bg-selected'
-                  : 'border-transparent hover:bg-ink/[.045]',
+                  : 'border-transparent hover:bg-surface-hover',
               )}
             >
               <span className="flex w-3.5 shrink-0 items-center">

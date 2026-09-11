@@ -143,7 +143,7 @@ export function CodingAgentsSection() {
         <div className="flex shrink-0 flex-col items-end gap-1">
           <Button
             data-agent-rescan
-            variant="outline"
+            variant="secondary"
             size="sm"
             loading={busy}
             onClick={() => void reload(true)}

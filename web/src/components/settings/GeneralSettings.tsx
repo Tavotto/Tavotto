@@ -57,7 +57,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
       </SettingRow>
       <SettingRow label={st('general.layout')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             try {
@@ -73,7 +73,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
       </SettingRow>
       <SettingRow label={st('shortcuts.label')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             close()
@@ -83,7 +83,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
           {st('shortcuts.open')}
         </Button>
         {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法 */}
-        <kbd className="rounded-sm border border-border px-1 font-mono text-[11px] leading-5 text-ink-3">
+        <kbd className="rounded-sm border border-border px-1 font-mono text-xs leading-5 text-ink-3">
           ?
         </kbd>
       </SettingRow>
@@ -108,7 +108,7 @@ function TutorialRows({ close }: { close: () => void }) {
     <>
       <SettingRow label={st('tutorial.label')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={busy != null}
           data-onboarding-anchor="settings-tutorial"
@@ -124,7 +124,7 @@ function TutorialRows({ close }: { close: () => void }) {
       {hasTutorial && (
         <SettingRow label={st('tutorial.reset')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             disabled={busy != null}
             onClick={() => {
@@ -137,7 +137,7 @@ function TutorialRows({ close }: { close: () => void }) {
         </SettingRow>
       )}
       <SettingRow label={st('tutorial.hints')}>
-        <Button variant="outline" size="sm" onClick={() => resetHints()}>
+        <Button variant="secondary" size="sm" onClick={() => resetHints()}>
           {st('tutorial.resetHints')}
         </Button>
       </SettingRow>

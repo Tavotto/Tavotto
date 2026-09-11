@@ -46,6 +46,7 @@ import {
   X,
 } from 'lucide-react'
 import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
+import { Checkbox } from './ui/Checkbox'
 import { Details, Summary } from '@/components/ui/Details'
 import {
   panelSrc,
@@ -681,11 +682,11 @@ export function ExportDialog() {
       footer={
         <>
           <span className="flex-1" />
-          <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
             {translate('actions.close')}
           </Button>
           {busy ? (
-            <Button variant="outline" size="md" onClick={() => void cancelCurrentExport()}>
+            <Button variant="secondary" size="md" onClick={() => void cancelCurrentExport()}>
               <X size={ICON_SIZE.md} />
               {ex('cancelExport')}
             </Button>
@@ -888,7 +889,7 @@ export function ExportDialog() {
           {resolved.updateAvailable && (
             <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
               {ex('profileUpdateAvailable')}
-              <Button variant="outline" size="sm" onClick={syncProfile}>
+              <Button variant="secondary" size="sm" onClick={syncProfile}>
                 {ex('profileSync')}
               </Button>
             </p>
@@ -923,11 +924,10 @@ export function ExportDialog() {
 
           {needsConfirm && (
             <label className="flex items-start gap-2 pt-1 text-xs leading-relaxed text-ink-2">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-ink-2"
+                className="mt-0.5"
               />
               {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
                   英文的从句位置不一样，拼出来的句子读着就是机翻 */}
@@ -1098,7 +1098,7 @@ function FigurePicker({
             <FigureThumb figure={f} />
             <span
               className={cn(
-                'block w-full truncate text-[11px] leading-tight',
+                'block w-full truncate text-xs leading-tight',
                 selected ? 'text-ink' : 'text-ink-2',
               )}
             >
@@ -1108,7 +1108,7 @@ function FigurePicker({
             {selected && (
               <span
                 aria-hidden
-                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-ink-2 text-white"
+                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-xs bg-ink-2 text-white"
               >
                 <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />
               </span>
@@ -1153,7 +1153,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm
   const ratio = sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3
   return (
-    <span className="flex h-14 w-full items-center justify-center overflow-hidden rounded-[3px] border border-border bg-white">
+    <span className="flex h-14 w-full items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
       {svg ? (
         // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
         // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
@@ -1313,7 +1313,7 @@ function TargetHeader({
       data-export-target
       className="flex items-center gap-4"
     >
-      <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border bg-white">
+      <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
         {original ? (
           src ? (
             <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
@@ -1412,7 +1412,7 @@ function BlockingList({
               <span className="text-ink">{title}</span>
               <span className="text-ink-3">{` · ${subject}`}</span>
               {values.current && (
-                <span className="ml-1 font-mono text-[10px] text-ink-3">
+                <span className="ml-1 font-mono text-xs text-ink-3">
                   {values.expected
                     ? translate('problems.valueArrow', {
                         ns: 'errors',
@@ -1545,10 +1545,10 @@ function ConflictBar({
         {ex('conflict', { files: names.join('、') })}
       </p>
       <div className="flex gap-1.5">
-        <Button variant="outline" size="sm" onClick={onRename}>
+        <Button variant="secondary" size="sm" onClick={onRename}>
           {ex('conflictRename')}
         </Button>
-        <Button variant="outline" size="sm" onClick={onReplace}>
+        <Button variant="secondary" size="sm" onClick={onReplace}>
           {ex('conflictReplace')}
         </Button>
       </div>
@@ -1582,7 +1582,7 @@ function ResultBlock({
           <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-warn" aria-hidden />
           {ex('jobLost')}
         </p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
+        <Button variant="secondary" size="sm" onClick={onRetry}>
           {ex('retry')}
         </Button>
       </div>
@@ -1599,7 +1599,7 @@ function ResultBlock({
           })}
         </p>
         {job.error?.recoverable !== false && (
-          <Button variant="outline" size="sm" onClick={onRetry}>
+          <Button variant="secondary" size="sm" onClick={onRetry}>
             {ex('retry')}
           </Button>
         )}
@@ -1687,8 +1687,8 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             {out.name}
           </a>
         )}
-        <span className="shrink-0 font-mono text-[10px] text-ink-3">{dims}</span>
-        {out.replaced && <span className="shrink-0 text-[10px] text-ink-3">{ex('replaced')}</span>}
+        <span className="shrink-0 font-mono text-xs text-ink-3">{dims}</span>
+        {out.replaced && <span className="shrink-0 text-xs text-ink-3">{ex('replaced')}</span>}
       </div>
       {revealError && <p className="text-xs text-danger">{revealError}</p>}
     </div>
@@ -1724,13 +1724,11 @@ function FormatCheck({
         disabled ? 'cursor-not-allowed text-ink-faint' : 'text-ink',
       )}
     >
-      <input
-        type="checkbox"
+      <Checkbox
         checked={checked}
         onChange={onChange}
         disabled={disabled}
         aria-describedby={describedBy}
-        className={cn('h-3.5 w-3.5 shrink-0 accent-ink-2', disabled && 'opacity-60')}
       />
       <span>{title}</span>
     </label>

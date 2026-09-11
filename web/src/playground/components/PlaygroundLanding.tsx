@@ -42,7 +42,7 @@ export function PlaygroundLanding({
           <h1 className="text-[19px] font-semibold tracking-tight text-ink">
             {pg('landingTitle')}
           </h1>
-          <p className="max-w-[52ch] text-[13px] leading-relaxed text-ink-2">
+          <p className="max-w-[52ch] text-base leading-relaxed text-ink-2">
             {pg('landingSubtitle')}
           </p>
         </header>
@@ -70,19 +70,19 @@ export function PlaygroundLanding({
             <p className="text-xs leading-relaxed text-ink-2">{pg('privacyNote')}</p>
             <a
               href={RELEASES_LATEST_URL}
-              className="flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
             >
               <Download size={ICON_SIZE.sm} aria-hidden />
               {pg('downloadDesktop')}
             </a>
           </div>
           <p className="text-xs leading-relaxed text-ink-3">{pg('desktopNote')}</p>
-          <p className="font-mono text-[11px] text-ink-3">
+          <p className="font-mono text-xs text-ink-3">
             {Object.entries(RUNTIME_PACKAGES)
               .map(([n, v]) => `${n} ${v}`)
               .join(' · ')}
           </p>
-          <p className="font-mono text-[11px] text-ink-faint">
+          <p className="font-mono text-xs text-ink-faint">
             {pg('cdnNote', { version: PYODIDE_VERSION })}
           </p>
         </footer>

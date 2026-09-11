@@ -9,6 +9,7 @@ import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
+import { Toggle } from '../ui/Toggle'
 import {
   DiagnosticDisclosure,
   InlineWarning,
@@ -122,24 +123,12 @@ function PrivacyBlock() {
         {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），完整状态由
             行内 status 那句话说。`choose` 只收得到开 / 关两档，所以界面上说
             得出 unset，却写不回 unset */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
+        <Toggle
+          checked={enabled}
           aria-label={st('about.telemetry.toggle')}
           disabled={hard || pending}
-          onClick={() => void choose(enabled ? 'disabled' : 'enabled', 'settings')}
-          className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors duration-[var(--duration-fast)] focus-visible:focus-ring disabled:opacity-50 ${
-            enabled ? 'bg-ink' : 'bg-border-strong'
-          }`}
-        >
-          <span
-            aria-hidden
-            className={`inline-block size-3 rounded-full bg-surface transition-transform duration-[var(--duration-fast)] ${
-              enabled ? 'translate-x-3.5' : 'translate-x-0.5'
-            }`}
-          />
-        </button>
+          onChange={(next) => void choose(next ? 'enabled' : 'disabled', 'settings')}
+        />
       </SettingRow>
       {/* 一句话摘要：常驻。这是隐私承诺，不是说明文字 */}
       <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.summary')}</p>
@@ -262,7 +251,7 @@ export function DiagnosticsExportButton() {
   }
   return (
     <>
-      <Button variant="outline" size="sm" onClick={run} disabled={phase === 'busy'}>
+      <Button variant="secondary" size="sm" onClick={run} disabled={phase === 'busy'}>
         {phase === 'busy' ? st('about.exporting') : st('about.exportBundle')}
       </Button>
       {phase === 'done' && (

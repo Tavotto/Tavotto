@@ -147,8 +147,8 @@ export function ExampleCard({
           : undefined
       }
       className={cn(
-        'group relative flex cursor-pointer touch-manipulation flex-col overflow-hidden rounded-[10px] border bg-surface text-left',
-        'transition-[border-color,box-shadow,transform] duration-150 ease-out',
+        'group relative flex cursor-pointer touch-manipulation flex-col overflow-hidden rounded-md border bg-surface text-left',
+        'transition-[border-color,box-shadow,transform] duration-fast ease-out',
         'focus-visible:focus-ring outline-none',
         dragging
           ? 'z-30 border-sel shadow-pop'
@@ -176,16 +176,16 @@ export function ExampleCard({
 
       <div className="flex flex-1 flex-col gap-1.5 p-3">
         <div className="flex items-baseline gap-2">
-          <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
+          <h3 className="text-base font-semibold text-ink">{title}</h3>
           {example.difficulty === 'starter' && (
-            <span className="rounded-sm bg-sel/10 px-1.5 py-0.5 text-[10px] font-medium text-sel">
+            <span className="rounded-sm bg-sel/10 px-1.5 py-0.5 text-xs font-medium text-sel">
               {pg('starterBadge')}
             </span>
           )}
-          <span className="ml-auto font-mono text-[10px] text-ink-faint">{example.filename}</span>
+          <span className="ml-auto font-mono text-xs text-ink-faint">{example.filename}</span>
         </div>
         <p className="text-xs leading-relaxed text-ink-2">{pg(example.descriptionKey)}</p>
-        <p className="text-[11px] text-ink-3">
+        <p className="text-xs text-ink-3">
           <span className="text-ink-faint">{pg('editableLabel')}</span>{' '}
           {pg(example.editableKey)}
         </p>
@@ -196,7 +196,7 @@ export function ExampleCard({
               e.stopPropagation()
               onViewCode(example)
             }}
-            className="h-7 rounded-[6px] border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+            className="h-7 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
             {pg('viewCode')}
           </button>
@@ -205,7 +205,7 @@ export function ExampleCard({
               e.stopPropagation()
               onLaunch(example)
             }}
-            className="h-7 rounded-[6px] bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
+            className="h-7 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
           >
             {pg('startExample')}
           </button>

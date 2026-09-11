@@ -174,7 +174,7 @@ function CanvasRow({
       }}
       className={cn(
         'group relative flex items-center gap-2 rounded-sm px-1.5 py-1.5',
-        active ? 'bg-ink/[.07]' : 'hover:bg-ink/[.035]',
+        active ? 'bg-selected' : 'hover:bg-surface-hover',
       )}
     >
       <CanvasThumb page={canvas.page} objects={canvas.objects} />

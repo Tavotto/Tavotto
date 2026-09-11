@@ -174,7 +174,7 @@ export function EndpointDialog({
               {m}
               {/* 第一个是默认值——这件事以前只写在占位文案里 */}
               {i === 0 && (
-                <span className="font-sans text-[10px] text-ink-3">
+                <span className="font-sans text-xs text-ink-3">
                   {ag('endpoint.modelDefault')}
                 </span>
               )}

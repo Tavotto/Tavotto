@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { ICON_SIZE } from './Icon'
 import { useRef, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { IconButton } from './Button'
 
 export type DialogSize = 'sm' | 'md' | 'lg'
 
@@ -126,21 +127,25 @@ export function Dialog({
         >
           <div className="flex items-start justify-between gap-3 px-4 pb-1 pt-3.5">
             <div className="min-w-0">
-              <RD.Title className="text-lg font-medium text-ink">{title}</RD.Title>
+              <RD.Title className="type-title">{title}</RD.Title>
               {description && (
-                <RD.Description className="mt-0.5 text-xs text-ink-2">{description}</RD.Description>
+                <RD.Description className="type-caption mt-0.5">{description}</RD.Description>
               )}
             </div>
             {!locked && (
-              <RD.Close
-                /* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
-                   本地化文案（`actions.close`），换语言就选不中——e2e 里
-                   `[aria-label=关闭]` 是明文禁止的写法（issue #307）。 */
-                data-dialog-close
-                className="-mr-1.5 -mt-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm text-ink-3 hover:bg-ink/[.055] hover:text-ink"
-                aria-label={t('actions.close')}
-              >
-                <X size={ICON_SIZE.md} />
+              <RD.Close asChild>
+                {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
+                    本地化文案（`actions.close`），换语言就选不中——e2e 里
+                    `[aria-label=关闭]` 是明文禁止的写法（issue #307）。
+                    标题栏里已经说明了这是什么对话框，关闭钮不再挂气泡。 */}
+                <IconButton
+                  data-dialog-close
+                  label={t('actions.close')}
+                  tip={false}
+                  className="-mr-1.5 -mt-1 text-ink-3 hover:text-ink"
+                >
+                  <X size={ICON_SIZE.md} />
+                </IconButton>
               </RD.Close>
             )}
           </div>

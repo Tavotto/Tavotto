@@ -171,7 +171,7 @@ export function PackagesSettings() {
               的话回车会同时触发安装与查找，而回车该只做主动作。 */}
           <Button
             type="button"
-            variant="outline"
+            variant="secondary"
             size="sm"
             data-packages-lookup
             disabled={locked || !term}
@@ -197,7 +197,7 @@ export function PackagesSettings() {
             name: (
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{u.distribution}</span>
-                <span className="truncate text-[11px] text-ink-3">
+                <span className="truncate text-xs text-ink-3">
                   {pk(`reason.${u.reason === 'user_requested' ? 'user' : 'repair'}`)}
                   {u.requested_specifier ? ` · ${u.distribution}${u.requested_specifier}` : ''}
                   {u.installed_at ? ` · ${formatDateTime(u.installed_at * 1000)}` : ''}
@@ -306,7 +306,7 @@ function EnvironmentLine() {
             {env?.state === 'ready' ? pk('env.ready') : pk('env.incomplete')}
           </span>
           <span className="text-ink-3">{env?.in_use ? pk('env.inUse') : pk('env.notInUse')}</span>
-          <Button variant="outline" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged()}>
+          <Button variant="secondary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged()}>
             {pk('env.rebuild')}
           </Button>
         </>
@@ -413,9 +413,9 @@ function LookupPanel({
           <span className="ml-2 text-xs text-ink-2">
             {pk('search.latest', { version: found.latest })}
           </span>
-          <span className="block text-[11px] text-ink-3">{pk(`search.source.${found.source}`)}</span>
+          <span className="block text-xs text-ink-3">{pk(`search.source.${found.source}`)}</span>
           {found.installed && (
-            <span className="block text-[11px] text-ink-3">
+            <span className="block text-xs text-ink-3">
               {pk('search.alreadyInstalled', { version: found.installed })}
             </span>
           )}
@@ -461,7 +461,7 @@ function StatusText({ status, detail }: { status: string; detail?: string }) {
   return (
     <span className={cn('flex flex-col text-xs', tone)}>
       <span>{status ? pk(`status.${status}`) : pk('status.unknown')}</span>
-      {detail && <span className="text-[11px] text-ink-3">{detail}</span>}
+      {detail && <span className="text-xs text-ink-3">{detail}</span>}
     </span>
   )
 }
@@ -482,7 +482,7 @@ function UserActions({
     <span className="flex items-center justify-end gap-1">
       {pkg.status === 'missing' ? (
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={locked}
           onClick={() => void onAction('install', `${pkg.distribution}${pkg.requested_specifier}`)}
@@ -491,7 +491,7 @@ function UserActions({
         </Button>
       ) : (
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={locked}
           aria-label={pk('updateAria', { name: pkg.distribution })}
@@ -501,7 +501,7 @@ function UserActions({
         </Button>
       )}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         disabled={locked}
         aria-label={pk('uninstallAria', { name: pkg.distribution })}
@@ -603,7 +603,7 @@ function JobPanel({
           {stateText}
         </span>
         {running && (
-          <Button variant="outline" size="sm" onClick={() => void cancel()}>
+          <Button variant="secondary" size="sm" onClick={() => void cancel()}>
             {pk('job.cancel')}
           </Button>
         )}
@@ -633,7 +633,7 @@ function JobPanel({
         <InlineWarning tone="danger">
           {failure}
           {errorText && repairCodeMessage(errorCode) && (
-            <span className="ml-1 font-mono text-[11px] text-ink-3">{errorCode}</span>
+            <span className="ml-1 font-mono text-xs text-ink-3">{errorCode}</span>
           )}
         </InlineWarning>
       )}
@@ -642,7 +642,7 @@ function JobPanel({
           title={pk('job.log')}
           action={<CopyButton text={progress.log} label={pk('job.copyLog')} />}
         >
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink-3">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3">
             {progress.log}
           </pre>
         </DiagnosticDisclosure>

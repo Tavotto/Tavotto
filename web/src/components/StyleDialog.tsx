@@ -224,7 +224,7 @@ export function StyleDialog() {
         covered={covered}
         footer={
           <>
-            <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+            <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
               {t('common:actions.close')}
             </Button>
             <Button
@@ -257,7 +257,7 @@ export function StyleDialog() {
       covered={covered}
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
             {t('common:actions.close')}
           </Button>
           <Button variant="primary" size="md" disabled={!applicable} onClick={apply}>
@@ -270,7 +270,7 @@ export function StyleDialog() {
       <div className="flex gap-3">
         {/* 左：已存样式 */}
         <div className="flex w-44 shrink-0 flex-col gap-1.5">
-          <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
+          <h3 className="type-section">
             {sd('savedStyles')}
           </h3>
           <ul className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border">
@@ -288,7 +288,7 @@ export function StyleDialog() {
                   onClick={() => setDraft(structuredClone(s))}
                   className={cn(
                     'h-7 min-w-0 flex-1 truncate px-2 text-left text-xs',
-                    draft.id === s.id ? 'bg-selected text-ink' : 'text-ink hover:bg-ink/[.04]',
+                    draft.id === s.id ? 'bg-selected text-ink' : 'text-ink hover:bg-surface-hover',
                   )}
                 >
                   {nameOf(s)}
@@ -322,7 +322,7 @@ export function StyleDialog() {
               </li>
             ))}
           </ul>
-          <Button variant="outline" size="sm" onClick={() => setDraft(EMPTY)}>
+          <Button variant="secondary" size="sm" onClick={() => setDraft(EMPTY)}>
             <Plus size={ICON_SIZE.sm} />
             {sd('newStyle')}
           </Button>
@@ -338,7 +338,7 @@ export function StyleDialog() {
               className="h-6 min-w-0 flex-1"
             />
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={!primaryManifest}
               title={
@@ -351,7 +351,7 @@ export function StyleDialog() {
               <Pipette size={ICON_SIZE.sm} />
               {sd('extract')}
             </Button>
-            <Button variant="outline" size="sm" loading={busy} onClick={save}>
+            <Button variant="secondary" size="sm" loading={busy} onClick={save}>
               <Save size={ICON_SIZE.sm} />
               {t('common:actions.save')}
             </Button>
@@ -474,7 +474,7 @@ export function StyleDialog() {
 
         {/* 右：应用范围与预览 */}
         <div className="flex w-52 shrink-0 flex-col gap-2">
-          <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
+          <h3 className="type-section">
             {sd('applyScope')}
           </h3>
           <Segmented

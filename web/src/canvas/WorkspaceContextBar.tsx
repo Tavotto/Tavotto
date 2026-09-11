@@ -146,7 +146,7 @@ export function WorkspaceContextBar() {
               {/* `data-onboarding-anchor`：新手教程 Step 6 的 coachmark 挂这颗按钮 */}
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 className="shrink-0 whitespace-nowrap"
                 data-onboarding-anchor="add-to-layout"
                 onClick={() => void addFigureToLayout(panel.fileId)}

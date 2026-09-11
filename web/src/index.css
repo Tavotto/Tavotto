@@ -1,16 +1,30 @@
 @import 'tailwindcss';
 
 /* ---------------------------------------------------------------------------
-   Tavotto — design tokens
-   暖灰白底、白色 surface、层级靠留白与轻微背景差；
+   Tavotto — design tokens（Design Constitution 的落地；全文见
+   docs/ux/DESIGN_CONSTITUTION.md，这里只放值与一句理由）
+
+   方向：Paper × Instrument。微暖纸白底、白色 surface、层级靠留白与轻微背景差；
    边框只给真实输入框、区域边界、选择状态与浮层；
    持久表面不用 shadow，浮层允许唯一一层轻投影（--shadow-pop）。
+
+   语义 token 与工具类名对照（工具类名沿用已有的，不为了改名动七百处调用）：
+     surface-app = bg · surface-panel = surface · surface-subtle = surface-2
+     surface-hover / surface-active / selected（交互面三档，hover 最弱）
+     ink-1 = ink · ink-2 · ink-3 · ink-disabled = ink-faint
+     border / border-strong · accent / accent-subtle
+     danger / warning = warn / success = ok（各带 -subtle 底色）
    --------------------------------------------------------------------------- */
 @theme {
   --color-bg: #f2f2ef;
   --color-canvas: #eaeae6;
   --color-surface: #ffffff;
   --color-surface-2: #f7f7f4;
+  /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
+     暖灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
+     （2026-09-11 收敛前全仓有 9 种）。 */
+  --color-surface-hover: color-mix(in srgb, var(--color-ink) 4.5%, transparent);
+  --color-surface-active: color-mix(in srgb, var(--color-ink) 8%, transparent);
 
   --color-border: #e3e3dd;
   --color-border-strong: #cfcfc7;
@@ -31,8 +45,10 @@
   --color-accent: #2868b7;
   --color-accent-subtle: #e9f0f9;
   /* 列表 / 分段 / 选项格的**选中态**：浅灰圆角块，不再用品牌蓝、不再画左侧竖条
-     （2026-09-11 用户反馈）。蓝只剩链接、焦点、画布上的选择框。 */
-  --color-selected: #d7d7cf;
+     （2026-09-11 用户反馈）。蓝只剩链接、焦点、画布上的选择框。
+     Visual Consolidation Session 1 把它从 #d7d7cf 收浅：选中面只比普通背景稍深，
+     与 hover 拉开一档就够，「是哪一个」由字重 / 对勾 / 形状再说一遍，不靠大块深灰。 */
+  --color-selected: #e6e6e0;
   --color-danger: #c4442a;
   --color-danger-subtle: #fbeeeb;
   /* 警示（「需要处理，但还没坏」）：编码 Agent 的「需要登录」用它。
@@ -46,9 +62,17 @@
   --color-ok-subtle: #e6f3ea;
   --color-sel: #2f6fed;
 
+  /* 圆角只有四档 + full（圆点 / 开关 / 徽章）。先把 Tailwind 自带的 xl / 2xl…
+     整个清掉，rounded-xl 这种写了也不生效，随机圆角就没有来路。
+       xs 3  ——16px 高以下的小片：kbd、计数角标、缩略图上的标签
+       sm 6  ——控件：输入框、按钮、图标钮、选项格、树行
+       md 8  ——卡片与浮层：菜单、popover、tooltip、select 弹层
+       lg 12 ——对话框、命令面板 */
+  --radius-*: initial;
+  --radius-xs: 3px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
 
   /* 唯一允许的投影：菜单 / popover / dialog / tooltip 等浮层专用 */
   --shadow-pop: 0 6px 20px rgba(27, 27, 24, 0.09);
@@ -319,6 +343,50 @@
 @utility focus-ring {
   outline: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
   outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
+   字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
+   六档对应 docs/ux/DESIGN_CONSTITUTION.md 第八节；数值全部取自上面的字号阶梯。
+     type-title    对话框 / 页面标题        14px 500 ink
+     type-section  分区小标题              11px 500 大写 ink-3
+     type-body     正文                    12px ink
+     type-control  控件里的文字            11px ink（颜色随控件）
+     type-caption  说明文字                11px ink-2，行距放宽
+     type-meta     元数据 / 路径 / 计数    11px ink-3
+   --------------------------------------------------------------------------- */
+@utility type-title {
+  font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
+  font-weight: 500;
+  color: var(--color-ink);
+}
+@utility type-section {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-3);
+}
+@utility type-body {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  color: var(--color-ink);
+}
+@utility type-control {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+@utility type-caption {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-ink-2);
+}
+@utility type-meta {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--color-ink-3);
 }
 
 /* 数值输入：等宽、右对齐、去边框直到 hover/focus —— 紧凑工具软件的典型手感 */

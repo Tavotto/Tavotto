@@ -36,7 +36,7 @@ export function SettingSection({
   return (
     <section className={cn('flex flex-col gap-1.5', className)}>
       {title != null && (
-        <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">{title}</h3>
+        <h3 className="type-section">{title}</h3>
       )}
       {children}
     </section>

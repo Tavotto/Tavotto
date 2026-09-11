@@ -42,7 +42,7 @@ export function HintToast() {
             type="button"
             onClick={dismiss}
             aria-label={translate('actions.close')}
-            className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
+            className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
           >
             <X size={ICON_SIZE.sm} />
           </button>

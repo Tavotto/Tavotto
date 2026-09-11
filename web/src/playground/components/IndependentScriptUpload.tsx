@@ -34,18 +34,18 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
           if (f) onFile(f)
         }}
         className={cn(
-          'flex flex-col gap-2 rounded-[10px] border border-dashed px-4 py-3 transition-colors',
+          'flex flex-col gap-2 rounded-md border border-dashed px-4 py-3 transition-colors',
           over ? 'border-sel bg-sel/5' : 'border-border',
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-medium text-ink">{pg('uploadHeading')}</p>
+            <p className="text-base font-medium text-ink">{pg('uploadHeading')}</p>
             <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{pg('uploadNote')}</p>
           </div>
           <button
             onClick={() => inputRef.current?.click()}
-            className="flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] border border-border bg-surface px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
             <Upload size={ICON_SIZE.sm} aria-hidden />
             {pg('uploadButton')}

@@ -78,12 +78,12 @@ export function LegendCard({
     <div className="flex flex-col gap-2">
       {hasTypography && (
         <div>
-          <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{lg('typography')}</p>
+          <p className="mb-1 type-section">{lg('typography')}</p>
           <TypographyControls adapter={typography} labelWidth={labelWidth} />
         </div>
       )}
       <div>
-        <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
+        <p className="mb-1 type-section">
           {lg('entries', { count: views.length })}
         </p>
         <ul className="rounded-sm border border-border p-0.5" aria-label={lg('entriesAria')}>
@@ -150,7 +150,7 @@ export function BindingBadge({ binding }: { binding: LegendEntryView['binding'] 
   return (
     <span
       className={cn(
-        'shrink-0 rounded-[3px] border px-1 text-[10px] leading-4',
+        'shrink-0 rounded-xs border px-1 text-xs leading-4',
         binding === 'follow_source'
           ? 'border-border text-ink-3'
           : binding === 'custom'

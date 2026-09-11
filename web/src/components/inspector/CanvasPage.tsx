@@ -143,7 +143,7 @@ export function CanvasPage() {
           <Tip label={cv('swap')} side="left">
             <Button
               size="icon-sm"
-              variant="outline"
+              variant="secondary"
               aria-label={cv('swap')}
               onClick={() => setPageSize(page.h, page.w)}
             >

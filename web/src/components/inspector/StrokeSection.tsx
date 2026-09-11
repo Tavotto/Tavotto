@@ -340,7 +340,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
         </Row>
         {/* 整行按钮不走标签列：空标签会在左边留一块 44px 的白 */}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="w-full"
           onClick={() =>

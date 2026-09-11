@@ -186,7 +186,7 @@ function importPackage() {
 /** 图形标 + 实时文字 */
 function Brand() {
   return (
-    <span className="flex shrink-0 items-center gap-[7px] text-sm font-semibold tracking-tight text-ink">
+    <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight text-ink">
       <BrandMark size={20} />
       {PRODUCT_NAME}
     </span>
@@ -225,7 +225,7 @@ function RecoveryNotice() {
     >
       <RotateCcwClock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
       <span className="truncate">{t('docBanner.recoveryTitle')}</span>
-      <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => void recoverLocalCopy()}>
+      <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={() => void recoverLocalCopy()}>
         {t('docBanner.recover')}
       </Button>
       <Button size="sm" className="h-6 text-xs" onClick={discardLocalCopy}>
@@ -529,7 +529,7 @@ function ZoomControls() {
         trigger={
           <button
             aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })}
-            className="h-7 w-14 border-x border-border font-mono text-xs tabular-nums text-ink outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
+            className="h-7 w-14 border-x border-border font-mono text-xs tabular-nums text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -543,7 +543,7 @@ function ZoomControls() {
                 useViewportStore.getState().setZoomCentered(z)
                 setOpen(false)
               }}
-              className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
+              className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
             >
               <span>{z * 100}%</span>
               {z === 1 && <span className="font-mono text-xs text-ink-3">{MOD}0</span>}
@@ -555,7 +555,7 @@ function ZoomControls() {
               useViewportStore.getState().fitAnimated(page.w, page.h)
               setOpen(false)
             }}
-            className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
+            className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
           >
             <span>{t('topbar.fitCanvas')}</span>
             <span className="font-mono text-xs text-ink-3">{MOD}1</span>

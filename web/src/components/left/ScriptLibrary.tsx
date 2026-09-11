@@ -189,7 +189,7 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
         </span>
         {/* 窄视口下按钮换行而不是被挤出可视区（flex-wrap + basis） */}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="shrink-0"
           onClick={onRunOrCancel}
@@ -327,7 +327,7 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
       <p className="text-xs leading-relaxed text-ink-2">{sc('recoveryBody')}</p>
       <div className="mt-1 flex flex-wrap items-center gap-1.5">
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           // 渲染环境卡片住在设置的「关于」段（EngineEnvironmentCard）
           onClick={() => useUiStore.getState().setSettingsOpen(true, 'about')}
@@ -335,7 +335,7 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
           <Settings size={ICON_SIZE.sm} />
           {sc('openEnvSettings')}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void copyDiagnostics()}>
+        <Button variant="secondary" size="sm" onClick={() => void copyDiagnostics()}>
           <Copy size={ICON_SIZE.sm} />
           {sc(copied ? 'copied' : 'copyDiagnostics')}
         </Button>
@@ -343,7 +343,7 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
       {error?.traceback && (
         <Details className="mt-1">
           <Summary className="text-xs text-ink-3">{sc('diagnostics')}</Summary>
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-snug text-ink-2">
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-ink-2">
             {error.traceback}
           </pre>
         </Details>
@@ -396,7 +396,7 @@ export function ProbeResultsDialog({
               })}
             </span>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 addRuntimePanel(d)

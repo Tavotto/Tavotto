@@ -87,7 +87,7 @@ export function CloseGuardDialog() {
       blockDismiss
       footer={
         <>
-          <Button variant="outline" size="md" disabled={busy} onClick={() => answer('cancel')}>
+          <Button variant="secondary" size="md" disabled={busy} onClick={() => answer('cancel')}>
             {translate('actions.cancel')}
           </Button>
           <Button variant="danger" size="md" disabled={busy} onClick={() => answer('discard')}>

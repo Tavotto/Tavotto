@@ -61,7 +61,7 @@ export function AgentList({
             data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
-            className="absolute inset-0 rounded-md outline-none hover:bg-ink/[.025] focus-visible:focus-ring"
+            className="absolute inset-0 rounded-md outline-none hover:bg-surface-hover focus-visible:focus-ring"
           />
           <AgentIcon iconKey={agent.icon_key} />
           {/*
@@ -88,7 +88,7 @@ export function AgentList({
             {onSetDefault && (
               <Button
                 size="sm"
-                variant={agent.id === defaultId ? 'primary' : 'outline'}
+                variant={agent.id === defaultId ? 'primary' : 'secondary'}
                 aria-pressed={agent.id === defaultId}
                 aria-label={ag('setDefaultAria', { name: agent.display_name })}
                 disabled={!agent.usable}

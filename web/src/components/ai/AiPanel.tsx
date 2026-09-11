@@ -312,7 +312,7 @@ export function AssistantPanel() {
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
             <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
             >
@@ -414,7 +414,7 @@ function TargetChip({
           aria-label={ai('panel.targetAria', { target: targetText })}
           className={cn(
             'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm bg-surface-2 px-2 text-left',
-            'outline-none transition-colors hover:bg-ink/[.06] focus-visible:focus-ring',
+            'outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring',
           )}
         >
           <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
@@ -558,7 +558,7 @@ export function ScopeAgentContent({
           <div>
             <Button
               data-ai-open-settings
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
             >
@@ -1009,7 +1009,7 @@ function SessionBlock({ session }: { session: AiSession }) {
         <>
           <DiffView diff={session.diff} script={session.script} />
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full text-danger"
             onClick={() => void revertSession(session)}

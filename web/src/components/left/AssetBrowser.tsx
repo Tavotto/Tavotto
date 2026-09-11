@@ -697,12 +697,12 @@ function AssetCard({
         />
 
         <span className="pointer-events-none absolute left-1 top-1 flex max-w-[calc(100%-2.25rem)] items-center gap-1">
-          <span className="shrink-0 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
+          <span className="shrink-0 rounded-xs bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
             {formatOf(panel)}
           </span>
           {panel.script && (
             <span
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs bg-ink/[.72] text-white"
               title={ab('scriptBadgeTitle')}
             >
               <Braces size={ICON_SIZE.xs} />
@@ -716,7 +716,7 @@ function AssetCard({
               在 `title` 与卡片外的说明条里，两条路都到得了。 */}
           {cap && cap.status !== 'editable' && (
             <span
-              className="min-w-0 truncate rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white"
+              className="min-w-0 truncate rounded-xs bg-ink/[.72] px-1 text-xs leading-4 text-white"
               title={reasonText(cap)}
             >
               {statusLabel(cap.status)}
@@ -726,7 +726,7 @@ function AssetCard({
 
         {used > 0 && (
           <span
-            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
+            className="pointer-events-none absolute right-1 top-1 rounded-xs bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
             title={ab('cardUsed', { count: used })}
           >
             ×{used}
@@ -904,7 +904,7 @@ function RuntimeAssetCard({
         )}
 
         <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-1">
-          <span className="flex items-center gap-0.5 rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white">
+          <span className="flex items-center gap-0.5 rounded-xs bg-ink/[.72] px-1 text-xs leading-4 text-white">
             <Zap size={ICON_SIZE.xs} />
             {ab('runtimeBadge')}
           </span>
@@ -912,7 +912,7 @@ function RuntimeAssetCard({
 
         {used > 0 && (
           <span
-            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
+            className="pointer-events-none absolute right-1 top-1 rounded-xs bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
             title={ab('cardUsed', { count: used })}
           >
             ×{used}
@@ -1066,7 +1066,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
         <>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               openFastEdit(itemId(item))
             }}
@@ -1076,7 +1076,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
           </Button>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               addFigureToLayout(itemId(item))
             }}
@@ -1088,7 +1088,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
       ) : (
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={busy}
           onClick={() => void useScriptRunStore.getState().run(item.asset.script)}
         >

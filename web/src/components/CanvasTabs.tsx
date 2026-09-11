@@ -8,6 +8,7 @@ import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
+import { TAB_UNDERLINE } from './ui/tabClass'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -187,9 +188,7 @@ function TabItem({
         // 关闭键改为绝对定位后左右留同样的量：标题与激活下划线共用一条中轴
         closable ? 'px-6' : 'px-2.5',
         'outline-none focus-visible:focus-ring',
-        active
-          ? 'text-ink after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
-          : 'text-ink-3 hover:text-ink-2',
+        active ? cn('text-ink', TAB_UNDERLINE, 'after:inset-x-1.5') : 'text-ink-3 hover:text-ink-2',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
         dragOver && 'rounded-sm bg-selected text-ink',
       )}
@@ -212,7 +211,7 @@ function TabItem({
           className={cn(
             'absolute right-1.5 top-1/2 -translate-y-1/2',
             'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-ink-3',
-            'opacity-0 outline-none hover:bg-ink/[.08] hover:text-ink',
+            'opacity-0 outline-none hover:bg-surface-hover hover:text-ink',
             'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
           )}
         >

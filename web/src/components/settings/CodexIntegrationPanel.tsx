@@ -82,7 +82,7 @@ export function CodexIntegrationPanel() {
           {busy === 'install' ? ag('codexInstall.running') : ag('codexInstall.action')}
         </Button>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           loading={busy === 'doctor'}
           disabled={busy !== null}

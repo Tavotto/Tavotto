@@ -42,7 +42,7 @@ export function HistoryPanel({ panel }: { panel: PanelObject }) {
       width={252}
       align="end"
       trigger={
-        <Button variant="outline" size="sm" className="flex-1">
+        <Button variant="secondary" size="sm" className="flex-1">
           <RotateCcwClock size={ICON_SIZE.sm} />
           {vh('trigger')}
         </Button>
@@ -127,7 +127,7 @@ function VersionRow({
         loading="lazy"
         src={historyPreviewUrl(panel.fileId, version.n, 320)}
         alt=""
-        className="h-14 w-[92px] shrink-0 rounded-[3px] border border-border bg-white object-contain"
+        className="h-14 w-[92px] shrink-0 rounded-xs border border-border bg-white object-contain"
       />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <p className={cn('truncate text-xs', isCurrent ? 'text-ink' : 'text-ink-2')}>
@@ -207,7 +207,7 @@ function RestoreDialog({
       busy={busy}
       footer={
         <>
-          <Button variant="outline" size="md" disabled={busy} onClick={onClose}>
+          <Button variant="secondary" size="md" disabled={busy} onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button

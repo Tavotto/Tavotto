@@ -108,7 +108,7 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
       <p className="text-xs font-semibold text-ink">{statusLabel(cap.status)}</p>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="mt-1.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
@@ -254,7 +254,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
       <div className="mt-1.5 flex gap-1.5">
         <Tip label={pn('aspectTip')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="flex-1"
             onClick={() => restorePanelAspect(ids)}
@@ -265,7 +265,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         </Tip>
         <Tip label={pn('nativeSizeTip')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="flex-1"
             onClick={() => restorePanelNativeSize(ids)}
@@ -342,7 +342,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         <Row label={pn('flip')}>
           <div className="flex min-w-0 flex-1 gap-1">
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               className="flex-1"
               active={sharedPanel(objs, (o) => o.flipH === true) === true}
@@ -356,7 +356,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
               {pn('flipHorizontal')}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               className="flex-1"
               active={sharedPanel(objs, (o) => o.flipV === true) === true}
@@ -396,7 +396,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
 
         <Tip label={pn('replaceTip')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full"
             disabled={!one}
@@ -436,7 +436,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
       <div className="flex gap-1.5">
         <Tip label={pn('cropTip')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="flex-1"
             disabled={!one}
@@ -455,7 +455,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
         {cropped && (
           <Tip label={pn('resetCropTip')}>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => resetPanelCrop(ids)}
               aria-label={pn('resetCrop')}
@@ -468,13 +468,13 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
 
       <Grid2 className="mt-1.5">
         <Tip label={pn('fitTip')}>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => fitPanels(ids)}>
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => fitPanels(ids)}>
             <Minimize2 size={ICON_SIZE.sm} />
             {pn('fit')}
           </Button>
         </Tip>
         <Tip label={pn('fillTip')}>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
             <Maximize2 size={ICON_SIZE.sm} />
             {pn('fill')}
           </Button>
@@ -530,7 +530,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
 
   return (
     <div className="mt-2 border-t border-border pt-2">
-      <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
+      <p className="mb-1 type-section">
         {pn('diagnostics')}
       </p>
       <div className="flex flex-col gap-1">
@@ -618,7 +618,7 @@ function ReplaceAssetDialog({
                 onClick={() => void pick(info)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left',
-                  'hover:bg-ink/[.055] disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent',
+                  'hover:bg-surface-hover disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent',
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink" title={info.id}>
@@ -670,7 +670,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           构建进度改用下面那行非阻塞提示表达。
         */}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="min-w-0 flex-1"
           active={editing}
@@ -788,7 +788,7 @@ function RuntimeSourceArea({ panel }: { panel: PanelObject }) {
           {script}
         </span>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="shrink-0"
           disabled={!script || busy}

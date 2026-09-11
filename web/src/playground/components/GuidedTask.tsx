@@ -96,7 +96,7 @@ export function GuidedTask({
       data-guided-task={achieved ? 'done' : `step-${step}`}
       className={cn(
         'absolute bottom-3 left-3 z-20 w-[272px] max-w-[calc(100%-1.5rem)]',
-        'rounded-[10px] border border-border bg-surface p-3 shadow-pop',
+        'rounded-md border border-border bg-surface p-3 shadow-pop',
         'animate-rise-in',
       )}
     >
@@ -110,7 +110,7 @@ export function GuidedTask({
 
       {achieved ? (
         <div aria-live="polite" className="flex flex-col gap-1.5 pr-5">
-          <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
+          <p className="flex items-center gap-1.5 text-base font-semibold text-ink">
             <Check size={ICON_SIZE.md} className="text-sel" aria-hidden />
             {pg('taskDoneTitle')}
           </p>
@@ -129,25 +129,25 @@ export function GuidedTask({
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <button
               onClick={() => runUndoRedo(false)}
-              className="h-6 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
+              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
             >
               {translate('topbar.undo', { ns: 'workspace' })}
             </button>
             <button
               onClick={onDismiss}
-              className="h-6 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
+              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
             >
               {pg('taskContinue')}
             </button>
             <button
               onClick={onViewSource}
-              className="h-6 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
+              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
             >
               {pg('taskViewSource')}
             </button>
             <a
               href={RELEASES_LATEST_URL}
-              className="flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
+              className="flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
             >
               <Download size={ICON_SIZE.xs} aria-hidden />
               {pg('downloadDesktop')}
@@ -156,8 +156,8 @@ export function GuidedTask({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5 pr-5">
-          <p className="text-[13px] font-semibold text-ink">{pg('taskTitle')}</p>
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+          <p className="text-base font-semibold text-ink">{pg('taskTitle')}</p>
+          <p className="type-section">
             {pg('taskStep', { n: step })}
           </p>
           <p aria-live="polite" className="text-xs leading-relaxed text-ink-2">
@@ -165,7 +165,7 @@ export function GuidedTask({
           </p>
           <button
             onClick={onDismiss}
-            className="self-start text-[11px] text-ink-3 underline-offset-2 hover:text-ink hover:underline"
+            className="self-start text-xs text-ink-3 underline-offset-2 hover:text-ink hover:underline"
           >
             {pg('taskSkip')}
           </button>

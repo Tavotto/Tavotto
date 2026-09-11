@@ -12,6 +12,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Checkbox } from '@/components/ui/Checkbox'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
@@ -164,11 +165,11 @@ export function McpApp({
   return (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-        <span className="truncate text-[13px] font-medium">{open.stem}</span>
-        <span className="shrink-0 rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-3">
+        <span className="truncate text-base font-medium">{open.stem}</span>
+        <span className="shrink-0 rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-ink-3">
           {open.profile.profile_id} v{open.profile.profile_version}
         </span>
-        <span className="shrink-0 font-mono text-[11px] text-ink-3">
+        <span className="shrink-0 font-mono text-xs text-ink-3">
           {translate('measure.mmSizeSpaced', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
         </span>
 
@@ -208,11 +209,10 @@ export function McpApp({
 
       {needsConfirm && (
         <label className="flex shrink-0 items-start gap-1.5 border-b border-border bg-danger-subtle px-3 py-1.5 text-xs text-ink-2">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={confirmForced}
             onChange={(e) => setConfirmForced(e.target.checked)}
-            className="mt-0.5 shrink-0"
+            className="mt-0.5"
           />
           {/* 两种情况各是一句完整的话，不拼字符串（英文从句位置与中文不同） */}
           <span>
@@ -405,7 +405,7 @@ function IssueList({
   if (!issues.length) return null
   return (
     <section className="border-t border-border p-2">
-      <h3 className="mb-1.5 text-[11px] text-ink-3">
+      <h3 className="mb-1.5 text-xs text-ink-3">
         {stale ? mc('issuesTitleStale') : mc('issuesTitle')}
       </h3>
       <ul className="flex flex-col gap-1.5">

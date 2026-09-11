@@ -21,7 +21,7 @@ export function UpdateBanner() {
       size="sm"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => setDismissed(true)}>
+          <Button variant="secondary" size="md" onClick={() => setDismissed(true)}>
             {t('workspace:update.later')}
           </Button>
           <Button variant="primary" size="md" onClick={() => location.reload()}>

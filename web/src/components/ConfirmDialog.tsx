@@ -27,7 +27,7 @@ export function ConfirmDialog() {
       blockDismiss
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => answer(false)}>
+          <Button variant="secondary" size="md" onClick={() => answer(false)}>
             {req?.cancelLabel ? fmt(req.cancelLabel) : t('actions.cancel')}
           </Button>
           <Button

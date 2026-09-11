@@ -27,7 +27,7 @@ export function EmptyState({
       <p className="text-xs font-medium text-ink-2">{title}</p>
       {hint && <p className="max-w-60 text-xs leading-relaxed text-ink-3">{hint}</p>}
       {action && (
-        <Button variant="outline" size="sm" className="mt-1.5" onClick={action.onClick}>
+        <Button variant="secondary" size="sm" className="mt-1.5" onClick={action.onClick}>
           {action.label}
         </Button>
       )}

@@ -187,7 +187,7 @@ export function AgentDetailView({
             跑两遍——每一遍都是两个真子进程 */}
         <Button
           data-agent-rescan
-          variant="outline"
+          variant="secondary"
           size="sm"
           loading={busy}
           onClick={() => void run(onRefreshed)}
@@ -393,7 +393,7 @@ function CustomExecutable({
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             data-agent-custom-exe
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => setDraft(agent.path_override ?? '')}
           >
@@ -401,7 +401,7 @@ function CustomExecutable({
           </Button>
           {agent.path_override && (
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               loading={busy}
               onClick={() => void submit('', null)}
@@ -424,7 +424,7 @@ function CustomExecutable({
           </label>
           <div className="flex items-center gap-1.5">
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 setDraft(null)
@@ -603,7 +603,7 @@ function InstallPanel({
           size="sm"
           footer={
             <>
-              <Button variant="outline" size="md" onClick={() => setConfirming(false)}>
+              <Button variant="secondary" size="md" onClick={() => setConfirming(false)}>
                 {ag('detail.cancel')}
               </Button>
               <Button variant="primary" size="md" onClick={() => void begin()}>

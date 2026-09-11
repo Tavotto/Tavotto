@@ -69,7 +69,7 @@ export function CanvasThumb({
        */
       style={{ contentVisibility: 'auto' }}
       className={cn(
-        'shrink-0 rounded-[3px] border border-border bg-white text-ink',
+        'shrink-0 rounded-xs border border-border bg-white text-ink',
         className ?? 'h-10 w-14',
       )}
       preserveAspectRatio="xMidYMid meet"

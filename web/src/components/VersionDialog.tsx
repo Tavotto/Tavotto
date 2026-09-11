@@ -208,7 +208,7 @@ export function VersionDrawer() {
           placeholder={vd('namePlaceholder')}
           className="min-w-0 flex-1"
         />
-        <Button variant="outline" size="sm" loading={busy} onClick={saveNow}>
+        <Button variant="secondary" size="sm" loading={busy} onClick={saveNow}>
           <Bookmark size={ICON_SIZE.sm} />
           {vd('save')}
         </Button>
@@ -228,7 +228,7 @@ export function VersionDrawer() {
                     'flex w-full items-start gap-2 rounded-sm px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
                     v.id === selected
                       ? 'bg-selected'
-                      : 'hover:bg-ink/[.04]',
+                      : 'hover:bg-surface-hover',
                   )}
                 >
                   {/* 缩略图 → 时间 → 变化摘要 → 哪张画布。
@@ -241,7 +241,7 @@ export function VersionDrawer() {
                   ) : (
                     <span
                       aria-hidden
-                      className="h-10 w-14 shrink-0 rounded-[3px] border border-dashed border-border"
+                      className="h-10 w-14 shrink-0 rounded-xs border border-dashed border-border"
                     />
                   )}
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -260,7 +260,7 @@ export function VersionDrawer() {
                         {versionDisplayName(v)}
                       </span>
                       {v.auto && (
-                        <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
+                        <span className="shrink-0 rounded-xs border border-border px-1 text-xs text-ink-3">
                           {vd('autoBadge')}
                         </span>
                       )}
@@ -656,7 +656,7 @@ export function LayoutSnapshot({
   return (
     <div
       className={cn(
-        'relative w-full overflow-hidden rounded-[3px] border border-border',
+        'relative w-full overflow-hidden rounded-xs border border-border',
         outline ? 'bg-transparent' : 'bg-white',
       )}
       style={{ aspectRatio: `${pw} / ${ph}` }}

@@ -1,6 +1,5 @@
 import {
   forwardRef,
-  useId,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
@@ -9,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import {
   ArrowDownToLine,
   ArrowUpToLine,
-  ChevronDown,
   Clipboard,
   ClipboardPaste,
   Group,
@@ -20,6 +18,7 @@ import {
   Ungroup,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Select } from '@/components/ui/Select'
 import { t as translate } from '@/i18n'
 import { MOD } from '@/lib/utils'
 import {
@@ -274,32 +273,22 @@ function MultiAlignRows({ count }: { count: number }) {
   // 对齐参照与画布上的多选浮动栏共用 arrangeStore：这边切了那边当场就是新值
   const ref = useArrangeStore((s) => s.alignRef)
   const setRef = useArrangeStore((s) => s.setAlignRef)
-  const refId = useId()
 
   return (
     <>
       {/* 参照只是对齐的一个设置：一行标签 + 紧凑下拉，不再像整块面板的主导航 */}
-      <ArrangeRow label={ar('refLabel')} htmlFor={refId}>
-        <span className="relative inline-flex min-w-0 max-w-full">
-          <select
-            id={refId}
-            value={ref}
-            title={ar(`refTip.${ref}`)}
-            onChange={(e) => setRef(e.target.value as AlignRef)}
-            className="h-7 min-w-0 max-w-full appearance-none rounded-sm border border-border bg-surface pl-2 pr-6 text-xs text-ink hover:border-border-strong focus-visible:focus-ring"
-          >
-            {ALIGN_REFS.map((r) => (
-              <option key={r} value={r} title={ar(`refTip.${r}`)}>
-                {alignRefLabel(r)}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            size={ICON_SIZE.xs}
-            aria-hidden
-            className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-ink-3"
-          />
-        </span>
+      {/* 参照是个普通下拉（ui/Select，全仓唯一的下拉控件——`nativeSelect.test` 守着）。
+          可达名走 ariaLabel：`<label for>` 指向 Radix 的 `<button>` 不算取名（webkit）。
+          当前取值的一句解释挂在触发器的 title 上。 */}
+      <ArrangeRow label={ar('refLabel')}>
+        <Select
+          value={ref}
+          onChange={setRef}
+          ariaLabel={ar('refLabel')}
+          title={ar(`refTip.${ref}`)}
+          options={ALIGN_REFS.map((r) => ({ value: r, label: alignRefLabel(r) }))}
+          className="w-auto min-w-0 max-w-full"
+        />
       </ArrangeRow>
 
       <ArrangeRow label={ar('align')}>

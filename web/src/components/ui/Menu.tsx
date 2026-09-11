@@ -13,7 +13,7 @@ const CONTENT_CLASS = cn(
 /** 一条菜单项的样式：`MenuItem` 与子菜单的触发项共用 */
 const ITEM_CLASS = cn(
   'flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-xs outline-none',
-  'data-[highlighted]:bg-ink/[.055] data-[disabled]:opacity-35',
+  'data-[highlighted]:bg-surface-hover data-[disabled]:opacity-35',
 )
 
 export function Menu({
@@ -166,8 +166,8 @@ export function MenuItem({
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{children}</span>
-        {reason && <span className="truncate text-[11px] leading-4 text-ink-3">{reason}</span>}
-        {hint && <span className="truncate font-mono text-[11px] leading-4 text-ink-3">{hint}</span>}
+        {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
+        {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
       </span>
       {shortcut && <span className="shrink-0 font-mono text-xs text-ink-3">{shortcut}</span>}
     </DM.Item>
@@ -195,7 +195,7 @@ export function MenuSub({
       <DM.SubTrigger
         {...rest}
         disabled={disabled}
-        className={cn(ITEM_CLASS, 'text-ink data-[state=open]:bg-ink/[.055]')}
+        className={cn(ITEM_CLASS, 'text-ink data-[state=open]:bg-surface-hover')}
       >
         {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
         <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -240,7 +240,7 @@ export function MenuCheckItem({
       }}
       className={cn(
         'flex h-7 cursor-default select-none items-center rounded-sm pl-6 pr-2 text-xs text-ink outline-none',
-        'relative data-[highlighted]:bg-ink/[.055]',
+        'relative data-[highlighted]:bg-surface-hover',
       )}
     >
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
@@ -300,7 +300,7 @@ export function MenuRadioItem({
 export const MenuSeparator = () => <DM.Separator className="my-1 h-px bg-border" />
 
 export const MenuLabel = ({ children }: { children: ReactNode }) => (
-  <DM.Label className="px-2 py-1 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
+  <DM.Label className="type-section px-2 py-1">
     {children}
   </DM.Label>
 )

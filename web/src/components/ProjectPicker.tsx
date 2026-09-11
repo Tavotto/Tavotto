@@ -120,7 +120,7 @@ export function ProjectPicker() {
               {t('picker.create')}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="md"
               onClick={() => {
                 // 桌面壳里用原生目录选择器；取消不是错误，什么都不发生。
@@ -167,7 +167,7 @@ export function ProjectPicker() {
             />
             <Button
               type="submit"
-              variant="outline"
+              variant="secondary"
               size="md"
               disabled={!target}
               aria-label={
@@ -344,7 +344,7 @@ function MissingGroup({
           <span className="truncate">{t('picker.missingGroup')}</span>
           <span className="font-mono text-ink-3">{t('picker.recentCount', { count: entries.length })}</span>
         </button>
-        <Button size="sm" variant="outline" className="shrink-0 text-xs" onClick={onRemoveAll}>
+        <Button size="sm" variant="secondary" className="shrink-0 text-xs" onClick={onRemoveAll}>
           {t('picker.removeAllMissing')}
         </Button>
       </div>
@@ -422,7 +422,7 @@ function RecentRow({
         title={t('picker.removeFromListTitle')}
         className={cn(
           'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-3',
-          'outline-none transition-opacity hover:bg-ink/[.055] hover:text-ink',
+          'outline-none transition-opacity hover:bg-surface-hover hover:text-ink',
           'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
           // 打不开的条目只剩「移除」一个动作：常驻显示，不藏在悬停后面
           entry.exists ? 'opacity-0' : 'opacity-100',
@@ -518,7 +518,7 @@ export function DirBrowser({
       size="md"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button
@@ -598,7 +598,7 @@ export function DirBrowser({
                 }}
                 className={cn(
                   'flex h-7 w-full items-center gap-2 px-2 text-left text-xs text-ink',
-                  'outline-none hover:bg-ink/[.045] focus-visible:focus-ring',
+                  'outline-none hover:bg-surface-hover focus-visible:focus-ring',
                 )}
               >
                 {state.is_roots ? (
@@ -687,7 +687,7 @@ function NewProjectNameDialog({
       size="sm"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button

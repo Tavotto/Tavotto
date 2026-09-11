@@ -162,7 +162,7 @@ export function ProblemPanel() {
               </span>
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 className="shrink-0 text-xs"
                 onClick={() => runBatchFix(fixableHere)}
               >
@@ -186,7 +186,7 @@ export function ProblemPanel() {
         >
           <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn" aria-hidden />
           <span className="flex-1">{pr('failedKeptHint')}</span>
-          <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => schedule()}>
+          <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={() => schedule()}>
             {pr('retry')}
           </Button>
         </div>
@@ -295,7 +295,7 @@ function ScopeBar({
       />
       {/* 图名就在范围下面：用户得知道「当前图」指的是谁 */}
       {scope === 'figure' && figureName && (
-        <p className="truncate pt-1.5 text-[11px] text-ink-3" title={figureName}>
+        <p className="truncate pt-1.5 text-xs text-ink-3" title={figureName}>
           {figureName}
         </p>
       )}
@@ -388,7 +388,7 @@ function GroupBlock({
           aria-expanded={open}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
         >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-2 transition-colors hover:bg-ink/[.05]">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-2 transition-colors hover:bg-surface-hover">
             <ChevronRight
               size={ICON_SIZE.sm}
               aria-hidden
@@ -406,7 +406,7 @@ function GroupBlock({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-xs font-medium leading-snug text-ink">{title}</span>
-            <span className="mt-px block text-[11px] text-ink-3">
+            <span className="mt-px block text-xs text-ink-3">
               {pr('groupObjects', { count: group.objects })}
               {' · '}
               {severityLabel(group.severity)}
@@ -457,7 +457,7 @@ function IssueRow({
       className={cn(
         'rounded-md transition-colors',
         // 「当前」= 浅灰圆角块 + 文字标签，不画左侧竖条、不用蓝（2026-09-11 用户反馈）
-        current ? 'bg-selected' : 'hover:bg-ink/[.035]',
+        current ? 'bg-selected' : 'hover:bg-surface-hover',
       )}
     >
       <div className="flex items-start gap-2 py-2 pl-2 pr-1">
@@ -478,12 +478,12 @@ function IssueRow({
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="min-w-0 truncate text-xs leading-snug text-ink">{subjectName(issue)}</span>
             {current && (
-              <span className="shrink-0 rounded-[3px] bg-surface px-1 text-[10px] leading-4 text-ink-2">
+              <span className="shrink-0 rounded-xs bg-surface px-1 text-xs leading-4 text-ink-2">
                 {pr('current')}
               </span>
             )}
           </span>
-          <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-ink-2">
+          <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs leading-snug text-ink-2">
             {values.current ? (
               values.expected ? (
                 <>
@@ -518,10 +518,10 @@ function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
     <Details className="mb-1.5 ml-2">
       {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
           用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
-      <Summary className="cursor-default gap-0.5 text-[11px] text-ink-3">{pr('techTitle')}</Summary>
+      <Summary className="cursor-default gap-0.5 text-xs text-ink-3">{pr('techTitle')}</Summary>
       <ul className="mt-0.5 flex flex-col gap-0.5">
         {lines.map((line) => (
-          <li key={line} className="break-all font-mono text-[10px] leading-relaxed text-ink-3">
+          <li key={line} className="break-all font-mono text-xs leading-relaxed text-ink-3">
             {line}
           </li>
         ))}
@@ -568,7 +568,7 @@ function CursorBar({
       </Tip>
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         className="text-xs"
         disabled={!view.next}
         onClick={() => {

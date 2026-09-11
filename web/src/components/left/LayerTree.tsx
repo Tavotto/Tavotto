@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
+import { listRowClass } from '@/components/ui/listRow'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -229,10 +230,7 @@ function GroupRow({
           selectAllMembers()
         }
       }}
-      className={cn(
-        'group mx-1 flex h-7 cursor-default items-center gap-1 rounded-sm px-1.5 text-xs outline-none focus-visible:focus-ring',
-        allSelected ? 'bg-ink/[.08] text-ink' : 'text-ink-2 hover:bg-ink/[.04]',
-      )}
+      className={cn(listRowClass({ selected: allSelected, muted: true }), 'px-1.5')}
     >
       <button
         onPointerDown={(e) => e.stopPropagation()}
@@ -247,7 +245,7 @@ function GroupRow({
         {lt('groupLabel', { count: members.length })}
       </span>
       {layout && (
-        <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
+        <span className="shrink-0 rounded-xs border border-border px-1 text-xs text-ink-3">
           {layoutKindLabel(layout.kind)}
         </span>
       )}
@@ -341,9 +339,8 @@ function LayerRow({
       onDoubleClick={() => setEditing(true)}
       style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
       className={cn(
-        'group relative mx-1 flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs outline-none focus-visible:focus-ring',
-        selected ? 'bg-selected text-ink' : 'text-ink hover:bg-ink/[.04]',
-        obj.hidden && 'opacity-45',
+        listRowClass({ selected, hidden: obj.hidden }),
+        'gap-1.5 px-2',
         dropHint === 'above' && 'shadow-[inset_0_1px_0_0_var(--color-accent)]',
         dropHint === 'below' && 'shadow-[inset_0_-1px_0_0_var(--color-accent)]',
       )}
@@ -369,7 +366,7 @@ function LayerRow({
               setTimeout(() => li?.focus(), 0)
             }
           }}
-          className="h-5 min-w-0 flex-1 rounded-[3px] border border-accent bg-surface px-1 text-xs text-ink outline-none"
+          className="h-5 min-w-0 flex-1 rounded-xs border border-accent bg-surface px-1 text-xs text-ink outline-none"
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>

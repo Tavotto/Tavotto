@@ -142,12 +142,12 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
         {diffs.length > 0 && (
           <ul className="flex flex-col gap-0.5">
             {diffs.slice(0, 5).map((d, i) => (
-              <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-[11px] text-ink-2">
+              <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-xs text-ink-2">
                 {d.gid || 'figure'}.{d.field}
               </li>
             ))}
             {diffs.length > 5 && (
-              <li className="text-[11px] text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
+              <li className="text-xs text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
             )}
           </ul>
         )}
@@ -178,7 +178,7 @@ function BackupDetails({ dir, summary }: { dir: string; summary: string }) {
       <Summary className="cursor-default text-xs leading-relaxed text-ink-2">{summary}</Summary>
       <div className="mt-1 flex flex-col gap-1 pl-4">
         <div className="flex items-start gap-1">
-          <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed text-ink-2">
+          <span className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-ink-2">
             {dir}
           </span>
           <CopyButton text={dir} label={wb('copyBackupDir')} />
@@ -307,12 +307,12 @@ export function WriteBackDialog({
       busy={busy}
       footer={
         result ? (
-          <Button variant="outline" size="md" onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" size="md" onClick={() => onOpenChange(false)}>
             {wb('done')}
           </Button>
         ) : (
           <>
-            <Button variant="outline" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
+            <Button variant="secondary" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
               {translate('actions.cancel')}
             </Button>
             <Button
@@ -359,7 +359,7 @@ export function WriteBackDialog({
               <TriangleAlert size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-danger" />
               {wb('targetsLabel')}
             </p>
-            <ul className="mt-1 flex flex-col gap-0.5 pl-[18px]">
+            <ul className="mt-1 flex flex-col gap-0.5 pl-4.5">
               {targetFiles.map((f) => (
                 <li key={f} className="break-all font-mono text-xs text-ink">
                   {f}
@@ -406,7 +406,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
   return (
     <>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="w-fit"
         disabled={!panel.overrides.length || readOnly}
@@ -484,7 +484,7 @@ export function WriteBackTopBarButton() {
       <Tip label={tip}>
         <Button
           data-write-back="open"
-          variant="outline"
+          variant="secondary"
           size="md"
           disabled={disabled}
           aria-label={wb('buttonLabel')}

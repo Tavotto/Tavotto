@@ -11,22 +11,82 @@ import {
 import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 
-export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
-  function TextInput({ className, ...props }, ref) {
+/**
+ * 输入框的「框」：边框、底色、hover / focus / invalid / disabled 全在这一份。
+ * 单独的 `TextInput` 直接把它画在 `<input>` 上；带后缀的输入框把它画在外壳上、
+ * 里面的 `<input>` 透明——两种形态同一套状态，不各写一遍。
+ */
+const BOX_CLASS = cn(
+  'rounded-sm border border-border bg-surface text-xs text-ink transition-colors duration-fast',
+  'hover:border-border-strong',
+)
+const BOX_FOCUS = 'focus:border-accent focus:bg-surface'
+const BOX_FOCUS_WITHIN = 'focus-within:border-accent focus-within:bg-surface'
+const BOX_INVALID = 'border-danger hover:border-danger'
+const BOX_DISABLED = 'cursor-not-allowed bg-surface-2 opacity-60 hover:border-border'
+
+export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
+  /** 校验不过：红边 + `aria-invalid`；错误文案由调用方用 `aria-describedby` 指过去 */
+  invalid?: boolean
+  /**
+   * 框内后缀：`[ 393.7      mm ]`——单位坐在框里、靠右，与数字形成稳定结构，
+   * 而不是 `[393.7] mm` 那样漂在框外。给了它输入文字自动右对齐（数字的读法）；
+   * 要左对齐传 `align="left"`。
+   */
+  suffix?: ReactNode
+  align?: 'left' | 'right'
+}
+
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
+  { className, invalid, suffix, align, disabled, ...props },
+  ref,
+) {
+  const alignRight = align === 'right' || (align == null && suffix != null)
+  if (suffix == null) {
     return (
       <input
         ref={ref}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
         className={cn(
-          'h-7 w-full min-w-0 rounded-sm border border-border bg-surface px-2 text-xs text-ink',
-          'placeholder:text-ink-3 outline-none transition-colors',
-          'hover:border-border-strong focus:border-accent focus:bg-surface',
+          'h-7 w-full min-w-0 px-2 placeholder:text-ink-3 outline-none',
+          BOX_CLASS,
+          BOX_FOCUS,
+          alignRight && 'text-right tabular-nums',
+          invalid && BOX_INVALID,
+          disabled && BOX_DISABLED,
           className,
         )}
         {...props}
       />
     )
-  },
-)
+  }
+  return (
+    // 外壳是「框」，输入框透明：hover / focus 状态挂在外壳上，后缀也在框里
+    <span
+      className={cn(
+        'flex h-7 w-full min-w-0 items-center',
+        BOX_CLASS,
+        BOX_FOCUS_WITHIN,
+        invalid && BOX_INVALID,
+        disabled && BOX_DISABLED,
+        className,
+      )}
+    >
+      <input
+        ref={ref}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
+        className={cn(
+          'h-full min-w-0 flex-1 bg-transparent pl-2 pr-1 text-inherit placeholder:text-ink-3 outline-none',
+          alignRight && 'text-right tabular-nums',
+        )}
+        {...props}
+      />
+      <span className="shrink-0 select-none whitespace-nowrap pr-2 text-ink-3">{suffix}</span>
+    </span>
+  )
+})
 
 /** TextInput 的多行版：样式同源，供可含换行的文本字段（如图内文字）使用 */
 export const TextArea = forwardRef<
@@ -57,7 +117,16 @@ interface NumberFieldProps {
   /** 小数位，仅影响显示 */
   precision?: number
   prefix?: ReactNode
+  /**
+   * 框外的单位 / 说明（`[393.7] mm`）。1.0 之前的形态；页面级 Session 逐页迁到
+   * `unit`（框内），迁完这个字段就删。新代码不要再用它。
+   */
   suffix?: ReactNode
+  /**
+   * 框内单位：`[ 393.7      mm ]`。数字右对齐、单位靠右坐在同一个框里，
+   * 一列数字框的单位就排成一条稳定的竖线（Design Constitution 第五节）。
+   */
+  unit?: ReactNode
   disabled?: boolean
   /** 多选且取值不一致：留空并显示占位符，而不是谎报一个数 */
   mixed?: boolean
@@ -86,6 +155,7 @@ export function NumberField({
   precision = 1,
   prefix,
   suffix,
+  unit,
   disabled,
   mixed,
   className,
@@ -95,11 +165,12 @@ export function NumberField({
   onScrubEnd,
   dataProp,
 }: NumberFieldProps) {
+  const unitText = typeof unit === 'string' && unit ? unit : typeof suffix === 'string' && suffix ? suffix : ''
   const derivedLabel =
     ariaLabel ??
     (typeof prefix === 'string' && prefix
-      ? typeof suffix === 'string' && suffix
-        ? `${prefix} (${suffix})`
+      ? unitText
+        ? `${prefix} (${unitText})`
         : prefix
       : (title ?? undefined))
   const [text, setText] = useState('')
@@ -192,7 +263,7 @@ export function NumberField({
       <div
         className={cn(
           'flex h-full min-w-0 items-center rounded-sm border border-transparent bg-surface-2',
-          'transition-colors hover:border-border focus-within:border-accent focus-within:bg-surface',
+          'transition-colors duration-fast hover:border-border focus-within:border-accent focus-within:bg-surface',
         )}
       >
         <input
@@ -238,10 +309,17 @@ export function NumberField({
             // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
             // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
             // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
-            'num-input h-full w-[calc(4ch+0.75rem)] min-w-0 bg-transparent px-1.5 text-center text-ink outline-none',
+            'num-input h-full w-[calc(4ch+0.75rem)] min-w-0 bg-transparent px-1.5 text-ink outline-none',
             'placeholder:font-sans placeholder:text-ink-3',
+            // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
+            unit != null ? 'pr-1 text-right' : 'text-center',
           )}
         />
+        {unit != null && (
+          <span className="num-input shrink-0 select-none whitespace-nowrap pr-1.5 text-ink-3">
+            {unit}
+          </span>
+        )}
       </div>
       {suffix != null && (
         // 单位放在框外，与前缀标签对称：框只圈住可编辑的数字，「pt」读作框后的说明。

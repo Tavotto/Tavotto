@@ -501,7 +501,7 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
       <div className="flex items-center gap-2">
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         onClick={() =>
           clearOverrides(
             panel.id,
@@ -895,7 +895,7 @@ function AbsentAppearanceNote({ element }: { element: ManifestElement }) {
         </div>
       ))}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="w-full"
         onClick={() => {
@@ -1034,7 +1034,7 @@ function FieldList({
               {restGroups.map(([group, fields], i) => (
                 <div key={group ?? `flat-${i}`}>
                   {group && (
-                    <p className="mb-1 mt-1 text-xs uppercase tracking-[.06em] text-ink-3">
+                    <p className="mb-1 mt-1 type-section">
                       {groupLabel(group)}
                     </p>
                   )}
@@ -1137,7 +1137,7 @@ function TickControl({
 
 /** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
 function GroupHead({ children }: { children: ReactNode }) {
-  return <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{children}</p>
+  return <p className="mb-1 type-section">{children}</p>
 }
 
 /* ------------------------------ 子图：范围与坐标变换 ------------------------ */
@@ -2467,7 +2467,7 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
         title={el('scaleTitle')}
         onChange={setPct}
       />
-      <Button size="sm" variant="outline" disabled={!ready} onClick={apply} data-scale-apply>
+      <Button size="sm" variant="secondary" disabled={!ready} onClick={apply} data-scale-apply>
         {el('scaleApply')}
       </Button>
     </Row>
@@ -2624,7 +2624,7 @@ function AxesSizeMm({
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
         <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
           <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-          <p className="min-w-0 flex-1 truncate text-xs uppercase tracking-[.06em] text-ink-3">
+          <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
           </p>
           <Tip label={el('proxiedGeometry', { label: engineLabel(element.label) })}>
@@ -2669,7 +2669,7 @@ function AxesSizeMm({
       {group && <ScaleField panel={panel} group={group} />}
       <div className="mt-1.5 flex gap-1.5">
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
@@ -2678,7 +2678,7 @@ function AxesSizeMm({
           {el('centerH')}
         </Button>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
@@ -2741,7 +2741,7 @@ function SourceAdvancedSection({
         <GroupHead>{el('restoreGroup')}</GroupHead>
         {gid && counts.element > 0 && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full"
             title={el('resetElementTitle')}
@@ -2760,7 +2760,7 @@ function SourceAdvancedSection({
           </Button>
         )}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="w-full"
           disabled={!counts.figure}
@@ -2785,10 +2785,10 @@ function SourceAdvancedSection({
 
         {gid && (
           <Details>
-            <Summary className="cursor-default gap-0.5 text-[11px] text-ink-3">
+            <Summary className="cursor-default gap-0.5 text-xs text-ink-3">
               {el('techDetails')}
             </Summary>
-            <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-ink-3">{gid}</p>
+            <p className="mt-0.5 break-all font-mono text-xs leading-relaxed text-ink-3">{gid}</p>
           </Details>
         )}
       </div>
@@ -2810,7 +2810,7 @@ function UnsupportedNote({ role }: { role: string }) {
         <b className="font-medium text-ink">{info.title}</b>：{info.reason}
       </p>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="mt-1.5 w-full"
         onClick={() => useUiStore.getState().setRightTab('assistant')}
