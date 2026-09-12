@@ -173,12 +173,14 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       'entry_order', 'visible',
     ],
     visibleWhen: {
-      // 列距只在多列时有地方可摆；边框的四条只在边框开着时有意义
+      // 列距只在多列时有地方可摆；边框的五条只在边框开着时有意义——
+      // `framealpha` 在「更多」里，漏了它就是「此刻写了不生效的控件」（2026-09-12 critique）
       columnspacing: (read) => Number(read('ncol')) > 1,
       frame_linewidth: (read) => read('frameon') !== false,
       frame_rounded: (read) => read('frameon') !== false,
       edgecolor: (read) => read('frameon') !== false,
       facecolor: (read) => read('frameon') !== false,
+      framealpha: (read) => read('frameon') !== false,
     },
   },
   axes: {

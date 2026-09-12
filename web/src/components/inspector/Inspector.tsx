@@ -47,6 +47,7 @@ import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
+import { RestoreMenu } from './RestoreMenu'
 import { roleName } from './roles/registry'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
@@ -370,11 +371,9 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
                 {crumbs.slice(0, -1).join(' / ')}
               </span>
             )}
-            {modified > 0 && (
-              <span className="shrink-0 rounded-sm bg-selected px-1 py-px text-ink">
-                {t('element.modifiedCount', { count: modified })}
-              </span>
-            )}
+            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
+                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
+            <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
           </p>
         )}
       </header>

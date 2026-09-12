@@ -283,7 +283,6 @@
     "resetDiagram": "恢复刻度与边框到脚本",
     "resetElement": "恢复此元素",
     "resetElementCount_other": "恢复此元素 · {{count}} 项",
-    "resetElementTitle": "清掉这个元素上的图内修改，回到脚本的原始输出",
     "resetHint": {
       "default": "回到脚本值",
       "size_mm": "恢复脚本原始尺寸",
@@ -291,11 +290,9 @@
       "vmin": "自动范围"
     },
     "resetProp": "恢复{{label}}",
-    "resetTitle": "清掉这张图的全部图内修改（含写回时继承的基线），回到脚本的原始输出",
-    "resetToScript": "恢复整张图",
-    "resetToScriptCount": "恢复整张图 · {{count}} 项",
+    "resetToScriptCount_other": "恢复整张图 · {{count}} 项",
+    "restoreMenuTip": "恢复图内修改",
     "restore": "恢复",
-    "restoreGroup": "恢复",
     "retryRender": "重试渲染",
     "scaleApply": "应用",
     "scaleAxes": "缩放子图",
@@ -684,7 +681,7 @@
   "pinnedAria": "右栏常驻中，点击改为自动收起",
   "pinnedTip": "常驻中：清空选择也保持展开。点击改为自动收起",
   "prop": {
-    "alpha": "透明度",
+    "alpha": "不透明度",
     "arrow_color": "箭头颜色",
     "arrow_head": "箭头大小",
     "arrow_width": "箭头线宽",
@@ -695,7 +692,7 @@
     "axline_width": "轴线线宽",
     "azim": "方位角",
     "bar_width": "柱宽",
-    "bbox_alpha": "背景透明度",
+    "bbox_alpha": "背景不透明度",
     "bbox_edgecolor": "边框色",
     "bbox_facecolor": "背景色",
     "bbox_linewidth": "边框粗细",
@@ -722,10 +719,10 @@
     "format": "数值格式",
     "frame_linewidth": "边框线宽",
     "frame_rounded": "圆角边框",
-    "framealpha": "边框透明度",
+    "framealpha": "边框不透明度",
     "frameon": "边框",
     "gradient_color": "渐变基色",
-    "grid_alpha": "网格透明度",
+    "grid_alpha": "网格不透明度",
     "grid_color": "网格颜色",
     "grid_linestyle": "网格线型",
     "grid_linewidth": "网格线宽",
@@ -819,7 +816,8 @@
     "ylim": "Y 范围",
     "yscale": "Y 轴缩放",
     "zorder": "堆叠层级",
-    "loc_anchor": "锚点"
+    "loc_anchor": "锚点",
+    "title": "标题"
   },
   "propByRole": {
     "bar": {

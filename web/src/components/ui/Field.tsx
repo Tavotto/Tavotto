@@ -68,7 +68,12 @@ export function Disclosure({
         />
         <span className="font-medium">{title}</span>
         {!open && summary != null && (
-          <span className="ml-auto min-w-0 truncate text-right text-xs text-ink-3">{summary}</span>
+          <>
+            {/* 名字按内容取：标题与摘要之间没有分隔时读屏念成「背景#FFFFFF」「GuidesNone」
+                （2026-09-12 critique 的可访问名清单）。只给辅助技术加一个停顿，视觉不变 */}
+            <span className="sr-only">, </span>
+            <span className="ml-auto min-w-0 truncate text-right text-xs text-ink-3">{summary}</span>
+          </>
         )}
       </button>
       {open && <div className="mt-1.5">{children}</div>}

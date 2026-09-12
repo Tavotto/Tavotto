@@ -105,7 +105,7 @@
     "presets": {
       "double": {
         "hint": "150 mm — full width",
-        "label": "Double"
+        "label": "Double column"
       },
       "full": {
         "hint": "180×240 mm — full-page text block",
@@ -113,7 +113,7 @@
       },
       "single": {
         "hint": "85 mm — single-column width at most journals",
-        "label": "Single"
+        "label": "Single column"
       },
       "square": {
         "hint": "100×100 mm",
@@ -295,7 +295,6 @@
     "resetElement": "Restore this element",
     "resetElementCount_one": "Restore this element · {{count}} edit",
     "resetElementCount_other": "Restore this element · {{count}} edits",
-    "resetElementTitle": "Clear the figure edits on this element and return to the script's original output",
     "resetHint": {
       "default": "Back to the script value",
       "size_mm": "Restore the script's original size",
@@ -303,11 +302,10 @@
       "vmin": "Auto range"
     },
     "resetProp": "Reset {{label}}",
-    "resetTitle": "Clear every figure edit on this figure (including the baseline inherited from the last write-back) and return to the script's original output",
-    "resetToScript": "Restore the whole figure",
-    "resetToScriptCount": "Restore the whole figure · {{count}} edits",
+    "resetToScriptCount_one": "Restore the whole figure · {{count}} edit",
+    "resetToScriptCount_other": "Restore the whole figure · {{count}} edits",
+    "restoreMenuTip": "Restore figure edits",
     "restore": "Restore",
-    "restoreGroup": "Restore",
     "retryRender": "Retry render",
     "scaleApply": "Apply",
     "scaleAxes": "Scale axes",
@@ -837,7 +835,8 @@
     "ylim": "Y range",
     "yscale": "Y scale",
     "zorder": "Stacking order",
-    "loc_anchor": "Anchor"
+    "loc_anchor": "Anchor",
+    "title": "Title"
   },
   "propByRole": {
     "bar": {
@@ -1040,7 +1039,7 @@
   },
   "textControls": {
     "align": "Align",
-    "color": "Color",
+    "color": "Colour",
     "font": "Font",
     "fontMissingHint": "This computer does not have that font, so the figure is actually drawn with a different one. Pick an available font, or install it.",
     "fontMissingTag": " (not installed)",

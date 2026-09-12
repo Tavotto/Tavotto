@@ -148,7 +148,7 @@ describe('三层折叠契约', () => {
     expect(rowLabel('线宽')).toBe(true)
     expect(rowLabel('线型')).toBe(true)
     // 中频的透明度在「更多」里，默认收起
-    expect(rowLabel('透明度')).toBe(false)
+    expect(rowLabel('不透明度')).toBe(false)
   })
 
   it('「更多」按角色记忆，换面板不重置', async () => {
@@ -158,7 +158,7 @@ describe('三层折叠契约', () => {
     await act(async () => {
       more.click()
     })
-    expect(rowLabel('透明度')).toBe(true)
+    expect(rowLabel('不透明度')).toBe(true)
 
     // 换到另一个面板的同角色元素：仍然展开
     await act(async () => {
@@ -166,7 +166,7 @@ describe('三层折叠契约', () => {
     })
     await mount('p2', 'axes_0.lines_0')
     expect(buttonByText('更多')!.getAttribute('aria-expanded')).toBe('true')
-    expect(rowLabel('透明度')).toBe(true)
+    expect(rowLabel('不透明度')).toBe(true)
   })
 
   it('「更多」偏好持久化到 localStorage', async () => {

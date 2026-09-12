@@ -88,10 +88,24 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
   )
 })
 
-/** TextInput 的多行版：样式同源，供可含换行的文本字段（如图内文字）使用 */
+/**
+ * TextInput 的多行版：样式同源，供可含换行的文本字段（如图内文字）使用。
+ *
+ * **名字是类型必填的**（与 `Toggle` / `ColorField` 同一条纪律）。`<textarea>` 不像
+ * `<input>` 那样常被 `<label htmlFor>` 指着——属性栏里它坐在 `Row` 的标签列旁边，
+ * 那句标签是个 `<span>`，不给它取名；axe 在属性页签上报的正是这一条 `label`
+ * critical（2026-09-12 critique），而 e2e 门禁当时只扫画布页签所以没看见。
+ * 两种给法二选一：`aria-labelledby` 指向可见标签的 id；`aria-label` 要传渲染那句
+ * 可见文字的**同一个表达式**，别另写一句同义的。
+ */
+type TextAreaName =
+  | { 'aria-label': string; 'aria-labelledby'?: never }
+  | { 'aria-labelledby': string; 'aria-label'?: never }
+
 export const TextArea = forwardRef<
   HTMLTextAreaElement,
-  TextareaHTMLAttributes<HTMLTextAreaElement>
+  Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'aria-label' | 'aria-labelledby'> &
+    TextAreaName
 >(function TextArea({ className, ...props }, ref) {
   return (
     <textarea
