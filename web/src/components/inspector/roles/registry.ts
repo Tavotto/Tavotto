@@ -227,43 +227,6 @@ export function engineLabel(label: string): string {
 }
 
 /**
- * 角色 → 它在 matplotlib 里的类名，挂在属性栏身份头的徽标里（2026-09-12 critique P1
- * 「术语桥」）。主用户的脚本多半是编码 Agent 写的，他回头对 Agent 说「把那个
- * 边框去掉」时得说得出这是 `Legend` 的 frame 还是 `Axes` 的 spine——徽标给他那个词。
- *
- * 类名按 `engine/manifest.py` 注册该角色时拿到的 artist 写；`ticks` 是 Tavotto 把一根
- * 轴上的刻度收成一个对象（`TickSet`），对应 matplotlib 的 `Axis`。查不到就不显示，
- * 不给 Tavotto 自造的聚合角色编类名。
- */
-const MPL_CLASS: Record<string, string> = {
-  figure: 'Figure',
-  axes: 'Axes',
-  axes3d: 'Axes3D',
-  text: 'Text',
-  title: 'Text',
-  axis_label: 'Text',
-  ticklabel: 'Text',
-  legend_text: 'Text',
-  ticks: 'Axis',
-  image: 'AxesImage',
-  line: 'Line2D',
-  scatter: 'PathCollection',
-  bar: 'Rectangle',
-  bar_series: 'BarContainer',
-  stem_series: 'StemContainer',
-  errorbar: 'ErrorbarContainer',
-  fill: 'PolyCollection',
-  linecoll: 'LineCollection',
-  legend: 'Legend',
-  colorbar: 'Colorbar',
-  patch: 'Patch',
-  arrow_patch: 'FancyArrowPatch',
-}
-
-/** 这个角色的 matplotlib 类名；未知角色回 undefined */
-export const mplClassOf = (role: string): string | undefined => MPL_CLASS[role]
-
-/**
  * 引擎明确不支持的能力：不画空白页、不摆假的 disabled 控件，
  * 而是说清为什么，并把用户导向改图助手（那条路真能做到）。
  *

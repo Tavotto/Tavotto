@@ -1,11 +1,12 @@
 /**
  * 「源文件与高级」折叠区（审计 T32 的后半段）。
  *
- * 恢复动作（「恢复此元素 · n 项」「恢复整张图 · m 项」）与「修改保存在哪里」
- * 2026-09-12 起住在身份头的脚本行里，由 `sourceRow.test.tsx` 看护。这里剩下的：
+ * 恢复动作（「恢复此元素 · n 项」「恢复整张图 · m 项」）2026-09-12 起是身份头那颗
+ * 「n 项已修改」徽标的菜单，由 `restoreMenu.test.tsx` 看护。这里剩下的：
  *   1. 折叠区里**只有**会动磁盘的那一组（「原始文件」：写回 / 历史 / 同步），
  *      没有恢复按钮——「只改文档」与「会动磁盘」的边界现在是两个位置，不是两个组头；
- *   2. 精确名词（gid）不再常驻，收在「技术详情」里。
+ *   2. 精确名词（gid）不再常驻，收在「技术详情」里；
+ *   3. 「修改保存在哪里」的说明不出现 override / 撤销栈 / 引擎 / 孤儿这些实现词。
  */
 import { literal } from '@/i18n'
 import { act } from 'react'
@@ -168,5 +169,13 @@ describe('源文件与高级：只剩会动磁盘的那一组', () => {
       (p) => p.textContent?.includes('axes_0.title') && !details!.contains(p),
     )
     expect(outside).toEqual([])
+  })
+
+  it('「修改保存在哪里」的说明不用实现词', async () => {
+    await mount()
+    await act(async () => buttonByText('修改保存在哪里')!.click())
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('图内修改')
+    for (const jargon of ['override', '撤销栈', '引擎', '孤儿']) expect(text).not.toContain(jargon)
   })
 })

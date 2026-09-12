@@ -1,16 +1,14 @@
 /**
- * 属性栏身份头的脚本行（2026-09-12 critique P1「脚本不在场」）。
+ * 属性栏身份头的「n 项已修改 ↺」（2026-09-12 critique P1「恢复入口太深」的第二版）。
  *
- * 要钉住的：
- *   1. 图内编辑时，头部**看得见脚本名**与「脚本未改动」——此前整张页面的文字里没有
- *      任何 `.py`（critique 实测），aha 时刻的后半句没人说；
- *   2. 恢复入口跟着脚本行走：一颗 ↺ 菜单，「恢复此元素 · n 项」「恢复整张图 · m 项」
- *      各说各的对象与数量，数字来自同一份 overrides，按下去清掉的正是标签上写的那批
- *      （审计 T32 的保证不因搬家而丢）；没有任何修改时这颗钮不出现；
+ * 第一版在头部另起了一行「脚本名 · 脚本未改动 · ↺ · ?」，用户的回退意见：占地且啰嗦，
+ * 脚本名多余、「脚本未改动」不必常驻、类名徽标与标题重复。现在计数徽标本身就是
+ * 恢复菜单的触发器，头部不多一行、不多一颗钮。要钉住的：
+ *   1. 徽标写的是修改数，点开是「恢复此元素 · n 项」「恢复整张图 · m 项」——各说各的
+ *      对象与数量，数字来自同一份 overrides，按下去清掉的正是标签上写的那批（审计 T32）；
+ *   2. 一条修改都没有时整颗徽标不出现（没有「禁用的恢复钮」）；
  *   3. 「源文件与高级」折叠区里**不再有**恢复按钮——只剩会动磁盘的那一组；
- *   4. 身份头带 matplotlib 类名徽标（术语桥）：标题是 `Text`，整张图是 `Figure`；
- *   5. 「修改保存在哪里」跟着脚本行走，说明仍不用实现词；
- *   6. 没有脚本的素材不摆这一行。
+ *   4. 头部没有脚本行、没有 matplotlib 类名徽标（回退第一版）。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -98,7 +96,7 @@ let host: HTMLDivElement
 let root: Root
 
 async function seed(p: PanelObject, gid: string | null) {
-  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_source_row')
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_restore_menu')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.page = { w: 100, h: 80 }
     d.objects = [p]
@@ -144,8 +142,7 @@ async function mount() {
   await act(async () => {})
 }
 
-const row = () => host.querySelector<HTMLElement>('[data-source-row]')
-const restoreTrigger = () => host.querySelector<HTMLButtonElement>('[data-source-restore]')
+const restoreTrigger = () => host.querySelector<HTMLButtonElement>('[data-restore-menu]')
 const menuItems = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
 const overrides = () =>
   (useDocumentStore.getState().doc.objects.find((o) => o.id === 'p1') as PanelObject).overrides
@@ -176,39 +173,27 @@ afterEach(async () => {
   useSelectionStore.getState().clear()
 })
 
-describe('脚本行：脚本在场', () => {
-  it('图内编辑时头部写着脚本名与「脚本未改动」', async () => {
+describe('头部只有计数徽标：没有脚本行、没有类名徽标', () => {
+  it('徽标写的是「2 项已修改」，头部里没有 .py、没有「脚本未改动」', async () => {
     await seed(panelOf(), 'axes_0.title')
     await mount()
-    const r = row()!
-    expect(r.textContent).toContain('fig1_kinetics.py')
-    expect(r.textContent).toContain('脚本未改动')
-    // 完整路径留在 title 里，不占版面
-    expect(r.querySelector('[title="figs/fig1_kinetics.py"]')).toBeTruthy()
+    const header = host.querySelector('header')!
+    expect(restoreTrigger()!.textContent).toBe('2 项已修改')
+    expect(header.textContent).not.toMatch(/\.py|脚本未改动/)
+    // 头部只有两行：标题行 + 面包屑行；面包屑里没有类名徽标那个 <code>
+    expect(header.children.length).toBe(2)
+    expect(header.querySelector('code')).toBeNull()
   })
 
-  it('没有脚本的素材不摆这一行', async () => {
-    await seed(panelOf({ script: null, overrides: [] }), 'axes_0.title')
-    await mount()
-    expect(row()).toBeNull()
-  })
-
-  it('没选元素（整张图）时也在，且徽标是 Figure', async () => {
+  it('没选元素（整张图）时徽标是面板总数 3', async () => {
     await seed(panelOf(), null)
     await mount()
-    expect(row()!.textContent).toContain('fig1_kinetics.py')
-    expect(host.querySelector('[data-mpl-class]')?.textContent).toBe('Figure')
-  })
-
-  it('选中标题时徽标是 Text', async () => {
-    await seed(panelOf(), 'axes_0.title')
-    await mount()
-    expect(host.querySelector('[data-mpl-class]')?.textContent).toBe('Text')
+    expect(restoreTrigger()!.textContent).toBe('3 项已修改')
   })
 })
 
-describe('恢复入口跟着脚本行走', () => {
-  it('一条修改都没有时没有 ↺ 钮', async () => {
+describe('计数徽标就是恢复菜单', () => {
+  it('一条修改都没有时整颗徽标不出现', async () => {
     await seed(panelOf({ overrides: [] }), 'axes_0.title')
     await mount()
     expect(restoreTrigger()).toBeNull()
@@ -233,7 +218,7 @@ describe('恢复入口跟着脚本行走', () => {
     expect(overrides()).toEqual([{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 8 }])
   })
 
-  it('「恢复整张图」清掉全部，之后 ↺ 钮消失', async () => {
+  it('「恢复整张图」清掉全部，之后徽标消失', async () => {
     await seed(panelOf(), 'axes_0.title')
     await mount()
     await openRestore()
@@ -266,18 +251,5 @@ describe('恢复入口跟着脚本行走', () => {
     const heads = Array.from(fold.querySelectorAll('p')).map((p) => p.textContent?.trim())
     expect(heads).toContain('原始文件')
     expect(heads).not.toContain('恢复')
-  })
-})
-
-describe('「修改保存在哪里」跟着脚本行走', () => {
-  it('问号钮在脚本行里，说明不用实现词', async () => {
-    await seed(panelOf(), 'axes_0.title')
-    await mount()
-    const btn = row()!.querySelector<HTMLButtonElement>('button[aria-label="修改保存在哪里？"]')
-    expect(btn).toBeTruthy()
-    await act(async () => btn!.click())
-    const text = document.body.textContent ?? ''
-    expect(text).toContain('图内修改')
-    for (const jargon of ['override', '撤销栈', '引擎', '孤儿']) expect(text).not.toContain(jargon)
   })
 })

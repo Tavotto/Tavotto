@@ -10,6 +10,7 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ChevronRight,
+  CircleQuestionMark,
   CornerUpLeft,
   Link2,
   MoveDown,
@@ -86,6 +87,7 @@ import {
 import { Button } from '../ui/Button'
 import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
+import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -95,7 +97,6 @@ import {
   controlKindOf,
   fieldHintKey,
   isPercentField,
-  mplTermOf,
   pairedProp,
   presentFields,
 } from './presentation/registry'
@@ -1877,24 +1878,13 @@ function FieldRow({
   // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
   // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
   // 三重表达「这个值来自你的修改，不是脚本」。
-  // 术语桥（2026-09-12 critique P1）：标签的气泡第一行是这个属性在 matplotlib 里的
-  // 调用（`mplTermOf`，镜像引擎 HANDLERS），第二行是一句「它改的是什么」（展示
-  // 注册表 FIELD_HINTS）。悬停即现，没有问号按钮；两行都没有的字段不挂气泡。
-  // 有气泡时不再给原生 `title`——两种提示叠着出现看起来像 bug。
-  const term = mplTermOf(field.prop, element.role)
+  // 单位或语义会被读错的字段带一句短提示（没有问号按钮，见展示注册表）
   const hintKey = fieldHintKey(field.prop)
   const hint = hintKey ? el(`hint.${hintKey}`) : undefined
-  const tip =
-    term || hint ? (
-      <span className="flex max-w-64 flex-col gap-0.5">
-        {term && <code className="font-mono text-ink-3">{term}</code>}
-        {hint && <span className="leading-relaxed">{hint}</span>}
-      </span>
-    ) : null
   const labelBody = (
     <span
       className="flex min-w-0 items-center gap-1"
-      title={tip ? undefined : overridden ? `${label} · ${el('modified')}` : label}
+      title={overridden ? `${label} · ${el('modified')}` : label}
     >
       {overridden && (
         <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
@@ -1903,7 +1893,7 @@ function FieldRow({
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
-  const labelNode = tip ? <Tip label={tip} side="left">{labelBody}</Tip> : labelBody
+  const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
 
@@ -2382,6 +2372,37 @@ function FieldRow({
 }
 
 /** 「修改逻辑」说明：讲清 override 与改脚本这两层的区别 */
+function HowItWorks() {
+  useTranslation('inspector')
+  return (
+    <Popover
+      width={268}
+      align="end"
+      trigger={
+        <Button
+          variant="ghost"
+          size="sm"
+          className="self-start text-ink-3"
+          aria-label={el('howItWorksAria')}
+        >
+          <CircleQuestionMark size={ICON_SIZE.sm} />
+          {el('howItWorksTrigger')}
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
+        {(['howOverride', 'howWriteBack', 'howAi', 'howBoth'] as const).map((key, i) => (
+          <div key={key}>
+            {i > 0 && <div className="mb-2 h-px bg-border" />}
+            <p className="font-medium text-ink">{el(`${key}Title`)}</p>
+            <p className="mt-0.5">{el(`${key}Body`)}</p>
+          </div>
+        ))}
+      </div>
+    </Popover>
+  )
+}
+
 /* -------------------------------------------------------------------------- */
 /*  子图布局                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -2679,8 +2700,8 @@ function AxesSizeMm({
  * 低频字段（层级、裸坐标）与 gid 诊断。默认折叠、会话内按角色记忆——高风险
  * 低频动作不和日常调样式挤在一起。
  *
- * 「恢复」（只改这份文档、可撤销）**不在这里**：它住在身份头的脚本行里
- * （`SourceRow`），与会动磁盘的这一组隔着一个折叠区。审计 T32 用两个组标题
+ * 「恢复」（只改这份文档、可撤销）**不在这里**：它是身份头那颗「n 项已修改」徽标
+ * 的菜单（`RestoreMenu`），与会动磁盘的这一组隔着一个折叠区。审计 T32 用两个组标题
  * 划的那条边界，2026-09-12 critique 发现在中文里看不出来（type-section 没有大写
  * 可用，「恢复 / 原始文件」两个组头与普通标签几乎无法区分），于是改成两个位置。
  */
@@ -2729,6 +2750,7 @@ function SourceAdvancedSection({
           </div>
         )}
         <SyncOverridesButton panel={panel} />
+        <HowItWorks />
 
         {gid && (
           <Details>
