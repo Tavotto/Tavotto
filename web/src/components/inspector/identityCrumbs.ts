@@ -43,5 +43,7 @@ export function untruncatedLabel(label: string, text: string | undefined): strin
   if (typeof text !== 'string' || !label.endsWith('…”')) return label
   const full = text.split(/\s+/).join(' ').trim()
   if (!full) return label
-  return label.replace(/“[^”]*…”$/, `“${full}”`)
+  // 用回调而不是替换串：用户的文字进 `replace` 的第二个参数会被当成模板，
+  // mathtext 里常见的 `$$`、`$&` 会被吃掉或换成被截的旧名（评审 P2）
+  return label.replace(/“[^”]*…”$/, () => `“${full}”`)
 }

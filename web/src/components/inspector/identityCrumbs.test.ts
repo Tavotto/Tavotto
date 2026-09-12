@@ -77,6 +77,12 @@ describe('身份头标题不带引擎的截断省略号（2026-09-12 critique P3
     expect(untruncatedLabel('X 轴 “Reaction time (mi…”', '   ')).toBe('X 轴 “Reaction time (mi…”')
   })
 
+  it('mathtext 里的 $ 原样进标题：$$ 不并成一个、$& 不换成被截的旧名', () => {
+    expect(untruncatedLabel('标题 “Rate $k_1$ vs $k_…”', 'Rate $k_1$ vs $k_2$ $$ $& done')).toBe(
+      '标题 “Rate $k_1$ vs $k_2$ $$ $& done”',
+    )
+  })
+
   it('完整文字里的换行折成空格（引擎给名字时也是这么做的）', () => {
     expect(untruncatedLabel('文字 “first line second l…”', 'first line\nsecond line')).toBe(
       '文字 “first line second line”',
