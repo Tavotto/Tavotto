@@ -25,6 +25,7 @@ import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, StatusToasts } from '@/components/StatusBar'
 import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
+import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEngineSync } from '@/hooks/useEngineSync'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
@@ -67,8 +68,8 @@ export function App() {
 
   useEffect(() => {
     void useProjectStore.getState().init()
-    // 静默取一次版本状态（有新版本才在顶栏点圆点）。桌面与浏览器是两条
-    // 互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
+    // 静默取一次版本状态（有新版本才弹 UpdateNoticeDialog、点顶栏圆点）。
+    // 桌面与浏览器是两条互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
     checkUpdateOnStartup()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
@@ -89,6 +90,8 @@ export function App() {
       <>
         <ProjectPicker />
         <TelemetryConsentDialog />
+        {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
+        <UpdateNoticeDialog />
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
             确认屏不能等到用户先挑完项目才出现 */}
         <NativeConfirmDialog />
@@ -252,6 +255,7 @@ function Workspace() {
         <NativeConfirmDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
+        <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
