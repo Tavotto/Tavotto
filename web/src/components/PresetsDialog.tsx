@@ -63,7 +63,7 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
                   onClose()
                 }}
                 aria-label={t('presets.insertSymbolAria', { symbol: s })}
-                className="flex h-8 items-center justify-center rounded-sm text-sm text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
+                className="flex h-8 items-center justify-center rounded-sm text-sm text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
                 style={{ fontFamily: 'var(--font-doc)' }}
               >
                 {s}

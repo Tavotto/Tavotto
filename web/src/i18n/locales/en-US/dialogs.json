@@ -129,11 +129,9 @@
     "nameLabel": "Document name",
     "namePlaceholder": "Document name",
     "nameTaken": "A document with this name already exists; saving replaces it.",
-    "openDescription": "Switch to another named document in this project; the current one is already autosaved on this machine",
     "openTitle": "Open document",
     "overwrite": "Overwrite anyway",
     "saveAs": "Save as",
-    "saveDescription": "Save the current document, with all of its canvases, as a named document in this project",
     "saveTitle": "Save document as",
     "saved": "Saved as document: {{name}}",
     "savesInto": "Saves into {{dir}}",
@@ -168,8 +166,7 @@
     "argCount_one": "{{count}} (its value never reaches this window)",
     "argCount_other": "{{count}} (their values never reach this window)",
     "cancel": "Cancel",
-    "description": "This command has not started running yet — it starts once you confirm.",
-    "descriptionQueued": "This command has not started running yet — it starts once you confirm. {{queued}} more are waiting.",
+    "descriptionQueued": "{{queued}} more queued after this one.",
     "fields": {
       "args": "Arguments",
       "cwd": "Working directory",
@@ -181,7 +178,6 @@
     "permissionNotice": "This mode uses the project's own Python. The script has the same file permissions it would have if you ran it in your terminal yourself. Tavotto only takes over the Matplotlib figures inside that Python process. Only run code you trust.",
     "pythonVersion": "Python {{version}}",
     "remember": "Remember this project and this Python",
-    "rememberHint": "Next time the same figure library with the same interpreter runs without asking. Changing the interpreter, moving the library, or a permission-rule upgrade all bring the question back; you can revoke it in Settings at any time.",
     "targetKind": {
       "module": "module",
       "script": "script"
@@ -517,7 +513,6 @@
     "duplicate": "Duplicate",
     "duplicateToEdit": "Duplicate to edit",
     "empty": "Nothing here yet",
-    "emptyHint": "The list is empty. You can import a profile from a file.",
     "export": "Export to a file",
     "field": {
       "annotationFont": "Annotation size",
@@ -539,7 +534,6 @@
       "widthTolerance": "Width tolerance"
     },
     "follow": "Follow updates",
-    "followDesc": "Off by default: the project uses the rules as they were when you picked them",
     "group": {
       "fonts": "Font sizes",
       "lines": "Lines",
@@ -550,10 +544,6 @@
     },
     "import": "Import from a file",
     "inUse": "In use here",
-    "kind": {
-      "specHint": "A spec decides what a figure must satisfy: minimum font size, column widths, minimum resolution. It only checks — it never changes your figure.",
-      "styleHint": "A style decides how a figure looks: sizes, fonts, line widths, ticks, legend, background. Applying one is a single undoable change."
-    },
     "name": "Name",
     "new": "New",
     "newName": "New profile",
@@ -562,7 +552,6 @@
       "user": "Custom"
     },
     "previewAria": "Style sample: title {{title}} pt, axis titles {{axis}} pt, ticks {{tick}} pt, legend {{legend}} pt, line width {{line}} pt, frame {{spine}} pt",
-    "previewHint": "The sample is computed from the fields above; size and width proportions match a real figure, which elements appear depends on the figure.",
     "previewTitle": "Sample",
     "readOnlyBadge": "Read-only",
     "readOnlyBuiltinBadge": "Built-in · read-only",
@@ -571,7 +560,6 @@
     "restoreConfirm": "Restore",
     "restoreNeedsOrigin": "This one was not copied from a built-in profile, so there are no defaults to restore",
     "restoreTitle": "Restore “{{name}}” to its defaults?",
-    "ruleLine": "Checked as {{expect}}; otherwise {{severity}}",
     "save": "Save",
     "saved": "Saved “{{name}}”",
     "snapshotHint": "The project stores the rules as they were when you picked them. Later edits to the same profile in the global list do not change these numbers unless “Follow updates” is on.",
@@ -583,24 +571,20 @@
       "legacyUnnamed": "One old style had no name and was skipped",
       "other": "One entry needs a look: {{code}}",
       "unmappedField": "One entry was not recognised and was kept as-is: {{field}}"
-    }
+    },
+    "library": {
+      "style": "Style library",
+      "spec": "Spec library"
+    },
+    "keyRules": "Key requirements"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
-    "allEditable_one": "{{count}} figure, and it is editable.",
-    "allEditable_other": "All {{count}} figures are editable.",
+    "allEditable_one": "{{count}} figure ready",
+    "allEditable_other": "{{count}} figures ready",
     "allScriptsHint": "Every .py in the project is here, including the ones whose figures cannot be told from the source alone. Run any of them once and Tavotto links it by what it actually draws.",
     "allScriptsTitle": "All scripts ({{n}})",
     "autoLink": "Connect automatically",
-    "detail": {
-      "candidates": "Candidate scripts",
-      "cost": "Run cost",
-      "entry": "Entry function",
-      "reasonCode": "Status code",
-      "scope": "Candidate scope",
-      "script": "Source script",
-      "stem": "Figure name"
-    },
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
     "emptyTitle": "No figures in this project yet",
     "group": {
@@ -619,6 +603,7 @@
     "manualPick": "Pick from project",
     "manualPickAria": "Pick a figure name already in the project for {{script}}",
     "manualPlaceholder": "Figure names without extension, separated by commas",
+    "moreAria": "More actions for {{name}}",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
     "orphanConflicts": "More than one script claims these figure names: {{stems}}. There is no matching file in the project yet; you can assign them under “All scripts” below.",
@@ -653,7 +638,6 @@
       "pending": "Waiting",
       "total": "Total"
     },
-    "technicalDetails": "Technical details",
     "title": "Project readiness",
     "useScript": "Use {{script}}",
     "write": "Write"
@@ -675,9 +659,6 @@
     "cancelPaste": "Cancel paste",
     "confirmDoc": "Relink the selected assets",
     "confirmPaste": "Paste with these choices",
-    "descDoc": "This document references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you skip stay missing and are flagged in the pre-export check.",
-    "descPaste": "Panels on the clipboard reference files that do not exist in the current figure library. Pick a replacement for each, or skip that panel.",
-    "footnote": "Relinking resets the figure edits to the new asset's size and script (overrides are bound to elements of the original script, so they do not transfer reliably). Position, size, stacking order and grouping are kept.",
     "keepMissing": "Leave missing",
     "refCount_one": " (referenced by {{count}} panel)",
     "refCount_other": " (referenced by {{count}} panels)",
@@ -817,8 +798,7 @@
         }
       },
       "codexIntegrationName": "{{product}} for Codex",
-      "defaultAgent": "Default agent",
-      "defaultAgentAria": "Default coding agent",
+      "defaultButton": "Default",
       "detail": {
         "addEndpoint": "Add a service…",
         "advanced": "Advanced",
@@ -904,7 +884,6 @@
       },
       "lastChecked": "Last checked {{time}}",
       "noUsableAgent": "No usable coding agent was detected. Install one, then hit Rescan.",
-      "noUsableAgentShort": "None available",
       "readiness": {
         "needs_auth": "Sign-in required",
         "ready": "Signed in",
@@ -913,6 +892,7 @@
       "refreshFailed": "The rescan failed; what you see below is the previous result.",
       "rescan": "Rescan",
       "rowAria": "{{name}} details",
+      "setDefaultAria": "Make {{name}} the default coding agent",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
         "common_location": "Common install location",
@@ -946,12 +926,11 @@
     "canvas": {
       "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
       "dragCompanions": "Move related objects along",
-      "dragCompanionsHint": "Titles, axis labels and legends you placed by hand",
       "more": "Canvas settings",
       "openCanvasSettings": "Open canvas settings",
       "diagramOn": "Diagram: the title and legend move along with the axes",
       "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
-      "moreScope": "Grid, snapping, rulers and the safe area"
+      "dragCompanionsDesc": "Titles, legends and other hand-placed objects move with the axes"
     },
     "copied": "Copied",
     "copy": "Copy",
@@ -973,14 +952,16 @@
       "previewNote": "This is what will be copied (secrets and personal paths are redacted). Review it, then copy.",
       "refetch": "Fetch again",
       "reportTitle": "Diagnostic report",
-      "scopeNote": "These checks cover the runtime environment only (Python, the rendering engine, project folders). Whether a figure meets its publication spec is checked in the Problems panel; neither result implies the other.",
       "summaryFailing": "{{count}} problem(s)",
       "summaryOk": "Runtime environment checks passed"
     },
     "export": {
       "defaultFormats": "Default formats",
       "ppiNotForVector": "Vector formats only — resolution has no effect",
-      "reportScope": "Records this run’s sizes, styles and check results"
+      "sectionFormats": "Formats",
+      "formatsDesc": "Preselected when the export dialog opens",
+      "sectionRaster": "Raster output",
+      "sectionChecks": "Checks"
     },
     "general": {
       "autosave": "Autosave",
@@ -988,9 +969,7 @@
       "language": "Language",
       "layout": "Window layout",
       "layoutReset": "Interface layout reset; reload the page to see it",
-      "resetLayout": "Reset the interface layout",
-      "autosaveNamedCopy": "Use “Save as canvas file” for a named copy",
-      "resetLayoutScope": "Sidebar widths, snapping and other interface preferences"
+      "resetLayout": "Reset the interface layout"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1113,8 +1092,6 @@
       "scriptCount_other": "{{count}} scripts",
       "scripts": "Editable sources",
       "switch": "Switch project…",
-      "exportDirScope": "Where exported figures go by default",
-      "backupDirScope": "Originals are copied here before any write-back",
       "dirPlaceholder": "Leave empty for the default location",
       "effectivePath": "In use",
       "chooseFolder": "Choose…",
@@ -1122,8 +1099,8 @@
       "showFullPath": "Show the full path of {{name}}",
       "copyPath": "Copy the full path of {{name}}",
       "allowWriteBack": "Allow writing back to original files",
-      "allowWriteBackScope": "Write-back only; canvas editing and export are unaffected",
-      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled."
+      "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled.",
+      "writeBackOnHint": "Edits can be written straight into the original scripts."
     },
     "section": {
       "about": "About & privacy",
@@ -1146,9 +1123,7 @@
     },
     "sidebars": {
       "leftPinned": "Pin the left sidebar",
-      "leftPinnedHint": "Stays put when you select an object",
       "rightPinned": "Pin the properties panel",
-      "rightPinnedHint": "Stays open when you clear the selection",
       "pinLimitedMedium": "This window fits only one pinned side",
       "pinLimitedNarrow": "This window is too narrow; pinning has no effect"
     },
@@ -1158,7 +1133,6 @@
       "applyFailedRetry": "The upgrade did not finish and the running version is unchanged. You can press “Download and upgrade” again, or read the log below.",
       "autoCheck": "Check automatically",
       "autoCheckAria": "Check for updates daily",
-      "autoCheckHint": "Once a day; with this off, no network request is ever made",
       "available": "Update available:",
       "channelNote": "Only the latest stable GitHub release is consulted. With automatic checks off, nothing reaches the network.",
       "check": "Check for updates",
@@ -1190,21 +1164,19 @@
     },
     "tutorial": {
       "label": "Tutorial",
-      "state": {
-        "not_started": "Not started",
-        "active": "In progress",
-        "paused": "Paused",
-        "completed": "Completed",
-        "skipped": "Skipped"
-      },
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
       "reset": "Reset the tutorial project",
       "hints": "Action hints",
       "resetHints": "Show action hints again",
-      "resetAction": "Reset",
-      "resetScope": "The sample project returns to its initial state; your edits in it are lost"
+      "resetAction": "Reset"
+    },
+    "navGroup": {
+      "general": "General",
+      "workflow": "Workflow",
+      "integrations": "Integrations",
+      "system": "System"
     }
   },
   "style": {
@@ -1224,7 +1196,7 @@
     "deleteBody": "It cannot be recovered (edits already applied to the document are unaffected).",
     "deleteStyleAria": "Delete style {{name}}",
     "deleteTitle": "Delete style “{{name}}”?",
-    "description": "Save font sizes, line widths, ticks and palettes as a named style and apply it to panels in bulk. Only figure edits are written; source files are never touched.",
+    "description": "Save typography settings as a named style and apply it to panels in bulk, without touching source files.",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style and apply it in bulk. Only figure edits are written; source files are never touched.",
     "emptyBody": "No styles saved yet. Select a rendered, editable figure and extract its font sizes, line widths, ticks and palette as a starting point.",
     "emptyDraft": "Empty style. Click “Extract from the current panel” to read the selected panel's font sizes, line widths, ticks and palette, then delete anything you don't want to unify and save.",
@@ -1344,11 +1316,9 @@
     },
     "drawerLabel": "Document versions",
     "duplicate": "Duplicate version",
-    "emptyHint": "Use “Save version” to keep a named one; one is also saved automatically after a few minutes of editing.",
     "emptyTitle": "No versions yet",
     "fromCanvas": "From canvas “{{name}}”",
     "fromUnknownCanvas": "Older checkpoint — canvas unknown",
-    "intro": "Autosaved versions of this document. Restoring saves the current state as a version first, can be undone, and never touches your source files.",
     "keep": "Keep",
     "keepTitle": "Automatic checkpoints are cleaned up over time; promoting one keeps it like a manual version",
     "listLabel": "Version list",

@@ -6,6 +6,7 @@ import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
+import { Kbd } from './ui/Kbd'
 import { TextInput } from './ui/Input'
 
 /**
@@ -129,36 +130,53 @@ export function ShortcutHelp() {
   }, [open])
   return (
     <Dialog open={open} onOpenChange={setOpen} title={sc('title')} size="md">
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
         <div className="relative">
-          <Search size={ICON_SIZE.xs} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+          <Search size={ICON_SIZE.xs} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={sc('search')}
             aria-label={sc('searchAria')}
-            className="w-full pl-6"
+            className="h-9 w-full rounded-md bg-surface-2 pl-8 text-base"
           />
         </div>
-        {shown.length === 0 && <p className="py-4 text-center text-xs text-ink-3">{sc('noMatch')}</p>}
-        {shown.map((g) => (
-          <div key={g.id} data-shortcut-group={g.id}>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-              {sc(`group.${g.id}`)}
-            </h3>
-            <ul className="flex flex-col gap-0.5">
-              {g.rows.map((r) => (
-                <li key={r.desc} data-shortcut-row className="flex min-h-6 items-start gap-3 py-0.5">
-                  <span className="w-40 shrink-0 font-mono text-xs leading-5 text-ink">{keyText(r)}</span>
-                  {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
-                  <span className="min-w-0 flex-1 whitespace-normal break-words text-xs leading-5 text-ink-2">
-                    {sc(`key.${r.desc}`)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        <div className="flex max-h-[22rem] min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain">
+          {shown.length === 0 && (
+            <p className="flex min-h-40 items-center justify-center py-7 text-center text-base text-ink-3">
+              {sc('noMatch')}
+            </p>
+          )}
+          {shown.map((g) => (
+            <div key={g.id} data-shortcut-group={g.id}>
+              <h3 className="mb-2 flex items-center gap-3 text-xs font-medium text-ink-3 after:h-px after:flex-1 after:bg-border after:content-['']">
+                {sc(`group.${g.id}`)}
+              </h3>
+              <ul className="flex flex-col">
+                {g.rows.map((r) => (
+                  <li
+                    key={r.desc}
+                    data-shortcut-row
+                    className="flex min-h-[38px] items-center justify-between gap-5 py-1.5"
+                  >
+                    {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
+                    <span className="order-last shrink-0">
+                      <Kbd size="md">{keyText(r)}</Kbd>
+                    </span>
+                    {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
+                    <span className="min-w-0 flex-1 whitespace-normal break-words text-base leading-5 text-ink-2">
+                      {sc(`key.${r.desc}`)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border pt-3 text-xs text-ink-3">
+          <Kbd>{translate('keycap.esc', { ns: 'common' })}</Kbd>
+          <span>{translate('actions.close', { ns: 'common' })}</span>
+        </div>
       </div>
     </Dialog>
   )

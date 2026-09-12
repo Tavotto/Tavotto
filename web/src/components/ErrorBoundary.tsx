@@ -31,13 +31,13 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
         <div className="w-[420px] rounded-lg border border-border bg-surface p-5">
-          <div className="mb-1 text-[13px] font-medium text-ink">
+          <div className="mb-1 text-base font-medium text-ink">
             {t('crash.title', { ns: 'workspace' })}
           </div>
           <div className="mb-3 text-xs leading-relaxed text-ink-2">
             {t('crash.body', { ns: 'workspace' })}
           </div>
-          <pre className="mb-4 max-h-40 overflow-auto rounded-sm border border-border bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-ink-2">
+          <pre className="mb-4 max-h-40 overflow-auto rounded-sm border border-border bg-surface-2 px-2 py-1.5 font-mono text-xs leading-relaxed text-ink-2">
             {this.state.error.message}
           </pre>
           <div className="flex gap-2">

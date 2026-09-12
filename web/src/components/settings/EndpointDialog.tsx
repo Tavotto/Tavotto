@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X } from 'lucide-react'
+import { ChevronRight, ShieldCheck, X } from 'lucide-react'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -14,7 +14,8 @@ import { Select } from '../ui/Select'
 const ag = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.agents.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-const Row = ({
+/** 纵向字段：标签在上、控件通栏，错误信息紧跟在控件下面 */
+const Field = ({
   label,
   required,
   error,
@@ -26,8 +27,8 @@ const Row = ({
   error?: string | null
   children: React.ReactNode
 }) => (
-  <label className="flex min-h-7 flex-wrap items-center gap-2">
-    <span className="flex w-24 shrink-0 items-baseline gap-0.5 text-xs text-ink-2">
+  <label className="flex flex-col gap-1.5">
+    <span className="flex items-baseline gap-0.5 text-sm font-medium text-ink-2">
       {label}
       {required && (
         <>
@@ -40,7 +41,7 @@ const Row = ({
     </span>
     {children}
     {error && (
-      <span role="alert" className="w-full text-xs text-danger">
+      <span role="alert" className="text-xs text-danger">
         {error}
       </span>
     )}
@@ -149,65 +150,67 @@ export function EndpointDialog({
 
   const connectionFields = (
     <>
-      <Row label={ag('endpoint.baseUrl')}>
+      <Field label={ag('endpoint.baseUrl')}>
         <TextInput
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           aria-label={ag('endpoint.baseUrl')}
           placeholder={wireApi ? 'https://…/v1' : 'https://…/anthropic'}
-          className="flex-1 font-mono"
+          className="w-full font-mono"
           spellCheck={false}
         />
-      </Row>
-      <Row label={ag('endpoint.models')}>
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          {models.length > 0 && (
-            <span className="flex flex-wrap gap-1" data-model-list>
-              {models.map((m, i) => (
-                <span
-                  key={m}
-                  className="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 font-mono text-xs text-ink-2"
-                >
-                  {m}
-                  {/* 第一个是默认值——这件事以前只写在占位文案里 */}
-                  {i === 0 && (
-                    <span className="text-[10px] text-ink-3">{ag('endpoint.modelDefault')}</span>
-                  )}
-                  <button
-                    type="button"
-                    aria-label={ag('endpoint.modelRemove', { name: m })}
-                    onClick={() => setModels(models.filter((x) => x !== m))}
-                    className="text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
-                  >
-                    <X size={ICON_SIZE.xs} aria-hidden />
-                  </button>
+      </Field>
+      <Field label={ag('endpoint.models')}>
+        {/* 一个框装下全部：条目是 chip，输入紧跟在最后一个 chip 之后，回车即添加 */}
+        <span
+          className="flex min-h-10 w-full flex-wrap items-center gap-1.5 rounded-md border border-border-strong bg-surface px-2 py-1.5 focus-within:focus-ring"
+          data-model-list
+        >
+          {models.map((m, i) => (
+            <span
+              key={m}
+              className="flex h-7 max-w-full items-center gap-1.5 rounded-sm border border-border bg-surface-2 pl-2 pr-1 font-mono text-xs text-ink-2"
+            >
+              {m}
+              {/* 第一个是默认值——这件事以前只写在占位文案里 */}
+              {i === 0 && (
+                <span className="font-sans text-xs text-ink-3">
+                  {ag('endpoint.modelDefault')}
                 </span>
-              ))}
+              )}
+              <button
+                type="button"
+                aria-label={ag('endpoint.modelRemove', { name: m })}
+                onClick={() => setModels(models.filter((x) => x !== m))}
+                className="grid size-4 place-items-center rounded-sm text-ink-faint outline-none hover:bg-border hover:text-ink-2 focus-visible:focus-ring"
+              >
+                <X size={ICON_SIZE.xs} aria-hidden />
+              </button>
             </span>
-          )}
-          <span className="flex items-center gap-1.5">
-            <TextInput
-              value={modelDraft}
-              onChange={(e) => setModelDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return
-                // 回车加一条，**不提交对话框**——否则打一半就存下去了
-                e.preventDefault()
-                addModel()
-              }}
-              placeholder={ag('endpoint.modelPlaceholder')}
-              aria-label={ag('endpoint.modelDraftAria')}
-              className="min-w-0 flex-1 font-mono"
-              spellCheck={false}
-            />
-            <Button variant="outline" size="sm" disabled={!modelDraft.trim()} onClick={addModel}>
+          ))}
+          <input
+            value={modelDraft}
+            onChange={(e) => setModelDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              // 回车加一条，**不提交对话框**——否则打一半就存下去了
+              e.preventDefault()
+              addModel()
+            }}
+            placeholder={ag('endpoint.modelPlaceholder')}
+            aria-label={ag('endpoint.modelDraftAria')}
+            className="h-7 min-w-[150px] flex-1 bg-transparent px-1 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+            spellCheck={false}
+          />
+          {modelDraft.trim() && (
+            <Button variant="ghost" size="sm" onClick={addModel}>
               {ag('endpoint.modelAdd')}
             </Button>
-          </span>
+          )}
         </span>
-      </Row>
+      </Field>
       {wireApi && (
-        <Row label={ag('endpoint.wire')}>
+        <Field label={ag('endpoint.wire')}>
           <Select
             value={wire}
             onChange={(v) => setWire(v as 'responses' | 'chat')}
@@ -216,9 +219,9 @@ export function EndpointDialog({
               { value: 'responses', label: ag('endpoint.wireResponses') },
             ]}
             ariaLabel={ag('endpoint.wireAria')}
-            className="flex-1"
+            className="w-full"
           />
-        </Row>
+        </Field>
       )}
     </>
   )
@@ -235,7 +238,7 @@ export function EndpointDialog({
       size="md"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="ghost" size="md" onClick={onClose}>
             {t('common:actions.cancel')}
           </Button>
           {!choosing && (
@@ -248,17 +251,17 @@ export function EndpointDialog({
     >
       {choosing ? (
         /* 第一步：选一个预设。地址 / 模型 / 协议由它填好，第二步只剩名称 + 密钥 */
-        <div className="flex flex-col gap-2" data-endpoint-step="preset">
-          <Row label={ag('endpoint.preset')} required>
+        <div className="flex flex-col gap-4" data-endpoint-step="preset">
+          <Field label={ag('endpoint.preset')} required>
             <Select
               value={preset}
               onChange={applyPreset}
               options={presets.map((p) => ({ value: p.id, label: p.label }))}
               placeholder={ag('endpoint.presetPlaceholder')}
               ariaLabel={ag('endpoint.presetAria')}
-              className="flex-1"
+              className="w-full"
             />
-          </Row>
+          </Field>
           <div>
             <Button variant="ghost" size="sm" onClick={() => setManual(true)}>
               {ag('endpoint.manual')}
@@ -266,8 +269,8 @@ export function EndpointDialog({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-2" data-endpoint-step="form">
-          <Row label={ag('endpoint.name')} required error={nameError}>
+        <div className="flex flex-col gap-5" data-endpoint-step="form">
+          <Field label={ag('endpoint.name')} required error={nameError}>
             <TextInput
               value={label}
               onChange={(e) => {
@@ -276,42 +279,64 @@ export function EndpointDialog({
               }}
               aria-label={ag('endpoint.name')}
               aria-invalid={nameError ? true : undefined}
-              className="flex-1"
+              className="w-full"
             />
-          </Row>
-          <Row label={ag('endpoint.apiKey')}>
-            <TextInput
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              aria-label={ag('endpoint.apiKey')}
-              placeholder={
-                existing?.has_key ? ag('endpoint.apiKeySaved', { hint: existing.key_hint }) : 'sk-…'
-              }
-              className="flex-1 font-mono"
-              spellCheck={false}
-            />
-          </Row>
+          </Field>
+          <div className="flex flex-col gap-1.5">
+            <Field label={ag('endpoint.apiKey')}>
+              <TextInput
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                aria-label={ag('endpoint.apiKey')}
+                placeholder={
+                  existing?.has_key
+                    ? ag('endpoint.apiKeySaved', { hint: existing.key_hint })
+                    : 'sk-…'
+                }
+                className="w-full font-mono"
+                spellCheck={false}
+              />
+            </Field>
+            {/* 隐私说明：一句准确的短话紧跟在密钥下面，细节在末尾展开。**不许虚构安全保证**——
+                下面每一句都对着 `engine/ai_providers.py` 与 `engine/config.py`
+                核过（审计 T45）。特别是权限那条：`_harden()` 在 Windows 上
+                直接 return，所以那句话不能说成"已经收好了"。 */}
+            <p className="flex items-center gap-2 text-xs leading-relaxed text-ink-3">
+              <ShieldCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+              <span>{ag('endpoint.keyNote')}</span>
+            </p>
+          </div>
 
           {fromPreset ? (
-            <Details className="rounded-sm border border-border px-2 py-1.5">
-              <Summary className="cursor-default text-xs text-ink-2">
-                {ag('endpoint.presetFilled')}
+            <Details className="group border-y border-border">
+              <Summary className="flex min-h-12 cursor-default items-center gap-2 text-sm font-medium text-ink-2">
+                <span className="min-w-0 flex-1 truncate">{ag('endpoint.presetFilled')}</span>
+                <span className="shrink-0 truncate text-xs font-normal text-ink-3">
+                  {presets.find((p) => p.id === preset)?.label}
+                </span>
+                <ChevronRight
+                  size={ICON_SIZE.sm}
+                  className="shrink-0 text-ink-3 transition-transform group-open:rotate-90"
+                  aria-hidden
+                />
               </Summary>
-              <div className="mt-1.5 flex flex-col gap-2">{connectionFields}</div>
+              <div className="flex flex-col gap-5 pb-5 pt-1">{connectionFields}</div>
             </Details>
           ) : (
-            connectionFields
+            <div className="flex flex-col gap-5 border-t border-border pt-5">{connectionFields}</div>
           )}
 
-          {/* 隐私说明：一句准确的短话，细节展开。**不许虚构安全保证**——
-              下面每一句都对着 `engine/ai_providers.py` 与 `engine/config.py`
-              核过（审计 T45）。特别是权限那条：`_harden()` 在 Windows 上
-              直接 return，所以那句话不能说成"已经收好了"。 */}
-          <p className="text-xs leading-relaxed text-ink-3">{ag('endpoint.keyNote')}</p>
-          <Details className="text-xs leading-relaxed text-ink-3">
-            <Summary className="cursor-default">{ag('endpoint.keyNoteMore')}</Summary>
-            <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4">
+          <Details className="group text-xs leading-relaxed text-ink-3">
+            <Summary className="inline-flex cursor-default items-center gap-1 hover:text-ink-2">
+              <ChevronRight
+                size={ICON_SIZE.xs}
+                className="shrink-0 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              {ag('endpoint.keyNoteMore')}
+            </Summary>
+            <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5">
               <li>{ag('endpoint.keyNoteWhere')}</li>
               <li>{ag('endpoint.keyNotePerms')}</li>
               <li>{ag('endpoint.keyNoteDiagnostics')}</li>

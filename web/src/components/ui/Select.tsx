@@ -18,6 +18,8 @@ interface SelectProps<T extends string> {
   placeholder?: string
   disabled?: boolean
   ariaLabel?: string
+  /** 当前取值的一句解释（原生 title）；逐项的解释放 `SelectOption.hint` */
+  title?: string
 }
 
 export function Select<T extends string>({
@@ -28,13 +30,17 @@ export function Select<T extends string>({
   placeholder,
   disabled,
   ariaLabel,
+  title,
 }: SelectProps<T>) {
   return (
     <RS.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <RS.Trigger
         aria-label={ariaLabel}
+        title={title}
         className={cn(
-          'flex h-7 w-full items-center justify-between gap-1 rounded-sm border border-transparent',
+          // `group`：箭头方向要跟着 Trigger 的 data-state 走，而 data-state 挂在
+          // Trigger 自己身上，子元素上的 data-[state=open]: 是读不到的。
+          'group flex h-7 w-full items-center justify-between gap-1 rounded-sm border border-transparent',
           'bg-surface-2 px-1.5 text-xs text-ink outline-none transition-colors',
           'hover:border-border data-[state=open]:border-accent',
           // **弹层关着的时候键盘用户也得看得见焦点在哪。** `outline-none` 只是
@@ -52,7 +58,19 @@ export function Select<T extends string>({
         <span className="min-w-0 flex-1 truncate text-left">
           <RS.Value placeholder={placeholder} />
         </span>
-        <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
+        {/* 下拉的记号只有 chevron-down（Design Constitution 第六节）：收起时朝下，
+            展开时同一枚转到朝上——不做图标互换（两枚字形的视觉重心难对齐，切换
+            会「跳」），也**不再**收起时转成朝左：那看起来是「<」，读作后退 / 折叠，
+            不是下拉（2026-09-11 收敛前正是这样）。
+            时长/缓动取动效 token，与浮层 pop-in 同拍；reduced-motion 由
+            index.css 全局兜底压到 0.01ms，方向照常正确，只是不播过程。 */}
+        <ChevronDown
+          size={ICON_SIZE.xs}
+          className={cn(
+            'shrink-0 text-ink-3 transition-transform duration-fast ease-pop',
+            'group-data-[state=open]:rotate-180',
+          )}
+        />
       </RS.Trigger>
       <RS.Portal>
         <RS.Content
@@ -73,7 +91,7 @@ export function Select<T extends string>({
                 className={cn(
                   'relative flex h-7 cursor-default select-none items-center gap-2 rounded-sm',
                   'pl-6 pr-2 text-xs text-ink outline-none',
-                  'data-[highlighted]:bg-ink/[.055] data-[state=checked]:text-accent',
+                  'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
                 )}
               >
                 <RS.ItemIndicator className="absolute left-1.5 flex items-center">

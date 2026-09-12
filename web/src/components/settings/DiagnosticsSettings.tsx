@@ -91,21 +91,22 @@ export function DiagnosticsSettings() {
   /** 恢复卡片此刻在不在这一屏上——「下一步」指得着它才说得出口 */
   const repairCard = !!env && !env.ok
 
+  // 分区之间的间距由外壳统一给：`display: contents` 让三块直接成为内容容器的子项
   return (
-    <div className="flex flex-col gap-4" data-diagnostics-page>
+    <div className="contents" data-diagnostics-page>
       <SettingSection title={st('diagnostics.healthTitle')}>
         {checks === null ? (
-          <p className="text-xs text-ink-3">{st('about.detecting')}</p>
+          <p className="type-meta">{st('about.detecting')}</p>
         ) : (
           <>
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <p className={cn('text-xs', failing.length ? 'text-ink' : 'text-ink-2')}>
+            <div className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1">
+              <p className={cn('text-sm', failing.length ? 'text-ink' : 'text-ink-2')}>
                 {failing.length
                   ? st('diagnostics.summaryFailing', { count: failing.length })
                   : st('diagnostics.summaryOk')}
               </p>
               {fetchedAt !== null && (
-                <span className="text-xs text-ink-3">
+                <span className="type-meta">
                   {st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })}
                 </span>
               )}
@@ -114,8 +115,6 @@ export function DiagnosticsSettings() {
                 {st('diagnostics.refetch')}
               </Button>
             </div>
-            {/* 「运行环境检查通过」很容易被读成"图没问题"（审计 T47） */}
-            <p className="text-xs leading-relaxed text-ink-3">{st('diagnostics.scopeNote')}</p>
             {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
                 取值的，铺在首屏等于同一件事说两遍。 */}
             {failing.length > 0 && (
@@ -167,7 +166,7 @@ export function DiagnosticsSettings() {
             />
             <DiagnosticItem name="matplotlib" value={env.matplotlib ?? '—'} />
             {/* 两个环境曾经同名，于是两页的状态看起来对不上（审计 T47） */}
-            <p className="text-xs leading-relaxed text-ink-3">
+            <p className="type-caption">
               {st('diagnostics.envNote', { product: PRODUCT_NAME })}
             </p>
           </>
@@ -281,12 +280,12 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {phase !== 'ready' ? (
-          <Button variant="outline" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+          <Button variant="secondary" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
             {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
           </Button>
         ) : (
           <>
-            <CopyButton text={text} label={st('diagnostics.copyReport')} className="h-7 border border-border px-2" />
+            <CopyButton text={text} label={st('diagnostics.copyReport')} variant="secondary" />
             <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
               {st('diagnostics.hidePreview')}
             </Button>
@@ -301,8 +300,8 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
       </div>
       {phase === 'ready' && (
         <div className="flex flex-col gap-1" data-diagnostics-preview>
-          <p className="text-xs text-ink-3">{st('diagnostics.previewNote')}</p>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-[11px] leading-relaxed text-ink-3">
+          <p className="type-caption">{st('diagnostics.previewNote')}</p>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-xs leading-relaxed text-ink-3">
             {text}
           </pre>
         </div>

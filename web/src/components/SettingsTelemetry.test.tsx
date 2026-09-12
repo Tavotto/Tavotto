@@ -4,10 +4,10 @@
  * 它放在「隐私、诊断与 About」这一档里——用户找「这东西会不会上传我的图」
  * 时会来这里，而不是去翻一个新分区。
  *
- * 审计 T49 之前这里是个**二值开关**，于是 `unset`（还没问过）和 `disabled`
+ * 审计 T49 之前这里是个只会开 / 关的开关，于是 `unset`（还没问过）和 `disabled`
  * （问过了，用户说不）在界面上一模一样——后端刻意分开的两件事被界面重新合并
- * 了一次。下面这组用例的主语就是这个：**三档必须是三种可辨状态**，而**可写的
- * 仍然只有开 / 关两档**。
+ * 了一次。下面这组用例的主语就是这个：**三档必须是三种可辨状态**（控件 + 行内
+ * 现状文字一起表达），而**可写的仍然只有开 / 关两档**。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -72,16 +72,23 @@ async function open(initial = settings()) {
 
 const bodyText = () => document.body.textContent ?? ''
 
-/** 同意控件那一组单选。**认 role + 整组的可达名**，不认某个 class */
-const radios = () =>
-  [
-    ...(document
-      .querySelector(`[role="radiogroup"][aria-label="${st('about.telemetry.toggle')}"]`)
-      ?.querySelectorAll('button[role="radio"]') ?? []),
-  ] as HTMLButtonElement[]
-const seg = (label: string) => radios().find((b) => b.textContent?.trim() === label)
-/** 当前选中的是哪一档；一档都没选中就是 null——那正是「尚未选择」 */
-const chosen = () => radios().find((b) => b.getAttribute('aria-checked') === 'true') ?? null
+/**
+ * 同意控件是一颗滑动开关（`role="switch"`）。**认 role + 可达名**，不认某个 class。
+ *
+ * 2026-09-11 Visual Consolidation Session 1 把这里第二套三档 `Segmented` 并回了
+ * `Toggle`：控件只表达开 / 关，**第三档（还没问过）与第四档（同意的是上一版采集
+ * 范围）由行内的现状文字说出来**——三档仍是三种可辨状态，只是「可辨」落在文字上，
+ * 不落在第三颗按钮上。
+ */
+const toggle = () =>
+  document.querySelector<HTMLButtonElement>(
+    `button[role="switch"][aria-label="${st('about.telemetry.toggle')}"]`,
+  )
+const checked = () => toggle()?.getAttribute('aria-checked') ?? null
+const clickToggle = () =>
+  act(async () => {
+    toggle()?.click()
+  })
 
 beforeEach(() => {
   fetchMock.mockReset()
@@ -120,33 +127,34 @@ describe('隐私承诺常驻', () => {
 })
 
 describe('三档同意是三种可辨状态', () => {
-  it('同意：「开启」被选中', async () => {
+  it('同意：开关是开的，现状写「开启」', async () => {
     await open(settings({ consent: 'enabled', enabled: true }))
-    expect(chosen()).toBe(seg(st('about.telemetry.optIn')))
+    expect(checked()).toBe('true')
+    expect(bodyText()).toContain(st('about.telemetry.optIn'))
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
 
-  it('拒绝：「关闭」被选中，而不是「什么都没选」', async () => {
+  it('拒绝：开关是关的，现状写「关闭」，而不是「什么都没选」', async () => {
     await open(settings({ consent: 'disabled', enabled: false }))
-    expect(chosen()).toBe(seg(st('about.telemetry.optOut')))
+    expect(checked()).toBe('false')
+    expect(bodyText()).toContain(st('about.telemetry.optOut'))
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
 
   /**
-   * 这一条是整组的主语：**「还没问过」不许画成「用户说了不」**。
-   * 判据落在控件的选中态上（一档都没选中），而不是某句话上——只看文案的话，
-   * 把两档都渲染成选中也照样绿。
+   * 这一条是整组的主语：**「还没问过」不许画成「用户说了不」**。开关本身只有
+   * 开 / 关两态，所以判据落在现状文字上——它必须明说「尚未选择」，而不是「关闭」。
    */
-  it('未选择：一档都没选中，并且明说是「尚未选择」', async () => {
+  it('未选择：开关关着，并且明说是「尚未选择」', async () => {
     await open(settings({ consent: 'unset', enabled: false }))
-    expect(radios()).toHaveLength(2)
-    expect(chosen()).toBeNull()
+    expect(toggle()).toBeTruthy()
+    expect(checked()).toBe('false')
     expect(bodyText()).toContain(st('about.telemetry.unset'))
+    expect(bodyText()).not.toContain(st('about.telemetry.optOut'))
   })
 
   it('未选择与拒绝画出来不一样', async () => {
     await open(settings({ consent: 'unset', enabled: false }))
-    const unsetChecked = radios().map((b) => b.getAttribute('aria-checked'))
     const unsetText = bodyText()
     await act(async () => {
       root.unmount()
@@ -154,8 +162,8 @@ describe('三档同意是三种可辨状态', () => {
     host.remove()
     document.body.innerHTML = ''
     await open(settings({ consent: 'disabled', enabled: false }))
-    expect(radios().map((b) => b.getAttribute('aria-checked'))).not.toEqual(unsetChecked)
     expect(bodyText()).not.toEqual(unsetText)
+    expect(bodyText()).toContain(st('about.telemetry.optOut'))
   })
 
   /**
@@ -180,37 +188,36 @@ describe('可撤销：两个方向都写得回后端', () => {
   it('从同意改成拒绝：写 disabled', async () => {
     await open(settings({ consent: 'enabled', enabled: true }))
     setTelemetryEnabled(true)
-    await act(async () => {
-      seg(st('about.telemetry.optOut'))?.click()
-    })
+    await clickToggle()
     expect(patchMock).toHaveBeenCalledWith('disabled', 'settings')
   })
 
   it('从拒绝改回同意：写 enabled', async () => {
     await open(settings({ consent: 'disabled', enabled: false }))
     patchMock.mockResolvedValue(settings())
-    await act(async () => {
-      seg(st('about.telemetry.optIn'))?.click()
-    })
+    await clickToggle()
     expect(patchMock).toHaveBeenCalledWith('enabled', 'settings')
   })
 
   /**
    * 界面**说得出** unset，却**写不回** unset：表过态就是表过态，回到「还没问过」
-   * 只会让首启询问再弹一次。控件上只有两档可点，这一条把它钉住。
+   * 只会让首启询问再弹一次。控件是一颗二值开关、页面上没有第二个同意控件，
+   * 这一条把它钉住：从 unset 点一下写的是 enabled，不是别的什么档。
    */
   it('界面上没有任何一个能写回「未选择」的入口', async () => {
     await open(settings({ consent: 'unset', enabled: false }))
-    expect(radios().map((b) => b.textContent?.trim())).toEqual([
-      st('about.telemetry.optIn'),
-      st('about.telemetry.optOut'),
-    ])
+    expect(
+      document.body.querySelectorAll('[role="switch"], [role="radiogroup"]'),
+    ).toHaveLength(1)
+    patchMock.mockResolvedValue(settings({ consent: 'enabled', enabled: true }))
+    await clickToggle()
+    expect(patchMock).toHaveBeenCalledWith('enabled', 'settings')
   })
 
   /**
    * 设置还没载入完就点得动 = 与在途的 `load()` 赛跑（评审 #300-4）。
    *
-   * `settings` 是 null 时 `hard` 算出来是 false，于是两档都可点。那一下点下去
+   * `settings` 是 null 时 `hard` 算出来是 false，于是开关可点。那一下点下去
    * PATCH 先回来写下同意态，随后那份**陈旧**的 GET 响应把 store 里的
    * `settings` 连同 `lib/telemetry` 的缓存一起覆盖回去——界面显示的与后端
    * 刚存下的同意状态从此对不上，而且用户以为自己已经表过态了。
@@ -243,32 +250,26 @@ describe('可撤销：两个方向都写得回后端', () => {
     expect(fetchMock).toHaveBeenCalled()
     expect(useTelemetryStore.getState().settings).toBeNull()
 
-    expect(radios()).toHaveLength(2)
-    await act(async () => {
-      seg(st('about.telemetry.optIn'))?.click()
-      seg(st('about.telemetry.optOut'))?.click()
-    })
+    expect(toggle()).toBeTruthy()
+    await clickToggle()
+    await clickToggle()
     expect(patchMock).not.toHaveBeenCalled()
 
     // 载入完成之后照常可点，而且不会被那份 GET 再覆盖回去
     await act(async () => {
       settle(settings({ consent: 'unset', enabled: false }))
     })
-    await act(async () => {
-      seg(st('about.telemetry.optIn'))?.click()
-    })
+    await clickToggle()
     expect(patchMock).toHaveBeenCalledWith('enabled', 'settings')
     expect(useTelemetryStore.getState().settings?.consent).toBe('enabled')
-    expect(chosen()).toBe(seg(st('about.telemetry.optIn')))
+    expect(checked()).toBe('true')
   })
 
-  it('TAVOTTO_NO_TELEMETRY 关着时两档都点不动，并说明是谁关的', async () => {
+  it('TAVOTTO_NO_TELEMETRY 关着时开关点不动，并说明是谁关的', async () => {
     await open(settings({ consent: 'unset', enabled: false, hard_disabled: true }))
-    expect(radios().every((b) => b.disabled)).toBe(true)
+    expect(toggle()!.disabled).toBe(true)
     expect(bodyText()).toContain(st('about.telemetry.hardDisabled'))
-    await act(async () => {
-      seg(st('about.telemetry.optIn'))?.click()
-    })
+    await clickToggle()
     expect(patchMock).not.toHaveBeenCalled()
   })
 })

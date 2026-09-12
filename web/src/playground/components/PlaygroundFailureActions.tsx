@@ -24,19 +24,19 @@ export function PlaygroundFailureActions({
     <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
       <button
         onClick={onBack}
-        className="h-7 rounded-[6px] border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
       >
         {pg('failBackGallery')}
       </button>
       <button
         onClick={() => onLaunch(FEATURED_EXAMPLE)}
-        className="h-7 rounded-[6px] border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
       >
         {pg('failTryExample', { name: pg(FEATURED_EXAMPLE.titleKey) })}
       </button>
       <a
         href={RELEASES_LATEST_URL}
-        className="flex h-7 items-center gap-1.5 rounded-[6px] bg-ink px-3 text-xs text-white transition-opacity hover:opacity-90"
+        className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs text-white transition-opacity hover:opacity-90"
       >
         <Download size={ICON_SIZE.sm} aria-hidden />
         {pg('downloadDesktop')}

@@ -11,6 +11,7 @@ import {
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import { Kbd } from '../ui/Kbd'
 import { Select } from '../ui/Select'
 import { SettingRow, SettingSection } from './SettingRow'
 
@@ -29,8 +30,12 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *     起始页讲，这里的任务是让人进得去；
  *   * 「情境提示」→「第一次遇到某类操作时出现的一次性提示」——它定义「一次性
  *     提示是什么」，而用户要的是「点了会怎样」，所以按钮改叫「重新显示操作提示」。
- * 剩下真正有价值的那点（重置动作影响哪些东西、自动保存与命名副本的分工）改成
- * 标签下面的一行短说明，读一行就够，不用先点开什么。
+ * 标签下面原本各有一行短说明（重置动作影响哪些东西、自动保存与命名副本的分工），
+ * 2026-09-11 的组件工作台设计包把它们一并去掉：这一页只剩标签与动作。
+ *
+ * Session 5 起这一页走标准 `SettingRow`（标题列弹性、控件列定宽 240、行高 48、
+ * 行间 hairline）：语言下拉铺满控件列，按钮 / 快捷键 / 现状都从同一条竖线起排。
+ * Session 6 复核：六行标签都读得出后果，一句 `description` 都不补。
  */
 export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
@@ -44,21 +49,20 @@ export function GeneralSettings({ close }: { close: () => void }) {
       */}
       <SettingRow label={st('general.language')}>
         <Select
-          className="w-[160px]"
+          className="w-full"
           ariaLabel={st('general.language')}
           value={locale}
           onChange={(v) => void setLocale(v as (typeof SUPPORTED_LOCALES)[number])}
           options={SUPPORTED_LOCALES.map((l) => ({ value: l, label: LOCALE_LABELS[l] }))}
         />
       </SettingRow>
-      {/* 自动保存没有开关可调，它是一句现状。目录与写盘时机进帮助文档；
-          这里只留「不用手动保存」与「命名副本走哪儿」这两件当下用得上的事 */}
-      <SettingRow label={st('general.autosave')} description={st('general.autosaveNamedCopy')}>
-        <span className="text-xs text-ink-3">{st('general.autosaveState')}</span>
+      {/* 自动保存没有开关可调，它是一句现状。目录与写盘时机进帮助文档 */}
+      <SettingRow label={st('general.autosave')}>
+        <span className="type-meta">{st('general.autosaveState')}</span>
       </SettingRow>
-      <SettingRow label={st('general.layout')} description={st('general.resetLayoutScope')}>
+      <SettingRow label={st('general.layout')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             try {
@@ -74,7 +78,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
       </SettingRow>
       <SettingRow label={st('shortcuts.label')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             close()
@@ -83,10 +87,9 @@ export function GeneralSettings({ close }: { close: () => void }) {
         >
           {st('shortcuts.open')}
         </Button>
-        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法 */}
-        <kbd className="rounded-sm border border-border px-1 font-mono text-[11px] leading-5 text-ink-3">
-          ?
-        </kbd>
+        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法——
+            画成键帽（`Kbd`），不画成一颗带边框的钮：Session 6 之前它长得像帮助按钮 */}
+        <Kbd>?</Kbd>
       </SettingRow>
       <TutorialRows close={close} />
     </SettingSection>
@@ -94,12 +97,11 @@ export function GeneralSettings({ close }: { close: () => void }) {
 }
 
 /**
- * 教程三行：进入教程（状态在右）、重置示例项目、重新显示操作提示。
+ * 教程三行：进入教程、重置示例项目、重新显示操作提示。
  *
  * 状态与动作都来自 `lib/onboarding/tutorial`——四个入口共用，这里不判状态。
  * **重置单独一行**（审计 T38 / 说明文字第 5 条）：改动前它是主入口旁边的一个
- * 幽灵按钮，「再看一遍教程」与它的区别得点开问号才知道；现在它自己一行，
- * 标签下面直接写清重置的是哪个对象、代价是什么。
+ * 幽灵按钮，「再看一遍教程」与它的区别得点开问号才知道；现在它自己一行。
  */
 function TutorialRows({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
@@ -108,9 +110,9 @@ function TutorialRows({ close }: { close: () => void }) {
   const entry = tutorialEntry(status)
   return (
     <>
-      <SettingRow label={st('tutorial.label')} status={st(`tutorial.state.${status}`)}>
+      <SettingRow label={st('tutorial.label')}>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={busy != null}
           data-onboarding-anchor="settings-tutorial"
@@ -124,9 +126,9 @@ function TutorialRows({ close }: { close: () => void }) {
         </Button>
       </SettingRow>
       {hasTutorial && (
-        <SettingRow label={st('tutorial.reset')} description={st('tutorial.resetScope')}>
+        <SettingRow label={st('tutorial.reset')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             disabled={busy != null}
             onClick={() => {
@@ -139,7 +141,7 @@ function TutorialRows({ close }: { close: () => void }) {
         </SettingRow>
       )}
       <SettingRow label={st('tutorial.hints')}>
-        <Button variant="outline" size="sm" onClick={() => resetHints()}>
+        <Button variant="secondary" size="sm" onClick={() => resetHints()}>
           {st('tutorial.resetHints')}
         </Button>
       </SettingRow>

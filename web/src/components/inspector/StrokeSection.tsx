@@ -1,15 +1,16 @@
-import type { ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads, legacyHead } from '@/types/document'
+import { ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
-import { ArrowHeadPicker } from './controls/ArrowPickers'
 import { EffectToggle } from './controls/EffectToggle'
-import { LineStylePicker } from './controls/LineStylePicker'
 import { shared } from './common'
 
 /** 本组文案 inspector:stroke.*，历史标签 inspector:history.* */
@@ -17,6 +18,189 @@ const sk = (key: string) => translate(`stroke.${key}`, { ns: 'inspector' })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
 const DASH_VALUES: DashStyle[] = ['solid', 'dashed', 'dotted']
+
+type ArrowHead = ReturnType<typeof arrowHeads>['end']
+const HEAD_VALUES: ArrowHead[] = ['none', 'open', 'triangle', 'bar']
+
+/** 每种线型的形状示意：一段线，跟随文字色 */
+function DashGlyph({ dash }: { dash: DashStyle }) {
+  const dasharray = dash === 'dashed' ? '4 3' : dash === 'dotted' ? '0.5 3' : undefined
+  return (
+    <svg width="32" height="16" viewBox="0 0 32 16" aria-hidden="true" className="shrink-0">
+      <line
+        x1="3"
+        y1="8"
+        x2="29"
+        y2="8"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeDasharray={dasharray}
+      />
+    </svg>
+  )
+}
+
+/** 每种端型的形状示意：一段线 + 右端的端型，跟随文字色 */
+function HeadGlyph({ head }: { head: ArrowHead }) {
+  const lineEnd = head === 'open' || head === 'triangle' ? 22 : 29
+  return (
+    <svg width="32" height="16" viewBox="0 0 32 16" aria-hidden="true" className="shrink-0">
+      <line x1="3" y1="8" x2={lineEnd} y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      {head === 'open' && (
+        <path
+          d="M22 3.5 L29 8 L22 12.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+      {head === 'triangle' && <path d="M21 3.5 L30 8 L21 12.5 Z" fill="currentColor" />}
+      {head === 'bar' && (
+        <line x1="29" y1="3.5" x2="29" y2="12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      )}
+    </svg>
+  )
+}
+
+/**
+ * 带图形示意的列表选择：原生 select 的选项放不了图形，所以自绘一个 combobox + listbox，
+ * 每项显示「示意图 + 文案」并居中；多选不一致时触发器显示「多个值」。
+ * 端型与线型共用这一套控件，宽度与外观因此完全一致。
+ */
+function GlyphSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  labelOf,
+  glyphOf,
+}: {
+  value: T | null
+  options: T[]
+  onChange: (v: T) => void
+  ariaLabel: string
+  labelOf: (v: T) => string
+  glyphOf: (v: T) => ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState<T>(value ?? options[0])
+  const rootRef = useRef<HTMLDivElement>(null)
+  const listId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
+  const show = () => {
+    setActive(value ?? options[0])
+    setOpen(true)
+  }
+  const pick = (h: T) => {
+    onChange(h)
+    setOpen(false)
+  }
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const i = Math.max(0, options.indexOf(active))
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        e.preventDefault()
+        if (!open) {
+          show()
+          return
+        }
+        const step = e.key === 'ArrowDown' ? 1 : -1
+        setActive(options[(i + step + options.length) % options.length])
+        return
+      }
+      case 'Enter':
+      case ' ':
+        e.preventDefault()
+        if (open) pick(active)
+        else show()
+        return
+      case 'Escape':
+        if (open) {
+          e.preventDefault()
+          setOpen(false)
+        }
+        return
+    }
+  }
+
+  return (
+    <div ref={rootRef} className="relative w-full">
+      <button
+        type="button"
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open ? `${listId}-${active}` : undefined}
+        onClick={() => (open ? setOpen(false) : show())}
+        onKeyDown={onKeyDown}
+        className="relative flex h-7 w-full items-center justify-center gap-2 rounded-sm border border-border bg-surface pl-2 pr-6 text-xs text-ink outline-none focus-visible:focus-ring"
+      >
+        {value === null ? (
+          <span className="truncate text-ink-3">{translate('mixed', { ns: 'common' })}</span>
+        ) : (
+          <>
+            {glyphOf(value)}
+            <span className="truncate">{labelOf(value)}</span>
+          </>
+        )}
+        <ChevronDown
+          size={ICON_SIZE.xs}
+          aria-hidden
+          className={cn(
+            'absolute right-2 top-1/2 shrink-0 -translate-y-1/2 text-ink-3 transition-transform duration-fast',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {open && (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label={ariaLabel}
+          onMouseDown={(e) => e.preventDefault()}
+          className="absolute left-0 right-0 top-full z-10 mt-1 rounded-md border border-border bg-surface p-1 shadow-pop animate-pop-in"
+        >
+          {options.map((h) => {
+            const selected = h === value
+            const isActive = h === active
+            return (
+              <li
+                key={h}
+                id={`${listId}-${h}`}
+                role="option"
+                aria-selected={selected}
+                onPointerMove={() => setActive(h)}
+                onClick={() => pick(h)}
+                className={`flex h-7 cursor-default items-center justify-center gap-2 rounded-sm px-1.5 text-xs ${
+                  isActive ? 'bg-surface-2' : ''
+                } ${selected ? 'font-medium text-ink' : 'text-ink'}`}
+              >
+                {glyphOf(h)}
+                <span className="truncate">{labelOf(h)}</span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 /**
  * 标注（箭头 / 形状）的外观分组。
@@ -33,7 +217,29 @@ function AppearanceSection({ children }: { children: ReactNode }) {
   )
 }
 
-/** 与图内元素同一个线型选择器：真实线段预览 + 画布自己的显示名（§16） */
+/** 端型下拉：GlyphSelect 的端型特化，文案取 stroke.head.* */
+function HeadSelect({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: ArrowHead | null
+  onChange: (v: ArrowHead) => void
+  ariaLabel: string
+}) {
+  return (
+    <GlyphSelect
+      value={value}
+      options={HEAD_VALUES}
+      onChange={onChange}
+      ariaLabel={ariaLabel}
+      labelOf={(v) => sk(`head.${v}`)}
+      glyphOf={(v) => <HeadGlyph head={v} />}
+    />
+  )
+}
+
+/** 线型下拉：与端型同一个控件，真实线段示意 + 画布自己的显示名（§16） */
 function DashRow({
   value,
   onChange,
@@ -43,12 +249,13 @@ function DashRow({
 }) {
   return (
     <Row label={sk('dash')}>
-      <LineStylePicker
-        value={value ?? 'solid'}
+      <GlyphSelect
+        value={value}
         options={DASH_VALUES}
-        onChange={(v) => onChange(v as DashStyle)}
+        onChange={onChange}
         ariaLabel={sk('dash')}
         labelOf={(v) => sk(`dashStyle.${v}`)}
+        glyphOf={(v) => <DashGlyph dash={v} />}
       />
     </Row>
   )
@@ -69,11 +276,14 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
 
   return (
     <AppearanceSection>
-        {/* 一条箭头最先要定的是它指向谁：端型排在线宽 / 颜色之前（审计 T28） */}
+        {/* 线型放首行；端型排在线宽 / 颜色之前（审计 T28） */}
+        <DashRow
+          value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
+          onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
+        />
         <Row label={sk('end')}>
-          <ArrowHeadPicker
+          <HeadSelect
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
-            at="end"
             onChange={(v) =>
               patch(hist('setHeadEnd'), (o) => {
                 const prev = arrowHeads(o) // 先取旧值：设了新字段后旧 head 不再参与推导
@@ -86,9 +296,8 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           />
         </Row>
         <Row label={sk('start')}>
-          <ArrowHeadPicker
+          <HeadSelect
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
-            at="start"
             onChange={(v) =>
               patch(hist('setHeadStart'), (o) => {
                 const prev = arrowHeads(o)
@@ -100,32 +309,33 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             ariaLabel={sk('start')}
           />
         </Row>
-        <Row label={sk('color')}>
-          <ColorField
-            ariaLabel={sk('color')}
-            value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
-            onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
-          />
-        </Row>
+        {/* 线宽与颜色同一行：线宽占剩余宽度，颜色靠右 */}
         <Row label={sk('lineWidth')}>
-          <NumberField
-            value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
-            mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
-            step={0.25}
-            min={0.1}
-            max={20}
-            precision={2}
-            suffix="pt"
-            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-          />
+          <div className="flex w-full items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <NumberField
+                value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
+                mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
+                step={0.25}
+                min={0.1}
+                max={20}
+                precision={2}
+                unit="pt"
+                onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
+              />
+            </div>
+            <div className="shrink-0">
+              <ColorField
+                ariaLabel={sk('color')}
+                value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
+                onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
+              />
+            </div>
+          </div>
         </Row>
-        <DashRow
-          value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
-          onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
-        />
         {/* 整行按钮不走标签列：空标签会在左边留一块 44px 的白 */}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="w-full"
           onClick={() =>
@@ -180,24 +390,6 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             )}
           </Row>
         )}
-        {hasFillable && fill && (
-          <Row label={sk('fillOpacity')}>
-            <NumberField
-              value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
-              step={5}
-              min={0}
-              max={100}
-              suffix="%"
-              onChange={(v) =>
-                patch(hist('setFillOpacity'), (o) => {
-                  const f = Math.max(0, Math.min(1, v / 100))
-                  if (f < 1) o.fillOpacity = f
-                  else delete o.fillOpacity
-                })
-              }
-            />
-          </Row>
-        )}
         <Row label={sk('strokeColor')}>
           <ColorField
             ariaLabel={sk('strokeColor')}
@@ -205,17 +397,39 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
+        {/* 线宽与填充不透明度同一行：两个输入框固定 40px（index.css 的 data-stroke-fields） */}
         <Row label={sk('lineWidth')}>
-          <NumberField
-            value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
-            mixed={shared(objs, (o) => (o as ShapeObject).strokePt) === undefined}
-            step={0.25}
-            min={0.1}
-            max={20}
-            precision={2}
-            suffix="pt"
-            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-          />
+          <div data-stroke-fields className="flex w-full items-center gap-2">
+            <NumberField
+              value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
+              mixed={shared(objs, (o) => (o as ShapeObject).strokePt) === undefined}
+              step={0.25}
+              min={0.1}
+              max={20}
+              precision={2}
+              unit="pt"
+              onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
+            />
+            {hasFillable && fill && (
+              <label className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-2">
+                <span className="shrink-0">{sk('fillOpacity')}</span>
+                <NumberField
+                  value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
+                  step={5}
+                  min={0}
+                  max={100}
+                  unit="%"
+                  onChange={(v) =>
+                    patch(hist('setFillOpacity'), (o) => {
+                      const f = Math.max(0, Math.min(1, v / 100))
+                      if (f < 1) o.fillOpacity = f
+                      else delete o.fillOpacity
+                    })
+                  }
+                />
+              </label>
+            )}
+          </div>
         </Row>
         <DashRow
           value={shared(objs, (o) => (o as ShapeObject).dash ?? 'solid') ?? null}
@@ -229,7 +443,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               min={0}
               max={50}
               precision={1}
-              suffix="mm"
+              unit="mm"
               onChange={(v) =>
                 patch(hist('setCornerRadius'), (o) => {
                   if (v > 0) o.cornerRadius = v

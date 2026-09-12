@@ -1502,15 +1502,43 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 
 ## UI 视觉纪律
 
+全文是 `docs/ux/DESIGN_CONSTITUTION.md`（Paper × Instrument；2026-09-11 Visual
+Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
+`components/ui/foundation.test.ts`（类名字面量：像素圆角 / 像素字号 / ink 透明度 hover /
+数字时长 / 手拼大写小标题 / 预设投影 / 第二套复选框与开关 / `variant="outline"`）。
+这里只留一段速记：
+
 暖灰白 `#F2F2EF` 底 + 白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给真实输入框、区域边界、选择状态与浮层。**持久表面不用 shadow，
 浮层（菜单/popover/dialog/tooltip）可使用唯一轻投影 `--shadow-pop`**。
-radius：控件 6px、浮层 10px、上限 14px。UI 字号 11-14px；控件高 28px、
-树行高 28px、图标点击区 ≥28px。主按钮近黑色（`bg-ink`）；蓝色只用于
-选择 / 焦点 / 链接；每个上下文最多一个填色主动作（顶栏=导出、助手=发送、
-弹窗=确认）。文字对比：`ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用。
-选中态不只靠颜色（左侧 2px 竖条 / check / 形状变化）。支持
-`prefers-reduced-motion`。Document 字体（Times）与 UI 字体严格分离。
+radius 四档：`xs` 3（≤16px 小片）、`sm` 6（控件）、`md` 8（浮层 / 卡片）、`lg` 12（对话框）；
+Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
+控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
+`surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
+（`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点 / 链接；
+每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。文字对比：
+`ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
+`状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
+「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
+（未选中的分段标签、折叠 summary 都是要读的字，用 `ink-3`）。选中态不只靠颜色（字重 / check /
+形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
+Document 字体（Times）与 UI 字体严格分离。
+
+设置窗口（Session 5 / 6）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
+（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 最大宽 640 / wide 铺满）；一行设置是
+`settings/SettingRow`（标题列弹性 + 控件列定宽 240、normal 48 / compact 32、`control="fill"`
+整行宽；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status` / `illustration`
+都在标题列），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）；页面
+不带页标题、不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是
+「左库（`listRowClass` 行）右编辑器」，规范页顶部四个关键数；`CopyButton` 建在 `Button` 上；
+键位提示用 `ui/Kbd`。细则在 Design Constitution 第十二、十三节。**用例里渲染任何含
+`IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
+
+公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
+NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs、`listRowClass`、
+TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
+Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented、StepSlider、
+EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
 
 工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做+工具，
 右=缩放/导出/更多）；左侧 44px 常驻图标轨道（素材/结构/图内元素）+

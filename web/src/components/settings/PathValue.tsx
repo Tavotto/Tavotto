@@ -43,8 +43,9 @@ export function PathValue({
           aria-label={st('project.showFullPath', { name })}
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            'flex h-6 min-w-0 items-center gap-1 rounded-sm px-1 text-xs text-ink-2',
-            'outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
+            // 28px：与旁边的 CopyButton（建在 Button 上）同高，一行里的东西在一条中线上
+            'flex h-7 min-w-0 items-center gap-1 rounded-sm px-1 text-xs text-ink-2',
+            'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
           )}
         >
           <ChevronRight
@@ -57,7 +58,7 @@ export function PathValue({
         <CopyButton text={path} label={st('project.copyPath', { name })} />
       </span>
       {open && (
-        <span className="break-all pl-1 font-mono text-[11px] leading-snug text-ink-3">{path}</span>
+        <span className="break-all pl-1 font-mono text-xs leading-snug text-ink-3">{path}</span>
       )}
     </span>
   )

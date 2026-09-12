@@ -63,7 +63,22 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const f = (prop: string, type: EditableField['type'], value: unknown, extra = {}): EditableField =>
   ({ prop, type, value, ...extra }) as EditableField
 
-const LOCS = ['best', 'upper right', 'upper left', 'lower left', 'lower right']
+// 与 matplotlib 的 legend loc 全表同形：外侧预设（rightCenter = 'center left' …）的
+// 落位判据现在会问「这个 loc 在不在 manifest 的选项里」，夹具只给五个的话「右侧中」
+// 那一档是禁用的——点了什么都不写，用例量到的是夹具而不是产品
+const LOCS = [
+  'best',
+  'upper right',
+  'upper left',
+  'lower left',
+  'lower right',
+  'right',
+  'center left',
+  'center right',
+  'lower center',
+  'upper center',
+  'center',
+]
 
 /** 落位模型的源码原文——「清单是算出来的」那条判据读它 */
 const LEGEND_MODEL_SRC = Object.values(

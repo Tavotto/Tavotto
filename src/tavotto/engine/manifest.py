@@ -3989,7 +3989,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
         # 散点给的是每颗 marker 的轮廓（标记数有上限，超了退回 bbox）。
         # 没有 geometry 的元素（文字、图例、容器）前端照旧用 bbox。
-        if el["role"] in ("line", "fill", "patch", "scatter"):
+        # `collection` / `linecoll`（等值线、hlines / vlines 的线组）也描真实
+        # 路径：它们的 bbox 常常就是整个子图，会把底下热力图 / 位图的点击偷走。
+        if el["role"] in ("line", "fill", "patch", "scatter", "collection", "linecoll"):
             geom = pathgeom.element_geometry(artist, W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom

@@ -206,50 +206,43 @@ describe('编码 Agent 一级页面', () => {
     expect(switches()[0].disabled).toBe(true)
   })
 
-  it('默认 Agent 只列可用的；只有一个时不画下拉框', async () => {
+  /** 每行里的「默认」按钮（2026-09-11 起不再有单独的下拉框） */
+  const defaultButtons = () =>
+    [...document.querySelectorAll<HTMLButtonElement>('button')].filter(
+      (b) => b.textContent?.trim() === ag('defaultButton'),
+    )
+
+  it('每行自带「默认」按钮：当前默认的是按下态，不可用的按不了', async () => {
     await open(capsOf([agentCaps(), claudeCaps({ state: 'disabled', enabled: false, usable: false })]))
-    expect(document.querySelector(`select[aria-label="${ag('defaultAgentAria')}"]`)).toBeNull()
-    expect(text()).toContain(ag('defaultAgent'))
+    const buttons = defaultButtons()
+    expect(buttons).toHaveLength(2)
+    expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
+    expect(buttons[1].disabled).toBe(true)
+    expect(document.querySelector('[role="combobox"]'), '不再有默认 Agent 下拉框').toBeNull()
   })
 
-  /** 打开默认 Agent 下拉（`ui/Select` 是 Radix，选项在 portal 里，要先点开） */
-  const openDefaultAgentSelect = async (): Promise<HTMLElement[]> => {
-    const trigger = document.querySelector(
-      `[role="combobox"][aria-label="${ag('defaultAgentAria')}"]`,
-    ) as HTMLElement
-    expect(trigger, '默认 Agent 下拉不见了（原生 select 换成 ui/Select 之后是 combobox）').toBeTruthy()
-    await act(async () => {
-      trigger.click()
-    })
-    return [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
-  }
-
-  it('两个都可用时给下拉框，且只列可用的', async () => {
+  it('按另一行的「默认」：真的写进 store，按下态跟着换', async () => {
     await open(capsOf([agentCaps(), claudeCaps()]))
-    const options = await openDefaultAgentSelect()
-    expect(options.map((o) => o.textContent?.trim())).toEqual(['Codex', 'Claude Code'])
-  })
-
-  it('下拉里选另一个 Agent：真的写进 store（迁移到 ui/Select 之后的交互覆盖）', async () => {
-    await open(capsOf([agentCaps(), claudeCaps()]))
-    const options = await openDefaultAgentSelect()
+    const before = defaultButtons()
+    expect(before.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
     await act(async () => {
-      options[1].click()
+      before[1].click()
     })
     expect(useAiStore.getState().agent).toBe('claude')
+    expect(defaultButtons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true'])
   })
 
-  it('首选那个不可用时自动落到第一个可用的，但不改用户存着的首选值', async () => {
+  it('首选那个不可用时按下态落到第一个可用的，但不改用户存着的首选值', async () => {
     useAiStore.setState({ agent: 'claude' })
     await open(capsOf([agentCaps(), claudeCaps({ state: 'needs_auth', usable: false })]))
     expect(useAiStore.getState().agent).toBe('claude')   // 首选值原样留着
-    expect(text()).toContain('Codex')                    // 实际默认落到可用的那个
+    expect(defaultButtons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
   })
 
-  it('localStorage 里存了不存在的 Agent 也不崩，回退到第一个可用的', async () => {
+  it('localStorage 里存了不存在的 Agent 也不崩，按下态回退到第一个可用的', async () => {
     useAiStore.setState({ agent: 'opencode' })
     await open()
-    expect(text()).toContain(ag('defaultAgent'))
+    expect(defaultButtons()[0].getAttribute('aria-pressed')).toBe('true')
     expect(useAiStore.getState().agent).toBe('opencode')
   })
 

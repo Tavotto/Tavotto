@@ -46,6 +46,20 @@ afterEach(async () => {
 
 /** radio 一律全 document 找：Popover 里的选项挂在 portal 上 */
 const radios = () => Array.from(document.querySelectorAll<HTMLElement>('[role="radio"]'))
+/**
+ * 线型选择器（组件工作台批次起）是「触发按钮 + 弹出的 OptionGrid」：radio 只在
+ * 弹层打开后才进 DOM。**先打开再量**——不打开的话 `radios()` 是空数组，遍历
+ * 它的断言全是恒真。
+ */
+const openLineStyle = async (label = '线型') => {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    `button[aria-haspopup="listbox"][aria-label="${label}"]`,
+  )
+  expect(trigger, '线型触发按钮不见了').toBeTruthy()
+  await act(async () => {
+    trigger!.click()
+  })
+}
 const radioByLabel = (label: string) =>
   radios().find((r) => r.getAttribute('aria-label') === label)
 
@@ -55,6 +69,7 @@ describe('LineStylePicker', () => {
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={onChange} ariaLabel="线型" />,
     )
+    await openLineStyle()
     expect(radioByLabel('实线')?.getAttribute('aria-checked')).toBe('true')
     await act(async () => {
       radioByLabel('虚线')!.click()
@@ -66,6 +81,7 @@ describe('LineStylePicker', () => {
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
     )
+    await openLineStyle()
     for (const r of radios()) expect(r.querySelector('svg line')).toBeTruthy()
   })
 
@@ -79,6 +95,7 @@ describe('LineStylePicker', () => {
         ariaLabel="线型"
       />,
     )
+    await openLineStyle()
     const custom = radios().find((r) => r.getAttribute('aria-checked') === 'true')!
     expect(custom.getAttribute('aria-label')).toContain('(0, (1, 2))')
   })
@@ -88,6 +105,7 @@ describe('LineStylePicker', () => {
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={onChange} ariaLabel="线型" />,
     )
+    await openLineStyle()
     const group = document.querySelector('[role="radiogroup"]')!
     await act(async () => {
       group.dispatchEvent(
@@ -731,6 +749,7 @@ describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', ()
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
     )
+    await openLineStyle()
     const dotted = radioByLabel('点线')!
     expect(dotted.getAttribute('data-code')).toBe(':')
     expect(dotted.getAttribute('aria-label')).toBe('点线')
@@ -745,6 +764,7 @@ describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', ()
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
     )
+    await openLineStyle()
     const dotted = radioByLabel('点线')!
     await act(async () => {
       dotted.focus()

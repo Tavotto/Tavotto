@@ -1,4 +1,6 @@
-import { useState, type KeyboardEvent } from 'react'
+import type { KeyboardEvent } from 'react'
+import { RotateCcw } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
@@ -80,8 +82,8 @@ export const TICK_SPINE_PROPS = [
 type Side = 'top' | 'bottom' | 'left' | 'right'
 const SIDES: Side[] = ['top', 'right', 'bottom', 'left']
 
-/** 中央坐标框（viewBox 148×104） */
-const BOX = { x: 26, y: 14, w: 96, h: 68 }
+/** 中央坐标框（viewBox 220×148）：四周留出内外两条命中带的余量 */
+const BOX = { x: 38, y: 22, w: 144, h: 100 }
 
 const spinePath = (side: Side): string => {
   const { x, y, w, h } = BOX
@@ -97,9 +99,9 @@ const spinePath = (side: Side): string => {
 export const axisOfSide = (side: Side): 'x' | 'y' =>
   side === 'top' || side === 'bottom' ? 'x' : 'y'
 
-const MAJOR_LEN = 6
+const MAJOR_LEN = 8
 /** 次刻度明显更短——两者长度必须一眼可辨，否则「开了次刻度」看不出来 */
-const MINOR_LEN = 3
+const MINOR_LEN = 4
 
 /**
  * 一根刻度短线。`direction` 决定它往哪边伸：
@@ -156,9 +158,14 @@ const minorTickMarks = (side: Side, direction: TickDirection): string =>
  * 上 `lib/tickSides.spineZoneAt` 的三带同构，只是这里是固定尺寸的示意图。
  * `ticks` 是退化形态（没有方向信息时）：内外两带合成一块。
  */
-const NEUTRAL = 3.5
-const BAND = 10.5
-const hitRect = (side: Side, kind: 'spine' | 'ticks' | 'inner' | 'outer') => {
+const NEUTRAL = 4
+const BAND = 13
+/** 命中带沿边长方向两端各缩进这么多：四个角不互相叠压，也不误触相邻边 */
+const INSET = 10
+
+type Rect = { x: number; y: number; width: number; height: number }
+
+const hitRect = (side: Side, kind: 'spine' | 'ticks' | 'inner' | 'outer'): Rect => {
   const { x, y, w, h } = BOX
   // 每条边「向外」的符号：上 / 左为负，下 / 右为正
   const outward = side === 'top' || side === 'left' ? -1 : 1
@@ -179,8 +186,70 @@ const hitRect = (side: Side, kind: 'spine' | 'ticks' | 'inner' | 'outer') => {
   const lo = Math.min(a, b)
   const t = Math.abs(b - a)
   return side === 'top' || side === 'bottom'
-    ? { x, y: lo, width: w, height: t }
-    : { x: lo, y, width: t, height: h }
+    ? { x: x + INSET, y: lo, width: w - INSET * 2, height: t }
+    : { x: lo, y: y + INSET, width: t, height: h - INSET * 2 }
+}
+
+/**
+ * 悬停 / 聚焦时那圈淡蓝底的几何：**只贴着这个开关真正画出来的线**，比命中区
+ * 紧得多——命中区为了好点要往外铺 13，底却不能跟着铺，否则一块大蓝底同时罩住
+ * 框里框外，看不出「点的是向外那一半」。刻度带的底从边线外 HALO_GAP 起、到
+ * 刻度尖端外 HALO_PAD 止；退化的单开关按它此刻画的方向取外侧 / 内侧 / 两侧。
+ */
+const HALO_GAP = 1
+const HALO_PAD = 2.5
+const haloRect = (
+  side: Side,
+  kind: 'spine' | 'ticks' | 'inner' | 'outer',
+  direction: TickDirection = 'out',
+): Rect => {
+  const { x, y, w, h } = BOX
+  const outward = side === 'top' || side === 'left' ? -1 : 1
+  const edge = side === 'top' ? y : side === 'bottom' ? y + h : side === 'left' ? x : x + w
+  let a: number
+  let b: number
+  if (kind === 'spine') {
+    a = edge - HALO_PAD
+    b = edge + HALO_PAD
+  } else {
+    const dir: TickDirection = kind === 'inner' ? 'in' : kind === 'outer' ? 'out' : direction
+    const reach = MAJOR_LEN + HALO_PAD
+    a = dir === 'out' ? edge + outward * HALO_GAP : edge - outward * reach
+    b = dir === 'in' ? edge - outward * HALO_GAP : edge + outward * reach
+  }
+  const lo = Math.min(a, b)
+  const t = Math.abs(b - a)
+  return side === 'top' || side === 'bottom'
+    ? { x: x + INSET, y: lo, width: w - INSET * 2, height: t }
+    : { x: lo, y: y + INSET, width: t, height: h - INSET * 2 }
+}
+
+/** 每个开关的外壳：悬停 / 聚焦整体变深（ink），路径都用 currentColor */
+const SWITCH_CLS =
+  'group cursor-pointer outline-none transition-colors hover:text-ink focus-visible:text-ink'
+/** 开关里的线：不吃指针（命中只认 hit 矩形）；悬停 / 聚焦时不管开关全亮 */
+const MARK_CLS = 'pointer-events-none group-hover:opacity-100 group-focus-visible:opacity-100'
+
+/**
+ * 每个开关共用的两层底：`halo` 是悬停 / 聚焦时的淡蓝底（不吃指针，聚焦再加
+ * 一圈 accent 描边），下面那个透明矩形才是真正的命中区。悬停与聚焦用同一种
+ * 反馈——先看到「这块能点」，再看到点下去会变成什么（那一半刻度亮起来）。
+ */
+function Halo({ hit, halo }: { hit: Rect; halo?: Rect }) {
+  return (
+    <>
+      <rect
+        {...(halo ?? hit)}
+        rx="2"
+        strokeWidth="1"
+        className={cn(
+          'pointer-events-none fill-transparent stroke-transparent transition-colors',
+          'group-hover:fill-selected group-focus-visible:fill-selected group-focus-visible:stroke-ink',
+        )}
+      />
+      <rect {...hit} fill="transparent" />
+    </>
+  )
 }
 
 const ctl = (key: string, values?: Record<string, unknown>) =>
@@ -192,14 +261,16 @@ function SvgSwitch({
   adapter,
   children,
   hit,
+  halo,
 }: {
   prop: string
   on: boolean
   adapter: TickSpineAdapter
   children: React.ReactNode
-  hit: { x: number; y: number; width: number; height: number }
+  hit: Rect
+  /** 淡蓝底的几何；不给就与命中区同大 */
+  halo?: Rect
 }) {
-  const [focused, setFocused] = useState(false)
   const name = ctl(on ? 'switchOn' : 'switchOff', { label: adapter.labelOf(prop) })
   const modified = adapter.isOverridden(prop)
   const onKey = (e: KeyboardEvent) => {
@@ -216,22 +287,11 @@ function SvgSwitch({
         tabIndex={0}
         // 修改标记跟着这条边走（颜色 + tooltip 文字两重表达），不另列一排标签
         data-tick-modified={modified ? 'true' : undefined}
-        className={cn('cursor-pointer outline-none', modified && 'text-accent')}
+        className={cn(SWITCH_CLS, modified && 'text-ink')}
         onClick={() => adapter.toggle(prop, !on)}
         onKeyDown={onKey}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
       >
-        <rect {...hit} fill="transparent" />
-        {focused && (
-          <rect
-            {...hit}
-            fill="none"
-            stroke="var(--color-accent)"
-            strokeWidth="1"
-            rx="2"
-          />
-        )}
+        <Halo hit={hit} halo={halo} />
         {children}
       </g>
     </Tip>
@@ -244,49 +304,46 @@ const halfMarks = (side: Side, half: 'in' | 'out', len: number, minor: boolean):
     .map((p) => tickAt(side, p, len, half))
     .join(' ')
 
-/** 内 / 外一个带的开关：aria-checked = 这一方向此刻开不开，点击走同一份计划 */
+/**
+ * 内 / 外一个带的开关（纯展示）：aria-checked = 这一方向此刻开不开。点下去
+ * 写什么由调用处决定（`toggleSidePlan` 的计划）。
+ */
 function ZoneSwitch({
   side,
   zone,
-  adapter,
-  model,
+  on,
+  coupled,
+  modified,
   minor,
+  fire,
 }: {
   side: Side
   zone: 'inner' | 'outer'
-  adapter: TickSpineAdapter
-  model: AxesTickModel
+  on: boolean
+  /** 这次点击会连带改到的同轴另一边（方向是整条轴的） */
+  coupled: readonly string[]
+  modified: boolean
   minor: boolean
+  fire: () => void
 }) {
-  const [focused, setFocused] = useState(false)
-  const state = model.sides[side]!
   const dir = zone === 'inner' ? 'in' : 'out'
-  const on = dir === 'in' ? state.inward : state.outward
-  const plan = toggleSidePlan(model, side, zone)
   const name = ctl('zoneAria', {
     side: translate(`tick.side.${side}`, { ns: 'inspector' }),
     dir: translate(`tick.dir.${dir}`, { ns: 'inspector' }),
   })
-  const coupled = plan?.effect.coupled.length
+  const coupledText = coupled.length
     ? translate('spineZone.coupled', {
         ns: 'workspace',
-        sides: listJoin(
-          plan.effect.coupled.map((sd) => translate(`tick.side.${sd}`, { ns: 'inspector' })),
-        ),
+        sides: listJoin(coupled.map((sd) => translate(`tick.side.${sd}`, { ns: 'inspector' }))),
       })
     : ''
-  const tip = `${ctl(on ? 'switchOn' : 'switchOff', { label: name })}${coupled ? ` ${coupled}` : ''}`
-  const fire = () => {
-    if (plan) adapter.applyPlan?.(plan)
-  }
+  const tip = `${ctl(on ? 'switchOn' : 'switchOff', { label: name })}${coupledText ? ` ${coupledText}` : ''}`
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== 'Enter' && e.key !== ' ') return
     e.preventDefault()
     fire()
   }
   const hit = hitRect(side, zone)
-  const sideOn = state.visible
-  const modified = adapter.isOverridden(`ticks_${side}`)
   const tipText = modified ? `${tip} · ${translate('element.modified', { ns: 'inspector' })}` : tip
   return (
     <Tip label={tipText}>
@@ -296,26 +353,23 @@ function ZoneSwitch({
         aria-label={name}
         tabIndex={0}
         data-tick-modified={modified ? 'true' : undefined}
-        className={cn('cursor-pointer outline-none', modified && 'text-accent')}
+        className={cn(SWITCH_CLS, modified && 'text-ink')}
         data-tick-zone={`${side}:${zone}`}
-        data-tick-coupled={plan?.effect.coupled.length ? plan.effect.coupled.join(',') : undefined}
+        data-tick-coupled={coupled.length ? coupled.join(',') : undefined}
         onClick={fire}
         onKeyDown={onKey}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
       >
-        <rect {...hit} fill="transparent" />
-        {focused && (
-          <rect {...hit} fill="none" stroke="var(--color-accent)" strokeWidth="1" rx="2" />
-        )}
-        {/* 开着：实线；关着：这一半画成浅虚线占位，让用户看得出「这里能点出一排刻度」 */}
+        <Halo hit={hit} halo={haloRect(side, zone)} />
+        {/* 开着：实线；关着的内侧带画成极淡的虚线占位（痕迹留在框里，图外
+            保持干净）；关着的外侧带平时不画——悬停 / 聚焦时才亮出来 */}
         <path
           d={halfMarks(side, dir, MAJOR_LEN, false)}
           fill="none"
           stroke="currentColor"
-          strokeWidth={on ? 1.6 : 1}
-          strokeOpacity={on ? 1 : sideOn ? 0.22 : 0.3}
-          strokeDasharray={on ? undefined : '1.5 1.5'}
+          strokeWidth={on ? 1.15 : 0.9}
+          opacity={on ? 0.88 : zone === 'outer' ? 0 : 0.16}
+          strokeDasharray={on ? undefined : '2 2'}
+          className={MARK_CLS}
           data-tick-major={side}
           data-tick-half={dir}
           data-tick-on={on ? 'true' : 'false'}
@@ -325,8 +379,9 @@ function ZoneSwitch({
             d={halfMarks(side, dir, MINOR_LEN, true)}
             fill="none"
             stroke="currentColor"
-            strokeWidth={1.1}
-            strokeOpacity={0.85}
+            strokeWidth={0.9}
+            opacity={0.7}
+            className={MARK_CLS}
             data-tick-minor={side}
             data-tick-half={dir}
           />
@@ -352,148 +407,190 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
   const zoned = (side: Side): side is SpineSide =>
     !!model && !!model.sides[side] && !!adapter.applyPlan
 
+  const gridLabel = translate('canvas.grid', { ns: 'inspector' })
+  const resetLabel = ctl('resetDiagram', { count: modified.length })
+
   return (
-    <div className="flex flex-col gap-1">
-      <svg
-        viewBox="0 0 148 104"
-        className="w-full max-w-[220px] self-center text-ink"
-        aria-label={ctl('tickSpineDiagram')}
-        role="group"
-      >
-        {/* 网格预览（非交互，开关在下方） */}
-        {gridX && (
-          <path
-            d={`M${BOX.x + BOX.w * 0.25} ${BOX.y} V${BOX.y + BOX.h} M${BOX.x + BOX.w * 0.5} ${BOX.y} V${BOX.y + BOX.h} M${BOX.x + BOX.w * 0.75} ${BOX.y} V${BOX.y + BOX.h}`}
-            stroke="currentColor" strokeOpacity="0.18" strokeWidth="0.8" aria-hidden
-          />
-        )}
-        {gridY && (
-          <path
-            d={`M${BOX.x} ${BOX.y + BOX.h * 0.25} H${BOX.x + BOX.w} M${BOX.x} ${BOX.y + BOX.h * 0.5} H${BOX.x + BOX.w} M${BOX.x} ${BOX.y + BOX.h * 0.75} H${BOX.x + BOX.w}`}
-            stroke="currentColor" strokeOpacity="0.18" strokeWidth="0.8" aria-hidden
-          />
-        )}
-        {SIDES.map((side) => (
-          <g key={side}>
-            {adapter.has(`spine_${side}`) && (
-              <SvgSwitch
-                prop={`spine_${side}`}
-                on={on(`spine_${side}`)}
-                adapter={adapter}
-                hit={hitRect(side, 'spine')}
-              >
-                <path
-                  d={spinePath(side)}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={on(`spine_${side}`) ? 2 : 1}
-                  strokeOpacity={on(`spine_${side}`) ? 1 : 0.3}
-                  strokeDasharray={on(`spine_${side}`) ? undefined : '3 3'}
-                />
-              </SvgSwitch>
-            )}
-            {adapter.has(`ticks_${side}`) && zoned(side) && (
-              <>
-                <ZoneSwitch
-                  side={side}
-                  zone="inner"
+    <div className="flex flex-col gap-2">
+      <div className="relative flex justify-center pb-2 pt-1">
+        <svg
+          viewBox="0 0 220 148"
+          className="w-full max-w-[220px] overflow-visible text-ink"
+          aria-label={ctl('tickSpineDiagram')}
+          role="group"
+        >
+          {/* 网格预览（非交互，开关在下方） */}
+          {gridX && (
+            <path
+              d={`M${BOX.x + BOX.w * 0.25} ${BOX.y} V${BOX.y + BOX.h} M${BOX.x + BOX.w * 0.5} ${BOX.y} V${BOX.y + BOX.h} M${BOX.x + BOX.w * 0.75} ${BOX.y} V${BOX.y + BOX.h}`}
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.32"
+              strokeWidth="0.7"
+              className="pointer-events-none"
+              aria-hidden
+            />
+          )}
+          {gridY && (
+            <path
+              d={`M${BOX.x} ${BOX.y + BOX.h * 0.25} H${BOX.x + BOX.w} M${BOX.x} ${BOX.y + BOX.h * 0.5} H${BOX.x + BOX.w} M${BOX.x} ${BOX.y + BOX.h * 0.75} H${BOX.x + BOX.w}`}
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.32"
+              strokeWidth="0.7"
+              className="pointer-events-none"
+              aria-hidden
+            />
+          )}
+          {SIDES.map((side) => (
+            <g key={side}>
+              {adapter.has(`spine_${side}`) && (
+                <SvgSwitch
+                  prop={`spine_${side}`}
+                  on={on(`spine_${side}`)}
                   adapter={adapter}
-                  model={model!}
-                  minor={stateOf(side).minor}
-                />
-                <ZoneSwitch
-                  side={side}
-                  zone="outer"
-                  adapter={adapter}
-                  model={model!}
-                  minor={stateOf(side).minor}
-                />
-              </>
-            )}
-            {adapter.has(`ticks_${side}`) && !zoned(side) && (
-              <SvgSwitch
-                prop={`ticks_${side}`}
-                on={on(`ticks_${side}`)}
-                adapter={adapter}
-                hit={hitRect(side, 'ticks')}
-              >
-                {/* 主刻度与次刻度都在同一个开关里：这条边一关，两者一起变成
-                    关闭样式——「关了但次刻度还亮着」是自相矛盾的状态 */}
-                <path
-                  d={tickMarks(side, stateOf(side).direction)}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={on(`ticks_${side}`) ? 1.6 : 1}
-                  strokeOpacity={on(`ticks_${side}`) ? 1 : 0.3}
-                  strokeDasharray={on(`ticks_${side}`) ? undefined : '1.5 1.5'}
-                  data-tick-major={side}
-                  data-tick-direction={stateOf(side).direction}
-                />
-                {stateOf(side).minor && (
+                  hit={hitRect(side, 'spine')}
+                  halo={haloRect(side, 'spine')}
+                >
+                  {/* 四条边是四个独立开关、各画各的路径，端点默认 butt——线正好
+                      停在角点上，每个角缺一块半线宽见方的口子。square 端点让每条线
+                      各向两端外延半个线宽，恰好补到相邻边的外沿：路径、命中区、
+                      开关语义都不动，四角自然闭合。 */}
                   <path
-                    d={minorTickMarks(side, stateOf(side).direction)}
+                    d={spinePath(side)}
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth={on(`ticks_${side}`) ? 1.1 : 0.9}
-                    strokeOpacity={on(`ticks_${side}`) ? 0.85 : 0.3}
-                    strokeDasharray={on(`ticks_${side}`) ? undefined : '1.5 1.5'}
-                    data-tick-minor={side}
+                    strokeWidth={on(`spine_${side}`) ? 1.5 : 1}
+                    opacity={on(`spine_${side}`) ? 1 : 0.26}
+                    strokeDasharray={on(`spine_${side}`) ? undefined : '3 3'}
+                    strokeLinecap="square"
+                    className={MARK_CLS}
                   />
-                )}
-              </SvgSwitch>
-            )}
-          </g>
-        ))}
-      </svg>
+                </SvgSwitch>
+              )}
+              {adapter.has(`ticks_${side}`) &&
+                zoned(side) &&
+                (['inner', 'outer'] as const).map((zone) => {
+                  const st = model!.sides[side]!
+                  const plan = toggleSidePlan(model!, side, zone)
+                  return (
+                    <ZoneSwitch
+                      key={zone}
+                      side={side}
+                      zone={zone}
+                      on={zone === 'inner' ? st.inward : st.outward}
+                      coupled={plan?.effect.coupled ?? []}
+                      modified={adapter.isOverridden(`ticks_${side}`)}
+                      minor={stateOf(side).minor}
+                      fire={() => {
+                        if (plan) adapter.applyPlan?.(plan)
+                      }}
+                    />
+                  )
+                })}
+              {adapter.has(`ticks_${side}`) && !zoned(side) && (
+                <SvgSwitch
+                  prop={`ticks_${side}`}
+                  on={on(`ticks_${side}`)}
+                  adapter={adapter}
+                  hit={hitRect(side, 'ticks')}
+                  halo={haloRect(side, 'ticks', stateOf(side).direction)}
+                >
+                  {/* 主刻度与次刻度都在同一个开关里：这条边一关，两者一起变成
+                      关闭样式——「关了但次刻度还亮着」是自相矛盾的状态 */}
+                  <path
+                    d={tickMarks(side, stateOf(side).direction)}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={on(`ticks_${side}`) ? 1.15 : 0.9}
+                    opacity={on(`ticks_${side}`) ? 0.88 : 0.16}
+                    strokeDasharray={on(`ticks_${side}`) ? undefined : '2 2'}
+                    className={MARK_CLS}
+                    data-tick-major={side}
+                    data-tick-direction={stateOf(side).direction}
+                  />
+                  {stateOf(side).minor && (
+                    <path
+                      d={minorTickMarks(side, stateOf(side).direction)}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={on(`ticks_${side}`) ? 0.9 : 0.8}
+                      opacity={on(`ticks_${side}`) ? 0.7 : 0.16}
+                      strokeDasharray={on(`ticks_${side}`) ? undefined : '2 2'}
+                      className={MARK_CLS}
+                      data-tick-minor={side}
+                    />
+                  )}
+                </SvgSwitch>
+              )}
+            </g>
+          ))}
+        </svg>
+
+        {/* 改过的边在图上自己说（accent 色 + tooltip「已修改」）；恢复只有一个
+            动作——一次把示意图承接的全部修改回到脚本（一条历史）。做成图右上角
+            的图标按钮，与分区标题里的动作同一位置；没改过时不渲染、不占位。 */}
+        {modified.length > 0 && (
+          <Tip label={resetLabel}>
+            <button
+              type="button"
+              onClick={adapter.resetAll}
+              data-tick-reset-all
+              aria-label={resetLabel}
+              className={cn(
+                'absolute right-0 top-0 flex h-7 w-7 items-center justify-center rounded-sm text-ink-2',
+                'outline-none transition-colors hover:bg-surface-2 hover:text-ink focus-visible:focus-ring',
+              )}
+            >
+              <RotateCcw size={ICON_SIZE.sm} aria-hidden />
+            </button>
+          </Tip>
+        )}
+      </div>
 
       {(adapter.has('grid_x') || adapter.has('grid_y')) && (
-        <div className="flex gap-1.5">
-          {(['grid_x', 'grid_y'] as const).map((p) =>
-            adapter.has(p) ? (
-              <button
-                key={p}
-                type="button"
-                role="switch"
-                aria-checked={on(p)}
-                onClick={() => adapter.toggle(p, !on(p))}
-                className={cn(
-                  'flex h-6 flex-1 items-center justify-center gap-1 rounded-sm border text-xs outline-none transition-colors',
-                  'focus-visible:focus-ring',
-                  on(p)
-                    ? 'border-accent bg-accent-subtle font-medium text-accent'
-                    : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
-                )}
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
-                  {p === 'grid_x' ? (
-                    <path d="M4 1 V11 M8 1 V11" stroke="currentColor" strokeWidth="1" fill="none" />
-                  ) : (
-                    <path d="M1 4 H11 M1 8 H11" stroke="currentColor" strokeWidth="1" fill="none" />
-                  )}
-                </svg>
-                {adapter.labelOf(p)}
-              </button>
-            ) : null,
-          )}
-        </div>
-      )}
-
-      {/* 改过的边在图上自己说（accent 色 + tooltip「已修改」）；恢复只有一个动作
-          ——一次把示意图承接的全部修改回到脚本（一条历史）。以前这里逐条列
-          「上边刻度线 ×」chips，与图上的状态重复表达同一组设置（审计 T13） */}
-      {modified.length > 0 && (
-        <button
-          type="button"
-          onClick={adapter.resetAll}
-          data-tick-reset-all
-          className={cn(
-            'flex h-6 items-center gap-1 self-start rounded-sm px-1.5 text-xs text-accent',
-            'outline-none transition-colors hover:bg-accent-subtle focus-visible:focus-ring',
-          )}
+        <div
+          role="group"
+          aria-label={gridLabel}
+          className="flex items-center justify-between gap-3 border-t border-border pt-2"
         >
-          <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
-          {ctl('resetDiagram', { count: modified.length })}
-        </button>
+          <span className="text-sm text-ink-2">{gridLabel}</span>
+          <div className="flex items-center gap-1">
+            {(['grid_x', 'grid_y'] as const).map((p) =>
+              adapter.has(p) ? (
+                <Tip key={p} label={adapter.labelOf(p)}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={on(p)}
+                    onClick={() => adapter.toggle(p, !on(p))}
+                    className={cn(
+                      'flex h-7 min-w-14 items-center justify-center gap-1.5 rounded-sm px-2 text-sm',
+                      'outline-none transition-colors focus-visible:focus-ring',
+                      on(p)
+                        ? 'bg-selected text-ink'
+                        : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+                    )}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden>
+                      {p === 'grid_x' ? (
+                        <path d="M5 2V12M9 2V12" stroke="currentColor" strokeWidth="1.4" />
+                      ) : (
+                        <path d="M2 5H12M2 9H12" stroke="currentColor" strokeWidth="1.4" />
+                      )}
+                    </svg>
+                    {translate(p === 'grid_x' ? 'tick.axisX' : 'tick.axisY', { ns: 'inspector' })}
+                    {/* 开关状态的第二重表达：不只靠底色，开着时多一颗小点；关着时留同样的位 */}
+                    <span
+                      aria-hidden
+                      className={cn('h-[3px] w-[3px] rounded-full', on(p) && 'bg-current')}
+                    />
+                  </button>
+                </Tip>
+              ) : null,
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

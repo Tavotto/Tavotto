@@ -55,11 +55,10 @@ export function RelinkDialog() {
       open
       onOpenChange={(v) => !v && setPending(null)}
       title={t(isPaste ? 'relink.titlePaste' : 'relink.titleDoc')}
-      description={t(isPaste ? 'relink.descPaste' : 'relink.descDoc')}
       size="lg"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => setPending(null)}>
+          <Button variant="secondary" size="md" onClick={() => setPending(null)}>
             {t(isPaste ? 'relink.cancelPaste' : 'relink.cancelDoc')}
           </Button>
           <Button variant="primary" size="md" onClick={confirm}>
@@ -101,7 +100,6 @@ export function RelinkDialog() {
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs leading-relaxed text-ink-3">{t('relink.footnote')}</p>
     </Dialog>
   )
 }

@@ -354,8 +354,11 @@ function EmptyHint() {
   const cx = panX + mmToWorld(page.w / 2) * zoom
   const cy = panY + mmToWorld(page.h / 2) * zoom
   return (
+    // `w-max`：绝对定位盒子的 shrink-to-fit 只看 left 右侧剩下的空间，纸面中心靠近
+    // 视口右缘时提示会被折成十几个字一行的一根细柱（2026-09-11 走查截图）；
+    // 按内容定宽，宽度上限由 EmptyState 自己的 max-w 决定
     <div
-      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
+      className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
       <div className="pointer-events-auto">

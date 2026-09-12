@@ -17,6 +17,32 @@ const PAGE = `
   <p id="f" style="color:#cccccc">颜色本身就浅</p>
 </div>`
 
+const DECORATION_PAGE = `
+  <main style="background:#fff;color:#1b1b18;font:12px sans-serif;padding:16px">
+    <p>3 pt <span class="deco" aria-hidden="true" style="color:#a3a39a">→</span> 8 pt</p>
+    <p>ok <span class="deco" aria-hidden="true" style="color:#a3a39a">·</span> 刚才</p>
+    <p>要读的字藏进 aria-hidden：<span class="hidden-words" aria-hidden="true" style="color:#a3a39a">abc</span></p>
+    <p>没标 aria-hidden 的箭头：<span class="bare" style="color:#a3a39a">→</span></p>
+  </main>
+`
+
+test('自算对比度：aria-hidden 的纯符号记号是装饰，不量；带字母数字的照样量', async ({
+  page,
+}) => {
+  await page.setContent(DECORATION_PAGE)
+  const bad = await lowContrastNodes(page)
+  // 豁免只有一档：aria-hidden + 纯符号（箭头 / 间隔点），ink-faint 的 2.54:1 不报
+  expect(bad.filter((l) => l.startsWith('SPAN.deco ')), '装饰记号被报了').toEqual([])
+  // 两条反向，缺一条豁免就成了暗门：
+  // ① 把要读的字藏进 aria-hidden 绕不过去；② 没标 aria-hidden 的符号照样量
+  expect(bad.filter((l) => l.startsWith('SPAN.hidden-words ')), 'aria-hidden 里的字母数字没量').toEqual([
+    'SPAN.hidden-words "abc" 2.54:1 < 4.5',
+  ])
+  expect(bad.filter((l) => l.startsWith('SPAN.bare ')), '没标 aria-hidden 的箭头没量').toEqual([
+    'SPAN.bare "→" 2.54:1 < 4.5',
+  ])
+})
+
 test('自算对比度：CSS opacity 计入有效 alpha，禁用态按 WCAG 排除', async ({ page }) => {
   await page.setContent(PAGE)
   const bad = (await lowContrastNodes(page)).join(' | ')

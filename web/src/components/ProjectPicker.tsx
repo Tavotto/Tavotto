@@ -37,7 +37,7 @@ import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { BrandMark } from './ui/BrandMark'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 
@@ -96,8 +96,8 @@ export function ProjectPicker() {
         {/* 固定区：品牌 + 主入口。`shrink-0` 是这一屏的要点——列表再长也挤不动它 */}
         <header className="shrink-0 pt-10">
           {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
-          <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-ink">
-            <BrandMark size={24} variant="compact" tone="paper" />
+          <h1 className="flex items-center gap-2.5 text-lg font-medium tracking-tight text-ink">
+            <BrandMark size={24} tone="paper" />
             {PRODUCT_NAME}
           </h1>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>
@@ -120,7 +120,7 @@ export function ProjectPicker() {
               {t('picker.create')}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="md"
               onClick={() => {
                 // 桌面壳里用原生目录选择器；取消不是错误，什么都不发生。
@@ -167,7 +167,7 @@ export function ProjectPicker() {
             />
             <Button
               type="submit"
-              variant="outline"
+              variant="secondary"
               size="md"
               disabled={!target}
               aria-label={
@@ -344,7 +344,7 @@ function MissingGroup({
           <span className="truncate">{t('picker.missingGroup')}</span>
           <span className="font-mono text-ink-3">{t('picker.recentCount', { count: entries.length })}</span>
         </button>
-        <Button size="sm" variant="outline" className="shrink-0 text-xs" onClick={onRemoveAll}>
+        <Button size="sm" variant="secondary" className="shrink-0 text-xs" onClick={onRemoveAll}>
           {t('picker.removeAllMissing')}
         </Button>
       </div>
@@ -416,20 +416,21 @@ function RecentRow({
           <TailPath path={entry.path} />
         )}
       </button>
-      <button
+      <IconButton
+        iconSize="sm"
+        tip={false}
         onClick={onRemove}
-        aria-label={t('picker.removeFromList', { name: entry.name })}
+        label={t('picker.removeFromList', { name: entry.name })}
         title={t('picker.removeFromListTitle')}
         className={cn(
-          'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-3',
-          'outline-none transition-opacity hover:bg-ink/[.055] hover:text-ink',
-          'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
+          'text-ink-3 transition-[opacity,background-color,color]',
+          'focus-visible:opacity-100 group-hover:opacity-100',
           // 打不开的条目只剩「移除」一个动作：常驻显示，不藏在悬停后面
           entry.exists ? 'opacity-0' : 'opacity-100',
         )}
       >
         <X size={ICON_SIZE.sm} />
-      </button>
+      </IconButton>
     </li>
   )
 }
@@ -518,7 +519,7 @@ export function DirBrowser({
       size="md"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button
@@ -598,7 +599,7 @@ export function DirBrowser({
                 }}
                 className={cn(
                   'flex h-7 w-full items-center gap-2 px-2 text-left text-xs text-ink',
-                  'outline-none hover:bg-ink/[.045] focus-visible:focus-ring',
+                  'outline-none hover:bg-surface-hover focus-visible:focus-ring',
                 )}
               >
                 {state.is_roots ? (
@@ -687,7 +688,7 @@ function NewProjectNameDialog({
       size="sm"
       footer={
         <>
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button
@@ -739,8 +740,8 @@ function Chip({ entry, icon, onGo }: { entry: DirEntry; icon?: boolean; onGo: ()
       onClick={onGo}
       title={entry.path}
       className={cn(
-        'flex h-6 items-center gap-1 rounded-sm border border-border px-1.5 text-xs text-ink-2',
-        'outline-none hover:border-border-strong hover:text-ink focus-visible:focus-ring',
+        'flex h-7 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2',
+        'outline-none transition-colors duration-fast hover:border-border-strong hover:text-ink focus-visible:focus-ring',
       )}
     >
       {icon && <HardDrive size={ICON_SIZE.xs} className="text-ink-3" />}

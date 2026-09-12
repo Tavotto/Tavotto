@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Play } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
 import { stemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
@@ -81,34 +82,40 @@ export function FigurePickerDialog() {
       {entries.length === 0 ? (
         <p className="text-xs leading-relaxed text-ink-3">{fp('empty')}</p>
       ) : (
-        <ul className="flex flex-col gap-1" aria-label={fp('listAria')}>
+        <ul className="grid grid-cols-2 gap-3" aria-label={fp('listAria')}>
           {entries.map((e) => (
             <li
               key={e.kind === 'panel' ? e.info.id : e.asset.id}
-              className="flex items-center gap-2 rounded-sm border border-border px-2 py-1"
+              className="flex flex-col overflow-hidden rounded-md border border-border bg-surface"
             >
               <FigureThumb entry={e} nonce={nonce} />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={e.stem}>
-                {e.stem}
-              </span>
-              {e.kind === 'runtime' && (
-                <span className="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 text-[10px] text-ink-3">
-                  {fp('runtimeBadge')}
-                </span>
-              )}
-              <EntrySize entry={e} />
-              {e.kind === 'panel' || e.asset.descriptor ? (
-                <Button variant="outline" size="sm" onClick={() => pickEntry(e)}>
-                  {fp('addToCanvas')}
-                </Button>
-              ) : (
-                // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
-                // 如实指去素材库「运行并发现图」
-                <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-                  <Play size={ICON_SIZE.xs} />
-                  {fp('needsRun')}
-                </span>
-              )}
+              <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={e.stem}>
+                    {e.stem}
+                  </span>
+                  {e.kind === 'runtime' && (
+                    <Badge>{fp('runtimeBadge')}</Badge>
+                  )}
+                </div>
+                <div className="mt-auto flex flex-wrap items-center gap-2">
+                  <EntrySize entry={e} />
+                  <span className="ml-auto flex shrink-0 items-center">
+                    {e.kind === 'panel' || e.asset.descriptor ? (
+                      <Button variant="secondary" size="sm" onClick={() => pickEntry(e)}>
+                        {fp('addToCanvas')}
+                      </Button>
+                    ) : (
+                      // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
+                      // 如实指去素材库「运行并发现图」
+                      <span className="flex items-center gap-1 text-xs text-ink-3">
+                        <Play size={ICON_SIZE.xs} />
+                        {fp('needsRun')}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
             </li>
           ))}
         </ul>
@@ -124,12 +131,12 @@ function FigureThumb({ entry, nonce }: { entry: Entry; nonce: Record<string, num
       : entry.asset.cached
         ? panelSrc(entry.asset.id, 'runtime', 320, nonce[entry.asset.id])
         : null
-  if (!src) return <span className="h-10 w-14 shrink-0 rounded-sm bg-surface-2" />
+  if (!src) return <span className="h-32 w-full shrink-0 border-b border-border bg-surface-2" />
   return (
     <img
       src={src}
       alt=""
-      className="h-10 w-14 shrink-0 rounded-sm border border-border bg-white object-contain"
+      className="h-32 w-full shrink-0 border-b border-border bg-white object-contain p-2"
     />
   )
 }

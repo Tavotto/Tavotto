@@ -21,6 +21,7 @@ import {
   SHELL_HEIGHT,
   SHELL_WIDTH,
 } from '@/components/SettingsDialog'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
 
 declare global {
@@ -41,7 +42,11 @@ async function open(section: string | null = null) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }
@@ -104,16 +109,13 @@ describe('分区与深链', () => {
   it('导出面板的「编辑」深链落在「规范」页，不是样式页', async () => {
     await open('profiles')
     expect(current()?.dataset.section).toBe('spec')
-    expect(dialog().textContent).toContain(t('profiles.kind.specHint', { ns: 'dialogs' }))
-    expect(dialog().textContent).not.toContain(t('profiles.kind.styleHint', { ns: 'dialogs' }))
   })
 
   it('「样式」与「规范」是两个分区，各自只有自己那类字段', async () => {
     await open('style')
-    expect(dialog().textContent).toContain(t('profiles.kind.styleHint', { ns: 'dialogs' }))
+    expect(current()?.dataset.section).toBe('style')
     await act(async () => navButtons().find((b) => b.dataset.section === 'spec')!.click())
-    expect(dialog().textContent).toContain(t('profiles.kind.specHint', { ns: 'dialogs' }))
-    expect(dialog().textContent).not.toContain(t('profiles.kind.styleHint', { ns: 'dialogs' }))
+    expect(current()?.dataset.section).toBe('spec')
   })
 })
 

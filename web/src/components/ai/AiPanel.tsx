@@ -46,6 +46,7 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { SearchInput } from '../ui/SearchInput'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
@@ -265,11 +266,7 @@ export function AssistantPanel() {
         <div ref={scrollRef} className="h-full overflow-y-auto px-2.5 py-2">
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
-            <EmptyState
-              icon={FileCodeCorner}
-              title={ai('panel.noPanelTitle')}
-              hint={ai('panel.noPanelHint')}
-            />
+            <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
           ) : (
             /* 有可编辑的图、还没发过任务时**这里什么都不放**（审计 T37）：
                起手式和「助手会做什么」都挪到了输入框旁边，注意力集中在一处。
@@ -295,17 +292,9 @@ export function AssistantPanel() {
         {panel && mine.length === 0 && !prompt.trim() && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {chipsFor(scope, element, !!axes).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => fillPrompt(c)}
-                className={cn(
-                  'h-6 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink-2',
-                  'transition-colors hover:border-border-strong hover:text-ink',
-                )}
-              >
+              <Button key={c} variant="secondary" size="sm" className="text-ink-2 hover:text-ink" onClick={() => fillPrompt(c)}>
                 {c}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -316,7 +305,7 @@ export function AssistantPanel() {
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
             <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
             >
@@ -335,7 +324,7 @@ export function AssistantPanel() {
             value={prompt}
             rows={2}
             disabled={!panel || noAgent}
-            placeholder={ai(panel ? 'panel.placeholder' : 'panel.placeholderNoPanel')}
+            placeholder={panel ? ai('panel.placeholder') : undefined}
             onChange={(e) => {
               setPrompt(e.target.value)
               // 两行起步，随内容自动增长（封顶约 8 行）
@@ -418,7 +407,7 @@ function TargetChip({
           aria-label={ai('panel.targetAria', { target: targetText })}
           className={cn(
             'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm bg-surface-2 px-2 text-left',
-            'outline-none transition-colors hover:bg-ink/[.06] focus-visible:focus-ring',
+            'outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring',
           )}
         >
           <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
@@ -498,7 +487,6 @@ export function ScopeAgentContent({
   const caps = useAiStore((s) => s.caps)
   const models = useAiStore((s) => s.models)
   const efforts = useAiStore((s) => s.efforts)
-  const [detailsOpen, setDetailsOpen] = useState(false)
   const [effortOpen, setEffortOpen] = useState(false)
 
   // 只展示**可用**的 Agent（装了、没被关掉、也没在等登录）；顺序沿用后端注册表。
@@ -537,7 +525,14 @@ export function ScopeAgentContent({
   return (
     <div className="flex flex-col gap-2">
       <div>
-        <p className="mb-1 text-xs text-ink-2">{ai('panel.scopeTitle')}</p>
+        {/* 标题与路径同一行：左边说「这是什么」，右边说「现在指向谁」，
+            视线不用在分段控件上下来回跳 */}
+        <div className="mb-1 flex min-w-0 items-center gap-2">
+          <p className="shrink-0 text-xs font-medium text-ink-2">{ai('panel.scopeTitle')}</p>
+          <div className="min-w-0 flex-1 text-right">
+            <Breadcrumb panel={panel} element={element} axes={axes} scope={scope} />
+          </div>
+        </div>
         <Segmented
           tone="quiet"
           className="w-full"
@@ -546,11 +541,7 @@ export function ScopeAgentContent({
           onChange={(v) => useAiStore.getState().setScope(v)}
           items={scopeItems().filter((i) => scopes.includes(i.value))}
         />
-        <div className="mt-1">
-          <Breadcrumb panel={panel} element={element} axes={axes} scope={scope} />
-        </div>
       </div>
-      <div className="h-px bg-border" />
       {caps == null ? (
         <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
       ) : usable.length === 0 ? (
@@ -560,7 +551,7 @@ export function ScopeAgentContent({
           <div>
             <Button
               data-ai-open-settings
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
             >
@@ -639,53 +630,6 @@ export function ScopeAgentContent({
               )}
             </div>
           )}
-        </div>
-      )}
-      {/* CLI 版本 / 路径 / 快照说明等实现细节默认不展示——正常选个模型
-          不需要每次读一遍它们 */}
-      <button
-        onClick={() => setDetailsOpen((v) => !v)}
-        aria-expanded={detailsOpen}
-        className="flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
-      >
-        <ChevronRight
-          size={ICON_SIZE.xs}
-          className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
-        />
-        {ai('panel.techDetails')}
-      </button>
-      {detailsOpen && (
-        <div className="flex flex-col gap-0.5 border-l border-border pl-2">
-          <p className="text-xs leading-relaxed text-ink-3">{ai('panel.agentNote')}</p>
-          <p className="truncate font-mono text-xs text-ink-3" title={panel.script ?? ''}>
-            {ai('panel.script', {
-              name: panel.script ? scriptName(panel.script) : ai('panel.none'),
-            })}
-          </p>
-          {cur?.version && (
-            <p className="truncate font-mono text-xs text-ink-3" title={cur.executable_path ?? ''}>
-              {ai('panel.cli', { version: cur.version })}
-            </p>
-          )}
-          {cur?.executable_path && (
-            <p className="truncate font-mono text-xs text-ink-3" title={cur.executable_path}>
-              {ai('panel.cliPath', { path: cur.executable_path })}
-            </p>
-          )}
-          {effortList.length > 0 && (
-            <p className="truncate font-mono text-xs text-ink-3">
-              {ai('panel.effortRaw', { value: effortList[effortIndex] })}
-            </p>
-          )}
-          <div className="pt-0.5">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
-            >
-              {ai('panel.openAiSettings')}
-            </Button>
-          </div>
         </div>
       )}
     </div>
@@ -791,9 +735,8 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-surface">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-2.5">
-        <h3 className="text-xs text-ink">{ai('history.title')}</h3>
-        <span className="text-xs text-ink-3">{ai('history.count', { count: total })}</span>
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2.5">
+        <h3 className="text-xs font-medium text-ink">{ai('history.title')}</h3>
         <Button
           size="icon-sm"
           className="-mr-1 ml-auto"
@@ -805,15 +748,14 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
       </div>
       {showFilters && (
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
-        <input
+        <SearchInput
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
+          onValueChange={(v) => {
+            setQuery(v)
             setOffset(0)
           }}
           placeholder={ai('history.searchPlaceholder')}
           aria-label={ai('history.searchAria')}
-          className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-accent"
         />
         <Select
           value={status || ALL_STATUSES}
@@ -828,7 +770,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
             ...HISTORY_STATUSES.map((v) => ({ value: v, label: statusLabel(v) })),
           ]}
           ariaLabel={ai('history.filterAria')}
-          className="h-6 w-auto shrink-0"
+          className="w-auto shrink-0"
         />
       </div>
       )}
@@ -1059,7 +1001,7 @@ function SessionBlock({ session }: { session: AiSession }) {
         <>
           <DiffView diff={session.diff} script={session.script} />
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full text-danger"
             onClick={() => void revertSession(session)}

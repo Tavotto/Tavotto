@@ -60,13 +60,19 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
           data-kind-switch
           aria-label={translate('kindSwitch.aria', { ns: 'inspector', name: currentLabel })}
           className={cn(
-            'flex shrink-0 items-center gap-0.5 rounded-sm bg-ink/[.055] py-px pl-1 pr-0.5 text-xs text-ink-2',
-            'outline-none transition-colors hover:bg-ink/[.09] hover:text-ink focus-visible:focus-ring',
-            'data-[state=open]:bg-ink/[.09] data-[state=open]:text-ink',
+            'group flex shrink-0 items-center gap-0.5 rounded-sm bg-surface-active py-px pl-1 pr-0.5 text-xs text-ink-2',
+            'outline-none transition-colors hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+            'data-[state=open]:bg-selected data-[state=open]:text-ink',
           )}
         >
           {currentLabel}
-          <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" aria-hidden />
+          {/* 下拉的记号只有 chevron-down（Design Constitution 第四节）：收起朝下，
+              菜单展开（Radix 触发器 data-state=open）时转成朝上 */}
+          <ChevronDown
+            size={ICON_SIZE.xs}
+            className="text-ink-3 transition-transform duration-fast group-data-[state=open]:rotate-180"
+            aria-hidden
+          />
         </button>
       }
     >
@@ -95,7 +101,7 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
 /** 不可切换时的静态徽标：与可切换那颗同一套底色与字号，只是不点得动 */
 export function KindBadge({ children }: { children: React.ReactNode }) {
   return (
-    <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+    <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
       {children}
     </span>
   )

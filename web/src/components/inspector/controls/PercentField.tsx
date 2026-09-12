@@ -51,7 +51,7 @@ export function PercentField({
       max={Math.round(max * 100)}
       step={Math.max(1, Math.round(step * 100))}
       precision={0}
-      suffix="%"
+      unit="%"
       ariaLabel={ariaLabel}
       dataProp={dataProp}
       onChange={(p) => onChange(fromPercent(p))}

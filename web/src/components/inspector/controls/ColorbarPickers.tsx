@@ -123,7 +123,7 @@ export function ColorbarExtendPicker({
     preview: (
       <span className="flex flex-col items-center gap-0.5 px-0.5">
         <BarPreview cmap={cmap} orientation={dir} extend={asExtend(v)} />
-        <span className="text-[10px] leading-3">{optionLabel('extend', v)}</span>
+        <span className="text-xs leading-3">{optionLabel('extend', v)}</span>
       </span>
     ),
   }))

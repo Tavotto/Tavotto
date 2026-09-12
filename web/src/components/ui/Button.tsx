@@ -2,8 +2,22 @@ import { forwardRef, useCallback, useRef, useState, type ButtonHTMLAttributes } 
 import { LoaderCircle } from 'lucide-react'
 import { ICON_SIZE, type IconSizeStep } from './Icon'
 import { cn } from '@/lib/utils'
+import { Tip } from './Tooltip'
 
-type Variant = 'ghost' | 'outline' | 'primary' | 'danger'
+/**
+ * 按钮层级只有四档（docs/ux/DESIGN_CONSTITUTION.md 第七节）：
+ *   primary   近黑填色。每个上下文最多一个（顶栏=导出、助手=发送、弹窗=确认）。
+ *   secondary 细边框 + 白底。工具类操作的默认形态。
+ *   ghost     无边无底，hover 才浮出一层 surface-hover。工具栏、行内动作、图标钮。
+ *   danger    红字 ghost。只给不可逆操作。
+ * 蓝色不出现在任何一档里：它只属于焦点、链接、画布选择框。
+ */
+type Variant = 'ghost' | 'secondary' | 'primary' | 'danger'
+/**
+ * 高度只有一档 28px（h-7）——Tavotto 的控件密度是「紧凑工具」那一档，
+ * 输入框 / 下拉 / 树行 / 图标钮全都是它，按钮不另起炉灶。
+ * sm / md 只差字号与内边距；icon / icon-sm 是 28×28 的方钮，只差图标档。
+ */
 type Size = 'sm' | 'md' | 'icon' | 'icon-sm'
 
 export interface ButtonProps
@@ -20,11 +34,12 @@ export interface ButtonProps
 }
 
 const VARIANTS: Record<Variant, string> = {
-  ghost: 'text-ink hover:bg-ink/[.055] active:bg-ink/[.09]',
-  outline: 'border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-2',
+  ghost: 'text-ink hover:bg-surface-hover active:bg-surface-active',
+  secondary:
+    'border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-2 active:bg-surface-active',
   // 主动作用近黑色；蓝色只留给选择 / 焦点 / 链接
   primary: 'bg-ink text-white hover:bg-ink/90 active:bg-ink/95',
-  danger: 'text-danger hover:bg-danger/[.08]',
+  danger: 'text-danger hover:bg-danger-subtle active:bg-danger/15',
 }
 
 const SIZES: Record<Size, string> = {
@@ -120,19 +135,61 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       onClick={handleClick}
       className={cn(
         'inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap',
-        'transition-[background-color,border-color,color] duration-100',
+        'transition-[background-color,border-color,color] duration-fast',
         'focus-visible:focus-ring outline-none',
         // 不用 pointer-events-none：那会连 not-allowed 光标和 tooltip 一起吞掉，
         // 点击本来就被原生 disabled 挡住了
         'disabled:cursor-not-allowed disabled:opacity-35',
         VARIANTS[variant],
         SIZES[size],
-        active && variant !== 'primary' && 'bg-accent-subtle text-accent hover:bg-accent-subtle',
+        // 按下 / 选中态：轻 tint + 字重，不靠深灰块
+        active && variant !== 'primary' && 'bg-selected font-medium text-ink hover:bg-selected',
         className,
       )}
       {...props}
     >
       {content}
     </button>
+  )
+})
+
+/**
+ * 只有图标的按钮：Pin / Close / Copy / Refresh / More… 全部走它。
+ *
+ * 28×28、16px 图标（`iconSize="sm"` 时 14px）、默认透明、hover 才浮出
+ * surface-hover、按下 / 选中是 selected 那一档轻 tint——不用大块灰底。
+ * **名字与气泡同一份**：`label` 既是 `aria-label` 也是 tooltip 文案，两者不会分叉
+ * （审计 T39 担心的正是分叉）。`tip={false}` 只在已经有可见文字说明它的场合用，
+ * 名字照样给。
+ */
+export interface IconButtonProps extends Omit<ButtonProps, 'size' | 'aria-label' | 'children'> {
+  label: string
+  /** 图标档：默认 md（16px）；与 11–12px 文字并排的小钮用 sm（14px） */
+  iconSize?: 'md' | 'sm'
+  /**
+   * 气泡：默认显示 `label`；传 false 关掉（旁边已有可见文字时）；传字符串则气泡说
+   * 另一句（只给「名字是动作、气泡讲当前状态」的开关钮，如钉住 / 宽高比锁）。
+   */
+  tip?: boolean | string
+  shortcut?: string
+  side?: 'top' | 'bottom' | 'left' | 'right'
+  children: React.ReactNode
+}
+
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
+  { label, iconSize = 'md', tip = true, shortcut, side, children, ...props },
+  ref,
+) {
+  const btn = (
+    <Button ref={ref} size={iconSize === 'md' ? 'icon' : 'icon-sm'} aria-label={label} {...props}>
+      {children}
+    </Button>
+  )
+  return tip ? (
+    <Tip label={typeof tip === 'string' ? tip : label} shortcut={shortcut} side={side}>
+      {btn}
+    </Tip>
+  ) : (
+    btn
   )
 })

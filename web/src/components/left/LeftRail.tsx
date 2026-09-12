@@ -32,7 +32,7 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
 
 /**
  * 常驻图标轨道：三个上下文各占一格，点击打开对应抽屉，再点一次收起。
- * 选中态用左侧 2px 竖条 + 底色双重标记，不单靠颜色。
+ * 选中态用浅灰底色标记（比 hover 深一档），不用品牌蓝；状态语义靠 aria-expanded。
  */
 export function LeftRail() {
   const { t } = useTranslation('workspace')
@@ -67,16 +67,10 @@ export function LeftRail() {
                 'relative flex h-8 w-8 items-center justify-center rounded-sm outline-none',
                 'transition-colors focus-visible:focus-ring',
                 active
-                  ? 'bg-accent-subtle text-accent'
-                  : 'text-ink-2 hover:bg-ink/[.05] hover:text-ink',
+                  ? 'bg-selected text-ink'
+                  : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
               )}
             >
-              {active && (
-                <span
-                  aria-hidden
-                  className="absolute -left-1.5 top-1.5 h-5 w-0.5 rounded-full bg-accent"
-                />
-              )}
               <Icon size={ICON_SIZE.md} />
               {id === 'problems' && problems > 0 && (
                 /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
@@ -112,7 +106,7 @@ export function LeftRail() {
           aria-label={t('rail.readiness')}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-ink/[.05] hover:text-ink',
+            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
         >
@@ -126,7 +120,7 @@ export function LeftRail() {
           aria-label={t('rail.settings')}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-ink/[.05] hover:text-ink',
+            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
         >

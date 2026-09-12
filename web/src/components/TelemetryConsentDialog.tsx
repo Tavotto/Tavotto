@@ -38,10 +38,10 @@ export function TelemetryConsentDialog() {
       size="md"
       footer={
         <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => void choose('disabled', 'first_run')}>
+          <Button variant="secondary" onClick={() => void choose('disabled', 'first_run')}>
             {tt('decline')}
           </Button>
-          <Button variant="outline" onClick={() => void choose('enabled', 'first_run')}>
+          <Button variant="secondary" onClick={() => void choose('enabled', 'first_run')}>
             {tt('allow')}
           </Button>
         </div>

@@ -140,7 +140,7 @@ function Splash({ state }: { state: 'connecting' | 'waiting' | 'nohost' }) {
   const text = translate(`mcp.${key}`, { ns: 'dialogs' })
   return (
     <div className="flex h-full w-full items-center justify-center bg-bg p-6">
-      <p className="max-w-md text-center text-[13px] leading-relaxed text-ink-2">{text}</p>
+      <p className="max-w-md text-center text-base leading-relaxed text-ink-2">{text}</p>
     </div>
   )
 }

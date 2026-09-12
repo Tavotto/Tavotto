@@ -81,55 +81,87 @@ export function MultiSelectionBar({
 
   if (docked) {
     return (
-      <>
+      <Bar>
         {countEl}
-        <Sep />
+        <GroupSep />
         <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-        <Sep />
-        <GroupButtons grouped={grouped} />
-        <MoreButton count={count} />
-      </>
+        <GroupSep />
+        <div className="flex items-center gap-0.5">
+          <GroupButtons grouped={grouped} />
+          <MoreButton count={count} />
+        </div>
+      </Bar>
     )
   }
 
   if (variant === 'compact') {
     return (
-      <>
+      <Bar>
         {countEl}
-        <Sep />
-        <MenuPopover label={qb('alignMenu')} width={232} testId="align">
-          <RefPicker />
-          <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-        </MenuPopover>
-        <MenuPopover label={qb('distributeMenu')} width={120} testId="distribute">
-          <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
-        </MenuPopover>
-        <MenuPopover label={qb('sizeMenu')} width={120} testId="size">
-          <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
-        </MenuPopover>
-        <Sep />
-        <GroupButtons grouped={grouped} />
-        <MoreButton count={count} />
-      </>
+        <GroupSep />
+        {/* 三个弹层入口是同一档控件，彼此按组内 2px 排 */}
+        <div className="flex items-center gap-0.5">
+          <MenuPopover label={qb('alignMenu')} width={232} testId="align">
+            <RefPicker />
+            <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
+          </MenuPopover>
+          <MenuPopover label={qb('distributeMenu')} width={120} testId="distribute">
+            <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
+          </MenuPopover>
+          <MenuPopover label={qb('sizeMenu')} width={120} testId="size">
+            <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
+          </MenuPopover>
+        </div>
+        <GroupSep />
+        <div className="flex items-center gap-0.5">
+          <GroupButtons grouped={grouped} />
+          <MoreButton count={count} />
+        </div>
+      </Bar>
     )
   }
 
   return (
-    <>
+    <Bar>
       {countEl}
-      <Sep />
+      <GroupSep />
       <RefPicker />
-      <Sep />
+      <GroupSep />
       <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-      <Sep />
-      {/* 均匀分布与等宽等高是两件事，中间给一道分隔线（审计 T29） */}
+      {/* 均匀分布与等宽等高是两件事，中间给一道分隔线（审计 T29）；
+          这道线连同左右留白就是组间距的**全部**，外层不再另给一份 */}
+      <GroupSep />
       <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
-      <Sep />
+      <GroupSep />
       <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
+      <GroupSep />
+      <div className="flex items-center gap-0.5">
+        <GroupButtons grouped={grouped} />
+        <MoreButton count={count} />
+      </div>
+    </Bar>
+  )
+}
+
+/**
+ * 这段内容自己的 flex 外壳，`gap-0`。
+ *
+ * 之前这里是个 Fragment，按钮与分隔线直接摊在浮动栏外层的 flex 里，于是组与组
+ * 之间的空白是三份叠出来的：外层 gap ＋ 分隔线自己 ＋ 外层 gap，读起来像「中间
+ * 破了个洞」。包一层之后外层 gap 只作用在这个盒子的外面，进不到里面来——
+ * **组间距只剩 `GroupSep` 一份**，组内的 2px 仍由各行（`AlignRow`、收尾按钮那排）
+ * 自己给，两档差距因此是有意的 2px ↔ 一档，而不是无意的累加。
+ */
+function Bar({ children }: { children: ReactNode }) {
+  return <div className="flex min-w-0 items-center gap-0">{children}</div>
+}
+
+/** 组间距的唯一出处：分隔线连同它左右的留白，一起占掉这一份空白 */
+function GroupSep() {
+  return (
+    <span className="mx-1.5 flex items-center">
       <Sep />
-      <GroupButtons grouped={grouped} />
-      <MoreButton count={count} />
-    </>
+    </span>
   )
 }
 

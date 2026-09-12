@@ -95,15 +95,15 @@ test('流程 B+C：曲线首屏（视觉线型选择器）与图例 3×3 位置�
   await expect(panel.getByText('颜色', { exact: true })).toBeVisible()
   await expect(panel.getByText('线宽', { exact: true })).toBeVisible()
   await expect(panel.getByText('线型', { exact: true })).toBeVisible()
-  // 线型是视觉选择器：radio 上是「实线/虚线」的名字 + SVG 预览，不是 "--" 下拉
-  const solid = panel.getByRole('radio', { name: '实线' })
-  await expect(solid).toHaveAttribute('aria-checked', 'true')
+  // 线型是视觉选择器：触发钮上是当前项的名字 + SVG 预览（不是 "--" 这种码），
+  // 展开后每一项是带预览的 radio（Visual Consolidation 把整块网格收成了下拉）
+  // exact：旁边还有一颗「恢复线型」，子串匹配会把两颗都捞进来
+  const lineStyle = panel.getByRole('button', { name: '线型', exact: true })
+  await expect(lineStyle).toContainText('实线')
+  await lineStyle.click()
+  await expect(panel.getByRole('radio', { name: '实线' })).toHaveAttribute('aria-checked', 'true')
   await panel.getByRole('radio', { name: '虚线' }).click()
-  await expect(panel.getByRole('radio', { name: '虚线' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-    { timeout: 15_000 },
-  )
+  await expect(lineStyle).toContainText('虚线', { timeout: 15_000 })
   // marker 选择器在首屏（不需要展开折叠组）
   await expect(panel.getByText('标记', { exact: true })).toBeVisible()
 
@@ -138,18 +138,36 @@ test('流程 C2：图例放到子图外面（外侧锚点），检查随即报�
 
   await rightTop.click()
   await expect(rightTop).toHaveAttribute('aria-checked', 'true', { timeout: 15_000 })
-  // 锚点那两个数字是父容器分数坐标：1.02 = 子图右边缘往外 2%
+  // 锚点那两个数字是父容器分数坐标：1.02 = 子图右边缘往外 2%。
+  // 它们默认收在「锚点」折叠里（Visual Consolidation）：先展开再读值——
+  // `getByRole` 只认可访问树，hidden 的输入框对它等于不存在。
+  const refine = panel.getByRole('button', { name: '锚点', exact: true })
+  await expect(refine).toHaveAttribute('aria-expanded', 'false')
+  await refine.click()
   await expect(panel.getByRole('textbox', { name: /锚点 x/ })).toHaveValue('1.02')
   await expect(panel.getByText(/可能超出图幅/)).toBeVisible()
 
   // **真的跑到图幅外面了**：预检的 element-outside-figure 报出来（审计 T14）。
   // 这一条是 jsdom 量不到的那半——它要真的渲染一遍、真的量元素的框。
-  await expect(panel.getByText(/有元素超出图幅/)).toBeVisible({ timeout: 30_000 })
+  // 报在**问题面板**里：Visual Consolidation 撤掉了检查器里就地的 ElementIssueNote，
+  // 问题面板是全产品唯一的清单（ADR 0030）。从常驻轨道进，与检查器同屏。
+  const rail = page.locator('[data-rail="problems"]')
+  await rail.focus()
+  await page.keyboard.press('Enter')
+  const problems = page.getByRole('complementary', { name: /问题|Problems/ })
+  await expect(problems).toBeVisible()
+  // **只认图例那一行**：清单是全文档的，别的元素（这台机器的 matplotlib 排出来的
+  // x 轴标题就差 1.87 mm 出界）也可能在同一组里，按组名判会把它们的问题算成图例的。
+  // 行的锚点是 `data-issue-row` + `data-issue-rule`；主语那个 span 恰好只写「图例」。
+  const legendOutside = problems
+    .locator('[data-issue-row][data-issue-rule="element-outside-figure"]')
+    .filter({ has: page.locator('span', { hasText: /^图例$/ }) })
+  await expect(legendOutside).toHaveCount(1, { timeout: 30_000 })
 
-  // 点回九宫格 = 回到子图内侧：那句提示与超出图幅的问题一起消失
+  // 点回九宫格 = 回到子图内侧：那句提示与图例超出图幅的问题一起消失
   await panel.getByRole('radio', { name: '左上' }).click()
   await expect(panel.getByText(/可能超出图幅/)).toHaveCount(0)
-  await expect(panel.getByText(/有元素超出图幅/)).toHaveCount(0, { timeout: 30_000 })
+  await expect(legendOutside).toHaveCount(0, { timeout: 30_000 })
 })
 
 test('1366×768：左树、画布与属性栏三者共存', async ({ app, page }) => {

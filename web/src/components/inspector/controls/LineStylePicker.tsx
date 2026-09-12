@@ -1,3 +1,7 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { t as translate } from '@/i18n'
 import { optionLabel } from '../roles/registry'
 import { OptionGrid, type GridOption } from './OptionGrid'
@@ -33,7 +37,7 @@ function LinePreview({ style }: { style: string }) {
         x2="33"
         y2="5"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="1.5"
         strokeLinecap={style === ':' ? 'round' : 'butt'}
         strokeDasharray={known ? DASH[style] : '4 2 1 2 1 2'}
       />
@@ -74,13 +78,82 @@ export function LineStylePicker({
     preview: <LinePreview style={o} />,
     code: o,
   }))
+  const current = value === null ? undefined : grid.find((o) => o.value === value)
+
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listId = useId()
+
+  // 点外面 / Esc 收起；Esc 把焦点还给触发按钮
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  const pick = (v: string) => {
+    onChange(v)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
   return (
-    <OptionGrid
-      value={value}
-      options={grid}
-      onChange={onChange}
-      columns={Math.min(4, grid.length)}
-      ariaLabel={ariaLabel}
-    />
+    <div ref={rootRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-7 w-full items-center gap-2 rounded-sm border border-border bg-surface px-2 text-left text-sm text-ink hover:border-border-strong focus-visible:focus-ring"
+      >
+        {current ? (
+          <>
+            <LinePreview style={current.value} />
+            <span className="min-w-0 flex-1 truncate">{current.label}</span>
+          </>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-ink-3">
+            {translate('mixed', { ns: 'common' })}
+          </span>
+        )}
+        {/* 下拉的记号只有 chevron-down（Design Constitution 第四节）：展开时转到朝上 */}
+        <ChevronDown
+          size={ICON_SIZE.xs}
+          aria-hidden
+          className={cn('shrink-0 text-ink-3 transition-transform duration-fast', open && 'rotate-180')}
+        />
+      </button>
+      {open && (
+        <div
+          id={listId}
+          className="absolute left-0 top-full z-50 mt-1 min-w-full animate-pop-in rounded-md border border-border bg-surface p-1 shadow-pop"
+        >
+          <OptionGrid
+            value={value}
+            options={grid}
+            onChange={pick}
+            columns={1}
+            ariaLabel={ariaLabel}
+          />
+        </div>
+      )}
+    </div>
   )
 }

@@ -30,7 +30,7 @@ export function labeledWithState(label: string, overridden?: boolean): ReactNode
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${translate('element.modified', { ns: 'inspector' })}` : label}
     >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && (
         <span className="sr-only">{translate('element.modified', { ns: 'inspector' })}</span>
@@ -86,8 +86,15 @@ export function StyleToggle({
         aria-pressed={state === 'mixed' ? 'mixed' : state === 'on'}
         aria-label={name}
         onClick={onClick}
-        // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
-        className="relative"
+        className={cn(
+          // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
+          'relative',
+          // 按下时字形自己跟着变重：B 真的加粗。状态不只写在底色上——
+          // 图标就是它所描述的那件事，低对比屏与色觉差异下也读得出来。
+          // 文字子节点走 font-bold，lucide 图标走 stroke-width（CSS 覆盖
+          // SVG 的表现属性），按钮尺寸由 icon-sm 固定，不会因此位移。
+          state === 'on' && 'font-bold [&_svg]:[stroke-width:2.5]',
+        )}
       >
         {children}
         {state === 'mixed' && (
@@ -188,7 +195,7 @@ export function FontSizeRow({
   onChange: (v: number) => void
   onScrubStart?: () => void
   onScrubEnd?: () => void
-  labelWidth?: number
+  labelWidth?: number | 'auto'
   overridden?: boolean
   onReset?: () => void
   /** 字形按钮（B / I / U / 上下标）跟在字号后面 */
@@ -198,7 +205,8 @@ export function FontSizeRow({
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
       <NumberField
-        className="w-[74px] shrink-0"
+        fill
+        className="w-[76px] shrink-0"
         dataProp="fontsize"
         ariaLabel={label}
         value={value}
@@ -207,7 +215,7 @@ export function FontSizeRow({
         max={max}
         step={step}
         precision={1}
-        suffix={suffix}
+        unit={suffix}
         onChange={onChange}
         onScrubStart={onScrubStart}
         onScrubEnd={onScrubEnd}

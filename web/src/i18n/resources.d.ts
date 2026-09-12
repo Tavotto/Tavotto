@@ -129,6 +129,7 @@ export default interface Resources {
   "common": {
     "actions": {
       "cancel": "取消",
+      "clearSearch": "清除搜索",
       "close": "关闭",
       "continue": "继续",
       "copy": "复制",
@@ -138,7 +139,6 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
-      "hex": "{{label}}：十六进制值",
       "picker": "{{label}}：取色盘"
     },
     "count": {
@@ -309,11 +309,9 @@ export default interface Resources {
       "nameLabel": "文档名",
       "namePlaceholder": "文档名",
       "nameTaken": "这个名字已经有一份文档了；继续会覆盖它。",
-      "openDescription": "换成项目里另一份命名文档；当前文档已自动保存在本机",
       "openTitle": "打开文档",
       "overwrite": "仍然覆盖",
       "saveAs": "另存为",
-      "saveDescription": "把当前文档（含它的全部画布）另存成项目里的一份命名文档",
       "saveTitle": "另存为文档",
       "saved": "已另存为文档：{{name}}",
       "savesInto": "保存到 {{dir}}",
@@ -347,8 +345,7 @@ export default interface Resources {
       "approving": "正在连接…",
       "argCount_other": "{{count}} 个（参数值不经过这个窗口）",
       "cancel": "取消",
-      "description": "这条命令还没有开始运行——你确认之后才会。",
-      "descriptionQueued": "这条命令还没有开始运行——你确认之后才会。还有 {{queued}} 条在排队。",
+      "descriptionQueued": "还有 {{queued}} 条在排队。",
       "fields": {
         "args": "参数",
         "cwd": "工作目录",
@@ -360,7 +357,6 @@ export default interface Resources {
       "permissionNotice": "此模式使用项目自己的 Python。脚本拥有与你在终端中直接运行时相同的文件权限。Tavotto 只接管当前 Python 进程中的 Matplotlib Figure。仅运行你信任的代码。",
       "pythonVersion": "Python {{version}}",
       "remember": "记住此项目和此 Python",
-      "rememberHint": "下次同一个图库配同一个解释器就不再询问。解释器换了、图库移动了、或者权限规则升级之后会重新询问；随时可以在设置里撤销。",
       "targetKind": {
         "module": "模块",
         "script": "脚本"
@@ -815,7 +811,6 @@ export default interface Resources {
       "duplicate": "复制一份",
       "duplicateToEdit": "复制一份再修改",
       "empty": "还没有配置",
-      "emptyHint": "清单里一条都没有。可以从文件导入一份配置。",
       "export": "导出为文件",
       "field": {
         "annotationFont": "标注字号",
@@ -837,7 +832,6 @@ export default interface Resources {
         "widthTolerance": "宽度容差"
       },
       "follow": "跟随更新",
-      "followDesc": "默认不跟随：项目按选中那一刻的规则算",
       "group": {
         "fonts": "字号",
         "lines": "线条",
@@ -848,9 +842,10 @@ export default interface Resources {
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
-      "kind": {
-        "specHint": "规范决定图要满足什么：字号下限、栏宽、最低分辨率。只用于检查，不会改动你的图。",
-        "styleHint": "样式决定图长什么样：字号、字体、线宽、刻度、图例、背景。应用到图上是一次可撤销的修改。"
+      "keyRules": "关键要求",
+      "library": {
+        "spec": "规范库",
+        "style": "样式库"
       },
       "name": "名称",
       "new": "新建",
@@ -860,7 +855,6 @@ export default interface Resources {
         "user": "自定义"
       },
       "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
-      "previewHint": "示例图按上面的字段现算，字号与线宽的比例和真图一致；真图里有哪些元素以图为准。",
       "previewTitle": "示例",
       "readOnlyBadge": "只读",
       "readOnlyBuiltinBadge": "内置 · 只读",
@@ -869,7 +863,6 @@ export default interface Resources {
       "restoreConfirm": "恢复",
       "restoreNeedsOrigin": "这条不是从内置复制来的，没有可恢复的默认值",
       "restoreTitle": "把「{{name}}」恢复成默认值？",
-      "ruleLine": "检查 {{expect}}，否则记为{{severity}}",
       "save": "保存",
       "saved": "已保存「{{name}}」",
       "snapshotHint": "项目里存着选中那一刻的规则快照。全局清单里同名的那套后来改了也不影响这些数，除非打开「跟随更新」。",
@@ -885,19 +878,10 @@ export default interface Resources {
     },
     "readiness": {
       "addToCanvas": "添加到画布",
-      "allEditable_other": "{{count}} 张图都可以编辑。",
+      "allEditable_other": "{{count}} 张图已就绪",
       "allScriptsHint": "项目里的每个 .py 都在这里，包括那些只看脚本看不出会画出哪张图的。任选一个「试运行」，Tavotto 按它真实画出来的图建立关系。",
       "allScriptsTitle": "全部脚本（{{n}}）",
       "autoLink": "自动连接",
-      "detail": {
-        "candidates": "候选脚本",
-        "cost": "运行成本",
-        "entry": "入口函数",
-        "reasonCode": "状态代码",
-        "scope": "候选范围",
-        "script": "源脚本",
-        "stem": "图名"
-      },
       "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
       "emptyTitle": "这个项目里还没有图",
       "group": {
@@ -915,6 +899,7 @@ export default interface Resources {
       "manualPick": "从项目里挑",
       "manualPickAria": "从项目已有的图名里挑一个给 {{script}}",
       "manualPlaceholder": "图名（去掉扩展名），多个用逗号分隔",
+      "moreAria": "{{name}} 的更多操作",
       "none": "—",
       "nothingNew": "扫描完成，没有发现新的可连接脚本",
       "orphanConflicts": "这些图名有不止一个脚本声称生成：{{stems}}。项目里还没有对应的图文件，可以在下面的「全部脚本」里指定。",
@@ -948,7 +933,6 @@ export default interface Resources {
         "pending": "待连接",
         "total": "总计"
       },
-      "technicalDetails": "技术详情",
       "title": "项目接入状态",
       "useScript": "用 {{script}}",
       "write": "写入"
@@ -970,9 +954,6 @@ export default interface Resources {
       "cancelPaste": "取消粘贴",
       "confirmDoc": "重新链接所选素材",
       "confirmPaste": "按上述处置粘贴",
-      "descDoc": "文档引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
-      "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
-      "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
       "keepMissing": "保持缺失",
       "refCount_other": "（{{count}} 个面板引用）",
       "selectAria": "为 {{name}} 选择替代素材",
@@ -1007,44 +988,44 @@ export default interface Resources {
         "exporting": "正在生成…",
         "licenseAfter": "。",
         "licenseBefore": "自由软件，以 AGPL-3.0-only 发布 ——",
-        "privacy": "所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的 Codex / Claude 命令行工具。对外请求只有两条：检查更新（可在「更新」分区关闭），以及这份默认关闭、需要你显式同意的匿名用量统计。",
+        "privacy": "所有数据与渲染都在本机完成；对外请求只有检查更新和这份需你手动开启的匿名统计。",
         "privacyTitle": "隐私与数据",
         "source": "获取源代码",
         "tagline": "论文图排版与参数化图表编辑",
         "telemetry": {
-          "autoProps": "每一条记录都带：应用版本、操作系统、CPU 架构、安装渠道（桌面版 / pipx / pip / 源码）。刻意不带主机名、用户名、Python 路径、界面语言、时区与屏幕尺寸。",
+          "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
           "detailsTitle": "会发送哪些数据",
-          "hardDisabled": "本机已由 TAVOTTO_NO_TELEMETRY=1 关闭，这里的开关不生效。",
+          "hardDisabled": "本机已由 TAVOTTO_NO_TELEMETRY=1 关闭，此开关无效。",
           "needsReconsent": "采集范围有变化，待重新确认",
-          "never": "图、脚本、文件名、路径、科研数据、图内文字、改图助手的提示词。",
+          "never": "图、脚本、文件名、路径、科研数据、图内文字与助手提示词。",
           "neverLabel": "绝不发送：",
           "optIn": "开启",
           "optOut": "关闭",
           "policy": "隐私政策",
           "sends": {
-            "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他（提示词、脚本、会话内容都不发）。",
-            "app_started": "应用启动：这一次是桌面版还是浏览器版。",
-            "canvas_created": "新建画布：空白、来自项目，还是复制现有画布。",
-            "context_bar_multi_used": "多选浮动栏上按了哪一类按钮、当时选中的对象数落在哪一档。",
-            "document_saved": "文档写盘：手动保存还是自动保存、结果是成功 / 冲突 / 失败。",
-            "export_completed": "导出成功：有没有 PDF、有没有 PNG、有没有留档报告、这一次导了几张图。",
-            "figure_edit_completed": "完成一次编辑：改的是哪一类（文字 / 数据系列 / 坐标轴 / 标注 / 排版 / 样式 / 其他）、这一次含几处改动。",
-            "figure_opened": "进入某张图的图内编辑：这张图是 PDF 还是位图、能不能改。",
-            "package_action": "受管环境的包操作：装 / 更新 / 卸载，结果是成功 / 失败 / 取消（不含包名）。",
-            "preflight_completed": "检查跑完：错误、警告、无法核实、建议各几条，整体过没过。",
-            "project_readiness_opened": "打开项目接入状态：从哪个入口进来、整体落在哪一档（全部可编辑 / 部分 / 只能排版）。",
-            "project_refresh_completed": "项目刷新成功：从哪个入口触发（文件监视 / 手动 / Codex / 改图助手）、变化条数落在哪一档。",
-            "recovery_action": "崩溃恢复横幅上选了「恢复」还是「保留当前」。",
-            "telemetry_enabled": "第一次打开匿名统计：是在首启询问里打开的，还是在设置页打开的。",
-            "tutorial_completed": "教程走完：教程流程的版本号。",
-            "tutorial_started": "教程开始：从哪个入口进来、教程流程的版本号。",
-            "tutorial_step_completed": "教程完成一步：是十个固定步骤里的哪一步、流程版本号（跳过的步骤不记）。",
-            "update_completed": "更新装完：走的哪条通道（桌面 / pip / pipx）、装到了哪个版本号。"
+            "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",
+            "app_started": "应用启动：桌面版还是浏览器版。",
+            "canvas_created": "新建画布：空白、来自项目还是复制。",
+            "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
+            "document_saved": "文档保存：手动还是自动、结果如何。",
+            "export_completed": "导出完成：格式、是否带报告、图的数量。",
+            "figure_edit_completed": "完成编辑：改动类别与数量。",
+            "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
+            "package_action": "包操作：类型与结果，不含包名。",
+            "preflight_completed": "预检完成：各级问题数与是否通过。",
+            "project_readiness_opened": "打开接入状态：入口与可编辑档位。",
+            "project_refresh_completed": "项目刷新：入口与变化数量档位。",
+            "recovery_action": "崩溃恢复：选了恢复还是保留。",
+            "telemetry_enabled": "首次开启统计：来自首启询问还是设置页。",
+            "tutorial_completed": "教程完成：流程版本号。",
+            "tutorial_started": "教程开始：入口与流程版本号。",
+            "tutorial_step_completed": "教程完成一步：步骤编号与流程版本号。",
+            "update_completed": "更新完成：通道（桌面 / pip / pipx）与版本号。"
           },
-          "sendsAfter": "（否则算不出「一周后还在不在用」），与任何账号无关，也不含硬件序列号、MAC 地址这类能唯一指认某台设备的标识。",
-          "sendsBefore": "标识是本机随机生成的一串 UUID，",
-          "sendsPersist": "多次启动之间保持不变",
-          "summary": "仅在你明确开启后发送匿名功能使用情况，不发送图、脚本、文件名、路径、科研数据或提示词。",
+          "sendsAfter": "的 UUID，不关联账号或设备硬件。",
+          "sendsBefore": "标识是本机随机生成、",
+          "sendsPersist": "跨启动不变",
+          "summary": "开启后只发送匿名的功能使用情况，不含图、脚本、路径、科研数据或提示词。",
           "title": "匿名用量统计",
           "toggle": "分享匿名用量统计",
           "unset": "尚未选择"
@@ -1111,8 +1092,7 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "defaultAgent": "默认 Agent",
-        "defaultAgentAria": "默认编码 Agent",
+        "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
           "advanced": "高级设置",
@@ -1198,7 +1178,6 @@ export default interface Resources {
         },
         "lastChecked": "最近检测 {{time}}",
         "noUsableAgent": "未检测到可用的编码 Agent。装好任意一个之后点「重新检测」。",
-        "noUsableAgentShort": "暂无可用",
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -1207,6 +1186,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败，下面仍是上一次的结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
+        "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "common_location": "常见安装位置",
@@ -1242,9 +1222,8 @@ export default interface Resources {
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
         "dragCompanions": "拖动时一同移动关联对象",
-        "dragCompanionsHint": "手动摆过的标题、轴标签、图例",
+        "dragCompanionsDesc": "标题、图例等手动摆过位置的对象随子图一起移动",
         "more": "画布设置",
-        "moreScope": "网格、吸附、标尺与安全区域",
         "openCanvasSettings": "打开画布设置"
       },
       "copied": "已复制",
@@ -1267,32 +1246,38 @@ export default interface Resources {
         "previewNote": "以下是将要复制的内容（密钥与个人路径已脱敏），请过目后再复制。",
         "refetch": "重新获取",
         "reportTitle": "诊断报告",
-        "scopeNote": "这里只检查运行环境（Python、渲染引擎、项目目录）。图本身合不合规范由「问题」面板检查，两者互不代表。",
         "summaryFailing": "{{count}} 项异常",
         "summaryOk": "运行环境检查通过"
       },
       "export": {
         "defaultFormats": "默认格式",
+        "formatsDesc": "导出对话框打开时预选这些格式",
         "ppiNotForVector": "只选了矢量格式，分辨率不生效",
-        "reportScope": "记录本次尺寸、样式和检查结果"
+        "sectionChecks": "检查",
+        "sectionFormats": "格式",
+        "sectionRaster": "位图输出"
       },
       "general": {
         "autosave": "自动保存",
-        "autosaveNamedCopy": "命名副本用「保存为画布文件」",
         "autosaveState": "编辑停顿后自动写入本机",
         "language": "界面语言",
         "layout": "界面布局",
         "layoutReset": "界面布局已重置，刷新页面后生效",
-        "resetLayout": "恢复界面默认布局",
-        "resetLayoutScope": "侧栏宽度、吸附等界面偏好回到默认"
+        "resetLayout": "恢复界面默认布局"
       },
       "helpAbout": "关于{{label}}",
+      "navGroup": {
+        "general": "通用",
+        "integrations": "集成",
+        "system": "系统",
+        "workflow": "工作流"
+      },
       "navLabel": "设置分区",
       "packages": {
         "builtinEmpty": "没有内置包信息。",
         "builtinFromBundled": "随 {{product}} 安装包附带，只读。",
         "builtinFromManaged": "随 {{product}} 环境提供，只读。",
-        "builtinPlanned": "创建环境时会装上 matplotlib 及其依赖。",
+        "builtinPlanned": "创建环境时安装 matplotlib 及其依赖。",
         "builtinTitle": "内置包",
         "builtinTitleCount": "内置包（{{count}} 个，只读）",
         "col": {
@@ -1303,19 +1288,19 @@ export default interface Resources {
         },
         "confirm": {
           "uninstallAction": "卸载",
-          "uninstallBody": "会从这个项目的 Tavotto 环境里移除它。用到它的脚本将无法渲染，直到重新安装。",
-          "uninstallBodyDependents": "{{dependents}} 依赖 {{name}}。卸载后它们也会不可用，用到的脚本将无法渲染。",
+          "uninstallBody": "将从项目环境中移除，用到它的脚本无法渲染。",
+          "uninstallBodyDependents": "{{dependents}} 依赖 {{name}}，卸载后它们与相关脚本都将不可用。",
           "uninstallTitle": "卸载 {{name}}？"
         },
         "disabled": {
-          "noBasePython": "这台机器上没有可以用来创建环境的 Python（需要 3.10 以上）。请先安装 Python，再回到这里。",
+          "noBasePython": "没有找到可用的 Python（需要 3.10 以上），请先安装。",
           "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
           "other": "包管理暂时不可用。"
         },
         "env": {
           "inUse": "本项目正在使用",
-          "incomplete": "未完成（下次操作前会重建）",
-          "notCreated": "尚未创建——第一次安装时会自动创建",
+          "incomplete": "未完成，下次操作前重建",
+          "notCreated": "尚未创建，首次安装时自动创建",
           "notInUse": "本项目当前未使用它",
           "python": "Python {{version}}",
           "ready": "就绪",
@@ -1326,7 +1311,7 @@ export default interface Resources {
         "install": "安装",
         "job": {
           "cancel": "取消",
-          "cancelled": "已取消{{op}} {{name}}。环境已标记为未完成，下次操作前会重建。",
+          "cancelled": "已取消{{op}} {{name}}，环境将在下次操作前重建。",
           "copyLog": "复制日志",
           "creating_env": "正在创建 Tavotto 环境…",
           "dismiss": "关闭",
@@ -1336,14 +1321,14 @@ export default interface Resources {
           "log": "详细日志",
           "preparing": "正在准备{{op}} {{name}}…",
           "progressAria": "包操作进度",
-          "verifying": "正在验证环境仍可渲染…"
+          "verifying": "正在验证环境…"
         },
         "loading": "正在读取…",
         "network": {
           "customIndex": "使用自定义软件源",
           "proxy": "当前走代理"
         },
-        "networkNote": "安装与升级需要联网下载。",
+        "networkNote": "安装、升级与查找会联网访问 PyPI 或你配置的软件源。",
         "op": {
           "install": "安装",
           "uninstall": "卸载",
@@ -1355,37 +1340,37 @@ export default interface Resources {
           "repair": "缺包时自动修复安装",
           "user": "手动安装"
         },
-        "recoveryNote": "装坏了可以「重建」：按账上记录的包，在一个新建的环境里重装一遍。",
+        "recoveryNote": "装坏了点「重建」：新建环境并按记录重装所有包。",
         "reinstall": "重新安装",
         "search": {
           "action": "在 PyPI 查找",
-          "alreadyInstalled": "这个环境里已经装了 {{version}}。",
+          "alreadyInstalled": "已安装 {{version}}。",
           "builtinTitleMatch": "内置包（匹配 {{count}} 个，共 {{total}} 个，只读）",
-          "exactOnly": "只按完整包名查找：软件源没有全文搜索，我们也不会猜相近的名字。",
+          "exactOnly": "只按完整包名查找，不猜相近的名字。",
           "failed": "没有查到 {{name}}。",
-          "installHere": "安装到这个项目的环境",
+          "installHere": "安装到此环境",
           "latest": "最新版 {{version}}",
           "latestOption": "最新版（{{version}}）",
           "loading": "正在查找 {{name}}…",
           "networkNote": "查找会访问 PyPI 或你配置的软件源。",
           "noMatch": "已装的包里没有匹配「{{term}}」的。",
-          "privacyDetail": "只有你点「在 PyPI 查找」时才会发出那个请求；在输入框里打字只在本地过滤已经装上的包，不出网。",
+          "privacyDetail": "只有点「在 PyPI 查找」才出网，输入框里打字只在本地过滤。",
           "source": {
-            "custom_index": "答案来自你配置的软件源。",
-            "pypi": "答案来自官方 PyPI。",
-            "unknown": "问不出这个环境用的是哪个软件源。"
+            "custom_index": "来自你配置的软件源。",
+            "pypi": "来自官方 PyPI。",
+            "unknown": "无法确定软件源。"
           },
           "versionAria": "{{name}} 的版本"
         },
-        "snapshotDetail": "包操作本身没有回滚（pip 没有事务）。每次改动前后各存一份 pip freeze 作对照（现有 {{count}} 份）——它只是排障时的证据，「重建」不读它，重建依据的是账上记录的包与版本。",
+        "snapshotDetail": "包操作无法回滚；每次改动前后各存一份 pip freeze 仅供排障（现有 {{count}} 份），重建不依赖它。",
         "specAria": "包名或规范（同时过滤下面的清单）",
-        "specInvalid": "只接受「包名」或「包名>=版本」这样的写法，不接受空格、路径、地址或选项。",
-        "specPlaceholder": "包名或规范，例如 lmfit 或 lmfit>=1.3",
+        "specInvalid": "只接受「包名」或「包名>=版本」。",
+        "specPlaceholder": "例如 lmfit 或 lmfit>=1.3",
         "status": {
           "changed": "版本已变化",
           "changedDetail": "安装时是 {{recorded}}",
           "installed": "已安装",
-          "missing": "环境里不见了",
+          "missing": "缺失",
           "planned": "创建时安装",
           "unknown": "未知"
         },
@@ -1394,21 +1379,18 @@ export default interface Resources {
         "uninstallAria": "卸载 {{name}}",
         "update": "升级",
         "updateAria": "升级 {{name}}",
-        "userEmpty": "还没有在这个环境里安装过包。",
+        "userEmpty": "还没有安装过包。",
         "userTitle": "用户安装"
       },
       "project": {
         "allowWriteBack": "允许写回原始文件",
-        "allowWriteBackScope": "只管写回；画布编辑与导出不受影响",
         "backupDir": "原始文件备份",
-        "backupDirScope": "写回前先把原件复制到这里",
         "chooseFolder": "选择…",
         "copyPath": "复制 {{name}} 的完整路径",
         "current": "当前项目",
         "dirPlaceholder": "留空使用默认位置",
         "effectivePath": "实际位置",
         "exportDir": "导出位置",
-        "exportDirScope": "导出的图默认写到这里",
         "noScriptsSuffix": "（这个项目里的图还不能逐元素编辑）",
         "registry": "管理来源…",
         "scriptCount_other": "{{count}} 个脚本",
@@ -1416,7 +1398,8 @@ export default interface Resources {
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。"
+        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
+        "writeBackOnHint": "修改可直接写入原始脚本。"
       },
       "section": {
         "about": "关于与隐私",
@@ -1439,11 +1422,9 @@ export default interface Resources {
       },
       "sidebars": {
         "leftPinned": "固定左侧栏",
-        "leftPinnedHint": "选中对象时不让位",
         "pinLimitedMedium": "当前窗口只能固定一侧",
         "pinLimitedNarrow": "当前窗口太窄，固定不生效",
-        "rightPinned": "固定属性栏",
-        "rightPinnedHint": "取消选择后不收起"
+        "rightPinned": "固定属性栏"
       },
       "techDetails": "技术详情",
       "title": "设置",
@@ -1453,23 +1434,14 @@ export default interface Resources {
         "reset": "重置教程项目",
         "resetAction": "重置",
         "resetHints": "重新显示操作提示",
-        "resetScope": "示例项目回到初始状态，你在它里面的修改会丢失",
         "restart": "再看一遍教程",
         "resume": "继续教程",
-        "start": "开始教程",
-        "state": {
-          "active": "进行中",
-          "completed": "已完成",
-          "not_started": "未开始",
-          "paused": "已暂停",
-          "skipped": "已跳过"
-        }
+        "start": "开始教程"
       },
       "update": {
         "applyFailedRetry": "升级没有完成，当前版本没有改变。可以再点一次「下载并升级」，或按下面的日志排查。",
         "autoCheck": "自动检查",
         "autoCheckAria": "每天自动检查更新",
-        "autoCheckHint": "每天一次，关掉后不会有任何联网请求",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版；关掉自动检查后不会有任何联网请求。",
         "check": "检查更新",
@@ -1514,7 +1486,7 @@ export default interface Resources {
       "deleteBody": "删除后无法找回（已应用到文档的修改不受影响）。",
       "deleteStyleAria": "删除样式 {{name}}",
       "deleteTitle": "删除样式「{{name}}」？",
-      "description": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件",
+      "description": "将排版规格存为命名样式并批量应用到面板，只改图不改源文件。",
       "descriptionEmpty": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件",
       "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
       "emptyDraft": "空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，删掉不想统一的项后保存。",
@@ -1630,11 +1602,9 @@ export default interface Resources {
       },
       "drawerLabel": "文档版本",
       "duplicate": "复制版本",
-      "emptyHint": "点「存版本」留一个自己命名的版本；编辑几分钟后也会自动存一版。",
       "emptyTitle": "还没有版本",
       "fromCanvas": "来自画布「{{name}}」",
       "fromUnknownCanvas": "旧检查点，不知道来自哪张画布",
-      "intro": "这份文档的自动保存版本；恢复会先把当前状态存成一版，可撤销，不改动任何源文件。",
       "keep": "保留",
       "keepTitle": "自动检查点会滚动清理；转正后按手动版本保留",
       "listLabel": "版本列表",
@@ -1831,9 +1801,8 @@ export default interface Resources {
       "autoInstallHintAfter": "。首次需要下载几十 MB。",
       "autoInstallHintBefore": "会在 Tavotto 自己的目录里建一个独立环境并装上 matplotlib，",
       "autoInstallHintStrong": "不会改动你现有的任何 Python 环境",
-      "bundledHint": "常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）已随 Tavotto 一起安装，不需要你另外装 Python，首次渲染也不联网。",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，安装后把 Tavotto 的安装目录加入白名单。",
-      "incompleteBefore": "Tavotto 自带的渲染环境",
+      "incompleteBefore": "Tavotto 渲染环境",
       "incompleteHint": "排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
       "incompleteInvalid": "已损坏",
       "incompleteMissing": "不见了",
@@ -1843,12 +1812,8 @@ export default interface Resources {
       "managedEnvInstalled": "已安装：{{packages}}",
       "managedEnvRebuild": "重建 Tavotto 环境",
       "managedEnvUsing": "这个项目的 {{product}} 环境：Python {{version}}",
-      "matplotlibVersion": "matplotlib {{version}}",
       "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
-      "missingModuleBody": "Tavotto 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
-      "missingModuleNoteAfter": "。",
-      "missingModuleNoteBefore": "Tavotto 只是启动它来渲染，",
-      "missingModuleNoteStrong": "不会往里面安装任何东西",
+      "missingModuleBody": "这个脚本涉及到额外的 Python 包，切换到你常用的 Python 或 Conda 环境即可。",
       "missingModulePackage": "这个包",
       "missingModuleTitle": "渲染环境里没有 {{module}}",
       "missingTitle": "尚未配置渲染环境",
@@ -1857,7 +1822,7 @@ export default interface Resources {
       "noPythonLink": "Python 3.10 以上",
       "okTitle": "渲染环境",
       "pathAria": "渲染解释器路径",
-      "pathPlaceholder": "/path/to/python 或 conda 环境里的 python",
+      "pathPlaceholder": "/path/to/python",
       "projectEnvAlsoMissing": "找到了项目环境 {{venv}}，但它里面也没有 {{module}}。",
       "projectEnvNoMatplotlib": "找到了项目环境 {{venv}}，但它导入不了 matplotlib——它不是一个可用的绘图环境。",
       "projectEnvNotFound": "内置环境里没有 {{module}}，这个项目附近也没有找到可用的 Python 虚拟环境。",
@@ -1919,9 +1884,9 @@ export default interface Resources {
       },
       "repairExhausted": "这个脚本的自动依赖修复次数已经用完。剩下的依赖请在终端里装，或换一个已经装好的 Python 环境。",
       "repairFailed": "安装没有完成",
+      "repairInstallToManaged": "将 {{module}} 安装到 {{product}} 环境",
       "repairInstallToProject": "安装到项目环境",
       "repairInstalling": "正在安装 {{module}}…",
-      "repairManagedHint": "不动你已有的环境",
       "repairModifiesEnv": "这会修改这个项目现有的 Python 环境。",
       "repairNeedsNetwork": "需要联网下载",
       "repairPackageAria": "要安装的包名",
@@ -1937,14 +1902,14 @@ export default interface Resources {
       "repairTitle": "这个项目还缺少 {{module}}",
       "repairUnresolved": "Tavotto 无法确定「{{module}}」对应哪个安装包，所以不会替你安装。你可以自己指定安装包，或者换一个已经装好它的 Python 环境。",
       "repairUseManaged": "安装到 Tavotto 环境",
-      "repairUseOtherPython": "或者换一个已经装好它的 Python 环境（只对这个项目生效）",
+      "repairUseOtherPythonShort": "或者使用你已有的 Python 环境",
       "repairUseProjectEnv": "安装到项目环境",
       "repairUseSystemPython": "改用这台机器上已有的环境",
       "repairVerifying": "正在验证…",
       "repairWillInstall": "将安装：{{requirement}}",
       "setPythonFailed": "设置失败",
       "sourceLabel": {
-        "bundled": "{{product}} 自带的渲染环境",
+        "bundled": "{{product}} 渲染环境",
         "configured": "你指定的环境",
         "current_process": "Tavotto 自身的解释器",
         "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
@@ -1964,11 +1929,11 @@ export default interface Resources {
       "workdirConfirmOk": "在脚本目录里运行",
       "workdirConfirmTitle": "改为在脚本目录里运行？",
       "workdirHintProject": "脚本在自己所在的目录里运行：相对路径读得到数据；它用相对路径写出的文件会落进项目目录，已有的同名文件会被改写。删除、改名仍会被拦下。",
-      "workdirHintSandbox": "脚本在 Tavotto 的沙盒目录里运行（默认）：它用相对路径写出的东西不会碰项目目录，但用 exists / glob 找数据的脚本会找不到文件。",
+      "workdirHintSandbox": "打开此开关使用本地环境运行，以提高兼容性。",
       "workdirLabel": "在脚本目录里运行",
       "workdirNowProject": "这个项目的脚本改为在自己的目录里运行，正在重新运行。",
       "workdirNowSandbox": "这个项目的脚本改回在沙盒里运行。",
-      "workdirSuggest": "脚本是不是用相对路径找数据（os.path.exists、glob、ovito 之类）？它现在在 Tavotto 的沙盒目录里运行，那些路径指不到项目里的文件。",
+      "workdirSuggest": "脚本目前在沙盒目录里运行，用相对路径找不到项目里的数据文件。",
       "workdirSuggestButton": "改为在脚本目录里运行"
     },
     "preflight": {
@@ -2041,7 +2006,7 @@ export default interface Resources {
       "failedTitle": "这一次没查成",
       "filterAria": "只看{{label}}（{{count}} 项）",
       "fix": "修复",
-      "fixAll_other": "修复本画布 {{count}} 项",
+      "fixAuto": "全部处理",
       "fixChoose": "修复…",
       "fixFailed": {
         "canvas_missing": "找不到这条问题所在的画布，请先刷新问题列表",
@@ -2053,6 +2018,7 @@ export default interface Resources {
         "double": "改成双栏宽 {{mm}}mm",
         "single": "改成单栏宽 {{mm}}mm"
       },
+      "fixableHere_other": "{{count}} 项可自动处理",
       "fixed_other": "已修复 {{count}} 项（可撤销）",
       "focusFailed": {
         "canvas_missing": "这条问题所在的画布已经不在项目里了",
@@ -2060,7 +2026,7 @@ export default interface Resources {
         "not_editable": "这张图没有连上源脚本，进不了图内编辑——可在项目状态里连接",
         "object_deleted": "这个对象已经被删掉了，请刷新问题列表"
       },
-      "groupFix_other": "修复 {{count}} 项",
+      "groupFixAll": "全部修复",
       "groupObjects_other": "{{count}} 个对象",
       "listLabel": "问题列表",
       "next": "下一项",
@@ -2086,6 +2052,8 @@ export default interface Resources {
         "suggestion": "建议",
         "warn": "警告"
       },
+      "severityLabel": "问题严重程度",
+      "showRest_other": "显示其余 {{count}} 项",
       "subjectArrow": "箭头",
       "subjectElement": "图内元素",
       "subjectObject": "对象",
@@ -2210,7 +2178,7 @@ export default interface Resources {
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
       "pinMembers": "固定选中成员（不随重排）",
-      "refLabel": "参照",
+      "refLabel": "对齐到",
       "refTip": {
         "page": "以整个画布为基准",
         "primary": "以最后选中的那个对象为基准，它自己不动",
@@ -2254,7 +2222,6 @@ export default interface Resources {
       "guideHorizontal": "水平",
       "guideVertical": "垂直",
       "guides": "参考线",
-      "guidesHint": "从标尺往画布里拖即可拉出参考线。",
       "guidesLockedSuffix": " · 已锁定",
       "guidesNone": "无",
       "lock": "锁定",
@@ -2298,7 +2265,6 @@ export default interface Resources {
       "swap": "横竖交换",
       "transparent": "透明",
       "transparentBg": "透明背景",
-      "transparentHint": "导出 PNG 不铺底色，PDF 本身即无背景；画布上的棋盘格只是示意。",
       "viewAids": "查看辅助"
     },
     "closePanel": "关闭右侧面板",
@@ -2343,7 +2309,6 @@ export default interface Resources {
         "topCenter": "上方居中"
       },
       "legendOutsideAria": "图外位置",
-      "legendOutsideBand": "图外",
       "legendOutsideOverflowHint": "放到外面可能超出图幅，检查会提示。",
       "legendPositionWithin": "相对{{label}}",
       "legendPreviewAria": "位置示意：容器边界与图例此刻的落点",
@@ -2405,8 +2370,6 @@ export default interface Resources {
       "editElement": "修改图内元素",
       "editProp": "修改{{label}}",
       "figureSize": "整图 {{w}}×{{h}} mm",
-      "glyphChangeFont": "更换字体",
-      "glyphChangeFontTip": "把焦点移到「字体」一栏，换一个画得出这些字的字体",
       "groupFrame": "边框",
       "groupRange": "范围",
       "groupTicksGrid": "刻度与网格",
@@ -2427,8 +2390,6 @@ export default interface Resources {
       "howWriteBackTitle": "写回原始文件",
       "invert": "反转",
       "invertAria": "反转坐标轴",
-      "issueLocateField": "定位到字段",
-      "issueOpenPanel": "在问题面板查看",
       "keptPrevious": "已保留上一版图像",
       "markerShapeMultiple": "多个形状",
       "markerValueWithShape": "{{value}}（{{shape}}）",
@@ -2866,18 +2827,20 @@ export default interface Resources {
       "ptHint": "原图 {{base}}pt × 缩放 {{scale}}%",
       "ptHintBad": "原图 {{base}}pt × 缩放 {{scale}}%，低于 6pt 出版会看不清",
       "replace": "替换素材",
+      "replaceAction": "选择…",
       "replaceDescription": "位置、尺寸、裁剪、旋转与层级都会保留；图内修改无法跨脚本搬运，会先征求同意再清空。",
       "replaceTip": "保留位置、尺寸、裁剪与层级，只换图源",
       "replaceTitle": "替换素材",
       "resetCrop": "重置裁剪",
       "resetCropTip": "恢复完整画面",
+      "restore": "恢复",
       "rotationTip": "只提供 90° 步进：合成引擎在非 90° 倍数下无法填满目标框",
       "scale": "缩放",
       "scaleTitle": "相对原始大小的绝对百分比：100% = 原始大小。裁剪不改变缩放基准",
       "searchAssets": "搜索文件名…",
       "source": "源文件",
       "sourceAdvanced": "源文件与高级",
-      "sourceHint": "写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。",
+      "sourceHint": "写回会覆盖原始的 PDF/PNG 文件，同时会留下备份，可以恢复。",
       "staleScript": "脚本已更新，进入编辑会自动重建",
       "unknown": "未知"
     },
@@ -3323,7 +3286,6 @@ export default interface Resources {
       "summaryMany_other": "将把 {{count}} 项修改写回 {{panels}} 张图的原始文件",
       "summaryOne_other": "将把 {{count}} 项修改写回「{{stem}}」的原始文件",
       "targetsLabel": "将覆盖 figures 目录里的这些文件",
-      "targetsNote": "同名的 PDF 与 PNG，存在哪个就覆盖哪个。",
       "title": "写回原始文件",
       "topBarMany_other": "写回原始文件：{{count}} 个面板",
       "topBarOne": "写回原始文件：{{stem}}",
@@ -3556,7 +3518,7 @@ export default interface Resources {
       "usedChip": "已使用",
       "usedOnly": "已使用",
       "usedOnlyAria": "只看当前文档已使用的素材",
-      "usedSuffix_other": " · 已用 {{count}} 次",
+      "usedSuffix_other": "已用 {{count}} 次",
       "zoomAlt": "{{name}} 大图预览"
     },
     "autosave": {
@@ -3655,7 +3617,6 @@ export default interface Resources {
     },
     "elementTree": {
       "building": "正在构建图表…",
-      "clearSearch": "清除搜索",
       "collapse": "折叠",
       "count_other": "{{count}} 个元素",
       "exitIsolate": "退出",
@@ -3675,7 +3636,6 @@ export default interface Resources {
       "lockedState": "已锁定",
       "needRender": "「{{name}}」的元素清单需要引擎渲染一次。",
       "noMatch": "没有匹配的元素",
-      "noPanelHint": "带 { } 标记的面板由脚本生成，这里会列出它的全部图内元素。",
       "noPanelTitle": "选中一个可参数化面板",
       "readonly": "只读",
       "rowActions": "{{label}} 的操作",
@@ -3696,15 +3656,7 @@ export default interface Resources {
       "connectSource": "连接源脚本",
       "crumbTitle": "回到画布排版",
       "figureMissing": "项目里找不到 {{name}}",
-      "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
-      "mode": "快速编辑",
-      "originalSize": "原图 {{w}} × {{h}} mm",
-      "sizeAssumed": "假定密度",
-      "sizeAssumedTitle": "这张位图没有写物理密度，毫米尺寸按假定的 {{dpi}} dpi 算。",
-      "sizeStale": "上次已知",
-      "sizeStaleTitle": "源文件此刻不可用，显示的是上一次已知的原图规格。",
-      "sizeUnknown": "尺寸未知",
-      "sizeUnknownTitle": "没有可信的原图尺寸，暂按 {{size}} 处理，请自己确认。"
+      "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。"
     },
     "hints": {
       "fast_edit_entered": "这里的修改会保存到当前 Tavotto 文档，原始文件不动。",
@@ -3806,6 +3758,10 @@ export default interface Resources {
       "zDown": "下移一层",
       "zTop": "置于顶层",
       "zUp": "上移一层"
+    },
+    "hud": {
+      "cursor": "光标",
+      "size": "尺寸"
     },
     "layerTree": {
       "collapseGroup": "折叠组",
@@ -3965,10 +3921,6 @@ export default interface Resources {
     },
     "scripts": {
       "addToCanvas": "添加到画布",
-      "advEntry": "入口候选",
-      "advReason": "状态码",
-      "advStems": "静态识别的输出",
-      "advanced": "高级详情",
       "cancel": "取消",
       "cancelAria": "取消 {{script}} 的运行",
       "cancelledNote": "已取消",
@@ -3978,7 +3930,6 @@ export default interface Resources {
       "copyDiagnostics": "复制诊断",
       "diagnostics": "诊断详情",
       "dropped_other": "还有 {{count}} 张未捕获（显式 savefig 不受限）",
-      "emptyHint": "把绘图脚本放进项目目录即可出现在这里。",
       "emptyTitle": "项目里没有发现 Python 脚本",
       "groupInfra_other": "工具与配置脚本（{{count}}）",
       "group_linked": "已关联",
@@ -4176,7 +4127,9 @@ export default interface Resources {
       "zoomValue": "缩放 {{percent}}%"
     },
     "update": {
-      "banner": "工具已更新，刷新后使用新版本（当前页面仍可继续操作）"
+      "banner": "工具已更新，刷新后使用新版本",
+      "later": "稍后",
+      "title": "工具已更新"
     }
   }
 }

@@ -1,6 +1,7 @@
 {
   "actions": {
     "cancel": "Cancel",
+    "clearSearch": "Clear search",
     "close": "Close",
     "continue": "Continue",
     "copy": "Copy",
@@ -10,7 +11,6 @@
     "save": "Save"
   },
   "colorField": {
-    "hex": "{{label}}: hex value",
     "picker": "{{label}}: colour picker"
   },
   "count": {

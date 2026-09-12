@@ -241,7 +241,8 @@ describe('本地过滤', () => {
     await mount()
     // 首屏那句是短的：这一页首屏只允许一段长文（`settingsDisclosure.test.tsx`
     // 按 30 字数段数），而那一段已经归「装坏了可以重建」
-    expect(textOf()).toContain(pk('search.networkNote'))
+    // 首屏那句是页面级的一句（安装 / 升级 / 查找都会出网），不再单独一句「查找会出网」
+    expect(textOf()).toContain(pk('networkNote'))
     expect(textOf()).not.toContain(pk('search.privacyDetail'))
 
     const tech = buttons().find(

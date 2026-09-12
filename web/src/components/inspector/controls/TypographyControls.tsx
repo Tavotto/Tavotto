@@ -41,12 +41,12 @@ const tb = (key: string, values?: Record<string, unknown>) =>
 export function TypographyControls({
   adapter,
   className,
-  labelWidth = 72,
+  labelWidth = 48,
   sizeRowExtra,
 }: {
   adapter: TypographyAdapter
   className?: string
-  /** 标签列宽：属性页 72（与 FieldRow 对齐），快捷编辑弹层可传 44 */
+  /** 标签列宽：默认 48（两字标签后留一小段间距即贴上控件），快捷编辑弹层可传 44 */
   labelWidth?: number
   /**
    * 跟在 B / I 后面的额外按钮（画布文字的下划线 / 上标 / 下标）。
@@ -77,8 +77,10 @@ export function TypographyControls({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
+      {(family || size) && (
+      <div className="flex gap-2">
       {family && (
-        <Anchor adapter={adapter} prop="fontFamily">
+        <Anchor adapter={adapter} prop="fontFamily" className="min-w-0 flex-1">
           <FontFamilyRow
             labelWidth={labelWidth}
             value={String(displayValueOf(familyVal) ?? '')}
@@ -93,65 +95,70 @@ export function TypographyControls({
         </Anchor>
       )}
       {size && (
-        <Anchor adapter={adapter} prop="sizePt">
+        <Anchor adapter={adapter} prop="sizePt" className="shrink-0">
+          {/* 字号只占自己的宽度、标签紧挨输入框，剩余宽度全给字体下拉
+              （2026-09-11 用户反馈） */}
           <FontSizeRow
-            labelWidth={labelWidth}
+            labelWidth="auto"
             // mixed 时 NumberField 留空 + 占位符；**绝不退回 9 pt 那种默认值**
             value={sizeVal.kind === 'mixed' ? NaN : Number(displayValueOf(sizeVal) ?? 9)}
             mixed={sizeVal.kind === 'mixed'}
             min={size.min}
             max={size.max}
             step={size.step ?? 0.5}
-            suffix={size.unit}
             onChange={(v) => adapter.write('sizePt', v)}
             onScrubStart={adapter.beginGesture}
             onScrubEnd={adapter.endGesture}
             overridden={dirty('sizePt')}
             onReset={reset('sizePt')}
-          >
-            {/* B / I 各挂各的锚点：`text-weight-policy` 报的 property path 是
-                `weight`，压在字号那一格的锚点里的话定位会落到数字框上。
-                包一层用 `display:contents`，按钮仍是这一行的直接 flex 项，
-                版面一个像素不变。 */}
-            {weight && (
-              <Anchor adapter={adapter} prop="weight" inline>
-                <StyleToggle
-                  state={boldState}
-                  label={tb('bold')}
-                  hint={
-                    boldState === 'mixed'
-                      ? tb('boldWeight', { value: translate('element.mixedValues', { ns: 'inspector' }) })
-                      : tb('boldWeight', { value: tb(boldState === 'on' ? 'weightBold' : 'weightNormal') })
-                  }
-                  onClick={() =>
-                    adapter.writeOnce('weight', nextToggle(adapter.valueOf('weight'), 'bold', 'normal'))
-                  }
-                >
-                  <Bold size={ICON_SIZE.sm} />
-                </StyleToggle>
-              </Anchor>
-            )}
-            {style && (
-              <Anchor adapter={adapter} prop="style" inline>
-                <StyleToggle
-                  state={italicState}
-                  label={tb('italic')}
-                  hint={
-                    italicState === 'mixed'
-                      ? tb('italicStyle', { value: translate('element.mixedValues', { ns: 'inspector' }) })
-                      : tb('italicStyle', { value: tb(italicState === 'on' ? 'styleItalic' : 'styleNormal') })
-                  }
-                  onClick={() =>
-                    adapter.writeOnce('style', nextToggle(adapter.valueOf('style'), 'italic', 'normal'))
-                  }
-                >
-                  <Italic size={ICON_SIZE.sm} />
-                </StyleToggle>
-              </Anchor>
-            )}
-            {sizeRowExtra}
-          </FontSizeRow>
+          />
         </Anchor>
+      )}
+      </div>
+      )}
+      {(weight || style || sizeRowExtra) && (
+        <div className="flex items-center gap-1" style={{ paddingLeft: labelWidth }}>
+          {/* B / I 各挂各的锚点：`text-weight-policy` 报的 property path 是
+              `weight`，压在字号那一格的锚点里的话定位会落到数字框上。
+              包一层用 `display:contents`，按钮仍是这一行的直接 flex 项。 */}
+          {weight && (
+            <Anchor adapter={adapter} prop="weight" inline>
+              <StyleToggle
+                state={boldState}
+                label={tb('bold')}
+                hint={
+                  boldState === 'mixed'
+                    ? tb('boldWeight', { value: translate('element.mixedValues', { ns: 'inspector' }) })
+                    : tb('boldWeight', { value: tb(boldState === 'on' ? 'weightBold' : 'weightNormal') })
+                }
+                onClick={() =>
+                  adapter.writeOnce('weight', nextToggle(adapter.valueOf('weight'), 'bold', 'normal'))
+                }
+              >
+                <Bold size={ICON_SIZE.sm} />
+              </StyleToggle>
+            </Anchor>
+          )}
+          {style && (
+            <Anchor adapter={adapter} prop="style" inline>
+              <StyleToggle
+                state={italicState}
+                label={tb('italic')}
+                hint={
+                  italicState === 'mixed'
+                    ? tb('italicStyle', { value: translate('element.mixedValues', { ns: 'inspector' }) })
+                    : tb('italicStyle', { value: tb(italicState === 'on' ? 'styleItalic' : 'styleNormal') })
+                }
+                onClick={() =>
+                  adapter.writeOnce('style', nextToggle(adapter.valueOf('style'), 'italic', 'normal'))
+                }
+              >
+                <Italic size={ICON_SIZE.sm} />
+              </StyleToggle>
+            </Anchor>
+          )}
+          {sizeRowExtra}
+        </div>
       )}
       {color && (
         <Anchor adapter={adapter} prop="color">
@@ -198,21 +205,26 @@ function Anchor({
   prop,
   children,
   inline,
+  className,
 }: {
   adapter: TypographyAdapter
   prop: TypographyProp
   children: ReactNode
   /** 行内锚点：用 `display:contents` 挂，不参与版面（B / I 仍是同一行的 flex 项） */
   inline?: boolean
+  /** 块级锚点的版面类（如分栏时的 flex-1）；没有定位路径时也保留包裹层以维持版面 */
+  className?: string
 }) {
   const path = adapter.pathOf(prop)
-  if (!path) return <>{children}</>
+  if (!path) return className ? <div className={className}>{children}</div> : <>{children}</>
   return inline ? (
     <span className="contents" data-prop={path}>
       {children}
     </span>
   ) : (
-    <div data-prop={path}>{children}</div>
+    <div data-prop={path} className={className}>
+      {children}
+    </div>
   )
 }
 

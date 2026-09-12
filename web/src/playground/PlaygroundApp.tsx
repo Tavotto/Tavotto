@@ -78,7 +78,7 @@ function BrandLink() {
       href={homeHref()}
       title={pg('backHome')}
       aria-label={pg('backHome')}
-      className="shrink-0 rounded-sm text-[13px] font-semibold tracking-tight text-ink transition-colors hover:text-sel"
+      className="shrink-0 rounded-sm text-base font-medium tracking-tight text-ink transition-colors hover:text-sel"
     >
       {PRODUCT_NAME}
     </a>
@@ -383,7 +383,7 @@ function PickView({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-6">
-      <p className="text-[14px] font-medium">{pg('pickTitle')}</p>
+      <p className="text-lg font-medium">{pg('pickTitle')}</p>
       {truncated > 0 && (
         <p className="mt-1 text-xs text-ink-3">{pg('pickTruncated', { count: truncated })}</p>
       )}
@@ -392,21 +392,21 @@ function PickView({
           <button
             key={f.stem}
             onClick={() => onPick(f.stem)}
-            className="flex w-[220px] flex-col gap-2 rounded-[6px] border border-border bg-surface p-3 text-left hover:border-sel"
+            className="flex w-[220px] flex-col gap-2 rounded-sm border border-border bg-surface p-3 text-left hover:border-sel"
           >
             {f.preview ? (
               <img
                 src={`data:image/png;base64,${f.preview}`}
                 alt=""
-                className="w-full rounded-[4px] border border-border bg-white"
+                className="w-full rounded-xs border border-border bg-white"
               />
             ) : (
-              <span className="flex h-24 items-center justify-center rounded-[4px] border border-border text-xs text-ink-faint">
+              <span className="flex h-24 items-center justify-center rounded-xs border border-border text-xs text-ink-faint">
                 {f.stem}
               </span>
             )}
             <span className="truncate text-xs font-medium">{f.stem}</span>
-            <span className="font-mono text-[11px] text-ink-3">
+            <span className="font-mono text-xs text-ink-3">
               {translate('measure.mmSizeSpaced', {
                 w: f.size_mm[0].toFixed(1),
                 h: f.size_mm[1].toFixed(1),
@@ -435,7 +435,7 @@ function NoFigureView({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
-      <p className="text-[14px] font-medium">{pg('noFigureTitle')}</p>
+      <p className="text-lg font-medium">{pg('noFigureTitle')}</p>
       <p className="max-w-md text-center text-xs leading-relaxed text-ink-2">{pg('noFigureBody')}</p>
       {log && <LogDisclosure label={pg('showLog')} text={log} open />}
       <button onClick={onBack} className="btn-back mt-2 h-7 rounded-sm border border-border px-3 text-xs text-ink-2 hover:text-ink">
@@ -499,7 +499,7 @@ function FailureView({
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto p-6">
       <TriangleAlert size={ICON_SIZE.lg} className="text-danger" aria-hidden />
-      <p className="max-w-lg text-center text-[14px] font-medium" role="alert">
+      <p className="max-w-lg text-center text-lg font-medium" role="alert">
         {title}
       </p>
       {body && <p className="max-w-lg text-center text-xs leading-relaxed text-ink-2">{body}</p>}
@@ -515,7 +515,7 @@ function LogDisclosure({ label, text, open }: { label: string; text: string; ope
   return (
     <Details className="w-full max-w-lg" open={open}>
       <Summary className="text-xs text-ink-3">{label}</Summary>
-      <pre className="mt-1 max-h-48 overflow-auto rounded-[6px] border border-border bg-surface p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2">
+      <pre className="mt-1 max-h-48 overflow-auto rounded-sm border border-border bg-surface p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-ink-2">
         {text}
       </pre>
     </Details>
@@ -645,7 +645,7 @@ function EditorView({
         <span className="mx-1 h-4 w-px bg-border" />
         <button
           onClick={openSourceDialog}
-          className="flex h-7 items-center gap-1.5 rounded-sm px-2 font-mono text-[11px] text-ink-2 hover:bg-surface-2"
+          className="flex h-7 items-center gap-1.5 rounded-sm px-2 font-mono text-xs text-ink-2 hover:bg-surface-2"
           title={pg('sourceNote')}
         >
           <FileCodeCorner size={ICON_SIZE.sm} aria-hidden />
@@ -654,7 +654,7 @@ function EditorView({
         </button>
         <button
           onClick={() => setShowPatches((v) => !v)}
-          className="h-7 rounded-sm px-2 font-mono text-[11px] text-ink-3 hover:bg-surface-2"
+          className="h-7 rounded-sm px-2 font-mono text-xs text-ink-3 hover:bg-surface-2"
         >
           {pg('overrides', { count: overrideCount })}
         </button>
@@ -701,7 +701,7 @@ function EditorView({
               {session.scriptName} · {pg('changed')}
             </p>
             <p className="mt-0.5">{pg('integrityMismatchNote')}</p>
-            <p className="mt-1 font-mono text-[11px] text-ink-3">
+            <p className="mt-1 font-mono text-xs text-ink-3">
               {shortHash(integrity.originalSha256)} → {shortHash(integrity.workspaceSha256)}
             </p>
           </div>
@@ -711,7 +711,7 @@ function EditorView({
       {showPatches && (
         <div className="shrink-0 border-b border-border bg-surface px-3 py-2">
           {/* 真实的 Tavotto patch 表示，不造一个更友好的假格式 */}
-          <pre className="max-h-40 overflow-auto font-mono text-[11px] leading-relaxed text-ink-2">
+          <pre className="max-h-40 overflow-auto font-mono text-xs leading-relaxed text-ink-2">
             {JSON.stringify(panel.overrides, null, 2)}
           </pre>
         </div>
@@ -758,7 +758,7 @@ function EditorView({
           <p className="min-w-0 flex-1 truncate text-xs text-ink-3">{pg('desktopNote')}</p>
           <a
             href={RELEASES_LATEST_URL}
-            className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border px-2 text-[11px] text-ink-2 hover:text-ink"
+            className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
           >
             <Download size={ICON_SIZE.xs} aria-hidden />
             {pg('downloadDesktop')}
@@ -834,7 +834,7 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
         {note}
       </p>
       {(originalSha256 || workspaceSha256) && (
-        <p className="mt-1.5 font-mono text-[11px] text-ink-2">
+        <p className="mt-1.5 font-mono text-xs text-ink-2">
           {HASH_ALGO}{' '}
           {verdict === 'changed'
             ? `${shortHash(originalSha256)} → ${shortHash(workspaceSha256)}`
@@ -874,7 +874,7 @@ function SourceDialog({
         aria-modal="true"
         aria-label={pg('sourceTitle')}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[10px] border border-border bg-surface shadow-pop"
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-md border border-border bg-surface shadow-pop"
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="font-mono text-xs">{filename}</span>
@@ -893,7 +893,7 @@ function SourceDialog({
         <p className="shrink-0 border-b border-border px-4 py-2 text-xs leading-relaxed text-ink-3">
           {pg('sourceNote')}
         </p>
-        <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-ink-2">
+        <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-sm leading-relaxed text-ink-2">
           {source}
         </pre>
         <IntegrityDetails integrity={integrity} />

@@ -78,28 +78,27 @@ export function LegendCard({
     <div className="flex flex-col gap-2">
       {hasTypography && (
         <div>
-          <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{lg('typography')}</p>
+          <p className="mb-1 type-section">{lg('typography')}</p>
           <TypographyControls adapter={typography} labelWidth={labelWidth} />
         </div>
       )}
       <div>
-        <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
+        <p className="mb-1 type-section">
           {lg('entries', { count: views.length })}
         </p>
-        <ul className="rounded-sm border border-border" aria-label={lg('entriesAria')}>
+        <ul className="rounded-sm border border-border p-0.5" aria-label={lg('entriesAria')}>
           {views.map((v, i) => (
             <li
               key={v.element.gid}
               className={cn(
-                'flex h-7 items-center gap-1 px-1.5',
-                i > 0 && 'border-t border-border',
+                'flex h-7 items-center gap-1 rounded-sm px-1 hover:bg-surface-hover',
                 v.hidden && 'text-ink-3',
               )}
             >
               <HandleSwatch panel={panel} entry={v} />
               <button
                 type="button"
-                className="flex h-6 min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
+                className="flex h-full min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
                 onClick={() => useUiStore.getState().setSelectedGid(v.element.gid)}
                 aria-label={lg('selectEntry', { label: v.text })}
               >
@@ -111,7 +110,6 @@ export function LegendCard({
               <Tip label={v.hidden ? lg('show') : lg('hide')}>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   aria-label={v.hidden ? lg('showEntry', { label: v.text }) : lg('hideEntry', { label: v.text })}
                   aria-pressed={v.hidden}
                   onClick={() => toggleHidden(v)}
@@ -121,7 +119,6 @@ export function LegendCard({
               </Tip>
               <Button
                 size="icon-sm"
-                className="h-5 w-5"
                 disabled={i === 0}
                 onClick={() => move(i, -1)}
                 aria-label={lg('moveUp', { label: v.text })}
@@ -130,7 +127,6 @@ export function LegendCard({
               </Button>
               <Button
                 size="icon-sm"
-                className="h-5 w-5"
                 disabled={i === views.length - 1}
                 onClick={() => move(i, 1)}
                 aria-label={lg('moveDown', { label: v.text })}
@@ -151,11 +147,11 @@ export function BindingBadge({ binding }: { binding: LegendEntryView['binding'] 
   return (
     <span
       className={cn(
-        'shrink-0 rounded-[3px] border px-1 text-[10px] leading-4',
+        'shrink-0 rounded-xs border px-1 text-xs leading-4',
         binding === 'follow_source'
           ? 'border-border text-ink-3'
           : binding === 'custom'
-            ? 'border-accent/40 text-accent'
+            ? 'border-border-strong bg-selected text-ink'
             : 'border-dashed border-border text-ink-3',
       )}
     >

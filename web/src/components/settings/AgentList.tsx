@@ -3,6 +3,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentCaps } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
+import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge, agentSubtitle } from './agentState'
@@ -26,12 +27,18 @@ export function AgentList({
   onOpen,
   onToggle,
   busyAgent,
+  defaultId = null,
+  onSetDefault,
 }: {
   agents: AiAgentCaps[]
   onOpen: (id: string) => void
   onToggle: (id: string, enabled: boolean) => void
   /** 正在提交开关的那个 Agent（防重复点击） */
   busyAgent?: string | null
+  /** 此刻实际作为默认的那个（首选不可用时是回退到的那个）；null = 一个都不可用 */
+  defaultId?: string | null
+  /** 「默认」按钮：把这一行设为默认编码 Agent。不给就不画这颗按钮 */
+  onSetDefault?: (id: string) => void
 }) {
   return (
     <ul className="overflow-hidden rounded-md border border-border bg-surface">
@@ -54,7 +61,7 @@ export function AgentList({
             data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
-            className="absolute inset-0 rounded-md outline-none hover:bg-ink/[.025] focus-visible:focus-ring"
+            className="absolute inset-0 rounded-md outline-none hover:bg-surface-hover focus-visible:focus-ring"
           />
           <AgentIcon iconKey={agent.icon_key} />
           {/*
@@ -74,8 +81,25 @@ export function AgentList({
               <p className="truncate text-xs text-ink-3">{agentSubtitle(agent)}</p>
             )}
           </div>
-          {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了） */}
-          <div className="relative z-10 flex shrink-0 items-center gap-1">
+          {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了）。
+              「默认」按钮就在行里（2026-09-11 用户反馈：不再单独一行下拉框）：
+              当前默认的那颗是按下态，只有可用的 Agent 才能被设为默认 */}
+          <div className="relative z-10 flex shrink-0 items-center gap-1.5">
+            {onSetDefault && (
+              <Button
+                size="sm"
+                variant="secondary"
+                // 当前默认是「选中态」不是「主动作」：selected 轻 tint + 字重（第五节），
+                // 不给每一行都摆一颗近黑填色的钮
+                active={agent.id === defaultId}
+                aria-pressed={agent.id === defaultId}
+                aria-label={ag('setDefaultAria', { name: agent.display_name })}
+                disabled={!agent.usable}
+                onClick={() => onSetDefault(agent.id)}
+              >
+                {ag('defaultButton')}
+              </Button>
+            )}
             <Toggle
               checked={agent.enabled && agent.installed}
               disabled={!agent.installed || busyAgent === agent.id}

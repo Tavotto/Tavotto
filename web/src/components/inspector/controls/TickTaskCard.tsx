@@ -187,22 +187,15 @@ export function TickTaskCard({
         </div>
       )}
 
-      {length && (
-        <NumberRow
-          label={tk('length')}
-          field={length}
+      {/* 长度与宽度同一行：行首标签给第一项，其余项用内联小标签跟在后面 */}
+      {(length || width) && (
+        <NumberPairRow
           axis={cur}
-          prop="length"
           labelWidth={labelWidth}
-        />
-      )}
-      {width && (
-        <NumberRow
-          label={tk('width')}
-          field={width}
-          axis={cur}
-          prop="width"
-          labelWidth={labelWidth}
+          items={[
+            ...(length ? [{ label: tk('length'), field: length, prop: 'length' }] : []),
+            ...(width ? [{ label: tk('width'), field: width, prop: 'width' }] : []),
+          ]}
         />
       )}
 
@@ -229,22 +222,28 @@ export function TickTaskCard({
       {/* 次刻度自己的长度 / 线宽：主刻度那两条只动主刻度。**关着时收起**
           ——值虽然是「开了会是多少」，但此刻写了看不见；改过的照样显示。
           收不收由展示注册表的 visibleWhen 说（`cur.visible`），这里不另判 */}
-      {minorLength && cur.visible('minor_length') && (
-        <NumberRow
-          label={tk('minorLength')}
-          field={minorLength}
+      {((minorLength && cur.visible('minor_length')) ||
+        (minorWidth && cur.visible('minor_width'))) && (
+        <NumberPairRow
           axis={cur}
-          prop="minor_length"
           labelWidth={labelWidth}
-        />
-      )}
-      {minorWidth && cur.visible('minor_width') && (
-        <NumberRow
-          label={tk('minorWidth')}
-          field={minorWidth}
-          axis={cur}
-          prop="minor_width"
-          labelWidth={labelWidth}
+          items={[
+            ...(minorLength && cur.visible('minor_length')
+              ? [{ label: tk('minorLength'), field: minorLength, prop: 'minor_length' }]
+              : []),
+            ...(minorWidth && cur.visible('minor_width')
+              ? [
+                  {
+                    label: tk('minorWidth'),
+                    // 行首已经写了「次刻度」，内联标签只留「宽度」——与主刻度那行
+                    // 同字同宽，两行的宽度输入框左边缘才对得齐
+                    inline: tk('width'),
+                    field: minorWidth,
+                    prop: 'minor_width',
+                  },
+                ]
+              : []),
+          ]}
         />
       )}
       {minorExtra}
@@ -252,39 +251,71 @@ export function TickTaskCard({
   )
 }
 
-function NumberRow({
-  label,
-  field,
+interface NumberItem {
+  /** 完整名称：无障碍名与重置芯片用它 */
+  label: string
+  /** 内联小标签的显示文案；缺省用 label */
+  inline?: string
+  field: EditableField
+  prop: string
+}
+
+/**
+ * 几个数值字段挤在同一行：第一项的标签走 Row 的行首标签，其余项用内联小标签
+ * 跟在自己的输入框前面。每个字段各自保留 `data-prop` 锚点、覆盖态与重置芯片。
+ */
+function NumberPairRow({
+  items,
   axis,
-  prop,
   labelWidth,
 }: {
-  label: string
-  field: EditableField
+  items: NumberItem[]
   axis: TickAxisAdapter
-  prop: string
   labelWidth: number
 }) {
+  const [head, ...rest] = items
+  if (!head) return null
   return (
-    <div data-prop={prop} data-gid={axis.gid}>
-      <Row label={labeledWithState(label, axis.isOverridden(prop))} labelWidth={labelWidth}>
-        <NumberField
-          className="w-[74px] shrink-0"
-          dataProp={prop}
-          ariaLabel={label}
-          value={Number(axis.read(prop) ?? 0)}
-          min={field.min}
-          max={field.max}
-          step={field.step ?? 0.1}
-          precision={2}
-          suffix={field.unit}
-          onChange={(v) => axis.write(prop, v)}
-          onScrubStart={axis.beginGesture}
-          onScrubEnd={axis.endGesture}
-        />
-        {axis.isOverridden(prop) && <ResetChip label={label} onReset={() => axis.reset(prop)} />}
-      </Row>
-    </div>
+    <Row label={labeledWithState(head.label, axis.isOverridden(head.prop))} labelWidth={labelWidth}>
+      {/* 行内两端对齐：首项贴行首，后续「标签 + 输入框」成组贴行尾，
+          中间空隙由 justify-between 撑开、至少保留 gap-4 */}
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+        <NumberCell item={head} axis={axis} />
+        {rest.map((item) => (
+          <span key={item.prop} className="flex shrink-0 items-center gap-1.5">
+            <span className="min-w-10 shrink-0 text-xs text-ink-3">
+              {labeledWithState(item.inline ?? item.label, axis.isOverridden(item.prop))}
+            </span>
+            <NumberCell item={item} axis={axis} />
+          </span>
+        ))}
+      </div>
+    </Row>
+  )
+}
+
+function NumberCell({ item, axis }: { item: NumberItem; axis: TickAxisAdapter }) {
+  const { label, field, prop } = item
+  return (
+    <span className="flex shrink-0 items-center gap-1" data-prop={prop} data-gid={axis.gid}>
+      <NumberField
+        // 定宽 96px、框吃满：单位在框里，数字位不会被挤到只剩两位（以前实测 26px）
+        fill
+        className="w-24 shrink-0"
+        dataProp={prop}
+        ariaLabel={label}
+        value={Number(axis.read(prop) ?? 0)}
+        min={field.min}
+        max={field.max}
+        step={field.step ?? 0.1}
+        precision={2}
+        unit={field.unit}
+        onChange={(v) => axis.write(prop, v)}
+        onScrubStart={axis.beginGesture}
+        onScrubEnd={axis.endGesture}
+      />
+      {axis.isOverridden(prop) && <ResetChip label={label} onReset={() => axis.reset(prop)} />}
+    </span>
   )
 }
 
@@ -312,14 +343,14 @@ function DirectionGlyph({ axis, direction }: { axis: TickAxis; direction: AxisTi
       <path
         d={horizontal ? 'M2 9 H16' : 'M9 2 V16'}
         stroke="currentColor"
-        strokeWidth="1.3"
+        strokeWidth="1.5"
         fill="none"
       />
       {marks.length > 0 && (
         <path
           d={marks.join(' ')}
           stroke="currentColor"
-          strokeWidth="1.3"
+          strokeWidth="1.5"
           strokeOpacity="0.75"
           fill="none"
         />

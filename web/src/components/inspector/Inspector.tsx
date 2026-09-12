@@ -36,9 +36,10 @@ import {
 } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { Tab, TabList } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
@@ -106,25 +107,13 @@ export function Inspector({
     >
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-3 px-3">
-        <div role="tablist" aria-label={t('tabsLabel')} className="flex h-full items-center gap-3">
+        <TabList label={t('tabsLabel')}>
           {TABS.map((id) => (
-            <button
-              key={id}
-              role="tab"
-              data-inspector-tab={id}
-              aria-selected={tab === id}
-              onClick={() => setTab(id)}
-              className={cn(
-                'relative h-full text-xs outline-none transition-colors focus-visible:focus-ring',
-                tab === id
-                  ? 'font-medium text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
-                  : 'text-ink-3 hover:text-ink-2',
-              )}
-            >
+            <Tab key={id} data-inspector-tab={id} active={tab === id} onClick={() => setTab(id)}>
               {tabLabel(id)}
-            </button>
+            </Tab>
           ))}
-        </div>
+        </TabList>
         <span className="flex-1" />
         <Tip label={runningAi ? t('assistantRunningTip') : assistantTabLabel()} side="bottom">
           <Button
@@ -140,7 +129,7 @@ export function Inspector({
             {runningAi && (
               <span
                 aria-hidden
-                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-ink"
               />
             )}
           </Button>
@@ -150,32 +139,33 @@ export function Inspector({
              助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
              量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
              tooltip 与无障碍名里，那两处不占版面。 */
-          <Tip label={t(pinned ? 'pinnedTip' : 'autoHideTip')} side="bottom">
-            <Button
-              size="icon-sm"
-              active={pinned}
-              aria-pressed={pinned}
-              aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
-              onClick={() => useUiStore.getState().setRightPinned(!pinned)}
-            >
-              <Pin size={ICON_SIZE.xs} className={pinned ? undefined : 'text-ink-3'} />
-            </Button>
-          </Tip>
+          <IconButton
+            label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
+            tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
+            side="bottom"
+            iconSize="sm"
+            active={pinned}
+            aria-pressed={pinned}
+            onClick={() => useUiStore.getState().setRightPinned(!pinned)}
+          >
+            {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
+            <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+          </IconButton>
         ) : (
           <Tip label={t('overlayTip')} side="bottom">
             <span className="text-xs text-ink-3">{t('overlay')}</span>
           </Tip>
         )}
-        <Tip label={translate('actions.close')} side="bottom">
-          <Button
-            size="icon-sm"
-            className="-mr-1.5"
-            aria-label={t('closePanel')}
-            onClick={() => useUiStore.getState().toggleRight()}
-          >
-            <X size={ICON_SIZE.sm} className="text-ink-3" />
-          </Button>
-        </Tip>
+        <IconButton
+          label={t('closePanel')}
+          tip={translate('actions.close')}
+          side="bottom"
+          iconSize="sm"
+          className="-mr-1.5 text-ink-3 hover:text-ink"
+          onClick={() => useUiStore.getState().toggleRight()}
+        >
+          <X size={ICON_SIZE.sm} />
+        </IconButton>
       </div>
 
       {tab === 'assistant' ? (
@@ -338,7 +328,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
           <ImageIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
           {!el && (
-            <span data-object-kind className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+            <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
               {roleName('figure')}
             </span>
           )}
@@ -381,7 +371,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
               </span>
             )}
             {modified > 0 && (
-              <span className="shrink-0 rounded-sm bg-accent-subtle px-1 py-px text-accent">
+              <span className="shrink-0 rounded-sm bg-selected px-1 py-px text-ink">
                 {t('element.modifiedCount', { count: modified })}
               </span>
             )}

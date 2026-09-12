@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowDownToLine,
@@ -13,6 +13,7 @@ import {
   Ungroup,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Select } from '@/components/ui/Select'
 import { t as translate } from '@/i18n'
 import { MOD } from '@/lib/utils'
 import {
@@ -39,7 +40,7 @@ import { useArrangeStore } from '@/store/arrangeStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import type { CanvasObject, LayoutGroup } from '@/types/document'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Disclosure, Row, Section } from '../ui/Field'
 import { NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
@@ -58,6 +59,58 @@ import { useSelectedObjects } from './common'
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
+type AlignMode = Parameters<typeof alignSelectedTo>[0]
+
+/**
+ * 排列面板的行网格：左列定宽短标签，右列 minmax(0,1fr) 操作区。
+ * 常驻区与「更多排列」各自一张网格，但列宽一致，展开后起点不错位。
+ * 标签列 3.75rem：中文四字、英文 Distribute / Match size 都放得下；
+ * 280px 侧栏里右侧仍留得出六个 28px 对齐键 + 一根分隔线。
+ */
+function ArrangeGrid({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[3.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2">
+      {children}
+    </div>
+  )
+}
+
+/** 网格里的一行：标签 + 操作区。传 htmlFor 时标签是真正的 <label>。 */
+function ArrangeRow({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string
+  htmlFor?: string
+  children: ReactNode
+}) {
+  const cls = 'min-w-0 truncate text-xs text-ink-2'
+  return (
+    <>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} className={cls} title={label}>
+          {label}
+        </label>
+      ) : (
+        <span className={cls} title={label}>
+          {label}
+        </span>
+      )}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">{children}</div>
+    </>
+  )
+}
+
+/**
+ * 面板内的工具键全部走公共 primitive（Session 2 删掉了这里的第二套 ToolButton）：
+ * 方块键 = `IconButton`（ghost、28×28、16px 图标、名字即气泡），文字键 = `Button`
+ * ghost sm。一组键之间 `gap-0.5`，组与组之间一根 hairline（`GroupGap`）。
+ */
+function GroupGap() {
+  return <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />
+}
+
 const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
   { move: 'top', icon: ArrowUpToLine, key: 'zTop', shortcut: `⇧${MOD}]` },
   { move: 'up', icon: MoveUp, key: 'zUp', shortcut: `${MOD}]` },
@@ -65,27 +118,64 @@ const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string
   { move: 'bottom', icon: ArrowDownToLine, key: 'zBottom', shortcut: `⇧${MOD}[` },
 ]
 
+/** 层级：按 ZORDER 实际数量组成的紧凑键组，不再占六列 */
+function ZOrderToolbar() {
+  useTranslation('inspector')
+  return (
+    <div role="toolbar" aria-label={ar('zorderLabel')} className="flex items-center gap-0.5">
+      {ZORDER.map(({ move, icon: Icon, key, shortcut }) => (
+        <IconButton key={move} label={ar(key)} shortcut={shortcut} side="left" onClick={() => changeZOrder(move)}>
+          <Icon size={ICON_SIZE.md} />
+        </IconButton>
+      ))}
+    </div>
+  )
+}
+
+const H_ALIGN = new Set<string>(['left', 'hcenter', 'right'])
+
+/**
+ * 六向对齐：水平三键 | 垂直三键，两组各自紧凑（gap-0.5）、中间一根 hairline，
+ * 不再把六颗键撑满整行等距分布——那样组的边界就没了。窄栏时整组换行。
+ */
+function AlignToolbar({
+  label,
+  nameFor,
+  tipFor,
+  onPick,
+}: {
+  label: string
+  nameFor: (mode: AlignMode) => string
+  tipFor: (mode: AlignMode) => string
+  onPick: (mode: AlignMode) => void
+}) {
+  const horizontal = ALIGN_BUTTONS.filter((b) => H_ALIGN.has(b.mode))
+  const vertical = ALIGN_BUTTONS.filter((b) => !H_ALIGN.has(b.mode))
+  const render = ({ mode, icon: Icon }: (typeof ALIGN_BUTTONS)[number]) => (
+    <IconButton key={mode} label={nameFor(mode)} tip={tipFor(mode)} side="left" onClick={() => onPick(mode)}>
+      <Icon size={ICON_SIZE.md} />
+    </IconButton>
+  )
+  return (
+    <div role="toolbar" aria-label={label} className="flex flex-wrap items-center">
+      <div className="flex items-center gap-0.5">{horizontal.map(render)}</div>
+      {horizontal.length > 0 && vertical.length > 0 && <GroupGap />}
+      <div className="flex items-center gap-0.5">{vertical.map(render)}</div>
+    </div>
+  )
+}
+
 /** 六向对齐，参照整个画布 —— 单选时唯一说得通的对齐 */
 export function AlignToCanvasRow() {
   useTranslation('inspector')
+  const name = (mode: AlignMode) => ar('alignRelativeCanvas', { mode: alignModeLabel(mode) })
   return (
-    <div className="grid grid-cols-6 gap-0.5">
-      {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
-        const label = ar('alignRelativeCanvas', { mode: alignModeLabel(mode) })
-        return (
-        <Tip key={mode} label={label} side="left">
-          <Button
-            size="icon"
-            className="w-full"
-            onClick={() => alignSelectedTo(mode, 'page')}
-            aria-label={label}
-          >
-            <Icon size={ICON_SIZE.md} />
-          </Button>
-        </Tip>
-        )
-      })}
-    </div>
+    <AlignToolbar
+      label={ar('alignToolbar')}
+      nameFor={name}
+      tipFor={name}
+      onPick={(mode) => alignSelectedTo(mode, 'page')}
+    />
   )
 }
 
@@ -110,28 +200,13 @@ export function ArrangeSection({
 }) {
   useTranslation('inspector')
   const [moreOpen, setMoreOpen] = useState(false)
-  const zRow = (
-    <div role="toolbar" aria-label={ar('zorderLabel')} className="grid grid-cols-6 gap-0.5">
-      {ZORDER.map(({ move, icon: Icon, key, shortcut }) => {
-        const tip = ar(key)
-        return (
-          <Tip key={move} label={tip} shortcut={shortcut} side="left">
-            <Button
-              size="icon"
-              className="w-full"
-              onClick={() => changeZOrder(move)}
-              aria-label={tip}
-            >
-              <Icon size={ICON_SIZE.md} />
-            </Button>
-          </Tip>
-        )
-      })}
-    </div>
-  )
 
   if (zOnly) {
-    return <Section title={ar('zorderLabel')}>{zRow}</Section>
+    return (
+      <Section title={ar('zorderLabel')}>
+        <ZOrderToolbar />
+      </Section>
+    )
   }
 
   if (!multi) {
@@ -139,7 +214,7 @@ export function ArrangeSection({
       <>
         {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
         <Section title={ar('zorderLabel')} className="scroll-mt-2" data-arrange-section="">
-          {zRow}
+          <ZOrderToolbar />
         </Section>
         <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
           <div data-single-align>
@@ -157,10 +232,12 @@ export function ArrangeSection({
         className="scroll-mt-2"
         data-arrange-section=""
       >
-        <div className="flex flex-col gap-1.5">
+        <ArrangeGrid>
           <MultiAlignRows count={count} />
-          {zRow}
-        </div>
+          <ArrangeRow label={ar('zorderLabel')}>
+            <ZOrderToolbar />
+          </ArrangeRow>
+        </ArrangeGrid>
       </Section>
       <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
         <MultiArrangeExtras />
@@ -177,57 +254,52 @@ function MultiAlignRows({ count }: { count: number }) {
 
   return (
     <>
-      <Segmented
-        className="w-full"
-        tone="quiet"
-        ariaLabel={ar('refLabel')}
-        value={ref}
-        onChange={setRef}
-        items={ALIGN_REFS.map((r) => ({
-          value: r,
-          label: alignRefLabel(r),
-          tip: ar(`refTip.${r}`),
-        }))}
-      />
+      {/* 参照只是对齐的一个设置：一行标签 + 紧凑下拉，不再像整块面板的主导航 */}
+      {/* 参照是个普通下拉（ui/Select，全仓唯一的下拉控件——`nativeSelect.test` 守着）。
+          可达名走 ariaLabel：`<label for>` 指向 Radix 的 `<button>` 不算取名（webkit）。
+          当前取值的一句解释挂在触发器的 title 上。 */}
+      <ArrangeRow label={ar('refLabel')}>
+        <Select
+          value={ref}
+          onChange={setRef}
+          ariaLabel={ar('refLabel')}
+          title={ar(`refTip.${ref}`)}
+          options={ALIGN_REFS.map((r) => ({ value: r, label: alignRefLabel(r) }))}
+          className="w-auto min-w-0 max-w-full"
+        />
+      </ArrangeRow>
 
-      <div role="toolbar" aria-label={ar('alignToolbar')} className="grid grid-cols-6 gap-0.5">
-        {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
-          const tip = alignModeLabel(mode)
-          return (
-            <Tip
-              key={mode}
-              label={ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(ref) })}
-              side="left"
-            >
-              <Button
-                size="icon"
-                className="w-full"
-                onClick={() => alignSelectedTo(mode, ref)}
-                aria-label={tip}
-              >
-                <Icon size={ICON_SIZE.md} />
-              </Button>
-            </Tip>
-          )
-        })}
-      </div>
+      <ArrangeRow label={ar('align')}>
+        <AlignToolbar
+          label={ar('alignToolbar')}
+          nameFor={(mode) => alignModeLabel(mode)}
+          tipFor={(mode) =>
+            ar('alignRelativeRef', { mode: alignModeLabel(mode), ref: alignRefLabel(ref) })
+          }
+          onPick={(mode) => alignSelectedTo(mode, ref)}
+        />
+      </ArrangeRow>
 
       {/*
         均匀分布与等宽等高是两件事（审计 T29）：前者动位置、后者动尺寸，
-        挤在同一条工具带里只能靠猜图标分辨。拆成两条各自带名字的工具带。
+        挤在同一条工具带里只能靠猜图标分辨。拆成两条各自带名字的行。
       */}
-      <ArrangeToolbar
-        label={ar('distributeToolbar')}
-        buttons={DISTRIBUTE_BUTTONS}
-        refName={ref}
-        count={count}
-      />
-      <ArrangeToolbar
-        label={ar('sizeToolbar')}
-        buttons={SIZE_BUTTONS}
-        refName={ref}
-        count={count}
-      />
+      <ArrangeRow label={ar('distributeToolbar')}>
+        <ArrangeToolbar
+          label={ar('distributeToolbar')}
+          buttons={DISTRIBUTE_BUTTONS}
+          refName={ref}
+          count={count}
+        />
+      </ArrangeRow>
+      <ArrangeRow label={ar('sizeToolbar')}>
+        <ArrangeToolbar
+          label={ar('sizeToolbar')}
+          buttons={SIZE_BUTTONS}
+          refName={ref}
+          count={count}
+        />
+      </ArrangeRow>
     </>
   )
 }
@@ -245,29 +317,24 @@ function ArrangeToolbar({
   count: number
 }) {
   return (
-    <div role="toolbar" aria-label={label} className="grid grid-cols-6 gap-0.5">
+    <div role="toolbar" aria-label={label} className="flex items-center gap-0.5">
       {buttons.map(({ mode, icon: Icon, tipKey, min }) => {
         const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
         return (
-          <Tip
+          <IconButton
             key={mode}
-            label={
+            label={tip}
+            tip={
               mode === 'samew' || mode === 'sameh'
                 ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(refName) })
-                : tip
+                : true
             }
             side="left"
+            disabled={count < min}
+            onClick={() => alignSelectedTo(mode, refName)}
           >
-            <Button
-              size="icon"
-              className="w-full"
-              disabled={count < min}
-              onClick={() => alignSelectedTo(mode, refName)}
-              aria-label={tip}
-            >
-              <Icon size={ICON_SIZE.md} />
-            </Button>
-          </Tip>
+            <Icon size={ICON_SIZE.md} />
+          </IconButton>
         )
       })}
     </div>
@@ -283,97 +350,88 @@ function MultiArrangeExtras() {
   const grouped = selectionHasGroup()
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <ArrangeGrid>
       {/*
         间距的两个方向以前写作 H / V——而 H 在上面的尺寸里是「高度」，同一个
         字母在同一个面板里代表两件事（审计 T29）。换成方向图示 + 明确的名字，
         名字进 aria-label 与提示，图示只是视觉。
+        两个复合输入等宽（图标 · 数值 · mm 同在一个框内）；窄栏时整个输入换行，
+        绝不缩成一条细缝。
       */}
-      <Row label={ar('spacing')} labelWidth={72}>
-        <NumberField
-          className="min-w-0 flex-1"
-          prefix={<MoveHorizontal size={ICON_SIZE.xs} aria-hidden />}
-          ariaLabel={ar('spacingH')}
-          suffix="mm"
-          step={0.5}
-          precision={1}
-          value={spacingOf(objs, 'x') ?? 0}
-          mixed={spacingOf(objs, 'x') === undefined}
-          title={ar('spacingHTitle')}
-          onChange={(v) => setSelectionSpacing('x', v)}
-        />
-        <NumberField
-          className="min-w-0 flex-1"
-          prefix={<MoveVertical size={ICON_SIZE.xs} aria-hidden />}
-          ariaLabel={ar('spacingV')}
-          suffix="mm"
-          step={0.5}
-          precision={1}
-          value={spacingOf(objs, 'y') ?? 0}
-          mixed={spacingOf(objs, 'y') === undefined}
-          title={ar('spacingVTitle')}
-          onChange={(v) => setSelectionSpacing('y', v)}
-        />
-      </Row>
+      <ArrangeRow label={ar('spacing')}>
+        <div className="grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(6.5rem,1fr))] gap-1.5">
+          <NumberField
+            fill
+            prefix={<MoveHorizontal size={ICON_SIZE.xs} aria-hidden />}
+            unit="mm"
+            ariaLabel={ar('spacingH')}
+            step={0.5}
+            precision={1}
+            value={spacingOf(objs, 'x') ?? 0}
+            mixed={spacingOf(objs, 'x') === undefined}
+            title={ar('spacingHTitle')}
+            onChange={(v) => setSelectionSpacing('x', v)}
+          />
+          <NumberField
+            fill
+            prefix={<MoveVertical size={ICON_SIZE.xs} aria-hidden />}
+            unit="mm"
+            ariaLabel={ar('spacingV')}
+            step={0.5}
+            precision={1}
+            value={spacingOf(objs, 'y') ?? 0}
+            mixed={spacingOf(objs, 'y') === undefined}
+            title={ar('spacingVTitle')}
+            onChange={(v) => setSelectionSpacing('y', v)}
+          />
+        </div>
+      </ArrangeRow>
 
-      <div className="flex gap-1.5">
-        <Tip label={ar('groupTip')}>
-          <Button variant="outline" size="sm" className="flex-1" onClick={groupSelected}>
-            <Group size={ICON_SIZE.sm} />
-            {ar('group')}
-          </Button>
-        </Tip>
-        <Tip label={ar('ungroupTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={!grouped}
-            onClick={ungroupSelected}
-          >
-            <Ungroup size={ICON_SIZE.sm} />
-            {ar('ungroup')}
-          </Button>
-        </Tip>
-      </div>
+      {/* 成组 / 取消成组都是即时命令：点完不留选中态 */}
+      <ArrangeRow label={ar('group')}>
+        <div className="flex gap-0.5">
+          <IconButton label={ar('group')} tip={ar('groupTip')} onClick={groupSelected}>
+            <Group size={ICON_SIZE.md} />
+          </IconButton>
+          <IconButton label={ar('ungroup')} tip={ar('ungroupTip')} disabled={!grouped} onClick={ungroupSelected}>
+            <Ungroup size={ICON_SIZE.md} />
+          </IconButton>
+        </div>
+      </ArrangeRow>
 
       <LayoutGroupControls />
 
-      <div className="flex gap-1.5">
-        <Tip label={ar('copyStyleTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => {
-              copySelectionStyle()
-              bump((n) => n + 1)
-            }}
+      {/* 样式搬运暂留在这里（不跨面板迁移），放最底、同样轻量 */}
+      <ArrangeRow label={translate('group.style', { ns: 'inspector' })}>
+        <div className="flex flex-wrap gap-0.5">
+          <Tip label={ar('copyStyleTip')}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                copySelectionStyle()
+                bump((n) => n + 1)
+              }}
+            >
+              <Clipboard size={ICON_SIZE.sm} />
+              {ar('copyStyle')}
+            </Button>
+          </Tip>
+          <Tip
+            label={
+              clip
+                ? ar('pasteStyleTip', { kind: translate(`objectType.${clip}`) })
+                : ar('pasteStyleEmpty')
+            }
           >
-            <Clipboard size={ICON_SIZE.sm} />
-            {ar('copyStyle')}
-          </Button>
-        </Tip>
-        <Tip
-          label={
-            clip
-              ? ar('pasteStyleTip', { kind: translate(`objectType.${clip}`) })
-              : ar('pasteStyleEmpty')
-          }
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={!clip}
-            onClick={pasteSelectionStyle}
-          >
-            <ClipboardPaste size={ICON_SIZE.sm} />
-            {ar('pasteStyle')}
-          </Button>
-        </Tip>
-      </div>
-    </div>
+            <Button variant="ghost" size="sm" disabled={!clip} onClick={pasteSelectionStyle}>
+              <ClipboardPaste size={ICON_SIZE.sm} />
+              {ar('pasteStyle')}
+            </Button>
+          </Tip>
+        </div>
+      </ArrangeRow>
+    </ArrangeGrid>
   )
 }
 
@@ -398,35 +456,30 @@ function LayoutGroupControls() {
   )
 
   if (!group) {
+    // 行 / 列 / 网格是「创建」命令，不是模式：轻量文字键，点完不留选中态
     return (
-      <div className="mt-0.5">
-        <Row label={ar('layoutGroup')}>
-          <div className="flex min-w-0 flex-1 gap-1">
-            {(['row', 'col', 'grid'] as const).map((kind) => {
-              const label = ar(
-                kind === 'row' ? 'layoutRow' : kind === 'col' ? 'layoutCol' : 'layoutGrid',
-              )
-              return (
+      <ArrangeRow label={ar('layoutGroup')}>
+        <div className="flex flex-wrap gap-0.5">
+          {(['row', 'col', 'grid'] as const).map((kind) => {
+            const label = ar(
+              kind === 'row' ? 'layoutRow' : kind === 'col' ? 'layoutCol' : 'layoutGrid',
+            )
+            return (
               <Tip key={kind} label={ar('createLayoutTip', { kind: label })}>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => createLayoutGroup(kind)}
-                >
+                <Button variant="ghost" size="sm" onClick={() => createLayoutGroup(kind)}>
                   {label}
                 </Button>
               </Tip>
-              )
-            })}
-          </div>
-        </Row>
-      </div>
+            )
+          })}
+        </div>
+      </ArrangeRow>
     )
   }
 
+  // 已有布局组：这是一块有状态的设置区，横跨两列
   return (
-    <div className="mt-0.5 flex flex-col gap-1.5 rounded-sm border border-border p-1.5">
+    <div className="col-span-2 flex flex-col gap-1.5 rounded-sm border border-border p-1.5">
       <Row label={ar('layout')}>
         <Segmented
           className="w-full"
@@ -441,11 +494,12 @@ function LayoutGroupControls() {
       </Row>
       <Row label={ar('spacing')}>
         <NumberField
+          unit="mm"
+          ariaLabel={ar('spacing')}
           value={group.gap}
           min={0}
           max={50}
           step={0.5}
-          suffix="mm"
           onChange={(gap) => updateLayoutGroup(group.id, { gap })}
         />
         {group.kind === 'grid' && (
@@ -495,23 +549,11 @@ function LayoutGroupControls() {
         />
         {ar('pinMembers')}
       </label>
-      <div className="flex gap-1.5">
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1"
-          title={ar('reflowTitle')}
-          onClick={() => reflowLayoutGroup(group.id)}
-        >
+      <div className="flex flex-wrap gap-0.5">
+        <Button variant="ghost" size="sm" title={ar('reflowTitle')} onClick={() => reflowLayoutGroup(group.id)}>
           {ar('reflow')}
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1"
-          title={ar('dissolveTitle')}
-          onClick={() => dissolveLayoutGroup(group.id)}
-        >
+        <Button variant="ghost" size="sm" title={ar('dissolveTitle')} onClick={() => dissolveLayoutGroup(group.id)}>
           {ar('dissolve')}
         </Button>
       </div>

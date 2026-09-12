@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, TriangleAlert } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Badge } from './ui/Badge'
+import { Checkbox } from './ui/Checkbox'
 import { backendCodeMsg } from '@/lib/api'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
@@ -75,7 +77,7 @@ export function NativeConfirmDialog() {
         busy={head.loading}
         footer={
           !head.loading && (
-            <Button variant="outline" size="md" onClick={() => store.dismissPending(head.native_id)}>
+            <Button variant="secondary" size="md" onClick={() => store.dismissPending(head.native_id)}>
               {translate('actions.close')}
             </Button>
           )
@@ -101,12 +103,14 @@ export function NativeConfirmDialog() {
       blockDismiss
       busy={busy}
       title={nr('title')}
-      description={nr(queued > 1 ? 'descriptionQueued' : 'description', { queued: queued - 1 })}
+      // 「还没开始运行」那句说明按 2026-09-11 设计包去掉；排队里还有别的交接时
+      // 仍要说出来——悄悄压着第二条等于让用户以为只有这一条
+      description={queued > 1 ? nr('descriptionQueued', { queued: queued - 1 }) : undefined}
       size="lg"
       footer={
         <>
           <Button
-            variant="outline"
+            variant="secondary"
             size="md"
             disabled={busy}
             onClick={() => store.cancel(head.native_id)}
@@ -130,9 +134,7 @@ export function NativeConfirmDialog() {
           <span className="font-mono text-ink" title={info.target_display}>
             {info.target_display}
           </span>
-          <span className="ml-1.5 rounded-sm bg-surface-2 px-1 py-0.5 text-[10px] text-ink-3">
-            {nr(`targetKind.${info.target_kind}`)}
-          </span>
+          <Badge className="ml-1.5">{nr(`targetKind.${info.target_kind}`)}</Badge>
         </Row>
         <Row label={nr('fields.interpreter')}>
           <span className="break-all font-mono text-ink" title={info.interpreter}>
@@ -170,17 +172,13 @@ export function NativeConfirmDialog() {
       </p>
 
       <label className="mt-2 flex items-start gap-1.5 text-xs text-ink-2">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={remember}
           disabled={busy}
           onChange={(e) => setRemember(e.target.checked)}
-          className="mt-0.5 shrink-0"
+          className="mt-0.5"
         />
-        <span className="min-w-0 flex-1">
-          {nr('remember')}
-          <span className="block text-ink-3">{nr('rememberHint')}</span>
-        </span>
+        <span className="min-w-0 flex-1">{nr('remember')}</span>
       </label>
 
       {head.error && (

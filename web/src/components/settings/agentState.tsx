@@ -1,12 +1,13 @@
 import {
   TriangleAlert,
+  Check,
   CircleCheck,
   CircleDashed,
   KeyRound,
   CircleMinus,
   type LucideIcon,
 } from 'lucide-react'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import type { AiAgentCaps, AiAgentUiState } from '@/lib/api'
@@ -23,9 +24,13 @@ export const ag = (key: string, values?: Record<string, unknown>) =>
  * 危险色只留给 `broken`（找到了安装却根本启动不了），警示色只留给
  * `needs_auth`（CLI 明确说要登录）。
  */
-const PRESENTATION: Record<AiAgentUiState, { icon: LucideIcon; tone: string }> = {
+const PRESENTATION: Record<
+  AiAgentUiState,
+  { icon: LucideIcon; tone: string; iconOnly?: boolean }
+> = {
   detecting: { icon: CircleDashed, tone: 'text-ink-3' },
-  ready: { icon: CircleCheck, tone: 'text-ink' },
+  // 「可用」是唯一不带文字的一档：实心绿圆 + 白对勾，文字留给读屏与 title
+  ready: { icon: Check, tone: 'text-ok', iconOnly: true },
   installed: { icon: CircleCheck, tone: 'text-ink-2' },
   needs_auth: { icon: KeyRound, tone: 'text-warn' },
   broken: { icon: TriangleAlert, tone: 'text-danger' },
@@ -42,17 +47,28 @@ export function AgentStateBadge({
   state: AiAgentUiState
   className?: string
 }) {
-  const { icon: Icon, tone } = PRESENTATION[state] ?? PRESENTATION.not_installed
+  const { icon: Icon, tone, iconOnly } = PRESENTATION[state] ?? PRESENTATION.not_installed
+  const label = stateLabel(state)
   return (
     // `data-agent-state` 给判据用：一行里还有 Agent 自己的品牌图标，
     // 不指名道姓地找 svg 会量到那一个（它本来就每个 Agent 各不相同，
     // 于是「两档的图标不一样」在任何实现下都成立）
     <span
       data-agent-state={state}
+      title={iconOnly ? label : undefined}
       className={`flex items-center gap-1 text-xs ${tone} ${className ?? ''}`}
     >
-      <Icon size={ICON_SIZE.sm} aria-hidden />
-      {stateLabel(state)}
+      {iconOnly ? (
+        <span
+          aria-hidden
+          className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-ok text-surface"
+        >
+          <Icon size={ICON_SIZE.sm} strokeWidth={ICON_STROKE.emphasis} />
+        </span>
+      ) : (
+        <Icon size={ICON_SIZE.sm} aria-hidden />
+      )}
+      {iconOnly ? <span className="sr-only">{label}</span> : label}
     </span>
   )
 }

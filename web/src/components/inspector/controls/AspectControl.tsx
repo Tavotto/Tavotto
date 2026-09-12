@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { t as translate } from '@/i18n'
 import { NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
@@ -55,35 +57,66 @@ export function AspectControl({
   onScrubStart?: () => void
   onScrubEnd?: () => void
 }) {
-  const { mode, ratio } = aspectModeOf(value)
+  const { mode: committed, ratio } = aspectModeOf(value)
+  // 点下去立刻换档，不等引擎把 value 写回来。
+  //
+  // 这一档完全受控：mode 只从 value 推。写回没到（或者根本不会到——预览里
+  // onPick 是个空壳）的那段时间里，「自定义比例」按下去 mode 还是 auto，
+  // 数字框自然不挂载，看着就是「点了没反应」。乐观档只影响本地渲染，写入
+  // 仍然只走 onPick 一条路，不产生第二个真值来源。
+  //
+  // 渲染期同步而不是 useEffect：省掉一帧，不会先画旧档再闪一下。committed
+  // 一变（引擎确认了，或者别处改了这个属性）就丢掉乐观档，以引擎为准。
+  const [seen, setSeen] = useState(committed)
+  const [pending, setPending] = useState<AspectMode | null>(null)
+  if (seen !== committed) {
+    setSeen(committed)
+    setPending(null)
+  }
+  const mode = pending ?? committed
+  const custom = mode === 'custom'
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <div className="flex min-w-0 flex-1 items-center justify-end">
       <Segmented
         tone="quiet"
-        className="w-full"
+        className="w-auto shrink-0 gap-1"
         ariaLabel={label}
         value={mode}
         onChange={(m) => {
           if (m === mode) return
+          setPending(m)
           onPick(aspectValueOf(m, ratio ?? DEFAULT_RATIO))
         }}
         items={MODES.map((m) => ({ value: m, label: ctl(`aspect.${m}`) }))}
       />
-      {mode === 'custom' && (
-        <NumberField
-          className="w-[92px]"
-          dataProp="aspect"
-          ariaLabel={ctl('aspectRatio')}
-          value={ratio ?? DEFAULT_RATIO}
-          min={0.05}
-          max={20}
-          step={0.1}
-          precision={3}
-          onChange={(v) => onRatio(aspectValueOf('custom', v))}
-          onScrubStart={onScrubStart}
-          onScrubEnd={onScrubEnd}
-        />
-      )}
+      {/* 同一行、同一条基线：数字框从「自定义比例」右边长出来。外层只动 width
+          （0 → 100px），内层是**定宽**的，被 overflow-hidden 从右往左裁——所以它是
+          紧贴着那几个字往右「抽」出来的，而不是先出现一个压扁的框再撑开。整组右对齐，
+          于是长出来的宽度反过来把分段控件平滑推向左边；Segmented 用 shrink-0，是被
+          推走而不是被挤扁。字段本身仍然只在自定义档挂载，不是 CSS 藏起来的：看不见
+          却能 Tab 到、能被读屏念到的输入框是个陷阱。动效关掉时（base 层的
+          prefers-reduced-motion）它就退化成一次瞬时布局，不丢信息。 */}
+      <div
+        className={`shrink-0 overflow-hidden transition-[width] duration-[var(--duration-base)] ease-[var(--ease-pop)] ${custom ? 'w-[100px]' : 'w-0'}`}
+      >
+        {custom && (
+          <div className="animate-fade-in w-[100px] pl-2">
+            <NumberField
+              className="w-[92px]"
+              dataProp="aspect"
+              ariaLabel={ctl('aspectRatio')}
+              value={ratio ?? DEFAULT_RATIO}
+              min={0.05}
+              max={20}
+              step={0.1}
+              precision={3}
+              onChange={(v) => onRatio(aspectValueOf('custom', v))}
+              onScrubStart={onScrubStart}
+              onScrubEnd={onScrubEnd}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

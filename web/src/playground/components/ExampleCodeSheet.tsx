@@ -74,14 +74,14 @@ export function ExampleCodeSheet({
         <>
           <button
             onClick={() => void copy()}
-            className="flex h-7 items-center gap-1.5 rounded-[6px] border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex h-7 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
             {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
             {copied ? pg('copied') : pg('copyCode')}
           </button>
           <button
             onClick={() => onStart(example)}
-            className="flex h-7 items-center gap-1.5 rounded-[6px] bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
+            className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
           >
             <Play size={ICON_SIZE.sm} aria-hidden />
             {pg('codeStart')}
@@ -89,8 +89,8 @@ export function ExampleCodeSheet({
         </>
       }
     >
-      <div className="overflow-x-auto rounded-[6px] border border-border bg-bg">
-        <pre className="flex min-w-max p-3 font-mono text-[12px] leading-[1.7] text-ink-2">
+      <div className="overflow-x-auto rounded-sm border border-border bg-bg">
+        <pre className="flex min-w-max p-3 font-mono text-sm leading-[1.7] text-ink-2">
           {/* 行号列：aria-hidden + select-none——复制与朗读都只有代码本身 */}
           <span
             aria-hidden

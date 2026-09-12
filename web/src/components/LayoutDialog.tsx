@@ -160,12 +160,11 @@ export function LayoutDialog() {
       open={open}
       onOpenChange={setOpen}
       title={t(saving ? 'dialogs:layout.saveTitle' : 'dialogs:layout.openTitle')}
-      description={t(saving ? 'dialogs:layout.saveDescription' : 'dialogs:layout.openDescription')}
       size="md"
       busy={busy}
       footer={
         <>
-          <Button variant="outline" size="md" disabled={busy} onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" disabled={busy} onClick={() => setOpen(false)}>
             {t('common:actions.close')}
           </Button>
           {/* 「打开」那一屏一个能写盘的控件都没有：主按钮只在另存时出现 */}
@@ -189,7 +188,7 @@ export function LayoutDialog() {
         {saving ? (
           <div>
             <label
-              className="mb-1.5 block text-xs font-medium uppercase tracking-[.06em] text-ink-3"
+              className="mb-1.5 block type-section"
               htmlFor="layout-save-name"
             >
               {t('dialogs:layout.nameLabel')}
@@ -226,7 +225,7 @@ export function LayoutDialog() {
                   onClick={() => doLoad(n)}
                   className={cn(
                     'flex h-7 w-full items-center gap-2 px-2 text-left text-xs text-ink',
-                    'hover:bg-ink/[.04] disabled:opacity-40',
+                    'hover:bg-surface-hover disabled:opacity-40',
                     i > 0 && 'border-t border-border',
                   )}
                 >

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ChevronDown,
   ChevronRight,
   ChevronUp,
   CircleCheck,
   ClipboardList,
   TriangleAlert,
+  Wrench,
   X,
 } from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
@@ -37,7 +39,7 @@ import { applyIssueFixes } from '@/store/issueFixActions'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { currentProfile, FixButton } from './IssueFixButton'
 import { Segmented } from '../ui/Segmented'
@@ -49,6 +51,15 @@ const pr = (key: string, values?: Record<string, unknown>) =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
 
 /**
+ * 一组默认只展开这么多行；再多的收进「显示其余 N 项」。
+ * 23 条几乎一样的「字号低于绝对下限」逐条铺开，用户看到的是一面墙，而不是
+ * 「一个问题、23 个对象、一颗全部修复」。
+ */
+export const PREVIEW_ROWS = 5
+/** 只差一两条就不值得折：「显示其余 1 项」比直接列出来更啰嗦 */
+export const MIN_HIDDEN_ROWS = 3
+
+/**
  * 左侧「问题」抽屉。**打开导出对话框才知道图有没有问题的日子到此为止。**
  *
  * 这一屏只做三件事：说清有什么问题、点一下跳到那个真实对象、能安全修的给
@@ -56,17 +67,21 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * **不自己挑规范**（`lib/specBinding.ts` 唯一判据）、**不显示 gid**
  * （精确名词只在每行的技术详情里）。
  *
- * ### 呈现（审计 T09）
+ * ### 呈现（审计 T09；2026-09-11 Visual Consolidation Session 4 定形）
  *
- * * **范围**：「当前图 / 整个文档」。在快速编辑里打开面板默认只看这张图；
- *   判据在 `lib/problemList.ts`，抽屉标题的计数与这里同一份。轨道角标仍是
- *   全文档数——它是入口，不跟着范围变。
- * * **按规则聚合**：组头 = 标题 + 等级 + 受影响对象数 + 该组的「修复 N 项」；
- *   组内一行一个真实对象，只说「谁、现在多少、要多少」。标题在组头说一遍，
- *   不再逐行重复、也不截断。
- * * **定位后清单留在原地**：`issueFocus` 不再让元素树顶掉左栏；正在处理的
- *   那一条带「当前」标记（左侧竖条 + 文字，不只靠颜色），底部给「上一项 /
- *   下一项」。修好一条它会消失，「下一项」指向顶上来的那一条。
+ * * **范围**：「当前图 / 整个文档」两档等分的下划线页签。判据在 `lib/problemList.ts`，
+ *   抽屉标题的计数与这里同一份。轨道角标仍是全文档数——它是入口，不跟着范围变。
+ * * **筛选条**：`● 阻断 25   ● 警告 110   ● 建议 30` 一行轻量的开关，等级色只在
+ *   6px 的点上；选中是 selected 轻 tint + 字重，不是一整块红 / 黄。
+ * * **自动修复**：`N 项可自动处理  [全部处理]` 是这一屏唯一的填色主动作——
+ *   「自动检查 + 自动修复」是产品卖点，不该写成一行表单说明。
+ * * **按规则聚合**：组头 = 折叠箭头 + 等级图标 + 标题 + 「N 个对象 · 等级」+ 该组的
+ *   「全部修复」，滚动时钉在顶上；组内一行一个真实对象，只说「谁、现在多少 → 要多少」。
+ *   一组默认只展开前 {@link PREVIEW_ROWS} 行，其余收进「显示其余 N 项」。
+ * * **定位后清单留在原地**：`issueFocus` 不再让元素树顶掉左栏；正在处理的那一条
+ *   带浅灰底 + 「当前」字样（不只靠颜色），底部给「上一项 / 下一项」。修好一条
+ *   它会消失，「下一项」指向顶上来的那一条；「下一项」走进被折起的那部分时，
+ *   那一组自动展开。
  *
  * 接入状态（哪张图连没连上脚本）刻意**不混进来**：那是另一类事实，有自己的
  * 中心与自己的下一步；底部只放一条链接把用户送过去。
@@ -82,6 +97,8 @@ export function ProblemPanel() {
   const { figureId, figureName, scope, issues } = useScopedProblems()
   const listRef = useRef<HTMLUListElement>(null)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  /** 用户点过「显示其余 N 项」的组 */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
 
   /**
    * 这一轮检查失败了，**但上一轮的结果被留着**（`validationStore` 刻意保留，
@@ -144,26 +161,48 @@ export function ProblemPanel() {
       return next
     })
 
+  const expandGroup = (ruleCode: string) => setExpanded((prev) => new Set(prev).add(ruleCode))
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ScopeBar figureId={figureId} figureName={figureName} scope={scope} />
 
-      <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pb-2">
-        {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
-          <SeverityChip key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
-        ))}
-        <span className="flex-1" />
-        {fixableHere.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs"
-            onClick={() => runBatchFix(fixableHere)}
+      {/* 概览条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的
+          「正在检查…」是两句互相打架的话（2026-09-11 设计包） */}
+      {ready && issues.length > 0 && (
+        <section className="shrink-0 border-b border-border px-3 pb-2.5 pt-1.5">
+          <div
+            role="group"
+            aria-label={pr('severityLabel')}
+            className="-mx-1.5 flex flex-wrap items-center"
           >
-            {pr('fixAll', { count: fixableHere.length })}
-          </Button>
-        )}
-      </div>
+            {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
+              <SeverityStat key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
+            ))}
+          </div>
+          {fixableHere.length > 0 && (
+            <div
+              data-problem-autofix
+              className="mt-2 flex items-center justify-between gap-2 rounded-sm bg-surface-2 py-1.5 pl-2.5 pr-1.5"
+            >
+              <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-ink">
+                <Wrench size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />
+                <span className="min-w-0 truncate tabular-nums">
+                  {pr('fixableHere', { count: fixableHere.length })}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="primary"
+                className="shrink-0"
+                onClick={() => runBatchFix(fixableHere)}
+              >
+                {pr('fixAuto')}
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
 
       {/*
         这一轮查砸了、但上一轮的结果**留着**（`ready && issues.length`）：
@@ -174,11 +213,11 @@ export function ProblemPanel() {
       {retained && (
         <div
           role="status"
-          className="mx-3 mb-2 flex shrink-0 items-center gap-2 rounded-sm border border-warn/30 bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-ink-2"
+          className="mx-3 my-2 flex shrink-0 items-center gap-2 rounded-sm bg-warn-subtle py-1.5 pl-2 pr-1 text-xs leading-relaxed text-ink-2"
         >
           <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn" aria-hidden />
           <span className="flex-1">{pr('failedKeptHint')}</span>
-          <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => schedule()}>
+          <Button size="sm" variant="ghost" className="-my-1" onClick={() => schedule()}>
             {pr('retry')}
           </Button>
         </div>
@@ -226,14 +265,16 @@ export function ProblemPanel() {
           ref={listRef}
           onKeyDown={roam}
           aria-label={pr('listLabel')}
-          className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
+          className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
         >
           {groups.map((g) => (
             <GroupBlock
               key={g.ruleCode}
               group={g}
               open={!collapsed.has(g.ruleCode)}
+              expanded={expanded.has(g.ruleCode)}
               onToggle={() => toggleGroup(g.ruleCode)}
+              onExpand={() => expandGroup(g.ruleCode)}
               currentId={view.current?.issueId ?? null}
               activeCanvasId={activeCanvasId}
               onLocate={locate}
@@ -251,8 +292,8 @@ export function ProblemPanel() {
 /* ------------------------------- 范围 ------------------------------------- */
 
 /**
- * 「当前图 / 整个文档」。没有当前图时那一档留在原位灰掉、说明为什么——
- * 消失的选项解释不了自己。
+ * 「当前图 / 整个文档」两档等分的页签。没有当前图时那一档留在原位灰掉、
+ * 说明为什么——消失的选项解释不了自己。
  */
 function ScopeBar({
   figureId,
@@ -264,10 +305,11 @@ function ScopeBar({
   scope: ProblemScope
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 px-3 pb-1.5">
+    <div className="shrink-0 px-3">
       <Segmented<ProblemScope>
         ariaLabel={pr('scopeLabel')}
         tone="quiet"
+        size="md"
         value={scope}
         onChange={(v) => useUiStore.getState().setProblemScope(v)}
         items={[
@@ -284,16 +326,33 @@ function ScopeBar({
           { value: 'document', label: pr('scopeDocument') },
         ]}
       />
+      {/* 图名就在范围下面：用户得知道「当前图」指的是谁 */}
       {scope === 'figure' && figureName && (
-        <span className="min-w-0 flex-1 truncate text-[11px] text-ink-3" title={figureName}>
+        <p className="type-meta truncate pt-1.5" title={figureName}>
           {figureName}
-        </span>
+        </p>
       )}
     </div>
   )
 }
 
-function SeverityChip({
+/** 等级色点。**颜色不是唯一表达**：名字与数字各说一遍同一件事。 */
+const DOT: Record<Severity, string> = {
+  error: 'bg-danger',
+  warn: 'bg-warn',
+  not_verifiable: 'bg-ink-3',
+  suggestion: 'bg-ink-faint',
+}
+
+/** 组头的等级图标：只有 14px 的图标本身带色，不铺底色 */
+const SEVERITY_INK: Record<Severity, string> = {
+  error: 'text-danger',
+  warn: 'text-warn',
+  not_verifiable: 'text-ink-3',
+  suggestion: 'text-ink-3',
+}
+
+function SeverityStat({
   severity,
   count,
   active,
@@ -302,7 +361,6 @@ function SeverityChip({
   count: number
   active: boolean
 }) {
-  const Icon = SEVERITY_ICON[severity]
   const label = severityLabel(severity)
   const toggle = () => {
     const cur = useUiStore.getState().problemFilter ?? []
@@ -311,43 +369,48 @@ function SeverityChip({
   }
   return (
     <button
+      type="button"
       onClick={toggle}
       aria-pressed={active}
       aria-label={pr('filterAria', { label, count })}
       className={cn(
-        'flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs outline-none',
-        'transition-colors focus-visible:focus-ring',
-        active ? 'border-accent bg-accent-subtle text-accent' : 'border-border text-ink-2 hover:bg-ink/[.05]',
+        'flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-xs outline-none',
+        'transition-colors duration-fast focus-visible:focus-ring',
+        active ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
       )}
     >
-      <Icon size={ICON_SIZE.xs} className={cn('shrink-0', toneOf(severity))} aria-hidden />
+      <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', DOT[severity])} />
       <span>{label}</span>
-      <span className="font-mono text-ink-3">{count}</span>
+      <span className="tabular-nums text-ink">{count}</span>
     </button>
   )
 }
 
-/** 等级配色。**颜色不是唯一表达**：图标形状与文字标签各说一遍同一件事。 */
-const toneOf = (s: Severity): string =>
-  s === 'error' ? 'text-danger' : s === 'suggestion' ? 'text-ink-faint' : 'text-ink-3'
-
 /* ------------------------------- 分组 ------------------------------------- */
 
 /**
- * 一条规则一组。组头把「这是什么问题」说一遍（标题不截断、可换行），
- * 组内每行只说「谁、现在多少、要多少」+ 定位 + 修复。
+ * 一条规则一组。组头把「这是什么问题」说一遍（标题不截断、可换行）并钉在
+ * 滚动区顶上；组内每行只说「谁、现在多少 → 要多少」+ 定位 + 修复。
+ *
+ * 行数达到 {@link PREVIEW_ROWS} + {@link MIN_HIDDEN_ROWS} 时只展开前几行，其余
+ * 收进「显示其余 N 项」；「当前」那条落在被折起的部分时整组自动展开——逐项
+ * 处理的「下一项」不能把用户带到一条看不见的行上。
  */
 function GroupBlock({
   group,
   open,
+  expanded,
   onToggle,
+  onExpand,
   currentId,
   activeCanvasId,
   onLocate,
 }: {
   group: IssueGroup
   open: boolean
+  expanded: boolean
   onToggle: () => void
+  onExpand: () => void
   currentId: string | null
   activeCanvasId: string
   onLocate: (issue: ValidationIssue) => void
@@ -357,43 +420,57 @@ function GroupBlock({
   const fixable = group.issues.filter(
     (i) => i.fixKind === 'safe_auto' && i.objectRef.canvasId === activeCanvasId,
   )
+  const currentAt = currentId ? group.issues.findIndex((i) => i.issueId === currentId) : -1
+  const folded =
+    !expanded && currentAt < PREVIEW_ROWS && group.issues.length >= PREVIEW_ROWS + MIN_HIDDEN_ROWS
+  const visible = folded ? group.issues.slice(0, PREVIEW_ROWS) : group.issues
   return (
     <li data-issue-group={group.ruleCode} className="mb-1">
-      <div className="flex items-start gap-1 px-0.5">
+      <div className="sticky top-0 z-[1] flex items-start gap-1 bg-surface py-1.5">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-start gap-1.5 rounded-sm p-1 text-left outline-none hover:bg-ink/[.035] focus-visible:focus-ring"
+          className={cn(
+            'flex min-w-0 flex-1 items-start gap-1.5 rounded-sm px-1 py-0.5 text-left outline-none',
+            'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
+          )}
         >
-          <ChevronRight
-            size={ICON_SIZE.xs}
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
+            <ChevronRight
+              size={ICON_SIZE.xs}
+              aria-hidden
+              className={cn('transition-transform duration-fast', open && 'rotate-90')}
+            />
+          </span>
+          <Icon
+            size={ICON_SIZE.sm}
             aria-hidden
-            className={cn('mt-0.5 shrink-0 text-ink-3 transition-transform', open && 'rotate-90')}
+            className={cn('mt-px shrink-0', SEVERITY_INK[group.severity])}
           />
-          <Icon size={ICON_SIZE.xs} className={cn('mt-0.5 shrink-0', toneOf(group.severity))} aria-hidden />
           <span className="min-w-0 flex-1">
-            <span className="block text-xs font-medium leading-snug text-ink">{title}</span>
-            <span className="block text-[11px] text-ink-3">
-              {severityLabel(group.severity)}
-              {' · '}
+            <span className="block text-xs font-medium leading-4 text-ink">{title}</span>
+            <span className="type-meta mt-px block leading-4 tabular-nums">
               {pr('groupObjects', { count: group.objects })}
+              {' · '}
+              {severityLabel(group.severity)}
             </span>
           </span>
         </button>
         {fixable.length > 0 && (
           <Button
             size="sm"
-            className="mt-0.5 shrink-0 text-xs"
+            variant="ghost"
+            className="shrink-0 text-ink-2 hover:text-ink"
             onClick={() => runBatchFix(fixable)}
           >
-            {pr('groupFix', { count: fixable.length })}
+            {pr('groupFixAll')}
           </Button>
         )}
       </div>
       {open && (
-        <ul className="ml-3 border-l border-border pl-1">
-          {group.issues.map((issue) => (
+        <ul className="ml-5">
+          {visible.map((issue) => (
             <IssueRow
               key={issue.issueId}
               issue={issue}
@@ -402,6 +479,22 @@ function GroupBlock({
               onLocate={() => onLocate(issue)}
             />
           ))}
+          {folded && (
+            <li>
+              <button
+                type="button"
+                data-issue-show-rest
+                onClick={onExpand}
+                className={cn(
+                  'flex h-7 items-center gap-1 rounded-sm pl-2 pr-2.5 text-xs text-ink-2 outline-none',
+                  'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+                )}
+              >
+                <ChevronDown size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
+                {pr('showRest', { count: group.issues.length - PREVIEW_ROWS })}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </li>
@@ -424,14 +517,15 @@ function IssueRow({
     (s) => s.canvases.find((c) => c.id === issue.objectRef.canvasId)?.name ?? null,
   )
   const elsewhere = issue.objectRef.canvasId !== activeCanvasId
-  const detail = values.current
-    ? values.expected
-      ? pr('valueArrow', { current: values.current, expected: values.expected })
-      : values.current
-    : issueDetailText(issue)
   return (
-    <li className={cn('rounded-sm py-0.5 pr-1 hover:bg-ink/[.035]', current && 'bg-accent-subtle/60')}>
-      <div className="flex items-start gap-1">
+    <li
+      className={cn(
+        'group/row rounded-sm transition-colors duration-fast',
+        // 「当前」= 浅灰圆角块 + 文字标签，不画左侧竖条、不用蓝（2026-09-11 用户反馈）
+        current ? 'bg-selected' : 'hover:bg-surface-hover',
+      )}
+    >
+      <div className="flex items-start gap-1 py-1 pl-2 pr-0.5">
         {/* 整行点击 = 定位。修复是它的兄弟节点而不是子节点——按钮套按钮
             在辅助技术里是一个读不出来的控件（nested interactive） */}
         <button
@@ -444,30 +538,41 @@ function IssueRow({
           onClick={onLocate}
           aria-label={issueAriaLabel(issue)}
           title={issueDetailText(issue)}
-          className={cn(
-            'flex min-w-0 flex-1 items-start gap-1.5 rounded-sm border-l-2 py-0.5 pl-1.5 text-left outline-none focus-visible:focus-ring',
-            // 「当前」不只靠颜色：左侧竖条 + 文字标签
-            current ? 'border-accent' : 'border-transparent',
-          )}
+          className="min-w-0 flex-1 rounded-sm py-0.5 text-left outline-none focus-visible:focus-ring"
         >
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-baseline gap-1.5">
-              <span className="min-w-0 truncate text-xs text-ink">{subjectName(issue)}</span>
-              {/* 「当前」与等级筛选的选中态同一套配色（accent 字 + 淡底 + 描边），
-                  对比度已在那儿量过；白字压在 accent 上没量过，不冒这个险 */}
-              {current && (
-                <span className="shrink-0 rounded-[3px] border border-accent bg-accent-subtle px-1 text-[10px] leading-4 text-accent">
-                  {pr('current')}
-                </span>
-              )}
-            </span>
-            <span className="block truncate text-[11px] text-ink-3" title={detail}>
-              {detail}
-              {elsewhere && canvasName ? pr('onCanvas', { name: canvasName }) : ''}
-            </span>
+          <span className="flex min-w-0 items-center gap-1.5 leading-4">
+            <span className="min-w-0 truncate text-xs text-ink">{subjectName(issue)}</span>
+            {current && (
+              <span className="type-meta shrink-0 rounded-xs bg-surface px-1 leading-4">
+                {pr('current')}
+              </span>
+            )}
+          </span>
+          <span className="type-meta mt-px flex min-w-0 flex-wrap items-center gap-x-1 leading-4">
+            {values.current ? (
+              values.expected ? (
+                <>
+                  <span className="tabular-nums">{values.current}</span>
+                  <span aria-hidden className="text-ink-faint">
+                    →
+                  </span>
+                  <span className="tabular-nums text-ink-2">{values.expected}</span>
+                </>
+              ) : (
+                <span className="tabular-nums">{values.current}</span>
+              )
+            ) : (
+              <span className="min-w-0 truncate">{issueDetailText(issue)}</span>
+            )}
+            {elsewhere && canvasName && <span>{pr('onCanvas', { name: canvasName })}</span>}
           </span>
         </button>
-        <FixButton issue={issue} />
+        {/* 修复钮常态退到 ink-3，指针 / 焦点落在这一行时才与文字同色——
+            它一直在（键盘与读屏都找得到），只是不抢那一列数字的注意力 */}
+        <FixButton
+          issue={issue}
+          className="text-ink-3 group-focus-within/row:text-ink group-hover/row:text-ink"
+        />
       </div>
       <TechnicalDetails issue={issue} />
     </li>
@@ -476,18 +581,19 @@ function IssueRow({
 
 /** 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。 */
 // 折叠三角走 `components/ui/Details` 那一份（这里从前是自己拼的
-// `<details>` + ChevronRight，与树、检查器的折叠箭头对不上）；缩进保留
-// `ml-6`，与本面板其余层级对齐。
+// `<details>` + ChevronRight，与树、检查器的折叠箭头对不上）。
 function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
   const lines = technicalDetailLines(issue)
   return (
-    <Details className="ml-6 mt-0.5">
+    <Details className="mb-0.5 ml-2">
       {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
           用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
-      <Summary className="cursor-default gap-0.5 text-[11px] text-ink-3">{pr('techTitle')}</Summary>
-      <ul className="mt-0.5 flex flex-col gap-0.5">
+      <Summary className="type-meta h-5 w-fit cursor-default gap-0.5 rounded-xs pr-1 hover:text-ink-2">
+        {pr('techTitle')}
+      </Summary>
+      <ul className="mb-1 mt-0.5 flex flex-col gap-0.5 pl-4">
         {lines.map((line) => (
-          <li key={line} className="break-all font-mono text-[10px] leading-relaxed text-ink-3">
+          <li key={line} className="break-all font-mono text-xs leading-4 text-ink-3">
             {line}
           </li>
         ))}
@@ -513,29 +619,27 @@ function CursorBar({
     <div
       data-problem-cursor
       aria-label={pr('cursorLabel')}
-      className="flex shrink-0 items-center gap-1 border-t border-border px-2 py-1"
+      className="flex shrink-0 items-center gap-1 border-t border-border py-1 pl-3 pr-1.5"
     >
       <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
         {view.current
           ? `${pr('cursorAt', { pos: view.position, total: view.total })} · ${subjectName(view.current)}`
           : pr('cursorDone', { count: view.total })}
       </span>
-      <Tip label={pr('prev')} side="top">
-        <Button
-          size="icon-sm"
-          aria-label={pr('prev')}
-          disabled={!view.prev}
-          onClick={() => {
-            if (view.prev) onLocate(view.prev)
-          }}
-        >
-          <ChevronUp size={ICON_SIZE.sm} />
-        </Button>
-      </Tip>
+      <IconButton
+        iconSize="sm"
+        side="top"
+        label={pr('prev')}
+        disabled={!view.prev}
+        onClick={() => {
+          if (view.prev) onLocate(view.prev)
+        }}
+      >
+        <ChevronUp size={ICON_SIZE.sm} />
+      </IconButton>
       <Button
         size="sm"
-        variant="outline"
-        className="text-xs"
+        variant="secondary"
         disabled={!view.next}
         onClick={() => {
           if (view.next) onLocate(view.next)
@@ -543,15 +647,14 @@ function CursorBar({
       >
         {pr('next')}
       </Button>
-      <Tip label={pr('cursorClose')} side="top">
-        <Button
-          size="icon-sm"
-          aria-label={pr('cursorClose')}
-          onClick={() => useUiStore.getState().setProblemCursor(null)}
-        >
-          <X size={ICON_SIZE.sm} />
-        </Button>
-      </Tip>
+      <IconButton
+        iconSize="sm"
+        side="top"
+        label={pr('cursorClose')}
+        onClick={() => useUiStore.getState().setProblemCursor(null)}
+      >
+        <X size={ICON_SIZE.sm} />
+      </IconButton>
     </div>
   )
 }
@@ -567,11 +670,15 @@ function ReadinessLink() {
   }
   const pending = report.summary.total - report.summary.editable
   return (
-    <div className="shrink-0 border-t border-border px-3 py-1.5">
+    <div className="shrink-0 border-t border-border px-1.5 py-1">
       <Tip label={pr('readinessTip')} side="top">
         <button
+          type="button"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
-          className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+          className={cn(
+            'flex h-7 w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-xs text-ink-2 outline-none',
+            'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+          )}
         >
           <ClipboardList size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{pr('readiness', { count: pending })}</span>

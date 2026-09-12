@@ -33,7 +33,7 @@ import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
 import { ColorField, NumberField, TextInput } from './ui/Input'
-import { Segmented } from './ui/Segmented'
+import { Radio } from './ui/Radio'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
 
@@ -224,7 +224,7 @@ export function StyleDialog() {
         covered={covered}
         footer={
           <>
-            <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+            <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
               {t('common:actions.close')}
             </Button>
             <Button
@@ -257,7 +257,7 @@ export function StyleDialog() {
       covered={covered}
       footer={
         <>
-          <Button variant="outline" size="md" onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
             {t('common:actions.close')}
           </Button>
           <Button variant="primary" size="md" disabled={!applicable} onClick={apply}>
@@ -270,25 +270,25 @@ export function StyleDialog() {
       <div className="flex gap-3">
         {/* 左：已存样式 */}
         <div className="flex w-44 shrink-0 flex-col gap-1.5">
-          <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
+          <h3 className="type-section">
             {sd('savedStyles')}
           </h3>
-          <ul className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border">
+          <ul className="min-h-0 flex-1 overflow-y-auto">
             {saved.length === 0 && (
               <li>
                 <EmptyState icon={Paintbrush} title={sd('noSavedStyles')} />
               </li>
             )}
-            {saved.map((s, i) => (
+            {saved.map((s) => (
               <li
                 key={s.id}
-                className={cn('group flex items-center', i > 0 && 'border-t border-border')}
+                className="group flex items-center"
               >
                 <button
                   onClick={() => setDraft(structuredClone(s))}
                   className={cn(
-                    'h-7 min-w-0 flex-1 truncate px-2 text-left text-xs',
-                    draft.id === s.id ? 'bg-accent-subtle text-accent' : 'text-ink hover:bg-ink/[.04]',
+                    'h-7 min-w-0 flex-1 truncate rounded-sm px-2 text-left text-xs',
+                    draft.id === s.id ? 'bg-selected font-medium text-ink' : 'text-ink hover:bg-surface-hover',
                   )}
                 >
                   {nameOf(s)}
@@ -296,7 +296,7 @@ export function StyleDialog() {
                 <Button
                   size="icon-sm"
                   className={cn(
-                    'mr-0.5 h-5 w-5 opacity-0 group-hover:opacity-100',
+                    'mr-0.5 opacity-0 group-hover:opacity-100',
                     // 内置只读：删除按钮**不渲染**，而不是渲染成禁用的——
                     // 禁用的按钮仍然邀请用户去点，然后什么都不发生
                     s.id && readOnlyIds.has(s.id) && 'hidden',
@@ -322,7 +322,7 @@ export function StyleDialog() {
               </li>
             ))}
           </ul>
-          <Button variant="outline" size="sm" onClick={() => setDraft(EMPTY)}>
+          <Button variant="secondary" size="sm" onClick={() => setDraft(EMPTY)}>
             <Plus size={ICON_SIZE.sm} />
             {sd('newStyle')}
           </Button>
@@ -335,10 +335,10 @@ export function StyleDialog() {
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
               placeholder={sd('namePlaceholder')}
-              className="h-6 min-w-0 flex-1"
+              className="min-w-0 flex-1"
             />
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={!primaryManifest}
               title={
@@ -351,7 +351,7 @@ export function StyleDialog() {
               <Pipette size={ICON_SIZE.sm} />
               {sd('extract')}
             </Button>
-            <Button variant="outline" size="sm" loading={busy} onClick={save}>
+            <Button variant="secondary" size="sm" loading={busy} onClick={save}>
               <Save size={ICON_SIZE.sm} />
               {t('common:actions.save')}
             </Button>
@@ -363,7 +363,7 @@ export function StyleDialog() {
             ) : (
               <div className="flex flex-col gap-1">
                 {entries.map((en) => (
-                  <div key={`${en.role}.${en.prop}`} className="flex h-6 items-center gap-1.5">
+                  <div key={`${en.role}.${en.prop}`} className="flex h-7 items-center gap-1.5">
                     <span className="w-16 shrink-0 truncate text-xs text-ink-3">
                       {styleRoleLabel(en.role)}
                     </span>
@@ -387,7 +387,7 @@ export function StyleDialog() {
                     </div>
                     <Button
                       size="icon-sm"
-                      className="h-5 w-5 shrink-0"
+                      className="shrink-0"
                       aria-label={sd('removeEntry')}
                       onClick={() =>
                         setDraft((d) => {
@@ -453,7 +453,7 @@ export function StyleDialog() {
               onChange={(v) => setDraft((d) => ({ ...d, subLabel: v }))}
             />
 
-            <div className="mt-1.5 flex h-6 items-center gap-1.5 border-t border-border pt-1.5">
+            <div className="mt-1.5 flex h-7 items-center gap-1.5 border-t border-border pt-1.5">
               <Toggle
                 aria-label={sd('includePageSize')}
                 checked={!!draft.page}
@@ -474,24 +474,39 @@ export function StyleDialog() {
 
         {/* 右：应用范围与预览 */}
         <div className="flex w-52 shrink-0 flex-col gap-2">
-          <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
+          <h3 className="type-section">
             {sd('applyScope')}
           </h3>
-          <Segmented
-            value={scope}
-            onChange={setScope}
-            className="w-full"
-            items={[
-              { value: 'panel', label: sd('scopePanel'), tip: styleScopeLabel('panel') },
-              { value: 'selection', label: sd('scopeSelection'), tip: styleScopeLabel('selection') },
-              {
-                value: 'sameScript',
-                label: sd('scopeSameScript'),
-                tip: styleScopeLabel('sameScript'),
-              },
-              { value: 'document', label: sd('scopeDocument'), tip: styleScopeLabel('document') },
-            ]}
-          />
+          {/* 四档竖着排成单选行：208px 的一栏放不下四个并排的页签——中文下四个标签
+              连成一串（2026-09-11 走查截图）。行 28px、选中 = selected 轻 tint + 字重。 */}
+          <div role="radiogroup" aria-label={sd('applyScope')} className="flex flex-col gap-0.5">
+            {(
+              [
+                ['panel', sd('scopePanel')],
+                ['selection', sd('scopeSelection')],
+                ['sameScript', sd('scopeSameScript')],
+                ['document', sd('scopeDocument')],
+              ] as const
+            ).map(([value, label]) => (
+              <label
+                key={value}
+                title={styleScopeLabel(value)}
+                className={cn(
+                  'flex h-7 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-xs text-ink',
+                  'transition-colors duration-fast',
+                  scope === value ? 'bg-selected font-medium' : 'hover:bg-surface-hover',
+                )}
+              >
+                <Radio
+                  name="style-apply-scope"
+                  value={value}
+                  checked={scope === value}
+                  onChange={() => setScope(value)}
+                />
+                <span className="min-w-0 truncate">{label}</span>
+              </label>
+            ))}
+          </div>
           <label className="flex items-center gap-1.5 text-xs text-ink-2">
             <Toggle
               aria-label={sd('withAnnotations')}
@@ -501,7 +516,8 @@ export function StyleDialog() {
             {sd('withAnnotations')}
           </label>
 
-          <div className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border p-2">
+          {/* 按内容定高：它是一段状态说明，不是一张要撑满整栏的卡 */}
+          <div className="min-h-0 overflow-y-auto rounded-sm bg-surface-2 p-2">
             <p className="mb-1 text-xs font-medium text-ink">{sd('willAffect')}</p>
             {/* 作用对象与变化数先说总账，再逐张列：用户要的第一个答案是「会改到几张、改多少」 */}
             <p data-style-affect-summary className="mb-1 text-xs text-ink-2">
@@ -635,7 +651,6 @@ function EntryEditor({
     <TextInput
       value={String(value ?? '')}
       onChange={(e) => onChange(e.target.value)}
-      className="h-5"
     />
   )
 }
@@ -659,7 +674,7 @@ function TextStylePart({
   useTranslation('dialogs')
   return (
     <div className="mt-1.5 border-t border-border pt-1.5">
-      <div className="flex h-6 items-center gap-1.5">
+      <div className="flex h-7 items-center gap-1.5">
         <Toggle
           aria-label={label}
           checked={!!value}
@@ -676,7 +691,7 @@ function TextStylePart({
             min={4}
             max={24}
             step={0.5}
-            suffix="pt"
+            unit="pt"
             onChange={(v) => onChange({ ...value, sizePt: v })}
           />
           <label className="flex items-center gap-1 text-xs text-ink-2">

@@ -7,7 +7,9 @@ import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
+import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
+import { TAB_UNDERLINE } from './ui/tabClass'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -43,7 +45,7 @@ export function CanvasTabs() {
         ref={strip}
         role="tablist"
         aria-label={t('tabs.listLabel')}
-        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+        className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto"
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -69,6 +71,7 @@ export function CanvasTabs() {
         ))}
       </div>
 
+      {/* 「+」紧跟最后一个标签（2026-09-11 用户反馈），画布总览菜单仍靠右 */}
       <Tip label={t('tabs.newCanvas')}>
         <Button
           size="icon-sm"
@@ -78,6 +81,7 @@ export function CanvasTabs() {
           <Plus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
+      <span className="flex-1" />
 
       {canvases.length > openTabs.length || canvases.length > 6 ? (
         <AllCanvasesMenu activate={activate} />
@@ -125,7 +129,7 @@ function TabItem({
 
   if (renaming) {
     return (
-      <input
+      <TextInput
         autoFocus
         value={draft}
         aria-label={t('tabs.canvasName')}
@@ -136,7 +140,7 @@ function TabItem({
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') onRenamed(null)
         }}
-        className="h-6 w-28 shrink-0 rounded-sm border border-accent bg-surface px-1.5 text-xs text-ink outline-none"
+        className="w-28 shrink-0"
       />
     )
   }
@@ -181,17 +185,17 @@ function TabItem({
         }
       }}
       className={cn(
-        'group relative flex h-8 max-w-44 shrink-0 cursor-default items-center gap-1 px-2.5',
+        'group relative flex h-8 max-w-44 shrink-0 cursor-default items-center justify-center gap-1',
+        // 关闭键改为绝对定位后左右留同样的量：标题与激活下划线共用一条中轴
+        closable ? 'px-6' : 'px-2.5',
         'outline-none focus-visible:focus-ring',
-        active
-          ? 'text-ink after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
-          : 'text-ink-3 hover:text-ink-2',
+        active ? cn('text-ink', TAB_UNDERLINE, 'after:inset-x-1.5') : 'text-ink-3 hover:text-ink-2',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
-        dragOver && 'rounded-sm bg-accent-subtle text-accent',
+        dragOver && 'rounded-sm bg-selected text-ink',
       )}
       title={name}
     >
-      <span className="truncate text-xs">{name}</span>
+      <span className="truncate text-center text-xs">{name}</span>
       {dirty && (
         <span
           aria-label={t('tabs.unsaved')}
@@ -206,8 +210,9 @@ function TabItem({
             onClose()
           }}
           className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2',
             'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-ink-3',
-            'opacity-0 outline-none hover:bg-ink/[.08] hover:text-ink',
+            'opacity-0 outline-none hover:bg-surface-hover hover:text-ink',
             'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
           )}
         >

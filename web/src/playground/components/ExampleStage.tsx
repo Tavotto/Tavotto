@@ -33,15 +33,15 @@ export function ExampleStage({
       aria-label={pg('stageAria')}
       data-stage-state={active ? 'active' : drag ? 'ready' : 'idle'}
       className={cn(
-        'relative flex min-h-[260px] flex-1 flex-col items-center justify-center gap-2 rounded-[10px] border bg-surface p-8',
-        'transition-colors duration-150',
+        'relative flex min-h-[260px] flex-1 flex-col items-center justify-center gap-2 rounded-md border bg-surface p-8',
+        'transition-colors duration-fast',
         active ? 'border-sel bg-sel/5' : drag ? 'border-ink-faint' : 'border-border',
       )}
     >
       {/* 工作纸的衬线：极淡的方格，暗示这是画布语言的一部分（纯装饰） */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-3 rounded-[6px] opacity-[0.5]"
+        className="pointer-events-none absolute inset-3 rounded-sm opacity-[0.5]"
         style={{
           backgroundImage:
             'linear-gradient(var(--color-border) 1px, transparent 1px), linear-gradient(90deg, var(--color-border) 1px, transparent 1px)',
@@ -53,14 +53,14 @@ export function ExampleStage({
         // 顶部而不是居中：被拖的卡片正悬在台面中央，居中的话这句话会被
         // 它自己盖住——说给用户听的话必须躲开用户手里的东西
         <p
-          className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap rounded-[6px] bg-sel px-3 py-1.5 text-[14px] font-medium text-white"
+          className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap rounded-sm bg-sel px-3 py-1.5 text-lg font-medium text-white"
           aria-live="polite"
         >
           {pg('stageActive', { name: pg(drag!.example.titleKey) })}
         </p>
       ) : (
         <>
-          <p className="relative text-[14px] font-medium text-ink-2">{pg('stageIdle')}</p>
+          <p className="relative text-lg font-medium text-ink-2">{pg('stageIdle')}</p>
           <p className="relative text-xs text-ink-3">{pg('stageIdleHint')}</p>
         </>
       )}

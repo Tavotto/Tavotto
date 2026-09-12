@@ -24,13 +24,13 @@ export function Section({
       {title && (
         <header className="mb-2 flex h-4 items-center justify-between">
           <h3
-          className={cn(
-            'min-w-0 truncate text-xs font-medium',
-            plainTitle ? 'text-ink-2' : 'uppercase tracking-[.06em] text-ink-3',
-          )}
-        >
-          {title}
-        </h3>
+            className={cn(
+              'min-w-0 truncate',
+              plainTitle ? 'text-xs font-medium text-ink-2' : 'type-section',
+            )}
+          >
+            {title}
+          </h3>
           {action}
         </header>
       )}
@@ -77,7 +77,9 @@ export function Disclosure({
 }
 
 /**
- * 标签在左、控件在右的紧凑行。
+ * 标签在左、控件在右的紧凑行：标签列定宽，控件从同一条竖线起排（固定的控件列），
+ * **不**把控件推到侧栏最右边——那样每行的控件各漂各的，读不出一列
+ * （Design Constitution 第三节；2026-09-11 Session 2 把第四批的 justify-end 改回来）。
  *
  * `align='start'` 给**多行高的控件**用（图例位置的内 / 外两带那种）：默认的
  * 垂直居中会把标签推到控件的半腰，看上去像在给下面那一段命名——真浏览器里
@@ -94,15 +96,16 @@ export function Row({
   label?: ReactNode
   children: ReactNode
   className?: string
-  labelWidth?: number
+  /** 'auto' = 标签只占自己的宽度（字号那种紧挨着输入框的短标签） */
+  labelWidth?: number | 'auto'
   align?: 'center' | 'start'
 }) {
   const top = align === 'start'
   return (
-    <div className={cn('flex min-h-6 gap-2', top ? 'items-start' : 'items-center', className)}>
+    <div className={cn('flex min-h-7 gap-2', top ? 'items-start' : 'items-center', className)}>
       {label != null && (
         <span
-          style={{ width: labelWidth }}
+          style={labelWidth === 'auto' ? undefined : { width: labelWidth }}
           className={cn('shrink-0 text-xs text-ink-2', top && 'leading-6')}
         >
           {label}

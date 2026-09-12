@@ -320,7 +320,8 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 预检有阻断/无法核验项时，键盘也能走到确认勾选框打勾，「导出」才可用
   const exportBtn = dialog.getByRole('button', { name: /开始导出/ })
   if (await exportBtn.isDisabled().catch(() => false)) {
-    await tabTo(page, 'css=input[type="checkbox"]', 40)
+    // 认产品给的锚点：格式那四颗复选框排在确认框前面，「第一颗 checkbox」是 PDF
+    await tabTo(page, 'css=input[data-export-confirm]', 40)
     await page.keyboard.press(' ')
     await expect(exportBtn).toBeEnabled()
   }

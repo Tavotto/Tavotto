@@ -62,7 +62,7 @@ const TONE: Record<NativeSessionState, 'busy' | 'ready' | 'done' | 'bad'> = {
 
 const BORDER: Record<'busy' | 'ready' | 'done' | 'bad', string> = {
   busy: 'border-border',
-  ready: 'border-accent/50',
+  ready: 'border-border-strong',
   done: 'border-border',
   bad: 'border-danger/50',
 }
@@ -97,7 +97,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
     <section
       aria-label={ns('cardAria', { target: session.target_display })}
       data-state={session.state}
-      className={`pointer-events-auto rounded-sm border bg-surface px-2 py-1.5 shadow-sm ${BORDER[tone]}`}
+      className={`pointer-events-auto rounded-sm border bg-surface px-2 py-1.5 shadow-pop ${BORDER[tone]}`}
     >
       <header className="flex items-start gap-1.5">
         <StateIcon state={session.state} />
@@ -105,7 +105,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           <p className="truncate text-xs font-medium text-ink" title={session.target_display}>
             {session.target_display}
           </p>
-          <p className="text-[11px] leading-relaxed text-ink-3">{stateLine(session)}</p>
+          <p className="text-xs leading-relaxed text-ink-3">{stateLine(session)}</p>
         </div>
         {terminal && (
           <Button
@@ -123,7 +123,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           终端跑了同一个脚本）。静默抢过来的表现是他看到的图突然换成了另一次
           运行的，而界面什么都没说（ADR 0021 §9.2）。 */}
       {conflicts.length > 0 && (
-        <p className="mt-1 rounded-sm bg-warn-subtle px-1.5 py-1 text-[11px] leading-relaxed text-ink-2">
+        <p className="mt-1 rounded-sm bg-warn-subtle px-1.5 py-1 text-xs leading-relaxed text-ink-2">
           {ns('assetConflict', { stems: conflicts.join('、'), count: conflicts.length })}
         </p>
       )}
@@ -131,7 +131,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
       {error && (
         <p
           role="alert"
-          className="mt-1 flex items-start gap-1 text-[11px] leading-relaxed text-danger"
+          className="mt-1 flex items-start gap-1 text-xs leading-relaxed text-danger"
         >
           <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
@@ -159,7 +159,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             <Play size={ICON_SIZE.xs} />
             {ns('resume')}
           </Button>
-          <Button variant="outline" size="sm" disabled={busy} onClick={act(store.detach)}>
+          <Button variant="secondary" size="sm" disabled={busy} onClick={act(store.detach)}>
             <Unplug size={ICON_SIZE.xs} />
             {ns('detach')}
           </Button>
@@ -177,7 +177,7 @@ function StateIcon({ state }: { state: NativeSessionState }) {
   if (tone === 'busy') {
     return <LoaderCircle size={ICON_SIZE.sm} className="mt-0.5 shrink-0 animate-spin text-ink-3" />
   }
-  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-accent" />
+  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-2" />
   if (tone === 'bad') return <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
   return <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-border-strong" />
 }

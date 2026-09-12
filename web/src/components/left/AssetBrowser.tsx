@@ -1,12 +1,19 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Braces, ListFilter, Pencil, Plus, RefreshCw, Search, X,
-  SearchX,
+import {
+  Braces,
   ImageOff,
+  ListFilter,
+  Pencil,
   Play,
+  Plus,
+  RefreshCw,
+  SearchX,
   TriangleAlert,
+  X,
   Zap,
+  type LucideIcon,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -35,14 +42,14 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
 import { Row } from '../ui/Field'
+import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
-import { Tip } from '../ui/Tooltip'
 import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
@@ -204,11 +211,13 @@ export function AssetBrowser() {
     return out
   }, [panels, runtimeAssets, query, source, type, sort, usedOnly, usage, recentlyUsed])
 
-  // 列数按实测宽度算：<344px 单列大预览，更宽才双列
+  // 列数按实测宽度算：抽屉最窄 280px 时也是双列（每张卡 ~125px，预览 3:2 约 83px 高）——
+  // 这是素材库而不是看图器，同屏能扫到的张数比单张预览的尺寸重要；看细节有空格键放大。
+  // 只有被挤到 <250px（覆盖式抽屉的极端情况）才退回单列
   useLayoutEffect(() => {
     const el = gridRef.current
     if (!el) return
-    const measure = () => setColumns(el.clientWidth < 344 ? 1 : 2)
+    const measure = () => setColumns(el.clientWidth < 250 ? 1 : 2)
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
@@ -250,68 +259,59 @@ export function AssetBrowser() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* 工具栏：搜索框 + 三颗同权重的图标钮（只看可参数化 / 筛选 / 刷新）。
+          它们都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份 */}
       <div className="flex flex-col gap-1.5 px-3 pb-2">
-        <div className="flex items-center gap-1">
-          <div className="relative flex-1">
-            <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-              placeholder={ab('search')}
-              aria-label={ab('searchAria')}
-              className={cn(
-                'h-7 w-full rounded-sm border border-transparent bg-surface-2 pl-6.5 pr-1.5 text-xs',
-                'text-ink placeholder:text-ink-faint outline-none transition-colors',
-                'hover:border-border focus:border-accent focus:bg-surface',
-              )}
-            />
-          </div>
+        <div className="flex items-center gap-0.5">
+          <SearchInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder={ab('search')}
+            aria-label={ab('searchAria')}
+            className="mr-1"
+          />
           {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
               生效时下方出现同一个可移除的筛选标签 */}
-          <Tip label={ab('scriptOnly')}>
-            <Button
-              size="icon-sm"
-              active={type === 'script'}
-              onClick={() =>
-                setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
-              }
-              aria-label={ab('scriptOnly')}
-              aria-pressed={type === 'script'}
-            >
-              <Braces size={ICON_SIZE.sm} />
-            </Button>
-          </Tip>
+          <IconButton
+            iconSize="sm"
+            label={ab('scriptOnly')}
+            active={type === 'script'}
+            aria-pressed={type === 'script'}
+            onClick={() =>
+              setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
+            }
+          >
+            <Braces size={ICON_SIZE.sm} className={type === 'script' ? undefined : 'text-ink-2'} />
+          </IconButton>
           <FilterButton
             filters={filters}
             folders={folders}
             activeCount={chips.length}
             onChange={setFilters}
           />
-          <Tip label={ab('refreshTip')}>
-            <Button
-              size="icon-sm"
-              disabled={refreshing}
-              onClick={() => {
-                // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
-                // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
-                // 事件与手动刷新共用它。
-                setRefreshing(true)
-                void refreshProjectNow()
-                  .catch((e: unknown) =>
-                    useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
-                  )
-                  .finally(() => setRefreshing(false))
-                // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
-                void useRuntimeAssetStore.getState().loadAssets()
-              }}
-              aria-label={ab('refresh')}
-            >
-              {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
-                  LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
-              <RefreshCw size={ICON_SIZE.sm} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
-            </Button>
-          </Tip>
+          <IconButton
+            iconSize="sm"
+            label={ab('refresh')}
+            tip={ab('refreshTip')}
+            disabled={refreshing}
+            onClick={() => {
+              // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
+              // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
+              // 事件与手动刷新共用它。
+              setRefreshing(true)
+              void refreshProjectNow()
+                .catch((e: unknown) =>
+                  useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
+                )
+                .finally(() => setRefreshing(false))
+              // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
+              void useRuntimeAssetStore.getState().loadAssets()
+            }}
+          >
+            {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
+                LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
+            <RefreshCw size={ICON_SIZE.sm} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
+          </IconButton>
         </div>
 
         {chips.length > 0 && (
@@ -322,12 +322,12 @@ export function AssetBrowser() {
                 onClick={() => clearChip(c.key)}
                 aria-label={ab('removeFilter', { label: c.label })}
                 className={cn(
-                  'flex h-6 items-center gap-1 rounded-sm bg-accent-subtle px-1.5 text-xs text-accent',
-                  'outline-none transition-colors hover:bg-accent/15 focus-visible:focus-ring',
+                  'flex h-6 items-center gap-1 rounded-sm bg-selected px-1.5 text-xs text-ink',
+                  'outline-none transition-colors duration-fast hover:bg-surface-active focus-visible:focus-ring',
                 )}
               >
                 {c.label}
-                <X size={ICON_SIZE.xs} />
+                <X size={ICON_SIZE.xs} className="text-ink-3" />
               </button>
             ))}
           </div>
@@ -476,12 +476,12 @@ export function AssetBrowser() {
   )
 }
 
-/** 区标题：图 / 脚本 两个区的分隔（计数可选） */
+/** 区标题：图 / 脚本 两个区的分隔（计数可选）。分区小标题那一档，靠左与内容对齐 */
 function SectionHeading({ label, count }: { label: string; count?: number }) {
   return (
-    <h3 className="flex items-center gap-1.5 px-3 pb-1 pt-1.5 text-xs font-medium text-ink-2">
+    <h3 className="type-section flex items-center gap-1.5 px-3 pb-1 pt-2">
       {label}
-      {count !== undefined && <span className="font-mono text-ink-3">{count}</span>}
+      {count !== undefined && <span className="tabular-nums">{count}</span>}
     </h3>
   )
 }
@@ -505,13 +505,13 @@ function FilterButton({
       width={224}
       align="end"
       trigger={
-        <Button
-          size="icon-sm"
+        <IconButton
+          iconSize="sm"
           active={activeCount > 0}
-          aria-label={activeCount ? ab('filterActiveAria', { count: activeCount }) : ab('filterAria')}
+          label={activeCount ? ab('filterActiveAria', { count: activeCount }) : ab('filterAria')}
         >
           <ListFilter size={ICON_SIZE.sm} className={activeCount ? undefined : 'text-ink-2'} />
-        </Button>
+        </IconButton>
       }
     >
       <div className="flex flex-col gap-1.5">
@@ -562,7 +562,7 @@ function FilterButton({
   )
 }
 
-/** 骨架与真实卡片同尺寸（4:3 图片区 + 两行文字），加载完不跳版 */
+/** 骨架与真实卡片同尺寸（3:2 图片区 + 两行文字），加载完不跳版 */
 function GridSkeleton({ columns }: { columns: number }) {
   return (
     <ul
@@ -571,11 +571,11 @@ function GridSkeleton({ columns }: { columns: number }) {
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: 8 }, (_, i) => (
-        <li key={i} className="rounded-sm border border-border bg-surface">
-          <div className="aspect-[4/3] animate-pulse rounded-t-sm bg-ink/[.05]" />
-          <div className="px-1.5">
-            <div className="h-3 animate-pulse rounded-sm bg-ink/[.06]" />
-            <div className="h-3 w-3/5 animate-pulse rounded-sm bg-ink/[.04]" />
+        <li key={i} className="overflow-hidden rounded-sm border border-border bg-surface">
+          <div className="aspect-[3/2] animate-pulse bg-surface-2" />
+          <div className="flex flex-col gap-1 px-1.5 py-1.5">
+            <div className="h-3 animate-pulse rounded-xs bg-selected" />
+            <div className="h-3 w-3/5 animate-pulse rounded-xs bg-surface-2" />
           </div>
         </li>
       ))}
@@ -677,94 +677,57 @@ function AssetCard({
         }
       }}
       title={ab('cardTitle', { id: panel.id })}
-      className={cn(
-        'group relative cursor-grab overflow-hidden rounded-sm border bg-surface outline-none',
-        'transition-colors active:cursor-grabbing',
-        selected
-          ? 'border-accent bg-accent-subtle'
-          : 'border-border hover:border-border-strong',
-        'focus-visible:focus-ring',
-      )}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '150px' }}
+      className={cn(cardClass(selected), 'cursor-grab active:cursor-grabbing')}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
-      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-white">
+      <CardPreview>
         <img
           loading="lazy"
           src={renderUrl(panel.id, 400, panel.mtime)}
           alt=""
           draggable={false}
-          className="max-h-full max-w-full object-contain p-1"
+          className="h-full w-full object-contain p-1"
         />
-
-        <span className="pointer-events-none absolute left-1 top-1 flex max-w-[calc(100%-2.25rem)] items-center gap-1">
-          <span className="shrink-0 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
-            {formatOf(panel)}
-          </span>
-          {panel.script && (
-            <span
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
-              title={ab('scriptBadgeTitle')}
-            >
-              <Braces size={ICON_SIZE.xs} />
-            </span>
-          )}
-          {/* 接入状态角标。**只在需要说话时说话**：`editable` 已经有 `{}` 那个
-              紧凑标记了，再写一遍「可编辑」是纯噪音。
-              与格式角标同一行、同一种底色：不引入新的高饱和色块，也不会跟
-              悬停时右下角那个「添加到画布」撞上。整组留出右上角 ×N 的位置。
-              它是 `<span>` 不是按钮——option 里不许再嵌可 Tab 的控件；完整解释
-              在 `title` 与卡片外的说明条里，两条路都到得了。 */}
-          {cap && cap.status !== 'editable' && (
-            <span
-              className="min-w-0 truncate rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white"
-              title={reasonText(cap)}
-            >
-              {statusLabel(cap.status)}
-            </span>
-          )}
-        </span>
-
-        {used > 0 && (
-          <span
-            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
-            title={ab('cardUsed', { count: used })}
-          >
-            ×{used}
-          </span>
-        )}
 
         {/* 不是 <button>：option 里不许再嵌交互控件（axe nested-interactive，
             serious）——哪怕 tabIndex=-1 也算。这两个只是鼠标用户的就近入口；
             键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
         <CardActions selected={selected}>
-          <CardAction title={ab('openAria', { name })} onClick={onOpen}>
-            <Pencil size={ICON_SIZE.xs} />
-            {ab('openFigure')}
-          </CardAction>
-          <CardAction title={ab('addAria', { name })} onClick={onAdd}>
-            <Plus size={ICON_SIZE.xs} />
-            {ab('addToCanvas')}
-          </CardAction>
+          <CardAction icon={Pencil} label={ab('openFigure')} title={ab('openAria', { name })} onClick={onOpen} />
+          <CardAction icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
         </CardActions>
-      </div>
+      </CardPreview>
 
-      {/* 文字区压到最薄：图片区要占到卡片约 80%，识别靠图不靠字 */}
-      <div className="px-1.5 py-0.5">
-        <p
-          className={cn('truncate text-xs leading-4', selected ? 'text-accent' : 'text-ink')}
-          title={name}
-        >
-          {name}
-        </p>
-        <p className="truncate font-mono text-xs leading-4 text-ink-3">
-          {translate('measure.cmSize', {
+      {/* 文字区：文件名一行、元数据一行。格式 / 尺寸 / 接入状态 / 使用次数都在
+          这里，预览上不再压任何标签——图就是图。
+          接入状态**只在需要说话时说话**：`editable` 已经有 `{}` 那个紧凑标记，
+          再写一遍「可编辑」是纯噪音；完整解释在 `title` 与卡片外的说明条里。 */}
+      <CardMeta
+        name={name}
+        selected={selected}
+        marker={
+          panel.script ? (
+            <span
+              className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
+              title={ab('scriptBadgeTitle')}
+            >
+              <Braces size={ICON_SIZE.xs} />
+            </span>
+          ) : undefined
+        }
+        parts={[
+          formatOf(panel),
+          translate('measure.cmSize', {
             w: formatCm(panel.native_w_mm),
             h: formatCm(panel.native_h_mm),
-          })}
-          {used ? ab('usedSuffix', { count: used }) : ''}
-        </p>
-      </div>
+          }),
+          cap && cap.status !== 'editable'
+            ? { text: statusLabel(cap.status), title: reasonText(cap) }
+            : null,
+        ]}
+        used={used}
+      />
     </li>
   )
 }
@@ -876,44 +839,22 @@ function RuntimeAssetCard({
         }
       }}
       title={ab('runtimeCardTitle', { stem: asset.stem, script: asset.script })}
-      className={cn(
-        'group relative overflow-hidden rounded-sm border bg-surface outline-none transition-colors',
-        selected
-          ? 'border-accent bg-accent-subtle'
-          : 'border-border hover:border-border-strong',
-        'focus-visible:focus-ring',
-      )}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '150px' }}
+      className={cardClass(selected)}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
-      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-border bg-white">
+      <CardPreview>
         {asset.cached ? (
           <img
             loading="lazy"
             src={runtimePreviewUrl(asset.id, nonce)}
             alt=""
             draggable={false}
-            className="max-h-full max-w-full object-contain p-1"
+            className="h-full w-full object-contain p-1"
           />
         ) : (
-          <span className="flex flex-col items-center gap-1 p-2 text-center text-xs text-ink-3">
+          <span className="flex flex-col items-center gap-1 p-2 text-center type-meta">
             <Play size={ICON_SIZE.md} className="text-ink-faint" />
             {ab('runtimeNeedsRun')}
-          </span>
-        )}
-
-        <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-1">
-          <span className="flex items-center gap-0.5 rounded-[3px] bg-ink/[.72] px-1 text-xs leading-4 text-white">
-            <Zap size={ICON_SIZE.xs} />
-            {ab('runtimeBadge')}
-          </span>
-        </span>
-
-        {used > 0 && (
-          <span
-            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
-            title={ab('cardUsed', { count: used })}
-          >
-            ×{used}
           </span>
         )}
 
@@ -922,63 +863,148 @@ function RuntimeAssetCard({
         <CardActions selected={selected}>
           {asset.descriptor ? (
             <>
-              <CardAction title={ab('openAria', { name: asset.stem })} onClick={primary}>
-                <Pencil size={ICON_SIZE.xs} />
-                {ab('openFigure')}
-              </CardAction>
-              <CardAction title={ab('addAria', { name: asset.stem })} onClick={add}>
-                <Plus size={ICON_SIZE.xs} />
-                {ab('addToCanvas')}
-              </CardAction>
+              <CardAction
+                icon={Pencil}
+                label={ab('openFigure')}
+                title={ab('openAria', { name: asset.stem })}
+                onClick={primary}
+              />
+              <CardAction
+                icon={Plus}
+                label={ab('addToCanvas')}
+                title={ab('addAria', { name: asset.stem })}
+                onClick={add}
+              />
             </>
           ) : (
-            <CardAction title={ab('runtimeRunAria', { script: asset.script })} onClick={primary}>
-              <Play size={ICON_SIZE.xs} />
-              {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
-            </CardAction>
+            <CardAction
+              icon={Play}
+              label={translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+              title={ab('runtimeRunAria', { script: asset.script })}
+              onClick={primary}
+            />
           )}
         </CardActions>
-      </div>
+      </CardPreview>
 
-      <div className="px-1.5 py-0.5">
-        <p
-          className={cn('truncate text-xs leading-4', selected ? 'text-accent' : 'text-ink')}
-          title={asset.stem}
-        >
-          {asset.stem}
-        </p>
-        {/* 第二行：有同源磁盘图先说关系（脚本路径在 title 与可达名里仍然有）；
-            否则尺寸（跑过）或脚本路径（没跑过） */}
-        <p className="truncate font-mono text-xs leading-4 text-ink-3" title={asset.script}>
-          {sibling
+      {/* 第二行：「运行时图」是它的格式名；之后有同源磁盘图先说关系（脚本路径在
+          title 与可达名里仍然有），否则尺寸（跑过）或脚本路径（没跑过） */}
+      <CardMeta
+        name={asset.stem}
+        selected={selected}
+        marker={
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
+            <Zap size={ICON_SIZE.xs} />
+          </span>
+        }
+        parts={[
+          ab('runtimeBadge'),
+          sibling
             ? ab('runtimeSiblingOf', { name: fileName(sibling.id) })
             : asset.size_mm
               ? translate('measure.cmSize', {
                   w: formatCm(asset.size_mm[0]),
                   h: formatCm(asset.size_mm[1]),
                 })
-              : asset.script}
-          {used ? ab('usedSuffix', { count: used }) : ''}
-        </p>
-        {staleKey && (
-          <p className="flex items-center justify-between gap-1 pb-0.5 text-xs leading-4">
-            <span className="min-w-0 truncate text-danger">
-              {translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}
-            </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                rerun()
-              }}
-              disabled={busy}
-              className="shrink-0 rounded-sm text-ink-3 outline-none hover:text-ink focus-visible:focus-ring disabled:opacity-40"
-            >
-              {translate(`scripts.${busy ? 'running' : 'rerun'}`, { ns: 'workspace' })}
-            </button>
-          </p>
-        )}
-      </div>
+              : { text: asset.script, title: asset.script },
+        ]}
+        used={used}
+        extra={
+          staleKey ? (
+            <p className="flex items-center justify-between gap-1 text-xs">
+              <span className="min-w-0 truncate text-danger">
+                {translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  rerun()
+                }}
+                disabled={busy}
+                className="shrink-0 rounded-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring disabled:opacity-40"
+              >
+                {translate(`scripts.${busy ? 'running' : 'rerun'}`, { ns: 'workspace' })}
+              </button>
+            </p>
+          ) : undefined
+        }
+      />
     </li>
+  )
+}
+
+/** 卡片外壳：hairline 常态，hover 加深一档，选中是 selected 轻 tint + 名字加粗 */
+const cardClass = (selected: boolean) =>
+  cn(
+    'group relative overflow-hidden rounded-sm border outline-none transition-colors duration-fast',
+    selected ? 'border-border-strong bg-selected' : 'border-border bg-surface hover:border-border-strong',
+    'focus-visible:focus-ring',
+  )
+
+/** 预览区：3:2、白底、内容按比例缩放；上面只有悬停时的就近入口，没有常驻标签 */
+function CardPreview({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative flex aspect-[3/2] items-center justify-center overflow-hidden bg-white">
+      {children}
+    </div>
+  )
+}
+
+/** 元数据行里的一段：纯文字，或带 title（悬停看完整解释）的文字 */
+type MetaPart = string | { text: string; title?: string } | null | undefined
+
+/**
+ * 卡片文字区：第一行名字（+ 一个 16px 的标记位），第二行元数据用「·」串起来、
+ * 使用次数靠右。两行都是单行截断，长文件名 / 长状态不会把卡片撑高。
+ */
+function CardMeta({
+  name,
+  selected,
+  marker,
+  parts,
+  used,
+  extra,
+}: {
+  name: string
+  selected: boolean
+  marker?: ReactNode
+  parts: MetaPart[]
+  used: number
+  extra?: ReactNode
+}) {
+  const shown = parts.filter((p): p is Exclude<MetaPart, null | undefined> => p != null)
+  return (
+    <div className="flex flex-col px-1.5 py-1">
+      <p className="flex items-center gap-1 text-xs">
+        <span className={cn('min-w-0 truncate', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
+          {name}
+        </span>
+        {marker}
+      </p>
+      <p className="flex items-center gap-1 type-meta tabular-nums">
+        {shown.map((part, i) => (
+          <Fragment key={i}>
+            {i > 0 && (
+              <span aria-hidden className="shrink-0">
+                ·
+              </span>
+            )}
+            <span
+              className={cn('truncate', i === 0 ? 'shrink-0' : 'min-w-0')}
+              title={typeof part === 'string' ? undefined : part.title}
+            >
+              {typeof part === 'string' ? part : part.text}
+            </span>
+          </Fragment>
+        ))}
+        {used > 0 && (
+          <span className="ml-auto shrink-0 pl-1" title={ab('cardUsed', { count: used })}>
+            ×{used}
+          </span>
+        )}
+      </p>
+      {extra}
+    </div>
   )
 }
 
@@ -989,10 +1015,10 @@ const CARD_KEYSHORTCUTS = 'Enter Shift+Enter Space'
 function CardActions({ selected, children }: { selected: boolean; children: ReactNode }) {
   return (
     <span
+      data-card-actions
       className={cn(
-        // 双列时卡片只有 ~150px 宽，两个入口放不下一行就换行（图片区 4:3 有两行的高度）
-        'absolute bottom-1 right-1 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center justify-end gap-1',
-        'opacity-0 transition-opacity select-none',
+        'absolute bottom-1.5 right-1.5 flex items-center gap-1',
+        'opacity-0 transition-opacity duration-fast select-none',
         'group-hover:opacity-100 group-focus-visible:opacity-100',
         selected && 'opacity-100',
       )}
@@ -1002,15 +1028,21 @@ function CardActions({ selected, children }: { selected: boolean; children: Reac
   )
 }
 
-/** 一个就近入口。不是 <button>——option 里不许再嵌交互控件（axe nested-interactive） */
+/**
+ * 一个就近入口：24px 的图标小片，名字在 title（气泡）与读屏文本里——双列时预览
+ * 只有 ~80px 高，两个带文字的片会把图整个盖住。
+ * 不是 <button>——option 里不许再嵌交互控件（axe nested-interactive）。
+ */
 function CardAction({
+  icon: Icon,
+  label,
   title,
   onClick,
-  children,
 }: {
+  icon: LucideIcon
+  label: string
   title: string
   onClick: () => void
-  children: ReactNode
 }) {
   return (
     <span
@@ -1020,11 +1052,13 @@ function CardAction({
         onClick()
       }}
       className={cn(
-        'flex h-6 cursor-pointer items-center gap-1 rounded-sm',
-        'border border-border bg-surface px-1.5 text-xs text-ink hover:border-border-strong hover:bg-surface-2',
+        'flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm',
+        'border border-border bg-surface text-ink shadow-pop',
+        'transition-colors duration-fast hover:border-border-strong hover:bg-surface-2',
       )}
     >
-      {children}
+      <Icon size={ICON_SIZE.sm} />
+      <span className="sr-only">{label}</span>
     </span>
   )
 }
@@ -1059,7 +1093,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
         <>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               openFastEdit(itemId(item))
             }}
@@ -1069,7 +1103,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
           </Button>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               addFigureToLayout(itemId(item))
             }}
@@ -1081,7 +1115,7 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
       ) : (
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={busy}
           onClick={() => void useScriptRunStore.getState().run(item.asset.script)}
         >

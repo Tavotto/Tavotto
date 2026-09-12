@@ -39,7 +39,6 @@ import {
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useDocumentStore } from '@/store/documentStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { overrideCounts } from '@/lib/overrideCounts'
@@ -48,17 +47,15 @@ import {
   panelAspectLocked,
   panelFullSize,
   panelRotation,
-  ROTATIONS,
 } from '@/types/document'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { NumberField, TextInput } from '../ui/Input'
-import { Segmented } from '../ui/Segmented'
 import { Tip } from '../ui/Tooltip'
 import { AlignToCanvasRow } from './ArrangeSection'
 import { HistoryPanel } from './HistoryPanel'
-import { MmField } from './MmField'
+import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { shared } from './common'
 
@@ -108,11 +105,12 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   if (panel.script || !cap || cap.status === 'editable') return null
   return (
     <div className="mx-3 mb-1.5 rounded-md border border-border bg-surface-2 p-2">
-      <p className="text-xs text-ink">{statusLabel(cap.status)}</p>
+      <p className="text-xs font-medium text-ink">{statusLabel(cap.status)}</p>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
+        variant="secondary"
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="mt-1.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
@@ -156,64 +154,61 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Section title={pn('geometry')}>
-      <Grid2>
+      {/* X / Y 与 W / H 各占一列、单位坐在框里，中间一格只放宽高比锁
+          （第一行占位）——两行的数字和单位各排成一条竖线；列宽 minmax(0,1fr)，
+          窄栏里一起收窄而不是溢出（Session 2） */}
+      <GeometryGrid>
         <MmField
           label="X"
           historyLabel={hist('setX')}
           value={sharedPanel(objs, (o) => o.x)}
           onChange={(v) => setAxis('x', v)}
         />
+        <GeometrySpacer />
         <MmField
           label="Y"
           historyLabel={hist('setY')}
           value={sharedPanel(objs, (o) => o.y)}
           onChange={(v) => setAxis('y', v)}
         />
-      </Grid2>
-
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <div className="min-w-0 flex-1">
-          <MmField
-            label="W"
-            historyLabel={hist('setWidth')}
-            min={1}
-            value={sharedPanel(objs, (o) => o.w)}
-            onChange={(v) =>
-              setEach(hist('setWidth'), (o) => {
-                const k = v / o.w
-                o.w = v
-                if (panelAspectLocked(o)) o.h *= k
-              })
-            }
-          />
-        </div>
-        <Tip label={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}>
-          <Button
-            size="icon-sm"
-            active={locked}
-            aria-pressed={locked}
-            aria-label={pn('lockAspect')}
-            onClick={() => setPanelAspectLocked(ids, !locked)}
-          >
-            {locked ? <Link2 size={ICON_SIZE.sm} /> : <Unlink2 size={ICON_SIZE.sm} />}
-          </Button>
-        </Tip>
-        <div className="min-w-0 flex-1">
-          <MmField
-            label="H"
-            historyLabel={hist('setHeight')}
-            min={1}
-            value={sharedPanel(objs, (o) => o.h)}
-            onChange={(v) =>
-              setEach(hist('setHeight'), (o) => {
-                const k = v / o.h
-                o.h = v
-                if (panelAspectLocked(o)) o.w *= k
-              })
-            }
-          />
-        </div>
-      </div>
+        <MmField
+          label="W"
+          historyLabel={hist('setWidth')}
+          min={1}
+          value={sharedPanel(objs, (o) => o.w)}
+          onChange={(v) =>
+            setEach(hist('setWidth'), (o) => {
+              const k = v / o.w
+              o.w = v
+              if (panelAspectLocked(o)) o.h *= k
+            })
+          }
+        />
+        {/* 锁是个小 ghost 图标钮：名字是动作，气泡讲当前状态；锁上时轻 tint */}
+        <IconButton
+          label={pn('lockAspect')}
+          tip={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}
+          iconSize="sm"
+          active={locked}
+          aria-pressed={locked}
+          onClick={() => setPanelAspectLocked(ids, !locked)}
+        >
+          {locked ? <Link2 size={ICON_SIZE.sm} /> : <Unlink2 size={ICON_SIZE.sm} />}
+        </IconButton>
+        <MmField
+          label="H"
+          historyLabel={hist('setHeight')}
+          min={1}
+          value={sharedPanel(objs, (o) => o.h)}
+          onChange={(v) =>
+            setEach(hist('setHeight'), (o) => {
+              const k = v / o.h
+              o.h = v
+              if (panelAspectLocked(o)) o.w *= k
+            })
+          }
+        />
+      </GeometryGrid>
 
       <Row className="mt-1.5" label={pn('scale')}>
         <NumberField
@@ -223,7 +218,8 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           min={5}
           max={500}
           precision={0}
-          suffix="%"
+          unit="%"
+          ariaLabel={pn('scale')}
           title={pn('scaleTitle')}
           onChange={(v) =>
             updateObjects(ids, hist('setPanelScale'), (o) => {
@@ -243,7 +239,8 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           }
           side="left"
         >
-          <span className="min-w-0 shrink truncate font-mono text-xs text-ink-3">
+          {/* 原始尺寸是元数据：靠右、meta 字色，不与数字框争视线 */}
+          <span className="type-meta ml-auto min-w-0 shrink truncate font-mono">
             {native ? pn('native', { size: native }) : pn('nativeMixed')}
           </span>
         </Tip>
@@ -251,38 +248,28 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 
       {/*
         「原始比例 / 原始尺寸」改的就是上面那两个数，所以它们跟着 W/H 与缩放走
-        （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。它们以前和裁剪、
-        适配挤在「图片」一组里，于是「原始尺寸」看着像是在说裁剪前的画面。
+        （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。两颗都是次级操作：
+        ghost 文字键、不撑满、同高同图标档——不是两个 CTA。
       */}
-      <div className="mt-1.5 flex gap-1.5">
+      <Row className="mt-1.5" label={pn('restore')}>
         <Tip label={pn('aspectTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => restorePanelAspect(ids)}
-          >
-            <Ratio size={ICON_SIZE.sm} />
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
+            <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('aspect')}
           </Button>
         </Tip>
         <Tip label={pn('nativeSizeTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => restorePanelNativeSize(ids)}
-          >
-            <Scaling size={ICON_SIZE.sm} />
+          <Button variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
+            <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('nativeSize')}
           </Button>
         </Tip>
-      </div>
+      </Row>
 
       {objs.length === 1 && (
-        <div className="mt-2">
+        <Row className="mt-1.5" label={translate('arrange.align', { ns: 'inspector' })}>
           <AlignToCanvasRow />
-        </div>
+        </Row>
       )}
     </Section>
   )
@@ -323,25 +310,32 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
       summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
     >
       <div className="flex flex-col gap-1.5">
+        {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，
+            步进 90、写回前吸附到这四档 */}
         <Row label={translate('transform.rotation', { ns: 'inspector' })}>
-          <Segmented
-            className="w-full"
-            value={rot === undefined ? null : String(rot)}
-            onChange={(v) => rotatePanels(ids, Number(v) as PanelRotation)}
-            items={ROTATIONS.map((r) => ({
-              value: String(r),
-              label: `${r}°`,
-              tip: pn('rotationTip'),
-            }))}
+          <NumberField
+            value={rot ?? 0}
+            mixed={rot === undefined}
+            min={-360}
+            max={360}
+            step={90}
+            precision={0}
+            unit="°"
+            ariaLabel={translate('transform.rotation', { ns: 'inspector' })}
+            title={pn('rotationTip')}
+            onChange={(v) => {
+              const snapped = ((Math.round(v / 90) * 90) % 360 + 360) % 360
+              rotatePanels(ids, snapped as PanelRotation)
+            }}
           />
         </Row>
 
         <Row label={pn('flip')}>
-          <div className="flex min-w-0 flex-1 gap-1">
+          {/* 两颗同高同档的开关键（secondary + active），不撑满整行 */}
+          <div className="flex min-w-0 gap-1">
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
-              className="flex-1"
               active={sharedPanel(objs, (o) => o.flipH === true) === true}
               onClick={() =>
                 setEach(hist('flipH'), (o) => {
@@ -353,9 +347,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
               {pn('flipHorizontal')}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
-              className="flex-1"
               active={sharedPanel(objs, (o) => o.flipV === true) === true}
               onClick={() =>
                 setEach(hist('flipV'), (o) => {
@@ -369,31 +362,17 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           </div>
         </Row>
 
+        {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
         <Row label={pn('opacity')}>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={opacity ?? 100}
-            aria-label={pn('opacity')}
-            style={{ accentColor: 'var(--color-accent)' }}
-            className="h-4 min-w-0 flex-1 cursor-pointer"
-            onPointerDown={() =>
-              useDocumentStore.getState().beginTxn(msg('history.setOpacity', undefined, 'workspace'))
-            }
-            onPointerUp={() => useDocumentStore.getState().endTxn()}
-            onChange={(e) => setPanelOpacity(ids, Number(e.target.value) / 100)}
-          />
           <NumberField
-            className="w-[58px] shrink-0"
+            ariaLabel={pn('opacity')}
             value={opacity ?? 100}
             mixed={opacity === undefined}
             min={0}
             max={100}
             step={1}
             precision={0}
-            suffix="%"
+            unit="%"
             onChange={(v) => setPanelOpacity(ids, v / 100)}
           />
         </Row>
@@ -405,18 +384,15 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           </p>
         )}
 
-        <Tip label={pn('replaceTip')}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            disabled={!one}
-            onClick={() => setReplacing(true)}
-          >
-            <Replace size={ICON_SIZE.sm} />
-            {pn('replace')}
-          </Button>
-        </Tip>
+        {/* 替换素材是设置行里的一个动作，不是整行 CTA */}
+        <Row label={pn('replace')}>
+          <Tip label={pn('replaceTip')}>
+            <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
+              <Replace size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('replaceAction')}
+            </Button>
+          </Tip>
+        </Row>
         {one && (
           <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
         )}
@@ -444,12 +420,13 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
       已经跟着 W/H 搬到位置与尺寸那一组（审计 T26）。
     */
     <Section title={pn('image')}>
-      <div className="flex gap-1.5">
+      {/* 取景 / 完整放入 / 填满框：三个同级、互斥的摆法，三列等宽一行排开；
+          裁剪是进出的模式（active），另两颗是一次性的摆法命令 */}
+      <div className="grid grid-cols-3 gap-1">
         <Tip label={pn('cropTip')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
-            className="flex-1"
             disabled={!one}
             active={cropping}
             data-crop-toggle
@@ -459,38 +436,33 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
               else beginCrop(one.id)
             }}
           >
-            <Crop size={ICON_SIZE.sm} />
+            <Crop size={ICON_SIZE.sm} className={cropping ? undefined : 'text-ink-3'} />
             {pn(cropping ? 'cropDone' : 'crop')}
           </Button>
         </Tip>
-        {cropped && (
-          <Tip label={pn('resetCropTip')}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => resetPanelCrop(ids)}
-              aria-label={pn('resetCrop')}
-            >
-              <RotateCcw size={ICON_SIZE.sm} />
-            </Button>
-          </Tip>
-        )}
-      </div>
-
-      <Grid2 className="mt-1.5">
         <Tip label={pn('fitTip')}>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => fitPanels(ids)}>
-            <Minimize2 size={ICON_SIZE.sm} />
+          <Button variant="secondary" size="sm" onClick={() => fitPanels(ids)}>
+            <Minimize2 size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('fit')}
           </Button>
         </Tip>
         <Tip label={pn('fillTip')}>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
-            <Maximize2 size={ICON_SIZE.sm} />
+          <Button variant="secondary" size="sm" onClick={() => fillPanels(ids)}>
+            <Maximize2 size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('fill')}
           </Button>
         </Tip>
-      </Grid2>
+      </div>
+      {cropped && (
+        <div className="mt-1 flex justify-end">
+          <Tip label={pn('resetCropTip')}>
+            <Button variant="ghost" size="sm" onClick={() => resetPanelCrop(ids)}>
+              <RotateCcw size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('resetCrop')}
+            </Button>
+          </Tip>
+        </div>
+      )}
     </Section>
   )
 }
@@ -541,7 +513,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
 
   return (
     <div className="mt-2 border-t border-border pt-2">
-      <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
+      <p className="mb-1 type-section">
         {pn('diagnostics')}
       </p>
       <div className="flex flex-col gap-1">
@@ -629,7 +601,7 @@ function ReplaceAssetDialog({
                 onClick={() => void pick(info)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left',
-                  'hover:bg-ink/[.055] disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent',
+                  'hover:bg-surface-hover disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent',
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink" title={info.id}>
@@ -681,7 +653,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           构建进度改用下面那行非阻塞提示表达。
         */}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="min-w-0 flex-1"
           active={editing}
@@ -704,12 +676,10 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
         </Button>
         {overrides > 0 && (
           /* 「22」孤零零挂在按钮旁会被读成元素数（审计 T07）：徽标自己说清是
-             修改数，与右栏头部的「N 项已修改」同一句话；完整说明在 tooltip */
+             修改数，与右栏头部的「N 项已修改」同一句话；完整说明在 tooltip。
+             它是状态不是动作：meta 字色、无底无框，与旁边那颗按钮一眼分得开 */
           <Tip label={pn('overrideCount', { count: overrides })}>
-            <span
-              data-override-badge
-              className="flex h-7 shrink-0 items-center rounded-sm bg-accent-subtle px-1.5 text-xs text-accent"
-            >
+            <span data-override-badge className="type-meta flex h-7 shrink-0 items-center tabular-nums">
               {translate('element.modifiedCount', { ns: 'inspector', count: overrides })}
             </span>
           </Tip>
@@ -752,15 +722,18 @@ export function SourceSection({
       title={pn('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen('panel', !open)}
-      summary={panel?.script?.split('/').pop()}
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (
         <>
-          <div className="flex gap-1.5">
-            <UpdateSourceButton panel={panel} />
-            <HistoryPanel panel={panel} />
-          </div>
+          <Grid2>
+            <div className="flex min-w-0 *:w-full">
+              <UpdateSourceButton panel={panel} />
+            </div>
+            <div className="flex min-w-0 *:w-full">
+              <HistoryPanel panel={panel} />
+            </div>
+          </Grid2>
           {overrides > 0 && (
             <p className="mt-1.5 text-xs text-ink-3">
               {pn('overrideCount', { count: overrides })}
@@ -796,7 +769,7 @@ function RuntimeSourceArea({ panel }: { panel: PanelObject }) {
           {script}
         </span>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="shrink-0"
           disabled={!script || busy}

@@ -18,7 +18,6 @@ import {
   MoveUp,
   MoveVertical,
   RotateCcw,
-  TriangleAlert,
 } from 'lucide-react'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -144,7 +143,6 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
-import { ElementIssueNote } from './ElementIssueNote'
 import { HistoryPanel } from './HistoryPanel'
 import { overrideCounts } from '@/lib/overrideCounts'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
@@ -362,19 +360,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           />
         )
       )}
-      {!!render?.warnings.length && (
-        <Section>
-          <ul className="flex flex-col gap-1">
-            {render.warnings.map((w, i) => (
-              <li key={i} className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-                <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-danger" />
-                <span>{w}</span>
-              </li>
-            ))}
-          </ul>
-          <OrphanOverrides panel={panel} manifest={exactManifest} />
-        </Section>
-      )}
+      {/* 引擎的 warnings（「应用失败 gid.prop: …」）不再在属性页顶上整段列出
+          （2026-09-11 用户反馈）：与某个字段对得上的那条仍在那个字段下面说，
+          孤儿 override 的清理入口单独保留。 */}
+      <OrphanOverrides panel={panel} manifest={exactManifest} />
 
       {/* 三层顺序：公共文字样式 → 其余公共属性 → 对齐与排列。
           三者互相独立，谁在谁不在只看选择本身，不再互斥。
@@ -427,7 +416,6 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
-            primaryNote={element ? <ElementIssueNote panel={panel} element={element} /> : null}
             primaryExtra={
               element?.role === 'axes' && sideHost ? (
                 /* 子图页三段：范围与坐标变换 → 刻度与网格 → 边框（审计 T12：
@@ -509,10 +497,11 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
   if (!orphans.length) return null
   const gids = new Set(orphans.map((o) => o.gid))
   return (
-    <div className="mt-1.5 flex items-center gap-2">
+    <Section>
+      <div className="flex items-center gap-2">
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         onClick={() =>
           clearOverrides(
             panel.id,
@@ -526,7 +515,8 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
       <span className="text-xs text-ink-3">
         {el('orphanCount', { overrides: orphans.length, elements: gids.size })}
       </span>
-    </div>
+      </div>
+    </Section>
   )
 }
 
@@ -793,9 +783,10 @@ function PairRow({
   const cell = (field: EditableField, prefix: string) => {
     const label = propLabel(field.prop, element.role)
     return (
-      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 flex-1 items-center gap-1">
+      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 shrink-0 items-center gap-1">
         <NumberField
-          className="min-w-0 flex-1"
+          // 图幅那一对是「393.7」这种五位带小数的数：4ch 只剩「39」（2026-09-11 用户反馈）
+          className="min-w-0 [&_input]:w-[calc(6ch+0.75rem)]"
           prefix={prefix}
           ariaLabel={label}
           value={Number(w.read(field.prop) ?? 0)}
@@ -803,7 +794,7 @@ function PairRow({
           max={field.max}
           step={field.step ?? 1}
           precision={2}
-          suffix={field.unit}
+          unit={field.unit}
           onChange={(v) => w.write(field.prop, v)}
           onScrubStart={() => w.beginGesture()}
           onScrubEnd={w.endGesture}
@@ -820,8 +811,11 @@ function PairRow({
         label={labeledWithStateNode(text.label(), overridden(a.prop) || overridden(b.prop))}
         labelWidth={LABEL_W}
       >
-        {cell(byProp(text.props[0]), text.prefixes[0]())}
-        {cell(byProp(text.props[1]), text.prefixes[1]())}
+        {/* 两个数值框靠右贴齐、不再各占半行（2026-09-11 用户反馈：右侧不留空隙） */}
+        <div className="flex w-full min-w-0 items-center justify-end gap-1.5">
+          {cell(byProp(text.props[0]), text.prefixes[0]())}
+          {cell(byProp(text.props[1]), text.prefixes[1]())}
+        </div>
       </Row>
     </div>
   )
@@ -901,7 +895,7 @@ function AbsentAppearanceNote({ element }: { element: ManifestElement }) {
         </div>
       ))}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="w-full"
         onClick={() => {
@@ -931,7 +925,6 @@ function FieldList({
   warnings,
   buckets,
   primaryExtra,
-  primaryNote,
 }: {
   panel: PanelObject
   element: ManifestElement
@@ -939,8 +932,6 @@ function FieldList({
   buckets: { primary: PresentedField[]; more: PresentedField[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
-  /** 紧跟在 primary 行（内容框）后面的就地提示（落在这个元素上的问题），排在文字样式行之前 */
-  primaryNote?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
   // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
@@ -1000,26 +991,30 @@ function FieldList({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
   ).length
 
+  // 有文字工具条时，首屏顺序是「内容 → 字体行 → 其余首屏字段（背景等）」：
+  // 工具条承接的字体字段已从列表里滤掉，剩下排在 `text` 之后的按模板顺序跟在工具条后面
+  const headPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop === 'text') : buckets.primary
+  const tailPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop !== 'text') : []
   return (
     <>
-      {rows(buckets.primary)}
-      {primaryNote && <div className="mt-1">{primaryNote}</div>}
+      {rows(headPrimary)}
       {bar && (
-        <div className={cn(buckets.primary.length > 0 && 'mt-1.5')}>
+        <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} />
         </div>
       )}
+      {tailPrimary.length > 0 && <div className="mt-1.5">{rows(tailPrimary)}</div>}
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
       {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
       <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
-        <div className="mt-1.5 border-t border-border pt-1.5">
+        <div className="mt-1.5">
           <button
             onClick={() => setMoreOpen(role, !moreOpen)}
             aria-expanded={moreOpen}
-            className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+            className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
           >
             <ChevronRight
               size={ICON_SIZE.xs}
@@ -1039,7 +1034,7 @@ function FieldList({
               {restGroups.map(([group, fields], i) => (
                 <div key={group ?? `flat-${i}`}>
                   {group && (
-                    <p className="mb-1 mt-1 text-xs uppercase tracking-[.06em] text-ink-3">
+                    <p className="mb-1 mt-1 type-section">
                       {groupLabel(group)}
                     </p>
                   )}
@@ -1142,7 +1137,7 @@ function TickControl({
 
 /** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
 function GroupHead({ children }: { children: ReactNode }) {
-  return <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">{children}</p>
+  return <p className="mb-1 type-section">{children}</p>
 }
 
 /* ------------------------------ 子图：范围与坐标变换 ------------------------ */
@@ -1255,7 +1250,7 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
       className="flex min-w-0 items-center gap-1"
       title={overridden ? `${label} · ${el('modified')}` : label}
     >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />}
+      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
@@ -1641,7 +1636,7 @@ function BatchFieldRow({
             max={field.max}
             step={field.step ?? 1}
             precision={2}
-            suffix={field.unit}
+            unit={field.unit}
             onChange={(v) => write(v)}
             onScrubStart={gesture.start}
             onScrubEnd={gesture.end}
@@ -1771,7 +1766,7 @@ function BatchFieldRow({
               overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
             )
           }
-          className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-accent"
+          className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-ink"
         >
           {overridden.length === elements.length
             ? el('backToScript')
@@ -1894,7 +1889,7 @@ function FieldRow({
       title={overridden ? `${label} · ${el('modified')}` : label}
     >
       {overridden && (
-        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />
+        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
       )}
       <span className="min-w-0 truncate">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
@@ -2166,7 +2161,9 @@ function FieldRow({
               onChange={(next, immediate) => write(next, immediate)}
             />
           </div>
-        </>
+        </>,
+        // 标签与多行输入框顶对齐（2026-09-11 用户反馈）：居中会让「内容」悬在框的半腰
+        'start',
       )
     }
 
@@ -2179,7 +2176,7 @@ function FieldRow({
             max={field.max}
             step={field.step ?? 1}
             precision={2}
-            suffix={field.unit}
+            unit={field.unit}
             // 可达名：标签只是**旁边的一段文字**，没有任何东西把它和这个输入框
             // 连起来——走查的 AX 树里这些框读出来就是「编辑框 1.1」，用户听不出
             // 改的是线宽还是端帽长度（axe 的 label 规则按 critical 报）。带单位，
@@ -2253,7 +2250,7 @@ function FieldRow({
               <li
                 key={`${origIdx}-${i}`}
                 className={cn(
-                  'flex h-6 items-center gap-1 px-1.5',
+                  'flex h-7 items-center gap-1 pl-1.5 pr-0.5',
                   i > 0 && 'border-t border-border',
                 )}
               >
@@ -2262,7 +2259,6 @@ function FieldRow({
                 </span>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   disabled={i === 0}
                   onClick={() => move(i, -1)}
                   aria-label={el('moveUp')}
@@ -2271,7 +2267,6 @@ function FieldRow({
                 </Button>
                 <Button
                   size="icon-sm"
-                  className="h-5 w-5"
                   disabled={i === perm.length - 1}
                   onClick={() => move(i, 1)}
                   aria-label={el('moveDown')}
@@ -2348,6 +2343,9 @@ function FieldRow({
             {arr.map((v, i) => (
               <NumberField
                 key={i}
+                // 图幅是「393.7」这种五位带小数的数：默认 4ch 只剩「393.」
+                // （2026-09-11 用户反馈）；rect 四格并排放不下，维持默认
+                className={field.type === 'pair' ? '[&_input]:w-[calc(6ch+0.75rem)]' : undefined}
                 ariaLabel={axisAriaLabel(field, label, i)}
                 prefix={field.type === 'pair' ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
                 value={Number(v)}
@@ -2457,17 +2455,18 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   return (
     <Row label={el('scaleLabel')} className="mt-1.5">
       <NumberField
+        fill
         className="w-[84px] shrink-0"
         ariaLabel={el('scaleLabel')}
         value={pct}
         min={10}
         max={400}
         step={5}
-        suffix="%"
+        unit="%"
         title={el('scaleTitle')}
         onChange={setPct}
       />
-      <Button size="sm" variant="outline" disabled={!ready} onClick={apply} data-scale-apply>
+      <Button size="sm" variant="secondary" disabled={!ready} onClick={apply} data-scale-apply>
         {el('scaleApply')}
       </Button>
     </Row>
@@ -2578,7 +2577,7 @@ function AlignSection({
               位置类对齐用的是选区边界，末位元素并不特殊。
             */}
             {i === items.length - 1 && allResizable && (
-              <span className="ml-auto shrink-0 font-mono text-xs text-accent/70">
+              <span className="ml-auto shrink-0 font-mono text-xs text-ink-3">
                 {el('alignBaselineSize')}
               </span>
             )}
@@ -2624,7 +2623,7 @@ function AxesSizeMm({
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
         <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
           <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-          <p className="min-w-0 flex-1 truncate text-xs uppercase tracking-[.06em] text-ink-3">
+          <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
           </p>
           <Tip label={el('proxiedGeometry', { label: engineLabel(element.label) })}>
@@ -2642,8 +2641,9 @@ function AxesSizeMm({
       ) : null}
       <Grid2>
         <NumberField
+          fill
           prefix="W"
-          suffix="mm"
+          unit="mm"
           value={fracToMm(rect[2], figW)}
           step={0.5}
           min={1}
@@ -2651,8 +2651,9 @@ function AxesSizeMm({
           onChange={(v) => write([rect[0], rect[1], mmToFrac(v, figW), rect[3]], 'setAxesWidth')}
         />
         <NumberField
+          fill
           prefix="H"
-          suffix="mm"
+          unit="mm"
           value={fracToMm(rect[3], figH)}
           step={0.5}
           min={1}
@@ -2669,7 +2670,7 @@ function AxesSizeMm({
       {group && <ScaleField panel={panel} group={group} />}
       <div className="mt-1.5 flex gap-1.5">
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
@@ -2678,7 +2679,7 @@ function AxesSizeMm({
           {el('centerH')}
         </Button>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="flex-1"
           onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
@@ -2724,11 +2725,10 @@ function SourceAdvancedSection({
       title={el('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen(role, !open)}
-      summary={panel.script?.split('/').pop()}
     >
       <div className="flex flex-col gap-1.5">
         {advanced.length > 0 && (
-          <div className="flex flex-col gap-1.5 border-b border-border pb-2">
+          <div className="flex flex-col gap-1.5">
             {element &&
               advanced.map(({ field }) => (
                 <FieldRow key={field.prop} panel={panel} element={element} field={field} />
@@ -2742,7 +2742,7 @@ function SourceAdvancedSection({
         <GroupHead>{el('restoreGroup')}</GroupHead>
         {gid && counts.element > 0 && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full"
             title={el('resetElementTitle')}
@@ -2761,7 +2761,7 @@ function SourceAdvancedSection({
           </Button>
         )}
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           className="w-full"
           disabled={!counts.figure}
@@ -2772,7 +2772,7 @@ function SourceAdvancedSection({
           {counts.figure ? el('resetToScriptCount', { count: counts.figure }) : el('resetToScript')}
         </Button>
 
-        <div className="mt-1 border-t border-border pt-2">
+        <div className="mt-1">
           <GroupHead>{el('originalFileGroup')}</GroupHead>
         </div>
         {panel.script && (
@@ -2786,10 +2786,10 @@ function SourceAdvancedSection({
 
         {gid && (
           <Details>
-            <Summary className="cursor-default gap-0.5 text-[11px] text-ink-3">
+            <Summary className="cursor-default gap-0.5 text-xs text-ink-3">
               {el('techDetails')}
             </Summary>
-            <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-ink-3">{gid}</p>
+            <p className="mt-0.5 break-all font-mono text-xs leading-relaxed text-ink-3">{gid}</p>
           </Details>
         )}
       </div>
@@ -2811,7 +2811,7 @@ function UnsupportedNote({ role }: { role: string }) {
         <b className="font-medium text-ink">{info.title}</b>：{info.reason}
       </p>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         className="mt-1.5 w-full"
         onClick={() => useUiStore.getState().setRightTab('assistant')}

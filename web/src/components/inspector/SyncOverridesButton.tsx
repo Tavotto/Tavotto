@@ -84,7 +84,7 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
         align="end"
         trigger={
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             className="w-full"
             disabled={disabled}
@@ -220,12 +220,12 @@ function ResultDialog({
       busy={applying}
       footer={
         done ? (
-          <Button variant="outline" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={onClose}>
             {sy('done')}
           </Button>
         ) : (
           <>
-            <Button variant="outline" size="md" disabled={applying} onClick={onClose}>
+            <Button variant="secondary" size="md" disabled={applying} onClick={onClose}>
               {translate('actions.cancel')}
             </Button>
             {onCanvas ? (
@@ -307,7 +307,7 @@ function SiblingItem({
     <button
       onClick={() => void onPick(info)}
       title={info.id}
-      className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-left text-xs text-ink hover:bg-ink/[.055]"
+      className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-left text-xs text-ink hover:bg-surface-hover"
     >
       <span className="truncate">{info.name}</span>
     </button>

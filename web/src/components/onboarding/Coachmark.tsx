@@ -78,7 +78,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       onPointerDown={(e) => e.stopPropagation()}
       style={style}
       className={cn(
-        'pointer-events-auto w-[300px] max-w-[calc(100vw-1rem)] rounded-[10px] border border-border bg-surface p-3 text-ink shadow-pop outline-none',
+        'pointer-events-auto w-[300px] max-w-[calc(100vw-1rem)] rounded-md border border-border bg-surface p-3 text-ink shadow-pop outline-none',
         'animate-pop-in',
         className,
       )}
@@ -97,7 +97,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         />
       )}
       <div className="min-w-0 pr-6">
-        <h2 id={titleId} className="text-[13px] font-medium leading-5 text-ink">
+        <h2 id={titleId} className="text-base font-medium leading-5 text-ink">
           {title}
         </h2>
         <p id={bodyId} className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -107,7 +107,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       </div>
       <div className="mt-2.5 flex items-center gap-1">
         {progress && (
-          <span className="font-mono text-[11px] text-ink-3" data-onboarding-progress>
+          <span className="font-mono text-xs text-ink-3" data-onboarding-progress>
             {progress}
           </span>
         )}
@@ -123,7 +123,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
           </Button>
         )}
         {secondary && (
-          <Button size="sm" variant="outline" onClick={secondary.onClick} data-onboarding-secondary>
+          <Button size="sm" variant="secondary" onClick={secondary.onClick} data-onboarding-secondary>
             {secondary.label}
           </Button>
         )}
@@ -145,7 +145,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         onClick={onClose}
         aria-label={ob('pause')}
         title={ob('pause')}
-        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
+        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
       >
         <X size={ICON_SIZE.sm} />
       </button>

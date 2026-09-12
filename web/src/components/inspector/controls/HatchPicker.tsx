@@ -69,8 +69,8 @@ function HatchPreview({ code }: { code: string }) {
           {lines}
         </pattern>
       </defs>
-      <rect x="0.5" y="0.5" width="25" height="15" rx="1" fill={`url(#${pid})`}
-        stroke="currentColor" strokeOpacity="0.35" strokeWidth="0.6" />
+      {/* 只填花纹本身，不描外框：外框会和选项格 / 触发器自己的边框叠成双框 */}
+      <rect x="0" y="0" width="26" height="16" fill={`url(#${pid})`} />
     </svg>
   )
 }
@@ -150,7 +150,7 @@ export function HatchPicker({
             'flex h-7 w-full items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
             'text-xs text-ink outline-none transition-colors hover:border-border',
             'focus-visible:focus-ring',
-            open && 'border-accent',
+            open && 'border-border-strong',
           )}
         >
           {value !== null && <HatchPreview code={value} />}

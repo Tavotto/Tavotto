@@ -52,7 +52,7 @@ export function PlaygroundLoading({
           const stepAt = i + 1 // PHASE_ORDER 里 'start' 占 0 位
           const state = at > stepAt ? 'done' : at === stepAt ? 'active' : 'todo'
           return (
-            <li key={s.key} className="flex items-center gap-2.5 text-[13px]">
+            <li key={s.key} className="flex items-center gap-2.5 text-base">
               {state === 'done' ? (
                 <Check size={ICON_SIZE.md} className="shrink-0 text-ink-3" aria-hidden />
               ) : state === 'active' ? (
@@ -69,7 +69,7 @@ export function PlaygroundLoading({
       </ol>
       <button
         onClick={onCancel}
-        className="h-7 rounded-[6px] border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
+        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
       >
         {pg('cancelLoading')}
       </button>

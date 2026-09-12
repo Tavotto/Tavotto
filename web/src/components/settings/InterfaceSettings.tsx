@@ -13,8 +13,8 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * 界面。原来的「侧栏行为」与「画布与编辑」两个分区合成一页（ADR 0038）。
  *
  * 三个开关都改成**结果式名称**（审计 T39）：「左抽屉常驻」「右栏常驻」
- * 「拖动子图联动」是我们内部叫法，用户读不出开了之后会怎样。现在标签说结果、
- * 标签底下一行短说明说影响谁，开关统一对齐在同一列。
+ * 「拖动子图联动」是我们内部叫法，用户读不出开了之后会怎样。现在标签说结果，
+ * 开关统一落在 `SettingRow` 的控件列（Session 5 的标准行：标题列弹性、控件列定宽）。
  *
  * **像素断点不再写在界面上。** 改动前两个侧栏各挂一段「窗口 ≥1440px 时……」
  * ——那串数字既是开发口径（真实断点在 `uiStore` 是 WIDE=1280 / MEDIUM=1024，
@@ -35,12 +35,12 @@ export function InterfaceSettings({ close }: { close: () => void }) {
       : layout === 'medium'
         ? st('sidebars.pinLimitedMedium')
         : undefined
+  // 分区之间的间距由外壳的内容容器统一给，这里不再自带一层 gap
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <SettingSection title={st('section.sidebars')}>
         <SettingRow
           label={st('sidebars.leftPinned')}
-          description={st('sidebars.leftPinnedHint')}
           controlId="setting-left-pinned"
           status={pinLimit}
         >
@@ -53,7 +53,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
         </SettingRow>
         <SettingRow
           label={st('sidebars.rightPinned')}
-          description={st('sidebars.rightPinnedHint')}
           controlId="setting-right-pinned"
           status={pinLimit}
         >
@@ -72,9 +71,12 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             界面这一层交给示意图——空间关系用图讲，比两行字快 */}
         <SettingRow
           label={st('canvas.dragCompanions')}
-          description={st('canvas.dragCompanionsHint')}
+          description={st('canvas.dragCompanionsDesc')}
           help={st('canvas.companionsExplain')}
           controlId="setting-drag-companions"
+          // 示意图是说明的一部分，坐在标题列的说明下方（Session 6）；此前它与开关、
+          // 问号挤在控件列同一条基线上，读起来像一个奇怪的大图标
+          illustration={<CompanionDiagram on={withCompanions} />}
         >
           <Toggle
             aria-labelledby={settingRowLabelId('setting-drag-companions')}
@@ -82,11 +84,10 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             checked={withCompanions}
             onChange={(v) => useUiStore.getState().setCanvasPref({ dragAxesWithCompanions: v })}
           />
-          <CompanionDiagram on={withCompanions} />
         </SettingRow>
-        <SettingRow label={st('canvas.more')} description={st('canvas.moreScope')}>
+        <SettingRow label={st('canvas.more')}>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               close()
@@ -97,6 +98,6 @@ export function InterfaceSettings({ close }: { close: () => void }) {
           </Button>
         </SettingRow>
       </SettingSection>
-    </div>
+    </>
   )
 }

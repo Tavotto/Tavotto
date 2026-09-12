@@ -1,6 +1,7 @@
 {
   "actions": {
     "cancel": "取消",
+    "clearSearch": "清除搜索",
     "close": "关闭",
     "continue": "继续",
     "copy": "复制",
@@ -10,7 +11,6 @@
     "save": "保存"
   },
   "colorField": {
-    "hex": "{{label}}：十六进制值",
     "picker": "{{label}}：取色盘"
   },
   "count": {

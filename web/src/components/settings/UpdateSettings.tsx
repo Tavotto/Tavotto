@@ -35,7 +35,7 @@ function LastCheckVerdict({ checkedAtMs }: { checkedAtMs: number | null | undefi
       // 结构性标记：判据认它，不去匹配那两句话的散文。用文案当判据的话，
       // 「不含另一句」在时间参数不同的时候是恒真的
       data-update-verdict={checkedAtMs ? 'checked' : 'unknown'}
-      className="text-xs text-ink-3"
+      className="type-caption"
     >
       {checkedAtMs
         ? st('update.noUpdateAtLastCheck', { time: formatDateTime(checkedAtMs) })
@@ -76,11 +76,9 @@ export function UpdateSettings() {
   return (
     <SettingSection>
       <SettingRow label={st('update.currentVersion')}>
-        <span className="font-mono text-xs text-ink">{status?.current ?? '…'}</span>
+        <span className="font-mono text-sm text-ink">{status?.current ?? '…'}</span>
       </SettingRow>
-      {/* 「每天一次、关掉就不联网」是这一项**改的是什么**，属于标签底下的一行
-          短说明，不是需要点开的歧义解释（审计「说明文字专项补查」的统一规则） */}
-      <SettingRow label={st('update.autoCheck')} description={st('update.autoCheckHint')}>
+      <SettingRow label={st('update.autoCheck')} description={st('update.autoCheckAria')}>
         <Toggle
           checked={status?.auto_check ?? true}
           onChange={(v) => void setAutoCheck(v)}
@@ -89,7 +87,7 @@ export function UpdateSettings() {
       </SettingRow>
 
       <SettingRow label={st('update.check')} status={st('update.lastChecked', { time: checkedAt })}>
-        <Button onClick={() => void check(true)} disabled={checking}>
+        <Button variant="secondary" size="sm" onClick={() => void check(true)} disabled={checking}>
           {st(checking ? 'update.checking' : 'update.checkNow')}
         </Button>
       </SettingRow>
@@ -108,12 +106,13 @@ export function UpdateSettings() {
       {checkError && <InlineWarning tone="danger">{checkError}</InlineWarning>}
 
       {status?.update_available ? (
-        <div className="flex flex-col gap-2 rounded-md border border-border p-2.5">
-          <p className="text-xs text-ink">
-            {st('update.available')} <span className="font-mono">{status.latest}</span>
-            <span className="ml-2 text-ink-3">
-              {st('update.currentIs', { version: status.current })}
-            </span>
+        /* 「有新版本」是这一页此刻最重要的事，但它是一段内容不是一张卡（第八节）：
+           小标题一档的「有新版本」+ 版本号 + 发行说明 + 唯一的主动作，不套框 */
+        <div data-update-available className="flex flex-col gap-2 border-t border-border pt-3">
+          <p className="text-sm text-ink">
+            <span className="font-medium">{st('update.available')}</span>{' '}
+            <span className="font-mono">{status.latest}</span>
+            <span className="type-meta ml-2">{st('update.currentIs', { version: status.current })}</span>
           </p>
           {status.notes && (
             <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
@@ -170,7 +169,7 @@ export function UpdateSettings() {
                 : 'pip'
           }
         />
-        <p className="text-xs leading-relaxed text-ink-3">{st('update.channelNote')}</p>
+        <p className="type-caption">{st('update.channelNote')}</p>
       </DiagnosticDisclosure>
     </SettingSection>
   )
@@ -210,7 +209,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
   return (
     <SettingSection>
       <SettingRow label={st('update.currentVersion')}>
-        <span className="font-mono text-xs text-ink">{status.current}</span>
+        <span className="font-mono text-sm text-ink">{status.current}</span>
       </SettingRow>
 
       <SettingRow
@@ -221,7 +220,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
             : st('update.neverChecked'),
         })}
       >
-        <Button onClick={() => void checkDesktop()} disabled={busy}>
+        <Button variant="secondary" size="sm" onClick={() => void checkDesktop()} disabled={busy}>
           {st(desktopPhase === 'checking' ? 'update.checking' : 'update.checkNow')}
         </Button>
       </SettingRow>
@@ -247,12 +246,11 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
       )}
 
       {desktopUpdate && (
-        <div className="flex flex-col gap-2 rounded-md border border-border p-2.5">
-          <p className="text-xs text-ink">
-            {st('update.available')} <span className="font-mono">{desktopUpdate.version}</span>
-            <span className="ml-2 text-ink-3">
-              {st('update.currentIs', { version: status.current })}
-            </span>
+        <div data-update-available className="flex flex-col gap-2 border-t border-border pt-3">
+          <p className="text-sm text-ink">
+            <span className="font-medium">{st('update.available')}</span>{' '}
+            <span className="font-mono">{desktopUpdate.version}</span>
+            <span className="type-meta ml-2">{st('update.currentIs', { version: status.current })}</span>
           </p>
           {desktopUpdate.notes && (
             <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
@@ -279,7 +277,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
                 className="h-1 overflow-hidden rounded-full bg-surface-2"
               >
                 <div
-                  className={cn('h-full bg-accent', pct === null && 'w-1/3 animate-pulse')}
+                  className={cn('h-full bg-ink', pct === null && 'w-1/3 animate-pulse')}
                   style={pct === null ? undefined : { width: `${pct}%` }}
                 />
               </div>
@@ -306,7 +304,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
       )}
 
       <DiagnosticDisclosure title={st('techDetails')}>
-        <p className="text-xs leading-relaxed text-ink-3">{st('update.signatureNote')}</p>
+        <p className="type-caption">{st('update.signatureNote')}</p>
       </DiagnosticDisclosure>
     </SettingSection>
   )

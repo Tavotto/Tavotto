@@ -228,9 +228,10 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
 
   const popover = page.locator('[data-radix-popper-content-wrapper]').first()
 
-  // 正常状态不常驻实现说明（技术详情里才有）
+  // 正常状态不常驻实现说明。（原先它们收在弹层里的「技术详情」折叠下；Visual
+  // Consolidation 把那段整个撤了——CLI 版本 / 路径在设置 → 编码 Agent 的详情里）
   await expect(popover.getByText(/自动快照/)).toHaveCount(0)
-  await expect(popover.getByRole('button', { name: '技术详情' })).toBeVisible()
+  await expect(popover.getByRole('button', { name: '技术详情' })).toHaveCount(0)
 
   // **锚点全是稳定 `data-*`。** 这一段原先按可见文案与 role 定位，审计 T37 把执行器
   // 从「双选 radiogroup」换成了「执行器与模型」一个 Select、把推理强度收进了折叠区，
@@ -356,7 +357,7 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
 
   // --- 关于与隐私：只说「发什么 / 不发什么」，一个绝对路径都没有 ---
   await dialog.getByRole('navigation').getByRole('button', { name: '关于与隐私' }).click()
-  await expect(dialog.getByText(/仅在你明确开启后发送匿名功能使用情况/)).toBeVisible()
+  await expect(dialog.getByText(/开启后只发送匿名的功能使用情况/)).toBeVisible()
 
   const aboutScreen = await dialog.innerText()
   expect(aboutScreen).not.toMatch(absolutePath)

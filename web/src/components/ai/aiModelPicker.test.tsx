@@ -11,7 +11,8 @@
  *      滑到第 i 格写的就是 efforts[i]，绝不生成数组里没有的值；
  *   4. 只有一档时滑杆不可调；一档都没有时整块不出现；
  *   5. 键盘方向键可调；
- *   6. 正常状态不常驻快照 / CLI / 实现说明，它们在「技术详情」里；
+ *   6. 正常状态不常驻快照 / CLI / 实现说明（2026-09-11 起弹层里也没有技术详情折叠，
+ *      那些内容在设置 → 编码 Agent 的详情页）；
  *   7. 切 Agent 各自保留模型与强度偏好。
  *
  * 合并只是**呈现**：底下仍是 aiStore 的 agent 与 models[agent] 两个字段。
@@ -97,12 +98,6 @@ const pickPair = async (label: string) => {
   expect(hit, `选项里没有「${label}」`).toBeTruthy()
   await act(async () => {
     hit!.click()
-  })
-}
-const openDetails = async () => {
-  const btn = buttons().find((b) => b.textContent?.trim() === '技术详情')!
-  await act(async () => {
-    btn.click()
   })
 }
 /** 推理强度默认收起：要动滑杆先展开 */
@@ -360,28 +355,25 @@ describe('正常状态的文案', () => {
     expect(textOf()).not.toContain('fig1_kinetics.py')
   })
 
-  it('展开「技术详情」后它们都在，长路径截断但有 title', async () => {
+  /**
+   * 2026-09-11 组件工作台批次把弹层里的「技术详情」折叠整个去掉了：快照说明、
+   * CLI 包名、解释器路径不再在这个弹层里出现（它们在设置 → 编码 Agent 的详情页）。
+   * 守住的仍是第 6 条：正常状态一个字都不常驻。
+   */
+  it('正常状态不常驻快照 / CLI / 实现说明（弹层里也没有技术详情折叠）', async () => {
     useAiStore.setState({ caps: capsOf(codexSix) })
     await mount()
-    await openDetails()
-    expect(textOf()).toContain('自动快照')
-    expect(textOf()).toContain('codex-cli')
-    expect(textOf()).toContain('fig1_kinetics.py')
-    const pathNode = Array.from(host.querySelectorAll('p')).find((p) =>
-      p.textContent?.includes('/opt/homebrew'),
-    )
-    expect(pathNode).toBeTruthy()
-    expect(pathNode!.className).toContain('truncate')
-    expect(pathNode!.getAttribute('title')).toBe('/opt/homebrew/bin/codex')
+    expect(textOf()).not.toContain('自动快照')
+    expect(textOf()).not.toContain('codex-cli')
+    expect(textOf()).not.toContain('/opt/homebrew')
+    expect(buttons().find((b) => b.textContent?.trim() === '技术详情')).toBeUndefined()
   })
 
-  it('强度的原始值只在技术详情里出现（正常状态给的是当前语言的名字）', async () => {
+  it('强度的原始值不出现在弹层里（正常状态给的是当前语言的名字）', async () => {
     useAiStore.setState({ caps: capsOf(codexSix) })
     useAiStore.getState().setEffort('codex', 'xhigh')
     await mount()
     expect(textOf()).toContain('极高')
     expect(textOf()).not.toContain('xhigh')
-    await openDetails()
-    expect(textOf()).toContain('xhigh')
   })
 })

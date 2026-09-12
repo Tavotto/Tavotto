@@ -162,14 +162,30 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         />
       )}
       {one && (
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-center justify-start gap-1">
           <Button
-            size="sm"
+            size="icon-sm"
+            onClick={() => wrapScript('sup')}
+            aria-label={tx('superscript')}
+            title={tx('superscriptTitle', { key: modKey('↑') })}
+          >
+            <Superscript size={ICON_SIZE.sm} />
+          </Button>
+          <Button
+            size="icon-sm"
+            onClick={() => wrapScript('sub')}
+            aria-label={tx('subscript')}
+            title={tx('subscriptTitle', { key: modKey('↓') })}
+          >
+            <Subscript size={ICON_SIZE.sm} />
+          </Button>
+          <Button
+            size="icon-sm"
             onClick={insertNewline}
+            aria-label={tx('insertNewline')}
             title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
           >
             <CornerDownLeft size={ICON_SIZE.sm} />
-            {tx('insertNewline')}
           </Button>
         </div>
       )}
@@ -199,24 +215,6 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               >
                 <Underline size={ICON_SIZE.sm} />
               </Button>
-              <Button
-                size="icon-sm"
-                disabled={!one}
-                onClick={() => wrapScript('sup')}
-                aria-label={tx('superscript')}
-                title={tx('superscriptTitle', { key: modKey('↑') })}
-              >
-                <Superscript size={ICON_SIZE.sm} />
-              </Button>
-              <Button
-                size="icon-sm"
-                disabled={!one}
-                onClick={() => wrapScript('sub')}
-                aria-label={tx('subscript')}
-                title={tx('subscriptTitle', { key: modKey('↓') })}
-              >
-                <Subscript size={ICON_SIZE.sm} />
-              </Button>
             </>
           }
         />
@@ -230,7 +228,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
       </div>
 
       {/* 与图内元素同一个「更多」模型：按角色记忆，折叠给现状摘要 */}
-      <div className="mt-1.5 border-t border-border pt-1.5">
+      <div className="mt-1.5">
         <button
           onClick={() => setMoreOpen('text-object', !moreOpen)}
           aria-expanded={moreOpen}
@@ -250,7 +248,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 width={200}
                 trigger={
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     className="w-full justify-between"
                     data-case-menu
@@ -347,7 +345,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                   min={0}
                   max={10}
                   precision={1}
-                  suffix="mm"
+                  unit="mm"
                   onChange={(v) =>
                     patch(hist('setPadding'), (o) => {
                       if (v > 0) o.padding = v

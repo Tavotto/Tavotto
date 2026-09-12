@@ -452,11 +452,11 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
     >
       <span className="text-xs text-ink-3">{rp('placeholder')}</span>
       {script && (
-        <span className="max-w-full truncate font-mono text-[10px] text-ink/40" title={script}>
+        <span className="max-w-full truncate font-mono text-xs text-ink/40" title={script}>
           {script}
         </span>
       )}
-      <span className="text-[10px] text-ink/40">{rp('placeholderHint', { script })}</span>
+      <span className="text-xs text-ink/40">{rp('placeholderHint', { script })}</span>
     </div>
   )
 }
@@ -863,7 +863,7 @@ function SpineZoneFeedback({
         data-spine-zone-label={hover.side}
         className={cn(
           'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm border border-border bg-surface px-1.5 py-0.5',
-          'text-[11px] leading-4 text-ink shadow-sm',
+          'text-xs leading-4 text-ink shadow-pop',
         )}
         style={{
           left: cx,

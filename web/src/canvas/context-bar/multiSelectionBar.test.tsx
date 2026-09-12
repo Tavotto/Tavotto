@@ -6,6 +6,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
+
+// jsdom 没有 scrollIntoView；属性页的参照下拉（Radix Select）打开时会把活动项滚进视口
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { boundsOf } from '@/lib/geometry'
 import { ArrangeSection } from '@/components/inspector/ArrangeSection'
@@ -539,7 +542,8 @@ describe('无障碍与键盘', () => {
       const name = b.getAttribute('aria-label') || b.textContent?.trim()
       expect(name, b.outerHTML).toBeTruthy()
     }
-    expect(el.querySelector('[role="radiogroup"]')!.getAttribute('aria-label')).toBe('参照')
+    // 参照分段的组名与属性页同一个键（inspector `refLabel`，2026-09-11 起叫「对齐到」）
+    expect(el.querySelector('[role="radiogroup"]')!.getAttribute('aria-label')).toBe('对齐到')
     expect(el.querySelector('[data-align-mode="hdist"]')!.getAttribute('aria-label')).toBe('水平等距')
   })
 
@@ -560,14 +564,19 @@ describe('与 ArrangeSection 共用参照', () => {
     await mount(<ArrangeSection count={3} multi />)
     await select(['t1', 't2', 't3'])
     const inBar = () => multiBar()!.querySelector('[data-align-ref-picker]')!
+    // 属性页那边的参照是一个普通下拉（ui/Select，combobox），不是分段：
+    // 判它显示的当前值，改它要先打开再点选项（Radix 把选项 portal 到 body）
     const inPanel = () =>
-      [...mountEl.querySelectorAll<HTMLElement>('[role="radiogroup"]')].find(
-        (g) => g.getAttribute('aria-label') === '参照',
-      )!
+      mountEl.querySelector<HTMLElement>('[role="combobox"][aria-label="对齐到"]')!
     await click(radio(inBar(), '画布'))
-    expect(radio(inPanel(), '画布').getAttribute('aria-checked')).toBe('true')
+    expect(inPanel().textContent).toContain('画布')
     expect(useArrangeStore.getState().alignRef).toBe('page')
-    await click(radio(inPanel(), '最后选中'))
+    await click(inPanel())
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+      o.textContent?.includes('最后选中'),
+    )!
+    expect(option, '下拉没打开或没有「最后选中」这一项').toBeTruthy()
+    await click(option)
     expect(radio(inBar(), '最后选中').getAttribute('aria-checked')).toBe('true')
     // 参照切换不进历史、不动文档
     expect(past()).toHaveLength(0)

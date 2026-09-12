@@ -329,11 +329,11 @@ describe('状态图反映真实刻度形态（内 / 外两带各是一个开关�
 
   it('out：只有框外那一半是实线；in：只有框里那一半；inout：两半都实', async () => {
     await mount('axes_0')
-    // 底边（X）：框外 = 从 y=82 往下到 88；框里 = 往上到 76
+    // 底边（X）：框外 = 从 y=122 往下到 130；框里 = 往上到 114
     expect(half('bottom', 'out')?.getAttribute('data-tick-on')).toBe('true')
     expect(half('bottom', 'in')?.getAttribute('data-tick-on')).toBe('false')
-    expect(dOf(half('bottom', 'out'))).toContain('L50 88')
-    expect(dOf(half('bottom', 'in'))).toContain('L50 76')
+    expect(dOf(half('bottom', 'out'))).toContain('L74 130')
+    expect(dOf(half('bottom', 'in'))).toContain('L74 114')
     expect(zone('bottom', 'outer')?.getAttribute('aria-checked')).toBe('true')
     expect(zone('bottom', 'inner')?.getAttribute('aria-checked')).toBe('false')
 
@@ -352,10 +352,11 @@ describe('状态图反映真实刻度形态（内 / 外两带各是一个开关�
 
   it('内侧带的命中矩形在框里、外侧带在框外（命中区与视觉语义一致，四边都查）', async () => {
     await mount('axes_0')
-    // 与 TickAndSpineDiagram 的 BOX 同一份数：x 26..122，y 14..82
-    const box = { x0: 26, x1: 122, y0: 14, y1: 82 }
+    // 与 TickAndSpineDiagram 的 BOX 同一份数：x 38..182，y 22..122
+    const box = { x0: 38, x1: 182, y0: 22, y1: 122 }
     const rectOf = (side: string, z: 'inner' | 'outer') => {
-      const r = zone(side, z)!.querySelector('rect')!
+      // 命中区是带 fill="transparent" 的那个矩形；前面那个是悬停底（不吃指针），量它量错主语
+      const r = zone(side, z)!.querySelector('rect[fill="transparent"]')!
       const x = Number(r.getAttribute('x'))
       const y = Number(r.getAttribute('y'))
       return { x0: x, y0: y, x1: x + Number(r.getAttribute('width')), y1: y + Number(r.getAttribute('height')) }
@@ -466,9 +467,9 @@ describe('状态图反映真实刻度形态（内 / 外两带各是一个开关�
     const minor = minorPath('bottom')
     expect(minor).toBeTruthy()
     expect(minor?.getAttribute('data-tick-half')).toBe('out')
-    // 主刻度 6、次刻度 3：从边线 82 出发，主到 88、次到 85
-    expect(dOf(minor)).toContain('L38 85')
-    expect(dOf(half('bottom', 'out'))).toContain('L50 88')
+    // 主刻度 8、次刻度 4：从边线 122 出发，主到 130、次到 126
+    expect(dOf(minor)).toContain('L56 126')
+    expect(dOf(half('bottom', 'out'))).toContain('L74 130')
     // 只影响 X：左边（Y）不该冒出次刻度
     expect(minorPath('left')).toBeNull()
   })
@@ -479,8 +480,8 @@ describe('状态图反映真实刻度形态（内 / 外两带各是一个开关�
       byAria('X 轴的次刻度')!.click()
     })
     // 上边默认关：两半都虚线，没有次刻度
-    expect(half('top', 'out')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
-    expect(half('top', 'in')?.getAttribute('stroke-dasharray')).toBe('1.5 1.5')
+    expect(half('top', 'out')?.getAttribute('stroke-dasharray')).toBe('2 2')
+    expect(half('top', 'in')?.getAttribute('stroke-dasharray')).toBe('2 2')
     expect(minorPath('top')).toBeNull()
     // 下边是开的（朝外）：框外那一半实线 + 次刻度在
     expect(half('bottom', 'out')?.getAttribute('stroke-dasharray')).toBeNull()

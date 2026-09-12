@@ -203,7 +203,7 @@ function Item({
       onClick={onClick}
       className={cn(
         'flex h-6 w-full cursor-default select-none items-center gap-3 rounded-sm px-2 text-xs',
-        'outline-none hover:bg-ink/[.055] focus-visible:bg-ink/[.055]',
+        'outline-none hover:bg-surface-hover focus-visible:bg-surface-hover',
         danger ? 'text-danger' : 'text-ink',
       )}
     >

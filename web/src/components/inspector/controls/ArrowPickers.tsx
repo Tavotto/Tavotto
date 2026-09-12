@@ -77,19 +77,26 @@ export function ArrowStylePicker({
   const all = value && !options.includes(value) ? [value, ...options] : options
   const grid: GridOption[] = all.map((o) => {
     const shape = ARROWSTYLE_SHAPE[o]
+    const label = optionLabel('arrowstyle', o)
     return {
       value: o,
-      label: optionLabel('arrowstyle', o),
+      label,
       code: o,
-      preview: shape ? (
-        <ArrowPreview start={shape.start} end={shape.end} />
-      ) : (
-        <span aria-hidden className="max-w-12 truncate font-mono text-xs">{o}</span>
+      // 列表形态：每一行 = 箭头图形 + 可见名称；可达名仍由 OptionGrid 的 aria-label 提供
+      preview: (
+        <span className="flex min-w-0 items-center gap-2">
+          {shape ? (
+            <ArrowPreview start={shape.start} end={shape.end} />
+          ) : (
+            <span aria-hidden className="max-w-12 shrink-0 truncate font-mono text-xs">{o}</span>
+          )}
+          <span aria-hidden className="min-w-0 truncate text-xs text-ink-2">{label}</span>
+        </span>
       ),
     }
   })
   return (
-    <OptionGrid value={value} options={grid} onChange={onChange} columns={3} ariaLabel={ariaLabel} />
+    <OptionGrid value={value} options={grid} onChange={onChange} columns={1} ariaLabel={ariaLabel} />
   )
 }
 

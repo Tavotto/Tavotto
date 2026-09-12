@@ -8,7 +8,6 @@ import {
   Ellipsis,
   Pencil,
   Plus,
-  Search,
   SearchX,
   Trash2,
 } from 'lucide-react'
@@ -26,7 +25,7 @@ import { Button } from '../ui/Button'
 import { CanvasThumb } from '../CanvasThumb'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
-import { TextInput } from '../ui/Input'
+import { SearchInput } from '../ui/SearchInput'
 
 /**
  * 画布列表（项目里的全部画布，含未打开成标签的）。
@@ -64,16 +63,12 @@ export function CanvasList() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2">
-        <div className="relative min-w-0 flex-1">
-          <Search size={ICON_SIZE.sm} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
-          <TextInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={cl('search')}
-            aria-label={cl('searchAria')}
-            className="w-full pl-6"
-          />
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder={cl('search')}
+          aria-label={cl('searchAria')}
+        />
         <Button
           size="icon"
           aria-label={cl('newCanvas')}
@@ -174,12 +169,9 @@ function CanvasRow({
       }}
       className={cn(
         'group relative flex items-center gap-2 rounded-sm px-1.5 py-1.5',
-        active ? 'bg-accent-subtle' : 'hover:bg-ink/[.035]',
+        active ? 'bg-selected' : 'hover:bg-surface-hover',
       )}
     >
-      {active && (
-        <span aria-hidden className="absolute -left-0.5 top-2 h-8 w-0.5 rounded-full bg-accent" />
-      )}
       <CanvasThumb page={canvas.page} objects={canvas.objects} />
       <button
         onClick={onOpen}

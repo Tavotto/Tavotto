@@ -197,10 +197,6 @@ export function VersionDrawer() {
           <X size={ICON_SIZE.md} className="text-ink-3" />
         </Button>
       </div>
-      <p className="shrink-0 px-3 pb-2 text-xs leading-relaxed text-ink-3">
-        {vd('intro')}
-      </p>
-
       <div className="flex shrink-0 gap-1.5 px-3 pb-2">
         <TextInput
           value={saveName}
@@ -212,7 +208,7 @@ export function VersionDrawer() {
           placeholder={vd('namePlaceholder')}
           className="min-w-0 flex-1"
         />
-        <Button variant="outline" size="sm" loading={busy} onClick={saveNow}>
+        <Button variant="secondary" size="sm" loading={busy} onClick={saveNow}>
           <Bookmark size={ICON_SIZE.sm} />
           {vd('save')}
         </Button>
@@ -220,11 +216,7 @@ export function VersionDrawer() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {versions.length === 0 ? (
-          <EmptyState
-            icon={RotateCcwClock}
-            title={vd('emptyTitle')}
-            hint={vd('emptyHint')}
-          />
+          <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} />
         ) : (
           <ul aria-label={vd('listLabel')}>
             {versions.map((v, i) => (
@@ -233,10 +225,10 @@ export function VersionDrawer() {
                   onClick={() => setSelected(v.id === selected ? null : v.id)}
                   aria-expanded={v.id === selected}
                   className={cn(
-                    'flex w-full items-start gap-2 px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
+                    'flex w-full items-start gap-2 rounded-sm px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
                     v.id === selected
-                      ? 'border-l-2 border-accent bg-accent-subtle'
-                      : 'border-l-2 border-transparent hover:bg-ink/[.04]',
+                      ? 'bg-selected'
+                      : 'hover:bg-surface-hover',
                   )}
                 >
                   {/* 缩略图 → 时间 → 变化摘要 → 哪张画布。
@@ -249,7 +241,7 @@ export function VersionDrawer() {
                   ) : (
                     <span
                       aria-hidden
-                      className="h-10 w-14 shrink-0 rounded-[3px] border border-dashed border-border"
+                      className="h-10 w-14 shrink-0 rounded-xs border border-dashed border-border"
                     />
                   )}
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -259,7 +251,7 @@ export function VersionDrawer() {
                       <span
                         className={cn(
                           'shrink-0 text-xs',
-                          v.id === selected ? 'font-medium text-accent' : 'text-ink',
+                          v.id === selected ? 'font-medium text-ink' : 'text-ink',
                         )}
                       >
                         {formatTime(v.ts)}
@@ -268,7 +260,7 @@ export function VersionDrawer() {
                         {versionDisplayName(v)}
                       </span>
                       {v.auto && (
-                        <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
+                        <span className="shrink-0 rounded-xs border border-border px-1 text-xs text-ink-3">
                           {vd('autoBadge')}
                         </span>
                       )}
@@ -664,7 +656,7 @@ export function LayoutSnapshot({
   return (
     <div
       className={cn(
-        'relative w-full overflow-hidden rounded-[3px] border border-border',
+        'relative w-full overflow-hidden rounded-xs border border-border',
         outline ? 'bg-transparent' : 'bg-white',
       )}
       style={{ aspectRatio: `${pw} / ${ph}` }}

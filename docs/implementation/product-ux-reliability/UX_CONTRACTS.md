@@ -700,10 +700,14 @@ Esc 在子菜单上按 = 整个菜单关掉（Radix 语义）。点外部关掉�
 
 ### 外壳
 
-外框 **760×600 固定**（上限 86vh / 视口宽减 2rem），切分区一个像素不动；标题与导航固定，内容区
-（`[data-settings-content]`）独立滚、切页滚回顶部；<640 CSS px 导航变顶部一条可横滚。导航是
-roving tabindex：Tab 落当前项，↑ ↓ ← → Home End 走并搬焦点，落地即切页。十一个分区顺序
-`常规 · 界面 · 项目 · 样式 · 规范 · 导出 · 编码 Agent · 包管理 · 诊断 · 更新 · 关于与隐私`；旧 id
+外框 **1000×680 固定**（上限 86vh / 视口宽减 2rem，小窗口按它收缩；2026-09-11 Visual
+Consolidation Session 5 从 760×600 改过来，形态见 `docs/ux/DESIGN_CONSTITUTION.md` 第十二节），
+切分区一个像素不动；标题与导航固定，内容区（`[data-settings-content]`）独立滚、切页滚回顶部；
+普通分区内容最大宽 640，样式 / 规范 / 包管理铺满（`CONTENT_MODE`）；<640 CSS px 导航变顶部一条
+可横滚。导航是 roving tabindex：Tab 落当前项，↑ ↓ ← → Home End 走并搬焦点，落地即切页。
+十一个分区顺序
+`常规 · 界面 · 项目 · 样式 · 规范 · 导出 · 编码 Agent · 包管理 · 诊断 · 更新 · 关于与隐私`，
+视觉上分四组（通用 / 工作流 / 集成 / 系统，只是间距与一行组名，顺序不变）；旧 id
 （profiles / canvas / sidebars / shortcuts）别名到新分区。从导出面板「编辑规范」进来的，关掉设置回
 导出面板；别的入口关掉回原处。desktop / browser 同一个外壳。
 

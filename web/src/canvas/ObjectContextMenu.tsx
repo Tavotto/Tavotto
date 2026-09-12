@@ -210,7 +210,6 @@ export function ObjectContextMenu({
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
-      <MenuSeparator />
       <CommonTail selected={selected} obj={obj} multi={multi} run={run} />
     </PointMenu>
   )

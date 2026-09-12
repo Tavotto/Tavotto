@@ -23,7 +23,9 @@
 
 ### 1. 外壳尺寸是合同，不是内容的函数
 
-`SettingsDialog` 用固定外框：宽 `SHELL_WIDTH = 760`、高 `SHELL_HEIGHT = 600px`
+`SettingsDialog` 用固定外框：宽 `SHELL_WIDTH = 760`、高 `SHELL_HEIGHT = 600px`（2026-09-11
+Visual Consolidation Session 5 改成 1000×680 并加了内容最大宽与导航分组，合同本身不变，
+见 `docs/ux/DESIGN_CONSTITUTION.md` 第十二节）
 （Dialog 新增 `height` 属性；`max-h-[86vh]` / `max-w-[calc(100vw-2rem)]` 仍由 Dialog
 兜底，小屏上按它收缩）。标题与导航固定，**内容区自己滚**（`[data-settings-content]`
 `overflow-y-auto`）。切分区时外框一个像素都不动——`e2e/settings-shell.spec.ts`

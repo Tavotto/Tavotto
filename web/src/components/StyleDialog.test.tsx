@@ -143,7 +143,10 @@ describe('作用范围与影响', () => {
     })
     await act(async () => {})
     const group = document.body.querySelector('[role="radiogroup"]')!
-    const labels = [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent?.trim())
+    // 四档是 ui/Radio 的单选行：名字在包着它的 <label> 里
+    const labels = [...group.querySelectorAll('input[type="radio"]')].map((b) =>
+      b.closest('label')?.textContent?.trim(),
+    )
     expect(labels).toEqual(['当前图', '选中的图', '同一脚本的图', '整个文档'])
     for (const gone of ['面板', '选区', '全文档']) expect(labels.join(' ')).not.toContain(gone)
     expect(text()).toContain('应用到当前图')

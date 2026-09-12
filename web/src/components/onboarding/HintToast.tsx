@@ -19,7 +19,9 @@ export function HintToast() {
   const { mounted, state } = usePresence(!!current, DURATION.exit)
   const text = current ? t(`hints.${current}`) : ''
   return (
-    <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex justify-end">
+    // 坐在状态 toast（StatusBar，bottom-3 居中）那一行的**上方**：两条同时出现时
+    // 不再互相压住（2026-09-11 走查：「渲染完成」被操作提示盖掉半句）
+    <div className="pointer-events-none absolute bottom-12 right-3 z-20 flex justify-end">
       {/* 读屏：aria-live 常驻。**不给 role=status**——状态 toast 那一份已经是 status，
           再来一个同名的会让「唯一的状态区」变成两个（既有 e2e 用 getByRole('status')
           找 toast，第一遍就撞上了） */}
@@ -42,7 +44,7 @@ export function HintToast() {
             type="button"
             onClick={dismiss}
             aria-label={translate('actions.close')}
-            className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-ink/[.055] hover:text-ink focus-visible:focus-ring"
+            className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
           >
             <X size={ICON_SIZE.sm} />
           </button>

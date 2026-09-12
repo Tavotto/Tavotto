@@ -225,7 +225,7 @@ describe('Agent 详情', () => {
     expect(text()).not.toContain('sk-')
   })
 
-  it('模型服务下拉：换一个就真的切过去（原生 select 迁到 ui/Select 之后的交互覆盖）', async () => {
+  it('模型服务是一组单选：点另一条就真的切过去', async () => {
     const ep = (id: string, label: string) => ({
       id, label, agent: 'codex' as const,
       base_url: 'https://example.test', models: ['m'],
@@ -234,19 +234,12 @@ describe('Agent 详情', () => {
     await openDetail(capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [ep('kimi', 'Kimi'), ep('glm', 'GLM')],
     }))
-    const trigger = document.querySelector(
-      '[role="combobox"][aria-label^="' + ag('detail.serviceAria', { name: 'Codex' }).slice(0, 4) + '"]',
-    ) as HTMLElement
-    expect(trigger, '模型服务下拉不见了（迁到 ui/Select 之后是 combobox）').toBeTruthy()
-    await act(async () => {
-      trigger.click()
-    })
-    const glm = [...document.body.querySelectorAll('[role="option"]')]
-      .find((o) => o.textContent?.includes('GLM')) as HTMLElement
-    expect(glm, '第二个模型服务没出现在下拉里').toBeTruthy()
-    await act(async () => {
-      glm.click()
-    })
+    const radios = [...document.querySelectorAll('input[type="radio"]')] as HTMLInputElement[]
+    expect(radios.length, '官方登录 + 两条接口 = 三档').toBe(3)
+    const glm = radios.find((r) => r.closest('label')?.textContent?.includes('GLM'))
+    expect(glm, '第二个模型服务没出现在单选组里').toBeTruthy()
+    expect(glm!.checked).toBe(false)
+    await act(async () => glm!.click())
     expect(vi.mocked(setAiEndpointActive)).toHaveBeenCalledWith('codex', 'glm')
   })
 

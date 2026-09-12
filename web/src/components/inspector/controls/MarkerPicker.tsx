@@ -299,7 +299,7 @@ export function MarkerPicker({
             'flex h-7 w-full items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
             'text-xs text-ink outline-none transition-colors hover:border-border',
             'focus-visible:focus-ring',
-            open && 'border-accent',
+            open && 'border-border-strong',
           )}
         >
           {/* 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形 */}

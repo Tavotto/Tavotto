@@ -16,6 +16,7 @@ import {
   Tags,
   Type,
   Undo2,
+  RotateCcwClock,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -39,7 +40,7 @@ import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { discardLocalCopy, recoverLocalCopy, useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -98,6 +99,7 @@ export function TopBar() {
         <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
         <SaveStateLabel />
+        <RecoveryNotice />
       </div>
 
       <ToolCluster layoutTools={!fastEdit} />
@@ -181,11 +183,11 @@ function importPackage() {
   input.click()
 }
 
-/** 图形标 + 实时文字：20px compact 是规范的显式例外（阈值本该给 mini） */
+/** 图形标 + 实时文字 */
 function Brand() {
   return (
-    <span className="flex shrink-0 items-center gap-[7px] text-sm font-semibold tracking-tight text-ink">
-      <BrandMark size={20} variant="compact" />
+    <span className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-tight text-ink">
+      <BrandMark size={20} />
       {PRODUCT_NAME}
     </span>
   )
@@ -200,6 +202,39 @@ function Brand() {
  * 「已自动保存 14:03」在写盘失败之后照样显示（`dirty` 被 flush 清掉了，
  * 失败只派了一个 4.5 秒后消失的事件）。用户看不出磁盘上到底是哪一版。
  */
+/**
+ * 「发现未恢复的编辑」：贴在保存状态右侧的一句话 + 两个出口，不再是整条横幅
+ * （2026-09-11 用户反馈）。摘要（几张画布、几个对象、存于几点）走 title。
+ */
+function RecoveryNotice() {
+  const { t } = useTranslation('workspace')
+  const notice = useDocumentStore((s) => s.docNotice)
+  if (notice?.kind !== 'recovery') return null
+  const s = notice.summary
+  return (
+    <span
+      role="status"
+      className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ink-2"
+      // 文档名是用户内容，作为插值原样透出
+      title={t('docBanner.recoveryBody', {
+        name: s.name,
+        canvases: s.canvases,
+        objects: s.objects,
+        time: formatTime(s.savedAt),
+      })}
+    >
+      <RotateCcwClock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+      <span className="truncate">{t('docBanner.recoveryTitle')}</span>
+      <Button size="sm" variant="secondary" onClick={() => void recoverLocalCopy()}>
+        {t('docBanner.recover')}
+      </Button>
+      <Button size="sm" onClick={discardLocalCopy}>
+        {t('docBanner.keepMain')}
+      </Button>
+    </span>
+  )
+}
+
 function SaveStateLabel() {
   const { t } = useTranslation('workspace')
   const saveState = useDocumentStore((s) => s.saveState)
@@ -442,7 +477,7 @@ function MarkTools() {
             onSelect={() => setTool(tool === mark ? 'select' : mark)}
           >
             <span className="flex items-center gap-2">
-              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-accent' : 'text-ink-3'} />
+              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-ink' : 'text-ink-3'} />
               {t(markToolKey(mark))}
             </span>
           </MenuItem>
@@ -494,7 +529,7 @@ function ZoomControls() {
         trigger={
           <button
             aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })}
-            className="h-7 w-14 border-x border-border font-mono text-xs tabular-nums text-ink outline-none hover:bg-ink/[.04] focus-visible:focus-ring"
+            className="h-7 w-14 border-x border-border font-mono text-xs tabular-nums text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -508,7 +543,7 @@ function ZoomControls() {
                 useViewportStore.getState().setZoomCentered(z)
                 setOpen(false)
               }}
-              className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
+              className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
             >
               <span>{z * 100}%</span>
               {z === 1 && <span className="font-mono text-xs text-ink-3">{MOD}0</span>}
@@ -520,7 +555,7 @@ function ZoomControls() {
               useViewportStore.getState().fitAnimated(page.w, page.h)
               setOpen(false)
             }}
-            className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
+            className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
           >
             <span>{t('topbar.fitCanvas')}</span>
             <span className="font-mono text-xs text-ink-3">{MOD}1</span>
@@ -589,7 +624,7 @@ function MoreMenu() {
             {hasUpdate && (
               <span
                 aria-hidden
-                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-ink"
               />
             )}
           </span>
@@ -600,7 +635,7 @@ function MoreMenu() {
         <>
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'update')}>
             <span className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink" aria-hidden />
               {t('topbar.updateAvailable', { version: latest })}
             </span>
           </MenuItem>

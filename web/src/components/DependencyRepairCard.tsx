@@ -137,29 +137,36 @@ export function DependencyRepairCard({
 
       {targets.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          {targets.map((tg) => (
-            // 一个目标一块：按钮在上、说明在下。**不并排**——Button 是
-            // whitespace-nowrap + shrink-0 的，右栏只有 296px，英文按钮
-            // 一旦并排就会把旁边那句挤没或把整栏撑破。
-            <div key={tg.kind} className="flex flex-col gap-0.5">
-              <Button
-                className="self-start"
-                variant={tg.kind === targets[0].kind ? 'primary' : 'ghost'}
-                disabled={busy}
-                onClick={() =>
-                  tg.kind === 'system_interpreter'
-                    ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-                      void adoptSystemPython(tg.python, module)
-                    : makePlan({ module, script, target: tg.kind })
-                }
-              >
-                {label(tg)}
-              </Button>
-              <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
-                {hint(tg)}
-              </span>
-            </div>
-          ))}
+          {targets.map((tg) => {
+            // 受管环境那条已经没有副标题（hint 返回空串）：空的 <span> 会白留
+            // 一行 gap，所以判空后整块不渲染，而不是渲染一个空元素。
+            const detail = hint(tg)
+            return (
+              // 一个目标一块：按钮在上、说明在下。**不并排**——Button 是
+              // whitespace-nowrap + shrink-0 的，右栏只有 296px，英文按钮
+              // 一旦并排就会把旁边那句挤没或把整栏撑破。
+              <div key={tg.kind} className="flex flex-col gap-0.5">
+                <Button
+                  className="self-start"
+                  variant={tg.kind === targets[0].kind ? 'primary' : 'ghost'}
+                  disabled={busy}
+                  onClick={() =>
+                    tg.kind === 'system_interpreter'
+                      ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
+                        void adoptSystemPython(tg.python, module)
+                      : makePlan({ module, script, target: tg.kind })
+                  }
+                >
+                  {label(tg, pkg)}
+                </Button>
+                {detail && (
+                  <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
+                    {detail}
+                  </span>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -228,12 +235,20 @@ function OtherPython() {
   const [error, setError] = useState<string | null>(null)
   return (
     <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
-      <span className="text-xs text-ink-2">{en('repairUseOtherPython')}</span>
-      <div className="flex items-center gap-1.5">
+      {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚 */}
+      <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>
+      {/* 占位符是「这里还没填」的提示，不是要读的正文，压到 faint 一档。写在行
+          容器上（而不是传 className）是因为 placeholder 的样式归 TextInput 自己
+          管，这条后代变体的特指度更高，能盖住它的默认色。 */}
+      <div className="flex items-center gap-1.5 [&_input]:placeholder:text-ink-faint">
+        {/* 占位符只留一条路径样例。它是**格式示范**不是要读的句子，各语言写法
+            完全一致，所以不走文案表（原 `engine.pathPlaceholder` 里那句解释性
+            补充随之去掉）。控件的无障碍名仍由 pathAria 提供，屏幕阅读器读到的
+            依然是当前语言的完整说明。 */}
         <TextInput
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder={en('pathPlaceholder')}
+          placeholder="/path/to/python"
           aria-label={en('pathAria')}
         />
         <Button
@@ -248,14 +263,23 @@ function OtherPython() {
   )
 }
 
-/** 目标环境的按钮文案。**必须短**：按钮不换行，长文案会撑破右栏。 */
-function label(target: DependencyTarget): string {
+/**
+ * 目标环境的按钮文案。**必须短**：按钮不换行，长文案会撑破右栏。
+ *
+ * 受管环境这条点名要装的是哪个包（「将 lmfit 安装到 Tavotto 环境」）：主动作
+ * 自己就是一句完整的话，用户不用回头找上面的标题确认主语。新建还是复用受管
+ * 环境对他没有区别——两种情况都不碰他自己的 Python，所以合成同一句。
+ */
+function label(target: DependencyTarget, pkg: string): string {
   if (target.kind === 'project_venv') return en('repairUseProjectEnv')
   if (target.kind === 'system_interpreter') return en('repairUseSystemPython')
-  return target.creates_environment ? en('repairCreateManaged') : en('repairUseManaged')
+  return en('repairInstallToManaged', { module: pkg, product: PRODUCT_NAME })
 }
 
-/** 按钮旁边那句「装到哪 / 会不会动你已有的东西」，长了就截断 */
+/**
+ * 按钮旁边那句「装到哪」，长了就截断；没有要补充的就返回空串（调用方判空后
+ * 整块不渲染）。
+ */
 function hint(target: DependencyTarget): string {
   if (target.kind === 'project_venv') return target.venv || '.venv'
   if (target.kind === 'system_interpreter') {
@@ -268,7 +292,10 @@ function hint(target: DependencyTarget): string {
       ? `${base} · ${en('repairSystemUnverified')}`
       : base
   }
-  return en('repairManagedHint')
+  // 受管环境不需要副标题：装到哪按钮自己已经说清楚了（「将 X 安装到 Tavotto
+  // 环境」——那本来就不是用户的环境），再补一句「不动你已有的环境」只是把同一
+  // 件事说第二遍。真会动用户环境的是项目 .venv 那条，那句警告在确认页里。
+  return ''
 }
 
 /** 「找到了 X 装了这个包，但没采用」——三种原因三句话，用户的下一步各不相同 */
@@ -389,14 +416,19 @@ export function ManagedEnvironmentRow() {
           })}
         </span>
       )}
-      <button
-        type="button"
+      {/* 重建会真动环境，不该长得像一句可点的说明文字：换成组件库的 Button
+          （默认变体、self-start 不撑满），busy 时禁用的行为与文案来源不变。
+          mt-1.5 是让它和上面两行环境说明拉开，不跟着 gap-0.5 贴成一坨。
+          再补一圈实边框（border-strong 而不是 border——这块坐在白色 surface
+          上，浅一档的边线几乎看不出来）：这一行只有它一个可点的东西，要让
+          「这是按钮」在扫一眼时就成立，而不是靠 hover 才显形。 */}
+      <Button
+        className="mt-1.5 self-start border border-border-strong"
         disabled={busy}
         onClick={() => void rebuildManaged()}
-        className="self-start text-xs text-accent hover:underline disabled:opacity-50"
       >
         {en('managedEnvRebuild')}
-      </button>
+      </Button>
     </div>
   )
 }

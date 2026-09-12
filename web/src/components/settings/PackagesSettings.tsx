@@ -128,9 +128,11 @@ export function PackagesSettings() {
   }
 
   return (
-    <div data-packages-page className="flex flex-col gap-4">
+    // 分区之间的间距由外壳统一给（`display: contents`）；这一页是管理页，信息架构不动，
+    // 只把字级 / 按钮 / 折叠区收到与别的分区同一套
+    <div data-packages-page className="contents">
       {!available && capability && (
-        <p className="text-xs leading-relaxed text-ink-2" data-packages-disabled>
+        <p className="type-caption" data-packages-disabled>
           {capability.reason === 'no_project'
             ? pk('disabled.noProject', { product: PRODUCT_NAME })
             : capability.reason === 'managed_env_unavailable'
@@ -171,7 +173,7 @@ export function PackagesSettings() {
               的话回车会同时触发安装与查找，而回车该只做主动作。 */}
           <Button
             type="button"
-            variant="outline"
+            variant="secondary"
             size="sm"
             data-packages-lookup
             disabled={locked || !term}
@@ -185,11 +187,7 @@ export function PackagesSettings() {
             {specError}
           </p>
         )}
-        <p className="text-xs text-ink-3">{pk('networkNote')}</p>
-        {/* 「点了会发生什么」就近说清：那颗按钮会出网。**为什么打字不出网**是
-            工程细节，折在下面的技术详情里——首屏留给此刻要做的事（审计 T46 的
-            那条纪律，`settingsDisclosure.test.tsx` 数首屏长文的段数）。 */}
-        <p className="text-xs text-ink-3">{pk('search.networkNote')}</p>
+        <p className="type-meta">{pk('networkNote')}</p>
 
         <LookupPanel locked={locked} onInstall={start} />
 
@@ -201,7 +199,7 @@ export function PackagesSettings() {
             name: (
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{u.distribution}</span>
-                <span className="truncate text-[11px] text-ink-3">
+                <span className="truncate text-xs text-ink-3">
                   {pk(`reason.${u.reason === 'user_requested' ? 'user' : 'repair'}`)}
                   {u.requested_specifier ? ` · ${u.distribution}${u.requested_specifier}` : ''}
                   {u.installed_at ? ` · ${formatDateTime(u.installed_at * 1000)}` : ''}
@@ -262,7 +260,7 @@ export function PackagesSettings() {
 
       {/* 一句话说清失败后怎么办（审计 T46）。「没有回滚」与快照份数是工程细节，
           折在下面——它们解释的是**为什么**只能重建，不是用户此刻要做的事。 */}
-      <p className="text-xs leading-relaxed text-ink-3">{pk('recoveryNote')}</p>
+      <p className="type-caption">{pk('recoveryNote')}</p>
 
       <DiagnosticDisclosure title={pk('techTitle')}>
         <p className="text-xs leading-relaxed text-ink-3">
@@ -298,8 +296,8 @@ function EnvironmentLine() {
   if (!capability || capability.reason === 'no_project') return null
   const exists = !!env?.exists
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
-      <span className="font-medium text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
+    <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
+      <span className="text-sm text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
       <span className="text-ink-3">{pk('envTarget')}</span>
       {exists ? (
         <>
@@ -310,7 +308,7 @@ function EnvironmentLine() {
             {env?.state === 'ready' ? pk('env.ready') : pk('env.incomplete')}
           </span>
           <span className="text-ink-3">{env?.in_use ? pk('env.inUse') : pk('env.notInUse')}</span>
-          <Button variant="outline" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged()}>
+          <Button variant="secondary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged()}>
             {pk('env.rebuild')}
           </Button>
         </>
@@ -362,7 +360,7 @@ function LookupPanel({
     return (
       <div
         data-packages-lookup-panel="loading"
-        className="rounded-md border border-border p-2.5 text-xs text-ink-2"
+        className="rounded-sm bg-surface-2 px-2.5 py-2 text-xs text-ink-2"
         role="status"
         aria-live="polite"
       >
@@ -378,7 +376,7 @@ function LookupPanel({
     return (
       <div
         data-packages-lookup-panel="error"
-        className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+        className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
         role="status"
         aria-live="polite"
       >
@@ -407,7 +405,7 @@ function LookupPanel({
   return (
     <div
       data-packages-lookup-panel="found"
-      className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+      className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
       role="status"
       aria-live="polite"
     >
@@ -417,9 +415,9 @@ function LookupPanel({
           <span className="ml-2 text-xs text-ink-2">
             {pk('search.latest', { version: found.latest })}
           </span>
-          <span className="block text-[11px] text-ink-3">{pk(`search.source.${found.source}`)}</span>
+          <span className="block text-xs text-ink-3">{pk(`search.source.${found.source}`)}</span>
           {found.installed && (
-            <span className="block text-[11px] text-ink-3">
+            <span className="block text-xs text-ink-3">
               {pk('search.alreadyInstalled', { version: found.installed })}
             </span>
           )}
@@ -465,7 +463,7 @@ function StatusText({ status, detail }: { status: string; detail?: string }) {
   return (
     <span className={cn('flex flex-col text-xs', tone)}>
       <span>{status ? pk(`status.${status}`) : pk('status.unknown')}</span>
-      {detail && <span className="text-[11px] text-ink-3">{detail}</span>}
+      {detail && <span className="text-xs text-ink-3">{detail}</span>}
     </span>
   )
 }
@@ -486,7 +484,7 @@ function UserActions({
     <span className="flex items-center justify-end gap-1">
       {pkg.status === 'missing' ? (
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={locked}
           onClick={() => void onAction('install', `${pkg.distribution}${pkg.requested_specifier}`)}
@@ -495,7 +493,7 @@ function UserActions({
         </Button>
       ) : (
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           disabled={locked}
           aria-label={pk('updateAria', { name: pkg.distribution })}
@@ -505,7 +503,7 @@ function UserActions({
         </Button>
       )}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
         disabled={locked}
         aria-label={pk('uninstallAria', { name: pkg.distribution })}
@@ -598,7 +596,7 @@ function JobPanel({
   return (
     <div
       data-packages-job
-      className="flex flex-col gap-1.5 rounded-md border border-border p-2.5"
+      className="flex flex-col gap-1.5 rounded-sm bg-surface-2 px-2.5 py-2"
       role="status"
       aria-live="polite"
     >
@@ -607,7 +605,7 @@ function JobPanel({
           {stateText}
         </span>
         {running && (
-          <Button variant="outline" size="sm" onClick={() => void cancel()}>
+          <Button variant="secondary" size="sm" onClick={() => void cancel()}>
             {pk('job.cancel')}
           </Button>
         )}
@@ -630,14 +628,14 @@ function JobPanel({
           aria-label={pk('job.progressAria')}
           className="h-1 overflow-hidden rounded-full bg-surface-2"
         >
-          <div className="h-full w-1/3 animate-pulse bg-accent" />
+          <div className="h-full w-1/3 animate-pulse bg-ink" />
         </div>
       )}
       {failure && (
         <InlineWarning tone="danger">
           {failure}
           {errorText && repairCodeMessage(errorCode) && (
-            <span className="ml-1 font-mono text-[11px] text-ink-3">{errorCode}</span>
+            <span className="ml-1 font-mono text-xs text-ink-3">{errorCode}</span>
           )}
         </InlineWarning>
       )}
@@ -646,7 +644,7 @@ function JobPanel({
           title={pk('job.log')}
           action={<CopyButton text={progress.log} label={pk('job.copyLog')} />}
         >
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink-3">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3">
             {progress.log}
           </pre>
         </DiagnosticDisclosure>
