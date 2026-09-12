@@ -76,7 +76,9 @@ export function AspectControl({
   const mode = pending ?? committed
   const custom = mode === 'custom'
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-end">
+    // 允许换行：分段控件 + 抽出来的数字框放不下时（属性栏 320px 且选了自定义档），
+    // 数字框折到下一行、仍右对齐，而不是把整行撑破（2026-09-12 critique P2 的溢出门禁）
+    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-y-1">
       <Segmented
         tone="quiet"
         className="w-auto shrink-0 gap-1"

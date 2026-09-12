@@ -276,10 +276,17 @@ function NumberPairRow({
   const [head, ...rest] = items
   if (!head) return null
   return (
-    <Row label={labeledWithState(head.label, axis.isOverridden(head.prop))} labelWidth={labelWidth}>
+    <Row
+      label={labeledWithState(head.label, axis.isOverridden(head.prop))}
+      labelWidth={labelWidth}
+      align="start"
+    >
       {/* 行内两端对齐：首项贴行首，后续「标签 + 输入框」成组贴行尾，
-          中间空隙由 justify-between 撑开、至少保留 gap-4 */}
-      <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+          中间空隙由 justify-between 撑开、至少保留 gap-4。
+          放不下时（属性栏 320px：两个 96px 框 + 内联标签 > 控件列）后续组**折到下一行**，
+          而不是把宽度框裁掉右半边（2026-09-12 critique P2，实测溢出 26px）；
+          标签按 start 对齐到第一行控件的中线 */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <NumberCell item={head} axis={axis} />
         {rest.map((item) => (
           <span key={item.prop} className="flex shrink-0 items-center gap-1.5">
@@ -299,9 +306,11 @@ function NumberCell({ item, axis }: { item: NumberItem; axis: TickAxisAdapter })
   return (
     <span className="flex shrink-0 items-center gap-1" data-prop={prop} data-gid={axis.gid}>
       <NumberField
-        // 定宽 96px、框吃满：单位在框里，数字位不会被挤到只剩两位（以前实测 26px）
+        // 定宽 88px、框吃满：单位在框里，数字位不会被挤到只剩两位（以前实测 26px）。
+        // 88 而不是 96：标签列 88 之后控件列在 360px 下只剩 240，两个框 + 内联标签 +
+        // 间距要在一行里放下（88 + 12 + 40 + 6 + 88 = 234）；320px 时才折行
         fill
-        className="w-24 shrink-0"
+        className="w-22 shrink-0"
         dataProp={prop}
         ariaLabel={label}
         value={Number(axis.read(prop) ?? 0)}

@@ -547,6 +547,11 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
           </Tip>
         )}
       </div>
+      {/* 示意图能点这件事只有悬停才知道（2026-09-12 critique：首次用户不知道它能点）；
+          一句 caption 说清，读屏也拿得到。它说的是图的用法，不重复各边的名字 */}
+      <p className="-mt-1 text-center type-caption" data-tick-diagram-caption>
+        {ctl('tickSpineDiagramHint')}
+      </p>
 
       {(adapter.has('grid_x') || adapter.has('grid_y')) && (
         <div

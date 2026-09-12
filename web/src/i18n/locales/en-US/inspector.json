@@ -169,7 +169,7 @@
     "aspect": {
       "auto": "Auto",
       "equal": "Equal",
-      "custom": "Custom ratio"
+      "custom": "Custom"
     },
     "aspectRatio": "Aspect ratio value: display length of one Y unit over one X unit",
     "resetDiagram_one": "Reset ticks and frame to script ({{count}} item)",
@@ -191,7 +191,8 @@
       "topCenter": "Above, centered",
       "bottomCenter": "Below, centered",
       "leftCenter": "Left, middle"
-    }
+    },
+    "tickSpineDiagramHint": "Click a side to toggle its tick marks and spine"
   },
   "element": {
     "absentAppearance": "Visible in the figure, but this version can't edit it here — it comes from the script.",
@@ -246,9 +247,7 @@
     "editProp": "Change {{label}}",
     "figureSize": "Figure {{w}}×{{h}} mm",
     "groupFrame": "Frame",
-    "groupRange": "Range",
     "groupTicksGrid": "Ticks and grid",
-    "groupTransform": "Transform",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hint": {
       "scatterSize": "pt² is an area, not a diameter: doubling the value makes the dot about 1.4× wider."
@@ -332,7 +331,9 @@
     "colorScaleLinked": "Shares a colour scale with {{label}}",
     "colorScaleTip": "The colormap and the scale limits are one state: change either side and the other follows.",
     "selectScalePartner": "Select {{label}}",
-    "selectScalePartnerShort": "Select"
+    "selectScalePartnerShort": "Select",
+    "groupRangeTransform": "Range & transform",
+    "sizeHead": "Axes size"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",

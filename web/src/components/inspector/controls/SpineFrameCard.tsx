@@ -258,7 +258,11 @@ export function SpineFrameCard({
   )
 }
 
-/** 边位示意：四边联动画整个框，逐边只点亮那一条边 */
+/**
+ * 边位示意：逐边只点亮那一条边。**四边联动那一行不画字形**——一个 1.2px 描边的
+ * 空方框长得就是未勾选的复选框，首次用户会去点它（2026-09-12 critique）；那一行
+ * 是组里的「全部」，文字加粗已经说了它是谁，字形位留空只为与逐边行的文字对齐。
+ */
 function SideGlyph({ side }: { side: Side | 'all' }) {
   const edge: Record<Side, string> = {
     top: 'M3 3h12',
@@ -266,7 +270,7 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
     bottom: 'M3 15h12',
     left: 'M3 3v12',
   }
-  const all = side === 'all'
+  if (side === 'all') return <span aria-hidden className="w-3 shrink-0" />
   return (
     <svg
       viewBox="0 0 18 18"
@@ -274,18 +278,11 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
       height={ICON_SIZE.xs}
       fill="none"
       aria-hidden
+      data-side-glyph={side}
       className="shrink-0"
     >
-      <rect
-        x="3"
-        y="3"
-        width="12"
-        height="12"
-        rx="0.6"
-        stroke={all ? 'currentColor' : 'var(--color-border-strong)'}
-        strokeWidth={all ? 1.2 : 1}
-      />
-      {!all && <path d={edge[side]} stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
+      <rect x="3" y="3" width="12" height="12" rx="0.6" stroke="var(--color-border-strong)" strokeWidth={1} />
+      <path d={edge[side]} stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }

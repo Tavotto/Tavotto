@@ -2,34 +2,23 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
-  Box,
   Braces,
-  ChartArea,
-  ChartColumn,
   ChartLine,
-  ChartScatter,
   Crosshair,
   Ellipsis,
   Eye,
   EyeOff,
-  Frame,
-  GitCommitVertical,
-  Image,
   LayoutList,
   Lock,
   LockOpen,
-  Minus,
-  MoveUpRight,
-  Blend,
   Ruler,
   SearchX,
   Shapes,
-  Square,
   TriangleAlert,
   Type,
-  WavesHorizontal,
   type LucideIcon,
 } from 'lucide-react'
+import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
@@ -93,37 +82,7 @@ function parentGid(gid: string, byGid: ReadonlySet<string>): string | null {
 const et = (key: string, values?: Record<string, unknown>) =>
   translate(`elementTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-/**
- * 元素类型图标：一种角色一个低调的 lucide 图标，与图层树的对象图标同一套尺寸
- * （sm 14，坐在 16px 列里）。文字类的角色都是 `Type`——标题 / 轴标题 / 刻度文字
- * 的区别由标签说，图标只回答「这是什么类的东西」。认不出的角色回落到 `Shapes`。
- */
-const ROLE_ICONS: Record<string, LucideIcon> = {
-  figure: Frame,
-  axes: Square,
-  axes3d: Box,
-  text: Type,
-  title: Type,
-  axis_label: Type,
-  ticklabel: Type,
-  legend_text: Type,
-  image: Image,
-  line: ChartLine,
-  scatter: ChartScatter,
-  bar: ChartColumn,
-  bar_series: ChartColumn,
-  errorbar: GitCommitVertical,
-  fill: ChartArea,
-  linecoll: WavesHorizontal,
-  ticks: Ruler,
-  spine: Minus,
-  grid: Ruler,
-  legend: LayoutList,
-  colorbar: Blend,
-  patch: Shapes,
-  arrow_patch: MoveUpRight,
-}
-const roleIcon = (role: string): LucideIcon => ROLE_ICONS[role] ?? Shapes
+// 角色 → 图标：唯一出处在 roles/roleIcons（身份头共用）
 
 /** 语义聚类：子图直属元素按角色归组，找不准的元素靠类别缩小范围 */
 const CLUSTERS: { key: string; labelKey: string; icon: LucideIcon; roles: Set<string> }[] = [

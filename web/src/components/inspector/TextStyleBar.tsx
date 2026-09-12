@@ -48,7 +48,7 @@ export function TextStyleBar({
   panel: PanelObject
   element: ManifestElement
   className?: string
-  /** 标签列宽：属性页 72（与 FieldRow 对齐），快捷编辑弹层可传 44 */
+  /** 标签列宽：属性页显式传 `LABEL_W`（与 FieldRow 同一条竖线），快捷编辑弹层用默认的 72 */
   labelWidth?: number
 }) {
   useTranslation('inspector')

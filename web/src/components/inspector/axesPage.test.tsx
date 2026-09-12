@@ -292,27 +292,49 @@ describe('纵横比：三档控件，不是文字编辑器', () => {
 
 /* -------------------------------- 分段顺序 -------------------------------- */
 
-describe('范围 → 坐标变换 → 刻度与网格 → 边框，三类任务互不混杂', () => {
-  it('四段按顺序出现，各自只装自己的字段', async () => {
+describe('范围与变换 → 刻度与网格 → 边框，三类任务互不混杂', () => {
+  it('三段按顺序出现，各自只装自己的字段；范围与变换是一个组头（2026-09-12 起）', async () => {
     await mount()
-    const range = host.querySelector('[data-axes-section="range"]')!
-    const transform = host.querySelector('[data-axes-section="transform"]')!
+    const rangeTransform = host.querySelector('[data-axes-section="range-transform"]')!
     const frame = host.querySelector('[data-spine-frame]')!
     const diagram = host.querySelector('[aria-label="刻度与边框状态图"]')!
-    expect(range && transform && frame && diagram).toBeTruthy()
-    expect(range.compareDocumentPosition(transform) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(transform.compareDocumentPosition(diagram) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(rangeTransform && frame && diagram).toBeTruthy()
+    // 以前是「范围」「坐标变换」两个组头（审计 T12）：子图页六块跨两屏，收成一块
+    expect(host.querySelector('[data-axes-section="range"]')).toBeNull()
+    expect(host.querySelector('[data-axes-section="transform"]')).toBeNull()
+    expect(rangeTransform.querySelector('p')?.textContent).toBe('范围与变换')
+    expect(rangeTransform.compareDocumentPosition(diagram) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(diagram.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // 范围段只有 xlim / ylim；坐标变换段有缩放 / 反转 / 纵横比
-    expect(range.querySelector('[data-prop="xlim"]')).toBeTruthy()
-    expect(range.querySelector('[data-prop="ylim"]')).toBeTruthy()
-    expect(range.querySelector('[data-prop="xscale"]')).toBeNull()
-    expect(transform.querySelector('[data-prop="xscale"]')).toBeTruthy()
-    expect(transform.querySelector('[data-prop="invert_x"]')).toBeTruthy()
-    expect(transform.querySelector('[data-prop="aspect"]')).toBeTruthy()
+    // 顺序不变：范围在前，缩放 / 反转 / 纵横比在后
+    const props = Array.from(rangeTransform.querySelectorAll('[data-prop]')).map((n) =>
+      n.getAttribute('data-prop'),
+    )
+    expect(props.indexOf('xlim')).toBeLessThan(props.indexOf('xscale'))
+    expect(props.indexOf('xscale')).toBeLessThan(props.indexOf('invert_x'))
+    expect(props.indexOf('invert_x')).toBeLessThan(props.indexOf('aspect'))
     // 这些字段没有在「更多」里再出现一遍
     expect(host.querySelectorAll('[data-prop="aspect"]')).toHaveLength(1)
     expect(host.querySelectorAll('[data-prop="spine_linewidth"]')).toHaveLength(1)
+  })
+
+  it('示意图下有一句用法说明；「边框」总行不再画那个像复选框的方框', async () => {
+    await mount()
+    expect(host.querySelector('[data-tick-diagram-caption]')?.textContent).toBe('点四条边切换刻度线与边框')
+    const frame = host.querySelector('[data-spine-frame]')!
+    // 总行的字形位是个空占位（对齐用）：收起时整张卡里没有任何边位字形
+    expect(frame.querySelector('[data-side-glyph]')).toBeNull()
+    // 逐边行在「分别设置各边」里，展开后各有自己点亮的那条边
+    await act(async () => {
+      ;(host.querySelector('[data-spine-per-side]') as HTMLButtonElement).click()
+    })
+    const glyphs = frame.querySelectorAll('[data-side-glyph]')
+    expect(Array.from(glyphs).map((g) => g.getAttribute('data-side-glyph'))).toEqual([
+      'top',
+      'right',
+      'bottom',
+      'left',
+    ])
+    for (const g of glyphs) expect(g.querySelector('path'), '每个字形都点亮一条边').toBeTruthy()
   })
 
   it('反转 X / Y 在同一行，各自写自己的字段', async () => {

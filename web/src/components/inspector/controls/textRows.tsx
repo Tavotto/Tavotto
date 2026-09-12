@@ -31,7 +31,9 @@ export function labeledWithState(label: string, overridden?: boolean): ReactNode
       title={overridden ? `${label} · ${translate('element.modified', { ns: 'inspector' })}` : label}
     >
       {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
-      <span className="min-w-0 truncate">{label}</span>
+      {/* 折两行而不是截成省略号（与 FieldRow 同一条纪律）：「Major tick mode」在 88px 里
+          放得下，放不下的也让用户看见整个词 */}
+      <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
       {overridden && (
         <span className="sr-only">{translate('element.modified', { ns: 'inspector' })}</span>
       )}
