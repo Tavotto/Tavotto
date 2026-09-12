@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from '@/lib/api'
-import { controlKindOf, fieldVisible, isPercentField, presentFields } from './registry'
+import { controlKindOf, fieldHintKey, fieldVisible, isPercentField, mplTermOf, presentFields } from './registry'
 
 const f = (prop: string, type: EditableField['type'] = 'number', group?: string): EditableField =>
   ({ prop, type, value: 0, ...(group ? { group } : {}) }) as EditableField
@@ -235,5 +235,33 @@ describe('controlKindOf：透明度按百分比（审计 T16 / T20）', () => {
     expect(controlKindOf('line', f('linewidth'))).toBe('number')
     expect(controlKindOf('legend', { ...f('handlelength'), min: 0, max: 1 })).toBe('number')
     expect(controlKindOf('line', f('alpha', 'text'))).toBe('text')
+  })
+})
+
+describe('术语桥：matplotlib 名与短提示（2026-09-12 critique P1）', () => {
+  it('同名属性按角色分派：color 在文字上是 Text.set_color()，在刻度上是 tick_params(labelcolor=)', () => {
+    expect(mplTermOf('color', 'title')).toBe('Text.set_color()')
+    expect(mplTermOf('color', 'ticks')).toBe('tick_params(labelcolor=)')
+    expect(mplTermOf('color', 'line')).toBe('set_color()')
+  })
+
+  it('文字家族五个角色共用同一张表', () => {
+    for (const role of ['text', 'title', 'axis_label', 'ticklabel', 'legend_text']) {
+      expect(mplTermOf('fontsize', role)).toBe('Text.set_fontsize()')
+    }
+  })
+
+  it('Tavotto 自造的复合属性不编 matplotlib 名', () => {
+    expect(mplTermOf('entry_order', 'legend')).toBeUndefined()
+    expect(mplTermOf('binding', 'legend_text')).toBeUndefined()
+    expect(mplTermOf('axis_arrows', 'axes3d')).toBeUndefined()
+    expect(mplTermOf('no_such_prop', 'line')).toBeUndefined()
+  })
+
+  it('短提示按 prop 点名，同一族共用一句', () => {
+    expect(fieldHintKey('zorder')).toBe('zorder')
+    expect(fieldHintKey('spine_top')).toBe(fieldHintKey('spine_left'))
+    expect(fieldHintKey('grid_alpha')).toBe('alpha')
+    expect(fieldHintKey('linewidth')).toBeUndefined()
   })
 })

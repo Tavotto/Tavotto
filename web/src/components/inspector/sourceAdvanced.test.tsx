@@ -1,12 +1,11 @@
 /**
- * 「源文件与高级」的恢复动作（审计 T32）。
+ * 「源文件与高级」折叠区（审计 T32 的后半段）。
  *
- * 要钉住的：
- *   1. 两颗恢复按钮各自说清**对象与数量**——「恢复此元素 · n 项」「恢复整张图 · m 项」，
- *      数字来自同一份 overrides，按下去清掉的正是标签上写的那批；
- *   2. 日常恢复与会动磁盘的「原始文件」分成两组，各有组标题；
- *   3. 精确名词（gid）不再常驻，收在「技术详情」里；
- *   4. 「修改保存在哪里」的说明不出现 override / 撤销栈 / 引擎 / 孤儿这些实现词。
+ * 恢复动作（「恢复此元素 · n 项」「恢复整张图 · m 项」）与「修改保存在哪里」
+ * 2026-09-12 起住在身份头的脚本行里，由 `sourceRow.test.tsx` 看护。这里剩下的：
+ *   1. 折叠区里**只有**会动磁盘的那一组（「原始文件」：写回 / 历史 / 同步），
+ *      没有恢复按钮——「只改文档」与「会动磁盘」的边界现在是两个位置，不是两个组头；
+ *   2. 精确名词（gid）不再常驻，收在「技术详情」里。
  */
 import { literal } from '@/i18n'
 import { act } from 'react'
@@ -108,8 +107,6 @@ async function mount() {
 
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const buttonByText = (text: string) => buttons().find((b) => b.textContent?.trim().startsWith(text))
-const overrides = () =>
-  (useDocumentStore.getState().doc.objects.find((o) => o.id === 'p1') as PanelObject).overrides
 
 beforeEach(async () => {
   localStorage.clear()
@@ -146,39 +143,18 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-describe('源文件与高级：恢复动作说清对象与数量', () => {
-  it('「恢复此元素 · 2 项」只清这个元素的两项，别的元素那项留着', async () => {
+describe('源文件与高级：只剩会动磁盘的那一组', () => {
+  it('折叠区里没有恢复按钮；「原始文件」组头之下是写回按钮', async () => {
     await mount()
-    const btn = buttonByText('恢复此元素')
-    expect(btn?.textContent).toContain('2')
-    await act(async () => btn!.click())
-    expect(overrides()).toEqual([{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 8 }])
-  })
-
-  it('「恢复整张图 · 3 项」清掉全部', async () => {
-    await mount()
-    const btn = buttonByText('恢复整张图')
-    expect(btn?.textContent).toContain('3')
-    await act(async () => btn!.click())
-    expect(overrides()).toEqual([])
-    // 清空之后按钮不再带数字，且禁用
-    const after = buttonByText('恢复整张图')!
-    expect(after.disabled).toBe(true)
-    expect(after.textContent).not.toMatch(/\d/)
-  })
-
-  it('日常恢复与原始文件分成两组，写回按钮在「原始文件」那组里', async () => {
-    await mount()
-    const heads = Array.from(host.querySelectorAll('p')).map((p) => p.textContent?.trim())
-    expect(heads).toContain('恢复')
+    const fold = host.querySelector('[data-source-advanced]')!
+    const names = Array.from(fold.querySelectorAll('button')).map((b) => b.textContent?.trim() ?? '')
+    expect(names.some((t) => t.startsWith('恢复'))).toBe(false)
+    const heads = Array.from(fold.querySelectorAll('p')).map((p) => p.textContent?.trim())
     expect(heads).toContain('原始文件')
-    const restoreHead = Array.from(host.querySelectorAll('p')).find((p) => p.textContent === '恢复')!
-    const fileHead = Array.from(host.querySelectorAll('p')).find((p) => p.textContent === '原始文件')!
+    expect(heads).not.toContain('恢复')
+    const fileHead = Array.from(fold.querySelectorAll('p')).find((p) => p.textContent === '原始文件')!
     const writeBack = buttonByText('写回原始文件')!
-    // DOM 顺序：恢复组头 < 恢复按钮 < 原始文件组头 < 写回按钮
-    expect(restoreHead.compareDocumentPosition(buttonByText('恢复此元素')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(fileHead.compareDocumentPosition(writeBack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(buttonByText('恢复整张图')!.compareDocumentPosition(fileHead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('gid 不常驻：收在「技术详情」里，默认收起', async () => {
@@ -192,13 +168,5 @@ describe('源文件与高级：恢复动作说清对象与数量', () => {
       (p) => p.textContent?.includes('axes_0.title') && !details!.contains(p),
     )
     expect(outside).toEqual([])
-  })
-
-  it('「修改保存在哪里」的说明不用实现词', async () => {
-    await mount()
-    await act(async () => buttonByText('修改保存在哪里')!.click())
-    const text = document.body.textContent ?? ''
-    expect(text).toContain('图内修改')
-    for (const jargon of ['override', '撤销栈', '引擎', '孤儿']) expect(text).not.toContain(jargon)
   })
 })

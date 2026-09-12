@@ -97,17 +97,26 @@ marker（`o`/`s`/`D`/`^`…）、hatch、colormap 名、图例位置全部是文
 ```
 ┌ 身份头 ────────────────────────────┐
 │ [图标] 标题 “Reaction kinetics”  ⋯ │
-│ Fig1_kinetics / 子图 1 · 2 项已修改 │
+│ Fig1_kinetics / 子图 1 · Text  2 项已修改 │
+│ ⌘ fig1_kinetics.py · 脚本未改动  ↺ ? │
 ├ 第一层：主要属性（永远展开） ───────┤
 │ 角色模板决定的 4–8 个高频属性        │
 ├ 第二层：更多（单一折叠区） ─────────┤
 │ ▸ 更多                 1 项已修改   │
 ├ 第三层：源文件与高级（默认折叠） ────┤
-│ ▸ 源文件与高级      fig1_kinetics.py│
-│   脚本 / override 计数 / 恢复全部 /  │
-│   写回 / 历史 / gid / 诊断           │
+│ ▸ 源文件与高级                      │
+│   低频字段 / 写回 / 历史 / 同步 / gid │
 └──────────────────────────────────┘
 ```
+
+身份头第三行是**脚本行**（`SourceRow`，2026-09-12 impeccable critique P1「脚本不在场」）：
+脚本名 + 「脚本未改动」常驻，↺ 是恢复菜单（「恢复此元素 · n 项」「恢复整张图 · m 项」，
+没有修改时不出现），? 是「修改保存在哪里」。恢复动作从第三层搬到这里之后，第三层
+只剩**会动磁盘**的那一组——「只改文档」与「会动磁盘」的边界从两个组标题变成两个位置
+（审计 T32 用组标题划的边界在中文里看不出来：type-section 没有大写可用）。
+面包屑后的 `Text` / `Axes` / `Legend` 是 matplotlib 类名徽标（`roles/registry.mplClassOf`），
+属性标签的悬停气泡第一行是该属性的 matplotlib 调用（`presentation/registry.mplTermOf`，
+镜像 `engine/overrides.py` 的 `HANDLERS`），第二行是一句短提示——术语立场见 `PRODUCT.md`。
 
 - 第一层不允许折叠；第二层只有一个「更多」，展开状态**按角色**持久化
   （`inspectorPrefsStore`，localStorage），折叠时标题右侧显示「N 项已修改」摘要；

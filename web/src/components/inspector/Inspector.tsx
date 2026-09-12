@@ -47,7 +47,8 @@ import { ElementInspector } from './ElementInspector'
 import { identityCrumbs } from './identityCrumbs'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
-import { roleName } from './roles/registry'
+import { mplClassOf, roleName } from './roles/registry'
+import { SourceRow } from './SourceRow'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -321,6 +322,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     const modified = el
       ? panel.overrides.filter((o) => o.gid === el.gid).length
       : panel.overrides.length
+    const mplClass = mplClassOf(el?.role ?? 'figure')
 
     return (
       <header className="shrink-0 px-3 pb-2">
@@ -363,20 +365,33 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             </Tip>
           </span>
         </div>
-        {(crumbs.length > 1 || modified > 0) && (
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-3">
-            {crumbs.length > 1 && (
-              <span className="min-w-0 truncate" title={crumbs.join(' / ')}>
-                {crumbs.slice(0, -1).join(' / ')}
-              </span>
-            )}
-            {modified > 0 && (
-              <span className="shrink-0 rounded-sm bg-selected px-1 py-px text-ink">
-                {t('element.modifiedCount', { count: modified })}
-              </span>
-            )}
-          </p>
-        )}
+        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-3">
+          {crumbs.length > 1 && (
+            <span className="min-w-0 truncate" title={crumbs.join(' / ')}>
+              {crumbs.slice(0, -1).join(' / ')}
+            </span>
+          )}
+          {/* 术语桥（2026-09-12 critique P1）：这个东西在 matplotlib 里叫什么类。主用户
+              回头对编码 Agent 说「把边框去掉」时，得说得出是 Legend 还是 Axes 的边框 */}
+          {mplClass && (
+            <>
+              {crumbs.length > 1 && (
+                <span aria-hidden className="shrink-0">
+                  ·
+                </span>
+              )}
+              <code data-mpl-class className="shrink-0 font-mono text-xs text-ink-3">
+                {mplClass}
+              </code>
+            </>
+          )}
+          {modified > 0 && (
+            <span className="shrink-0 rounded-sm bg-selected px-1 py-px text-ink">
+              {t('element.modifiedCount', { count: modified })}
+            </span>
+          )}
+        </p>
+        <SourceRow panel={panel} gid={el?.gid} />
       </header>
     )
   }

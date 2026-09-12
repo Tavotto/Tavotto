@@ -309,6 +309,80 @@ test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
   })
 })
 
+test('图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净', async ({
+  app,
+  page,
+}) => {
+  // 上一条用例扫的是「画布」页签；「属性」页签在没选元素时**一个输入框都没有**，
+  // 而选了元素之后它才是控件最多的那一屏——2026-09-12 的 impeccable critique 在这里
+  // 抓到一条 axe critical（`label`）：标题的正文 `<textarea>` 没有可访问名，
+  // 门禁两条腿一直是绿的，因为它从没扫过这一屏。这条用例就是那个缺口。
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
+    .toBeVisible({ timeout: 60_000 })
+
+  // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
+  // 一条是 en-US，fixtures 的 `openElementsTab` 写死了「图内元素」，这里不能用它）。
+  // 按 aria-expanded 判态、不在才点：盲点击会在收起动画里把刚打开的面板关掉。
+  const nav = page.getByRole('navigation').getByRole('button', { name: /图内元素|Figure elements/ })
+  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  // 树在引擎首次渲染完之前是空的，先等它有内容
+  const items = page.getByRole('treeitem')
+  await expect(items.first()).toBeVisible({ timeout: 60_000 })
+  // 组行的文字是「文字 3」/「Text 3」（名字 + 计数），`\b` 在 en 里落不到 t 与 3 之间
+  const textGroup = items.filter({ hasText: /^(文字|Text)\s*\d/ }).first()
+  await textGroup.click()
+  await page.keyboard.press('ArrowRight')
+  const title = items.filter({ hasText: /Reaction kinetics/ }).first()
+  await title.click()
+
+  const inspector = page.locator('[data-inspector-panel]')
+  await inspector.locator('[data-inspector-tab="properties"]').click()
+  // 选中态的主语：头部 h2 必须是标题本身，不是「整张图」——否则下面扫的不是这一屏
+  await expect(inspector.locator('h2')).toContainText('Reaction kinetics')
+
+  // 关掉聚焦触发的气泡时**不要按 Escape**：这个应用里 Escape 会把选区往上退
+  // （标题 → 整张图 → 面板），扫描的主语会悄悄变掉（critique-B 实测）
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
+  // 把折叠区一个不剩地展开：字体下拉是 Radix Select 触发器（role=combobox），
+  // 也带 aria-expanded=false，排除它，否则「展开全部」会把字体菜单弹出来
+  for (let i = 0; i < 16; i++) {
+    const collapsed = inspector
+      .locator(
+        'button[aria-expanded="false"]:not([disabled]):not([aria-haspopup]):not([role="combobox"])',
+      )
+      .first()
+    if (!(await collapsed.count())) break
+    await collapsed.click()
+    await page.waitForTimeout(80)
+  }
+
+  // 先证明这一屏真的有那个正文框，否则 `label` 规则对它 inapplicable、判据恒真
+  await expect(inspector.locator('textarea')).toHaveCount(1)
+  const controls = await inspector.locator('input, textarea, [role="switch"]').count()
+  expect(controls, '属性页签里一个控件都没有，这一遍扫描是恒真的').toBeGreaterThan(3)
+
+  const named = await new AxeBuilder({ page })
+    .include('[data-inspector-panel]')
+    .withRules(['button-name', 'label'])
+    .analyze()
+  expect(
+    named.violations.map((v) => ({
+      id: v.id,
+      nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
+    })),
+    '属性页签（选中标题）',
+  ).toEqual([])
+
+  await expectAccessible(page, {
+    allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+})
+
 test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
   app,
   page,

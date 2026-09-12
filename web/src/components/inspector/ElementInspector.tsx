@@ -10,7 +10,6 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ChevronRight,
-  CircleQuestionMark,
   CornerUpLeft,
   Link2,
   MoveDown,
@@ -55,7 +54,6 @@ import {
   clearOverride,
   clearOverrides,
   disableTextEffect,
-  resetOverrides,
   setLegendPlacement,
   setOverride,
   setOverrides,
@@ -88,7 +86,6 @@ import {
 import { Button } from '../ui/Button'
 import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
-import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -98,6 +95,7 @@ import {
   controlKindOf,
   fieldHintKey,
   isPercentField,
+  mplTermOf,
   pairedProp,
   presentFields,
 } from './presentation/registry'
@@ -144,7 +142,6 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { HistoryPanel } from './HistoryPanel'
-import { overrideCounts } from '@/lib/overrideCounts'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { ColorScaleLink } from './ColorScaleLink'
@@ -1880,13 +1877,24 @@ function FieldRow({
   // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
   // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
   // 三重表达「这个值来自你的修改，不是脚本」。
-  // 单位或语义会被读错的字段带一句短提示（没有问号按钮，见展示注册表）
+  // 术语桥（2026-09-12 critique P1）：标签的气泡第一行是这个属性在 matplotlib 里的
+  // 调用（`mplTermOf`，镜像引擎 HANDLERS），第二行是一句「它改的是什么」（展示
+  // 注册表 FIELD_HINTS）。悬停即现，没有问号按钮；两行都没有的字段不挂气泡。
+  // 有气泡时不再给原生 `title`——两种提示叠着出现看起来像 bug。
+  const term = mplTermOf(field.prop, element.role)
   const hintKey = fieldHintKey(field.prop)
   const hint = hintKey ? el(`hint.${hintKey}`) : undefined
+  const tip =
+    term || hint ? (
+      <span className="flex max-w-64 flex-col gap-0.5">
+        {term && <code className="font-mono text-ink-3">{term}</code>}
+        {hint && <span className="leading-relaxed">{hint}</span>}
+      </span>
+    ) : null
   const labelBody = (
     <span
       className="flex min-w-0 items-center gap-1"
-      title={overridden ? `${label} · ${el('modified')}` : label}
+      title={tip ? undefined : overridden ? `${label} · ${el('modified')}` : label}
     >
       {overridden && (
         <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
@@ -1895,7 +1903,7 @@ function FieldRow({
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
-  const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
+  const labelNode = tip ? <Tip label={tip} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
 
@@ -2125,6 +2133,8 @@ function FieldRow({
           {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
           <div className="flex w-full min-w-0 flex-col gap-1">
             <TextArea
+              // 名字 = 标签列那句可见文字，同一个表达式（axe `label`，见 TextArea 的注释）
+              aria-label={label}
               // 选中带文字的元素就直接可以打字，不用再点一次输入框
               ref={(el) => {
                 taRef.current = el
@@ -2372,37 +2382,6 @@ function FieldRow({
 }
 
 /** 「修改逻辑」说明：讲清 override 与改脚本这两层的区别 */
-function HowItWorks() {
-  useTranslation('inspector')
-  return (
-    <Popover
-      width={268}
-      align="end"
-      trigger={
-        <Button
-          variant="ghost"
-          size="sm"
-          className="self-start text-ink-3"
-          aria-label={el('howItWorksAria')}
-        >
-          <CircleQuestionMark size={ICON_SIZE.sm} />
-          {el('howItWorksTrigger')}
-        </Button>
-      }
-    >
-      <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
-        {(['howOverride', 'howWriteBack', 'howAi', 'howBoth'] as const).map((key, i) => (
-          <div key={key}>
-            {i > 0 && <div className="mb-2 h-px bg-border" />}
-            <p className="font-medium text-ink">{el(`${key}Title`)}</p>
-            <p className="mt-0.5">{el(`${key}Body`)}</p>
-          </div>
-        ))}
-      </div>
-    </Popover>
-  )
-}
-
 /* -------------------------------------------------------------------------- */
 /*  子图布局                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -2696,9 +2675,14 @@ function AxesSizeMm({
 }
 
 /**
- * 第三层「源文件与高级」：一切触碰磁盘原始文件的动作（写回 / 历史）、
- * 恢复入口（当前元素 / 整个面板）、低频字段（层级、裸坐标）与 gid 诊断。
- * 默认折叠、会话内按角色记忆——高风险低频动作不和日常调样式挤在一起。
+ * 第三层「源文件与高级」：一切触碰磁盘原始文件的动作（写回 / 历史 / 同步）、
+ * 低频字段（层级、裸坐标）与 gid 诊断。默认折叠、会话内按角色记忆——高风险
+ * 低频动作不和日常调样式挤在一起。
+ *
+ * 「恢复」（只改这份文档、可撤销）**不在这里**：它住在身份头的脚本行里
+ * （`SourceRow`），与会动磁盘的这一组隔着一个折叠区。审计 T32 用两个组标题
+ * 划的那条边界，2026-09-12 critique 发现在中文里看不出来（type-section 没有大写
+ * 可用，「恢复 / 原始文件」两个组头与普通标签几乎无法区分），于是改成两个位置。
  */
 function SourceAdvancedSection({
   panel,
@@ -2714,8 +2698,6 @@ function SourceAdvancedSection({
   const open = useInspectorPrefs((s) => s.advancedOpen[role] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
   const gid = element?.gid
-  // 两颗恢复按钮各说各的对象与数量，数字来自同一份判据（审计 T32）
-  const counts = overrideCounts(panel.overrides, gid)
 
   return (
     /* `data-source-advanced` 是能力提示那个按钮的滚动落点——它要把用户
@@ -2736,43 +2718,8 @@ function SourceAdvancedSection({
           </div>
         )}
 
-        {/* 日常的「恢复」与会动磁盘的「原始文件」分成两组：前者只改这份文档、
-            可撤销；后者覆盖用户的原件。挨在一起时用户分不清按下去清的是哪一层
-            （审计 T32），分组标题就是那层边界，不另加确认。 */}
-        <GroupHead>{el('restoreGroup')}</GroupHead>
-        {gid && counts.element > 0 && (
-          <Button
-            variant="secondary"
-            size="sm"
-            className="w-full"
-            title={el('resetElementTitle')}
-            onClick={() =>
-              clearOverrides(
-                panel.id,
-                elMsg('resetElement'),
-                panel.overrides
-                  .filter((o) => o.gid === gid)
-                  .map((o) => ({ gid: o.gid, prop: o.prop })),
-              )
-            }
-          >
-            <RotateCcw size={ICON_SIZE.sm} />
-            {el('resetElementCount', { count: counts.element })}
-          </Button>
-        )}
-        <Button
-          variant="secondary"
-          size="sm"
-          className="w-full"
-          disabled={!counts.figure}
-          title={el('resetTitle')}
-          onClick={() => resetOverrides(panel.id)}
-        >
-          <RotateCcw size={ICON_SIZE.sm} />
-          {counts.figure ? el('resetToScriptCount', { count: counts.figure }) : el('resetToScript')}
-        </Button>
-
-        <div className="mt-1">
+        {/* 这一组全部会覆盖用户的原件（写回）或读它的历史；组标题点名「原始文件」 */}
+        <div className={advanced.length > 0 ? 'mt-1' : undefined}>
           <GroupHead>{el('originalFileGroup')}</GroupHead>
         </div>
         {panel.script && (
@@ -2782,7 +2729,6 @@ function SourceAdvancedSection({
           </div>
         )}
         <SyncOverridesButton panel={panel} />
-        <HowItWorks />
 
         {gid && (
           <Details>

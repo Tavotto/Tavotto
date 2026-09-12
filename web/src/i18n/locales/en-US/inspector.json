@@ -105,7 +105,7 @@
     "presets": {
       "double": {
         "hint": "150 mm — full width",
-        "label": "Double"
+        "label": "Double column"
       },
       "full": {
         "hint": "180×240 mm — full-page text block",
@@ -113,7 +113,7 @@
       },
       "single": {
         "hint": "85 mm — single-column width at most journals",
-        "label": "Single"
+        "label": "Single column"
       },
       "square": {
         "hint": "100×100 mm",
@@ -251,14 +251,42 @@
     "groupTransform": "Transform",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hint": {
-      "scatterSize": "pt² is an area, not a diameter: doubling the value makes the dot about 1.4× wider."
+      "scatterSize": "pt² is an area, not a diameter: doubling the value makes the dot about 1.4× wider.",
+      "zorder": "Higher numbers draw on top; within one Axes it decides what covers what.",
+      "alpha": "100 % is fully opaque, 0 % invisible; this is the 0–1 alpha in the script.",
+      "ha": "Where the text anchor sits horizontally within the text block — moves the anchor, not the text.",
+      "va": "Where the text anchor sits vertically: baseline aligns the baseline, center the midline.",
+      "linespacing": "Line spacing is a multiple of the font size; 1.2 = 1.2 × line height.",
+      "labelpad": "Distance from the axis title to the tick labels, in pt.",
+      "spines": "Spines are the four border lines of an Axes; tick marks are a separate thing, each can be switched on its own.",
+      "tickSides": "Which sides carry tick marks; the matching spine can be switched off independently.",
+      "gridAxis": "The X grid is the vertical lines through X ticks; the Y grid is the horizontal lines through Y ticks.",
+      "legendLoc": "loc is where the legend sits inside the Axes; outside the Axes it is placed by the anchor.",
+      "legendAnchor": "bbox_to_anchor: the legend box anchor relative to the Axes — 0–1 is inside, beyond that is outside.",
+      "frameon": "The box behind the legend; when off, its colour, edge colour and opacity no longer apply.",
+      "ncol": "How many columns the legend uses; column spacing only matters with more than one.",
+      "legendSpacingUnit": "The unit is a multiple of the font size, not pt: 1.0 = one line height.",
+      "aspect": "equal = one data unit is the same length on X and Y; auto = fill the Axes; a number = Y over X.",
+      "scale": "log draws positive values only; changing the scale recomputes ticks, so ticks set in the script may no longer apply.",
+      "invert": "Flips the axis direction; the data is unchanged.",
+      "tickDirection": "in points into the plot, out away from it, inout straddles the spine.",
+      "majorMode": "How major ticks are chosen: automatic, a fixed step, or an explicit list of values.",
+      "minorMode": "How minor ticks are chosen: automatic subdivision or a fixed step.",
+      "tickFormat": "How tick numbers are written — a matplotlib format string such as %.1f or {x:.0f}.",
+      "mutationScale": "Size of the arrow head in pt; the line width is separate.",
+      "markersize": "Marker diameter in pt.",
+      "clim": "Colour range: values below vmin get the lowest colour, above vmax the highest.",
+      "cbExtend": "Triangles at the ends of the colourbar: out-of-range values are drawn in the end colours.",
+      "transparent": "The figure background is not painted on export; PNGs get a transparent background.",
+      "sizeMm": "Size of the whole figure; changing it reflows the Axes by the script’s layout rules.",
+      "stroke": "Outline around the text so it stays readable on dark backgrounds; done with path effects.",
+      "bbox": "The box behind the text: bbox is its name in the script."
     },
     "hiddenElements_other": "Hidden elements ({{count}})",
     "howAiBody": "Rewrites the .py script itself. A snapshot is taken before every run, so the task history can \"Revert this change\".",
     "howAiTitle": "Assistant edits",
     "howBothBody": "After the script changes, figure edits pointing at elements that no longer exist are skipped and flagged in the problems panel; the rest still apply.",
     "howBothTitle": "When the two meet",
-    "howItWorksAria": "Where edits are saved",
     "howItWorksTrigger": "Where are my edits saved?",
     "howOverrideBody": "Saved in this document — neither the script nor the figure on disk changes. They can be undone; \"Restore this element\" / \"Restore the whole figure\" clear them in one step. Exports re-render at full quality.",
     "howOverrideTitle": "Figure edits",
@@ -295,7 +323,6 @@
     "resetElement": "Restore this element",
     "resetElementCount_one": "Restore this element · {{count}} edit",
     "resetElementCount_other": "Restore this element · {{count}} edits",
-    "resetElementTitle": "Clear the figure edits on this element and return to the script's original output",
     "resetHint": {
       "default": "Back to the script value",
       "size_mm": "Restore the script's original size",
@@ -303,11 +330,9 @@
       "vmin": "Auto range"
     },
     "resetProp": "Reset {{label}}",
-    "resetTitle": "Clear every figure edit on this figure (including the baseline inherited from the last write-back) and return to the script's original output",
-    "resetToScript": "Restore the whole figure",
-    "resetToScriptCount": "Restore the whole figure · {{count}} edits",
+    "resetToScriptCount_one": "Restore the whole figure · {{count}} edit",
+    "resetToScriptCount_other": "Restore the whole figure · {{count}} edits",
     "restore": "Restore",
-    "restoreGroup": "Restore",
     "retryRender": "Retry render",
     "scaleApply": "Apply",
     "scaleAxes": "Scale axes",
@@ -334,7 +359,13 @@
     "colorScaleLinked": "Shares a colour scale with {{label}}",
     "colorScaleTip": "The colormap and the scale limits are one state: change either side and the other follows.",
     "selectScalePartner": "Select {{label}}",
-    "selectScalePartnerShort": "Select"
+    "selectScalePartnerShort": "Select",
+    "sourceRow": {
+      "scriptUntouched": "script untouched",
+      "restoreMenu": "Restore figure edits",
+      "restoreMenuTip_one": "Restore figure edits ({{count}} edit)",
+      "restoreMenuTip_other": "Restore figure edits ({{count}} edits)"
+    }
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
@@ -837,7 +868,8 @@
     "ylim": "Y range",
     "yscale": "Y scale",
     "zorder": "Stacking order",
-    "loc_anchor": "Anchor"
+    "loc_anchor": "Anchor",
+    "title": "Title"
   },
   "propByRole": {
     "bar": {
@@ -1040,7 +1072,7 @@
   },
   "textControls": {
     "align": "Align",
-    "color": "Color",
+    "color": "Colour",
     "font": "Font",
     "fontMissingHint": "This computer does not have that font, so the figure is actually drawn with a different one. Pick an available font, or install it.",
     "fontMissingTag": " (not installed)",

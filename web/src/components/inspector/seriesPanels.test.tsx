@@ -308,7 +308,7 @@ describe('透明度按百分比显示与输入（T16 / T20）', () => {
       ]),
     )
     await mount(['axes_0.lines_0', 'axes_0.lines_1'])
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="透明度"]')!
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="不透明度"]')!
     expect(input).toBeTruthy()
     expect(input.value).toBe('75')
     await typeNumber(input, '30')
@@ -853,7 +853,7 @@ describe('数值行的可达名：标签在视觉与辅助技术中一致（T11 
     expect(named('capsize')).toBe('端帽长度 (pt)')
     expect(named('cap_thickness')).toBe('端帽线宽 (pt)')
     // 百分比控件自己带名字（不带单位——单位就在框里那个 %）
-    expect(named('alpha')).toBe('透明度')
+    expect(named('alpha')).toBe('不透明度')
   })
 })
 

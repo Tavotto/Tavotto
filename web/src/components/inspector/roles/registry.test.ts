@@ -14,7 +14,8 @@ import { describe, expect, it } from 'vitest'
 import { setLocale } from '@/i18n'
 import enInspector from '@/i18n/locales/en-US/inspector.json'
 import zhInspector from '@/i18n/locales/zh-CN/inspector.json'
-import { engineLabel, groupLabel, groupRank, optionLabel, propLabel, roleName } from './registry'
+import { fieldHintKey } from '../presentation/registry'
+import { engineLabel, groupLabel, groupRank, mplClassOf, optionLabel, propLabel, roleName } from './registry'
 
 /** 引擎会发出来的 prop → 它属于哪个角色（只列需要显示名的那些） */
 const ENGINE_PROPS: [string, string][] = [
@@ -111,6 +112,25 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
         expect(label).not.toBe('')
       }
     })
+  })
+
+  it('术语桥：登记了短提示的属性，两种语言都有那句话（否则气泡里是 hint.xxx 原键）', async () => {
+    const res = (locale === 'zh-CN' ? zhInspector : enInspector) as {
+      element: { hint: Record<string, string> }
+    }
+    const hinted = ENGINE_PROPS.map(([prop]) => prop).filter((p) => fieldHintKey(p))
+    expect(hinted.length, '一条带提示的属性都没有：判据恒真').toBeGreaterThan(10)
+    for (const prop of hinted) {
+      const key = fieldHintKey(prop)!
+      expect(res.element.hint[key], `${prop} 的提示 hint.${key} 在 ${locale} 里缺`).toBeTruthy()
+    }
+  })
+
+  it('术语桥：类名徽标对引擎会发的每个角色都给得出（未知角色除外）', () => {
+    for (const [, role] of ENGINE_PROPS) {
+      expect(mplClassOf(role), `${role} 没有 matplotlib 类名`).toBeTruthy()
+    }
+    expect(mplClassOf('no_such_role')).toBeUndefined()
   })
 
   it('每个枚举选项都有显示名', async () => {

@@ -22,7 +22,6 @@
   "literal": "{{text}}",
   "measure": {
     "cmSize": "{{w}}×{{h}}cm",
-    "cmSizeSpaced": "{{w}}×{{h}} cm",
     "mm": "{{value}} mm",
     "mmPair": "{{a}}, {{b}} mm",
     "mmSize": "{{w}}×{{h}} mm",

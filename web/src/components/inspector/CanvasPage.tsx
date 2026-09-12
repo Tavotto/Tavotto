@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { formatCm, formatMm } from '@/lib/units'
+import { formatMm } from '@/lib/units'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
@@ -81,7 +81,8 @@ export function CanvasPage() {
         title={cv('pageSize')}
         action={
           <span className="shrink-0 font-mono text-xs text-ink-3">
-            {translate('measure.cmSizeSpaced', { w: formatCm(page.w), h: formatCm(page.h) })}
+            {/* 与下面的 W / H 输入框同一个单位：摘要说 cm、框里写 mm 是两套尺子 */}
+            {translate('measure.mmSizeSpaced', { w: formatMm(page.w), h: formatMm(page.h) })}
           </span>
         }
       >
