@@ -11,9 +11,10 @@
 web
 
 React 19 + Vite + Tailwind v4 的同一套界面，交付到三个宿主：Tauri 桌面应用
-（macOS arm64 / Windows x64 supported，Linux beta）、Codex 插件内嵌画布
-（MCP widget，`canvas.html`）、浏览器 playground（tavotto.com/try，Pyodide）。
-Tauri 只是壳，设计语言不是原生 macOS / Windows。
+（macOS arm64 / Windows x64 supported）、Codex 插件内嵌画布（MCP widget，
+`canvas.html`）、浏览器 playground（tavotto.com/try，Pyodide）。Linux 没有桌面
+安装包，只有 pip / pipx 的浏览器模式（beta）——支持等级以 `docs/support-matrix.json`
+为准，这里不另写一份。Tauri 只是壳，设计语言不是原生 macOS / Windows。
 
 ## Users
 
