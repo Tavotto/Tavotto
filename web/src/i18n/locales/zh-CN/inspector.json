@@ -188,7 +188,8 @@
       "topCenter": "上方居中",
       "bottomCenter": "下方居中",
       "leftCenter": "左侧中"
-    }
+    },
+    "tickSpineDiagramHint": "点四条边切换刻度线与边框"
   },
   "element": {
     "absentAppearance": "图上看得见，但这一版不提供在这里编辑——它来自脚本。",
@@ -238,9 +239,7 @@
     "editProp": "修改{{label}}",
     "figureSize": "整图 {{w}}×{{h}} mm",
     "groupFrame": "边框",
-    "groupRange": "范围",
     "groupTicksGrid": "刻度与网格",
-    "groupTransform": "坐标变换",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
     "hint": {
       "scatterSize": "pt² 是面积，不是直径：数值翻一倍，点看上去约宽 1.4 倍。"
@@ -317,7 +316,9 @@
     "colorScaleLinked": "与{{label}}共用色阶",
     "colorScaleTip": "色图与色阶上下限是同一份状态：在哪一边改，另一边跟着变。",
     "selectScalePartner": "选中{{label}}",
-    "selectScalePartnerShort": "选中"
+    "selectScalePartnerShort": "选中",
+    "groupRangeTransform": "范围与变换",
+    "sizeHead": "子图尺寸"
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",

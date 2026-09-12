@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
-import { identityCrumbs } from './identityCrumbs'
+import { identityCrumbs, untruncatedLabel } from './identityCrumbs'
 
 async function inLocale(locale: 'zh-CN' | 'en-US', fn: () => void) {
   await setLocale(locale)
@@ -54,5 +54,38 @@ describe('属性页面包屑', () => {
 
   it('单选却没解析到元素时不摆一个空段', () => {
     expect(identityCrumbs('Fig1_kinetics', undefined, undefined, 1)).toEqual(['Fig1_kinetics'])
+  })
+})
+
+describe('身份头标题不带引擎的截断省略号（2026-09-12 critique P3）', () => {
+  it('名字以 …” 收尾且有完整文字时，引号里换成完整文字，角色前缀原样', () => {
+    expect(untruncatedLabel('X 轴 “Reaction time (mi…”', 'Reaction time (min)')).toBe(
+      'X 轴 “Reaction time (min)”',
+    )
+  })
+
+  it('换出来的名字仍过得了 engineLabel：英文界面翻结构、留文字', async () => {
+    await inLocale('en-US', () => {
+      const full = untruncatedLabel('标题 “Reaction kinetics of…”', 'Reaction kinetics of catalysis')
+      expect(identityCrumbs('F', undefined, full, 1)).toEqual(['F', 'Title “Reaction kinetics of catalysis”'])
+    })
+  })
+
+  it('没截过的名字、没有 text 字段、或文字是空白：原样返回', () => {
+    expect(untruncatedLabel('标题 “Reaction kinetics”', 'Reaction kinetics')).toBe('标题 “Reaction kinetics”')
+    expect(untruncatedLabel('X 轴 “Reaction time (mi…”', undefined)).toBe('X 轴 “Reaction time (mi…”')
+    expect(untruncatedLabel('X 轴 “Reaction time (mi…”', '   ')).toBe('X 轴 “Reaction time (mi…”')
+  })
+
+  it('mathtext 里的 $ 原样进标题：$$ 不并成一个、$& 不换成被截的旧名', () => {
+    expect(untruncatedLabel('标题 “Rate $k_1$ vs $k_…”', 'Rate $k_1$ vs $k_2$ $$ $& done')).toBe(
+      '标题 “Rate $k_1$ vs $k_2$ $$ $& done”',
+    )
+  })
+
+  it('完整文字里的换行折成空格（引擎给名字时也是这么做的）', () => {
+    expect(untruncatedLabel('文字 “first line second l…”', 'first line\nsecond line')).toBe(
+      '文字 “first line second line”',
+    )
   })
 })

@@ -2338,6 +2338,7 @@ export default interface Resources {
       "switchOff": "{{label}}：关（点击开启）",
       "switchOn": "{{label}}：开（点击关闭）",
       "tickSpineDiagram": "刻度与边框状态图",
+      "tickSpineDiagramHint": "点四条边切换刻度线与边框",
       "viewAngle": "视角示意：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°",
       "zoneAria": "{{side}}{{dir}}刻度"
     },
@@ -2391,9 +2392,8 @@ export default interface Resources {
       "editProp": "修改{{label}}",
       "figureSize": "整图 {{w}}×{{h}} mm",
       "groupFrame": "边框",
-      "groupRange": "范围",
+      "groupRangeTransform": "范围与变换",
       "groupTicksGrid": "刻度与网格",
-      "groupTransform": "坐标变换",
       "hiddenElements_other": "已隐藏元素（{{count}}）",
       "hint": {
         "scatterSize": "pt² 是面积，不是直径：数值翻一倍，点看上去约宽 1.4 倍。"
@@ -2462,6 +2462,7 @@ export default interface Resources {
       "selectScalePartnerShort": "选中",
       "setAxesHeight": "修改子图高度",
       "setAxesWidth": "修改子图宽度",
+      "sizeHead": "子图尺寸",
       "sourceAdvanced": "源文件与高级",
       "techDetails": "技术详情",
       "textBatchHintMixed_other": "这些元素类型不同，只列出它们都支持的文字样式；改动会同时写到 {{count}} 个元素。",

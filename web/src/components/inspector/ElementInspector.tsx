@@ -628,8 +628,13 @@ function ErrorBlock({
  * 动态表单：无 group 的字段平铺在前，其余按 group 收进可折叠小节。
  * 分组和顺序都由 manifest 决定，前端不排字段清单。
  */
-/** 标签列宽：容得下「网格透明度」这类 5 字标签，再长的自身截断 */
-const LABEL_W = 72
+/**
+ * 标签列宽。72 时 en-US 在出厂宽度 360 就把「Stacking order / Frame opacity /
+ * Major tick mode / Number format」截成省略号，要悬停才知道是什么（2026-09-12
+ * critique P2）——高手最不能忍的是本来认识的词被遮住。88 容得下这四个，再长的
+ * 折成两行（标签最多两行截断），不再截断成省略号。
+ */
+const LABEL_W = 88
 
 /**
  * 「移除 override」在不同字段上的自然说法；没有专属说法的用通用那条。
@@ -998,7 +1003,7 @@ function FieldList({
       {rows(headPrimary)}
       {bar && (
         <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>
-          <TextStyleBar panel={panel} element={element} />
+          <TextStyleBar panel={panel} element={element} labelWidth={LABEL_W} />
         </div>
       )}
       {tailPrimary.length > 0 && <div className="mt-1.5">{rows(tailPrimary)}</div>}
@@ -1186,18 +1191,14 @@ function AxesRangeCard({
     <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
   )
   const invertLabel = el('invert')
+  // 范围与坐标变换收成一块（2026-09-12 critique：子图页六块跨两屏）：X / Y 范围、
+  // 缩放、反转、纵横比说的都是「坐标怎么映射」，一个组头就够；顺序不变
   return (
     <div className="flex flex-col gap-1.5" data-axes-range-card>
-      {range.length > 0 && (
-        <div className="flex flex-col gap-1.5" data-axes-section="range">
-          <GroupHead>{el('groupRange')}</GroupHead>
-          {range.map(block)}
-        </div>
-      )}
-      {(scale.length > 0 || invert.length > 0 || aspect) && (
-        <div className="flex flex-col gap-1.5" data-axes-section="transform">
-          <GroupHead>{el('groupTransform')}</GroupHead>
-          {scale.map(block)}
+      <div className="flex flex-col gap-1.5" data-axes-section="range-transform">
+        <GroupHead>{el('groupRangeTransform')}</GroupHead>
+        {range.map(block)}
+        {scale.map(block)}
           {invert.length > 0 && (
             <Row
               label={labeledWithStateNode(invertLabel, invert.some(overridden))}
@@ -1234,9 +1235,8 @@ function AxesRangeCard({
               </div>
             </Row>
           )}
-          {aspect && block(aspect)}
-        </div>
-      )}
+        {aspect && block(aspect)}
+      </div>
     </div>
   )
 }
@@ -1249,7 +1249,8 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
       title={overridden ? `${label} · ${el('modified')}` : label}
     >
       {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
-      <span className="min-w-0 truncate">{label}</span>
+      {/* 折两行而不是截成省略号：省略号遮住的正是用户本来认识的那个词 */}
+      <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
@@ -1889,7 +1890,8 @@ function FieldRow({
       {overridden && (
         <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
       )}
-      <span className="min-w-0 truncate">{label}</span>
+      {/* 折两行而不是截成省略号：省略号遮住的正是用户本来认识的那个词 */}
+      <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
       {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
@@ -2071,7 +2073,8 @@ function FieldRow({
         />,
       )
     case 'aspect':
-      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器
+      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
+      // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间
       return wrap(
         <AspectControl
           value={value}
@@ -2081,6 +2084,7 @@ function FieldRow({
           onScrubStart={beginTxn}
           onScrubEnd={endTxn}
         />,
+        'start',
       )
     case 'effect':
       // 背景 / 描边：关着只给「＋添加」，开了才铺参数（从属字段由展示注册表
@@ -2453,7 +2457,7 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   }
 
   return (
-    <Row label={el('scaleLabel')} className="mt-1.5">
+    <Row label={el('scaleLabel')} labelWidth={LABEL_W} className="mt-1.5">
       <NumberField
         fill
         className="w-[84px] shrink-0"
@@ -2616,6 +2620,9 @@ function AxesSizeMm({
 
   return (
     <div className="mt-2 border-t border-border pt-2">
+      {/* 这一块以前没有组头，一条 hairline 之下突然是 W / H（2026-09-12 critique）；
+          宿主代理的场合组头另有一行（下面），带来源入口 */}
+      {!proxied && <GroupHead>{el('sizeHead')}</GroupHead>}
       {proxied ? (
         /* 「位置和大小属于宿主子图」原本是两段常驻说明（审计 T22 点名的
            三段之二）。现在由**组标题**回答作用对象（「子图尺寸 · 子图 1」）、

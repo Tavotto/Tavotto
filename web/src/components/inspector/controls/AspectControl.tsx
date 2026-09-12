@@ -76,10 +76,18 @@ export function AspectControl({
   const mode = pending ?? committed
   const custom = mode === 'custom'
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-end">
+    // 两行、不折行：分段控件靠右占第一行，自定义档的数字框在第二行贴控件列左缘，
+    // 与上面「X 范围」那些框对齐。以前是「同一行、数字框从『自定义比例』右边抽出来」
+    // 的动效，但那一行在出厂宽度 360 就放不下（zh 三个档名 + 框 > 控件列；en 一旦
+    // 改过、右侧多了恢复芯片也放不下），只好允许换行——折下去的框悬在右边和谁都
+    // 不对齐，而且宽度动画到一半才跳到第二行（2026-09-12 用户实测：躲过裁切但更怪）。
+    // 什么宽度、哪种语言都是同一个样子，比一个只在宽面板 + 中文下成立的动效值钱。
+    // 字段本身仍然只在自定义档挂载，不是 CSS 藏起来的：看不见却能 Tab 到、能被读屏
+    // 念到的输入框是个陷阱。
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
       <Segmented
         tone="quiet"
-        className="w-auto shrink-0 gap-1"
+        className="w-auto shrink-0 gap-1 self-end"
         ariaLabel={label}
         value={mode}
         onChange={(m) => {
@@ -89,34 +97,23 @@ export function AspectControl({
         }}
         items={MODES.map((m) => ({ value: m, label: ctl(`aspect.${m}`) }))}
       />
-      {/* 同一行、同一条基线：数字框从「自定义比例」右边长出来。外层只动 width
-          （0 → 100px），内层是**定宽**的，被 overflow-hidden 从右往左裁——所以它是
-          紧贴着那几个字往右「抽」出来的，而不是先出现一个压扁的框再撑开。整组右对齐，
-          于是长出来的宽度反过来把分段控件平滑推向左边；Segmented 用 shrink-0，是被
-          推走而不是被挤扁。字段本身仍然只在自定义档挂载，不是 CSS 藏起来的：看不见
-          却能 Tab 到、能被读屏念到的输入框是个陷阱。动效关掉时（base 层的
-          prefers-reduced-motion）它就退化成一次瞬时布局，不丢信息。 */}
-      <div
-        className={`shrink-0 overflow-hidden transition-[width] duration-[var(--duration-base)] ease-[var(--ease-pop)] ${custom ? 'w-[100px]' : 'w-0'}`}
-      >
-        {custom && (
-          <div className="animate-fade-in w-[100px] pl-2">
-            <NumberField
-              className="w-[92px]"
-              dataProp="aspect"
-              ariaLabel={ctl('aspectRatio')}
-              value={ratio ?? DEFAULT_RATIO}
-              min={0.05}
-              max={20}
-              step={0.1}
-              precision={3}
-              onChange={(v) => onRatio(aspectValueOf('custom', v))}
-              onScrubStart={onScrubStart}
-              onScrubEnd={onScrubEnd}
-            />
-          </div>
-        )}
-      </div>
+      {custom && (
+        <div className="animate-fade-in self-start">
+          <NumberField
+            className="w-[92px]"
+            dataProp="aspect"
+            ariaLabel={ctl('aspectRatio')}
+            value={ratio ?? DEFAULT_RATIO}
+            min={0.05}
+            max={20}
+            step={0.1}
+            precision={3}
+            onChange={(v) => onRatio(aspectValueOf('custom', v))}
+            onScrubStart={onScrubStart}
+            onScrubEnd={onScrubEnd}
+          />
+        </div>
+      )}
     </div>
   )
 }

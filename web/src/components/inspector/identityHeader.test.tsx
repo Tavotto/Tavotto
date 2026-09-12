@@ -177,6 +177,23 @@ describe('标题说得出「我在改的是什么」（T01）', () => {
   })
 })
 
+describe('图内元素的头部图标按角色（2026-09-12 critique P3）', () => {
+  it('选中标题时是文字图标，不是面板那个图片图标；整张图是 Frame', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title'] })
+    await mount()
+    const icon = document.querySelector('header svg')!
+    expect(icon.getAttribute('class')).toContain('lucide-type')
+    expect(icon.getAttribute('class')).not.toContain('lucide-image')
+    // 与元素树同一张表：树里标题也是 Type
+    useUiStore.setState({ selectedGids: [] })
+    await act(async () => {})
+    expect(document.querySelector('header svg')!.getAttribute('class')).toContain('lucide-frame')
+  })
+})
+
 describe('图内修改数说清是修改数（T07）', () => {
   const withOverrides = (n: number): PanelObject => ({
     ...panel,

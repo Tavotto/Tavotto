@@ -44,11 +44,12 @@ import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
-import { identityCrumbs } from './identityCrumbs'
+import { identityCrumbs, untruncatedLabel } from './identityCrumbs'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
 import { RestoreMenu } from './RestoreMenu'
 import { roleName } from './roles/registry'
+import { roleIcon } from './roles/roleIcons'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -309,10 +310,11 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
     const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
     const axes = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
+    const text = el?.editable.find((f) => f.prop === 'text')?.value
     const crumbs = identityCrumbs(
       panel.name ?? panel.fileId,
       axes && axes.gid !== gid ? axes.label : undefined,
-      el?.label,
+      el ? untruncatedLabel(el.label, typeof text === 'string' ? text : undefined) : undefined,
       selectedGids.length,
     )
     const hideable =
@@ -322,11 +324,14 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     const modified = el
       ? panel.overrides.filter((o) => o.gid === el.gid).length
       : panel.overrides.length
+    const RoleIcon = roleIcon(el?.role ?? 'figure')
 
     return (
-      <header className="shrink-0 px-3 pb-2">
+      <header className="shrink-0 pl-3 pr-2 pb-2">
         <div className="flex items-center gap-1.5">
-          <ImageIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
+          {/* 图标按角色查树里那张表（roles/roleIcons）：标题是 T、曲线是折线、图例是列表，
+              与左栏元素树同一张脸；以前不管选了什么都是同一个图片图标 */}
+          <RoleIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
           {!el && (
             <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
@@ -354,7 +359,6 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             <Tip label={t('exitElementEdit')} side="bottom">
               <Button
                 size="icon-sm"
-                className="-mr-1"
                 data-exit-element-edit
                 onClick={() => useUiStore.getState().setElementPanel(null)}
                 aria-label={t('exitElementEdit')}
@@ -365,7 +369,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
           </span>
         </div>
         {(crumbs.length > 1 || modified > 0) && (
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-3">
+          <p className="mt-0.5 flex items-center gap-1.5 pr-1 text-xs text-ink-3">
             {crumbs.length > 1 && (
               <span className="min-w-0 truncate" title={crumbs.join(' / ')}>
                 {crumbs.slice(0, -1).join(' / ')}
@@ -409,7 +413,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
   const ids = objs.map((o) => o.id)
 
   return (
-    <header className="shrink-0 px-3 pb-2">
+    <header className="shrink-0 pl-3 pr-2 pb-2">
       <div className="flex items-center gap-1.5">
         <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
         {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
@@ -427,7 +431,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
           width={172}
           align="end"
           trigger={
-            <Button size="icon-sm" className="-mr-1 ml-auto" aria-label={t('objectActions')}>
+            <Button size="icon-sm" className="ml-auto" aria-label={t('objectActions')}>
               <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
             </Button>
           }

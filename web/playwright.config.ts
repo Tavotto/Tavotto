@@ -59,7 +59,8 @@ export default defineConfig({
     {
       name: 'chromium-en',
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
-      testMatch: ['a11y.spec.ts', 'error-recovery-en.spec.ts'],
+      // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
+      testMatch: ['a11y.spec.ts', 'error-recovery-en.spec.ts', 'inspector-overflow.spec.ts'],
     },
   ],
 })
