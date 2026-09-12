@@ -2073,7 +2073,8 @@ function FieldRow({
         />,
       )
     case 'aspect':
-      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器
+      // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
+      // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间
       return wrap(
         <AspectControl
           value={value}
@@ -2083,6 +2084,7 @@ function FieldRow({
           onScrubStart={beginTxn}
           onScrubEnd={endTxn}
         />,
+        'start',
       )
     case 'effect':
       // 背景 / 描边：关着只给「＋添加」，开了才铺参数（从属字段由展示注册表
