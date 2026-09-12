@@ -228,7 +228,7 @@ def test_the_scan_range_is_not_quietly_hollow():
     assert not _has_emitter("backend.zzz_no_such_error_code_xyz", blob)
     # 复数后缀的剥离**不是万能钥匙**：基名没有发射点的照样是死键
     assert not _has_emitter("backend.zzz_no_such_error_code_xyz_other", blob)
-    assert _has_emitter("problems.fixAll_other", blob), "复数形态的基名有发射点却被报成死键"
+    assert _has_emitter("problems.groupObjects_other", blob), "复数形态的基名有发射点却被报成死键"
 
 
 def test_every_exemption_carries_a_reason():

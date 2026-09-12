@@ -701,7 +701,7 @@
         "optOut": "关闭",
         "policy": "隐私政策",
         "sends": {
-          "ai_assistant_invoked": "调用改图助手：用的是哪个 Agent。",
+          "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",
           "app_started": "应用启动：桌面版还是浏览器版。",
           "canvas_created": "新建画布：空白、来自项目还是复制。",
           "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
@@ -718,7 +718,7 @@
           "tutorial_completed": "教程完成：流程版本号。",
           "tutorial_started": "教程开始：入口与流程版本号。",
           "tutorial_step_completed": "教程完成一步：步骤编号与流程版本号。",
-          "update_completed": "更新完成：通道与版本号。"
+          "update_completed": "更新完成：通道（桌面 / pip / pipx）与版本号。"
         },
         "sendsAfter": "的 UUID，不关联账号或设备硬件。",
         "sendsBefore": "标识是本机随机生成、",
