@@ -11,9 +11,16 @@
  *      `--font-sans` / `--font-mono`；
  *   4. 投影：正文里写的 `--shadow-pop` 值与 index.css 逐字相同；
  *   5. 宪法第一节颜色表里写了 hex 的行也对一遍——#330 里 selected 收浅到 #ebebe6 时
- *      那张表没跟上（`#e6e6e0`），说明「说明书写值」这件事本身就需要门禁。
+ *      那张表没跟上（`#e6e6e0`），说明「说明书写值」这件事本身就需要门禁；
+ *   6. `spacing` 与 `components`（评审 P2：frontmatter 里每一块机器可读的数据都得有
+ *      对拍对象，否则就是没人守的第二份真值）：`spacing.control` 等于 `Button` 的
+ *      唯一高度档、`setting-row` 等于 `SettingRow` 的行高；每个组件的
+ *      `{colors.x}` / `{rounded.x}` / `{spacing.x}` 引用都解析得到，并且换算成
+ *      Tailwind 类之后真的出现在那个组件的类串里（`rounded.sm` → `rounded-sm`、
+ *      `28px` → `h-7`、`{colors.ink}` 做底色 → `bg-ink`）。没有对拍对象的字段
+ *      （gap-sm / gap-md、mono 的字号）已从 frontmatter 删掉，不留没人守的数据。
  *
- * 改值先改 index.css，DESIGN.md 跟着改，同一次提交——这条用例就是那句话的门禁。
+ * 改值先改 index.css / 组件，DESIGN.md 跟着改，同一次提交——这条用例就是那句话的门禁。
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -172,6 +179,15 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
     expect(m![1]).toBe(vars['shadow-pop'])
   })
 
+  it('ink-3 的对比度说明与 index.css 的实测一致：画布灰上不达标，正文不许说「所有底色」', () => {
+    // index.css 的注释是权威：ink-3 白 5.37 / surface-2 5.00 / bg 4.78 过线，canvas 4.45 不过
+    expect(INDEX_CSS).toMatch(/--color-canvas 上只有\s*4\.45:1/)
+    const line = DESIGN_MD.split('\n').find((l) => l.includes('Ink-3') && l.includes('Ink-faint'))!
+    expect(line, '正文里没有 Ink-3 那一行').toBeTruthy()
+    expect(line).toMatch(/4\.45:1/)
+    expect(line).not.toMatch(/前两档在所有底色上/)
+  })
+
   it('索引不复制规矩：正文每一节都指向宪法', () => {
     const body = DESIGN_MD.slice(DESIGN_MD.indexOf('\n---\n', 4) + 5)
     for (const h of ['## Colors', '## Typography', '## Layout', '## Shapes', '## Components']) {
@@ -181,5 +197,115 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
       const section = body.slice(i, next < 0 ? undefined : next)
       expect(section, `${h} 没有指向宪法`).toMatch(/宪法/)
     }
+  })
+})
+
+/* ------------------------- spacing / components 对拍 ------------------------- */
+
+const ui = (rel: string) => readFileSync(path.resolve(HERE, 'components', rel), 'utf8')
+
+/** Tailwind 的 4px 栅格：28px → h-7 */
+const px = (v: string): number => {
+  const m = v.match(/^(\d+)px$/)
+  if (!m) throw new Error(`不是像素值：${v}`)
+  return Number(m[1])
+}
+const stepOf = (v: string) => `${px(v) / 4}`
+
+/** `{colors.ink}` → colors 块里 ink 的值；不是引用的原样回 */
+function deref(value: string): { value: string; ref?: [string, string] } {
+  const m = value.match(/^\{([a-z]+)\.([a-z0-9-]+)\}$/)
+  if (!m) return { value }
+  const table = flatMap(m[1])
+  if (!(m[2] in table)) throw new Error(`引用解析不到：${value}`)
+  return { value: table[m[2]], ref: [m[1], m[2]] }
+}
+
+/** 一条 frontmatter 声明换算成它在组件类串里必须出现的 Tailwind 类 */
+function expectedClasses(prop: string, raw: string): string[] {
+  const { value, ref } = deref(raw)
+  switch (prop) {
+    case 'rounded':
+      if (value === '9999px') return ['rounded-full']
+      if (!ref || ref[0] !== 'rounded') throw new Error(`rounded 只认 {rounded.x} 或 9999px：${raw}`)
+      return [`rounded-${ref[1]}`]
+    case 'height':
+      return [`h-${stepOf(value)}`]
+    case 'size':
+      return [`h-${stepOf(value)}`, `w-${stepOf(value)}`]
+    case 'backgroundColor':
+      if (!ref || ref[0] !== 'colors') throw new Error(`backgroundColor 只认 {colors.x}：${raw}`)
+      return [`bg-${ref[1]}`]
+    case 'textColor':
+      if (value === '#ffffff') return ['text-white']
+      if (!ref || ref[0] !== 'colors') throw new Error(`textColor 只认 {colors.x} 或 #ffffff：${raw}`)
+      return [`text-${ref[1]}`]
+    default:
+      throw new Error(`components 里出现了对拍表不认识的属性：${prop}`)
+  }
+}
+
+/** 组件 → 它的类串权威（源码里那段字面量；找不到就抛，别让判据恒真） */
+const COMPONENT_CLASSES: Record<string, () => string> = {
+  'button-primary': () => buttonVariant('primary') + ' ' + buttonSize('sm'),
+  'button-secondary': () => buttonVariant('secondary') + ' ' + buttonSize('sm'),
+  'button-ghost': () => buttonVariant('ghost') + ' ' + buttonSize('sm'),
+  'button-danger': () => buttonVariant('danger') + ' ' + buttonSize('sm'),
+  'icon-button': () => buttonSize('icon'),
+  input: () => block1(ui('ui/Input.tsx'), /const BOX_CLASS = cn\(([\s\S]*?)\)\n/) + ' ' + literal(ui('ui/Input.tsx'), /'(h-7 w-full[^']*)'/),
+  badge: () => literal(ui('ui/Badge.tsx'), /'(inline-flex h-\d[^']*)'/),
+  menu: () => block1(ui('ui/Menu.tsx'), /const CONTENT_CLASS = cn\(([\s\S]*?)\)\n/),
+  dialog: () => literal(ui('ui/Dialog.tsx'), /'([^']*rounded-\w+ border border-border bg-surface shadow-pop[^']*)'/),
+}
+
+function literal(src: string, re: RegExp): string {
+  const m = src.match(re)
+  if (!m) throw new Error(`源码里找不到类串：${re}`)
+  return m[1]
+}
+const block1 = (src: string, re: RegExp) => literal(src, re).replace(/['\n,]/g, ' ')
+function buttonVariant(name: string): string {
+  const table = literal(ui('ui/Button.tsx'), /const VARIANTS: Record<Variant, string> = \{([\s\S]*?)\n\}/)
+  return literal(table, new RegExp(`\\b${name}:\\s*('[^']*'(?:\\s*\\+\\s*'[^']*')*|\\n\\s*'[^']*')`)).replace(/['\n+]/g, ' ')
+}
+function buttonSize(name: string): string {
+  const table = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+  return literal(table, new RegExp(`(?:^|\\n)\\s*'?${name}'?:\\s*'([^']*)'`))
+}
+const hasClass = (classes: string, cls: string) => classes.split(/\s+/).includes(cls)
+
+describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
+  it('spacing.control 等于 Button 唯一那档高度；setting-row 等于 SettingRow 的行高', () => {
+    const spacing = flatMap('spacing')
+    expect(Object.keys(spacing).sort()).toEqual(['control', 'setting-row'])
+    const sizes = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+    const heights = [...sizes.matchAll(/\bh-(\d+)\b/g)].map((m) => m[1])
+    expect(heights.length, 'SIZES 里一条 h- 都没解析到：判据恒真').toBeGreaterThanOrEqual(4)
+    expect(new Set(heights), 'Button 不止一档高度').toEqual(new Set([stepOf(spacing.control)]))
+    expect(ui('settings/SettingRow.tsx')).toContain(`min-h-${stepOf(spacing['setting-row'])} `)
+  })
+
+  it('components 里每条引用都解析得到，换算成的 Tailwind 类真的在那个组件的类串里', () => {
+    const components = nestedMap('components')
+    expect(Object.keys(components).length).toBeGreaterThan(5)
+    for (const [name, props] of Object.entries(components)) {
+      const classes = COMPONENT_CLASSES[name]
+      expect(classes, `${name} 没有对拍对象：要么补，要么从 frontmatter 删掉`).toBeDefined()
+      const src = classes()
+      expect(Object.keys(props).length, `${name} 一条声明都没有`).toBeGreaterThan(0)
+      for (const [prop, raw] of Object.entries(props)) {
+        for (const cls of expectedClasses(prop, raw)) {
+          expect(hasClass(src, cls), `${name}.${prop} = ${raw} → 组件类串里没有 ${cls}（${src.trim()}）`).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('自检：引用解析与换算抓得住反例', () => {
+    expect(() => deref('{colors.no-such}')).toThrow(/解析不到/)
+    expect(expectedClasses('height', '{spacing.control}')).toEqual(['h-7'])
+    expect(expectedClasses('rounded', '9999px')).toEqual(['rounded-full'])
+    expect(() => expectedClasses('padding', '4px')).toThrow(/不认识/)
+    expect(hasClass('rounded-sm h-7', 'rounded-s')).toBe(false)
   })
 })
