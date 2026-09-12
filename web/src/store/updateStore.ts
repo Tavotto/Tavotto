@@ -9,11 +9,13 @@ import {
   relaunchDesktop,
   type DesktopUpdateInfo,
 } from '@/lib/desktop'
+import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 
 /**
  * 版本更新状态。启动时静默取一次（后端有 24h 节流，不会真的每次都联网），
- * 拿到 update_available 才在顶栏露出提示；用户在「设置 → 检查更新」里可以
- * 手动立即检查、关掉自动检查、或直接执行升级。
+ * 拿到 update_available 才露出提示——启动时弹一次 `UpdateNoticeDialog`
+ * （「稍后」按版本记住）+「⋯」上的圆点；用户在
+ * 「设置 → 检查更新」里可以手动立即检查、关掉自动检查、或直接执行升级。
  *
  * 升级永远不静默进行：学术制图要可复现，版本什么时候变必须是用户按下按钮的结果。
  *
@@ -42,14 +44,19 @@ interface UpdateState {
    * 该不该再点一次（审计 T48「失败保留重试路径」）。
    */
   applyFailed: boolean
-  /** 用户手动关掉本次顶栏提示（不改设置，仅本次会话） */
-  dismissed: boolean
+  /**
+   * 用户对哪个版本点过「稍后」。**按版本记，不按会话记**：同一版本下次启动
+   * 不再催，出了更新的版本才再提示。落在 localStorage（本机偏好，不进文档），
+   * 启动时读回来；「⋯」上的圆点不受它影响——那是安静的提醒，弹窗才是打招呼。
+   */
+  dismissedVersion: string | null
   /** 手动「立即检查」在 fetch 层就失败时的提示（连不上后端等）；自动检查不写 */
   checkError: string | null
   check: (force?: boolean) => Promise<void>
   apply: () => Promise<void>
   setAutoCheck: (v: boolean) => Promise<void>
-  dismiss: () => void
+  /** 对这个版本说「稍后」 */
+  dismiss: (version: string) => void
 
   /* ------------------------------ 桌面通道 ------------------------------ */
   desktopPhase: DesktopPhase
@@ -78,7 +85,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   restartRequired: false,
   applyLog: null,
   applyFailed: false,
-  dismissed: false,
+  dismissedVersion: readDismissedUpdate(),
   checkError: null,
   desktopPhase: 'idle',
   desktopUpdate: null,
@@ -92,7 +99,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     set({ checking: true, ...(force ? { checkError: null } : {}) })
     try {
       const status = await checkUpdate(force)
-      set({ status, checkError: null, dismissed: force ? false : get().dismissed })
+      set({ status, checkError: null })
     } catch (e) {
       // 自动检查失败保持安静（离线是常态，顶栏什么都不显示即可）；
       // 手动点「立即检查」必须有下文——无声无息的按钮和坏掉没有区别。
@@ -136,7 +143,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (status) set({ status: { ...status, auto_check: v } })
   },
 
-  dismiss: () => set({ dismissed: true }),
+  dismiss: (version) => {
+    writeDismissedUpdate(version)
+    set({ dismissedVersion: version })
+  },
 
   checkDesktop: async () => {
     if (get().desktopPhase !== 'idle') return
@@ -147,7 +157,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         desktopUpdate: info,
         desktopChecked: true,
         desktopCheckedAtMs: Date.now(),
-        dismissed: false,
       })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别

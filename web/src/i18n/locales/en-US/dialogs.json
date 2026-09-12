@@ -1280,6 +1280,27 @@
     "sendsVersion": "The Tavotto version",
     "title": "Help improve Tavotto"
   },
+  "updateNotice": {
+    "title": "Version {{version}} is available",
+    "current": "You are on {{version}}",
+    "intro": "Update to get this release's new features and fixes.",
+    "notesTitle": "What's new",
+    "releaseNotes": "Full release notes",
+    "later": "Later",
+    "install": "Update now",
+    "downloading": "Downloading…",
+    "downloadingPct": "Downloading {{pct}}%",
+    "downloadProgressAria": "Update download progress",
+    "installed": "{{version}} is installed. This window still runs the old version; restart to use it.",
+    "relaunch": "Restart now",
+    "relaunchLater": "Restart later",
+    "upgrading": "Upgrading…",
+    "upgraded": "Upgraded to {{version}}. This process still runs the old version — restart Tavotto to use it.",
+    "gotIt": "Got it",
+    "failed": "The update did not complete; the current version is unchanged.",
+    "retry": "Try again",
+    "sourceBody": "This is a source checkout, so Tavotto does not upgrade itself. Run this in the repository:"
+  },
   "versions": {
     "autoBadge": "Auto",
     "beforeRestore": "Before restore ({{time}})",

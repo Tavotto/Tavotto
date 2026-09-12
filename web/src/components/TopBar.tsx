@@ -607,8 +607,8 @@ function ExportButton() {
 function MoreMenu() {
   const { t } = useTranslation('workspace')
   const ui = () => useUiStore.getState()
-  // 新版本不弹窗、不占顶栏位置：只在「更多」上点一个圆点，菜单里给一条入口。
-  // 升级是可延后的事，不该打断正在排版的人。
+  // 打招呼的是启动时那个 UpdateNoticeDialog（「稍后」按版本记住）；这里只在
+  // 「更多」上点一个圆点、菜单里给一条入口——用户说过稍后之后仍留着的安静提醒。
   const update = useUpdateStore((s) => s.status)
   const desktopUpdate = useUpdateStore((s) => s.desktopUpdate)
   const hasUpdate = !!update?.update_available || !!desktopUpdate

@@ -1566,6 +1566,27 @@ export default interface Resources {
       "sendsVersion": "Tavotto 的版本号",
       "title": "帮助改进 Tavotto"
     },
+    "updateNotice": {
+      "current": "当前版本 {{version}}",
+      "downloadProgressAria": "更新包下载进度",
+      "downloading": "正在下载…",
+      "downloadingPct": "正在下载 {{pct}}%",
+      "failed": "更新没有完成，当前版本没有改变。",
+      "gotIt": "知道了",
+      "install": "立即更新",
+      "installed": "{{version}} 已安装完成。当前窗口仍是旧版本，重启后生效。",
+      "intro": "更新后即可使用这一版的新功能与修复。",
+      "later": "稍后",
+      "notesTitle": "这一版有什么新东西",
+      "relaunch": "立即重启",
+      "relaunchLater": "稍后重启",
+      "releaseNotes": "查看完整发行说明",
+      "retry": "再试一次",
+      "sourceBody": "这是源码检出的运行方式，Tavotto 不代劳升级。请在仓库目录执行：",
+      "title": "新版本 {{version}} 已发布",
+      "upgraded": "已升级到 {{version}}。当前进程仍在运行旧版本，请重启 Tavotto 后使用。",
+      "upgrading": "正在升级…"
+    },
     "versions": {
       "autoBadge": "自动",
       "beforeRestore": "恢复前（{{time}}）",
