@@ -7,6 +7,9 @@
 本文是全部视觉参数的唯一出处的**说明**；值本身在 `web/src/index.css` 的 `@theme`，
 门禁在 `web/src/components/ui/foundation.test.ts`（类名字面量）与
 `iconography.test.tsx`（图标）。改值先改 index.css，改规矩先改这里，两边同一次提交。
+仓库根的 `DESIGN.md` 是给 impeccable / Stitch 这类工具读的**机器层索引**（frontmatter
+里的 token + 每节一两句话指回本文），不是第二份规矩；`web/src/designMd.test.ts` 把它
+的 frontmatter、本文第一节的颜色表与 index.css 逐条对拍，漂了就红。
 
 ## 一、颜色
 
@@ -17,7 +20,7 @@
 | surface-subtle | `surface-2` | `#f7f7f4` | 只读值、数字框静态底、徽章底 |
 | surface-hover | `surface-hover` | ink 4.5% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
-| surface-selected | `selected` | `#e6e6e0` | 选中：只比背景稍深，配字重 / 对勾再说一遍 |
+| surface-selected | `selected` | `#ebebe6` | 选中：只比背景稍深，配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
 | ink-2 | `ink-2` | `#5c5c55` | 次级文字、标签 |
 | ink-3 | `ink-3` | `#6b6b64` | 元数据、单位、占位。仍 ≥4.5:1 |
