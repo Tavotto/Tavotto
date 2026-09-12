@@ -50,7 +50,10 @@
      与 hover 拉开一档就够，「是哪一个」由字重 / 对勾 / 形状再说一遍，不靠大块深灰。 */
   --color-selected: #ebebe6;
   --color-danger: #c4442a;
-  --color-danger-subtle: #fbeeeb;
+  /* danger 字落在 danger-subtle 上（InlineWarning / Badge / 状态栏）要过 4.5:1：
+     #fbeeeb 只有 4.40（settings-shell 的 axe 在「更新」分区当场 serious），
+     #fdf3f1 是 4.58——与从前 `bg-danger/[.07]` 混出来的 #fbf2f0（4.53）同一档。 */
+  --color-danger-subtle: #fdf3f1;
   /* 警示（「需要处理，但还没坏」）：编码 Agent 的「需要登录」用它。
      与 danger 分工明确——没登录不是故障，装坏了才是。
      5.9:1（白）/ 5.3:1（暖灰底），两处都过普通文字的 4.5:1。 */

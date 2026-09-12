@@ -77,7 +77,9 @@ export function Segmented<T extends string>({
                   : 'font-medium text-ink opacity-100'
                 : item.disabled
                   ? 'cursor-default text-ink-faint opacity-50'
-                  : 'text-ink opacity-50 hover:opacity-100',
+                  : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化
+                    // （`text-ink opacity-50` 量出来 3.32:1，a11y 那条 e2e 当场红）
+                    'text-ink-3 hover:text-ink',
             )}
           >
             {item.icon}

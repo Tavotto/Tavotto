@@ -268,6 +268,16 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
         // 不排除它们，每一个灰掉的按钮都会变成一条假红，而误报比漏报更糟：它逼人
         // 去「修」一件标准上根本不要求的事。
         if (e.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')) continue
+        // **纯装饰的记号不在 WCAG 1.4.3 的范围内**（"Decoration: text … that is
+        // pure decoration … has no contrast requirement"）。本仓库的装饰记号是
+        // `当前 → 要求` 里的箭头、`状态 · 时间` 里的间隔点这一类：按 Design
+        // Constitution 用 `ink-faint`，并且一律 `aria-hidden`（读屏也不读它）。
+        // 豁免收得很窄，两个条件缺一不可：**元素自己标了 aria-hidden**，且**自己
+        // 持有的文字里没有任何字母或数字**（`\p{L}` / `\p{N}`）。把要读的字藏进
+        // aria-hidden 里绕不过去——那样的字照样量。前提：`ink-faint` 只给装饰与
+        // 禁用态（web/AGENTS.md「UI 视觉纪律」）；哪天它被用在要读的字上，这条豁免
+        // 挡不住，`contrast.spec.ts` 里两向的判据会先红。
+        if (e.getAttribute('aria-hidden') === 'true' && !/[\p{L}\p{N}]/u.test(text)) continue
         const fgRaw = parse(cs.color)
         if (!fgRaw) continue
         const measured = opaqueBg(e)

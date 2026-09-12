@@ -371,10 +371,11 @@ test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢�
   await page.keyboard.press('Enter')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
-  // 每一行都在（报告取回来了才算真的打开，空壳上扫 axe 什么都证明不了）
-  await expect(dialog.getByText(/技术详情|Technical details/).first()).toBeVisible({
-    timeout: 30_000,
-  })
+  // 每一行都在（报告取回来了才算真的打开，空壳上扫 axe 什么都证明不了）。
+  // 锚点是稳定的 `data-panel-row`：Visual Consolidation 把每行的「技术详情」折叠段
+  // 整个撤了（stem / entry / reason code 不是普通用户连图要懂的东西），按那句文案等
+  // 就永远等不到。
+  await expect(dialog.locator('[data-panel-row]').first()).toBeVisible({ timeout: 30_000 })
 
   // 两条「查不了」的允许各自带真核对：背景整片 aria-hidden（焦点进不去由下面
   // 那圈 Tab 覆盖）；覆盖层下 axe 算不出背景色的节点由自算尺子逐个核对。后者是
@@ -398,7 +399,17 @@ test('项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢�
     expect(inside, `第 ${i + 1} 次 Tab 后焦点跑出了接入状态`).toBe(true)
   }
 
+  // 焦点此刻多半停在一颗带气泡的图标钮上（每行的 ⋯ 菜单是 IconButton + Tip）。
+  // 第一下 Escape 只收气泡：WCAG 1.4.13 要求悬停 / 聚焦冒出来的内容能用 Esc 单独
+  // 关掉且不动焦点，Radix 的层栈也正是这么做的（最上层先接 Esc），对话框要再按
+  // 一下。气泡开没开取决于 Tab 停在哪、以及 420ms 的延时有没有走完——两种情况都
+  // 得对，所以按「对话框还在不在」分支，而不是按「气泡在不在」赌一个时刻。
   await page.keyboard.press('Escape')
+  if ((await dialog.count()) > 0) {
+    // 这一下被气泡接走了：气泡必须已关（1.4.13 的那一半），再按一下关对话框
+    await expect(page.locator('[role="tooltip"]')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+  }
   await expect(dialog).toHaveCount(0)
   await expect(railButton).toBeFocused()
 })

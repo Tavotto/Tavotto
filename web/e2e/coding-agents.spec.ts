@@ -54,7 +54,12 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
   await expect(row).toBeVisible()
   await row.click()
   await expect(dialog.locator('[data-agent-detail="codex"]')).toBeVisible()
-  await expect(dialog.locator('[data-agent-field="source"]')).toBeVisible()
+  // 头部常驻的是状态与版本；「来源 / 可执行文件 / 上次检测」收进了高级设置里的
+  // 「概览」折叠（Visual Consolidation）：在 DOM 里、默认不可见——两句都钉，
+  // 只写后半句的话把这一段整个删掉也是绿的。
+  await expect(dialog.locator('[data-agent-field="state"]')).toBeVisible()
+  await expect(dialog.locator('[data-agent-field="source"]')).toHaveCount(1)
+  await expect(dialog.locator('[data-agent-field="source"]')).toBeHidden()
   // 高级设置默认折叠。**直接量 `<details>` 的 open**，不拿「输入框不在」当代理：
   // 那个输入框要点过「使用自定义可执行文件」才渲染，折叠与否它都不在——用它当
   // 判据，把 details 强行改成默认展开也照样绿（变异验过，就是这么漏的）。

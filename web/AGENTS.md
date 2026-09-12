@@ -1517,7 +1517,10 @@ Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）�
 `surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
 （`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点 / 链接；
 每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。文字对比：
-`ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用。选中态不只靠颜色（字重 / check /
+`ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
+`状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
+「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
+（未选中的分段标签、折叠 summary 都是要读的字，用 `ink-3`）。选中态不只靠颜色（字重 / check /
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
