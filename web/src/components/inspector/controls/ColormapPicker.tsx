@@ -13,8 +13,10 @@ const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
 /**
  * 色图在界面上叫什么：注册过的名字**保留原文**（viridis / RdBu_r 是 Matplotlib
  * 标识符，翻译反而对不上文档）；引擎说它是自定义的（`ListedColormap([...])` 那种
- * 没注册的，matplotlib 给的名字是 `from_list`）就叫「自定义」——那个名字对用户
- * 没有任何信息量，而且它根本不是一个能写进 override 的取值。原文留在可达名里。
+ * 没注册的，名字是 matplotlib 给的默认词，哪一档叫什么不归这里管）就叫「自定义」
+ * ——那个名字对用户没有任何信息量，而且它根本不是一个能写进 override 的取值。
+ * 原文留在可达名里。**自定义与否只认引擎的 `custom`，不拿名字判**：自定义色图
+ * 可以顶着 `viridis` 的名字（`ListedColormap([...], name="viridis")`）。
  */
 const displayName = (name: string, facts?: ColormapFacts | null) =>
   facts?.custom ? translate('control.customColormapName', { ns: 'inspector' }) : name
@@ -28,10 +30,11 @@ const accessibleName = (name: string, facts?: ColormapFacts | null) =>
  * Colormap 选择器：真实渐变条（内置的 stops 离线采样自 matplotlib，白名单之外的
  * 由引擎随 manifest 发来 `cmap_current` / `cmap_original`），名称保留原文。
  *
- * 脚本自定义的 cmap（`from_list`）**不是可写的取值**：它只以「当前值」的身份出现，
- * 显示为「自定义」，选它 = 保持原样（不写 override）。换成别的色图之后，引擎发
+ * 脚本自定义的 cmap **不是可写的取值**：它只以「当前值」的身份出现，显示为
+ * 「自定义」，选它 = 保持原样（不写 override）。换成别的色图之后，引擎发
  * `cmap_original`，列表顶上多一格「脚本原样」——选它走 `onRestore`（清掉 override）
- * 而不是写一条 `cmap: "from_list"`（那会当场「应用失败」）。
+ * 而不是把它的名字写成一条 override（没注册的当场「应用失败」，顶着注册名的
+ * 写回去是另一张图）。
  */
 
 function GradientBar({
@@ -116,18 +119,22 @@ export function ColormapPicker({
       action: 'restore',
     })
   }
-  if (value && !options.includes(value)) {
-    // 当前值不在可写选项里：它是脚本自定义的（写不进 override）。摆出来是为了
-    // 让用户看见「现在是这一张」，点它什么都不发生——从前这一格写出去的是
-    // `cmap: "from_list"`，引擎当场 ValueError。
-    entries.push({ key: value, name: value, facts: current, active: true, action: 'keep' })
+  // 当前值不在可写选项里、或引擎说它是自定义的（名字可以与选项表里的一格同名：
+  // `ListedColormap([...], name="viridis")`）：它是脚本自定义的，写不进 override。
+  // 摆出来是为了让用户看见「现在是这一张」，点它什么都不发生——从前这一格写出去
+  // 的是 `cmap: "<自定义的名字>"`，引擎当场 ValueError。同名的那格选项照常列在
+  // 下面、不标选中：选它 = 换成注册表里真正的那张。
+  const custom = Boolean(value && (!options.includes(value) || current?.custom))
+  if (value && custom) {
+    entries.push({ key: '__current', name: value, facts: current, active: true, action: 'keep' })
   }
   for (const name of options) {
+    const active = name === value && !custom
     entries.push({
       key: name,
       name,
-      facts: name === value ? current : null,
-      active: name === value,
+      facts: active ? current : null,
+      active,
       action: 'write',
     })
   }

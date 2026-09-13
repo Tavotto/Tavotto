@@ -1903,21 +1903,44 @@ _DISCRETE_CMAP_MAX = 32
 _CMAP_SAMPLES = 9
 
 
+def _registered_colormap(cm) -> bool:
+    """这张色图就是注册表里的那张：名字查得到，**而且**查出来的与它画得一样。
+
+    判据的主语是**对象**，不是名字。名字不够用有两个方向：`ListedColormap([...])`
+    的默认名是 matplotlib 给的、跨版本会变（3.10 叫 `from_list`，3.11.2 起叫
+    `unnamed`），钉住任何一个字面量都只在一档 matplotlib 上对；反过来
+    `ListedColormap([...], name="viridis")`、`get_cmap("viridis", 5)`、
+    `.with_extremes(bad=…)` 的名字都在注册表里，可写回 `cmap: "viridis"` 得到的是
+    另一张图。`Colormap.__eq__` 比的是整张查找表（含 under / over / bad），正是
+    「写这个名字回去能不能复现」的那把尺子；注册表按名取出的是副本，`is` 恒假。
+    用户 `matplotlib.colormaps.register(...)` 过的自定义色图按注册表算：名字写得
+    进 override、取回来一样，就是可写的合法取值。
+    """
+    import matplotlib  # noqa: PLC0415 — worker 侧有科学栈
+
+    name = str(getattr(cm, "name", "") or "")
+    if name not in matplotlib.colormaps:
+        return False
+    try:
+        return bool(matplotlib.colormaps[name] == cm)
+    except Exception:  # noqa: BLE001 — 比不出就当不是那张（`__eq__` 要初始化查找表）
+        return False
+
+
 def _cmap_facts(cm) -> dict:
     """一张色图**长什么样**的只读事实：`{"name", "custom", "stops", "discrete"}`。
 
-    `custom` = 这个名字不在 matplotlib 的注册表里（`ListedColormap([...])` 的
-    默认名 `from_list`、`LinearSegmentedColormap.from_list("mine", …)` 没注册
-    过的名字）——它**不是**一个能写进 `cmap` override 的取值：`set_cmap("from_list")`
-    当场 ValueError。界面据此显示「自定义」而不是 `from_list`，选它 = 保持原样。
+    `custom` = 这张色图不是注册表里的那张（`_registered_colormap`）——它的名字
+    **不是**一个能写进 `cmap` override 的取值：没注册的 `set_cmap(name)` 当场
+    ValueError，注册了但对象不同的写回去换成另一张图。界面据此显示「自定义」，
+    选它 = 保持原样。`name` 是这张色图自己的名字（事实描述的是谁），原样透传
+    matplotlib 给的词，前端只拿它对事实、当可达名，**不拿它判自定义**。
 
-    `name` 是这张色图自己的名字（事实描述的是谁）。
     `stops` 是按顺序采出来的十六进制色：离散色图（格数不多的 ListedColormap）
     逐格给、`discrete=True`，前端画成硬边色块；其余按九点均匀采样，与内置表
     同一口径。前端的离线表只认 `CMAPS` 白名单里的名字，白名单之外的（自定义、
     或 `Blues` 这类注册了但没进白名单的）都靠这条事实才画得出渐变条。
     """
-    import matplotlib  # noqa: PLC0415
     from matplotlib.colors import ListedColormap  # noqa: PLC0415 — worker 侧有科学栈
 
     name = str(getattr(cm, "name", "") or "")
@@ -1931,10 +1954,17 @@ def _cmap_facts(cm) -> dict:
     # 前端才判得出这份事实还作不作数，不会把上一张的色标画到新名字头上。
     return {
         "name": name,
-        "custom": name not in matplotlib.colormaps,
+        "custom": not _registered_colormap(cm),
         "stops": stops,
         "discrete": discrete,
     }
+
+
+def _cmap_needs_facts(facts: dict) -> bool:
+    """这张色图**不能**由前端按名字查离线表：自定义的（名字不代表它长什么样，
+    哪怕名字在白名单里），或注册了但没进 `CMAPS` 白名单的（离线表没有它）。
+    `cmap_current` 与 `cmap_original` 发不发都问这一条。"""
+    return bool(facts["custom"]) or facts["name"] not in CMAPS
 
 
 def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
@@ -1965,10 +1995,11 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
     别名组（色条 ↔ mappable）里任一个 gid 上有 override 都算：「这条色条的
     脚本原样」不因用户是从图像那边改的就说不出来。
 
-    **只在原样不在 `CMAPS` 白名单里时才发**：白名单里的名字本来就在选项表
-    里、选它写一条普通 override 即可；白名单之外的（自定义的写不进 override，
-    注册了但没进白名单的换过之后就从选项表里消失了）没有这条事实就再也回
-    不去——只剩「恢复到脚本」那个入口，而它在色图选择器里看不见。
+    **只在原样的名字写不回它自己时才发**：白名单里的注册色图本来就在选项表
+    里、选它写一条普通 override 即可；其余的（自定义的写不进 override——哪怕它
+    顶着 `viridis` 的名字，写回去也是另一张图；注册了但没进白名单的换过之后就
+    从选项表里消失了）没有这条事实就再也回不去——只剩「恢复到脚本」那个入口，
+    而它在色图选择器里看不见。
     """
     for g in _cmap_alias_gids(state, artist, gid):
         key = (g, "cmap")
@@ -1977,7 +2008,7 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
         try:
             orig = state.originals[key]
             facts = _cmap_facts(orig)
-            return None if facts["name"] in CMAPS else facts
+            return facts if _cmap_needs_facts(facts) else None
         except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉
             return None
     return None
@@ -1988,7 +2019,9 @@ def _cmap_field(m, state: FigState, artist, gid: str) -> dict:
 
     `value` 是此刻色图的名字；`options` 只放**写得进 override 的名字**；
     `cmap_current` / `cmap_original` 是两条只读事实（形态见 `_cmap_facts`），
-    白名单里的名字不发（前端有离线表），缺席 = 前端按名字查表。
+    白名单里的注册色图不发（前端有离线表），缺席 = 前端按名字查表。
+    自定义色图**顶着白名单里的名字**时照发：`value` 会与选项表里的一格同名，
+    前端只认事实里的 `custom`，不拿名字判。
     """
     cm = m.get_cmap()
     cname = str(cm.name)
@@ -1999,8 +2032,9 @@ def _cmap_field(m, state: FigState, artist, gid: str) -> dict:
         "options": _cmap_options(cname),
         "group": "颜色映射",
     }
-    if cname not in CMAPS:
-        field["cmap_current"] = _cmap_facts(cm)
+    facts = _cmap_facts(cm)
+    if _cmap_needs_facts(facts):
+        field["cmap_current"] = facts
     orig = _cmap_original(state, artist, gid)
     if orig is not None:
         field["cmap_original"] = orig
@@ -2233,9 +2267,11 @@ def _cmap_options(current: str) -> list[str]:
     """`cmap` 的可选项：白名单，外加当前这个名字——**仅当它写得进 override**。
 
     注册过、只是没进白名单的（`Blues` / `RdYlGn`…）留着：选项表里没有自己的
-    当前值，换走之后就回不来。**没注册的不放**（`ListedColormap([...])` 的
-    `from_list`）：`set_cmap("from_list")` 当场 ValueError，把它摆在选项表里
+    当前值，换走之后就回不来。**没注册的不放**（`ListedColormap([...])` 那个
+    matplotlib 给的默认名）：`set_cmap(name)` 当场 ValueError，把它摆在选项表里
     等于摆一个点了就报「应用失败」的按钮；它由 `cmap_current` 事实描述。
+    这里只问名字写不写得进去：自定义色图顶着注册过的名字时那个名字仍在表里
+    ——选它是「换成真正的那张」，合法。
     """
     import matplotlib  # noqa: PLC0415 — worker 侧有科学栈
 

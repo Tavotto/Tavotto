@@ -75,17 +75,26 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `options_unavailable` 只在真画不出时才发，不再把「不在首选项里」当「没装」。
   看护 `tests/test_font_family_options.py`。
 - **色图字段的两条只读事实（2026-09-13，用户反馈「自定义色块显示成 from_list」）**：
-  `ListedColormap([...])` 的名字是 `from_list`，不在 matplotlib 注册表里，
-  `set_cmap("from_list")` 当场 ValueError——它**不是一个能写进 override 的取值**。
+  `ListedColormap([...])` 的名字是 matplotlib 给的默认词（3.10 叫 `from_list`，
+  3.11.2 起叫 `unnamed`），不在注册表里，`set_cmap(name)` 当场 ValueError——它
+  **不是一个能写进 override 的取值**。**「自定义」的判据是对象不是名字**
+  （`_registered_colormap`：名字查得到、且 `matplotlib.colormaps[name] == cm`——
+  `Colormap.__eq__` 比整张查找表；注册表按名取出的是副本，`is` 恒假）：钉任何一个
+  默认名字面量都只在一档 matplotlib 上对，而 `ListedColormap([...], name="viridis")`
+  / `get_cmap("viridis", 5)` 的名字在注册表里、写回去却是另一张图，也算自定义；
+  用户 `register` 过的按注册表算（可写）。`value` / 事实里的 `name` 原样透传
+  matplotlib 的词，前端只拿它对事实、当可达名，**不拿它判自定义**。
   `_cmap_field` 是 `cmap` enum 的唯一构造处（Collection / AxesImage / 色条共用）：
   `options` 只放写得进去的名字（`_cmap_options`：注册过但不在 `CMAPS` 白名单里的留着，
-  没注册的不放）；名字不在白名单里时发 `cmap_current`（`_cmap_facts`：`custom` /
-  `stops` / `discrete`——格数 ≤ 32 的 ListedColormap 逐格给色、其余九点采样，与前端
-  离线表同一口径）；换走之后发 `cmap_original`（同一套事实 + `name`，只在原样不在
-  白名单里时发；判据与 `_marker_original` 同一条：`state.applied` 里有，原值取
-  `state.originals`），色条 ↔ mappable 别名组里任一 gid 上有 override 都算
-  （`_cmap_alias_gids`）。前端据此显示「自定义」、画真实渐变条、列一格「脚本原样」
-  （选它 = 清 override）。看护 `tests/test_cmap_facts.py`。
+  没注册的不放；自定义色图顶着注册名时那个名字仍在表里，选它 = 换成真正的那张）；
+  自定义、或名字不在白名单里时发 `cmap_current`（`_cmap_needs_facts`；`_cmap_facts`：
+  `custom` / `stops` / `discrete`——格数 ≤ 32 的 ListedColormap 逐格给色、其余九点
+  采样，与前端离线表同一口径）；换走之后发 `cmap_original`（同一套事实 + `name`，
+  发不发问同一条 `_cmap_needs_facts`；判据与 `_marker_original` 同一条：
+  `state.applied` 里有，原值取 `state.originals`），色条 ↔ mappable 别名组里任一
+  gid 上有 override 都算（`_cmap_alias_gids`）。前端据此显示「自定义」、画真实
+  渐变条、列一格「脚本原样」（选它 = 清 override）；自定义与选项表里的一格同名时
+  「自定义」那格选中、同名选项不选中。看护 `tests/test_cmap_facts.py`。
 - **图内中文的回退链（ADR 0045）**：脚本跑完、采 baseline 之前
   （`figsession.instrument_all()`）给每段图内文字的族列表接上 DejaVu Sans + 本机
   探测到的中日韩脸（`overrides.cjk_fallback_tail()`，候选按平台分组、只有装了的

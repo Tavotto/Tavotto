@@ -486,6 +486,37 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     expect(engineRender).not.toHaveBeenCalled()
   })
 
+  it('自定义色图顶着白名单里的名字（`ListedColormap([...], name="viridis")`）：自定义与否只认引擎的 `custom`，不拿名字判', async () => {
+    // 引擎：value 是 viridis、viridis 也在选项表里，但事实说它是自定义的三格
+    const facts = { ...CUSTOM_FACTS, name: 'viridis' }
+    await mount('axes_0.images_0', {
+      manifest: withElements(customImage({ value: 'viridis', cmap_current: facts } as Partial<EditableField>), colorbarEl()),
+    })
+    const trigger = cmapTrigger()
+    expect(trigger.textContent).toContain('自定义')
+    expect(trigger.getAttribute('data-cmap-custom')).toBe('true')
+    expect(trigger.querySelector('[data-cmap-gradient]')?.getAttribute('data-cmap-gradient')).toBe('discrete')
+    await click(trigger)
+    const entries = cmapEntries()
+    // 顶上「自定义」那一格选中、点它不写；同名的 viridis 一格照常列着但**不选中**，
+    // 渐变条是真 viridis——选它 = 换成注册表里真正的那张
+    expect(entries[0].getAttribute('data-cmap-entry')).toBe('keep')
+    expect(entries[0].getAttribute('aria-checked')).toBe('true')
+    expect(entries[0].textContent).toContain('自定义')
+    expect(entries.slice(1).map((e) => e.textContent?.trim())).toEqual(CMAPS)
+    const viridis = entries[1]
+    expect(viridis.getAttribute('data-cmap-entry')).toBe('write')
+    expect(viridis.getAttribute('aria-checked')).toBe('false')
+    expect(viridis.textContent).not.toContain('自定义')
+    expect(viridis.querySelector('[data-cmap-gradient]')?.getAttribute('data-cmap-gradient')).toBe('smooth')
+    await click(entries[0])
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBeUndefined()
+    expect(engineRender).not.toHaveBeenCalled()
+    await click(cmapTrigger())
+    await click(cmapEntries()[1])
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBe('viridis')
+  })
+
   it('换走之后多一格「脚本原样」，选它清掉图像与色条两边的 override', async () => {
     await mount('axes_0.images_0', {
       manifest: withElements(switchedImage(), colorbarEl()),
