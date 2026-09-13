@@ -88,6 +88,7 @@ def test_custom_colormap_is_described_not_offered_as_a_writable_option(library):
     assert "from_list" not in f["options"], "写不进 override 的名字不许出现在选项表里"
     assert f["options"][0] == "viridis"
     cur = f["cmap_current"]
+    assert cur["name"] == "from_list", "事实自己说清描述的是谁"
     assert cur["custom"] is True
     assert cur["discrete"] is True
     assert cur["stops"] == COLORS
@@ -108,6 +109,7 @@ def test_registered_but_unlisted_colormap_stays_selectable_and_gets_a_gradient(l
     assert f["value"] == "Blues"
     assert f["options"][0] == "Blues"
     cur = f["cmap_current"]
+    assert cur["name"] == "Blues"
     assert cur["custom"] is False
     assert cur["discrete"] is False
     assert len(cur["stops"]) == 9
@@ -129,9 +131,7 @@ def test_switching_away_reports_the_custom_original_on_both_gids(library):
     for gid in (IMAGE, CB):
         f = _cmap(man, gid)
         assert f["value"] == "viridis", gid
-        orig = f["cmap_original"]
-        assert orig["name"] == "from_list"
-        assert {k: orig[k] for k in ("custom", "stops", "discrete")} == before, gid
+        assert f["cmap_original"] == before, gid
     # 反过来从色条那边改，图像也报得出原样
     man = _render(library, [{"gid": CB, "prop": "cmap", "value": "magma"}])
     assert _cmap(man, IMAGE)["cmap_original"]["name"] == "from_list"

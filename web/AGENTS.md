@@ -439,6 +439,24 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
 * 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的
   `mappable_gid`，不猜「两边 cmap 名字相同」；引擎没给就整行不出现。
+* **色图选择器（`controls/ColormapPicker.tsx`，2026-09-13）**：白名单之外的色图长什么样
+  由引擎的两条事实说——`cmap_current`（此刻这张：`custom` / `stops` / `discrete`）与
+  `cmap_original`（换走之后脚本原来那张，多一个 `name`）。渐变的唯一出处
+  `colormapStops.colormapGradient(name, facts)`：事实优先、其次离线表、都没有才回落
+  「?」；离散的画硬边色块。`custom` 的显示成「自定义」（原名留在可达名与 title 里），
+  它**不是可写的取值**：当前那一格点了什么都不发生（`data-cmap-entry="keep"`），
+  「脚本原样」那一格（`restore`）走 `clearOverrides`，清的是 `lib/colormapAlias.
+  colormapAliasGids()` 算出的整组 gid——色条 ↔ mappable 是同一份色图状态的两个 gid，
+  override 落在哪一边取决于用户从哪边改的。多选时事实**全体一致才给**
+  （`sharedCmapFacts`，与 `sharedMarkerShape` 同一条纪律）。色条的方向 / 延伸小色条
+  预览同样吃 `cmap_current`（`cmapFacts`），不再对自定义色图退回灰阶。
+  看护 `colorScalePanels.test.tsx` 的「脚本自定义的色图」一组。
+* **字体下拉并上本机字体族（2026-09-13）**：引擎按元素发的 `fontfamily.options` 只有
+  首选项，本机的几百个族在 manifest **顶层** `font_families`（整份只发一次）。并表
+  **只在 `lib/typography.withMachineFamilies` 一处**——`useFigureTypography` 的 `fieldOf`
+  与写入前的 `coerceTypography` 拿的必须是同一份表，否则下拉里选得到、写下去却被判成
+  「不是选项」；`ElementInspector` 兜底用的两个通用字体 `Select` 也过它。老引擎不发
+  这张表时行为一字不变。看护 `figureFontFamilies.test.tsx`。
 * 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
   `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
   `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
@@ -886,7 +904,11 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   没改——几百颗点仍收在**一个** `<path>` 节点里（d 串多几段，DOM 不多一个
   节点，别把它拆成每颗一个元素）；标记数超过 `pathgeom.MAX_MARKERS` 时引擎
   不给 geometry，前端自然退回 bbox 矩形。既有连线又有 marker 的曲线仍只描
-  折线（理由在 `src/tavotto/AGENTS.md` 散点几何那段）。
+  折线（理由在 `src/tavotto/AGENTS.md` 散点几何那段）。**柱形系列也一样**
+  （2026-09-13）：引擎给每根柱一条闭合子路径，柱间空白不再命中这组、框选按柱相交、
+  选中描的是每根柱。**色条元素的几何代理到它的轴**（`resizable` + `geom_gid = axes_i`，
+  与位图 → 宿主子图同一套 `geomTarget`）：点色条就有八个手柄、拖动写的是色条轴的
+  `position`，前端一个字没改——看护 `elementPathSelection.test.tsx` 的柱形与色条两组。
 - **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
   ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**

@@ -2296,6 +2296,7 @@ export default interface Resources {
       },
       "aspectRatio": "纵横比数值：一单位 Y 与一单位 X 的显示长度之比",
       "customColormap": "自定义色图（{{value}}）",
+      "customColormapName": "自定义",
       "customLineStyle": "自定义线型（{{value}}）",
       "hatch": {
         "back": "反斜线",
@@ -2333,6 +2334,7 @@ export default interface Resources {
       "legendPositionWithin": "相对{{label}}",
       "legendPreviewAria": "位置示意：容器边界与图例此刻的落点",
       "resetDiagram_other": "恢复刻度与边框到脚本（{{count}} 项）",
+      "scriptOriginal": "脚本原样",
       "spinePerSide": "分别设置各边",
       "spineSidesDiffer": "各边不同",
       "switchOff": "{{label}}：关（点击开启）",

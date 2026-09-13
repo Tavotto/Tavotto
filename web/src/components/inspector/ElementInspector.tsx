@@ -103,6 +103,8 @@ import {
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
+import { colormapAliasGids } from '@/lib/colormapAlias'
+import { withMachineFamilies } from '@/lib/typography'
 import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/ColorbarPickers'
 import { ProjectionPicker } from './controls/ProjectionPicker'
 import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
@@ -1546,6 +1548,20 @@ function sharedMarkerShape(
 }
 
 /**
+ * 多选时的色图事实：**全体一致才给**（与 `sharedMarkerShape` 同一条纪律）。
+ * 两张图一张自定义、一张 viridis，拿第一张的色标画渐变条就是替另一张撒谎。
+ */
+function sharedCmapFacts<K extends 'cmap_current' | 'cmap_original'>(
+  elements: ManifestElement[],
+  which: K,
+): EditableField[K] | undefined {
+  const facts = elements.map((el) => el.editable.find((f) => f.prop === 'cmap')?.[which])
+  if (!facts.length || facts[0] === undefined) return undefined
+  const head = JSON.stringify(facts[0])
+  return facts.every((f) => JSON.stringify(f) === head) ? facts[0] : undefined
+}
+
+/**
  * 多选时的锚点：**全体一致才给**（与 `sharedMarkerShape` 同一条纪律）。
  *
  * 两个图例一个在右侧、一个在下方，拿第一个的锚点去画示意图就是替另一个
@@ -1579,6 +1595,8 @@ function BatchFieldRow({
     </span>
   )
   const gesture = useFieldGesture(panel, el('batchEdit', { label }))
+  // 只有色图的「脚本原样」要看别的元素（谁是谁的色条）；显示用，上一版也行
+  const batchManifest = usePanelRender(panel)?.manifest
   // 多选里每个成员各自判断能不能预览：同时选中曲线和刻度组时，曲线照样
   // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
   const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
@@ -1686,7 +1704,27 @@ function BatchFieldRow({
             case 'hatch':
               return <HatchPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'colormap':
-              return <ColormapPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+              // 事实**全体一致才给**（与 `sharedMarkerShape` 同一条纪律）；
+              // 「脚本原样」清的是每个成员（连同它的色条 / mappable）上的 override
+              return (
+                <ColormapPicker
+                  value={v}
+                  options={opts}
+                  onChange={writeOnce}
+                  ariaLabel={label}
+                  current={sharedCmapFacts(elements, 'cmap_current')}
+                  original={sharedCmapFacts(elements, 'cmap_original')}
+                  onRestore={() =>
+                    clearOverrides(
+                      panel.id,
+                      elMsg('resetProp', { label }),
+                      elements
+                        .flatMap((item) => colormapAliasGids(batchManifest, item))
+                        .map((gid) => ({ gid, prop: field.prop })),
+                    )
+                  }
+                />
+              )
             case 'legend-position':
               // **多选也要给外侧带**：能力凭空消失是最坏的那种（#142 评审 P1）。
               // 锚点取值不一致时传 null——那时一个外侧位都不标选中，示意图
@@ -1708,13 +1746,14 @@ function BatchFieldRow({
             case 'arrow-style':
               return <ArrowStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'font':
+              // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
               return (
                 <Select
                   className="min-w-0 flex-1"
                   value={mixed ? '' : String(first ?? '')}
                   placeholder={el('mixedValues')}
                   onChange={(x) => writeOnce(x)}
-                  options={opts.map((o) => ({
+                  options={(withMachineFamilies(field, batchManifest?.font_families)?.options ?? opts).map((o) => ({
                     value: o,
                     label: (
                       <span style={{ fontFamily: fontStackOf(o) }}>
@@ -1823,6 +1862,8 @@ function FieldRow({
     const other = element.editable.find((x) => x.prop === prop)
     return other ? currentValue(panel, element.gid, other) : undefined
   }
+  /** 同一个元素上 `cmap` 字段的只读事实：白名单之外的色图，小色条预览靠它上色 */
+  const siblingCmapFacts = () => element.editable.find((x) => x.prop === 'cmap')?.cmap_current
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelRender(panel)?.manifest
   const gidRef = useRef<string>('')
@@ -1980,12 +2021,24 @@ function FieldRow({
         />,
       )
     case 'colormap':
+      // 白名单之外的色图（脚本自定义 / `Blues`）长什么样由引擎的两条事实说
+      // （`cmap_current` / `cmap_original`）；「脚本原样」那一格清的是这份色图
+      // 状态落在哪儿的 override——色条 ↔ mappable 两个 gid 一起清
       return wrap(
         <ColormapPicker
           value={enumValue}
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
+          current={field.cmap_current}
+          original={field.cmap_original}
+          onRestore={() =>
+            clearOverrides(
+              panel.id,
+              elMsg('resetProp', { label }),
+              colormapAliasGids(rowManifest, element).map((gid) => ({ gid, prop: field.prop })),
+            )
+          }
         />,
       )
     case 'projection':
@@ -2007,6 +2060,7 @@ function FieldRow({
           onChange={writeOnce}
           ariaLabel={label}
           cmap={String(siblingValue('cmap') ?? '')}
+          cmapFacts={siblingCmapFacts()}
         />,
       )
     case 'colorbar-extend':
@@ -2017,6 +2071,7 @@ function FieldRow({
           onChange={writeOnce}
           ariaLabel={label}
           cmap={String(siblingValue('cmap') ?? '')}
+          cmapFacts={siblingCmapFacts()}
           orientation={colorbarOrientationOf(panel, element)}
         />,
       )
@@ -2059,11 +2114,12 @@ function FieldRow({
         />,
       )
     case 'font':
+      // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
       return wrap(
         <Select
           value={enumValue}
           onChange={(v) => writeOnce(v)}
-          options={enumOptions.map((o) => ({
+          options={(withMachineFamilies(field, rowManifest?.font_families)?.options ?? enumOptions).map((o) => ({
             value: o,
             label: (
               <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>

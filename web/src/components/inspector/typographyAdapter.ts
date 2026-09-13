@@ -4,6 +4,7 @@ import { msg, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture } from '@/store/gestureCoordinator'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 import { getHistoryMode } from '@/store/svgPreviewStore'
 import {
   canvasFieldOf,
@@ -14,6 +15,7 @@ import {
   propertyPathOf,
   readCanvasText,
   supportsTypography,
+  withMachineFamilies,
   writeCanvasText,
   type TypographyKind,
   type TypographyProp,
@@ -135,16 +137,26 @@ export function useFigureTypography(
   )
   const inner = useTextStyleAdapter(panel, elements, manifestProps)
   const allowed = useMemo(() => new Set(props), [props])
+  // 本机字体族是 manifest 顶层的一张表（机器的事实，不是几何）：显示那一份就够，
+  // 老引擎不发它时字体下拉照旧只有首选项
+  const families = usePanelDisplayManifest(panel)?.font_families
+  const familyField = inner.fieldOf('fontfamily')
+  const mergedFamily = useMemo(
+    () => withMachineFamilies(familyField, families),
+    [familyField, families],
+  )
 
   const mp = (prop: TypographyProp): string | null =>
     allowed.has(prop) ? FIGURE_PROP[prop] : null
+  /** 字段表：字体族并上本机字体，其余原样（`coerceTypography` 与控件拿同一份） */
+  const fieldFor = (m: string) => (m === 'fontfamily' ? mergedFamily : inner.fieldOf(m))
 
   return {
     count: inner.count,
     kinds: ['figureText'],
     fieldOf: (prop) => {
       const m = mp(prop)
-      return m ? inner.fieldOf(m) : undefined
+      return m ? fieldFor(m) : undefined
     },
     valueOf: (prop) => {
       const m = mp(prop)
@@ -161,14 +173,14 @@ export function useFigureTypography(
     write: (prop, value, immediate) => {
       const m = mp(prop)
       if (!m) return
-      const ok = coerceTypography(prop, value, inner.fieldOf(m))
+      const ok = coerceTypography(prop, value, fieldFor(m))
       if (!ok.ok) return
       inner.write(m, ok.value, immediate)
     },
     writeOnce: (prop, value) => {
       const m = mp(prop)
       if (!m) return
-      const ok = coerceTypography(prop, value, inner.fieldOf(m))
+      const ok = coerceTypography(prop, value, fieldFor(m))
       if (!ok.ok) return
       inner.writeOnce(m, ok.value)
     },

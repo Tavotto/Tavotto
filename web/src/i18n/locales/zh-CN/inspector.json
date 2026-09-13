@@ -139,6 +139,7 @@
   "closePanel": "关闭右侧面板",
   "control": {
     "customColormap": "自定义色图（{{value}}）",
+    "customColormapName": "自定义",
     "customLineStyle": "自定义线型（{{value}}）",
     "hatch": {
       "back": "反斜线",
@@ -159,6 +160,7 @@
       "vertical": "竖线"
     },
     "hatchPattern": "纹理 {{value}}",
+    "scriptOriginal": "脚本原样",
     "legendCustomHint": "图例被拖到过自定义位置；点任一预设（含「最佳位置」）即可回到预设定位。",
     "switchOff": "{{label}}：关（点击开启）",
     "switchOn": "{{label}}：开（点击关闭）",

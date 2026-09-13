@@ -62,6 +62,30 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
   看住它与真字体一致）。**本仓库不分发任何字体**，看护
   `tests/test_font_provenance.py`。
+- **本机字体族随 manifest 下发（2026-09-13，用户反馈「支持的字体太少」）**：
+  `manifest.installed_font_families()` 问的是 matplotlib 自己的 `fontManager.ttflist`
+  （它认得的就是渲染时解析得到的，所以列出来的每一个都画得出来；AFM 不列，`.` 开头的
+  macOS 内部字体不列，名字含 `?` 的——FreeType 读不出 name 表、实测本机 20 个只有
+  中文名的字体全读成 `????`——不列），进程内只算一次，放在 manifest **顶层**
+  `font_families`，整份只发一次：按元素塞进 `fontfamily.options` 会让 88 个文字元素的
+  manifest 多出半兆。`options` 仍只有首选项（`_family_options`：三个通用族 + 装了的
+  具名候选 + 脚本自己那个），前端在 `lib/typography.withMachineFamilies` 一处并表。
+  同族两条修正：`font_installed` 用**列表形式**问 `findfont`（`FontProperties(family="A-B")`
+  只给 family 一个参数时会被当成 fontconfig 模式解析，连字符当场 ParseException）；
+  `options_unavailable` 只在真画不出时才发，不再把「不在首选项里」当「没装」。
+  看护 `tests/test_font_family_options.py`。
+- **色图字段的两条只读事实（2026-09-13，用户反馈「自定义色块显示成 from_list」）**：
+  `ListedColormap([...])` 的名字是 `from_list`，不在 matplotlib 注册表里，
+  `set_cmap("from_list")` 当场 ValueError——它**不是一个能写进 override 的取值**。
+  `_cmap_field` 是 `cmap` enum 的唯一构造处（Collection / AxesImage / 色条共用）：
+  `options` 只放写得进去的名字（`_cmap_options`：注册过但不在 `CMAPS` 白名单里的留着，
+  没注册的不放）；名字不在白名单里时发 `cmap_current`（`_cmap_facts`：`custom` /
+  `stops` / `discrete`——格数 ≤ 32 的 ListedColormap 逐格给色、其余九点采样，与前端
+  离线表同一口径）；换走之后发 `cmap_original`（同一套事实 + `name`，只在原样不在
+  白名单里时发；判据与 `_marker_original` 同一条：`state.applied` 里有，原值取
+  `state.originals`），色条 ↔ mappable 别名组里任一 gid 上有 override 都算
+  （`_cmap_alias_gids`）。前端据此显示「自定义」、画真实渐变条、列一格「脚本原样」
+  （选它 = 清 override）。看护 `tests/test_cmap_facts.py`。
 - **图内中文的回退链（ADR 0045）**：脚本跑完、采 baseline 之前
   （`figsession.instrument_all()`）给每段图内文字的族列表接上 DejaVu Sans + 本机
   探测到的中日韩脸（`overrides.cjk_fallback_tail()`，候选按平台分组、只有装了的
@@ -440,6 +464,19 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `_colorbar_info['aspect']=False`：落位归我们，locator 不能再按 aspect 反推厚度。
   **色条轴上的 patch 一律不登记成可编辑形状**——延伸三角就是 PathPatch，而且每次
   `_draw_all()` 都被删掉重建。看护 `tests/test_colorbar_orientation.py`。
+  **色条的大小与长度（2026-09-13，用户反馈「色条拖不动」）**：色条伪元素 manifest 上
+  `resizable` + `geom_gid` 指向它的轴（`axes_i`，与位图代理宿主同一机制；色条轴
+  `position_locked` 时不宣称，两处判据同源），几何写的是色条轴的 `position`。
+  `fig.colorbar(im, ax=ax)` 的轴带 `box_aspect=20`，`set_position` 给多宽都被
+  `apply_aspect` 按回高度的 1/20——所以 `_set_axes_position` 落到色条轴时
+  `_cb_release_aspect`：box_aspect 清掉、`_mm_box_aspect0` 基线清掉、
+  `_colorbar_info['aspect']` 关掉（与 `_cb_reorient`「落位从此归我们」同一处置），
+  三个值只在第一次记进 `_mm_cb_aspect_stash`，撤销 position 时 `_cb_restore_aspect`
+  放回。`("axes","position")` 的脚本原样记 **`get_position(original=True)`** 而不是
+  active：aspect 约束的轴（`aspect="equal"` 子图、带 box_aspect 的色条轴）active 是
+  每次 draw 从 original 现算的结果，回灌成 original 之后再改图幅会与全新重放分岔
+  （实测 6×4 改 4×6 色条轴高度 0.77 → 0.34）。看护 `tests/test_colorbar_resize.py`
+  （热会话 vs 全新重放逐位相同、撤销后再改图幅仍一致）。
 - **刻度定位走 Locator / Formatter，不是改已经生成出来的 Text**（2026-08-18）：
   刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠
   tick_params 持久（字号/颜色/朝向那一档），而「几个刻度、落在哪、写成什么」
@@ -508,6 +545,11 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   混进来会把那条折线一起变成多边形——要并存得先给 geometry 分层。**箭头不给**
   （它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
   `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
+  **柱形系列（`ax.bar()` 的 BarContainer 伪元素）逐根描柱**（2026-09-13，用户反馈
+  「选中柱形系列罩的是一个把柱间空白也罩进去的大矩形」）：`pathgeom.patch_group_geometry`
+  一根柱一条闭合子路径（Rectangle 的 `get_path()` + `get_transform()`，barh / 负高度 /
+  对数轴同一条路），隐藏的不描，根数超过 `MAX_MARKERS` 整组退回 bbox（与散点同一个
+  数、同一种降级）。命中 / 框选 / 描示前端一个字没改。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
 - **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
   改成**按 family 认**——任何 `Patch` 子类归 `patch`、任何 `Collection` 子类归

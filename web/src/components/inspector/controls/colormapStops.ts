@@ -1,3 +1,5 @@
+import type { ColormapFacts } from '@/lib/api'
+
 /**
  * 内置 colormap 的渐变 stops——**离线采样自真实 matplotlib**（3.10.8，
  * 每个 cmap 均匀取 9 个点 `to_hex(cm(i/8))`），不联网、不在运行时算色。
@@ -29,9 +31,40 @@ export const COLORMAP_STOPS: Record<string, string[]> = {
   turbo: ['#30123b', '#466be3', '#28bceb', '#32f298', '#a4fc3c', '#eecf3a', '#fb7e21', '#d02f05', '#7a0403'],
 }
 
-/** CSS 渐变；未知 cmap（脚本自定义）返回 null → 调用方回落到名称显示 */
-export function colormapGradient(name: string): string | null {
+/**
+ * 一串色标 → CSS 渐变。离散色图一格一色、格与格之间是硬边（`ListedColormap`
+ * 手写的三五个色块本来就没有过渡）；连续的按均匀停靠点平滑过渡。
+ */
+export function gradientOfStops(
+  stops: readonly string[],
+  discrete = false,
+  dir = 'to right',
+): string | null {
+  if (!stops.length) return null
+  if (!discrete || stops.length === 1) return `linear-gradient(${dir}, ${stops.join(', ')})`
+  const n = stops.length
+  const pct = (i: number) => `${((100 * i) / n).toFixed(2)}%`
+  const bands = stops.map((c, i) => `${c} ${pct(i)}, ${c} ${pct(i + 1)}`)
+  return `linear-gradient(${dir}, ${bands.join(', ')})`
+}
+
+/**
+ * CSS 渐变。**引擎发来的事实优先**（`cmap_current` / `cmap_original`：白名单
+ * 之外的色图只有它说得出长什么样），其次查离线表；两处都没有（老引擎 + 脚本
+ * 自定义）返回 null → 调用方回落到名称显示。
+ *
+ * 事实只对得上名字才作数：override 刚写下、渲染还没回来的那一拍，`name` 已经是
+ * 新的而 manifest 里的事实还是上一张的，照用就是把上一张的色标画到新名字头上。
+ */
+export function colormapGradient(
+  name: string,
+  facts?: ColormapFacts | null,
+  dir = 'to right',
+): string | null {
+  if (facts?.name === name && facts.stops.length) {
+    return gradientOfStops(facts.stops, facts.discrete, dir)
+  }
   const stops = COLORMAP_STOPS[name]
   if (!stops) return null
-  return `linear-gradient(to right, ${stops.join(', ')})`
+  return gradientOfStops(stops, false, dir)
 }

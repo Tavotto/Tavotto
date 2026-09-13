@@ -141,6 +141,7 @@
   "closePanel": "Close right panel",
   "control": {
     "customColormap": "Custom colormap ({{value}})",
+    "customColormapName": "Custom",
     "customLineStyle": "Custom line style ({{value}})",
     "hatch": {
       "back": "Backslash",
@@ -161,6 +162,7 @@
       "vertical": "Vertical lines"
     },
     "hatchPattern": "Hatch {{value}}",
+    "scriptOriginal": "script original",
     "legendCustomHint": "The legend was dragged to a custom spot; pick any preset (including Best fit) to snap back.",
     "switchOff": "{{label}}: off (click to turn on)",
     "switchOn": "{{label}}: on (click to turn off)",

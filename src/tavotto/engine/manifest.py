@@ -1904,13 +1904,14 @@ _CMAP_SAMPLES = 9
 
 
 def _cmap_facts(cm) -> dict:
-    """一张色图**长什么样**的只读事实：`{"custom", "stops", "discrete"}`。
+    """一张色图**长什么样**的只读事实：`{"name", "custom", "stops", "discrete"}`。
 
     `custom` = 这个名字不在 matplotlib 的注册表里（`ListedColormap([...])` 的
     默认名 `from_list`、`LinearSegmentedColormap.from_list("mine", …)` 没注册
     过的名字）——它**不是**一个能写进 `cmap` override 的取值：`set_cmap("from_list")`
     当场 ValueError。界面据此显示「自定义」而不是 `from_list`，选它 = 保持原样。
 
+    `name` 是这张色图自己的名字（事实描述的是谁）。
     `stops` 是按顺序采出来的十六进制色：离散色图（格数不多的 ListedColormap）
     逐格给、`discrete=True`，前端画成硬边色块；其余按九点均匀采样，与内置表
     同一口径。前端的离线表只认 `CMAPS` 白名单里的名字，白名单之外的（自定义、
@@ -1925,7 +1926,15 @@ def _cmap_facts(cm) -> dict:
         stops = [to_hex(cm(i)) for i in range(int(cm.N))]
     else:
         stops = [to_hex(cm(i / (_CMAP_SAMPLES - 1))) for i in range(_CMAP_SAMPLES)]
-    return {"custom": name not in matplotlib.colormaps, "stops": stops, "discrete": discrete}
+    # `name` 跟着事实走：override 刚写下、渲染还没回来的那一拍，前端手里的
+    # `value` 已经是新名字而事实还是上一张的——事实自己说清「我描述的是谁」，
+    # 前端才判得出这份事实还作不作数，不会把上一张的色标画到新名字头上。
+    return {
+        "name": name,
+        "custom": name not in matplotlib.colormaps,
+        "stops": stops,
+        "discrete": discrete,
+    }
 
 
 def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
@@ -1967,10 +1976,8 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
             continue
         try:
             orig = state.originals[key]
-            name = str(getattr(orig, "name", orig))
-            if name in CMAPS:
-                return None
-            return {"name": name, **_cmap_facts(orig)}
+            facts = _cmap_facts(orig)
+            return None if facts["name"] in CMAPS else facts
         except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉
             return None
     return None

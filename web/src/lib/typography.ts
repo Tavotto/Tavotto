@@ -298,6 +298,28 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * `field` 是这一次的实际值域（图内文字来自 manifest，画布文字来自本表）；
  * 数值区间取它与兜底区间的**更紧者**——宽的那个会让某个目标收到越界值。
  */
+/**
+ * 图内文字的字体族字段并上**本机字体族**（manifest 顶层 `font_families`）。
+ *
+ * 引擎按元素发的 `options` 只有首选项（三个通用族 + 装了的几个具名候选 + 脚本
+ * 自己那个），本机的几百个族整份 manifest 只发一次——并进来的地方**只有这一处**：
+ * `fieldOf` 与写入前的校验（`coerceTypography` 认的是 `field.options`）拿到的
+ * 必须是同一份表，否则下拉里选得到、写下去却被判成「不是选项」。
+ *
+ * 首选项在前、本机的按引擎排好的序接在后面、去重；别的字段与没有本机表的
+ * 老引擎原样返回（同一个对象，memo 不白白失效）。
+ */
+export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options'>>(
+  field: F | undefined,
+  families: readonly string[] | undefined,
+): F | undefined {
+  if (!field || field.prop !== 'fontfamily' || !families?.length) return field
+  const own = field.options ?? []
+  const seen = new Set(own)
+  const extra = families.filter((f) => !seen.has(f))
+  return extra.length ? { ...field, options: [...own, ...extra] } : field
+}
+
 export function coerceTypography(
   prop: TypographyProp,
   raw: unknown,

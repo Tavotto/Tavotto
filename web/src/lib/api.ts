@@ -1248,6 +1248,18 @@ export interface EditableField {
    * 不用再判一次「改没改过」，直接 `?? marker_current` 即可。
    */
   marker_original?: MarkerShape
+  /**
+   * `cmap` 字段专有的只读事实：图上此刻这张色图**长什么样**（见 `ColormapFacts`）。
+   * 只在名字不在引擎 `CMAPS` 白名单里时出现（白名单里的前端有离线表，
+   * `colormapStops.ts`）；缺席 = 按名字查表。
+   */
+  cmap_current?: ColormapFacts
+  /**
+   * **override 之前**那张色图的事实（多一个 `name`）。没有 override、或原样就在
+   * 白名单里时整个缺席。有它时选择器多一格「脚本原样」，选它 = 清掉 override
+   * ——自定义色图的名字（`from_list`）写不进 override，只能这么回去。
+   */
+  cmap_original?: ColormapFacts
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }
@@ -1310,6 +1322,23 @@ export interface SpineGeom {
   ticks: boolean
   from: [number, number]
   to: [number, number]
+}
+
+/**
+ * 一张色图**长什么样**（引擎 `manifest._cmap_facts()`）。
+ *
+ * `custom`：名字不在 matplotlib 注册表里（`ListedColormap([...])` 的 `from_list`）
+ * ——**不是一个能写进 override 的取值**，界面显示「自定义」而不是那个名字。
+ * `stops`：按顺序采出来的十六进制色；`discrete` 时一格一色（画成硬边色块），
+ * 否则是九点均匀采样（与离线表同一口径）。
+ */
+export interface ColormapFacts {
+  /** 事实描述的是哪张色图：override 刚写下、渲染还没回来时 `value` 已经换了名字，
+   * 事实还是上一张的——按名字对得上才作数 */
+  name: string
+  custom: boolean
+  stops: string[]
+  discrete: boolean
 }
 
 export interface ManifestElement {
@@ -1412,6 +1441,13 @@ export interface Manifest {
   stem: string
   size_mm: [number, number]
   elements: ManifestElement[]
+  /**
+   * 这台机器上 matplotlib 认得的全部字体族（引擎 `installed_font_families()`），
+   * 排好序、每一个都画得出来。**整份 manifest 只发一次**——逐条塞进每个文字
+   * 元素的 `fontfamily.options` 会让一份 88 个文字元素的 manifest 多出半兆。
+   * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
+   */
+  font_families?: string[]
 }
 
 export interface EngineRenderResponse {

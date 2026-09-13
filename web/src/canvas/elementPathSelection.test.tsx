@@ -166,10 +166,78 @@ const scatterEl: ManifestElement = {
   draggable: false,
 }
 
+/**
+ * 柱形系列：三根柱各一条闭合轮廓（引擎 `pathgeom.patch_group_geometry`）。bbox
+ * 仍是横跨三根柱的并集——修之前（2026-09-13 用户反馈，图 B / 图 F）选中画的、
+ * 命中吃的都是它，柱与柱之间的空白也算这组的。
+ */
+const bar = (x0: number): ElementGeometry['paths'][number] => ({
+  points: [
+    [x0, 0.4],
+    [x0 + 0.06, 0.4],
+    [x0 + 0.06, 0.5],
+    [x0, 0.5],
+  ],
+  closed: true,
+})
+
+const barSeriesEl: ManifestElement = {
+  gid: 'axes_0.barseries_0',
+  role: 'bar_series',
+  label: '柱形系列 1',
+  bbox: [0.62, 0.4, 0.26, 0.1],
+  geometry: {
+    kind: 'multi_path',
+    paths: [bar(0.62), bar(0.72), bar(0.82)],
+    fill: true,
+    stroke: false,
+    clip: [0.1, 0.1, 0.8, 0.8],
+  },
+  editable: [],
+  draggable: false,
+}
+
+/** 第一根柱自己的元素（bbox 就是那根柱，与从前一样没有 geometry） */
+const bar0El: ManifestElement = {
+  gid: 'axes_0.barseries_0.bar_0',
+  role: 'bar',
+  label: '柱 1',
+  bbox: [0.62, 0.4, 0.06, 0.1],
+  editable: [],
+  draggable: false,
+}
+
+/** 色条轴 + 色条伪元素：几何代理到轴（`geom_gid`），与位图代理到宿主同一机制 */
+const cbAxesEl: ManifestElement = {
+  gid: 'axes_2',
+  role: 'axes',
+  label: '色条轴',
+  bbox: [0.92, 0.1, 0.03, 0.8],
+  editable: [{ prop: 'position', type: 'rect', value: [0.92, 0.1, 0.03, 0.8] }],
+  draggable: false,
+  resizable: true,
+  is_colorbar: true,
+  colorbar_gid: 'axes_2.colorbar',
+}
+
+const colorbarEl: ManifestElement = {
+  gid: 'axes_2.colorbar',
+  role: 'colorbar',
+  label: '色条',
+  bbox: [0.92, 0.1, 0.03, 0.8],
+  editable: [],
+  draggable: false,
+  resizable: true,
+  geom_gid: 'axes_2',
+}
+
 const manifest: Manifest = {
   stem: 'Fig1',
   size_mm: [100, 100],
-  elements: [figureEl, axesEl, axes1El, lineEl, fillEl, patchEl, textEl, scatterEl],
+  elements: [
+    figureEl, axesEl, axes1El, lineEl, fillEl, patchEl, textEl, scatterEl,
+    barSeriesEl, bar0El, cbAxesEl, colorbarEl,
+  ],
 }
 
 const panel = (over: Partial<PanelObject> = {}): PanelObject => ({
@@ -229,6 +297,26 @@ describe('pickElement：曲线按真实路径命中', () => {
 
 /* ------------------------------ 框选 ------------------------------ */
 
+describe('pickElement：柱形系列按每根柱命中', () => {
+  it('点在柱身上：第一根柱自己的元素赢（更小），系列在它之后；点在柱间空白落回子图', () => {
+    // 柱身：bar_0 的 bbox 与系列的第一条子路径重合，面积小的赢
+    expect(pickElement(manifest, 0.65, 0.45)!.gid).toBe('axes_0.barseries_0.bar_0')
+    // 第二根柱没有自己的元素（夹具只放了 bar_0）：命中的是系列
+    expect(pickElement(manifest, 0.75, 0.45)!.gid).toBe('axes_0.barseries_0')
+    // 柱与柱之间的空白（仍在系列的并集 bbox 里）：不再归系列
+    expect(pickElement(manifest, 0.70, 0.45)!.gid).toBe('axes_0')
+  })
+})
+
+describe('pickElement：色条元素与它的轴', () => {
+  it('点色条命中的是色条元素，几何目标是它的轴（resizable 从那儿来）', () => {
+    const hit = pickElement(manifest, 0.935, 0.5)!
+    expect(hit.gid).toBe('axes_2.colorbar')
+    expect(hit.resizable).toBe(true)
+    expect(hit.geom_gid).toBe('axes_2')
+  })
+})
+
 describe('框选：按真实路径与选择带相交', () => {
   it('框穿过曲线算圈中', () => {
     expect(geomHitsRect(lineGeom, { x: 0.45, y: 0.45, w: 0.1, h: 0.1 })).toBe(true)
@@ -245,6 +333,11 @@ describe('框选：按真实路径与选择带相交', () => {
     expect(geomHitsRect({ ...fillEl.geometry!, paths: [fillEl.geometry!.paths[1]] }, left)).toBe(
       false,
     )
+  })
+
+  it('柱形系列：框只落在柱间空白里不算圈中，碰到任一根柱才算', () => {
+    expect(geomHitsRect(barSeriesEl.geometry!, { x: 0.685, y: 0.42, w: 0.03, h: 0.06 })).toBe(false)
+    expect(geomHitsRect(barSeriesEl.geometry!, { x: 0.685, y: 0.42, w: 0.05, h: 0.06 })).toBe(true)
   })
 
   it('框整个落在填充内部**不**算圈中（框选是圈墨迹，不是戳进去）', () => {
@@ -332,6 +425,30 @@ describe('OverlaySvg：路径式选中描示', () => {
     expect(paths().filter((p) => p.getAttribute('d')?.startsWith('M')).length).toBe(1)
     // 第一颗的左上角：分数 (0.185, 0.86) → 面板 (10,20) + 100mm → mm (28.5, 106)
     expect(d).toContain(`M${px(28.5).toFixed(2)},${px(106).toFixed(2)}`)
+  })
+
+  it('选中柱形系列：三根柱三条闭合子路径，没有罩住整组的矩形框', () => {
+    show(['axes_0.barseries_0'])
+    expect(rects().length).toBe(0)
+    const outline = paths().find((p) => p.getAttribute('d')?.includes('Z'))
+    expect(outline, '柱形系列应当画成 path 而不是 rect').toBeTruthy()
+    const d = outline!.getAttribute('d')!
+    expect(d.match(/M/g)?.length, '三根柱 = 三条子路径').toBe(3)
+    expect(d.match(/Z/g)?.length).toBe(3)
+    // 第一根柱的左上角：分数 (0.62, 0.4) → 面板 (10,20) + 100mm → mm (72, 60)
+    expect(d).toContain(`M${px(72).toFixed(2)},${px(60).toFixed(2)}`)
+  })
+
+  it('选中色条：手柄画在色条轴上（八个），与选中那条轴本身一样', () => {
+    const handles = () => [...container.querySelectorAll('rect[fill="#fff"]')]
+    show(['axes_2.colorbar'])
+    expect(handles().length).toBe(8)
+    const viaColorbar = handles().map((h) => [h.getAttribute('x'), h.getAttribute('y')])
+    show(['axes_2'])
+    expect(handles().map((h) => [h.getAttribute('x'), h.getAttribute('y')])).toEqual(viaColorbar)
+    // 没有 geom_gid 的伪元素（曲线）不出手柄——对照组，别让「有元素就画八个」蒙混
+    show(['axes_0.lines_0'])
+    expect(handles().length).toBe(0)
   })
 
   it('断开的填充画成多条子路径，不会被连成一块', () => {
