@@ -414,10 +414,13 @@ jobs:
           - { os: macos-latest,   python: "3.13" }
           - { os: windows-latest, python: "3.13" }
     runs-on: ${{ matrix.os }}
-    # 上一轮实测 27:57（Windows，2994 条）。45 分钟给足余量，但**必须有**：
-    # 这个 job 没有上限时，一条挂死的用例会把整个**合并队列**堵住——
-    # 2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。
-    timeout-minutes: 45
+    # 实测（2026-09-12/13 的 12 个合并组，Windows）29~41 分钟，套件已 4460 条；
+    # 2026-09-13 #340 的组跑到 45:00 被这条上限取消、整组按 failed_checks 踢出——
+    # 上一轮定 45 时实测还是 27:57 / 2994 条，套件长了一半上限没动，余量归零。
+    # 抬到与 windows-exe-smoke 同档的 60，但**必须有**上限：这个 job 没有上限时，
+    # 一条挂死的用例会把整个**合并队列**堵住——2026-08-28 就发生过一次，
+    # 8 小时 20 分，其间没有任何 PR 能落地。
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
