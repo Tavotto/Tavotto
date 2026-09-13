@@ -79,8 +79,12 @@ export function ProjectSettings() {
     }
   }
 
+  // 三段（2026-09-13 审计 B33）：项目 → 位置 → 写回源图。写回是会碰原始文件的
+  // 高影响能力，与导出位置同级并排时看不出它的分量；单独一段，说清会覆盖什么、
+  // 备份去哪
   return (
-    <SettingSection>
+    <>
+    <SettingSection title={st('project.sectionProject')} description={st('project.onlyThisProject')}>
       <SettingRow
         label={st('project.current')}
         status={<PathValue path={project?.figures_dir} name={st('project.current')} />}
@@ -119,7 +123,9 @@ export function ProjectSettings() {
           {st('project.registry')}
         </Button>
       </SettingRow>
+    </SettingSection>
 
+    <SettingSection title={st('project.sectionLocations')}>
       <DirectoryRow
         id="setting-export-dir"
         label={st('project.exportDir')}
@@ -136,7 +142,9 @@ export function ProjectSettings() {
         onCommit={(v) => void save({ backup_dir: v })}
         effective={project?.backup_dir}
       />
+    </SettingSection>
 
+    <SettingSection title={st('project.sectionWriteBack')} description={st('project.writeBackDesc')}>
       <SettingRow
         label={st('project.allowWriteBack')}
         controlId="setting-allow-write-back"
@@ -154,6 +162,7 @@ export function ProjectSettings() {
 
       {error && <InlineWarning tone="danger">{error}</InlineWarning>}
     </SettingSection>
+    </>
   )
 }
 

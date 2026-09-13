@@ -483,7 +483,7 @@
     "applyToFigure": "Apply to the current figure…",
     "binding": {
       "builtinDefault": "Default spec",
-      "current": "This project is checked against “{{name}}”",
+      "current": "This project uses",
       "globalMissing": "That profile is no longer in the global list; the project’s snapshot still applies",
       "source": {
         "builtin": "not bound; using the built-in default",
@@ -701,7 +701,7 @@
       "telemetry": {
         "autoProps": "Every record carries: app version, operating system, CPU architecture, and how it was installed (desktop, pipx, pip, source). Deliberately absent: hostname, user name, Python path, interface language, time zone and screen size.",
         "detailsTitle": "What gets sent",
-        "hardDisabled": "Disabled on this machine by TAVOTTO_NO_TELEMETRY=1; this switch has no effect.",
+        "hardDisabled": "Turned off by this machine’s configuration; the switch is unavailable",
         "needsReconsent": "Scope changed, waiting for you to confirm again",
         "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
         "neverLabel": "Never sent: ",
@@ -734,7 +734,8 @@
         "summary": "Anonymous feature usage is sent only after you turn this on. Never your figures, scripts, file names, paths, research data or prompts.",
         "title": "Anonymous usage statistics",
         "toggle": "Share anonymous usage statistics",
-        "unset": "Not chosen yet"
+        "unset": "Not chosen yet",
+        "hardDisabledDetail": "The environment variable {{env}} is in effect; remove it to make the switch available"
       }
     },
     "agents": {
@@ -921,16 +922,19 @@
       "toggleAria": "Enable {{name}} in {{product}}",
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
-      "viewGuide": "Read the guide"
+      "viewGuide": "Read the guide",
+      "currentDefault": "Current default",
+      "setDefault": "Set as default",
+      "currentDefaultAria": "{{name}} is the current default coding agent"
     },
     "canvas": {
       "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
-      "dragCompanions": "Move related objects along",
+      "dragCompanions": "When moving axes, move their title and legend too",
       "more": "Canvas settings",
       "openCanvasSettings": "Open canvas settings",
       "diagramOn": "Diagram: the title and legend move along with the axes",
       "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
-      "dragCompanionsDesc": "Titles, legends and other hand-placed objects move with the axes"
+      "dragCompanionsDesc": "Also colorbar and twin axes; off moves only the axes"
     },
     "copied": "Copied",
     "copy": "Copy",
@@ -990,7 +994,10 @@
         "uninstallAction": "Uninstall",
         "uninstallBody": "It will be removed from this project’s Tavotto environment. Scripts that use it cannot render until it is reinstalled.",
         "uninstallBodyDependents": "{{dependents}} depend on {{name}}. They will stop working too, and scripts that use them cannot render.",
-        "uninstallTitle": "Uninstall {{name}}?"
+        "uninstallTitle": "Uninstall {{name}}?",
+        "rebuildTitle": "Rebuild this project’s environment?",
+        "rebuildBody": "Deletes the current environment, creates a new one and reinstalls every package on record. Figures that use it cannot render meanwhile; the package records are kept.",
+        "rebuildAction": "Rebuild"
       },
       "disabled": {
         "noBasePython": "No Python that can create an environment was found on this computer (3.10 or newer is required). Install Python, then come back here.",
@@ -1004,7 +1011,8 @@
         "notInUse": "Not currently used by this project",
         "python": "Python {{version}}",
         "ready": "Ready",
-        "rebuild": "Rebuild"
+        "rebuild": "Rebuild environment…",
+        "rebuildDesc": "If it breaks, rebuild: creates a fresh environment and reinstalls every recorded package"
       },
       "envTarget": "Installs go here",
       "envTitle": "This project’s {{product}} environment",
@@ -1040,7 +1048,6 @@
         "repair": "Installed by missing-dependency repair",
         "user": "Installed manually"
       },
-      "recoveryNote": "If it breaks, use “Rebuild”: a fresh environment is created and the recorded packages are installed again.",
       "reinstall": "Reinstall",
       "search": {
         "action": "Look up on PyPI",
@@ -1080,7 +1087,8 @@
       "update": "Upgrade",
       "updateAria": "Upgrade {{name}}",
       "userEmpty": "Nothing has been installed into this environment yet.",
-      "userTitle": "Installed by you"
+      "userTitle": "Installed by you",
+      "envSection": "Environment"
     },
     "project": {
       "backupDir": "Original file backups",
@@ -1100,7 +1108,12 @@
       "copyPath": "Copy the full path of {{name}}",
       "allowWriteBack": "Allow writing back to original files",
       "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled.",
-      "writeBackOnHint": "Edits can be written straight into the original scripts."
+      "writeBackOnHint": "Edits can be written straight into the original scripts.",
+      "sectionProject": "Project",
+      "sectionLocations": "Locations",
+      "sectionWriteBack": "Writing back to sources",
+      "writeBackDesc": "\"Write back to original\" overwrites the original PDF/PNG and script in the project; the original is backed up to the backup location above first, every time.",
+      "onlyThisProject": "Only affects this project"
     },
     "section": {
       "about": "About & privacy",
@@ -1152,7 +1165,7 @@
       "manualDownload": "If the update service is unreachable, you can also download from Releases manually",
       "methodSource": "source checkout (upgrade with git pull)",
       "neverChecked": "Never checked",
-      "noUpdateAtLastCheck": "No newer version was found when checked at {{time}}. That is the result of that check, not the release status right now.",
+      "noUpdateAtLastCheck": "No new version was found when checked at {{time}}; check again to know about now.",
       "relaunch": "Restart into the new version",
       "releaseNotes": "Release notes",
       "restartAfter": " to use it — this process is still running the old code.",

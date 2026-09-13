@@ -484,7 +484,10 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           导出面板里猜（审计 T41）。解析只有 `resolveDocumentSpec` 一份判据。 */}
       {resolved && (
         <section data-spec-binding className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {/* 先说这是「项目在用的」，再说是哪一套（2026-09-13 审计 B35：只写名字 +
+              「未绑定，按内置默认」时，读不出下面库里正在浏览的那条与它是不是一回事） */}
+          <span className="type-section">{st('binding.current')}</span>
+          <div className="-mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="type-title">
               {boundRecord
                 ? profileName(boundRecord)

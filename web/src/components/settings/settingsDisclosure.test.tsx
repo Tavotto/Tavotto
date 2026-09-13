@@ -392,6 +392,50 @@ describe('该常驻的不许折叠', () => {
     expect(bodyText()).toContain(st('about.telemetry.optOut'))
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
+
+  /**
+   * 硬开关（2026-09-13 审计 B42）：第一层是「已由本机配置关闭」这句现状，环境变量名
+   * 是第二层的 type-meta；开关禁用；不再是一条警示横幅（它不是错误，是本机的配置）。
+   */
+  it('TAVOTTO_NO_TELEMETRY=1 关掉时：现状说「已由本机配置关闭」，变量名在第二层，开关禁用', async () => {
+    useTelemetryStore.setState({
+      settings: {
+        consent: 'unset',
+        enabled: false,
+        hard_disabled: true,
+        consent_version: 1,
+        saved_consent_version: 1,
+        needs_reconsent: false,
+      } as never,
+      askOpen: false,
+    })
+    await open('about')
+    const toggle = body().querySelector<HTMLButtonElement>(
+      `button[role="switch"][aria-label="${st('about.telemetry.toggle')}"]`,
+    )!
+    expect(toggle.disabled).toBe(true)
+    expect(bodyText()).toContain(st('about.telemetry.hardDisabled'))
+    // 「尚未选择」是用户没表过态的意思；被本机关掉时不能同时挂着这句
+    expect(bodyText()).not.toContain(st('about.telemetry.unset'))
+    const detail = body().querySelector('[data-telemetry-hard-detail]')!
+    expect(detail.textContent).toContain('TAVOTTO_NO_TELEMETRY=1')
+    expect(detail.className).toContain('type-meta')
+  })
+
+  /** 项目页三段（2026-09-13 审计 B33）：项目 → 位置 → 写回源图，写回那一段说清覆盖什么、备份去哪 */
+  it('项目页分成项目 / 位置 / 写回源图三段，写回段带一句会覆盖什么', async () => {
+    await open('project')
+    const text = bodyText()
+    const at = (s: string) => text.indexOf(s)
+    for (const k of ['sectionProject', 'sectionLocations', 'sectionWriteBack']) {
+      expect(at(st(`project.${k}`)), k).toBeGreaterThan(-1)
+    }
+    expect(at(st('project.sectionProject'))).toBeLessThan(at(st('project.sectionLocations')))
+    expect(at(st('project.sectionLocations'))).toBeLessThan(at(st('project.sectionWriteBack')))
+    expect(at(st('project.sectionWriteBack'))).toBeLessThan(at(st('project.allowWriteBack')))
+    expect(text).toContain(st('project.writeBackDesc'))
+    expect(text).toContain(st('project.onlyThisProject'))
+  })
 })
 
 /* ------------------------------ About 与诊断 ------------------------------ */

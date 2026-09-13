@@ -90,14 +90,19 @@ export function AgentList({
                 size="sm"
                 variant="secondary"
                 // 当前默认是「选中态」不是「主动作」：selected 轻 tint + 字重（第五节），
-                // 不给每一行都摆一颗近黑填色的钮
+                // 不给每一行都摆一颗近黑填色的钮。字面也分开写（2026-09-13 审计 B37）：
+                // 两行都写「默认」时一个像状态、一个像按钮，用户得靠底色猜哪个是哪个
                 active={agent.id === defaultId}
                 aria-pressed={agent.id === defaultId}
-                aria-label={ag('setDefaultAria', { name: agent.display_name })}
+                aria-label={
+                  agent.id === defaultId
+                    ? ag('currentDefaultAria', { name: agent.display_name })
+                    : ag('setDefaultAria', { name: agent.display_name })
+                }
                 disabled={!agent.usable}
                 onClick={() => onSetDefault(agent.id)}
               >
-                {ag('defaultButton')}
+                {ag(agent.id === defaultId ? 'currentDefault' : 'setDefault')}
               </Button>
             )}
             <Toggle

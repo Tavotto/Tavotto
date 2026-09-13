@@ -345,7 +345,7 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
 
   // --- 问号：Tab 到它 → 展开 → Esc 收回。设置里唯一剩下的那个（界面 / 拖动联动）---
   await dialog.getByRole('navigation').getByRole('button', { name: '界面' }).click()
-  const help = dialog.getByRole('button', { name: '关于拖动时一同移动关联对象' })
+  const help = dialog.getByRole('button', { name: '关于移动子图时，同步移动标题和图例' })
   await expect(help).toHaveAttribute('aria-expanded', 'false')
   await help.focus()
   await expect(help).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 })

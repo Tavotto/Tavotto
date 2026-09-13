@@ -13,7 +13,7 @@ import { Button } from '../ui/Button'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
-import { DiagnosticDisclosure, InlineWarning, SettingSection } from './SettingRow'
+import { DiagnosticDisclosure, InlineWarning, SettingRow, SettingSection } from './SettingRow'
 
 /** 本页文案在 dialogs:settings.packages.* 下 */
 const pk = (key: string, values?: Record<string, unknown>) =>
@@ -142,10 +142,11 @@ export function PackagesSettings() {
       )}
       {loadError && !data && <InlineWarning tone="danger">{loadError}</InlineWarning>}
 
-      {/* ---------------- 用户安装（置顶：这一页存在的理由） ---------------- */}
+      {/* ---------------- 环境（先说现状，再给动作；2026-09-13 审计 B39） ---------------- */}
+      <EnvironmentSection />
+
+      {/* ---------------- 用户安装（这一页存在的理由） ---------------- */}
       <SettingSection title={pk('userTitle')}>
-        {/* 安装目标就在安装入口旁边，不必去别处对照 */}
-        <EnvironmentLine />
         <form
           className="flex items-center gap-1.5"
           onSubmit={(e) => {
@@ -258,10 +259,9 @@ export function PackagesSettings() {
       {/* ---------------- 作业进度 / 结果 ---------------- */}
       <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
 
-      {/* 一句话说清失败后怎么办（审计 T46）。「没有回滚」与快照份数是工程细节，
-          折在下面——它们解释的是**为什么**只能重建，不是用户此刻要做的事。 */}
-      <p className="type-caption">{pk('recoveryNote')}</p>
-
+      {/* 「没有回滚」与快照份数是工程细节，折在下面——它们解释的是**为什么**只能
+          重建，不是用户此刻要做的事。重建入口本身在页首的环境段里，就在它解释的
+          那一行旁边 */}
       <DiagnosticDisclosure title={pk('techTitle')}>
         <p className="text-xs leading-relaxed text-ink-3">
           {pk('snapshotDetail', { count: data?.snapshots ?? 0 })}
@@ -279,15 +279,20 @@ export function PackagesSettings() {
 }
 
 /**
- * 一行：**这个项目的** Tavotto 环境现在什么状态、是不是正在用它、重建入口。
+ * 页首的环境段：**这个项目的** Tavotto 环境现在什么状态、是不是正在用它、重建入口。
  *
  * 名字里的「这个项目的」不是修辞（审计 T46 / T47）：受管环境在
  * `<data_dir>/environments/<项目指纹>/`，**每个项目一个**；而诊断页上那句
  * 「{{product}} 自带的渲染环境」说的是随安装包附带、只读、不能 pip 的另一个。
  * 两者以前都叫「Tavotto 环境」，于是「尚未创建」与「matplotlib 3.11.1」会同时
  * 出现在两页上，看起来像自相矛盾。
+ *
+ * 形态是一行标准的 `SettingRow`（2026-09-13 审计 B39）：标题 + 现状在标题列，
+ * 「重建环境…」在控件列、说明就在它旁边。此前是三段不同字号拼成的一行，
+ * 「装坏了点「重建」」那句话与那颗按钮分别在页首与页尾，环境还没创建时那句话
+ * 指着一颗不存在的按钮。重建是高影响动作：先确认，说清会删什么、重装什么。
  */
-function EnvironmentLine() {
+function EnvironmentSection() {
   useTranslation('dialogs')
   const env = usePackageStore((s) => s.data?.environment)
   const capability = usePackageStore((s) => s.data?.capability)
@@ -295,27 +300,38 @@ function EnvironmentLine() {
   const rebuildManaged = useDepRepairStore((s) => s.rebuildManaged)
   if (!capability || capability.reason === 'no_project') return null
   const exists = !!env?.exists
+  const status = exists
+    ? [
+        pk('env.python', { version: env?.python_version || '?' }),
+        env?.state === 'ready' ? pk('env.ready') : pk('env.incomplete'),
+        env?.in_use ? pk('env.inUse') : pk('env.notInUse'),
+      ].join(' · ')
+    : pk('env.notCreated')
+  const rebuild = async () => {
+    const ok = await askConfirm({
+      title: msg('settings.packages.confirm.rebuildTitle', undefined, 'dialogs'),
+      body: msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
+      confirmLabel: msg('settings.packages.confirm.rebuildAction', undefined, 'dialogs'),
+      danger: true,
+    })
+    if (ok) await rebuildManaged()
+  }
   return (
-    <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-packages-env>
-      <span className="text-sm text-ink">{pk('envTitle', { product: PRODUCT_NAME })}</span>
-      <span className="text-ink-3">{pk('envTarget')}</span>
-      {exists ? (
-        <>
-          <span className="font-mono text-ink-2">
-            {pk('env.python', { version: env?.python_version || '?' })}
-          </span>
-          <span className="text-ink-3">
-            {env?.state === 'ready' ? pk('env.ready') : pk('env.incomplete')}
-          </span>
-          <span className="text-ink-3">{env?.in_use ? pk('env.inUse') : pk('env.notInUse')}</span>
-          <Button variant="secondary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged()}>
-            {pk('env.rebuild')}
-          </Button>
-        </>
-      ) : (
-        <span className="text-ink-3">{pk('env.notCreated')}</span>
-      )}
-    </div>
+    <SettingSection title={pk('envSection')}>
+      <div data-packages-env className="contents">
+        <SettingRow
+          label={pk('envTitle', { product: PRODUCT_NAME })}
+          description={exists ? pk('env.rebuildDesc') : undefined}
+          status={status}
+        >
+          {exists && (
+            <Button variant="secondary" size="sm" disabled={rebuildBusy} onClick={() => void rebuild()}>
+              {pk('env.rebuild')}
+            </Button>
+          )}
+        </SettingRow>
+      </div>
+    </SettingSection>
   )
 }
 

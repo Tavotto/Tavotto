@@ -206,17 +206,22 @@ describe('编码 Agent 一级页面', () => {
     expect(switches()[0].disabled).toBe(true)
   })
 
-  /** 每行里的「默认」按钮（2026-09-11 起不再有单独的下拉框） */
+  /**
+   * 每行里的默认钮（2026-09-11 起不再有单独的下拉框）。字面分两种（2026-09-13 审计
+   * B37）：当前默认的那一颗写「当前默认」，其余写「设为默认」——不再两行都写「默认」
+   */
   const defaultButtons = () =>
-    [...document.querySelectorAll<HTMLButtonElement>('button')].filter(
-      (b) => b.textContent?.trim() === ag('defaultButton'),
-    )
+    [...document.querySelectorAll<HTMLButtonElement>('button')].filter((b) => {
+      const s = b.textContent?.trim()
+      return s === ag('currentDefault') || s === ag('setDefault')
+    })
 
-  it('每行自带「默认」按钮：当前默认的是按下态，不可用的按不了', async () => {
+  it('每行自带默认钮：当前默认的是按下态并写「当前默认」，其余写「设为默认」，不可用的按不了', async () => {
     await open(capsOf([agentCaps(), claudeCaps({ state: 'disabled', enabled: false, usable: false })]))
     const buttons = defaultButtons()
     expect(buttons).toHaveLength(2)
     expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([ag('currentDefault'), ag('setDefault')])
     expect(buttons[1].disabled).toBe(true)
     expect(document.querySelector('[role="combobox"]'), '不再有默认 Agent 下拉框').toBeNull()
   })
@@ -230,6 +235,7 @@ describe('编码 Agent 一级页面', () => {
     })
     expect(useAiStore.getState().agent).toBe('claude')
     expect(defaultButtons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true'])
+    expect(defaultButtons().map((b) => b.textContent?.trim())).toEqual([ag('setDefault'), ag('currentDefault')])
   })
 
   it('首选那个不可用时按下态落到第一个可用的，但不改用户存着的首选值', async () => {

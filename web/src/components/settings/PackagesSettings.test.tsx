@@ -258,26 +258,52 @@ describe('两份清单', () => {
     expect(byName(pk('env.rebuild'))).toBeTruthy()
   })
 
-  it('首屏一句说清失败后怎么办；「没有回滚」与快照份数在工程细节里（审计 T46）', async () => {
+  it('「装坏了就重建」那句话就在重建钮旁边；「没有回滚」与快照份数在工程细节里（审计 T46 / B39）', async () => {
     await mount()
-    expect(text()).toContain(pk('recoveryNote'))
+    const env = document.querySelector('[data-packages-env]')!
+    expect(env.textContent).toContain(pk('env.rebuildDesc'))
     // 首屏不谈 pip 事务与快照份数——它们解释的是「为什么只能重建」
     expect(text()).not.toContain(pk('snapshotDetail', { count: 4 }))
     await expand(pk('techTitle'))
     expect(text()).toContain(pk('snapshotDetail', { count: 4 }))
   })
 
-  it('安装入口与用户包排在内置清单之前（审计 T46）', async () => {
+  it('环境状态在页首，安装入口与用户包排在内置清单之前（审计 T46 / B39）', async () => {
     await mount()
     const body = document.querySelector('[data-packages-page]')!.textContent ?? ''
-    expect(body.indexOf(pk('userTitle'))).toBeGreaterThan(-1)
+    expect(body.indexOf(pk('envSection'))).toBeGreaterThan(-1)
+    expect(body.indexOf(pk('envSection'))).toBeLessThan(body.indexOf(pk('userTitle')))
     expect(body.indexOf(pk('userTitle'))).toBeLessThan(
       body.indexOf(pk('builtinTitleCount', { count: 3 })),
     )
-    // 安装目标就在安装入口旁边，且名字里说清是**这个项目的**那一个
+    // 名字里说清是**这个项目的**那一个
     const env = document.querySelector('[data-packages-env]')!
     expect(env.textContent).toContain('这个项目的')
-    expect(env.textContent).toContain(pk('envTarget'))
+  })
+
+  it('环境还没创建：没有重建钮，也没有那句指着它的说明', async () => {
+    await mount({ ...LISTING, environment: { ...LISTING.environment!, exists: false, in_use: false } })
+    const env = document.querySelector('[data-packages-env]')!
+    expect(env.textContent).toContain(pk('env.notCreated'))
+    expect(byName(pk('env.rebuild'))).toBeFalsy()
+    expect(env.textContent).not.toContain(pk('env.rebuildDesc'))
+  })
+
+  it('重建是高影响动作：先确认，取消就什么都不做', async () => {
+    await mount()
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    await act(async () => {
+      byName(pk('env.rebuild'))!.click()
+    })
+    const confirm = useUiStore.getState().confirm
+    expect(confirm?.title).toEqual({ key: 'settings.packages.confirm.rebuildTitle', ns: 'dialogs' })
+    await act(async () => confirm!.resolve(false))
+    expect(rebuildManagedEnvironment).not.toHaveBeenCalled()
+    await act(async () => {
+      byName(pk('env.rebuild'))!.click()
+    })
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    expect(rebuildManagedEnvironment).toHaveBeenCalledTimes(1)
   })
 
   it('清单里没有任何路径', async () => {

@@ -10,12 +10,7 @@ import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
-import {
-  DiagnosticDisclosure,
-  InlineWarning,
-  SettingRow,
-  SettingSection,
-} from './SettingRow'
+import { DiagnosticDisclosure, SettingRow, SettingSection } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -124,7 +119,9 @@ function PrivacyBlock() {
       <SettingRow
         label={st('about.telemetry.title')}
         description={st('about.telemetry.summary')}
-        status={consentStatus(settings)}
+        // 硬开关那一档的第一层是「已由本机配置关闭」（2026-09-13 审计 B42：用户先要
+        // 知道采不采集，环境变量名是第二层）
+        status={hard ? st('about.telemetry.hardDisabled') : consentStatus(settings)}
       >
         {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），完整状态由
             行内 status 那句话说。`choose` 只收得到开 / 关两档，所以界面上说
@@ -136,7 +133,11 @@ function PrivacyBlock() {
           onChange={(next) => void choose(next ? 'enabled' : 'disabled', 'settings')}
         />
       </SettingRow>
-      {hard && <InlineWarning>{st('about.telemetry.hardDisabled')}</InlineWarning>}
+      {hard && (
+        <p className="type-meta" data-telemetry-hard-detail>
+          {st('about.telemetry.hardDisabledDetail', { env: 'TAVOTTO_NO_TELEMETRY=1' })}
+        </p>
+      )}
       <TelemetryDataDisclosure />
       <a
         href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"

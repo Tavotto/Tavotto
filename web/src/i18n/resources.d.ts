@@ -780,7 +780,7 @@ export default interface Resources {
       "applyToFigure": "应用到当前图…",
       "binding": {
         "builtinDefault": "默认规范",
-        "current": "本项目按「{{name}}」检查",
+        "current": "当前项目使用",
         "globalMissing": "全局清单里已没有这条配置，项目里的快照仍然有效",
         "source": {
           "builtin": "未绑定，按内置默认",
@@ -994,7 +994,8 @@ export default interface Resources {
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
           "detailsTitle": "会发送哪些数据",
-          "hardDisabled": "本机已由 TAVOTTO_NO_TELEMETRY=1 关闭，此开关无效。",
+          "hardDisabled": "已由本机配置关闭，此开关不可用",
+          "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用",
           "needsReconsent": "采集范围有变化，待重新确认",
           "never": "图、脚本、文件名、路径、科研数据、图内文字与助手提示词。",
           "neverLabel": "绝不发送：",
@@ -1091,6 +1092,8 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
+        "currentDefault": "当前默认",
+        "currentDefaultAria": "{{name}} 是当前默认的编码 Agent",
         "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
@@ -1185,6 +1188,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败，下面仍是上一次的结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
+        "setDefault": "设为默认",
         "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
@@ -1220,8 +1224,8 @@ export default interface Resources {
         "companionsExplain": "关联元素 = 被你手动摆过位置的标题 / 轴标签 / 图例，以及色条轴与 twinx 的孪生轴。它们要么钉在 figure 坐标上、要么本就是平级的另一个子图，不带的话挪走子图它们会留在原地。关掉就只动子图本身。",
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例跟着一起移动",
-        "dragCompanions": "拖动时一同移动关联对象",
-        "dragCompanionsDesc": "标题、图例等手动摆过位置的对象随子图一起移动",
+        "dragCompanions": "移动子图时，同步移动标题和图例",
+        "dragCompanionsDesc": "也包括色条轴与孪生轴；关掉只动子图本身",
         "more": "画布设置",
         "openCanvasSettings": "打开画布设置"
       },
@@ -1286,6 +1290,9 @@ export default interface Resources {
           "version": "版本"
         },
         "confirm": {
+          "rebuildAction": "重建",
+          "rebuildBody": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。",
+          "rebuildTitle": "重建这个项目的环境？",
           "uninstallAction": "卸载",
           "uninstallBody": "将从项目环境中移除，用到它的脚本无法渲染。",
           "uninstallBodyDependents": "{{dependents}} 依赖 {{name}}，卸载后它们与相关脚本都将不可用。",
@@ -1303,8 +1310,10 @@ export default interface Resources {
           "notInUse": "本项目当前未使用它",
           "python": "Python {{version}}",
           "ready": "就绪",
-          "rebuild": "重建"
+          "rebuild": "重建环境…",
+          "rebuildDesc": "装坏了就重建：新建环境并按记录重装所有包"
         },
+        "envSection": "环境",
         "envTarget": "装到这里",
         "envTitle": "这个项目的 {{product}} 环境",
         "install": "安装",
@@ -1339,7 +1348,6 @@ export default interface Resources {
           "repair": "缺包时自动修复安装",
           "user": "手动安装"
         },
-        "recoveryNote": "装坏了点「重建」：新建环境并按记录重装所有包。",
         "reinstall": "重新安装",
         "search": {
           "action": "在 PyPI 查找",
@@ -1391,12 +1399,17 @@ export default interface Resources {
         "effectivePath": "实际位置",
         "exportDir": "导出位置",
         "noScriptsSuffix": "（这个项目里的图还不能逐元素编辑）",
+        "onlyThisProject": "只影响这个项目",
         "registry": "管理来源…",
         "scriptCount_other": "{{count}} 个脚本",
         "scripts": "可编辑来源",
+        "sectionLocations": "位置",
+        "sectionProject": "项目",
+        "sectionWriteBack": "写回源图",
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
+        "writeBackDesc": "「写回原始文件」会覆盖项目里的原始 PDF / PNG 与脚本；每次写回前先把原文件备份到上面的备份位置。",
         "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
         "writeBackOnHint": "修改可直接写入原始脚本。"
       },
@@ -1460,7 +1473,7 @@ export default interface Resources {
         "manualDownload": "连不上更新服务时，也可以去 Releases 手动下载",
         "methodSource": "源码检出（升级请用 git pull）",
         "neverChecked": "尚未检查",
-        "noUpdateAtLastCheck": "{{time}} 检查时没有发现新版本。这是那次检查的结果，不是此刻的发布状态。",
+        "noUpdateAtLastCheck": "{{time}} 检查时没有发现新版本；此刻有没有新版要再查一次才知道。",
         "relaunch": "重启并使用新版本",
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效——当前进程仍在运行旧版本代码。",
