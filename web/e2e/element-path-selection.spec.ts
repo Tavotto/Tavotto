@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 
 /**
@@ -15,6 +16,195 @@ import { expect, test } from './fixtures'
  * 取点用 `SVGPathElement.getPointAtLength()` + `getScreenCTM()`——曲线上的
  * 精确一点只有浏览器算得出来，猜 bbox 中点在弯曲的曲线上会落空。
  */
+
+interface Pt {
+  x: number
+  y: number
+}
+/** 一块墨迹：中心 + 半径（曲线的采样点半径为 0） */
+interface Ink extends Pt {
+  r: number
+}
+interface Box {
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+}
+
+/** 一组点的包围盒 */
+function bboxOf(pts: Pt[]): Box {
+  const xs = pts.map((p) => p.x)
+  const ys = pts.map((p) => p.y)
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+}
+
+/**
+ * 坐标轴边框两侧各 `ZONE_PX.band` 屏幕像素是「切这一边刻度」的命中带
+ * （`lib/tickSides.ts` 的 `ZONE_PX`，ADR 0035：按**屏幕像素**定宽、缩放不变）。
+ * 点进去是一次刻度操作，选区照旧——那一下根本不是在验「空白处是否误命中」。
+ * 这里不能 import 产品常量（e2e 的 tsconfig 不解析 `@/`），所以照抄一份并点名
+ * 出处：产品那边把带加宽的话这里会**红**（点进带里），不会假绿。
+ * 命中层用的是 manifest 的边框分数 × 布局 × zoom，这里量的是 SVG 的 DOM 矩形，
+ * 两把尺子差一个亚像素与半个线宽，再留 4px。
+ */
+const SPINE_BAND_PX = 10
+const SPINE_CLEARANCE_PX = SPINE_BAND_PX + 4
+
+/**
+ * 整张图里的墨迹与边框（屏幕坐标），从 SVG 的 DOM 上量、一次量齐——这把尺子
+ * 与命中层（manifest 的 geometry）无关，所以「点在墨迹上 / 不在墨迹上」的结论
+ * 不是产品自己验自己：
+ *
+ * - `ink`：每颗 marker 的中心与半径（散点 / 只有 marker 的曲线都是 `<defs>` 模板 +
+ *   每颗一个 `<use>`）+ 每条曲线的沿线采样——点中任何一条都会在覆盖层画出 path；
+ * - `spines`：边框线的采样点。边框是 matplotlib 留在 axes 组里的 `patch_N`（背景
+ *   矩形 + 四条 spine，引擎不给它们改名），背景矩形的轮廓与四条 spine 重合
+ *   （偏出去的边框另算一份），一起采无妨；
+ * - `layer`：命中层（= 整张图）在屏幕上的矩形，manifest 的分数 bbox 靠它换算。
+ */
+function inkInBrowser(): { ink: Ink[]; spines: Pt[]; layer: Box } {
+  const svg = document.querySelector('[data-element-svg] svg')
+  const ink: Ink[] = []
+  const spines: Pt[] = []
+  const lr = document.querySelector('[data-authority]')?.getBoundingClientRect()
+  const layer: Box = lr
+    ? { x0: lr.x, x1: lr.x + lr.width, y0: lr.y, y1: lr.y + lr.height }
+    : { x0: 0, x1: 0, y0: 0, y1: 0 }
+  if (!svg) return { ink, spines, layer }
+  const sample = (path: SVGPathElement, into: Pt[]) => {
+    if (!path.getTotalLength) return
+    const ctm = path.getScreenCTM()
+    if (!ctm) return
+    const len = path.getTotalLength()
+    for (let i = 0; i <= 200; i++) {
+      const q = path.getPointAtLength((len * i) / 200)
+      into.push({ x: q.x * ctm.a + q.y * ctm.c + ctm.e, y: q.x * ctm.b + q.y * ctm.d + ctm.f })
+    }
+  }
+  for (const g of svg.querySelectorAll('[id^="axes_"]')) {
+    if (!g.id.includes('.')) {
+      for (const patch of g.querySelectorAll(':scope > [id^="patch_"]')) {
+        const path = patch.querySelector('path')
+        if (path) sample(path as SVGPathElement, spines)
+      }
+      continue
+    }
+    if (/\.(lines|scatter)_\d+$/.test(g.id)) {
+      for (const u of g.querySelectorAll('use')) {
+        const r = u.getBoundingClientRect()
+        ink.push({ x: r.x + r.width / 2, y: r.y + r.height / 2, r: Math.max(r.width, r.height) / 2 })
+      }
+      const path = g.querySelector('path')
+      const pts: Pt[] = []
+      if (path) sample(path as SVGPathElement, pts)
+      for (const q of pts) ink.push({ ...q, r: 0 })
+    }
+  }
+  return { ink, spines, layer }
+}
+
+/** render 响应里 manifest 的最小形状：这里只用得着 bbox 命中那几个字段 */
+interface RenderManifest {
+  elements: {
+    gid: string
+    role: string
+    bbox: [number, number, number, number]
+    geometry?: unknown
+  }[]
+}
+
+/**
+ * 从 `goto` 之前就挂上：记住最近一次 `/api/engine/render` 响应里的 manifest。
+ * 命中层认的就是这一份（ADR 0017 的几何权威），取最后一次与它同步。
+ */
+function captureManifest(page: Page): () => RenderManifest | null {
+  let latest: RenderManifest | null = null
+  page.on('response', async (res) => {
+    if (!res.url().includes('/api/engine/render')) return
+    try {
+      const body = (await res.json()) as { manifest?: RenderManifest }
+      if (body?.manifest) latest = body.manifest
+    } catch {
+      /* 不是 JSON 就跳过 */
+    }
+  })
+  return () => latest
+}
+
+/**
+ * 命中层给 bbox 外扩的余量（`pickElementStack` 的 `PAD`，图幅分数），照抄一份；
+ * 再加 1px 盖住换算的亚像素
+ */
+const HIT_PAD_FRAC = 0.004
+
+/**
+ * 其余元素（图例 / 标题 / 轴标题 / 文字 / 刻度……）的命中区，换到屏幕坐标。
+ * 它们按 **manifest 的 bbox** 命中（图例的 bbox 含看不见的边框内边距，比 SVG 上
+ * 画出来的那块大好几个像素），所以这一项**必须**用产品自己的尺子——问的是
+ * 「点这儿会不会选中别的东西」，答案由命中层定义。容器（axes）不排除：点空白
+ * 本来就该落到它身上。
+ */
+function hitBoxes(manifest: RenderManifest, layer: Box): Box[] {
+  const w = layer.x1 - layer.x0
+  const h = layer.y1 - layer.y0
+  const pad = HIT_PAD_FRAC * Math.max(w, h) + 1
+  return manifest.elements
+    .filter((e) => e.gid !== 'figure' && e.role !== 'axes' && e.role !== 'axes3d' && !e.geometry)
+    .map(({ bbox: [x, y, bw, bh] }) => ({
+      x0: layer.x0 + x * w - pad,
+      x1: layer.x0 + (x + bw) * w + pad,
+      y0: layer.y0 + y * h - pad,
+      y1: layer.y0 + (y + bh) * h + pad,
+    }))
+}
+
+/**
+ * 在候选点里挑「空白」：离每块墨迹最远，**且**不落进边框命中带、不落在别的元素
+ * 的 bbox 里。回 null = 没有候选够得上「空白」。
+ */
+function blankSpot(
+  candidates: Pt[],
+  { ink, spines, boxes }: { ink: Ink[]; spines: Pt[]; boxes: Box[] },
+): (Pt & { dist: number; spine: number }) | null {
+  let best: (Pt & { dist: number; spine: number }) | null = null
+  for (const c of candidates) {
+    const spine = Math.min(Infinity, ...spines.map((q) => Math.hypot(q.x - c.x, q.y - c.y)))
+    if (spine <= SPINE_CLEARANCE_PX) continue
+    if (boxes.some((b) => c.x >= b.x0 && c.x <= b.x1 && c.y >= b.y0 && c.y <= b.y1)) continue
+    const dist = Math.min(...ink.map((q) => Math.hypot(q.x - c.x, q.y - c.y) - q.r))
+    if (!best || dist > best.dist) best = { ...c, dist, spine }
+  }
+  return best
+}
+
+/** 一块矩形范围里 39×39 个网格点（不含边界） */
+function gridInside({ x0, x1, y0, y1 }: Box): Pt[] {
+  const pts: Pt[] = []
+  for (let i = 1; i < 40; i++) {
+    for (let j = 1; j < 40; j++) {
+      pts.push({ x: x0 + ((x1 - x0) * i) / 40, y: y0 + ((y1 - y0) * j) / 40 })
+    }
+  }
+  return pts
+}
+
+/** 覆盖层里当前的描示：沿路径的 path 各有几段子路径、几个带底色的矩形选中框 */
+const overlayOf = (page: Page) =>
+  page.evaluate(() => {
+    const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
+    const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
+      .map((p) => p.getAttribute('d') ?? '')
+      .filter((d) => d.startsWith('M'))
+    const rects = svg?.querySelectorAll('rect[fill-opacity]').length ?? 0
+    return {
+      paths: ds.length,
+      subpaths: ds.map((d) => d.match(/M/g)?.length ?? 0),
+      closed: ds.map((d) => d.match(/Z/g)?.length ?? 0),
+      rects,
+    }
+  })
+
 test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async ({ app, page }) => {
   const a = await app()
 
@@ -31,6 +221,8 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
     }
   })
 
+  const manifestOf = captureManifest(page)
+
   await page.goto(a.baseURL)
   // Prompt 09 起，双击素材卡 = 打开这张图（快速编辑工作区），**当场就在图内
   // 编辑态**——不再需要先「加入画布」再点一次「编辑图内元素」。
@@ -40,7 +232,7 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
   await page.waitForTimeout(1500)
   expect(sawGeometry, 'manifest 里应当带上 geometry').toBe(true)
 
-  /** 曲线上的一个精确点 + 它 bbox 的四个角（屏幕坐标） */
+  /** 目标曲线上的一个精确点 + 它的 bbox（屏幕坐标） */
   const probe = await page.evaluate(() => {
     const svg = document.querySelector('[data-element-svg] svg')
     if (!svg) return null
@@ -52,74 +244,43 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
       if (len < 40) continue
       const ctm = path.getScreenCTM()
       if (!ctm) continue
-      const at = (frac: number) => {
-        const p = path.getPointAtLength(len * frac)
-        return { x: p.x * ctm.a + p.y * ctm.c + ctm.e, y: p.x * ctm.b + p.y * ctm.d + ctm.f }
-      }
+      const p = path.getPointAtLength(len / 2)
       const r = path.getBoundingClientRect()
-      if (r.width < 30 || r.height < 30) continue   // 扁平线没有「空白角」可言
-      return { id: g.id, mid: at(0.5), rect: { x: r.x, y: r.y, w: r.width, h: r.height } }
+      if (r.width < 30 || r.height < 30) continue // 扁平线没有「空白角」可言
+      return {
+        id: g.id,
+        mid: { x: p.x * ctm.a + p.y * ctm.c + ctm.e, y: p.x * ctm.b + p.y * ctm.d + ctm.f },
+        box: { x0: r.x, x1: r.x + r.width, y0: r.y, y1: r.y + r.height },
+      }
     }
     return null
   })
   expect(probe, '图里应当有一条有起伏的曲线').not.toBeNull()
-
-  /** 覆盖层里当前有几条沿路径的描示 / 几个带底色的矩形选中框 */
-  const overlay = () =>
-    page.evaluate(() => {
-      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
-      const paths = [...(svg?.querySelectorAll('path[d]') ?? [])].filter(
-        (p) => (p.getAttribute('d') ?? '').startsWith('M'),
-      ).length
-      const rects = svg?.querySelectorAll('rect[fill-opacity]').length ?? 0
-      return { paths, rects }
-    })
+  const ink = await page.evaluate(inkInBrowser)
+  expect(ink.spines.length, '图里应当量得到坐标轴边框').toBeGreaterThan(0)
+  expect(manifestOf(), '应当截到 render 响应里的 manifest').not.toBeNull()
+  const boxes = hitBoxes(manifestOf()!, ink.layer)
 
   // 1) 点在曲线**本身**上 → 沿路径描示，没有带底色的矩形选中框
   await page.mouse.click(probe!.mid.x, probe!.mid.y)
   await page.waitForTimeout(300)
-  const onCurve = await overlay()
+  const onCurve = await overlayOf(page)
   expect(onCurve.paths, '选中曲线应当画一条沿真实路径的 path').toBeGreaterThan(0)
   expect(onCurve.rects, '曲线不该再有带底色的矩形选中框').toBe(0)
 
-  // 2) 点在曲线 bbox 的角上（离曲线很远的空白）→ 选中的不再是曲线
-  //    四个角里挑一个离曲线最远的：曲线不一定从哪个角附近经过
-  const corner = await page.evaluate((p) => {
-    const svg = document.querySelector('[data-element-svg] svg')!
-    const path = svg.querySelector(`[id="${p.id}"] path`) as SVGPathElement
-    const ctm = path.getScreenCTM()!
-    const len = path.getTotalLength()
-    const pts: { x: number; y: number }[] = []
-    for (let i = 0; i <= 200; i++) {
-      const q = path.getPointAtLength((len * i) / 200)
-      pts.push({ x: q.x * ctm.a + q.y * ctm.c + ctm.e, y: q.x * ctm.b + q.y * ctm.d + ctm.f })
-    }
-    const inset = 6
-    const corners = [
-      { x: p.rect.x + inset, y: p.rect.y + inset },
-      { x: p.rect.x + p.rect.w - inset, y: p.rect.y + inset },
-      { x: p.rect.x + inset, y: p.rect.y + p.rect.h - inset },
-      { x: p.rect.x + p.rect.w - inset, y: p.rect.y + p.rect.h - inset },
-    ]
-    let best = corners[0]
-    let bestD = -1
-    for (const c of corners) {
-      const d = Math.min(...pts.map((q) => Math.hypot(q.x - c.x, q.y - c.y)))
-      if (d > bestD) {
-        bestD = d
-        best = c
-      }
-    }
-    return { ...best, dist: bestD }
-  }, probe!)
-  expect(corner.dist, 'bbox 角到曲线应当有足够距离才算「空白」').toBeGreaterThan(20)
+  // 2) 点在曲线 bbox 里离曲线最远的空白（多半在某个角附近）→ 选中的不再是曲线。
+  //    曲线不一定从哪个角附近经过，所以在 bbox 里搜而不是猜角；一条铺满绘图区的
+  //    曲线，它的 bbox 四角就贴着边框——那儿是刻度命中带，点下去是切刻度
+  const corner = blankSpot(gridInside(probe!.box), { ...ink, boxes })
+  expect(corner, '曲线 bbox 里应当有既不在边框命中带里、也不压着别的元素的点').not.toBeNull()
+  expect(corner!.dist, 'bbox 里的空白点到曲线应当有足够距离才算「空白」').toBeGreaterThan(20)
 
-  await page.mouse.click(corner.x, corner.y)
+  await page.mouse.click(corner!.x, corner!.y)
   await page.waitForTimeout(300)
-  const atCorner = await overlay()
+  const atCorner = await overlayOf(page)
   expect(
     atCorner.paths,
-    `点 bbox 空白角（离曲线 ${Math.round(corner.dist)}px）不该还选中曲线`,
+    `点 bbox 空白角（离曲线 ${Math.round(corner!.dist)}px、离边框 ${Math.round(corner!.spine)}px）不该还选中曲线`,
   ).toBe(0)
 })
 
@@ -131,16 +292,23 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
  *
  * marker 的屏幕位置从 matplotlib SVG 的 `<use>` 上量（散点的 SVG 是一个 `<defs>`
  * 模板 + 每颗一个 `<use>`），不猜 bbox 中点。
+ *
+ * 「空白」要同时避开 marker、拟合线**与边框命中带**：整组 bbox 的角落往往贴着
+ * 边框，而命中带按屏幕像素定宽——图显示得越小，带盖住 bbox 的份额越大。
+ * 「适应画布」成为模式之后（审计 B01）快速编辑里的图按侧栏展开后的舞台适配，
+ * 比此前小了一截，原先那个「空白点」就落进了下边框的带里：那一下切了刻度、
+ * 选区照旧，于是 60 段子路径原样留在覆盖层（PR #337 posix-e2e）。
  */
 test('图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命中', async ({ app, page }) => {
   const a = await app()
+  const manifestOf = captureManifest(page)
   await page.goto(a.baseURL)
   await page.getByText('Fig2_correlation.pdf').dblclick({ timeout: 30_000 })
   const svgWrap = page.locator('[data-element-svg]').first()
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
 
-  /** 每颗 marker 的屏幕中心 + 拟合线上的采样点 */
+  /** 每颗 marker 的屏幕中心 */
   const probe = await page.evaluate(() => {
     const svg = document.querySelector('[data-element-svg] svg')
     if (!svg) return null
@@ -152,39 +320,20 @@ test('图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命
       const r = u.getBoundingClientRect()
       return { x: r.x + r.width / 2, y: r.y + r.height / 2, r: Math.max(r.width, r.height) / 2 }
     })
-    const avoid: { x: number; y: number }[] = []
-    for (const g of svg.querySelectorAll('[id^="axes_"]')) {
-      if (!/\.lines_\d+$/.test(g.id)) continue
-      const path = g.querySelector('path') as SVGPathElement | null
-      if (!path?.getTotalLength) continue
-      const ctm = path.getScreenCTM()
-      if (!ctm) continue
-      const len = path.getTotalLength()
-      for (let i = 0; i <= 200; i++) {
-        const q = path.getPointAtLength((len * i) / 200)
-        avoid.push({ x: q.x * ctm.a + q.y * ctm.c + ctm.e, y: q.x * ctm.b + q.y * ctm.d + ctm.f })
-      }
-    }
-    return { id: group.id, markers, avoid }
+    return { id: group.id, markers }
   })
   expect(probe, '图里应当有一组散点').not.toBeNull()
   expect(probe!.markers.length).toBeGreaterThan(10)
-
-  const overlay = () =>
-    page.evaluate(() => {
-      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
-      const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
-        .map((p) => p.getAttribute('d') ?? '')
-        .filter((d) => d.startsWith('M'))
-      const rects = svg?.querySelectorAll('rect[fill-opacity]').length ?? 0
-      return { paths: ds.length, subpaths: ds.map((d) => d.match(/M/g)?.length ?? 0), rects }
-    })
+  const ink = await page.evaluate(inkInBrowser)
+  expect(ink.spines.length, '图里应当量得到坐标轴边框').toBeGreaterThan(0)
+  expect(manifestOf(), '应当截到 render 响应里的 manifest').not.toBeNull()
+  const boxes = hitBoxes(manifestOf()!, ink.layer)
 
   // 1) 点在某一颗 marker 的正中 → 一条 path 里有「每颗一段」的闭合子路径，没有矩形框
   const m = probe!.markers[Math.floor(probe!.markers.length / 2)]
   await page.mouse.click(m.x, m.y)
   await page.waitForTimeout(300)
-  const onMarker = await overlay()
+  const onMarker = await overlayOf(page)
   expect(onMarker.rects, '散点不该再有罩住整组的矩形选中框').toBe(0)
   expect(onMarker.paths, '选中散点应当画出沿 marker 轮廓的 path').toBeGreaterThan(0)
   expect(
@@ -192,31 +341,17 @@ test('图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命
     '子路径数应当等于 marker 数（每颗一条），且全部收在一个 path 节点里',
   ).toBe(probe!.markers.length)
 
-  // 2) 点在整组 bbox 里、离每颗 marker 与拟合线都最远的空白处 → 不再选中散点
-  const gap = (() => {
-    const xs = probe!.markers.map((p) => p.x)
-    const ys = probe!.markers.map((p) => p.y)
-    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
-    let best = { x: x0, y: y0, dist: -1 }
-    for (let i = 1; i < 40; i++) {
-      for (let j = 1; j < 40; j++) {
-        const c = { x: x0 + ((x1 - x0) * i) / 40, y: y0 + ((y1 - y0) * j) / 40 }
-        const d = Math.min(
-          ...probe!.markers.map((q) => Math.hypot(q.x - c.x, q.y - c.y) - q.r),
-          ...probe!.avoid.map((q) => Math.hypot(q.x - c.x, q.y - c.y)),
-        )
-        if (d > best.dist) best = { ...c, dist: d }
-      }
-    }
-    return best
-  })()
-  expect(gap.dist, '散点之间应当有一块足够大的空白才算得上「空白」').toBeGreaterThan(12)
-  await page.mouse.click(gap.x, gap.y)
+  // 2) 点在整组 bbox 里、离每颗 marker 与拟合线都最远、又不在边框命中带里、
+  //    不压着图例的空白处 → 不再选中散点
+  const gap = blankSpot(gridInside(bboxOf(probe!.markers)), { ...ink, boxes })
+  expect(gap, '整组 bbox 里应当有既不在边框命中带里、也不压着别的元素的点').not.toBeNull()
+  expect(gap!.dist, '散点之间应当有一块足够大的空白才算得上「空白」').toBeGreaterThan(12)
+  await page.mouse.click(gap!.x, gap!.y)
   await page.waitForTimeout(300)
-  const atGap = await overlay()
+  const atGap = await overlayOf(page)
   expect(
     Math.max(0, ...atGap.subpaths),
-    `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap.dist)}px）不该还选中整组散点`,
+    `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap!.dist)}px、离边框 ${Math.round(gap!.spine)}px）不该还选中整组散点`,
   ).toBeLessThan(probe!.markers.length)
 })
 
@@ -271,6 +406,7 @@ test('图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那�
   page,
 }) => {
   const a = await app({ figures: markerOnlyLibrary() })
+  const manifestOf = captureManifest(page)
   await page.goto(a.baseURL)
   await page.getByText('Fig_markers.pdf').dblclick({ timeout: 30_000 })
   const svgWrap = page.locator('[data-element-svg]').first()
@@ -293,27 +429,16 @@ test('图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那�
   })
   expect(probe, '图里应当有一条只有 marker 的曲线').not.toBeNull()
   expect(probe!.markers.length).toBe(24)
-
-  const overlay = () =>
-    page.evaluate(() => {
-      const svg = document.querySelector('[data-overlay-svg]') as SVGSVGElement | null
-      const ds = [...(svg?.querySelectorAll('path[d]') ?? [])]
-        .map((p) => p.getAttribute('d') ?? '')
-        .filter((d) => d.startsWith('M'))
-      const rects = svg?.querySelectorAll('rect[fill-opacity]').length ?? 0
-      return {
-        paths: ds.length,
-        subpaths: ds.map((d) => d.match(/M/g)?.length ?? 0),
-        closed: ds.map((d) => d.match(/Z/g)?.length ?? 0),
-        rects,
-      }
-    })
+  const ink = await page.evaluate(inkInBrowser)
+  expect(ink.spines.length, '图里应当量得到坐标轴边框').toBeGreaterThan(0)
+  expect(manifestOf(), '应当截到 render 响应里的 manifest').not.toBeNull()
+  const boxes = hitBoxes(manifestOf()!, ink.layer)
 
   // 1) 点在某一颗 marker 的正中 → 一条 path、每颗一段**闭合**子路径、没有矩形框
   const m = probe!.markers[Math.floor(probe!.markers.length / 2)]
   await page.mouse.click(m.x, m.y)
   await page.waitForTimeout(300)
-  const onMarker = await overlay()
+  const onMarker = await overlayOf(page)
   expect(onMarker.rects, '只有 marker 的曲线不该再有罩住整组的矩形选中框').toBe(0)
   expect(onMarker.paths, '选中后应当画出沿 marker 轮廓的 path').toBeGreaterThan(0)
   const k = onMarker.subpaths.indexOf(Math.max(...onMarker.subpaths))
@@ -324,27 +449,15 @@ test('图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那�
     probe!.markers.length,
   )
 
-  // 2) 点在整组 bbox 里、离每颗 marker 最远的空白处 → 不再选中这条曲线
-  const gap = (() => {
-    const xs = probe!.markers.map((p) => p.x)
-    const ys = probe!.markers.map((p) => p.y)
-    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
-    let best = { x: x0, y: y0, dist: -1 }
-    for (let i = 1; i < 40; i++) {
-      for (let j = 1; j < 40; j++) {
-        const c = { x: x0 + ((x1 - x0) * i) / 40, y: y0 + ((y1 - y0) * j) / 40 }
-        const d = Math.min(...probe!.markers.map((q) => Math.hypot(q.x - c.x, q.y - c.y) - q.r))
-        if (d > best.dist) best = { ...c, dist: d }
-      }
-    }
-    return best
-  })()
-  expect(gap.dist, 'marker 之间应当有一块足够大的空白才算得上「空白」').toBeGreaterThan(12)
-  await page.mouse.click(gap.x, gap.y)
+  // 2) 点在整组 bbox 里、离每颗 marker 最远、又不在边框命中带里的空白处 → 不再选中这条曲线
+  const gap = blankSpot(gridInside(bboxOf(probe!.markers)), { ...ink, boxes })
+  expect(gap, '整组 bbox 里应当有既不在边框命中带里、也不压着别的元素的点').not.toBeNull()
+  expect(gap!.dist, 'marker 之间应当有一块足够大的空白才算得上「空白」').toBeGreaterThan(12)
+  await page.mouse.click(gap!.x, gap!.y)
   await page.waitForTimeout(300)
-  const atGap = await overlay()
+  const atGap = await overlayOf(page)
   expect(
     Math.max(0, ...atGap.subpaths),
-    `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap.dist)}px）不该还选中整条曲线`,
+    `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap!.dist)}px、离边框 ${Math.round(gap!.spine)}px）不该还选中整条曲线`,
   ).toBeLessThan(probe!.markers.length)
 })

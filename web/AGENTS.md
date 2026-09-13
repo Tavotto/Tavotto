@@ -527,6 +527,17 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * 看护：`lib/tickSides.test.ts`（几何 + 映射全状态扫描）、`canvas/spineZones.test.tsx`
   （命中层：hover / 点击 / 优先级 / zoom / 触控 / 旋转 / 偏出去的边框）、
   `inspector/tickTaskCard.test.tsx`（示意图两带 + 四档 + 显示边 + 锚点）。
+* **e2e 里「点图内空白」的点必须避开这条带**（2026-09-13，#337 posix-e2e 真红）：
+  带按屏幕像素定宽，图显示得越小它盖住绘图区的份额越大；「适应画布」成为模式
+  之后快速编辑里的图按侧栏展开后的舞台适配、比此前小了一截，
+  `e2e/element-path-selection.spec.ts` 原先在 marker 包围盒里搜出来的「空白点」
+  就落进了下边框的带里——那一下是切刻度、选区照旧，60 段子路径原样留在覆盖层。
+  空白点现在由 `blankSpot` 统一挑：离 marker / 曲线最远**且**离边框
+  > `ZONE_PX.band` + 4px（e2e 的 tsconfig 不解析 `@/`，常量照抄一份并点名出处；
+  产品把带加宽只会让它红，不会假绿）、**且**不压着别的元素的 bbox——那一项按
+  render 响应里 manifest 的 bbox 算（图例的 bbox 含看不见的边框内边距，比 SVG 上画
+  出来的大好几个像素），曲线那条原先猜的「离曲线最远的 bbox 角」正是图例，bbox
+  命中的变异照样绿。墨迹与边框仍从 SVG 的 DOM 上量，与命中层两把尺子。
 
 ## 多选浮动栏与共享排列参照（2026-09-02，ADR 0036）
 
