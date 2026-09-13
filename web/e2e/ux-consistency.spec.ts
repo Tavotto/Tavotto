@@ -187,15 +187,15 @@ test('流程 B：选中子图即可设四边刻度、方向与次刻度，示意
   await panel.getByRole('radio', { name: '朝内' }).click()
   await expectDirection('bottom', 'in')
 
-  // --- 切到 Y 刻度，设成内外 ---
-  await panel.getByRole('radio', { name: 'Y 刻度' }).click()
+  // --- 切到 Y 刻度（「X / Y 刻度」是看哪条轴的页签，方向才是取值），设成内外 ---
+  await panel.getByRole('tab', { name: 'Y 刻度' }).click()
   await panel.getByRole('radio', { name: '内外' }).click()
   await expectDirection('left', 'inout')
   // X 不受影响（两个轴各写各的 ticks 元素）
   await expectDirection('bottom', 'in')
 
   // --- 开 X 次刻度：示意图上出现更短的次刻度 ---
-  await panel.getByRole('radio', { name: 'X 刻度' }).click()
+  await panel.getByRole('tab', { name: 'X 刻度' }).click()
   await expect(panel.locator('[data-tick-minor="bottom"]')).toHaveCount(0)
   await panel.getByRole('switch', { name: 'X 轴的次刻度' }).click()
   await expect(panel.locator('[data-tick-minor="bottom"]')).toHaveCount(1, { timeout: 15_000 })

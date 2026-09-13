@@ -378,13 +378,15 @@ export function StyleDialog() {
                   <div key={group} data-style-group={group}>
                     <p className="mb-1 type-section">{styleGroupLabel(group)}</p>
                     <div className="flex flex-col gap-0.5">
-                      {list.map((en) => (
+                      {list.map((en, i) => (
                         <div key={`${en.role}.${en.prop}`} className="flex h-7 items-center gap-2">
+                          {/* 角色名只在这一串的第一行写，下面同角色的行留空——
+                              「轴标题 / 轴标题 / 轴标题」逐行重复正是审计说的读不出结构 */}
                           <span
                             className="w-16 shrink-0 truncate text-xs text-ink-3"
                             title={styleRoleLabel(en.role)}
                           >
-                            {styleRoleLabel(en.role)}
+                            {i === 0 || list[i - 1].role !== en.role ? styleRoleLabel(en.role) : ''}
                           </span>
                           <span
                             className="w-20 shrink-0 truncate text-xs text-ink-2"
