@@ -137,9 +137,9 @@ describe('NativeConfirmDialog', () => {
     render()
     const shown = text()
     expect(shown).toContain('项目自己的 Python')
-    expect(shown).toContain('相同的文件权限')
-    expect(shown).toContain('只接管当前 Python 进程中的 Matplotlib Figure')
-    expect(shown).toContain('仅运行你信任的代码')
+    expect(shown).toContain('权限与在终端里运行时相同')
+    expect(shown).toContain('只接管其中的 Matplotlib 图')
+    expect(shown).toContain('只运行你信任的代码')
   })
 
   it('「记住此项目和此 Python」默认不勾，不勾就 remember=false', async () => {
@@ -231,7 +231,7 @@ describe('NativeConfirmDialog', () => {
       ],
     })
     render()
-    expect(text()).toContain('已经被处理过')
+    expect(text()).toContain('已被处理')
     expect(buttonWith('运行并连接'), '作废之后还留着一个点不动的按钮').toBeUndefined()
     const close = buttonWith('关闭')
     expect(close, '缺少能关掉它的出口').toBeTruthy()

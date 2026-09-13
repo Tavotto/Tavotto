@@ -109,7 +109,7 @@ describe('pasteObjects 读剪贴板失败', () => {
     const l = await load()
 
     expect(await l.clipboard.pasteObjects()).toBe(false)
-    expect(status(l)).toBe('无法读取剪贴板（浏览器权限被拒）')
+    expect(status(l)).toBe('无法读取剪贴板。浏览器未授权。')
     expect(l.useUiStore.getState().statusTone).toBe('error')
   })
 

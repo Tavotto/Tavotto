@@ -182,7 +182,7 @@ describe('Mod+↑ / Mod+↓ 在文字框里', () => {
       })
     })
     select(1, 2)
-    clickButton('上标（cm⁻¹ 这类）')
+    clickButton('上标')
     await nextFrame()
 
     expect({ text: currentText(), start: ta().selectionStart, end: ta().selectionEnd }).toEqual(byKey)
@@ -307,6 +307,6 @@ describe('科学文本与字形提示', () => {
     setText('×10⁵')
     const missing = container.textContent?.includes('导出后是方框')
     expect(missing).toBe(false)
-    expect(container.textContent).toContain('另一张字体')
+    expect(container.textContent).toContain('另一种字体')
   })
 })

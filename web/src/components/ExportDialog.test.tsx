@@ -1129,7 +1129,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     await openDialog()
     expect(radios()[0].getAttribute('aria-checked')).toBe('true')
     expect(text()).toContain('导出前检查通过')
-    expect(text()).toContain('只算这张图')
+    expect(text()).toContain('仅此图')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])

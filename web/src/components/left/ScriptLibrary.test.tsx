@@ -163,7 +163,7 @@ describe('脚本区列表', () => {
     expect(text).toContain('linked.py')
     expect(text).toContain('conftest.py')
     // 分组文案：尚未运行 vs 输出名称只能在运行后确定 vs 已关联数
-    expect(text).toContain('这个脚本尚未运行')
+    expect(text).toContain('脚本尚未运行')
     expect(text).toContain('输出名称只能在运行后确定')
     expect(text).toContain('已关联 2 张图')
   })

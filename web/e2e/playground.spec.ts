@@ -133,7 +133,7 @@ test('黄金路径：案例库 → 查看代码 → 启动 → 真 Pyodide → �
   // 单文件边界在上传前就写明；隐私说明照旧
   await expect(page.getByText('挑一张图，亲手改一次。')).toBeVisible()
   await expect(page.locator('[data-example-card]')).toHaveCount(3)
-  await expect(page.getByText(/不会把它上传到服务器/)).toBeVisible()
+  await expect(page.getByText(/不会上传到服务器/)).toBeVisible()
   await expect(page.getByText('已有一个独立脚本？')).toBeVisible()
   await expect(page.getByText(/仅适合不依赖本地数据/)).toBeVisible()
   const kineticsCard = page.locator('[data-example-card="kinetics"]')
@@ -541,7 +541,7 @@ test('死循环：脚本阶段硬超时，Worker 被杀，错误诚实', async (
     mimeType: 'text/x-python',
     buffer: Buffer.from('while True:\n    pass\n', 'utf-8'),
   })
-  await expect(page.getByText(/超过了浏览器 playground 的时限/)).toBeVisible({
+  await expect(page.getByText(/超过浏览器 playground 的时限/)).toBeVisible({
     timeout: 400_000,
   })
   // 失败页三出口：返回案例库 / 试试主推案例 / 下载桌面版

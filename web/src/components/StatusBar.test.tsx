@@ -127,7 +127,7 @@ describe('CanvasHud 读数', () => {
     useUiStore.setState({ tool: 'rect' })
     mount()
     expect(readings()).toBeNull()
-    expect(container.textContent).toBe('拖动画出矩形；Esc 取消')
+    expect(container.textContent).toBe('拖动绘制矩形；Esc 取消')
     expect(container.firstElementChild!.getAttribute('aria-hidden')).toBe('true')
   })
 

@@ -293,7 +293,7 @@ describe('绝不替用户决定', () => {
   it('试运行只有点了才跑，而且点之前先说清它会运行脚本', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Mystery.pdf')!
-    expect(row.textContent).toContain('Tavotto 将运行这个脚本')
+    expect(row.textContent).toContain('Tavotto 会运行这个脚本')
     expect(mockProbe).not.toHaveBeenCalled()
     await clickIn(row, '试运行并连接')
     expect(mockProbe).toHaveBeenCalledWith('dyn.py')
@@ -493,7 +493,7 @@ describe('项目级状态', () => {
         project: { writable: true, registry_valid: false, scan_ok: true, can_rescan: true },
       }),
     )
-    expect(dialog().textContent).toContain('读不回来')
+    expect(dialog().textContent).toContain('无法读取')
     expect(dialog().textContent).not.toContain('只读')
   })
 })
@@ -615,7 +615,7 @@ describe('手工映射：图名列表', () => {
     const input = dialog().querySelector<HTMLInputElement>('#stems-ok\\.py')!
     expect(input).not.toBeNull()
     const label = dialog().querySelector(`label[for="stems-ok.py"]`)
-    expect(label?.textContent).toBe('这个脚本画出哪些图')
+    expect(label?.textContent).toBe('此脚本画出的图')
   })
 
   it('写入的是解析后的那几个名字', async () => {

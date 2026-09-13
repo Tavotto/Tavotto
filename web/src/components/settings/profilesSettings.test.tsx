@@ -378,7 +378,7 @@ describe('规范页把边界与快照摊开（审计 T41）', () => {
     await act(async () => {
       byText('本项目用这套规范')!.click()
     })
-    const head = buttons().find((b) => b.textContent?.includes('本项目实际用来检查的规则'))!
+    const head = buttons().find((b) => b.textContent?.includes('本项目实际检查的规则'))!
     expect(head.getAttribute('aria-expanded')).toBe('false') // 排障材料，默认折叠
     await act(async () => head.click())
     expect(text()).toContain('快照')

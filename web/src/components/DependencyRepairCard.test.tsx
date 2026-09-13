@@ -508,7 +508,7 @@ describe('英文界面', () => {
     await render()
     expect(text()).toContain('This project is missing lmfit')
     await click('Install into project environment')
-    expect(text()).toContain('This modifies this project’s existing Python environment.')
+    expect(text()).toContain('This modifies the project’s Python environment.')
     // 整张卡片里一个 CJK 字符都不该有
     expect(text()).not.toMatch(/[一-鿿]/)
   })

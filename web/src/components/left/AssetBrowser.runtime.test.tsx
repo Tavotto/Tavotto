@@ -152,7 +152,7 @@ describe('RuntimeAssetCard', () => {
     useRuntimeAssetStore.setState({ assets: [asset({ status: 'possibly_stale' })] })
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
-    expect(card.textContent).toContain('可能已变化')
+    expect(card.textContent).toContain('可能有变')
     expect(card.textContent).toContain('重新运行')
   })
 })

@@ -26,7 +26,7 @@ describe('backendErrorText', () => {
     expect(backendErrorText(e)).toBe('目录不存在：/gone')
 
     await i18n.changeLanguage('en-US')
-    expect(backendErrorText(e)).toBe('Folder does not exist: /gone')
+    expect(backendErrorText(e)).toBe('Folder doesn’t exist: /gone')
   })
 
   it('同一个 error 对象在切语言后给出新语言的文案（不缓存翻译结果）', async () => {
@@ -62,6 +62,6 @@ describe('backendErrorText', () => {
     const e = err('目录不存在: /gone', { code: 'dir_missing' })
     expect(backendErrorText(e)).toContain('目录不存在')
     await i18n.changeLanguage('en-US')
-    expect(backendErrorText(e)).toContain('Folder does not exist')
+    expect(backendErrorText(e)).toContain('Folder doesn’t exist')
   })
 })

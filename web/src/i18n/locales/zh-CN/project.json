@@ -3,12 +3,12 @@
     "confirmCreate": "在此新建",
     "confirmOpen": "打开此目录",
     "goTo": "去 {{path}}",
-    "goToPath": "跳转到该路径",
+    "goToPath": "前往此路径",
     "nameError": {
-      "control_char": "名字里有不可见的特殊字符，请重新输入。",
-      "dot_only": "「.」和「..」是目录本身和上一级，不能当项目名。",
+      "control_char": "名字里有不可见的字符，请重新输入。",
+      "dot_only": "「.」和「..」不能用作项目名。",
       "empty": "请输入项目名。",
-      "illegal_char": "项目名是一级目录的名字，不能包含 < > : \" / \\ | ? * 这些字符。",
+      "illegal_char": "项目名不能包含 < > : \" / \\ | ? *。",
       "reserved_name": "这是系统保留的名字，换一个。",
       "too_long": "项目名太长了，请缩短一些。",
       "trailing_dot": "项目名不能以句点结尾。",
@@ -25,10 +25,10 @@
   },
   "figurePicker": {
     "addToCanvas": "添加到画布",
-    "description_other": "这个脚本产出 {{count}} 张图，选择要打开的那张",
-    "empty": "这个脚本还没有登记任何图。到素材库的「脚本」区运行它试试。",
-    "listAria": "这个脚本产出的图",
-    "needsRun": "先运行发现",
+    "description_other": "脚本产出 {{count}} 张图，选择要打开的一张",
+    "empty": "脚本还没有登记任何图。到素材库的「脚本」区运行它。",
+    "listAria": "脚本产出的图",
+    "needsRun": "先运行一次",
     "runtimeBadge": "运行时图",
     "title": "选择一张图——{{script}}"
   },
@@ -37,9 +37,9 @@
     "located": "已定位到 {{name}}",
     "noProject": "还没有打开的项目，无法定位面板",
     "openFailed": "打不开项目：{{error}}",
-    "panelMissing": "没找到面板 {{stem}}——脚本可能还没跑出产物，或它在别的图库里",
+    "panelMissing": "没找到面板 {{stem}}——脚本可能还没产出，或它在别的图库里",
     "projectOpened": "已打开项目 {{name}}",
-    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次即可"
+    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。"
   },
   "picker": {
     "backToCurrent": "返回当前项目",
@@ -51,7 +51,7 @@
     "missingGroup": "已不存在的目录",
     "missingGroupCollapse": "收起已不存在的目录",
     "missingGroupExpand": "展开已不存在的目录",
-    "missingHint": "这些目录已经不在磁盘上；从列表移除不会删除任何文件。",
+    "missingHint": "目录已不在磁盘上；从列表移除不会删除文件。",
     "nativeCreateTitle": "选择新项目所在的上级目录",
     "nativePickerTitle": "选择论文图所在目录",
     "openButton": "打开",
@@ -65,19 +65,19 @@
     "recentLabel": "最近项目",
     "regionLabel": "选择项目",
     "removeAllMissing": "全部移除",
-    "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
-    "removeFromListTitle": "从列表移除（不删除磁盘内容）",
-    "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。",
+    "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
+    "removeFromListTitle": "从列表移除，不删文件",
+    "tagline": "项目是论文图所在的目录。选一个开始排版。",
     "tutorial": {
       "start": "用示例了解 Tavotto",
       "resume": "继续教程",
       "restart": "再看一遍教程"
     },
     "tutorialBadge": "教程项目",
-    "tutorialHint": "一份离线的示例项目，随便改、随时重来，不会碰你自己的项目。",
+    "tutorialHint": "离线示例项目，随便改、随时重来，不会碰你自己的项目。",
     "tutorialLabel": "新手教程",
     "tutorialOpening": "准备中…",
-    "tutorialUnavailable": "这份安装里的教程资源不完整，请重新安装 Tavotto。"
+    "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
   },
   "switcher": {
     "allProjects": "全部项目…",
@@ -85,7 +85,7 @@
     "create": "新建项目…",
     "current": "当前项目",
     "newTabLabel": "在新标签页打开",
-    "newTabTip": "在新标签页打开（可在那边切到另一个项目）",
+    "newTabTip": "在新标签页打开，可切到另一个项目",
     "openInNewTab": "在新标签页打开本项目",
     "opened": "已打开",
     "readOnlySuffix": " · 只读",

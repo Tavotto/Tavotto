@@ -20,13 +20,13 @@
     "tutorial": "Tutorial"
   },
   "key": {
-    "copyPaste": "Copy / paste objects (works across documents)",
-    "delete": "Delete objects; in figure editing this hides the element instead (restorable)",
+    "copyPaste": "Copy / paste objects across documents",
+    "delete": "Delete objects; in figure editing, hides the element instead — restorable.",
     "duplicate": "Duplicate the selection in place",
     "enter": "Edit the selection: text enters editing, parameterizable panels enter figure editing",
     "escape": "Step out one level: text editing → figure element → editing mode → clear selection",
     "export": "Export",
-    "freeResize": "Free (non-proportional) resize",
+    "freeResize": "Non-proportional resize",
     "help": "This help",
     "newline": "Insert a line break; plain ⏎ commits",
     "nudge": "Nudge 0.5mm / 5mm",
@@ -34,7 +34,7 @@
     "pan": "Pan the canvas",
     "saveDocument": "Save this document",
     "saveLayout": "Save as canvas file",
-    "script": "Superscript / subscript (inside the properties panel's text box)",
+    "script": "Superscript / subscript (in the properties panel text box)",
     "selectAll": "Select all",
     "tools": "Select / text / arrow / rectangle / ellipse / line",
     "undoRedo": "Undo / redo",
@@ -45,8 +45,8 @@
     "zoomPresets": "100% / fit canvas",
     "multiSelect": "Add / remove objects or figure elements from the selection",
     "quickEdit": "Open the quick-edit menu for the object",
-    "tutorialPause": "Pause the tutorial (when the tutorial card has focus)",
-    "cycleOverlap": "Cycle the selection through overlapping figure elements (both axes of a twin-axis plot)"
+    "tutorialPause": "Pause the tutorial (tutorial card focused)",
+    "cycleOverlap": "Cycle the selection through overlapping figure elements"
   },
   "title": "Keyboard shortcuts",
   "search": "Search shortcuts…",

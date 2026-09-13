@@ -160,7 +160,7 @@ describe('作用范围与影响', () => {
     expect(entries.compareDocumentPosition(scopeArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     for (const gone of ['面板', '选区', '全文档']) expect(labels.join(' ')).not.toContain(gone)
     expect(text()).toContain('应用到当前图')
-    expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain('没有会被改到的图')
+    expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain('没有图会被改动')
   })
 })
 

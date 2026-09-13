@@ -148,7 +148,7 @@ describe('GuidedTask', () => {
       overrides: [{ gid: task.targetGid, prop: 'fontsize', value: 12 }],
       verdict: 'unchanged',
     })
-    expect(container.textContent).toContain('图已经改变')
+    expect(container.textContent).toContain('图已改变')
     expect(container.textContent).toContain('kinetics.py 一个字也没动')
   })
 
@@ -157,7 +157,7 @@ describe('GuidedTask', () => {
       overrides: [{ gid: task.targetGid, prop: 'fontsize', value: 12 }],
       verdict: 'unavailable',
     })
-    expect(container.textContent).toContain('图已经改变')
+    expect(container.textContent).toContain('图已改变')
     expect(container.textContent).not.toContain('一个字也没动')
   })
 

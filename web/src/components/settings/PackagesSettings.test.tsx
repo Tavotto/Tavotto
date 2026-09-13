@@ -278,7 +278,7 @@ describe('两份清单', () => {
     )
     // 名字里说清是**这个项目的**那一个
     const env = document.querySelector('[data-packages-env]')!
-    expect(env.textContent).toContain('这个项目的')
+    expect(env.textContent).toContain('本项目的')
   })
 
   it('环境还没创建：没有重建钮，也没有那句指着它的说明', async () => {

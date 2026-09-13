@@ -147,6 +147,6 @@ describe('FigurePickerDialog', () => {
     const rows = Array.from(document.querySelectorAll('li'))
     expect(rows[0].querySelector('button')).not.toBeNull()
     expect(rows[1].querySelector('button')).toBeNull()
-    expect(rows[1].textContent).toContain('先运行发现')
+    expect(rows[1].textContent).toContain('先运行一次')
   })
 })

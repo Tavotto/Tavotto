@@ -169,9 +169,9 @@ describe('项目名必须是一个路径分量', () => {
     await act(async () => button('新建项目')!.click())
     expect(alertText()).toBeNull() // 空着不算错
     typeInto(nameInput(), '../other')
-    expect(alertText()).toContain('一级目录')
+    expect(alertText()).toContain('不能包含')
     typeInto(nameInput(), '..')
-    expect(alertText()).toContain('上一级')
+    expect(alertText()).toContain('不能用作项目名')
     typeInto(nameInput(), 'CON')
     expect(alertText()).toContain('保留')
   })
@@ -192,7 +192,7 @@ describe('项目名必须是一个路径分量', () => {
     await act(async () => button('新建项目')!.click())
     typeInto(nameInput(), 'nested/name')
     expect(button('在此新建')!.disabled).toBe(true)
-    expect(alertText()).toContain('一级目录')
+    expect(alertText()).toContain('不能包含')
 
     typeInto(nameInput(), 'my_paper_figures')
     expect(button('在此新建')!.disabled).toBe(false)

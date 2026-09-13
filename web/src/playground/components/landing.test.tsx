@@ -36,7 +36,7 @@ describe('PlaygroundLanding', () => {
   it('主标题与副题可见，案例库是第一主角', () => {
     renderLanding()
     expect(container.textContent).toContain('挑一张图，亲手改一次。')
-    expect(container.textContent).toContain('运行和编辑都在你的浏览器里完成')
+    expect(container.textContent).toContain('运行、编辑都在浏览器里')
     const cards = container.querySelectorAll('[data-example-card]')
     expect(cards).toHaveLength(3)
   })

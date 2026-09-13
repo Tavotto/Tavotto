@@ -81,7 +81,7 @@ describe('ExampleCodeSheet', () => {
   it('「用这个案例开始」交出正确的 filename 与 source', () => {
     const { onStart } = renderSheet()
     const start = [...dialog()!.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('用这个案例开始'),
+      b.textContent?.includes('以此案例开始'),
     )!
     act(() => start.click())
     expect(onStart).toHaveBeenCalledTimes(1)

@@ -165,7 +165,7 @@ describe('409 之后的出口', () => {
     await open()
     await clickSave()
     expect(buttonByText('仍然覆盖')).toBeUndefined()
-    expect(dialog().textContent).toContain('写入磁盘失败')  // backendErrorText 按 code 翻的那一句
+    expect(dialog().textContent).toContain('无法写入磁盘')  // backendErrorText 按 code 翻的那一句
   })
 })
 
@@ -209,12 +209,12 @@ describe('另存 / 打开是两屏', () => {
 
   it('名字撞上已有文档时当场说出来（写盘之前）', async () => {
     await open(['Fig 1'], 'save')
-    expect(dialog().textContent).toContain('已经有一份文档')
+    expect(dialog().textContent).toContain('已有同名文档')
     expect(mockSave).not.toHaveBeenCalled()
   })
 
   it('名字没撞上就不吓唬用户', async () => {
     await open(['Something Else'], 'save')
-    expect(dialog().textContent).not.toContain('已经有一份文档')
+    expect(dialog().textContent).not.toContain('已有同名文档')
   })
 })

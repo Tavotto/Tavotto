@@ -218,7 +218,7 @@ describe('写回成功的回执', () => {
     render()
     await confirm()
     expect(text()).toContain('已更新以下文件')
-    expect(text()).toContain('已通过干净重放校验（17 个元素一致）')
+    expect(text()).toContain('已通过干净重放校验，17 个元素一致')
     expect(text()).toContain(OK_BODY.backup_dir)
   })
 
@@ -287,7 +287,7 @@ describe('确认页的信息结构', () => {
   it('短摘要说清「多少项修改」与「写进哪张图」，不必读正文', async () => {
     render()
     // 1 条 override、面板 Fig1.pdf
-    expect(text()).toContain('将把 1 项修改写回「Fig1」的原始文件')
+    expect(text()).toContain('把 1 项修改写回「Fig1」的原始文件')
   })
 
   it('目标文件成清单列出，一眼能数出覆盖的是哪几个', async () => {
@@ -311,7 +311,7 @@ describe('确认页的信息结构', () => {
       ),
     )
     // 1 + 2 项修改、2 张图
-    expect(text()).toContain('将把 3 项修改写回 2 张图的原始文件')
+    expect(text()).toContain('把 3 项修改写回 2 张图的原始文件')
     const items = [...document.body.querySelectorAll('li')].map((li) => li.textContent)
     expect(items).toEqual(
       expect.arrayContaining(['Fig1.pdf', 'Fig1.png', 'Fig2.pdf', 'Fig2.png']),
@@ -346,7 +346,7 @@ describe('确认页的信息结构', () => {
     // 恢复路径仍然完整可查：历史 + 备份目录 + 脚本不受影响
     expect(body).toContain('历史')
     expect(body).toContain('备份目录')
-    expect(body).toContain('脚本不会被改动')
+    expect(body).toContain('脚本不会改动')
   })
 
   it('主动作按钮直说「写回原始文件」，不是含糊的「确认」', () => {

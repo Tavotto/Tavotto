@@ -44,7 +44,7 @@ async function runAndDiscover(page: Page, a: RunningApp) {
   // 素材库分「图」「脚本」两个区；show-only 脚本在脚本区可见、可运行
   await expect(page.getByRole('heading', { name: '脚本' })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('show_only.py').first()).toBeVisible()
-  await expect(page.getByText('这个脚本尚未运行')).toBeVisible()
+  await expect(page.getByText('脚本尚未运行')).toBeVisible()
 
   // 显式用户动作才执行（总纲原则 5）：点「运行并发现图」
   await page.getByRole('button', { name: '运行 show_only.py 并发现图' }).click()

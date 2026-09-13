@@ -66,7 +66,7 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
   ).toBeVisible({ timeout: left() })
 
   // ---- Step 2：选一个文字（高亮环套着图里的标题；点它的中心 = 真实选中） ----
-  await expect(coachmark(page)).toContainText('选一个文字')
+  await expect(coachmark(page)).toContainText('选中文字')
   const ring = page.locator('[data-onboarding-ring]')
   await expect(ring).toBeVisible()
   const rb = (await ring.boundingBox())!
@@ -87,7 +87,7 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
     .locator('[data-issue-row][data-issue-rule="font-below-absolute-floor"][data-issue-object="p2"]')
     .first()
   await expect(row).toBeVisible({ timeout: 30_000 })
-  await expect(coachmark(page)).toContainText('点这一条问题')
+  await expect(coachmark(page)).toContainText('点击问题')
   await row.click()
 
   // ---- Step 5：原图导出（面板开着时 coachmark 在面板里） ----
@@ -246,7 +246,7 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
     page.locator('[data-exit-element-edit]'),
     '重新开始教程之后双击画布上的图没有进入图内编辑',
   ).toBeVisible({ timeout: 30_000 })
-  await expect(coachmark(page)).toContainText('选一个文字')
+  await expect(coachmark(page)).toContainText('选中文字')
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-exit-element-edit]')).toHaveCount(0)
 

@@ -213,7 +213,7 @@ test('导出目录不可写：导出失败给英文报错，且不丢项目', as
    * 断言陈旧了没有任何门禁会说话，只有本机全量跑才看得见。
    */
   const err = dialog
-    .getByText(/Couldn't create a temporary file in the export folder|Operation failed/i)
+    .getByText(/Couldn't create a temporary file in the export folder|Operation failed|Couldn’t finish/i)
     .first()
   await expect(err).toBeVisible({ timeout: 120_000 })
   await expectNoCjk(err, '导出失败错误')
@@ -248,7 +248,7 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 弹层 portal 到文档根部的 dialog，不在 Right panel 子树里
   const scopeDialog = page.getByRole('dialog')
   await expect(
-    scopeDialog.getByText(/No usable coding agent was detected/i).first(),
+    scopeDialog.getByText(/No coding agent available/i).first(),
   ).toBeVisible({ timeout: 30_000 })
   // 可执行的下一步：打开编码 Agent 设置
   await expect(

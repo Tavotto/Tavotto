@@ -349,7 +349,7 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await expect(help).toHaveAttribute('aria-expanded', 'false')
   await help.focus()
   await expect(help).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 })
-  await expect(page.getByText(/关联元素 = 被你手动摆过位置的标题/)).toBeVisible()
+  await expect(page.getByText(/关联元素是手动摆过位置的标题/)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(help).toHaveAttribute('aria-expanded', 'false', { timeout: 10_000 })
   // Esc 关的是气泡，不是整个设置对话框

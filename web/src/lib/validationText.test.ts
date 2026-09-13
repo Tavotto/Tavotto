@@ -74,7 +74,7 @@ describe('当前值 → 要求', () => {
     })
     // 绝对下限**不含等号**：这句话必须说成"大于"，说成"≥"就是在骗人。
     // 8.00 与 8 在屏幕上是同一个数，所以还带上那句解释（见下面的 T41 用例）
-    expect(issueValues(floor).expected).toBe('大于 8pt（正好等于不算通过）')
+    expect(issueValues(floor).expected).toBe('大于 8pt，正好等于不算通过。')
     expect(issueValues(floor).expected).not.toContain('≥')
   })
 
@@ -201,7 +201,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     const values = issueValues(
       issue({ ruleCode: 'font-below-absolute-floor', message: hit.message }),
     )
-    expect(values.expected).toBe('大于 8pt（正好等于不算通过）')
+    expect(values.expected).toBe('大于 8pt，正好等于不算通过。')
   })
 
   it('两个数在屏幕上不一样时不加那句话——它只解释「看起来相等」', () => {
@@ -219,7 +219,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     expect(hit.message.values?.effective).toBe('8.00')
     expect(
       issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('大于 8pt（正好等于不算通过）')
+    ).toBe('大于 8pt，正好等于不算通过。')
   })
 
   it('含等号的那一侧（≥ / ≤）在边界上说的是「显示已四舍五入」', () => {
@@ -231,7 +231,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
         values: { effective: '8.00', min: '8' },
       },
     })
-    expect(issueValues(tooSmall).expected).toBe('≥ 8pt（当前值实际略低，显示已四舍五入）')
+    expect(issueValues(tooSmall).expected).toBe('≥ 8pt，当前值实际略低，显示已四舍五入。')
     const tooLarge = issue({
       ruleCode: 'font-too-large',
       message: {
@@ -240,7 +240,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
         values: { effective: '12.00', max: '12' },
       },
     })
-    expect(issueValues(tooLarge).expected).toBe('≤ 12pt（当前值实际略高，显示已四舍五入）')
+    expect(issueValues(tooLarge).expected).toBe('≤ 12pt，当前值实际略高，显示已四舍五入。')
   })
 
   it('设置页问的是同一张表：填 8 时两条下限的要求不是同一句话', () => {
