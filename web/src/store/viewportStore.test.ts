@@ -192,16 +192,62 @@ describe('挂起的适配（舞台还没量到尺寸）', () => {
   })
 
   /**
-   * 中间**不许**插任何直接操纵：`zoomAt` 那些会自己 `dropPendingFit()`，
-   * 于是就算 `fit` 忘了清空，这条也照样绿——判据会被另一条保证顶掉。
+   * 适应模式跟着舞台走（审计 B01 / B17 / B57）：侧栏是在舞台量过一次尺寸之后
+   * 才展开的，首次那一下按整窗宽度算出来的比例装不下画布——用户还没动过视口，
+   * 尺寸变了就该按同一个取景框重算。
    */
-  it('补过一次就没了：之后再上报尺寸（改窗口大小）不重新适配', () => {
+  it('还在适应模式：之后再上报尺寸（侧栏展开 / 改窗口大小）按同一个取景框重算', () => {
     unmounted()
     useViewportStore.getState().fit(150, 100)
     useViewportStore.getState().setViewRect(VIEW)
+    expect(useViewportStore.getState().fitted).toBe(true)
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
+    const wPx = 150 * BASE_PX_PER_MM
+    const hPx = 100 * BASE_PX_PER_MM
+    const want = Math.min((1000 - 72) / wPx, (700 - 72) / hPx)
+    expect(zoom(), '舞台变大、仍在适应模式：重新适配').toBeCloseTo(want, 6)
+    expect(useViewportStore.getState().panX).toBeCloseTo((1000 - wPx * want) / 2, 6)
+  })
+
+  it('只挪位置不改尺寸（页面滚动）不重算', () => {
+    unmounted()
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().setViewRect(VIEW)
+    const held = { ...useViewportStore.getState() }
+    useViewportStore.getState().setViewRect({ ...VIEW, left: 40, top: 30 })
+    expect(zoom()).toBeCloseTo(held.zoom, 6)
+    expect(useViewportStore.getState().panX).toBeCloseTo(held.panX, 6)
+  })
+
+  /**
+   * 中间的直接操纵会退出适应模式：`zoomAt` 那些各自 `leaveFitMode()`。
+   * 判据用**瞬时**的 `zoomAt`（带缓动的会在 fit 之后把 zoom 又写回目标值，
+   * 于是就算适配照常执行断言也是绿的）。
+   */
+  it('用户动过视口之后：再上报尺寸不重新适配（视口是他的）', () => {
+    unmounted()
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().setViewRect(VIEW)
+    useViewportStore.getState().zoomAt(1.5, 0, 0)
+    expect(useViewportStore.getState().fitted).toBe(false)
     const held = zoom()
     useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
-    expect(zoom(), '窗口变大不该再适配一次').toBeCloseTo(held, 6)
+    expect(zoom(), '用户动过就不该再被适配覆盖').toBeCloseTo(held, 6)
+  })
+
+  it('平移 / 定位 / 还原同样退出适应模式', async () => {
+    useViewportStore.getState().fit(150, 100)
+    expect(useViewportStore.getState().fitted).toBe(true)
+    useViewportStore.getState().panBy(3, 3)
+    expect(useViewportStore.getState().fitted).toBe(false)
+    useViewportStore.getState().fitAnimated(150, 100)
+    expect(useViewportStore.getState().fitted).toBe(true)
+    useViewportStore.getState().revealRect({ x: 10, y: 10, w: 20, h: 20 })
+    expect(useViewportStore.getState().fitted).toBe(false)
+    useViewportStore.getState().fit(150, 100)
+    useViewportStore.getState().restoreView({ zoom: 1, panX: 5, panY: 5 })
+    expect(useViewportStore.getState().fitted).toBe(false)
+    await settle()
   })
 
   /**

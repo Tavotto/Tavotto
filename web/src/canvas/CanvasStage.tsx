@@ -13,6 +13,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
 import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
+import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
@@ -344,20 +345,27 @@ function EmptyHint() {
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
+  const viewW = useViewportStore((s) => s.viewW)
+  const viewH = useViewportStore((s) => s.viewH)
   const page = useDocumentStore((s) => s.doc.page)
   const assetsLoaded = useAssetStore((s) => s.loaded)
   const hasAssets = useAssetStore((s) => s.panels.length > 0)
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
-  // 锚在纸面中心而不是视口中心：侧栏一开、画布被挤到一边时，
-  // 提示跟着纸面走，而不是飘在灰色工作区中央
-  const cx = panX + mmToWorld(page.w / 2) * zoom
-  const cy = panY + mmToWorld(page.h / 2) * zoom
+  // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
+  // 而不是飘在灰色工作区中央；纸面比视野大时（放大 / 首次适配还没算对）落在
+  // 看得到的那一块上，永远不出屏（审计 B01）。落点算法在 `lib/emptyStateAnchor`
+  const { x: cx, y: cy } = emptyStateAnchor({
+    viewW,
+    viewH,
+    paper: { x: panX, y: panY, w: mmToWorld(page.w) * zoom, h: mmToWorld(page.h) * zoom },
+  })
   return (
     // `w-max`：绝对定位盒子的 shrink-to-fit 只看 left 右侧剩下的空间，纸面中心靠近
     // 视口右缘时提示会被折成十几个字一行的一根细柱（2026-09-11 走查截图）；
     // 按内容定宽，宽度上限由 EmptyState 自己的 max-w 决定
     <div
+      data-canvas-empty-hint
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >

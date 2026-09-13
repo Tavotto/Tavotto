@@ -20,6 +20,14 @@ interface ViewportState {
   originY: number
   /** 空格键按下 = 临时平移工具 */
   spaceDown: boolean
+  /**
+   * 「适应」模式：视口此刻显示的是最近一次 `fit` / `fitAnimated` 算出来的落点，
+   * 用户还没自己动过。**只在这个模式下**舞台尺寸变化（侧栏开合、窗口缩放）会
+   * 重算一次适配——用户手动缩放 / 平移过之后，视口是他的，尺寸再变也不碰
+   * （审计 B01 / B17 / B57：首次打开按侧栏都展开之后的舞台算适配；手动 167%
+   * 时保留缩放与平移）。任何直接操纵都会退出这个模式。
+   */
+  fitted: boolean
 
   setViewRect: (rect: { left: number; top: number; width: number; height: number }) => void
   setSpaceDown: (v: boolean) => void
@@ -83,7 +91,7 @@ type Getter = () => ViewportState
  * 否则连按时锚点会以中间帧算，画面会一点点往边上飘。
  */
 function zoomCenteredTo(set: Setter, get: Getter, next: number) {
-  dropPendingFit()
+  leaveFitMode(set, get)
   const s = get()
   const base = animTarget ?? { zoom: s.zoom, panX: s.panX, panY: s.panY }
   if (next === base.zoom) return
@@ -123,18 +131,26 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
   })
 }
 
-/** 舞台量到尺寸之前收到的那次 `fit`；只留最后一次 */
-let pendingFit: { pageW: number; pageH: number; padding: number } | null = null
+/** 最近一次要求适配的取景框；舞台尺寸变了、仍在适应模式时按它重算 */
+let lastFit: { pageW: number; pageH: number; padding: number } | null = null
 
 /**
- * 用户自己动过视口之后，那次挂起的适配就作废了。
+ * 用户自己动过视口 = 退出适应模式：之后舞台尺寸再变也不重算。
  *
- * `stopAnim()` 里做不了这件事——`fit` 自己第一句就是它，挂起的那次会被当场
- * 抹掉。所以直接操纵各自调一次：不调的话，用户在舞台量到尺寸之前调的缩放
- * 会在下一帧被补上来的 fit 覆盖掉，而那看起来就是「我的缩放被吃了」。
+ * `stopAnim()` 里做不了这件事——`fit` 自己第一句就是它。所以直接操纵各自
+ * 调一次：不调的话，用户在舞台量到尺寸之前调的缩放会在下一帧被补上来的 fit
+ * 覆盖掉，而那看起来就是「我的缩放被吃了」。
  */
-function dropPendingFit() {
-  pendingFit = null
+function leaveFitMode(set: Setter, get: Getter) {
+  if (get().fitted) set({ fitted: false })
+}
+
+/** 按取景框算落点；调用方保证视口已量到尺寸 */
+function fitTarget(viewW: number, viewH: number, pageW: number, pageH: number, padding: number): ViewTarget {
+  const wPx = mmToWorld(pageW)
+  const hPx = mmToWorld(pageH)
+  const zoom = clamp(Math.min((viewW - padding) / wPx, (viewH - padding) / hPx), MIN_ZOOM, MAX_ZOOM)
+  return { zoom, panX: (viewW - wPx * zoom) / 2, panY: (viewH - hPx * zoom) / 2 }
 }
 
 export const useViewportStore = create<ViewportState>((set, get) => ({
@@ -146,35 +162,40 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   originX: 0,
   originY: 0,
   spaceDown: false,
+  fitted: false,
 
   setViewRect: ({ left, top, width, height }) => {
     const s = get()
     if (s.viewW === width && s.viewH === height && s.originX === left && s.originY === top) return
+    const resized = s.viewW !== width || s.viewH !== height
     set({ viewW: width, viewH: height, originX: left, originY: top })
-    // 舞台第一次量到尺寸：把挂着的那次「适配页面」补上（见 `fit`）。
-    // 清空由 `fit` 自己做——它量到尺寸那条分支上本来就有一句，这里再写一遍
-    // 是同一条保证的第二份实现，谁也变异不掉它。
-    if (pendingFit && width && height) {
-      const { pageW, pageH, padding } = pendingFit
+    // 舞台尺寸变了、而视口还处在适应模式：按同一个取景框重算。这一条同时
+    // 覆盖两种情形——舞台第一次量到尺寸（从 Project Picker 进工作台的空档里
+    // 收到的 `fit` 在这里补上），以及侧栏开合 / 窗口缩放（首次打开时侧栏是在
+    // 舞台量过一次尺寸之后才展开的，不重算就会按整窗宽度算出 190% 上下的比例，
+    // 空画布的起步提示被挤到可视区右缘——审计 B01）。用户动过视口就不在适应
+    // 模式里，这里一个字不碰。
+    if (resized && s.fitted && lastFit && width && height) {
+      const { pageW, pageH, padding } = lastFit
       get().fit(pageW, pageH, padding)
     }
   },
   setSpaceDown: (v) => set((s) => (s.spaceDown === v ? s : { spaceDown: v })),
-  // 直接操纵一律先掐断在飞的补间
+  // 直接操纵一律先掐断在飞的补间，并退出适应模式
   setPan: (panX, panY) => {
     stopAnim()
-    dropPendingFit()
+    leaveFitMode(set, get)
     set({ panX, panY })
   },
   panBy: (dx, dy) => {
     stopAnim()
-    dropPendingFit()
+    leaveFitMode(set, get)
     set((s) => ({ panX: s.panX + dx, panY: s.panY + dy }))
   },
 
   zoomAt: (factor, anchorX, anchorY) => {
     stopAnim()
-    dropPendingFit()
+    leaveFitMode(set, get)
     const { zoom, panX, panY } = get()
     const next = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM)
     if (next === zoom) return
@@ -198,50 +219,31 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
 
   fit: (pageW, pageH, padding = 72) => {
     stopAnim()
+    lastFit = { pageW, pageH, padding }
     const { viewW, viewH } = get()
     // 舞台还没挂载（Project Picker → 工作台的那个空档）：现在算不出缩放，
-    // 记下来等 `setViewRect` 第一次量到尺寸再做。丢掉的话新项目会沿用上一个
-    // 项目留下的缩放（审计 T03）。
+    // 进入适应模式等 `setViewRect` 第一次量到尺寸再做。丢掉的话新项目会沿用
+    // 上一个项目留下的缩放（审计 T03）。
     if (!viewW || !viewH) {
-      pendingFit = { pageW, pageH, padding }
+      set({ fitted: true })
       return
     }
-    pendingFit = null
-    const wPx = mmToWorld(pageW)
-    const hPx = mmToWorld(pageH)
-    const zoom = clamp(
-      Math.min((viewW - padding) / wPx, (viewH - padding) / hPx),
-      MIN_ZOOM,
-      MAX_ZOOM,
-    )
-    set({
-      zoom,
-      panX: (viewW - wPx * zoom) / 2,
-      panY: (viewH - hPx * zoom) / 2,
-    })
+    set({ ...fitTarget(viewW, viewH, pageW, pageH, padding), fitted: true })
   },
 
   fitAnimated: (pageW, pageH, padding = 72) => {
-    dropPendingFit()
+    lastFit = { pageW, pageH, padding }
     const s = get()
-    if (!s.viewW || !s.viewH) return
-    const wPx = mmToWorld(pageW)
-    const hPx = mmToWorld(pageH)
-    const zoom = clamp(
-      Math.min((s.viewW - padding) / wPx, (s.viewH - padding) / hPx),
-      MIN_ZOOM,
-      MAX_ZOOM,
-    )
-    const target = {
-      zoom,
-      panX: (s.viewW - wPx * zoom) / 2,
-      panY: (s.viewH - hPx * zoom) / 2,
+    if (!s.viewW || !s.viewH) {
+      set({ fitted: true })
+      return
     }
-    animateTo(set, get, target)
+    set({ fitted: true })
+    animateTo(set, get, fitTarget(s.viewW, s.viewH, pageW, pageH, padding))
   },
 
   revealRect: ({ x, y, w, h }, padding = 96) => {
-    dropPendingFit()
+    leaveFitMode(set, get)
     const { viewW, viewH, zoom } = get()
     if (!viewW || !viewH) return
     // 当前缩放能装下就不动它，装不下才退到刚好装下的比例
@@ -258,9 +260,9 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   restoreView: ({ zoom, panX, panY }) => {
-    // 与其它直接落点同一条纪律：挂起的那次「适配页面」到此作废，
-    // 否则舞台量到尺寸的下一帧会把还原出来的视口盖掉
-    dropPendingFit()
+    // 与其它直接落点同一条纪律：退出适应模式，否则舞台量到尺寸的下一帧
+    // 会把还原出来的视口盖掉
+    leaveFitMode(set, get)
     if (!get().viewW || !get().viewH) return
     animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
   },
