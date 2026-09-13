@@ -1721,6 +1721,7 @@ def normalize_figure(
     profile_id: str | None = None,
     journal: dict | None = None,
     replay_check: bool = False,
+    evidence: bool = False,
 ) -> dict:
     """保留式规范化：B0 → 约定 → 最小编辑 → 真实渲染检测 → 有界局部修复 → 导出验收 → 提交或回退。
 
@@ -1824,13 +1825,44 @@ def normalize_figure(
             profile_issues=_profile_issues(session, profile),
             profile=profile,
             relocated_legends=rel,
+            patches=list(session.patches),
         )
 
     def _rollback() -> None:
         _render(session, base_patches, preview_dpi=None)
 
+    # 证据（§4.1）：每个阶段一张位图，落在运行时数据目录（不进项目、不进导出目录），
+    # 目录名就是合同 id。它们是**候选**，不是交付物——README 里写明。
+    ev_dir: Path | None = None
+    ev_files: list[str] = []
+    if evidence:
+        ev_dir = Path(engine_config.data_dir()) / "cache" / "normalize" / contract["contract_id"]
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        (ev_dir / "README.txt").write_text(
+            "Tavotto 保留式规范化的阶段证据（候选图，不是交付物）。\n"
+            f"contract {contract['contract_id']}；B0 patch_hash {b0_hash}；"
+            f"原始产物 {original.get('path')}（{original.get('size_mm')} mm）。\n"
+            "顺序：00-b0 → 01-targets → 0N-roundN-<step> → 最终导出见 export_dir。\n",
+            encoding="utf-8",
+        )
+        result["evidence_dir"] = str(ev_dir)
+
+    def _snap(tag: str) -> None:
+        if ev_dir is None:
+            return
+        try:
+            data = base64.b64decode(preview_png(session, list(session.patches), 1200))
+        except BridgeError as exc:
+            ev_files.append(f"{tag}: 位图失败 {exc.code}")
+            return
+        name = f"{len(ev_files):02d}-{tag}.png"
+        (ev_dir / name).write_bytes(data)
+        ev_files.append(name)
+
+    _snap("b0")
     try:
         render = _render(session, candidate, preview_dpi=None)
+        _snap("targets")
         if render.get("warnings"):
             # 有一条 override 没写进去 = 目标没有真的落地。不带着 warning 往下验。
             _rollback()
@@ -1881,6 +1913,7 @@ def normalize_figure(
                         )
                         progressed = True
                         result["rounds"].append(_round_record(rounds, "margins", v2))
+                        _snap(f"round{rounds}-margins")
                     else:
                         _render(session, candidate, preview_dpi=None)
                         result["rounds"].append(
@@ -1939,6 +1972,7 @@ def normalize_figure(
                         )
                         progressed = True
                         result["rounds"].append(_round_record(rounds, f"legend {lg}", verdict))
+                        _snap(f"round{rounds}-legend")
                     else:
                         _render(session, candidate, preview_dpi=None)
                         result["rounds"].append(
@@ -1948,6 +1982,8 @@ def normalize_figure(
                 break
 
         result["verdict"] = _public_verdict(verdict)
+        if ev_dir is not None:
+            result["evidence_files"] = list(ev_files)
         if not verdict["ok"]:
             _rollback()
             result.update(
@@ -1990,6 +2026,22 @@ def normalize_figure(
         result["kept_pre_existing"] = sorted(set(pre_existing))
         failed = [f for f in exported["files"] if f["status"] != engine_exportjob.STATUS_DONE]
         if failed:
+            # 事务失败：这一次作业里**已经发布**的其它格式与留档也撤回——它们描述的是
+            # 一个会话马上就要回退掉的状态，留在导出目录里就是「看起来成功的输出」。
+            withdrawn = []
+            for entry in exported["files"]:
+                if entry["status"] == engine_exportjob.STATUS_DONE and entry.get("path"):
+                    try:
+                        Path(entry["path"]).unlink()
+                        withdrawn.append(entry["path"])
+                    except OSError:
+                        pass
+            if exported.get("proof_path"):
+                try:
+                    Path(exported["proof_path"]).unlink()
+                    withdrawn.append(exported["proof_path"])
+                except OSError:
+                    pass
             _rollback()
             result.update(
                 {
@@ -1997,6 +2049,9 @@ def normalize_figure(
                     "patch_hash": session.patch_hash(),
                     "rolled_back": True,
                     "failed_files": failed,
+                    "withdrawn_files": withdrawn,
+                    "files": [],
+                    "proof_path": None,
                 }
             )
             return result

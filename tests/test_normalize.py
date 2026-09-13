@@ -531,6 +531,27 @@ def test_cumulative_drift_is_measured_against_b0_not_the_previous_round():
     assert any(o["gid"] == "axes_0" and o.get("side") == "left" for o in v["budget"]["over"])
 
 
+def test_budget_only_judges_axes_we_moved_ourselves():
+    """布局引擎自己重排出来的位移（列表里没有那个子图的 position）只报不挡；
+    同样的位移一旦是我们的 patch 落的，就按预算判。"""
+    m = _two_column_manifest()
+    c = _contract(m, {"width_mm": 80})
+    after = _two_column_manifest(80, 32)
+    _set(after, "axes_0", "position", [0.28, 0.15, 0.30, 0.70])
+    size_only = [{"gid": "figure", "prop": "size_mm", "value": [80, 32]}]
+    engine_moved = _compare(c, after, patches=size_only)
+    assert engine_moved["budget"]["over"] == []
+    assert engine_moved["budget"]["axes"]["axes_0"]["judged"] is False
+    assert engine_moved["budget"]["max_edge_shift_mm"] > 0
+    ours = _compare(
+        c,
+        after,
+        patches=size_only
+        + [{"gid": "axes_0", "prop": "position", "value": [0.28, 0.15, 0.30, 0.70]}],
+    )
+    assert ours["exit"] == normalize.EXIT_BUDGET_EXCEEDED
+
+
 def test_an_axes_squeezed_below_the_keep_ratio_is_over_budget():
     m = _two_column_manifest()
     c = _contract(m, {"width_mm": 80})

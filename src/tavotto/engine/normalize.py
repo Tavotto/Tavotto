@@ -417,10 +417,9 @@ def plan_patches(contract: dict, manifest: dict) -> dict:
             if _has_field(el, "fontfamily"):
                 patches.append({"gid": gid, "prop": "fontfamily", "value": fam})
                 covered += 1
-            elif el.get("role") in ("legend", "colorbar") and (
-                _field(el, "title") or el.get("role") == "colorbar"
-            ):
-                # 图例标题 / 色条标签的字体没有 override 入口：逐项说出口，不假装改了
+            elif el.get("role") == "legend" and _field(el, "title"):
+                # 图例标题的字体没有 override 入口：逐项说出口，不假装改了
+                # （色条的标签与刻度分别是它那条轴的 axis_label / ticks，已经覆盖）
                 unsupported.append(
                     {
                         "gid": gid,
@@ -570,8 +569,15 @@ def compare(
     profile_issues: list[dict],
     profile: dict | None,
     relocated_legends: set[str] | None = None,
+    patches: list[dict] | None = None,
 ) -> dict:
-    """执行后：拿真实渲染的 manifest 对着 B0 逐项比。返回裁决。"""
+    """执行后：拿真实渲染的 manifest 对着 B0 逐项比。返回裁决。
+
+    `patches` 是这一版落下的全量列表：预算只对**我们自己挪过的**子图（列表里有它的
+    `position`）判超不超；布局引擎（`layout="tight"` / `"constrained"`）自己重排出来
+    的位移照样量、照样报，但那不是局部适配的开销，不拿它挡事务。不给 `patches`
+    就全部都判（合成 manifest 的单元测试走这一档）。
+    """
     base = contract["baseline"]
     snap0: dict = base["snapshot"]
     snap1 = protected_snapshot(manifest)
@@ -684,7 +690,8 @@ def compare(
         uniform_ok = not off
 
     # ---- 几何位移预算（相对 B0 按比例缩放后的位置）----
-    budget = _budget_report(contract, manifest)
+    adjusted = {str(p["gid"]) for p in (patches or []) if str(p.get("prop")) == "position"}
+    budget = _budget_report(contract, manifest, adjusted if patches is not None else None)
 
     # ---- 问题清单：几何（逐元素）+ 规范 ----
     geo_now = geometry_issues(manifest, profile)
@@ -748,7 +755,9 @@ def _target_size(contract: dict) -> list[float] | None:
     return None
 
 
-def _budget_report(contract: dict, manifest: dict) -> dict:
+def _budget_report(contract: dict, manifest: dict, adjusted: set[str] | None = None) -> dict:
+    """每个顶层子图相对 B0（按比例缩放后）的边位移与保留比例。`adjusted` 给了就只对
+    这些子图判超预算（其余的位移是布局引擎的，只报不挡）；None = 全部都判。"""
     base = contract["baseline"]
     size = manifest.get("size_mm") or [0.0, 0.0]
     w1, h1 = float(size[0]), float(size[1])
@@ -774,10 +783,12 @@ def _budget_report(contract: dict, manifest: dict) -> dict:
             "edge_shift_mm": {k: round(v, 3) for k, v in edges.items()},
             "keep_ratio": [round(keep_w, 4), round(keep_h, 4)],
         }
+        judged = adjusted is None or gid in adjusted
+        shifts[gid]["judged"] = judged
         for side, mm in edges.items():
             limit = EDGE_SHIFT_BUDGET_FRAC * (w1 if side in ("left", "right") else h1)
             worst = max(worst, abs(mm))
-            if abs(mm) > limit + 1e-6:
+            if judged and abs(mm) > limit + 1e-6:
                 over.append(
                     {
                         "gid": gid,
@@ -787,7 +798,7 @@ def _budget_report(contract: dict, manifest: dict) -> dict:
                     }
                 )
         for axis, keep in (("w", keep_w), ("h", keep_h)):
-            if keep < AXES_KEEP_FRAC - 1e-9:
+            if judged and keep < AXES_KEEP_FRAC - 1e-9:
                 over.append(
                     {"gid": gid, "keep": axis, "ratio": round(keep, 4), "min": AXES_KEEP_FRAC}
                 )

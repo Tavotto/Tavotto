@@ -257,6 +257,13 @@ def _tools() -> list[dict]:
                         "type": "boolean",
                         "description": "提交后再起一次性 worker 全量重放对比（heavy 的图是分钟级）",
                     },
+                    "evidence": {
+                        "type": "boolean",
+                        "description": (
+                            "把每个阶段（B0 / 只应用目标 / 每轮局部修复）各存一张位图到运行时"
+                            "数据目录，用来定位第一次偏离发生在哪一步；它们是候选图不是交付物"
+                        ),
+                    },
                 },
                 "required": ["session_id"],
                 "additionalProperties": False,
@@ -721,6 +728,7 @@ def _call_normalize(args: dict) -> dict:
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
         replay_check=bool(args.get("replay_check")),
+        evidence=bool(args.get("evidence")),
     )
     return {"content": _text(*normalize_report_lines(out)), "structuredContent": out}
 
@@ -778,7 +786,10 @@ def normalize_report_lines(out: dict) -> list[str]:
     for kind in ("geometry_issues", "profile_issues"):
         improved += (issues.get(kind) or {}).get("improved") or []
     if improved:
-        lines.append("顺带改善 / 消失的原有问题：" + "；".join(i["id"] for i in improved[:8]))
+        lines.append(
+            "顺带改善 / 消失的原有问题："
+            + "；".join(f"{i['id']}[{'、'.join((i.get('gids') or [])[:3])}]" for i in improved[:8])
+        )
     for c in verdict.get("profile_conflicts") or []:
         lines.append(
             f"! 规范与你的要求冲突，按你的要求执行了（已记进留档）：{c.get('text') or c.get('id')}"
@@ -838,6 +849,10 @@ def normalize_report_lines(out: dict) -> list[str]:
             )
         lines.append(
             "会话现在受修改约定保护：再改超出约定的东西要用户明确提出并带 user_authorized=true。"
+        )
+    if out.get("evidence_dir"):
+        lines.append(
+            f"阶段证据（候选图，不是交付物）：{out['evidence_dir']}（{'、'.join(out.get('evidence_files') or [])}）"
         )
     return lines
 

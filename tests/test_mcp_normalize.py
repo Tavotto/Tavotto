@@ -447,6 +447,9 @@ def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_p
     left = out["verdict"]["blocking"]
     assert left and {b["id"] for b in left} <= {"legend-over-data", "text-overlap"}
     assert all(any(".legend" in g for g in b["gids"]) for b in left)
+    # 没有一个预设位置让图例干干净净：一条图例调整都不许记成「已做的局部调整」
+    # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）
+    assert not any(a["prop"] == "loc" for a in out["adjustments"])
     assert out["rolled_back"] is True
     s = bridge.get_session(sid)
     assert s.patches == [] and s.patch_hash() == b0_hash
@@ -740,3 +743,79 @@ def test_the_tool_is_wired_through_the_real_stdio_server(tmp_path):
         c.call("tools/call", {"name": "tavotto_close_session", "arguments": {"session_id": sid}})
     finally:
         c.close()
+
+
+def test_a_file_that_fails_acceptance_is_not_published_and_the_transaction_rolls_back(
+    tmp_path, monkeypatch
+):
+    """最终产物验收不过：那一格以 acceptance_failed 进 partial、**不发布**；事务回到
+    B0。用假的核验结果模拟「文件尺寸不对」——真产物尺寸永远对，只有这样才能证明
+    这道门在控制流里，而不是摆设。"""
+    from tavotto.engine import artifactcheck
+
+    real = artifactcheck.check_file
+
+    def fake(path, fmt, **kw):
+        out = real(path, fmt, **kw)
+        if fmt == "png":
+            out.update({"ok": False, "size_ok": False, "failed": ["size_ok"]})
+        return out
+
+    monkeypatch.setattr(bridge.engine_artifactcheck, "check_file", fake)
+    project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
+    sid = _open(project, "Two")
+    out_dir = tmp_path / "out"
+    out = bridge.normalize_figure(
+        sid, targets={"width_mm": 120}, formats=["pdf", "png"], out_dir=str(out_dir)
+    )
+    assert out["exit"] == normalize.EXIT_ACCEPTANCE_FAILED and out["rolled_back"] is True
+    png = next(f for f in out["failed_files"] if f["format"] == "png")
+    assert png["status"] != "done" and png["error"]["code"] == "acceptance_failed"
+    assert not list(out_dir.glob("*.png"))  # 没通过的那个文件没有落到最终目录
+    # 同一次作业里已经发布的 PDF 与留档也撤回：它们描述的是一个已回退的状态
+    assert _files_in(out_dir) == [] and out["files"] == [] and out["withdrawn_files"]
+    assert bridge.get_session(sid).patches == [] and bridge.get_session(sid).normalized is None
+
+
+def test_evidence_snapshots_locate_the_first_deviation(tmp_path):
+    """§4.1 的证据：B0 / 只应用目标 / 每轮局部修复各一张位图，落在运行时数据目录——
+    不进项目目录、不进导出目录，README 里写明它们是候选图不是交付物。"""
+    project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
+    sid = _open(project, "Two")
+    out = bridge.normalize_figure(
+        sid,
+        targets={"width_mm": 120},
+        formats=["pdf"],
+        out_dir=str(tmp_path / "out"),
+        evidence=True,
+    )
+    assert out["exit"] == normalize.EXIT_DONE
+    ev = Path(out["evidence_dir"])
+    assert ev.is_relative_to(tmp_path / "data")
+    names = out["evidence_files"]
+    assert names[0] == "00-b0.png" and names[1] == "01-targets.png"
+    assert any("margins" in n for n in names[2:])
+    assert (
+        (ev / "README.txt").read_text(encoding="utf-8").startswith("Tavotto 保留式规范化的阶段证据")
+    )
+    b0 = pdfbackend.probe_asset(ev / names[0], "raster")
+    tg = pdfbackend.probe_asset(ev / names[1], "raster")
+    assert abs(b0["px_h"] / b0["px_w"] - 60 / 150) < 0.01  # B0 仍是 150×60
+    assert abs(tg["px_h"] / tg["px_w"] - 48 / 120) < 0.01  # 只应用目标之后 120×48
+    assert not list(project.glob("*.png")) and not list((tmp_path / "out").glob("*.png"))
+
+
+def test_a_figure_without_a_script_cannot_enter_the_transaction(tmp_path):
+    """位图 / 没有脚本的产物进不了图内编辑，也就谈不上改字号字体：入口就说清（稳定 code），
+    不从截图猜数据重画，也不把缩放位图说成「已改字号」。"""
+    import pymupdf
+
+    figures = tmp_path / "raw"
+    figures.mkdir()
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 30), False)
+    pix.clear_with(255)
+    pix.save(str(figures / "Photo.png"))
+    (figures / "tavotto_registry.json").write_text('{"scripts": {}}', encoding="utf-8")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.open_figure(str(figures), stem="Photo")
+    assert exc.value.code in ("stem_not_parameterizable", "no_figure")

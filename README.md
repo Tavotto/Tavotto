@@ -98,6 +98,16 @@ script is run) and the open Tavotto window updates by itself — you never refre
 restart it by hand. The tool reports which figures are now editable, which still need
 a trial run you trigger in Tavotto, and which have a source conflict for you to settle.
 
+When a figure already exists and only needs a new width, font, or font-size floor, just
+say "make this figure 8 cm wide, Times New Roman, no text below 8 pt": Codex calls
+`tavotto_normalize_figure`, which changes only what you named and leaves content,
+colours, data and subplot structure alone. If text no longer fits after shrinking it
+makes bounded margin adjustments first, then verifies the delivered file itself (PDF
+page size and embedded fonts, PNG pixels and dpi). When the request cannot be met —
+nothing fits, the font is not installed, the structure would have to change — it stops
+and tells you which constraint to relax instead of lowering the bar or leaving behind a
+file that only looks finished.
+
 The first time a project-directory approval appears, what you are confirming is the
 local figure directory Tavotto may access. Figures, scripts and data are still
 processed on your machine.
