@@ -245,8 +245,11 @@ describe('锚点', () => {
     })
     await flush()
     const c = card()!
-    // 正文照常说这一步做什么；状态行说缺什么；等多久都不出现「等待」
+    // 标题仍是这一步的标题；正文**只**说缺什么——这一步自己的指令（「点击图里的
+    // 标题」）在前置满足之前不出现，用户不会同时收到两条互相矛盾的指示（审计 A06 / A07）；
+    // 等多久都不出现「等待」
     expect(c.textContent).toContain('选一个文字')
+    expect(c.textContent).not.toContain('点击图里的标题')
     const note = c.querySelector<HTMLElement>('[data-onboarding-precondition]')!
     expect(note.dataset.onboardingPrecondition).toBe('notInElementEdit')
     expect(note.textContent).toContain('要在 Fig2_correlation 的图内编辑里进行')

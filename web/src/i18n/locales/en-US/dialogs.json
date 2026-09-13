@@ -1384,14 +1384,14 @@
     "openOwnProject": "Open my own project",
     "resolvedContinue": "Already fixed, continue",
     "targetWaiting": "Waiting for the target to appear…",
-    "targetMissing": "The target for this step is not on screen. You can go back or skip this step.",
+    "targetMissing": "The target for this step is not on screen.",
     "precondition": {
-      "editPanelMissing": "{{name}}, the figure this tutorial edits, is not on this canvas. Open it first, or skip this step.",
-      "notInElementEdit": "This step happens inside the figure editor of {{name}}. Open it first, or skip this step.",
+      "editPanelMissing": "{{name}}, the figure this tutorial edits, is not on this canvas. Open it first.",
+      "notInElementEdit": "This step happens inside the figure editor of {{name}}. Open it first.",
       "noTextSelected": "Select a text inside the figure first (the title or an axis label).",
-      "editPanelNotRendered": "{{name}} has not been rendered yet, so the Problems panel has no results for it. Open it once, or skip this step.",
-      "otherPanelMissing": "Only one tutorial figure is on the canvas; aligning needs at least two. Add {{name}} first, or skip this step.",
-      "notInLayout": "Multi-select happens in the canvas layout. Go back to the canvas first, or skip this step."
+      "editPanelNotRendered": "{{name}} has not been rendered yet, so the Problems panel has no results for it. Open it once first.",
+      "otherPanelMissing": "Only one tutorial figure is on the canvas; aligning needs at least two. Add {{name}} first.",
+      "notInLayout": "Multi-select happens in the canvas layout. Go back to the canvas first."
     },
     "action": {
       "openFigure": "Open {{name}}",

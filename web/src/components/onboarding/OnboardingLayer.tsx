@@ -248,7 +248,10 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   const variant = def.variant ? def.variant(ctx) : stepId
   const values = def.values?.(ctx)
   const title = ob(`steps.${variant}.title`, values)
-  const body = ob(`steps.${variant}.body`, values)
+  // 前置条件没满足时正文只说「先做什么」，不同时发出这一步自己的指令（审计
+  // A06 / A07：「点击图里的标题」与「先打开 Fig2_correlation」并排出现，而右栏
+  // 里根本没有那张图）。标题仍是这一步的标题——用户知道自己卡在哪一步上
+  const body = blocked ? ob(`precondition.${pre.reason}`, pre.values) : ob(`steps.${variant}.body`, values)
   const index = STEP_IDS.indexOf(stepId)
   const progress = index >= 1 && index <= REAL_STEPS ? ob('progress', { n: index, total: REAL_STEPS }) : null
   const altDone = !blocked && (def.altDone?.(ctx) ?? false)
@@ -328,7 +331,15 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
         ref={cardRef}
         id={`onboarding-${stepId}`}
         title={title}
-        body={body}
+        body={
+          blocked ? (
+            <span role="status" data-onboarding-precondition={pre.reason}>
+              {body}
+            </span>
+          ) : (
+            body
+          )
+        }
         progress={progress}
         side={placement?.side ?? 'center'}
         primary={primary}
@@ -338,11 +349,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
         onClose={onClose}
         onKeyDown={onKeyDown}
         note={
-          blocked ? (
-            <span role="status" data-onboarding-precondition={pre.reason}>
-              {ob(`precondition.${pre.reason}`, pre.values)}
-            </span>
-          ) : showMissing ? (
+          blocked ? null : showMissing ? (
             <span role="status">{ob('targetMissing')}</span>
           ) : missing ? (
             <span role="status">{ob('targetWaiting')}</span>

@@ -388,12 +388,12 @@ export default interface Resources {
       "openOwnProject": "打开自己的项目",
       "pause": "暂停教程",
       "precondition": {
-        "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里。先把它打开，或跳过此步。",
-        "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果。先打开它一次，或跳过此步。",
-        "noTextSelected": "这一步要先选中图里的一段文字（标题或坐标轴标签）。",
-        "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行。先打开它，或跳过此步。",
-        "notInLayout": "多选要在画布排版里进行。先回到画布，或跳过此步。",
-        "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张。先把 {{name}} 加进来，或跳过此步。"
+        "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里，先把它打开。",
+        "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果，先打开它一次。",
+        "noTextSelected": "先选中图里的一段文字（标题或坐标轴标签）。",
+        "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行，先打开它。",
+        "notInLayout": "多选要在画布排版里进行，先回到画布。",
+        "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张，先把 {{name}} 加进来。"
       },
       "progress": "第 {{n}} 步，共 {{total}} 步",
       "reset": {
@@ -479,7 +479,7 @@ export default interface Resources {
           "title": "用示例了解 Tavotto"
         }
       },
-      "targetMissing": "找不到这一步的目标。可以返回上一步或跳过此步。",
+      "targetMissing": "找不到这一步的目标。",
       "targetWaiting": "正在等待目标出现…"
     },
     "palette": {

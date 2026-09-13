@@ -16,13 +16,23 @@ import { Button } from '../ui/Button'
  *     区在层里（换步骤时读一次「第几步、目标、进度」）；
  *   * Tab 顺序：返回 → 跳过 → 主动作 → 关闭；Esc 由层处理（暂停）。
  *
+ * 骨架固定两行脚注，**什么语言、多长的图名都不折行**（审计 A06 / A07：以前
+ * 进度、返回、跳过与「打开 Fig2_correlation」挤在同一行，「第 2 步，共 8 步」被
+ * 折成三行）：
+ *
+ * ```text
+ * 第 n 步，共 N 步                     返回  跳过此步     ← 进度 + 两个辅助动作
+ *                                   [次动作] [主动作]     ← 只在有动作时出现
+ * ```
+ *
  * 视觉：浮层用唯一的轻投影 `shadow-pop`、10px 圆角；进场 `animate-pop-in`
  * （reduced motion 下 index.css 的全局覆盖把它压到 0.01ms）。
  */
 export interface CoachmarkProps {
   id: string
   title: string
-  body: string
+  /** 正文：这一步做什么。前置条件没满足时层会把它换成「先做什么」（见 OnboardingLayer） */
+  body: ReactNode
   /** 「第 n 步，共 N 步」；欢迎 / 完成页不显示 */
   progress?: string | null
   side?: CoachmarkSide | 'center'
@@ -105,40 +115,45 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         </p>
         {note && <div className="mt-1.5 text-xs leading-relaxed text-ink-3">{note}</div>}
       </div>
-      <div className="mt-2.5 flex items-center gap-1">
-        {progress && (
-          <span className="font-mono text-xs text-ink-3" data-onboarding-progress>
+      {(progress || onBack || onSkip) && (
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate font-mono text-xs text-ink-3" data-onboarding-progress>
             {progress}
           </span>
-        )}
-        <span className="flex-1" />
-        {onBack && (
-          <Button size="sm" variant="ghost" onClick={onBack} data-onboarding-back>
-            {ob('back')}
-          </Button>
-        )}
-        {onSkip && (
-          <Button size="sm" variant="ghost" onClick={onSkip} data-onboarding-skip>
-            {ob('skipStep')}
-          </Button>
-        )}
-        {secondary && (
-          <Button size="sm" variant="secondary" onClick={secondary.onClick} data-onboarding-secondary>
-            {secondary.label}
-          </Button>
-        )}
-        {primary && (
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={primary.onClick}
-            autoFocus={primary.autoFocus}
-            data-onboarding-primary
-          >
-            {primary.label}
-          </Button>
-        )}
-      </div>
+          <span className="flex shrink-0 items-center gap-0.5">
+            {onBack && (
+              <Button size="sm" variant="ghost" onClick={onBack} data-onboarding-back>
+                {ob('back')}
+              </Button>
+            )}
+            {onSkip && (
+              <Button size="sm" variant="ghost" onClick={onSkip} data-onboarding-skip>
+                {ob('skipStep')}
+              </Button>
+            )}
+          </span>
+        </div>
+      )}
+      {(primary || secondary) && (
+        <div className={cn('flex items-center justify-end gap-2', progress || onBack || onSkip ? 'mt-2' : 'mt-3')}>
+          {secondary && (
+            <Button size="sm" variant="secondary" onClick={secondary.onClick} data-onboarding-secondary>
+              {secondary.label}
+            </Button>
+          )}
+          {primary && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={primary.onClick}
+              autoFocus={primary.autoFocus}
+              data-onboarding-primary
+            >
+              {primary.label}
+            </Button>
+          )}
+        </div>
+      )}
       {/* 关闭（暂停）画在右上角，但放在 DOM 末尾：Tab 顺序是返回 → 跳过 → 主动作 → 关闭 */}
       <button
         type="button"
