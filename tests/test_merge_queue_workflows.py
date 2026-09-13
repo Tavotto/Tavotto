@@ -409,6 +409,22 @@ class TestGates:
         assert _needs_of(block) == {"analyze"}
         assert _required_of(block) == {"analyze"}
 
+    def test_codeql_skips_the_sarif_upload_only_on_merge_group(self):
+        """合并组里 SARIF 上传没有消费者，却是 `CodeQL gate` 唯一的外部依赖
+        （2026-09-13 #336 三次被踢全在这一步）。PR / push 仍要上传：PR 的 diff
+        告警与 main 的告警账本都靠它。判据钉在 analyze 步骤自己的 `with:` 里——
+        写到别的步骤上、或把 PR 也一起关掉，这里都红。"""
+        block = _code(_job(CODEQL, "analyze"))
+        step = re.search(
+            r"uses: github/codeql-action/analyze@v\d+\n(.*?)(?=\n      - |\Z)", block, re.S
+        )
+        assert step, "codeql.yml 里找不到 analyze 步骤"
+        m = re.search(r"(?m)^\s+upload:\s*(.+)$", step.group(1))
+        assert m, "analyze 步骤没有 upload: 输入——合并组会重新依赖 SARIF 上传"
+        expr = m.group(1).strip()
+        assert "github.event_name == 'merge_group' && 'never'" in expr, expr
+        assert expr.endswith("|| 'always' }}"), f"非 merge_group 事件必须照常上传：{expr}"
+
     def test_every_gate_needs_is_a_real_job(self):
         """needs 指向的 job 必须存在——改名后 Gate 会在 workflow 解析期炸，
         但那时已经推上去了；这里在本地就红。"""

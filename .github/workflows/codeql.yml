@@ -70,6 +70,13 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
+          # merge_group 上不上传 SARIF。`CodeQL gate` 判的是 `needs.analyze` 有没有
+          # 跑错，从来不看告警数；合并组的分析挂在临时 ref 上「只产 diff 结论、
+          # 不落账」，而 diff 结论在 PR 自己的 run 上已经产过一遍——上传这一步在
+          # 合并组里没有任何消费者，却是门禁唯一的外部依赖。2026-09-13 #336 三次
+          # 入队三次被踢，都是分析跑完、Uploading results 十几秒后失败、三次换了
+          # 三种语言；同一提交在 PR 上四种语言全绿。PR 与 push main 照旧上传。
+          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
 
   # 稳定 Gate：矩阵四条语言收敛成一个固定名字的结论（判定逻辑与 ci.yml 的
   # 两个 Gate 同一份脚本）。矩阵任一语言 failure / cancelled，`needs.analyze`
