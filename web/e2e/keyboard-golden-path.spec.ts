@@ -294,6 +294,17 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 文本编辑管；不用 Esc 失焦——programmatic blur 之后 WebKit 的顺序导航
   // 会失去起点，键盘用户会被困在 body 上
   await page.keyboard.press(tabKey())
+  // **先等线宽那一版真的画出来**（#333 的根因）：从提交线宽到走回这里只有半秒，
+  // 引擎那一趟往返常常还没回来，画布此刻挂的是上一版的精确图当**回退**
+  // （`data-display="fallback"`）。这时撤销，画布换回的正是那一张——键不变，
+  // 而这是正确行为。判据要量的是「撤销把画面换成上一版」，前提是「这一版已经
+  // 上过画面」，所以前提自己先等到。
+  await expect
+    .poll(() => page.locator('[data-display-key]').first().getAttribute('data-display'), {
+      timeout: 60_000,
+      message: '改线宽之后画布没有换成这一版的精确图',
+    })
+    .toBe('exact')
   await settleAfter(() => page.keyboard.press('ControlOrMeta+z')) // 撤销线宽
   await settleAfter(() => page.keyboard.press('ControlOrMeta+z')) // 撤销字号
   // 字号回到原值：重新走到标题的字号框核对
