@@ -280,6 +280,25 @@ def probe_asset(path: Path, kind: str) -> dict:
     }
 
 
+def pdf_fonts(path: Path) -> list[str]:
+    """一份 PDF 首页真正用到的字体名（去掉子集前缀 `ABCDEF+`，去重、保序）。
+
+    这是「最终产物里字体到底是什么」的唯一依据（`engine/artifactcheck.py`）：
+    引擎侧的 manifest 说的是「会由哪张脸画」，这里读的是**写进文件的**。
+    """
+    names: list[str] = []
+    with pymupdf.open(path) as doc:
+        if doc.page_count == 0:
+            return []
+        for entry in doc[0].get_fonts(full=False):
+            base = str(entry[3] if len(entry) > 3 else "")
+            if "+" in base and len(base.split("+", 1)[0]) == 6:
+                base = base.split("+", 1)[1]
+            if base and base not in names:
+                names.append(base)
+    return names
+
+
 def render_preview_png(path: Path, width_px: int, out: Path) -> None:
     """把矢量面板首页渲染成指定像素宽度的 PNG（画布显示与缩略图用）。"""
     with pymupdf.open(path) as doc:

@@ -15,6 +15,7 @@ import re
 import sys
 from functools import lru_cache
 
+import matplotlib as mpl
 from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
@@ -1189,6 +1190,54 @@ def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
         elif len(subst) < MAX_MISSING_GLYPHS:
             subst[ch] = None
     return list(gone), list(subst), list(cjk_faces)
+
+
+#: mathtext 内置字体集 → 它画字用的那张脸的族名。`custom` 不在表里：那一档由
+#: rcParams 的 `mathtext.rm` 指向一个具体字体，按解析结果报。
+_MATHTEXT_SET_FACES = {
+    "dejavusans": "DejaVu Sans",
+    "dejavuserif": "DejaVu Serif",
+    "cm": "Computer Modern",
+    "stix": "STIXGeneral",
+    "stixsans": "STIXGeneral",
+}
+
+
+def font_faces(text: str, families, math_family) -> dict:
+    """这段文字**真正会由哪张脸画出来**（渲染派生数据，不进文档、不是 override）。
+
+    `face` 是正文族链解析到的第一张脸的族名——用户请求的族名（`fontfamily`
+    字段）与它不一致，就说明那个字体没装上、matplotlib 静默退到了下一环。
+    这是「指定字体不可用时明确报告，不能自动替换后宣称达标」的唯一依据：
+    族名白名单（预检的 `font-family-substituted`）只认名字，名字对了脸却是
+    DejaVu 时它不响。
+
+    `math_face` 只在文字里有 `$…$` 片段时出现：那些字由 mathtext 字体集画，
+    不是正文那张脸。`custom` 集按 rcParams 的 `mathtext.rm` 解析；内置集按
+    `_MATHTEXT_SET_FACES`。对数轴的 `10^4` 整条都是 mathtext——正文族换了、
+    `math_face` 没跟上，这一格就是最终产物里仍然混着 DejaVu 的原因。
+    """
+    out: dict = {}
+    fonts = [
+        f for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families)) if f is not None
+    ]
+    if fonts:
+        out["face"] = str(fonts[0].family_name)
+    if isinstance(text, str) and _MATH_SPAN.search(text):
+        if math_family == "custom":
+            rm = str(mpl.rcParams.get("mathtext.rm") or "")
+            rm_fonts = [
+                f
+                for f in (_ft_font(p, i) for p, i in _resolved_font_paths([rm.split(":")[0]]))
+                if f is not None
+            ]
+            if rm_fonts:
+                out["math_face"] = str(rm_fonts[0].family_name)
+        else:
+            face = _MATHTEXT_SET_FACES.get(str(math_family))
+            if face:
+                out["math_face"] = face
+    return out
 
 
 def missing_glyphs(text: str, families) -> list[str]:
@@ -2728,6 +2777,30 @@ def _handle_color_of(h):
     return fc[0] if len(fc) else "#000000"
 
 
+def _tick_family_field(ts: TickSet) -> dict:
+    """刻度组的 `fontfamily`：与 `_text_fields` 同一套取值 / 选项 / 不可用标记。
+
+    读的是第一条画着字的标签（整条轴由 `tick_params` 统一设，各条不会分岔）；
+    一条标签都没有时按 rcParams 的族链算——那正是下一条新建标签会拿到的。
+    """
+    fam = ts._first(
+        lambda t: (t.get_fontfamily() or ["serif"])[0],
+        str((list(mpl.rcParams["font.family"]) or ["serif"])[0]),
+    )
+    fam_opts = _family_options()
+    fam_missing: list[str] = []
+    if fam not in fam_opts:
+        fam_opts = [fam] + fam_opts
+        fam_missing = [fam]
+    return {
+        "prop": "fontfamily",
+        "type": "enum",
+        "value": str(fam),
+        "options": fam_opts,
+        **({"options_unavailable": fam_missing} if fam_missing else {}),
+    }
+
+
 def _tick_fields(ts: TickSet) -> list[dict]:
     t0 = _tick0(ts)
     is3d = getattr(ts.ax, "name", "") == "3d"
@@ -2741,6 +2814,10 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "step": 0.5,
             "unit": "pt",
         },
+        # 刻度文字的字体族（2026-09-13）。没有它的话「整图换成 Times」这句话
+        # 在刻度上落不下去，而规范预检读的是 manifest 的 `fontfamily` 字段——
+        # 字段缺席 = 刻度字体既改不了也查不到，导出的 PDF 里刻度仍是旧字体。
+        _tick_family_field(ts),
         {
             "prop": "color",
             "type": "color",
@@ -4064,7 +4141,19 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         # 恰恰是最容易出现 `×10⁵` 与中文单位的地方。放在这里是因为上面那些
         # 分支已经把「量不出几何 / 文字空了」的元素 `continue` 掉了。
         live_text = artist.live() if el["role"] == "ticklabel" else artist
+        if el["role"] == "ticks":
+            # 刻度组自己不是 Text：拿第一条画着字的标签代言整组（整条轴由
+            # `tick_params` 统一设，各条不会分岔）。
+            live_text = artist._first(lambda t: t, None)
         if isinstance(live_text, Text):
+            # 「真正由哪张脸画」：字体缺失时的静默替代只有这一格量得出。
+            entry.update(
+                font_faces(
+                    live_text.get_text(),
+                    live_text.get_fontfamily() or [],
+                    live_text.get_math_fontfamily(),
+                )
+            )
             gone, subst, cjk_faces = _glyph_scan(
                 live_text.get_text(), live_text.get_fontfamily() or []
             )

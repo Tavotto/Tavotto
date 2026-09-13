@@ -187,8 +187,78 @@ def _tools() -> list[dict]:
                         "type": "integer",
                         "description": "预览 SVG 里内嵌位图的 dpi（含 imshow 的图才有意义）",
                     },
+                    "user_authorized": {
+                        "type": "boolean",
+                        "description": (
+                            "会话已经过 tavotto_normalize_figure 提交时，超出修改约定的改动"
+                            "只有**用户明确提出新要求**才可以：那时带 true（约定解除、"
+                            "验收报告作废）。模型不得替用户置 true。"
+                        ),
+                    },
                 },
                 "required": ["session_id", "patches"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_normalize_figure",
+            "title": "保留原图的规范化（改尺寸 / 字体 / 最小字号）",
+            "description": (
+                "用户**已经有一张画好的图**、只要改宽度 / 高度 / 字体 / 字号下限时用它，"
+                "不要自己拼 tavotto_apply_overrides。它以当前会话状态为基准 B0，只改点名的"
+                "目标（只给宽度时高度按原长宽比推；min_font_pt 只补齐低于阈值的文字，"
+                "不压平字号层级；font_size_pt 才统一），在真实渲染上检测裁切 / 文字重叠 / "
+                "图例压数据，必要时只做有预算的局部适配（外边距 / 子图间距 / 图例在自己"
+                "子图内换预设位置），然后导出并**验最终文件本身**（PDF 页面尺寸与字体、"
+                "SVG 尺寸、PNG 像素与 dpi）。四件事同时成立才算成功：目标达成且没有未授权"
+                "改动、没有新增 / 加重的确定性干涉或裁切、局部调整在预算内、文件过验收；"
+                "否则**会话回到 B0、不出文件**，返回 exit（constraint_conflict / "
+                "font_unavailable / budget_exceeded / protected_changed / "
+                "acceptance_failed / requires_authorization）与具体冲突。"
+                "它不改用户的 .py，不重画，不套主题，不改配色 / 数据 / 坐标范围 / 子图结构。"
+                "结果里 verdict.issues 分 new / worsened / unchanged / improved 四档；"
+                "原图本来就有的问题保留并如实报告，不顺手大修。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "width_mm": {"type": "number", "description": "目标宽度（mm）"},
+                    "height_mm": {
+                        "type": "number",
+                        "description": "目标高度（mm）；不给则按原图长宽比随宽度走",
+                    },
+                    "font_family": {
+                        "type": "string",
+                        "description": "整图文字（含刻度）换成这个字体族；没装时不替代、报 font_unavailable",
+                    },
+                    "min_font_pt": {
+                        "type": "number",
+                        "description": "最小字号：只把低于它的文字补齐到它",
+                    },
+                    "font_size_pt": {
+                        "type": "number",
+                        "description": "统一字号：用户明确要求所有文字同一字号时才用",
+                    },
+                    "formats": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(bridge.EXPORT_FORMATS)},
+                        "description": "导出格式，缺省用规范的 export_default",
+                    },
+                    "dpi": {"type": "integer", "description": "位图格式的 dpi，默认 600"},
+                    "stem": {"type": "string", "description": "输出文件名主干"},
+                    "out_dir": {
+                        "type": "string",
+                        "description": "输出目录；缺省 <项目>/tavottofile/export/",
+                    },
+                    "profile_id": {"type": "string"},
+                    "journal": {"type": "object"},
+                    "replay_check": {
+                        "type": "boolean",
+                        "description": "提交后再起一次性 worker 全量重放对比（heavy 的图是分钟级）",
+                    },
+                },
+                "required": ["session_id"],
                 "additionalProperties": False,
             },
         },
@@ -567,12 +637,17 @@ def _call_open(args: dict) -> dict:
 
 def _call_apply(args: dict) -> dict:
     out = bridge.apply_overrides(
-        str(args.get("session_id") or ""), args.get("patches"), preview_dpi=args.get("preview_dpi")
+        str(args.get("session_id") or ""),
+        args.get("patches"),
+        preview_dpi=args.get("preview_dpi"),
+        user_authorized=bool(args.get("user_authorized")),
     )
     lines = [
         f"已应用 {out['applied']} 条 override（hash {out['patch_hash'][:19]}…）",
         _brief_manifest(out.get("manifest")),
     ]
+    if out.get("contract_released"):
+        lines.append("规范化约定已按用户明确要求解除：之前的验收报告作废，导出时会如实说明。")
     if out["rejected"]:
         lines.append(
             "被拒条目（形状不合法，未应用）: "
@@ -621,9 +696,150 @@ def _call_export(args: dict) -> dict:
         lines.append("留档没写成：" + str(out["proof_error"].get("code")))
     if out["forced"]:
         lines.append("注意：这次是带着阻断性问题强制导出的，已记进 proof report。")
+    norm = out.get("normalized")
+    if norm is not None:
+        lines.append(
+            "规范化验收：与提交的那一版一致（产物已按同一份参数核验）。"
+            if norm.get("verified")
+            else "规范化验收：**已失效**——会话状态在验收之后变过，这次导出的不是通过验收的那一版。"
+        )
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _call_normalize(args: dict) -> dict:
+    targets = {k: args[k] for k in bridge.engine_normalize.TARGET_KEYS if args.get(k) is not None}
+    raw_dpi = args.get("dpi")
+    out = bridge.normalize_figure(
+        str(args.get("session_id") or ""),
+        targets=targets,
+        formats=args.get("formats") or None,
+        dpi=600 if raw_dpi is None else raw_dpi,
+        stem=args.get("stem"),
+        out_dir=args.get("out_dir"),
+        profile_id=args.get("profile_id"),
+        journal=args.get("journal"),
+        replay_check=bool(args.get("replay_check")),
+    )
+    return {"content": _text(*normalize_report_lines(out)), "structuredContent": out}
+
+
+def normalize_report_lines(out: dict) -> list[str]:
+    """念给用户听的那一份：明确要求的修改、必要的局部调整、保留的原有问题、仍未满足的约束。"""
+    lines: list[str] = []
+    exit_code = out.get("exit")
+    targets = (out.get("contract") or {}).get("targets") or {}
+    want = "、".join(f"{k}={v}" for k, v in targets.items())
+    if exit_code == bridge.engine_normalize.EXIT_NOTHING_TO_DO:
+        lines.append(f"规范化：目标（{want}）与当前状态一致，没有需要改的地方；会话未变。")
+    elif out.get("ok"):
+        size = out.get("size_mm") or []
+        lines.append(
+            f"规范化完成：{want}；最终尺寸 {size[0]}×{size[1]} mm，"
+            f"{len(out.get('patches') or [])} 条 override（hash {str(out.get('patch_hash'))[:19]}…）"
+        )
+    else:
+        lines.append(f"规范化**未完成**（{exit_code}）：会话已回到基准 B0，没有写出任何文件。")
+    for note in (out.get("plan") or {}).get("notes") or []:
+        lines.append("· " + note)
+    for u in (out.get("plan") or {}).get("unsupported") or []:
+        lines.append(f"· 不支持：{u.get('gid')} 的 {u.get('prop')}（{u.get('reason')}），未改")
+    orig = (out.get("baseline") or {}).get("original_artifact") or {}
+    if orig.get("mismatch"):
+        lines.append(
+            f"! 原始文件 {orig.get('path')} 的页面 {orig.get('size_mm')} mm 与脚本重跑的图幅 "
+            f"{(out.get('baseline') or {}).get('size_mm')} mm 不一致（常见原因：savefig 用了 "
+            "bbox_inches）。规范化以脚本重跑结果为基准，原始文件未被替换。"
+        )
+    adjustments = out.get("adjustments") or []
+    if adjustments:
+        lines.append(f"必要的局部调整（{len(adjustments)} 条，均在预算内、相对 B0 计）：")
+        for a in adjustments[:12]:
+            if a.get("prop") == "position":
+                sh = a.get("shift_mm") or {}
+                lines.append(
+                    f"  - {a['gid']} 边距：左 {sh.get('left', 0):+.2f} / 右 {sh.get('right', 0):+.2f} / "
+                    f"下 {sh.get('bottom', 0):+.2f} / 上 {sh.get('top', 0):+.2f} mm（因 {a.get('reason')}）"
+                )
+            else:
+                lines.append(f"  - {a['gid']} {a['prop']}: {a.get('before')} → {a.get('after')}")
+    verdict = out.get("verdict") or {}
+    issues = verdict.get("issues") or {}
+    kept = []
+    for kind in ("geometry_issues", "profile_issues"):
+        kept += (issues.get(kind) or {}).get("unchanged") or []
+    if kept:
+        lines.append(
+            "原图已有、本次未加重的问题（保留，未顺手修）："
+            + "；".join(f"{i['id']}[{'、'.join((i.get('gids') or [])[:3])}]" for i in kept[:8])
+        )
+    improved = []
+    for kind in ("geometry_issues", "profile_issues"):
+        improved += (issues.get(kind) or {}).get("improved") or []
+    if improved:
+        lines.append("顺带改善 / 消失的原有问题：" + "；".join(i["id"] for i in improved[:8]))
+    for c in verdict.get("profile_conflicts") or []:
+        lines.append(
+            f"! 规范与你的要求冲突，按你的要求执行了（已记进留档）：{c.get('text') or c.get('id')}"
+        )
+    if not out.get("ok") and exit_code != bridge.engine_normalize.EXIT_NOTHING_TO_DO:
+        for b in verdict.get("blocking") or []:
+            lines.append(f"  ✗ {b.get('text') or b.get('id')}")
+        for c in verdict.get("protected_changes") or []:
+            lines.append(
+                f"  ✗ 受保护属性被改动：{c['gid']}.{c['prop']} {c.get('before')} → {c.get('after')}"
+            )
+        st = verdict.get("structure") or {}
+        for key in ("missing", "extra", "role_changed"):
+            if st.get(key):
+                lines.append(f"  ✗ 结构变化（{key}）：{'、'.join(st[key][:6])}")
+        for f in verdict.get("font_unresolved") or []:
+            lines.append(
+                f"  ✗ 字体 {f['requested']} 没有真的落地：{f['gid']} 实际由 "
+                f"{f.get('face')}{'（数学 ' + str(f.get('math_face')) + '）' if f.get('math_face') else ''} 画出"
+                "——这台机器上没装它，不自动替代。"
+            )
+        for o in (verdict.get("budget") or {}).get("over") or []:
+            lines.append(f"  ✗ 超出局部适配预算：{o}")
+        for r in out.get("rounds") or []:
+            if r.get("conflict"):
+                c = r["conflict"]
+                lines.append(
+                    f"  ✗ 装不下：{c.get('reason')}（需要 {c.get('needed_mm')} mm，只有 "
+                    f"{c.get('available_mm')} mm）——要放宽的最小约束：更大的宽度，或用户明确允许缩小字号 / 减少刻度"
+                )
+        for f in out.get("failed_files") or []:
+            err = f.get("error") or {}
+            lines.append(
+                f"  ✗ 最终产物 {f.get('format')} 未通过验收：{err.get('params', {}).get('failed')}"
+            )
+        lines.append(
+            "没有擅自放宽任何约束：要继续，请让用户明确选择（更大的尺寸 / 缩小字号 / 其它字体 / 允许改结构）后重新发起。"
+        )
+    if out.get("ok") and exit_code == bridge.engine_normalize.EXIT_DONE:
+        ok_files = [f["path"] for f in out.get("files") or [] if f.get("status") == "done"]
+        if ok_files:
+            lines.append("已导出并通过最终产物验收：" + "、".join(ok_files))
+        for fmt, chk in (out.get("acceptance") or {}).items():
+            unverified = chk.get("unverified") or []
+            if unverified:
+                lines.append(
+                    f"  · {fmt}：{'、'.join(unverified)} 查不了（{chk.get('font_note') or chk.get('dpi_note') or ''}）"
+                )
+        if out.get("proof_path"):
+            lines.append("留档：" + str(out["proof_path"]))
+        rep = out.get("replay")
+        if rep is not None:
+            lines.append(
+                "全量重放对比：一致"
+                if rep.get("ok")
+                else f"全量重放对比：有 {len(rep.get('divergence') or [])} 处分歧，别直接拿去投稿"
+            )
+        lines.append(
+            "会话现在受修改约定保护：再改超出约定的东西要用户明确提出并带 user_authorized=true。"
+        )
+    return lines
 
 
 def _call_verify(args: dict) -> dict:
@@ -737,6 +953,7 @@ HANDLERS = {
     "tavotto_health": _call_health,
     "tavotto_open_figure": _call_open,
     "tavotto_apply_overrides": _call_apply,
+    "tavotto_normalize_figure": _call_normalize,
     "tavotto_preflight": _call_preflight,
     "tavotto_export": _call_export,
     "tavotto_verify_replay": _call_verify,

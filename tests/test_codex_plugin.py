@@ -1693,3 +1693,65 @@ def test_shipped_skill_docs_never_reference_repo_relative_docs():
         assert "../../../docs/" not in text and "../../docs/" not in text, (
             f"{path.name} 引用了包外的仓库 docs/ 相对路径"
         )
+
+
+# ------------------- 已有图的保留式规范化（ADR 0051）在技能里的落点 -------------------
+def test_skill_routes_existing_figure_normalization_to_the_transaction_tool():
+    """用户拿来一张画好的图要改宽度 / 字体 / 字号下限：技能必须把它路由到
+    `tavotto_normalize_figure`，而不是让模型自己拼 apply、重写脚本或重画。"""
+    text = _skill_text()
+    assert "tavotto_normalize_figure" in text
+    assert "已有图的规范化" in text
+    # 「最小字号」与「统一字号」是两回事：技能必须点名区分
+    assert "min_font_pt" in text and "font_size_pt" in text
+    assert "不是** `font_size_pt`" in text or "不是 `font_size_pt`" in text
+    # 只指定宽度时高度按原长宽比
+    assert "原长宽比" in text
+    # 完成判据表里有这一行
+    assert "`tavotto_normalize_figure`，按 `exit` 说话" in text
+
+
+def test_skill_forbids_every_bypass_around_the_protected_edit_path():
+    """后端只守得住它管辖的那条路；旁路（改源码、另写脚本、整份换 SVG、Pillow /
+    OpenCV 重建、套主题、删内容）只能在这里禁。少写一条就是给模型留一条后门。"""
+    text = _skill_text()
+    section = text.split("## 已有图的规范化")[1].split("## 交接给")[0]
+    for phrase in (
+        "不改用户的 .py 源码",
+        "不另写一份绘图脚本",
+        "不整份替换 SVG",
+        "Pillow / OpenCV",
+        "不套全局主题",
+        "删曲线 / 删图例项 / 删刻度",
+        "不改配色 / 数据 / 坐标范围 / 子图结构",
+    ):
+        assert phrase in section, f"规范化一节少了禁令：{phrase}"
+
+
+def test_skill_decides_completion_by_the_verdict_not_by_the_tool_call():
+    """工具被调用成功 / 文件生成了都不是「任务完成」：每个退出码都要有对应的说法，
+    装不下时列最小放宽约束让用户选、字体没装不自动替代、约定外的改动要用户明确要求。"""
+    text = _skill_text()
+    section = text.split("## 已有图的规范化")[1].split("## 交接给")[0]
+    for code in (
+        "done",
+        "constraint_conflict",
+        "budget_exceeded",
+        "font_unavailable",
+        "requires_authorization",
+        "acceptance_failed",
+    ):
+        assert f"`{code}`" in section, f"规范化一节没说 {code} 该怎么办"
+    assert "不要自己放宽" in section
+    assert "不要**自己换一个相近字体" in section or "自己换一个相近字体" in section
+    assert "user_authorized" in section
+    assert "保留的原有问题" in section
+
+
+def test_compatibility_reference_documents_the_contract_tables():
+    ref = (SKILL_DIR / "references" / "compatibility.md").read_text(encoding="utf-8")
+    assert "保留式规范化" in ref
+    for phrase in ("默认受保护", "明确要求才改", "局部适配", "15%", "60%", "3 轮"):
+        assert phrase in ref, phrase
+    for code in ("constraint_conflict", "font_unavailable", "requires_authorization"):
+        assert code in ref

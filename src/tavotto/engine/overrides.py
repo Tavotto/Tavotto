@@ -690,15 +690,7 @@ def _set_text_fontfamily(t: Text, v) -> None:
     # 画 `×10⁵` 的 `⁵` `⁻` 是三个一模一样的空心框；任何拉丁字体画汉字都是）。
     # `get_fontfamily()[0]` 仍然是用户选的那个，manifest / 预检报的都是它。
     t.set_fontfamily(_family_chain(fam))
-    math_name = _mathtext_font_name(fam)
-    if not math_name:
-        return
-    try:
-        mpl.rcParams["mathtext.rm"] = math_name
-        mpl.rcParams["mathtext.it"] = f"{math_name}:italic"
-        mpl.rcParams["mathtext.bf"] = f"{math_name}:bold"
-        mpl.rcParams["mathtext.sf"] = math_name
-    except (ValueError, KeyError):
+    if not _apply_mathtext_custom_set(fam):
         return  # 正文已经改好；上下标留在默认字体集
     t.set_math_fontfamily("custom")
 
@@ -712,6 +704,67 @@ def _restore_text_fontfamily(t: Text, orig) -> None:
     fam, math = orig
     t.set_fontfamily(fam)
     t.set_math_fontfamily(math)
+
+
+def _apply_mathtext_custom_set(fam: str) -> bool:
+    """把 rcParams 的 custom mathtext 字体集指向 `fam`。指不过去回 False。
+
+    `_set_text_fontfamily` 与刻度那条共用这一段：mathtext 只认具体字体名
+    （`_mathtext_font_name`），而 rcParams 是进程级的——多个文字分别改成
+    **不同**字体时 custom 集只能指向最后一次的选择（明示的边界）。
+    """
+    math_name = _mathtext_font_name(fam)
+    if not math_name:
+        return False
+    try:
+        mpl.rcParams["mathtext.rm"] = math_name
+        mpl.rcParams["mathtext.it"] = f"{math_name}:italic"
+        mpl.rcParams["mathtext.bf"] = f"{math_name}:bold"
+        mpl.rcParams["mathtext.sf"] = math_name
+    except (ValueError, KeyError):
+        return False
+    return True
+
+
+def _get_ticks_fontfamily(ts: "TickSet"):
+    """脚本原样 = (第一条刻度标签的族链, 它的 mathtext 字体集)——与 text 同一形状。
+
+    没有一条标签时按 rcParams 的族链算（`ensure_rcparams_fallback` 之后那份），
+    还原时写回去的仍是这条链，所以「没标签 → 改 → 撤销」不会留下第二种状态。
+    """
+    labs = ts.labels
+    if labs:
+        return (list(labs[0].get_fontfamily() or []), labs[0].get_math_fontfamily())
+    return (list(mpl.rcParams["font.family"]), str(mpl.rcParams["mathtext.fontset"]))
+
+
+def _set_ticks_fontfamily(ts: "TickSet", v) -> None:
+    """改整条轴的刻度文字字体（2026-09-13，保留式规范化补的一格）。
+
+    刻度标签每次 draw 由 locator 现建，属性只有经 `tick_params` 才留得住：
+    `labelfontfamily`（matplotlib ≥ 3.7，本仓库下界 3.8.4）写进
+    `_major_tick_kw` / `_minor_tick_kw`，已有的与之后新建的标签都吃它。
+    族按回退链设（`_family_chain`），理由同 `_set_text_fontfamily`。
+
+    **mathtext 那一半只盖得住已经存在的标签**：对数轴的 `10^4` 由 mathtext
+    字体集画，`tick_params` 没有 math 家族的键，只能逐条
+    `set_math_fontfamily("custom")`；刻度**数量增长**后新建出来的那几条标签
+    仍在默认字体集上。这是明示的边界——manifest 的 `math_face` 与最终产物的
+    字体清单（`engine/artifactcheck.py`）都量得出它，不会被报成「已换字体」。
+    """
+    fam = str(v[0]) if isinstance(v, (list, tuple)) else str(v)
+    ts.tick_params(labelfontfamily=_family_chain(fam))
+    if not _apply_mathtext_custom_set(fam):
+        return
+    for t in ts.labels:
+        t.set_math_fontfamily("custom")
+
+
+def _restore_ticks_fontfamily(ts: "TickSet", orig) -> None:
+    fam, math = orig
+    ts.tick_params(labelfontfamily=list(fam))
+    for t in ts.labels:
+        t.set_math_fontfamily(math)
 
 
 # ---------------------------------------------------------------------------
@@ -4619,6 +4672,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
             **({"labelbottom": bool(v)} if a.which == "x" else {"labelleft": bool(v)})
         ),
     ),
+    ("ticks", "fontfamily"): (_get_ticks_fontfamily, _set_ticks_fontfamily),
     ("figure", "size_mm"): (
         lambda f: [x * 25.4 for x in f.get_size_inches()],
         lambda f, v: f.set_size_inches(float(v[0]) / 25.4, float(v[1]) / 25.4, forward=False),
@@ -5065,6 +5119,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
     ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
+    ("ticks", "fontfamily"): _restore_ticks_fontfamily,
     ("image", "gradient_color"): _restore_image_gradient,
     # 位置模型的三条：槽位退回未表态 + 整体重建（脚本原样存在模型的 orig 里）
     ("legend", "loc_frac"): _mk_legend_pos_restore("loc_frac"),

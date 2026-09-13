@@ -268,6 +268,25 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   * 看护 `tests/test_manifest_marker_shape.py`。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **刻度组有 `fontfamily`、文字元素报真正画字的脸（2026-09-13，ADR 0051）**：
+  `("ticks", "fontfamily")` 走 `tick_params(labelfontfamily=…)`（matplotlib ≥ 3.7）
+  + 已有标签逐条 `set_math_fontfamily("custom")`——刻度**数量增长**后新建的标签里的
+  mathtext 仍在默认字体集，这是明示的边界。manifest 给每个带字的元素（含刻度组与
+  单条刻度）加 `face`（正文族链解析到的第一张脸的族名）与 `math_face`（文字含
+  `$…$` 时：custom 集按 `mathtext.rm` 解析，内置集按 `_MATHTEXT_SET_FACES`），唯一
+  出处 `manifest.font_faces()`。**请求的族名 ≠ face 就是没装上、matplotlib 静默退了**
+  ——白名单式的 `font-family-substituted` 只认名字，量不到这一维；保留式规范化的
+  `font_unavailable` 退出靠的就是它。`_apply_mathtext_custom_set` 是文字与刻度共用的
+  那一段 rcParams 写入。
+- **保留式规范化的引擎侧三模块（ADR 0051，纯标准库，Flask / MCP 两个进程都 import）**：
+  `engine/normalize.py`（约定 / 计划 / 授权 / 实效比对 / 边距与图例候选 / 预算）、
+  `engine/interference.py`（`text-overlap` / `text-over-axes` / `legend-over-data`，
+  与预检同一形状；`measure()` / `issue_key()` 是「加没加重」的尺）、
+  `engine/artifactcheck.py`（最终文件按格式验；`pdfbackend.pdf_fonts` 是它唯一的
+  PyMuPDF 入口）。`preflight.element_overflow()` 是 `element-outside-figure` 的逐元素
+  判据，`_check_panel_clipping` 与 B0 对比共用它——改判据只改这一处。三条干涉检查的
+  severity 登记在 `publication.json`（warn），文案 key 在 `errors.json` 的 `preflight.*`
+  与 `problems.title.*`（`test_i18n_dead_keys` 扫 `src/tavotto` 与插件目录）。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，

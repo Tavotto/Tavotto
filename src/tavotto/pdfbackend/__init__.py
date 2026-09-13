@@ -8,6 +8,7 @@ AGPL-3.0-only。把「读页面尺寸 / 栅格化 / 按布局合成」这三件�
 边界契约（进出全是 dict / Path / 基本类型，不泄漏任何后端对象）：
 
   probe_asset(path, kind)           → 素材原始尺寸，供图库列表换算物理尺寸
+  pdf_fonts(path)                   → PDF 首页真正用到的字体名（最终产物验收的唯一依据）
   render_preview_png(path, w, out)  → 画布显示用的位图预览（带磁盘缓存）
   text_width(s, size_pt, ...)       → 中英混排字符串宽度（pt；`family` 与落笔同族）
   text_plan(s, family, ...)         → 字形归属计划 [(片段, 层)]；层见 glyphplan.GLYPH_LAYERS
@@ -53,6 +54,7 @@ from .pymupdf_backend import (  # noqa: F401
     original_pdf,
     original_png,
     original_tiff,
+    pdf_fonts,
     probe_asset,
     render_preview_png,
     text_plan,
@@ -74,6 +76,7 @@ __all__ = [
     "original_pdf",
     "original_png",
     "original_tiff",
+    "pdf_fonts",
     "probe_asset",
     "render_preview_png",
     "text_plan",

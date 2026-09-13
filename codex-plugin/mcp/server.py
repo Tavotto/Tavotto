@@ -79,9 +79,9 @@ DESKTOP_ONLY_HINT = (
 #: 两侧由 tests/test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge
 #: 对拍，改 bridge 的 import 必须同步这里。
 _BRIDGE_IMPORT = (
-    "from tavotto.engine import config, exportjob, exportreq, handoff, patchspec, "
-    "pool, preflight, previewbudget, profiles, profilestore, project_refresh, "
-    "readiness, registry, telemetry"
+    "from tavotto.engine import artifactcheck, config, exportjob, exportreq, figcapture, "
+    "handoff, interference, normalize, patchspec, pool, preflight, previewbudget, "
+    "profiles, profilestore, project_refresh, readiness, registry, telemetry"
 )
 
 
@@ -516,6 +516,7 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
 NORMAL_TOOLS = (
     "tavotto_open_figure",
     "tavotto_apply_overrides",
+    "tavotto_normalize_figure",
     "tavotto_preflight",
     "tavotto_export",
     "tavotto_verify_replay",

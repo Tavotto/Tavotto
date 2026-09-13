@@ -55,12 +55,20 @@ MIN_TAVOTTO_VERSION = "0.13.0"
 #: 上面那个版本号是**对着这一组桥 import** 算出来的。改了 `bridge.py` 的
 #: `from tavotto.engine import ...`，`tests/test_codex_plugin.py` 会红，逼你回来
 #: 重估 `MIN_TAVOTTO_VERSION` 再同步这里。散句约定靠人记得，这条靠退出码。
+#: 2026-09-13（ADR 0051）：桥新增 import 了 artifactcheck / figcapture / interference /
+#: normalize——四个全部晚于 v0.14.0。**下一次发版时把 MIN_TAVOTTO_VERSION 抬到那个
+#: 版本号**（`tests/test_codex_plugin.py` 不允许它高于当前 `tavotto.__version__`，
+#: 所以这里先只同步 import 集；待发条目已记进 docs/release-notes/UNRELEASED.md）。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
+        "artifactcheck",
         "config",
         "exportjob",
         "exportreq",
+        "figcapture",
         "handoff",
+        "interference",
+        "normalize",
         "patchspec",
         "pool",
         "preflight",

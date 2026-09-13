@@ -175,6 +175,7 @@ def test_tools_list_shape():
         "tavotto_health",
         "tavotto_open_figure",
         "tavotto_apply_overrides",
+        "tavotto_normalize_figure",
         "tavotto_preflight",
         "tavotto_export",
         "tavotto_verify_replay",
@@ -193,6 +194,7 @@ def test_only_canvas_tools_carry_the_ui_resource():
     for name in server.UI_TOOLS:
         assert tools[name]["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
     for name in (
+        "tavotto_normalize_figure",
         "tavotto_preflight",
         "tavotto_export",
         "tavotto_refresh_project",
