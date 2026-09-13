@@ -113,6 +113,8 @@
 | 加载中 | `LoaderCircle` | 别名 `Loader2` |
 | 帮助 | `CircleQuestionMark` | 别名 `CircleHelp` |
 | 成功 | `CircleCheck`（状态）/ `Check`（选中标记） | 别名 `CheckCircle2` |
+| 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces`（`{ }`，2026-09-13 审计 B04 / B05 / B07 换掉：大括号说的是「参数化」这个实现词） |
+| 整张图（图内编辑的图幅） | `Fullscreen`（`roles/roleIcons`） | `Frame`（井字，读起来像网格 / 裁切） |
 
 ## 五、留给用户拍板的三组
 

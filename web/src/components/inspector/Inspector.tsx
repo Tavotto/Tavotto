@@ -311,7 +311,10 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
 
   if (panel) {
     const gid = selectedGids.at(-1)
-    const el = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
+    // 在树里点「整张图」与什么都没选是同一个对象：头部只有一种写法（「整张图」徽标 +
+    // 图名），不因为选中方式不同而换一副面孔（2026-09-13 审计 B54 / B56 的连续性）
+    const picked = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
+    const el = picked?.gid === 'figure' ? undefined : picked
     // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
     const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
     const axes = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined

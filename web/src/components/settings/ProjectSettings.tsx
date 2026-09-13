@@ -145,11 +145,8 @@ export function ProjectSettings() {
     </SettingSection>
 
     <SettingSection title={st('project.sectionWriteBack')} description={st('project.writeBackDesc')}>
-      <SettingRow
-        label={st('project.allowWriteBack')}
-        controlId="setting-allow-write-back"
-        status={allowWriteBack ? st('project.writeBackOnHint') : undefined}
-      >
+      {/* 开着时的副作用由分区说明那一句承担（覆盖什么、备份去哪），行上不再重复一句 */}
+      <SettingRow label={st('project.allowWriteBack')} controlId="setting-allow-write-back">
         <Toggle
           aria-labelledby={settingRowLabelId('setting-allow-write-back')}
           id="setting-allow-write-back"

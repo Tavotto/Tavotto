@@ -37,9 +37,8 @@ function LastCheckVerdict({ checkedAtMs }: { checkedAtMs: number | null | undefi
       data-update-verdict={checkedAtMs ? 'checked' : 'unknown'}
       className="type-caption"
     >
-      {checkedAtMs
-        ? st('update.noUpdateAtLastCheck', { time: formatDateTime(checkedAtMs) })
-        : st('update.latestUnknown')}
+      {/* 时刻在上面那行「上次检查」里，这里只说结论与它的边界（2026-09-13 审计 B41） */}
+      {checkedAtMs ? st('update.noUpdateAtLastCheck') : st('update.latestUnknown')}
     </p>
   )
 }

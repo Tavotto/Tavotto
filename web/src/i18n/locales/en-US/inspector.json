@@ -335,8 +335,8 @@
     "groupRangeTransform": "Range & transform",
     "sizeHead": "Axes size",
     "groupLine": "Line",
-    "groupMarker": "Markers",
-    "relatedTicksAll": "Edit all {{label}}…"
+    "groupMarker": "Data points",
+    "relatedTicksAll": "Edit all of {{label}}…"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",

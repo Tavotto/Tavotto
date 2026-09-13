@@ -783,7 +783,7 @@ export default interface Resources {
         "current": "当前项目使用",
         "globalMissing": "全局清单里已没有这条配置，项目里的快照仍然有效",
         "source": {
-          "builtin": "未绑定，按内置默认",
+          "builtin": "没有指定过，按内置默认检查",
           "global": "跟随全局配置",
           "snapshot": "用的是选择时的快照"
         },
@@ -1410,8 +1410,7 @@ export default interface Resources {
         "switch": "切换项目…",
         "useDefault": "恢复默认",
         "writeBackDesc": "「写回原始文件」会覆盖项目里的原始 PDF / PNG 与脚本；每次写回前先把原文件备份到上面的备份位置。",
-        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
-        "writeBackOnHint": "修改可直接写入原始脚本。"
+        "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。"
       },
       "section": {
         "about": "关于与隐私",
@@ -1473,7 +1472,7 @@ export default interface Resources {
         "manualDownload": "连不上更新服务时，也可以去 Releases 手动下载",
         "methodSource": "源码检出（升级请用 git pull）",
         "neverChecked": "尚未检查",
-        "noUpdateAtLastCheck": "{{time}} 检查时没有发现新版本；此刻有没有新版要再查一次才知道。",
+        "noUpdateAtLastCheck": "上次检查没有发现新版本；此刻有没有，要再查一次才知道。",
         "relaunch": "重启并使用新版本",
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效——当前进程仍在运行旧版本代码。",
@@ -2420,7 +2419,7 @@ export default interface Resources {
       "figureSize": "整图 {{w}}×{{h}} mm",
       "groupFrame": "边框",
       "groupLine": "线条",
-      "groupMarker": "标记",
+      "groupMarker": "数据点",
       "groupRangeTransform": "范围与变换",
       "groupTicksGrid": "刻度与网格",
       "hiddenElements_other": "已隐藏元素（{{count}}）",
@@ -2464,7 +2463,7 @@ export default interface Resources {
       "proxiedSizeHead": "子图尺寸 · {{label}}",
       "relatedAxes": "所属子图",
       "relatedSeries": "所属系列",
-      "relatedTicksAll": "编辑整条{{label}}…",
+      "relatedTicksAll": "编辑整个 {{label}}…",
       "relatedWithHint": "{{hint}}：{{label}}",
       "resetDiagram": "恢复刻度与边框到脚本",
       "resetElement": "恢复此元素",

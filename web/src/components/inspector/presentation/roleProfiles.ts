@@ -112,8 +112,9 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       markerfacecolor: HAS_MARKER,
       markeredgecolor: HAS_MARKER,
     },
-    // 系列名 → 线条 → 标记（2026-09-13 审计 B48）：五六个控件平铺时颜色 / 线宽 /
-    // 线型与标记那一组读不出边界，像一张配置表
+    // 系列名 → 线条 → 数据点（2026-09-13 审计 B48）：五六个控件平铺时颜色 / 线宽 /
+    // 线型与标记那一组读不出边界，像一张配置表。第二组叫「数据点」而不是「标记」：
+    // 它的第一个字段就叫「标记」，组名再写一遍等于同一个词连出两行
     primaryGroups: [
       { labelKey: 'groupLine', props: ['color', 'linewidth', 'linestyle'] },
       { labelKey: 'groupMarker', props: ['marker', 'markersize', 'markerfacecolor', 'markeredgecolor'] },

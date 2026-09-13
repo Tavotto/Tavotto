@@ -482,7 +482,7 @@
       "current": "当前项目使用",
       "globalMissing": "全局清单里已没有这条配置，项目里的快照仍然有效",
       "source": {
-        "builtin": "未绑定，按内置默认",
+        "builtin": "没有指定过，按内置默认检查",
         "global": "跟随全局配置",
         "snapshot": "用的是选择时的快照"
       },
@@ -1099,7 +1099,6 @@
       "copyPath": "复制 {{name}} 的完整路径",
       "allowWriteBack": "允许写回原始文件",
       "writeBackOffHint": "已关闭写回：源图与脚本不会被覆盖，「写回原始文件」按钮已停用。",
-      "writeBackOnHint": "修改可直接写入原始脚本。",
       "sectionProject": "项目",
       "sectionLocations": "位置",
       "sectionWriteBack": "写回源图",
@@ -1156,7 +1155,7 @@
       "manualDownload": "连不上更新服务时，也可以去 Releases 手动下载",
       "methodSource": "源码检出（升级请用 git pull）",
       "neverChecked": "尚未检查",
-      "noUpdateAtLastCheck": "{{time}} 检查时没有发现新版本；此刻有没有新版要再查一次才知道。",
+      "noUpdateAtLastCheck": "上次检查没有发现新版本；此刻有没有，要再查一次才知道。",
       "relaunch": "重启并使用新版本",
       "releaseNotes": "查看发行说明",
       "restartAfter": "后生效——当前进程仍在运行旧版本代码。",

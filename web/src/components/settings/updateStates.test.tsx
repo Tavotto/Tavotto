@@ -127,7 +127,7 @@ describe('「最新」只说到上一次检查那一刻', () => {
     await render()
     expect(verdict()).toBe('checked')
     expect(text()).toContain(
-      st('update.noUpdateAtLastCheck', { time: formatDateTime(CHECKED_AT) }),
+      st('update.noUpdateAtLastCheck'),
     )
   })
 
@@ -147,7 +147,7 @@ describe('「最新」只说到上一次检查那一刻', () => {
     await render()
     const time = formatDateTime(CHECKED_AT)
     expect(verdict()).toBe('checked')
-    expect(text()).toContain(st('update.noUpdateAtLastCheck', { time }))
+    expect(text()).toContain(st('update.noUpdateAtLastCheck'))
     expect(text()).toContain(st('update.lastChecked', { time }))
   })
 })

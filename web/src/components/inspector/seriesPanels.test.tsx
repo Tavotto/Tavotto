@@ -381,7 +381,7 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
     expect(row('alpha')).toBeNull()
   })
 
-  it('首屏分成「线条」「标记」两组，小标题各钉在那一组第一个在场的字段前（审计 B48）', async () => {
+  it('首屏分成「线条」「数据点」两组，小标题各钉在那一组第一个在场的字段前（审计 B48）', async () => {
     seedRender(
       makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields({ marker: 'o' }))]),
     )
@@ -392,13 +392,13 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
     )
     const at = (s: string) => seq.indexOf(s)
     expect(at('#线条')).toBeGreaterThanOrEqual(0)
-    expect(at('#标记')).toBeGreaterThan(at('#线条'))
+    expect(at('#数据点')).toBeGreaterThan(at('#线条'))
     expect(at('label')).toBeLessThan(at('#线条'))
     expect(at('#线条')).toBe(at('color') - 1)
-    expect(at('#标记')).toBe(at('marker') - 1)
+    expect(at('#数据点')).toBe(at('marker') - 1)
     // 每个标题只出一次
     expect(seq.filter((s) => s === '#线条').length).toBe(1)
-    expect(seq.filter((s) => s === '#标记').length).toBe(1)
+    expect(seq.filter((s) => s === '#数据点').length).toBe(1)
   })
 
   it('用户改过标记大小后再把标记设为无，那一行照样显示（改过的必须能看到）', async () => {

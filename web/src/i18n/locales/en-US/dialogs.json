@@ -486,7 +486,7 @@
       "current": "This project uses",
       "globalMissing": "That profile is no longer in the global list; the project’s snapshot still applies",
       "source": {
-        "builtin": "not bound; using the built-in default",
+        "builtin": "none chosen; checked against the built-in default",
         "global": "following the global profile",
         "snapshot": "using the snapshot taken when it was chosen"
       },
@@ -1108,7 +1108,6 @@
       "copyPath": "Copy the full path of {{name}}",
       "allowWriteBack": "Allow writing back to original files",
       "writeBackOffHint": "Write-back is off: source figures and scripts can never be overwritten, and the “Write back to the original file” button is disabled.",
-      "writeBackOnHint": "Edits can be written straight into the original scripts.",
       "sectionProject": "Project",
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
@@ -1165,7 +1164,7 @@
       "manualDownload": "If the update service is unreachable, you can also download from Releases manually",
       "methodSource": "source checkout (upgrade with git pull)",
       "neverChecked": "Never checked",
-      "noUpdateAtLastCheck": "No new version was found when checked at {{time}}; check again to know about now.",
+      "noUpdateAtLastCheck": "No new version was found at the last check; check again to know about now.",
       "relaunch": "Restart into the new version",
       "releaseNotes": "Release notes",
       "restartAfter": " to use it — this process is still running the old code.",

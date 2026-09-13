@@ -320,8 +320,8 @@
     "groupRangeTransform": "范围与变换",
     "sizeHead": "子图尺寸",
     "groupLine": "线条",
-    "groupMarker": "标记",
-    "relatedTicksAll": "编辑整条{{label}}…"
+    "groupMarker": "数据点",
+    "relatedTicksAll": "编辑整个 {{label}}…"
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",

@@ -1547,6 +1547,13 @@ NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kb
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
 Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
+跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
+角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。
+图内元素的**归属**（谁挂在谁下面、面包屑里子图与元素之间那一级）只有
+`inspector/roles/hierarchy.ts` 一份判据，元素树建树与身份头共用；对象头显示的名字过
+`identityCrumbs.displayLabel`（mathtext → 可读文本），源码只在输入框里。首屏字段的分组小
+标题由 `RoleProfile.primaryGroups` 声明（曲线 = 线条 / 数据点），不在组件里手排
+（2026-09-13 审计 P1 第二批，细则在宪法第十六节）。
 
 工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做+工具，
 右=缩放/导出/更多）；左侧 44px 常驻图标轨道（素材/结构/图内元素）+
