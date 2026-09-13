@@ -46,7 +46,7 @@ import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
-import { Segmented } from './ui/Segmented'
+import { Tab, TabList } from './ui/Tabs'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -542,14 +542,17 @@ function VersionDetail({
       ) : (
         <>
           <div className="flex items-center justify-between gap-1.5">
-            <Segmented
-              value={view}
-              onChange={(v) => setView(v)}
-              items={[
-                { value: 'version', label: vd('viewVersion') },
-                { value: 'current', label: vd('viewCurrent') },
-              ]}
-            />
+            {/* 「该版本 / 当前」是看哪一页的预览，不是一个取值：下划线页签（`Tabs`），
+                与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
+            <div className="flex h-8 min-w-0 flex-1 items-center border-b border-border">
+              <TabList label={vd('viewLabel')}>
+                {(['version', 'current'] as const).map((v) => (
+                  <Tab key={v} active={view === v} onClick={() => setView(v)}>
+                    {vd(v === 'version' ? 'viewVersion' : 'viewCurrent')}
+                  </Tab>
+                ))}
+              </TabList>
+            </div>
             <Tip label={vd('compareTip')}>
               <Button
                 size="icon-sm"

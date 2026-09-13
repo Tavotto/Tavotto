@@ -1180,11 +1180,13 @@
     }
   },
   "style": {
+    "affectDetails": "Affected details",
     "affectNone": "No figure in this scope would change",
     "affectSummary_one": "Affects {{count}} figure, {{patches}} changes in total",
     "affectSummary_other": "Affects {{count}} figures, {{patches}} changes in total",
     "annotationCount_one": "Annotation text: {{count}}",
     "annotationCount_other": "Annotation text: {{count}}",
+    "annotationGroup": "Annotations and page",
     "annotationText": "Annotation text",
     "applyScope": "Scope",
     "applyTo": "Apply to {{scope}}",
@@ -1203,6 +1205,13 @@
     "extract": "Extract from the current panel",
     "extractFrom": "Read the current values from “{{name}}”",
     "extractNeedPanel": "Select a rendered, editable figure to extract from",
+    "group": {
+      "axes": "Axes",
+      "legend": "Legend",
+      "other": "Other",
+      "series": "Curves and series",
+      "text": "Text"
+    },
     "includePageSize": "Include page size",
     "namePlaceholder": "Style name (e.g. “AMFE main text”)",
     "nameRequired": "Give the style a name first",
@@ -1223,6 +1232,7 @@
     "panelUnmappable_other": "; {{count}} items cannot be mapped",
     "removeColor": "Remove colour",
     "removeEntry": "Remove this item",
+    "removeEntryNamed": "Remove “{{role}} · {{prop}}” from this style",
     "roleLabel": {
       "axes": "Axes frame",
       "axis_label": "Axis label",
@@ -1372,6 +1382,7 @@
     },
     "title": "Document versions",
     "versionName": "Version name",
+    "viewLabel": "Which version to preview",
     "viewCurrent": "Current",
     "viewVersion": "This version"
   },

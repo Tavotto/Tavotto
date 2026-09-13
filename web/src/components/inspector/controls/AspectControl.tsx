@@ -76,8 +76,8 @@ export function AspectControl({
   const mode = pending ?? committed
   const custom = mode === 'custom'
   return (
-    // 两行、不折行：分段控件靠右占第一行，自定义档的数字框在第二行贴控件列左缘，
-    // 与上面「X 范围」那些框对齐。以前是「同一行、数字框从『自定义比例』右边抽出来」
+    // 两行、不折行：分段控件铺满控件列占第一行（与上面「X 轴缩放」的下拉同宽），
+    // 自定义档的数字框在第二行贴控件列左缘，与上面「X 范围」那些框对齐。以前是「同一行、数字框从『自定义比例』右边抽出来」
     // 的动效，但那一行在出厂宽度 360 就放不下（zh 三个档名 + 框 > 控件列；en 一旦
     // 改过、右侧多了恢复芯片也放不下），只好允许换行——折下去的框悬在右边和谁都
     // 不对齐，而且宽度动画到一半才跳到第二行（2026-09-12 用户实测：躲过裁切但更怪）。
@@ -86,8 +86,6 @@ export function AspectControl({
     // 念到的输入框是个陷阱。
     <div className="flex min-w-0 flex-1 flex-col gap-1">
       <Segmented
-        tone="quiet"
-        className="w-auto shrink-0 gap-1 self-end"
         ariaLabel={label}
         value={mode}
         onChange={(m) => {

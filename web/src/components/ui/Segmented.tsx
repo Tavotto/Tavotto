@@ -25,32 +25,38 @@ interface SegmentedProps<T extends string> {
   onChange: (v: T) => void
   items: SegmentedItem<T>[]
   className?: string
-  size?: 'sm' | 'md'
-  /** quiet：选中态不用 accent，融进低对比的界面 */
-  tone?: 'accent' | 'quiet'
   /** 整组的可达名（「方向」「作用范围」…）——无名的 radiogroup 说不清在选什么 */
   ariaLabel?: string
 }
 
 /**
- * 单选下划线 Tabs：整组只有一条底部基线，选中项在基线上压一段实线。
- * 选中态除颜色外还有下划线与字重两重线索（未选中的文字压到 50% 不透明度），
- * 不单靠颜色区分。整组默认撑满容器宽度，各档等分。
+ * 分段选择器（segmented control）：一组**互斥的取值**排成 28px 的一行，hairline
+ * 外框把它标成一个控件（与输入框、下拉同一条边），选中项 = `selected` 轻 tint +
+ * 字重（与列表行、设置导航、`Button active` 同一套选中语言），未选中 ink-3、
+ * hover 浮 surface-hover。整组默认撑满容器宽度，各档等分；`value` 为 null（多选
+ * 取值不一）时没有一档被标成选中。
+ *
+ * 它与 `Tabs` 的分工（2026-09-13 审计 §6「控件语法」）：**页签负责切换视图，
+ * 不负责属性取值**——对齐、刻度方向、纵横比、作用范围这些「值」用它；版本对比
+ * 的「版本 / 当前」、问题面板的「当前图 / 整个文档」、刻度卡的「X / Y」那种
+ * 「看哪一页」用 `Tabs`。此前两边都是下划线页签，值与视图长得一样，选边 /
+ * 选方向像在切换页面（B45 / B52）。
  */
 export function Segmented<T extends string>({
   value,
   onChange,
   items,
   className,
-  size = 'sm',
-  tone = 'accent',
   ariaLabel,
 }: SegmentedProps<T>) {
   return (
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className={cn('flex w-full items-stretch border-b border-border', className)}
+      className={cn(
+        'flex h-7 w-full items-stretch rounded-sm border border-border bg-surface',
+        className,
+      )}
     >
       {items.map((item) => {
         const active = item.value === value
@@ -68,31 +74,20 @@ export function Segmented<T extends string>({
             title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
-              'relative flex flex-1 items-center justify-center gap-1 whitespace-nowrap outline-none',
-              'transition-[color,opacity] focus-visible:focus-ring',
-              size === 'sm' ? 'h-7 min-w-7 px-2 text-xs' : 'h-8 min-w-8 px-2.5 text-xs',
+              'flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-xs outline-none',
+              // 首尾两格跟着外框的圆角走，选中的 tint 才不会在角上露出方角
+              'first:rounded-l-sm last:rounded-r-sm',
+              'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
               active
-                ? tone === 'quiet'
-                  ? 'font-medium text-ink opacity-100'
-                  : 'font-medium text-ink opacity-100'
+                ? 'bg-selected font-medium text-ink'
                 : item.disabled
-                  ? 'cursor-default text-ink-faint opacity-50'
+                  ? 'cursor-default text-ink-faint'
                   : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化
-                    // （`text-ink opacity-50` 量出来 3.32:1，a11y 那条 e2e 当场红）
-                    'text-ink-3 hover:text-ink',
+                    'text-ink-3 hover:bg-surface-hover hover:text-ink',
             )}
           >
             {item.icon}
             {item.label}
-            {active && (
-              <span
-                aria-hidden
-                className={cn(
-                  'absolute inset-x-0 -bottom-px h-[1.5px]',
-                  'bg-ink',
-                )}
-              />
-            )}
           </button>
         )
         return item.tip ? (

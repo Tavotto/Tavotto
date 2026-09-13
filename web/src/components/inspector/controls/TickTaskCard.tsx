@@ -5,6 +5,7 @@ import type { EditableField } from '@/lib/api'
 import { Row } from '../../ui/Field'
 import { NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
+import { Tab, TabList } from '../../ui/Tabs'
 import { Toggle } from '../../ui/Toggle'
 import {
   axisChoice,
@@ -149,14 +150,17 @@ export function TickTaskCard({
   return (
     <div className="flex flex-col gap-1.5" data-tick-card={cur.axis}>
       {axes.length > 1 && (
-        <Segmented
-          tone="quiet"
-          className="w-full"
-          ariaLabel={tk('axisSwitch')}
-          value={active}
-          onChange={setActive}
-          items={axes.map((a) => ({ value: a.axis, label: tk(AXIS_TAB[a.axis]) }))}
-        />
+        /* 「X 刻度 / Y 刻度」是看哪一条轴的页，不是一个取值：下划线页签（`Tabs`）；
+           下面的「方向」才是取值，走 `Segmented` */
+        <div className="flex h-8 items-center border-b border-border">
+          <TabList label={tk('axisSwitch')}>
+            {axes.map((a) => (
+              <Tab key={a.axis} active={active === a.axis} onClick={() => setActive(a.axis)}>
+                {tk(AXIS_TAB[a.axis])}
+              </Tab>
+            ))}
+          </TabList>
+        </div>
       )}
 
       {dirField && dirOptions.length > 0 && (
@@ -168,7 +172,6 @@ export function TickTaskCard({
             labelWidth={labelWidth}
           >
             <Segmented
-              tone="quiet"
               className="min-w-0 flex-1"
               ariaLabel={tk('direction')}
               value={choice}

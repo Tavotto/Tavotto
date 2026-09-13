@@ -100,12 +100,15 @@ export function WorkspaceContextBar() {
             按钮 shrink-0 + nowrap，不参与压缩——挤压等于叠字 */}
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            {/* `data-onboarding-anchor="to-layout"`：新手教程 Step 6 的 coachmark 挂这颗 */}
+            {/* `data-onboarding-anchor="to-layout"`：新手教程 Step 6 的 coachmark 挂这颗。
+                `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
+                图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里 */}
             <Button
               size="sm"
               variant="ghost"
               className="shrink-0 whitespace-nowrap"
               data-context-back
+              data-exit-element-edit={editingHere ? '' : undefined}
               data-onboarding-anchor={fastEdit ? 'to-layout' : undefined}
               title={fastEdit ? t('fastEdit.crumbTitle') : t('stage.exitTitle')}
               onClick={back}

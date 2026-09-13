@@ -42,7 +42,7 @@ import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { currentProfile, FixButton } from './IssueFixButton'
-import { Segmented } from '../ui/Segmented'
+import { Tab, TabList } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { useScopedProblems } from './useProblemScope'
 
@@ -292,7 +292,7 @@ export function ProblemPanel() {
 /* ------------------------------- 范围 ------------------------------------- */
 
 /**
- * 「当前图 / 整个文档」两档等分的页签。没有当前图时那一档留在原位灰掉、
+ * 「当前图 / 整个文档」两个页签。没有当前图时那一档留在原位灰掉、
  * 说明为什么——消失的选项解释不了自己。
  */
 function ScopeBar({
@@ -306,26 +306,33 @@ function ScopeBar({
 }) {
   return (
     <div className="shrink-0 px-3">
-      <Segmented<ProblemScope>
-        ariaLabel={pr('scopeLabel')}
-        tone="quiet"
-        size="md"
-        value={scope}
-        onChange={(v) => useUiStore.getState().setProblemScope(v)}
-        items={[
-          {
-            value: 'figure',
-            label: pr('scopeFigure'),
-            disabled: !figureId,
-            title: figureId
-              ? figureName
-                ? pr('scopeFigureTip', { name: figureName })
-                : undefined
-              : pr('scopeFigureUnavailable'),
-          },
-          { value: 'document', label: pr('scopeDocument') },
-        ]}
-      />
+      {/* 「当前图 / 整个文档」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
+          与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
+      <div className="flex h-8 items-center border-b border-border">
+        <TabList label={pr('scopeLabel')}>
+          <Tab
+            active={scope === 'figure'}
+            disabled={!figureId}
+            title={
+              figureId
+                ? figureName
+                  ? pr('scopeFigureTip', { name: figureName })
+                  : undefined
+                : pr('scopeFigureUnavailable')
+            }
+            className="disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => useUiStore.getState().setProblemScope('figure')}
+          >
+            {pr('scopeFigure')}
+          </Tab>
+          <Tab
+            active={scope === 'document'}
+            onClick={() => useUiStore.getState().setProblemScope('document')}
+          >
+            {pr('scopeDocument')}
+          </Tab>
+        </TabList>
+      </div>
       {/* 图名就在范围下面：用户得知道「当前图」指的是谁 */}
       {scope === 'figure' && figureName && (
         <p className="type-meta truncate pt-1.5" title={figureName}>

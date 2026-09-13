@@ -1472,9 +1472,11 @@ export default interface Resources {
       }
     },
     "style": {
+      "affectDetails": "影响明细",
       "affectNone": "这个范围里没有会被改到的图",
       "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
       "annotationCount_other": "标注文字：{{count}} 条",
+      "annotationGroup": "标注与页面",
       "annotationText": "标注文字",
       "applyScope": "应用范围",
       "applyTo": "应用到{{scope}}",
@@ -1492,6 +1494,13 @@ export default interface Resources {
       "extract": "从当前面板提取",
       "extractFrom": "从「{{name}}」读取当前值",
       "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
+      "group": {
+        "axes": "坐标轴",
+        "legend": "图例",
+        "other": "其他",
+        "series": "曲线与系列",
+        "text": "文字"
+      },
       "includePageSize": "包含页面尺寸",
       "namePlaceholder": "样式名称（如「AMFE 正文图」）",
       "nameRequired": "先给样式起个名字",
@@ -1509,6 +1518,7 @@ export default interface Resources {
       "panelUnmappable_other": "；{{count}} 项无法映射",
       "removeColor": "移除颜色",
       "removeEntry": "移除此项",
+      "removeEntryNamed": "从样式中移除「{{role}} · {{prop}}」",
       "roleLabel": {
         "axes": "子图边框",
         "axis_label": "轴标题",
@@ -1655,6 +1665,7 @@ export default interface Resources {
       "title": "文档版本",
       "versionName": "版本名称",
       "viewCurrent": "当前",
+      "viewLabel": "预览哪一版",
       "viewVersion": "该版本"
     }
   },
@@ -2212,6 +2223,7 @@ export default interface Resources {
       "spacingHTitle": "水平间距：按 X 排序后依次贴齐，第一个对象不动",
       "spacingV": "垂直间距",
       "spacingVTitle": "垂直间距：按 Y 排序后依次贴齐，第一个对象不动",
+      "title": "排列",
       "titleMulti_other": "排列 · 已选 {{count}} 个",
       "ungroup": "取消成组",
       "ungroupTip": "解散选区里的组",
@@ -2671,7 +2683,6 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
-    "exitElementEdit": "退出图内编辑",
     "group": {
       "advanced": "高级",
       "arrange": "排列",
@@ -2818,7 +2829,6 @@ export default interface Resources {
       "editElements": "编辑图内元素",
       "effectiveDpi": "等效 DPI",
       "effectivePt": "等效字号",
-      "elements": "图内元素",
       "exitElementEdit": "退出图内编辑",
       "fill": "填满框",
       "fillTip": "框一点不动，用居中裁剪切掉溢出的部分",

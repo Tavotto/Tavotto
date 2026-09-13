@@ -62,6 +62,7 @@
     "spacingV": "Vertical spacing",
     "spacingVTitle": "Vertical spacing: sorted by Y and packed in order; the first object stays put",
     "titleMulti_one": "Arrange · {{count}} selected",
+    "title": "Arrange",
     "titleMulti_other": "Arrange · {{count}} selected",
     "ungroup": "Ungroup",
     "ungroupTip": "Break up the groups in the selection",
@@ -536,7 +537,6 @@
       "custom": "Custom"
     }
   },
-  "exitElementEdit": "Exit figure editing",
   "group": {
     "advanced": "Advanced",
     "arrange": "Arrange",
@@ -651,7 +651,6 @@
     "editElements": "Edit figure elements",
     "effectiveDpi": "Effective DPI",
     "effectivePt": "Effective font size",
-    "elements": "Figure elements",
     "exitElementEdit": "Exit figure editing",
     "fill": "Fill frame",
     "fillTip": "Keep the frame; crop centrally to cut off the overflow",

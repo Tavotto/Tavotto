@@ -53,7 +53,7 @@ import { Dialog } from '../ui/Dialog'
 import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { NumberField, TextInput } from '../ui/Input'
 import { Tip } from '../ui/Tooltip'
-import { AlignToCanvasRow } from './ArrangeSection'
+import { ArrangeSection } from './ArrangeSection'
 import { HistoryPanel } from './HistoryPanel'
 import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
 import { UpdateSourceButton } from './UpdateSourceButton'
@@ -75,14 +75,17 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <>
-      {/* 第一层：图内编辑（参数化面板的核心动作）、几何、裁剪与适配 */}
-      {one?.script && <ScriptSection panel={one} />}
+      {/* 头部之下先是进图内编辑的紧凑入口（参数化面板的核心动作），然后
+          变换 → 内容适配 → 排列 → 更多 → 源文件（2026-09-13 审计 B09 的固定顺序） */}
+      {one?.script && <ElementEditEntry panel={one} />}
       {one && <PanelCapabilityNote panel={one} />}
       <GeometrySection objs={objs} />
       <ImageOpsSection objs={objs} />
-      {/* 第二层：唯一的「更多」——旋转 / 翻转 / 不透明度 / 替换素材 */}
+      {/* 单选的排列（对齐到画布 + 层级）就在这里；多选的排列由属性页统一摆在最后 */}
+      {one && <ArrangeSection count={1} />}
+      {/* 唯一的「更多」——旋转 / 翻转 / 不透明度 / 替换素材 */}
       <PanelMoreSection objs={objs} />
-      {/* 第三层：源文件与高级——写回 / 历史 / 质量诊断，默认折叠 */}
+      {/* 源文件与高级——写回 / 历史 / 质量诊断，默认折叠 */}
       <SourceSection panel={one ?? undefined} objs={objs} />
     </>
   )
@@ -265,12 +268,6 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           </Button>
         </Tip>
       </Row>
-
-      {objs.length === 1 && (
-        <Row className="mt-1.5" label={translate('arrange.align', { ns: 'inspector' })}>
-          <AlignToCanvasRow />
-        </Row>
-      )}
     </Section>
   )
 }
@@ -627,11 +624,17 @@ function ReplaceAssetDialog({
 }
 
 /* -------------------------------------------------------------------------- */
-/*  图内元素（核心动作） + 源文件（折叠，涉及磁盘写入）                            */
+/*  图内编辑入口（核心动作） + 源文件（折叠，涉及磁盘写入）                        */
 /* -------------------------------------------------------------------------- */
 
-/** ⚡ 可参数化面板：进入图内编辑的入口 + 引擎状态 */
-function ScriptSection({ panel }: { panel: PanelObject }) {
+/**
+ * 可参数化面板：进入图内编辑的入口 + 引擎状态。
+ *
+ * 它是头部的延伸，不是一个分组：此前这里是「图内元素」小标题 + 一颗撑满整栏的
+ * 「编辑图内元素」——标题与按钮说的是同一件事（2026-09-13 审计 B09）。现在只有
+ * 那颗按钮，按内容取宽，「n 项已修改」徽标跟在旁边。
+ */
+function ElementEditEntry({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
@@ -644,7 +647,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
   const overrides = overrideCounts(panel.overrides, null).figure
 
   return (
-    <Section title={pn('elements')}>
+    <Section>
       <div className="flex items-center gap-1.5">
         {/*
           进图内编辑是导航动作，**不能**绑渲染状态：进去本来就不依赖上一次渲染
@@ -655,7 +658,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
         <Button
           variant="secondary"
           size="sm"
-          className="min-w-0 flex-1"
+          className="min-w-0 shrink"
           active={editing}
           onClick={() => {
             if (editing) {
@@ -665,7 +668,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
             enterElementEdit(panel.id)
             // 这颗按钮随属性页切换整个被卸载，焦点会摔到 body——键盘用户
             // 失去落点（WebKit 里顺序导航就此失灵，issue #37 实测）。把焦点
-            // 交给编辑态里语义对应的「退出图内编辑」按钮。
+            // 交给编辑态里语义对应的「返回画布」按钮（上下文栏，唯一的退出入口）。
             requestAnimationFrame(() => {
               document.querySelector<HTMLElement>('[data-exit-element-edit]')?.focus()
             })

@@ -10,9 +10,11 @@ import {
   draftToData,
   extractFromManifest,
   extractPalette,
+  groupedEntries,
   planStyle,
   presetEntries,
   profileToDraft,
+  styleGroupLabel,
   styleRoleLabel,
   styleScopeLabel,
   targetPanels,
@@ -29,11 +31,11 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './inspector/roles/registry'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
 import { ColorField, NumberField, TextInput } from './ui/Input'
-import { Radio } from './ui/Radio'
+import { Segmented } from './ui/Segmented'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
 
@@ -201,6 +203,7 @@ export function StyleDialog() {
   }
 
   const entries = presetEntries(draft)
+  const groups = groupedEntries(draft)
   const applicable =
     plan.panels.some((p) => p.patches.length) ||
     plan.annotationIds.length > 0 ||
@@ -252,7 +255,9 @@ export function StyleDialog() {
       onOpenChange={setOpen}
       title={sd('title')}
       description={sd('description')}
-      width={760}
+      width={920}
+      /* 固定高：字段清单在中间滚，样式库与底部的应用范围不随内容高低跳动 */
+      height="640px"
       busy={busy}
       covered={covered}
       footer={
@@ -267,7 +272,13 @@ export function StyleDialog() {
         </>
       }
     >
-      <div className="flex gap-3">
+      {/*
+        两栏：左边是样式库，右边是这一份样式的内容；应用范围与影响在右栏**底部**
+        自成一段（2026-09-13 审计 B25）。此前是三栏——列表 / 字段 / 范围各占一列，
+        字段那一列被挤到字体名只剩「Times New Rom…」，每行末尾的 × 也说不清是删
+        条目还是关什么。字段清单按对象类别分组，字体那一格至少 224px。
+      */}
+      <div className="flex h-full gap-4">
         {/* 左：已存样式 */}
         <div className="flex w-44 shrink-0 flex-col gap-1.5">
           <h3 className="type-section">
@@ -328,8 +339,8 @@ export function StyleDialog() {
           </Button>
         </div>
 
-        {/* 中：样式内容 */}
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
+        {/* 右：样式内容 + 底部的应用范围 */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <div className="flex items-center gap-1.5">
             <TextInput
               value={draft.name}
@@ -357,56 +368,76 @@ export function StyleDialog() {
             </Button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border p-2">
-            {entries.length === 0 && !draft.palette?.length ? (
+          {/* 字段清单：靠组头与留白分区，不套边框（宪法第八节「少用容器」） */}
+          <div className="min-h-0 flex-1 overflow-y-auto" data-style-entries>
+            {groups.length === 0 && !draft.palette?.length ? (
               <p className="py-2 text-xs leading-relaxed text-ink-3">{sd('emptyDraft')}</p>
             ) : (
-              <div className="flex flex-col gap-1">
-                {entries.map((en) => (
-                  <div key={`${en.role}.${en.prop}`} className="flex h-7 items-center gap-1.5">
-                    <span className="w-16 shrink-0 truncate text-xs text-ink-3">
-                      {styleRoleLabel(en.role)}
-                    </span>
-                    <span className="w-16 shrink-0 truncate text-xs text-ink-2">
-                      {propLabel(en.prop, en.role)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <EntryEditor
-                        prop={en.prop}
-                        value={en.value}
-                        onChange={(v) =>
-                          setDraft((d) => ({
-                            ...d,
-                            element: {
-                              ...d.element,
-                              [en.role]: { ...d.element[en.role], [en.prop]: v },
-                            },
-                          }))
-                        }
-                      />
+              <div className="flex flex-col gap-3">
+                {groups.map(({ group, entries: list }) => (
+                  <div key={group} data-style-group={group}>
+                    <p className="mb-1 type-section">{styleGroupLabel(group)}</p>
+                    <div className="flex flex-col gap-0.5">
+                      {list.map((en) => (
+                        <div key={`${en.role}.${en.prop}`} className="flex h-7 items-center gap-2">
+                          <span
+                            className="w-16 shrink-0 truncate text-xs text-ink-3"
+                            title={styleRoleLabel(en.role)}
+                          >
+                            {styleRoleLabel(en.role)}
+                          </span>
+                          <span
+                            className="w-20 shrink-0 truncate text-xs text-ink-2"
+                            title={propLabel(en.prop, en.role)}
+                          >
+                            {propLabel(en.prop, en.role)}
+                          </span>
+                          {/* 值一列 224px：字体名（Times New Roman）完整可读 */}
+                          <div className="w-56 shrink-0">
+                            <EntryEditor
+                              prop={en.prop}
+                              value={en.value}
+                              onChange={(v) =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  element: {
+                                    ...d.element,
+                                    [en.role]: { ...d.element[en.role], [en.prop]: v },
+                                  },
+                                }))
+                              }
+                            />
+                          </div>
+                          {/* × 的动作说全：从这份样式里移除这一项（样式不再管它），
+                              不是删对象、也不是关掉什么 */}
+                          <IconButton
+                            iconSize="sm"
+                            className="shrink-0 text-ink-3"
+                            label={sd('removeEntryNamed', {
+                              role: styleRoleLabel(en.role),
+                              prop: propLabel(en.prop, en.role),
+                            })}
+                            onClick={() =>
+                              setDraft((d) => {
+                                const role = { ...d.element[en.role] }
+                                delete role[en.prop]
+                                const element = { ...d.element, [en.role]: role }
+                                if (!Object.keys(role).length) delete element[en.role]
+                                return { ...d, element }
+                              })
+                            }
+                          >
+                            <X size={ICON_SIZE.sm} />
+                          </IconButton>
+                        </div>
+                      ))}
                     </div>
-                    <Button
-                      size="icon-sm"
-                      className="shrink-0"
-                      aria-label={sd('removeEntry')}
-                      onClick={() =>
-                        setDraft((d) => {
-                          const role = { ...d.element[en.role] }
-                          delete role[en.prop]
-                          const element = { ...d.element, [en.role]: role }
-                          if (!Object.keys(role).length) delete element[en.role]
-                          return { ...d, element }
-                        })
-                      }
-                    >
-                      <X size={ICON_SIZE.xs} className="text-ink-3" />
-                    </Button>
                   </div>
                 ))}
 
                 {!!draft.palette?.length && (
-                  <div className="mt-1 border-t border-border pt-1.5">
-                    <p className="mb-1 text-xs text-ink-3">{sd('paletteTitle')}</p>
+                  <div data-style-group="palette">
+                    <p className="mb-1 type-section">{sd('paletteTitle')}</p>
                     <div className="flex flex-wrap items-center gap-1">
                       {draft.palette.map((c, i) => (
                         <span key={i} className="flex items-center gap-0.5">
@@ -420,18 +451,19 @@ export function StyleDialog() {
                               }))
                             }
                           />
-                          <button
-                            aria-label={sd('removeColor')}
+                          <IconButton
+                            iconSize="sm"
+                            className="text-ink-3"
+                            label={sd('removeColor')}
                             onClick={() =>
                               setDraft((d) => ({
                                 ...d,
                                 palette: d.palette!.filter((_, j) => j !== i),
                               }))
                             }
-                            className="text-ink-3 hover:text-ink"
                           >
                             <X size={ICON_SIZE.xs} />
-                          </button>
+                          </IconButton>
                         </span>
                       ))}
                     </div>
@@ -440,150 +472,146 @@ export function StyleDialog() {
               </div>
             )}
 
-            <TextStylePart
-              label={sd('annotationText')}
-              boldByDefault={false}
-              value={draft.annotation}
-              onChange={(v) => setDraft((d) => ({ ...d, annotation: v }))}
-            />
-            <TextStylePart
-              label={sd('subLabel')}
-              boldByDefault
-              value={draft.subLabel}
-              onChange={(v) => setDraft((d) => ({ ...d, subLabel: v }))}
-            />
-
-            <div className="mt-1.5 flex h-7 items-center gap-1.5 border-t border-border pt-1.5">
-              <Toggle
-                aria-label={sd('includePageSize')}
-                checked={!!draft.page}
-                onChange={(v) =>
-                  setDraft((d) => ({
-                    ...d,
-                    page: v ? { ...useDocumentStore.getState().doc.page } : undefined,
-                  }))
-                }
+            <div className="mt-3" data-style-group="annotation">
+              <p className="mb-1 type-section">{sd('annotationGroup')}</p>
+              <TextStylePart
+                label={sd('annotationText')}
+                boldByDefault={false}
+                value={draft.annotation}
+                onChange={(v) => setDraft((d) => ({ ...d, annotation: v }))}
               />
-              <span className="text-xs text-ink-2">
-                {sd('includePageSize')}
-                {draft.page ? sd('pageSizeSuffix', { w: draft.page.w, h: draft.page.h }) : ''}
-              </span>
+              <TextStylePart
+                label={sd('subLabel')}
+                boldByDefault
+                value={draft.subLabel}
+                onChange={(v) => setDraft((d) => ({ ...d, subLabel: v }))}
+              />
+              <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
+                <Toggle
+                  aria-label={sd('includePageSize')}
+                  checked={!!draft.page}
+                  onChange={(v) =>
+                    setDraft((d) => ({
+                      ...d,
+                      page: v ? { ...useDocumentStore.getState().doc.page } : undefined,
+                    }))
+                  }
+                />
+                <span>
+                  {sd('includePageSize')}
+                  {draft.page ? sd('pageSizeSuffix', { w: draft.page.w, h: draft.page.h }) : ''}
+                </span>
+              </label>
             </div>
           </div>
-        </div>
 
-        {/* 右：应用范围与预览 */}
-        <div className="flex w-52 shrink-0 flex-col gap-2">
-          <h3 className="type-section">
-            {sd('applyScope')}
-          </h3>
-          {/* 四档竖着排成单选行：208px 的一栏放不下四个并排的页签——中文下四个标签
-              连成一串（2026-09-11 走查截图）。行 28px、选中 = selected 轻 tint + 字重。 */}
-          <div role="radiogroup" aria-label={sd('applyScope')} className="flex flex-col gap-0.5">
-            {(
-              [
-                ['panel', sd('scopePanel')],
-                ['selection', sd('scopeSelection')],
-                ['sameScript', sd('scopeSameScript')],
-                ['document', sd('scopeDocument')],
-              ] as const
-            ).map(([value, label]) => (
-              <label
-                key={value}
-                title={styleScopeLabel(value)}
-                className={cn(
-                  'flex h-7 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-xs text-ink',
-                  'transition-colors duration-fast',
-                  scope === value ? 'bg-selected font-medium' : 'hover:bg-surface-hover',
-                )}
-              >
-                <Radio
-                  name="style-apply-scope"
-                  value={value}
-                  checked={scope === value}
-                  onChange={() => setScope(value)}
+          {/* 底部：应用范围与影响。范围是一个取值 → 分段选择器；影响先说总账，
+              逐张明细折叠 */}
+          <div className="flex flex-col gap-2 border-t border-border pt-3" data-style-scope>
+            <div className="flex items-center gap-3">
+              <span className="type-section shrink-0">{sd('applyScope')}</span>
+              <Segmented<StyleScope>
+                ariaLabel={sd('applyScope')}
+                className="min-w-0 flex-1"
+                value={scope}
+                onChange={setScope}
+                items={(
+                  [
+                    ['panel', sd('scopePanel')],
+                    ['selection', sd('scopeSelection')],
+                    ['sameScript', sd('scopeSameScript')],
+                    ['document', sd('scopeDocument')],
+                  ] as const
+                ).map(([value, label]) => ({ value, label, title: styleScopeLabel(value) }))}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
+                <Toggle
+                  aria-label={sd('withAnnotations')}
+                  checked={withAnnotations}
+                  onChange={setWithAnnotations}
                 />
-                <span className="min-w-0 truncate">{label}</span>
+                {sd('withAnnotations')}
               </label>
-            ))}
-          </div>
-          <label className="flex items-center gap-1.5 text-xs text-ink-2">
-            <Toggle
-              aria-label={sd('withAnnotations')}
-              checked={withAnnotations}
-              onChange={setWithAnnotations}
-            />
-            {sd('withAnnotations')}
-          </label>
-
-          {/* 按内容定高：它是一段状态说明，不是一张要撑满整栏的卡 */}
-          <div className="min-h-0 overflow-y-auto rounded-sm bg-surface-2 p-2">
-            <p className="mb-1 text-xs font-medium text-ink">{sd('willAffect')}</p>
-            {/* 作用对象与变化数先说总账，再逐张列：用户要的第一个答案是「会改到几张、改多少」 */}
-            <p data-style-affect-summary className="mb-1 text-xs text-ink-2">
-              {plan.panels.length === 0
-                ? sd('affectNone')
-                : sd('affectSummary', {
-                    count: plan.panels.length,
-                    patches: plan.panels.reduce((t, p) => t + p.patches.length, 0),
-                  })}
-            </p>
-            {plan.panels.length === 0 && (
-              <p className="text-xs leading-relaxed text-ink-3">
-                {sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')}
+              {/* 作用对象与变化数先说总账：用户要的第一个答案是「会改到几张、改多少」 */}
+              <p data-style-affect-summary className="text-xs text-ink-2">
+                {plan.panels.length === 0
+                  ? sd('affectNone')
+                  : sd('affectSummary', {
+                      count: plan.panels.length,
+                      patches: plan.panels.reduce((t, p) => t + p.patches.length, 0),
+                    })}
+                {plan.panels.length === 0 && (
+                  <span className="text-ink-3">
+                    {' · '}
+                    {sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')}
+                  </span>
+                )}
               </p>
-            )}
-            <ul className="flex flex-col gap-1">
-              {plan.panels.map((p) => (
-                <li key={p.panel.id} className="text-xs leading-relaxed text-ink-2">
-                  <span className="text-ink">{p.panel.name ?? p.panel.fileId}</span>
-                  {sd('panelPatches', { count: p.patches.length })}
-                  {p.overwrites > 0 && (
-                    <span className="text-danger">
-                      {sd('panelOverwrites', { count: p.overwrites })}
-                    </span>
+            </div>
+            {(plan.panels.length > 0 ||
+              plan.unrendered.length > 0 ||
+              (withAnnotations && plan.annotationIds.length > 0 && draft.annotation) ||
+              (withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel) ||
+              plan.page) && (
+              <Details>
+                <Summary className="h-7 text-xs text-ink-3 hover:text-ink">{sd('affectDetails')}</Summary>
+                <ul className="mt-1 flex max-h-32 flex-col gap-1 overflow-y-auto">
+                  {plan.panels.map((p) => (
+                    <li key={p.panel.id} className="text-xs leading-relaxed text-ink-2">
+                      <span className="text-ink">{p.panel.name ?? p.panel.fileId}</span>
+                      {sd('panelPatches', { count: p.patches.length })}
+                      {p.overwrites > 0 && (
+                        <span className="text-danger">
+                          {sd('panelOverwrites', { count: p.overwrites })}
+                        </span>
+                      )}
+                      {p.unmappable.length > 0 && (
+                        <span className="text-ink-3">
+                          {sd('panelUnmappable', { count: p.unmappable.length })}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                  {plan.unrendered.map((p: PanelObject) => (
+                    <li key={p.id} className="flex items-start gap-1 text-xs leading-relaxed text-ink-3">
+                      <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
+                      <span>{sd('unrendered', { name: p.name ?? p.fileId })}</span>
+                    </li>
+                  ))}
+                  {withAnnotations && plan.annotationIds.length > 0 && draft.annotation && (
+                    <li className="text-xs text-ink-2">
+                      {sd('annotationCount', { count: plan.annotationIds.length })}
+                    </li>
                   )}
-                  {p.unmappable.length > 0 && (
-                    <span className="text-ink-3">
-                      {sd('panelUnmappable', { count: p.unmappable.length })}
-                    </span>
+                  {withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel && (
+                    <li className="text-xs text-ink-2">
+                      {sd('subLabelCount', { count: plan.subLabelIds.length })}
+                    </li>
                   )}
-                </li>
-              ))}
-              {plan.unrendered.map((p: PanelObject) => (
-                <li key={p.id} className="flex items-start gap-1 text-xs leading-relaxed text-ink-3">
-                  <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
-                  <span>{sd('unrendered', { name: p.name ?? p.fileId })}</span>
-                </li>
-              ))}
-              {withAnnotations && plan.annotationIds.length > 0 && draft.annotation && (
-                <li className="text-xs text-ink-2">
-                  {sd('annotationCount', { count: plan.annotationIds.length })}
-                </li>
-              )}
-              {withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel && (
-                <li className="text-xs text-ink-2">
-                  {sd('subLabelCount', { count: plan.subLabelIds.length })}
-                </li>
-              )}
-              {plan.page && (
-                <li className="text-xs text-ink-2">
-                  {sd('pageSizeTo', { w: plan.page.w, h: plan.page.h })}
-                </li>
-              )}
-            </ul>
-            {plan.panels.some((p) => p.unmappable.length > 0) && (
-              <Details className="mt-1.5">
-                <Summary className="text-xs text-ink-3 hover:text-ink">
-                  {sd('unmappableDetails')}
-                </Summary>
-                <ul className="mt-1 flex flex-col gap-0.5">
-                  {plan.panels.flatMap((p) =>
-                    p.unmappable.slice(0, 20).map((u, i) => (
-                      <li key={`${p.panel.id}-${i}`} className="text-xs text-ink-3">
-                        {u}
-                      </li>
-                    )),
+                  {plan.page && (
+                    <li className="text-xs text-ink-2">
+                      {sd('pageSizeTo', { w: plan.page.w, h: plan.page.h })}
+                    </li>
+                  )}
+                  {plan.panels.some((p) => p.unmappable.length > 0) && (
+                    <li>
+                      <Details>
+                        <Summary className="text-xs text-ink-3 hover:text-ink">
+                          {sd('unmappableDetails')}
+                        </Summary>
+                        <ul className="mt-1 flex flex-col gap-0.5">
+                          {plan.panels.flatMap((p) =>
+                            p.unmappable.slice(0, 20).map((u, i) => (
+                              <li key={`${p.panel.id}-${i}`} className="text-xs text-ink-3">
+                                {u}
+                              </li>
+                            )),
+                          )}
+                        </ul>
+                      </Details>
+                    </li>
                   )}
                 </ul>
               </Details>
@@ -673,8 +701,8 @@ function TextStylePart({
 }) {
   useTranslation('dialogs')
   return (
-    <div className="mt-1.5 border-t border-border pt-1.5">
-      <div className="flex h-7 items-center gap-1.5">
+    <div>
+      <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
         <Toggle
           aria-label={label}
           checked={!!value}
@@ -682,10 +710,10 @@ function TextStylePart({
             onChange(v ? { sizePt: 9, bold: boldByDefault, color: '#000000' } : undefined)
           }
         />
-        <span className="text-xs text-ink-2">{label}</span>
-      </div>
+        {label}
+      </label>
       {value && (
-        <div className="mt-1 flex items-center gap-1.5 pl-7">
+        <div className="mb-1 flex items-center gap-1.5 pl-7">
           <NumberField
             value={value.sizePt ?? 9}
             min={4}

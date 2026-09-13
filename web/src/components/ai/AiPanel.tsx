@@ -534,7 +534,6 @@ export function ScopeAgentContent({
           </div>
         </div>
         <Segmented
-          tone="quiet"
           className="w-full"
           ariaLabel={ai('panel.scopeTitle')}
           value={scope}

@@ -175,6 +175,8 @@ const textOf = () => host.textContent ?? ''
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
 const radios = () => buttons().filter((b) => b.getAttribute('role') === 'radio')
+/** 「X 刻度 / Y 刻度」是看哪一条轴的页——页签（role=tab），不是取值（radio） */
+const tabs = () => buttons().filter((b) => b.getAttribute('role') === 'tab')
 /** 方向档位按可达名找（图标按钮的 aria-label，不是 tooltip） */
 const DIR_NAME = { in: '朝内', out: '朝外', inout: '内外' } as const
 const dirBtn = (dir: keyof typeof DIR_NAME) => byAria(DIR_NAME[dir])!
@@ -280,7 +282,7 @@ describe('选中子图即可配置刻度', () => {
     expect(overrideOf('axes_0.yticks', 'direction')).toBeUndefined()
 
     // 切到 Y 刻度
-    const yTab = radios().find((b) => b.textContent?.includes('Y 刻度'))!
+    const yTab = tabs().find((b) => b.textContent?.includes('Y 刻度'))!
     await act(async () => {
       yTab.click()
     })
@@ -445,7 +447,7 @@ describe('状态图反映真实刻度形态（内 / 外两带各是一个开关�
     await act(async () => {
       dirBtn('in').click()
     })
-    const yTab = radios().find((b) => b.textContent?.includes('Y 刻度'))!
+    const yTab = tabs().find((b) => b.textContent?.includes('Y 刻度'))!
     await act(async () => {
       yTab.click()
     })
@@ -643,7 +645,7 @@ describe('刻度组元素页', () => {
     expect(textOf()).toContain('方向')
     expect(textOf()).toContain('次刻度')
     // 没有「Y 刻度」这个切换项——切过去会写到另一个元素
-    expect(radios().some((b) => b.textContent?.includes('Y 刻度'))).toBe(false)
+    expect(tabs().some((b) => b.textContent?.includes('Y 刻度'))).toBe(false)
   })
 
   it('写的是选中的那个刻度元素', async () => {

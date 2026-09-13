@@ -494,7 +494,14 @@ export const useUiStore = create<UiState>((set, get) => ({
     if (!s.rightOpen || s.rightTab !== 'properties') return
     // 常驻在 wide 与 medium 都生效（medium 靠互斥保证画布空间）；
     // narrow 是覆盖层，物理上无法常驻
-    if (s.rightPinned && s.layout !== 'narrow') return
+    if (s.rightPinned && s.layout !== 'narrow') {
+      // 常驻的右栏在没有选中对象时**给画布**，不留一整栏「没有选中对象」的占位
+      // （2026-09-13 审计 B02 / B57：无选中 → 画布设置，选中 → 对象属性；Figma
+      // 的右栏也是这么分工的）。选中一出现 `autoShowProperties` 就切回属性页。
+      // 只改页签不写偏好：这是选择驱动的路由，不是用户挑的页。
+      set({ rightTab: 'canvas' })
+      return
+    }
     set({ rightOpen: false })
     prefOpen.right = false
     persist(get())

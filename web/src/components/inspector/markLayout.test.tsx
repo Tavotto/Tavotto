@@ -2,7 +2,8 @@
  * 标注（箭头 / 矩形 / 椭圆 / 线）的属性页（审计 T28）：
  *   1. 分组标题不再重复对象类型——右栏头部已经写着「箭头」/「矩形」；
  *   2. 箭头把端型排在颜色 / 线宽之前；矩形把填充排在描边之前；
- *   3. 单选只常驻层级，六向「对齐到画布」收进「更多排列」，能力一条不减；
+ *   3. 单选的排列是一张组：对齐到画布一行 + 层级一行（2026-09-13 审计 B09 把 T28 的
+ *      「层级常驻、对齐收进更多排列」收成与面板同一形状）；
  *   4. 图形选择有文字名与键盘路径（radiogroup + 方向键），不依赖猜图标。
  */
 import { act } from 'react'
@@ -161,18 +162,15 @@ describe('高频属性排在前面', () => {
   })
 })
 
-describe('单选：层级常驻，完整排列收进「更多排列」', () => {
-  it('层级四颗常驻；对齐到画布默认不铺开', async () => {
+describe('单选：一张「排列」组 = 对齐一行 + 层级一行（审计 B09，标注与面板同一形状）', () => {
+  it('对齐到画布六颗与层级四颗都常驻，标题是「排列」', async () => {
     await mount(arrowOf())
-    expect(headings()).toContain('层级')
+    expect(headings()).toContain('排列')
+    // 此前（审计 T28）层级单独成组、对齐收在「更多排列」里；现在没有那层折叠
+    expect(headings()).not.toContain('层级')
+    expect(disclosure('更多排列')).toBeUndefined()
     const zbar = host.querySelector('[aria-label="层级"][role="toolbar"]')!
     expect(zbar.querySelectorAll('button')).toHaveLength(4)
-    expect(host.querySelector('[data-single-align]')).toBeNull()
-  })
-
-  it('展开「更多排列」后六向对齐一颗不少（能力没丢）', async () => {
-    await mount(arrowOf())
-    await act(async () => disclosure('更多排列').click())
     const align = host.querySelector('[data-single-align]')!
     expect(align.querySelectorAll('button')).toHaveLength(6)
   })

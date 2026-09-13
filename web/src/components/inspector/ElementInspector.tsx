@@ -416,9 +416,20 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             buckets={buckets}
             primaryExtra={
               element?.role === 'axes' && sideHost ? (
-                /* 子图页三段：范围与坐标变换 → 刻度与网格 → 边框（审计 T12：
-                   范围、比例、边框三类任务互不混杂） */
+                /* 子图页四段：几何（子图尺寸 / 居中）→ 范围与坐标变换 → 刻度与网格 → 边框
+                   （审计 T12：范围、比例、边框三类任务互不混杂；2026-09-13 审计 B53：
+                   改尺寸是最常用的几何操作，放首屏，不再排在整页刻度设置之后） */
                 <div className="flex flex-col gap-2">
+                  {exactManifest && (
+                    <AxesSizeMm
+                      panel={panel}
+                      element={geomTarget(exactManifest, element)}
+                      sizeMm={exactManifest.size_mm}
+                      proxied={!!element.geom_gid}
+                      group={groupOf(alignEntries(panel, exactManifest, [element.gid]), 1)}
+                      first
+                    />
+                  )}
                   <AxesRangeCard panel={panel} element={element} warnings={render?.warnings ?? []} />
                   <div>
                     <GroupHead>{el('groupTicksGrid')}</GroupHead>
@@ -454,8 +465,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           />
         )}
         {element && <UnsupportedNote role={element.role} />}
-        {/* 改尺寸 / 居中是几何写操作：只认权威那一份（issue #131） */}
-        {element?.resizable && exactManifest && (
+        {/* 改尺寸 / 居中是几何写操作：只认权威那一份（issue #131）。
+            子图自己的那份已经在页首的「几何」段里；这里只剩位图代理那类
+            resizable 元素 */}
+        {element?.resizable && exactManifest && element.role !== 'axes' && (
           <AxesSizeMm
             panel={panel}
             element={geomTarget(exactManifest, element)}
@@ -2602,12 +2615,15 @@ function AxesSizeMm({
   sizeMm,
   proxied,
   group,
+  first = false,
 }: {
   panel: PanelObject
   element: ManifestElement
   sizeMm: [number, number]
   proxied: boolean
   group: Group | null
+  /** 作为页首的「几何」段出现：不带上方的 hairline 与间距 */
+  first?: boolean
 }) {
   const rect = positionOf(panel, element)
   if (!rect) return null
@@ -2619,7 +2635,7 @@ function AxesSizeMm({
     ])
 
   return (
-    <div className="mt-2 border-t border-border pt-2">
+    <div className={cn(!first && 'mt-2 border-t border-border pt-2')} data-axes-size-block>
       {/* 这一块以前没有组头，一条 hairline 之下突然是 W / H（2026-09-12 critique）；
           宿主代理的场合组头另有一行（下面），带来源入口 */}
       {!proxied && <GroupHead>{el('sizeHead')}</GroupHead>}

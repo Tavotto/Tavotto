@@ -175,6 +175,40 @@ describe('选中对象时回到属性页', () => {
   })
 })
 
+describe('无选中对象时常驻的右栏给画布（审计 B02）', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('钉住 + 选择清空 → 右栏留着，页签切到画布；再选中就切回属性', async () => {
+    await freshStore()
+    const store = (await import('./uiStore')).useUiStore
+    store.setState({ rightPinned: true, rightOpen: true, rightTab: 'properties', layout: 'wide' })
+    store.getState().autoHideProperties()
+    expect(store.getState().rightOpen).toBe(true)
+    expect(store.getState().rightTab).toBe('canvas')
+    store.getState().autoShowProperties()
+    expect(store.getState().rightTab).toBe('properties')
+  })
+
+  it('停在助手页时选择清空不动页签（助手是独立工作流）', async () => {
+    await freshStore()
+    const store = (await import('./uiStore')).useUiStore
+    store.setState({ rightPinned: true, rightOpen: true, rightTab: 'assistant', layout: 'wide' })
+    store.getState().autoHideProperties()
+    expect(store.getState().rightTab).toBe('assistant')
+  })
+
+  it('未钉住时照旧收起，不切页签', async () => {
+    await freshStore()
+    const store = (await import('./uiStore')).useUiStore
+    store.setState({ rightPinned: false, rightOpen: true, rightTab: 'properties', layout: 'wide' })
+    store.getState().autoHideProperties()
+    expect(store.getState().rightOpen).toBe(false)
+    expect(store.getState().rightTab).toBe('properties')
+  })
+})
+
 describe('左侧工作区：默认常驻、可折叠、偏好跨会话', () => {
   beforeEach(() => {
     localStorage.clear()

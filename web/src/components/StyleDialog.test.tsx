@@ -54,7 +54,15 @@ const USER = envelope({
   id: 's1',
   display_name: '投稿用',
   derived_from: 'builtin-default-style',
-  data: { element: { line: { linewidth: 1.25 } } },
+  data: {
+    element: {
+      // 故意打乱角色顺序：界面上按对象类别归组，不按存盘顺序
+      line: { linewidth: 1.25 },
+      axis_label: { fontfamily: 'Times New Roman', fontsize: 9 },
+      ticks: { direction: 'in' },
+      title: { weight: 'bold' },
+    },
+  },
 })
 
 let container: HTMLDivElement
@@ -142,15 +150,45 @@ describe('作用范围与影响', () => {
       useUiStore.getState().setStylesOpen(true)
     })
     await act(async () => {})
-    const group = document.body.querySelector('[role="radiogroup"]')!
-    // 四档是 ui/Radio 的单选行：名字在包着它的 <label> 里
-    const labels = [...group.querySelectorAll('input[type="radio"]')].map((b) =>
-      b.closest('label')?.textContent?.trim(),
-    )
+    // 四档是底部「应用范围」的分段选择器（取值控件；2026-09-13 审计 B25）
+    const scopeArea = document.body.querySelector('[data-style-scope]')!
+    const group = scopeArea.querySelector('[role="radiogroup"]')!
+    const labels = [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent?.trim())
     expect(labels).toEqual(['当前图', '选中的图', '同一脚本的图', '整个文档'])
+    // 范围区在字段清单之后：先看这份样式是什么，再定用到哪
+    const entries = document.body.querySelector('[data-style-entries]')!
+    expect(entries.compareDocumentPosition(scopeArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     for (const gone of ['面板', '选区', '全文档']) expect(labels.join(' ')).not.toContain(gone)
     expect(text()).toContain('应用到当前图')
     expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain('没有会被改到的图')
+  })
+})
+
+describe('字段按对象类别分组（审计 B25）', () => {
+  it('组头按 文字 → 曲线与系列 → 坐标轴 排，条目落在各自的组里；每行的 × 说全了动作', async () => {
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    })
+    await act(async () => {})
+    const entries = document.body.querySelector('[data-style-entries]')!
+    const groups = [...entries.querySelectorAll('[data-style-group]')].map((g) =>
+      g.getAttribute('data-style-group'),
+    )
+    expect(groups).toEqual(['text', 'series', 'axes', 'annotation'])
+    const textGroup = entries.querySelector('[data-style-group="text"]')!
+    expect(textGroup.textContent).toContain('轴标题')
+    expect(textGroup.textContent).toContain('标题')
+    expect(textGroup.textContent).not.toContain('曲线')
+    expect(entries.querySelector('[data-style-group="axes"]')!.textContent).toContain('刻度')
+    // × 的可达名点名移除的是哪一项，不是一个泛泛的「移除此项」
+    const remove = [...entries.querySelectorAll('button[aria-label]')].find((b) =>
+      b.getAttribute('aria-label')?.includes('从样式中移除'),
+    )!
+    expect(remove.getAttribute('aria-label')).toMatch(/从样式中移除「.+ · .+」/)
+    // 移除后那一项没了，别的组还在
+    await act(async () => (remove as HTMLButtonElement).click())
+    expect(entries.querySelectorAll('[data-style-group]').length).toBeGreaterThanOrEqual(3)
   })
 })
 

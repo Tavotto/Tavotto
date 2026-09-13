@@ -295,3 +295,35 @@ export function presetEntries(preset: StylePreset): PresetEntry[] {
   }
   return out
 }
+
+/**
+ * 样式条目在界面上按**对象类别**分组：文字 / 曲线与系列 / 坐标轴 / 图例（2026-09-13
+ * 审计 B25：后端的角色 × 属性平铺成一张表，「轴标题 / 字号 / 字体」反复出现，
+ * 读不出结构）。分组只影响排版，写进磁盘的内容一个字不变；没登记的角色归到「其他」。
+ */
+export type StyleGroup = 'text' | 'series' | 'axes' | 'legend' | 'other'
+const STYLE_GROUP_OF: Record<string, StyleGroup> = {
+  text: 'text',
+  title: 'text',
+  axis_label: 'text',
+  line: 'series',
+  errorbar: 'series',
+  bar_series: 'series',
+  axes: 'axes',
+  ticks: 'axes',
+  colorbar: 'axes',
+  legend: 'legend',
+}
+export const STYLE_GROUP_ORDER: readonly StyleGroup[] = ['text', 'series', 'axes', 'legend', 'other']
+export const styleGroupOf = (role: string): StyleGroup => STYLE_GROUP_OF[role] ?? 'other'
+export const styleGroupLabel = (group: StyleGroup): string =>
+  t(`style.group.${group}`, { ns: 'dialogs' })
+
+/** 条目按组归并，组按 `STYLE_GROUP_ORDER`，组内保持条目原有顺序；空组不出现 */
+export function groupedEntries(preset: StylePreset): { group: StyleGroup; entries: PresetEntry[] }[] {
+  const entries = presetEntries(preset)
+  return STYLE_GROUP_ORDER.map((group) => ({
+    group,
+    entries: entries.filter((en) => styleGroupOf(en.role) === group),
+  })).filter((g) => g.entries.length > 0)
+}

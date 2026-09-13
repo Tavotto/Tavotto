@@ -1171,9 +1171,11 @@
     }
   },
   "style": {
+    "affectDetails": "影响明细",
     "affectNone": "这个范围里没有会被改到的图",
     "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
     "annotationCount_other": "标注文字：{{count}} 条",
+    "annotationGroup": "标注与页面",
     "annotationText": "标注文字",
     "applyScope": "应用范围",
     "applyTo": "应用到{{scope}}",
@@ -1191,6 +1193,13 @@
     "extract": "从当前面板提取",
     "extractFrom": "从「{{name}}」读取当前值",
     "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
+    "group": {
+      "axes": "坐标轴",
+      "legend": "图例",
+      "other": "其他",
+      "series": "曲线与系列",
+      "text": "文字"
+    },
     "includePageSize": "包含页面尺寸",
     "namePlaceholder": "样式名称（如「AMFE 正文图」）",
     "nameRequired": "先给样式起个名字",
@@ -1208,6 +1217,7 @@
     "panelUnmappable_other": "；{{count}} 项无法映射",
     "removeColor": "移除颜色",
     "removeEntry": "移除此项",
+    "removeEntryNamed": "从样式中移除「{{role}} · {{prop}}」",
     "roleLabel": {
       "axes": "子图边框",
       "axis_label": "轴标题",
@@ -1353,6 +1363,7 @@
     },
     "title": "文档版本",
     "versionName": "版本名称",
+    "viewLabel": "预览哪一版",
     "viewCurrent": "当前",
     "viewVersion": "该版本"
   },

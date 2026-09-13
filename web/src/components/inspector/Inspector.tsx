@@ -284,12 +284,11 @@ function PropertiesPage() {
         {textsOnly && <TransformSection objs={objs} foldKey="text-transform" />}
         {onlyType(arrows.length) && <ArrowSection objs={arrows} />}
         {onlyType(shapes.length) && <ShapeSection objs={shapes} />}
-        {/* 第三层：排列与层级（紧凑工具带；单选面板的对齐已在位置组里） */}
-        <ArrangeSection
-          count={objs.length}
-          multi={objs.length > 1}
-          zOnly={panelsOnly && objs.length === 1}
-        />
+        {/* 第三层：排列（对齐 + 层级）。单选面板的排列由 PanelSection 自己摆在
+            图片适配之后、更多之前（变换 → 内容适配 → 排列 → 源文件，审计 B09） */}
+        {!(panelsOnly && objs.length === 1) && (
+          <ArrangeSection count={objs.length} multi={objs.length > 1} />
+        )}
       </div>
     </>
   )
@@ -298,6 +297,11 @@ function PropertiesPage() {
 /**
  * 唯一的上下文头：现在改的是谁、它处于什么状态、对它还能做什么。
  * 复制 / 显隐 / 锁定 / 删除收进右侧更多菜单，锁定与隐藏状态本身常驻显示。
+ *
+ * 图内编辑态的头上**没有退出按钮**：返回排版的唯一入口是画布上方上下文栏的
+ * 「返回画布 Esc」（`WorkspaceContextBar`，它还顺手选中该面板）。此前这里另有一颗
+ * ×，与右栏自己的关闭 × 上下叠着，一个退编辑、一个关面板，靠悬停才分得清
+ * （2026-09-13 审计 B45：每个 × 核对动作后只留面板关闭）。
  */
 function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
   const { t } = useTranslation('inspector')
@@ -356,16 +360,6 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
                 </Button>
               </Tip>
             )}
-            <Tip label={t('exitElementEdit')} side="bottom">
-              <Button
-                size="icon-sm"
-                data-exit-element-edit
-                onClick={() => useUiStore.getState().setElementPanel(null)}
-                aria-label={t('exitElementEdit')}
-              >
-                <X size={ICON_SIZE.sm} className="text-ink-3" />
-              </Button>
-            </Tip>
           </span>
         </div>
         {(crumbs.length > 1 || modified > 0) && (

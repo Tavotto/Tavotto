@@ -61,6 +61,7 @@
     "spacingHTitle": "水平间距：按 X 排序后依次贴齐，第一个对象不动",
     "spacingV": "垂直间距",
     "spacingVTitle": "垂直间距：按 Y 排序后依次贴齐，第一个对象不动",
+    "title": "排列",
     "titleMulti_other": "排列 · 已选 {{count}} 个",
     "ungroup": "取消成组",
     "ungroupTip": "解散选区里的组",
@@ -520,7 +521,6 @@
       "custom": "自定义"
     }
   },
-  "exitElementEdit": "退出图内编辑",
   "group": {
     "advanced": "高级",
     "arrange": "排列",
@@ -634,7 +634,6 @@
     "editElements": "编辑图内元素",
     "effectiveDpi": "等效 DPI",
     "effectivePt": "等效字号",
-    "elements": "图内元素",
     "exitElementEdit": "退出图内编辑",
     "fill": "填满框",
     "fillTip": "框一点不动，用居中裁剪切掉溢出的部分",

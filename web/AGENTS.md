@@ -1543,9 +1543,9 @@ Document 字体（Times）与 UI 字体严格分离。
 `IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
 
 公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
-NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs、`listRowClass`、
+NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
-Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented、StepSlider、
+Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
 
 工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做+工具，

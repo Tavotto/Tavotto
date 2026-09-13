@@ -172,8 +172,6 @@ function RefPicker() {
   return (
     <div data-align-ref-picker className="shrink-0">
       <Segmented<AlignRef>
-        size="sm"
-        tone="quiet"
         ariaLabel={ar('refLabel')}
         value={ref}
         onChange={setRef}

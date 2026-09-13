@@ -182,46 +182,38 @@ export function AlignToCanvasRow() {
 /**
  * 排列：紧凑无外框工具带。
  *
- * **单选只常驻层级**，六向「对齐到画布」收进「更多排列」——一个箭头、一段
- * 文字最常做的是调外观，整套排列摆在那里只是让面板更长（审计 T28：层级压成
- * 一组，完整排列仅在相关任务出现）。**能力一条不减**，展开就是同一批按钮。
- * 单选面板连层级都只给层级：对齐已经在它自己的位置组里。
+ * **单选是同一张「排列」组：对齐（相对画布）一行 + 层级一行**，面板、文字、
+ * 标注都长这样——同一个控件在每种对象上结构相同（2026-09-13 审计 B09 / §8
+ * 完成标准）。此前面板把对齐塞在位置组里、层级单独挂在面板最底下，箭头 / 文字
+ * 则是「层级常驻、对齐收进更多排列」（审计 T28），三种对象三种排法。
  * 多选是「相关任务」：对齐 / 分布 / 尺寸常驻，参照、间距、成组与样式搬运
  * 收进「更多排列」。
  */
 export function ArrangeSection({
   count,
   multi = false,
-  zOnly = false,
 }: {
   count: number
   multi?: boolean
-  zOnly?: boolean
 }) {
   useTranslation('inspector')
   const [moreOpen, setMoreOpen] = useState(false)
 
-  if (zOnly) {
-    return (
-      <Section title={ar('zorderLabel')}>
-        <ZOrderToolbar />
-      </Section>
-    )
-  }
-
   if (!multi) {
     return (
-      <>
-        {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
-        <Section title={ar('zorderLabel')} className="scroll-mt-2" data-arrange-section="">
-          <ZOrderToolbar />
-        </Section>
-        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
-          <div data-single-align>
-            <AlignToCanvasRow />
-          </div>
-        </Disclosure>
-      </>
+      /* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */
+      <Section title={ar('title')} className="scroll-mt-2" data-arrange-section="">
+        <ArrangeGrid>
+          <ArrangeRow label={ar('align')}>
+            <div data-single-align>
+              <AlignToCanvasRow />
+            </div>
+          </ArrangeRow>
+          <ArrangeRow label={ar('zorderLabel')}>
+            <ZOrderToolbar />
+          </ArrangeRow>
+        </ArrangeGrid>
+      </Section>
     )
   }
 
@@ -516,7 +508,6 @@ function LayoutGroupControls() {
       <Row label={ar('align')}>
         <Segmented
           className="w-full"
-          tone="quiet"
           value={group.align}
           onChange={(align) => updateLayoutGroup(group.id, { align })}
           items={[
@@ -529,7 +520,6 @@ function LayoutGroupControls() {
       <Row label={ar('uniform')}>
         <Segmented
           className="w-full"
-          tone="quiet"
           value={group.uniform ?? 'none'}
           onChange={(v) =>
             updateLayoutGroup(group.id, { uniform: v === 'none' ? null : (v as 'width' | 'height') })

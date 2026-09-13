@@ -137,7 +137,8 @@ export function SettingRow({
   status?: ReactNode
   /** 说明下方的小型辅助示意（关联对象那张关系图）。帮助理解用，不是装饰 */
   illustration?: ReactNode
-  children: ReactNode
+  /** 控件；纯现状行（自动保存那种没有开关可调的）不给，控件列留空 */
+  children?: ReactNode
   /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件 */
   controlId?: string
   /** normal 48px（默认）/ compact 32px（密集字段清单，不放说明） */

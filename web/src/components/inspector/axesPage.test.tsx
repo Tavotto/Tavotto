@@ -292,7 +292,18 @@ describe('纵横比：三档控件，不是文字编辑器', () => {
 
 /* -------------------------------- 分段顺序 -------------------------------- */
 
-describe('范围与变换 → 刻度与网格 → 边框，三类任务互不混杂', () => {
+describe('几何 → 范围与变换 → 刻度与网格 → 边框，四类任务互不混杂', () => {
+  it('子图尺寸在页首的「几何」段，不再排在整页刻度设置之后（2026-09-13 审计 B53）', async () => {
+    await mount()
+    const size = host.querySelector('[data-axes-size-block]')!
+    const rangeTransform = host.querySelector('[data-axes-section="range-transform"]')!
+    expect(size).toBeTruthy()
+    expect(size.textContent).toContain('子图尺寸')
+    expect(size.compareDocumentPosition(rangeTransform) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 只有一份：页尾不再另出一块
+    expect(host.querySelectorAll('[data-axes-size-block]')).toHaveLength(1)
+  })
+
   it('三段按顺序出现，各自只装自己的字段；范围与变换是一个组头（2026-09-12 起）', async () => {
     await mount()
     const rangeTransform = host.querySelector('[data-axes-section="range-transform"]')!

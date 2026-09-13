@@ -398,8 +398,9 @@ async function seedThree() {
 }
 
 const rows = () => [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
-const radios = () => [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
-const checkedRadio = () => radios().find((r) => r.getAttribute('aria-checked') === 'true')
+// 「当前图 / 整个文档」是看哪一页的清单——页签（role=tab），不是取值（radio）
+const radios = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+const checkedRadio = () => radios().find((r) => r.getAttribute('aria-selected') === 'true')
 const radioNamed = (s: string) => radios().find((r) => r.textContent?.includes(s))!
 const cursorBar = () => container.querySelector('[data-problem-cursor]')
 /** 全文档的问题数（三张图的 + 页面级那条：80×200 的页面比例不合规范） */
