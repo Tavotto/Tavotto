@@ -73,9 +73,6 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
-  // 「当前画布」范围的版面示意：页面比例 + 每个对象的落位方块，画的是这份
-  // 文档的几何，换成任何一个 lucide 图标都会把它变成一张与内容无关的图
-  '/src/components/ExportDialog.tsx': 1,
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个
   // 外侧预设的缩略示意，全在同一张 svg 里。画的是这张图自己的几何，不是图标
   '/src/components/inspector/controls/LegendPositionPicker.tsx': 1,

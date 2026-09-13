@@ -376,7 +376,7 @@ describe('输出范围', () => {
     expect(text()).not.toContain('点选下面的一张图')
   })
 
-  it('源文件不见了：禁用 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
+  it('源文件不见了：主按钮灰 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
     await setup(9)
     // 面板还在，素材清单里没有了（掉线 / 被删）
     useAssetStore.setState({ byId: {} } as never)
@@ -387,8 +387,11 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
+    // 范围按钮本身不禁用（项目里还有图可挑，清单就在下面）；灰的是「开始导出」
     const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
-    expect(original.hasAttribute('disabled')).toBe(true)
+    expect(original.getAttribute('aria-checked')).toBe('true')
+    expect(original.hasAttribute('disabled')).toBe(false)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     expect(text()).toContain('源文件现在找不到了')
     // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
     expect(text()).not.toContain('先选中一张图')
@@ -437,14 +440,14 @@ describe('对话框开着时素材没了', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    const radio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
-    expect(radio().hasAttribute('disabled')).toBe(false)
+    const start = () => button('开始导出')!
+    expect(start().hasAttribute('disabled')).toBe(false)
 
-    // 对话框开着，素材被删 / 掉线：那颗按钮必须当场灰掉
+    // 对话框开着，素材被删 / 掉线：「开始导出」必须当场灰掉，并说出原因
     await act(async () => {
       useAssetStore.setState({ byId: {} } as never)
     })
-    expect(radio().hasAttribute('disabled'), 'memo 只挂 figureId 的话这里还是亮的').toBe(true)
+    expect(start().hasAttribute('disabled'), 'memo 只挂 figureId 的话这里还是亮的').toBe(true)
     expect(text()).toContain('源文件现在找不到了')
   })
 })
@@ -1095,7 +1098,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(text()).not.toContain('磁盘上的原件')
   })
 
-  it('画布：画布名 + 页面尺寸 + 对象数，缩略图是示意不是渲染', async () => {
+  it('画布：画布名 + 页面尺寸 + 对象数，缩略图是画布列表同一张（真实内容，不发渲染）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 180, h: 120 } })
     await mountDialogs()
     await openDialog()
@@ -1103,7 +1106,10 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(header()).toContain('当前画布')
     expect(header()).toContain('180 × 120 mm')
     expect(header()).toContain('1 个对象')
-    expect(document.body.querySelector('[data-export-target] svg')).toBeTruthy()
+    // 与画布列表 / 版本列表同一个组件：面板落位处挂的是素材预览图，不是灰方块
+    const thumb = document.body.querySelector('[data-export-target] [data-canvas-thumb]')
+    expect(thumb).toBeTruthy()
+    expect(thumb!.querySelector('[data-thumb-panel="Fig1.pdf"]')).toBeTruthy()
     expect(document.body.querySelector('[data-export-target] img')).toBeNull()
   })
 })
@@ -1344,10 +1350,19 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(text()).toContain('80 × 60 mm')
   })
 
-  it('什么都没选、项目里有两张图：列表列出两张，点一张就按它导（不用回画布选）', async () => {
+  it('什么都没选、项目里有两张图：画布范围下不摆清单；切到原图才列出两张，点一张就按它导（审计 B20）', async () => {
     await setupTwo({ select: [] })
-    expect(originalRadio().hasAttribute('disabled')).toBe(true)
+    // 默认按画布：一句「还没定要导哪一张」都不出现——那是原图范围的事，
+    // 与「当前画布」并排出现就是两个状态互相矛盾；清单也不摆
+    expect(text()).not.toContain('点选下面的一张图')
+    expect(figureOptions()).toHaveLength(0)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    // 「原图尺寸」可点（项目里有图可挑），点了之后清单展开、指引出现、主按钮灰
+    expect(originalRadio().hasAttribute('disabled')).toBe(false)
+    await click(originalRadio())
     expect(text()).toContain('点选下面的一张图')
+    expect(text()).not.toContain('没有当前图')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     const options = figureOptions()
     expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
     expect(options.every((o) => o.getAttribute('aria-selected') === 'false')).toBe(true)
@@ -1393,26 +1408,32 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(text()).toContain('65 × 50 mm')
   })
 
-  it('按画布导且当前图可用时列表收起；原图不可用时列表仍在（那句提示得指得到东西）', async () => {
+  it('清单只在原图范围下出现：可用时收进折叠项，不可用时展开（那句提示得指得到东西）', async () => {
     await setupTwo({ select: ['p2'] })
-    // 默认按画布，图又有着落：不摆列表
+    // 默认按画布：不摆列表
     expect(figureOptions()).toHaveLength(0)
     await click(originalRadio())
     expect(figureOptions()).toHaveLength(2)
     // 切回画布：收起
     await click([...document.body.querySelectorAll('[role="radio"]')][1])
     expect(figureOptions()).toHaveLength(0)
-    // 选中的那张源文件没了：按画布也得把列表摆出来，让用户换一张
+    // 选中的那张源文件没了：画布范围下一个字不说（导画布什么都没挡着）……
     await act(async () => {
       useAssetStore.setState({
         byId: { 'Fig1.pdf': { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 } },
         panels: [{ id: 'Fig1.pdf', kind: 'pdf', mtime: 1 }],
       } as never)
     })
+    expect(text()).not.toContain('源文件现在找不到了')
+    expect(figureOptions()).toHaveLength(0)
+    // ……切到原图才说，并把列表摆出来让用户换一张
+    await click(originalRadio())
     expect(text()).toContain('源文件现在找不到了')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     expect(figureOptions()).toHaveLength(2)
     await click(figureOptions()[0])
-    expect(originalRadio().hasAttribute('disabled')).toBe(false)
+    expect(text()).not.toContain('源文件现在找不到了')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(text()).toContain('80 × 60 mm')
   })
 
@@ -1432,10 +1453,14 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(text()).toContain('项目里还没有可以按原图尺寸导出的图')
     expect(text()).not.toContain('点选下面')
     expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+    // 这是一句说明，不是错误：画布照常能导
+    expect(document.body.querySelector('.text-danger')).toBeNull()
   })
 
   it('缩略图：有图内修改的面板挂 store 里那份 SVG，没有的走素材缩略图地址，不发渲染请求', async () => {
     await setupTwo({ select: [] })
+    // 清单只在原图范围下出现
+    await click(originalRadio())
     const fetches: string[] = []
     const realFetch = globalThis.fetch
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {

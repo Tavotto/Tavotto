@@ -46,6 +46,7 @@ import {
   X,
 } from 'lucide-react'
 import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
+import { CanvasThumb } from './CanvasThumb'
 import { Checkbox } from './ui/Checkbox'
 import { Details, Summary } from '@/components/ui/Details'
 import {
@@ -647,11 +648,35 @@ export function ExportDialog() {
     ui.setStatus(msg('export.locatedHint', undefined, 'dialogs'))
   }
 
+  /** 这张图在候选清单里的名字（面板名 / 文件名主干；素材清单里还没上画布的图也有） */
+  const figureName = figureId ? figures.find((f) => f.figureId === figureId)?.name : undefined
+
   /** 切换输出范围：用户没碰过文件名的话，默认名跟着换 */
   const changeScope = (next: ExportScope) => {
     setScope(next)
-    if (!filenameTouched) setFilename(defaultExportName(next, panel, doc))
+    if (!filenameTouched) {
+      setFilename(next === 'original' && figureName ? figureName : defaultExportName(next, panel, doc))
+    }
   }
+
+  /**
+   * 在清单里点一张图：意思就是「按它的原图尺寸导」——范围切到原图，不让用户再去
+   * 点一次；默认文件名跟着这张图走（用户改过的不动）。
+   */
+  const pickFigure = (id: string) => {
+    setPickedFigureId(id)
+    setScope('original')
+    const f = figures.find((x) => x.figureId === id)
+    if (!filenameTouched && f) setFilename(f.name)
+  }
+
+  /**
+   * 「原图尺寸」这个范围能不能选：项目里**有图可挑**就能选（审计 B20）。
+   * 选了之后没有当前图 → 清单展开让用户点一张，主按钮灰着；清单为空才禁用按钮。
+   * 「当前这张图此刻导不导得出」是另一个问题（`availability`），它只在原图范围下
+   * 说话——画布范围下同时出现「当前画布」与「还没定要导哪一张」是两个状态互相矛盾。
+   */
+  const originalSelectable = figures.length > 0
 
   /** 导出完成时报一次状态。**只在终局报一次**，不在每次进度推送上报 */
   const announced = useRef<string | null>(null)
@@ -720,7 +745,7 @@ export function ExportDialog() {
             >
               <ScopeButton
                 active={scope === 'original'}
-                disabled={!availability.ok}
+                disabled={!originalSelectable}
                 label={ex('scopeOriginal')}
                 onClick={() => changeScope('original')}
               />
@@ -731,51 +756,41 @@ export function ExportDialog() {
               />
             </div>
           </div>
-          <TargetHeader
-            scope={scope}
-            panel={panel}
-            spec={availability.spec}
-            doc={doc}
-            asset={figureId ? assets[figureId] : undefined}
-            previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
-            pixels={pixels}
-          />
+          {/* 对象头：画布 = 真实排版缩略图 + 画布名；原图 = 那张图。原图范围下还没定
+              是哪一张时不摆一个「没有当前图」的头——下面的清单本身就是选对象的地方 */}
+          {(scope === 'canvas' || panel) && (
+            <TargetHeader
+              scope={scope}
+              panel={panel}
+              spec={availability.spec}
+              doc={doc}
+              asset={figureId ? assets[figureId] : undefined}
+              previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+              pixels={pixels}
+            />
+          )}
           <ScopeNote
             scope={scope}
             available={availability.ok}
             reason={availability.reason}
+            originalSelectable={originalSelectable}
             ignored={availability.spec?.ignored ?? []}
             fallback={availability.spec?.fallback ?? false}
           />
-          {/* 2b. 要导的是哪一张 —— 项目里的图直接列出来点选（用户反馈 06）。
-              原图不可用时清单直接展开（上面那句「点选下面的一张」得指得到东西）；
+          {/* 2b. 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
+              还没定 / 当前那张导不出时清单直接展开（上面那句「点选下面的一张」得指得到东西）；
               已经选好且项目里不止一张时收进折叠项，不抢主界面；只有一张时不出现。
-              清单为空时一个字都不出现：空态由 `scopeUnavailable.no_figures` 那一句说 */}
-          {figures.length > 0 &&
-            (scope === 'original' || !availability.ok) &&
+              画布范围下一个字都不出现——那是另一个范围的事 */}
+          {scope === 'original' &&
+            figures.length > 0 &&
             (!availability.ok ? (
-              <FigurePicker
-                figures={figures}
-                selectedId={figureId}
-                onPick={(id) => {
-                  setPickedFigureId(id)
-                  // 点了一张图，意思就是「按它的原图尺寸导」——不让用户再去点一次范围
-                  setScope('original')
-                }}
-              />
+              <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
             ) : figures.length > 1 ? (
               // key 跟着选中的图走：点过一张之后折叠项重新收起
               <Details key={figureId} className="rounded-sm">
                 <Summary className="rounded-sm text-xs text-ink-2">{ex('figureListLabel')}</Summary>
                 <div className="mt-2">
-                  <FigurePicker
-                    figures={figures}
-                    selectedId={figureId}
-                    onPick={(id) => {
-                      setPickedFigureId(id)
-                      setScope('original')
-                    }}
-                  />
+                  <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
                 </div>
               </Details>
             ) : null)}
@@ -1205,32 +1220,45 @@ function ScopeNote({
   scope,
   available,
   reason,
+  originalSelectable,
   ignored,
   fallback,
 }: {
   scope: ExportScope
   available: boolean
   reason: string
+  /** 「原图尺寸」按钮此刻能不能选（项目里有没有图可挑） */
+  originalSelectable: boolean
   ignored: readonly string[]
   fallback: boolean
 }) {
   useTranslation('dialogs')
+  if (scope === 'canvas') {
+    return (
+      <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3">
+        <span>{ex('scopeCanvasNote')}</span>
+        {/* 「原图尺寸」灰着时说一句为什么——一个禁用的按钮解释不了自己（§五：不隐藏
+            选项）。这是一句说明，不是错误：用户此刻导的是画布，什么都没挡着他 */}
+        {!originalSelectable && <span>{ex('scopeUnavailable.no_figures')}</span>}
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3 empty:hidden">
-      {/* 原图不可用时**总是**说出原因，与当前选的是哪个范围无关：
-          一个禁用的按钮解释不了自己，而"为什么灰着"正是用户此刻要问的
-          （§五：不隐藏选项、不静默改为画布） */}
-      {!available && (
-        <span className="flex items-start gap-1.5 text-danger">
-          <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
-          {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
-              「先选中一张图」，用户照做之后按钮还是灰的 */}
-          {ex(`scopeUnavailable.${reason}`)}
-        </span>
-      )}
-      {scope === 'canvas' ? (
-        <span>{ex('scopeCanvasNote')}</span>
-      ) : (
+      {/* 原图范围下当前这张导不出：说出原因。「还没定要导哪一张」是一句指引
+          （下面的清单就是给这个的），不是错误；源文件不见了 / 找不到这张图才是 */}
+      {!available &&
+        (reason === 'no_figure' ? (
+          <span className="text-ink-2">{ex('scopeUnavailable.no_figure')}</span>
+        ) : (
+          <span className="flex items-start gap-1.5 text-danger">
+            <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" aria-hidden />
+            {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
+                「先选中一张图」，用户照做之后按钮还是灰的 */}
+            {ex(`scopeUnavailable.${reason}`)}
+          </span>
+        ))}
+      {available && (
         <>
           <span>{ex('scopeOriginalNote')}</span>
           {fallback && <span className="text-warn">{ex('scopeOriginalFallback')}</span>}
@@ -1281,8 +1309,8 @@ export function diskSizeNote(
  * （原图 = `OriginalOutputSpec`，画布 = 页面尺寸），别处只说话不报数。
  *
  * 缩略图不新起渲染：磁盘素材走现成的 `/api/render` 分档缩略图（素材库同一张），
- * runtime 素材走 materialized cache 预览；画布范围画一张按页面比例的示意
- * （对象落位的方块），不合成整页。
+ * runtime 素材走 materialized cache 预览；画布范围复用 `CanvasThumb`（画布列表 /
+ * 版本列表同一张：按页面比例摆真实内容），不合成整页。
  */
 function TargetHeader({
   scope,
@@ -1325,17 +1353,19 @@ function TargetHeader({
       data-export-target
       className="flex items-center gap-4"
     >
-      <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
-        {original ? (
-          src ? (
+      {original ? (
+        <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
+          {src ? (
             <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
           ) : (
             <ImageOff size={ICON_SIZE.sm} className="text-ink-faint" aria-hidden />
-          )
-        ) : (
-          <PageSchematic doc={doc} />
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        // 画布范围：与画布列表 / 版本列表同一张缩略图——按页面比例画真实内容
+        // （面板挂素材预览、文字画文字），不是几个灰方块（审计 B20）
+        <CanvasThumb page={doc.page} objects={doc.objects} className="h-14 w-[73px]" />
+      )}
       <div className="min-w-0 flex-1">
         <p className="truncate type-title" title={name}>
           {name}
@@ -1362,32 +1392,6 @@ function TargetHeader({
         {originNote && <p className="text-xs leading-relaxed text-ink-3">{originNote}</p>}
       </div>
     </div>
-  )
-}
-
-/** 画布范围的示意：页面比例 + 对象落位的方块。纯几何，零渲染。 */
-function PageSchematic({ doc }: { doc: FigureDocument }) {
-  const { w, h } = doc.page
-  if (!(w > 0 && h > 0)) return null
-  const stroke = Math.max(w, h) / 120
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="max-h-full max-w-full p-0.5" aria-hidden>
-      <rect x={0} y={0} width={w} height={h} fill="#fff" stroke="#cfcfc7" strokeWidth={stroke} />
-      {doc.objects
-        .filter((o) => !o.hidden)
-        .slice(0, 80)
-        .map((o) => (
-          <rect
-            key={o.id}
-            x={o.x}
-            y={o.y}
-            width={o.w}
-            height={o.h}
-            fill="#1b1b18"
-            fillOpacity={o.type === 'panel' ? 0.3 : 0.14}
-          />
-        ))}
-    </svg>
   )
 }
 
