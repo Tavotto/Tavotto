@@ -3,7 +3,7 @@ import { ArrowLeft, Info, Plus } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
-import { engineLabel } from '@/components/inspector/roles/registry'
+import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -20,6 +20,7 @@ import type { PanelObject } from '@/types/document'
  * ```text
  * ← 返回画布   Fig2_correlation  /  Y 轴刻度                    画布排版 + 图内编辑
  * ← 返回画布   Fig1_kinetics                        │ + 添加到画布    快速编辑
+ * ← 返回画布   Fig1_kinetics / 整张图               │ + 添加到画布    快速编辑 + 图内编辑（没选元素）
  * ← 返回画布   Fig1_kinetics / 标题 “…”             │ + 添加到画布    快速编辑 + 图内编辑
  * ```
  *
@@ -61,13 +62,17 @@ export function WorkspaceContextBar() {
   const editable = !!panel.script
   const gid = editingHere ? selectedGids.at(-1) : undefined
   const element = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
+  // 图内编辑里没选元素时，当前对象就是「整张图」（右栏头部也这么写）：面包屑
+  // 只剩图名的话，「现在改的是图内还是排版」这一层就没了（2026-09-13 审计 B43）
   const objectCrumb = !editingHere
     ? null
     : selectedGids.length > 1
       ? translate('elementsSelected', { ns: 'inspector', count: selectedGids.length })
-      : element
-        ? engineLabel(element.label)
-        : null
+      : selectedGids.length === 0
+        ? roleName('figure')
+        : element
+          ? engineLabel(element.label)
+          : null
 
   /**
    * 唯一的返回入口。快速编辑里 = 回到画布排版（顺带退出图内编辑）；画布排版

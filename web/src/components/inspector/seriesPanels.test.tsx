@@ -381,6 +381,26 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
     expect(row('alpha')).toBeNull()
   })
 
+  it('首屏分成「线条」「标记」两组，小标题各钉在那一组第一个在场的字段前（审计 B48）', async () => {
+    seedRender(
+      makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields({ marker: 'o' }))]),
+    )
+    await mount(['axes_0.lines_0'])
+    // 按文档顺序取「组标题 | 字段」：线条 → color → … → 标记 → marker → …
+    const seq = Array.from(host.querySelectorAll<HTMLElement>('[data-prop], p.type-section')).map((e) =>
+      e.dataset.prop ? e.dataset.prop : `#${e.textContent}`,
+    )
+    const at = (s: string) => seq.indexOf(s)
+    expect(at('#线条')).toBeGreaterThanOrEqual(0)
+    expect(at('#标记')).toBeGreaterThan(at('#线条'))
+    expect(at('label')).toBeLessThan(at('#线条'))
+    expect(at('#线条')).toBe(at('color') - 1)
+    expect(at('#标记')).toBe(at('marker') - 1)
+    // 每个标题只出一次
+    expect(seq.filter((s) => s === '#线条').length).toBe(1)
+    expect(seq.filter((s) => s === '#标记').length).toBe(1)
+  })
+
   it('用户改过标记大小后再把标记设为无，那一行照样显示（改过的必须能看到）', async () => {
     seedRender(makeManifest([elementOf('axes_0.lines_0', 'line', '曲线 “Linear fit”', lineFields())]))
     useDocumentStore.getState().commit(literal('改标记大小'), (d) => {

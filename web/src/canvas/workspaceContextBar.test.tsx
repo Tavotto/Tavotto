@@ -169,11 +169,11 @@ describe('返回入口只有一个', () => {
 })
 
 describe('面包屑：图 / 当前对象', () => {
-  it('图名始终在；没选元素时没有第二级', async () => {
+  it('图名始终在；没选元素时第二级是「整张图」（与右栏头部同一个词）', async () => {
     useUiStore.getState().setElementPanel('p1')
     await mount()
     expect(bar()?.textContent).toContain('Fig2_correlation')
-    expect(objectCrumb()).toBeNull()
+    expect(objectCrumb()).toBe(t('role.figure', { ns: 'inspector' }))
   })
 
   it('选中图内元素后第二级说的是那个对象', async () => {

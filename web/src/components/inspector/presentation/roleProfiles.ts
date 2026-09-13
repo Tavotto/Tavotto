@@ -112,6 +112,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       markerfacecolor: HAS_MARKER,
       markeredgecolor: HAS_MARKER,
     },
+    // 系列名 → 线条 → 标记（2026-09-13 审计 B48）：五六个控件平铺时颜色 / 线宽 /
+    // 线型与标记那一组读不出边界，像一张配置表
+    primaryGroups: [
+      { labelKey: 'groupLine', props: ['color', 'linewidth', 'linestyle'] },
+      { labelKey: 'groupMarker', props: ['marker', 'markersize', 'markerfacecolor', 'markeredgecolor'] },
+    ],
   },
   linecoll: {
     primary: ['color', 'linewidth', 'linestyle'],

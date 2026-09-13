@@ -277,7 +277,6 @@
     "orphanCount": "{{overrides}} 条 · {{elements}} 个元素",
     "proxiedGeometry": "位置与大小作用于宿主子图「{{label}}」。",
     "relatedAxes": "所属子图",
-    "relatedLegend": "所属图例",
     "relatedSeries": "所属系列",
     "relatedWithHint": "{{hint}}：{{label}}",
     "resetDiagram": "恢复刻度与边框到脚本",
@@ -319,7 +318,10 @@
     "selectScalePartner": "选中{{label}}",
     "selectScalePartnerShort": "选中",
     "groupRangeTransform": "范围与变换",
-    "sizeHead": "子图尺寸"
+    "sizeHead": "子图尺寸",
+    "groupLine": "线条",
+    "groupMarker": "标记",
+    "relatedTicksAll": "编辑整条{{label}}…"
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",

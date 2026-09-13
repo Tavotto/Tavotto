@@ -701,8 +701,9 @@ describe('选中图例项', () => {
     const toggle = byAria('断开链接')
     expect(toggle).toBeDefined()
     expect(toggle?.getAttribute('aria-pressed')).toBe('true')
-    // 关系仍然看得见：来源入口在
-    expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
+    // 关系仍然看得见：来源入口在（行尾的图标钮，名字带对象名；审计 B50 之后
+    // 不再单独一行把对象名再念一遍）
+    expect(byAria('查看源对象：曲线 “sin”')).toBeDefined()
     // 说明**不常驻**：原理在开关的悬停提示里（Radix 的气泡只在打开时才进 DOM）
     expect(host.textContent).not.toContain('示意线由图中那个对象派生')
   })
@@ -719,7 +720,7 @@ describe('选中图例项', () => {
     expect(propInput('handle_color', 'color')).toBeDefined()
     // **断开之后关系仍然看得见**：来源入口留着。藏起来的话，改这一项就像是
     // 在改那条曲线本身——那正是这一条的验收（审计 T18）
-    expect(byText('查看源对象：曲线 “sin”')).toBeDefined()
+    expect(byAria('查看源对象：曲线 “sin”')).toBeDefined()
 
     await click(byAria('恢复链接'))
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('follow_source')

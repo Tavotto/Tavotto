@@ -17,6 +17,7 @@ import {
   Type,
   type LucideIcon,
 } from 'lucide-react'
+import { parentGid } from '@/components/inspector/roles/hierarchy'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
@@ -63,21 +64,6 @@ interface TreeNode {
 const nodeKey = (n: TreeNode, parentKey = ''): string =>
   n.el ? n.el.gid : `${parentKey}#${n.cluster!.key}`
 
-/** gid → 父 gid：按段收缩，刻度文字归到所属刻度组下 */
-function parentGid(gid: string, byGid: ReadonlySet<string>): string | null {
-  if (gid === 'figure') return null
-  const tickm = gid.match(/^(.*)\.([xyz])ticklabels_\d+$/)
-  if (tickm && byGid.has(`${tickm[1]}.${tickm[2]}ticks`)) {
-    return `${tickm[1]}.${tickm[2]}ticks`
-  }
-  let cur = gid
-  while (cur.includes('.')) {
-    cur = cur.slice(0, cur.lastIndexOf('.'))
-    if (byGid.has(cur)) return cur
-  }
-  return 'figure'
-}
-
 /** 本组文案在 workspace:elementTree.* 下 */
 const et = (key: string, values?: Record<string, unknown>) =>
   translate(`elementTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
@@ -113,7 +99,7 @@ function buildTree(manifest: Manifest): TreeNode[] {
   const roots: TreeNode[] = []
   for (const el of manifest.elements) {
     const node = nodes.get(el.gid)!
-    const p = parentGid(el.gid, byGid)
+    const p = parentGid(el.gid, (g) => byGid.has(g))
     if (p && nodes.has(p)) nodes.get(p)!.children.push(node)
     else roots.push(node)
   }

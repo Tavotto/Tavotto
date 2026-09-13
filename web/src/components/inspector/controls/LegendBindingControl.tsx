@@ -7,7 +7,7 @@ import { engineLabel } from '../roles/registry'
 import { restoreLegendEntryFollow } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
-import { Button } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/Button'
 import { Tip } from '../../ui/Tooltip'
 
 const lg = (key: string, values?: Record<string, unknown>) =>
@@ -25,7 +25,9 @@ const lg = (key: string, values?: Record<string, unknown>) =>
  *     走 `store/actions.restoreLegendEntryFollow`，不在组件里逐条清）。
  *
  * 「查看源对象」两种状态下都留着：断开之后关系仍然存在（只是样式不再派生），
- * 藏起来会让人以为改这一项动到了那条曲线本身——那正是这一条的验收。
+ * 藏起来会让人以为改这一项动到了那条曲线本身——那正是这一条的验收。它是行尾的
+ * 一颗图标钮（可达名带对象名），不再单独一行把「曲线 “sin”」再念一遍（2026-09-13
+ * 审计 B50：所属图例、链接到、查看源对象三处写同一个关系）。
  *
  * 示意线的样式字段**只在断开后出现**（展示注册表的 `visibleWhen`，判据是
  * `binding !== 'follow_source'`，与这里读的是同一个字段值）。所以链接中不再有
@@ -91,17 +93,17 @@ export function LegendBindingControl({
         >
           {stateText}
         </span>
+        {source && (
+          <IconButton
+            iconSize="sm"
+            className="-my-1 shrink-0"
+            label={lg('viewSource', { label: engineLabel(source.label) })}
+            onClick={() => useUiStore.getState().setSelectedGid(source.gid)}
+          >
+            <CornerUpLeft size={ICON_SIZE.sm} className="text-ink-3" />
+          </IconButton>
+        )}
       </div>
-      {source && (
-        <Button
-          size="sm"
-          className="max-w-full self-start px-1.5 text-ink-2"
-          onClick={() => useUiStore.getState().setSelectedGid(source.gid)}
-        >
-          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
-          <span className="truncate">{lg('viewSource', { label: engineLabel(source.label) })}</span>
-        </Button>
-      )}
     </div>
   )
 }

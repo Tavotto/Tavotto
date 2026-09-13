@@ -162,6 +162,20 @@ export function fieldVisible(role: string, prop: string, opts: PresentOptions): 
  * 这个角色里与 `prop` 并排成一行的另一条字段（模板 `pairRows`）；没有就 null。
  * 只回答「谁和谁一对」，画不画在一行由列表按「两条都在同一桶里」决定。
  */
+/**
+ * 首屏分组：字段 → 它领头的那一组的标题 key（只有每组**第一个在场**的字段拿到）。
+ * 与 `presentFields` 一样只看在场的字段：模板点名的属性 manifest 没给就跳过，
+ * 组照样从下一个在场的开始，绝不出现一个没有字段的标题。
+ */
+export function primaryGroupHeads(role: string, present: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const g of ROLE_PROFILES[role]?.primaryGroups ?? []) {
+    const first = g.props.find((p) => present.includes(p))
+    if (first) out.set(first, g.labelKey)
+  }
+  return out
+}
+
 export function pairedProp(role: string, prop: string): string | null {
   for (const [a, b] of ROLE_PROFILES[role]?.pairRows ?? []) {
     if (a === prop) return b

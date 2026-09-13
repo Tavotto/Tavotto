@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   AlignCenterHorizontal,
@@ -99,6 +99,7 @@ import {
   isPercentField,
   pairedProp,
   presentFields,
+  primaryGroupHeads,
 } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
@@ -538,21 +539,27 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
 function relatedGids(
   manifest: Manifest,
   target: ManifestElement,
-): { gid: string; label: string; hint?: string }[] {
+): { gid: string; label: string; hint?: string; text?: string }[] {
   const find = (gid: string) =>
     manifest.elements.find((e) => e.gid === gid && e.editable.length > 0)
   const up = (re: RegExp) => {
     const m = target.gid.match(re)
     return m ? find(m[1]) : undefined
   }
-  const out: { gid: string; label: string; hint?: string }[] = []
-  const push = (e: ManifestElement | undefined, hint?: string) => {
+  const out: { gid: string; label: string; hint?: string; text?: string }[] = []
+  const push = (e: ManifestElement | undefined, hint?: string, text?: (label: string) => string) => {
     // label 是引擎发来的散文（`曲线 “电流”`），过 engineLabel 换成当前语言
-    if (e) out.push({ gid: e.gid, label: engineLabel(e.label), hint })
+    if (e) out.push({ gid: e.gid, label: engineLabel(e.label), hint, text: text?.(engineLabel(e.label)) })
   }
 
   if (target.role === 'bar') push(up(/^(.*)\.bar_\d+$/), el('relatedSeries'))
-  if (target.role === 'legend_text') push(up(/^(.*)\.texts_\d+$/), el('relatedLegend'))
+  // 图例项的「所属图例」已在身份头的面包屑里（审计 B50），这里不再重复一行
+  // 单个刻度文字 → 整条轴的刻度（审计 B51）：这一页改的只是这一个刻度的文字，
+  // 字号 / 朝向 / 间距那些整条轴的事在刻度组页；入口就写成「编辑整条 X 轴刻度」
+  if (target.role === 'ticklabel') {
+    const m = target.gid.match(/^(.*)\.([xyz])ticklabels_\d+$/)
+    if (m) push(find(`${m[1]}.${m[2]}ticks`), undefined, (label) => el('relatedTicksAll', { label }))
+  }
   if (target.role === 'ticks') push(up(/^(.*)\.[xyz]ticks$/), el('relatedAxes'))
   if (target.role === 'axes' || target.role === 'axes3d') {
     push(find(`${target.gid}.xticks`))
@@ -577,7 +584,7 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
         >
           <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
           <span className="truncate">
-            {it.hint ? el('relatedWithHint', { hint: it.hint, label: it.label }) : it.label}
+            {it.text ?? (it.hint ? el('relatedWithHint', { hint: it.hint, label: it.label }) : it.label)}
           </span>
         </Button>
       ))}
@@ -956,7 +963,7 @@ function FieldList({
   const moreOpen = useInspectorPrefs((s) => s.moreOpen[role] ?? false)
   const setMoreOpen = useInspectorPrefs((s) => s.setMoreOpen)
 
-  const rows = (fields: PresentedField[]) => {
+  const rows = (fields: PresentedField[], heads?: Map<string, string>) => {
     // 并排成一行的字段对（模板的 `pairRows`，如色阶下限 / 上限）：**两条都在
     // 这一桶里**才并排，否则各画各的——条件显示把其中一条收起来时，剩下那条
     // 不该跟着消失。两条仍是各自的 manifest 字段、各写各的 override。
@@ -965,28 +972,22 @@ function FieldList({
       <div className="flex flex-col gap-1.5">
         {fields.map(({ field }) => {
           if (paired.has(field.prop)) return null
+          // 首屏分组小标题（模板的 `primaryGroups`）：只钉在每组第一个在场的字段前
+          const head = heads?.get(field.prop)
           const mateProp = pairedProp(role, field.prop)
           const mate = mateProp ? fields.find((p) => p.field.prop === mateProp)?.field : undefined
+          let block: ReactNode
           if (mate && PAIR_TEXT[pairKey(field.prop, mate.prop)]) {
             paired.add(mate.prop)
-            return (
-              <PairRow
-                key={field.prop}
-                panel={panel}
-                element={element}
-                a={field}
-                b={mate}
-              />
-            )
+            block = <PairRow panel={panel} element={element} a={field} b={mate} />
+          } else {
+            block = <FieldBlock panel={panel} element={element} field={field} warnings={warnings} />
           }
           return (
-            <FieldBlock
-              key={field.prop}
-              panel={panel}
-              element={element}
-              field={field}
-              warnings={warnings}
-            />
+            <Fragment key={field.prop}>
+              {head && <GroupHead className="mt-1.5">{el(head)}</GroupHead>}
+              {block}
+            </Fragment>
           )
         })}
       </div>
@@ -1011,9 +1012,13 @@ function FieldList({
   // 工具条承接的字体字段已从列表里滤掉，剩下排在 `text` 之后的按模板顺序跟在工具条后面
   const headPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop === 'text') : buckets.primary
   const tailPrimary = bar ? buckets.primary.filter((pf) => pf.field.prop !== 'text') : []
+  const groupHeads = primaryGroupHeads(
+    role,
+    buckets.primary.map((pf) => pf.field.prop),
+  )
   return (
     <>
-      {rows(headPrimary)}
+      {rows(headPrimary, groupHeads)}
       {bar && (
         <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} labelWidth={LABEL_W} />
@@ -1152,8 +1157,8 @@ function TickControl({
 }
 
 /** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
-function GroupHead({ children }: { children: ReactNode }) {
-  return <p className="mb-1 type-section">{children}</p>
+function GroupHead({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cn('mb-1 type-section', className)}>{children}</p>
 }
 
 /* ------------------------------ 子图：范围与坐标变换 ------------------------ */
@@ -2354,20 +2359,25 @@ function FieldRow({
     case 'rect': {
       const arr = Array.isArray(value) ? (value as number[]) : []
       const step = field.type === 'rect' ? 0.01 : 1
+      // 一对（图幅 W / H）的单位进框内，与画布页的 W / H 同一种写法（第五节：单位漂在框外
+      // 没有来路；2026-09-13 审计 B54 点到的正是这一对）。四格并排的 rect 放不下框内单位，
+      // 仍写在行尾
+      const pair = field.type === 'pair'
       return wrap(
         <>
-          <div className={cn('grid flex-1 gap-1', field.type === 'rect' ? 'grid-cols-4' : 'grid-cols-2')}>
+          <div className={cn('grid flex-1 gap-1', pair ? 'grid-cols-2' : 'grid-cols-4')}>
             {arr.map((v, i) => (
               <NumberField
                 key={i}
                 // 图幅是「393.7」这种五位带小数的数：默认 4ch 只剩「393.」
                 // （2026-09-11 用户反馈）；rect 四格并排放不下，维持默认
-                className={field.type === 'pair' ? '[&_input]:w-[calc(6ch+0.75rem)]' : undefined}
+                className={pair ? '[&_input]:w-[calc(6ch+0.75rem)]' : undefined}
                 ariaLabel={axisAriaLabel(field, label, i)}
-                prefix={field.type === 'pair' ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
+                prefix={pair ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
+                unit={pair && field.unit ? field.unit : undefined}
                 value={Number(v)}
                 step={step}
-                precision={field.type === 'rect' ? 3 : 2}
+                precision={pair ? 2 : 3}
                 onChange={(nv) => {
                   const next = [...arr]
                   next[i] = nv
@@ -2378,7 +2388,7 @@ function FieldRow({
               />
             ))}
           </div>
-          {field.unit && <span className="shrink-0 text-xs text-ink-3">{field.unit}</span>}
+          {!pair && field.unit && <span className="shrink-0 text-xs text-ink-3">{field.unit}</span>}
         </>
       )
     }

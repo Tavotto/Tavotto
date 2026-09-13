@@ -44,7 +44,8 @@ import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
-import { identityCrumbs, untruncatedLabel } from './identityCrumbs'
+import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
+import { containerGid } from './roles/hierarchy'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
 import { RestoreMenu } from './RestoreMenu'
@@ -314,12 +315,24 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
     const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
     const axes = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
-    const text = el?.editable.find((f) => f.prop === 'text')?.value
+    // 子图与元素之间那一级（图例 / X 轴刻度 / 柱形系列）：归属进面包屑
+    const has = (g: string) => !!manifest?.elements.some((e) => e.gid === g)
+    const containerOf = gid
+      ? containerGid(gid, has, (g) => {
+          const r = manifest?.elements.find((e) => e.gid === g)?.role
+          return r === 'axes' || r === 'axes3d'
+        })
+      : null
+    const container = containerOf ? manifest?.elements.find((e) => e.gid === containerOf) : undefined
+    // 文字元素的 `text`、系列的 `label`：都是「名字里被引擎截断的那段用户文字」的全文
+    const text = el?.editable.find((f) => f.prop === 'text' || f.prop === 'label')?.value
     const crumbs = identityCrumbs(
       panel.name ?? panel.fileId,
       axes && axes.gid !== gid ? axes.label : undefined,
-      el ? untruncatedLabel(el.label, typeof text === 'string' ? text : undefined) : undefined,
+      // 标题显示可读文本：mathtext 源码只在下面的「名称」框里（审计 B48）
+      el ? displayLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined)) : undefined,
       selectedGids.length,
+      container?.label,
     )
     const hideable =
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')

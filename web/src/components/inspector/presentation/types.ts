@@ -84,4 +84,11 @@ export interface RoleProfile {
    * 各写各的 override；只在两条都在同一个桶里时并排，缺一条就各画各的。
    */
   pairRows?: [string, string][]
+  /**
+   * 首屏字段的分组小标题（2026-09-13 审计 B48：曲线 = 名称 → 线条 → 标记）。
+   * 一组从它点名的第一个**在场**字段起，到下一组的第一个在场字段止；第一组之前
+   * 的字段（系列名）不带标题。只管首屏——「更多」里按引擎分组，「高级」不分。
+   * 组名是 `inspector:element.<labelKey>`。
+   */
+  primaryGroups?: { labelKey: string; props: string[] }[]
 }

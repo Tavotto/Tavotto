@@ -5,7 +5,7 @@ import {
   ChartColumn,
   ChartLine,
   ChartScatter,
-  Frame,
+  Fullscreen,
   GitCommitVertical,
   Image,
   LayoutList,
@@ -26,9 +26,13 @@ import {
  *
  * 文字类的角色都是 `Type`——标题 / 轴标题 / 刻度文字的区别由标签说，图标只回答
  * 「这是什么类的东西」。认不出的角色回落到 `Shapes`。
+ *
+ * 整张图是**外框里含一块内容区**（`Fullscreen`：四个角 + 中间一个矩形）——它说的是
+ * 「这张图自己的图幅」，与画布 / 多页区分开。此前是井字（`Frame`），读起来像网格
+ * 或裁切（2026-09-13 审计 B54）。
  */
 export const ROLE_ICONS: Record<string, LucideIcon> = {
-  figure: Frame,
+  figure: Fullscreen,
   axes: Square,
   axes3d: Box,
   text: Type,

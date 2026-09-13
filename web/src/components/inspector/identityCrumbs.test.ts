@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
-import { identityCrumbs, untruncatedLabel } from './identityCrumbs'
+import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
 
 async function inLocale(locale: 'zh-CN' | 'en-US', fn: () => void) {
   await setLocale(locale)
@@ -87,5 +87,28 @@ describe('身份头标题不带引擎的截断省略号（2026-09-12 critique P3
     expect(untruncatedLabel('文字 “first line second l…”', 'first line\nsecond line')).toBe(
       '文字 “first line second line”',
     )
+  })
+})
+
+describe('displayLabel：mathtext → 可读文本（审计 B48）', () => {
+  it('图例标签里的单位：字体命令剥掉、上标换成字符', () => {
+    expect(displayLabel('Catalyst (k = 0.125 $\\mathrm{min^{-1}}$)')).toBe('Catalyst (k = 0.125 min⁻¹)')
+    expect(displayLabel('Current density (A cm$^{-2}$)')).toBe('Current density (A cm⁻²)')
+  })
+
+  it('希腊字母与下标', () => {
+    expect(displayLabel('$\\alpha$-Fe$_2$O$_3$')).toBe('α-Fe₂O₃')
+    expect(displayLabel('$\\Delta T$ (K)')).toBe('ΔT (K)')
+  })
+
+  it('换不成字符的上下标与不认识的命令原样保留；`$` 不成对整段不动', () => {
+    expect(displayLabel('$T_{\\mathrm{c}}$')).toBe('T_{c}')
+    expect(displayLabel('$\\frac{a}{b}$')).toBe('\\frac{a}{b}')
+    expect(displayLabel('price $5')).toBe('price $5')
+  })
+
+  it('没有 `$` 的原样返回（含引擎给的角色前缀）', () => {
+    expect(displayLabel('曲线 “Blank (k = 0.042 $\\mathrm{min^{-1}}$)”')).toBe('曲线 “Blank (k = 0.042 min⁻¹)”')
+    expect(displayLabel('标题 “Reaction kinetics”')).toBe('标题 “Reaction kinetics”')
   })
 })

@@ -288,7 +288,6 @@
     "orphanCount": "{{overrides}} edits · {{elements}} elements",
     "proxiedGeometry": "Position and size apply to the host axes “{{label}}”.",
     "relatedAxes": "Parent axes",
-    "relatedLegend": "Parent legend",
     "relatedSeries": "Parent series",
     "relatedWithHint": "{{hint}}: {{label}}",
     "resetDiagram": "Reset ticks and frame to script",
@@ -334,7 +333,10 @@
     "selectScalePartner": "Select {{label}}",
     "selectScalePartnerShort": "Select",
     "groupRangeTransform": "Range & transform",
-    "sizeHead": "Axes size"
+    "sizeHead": "Axes size",
+    "groupLine": "Line",
+    "groupMarker": "Markers",
+    "relatedTicksAll": "Edit all {{label}}…"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
