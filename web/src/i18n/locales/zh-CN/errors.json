@@ -466,7 +466,9 @@
       "ppi": "ppi",
       "pt": "pt"
     },
-    "valueArrow": "{{current}} → {{expected}}"
+    "valueArrow": "{{current}} → {{expected}}",
+    "scopeCountAria": "{{label}}（{{count}} 项）",
+    "tierUnverifiable": "无法自动检查"
   },
   "render": {
     "failed": "渲染失败（HTTP {{status}}）",

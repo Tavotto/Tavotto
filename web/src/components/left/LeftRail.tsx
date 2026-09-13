@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import {
-  Braces,
   ClipboardList,
   Images,
   Layers,
@@ -9,6 +8,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
@@ -26,7 +26,7 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   { id: 'canvases', icon: LayoutGrid },
   { id: 'assets', icon: Images },
   { id: 'layers', icon: Layers },
-  { id: 'elements', icon: Braces },
+  { id: 'elements', icon: EditableFigureIcon },
   { id: 'problems', icon: TriangleAlert },
 ]
 

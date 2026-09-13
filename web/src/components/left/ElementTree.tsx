@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
-  Braces,
   ChartLine,
   Crosshair,
   Ellipsis,
@@ -20,6 +19,7 @@ import {
 } from 'lucide-react'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn } from '@/lib/utils'
@@ -221,6 +221,19 @@ function ancestorKeys(nodes: TreeNode[], gid: string, parentKey = ''): string[] 
 const canHide = (el: ManifestElement) =>
   el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
 
+/**
+ * 行上显示的名字。刻度文字只显示**值**（`10` 而不是 `刻度 “10”`）：它们只出现在
+ * 「X 轴刻度」组下面，组名已经说了它们是什么，每行再念一遍「刻度」是同一个词
+ * 重复十几行（2026-09-13 审计 B44）。完整名字仍在 `title` 与可达名里。
+ */
+function rowLabel(el: ManifestElement): string {
+  if (el.role === 'ticklabel') {
+    const text = el.editable.find((f) => f.prop === 'text')?.value
+    if (typeof text === 'string' && text.trim()) return text
+  }
+  return engineLabel(el.label)
+}
+
 export function ElementTree() {
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedIds = useSelectionStore((s) => s.ids)
@@ -239,8 +252,34 @@ export function ElementTree() {
   const rendering = usePanelRender(panel)?.status === 'rendering'
 
   if (!panel) {
+    /**
+     * 两种空态是两句不同的话（2026-09-13 审计 B05）：画布上**有**可编辑的图、只是
+     * 没选中 → 给「选中一张」这一步；一张都没有 → 说清只有脚本生成的图才有图内
+     * 对象，把人送去素材。此前不分这两种、也不给下一步，只有一句「选中一个可参数
+     * 化面板」——「参数化」是实现词，用户读不出该做什么。
+     */
+    const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && !!o.script)
+    if (editable.length === 0) {
+      return (
+        <EmptyState
+          icon={EditableFigureIcon}
+          title={et('noEditableTitle')}
+          hint={et('noEditableHint')}
+          action={{ label: et('openAssets'), onClick: () => useUiStore.getState().setLeftTab('assets') }}
+        />
+      )
+    }
     return (
-      <EmptyState icon={Braces} title={et('noPanelTitle')} />
+      <EmptyState
+        icon={EditableFigureIcon}
+        title={et('noPanelTitle')}
+        hint={et('noPanelHint')}
+        action={{
+          label: et('locateEditable'),
+          // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态
+          onClick: () => useSelectionStore.getState().set([editable[0].id]),
+        }}
+      />
     )
   }
 
@@ -257,7 +296,7 @@ export function ElementTree() {
           </p>
         ) : (
           <Button variant="secondary" size="sm" onClick={() => enterElementEdit(panel.id)}>
-            <Braces size={ICON_SIZE.sm} />
+            <EditableFigureIcon size={ICON_SIZE.sm} />
             {et('load')}
           </Button>
         )}
@@ -290,9 +329,14 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   const isOpen = (n: TreeNode, key: string) => {
     // 搜索 / 只看分支时全部展开，否则命不中匹配项
     if (q || isolated) return open[key] ?? true
-    // 默认只展开 Figure 与 Axes 一级：聚类和刻度组等更深层收起
+    // 默认展开到**语义聚类的成员**：整张图 → 子图 → 文字 / 数据系列 / 图例 / 坐标轴
+    // 各自的直接成员都看得见；成员自己再带的一层（刻度组下的每个刻度文字、柱形系列
+    // 下的每根柱、图例下的每一项）收起（2026-09-13 审计 B44：一进来就铺到叶子，
+    // 「刻度」一词重复十几行，结构密度高过当前任务；只开两级又什么都看不见）
     const role = n.el?.role
-    return open[key] ?? (n.el?.gid === 'figure' || role === 'axes' || role === 'axes3d')
+    return (
+      open[key] ?? (!!n.cluster || n.el?.gid === 'figure' || role === 'axes' || role === 'axes3d')
+    )
   }
   const rows = useMemo(
     () => flatten(shown, 0, '', isOpen, []),
@@ -575,7 +619,7 @@ function ElementRow({
         className="min-w-0 flex-1 truncate"
         title={`${engineLabel(el.label)} · ${roleName(el.role)} · ${el.gid}`}
       >
-        {engineLabel(el.label)}
+        {rowLabel(el)}
       </span>
 
       {unsupported && (

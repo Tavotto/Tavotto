@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Braces,
   CircleCheck,
   CircleDashed,
   CircleMinus,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
   backendErrorText,
@@ -265,7 +265,7 @@ function ReadinessBody() {
       )}
 
       {report.summary.total === 0 ? (
-        <EmptyState icon={Braces} title={rd('emptyTitle')} hint={rd('emptyHint')} />
+        <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
       ) : (
         groups.map(
           ({ key, panels }) =>

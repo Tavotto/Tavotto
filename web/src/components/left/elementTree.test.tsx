@@ -2,8 +2,9 @@
  * 图内元素树（审计 T08）。验收原话：**从图上点击对象后，树中对应行可见并
  * 高亮**。
  *
- * 树默认只展开 Figure 与子图两级，刻度组与语义聚类是收起的——审计里选中的
- * 刻度就藏在里面，用户得自己一层层翻。这里量：选中一个深层 gid 之后，那一行
+ * 树默认展开到语义聚类的成员为止，刻度组（与柱形系列、图例这类成员自带的
+ * 下一层）是收起的（2026-09-13 审计 B44）——审计里选中的刻度就藏在里面，
+ * 用户得自己一层层翻。这里量：选中一个深层 gid 之后，那一行
  * 出现在扁平化后的行里，并且带着选中标记。
  *
  * 另外两条：搜索占位语不再写内部标识（gid 仍然搜得到，只是不摆进默认文案）、
@@ -28,6 +29,12 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+// 「打开素材」会把抽屉切到素材库，它量列宽用 ResizeObserver（jsdom 没有）
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver
 globalThis.fetch = vi.fn(async () => new Response('{}', { status: 200 })) as typeof fetch
 
 const panel: PanelObject = {
@@ -247,18 +254,72 @@ describe('键盘', () => {
     expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks.label_3')
   })
 
-  it('语义聚类那一行也走同一套键：→ 展开、← 收起', async () => {
+  it('语义聚类那一行也走同一套键：← 收起、→ 展开', async () => {
     await mount()
-    // 聚类行的 key 是「父 key#聚类名」，不是 gid
+    // 聚类行的 key 是「父 key#聚类名」，不是 gid。聚类默认是**展开**的（审计 B44：
+    // 文字 / 数据系列 / 图例 / 坐标轴的成员一进来就看得见），所以先 ← 再 →
     const cluster = [...host.querySelectorAll('[data-el]')].find((n) =>
       (n as HTMLElement).dataset.el!.includes('#'),
     ) as HTMLElement
     expect(cluster).toBeTruthy()
-    expect(cluster.getAttribute('aria-expanded')).toBe('false')
-    const collapsed = rowGids().length
-    await press(cluster, 'ArrowRight')
-    expect(rowGids().length).toBeGreaterThan(collapsed)
-    await press(row(cluster.dataset.el!), 'ArrowLeft')
-    expect(rowGids().length).toBe(collapsed)
+    expect(cluster.getAttribute('aria-expanded')).toBe('true')
+    const expanded = rowGids().length
+    await press(cluster, 'ArrowLeft')
+    expect(rowGids().length).toBeLessThan(expanded)
+    await press(row(cluster.dataset.el!), 'ArrowRight')
+    expect(rowGids().length).toBe(expanded)
+  })
+})
+
+/**
+ * 空态分两句话（2026-09-13 审计 B05）：「画布上一张可编辑的图都没有」与「有、但没
+ * 选中」是两种状态，各给各的下一步；两句都不许出现「参数化」这个实现词。
+ */
+describe('空态', () => {
+  const et = (key: string) => t(`elementTree.${key}`, { ns: 'workspace' })
+
+  it('一张可编辑的图都没有：说清原因，主动作是打开素材', async () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    useDocumentStore.getState().commit(literal('清空'), (d) => {
+      d.objects = [{ ...panel, script: undefined } as CanvasObject]
+    })
+    await mount()
+    expect(host.textContent).toContain(et('noEditableTitle'))
+    expect(host.textContent).not.toContain('参数化')
+    const btn = [...host.querySelectorAll('button')].find((b) => b.textContent === et('openAssets'))!
+    expect(btn).toBeTruthy()
+    await act(async () => btn.click())
+    expect(useUiStore.getState().leftTab).toBe('assets')
+  })
+
+  it('有可编辑的图但没选中：主动作选中它，树随即出现', async () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    await mount()
+    expect(host.textContent).toContain(et('noPanelTitle'))
+    expect(host.textContent).not.toContain(et('noEditableTitle'))
+    const btn = [...host.querySelectorAll('button')].find((b) => b.textContent === et('locateEditable'))!
+    expect(btn).toBeTruthy()
+    await act(async () => btn.click())
+    await act(async () => {})
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(rowGids()).toContain('figure')
+  })
+
+  it('刻度文字行只显示值：组名已经说了它们是刻度', async () => {
+    await mount()
+    const row = (gid: string) => host.querySelector(`[data-el="${gid}"]`) as HTMLElement
+    await act(async () => {
+      row('axes_0.yticks').focus()
+      row('axes_0.yticks').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      )
+    })
+    await act(async () => {})
+    const tick = row('axes_0.yticks.label_3')
+    expect(tick).toBeTruthy()
+    // 夹具的刻度文字没有 text 字段：退回完整名字；有 text 的那条只显示值
+    expect(tick.textContent).toContain('刻度文字 0.75')
   })
 })

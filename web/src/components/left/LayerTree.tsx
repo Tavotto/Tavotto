@@ -19,6 +19,7 @@ import {
   Type,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
@@ -275,7 +276,12 @@ function LayerRow({
   const [editing, setEditing] = useState(false)
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
-  const stateLabel = [obj.hidden && lt('hiddenState'), obj.locked && lt('lockedState')]
+  // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
+  const stateLabel = [
+    isScript && lt('editableState'),
+    obj.hidden && lt('hiddenState'),
+    obj.locked && lt('lockedState'),
+  ]
     .filter(Boolean)
     .join('，')
 
@@ -368,9 +374,17 @@ function LayerRow({
       ) : (
         <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
-      {/* 可参数化徽标与素材卡的 { } 同源；行首的 Braces 是大括号形状的种类图标，
-          靠位置（行尾）把两个角色分开，颜色与行内文字同为墨色 */}
-      {isScript && !editing && <Braces size={ICON_SIZE.sm} className="shrink-0 text-ink" />}
+      {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`）；行首的 Braces 是
+          大括号形状的种类图标，两个角色靠位置（行尾）与图形分开。悬停说清它是
+          什么——审计 B04：一个没有名字的记号只能靠猜 */}
+      {isScript && !editing && (
+        <span
+          className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-2"
+          title={lt('editableBadge')}
+        >
+          <EditableFigureIcon size={ICON_SIZE.sm} aria-hidden />
+        </span>
+      )}
       {primary && !editing && (
         <span className="shrink-0 font-mono text-xs text-ink-3">{lt('primary')}</span>
       )}

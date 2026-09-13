@@ -651,3 +651,59 @@ describe('长列表：一组默认只展开前几行', () => {
     expect(showRest()).toBeNull()
   })
 })
+
+/**
+ * 2026-09-13 审计 B55 / B06：两个范围页签各带自己的计数；「无法核验」的组另起一段，
+ * 带一行小标题，排在需要处理的组之后——它不是通过，也不是错误。
+ */
+describe('页签计数与「无法自动检查」分段', () => {
+  it('「当前图」与「整个文档」各带自己的数，两个数同时看得见', async () => {
+    await seedThree()
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    const fig = radioNamed('当前图')
+    const doc = radioNamed('整个文档')
+    const figureCount = useValidationStore
+      .getState()
+      .issues.filter((i) => i.objectRef.objectId === 'p1').length
+    expect(figureCount).toBeGreaterThan(0)
+    expect(figureCount).toBeLessThan(total())
+    expect(fig.textContent).toContain(String(figureCount))
+    expect(doc.textContent).toContain(String(total()))
+    // 可达名也带数：读屏不用切过去才知道那一档有几条
+    expect(fig.getAttribute('aria-label')).toContain(String(figureCount))
+    expect(doc.getAttribute('aria-label')).toContain(String(total()))
+  })
+
+  it('无法核验的组排在需要处理的组之后，自成一段并带小标题', async () => {
+    await seed()
+    const issues = useValidationStore.getState().issues
+    const base = issues[0]
+    useValidationStore.setState({
+      issues: [
+        ...issues,
+        {
+          ...base,
+          issueId: 'nv|1',
+          ruleCode: 'panel-text-not-verifiable',
+          severity: 'not_verifiable',
+          propertyPath: null,
+          fixKind: 'none',
+        },
+      ],
+    })
+    await mount(<ProblemPanel />)
+    const tiers = [...container.querySelectorAll<HTMLElement>('[data-problem-tier]')].map(
+      (n) => n.dataset.problemTier,
+    )
+    expect(tiers).toEqual(['actionable', 'unverifiable'])
+    const unverifiable = container.querySelector('[data-problem-tier="unverifiable"]')!
+    expect(unverifiable.textContent).toContain('无法自动检查')
+    expect(unverifiable.querySelector('[data-issue-group="panel-text-not-verifiable"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-problem-tier="actionable"] [data-issue-group="panel-text-not-verifiable"]'),
+    ).toBeNull()
+    // 小标题只在有无法核验的组时出现
+    expect(text().split('无法自动检查').length - 1).toBe(1)
+  })
+})

@@ -473,7 +473,9 @@
       "ppi": " ppi",
       "pt": " pt"
     },
-    "valueArrow": "{{current}} → {{expected}}"
+    "valueArrow": "{{current}} → {{expected}}",
+    "scopeCountAria": "{{label}} ({{count}})",
+    "tierUnverifiable": "Cannot be checked automatically"
   },
   "render": {
     "failed": "Render failed (HTTP {{status}})",

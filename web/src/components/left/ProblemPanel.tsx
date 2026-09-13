@@ -18,6 +18,7 @@ import {
   cursorFor,
   cursorView,
   groupIssues,
+  issuesInScope,
   type IssueGroup,
   type ProblemScope,
 } from '@/lib/problemList'
@@ -120,6 +121,9 @@ export function ProblemPanel() {
 
   const groups = useMemo(() => groupIssues(shown), [shown])
   const view = useMemo(() => cursorView(groups, cursor), [groups, cursor])
+  // 「无法核验」的组另起一段（见列表处的说明）；顺序仍是 `groupIssues` 排好的
+  const actionable = groups.filter((g) => g.severity !== 'not_verifiable')
+  const unverifiable = groups.filter((g) => g.severity === 'not_verifiable')
 
   const fixableHere = useMemo(
     () => shown.filter((i) => i.fixKind === 'safe_auto' && i.objectRef.canvasId === activeCanvasId),
@@ -163,9 +167,19 @@ export function ProblemPanel() {
 
   const expandGroup = (ruleCode: string) => setExpanded((prev) => new Set(prev).add(ruleCode))
 
+  // 两个页签各带自己的计数（审计 B55：「当前图 14 / 整个文档 16」两个数得同时看得见，
+  // 用户才知道切过去会多出几条）。判据与清单同一份 `issuesInScope`
+  const figureCount = figureId ? issuesInScope(all, 'figure', figureId).length : 0
+  const documentCount = all.length
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ScopeBar figureId={figureId} figureName={figureName} scope={scope} />
+      <ScopeBar
+        figureId={figureId}
+        figureName={figureName}
+        scope={scope}
+        counts={ready ? { figure: figureCount, document: documentCount } : null}
+      />
 
       {/* 概览条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的
           「正在检查…」是两句互相打架的话（2026-09-11 设计包） */}
@@ -267,19 +281,34 @@ export function ProblemPanel() {
           aria-label={pr('listLabel')}
           className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
         >
-          {groups.map((g) => (
-            <GroupBlock
-              key={g.ruleCode}
-              group={g}
-              open={!collapsed.has(g.ruleCode)}
-              expanded={expanded.has(g.ruleCode)}
-              onToggle={() => toggleGroup(g.ruleCode)}
-              onExpand={() => expandGroup(g.ruleCode)}
-              currentId={view.current?.issueId ?? null}
-              activeCanvasId={activeCanvasId}
-              onLocate={locate}
-            />
-          ))}
+          {/* 「需要处理」与「无法自动检查」是两层不同的话（审计 B06）：前者是规范
+              判过、给得出「当前 → 要求」的；后者是**查不了**——不是通过，也不是
+              错误。以前两类组混排在同一列，等级、核验能力、范围三种信息挤在同一个
+              阅读层。分成两段，后一段带一行小标题；组的内部形态不变 */}
+          {[actionable, unverifiable].map((list, i) =>
+            list.length === 0 ? null : (
+              <li key={i === 0 ? 'actionable' : 'unverifiable'} data-problem-tier={i === 0 ? 'actionable' : 'unverifiable'}>
+                {i === 1 && (
+                  <p className="type-section mb-1 mt-2 px-1">{pr('tierUnverifiable')}</p>
+                )}
+                <ul>
+                  {list.map((g) => (
+                    <GroupBlock
+                      key={g.ruleCode}
+                      group={g}
+                      open={!collapsed.has(g.ruleCode)}
+                      expanded={expanded.has(g.ruleCode)}
+                      onToggle={() => toggleGroup(g.ruleCode)}
+                      onExpand={() => expandGroup(g.ruleCode)}
+                      currentId={view.current?.issueId ?? null}
+                      activeCanvasId={activeCanvasId}
+                      onLocate={locate}
+                    />
+                  ))}
+                </ul>
+              </li>
+            ),
+          )}
         </ul>
       )}
 
@@ -299,11 +328,20 @@ function ScopeBar({
   figureId,
   figureName,
   scope,
+  counts,
 }: {
   figureId: string | null
   figureName: string | null
   scope: ProblemScope
+  /** 两档各自的问题数；这一轮还没查完时是 null（挂着旧数字与「正在检查…」是两句打架的话） */
+  counts: { figure: number; document: number } | null
 }) {
+  const count = (n: number | undefined) =>
+    n ? (
+      <span className="ml-1 type-meta tabular-nums" aria-hidden>
+        {n}
+      </span>
+    ) : null
   return (
     <div className="shrink-0 px-3">
       {/* 「当前图 / 整个文档」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
@@ -321,15 +359,23 @@ function ScopeBar({
                 : pr('scopeFigureUnavailable')
             }
             className="disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={
+              counts && figureId ? pr('scopeCountAria', { label: pr('scopeFigure'), count: counts.figure }) : undefined
+            }
             onClick={() => useUiStore.getState().setProblemScope('figure')}
           >
             {pr('scopeFigure')}
+            {figureId && count(counts?.figure)}
           </Tab>
           <Tab
             active={scope === 'document'}
+            aria-label={
+              counts ? pr('scopeCountAria', { label: pr('scopeDocument'), count: counts.document }) : undefined
+            }
             onClick={() => useUiStore.getState().setProblemScope('document')}
           >
             {pr('scopeDocument')}
+            {count(counts?.document)}
           </Tab>
         </TabList>
       </div>

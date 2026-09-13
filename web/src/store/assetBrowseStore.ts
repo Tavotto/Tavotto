@@ -32,8 +32,15 @@ export const DEFAULT_ASSET_FILTERS: AssetFilters = {
 interface AssetBrowseState {
   query: string
   filters: AssetFilters
+  /**
+   * 「脚本」区展开着没有。图是这一栏的主区域，脚本是可以收起的第二层
+   * （2026-09-13 审计 B07）；默认展开——「运行并发现图」是新项目的第一步，不能
+   * 一开始就藏起来。与筛选一样只在内存里，换项目不重置（它不属于某个项目）。
+   */
+  scriptsOpen: boolean
   setQuery: (query: string) => void
   setFilters: (filters: AssetFilters | ((prev: AssetFilters) => AssetFilters)) => void
+  setScriptsOpen: (open: boolean) => void
   /** 换项目：搜索词与筛选都属于旧项目 */
   clear: () => void
 }
@@ -41,8 +48,10 @@ interface AssetBrowseState {
 export const useAssetBrowseStore = create<AssetBrowseState>((set) => ({
   query: '',
   filters: DEFAULT_ASSET_FILTERS,
+  scriptsOpen: true,
   setQuery: (query) => set({ query }),
   setFilters: (filters) =>
     set((s) => ({ filters: typeof filters === 'function' ? filters(s.filters) : filters })),
+  setScriptsOpen: (scriptsOpen) => set({ scriptsOpen }),
   clear: () => set({ query: '', filters: DEFAULT_ASSET_FILTERS }),
 }))

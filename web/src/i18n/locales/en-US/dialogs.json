@@ -240,7 +240,7 @@
       },
       "left-layers": {
         "keywords": "layer structure stacking order",
-        "label": "Open structure (layers)"
+        "label": "Open layers"
       },
       "load-layout": {
         "keywords": "open load document canvas file",

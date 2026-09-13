@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
-  Braces,
+  ChevronRight,
   ImageOff,
   ListFilter,
   Pencil,
@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendErrorMsg,
   renderUrl,
@@ -120,6 +121,7 @@ export function AssetBrowser() {
   const [refreshing, setRefreshing] = useState(false)
   const filters = useAssetBrowseStore((s) => s.filters)
   const setFilters = useAssetBrowseStore((s) => s.setFilters)
+  const scriptsOpen = useAssetBrowseStore((s) => s.scriptsOpen)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState<LibraryItem | null>(null)
   /** 后端刷新与素材重取合起来才是用户眼里的「正在刷新」 */
@@ -281,7 +283,7 @@ export function AssetBrowser() {
               setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
             }
           >
-            <Braces size={ICON_SIZE.sm} className={type === 'script' ? undefined : 'text-ink-2'} />
+            <EditableFigureIcon size={ICON_SIZE.sm} className={type === 'script' ? undefined : 'text-ink-2'} />
           </IconButton>
           <FilterButton
             filters={filters}
@@ -420,8 +422,19 @@ export function AssetBrowser() {
         </div>
 
         {/* ---- 脚本：普通入口的「运行并发现图」住在这里 ---- */}
-        <SectionHeading label={ab('sectionScripts')} />
-        <ScriptLibrary query={query} />
+        {/* 图是主区域，脚本是可收起的第二层（审计 B07）；搜索时强制展开——匹配项
+            可能就在脚本里，收着的区域会让「没有结果」成为一句假话 */}
+        <SectionToggle
+          label={ab('sectionScripts')}
+          open={scriptsOpen || query.trim() !== ''}
+          onToggle={() => useAssetBrowseStore.getState().setScriptsOpen(!scriptsOpen)}
+          controls="asset-scripts-section"
+        />
+        {(scriptsOpen || query.trim() !== '') && (
+          <div id="asset-scripts-section">
+            <ScriptLibrary query={query} />
+          </div>
+        )}
       </div>
 
       {/* 选中卡片的两个动作（真按钮）与接入说明。**都在 listbox 之外**：option
@@ -482,6 +495,44 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
     <h3 className="type-section flex items-center gap-1.5 px-3 pb-1 pt-2">
       {label}
       {count !== undefined && <span className="tabular-nums">{count}</span>}
+    </h3>
+  )
+}
+
+/**
+ * 可收起的区标题：与 `SectionHeading` 同一档字，前面多一个折叠箭头（xs，展开转 90°，
+ * 与树 / 检查器同一套记号）。整行是按钮，热区 28px。
+ */
+function SectionToggle({
+  label,
+  open,
+  onToggle,
+  controls,
+}: {
+  label: string
+  open: boolean
+  onToggle: () => void
+  controls: string
+}) {
+  return (
+    <h3 className="px-2 pt-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={controls}
+        onClick={onToggle}
+        className={cn(
+          'type-section flex h-7 w-full items-center gap-1 rounded-sm px-1 text-left outline-none',
+          'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+        )}
+      >
+        <ChevronRight
+          size={ICON_SIZE.xs}
+          aria-hidden
+          className={cn('shrink-0 transition-transform duration-fast', open && 'rotate-90')}
+        />
+        {label}
+      </button>
     </h3>
   )
 }
@@ -701,8 +752,9 @@ function AssetCard({
 
       {/* 文字区：文件名一行、元数据一行。格式 / 尺寸 / 接入状态 / 使用次数都在
           这里，预览上不再压任何标签——图就是图。
-          接入状态**只在需要说话时说话**：`editable` 已经有 `{}` 那个紧凑标记，
-          再写一遍「可编辑」是纯噪音；完整解释在 `title` 与卡片外的说明条里。 */}
+          接入状态**只在需要说话时说话**：`editable` 已经有「可编辑的图」那个紧凑
+          角标（`ui/semanticIcons`），再写一遍「可编辑」是纯噪音；完整解释在 `title`
+          与卡片外的说明条里。 */}
       <CardMeta
         name={name}
         selected={selected}
@@ -712,7 +764,7 @@ function AssetCard({
               className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
               title={ab('scriptBadgeTitle')}
             >
-              <Braces size={ICON_SIZE.xs} />
+              <EditableFigureIcon size={ICON_SIZE.xs} />
             </span>
           ) : undefined
         }
