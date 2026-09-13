@@ -552,6 +552,40 @@ def test_open_does_not_touch_the_user_project(client, tmp_path, monkeypatch):
     assert opened == {user["id"], body["project"]["id"]}
 
 
+def test_open_after_resource_upgrade_drops_the_stale_autosave_slot(
+    client, tmp_path, monkeypatch, data_dir
+):
+    """包内教程资源升级 → 副本换目录；教程画布的自动保存槽位描述的是上一份副本里的
+    排版（页面尺寸、面板摆放），必须跟着作废——否则新图幅按旧尺寸摆回来，线宽 /
+    字号检查全红（2026-09-13 把教程图从 80 mm 改到 65 mm 时抓到）。普通重开
+    （同一份副本）一个字都不碰。"""
+    _forbid_execution(monkeypatch)
+    first = client.post("/api/tutorial/open", json={"default": False}).get_json()
+    doc_id = first["tutorial"]["document_id"]
+    assert first["created"] is True and first["cleared"] == []
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    slot = m.AUTOSAVE_DIR / f"{doc_id}.json"
+    slot.write_text("{}", encoding="utf-8")
+    (m.AUTOSAVE_DIR / "d-user.json").write_text("{}", encoding="utf-8")
+
+    # 同一份副本再开：进度保留，槽位原样
+    again = client.post("/api/tutorial/open", json={"default": False}).get_json()
+    assert again["created"] is False and again["cleared"] == []
+    assert slot.exists()
+
+    # 资源升级（改一个字节就换目录）：新副本 + 旧槽位清掉，别的文档的槽位不碰
+    res = _broken_copy(tmp_path)
+    (res / "paper_style.py").write_text("# v2 style\n", encoding="utf-8")
+    monkeypatch.setattr(tutorial, "resource_root", lambda: res)
+    m.close_project(first["project"]["id"], wait=True)
+    upgraded = client.post("/api/tutorial/open", json={"default": False}).get_json()
+    assert upgraded["created"] is True
+    assert upgraded["project"]["figures_dir"] != first["project"]["figures_dir"]
+    assert f"{doc_id}.json" in upgraded["cleared"]
+    assert not slot.exists()
+    assert (m.AUTOSAVE_DIR / "d-user.json").exists()
+
+
 def test_reset_clears_only_tutorial_state(client, tmp_path, monkeypatch, data_dir):
     figs = _make_user_project(tmp_path)
     user = client.post("/api/projects/open", json={"path": str(figs)}).get_json()

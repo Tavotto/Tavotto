@@ -9,8 +9,8 @@
    "id": "c1",
    "name": "Figure 1",
    "page": {
-    "w": 180,
-    "h": 90
+    "w": 150,
+    "h": 84
    },
    "objects": [
     {
@@ -18,12 +18,12 @@
      "type": "panel",
      "fileId": "Fig1_kinetics.pdf",
      "fileKind": "pdf",
-     "nativeW": 75.26,
-     "nativeH": 58.68,
+     "nativeW": 65.0,
+     "nativeH": 46.8,
      "x": 10,
-     "y": 12,
-     "w": 75.26,
-     "h": 58.68,
+     "y": 14,
+     "w": 65.0,
+     "h": 46.8,
      "overrides": []
     },
     {
@@ -31,12 +31,12 @@
      "type": "panel",
      "fileId": "Fig2_correlation.pdf",
      "fileKind": "pdf",
-     "nativeW": 73.0,
-     "nativeH": 58.68,
-     "x": 95,
-     "y": 18,
-     "w": 73.0,
-     "h": 58.68,
+     "nativeW": 65.0,
+     "nativeH": 46.8,
+     "x": 79,
+     "y": 22,
+     "w": 65.0,
+     "h": 46.8,
      "overrides": []
     }
    ],

@@ -78,6 +78,19 @@ Prompt 原案是 `v1/`。只带版本号意味着「改了资源要记得升版�
 失败报 `tutorial_copy_failed`，两种情况旧副本都原样在。残留的 `.Tutorial-*.old/.tmp` 下次
 `ensure` 顺手清。
 
+> 2026-09-13 修订：**建了全新副本（`created`）时，教程画布的自动保存槽位随之作废**
+> （`api_tutorial_open` 调与重置同一个 `_clear_tutorial_local_state`，前端同样
+> `forgetLocalDocument`）。槽位按 `document_id` 定死，它描述的是**上一份副本**里的排版
+> ——资源升级换了目录（§2）之后页面尺寸、面板摆放都可能已经不是这份资源的了：把教程
+> 图幅从 80 mm 改到 65 mm 那次，旧槽位把面板按 1.19 倍摆回来，线宽 / 字号检查全红。
+> 副本目录都换了，进度本来就随目录走。同一份副本再开（`created=False`）一个字不碰。
+>
+> 同一次修订把教程图本身收成**默认出版规范下零问题**（UI 审计 A04）：每张图 65 mm 宽、
+> 边距按图幅定死（轴标签不再伸到图幅外被裁掉）、STIX 衬线（matplotlib 自带，在规范的
+> 字体白名单里）、线宽 / 轴线在预设档上、轴标题加粗且带单位、拟合线带置信带；教程画布
+> 150 × 84 mm（双栏 16:9），两张图按 figsize 100% 摆放。唯一剩下的问题就是 Fig2 那条
+> 故意的 7 pt 说明——它是练习，`tutorial_meta.json` 的 `spec_issue` 记着它。
+
 ### 5. 重置的范围精确到「只属于教程的」
 
 `POST /api/tutorial/reset`：先 `close_project(pid, wait=True)`（worker 真退出、释放文件），

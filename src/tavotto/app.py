@@ -2516,6 +2516,15 @@ def api_tutorial_open():
     body = request.get_json(silent=True) or {}
     try:
         tp = engine_tutorial.ensure_tutorial_copy()
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
+    # 这次建的是一份全新的副本（第一次打开，或包内教程资源升级换了目录）：
+    # 教程画布的自动保存槽位是按 document_id 定死的，它描述的是**上一份副本**
+    # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
+    # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
+    # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
+    cleared = _clear_tutorial_local_state(_project_id(tp.path), tp.metadata) if tp.created else []
+    try:
         status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
     except engine_tutorial.TutorialError as exc:
         return _tutorial_error(exc)
@@ -2530,6 +2539,7 @@ def api_tutorial_open():
             "reset": False,
             "created": tp.created,
             "repaired": tp.repaired,
+            "cleared": cleared,
         }
     )
 

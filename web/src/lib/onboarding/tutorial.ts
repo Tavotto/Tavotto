@@ -188,6 +188,9 @@ export async function startTutorial(source?: TutorialEntrySource): Promise<Tutor
   } catch (e) {
     return fail(classify(e), e)
   }
+  // 后端刚建了一份全新的副本（首次 / 资源升级换了目录）并清了磁盘上的槽位；
+  // 本机这格不忘掉的话 readAutosaveDoc 会把上一份副本的排版推回来——与重置同一条路
+  if (res.created) forgetLocalDocument(res.tutorial.document_id)
   return landTutorial(res, 'start', source)
 }
 

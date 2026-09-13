@@ -190,6 +190,40 @@ describe('startTutorial', () => {
     expect(useDocumentStore.getState().doc.objects).toEqual([])
   })
 
+  /**
+   * 本机槽位里留一份上一份副本的教程画布（内容不同：对象清空了）。**槽位必须在索引里**：
+   * 不在索引里的槽位会被 `writeIndex` 当孤儿扫掉，那样用例根本量不到「忘没忘掉」
+   * （第一版就是这么恒真的——变异掉 forgetLocalDocument 照样绿）。
+   */
+  const seedStaleLocalSlot = () => {
+    localStorage.setItem(
+      'tavotto.autosave.tavotto-tutorial',
+      JSON.stringify({ ...LAYOUT, updatedAt: Date.now() + 10_000, canvases: [{ ...LAYOUT.canvases[0], objects: [] }] }),
+    )
+    const index = JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]') as unknown[]
+    index.unshift({ id: 'tavotto-tutorial', name: 'Tutorial', savedAt: Date.now(), objects: 0 })
+    localStorage.setItem('tavotto.docIndex', JSON.stringify(index))
+  }
+
+  it('同一份副本再开（created=false）：本机那格进度照用', async () => {
+    stubFetch({
+      '/api/tutorial/open': () =>
+        json({ project: PROJECT, tutorial: META, reset: false, created: false, repaired: [], cleared: [] }),
+    })
+    seedStaleLocalSlot()
+    await startTutorial()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    // 先证明尺子是活的：槽位真的被读到了
+    expect(useDocumentStore.getState().doc.objects).toEqual([])
+  })
+
+  it('后端刚建了全新副本（首次 / 资源升级换了目录）：本机那格进度作废，装的是干净画布', async () => {
+    seedStaleLocalSlot()
+    await startTutorial()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1'])
+  })
+
   it('已经在教程项目里：不再走认领（文档不换成空白），暂停的教程继续', async () => {
     await startTutorial()
     useOnboardingStore.getState().pause('user')

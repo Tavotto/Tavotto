@@ -4,8 +4,9 @@
 配色，并提供 `save(fig, stem)`。Tavotto 会拦截 `save()` 里的 `fig.savefig`
 把 Figure 留在内存里，所以在编辑器里改元素**不会**重写磁盘上的 PDF。
 
-只用 matplotlib 自带的 DejaVu 字体：教程必须在 macOS / Windows / pip 环境里
-画出同一张图，且不依赖任何联网字体或系统字体。
+只用 matplotlib 自带的 STIX 字体：教程必须在 macOS / Windows / pip 环境里
+画出同一张图，且不依赖任何联网字体或系统字体。STIX 是 Times 一族的衬线体，
+在默认出版规范的字体白名单里——教程图本身不该带着「字体不合规范」的提示。
 """
 
 from pathlib import Path
@@ -15,16 +16,16 @@ import matplotlib.pyplot as plt
 
 mpl.rcParams.update(
     {
-        "font.family": "sans-serif",
-        "font.sans-serif": ["DejaVu Sans"],
-        "mathtext.fontset": "dejavusans",
+        "font.family": "STIXGeneral",
+        "mathtext.fontset": "stix",
         "font.size": 9,
         "axes.labelsize": 9,
+        "axes.labelweight": "bold",
         "axes.titlesize": 9,
         "legend.fontsize": 9,
         "xtick.labelsize": 8.5,
         "ytick.labelsize": 8.5,
-        "axes.linewidth": 0.6,
+        "axes.linewidth": 0.75,
         "xtick.direction": "in",
         "ytick.direction": "in",
         "legend.frameon": False,
@@ -32,8 +33,8 @@ mpl.rcParams.update(
     }
 )
 
-# 单栏 8 cm 是最常见的投稿宽度
-COL_1 = 8 / 2.54
+# 双栏 15 cm 的版面上并排两张图，每张 6.5 cm（教程画布就是这样摆的）
+COL_1 = 6.5 / 2.54
 
 PALETTE = ["#1b3a6b", "#c0562a", "#4a7c59", "#8c6d31"]
 
