@@ -37,7 +37,7 @@
       "把这张图按课题组出版规范体检一遍，然后导出双栏宽的矢量 PDF",
       "图例挪到右下、刻度朝内、线宽统一到 0.75pt，改完给我导出 PDF 和 300dpi PNG"
     ],
-    "brandColor": "#2868b7",
+    "brandColor": "#1b1b18",
     "composerIcon": "./assets/tavotto.svg",
     "logo": "./assets/tavotto.svg",
     "screenshots": []

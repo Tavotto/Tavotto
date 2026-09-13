@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""品牌标志几何的唯一出处：生成 assets/brand/*.svg、assets/icon/icon.svg，
-并同步 web/index.html 的 favicon、界面组件 BrandMark 的几何表、README hero
-里内嵌的那一份。
+"""品牌标志几何的唯一出处：生成 assets/brand/*.svg、assets/icon/icon.svg、
+codex-plugin/assets/tavotto.svg（Codex 插件的 logo / composerIcon），并同步
+web/index.html 的 favicon、界面组件 BrandMark 的几何表、README hero 里内嵌的那一份。
 
 标志 = Tavotto_Master_05（2026-09-11 定稿，`Tavotto_Brand_Final/master/
 Tavotto_Master_05.ai` 第 1 页）：一个带「t」字横笔的圆角方框，右下角
@@ -11,7 +11,8 @@ Tavotto_Master_05.ai` 第 1 页）：一个带「t」字横笔的圆角方框，
 （标志 + 字标「Tavotto」），也一并抽出来做 tavotto-lockup.svg。
 
 配色只有墨与浅灰两色：墨 #1b1b18，切开的那片 #d7d7cf（与界面里的
-选中态 token `--color-selected` 同一个值）。**品牌里没有蓝**。
+选中态 token `--color-selected` 同一个值）；深底上主体反白 #f2f2ef，
+**那片仍是 #d7d7cf**（品牌包 `使用说明.md`：两种底色同一个纸角）。**品牌里没有蓝**。
 
 改几何只改本文件里的路径，然后重跑：
 
@@ -31,6 +32,7 @@ import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree
 
 if TYPE_CHECKING:
     import pymupdf
@@ -42,6 +44,7 @@ for _s in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 BRAND_DIR = ROOT / "assets" / "brand"
 ICON_SVG = ROOT / "assets" / "icon" / "icon.svg"
+PLUGIN_ICON_SVG = ROOT / "codex-plugin" / "assets" / "tavotto.svg"
 INDEX_HTML = ROOT / "web" / "index.html"
 GEOMETRY_TS = ROOT / "web" / "src" / "components" / "ui" / "brandMark.geometry.ts"
 HERO_SVG = ROOT / "assets" / "readme" / "hero.svg"
@@ -84,11 +87,13 @@ LOCKUP_MARK_OFFSET = (-1.866, 15.541)
 
 # 配色（独立 SVG 里色值固定是可移植资产的正常需求；界面内走 CSS token）：
 #   surface  任何浅底（白 / 纸色 #f2f2ef）：墨 #1b1b18，片 #d7d7cf
-#   reverse  深底：整体反白 #f2f2ef，片换 #5c5c55
+#   reverse  深底：主体反白 #f2f2ef，片**不换色**仍是 #d7d7cf——
+#            与品牌包 applications/tavotto-icon-standard-dark.svg 逐色相同
+#            （上一版的 #5c5c55 是蓝色时代留下的，2026-09-11 定稿后没跟着改）
 #   mono     单色黑（印刷）：两条路径都是纯黑
 PALETTES: dict[str, dict[str, str]] = {
     "surface": {"ink": "#1b1b18", "piece": "#d7d7cf"},
-    "reverse": {"ink": "#f2f2ef", "piece": "#5c5c55"},
+    "reverse": {"ink": "#f2f2ef", "piece": "#d7d7cf"},
     "mono": {"ink": "#000000", "piece": "#000000"},
 }
 
@@ -154,6 +159,35 @@ def icon_svg() -> str:
         f'    <g transform="translate({tx:.3f} {ty:.3f}) scale({k:.5f})">\n'
         f"{paths(PALETTES['surface'], indent='      ')}\n"
         "    </g>\n"
+        "  </g>\n"
+        "</svg>\n"
+    )
+
+
+# 品牌包的「图标容器」（applications/tavotto-icon-*.svg）：128 的圆角方，
+# rx 28，标志画板 112 居中、四边各留 8。插件图标按它生成，不另起一套。
+ICON_CONTAINER = 128.0
+ICON_CONTAINER_RADIUS = 28.0
+ICON_CONTAINER_MARGIN = (ICON_CONTAINER - BOX) / 2
+
+
+def plugin_icon_svg(size: float = 1024.0) -> str:
+    """Codex 插件图标（plugin.json 的 logo / composerIcon）。
+
+    形状 = 品牌包的深色图标容器（`tavotto-icon-standard-dark.svg`）：墨底圆角方
+    + reverse 配色的标志，按 128 → size 等比放大；1024 与上一版文件同尺寸。
+    深色是沿用——插件列表与 composer 里它一直是墨底那颗。
+    """
+    k = size / ICON_CONTAINER
+    m = ICON_CONTAINER_MARGIN * k
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size:g}" height="{size:g}"\n'
+        f'     viewBox="0 0 {size:g} {size:g}" role="img" aria-label="Tavotto">\n'
+        f"  <!-- {GENERATED} · plugin icon / reverse -->\n"
+        f'  <rect width="{size:g}" height="{size:g}" rx="{ICON_CONTAINER_RADIUS * k:g}"'
+        f' fill="{PALETTES["surface"]["ink"]}"/>\n'
+        f'  <g transform="translate({m:g} {m:g}) scale({k:g})">\n'
+        f"{paths(PALETTES['reverse'], indent='    ')}\n"
         "  </g>\n"
         "</svg>\n"
     )
@@ -284,6 +318,9 @@ def main() -> int:
     ICON_SVG.write_text(icon_svg(), encoding="utf-8")
     print("✓ assets/icon/icon.svg")
 
+    PLUGIN_ICON_SVG.write_text(plugin_icon_svg(), encoding="utf-8")
+    print("✓ codex-plugin/assets/tavotto.svg")
+
     GEOMETRY_TS.write_text(geometry_ts(), encoding="utf-8")
     print("✓ web/src/components/ui/brandMark.geometry.ts")
 
@@ -293,9 +330,25 @@ def main() -> int:
         favicon_href(),
         "web/index.html favicon",
     )
+    # 落点写成完整的开始标签：hero.svg 里那行「the <g id="brand-mark"> block is
+    # rewritten by …」的注释也含这个 id，只钉 `<g id="brand-mark"` 会从注释里起
+    # 手、吃到真标签的 `</g>` 为止——注释没闭合、SVG 就坏了（2026-09-13 实测）。
     ok = (
-        _sync(HERO_SVG, r'<g id="brand-mark".*?</g>', hero_group(), "assets/readme/hero.svg") and ok
+        _sync(
+            HERO_SVG,
+            r'<g id="brand-mark" transform="[^"]*" aria-hidden="true">.*?</g>',
+            hero_group(),
+            "assets/readme/hero.svg",
+        )
+        and ok
     )
+    # 回写完必须仍是一份能解析的 SVG——上面那种「把注释吃掉一半」的坏法，
+    # 正则本身报不出来（它恰好匹配了 1 处）。
+    try:
+        ElementTree.fromstring(HERO_SVG.read_bytes())
+    except ElementTree.ParseError as e:
+        print(f"assets/readme/hero.svg 回写后不再是合法 XML：{e}", file=sys.stderr)
+        ok = False
     return 0 if ok else 1
 
 
