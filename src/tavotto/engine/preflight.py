@@ -724,9 +724,13 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                 object_ids=[pid],
                 gids=[ax],
             )
-        if len(lines) >= 2 and all(
+        # 没有 marker 又共用同一种线型的曲线才分不开：实线 + 虚线本来就是这条
+        # 建议给出的解法之一，两条线型各不相同时不响（教程 Fig1 就是这种图）
+        no_markers = len(lines) >= 2 and all(
             str(_field(ln, "marker") or "None") in ("None", "none", "") for ln in lines
-        ):
+        )
+        styles = {str(_field(ln, "linestyle") or "-") for ln in lines}
+        if no_markers and len(styles) < len(lines):
             sink.add(
                 "palette-line-markers",
                 f"{len(lines)} 条曲线全部没有 marker，黑白打印或色觉障碍读者难以区分，"

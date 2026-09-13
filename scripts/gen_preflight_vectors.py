@@ -406,6 +406,41 @@ def cases() -> list[dict]:
         }
     )
 
+    # 12b. 两条曲线都没有 marker，但线型一实一虚：本来就分得开，marker 那条建议
+    #      **不响**（教程 Fig1 就是这种图；上一条里两条线共用默认线型才响）。
+    #      三条线里两条共用线型 → 仍响：判据是「线型有重复」，不是「有两种线型」
+    m = _clean_manifest()
+    m["elements"] = [
+        m["elements"][0],
+        m["elements"][1],
+        m["elements"][2],
+        _el("axes_0.lines_0", "line", linewidth=1.0, marker="None", linestyle="-", label="a"),
+        _el("axes_0.lines_1", "line", linewidth=1.0, marker="None", linestyle="--", label="b"),
+    ]
+    out.append(
+        {
+            "name": "distinct-linestyles-without-markers",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+    m = _clean_manifest()
+    m["elements"] = [
+        m["elements"][0],
+        m["elements"][1],
+        m["elements"][2],
+        _el("axes_0.lines_0", "line", linewidth=1.0, marker="None", linestyle="-", label="a"),
+        _el("axes_0.lines_1", "line", linewidth=1.0, marker="None", linestyle="--", label="b"),
+        _el("axes_0.lines_2", "line", linewidth=1.0, marker="None", linestyle="-", label="c"),
+    ]
+    out.append(
+        {
+            "name": "repeated-linestyle-without-markers",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
+
     # 13. 面板状态：缺素材 / 渲染失败 / 过期 / override 没画上 / 位图嵌入
     out.append(
         {

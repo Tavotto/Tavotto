@@ -739,10 +739,13 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         { objectIds: [pid], gids: [ax] },
       )
     }
-    if (
+    // 没有 marker 又共用同一种线型的曲线才分不开：实线 + 虚线本来就是这条建议
+    // 给出的解法之一，线型各不相同时不响（与 engine/preflight.py 同一条判据）
+    const noMarkers =
       lines.length >= 2 &&
       lines.every((l) => ['None', 'none', ''].includes(String(field(l, 'marker') ?? 'None')))
-    ) {
+    const styles = new Set(lines.map((l) => String(field(l, 'linestyle') ?? '-')))
+    if (noMarkers && styles.size < lines.length) {
       sink.add(
         'palette-line-markers',
         pf('paletteLineMarkers', { count: lines.length }),
