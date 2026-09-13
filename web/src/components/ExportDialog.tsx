@@ -648,8 +648,13 @@ export function ExportDialog() {
     ui.setStatus(msg('export.locatedHint', undefined, 'dialogs'))
   }
 
-  /** 这张图在候选清单里的名字（面板名 / 文件名主干；素材清单里还没上画布的图也有） */
-  const figureName = figureId ? figures.find((f) => f.figureId === figureId)?.name : undefined
+  /**
+   * 这次导的那张在候选清单里的那一条（名字 = 面板名 / 文件名主干；缩略图的种类与换代）。
+   * 素材 / runtime 清单里还没上画布的图也在清单里（`panel === null`）——「选中了对象」
+   * 的判据是 `figureId`，不是「文档里有没有它的面板」。
+   */
+  const figure = figureId ? (figures.find((f) => f.figureId === figureId) ?? null) : null
+  const figureName = figure?.name
 
   /** 切换输出范围：用户没碰过文件名的话，默认名跟着换 */
   const changeScope = (next: ExportScope) => {
@@ -756,12 +761,14 @@ export function ExportDialog() {
               />
             </div>
           </div>
-          {/* 对象头：画布 = 真实排版缩略图 + 画布名；原图 = 那张图。原图范围下还没定
-              是哪一张时不摆一个「没有当前图」的头——下面的清单本身就是选对象的地方 */}
-          {(scope === 'canvas' || panel) && (
+          {/* 对象头：画布 = 真实排版缩略图 + 画布名；原图 = 那张图（还没上画布的素材也算
+              选中了——项目里只有它一张时清单不出现，这里是唯一写着对象名与尺寸的地方）。
+              原图范围下还没定是哪一张时不摆一个「没有当前图」的头——下面的清单本身就是
+              选对象的地方 */}
+          {(scope === 'canvas' || figure) && (
             <TargetHeader
               scope={scope}
-              panel={panel}
+              figure={figure}
               spec={availability.spec}
               doc={doc}
               asset={figureId ? assets[figureId] : undefined}
@@ -1314,7 +1321,7 @@ export function diskSizeNote(
  */
 function TargetHeader({
   scope,
-  panel,
+  figure,
   spec,
   doc,
   asset,
@@ -1322,7 +1329,8 @@ function TargetHeader({
   pixels = null,
 }: {
   scope: ExportScope
-  panel: PanelObject | null
+  /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
+  figure: ExportableFigure | null
   spec: OriginalOutputSpec | null
   doc: FigureDocument
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
@@ -1333,19 +1341,15 @@ function TargetHeader({
 }) {
   useTranslation('dialogs')
   const original = scope === 'original'
-  const name = original
-    ? panel
-      ? (panel.name ?? stemOf(panel.fileId))
-      : ex('targetNoFigure')
-    : doc.name
+  const name = original ? (figure ? figure.name : ex('targetNoFigure')) : doc.name
   const size = original
     ? spec && !spec.fallback
       ? ex('mmSize', { w: round1(spec.widthMm), h: round1(spec.heightMm) })
       : ex('sizeUnknownShort')
     : ex('mmSize', { w: round1(doc.page.w), h: round1(doc.page.h) })
   const originNote = original && spec ? diskSizeNote(spec, asset?.original_spec) : null
-  const src = original && panel
-    ? panelSrc(panel.fileId, panel.fileKind, 200, panel.fileKind === 'runtime' ? previewNonce : asset?.mtime)
+  const src = original && figure
+    ? panelSrc(figure.figureId, figure.kind, 200, figure.kind === 'runtime' ? previewNonce : asset?.mtime)
     : null
   const visibleObjects = doc.objects.filter((o) => !o.hidden).length
   return (

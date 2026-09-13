@@ -224,6 +224,64 @@ describe('startTutorial', () => {
     expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1'])
   })
 
+  /**
+   * 资源升级换了副本、而用户此刻就停在旧教程里（旧副本的项目开着、当前文档就是教程画布）。
+   * 认领新项目的第一步是把当前文档冲刷落盘——那一刻项目 id 已经换成新副本的，
+   * 于是旧布局在同一个教程 documentId 下又落回本机 / 磁盘槽位，`loadTutorialDocument`
+   * 装回来的还是刚作废的旧布局。旧画布要在调 open 之前就从自动保存链路上摘下来（与重置同一条路）。
+   */
+  it('升级换副本时当前就是旧教程：换代那次冲刷不许把旧布局写回槽位，装的是干净画布', async () => {
+    stubFetch({
+      '/api/tutorial/open': () =>
+        json({ project: { ...PROJECT, id: 'p_tut_old' }, tutorial: META, reset: false, created: true, repaired: [] }),
+    })
+    await startTutorial()
+    expect(useProjectStore.getState().project?.id).toBe('p_tut_old')
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    // 在旧教程里挪过图：这就是升级后要作废的布局
+    useDocumentStore.getState().commit({ key: 'literal', ns: 'common', values: { text: 'x' } }, (d) => {
+      d.objects[0].x = 55
+    })
+    // 升级：后端建了新副本（新项目 id），磁盘槽位已清；本机槽位由 forgetLocalDocument 清
+    stubFetch()
+    const out = await startTutorial()
+    expect(out).toEqual({ ok: true, kind: 'started' })
+    expect(useProjectStore.getState().project?.id).toBe('p_tut')
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    expect(useDocumentStore.getState().doc.objects.map((o) => [o.id, o.x])).toEqual([['p1', 10]])
+    // 装回干净画布后自动保存恢复：新副本里的编辑照常落盘
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
+  })
+
+  it('同一副本再开（已在教程画布里、不换文档）：open 期间挂起，落地后接回', async () => {
+    await startTutorial()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    let suspendedDuringOpen: boolean | null = null
+    stubFetch({
+      '/api/tutorial/open': () => {
+        suspendedDuringOpen = isAutosaveSuspendedFor('tavotto-tutorial')
+        return json({ project: PROJECT, tutorial: META, reset: false, created: false, repaired: [], cleared: [] })
+      },
+    })
+    const out = await startTutorial()
+    expect(out.ok).toBe(true)
+    expect(suspendedDuringOpen).toBe(true)
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
+  })
+
+  it('升级换副本时 open 失败：挂起被接回，旧教程的画布不晾在不保存的状态', async () => {
+    stubFetch({
+      '/api/tutorial/open': () =>
+        json({ project: { ...PROJECT, id: 'p_tut_old' }, tutorial: META, reset: false, created: true, repaired: [] }),
+    })
+    await startTutorial()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    stubFetch({ '/api/tutorial/open': () => json({ error: 'x', code: 'open_project_failed' }, 400) })
+    const out = await startTutorial()
+    expect(out.ok).toBe(false)
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
+  })
+
   it('已经在教程项目里：不再走认领（文档不换成空白），暂停的教程继续', async () => {
     await startTutorial()
     useOnboardingStore.getState().pause('user')

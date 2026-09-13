@@ -14,6 +14,9 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MAX_ZOOM, useViewportStore } from './viewportStore'
 import { BASE_PX_PER_MM } from '@/lib/units'
+import { emptyProject } from '@/types/document'
+import { activateCanvas, createCanvasAndActivate } from './canvasSession'
+import { useDocumentStore } from './documentStore'
 
 const VIEW = { left: 0, top: 0, width: 800, height: 600 }
 
@@ -262,5 +265,68 @@ describe('挂起的适配（舞台还没量到尺寸）', () => {
     expect(zoom()).toBeCloseTo(3, 6)
     useViewportStore.getState().setViewRect(VIEW)
     expect(zoom(), '用户动过就不该再被适配覆盖').toBeCloseTo(3, 6)
+  })
+})
+
+/**
+ * 适应模式是**每张画布各自的**（Codex 对 #337 的评审）：切画布还原会话时
+ * `restore()` 曾直接 `setState({ zoom, pan })`，`fitted` 与 `lastFit` 原样留着上一张
+ * 画布的——从一张没会话（刚 fit 过）的画布切到一张存了自定义视口的画布，下一次
+ * 侧栏开合 / 窗口缩放就按上一张的取景框重算，把用户还原出来的视口丢掉；反过来，
+ * 离开时在适应模式的画布切回来却不在适应模式，侧栏一开又装不下（审计 B01 那一幕）。
+ */
+describe('切画布还原会话：适应模式跟着会话走', () => {
+  const vp = () => useViewportStore.getState()
+  const view = () => ({ zoom: vp().zoom, panX: vp().panX, panY: vp().panY })
+  const fitFor = (w: number, h: number, pageW: number, pageH: number) => {
+    const wPx = pageW * BASE_PX_PER_MM
+    const hPx = pageH * BASE_PX_PER_MM
+    const zoom = Math.min((w - 72) / wPx, (h - 72) / hPx)
+    return { zoom, panX: (w - wPx * zoom) / 2, panY: (h - hPx * zoom) / 2 }
+  }
+
+  beforeEach(async () => {
+    localStorage.clear()
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_vp')
+    vp().setViewRect(VIEW)
+  })
+
+  it('切回存了自定义视口的画布：退出适应模式，之后舞台尺寸变化不再覆盖它', () => {
+    const doc = useDocumentStore.getState()
+    const c1 = doc.activeCanvasId
+    const page = doc.doc.page
+    // c1 上用户自己缩放过（不在适应模式），c2 是新画布——没会话，落进 fit
+    vp().fit(page.w, page.h)
+    vp().zoomAt(1.5, 0, 0)
+    const custom = view()
+    expect(vp().fitted).toBe(false)
+    const c2 = createCanvasAndActivate()
+    expect(vp().fitted).toBe(true)
+
+    activateCanvas(c1)
+    expect(view()).toEqual(custom)
+    expect(vp().fitted, '还原出来的是用户自己的视口，不在适应模式').toBe(false)
+    vp().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
+    expect(view(), '侧栏开合 / 窗口缩放不许把还原出来的视口按别的画布的取景框重算').toEqual(custom)
+    expect(c2).not.toBe(c1)
+  })
+
+  it('离开时在适应模式的画布切回来仍在适应模式，且按此刻的舞台尺寸重算', () => {
+    const doc = useDocumentStore.getState()
+    const c1 = doc.activeCanvasId
+    const page = doc.doc.page
+    vp().fit(page.w, page.h)
+    expect(vp().fitted).toBe(true)
+    createCanvasAndActivate()
+    // 在 c2 上用户动过视口，舞台也变过尺寸
+    vp().zoomAt(2, 0, 0)
+    vp().setViewRect({ left: 0, top: 0, width: 1000, height: 700 })
+
+    activateCanvas(c1)
+    expect(vp().fitted, 'c1 离开时在适应模式，回来也在').toBe(true)
+    const want = fitFor(1000, 700, page.w, page.h)
+    expect(vp().zoom).toBeCloseTo(want.zoom, 6)
+    expect(vp().panX).toBeCloseTo(want.panX, 6)
+    expect(vp().panY).toBeCloseTo(want.panY, 6)
   })
 })

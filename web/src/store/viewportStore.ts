@@ -56,6 +56,12 @@ interface ViewportState {
    * `revealRect`，它们才知道页面与视口尺寸。
    */
   restoreView: (view: ViewTarget) => void
+  /**
+   * 瞬时落到一个**记下来的**落点。给切画布还原会话用（标签切换是纯显隐，不补间）。
+   * 与 `restoreView` 同一条纪律：退出适应模式——否则 `fitted` / `lastFit` 还是上一张
+   * 画布的，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉。
+   */
+  setView: (view: ViewTarget) => void
 }
 
 /** 视口的一个落点：补间与瞬时设置共用同一种描述 */
@@ -265,6 +271,12 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     leaveFitMode(set, get)
     if (!get().viewW || !get().viewH) return
     animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
+  },
+
+  setView: ({ zoom, panX, panY }) => {
+    stopAnim()
+    leaveFitMode(set, get)
+    set({ zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
   },
 }))
 

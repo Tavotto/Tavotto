@@ -1437,6 +1437,65 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(text()).toContain('80 × 60 mm')
   })
 
+  /**
+   * 素材库里还没上画布的图（`listExportableFigures()` 里 `panel === null` 的候选）：选中后
+   * `figureId` 与规格都有效、能导，对象头却曾按 `panel` 判而被压掉——项目里只有这一张时
+   * 清单也收起，界面上没有一处写着对象名与最终尺寸（Codex 对 #337 的评审）。
+   */
+  it('素材里还没上画布的图：选中后对象头照样摆出名字与最终尺寸', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_offcanvas')
+    const onDisk = {
+      source_kind: 'vector',
+      logical_w_mm: 70,
+      logical_h_mm: 50,
+      px_w: null,
+      px_h: null,
+      dpi: null,
+      dpi_source: 'unknown',
+      viewport_pt: [(70 / 25.4) * 72, (50 / 25.4) * 72],
+      transparent: false,
+    }
+    useAssetStore.setState({
+      byId: { 'Fig9.pdf': { id: 'Fig9.pdf', kind: 'pdf', mtime: 1, original_spec: onDisk } },
+      panels: [{ id: 'Fig9.pdf', kind: 'pdf', mtime: 1, native_w_mm: 70, native_h_mm: 50, original_spec: onDisk }],
+    } as never)
+    useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    await mountDialogs()
+    await openDialog()
+    // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
+    await click(originalRadio())
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(figureOptions()).toHaveLength(0)
+    const header = document.body.querySelector('[data-export-target]')
+    expect(header, '选中了图就该有对象头').toBeTruthy()
+    expect(header!.textContent).toContain('Fig9')
+    expect(header!.textContent).toContain('原图尺寸')
+    expect(header!.textContent).toContain('70 × 50 mm')
+    expect(header!.textContent).not.toContain('没有当前图')
+    const img = header!.querySelector('img') as HTMLImageElement | null
+    expect(img?.getAttribute('src'), '缩略图走素材同一条地址').toContain('/api/render?id=Fig9.pdf')
+    await click(button('开始导出')!)
+    expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig9.pdf')
+  })
+
+  it('画布上有一张、素材里另有一张还没上画布：在清单里点后者，对象头换成它', async () => {
+    await setupTwo({ select: [] })
+    useAssetStore.setState((st) => ({
+      byId: { ...st.byId, 'Fig3.pdf': { id: 'Fig3.pdf', kind: 'pdf', mtime: 1 } },
+      panels: [...st.panels, { id: 'Fig3.pdf', kind: 'pdf', mtime: 1, native_w_mm: 42, native_h_mm: 30 }],
+    }) as never)
+    await click(originalRadio())
+    // 还没定是哪一张：不摆对象头
+    expect(document.body.querySelector('[data-export-target]')).toBeNull()
+    const options = figureOptions()
+    expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2', 'Fig3'])
+    await click(options[2])
+    const header = document.body.querySelector('[data-export-target]')
+    expect(header).toBeTruthy()
+    expect(header!.textContent).toContain('Fig3')
+    expect(header!.textContent).not.toContain('Fig1')
+  })
+
   it('项目里一张图都没有：说「还没有可以导的图」，不摆空列表、不说"点选下面"', async () => {
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_empty')
     useAssetStore.setState({ byId: {}, panels: [] } as never)

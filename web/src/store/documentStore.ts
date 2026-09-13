@@ -1629,8 +1629,9 @@ function cancelPendingAutosave(): void {
 /**
  * 自动保存被**挂起**的那份文档 id；`null` = 没有。
  *
- * 教程「重新开始」是唯一的调用方：后端在重置里清掉磁盘槽位、换掉项目目录，
- * 而前端此刻手里还是旧文档——重置窗口里的任何一次防抖写盘 / 派生同步
+ * 调用方只有教程（`lib/onboarding/tutorial.ts` 的重置与打开）：后端在重置里清掉磁盘
+ * 槽位、换掉项目目录（打开也可能因资源升级换副本），而前端此刻手里还是旧文档——
+ * 这个窗口里的任何一次防抖写盘 / 派生同步 / 认领新项目时的那次冲刷
  * （项目重开会推 `registry.changed` / `assets.changed`，它们照样进 `applyDerivedUpdate`）
  * 都会把**拖过 / 改过的旧文档**写回刚清掉的那一格，随后装回来的就是旧的
  * （Windows 桌面腿的 e2e 第一次跑就抓到，mac 上只是时序没撞上）。
@@ -1646,7 +1647,7 @@ export function suspendAutosaveFor(id: string): void {
 
 export const isAutosaveSuspendedFor = (id: string): boolean => autosaveSuspendedFor === id
 
-/** 重置没做成（锁住 / 失败）时把文档接回自动保存链路。 */
+/** 重置 / 打开没做成（锁住 / 失败）、或落地后没换文档时，把文档接回自动保存链路。 */
 export function resumeAutosave(): void {
   autosaveSuspendedFor = null
 }

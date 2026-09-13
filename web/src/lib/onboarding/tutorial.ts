@@ -182,16 +182,38 @@ export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette' | '
 export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
   if (useTutorialStore.getState().busy) return fail('open_failed')
   useTutorialStore.setState({ busy: 'open', failure: null })
+  // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
+  // 副本（资源升级换了目录 = 新项目 id），换副本要走认领，而认领的第一步就是把当前文档
+  // 冲刷落盘——那一刻项目 id 已经是新副本的，旧布局会在同一个教程 documentId 下落回
+  // 本机 / 磁盘槽位，下面 forgetLocalDocument 清掉的那格当场被建回来，装回来的还是它。
+  // 换到教程画布时 switchDocument 自动恢复；没换文档（同一副本再开）/ 没做成就手动接回。
+  const suspended = currentTutorialDocumentId()
+  if (suspended) suspendAutosaveFor(suspended)
   let res: TutorialOpenResult
   try {
     res = await openTutorialApi({ default: true })
   } catch (e) {
+    if (suspended) resumeAutosave()
     return fail(classify(e), e)
   }
   // 后端刚建了一份全新的副本（首次 / 资源升级换了目录）并清了磁盘上的槽位；
   // 本机这格不忘掉的话 readAutosaveDoc 会把上一份副本的排版推回来——与重置同一条路
   if (res.created) forgetLocalDocument(res.tutorial.document_id)
-  return landTutorial(res, 'start', source)
+  const out = await landTutorial(res, 'start', source)
+  if (suspended) resumeAutosave()
+  return out
+}
+
+/**
+ * 当前文档是教程画布时给它的 id，否则 null。教程画布的 documentId 固定为
+ * `metadata.document_id`（T-106）：元数据重启后可能还没取到（onboarding 已完成就没人去取），
+ * onboarding 记着的那份是第二个出处。
+ */
+function currentTutorialDocumentId(): string | null {
+  const current = useDocumentStore.getState().documentId
+  const known =
+    useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
+  return known !== null && current === known ? current : null
 }
 
 /**

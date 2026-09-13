@@ -13,6 +13,12 @@ interface UiSession {
   zoom: number
   panX: number
   panY: number
+  /**
+   * 离开时是否在适应模式（`viewportStore.fitted`）。是 → 回来时按**此刻**的舞台
+   * 尺寸重新适配（模式的含义就是「视口显示的是适配落点」，中间舞台变过尺寸也对）；
+   * 否 → 原样落回 zoom / pan，视口是用户的。
+   */
+  fitted: boolean
   elementPanelId: string | null
   selectedGids: string[]
   leftOpen: boolean
@@ -29,6 +35,7 @@ function capture(canvasId: string): void {
     zoom: vp.zoom,
     panX: vp.panX,
     panY: vp.panY,
+    fitted: vp.fitted,
     elementPanelId: ui.elementPanelId,
     selectedGids: ui.selectedGids,
     leftOpen: ui.leftOpen,
@@ -57,7 +64,11 @@ function restore(canvasId: string): void {
   if (saved.elementPanelId && alive.has(saved.elementPanelId)) {
     useUiStore.setState({ selectedGids: saved.selectedGids })
   }
-  useViewportStore.setState({ zoom: saved.zoom, panX: saved.panX, panY: saved.panY })
+  // 适应模式是每张画布各自的：直写 zoom / pan 会把上一张画布的 `fitted` / `lastFit`
+  // 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉
+  const vp = useViewportStore.getState()
+  if (saved.fitted) vp.fit(doc.page.w, doc.page.h)
+  else vp.setView({ zoom: saved.zoom, panX: saved.panX, panY: saved.panY })
   useUiStore.setState({ leftOpen: saved.leftOpen, rightOpen: saved.rightOpen })
 }
 

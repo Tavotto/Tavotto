@@ -733,6 +733,10 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   resetHints`）：项目选择器、顶栏更多、命令面板、设置常规。**不许在入口里判状态**。打开教程走
   `projectStore.adoptOpenedProject(status, { prepareDocument })`——与打开任何项目同一条认领链路；
   教程画布的 documentId **必须**是 `metadata.document_id`（T-106）；同一项目里再点入口不走认领。
+  **手里就是教程画布时，打开 / 重置都先 `suspendAutosaveFor` 再调 API**：重置会清磁盘槽位、打开可能
+  因资源升级换副本（新项目 id → 走认领，认领第一句就是把当前文档冲刷落盘），不挂起的话旧布局会在
+  同一个教程 documentId 下落回槽位、装回来的还是它；换到教程画布时 `switchDocument` 自动恢复，
+  没换文档 / 没做成就 `resumeAutosave` 接回。
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**
@@ -1078,9 +1082,12 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   尺寸、侧栏开合、窗口缩放——会按同一个取景框重算（`setViewRect` 里那一条）；首次
   打开的那次适配是在侧栏展开之前算的，不重算就是审计里 194% 装不下画布、空画布
   提示被挤到右缘那一幕。任何直接操纵（平移 / 缩放 / 定位 / 还原）各自
-  `leaveFitMode()` 退出模式，之后尺寸再变一位都不碰——视口是用户的。空画布的
-  起步提示按 `lib/emptyStateAnchor` 落在**纸面可见部分**的中心并钳进视口，
-  永远不出屏。
+  `leaveFitMode()` 退出模式，之后尺寸再变一位都不碰——视口是用户的。**模式是每张
+  画布各自的**：`canvasSession` 的会话记 `fitted`，切回来时是 → 按此刻的舞台重新
+  `fit`，否 → `setView` 瞬时落回并退出模式；直写 `zoom / pan` 会把上一张画布的
+  `fitted` / `lastFit` 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口
+  重算掉。空画布的起步提示按 `lib/emptyStateAnchor` 落在**纸面可见部分**的中心并
+  钳进视口，永远不出屏。
 - **新文档的默认名跟界面语言走**（`types/document.defaultDocumentName()`）：
   只在创建那一刻取一次，之后是用户内容（不翻、不追认）。它同时是「另存为」的
   默认文件名，所以取值必须磁盘安全。
