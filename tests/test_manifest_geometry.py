@@ -124,6 +124,25 @@ def main():
     # linecoll_1：两条竖参考线（LineCollection）
     ax4.vlines([0.25, 0.75], 0.0, 1.0, colors="#2A6F3C", linewidths=0.8)
     fig4.savefig("ContourFig.pdf")
+
+    # BarFig：柱形系列——选中一组柱要逐根描柱，不是罩一个大矩形
+    fig5, (ax5, ax6) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    # barseries_0：三根无描边的柱
+    ax5.bar([0, 1, 2], [1.0, 2.0, 3.0], width=0.5, color="#B34700")
+    # barseries_1：叠在上面的一段，带 1.5pt 黑描边
+    ax5.bar([0, 1, 2], [0.5, 0.5, 0.5], bottom=[1.0, 2.0, 3.0], width=0.5,
+            color="#2A6F3C", edgecolor="black", linewidth=1.5)
+    # barseries_2：中间那根被脚本隐藏——图上没有它的墨迹，轮廓也不该有
+    hidden = ax5.bar([0, 1, 2], [0.3, 0.3, 0.3], bottom=[1.5, 2.5, 3.5], width=0.5)
+    hidden.patches[1].set_visible(False)
+    # axes_1.barseries_0：横向柱（barh）走的是同一条 Rectangle 路径
+    ax6.barh([0, 1], [3.0, 1.0], height=0.6)
+    fig5.savefig("BarFig.pdf")
+    # 柱数上限的两张对照图（与散点同一个数、同一种降级）
+    for stem, n in (("BarCapFig", __CAP__), ("BarOverCapFig", __CAP__ + 1)):
+        fig6, ax7 = plt.subplots(figsize=(4.0, 3.0))
+        ax7.bar(np.arange(n), np.ones(n))
+        fig6.savefig(f"{stem}.pdf")
 """
 
 
@@ -385,6 +404,86 @@ def test_marker_cap_is_one_number(library, stems, gid):
     # 多一颗就没有——而且那张图上只有它，点数远在 TOTAL_BUDGET 之内，
     # 挡下它的只能是标记数上限本身
     assert "geometry" not in over_cap, "超过上限的标记组应当退回 bbox"
+    assert over_cap["bbox"]
+
+
+# ---------------------------------------------------------------------------
+# 柱形系列：逐根描柱（2026-09-13 用户反馈：选中柱形系列罩的是一个大矩形）
+# ---------------------------------------------------------------------------
+def _path_box(points):
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
+def test_bar_series_outlines_every_bar_not_the_union_box(library):
+    """三根柱 = 三条闭合的四点子路径，每条正好是对应那根柱（`bar_k` 元素）的
+    bbox；并集 bbox 仍然是那个包围盒（geometry 不替代它），但选中轮廓与命中
+    都按 geometry 走，柱与柱之间的空白不再算这组的。"""
+    man = _manifest(library, stem="BarFig")
+    el = _el(man, "axes_0.barseries_0")
+    assert el["role"] == "bar_series"
+    geom = el["geometry"]
+    assert geom["kind"] == "multi_path"
+    assert geom["fill"] is True and geom["stroke"] is False
+    assert len(geom["paths"]) == 3, "三根柱就是三条轮廓"
+    for k, path in enumerate(geom["paths"]):
+        assert path["closed"] is True
+        assert len(path["points"]) == 4, "矩形就是四个顶点（CLOSEPOLY 的占位点要掐掉）"
+        bar = _el(man, f"axes_0.barseries_0.bar_{k}")
+        got = _path_box(path["points"])
+        assert got == pytest.approx(bar["bbox"], abs=2e-3), (k, got, bar["bbox"])
+    # 并集 bbox 一个字节没少：布局 / 对齐仍然只认它
+    boxes = [_path_box(p["points"]) for p in geom["paths"]]
+    x0 = min(b[0] for b in boxes)
+    y0 = min(b[1] for b in boxes)
+    x1 = max(b[0] + b[2] for b in boxes)
+    y1 = max(b[1] + b[3] for b in boxes)
+    assert [x0, y0, x1 - x0, y1 - y0] == pytest.approx(el["bbox"], abs=2e-3)
+    # 柱与柱之间有空白：第一根的右沿离第二根的左沿有明显距离——这正是并集
+    # bbox 会罩住、而逐根轮廓不会的那块
+    gap = boxes[1][0] - (boxes[0][0] + boxes[0][2])
+    assert gap > 0.02, f"柱间应当有空白（gap={gap}）"
+
+
+def test_bar_series_edge_gives_stroke_semantics_with_the_widest_linewidth(library):
+    """`edgecolor="black", linewidth=1.5` 的柱：描边语义 + 容差按 1.5pt 算。"""
+    geom = _el(_manifest(library, stem="BarFig"), "axes_0.barseries_1")["geometry"]
+    assert geom["fill"] is True and geom["stroke"] is True
+    assert geom["stroke_pt"] == pytest.approx(1.5)
+    assert len(geom["paths"]) == 3
+
+
+def test_hidden_bar_is_not_outlined(library):
+    """`set_visible(False)` 的那根图上没有墨迹，轮廓也不该有——三根里只描两根。"""
+    geom = _el(_manifest(library, stem="BarFig"), "axes_0.barseries_2")["geometry"]
+    assert len(geom["paths"]) == 2
+
+
+def test_barh_bars_are_wider_than_tall(library):
+    """横向柱走的是同一条 Rectangle 路径：两根柱，长的那根（值 3.0）物理宽度
+    大于物理高度。分数坐标要各乘图宽图高才是视觉尺寸（6×3 英寸的图上 x 分数
+    的一份是 y 分数的两倍长），直接比分数会把一根明明横着的柱判成竖的。"""
+    man = _manifest(library, stem="BarFig")
+    geom = _el(man, "axes_1.barseries_0")["geometry"]
+    assert len(geom["paths"]) == 2
+    sw, sh = man["size_mm"]
+    _, _, w, h = _path_box(geom["paths"][0]["points"])
+    assert w * sw > h * sh, (w * sw, h * sh)
+    # 两根柱在同一条 x 起点上（barh 从 0 起），高度相同
+    b0, b1 = (_path_box(p["points"]) for p in geom["paths"])
+    assert b0[0] == pytest.approx(b1[0], abs=2e-3)
+    assert b0[3] == pytest.approx(b1[3], abs=2e-3)
+    assert b0[2] > b1[2], "值 3.0 的柱比值 1.0 的长"
+
+
+def test_bar_cap_is_the_same_number_as_markers(library):
+    """柱数上限与标记数上限**是同一个数**：正好 `MAX_MARKERS` 根仍逐根描，多一根
+    整组退回 bbox（那张图上只有它，点数远在 TOTAL_BUDGET 之内）。"""
+    at_cap = _el(_manifest(library, stem="BarCapFig"), "axes_0.barseries_0")
+    over_cap = _el(_manifest(library, stem="BarOverCapFig"), "axes_0.barseries_0")
+    assert len(at_cap["geometry"]["paths"]) == MAX_MARKERS
+    assert "geometry" not in over_cap, "超过上限的柱形系列应当退回 bbox"
     assert over_cap["bbox"]
 
 

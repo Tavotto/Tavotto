@@ -586,8 +586,12 @@ def font_installed(name: str) -> bool:
         from matplotlib import font_manager
 
         try:
+            # **列表形式**，不是裸字符串：`FontProperties(family="DFYanKaiW7-B5")`
+            # 只给 family 一个参数时会被当成 fontconfig 模式来解析，连字符是它的
+            # 分隔符，当场 ParseException——装得好好的字体被判成「没装」。
+            # `set_fontfamily` 存的本来就是列表，这里问的要与画的时候同一条路。
             font_manager.findfont(
-                font_manager.FontProperties(family=name), fallback_to_default=False
+                font_manager.FontProperties(family=[name]), fallback_to_default=False
             )
             hit = True
         except (ValueError, RuntimeError):
@@ -2700,7 +2704,8 @@ def _set_axes_position(a, v) -> None:
     """
     bounds = [float(x) for x in v]
     # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
-    # bounds 抛 TypeError）必须排在**不可逆**的两步（换引擎、落 pin）之前。
+    # bounds 抛 TypeError）必须排在**不可逆**的几步（换引擎、落 pin、解开色条轴的
+    # 长宽比）之前。
     #
     # 反过来写会烧掉一张图：pin 已经落下而 setter 抛了异常，于是 `apply` 把它收成一条
     # warning、**不记进 `state.applied`**；后续任何一次全量列表里都没有这个 key，
@@ -2715,6 +2720,65 @@ def _set_axes_position(a, v) -> None:
     engine = ensure_pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
     if engine is not None:
         engine.pin(a, bounds)
+    _cb_release_aspect(a)
+
+
+def _colorbar_of_axes(a):
+    """这个 axes 是色条轴时回它的 Colorbar，否则 None。判据是 matplotlib 自己
+    挂的 `_ColorbarAxesLocator`（`Colorbar.__init__` 无条件装上，`cax=` 给的
+    用户轴也有），不猜类名、不看 `_colorbar_info`（后者只有 `make_axes` 那条
+    路才有）。"""
+    return getattr(a.get_axes_locator(), "_cbar", None)
+
+
+def _cb_release_aspect(a) -> None:
+    """落了 position override 的色条轴：把厚度交给用户，不再由长宽比反推。
+
+    `fig.colorbar(im, ax=ax)` 造出来的色条轴带着 `box_aspect=20`（`make_axes` /
+    `make_axes_gridspec` 按的，强制细高），`apply_aspect` 每次 draw 都按它把
+    宽度重算成高度的 1/20——`set_position` 给多宽都没用，用户在画布上把色条
+    拖粗，下一帧就弹回去（实测 3.10.8：请求宽 0.1，画出来 0.02）。这正是
+    「设了、界面也变了、下一帧弹回去」那种最坏的假支持，所以落位归用户的那一刻
+    就把长宽比解开——与色条方向翻转（`_cb_reorient`）「落位从此归我们」同一套
+    处置：`box_aspect` 清掉、`_mm_box_aspect0` 基线跟着清（extend 的 setter 每次
+    从基线放回，基线不清的话开一次 extend 又把 20 按回去）、
+    `_colorbar_info['aspect']` 关掉（extend≠neither 时 locator 会按它反推厚度）。
+
+    解开之前的三个值记在轴上（`_mm_cb_aspect_stash`，**只记第一次**：拖动是
+    连着落好几条 position，第二次再记就记成了已经解开的状态），撤销 position
+    时原样放回——否则撤销之后色条停在解开的样子，比从没改过时粗四倍。
+    `cax=` 是用户自己摆的轴、没有 box_aspect，这里什么都不动，撤销也不放回。
+    """
+    cb = _colorbar_of_axes(a)
+    if cb is None or a.get_box_aspect() is None:
+        return
+    if not hasattr(a, "_mm_cb_aspect_stash"):
+        info = getattr(a, "_colorbar_info", None)
+        a._mm_cb_aspect_stash = (  # noqa: SLF001
+            _cb_box_aspect0(cb),
+            info.get("aspect") if isinstance(info, dict) else None,
+        )
+    a.set_box_aspect(None)
+    cb._mm_box_aspect0 = None  # noqa: SLF001 — 新的 box_aspect 基线（与 _cb_reorient 同）
+    info = getattr(a, "_colorbar_info", None)
+    if isinstance(info, dict):
+        info["aspect"] = False
+
+
+def _cb_restore_aspect(a) -> None:
+    """撤销 position 时把 `_cb_release_aspect` 解开的长宽比放回去。"""
+    stash = getattr(a, "_mm_cb_aspect_stash", None)
+    if stash is None:
+        return
+    del a._mm_cb_aspect_stash  # noqa: SLF001
+    box_aspect0, info_aspect = stash
+    cb = _colorbar_of_axes(a)
+    a.set_box_aspect(box_aspect0)
+    if cb is not None:
+        cb._mm_box_aspect0 = box_aspect0  # noqa: SLF001
+    info = getattr(a, "_colorbar_info", None)
+    if isinstance(info, dict) and info_aspect is not None:
+        info["aspect"] = info_aspect
 
 
 def _restore_axes_position(a, orig) -> None:
@@ -2724,10 +2788,12 @@ def _restore_axes_position(a, orig) -> None:
     数字，不是用户或脚本表过的态——留着 pin 就等于把那次计算的结果冻成了永久
     设置（见 CLAUDE.md「getter 必须回可回灌的形式」的同一族问题）。unpin 之后
     tight 会在下一次 draw 里重新算它，实测逐位回到「从没被 override 过」的位置。
+    色条轴另有一件要还的：`_cb_release_aspect` 解开的长宽比（见那里）。
     """
     engine = pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
     if engine is not None:
         engine.unpin(a)
+    _cb_restore_aspect(a)
     a.set_position([float(x) for x in orig])
 
 
@@ -4584,8 +4650,14 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 「原样」不是一对数字，而是「自动缩放」这个**模式**。见 `_get_axes_lim`。
     ("axes", "xlim"): (_get_axes_lim("x"), _set_axes_lim("x")),
     ("axes", "ylim"): (_get_axes_lim("y"), _set_axes_lim("y")),
+    # 脚本原样记 **original** 而不是画出来的 active：`aspect="equal"` 的子图与
+    # 带 box_aspect 的色条轴（`fig.colorbar(im, ax=ax)`），active 是 `apply_aspect`
+    # 每次 draw 从 original 现算出来的一个**结果**，不是脚本表过的态——把它回灌
+    # 成 original 之后再改图幅，`apply_aspect` 会从这个已经收窄的框再算一次，
+    # 与从没改过 position 的全新重放分岔（实测 6×4 改 4×6：色条轴高度 0.77 →
+    # 0.34）。`set_position` 两份一起写，回灌 original 之后 active 自然重算回来。
     ("axes", "position"): (
-        lambda a: list(a.get_position().bounds),
+        lambda a: list(a.get_position(original=True).bounds),
         _set_axes_position,
     ),
     ("axes", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),

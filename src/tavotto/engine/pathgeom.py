@@ -36,6 +36,9 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 逻辑 `_stamp_markers`：形状只拍平一次、按尺度分档抽稀、其余各颗是一次批量仿射；
 标记数超过 `MAX_MARKERS`（两种 artist 同一个数）整组退回 bbox，同样在 stderr
 上说明。既有连线又有 marker 的 Line2D 仍只描折线（理由见 `element_geometry`）。
+
+柱形系列（`ax.bar()` 的 BarContainer，`patch_group_geometry`）出的是**每一根柱
+的轮廓**：一根柱一条闭合子路径，同一个上限、同一种降级。
 """
 
 from __future__ import annotations
@@ -712,4 +715,60 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
             )
     except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
         print(f"[geometry] {type(artist).__name__} 取路径失败: {exc}", file=sys.stderr)
+    return None
+
+
+def patch_group_geometry(patches, W: float, H: float, budget: Budget) -> dict | None:
+    """一组 Patch（柱形系列的每一根柱）的路径几何：**一根柱一条闭合子路径**。
+
+    柱形系列是伪元素（`overrides.SeriesGroup`），SVG 里没有它自己的节点，
+    manifest 从前只给它一个并集 bbox——选中一组柱时画出来的是一个把整组（连
+    同柱与柱之间的空白）罩住的大矩形，用户认不出选中的是「这几根柱」
+    （2026-09-13 用户反馈，analysis_peak_valley 项目的图 B / 图 F）。这里按
+    散点逐颗描 marker 的同一取舍，逐根描柱：命中落在柱身上、框选按柱相交、
+    柱与柱之间的空白不再算这组的。
+
+    每根柱走它自己的 `get_path()` + `get_transform()`（Rectangle 的单位方经
+    patch 变换落到 display），与 `Patch.draw` 同一条路——`barh` / 负高度 /
+    对数轴上照样对。隐藏的柱（`set_visible(False)`）图上没有墨迹，不描。
+    根数超过 `MAX_MARKERS` 整组退回 bbox（与散点同一个上限、同一种降级，stderr
+    上说明）：`hist(bins=2000)` 那种一根柱四个点也是八千点，前端每次指针移动
+    都要沿全部线段算距离。
+
+    填充 / 描边按整组判：任一根柱真的填了色就是 `fill`（前端据此按面积命中），
+    任一根有可见描边就是 `stroke`，容差取最粗的那根。
+    """
+    try:
+        shown = [p for p in patches if p.get_visible()]
+        if not shown:
+            return None
+        if len(shown) > MAX_MARKERS:
+            print(
+                f"[geometry] 柱形系列 {len(shown)} 根柱超过 MAX_MARKERS={MAX_MARKERS}，退回 bbox",
+                file=sys.stderr,
+            )
+            return None
+        subs: list[tuple] = []
+        for p in shown:
+            subs.extend(_display_subpaths(p.get_path(), p.get_transform()))
+        if not subs:
+            return None
+        fill = any(bool(p.get_fill()) and _has_paint(p.get_facecolor()) for p in shown)
+        stroked = [
+            float(p.get_linewidth() or 0.0)
+            for p in shown
+            if _has_paint(p.get_edgecolor()) and (p.get_linewidth() or 0.0) > 0
+        ]
+        return _pack(
+            subs,
+            W,
+            H,
+            fill=fill,
+            stroke=bool(stroked),
+            stroke_pt=max(stroked) if stroked else 0.0,
+            clip=_clip_rect(shown[0], W, H),
+            budget=budget,
+        )
+    except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
+        print(f"[geometry] 柱形系列取路径失败: {exc}", file=sys.stderr)
     return None

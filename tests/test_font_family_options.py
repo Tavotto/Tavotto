@@ -78,6 +78,76 @@ print("OK")
 """
 
 
+_MACHINE_DRIVER = """\
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import font_manager
+from matplotlib.text import Text
+
+import manifest
+import overrides
+
+# ── a) 本机字体族：排好序、没有系统内部字体、没有读不出名字的、每一个都
+#       不回退地解析得到（列出来的 == 画得出来的，与首选项同一条纪律）──────
+fams = manifest.installed_font_families()
+assert fams == tuple(sorted(fams, key=lambda n: (n.casefold(), n))), fams[:10]
+assert len(fams) == len(set(fams))
+assert not any(n.startswith(".") or "?" in n for n in fams), [n for n in fams if n.startswith(".") or "?" in n]
+assert "DejaVu Sans" in fams, "matplotlib 自带的 DejaVu 在任何平台都该在"
+assert not any(n in manifest._GENERIC_FAMILIES for n in fams), "通用族不是本机字体"
+for name in fams:
+    font_manager.findfont(font_manager.FontProperties(family=[name]),
+                          fallback_to_default=False)
+# 整个进程只算一次
+assert manifest.installed_font_families() is fams
+
+# ── b) `font_installed` 走列表形式：带连字符的名字不许被当成 fontconfig 模式 ──
+real = font_manager.findfont
+seen = []
+def _record(prop, *a, **kw):
+    seen.append(list(prop.get_family()))
+    return "/nonexistent/but/found.ttf"
+font_manager.findfont = _record
+overrides._FONT_PRESENT.clear()
+assert overrides.font_installed("DFYanKaiW7-B5") is True, seen
+assert seen == [["DFYanKaiW7-B5"]], seen
+font_manager.findfont = real
+overrides._FONT_PRESENT.clear()
+
+# ── c) `options_unavailable` 的判据是「画不画得出」，不是「在不在首选项里」──
+def _fam_field(t):
+    return next(f for f in manifest._text_fields(t) if f["prop"] == "fontfamily")
+installed = _fam_field(Text(0, 0, "hi", fontfamily="DejaVu Sans"))
+assert installed["value"] == "DejaVu Sans"
+assert installed["options"][0] == "DejaVu Sans", installed["options"][:4]
+assert "options_unavailable" not in installed, installed
+missing = _fam_field(Text(0, 0, "hi", fontfamily="No Such Font Zzz"))
+assert missing["options_unavailable"] == ["No Such Font Zzz"], missing
+overrides._FONT_PRESENT.clear()
+print("OK")
+"""
+
+
+def test_machine_font_families_are_listed_once_and_all_drawable():
+    """`installed_font_families()`（manifest 顶层 `font_families` 的来源）：本机
+    matplotlib 认得的全部字体族——排好序、不含系统内部字体与读不出名字的、
+    每一个都不回退地解析得到。顺带钉两条同一纪律的修正：`font_installed`
+    用列表形式问（连字符不再被当成 fontconfig 模式），`options_unavailable`
+    只在**真画不出**时才发（脚本设了一个装了的字体不再被标成「未安装」）。
+    """
+    out = subprocess.run(
+        [WORKER_PY, "-c", _MACHINE_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")
+
+
 def test_the_font_dropdown_only_offers_what_this_runtime_can_draw():
     """三件事一次钉住：通用族无条件保留、具体字体名装了才列、探测不碰通用族。
 
