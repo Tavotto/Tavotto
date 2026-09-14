@@ -129,7 +129,7 @@ components:
 - 持久表面没有投影；分层靠极轻的明度差与 hairline
 - 蓝色只做小面积：焦点环、链接、AI、画布选择框；主按钮是近黑
 - 密度是「紧凑工具」那一档：控件一律 28px
-- 动效只是点缀：opacity + ≤4px 位移 + scale 0.97~1，关掉不损失信息
+- 动效只是点缀：opacity + ≤4px 位移 + scale 0.97~1，关掉不损失信息；回弹只有 `--ease-spring` 一条曲线（峰值 5%，只给落位收尾）
 
 ## Colors
 
@@ -186,8 +186,9 @@ Badge、Tabs、listRowClass / TreeRow、SearchInput、Notice、Section / Disclos
 disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有 lucide 一套（`docs/ux/ICONOGRAPHY.md`）。
 
 动效：**宪法第七节**。时长只来自 token（fast 120 / base 180 / slow 240 / exit 90），
-进场 `--ease-pop`、退场 `--ease-exit`、其余 `--ease-standard`；没写时长的 `transition-*` 默认
-就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
+进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
+`transition-*` 默认就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
+改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**。
 
 ## Do's and Don'ts
 

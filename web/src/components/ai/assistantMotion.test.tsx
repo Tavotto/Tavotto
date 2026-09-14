@@ -219,7 +219,7 @@ describe('贴底跟随', () => {
 
 describe('过程与正文', () => {
   it('过程步骤：按钮带 aria-expanded，展开是 Reveal', async () => {
-    await mount([session({ entries: [{ kind: 'thought', text: '先看一眼脚本' }] })])
+    await mount([session({ entries: [{ kind: 'thinking', text: '先看一眼脚本' }] })])
     const toggle = Array.from(host.querySelectorAll('button')).find((b) =>
       b.textContent?.includes(ai('panel.processSteps', { count: 1 })),
     )!
