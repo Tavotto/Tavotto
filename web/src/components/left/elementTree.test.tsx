@@ -74,7 +74,14 @@ const manifest = {
     el('figure', 'figure', '整张图'),
     el('axes_0', 'axes', '子图 1'),
     el('axes_0.title', 'title', '标题'),
-    el('axes_0.xlabel', 'axis_label', 'X 轴标题'),
+    // 引擎把引号里的文字截到 18 字：树行要用 `text` 字段补回全文（2026-09-14 审计 S15）
+    {
+      ...el('axes_0.xlabel', 'axis_label', 'X 轴 “Reaction time (mi…”'),
+      editable: [
+        { prop: 'text', type: 'text', value: 'Reaction time (min)' },
+        { prop: 'fontsize', type: 'number', value: 7 },
+      ],
+    },
     el('axes_0.ylabel', 'axis_label', 'Y 轴标题'),
     el('axes_0.yticks', 'ticks', 'Y 刻度'),
     el('axes_0.yticks.label_3', 'ticklabel', '刻度文字 0.75'),
@@ -193,6 +200,13 @@ describe('文案与计数', () => {
     await mount()
     await type('yticks')
     expect(rowGids()).toContain('axes_0.yticks')
+  })
+
+  it('树行用完整名字（按可用宽度 CSS 截断），不用引擎按字数截的那份（S15）', async () => {
+    await mount()
+    const row = host.querySelector('[data-el="axes_0.xlabel"]')!
+    expect(row.textContent).toContain('Reaction time (min)')
+    expect(row.textContent).not.toContain('(mi…')
   })
 
   it('标题上的计数带单位', async () => {
