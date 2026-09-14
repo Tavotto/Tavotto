@@ -350,3 +350,22 @@ B2 ppi 标签 → B3 文案 → B4 做减法 → D1 Agent 默认项 → D2 / D3 
 变异反证：focus-ring 回 color-mix / border-input 回 #cfcfc7 / border-control 回 #cfcfc7 / ok 回 #2e7d4f / LineStylePicker 手写 aria-haspopup / OptionGrid 删 onPick——六条全红（最后一条第一次跑是绿的，补了用例再红）。
 
 **接受的差异**：S12 抽屉标题「名字 + 小号数字」与分区标题「名字（N）」两种计数形态各自一致、语义不同，不统一。
+
+## 批次 3 落地记录（2026-09-14）
+
+分支 `ux/apple-design-batch3`（stacked 在批次 2 上）。
+
+| 发现 | 改法（已落地） | 验收 |
+| --- | --- | --- |
+| 分歧 1 控件里的值 | `type-control` / `fieldBox` / `Segmented` / `OptionGrid` / `Select` 选项 / `num-input` 12px；标签 / caption / meta 留 11；DESIGN.md `control` 同步 | `designMd.test` |
+| A2 文字组两种顺序 | `ticks` 角色 primary 加 `fontfamily`：字体 → 字号 → 颜色，与文本角色同序（并排 / 分行的布局差异接受） | 刻度页 |
+| A3 mathtext 只在一处可读 | `roles/mathtext.ts`，`displayLabel` 挂在 `engineLabel` 出口；LegendCard 条目、QuickEdit 头同步 | `registry.test`「min⁻¹」；变异红 |
+| A4 同一图标三个方向 + 面包屑不可点 | 面包屑祖先各是按钮（`data-crumb`）；`relatedGids` 删「所属子图 / 所属系列」；去到链接尾随 `ChevronRight`；`CornerUpLeft` 退场 | `identityHeader.test`「面包屑可点」；变异红 |
+| A5 示意图两处 + 常驻说明 | 刻度页只留字段 + 「在子图页编辑刻度线与边框 ›」；说明 `sr-only` + `aria-describedby` | `tickTaskCard.test` / `axesPage.test`；变异红 |
+| A6 下拉宽度 | 随 S5 的 `PickerTrigger`（w-full）自然解决 | 曲线页 |
+| A7 锚点折叠推到右缘 | 左起排 | 图例页 |
+| A8 浮动栏「左上」 vs 选择器「右侧上」 | 浮动栏落在外侧预设上时用空间名（`outsidePresetOf`） | `elementBar.test`；变异红 |
+| A9 覆盖态盖住浮条 | `WorkspaceContextBar` 按覆盖式侧栏宽度留边 | `workspaceContextBar.test`；变异红 |
+| S13 键盘缺 Alt | NumberField ↑↓ Alt ×0.1 | `numberField.test`；变异红 |
+| S15 树行按字数截 | `untruncatedLabel` + CSS truncate | `elementTree.test`；变异红 |
+| S4 收尾 | ProblemPanel / TickTaskCard / VersionDialog 的页签带 `panelId`、内容区 `TabPanel` | 现有用例 |

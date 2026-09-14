@@ -111,6 +111,15 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Notice**：低权重说明条（Info + caption + 至多一个 ghost 小动作），surface-2 底、无边框；
   它是脚注不是卡片。要警告语义用设置页的 `InlineWarning`。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
+- **「去到」的记号只有一枚**（2026-09-14 审计 A4）：尾随的 `ChevronRight`（xs），给「X 轴刻度 ›」
+  「在子图页编辑刻度线与边框 ›」这种往下 / 往旁边走的入口；往上走的路是身份头的**面包屑**，
+  每一级祖先都是按钮（`data-crumb=<gid>`），不再另写「所属子图 / 所属系列」一行。
+  `CornerUpLeft` 不在检查器里出现。
+- **示意图只在一处可编辑**（A5）：四边刻度线 / 边框 / 网格的示意图只在子图页；刻度组页只留字段
+  与一条去子图页的链接。示意图的用法说明只给读屏（`aria-describedby` + `sr-only`），不常驻。
+- **名字的可读性在 `engineLabel` 出口统一**（A3）：mathtext → 可读文本（`roles/mathtext.ts`）对树 /
+  问题面板 / 导出清单 / 上下文栏 / 图例项一律生效；引擎按字数截断的名字在树行用 `untruncatedLabel`
+  补回全文、由 CSS 按宽度截（S15）。
 
 状态四态必须可辨：hover（surface-hover）< active（surface-active）≈ selected（selected +
 字重 / 对勾）；disabled 统一 **`opacity-40 + cursor-not-allowed`**（一档，2026-09-14 审计 S7 之前
