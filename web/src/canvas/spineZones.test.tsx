@@ -359,6 +359,31 @@ describe('点击即切', () => {
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
   })
 
+  it('选着子图名下的别的元素（散点）时点边框带：刻度照切，选区落回子图（issue #343）', async () => {
+    // 散点的 gid 也以 `axes_0.` 开头——「已选着它或它的刻度组」曾写成 startsWith，
+    // 把子图名下的一切都当成了「它」。ADR 0035：选中落到那条边所属的子图。
+    seedExactRender(
+      livePanel(),
+      makeManifest({
+        extra: [
+          {
+            gid: 'axes_0.scatter_1',
+            role: 'scatter',
+            label: '散点',
+            bbox: [0.3, 0.3, 0.4, 0.3],
+            editable: [],
+            draggable: false,
+          } as unknown as ManifestElement,
+        ],
+      }),
+    )
+    useUiStore.setState({ selectedGids: ['axes_0.scatter_1'] })
+    await mount()
+    await press(0.3, 0.9 - dy(5))
+    expect(overrideOf('axes_0.xticks', 'direction')).toBe('inout')
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+
   it('中线：不写任何 override，只选中子图', async () => {
     await mount()
     await press(0.3, 0.9)

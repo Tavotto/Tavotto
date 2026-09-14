@@ -9,6 +9,7 @@ import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import {
+  axisOfSide,
   pickSpineZone,
   readAxesTickModel,
   toggleSidePlan,
@@ -517,6 +518,7 @@ function ElementHitLayer({
     const spinesOf = manifest!.elements.find((e) => e.gid === pick.gid)!.spines!
     return {
       gid: pick.gid,
+      tickGid: model.tickGid[axisOfSide(pick.hit.side)],
       side: pick.hit.side,
       zone,
       geom: pick.geom,
@@ -658,13 +660,17 @@ function ElementHitLayer({
           return
         }
         // 边框的内 / 外侧命中带：一次点击 = 切这一边的向内 / 向外刻度（一条历史）。
-        // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源）；已经选着它或
-        // 它的刻度组时不动选区。中线（neutral）不切刻度，走下面的普通选中。
+        // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源，ADR 0035）；只有
+        // 已经选着**这个子图本身或这条边那条轴的刻度组**时才不动选区——两者的
+        // 属性页都带刻度卡。以前写成 `startsWith(`${gid}.`)`，把子图名下的散点 /
+        // 图例 / 文字全算了进去：选着散点点边框带，刻度切了、选区却留在散点上，
+        // 刻度卡不出现、60 段轮廓原样留在覆盖层（issue #343）。
+        // 中线（neutral）不切刻度，走下面的普通选中。
         const zone = spineZoneUnder(fx, fy, e.pointerType, hit)
         if (zone && zone.zone !== 'neutral' && zone.plan) {
           applyTickSidePlan(obj.id, zone.plan)
           const sel = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
-          const keep = sel === zone.gid || sel?.startsWith(`${zone.gid}.`)
+          const keep = sel === zone.gid || sel === zone.tickGid
           if (!keep) ui.setSelectedGid(zone.gid)
           setSpineHover(null)
           return
@@ -756,6 +762,8 @@ function ElementHitLayer({
 /** 指针悬在边框命中带上的那一刻：谁的、哪条边、哪个带、点下去会发生什么 */
 interface SpineHover {
   gid: string
+  /** 这条边那条轴的刻度组 gid（`axes_0.xticks`）；引擎没发那条轴的刻度元素时缺席 */
+  tickGid: string | undefined
   side: SpineSide
   zone: SpineZone
   geom: SpineGeom
