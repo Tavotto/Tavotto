@@ -241,7 +241,8 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // noCli 提示渲染在「Scope and agent」弹层里（AiPanel 的 agent 分区），
   // 不点开弹层它不在 DOM 里——issue #122 记录了「面板顶层无提示」的 UX 疑点。
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await page.getByRole('button', { name: /Assistant/i }).click()
+  // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
+  await page.getByRole('tab', { name: /Assistant/i }).click()
   const panel = page.getByLabel('Right panel', { exact: true })
   await expect(panel).toBeVisible()
   await panel.getByRole('button', { name: /Scope and agent/i }).click()
