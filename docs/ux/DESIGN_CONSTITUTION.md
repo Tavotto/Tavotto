@@ -136,6 +136,10 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 | `type-caption` | 11 · 行距 1.5 · ink-2 | 说明文字 |
 | `type-meta` | 11 · ink-3 | 元数据、路径、计数 |
 
+**数值与单位**只有一个写法（`i18n/format.formatQuantity`，2026-09-14 审计 S11）：字母单位（pt / mm / px /
+ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`，代码里拼字符串走 `formatQuantity`；
+`NumberField` 框内单位是独立的一列，不经它。此前 `{{x}}pt` 21 处无空格、`{{x}} mm` 22 处有空格并存。
+
 字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 四档；`text-[Npx]` 不许出现（营销页 /try 的
 三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；`font-semibold` 现存 9 处待
 页面级 Session 收成 `type-title`。

@@ -332,3 +332,21 @@ B2 ppi 标签 → B3 文案 → B4 做减法 → D1 Agent 默认项 → D2 / D3 
 顺手：`multiSelectionBar.test` 原来断言「每个按钮 tabIndex ≥ 0」——那句话把缺陷钉成了规范，改成「radiogroup 只有一个停靠点」。
 
 **没做（留给后续批次）**：ProblemPanel / TickTaskCard / VersionDialog 的 tablist 已得到方向键，但内容区还没套 `TabPanel`（批次 3 顺手）；S5 / S6 / S8 / S9 / S11 / S12 与页面项按拍板记录进批次 2–4。
+
+## 批次 2 落地记录（2026-09-14）
+
+分支 `ux/apple-design-batch2`（stacked 在批次 1 上）。拍板：S8 甲 + 边框 A 档 `#8a8a82`；S12 不做。
+
+| 发现 | 改法（已落地） | 验收（实测） |
+| --- | --- | --- |
+| S8 可编辑框两套语法 | `ui/fieldBox.ts` 一份框（白底 + `border-input #8a8a82`，hover ink-3，聚焦 / 打开 accent）；TextInput / TextArea / NumberField / Select / SearchInput 共用；新 token 进 DESIGN.md 与宪法第一、五节 | 标题页 / 曲线页截图：名称 / 字号 / 字体 / 线宽 / 线型 / 标记同一副框；`tokenContrast.test` 钉 ≥3:1 |
+| S5 三种下拉触发器、两种弹层 | `inspector/controls/PickerTrigger.tsx` 一份触发器；LineStylePicker、StrokeSection 的箭头端型 / 线型、Marker / Hatch / Colormap 五个都走 `Popover + PickerTrigger + OptionGrid`；`OptionGrid.onPick` 点选才收起、方向键漫游不收；`aria-haspopup` 两条豁免删除 | 曲线页「线型」打开：portal 弹层、触发器 accent 边 + 箭头朝上；`pickers.test` 46 条含「漫游不收 / 点选收」 |
+| S6 网格 X / Y 第二套开关 | `Row + Toggle`（与「反转 X / Y」同形），去掉 `border-t` 与 `justify-between`，标签列跟 `LABEL_W`；`role=switch` 豁免 3→2、内联 svg 豁免 2→1 | 刻度页截图 |
+| S9 type-section 中文同形 | 12px / 500 / ink（DESIGN.md typography.section、宪法第六节同步） | 曲线页「线条 / 数据点」、设置导航组名一眼可分 |
+| S11 数值 - 单位两套间距 | `formatQuantity`；locale 54 处 `{{x}}pt` / `{{x}}mm` 统一成 `{{x}} pt` / `{{x}} mm`；`validationText` / `PanelSection` 走它；用例里钉住的「7.50pt」改「7.50 pt」 | 问题面板截图「7.33 pt → 大于 8 pt」；`pnpm i18n:check` 绿 |
+| A1 富文本动作行均布 | `gap-1` 靠左 | 标题页截图 |
+| 顺手 | `tokenContrast.test` 第一次跑就抓到 `ok #2e7d4f` 在 ok-subtle 上 4.41:1 → `#2b7649` | — |
+
+变异反证：focus-ring 回 color-mix / border-input 回 #cfcfc7 / border-control 回 #cfcfc7 / ok 回 #2e7d4f / LineStylePicker 手写 aria-haspopup / OptionGrid 删 onPick——六条全红（最后一条第一次跑是绿的，补了用例再红）。
+
+**接受的差异**：S12 抽屉标题「名字 + 小号数字」与分区标题「名字（N）」两种计数形态各自一致、语义不同，不统一。

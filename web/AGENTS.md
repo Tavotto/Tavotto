@@ -1595,7 +1595,11 @@ Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）�
 cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `border-control`（≥3:1）；焦点环
 `focus-ring` 不透明。**键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
 在容器、关闭钮 DOM 排最后；Segmented / Tabs 一个 Tab 停靠点 + 方向键；`keyboardPrimitives.test`
-与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。文字对比：
+与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。
+**可编辑框只有一副**（`ui/fieldBox.ts`：白底 + `border-input`；TextInput / NumberField / Select / SearchInput /
+`inspector/controls/PickerTrigger` 共用；批次 2）；带样张的取值选择器一律 `Popover + PickerTrigger + OptionGrid`
+（`onPick` 收弹层、方向键漫游不收）；数值与单位 `formatQuantity`；token 配对对比度由
+`src/tokenContrast.test.ts` 守着（焦点环 / 控件边界 ≥3:1，要读的字 ≥4.5:1）。文字对比：
 `ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
 `状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
 「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
