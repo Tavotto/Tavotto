@@ -101,8 +101,10 @@ test('流程 B+C：曲线首屏（视觉线型选择器）与图例 3×3 位置�
   const lineStyle = panel.getByRole('button', { name: '线型', exact: true })
   await expect(lineStyle).toContainText('实线')
   await lineStyle.click()
-  await expect(panel.getByRole('radio', { name: '实线' })).toHaveAttribute('aria-checked', 'true')
-  await panel.getByRole('radio', { name: '虚线' }).click()
+  // 弹层 portal 到文档根部（2026-09-14 批次 2：与标记 / 纹理同一副 Popover 外壳），不在右栏子树里
+  const lineStyleGrid = page.getByRole('radiogroup', { name: '线型' })
+  await expect(lineStyleGrid.getByRole('radio', { name: '实线' })).toHaveAttribute('aria-checked', 'true')
+  await lineStyleGrid.getByRole('radio', { name: '虚线' }).click()
   await expect(lineStyle).toContainText('虚线', { timeout: 15_000 })
   // marker 选择器在首屏（不需要展开折叠组）
   await expect(panel.getByText('标记', { exact: true })).toBeVisible()
