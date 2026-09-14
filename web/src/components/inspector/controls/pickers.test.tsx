@@ -115,6 +115,27 @@ describe('LineStylePicker', () => {
     })
     expect(onChange).toHaveBeenCalledWith('--')
   })
+
+  it('方向键漫游不收起弹层；点选（click / Enter）才收起，焦点回到触发器', async () => {
+    const onChange = vi.fn()
+    await mount(
+      <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={onChange} ariaLabel="线型" />,
+    )
+    await openLineStyle()
+    const group = () => document.querySelector('[role="radiogroup"][aria-label="线型"]')
+    await act(async () => {
+      group()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    // 漫游即选中（radiogroup 契约），但弹层还开着——连续按方向键要能继续走
+    expect(onChange).toHaveBeenCalledWith('--')
+    expect(group()).toBeTruthy()
+    await act(async () => {
+      radioByLabel('点线')!.click()
+    })
+    expect(onChange).toHaveBeenLastCalledWith(':')
+    // 点选之后弹层收起
+    expect(group()).toBeNull()
+  })
 })
 
 describe('MarkerPicker', () => {
