@@ -147,10 +147,11 @@ export function Dialog({
         >
           <div
             className={cn(
-              'flex justify-between gap-3',
+              'flex gap-3',
+              // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
-                ? 'h-11 shrink-0 items-center border-b border-border px-4'
-                : 'items-start px-4 pb-1 pt-3.5',
+                ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
+                : 'items-start pb-1 pl-4 pr-12 pt-3.5',
             )}
           >
             <div className="min-w-0">
@@ -159,22 +160,6 @@ export function Dialog({
                 <RD.Description className="type-caption mt-0.5">{description}</RD.Description>
               )}
             </div>
-            {!locked && (
-              <RD.Close asChild>
-                {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
-                    本地化文案（`actions.close`），换语言就选不中——e2e 里
-                    `[aria-label=关闭]` 是明文禁止的写法（issue #307）。
-                    标题栏里已经说明了这是什么对话框，关闭钮不再挂气泡。 */}
-                <IconButton
-                  data-dialog-close
-                  label={t('actions.close')}
-                  tip={false}
-                  className={cn('-mr-1.5 text-ink-3 hover:text-ink', !shell && '-mt-1')}
-                >
-                  <X size={ICON_SIZE.md} />
-                </IconButton>
-              </RD.Close>
-            )}
           </div>
           <div
             className={cn(
@@ -188,6 +173,28 @@ export function Dialog({
             <div className="flex items-center justify-end gap-2 px-4 pb-3.5 pt-1">
               {footer}
             </div>
+          )}
+          {!locked && (
+            <RD.Close asChild>
+              {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
+                  本地化文案（`actions.close`），换语言就选不中——e2e 里
+                  `[aria-label=关闭]` 是明文禁止的写法（issue #307）。
+                  标题栏里已经说明了这是什么对话框，关闭钮不再挂气泡。
+                  **DOM 排在正文与脚部之后、视觉钉在右上角**：初始焦点在容器上，
+                  第一下 Tab 应该进正文第一个控件，而不是先路过关闭钮（2026-09-14
+                  审计 S1）；Shift+Tab 或走到末尾仍能到它，Esc 照旧。 */}
+              <IconButton
+                data-dialog-close
+                label={t('actions.close')}
+                tip={false}
+                className={cn(
+                  'absolute right-2.5 text-ink-3 hover:text-ink',
+                  shell ? 'top-2' : 'top-2.5',
+                )}
+              >
+                <X size={ICON_SIZE.md} />
+              </IconButton>
+            </RD.Close>
           )}
         </RD.Content>
       </RD.Portal>

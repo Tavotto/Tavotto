@@ -314,3 +314,21 @@ B2 ppi 标签 → B3 文案 → B4 做减法 → D1 Agent 默认项 → D2 / D3 
 | A5 刻度示意图 | **子图页留示意图，刻度页只留字段 + 「在子图页编辑边框 ›」**；常驻说明改 `aria-description` + 边缘 hover 反馈 |
 | S1 对话框初始焦点 | **落在对话框容器本身**（`role=dialog` 容器 `tabIndex=-1`），不预选控件；读屏先念标题与说明 |
 | 下一步 | **立即实施批次 1**（S1 S2 S3 S4 S7 S10 + AST 门禁），报告先单独提交；批次 2–4 另开 |
+
+## 批次 1 落地记录（2026-09-14）
+
+分支 `ux/apple-design-audit`，提交「共享原语批次 1」。改动与验收：
+
+| 发现 | 改法（已落地） | 验收（实测） |
+| --- | --- | --- |
+| S1 Dialog 初始焦点 | `onOpenAutoFocus` 后焦点给 `role=dialog` 容器；关闭钮 DOM 移到正文与脚部之后、视觉钉在右上角 | 导出 / 设置 / 快捷键三处 `activeElement` = 容器；第一下 Tab 分别落到范围分段 / 当前导航项 / 搜索框；Esc 后焦点回到树行 |
+| S2 focus-ring | `outline: 2px solid var(--color-accent)`（不透明）；StepSlider 同步 | 计算样式不再带 alpha；截图里焦点环是实心蓝 |
+| S3 Segmented 键盘 | roving tabindex + ← → Home End，禁用项跳过；导出范围换 `Segmented` | 对齐分段 tabIndex `-1,0,-1`、→ 选中下一格；导出范围 → / ← 换值 |
+| S4 Tabs 键盘 + 右栏三页签 | `TabList` 方向键自动激活、`Tab` 带 `panelId` / `aria-controls`、新 `TabPanel`；右栏「属性 / 改图助手 / 画布」三个页签（ADR 0010 §3 修订） | 三个 tab 各带 `aria-controls`，→ 切到助手且 tabpanel id 对上；en-US 头部宽 360 无溢出 |
+| S7 禁用态 | 全站 `opacity-40 + cursor-not-allowed`；NumberField / Select 去掉 `pointer-events-none` | 门禁两条 |
+| S10 border-control | 新 token `#8a8a82`；Checkbox / Radio 未选边框、Toggle 关态轨道 | 关态开关在设置页可见（截图） |
+| 门禁 | `foundation.test` 五条新规则（`role="radio"` / `aria-haspopup` 只在 ui/，LineStylePicker / StrokeSection 豁免到批次 2；disabled 只有 40；disabled 不配 pointer-events-none；`ring-accent/N` 不许）；`keyboardPrimitives.test` 七条 | 11 条变异逐条红（Segmented 删 onKeyDown / 停靠点全 0、Tabs 删方向键 / 停靠点 / aria-controls、Dialog 不聚焦容器、Button 35、Input pointer-events-none、StepSlider ring/50、ExportDialog 手拼 radio、新写 aria-haspopup） |
+
+顺手：`multiSelectionBar.test` 原来断言「每个按钮 tabIndex ≥ 0」——那句话把缺陷钉成了规范，改成「radiogroup 只有一个停靠点」。
+
+**没做（留给后续批次）**：ProblemPanel / TickTaskCard / VersionDialog 的 tablist 已得到方向键，但内容区还没套 `TabPanel`（批次 3 顺手）；S5 / S6 / S8 / S9 / S11 / S12 与页面项按拍板记录进批次 2–4。

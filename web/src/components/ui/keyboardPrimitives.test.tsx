@@ -133,13 +133,15 @@ describe('Tabs：tablist 的键盘契约', () => {
 })
 
 describe('Dialog：打开后的初始焦点', () => {
+  // 用变量而不是 JSX 字面量：i18n lint 会把 JSX 里的字符串字面量当成漏翻的文案
+  const TITLE = 'Export'
   it('落在对话框容器本身，不是标题栏的关闭钮', async () => {
     const onOpenChange = vi.fn()
     await render(
       <TooltipProvider>
-        <Dialog open onOpenChange={onOpenChange} title="导出" anchor="t">
-          <input aria-label="文件名" />
-          <button type="button">开始导出</button>
+        <Dialog open onOpenChange={onOpenChange} title={TITLE} anchor="t">
+          <input aria-label="filename" />
+          <button type="button">{TITLE}</button>
         </Dialog>
       </TooltipProvider>,
     )
@@ -152,5 +154,9 @@ describe('Dialog：打开后的初始焦点', () => {
     expect(document.activeElement).not.toBe(document.querySelector('[data-dialog-close]'))
     // 容器可聚焦但不在 Tab 顺序里：下一下 Tab 才进第一个控件
     expect(dialog.tabIndex).toBe(-1)
+    // 第一下 Tab 进的是正文第一个控件，不是关闭钮：关闭钮 DOM 排在正文之后（视觉仍在右上角）
+    const close = document.querySelector('[data-dialog-close]')!
+    const first = document.querySelector('input[aria-label="filename"]')!
+    expect(first.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

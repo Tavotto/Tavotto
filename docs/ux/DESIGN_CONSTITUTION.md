@@ -85,12 +85,17 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Toggle**：唯一的滑动开关，名字必填。
 - **Badge**：胶囊、16px 高、五种语义色。
 - **Tabs / tabClass**：下划线标签页，选中 = 字重 + 2px 近黑线。**只负责切换视图**
-  （右栏「属性 / 画布」、版本抽屉「该版本 / 当前」、问题面板「当前图 / 整个文档」、
-  刻度卡「X 刻度 / Y 刻度」）。
+  （右栏「属性 / 改图助手 / 画布」、版本抽屉「该版本 / 当前」、问题面板「当前图 / 整个文档」、
+  刻度卡「X 刻度 / Y 刻度」）。**键盘**（2026-09-14 审计 S4）：只有当前页在 Tab 顺序里，
+  ← → Home End 换页并当场切换；`Tab` 传 `panelId` 得到 id / `aria-controls`，内容区套
+  `TabPanel`。右栏三个模式是同一个 tablist 的三个页签（ADR 0010 §3 的 2026-09-14 修订）。
 - **Segmented**：分段选择器，**一组互斥的取值**——对齐、刻度方向、纵横比、布局方向、
-  作用范围。28px 一行、hairline 外框、选中 = `selected` 轻 tint + 字重、未选中 ink-3。
-  页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：此前它也是
-  下划线页签，选一个值长得像在切换页面。互斥取值超过四五档、或标签很长时用 `Select`。
+  作用范围（含导出对话框的输出范围）。28px 一行、hairline 外框、选中 = `selected` 轻 tint +
+  字重、未选中 ink-3。页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：
+  此前它也是下划线页签，选一个值长得像在切换页面。互斥取值超过四五档、或标签很长时用 `Select`。
+  **键盘**（2026-09-14 审计 S3）：整组只占一个 Tab 停靠点（选中项），← → Home End 换值并带
+  焦点，禁用项跳过；`role="radio"` 字面量只许出现在它与空间型选择器（OptionGrid 一族）里，
+  `foundation.test` 守着。
 - **listRowClass**：树行 / 列表行的共同外观（28px、hover / selected / hidden 三态）。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
@@ -102,8 +107,15 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 
 状态四态必须可辨：hover（surface-hover）< active（surface-active）≈ selected（selected +
-字重 / 对勾）；disabled 统一 `opacity-35~40 + cursor-not-allowed`，不用 pointer-events-none
-（那会连 tooltip 一起吞掉）；destructive 只有红字，不用红底。
+字重 / 对勾）；disabled 统一 **`opacity-40 + cursor-not-allowed`**（一档，2026-09-14 审计 S7 之前
+有 35 / 40 / 45 / 60 四种），不用 pointer-events-none（那会连 title / tooltip 一起吞掉），
+`foundation.test` 守着两条；destructive 只有红字，不用红底。
+未选中复选框 / 单选的边框与开关关态轨道用 `border-control`（≥3:1），`border-strong` 只做 hover
+输入框与区域边界（S10）。
+
+- **Dialog**：打开后焦点落在 `role=dialog` 容器本身（不预选控件；读屏先念标题与说明），
+  关闭钮画在右上角但 DOM 排在正文与脚部之后——第一下 Tab 进正文第一个控件，Shift+Tab 或走到
+  末尾才到关闭钮；Esc、`busy` / `blockDismiss` / `covered`、关闭还焦不变（2026-09-14 审计 S1）。
 
 ## 六、文字
 
