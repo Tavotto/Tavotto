@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Reveal } from '../../ui/Field'
 import { ChevronRight } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -72,7 +73,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
           </span>
         )}
       </button>
-      {open && (
+      <Reveal open={open}>
         <div className="mt-1.5 flex flex-col gap-1.5">
           <p className="text-xs leading-snug text-ink-3">{lg('spacingUnitNote')}</p>
           {shown.map((prop) => {
@@ -106,7 +107,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
             )
           })}
         </div>
-      )}
+      </Reveal>
     </div>
   )
 }

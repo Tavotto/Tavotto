@@ -61,10 +61,11 @@ export function Toggle({
           checked ? 'bg-ink' : 'bg-border-control',
         )}
       >
+        {/* 滑块动 transform 不动 left：布局属性每帧重排（二审 E4）；开关的来回用对称曲线 */}
         <span
           className={cn(
-            'absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white transition-[left] duration-fast',
-            checked ? 'left-[12px]' : 'left-[2px]',
+            'absolute left-[2px] top-[2px] h-[10px] w-[10px] rounded-full bg-white transition-transform duration-fast',
+            checked ? 'translate-x-[10px]' : 'translate-x-0',
           )}
         />
       </span>

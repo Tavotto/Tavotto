@@ -56,8 +56,24 @@ export function CopyButton({
       title={name}
       className={variant === 'ghost' ? cn('text-ink-3 hover:text-ink', className) : className}
     >
-      {done ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
-      <span>{done ? st('copied') : st('copy')}</span>
+      {/* 两份内容叠在同一格、按宽者定宽：「复制 → 已复制」换字时按钮与它旁边的东西不跳
+          （与 Button 的 loadingLabel 同一手法；2026-09-14 二审 E7）；图标淡换而不是硬切 */}
+      <span className="grid place-items-center">
+        <span
+          className={cn('col-start-1 row-start-1 inline-flex items-center gap-1 transition-opacity duration-fast', done && 'opacity-0')}
+          aria-hidden={done || undefined}
+        >
+          <Copy size={ICON_SIZE.sm} aria-hidden />
+          <span>{st('copy')}</span>
+        </span>
+        <span
+          className={cn('col-start-1 row-start-1 inline-flex items-center gap-1 transition-opacity duration-fast', !done && 'opacity-0')}
+          aria-hidden={!done || undefined}
+        >
+          <Check size={ICON_SIZE.sm} aria-hidden />
+          <span>{st('copied')}</span>
+        </span>
+      </span>
     </Button>
   )
 }

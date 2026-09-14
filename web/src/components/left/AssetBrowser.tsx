@@ -47,7 +47,7 @@ import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
-import { Row } from '../ui/Field'
+import { Reveal, Row } from '../ui/Field'
 import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
@@ -1256,11 +1256,11 @@ function FolderInfo({ dir, shown, total }: { dir: string; shown: number; total: 
           {shown === total ? total : `${shown} / ${total}`}
         </span>
       </button>
-      {open && (
+      <Reveal open={open}>
         <p className="mt-1 break-all font-mono text-xs text-ink-3" title={dir}>
           {dir}
         </p>
-      )}
+      </Reveal>
     </div>
   )
 }

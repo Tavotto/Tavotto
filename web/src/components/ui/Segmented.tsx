@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { useSlidingIndicator } from './slidingIndicator'
 import { Tip } from './Tooltip'
 
 export interface SegmentedItem<T extends string> {
@@ -63,6 +64,9 @@ export function Segmented<T extends string>({
   ...rest
 }: SegmentedProps<T>) {
   const rootRef = useRef<HTMLDivElement>(null)
+  // 选中底是整组唯一的一块，换值时滑到新的一格（2026-09-14 二审 E2）；此前每格自己的
+  // bg-selected 一亮一灭，中间没有轨迹。多选取值不一（value 为 null）时没有选中项，也就没有它
+  const thumb = useSlidingIndicator(rootRef, '[role="radio"][aria-checked="true"]')
   const enabled = items.filter((it) => !it.disabled)
   // Tab 落点：选中项；多选取值不一（value 为 null）或选中项不可用时退到第一个可用项
   const tabStop = enabled.find((it) => it.value === value) ?? enabled[0]
@@ -102,11 +106,22 @@ export function Segmented<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        'flex h-7 w-full items-stretch rounded-sm border border-border bg-surface',
+        'relative flex h-7 w-full items-stretch rounded-sm border border-border bg-surface',
         className,
       )}
       {...rest}
     >
+      {thumb.style && (
+        <span
+          aria-hidden
+          data-segmented-thumb
+          className={cn(
+            'pointer-events-none absolute inset-y-0 left-0 rounded-sm bg-selected',
+            thumb.animate && 'transition-[transform,width] duration-base ease-pop',
+          )}
+          style={thumb.style}
+        />
+      )}
       {items.map((item) => {
         const active = item.value === value
         const btn = (
@@ -125,12 +140,13 @@ export function Segmented<T extends string>({
             title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
-              'flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
-              // 首尾两格跟着外框的圆角走，选中的 tint 才不会在角上露出方角
+              // relative：压在滑动的选中底之上；每格不再自己画 bg-selected
+              'relative flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
+              // 首尾两格跟着外框的圆角走，hover 的 tint 才不会在角上露出方角
               'first:rounded-l-sm last:rounded-r-sm',
               'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
               active
-                ? 'bg-selected font-medium text-ink'
+                ? 'font-medium text-ink'
                 : item.disabled
                   ? 'cursor-default text-ink-faint'
                   : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化

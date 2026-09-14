@@ -21,7 +21,7 @@ import { useUiStore } from '@/store/uiStore'
 import { panelFullSize, type PanelObject, type TextObject } from '@/types/document'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
-import { Row, Section } from '../ui/Field'
+import { Reveal, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
@@ -244,7 +244,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             </span>
           )}
         </button>
-        {moreOpen && (
+        <Reveal open={moreOpen}>
           <div className="mt-1.5 flex flex-col gap-1.5">
             <Row label={tx('case')} labelWidth={72}>
               <Menu
@@ -359,7 +359,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               </Row>
             )}
           </div>
-        )}
+        </Reveal>
       </div>
     </Section>
   )

@@ -96,16 +96,20 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   （线型 / 标记 / 填充纹理 / 色图 / 箭头端型）用 `Popover + PickerTrigger + OptionGrid`，触发器与
   Select 同一副框；`aria-haspopup` 字面量不在页面里出现（`foundation.test` 守着）。
 - **Checkbox**：14px 方块、xs 圆角、选中近黑 + 白勾（唯一允许加粗描边的图标）。
-- **Toggle**：唯一的滑动开关，名字必填。
+- **Toggle**：唯一的滑动开关，名字必填；滑块动 `transform`（二审 E4）。复选框的勾 / 单选的点
+  与框同一个 `fast` 淡入（E5）。`CopyButton` 的「复制 → 已复制」两份内容叠同一格取宽者、图标淡换（E7）。
 - **Badge**：胶囊、16px 高、五种语义色。
-- **Tabs / tabClass**：下划线标签页，选中 = 字重 + 2px 近黑线。**只负责切换视图**
+- **Tabs / tabClass**：下划线标签页，选中 = ink 色 + 2px 近黑线（二审 A4 起**不再加粗**：SF Pro 的 500 比
+  400 宽 2–3%，en-US 切页签邻居会挪 1.5px；下划线本身就是不靠颜色的第二重线索）。那条线是 tablist 上
+  **唯一的一条**，切换时滑到新页签（二审 E2）。**只负责切换视图**
   （右栏「属性 / 改图助手 / 画布」、版本抽屉「该版本 / 当前」、问题面板「当前图 / 整个文档」、
   刻度卡「X 刻度 / Y 刻度」）。**键盘**（2026-09-14 审计 S4）：只有当前页在 Tab 顺序里，
   ← → Home End 换页并当场切换；`Tab` 传 `panelId` 得到 id / `aria-controls`，内容区套
   `TabPanel`。右栏三个模式是同一个 tablist 的三个页签（ADR 0010 §3 的 2026-09-14 修订）。
 - **Segmented**：分段选择器，**一组互斥的取值**——对齐、刻度方向、纵横比、布局方向、
   作用范围（含导出对话框的输出范围）。28px 一行、hairline 外框、选中 = `selected` 轻 tint +
-  字重、未选中 ink-3。页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：
+  字重、未选中 ink-3；那块 tint 是整组**唯一的一块**，换值时滑到新的一格（二审 E2；各格等分，
+  字重变化不会挪动邻居）。页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：
   此前它也是下划线页签，选一个值长得像在切换页面。互斥取值超过四五档、或标签很长时用 `Select`。
   **键盘**（2026-09-14 审计 S3）：整组只占一个 Tab 停靠点（选中项），← → Home End 换值并带
   焦点，禁用项跳过；`role="radio"` 字面量只许出现在它与空间型选择器（OptionGrid 一族）里，
@@ -169,6 +173,13 @@ i18n 字串里写 `{{w}} × {{h}} mm`，`resources.test` 守着（此前 `{{w}}�
 时长只来自 token：`fast` 120 / `base` 180 / `slow` 240 / `exit` 90；形态只有
 opacity + ≤4px 位移 + scale 0.97~1；没有弹簧、缩放炫技、漂浮。`prefers-reduced-motion`
 是硬约束（JS 动画走 `lib/motion.tween()`）。
+
+**2026-09-14 二审 E2 / E3 的修订（用户拍板「甲」）**：「≤4px 位移」针对的是浮层进场。**位置跟随型指示物**
+（页签下划线、分段选择器的选中底）允许在同一控件内滑到新位置；**折叠分组**允许高度跟着内容展开 / 收起
+（`grid-template-rows: 0fr ↔ 1fr`）。两者都是 `base` 进 / `exit` 出、无回弹、首次落位不播、
+`prefers-reduced-motion` 下即时。它们解释的是「谁被选中了 / 哪些行是新出现的」，不是装饰。
+实现只有一份：`ui/slidingIndicator.useSlidingIndicator`（Tabs / Segmented 共用）与 `ui/Field.Reveal`
+（Disclosure；原生 `<details>` 用 `::details-content` 在支持 `interpolate-size` 的引擎里同样长高）。
 
 **写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
 = `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /

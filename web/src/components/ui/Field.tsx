@@ -1,6 +1,7 @@
-import type { HTMLAttributes, ReactNode } from 'react'
+import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { ICON_SIZE } from './Icon'
+import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 /** Inspector 分组：标题 + 内容。组间靠留白分层，不再画分隔线 */
@@ -36,6 +37,37 @@ export function Section({
       )}
       {children}
     </section>
+  )
+}
+
+/**
+ * 折叠内容的展开 / 收起（2026-09-14 二审 E3）：`grid-template-rows: 0fr → 1fr` + 淡入，
+ * 下面的行跟着内容长高而不是瞬间跳出——动效解释的是「哪些行是新出现的」。
+ * 收起走 `usePresence` 保活 exit 那 90ms 播 1fr → 0fr，之后才真的卸载（内容不常驻）。
+ * 裁切只在动画期间生效：播完就把 overflow-hidden 撤掉，否则贴边控件的焦点环会被切。
+ * `prefers-reduced-motion` 由 index.css 的全局兜底把两段动画压到 0.01ms。
+ */
+export function Reveal({ open, className, children }: { open: boolean; className?: string; children: ReactNode }) {
+  const { mounted, state } = usePresence(open, DURATION.exit)
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    if (!open) setSettled(false)
+  }, [open])
+  if (!mounted) return null
+  return (
+    <div
+      data-state={state}
+      data-reveal
+      className={cn(
+        'grid data-[state=open]:animate-reveal-in data-[state=closed]:animate-reveal-out',
+        className,
+      )}
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget && open) setSettled(true)
+      }}
+    >
+      <div className={cn('min-h-0', !settled && 'overflow-hidden')}>{children}</div>
+    </div>
   )
 }
 
@@ -76,7 +108,9 @@ export function Disclosure({
           </>
         )}
       </button>
-      {open && <div className="mt-1.5">{children}</div>}
+      <Reveal open={open}>
+        <div className="mt-1.5">{children}</div>
+      </Reveal>
     </section>
   )
 }

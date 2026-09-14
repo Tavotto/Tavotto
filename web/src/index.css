@@ -146,6 +146,10 @@
   /* 从下方升起：toast */
   --animate-rise-in: rise-in var(--duration-base) var(--ease-pop);
   --animate-rise-out: rise-out var(--duration-exit) var(--ease-exit);
+  /* 折叠内容展开 / 收起（ui/Field 的 Reveal，2026-09-14 二审 E3）：grid 行高 0fr ↔ 1fr，
+     下面的行跟着长高而不是瞬间跳出；退场短一档 */
+  --animate-reveal-in: reveal-in var(--duration-base) var(--ease-pop);
+  --animate-reveal-out: reveal-out var(--duration-exit) var(--ease-exit);
   /* 面板换图：旧图压在新图之上淡出。linear 而不是缓动——交叉淡入两侧的
      不透明度和恒为 1 才不会在中途出现一道暗带；forwards 是必须的，
      不然动画结束到卸载之间会有一帧回到 opacity:1，闪一下。 */
@@ -230,6 +234,28 @@
   to {
     opacity: 0;
     transform: translateY(2px);
+  }
+}
+
+@keyframes reveal-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+@keyframes reveal-out {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
   }
 }
 
@@ -441,6 +467,24 @@
 [data-stroke-fields] :has(> input) {
   flex: 0 0 auto;
   width: auto;
+}
+
+/* 原生 <details>（ui/Details）的展开也跟着长高（二审 E3）：只在能把高度插值到 auto 的引擎里
+   生效（Chromium 129+ 的 interpolate-size），WKWebView 暂时仍是即时展开——不损失信息。 */
+@supports (interpolate-size: allow-keywords) {
+  details {
+    interpolate-size: allow-keywords;
+  }
+  details::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    transition:
+      block-size var(--duration-base) var(--ease-pop),
+      content-visibility var(--duration-base) allow-discrete;
+  }
+  details[open]::details-content {
+    block-size: auto;
+  }
 }
 
 /* 气泡（Tooltip）不是控件：连 Radix 的定位外壳一起不吃指针。

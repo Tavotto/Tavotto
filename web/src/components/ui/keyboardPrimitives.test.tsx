@@ -132,6 +132,84 @@ describe('Tabs：tablist 的键盘契约', () => {
   })
 })
 
+describe('共享指示物：整组只有一条下划线 / 一块选中底，位置由选中项决定（二审 E2）', () => {
+  /** jsdom 不排版：把每一格的几何装成「第 i 格在 x = 40 i，宽 30」 */
+  const geometry = () => {
+    const fakeLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetLeft')!
+    const fakeWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')!
+    Object.defineProperty(HTMLElement.prototype, 'offsetLeft', {
+      configurable: true,
+      get(this: HTMLElement) {
+        const i = Number(this.dataset.slot ?? -1)
+        return i >= 0 ? 40 * i : 0
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset.slot != null ? 30 : 0
+      },
+    })
+    return () => {
+      Object.defineProperty(HTMLElement.prototype, 'offsetLeft', fakeLeft)
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', fakeWidth)
+    }
+  }
+  let restore: () => void
+  beforeEach(() => {
+    restore = geometry()
+  })
+  afterEach(() => restore())
+
+  function TabHarness() {
+    const [tab, setTab] = useState('a')
+    return (
+      <TabList label="视图">
+        {['a', 'b', 'c'].map((id, i) => (
+          <Tab key={id} data-slot={i} panelId={`p-${id}`} active={tab === id} onClick={() => setTab(id)}>
+            {id}
+          </Tab>
+        ))}
+      </TabList>
+    )
+  }
+
+  it('Tabs：下划线只有一条，跟着选中页签走；页签自己不再画', async () => {
+    await render(<TabHarness />)
+    const bars = () => [...host.querySelectorAll<HTMLElement>('[data-tab-indicator]')]
+    expect(bars()).toHaveLength(1)
+    expect(bars()[0].style.transform).toBe('translateX(0px)')
+    expect(bars()[0].style.width).toBe('30px')
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+    await act(async () => tabs[2].click())
+    expect(bars()).toHaveLength(1)
+    expect(bars()[0].style.transform).toBe('translateX(80px)')
+    for (const t of tabs) expect(t.className).not.toContain('after:')
+  })
+
+  it('Segmented：选中底只有一块，跟着选中值走；多选取值不一时没有它', async () => {
+    const items = ['a', 'b', 'c'].map((v) => ({ value: v, label: v }))
+    function Harness({ initial }: { initial: string | null }) {
+      const [v, setV] = useState<string | null>(initial)
+      return <Segmented value={v} onChange={setV} items={items} ariaLabel="对齐" />
+    }
+    await render(<Harness initial="b" />)
+    const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')]
+    radios.forEach((r, i) => (r.dataset.slot = String(i)))
+    // 几何是渲染之后才装上的，换一次值让它重新量
+    const thumb = () => host.querySelector<HTMLElement>('[data-segmented-thumb]')
+    await act(async () => radios[2].click())
+    expect(host.querySelectorAll('[data-segmented-thumb]')).toHaveLength(1)
+    expect(thumb()!.style.transform).toBe('translateX(80px)')
+    expect(thumb()!.style.width).toBe('30px')
+    await act(async () => radios[0].click())
+    expect(thumb()!.style.transform).toBe('translateX(0px)')
+    for (const r of radios) expect(r.className).not.toContain('bg-selected')
+    await render(<Harness key="mixed" initial={null} />)
+    expect(host.querySelector('[data-segmented-thumb]')).toBeNull()
+  })
+})
+
 describe('Dialog：打开后的初始焦点', () => {
   // 用变量而不是 JSX 字面量：i18n lint 会把 JSX 里的字符串字面量当成漏翻的文案
   const TITLE = 'Export'

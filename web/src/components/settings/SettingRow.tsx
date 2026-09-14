@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Reveal } from '../ui/Field'
 import { ChevronRight, CircleQuestionMark, TriangleAlert } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -363,7 +364,9 @@ export function DiagnosticDisclosure({
         </button>
         {action}
       </div>
-      {open && <div className="flex flex-col gap-1 pl-2">{children}</div>}
+      <Reveal open={open}>
+        <div className="flex flex-col gap-1 pl-2">{children}</div>
+      </Reveal>
     </div>
   )
 }

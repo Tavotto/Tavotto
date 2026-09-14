@@ -37,7 +37,7 @@ export const Checkbox = forwardRef<
         size={ICON_SIZE.xs}
         strokeWidth={ICON_STROKE.emphasis}
         aria-hidden
-        className="pointer-events-none absolute inset-0 m-auto text-white opacity-0 peer-checked:opacity-100"
+        className="pointer-events-none absolute inset-0 m-auto text-white opacity-0 transition-opacity duration-fast peer-checked:opacity-100"
       />
     </span>
   )

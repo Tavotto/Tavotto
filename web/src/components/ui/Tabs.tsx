@@ -1,10 +1,13 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
+import { useRef, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { useSlidingIndicator } from './slidingIndicator'
 import { tabClass } from './tabClass'
 
 /**
  * 下划线标签页：整行只有文字与一条 2px 的近黑下划线，没有框、没有底色。
- * 选中态 = 字重 + 下划线（两重线索，不单靠颜色）；未选中 ink-3，hover 提到 ink-2。
+ * 选中态 = ink 色 + 下划线（两重线索，不单靠颜色）；未选中 ink-3，hover 提到 ink-2。
+ * 下划线是 **tablist 上唯一的一条**，切页签时滑到新位置（`useSlidingIndicator`，2026-09-14
+ * 二审 E2）——此前每个页签自己画一条，切换是旧的消失、新的出现，中间没有轨迹。
  *
  * 右栏的「属性 / 改图助手 / 画布」与画布标签栏共用同一条下划线（`TAB_UNDERLINE`）；
  * 画布标签有拖拽 / 重命名 / 关闭钮，结构不同，只借用视觉，不借用组件。
@@ -39,15 +42,29 @@ export function TabList({
     // 自动激活：焦点到哪一页就切到哪一页（点击与键盘走同一个 onClick）
     if (target.getAttribute('aria-selected') !== 'true') target.click()
   }
+  const rootRef = useRef<HTMLDivElement>(null)
+  const indicator = useSlidingIndicator(rootRef, '[role="tab"][aria-selected="true"]')
   return (
     <div
       {...rest}
+      ref={rootRef}
       role="tablist"
       aria-label={label}
       onKeyDown={handleKeyDown}
-      className={cn('flex h-full items-center gap-3', className)}
+      className={cn('relative flex h-full items-center gap-3', className)}
     >
       {children}
+      {indicator.style && (
+        <span
+          aria-hidden
+          data-tab-indicator
+          className={cn(
+            'pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-ink',
+            indicator.animate && 'transition-[transform,width] duration-base ease-pop',
+          )}
+          style={indicator.style}
+        />
+      )}
     </div>
   )
 }

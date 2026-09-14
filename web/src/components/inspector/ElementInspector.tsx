@@ -84,7 +84,7 @@ import {
   unsupportedOf,
 } from './roles/registry'
 import { Button } from '../ui/Button'
-import { Disclosure, Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Grid2, Reveal, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
@@ -1047,7 +1047,7 @@ function FieldList({
               </span>
             )}
           </button>
-          {moreOpen && (
+          <Reveal open={moreOpen}>
             <div className="mt-1.5 flex flex-col gap-1.5">
               {rows(named)}
               {restGroups.map(([group, fields], i) => (
@@ -1061,7 +1061,7 @@ function FieldList({
                 </div>
               ))}
             </div>
-          )}
+          </Reveal>
         </div>
       )}
     </>
@@ -1516,7 +1516,9 @@ function BatchSection({
                   />
                   {groupLabel(name)}
                 </button>
-                {open && <div className="mt-1.5">{rows(list)}</div>}
+                <Reveal open={open}>
+                  <div className="mt-1.5">{rows(list)}</div>
+                </Reveal>
               </div>
             )
           })}

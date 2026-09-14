@@ -135,8 +135,8 @@ const RULES: Rule[] = [
     spares: '<Segmented value={v} items={items} onChange={set} />',
     exempt: {
       '/src/components/ui/Segmented.tsx': {
-        count: 2,
-        why: '它就是那一处实现（另一处是键盘漫游里的 closest 选择器字面量）',
+        count: 3,
+        why: '它就是那一处实现（另两处是键盘漫游里的 closest 选择器与滑动选中底量测用的选择器字面量）',
       },
       '/src/components/inspector/controls/OptionGrid.tsx': {
         count: 1,

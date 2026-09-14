@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Reveal } from '../ui/Field'
 import { ChevronRight } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -57,9 +58,9 @@ export function PathValue({
         </button>
         <CopyButton text={path} label={st('project.copyPath', { name })} />
       </span>
-      {open && (
+      <Reveal open={open}>
         <span className="break-all pl-1 font-mono text-xs leading-snug text-ink-3">{path}</span>
-      )}
+      </Reveal>
     </span>
   )
 }
