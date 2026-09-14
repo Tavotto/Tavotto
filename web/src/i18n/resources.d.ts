@@ -190,6 +190,7 @@ export default interface Resources {
     "export": {
       "advanced": "高级选项",
       "blockedTitle": "有阻断性问题或无法自动核验的项。勾选上方确认后再导出。",
+      "blockingGroupCount": "{{count}} 项",
       "blockingListLabel": "阻断性问题",
       "blockingMore_other": "还有 {{count}} 条，在问题面板中查看",
       "cancelExport": "取消导出",
@@ -199,9 +200,9 @@ export default interface Resources {
       "checkLabel": "检查",
       "checkScopeCanvas": "整个画布",
       "checkScopeFigure": "仅此图",
-      "confirmBoth": "我已知悉 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项，仍要导出。确认会记入样式检查报告。",
+      "confirmBoth": "我已知悉上述 {{errors}} 条阻断问题与 {{notVerifiable}} 条无法自动核验的项，仍要导出。确认会记入样式检查报告。",
       "confirmCheckFailed": "预检没完成，我已自行确认此图可以导出。",
-      "confirmErrors": "我已知悉上述 {{errors}} 类阻断性问题，仍要导出。确认会记入样式检查报告。",
+      "confirmErrors": "我已知悉上述 {{errors}} 条阻断问题，仍要导出。确认会记入样式检查报告。",
       "confirmNotVerifiable": "我已知悉上述 {{notVerifiable}} 类无法自动核验的项，仍要导出。确认会记入样式检查报告。",
       "conflict": "导出目录里已经有 {{files}}。",
       "conflictRename": "另存一份",
@@ -277,12 +278,10 @@ export default interface Resources {
       "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
       "savedTo": "已保存到 {{dir}}",
       "scopeCanvas": "当前画布",
-      "scopeCanvasNote": "按画布尺寸出图，包含画布上的全部内容。",
       "scopeIgnored": "画布上的{{list}}不会带进导出。",
       "scopeLabel": "输出范围",
       "scopeOriginal": "原图尺寸",
       "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是占位值——导出后请核对。",
-      "scopeOriginalNote": "按这张图自己的尺寸出图，不受它在画布上摆放的影响。",
       "scopeUnavailable": {
         "no_figure": "还没选要导的图：点选下面的一张图，按原图尺寸导出。",
         "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
@@ -317,8 +316,8 @@ export default interface Resources {
       "saving": "正在保存…"
     },
     "mcp": {
-      "confirmBoth": "仍要导出：已知悉 {{errors}} 类阻断项与 {{notVerifiable}} 类无法核验的项。确认会记入 proof report。",
-      "confirmErrors": "仍要导出：已知悉 {{errors}} 类阻断项。确认会记入 proof report。",
+      "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",
+      "confirmErrors": "仍要导出：已知悉 {{errors}} 条阻断项。确认会记入 proof report。",
       "exportBlockedTitle": "有阻断项或无法核验项：先在下方勾选确认",
       "exportBoth": "导出 PDF+PNG",
       "exportPendingTitle": "还有改动没画上，等这一版渲染完再导出",
@@ -1092,7 +1091,6 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "currentDefault": "当前默认",
         "currentDefaultAria": "{{name}} 是当前默认的编码 Agent",
         "defaultButton": "默认",
         "detail": {
@@ -1188,7 +1186,6 @@ export default interface Resources {
         "refreshFailed": "重新检测失败。下面仍是上次结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
-        "setDefault": "设为默认",
         "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
@@ -1225,7 +1222,6 @@ export default interface Resources {
         "diagramOff": "示意：只移动子图，标题与图例留在原地",
         "diagramOn": "示意：拖动子图时，标题与图例随之移动",
         "dragCompanions": "移动子图时，同步移动标题和图例",
-        "dragCompanionsDesc": "也包括色条轴与孪生轴；关掉只动子图本身",
         "more": "画布设置",
         "openCanvasSettings": "打开画布设置"
       },

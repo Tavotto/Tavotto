@@ -632,18 +632,29 @@ function IssueRow({
           className="text-ink-3 group-focus-within/row:text-ink group-hover/row:text-ink"
         />
       </div>
-      <TechnicalDetails issue={issue} />
+      <TechnicalDetails issue={issue} pinned={current} />
     </li>
   )
 }
 
-/** 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。 */
+/**
+ * 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。
+ *
+ * 折叠行本身也只在**这一行被指到 / 聚焦 / 是「当前」时**才出现（2026-09-14 审计 C1）：
+ * 五条同类问题就是五行「› 技术详情」，读的人一条都不需要；打开过就常驻（open 态不收）。
+ * 键盘：Tab 到这一行的「修复」钮时 focus-within 让它出现，再 Tab 就到它。
+ */
 // 折叠三角走 `components/ui/Details` 那一份（这里从前是自己拼的
 // `<details>` + ChevronRight，与树、检查器的折叠箭头对不上）。
-function TechnicalDetails({ issue }: { issue: ValidationIssue }) {
+function TechnicalDetails({ issue, pinned }: { issue: ValidationIssue; pinned: boolean }) {
   const lines = technicalDetailLines(issue)
   return (
-    <Details className="mb-0.5 ml-2">
+    <Details
+      className={cn(
+        'mb-0.5 ml-2',
+        !pinned && 'not-open:hidden group-hover/row:not-open:block group-focus-within/row:not-open:block',
+      )}
+    >
       {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
           用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
       <Summary className="type-meta h-5 w-fit cursor-default gap-0.5 rounded-xs pr-1 hover:text-ink-2">

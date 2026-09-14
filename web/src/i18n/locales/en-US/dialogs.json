@@ -11,6 +11,7 @@
     "blockedTitle": "Blocking problems or items that can’t be verified automatically. Tick the confirmation above before exporting.",
     "blockingListLabel": "Blocking problems",
     "blockingMore_one": "{{count}} more — open the problems panel",
+    "blockingGroupCount": "{{count}} items",
     "blockingMore_other": "{{count}} more — open the problems panel",
     "cancelExport": "Cancel export",
     "cancelled": "Export cancelled",
@@ -98,12 +99,10 @@
     "revealFailed": "Couldn’t reveal it in the file manager. The file is at: {{path}}",
     "savedTo": "Saved to {{dir}}",
     "scopeCanvas": "Current canvas",
-    "scopeCanvasNote": "Exports the canvas at its page size, with everything on it.",
     "scopeIgnored": "The {{list}} on the canvas won’t carry into this export.",
     "scopeLabel": "Output size",
     "scopeOriginal": "Original size",
     "scopeOriginalFallback": "This figure’s size can’t be read right now, so a placeholder is used — check the result.",
-    "scopeOriginalNote": "Exports this figure at its own size, regardless of how it's placed on the canvas.",
     "scopeUnavailable": {
       "no_figure": "No figure is chosen yet — pick one below to export it at its original size.",
       "no_figures": "This project has no figure to export at its original size yet, so only the canvas can be exported.",
@@ -923,8 +922,6 @@
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide",
-      "currentDefault": "Current default",
-      "setDefault": "Set as default",
       "currentDefaultAria": "{{name}} is the current default coding agent"
     },
     "canvas": {
@@ -933,8 +930,7 @@
       "more": "Canvas settings",
       "openCanvasSettings": "Open canvas settings",
       "diagramOn": "Diagram: the title and legend move with the axes.",
-      "diagramOff": "Diagram: only the axes move; the title and legend stay behind",
-      "dragCompanionsDesc": "Also colorbar and twin axes; off moves only the axes"
+      "diagramOff": "Diagram: only the axes move; the title and legend stay behind"
     },
     "copied": "Copied",
     "copy": "Copy",

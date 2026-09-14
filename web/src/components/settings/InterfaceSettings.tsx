@@ -71,7 +71,8 @@ export function InterfaceSettings({ close }: { close: () => void }) {
             界面这一层交给示意图——空间关系用图讲，比两行字快 */}
         <SettingRow
           label={st('canvas.dragCompanions')}
-          description={st('canvas.dragCompanionsDesc')}
+          // 一行只留两种辅助（2026-09-14 审计 D2）：小问号里那句已经把色条轴 / 孪生轴说全了，
+          // 说明行再说一遍是第二份；示意图讲空间关系，留着
           help={st('canvas.companionsExplain')}
           controlId="setting-drag-companions"
           // 示意图是说明的一部分，坐在标题列的说明下方（Session 6）；此前它与开关、

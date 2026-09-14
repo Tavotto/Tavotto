@@ -45,6 +45,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
+import { Kbd } from '../ui/Kbd'
 import { EmptyState } from '../ui/EmptyState'
 import { SearchInput } from '../ui/SearchInput'
 import { Popover } from '../ui/Popover'
@@ -352,7 +353,8 @@ export function AssistantPanel() {
               scope={scope}
               scopes={scopes}
             />
-            <span className="ml-auto font-mono text-xs text-ink-faint">{MOD}↵</span>
+            {/* 快捷键提示是要读的字：`Kbd`（ink-3），不用 ink-faint（2.5:1；2026-09-14 审计 E1） */}
+            <Kbd className="ml-auto">{MOD}↵</Kbd>
             <Tip
               label={
                 runningHere ? ai('panel.runningHere') : ai('panel.send', { key: modKey('↵') })

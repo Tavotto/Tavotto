@@ -825,16 +825,21 @@ export function ExportDialog() {
               />
             </div>
             {raster && (
-              <Select
-                value={String(ppi)}
-                onChange={setPpi}
-                options={PPI_VALUES.map((v) => ({
-                  value: v,
-                  label: translate('measure.ppi', { value: v }),
-                }))}
-                ariaLabel={ex('ppiSelectLabel')}
-                className="w-28 shrink-0"
-              />
+              // 分辨率带可见标签（2026-09-14 审计 B2：此前只有 aria-label，坐在「文件名」标题下
+              // 像文件名的一部分；设置 › 导出页同一控件本来就叫「分辨率」）
+              <label className="flex shrink-0 items-center gap-2 text-xs text-ink-2">
+                <span>{ex('ppiSelectLabel')}</span>
+                <Select
+                  value={String(ppi)}
+                  onChange={setPpi}
+                  options={PPI_VALUES.map((v) => ({
+                    value: v,
+                    label: translate('measure.ppi', { value: v }),
+                  }))}
+                  ariaLabel={ex('ppiSelectLabel')}
+                  className="w-28"
+                />
+              </label>
             )}
           </div>
           {filenameIssue && (
@@ -1210,10 +1215,12 @@ function ScopeNote({
   fallback: boolean
 }) {
   useTranslation('dialogs')
+  // 「按画布尺寸出图」「按这张图自己的尺寸出图」这两句只是把选中的范围再说一遍
+  // （2026-09-14 审计 B4：三句解释同一件事）——删掉；留下的是范围本身说不出的事实：
+  // 画布上的哪些变换不带进导出、磁盘原件与图幅不一致、尺寸读不到用了占位值、为什么灰
   if (scope === 'canvas') {
     return (
-      <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3">
-        <span>{ex('scopeCanvasNote')}</span>
+      <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3 empty:hidden">
         {/* 「原图尺寸」灰着时说一句为什么——一个禁用的按钮解释不了自己（§五：不隐藏
             选项）。这是一句说明，不是错误：用户此刻导的是画布，什么都没挡着他 */}
         {!originalSelectable && <span>{ex('scopeUnavailable.no_figures')}</span>}
@@ -1237,7 +1244,6 @@ function ScopeNote({
         ))}
       {available && (
         <>
-          <span>{ex('scopeOriginalNote')}</span>
           {fallback && <span className="text-warn">{ex('scopeOriginalFallback')}</span>}
           {ignored.length > 0 && (
             <span>
@@ -1370,7 +1376,9 @@ function TargetHeader({
 }
 
 /**
- * 阻断项清单（审计 T33）：标题 · 主语 · 当前值 → 要求，每条一个「定位」。
+ * 阻断项清单（审计 T33）：**按规则分组**——规则名只在组头说一遍，组内每行是
+ * 主语 · 当前值 → 要求 + 一个「定位」（2026-09-14 审计 B4：此前五行「字号低于绝对下限 ·
+ * 图例 / · 图例项 / · X 轴刻度…」把同一句规则名重复了五遍，问题面板早已按规则分组）。
  * 只列阻断级、只列前几条、不筛选、不修复——那些都在左侧问题面板。
  * 等级不只靠颜色：图标 + 「阻断」标签 + 颜色三重表达。
  */
@@ -1386,44 +1394,62 @@ function BlockingList({
   useTranslation(['dialogs', 'errors'])
   const shown = issues.slice(0, BLOCKING_SHOWN)
   const rest = issues.length - shown.length
+  // 保持首次出现的顺序：先按规则聚合，组内保留原顺序
+  const groups: { ruleCode: string; title: string; items: ValidationIssue[] }[] = []
+  for (const issue of shown) {
+    const g = groups.find((x) => x.ruleCode === issue.ruleCode)
+    if (g) g.items.push(issue)
+    else groups.push({ ruleCode: issue.ruleCode, title: issueTitle(issue), items: [issue] })
+  }
   return (
-    <ul
-      aria-label={ex('blockingListLabel')}
-      className="flex flex-col gap-0.5"
-    >
-      {shown.map((issue) => {
-        const values = issueValues(issue)
-        const title = issueTitle(issue)
-        const subject = subjectName(issue)
-        return (
-          <li key={issue.issueId} data-blocking-issue={issue.ruleCode} className="flex items-start gap-2 py-1 text-xs">
-            <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0 text-danger" aria-hidden />
-            <span className="min-w-0 flex-1 leading-relaxed">
-              <span className="text-ink">{title}</span>
-              <span className="text-ink-3">{` · ${subject}`}</span>
-              {values.current && (
-                <span className="ml-1 font-mono text-xs text-ink-3">
-                  {values.expected
-                    ? translate('problems.valueArrow', {
-                        ns: 'errors',
-                        current: values.current,
-                        expected: values.expected,
-                      })
-                    : values.current}
-                </span>
-              )}
-            </span>
-            <button
-              type="button"
-              onClick={() => onLocate(issue)}
-              aria-label={ex('locateAria', { subject, title })}
-              className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
-            >
-              {ex('locate')}
-            </button>
-          </li>
-        )
-      })}
+    <ul aria-label={ex('blockingListLabel')} className="flex flex-col gap-1">
+      {groups.map((g) => (
+        <li key={g.ruleCode} data-blocking-group={g.ruleCode} className="py-0.5 text-xs">
+          <div className="flex items-center gap-2 leading-relaxed">
+            <TriangleAlert size={ICON_SIZE.xs} className="shrink-0 text-danger" aria-hidden />
+            <span className="text-ink">{g.title}</span>
+            {g.items.length > 1 && (
+              <span className="type-meta tabular-nums">{ex('blockingGroupCount', { count: g.items.length })}</span>
+            )}
+          </div>
+          <ul className="mt-0.5 flex flex-col gap-0.5 pl-5">
+            {g.items.map((issue) => {
+              const values = issueValues(issue)
+              const subject = subjectName(issue)
+              return (
+                <li
+                  key={issue.issueId}
+                  data-blocking-issue={issue.ruleCode}
+                  className="flex items-start gap-2 py-0.5"
+                >
+                  <span className="min-w-0 flex-1 leading-relaxed">
+                    <span className="text-ink-2">{subject}</span>
+                    {values.current && (
+                      <span className="ml-1.5 font-mono text-xs text-ink-3">
+                        {values.expected
+                          ? translate('problems.valueArrow', {
+                              ns: 'errors',
+                              current: values.current,
+                              expected: values.expected,
+                            })
+                          : values.current}
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onLocate(issue)}
+                    aria-label={ex('locateAria', { subject, title: g.title })}
+                    className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+                  >
+                    {ex('locate')}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </li>
+      ))}
       {rest > 0 && (
         <li className="py-1 pl-5">
           <button

@@ -278,14 +278,16 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
   }
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
+      {/* 两颗钮分权重（2026-09-14 审计 D3）：交给支持的是「导出诊断包」（secondary），
+          「复制诊断」是轻量路径（ghost），不再并排两颗同权重的 secondary */}
       <div className="flex flex-wrap items-center gap-2">
         {phase !== 'ready' ? (
-          <Button variant="secondary" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+          <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
             {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
           </Button>
         ) : (
           <>
-            <CopyButton text={text} label={st('diagnostics.copyReport')} variant="secondary" />
+            <CopyButton text={text} label={st('diagnostics.copyReport')} variant="ghost" />
             <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
               {st('diagnostics.hidePreview')}
             </Button>

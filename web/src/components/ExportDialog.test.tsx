@@ -1190,7 +1190,9 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     expect(rows()).toHaveLength(errors.length)
     const row = rows().find((r) => r.getAttribute('data-blocking-issue') === 'font-below-absolute-floor')!
     expect(row, '每一行带着稳定的规则码').toBeTruthy()
-    expect(row.textContent).toContain('字号低于绝对下限')
+    // 规则名在组头只说一遍（2026-09-14 审计 B4），行里是主语与数值
+    expect(row.closest('[data-blocking-group]')!.textContent).toContain('字号低于绝对下限')
+    expect(row.textContent).not.toContain('字号低于绝对下限')
     expect(row.textContent).toContain('x 刻度 1')
     expect(row.textContent).toContain('8.00 pt')
     expect(locateButtons()).toHaveLength(errors.length)

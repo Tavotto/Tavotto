@@ -207,48 +207,44 @@ describe('编码 Agent 一级页面', () => {
   })
 
   /**
-   * 每行里的默认钮（2026-09-11 起不再有单独的下拉框）。字面分两种（2026-09-13 审计
-   * B37）：当前默认的那一颗写「当前默认」，其余写「设为默认」——不再两行都写「默认」
+   * 每行行首一颗 `Radio`（2026-09-14 审计 D1）：默认助手是一组互斥取值，当前默认 = 选中，
+   * 其余可用的可点、不可用的禁用。此前是行尾一颗一会儿是状态一会儿是动作的按钮。
    */
-  const defaultButtons = () =>
-    [...document.querySelectorAll<HTMLButtonElement>('button')].filter((b) => {
-      const s = b.textContent?.trim()
-      return s === ag('currentDefault') || s === ag('setDefault')
-    })
+  const defaultRadios = () =>
+    [...document.querySelectorAll<HTMLInputElement>('input[type="radio"][name="default-coding-agent"]')]
 
-  it('每行自带默认钮：当前默认的是按下态并写「当前默认」，其余写「设为默认」，不可用的按不了', async () => {
+  it('每行行首一颗默认单选：当前默认的选中，不可用的禁用；不再有下拉框', async () => {
     await open(capsOf([agentCaps(), claudeCaps({ state: 'disabled', enabled: false, usable: false })]))
-    const buttons = defaultButtons()
-    expect(buttons).toHaveLength(2)
-    expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual([ag('currentDefault'), ag('setDefault')])
-    expect(buttons[1].disabled).toBe(true)
+    const radios = defaultRadios()
+    expect(radios).toHaveLength(2)
+    expect(radios.map((r) => r.checked)).toEqual([true, false])
+    expect(radios[1].disabled).toBe(true)
+    expect(radios[0].getAttribute('aria-label')).toBe(ag('currentDefaultAria', { name: agentCaps().display_name }))
+    expect(radios[1].getAttribute('aria-label')).toBe(ag('setDefaultAria', { name: claudeCaps().display_name }))
     expect(document.querySelector('[role="combobox"]'), '不再有默认 Agent 下拉框').toBeNull()
   })
 
-  it('按另一行的「默认」：真的写进 store，按下态跟着换', async () => {
+  it('选另一行的单选：真的写进 store，选中态跟着换', async () => {
     await open(capsOf([agentCaps(), claudeCaps()]))
-    const before = defaultButtons()
-    expect(before.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
+    expect(defaultRadios().map((r) => r.checked)).toEqual([true, false])
     await act(async () => {
-      before[1].click()
+      defaultRadios()[1].click()
     })
     expect(useAiStore.getState().agent).toBe('claude')
-    expect(defaultButtons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true'])
-    expect(defaultButtons().map((b) => b.textContent?.trim())).toEqual([ag('setDefault'), ag('currentDefault')])
+    expect(defaultRadios().map((r) => r.checked)).toEqual([false, true])
   })
 
-  it('首选那个不可用时按下态落到第一个可用的，但不改用户存着的首选值', async () => {
+  it('首选那个不可用时选中态落到第一个可用的，但不改用户存着的首选值', async () => {
     useAiStore.setState({ agent: 'claude' })
     await open(capsOf([agentCaps(), claudeCaps({ state: 'needs_auth', usable: false })]))
     expect(useAiStore.getState().agent).toBe('claude')   // 首选值原样留着
-    expect(defaultButtons().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false'])
+    expect(defaultRadios().map((r) => r.checked)).toEqual([true, false])
   })
 
-  it('localStorage 里存了不存在的 Agent 也不崩，按下态回退到第一个可用的', async () => {
+  it('localStorage 里存了不存在的 Agent 也不崩，选中态回退到第一个可用的', async () => {
     useAiStore.setState({ agent: 'opencode' })
     await open()
-    expect(defaultButtons()[0].getAttribute('aria-pressed')).toBe('true')
+    expect(defaultRadios()[0].checked).toBe(true)
     expect(useAiStore.getState().agent).toBe('opencode')
   })
 

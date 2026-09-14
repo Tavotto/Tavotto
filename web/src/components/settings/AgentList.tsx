@@ -3,7 +3,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentCaps } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
-import { Button } from '../ui/Button'
+import { Radio } from '../ui/Radio'
 import { Toggle } from '../ui/Toggle'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge, agentSubtitle } from './agentState'
@@ -63,6 +63,32 @@ export function AgentList({
             aria-label={ag('rowAria', { name: agent.display_name })}
             className="absolute inset-0 rounded-md outline-none hover:bg-surface-hover focus-visible:focus-ring"
           />
+          {/* 默认助手是一组互斥的取值：行首一颗 `Radio`（2026-09-14 审计 D1，用户拍板）。
+              此前是行尾一颗一会儿写「当前默认」（按下态、不可点）一会儿写「设为默认」（动作）
+              的按钮——同一个控件既当状态又当动作。↑↓ 在同名组里就能换默认；不可用的 Agent
+              那颗禁用 */}
+          {onSetDefault && (
+            <span className="relative z-10 flex h-7 shrink-0 items-center">
+              <Radio
+                name="default-coding-agent"
+                data-agent-default={agent.id}
+                checked={agent.id === defaultId}
+                disabled={!agent.usable}
+                onChange={() => onSetDefault(agent.id)}
+                // 名字与悬停提示同一份：行首一颗没有文字的单选，指过去得知道它管什么
+                aria-label={
+                  agent.id === defaultId
+                    ? ag('currentDefaultAria', { name: agent.display_name })
+                    : ag('setDefaultAria', { name: agent.display_name })
+                }
+                title={
+                  agent.id === defaultId
+                    ? ag('currentDefaultAria', { name: agent.display_name })
+                    : ag('setDefaultAria', { name: agent.display_name })
+                }
+              />
+            </span>
+          )}
           <AgentIcon iconKey={agent.icon_key} />
           {/*
             一行只回答用户此刻的问题：**这个能不能用、去哪儿配**——名称 + 状态
@@ -81,30 +107,8 @@ export function AgentList({
               <p className="truncate text-xs text-ink-3">{agentSubtitle(agent)}</p>
             )}
           </div>
-          {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了）。
-              「默认」按钮就在行里（2026-09-11 用户反馈：不再单独一行下拉框）：
-              当前默认的那颗是按下态，只有可用的 Agent 才能被设为默认 */}
+          {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了） */}
           <div className="relative z-10 flex shrink-0 items-center gap-1.5">
-            {onSetDefault && (
-              <Button
-                size="sm"
-                variant="secondary"
-                // 当前默认是「选中态」不是「主动作」：selected 轻 tint + 字重（第五节），
-                // 不给每一行都摆一颗近黑填色的钮。字面也分开写（2026-09-13 审计 B37）：
-                // 两行都写「默认」时一个像状态、一个像按钮，用户得靠底色猜哪个是哪个
-                active={agent.id === defaultId}
-                aria-pressed={agent.id === defaultId}
-                aria-label={
-                  agent.id === defaultId
-                    ? ag('currentDefaultAria', { name: agent.display_name })
-                    : ag('setDefaultAria', { name: agent.display_name })
-                }
-                disabled={!agent.usable}
-                onClick={() => onSetDefault(agent.id)}
-              >
-                {ag(agent.id === defaultId ? 'currentDefault' : 'setDefault')}
-              </Button>
-            )}
             <Toggle
               checked={agent.enabled && agent.installed}
               disabled={!agent.installed || busyAgent === agent.id}
