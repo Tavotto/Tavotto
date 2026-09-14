@@ -2570,3 +2570,100 @@ def test_publish_file_still_reports_a_real_fsync_failure(tmp_path, monkeypatch):
     assert got.value.code == "write_failed"
     assert not dest.exists(), "失败了却留下了产物"
     assert not tmp.exists(), "失败了却留下了半个临时文件"
+
+
+# ── 构建脚本找 pnpm：Windows 上 which() 回的是 pnpm.CMD（PR #349 windows-exe-smoke） ──
+#
+# `scripts/build_mcp_widget.py` 与 `scripts/build_browser_playground.py` 都要跑
+# `vite build --config <…>`。找工具时先 pnpm 再 npx，两者的形状不同：pnpm 得走
+# `pnpm exec vite build`，npx 走 `npx vite build`。此前「找到的是哪个」按**路径**判
+# （`found.endswith("pnpm")`），而 Windows 上 `shutil.which("pnpm")` 回的是
+# `…\pnpm.CMD`，对它恒假——于是 Windows 上一直在跑 `pnpm build --config …`：那是
+# package.json 里的 `build` **脚本**，多出来的参数被追加到脚本最后一条命令上。
+# main 上碰巧能用只因为脚本最后一条正是 `vite build`；#322 在 build 末尾接上扫描面
+# 门禁后，`--config/--outDir` 落到了门禁上，vite 按默认配置建到 dist/，临时目录里
+# 没有 mcp.html → FileNotFoundError。
+#
+# 判据的主语是**构造出来的 argv**（`vite_build_argv`），不跑 vite；两个脚本从同一个
+# 函数取命令，另用 AST 钉住「没有第二份按路径判的实现」。
+
+
+def _build_scripts():
+    """按 tests/test_playground_build.py 的写法把 scripts/ 放进 sys.path 再 import。"""
+    if str(_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(_SCRIPTS_DIR))
+    import build_browser_playground  # noqa: PLC0415
+    import build_mcp_widget  # noqa: PLC0415
+
+    return build_mcp_widget, build_browser_playground
+
+
+@pytest.mark.parametrize(
+    "shim",
+    [
+        r"C:\Users\x\AppData\Roaming\npm\pnpm.CMD",  # npm -g 装的 shim（大写 .CMD）
+        r"C:\Program Files\nodejs\pnpm.cmd",  # corepack 放出来的
+        "/opt/homebrew/bin/pnpm",  # 对照：POSIX 上没有后缀，改前改后都该走 exec
+    ],
+)
+def test_build_scripts_run_vite_through_pnpm_exec_even_when_which_returns_the_cmd_shim(
+    monkeypatch, shim
+):
+    widget, playground = _build_scripts()
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: shim if name == "pnpm" else None)
+    # 两个脚本各问一次：playground 那份是从 build_mcp_widget 导入的（下面用 AST 钉住），
+    # 但别拿 `is` 比模块身份——test_plugin_stage 用另一个 loader 再装一份时身份就变了
+    for module in (widget, playground):
+        for config in ("vite.mcp.config.ts", "vite.playground.config.ts"):
+            argv = module.vite_build_argv(config, "--outDir", "X")
+            assert argv[:4] == [shim, "exec", "vite", "build"], (
+                f"{module.__name__} / {config}: 构造出来的是 {argv}——`{argv[1]}` 不是 `exec`，"
+                "这是在跑 package.json 的 build 脚本，参数会落到脚本最后一条命令上"
+            )
+            assert argv[4:] == ["--config", config, "--outDir", "X"]
+
+
+def test_build_scripts_fall_back_to_npx_vite_when_pnpm_is_absent(monkeypatch):
+    """反方向：修「pnpm.CMD 判成 npx」不许把 npx 那一支也改成 `exec`——npx 没有 exec 子命令。"""
+    widget, playground = _build_scripts()
+    npx = r"C:\Program Files\nodejs\npx.cmd"
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: npx if name == "npx" else None)
+    for module in (widget, playground):
+        argv = module.vite_build_argv("vite.mcp.config.ts")
+        assert argv == [npx, "vite", "build", "--config", "vite.mcp.config.ts"], module.__name__
+
+
+def test_build_scripts_have_one_tool_check_and_it_is_not_by_path_suffix():
+    """结构：命令只在 build_mcp_widget 里构造一次，playground 从它导入；两个脚本里都不许再
+    出现 `.endswith("pnpm")`——按路径判是这个缺陷的根。判据用 AST 不用子串。"""
+    trees = {
+        rel: ast.parse((_SCRIPTS_DIR / rel).read_text(encoding="utf-8"))
+        for rel in ("build_mcp_widget.py", "build_browser_playground.py")
+    }
+    for rel, tree in trees.items():
+        offenders = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "endswith"
+            and any(isinstance(a, ast.Constant) and a.value == "pnpm" for a in node.args)
+        ]
+        assert not offenders, (
+            f"scripts/{rel}:{offenders} 还在按路径尾巴判 pnpm——Windows 上是 pnpm.CMD"
+        )
+    playground = trees["build_browser_playground.py"]
+    assert not [
+        n
+        for n in ast.walk(playground)
+        if isinstance(n, ast.FunctionDef) and n.name == "vite_build_argv"
+    ], "playground 自己又定义了一份 vite_build_argv——第二份实现迟早与第一份分叉"
+    imported = [
+        alias.name
+        for n in ast.walk(playground)
+        if isinstance(n, ast.ImportFrom) and n.module == "build_mcp_widget"
+        for alias in n.names
+    ]
+    assert "vite_build_argv" in imported, (
+        f"playground 从 build_mcp_widget 导入的是 {imported}，没有 vite_build_argv"
+    )

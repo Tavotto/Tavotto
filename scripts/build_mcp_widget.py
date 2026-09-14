@@ -86,12 +86,34 @@ def _force_utf8() -> None:
                 pass
 
 
-def _pnpm() -> list[str]:
+def _node_runner() -> tuple[str, str]:
+    """先 pnpm 再 npx：(可执行文件路径, 查的是哪个名字)。
+
+    **按查的名字判、不按找到的路径判。** Windows 上 `shutil.which("pnpm")` 回的是
+    `…\\pnpm.CMD`，此前的 `found.endswith("pnpm")` 对它恒假，于是 Windows 上一直走的是
+    npx 那一支的形状 `pnpm build --config …`——那是 package.json 里的 `build` **脚本**，
+    多出来的参数被追加到脚本最后一条命令上。main 上碰巧能用只因为脚本最后一条正是
+    `vite build`；#322 在 build 末尾接上扫描面门禁的那天起，`--config/--outDir` 就落到
+    了门禁上，vite 按默认配置建到 dist/，临时目录里没有 mcp.html（PR #349
+    windows-exe-smoke）。看护 `tests/test_windows_regressions.py` 的三条 build_scripts。
+    """
     for name in ("pnpm", "npx"):
         found = shutil.which(name)
         if found:
-            return [found] if name == "pnpm" else [found, "vite"]
+            return found, name
     raise SystemExit("没找到 pnpm 或 npx —— 构建前端需要 Node 工具链")
+
+
+def vite_build_argv(config: str, *extra: str) -> list[str]:
+    """`vite build --config <config> …` 的完整 argv。
+
+    pnpm 走 `pnpm exec vite build`（**不是** `pnpm build`——那是脚本，参数会落到脚本最后
+    一条命令上），npx 走 `npx vite build`。两条构建链（MCP 画布 / playground）都从这里
+    取，别再各自判一次。
+    """
+    found, name = _node_runner()
+    prefix = [found, "exec", "vite"] if name == "pnpm" else [found, "vite"]
+    return [*prefix, "build", "--config", config, *extra]
 
 
 def _entry(rel: PurePath, data: bytes) -> tuple[bytes, bytes]:
@@ -151,16 +173,10 @@ def source_fingerprint() -> str:
 
 def build() -> str:
     """跑 vite（输出进临时目录），把 JS/CSS 内联成一份 HTML 文本并打上指纹戳。"""
-    tool = _pnpm()
     fingerprint = source_fingerprint()  # 构建**之前**算：构建不改源码，之后算也一样
     with tempfile.TemporaryDirectory(prefix="tavotto-mcp-dist-") as dist_str:
         dist = Path(dist_str)
-        cmd = (
-            [*tool, "exec", "vite", "build", "--config", "vite.mcp.config.ts"]
-            if tool[0].endswith("pnpm")
-            else [*tool, "build", "--config", "vite.mcp.config.ts"]
-        )
-        cmd += ["--outDir", str(dist), "--emptyOutDir"]
+        cmd = vite_build_argv("vite.mcp.config.ts", "--outDir", str(dist), "--emptyOutDir")
         proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0:
             raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")

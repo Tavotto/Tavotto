@@ -36,7 +36,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from build_mcp_widget import _pnpm, digest  # noqa: E402
+from build_mcp_widget import digest, vite_build_argv  # noqa: E402
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -125,11 +125,7 @@ def _git_commit() -> str:
 
 
 def build() -> dict:
-    cmd = (
-        [*_pnpm(), "exec", "vite", "build", "--config", "vite.playground.config.ts"]
-        if _pnpm()[0].endswith("pnpm")
-        else [*_pnpm(), "build", "--config", "vite.playground.config.ts"]
-    )
+    cmd = vite_build_argv("vite.playground.config.ts")
     proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")
