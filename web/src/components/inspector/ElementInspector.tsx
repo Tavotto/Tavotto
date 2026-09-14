@@ -17,7 +17,7 @@ import {
   MoveUp,
   MoveVertical,
   RotateCcw,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AlignMode } from '@/lib/geometry'

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Bold, CircleQuestionMark, Crop, Italic, Minimize2, Pencil } from 'lucide-react'
+import { Bold, CircleQuestionMark, Crop, Italic, Minimize2, Pencil } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'

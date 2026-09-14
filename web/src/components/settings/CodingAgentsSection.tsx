@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, RefreshCw } from 'lucide-react'
+import { ExternalLink, RefreshCw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,

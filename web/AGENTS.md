@@ -1642,10 +1642,13 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 通知只有一条轨（`NotificationRail`，底部居中、最多两条叠着）：普通状态短暂即逝、错误常驻可关、
 操作提示可关、「已为编辑加入本文档」带撤销；autosave 显示在顶栏文档名旁。
 
-**图标**（2026-09-06，用户反馈第 7 条；细则 `docs/ux/ICONOGRAPHY.md`）：全产品只有
-lucide-react 一套；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}` = 12 / 14 / 16 / 20，默认 sm，
-描边 1.75 按比例缩放，都由 `components/ui/Icon.tsx` 的 `IconProvider` 在三个根上给。
-写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写 strokeWidth；折叠 / 下拉
-箭头一律 xs；折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图
-与品牌标按个数豁免）、不许别名引入、不许拿字符 / emoji 当图标、不许裸 `<summary>`
-——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）。
+**图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
+全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，141 个名字与
+lucide 时代相同），**任何第三方图标库都不许再 import**；尺寸四档 `ICON_SIZE.{xs,sm,md,lg}`
+= 12 / 14 / 16 / 20，默认 sm，描边 2 按比例缩放，都由 `components/ui/Icon.tsx` 的
+`IconProvider` 在三个根上给。写法 `<X size={ICON_SIZE.md} />`，不写 size 即默认档，不写
+strokeWidth；开关 / 激活态写 `filled`（28 个有实心孪生，其余忽略）；折叠 / 下拉箭头一律 xs；
+折叠块用 `ui/Details`。不许手写内联 svg 当图标（画用户数据的样本图、品牌标与图标集本体
+按个数豁免）、不许引入图标集里没有的名字、不许拿字符 / emoji 当图标、不许裸 `<summary>`
+——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）；加新
+图标是在 `defs.ts` 里**画**，不是去别的库挑。

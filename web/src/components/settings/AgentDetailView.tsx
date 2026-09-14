@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Plus, RefreshCw, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {

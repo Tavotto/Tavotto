@@ -15,8 +15,8 @@ import {
   Shapes,
   TriangleAlert,
   Type,
-  type LucideIcon,
-} from 'lucide-react'
+  type IconComponent,
+} from '@/components/ui/icons'
 import { parentGid } from '@/components/inspector/roles/hierarchy'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -72,7 +72,7 @@ const et = (key: string, values?: Record<string, unknown>) =>
 // 角色 → 图标：唯一出处在 roles/roleIcons（身份头共用）
 
 /** 语义聚类：子图直属元素按角色归组，找不准的元素靠类别缩小范围 */
-const CLUSTERS: { key: string; labelKey: string; icon: LucideIcon; roles: Set<string> }[] = [
+const CLUSTERS: { key: string; labelKey: string; icon: IconComponent; roles: Set<string> }[] = [
   { key: 'text', labelKey: 'groupText', icon: Type, roles: new Set(['text', 'title', 'axis_label']) },
   {
     key: 'series',
@@ -88,7 +88,7 @@ const CLUSTERS: { key: string; labelKey: string; icon: LucideIcon; roles: Set<st
     roles: new Set(['legend', 'legend_text', 'colorbar']),
   },
 ]
-const clusterIcon = (key: string): LucideIcon => CLUSTERS.find((c) => c.key === key)?.icon ?? Shapes
+const clusterIcon = (key: string): IconComponent => CLUSTERS.find((c) => c.key === key)?.icon ?? Shapes
 
 const clusterOf = (role: string): (typeof CLUSTERS)[number] | undefined =>
   CLUSTERS.find((c) => c.roles.has(role))
@@ -469,7 +469,7 @@ function ClusterRow({
 }: {
   rowKey: string
   label: string
-  icon: LucideIcon
+  icon: IconComponent
   count: number
   depth: number
   expanded: boolean

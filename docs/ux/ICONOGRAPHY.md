@@ -1,43 +1,50 @@
 # 图标体系（Iconography）
 
-> 用户反馈第 7 条：「目前 Tavotto 里面的图标非常不统一，太丑了，参考
-> morphicons.com 来统一图标。」分支 `uf/07-icon-unify`（基线 `5bad5de5`）。
-> 代码里的唯一出处是 `web/src/components/ui/Icon.tsx`，门禁在同目录的
-> `iconography.test.tsx`；本文是它们的说明书，不另立规则。
+> 第一版 2026-09-06（用户反馈第 7 条「图标非常不统一」）把尺寸、描边、别名与手绘 svg
+> 统一到 lucide 一套；第二版 2026-09-15（用户反馈「所有图标都不够精致，很 demo」）把
+> 图形本身换成自绘的一套，决策在 ADR 0052。代码里的唯一出处是
+> `web/src/components/ui/icons/`（几何 `defs.ts`、工厂 `createIcon.tsx`、公开面 `index.ts`）
+> 与 `web/src/components/ui/Icon.tsx`（尺寸阶梯 / 描边 / Provider），门禁在
+> `web/src/components/ui/iconography.test.tsx`；本文是它们的说明书，不另立规则。
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`lucide-react`（描边图标，24 网格）。不换库——
-  morphicons 本身就跑在 Lucide / Heroicons / Tabler 之上，它统一的是**变形动画**，
-  不是图形语言；仓库里 82 个文件早已在用 lucide。丑的根源是**同一套图标被用成了
-  十种尺寸**，加上手绘 svg、别名、浏览器自带的折叠三角混在一起。
-- 尺寸只有四档 `ICON_SIZE = { xs: 12, sm: 14, md: 16, lg: 20 }`，默认 **sm**；
-  描边 `1.75`，**按比例缩放**；三个 React 根都套 `IconProvider`，不写 `size`
-  的图标拿到默认档而不是 lucide 自己的 24 / 2。
-- 同一语义全产品只用同一个图标（表见第四节）；有歧义的三组留给用户拍板（第五节）。
-- 不接 morphicons：数据在第六节。
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 141 个。名字与 lucide 时代
+  一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
+  import**（门禁按 import 路径判）。
+- 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
+  内角 ≥ 1；标点是直径 2.5 的纯填充圆；每个图标 ≤ 3 个可辨元素、元素间净空 ≥ 2；
+  同一家族同一个骨架。
+- 尺寸只有四档 `ICON_SIZE = { xs: 12, sm: 14, md: 16, lg: 20 }`，默认 **sm**；描边
+  `ICON_STROKE.regular = 2`，`emphasis = 2.5` 只给复选框的勾；三个 React 根都套
+  `IconProvider`，图标集自己的默认就是阶梯，Provider 只是「默认档在哪改」的唯一答案。
+- 选中 / 激活态用实心孪生：`<Layers filled />`。只有 28 个真正用作开关的图标有孪生，
+  其余忽略 `filled`（第五节）。
 
-## 二、修改前的盘点
+## 二、精致感从哪来——量出来的六条
 
-扫描范围：`web/src`（含 `mcp/`、`playground/`、`embedded/`）与 `src-tauri/`。
-`src-tauri` 的界面只有两张启动 / 错误页（`shell/splash.html`、`shell/error.html`），
-没有图标；桌面壳的其余界面全由 Flask 提供、与浏览器同一份，所以下表就是全部。
+规格不是凭感觉定的。OpenAI 自己的设计系统 `@openai/apps-sdk-ui`（ChatGPT 应用的组件库，
+MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 lucide 在 Tavotto 里的病根：
 
-| 来源 | 数量 | 用在哪 | 尺寸 / 描边现状 |
+| 维度 | lucide 在 Tavotto 里 | OpenAI 图标集（量得） | 新规 |
 | --- | --- | --- | --- |
-| `lucide-react` 直接渲染 | 323 处 JSX，101 个不同图标，82 个文件 | 全部界面 | `size` 用了 **10 种**数值：12（145）、13（75）、11（58）、14（24）、10（7）、15（6）、16（3）、9（2）、18（1）、`SPINNER[size]`（2）；描边全部走 lucide 默认 2（按比例，即 11px 上 0.92px、14px 上 1.17px），只有一处手写 `strokeWidth={3}` |
-| `lucide-react` 间接渲染（`icon: Icon` 再 `<Icon size={n}>`） | 20 处 | 菜单项、排列按钮表、左侧轨道、空状态、Agent 状态 | 11 / 12 / 13 / 14 / 16 / 20 六种 |
-| 别名引入（同一张图两个名字） | 11 个名字，32 处 | `AlertTriangle`↔`TriangleAlert`、`Loader2`↔`LoaderCircle`、`CheckCircle2`↔`CircleCheck`、`XCircle`、`CircleHelp`、`MinusCircle`、`FileCode2`、`History`、`FileWarning`、`MoreHorizontal`、`ShieldQuestion` | — |
-| 手写内联 `<svg>` 当图标 | 1 处 | `settings/SettingRow.tsx` 的折叠箭头（11 网格、描边 1.3） | 与 lucide 的 ChevronRight 不同重量 |
-| 手写内联 `<svg>` **不是**图标 | 13 处，12 个文件 | 画布形状 / 箭头 / 选框本体（3）、检查器里跟着用户样式变的样本图（线型 / 标记 / 纹样 / 箭头头尾 / 图例句柄 / 刻度示意，7）、画布布局缩略图（1）、品牌标（1） | 保留，按个数豁免 |
-| 浏览器自带的 `<details>` 折叠三角 | 16 处，10 个文件 | 导出高级选项、问题面板技术详情、脚本库、注册表对话框、Agent 详情、样式对话框、playground | 每个浏览器长得都不一样 |
-| Unicode 字符当图标 | 1 处 | 刻度示意图里「已修改的边」芯片上的 `×` | 字体渲染，随字号变 |
-| emoji、CSS 背景图、自定义图标字体 | 0 | — | — |
-| 快捷键符号 ⌘ ⇧ ⌥ ⏎ ↑ ↓ | 若干 | 快捷键提示、菜单右侧 | **不是图标**，是按键名，不动 |
-| `×` 作乘号（`80 × 57.6 mm`、`×3`） | 若干 | 尺寸、计数徽标 | 不是图标，不动 |
-| 品牌标 `BrandMark` | 3 处（20 / 24 / 54） | 顶栏、项目选择器、关于页 | 唯一出处 `lib/brand.ts`，不在统一范围 |
-| `AgentIcon` 外框（36 / 40） | 2 处 | 编码 Agent 列表 / 详情 | 外框不是图标；框里的字形已改走阶梯 |
-| `generative-loaders` 的 `InlineLoader`（24） | 1 处 | AI 面板等待态 | 不是图标 |
+| 网格 / 描边 | 24 / 1.75 | 24（730 / 755）/ 2，已展开成填充 | 24 / 2 |
+| 16px 上的线宽 | 1.17px（14px 上 1.02px，比 13px 正文的笔画还细） | 1.33px | 1.33px |
+| 端点 / 拐角 | 圆头；闭合外形多数 r=2 | 三角外角 r≈4、方框 r≈3.5、六角 r≈3；内角 r=1 | 外角 ≥ 2.5、内角 ≥ 1 |
+| 标点 | 长 0.01 的线段，直径 = 线宽 | 实心圆，直径 2.3～2.5 | 实心圆，直径 2.5 |
+| 元素数 | 不限（齿轮 8 齿、剪贴板 6 段） | ≤ 3（设置 = 六角 + 环） | ≤ 3，净空 ≥ 2 |
+| 选中态 | 只靠底色 | 43 对 outline / filled | 28 个实心孪生 |
+
+1. **标点得是点。** 叹号的点是长 0.01 的线段时，16px 上只剩 1.2px——警告图标「缺了
+   点什么」就是它。状态家族（警告 / 错误 / 说明 / 帮助 / 问题）共用同一套点与竖条。
+2. **线要比正文笔画略重，不能更轻。** 界面正文 13px 的笔画约 1.2px；1.75 / 24 在 14px
+   上只有 1.02px，整套图标像线框稿。改 2 之后 12px 的折叠箭头刚好 1px。
+3. **外角大、内角小、端点全圆。** 一大一小让轮廓「厚」得均匀；多边形用同一个圆角
+   函数生成，没有手调的角。
+4. **一个图标最多三个能分辨的元素。** 现状的齿轮、剪贴板、双框加太阳在 16px 上糊成一团。
+5. **用实心表达选中，不只靠底色。** 外形不变、内部细节挖空，切换时形状不跳。
+6. **同一家族同一个骨架。** 五个圆形状态共用 r=9 的圆，四个文件共用一个折角文档，
+   八个对齐都是「一条线 + 两根实心条」，四个箭头方向是同一条路径旋转。
 
 ## 三、定下的纪律（与理由）
 
@@ -50,106 +57,93 @@
 | `md` | 16 | **只有图标**的按钮（28px 点击区）、顶栏工具、左侧图标轨道、对话框标题栏的关闭钮 |
 | `lg` | 20 | 空状态、引导卡片、对话框级别的强调图 |
 
-为什么是 12 / 14 / 16 / 20 而不是 14 / 16 / 20：界面字号 11–14px、控件高 28px，
-密度比通常的 web app 高一档；14 是与 12–13px 正文并排时视觉体量相当的尺寸，
-16 在 28px 点击区里留有 6px 呼吸，12 给箭头与徽标。原来的 11 / 13 / 15 三个
-「中间值」全部归并——它们正是不统一的来源。
+界面字号 11–14px、控件高 28px，密度比通常的 web app 高一档；14 是与 12–13px 正文并排
+时视觉体量相当的尺寸，16 在 28px 点击区里留有 6px 呼吸，12 给箭头与徽标。
 
 ### 描边
 
-`strokeWidth = 1.75`，`absoluteStrokeWidth = false`（按比例缩放）。
+`strokeWidth = 2`，按比例缩放：12 / 14 / 16 / 20 上 1.0 / 1.17 / 1.33 / 1.67px。不能固定成
+绝对像素——图形在 24 网格上留的最小净空是 2 单位，12px 档上只剩 1px，描边一固定到
+1.5px 以上细节就糊成一团。`ICON_STROKE.emphasis = 2.5` 只给一种场景：填色小方块里的
+对勾（复选框选中态）。
 
-- 默认档 14px 上正好画成 **1.02px**，与界面其它 1px 分隔线同一重量；16px ≈ 1.17px、
-  20px ≈ 1.46px、12px ≈ 0.88px，随尺寸自然加重而不是所有档一样粗。
-- 不用绝对描边的硬理由：lucide 图形在 24 网格上留的最小间隙是 2 单位，12px 档上
-  只剩 1px，描边固定到 1.5px 以上细节就糊成一团。
-- 1.75 落在 morphicons 的 1.5–2.5 区间内，日后要接变形过渡不必再调重量。
-- 加粗 `ICON_STROKE.emphasis = 2.5` 只给一种场景：填色小方块里的对勾（复选框选中态），
-  1px 的勾在 14px 的蓝底上看不见。
+### 画一个新图标
+
+在 `defs.ts` 里按上面的画法写几何（`rr` 圆角矩形、`circ` 圆、`dot` 实心点、`poly` /
+`regular` 圆角多边形；`s` 描边、`f` 实心、`k` 挖空、`o` 挖空后压线、`sel` 孪生），在
+`index.ts` 加一行导出，跑 `iconography.test.tsx`，再用真浏览器截一张 16px 看一眼。
+**加图标是画，不是去别的库挑**——挑出来的图标就是「不统一」的来源。
 
 ### 对齐与间距
 
-- 图标在 `inline-flex items-center` 的行里靠 flex 居中，不调 baseline；行内文字中
-  偶尔夹一个图标（导出对话框的「编辑」链接）用 `inline` + 右边距。
+- 图标在 `inline-flex items-center` 的行里靠 flex 居中，不调 baseline。
 - 按钮里图标与文字的间距由 `ui/Button` 定：`sm` 4px、`md` 6px；菜单项 8px。
-- `IconProvider` 顺带给每个图标 `shrink-0`：之前它在三百多处被手写，漏一处就是
-  窄行里被压成椭圆的图标。
+- 每个图标自带 `shrink-0`（Provider 的默认类名），窄行里不会被压成椭圆。
 
 ### 机制
 
-- `IconProvider` = lucide 1.31 的 `LucideProvider`（context），套在三个根：
-  `main.tsx`、`playground/main.tsx`、`mcp/McpProviders.tsx`。
-- 写法：`<X size={ICON_SIZE.md} />`；不写 `size` 即 sm。不写 `strokeWidth`。
-- 折叠块：`ui/Details` 的 `Details` / `Summary`（原生 `<details>` 加 lucide 箭头）。
+- `IconProvider`（`Icon.tsx`）是一个 React context，套在三个根：`main.tsx`、
+  `playground/main.tsx`、`mcp/McpProviders.tsx`。
+- 写法：`<X size={ICON_SIZE.md} />`；不写 `size` 即 sm；不写 `strokeWidth`；开关 / 激活态
+  写 `filled`。
+- 无障碍：没有 `aria-label` / `aria-labelledby` / 子元素时自动 `aria-hidden`；类名
+  `icon icon-<kebab>`，用例按它认形状（`svg.icon-triangle-alert`）。
+- 折叠块：`ui/Details` 的 `Details` / `Summary`（原生 `<details>` 加图标集的箭头）。
 
 ### 门禁（`web/src/components/ui/iconography.test.tsx`，TypeScript AST）
 
-1. 非测试源码里没有内联 `<svg>`，豁免表**按文件按个数**（多画一个就红）；
-2. 任何大写标签上 `size={数字}` 都红（间接渲染也抓），lucide 标签上的 `size`
-   只能是 `ICON_SIZE.*`；`strokeWidth` 只能是 `ICON_STROKE.*`；不许 `absoluteStrokeWidth`；
-3. 从 `lucide-react` 引入的名字必须在 `icons` 表里（规范名）；
-4. JSX 文本里单独撑起一个元素的 ✕ × ▸ ▾ … 与任何 emoji 都红（`×{used}`、`{w} × {h}` 不算）；
-5. 没有裸的原生 `<summary>`。
+1. 非测试源码里没有内联 `<svg>`，豁免表**按文件按个数**（图标集本体 `createIcon.tsx`
+   那一个也在表里；多画一个就红）；
+2. 任何大写标签上 `size={数字}` 都红（间接渲染也抓），图标标签上的 `size` 只能是
+   `ICON_SIZE.*`；`strokeWidth` 只能是 `ICON_STROKE.*`；
+3. 从 `components/ui/icons` 引入的名字必须在 `ICON_DEFS` 里；**任何第三方图标库**
+   （lucide-react、heroicons、react-icons、tabler、radix、phosphor）的 import 一律红；
+4. JSX 文本里单独撑起一个元素的 ✕ × ▸ ▾ … 与任何 emoji 都红；
+5. 没有裸的原生 `<summary>`；
+6. 每个几何定义都渲染得出来；`filled` 渲染孪生、同页两个蒙版 id 不串。
 
-每条规则都有正反两组自检样例；上线前对着真源码跑过一次：改造前它报出
-342 处尺寸字面量、1 处内联 svg、1 处手写描边、32 处别名、1 处字符图标。
+每条规则都有正反两组自检样例。
 
 ## 四、语义统一表（同一含义只用一个图标）
 
-| 语义 | 图标 | 改造前的并存者 |
+| 语义 | 图标 | 曾经的并存者 |
 | --- | --- | --- |
 | 关闭 / 移除 | `X` | 刻度示意图芯片上的字符 `×` |
 | 撤销 / 重做 | `Undo2` / `Redo2` | Codex 内嵌画布与 playground 用的 `RotateCcw` / `RotateCw` |
 | 恢复到脚本原值 | `RotateCcw` | — |
 | 刷新 / 重新扫描 | `RefreshCw` | 素材库刷新用的 `RotateCw` |
-| 复制到剪贴板 | `Copy` | `ClipboardCopy`（脚本库诊断、设置页复制按钮） |
-| 外部链接 / 在文件管理器里显示 | `ExternalLink` | `SquareArrowOutUpRight`（项目切换器） |
-| 打开设置对话框 | `Settings` | `Settings2`（脚本库「打开环境设置」） |
-| 编辑（改名、改规范） | `Pencil` | `PenLine`（素材卡「编辑图」）、`Settings2`（导出对话框「编辑规范」） |
-| 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2`（AI 面板作用范围与 Agent） |
-| 警告 | `TriangleAlert` | 别名 `AlertTriangle`；问题面板「检查失败」用的 `ShieldAlert` |
+| 复制到剪贴板 | `Copy` | `ClipboardCopy` |
+| 外部链接 / 在文件管理器里显示 | `ExternalLink` | `SquareArrowOutUpRight` |
+| 打开设置对话框 | `Settings` | `Settings2` |
+| 编辑（改名、改规范） | `Pencil` | `PenLine`、`Settings2` |
+| 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2` |
+| 警告 | `TriangleAlert` | 别名 `AlertTriangle`；`ShieldAlert` 只留给「来源已分叉」 |
 | 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |
-| 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg（设置页）、浏览器 `<details>` 三角（16 处） |
+| 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg、浏览器 `<details>` 三角 |
 | 下拉 | `ChevronDown` | — |
 | 加载中 | `LoaderCircle` | 别名 `Loader2` |
 | 帮助 | `CircleQuestionMark` | 别名 `CircleHelp` |
 | 成功 | `CircleCheck`（状态）/ `Check`（选中标记） | 别名 `CheckCircle2` |
-| 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces`（`{ }`，2026-09-13 审计 B04 / B05 / B07 换掉：大括号说的是「参数化」这个实现词） |
-| 整张图（图内编辑的图幅） | `Fullscreen`（`roles/roleIcons`） | `Frame`（井字，读起来像网格 / 裁切） |
+| 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces` |
+| 整张图（图内编辑的图幅） | `Fullscreen`（`roles/roleIcons`） | `Frame` |
+| 改图助手 | `Sparkles`（一大一小两颗火花） | — |
 
-## 五、留给用户拍板的三组
+三个在第二版换了隐喻的（其余 138 个都是同一隐喻的重画）：设置（8 齿齿轮 → 六角 + 环）、
+图层（三层菱 → 一层实心 + 两道）、项目接入状态（六段剪贴板 → 剪贴板 + 勾）。
 
-1. **`Sparkles` 一图两义**：右栏「改图助手」入口与编码 Agent 注册表里 Claude 的头像框
-   都是 `Sparkles`。建议助手保留 `Sparkles`，Claude 头像框换 `MessageSquareText`
-   或 `Bot`（`AgentIcon.tsx` 的 `GLYPHS` 表一行）。未动。
-2. **`ShieldAlert` 是否保留为「完整性 / 来源变了」的专用警告**：更新源文件按钮的
-   「脚本与图已分叉」、playground 的「脚本被改过」仍用盾形；普通警告一律三角。
-   这次只把问题面板里那一处明显是普通警告的换成了三角。若要一刀切，全部改
-   `TriangleAlert` 是三处一行改动。
-3. **AI 面板「作用范围 · Agent」按钮**：从 `Settings2` 改成了 `SlidersHorizontal`
-   （与画布上下文栏「更多属性」同一个）。如果更愿意它读作「设置」，改回 `Settings`。
+## 五、有实心孪生的 28 个（`filled`）
 
-## 六、morphicons 评估（不接入）
+左轨：`LayoutGrid` `Images` `Layers` `SquareMousePointer` `TriangleAlert` `Settings`
+`ClipboardList`；状态：`CircleAlert` `Info` `CircleCheck` `CircleX` `CircleQuestionMark`
+`CircleMinus` `ShieldAlert` `ShieldCheck` `ShieldQuestionMark` `Lightbulb` `Zap`；开关：
+`Sparkles` `Pin` `Eye` `Lock` `Bookmark` `Square` `Circle` `Tags` `Diamond` `Bot`。
 
-| 项 | 数据 |
-| --- | --- |
-| 版本 / 许可 | 1.7.1，MIT |
-| React 绑定体积 | `react.js` 5.1 KB + core（controller 5.2 KB、spring 18.1 KB、normalize 13.5 KB）≈ **42 KB 原始 / 13.3 KB gzip** |
-| 依赖 | 消费的是**图标数据**，要另装 vanilla `lucide` 包（1.41.0），且要求与 `lucide-react`（1.31.0）版本对齐——多一对必须同步的版本 |
-| 渲染方式 | 把图标折成**一条 `<path>`** 做形变；静止态 DOM 与 lucide-react 的多元素 svg 不同，现有按 `svg.lucide-braces` 取节点的用例会失效 |
-| reduced-motion | 默认**无视**系统设置，需显式 `reducedMotion="user"`（仓库纪律要求支持） |
-| jsdom | 靠 rAF + 弹簧插值；未验证，未在仓库里装 |
-| 仓库里的状态切换对 | Eye/EyeOff（树、检查器）、Lock/LockOpen、Play/Pause（原生会话卡）、Check/Copy（复制按钮）——都在密集列表行里 |
+接在已有状态上的地方：左轨五个上下文（`aria-expanded`）、右栏助手钮（`aria-pressed`）、
+三处图钉、顶栏当前标注工具、图层树的锁。元素树的类型图标**不做**实心态。
 
-结论：13 KB gzip 换四对小图标在列表行里的变形，还要在 Codex 内嵌画布（`canvas.html`
-单文件产物）里再背一份，并新增一对「必须同步」的版本，不值。若以后要做，先接
-`Play/Pause` 与 `Eye/EyeOff` 两对，并把 `reducedMotion="user"` 写进封装。
+## 六、第一版的盘点（2026-09-06，历史）
 
-## 七、验证
-
-- `cd web && pnpm test`：190 个文件 / 2601 条通过（改造前 189 / 2586，新增的是门禁）。
-- `pnpm build`：通过。
-- 真浏览器（agent-browser，1440×900，zh-CN）对顶栏、检查器、问题面板、导出对话框、
-  命令面板、设置页、更多菜单各截修改前 / 后一张，见 PR 描述。
-- 受管产物 `codex-plugin/mcp/widget/canvas.html` 与 `web/dist-playground` **未重建**
-  （按任务约定留给合并前统一做）。
+改造前 `web/src` 里 lucide 直接渲染 323 处 / 101 个图标 / 82 个文件，`size` 用了 10 种
+数值、别名 11 个 32 处、手写 svg 1 处、浏览器 `<details>` 三角 16 处、字符图标 1 处。
+第一版把这些全部归到四档 / 一套名字 / `ui/Details`，并评估过 morphicons（不接：13 KB gzip
+换四对列表行里的变形，还要在 Codex 内嵌画布里再背一份）。第二版在此之上只换图形。

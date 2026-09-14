@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react'
+import type { IconComponent } from './icons'
 import { ICON_SIZE } from './Icon'
 import { Button } from './Button'
 
@@ -14,7 +14,7 @@ export function EmptyState({
   action,
   secondary,
 }: {
-  icon: LucideIcon
+  icon: IconComponent
   title: string
   hint?: string
   action?: { label: string; onClick: () => void }

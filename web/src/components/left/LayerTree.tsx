@@ -17,7 +17,7 @@ import {
   Square,
   Triangle,
   Type,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
@@ -403,7 +403,7 @@ function LayerRow({
           onClick={() => toggleLocked(obj.id)}
           label={lt(obj.locked ? 'unlock' : 'lock')}
         >
-          {obj.locked ? <Lock size={ICON_SIZE.sm} /> : <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />}
+          {obj.locked ? <Lock size={ICON_SIZE.sm} filled /> : <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />}
         </IconButton>
         <IconButton
           iconSize="sm"

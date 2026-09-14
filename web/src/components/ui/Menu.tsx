@@ -1,5 +1,5 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
-import { Check, ChevronRight } from 'lucide-react'
+import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
 import { useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'

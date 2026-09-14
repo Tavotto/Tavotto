@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, CircleMinus, CircleX } from 'lucide-react'
+import { CircleCheck, CircleMinus, CircleX } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   CodexShellError,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { ChevronDown, Plus, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'

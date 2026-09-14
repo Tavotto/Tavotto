@@ -68,8 +68,9 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 
 ## 四、图标
 
-见 `docs/ux/ICONOGRAPHY.md`：只有 lucide 一套，四档 12 / 14 / 16 / 20，描边 1.75 按比例
-缩放，`IconProvider` 给默认值。下拉的记号**只有 chevron-down**（收起朝下、展开转到朝上），
+见 `docs/ux/ICONOGRAPHY.md` 与 ADR 0052：只有 `components/ui/icons` 自绘的一套（24 网格、描边 2
+按比例缩放、闭合外形外角 ≥ 2.5、标点是直径 2.5 的实心圆、每图 ≤ 3 个元素），四档
+12 / 14 / 16 / 20，`IconProvider` 给默认值；开关 / 激活态用实心孪生 `filled`，不只靠底色。下拉的记号**只有 chevron-down**（收起朝下、展开转到朝上），
 不许用「<」或别的字形表示下拉。图标钮（Pin / Close / Copy / Refresh / More）走 `IconButton`：
 28×28、16px 图标、透明底、hover 才浮出 surface-hover。低频操作不给更重的视觉。
 
@@ -323,7 +324,7 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
   中心靠近视口右缘时折成十几个字一行；盒子按内容定宽（`w-max`）。
 - **两条 toast 不叠**：操作提示（HintToast）坐在状态 toast 那一行的上方。
 - **字重只有 400 / 500**：`font-semibold` 清零（品牌字、项目选择器标题、面板能力说明、/try）。
-- **图标级小 svg 的描边按渲染尺寸对齐 lucide**：12px≈1.3、14px≈1.5、16–18px≈1.6–1.75
+- **图标级小 svg 的描边按渲染尺寸对齐图标集（24 网格描边 2）**：12px≈1.0、14px≈1.17、16px≈1.33、20px≈1.67
   （边框示意、网格开关、刻度朝向、线型样张）；讲空间关系的示意图（关联对象、误差棒、
   视角）保留自己的重量，它们是图不是图标。
 - 任务历史：标题行与左右抽屉同高 36px，搜索框是 `SearchInput`，起手式小片是 secondary 按钮。

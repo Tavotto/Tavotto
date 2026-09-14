@@ -1,6 +1,6 @@
 import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
-import { X } from 'lucide-react'
+import { X } from './icons'
 import { ICON_SIZE } from './Icon'
 import { useRef, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'

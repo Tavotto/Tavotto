@@ -12,7 +12,7 @@
  * 路径最终都走同一个 onLaunch——启动逻辑（真 Pyodide 会话）在 PlaygroundApp。
  */
 import { useRef, useState } from 'react'
-import { Download } from 'lucide-react'
+import { Download } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
 import type { PlaygroundExample } from '../examples'

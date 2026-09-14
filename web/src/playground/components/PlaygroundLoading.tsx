@@ -9,7 +9,7 @@
  * 「取消」走 PlaygroundApp 的 cancelLoading：真正 dispose 在途 Worker
  * 回到案例库，不是把加载藏起来。
  */
-import { Check, LoaderCircle } from 'lucide-react'
+import { Check, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { PlaygroundPhase } from '../protocol'
 import { pg } from '../pgText'

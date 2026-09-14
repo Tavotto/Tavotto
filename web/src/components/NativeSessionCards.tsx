@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle, Pause, Play, TriangleAlert, Unplug, X } from 'lucide-react'
+import { LoaderCircle, Pause, Play, TriangleAlert, Unplug, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,

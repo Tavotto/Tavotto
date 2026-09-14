@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentCaps } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'

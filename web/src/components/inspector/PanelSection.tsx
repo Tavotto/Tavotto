@@ -14,7 +14,7 @@ import {
   RotateCcw,
   Scaling,
   Unlink2,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { msg, t as translate, type UiMessage } from '@/i18n'

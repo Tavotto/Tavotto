@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
   Paintbrush,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {

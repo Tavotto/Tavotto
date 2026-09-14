@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, Copy, Download, Ellipsis, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
+import { CircleCheck, Copy, Download, Ellipsis, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
 import { msg, t as translate } from '@/i18n'

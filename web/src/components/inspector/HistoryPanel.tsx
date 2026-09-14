@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { RotateCcwClock, RotateCcw, TriangleAlert } from 'lucide-react'
+import { RotateCcwClock, RotateCcw, TriangleAlert } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import {

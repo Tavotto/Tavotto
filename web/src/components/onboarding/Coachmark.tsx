@@ -1,5 +1,5 @@
 import { forwardRef, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'

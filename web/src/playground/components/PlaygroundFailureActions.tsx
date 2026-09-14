@@ -7,7 +7,7 @@
  * 会话来源是案例本身失败时（理论上不该发生，但 worker 崩溃/超时都可能），
  * ②仍然给——重试同一条路是合理出口。
  */
-import { Download } from 'lucide-react'
+import { Download } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
 import { FEATURED_EXAMPLE, type PlaygroundExample } from '../examples'

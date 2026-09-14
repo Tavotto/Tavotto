@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Play } from 'lucide-react'
+import { Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'

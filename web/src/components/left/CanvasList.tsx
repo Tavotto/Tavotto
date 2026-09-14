@@ -10,7 +10,7 @@ import {
   Plus,
   SearchX,
   Trash2,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   activateCanvas,

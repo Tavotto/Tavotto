@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Group, SlidersHorizontal, Ungroup } from 'lucide-react'
+import { ChevronDown, Group, SlidersHorizontal, Ungroup } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { captureContextBarMore, fromContextBar } from '@/lib/activityTelemetry'

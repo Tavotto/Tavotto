@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useRef, useState, type ButtonHTMLAttributes } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { LoaderCircle } from './icons'
 import { ICON_SIZE, type IconSizeStep } from './Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from './Tooltip'

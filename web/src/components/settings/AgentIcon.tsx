@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { Bot } from 'lucide-react'
+import { Bot } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { ICON_SIZE } from '@/components/ui/Icon'
 

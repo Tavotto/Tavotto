@@ -226,12 +226,12 @@ describe('图内元素的头部图标按角色（2026-09-12 critique P3）', () 
     useUiStore.setState({ selectedGids: ['axes_0.title'] })
     await mount()
     const icon = document.querySelector('header svg')!
-    expect(icon.getAttribute('class')).toContain('lucide-type')
-    expect(icon.getAttribute('class')).not.toContain('lucide-image')
+    expect(icon.getAttribute('class')).toContain('icon-type')
+    expect(icon.getAttribute('class')).not.toContain('icon-image')
     // 与元素树同一张表：树里标题也是 Type
     useUiStore.setState({ selectedGids: [] })
     await act(async () => {})
-    expect(document.querySelector('header svg')!.getAttribute('class')).toContain('lucide-fullscreen')
+    expect(document.querySelector('header svg')!.getAttribute('class')).toContain('icon-fullscreen')
   })
 })
 

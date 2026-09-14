@@ -5,8 +5,8 @@ import {
   CircleDashed,
   KeyRound,
   CircleMinus,
-  type LucideIcon,
-} from 'lucide-react'
+  type IconComponent,
+} from '@/components/ui/icons'
 import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -26,7 +26,7 @@ export const ag = (key: string, values?: Record<string, unknown>) =>
  */
 const PRESENTATION: Record<
   AiAgentUiState,
-  { icon: LucideIcon; tone: string; iconOnly?: boolean }
+  { icon: IconComponent; tone: string; iconOnly?: boolean }
 > = {
   detecting: { icon: CircleDashed, tone: 'text-ink-3' },
   // 「可用」是唯一不带文字的一档：实心绿圆 + 白对勾，文字留给读屏与 title

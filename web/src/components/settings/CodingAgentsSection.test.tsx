@@ -347,12 +347,12 @@ describe('三种状态明确区分（审计 T44 验收）', () => {
     expect(rows[0].textContent).toContain(ag('state.needs_auth'))
     expect(rows[1].textContent).toContain(ag('state.not_installed'))
     // **形状也不同**：等级不只靠颜色（灰度屏与色觉障碍下同样读得出）。
-    // 判据是两个图标的 lucide 类名不相等，不是"有图标"
+    // 判据是两个图标的 图标类名不相等，不是"有图标"
     // 量的是**状态徽标里**那个图标：一行里还有 Agent 的品牌图标，
     // 不指名道姓就会量到它，而它每个 Agent 本来就不一样（恒真）
     const badgeOf = (r: Element) => r.querySelector('[data-agent-state]')!
     const iconOf = (r: Element) =>
-      [...(badgeOf(r).querySelector('svg')?.classList ?? [])].find((c) => c.startsWith('lucide-'))
+      [...(badgeOf(r).querySelector('svg')?.classList ?? [])].find((c) => c.startsWith('icon-'))
     expect(iconOf(rows[0])).toBeTruthy()
     expect(iconOf(rows[0])).not.toBe(iconOf(rows[1]))
     // 颜色也不同，但它只是佐证——上面那条才是判据

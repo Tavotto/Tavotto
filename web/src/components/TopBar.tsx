@@ -15,7 +15,7 @@ import {
   Type,
   Undo2,
   RotateCcwClock,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   addSubLabels,
@@ -465,7 +465,7 @@ function MarkTools() {
         align="center"
         trigger={
           <Button size="sm" active={markActive} aria-label={t('workspace:topbar.annotate')}>
-            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} /> : <Shapes size={ICON_SIZE.md} />}
+            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
             <span className="text-xs">{t('workspace:topbar.annotate')}</span>
             <ChevronDown size={ICON_SIZE.xs} className="text-ink-faint" />
           </Button>

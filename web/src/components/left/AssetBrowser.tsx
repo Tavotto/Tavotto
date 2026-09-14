@@ -13,8 +13,8 @@ import {
   TriangleAlert,
   X,
   Zap,
-  type LucideIcon,
-} from 'lucide-react'
+  type IconComponent,
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
@@ -1091,7 +1091,7 @@ function CardAction({
   title,
   onClick,
 }: {
-  icon: LucideIcon
+  icon: IconComponent
   label: string
   title: string
   onClick: () => void

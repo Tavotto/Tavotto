@@ -1,5 +1,5 @@
 import * as RS from '@radix-ui/react-select'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown } from './icons'
 import { ICON_SIZE } from './Icon'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Info } from 'lucide-react'
+import { Info } from './icons'
 import { cn } from '@/lib/utils'
 import { ICON_SIZE } from './Icon'
 

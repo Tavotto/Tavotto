@@ -140,7 +140,7 @@ describe('卡片上的状态', () => {
       panel('Ok.pdf', { script: 'fig.py', capability: cap('editable') }),
     ])
     const card = cardOf('Ok.pdf')
-    expect(card.querySelector('svg.lucide-square-mouse-pointer')).not.toBeNull()
+    expect(card.querySelector('svg.icon-square-mouse-pointer')).not.toBeNull()
     expect(card.textContent).not.toContain('可编辑')
   })
 

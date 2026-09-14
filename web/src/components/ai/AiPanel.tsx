@@ -13,7 +13,7 @@ import {
   Square,
   Trash2,
   X,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
@@ -909,7 +909,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
             onClick={() => void pinAiHistory(entry.id, !entry.pinned).then(onChanged)}
           >
-            <Pin size={ICON_SIZE.xs} className={entry.pinned ? undefined : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.xs} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
           </Button>
         </Tip>
         {entry.changed && entry.revert_available && (

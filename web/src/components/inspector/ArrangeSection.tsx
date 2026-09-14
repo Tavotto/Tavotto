@@ -11,7 +11,7 @@ import {
   MoveUp,
   MoveVertical,
   Ungroup,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Select } from '@/components/ui/Select'
 import { t as translate } from '@/i18n'

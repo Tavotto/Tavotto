@@ -1,5 +1,5 @@
 import { useId, type KeyboardEvent } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'

@@ -9,7 +9,7 @@ import {
   ShieldAlert,
   TriangleAlert,
   X,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { CanvasStage } from '@/canvas/CanvasStage'

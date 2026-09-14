@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Pin } from 'lucide-react'
+import { Pin } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -74,7 +74,7 @@ export function LeftPanel({
             className="-mr-1.5"
             onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
           >
-            <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
           </IconButton>
         )}
       </div>

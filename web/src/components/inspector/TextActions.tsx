@@ -1,6 +1,6 @@
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CaseSensitive, CornerDownLeft, Subscript, Superscript } from 'lucide-react'
+import { CaseSensitive, CornerDownLeft, Subscript, Superscript } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { toggleMathScript, transformCase, type CaseMode } from '@/lib/richText'

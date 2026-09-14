@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ChevronRight, type LucideIcon } from 'lucide-react'
+import { ChevronRight, type IconComponent } from './icons'
 import { cn } from '@/lib/utils'
 import { ICON_SIZE } from './Icon'
 
@@ -61,7 +61,7 @@ export function TreeChevron({
 }
 
 /** 类型图标列：14px 图标坐在 16px 格里；选中行用墨色，其余 ink-3 */
-export function TreeIcon({ icon: Icon, selected }: { icon: LucideIcon; selected?: boolean }) {
+export function TreeIcon({ icon: Icon, selected }: { icon: IconComponent; selected?: boolean }) {
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
       <Icon size={ICON_SIZE.sm} className={selected ? 'text-ink' : 'text-ink-3'} />

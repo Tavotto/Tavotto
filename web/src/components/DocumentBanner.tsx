@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { TriangleAlert, RotateCcwClock, Lock } from 'lucide-react'
+import { TriangleAlert, RotateCcwClock, Lock } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatTime } from '@/i18n/format'
 import {

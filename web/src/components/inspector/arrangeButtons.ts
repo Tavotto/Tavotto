@@ -9,7 +9,7 @@ import {
   AlignVerticalDistributeCenter,
   MoveHorizontal,
   MoveVertical,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import type { AlignMode } from '@/lib/geometry'
 import type { AlignRef } from '@/store/actions'
 

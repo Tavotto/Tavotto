@@ -1,4 +1,4 @@
-import { CornerUpLeft, Link2, Unlink2 } from 'lucide-react'
+import { CornerUpLeft, Link2, Unlink2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'

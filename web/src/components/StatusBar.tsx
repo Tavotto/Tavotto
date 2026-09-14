@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Info, Lightbulb, X } from 'lucide-react'
+import { Check, CircleAlert, Info, Lightbulb, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { runUndoRedo } from '@/hooks/useKeyboard'

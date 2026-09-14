@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Bold, Italic } from 'lucide-react'
+import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'

@@ -1,4 +1,4 @@
-import { SquareMousePointer } from 'lucide-react'
+import { SquareMousePointer } from './icons'
 
 /**
  * 跨区域复用的**语义**图标（ICONOGRAPHY.md 第四节：同一含义只用一个图标）。

@@ -1,5 +1,5 @@
 import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
 import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'

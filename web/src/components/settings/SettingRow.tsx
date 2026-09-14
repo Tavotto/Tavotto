@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Reveal } from '../ui/Field'
-import { ChevronRight, CircleQuestionMark, TriangleAlert } from 'lucide-react'
+import { ChevronRight, CircleQuestionMark, TriangleAlert } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'

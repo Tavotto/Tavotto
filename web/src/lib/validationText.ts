@@ -12,7 +12,7 @@
  * 3. **不存翻译后的字符串**。这里全是现算的读法，问题本身存的是 message key
  *    与结构化参数（`ValidationIssue.message`）。
  */
-import { Lightbulb, OctagonAlert, ShieldQuestionMark, TriangleAlert } from 'lucide-react'
+import { Lightbulb, OctagonAlert, ShieldQuestionMark, TriangleAlert } from '@/components/ui/icons'
 import { formatQuantity } from '@/i18n/format'
 import { formatMessage, t as translate } from '@/i18n'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'

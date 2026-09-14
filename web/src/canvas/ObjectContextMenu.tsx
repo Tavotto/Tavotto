@@ -23,7 +23,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Ungroup,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { MOD } from '@/lib/utils'

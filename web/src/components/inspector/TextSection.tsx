@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CaseSensitive, ChevronDown, CornerDownLeft, Subscript, Superscript, Underline } from 'lucide-react'
+import { CaseSensitive, ChevronDown, CornerDownLeft, Subscript, Superscript, Underline } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   DEFAULT_INTERPRETATION,

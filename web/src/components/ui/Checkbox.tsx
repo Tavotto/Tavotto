@@ -1,5 +1,5 @@
 import { forwardRef, type InputHTMLAttributes } from 'react'
-import { Check } from 'lucide-react'
+import { Check } from './icons'
 import { ICON_SIZE, ICON_STROKE } from './Icon'
 import { cn } from '@/lib/utils'
 

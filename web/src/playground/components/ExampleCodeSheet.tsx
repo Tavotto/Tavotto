@@ -10,7 +10,7 @@
  * 与复制到剪贴板的都只有代码本身。打开它**不触发任何 Pyodide 加载**。
  */
 import { useEffect, useState } from 'react'
-import { Check, Copy, Play } from 'lucide-react'
+import { Check, Copy, Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Dialog } from '@/components/ui/Dialog'
 import { cn } from '@/lib/utils'

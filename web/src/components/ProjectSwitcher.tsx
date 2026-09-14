@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ExternalLink, Folder } from 'lucide-react'
+import { ChevronDown, ExternalLink, Folder } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorMsg } from '@/lib/api'
 import { disambiguateRecent } from '@/lib/recentProjects'

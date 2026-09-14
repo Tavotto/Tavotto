@@ -11,7 +11,7 @@ import {
   FolderPlus,
   HardDrive,
   X,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,

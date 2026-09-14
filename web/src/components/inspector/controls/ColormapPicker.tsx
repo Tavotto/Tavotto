@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react'
+import { Check } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useState } from 'react'
 import { t as translate } from '@/i18n'

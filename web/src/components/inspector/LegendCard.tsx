@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { displayLabel } from './roles/mathtext'
-import { Eye, EyeOff, MoveDown, MoveUp } from 'lucide-react'
+import { Eye, EyeOff, MoveDown, MoveUp } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'

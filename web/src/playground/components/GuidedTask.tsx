@@ -18,7 +18,7 @@
  * 不跨会话持久化。浮在画布左下角，不遮画布、不遮右栏、无全屏遮罩。
  */
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, LoaderCircle, X } from 'lucide-react'
+import { Check, Download, LoaderCircle, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { t as translate } from '@/i18n'

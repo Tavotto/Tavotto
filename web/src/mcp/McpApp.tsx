@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   ShieldQuestionMark,
   TriangleAlert,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { CanvasStage } from '@/canvas/CanvasStage'

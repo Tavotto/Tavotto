@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Images } from 'lucide-react'
+import { Images } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { pendingCount } from '@/lib/readinessText'
 import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'

@@ -10,7 +10,7 @@
  * 「把整个项目拖进来」。
  */
 import { useRef, useState } from 'react'
-import { Upload } from 'lucide-react'
+import { Upload } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { pg } from '../pgText'

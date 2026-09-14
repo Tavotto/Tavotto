@@ -16,8 +16,8 @@ import {
   Square,
   Type,
   WavesHorizontal,
-  type LucideIcon,
-} from 'lucide-react'
+  type IconComponent,
+} from '@/components/ui/icons'
 
 /**
  * 图内元素的角色 → 图标，**全产品只有这一张表**（ICONOGRAPHY.md 第四节：同一语义
@@ -31,7 +31,7 @@ import {
  * 「这张图自己的图幅」，与画布 / 多页区分开。此前是井字（`Frame`），读起来像网格
  * 或裁切（2026-09-13 审计 B54）。
  */
-export const ROLE_ICONS: Record<string, LucideIcon> = {
+export const ROLE_ICONS: Record<string, IconComponent> = {
   figure: Fullscreen,
   axes: Square,
   axes3d: Box,
@@ -57,4 +57,4 @@ export const ROLE_ICONS: Record<string, LucideIcon> = {
   arrow_patch: MoveUpRight,
 }
 
-export const roleIcon = (role: string): LucideIcon => ROLE_ICONS[role] ?? Shapes
+export const roleIcon = (role: string): IconComponent => ROLE_ICONS[role] ?? Shapes

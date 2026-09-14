@@ -15,7 +15,7 @@ import {
   Trash2,
   Type as TypeIcon,
   X,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { switchKindOf } from '@/lib/shapeSwitch'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
@@ -135,7 +135,7 @@ export function Inspector({
               className={id === 'assistant' ? 'inline-flex items-center gap-1 pr-1' : undefined}
             >
               {id === 'assistant' && (
-                <Sparkles size={ICON_SIZE.sm} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
+                <Sparkles size={ICON_SIZE.sm} filled={tab === 'assistant'} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
               )}
               {tabLabel(id)}
               {id === 'assistant' && runningAi && (
@@ -168,7 +168,7 @@ export function Inspector({
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
-              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
             </IconButton>
           ) : (
             <Tip label={t('overlayTip')} side="bottom">

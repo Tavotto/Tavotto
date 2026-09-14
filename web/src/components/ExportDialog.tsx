@@ -51,7 +51,7 @@ import {
   Pencil,
   TriangleAlert,
   X,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { Checkbox } from "./ui/Checkbox";
