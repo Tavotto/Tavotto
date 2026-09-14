@@ -1,4 +1,8 @@
-@import 'tailwindcss';
+/* 扫描面只有 web/src（issue #322）。`source()` 相对本文件所在目录；不写它的话 Tailwind
+   按 vite 根（web/）自动探测、连 .md 与 e2e 一起扫，散文里写全的工具类名会把规则吊在
+   产物里。三条构建链（vite.config / vite.mcp.config / vite.playground.config）都进这一份
+   CSS，所以声明一次三份产物都收窄；两向门禁 scripts/tailwind-scan-check.mjs 接在 pnpm build 后。 */
+@import 'tailwindcss' source('../src');
 
 /* ---------------------------------------------------------------------------
    Tavotto — design tokens（Design Constitution 的落地；全文见

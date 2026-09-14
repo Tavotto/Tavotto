@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/tailwind-scan-check.mjs",
     "lint": "oxlint",
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
     "i18n:extract": "i18next-cli extract",
