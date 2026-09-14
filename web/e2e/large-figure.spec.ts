@@ -238,6 +238,12 @@ test("大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点�
       total: document.getElementsByTagName("*").length,
     };
   });
+  // 绿的时候也要把实测数留在日志里（issue #321 B 表前两行）：这两条预算判据
+  // 此前只在失败消息里带数字，一直绿着就没人知道余量还剩多少、阈值该往哪挪。
+  console.log(
+    `[e2e-large] DOM 节点 ${dom.total}/${DOM_NODE_BUDGET} · ` +
+      `path ${dom.paths}/${VECTOR_PATH_COUNT / 100}（SVG 内 ${dom.svgElements} 个元素）`,
+  );
   expect(dom.total, `整页 DOM 节点 ${dom.total} 超预算`).toBeLessThan(
     DOM_NODE_BUDGET,
   );

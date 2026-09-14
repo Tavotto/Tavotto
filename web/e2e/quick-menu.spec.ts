@@ -46,10 +46,14 @@ test('右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚�
   await expect(menu).toBeVisible()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
-  await page.waitForTimeout(50) // Radix 把「聚焦下一项」放在 setTimeout(0)
-  expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.quickItem)).toBe(
-    'rebuild',
-  )
+  // Radix 把「聚焦下一项」放在 setTimeout(0)：一个宏任务之后才落焦。原先等固定
+  // 50ms 再一次性读 activeElement，负载下任务队列迟过 50ms 很平常（issue #321），
+  // 换成轮询——判据不变（焦点落在「重新构建」上），只是不再赌那一个宏任务的调度
+  await expect
+    .poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.quickItem), {
+      message: '↓↓ 之后焦点应当落在「重新构建」上',
+    })
+    .toBe('rebuild')
   await page.keyboard.press('r')
   await expect(menu).toBeVisible()
   await page.keyboard.press('Escape')

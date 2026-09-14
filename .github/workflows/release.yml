@@ -1002,9 +1002,13 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
           Start-Sleep 3
           # 这一步的契约是「三条判据都过 = 成功」，别把它托付给 $LASTEXITCODE
-          # 的隐式传播——那个值来自与结论无关的命令（issue #197：脚本跑到最后
-          # 一行仍退 1，机制没查清，解法是把后置条件写显式）。所有失败路径都是
-          # throw，走不到这里，所以不掩盖任何真失败。
+          # 的隐式传播——那个值来自与结论无关的命令。runner 会在每个 pwsh 步骤
+          # 末尾追加 `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`
+          # （actions/runner `ScriptHandlerHelpers.cs` 的 `FixUpScriptContents`），
+          # `-Command` 再把非 0/1 折成 1（about_pwsh「-Command | -c」一节）——
+          # issue #197 的「脚本跑到最后一行仍退 1」就是这两层。显式 `exit 0` 在追加
+          # 的那一行之前退出；所有失败路径都是 throw，走不到这里，所以不掩盖任何
+          # 真失败。规则见 `.github/AGENTS.md`「pwsh 步骤的退出码」。
           exit 0
 
       - name: 更新后的产物冒烟（复用 smoke_app 的既有断言）

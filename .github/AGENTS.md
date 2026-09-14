@@ -52,6 +52,27 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   的用例再谈修（cp936 编码、文件占用、盘符/反斜杠/中文路径、端口占用、
   CLI 只有 .cmd、解释器探测）。
 
+## pwsh 步骤的退出码（issue #197，2026-09-14 查清）
+
+- **pwsh / powershell 步骤里，最后一条原生命令故意非零退出（「期望用法错误退 2」
+  那类判据）时，脚本必须以显式 `exit 0`（或 `$global:LASTEXITCODE = 0`）结尾。**
+  否则断言全过、最后一行 `✓` 都打印了，步骤仍然退 1——不是 PowerShell 抛了什么，
+  是两层机制叠在一起：
+  * runner 会**改写**每个 pwsh 步骤的脚本：前置 `$ErrorActionPreference = 'stop'`，
+    **后置** `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`
+    （actions/runner `src/Runner.Worker/Handlers/ScriptHandlerHelpers.cs` 的
+    `FixUpScriptContents`）。你写的最后一行之后还有它这一行在跑，`$LASTEXITCODE`
+    是哪条命令留下的它不管。
+  * 步骤由 `pwsh -command ". '{0}'"` 起（同一文件的 `_defaultArguments`；Windows
+    runner 未指定 `shell` 时默认就是 pwsh），而 `-Command` 会把非 0/1 的退出码折成 1
+    （about_pwsh「-Command | -c」一节：「…an exit code other than 0 or 1, that exit
+    code is converted to 1 for process exit code」）——所以看见的永远是 1，不是那个 2。
+  显式 `exit 0` 在追加的那一行**之前**退出；失败路径全是 `throw`（Stop → 1），
+  走不到它，所以不掩盖任何真失败。`ErrorRecord` 转换与
+  `$PSNativeCommandUseErrorActionPreference` 都与此无关（2026-08-29 两轮实测证伪）。
+  现有两处：ci.yml `windows-exe-smoke` 的「console 版 CLI」步骤、release.yml 的
+  更新链验证步骤。
+
 ## 验证链（按层）
 
 - **Matplotlib CompatBench**（`tests/compat/` + `scripts/ci/compat_matrix.py`，

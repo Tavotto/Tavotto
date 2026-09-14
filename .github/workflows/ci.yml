@@ -431,8 +431,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # #346：先量再分片——Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
+      # 靠抬数字维持。让每个合并组自己把最慢的 50 条打进日志，分片 / session 级
+      # worker 复用的决定要从这份名单来，不从猜。只加在这个 job：backend-fast
+      # 的 Linux 腿不是问题所在。
       - name: pytest
-        run: python -m pytest
+        run: python -m pytest --durations=50
 
   # ────────────────────────────────────────────────────────────────
   # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
@@ -983,16 +987,31 @@ jobs:
           #
           # 2026-08-29 实测两轮：断言全过、`✓` 都打印了，步骤仍然退 1。第二轮
           # 已经去掉 `2>&1`、也把 `$ErrorActionPreference` 放成了 `Continue`，
-          # **日志里一行 PowerShell 异常文本都没有**，它还是退 1。所以那两条
-          # 猜测（ErrorRecord 转换 / `$PSNativeCommandUseErrorActionPreference`）
-          # 至少有一条不成立，**具体机制我们没查清**，也不打算再猜：
+          # **日志里一行 PowerShell 异常文本都没有**，它还是退 1。那两条猜测
+          # （ErrorRecord 转换 / `$PSNativeCommandUseErrorActionPreference`）
+          # 与此无关。机制是两层，2026-09-14 查清（issue #197）：
+          #
+          #   ① runner 会**改写**每个 pwsh / powershell 步骤的脚本：前置
+          #      `$ErrorActionPreference = 'stop'`，**后置**
+          #      `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`
+          #      （actions/runner `src/Runner.Worker/Handlers/ScriptHandlerHelpers.cs`
+          #      的 `FixUpScriptContents`）。所以「脚本最后一行打印了 ✓」之后还有
+          #      runner 追加的那一行在跑，它执行的是 `exit 2`——`$LASTEXITCODE`
+          #      此刻正是上一条原生命令留下的、我们**故意**要的那个 2。
+          #   ② 步骤是 `pwsh -command ". '{0}'"` 起的（同一文件里的
+          #      `_defaultArguments`），而 `-Command` 会把非 0/1 的退出码折成 1：
+          #      about_pwsh 的「-Command | -c」一节原文——"If the last command is an
+          #      external program or a PowerShell script that explicitly sets an exit
+          #      code other than 0 or 1, that exit code is converted to 1 for process
+          #      exit code."——所以看见的是 1 而不是 2。
           #
           #   这一步的契约是「**所有断言都过 = 成功**」，而它此前把这个结论
-          #   托付给了 `$LASTEXITCODE` 的隐式传播——那个值在最后一刻是上一条
-          #   原生命令留下的 **2**，也就是我们**故意**要的那个非零码。
+          #   托付给了 `$LASTEXITCODE` 的隐式传播——那个值来自一条**与结论无关**
+          #   的命令。
           #
-          # 所以显式 `exit 0`：把结论送进控制流，别让运行时替我们推断。失败
-          # 路径全是 `throw`，走不到这一行，所以它不掩盖任何真失败。
+          # 所以显式 `exit 0`：它在 runner 追加的那一行**之前**退出，把结论送进
+          # 控制流。失败路径全是 `throw`（Stop → 退 1），走不到这一行，所以它不
+          # 掩盖任何真失败。规则登记在 `.github/AGENTS.md`（「pwsh 步骤的退出码」）。
           #
           # 三条附带的事实，留给下一个想"顺手整理"这段的人：
           #  * `2>&1 > $null` 连吞输出都没做到——`2>&1` 绑的是**当时的** stdout，

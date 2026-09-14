@@ -47,9 +47,14 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
   console.log(`[动效] 弹窗进场 ${dlg.length} 帧，动画=${dlg[0]?.anim}，最大偏心 ${Math.max(...dlg.map((s) => Math.max(s.dx, s.dy))).toFixed(1)}px`)
   expect(dlg.length, '应当采到帧').toBeGreaterThan(2)
   expect(dlg[0].anim, '进场应当在播 pop-in').toBe('pop-in')
+  // 阈值 8 落在两档之间（issue #321 A 表）：正常播放实测最大偏心 **1.9px**
+  // （pop-in 起点的 `translateY(-2px)` + 亚像素取整），缺陷现场（关键帧里的
+  // translate 与 `-translate-x-1/2` 叠加）是 **250~280px**（历史留档 250，
+  // 2026-09-14 把那句 translate 加回关键帧复现 280）。原先的 3 贴在正常档上沿、
+  // 余量只有 1.1px，方向是假红；挪到 8 之后对几百像素那一档的杀伤力一点没少。
   for (const s of dlg) {
-    expect(s.dx, `播放中偏离水平中心 ${s.dx}px`).toBeLessThan(3)
-    expect(s.dy, `播放中偏离垂直中心 ${s.dy}px`).toBeLessThan(3)
+    expect(s.dx, `播放中偏离水平中心 ${s.dx}px`).toBeLessThan(8)
+    expect(s.dy, `播放中偏离垂直中心 ${s.dy}px`).toBeLessThan(8)
   }
 
   // ---- 弹窗退场：Radix Presence 应当把节点留到动画播完
@@ -65,7 +70,11 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
     return { seen, goneAfter: !document.querySelector('[data-dialog="export"]') }
   })
   console.log(`[动效] 弹窗退场：留存 ${exit.seen.length} 帧，动画=${exit.seen[0]?.anim}，state=${exit.seen[0]?.state}，最终卸载=${exit.goneAfter}`)
-  expect(exit.seen.length, '退场时节点应当被保活播完，而不是瞬间消失').toBeGreaterThan(0)
+  // 阈值 2 落在两档之间（issue #321 A 表）：Presence 保活时实测留存 **7 帧**
+  // （退场 `--duration-exit` 90ms 再加 animationend 之后那一帧），保活被条件渲染
+  // 破坏时是 **0 帧**。原先 `> 0` 贴在缺陷档上沿——1 帧就算通过，而 1 帧只说明
+  // 「卸载晚了一帧」，不说明播完了。
+  expect(exit.seen.length, '退场时节点应当被保活播完，而不是瞬间消失').toBeGreaterThan(2)
   expect(exit.seen[0].state).toBe('closed')
   expect(exit.seen[0].anim).toBe('pop-out')
 

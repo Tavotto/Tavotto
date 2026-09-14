@@ -67,17 +67,37 @@ test('拖图内元素：预览跟手、拖动期间零后端、松手一次定�
 
   await page.mouse.up()
 
-  // 松手：正好一次权威渲染
-  await page.waitForTimeout(3000)
+  // 松手：正好一次权威渲染。两半分开量（issue #321 B 表）：
+  //   * 「至少一次」交给轮询——它等的是 pointerup → commit → 请求发出这一段，
+  //     原先的固定 3000ms 是零余量判据（同机冷启动引擎往返实测过 10 071ms），
+  //     方向是假红；
+  //   * 「不多于一次」仍用固定窗，但它不再承担首次到达：首个请求到了之后再
+  //     等 1000ms，这个窗抓的是「同一次松手发了两次」，两次会是紧挨着的。
+  await expect
+    .poll(() => renders.length, { timeout: 30_000, message: '松手后应当发出定稿渲染' })
+    .toBeGreaterThanOrEqual(1)
+  await page.waitForTimeout(1000)
   expect(renders.length, `松手后应当只有一次定稿渲染，实际 ${renders.length} 次`).toBe(1)
 
-  // 真实计时（预览计时环由 lib/previewTrace.ts 维护）
-  const timings = await page.evaluate(() => {
-    const w = window as unknown as { __MM_PREVIEW_TIMINGS__?: Record<string, number>[] }
-    return w.__MM_PREVIEW_TIMINGS__ ?? []
-  })
+  // 真实计时（预览计时环由 lib/previewTrace.ts 维护）。计时环那一条是权威 SVG
+  // **换上画布之后**才写的（svgPreviewStore.reattachPreview → traceAuthority），
+  // 请求发出 ≠ 响应到达，所以这里也轮询，不拿上面那 1000ms 顺带赌响应时间。
+  const readTimings = () =>
+    page.evaluate(() => {
+      const w = window as unknown as { __MM_PREVIEW_TIMINGS__?: Record<string, number>[] }
+      return w.__MM_PREVIEW_TIMINGS__ ?? []
+    })
+  await expect
+    .poll(async () => (await readTimings()).length, {
+      timeout: 60_000,
+      message: '权威 SVG 换上画布后应当留下一条预览计时',
+    })
+    .toBeGreaterThan(0)
+  const timings = await readTimings()
   const last = timings.at(-1)
   expect(last, '应当留下一条预览计时').toBeTruthy()
+  // 权威渲染到了之后仍然只有那一次：定稿渲染的回包不许再触发第二次渲染
+  expect(renders.length, `权威渲染到达后仍应只有一次定稿渲染，实际 ${renders.length} 次`).toBe(1)
   console.log(
     `[e2e 假实时] 首帧 ${last!.preview_first_frame}ms · ` +
       `${last!.preview_frame_count}/${last!.preview_move_count} 帧（rAF 合并）· ` +
