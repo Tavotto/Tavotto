@@ -10,21 +10,18 @@ import {
 } from 'react'
 import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
+import {
+  FIELD_BOX as BOX_CLASS,
+  FIELD_DISABLED as BOX_DISABLED,
+  FIELD_FOCUS as BOX_FOCUS,
+  FIELD_FOCUS_WITHIN as BOX_FOCUS_WITHIN,
+  FIELD_INVALID as BOX_INVALID,
+} from './fieldBox'
 
 /**
- * 输入框的「框」：边框、底色、hover / focus / invalid / disabled 全在这一份。
- * 单独的 `TextInput` 直接把它画在 `<input>` 上；带后缀的输入框把它画在外壳上、
- * 里面的 `<input>` 透明——两种形态同一套状态，不各写一遍。
+ * 输入框的「框」在 `fieldBox.ts`（全站一份）：单独的 `TextInput` 直接把它画在 `<input>`
+ * 上；带后缀的输入框把它画在外壳上、里面的 `<input>` 透明——两种形态同一套状态。
  */
-const BOX_CLASS = cn(
-  'rounded-sm border border-border bg-surface text-xs text-ink transition-colors duration-fast',
-  'hover:border-border-strong',
-)
-const BOX_FOCUS = 'focus:border-accent focus:bg-surface'
-const BOX_FOCUS_WITHIN = 'focus-within:border-accent focus-within:bg-surface'
-const BOX_INVALID = 'border-danger hover:border-danger'
-// 禁用态与 Button / Checkbox / Select 同一档（opacity-40 + not-allowed）；之前的 60 让禁用输入框看起来像还能改
-const BOX_DISABLED = 'cursor-not-allowed bg-surface-2 opacity-40 hover:border-border'
 
 export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   /** 校验不过：红边 + `aria-invalid`；错误文案由调用方用 `aria-describedby` 指过去 */
@@ -112,9 +109,10 @@ export const TextArea = forwardRef<
     <textarea
       ref={ref}
       className={cn(
-        'w-full min-w-0 resize-none rounded-sm border border-border bg-surface px-1.5 py-1 text-xs leading-relaxed text-ink',
-        'placeholder:text-ink-3 outline-none transition-colors',
-        'hover:border-border-strong focus:border-accent focus:bg-surface',
+        'w-full min-w-0 resize-none px-1.5 py-1 leading-relaxed',
+        BOX_CLASS,
+        BOX_FOCUS,
+        'placeholder:text-ink-3 outline-none',
         className,
       )}
       {...props}
@@ -276,11 +274,13 @@ export function NumberField({
       {/* 只有输入框才是「框」：hover / focus-within 挂在这一层，标签与单位都移到
           框外之后，焦点高亮只圈住真正可编辑的数字。框不再 flex-1 撑满整行——
           宽度由里面的输入框决定，刚好包住数字；min-w-0 让框在窄行里仍先让位
-          （标签、单位都是 shrink-0）。 */}
+          （标签、单位都是 shrink-0）。框的样子来自 fieldBox（S8 甲：与文字框同一副）。 */}
       <div
         className={cn(
-          'flex h-full min-w-0 items-center rounded-sm border border-transparent bg-surface-2',
-          'transition-colors duration-fast hover:border-border focus-within:border-accent focus-within:bg-surface',
+          'flex h-full min-w-0 items-center',
+          BOX_CLASS,
+          BOX_FOCUS_WITHIN,
+          disabled && BOX_DISABLED,
           fill && 'flex-1',
         )}
       >

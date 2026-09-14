@@ -38,6 +38,9 @@
      几乎看不见。#8a8a82：白 3.48 / 纸 3.10 / surface-2 3.24。
      border / border-strong 继续给 hairline 分隔、hover 中的输入框与区域边界。 */
   --color-border-control: #8a8a82;
+  /* 可编辑框的边框（fieldBox，S8 甲）：与 border-control 同值——输入框的边界也是
+     「这里能改」的全部识别信息。单独成一个 token 是为了让输入框与复选框可以分别调。 */
+  --color-border-input: #8a8a82;
 
   --color-ink: #1b1b18;
   /* 次级正文：≥5.9:1（#f2f2ef 上），可放心用于说明文字 */
@@ -366,7 +369,7 @@
    字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
    六档对应 docs/ux/DESIGN_CONSTITUTION.md 第八节；数值全部取自上面的字号阶梯。
      type-title    对话框 / 页面标题        14px 500 ink
-     type-section  分区小标题              11px 500 大写 ink-3
+     type-section  分区小标题              12px 500 大写 ink
      type-body     正文                    12px ink
      type-control  控件里的文字            11px ink（颜色随控件）
      type-caption  说明文字                11px ink-2，行距放宽
@@ -378,13 +381,17 @@
   font-weight: 500;
   color: var(--color-ink);
 }
+/* 分区小标题：12px / 500 / ink（2026-09-14 审计 S9，用户拍板）。此前 11px / ink-3 只靠
+   大写 + 字距与行标签（12px / 400 / ink-2）区分——中文没有大写、0.06em 在两个汉字上
+   看不见，于是「线条 / 数据点 / 刻度与网格」与「颜色 / 线宽」几乎同形。现在「深 + 重」
+   永远是标题、「浅 + 常规」永远是标签；en-US 的大写字距照旧。 */
 @utility type-section {
-  font-size: var(--text-xs);
-  line-height: var(--text-xs--line-height);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--color-ink-3);
+  color: var(--color-ink);
 }
 @utility type-body {
   font-size: var(--text-sm);

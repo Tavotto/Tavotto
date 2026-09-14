@@ -11,6 +11,7 @@ import {
   type TickDirection,
 } from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
+import { Toggle } from '../../ui/Toggle'
 import { Tip } from '../../ui/Tooltip'
 
 /**
@@ -554,44 +555,22 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
       </p>
 
       {(adapter.has('grid_x') || adapter.has('grid_y')) && (
-        <div
-          role="group"
-          aria-label={gridLabel}
-          className="flex items-center justify-between gap-3 border-t border-border pt-2"
-        >
-          <span className="text-sm text-ink-2">{gridLabel}</span>
-          <div className="flex items-center gap-1">
+        // 网格开关是标准的 `Row + Toggle`（与「反转 X / Y」同一形态），不再是一对推到右缘、
+        // 关态长得像文字的 role=switch 按钮，也不再画分隔线（2026-09-14 审计 S6；宪法第五节
+        // 「Toggle 唯一的滑动开关」、第八节「组间靠留白不画线」）
+        <div role="group" aria-label={gridLabel} className="flex min-h-7 items-center gap-2 pt-1">
+          <span className="w-11 shrink-0 text-xs text-ink-2">{gridLabel}</span>
+          <div className="flex min-w-0 flex-1 items-center gap-4">
             {(['grid_x', 'grid_y'] as const).map((p) =>
               adapter.has(p) ? (
-                <Tip key={p} label={adapter.labelOf(p)}>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={on(p)}
-                    onClick={() => adapter.toggle(p, !on(p))}
-                    className={cn(
-                      'flex h-7 min-w-14 items-center justify-center gap-1.5 rounded-sm px-2 text-sm',
-                      'outline-none transition-colors focus-visible:focus-ring',
-                      on(p)
-                        ? 'bg-selected text-ink'
-                        : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-                    )}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden>
-                      {p === 'grid_x' ? (
-                        <path d="M5 2V12M9 2V12" stroke="currentColor" strokeWidth="1.4" />
-                      ) : (
-                        <path d="M2 5H12M2 9H12" stroke="currentColor" strokeWidth="1.4" />
-                      )}
-                    </svg>
-                    {translate(p === 'grid_x' ? 'tick.axisX' : 'tick.axisY', { ns: 'inspector' })}
-                    {/* 开关状态的第二重表达：不只靠底色，开着时多一颗小点；关着时留同样的位 */}
-                    <span
-                      aria-hidden
-                      className={cn('h-[3px] w-[3px] rounded-full', on(p) && 'bg-current')}
-                    />
-                  </button>
-                </Tip>
+                <label key={p} className="flex items-center gap-1.5 text-xs text-ink-2">
+                  <Toggle
+                    checked={on(p)}
+                    onChange={(v) => adapter.toggle(p, v)}
+                    aria-label={adapter.labelOf(p)}
+                  />
+                  {translate(p === 'grid_x' ? 'tick.axisX' : 'tick.axisY', { ns: 'inspector' })}
+                </label>
               ) : null,
             )}
           </div>

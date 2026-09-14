@@ -60,8 +60,10 @@ export function TextActionRow({
   const changeCase = (mode: CaseMode) => onChange(transformCase(text, mode, true), true)
 
   return (
-    // 按下时一律不抢焦点：textarea 的编辑事务不该因为点了按钮就提交
-    <div className="flex w-full shrink-0 items-center justify-between">
+    // 按下时一律不抢焦点：textarea 的编辑事务不该因为点了按钮就提交。
+    // 四颗钮靠左成一组、间距 4px（工具条），不再 justify-between 均布——均布在
+    // 320px 的控件列里把它们摊成四个互不相干的东西（2026-09-14 审计 A1）
+    <div className="flex w-full shrink-0 items-center gap-1">
       <Button
         size="icon-sm"
         onPointerDown={(e) => e.preventDefault()}

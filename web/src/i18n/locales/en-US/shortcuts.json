@@ -29,7 +29,7 @@
     "freeResize": "Non-proportional resize",
     "help": "This help",
     "newline": "Insert a line break; plain ⏎ commits",
-    "nudge": "Nudge 0.5mm / 5mm",
+    "nudge": "Nudge 0.5 mm / 5 mm",
     "palette": "Command palette",
     "pan": "Pan the canvas",
     "saveDocument": "Save this document",

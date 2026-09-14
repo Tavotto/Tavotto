@@ -1,15 +1,12 @@
-import { ChevronDown } from 'lucide-react'
-import { ICON_SIZE } from '@/components/ui/Icon'
 import { useState } from 'react'
 import { t as translate } from '@/i18n'
 import type { MarkerShape } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { optionLabel } from '../roles/registry'
 import { Popover } from '../../ui/Popover'
 import { OptionGrid, type GridOption } from './OptionGrid'
+import { PickerTrigger } from './PickerTrigger'
 
 /** 多选取值不一致时触发按钮上的占位文案（函数：常量会把语言定死在模块求值那一刻） */
-const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
 
 
 /**
@@ -292,32 +289,21 @@ export function MarkerPicker({
       open={open}
       onOpenChange={setOpen}
       trigger={
-        <button
-          type="button"
-          aria-label={ariaLabel}
-          className={cn(
-            'flex h-7 w-full items-center gap-1.5 rounded-sm border border-transparent bg-surface-2 px-1.5',
-            'text-xs text-ink outline-none transition-colors hover:border-border',
-            'focus-visible:focus-ring',
-            open && 'border-border-strong',
-          )}
+        // 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形
+        <PickerTrigger
+          ariaLabel={ariaLabel}
+          mixed={value === null}
+          preview={value !== null && <MarkerPreview code={value} current={factOf(value)} />}
         >
-          {/* 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形 */}
-          {value !== null && <MarkerPreview code={value} current={factOf(value)} />}
-          <span className="min-w-0 flex-1 truncate text-left">
-            {value === null ? MIXED_TEXT() : labelOf(value)}
-          </span>
-          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
-        </button>
+          {value !== null && labelOf(value)}
+        </PickerTrigger>
       }
     >
       <OptionGrid
         value={value}
         options={grid}
-        onChange={(v) => {
-          onChange(v)
-          setOpen(false)
-        }}
+        onChange={onChange}
+        onPick={() => setOpen(false)}
         columns={5}
         ariaLabel={ariaLabel}
       />

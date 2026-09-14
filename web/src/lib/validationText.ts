@@ -13,6 +13,7 @@
  *    与结构化参数（`ValidationIssue.message`）。
  */
 import { Lightbulb, ShieldQuestionMark, TriangleAlert } from 'lucide-react'
+import { formatQuantity } from '@/i18n/format'
 import { formatMessage, t as translate } from '@/i18n'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import type { Severity } from './profile'
@@ -104,7 +105,7 @@ export function issueValues(issue: ValidationIssue): IssueValues {
     return raw == null || raw === '' ? null : String(raw)
   }
   const unit = spec.unit ? pr(`unit.${spec.unit}`) : ''
-  const withUnit = (v: string | null) => (v == null ? null : unit ? `${v}${unit}` : v)
+  const withUnit = (v: string | null) => (v == null ? null : formatQuantity(v, unit))
   const currentRaw = read(spec.current)
   const expectedRaw = read(spec.expected)
   const expected = withUnit(expectedRaw)
@@ -169,7 +170,7 @@ export function ruleExpectation(ruleCode: string, value: number | string): strin
   const spec = VALUES[ruleCode]
   if (!spec?.cmp) return null
   const unit = spec.unit ? pr(`unit.${spec.unit}`) : ''
-  return pr(`cmp.${spec.cmp}`, { value: `${value}${unit}` })
+  return pr(`cmp.${spec.cmp}`, { value: formatQuantity(value, unit) })
 }
 
 /**

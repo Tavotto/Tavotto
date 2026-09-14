@@ -554,10 +554,10 @@ describe('批量里的视觉选择器', () => {
     await mount(els.map((e) => e.gid))
   }
 
-  /** 线型选择器是「触发按钮 + 弹出的 OptionGrid」：radio 要打开弹层才在 DOM 里 */
+  /** 线型选择器是「触发按钮 + 弹出的 OptionGrid」：弹层走 portal（挂在 body 上），radio 要打开弹层才在 DOM 里，全 document 找 */
   const openLineStyle = async () => {
     const trigger = host.querySelector<HTMLButtonElement>(
-      'button[aria-haspopup="listbox"][aria-label="线型"]',
+      'button[aria-haspopup="dialog"][aria-label="线型"]',
     )
     expect(trigger, '线型触发按钮不见了').toBeTruthy()
     await act(async () => {
@@ -568,11 +568,11 @@ describe('批量里的视觉选择器', () => {
   it('多选两条曲线：线型仍是真实线段预览的 radiogroup，不是文字下拉', async () => {
     await mountLines([lineA, lineB])
     await openLineStyle()
-    const group = host.querySelector('[role="radiogroup"][aria-label="线型"]')
+    const group = document.querySelector('[role="radiogroup"][aria-label="线型"]')
     expect(group).toBeTruthy()
     expect(host.querySelector('[role="combobox"][aria-label="线型"]')).toBeNull()
     // 值一致 → 该档被标成选中
-    const solid = [...host.querySelectorAll('[role="radio"]')].find(
+    const solid = [...document.querySelectorAll('[role="radio"]')].find(
       (r) => r.getAttribute('aria-label') === '实线',
     )!
     expect(solid.getAttribute('aria-checked')).toBe('true')
@@ -581,7 +581,7 @@ describe('批量里的视觉选择器', () => {
   it('线型不一致时一个格子都不标选中，且不把空值塞进选项表', async () => {
     await mountLines([lineA, lineC])
     await openLineStyle()
-    const radios = [...host.querySelectorAll('[role="radiogroup"][aria-label="线型"] [role="radio"]')]
+    const radios = [...document.querySelectorAll('[role="radiogroup"][aria-label="线型"] [role="radio"]')]
     expect(radios.length).toBe(4) // 四档，没有多出来的空项
     expect(radios.every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
   })
@@ -589,7 +589,7 @@ describe('批量里的视觉选择器', () => {
   it('点一档写到全部目标', async () => {
     await mountLines([lineA, lineC])
     await openLineStyle()
-    const dashed = [...host.querySelectorAll('[role="radio"]')].find(
+    const dashed = [...document.querySelectorAll('[role="radio"]')].find(
       (r) => r.getAttribute('aria-label') === '虚线',
     ) as HTMLElement
     await act(async () => {

@@ -24,6 +24,23 @@ export function formatNumber(n: number, opts?: Intl.NumberFormatOptions): string
   return new Intl.NumberFormat(currentLocale(), opts).format(n)
 }
 
+/** 数字与单位之间要不要留空：字母单位留一个空格，`%` / `°` 贴着数字（SI 的写法） */
+const TIGHT_UNITS = new Set(['%', '°'])
+
+/**
+ * 「数值 + 单位」全站一个写法（2026-09-14 审计 S11）。
+ *
+ * 此前两套并存：i18n 里 `{{x}}pt` 21 处无空格、`{{x}} mm` 22 处有空格，问题面板同一屏
+ * 「7.33pt」与「1.87 mm」；en-US 又是「7.33 pt」。字母单位（pt / mm / px / ppi / cm）与
+ * 数字之间一个普通空格（不用 U+00A0：用例、搜索、复制都认普通空格），`%` / `°` 不空。
+ * 数字框里的单位是框内独立的一列（`NumberField unit`），不经这里。
+ */
+export function formatQuantity(value: string | number, unit: string): string {
+  const v = typeof value === 'number' ? String(value) : value
+  if (!unit) return v
+  return TIGHT_UNITS.has(unit) ? `${v}${unit}` : `${v} ${unit}`
+}
+
 /** 时间戳 → 本地时间（默认「日期 + 时分」）。 */
 export function formatDateTime(
   ts: number | Date,

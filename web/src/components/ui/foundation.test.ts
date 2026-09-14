@@ -122,8 +122,8 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/ui/Toggle.tsx': { count: 1, why: '它就是那一处实现' },
       '/src/components/inspector/controls/TickAndSpineDiagram.tsx': {
-        count: 3,
-        why: '刻度 / 边框示意图里的开关是画在图上的位置块，语义是 switch、外形是图的一部分',
+        count: 2,
+        why: '刻度 / 边框示意图里四条边的开关是画在图上的位置块，语义是 switch、外形是图的一部分（网格 X / Y 已改回 Toggle）',
       },
     },
   },
@@ -162,16 +162,6 @@ const RULES: Rule[] = [
     fix: 'Select（取值）/ Popover + OptionGrid（带样张的取值）/ Menu（命令）',
     catches: '<button aria-haspopup="listbox" aria-expanded />',
     spares: '<Select value={v} options={opts} onChange={set} />',
-    exempt: {
-      '/src/components/inspector/controls/LineStylePicker.tsx': {
-        count: 1,
-        why: '2026-09-14 审计 S5：第二套下拉，批次 2 收成与 MarkerPicker 同一个 Popover 外壳后删',
-      },
-      '/src/components/inspector/StrokeSection.tsx': {
-        count: 1,
-        why: '2026-09-14 审计 S5：箭头样式的手写 combobox，批次 2 与 LineStylePicker 一起收',
-      },
-    },
   },
   {
     name: '禁用态只有一档：opacity-40（宪法第五节）',

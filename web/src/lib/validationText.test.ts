@@ -63,7 +63,7 @@ describe('主语说人话', () => {
 
 describe('当前值 → 要求', () => {
   it('字号带单位，要求那一侧说清是「不低于」还是「大于」', () => {
-    expect(issueValues(issue())).toEqual({ current: '7.50pt', expected: '≥ 8pt' })
+    expect(issueValues(issue())).toEqual({ current: '7.50 pt', expected: '≥ 8 pt' })
     const floor = issue({
       ruleCode: 'font-below-absolute-floor',
       message: {
@@ -74,7 +74,7 @@ describe('当前值 → 要求', () => {
     })
     // 绝对下限**不含等号**：这句话必须说成"大于"，说成"≥"就是在骗人。
     // 8.00 与 8 在屏幕上是同一个数，所以还带上那句解释（见下面的 T41 用例）
-    expect(issueValues(floor).expected).toBe('大于 8pt，正好等于不算通过。')
+    expect(issueValues(floor).expected).toBe('大于 8 pt，正好等于不算通过。')
     expect(issueValues(floor).expected).not.toContain('≥')
   })
 
@@ -82,7 +82,7 @@ describe('当前值 → 要求', () => {
     const t = issue({
       message: { key: 'preflight.textTooSmall', ns: 'errors', values: { size: '5', min: '8' } },
     })
-    expect(issueValues(t).current).toBe('5pt')
+    expect(issueValues(t).current).toBe('5 pt')
   })
 
   it('没登记的规则不硬编数字，两侧都回 null', () => {
@@ -201,14 +201,14 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     const values = issueValues(
       issue({ ruleCode: 'font-below-absolute-floor', message: hit.message }),
     )
-    expect(values.expected).toBe('大于 8pt，正好等于不算通过。')
+    expect(values.expected).toBe('大于 8 pt，正好等于不算通过。')
   })
 
   it('两个数在屏幕上不一样时不加那句话——它只解释「看起来相等」', () => {
     const hit = floorHit(specWithText(6))!
     expect(
       issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('大于 8pt')
+    ).toBe('大于 8 pt')
   })
 
   it('7.995pt 被显示成 8.00：同一句话也要成立（这一档的真值并不等于下限）', () => {
@@ -219,7 +219,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     expect(hit.message.values?.effective).toBe('8.00')
     expect(
       issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('大于 8pt，正好等于不算通过。')
+    ).toBe('大于 8 pt，正好等于不算通过。')
   })
 
   it('含等号的那一侧（≥ / ≤）在边界上说的是「显示已四舍五入」', () => {
@@ -231,7 +231,7 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
         values: { effective: '8.00', min: '8' },
       },
     })
-    expect(issueValues(tooSmall).expected).toBe('≥ 8pt，当前值实际略低，显示已四舍五入。')
+    expect(issueValues(tooSmall).expected).toBe('≥ 8 pt，当前值实际略低，显示已四舍五入。')
     const tooLarge = issue({
       ruleCode: 'font-too-large',
       message: {
@@ -240,12 +240,12 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
         values: { effective: '12.00', max: '12' },
       },
     })
-    expect(issueValues(tooLarge).expected).toBe('≤ 12pt，当前值实际略高，显示已四舍五入。')
+    expect(issueValues(tooLarge).expected).toBe('≤ 12 pt，当前值实际略高，显示已四舍五入。')
   })
 
   it('设置页问的是同一张表：填 8 时两条下限的要求不是同一句话', () => {
-    expect(ruleExpectation('font-below-absolute-floor', 8)).toBe('大于 8pt')
-    expect(ruleExpectation('font-too-small', 8)).toBe('≥ 8pt')
+    expect(ruleExpectation('font-below-absolute-floor', 8)).toBe('大于 8 pt')
+    expect(ruleExpectation('font-too-small', 8)).toBe('≥ 8 pt')
     expect(ruleExpectation('min_raster_dpi-not-a-rule', 8)).toBeNull()
     // 没登记比较词的规则不硬造一句
     expect(ruleExpectation('page-width', 80)).toBeNull()

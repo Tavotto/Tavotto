@@ -55,7 +55,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
-  '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 2, // 四边刻度示意图 + 位置点
+  '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 1, // 四边刻度示意图（网格开关那枚小 svg 已随 Toggle 回收）
   '/src/components/inspector/controls/TickTaskCard.tsx': 1, // 刻度朝向示意（in/out/both）
   '/src/components/inspector/controls/HatchPicker.tsx': 1, // 填充纹样样本
   '/src/components/inspector/StrokeSection.tsx': 2, // 画布标注的线型样本 + 箭头端型样本（跟着当前值画）

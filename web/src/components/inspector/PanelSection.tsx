@@ -18,6 +18,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { formatQuantity } from '@/i18n/format'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
@@ -485,7 +486,7 @@ function qualityOf(o: PanelObject): Quality {
       id: o.id,
       bad,
       label: pn('effectivePt'),
-      value: `${round1(pt)} pt`,
+      value: formatQuantity(round1(pt), 'pt'),
       hint: pn(bad ? 'ptHintBad' : 'ptHint', {
         base: BASE_FONT_PT,
         scale: Math.round((fullW / o.nativeW) * 100),

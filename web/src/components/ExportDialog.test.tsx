@@ -1192,7 +1192,7 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     expect(row, '每一行带着稳定的规则码').toBeTruthy()
     expect(row.textContent).toContain('字号低于绝对下限')
     expect(row.textContent).toContain('x 刻度 1')
-    expect(row.textContent).toContain('8.00pt')
+    expect(row.textContent).toContain('8.00 pt')
     expect(locateButtons()).toHaveLength(errors.length)
     // 列表紧挨着确认框：确认框是它的下一个兄弟
     expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()

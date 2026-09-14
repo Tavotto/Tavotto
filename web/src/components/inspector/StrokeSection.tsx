@@ -1,16 +1,16 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads, legacyHead } from '@/types/document'
-import { ChevronDown } from 'lucide-react'
-import { ICON_SIZE } from '@/components/ui/Icon'
-import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
+import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
+import { OptionGrid, type GridOption } from './controls/OptionGrid'
+import { PickerTrigger } from './controls/PickerTrigger'
 import { shared } from './common'
 
 /** 本组文案 inspector:stroke.*，历史标签 inspector:history.* */
@@ -66,9 +66,10 @@ function HeadGlyph({ head }: { head: ArrowHead }) {
 }
 
 /**
- * 带图形示意的列表选择：原生 select 的选项放不了图形，所以自绘一个 combobox + listbox，
- * 每项显示「示意图 + 文案」并居中；多选不一致时触发器显示「多个值」。
- * 端型与线型共用这一套控件，宽度与外观因此完全一致。
+ * 带图形示意的取值选择：端型与线型共用，与图内属性页的线型 / 标记 / 纹理选择器**同一副外壳**
+ * （`Popover + PickerTrigger + OptionGrid`；2026-09-14 审计 S5 之前这里是一套手写的
+ * combobox + listbox，弹层不走 portal，触发器与别的选择器长成两种）。
+ * 每项显示「示意图 + 文案」；多选不一致时触发器显示「多个值」。
  */
 function GlyphSelect<T extends string>({
   value,
@@ -86,119 +87,42 @@ function GlyphSelect<T extends string>({
   glyphOf: (v: T) => ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState<T>(value ?? options[0])
-  const rootRef = useRef<HTMLDivElement>(null)
-  const listId = useId()
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [open])
-
-  const show = () => {
-    setActive(value ?? options[0])
-    setOpen(true)
-  }
-  const pick = (h: T) => {
-    onChange(h)
-    setOpen(false)
-  }
-
-  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
-    const i = Math.max(0, options.indexOf(active))
-    switch (e.key) {
-      case 'ArrowDown':
-      case 'ArrowUp': {
-        e.preventDefault()
-        if (!open) {
-          show()
-          return
-        }
-        const step = e.key === 'ArrowDown' ? 1 : -1
-        setActive(options[(i + step + options.length) % options.length])
-        return
-      }
-      case 'Enter':
-      case ' ':
-        e.preventDefault()
-        if (open) pick(active)
-        else show()
-        return
-      case 'Escape':
-        if (open) {
-          e.preventDefault()
-          setOpen(false)
-        }
-        return
-    }
-  }
-
+  const grid: GridOption<T>[] = options.map((o) => ({
+    value: o,
+    label: labelOf(o),
+    preview: (
+      <span className="flex items-center gap-2 px-1 text-xs">
+        {glyphOf(o)}
+        <span className="truncate">{labelOf(o)}</span>
+      </span>
+    ),
+    code: o,
+  }))
   return (
-    <div ref={rootRef} className="relative w-full">
-      <button
-        type="button"
-        role="combobox"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        aria-activedescendant={open ? `${listId}-${active}` : undefined}
-        onClick={() => (open ? setOpen(false) : show())}
-        onKeyDown={onKeyDown}
-        className="relative flex h-7 w-full items-center justify-center gap-2 rounded-sm border border-border bg-surface pl-2 pr-6 text-xs text-ink outline-none focus-visible:focus-ring"
-      >
-        {value === null ? (
-          <span className="truncate text-ink-3">{translate('mixed', { ns: 'common' })}</span>
-        ) : (
-          <>
-            {glyphOf(value)}
-            <span className="truncate">{labelOf(value)}</span>
-          </>
-        )}
-        <ChevronDown
-          size={ICON_SIZE.xs}
-          aria-hidden
-          className={cn(
-            'absolute right-2 top-1/2 shrink-0 -translate-y-1/2 text-ink-3 transition-transform duration-fast',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
-      {open && (
-        <ul
-          id={listId}
-          role="listbox"
-          aria-label={ariaLabel}
-          onMouseDown={(e) => e.preventDefault()}
-          className="absolute left-0 right-0 top-full z-10 mt-1 rounded-md border border-border bg-surface p-1 shadow-pop animate-pop-in"
+    <Popover
+      width={216}
+      align="start"
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <PickerTrigger
+          ariaLabel={ariaLabel}
+          mixed={value === null}
+          preview={value !== null && glyphOf(value)}
         >
-          {options.map((h) => {
-            const selected = h === value
-            const isActive = h === active
-            return (
-              <li
-                key={h}
-                id={`${listId}-${h}`}
-                role="option"
-                aria-selected={selected}
-                onPointerMove={() => setActive(h)}
-                onClick={() => pick(h)}
-                className={`flex h-7 cursor-default items-center justify-center gap-2 rounded-sm px-1.5 text-xs ${
-                  isActive ? 'bg-surface-2' : ''
-                } ${selected ? 'font-medium text-ink' : 'text-ink'}`}
-              >
-                {glyphOf(h)}
-                <span className="truncate">{labelOf(h)}</span>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </div>
+          {value !== null && labelOf(value)}
+        </PickerTrigger>
+      }
+    >
+      <OptionGrid
+        value={value}
+        options={grid}
+        onChange={onChange}
+        onPick={() => setOpen(false)}
+        columns={1}
+        ariaLabel={ariaLabel}
+      />
+    </Popover>
   )
 }
 

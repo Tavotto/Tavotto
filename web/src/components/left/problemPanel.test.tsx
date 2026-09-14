@@ -179,7 +179,7 @@ describe('普通界面不出现内部标识', () => {
     await mount(<ProblemPanel />)
     expect(text()).toContain('字号低于绝对下限')
     // 当前值 → 要求：两个数字都摆出来，用户不必点开才知道差多少
-    expect(text()).toMatch(/6\.00pt\s*→\s*大于 8pt/)
+    expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
   })
 })
 
@@ -417,8 +417,8 @@ describe('按规则聚合（审计 T09）', () => {
     expect(text().split('字号低于绝对下限').length - 1, '标题逐行重复').toBe(1)
     expect(text()).toContain('2 个对象')
     expect(rows().length).toBe(2)
-    expect(text()).toMatch(/6\.00pt\s*→\s*大于 8pt/)
-    expect(text()).toMatch(/7\.00pt\s*→\s*大于 8pt/)
+    expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
+    expect(text()).toMatch(/7\.00 pt\s*→\s*大于 8 pt/)
     // 等级不只靠颜色：组头写着等级文字
     expect(groups[0].textContent).toContain('阻断')
   })

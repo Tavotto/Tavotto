@@ -252,7 +252,8 @@ const COMPONENT_CLASSES: Record<string, () => string> = {
   'button-ghost': () => buttonVariant('ghost') + ' ' + buttonSize('sm'),
   'button-danger': () => buttonVariant('danger') + ' ' + buttonSize('sm'),
   'icon-button': () => buttonSize('icon'),
-  input: () => block1(ui('ui/Input.tsx'), /const BOX_CLASS = cn\(([\s\S]*?)\)\n/) + ' ' + literal(ui('ui/Input.tsx'), /'(h-7 w-full[^']*)'/),
+  // 框的权威在 fieldBox.ts（S8：全站一份），高度那一截仍在 Input.tsx
+  input: () => block1(ui('ui/fieldBox.ts'), /export const FIELD_BOX = cn\(([\s\S]*?)\)\n/) + ' ' + literal(ui('ui/Input.tsx'), /'(h-7 w-full[^']*)'/),
   badge: () => literal(ui('ui/Badge.tsx'), /'(inline-flex h-\d[^']*)'/),
   menu: () => block1(ui('ui/Menu.tsx'), /const CONTENT_CLASS = cn\(([\s\S]*?)\)\n/),
   dialog: () => literal(ui('ui/Dialog.tsx'), /'([^']*rounded-\w+ border border-border bg-surface shadow-pop[^']*)'/),

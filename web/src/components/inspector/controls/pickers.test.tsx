@@ -52,8 +52,9 @@ const radios = () => Array.from(document.querySelectorAll<HTMLElement>('[role="r
  * 它的断言全是恒真。
  */
 const openLineStyle = async (label = '线型') => {
+  // 触发器与 MarkerPicker 同一副（Radix Popover.Trigger 给它 aria-haspopup="dialog"）
   const trigger = document.querySelector<HTMLButtonElement>(
-    `button[aria-haspopup="listbox"][aria-label="${label}"]`,
+    `button[aria-haspopup="dialog"][aria-label="${label}"]`,
   )
   expect(trigger, '线型触发按钮不见了').toBeTruthy()
   await act(async () => {

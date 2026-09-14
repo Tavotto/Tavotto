@@ -3,6 +3,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import { ICON_SIZE } from './Icon'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { FIELD_BOX, FIELD_OPEN } from './fieldBox'
 
 export interface SelectOption<T extends string = string> {
   value: T
@@ -40,16 +41,17 @@ export function Select<T extends string>({
         className={cn(
           // `group`：箭头方向要跟着 Trigger 的 data-state 走，而 data-state 挂在
           // Trigger 自己身上，子元素上的 data-[state=open]: 是读不到的。
-          'group flex h-7 w-full items-center justify-between gap-1 rounded-sm border border-transparent',
-          'bg-surface-2 px-1.5 text-xs text-ink outline-none transition-colors',
-          'hover:border-border data-[state=open]:border-accent',
+          'group flex h-7 w-full items-center justify-between gap-1 px-1.5 outline-none',
+          // 框与输入框同一副（fieldBox，S8 甲）；打开时与聚焦同色
+          FIELD_BOX,
+          FIELD_OPEN,
           // **弹层关着的时候键盘用户也得看得见焦点在哪。** `outline-none` 只是
           // 关掉浏览器默认那圈，不补一个替代品就是把焦点指示整个删掉——本仓库
           // 别的可聚焦控件（Button / Toggle / Segmented / Field）一律配这条。
           // 原生 `<select>` 自带默认焦点环，迁到这里时缺了它就是一条 a11y 回归。
           'focus-visible:focus-ring',
           // 不用 pointer-events-none：禁用时 title 里的原因还要能悬停读到（宪法第五节）
-          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent',
+          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border-input',
           className,
         )}
       >

@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | surface-app | `bg` | `#f2f2ef` | 应用底：微暖纸白，不黄、不米 |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
-| surface-subtle | `surface-2` | `#f7f7f4` | 只读值、数字框静态底、徽章底 |
+| surface-subtle | `surface-2` | `#f7f7f4` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
 | surface-hover | `surface-hover` | ink 4.5% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
 | surface-selected | `selected` | `#ebebe6` | 选中：只比背景稍深，配字重 / 对勾再说一遍 |
@@ -28,6 +28,7 @@
 | border | `border` | `#e3e3dd` | hairline。只给输入框、区域边界、浮层 |
 | border-strong | `border-strong` | `#cfcfc7` | hover 中的输入框、区域边界 |
 | border-control | `border-control` | `#8a8a82` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
+| border-input | `border-input` | `#8a8a82` | 所有可编辑框的边框（`ui/fieldBox.ts`：TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器）。**有框 = 能改**，只读摘要无框；此前数字框 / 下拉是 surface-2 灰底无边，与文字框两套并存（2026-09-14 审计 S8，拍板「甲」） |
 | accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、链接、AI、画布选择框 |
 | danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
 
@@ -76,11 +77,16 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost）。`active` 是 selected 轻 tint +
   字重。忙碌态自带。
 - **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。
+- **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：白底 + `border-input`，hover 加深到
+  ink-3，聚焦 / 打开 accent，禁用 opacity-40。TextInput / TextArea / NumberField / Select /
+  SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；数字框不再是 surface-2 灰底。
 - **TextInput**：`invalid`（红边 + aria-invalid）、`suffix`（**框内**后缀，数字自动右对齐）。
 - **NumberField**：`unit` 是框内单位 `[ 393.7      mm ]`，数字右对齐、单位靠右，一列数字框的
   单位排成一条竖线；框外后缀（`[393.7] mm`）已于 2026-09-11 最终 Session 全部迁完并删掉，
   单位漂在框外没有来路。
-- **Select**：全仓唯一的下拉（`nativeSelect.test` 守着）；`title` 给当前取值的解释。
+- **Select**：全仓唯一的下拉（`nativeSelect.test` 守着）；`title` 给当前取值的解释。带样张的取值
+  （线型 / 标记 / 填充纹理 / 色图 / 箭头端型）用 `Popover + PickerTrigger + OptionGrid`，触发器与
+  Select 同一副框；`aria-haspopup` 字面量不在页面里出现（`foundation.test` 守着）。
 - **Checkbox**：14px 方块、xs 圆角、选中近黑 + 白勾（唯一允许加粗描边的图标）。
 - **Toggle**：唯一的滑动开关，名字必填。
 - **Badge**：胶囊、16px 高、五种语义色。
@@ -100,8 +106,8 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
   元素树共用；叶子行留空的箭头列，同层的图标才对得齐。层级只靠缩进与箭头，不靠留白。
-- **SearchInput**：面板顶部的搜索框，唯一的一种——安静的 surface-2 填充框，hover 才有
-  hairline、聚焦才白底 + accent 边；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
+- **SearchInput**：面板顶部的搜索框，唯一的一种——与其它可编辑框同一副框（S8 之前是安静的
+  surface-2 填充框）；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
 - **Notice**：低权重说明条（Info + caption + 至多一个 ghost 小动作），surface-2 底、无边框；
   它是脚注不是卡片。要警告语义用设置页的 `InlineWarning`。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
@@ -124,7 +130,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 | 角色 | 值 | 给谁 |
 | --- | --- | --- |
 | `type-title` | 14 / 20 · 500 · ink | 对话框 / 页面标题 |
-| `type-section` | 11 · 500 · 大写 · 字距 .06em · ink-3 | 分区小标题、菜单组标题 |
+| `type-section` | 12 / 16 · 500 · ink · 大写 · 字距 .06em | 分区小标题、菜单组标题。2026-09-14 审计 S9：中文没有大写、字距看不见，靠「深 + 重」与行标签（12 · 400 · ink-2）拉开 |
 | `type-body` | 12 / 16 · ink | 正文 |
 | `type-control` | 11 · 颜色随控件 | 控件文字 |
 | `type-caption` | 11 · 行距 1.5 · ink-2 | 说明文字 |

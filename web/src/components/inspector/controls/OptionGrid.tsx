@@ -32,6 +32,7 @@ export function OptionGrid<T extends string>({
   value,
   options,
   onChange,
+  onPick,
   columns = 5,
   ariaLabel,
   cellClassName,
@@ -39,6 +40,12 @@ export function OptionGrid<T extends string>({
   value: T | null
   options: GridOption<T>[]
   onChange: (v: T) => void
+  /**
+   * **点选**（鼠标点击、Enter / Space）之后再调一次——与 `onChange` 的区别：方向键漫游
+   * 也会 `onChange`（radiogroup 的「选中跟着焦点走」），但漫游不该把弹层关掉。
+   * 弹层里的选择器用它来收起自己。
+   */
+  onPick?: (v: T) => void
   columns?: number
   ariaLabel: string
   cellClassName?: string
@@ -91,7 +98,10 @@ export function OptionGrid<T extends string>({
               data-code={opt.code}
               // radiogroup 的漫游焦点：选中项可 Tab 进入，其余用方向键到达
               tabIndex={active || (value == null && opt === options[0]) ? 0 : -1}
-              onClick={() => onChange(opt.value)}
+              onClick={() => {
+                onChange(opt.value)
+                onPick?.(opt.value)
+              }}
               className={cn(
                 'relative flex h-8 items-center justify-center rounded-sm border outline-none transition-colors',
                 'focus-visible:focus-ring',

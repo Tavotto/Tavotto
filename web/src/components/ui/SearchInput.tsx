@@ -3,13 +3,14 @@ import { Search, X } from 'lucide-react'
 import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { ICON_SIZE } from './Icon'
+import { FIELD_BOX, FIELD_FOCUS } from './fieldBox'
 
 /**
  * 抽屉 / 面板顶部的搜索框：全产品唯一的一种（素材、画布列表、图内元素树……）。
  *
- * 形态是「安静的填充框」：surface-2 底、无边框，hover 才浮出 hairline，聚焦才变成
- * 白底 + accent 边——它是面板工具栏的一部分，不是表单里的输入项，常态不该比
- * 旁边的图标钮更抢眼。左侧放大镜固定 16px 列，右侧清除钮只在有内容时出现。
+ * 形态与其它可编辑框同一副（`fieldBox`：白底 + border-input，hover 加深，聚焦 accent；
+ * 2026-09-14 审计 S8 之前是「安静的 surface-2 填充框」，与旁边的输入框长成两种）。
+ * 左侧放大镜固定 16px 列，右侧清除钮只在有内容时出现。
  *
  * 键盘：按键一律不冒泡（全局快捷键在输入时闭嘴）；Esc 先清空、再失焦。
  * 调用方的 `onKeyDown` 在这两条之后仍会被调到（元素树用它把 ↓ 交给第一行）。
@@ -49,10 +50,12 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
           onKeyDown?.(e)
         }}
         className={cn(
-          'h-7 w-full rounded-sm border border-transparent bg-surface-2 pl-6.5 text-xs text-ink',
+          'h-7 w-full pl-6.5',
+          // 与其它可编辑框同一副框（fieldBox，S8 甲）：此前是「安静的 surface-2 填充框」
+          FIELD_BOX,
+          FIELD_FOCUS,
           value ? 'pr-6.5' : 'pr-2',
-          'placeholder:text-ink-3 outline-none transition-colors duration-fast',
-          'hover:border-border focus:border-accent focus:bg-surface',
+          'placeholder:text-ink-3 outline-none',
         )}
         {...props}
       />

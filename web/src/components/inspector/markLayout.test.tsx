@@ -177,17 +177,24 @@ describe('单选：一张「排列」组 = 对齐一行 + 层级一行（审计 
 })
 
 describe('图形选择有名称和键盘路径', () => {
-  /** 端型选择器（组件工作台批次起）是一个 combobox：触发钮 + 打开后的 listbox */
-  const endCombo = () =>
-    host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="终点"]')!
+  /**
+   * 端型选择器与线型 / 标记 / 纹理同一副外壳（2026-09-14 审计 S5）：触发钮（Radix Popover
+   * 给它 aria-haspopup="dialog"）+ portal 里的 OptionGrid（radiogroup）。此前是一套手写的
+   * combobox + listbox。
+   */
+  const endTrigger = () =>
+    host.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"][aria-label="终点"]')!
+  const endRadios = () =>
+    [...document.querySelectorAll<HTMLElement>('[role="radiogroup"][aria-label="终点"] [role="radio"]')]
 
-  it('端型是 combobox，打开后每一格都有文字名，不只有图形', async () => {
+  it('端型触发钮打开一个 radiogroup，每一格都有文字名，不只有图形', async () => {
     await mount(arrowOf())
-    expect(endCombo()).toBeTruthy()
-    await act(async () => endCombo().click())
-    const options = [...host.querySelectorAll('[role="listbox"][aria-label="终点"] [role="option"]')]
+    expect(endTrigger()).toBeTruthy()
+    await act(async () => endTrigger().click())
+    const options = endRadios()
     expect(options).toHaveLength(4)
     for (const o of options) {
+      expect(o.getAttribute('aria-label')?.trim().length).toBeGreaterThan(0)
       expect(o.textContent?.trim().length).toBeGreaterThan(0)
     }
   })
@@ -197,13 +204,11 @@ describe('图形选择有名称和键盘路径', () => {
     const before = (
       useDocumentStore.getState().doc.objects.find((o) => o.id === 'a1') as ArrowObject
     ).headEnd
-    const key = (k: string) =>
-      act(async () => {
-        endCombo().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
-      })
-    await key('ArrowDown') // 打开（当前项成为活动项）
-    await key('ArrowDown') // 移到下一档
-    await key('Enter') // 选中
+    await act(async () => endTrigger().click())
+    const group = document.querySelector('[role="radiogroup"][aria-label="终点"]')!
+    await act(async () => {
+      group.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
     const after = (
       useDocumentStore.getState().doc.objects.find((o) => o.id === 'a1') as ArrowObject
     ).headEnd
