@@ -369,3 +369,19 @@ B2 ppi 标签 → B3 文案 → B4 做减法 → D1 Agent 默认项 → D2 / D3 
 | S13 键盘缺 Alt | NumberField ↑↓ Alt ×0.1 | `numberField.test`；变异红 |
 | S15 树行按字数截 | `untruncatedLabel` + CSS truncate | `elementTree.test`；变异红 |
 | S4 收尾 | ProblemPanel / TickTaskCard / VersionDialog 的页签带 `panelId`、内容区 `TabPanel` | 现有用例 |
+
+## 批次 4 落地记录（2026-09-14）
+
+分支 `ux/apple-design-batch4`（stacked 在批次 3 上）。
+
+| 发现 | 改法（已落地） | 验收 |
+| --- | --- | --- |
+| B2 ppi 无可见标签 | `<label>` 包住 Select，标签「位图分辨率」 | 导出对话框截图 |
+| B3「6 类阻断性问题」 | zh 四条文案「类」→「条」（en 本来就对） | `ExportDialog.test` |
+| B4 三句解释 + 规则名重复五次 | 删 `scopeCanvasNote` / `scopeOriginalNote`（只留磁盘原件与图幅不一致、忽略的画布变换、占位值、为什么灰）；阻断清单按规则分组（`data-blocking-group`，组头一次 + `N 项`），行里主语 · 数值 · 定位 | `ExportDialog.test` T33 改写；变异红 |
+| D1 Agent「当前默认 / 设为默认」 | 行首 `ui/Radio`（`name=default-coding-agent`，不可用的禁用，title = 可达名） | `CodingAgentsSection.test` 四条改写；变异红 |
+| D2 一行三种辅助 | 删与小问号重复的说明行 | 界面页截图 |
+| D3 两颗同权重 | 「导出诊断包」secondary、「复制诊断」ghost | — |
+| C1 每条一行「技术详情」 | 折叠只在行 hover / focus-within / 当前项出现（Tailwind `not-open:` 变体，open 态常驻） | 问题面板截图；`problemPanel.test` 仍钉「默认收起 + 含 gid」 |
+| E1 ⌘↵ ink-faint | `Kbd` | — |
+| E2 StepSlider | **未检查**：本机无可用 Codex，「作用范围与执行器」弹层里只出现模型下拉，推理强度滑杆没露出来 | — |
