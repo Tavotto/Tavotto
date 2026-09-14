@@ -108,6 +108,7 @@
 | 编辑（改名、改规范） | `Pencil` | `PenLine`（素材卡「编辑图」）、`Settings2`（导出对话框「编辑规范」） |
 | 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2`（AI 面板作用范围与 Agent） |
 | 警告 | `TriangleAlert` | 别名 `AlertTriangle`；问题面板「检查失败」用的 `ShieldAlert` |
+| 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |
 | 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg（设置页）、浏览器 `<details>` 三角（16 处） |
 | 下拉 | `ChevronDown` | — |
 | 加载中 | `LoaderCircle` | 别名 `Loader2` |

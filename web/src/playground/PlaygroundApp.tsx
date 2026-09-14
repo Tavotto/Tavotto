@@ -407,7 +407,7 @@ function PickView({
             )}
             <span className="truncate text-xs font-medium">{f.stem}</span>
             <span className="font-mono text-xs text-ink-3">
-              {translate('measure.mmSizeSpaced', {
+              {translate('measure.mmSize', {
                 w: f.size_mm[0].toFixed(1),
                 h: f.size_mm[1].toFixed(1),
               })}

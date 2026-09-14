@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type InputHTMLAttributes,
@@ -95,19 +96,64 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
  * critical（2026-09-12 critique），而 e2e 门禁当时只扫画布页签所以没看见。
  * 两种给法二选一：`aria-labelledby` 指向可见标签的 id；`aria-label` 要传渲染那句
  * 可见文字的**同一个表达式**，别另写一句同义的。
+ *
+ * **高度跟着内容走**（2026-09-14 二审 A1）：此前三个调用点各自 `rows={text.split('\n').length}`
+ * ——只数硬换行。图例名 `Catalyst (k = 0.125 $\mathrm{min^{-1}}$)` 是一行源码、两行显示，
+ * 于是第二行被裁掉只剩字顶（实测 scrollHeight 40 / clientHeight 24），用户看不全也编辑不到。
+ * 现在按 `scrollHeight` 自适应，封顶 `maxRows` 行后内部滚动；`rows` 只是没有 JS 时的起点。
+ * 用 JS 而不用 `field-sizing: content`：桌面壳是 WKWebView，那条 CSS 在那里还没有。
  */
 type TextAreaName =
   | { 'aria-label': string; 'aria-labelledby'?: never }
   | { 'aria-labelledby': string; 'aria-label'?: never }
 
+/** 最多长到几行；再多就在框内滚动。默认 4：属性栏一格的合理上限 */
+const TEXTAREA_MAX_ROWS = 4
+
+/**
+ * 把 textarea 的高度调到正好装下内容（不超过 maxRows 行）。
+ * jsdom 里 scrollHeight 恒为 0、行高读不出数——那就什么都不动，保持 `rows` 的起点。
+ */
+export function fitTextAreaHeight(el: HTMLTextAreaElement, maxRows: number): void {
+  const cs = getComputedStyle(el)
+  const line = parseFloat(cs.lineHeight)
+  if (!Number.isFinite(line) || line <= 0) return
+  const chrome =
+    parseFloat(cs.paddingTop) +
+    parseFloat(cs.paddingBottom) +
+    parseFloat(cs.borderTopWidth) +
+    parseFloat(cs.borderBottomWidth)
+  const max = line * maxRows + chrome
+  // 先收到最小，scrollHeight 才是「内容真正需要的高度」而不是「上一次的高度」
+  el.style.height = 'auto'
+  const need = el.scrollHeight
+  if (need <= 0) {
+    el.style.height = ''
+    return
+  }
+  el.style.height = `${Math.min(need, max)}px`
+  el.style.overflowY = need > max ? 'auto' : 'hidden'
+}
+
 export const TextArea = forwardRef<
   HTMLTextAreaElement,
   Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'aria-label' | 'aria-labelledby'> &
-    TextAreaName
->(function TextArea({ className, ...props }, ref) {
+    TextAreaName & { maxRows?: number }
+>(function TextArea({ className, maxRows = TEXTAREA_MAX_ROWS, rows = 1, value, ...props }, ref) {
+  const inner = useRef<HTMLTextAreaElement | null>(null)
+  // 值变了（包括受控更新、撤销、换选中对象）就重新量一次；不只在 onChange 里量
+  useLayoutEffect(() => {
+    if (inner.current) fitTextAreaHeight(inner.current, maxRows)
+  }, [value, maxRows])
   return (
     <textarea
-      ref={ref}
+      ref={(node) => {
+        inner.current = node
+        if (typeof ref === 'function') ref(node)
+        else if (ref) ref.current = node
+      }}
+      rows={rows}
+      value={value}
       className={cn(
         'w-full min-w-0 resize-none px-1.5 py-1 leading-relaxed',
         BOX_CLASS,

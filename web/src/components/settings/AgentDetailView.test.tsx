@@ -15,11 +15,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchAiCapabilities: vi.fn(),
   patchAiAgent: vi.fn(),
   setAiEndpointActive: vi.fn(),
+  deleteAiEndpoint: vi.fn(),
   startAiInstall: vi.fn(),
   fetchAiInstallStatus: vi.fn(),
 }))
 
 import {
+  deleteAiEndpoint,
   fetchAiCapabilities,
   patchAiAgent,
   setAiEndpointActive,
@@ -241,6 +243,37 @@ describe('Agent 详情', () => {
     expect(glm!.checked).toBe(false)
     await act(async () => glm!.click())
     expect(vi.mocked(setAiEndpointActive)).toHaveBeenCalledWith('codex', 'glm')
+  })
+
+  it('删除接口先就地确认：点「删除」不发请求，Esc 退回，确认后才发（2026-09-14 二审 A2）', async () => {
+    vi.mocked(deleteAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'kimi', label: 'Kimi', agent: 'codex',
+        base_url: 'https://example.test', models: ['m'],
+        default_model: 'm', wire_api: 'chat', has_key: true, key_hint: '…abcd',
+      }],
+    }))
+    const del = () => byName(ag('detail.delete'))!
+    await act(async () => del().click())
+    expect(vi.mocked(deleteAiEndpoint), '第一下不许发请求').not.toHaveBeenCalled()
+    const group = document.querySelector('[data-endpoint-delete-confirm="kimi"]') as HTMLElement
+    expect(group, '没有出现就地确认').toBeTruthy()
+    expect(group.textContent).toContain(ag('detail.deleteConfirm', { label: 'Kimi' }))
+    // 焦点落在「取消」——Enter 是安全的那一边
+    expect((document.activeElement as HTMLElement).textContent).toBe(t('actions.cancel'))
+    // Esc 退回：确认组消失，仍未发请求
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(document.querySelector('[data-endpoint-delete-confirm]')).toBeNull()
+    expect(vi.mocked(deleteAiEndpoint)).not.toHaveBeenCalled()
+    // 再点一次，这次确认
+    await act(async () => del().click())
+    const confirm = [...document.querySelector('[data-endpoint-delete-confirm]')!.querySelectorAll('button')]
+      .find((b) => b.textContent === ag('detail.delete'))!
+    await act(async () => confirm.click())
+    expect(vi.mocked(deleteAiEndpoint)).toHaveBeenCalledWith('kimi')
   })
 
   it('不支持第三方接口的 Agent 不显示模型服务区块', async () => {

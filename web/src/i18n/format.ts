@@ -41,6 +41,16 @@ export function formatQuantity(value: string | number, unit: string): string {
   return TIGHT_UNITS.has(unit) ? `${v}${unit}` : `${v} ${unit}`
 }
 
+/**
+ * 「宽 × 高 + 单位」全站一个写法（2026-09-14 二审 A8，S11 的兄弟）：`×` 两侧各一个空格，
+ * 单位前一个空格——与 Finder / 预览 的「1890 × 1361」同一读法。此前 `{{w}}×{{h}} mm` 十处、
+ * `{{w}} × {{h}} mm` 五处、`{{w}}×{{h}}cm` 一处并存，同一屏里素材卡与导出对话框两种写法。
+ * i18n 字串里直接写 `{{w}} × {{h}} mm`（resources.test 守着），代码里拼字符串走这里。
+ */
+export function formatSize(w: string | number, h: string | number, unit: string): string {
+  return formatQuantity(`${w} × ${h}`, unit)
+}
+
 /** 时间戳 → 本地时间（默认「日期 + 时分」）。 */
 export function formatDateTime(
   ts: number | Date,

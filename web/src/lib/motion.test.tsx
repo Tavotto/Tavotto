@@ -64,6 +64,12 @@ describe('时长 token：CSS 与 JS 同源', () => {
     expect(DURATION.exit).toBeLessThan(DURATION.fast)
   })
 
+  it('transition-* 不写时长时的默认档也是 token（二审 E1）：默认 = fast + 标准曲线', () => {
+    expect(cssToken('default-transition-duration')).toBe('var(--duration-fast)')
+    expect(cssToken('default-transition-timing-function')).toBe('var(--ease-standard)')
+    expect(cssToken('ease-standard')).toMatch(/^cubic-bezier\(/)
+  })
+
   it('index.css 里声明的每个 --duration-* 都在 DURATION 里有对应项', () => {
     const declared = [...CSS.matchAll(/--duration-([a-z]+):/g)].map((m) => m[1])
     expect(new Set(declared)).toEqual(new Set(Object.keys(DURATION)))

@@ -11,7 +11,7 @@
     "addToCanvas": "添加到画布",
     "capabilityHeading": "{{name}} · {{status}}",
     "cardParameterizable": "可编辑",
-    "cardSize": "{{w}}×{{h}} 厘米",
+    "cardSize": "{{w}} × {{h}} 厘米",
     "cardTitle": "{{id}}\n单击选中 · Enter 编辑原图 · Shift+Enter 添加到画布 · 空格看大图 · 也可直接拖到画布",
     "cardUsed_other": "当前文档已用 {{count}} 次",
     "emptyHint": "把 matplotlib 输出的 PDF/PNG 放进项目目录即可出现在这里。",
@@ -88,7 +88,7 @@
     "duplicate": "复制画布",
     "keepOne": "项目至少保留一张画布",
     "listLabel": "画布列表",
-    "meta_other": "{{w}}×{{h}} mm · {{count}} 对象",
+    "meta_other": "{{w}} × {{h}} mm · {{count}} 对象",
     "newCanvas": "新建画布",
     "noMatch": "没有匹配「{{query}}」的画布",
     "openCanvas": "打开画布 {{name}}",
@@ -159,7 +159,7 @@
   "drawer": {
     "pin": "钉住侧栏",
     "pinHint": "钉住：选中对象时不自动收起",
-    "resize": "调整侧栏宽度（{{min}}–{{max}}px）",
+    "resize": "调整侧栏宽度（{{min}}–{{max}} px）",
     "unpin": "取消钉住侧栏",
     "unpinHint": "取消钉住"
   },

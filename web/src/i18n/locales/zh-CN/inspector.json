@@ -99,7 +99,7 @@
     "marginSummary": "页边距 {{margin}} mm",
     "objects": "对象",
     "pageSize": "页面尺寸",
-    "presetAria": "{{label}}，{{w}}×{{h}} 毫米",
+    "presetAria": "{{label}}，{{w}} × {{h}} 毫米",
     "presetGroup": "页面预设",
     "presets": {
       "double": {
@@ -240,7 +240,7 @@
     "clickToEdit": "点击图内元素开始编辑",
     "editElement": "修改图内元素",
     "editProp": "修改{{label}}",
-    "figureSize": "整图 {{w}}×{{h}} mm",
+    "figureSize": "整图 {{w}} × {{h}} mm",
     "groupFrame": "边框",
     "groupTicksGrid": "刻度与网格",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
@@ -656,7 +656,7 @@
     "nativeMixed": "多个原始尺寸",
     "nativeSize": "原始尺寸",
     "nativeSizeTip": "回到素材本身的 mm 尺寸",
-    "nativeTip": "素材自身尺寸 {{w}}×{{h}} cm；缩放 % 一律相对它计算",
+    "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm；缩放 % 一律相对它计算",
     "nativeTipMulti": "素材自身的尺寸；缩放 % 一律相对它计算",
     "noAssetMatch": "没有匹配的素材",
     "opacity": "不透明度",
@@ -845,7 +845,7 @@
       "linewidth": "描边线宽"
     }
   },
-  "resize": "调整属性栏宽度（{{min}}–{{max}}px）",
+  "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
   "role": {
     "arrow_patch": "箭头",
     "axes": "子图",

@@ -101,7 +101,7 @@
     "marginSummary": "Margin {{margin}} mm",
     "objects": "Objects",
     "pageSize": "Page size",
-    "presetAria": "{{label}}, {{w}}×{{h}} millimetres",
+    "presetAria": "{{label}}, {{w}} × {{h}} millimetres",
     "presetGroup": "Page presets",
     "presets": {
       "double": {
@@ -248,7 +248,7 @@
     "clickToEdit": "Click an element in the figure to start editing",
     "editElement": "Edit figure element",
     "editProp": "Change {{label}}",
-    "figureSize": "Figure {{w}}×{{h}} mm",
+    "figureSize": "Figure {{w}} × {{h}} mm",
     "groupFrame": "Frame",
     "groupTicksGrid": "Ticks and grid",
     "hiddenElements_one": "Hidden elements ({{count}})",
@@ -674,7 +674,7 @@
     "nativeMixed": "Multiple original sizes",
     "nativeSize": "Original size",
     "nativeSizeTip": "Back to the asset’s own mm size",
-    "nativeTip": "The asset's own size is {{w}}×{{h}} cm; scale % is always relative to it",
+    "nativeTip": "The asset's own size is {{w}} × {{h}} cm; scale % is always relative to it",
     "nativeTipMulti": "The asset's own size; scale % is always relative to it",
     "noAssetMatch": "No matching asset",
     "opacity": "Opacity",
@@ -864,7 +864,7 @@
       "linewidth": "Edge width"
     }
   },
-  "resize": "Resize the properties panel ({{min}}–{{max}}px)",
+  "resize": "Resize the properties panel ({{min}}–{{max}} px)",
   "role": {
     "arrow_patch": "Arrow",
     "axes": "Axes",

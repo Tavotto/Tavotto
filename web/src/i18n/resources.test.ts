@@ -242,6 +242,35 @@ describe('文案里不许写不会被渲染的 Markdown', () => {
   }
 })
 
+describe('数值的写法只有一种（2026-09-14 审计 S11 / 二审 A8）', () => {
+  /** `{{w}}×{{h}}`、`{{w}} ×{{h}}`、`{{w}}× {{h}}` 都不行：`×` 两侧各一个空格 */
+  const GLUED_TIMES = /\}\}(?: ?× ?)(?<! × )\{\{/
+  /** 单位贴着占位符：`{{h}}cm`、`{{x}}pt` */
+  const GLUED_UNIT = /\}\}(cm|mm|px|pt|ppi)\b/
+  it.each(NAMESPACES)('%s：宽 × 高 的乘号两侧各一个空格', (ns) => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const bad = [...flatNs(locale, ns)].filter(([, v]) => GLUED_TIMES.test(v)).map(([k, v]) => `${locale} ${k}: ${v}`)
+      expect(bad).toEqual([])
+    }
+  })
+  it.each(NAMESPACES)('%s：字母单位前一个空格（formatQuantity 的规矩）', (ns) => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const bad = [...flatNs(locale, ns)].filter(([, v]) => GLUED_UNIT.test(v)).map(([k, v]) => `${locale} ${k}: ${v}`)
+      expect(bad).toEqual([])
+    }
+  })
+  it('自检：判据抓得住三种贴法、放得过规范写法', () => {
+    expect(GLUED_TIMES.test('{{w}}×{{h}} mm')).toBe(true)
+    expect(GLUED_TIMES.test('{{w}} ×{{h}} mm')).toBe(true)
+    expect(GLUED_TIMES.test('{{w}}× {{h}} mm')).toBe(true)
+    expect(GLUED_TIMES.test('{{w}} × {{h}} mm')).toBe(false)
+    expect(GLUED_UNIT.test('{{w}}×{{h}}cm')).toBe(true)
+    expect(GLUED_UNIT.test('{{x}}pt')).toBe(true)
+    expect(GLUED_UNIT.test('{{w}} × {{h}} cm')).toBe(false)
+    expect(GLUED_UNIT.test('{{value}} ppi')).toBe(false)
+  })
+})
+
 describe('缺 key 时的回退', () => {
   /**
    * 这一层有一批**开放集合**：matplotlib 的属性名、色图名（viridis）、刻度

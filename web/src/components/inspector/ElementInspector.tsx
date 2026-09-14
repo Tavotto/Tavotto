@@ -2194,7 +2194,7 @@ function FieldRow({
                 taRef.current = el
                 autoFocus(el)
               }}
-              rows={Math.min(4, text.split('\n').length)}
+              maxRows={4}
               value={text}
               onFocus={beginTxn}
               onBlur={endTxn}

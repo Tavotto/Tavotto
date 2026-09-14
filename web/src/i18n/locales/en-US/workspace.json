@@ -11,7 +11,7 @@
     "addToCanvas": "Add to canvas",
     "capabilityHeading": "{{name}} · {{status}}",
     "cardParameterizable": "editable",
-    "cardSize": "{{w}}×{{h}} centimetres",
+    "cardSize": "{{w}} × {{h}} centimetres",
     "cardTitle": "{{id}}\nClick to select · Enter to edit the figure · Shift+Enter to add to the canvas · Space to preview · or drag onto the canvas",
     "cardUsed_one": "used {{count}} time in this document",
     "cardUsed_other": "used {{count}} times in this document",
@@ -92,8 +92,8 @@
     "duplicate": "Duplicate canvas",
     "keepOne": "A project needs at least one canvas.",
     "listLabel": "Canvas list",
-    "meta_one": "{{w}}×{{h}} mm · {{count}} object",
-    "meta_other": "{{w}}×{{h}} mm · {{count}} objects",
+    "meta_one": "{{w}} × {{h}} mm · {{count}} object",
+    "meta_other": "{{w}} × {{h}} mm · {{count}} objects",
     "newCanvas": "New canvas",
     "noMatch": "No canvas matches “{{query}}”",
     "openCanvas": "Open canvas {{name}}",
@@ -167,7 +167,7 @@
   "drawer": {
     "pin": "Pin sidebar",
     "pinHint": "Pin: keep open when an object is selected",
-    "resize": "Resize sidebar ({{min}}–{{max}}px)",
+    "resize": "Resize sidebar ({{min}}–{{max}} px)",
     "unpin": "Unpin sidebar",
     "unpinHint": "Unpin"
   },

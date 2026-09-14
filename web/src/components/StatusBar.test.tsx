@@ -93,7 +93,7 @@ describe('CanvasHud 读数', () => {
     const groups = box!.querySelectorAll(':scope > span')
     expect(groups).toHaveLength(2)
     expect(groups[0].textContent).toBe('光标12.0, 16.0 mm')
-    expect(groups[1].textContent).toBe('尺寸100.0×8.0 mm')
+    expect(groups[1].textContent).toBe('尺寸100.0 × 8.0 mm')
     expect(container.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 

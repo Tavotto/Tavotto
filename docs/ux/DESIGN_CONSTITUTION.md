@@ -81,6 +81,14 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   ink-3，聚焦 / 打开 accent，禁用 opacity-40。TextInput / TextArea / NumberField / Select /
   SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；数字框不再是 surface-2 灰底。
 - **TextInput**：`invalid`（红边 + aria-invalid）、`suffix`（**框内**后缀，数字自动右对齐）。
+- **TextArea**：高度跟着内容走（`scrollHeight` 自适应，`maxRows` 封顶后框内滚动；2026-09-14 二审 A1）。
+  调用点不再自己算 `rows`——按硬换行数算的话，一行源码两行显示的图例名第二行会被裁掉。
+  画布文字的编辑框也是它（文档字体只是 `style`）。
+- **ColorField**：只有一块 32×20 的色块，宽度由它自己定；调用点不传宽度（浮动栏那四处
+  `w-[86px]` 是色号框时代的残留，删于二审 A3）。
+- **行内的危险动作先就地确认**（二审 A2）：密集列表里的「删除」不弹模态，那一行原位换成
+  「删除「x」？ [删除] [取消]」，焦点落「取消」，Esc / 焦点离开 = 取消；Esc 要在 window 的捕获
+  阶段拦，否则 Radix 的 Dialog 先把整个设置窗口关了。样式删除、终止会话这类整块对象仍走 `askConfirm`。
 - **NumberField**：`unit` 是框内单位 `[ 393.7      mm ]`，数字右对齐、单位靠右，一列数字框的
   单位排成一条竖线；框外后缀（`[393.7] mm`）已于 2026-09-11 最终 Session 全部迁完并删掉，
   单位漂在框外没有来路。
@@ -148,6 +156,9 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 **数值与单位**只有一个写法（`i18n/format.formatQuantity`，2026-09-14 审计 S11）：字母单位（pt / mm / px /
 ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`，代码里拼字符串走 `formatQuantity`；
 `NumberField` 框内单位是独立的一列，不经它。此前 `{{x}}pt` 21 处无空格、`{{x}} mm` 22 处有空格并存。
+**宽 × 高**也只有一个写法（`formatSize`，二审 A8）：`80 × 57.6 mm`——`×` 两侧各一个空格、单位前一个空格；
+i18n 字串里写 `{{w}} × {{h}} mm`，`resources.test` 守着（此前 `{{w}}×{{h}} mm` 十处、`{{w}} × {{h}} mm` 五处、
+`{{w}}×{{h}}cm` 一处并存，`measure.mmSize` 与 `mmSizeSpaced` 两个 key 同一件事）。
 
 字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 四档；`text-[Npx]` 不许出现（营销页 /try 的
 三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；`font-semibold` 现存 9 处待
@@ -158,6 +169,12 @@ ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`�
 时长只来自 token：`fast` 120 / `base` 180 / `slow` 240 / `exit` 90；形态只有
 opacity + ≤4px 位移 + scale 0.97~1；没有弹簧、缩放炫技、漂浮。`prefers-reduced-motion`
 是硬约束（JS 动画走 `lib/motion.tween()`）。
+
+**写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
+= `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /
+颜色 / 折叠箭头这类来回都要顺的过渡；`--ease-pop` 进场、`--ease-exit` 退场不变）。此前 53 处落在
+Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，抓不到「没写」；`motion.test`
+守着默认档与 token 同源。
 
 ## 八、少用容器
 

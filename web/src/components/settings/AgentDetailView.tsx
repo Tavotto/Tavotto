@@ -15,6 +15,7 @@ import {
   type AiCapabilities,
   type AiInstallState,
 } from '@/lib/api'
+import { t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import { Button } from '../ui/Button'
 import { Radio } from '../ui/Radio'
@@ -115,6 +116,23 @@ export function AgentDetailView({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<null | { id?: string }>(null)
+  // 正在就地确认删除的接口（2026-09-14 二审 A2）：这一行的「编辑 · 删除」换成
+  // 「删除「x」？ [删除] [取消]」，Esc / 焦点离开 = 取消。此前一下就发 DELETE——
+  // 密钥不回显，删错了没法找回；样式删除与终止会话都有一次确认，这里不该例外。
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // Esc 只收起确认，不连设置窗口一起关：Radix 的 Dialog 在 document 的捕获阶段听 Esc，
+  // 元素上的 onKeyDown 拦不住它；挂在 window 的捕获监听排在 document 之前，才拦得住。
+  useEffect(() => {
+    if (confirmDelete == null) return
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      setConfirmDelete(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [confirmDelete])
 
   /** 跑一个改动，然后重新拉能力。`fn` 自己就是重探测时不再多跑一次。 */
   const run = async (fn: () => Promise<AiCapabilities | unknown> | void) => {
@@ -259,14 +277,46 @@ export function AgentDetailView({
                       </span>
                     </span>
                   </label>
-                  <span className="flex shrink-0 items-center gap-0.5">
-                    <Button variant="ghost" size="sm" onClick={() => setEditing({ id: e.id })}>
-                      {ag('detail.edit')}
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => void run(() => deleteAiEndpoint(e.id))}>
-                      {ag('detail.delete')}
-                    </Button>
-                  </span>
+                  {confirmDelete === e.id ? (
+                    <span
+                      role="group"
+                      aria-label={ag('detail.deleteConfirm', { label: e.label })}
+                      data-endpoint-delete-confirm={e.id}
+                      className="flex shrink-0 items-center gap-1"
+                      onBlur={(ev) => {
+                        // 焦点离开整组（不是在两颗钮之间移动）就当作取消
+                        if (!ev.currentTarget.contains(ev.relatedTarget as Node | null))
+                          setConfirmDelete(null)
+                      }}
+                    >
+                      <span className="text-xs text-ink-2">
+                        {ag('detail.deleteConfirm', { label: e.label })}
+                      </span>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => {
+                          setConfirmDelete(null)
+                          void run(() => deleteAiEndpoint(e.id))
+                        }}
+                      >
+                        {ag('detail.delete')}
+                      </Button>
+                      {/* 焦点落在「取消」：Enter 是安全的那一边（危险操作的默认键） */}
+                      <Button autoFocus variant="secondary" size="sm" onClick={() => setConfirmDelete(null)}>
+                        {translate('actions.cancel')}
+                      </Button>
+                    </span>
+                  ) : (
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      <Button variant="ghost" size="sm" onClick={() => setEditing({ id: e.id })}>
+                        {ag('detail.edit')}
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => setConfirmDelete(e.id)}>
+                        {ag('detail.delete')}
+                      </Button>
+                    </span>
+                  )}
                 </div>
               )
             })}

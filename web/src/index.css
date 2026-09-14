@@ -124,9 +124,18 @@
   /* 退场档：比同名进场短一档 */
   --duration-exit: 90ms;
 
+  /* 过渡的默认档就是 token（2026-09-14 二审 E1）：写了 transition-* 没写 duration 的地方
+     （折叠箭头、Radio / Checkbox……53 处）此前落在 Tailwind 自带的 150ms / ease——
+     foundation.test 抓 `duration-150` 字面量，抓不到「没写」。默认 = fast + 标准曲线，
+     不用逐处补；motion.test 守着它与 --duration-fast 同源。 */
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-standard);
+
   /* 进场用强 ease-out（起步快、收尾稳），退场用 ease-in（直接让开） */
   --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* hover / 颜色 / 折叠箭头这类来回都要顺的过渡：对称曲线（与 Tailwind 原默认同形，只是有了名字） */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 
   /* 浮层：菜单 / popover / select / tooltip / dialog 主体 */
   --animate-pop-in: pop-in var(--duration-fast) var(--ease-pop);

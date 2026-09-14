@@ -77,7 +77,7 @@ import {
   type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
-import { issueTitle, issueValues, subjectName } from '@/lib/validationText'
+import { issueTitle, issueValues, SEVERITY_ICON, severityLabel, subjectName } from '@/lib/validationText'
 import { buildProofPayload } from '@/lib/preflight'
 import {
   defaultScope,
@@ -91,7 +91,6 @@ import {
 import type { OverwritePolicy } from '@/lib/exportRequest'
 import type { PublicationProfile } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
-import { severityLabel } from '@/lib/validationText'
 import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/specBinding'
 import { apiUrl } from '@/lib/session'
 import { boundedCount, captureTelemetry } from '@/lib/telemetry'
@@ -126,6 +125,9 @@ import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
+
+/** 阻断问题的图标：与问题面板同一张表（`SEVERITY_ICON`），八角 */
+const BlockingIcon = SEVERITY_ICON.error
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
 const ex = (key: string, values?: Record<string, unknown>) =>
@@ -1406,7 +1408,8 @@ function BlockingList({
       {groups.map((g) => (
         <li key={g.ruleCode} data-blocking-group={g.ruleCode} className="py-0.5 text-xs">
           <div className="flex items-center gap-2 leading-relaxed">
-            <TriangleAlert size={ICON_SIZE.xs} className="shrink-0 text-danger" aria-hidden />
+            {/* 阻断的形状与问题面板同一张表（八角），不在这里另画一个三角 */}
+            <BlockingIcon size={ICON_SIZE.xs} className="shrink-0 text-danger" aria-hidden />
             <span className="text-ink">{g.title}</span>
             {g.items.length > 1 && (
               <span className="type-meta tabular-nums">{ex('blockingGroupCount', { count: g.items.length })}</span>
@@ -1521,7 +1524,12 @@ function CheckRow({
           summary.blocking ? 'text-danger' : 'text-ink',
         )}
       >
-        <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        {/* 有阻断就是八角，只有警告 / 建议才是三角——与清单、问题面板同一套形状 */}
+        {summary.blocking ? (
+          <BlockingIcon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        ) : (
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        )}
         <span className="tabular-nums">{parts.join(' · ')}</span>
         <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
       </span>

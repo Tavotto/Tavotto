@@ -451,7 +451,7 @@ export function AssetBrowser() {
         title={zoomed ? (zoomed.kind === 'file' ? fileName(zoomed.panel.id) : zoomed.kind === 'runtime' ? zoomed.asset.stem : '') : ''}
         description={
           zoomed?.kind === 'file'
-            ? `${formatOf(zoomed.panel)} · ${formatCm(zoomed.panel.native_w_mm)}×${formatCm(zoomed.panel.native_h_mm)}cm`
+            ? `${formatOf(zoomed.panel)} · ${translate('measure.cmSize', { w: formatCm(zoomed.panel.native_w_mm), h: formatCm(zoomed.panel.native_h_mm) })}`
             : zoomed?.kind === 'runtime'
               ? `${ab('runtimeBadge')} · ${zoomed.asset.script}`
               : ''

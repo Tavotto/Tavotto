@@ -12,7 +12,7 @@
  * 3. **不存翻译后的字符串**。这里全是现算的读法，问题本身存的是 message key
  *    与结构化参数（`ValidationIssue.message`）。
  */
-import { Lightbulb, ShieldQuestionMark, TriangleAlert } from 'lucide-react'
+import { Lightbulb, OctagonAlert, ShieldQuestionMark, TriangleAlert } from 'lucide-react'
 import { formatQuantity } from '@/i18n/format'
 import { formatMessage, t as translate } from '@/i18n'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
@@ -22,9 +22,15 @@ import type { ValidationIssue } from './validation'
 const pr = (key: string, values?: Record<string, unknown>): string =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
 
-/** 四个等级共用的图标表。**问题面板与导出面板同一份**（图标一致的看护点）。 */
+/**
+ * 四个等级共用的图标表。**问题面板与导出面板同一份**（图标一致的看护点）。
+ *
+ * 阻断是八角（停车牌的形状），警告是三角：两级此前共用一个三角、只靠红 / 琥珀色
+ * 区分，灰度或色弱下只剩「阻断 / 警告」两个字可辨（2026-09-14 二审 C1）。形状与
+ * 颜色各说一遍，才不是「状态只靠颜色」。
+ */
 export const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
-  error: TriangleAlert,
+  error: OctagonAlert,
   warn: TriangleAlert,
   not_verifiable: ShieldQuestionMark,
   suggestion: Lightbulb,

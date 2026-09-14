@@ -22,7 +22,7 @@ import { panelFullSize, type PanelObject, type TextObject } from '@/types/docume
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
-import { ColorField, NumberField } from '../ui/Input'
+import { ColorField, NumberField, TextArea } from '../ui/Input'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
 import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
@@ -140,10 +140,12 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   return (
     <Section title={tx('title')}>
       {one && (
-        <textarea
+        <TextArea
           ref={taRef}
+          // 名字 = 分区标题那句可见文字，同一个表达式（此前这格没有可达名）
+          aria-label={tx('title')}
           value={one.text}
-          rows={2}
+          maxRows={6}
           onFocus={beginTxn}
           onBlur={endTxn}
           onChange={(e) => patch(hist('editText'), (o) => (o.text = e.target.value))}
@@ -157,7 +159,8 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           }}
           onDoubleClick={() => useUiStore.getState().setEditingText(one.id)}
           placeholder={tx('placeholder')}
-          className="mb-1 w-full resize-none rounded-sm border border-border bg-surface px-1.5 py-1 text-xs leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-3 hover:border-border-strong focus:border-accent"
+          // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）
+          className="mb-1"
           style={{ fontFamily: 'var(--font-doc)' }}
         />
       )}

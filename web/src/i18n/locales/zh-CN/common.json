@@ -21,11 +21,10 @@
   },
   "literal": "{{text}}",
   "measure": {
-    "cmSize": "{{w}}×{{h}}cm",
+    "cmSize": "{{w}} × {{h}} cm",
     "mm": "{{value}} mm",
     "mmPair": "{{a}}, {{b}} mm",
-    "mmSize": "{{w}}×{{h}} mm",
-    "mmSizeSpaced": "{{w}} × {{h}} mm",
+    "mmSize": "{{w}} × {{h}} mm",
     "ppi": "{{value}} ppi",
     "pxSize": "{{w}} × {{h}} px"
   },

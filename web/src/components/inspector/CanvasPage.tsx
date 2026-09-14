@@ -82,7 +82,7 @@ export function CanvasPage() {
         action={
           <span className="shrink-0 font-mono text-xs text-ink-3">
             {/* 与下面的 W / H 输入框同一个单位：摘要说 cm、框里写 mm 是两套尺子 */}
-            {translate('measure.mmSizeSpaced', { w: formatMm(page.w), h: formatMm(page.h) })}
+            {translate('measure.mmSize', { w: formatMm(page.w), h: formatMm(page.h) })}
           </span>
         }
       >
