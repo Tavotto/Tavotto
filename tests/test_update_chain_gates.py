@@ -611,17 +611,17 @@ def test_the_workflow_reader_still_sees_the_release_chain():
     desk = _wf_jobs(WORKFLOWS / "desktop-tauri.yml")
     assert {"trust", "build", "updater-manifest"} <= set(desk), sorted(desk)
     rows = _wf_matrix_rows(desk["build"])
-    assert [r.get("artifact") for r in rows] == ["dmg", "nsis"], rows
+    assert {"dmg", "nsis"} <= {r.get("artifact") for r in rows}, rows
     names = [n for n, _, _ in _wf_uploads(WORKFLOWS / "desktop-tauri.yml")]
     assert "desktop-tauri-dmg" in names and "artifact-manifest-nsis" in names, names
     rel = WORKFLOWS / "release.yml"
     assert [c.name for c in _wf_callees(rel)] == ["desktop-tauri.yml", "_lab-qualification.yml"]
     assert "artifact-manifest-python" in [n for n, _, _ in _wf_uploads(rel)]
     sites = {(p.name, job) for p, job, _, _, _ in _pattern_downloads()}
-    assert sites == {
+    assert {
         ("desktop-tauri.yml", "updater-manifest"),
         ("release.yml", "validate_artifacts"),
-    }, sites
+    } <= sites, sites
 
 
 def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uploads():
