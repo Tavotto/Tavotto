@@ -502,16 +502,19 @@ class TestGates:
                 and "github.event_name == 'merge_group'" in cond
             ), f"{job_id} 的事件条件不对：{cond}"
 
-    def test_backend_split_keeps_all_four_tiers(self):
-        """backend-fast + backend-platforms 合起来必须与从前的四腿矩阵逐档
-        相同：Linux 3.10 / Linux 3.13 / macOS 3.13 / Windows 3.13。
-        merge_group 上四档全跑（fast 与 platforms 都在），一档都不许少。"""
+    def test_backend_split_keeps_all_five_tiers(self):
+        """backend-fast + backend-platforms 合起来必须逐档等于：
+        Linux 3.10 / Linux 3.13 / Linux 3.14 / macOS 3.13 / Windows 3.13。
+        merge_group 上五档全跑（fast 与 platforms 都在），一档都不许少。
+        Linux 3.14 是 issue #33 放开上界时加的——上界那档在不在矩阵里，
+        由 tests/test_support_matrix.py 对着 support-matrix 的 tested 再钉一次。"""
         fast = _job(CI, "backend-fast")
         platforms = _job(CI, "backend-platforms")
         tiers = set(re.findall(r"\{ os: ([\w-]+),\s*python: \"([\d.]+)\" \}", fast + platforms))
         assert tiers == {
             ("ubuntu-latest", "3.10"),
             ("ubuntu-latest", "3.13"),
+            ("ubuntu-latest", "3.14"),
             ("macos-latest", "3.13"),
             ("windows-latest", "3.13"),
         }, f"backend 覆盖漂了：{sorted(tiers)}"

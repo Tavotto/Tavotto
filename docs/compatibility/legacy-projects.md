@@ -57,7 +57,7 @@ pandas、scipy、seaborn、pillow，版本见 `packaging/runtime-lock.json`）�
 
 | 检查 | 不过时 |
 | --- | --- |
-| Python 版本在 `>=3.10,<3.14` 内 | 拒绝使用，提示版本不支持 |
+| Python 版本在 `>=3.10,<3.15` 内 | 拒绝使用，提示版本不支持 |
 | `import matplotlib` 成功 | 拒绝使用——它不是一个绘图环境 |
 | 能起 Tavotto worker（`figcapture` / `manifest` / `overrides` 可 import） | 拒绝使用 |
 | 缺的那个包在它里面确实有 | 拒绝使用——换过去只会报同一个错 |

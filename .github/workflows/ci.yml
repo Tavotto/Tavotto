@@ -366,12 +366,16 @@ jobs:
         run: python tests/support/engine_invariant_probe.py --pretty
 
   # 跨平台是产品承诺，就得跨平台跑——但**在哪个提交上跑**分了工：
-  # backend-fast 守 Python 下界与主开发版本，每个 PR push 都回来；
+  # backend-fast 守 Python 下界、主开发版本与上界，每个 PR push 都回来；
   # backend-platforms 守 mac / Windows 的平台相关代码（数据目录、worker
   # 解释器探测、路径分隔符），在 merge_group 的最终组合提交（或 full-ci PR）
-  # 上跑。两个 job 合起来与从前的四腿矩阵**逐档相同**：
-  # Linux 3.10 / Linux 3.13 / macOS 3.13 / Windows 3.13，一档没少
-  # （tests/test_merge_queue_workflows.py 对拍这四档）。
+  # 上跑。两个 job 合起来是五档：
+  # Linux 3.10 / Linux 3.13 / Linux 3.14 / macOS 3.13 / Windows 3.13，一档没少
+  # （tests/test_merge_queue_workflows.py 对拍这五档）。
+  #
+  # Linux 3.14 那档是 requires-python `<3.15` 的兑现处（issue #33）：
+  # tests/test_support_matrix.py 钉住「support-matrix 里 tested 的最高档必须在
+  # 这个矩阵里有腿」——上界放开了却没有腿在跑它，就是一句空承诺。
   backend-fast:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     strategy:
@@ -380,6 +384,7 @@ jobs:
         include:
           - { os: ubuntu-latest,  python: "3.10" }
           - { os: ubuntu-latest,  python: "3.13" }
+          - { os: ubuntu-latest,  python: "3.14" }
     # 同 backend-platforms：实测 20–25 分钟，40 给余量。没有上限的 job
     # 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
     timeout-minutes: 40
@@ -780,13 +785,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 三个平台各一档 3.13（发行 runtime 的版本），外加一档 Linux 3.14：
+        # requires-python 放到 `<3.15` 之后，wheel 在 3.14 上「装得进干净
+        # 环境并起得来」也得有人真跑（issue #33 的完成定义之一）。
+        include:
+          - { os: ubuntu-latest,  python: "3.13" }
+          - { os: ubuntu-latest,  python: "3.14" }
+          - { os: macos-latest,   python: "3.13" }
+          - { os: windows-latest, python: "3.13" }
     timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
+        with: { python-version: "${{ matrix.python }}" }
       - uses: pnpm/action-setup@v4
         with: { version: 11 }
       - uses: actions/setup-node@v4

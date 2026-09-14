@@ -17,6 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "docs" / "support-matrix.json"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _release_section():
@@ -67,6 +68,71 @@ def test_python_range_matches_pyproject():
     assert m, "pyproject 里找不到 requires-python"
     assert _matrix()["python"]["requires"] == m.group(1), (
         "支持矩阵的 Python 范围与 pyproject 不一致——两边必须一起改"
+    )
+
+
+def _backend_fast_pythons() -> list[str]:
+    """从 ci.yml 里切出 `backend-fast` 的 `strategy.matrix.include`，返回它跑的
+    Python 档（按出现顺序）。
+
+    **不用 PyYAML**（与 tests/test_merge_queue_workflows.py 同一条纪律：它不在
+    `.venv` 里，importorskip 会让整组判据静默跳过——那正是空门禁）。改为只认
+    本仓库的缩进形状：先按两格缩进切出 job 块，再取 `include:` 下面**更深缩进**
+    的 `- { os: …, python: "…" }` 流式映射条目，注释行跳过，缩进回到 `include:`
+    那一层就停。切不出 job、找不到 include、一条都解析不出——三种都当场抛，
+    不许安静地返回空集让下面的判据恒真。
+    """
+    assert CI_WORKFLOW.is_file(), (
+        f"读不到 {CI_WORKFLOW.relative_to(ROOT)}——这条判据的输入是仓库级 workflow"
+    )
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+    job = re.search(r"(?ms)^  backend-fast:\n(.*?)(?=^  [\w-]+:|\Z)", text)
+    assert job, "ci.yml 里切不出 job `backend-fast`——缩进形状变了？"
+    lines = job.group(0).splitlines()
+    heads = [i for i, ln in enumerate(lines) if ln.strip() == "include:"]
+    assert len(heads) == 1, f"backend-fast 里应恰有一个 `include:`，读到 {len(heads)} 个"
+    head = heads[0]
+    depth = len(lines[head]) - len(lines[head].lstrip())
+    entries: list[tuple[str, str]] = []
+    for ln in lines[head + 1 :]:
+        if not ln.strip():
+            continue
+        indent = len(ln) - len(ln.lstrip())
+        if indent <= depth:
+            break
+        if ln.lstrip().startswith("#"):
+            continue
+        item = re.fullmatch(
+            r"\s*-\s*\{\s*os:\s*([\w-]+)\s*,\s*python:\s*\"(\d+\.\d+)\"\s*\}\s*", ln
+        )
+        assert item, f'backend-fast 的 include 里有一条不是 `{{ os: …, python: "…" }}` 形状：{ln!r}'
+        entries.append((item.group(1), item.group(2)))
+    assert entries, "backend-fast 的 include 下一条矩阵项都没解析出来——形状变了？"
+    return [py for _os, py in entries]
+
+
+def test_backend_fast_runs_both_ends_of_the_tested_range():
+    """矩阵里 `tested` 的两端（最低与最高）都必须在 ci.yml 的 backend-fast 矩阵里有腿。
+
+    `requires-python` 的上界是承诺，CI 矩阵是兑现：放开 `<3.15` 却没有任何一条腿
+    在 3.14 上跑，就是「pip 允许装」不等于「我们真的测过」（issue #33 的完成定义
+    写的是「3.14 全矩阵通过」，而不是「元数据改成 3.14」）。下界同理——3.10 那腿
+    掉了，`target-version = "py310"` 之外就没有任何东西在证明 3.10 还能跑。
+    backend-fast 是每个 PR push 都跑的那档，所以两端钉在它上面而不是 merge_group
+    才跑的 backend-platforms。
+    """
+    tested = _matrix()["python"]["tested"]
+    assert tested, "矩阵里没有 tested 列表"
+    by_version = sorted(tested, key=lambda v: tuple(int(x) for x in v.split(".")))
+    lowest, highest = by_version[0], by_version[-1]
+    legs = _backend_fast_pythons()
+    assert highest in legs, (
+        f"support-matrix 说 tested 到 {highest}，但 ci.yml 的 backend-fast 矩阵里没有 {highest} 那一档"
+        f"（现有：{legs}）——放开了上界却没有腿在跑它，是一句空承诺"
+    )
+    assert lowest in legs, (
+        f"support-matrix 说 tested 从 {lowest} 起，但 ci.yml 的 backend-fast 矩阵里没有 {lowest} 那一档"
+        f"（现有：{legs}）"
     )
 
 

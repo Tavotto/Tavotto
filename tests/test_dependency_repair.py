@@ -796,26 +796,34 @@ def test_reset_state_really_forgets_attempted_repairs(project, monkeypatch):
 
 
 def test_managed_base_python_must_be_in_the_support_range(project, monkeypatch):
-    """**负向反证（Codex 评审 P2）**：只有 3.14 的机器上不许提供受管修复。
+    """**负向反证（Codex 评审 P2）**：只有区间外 Python 的机器上不许提供受管修复。
 
     判据只问「`import venv` 行不行」的话，用户会走完「建 venv → 下载装
     matplotlib 与那个包」，**最后**才在体检那一步被告知版本不支持——白等
     一场下载。判据要提到选解释器那一刻。
-    """
-    from tavotto.engine import bootstrap
 
+    区间外的那一档**从 `projectenv.PYTHON_MAX_EXCLUSIVE` 现算**，不写死字面量：
+    这条用例最初写死 3.14，issue #33 放开 3.14 的那天它就会集体失效——
+    夹具里的「下一个版本」必须跟着支持区间走，否则它钉住的是日历不是判据。
+    """
+    from tavotto.engine import bootstrap, projectenv
+
+    beyond = "%d.%d" % projectenv.PYTHON_MAX_EXCLUSIVE
+    last_ok = "%d.%d" % projectenv.PYTHON_TESTED[-1]
     captured = {}
 
     def _fake(accept=None):
         captured["accept"] = accept
-        # 模拟「机器上只有 3.14」：候选唯一，版本超出支持区间
-        return "/fake/python3.14" if accept is None or accept("/fake/python3.14", "3.14") else None
+        # 模拟「机器上只有区间外的那一档」：候选唯一，版本超出支持区间
+        path = f"/fake/python{beyond}"
+        return path if accept is None or accept(path, beyond) else None
 
     monkeypatch.setattr(bootstrap, "find_base_python", _fake)
     deprepair.reset_state()
-    assert managedenv.base_python() is None, "3.14 不该被当成可用的基础解释器"
+    assert managedenv.base_python() is None, f"{beyond} 不该被当成可用的基础解释器"
     assert captured["accept"] is not None, "版本判据没被传下去"
-    # 区间内的照常接受
+    # 区间内的照常接受——上界那一档（刚放开的）尤其要在这里过一次
+    assert captured["accept"](f"/fake/python{last_ok}", last_ok) is True
     assert captured["accept"]("/fake/python3.12", "3.12") is True
 
 

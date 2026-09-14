@@ -99,8 +99,8 @@ PROBE_TIMEOUT_S = 60.0
 #: `tests/test_support_matrix.py::test_project_env_mirrors_the_matrix` 逐条对拍，
 #: 改了矩阵不改这里当场变红。
 PYTHON_MIN = (3, 10)
-PYTHON_MAX_EXCLUSIVE = (3, 14)
-PYTHON_TESTED = ((3, 10), (3, 11), (3, 12), (3, 13))
+PYTHON_MAX_EXCLUSIVE = (3, 15)
+PYTHON_TESTED = ((3, 10), (3, 11), (3, 12), (3, 13), (3, 14))
 MPL_MIN = (3, 8)
 MPL_MAX_EXCLUSIVE = (3, 12)
 
