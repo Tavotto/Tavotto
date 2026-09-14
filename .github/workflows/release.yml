@@ -436,10 +436,43 @@ jobs:
         with:
           path: desktop
           pattern: desktop-tauri-*
+      # **pattern 下载之后紧跟按名字点名**（issue #327）：download-artifact 排了两个、
+      # 只落了一个也报 success（v0.14.0 演练实测），不点名的话症状要到合并清单那步
+      # 才以「缺平台」的面目出现——报文离病因一整个 job。期望名单 = 这次 run 里
+      # 真会上传的那几个：desktop-tauri.yml 的 build 矩阵每条腿一个 `desktop-tauri-<artifact>`，
+      # `tests/test_update_chain_gates.py` 看着名单与矩阵严格同源。
+      - name: 点名下载到的桌面产物（download-artifact 少下一个也报 success）
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in desktop-tauri-dmg desktop-tauri-nsis; do
+            if ! test -n "$(ls -A "desktop/$name" 2>/dev/null)"; then
+              echo "::error::artifact $name 没下到（download-artifact 报了 success）"
+              missing=1
+            fi
+          done
+          ls -laR desktop || true
+          exit "$missing"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: manifests
           pattern: artifact-manifest-*
+      # 同上。三份清单：本文件 build job 的 artifact-manifest-python，
+      # 加桌面矩阵每条腿的 artifact-manifest-<artifact>。
+      - name: 点名下载到的产物清单（download-artifact 少下一个也报 success）
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in artifact-manifest-python artifact-manifest-dmg artifact-manifest-nsis; do
+            if ! test -n "$(ls -A "manifests/$name" 2>/dev/null)"; then
+              echo "::error::artifact $name 没下到（download-artifact 报了 success）"
+              missing=1
+            fi
+          done
+          ls -laR manifests || true
+          exit "$missing"
       # **不再 continue-on-error。** 桌面链现在恒以 release_build=true 运行，
       # `updater-manifest` job 因此总会产出 latest.json（产不出来它自己就红了，
       # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
@@ -641,6 +674,21 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: 项目许可证进发行资产（issue #182）
+        # Release 页面上要能直接拿到 AGPL 全文，不必翻源码归档。它**不进产物清单**：
+        # 清单记的是构建腿造出来的东西（role / sha256 / source_sha），而 LICENSE 是
+        # trust 验过的那个 SHA 上的源码文件，本 job 的 checkout 就是它——从这里拷
+        # 进 out/，与 SHA256SUMS / latest.json 同路进 release-assets，再由
+        # github_release 一次挂全部。演练也走这一步：文件改名或内容换了当场红。
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          grep -q "GNU AFFERO" LICENSE || {
+            echo "::error::仓库根的 LICENSE 不是 AGPL 全文（缺 GNU AFFERO）"
+            exit 1
+          }
+          cp LICENSE out/LICENSE
+
       - name: 上传全部发行资产
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -711,6 +759,7 @@ jobs:
             assets/out/SHA256SUMS.txt
             assets/out/tavotto-sbom.spdx.json
             assets/out/latest.json
+            assets/out/LICENSE
 
       # 官网的下载按钮直连安装包：版本、大小、校验和都在构建时从这次 Release 的
       # artifact-manifest.json 里读出来（Tavotto_website 的 scripts/sync-release.mjs）。

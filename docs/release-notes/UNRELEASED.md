@@ -36,3 +36,13 @@ first ship in this release (`artifactcheck`, `figcapture`, `interference`,
 `normalize`), so `MIN_TAVOTTO_VERSION` in `scripts/make_plugin_manifest.py`
 must be raised to this release's version when tagging.
 
+
+## Desktop installers and the GitHub Release now carry the project LICENSE
+
+The Windows installer and the macOS app now ship the project licence (AGPL-3.0
+full text) alongside the application: on Windows it lands in the installation
+directory next to `Tavotto.exe`, on macOS in `Tavotto.app/Contents/Resources/`.
+Every GitHub Release also attaches `LICENSE` as a separate asset next to
+`SHA256SUMS.txt`, so the licence can be read without opening the source
+archive. Nothing changes in the installer flow: there is still no licence page
+to click through.

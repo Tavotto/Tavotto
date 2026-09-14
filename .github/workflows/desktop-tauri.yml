@@ -497,6 +497,11 @@ jobs:
           ditto "$SRC" "$DEST/Tavotto.app"
           SIDECAR="$DEST/Tavotto.app/Contents/Resources/sidecar/Tavotto/Tavotto"
           test -x "$SIDECAR" || { echo "::error::.app 里没有可执行的 sidecar: $SIDECAR"; exit 1; }
+          # 项目许可证随 .app 走（issue #182）：tauri.conf.json 的 bundle.resources
+          # 把仓库根 LICENSE 映射到 $RESOURCES/LICENSE；只查「文件在」不够，
+          # 空文件或映射错了源也算在，所以还要认 AGPL 全文的抬头。
+          LIC="$DEST/Tavotto.app/Contents/Resources/LICENSE"
+          grep -q "GNU AFFERO" "$LIC" || { echo "::error::.app 里没有项目 LICENSE（AGPL 全文）: $LIC"; exit 1; }
           # 拷完再验一次签名：ditto 保不住签名的话，用户从 dmg 拖进
           # /Applications 的那一份也一样坏
           codesign --verify --deep --strict "$DEST/Tavotto.app"
@@ -780,6 +785,27 @@ jobs:
         with:
           path: artifacts
           pattern: desktop-tauri-*
+
+      # **按名字点名，紧跟在 pattern 下载之后。** v0.14.0 演练（run 34208652704）
+      # 实测：两个 artifact 都排了队，只有 dmg 打出完成校验，步骤仍报 success；
+      # 下游 make_updater_manifest 报的是「清单缺平台 windows-x86_64」——报文
+      # 离病因隔着一整个 job，第一反应会去查 Windows 构建腿（issue #327）。
+      # 判据的主语：下载目录里**每个期望名字的子目录非空**；期望名单就是上面
+      # build 矩阵每条腿上传的 `desktop-tauri-<artifact>`，
+      # `tests/test_update_chain_gates.py` 看着这份名单与矩阵严格同源。
+      - name: 点名下载到的桌面产物（download-artifact 少下一个也报 success）
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in desktop-tauri-dmg desktop-tauri-nsis; do
+            if ! test -n "$(ls -A "artifacts/$name" 2>/dev/null)"; then
+              echo "::error::artifact $name 没下到（download-artifact 报了 success）"
+              missing=1
+            fi
+          done
+          ls -laR artifacts || true
+          exit "$missing"
 
       - name: 有没有更新包（发行构建缺了就失败——半份更新链不许全绿）
         id: probe

@@ -69,6 +69,20 @@ SBOM、SHA256SUMS、provenance、updater 清单、Release 附件、PyPI 校验�
 一次哈希**：下载 artifact 再上传是一次真实的搬运，而「Release 上挂的与
 发行资格验证过的不是同一个东西」是这条链上最不能接受的失败。
 
+**搬运本身也要点名**（#327）：`actions/download-artifact` 的 `pattern:` 下载
+排了两个只落了一个也报 success（v0.14.0 演练实测），下游要到合成 `latest.json`
+/ 合并清单那步才以「缺平台」的面目红。所以每个 `pattern:` 下载之后**紧跟**一步
+按名字点名（下载目录里每个期望名字的子目录非空），名单与上传侧（桌面 build
+矩阵 / `upload-artifact` 的 `name:`）严格同源，
+`tests/test_update_chain_gates.py` 看着它们不漂。
+
+Release 资产里还有一个**不在清单里**的文件：项目 `LICENSE`（#182）。它不是
+构建腿造出来的，是 `trust` 验过的那个 SHA 上的源码文件——`validate_artifacts`
+从自己的 checkout 拷进 `out/`，与 `SHA256SUMS.txt` 同路进 `release-assets`，
+再由 `github_release` 一次挂全部。桌面安装包里的那份走
+`src-tauri/tauri.conf.json` 的 `bundle.resources`（Windows 落安装根、macOS 落
+`Contents/Resources`），**不走 `licenseFile`**——那会把许可证页放回安装器。
+
 ## 发行资格验证只有一份定义
 
 `_lab-qualification.yml` 是唯一定义，`lab-ci.yml`（push/schedule）与

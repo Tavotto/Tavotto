@@ -520,6 +520,26 @@ def test_the_release_attaches_everything_in_one_go():
         assert role in validate, f"validate_artifacts 的 --require 里少了 {role}"
 
 
+def test_the_release_carries_the_project_licence():
+    """Release 资产里要有项目 `LICENSE`（AGPL 全文），与 SHA256SUMS 同路（#182）。
+
+    v0.14.0 的 16 个 Release 资产里没有它。它**不进产物清单**：清单记的是构建腿
+    造出来的东西，而 LICENSE 是 trust 验过的那个 SHA 上的源码文件——由
+    validate_artifacts 从自己的 checkout 拷进 out/（演练也走，改名当场红），
+    随 release-assets 搬到 github_release，再一次挂全部。判据钉两头：
+    拷进 out/ 那一步在、挂载清单里有那一行；少任一头都是「登记了却没挂上」。
+    """
+    rel = _wf(RELEASE)
+    staged = [s for s in rel.steps("validate_artifacts") if "cp LICENSE out/LICENSE" in s]
+    assert len(staged) == 1, "validate_artifacts 里没有把 LICENSE 拷进 out/ 的那一步"
+    assert "GNU AFFERO" in staged[0], "拷之前不再核对它是 AGPL 全文——空文件或改错源也会照挂"
+    attach = [s for s in rel.steps("github_release") if "action-gh-release" in s]
+    assert len(attach) == 1, "挂 Release 只该有一步"
+    assert re.search(r"^\s+assets/out/LICENSE\s*$", attach[0], re.M), (
+        "github_release 的 files 清单里没有 assets/out/LICENSE——Release 页面上拿不到许可证全文"
+    )
+
+
 def test_the_published_artifacts_are_re_verified_before_attaching():
     """下载 artifact 再上传是一次真实的搬运，中间任何一环都可能改内容。"""
     rel = _wf(RELEASE)

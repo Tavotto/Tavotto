@@ -35,7 +35,8 @@
       "../assets/icon/icon.ico"
     ],
     "resources": {
-      "../dist/Tavotto": "sidecar/Tavotto"
+      "../dist/Tavotto": "sidecar/Tavotto",
+      "../LICENSE": "LICENSE"
     },
     "macOS": {
       "minimumSystemVersion": "11.0"

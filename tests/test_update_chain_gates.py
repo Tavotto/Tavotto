@@ -11,15 +11,24 @@
 * release.yml 的 `n1_update_windows`：发布后在 Windows runner 上装 N-1
   官方安装包、驱动真实应用内更新（壳的 `TAVOTTO_E2E_RUN_UPDATE` 触发口）。
 
+第三层（2026-09-14，issue #327）：`actions/download-artifact` 的 `pattern:`
+下载排了两个只落了一个也报 success（v0.14.0 演练实测），下游要到合成
+latest.json / 合并清单那步才以「缺平台」的面目红——所以每个 pattern 下载
+之后**紧跟**一步按名字点名，名单与上传侧（build 矩阵 / upload-artifact 的
+`name:`）严格同源。
+
 每条用例都钉「坏掉之后会怎样」：探针的依赖形态漂了 → 假绿；触发口默认
-不再关死 → 生产风险；workflow 掉了某条断言 → 门禁空转。
+不再关死 → 生产风险；workflow 掉了某条断言 → 门禁空转；点名名单与矩阵
+漂开 → 新加的那条腿丢了 artifact 也没人点它。
 """
 
 from __future__ import annotations
 
+import itertools
 import re
 import sys
 import tarfile
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -379,3 +388,291 @@ def test_release_notes_do_not_leak_powershell_backticks():
     src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     job = src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
     assert "\\`" not in job, "pwsh 字符串里混进了 \\`（backtick 是 pwsh 的转义字符）"
+
+
+# ============================================================ pattern 下载必须按名字点名（#327）
+#
+# **不用 PyYAML**（它不在 .venv 里，也不在任何 extras 里；第一版
+# `pytest.importorskip("yaml")` 会让整个模块静默跳过——见
+# tests/test_release_workflow_contract.py 抬头）。下面是只认本仓库这几个
+# workflow 缩进形状的最小读取器：job = `jobs:` 下缩进 2 的键，step = job 里以
+# `      - ` 开头的块，`with:` 取块内标量（也认行内 `{ a: b }`），matrix 只认
+# `include:` 的行内映射行与 `key: [a, b]` 列表。**解析不出预期形状时当场抛**——
+# 一个安静地什么都没找到的判据比没有判据更坏。
+
+
+def _wf_code(text: str) -> str:
+    """剥整行注释与行尾注释（引号内的 `#` 不是注释）——判据只看会执行的部分。"""
+    out = []
+    for line in text.splitlines():
+        buf, quote = [], None
+        for ch in line:
+            if quote:
+                buf.append(ch)
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+                buf.append(ch)
+            elif ch == "#":
+                break
+            else:
+                buf.append(ch)
+        out.append("".join(buf).rstrip())
+    return "\n".join(out)
+
+
+def _wf_jobs(path: Path) -> dict[str, str]:
+    text = _wf_code(path.read_text(encoding="utf-8"))
+    m = re.search(r"^jobs:\s*$", text, re.M)
+    assert m, f"{path.name}: 没有 jobs:"
+    body = text[m.end() :]
+    nxt = re.search(r"^\S", body, re.M)
+    if nxt:
+        body = body[: nxt.start()]
+    parts = re.split(r"^  ([A-Za-z_][\w-]*):\s*$", body, flags=re.M)
+    jobs = {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+    assert jobs, f"{path.name}: 一个 job 都没解析出来——缩进形状变了？"
+    return jobs
+
+
+def _wf_steps(job_body: str) -> list[str]:
+    m = re.search(r"^    steps:\s*$", job_body, re.M)
+    if not m:
+        return []
+    return [b for b in re.split(r"\n(?=      - )", job_body[m.end() :]) if b.strip()]
+
+
+def _wf_field(step: str, key: str) -> str | None:
+    m = re.search(rf"^\s+(?:-\s+)?{re.escape(key)}:[ \t]*(\S.*?)\s*$", step, re.M)
+    return m.group(1) if m else None
+
+
+def _wf_with(step: str) -> dict[str, str]:
+    inline = re.search(r"^\s+with:\s*\{(.*)\}\s*$", step, re.M)
+    if inline:
+        return dict(
+            (k.strip(), v.strip())
+            for k, v in re.findall(r"([\w-]+)\s*:\s*([^,}]+)", inline.group(1))
+        )
+    m = re.search(r"^(\s+)with:\s*$", step, re.M)
+    if not m:
+        return {}
+    indent = len(m.group(1))
+    out: dict[str, str] = {}
+    for line in step[m.end() :].splitlines():
+        if not line.strip():
+            continue
+        if len(line) - len(line.lstrip()) <= indent:
+            break
+        kv = re.match(r"\s*([\w-]+):[ \t]+(\S.*?)\s*$", line)
+        if kv:
+            out[kv.group(1)] = kv.group(2)
+    return out
+
+
+def _wf_run(step: str) -> str:
+    """`run:` 块标量按缩进取到底；单行 `run: cmd` 直接取。"""
+    m = re.search(r"^([ \t]*)run:[ \t]*(\||>|>-|\|-)?[ \t]*(\S.*)?$", step, re.M)
+    if not m:
+        return ""
+    if m.group(3) and not m.group(2):
+        return m.group(3)
+    indent = len(m.group(1))
+    body = []
+    for line in step[m.end() :].splitlines():
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
+def _wf_matrix_rows(job_body: str) -> list[dict[str, str]]:
+    """job 的 matrix 展开成行：`include:` 的行内映射优先，否则列表键的笛卡尔积。"""
+    head = job_body.split("\n    steps:", 1)[0]
+    m = re.search(r"^      matrix:\s*$", head, re.M)
+    if not m:
+        return []
+    block = []
+    for line in head[m.end() :].splitlines():
+        if line.strip() and len(line) - len(line.lstrip()) <= 6:
+            break
+        block.append(line)
+    blob = "\n".join(block)
+    rows = []
+    for row in re.findall(r"^\s+- \{(.*)\}\s*$", blob, re.M):
+        cells = {}
+        for cell in row.split(","):
+            k, _, v = cell.partition(":")
+            cells[k.strip()] = v.strip().strip("\"'")
+        rows.append(cells)
+    if rows:
+        return rows
+    lists = {
+        k: [x.strip().strip("\"'") for x in v.split(",")]
+        for k, v in re.findall(r"^\s+([\w-]+):\s*\[([^\]]*)\]\s*$", blob, re.M)
+    }
+    if not lists:
+        return []
+    keys = list(lists)
+    return [dict(zip(keys, combo)) for combo in itertools.product(*(lists[k] for k in keys))]
+
+
+_MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
+
+
+def _wf_expand(name: str, rows: list[dict[str, str]], where: str) -> list[str]:
+    """把 upload 名字里的 `${{ matrix.<k> }}` 按矩阵行展开；引用了矩阵却没有行就抛。"""
+    keys = _MATRIX_REF.findall(name)
+    if not keys:
+        return [name]
+    assert rows, f"{where}: artifact 名 {name!r} 引用了 matrix，而这个 job 解析不出 matrix 行"
+    out = []
+    for row in rows:
+        missing = [k for k in keys if k not in row]
+        assert not missing, (
+            f"{where}: matrix 行 {row} 里没有 {missing}（artifact 名 {name!r} 要它）"
+        )
+        out.append(_MATRIX_REF.sub(lambda mm: row[mm.group(1)], name))
+    return out
+
+
+def _wf_uploads(path: Path) -> list[tuple[str, bool, str]]:
+    """一份 workflow 里 upload-artifact 的全部 `name:`（矩阵已展开，文档序）。
+
+    返回 (名字, 有没有 `if:`, 出处)。名字里剩下的其它 `${{ }}`（run_id 之类）
+    原样保留——静态枚举不了它，但也不该匹配任何 pattern（下面的判据会核）。
+    """
+    out = []
+    for job, body in _wf_jobs(path).items():
+        rows = _wf_matrix_rows(body)
+        for step in _wf_steps(body):
+            uses = _wf_field(step, "uses") or ""
+            if "actions/upload-artifact@" not in uses:
+                continue
+            where = f"{path.name}::{job}"
+            name = _wf_with(step).get("name")
+            assert name, f"{where}: 有一步 upload-artifact 没有 name:"
+            cond = _wf_field(step, "if") is not None
+            for n in _wf_expand(name, rows, where):
+                out.append((n, cond, where))
+    return out
+
+
+def _wf_callees(path: Path) -> list[Path]:
+    """本 workflow 经 `uses: ./.github/workflows/X.yml` 调起的可复用 workflow（job 序）。"""
+    out = []
+    for body in _wf_jobs(path).values():
+        m = re.search(r"^    uses:\s*\./\.github/workflows/([\w.-]+\.yml)\s*$", body, re.M)
+        if m:
+            out.append(WORKFLOWS / m.group(1))
+    return out
+
+
+def _artifact_universe(path: Path) -> list[tuple[str, bool, str]]:
+    """这份 workflow 的一次 run 里**会出现**的 artifact：自己上传的 + 它调起的
+    可复用 workflow 上传的。刻意不算调用方的：desktop-tauri.yml 单独 dispatch
+    时调用方不存在，点名名单若含调用方的东西，独立构建会当场红。
+    """
+    universe = list(_wf_uploads(path))
+    for callee in _wf_callees(path):
+        assert callee.is_file(), f"{path.name} 调的 {callee.name} 不存在"
+        universe.extend(_wf_uploads(callee))
+    return universe
+
+
+_ROLLCALL_LIST = re.compile(r"^\s*for name in (.+?); do\s*$", re.M)
+_ROLLCALL_PROBE = re.compile(r'test -n "\$\(ls -A "([^"$]+)/\$name" 2>/dev/null\)"')
+
+
+def _pattern_downloads() -> list[tuple[Path, str, int, list[str], str]]:
+    """全部 workflow 里带 `pattern:` 的 download-artifact 步骤。
+
+    返回 (文件, job, 步骤下标, 该 job 的步骤列表, pattern)。**一个都找不到就抛**
+    ——那意味着解析器看不见它们了，下面的用例会变成假绿。
+    """
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for job, body in _wf_jobs(path).items():
+            steps = _wf_steps(body)
+            for i, step in enumerate(steps):
+                uses = _wf_field(step, "uses") or ""
+                if "actions/download-artifact@" not in uses:
+                    continue
+                pattern = _wf_with(step).get("pattern")
+                if pattern:
+                    found.append((path, job, i, steps, pattern))
+    assert found, "所有 workflow 里一个 pattern: 下载都没找到——解析器失明了，别信下面的绿"
+    return found
+
+
+def test_the_workflow_reader_still_sees_the_release_chain():
+    """**读取器自检**，排在判据之前：缩进一变，什么都没找到的读取器会让一切假绿。"""
+    desk = _wf_jobs(WORKFLOWS / "desktop-tauri.yml")
+    assert {"trust", "build", "updater-manifest"} <= set(desk), sorted(desk)
+    rows = _wf_matrix_rows(desk["build"])
+    assert [r.get("artifact") for r in rows] == ["dmg", "nsis"], rows
+    names = [n for n, _, _ in _wf_uploads(WORKFLOWS / "desktop-tauri.yml")]
+    assert "desktop-tauri-dmg" in names and "artifact-manifest-nsis" in names, names
+    rel = WORKFLOWS / "release.yml"
+    assert [c.name for c in _wf_callees(rel)] == ["desktop-tauri.yml", "_lab-qualification.yml"]
+    assert "artifact-manifest-python" in [n for n, _, _ in _wf_uploads(rel)]
+    sites = {(p.name, job) for p, job, _, _, _ in _pattern_downloads()}
+    assert sites == {
+        ("desktop-tauri.yml", "updater-manifest"),
+        ("release.yml", "validate_artifacts"),
+    }, sites
+
+
+def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uploads():
+    """每个 `pattern:` 下载**紧跟**一步按名字点名，名单 == 上传侧推出的闭集（顺序也比）。
+
+    判据的主语：下载目录里每个期望名字的子目录非空（download-artifact v4 不带
+    merge-multiple 时每个 artifact 落成 `<path>/<name>/`）。期望名单不手抄：
+    从同一次 run 里会上传的 artifact 名（本文件 + 被调起的 workflow，矩阵已展开）
+    按 pattern 过滤而来。名单里出现带 `if:` 的上传当场抛——条件上传在某些 run 里
+    合法地不存在，点名会把它报成故障，那不是这条门禁该管的事。
+
+    坏掉之后会怎样（每一条都手工反证过）：矩阵加了一条腿而点名没加 → 那条腿的
+    artifact 丢了没人点；点名步骤整个删掉 → 回到「下游报缺平台」；名单里少写
+    一个 → 少写的那个丢了照样绿。
+    """
+    for path, job, idx, steps, pattern in _pattern_downloads():
+        where = f"{path.name}::{job}"
+        universe = _artifact_universe(path)
+        expected = [(n, cond, src) for n, cond, src in universe if fnmatchcase(n, pattern)]
+        assert expected, (
+            f"{where}: pattern {pattern!r} 在这次 run 里一个 artifact 都匹配不上——过期的 pattern"
+        )
+        conditional = [(n, src) for n, cond, src in expected if cond]
+        assert not conditional, (
+            f"{where}: pattern {pattern!r} 匹配到带 if: 的上传 {conditional}——"
+            "条件上传推不出闭集，先决定它是不是这次 run 里必有的"
+        )
+        unresolved = [n for n, _, _ in expected if "${{" in n]
+        assert not unresolved, f"{where}: 这些 artifact 名静态枚举不了：{unresolved}"
+        names = [n for n, _, _ in expected]
+        assert len(names) == len(set(names)), f"{where}: 期望名单里有重复 {names}"
+
+        download_dir = _wf_with(steps[idx]).get("path")
+        assert download_dir, f"{where}: pattern 下载没有 path:——点名无从谈起"
+        assert idx + 1 < len(steps), f"{where}: pattern {pattern!r} 的下载是最后一步，后面没有点名"
+        nxt = steps[idx + 1]
+        run = _wf_run(nxt)
+        listed = _ROLLCALL_LIST.search(run)
+        assert listed, (
+            f"{where}: pattern {pattern!r} 下载之后紧跟的不是点名步骤"
+            f"（下一步是「{_wf_field(nxt, 'name') or nxt.strip().splitlines()[0]}」）"
+        )
+        assert listed.group(1).split() == names, (
+            f"{where}: 点名名单 {listed.group(1).split()} ≠ 上传侧推出的 {names}"
+        )
+        probe = _ROLLCALL_PROBE.search(run)
+        assert probe, f'{where}: 点名步骤没有 `test -n "$(ls -A "<dir>/$name")"` 这条判据'
+        assert probe.group(1) == download_dir, (
+            f"{where}: 点名查的目录 {probe.group(1)!r} 与下载的 path {download_dir!r} 不是同一个"
+        )
+        assert re.search(r"^\s*exit \"\$missing\"\s*$", run, re.M), (
+            f'{where}: 点名的结论没有进退出码（少了 exit "$missing"）——红了也不红'
+        )
+        assert "::error::" in run and "$name" in run, f"{where}: 报文没点到是哪个 artifact 没下到"

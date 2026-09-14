@@ -448,6 +448,15 @@ jobs:
             }
           }
           Write-Host "✓ 安装目录里有 sidecar + 内置 runtime + workerd"
+          # 项目许可证随安装包走（issue #182）。Windows 的 resource_dir 就是壳所在的
+          # 安装根，tauri.conf.json 把仓库根 LICENSE 映射到那里；只查「文件在」不够
+          # ——映射错了源也算在——所以还要认 AGPL 全文的抬头。
+          $lic = Join-Path $inst "LICENSE"
+          if (-not (Test-Path $lic)) { throw "安装后缺 LICENSE（bundle.resources 没把项目许可证带进来）" }
+          if (-not (Select-String -Path $lic -Pattern "GNU AFFERO" -Quiet)) {
+            throw "安装目录里的 LICENSE 不是 AGPL 全文: $lic"
+          }
+          Write-Host "✓ 安装目录里有项目 LICENSE（AGPL）"
 
           # 壳探针：用户从开始菜单点的就是它。这一步同时是安装布局的**唯一
           # 权威验证**——壳靠 resource_dir() 找 sidecar，找得到才说明落点真的对。

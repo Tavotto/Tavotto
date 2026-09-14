@@ -478,6 +478,56 @@ def test_sidecar_layout_has_a_single_source_of_truth():
         assert f'join("{part}")' in rust, f"sidecar.rs 里找不到 {part}"
 
 
+# ------------------------------------------------ 项目许可证随安装包走（#182）
+#
+# 桌面产物在 v0.14.0 之前不带项目 LICENSE（安装包里 0 处、Release 资产里也
+# 没有）——AGPL 分发本身就要求它随二进制走。修法**走 resources 不走
+# licenseFile**：后者会把许可证页放回安装器（上面 test_license_page_not_introduced
+# 有意钉死它为空）。resources 映射落在 $RESOURCES 根：Windows 是壳所在的安装根，
+# macOS 是 Contents/Resources。这里只看源码级映射与 tauri 展开后的中间脚本；
+# 装出来真有没有由 nightly 的「装一遍再冒烟」与 desktop-tauri 的最终 .app 冒烟看。
+
+LICENCE_SOURCE = "../LICENSE"  # 相对 src-tauri/，即仓库根的 LICENSE
+LICENCE_TARGET = "LICENSE"  # $RESOURCES 根，与 sidecar/ 同级
+
+
+def test_desktop_bundle_carries_the_project_licence():
+    """tauri.conf.json 的 resources 把仓库根 LICENSE 映射到 $RESOURCES/LICENSE。
+
+    坏掉之后会怎样：映射一删，两个平台的安装包又回到不带许可证的状态，而
+    打包链没有任何一步会红——resources 少一条不是错误。
+    """
+    resources = CONFIG["bundle"]["resources"]
+    assert resources.get(LICENCE_SOURCE) == LICENCE_TARGET, (
+        f"tauri.conf.json 的 bundle.resources 里没有 {LICENCE_SOURCE!r} → {LICENCE_TARGET!r}"
+        "——桌面安装包不带项目 LICENSE（issue #182）"
+    )
+    src = (ROOT / "src-tauri" / LICENCE_SOURCE).resolve()
+    assert src.is_file(), f"映射的源不存在：{src}"
+    assert "GNU AFFERO" in src.read_text(encoding="utf-8"), f"{src} 不是 AGPL 全文"
+    # 仍然不走许可证页：那是安装界面的事，与「文件随包走」是两件事
+    assert not CONFIG["bundle"].get("licenseFile")
+
+
+def test_generated_script_packs_the_project_licence():
+    """tauri 展开后的中间脚本真的有一条 File 把 LICENSE 装进安装根。
+
+    只有 Windows 打包之后才有这份脚本；CI 的 desktop-tauri Windows 腿用
+    TAVOTTO_NSIS_GENERATED 指名（指了就必须存在，见 _generated_script）。
+    """
+    gen = _generated_script()
+    if gen is None:
+        pytest.skip("没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）")
+    code = "\n".join(
+        ln for ln in gen.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith(";")
+    )
+    target = CONFIG["bundle"]["resources"][LICENCE_SOURCE].replace("/", "\\")
+    assert re.search(
+        rf'^\s*File /a "/oname={re.escape(target)}" ".*[\\/]LICENSE"\s*$', code, re.M
+    ), f"中间脚本里没有把 LICENSE 装到 $INSTDIR\\{target} 的 File 行——resources 映射没生效"
+    assert f'Delete "$INSTDIR\\{target}"' in code, "卸载段没有对应的 Delete——卸载后会留下残留"
+
+
 def test_install_registers_the_cli_through_the_bundled_binary():
     """装完跑一次装进来的 tavotto-cli，由它写安装清单。
 
