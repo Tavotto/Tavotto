@@ -727,6 +727,20 @@ describe('刻度组元素页', () => {
 
 /* ------------------------- 3D 的 Z 刻度（#142 评审 P1） -------------------- */
 
+describe('刻度组页不再画第二张状态图（2026-09-14 审计 A5）', () => {
+  it('子图页有状态图；刻度组页只留「在子图页编辑刻度线与边框 ›」，点了选中子图', async () => {
+    await mount('axes_0')
+    expect(host.querySelector('[role="group"][aria-label="刻度与边框状态图"]')).toBeTruthy()
+    await act(async () => root!.unmount())
+    await mount('axes_0.xticks')
+    expect(host.querySelector('[role="group"][aria-label="刻度与边框状态图"]')).toBeNull()
+    const link = host.querySelector<HTMLButtonElement>('[data-tick-spines-link]')!
+    expect(link.textContent).toContain('在子图页编辑刻度线与边框')
+    await act(async () => link.click())
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+})
+
 describe('3D 图的 Z 刻度', () => {
   /**
    * 3D axes 会发 `axes_i.zticks`（manifest.py 的 `tick_axes` 在 is3d 时多一条），

@@ -125,7 +125,7 @@ export function Segmented<T extends string>({
             title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
-              'flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-xs outline-none',
+              'flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
               // 首尾两格跟着外框的圆角走，选中的 tint 才不会在角上露出方角
               'first:rounded-l-sm last:rounded-r-sm',
               'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',

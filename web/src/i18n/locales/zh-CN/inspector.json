@@ -1057,7 +1057,8 @@
     "axisZ": "Z 轴",
     "zTicks": "Z 刻度",
     "sectionMarks": "刻度",
-    "sectionLabels": "文字"
+    "sectionLabels": "文字",
+    "editSpinesOnAxes": "在子图页编辑刻度线与边框"
   },
   "transform": {
     "rotation": "旋转",

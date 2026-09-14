@@ -352,6 +352,14 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       selectedGids.length,
       container?.label,
     )
+    // 面包屑里每一级祖先都能点（2026-09-14 审计 A4）：往上走的路就是它本身，
+    // 「所属子图 / 所属系列」那种再写一行的链接删掉。与 identityCrumbs 同一套条件，
+    // 顺序一致：整张图 → 宿主子图 → 容器（图例 / X 轴刻度 / 柱形系列）
+    const crumbTargets = [
+      'figure',
+      axes && axes.gid !== gid ? axes.gid : null,
+      container ? container.gid : null,
+    ].filter((g): g is string => !!g)
     const hideable =
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
     // 来源状态：选中元素时报它自己被改了几项，没选（整张图）时报面板总数。
@@ -396,8 +404,20 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
         {(crumbs.length > 1 || modified > 0) && (
           <p className="mt-0.5 flex items-center gap-1.5 pr-1 text-xs text-ink-3">
             {crumbs.length > 1 && (
-              <span className="min-w-0 truncate" title={crumbs.join(' / ')}>
-                {crumbs.slice(0, -1).join(' / ')}
+              <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
+                {crumbs.slice(0, -1).map((c, i) => (
+                  <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
+                    {i > 0 && <span aria-hidden>/</span>}
+                    <button
+                      type="button"
+                      data-crumb={crumbTargets[i]}
+                      onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
+                      className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink hover:underline underline-offset-2 focus-visible:focus-ring"
+                    >
+                      {c}
+                    </button>
+                  </span>
+                ))}
               </span>
             )}
             {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：

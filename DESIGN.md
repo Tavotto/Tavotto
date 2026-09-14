@@ -43,9 +43,9 @@ typography:
     lineHeight: "16px"
   control:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
-    fontSize: "11px"
+    fontSize: "12px"
     fontWeight: 400
-    lineHeight: "15px"
+    lineHeight: "16px"
   caption:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
     fontSize: "11px"

@@ -258,3 +258,21 @@ describe('分组顺序', () => {
     })
   })
 })
+
+describe('engineLabel 的出口把 mathtext 换成可读文本（2026-09-14 审计 A3）', () => {
+  it('曲线名里的 $\\mathrm{min^{-1}}$ 读作 min⁻¹；两种语言都成立', () => {
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      setLocale(locale)
+      const label = engineLabel('曲线 “Catalyst (k = 0.125 $\\mathrm{min^{-1}}$)”')
+      expect(label).toContain('min⁻¹')
+      expect(label).not.toContain('$')
+      expect(label).not.toContain('\\mathrm')
+    }
+  })
+
+  it('不成对的 $ 与认不出的命令原样保留：宁可露出源码，不许改掉用户的字', () => {
+    setLocale('zh-CN')
+    expect(engineLabel('标题 “price $5”')).toContain('$5')
+    expect(engineLabel('标题 “$\\foo{x}$”')).toContain('\\foo{x}')
+  })
+})

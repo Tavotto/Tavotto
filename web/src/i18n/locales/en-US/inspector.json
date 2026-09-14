@@ -1079,7 +1079,8 @@
     "axisZ": "Z axis",
     "zTicks": "Z ticks",
     "sectionMarks": "Tick marks",
-    "sectionLabels": "Labels"
+    "sectionLabels": "Labels",
+    "editSpinesOnAxes": "Edit tick marks and spines on the axes page"
   },
   "transform": {
     "rotation": "Rotation",

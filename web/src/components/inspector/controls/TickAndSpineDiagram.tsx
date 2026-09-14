@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react'
+import { useId, type KeyboardEvent } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -400,6 +400,7 @@ export function TickAndSpineDiagram({
   /** 网格行标签列的宽度：与同页其它 `Row` 的 `LABEL_W` 同一条竖线 */
   labelWidth?: number
 }) {
+  const hintId = useId()
   const sideProps = SIDES.flatMap((s) => [`spine_${s}`, `ticks_${s}`])
   if (!sideProps.some((p) => adapter.has(p))) return null
 
@@ -425,6 +426,7 @@ export function TickAndSpineDiagram({
           viewBox="0 0 220 148"
           className="w-full max-w-[220px] overflow-visible text-ink"
           aria-label={ctl('tickSpineDiagram')}
+          aria-describedby={hintId}
           role="group"
         >
           {/* 网格预览（非交互，开关在下方） */}
@@ -555,9 +557,10 @@ export function TickAndSpineDiagram({
           </Tip>
         )}
       </div>
-      {/* 示意图能点这件事只有悬停才知道（2026-09-12 critique：首次用户不知道它能点）；
-          一句 caption 说清，读屏也拿得到。它说的是图的用法，不重复各边的名字 */}
-      <p className="-mt-1 text-center type-caption" data-tick-diagram-caption>
+      {/* 「点四条边切换」这句用法说明只给读屏（aria-describedby），不再常驻在图下面
+          （2026-09-14 审计 A5，用户的打磨标准：常驻说明与术语提示不要）；鼠标用户靠
+          边缘 hover 的高亮（MARK_CLS 的 group-hover）知道它能点 */}
+      <p id={hintId} className="sr-only" data-tick-diagram-caption>
         {ctl('tickSpineDiagramHint')}
       </p>
 

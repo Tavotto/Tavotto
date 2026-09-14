@@ -222,8 +222,10 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   },
   // 刻度组页把这些再分成「刻度 / 文字」两段（ElementInspector 的 TickPage）：
   // 这张表只管每个字段可不可见（模式从属）与段内顺序，不管落在哪一段
+  // 「文字」段的顺序与文本角色同一套：字体 → 字号 → 颜色（2026-09-14 审计 A2：此前 fontfamily
+  // 没进这张表，靠注册表兜底排到最末，同一组属性在刻度页与标题页顺序相反）
   ticks: {
-    primary: ['major_mode', 'major_step', 'major_values', 'fontsize', 'color'],
+    primary: ['major_mode', 'major_step', 'major_values', 'fontfamily', 'fontsize', 'color'],
     more: [
       'format', 'direction', 'length', 'width', 'minor_length', 'minor_width',
       'minor_visible', 'minor_mode', 'minor_step', 'minor_format',

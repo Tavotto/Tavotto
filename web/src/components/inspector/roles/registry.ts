@@ -1,4 +1,5 @@
 import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
+import { displayLabel } from './mathtext'
 import { t } from '@/i18n'
 
 /**
@@ -206,6 +207,12 @@ const TWIN_SIDE_KEYS: Record<string, string> = {
  * 一致），英文界面下重组成英文。
  */
 export function engineLabel(label: string): string {
+  // mathtext 在这里一并换成可读文本（2026-09-14 审计 A3）：树 / 问题面板 / 导出清单 /
+  // 上下文栏 / 图例项都从这一个出口取名字，不再各自露出 `$\mathrm{…}$`
+  return displayLabel(engineLabelRaw(label))
+}
+
+function engineLabelRaw(label: string): string {
   for (const { re, key } of ENGINE_LABEL_PATTERNS) {
     const m = re.exec(label)
     if (!m) continue

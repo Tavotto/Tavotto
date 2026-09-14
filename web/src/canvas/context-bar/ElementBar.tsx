@@ -6,7 +6,7 @@ import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
-import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
+import { LEGEND_ANCHOR_PROP, legendAnchorRange, outsidePresetOf, toLegendAnchor } from '@/lib/legendModel'
 import { setLegendPlacement } from '@/store/actions'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
 import { fontStackOf } from '@/components/inspector/controls/fontStack'
@@ -112,6 +112,16 @@ function ElementQuickInner({
   if (role === 'legend') {
     const loc = w.fieldOf('loc')
     const size = w.fieldOf('fontsize')
+    const locValue = String(w.read('loc') ?? 'best')
+    // 浮动栏上的位置名与选择器同一套词汇（2026-09-14 审计 A8，用户拍板）：放到子图外时
+    // 说「右侧上」这种空间名，不说 `loc` 的角（「左上」是图例框自己的锚角，用户看到的却是
+    // 图例在子图右上方）；`loc` 原值只在「排版详情」里出现
+    const outside = w.has(LEGEND_ANCHOR_PROP)
+      ? outsidePresetOf({ loc: locValue, anchor: toLegendAnchor(w.read(LEGEND_ANCHOR_PROP)) })
+      : null
+    const placeName = outside
+      ? translate(`control.legendOutside.${outside}`, { ns: 'inspector' })
+      : optionLabel('loc', locValue)
     return (
       <span className="flex items-center gap-1.5">
         {loc && (
@@ -120,7 +130,7 @@ function ElementQuickInner({
             align="start"
             trigger={
               <Button size="sm" className="px-1.5" aria-label={propLabel('loc', role)}>
-                {optionLabel('loc', String(w.read('loc') ?? 'best'))}
+                {placeName}
               </Button>
             }
           >

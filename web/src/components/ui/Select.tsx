@@ -93,7 +93,7 @@ export function Select<T extends string>({
                 value={opt.value}
                 className={cn(
                   'relative flex h-7 cursor-default select-none items-center gap-2 rounded-sm',
-                  'pl-6 pr-2 text-xs text-ink outline-none',
+                  'pl-6 pr-2 text-sm text-ink outline-none',
                   'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
                 )}
               >

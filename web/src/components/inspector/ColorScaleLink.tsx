@@ -1,4 +1,4 @@
-import { CornerUpLeft, Link2 } from 'lucide-react'
+import { ChevronRight, Link2 } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
@@ -59,8 +59,8 @@ export function ColorScaleLink({
           onClick={() => useUiStore.getState().setSelectedGid(partner.gid)}
           aria-label={el('selectScalePartner', { label })}
         >
-          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
           {el('selectScalePartnerShort')}
+          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
         </Button>
       </Tip>
     </div>

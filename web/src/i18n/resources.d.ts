@@ -3255,6 +3255,7 @@ export default interface Resources {
         "out": "朝外"
       },
       "direction": "方向",
+      "editSpinesOnAxes": "在子图页编辑刻度线与边框",
       "length": "长度",
       "minor": "次刻度",
       "minorAria": "{{axis}}的次刻度",

@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { displayLabel } from './roles/mathtext'
 import { Eye, EyeOff, MoveDown, MoveUp } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -100,10 +101,10 @@ export function LegendCard({
                 type="button"
                 className="flex h-full min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
                 onClick={() => useUiStore.getState().setSelectedGid(v.element.gid)}
-                aria-label={lg('selectEntry', { label: v.text })}
+                aria-label={lg('selectEntry', { label: displayLabel(v.text) })}
               >
                 <span className={cn('min-w-0 truncate', v.hidden ? 'line-through' : 'text-ink')}>
-                  {v.text}
+                  {displayLabel(v.text)}
                 </span>
                 <BindingBadge binding={v.binding} />
               </button>

@@ -187,3 +187,54 @@ describe('图内文字的浮动栏走排版适配器', () => {
     expect(byLabel('加粗')!.getAttribute('aria-pressed')).toBe('true')
   })
 })
+
+/**
+ * 2026-09-14 审计 A8（用户拍板）：浮动栏上的位置名与选择器同一套词汇——图例放到子图外时
+ * 说「右侧上」这种空间名，不说 `loc` 的角（「左上」是图例框自己的锚角）。
+ */
+describe('图例浮动栏的位置名', () => {
+  const legendEl: ManifestElement = {
+    gid: 'axes_0.legend',
+    role: 'legend',
+    label: '图例',
+    bbox: [0.6, 0.6, 0.3, 0.2],
+    draggable: true,
+    editable: [
+      f('loc', 'enum', 'upper left', {
+        options: ['best', 'upper left', 'upper right', 'lower left', 'lower right', 'center left', 'center right', 'upper center', 'lower center', 'center'],
+      }),
+      f('loc_anchor', 'text', [1.02, 1]),
+      f('fontsize', 'number', 8, { min: 3, max: 36, step: 0.5, unit: 'pt' }),
+    ],
+  }
+  const withLegend: Manifest = { ...manifest, elements: [...manifest.elements, legendEl] }
+
+  async function mountLegend() {
+    engineRender.mockResolvedValue({ rev: 2, manifest: withLegend, svg: MATPLOTLIB_SVG, warnings: [] })
+    useRenderStore.getState().patch(renderKeyOf(livePanel()), {
+      fileId: 'Fig1.pdf',
+      manifest: withLegend,
+      svg: MATPLOTLIB_SVG,
+      rev: 1,
+      status: 'ready',
+      lastPatches: '[]',
+    })
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.legend'] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ElementQuickActions panel={panelOf()} gid="axes_0.legend" />
+        </TooltipProvider>,
+      )
+    })
+  }
+
+  it('loc=upper left + 锚点 (1.02, 1) 是「右侧上」预设：浮动栏写「右侧上」，不写「左上」', async () => {
+    await mountLegend()
+    const trigger = byLabel('位置')!
+    expect(trigger.textContent).toBe('右侧上')
+  })
+})

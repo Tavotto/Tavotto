@@ -372,7 +372,7 @@
      type-title    对话框 / 页面标题        14px 500 ink
      type-section  分区小标题              12px 500 大写 ink
      type-body     正文                    12px ink
-     type-control  控件里的文字            11px ink（颜色随控件）
+     type-control  控件里的文字            12px（颜色随控件）
      type-caption  说明文字                11px ink-2，行距放宽
      type-meta     元数据 / 路径 / 计数    11px ink-3
    --------------------------------------------------------------------------- */
@@ -399,9 +399,10 @@
   line-height: var(--text-sm--line-height);
   color: var(--color-ink);
 }
+/* 控件里的值：12px（2026-09-14 审计分歧 1，用户拍板「要读的值」试到正文档；标签 / caption / meta 留 11） */
 @utility type-control {
-  font-size: var(--text-xs);
-  line-height: var(--text-xs--line-height);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
 }
 @utility type-caption {
   font-size: var(--text-xs);
@@ -418,7 +419,7 @@
 @utility num-input {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
 }
 
 /* 形状外观（ShapeSection）：线宽与填充不透明度同一行，两个输入框固定 40px。

@@ -274,7 +274,7 @@ function ElementQuick({
 
   return (
     <>
-      <Head>{el.label}</Head>
+      <Head>{engineLabel(el.label)}</Head>
 
       {field('text') && <TextContentRow read={read} write={write} close={close} />}
       {hasTextStyleBar(el) && (

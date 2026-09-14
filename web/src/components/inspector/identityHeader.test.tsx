@@ -301,3 +301,29 @@ describe('归属与可读标题', () => {
     expect(crumbs()).toBe('Fig1_kinetics.pdf / 子图 1 / 曲线 “Catalyst (k = 0.125 min⁻¹)”')
   })
 })
+
+/**
+ * 2026-09-14 审计 A4：面包屑每一级祖先都能点，往上走的路就是它本身——
+ * 「所属子图」「所属系列」那种再写一行的链接删掉（同一枚回转箭头曾同时表示上到子图、
+ * 下到 X / Y 刻度）。
+ */
+describe('面包屑可点', () => {
+  const crumbButtons = () =>
+    [...document.querySelectorAll<HTMLButtonElement>('header p button[data-crumb]')]
+
+  it('刻度文字：三级祖先各是一颗按钮，点「子图 1」选中它；「所属子图」那一行不再出现', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.xticklabels_1'] })
+    await mount()
+    expect(crumbButtons().map((b) => b.getAttribute('data-crumb'))).toEqual([
+      'figure',
+      'axes_0',
+      'axes_0.xticks',
+    ])
+    expect(document.body.textContent).not.toContain('所属子图')
+    await act(async () => crumbButtons()[1].click())
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+})

@@ -118,7 +118,7 @@ export function OptionGrid<T extends string>({
                   className="absolute left-0.5 top-0.5 text-ink"
                 />
               )}
-              {opt.preview ?? <span className="truncate px-1 text-xs">{opt.label}</span>}
+              {opt.preview ?? <span className="truncate px-1 text-sm">{opt.label}</span>}
             </button>
           </Tip>
         )

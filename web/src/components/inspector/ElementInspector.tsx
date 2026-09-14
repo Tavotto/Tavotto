@@ -11,7 +11,6 @@ import {
   AlignVerticalDistributeCenter,
   ChevronRight,
   CircleQuestionMark,
-  CornerUpLeft,
   Link2,
   MoveDown,
   MoveHorizontal,
@@ -544,25 +543,20 @@ function relatedGids(
 ): { gid: string; label: string; hint?: string; text?: string }[] {
   const find = (gid: string) =>
     manifest.elements.find((e) => e.gid === gid && e.editable.length > 0)
-  const up = (re: RegExp) => {
-    const m = target.gid.match(re)
-    return m ? find(m[1]) : undefined
-  }
   const out: { gid: string; label: string; hint?: string; text?: string }[] = []
   const push = (e: ManifestElement | undefined, hint?: string, text?: (label: string) => string) => {
     // label 是引擎发来的散文（`曲线 “电流”`），过 engineLabel 换成当前语言
     if (e) out.push({ gid: e.gid, label: engineLabel(e.label), hint, text: text?.(engineLabel(e.label)) })
   }
 
-  if (target.role === 'bar') push(up(/^(.*)\.bar_\d+$/), el('relatedSeries'))
-  // 图例项的「所属图例」已在身份头的面包屑里（审计 B50），这里不再重复一行
+  // 「所属系列」「所属子图」「所属图例」这种往上一级的路都在身份头的面包屑里，而且面包屑
+  // 每一级都能点（2026-09-14 审计 A4）——这里不再重复写一行；只留往下 / 往旁边走的入口
   // 单个刻度文字 → 整条轴的刻度（审计 B51）：这一页改的只是这一个刻度的文字，
   // 字号 / 朝向 / 间距那些整条轴的事在刻度组页；入口就写成「编辑整条 X 轴刻度」
   if (target.role === 'ticklabel') {
     const m = target.gid.match(/^(.*)\.([xyz])ticklabels_\d+$/)
     if (m) push(find(`${m[1]}.${m[2]}ticks`), undefined, (label) => el('relatedTicksAll', { label }))
   }
-  if (target.role === 'ticks') push(up(/^(.*)\.[xyz]ticks$/), el('relatedAxes'))
   if (target.role === 'axes' || target.role === 'axes3d') {
     push(find(`${target.gid}.xticks`))
     push(find(`${target.gid}.yticks`))
@@ -584,10 +578,12 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
           className="max-w-full px-1.5 text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(it.gid)}
         >
-          <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" />
           <span className="truncate">
             {it.text ?? (it.hint ? el('relatedWithHint', { hint: it.hint, label: it.label }) : it.label)}
           </span>
+          {/* 「去到」的记号只有一枚：尾随的 chevron-right（此前是回转箭头 CornerUpLeft，
+              同一枚图标既用于上到所属子图、也用于下到 X / Y 刻度） */}
+          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
         </Button>
       ))}
     </div>
@@ -1317,7 +1313,6 @@ function TickPage({
   buckets: { primary: PresentedField[]; more: PresentedField[] }
 }) {
   useTranslation('inspector')
-  const w = useElementWriter(panel, host)
   const selfAxis: TickAxis = tickHostOf(element.gid)?.axis ?? 'x'
   // hook 数量固定：三个轴各调一次，元素不在时 adapter 回 null
   const xAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'x'), 'x')
@@ -1327,25 +1322,6 @@ function TickPage({
 
   const model = readAxesTickModel(manifest, panel.overrides, host.gid)
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
-  const diagramProps = TICK_SPINE_PROPS.filter(
-    (p) => w.has(p) && panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
-  )
-  const adapter: TickSpineAdapter = {
-    has: (p) => w.has(p),
-    read: (p) => w.read(p),
-    toggle: (p, next) => w.writeOnce(p, next),
-    labelOf: (p) => propLabel(p, host.role),
-    isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
-    resetAll: () =>
-      clearOverrides(
-        panel.id,
-        elMsg('resetDiagram'),
-        diagramProps.map((p) => ({ gid: host.gid, prop: p })),
-      ),
-    axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
-    model,
-    applyPlan,
-  }
 
   // 桶里的字段已经过展示注册表的 visibleWhen（次刻度关着时方式 / 间距 / 格式
   // 不在桶里；用户改过的仍在）——这里只决定落在哪一段，不再判一遍开关
@@ -1366,7 +1342,17 @@ function TickPage({
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1.5" data-tick-section="marks">
         <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
-        <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
+        {/* 四边刻度线 / 边框 / 网格的示意图只在子图页（2026-09-14 审计 A5，用户拍板）：同一份
+            状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路 */}
+        <Button
+          size="sm"
+          data-tick-spines-link
+          className="w-fit text-ink-2"
+          onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
+        >
+          {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
+          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+        </Button>
         {self ? (
           <TickTaskCard
             axes={[self]}
@@ -2722,8 +2708,8 @@ function AxesSizeMm({
               aria-label={el('selectHostAxes', { label: engineLabel(element.label) })}
               onClick={() => useUiStore.getState().setSelectedGid(element.gid)}
             >
-              <CornerUpLeft size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
               {el('selectHost')}
+              <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
             </Button>
           </Tip>
         </div>

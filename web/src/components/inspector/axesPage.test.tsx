@@ -328,9 +328,12 @@ describe('几何 → 范围与变换 → 刻度与网格 → 边框，四类任�
     expect(host.querySelectorAll('[data-prop="spine_linewidth"]')).toHaveLength(1)
   })
 
-  it('示意图下有一句用法说明；「边框」总行不再画那个像复选框的方框', async () => {
+  it('示意图的用法说明只给读屏（aria-describedby，不常驻）；「边框」总行不再画那个像复选框的方框', async () => {
     await mount()
-    expect(host.querySelector('[data-tick-diagram-caption]')?.textContent).toBe('点四条边切换刻度线与边框')
+    const caption = host.querySelector('[data-tick-diagram-caption]')!
+    expect(caption.textContent).toBe('点四条边切换刻度线与边框')
+    expect(caption.className).toContain('sr-only')
+    expect(host.querySelector('[role="group"][aria-describedby]')?.getAttribute('aria-describedby')).toBe(caption.id)
     const frame = host.querySelector('[data-spine-frame]')!
     // 总行的字形位是个空占位（对齐用）：收起时整张卡里没有任何边位字形
     expect(frame.querySelector('[data-side-glyph]')).toBeNull()
