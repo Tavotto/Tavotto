@@ -18,6 +18,7 @@ import { resolve } from 'node:path'
 import {
   DURATION,
   EASE_POP,
+  EASE_SPRING,
   easeOutCubic,
   prefersReducedMotion,
   tween,
@@ -87,6 +88,25 @@ describe('关键帧的形态约束', () => {
   it('EASE_POP 与 index.css 的 --ease-pop 逐字节相同', () => {
     // WAAPI 只认字符串缓动，JS 侧只能自己带一份；带了就必须钉住
     expect(cssToken('ease-pop')).toBe(EASE_POP)
+  })
+
+  it('回弹只有一条曲线：--ease-spring 与 EASE_SPRING 逐字节相同，y1 略过 1、y2 收在 1', () => {
+    expect(cssToken('ease-spring')).toBe(EASE_SPRING)
+    const [, y1, , y2] = EASE_SPRING.match(/cubic-bezier\(([^)]+)\)/)![1].split(',').map(Number)
+    // y1 > 1 才会越过终点再回来；上限 1.5 = 峰值约 5%~10%，再大就是弹跳不是收尾
+    expect(y1).toBeGreaterThan(1)
+    expect(y1).toBeLessThanOrEqual(1.5)
+    // y2 = 1：收尾不再抖第二下
+    expect(y2).toBe(1)
+  })
+
+  it('改图助手的三个动效：时长来自 token、落位用弹簧、亮带在 reduced-motion 下退回静止文字', () => {
+    expect(cssToken('animate-stream-in')).toMatch(/^stream-in var\(--duration-slow\)/)
+    expect(cssToken('animate-settle-in')).toMatch(/^settle-in var\(--duration-slow\) var\(--ease-spring\)/)
+    const util = CSS.match(/@utility text-shimmer \{[\s\S]*?\n\}/)?.[0]
+    expect(util, 'index.css 里没有 @utility text-shimmer').toBeTruthy()
+    expect(util).toMatch(/animation: var\(--animate-shimmer\)/)
+    expect(util).toMatch(/prefers-reduced-motion: reduce[\s\S]*animation: none/)
   })
 
   it('交叉淡出是 linear + forwards', () => {

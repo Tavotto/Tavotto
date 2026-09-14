@@ -1,5 +1,6 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { t } from '@/i18n'
+import { rehypeStreamWords } from '@/lib/streamMarkdown'
 import remarkGfm from 'remark-gfm'
 
 /**
@@ -96,10 +97,22 @@ const components: Components = {
   ),
 }
 
-export function Markdown({ text }: { text: string }) {
+/** 引用稳定：react-markdown 每次渲染都按 options 建处理器，数组别在渲染里现造 */
+const REMARK = [remarkGfm]
+const REHYPE_STREAM = [rehypeStreamWords]
+
+/**
+ * `streaming`：正文还在逐字流入。照样按 markdown 渲染（与 ChatGPT / Claude 一致，
+ * 不等终稿），只是每个新到的词多包一层一次性淡入（`lib/streamMarkdown`）。
+ */
+export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={REMARK}
+        rehypePlugins={streaming ? REHYPE_STREAM : undefined}
+        components={components}
+      >
         {text}
       </ReactMarkdown>
     </div>

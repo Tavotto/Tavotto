@@ -73,7 +73,6 @@
     "effort": "推理强度",
     "effortRaw": "强度原始值：{{value}}",
     "emptyHint": "助手会改图的脚本。改完可查看差异、回滚。",
-    "generating": "正在生成回答",
     "noCli": "没有可用的编码 Agent。",
     "noPanelHint": "带 { } 标记的面板来自脚本，助手可直接修改。",
     "noPanelTitle": "选中一张可编辑的图",
@@ -89,9 +88,9 @@
     "scopeAndAgent": "作用范围与执行器",
     "scopeTitle": "作用范围",
     "script": "脚本：{{name}}",
+    "scrollToBottom": "回到底部",
     "send": "发送（{{key}}）",
     "sendAria": "发送",
-    "streaming": "正在输出",
     "targetAria": "作用目标：{{target}}",
     "taskHistory": "任务历史",
     "techDetails": "技术详情"

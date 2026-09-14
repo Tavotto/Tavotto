@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowDown,
   ArrowUp,
   ChevronRight,
   FileCodeCorner,
@@ -45,16 +46,17 @@ import { usePanelDisplayManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Kbd } from '../ui/Kbd'
 import { EmptyState } from '../ui/EmptyState'
+import { Reveal } from '../ui/Field'
+import { fitTextAreaHeight } from '../ui/Input'
 import { SearchInput } from '../ui/SearchInput'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
-import { InlineLoader, TextLoader } from 'generative-loaders'
 import { DiffView } from './DiffView'
 import { Markdown } from './Markdown'
 
@@ -70,8 +72,13 @@ const ai = (key: string, values?: Record<string, unknown>) =>
 const statusLabel = (status: string) =>
   translate(`status.${status}`, { ns: 'ai', defaultValue: status })
 
-/** loader 一律走灰阶，别在聊天区制造高对比 */
-const LOADER_COLOR = 'var(--color-ink-3)'
+/**
+ * 贴底跟随的松弛量：离底部这么近仍算「看着最新内容」。滚轮一格通常 ≥ 40px，
+ * 用户真往上翻时一步就超过它；小于它的偏差只是子像素 / 滚动条尾巴。
+ */
+const STICK_SLACK = 24
+/** 输入框最多长到几行，再多在框内滚动 */
+const COMPOSER_MAX_ROWS = 8
 
 const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
 
@@ -200,10 +207,37 @@ export function AssistantPanel() {
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
 
-  useEffect(() => {
+  // 贴底跟随（ChatGPT / Claude 的约定）：只在用户本来就看着底部时才跟着新内容滚。
+  // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
+  // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
+  const stick = useRef(true)
+  const [detached, setDetached] = useState(false)
+  const syncStick = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK
+    stick.current = near
+    setDetached(!near)
+  }
+  const jumpToBottom = () => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
+    stick.current = true
+    setDetached(false)
+  }
+  useEffect(() => {
+    stick.current = true
+    setDetached(false)
+  }, [panel?.id])
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && stick.current) el.scrollTop = el.scrollHeight
   }, [sessions, panel?.id])
+
+  // 输入框高度跟着内容走（宪法第五节：调用点不自己算 rows）；jsdom 量不到行高时什么都不动
+  useLayoutEffect(() => {
+    if (inputRef.current) fitTextAreaHeight(inputRef.current, COMPOSER_MAX_ROWS)
+  }, [prompt])
 
   const fillPrompt = (text: string) => {
     setPrompt((p) => (p.trim() ? `${p.replace(/[；;，,\s]+$/, '')}；${text}` : text))
@@ -215,6 +249,8 @@ export function AssistantPanel() {
     if (!text || !panel || noAgent || sending || runningHere) return
     setSending(true)
     setError(null)
+    // 自己发的消息一定要看见：不管刚才翻到哪，发出去就回到底部
+    jumpToBottom()
     // 作用范围直接决定发给后端的元素上下文：整张图不带 gid，
     // 后端 _build_prompt 就不会写「用户选中的元素」那一行
     const ctx =
@@ -243,6 +279,12 @@ export function AssistantPanel() {
     }
   }
 
+  // 发送 ↔ 中止同一颗按钮、同一个位置（ChatGPT / Claude 的约定）：正在跑的时候它就是「中止」
+  const stopRunning = () => {
+    const running = mine.find((s) => s.status === 'running')
+    if (running) void useAiStore.getState().cancel(running.id)
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2">
@@ -265,7 +307,7 @@ export function AssistantPanel() {
       </div>
 
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} className="h-full overflow-y-auto px-2.5 py-2">
+        <div ref={scrollRef} onScroll={syncStick} className="h-full overflow-y-auto px-2.5 py-2">
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
@@ -284,19 +326,36 @@ export function AssistantPanel() {
             )
           )}
         </div>
+        {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮；到底了它自己消失 */}
+        {detached && runningHere && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+            <IconButton
+              label={ai('panel.scrollToBottom')}
+              iconSize="sm"
+              variant="secondary"
+              side="top"
+              className="pointer-events-auto animate-pop-in rounded-full shadow-pop"
+              onClick={jumpToBottom}
+            >
+              <ArrowDown size={ICON_SIZE.sm} />
+            </IconButton>
+          </div>
+        )}
         {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
       </div>
 
       <div className="shrink-0 px-3 pb-3 pt-1">
-        {panel && mine.length === 0 && !prompt.trim() && (
+        {/* 起手式：一开始打字就收起——收起是跟着内容合上（Reveal），不是原地消失让输入框跳一下 */}
+        <Reveal open={!!panel && mine.length === 0 && !prompt.trim()}>
           <div className="mb-1.5 flex flex-wrap gap-1">
-            {chipsFor(scope, element, !!axes).map((c) => (
-              <Button key={c} variant="secondary" size="sm" className="text-ink-2 hover:text-ink" onClick={() => fillPrompt(c)}>
-                {c}
-              </Button>
-            ))}
+            {panel &&
+              chipsFor(scope, element, !!axes).map((c) => (
+                <Button key={c} variant="secondary" size="sm" className="text-ink-2 hover:text-ink" onClick={() => fillPrompt(c)}>
+                  {c}
+                </Button>
+              ))}
           </div>
-        )}
+        </Reveal>
         {error && <p className="mb-1.5 text-xs text-danger">{error}</p>}
         {noAgent && (
           // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步。
@@ -324,13 +383,7 @@ export function AssistantPanel() {
             rows={2}
             disabled={!panel || noAgent}
             placeholder={panel ? ai('panel.placeholder') : undefined}
-            onChange={(e) => {
-              setPrompt(e.target.value)
-              // 两行起步，随内容自动增长（封顶约 8 行）
-              const el = e.currentTarget
-              el.style.height = 'auto'
-              el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-            }}
+            onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation()
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -353,26 +406,41 @@ export function AssistantPanel() {
             />
             {/* 快捷键提示是要读的字：`Kbd`（ink-3），不用 ink-faint（2.5:1；2026-09-14 审计 E1） */}
             <Kbd className="ml-auto">{MOD}↵</Kbd>
-            <Tip
-              label={
-                runningHere ? ai('panel.runningHere') : ai('panel.send', { key: modKey('↵') })
-              }
-            >
+            <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
               <Button
                 variant="primary"
                 size="icon-sm"
-                disabled={!panel || noAgent || !prompt.trim() || runningHere}
-                loading={sending || runningHere}
-                onClick={send}
-                aria-label={ai('panel.sendAria')}
+                data-ai-send={runningHere ? 'stop' : 'send'}
+                disabled={!panel || noAgent || (!runningHere && !prompt.trim())}
+                loading={sending}
+                onClick={runningHere ? stopRunning : send}
+                aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
               >
-                {!(sending || runningHere) && <ArrowUp size={ICON_SIZE.sm} />}
+                {!sending && <SendStopGlyph stop={runningHere} />}
               </Button>
             </Tip>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * 发送 ↔ 中止的图标：两个叠在同一格里，换的时候旧的缩小淡出、新的放大浮现，
+ * 弹簧曲线收尾——按钮本身不动，位置与尺寸一像素都不变。
+ */
+function SendStopGlyph({ stop }: { stop: boolean }) {
+  const cls = (shown: boolean) =>
+    cn(
+      'col-start-1 row-start-1 transition-[opacity,transform] duration-base ease-spring',
+      shown ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
+    )
+  return (
+    <span className="grid place-items-center" aria-hidden>
+      <ArrowUp size={ICON_SIZE.sm} className={cls(!stop)} />
+      <Square size={ICON_SIZE.xs} className={cn('fill-current', cls(stop))} />
+    </span>
   )
 }
 
@@ -944,13 +1012,10 @@ function SessionBlock({ session }: { session: AiSession }) {
   const caps = useAiStore((s) => s.caps)
   const running = session.status === 'running'
   const groups = groupEntries(session.entries)
-  // 有文字正在流入就撤掉 loader——同时出现会互相抢注意力
-  const streamingNow = session.entries.some((e) => e.streaming)
-  // 已经说过话、又还没开始流下一段 → 用骨架占位，别让面板空着
-  const awaitingParagraph = running && !streamingNow && session.entries.length > 0
 
   return (
-    <div className="flex flex-col gap-1.5">
+    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）
+    <div className="flex animate-settle-in flex-col gap-1.5" data-ai-session={session.status}>
       <div className="rounded-sm border border-border bg-surface-2 px-2 py-1.5">
         <p className="text-sm leading-[1.6] break-words text-ink-2">{session.prompt}</p>
         <p className="mt-0.5 truncate font-mono text-xs text-ink-3">
@@ -966,38 +1031,17 @@ function SessionBlock({ session }: { session: AiSession }) {
         ),
       )}
 
-      {awaitingParagraph && (
-        <div className="text-sm leading-[1.6]">
-          <TextLoader
-            variant="skeleton"
-            text={ai('panel.generating')}
-            color={LOADER_COLOR}
-            aria-label={ai('panel.generating')}
-          />
-        </div>
-      )}
-
-      <div className="flex items-center gap-1.5">
-        {running && !streamingNow && session.entries.length === 0 && (
-          <InlineLoader variant="matrix" size={24} color={LOADER_COLOR} />
-        )}
-        <span className={cn('text-xs', toneOf(session))}>{statusText(session)}</span>
-        {running && (
-          <Button
-            size="icon-sm"
-            className="ml-auto text-danger"
-            onClick={() => void useAiStore.getState().cancel(session.id)}
-            aria-label={ai('panel.abort')}
-          >
-            <Square size={ICON_SIZE.xs} />
-          </Button>
-        )}
-      </div>
+      {/* 状态行是唯一的「还活着」信号：进行中一道亮带扫过文字，完成即停——不另摆
+          loader / 骨架（三样东西同时在动是在互相抢注意力）。中止在输入框旁那颗按钮上
+          （发送 ↔ 中止同一位置），这里不再复制一颗。 */}
+      <p className={cn('text-xs', running ? 'text-shimmer' : toneOf(session))} data-ai-status={session.status}>
+        {statusText(session)}
+      </p>
 
       {session.error && <p className="text-xs text-danger">{session.error}</p>}
 
       {session.changed && session.diff && (
-        <>
+        <div className="flex animate-settle-in flex-col gap-1.5">
           <DiffView diff={session.diff} script={session.script} />
           <Button
             variant="secondary"
@@ -1008,7 +1052,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             <RotateCcw size={ICON_SIZE.sm} />
             {ai('panel.revert')}
           </Button>
-        </>
+        </div>
       )}
     </div>
   )
@@ -1022,7 +1066,8 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
     <div>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1 text-left text-xs text-ink-3 hover:text-ink-2"
+        aria-expanded={open}
+        className="flex w-full items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="truncate">
@@ -1034,7 +1079,8 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
             : ''}
         </span>
       </button>
-      {open && (
+      {/* 展开是跟着内容长高（Reveal），不是一整块瞬间跳出来 */}
+      <Reveal open={open}>
         <ul className="mt-1 flex flex-col gap-1 border-l border-border pl-2">
           {items.map((it, i) => (
             <li
@@ -1048,7 +1094,7 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
             </li>
           ))}
         </ul>
-      )}
+      </Reveal>
     </div>
   )
 }
@@ -1060,16 +1106,11 @@ async function revertSession(session: AiSession) {
   useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'))
 }
 
-/** 正文：按空行分段，行高放松；流式中在末段尾部挂闪烁光标 */
+/**
+ * 正文。流式阶段**照样按 markdown 渲染**（与 ChatGPT / Claude 一致，不等终稿），
+ * 新到的词由 `lib/streamMarkdown` 包成一次淡入；终稿到达后去掉插件，视觉零变化。
+ * 此前流式阶段走第三方的「涂黑显影」效果、终稿才换排版——两段观感不同，切换那一下会跳。
+ */
 function MessageBody({ text, streaming }: { text: string; streaming?: boolean }) {
-  // 流式阶段交给 redact 做逐字显影：它只吃纯字符串，半截 markdown 会不停闪
-  // 未闭合的语法；等 message 终稿到达再换成 Markdown 排版，两个阶段各司其职。
-  if (streaming) {
-    return (
-      <div className="whitespace-pre-wrap break-words text-sm leading-[1.6] text-ink-2">
-        <TextLoader variant="redact" text={text} color={LOADER_COLOR} aria-label={ai('panel.streaming')} />
-      </div>
-    )
-  }
-  return <Markdown text={text} />
+  return <Markdown text={text} streaming={!!streaming} />
 }

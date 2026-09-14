@@ -74,7 +74,6 @@
     "effort": "Reasoning effort",
     "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits the figure’s script. Review the diff, or roll it back.",
-    "generating": "Writing a reply",
     "noCli": "No coding agent available.",
     "noPanelHint": "Panels marked with { } come from a script. The assistant can edit it directly.",
     "noPanelTitle": "Select an editable figure",
@@ -91,9 +90,9 @@
     "scopeAndAgent": "Scope and agent",
     "scopeTitle": "Scope",
     "script": "Script: {{name}}",
+    "scrollToBottom": "Scroll to bottom",
     "send": "Send ({{key}})",
     "sendAria": "Send",
-    "streaming": "Streaming",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
     "techDetails": "Technical details"

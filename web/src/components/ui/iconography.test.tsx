@@ -79,7 +79,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */
-const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon', 'InlineLoader', 'TextLoader'])
+const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon'])
 
 /** lucide-react 里不是图标、但允许引入的名字 */
 const NON_ICON_EXPORTS = new Set(['LucideProvider', 'LucideIcon', 'LucideProps', 'icons'])

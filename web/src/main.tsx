@@ -5,7 +5,6 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { IconProvider } from './components/ui/Icon'
 import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
-import 'generative-loaders/styles.css'
 import './index.css'
 
 // i18n 必须在挂载 React **之前**就位：下面那个「桌面会话建立失败」的页面

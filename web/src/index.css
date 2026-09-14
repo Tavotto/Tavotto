@@ -115,8 +115,9 @@
      JS 侧的同一份值在 lib/motion.ts（两边必须同步，那里有断言看护）。
 
      进场比退场慢：退场是「让路」，拖沓会挡住用户的下一步动作。
-     形态一律 opacity + ≤4px 位移 + scale(0.97~1)——没有弹跳、没有回弹，
-     动画只是点缀，关掉（prefers-reduced-motion）不损失任何信息。
+     形态一律 opacity + ≤4px 位移 + scale(0.97~1)；回弹只有 --ease-spring 一条曲线
+     （峰值 5%，只给新内容落位的收尾），动画只是点缀，关掉（prefers-reduced-motion）
+     不损失任何信息。
      -------------------------------------------------------------------------- */
   --duration-fast: 120ms;
   --duration-base: 180ms;
@@ -136,6 +137,10 @@
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   /* hover / 颜色 / 折叠箭头这类来回都要顺的过渡：对称曲线（与 Tailwind 原默认同形，只是有了名字） */
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 回弹（2026-09-15 改图助手质感）：终点前先多走 5% 再收回。只给「新内容落位」的收尾——
+     对话块 / diff 卡的 settle-in、发送 ↔ 中止的图标——4px 位移上的回弹是 0.2px，是手感不是
+     动作；退场、hover、跟随输入的东西不用它。JS 侧同一份在 lib/motion.ts 的 EASE_SPRING。 */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   /* 浮层：菜单 / popover / select / tooltip / dialog 主体 */
   --animate-pop-in: pop-in var(--duration-fast) var(--ease-pop);
@@ -168,6 +173,16 @@
 
   /* 冷启动那几分钟的「还活着」信号：不确定进度条来回扫 */
   --animate-sweep: sweep 1.4s ease-in-out infinite;
+
+  /* 改图助手（2026-09-15）。三件事各一个名字，别互相代用：
+     stream-in  流式回答里每个新到的词淡入一次（lib/streamMarkdown 逐词包 span）——只动
+                opacity，正在读的字一位移就是抖；
+     settle-in  新的对话块 / diff 卡落位：淡入 + 4px 上浮 + 微缩放，弹簧曲线收尾；
+     shimmer    AI 进行中：一道亮带扫过状态文字（ChatGPT / Apple Intelligence 的「进行中」
+                语法）——只在进行中出现，完成即停，不是装饰。 */
+  --animate-stream-in: stream-in var(--duration-slow) var(--ease-standard) both;
+  --animate-settle-in: settle-in var(--duration-slow) var(--ease-spring) both;
+  --animate-shimmer: shimmer 1.8s linear infinite;
 }
 
 /* Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，不是
@@ -309,6 +324,37 @@
   }
 }
 
+@keyframes stream-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 亮带从左扫到右（1.35s），停 0.45s 再来：一直扫会像在催 */
+@keyframes shimmer {
+  0% {
+    background-position: 125% 0;
+  }
+  75%,
+  100% {
+    background-position: -25% 0;
+  }
+}
+
 @layer base {
   /* Tailwind v4 的默认边框色是 currentColor，这里回到 token 边框 */
   *,
@@ -399,6 +445,30 @@
 @utility focus-ring {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
+}
+
+/* AI 进行中的状态文字：ink-3 的字上一道 ink 的亮带扫过（背景裁成字形）。宽 200%、亮带占 30%，
+   关键帧从 125% 扫到 -25%，两头都完全离开文字。只给「正在进行」的那一行，不给正文。
+   reduced-motion：退回一行静止的 ink-3 文字（不能留一道停在半途的亮带）。 */
+@utility text-shimmer {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ink-3) 0%,
+    var(--color-ink-3) 35%,
+    var(--color-ink) 50%,
+    var(--color-ink-3) 65%,
+    var(--color-ink-3) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: var(--animate-shimmer);
+  @media (prefers-reduced-motion: reduce) {
+    color: var(--color-ink-3);
+    background-image: none;
+    animation: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------

@@ -10,8 +10,10 @@
  *    override 只管得到 CSS 的 animation/transition；**JS 动画一律管不到**。
  *    所以任何 rAF 动画都必须走 `tween()`——它在 reduced 时直接落终态，
  *    一帧都不放。绕过它自己写 rAF = 悄悄把这条无障碍契约作废。
- * 3. **动画只是点缀，关掉不损失任何信息。** 位移 ≤4px、scale 0.97~1、
- *    没有弹跳回弹；退场比进场短一档（退场是让路，拖沓会挡住下一步动作）。
+ * 3. **动画只是点缀，关掉不损失任何信息。** 位移 ≤4px、scale 0.97~1；退场比
+ *    进场短一档（退场是让路，拖沓会挡住下一步动作）。回弹只有一条曲线
+ *    `--ease-spring`，峰值 5%、只给「新内容落位」的收尾（改图助手的对话块 /
+ *    发送 ↔ 中止的图标）——4px 位移上的回弹是 0.2px，是手感不是动作。
  */
 import {
   useEffect,
@@ -47,6 +49,12 @@ export const easeOutCubic = (t: number): number => 1 - (1 - t) ** 3
  * 与 index.css 的 `--ease-pop` 逐字节相同，motion.test 直接读那份文件比对。
  */
 export const EASE_POP = 'cubic-bezier(0.16, 1, 0.3, 1)'
+
+/**
+ * 回弹曲线，与 index.css 的 `--ease-spring` 逐字节相同（motion.test 看护）。
+ * 峰值 1.05：终点前先多走 5% 再收回来。只给进场 / 落位，退场与 hover 不用。
+ */
+export const EASE_SPRING = 'cubic-bezier(0.34, 1.4, 0.64, 1)'
 
 interface TweenOptions {
   duration?: number
