@@ -12,22 +12,6 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## Python 3.14
-
-`pip install tavotto` (and `pipx install "tavotto[worker]"`) on Python 3.14 used
-to install **0.8.0** silently: every release after 0.8.0 declared
-`requires-python <3.14`, so a 3.14 interpreter — now the default `python3` from
-Homebrew and the default for pipx on those machines — could only resolve the one
-old version without that upper bound. The Codex plugin then reported
-`engine_too_old`, and `pipx upgrade tavotto` resolved to 0.8.0 again.
-
-This release accepts Python 3.14 (`requires-python >=3.10,<3.15`), so 3.14
-installs the current version. The CI backend suite now runs on 3.14 alongside
-3.10 and 3.13, and the wheel is installed into a clean 3.14 environment and
-started as part of the package smoke. The desktop builds still bundle their own
-3.13 runtime; nothing changes there. Project environments on 3.14 are now
-accepted by the environment check instead of being refused as unsupported.
-
 ## Codex: normalize an existing figure without redrawing it
 
 When a figure already exists and only needs a new width, font, or a font-size
@@ -51,6 +35,22 @@ Release housekeeping: the plugin bridge now imports four engine modules that
 first ship in this release (`artifactcheck`, `figcapture`, `interference`,
 `normalize`), so `MIN_TAVOTTO_VERSION` in `scripts/make_plugin_manifest.py`
 must be raised to this release's version when tagging.
+
+## Python 3.14
+
+`pip install tavotto` (and `pipx install "tavotto[worker]"`) on Python 3.14 used
+to install **0.8.0** silently: every release after 0.8.0 declared
+`requires-python <3.14`, so a 3.14 interpreter — now the default `python3` from
+Homebrew and the default for pipx on those machines — could only resolve the one
+old version without that upper bound. The Codex plugin then reported
+`engine_too_old`, and `pipx upgrade tavotto` resolved to 0.8.0 again.
+
+This release accepts Python 3.14 (`requires-python >=3.10,<3.15`), so 3.14
+installs the current version. The CI backend suite now runs on 3.14 alongside
+3.10 and 3.13, and the wheel is installed into a clean 3.14 environment and
+started as part of the package smoke. The desktop builds still bundle their own
+3.13 runtime; nothing changes there. Project environments on 3.14 are now
+accepted by the environment check instead of being refused as unsupported.
 
 
 ## Desktop installers and the GitHub Release now carry the project LICENSE
