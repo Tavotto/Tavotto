@@ -178,7 +178,7 @@ beforeEach(() => {
     data: null,
     loading: false,
     loadError: '',
-    progress: null,
+    jobs: {},
     busy: false,
     errorCode: '',
     errorText: '',

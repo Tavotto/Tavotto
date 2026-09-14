@@ -12,6 +12,7 @@ import {
   type PackageOp,
   type PackageProgress,
 } from '@/lib/api'
+import { currentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 
@@ -26,8 +27,16 @@ import { useRenderStore } from '@/store/renderStore'
  * 进度经 SSE `engine.package` 推过来，SSE 断了由 `poll()` 补拉。
  * 界面**按 state 换文案，不解析日志**——日志只在「详细日志」里原样显示。
  */
-/** 本标签页经 `run()` 起过的作业号：进度事件只认这里面的 */
-const startedJobs = new Set<string>()
+/**
+ * 本标签页经 `run()` 起过的作业：作业号 → 起它那一刻本标签页认领的项目
+ * （`currentProjectId()`）。进度事件只认这里面的作业号；「这个作业属于哪个项目」
+ * 是作业自己的一个字段（issue #309），不靠「此刻开着哪个项目」隐含——作业还在
+ * 后端跑的时候用户可以切走再切回来。
+ */
+const startedJobs = new Map<string, string | null>()
+
+/** `jobs` 表的键：没有项目时也要有个落点（那时后端不会放行作业，只是类型上要闭合） */
+const jobKey = (project: string | null): string => project ?? ''
 
 /**
  * 查找的序号。两次查找重叠时**只有最后一次的答案能落地**——先发的那次回来
@@ -84,8 +93,16 @@ interface PackageState {
   loading: boolean
   /** 上一次加载失败的原文（保留上次成功的 data） */
   loadError: string
-  /** 正在跑的作业进度；null = 没有 */
-  progress: PackageProgress | null
+  /**
+   * 每个项目最近一次作业的进度，按作业**所属**项目存（`run()` 那一刻的项目，issue #309）。
+   * 没有条目 = 那个项目没起过作业或已经关掉。切项目**不清**它（作业还在后端跑，
+   * `job_id` 是前端唯一的把手），切回去 `progressFor` 就接得上。
+   */
+  jobs: Readonly<Record<string, PackageProgress>>
+  /** 某个项目的页面上该显示的作业；作业属于别的项目就是 null */
+  progressFor: (project: string | null) => PackageProgress | null
+  /** 关掉当前项目那条已经结束的作业条 */
+  dismissJob: () => void
   /** 形成作业 / 发起执行期间的 busy（防连点） */
   busy: boolean
   errorCode: string
@@ -123,11 +140,23 @@ export const RUNNING_STATES: PackageProgress['state'][] = [
 export const isPackageJobRunning = (p: PackageProgress | null): boolean =>
   !!p && RUNNING_STATES.includes(p.state)
 
+/** 只改一个项目的那格；`null` = 删掉它 */
+const withJob = (
+  jobs: Readonly<Record<string, PackageProgress>>,
+  project: string | null,
+  p: PackageProgress | null,
+): Readonly<Record<string, PackageProgress>> => {
+  const next = { ...jobs }
+  if (p) next[jobKey(project)] = p
+  else delete next[jobKey(project)]
+  return next
+}
+
 export const usePackageStore = create<PackageState>((set, get) => ({
   data: null,
   loading: false,
   loadError: '',
-  progress: null,
+  jobs: {},
   busy: false,
   errorCode: '',
   errorText: '',
@@ -161,26 +190,35 @@ export const usePackageStore = create<PackageState>((set, get) => ({
     }
   },
 
+  progressFor: (project) => get().jobs[jobKey(project)] ?? null,
+
+  dismissJob: () => set({ jobs: withJob(get().jobs, currentProjectId(), null) }),
+
   run: async (jobId) => {
     if (get().busy) return false
-    startedJobs.add(jobId)
+    // 作业归起它那一刻的项目：之后的进度、取消、终态副作用都按这个字段派发
+    const project = currentProjectId()
+    startedJobs.set(jobId, project)
     set({ busy: true, errorCode: '', errorText: '' })
     try {
       // 乐观地先进 preparing：SSE 的第一条要等后端线程起来，那一下空窗期里
       // 按钮已经禁用了，界面却还什么都没说
-      set({ progress: { job_id: jobId, state: 'preparing', log: '', error: null, code: '' } })
+      const preparing: PackageProgress = { job_id: jobId, state: 'preparing', log: '', error: null, code: '' }
+      set({ jobs: withJob(get().jobs, project, preparing) })
       const res = await runPackageJob(jobId)
-      set({ busy: false, progress: { ...get().progress, ...res } as PackageProgress })
+      const merged = { ...(get().progressFor(project) ?? preparing), ...res } as PackageProgress
+      set({ busy: false, jobs: withJob(get().jobs, project, merged) })
       return true
     } catch (e) {
       const { code, text } = failure(e)
-      set({ busy: false, progress: null, errorCode: code, errorText: text })
+      set({ busy: false, jobs: withJob(get().jobs, project, null), errorCode: code, errorText: text })
       return false
     }
   },
 
   cancel: async () => {
-    const id = get().progress?.job_id
+    // 只取消**当前项目**的作业：别的项目的作业在这一页上根本不显示，后端也会按项目拒掉
+    const id = get().progressFor(currentProjectId())?.job_id
     if (!id) return
     try {
       await cancelPackageJob(id)
@@ -190,8 +228,10 @@ export const usePackageStore = create<PackageState>((set, get) => ({
   },
 
   poll: async () => {
-    const id = get().progress?.job_id
-    if (!id || !isPackageJobRunning(get().progress)) return
+    // 补拉同样只问当前项目的作业：`/job` 按项目核，问别的项目的只会得到 409
+    const mine = get().progressFor(currentProjectId())
+    const id = mine?.job_id
+    if (!id || !isPackageJobRunning(mine)) return
     try {
       const p = await fetchPackageJob(id)
       if (p.job_id === id && p.state !== 'idle') get().onProgress(p)
@@ -202,12 +242,19 @@ export const usePackageStore = create<PackageState>((set, get) => ({
 
   onProgress: (p) => {
     // 只认**自己起过**的作业：SSE 是全进程共享的一条流，同一后端下另一个项目的标签页
-    // 也会收到这条进度。以前只挡「与当前作业不同」，空闲标签页（progress 为 null）
+    // 也会收到这条进度。以前只挡「与当前作业不同」，空闲标签页（没有作业）
     // 会把别人的作业认领成自己的——终态时刷错项目的环境、进行中时露出别人的取消按钮
     // （评审 #228）。后端 cancel / job 也按项目核，这一层是前端自己的那一份。
     if (!p.job_id || !startedJobs.has(p.job_id)) return
-    set({ progress: p })
+    // 进度落到作业**所属**项目那一格，不落到此刻开着的项目上（issue #309）：
+    // A 起的作业在 B 上收到进度，只更新 A 的把手，B 的页面上什么都不出现
+    const project = startedJobs.get(p.job_id) ?? null
+    set({ jobs: withJob(get().jobs, project, p) })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
+      // 终态的副作用只在**此刻开着的就是作业所属项目**时派发：清单 / 环境状态 /
+      // 渲染重排 / 错误文案说的都是「当前项目」，A 的作业做完了不该让 B 刷一遍，
+      // 更不该把 A 的失败写成 B 的错误。切回 A 时页面挂载会自己 load()。
+      if (project !== currentProjectId()) return
       if (p.state !== 'done') set({ errorCode: p.code || '', errorText: p.error || '' })
       // 环境那半边变了（建了环境 / 换了解释器 / 版本变了）：清单与环境状态都刷一次
       void get().load()
@@ -254,11 +301,11 @@ export const usePackageStore = create<PackageState>((set, get) => ({
     // 尤其危险：它带着 A 环境里的 `installed` 版本与 A 的索引源，而这一页的
     // 安装按钮作用在**当前**项目上（本轮评审 P2）。
     //
-    // **`progress` / 已起过的作业号刻意不动。** 那个作业改的是 A 的环境、还在
+    // **`jobs` / 已起过的作业号刻意不动。** 那个作业改的是 A 的环境、还在
     // 后端跑着（切个项目不等于「我不要那次安装了」，与导出作业、native 会话
-    // 同一条纪律，ADR 0021 §14），而 `progress.job_id` 是前端手里唯一的把手
-    // ——丢掉它就再也接不回去了。「B 的页面上不该显示 A 的作业」是另一个问题，
-    // 它要的是重新对上账的能力，不是在这里把把手扔掉。
+    // 同一条纪律，ADR 0021 §14），而 `job_id` 是前端手里唯一的把手——丢掉它
+    // 就再也接不回去了。「B 的页面上不该显示 A 的作业」由 `jobs` 按作业所属
+    // 项目分格 + `progressFor(project)` 解决（issue #309）：切回 A 就接得上。
     set({ data: null, loading: false, loadError: '', errorCode: '', errorText: '', lookup: IDLE_LOOKUP })
   },
 }))

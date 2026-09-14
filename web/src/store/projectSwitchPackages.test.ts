@@ -12,13 +12,20 @@
  *
  *   * `clear()` 里的 `set(IDLE_LOOKUP)` 管**已经落地**的那份；
  *   * `clear()` 里的换代管**还在飞**的那些。
+ *
+ * 作业是另一回事（issue #309）：它改的是**起它那个项目**的环境、还在后端跑，
+ * `job_id` 是前端唯一的把手，所以 `clear()` **不清**它；「B 的页面上不该出现
+ * A 的作业」靠作业自带项目字段 + `progressFor(project)` 解决。下面第二组用例
+ * 钉的就是这两件事各自成立：切走看不见、切回接得上。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setCurrentProjectId } from '@/lib/session'
-import type { PackageLookup } from '@/lib/api'
-import { usePackageStore } from './packageStore'
+import type { PackageLookup, PackageProgress } from '@/lib/api'
+import { useEnvStore } from './envStore'
+import { isPackageJobRunning, usePackageStore } from './packageStore'
 import { useProjectStore } from './projectStore'
+import { useRenderStore } from './renderStore'
 
 /** A 项目那次查找的答案——`installed` / `source` 是它属于哪个项目的证据 */
 const A_ANSWER: PackageLookup = {
@@ -32,8 +39,31 @@ const A_ANSWER: PackageLookup = {
 /** 把 `/api/engine/packages/lookup` 那一次请求**扣在手里**，由用例决定何时回答 */
 let releaseLookup: ((body: unknown, status?: number) => void) | null = null
 
-globalThis.fetch = (async (url: unknown) => {
+/** 每次 fetch 的 url 与 JSON 请求体（作业那组用例数「谁被刷了」「取消发的是谁」） */
+const calls: { url: string; body: unknown }[] = []
+
+/** `/api/engine/packages/run` 的回答：后端在 run 响应里就带一份进度快照 */
+const RUN_ANSWER: { started: boolean } & PackageProgress = {
+  started: true,
+  job_id: 'job-a',
+  state: 'installing',
+  log: '',
+  error: null,
+  code: '',
+  op: 'install',
+  distribution: 'lmfit',
+}
+
+globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
+  calls.push({ url: u, body: typeof init?.body === 'string' ? JSON.parse(init.body) : null })
+  if (u.includes('/api/engine/packages/run')) {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { job_id: string }) : { job_id: '' }
+    return new Response(JSON.stringify({ ...RUN_ANSWER, job_id: body.job_id }), { status: 200 })
+  }
+  if (u.includes('/api/engine/packages/cancel')) {
+    return new Response(JSON.stringify({ cancelling: true }), { status: 200 })
+  }
   if (u.includes('/api/engine/packages/lookup')) {
     return new Promise<Response>((resolve) => {
       releaseLookup = (body, status = 200) =>
@@ -59,19 +89,20 @@ globalThis.fetch = (async (url: unknown) => {
   return new Response(JSON.stringify(body), { status: 200 })
 }) as typeof fetch
 
-const switchProject = () =>
+const switchProject = (id = 'p2') =>
   useProjectStore
     .getState()
-    .adoptOpenedProject({ id: 'p2', path: '/new', name: 'new', writable: true, open: true } as never)
+    .adoptOpenedProject({ id, path: `/${id}`, name: id, writable: true, open: true } as never)
 
 beforeEach(() => {
   releaseLookup = null
+  calls.length = 0
   setCurrentProjectId('p1')
   usePackageStore.setState({
     data: null,
     loading: false,
     loadError: '',
-    progress: null,
+    jobs: {},
     busy: false,
     errorCode: '',
     errorText: '',
@@ -162,5 +193,145 @@ describe('换项目时的包管理状态', () => {
     await run
     expect(usePackageStore.getState().lookup.result?.source).toBe('pypi')
     expect(usePackageStore.getState().lookup.status).toBe('found')
+  })
+})
+
+/* ------------------------- 作业跟着它所属的项目走（issue #309） ------------------------- */
+
+const progressFor = (project: string) => usePackageStore.getState().progressFor(project)
+/** 数「清单被刷了几次」：`/api/engine/packages` 本身，不含 run / cancel / lookup / job */
+const listLoads = () => calls.filter((c) => /\/api\/engine\/packages(\?|$)/.test(c.url)).length
+const done = (jobId: string): PackageProgress => ({
+  job_id: jobId,
+  state: 'done',
+  log: 'Successfully installed lmfit\n',
+  error: null,
+  code: '',
+  op: 'install',
+  distribution: 'lmfit',
+  result: { distribution: 'lmfit', version: '1.3.4' },
+})
+
+/**
+ * 终态副作用的两个探针。**不用 `vi.spyOn(store.getState(), …)`**：zustand 每次 `set`
+ * 都会把上一份 state 里的函数原样抄进新对象，spy 一旦被抄走，`restoreAllMocks`
+ * 只还原旧对象上的那份，新对象里留下的仍是那个 spy——计数会跨用例累加（实测
+ * 一次变异跑出「期望 1 次、实际 9 次」）。所以每条用例自己 `setState` 一个新的
+ * `vi.fn()`，跑完把原函数放回去。
+ */
+const ORIGINAL_ENV_REFRESH = useEnvStore.getState().refresh
+const ORIGINAL_RENDER_RETRY = useRenderStore.getState().retryEnvironmentFailures
+function probes() {
+  const refresh = vi.fn(async () => {})
+  const retry = vi.fn()
+  useEnvStore.setState({ refresh })
+  useRenderStore.setState({ retryEnvironmentFailures: retry })
+  return { refresh, retry }
+}
+afterEach(() => {
+  useEnvStore.setState({ refresh: ORIGINAL_ENV_REFRESH })
+  useRenderStore.setState({ retryEnvironmentFailures: ORIGINAL_RENDER_RETRY })
+})
+
+/** 起一个作业并证明它在起它的那个项目上**真的在**——没有这一步，后面的「看不见」恒真 */
+async function startJobOn(project: string, jobId: string) {
+  setCurrentProjectId(project)
+  expect(await usePackageStore.getState().run(jobId)).toBe(true)
+  const p = progressFor(project)
+  expect(p?.job_id).toBe(jobId)
+  expect(isPackageJobRunning(p)).toBe(true)
+}
+
+describe('安装作业跟着它所属的项目走', () => {
+  it('A 起的作业切到 B：B 的页面上没有它，A 做完也不在 B 上刷清单 / 环境 / 渲染', async () => {
+    await startJobOn('p1', 'job-a')
+
+    await switchProject('p2')
+    expect(progressFor('p2')).toBeNull()
+    // 把手没丢：作业还在后端跑，A 那一格原样留着
+    expect(progressFor('p1')?.job_id).toBe('job-a')
+
+    // 探针装在切完项目**之后**：换项目那一路自己也会重置 store，装早了会被抄掉
+    const { retry, refresh } = probes()
+    calls.length = 0
+    usePackageStore.getState().onProgress(done('job-a'))
+    await new Promise((r) => setTimeout(r, 0))
+
+    // 终态落进了 A 的格子（切回去能看到「已完成」），B 上仍然什么都没有
+    expect(progressFor('p1')?.state).toBe('done')
+    expect(progressFor('p2')).toBeNull()
+    // B 上一个副作用都没派发：这些动作说的都是「当前项目」
+    expect(retry).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+    expect(listLoads()).toBe(0)
+  })
+
+  it('A 的作业在 B 上失败：失败文案不写到 B 的页面上，只落进 A 的格子', async () => {
+    await startJobOn('p1', 'job-a')
+    await switchProject('p2')
+    usePackageStore.getState().onProgress({
+      ...done('job-a'),
+      state: 'failed',
+      code: 'package_install_failed',
+      error: 'pip 退出码 1',
+      result: null,
+    })
+    expect(usePackageStore.getState().errorCode).toBe('')
+    expect(usePackageStore.getState().errorText).toBe('')
+    expect(progressFor('p1')?.state).toBe('failed')
+    expect(progressFor('p1')?.code).toBe('package_install_failed')
+    expect(progressFor('p2')).toBeNull()
+  })
+
+  it('切回 A：进度接得上，取消发的仍是那个 job_id', async () => {
+    await startJobOn('p1', 'job-a')
+    await switchProject('p2')
+    expect(progressFor('p2')).toBeNull()
+
+    await switchProject('p1')
+    const p = progressFor('p1')
+    expect(p?.job_id).toBe('job-a')
+    expect(isPackageJobRunning(p)).toBe(true)
+
+    calls.length = 0
+    await usePackageStore.getState().cancel()
+    const cancels = calls.filter((c) => c.url.includes('/api/engine/packages/cancel'))
+    expect(cancels).toHaveLength(1)
+    expect(cancels[0]!.body).toEqual({ job_id: 'job-a' })
+  })
+
+  it('在 B 上取消：没有属于 B 的作业，一个取消请求都不发', async () => {
+    await startJobOn('p1', 'job-a')
+    await switchProject('p2')
+    calls.length = 0
+    await usePackageStore.getState().cancel()
+    expect(calls.filter((c) => c.url.includes('/api/engine/packages/cancel'))).toHaveLength(0)
+  })
+
+  it('两个项目各起一个：各在各的页面上，谁也不盖谁', async () => {
+    await startJobOn('p1', 'job-a')
+    await switchProject('p2')
+    await startJobOn('p2', 'job-b')
+    expect(progressFor('p1')?.job_id).toBe('job-a')
+    expect(progressFor('p2')?.job_id).toBe('job-b')
+    // A 的终态回来：只动 A 的格子
+    usePackageStore.getState().onProgress(done('job-a'))
+    expect(progressFor('p1')?.state).toBe('done')
+    expect(progressFor('p2')?.job_id).toBe('job-b')
+    expect(isPackageJobRunning(progressFor('p2'))).toBe(true)
+  })
+
+  it('对照：作业属于此刻开着的项目时，终态照常刷清单 / 环境 / 渲染重排', async () => {
+    // 上面那条「0 次」的前提：同一个事件在**作业所属项目**上确实会触发这些动作。
+    // 没有这一条，spy 哪天没接上那条路径，「不触发」就会因为从没有人触发而恒绿。
+    await startJobOn('p1', 'job-a')
+    const { retry, refresh } = probes()
+    calls.length = 0
+    usePackageStore.getState().onProgress(done('job-a'))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(listLoads()).toBe(1)
+    expect(progressFor('p1')?.state).toBe('done')
   })
 })

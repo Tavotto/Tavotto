@@ -4,6 +4,7 @@ import { msg, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import type { PackageOp, PackageProgress, UserPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { repairCodeMessage } from '../DependencyRepairCard'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -60,8 +61,10 @@ const pk = (key: string, values?: Record<string, unknown>) =>
  */
 export function PackagesSettings() {
   useTranslation('dialogs')
-  const { data, loading, loadError, progress, busy, errorCode, errorText, load } =
-    usePackageStore()
+  const { data, loading, loadError, busy, errorCode, errorText, load } = usePackageStore()
+  // 只看**这个项目的**作业（issue #309）：作业按所属项目存，A 起的安装在 B 的页面上
+  // 没有进度条、没有取消按钮；切回 A 时按 job_id 接上
+  const progress = usePackageStore((s) => s.progressFor(currentProjectId()))
   const [spec, setSpec] = useState('')
   const [specError, setSpecError] = useState<string | null>(null)
 
@@ -593,6 +596,7 @@ function JobPanel({
   useTranslation('dialogs')
   const cancel = usePackageStore((s) => s.cancel)
   const clearError = usePackageStore((s) => s.clearError)
+  const dismissJob = usePackageStore((s) => s.dismissJob)
   const running = isPackageJobRunning(progress)
   const failure = errorCode || errorText ? (repairCodeMessage(errorCode) ?? errorText) : null
   if (!progress && !failure) return null
@@ -631,7 +635,7 @@ function JobPanel({
             size="sm"
             onClick={() => {
               clearError()
-              usePackageStore.setState({ progress: null })
+              dismissJob()
             }}
           >
             {pk('job.dismiss')}

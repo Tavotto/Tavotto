@@ -33,6 +33,7 @@ import {
 } from '@/lib/api'
 import { t } from '@/i18n'
 import { PackagesSettings } from '@/components/settings/PackagesSettings'
+import { currentProjectId } from '@/lib/session'
 import { usePackageStore } from '@/store/packageStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -166,7 +167,7 @@ beforeEach(() => {
     data: null,
     loading: false,
     loadError: '',
-    progress: null,
+    jobs: {},
     busy: false,
     errorCode: '',
     errorText: '',
@@ -395,11 +396,11 @@ describe('安装', () => {
     await act(async () => {
       usePackageStore.getState().onProgress({ job_id: 'someone-elses', state: 'installing', log: 'x', error: null, code: '' })
     })
-    expect(usePackageStore.getState().progress).toBeNull()
+    expect(usePackageStore.getState().jobs).toEqual({})
     await act(async () => {
       usePackageStore.getState().onProgress({ job_id: 'someone-elses', state: 'done', log: 'x', error: null, code: '' })
     })
-    expect(usePackageStore.getState().progress).toBeNull()
+    expect(usePackageStore.getState().jobs).toEqual({})
     expect(listMock).not.toHaveBeenCalled()
   })
 
@@ -412,7 +413,7 @@ describe('安装', () => {
     await act(async () => {
       usePackageStore.getState().onProgress({ job_id: 'other', state: 'done', log: '', error: null, code: '' })
     })
-    expect(usePackageStore.getState().progress?.job_id).toBe('job-1')
+    expect(usePackageStore.getState().progressFor(currentProjectId())?.job_id).toBe('job-1')
   })
 
   it('取消按钮真的发取消', async () => {
