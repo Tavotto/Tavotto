@@ -20,6 +20,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect, test, writeRuntimeNamedProject } from './fixtures'
 import { lowContrastNodes } from './contrast'
+import { resolveScanned, type ScannedNode } from './scannedNodes'
 
 /**
  * **axe 的 `incomplete` 不是「通过」，是「axe 查不了」**（issue #130）。
@@ -43,8 +44,8 @@ interface IncompleteAllowance {
   rule: string
   /** axe 查不了，但这件事由谁覆盖 */
   why: string
-  /** 逐节点核对：拿到 axe 报的 target 选择器，自己去页面里把那件事查一遍 */
-  verify: (page: Page, targets: string[]) => Promise<void>
+  /** 逐节点核对：拿到 axe 报的节点（选择器 + 扫描那一刻的 html 片段），自己去页面里把那件事查一遍 */
+  verify: (page: Page, nodes: ScannedNode[]) => Promise<void>
 }
 
 /**
@@ -58,27 +59,16 @@ interface IncompleteAllowance {
 const dialogBackgroundIsInert: IncompleteAllowance = {
   rule: 'aria-hidden-focus',
   why: '对话框背景整片 aria-hidden；焦点进不去这一点由同一条用例的 focus trap 断言覆盖',
-  verify: async (page, targets) => {
-    const bad = await page.evaluate((sels) => {
-      const out: string[] = []
-      for (const sel of sels) {
-        let el: Element | null = null
-        try {
-          el = document.querySelector(sel)
-        } catch {
-          out.push(`${sel}（选择器解析不了）`)
-          continue
-        }
-        if (!el) continue // 扫描之后已经消失：不构成放行理由，也不构成失败
-        const guard = el.hasAttribute('data-radix-focus-guard')
-        const hidden = el.closest('[aria-hidden="true"], [data-aria-hidden="true"]') != null
-        const inDialog = el.closest('[role="dialog"]') != null
-        if (inDialog || (!guard && !hidden)) {
-          out.push(`${sel}（guard=${guard} hidden=${hidden} inDialog=${inDialog}）`)
-        }
+  verify: async (page, nodes) => {
+    const bad: string[] = []
+    for (const f of await resolveScanned(page, nodes)) {
+      if (f.found === 'unparseable') bad.push(`${f.target}（选择器解析不了）`)
+      // gone / other：扫描之后已经消失（或这个字符串现在指着别人）——不构成放行理由，也不构成失败
+      if (f.found !== 'same') continue
+      if (f.inDialog || (!f.guard && !f.hidden)) {
+        bad.push(`${f.target}（guard=${f.guard} hidden=${f.hidden} inDialog=${f.inDialog}）`)
       }
-      return out
-    }, targets)
+    }
     expect(
       bad,
       'aria-hidden-focus 的 incomplete 里混进了不属于「对话框背景已 inert」这一类的节点',
@@ -96,30 +86,15 @@ const dialogBackgroundIsInert: IncompleteAllowance = {
 const contrastCoveredByOurOwnRuler: IncompleteAllowance = {
   rule: 'color-contrast',
   why: '覆盖层下 axe 算不出背景色；由本文件的自算对比度判据逐节点覆盖',
-  verify: async (page, targets) => {
-    const unreachable = await page.evaluate((sels) => {
-      const out: string[] = []
-      for (const sel of sels) {
-        let el: Element | null = null
-        try {
-          el = document.querySelector(sel)
-        } catch {
-          out.push(`${sel}（选择器解析不了）`)
-          continue
-        }
-        if (!el) continue
-        // 自算判据只看「自己直接持有文字」的元素；禁用态按 WCAG 1.4.3 本就不在
-        // 范围内。两者都不是就说明它落在我们的尺子之外，这条豁免对它不成立。
-        const direct = [...el.childNodes]
-          .filter((n) => n.nodeType === 3)
-          .map((n) => n.textContent ?? '')
-          .join('')
-          .trim()
-        const disabled = el.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')
-        if (!direct && !disabled) out.push(`${sel}（没有直接文字，自算判据扫不到它）`)
-      }
-      return out
-    }, targets)
+  verify: async (page, nodes) => {
+    const unreachable: string[] = []
+    for (const f of await resolveScanned(page, nodes)) {
+      if (f.found === 'unparseable') unreachable.push(`${f.target}（选择器解析不了）`)
+      if (f.found !== 'same') continue
+      // 自算判据只看「自己直接持有文字」的元素；禁用态按 WCAG 1.4.3 本就不在
+      // 范围内。两者都不是就说明它落在我们的尺子之外，这条豁免对它不成立。
+      if (!f.direct && !f.disabled) unreachable.push(`${f.target}（没有直接文字，自算判据扫不到它）`)
+    }
     expect(
       unreachable,
       'color-contrast 的 incomplete 里有自算判据也覆盖不到的节点——不能按规则 id 放行',
@@ -158,7 +133,7 @@ const headingOrderCheckedByOurselves: IncompleteAllowance = {
 
 interface AxeReport {
   violations: unknown[]
-  incomplete: { id: string; impact: string | null | undefined; targets: string[] }[]
+  incomplete: { id: string; impact: string | null | undefined; nodes: ScannedNode[] }[]
 }
 
 /** 扫描一次，拿回 critical/serious 违规与**全部** incomplete（含每个节点的 target）。
@@ -182,7 +157,8 @@ async function axeReport(page: Page): Promise<AxeReport> {
     incomplete: results.incomplete.map((v) => ({
       id: v.id,
       impact: v.impact,
-      targets: v.nodes.map((n) => n.target.join(' ')),
+      // html 是 axe 扫描那一刻的 outerHTML 片段：verify 用它核对节点身份（resolveScanned）
+      nodes: v.nodes.map((n) => ({ target: n.target.join(' '), html: n.html ?? '' })),
     })),
   }
 }
@@ -207,14 +183,14 @@ async function expectAccessible(
   const byRule = new Map(allow.map((a) => [a.rule, a]))
   const unexplained = report.incomplete
     .filter((v) => !byRule.has(v.id))
-    .map((v) => ({ id: v.id, impact: v.impact, n: v.targets.length }))
+    .map((v) => ({ id: v.id, impact: v.impact, n: v.nodes.length }))
   expect(
     unexplained,
     '这个场景冒出了没有交代的「axe 查不了」——先定性它由谁覆盖，再在该用例上声明并验',
   ).toEqual([])
 
   for (const v of report.incomplete) {
-    await byRule.get(v.id)!.verify(page, v.targets)
+    await byRule.get(v.id)!.verify(page, v.nodes)
   }
   // 刻意不断言「声明了就必须出现」：同一处界面的 incomplete 会随抽屉开合、卡片
   // 数量、浏览器而变（实测工作台在 chromium 上有 color-contrast、chromium-en 上
