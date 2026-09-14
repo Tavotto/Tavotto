@@ -73,8 +73,9 @@
   --color-warn: #8a5a00;
   --color-warn-subtle: #f7efe0;
   /* 成功 / 就绪（「已经好了，不用管」）：编码 Agent 的「可用」用它。
-     只做小面积图标底色（白对勾压在上面 ≈4.9:1），不用于大段文字。 */
-  --color-ok: #2e7d4f;
+     小面积图标与 Badge 的字：#2e7d4f 落在 ok-subtle 上只有 4.41:1（tokenContrast.test 抓到），
+     收深一档到 #2b7649——ok-subtle 上 4.85、白上 5.54、白对勾压在上面 5.54。 */
+  --color-ok: #2b7649;
   --color-ok-subtle: #e6f3ea;
   --color-sel: #2f6fed;
 

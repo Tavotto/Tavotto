@@ -71,10 +71,17 @@ export function LineStylePicker({
   }
   // 当前值不在选项里（自定义 dash）也要能看到、能保持
   const all = value && !options.includes(value) ? [value, ...options] : options
+  // 弹层是一列（columns=1）：每行「样张 + 名字」，与箭头端型那一列同一形态；
+  // 只画一条线的话四行看起来像四条没有名字的横杠
   const grid: GridOption[] = all.map((o) => ({
     value: o,
     label: nameOf(o),
-    preview: <LinePreview style={o} />,
+    preview: (
+      <span className="flex items-center gap-2 px-1 text-xs">
+        <LinePreview style={o} />
+        <span className="truncate">{nameOf(o)}</span>
+      </span>
+    ),
     code: o,
   }))
   const current = value === null ? undefined : grid.find((o) => o.value === value)

@@ -392,7 +392,14 @@ function ZoneSwitch({
   )
 }
 
-export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) {
+export function TickAndSpineDiagram({
+  adapter,
+  labelWidth = 88,
+}: {
+  adapter: TickSpineAdapter
+  /** 网格行标签列的宽度：与同页其它 `Row` 的 `LABEL_W` 同一条竖线 */
+  labelWidth?: number
+}) {
   const sideProps = SIDES.flatMap((s) => [`spine_${s}`, `ticks_${s}`])
   if (!sideProps.some((p) => adapter.has(p))) return null
 
@@ -559,7 +566,10 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
         // 关态长得像文字的 role=switch 按钮，也不再画分隔线（2026-09-14 审计 S6；宪法第五节
         // 「Toggle 唯一的滑动开关」、第八节「组间靠留白不画线」）
         <div role="group" aria-label={gridLabel} className="flex min-h-7 items-center gap-2 pt-1">
-          <span className="w-11 shrink-0 text-xs text-ink-2">{gridLabel}</span>
+          {/* 标签列宽与同页其它行（`LABEL_W`）同一条竖线 */}
+          <span style={{ width: labelWidth }} className="shrink-0 text-xs text-ink-2">
+            {gridLabel}
+          </span>
           <div className="flex min-w-0 flex-1 items-center gap-4">
             {(['grid_x', 'grid_y'] as const).map((p) =>
               adapter.has(p) ? (

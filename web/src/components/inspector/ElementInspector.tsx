@@ -1150,7 +1150,7 @@ function TickControl({
   }
   return (
     <div className="flex flex-col gap-2">
-      <TickAndSpineDiagram adapter={adapter} />
+      <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
       {axes.length > 0 && (
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
@@ -1366,7 +1366,7 @@ function TickPage({
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1.5" data-tick-section="marks">
         <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
-        <TickAndSpineDiagram adapter={adapter} />
+        <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
         {self ? (
           <TickTaskCard
             axes={[self]}

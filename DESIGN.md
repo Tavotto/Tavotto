@@ -21,7 +21,7 @@ colors:
   danger-subtle: "#fdf3f1"
   warn: "#8a5a00"
   warn-subtle: "#f7efe0"
-  ok: "#2e7d4f"
+  ok: "#2b7649"
   ok-subtle: "#e6f3ea"
   sel: "#2f6fed"
 typography:
