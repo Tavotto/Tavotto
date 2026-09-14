@@ -373,8 +373,11 @@ D1 要过 `e2e` 里认 `data-status-live` 的用例。
 - **E3** 的 `Reveal` 没包 `SpineFrameCard` 的逐边行（行是父级 flex 的直接子项，包一层会吃掉 gap）与
   问题面板的分组展开（列表语义）；原生 `<details>` 只在支持 `interpolate-size` 的引擎里长高。
 - **E6** 选了「边框闪一次 warn」，没做横向摆动。
+- **D1** 的动作叫「移除」不叫「撤销」：chromium e2e 首轮 7 条红全是 `getByRole('button', { name: '撤销' })`
+  命中两颗（顶栏那颗 + 通知轨这颗）——同名两颗读屏也分不清；且只在撤销栈还停在加入那一刻才给这颗钮
+  （`workspace.addedForEditDepth`），用户在图内又改了别的之后撤销撤的不是加入。
 
 实测（Chromium，r2 构建）：分段选中底 79 → 124 → 134 → 136px、页签下划线 0 → 92 → 109 → 112px（180ms
 ease-pop 的轨迹）；「更多」展开 grid 行高 107 → 171 → 194 → 204px；名称框 scrollHeight 40 = height 40（两行
-完整）。jsdom：262 → 263 个用例文件，3952 → 3978 条全绿；`pnpm build`、`pnpm i18n:check` 通过。
+完整）。jsdom：262 → 263 个用例文件，3952 → 3979 条全绿；`pnpm build`、`pnpm i18n:check` 通过；chromium e2e（除 playground / mcp）84 条全绿——首轮 8 红：7 条是上面那颗同名「撤销」、1 条是 `large-figure` 调 `python3` 时 PATH 里系统 3.9 排在前面（环境）。
 

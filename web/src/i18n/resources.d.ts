@@ -3707,12 +3707,13 @@ export default interface Resources {
       "addToCanvas": "添加到画布",
       "added": "{{name}} 已加入画布",
       "addedForEdit": "已为编辑加入本文档",
-      "addedForEditLive": "已为编辑加入本文档，撤销即可移除。",
+      "addedForEditLive": "已为编辑加入本文档，移除即撤销这一步。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
       "crumbTitle": "回到画布排版",
       "figureMissing": "项目里找不到 {{name}}",
-      "layoutOnly": "未连接源脚本。可排版，不能改图内元素。"
+      "layoutOnly": "未连接源脚本。可排版，不能改图内元素。",
+      "removeAdded": "移除"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前 Tavotto 文档，原始文件不动。",

@@ -78,6 +78,11 @@ interface WorkspaceState {
    * 回到画布排版 / 换文档即清；撤销把面板撤掉时快速编辑自己会退出，同一条路。
    */
   addedForEdit: string | null
+  /**
+   * 加入那一刻的撤销栈深度：栈还是这个深度时，「撤销」正好撤的就是这一步，通知轨上才给
+   * 「移除」这颗钮；用户在图内又改了别的之后，撤销撤的是别的，钮就收起来（说明句留着）
+   */
+  addedForEditDepth: number
   /** 进入快速编辑（对象必须已经在激活画布里） */
   enterFastEdit: (panelId: string) => void
   /** 设置 / 清除「等源脚本到了再进图内编辑」的待办 */
@@ -93,6 +98,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activePanelId: null,
   pendingElementEdit: null,
   addedForEdit: null,
+  addedForEditDepth: 0,
   enterFastEdit: (panelId) => {
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
     // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
@@ -250,7 +256,10 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   // 快速编辑的对象只能是文档里的面板对象，见文件头；但用户点的是"编辑"，看到
   // 的却是版本预览多了一个对象、问题面板多了一批问题，UI 审计 T06）。它是一条
   // 可撤销的历史，撤销即移除。图**已经在文档里**时什么都不说——那一次零文档改动。
-  useWorkspaceStore.setState({ addedForEdit: created ? panel.id : null })
+  useWorkspaceStore.setState({
+    addedForEdit: created ? panel.id : null,
+    addedForEditDepth: useDocumentStore.getState().past.length,
+  })
   // 绘制工具画的是画布标注，快速编辑这一屏上根本没有它们的位置——
   // 停在「箭头」工具上进来，光标是十字而点下去什么也看不见
   useUiStore.getState().setTool('select')

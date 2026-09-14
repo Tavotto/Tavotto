@@ -17,10 +17,11 @@ export function TruncateMiddle({
   className?: string
 }) {
   if (text.length <= tail + 4) return <span className={cn('block truncate', className)}>{text}</span>
+  // whitespace-pre：切口两侧的空格不能被行尾折叠掉（「time (mi」切成「time」+「 (mi」时那个空格在头段末尾）
   return (
     <span className={cn('flex min-w-0', className)}>
-      <span className="min-w-0 truncate">{text.slice(0, -tail)}</span>
-      <span className="shrink-0">{text.slice(-tail)}</span>
+      <span className="min-w-0 truncate whitespace-pre">{text.slice(0, -tail)}</span>
+      <span className="shrink-0 whitespace-pre">{text.slice(-tail)}</span>
     </span>
   )
 }

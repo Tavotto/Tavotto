@@ -197,6 +197,11 @@ export function NotificationRail() {
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
   const addedPresence = usePresence(justAdded, DURATION.exit)
+  // 「移除」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
+  // 别的了）。名字用「移除」不用「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与用例都分不清
+  const addedDepth = useWorkspaceStore((s) => s.addedForEditDepth)
+  const historyDepth = useDocumentStore((s) => s.past.length)
+  const canRemoveAdded = justAdded && historyDepth === addedDepth
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-1.5 px-4">
@@ -222,7 +227,7 @@ export function NotificationRail() {
           data-fast-edit-added-note=""
           icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
           text={t('fastEdit.addedForEdit')}
-          action={{ label: t('topbar.undo'), onClick: () => runUndoRedo(false) }}
+          action={canRemoveAdded ? { label: t('fastEdit.removeAdded'), onClick: () => runUndoRedo(false) } : undefined}
         />
       )}
       {hintPresence.mounted && hint && (

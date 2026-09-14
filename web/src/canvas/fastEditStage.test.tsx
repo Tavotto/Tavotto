@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasStage } from './CanvasStage'
 import { NotificationRail } from '@/components/StatusBar'
+import { literal } from '@/i18n'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
@@ -208,7 +209,9 @@ describe('「刚为编辑加入本文档」的说明', () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     expect(note()).not.toBeNull()
-    expect(note()!.textContent).toContain('撤销')
+    // 动作叫「移除」不叫「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与 e2e 都分不清
+    expect(note()!.textContent).toContain('移除')
+    expect(note()!.querySelector('button')?.textContent).toBe('移除')
 
     act(() => returnToLayout())
     act(() => openFastEdit('a.pdf'))
@@ -245,6 +248,19 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(useWorkspaceStore.getState().addedForEdit, '这一次确实把图加进了文档').not.toBeNull()
     expect(live()!.textContent, '这一刻区被填上').toContain('撤销')
     expect(live(), '是同一个节点被填上，不是新插进来一个').toBe(before)
+  })
+
+  it('「移除」只在撤销正好撤的是加入这一步时给：之后又改了别的，钮收起、说明留着', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mountWithRail()
+    expect(note()!.querySelector('button')).not.toBeNull()
+    act(() => {
+      useDocumentStore.getState().commit(literal('改点别的'), (d) => {
+        d.objects[0]!.x += 1
+      })
+    })
+    expect(note(), '说明句还在').not.toBeNull()
+    expect(note()!.querySelector('button'), '撤销栈已经不在加入那一刻，「移除」该收起').toBeNull()
   })
 
   it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {
