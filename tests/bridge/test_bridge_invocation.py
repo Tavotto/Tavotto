@@ -182,10 +182,20 @@ def test_bridge_future_flags_never_leak_into_the_user_script(tmp_path, user_pyth
 
     判据是 A/B：同一个解释器、同一份夹具，直跑与 bridge 必须给同一个结果。
 
+    夹具用**函数**注解并显式读 `f.__annotations__`，而不是模块级 `x: NoSuchType = 5`
+    ——3.14 起（PEP 649/749）注解默认惰性求值，模块级那行直跑不再报错，用例
+    前提在 3.14 上就立不住了。函数注解在 3.10~3.13 是定义时求值、3.14 是读
+    `__annotations__` 那一刻求值，两边直跑都是 NameError；而一旦 PEP 563 从
+    runner 漏进来，`__annotations__` 会是 `{'a': 'NoSuchType'}` 的字符串、
+    脚本静默跑通——A/B 的形状在每一档支持的 Python 上都一样。
+
     反证：把 `run_script` 里的 `dont_inherit=True` 改回 `False`，本条当场红。
     """
     proj = tmp_path / "proj"
-    write(proj / "ann.py", "x: NoSuchType = 5\nprint('NO ERROR')\n")
+    write(
+        proj / "ann.py",
+        "def f(a: NoSuchType):\n    return a\nprint(f.__annotations__)\nprint('NO ERROR')\n",
+    )
     env = child_env()
     direct = subprocess.run(
         [user_python, "ann.py"],

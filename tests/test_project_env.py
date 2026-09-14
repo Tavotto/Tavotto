@@ -331,13 +331,22 @@ def test_module_name_must_be_a_bare_identifier():
 
 
 def test_support_status_is_asymmetric_between_python_and_matplotlib():
-    """Python 版本是硬边界，matplotlib 是软边界——**刻意不对称**。"""
-    assert projectenv.support_status((3, 13), "3.10.8") == projectenv.SUPPORT_VERIFIED
+    """Python 版本是硬边界，matplotlib 是软边界——**刻意不对称**。
+
+    区间外的两档从常量现算（下界减一、上界那一档），不写死字面量：这条用例
+    最初把 3.14 写死成「区间外」，issue #33 放开 3.14 的那天它就红了——夹具里的
+    「下一个版本」得跟着支持区间走。区间内则把两端都过一遍。
+    """
+    lo, hi = projectenv.PYTHON_TESTED[0], projectenv.PYTHON_TESTED[-1]
+    assert projectenv.support_status(lo, "3.10.8") == projectenv.SUPPORT_VERIFIED
+    assert projectenv.support_status(hi, "3.10.8") == projectenv.SUPPORT_VERIFIED
     # 支持区间外的 Python 不自动使用
-    assert projectenv.support_status((3, 9), "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
-    assert projectenv.support_status((3, 14), "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
+    below = (projectenv.PYTHON_MIN[0], projectenv.PYTHON_MIN[1] - 1)
+    assert projectenv.support_status(below, "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
+    beyond = projectenv.PYTHON_MAX_EXCLUSIVE
+    assert projectenv.support_status(beyond, "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
     # 钉版之外但能 import 的 matplotlib 照用，只是如实标注
-    assert projectenv.support_status((3, 13), "3.12.0") == projectenv.SUPPORT_UNVERIFIED
+    assert projectenv.support_status(hi, "3.12.0") == projectenv.SUPPORT_UNVERIFIED
 
 
 # --------------------------------------------------------------- 体检
