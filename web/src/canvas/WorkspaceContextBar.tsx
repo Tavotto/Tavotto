@@ -3,6 +3,7 @@ import { ArrowLeft, Info, Plus } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
+import { untruncatedLabel } from '@/components/inspector/identityCrumbs'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 import { useAssetStore } from '@/store/assetStore'
@@ -76,7 +77,7 @@ export function WorkspaceContextBar() {
       : selectedGids.length === 0
         ? roleName('figure')
         : element
-          ? engineLabel(element.label)
+          ? engineLabel(untruncatedLabel(element.label, fullTextOf(element)))
           : null
 
   /**
@@ -207,4 +208,10 @@ export function WorkspaceContextBar() {
       </nav>
     </div>
   )
+}
+
+/** 名字里被引擎截到 18 字的那段用户文字的全文：文字元素的 `text`、系列的 `label`（与右栏头部同一判据） */
+function fullTextOf(el: { editable: { prop: string; value: unknown }[] }): string | undefined {
+  const v = el.editable.find((f) => f.prop === 'text' || f.prop === 'label')?.value
+  return typeof v === 'string' ? v : undefined
 }
