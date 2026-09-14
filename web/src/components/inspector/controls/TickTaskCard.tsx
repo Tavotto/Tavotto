@@ -5,7 +5,7 @@ import type { EditableField } from '@/lib/api'
 import { Row } from '../../ui/Field'
 import { NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
-import { Tab, TabList } from '../../ui/Tabs'
+import { Tab, TabList, TabPanel } from '../../ui/Tabs'
 import { Toggle } from '../../ui/Toggle'
 import {
   axisChoice,
@@ -155,7 +155,12 @@ export function TickTaskCard({
         <div className="flex h-8 items-center border-b border-border">
           <TabList label={tk('axisSwitch')}>
             {axes.map((a) => (
-              <Tab key={a.axis} active={active === a.axis} onClick={() => setActive(a.axis)}>
+              <Tab
+                key={a.axis}
+                panelId={`tick-card-${a.axis}`}
+                active={active === a.axis}
+                onClick={() => setActive(a.axis)}
+              >
                 {tk(AXIS_TAB[a.axis])}
               </Tab>
             ))}
@@ -163,6 +168,8 @@ export function TickTaskCard({
         </div>
       )}
 
+      {/* 页签对应的内容区：多轴时是 tabpanel（由当前页签命名），单轴时只是一个容器 */}
+      <Body axis={active} tabbed={axes.length > 1}>
       {dirField && dirOptions.length > 0 && (
         /* `data-prop="direction"` 是问题面板的定位锚点（`tick-direction` 规则
            报的就是这个字段）：卡把通用行接管了，锚点也得跟着搬过来 */
@@ -244,7 +251,18 @@ export function TickTaskCard({
         />
       )}
       {minorExtra}
+      </Body>
     </div>
+  )
+}
+
+function Body({ axis, tabbed, children }: { axis: TickAxis; tabbed: boolean; children: ReactNode }) {
+  return tabbed ? (
+    <TabPanel id={`tick-card-${axis}`} className="flex flex-col gap-1.5">
+      {children}
+    </TabPanel>
+  ) : (
+    <div className="flex flex-col gap-1.5">{children}</div>
   )
 }
 

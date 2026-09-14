@@ -46,7 +46,7 @@ import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
-import { Tab, TabList } from './ui/Tabs'
+import { Tab, TabList, TabPanel } from './ui/Tabs'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -547,7 +547,7 @@ function VersionDetail({
             <div className="flex h-8 min-w-0 flex-1 items-center border-b border-border">
               <TabList label={vd('viewLabel')}>
                 {(['version', 'current'] as const).map((v) => (
-                  <Tab key={v} active={view === v} onClick={() => setView(v)}>
+                  <Tab key={v} panelId={`version-view-${v}`} active={view === v} onClick={() => setView(v)}>
                     {vd(v === 'version' ? 'viewVersion' : 'viewCurrent')}
                   </Tab>
                 ))}
@@ -564,11 +564,13 @@ function VersionDetail({
             </Tip>
           </div>
 
-          <LayoutSnapshot
-            doc={view === 'version' ? versionDoc : currentDoc}
-            renderOverrides
-            onApproximate={setApproximate}
-          />
+          <TabPanel id={`version-view-${view}`}>
+            <LayoutSnapshot
+              doc={view === 'version' ? versionDoc : currentDoc}
+              renderOverrides
+              onApproximate={setApproximate}
+            />
+          </TabPanel>
           {approximate && (
             <p className="text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
           )}

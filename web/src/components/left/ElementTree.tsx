@@ -38,6 +38,7 @@ import { usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
+import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
@@ -217,7 +218,10 @@ function rowLabel(el: ManifestElement): string {
     const text = el.editable.find((f) => f.prop === 'text')?.value
     if (typeof text === 'string' && text.trim()) return text
   }
-  return engineLabel(el.label)
+  // 引擎把引号里的文字截到 18 个字符（`Reaction time (mi…”`）；树行按可用宽度用 CSS 截断
+  // （`truncate` + title 全文），不再按字数截（2026-09-14 审计 S15：380px 的抽屉里只用了一半宽）
+  const text = el.editable.find((f) => f.prop === 'text' || f.prop === 'label')?.value
+  return engineLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined))
 }
 
 export function ElementTree() {

@@ -224,3 +224,20 @@ describe('教程锚点还挂在真按钮上（ADR 0040）', () => {
     expect(anchors()).toEqual([])
   })
 })
+
+/**
+ * 2026-09-14 审计 A9：<1024 的覆盖式侧栏压在画布上，浮条得按剩下的宽度居中，
+ * 别让「添加到画布」与 Esc 出口被右栏盖住。停靠布局不用让。
+ */
+describe('覆盖式侧栏下让位', () => {
+  it('narrow + 右栏开着：容器右侧留出右栏宽度；wide 下不留', async () => {
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: [], layout: 'narrow', rightOpen: true, rightWidth: 336, leftOpen: false })
+    await mount()
+    const wrap = bar()!.parentElement as HTMLElement
+    expect(wrap.style.paddingRight).toBe('340px')
+    await act(async () => root.unmount())
+    useUiStore.setState({ layout: 'wide', rightOpen: true, rightWidth: 336 })
+    await mount()
+    expect((bar()!.parentElement as HTMLElement).style.paddingRight).toBe('')
+  })
+})

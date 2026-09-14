@@ -315,7 +315,8 @@ export function NumberField({
               ;(e.target as HTMLInputElement).blur()
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
-              const mult = e.shiftKey ? 10 : 1
+              // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
+              const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
               const next = clampVal(value + (e.key === 'ArrowUp' ? step : -step) * mult)
               onChange(next)
               setText(String(Number(next.toFixed(precision))))

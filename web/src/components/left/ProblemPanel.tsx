@@ -43,7 +43,7 @@ import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { currentProfile, FixButton } from './IssueFixButton'
-import { Tab, TabList } from '../ui/Tabs'
+import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { useScopedProblems } from './useProblemScope'
 
@@ -181,6 +181,8 @@ export function ProblemPanel() {
         counts={ready ? { figure: figureCount, document: documentCount } : null}
       />
 
+      {/* 范围页签对应的内容区（tabpanel，由当前页签命名）：概览条 + 清单 + 游标条 */}
+      <TabPanel id={`problem-scope-${scope}`} className="flex min-h-0 flex-1 flex-col">
       {/* 概览条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的
           「正在检查…」是两句互相打架的话（2026-09-11 设计包） */}
       {ready && issues.length > 0 && (
@@ -313,6 +315,7 @@ export function ProblemPanel() {
       )}
 
       {cursor && groups.length > 0 && <CursorBar view={view} onLocate={locate} />}
+      </TabPanel>
       <ReadinessLink />
     </div>
   )
@@ -349,6 +352,7 @@ function ScopeBar({
       <div className="flex h-8 items-center border-b border-border">
         <TabList label={pr('scopeLabel')}>
           <Tab
+            panelId="problem-scope-figure"
             active={scope === 'figure'}
             disabled={!figureId}
             title={
@@ -368,6 +372,7 @@ function ScopeBar({
             {figureId && count(counts?.figure)}
           </Tab>
           <Tab
+            panelId="problem-scope-document"
             active={scope === 'document'}
             aria-label={
               counts ? pr('scopeCountAria', { label: pr('scopeDocument'), count: counts.document }) : undefined
