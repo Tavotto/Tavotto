@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import {
@@ -599,7 +600,7 @@ function IssueRow({
           className="min-w-0 flex-1 rounded-sm py-0.5 text-left outline-none focus-visible:focus-ring"
         >
           <span className="flex min-w-0 items-center gap-1.5 leading-4">
-            <span className="min-w-0 truncate text-xs text-ink">{subjectName(issue)}</span>
+            <TruncateMiddle text={subjectName(issue)} className="min-w-0 text-xs text-ink" />
             {current && (
               <span className="type-meta shrink-0 rounded-xs bg-surface px-1 leading-4">
                 {pr('current')}
@@ -620,7 +621,9 @@ function IssueRow({
                 <span className="tabular-nums">{values.current}</span>
               )
             ) : (
-              <span className="min-w-0 truncate">{issueDetailText(issue)}</span>
+              /* 说明允许两行：它是错误原因，截成一行省略号之后 title 会成为读它的唯一途径
+                 （二审 D3；组件模式 §4「不要通过固定很矮的行截断两行文本」） */
+              <span className="line-clamp-2 min-w-0">{issueDetailText(issue)}</span>
             )}
             {elsewhere && canvasName && <span>{pr('onCanvas', { name: canvasName })}</span>}
           </span>

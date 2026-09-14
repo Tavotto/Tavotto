@@ -87,27 +87,27 @@ afterEach(async () => {
 })
 
 describe('还没发过任务时的信息布局', () => {
-  it('说明贴着输入框，不再占着面板正中', async () => {
+  /**
+   * 2026-09-14 二审 D2（部分收回审计 T37）：「助手会做什么」那一句是**空态**，放回滚动区正中；
+   * 起手式仍贴着输入框。T37 把两者都压到底部时，中间一屏全空、底部叠成四层。
+   */
+  it('说明是滚动区里的空态，不再和输入框叠在底部', async () => {
     await mount({ withPanel: true })
-    // 那一句还在（用户仍然读得到助手会做什么）……
     expect(textOf()).toContain(ai('panel.emptyHint'))
-    // ……但它和输入框在同一块里，而不是滚动区中间那个空状态
     const hint = Array.from(host.querySelectorAll('p')).find(
       (p) => p.textContent === ai('panel.emptyHint'),
     )
     expect(hint, '找不到那句说明').toBeTruthy()
-    const box = host.querySelector('textarea')
-    expect(box, '找不到输入框').toBeTruthy()
-    expect(
-      hint!.parentElement!.contains(box!),
-      '说明和输入框不在同一块里 —— 注意力又被扯成两处',
-    ).toBe(true)
+    const scroller = host.querySelector('.overflow-y-auto')!
+    expect(scroller.contains(hint!), '说明应在滚动区（空态）里').toBe(true)
+    const box = host.querySelector('textarea')!
+    expect(hint!.parentElement!.contains(box), '说明不该再和输入框叠在同一块').toBe(false)
   })
 
-  it('正中不再摆「描述想要的改动」那个空状态', async () => {
+  it('会话一来，空态让位', async () => {
     await mount({ withPanel: true })
     const scroller = host.querySelector('.overflow-y-auto')!
-    expect(scroller.textContent?.trim(), '滚动区里还有东西在跟输入框抢注意力').toBe('')
+    expect(scroller.textContent).toContain(ai('panel.emptyHint'))
   })
 
   it('起手式仍然在输入框上方，点一下填进输入框', async () => {

@@ -14,6 +14,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasStage } from './CanvasStage'
+import { NotificationRail } from '@/components/StatusBar'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
@@ -189,17 +190,29 @@ describe('快速编辑这一屏', () => {
  * 用 DOM 断言而不是 store 字段：store 那一维在 workspace.test.ts 里钉。
  */
 describe('「刚为编辑加入本文档」的说明', () => {
+  // 可见的那条在通知轨里（二审 D1：不再常驻在上下文栏第二行），与画布一起挂上
+  const mountWithRail = () =>
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <CanvasStage />
+          <NotificationRail />
+        </TooltipProvider>,
+      )
+    })
   const note = () => container.querySelector('[data-fast-edit-added-note]')
+  /** 通知轨的 toast 退场要保活 90ms（usePresence）：「消失」= 已卸载，或正在播退场 */
+  const noteGone = () => note() === null || note()!.getAttribute('data-state') === 'closed'
 
   it('加进来的那一次显示；回排版再进同一张（已在文档里）不显示', async () => {
     act(() => openFastEdit('a.pdf'))
-    await mount()
+    await mountWithRail()
     expect(note()).not.toBeNull()
     expect(note()!.textContent).toContain('撤销')
 
     act(() => returnToLayout())
     act(() => openFastEdit('a.pdf'))
-    expect(note()).toBeNull()
+    expect(noteGone()).toBe(true)
   })
 
   /**
@@ -238,12 +251,12 @@ describe('「刚为编辑加入本文档」的说明', () => {
     // 「对象消失就退出快速编辑」的清扫在 App 层挂（usePruneSelection）：这里手动订阅
     const stopPrune = subscribePruneSelection()
     act(() => openFastEdit('a.pdf'))
-    await mount()
+    await mountWithRail()
     expect(note()).not.toBeNull()
     act(() => useDocumentStore.getState().undo())
     expect(useWorkspaceStore.getState().mode).toBe('layout')
     expect(useWorkspaceStore.getState().addedForEdit).toBeNull()
-    expect(note()).toBeNull()
+    expect(noteGone()).toBe(true)
     stopPrune()
   })
 })

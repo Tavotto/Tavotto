@@ -1257,8 +1257,6 @@ export default interface Resources {
         "sectionRaster": "位图输出"
       },
       "general": {
-        "autosave": "自动保存",
-        "autosaveState": "编辑停顿后自动写入本机",
         "language": "界面语言",
         "layout": "界面布局",
         "layoutReset": "界面布局已重置，刷新页面后生效",
@@ -3707,7 +3705,8 @@ export default interface Resources {
     "fastEdit": {
       "addToCanvas": "添加到画布",
       "added": "{{name}} 已加入画布",
-      "addedForEdit": "刚为编辑加入本文档，撤销即可移除。问题面板也会列出它的问题。",
+      "addedForEdit": "已为编辑加入本文档",
+      "addedForEditLive": "已为编辑加入本文档，撤销即可移除。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
       "crumbTitle": "回到画布排版",

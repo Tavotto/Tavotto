@@ -1,7 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, X } from 'lucide-react'
+import { Check, CircleAlert, Info, Lightbulb, X } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { runUndoRedo } from '@/hooks/useKeyboard'
+import { useHintStore } from '@/lib/onboarding/hints'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import { DURATION, usePresence } from '@/lib/motion'
@@ -11,13 +14,14 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { boundsOf } from '@/lib/geometry'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
  * - CanvasHud：坐标 / 选区尺寸，只在移动、缩放等交互进行中出现；
  *   工具提示只在非选择工具激活时出现。
- * - StatusToasts：普通状态短暂即逝，错误保留到用户关闭；带 aria-live。
+ * - NotificationRail：状态 / 操作提示 / 「刚为编辑加入」三种通知同一条轨（二审 D1）；带 aria-live。
  * 两者都挂在画布列内部，不占布局高度。
  */
 
@@ -99,7 +103,70 @@ export function CanvasHud() {
   )
 }
 
-export function StatusToasts() {
+/** 一条通知的形态：图标 + 一句话 + 至多一个动作 / 关闭。三种来源共用（二审 D1） */
+function Toast({
+  tone,
+  icon,
+  text,
+  action,
+  onClose,
+  closeLabel,
+  state,
+  ...rest
+}: {
+  tone: 'info' | 'error' | 'hint'
+  icon: ReactNode
+  text: ReactNode
+  action?: { label: string; onClick: () => void }
+  onClose?: () => void
+  closeLabel?: string
+  state: 'open' | 'closed'
+} & Record<`data-${string}`, string | undefined>) {
+  return (
+    <div
+      {...rest}
+      data-state={state}
+      className={cn(
+        'pointer-events-auto flex max-w-[520px] items-center gap-2 rounded-md border px-3 py-1.5 text-xs shadow-pop',
+        tone === 'error' ? 'border-danger/30 bg-danger-subtle text-danger' : 'border-border bg-surface text-ink-2',
+        'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
+      )}
+    >
+      {icon}
+      <span className="min-w-0 flex-1">{text}</span>
+      {action && (
+        <Button variant="ghost" size="sm" className="-my-1 shrink-0 text-ink" onClick={action.onClick}>
+          {action.label}
+        </Button>
+      )}
+      {onClose && (
+        <button
+          onClick={onClose}
+          aria-label={closeLabel}
+          className={cn(
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:focus-ring',
+            tone === 'error' ? 'hover:bg-danger/10' : 'text-ink-3 hover:bg-surface-hover hover:text-ink',
+          )}
+        >
+          <X size={ICON_SIZE.sm} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 通知轨：底部居中**一条**，最多两条叠着（新的在下、靠近底边；旧的顺延到上面），
+ * 三种来源同一种盒子（2026-09-14 二审 D1）：
+ *   - 状态（`uiStore.status`）：普通状态 4.5s 自己走，错误保留到用户关闭；
+ *   - 操作提示（`useHintStore`）：可关、到时自己走；
+ *   - 「刚为编辑加入本文档」：带「撤销」动作，加进来的那一次显示、离开快速编辑即消失。
+ * 此前三者各占一条轨（状态居中、提示右下、加入说明常驻在上下文栏第二行）——那行常驻说明
+ * 存在的理由正是「toast 只有一个槽位、会被『渲染完成』盖掉」。HUD 留在左下：它是读数不是消息。
+ * aria-live 的契约不变：状态区 `data-status-live`（e2e 认它，不认 role=status）、错误 assertive；
+ * 提示区只有 aria-live 没有 role（`role=status` 全产品只留状态区那一个）。
+ */
+export function NotificationRail() {
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
@@ -117,10 +184,22 @@ export function StatusToasts() {
   const shown = status ? { status, tone } : last.current
   const shownText = fmt(shown.status)
   const liveText = fmt(status)
-  const { mounted, state } = usePresence(!!status, DURATION.exit)
+  const statusPresence = usePresence(!!status, DURATION.exit)
+
+  const hint = useHintStore((s) => s.current)
+  const hintToken = useHintStore((s) => s.token)
+  const dismissHint = useHintStore((s) => s.dismiss)
+  const hintPresence = usePresence(!!hint, DURATION.exit)
+  const hintText = hint ? t(`hints.${hint}`) : ''
+
+  // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
+  const justAdded = useWorkspaceStore(
+    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
+  )
+  const addedPresence = usePresence(justAdded, DURATION.exit)
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-1.5 px-4">
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
           `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
           产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
@@ -132,33 +211,47 @@ export function StatusToasts() {
       <div aria-live="assertive" role="alert" className="sr-only">
         {tone === 'error' ? liveText : ''}
       </div>
-      {mounted && (
-        <div
-          data-state={state}
-          className={cn(
-            'pointer-events-auto flex max-w-[520px] items-center gap-2 rounded-md border px-3 py-1.5 text-xs shadow-pop',
-            shown.tone === 'error'
-              ? 'border-danger/30 bg-danger-subtle text-danger'
-              : 'border-border bg-surface text-ink-2',
-            'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
-          )}
-        >
-          {shown.tone === 'error' ? (
-            <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-          ) : (
-            <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
-          )}
-          <span className="min-w-0 flex-1">{shownText}</span>
-          {shown.tone === 'error' && (
-            <button
-              onClick={() => useUiStore.getState().setStatus(null)}
-              aria-label={t('status.dismissError')}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-danger/10"
-            >
-              <X size={ICON_SIZE.sm} />
-            </button>
-          )}
-        </div>
+      <div aria-live="polite" className="sr-only">
+        {hintText}
+      </div>
+      {/* 顺序 = 出现的先后：加入说明最早、提示其次、刚说的状态最靠近底边 */}
+      {addedPresence.mounted && (
+        <Toast
+          tone="info"
+          state={addedPresence.state}
+          data-fast-edit-added-note=""
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={t('fastEdit.addedForEdit')}
+          action={{ label: t('topbar.undo'), onClick: () => runUndoRedo(false) }}
+        />
+      )}
+      {hintPresence.mounted && hint && (
+        <Toast
+          key={hintToken}
+          tone="hint"
+          state={hintPresence.state}
+          data-onboarding-hint={hint}
+          icon={<Lightbulb size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={hintText}
+          onClose={dismissHint}
+          closeLabel={translate('actions.close')}
+        />
+      )}
+      {statusPresence.mounted && (
+        <Toast
+          tone={shown.tone}
+          state={statusPresence.state}
+          icon={
+            shown.tone === 'error' ? (
+              <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+            ) : (
+              <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+            )
+          }
+          text={shownText}
+          onClose={shown.tone === 'error' ? () => useUiStore.getState().setStatus(null) : undefined}
+          closeLabel={t('status.dismissError')}
+        />
       )}
     </div>
   )

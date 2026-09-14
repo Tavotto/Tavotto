@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Info, Plus } from 'lucide-react'
+import { ArrowLeft, Plus } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
@@ -47,10 +47,6 @@ export function WorkspaceContextBar() {
   // 左抽屉绝对定位在轨道右侧，画布列从轨道右缘起：抽屉盖住画布的宽度就是 leftWidth
   const overlayLeft = useUiStore((s) => (s.layout === 'narrow' && s.leftOpen ? s.leftWidth : 0))
   const overlayRight = useUiStore((s) => (s.layout === 'narrow' && s.rightOpen ? s.rightWidth : 0))
-  // 「编辑原图」这一次把图加进了文档（此前不在）：常驻一行说明，回排版即消失
-  const justAdded = useWorkspaceStore(
-    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
-  )
   const panelId = fastEdit ? activePanelId : elementPanelId
   const panel = useDocumentStore((s) => {
     const o = s.doc.objects.find((x) => x.id === panelId)
@@ -174,18 +170,6 @@ export function WorkspaceContextBar() {
             </>
           )}
         </div>
-
-        {/* 这张图是为了编辑才刚加进文档的：说出口，并说明怎么撤（UI 审计 T06）。
-            不是 toast——进快速编辑紧接着的「渲染完成」会把单槽位的状态盖掉 */}
-        {justAdded && (
-          <div
-            data-fast-edit-added-note
-            className="flex items-center gap-1.5 border-t border-border pt-1 text-xs text-ink-2"
-          >
-            <Info size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-            <span className="min-w-0 truncate">{t('fastEdit.addedForEdit')}</span>
-          </div>
-        )}
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
         {fastEdit && !editable && (

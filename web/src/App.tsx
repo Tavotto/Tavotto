@@ -22,7 +22,7 @@ import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
-import { CanvasHud, StatusToasts } from '@/components/StatusBar'
+import { CanvasHud, NotificationRail } from '@/components/StatusBar'
 import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
@@ -34,7 +34,6 @@ import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
-import { HintToast } from '@/components/onboarding/HintToast'
 import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
 import { startOnboardingEngine } from '@/lib/onboarding/flow'
@@ -224,8 +223,7 @@ function Workspace() {
             <CanvasStage />
             <CanvasHud />
             <NativeSessionCards />
-            <StatusToasts />
-            <HintToast />
+            <NotificationRail />
           </div>
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (

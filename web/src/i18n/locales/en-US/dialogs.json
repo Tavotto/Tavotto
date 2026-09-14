@@ -965,8 +965,6 @@
       "sectionChecks": "Checks"
     },
     "general": {
-      "autosave": "Autosave",
-      "autosaveState": "Written to this machine after you pause",
       "language": "Language",
       "layout": "Window layout",
       "layoutReset": "Interface layout reset; reload the page to see it",

@@ -957,8 +957,6 @@
       "sectionChecks": "检查"
     },
     "general": {
-      "autosave": "自动保存",
-      "autosaveState": "编辑停顿后自动写入本机",
       "language": "界面语言",
       "layout": "界面布局",
       "layoutReset": "界面布局已重置，刷新页面后生效",

@@ -56,11 +56,8 @@ export function GeneralSettings({ close }: { close: () => void }) {
           options={SUPPORTED_LOCALES.map((l) => ({ value: l, label: LOCALE_LABELS[l] }))}
         />
       </SettingRow>
-      {/* 自动保存没有开关可调，它是一句现状：走 `status`，落在标题列——控件列只放
-          能操作的东西（宪法第十三节「值在标题列，动作在控件列」）。此前这句话摆在
-          控件列里，与旁边的下拉、按钮排成一列，读起来像一个灰掉的控件
-          （2026-09-13 审计 B31）。目录与写盘时机进帮助文档 */}
-      <SettingRow label={st('general.autosave')} status={st('general.autosaveState')} />
+      {/* 「自动保存」这一行删了（二审 D4）：它没有开关可调，只是一句现状，而顶栏文档名旁的
+          「已保存 21:32」已经在说同一件事——设置页只放能操作的东西 */}
       <SettingRow label={st('general.layout')}>
         <Button
           variant="secondary"

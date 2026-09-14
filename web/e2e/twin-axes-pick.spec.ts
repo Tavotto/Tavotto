@@ -96,12 +96,12 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   const shownGid = () =>
     page.evaluate(() => document.querySelector('[data-gid]')?.getAttribute('data-gid') ?? null)
   /**
-   * **应用刚播报了什么**：`StatusToasts` 里那块常驻的 aria-live 区（内容来自
+   * **应用刚播报了什么**：`NotificationRail` 里那块常驻的 aria-live 区（内容来自
    * `uiStore.setStatus`）。
    *
    * 认 `data-status-live`，**不认 `[role="status"]`**——后者全产品十几个产出点，取第一个
-   * 拿到的是「文档里排在最前的那个 status」。快速编辑那行常驻说明
-   * （`fastEdit.addedForEdit`，UI 审计 T06）就排在播报区前面，一加进来这个判据的主语
+   * 拿到的是「文档里排在最前的那个 status」。快速编辑那条「已为编辑加入本文档」的读屏区
+   * （`data-fast-edit-live`，UI 审计 T06）就排在播报区前面，一加进来这个判据的主语
    * 就从「刚播报了什么」变成「那行说明写着什么」，而轮换播报本身好好的。
    */
   const announced = () =>

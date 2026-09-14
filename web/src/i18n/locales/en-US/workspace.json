@@ -214,7 +214,8 @@
   "fastEdit": {
     "addToCanvas": "Add to canvas",
     "added": "{{name}} added to the canvas",
-    "addedForEdit": "Just added to this document for editing. Undo removes it; its issues show in the Problems panel.",
+    "addedForEdit": "Added to this document for editing",
+    "addedForEditLive": "Added to this document for editing; undo removes it.",
     "alreadyOnCanvas": "{{name}} is already on the canvas",
     "connectSource": "Link source script",
     "crumbTitle": "Back to canvas layout",

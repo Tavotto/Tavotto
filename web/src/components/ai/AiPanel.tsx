@@ -8,6 +8,7 @@ import {
   Pin,
   RotateCcw,
   SlidersHorizontal,
+  Sparkles,
   Square,
   Trash2,
   X,
@@ -269,15 +270,17 @@ export function AssistantPanel() {
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
           ) : (
-            /* 有可编辑的图、还没发过任务时**这里什么都不放**（审计 T37）：
-               起手式和「助手会做什么」都挪到了输入框旁边，注意力集中在一处。
-               这块留白正是会话到来时它出现的地方 */
-            mine.length > 0 && (
+            /* 还没发过任务：中间是空态——「助手会做什么」那一句就是空态的说明（二审 D2；
+               审计 T37 曾把它压到输入框上方，底部叠成四层而中间全空）。起手式仍留在输入框旁：
+               它们是输入的快捷方式，跟着输入框走。会话一来，空态让位给它 */
+            mine.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {mine.map((s) => (
                   <SessionBlock key={s.id} session={s} />
                 ))}
               </div>
+            ) : (
+              <EmptyState icon={Sparkles} title={ai('panel.emptyHint')} />
             )
           )}
         </div>
@@ -285,11 +288,6 @@ export function AssistantPanel() {
       </div>
 
       <div className="shrink-0 px-3 pb-3 pt-1">
-        {/* 「助手会做什么」挪到输入框上方一行（审计 T37）：原来它在面板正中，
-            与底部的起手式和输入框各占一头，注意力被扯成两处 */}
-        {panel && mine.length === 0 && (
-          <p className="mb-1.5 text-xs leading-relaxed text-ink-3">{ai('panel.emptyHint')}</p>
-        )}
         {panel && mine.length === 0 && !prompt.trim() && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {chipsFor(scope, element, !!axes).map((c) => (
