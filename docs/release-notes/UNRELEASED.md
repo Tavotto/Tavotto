@@ -12,6 +12,27 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Clicking a spine band while a child element is selected now selects the axes
+
+Clicking the inner or outer band of an axes spine toggles that side's inward /
+outward ticks and moves the selection to the axes so the tick card appears. When
+a scatter series, legend, or text belonging to that axes was selected, the ticks
+toggled but the selection stayed on the child element: the tick card did not
+appear and the child's outline remained on the overlay. The selection now stays
+put only when the axes itself or that side's tick group is already selected
+(issue #343, second item).
+
+## Package job progress no longer bleeds across projects
+
+Starting an install, update, or uninstall in one project and then switching to
+another showed the first project's progress bar and cancel button on the second
+project's Packages page (the backend rejects a cancel from another project, so
+the button acted on a job that page could not see), and the job's completion
+refreshed the second project's package list and environment state. Progress is
+now stored per owning project: the other project shows nothing, switching back
+shows the job again with a working cancel button, and completion side effects
+run only when the owning project is the one open (issue #309).
+
 ## Codex: normalize an existing figure without redrawing it
 
 When a figure already exists and only needs a new width, font, or a font-size
@@ -36,24 +57,3 @@ first ship in this release (`artifactcheck`, `figcapture`, `interference`,
 `normalize`), so `MIN_TAVOTTO_VERSION` in `scripts/make_plugin_manifest.py`
 must be raised to this release's version when tagging.
 
-
-## Clicking a spine band while a child element is selected now selects the axes
-
-Clicking the inner or outer band of an axes spine toggles that side's inward /
-outward ticks and moves the selection to the axes so the tick card appears. When
-a scatter series, legend, or text belonging to that axes was selected, the ticks
-toggled but the selection stayed on the child element: the tick card did not
-appear and the child's outline remained on the overlay. The selection now stays
-put only when the axes itself or that side's tick group is already selected
-(issue #343, second item).
-
-## Package job progress no longer bleeds across projects
-
-Starting an install, update, or uninstall in one project and then switching to
-another showed the first project's progress bar and cancel button on the second
-project's Packages page (the backend rejects a cancel from another project, so
-the button acted on a job that page could not see), and the job's completion
-refreshed the second project's package list and environment state. Progress is
-now stored per owning project: the other project shows nothing, switching back
-shows the job again with a working cancel button, and completion side effects
-run only when the owning project is the one open (issue #309).
