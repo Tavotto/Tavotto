@@ -598,7 +598,7 @@ function ReplaceAssetDialog({
                 onClick={() => void pick(info)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left',
-                  'hover:bg-surface-hover disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent',
+                  'hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink" title={info.id}>

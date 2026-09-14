@@ -8,6 +8,7 @@ colors:
   surface-2: "#f7f7f4"
   border: "#e3e3dd"
   border-strong: "#cfcfc7"
+  border-control: "#8a8a82"
   ink: "#1b1b18"
   ink-2: "#5c5c55"
   ink-3: "#6b6b64"
@@ -137,7 +138,7 @@ components:
 ### Neutral
 - **Paper（纸面）** (`#f2f2ef`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 输入框 / 浮层 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Selected** (`#ebebe6`)
 - **Ink-2 / Ink-3 / Ink-faint** (`#5c5c55` / `#6b6b64` / `#a3a39a`)：次级、元数据、禁用。Ink-2 在所有底色上 ≥4.5:1；**Ink-3 只在白 / Surface-2 / Paper 上达标**（5.37 / 5.00 / 4.78），在 Canvas 画布灰上只有 4.45:1——画布底色上直接写字用 Ink-2（`index.css` 里 `--color-ink-3` 的注释是这条的权威）；faint 不用于要读的字
-- **Border / Border-strong** (`#e3e3dd` / `#cfcfc7`)：hairline 只给输入框、区域边界、浮层
+- **Border / Border-strong** (`#e3e3dd` / `#cfcfc7`)：hairline 只给输入框、区域边界、浮层 · **Border-control** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道这类「边界就是全部识别信息」的控件边界（≥3:1）
 
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。

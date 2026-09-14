@@ -27,7 +27,8 @@ export const Checkbox = forwardRef<
         {...props}
         className={cn(
           'peer absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none rounded-xs',
-          'border border-border-strong bg-surface outline-none transition-colors duration-fast',
+          // 未选中的方框：border-control（对白 3.48:1）。border-strong 只有 1.57:1，方框是复选框的全部识别信息
+          'border border-border-control bg-surface outline-none transition-colors duration-fast',
           'hover:border-ink/45 checked:border-ink checked:bg-ink',
           'focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
         )}

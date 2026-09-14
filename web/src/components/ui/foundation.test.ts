@@ -128,6 +128,73 @@ const RULES: Rule[] = [
     },
   },
   {
+    name: '分段选择器只有 ui/Segmented 一种：role="radio" 不在页面里手拼',
+    pattern: /role="radio"/,
+    fix: 'import { Segmented } from "@/components/ui/Segmented"（空间型选择器走 OptionGrid）',
+    catches: '<button role="radio" aria-checked />',
+    spares: '<Segmented value={v} items={items} onChange={set} />',
+    exempt: {
+      '/src/components/ui/Segmented.tsx': {
+        count: 2,
+        why: '它就是那一处实现（另一处是键盘漫游里的 closest 选择器字面量）',
+      },
+      '/src/components/inspector/controls/OptionGrid.tsx': {
+        count: 1,
+        why: '视觉选择器的二维网格：radiogroup 语义 + 方向键漫游，与 Segmented 同一套约定',
+      },
+      '/src/components/inspector/controls/ColormapPicker.tsx': {
+        count: 1,
+        why: '色图样张网格，OptionGrid 的同族（样张要自己画）',
+      },
+      '/src/components/inspector/controls/LegendPositionPicker.tsx': {
+        count: 4,
+        why: '九宫格 + 外侧带的空间型 radio（含一处 querySelector 字面量），自带 roving tabindex',
+      },
+      '/src/components/inspector/CanvasPage.tsx': {
+        count: 1,
+        why: '页面尺寸预设格（OptionGrid 的同族，预览图形要 32px 格子）',
+      },
+    },
+  },
+  {
+    name: '下拉 / 弹层触发器来自 ui/（Select / Popover / Menu），不手写 aria-haspopup',
+    pattern: /aria-haspopup=/,
+    fix: 'Select（取值）/ Popover + OptionGrid（带样张的取值）/ Menu（命令）',
+    catches: '<button aria-haspopup="listbox" aria-expanded />',
+    spares: '<Select value={v} options={opts} onChange={set} />',
+    exempt: {
+      '/src/components/inspector/controls/LineStylePicker.tsx': {
+        count: 1,
+        why: '2026-09-14 审计 S5：第二套下拉，批次 2 收成与 MarkerPicker 同一个 Popover 外壳后删',
+      },
+      '/src/components/inspector/StrokeSection.tsx': {
+        count: 1,
+        why: '2026-09-14 审计 S5：箭头样式的手写 combobox，批次 2 与 LineStylePicker 一起收',
+      },
+    },
+  },
+  {
+    name: '禁用态只有一档：opacity-40（宪法第五节）',
+    pattern: /\bdisabled:opacity-(?!40\b)\d+/,
+    fix: 'disabled:cursor-not-allowed disabled:opacity-40',
+    catches: '<button className="disabled:opacity-35" />',
+    spares: '<button className="disabled:cursor-not-allowed disabled:opacity-40" />',
+  },
+  {
+    name: '禁用态不用 pointer-events-none（会把 title / tooltip 一起吞掉）',
+    pattern: /(disabled:|disabled && ['"])pointer-events-none/,
+    fix: '原生 disabled 已经挡住点击；光标用 cursor-not-allowed，原因走 title',
+    catches: '<div className={cn(disabled && \'pointer-events-none opacity-40\')} />',
+    spares: '<div className={cn(disabled && \'cursor-not-allowed opacity-40\')} />',
+  },
+  {
+    name: '焦点环不透明：不写 ring-accent/N',
+    pattern: /\bring-accent\/\d+/,
+    fix: 'focus-visible:focus-ring 或 ring-2 ring-accent（不透明；透明版对底色不到 2:1）',
+    catches: '<span className="peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50" />',
+    spares: '<span className="peer-focus-visible:ring-2 peer-focus-visible:ring-accent" />',
+  },
+  {
     name: '按钮层级是 primary / secondary / ghost / danger，没有 outline',
     pattern: /variant=["']outline["']/,
     fix: 'variant="secondary"',

@@ -39,7 +39,7 @@ import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
-import { Tab, TabList } from '../ui/Tabs'
+import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
@@ -58,10 +58,19 @@ import { TransformSection } from './TransformSection'
 import { useSelectedObjects } from './common'
 
 /**
- * tab 行只放「对象上下文」的两页：属性（当前选中对象）与画布（当前文档）。
- * 助手是独立工作流，不与它们同级——入口在右侧，带运行状态点（§ADR 0010）。
+ * 右栏三个模式在同一个 tablist 里：属性（当前选中对象）· 改图助手 · 画布（当前文档）。
+ * ADR 0010 §3 曾把助手移出 tab 行做成头部的独立按钮（2026-09-14 修订）：那一版助手打开时
+ * tablist 里**没有任何选中项**、方向键也到不了助手——三个互斥视图却用了两种控件。
+ * ADR 0010 要的两件事都还在：选中对象一律切回属性页（`autoShowProperties`）、助手会话状态
+ * 在 aiStore 里切走不丢；运行状态点留在助手页签上。
  */
-const TABS: RightTab[] = ['properties', 'canvas']
+const TABS: RightTab[] = ['properties', 'assistant', 'canvas']
+/** 内容区 id（`TabPanel`）：`<id>-tab` 是对应页签的 id */
+const PANEL_ID: Record<RightTab, string> = {
+  properties: 'inspector-panel-properties',
+  assistant: 'inspector-panel-assistant',
+  canvas: 'inspector-panel-canvas',
+}
 
 const tabLabel = (id: RightTab): string =>
   id === 'assistant' ? assistantTabLabel() : translate(`tab.${id}`, { ns: 'inspector' })
@@ -110,33 +119,35 @@ export function Inspector({
     >
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-3 px-3">
-        <TabList label={t('tabsLabel')}>
+        <TabList label={t('tabsLabel')} className="min-w-0">
           {TABS.map((id) => (
-            <Tab key={id} data-inspector-tab={id} active={tab === id} onClick={() => setTab(id)}>
+            <Tab
+              key={id}
+              data-inspector-tab={id}
+              panelId={PANEL_ID[id]}
+              active={tab === id}
+              onClick={() => setTab(id)}
+              // 助手页签：可达名带上「有任务在运行」，视觉上是页签右上角的一颗点
+              aria-label={
+                id === 'assistant' && runningAi ? `${assistantTabLabel()} · ${t('aiRunning')}` : undefined
+              }
+              title={id === 'assistant' && runningAi ? t('assistantRunningTip') : undefined}
+              className={id === 'assistant' ? 'inline-flex items-center gap-1 pr-1' : undefined}
+            >
+              {id === 'assistant' && (
+                <Sparkles size={ICON_SIZE.sm} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
+              )}
               {tabLabel(id)}
+              {id === 'assistant' && runningAi && (
+                <span
+                  aria-hidden
+                  className="absolute right-0 top-1.5 h-1.5 w-1.5 rounded-full bg-ink"
+                />
+              )}
             </Tab>
           ))}
         </TabList>
         <span className="flex-1" />
-        <Tip label={runningAi ? t('assistantRunningTip') : assistantTabLabel()} side="bottom">
-          <Button
-            size="sm"
-            active={tab === 'assistant'}
-            aria-pressed={tab === 'assistant'}
-            aria-label={assistantTabLabel() + (runningAi ? ` · ${t('aiRunning')}` : '')}
-            className="relative gap-1 px-1.5 text-xs"
-            onClick={() => setTab(tab === 'assistant' ? 'properties' : 'assistant')}
-          >
-            <Sparkles size={ICON_SIZE.sm} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
-            {assistantTabLabel()}
-            {runningAi && (
-              <span
-                aria-hidden
-                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-ink"
-              />
-            )}
-          </Button>
-        </Tip>
         {layout !== 'narrow' ? (
           /* 只留图钉，不写「常驻 / 自动收起」：即便右栏最窄 320px，两个标签页 +
              助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
@@ -172,13 +183,17 @@ export function Inspector({
       </div>
 
       {tab === 'assistant' ? (
-        <AssistantPanel />
+        <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
+          <AssistantPanel />
+        </TabPanel>
       ) : tab === 'canvas' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <TabPanel id={PANEL_ID.canvas} className="min-h-0 flex-1 overflow-y-auto">
           <CanvasPage />
-        </div>
+        </TabPanel>
       ) : (
-        <PropertiesPage />
+        <TabPanel id={PANEL_ID.properties} className="flex min-h-0 flex-1 flex-col">
+          <PropertiesPage />
+        </TabPanel>
       )}
       </div>
       <WidthHandle />

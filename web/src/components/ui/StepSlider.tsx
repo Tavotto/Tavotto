@@ -166,7 +166,7 @@ export function StepSlider({
         onChange={(e) => onChange(Number(e.target.value))}
         className={cn(
           'peer relative h-[var(--thumb)] w-full cursor-pointer appearance-none bg-transparent outline-none',
-          'disabled:cursor-default',
+          'disabled:cursor-not-allowed',
           // 轨道由上面两层 span 画，原生轨道让位：透明 + 与输入框等高，这样拇指和
           // 轨道等高、天然垂直居中，不用给拇指补 margin-top 去凑。
           '[&::-webkit-slider-runnable-track]:h-[var(--thumb)] [&::-webkit-slider-runnable-track]:bg-transparent',
@@ -191,7 +191,8 @@ export function StepSlider({
           'pointer-events-none absolute top-1/2 h-[var(--thumb)] w-[var(--thumb)] -translate-x-1/2 -translate-y-1/2 rounded-full',
           'bg-surface shadow-pop',
           'transition-[left] duration-[var(--duration-base)] ease-[var(--ease-pop)]',
-          'peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50',
+          // 焦点环与全站 focus-ring 同一档：不透明的 accent（透明版对底色不到 2:1）
+          'peer-focus-visible:ring-2 peer-focus-visible:ring-accent',
         )}
         style={{ left: at(value) }}
       />

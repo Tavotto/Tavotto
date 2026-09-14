@@ -23,7 +23,8 @@ export const Radio = forwardRef<
         {...props}
         className={cn(
           'peer absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none rounded-full',
-          'border border-border-strong bg-surface outline-none transition-colors duration-fast',
+          // 未选中的圆：border-control，与 Checkbox 同一档（边界就是全部识别信息，≥3:1）
+          'border border-border-control bg-surface outline-none transition-colors duration-fast',
           'hover:border-ink/45 checked:border-ink',
           'focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
         )}

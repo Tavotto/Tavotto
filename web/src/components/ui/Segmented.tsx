@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { Tip } from './Tooltip'
 
@@ -27,7 +27,19 @@ interface SegmentedProps<T extends string> {
   className?: string
   /** 整组的可达名（「方向」「作用范围」…）——无名的 radiogroup 说不清在选什么 */
   ariaLabel?: string
+  /** 落在 radiogroup 根上的稳定锚点（onboarding coachmark / e2e） */
+  'data-onboarding-anchor'?: string
+  'data-testid'?: string
 }
+
+/**
+ * radiogroup 的键盘契约（WAI-ARIA radio group 模式；2026-09-14 审计 S3）：
+ * 整组只占**一个** Tab 停靠点（选中项，没有选中就是第一个可用项），
+ * ← → 换到相邻可用项并**当场选中**，Home / End 到首尾。此前每一格都是一个
+ * Tab 停靠点、方向键不动——一个四档分段把 Tab 顺序拉长四倍，读屏念出
+ * 「N 之 K」却换不了值。与 `OptionGrid` 同一套约定（那边是二维漫游）。
+ */
+const KEY_DELTA: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }
 
 /**
  * 分段选择器（segmented control）：一组**互斥的取值**排成 28px 的一行，hairline
@@ -48,15 +60,52 @@ export function Segmented<T extends string>({
   items,
   className,
   ariaLabel,
+  ...rest
 }: SegmentedProps<T>) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const enabled = items.filter((it) => !it.disabled)
+  // Tab 落点：选中项；多选取值不一（value 为 null）或选中项不可用时退到第一个可用项
+  const tabStop = enabled.find((it) => it.value === value) ?? enabled[0]
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    let next: SegmentedItem<T> | undefined
+    if (e.key === 'Home') next = enabled[0]
+    else if (e.key === 'End') next = enabled[enabled.length - 1]
+    else {
+      const delta = KEY_DELTA[e.key]
+      if (delta == null || enabled.length === 0) return
+      const cur = enabled.findIndex((it) => it.value === value)
+      // 没有选中项时从「焦点所在」那一格起步，否则从选中项起步
+      const from =
+        cur >= 0
+          ? cur
+          : enabled.findIndex(
+              (it) =>
+                it.value ===
+                (e.target as HTMLElement).closest('[role="radio"]')?.getAttribute('data-value'),
+            )
+      next = enabled[Math.max(0, Math.min(enabled.length - 1, (from < 0 ? 0 : from) + delta))]
+    }
+    if (!next) return
+    e.preventDefault()
+    if (next.value !== value) onChange(next.value)
+    // 焦点跟着选中走：连续按方向键才能继续漫游；用 data-value 找，label 可能是图标
+    rootRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-value="${CSS.escape(next.value)}"]`)
+      ?.focus()
+  }
+
   return (
     <div
+      ref={rootRef}
       role="radiogroup"
       aria-label={ariaLabel}
+      onKeyDown={onKeyDown}
       className={cn(
         'flex h-7 w-full items-stretch rounded-sm border border-border bg-surface',
         className,
       )}
+      {...rest}
     >
       {items.map((item) => {
         const active = item.value === value
@@ -71,6 +120,8 @@ export function Segmented<T extends string>({
             aria-checked={active}
             aria-disabled={item.disabled || undefined}
             disabled={item.disabled}
+            data-value={item.value}
+            tabIndex={item === tabStop ? 0 : -1}
             title={item.title}
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(

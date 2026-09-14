@@ -47,6 +47,12 @@ usePresence 动效、narrow 断点的覆盖层与 e2e 都围绕「右侧单一 a
 助手不占属性入口）用「独立入口 + 选中即回属性 + 运行状态点」已经全部拿到。
 Dock 化留给 post-1.0（见 docs/1.0-release-readiness.md 的 backlog 惯例）。
 
+**2026-09-14 修订**（apple-design 审计 S4，用户拍板）：助手回到 tab 行，三个模式
+（属性 / 改图助手 / 画布）是同一个 tablist 里的三个页签。「独立入口」那一版在助手
+打开时 tablist 里没有任何 `aria-selected=true`，方向键也到不了助手——三个互斥视图用了
+两种控件。本节要的两件事都保留：选中对象一律切回属性页（`autoShowProperties`）、
+助手会话状态在 aiStore 里切走不丢；运行状态点画在助手页签上。Dock 化仍留给 post-1.0。
+
 ### 4. 折叠模型：三层，取代「十几个小组 + 中性值判据」
 
 primary 永远展开；more 是唯一的中频折叠区，展开状态**按角色**持久化在

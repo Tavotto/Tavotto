@@ -219,7 +219,8 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
   await openFigure(page, a)
 
   // 右栏切到改图助手
-  await page.getByRole('button', { name: /改图助手/ }).first().click()
+  // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
+  await page.getByRole('tab', { name: /改图助手/ }).first().click()
   const openPopover = async () => {
     await page.getByRole('button', { name: '作用范围与执行器' }).click()
     await expect(page.getByText('作用范围')).toBeVisible({ timeout: 15_000 })

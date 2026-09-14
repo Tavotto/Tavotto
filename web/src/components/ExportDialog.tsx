@@ -48,6 +48,7 @@ import {
 import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
 import { CanvasThumb } from './CanvasThumb'
 import { Checkbox } from './ui/Checkbox'
+import { Segmented } from './ui/Segmented'
 import { Details, Summary } from '@/components/ui/Details'
 import {
   panelSrc,
@@ -741,25 +742,25 @@ export function ExportDialog() {
         <section aria-label={ex('scopeLabel')} className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-4">
             <span className="text-xs font-medium text-ink-2">{ex('scopeLabel')}</span>
-            {/* `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
-            <div
-              role="radiogroup"
-              aria-label={ex('scopeLabel')}
+            {/* 范围是一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3：此前是
+                两颗手拼的 radio 按钮，没有方向键、每颗一个 Tab 停靠点）。
+                `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+            <Segmented<ExportScope>
+              value={scope}
+              onChange={changeScope}
+              ariaLabel={ex('scopeLabel')}
               data-onboarding-anchor="export-scope"
-              className="flex gap-1"
-            >
-              <ScopeButton
-                active={scope === 'original'}
-                disabled={!originalSelectable}
-                label={ex('scopeOriginal')}
-                onClick={() => changeScope('original')}
-              />
-              <ScopeButton
-                active={scope === 'canvas'}
-                label={ex('scopeCanvas')}
-                onClick={() => changeScope('canvas')}
-              />
-            </div>
+              className="w-auto shrink-0"
+              items={[
+                {
+                  value: 'original',
+                  label: ex('scopeOriginal'),
+                  disabled: !originalSelectable,
+                  title: originalSelectable ? undefined : ex('scopeUnavailable.no_figures'),
+                },
+                { value: 'canvas', label: ex('scopeCanvas') },
+              ]}
+            />
           </div>
           {/* 对象头：画布 = 真实排版缩略图 + 画布名；原图 = 那张图（还没上画布的素材也算
               选中了——项目里只有它一张时清单不出现，这里是唯一写着对象名与尺寸的地方）。
@@ -1053,37 +1054,6 @@ export function ExportDialog() {
 }
 
 /* --------------------------------- 子组件 ---------------------------------- */
-
-function ScopeButton({
-  active,
-  label,
-  onClick,
-  disabled = false,
-}: {
-  active: boolean
-  label: string
-  onClick: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'h-6 rounded-sm border px-2.5 text-xs outline-none transition-colors focus-visible:focus-ring',
-        active
-          ? 'border-border-strong bg-surface-2 text-ink'
-          : 'border-border bg-surface text-ink-2 hover:border-border-strong',
-        disabled && 'cursor-not-allowed opacity-50',
-      )}
-    >
-      {label}
-    </button>
-  )
-}
 
 /**
  * 项目里的图，点一张就是这次「按原图尺寸」要导的那张（用户反馈 06）。

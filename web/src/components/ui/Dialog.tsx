@@ -79,6 +79,12 @@ export function Dialog({
   // 触发元素，焦点会掉回 body——键盘用户按 Esc 后不知道自己在哪（审计 P1-09）。
   // 在 Radix 挪焦点**之前**（onOpenAutoFocus）记下打开前的焦点，关闭时还回去。
   const restoreTo = useRef<HTMLElement | null>(null)
+  // 打开时焦点落在对话框容器本身（2026-09-14 审计 S1，用户拍板）。Radix 默认把焦点
+  // 给内容里第一个可聚焦元素——而标题栏的关闭钮在 DOM 里排在正文前面，于是导出 /
+  // 设置 / 快捷键三个对话框打开后第一下 Enter 都是「关闭」，读屏先念「关闭，按钮」。
+  // 容器带 tabIndex=-1（Radix 自己给的），焦点停在它上面：读屏念标题与说明，
+  // 用户再 Tab 进第一个控件；Tab 顺序不变，关闭钮仍在标题栏里。
+  const contentRef = useRef<HTMLDivElement | null>(null)
 
   return (
     <RD.Root open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
@@ -91,14 +97,17 @@ export function Dialog({
           )}
         />
         <RD.Content
+          ref={contentRef}
           style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}) }}
           aria-busy={busy || undefined}
           data-dialog={anchor ?? ''}
           data-covered={covered || undefined}
           onKeyDown={(e) => e.stopPropagation()}
-          onOpenAutoFocus={() => {
+          onOpenAutoFocus={(e) => {
             if (document.activeElement instanceof HTMLElement)
               restoreTo.current = document.activeElement
+            e.preventDefault()
+            contentRef.current?.focus({ preventScroll: true })
           }}
           onCloseAutoFocus={(e) => {
             const el = restoreTo.current
@@ -128,6 +137,8 @@ export function Dialog({
             'fixed left-1/2 top-1/2 z-50 max-h-[86vh] max-w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2',
             'flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-pop',
+            // 容器是初始焦点的落点：对话框自己的出现就是位置线索，不再套一圈焦点环
+            'outline-none',
             // 退场靠 Radix 的 Presence 保活（它会等 animationend）——**不要**改成条件
             // 渲染，那样只有进场、没有退场，浮层会「淡入之后瞬间消失」
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',

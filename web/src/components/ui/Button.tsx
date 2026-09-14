@@ -139,7 +139,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         'focus-visible:focus-ring outline-none',
         // 不用 pointer-events-none：那会连 not-allowed 光标和 tooltip 一起吞掉，
         // 点击本来就被原生 disabled 挡住了
-        'disabled:cursor-not-allowed disabled:opacity-35',
+        // 禁用态全站一档：opacity-40 + not-allowed（foundation.test 守着）
+        'disabled:cursor-not-allowed disabled:opacity-40',
         VARIANTS[variant],
         SIZES[size],
         // 按下 / 选中态：轻 tint + 字重，不靠深灰块

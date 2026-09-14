@@ -23,7 +23,8 @@ const BOX_CLASS = cn(
 const BOX_FOCUS = 'focus:border-accent focus:bg-surface'
 const BOX_FOCUS_WITHIN = 'focus-within:border-accent focus-within:bg-surface'
 const BOX_INVALID = 'border-danger hover:border-danger'
-const BOX_DISABLED = 'cursor-not-allowed bg-surface-2 opacity-60 hover:border-border'
+// 禁用态与 Button / Checkbox / Select 同一档（opacity-40 + not-allowed）；之前的 60 让禁用输入框看起来像还能改
+const BOX_DISABLED = 'cursor-not-allowed bg-surface-2 opacity-40 hover:border-border'
 
 export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   /** 校验不过：红边 + `aria-invalid`；错误文案由调用方用 `aria-describedby` 指过去 */
@@ -254,7 +255,9 @@ export function NumberField({
       className={cn(
         'group flex h-7 items-center gap-1.5',
         fill && 'w-full min-w-0',
-        disabled && 'pointer-events-none opacity-40',
+        // 不用 pointer-events-none（宪法第五节）：它会把 title 与 tooltip 一起吞掉；
+        // 点击本来就被原生 disabled 挡住，拖动改数在 startScrub 里自己判 disabled
+        disabled && 'cursor-not-allowed opacity-40',
         className,
       )}
     >

@@ -52,17 +52,18 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       // 视觉轨道 14px，点击区拉到 28px 高，符合最小可点面积
-      className="group flex h-7 shrink-0 items-center rounded-sm px-0.5 outline-none focus-visible:focus-ring disabled:opacity-40"
+      className="group flex h-7 shrink-0 items-center rounded-sm px-0.5 outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
         className={cn(
-          'relative h-[14px] w-[24px] rounded-full transition-colors',
-          checked ? 'bg-ink' : 'bg-border-strong',
+          'relative h-[14px] w-[24px] rounded-full transition-colors duration-fast',
+          // 关态轨道：border-control（对白 3.48:1）。border-strong 的 1.57:1 让关着的开关在 48px 设置行里几乎看不见
+          checked ? 'bg-ink' : 'bg-border-control',
         )}
       >
         <span
           className={cn(
-            'absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white transition-[left]',
+            'absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white transition-[left] duration-fast',
             checked ? 'left-[12px]' : 'left-[2px]',
           )}
         />

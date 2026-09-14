@@ -13,7 +13,7 @@ const CONTENT_CLASS = cn(
 /** 一条菜单项的样式：`MenuItem` 与子菜单的触发项共用 */
 const ITEM_CLASS = cn(
   'flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-xs outline-none',
-  'data-[highlighted]:bg-surface-hover data-[disabled]:opacity-35',
+  'data-[highlighted]:bg-surface-hover data-[disabled]:opacity-40',
 )
 
 export function Menu({

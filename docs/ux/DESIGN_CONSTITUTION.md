@@ -26,8 +26,9 @@
 | ink-3 | `ink-3` | `#6b6b64` | 元数据、单位、占位。仍 ≥4.5:1 |
 | ink-disabled | `ink-faint` | `#a3a39a` | 禁用 / 装饰。不用于要读的字 |
 | border | `border` | `#e3e3dd` | hairline。只给输入框、区域边界、浮层 |
-| border-strong | `border-strong` | `#cfcfc7` | hover 中的输入框、复选框 |
-| accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环、链接、AI、画布选择框 |
+| border-strong | `border-strong` | `#cfcfc7` | hover 中的输入框、区域边界 |
+| border-control | `border-control` | `#8a8a82` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
+| accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、链接、AI、画布选择框 |
 | danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。

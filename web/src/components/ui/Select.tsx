@@ -48,7 +48,8 @@ export function Select<T extends string>({
           // 别的可聚焦控件（Button / Toggle / Segmented / Field）一律配这条。
           // 原生 `<select>` 自带默认焦点环，迁到这里时缺了它就是一条 a11y 回归。
           'focus-visible:focus-ring',
-          'disabled:pointer-events-none disabled:opacity-40',
+          // 不用 pointer-events-none：禁用时 title 里的原因还要能悬停读到（宪法第五节）
+          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent',
           className,
         )}
       >

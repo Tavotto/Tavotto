@@ -547,11 +547,18 @@ describe('无障碍与键盘', () => {
     expect(el.querySelector('[data-align-mode="hdist"]')!.getAttribute('aria-label')).toBe('水平等距')
   })
 
-  it('出现时不抢焦点；按钮都可 Tab 到', async () => {
+  it('出现时不抢焦点；按钮都键盘可达', async () => {
     document.body.focus()
     await select(['t1', 't2'])
     expect(multiBar()!.contains(document.activeElement)).toBe(false)
-    for (const b of multiBar()!.querySelectorAll('button')) expect(b.tabIndex).toBeGreaterThanOrEqual(0)
+    // 普通按钮都在 Tab 顺序里；参照分段（radiogroup）按 WAI-ARIA 约定只占**一个**
+    // 停靠点，其余格子用方向键到达（2026-09-14 审计 S3 之前每格都是停靠点，那是缺陷）
+    for (const b of multiBar()!.querySelectorAll('button')) {
+      if (b.getAttribute('role') === 'radio') continue
+      expect(b.tabIndex, b.outerHTML).toBeGreaterThanOrEqual(0)
+    }
+    const group = multiBar()!.querySelector('[role="radiogroup"]')!
+    expect([...group.querySelectorAll('[role="radio"]')].filter((r) => (r as HTMLElement).tabIndex === 0)).toHaveLength(1)
     const first = multiBar()!.querySelector('button')!
     first.focus()
     expect(document.activeElement).toBe(first)
