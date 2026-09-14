@@ -959,6 +959,7 @@
   "tabsLabel": "Right panel mode",
   "text": {
     "addBackground": "Add background",
+    "effectNone": "None",
     "addBorder": "Add stroke",
     "align": "Align",
     "alignCenter": "Center",

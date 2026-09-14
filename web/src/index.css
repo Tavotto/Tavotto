@@ -405,11 +405,12 @@
    字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
    六档对应 docs/ux/DESIGN_CONSTITUTION.md 第八节；数值全部取自上面的字号阶梯。
      type-title    对话框 / 页面标题        14px 500 ink
-     type-section  分区小标题              12px 500 大写 ink
+     type-section  分区小标题              12px 500 ink
      type-body     正文                    12px ink
      type-control  控件里的文字            12px（颜色随控件）
      type-caption  说明文字                11px ink-2，行距放宽
      type-meta     元数据 / 路径 / 计数    11px ink-3
+     type-number   数值（输入框的值、只读读数）12px，系统字体 + 等宽数字（定义在文件末尾）
    --------------------------------------------------------------------------- */
 @utility type-title {
   font-size: var(--text-lg);
@@ -420,13 +421,13 @@
 /* 分区小标题：12px / 500 / ink（2026-09-14 审计 S9，用户拍板）。此前 11px / ink-3 只靠
    大写 + 字距与行标签（12px / 400 / ink-2）区分——中文没有大写、0.06em 在两个汉字上
    看不见，于是「线条 / 数据点 / 刻度与网格」与「颜色 / 线宽」几乎同形。现在「深 + 重」
-   永远是标题、「浅 + 常规」永远是标签；en-US 的大写字距照旧。 */
+   永远是标题、「浅 + 常规」永远是标签。二审 B2（用户拍板「甲」）：英文也不再大写 + 字距——
+   两种手段叠着，「TICK MARKS」读起来像 14px 页头，中英不是同一个骨架；Apple 检查器的分区
+   标题就是句首大写的 500 字重。 */
 @utility type-section {
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--color-ink);
 }
 @utility type-body {
@@ -450,11 +451,16 @@
   color: var(--color-ink-3);
 }
 
-/* 数值输入：等宽、右对齐、去边框直到 hover/focus —— 紧凑工具软件的典型手感 */
-@utility num-input {
-  font-family: var(--font-mono);
+/* 数值（输入框里的值与单位、只读的尺寸 / 计数 / 缩放 / 像素读数）：系统字体 + 等宽**数字**
+   （2026-09-14 二审 B1，用户拍板「乙」：先只改数值这一档）。此前是 SF Mono——它在 12px 上比
+   SF Pro 重一档，数字框里的「1.2 pt」比同列下拉里的「实线」黑一截，导出清单一句话里数字与汉字
+   两种字。对齐要的是等宽数字（tabular-nums），不是等宽字体；等宽字体只留给代码、路径、脚本名、
+   matplotlib 取值代号，快捷键那一档另议。 */
+@utility type-number {
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
 }
 
 /* 形状外观（ShapeSection）：线宽与填充不透明度同一行，两个输入框固定 40px。

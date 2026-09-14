@@ -117,7 +117,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       </div>
       {(progress || onBack || onSkip) && (
         <div className="mt-2.5 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate font-mono text-xs text-ink-3" data-onboarding-progress>
+          <span className="min-w-0 truncate text-xs tabular-nums text-ink-3" data-onboarding-progress>
             {progress}
           </span>
           <span className="flex shrink-0 items-center gap-0.5">

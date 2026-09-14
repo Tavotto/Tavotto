@@ -1355,7 +1355,7 @@ function TargetHeader({
         <p className="mt-0.5 text-xs text-ink-2">
           {ex(original ? 'scopeOriginal' : 'scopeCanvas')}
           {' · '}
-          <span className="font-mono">{size}</span>
+          <span className="tabular-nums">{size}</span>
           {!original && (
             <>
               {' · '}
@@ -1365,7 +1365,7 @@ function TargetHeader({
           {pixels && (
             <>
               {' · '}
-              <span id="export-pixel-preview" className="font-mono text-ink-3">
+              <span id="export-pixel-preview" className="tabular-nums text-ink-3">
                 {pixels}
               </span>
             </>
@@ -1428,7 +1428,7 @@ function BlockingList({
                   <span className="min-w-0 flex-1 leading-relaxed">
                     <span className="text-ink-2">{subject}</span>
                     {values.current && (
-                      <span className="ml-1.5 font-mono text-xs text-ink-3">
+                      <span className="ml-1.5 text-xs tabular-nums text-ink-3">
                         {values.expected
                           ? translate('problems.valueArrow', {
                               ns: 'errors',
@@ -1731,7 +1731,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             {out.name}
           </a>
         )}
-        <span className="shrink-0 font-mono text-xs text-ink-3">{dims}</span>
+        <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
         {out.replaced && <span className="shrink-0 text-xs text-ink-3">{ex('replaced')}</span>}
       </div>
       {revealError && <p className="text-xs text-danger">{revealError}</p>}

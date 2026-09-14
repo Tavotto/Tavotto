@@ -700,6 +700,20 @@ describe('刻度组元素页', () => {
     expect(buttons().some((b) => b.textContent?.trim() === '更多')).toBe(false)
   })
 
+  it('「文字」段的「显示」排在段首，关掉后其余行退到禁用一档而不是消失（二审 A6）', async () => {
+    await mount('axes_0.yticks')
+    const labels = host.querySelector('[data-tick-section="labels"]')!
+    const props = Array.from(labels.querySelectorAll('[data-prop]')).map((e) => e.getAttribute('data-prop'))
+    expect(props[0]).toBe('visible')
+    const body = labels.querySelector('[data-tick-labels-body]')!
+    expect(body.className).not.toContain('opacity-40')
+    const sw = labels.querySelector('[data-prop="visible"] [role="switch"]') as HTMLButtonElement
+    expect(sw, '「显示」该是一颗开关').toBeTruthy()
+    await act(async () => sw.click())
+    expect(labels.querySelector('[data-tick-labels-body]')!.className).toContain('opacity-40')
+    expect(labels.querySelector('[data-prop="fontsize"]'), '关着时字号那一行仍在').toBeTruthy()
+  })
+
   it('改过的次刻度从属字段即使次刻度关着也显示（不因折叠而不可发现）', async () => {
     await mount('axes_0.xticks')
     expect(textOf()).not.toContain('次刻度方式')

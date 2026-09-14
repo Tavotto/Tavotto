@@ -1252,7 +1252,7 @@ function FolderInfo({ dir, shown, total }: { dir: string; shown: number; total: 
         className="flex w-full items-center gap-1 rounded-sm text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
         {ab('folderInfo')}
-        <span className="ml-auto font-mono">
+        <span className="ml-auto tabular-nums">
           {shown === total ? total : `${shown} / ${total}`}
         </span>
       </button>

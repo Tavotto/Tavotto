@@ -244,7 +244,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           side="left"
         >
           {/* 原始尺寸是元数据：靠右、meta 字色，不与数字框争视线 */}
-          <span className="type-meta ml-auto min-w-0 shrink truncate font-mono">
+          <span className="type-meta ml-auto min-w-0 shrink truncate tabular-nums">
             {native ? pn('native', { size: native }) : pn('nativeMixed')}
           </span>
         </Tip>
@@ -524,7 +524,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
               )}
             >
               <span>{q.label}</span>
-              <span className="font-mono tabular-nums">{q.value}</span>
+              <span className="tabular-nums">{q.value}</span>
             </div>
           </Tip>
         ))}
@@ -606,7 +606,7 @@ function ReplaceAssetDialog({
                   {info.name}
                 </span>
                 <span className="shrink-0 text-xs text-ink-3">{folderLabel(info.folder)}</span>
-                <span className="shrink-0 font-mono text-xs tabular-nums text-ink-3">
+                <span className="shrink-0 text-xs tabular-nums text-ink-3">
                   {translate('measure.cmSize', {
                     w: formatCm(info.native_w_mm),
                     h: formatCm(info.native_h_mm),

@@ -135,7 +135,7 @@ function VersionRow({
           {isCurrent && vh('currentSuffix')}
         </p>
         {!isOrigin && version.ts && (
-          <p className="truncate font-mono text-xs text-ink-3">{shortTs(version.ts)}</p>
+          <p className="truncate text-xs tabular-nums text-ink-3">{shortTs(version.ts)}</p>
         )}
         {!isCurrent && (
           <Tip label={vh('restoreTip')} side="left">

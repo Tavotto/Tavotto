@@ -13,7 +13,6 @@ import { CanvasList } from './CanvasList'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
-import { useScopedProblems } from './useProblemScope'
 
 /**
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
@@ -60,7 +59,9 @@ export function LeftPanel({
           <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
         )}
         {tab === 'elements' && <ElementCount />}
-        {tab === 'problems' && <ProblemCount />}
+        {/* 问题面板的标题不再带计数（二审 C2，拍板「乙」）：页签「当前图 13 · 整个文档 14」
+            已经把两个范围各说了一遍，轨道角标说的是整个文档；标题再来一个 13 就是
+            一个概念三个数字 */}
         <span className="flex-1" />
         {wide && (
           <IconButton
@@ -109,12 +110,6 @@ function DrawerCount({ value, label }: { value: number; label?: string }) {
 }
 
 /** 问题计数进标题：与面板同一个范围（当前图 / 整个文档）；轨道角标仍是全文档 */
-function ProblemCount() {
-  const n = useScopedProblems().issues.length
-  if (!n) return null
-  return <DrawerCount value={n} />
-}
-
 /** 元素计数进标题：树里不再重复统计行 */
 function ElementCount() {
   const { t } = useTranslation('workspace')

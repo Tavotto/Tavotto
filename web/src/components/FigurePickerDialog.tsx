@@ -148,7 +148,7 @@ function EntrySize({ entry }: { entry: Entry }) {
       : entry.asset.size_mm
   if (!size) return null
   return (
-    <span className="shrink-0 font-mono text-xs text-ink-3">
+    <span className="shrink-0 text-xs tabular-nums text-ink-3">
       {translate('measure.cmSize', { w: formatCm(size[0]), h: formatCm(size[1]) })}
     </span>
   )

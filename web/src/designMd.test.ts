@@ -148,7 +148,7 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
 
   it('字体角色：type-<role> 解析出的字号 / 行高 / 字重 / 字距等于 frontmatter', () => {
     const typo = nestedMap('typography')
-    for (const role of ['title', 'section', 'body', 'control', 'caption', 'meta']) {
+    for (const role of ['title', 'section', 'body', 'control', 'caption', 'meta', 'number']) {
       const u = utility(`type-${role}`)
       const fm = typo[role]
       expect(fm, `frontmatter 缺 typography.${role}`).toBeDefined()

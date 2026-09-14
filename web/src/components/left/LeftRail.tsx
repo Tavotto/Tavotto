@@ -79,7 +79,7 @@ export function LeftRail() {
                   aria-hidden
                   className={cn(
                     'absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center',
-                    'rounded-full px-0.5 font-mono text-[9px] leading-none',
+                    'rounded-full px-0.5 text-[9px] leading-none tabular-nums',
                     blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
                   )}
                 >

@@ -342,7 +342,7 @@ function MissingGroup({
             className={cn('shrink-0 text-ink-3 transition-transform', expanded && 'rotate-90')}
           />
           <span className="truncate">{t('picker.missingGroup')}</span>
-          <span className="font-mono text-ink-3">{t('picker.recentCount', { count: entries.length })}</span>
+          <span className="tabular-nums text-ink-3">{t('picker.recentCount', { count: entries.length })}</span>
         </button>
         <Button size="sm" variant="secondary" className="shrink-0 text-xs" onClick={onRemoveAll}>
           {t('picker.removeAllMissing')}

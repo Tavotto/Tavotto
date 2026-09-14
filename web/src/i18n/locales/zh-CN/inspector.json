@@ -937,6 +937,7 @@
   "tabsLabel": "右侧面板模式",
   "text": {
     "addBackground": "添加背景",
+    "effectNone": "无",
     "addBorder": "添加描边",
     "align": "对齐",
     "alignCenter": "居中",

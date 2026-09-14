@@ -255,7 +255,7 @@ function ResultDialog({
         <div className="flex flex-col gap-2">
           <ul className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2 text-xs">
             <li className="text-ink">
-              {sy('mappedCount')} <span className="font-mono">{mapped.length}</span>{' '}
+              {sy('mappedCount')} <span className="tabular-nums">{mapped.length}</span>{' '}
               {sy('itemsSuffix')}
               {clamped > 0 && (
                 <span className="text-ink-2">{sy('clampedNote', { count: clamped })}</span>
@@ -263,13 +263,13 @@ function ResultDialog({
             </li>
             {result.skipped.length > 0 && (
               <li className="text-ink-2">
-                {sy('skippedPrefix')} <span className="font-mono">{result.skipped.length}</span>{' '}
+                {sy('skippedPrefix')} <span className="tabular-nums">{result.skipped.length}</span>{' '}
                 {sy('skippedSuffix')}
               </li>
             )}
             {result.unmatched.length > 0 && (
               <li className="text-ink-2">
-                {sy('unmatchedPrefix')} <span className="font-mono">{result.unmatched.length}</span>{' '}
+                {sy('unmatchedPrefix')} <span className="tabular-nums">{result.unmatched.length}</span>{' '}
                 {sy('unmatchedSuffix')}
               </li>
             )}

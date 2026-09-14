@@ -80,7 +80,7 @@ export function CanvasPage() {
       <Section
         title={cv('pageSize')}
         action={
-          <span className="shrink-0 font-mono text-xs text-ink-3">
+          <span className="shrink-0 text-xs tabular-nums text-ink-3">
             {/* 与下面的 W / H 输入框同一个单位：摘要说 cm、框里写 mm 是两套尺子 */}
             {translate('measure.mmSize', { w: formatMm(page.w), h: formatMm(page.h) })}
           </span>
@@ -283,7 +283,7 @@ export function CanvasPage() {
                   <span className={cn(LABEL_COL, 'shrink-0 truncate text-xs text-ink-2')}>
                     {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
                   </span>
-                  <span className="min-w-0 flex-1 font-mono text-xs tabular-nums text-ink">
+                  <span className="min-w-0 flex-1 text-xs tabular-nums text-ink">
                     {translate('measure.mm', { value: formatMm(g.pos) })}
                   </span>
                   <IconButton

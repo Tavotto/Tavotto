@@ -529,7 +529,7 @@ function ZoomControls() {
         trigger={
           <button
             aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })}
-            className="h-7 w-14 border-x border-border font-mono text-xs tabular-nums text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
+            className="h-7 w-14 border-x border-border text-sm tabular-nums text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
           >
             {Math.round(zoom * 100)}%
           </button>

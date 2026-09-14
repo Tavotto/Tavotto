@@ -90,7 +90,7 @@ function ElementQuickInner({
             width={190}
             align="start"
             trigger={
-              <Button size="sm" className="px-1.5 font-mono" aria-label={propLabel('linestyle', role)}>
+              <Button size="sm" className="px-1.5" aria-label={propLabel('linestyle', role)}>
                 {optionLabel('linestyle', String(w.read('linestyle') ?? '-'))}
               </Button>
             }

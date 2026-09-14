@@ -497,14 +497,14 @@ describe('范围：当前图 / 整个文档（审计 T09）', () => {
     expect(rows().length).toBe(total())
   })
 
-  it('计数条按范围算；抽屉标题的计数与面板同一个范围', async () => {
+  it('计数条按范围算；抽屉标题不再带计数（二审 C2：页签已把两个范围各说一遍）', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<LeftPanel />)
-    // 标题里的计数 = 当前图的 2 条，不是全文档的 3 条
+    // 标题行只有「问题」两个字：2 / 3 都不在标题里，范围数字只在页签与计数条
     const heading = container.querySelector('h2')!
-    expect(heading.parentElement?.textContent).toContain('2')
-    expect(heading.parentElement?.textContent).not.toContain(String(total()))
+    // 标题旁没有计数节点：h2 之后紧跟的是占位的 flex-1，不是 type-meta 的数字
+    expect(heading.nextElementSibling?.textContent?.trim()).toBe('')
     expect(severityChip().getAttribute('aria-label')).toContain('2')
   })
 })

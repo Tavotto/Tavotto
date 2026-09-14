@@ -1030,16 +1030,13 @@ function FieldList({
       <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5">
+          {/* 组内的「更多」是一条文字链接、不带 chevron（二审 C3）：chevron 行只表示「分区」
+              （源文件与高级），组的尾巴与分区不该同一个字形 */}
           <button
             onClick={() => setMoreOpen(role, !moreOpen)}
             aria-expanded={moreOpen}
             className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
           >
-            <ChevronRight
-              size={ICON_SIZE.xs}
-              aria-hidden
-              className={cn('shrink-0 transition-transform', moreOpen && 'rotate-90')}
-            />
             <span className="font-medium">{el('more')}</span>
             {!moreOpen && modifiedInMore > 0 && (
               <span className="ml-auto shrink-0 text-xs text-ink-3">
@@ -1328,7 +1325,12 @@ function TickPage({
   const fields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
   const placement = fields.filter((f) => TICK_PLACEMENT_PROPS.has(f.prop))
   const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop))
-  const labels = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
+  const labelFields = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
+  // 「显示」管着整段：排在段首（二审 A6），关着时下面的行退到禁用那一档而不是消失——
+  // 此前它排在最后，用户从上往下改完字体字号才发现整段是关的
+  const labelSwitch = labelFields.find((f) => f.prop === 'visible')
+  const labels = labelSwitch ? [labelSwitch, ...labelFields.filter((f) => f !== labelSwitch)] : labelFields
+  const labelsOn = labelSwitch ? currentValue(panel, element.gid, labelSwitch) !== false : true
   const rows = (list: EditableField[]) =>
     list.length ? (
       <div className="flex flex-col gap-1.5">
@@ -1372,7 +1374,16 @@ function TickPage({
       {labels.length > 0 && (
         <div className="flex flex-col gap-1.5" data-tick-section="labels">
           <GroupHead>{translate('tick.sectionLabels', { ns: 'inspector' })}</GroupHead>
-          {rows(labels)}
+          {labelSwitch ? (
+            <>
+              {rows([labelSwitch])}
+              <div className={cn(!labelsOn && 'opacity-40')} data-tick-labels-body>
+                {rows(labels.slice(1))}
+              </div>
+            </>
+          ) : (
+            rows(labels)
+          )}
         </div>
       )}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
@@ -2648,7 +2659,7 @@ function AlignSection({
               位置类对齐用的是选区边界，末位元素并不特殊。
             */}
             {i === items.length - 1 && allResizable && (
-              <span className="ml-auto shrink-0 font-mono text-xs text-ink-3">
+              <span className="ml-auto shrink-0 text-xs tabular-nums text-ink-3">
                 {el('alignBaselineSize')}
               </span>
             )}
@@ -2765,7 +2776,7 @@ function AxesSizeMm({
           {el('centerV')}
         </Button>
       </div>
-      <p className="mt-1.5 font-mono text-xs text-ink-3">
+      <p className="mt-1.5 text-xs tabular-nums text-ink-3">
         {el('figureSize', { w: figW, h: figH })}
       </p>
     </div>

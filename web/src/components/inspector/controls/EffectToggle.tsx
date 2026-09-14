@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { t as translate } from '@/i18n'
 import { Toggle } from '@/components/ui/Toggle'
 
 /**
@@ -40,10 +41,15 @@ export function EffectToggle({
       />
     )
   }
+  // 关着：一个行内值「无」+ 一颗 ghost「添加背景」（二审 A7）。此前是整行宽的 secondary 按钮，
+  // 是检查器里唯一一颗整行宽的钮，视觉分量高过它上面的所有属性行；低频入口不该更重
   return (
-    <Button variant="secondary" size="sm" className="w-full" data-effect-add onClick={onAdd}>
-      <Plus size={ICON_SIZE.xs} aria-hidden />
-      {addLabel}
-    </Button>
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="type-control text-ink-3">{translate('text.effectNone', { ns: 'inspector' })}</span>
+      <Button variant="ghost" size="sm" className="text-ink-2 hover:text-ink" data-effect-add onClick={onAdd}>
+        <Plus size={ICON_SIZE.xs} aria-hidden />
+        {addLabel}
+      </Button>
+    </span>
   )
 }

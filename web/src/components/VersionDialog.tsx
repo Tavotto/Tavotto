@@ -184,7 +184,7 @@ export function VersionDrawer() {
       <div className="flex h-11 shrink-0 items-center gap-2 px-3">
         <h2 className="text-sm font-medium text-ink">{vd('title')}</h2>
         {versions.length > 0 && (
-          <span className="font-mono text-xs text-ink-3">{versions.length}</span>
+          <span className="text-xs tabular-nums text-ink-3">{versions.length}</span>
         )}
         <span className="flex-1" />
         <Button

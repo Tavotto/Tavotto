@@ -348,3 +348,33 @@ D1 要过 `e2e` 里认 `data-status-live` 的用例。
 
 `a1-name-clipped` · `a3-elementbar` · `a6-visible-last` · `a7-add-bg` · `a8-cm-format` · `b1-linewidth` · `b1-export-mono-zh` · `b1-export-mono-en` · `b2-en-sections` · `b2-zh-sections` · `c1-severity` · `d1-two-toasts` · `d1-contextbar-note` · `d2-assistant` · `d3-truncate`。
 整页截图（首页、工作台、五个检查器页、菜单、命令面板、导出、设置、问题、助手、en-US 对照）在会话 scratchpad `shots/` / `shots-en/`，未入库。
+
+---
+
+## 落地记录（2026-09-14 晚，分支 `ux/apple-design-r2`，叠在 batch4 之上）
+
+拍板：1 乙 · 2 甲 · 3 甲 · 4 乙；五项小决定按建议。四个批次各一个提交：
+
+| 批次 | 条目 | 提交 |
+| --- | --- | --- |
+| 5 缺陷与一行改法 | A1 A2 A3 C1 A8 E1 | `d9461d9a` |
+| 6 动效 | E2 E3 E4 E5 E7 A4 + 宪法第七节修订 | `01240587` |
+| 7 层级 | D1 D2 D3 D4（D5 撤回） | `0ba1e07f` |
+| 8 拍板后 | B1（乙）B2 C2 A5 A6 A7 C3 E6 | 见 git log |
+
+与报告不同的处置：
+
+- **A4** 没用「隐藏的加粗影子」：页签的子元素是图标 + 文字 + 计数 + 运行点的组合，渲染两遍会把
+  运行点与计数也复制一份、`textContent` 类的判据全部翻倍；改为选中项**不再加粗**（下划线已是不靠
+  颜色的第二重线索），抖动归零（实测 en-US 三个页签 x 不变）。
+- **D2** 只把说明句搬回滚动区正中（空态），起手式仍贴输入框——它们是输入的快捷方式，跟输入框走；
+  部分收回 2026-09-13 审计 T37。
+- **D5** 撤回：「画布上的{{list}}不会带进导出」只在画布上有被忽略的变换时出现，是状态不是解释。
+- **E3** 的 `Reveal` 没包 `SpineFrameCard` 的逐边行（行是父级 flex 的直接子项，包一层会吃掉 gap）与
+  问题面板的分组展开（列表语义）；原生 `<details>` 只在支持 `interpolate-size` 的引擎里长高。
+- **E6** 选了「边框闪一次 warn」，没做横向摆动。
+
+实测（Chromium，r2 构建）：分段选中底 79 → 124 → 134 → 136px、页签下划线 0 → 92 → 109 → 112px（180ms
+ease-pop 的轨迹）；「更多」展开 grid 行高 107 → 171 → 194 → 204px；名称框 scrollHeight 40 = height 40（两行
+完整）。jsdom：262 → 263 个用例文件，3952 → 3978 条全绿；`pnpm build`、`pnpm i18n:check` 通过。
+

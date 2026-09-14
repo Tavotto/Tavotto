@@ -14,7 +14,7 @@ const TONES: Record<Tone, string> = {
 /**
  * 徽章 / 状态标签：全产品唯一允许用胶囊形（rounded-full）的文字元素——
  * 控件一律 6px 圆角，胶囊就成了「这是状态，不是按钮」的形状线索。
- * 16px 高、11px 字、不可折行；`mono` 给版本号 / 尺寸这类数据。
+ * 16px 高、11px 字、不可折行；`mono` 给版本号 / 尺寸这类数据（等宽**数字**，不换字体；二审 B1）。
  * 颜色只表达语义（neutral / accent / danger / warn / ok），不做装饰。
  */
 export function Badge({
@@ -29,7 +29,7 @@ export function Badge({
       {...rest}
       className={cn(
         'inline-flex h-4 shrink-0 items-center whitespace-nowrap rounded-full px-1.5 text-xs leading-none',
-        mono && 'font-mono',
+        mono && 'tabular-nums',
         TONES[tone],
         className,
       )}

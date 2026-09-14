@@ -10,6 +10,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { t } from '@/i18n'
+import { DURATION } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import {
   FIELD_BOX as BOX_CLASS,
@@ -252,6 +253,21 @@ export function NumberField({
     (v: number) => Math.min(max, Math.max(min, v)),
     [min, max],
   )
+  // 提交的值被钳到上下界时框闪一下 warn（二审 E6）：此前输入 20 回车静默变成 12，
+  // 用户不知道是自己按错还是有上限。只是边框颜色一次来回（slow 档），不摆动、不弹
+  const [clamped, setClamped] = useState(false)
+  const clampTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(clampTimer.current), [])
+  const commit = (v: number) => {
+    const next = clampVal(v)
+    if (next !== v) {
+      setClamped(true)
+      window.clearTimeout(clampTimer.current)
+      clampTimer.current = window.setTimeout(() => setClamped(false), DURATION.slow * 2)
+    }
+    onChange(next)
+    return next
+  }
 
   const submit = (raw: string) => {
     // 原文没动过就不提交：键盘用户 Tab 路过一个输入框（聚焦→失焦）不该
@@ -259,7 +275,7 @@ export function NumberField({
     // 「按了没反应」（issue #37 的纯键盘闭环实测撞见）。
     if (raw === display) return
     const parsed = Number(raw)
-    if (raw.trim() !== '' && Number.isFinite(parsed)) onChange(clampVal(parsed))
+    if (raw.trim() !== '' && Number.isFinite(parsed)) commit(parsed)
     else setText(display)
   }
 
@@ -322,12 +338,15 @@ export function NumberField({
           宽度由里面的输入框决定，刚好包住数字；min-w-0 让框在窄行里仍先让位
           （标签、单位都是 shrink-0）。框的样子来自 fieldBox（S8 甲：与文字框同一副）。 */}
       <div
+        data-clamped={clamped || undefined}
         className={cn(
           'flex h-full min-w-0 items-center',
           BOX_CLASS,
           BOX_FOCUS_WITHIN,
           disabled && BOX_DISABLED,
           fill && 'flex-1',
+          // 钳位那一刻：边框走 warn（盖过 hover / focus 的颜色），slow 档淡回去
+          clamped && 'border-warn transition-colors duration-slow hover:border-warn focus-within:border-warn',
         )}
       >
         <input
@@ -363,8 +382,7 @@ export function NumberField({
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
               const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
-              const next = clampVal(value + (e.key === 'ArrowUp' ? step : -step) * mult)
-              onChange(next)
+              const next = commit(value + (e.key === 'ArrowUp' ? step : -step) * mult)
               setText(String(Number(next.toFixed(precision))))
             }
           }}
@@ -374,7 +392,7 @@ export function NumberField({
             // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
             // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
             // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
-            'num-input h-full min-w-0 bg-transparent px-1.5 text-ink outline-none',
+            'type-number h-full min-w-0 bg-transparent px-1.5 text-ink outline-none',
             fill ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
@@ -382,7 +400,9 @@ export function NumberField({
           )}
         />
         {unit != null && (
-          <span className="num-input shrink-0 select-none whitespace-nowrap pr-1.5 text-ink-3">
+          /* 单位列至少 2 个字符宽：pt / mm / px / ° / % 的框在同一列里才一样宽、右缘对齐
+             （二审 A5：此前 `0 °` 的框比 `3.5 pt` 的窄 5px）；ppi 三个字符自然更宽 */
+          <span className="type-number min-w-[2ch] shrink-0 select-none whitespace-nowrap pr-1.5 text-ink-3">
             {unit}
           </span>
         )}

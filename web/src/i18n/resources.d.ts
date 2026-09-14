@@ -3162,6 +3162,7 @@ export default interface Resources {
       "caseTitle": "每个词首字母大写",
       "caseUpper": "全部大写",
       "color": "颜色",
+      "effectNone": "无",
       "fontSize": "字号",
       "glyphFallback": "这些字符会用另一种字体画：{{chars}}",
       "glyphMissing": "这些字符无法绘制，导出后是方框：{{chars}}",
