@@ -142,11 +142,27 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     assert fast["name"] == "CI fast gate" and heavy["name"] == "CI integration gate"
     assert "backend-fast" in fast["needs"] and "backend-fast" not in heavy["needs"]
     assert live_workflow["backend-fast"]["timeout_minutes"] == 40
-    assert [m["python"] for m in live_workflow["backend-fast"]["matrix"]] == [
-        "3.10",
-        "3.13",
-        "3.14",
-    ]
+    # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
+    assert live_workflow["backend-fast"]["matrix"] == {
+        "python": ["3.10", "3.13", "3.14"],
+        "shard": ["1", "2"],
+    }
+    assert live_workflow["backend-platforms"]["matrix"] == {
+        "os": ["macos-latest", "windows-latest"],
+        "shard": ["1", "2"],
+    }
+
+
+def test_sharded_display_names_map_back_to_the_job_id(live_workflow):
+    """分片后 API 的显示名是 `backend-fast (3.10, 1)` / `backend-platforms (windows-latest, 2)`
+    ——矩阵的值按轴顺序排进括号，os 不在轴上就不出现。仍要映射回 job id，否则下一轮
+    基线采集会把这两个 job 的时间算丢。"""
+    assert CB.display_to_job_id("backend-fast (3.10, 1)", live_workflow) == "backend-fast"
+    assert CB.display_to_job_id("backend-fast (3.14, 2)", live_workflow) == "backend-fast"
+    assert CB.display_to_job_id("backend-platforms (windows-latest, 2)", live_workflow) == (
+        "backend-platforms"
+    )
+    assert CB.display_to_job_id("backend-fast", live_workflow) == "backend-fast"  # 整格 skip
 
 
 def test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under():
