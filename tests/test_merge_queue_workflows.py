@@ -1166,7 +1166,7 @@ class TestPackageSmokeIsolation:
         assert names == ["package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}"], names
         upload = [s for s in _steps(block) if "uses: actions/upload-artifact@" in s]
         assert len(upload) == 1 and re.search(r"(?m)^        if: failure\(\)\s*$", upload[0])
-        m = re.search(r"(?ms)^          path: \|\n((?:^            \S.*\n)+)", upload[0])
+        m = re.search(r"(?m)^          path: \|\n((?:^            \S.*\n)+)", upload[0])
         assert m, "path 必须是块标量（`path: |` + 逐行），不是单个 glob"
         paths = [ln.strip() for ln in m.group(1).splitlines() if ln.strip()]
         assert paths == [
