@@ -1,0 +1,372 @@
+{
+ "label": "scripts/ci/package_smoke.py vs tests/test_package_smoke.py",
+ "killed": 28,
+ "total": 28,
+ "results": [
+  {
+   "id": "M01",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉产品顺延那句的识别",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[*",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]",
+    "tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry"
+   ],
+   "seconds": 85.7,
+   "tail": "FAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[* \\u7aef\\u53e3 5199 \\u88ab\\u5360\\u7528\\uff0c\\u6539\\u7528 5200]\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry"
+  },
+  {
+   "id": "M02",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉 Address already in use 的识别",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError:",
+    "tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError:",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]",
+    "tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+   ],
+   "seconds": 26.2,
+   "tail": "FAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError: [Errno 48] Address already in use]\nFAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError: [Errno 98] Address already in use]\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]\nFAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]\nFAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+  },
+  {
+   "id": "M03",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉 WinError 10048 的识别",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError:"
+   ],
+   "seconds": 26.2,
+   "tail": "FAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError: [WinError 10048] \\u901a\\u5e38\\u6bcf\\u4e2a\\u5957\\u63a5\\u5b57\\u5730\\u5740(\\u534f\\u8bae/\\u7f51\\u7edc\\u5730\\u5740/\\u7aef\\u53e3)\\u53ea\\u5141\\u8bb8\\u4f7f\\u7528\\u4e00\\u6b21\\u3002]\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[OSError: [WinError 10048] \\u901a\\u5e38\\u6bcf\\u4e2a\\u5957\\u63a5\\u5b57\\u5730\\u5740(\\u534f\\u8bae/\\u7f51\\u7edc\\u5730\\u5740/\\u7aef\\u53e3)\\u53ea\\u5141\\u8bb8\\u4f7f\\u7528\\u4e00\\u6b21\\u3002]"
+  },
+  {
+   "id": "M04",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉「已在 … 运行」的识别",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[*"
+   ],
+   "seconds": 26.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[* Tavotto \\u5df2\\u5728 http://127.0.0.1:5199/ \\u8fd0\\u884c\\uff0c\\u6253\\u5f00\\u73b0\\u6709\\u7a97\\u53e3]\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_looks_busy_recognises_every_platform_and_product_phrasing[* Tavotto \\u5df2\\u5728 http://127.0.0.1:5199/ \\u8fd0\\u884c\\uff0c\\u6253\\u5f00\\u73b0\\u6709\\u7a97\\u53e3]"
+  },
+  {
+   "id": "M05",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪不再要求本实例 data dir 里有凭据文件（应答者归属的前一半）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_public_200_from_a_stranger_is_not_our_readiness"
+   ],
+   "seconds": 26.9,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_public_200_from_a_stranger_is_not_our_readiness\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_public_200_from_a_stranger_is_not_our_readiness"
+  },
+  {
+   "id": "M06",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪不再要求带凭据的 /api/session/ping 200（应答者归属的后一半）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness"
+   ],
+   "seconds": 23.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness"
+  },
+  {
+   "id": "M07",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/api/version 的 body 不再要求是 JSON 对象",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_200_that_is_not_json_is_not_readiness"
+   ],
+   "seconds": 23.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_200_that_is_not_json_is_not_readiness\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_200_that_is_not_json_is_not_readiness"
+  },
+  {
+   "id": "M08",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程退出不再算失败（干等到超时）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry"
+   ],
+   "seconds": 56.3,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry"
+  },
+  {
+   "id": "M09",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "租约丢了不再重试",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]",
+    "tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry",
+    "tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+   ],
+   "seconds": 25.2,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+  },
+  {
+   "id": "M10",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪后不再打 / 与 /api/version 那两条",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir",
+    "tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails",
+    "tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails"
+   ],
+   "seconds": 26.8,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir\nFAILED tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails\nFAILED tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails\nFAILED tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails\nFAILED tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails"
+  },
+  {
+   "id": "M11",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/ 不再要求 200",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails"
+   ],
+   "seconds": 26.5,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails"
+  },
+  {
+   "id": "M12",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/api/version 不再要求 version 字段",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails"
+   ],
+   "seconds": 26.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_version_payload_without_the_version_field_fails"
+  },
+  {
+   "id": "M13",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "终止只 terminate() 直接子进程，不对组发信号",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_termination_leaves_neither_the_server_nor_its_worker",
+    "tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group"
+   ],
+   "seconds": 86.7,
+   "tail": "FAILED tests/test_package_smoke.py::test_termination_leaves_neither_the_server_nor_its_worker\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group\nFAILED tests/test_package_smoke.py::test_termination_leaves_neither_the_server_nor_its_worker\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group"
+  },
+  {
+   "id": "M14",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组里还剩人时不升级 SIGKILL",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty"
+   ],
+   "seconds": 26.3,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty"
+  },
+  {
+   "id": "M15",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组的存在性判据恒真",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty",
+    "tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled"
+   ],
+   "seconds": 22.2,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty\nFAILED tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled\nFAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty\nFAILED tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled"
+  },
+  {
+   "id": "M16",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "不再用新会话起子进程（组的判据失去主语）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry",
+    "tests/test_package_smoke.py::test_termination_leaves_neither_the_server_nor_its_worker",
+    "tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty",
+    "tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group",
+    "tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker"
+   ],
+   "seconds": 53.7,
+   "tail": "FAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_termination_leaves_neither_the_server_nor_its_worker\nFAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group\nFAILED tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group\nFAILED tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker"
+  },
+  {
+   "id": "M17",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组长判据恒真",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled"
+   ],
+   "seconds": 27.0,
+   "tail": "FAILED tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled"
+  },
+  {
+   "id": "M18",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "终止后组里仍有进程不算失败",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_group_that_is_still_populated_after_termination_fails_the_attempt"
+   ],
+   "seconds": 26.5,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_group_that_is_still_populated_after_termination_fails_the_attempt\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_group_that_is_still_populated_after_termination_fails_the_attempt"
+  },
+  {
+   "id": "M19",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "--launch 模板不再要求 {port}",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_parse_launch_refuses_templates_that_cannot_take_the_leased_port[python",
+    "tests/test_package_smoke.py::test_a_launch_template_without_the_port_placeholder_is_a_usage_error"
+   ],
+   "seconds": 27.0,
+   "tail": "FAILED tests/test_package_smoke.py::test_parse_launch_refuses_templates_that_cannot_take_the_leased_port[python stub.py --port 5099]\nFAILED tests/test_package_smoke.py::test_a_launch_template_without_the_port_placeholder_is_a_usage_error\nFAILED tests/test_package_smoke.py::test_parse_launch_refuses_templates_that_cannot_take_the_leased_port[python stub.py --port 5099]\nFAILED tests/test_package_smoke.py::test_a_launch_template_without_the_port_placeholder_is_a_usage_error"
+  },
+  {
+   "id": "M20",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "--python 与 --launch 不再二选一",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_python_and_launch_are_exactly_one"
+   ],
+   "seconds": 26.5,
+   "tail": "FAILED tests/test_package_smoke.py::test_python_and_launch_are_exactly_one - ...\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_python_and_launch_are_exactly_one - ..."
+  },
+  {
+   "id": "M21",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "失败时不再打日志尾",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail",
+    "tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry"
+   ],
+   "seconds": 26.8,
+   "tail": "FAILED tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail\nFAILED tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry\nFAILED tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail\nFAILED tests/test_package_smoke.py::test_a_crash_at_startup_fails_at_once_with_the_child_stderr_and_no_retry"
+  },
+  {
+   "id": "M22",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程环境不再设 TAVOTTO_DATA_DIR（隔离失守）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding",
+    "tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]",
+    "tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry",
+    "tests/test_package_smoke.py::test_a_slow_server_is_waited_for_by_the_predicate_not_by_a_sleep"
+   ],
+   "seconds": 593.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding\nFAILED tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_a_slow_server_is_waited_for_by_the_predicate_not_by_a_sleep\nFAILED tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness\nFAILED tests/test_package_smoke.py::test_a_ready_server_whose_index_is_not_200_fails\nFAILED tests/test_package_smoke.py::test_a_group_that_is_still_populated_after_termination_fails_the_attempt\nFAILED tests/test_package_smoke.py::test_leftover_workers_after_termination_fail_the_attempt"
+  },
+  {
+   "id": "M23",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程编码只钉父侧",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding"
+   ],
+   "seconds": 26.5,
+   "tail": "FAILED tests/test_package_smoke.py::test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding"
+  },
+  {
+   "id": "M24",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "stdout 多打一行（消费者按「恰好一行 JSON」读）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]",
+    "tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]",
+    "tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry",
+    "tests/test_package_smoke.py::test_a_slow_server_is_waited_for_by_the_predicate_not_by_a_sleep",
+    "tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail"
+   ],
+   "seconds": 26.7,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_healthy_server_passes_and_everything_lands_under_the_workdir\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]\nFAILED tests/test_package_smoke.py::test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[fallback]\nFAILED tests/test_package_smoke.py::test_the_fallback_instance_is_terminated_before_the_retry\nFAILED tests/test_package_smoke.py::test_a_slow_server_is_waited_for_by_the_predicate_not_by_a_sleep\nFAILED tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail\nFAILED tests/test_package_smoke.py::test_a_public_200_from_a_stranger_is_not_our_readiness\nFAILED tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness\nFAILED tests/test_package_smoke.py::test_a_worker_that_ignores_sigterm_is_still_killed_and_the_group_is_verified_empty\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group"
+  },
+  {
+   "id": "M25",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "租约连丢到用完不算失败（退 0）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+   ],
+   "seconds": 26.7,
+   "tail": "FAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_a_lease_lost_on_every_attempt_is_a_failure_not_an_endless_loop"
+  },
+  {
+   "id": "M26",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "worker 残留不算失败",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_leftover_workers_after_termination_fail_the_attempt"
+   ],
+   "seconds": 26.8,
+   "tail": "FAILED tests/test_package_smoke.py::test_leftover_workers_after_termination_fail_the_attempt\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_leftover_workers_after_termination_fail_the_attempt"
+  },
+  {
+   "id": "M27",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "EPERM 当成「判不了」立刻返回 False（macOS 上 reap 后那一瞬的假红）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_wait_group_gone_polls_through_the_transient_eperm",
+    "tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group"
+   ],
+   "seconds": 26.1,
+   "tail": "FAILED tests/test_package_smoke.py::test_wait_group_gone_polls_through_the_transient_eperm\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group\nFAILED tests/test_package_smoke.py::test_wait_group_gone_polls_through_the_transient_eperm\nFAILED tests/test_package_smoke.py::test_a_wrapper_process_shape_still_ends_with_an_empty_group"
+  },
+  {
+   "id": "M28",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "不装 SIGTERM / SIGINT 处理器（取消时 finally 不跑，服务成孤儿）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker"
+   ],
+   "seconds": 26.6,
+   "tail": "FAILED tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker\n=========================== short test summary info ============================\nFAILED tests/test_package_smoke.py::test_sigterm_while_waiting_still_terminates_the_server_and_its_worker"
+  }
+ ]
+}

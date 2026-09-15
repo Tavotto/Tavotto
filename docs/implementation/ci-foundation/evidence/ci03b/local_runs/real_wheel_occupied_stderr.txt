@@ -1,0 +1,5 @@
+· 第 1 次：租到端口 58253，起 /Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python docs/implementation/ci-foundation/evidence/ci03b/occupy_then_run.py --state-file /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/occupied.state --port 58253 -- /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python -m tavotto --port 58253 --no-browser
+! 第 1 次：日志里出现端口占用类文案：* 端口 58253 被占用，改用 58254——换端口重试
+· 第 2 次：租到端口 58267，起 /Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python docs/implementation/ci-foundation/evidence/ci03b/occupy_then_run.py --state-file /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/occupied.state --port 58267 -- /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python -m tavotto --port 58267 --no-browser
+✓ 就绪 0.26s（端口 58267）
+.venv/bin/python scripts/ci/package_smoke.py --workdir  --launch   0.10s user 0.09s system 4% cpu 4.454 total

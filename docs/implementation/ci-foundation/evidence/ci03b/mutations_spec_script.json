@@ -1,0 +1,285 @@
+{
+ "label": "scripts/ci/package_smoke.py vs tests/test_package_smoke.py",
+ "mutations": [
+  {
+   "id": "M01",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉产品顺延那句的识别",
+   "old": "    r\"|端口 \\d+ 被占用\"\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M02",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉 Address already in use 的识别",
+   "old": "    r\"[Aa]ddress already in use\"\n    r\"|Only one usage",
+   "new": "    r\"NEVER-MATCHES-XYZ\"\n    r\"|Only one usage",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M03",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉 WinError 10048 的识别",
+   "old": "    r\"|WinError 10048\"\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M04",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "拿掉「已在 … 运行」的识别",
+   "old": "    r\"|已在 \\S+ 运行\"\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M05",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪不再要求本实例 data dir 里有凭据文件（应答者归属的前一半）",
+   "old": "            elif not SA.adopt_session_credentials(data_dir, port):\n",
+   "new": "            elif not (SA.adopt_session_credentials(data_dir, port) or True):\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M06",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪不再要求带凭据的 /api/session/ping 200（应答者归属的后一半）",
+   "old": "                if ping == 200:\n                    return \"ready\"",
+   "new": "                if ping is not None:\n                    return \"ready\"",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M07",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/api/version 的 body 不再要求是 JSON 对象",
+   "old": "            if not isinstance(version, dict):\n                last = f\"/api/version 200 但 body",
+   "new": "            if False:\n                last = f\"/api/version 200 但 body",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M08",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程退出不再算失败（干等到超时）",
+   "old": "        if rc is not None:\n            return \"exited\"",
+   "new": "        if False:\n            return \"exited\"",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M09",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "租约丢了不再重试",
+   "old": "            if record[\"state\"] == \"lease_lost\" and n < args.attempts:\n",
+   "new": "            if False:\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M10",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "就绪后不再打 / 与 /api/version 那两条",
+   "old": "            problems = _request_pair(base, record)\n",
+   "new": "            problems = []\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M11",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/ 不再要求 200",
+   "old": "        if code != 200:\n            problems.append(f\"GET / → {code}（期望 200）\")\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M12",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "/api/version 不再要求 version 字段",
+   "old": "        elif not isinstance(payload.get(\"version\"), str) or not payload[\"version\"]:\n            problems.append(f\"/api/version 的 JSON 里没有非空的 version 字段：{payload}\")\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M13",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "终止只 terminate() 直接子进程，不对组发信号",
+   "old": "            info[\"how\"] = \"killpg-term\"\n            _killpg(proc.pid, signal.SIGTERM)",
+   "new": "            info[\"how\"] = \"killpg-term\"\n            proc.terminate()",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M14",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组里还剩人时不升级 SIGKILL",
+   "old": "        if not gone:\n            info[\"how\"] += \"+kill-group\"\n            _killpg(proc.pid, _SIGKILL)\n            gone = _wait_group_gone(proc.pid, GROUP_GONE_WAIT_S)\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M15",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组的存在性判据恒真",
+   "old": "        except ProcessLookupError:\n            return True\n        except PermissionError:\n            pass\n",
+   "new": "        except ProcessLookupError:\n            return True\n        except PermissionError:\n            pass\n        return True\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M16",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "不再用新会话起子进程（组的判据失去主语）",
+   "old": "            start_new_session=(os.name != \"nt\"),",
+   "new": "            start_new_session=False,",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M17",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "组长判据恒真",
+   "old": "        return os.getpgid(pid) == pid\n",
+   "new": "        return True\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M18",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "终止后组里仍有进程不算失败",
+   "old": "        if record[\"terminate\"][\"group_gone\"] is False:\n            after.append(\"终止后进程组里仍有进程\")\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M19",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "--launch 模板不再要求 {port}",
+   "old": "    if not any(\"{port}\" in tok for tok in tokens):\n        raise ValueError",
+   "new": "    if False:\n        raise ValueError",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M20",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "--python 与 --launch 不再二选一",
+   "old": "    if bool(args.python) == bool(args.launch):\n        ap.error",
+   "new": "    if False:\n        ap.error",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M21",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "失败时不再打日志尾",
+   "old": "    print(log_tail(log) or \"（日志是空的）\", file=sys.stderr, flush=True)\n",
+   "new": "    pass\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M22",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程环境不再设 TAVOTTO_DATA_DIR（隔离失守）",
+   "old": "        \"TAVOTTO_DATA_DIR\": str(data_dir),\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M23",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "子进程编码只钉父侧",
+   "old": "        \"PYTHONIOENCODING\": \"utf-8\",\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M24",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "stdout 多打一行（消费者按「恰好一行 JSON」读）",
+   "old": "        print(json.dumps(result, ensure_ascii=False), flush=True)\n",
+   "new": "        print(\"done\")\n        print(json.dumps(result, ensure_ascii=False), flush=True)\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M25",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "租约连丢到用完不算失败（退 0）",
+   "old": "            if record[\"state\"] == \"lease_lost\":\n                record[\"reason\"] += f\"（已连丢 {n} 次租约，不再重试）\"\n",
+   "new": "            if record[\"state\"] == \"lease_lost\":\n                record[\"reason\"] += f\"（已连丢 {n} 次租约，不再重试）\"\n                rc = 0\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M26",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "worker 残留不算失败",
+   "old": "        if record[\"leftover_workers\"]:\n            after.append(f\"终止后仍有 worker 残留：{record['leftover_workers']}\")\n",
+   "new": "",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M27",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "EPERM 当成「判不了」立刻返回 False（macOS 上 reap 后那一瞬的假红）",
+   "old": "        except PermissionError:\n            pass\n",
+   "new": "        except PermissionError:\n            return False\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  },
+  {
+   "id": "M28",
+   "file": "scripts/ci/package_smoke.py",
+   "why": "不装 SIGTERM / SIGINT 处理器（取消时 finally 不跑，服务成孤儿）",
+   "old": "def main(argv: list[str] | None = None) -> int:\n    _install_signal_handlers()\n",
+   "new": "def main(argv: list[str] | None = None) -> int:\n",
+   "tests": [
+    "tests/test_package_smoke.py"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "workdir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run",
+ "python": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python",
+ "launch": null,
+ "timeout": 60.0,
+ "max_attempts": 3,
+ "attempts": 1,
+ "port": 57875,
+ "ready_seconds": 2.33,
+ "version": {
+  "build": "index-CfkcuH7t",
+  "version": "0.14.0"
+ },
+ "history": [
+  {
+   "attempt": 1,
+   "port": 57875,
+   "command": [
+    "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python",
+    "-m",
+    "tavotto",
+    "--port",
+    "57875",
+    "--no-browser"
+   ],
+   "log": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run/attempt-1/server.log",
+   "state": "ready",
+   "ok": true,
+   "ready_seconds": 2.33,
+   "version": {
+    "build": "index-CfkcuH7t",
+    "version": "0.14.0"
+   },
+   "index_status": 200,
+   "version_status": 200,
+   "terminate": {
+    "how": "killpg-term",
+    "returncode": -15,
+    "group_gone": true
+   },
+   "leftover_workers": [],
+   "elapsed_seconds": 2.37
+  }
+ ]
+}

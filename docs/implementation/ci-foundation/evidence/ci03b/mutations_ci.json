@@ -1,0 +1,231 @@
+{
+ "label": ".github/workflows/ci.yml vs tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation",
+ "killed": 18,
+ "total": 18,
+ "results": [
+  {
+   "id": "C01",
+   "file": ".github/workflows/ci.yml",
+   "why": "装 wheel 那一步的 venv 回到 /tmp/smoke",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+   ],
+   "seconds": 0.3,
+   "tail": "E            +    where <function search at 0x102a55300> = re.search\n\ntests/test_merge_queue_workflows.py:1147: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+  },
+  {
+   "id": "C02",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟那一步的 venv 回到 /tmp/smoke",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+   ],
+   "seconds": 0.3,
+   "tail": "E            +    where <function search at 0x105e45300> = re.search\n\ntests/test_merge_queue_workflows.py:1147: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+  },
+  {
+   "id": "C03",
+   "file": ".github/workflows/ci.yml",
+   "why": "workdir 不在 runner.temp 下",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+   ],
+   "seconds": 0.3,
+   "tail": "E            +    where <function search at 0x106199300> = re.search\n\ntests/test_merge_queue_workflows.py:1147: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+  },
+  {
+   "id": "C04",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤换回旧写法（固定端口 + sleep + curl）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+   ],
+   "seconds": 0.3,
+   "tail": "E            +    where <function search at 0x10124d300> = re.search\n\ntests/test_merge_queue_workflows.py:1147: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+  },
+  {
+   "id": "C05",
+   "file": ".github/workflows/ci.yml",
+   "why": "被测解释器不是 venv 里的那个",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python"
+   ],
+   "seconds": 0.3,
+   "tail": "E       AssertionError: --python python              --workdir \"${{ runner.temp }}/smoke-run\"\nE       assert '--python \"$BIN/python\"' in '--python python              --workdir \"${{ runner.temp }}/smoke-run\"'\n\ntests/test_merge_queue_workflows.py:1135: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_runs_the_isolated_script_on_the_venv_python"
+  },
+  {
+   "id": "C06",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤不探 Scripts（Windows 腿失守）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it"
+   ],
+   "seconds": 0.3,
+   "tail": "E             \nE           assert 'BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"' in '          VENV=\"${{ runner.temp }}/smoke-venv\"\\n          BIN=\"$VENV/bin\"\\n          python scripts/ci/package_smoke.py --python \"$BIN/python\" \\\\\\n            --workdir \"${{ runner.temp }}/smoke-run\"\\n'\n\ntests/test_merge_queue_workflows.py:1124: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it"
+  },
+  {
+   "id": "C07",
+   "file": ".github/workflows/ci.yml",
+   "why": "删掉 step 级 timeout",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_has_a_step_level_timeout_and_the_job_level_is_unchanged"
+   ],
+   "seconds": 0.3,
+   "tail": "E         \nE       assert (None)\n\ntests/test_merge_queue_workflows.py:1155: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_has_a_step_level_timeout_and_the_job_level_is_unchanged"
+  },
+  {
+   "id": "C08",
+   "file": ".github/workflows/ci.yml",
+   "why": "job 级 timeout 60 → 90",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_has_a_step_level_timeout_and_the_job_level_is_unchanged"
+   ],
+   "seconds": 0.3,
+   "tail": "E        +    where '90' = <built-in method group of re.Match object at 0x10b58d750>(1)\nE        +      where <built-in method group of re.Match object at 0x10b58d750> = <re.Match object; span=(478, 501), match='    timeout-minutes: 90'>.group\n\ntests/test_merge_queue_workflows.py:1157: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_smoke_step_has_a_step_level_timeout_and_the_job_level_is_unchanged"
+  },
+  {
+   "id": "C09",
+   "file": ".github/workflows/ci.yml",
+   "why": "artifact 名去掉 matrix.python（两条 ubuntu 腿撞名）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+   ],
+   "seconds": 0.3,
+   "tail": "E         At index 0 diff: 'package-smoke-logs-${{ matrix.os }}' != 'package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}'\nE         Use -v to get more diff\n\ntests/test_merge_queue_workflows.py:1163: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+  },
+  {
+   "id": "C10",
+   "file": ".github/workflows/ci.yml",
+   "why": "失败日志 artifact 改成 always()",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+   ],
+   "seconds": 0.3,
+   "tail": "E        +  and   None = <function search at 0x102959300>('(?m)^        if: failure\\\\(\\\\)\\\\s*$', 'name: 上传冒烟日志（失败时）\\n        if: always()\\n        uses: actions/upload-artifact@v4\\n        with:\\n          name: pac...}\\n          path: ${{ runner.temp }}/smoke-run/**\\n          retention-days: 7\\n          if-no-files-found: ignore\\n')\nE        +    where <function search at 0x102959300> = re.search\n\ntests/test_merge_queue_workflows.py:1165: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+  },
+  {
+   "id": "C11",
+   "file": ".github/workflows/ci.yml",
+   "why": "artifact 路径不是 workdir",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+   ],
+   "seconds": 0.3,
+   "tail": "E        +  where None = <function search at 0x105e29300>('(?m)^          path: \\\\$\\\\{\\\\{ runner\\\\.temp \\\\}\\\\}/smoke-run/\\\\*\\\\*\\\\s*$', 'name: 上传冒烟日志（失败时）\\n        if: failure()\\n        uses: actions/upload-artifact@v4\\n        with:\\n          name: pa...          path: ${{ runner.temp }}/tavotto-data/**\\n          retention-days: 7\\n          if-no-files-found: ignore\\n')\nE        +    where <function search at 0x105e29300> = re.search\n\ntests/test_merge_queue_workflows.py:1166: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+  },
+  {
+   "id": "C12",
+   "file": ".github/workflows/ci.yml",
+   "why": "删掉整个上传步骤",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+   ],
+   "seconds": 0.3,
+   "tail": "E         Right contains one more item: 'package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}'\nE         Use -v to get more diff\n\ntests/test_merge_queue_workflows.py:1163: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg"
+  },
+  {
+   "id": "C13",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤又设回 TAVOTTO_DATA_DIR（假隔离）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_isolation_dirs_are_owned_by_the_script_not_by_the_yml"
+   ],
+   "seconds": 0.2,
+   "tail": "E         \nE         ...Full output truncated (10 lines hidden), use '-vv' to show)\n\ntests/test_merge_queue_workflows.py:1182: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_isolation_dirs_are_owned_by_the_script_not_by_the_yml"
+  },
+  {
+   "id": "C14",
+   "file": ".github/workflows/ci.yml",
+   "why": "needs 回到 [backend-fast, frontend]",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_do_not_wait_for_the_backend_fast_verdict",
+    "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_keep_the_frontend_prescreen",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+   ],
+   "seconds": 0.3,
+   "tail": "\ntests/test_merge_queue_workflows.py:1199: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_do_not_wait_for_the_backend_fast_verdict\nFAILED tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_keep_the_frontend_prescreen\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+  },
+  {
+   "id": "C15",
+   "file": ".github/workflows/ci.yml",
+   "why": "少一条 windows 腿",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+   ],
+   "seconds": 0.3,
+   "tail": "E         Use -v to get more diff\n\ntests/test_merge_queue_workflows.py:1204: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_failure_logs_are_uploaded_under_a_name_unique_per_leg\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+  },
+  {
+   "id": "C16",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤末尾加一句 sleep",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+   ],
+   "seconds": 0.3,
+   "tail": "E            +  where <re.Match object; span=(0, 1411), match='          python -m pip install --upgrade pip bui> = <function search at 0x107aa5300>('(?m)^\\\\s*[^#]*sleep', '          python -m pip install --upgrade pip build\\n          python -m build\\n\\n          VENV=\"${{ runner.temp }}/.../package_smoke.py --python \"$BIN/python\" \\\\\\n            --workdir \"${{ runner.temp }}/smoke-run\"\\n          sleep 2\\n')\nE            +    where <function search at 0x107aa5300> = re.search\n\ntests/test_merge_queue_workflows.py:1147: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep"
+  },
+  {
+   "id": "C17",
+   "file": ".github/workflows/ci.yml",
+   "why": "装 wheel 那一步不再共用 $VENV（写死另一个路径）",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it"
+   ],
+   "seconds": 0.3,
+   "tail": "E             \nE           assert 'BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"' in '          VENV=\"${{ runner.temp }}/smoke-venv\"\\n          python -m venv \"$VENV\"\\n          BIN=\"${{ runner.temp }}/v....resource_root()), tutorial.resource_root()\\n          print(\\'tutorial ok\\', tutorial.resource_root())\\n          \"\\n'\n\ntests/test_merge_queue_workflows.py:1124: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_venv_lives_under_runner_temp_and_both_steps_share_it"
+  },
+  {
+   "id": "C18",
+   "file": ".github/workflows/ci.yml",
+   "why": "package 从 integration gate 的 --required 闭集里拿掉",
+   "pytest_rc": 1,
+   "verdict": "KILLED",
+   "failed": [
+    "tests/test_merge_queue_workflows.py::TestGates::test_integration_gate_needs_matches_required_closed_set",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+   ],
+   "seconds": 0.3,
+   "tail": "E        +  and   {'backend-platforms', 'macos-app-smoke', 'posix-e2e', 'windows-exe-smoke'} = _required_of(\"  ci-integration-gate:\\n    name: CI integration gate\\n    if: ${{ always() && (github.event_name == 'pull_request' |...没有漂——几分钟内回来。深度验证归 nightly / lab（当晚就会跑到这个 SHA）。\\n  # ────────────────────────────────────────────────────────────────\\n\")\n\ntests/test_merge_queue_workflows.py:1211: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_integration_gate_needs_matches_required_closed_set\nFAILED tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+  }
+ ]
+}

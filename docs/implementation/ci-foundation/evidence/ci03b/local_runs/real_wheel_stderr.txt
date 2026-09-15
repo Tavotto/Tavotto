@@ -1,0 +1,3 @@
+· 第 1 次：租到端口 57875，起 /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python -m tavotto --port 57875 --no-browser
+✓ 就绪 2.33s（端口 57875）
+.venv/bin/python scripts/ci/package_smoke.py --python "$BIN/python" --workdir  0.22s user 0.08s system 12% cpu 2.421 total
