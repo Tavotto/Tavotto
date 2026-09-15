@@ -42,6 +42,7 @@ import json
 import os
 import secrets
 import socket
+import socketserver
 import subprocess
 import sys
 import time
@@ -51,6 +52,15 @@ from pathlib import Path
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
+
+#: 进程起点（模块 import 期，早于任何产品代码的 import）。每个阶段各打一行带相对秒数的进度——
+#: 桩在 CI 上「一行都没打」时，失败断言里嵌的日志尾要能回答「卡在哪一步」（PR #376 macOS 首跑）。
+T0 = time.monotonic()
+
+
+def trace(msg: str) -> None:
+    print(f"stub: +{time.monotonic() - T0:6.2f}s {msg}", file=sys.stderr, flush=True)
+
 
 MODES = (
     "normal",
@@ -83,8 +93,10 @@ def _bind_twice(port: int) -> int:
     a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        trace(f"bind-busy: 第一个 socket bind+listen {port} 前")
         a.bind(("127.0.0.1", port))
         a.listen(1)
+        trace("bind-busy: 第一个 socket 已 listen，第二个 bind 前")
         try:
             b.bind(("127.0.0.1", port))
         except OSError as exc:
@@ -107,26 +119,32 @@ def serve(args: argparse.Namespace) -> int:
 
     secret = "stub-" + secrets.token_urlsafe(16)
     if mode != "no-credentials":
+        trace("import tavotto.engine.session_client 前")
         from tavotto.engine import session_client  # noqa: PLC0415  桩要用产品自己的路径公式
 
+        trace("publish_secret 前")
         session_client.publish_secret(port, secret)
+        trace("publish_secret 后")
 
     worker_code = "import time; time.sleep(600)"
     if args.worker_ignores_term and os.name != "nt":
         worker_code = (
             "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"
         )
+    trace("worker spawn 前")
     worker = subprocess.Popen(
         [sys.executable, "-c", worker_code],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    trace(f"worker spawn 后 pid={worker.pid}")
     if args.pid_file:
         Path(args.pid_file).write_text(
             json.dumps({"pid": os.getpid(), "worker": worker.pid}), encoding="utf-8"
         )
     ready_at = time.monotonic() + (args.delay if mode == "slow-ready" else 0.0)
+    access: dict = {"last": None, "repeat": 0}
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, body: bytes, ctype: str) -> None:
@@ -161,10 +179,43 @@ def serve(args: argparse.Namespace) -> int:
                 self._send(404, b"{}", "application/json")
 
         def log_message(self, fmt: str, *rest: object) -> None:
-            print("stub: " + fmt % rest, file=sys.stderr, flush=True)
+            # 连续相同的访问行只打一次 + 一句重复计数：冒烟脚本每 0.25 秒轮询一次，never-ready
+            # 那类 15 秒就是 60 行 503，会把启动期的进度行挤出 40 行日志尾——而日志尾正是
+            # 失败断言里唯一看得见的诊断
+            line = "stub: " + fmt % rest
+            if line == access["last"]:
+                access["repeat"] += 1
+                return
+            if access["repeat"]:
+                print(f"stub: （上一行重复了 {access['repeat']} 次）", file=sys.stderr, flush=True)
+            access["last"], access["repeat"] = line, 0
+            print(line, file=sys.stderr, flush=True)
+
+    class Server(ThreadingHTTPServer):
+        """与 `http.server.HTTPServer` 同一套 bind，只是把每一步的时刻打出来。
+
+        `HTTPServer.server_bind` 在 `socket.bind` **之后**、`listen` **之前**调
+        `socket.getfqdn(host)`（反向 DNS）。macOS 上实测：端口已 bind 但还没 listen 时，
+        连它的 SYN 被丢掉、`connect()` 是 **timed out** 而不是 refused——PR #376 macOS 首跑的
+        签名正是「日志空 + timed out」。这里把 getfqdn 单独计时，日志尾就能直接回答它花了多久。
+        """
+
+        def server_bind(self) -> None:
+            socketserver.TCPServer.server_bind(self)
+            trace(f"socket 已 bind {self.server_address[1]}（还没 listen）；getfqdn 前")
+            t = time.monotonic()
+            host, port_ = self.server_address[:2]
+            self.server_name = socket.getfqdn(host)  # 与 HTTPServer.server_bind 同一句
+            self.server_port = port_
+            trace(f"getfqdn({host!r}) -> {self.server_name!r}，耗时 {time.monotonic() - t:.2f}s")
+
+        def server_activate(self) -> None:
+            super().server_activate()
+            trace("socket 已 listen")
 
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        trace("HTTPServer 构造前（socket → bind → getfqdn → listen）")
+        server = Server(("127.0.0.1", port), Handler)
     except OSError as exc:
         print(f"stub: OSError: {exc}", file=sys.stderr, flush=True)
         worker.kill()
@@ -181,6 +232,7 @@ def serve(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    trace(f"starting pid={os.getpid()} python={sys.executable} argv={argv or sys.argv[1:]}")
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--fail-mode", choices=MODES, default="normal")
@@ -193,11 +245,13 @@ def main(argv: list[str] | None = None) -> int:
         "--worker-ignores-term", action="store_true", help="worker 对 SIGTERM 置 SIG_IGN（POSIX）"
     )
     args = ap.parse_args(argv)
+    trace(f"参数已解析 mode={args.fail_mode} port={args.port}")
 
     if args.fail_mode == "crash":
         print("stub: 启动即崩（--fail-mode crash）", file=sys.stderr, flush=True)
         return 3
     if args.fail_mode in ("bind-busy", "fallback") and not _first_start(args.state_file):
+        trace("state-file 已在：不是第一次，按 normal 服务")
         args.fail_mode = "normal"
     if args.fail_mode == "bind-busy":
         return _bind_twice(args.port)

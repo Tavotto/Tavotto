@@ -52,7 +52,13 @@ def _stub_launch(*extra: str) -> str:
 def _run(
     workdir: Path, *args: str, timeout_s: float = 120
 ) -> tuple[subprocess.CompletedProcess, dict]:
-    """跑一次脚本；返回 (进程结果, stdout 那一行 JSON)。stdout 必须**恰好一行**且是 JSON。"""
+    """跑一次脚本；返回 (进程结果, stdout 那一行 JSON)。stdout 必须**恰好一行**且是 JSON。
+
+    传给脚本的 `--timeout` 不是判据的主语——判据是「503 / 非 JSON / 凭据不认 → 不算就绪 → 超时 rc 1」，
+    `--timeout` 只是留给**桩起来**的时间。PR #376 macOS 首跑把它定在 3 秒，而那台 runner 上桩在
+    `HTTPServer.server_bind` 的 `getfqdn` 里就耗掉了更久（日志空 + connect timed out），十条负例全红——
+    量错了对象的贴边阈值。所以负例给 15 秒、要真起服务的正例给 60 秒，断言不变。
+    """
     out = subprocess.run(
         [sys.executable, str(SCRIPT), "--workdir", str(workdir), *args],
         capture_output=True,
@@ -188,7 +194,7 @@ def test_a_healthy_server_passes_and_everything_lands_under_the_workdir(tmp_path
 def test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout(tmp_path, mode):
     """两种「租约丢了」的形状：bind 真的抛 EADDRINUSE（平台原话）/ 产品顺延（「端口 P 被占用，改用 Q」）。"""
     launch = _stub_launch("--fail-mode", mode, "--state-file", (tmp_path / "state").as_posix())
-    out, res = _run(tmp_path / "run", "--launch", launch, "--timeout", "30")
+    out, res = _run(tmp_path / "run", "--launch", launch, "--timeout", "60")
     assert out.returncode == 0, out.stderr
     assert res["ok"] is True and res["attempts"] == 2
     first, second = res["history"]
@@ -209,7 +215,7 @@ def test_the_fallback_instance_is_terminated_before_the_retry(tmp_path):
         "--pid-file",
         (tmp_path / "pids.json").as_posix(),
     )
-    out, res = _run(tmp_path / "run", "--launch", launch, "--timeout", "30")
+    out, res = _run(tmp_path / "run", "--launch", launch, "--timeout", "60")
     assert out.returncode == 0, out.stderr
     assert res["history"][0]["state"] == "lease_lost"
     assert res["history"][0]["terminate"]["how"] != "already-exited", "顺延那次进程是活着被终止的"
@@ -240,7 +246,7 @@ def test_the_handshake_nonce_is_redacted_from_the_log_before_it_can_be_uploaded(
     assert "STUBNONCE" not in log, log
     # 失败路径的日志尾同样经过脱敏：never-ready 桩也打那一行
     out, _ = _run(
-        tmp_path / "run2", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "3"
+        tmp_path / "run2", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "15"
     )
     assert out.returncode == 1
     assert "#dnonce=<redacted>" in out.stderr and "STUBNONCE" not in out.stderr, out.stderr
@@ -248,7 +254,7 @@ def test_the_handshake_nonce_is_redacted_from_the_log_before_it_can_be_uploaded(
 
 def test_never_ready_times_out_with_the_server_log_tail(tmp_path):
     out, res = _run(
-        tmp_path / "run", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "3"
+        tmp_path / "run", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "15"
     )
     assert out.returncode == 1
     assert res["ok"] is False and res["history"][0]["state"] == "timeout"
@@ -263,7 +269,7 @@ def test_a_public_200_from_a_stranger_is_not_our_readiness(tmp_path):
         "--launch",
         _stub_launch("--fail-mode", "no-credentials"),
         "--timeout",
-        "3",
+        "15",
     )
     assert out.returncode == 1
     assert res["history"][0]["state"] == "timeout"
@@ -277,7 +283,7 @@ def test_a_server_that_rejects_our_credentials_is_not_our_readiness(tmp_path):
         "--launch",
         _stub_launch("--fail-mode", "reject-credentials"),
         "--timeout",
-        "3",
+        "15",
     )
     assert out.returncode == 1
     assert res["history"][0]["state"] == "timeout"
@@ -288,7 +294,7 @@ def test_a_server_that_rejects_our_credentials_is_not_our_readiness(tmp_path):
 
 def test_a_200_that_is_not_json_is_not_readiness(tmp_path):
     out, res = _run(
-        tmp_path / "run", "--launch", _stub_launch("--fail-mode", "bad-json"), "--timeout", "3"
+        tmp_path / "run", "--launch", _stub_launch("--fail-mode", "bad-json"), "--timeout", "15"
     )
     assert out.returncode == 1
     assert res["history"][0]["state"] == "timeout"
@@ -455,7 +461,7 @@ def test_a_group_that_is_still_populated_after_termination_fails_the_attempt(tmp
 
     monkeypatch.setattr(PS, "terminate", still_there)
     port = PS.SA._free_port()
-    rec = PS.run_attempt(1, PS.parse_launch(_stub_launch(), port), tmp_path / "a1", port, 30)
+    rec = PS.run_attempt(1, PS.parse_launch(_stub_launch(), port), tmp_path / "a1", port, 60)
     assert rec["state"] == "failed" and rec["ok"] is False
     assert "进程组里仍有进程" in rec["reason"], rec
 
@@ -466,7 +472,7 @@ def test_leftover_workers_after_termination_fail_the_attempt(tmp_path, monkeypat
         PS.SA, "_leftover_workers", lambda data_dir: ["python worker.py --figures-dir x"]
     )
     port = PS.SA._free_port()
-    rec = PS.run_attempt(1, PS.parse_launch(_stub_launch(), port), tmp_path / "a1", port, 30)
+    rec = PS.run_attempt(1, PS.parse_launch(_stub_launch(), port), tmp_path / "a1", port, 60)
     assert rec["state"] == "failed" and rec["ok"] is False
     assert "worker 残留" in rec["reason"], rec
 
