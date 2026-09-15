@@ -156,7 +156,7 @@ export const TextArea = forwardRef<
       rows={rows}
       value={value}
       className={cn(
-        'w-full min-w-0 resize-none px-1.5 py-1 leading-relaxed',
+        'w-full min-w-0 resize-none px-2 py-1.5 leading-relaxed',
         BOX_CLASS,
         BOX_FOCUS,
         'placeholder:text-ink-3 outline-none',
@@ -359,7 +359,7 @@ export function NumberField({
         {prefix != null && prefixInside && (
           <span
             onPointerDown={startScrub}
-            className="flex h-full min-w-5 shrink-0 cursor-ew-resize select-none items-center justify-center whitespace-nowrap pl-1.5 text-xs text-ink-3"
+            className="type-number flex h-full min-w-5 shrink-0 cursor-ew-resize select-none items-center justify-center whitespace-nowrap pl-1.5 text-ink-3"
           >
             {prefix}
           </span>
@@ -461,7 +461,7 @@ export function ColorField({
     <div className={cn('flex h-7 items-center', className)}>
       <div
         title={value.toUpperCase()}
-        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border-strong transition-colors hover:border-ink/45 has-[:focus-visible]:focus-ring"
+        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border-input transition-colors hover:border-border-input-hover has-[:focus-visible]:focus-ring"
       >
         <div className="absolute inset-0" style={{ background: value }} />
         <input

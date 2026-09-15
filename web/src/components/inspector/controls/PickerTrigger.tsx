@@ -45,7 +45,7 @@ export const PickerTrigger = forwardRef<
       aria-label={ariaLabel}
       {...rest}
       className={cn(
-        'group flex h-7 w-full items-center gap-1.5 px-1.5 text-left outline-none',
+        'group flex h-7 w-full items-center gap-2 px-2 text-left outline-none',
         FIELD_BOX,
         FIELD_OPEN,
         'focus-visible:focus-ring',

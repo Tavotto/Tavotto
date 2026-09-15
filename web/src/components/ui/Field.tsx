@@ -20,10 +20,12 @@ export function Section({
   /** 标题是内容而非分组名（如图内元素名）时关掉全大写 */
   plainTitle?: boolean
 } & Omit<HTMLAttributes<HTMLElement>, 'title' | 'children' | 'className'>) {
+  // 分区头「上宽下紧」（上 16 / 下 4，Claude 分区头 padding 16 6 4）：标题贴着自己的内容，
+  // 不是均匀地悬在两组之间（2026-09-15 审计 B14）
   return (
-    <section {...rest} className={cn('px-3 pb-4 pt-3 [&+&]:pt-0', className)}>
+    <section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
       {title && (
-        <header className="mb-2 flex h-4 items-center justify-between">
+        <header className="mb-1 flex h-4 items-center justify-between">
           <h3
             className={cn(
               'min-w-0 truncate',
@@ -91,7 +93,8 @@ export function Disclosure({
       <button
         onClick={onToggle}
         aria-expanded={open}
-        className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        // 分区级折叠头 = 分区标题那一档（12/500/ink，type-section）：「浅 + 重」两头都不占（2026-09-15 审计 B06）
+        className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
       >
         <ChevronRight
           size={ICON_SIZE.xs}

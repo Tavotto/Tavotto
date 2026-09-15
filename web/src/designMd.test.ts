@@ -280,7 +280,9 @@ describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
     const spacing = flatMap('spacing')
     expect(Object.keys(spacing).sort()).toEqual(['control', 'setting-row'])
     const sizes = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
-    const heights = [...sizes.matchAll(/\bh-(\d+)\b/g)].map((m) => m[1])
+    // icon-xs（20px 行内小钮）是 28 之外唯一的一档（2026-09-15 审计 B08），只给行内 ?、清除、×；
+    // 这里量的是「控件档」——把它那一行摘掉再比
+    const heights = [...sizes.replace(/'icon-xs':[^\n]*/, '').matchAll(/\bh-(\d+)\b/g)].map((m) => m[1])
     expect(heights.length, 'SIZES 里一条 h- 都没解析到：判据恒真').toBeGreaterThanOrEqual(4)
     expect(new Set(heights), 'Button 不止一档高度').toEqual(new Set([stepOf(spacing.control)]))
     expect(ui('settings/SettingRow.tsx')).toContain(`min-h-${stepOf(spacing['setting-row'])} `)

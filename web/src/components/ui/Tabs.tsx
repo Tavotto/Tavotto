@@ -54,7 +54,7 @@ export function TabList({
       role="tablist"
       aria-label={label}
       onKeyDown={handleKeyDown}
-      className={cn('relative flex h-full items-center gap-3', className)}
+      className={cn('relative flex h-full items-center gap-4', className)}
     >
       {children}
       {indicator.style && (

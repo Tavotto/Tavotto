@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { requestBlankStart } from '@/store/documentStore'
 import { t } from '@/i18n'
+import { Button } from './ui/Button'
 
 interface State {
   error: Error | null
@@ -41,21 +42,18 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             {this.state.error.message}
           </pre>
           <div className="flex gap-2">
-            <button
-              onClick={() => location.reload()}
-              className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink transition-colors hover:border-border-strong"
-            >
+            <Button variant="secondary" onClick={() => location.reload()}>
               {t('actions.reload')}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => {
                 requestBlankStart()
                 location.reload()
               }}
-              className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
             >
               {t('crash.blank', { ns: 'workspace' })}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

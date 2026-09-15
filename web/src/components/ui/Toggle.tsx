@@ -51,21 +51,23 @@ export function Toggle({
       aria-labelledby={ariaLabelledBy}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      // 视觉轨道 14px，点击区拉到 28px 高，符合最小可点面积
+      // 视觉轨道 16px（28×16，thumb 12；2026-09-15 全面审计 B03：24×14 在 48px 设置行里像角标，
+      // OpenAI 32×19、Claude 30×18），点击区拉到 28px 高，符合最小可点面积
       className="group flex h-7 shrink-0 items-center rounded-sm px-0.5 outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
         className={cn(
-          'relative h-[14px] w-[24px] rounded-full transition-colors duration-fast',
+          'relative h-4 w-7 rounded-full transition-colors duration-base',
           // 关态轨道：border-control（对白 3.48:1）。border-strong 的 1.57:1 让关着的开关在 48px 设置行里几乎看不见
           checked ? 'bg-ink' : 'bg-border-control',
         )}
       >
-        {/* 滑块动 transform 不动 left：布局属性每帧重排（二审 E4）；开关的来回用对称曲线 */}
+        {/* 滑块动 transform 不动 left：布局属性每帧重排（二审 E4）；开关的来回用对称曲线。
+            白钮带 shadow-thumb（与分段选择器的 thumb 同一份）：两家的 thumb 都有 0 1px 2px 的投影，白钮才浮得起来 */}
         <span
           className={cn(
-            'absolute left-[2px] top-[2px] h-[10px] w-[10px] rounded-full bg-white transition-transform duration-fast',
-            checked ? 'translate-x-[10px]' : 'translate-x-0',
+            'absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-thumb transition-transform duration-base',
+            checked ? 'translate-x-3' : 'translate-x-0',
           )}
         />
       </span>

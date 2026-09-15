@@ -140,16 +140,14 @@ function Toast({
         </Button>
       )}
       {onClose && (
-        <button
+        <Button
+          size="icon-xs"
           onClick={onClose}
           aria-label={closeLabel}
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:focus-ring',
-            tone === 'error' ? 'hover:bg-danger/10' : 'text-ink-3 hover:bg-surface-hover hover:text-ink',
-          )}
+          className={cn('shrink-0', tone === 'error' ? 'hover:bg-danger/10' : 'text-ink-3 hover:text-ink')}
         >
           <X size={ICON_SIZE.sm} />
-        </button>
+        </Button>
       )}
     </div>
   )

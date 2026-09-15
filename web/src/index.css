@@ -455,6 +455,14 @@
    纸 / surface-2 / selected / 画布灰只有 1.86–1.98:1，达不到非文字对比 3:1（WCAG 1.4.11），
    而 Tavotto 又刻意把别的蓝色都去掉了，这一圈是键盘用户唯一的位置线索。
    不透明的 #2868b7 对同一组底色 4.6–5.6:1。要柔和感在外面另叠光晕，对比度由这一圈负责。 */
+/* 时长四档接成真正的工具类（2026-09-15 全面审计 A01）：Tailwind 4 没有 --duration-* 命名空间，
+   duration-fast / base / slow / exit 写了不产出，页签下划线、分段 thumb、钳位闪边全在跑默认档。
+   同时写 --tw-duration，让 transition-* 的 var(--tw-duration, …) 接得上。 */
+@utility duration-* {
+  --tw-duration: --value(--duration-*);
+  transition-duration: --value(--duration-*);
+}
+
 @utility focus-ring {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;

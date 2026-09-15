@@ -278,8 +278,8 @@ export function HelpTip({
             ignoreNextFocus.current = false
             scheduleClose()
           }}
-          // 与 IconButton 同一套行为（透明底、hover 才浮出 surface-hover、6px 圆角），
-          // 只是尺寸收到 20px：它坐在标题行里，28px 的钮会把标题行撑出节奏
+          // 20px 档的图标钮（与 Button icon-xs 同形，这里保留手写是因为它挂着自己的指针 / 焦点处理）：
+          // 它坐在标题行里，28px 的钮会把标题行撑出节奏
           className={cn(
             'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3',
             'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink',

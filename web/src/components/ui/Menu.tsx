@@ -12,7 +12,7 @@ const CONTENT_CLASS = cn(
 
 /** 一条菜单项的样式：`MenuItem` 与子菜单的触发项共用 */
 const ITEM_CLASS = cn(
-  'flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-xs outline-none',
+  'flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-sm outline-none',
   'data-[highlighted]:bg-surface-hover data-[disabled]:opacity-40',
 )
 
@@ -169,7 +169,7 @@ export function MenuItem({
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
         {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
       </span>
-      {shortcut && <span className="shrink-0 font-mono text-xs text-ink-3">{shortcut}</span>}
+      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </DM.Item>
   )
 }
@@ -238,10 +238,7 @@ export function MenuCheckItem({
         e.preventDefault()
         onSelect()
       }}
-      className={cn(
-        'flex h-7 cursor-default select-none items-center rounded-sm pl-6 pr-2 text-xs text-ink outline-none',
-        'relative data-[highlighted]:bg-surface-hover',
-      )}
+      className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}
     >
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
         <Check size={ICON_SIZE.sm} />
@@ -299,15 +296,19 @@ export function MenuRadioItem({
 
 export const MenuSeparator = () => <DM.Separator className="my-1 h-px bg-border" />
 
+/**
+ * 菜单分组标题：12 / 400 / ink-3——比菜单项**淡**一档（OpenAI 14/400 secondary、Claude 12.5 muted 都
+ * 是这么排的）。此前是 type-section（12/500/ink）压在 11px 的项上，组头比项还重（2026-09-15 审计 A03）。
+ * `MenuHeading` 是同一样式带截断的版本，给对象名 / 「已选 N 个」这类用户内容。
+ */
+const LABEL_CLASS = 'px-2 py-1 text-sm text-ink-3'
+
 export const MenuLabel = ({ children }: { children: ReactNode }) => (
-  <DM.Label className="type-section px-2 py-1">
-    {children}
-  </DM.Label>
+  <DM.Label className={LABEL_CLASS}>{children}</DM.Label>
 )
 
-/** 不大写、不加字距的普通说明行（对象名 / 「已选 N 个」这类用户内容不该被大写） */
 export const MenuHeading = ({ children, ...rest }: { children: ReactNode } & Record<`data-${string}`, string | number | boolean | undefined>) => (
-  <DM.Label {...rest} className="truncate px-2 py-1 text-xs text-ink-3" title={typeof children === 'string' ? children : undefined}>
+  <DM.Label {...rest} className={cn(LABEL_CLASS, 'truncate')} title={typeof children === 'string' ? children : undefined}>
     {children}
   </DM.Label>
 )

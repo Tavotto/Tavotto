@@ -70,7 +70,7 @@ export function Select<T extends string>({
         <ChevronDown
           size={ICON_SIZE.xs}
           className={cn(
-            'shrink-0 text-ink-3 transition-transform duration-fast ease-pop',
+            'shrink-0 text-ink-3 transition-transform duration-fast',
             'group-data-[state=open]:rotate-180',
           )}
         />
@@ -78,7 +78,7 @@ export function Select<T extends string>({
       <RS.Portal>
         <RS.Content
           position="popper"
-          sideOffset={4}
+          sideOffset={6}
           className={cn(
             'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md',
             'bg-surface p-1 shadow-pop',

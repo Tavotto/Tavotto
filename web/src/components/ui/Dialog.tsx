@@ -91,7 +91,8 @@ export function Dialog({
       <RD.Portal>
         <RD.Overlay
           className={cn(
-            'fixed inset-0 z-40 bg-ink/20 backdrop-blur-[1px]',
+            // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）
+            'fixed inset-0 z-40 bg-ink/30',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}
@@ -151,7 +152,7 @@ export function Dialog({
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
                 ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
-                : 'items-start pb-1 pl-4 pr-12 pt-3.5',
+                : 'items-start pb-1 pl-5 pr-12 pt-4',
             )}
           >
             <div className="min-w-0">
@@ -164,13 +165,13 @@ export function Dialog({
           <div
             className={cn(
               'min-h-0 flex-1',
-              shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-4 py-3',
+              shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
             )}
           >
             {children}
           </div>
           {footer && (
-            <div className="flex items-center justify-end gap-2 px-4 pb-3.5 pt-1">
+            <div className="flex items-center justify-end gap-2 px-5 pb-4 pt-1">
               {footer}
             </div>
           )}
@@ -188,8 +189,8 @@ export function Dialog({
                 label={t('actions.close')}
                 tip={false}
                 className={cn(
-                  'absolute right-2.5 text-ink-3 hover:text-ink',
-                  shell ? 'top-2' : 'top-2.5',
+                  'absolute text-ink-3 hover:text-ink',
+                  shell ? 'right-2.5 top-2' : 'right-3 top-3',
                 )}
               >
                 <X size={ICON_SIZE.md} />
