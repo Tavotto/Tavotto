@@ -293,11 +293,41 @@ describe('同源的运行时图与磁盘图', () => {
   })
 })
 
+/**
+ * 区头上的计数是一个 meta 数字，不是一句话。项目里一张图都没有时它不出现——
+ * 下面那句空态已经是「项目里还没有图」，一行之隔说两遍（2026-09-15 左栏审计 L04 一族）；
+ * 筛到 0 条是另一回事：「0 / 2」告诉你还有 2 张只是没匹配上。
+ */
+describe('「图」区头的计数', () => {
+  const figuresHead = () =>
+    [...host.querySelectorAll('h3 button')].find((b) => b.textContent?.startsWith('图'))!
+
+  it('项目里一张图都没有：区头只有「图」，没有 0', async () => {
+    seedPanels([])
+    await mount()
+    expect(figuresHead().textContent).toBe('图')
+  })
+
+  it('有图：区头带总数', async () => {
+    seedPanels([panel('Fig1.pdf'), panel('Fig2.pdf')])
+    await mount()
+    expect(figuresHead().textContent).toBe('图2')
+  })
+
+  it('筛到 0 条：写成「0 / 2」，不是空白也不是 0', async () => {
+    seedPanels([panel('Fig1.pdf'), panel('Fig2.pdf')])
+    useAssetBrowseStore.getState().setQuery('zzz')
+    await mount()
+    expect(cardIds()).toEqual([])
+    expect(figuresHead().textContent).toBe('图0 / 2')
+  })
+})
+
 describe('搜索词与筛选活得比组件长', () => {
   it('卸载再挂载（切页签 / 收起抽屉）后输入还在；换项目（clear）才回默认', async () => {
     seedPanels([panel('Fig1.pdf'), panel('Fig2.pdf')])
     await mount()
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="搜索面板"]')!
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="搜索图"]')!
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
       setter.call(input, 'Fig2')
@@ -307,11 +337,11 @@ describe('搜索词与筛选活得比组件长', () => {
 
     await unmount()
     await mount()
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索面板"]')!.value).toBe('Fig2')
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索图"]')!.value).toBe('Fig2')
     expect(cardIds()).toEqual(['Fig2.pdf'])
 
     await act(async () => useAssetBrowseStore.getState().clear())
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索面板"]')!.value).toBe('')
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索图"]')!.value).toBe('')
     expect(cardIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
     expect(useAssetBrowseStore.getState().filters).toEqual(DEFAULT_ASSET_FILTERS)
   })

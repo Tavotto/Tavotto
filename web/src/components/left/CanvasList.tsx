@@ -10,8 +10,10 @@ import {
   Plus,
   SearchX,
   Trash2,
-} from '@/components/ui/icons'
+} from 'lucide-react'
+import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { listRowClass } from '@/components/ui/listRow'
 import {
   activateCanvas,
   createCanvasAndActivate,
@@ -21,7 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
-import { Button } from '../ui/Button'
+import { IconButton } from '../ui/Button'
 import { CanvasThumb } from '../CanvasThumb'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
@@ -69,16 +71,14 @@ export function CanvasList() {
           placeholder={cl('search')}
           aria-label={cl('searchAria')}
         />
-        <Button
-          size="icon"
-          aria-label={cl('newCanvas')}
-          onClick={() => void createCanvasAndActivate()}
-        >
+        {/* 图标钮走 IconButton：名字与气泡同一份（宪法第四、五节；左栏审计 L14） */}
+        <IconButton label={cl('newCanvas')} onClick={() => void createCanvasAndActivate()}>
           <Plus size={ICON_SIZE.md} />
-        </Button>
+        </IconButton>
       </div>
 
-      <ul aria-label={cl('listLabel')} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      {/* 行自己带 `mx-1`（listRowClass），列表不再另加左右内边距：缩略图落在 56 那条竖线上 */}
+      <ul aria-label={cl('listLabel')} className="min-h-0 flex-1 overflow-y-auto pb-2">
         {rows.map((c, i) => (
           <CanvasRow
             key={c.id}
@@ -99,7 +99,7 @@ export function CanvasList() {
         ))}
         {rows.length === 0 && (
           <li>
-            <EmptyState icon={SearchX} title={cl('noMatch', { query })} />
+            <EmptyState icon={SearchX} title={cl('noMatch')} />
           </li>
         )}
       </ul>
@@ -167,10 +167,9 @@ function CanvasRow({
         }
         dragFrom.current = null
       }}
-      className={cn(
-        'group relative flex items-center gap-2 rounded-sm px-1.5 py-1.5',
-        active ? 'bg-selected' : 'hover:bg-surface-hover',
-      )}
+      // 与树行 / 列表行同一副外观（hover / selected / mx-1）；高度是例外——缩略图 40 撑到 52
+      // （左栏审计 L32）
+      className={cn(listRowClass({ selected: active }), 'h-auto gap-2 px-2 py-1.5')}
     >
       <CanvasThumb page={canvas.page} objects={canvas.objects} />
       <button
@@ -193,14 +192,16 @@ function CanvasRow({
               if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
               if (e.key === 'Escape') onRenamed(null)
             }}
-            className="h-5 w-full rounded-sm border border-accent bg-surface px-1 text-xs text-ink outline-none"
+            // 行内改名框也是「可编辑框」那一副（fieldBox），28 高；此前三处行内改名框三种
+            // 高度 / 圆角（左栏审计 L31）
+            className={cn('h-7 w-full px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
           />
         ) : (
           <>
-            <span className={cn('block truncate text-xs', active ? 'font-medium text-ink' : 'text-ink-2')}>
-              {canvas.name}
-            </span>
-            <span className="block text-xs text-ink-3">
+            {/* 画布名是主文字：12 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
+                元数据 11 / ink-3，选中时不跟着行加粗 */}
+            <span className="block truncate text-sm text-ink">{canvas.name}</span>
+            <span className="block text-xs font-normal text-ink-3">
               {cl('meta', {
                 w: canvas.page.w,
                 h: canvas.page.h,
@@ -214,13 +215,13 @@ function CanvasRow({
         width={148}
         align="end"
         trigger={
-          <Button
-            size="icon-sm"
-            aria-label={cl('rowActions', { name: canvas.name })}
+          <IconButton
+            iconSize="sm"
+            label={cl('rowActions', { name: canvas.name })}
             className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           >
             <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-          </Button>
+          </IconButton>
         }
       >
         <MenuItem onSelect={onRenameStart}>

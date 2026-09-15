@@ -395,7 +395,6 @@
     "listLabel": "问题列表",
     "next": "下一项",
     "none": "未发现问题",
-    "noneHint": "按当前规范检查，项目没有需要处理的问题。",
     "noneInFilter": "当前筛选下没有问题",
     "noneInScope": "这张图上没有问题",
     "noneInScopeHint_other": "整个文档里还有 {{count}} 项问题。",

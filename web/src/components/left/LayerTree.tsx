@@ -17,7 +17,8 @@ import {
   Square,
   Triangle,
   Type,
-} from '@/components/ui/icons'
+} from 'lucide-react'
+import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
@@ -369,24 +370,27 @@ function LayerRow({
               setTimeout(() => li?.focus(), 0)
             }
           }}
-          className="h-5 min-w-0 flex-1 rounded-xs border border-accent bg-surface px-1 text-xs text-ink outline-none"
+          // 行内改名框是「可编辑框」那一副（fieldBox），28 高 = 整行（左栏审计 L31）
+          className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
-      {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`）；行首的 Braces 是
-          大括号形状的种类图标，两个角色靠位置（行尾）与图形分开。悬停说清它是
-          什么——审计 B04：一个没有名字的记号只能靠猜 */}
+      {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`），尺寸与色也同源：xs / ink-3——
+          角标不该比行首 14px 的类型图标更响（左栏审计 L28）；行首的 Braces 是大括号形状的
+          种类图标，两个角色靠位置（行尾）与图形分开。悬停说清它是什么——审计 B04：一个
+          没有名字的记号只能靠猜 */}
       {isScript && !editing && (
         <span
-          className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-2"
+          className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
           title={lt('editableBadge')}
         >
-          <EditableFigureIcon size={ICON_SIZE.sm} aria-hidden />
+          <EditableFigureIcon size={ICON_SIZE.xs} aria-hidden />
         </span>
       )}
+      {/* 「基准」是一个词不是取值代号：type-meta，不用等宽（左栏审计 L29） */}
       {primary && !editing && (
-        <span className="shrink-0 font-mono text-xs text-ink-3">{lt('primary')}</span>
+        <span className="shrink-0 type-meta font-normal">{lt('primary')}</span>
       )}
 
       {/* 锁定 / 隐藏：hover 或键盘落到行里才出现；已锁 / 已隐藏的常驻，状态得看得见 */}

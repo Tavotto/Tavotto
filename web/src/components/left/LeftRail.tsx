@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardList,
@@ -46,7 +47,9 @@ export function LeftRail() {
     <nav
       aria-label={t('rail.navLabel')}
       style={{ width: RAIL_W }}
-      className="flex shrink-0 flex-col items-center gap-1 border-r border-border bg-surface pb-2 pt-2"
+      // 轨与抽屉之间不画线：两个同色面之间的 hairline 只是第三条竖线（抽屉右缘已有一条）；
+      // 抽屉关着时轨对着纸色画布，明度差已经够（左栏审计 L16）
+      className="flex shrink-0 flex-col items-center gap-1 bg-surface pb-2 pt-2"
     >
       {ITEMS.map(({ id, icon: Icon }) => {
         const active = open && tab === id
@@ -54,39 +57,46 @@ export function LeftRail() {
         const label = id === 'problems' && problems > 0
           ? t('rail.problemsCount', { count: problems })
           : t(`rail.${id}`)
-        return (
-          <Tip key={id} label={active ? t('rail.collapse', { label }) : label} side="right">
-            <button
-              onClick={() => railClick(id)}
-              // 焦点救援的落点（`lib/focusRescue.ts`）：aria-label 是本地化文案，
-              // 不能当选择器用
-              data-rail={id}
-              aria-label={label}
-              aria-expanded={active}
-              className={cn(
-                'relative flex h-8 w-8 items-center justify-center rounded-sm outline-none',
-                'transition-colors focus-visible:focus-ring',
-                active
-                  ? 'bg-selected text-ink'
-                  : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
-              )}
-            >
-              <Icon size={ICON_SIZE.md} filled={active} />
-              {id === 'problems' && problems > 0 && (
-                /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
-                   而且用形状（实心点）+ 数字两重表达，不只靠颜色 */
-                <span
-                  aria-hidden
-                  className={cn(
-                    'absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center',
-                    'rounded-full px-0.5 text-[9px] leading-none tabular-nums',
-                    blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
-                  )}
-                >
-                  {problems > 99 ? '99+' : problems}
-                </span>
-              )}
-            </button>
+        const button = (
+          <button
+            onClick={() => railClick(id)}
+            // 焦点救援的落点（`lib/focusRescue.ts`）：aria-label 是本地化文案，
+            // 不能当选择器用
+            data-rail={id}
+            aria-label={label}
+            aria-expanded={active}
+            className={cn(
+              'relative flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+              'transition-colors focus-visible:focus-ring',
+              active
+                ? 'bg-selected text-ink'
+                : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
+            )}
+          >
+            <Icon size={ICON_SIZE.md} />
+            {id === 'problems' && problems > 0 && (
+              /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
+                 而且用形状（实心点）+ 数字两重表达，不只靠颜色 */
+              <span
+                aria-hidden
+                className={cn(
+                  'absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center',
+                  'rounded-full px-0.5 text-[9px] leading-none tabular-nums',
+                  blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
+                )}
+              >
+                {problems > 99 ? '99+' : problems}
+              </span>
+            )}
+          </button>
+        )
+        // 抽屉开着时不出气泡：它会落在抽屉第二行上、盖住内容，而面板头已经写着这个名字
+        // （左栏审计 L15）；开合状态由 aria-expanded 说，可达名不变（e2e 按它找这颗钮）
+        return active ? (
+          <Fragment key={id}>{button}</Fragment>
+        ) : (
+          <Tip key={id} label={label} side="right">
+            {button}
           </Tip>
         )
       })}
@@ -98,14 +108,14 @@ export function LeftRail() {
           同一个赌注在三处各下了一次）。id 与 rail 文案键的末段对齐。
           （这里不写成完整的翻译调用形态：i18n 检查是按字面量扫的，注释里出现
           一个带通配的 key 会被当成真的用到了，构建当场红。） */}
-      <span className="mt-auto h-px w-6 bg-border" aria-hidden />
+      {/* 分区之间只靠留白（`mt-auto` 把这两颗推到底），不画分隔线（左栏审计 L17） */}
       <Tip label={t('rail.readiness')} side="right">
         <button
           data-rail="readiness"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
           className={cn(
-            'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+            'mt-auto flex h-8 w-8 items-center justify-center rounded-sm outline-none',
             'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
