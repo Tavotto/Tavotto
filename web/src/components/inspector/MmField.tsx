@@ -35,6 +35,7 @@ export function MmField({
     <NumberField
       fill
       prefix={label}
+      prefixInside
       unit={suffix || undefined}
       value={value ?? 0}
       mixed={value === undefined}

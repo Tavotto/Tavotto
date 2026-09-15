@@ -665,7 +665,7 @@
     "flipVertical": "Vertical",
     "flipped": "Flipped",
     "geometry": "Position and size",
-    "image": "Image fit",
+    "image": "Image",
     "loading": "Loading…",
     "lockAspect": "Lock aspect ratio",
     "morePanels_one": "{{count}} more panel not shown",
@@ -698,7 +698,9 @@
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
     "unknown": "Unknown",
     "restore": "Restore",
-    "replaceAction": "Choose…"
+    "replaceAction": "Choose…",
+    "cropRow": "Framing",
+    "fitRow": "Fit"
   },
   "panelLabel": "Right panel",
   "pinnedAria": "Right panel is pinned; click to auto-hide it",

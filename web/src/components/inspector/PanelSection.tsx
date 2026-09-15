@@ -418,9 +418,9 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
       已经跟着 W/H 搬到位置与尺寸那一组（审计 T26）。
     */
     <Section title={pn('image')}>
-      {/* 取景 / 完整放入 / 填满框：三个同级、互斥的摆法，三列等宽一行排开；
-          裁剪是进出的模式（active），另两颗是一次性的摆法命令 */}
-      <div className="grid grid-cols-3 gap-1">
+      {/* 裁剪是进出的模式，完整放入 / 填满框是两个一次性的摆法命令——不是三颗同权重的
+          大钮排一行（2026-09-15 打磨批次 C，L3）：模式一行、命令一行，标签列与位置组对齐 */}
+      <Row label={pn('cropRow')}>
         <Tip label={pn('cropTip')}>
           <Button
             variant="secondary"
@@ -438,6 +438,8 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
             {pn(cropping ? 'cropDone' : 'crop')}
           </Button>
         </Tip>
+      </Row>
+      <Row className="mt-1.5" label={pn('fitRow')}>
         <Tip label={pn('fitTip')}>
           <Button variant="secondary" size="sm" onClick={() => fitPanels(ids)}>
             <Minimize2 size={ICON_SIZE.sm} className="text-ink-3" />
@@ -450,7 +452,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
             {pn('fill')}
           </Button>
         </Tip>
-      </div>
+      </Row>
       {cropped && (
         <div className="mt-1 flex justify-end">
           <Tip label={pn('resetCropTip')}>

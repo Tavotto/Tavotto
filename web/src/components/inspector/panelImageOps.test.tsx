@@ -75,7 +75,7 @@ describe('「原始比例 / 原始尺寸」跟着 W/H 走', () => {
     const geo = section('位置与尺寸')
     expect(geo.textContent).toContain('原始比例')
     expect(geo.textContent).toContain('原始尺寸')
-    const image = section('图片适配')
+    const image = section('图片')
     expect(image.textContent).not.toContain('原始比例')
     expect(image.textContent).not.toContain('原始尺寸')
   })
@@ -97,13 +97,13 @@ describe('「原始比例 / 原始尺寸」跟着 W/H 走', () => {
 
 describe('「图片适配」只剩取景三件', () => {
   it('裁剪 / 完整放入 / 填满框，没有别的', () => {
-    const image = section('图片适配')
+    const image = section('图片')
     const names = [...image.querySelectorAll('button')].map((b) => b.textContent?.trim())
     expect(names).toEqual(['裁剪', '完整放入', '填满框'])
   })
 
   it('每颗都是小图标配短名称，不是纯图标', () => {
-    const image = section('图片适配')
+    const image = section('图片')
     for (const b of image.querySelectorAll('button')) {
       expect(b.querySelector('svg')).not.toBeNull()
       expect(b.textContent?.trim().length).toBeGreaterThan(0)

@@ -178,6 +178,12 @@ interface NumberFieldProps {
   precision?: number
   prefix?: ReactNode
   /**
+   * 前缀坐进框里（2026-09-15 打磨批次 C）：只给单字符 / 符号的几何标记（X / Y / W / H、θ）——
+   * 框外的灰色单字母读作与框无关的孤立字符，Figma / Sketch 的几何字段都是「字母 + 数字 + 单位」
+   * 在同一个框里。词语前缀（「字号」）仍放框外，那是行首的说明文字。仍可横向拖动改数。
+   */
+  prefixInside?: boolean
+  /**
    * 框内单位：`[ 393.7      mm ]`。数字右对齐、单位靠右坐在同一个框里，
    * 一列数字框的单位就排成一条稳定的竖线（Design Constitution 第五节）。
    * 框外的 `suffix`（`[393.7] mm`）是 1.0 前的形态，2026-09-11 全部迁完后删掉——
@@ -213,6 +219,7 @@ export function NumberField({
   max = 100000,
   precision = 1,
   prefix,
+  prefixInside,
   unit,
   fill,
   disabled,
@@ -321,7 +328,7 @@ export function NumberField({
         className,
       )}
     >
-      {prefix != null && (
+      {prefix != null && !prefixInside && (
         // 标签放在框外：框只圈住真正可编辑的部分，「字号」这类词读作行首的
         // 说明文字，而不是框里的一截。仍然是拖动改数的手柄（startScrub 没动）。
         // `min-w-5` 保留单字符标记（X / Y / W）的 20px 对齐宽度；
@@ -349,6 +356,14 @@ export function NumberField({
           clamped && 'border-warn transition-colors duration-slow hover:border-warn focus-within:border-warn',
         )}
       >
+        {prefix != null && prefixInside && (
+          <span
+            onPointerDown={startScrub}
+            className="flex h-full min-w-5 shrink-0 cursor-ew-resize select-none items-center justify-center whitespace-nowrap pl-1.5 text-xs text-ink-3"
+          >
+            {prefix}
+          </span>
+        )}
         <input
           ref={inputRef}
           type="text"
@@ -392,7 +407,8 @@ export function NumberField({
             // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
             // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
             // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
-            'type-number h-full min-w-0 bg-transparent px-1.5 text-ink outline-none',
+            'type-number h-full min-w-0 bg-transparent text-ink outline-none',
+            prefix != null && prefixInside ? 'pl-1 pr-1.5' : 'px-1.5',
             fill ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
