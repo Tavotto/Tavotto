@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
-import { msg, t as translate } from '@/i18n'
+import { msg } from '@/i18n'
 import { Search } from '@/components/ui/icons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -246,12 +246,15 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-ink/20 pt-[18vh] backdrop-blur-[1px]"
+      // 遮罩与 `ui/Dialog` 同值：30%、不模糊（宪法第十九节 / 审计 B13）。这一串是从那边
+      // 抄来的第二份字面量，Dialog 改了它不会跟——原语层这一轮冻结，已请 team-lead 抽成
+      // 一处（`ui/overlay`），落地后这里只留引用（2026-09-15 打磨 K2）
+      className="fixed inset-0 z-50 flex items-start justify-center bg-ink/30 pt-[18vh]"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) setOpen(false)
       }}
     >
-      <div className="w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg bg-surface shadow-dialog animate-pop-in">
+      <div className="w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg bg-surface shadow-dialog animate-pop-in">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
           <input
@@ -276,18 +279,15 @@ export function CommandPalette() {
             aria-label={t('palette.searchLabel')}
             className="h-6 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
           />
-          <span className="shrink-0 font-mono text-xs text-ink-3">
-            {translate('keycap.esc')}
-          </span>
         </div>
         <ul
           ref={listRef}
-          className="max-h-72 overflow-y-auto py-1"
+          className="max-h-80 overflow-y-auto py-1"
           role="listbox"
           aria-label={t('palette.listLabel')}
         >
           {matches.length === 0 && (
-            <li className="px-3 py-2 text-xs text-ink-3">{t('palette.noMatch')}</li>
+            <li className="px-3 py-2 text-sm text-ink-3">{t('palette.noMatch')}</li>
           )}
           {sections.map((section) => {
             const offset = matches.indexOf(section.items[0])
@@ -297,7 +297,8 @@ export function CommandPalette() {
                   key={`h:${section.section}`}
                   role="presentation"
                   data-palette-section={section.section}
-                  className="px-3 pb-0.5 pt-1.5 text-xs text-ink-3"
+                  // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
+                  className="px-3 pb-0.5 pt-1.5 text-sm text-ink-3"
                 >
                   {sectionLabel(section.section)}
                 </li>
@@ -316,14 +317,16 @@ export function CommandPalette() {
                     <button
                       onPointerMove={() => setActive(i)}
                       onClick={() => runCommand(c)}
+                      // 选中行用 `selected`（ink 10%）：`surface-2` 对白底只有 1.05:1，
+                      // 「现在会执行哪一条」几乎看不出来。行 32 / 12 号与菜单项同档（打磨 K1）
                       className={cn(
-                        'flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs text-ink',
-                        i === active && 'bg-surface-2',
+                        'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-ink',
+                        i === active && 'bg-selected',
                       )}
                     >
                       <span className="min-w-0 flex-1 truncate">{c.label}</span>
                       {c.shortcut && (
-                        <span className="shrink-0 font-mono text-xs text-ink-3">{c.shortcut}</span>
+                        <span className="shrink-0 text-xs tabular-nums text-ink-3">{c.shortcut}</span>
                       )}
                     </button>
                   </li>

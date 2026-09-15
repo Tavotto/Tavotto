@@ -9,7 +9,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
-import { TAB_UNDERLINE } from './ui/tabClass'
+import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
+import { useBoldWidthLock } from './ui/useBoldWidthLock'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -38,14 +39,16 @@ export function CanvasTabs() {
   const activate = (id: string) => activateCanvas(id)
 
   return (
-    <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+    /* px-3 与顶栏同值：品牌标 12 / 页签盒 8 / 页签文字 18 三条竖线收成一条（2026-09-15 打磨 T8）。
+       条高 36 与右栏页签同档（B1）；顶栏那条 border-b 已删，整屏的那一条 hairline 就是这里 */
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface px-3">
       {/* tablist 只许直接拥有 tab 子项（ARIA 硬性要求，axe critical）：
           role 挂在真正装着 TabItem 的滚动条上；「+」与画布菜单在 tablist 外 */}
       <div
         ref={strip}
         role="tablist"
         aria-label={t('tabs.listLabel')}
-        className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto"
+        className="flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -127,6 +130,10 @@ function TabItem({
     if (renaming) setDraft(name)
   }, [renaming, name])
 
+  // 选中态 600 比 400 宽 2~3%：量一次加粗宽度写成 min-width，切页签时邻居不挪——与右栏 `Tab` 同一个钩子
+  const nameRef = useRef<HTMLSpanElement>(null)
+  useBoldWidthLock(nameRef)
+
   if (renaming) {
     return (
       <TextInput
@@ -185,17 +192,28 @@ function TabItem({
         }
       }}
       className={cn(
-        'group relative flex h-8 max-w-44 shrink-0 cursor-default items-center justify-center gap-1',
-        // 关闭键改为绝对定位后左右留同样的量：标题与激活下划线共用一条中轴
-        closable ? 'px-6' : 'px-2.5',
-        'outline-none focus-visible:focus-ring',
-        active ? cn('text-ink', TAB_UNDERLINE, 'after:inset-x-1.5') : 'text-ink-3 hover:text-ink-2',
+        // 选中态与右栏页签同一副语法（`tabClass`：600 + ink + 2px 线，宪法第五节）：
+        // 此前这里只借了那条线，选中仍是 400——同一屏两种「选中」（2026-09-15 打磨 B1）
+        tabClass(active),
+        'group flex h-9 max-w-44 shrink-0 cursor-default items-center gap-1',
+        // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）
+        closable && 'pr-5',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
         dragOver && 'rounded-sm bg-selected text-ink',
       )}
       title={name}
     >
-      <span className="truncate text-center text-xs">{name}</span>
+      {/* 下划线挂在**文字盒**上而不是整个 tab 上（B2）：此前「Figure 1」41px 宽、线 49px，
+          可关闭时还延到 × 底下。外层给 h-full 让 `after:bottom-0` 落在条的底边 */}
+      <span
+        ref={nameRef}
+        className={cn(
+          'relative flex h-full min-w-0 items-center',
+          active && cn(TAB_UNDERLINE, 'after:inset-x-0'),
+        )}
+      >
+        <span className="truncate">{name}</span>
+      </span>
       {dirty && (
         <span
           aria-label={t('tabs.unsaved')}
@@ -210,7 +228,7 @@ function TabItem({
             onClose()
           }}
           className={cn(
-            'absolute right-1.5 top-1/2 -translate-y-1/2',
+            'absolute right-0 top-1/2 -translate-y-1/2',
             'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-ink-3',
             'opacity-0 outline-none hover:bg-surface-hover hover:text-ink',
             'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',

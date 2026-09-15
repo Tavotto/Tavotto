@@ -146,6 +146,27 @@ describe('命令集', () => {
  * 排序判据本身在 `lib/commandRanking.test.ts` 逐条反证过；这里量的是
  * 「面板真的按它渲染」以及「跑过的命令进了最近使用、且存在本机」。
  */
+describe('外壳（2026-09-15 打磨 K1 / K3）', () => {
+  it('输入行右端不再常驻「Esc」：已表达过的不重复', () => {
+    mount()
+    const box = document.querySelector('[role=listbox]')!.parentElement!
+    expect(
+      [...box.querySelectorAll('span')].some((sp) => sp.textContent?.trim() === 'Esc'),
+      'Esc 那段提示删掉了',
+    ).toBe(false)
+  })
+
+  it('选中行用 selected（ink 10%），不是 surface-2（对白 1.05:1，几乎看不见）', () => {
+    mount()
+    const active = document.querySelector('[role=option][aria-selected=true] button')!
+    expect(active.className).toContain('bg-selected')
+    expect(active.className).not.toContain('bg-surface-2')
+    // 行 32 / 12 号：与菜单项同档
+    expect(active.className).toContain('h-8')
+    expect(active.className).toContain('text-sm')
+  })
+})
+
 describe('空查询时的顺序（审计 T50）', () => {
   // 「最近使用」是本机偏好，模块初始化时就从 localStorage 读进来了：
   // 不清的话上一条用例点过什么，这一条的第一屏就跟着变

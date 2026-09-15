@@ -83,7 +83,6 @@
   --color-ok: #2b7649;
   --color-ok-subtle: #e6f3ea;
   --color-sel: #2f6fed;
-
   /* 圆角只有四档 + full（圆点 / 开关 / 徽章）。先把 Tailwind 自带的 xl / 2xl…
      整个清掉，rounded-xl 这种写了也不生效，随机圆角就没有来路。
        xs 3  ——16px 高以下的小片：kbd、计数角标、缩略图上的标签

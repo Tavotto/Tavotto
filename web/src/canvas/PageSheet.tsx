@@ -13,7 +13,10 @@ interface PageSheetProps {
   showSafeArea?: boolean
 }
 
-/** 白色纸面：唯一带 shadow 的常驻元素，画布的视觉中心 */
+/**
+ * 白色纸面：画布的视觉中心。**没有投影**——持久表面不用投影（宪法第一节），
+ * 只有一圈 1px 的 border-strong/60 轮廓把纸从画布灰上托出来。
+ */
 export function PageSheet({
   w,
   h,
@@ -59,7 +62,8 @@ export function PageSheet({
       )}
       {showSafeArea && margin > 0 && (
         <div
-          className="pointer-events-none absolute border border-dashed border-accent/45"
+          // 画布层的彩色线只有 --color-sel 一种（2026-09-15 打磨 C2）：安全区与选框同色
+          className="pointer-events-none absolute border border-dashed border-sel/45"
           style={{
             inset: mmToWorld(margin),
             borderWidth: hair,

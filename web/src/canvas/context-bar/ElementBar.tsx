@@ -4,6 +4,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
+import { PickerTrigger } from '@/components/inspector/controls/PickerTrigger'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
 import { LEGEND_ANCHOR_PROP, legendAnchorRange, outsidePresetOf, toLegendAnchor } from '@/lib/legendModel'
@@ -15,7 +16,6 @@ import { FALLBACK_MIN_FONT_SIZE_PT } from '@/lib/profile'
 import { displayValueOf, nextToggle, toggleStateOf } from '@/lib/typography'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
-import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Popover } from '@/components/ui/Popover'
 import { Select } from '@/components/ui/Select'
@@ -60,7 +60,7 @@ function ElementQuickInner({
   if (role === 'line' || role === 'linecoll') {
     const ls = w.fieldOf('linestyle')
     return (
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1">
         {w.has('color') && (
           <ColorField
             ariaLabel={propLabel('color', role)}
@@ -86,22 +86,18 @@ function ElementQuickInner({
           />
         )}
         {ls && (
-          <Popover
-            width={190}
-            align="start"
-            trigger={
-              <Button size="sm" className="px-1.5" aria-label={propLabel('linestyle', role)}>
-                {optionLabel('linestyle', String(w.read('linestyle') ?? '-'))}
-              </Button>
-            }
-          >
+          /* 带样张的取值 = `Popover + PickerTrigger + OptionGrid`（宪法第五节），触发器与
+             Select 同一副框。`LineStylePicker` 本身就是这一整套——此前它被再包一层 Popover +
+             34×28 的 ghost 文字钮，点「实线」开出的弹层里还蹲着一个没展开的选择器
+             （2026-09-15 打磨 F4） */
+          <span className="w-32 shrink-0">
             <LineStylePicker
               value={String(w.read('linestyle') ?? '-')}
               options={ls.options ?? []}
               onChange={(v) => w.writeOnce('linestyle', v)}
               ariaLabel={propLabel('linestyle', role)}
             />
-          </Popover>
+          </span>
         )}
         <Sep />
       </span>
@@ -122,15 +118,23 @@ function ElementQuickInner({
       ? translate(`control.legendOutside.${outside}`, { ns: 'inspector' })
       : optionLabel('loc', locValue)
     return (
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1">
         {loc && (
           <Popover
             width={196}
             align="start"
             trigger={
-              <Button size="sm" className="px-1.5" aria-label={propLabel('loc', role)}>
+              /* 与线型同一副框（F4）：内 / 外两带有五行高，进不了 36px 的浮条，
+                 所以这里仍留一层 Popover，只把触发器换成 PickerTrigger。宽度写在它自己身上
+                 ——外面套一层 span 的话 Radix 的 asChild 会把 data-state / aria-expanded
+                 落到那层 span 上，钮就没有打开态了 */
+              <PickerTrigger
+                ariaLabel={propLabel('loc', role)}
+                mixed={false}
+                className="w-32 shrink-0"
+              >
                 {placeName}
-              </Button>
+              </PickerTrigger>
             }
           >
             {/* 内 / 外两带：浮动栏与属性页是同一个控件，少给一半就等于
@@ -201,7 +205,7 @@ function TextElementActions({
   const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <span className="flex items-center gap-1.5" data-text-quick={compact ? 'compact' : 'full'}>
+    <span className="flex items-center gap-1" data-text-quick={compact ? 'compact' : 'full'}>
       {!compact && family && (family.options?.length ?? 0) > 0 && (
         <Select
           className="w-[112px] shrink-0"

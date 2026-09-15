@@ -3433,7 +3433,7 @@ export default interface Resources {
       "readOnlySuffix": " · 只读",
       "recent": "最近",
       "registry": "项目接入状态…",
-      "scriptCount_other": "{{count}} 个可参数化脚本",
+      "scriptCount_other": "{{count}} 个已关联脚本",
       "trigger": "当前项目 {{name}}，点击切换"
     }
   },
@@ -4127,12 +4127,12 @@ export default interface Resources {
       "documentLabel": "文档：{{name}}",
       "documentName": "文档名",
       "export": "导出",
-      "exportPackage": "导出项目包（.tavotto）",
+      "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
       "fitCanvas": "适应画布",
       "fromOtherProject": "· 其他项目",
       "fromProject": "· 项目 {{name}}",
-      "importPackage": "导入项目包（.tavotto）…",
+      "importPackage": "导入项目包…",
       "insertShape": "插入形状",
       "more": "更多",
       "moreWithUpdate": "更多（有新版本）",

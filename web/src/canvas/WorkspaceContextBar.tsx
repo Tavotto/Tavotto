@@ -3,6 +3,8 @@ import { ArrowLeft, Plus } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
+import { Kbd } from '@/components/ui/Kbd'
+import { Sep } from './context-bar/shared'
 import { untruncatedLabel } from '@/components/inspector/identityCrumbs'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import { reasonText, statusLabel } from '@/lib/readinessText'
@@ -103,18 +105,21 @@ export function WorkspaceContextBar() {
         aria-label={t('stage.contextBarLabel')}
         data-workspace-context-bar
         data-workspace-mode={fastEdit ? 'fast_edit' : 'layout'}
-        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1.5 rounded-md bg-surface px-2 py-1.5 shadow-pop"
+        // 与选区浮动栏（`ContextBar`）同一副骨架：p-1 → 36 高、gap 4、12px 字
+        // （2026-09-15 打磨 F1 / F2）。此前是 px-2 py-1.5 → 40 高、gap 8、分隔线 14，
+        // 同一块画布上两条浮条两种壳
+        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 rounded-md bg-surface p-1 text-sm text-ink shadow-pop"
       >
         {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
             面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗
             按钮 shrink-0 + nowrap，不参与压缩——挤压等于叠字 */}
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
             {/* `data-onboarding-anchor="to-layout"`：新手教程 Step 6 的 coachmark 挂这颗。
                 `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
                 图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里 */}
             <Button
-              size="sm"
+              size="md"
               variant="ghost"
               className="shrink-0 whitespace-nowrap"
               data-context-back
@@ -125,14 +130,13 @@ export function WorkspaceContextBar() {
             >
               <ArrowLeft size={ICON_SIZE.sm} />
               {t('stage.backToCanvas')}
-              {editingHere && (
-                <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
-              )}
+              {/* 键位提示只有一种：`ui/Kbd`（宪法第十三节）。此前是钮内一段手写 mono */}
+              {editingHere && <Kbd>{translate('keycap.esc')}</Kbd>}
             </Button>
-            <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
+            <Sep />
             <ol
               aria-label={t('stage.crumbsLabel')}
-              className="flex min-w-0 flex-1 items-center gap-1 text-xs"
+              className="type-body flex min-w-0 flex-1 items-center gap-1"
             >
               <li className="min-w-0 truncate font-medium text-ink" title={name}>
                 {name}
@@ -155,10 +159,10 @@ export function WorkspaceContextBar() {
           </div>
           {fastEdit && (
             <>
-              <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
+              <Sep />
               {/* `data-onboarding-anchor`：新手教程 Step 6 的 coachmark 挂这颗按钮 */}
               <Button
-                size="sm"
+                size="md"
                 variant="secondary"
                 className="shrink-0 whitespace-nowrap"
                 data-onboarding-anchor="add-to-layout"
@@ -173,14 +177,14 @@ export function WorkspaceContextBar() {
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
         {fastEdit && !editable && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-1 text-xs text-ink-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-0.5 text-ink-2">
             <span className="min-w-0 flex-1 basis-40 truncate">
               {capability
                 ? `${statusLabel(capability.status)} · ${reasonText(capability)}`
                 : t('fastEdit.layoutOnly')}
             </span>
             <Button
-              size="sm"
+              size="md"
               variant="ghost"
               className="ms-auto shrink-0 whitespace-nowrap"
               onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'quickedit')}

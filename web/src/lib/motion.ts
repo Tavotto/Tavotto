@@ -51,6 +51,13 @@ export const easeOutCubic = (t: number): number => 1 - (1 - t) ** 3
 export const EASE_POP = 'cubic-bezier(0.16, 1, 0.3, 1)'
 
 /**
+ * 对称曲线（hover / 颜色 / 位置跟随这类来回都要顺的过渡），与 index.css 的
+ * `--ease-standard` 逐字节相同（motion.test 看护）。JS 侧要它是因为
+ * `OnboardingLayer` 的落位是内联 style 里的字符串，取不到 CSS 变量的展开值。
+ */
+export const EASE_STANDARD = 'cubic-bezier(0.4, 0, 0.2, 1)'
+
+/**
  * 回弹曲线，与 index.css 的 `--ease-spring` 逐字节相同（motion.test 看护）。
  * 峰值 1.05：终点前先多走 5% 再收回来。只给进场 / 落位，退场与 hover 不用。
  */

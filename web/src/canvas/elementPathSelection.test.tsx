@@ -409,7 +409,8 @@ describe('OverlaySvg：路径式选中描示', () => {
     expect(rects().length).toBe(0)
     const outline = paths().find((p) => p.getAttribute('d')?.includes('Z'))
     expect(outline).toBeTruthy()
-    expect(outline!.getAttribute('fill')).toBe('var(--color-accent)')
+    // 画布层只有一种蓝（--color-sel）：元素框 / 端点 / 手柄与画布选框同色（2026-09-15 打磨 C2）
+    expect(outline!.getAttribute('fill')).toBe('var(--color-sel)')
     expect(outline!.getAttribute('fill-rule')).toBe('evenodd')
   })
 

@@ -21,8 +21,8 @@ import { Button } from './ui/Button'
  * 后自己消失的状态条报告它们，等于把一个持续存在的事实说成一次事件——
  * 改造前就是这么做的，用户回到界面时什么都看不到，而磁盘上那份还落后半小时。
  *
- * 与 `UpdateBanner` 同形（同一条高度、同一处挂载点），因为它们是同一类东西：
- * 不打断编辑、不抢焦点、说明 + 一到三个出口。
+ * 形态是 `Banner`：贴画布顶的一条 surface-2 状态条。`UpdateBanner` 早已改成启动时的
+ * 对话框（`UpdateNoticeDialog`），这里原来的「与它同形」是句过时的注释（2026-09-15 打磨 B3）。
  */
 export function DocumentBanner() {
   const { t } = useTranslation('workspace')
@@ -131,7 +131,15 @@ function LastDocumentBanner() {
   )
 }
 
-function Banner({
+/**
+ * 画布顶上那条状态条，**全产品一种**（2026-09-15 打磨 B3）：贴边、surface-2 底、
+ * 一条 border-b、min-h 32、px 12，无圆角无外边距。
+ *
+ * 此前是两副壳：这里是「带 12% 实边、四周留 8」的一张卡（宪法第十三节：状态区不是卡片），
+ * 接入状态那条是贴边的 24 高 surface-2 条却塞着 28 高的按钮。`ProjectReadinessBanner`
+ * 现在直接用这一份，两条挨着出现时是同一条轨的两行。
+ */
+export function Banner({
   icon,
   children,
 }: {
@@ -141,7 +149,7 @@ function Banner({
   return (
     <div
       role="status"
-      className="m-2 flex min-h-8 shrink-0 items-center gap-2 rounded-sm border border-border bg-surface px-3 text-xs text-ink"
+      className="flex min-h-8 shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 text-xs text-ink"
     >
       {icon}
       {children}

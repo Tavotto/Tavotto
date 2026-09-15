@@ -360,7 +360,8 @@ export function ContextBar() {
         // w-max：fixed 盒子的 width:auto 会被「left 到视口右沿」的可用宽度压扁，
         // 量出来的就不是它的自然宽度；落位与宽窄档都靠这个量
         'fixed z-40 flex w-max items-center gap-1 rounded-md bg-surface p-1',
-        'text-xs text-ink shadow-pop',
+        // 12px：栏里的 NumberField 一直是 12，旁边的「线型」「已选 2 个」却是 11（打磨 F2）
+        'text-sm text-ink shadow-pop',
         pos ? 'animate-pop-in' : 'invisible',
       )}
       onContextMenu={(e) => e.preventDefault()}

@@ -27,6 +27,7 @@ import { useQuickEdit } from './quickEditStore'
 import { TextActionRow } from '@/components/inspector/TextActions'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
+import { MenuButton } from '@/components/ui/Menu'
 import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 
@@ -146,7 +147,8 @@ function ElementPopover({
       style={{ left: pos.x, top: pos.y }}
       className={cn(
         'fixed z-50 w-[268px] rounded-md bg-surface p-1',
-        'text-xs text-ink shadow-pop animate-pop-in',
+        // 12px：与菜单项同档（M2）。此前整块 11，而里面的数字框是 12
+        'text-sm text-ink shadow-pop animate-pop-in',
       )}
     >
       <ElementQuick target={target} close={close} />
@@ -159,9 +161,10 @@ function ElementPopover({
 /*  版式基元                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/** 组头：与 `ui/Menu` 的 `MenuLabel` / `MenuHeading` 同一个形（12 / 400 / ink-3） */
 function Head({ children }: { children: ReactNode }) {
   return (
-    <div className="mb-0.5 truncate px-1.5 py-1 text-xs text-ink-3" title={String(children)}>
+    <div className="truncate px-2 py-1 text-ink-3" title={String(children)}>
       {children}
     </div>
   )
@@ -177,41 +180,15 @@ function Line({
   children: ReactNode
 }) {
   return (
-    <div className="flex min-h-6 items-center gap-1.5 px-1.5 py-0.5" title={hint}>
-      <span className="w-11 shrink-0 truncate text-xs text-ink-2">{label}</span>
+    /* 行高 28：宪法第十四节「高度只有 28 与 24 两档，24 只给就近入口 / 筛选小片 / 角标」，
+       这里是一整块可编辑的字段，不是角标（2026-09-15 打磨 M2） */
+    <div className="flex min-h-7 items-center gap-1.5 px-2 py-0.5" title={hint}>
+      <span className="w-11 shrink-0 truncate text-ink-2">{label}</span>
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
     </div>
   )
 }
 
-function Item({
-  children,
-  shortcut,
-  danger,
-  onClick,
-  ...rest
-}: {
-  children: ReactNode
-  shortcut?: string
-  danger?: boolean
-  onClick: () => void
-} & Record<`data-${string}`, string | undefined>) {
-  return (
-    <button
-      {...rest}
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex h-6 w-full cursor-default select-none items-center gap-3 rounded-sm px-2 text-xs',
-        'outline-none hover:bg-surface-hover focus-visible:bg-surface-hover',
-        danger ? 'text-danger' : 'text-ink',
-      )}
-    >
-      <span className="flex-1 truncate text-left">{children}</span>
-      {shortcut && <span className="font-mono text-xs text-ink-3">{shortcut}</span>}
-    </button>
-  )
-}
 
 const Divider = () => <div className="my-1 h-px bg-border" />
 
@@ -289,27 +266,18 @@ function ElementQuick({
 
       {(field('visible') || own.length > 0) && <Divider />}
       {own.length > 0 && (
-        <Item onClick={resetElement} data-quick-item="reset-element">
-          <span className="flex items-center gap-1.5">
-            <RotateCcw size={ICON_SIZE.sm} />
-            {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
-          </span>
-        </Item>
+        <MenuButton icon={RotateCcw} onClick={resetElement} data-quick-item="reset-element">
+          {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
+        </MenuButton>
       )}
       {field('visible') && (
-        <Item onClick={toggleVisible}>
-          <span className="flex items-center gap-1.5">
-            {hidden ? <Eye size={ICON_SIZE.sm} /> : <EyeOff size={ICON_SIZE.sm} />}
-            {qe(hidden ? 'unhide' : 'hide')}
-          </span>
-        </Item>
+        <MenuButton icon={hidden ? Eye : EyeOff} onClick={toggleVisible}>
+          {qe(hidden ? 'unhide' : 'hide')}
+        </MenuButton>
       )}
-      <Item onClick={openInPanel}>
-        <span className="flex items-center gap-1.5">
-          <ExternalLink size={ICON_SIZE.sm} />
-          {qe('openInspector')}
-        </span>
-      </Item>
+      <MenuButton icon={ExternalLink} onClick={openInPanel}>
+        {qe('openInspector')}
+      </MenuButton>
     </>
   )
 }

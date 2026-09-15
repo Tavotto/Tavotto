@@ -746,9 +746,11 @@ function ElementHitLayer({
             top: band.t,
             width: band.w,
             height: band.h,
-            // 本层随世界 zoom 缩放，线宽反除才是屏幕上恒定的 1px
-            border: `${1 / zoom}px dashed var(--color-accent)`,
-            background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
+            // 本层随世界 zoom 缩放，线宽反除才是屏幕上恒定的 1px。
+            // 颜色是 sel：画布层的彩色线只有一种（2026-09-15 打磨 C2，与 OverlaySvg 的
+            // 元素框 / 端点 / 手柄同源）
+            border: `${1 / zoom}px dashed var(--color-sel)`,
+            background: 'color-mix(in srgb, var(--color-sel) 6%, transparent)',
           }}
         />
       )}
@@ -837,10 +839,11 @@ function SpineZoneFeedback({
           top: r.y * layout.height,
           width: r.w * layout.width,
           height: r.h * layout.height,
+          // 同 C2：落点高亮也是画布层的指示物，与元素框同一种蓝
           background: strong
-            ? 'color-mix(in srgb, var(--color-accent) 28%, transparent)'
-            : 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
-          outline: strong ? `${1 / zoom}px solid var(--color-accent)` : undefined,
+            ? 'color-mix(in srgb, var(--color-sel) 28%, transparent)'
+            : 'color-mix(in srgb, var(--color-sel) 12%, transparent)',
+          outline: strong ? `${1 / zoom}px solid var(--color-sel)` : undefined,
         }}
       />
     )
@@ -1044,7 +1047,8 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
               ? 'bg-ink text-white'
               : shown.tone === 'info'
                 ? 'bg-ink/70 text-white'
-                : 'bg-accent text-white',
+                // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
+                : 'bg-ink text-white',
         )}
       >
         {shown.tone === 'busy' && (

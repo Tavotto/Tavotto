@@ -83,9 +83,9 @@ export function MultiSelectionBar({
     return (
       <Bar>
         {countEl}
-        <GroupSep />
+        <Sep />
         <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-        <GroupSep />
+        <Sep />
         <div className="flex items-center gap-0.5">
           <GroupButtons grouped={grouped} />
           <MoreButton count={count} />
@@ -98,7 +98,7 @@ export function MultiSelectionBar({
     return (
       <Bar>
         {countEl}
-        <GroupSep />
+        <Sep />
         {/* 三个弹层入口是同一档控件，彼此按组内 2px 排 */}
         <div className="flex items-center gap-0.5">
           <MenuPopover label={qb('alignMenu')} width={232} testId="align">
@@ -112,7 +112,7 @@ export function MultiSelectionBar({
             <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
           </MenuPopover>
         </div>
-        <GroupSep />
+        <Sep />
         <div className="flex items-center gap-0.5">
           <GroupButtons grouped={grouped} />
           <MoreButton count={count} />
@@ -124,17 +124,16 @@ export function MultiSelectionBar({
   return (
     <Bar>
       {countEl}
-      <GroupSep />
+      <Sep />
       <RefPicker />
-      <GroupSep />
+      <Sep />
       <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-      {/* 均匀分布与等宽等高是两件事，中间给一道分隔线（审计 T29）；
-          这道线连同左右留白就是组间距的**全部**，外层不再另给一份 */}
-      <GroupSep />
+      {/* 均匀分布与等宽等高是两件事，中间给一道分隔线（审计 T29） */}
+      <Sep />
       <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
-      <GroupSep />
+      <Sep />
       <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
-      <GroupSep />
+      <Sep />
       <div className="flex items-center gap-0.5">
         <GroupButtons grouped={grouped} />
         <MoreButton count={count} />
@@ -144,25 +143,18 @@ export function MultiSelectionBar({
 }
 
 /**
- * 这段内容自己的 flex 外壳，`gap-0`。
+ * 这段内容自己的 flex 外壳。
  *
  * 之前这里是个 Fragment，按钮与分隔线直接摊在浮动栏外层的 flex 里，于是组与组
  * 之间的空白是三份叠出来的：外层 gap ＋ 分隔线自己 ＋ 外层 gap，读起来像「中间
  * 破了个洞」。包一层之后外层 gap 只作用在这个盒子的外面，进不到里面来——
- * **组间距只剩 `GroupSep` 一份**，组内的 2px 仍由各行（`AlignRow`、收尾按钮那排）
- * 自己给，两档差距因此是有意的 2px ↔ 一档，而不是无意的累加。
+ * **组间距的唯一出处是这里的 `gap-1`**（2026-09-15 打磨 F3）：分隔线左右各 4，
+ * 与单选栏 / 图内元素栏 / 裁剪栏同一个数。此前这一层是 `gap-0` 外加一个自带 `mx-1.5`
+ * 的 `GroupSep`，再叠上 `Sep` 自己的 `mx-0.5`，组间距是 17——同一家族里最宽的一档。
+ * 组内的 2px 仍由各行（`AlignRow`、收尾按钮那排）自己给。
  */
 function Bar({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 items-center gap-0">{children}</div>
-}
-
-/** 组间距的唯一出处：分隔线连同它左右的留白，一起占掉这一份空白 */
-function GroupSep() {
-  return (
-    <span className="mx-1.5 flex items-center">
-      <Sep />
-    </span>
-  )
+  return <div className="flex min-w-0 items-center gap-1">{children}</div>
 }
 
 /** 参照三选一：与 ArrangeSection 共用 `arrangeStore`，这边切了那边当场就是新值 */
@@ -213,7 +205,7 @@ function AlignRow({
               data-align-mode={mode}
               aria-label={name}
               aria-disabled={blocked || undefined}
-              className={cn(blocked && 'cursor-not-allowed opacity-35')}
+              className={cn(blocked && 'cursor-not-allowed opacity-40')}
               onClick={() => {
                 if (blocked) return
                 // 遥测只认「从浮动栏发起」的那一次（`lib/activityTelemetry`）
@@ -295,7 +287,7 @@ function MenuPopover({
       width={width}
       align="start"
       trigger={
-        <Button size="sm" className="gap-0.5 px-1.5" data-multi-menu={testId} aria-label={label}>
+        <Button size="md" data-multi-menu={testId} aria-label={label}>
           {label}
           <ChevronDown size={ICON_SIZE.xs} aria-hidden />
         </Button>
