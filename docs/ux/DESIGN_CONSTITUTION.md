@@ -420,6 +420,8 @@ B02 / B09 / B25 / B31 / B45 / B52「像同一套产品」：
   三种来源同一种盒子（`NotificationRail`）。加入说明带「移除」动作（只在撤销栈还停在加入那一刻才给；
   名字不叫「撤销」——顶栏已有一颗，同名两颗读屏与 e2e 都分不清），不再常驻在上下文栏第二行；
   HUD 留在左下（读数不是消息）。aria-live 契约不变：`data-status-live`、错误 assertive、提示区无 role。
+  会自己走的那两种（状态 4.5 s、提示 9 s）在指针停在上面、焦点在它的按钮上、页面不可见时不走表；同一条
+  换文字原位换（第二十三节）。
 - **问题面板**（D3）：说明允许两行（`line-clamp-2`），对象名中间省略保留尾部（`ui/TruncateMiddle`）；
   title 不是读错误原因的唯一途径。
 - **改图助手空态**（D2，部分收回 2026-09-13 审计 T37）：「助手会做什么」那一句是滚动区正中的空态
@@ -653,3 +655,34 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 ### 看到了但不学
 会动的胶片颗粒、斜纹槽、蓝色实心主按钮、常驻表面五级投影、0.95 缩放 + 8px 位移的进场、Inter 13px、
 亮度 69.5% 的 ink-3、反色 tooltip 四件套（Tavotto 的气泡已是 ink 底白字，够了）。
+
+## 二十三、2026-09-15 从 Spectrum UI 学来的两条手法（用户拍板）
+
+调研了 ui.spectrumhq.in（Spectrum UI，58 个 SaaS 微交互组件 + ai-assistants 等 blocks，framer-motion）之后
+的结论（对比页 artifact「Spectrum 手法五对比」）：整库不引——它的语法（scale 0.85 squish、边界摇晃、hover
+跟随的弹簧、彩纸）与第七节正面冲突，ai-assistants 那组比第十八节已做的粗。五条对比里用户拍板做前两条，
+都是**手法**不是组件，不加依赖：
+
+- **有计时的通知会让路**（`lib/dismissTimer`，Undo Pill 的做法）：`uiStore.setStatus` 的 4.5 s 与
+  `onboarding/hints` 的 9 s 此前各是一只裸 `setTimeout`——用户正伸手去点 toast 上的 ×、或读到一半，它在
+  指针底下消失；切去别的 app 再回来，状态早就走了。现在三个暂停源：指针停在 toast 上、焦点在它的按钮上
+  （`Toast` 报 hold / release，**卸载时把按住的一并放开**——点 × 关掉时 pointerleave 不会再来）、
+  `document.visibilityState === 'hidden'`。停表按那一刻结算剩余，续表只排剩下的那截；后台过去的时间不会
+  一次落下；同一只计时器再次 `start` 时上一次的 hold 还算数（指针停着时新状态顶掉旧状态，DOM 没换）。
+  不是动画所以不走 `motion.tween`（它在 reduced-motion 下直接落终态），也不用 rAF（后台标签页里 rAF 是
+  「不触发」不是「暂停」）。错误 toast 本来就不自动走，不受影响；WCAG 2.2.1「时限可调」顺手满足。
+  只看 visibilityState、不看窗口焦点：Codex 内嵌画布是个 iframe，焦点在宿主页里时它也「不聚焦」。
+- **同一个位置上文字变了就原位换**（`ui/SwapText`，TextStates 手法）：旧字上移 4px 淡出、新字从下 4px
+  浮上来，各 fast 一档、对称曲线（第七节允许的形态正是 opacity + ≤4px）；不带 Spectrum 那 2px 的 blur。
+  给通知轨的那一句话（两条状态 1.4 s 内先后到达时此前像闪了一下）与改图助手的状态行（running → done）；
+  正文不用。三条边界：**DOM 文本永远是当前的**——旧句只在 `data-ghost` 里由 `::before` 画（`content:
+  attr() / ''`，不进 textContent、读屏与 e2e 只看到新字，动画只是点缀）；首次渲染不播；reduced-motion 下
+  连幽灵都没有。`text-shimmer` 落在会动的那句字自己身上（`textClassName`），不落在外层——`background-clip:
+  text` 的父元素带一个合成到独立图层的子元素会把字裁没；换字那 240 ms 里亮带让位给进场，之后从头再扫。
+  盒子一开始就按新字定宽，幽灵按盒子裁。
+- **没做的三条**（对比页 3–5）：数字框钳位的读屏播报、速查表键帽随真按键按下、删画布「先删再给撤销窗」
+  ——最后一条是模式更换（`canvasSession` 删完即丢、文案写着「无法撤销」），不是打磨。
+- 看护：`lib/dismissTimer.test`（剩余时间是主语：放开后不重新数满、后台那段不一次落下、hold 账本跨 start）、
+  `components/notificationRail.test`（指针 / 焦点 / 卸载放开 / 换字）、`ui/SwapText.test`、
+  `ai/assistantMotion.test` 的 running → done 一条。
+

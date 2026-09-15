@@ -1,19 +1,21 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type FocusEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CircleAlert, Info, Lightbulb, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { useHintStore } from '@/lib/onboarding/hints'
+import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
 import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
+import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
+import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { boundsOf } from '@/lib/geometry'
 
@@ -106,7 +108,13 @@ export function CanvasHud() {
   )
 }
 
-/** 一条通知的形态：图标 + 一句话 + 至多一个动作 / 关闭。三种来源共用（二审 D1） */
+/**
+ * 一条通知的形态：图标 + 一句话 + 至多一个动作 / 关闭。三种来源共用（二审 D1）。
+ *
+ * 会自己走的那两种（状态、提示）带着各自的 `timer`：指针停在上面、焦点落在它的按钮上就不走表
+ * （宪法第二十三节）。按住的原因记在 ref 里，**卸载时一并放开**——用户点 × 把它关掉时指针还在
+ * 上面，pointerleave 不会再来一次，不放开的话下一条状态永远不走。
+ */
 function Toast({
   tone,
   icon,
@@ -115,20 +123,47 @@ function Toast({
   onClose,
   closeLabel,
   state,
+  timer,
   ...rest
 }: {
   tone: 'info' | 'error' | 'hint'
   icon: ReactNode
-  text: ReactNode
+  text: string
   action?: { label: string; onClick: () => void }
   onClose?: () => void
   closeLabel?: string
   state: 'open' | 'closed'
+  /** 自动收起的计时器；不自己走的那种（错误、加入说明）不传 */
+  timer?: DismissTimer
 } & Record<`data-${string}`, string | undefined>) {
+  const held = useRef(new Set<string>())
+  const grip = (reason: string) => {
+    if (!timer) return
+    held.current.add(reason)
+    timer.hold(reason)
+  }
+  const drop = (reason: string) => {
+    if (!timer) return
+    held.current.delete(reason)
+    timer.release(reason)
+  }
+  useEffect(
+    () => () => {
+      for (const reason of held.current) timer?.release(reason)
+      held.current.clear()
+    },
+    [timer],
+  )
   return (
     <div
       {...rest}
       data-state={state}
+      onPointerEnter={() => grip('pointer')}
+      onPointerLeave={() => drop('pointer')}
+      onFocus={() => grip('focus')}
+      onBlur={(e: FocusEvent<HTMLDivElement>) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) drop('focus')
+      }}
       className={cn(
         // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink——11 号 ink-2
         // 的一句话在画布上方读起来像脚注（2026-09-15 打磨 N2）。
@@ -140,7 +175,8 @@ function Toast({
       )}
     >
       {icon}
-      <span className="min-w-0 flex-1">{text}</span>
+      {/* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */}
+      <SwapText className="min-w-0 flex-1" text={text} />
       {action && (
         <Button variant="ghost" size="sm" className="shrink-0 text-ink" onClick={action.onClick}>
           {action.label}
@@ -165,6 +201,7 @@ function Toast({
  * 三种来源同一种盒子（2026-09-14 二审 D1）：
  *   - 状态（`uiStore.status`）：普通状态 4.5s 自己走，错误保留到用户关闭；
  *   - 操作提示（`useHintStore`）：可关、到时自己走；
+ *   （「自己走」的表在指针停在上面、焦点在它的按钮上、页面不可见时都停——`lib/dismissTimer`）
  *   - 「刚为编辑加入本文档」：带「撤销」动作，加进来的那一次显示、离开快速编辑即消失。
  * 此前三者各占一条轨（状态居中、提示右下、加入说明常驻在上下文栏第二行）——那行常驻说明
  * 存在的理由正是「toast 只有一个槽位、会被『渲染完成』盖掉」。HUD 留在左下：它是读数不是消息。
@@ -252,6 +289,7 @@ export function NotificationRail() {
           tone="hint"
           state={hintPresence.state}
           data-onboarding-hint={hint}
+          timer={hintDismissTimer}
           icon={<Lightbulb size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
           text={hintText}
           onClose={dismissHint}
@@ -262,6 +300,7 @@ export function NotificationRail() {
         <Toast
           tone={shown.tone}
           state={statusPresence.state}
+          timer={statusDismissTimer}
           icon={
             shown.tone === 'error' ? (
               <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
