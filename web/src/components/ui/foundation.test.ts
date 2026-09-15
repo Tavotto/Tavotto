@@ -76,6 +76,13 @@ const RULES: Rule[] = [
     },
   },
   {
+    name: '不用 :empty 藏整行——<input> 也是空元素，会把它所在的那一行一起藏掉（2026-09-15 审计 D01）',
+    pattern: /has-\[[^\]]*:empty\][^\s"']*:hidden/,
+    fix: '没话说的行由组件自己 return null，不靠选择器',
+    catches: '<div className="has-[>div>:only-child:empty]:hidden" />',
+    spares: '<div className="empty:hidden" />',
+  },
+  {
     name: '交互面用 surface-hover / surface-active / selected 三档 token，不写 ink 透明度',
     pattern: /\b(hover|active|focus-visible|data-\[[^\]]+\]):bg-ink\/\[/,
     fix: 'hover:bg-surface-hover / active:bg-surface-active / bg-selected',
