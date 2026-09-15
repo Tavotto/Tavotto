@@ -20,6 +20,7 @@ docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md。
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -330,9 +331,21 @@ _TWO_FILES = ("tests/test_aggregate_gate.py", "tests/test_pixel_compare.py")
 
 
 def _pytest(*args: str) -> subprocess.CompletedProcess[str]:
+    # 编码要钉**两侧**：这里 `encoding="utf-8"` 只钉了父进程的解码器；子进程在
+    # Windows 上 stdout/stderr 是管道时退回 cp1252，pytest 把编不出的那一整行
+    # `UsageError` 转成 `\uXXXX` 转义（PR #374 首跑 backend-platforms (windows, 2)
+    # 就是这样红的：stderr 里是 `\u7247\u4e3a\u7a7a` 而不是「片为空」）。
+    # `PYTHONIOENCODING=utf-8` 直接钉子进程两条流的编码（实测它优先于 UTF-8 模式：
+    # `PYTHONUTF8=1 PYTHONIOENCODING=cp1252` 下 stderr 仍是 cp1252，所以只开 UTF-8
+    # 模式挡不住外面带进来的 PYTHONIOENCODING）；`PYTHONUTF8=1` 一并带上，让
+    # 文件系统 / 默认文本编码也不随区域走。与 tests/support/ 探针钉 stdout 是同一
+    # 条纪律的另一半。本机复现 Windows 形状：父进程 `PYTHONIOENCODING=cp1252` 时
+    # 这条用例在修复前红、修复后绿。
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
         cwd=str(ROOT),
+        env=env,
         capture_output=True,
         encoding="utf-8",
         errors="replace",

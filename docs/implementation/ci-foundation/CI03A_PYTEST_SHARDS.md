@@ -114,6 +114,29 @@ CI runner 的步骤是前台进程，不受影响；CI00 基线在同一台机�
 两片实测差 ≈ 27s（去掉假红后 s2 重 5%）。**Linux 3.10 / 3.13 / 3.14 与 Windows 的真实平衡要等 CI 的 junit artifact**——CI00 记录 Windows 腿比
 macOS 慢一倍、且慢在不同的用例上（`CI_BASELINE.md` §6），两片在 Windows 上很可能不平衡；重算方法见 §6。
 
+### 3.5 CI 首跑（PR #374，run `35004450721`，2026-09-15 17:57Z，`full-ci`）
+
+第一份 CI 侧真实样本（job 墙钟秒，`gh api …/runs/35004450721/jobs`）：
+
+| leg | 第 1 片 | 第 2 片 | 改前中位（CI00 §4.2） |
+|---|---:|---:|---:|
+| backend-fast 3.10 | 821 | 1100 | 1865 |
+| backend-fast 3.13 | 946 | 1015 | 1745 |
+| backend-fast 3.14 | 1058 | 997 | 2090 |
+| backend-platforms macOS | 900 | 684 | 1485 |
+| backend-platforms Windows | 1169 | 1362 | 2443 |
+
+`CI fast gate` 在 run 创建后 **18.5 分钟**出结论（改前 29 个合并组中位 32.7 分钟）。Windows 第 2 片
+比第 1 片重 193s、Linux 3.10 第 2 片重 279s——权重表来自 macOS 本机，各 os 的真实平衡要用这次
+上传的 junit artifact 重算（§6）。
+
+这一跑 `backend-platforms (windows-latest, 2)` **红了一条**：`tests/test_pytest_shard.py::
+test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run`——不是分片错了，是这条新用例
+只钉了父进程的解码器（`encoding="utf-8"`）没钉子进程的编码器：Windows 上子进程 stderr 是 cp1252
+管道，pytest 把编不出的 `UsageError` 整行转成 `\uXXXX`，`"片为空" in out.stderr` 恒假。修法是给
+子进程钉 `PYTHONIOENCODING=utf-8`（实测它优先于 `PYTHONUTF8`）；本机复现：父进程
+`PYTHONIOENCODING=cp1252` 时修复前 1 failed、修复后 56 passed。同族教训：编码要钉两侧。
+
 ## 4. 负例与退出码（真实变异，`evidence/ci03a/negative_cli_cases.txt` / `negative_d1_union_check.txt`）
 
 | # | 变异 / 输入 | 期望 | 实测 |
