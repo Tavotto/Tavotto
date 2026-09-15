@@ -187,6 +187,7 @@ disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有自绘的一�
 进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
 `transition-*` 默认就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
 改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**。
+通知轨的计时会让路（hover / focus / 页面不可见时不走表）、同一位置换文字原位换（`ui/SwapText`）见 **宪法第二十三节**。
 
 ## Do's and Don'ts
 

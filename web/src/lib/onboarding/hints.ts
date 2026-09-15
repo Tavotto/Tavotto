@@ -14,6 +14,7 @@
  */
 import { create } from 'zustand'
 import { onActivity, type ActivityDetail } from '@/lib/activity'
+import { createDismissTimer } from '@/lib/dismissTimer'
 import { useDocumentStore } from '@/store/documentStore'
 import { hintSeen, useOnboardingStore, type HintKind } from '@/store/onboardingStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -31,13 +32,20 @@ interface HintState {
   dismiss: () => void
 }
 
+/**
+ * 提示的自动收起计时器：指针停在 toast 上、焦点在它的 × 上、页面不可见时都不走表
+ * （`lib/dismissTimer`，与状态那只同一套）。通知轨的 `Toast` 拿着它报 hold / release。
+ */
+export const hintDismissTimer = createDismissTimer()
+
 export const useHintStore = create<HintState>((set) => ({
   current: null,
   token: 0,
-  dismiss: () => set({ current: null }),
+  dismiss: () => {
+    hintDismissTimer.cancel()
+    set({ current: null })
+  },
 }))
-
-let timer: ReturnType<typeof setTimeout> | null = null
 
 /** 显示一条；已经看过 / 教程进行中 / 已经有一条在显示 → 不显示 */
 export function showHint(kind: HintKind): boolean {
@@ -46,11 +54,7 @@ export function showHint(kind: HintKind): boolean {
   if (useHintStore.getState().current) return false
   useOnboardingStore.getState().markHintSeen(kind)
   useHintStore.setState((s) => ({ current: kind, token: s.token + 1 }))
-  if (timer) clearTimeout(timer)
-  timer = setTimeout(() => {
-    timer = null
-    useHintStore.getState().dismiss()
-  }, HINT_AUTO_DISMISS_MS)
+  hintDismissTimer.start(HINT_AUTO_DISMISS_MS, () => useHintStore.getState().dismiss())
   return true
 }
 
@@ -90,8 +94,7 @@ export function startHintEngine(): () => void {
   stop = () => {
     unsubActivity()
     unsubValidation()
-    if (timer) clearTimeout(timer)
-    timer = null
+    hintDismissTimer.cancel()
     useHintStore.setState({ current: null })
     stop = null
   }

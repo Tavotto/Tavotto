@@ -214,6 +214,11 @@
                 语法）——只在进行中出现，完成即停，不是装饰。 */
   --animate-stream-in: stream-in var(--duration-slow) var(--ease-standard) both;
   --animate-settle-in: settle-in var(--duration-slow) var(--ease-spring) both;
+  /* 原位换字（2026-09-15，Spectrum UI · TextStates 手法；宪法第二十三节）：旧字上移 4px 淡出、
+     新字从下 4px 浮上来，各 fast 一档、对称曲线；两段接力。盒子一开始就按新字定宽，幽灵按盒子裁。
+     给「同一个位置上文字变了」的地方——通知轨的一句话、改图助手的状态行；正文不用。 */
+  --animate-swap-out: swap-out var(--duration-fast) var(--ease-standard) both;
+  --animate-swap-in: swap-in var(--duration-fast) var(--ease-standard) var(--duration-fast) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
 }
 
@@ -383,6 +388,28 @@
   }
 }
 
+@keyframes swap-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* 亮带从左扫到右（1.35s），停 0.45s 再来：一直扫会像在催 */
 @keyframes shimmer {
   0% {
@@ -525,6 +552,36 @@
     color: var(--color-ink-3);
     background-image: none;
     animation: none;
+  }
+}
+
+/* 原位换字的盒子（`ui/SwapText`）：`data-ghost` 是刚被换掉的那句，画在 ::before 里压在同一个位置
+   上退场——它不进 DOM 文本（textContent / 读屏都只看得到新字，`/ ''` 把生成内容的可达名清空），
+   新字在里层 span 里接着进场。旧句比新句长时按盒子宽裁掉，不会戳出 toast。
+   reduced-motion：没有幽灵、没有进场，就是换了一句话。 */
+@utility swap-text {
+  position: relative;
+  display: inline-block;
+  &[data-ghost]::before {
+    content: attr(data-ghost) / '';
+    position: absolute;
+    inset: 0 auto auto 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: var(--animate-swap-out);
+  }
+  &[data-ghost] > span {
+    animation: var(--animate-swap-in);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &[data-ghost]::before {
+      display: none;
+    }
+    &[data-ghost] > span {
+      animation: none;
+    }
   }
 }
 
