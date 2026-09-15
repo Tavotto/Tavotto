@@ -71,7 +71,7 @@ function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean
   const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
     <span
-      className="flex items-center gap-1.5"
+      className="flex items-center gap-1"
       data-text-quick={compact ? 'compact' : 'full'}
     >
       {!compact && family && (
@@ -139,9 +139,9 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   // 「编辑图内元素」与「为什么不能编辑？」两个按钮。
   const explainable = !obj.script && !!cap && cap.status !== 'editable'
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       {obj.script && (
-        <Button size="sm" className="gap-1 px-1.5" onClick={() => enterElementEdit(obj.id)}>
+        <Button size="md" onClick={() => enterElementEdit(obj.id)}>
           <Pencil size={ICON_SIZE.sm} />
           {translate('panel.editElements', { ns: 'inspector' })}
         </Button>
@@ -150,8 +150,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
           不切裁剪态——用户点的是一个问题，不是一个动作 */}
       {explainable && (
         <Button
-          size="sm"
-          className="gap-1 px-1.5"
+          size="md"
           onClick={() => useProjectReadinessStore.getState().focusPanel(obj.fileId, 'quickedit')}
         >
           <CircleQuestionMark size={ICON_SIZE.sm} />
@@ -187,7 +186,7 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
       if (o.type === 'arrow' || o.type === 'shape') fn(o as ArrowObject | ShapeObject)
     })
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       <ColorField
         ariaLabel={translate(obj.type === 'arrow' ? 'stroke.color' : 'stroke.strokeColor', { ns: 'inspector' })}
         value={obj.color}

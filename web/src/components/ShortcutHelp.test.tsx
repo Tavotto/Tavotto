@@ -122,6 +122,31 @@ describe('说明整句可读', () => {
   })
 })
 
+describe('做减法（2026-09-15 打磨 K4 / K5）', () => {
+  it('搜索框是 `SearchInput`：有内容才出清除钮，Esc 先清空', async () => {
+    await open()
+    // SearchInput 的清除钮只在有内容时渲染——这是它与手写 TextInput 的可判别差别
+    expect(document.querySelector('button[aria-label*="清除"]'), '空的时候没有清除钮').toBeNull()
+    await type('导出')
+    const clear = document.querySelector('button[aria-label*="清除"]') as HTMLButtonElement
+    expect(clear, '有内容才出清除钮').not.toBeNull()
+    await act(async () => clear.click())
+    expect(search().value).toBe('')
+  })
+
+  it('页脚那句「Esc 关闭」不再渲染：右上角的 × 已经说过一遍', async () => {
+    await open()
+    const dialog = document.querySelector('[role=dialog]')!
+    const kbds = [...dialog.querySelectorAll('kbd')].map((k) => k.textContent?.trim())
+    // 表里的键位仍在（Esc 是「逐层退出」那一条的键位），但它不再作为页脚重复一次
+    expect(kbds.length).toBeGreaterThan(5)
+    expect(
+      [...dialog.querySelectorAll('span')].some((sp) => sp.textContent?.trim() === '关闭'),
+      '页脚的「关闭」二字没了',
+    ).toBe(false)
+  })
+})
+
 describe('搜索', () => {
   it('按说明搜：只留命中的组与行', async () => {
     await open()

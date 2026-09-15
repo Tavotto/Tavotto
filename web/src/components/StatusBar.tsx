@@ -32,11 +32,14 @@ const GEOMETRY_KINDS = new Set(['move', 'resize', 'draw', 'crop', 'endpoint', 'e
 const SIZE_FIRST_KINDS = new Set(['resize', 'draw', 'crop'])
 
 /**
- * 读数盒与工具提示共用的一只盒子：inline-flex 可换行、最小高 28px、
- * 内边距 5/10px，颜色全部走现有 token，不加阴影与强调色。
+ * 读数盒与工具提示共用的一只盒子：inline-flex 可换行、最小高 28px、内边距 5/10px。
+ *
+ * 它虽然是读数不是消息，但**落在画布上就是浮层**：圆角 10 + `shadow-pop`、不画实色边
+ * （宪法第一节）。此前是「圆角 6 + 12% 实边、无投影」，与同一角落的 toast（圆角 10 +
+ * 投影）是两种浮盒（2026-09-15 打磨 N4）。
  */
 const HUD_BOX =
-  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-sm border border-border bg-surface px-2.5 py-1.25 text-sm'
+  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md bg-surface px-2.5 py-1.25 text-sm shadow-pop'
 
 export function CanvasHud() {
   const { t } = useTranslation('workspace')
@@ -127,15 +130,19 @@ function Toast({
       {...rest}
       data-state={state}
       className={cn(
-        'pointer-events-auto flex max-w-[520px] items-center gap-2 rounded-md border px-3 py-1.5 text-xs shadow-pop',
-        tone === 'error' ? 'border-danger/30 bg-danger-subtle text-danger' : 'border-border bg-surface text-ink-2',
+        // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink——11 号 ink-2
+        // 的一句话在画布上方读起来像脚注（2026-09-15 打磨 N2）。
+        // `min-h-9 py-1`：一种高度 36。带动作的那条由 28 的按钮 + py 8 撑到 36，不带动作的
+        // 靠 min-h 补齐——此前是 34 / 29 两种（N3），min-h-8 只把差距从 5 缩到 4，仍是两种
+        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-md px-3 py-1 text-sm shadow-pop',
+        tone === 'error' ? 'bg-danger-subtle text-danger' : 'bg-surface text-ink',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
       {icon}
       <span className="min-w-0 flex-1">{text}</span>
       {action && (
-        <Button variant="ghost" size="sm" className="-my-1 shrink-0 text-ink" onClick={action.onClick}>
+        <Button variant="ghost" size="sm" className="shrink-0 text-ink" onClick={action.onClick}>
           {action.label}
         </Button>
       )}
@@ -187,7 +194,6 @@ export function NotificationRail() {
   const hint = useHintStore((s) => s.current)
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
-  const hintPresence = usePresence(!!hint, DURATION.exit)
   const hintText = hint ? t(`hints.${hint}`) : ''
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
@@ -201,8 +207,20 @@ export function NotificationRail() {
   const historyDepth = useDocumentStore((s) => s.past.length)
   const canRemoveAdded = justAdded && historyDepth === addedDepth
 
+  /**
+   * **最多两条**（二审 D1）。三种来源此前各自 `usePresence`、互不让位，双击素材卡进
+   * 快速编辑时实测三条同时在屏（加入说明 + 操作提示 + 「正在构建…」）。
+   *
+   * 让位顺序：加入说明最高（它带着「移除」这个一次性出口，错过就找不回来），状态次之
+   * （它报告的是刚发生的事），**操作提示第一个让**——提示本来就会重来（`hints` 有 seen
+   * 记录，没被看见的那条下次还会出），少说一次不丢信息。让位只是不渲染，不调 `dismiss`：
+   * 状态那条走完之后提示自己就回来了。
+   */
+  const hintHasSlot = !(justAdded && !!status)
+  const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-1.5 px-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-col items-center gap-1.5 px-4">
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
           `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
           产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以

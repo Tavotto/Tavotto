@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -46,8 +46,8 @@ import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
-import { Popover } from './ui/Popover'
+import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
 import { MOD, cn } from '@/lib/utils'
 import { msg } from '@/i18n'
@@ -89,7 +89,7 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 export function TopBar() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   return (
-    <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3">
+    <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <Brand />
         {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
@@ -292,7 +292,7 @@ function DocumentMenu() {
 
   if (editing) {
     return (
-      <input
+      <TextInput
         autoFocus
         value={draft}
         aria-label={t('topbar.documentName')}
@@ -309,7 +309,9 @@ function DocumentMenu() {
             setEditing(false)
           }
         }}
-        className="h-7 w-40 rounded-sm border border-accent bg-surface px-1.5 text-xs text-ink outline-none"
+        // 可编辑框只有一副（宪法第五节）：聚焦态由 fieldBox 给，不自己画一圈 accent 实线。
+        // 画布页签的重命名早就是 TextInput，这里是最后一处手写的（2026-09-15 打磨 T4）
+        className="w-40"
       />
     )
   }
@@ -317,9 +319,9 @@ function DocumentMenu() {
   return (
     <Menu
       trigger={
-        <Button size="sm" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
+        <Button size="md" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
-          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-faint" />
+          <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </Button>
       }
     >
@@ -464,25 +466,26 @@ function MarkTools() {
         width={188}
         align="center"
         trigger={
-          <Button size="sm" active={markActive} aria-label={t('workspace:topbar.annotate')}>
-            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
-            <span className="text-xs">{t('workspace:topbar.annotate')}</span>
-            <ChevronDown size={ICON_SIZE.xs} className="text-ink-faint" />
+          <Button size="md" active={markActive} aria-label={t('workspace:topbar.annotate')}>
+            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} /> : <Shapes size={ICON_SIZE.md} />}
+            {t('workspace:topbar.annotate')}
+            <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         }
       >
-        {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
-          <MenuItem
-            key={mark}
-            shortcut={key}
-            onSelect={() => setTool(tool === mark ? 'select' : mark)}
-          >
-            <span className="flex items-center gap-2">
-              <Icon size={ICON_SIZE.sm} className={tool === mark ? 'text-ink' : 'text-ink-3'} />
-              {t(markToolKey(mark))}
-            </span>
-          </MenuItem>
-        ))}
+        {/* 四把工具是一组互斥取值：当前那把带勾（MenuRadioGroup），不再靠图标换个颜色
+            说「选中的是我」——同一张菜单里图标的深浅还要兼职表示别的（2026-09-15 打磨 T6）。
+            图标走 `MenuItem.icon` 这个唯一出处，不手写 span + 自定色 */}
+        <MenuRadioGroup
+          value={activeMark?.tool ?? ''}
+          onValueChange={(v) => setTool(tool === v ? 'select' : (v as MarkTool))}
+        >
+          {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
+            <MenuRadioItem key={mark} value={mark} icon={Icon}>
+              <RadioRow shortcut={key}>{t(markToolKey(mark))}</RadioRow>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
         <MenuSeparator />
         <MenuLabel>{t('workspace:topbar.insertShape')}</MenuLabel>
         {INSERT_SHAPES.map((kind) => (
@@ -504,52 +507,74 @@ function MarkTools() {
   )
 }
 
+/**
+ * 菜单项里「名字 + 键位」的一行。
+ *
+ * 只给 `MenuRadioItem` 用：`MenuItem` 自己有 `shortcut` 列，`MenuRadioItem` 还没有
+ * （已向 team-lead 提原语请求，落地后这个组件连同调用点一起删，换成 `shortcut={…}`）。
+ */
+function RadioRow({ children, shortcut }: { children: ReactNode; shortcut: string }) {
+  return (
+    <span className="flex items-center justify-between gap-3">
+      {children}
+      <span className="shrink-0 tabular-nums text-ink-3">{shortcut}</span>
+    </span>
+  )
+}
+
 function ZoomControls() {
   const { t } = useTranslation('workspace')
   const zoom = useViewportStore((s) => s.zoom)
   const page = useDocumentStore((s) => s.doc.page)
-  const [open, setOpen] = useState(false)
-  const item = (label: string, shortcut: string | null, onPick: () => void) => (
-    <button
-      key={label}
-      onClick={() => {
-        onPick()
-        setOpen(false)
-      }}
-      className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
-    >
-      <span>{label}</span>
-      {shortcut && <span className="font-mono text-xs text-ink-3">{shortcut}</span>}
-    </button>
-  )
+  // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
+  // 有自己的取值，不能就近归到相邻那一档）
+  const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
 
   return (
     /* 缩放是一颗文本钮「114% ⌄」+ 一颗适应画布图标钮（2026-09-15 打磨批次 F，L3）：
-       此前是四格边框组，与旁边的边框钮、黑钮三种壳相邻。放大 / 缩小进了菜单，快捷键照旧 */
+       此前是四格边框组，与旁边的边框钮、黑钮三种壳相邻。放大 / 缩小进了菜单，快捷键照旧。
+       弹层本身从 Popover + 九行手写 button 换成 `Menu`（2026-09-15 打磨 M1）：全产品的菜单
+       只有一份实现——role=menu、方向键 / 首字母跳转、内边距 4 都跟着来，不再是第二种菜单 */
     <div className="flex items-center gap-0.5">
-      <Popover
-        open={open}
-        onOpenChange={setOpen}
-        width={144}
+      <Menu
+        width={168}
         align="end"
         trigger={
-          <Button size="sm" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="tabular-nums">
+          <Button size="md" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="type-number">
             {Math.round(zoom * 100)}%
-            <ChevronDown size={ICON_SIZE.xs} className="text-ink-faint" />
+            <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         }
       >
-        <div className="flex flex-col">
-          {item(t('topbar.zoomIn'), `${MOD}+`, () => useViewportStore.getState().zoomBy(1.25))}
-          {item(t('topbar.zoomOut'), `${MOD}−`, () => useViewportStore.getState().zoomBy(1 / 1.25))}
-          <div className="my-1 h-px bg-border" />
-          {ZOOM_PRESETS.map((z) =>
-            item(`${z * 100}%`, z === 1 ? `${MOD}0` : null, () => useViewportStore.getState().setZoomCentered(z)),
-          )}
-          <div className="my-1 h-px bg-border" />
-          {item(t('topbar.fitCanvas'), `${MOD}1`, () => useViewportStore.getState().fitAnimated(page.w, page.h))}
-        </div>
-      </Popover>
+        <MenuItem shortcut={`${MOD}+`} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
+          {t('topbar.zoomIn')}
+        </MenuItem>
+        <MenuItem shortcut={`${MOD}−`} onSelect={() => useViewportStore.getState().zoomBy(1 / 1.25)}>
+          {t('topbar.zoomOut')}
+        </MenuItem>
+        <MenuSeparator />
+        <MenuRadioGroup
+          value={preset != null ? String(preset) : undefined}
+          onValueChange={(v) => useViewportStore.getState().setZoomCentered(Number(v))}
+        >
+          {ZOOM_PRESETS.map((z) => (
+            <MenuRadioItem key={z} value={String(z)}>
+              {z === 1 ? (
+                <RadioRow shortcut={`${MOD}0`}>{`${z * 100}%`}</RadioRow>
+              ) : (
+                `${z * 100}%`
+              )}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+        <MenuSeparator />
+        <MenuItem
+          shortcut={`${MOD}1`}
+          onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
+        >
+          {t('topbar.fitCanvas')}
+        </MenuItem>
+      </Menu>
       <Tip label={t('topbar.fitCanvas')} shortcut={`${MOD}1`}>
         <Button
           size="icon"
@@ -594,10 +619,13 @@ function MoreMenu() {
   return (
     <Menu
       width={196}
+      // 从触发钮右缘垂下（与缩放菜单同一规则）：默认 align=start 时 Radix 碰到视口右缘
+      // 会把整块贴到窗口边上，与顶栏 12 的内边距不齐（2026-09-15 打磨 T3）
+      align="end"
       trigger={
         <Button size="icon" aria-label={t(hasUpdate ? 'topbar.moreWithUpdate' : 'topbar.more')}>
           <span className="relative">
-            <Ellipsis size={ICON_SIZE.md} className="text-ink-2" />
+            <Ellipsis size={ICON_SIZE.md} />
             {hasUpdate && (
               <span
                 aria-hidden
@@ -619,8 +647,10 @@ function MoreMenu() {
           <MenuSeparator />
         </>
       )}
+      {/* 分隔线只在真分组之间画（2026-09-15 打磨 T5）：
+          〔论文样式 · 画布设置〕｜〔刷新项目 · 项目接入状态〕｜〔命令面板 · 快捷键帮助 · 教程〕
+          ——七项此前被四条线切成 1/1/2/3 四组，线比组多 */}
       <MenuItem onSelect={() => ui().setStylesOpen(true)}>{t('topbar.paperStyles')}</MenuItem>
-      <MenuSeparator />
       <MenuItem onSelect={() => ui().setRightTab('canvas')}>{t('topbar.canvasSettings')}</MenuItem>
       <MenuSeparator />
       {/* 与命令面板同一批 helper：刷新走统一刷新端点，接入状态走 readiness store */}

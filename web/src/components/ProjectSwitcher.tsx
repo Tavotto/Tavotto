@@ -7,6 +7,7 @@ import { disambiguateRecent } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
+import { Button } from './ui/Button'
 import { DirBrowser } from './ProjectPicker'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Tip } from './ui/Tooltip'
@@ -62,17 +63,18 @@ export function ProjectSwitcher() {
       <Menu
         width={280}
         trigger={
-          <button
-            className={cn(
-              'flex h-7 min-w-0 max-w-56 shrink items-center gap-1 rounded-md px-1.5 text-xs',
-              'text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-            )}
+          /* 面包屑的两颗钮是同一件事，只能有一副壳（2026-09-15 打磨 T1）：此前项目这颗是
+             手写 button（圆角 10、px 6、11px 字），旁边的文档钮是 `Button size="md"`（圆角 6、
+             px 10、12px 字）——同一条面包屑两种圆角、两种内边距、两种字号 */
+          <Button
+            size="md"
+            className="min-w-0 max-w-56 shrink text-ink-2"
             aria-label={t('switcher.trigger', { name: project.name })}
           >
             <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
             <span className="truncate">{project.name}</span>
             <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
-          </button>
+          </Button>
         }
       >
         <MenuLabel>{t('switcher.current')}</MenuLabel>

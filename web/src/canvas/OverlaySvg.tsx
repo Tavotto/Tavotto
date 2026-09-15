@@ -164,7 +164,7 @@ export function OverlaySvg() {
             : { x1: 0, y1: p, x2: viewW, y2: p }
         return (
           <g key={`guide-${i}`}>
-            <line {...coords} stroke="#2AA9A0" strokeWidth={1} />
+            <line {...coords} stroke="var(--color-guide)" strokeWidth={1} />
             {!guidesLocked && (
               <line
                 {...coords}
@@ -185,7 +185,7 @@ export function OverlaySvg() {
           y1={pendingGuide.axis === 'x' ? 0 : mmToViewY(pendingGuide.pos, t) + 0.5}
           x2={pendingGuide.axis === 'x' ? mmToViewX(pendingGuide.pos, t) + 0.5 : viewW}
           y2={pendingGuide.axis === 'x' ? viewH : mmToViewY(pendingGuide.pos, t) + 0.5}
-          stroke="#2AA9A0"
+          stroke="var(--color-guide)"
           strokeWidth={1}
           strokeDasharray="3 3"
         />
@@ -651,10 +651,10 @@ function GeometryOutline({
       <path
         d={d}
         clipPath={c ? `url(#${clipId})` : undefined}
-        fill={geom.fill ? 'var(--color-accent)' : 'none'}
+        fill={geom.fill ? 'var(--color-sel)' : 'none'}
         fillOpacity={geom.fill ? 0.12 : undefined}
         fillRule="evenodd"
-        stroke="var(--color-accent)"
+        stroke="var(--color-sel)"
         strokeOpacity={opacity}
         strokeWidth={1.5}
         strokeLinejoin="round"
@@ -750,7 +750,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         y1={a.y}
         x2={b.x}
         y2={b.y}
-        stroke="var(--color-accent)"
+        stroke="var(--color-sel)"
         strokeOpacity={opacity}
         strokeWidth={1.5}
         strokeLinecap="round"
@@ -765,7 +765,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
       <rect
         {...rectAttrs(panelBox)}
         fill="none"
-        stroke="var(--color-accent)"
+        stroke="var(--color-sel)"
         strokeWidth={1}
         strokeDasharray="4 3"
         strokeOpacity={0.7}
@@ -780,9 +780,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           ) : (
             <rect
               {...rectAttrs(hover.box)}
-              fill="var(--color-accent)"
+              fill="var(--color-sel)"
               fillOpacity={0.06}
-              stroke="var(--color-accent)"
+              stroke="var(--color-sel)"
               strokeWidth={1}
               strokeOpacity={0.55}
             />
@@ -797,9 +797,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             <rect
               key={key}
               {...rectAttrs(r.box)}
-              fill="var(--color-accent)"
+              fill="var(--color-sel)"
               fillOpacity={0.06}
-              stroke="var(--color-accent)"
+              stroke="var(--color-sel)"
               strokeWidth={1}
             />
           ),
@@ -810,7 +810,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           <rect
             {...rectAttrs(groupBox)}
             fill="none"
-            stroke="var(--color-accent)"
+            stroke="var(--color-sel)"
             strokeWidth={1}
             strokeDasharray="4 2"
           />
@@ -846,7 +846,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                 y1={toPoint(arrowPreview.a).y}
                 x2={toPoint(arrowPreview.b).x}
                 y2={toPoint(arrowPreview.b).y}
-                stroke="var(--color-accent)"
+                stroke="var(--color-sel)"
                 strokeWidth={1}
                 strokeDasharray="4 3"
               />
@@ -870,7 +870,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                   cy={pt.y}
                   r={4.5}
                   fill="#fff"
-                  stroke="var(--color-accent)"
+                  stroke="var(--color-sel)"
                   strokeWidth={1}
                   style={{
                     pointerEvents: 'all',
@@ -906,7 +906,7 @@ function Handle({
       width={HANDLE}
       height={HANDLE}
       fill="#fff"
-      stroke="var(--color-accent)"
+      stroke="var(--color-sel)"
       strokeWidth={1}
       style={{ pointerEvents: 'all', cursor: CURSORS[dir] }}
       onPointerDown={onPointerDown}

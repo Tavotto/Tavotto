@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { prefersReducedMotion } from '@/lib/motion'
+import { DURATION, EASE_STANDARD, prefersReducedMotion } from '@/lib/motion'
 import { backStep, completeStep, currentContext, skipStep } from '@/lib/onboarding/flow'
 import {
   COACHMARK_MARGIN,
@@ -297,7 +297,11 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     left: placement?.x ?? -9999,
     top: placement?.y ?? -9999,
     zIndex: 60,
-    transition: reduced || !placement ? undefined : 'left 120ms ease-out, top 120ms ease-out',
+    // 时长与曲线只来自 token（宪法第七节）：此前是写死的 120ms + ease-out（打磨 G1）
+    transition:
+      reduced || !placement
+        ? undefined
+        : `left ${DURATION.fast}ms ${EASE_STANDARD}, top ${DURATION.fast}ms ${EASE_STANDARD}`,
   }
   const ring =
     measured?.box && !inDialog

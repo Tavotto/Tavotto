@@ -97,17 +97,20 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       {side !== 'center' && (
         <span
           aria-hidden
+          // 箭头与卡片同一副皮：只有 bg-surface（宪法第一节，浮层不画实边）。此前卡片是
+          // shadow-pop 的 8% 环、箭头却画 12% 实边，箭头比它指的那张卡还重（打磨 G2）
           className={cn(
-            'absolute h-2.5 w-2.5 rotate-45 border-border bg-surface',
-            side === 'bottom' && '-top-[6px] left-4 border-l border-t',
-            side === 'top' && '-bottom-[6px] left-4 border-b border-r',
-            side === 'right' && '-left-[6px] top-4 border-b border-l',
-            side === 'left' && '-right-[6px] top-4 border-r border-t',
+            'absolute h-2.5 w-2.5 rotate-45 bg-surface',
+            side === 'bottom' && '-top-[5px] left-4',
+            side === 'top' && '-bottom-[5px] left-4',
+            side === 'right' && '-left-[5px] top-4',
+            side === 'left' && '-right-[5px] top-4',
           )}
         />
       )}
       <div className="min-w-0 pr-6">
-        <h2 id={titleId} className="text-base font-medium leading-5 text-ink">
+        {/* 13px 不在六个角色里（宪法第六节）：标题是 type-title 15（打磨 G1） */}
+        <h2 id={titleId} className="type-title">
           {title}
         </h2>
         <p id={bodyId} className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -116,18 +119,18 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         {note && <div className="mt-1.5 text-xs leading-relaxed text-ink-3">{note}</div>}
       </div>
       {(progress || onBack || onSkip) && (
-        <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="mt-3 flex items-center justify-between gap-2">
           <span className="min-w-0 truncate text-xs tabular-nums text-ink-3" data-onboarding-progress>
             {progress}
           </span>
           <span className="flex shrink-0 items-center gap-0.5">
             {onBack && (
-              <Button size="sm" variant="ghost" onClick={onBack} data-onboarding-back>
+              <Button size="md" variant="ghost" onClick={onBack} data-onboarding-back>
                 {ob('back')}
               </Button>
             )}
             {onSkip && (
-              <Button size="sm" variant="ghost" onClick={onSkip} data-onboarding-skip>
+              <Button size="md" variant="ghost" onClick={onSkip} data-onboarding-skip>
                 {ob('skipStep')}
               </Button>
             )}
@@ -137,13 +140,13 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       {(primary || secondary) && (
         <div className={cn('flex items-center justify-end gap-2', progress || onBack || onSkip ? 'mt-2' : 'mt-3')}>
           {secondary && (
-            <Button size="sm" variant="secondary" onClick={secondary.onClick} data-onboarding-secondary>
+            <Button size="md" variant="secondary" onClick={secondary.onClick} data-onboarding-secondary>
               {secondary.label}
             </Button>
           )}
           {primary && (
             <Button
-              size="sm"
+              size="md"
               variant="primary"
               onClick={primary.onClick}
               autoFocus={primary.autoFocus}
@@ -155,15 +158,16 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
         </div>
       )}
       {/* 关闭（暂停）画在右上角，但放在 DOM 末尾：Tab 顺序是返回 → 跳过 → 主动作 → 关闭 */}
-      <button
-        type="button"
+      {/* 20px 行内小钮是原语的一档（`size="icon-xs"`，宪法第十三节）：此前这里手写 24×24 */}
+      <Button
+        size="icon-xs"
         onClick={onClose}
         aria-label={ob('pause')}
         title={ob('pause')}
-        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+        className="absolute right-2 top-2 text-ink-3 hover:text-ink"
       >
         <X size={ICON_SIZE.sm} />
-      </button>
+      </Button>
     </div>
   )
 })

@@ -8,9 +8,14 @@ export const RULER_SIZE = 20
 
 const STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500]
 
-/** 选一个让刻度间距不小于 7px 的整齐步长 */
+/**
+ * 选一个让刻度间距不小于 8px 的整齐步长。
+ *
+ * 门槛跟着字号走：刻度数字从 10 抬到 11 之后（2026-09-15 打磨 C4），7px 的间距会让
+ * 相邻两个主刻度的标签贴上。
+ */
 function pickStep(t: ViewTransform) {
-  for (const s of STEPS) if (mmToPx(s, t) >= 7) return s
+  for (const s of STEPS) if (mmToPx(s, t) >= 8) return s
   return STEPS[STEPS.length - 1]
 }
 
@@ -57,7 +62,12 @@ function draw(
   ) * step
   const endMm = startMm + (lengthPx / mmToPx(1, t)) + step * 2
 
-  ctx.font = '10px ui-monospace, "SF Mono", Menlo, monospace'
+  // 刻度数字用界面的系统字体 + 11px（宪法第六节：字号阶梯 xs 11 起；数值 = 系统字体 +
+  // tabular-nums）。此前是 10px 的等宽——比下限还小一档，而等宽只留给代码 / 路径 / 脚本名。
+  // 字体栈取自 --font-sans 这一个出处，canvas 不支持 font-variant-numeric，系统字体在
+  // 这个字号上数字本来就是等宽的（2026-09-15 打磨 C4）
+  const sans = css.getPropertyValue('--font-sans').trim() || 'system-ui, sans-serif'
+  ctx.font = `11px ${sans}`
   ctx.textBaseline = 'top'
   ctx.lineWidth = 1
 
@@ -82,10 +92,11 @@ function draw(
       ctx.fillStyle = text
       const label = String(Math.round(mm))
       if (axis === 'x') {
-        ctx.fillText(label, v + 2, 2)
+        // 起点从 +2 挪到 +3：11px 的字比 10px 宽，贴着刻度线读起来像连在一起
+        ctx.fillText(label, v + 3, 2)
       } else {
         ctx.save()
-        ctx.translate(2, v - 2)
+        ctx.translate(2, v - 3)
         ctx.rotate(-Math.PI / 2)
         ctx.fillText(label, 0, 0)
         ctx.restore()
