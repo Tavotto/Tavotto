@@ -24,12 +24,6 @@ name: CI
 #                   × 多运行时、视觉回归、真实安装链路、soak 与 mutation。
 #   release         发布产物资格（release.yml），一条没动。
 #
-# 重型档的 DAG（CI01，2026-09-16）：package / windows-exe-smoke / macos-app-smoke /
-# posix-e2e 四个 job **只 needs frontend**（几分钟的短预筛），**不再等 backend-fast**
-# 的 35 分钟全量 pytest——那四条边从不消费 backend-fast 的任何字节（verdict-only），
-# 28/29 个合并组的关键路径却经过它们。删边不动 AND：backend-fast 仍在 CI fast gate
-# 的闭集里，三个 Gate 都要绿才合得进去。理由与数字写在 `package` 那一段。
-#
 # ruleset 的 required contexts = 三个稳定 Gate（CI fast gate / CI integration
 # gate / codeql.yml 的 CodeQL gate），判定逻辑只在 scripts/ci/aggregate_gate.py。
 # 迁移顺序与前置条件见 docs/ci/merge-queue-rollout.md——本文件的重型 job 收敛
@@ -783,31 +777,11 @@ jobs:
     # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
-    #
-    # **needs 只有 frontend，没有 backend-fast**（CI01，2026-09-16；四个重型 job 同此，
-    # 另外三个不再重复这段）：
-    #   * 这里与三条冒烟腿都**不消费** backend-fast 的任何产物——没有一步
-    #     download-artifact，前端由下面的 `build_frontend.py` 自建。等它只是等一个
-    #     「pytest 过了」的结论（CI00 把 8 条 backend-fast / frontend → 重型 的边全部
-    #     判成 verdict-only，docs/implementation/ci-foundation/evidence/dag_edge_kinds.json）。
-    #   * 代价是整条合并资格：29 个合并组里 28 个的关键路径是
-    #     backend-fast（三档里最慢的那一档，中位 31–35 分钟）→ windows-exe-smoke（24 分钟）→ integration gate，
-    #     资格中位 57 分钟；删边后的模型中位 41 分钟（Δ −15 分钟，CI_BASELINE.md §5.1）。
-    #   * **AND 一点没松**：backend-fast 仍在 `CI fast gate` 的 needs / --required 闭集里，
-    #     ruleset 要三个 Gate 全绿；它红了候选照样进不了 main，只是重型 job 白跑一轮
-    #     （约 66 Windows 分钟 + 35 macOS 分钟）。判定器与两个 Gate 的闭集一行没动。
-    #   * **保留 frontend 这条边作短预筛**：frontend 中位 4 分钟，而删边后关键路径变成
-    #     backend-platforms (windows)（中位 41 分钟），frontend + 最长的重型 job 合计
-    #     ~28 分钟不在关键路径上——留着它对资格时长零成本，却能在前端坏掉
-    #     （pnpm install / lint / i18n / vitest / build / 插件候选组装）时省下每个候选
-    #     约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4）。
-    #   tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 钉住这两条决定；
-    #   回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的什么都不用动。
     if: >-
       github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    needs: [frontend]
+    needs: [backend-fast, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -897,8 +871,7 @@ jobs:
       github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [backend-fast, frontend]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -1214,8 +1187,7 @@ jobs:
       github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [backend-fast, frontend]
     runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
     timeout-minutes: 60
     steps:
@@ -1371,8 +1343,7 @@ jobs:
       github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
-    needs: [frontend]
+    needs: [backend-fast, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

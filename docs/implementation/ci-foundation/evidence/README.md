@@ -26,6 +26,7 @@
 | `pytest/serial_candidates_grep.txt` | 串行 / 隔离候选的静态扫描 | grep（命令写在文件头） |
 | `playwright/list.txt` / `list_summary.json` | `npx playwright test --list`（本机，不运行）与按 project / 文件计数 | 本机 |
 | `admin_inventory.json` | 管理员待填表（`not_run`）+ 文档里已记录的假设 | 只读文档；没登录任何机器 |
+| `ci01/` | **CI01 的静态证据**（改后 DAG、边分类、机器比对、analyze 解析检查），见 [`ci01/README.md`](ci01/README.md)；本目录其余文件仍是 `8b95256c` 的事实，CI01 一个字节没动 | 2026-09-16 |
 
 **不进仓库的东西**（在会话 scratchpad）：未裁剪的原始 API JSON（与裁剪版对拍过：`analyze` 输出逐字节相同）、
 完整 pytest 日志（873 KB）、junit.xml（592 KB）、五个 CI job 的完整日志、变异反证脚本。

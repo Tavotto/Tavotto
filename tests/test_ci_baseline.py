@@ -13,6 +13,14 @@ DAG 等待会去扩容量、把 DAG 等待算成排队会去删不该删的边�
   created→started 算，两者不许互相冒充；
 * 负例：空集合 / 缺 completed_at / 错 SHA / 没分类的边 / 空 evidence 目录一律非零。
 
+**分解历史 run 用的 workflow 是那些 run 真正执行时的那份**：
+`tests/fixtures/ci_baseline/ci_8b95256c.yml`（`git show 8b95256c:.github/workflows/ci.yml`
+逐字节），不是 HEAD 的 `.github/workflows/ci.yml`。dependency_wait / 关键路径都是从
+`needs` 边算出来的，而 CI01 起 HEAD 的 ci.yml 已经删掉了 backend-fast → 重型 的四条边——
+拿新 DAG 去分解旧 run，2120s 的 DAG 等待会被算成 256s，那不是测量，是把模型冒充成事实
+（「夹具默认跟着产品版本走」的那一族）。HEAD 的 ci.yml 只在明确要问「现在的 workflow」
+的用例里读（`live_workflow`）。
+
 纯标准库，不联网（`gh` 只在 fetch-* 子命令里被调用，这里不碰）。
 """
 
@@ -33,6 +41,8 @@ import ci_baseline as CB  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures" / "ci_baseline"
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
+#: 夹具 run 执行时的 ci.yml（8b95256c）——分解它们必须用这一份，见模块 docstring。
+CI_YML_AT_BASELINE = FIXTURES / "ci_8b95256c.yml"
 
 pytestmark = pytest.mark.skipif(
     not FIXTURES.is_dir() or not CI_YML.is_file(),
@@ -46,6 +56,13 @@ def _ts(s: str) -> datetime:
 
 @pytest.fixture(scope="module")
 def workflow() -> dict[str, dict]:
+    """夹具 run（34970490865 / 34762723238 / 34977366199）执行时的 workflow。"""
+    return CB.extract_workflow_jobs(CI_YML_AT_BASELINE.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def live_workflow() -> dict[str, dict]:
+    """HEAD 的 ci.yml——只给明确要问「现在的 workflow 长什么样」的用例。"""
     return CB.extract_workflow_jobs(CI_YML.read_text(encoding="utf-8"))
 
 
@@ -114,14 +131,37 @@ def test_display_names_map_back_to_workflow_job_ids(workflow):
         CB.display_to_job_id("backend (ubuntu-latest)", workflow)
 
 
-def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(workflow):
-    fast = workflow["ci-fast-gate"]
-    heavy = workflow["ci-integration-gate"]
+def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflow):
+    """解析器对 HEAD 的 ci.yml 仍然读得出两个 Gate 与它们的闭集（解析器活着的证据）。
+
+    重型 job 的 needs 形状**不在这里钉**：那是 CI01 的决定，由
+    tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 看住。
+    """
+    fast = live_workflow["ci-fast-gate"]
+    heavy = live_workflow["ci-integration-gate"]
     assert fast["name"] == "CI fast gate" and heavy["name"] == "CI integration gate"
     assert "backend-fast" in fast["needs"] and "backend-fast" not in heavy["needs"]
-    assert set(workflow["windows-exe-smoke"]["needs"]) == {"backend-fast", "frontend"}
-    assert workflow["backend-fast"]["timeout_minutes"] == 40
-    assert [m["python"] for m in workflow["backend-fast"]["matrix"]] == ["3.10", "3.13", "3.14"]
+    assert live_workflow["backend-fast"]["timeout_minutes"] == 40
+    assert [m["python"] for m in live_workflow["backend-fast"]["matrix"]] == [
+        "3.10",
+        "3.13",
+        "3.14",
+    ]
+
+
+def test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under():
+    """快照必须是 8b95256c 那份、且带着 backend-fast → 重型 的边。
+
+    下面 2120s 的 dependency_wait、`backend-fast → windows-exe-smoke → gate` 的关键路径
+    都以这四条边**存在**为前提；CI01 把它们从 HEAD 删掉之后，这个前提只在快照里成立。
+    快照被人「顺手同步到最新」的那天这里红——同步了它，上面那些数字就全变成模型。
+    """
+    snapshot = CB.extract_workflow_jobs(CI_YML_AT_BASELINE.read_text(encoding="utf-8"))
+    for heavy in ("package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"):
+        assert set(snapshot[heavy]["needs"]) == {"backend-fast", "frontend"}, heavy
+    # 与 HEAD 的差别正是 CI01 那一刀：HEAD 上四条边已经没了
+    live = CB.extract_workflow_jobs(CI_YML.read_text(encoding="utf-8"))
+    assert all("backend-fast" not in live[h]["needs"] for h in ("package", "windows-exe-smoke"))
 
 
 def test_extract_rejects_a_block_needs_that_the_parser_cannot_read():
@@ -283,7 +323,15 @@ def test_analyze_cli_writes_a_report_for_the_fixture(tmp_path):
         (tmp_path / dst / name).write_bytes((FIXTURES / name).read_bytes())
     out = tmp_path / "out.json"
     rc = CB.main(
-        ["analyze", "--workflow", str(CI_YML), "--evidence", str(tmp_path), "--out", str(out)]
+        [
+            "analyze",
+            "--workflow",
+            str(CI_YML_AT_BASELINE),
+            "--evidence",
+            str(tmp_path),
+            "--out",
+            str(out),
+        ]
     )
     assert rc == 0
     report = json.loads(out.read_text(encoding="utf-8"))
