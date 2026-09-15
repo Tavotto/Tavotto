@@ -277,11 +277,14 @@ export function MenuRadioItem({
   value,
   children,
   icon: Icon,
+  shortcut,
   ...rest
 }: {
   value: string
   children: ReactNode
   icon?: ComponentType<{ size?: number; className?: string }>
+  /** 与 MenuItem 同一列的快捷键（标注工具的 A / R / O / L、缩放预设的 ⌘0） */
+  shortcut?: string
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.RadioItem {...rest} value={value} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
@@ -290,6 +293,7 @@ export function MenuRadioItem({
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
+      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </DM.RadioItem>
   )
 }
