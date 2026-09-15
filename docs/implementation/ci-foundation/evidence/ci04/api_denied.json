@@ -1,0 +1,53 @@
+{
+  "note": "「读不到」按原文记，不写 0、不写「没有」。403 的两类：runner group / org runners 要 admin:org 或 fine-grained「runners and runner groups」；org 级 Actions 策略要「actions policies」。422 的两条端点只对 private/internal 仓库有意义。",
+  "responses": [
+    {
+      "command": "gh api repos/Tavotto/Tavotto/actions/permissions/access",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "422",
+      "message": "Access policy only applies to internal and private repositories.",
+      "documentation_url": "https://docs.github.com/rest/actions/permissions#get-the-level-of-access-for-workflows-outside-of-the-repository",
+      "gh_stderr": "gh: Access policy only applies to internal and private repositories. (HTTP 422)"
+    },
+    {
+      "command": "gh api repos/Tavotto/Tavotto/actions/permissions/fork-pr-workflows-private-repos",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "422",
+      "message": "Fork PR workflow settings is not allowed for public repositories.",
+      "documentation_url": "https://docs.github.com/rest/actions/permissions#get-private-repo-fork-pr-workflow-settings-for-a-repository",
+      "gh_stderr": "gh: Fork PR workflow settings is not allowed for public repositories. (HTTP 422)"
+    },
+    {
+      "command": "gh api orgs/Tavotto/actions/runner-groups",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "403",
+      "message": "You must be an org admin or have the runners and runner groups fine-grained permission.",
+      "documentation_url": "https://docs.github.com/rest/actions/self-hosted-runner-groups#list-self-hosted-runner-groups-for-an-organization",
+      "gh_stderr": "gh: You must be an org admin or have the runners and runner groups fine-grained permission. (HTTP 403)\ngh: This API operation needs the \"admin:org\" scope. To request it, run:  gh auth refresh -h github.com -s admin:org"
+    },
+    {
+      "command": "gh api orgs/Tavotto/actions/runners",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "403",
+      "message": "You must be an org admin or have the runners and runner groups fine-grained permission.",
+      "documentation_url": "https://docs.github.com/rest/actions/self-hosted-runners#list-self-hosted-runners-for-an-organization",
+      "gh_stderr": "gh: You must be an org admin or have the runners and runner groups fine-grained permission. (HTTP 403)\ngh: This API operation needs the \"admin:org\" scope. To request it, run:  gh auth refresh -h github.com -s admin:org"
+    },
+    {
+      "command": "gh api orgs/Tavotto/actions/permissions",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "403",
+      "message": "You must be an org admin or have the actions policies fine-grained permission.",
+      "documentation_url": "https://docs.github.com/rest/actions/permissions#get-github-actions-permissions-for-an-organization",
+      "gh_stderr": "gh: You must be an org admin or have the actions policies fine-grained permission. (HTTP 403)\ngh: This API operation needs the \"admin:org\" scope. To request it, run:  gh auth refresh -h github.com -s admin:org"
+    },
+    {
+      "command": "gh api orgs/Tavotto/actions/permissions/fork-pr-contributor-approval",
+      "fetched_at": "2026-09-15T22:03Z",
+      "http_status": "403",
+      "message": "You must be an org admin or have the actions policies fine-grained permission.",
+      "documentation_url": "https://docs.github.com/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-an-organization",
+      "gh_stderr": "gh: You must be an org admin or have the actions policies fine-grained permission. (HTTP 403)\ngh: This API operation needs the \"admin:org\" scope. To request it, run:  gh auth refresh -h github.com -s admin:org"
+    }
+  ]
+}

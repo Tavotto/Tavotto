@@ -1,0 +1,13 @@
+{
+  "command": "gh api orgs/Tavotto",
+  "fetched_at": "2026-09-15T22:03Z",
+  "trimmed": "只留 login / type / plan.name / two_factor_requirement_enabled / default_repository_permission / created_at",
+  "response": {
+    "login": "Tavotto",
+    "type": "Organization",
+    "plan_name": "free",
+    "two_factor_requirement_enabled": false,
+    "default_repository_permission": "read",
+    "created_at": "2026-08-19T14:00:29Z"
+  }
+}

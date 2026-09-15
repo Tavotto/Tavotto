@@ -1,0 +1,11 @@
+{
+  "command": "gh api repos/Tavotto/Tavotto/actions/runners/downloads",
+  "fetched_at": "2026-09-15T22:03Z",
+  "trimmed": "只留版本号",
+  "latest_runner_version": [
+    "2.337.0"
+  ],
+  "installed_on_all_four": [
+    "2.336.0"
+  ]
+}

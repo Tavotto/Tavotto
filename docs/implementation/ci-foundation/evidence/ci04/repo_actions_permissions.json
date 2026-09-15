@@ -1,0 +1,9 @@
+{
+  "command": "gh api repos/Tavotto/Tavotto/actions/permissions",
+  "fetched_at": "2026-09-15T22:03Z",
+  "response": {
+    "enabled": true,
+    "allowed_actions": "all",
+    "sha_pinning_required": false
+  }
+}

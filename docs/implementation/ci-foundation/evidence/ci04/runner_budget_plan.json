@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "planned_pool_budget_not_deployment_config",
+  "status": "not_run",
+  "generated": "2026-09-16 · CI04。按 03_RUNNERS_AND_TRUST.md §1 的示例预算填成**计划**；templates/runner_budget.json 原样不动。没有创建任何 VM / runner，没有登录任何机器。",
+  "physical_host_capacity": "未核（admin_inventory.json 的 host_or_guest / hypervisor / other_vms / allocatable_vcpu / real_ram_gib / disk 全部待填）。下面的数字在核出宿主容量之前**不是可分配量**。",
+  "existing_trusted_lab": {
+    "keep_separate": true,
+    "public_pr_allowed": false,
+    "observed_2026_09_15": "仓库级 runner 4 台在线：tavotto-ci-01（labels self-hosted,Linux,X64,tavotto-ci,tavotto-lab）+ tavotto-ci-01-2/-3/-4（labels self-hosted,Linux,X64,tavotto-ci）；30 个 lab run 的 qualify 全部落在 tavotto-ci-01（evidence/ci04/lab_jobs_runner_assignment.tsv）；-2/-3/-4 没有任何 workflow 用其标签。按名字判断四台很可能是同一台可信 lab VM 上的四个 runner 服务实例——待管理员确认；本计划按最坏情况（它们在可信主机上）设计，**不把任何 PR job 路由到 tavotto-ci**。",
+    "documented_spec": "16 vCPU / 32 GiB / 150 GiB SSD 的独立 VM（docs/ci/self-hosted-runner.md §2）；这份资源已被 lab 占用，新池要从**额外**资源来"
+  },
+  "planned_new_pool": {
+    "trust_zone": "B（可销毁 PR 池，03 §3）",
+    "cpu_budget_vcpu": 16,
+    "memory_budget_gib": 32,
+    "reserved_vcpu": 2,
+    "reserved_memory_gib": 6,
+    "rollout_order": ["fast-01 单槽试点", "fast-02（验并发与异常隔离）", "heavy-01（按实际到达负载决定要不要）"],
+    "slots": [
+      {"role": "fast-01", "vcpu": 3, "memory_gib": 6, "disk_gib": 40, "jobs_per_vm": 1, "lifecycle": "每 job 从模板克隆 → JIT 注册 → 跑完销毁", "candidate_job_types": ["python-lint", "invariants", "compat-smoke", "frontend", "plugin-candidate", "workerd (ubuntu 腿)", "desktop-shell (ubuntu 腿)"], "status": "not_run"},
+      {"role": "fast-02", "vcpu": 3, "memory_gib": 6, "disk_gib": 40, "jobs_per_vm": 1, "lifecycle": "同上", "candidate_job_types": ["同 fast-01"], "status": "not_run"},
+      {"role": "heavy-01", "vcpu": 8, "memory_gib": 14, "disk_gib": 80, "jobs_per_vm": 1, "lifecycle": "同上", "candidate_job_types": ["backend-fast 的一片（3 档 Python × 2 片 = 6 个 job，一台一次只能接一个）", "package (ubuntu 两档)", "posix-e2e"], "status": "not_run"}
+    ],
+    "max_parallel_note": "strategy.max-parallel 只限制那一个矩阵，不创建 runner、不解决优先级（03 §2）。新池标签下的矩阵在池只有 1 台时要么 max-parallel: 1，要么根本别路由矩阵——否则 5 片同时要 1 台，等待比 hosted 更长。",
+    "cannot_help_with": ["windows-exe-smoke 两片与 backend-platforms (windows) 的领取等待（205–321s，CI02 §1）——Linux 池不产 Windows", "macos-app-smoke / backend-platforms (macos) / desktop-shell (macos)——不用 Linux 容器假冒", "合并组上缓存 0% 命中（CI02 §4.1）——作用域问题，不是容量问题", "CodeQL / 签名 / 发布凭据——留在 hosted"]
+  },
+  "constraints": [
+    "This is not the confirmed physical host allocation",
+    "No additional concurrent lab VM included in budget",
+    "Pilot one slot before enabling production routing",
+    "Public PR jobs require clean disposable isolated execution and external access control",
+    "Runner group workflow restriction is documented only for Enterprise Cloud; the org is on the free plan (evidence/ci04/org_plan.json) — without that control the pool must not accept pull_request jobs (see CI04_RUNNER_PILOT.md §2.3)",
+    "Physical host capacity not verified"
+  ]
+}

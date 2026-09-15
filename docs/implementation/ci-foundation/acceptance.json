@@ -294,36 +294,64 @@
       "id": "CIP-022",
       "phase": "CI04",
       "requirement": "现有lab职责和资格基线不被PR池悄然改变",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "CI04_RUNNER_PILOT.md#5-runner_pool_ready-not_run以及每个验收项为什么是现在这个状态",
+        "CI04_RUNNER_PILOT.md#7-验证命令与退出码2026-09-16worktree-ci-foundation本-pr-的树（`git diff --stat 8b95256c..HEAD -- <lab 五文件>` 输出 0 行）",
+        "tests/test_merge_queue_workflows.py::TestRunnerTrustZones::test_untrusted_events_reach_only_hosted_runners（变异 M01–M05 / M09 / M10 / M13–M16 打红）",
+        "tests/test_merge_queue_workflows.py::TestRunnerTrustZones::test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers（变异 M01 / M09 / M10 / M11 / M13 / M14 打红）",
+        "evidence/ci04/mutations.json",
+        "evidence/ci04/workflow_events_and_runners.json"
+      ],
+      "note": "主语 = 本 PR 栈（8b95256c..HEAD）对 lab 五个文件（_lab-qualification.yml / lab-ci.yml / bootstrap_lab_runner.sh / lab_preflight.py / cleanup.py）的 diff 为空 + 静态守卫①②（PR 事件的 workflow 触不到 lab 标签；lab 标签只在可复用资格 workflow 里、调用方只有 lab-ci.yml / release.yml、事件只有 push / schedule / workflow_dispatch）。**不是**「lab 机器没被改」——tavotto-ci-01-2/-3/-4 的存在本身就是机器侧的变化，那一半待管理员（ADMIN_HANDOFF A-2）。2026-09-16 CI04。"
     },
     {
       "id": "CIP-023",
       "phase": "CI04",
       "requirement": "新池真实VM资源和网络已测；未知项不冒充可用",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "evidence/ci04/runner_budget_plan.json（status not_run，physical_host_capacity 未核）",
+        "ADMIN_HANDOFF_RUNNER_POOL.md#b-若批准试点操作表每步写作用对象--资源--回退--验收（B-1 / B-7）",
+        "evidence/admin_inventory.json（needs_admin_input 18 项）"
+      ],
+      "note": "没有 VM；网络清单一条没测（B-7 列了命令）；宿主容量六项待管理员。未知项没有冒充可用：仓库里没有任何 job 路由到不存在的池（守卫④）。2026-09-16 CI04。"
     },
     {
       "id": "CIP-024",
       "phase": "CI04",
       "requirement": "PR无法通过修改runs-on接触可信lab/签名/真实数据",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "CI04_RUNNER_PILOT.md#22-动态同仓库有写权限的人在-pr-里加一行-runs-on-self-hosted-tavotto-lab-会怎样",
+        "CI04_RUNNER_PILOT.md#23-哪一层在挡哪一层挡不住现状",
+        "tests/test_merge_queue_workflows.py::TestRunnerTrustZones（静态半边）",
+        "evidence/ci04/api_denied.json（org runner-groups 403）",
+        "evidence/ci04/org_plan.json（plan=free）",
+        "evidence/ci04/repo_fork_pr_contributor_approval.json（first_time_contributors）"
+      ],
+      "note": "静态半边有守卫（PR 事件的 workflow 在 main 上触不到 lab；挡合并，不挡执行）。**动态半边读不到**：runner group 的 workflow 限制 403，org 在 free 计划、按 GitHub 文档只有 Default 组且「Selected workflows」只见于 Enterprise Cloud；fork 审批只挡首次贡献者；同仓库分支 PR 不经审批。缺的是「PR 改不动的控制」——本轮没有任何证据它存在，按规则推的答案是「同仓库分支 PR 加一行 runs-on 会派到 tavotto-ci-01」。签名 / 发布凭据留在 hosted 这一条成立（desktop-tauri.yml / release.yml 相关 job 全是 hosted）。管理员答完 ADMIN_HANDOFF A-1 / A-3（含一次空 job 实测）才能判。2026-09-16 CI04。"
     },
     {
       "id": "CIP-025",
       "phase": "CI04",
       "requirement": "执行VM无管理面凭据，单job身份与磁盘清洁得到验证",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "ADMIN_HANDOFF_RUNNER_POOL.md#b-若批准试点操作表每步写作用对象--资源--回退--验收（B-3 / B-4 / D-7）"
+      ],
+      "note": "没有执行 VM。设计：一 job 一 VM、JIT 注册、凭据只在控制面、模板里无 .credentials / .runner / 私钥；验收命令在 B-3 / B-4 / D-7。2026-09-16 CI04。"
     },
     {
       "id": "CIP-026",
       "phase": "CI04",
       "requirement": "多槽真并行、离线route退出和同等hosted恢复有效",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "ADMIN_HANDOFF_RUNNER_POOL.md#c-本仓库侧要配合的改动只描述本轮不做（C-3 路由开关）",
+        "ADMIN_HANDOFF_RUNNER_POOL.md#d-演练清单b-9-之前每条各做一次记录结论d-1d-2-参考-03-6不因本地离线就跳过资格（D-1 … D-5）"
+      ],
+      "note": "没有槽。退出路线 = hosted：repo variable 缺省即 hosted 名、池离线删变量不改 yml；已失败 / 取消的必需实例在同一 SHA 重跑取得资格。多槽并发与异常隔离的演练在 D 组。2026-09-16 CI04。"
     },
     {
       "id": "CIP-027",

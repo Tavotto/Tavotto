@@ -1,0 +1,65 @@
+{
+  "command": "gh api repos/Tavotto/Tavotto/actions/runners",
+  "fetched_at": "2026-09-15T22:03Z",
+  "trimmed": "只留 id / name / os / status / busy / version / labels(name)；去掉 labels 里的 id/type 与其余字段",
+  "total_count": 4,
+  "runners": [
+    {
+      "id": 21,
+      "name": "tavotto-ci-01",
+      "os": "Linux",
+      "status": "online",
+      "busy": true,
+      "version": "2.336.0",
+      "labels": [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "tavotto-ci",
+        "tavotto-lab"
+      ]
+    },
+    {
+      "id": 22,
+      "name": "tavotto-ci-01-2",
+      "os": "Linux",
+      "status": "online",
+      "busy": false,
+      "version": "2.336.0",
+      "labels": [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "tavotto-ci"
+      ]
+    },
+    {
+      "id": 23,
+      "name": "tavotto-ci-01-3",
+      "os": "Linux",
+      "status": "online",
+      "busy": false,
+      "version": "2.336.0",
+      "labels": [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "tavotto-ci"
+      ]
+    },
+    {
+      "id": 24,
+      "name": "tavotto-ci-01-4",
+      "os": "Linux",
+      "status": "online",
+      "busy": false,
+      "version": "2.336.0",
+      "labels": [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "tavotto-ci"
+      ]
+    }
+  ]
+}
