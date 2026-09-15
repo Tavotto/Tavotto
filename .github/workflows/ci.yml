@@ -976,7 +976,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}
-          path: ${{ runner.temp }}/smoke-run/**
+          # 只收结果与服务日志。attempt-*/data 里有本实例的会话凭据（port-<P>.json，
+          # ADR 0008）、config 里有用户级配置——都不是诊断需要的，也不该离开这台 VM；
+          # server.log 里的 #dnonce= 由脚本在子进程退出后原地抹掉（03 §3：上传前脱敏）。
+          path: |
+            ${{ runner.temp }}/smoke-run/result.json
+            ${{ runner.temp }}/smoke-run/attempt-*/server.log
           retention-days: 7
           if-no-files-found: ignore
 

@@ -158,8 +158,30 @@ def read_log(path: Path) -> str:
 
 
 def log_tail(path: Path, n: int = LOG_TAIL_LINES) -> str:
-    lines = read_log(path).splitlines()
+    lines = redact(read_log(path)).splitlines()
     return "\n".join(lines[-n:])
+
+
+#: 产品启动时把桌面握手用的一次性 nonce 打在 stdout 的 URL 里（`app.py` 的
+#: `url += "#dnonce=" + nonce`）。它是本实例的会话凭据之一（ADR 0008），而 server.log
+#: 在失败时会作为 artifact 上传——03_RUNNERS_AND_TRUST §3「上传失败日志前脱敏」。
+#: 只抹值，保留键名：读日志的人仍看得出「那一行是握手 URL」。
+_DNONCE = re.compile(r"(#dnonce=)[^\s\"'&<>]+")
+
+
+def redact(text: str) -> str:
+    return _DNONCE.sub(r"\1<redacted>", text)
+
+
+def redact_log_file(path: Path) -> None:
+    """子进程退出**之后**把 server.log 原地脱敏（它退出前日志还在被写，先抹会被覆盖）。"""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    cleaned = redact(raw)
+    if cleaned != raw:
+        path.write_text(cleaned, encoding="utf-8")
 
 
 def _status(url: str, timeout: float = 5.0) -> tuple[int, bytes]:
@@ -380,6 +402,7 @@ def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: f
         record["terminate"] = terminate(proc)
         record["leftover_workers"] = SA._leftover_workers(data_dir)
         record["elapsed_seconds"] = round(time.monotonic() - t0, 2)
+        redact_log_file(log_path)  # 子进程已终止，日志不会再被写；上传前抹掉 #dnonce
     if record["state"] == "ready":
         after = []
         if record["terminate"]["group_gone"] is False:
