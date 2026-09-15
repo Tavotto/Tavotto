@@ -146,7 +146,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       data-active={active || undefined}
       onClick={handleClick}
       className={cn(
-        'inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap',
+        'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap',
         'transition-[background-color,border-color,color] duration-fast',
         'focus-visible:focus-ring outline-none',
         // 不用 pointer-events-none：那会连 not-allowed 光标和 tooltip 一起吞掉，

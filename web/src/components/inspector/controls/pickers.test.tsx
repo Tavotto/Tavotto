@@ -434,7 +434,7 @@ describe('LegendPositionPicker', () => {
     'right', 'center left', 'center right', 'lower center', 'upper center', 'center',
   ]
 
-  it('3×3 网格 + 「最佳位置」档；点击写 matplotlib loc 名；没有模糊的「自动」按钮', async () => {
+  it('3×3 网格 + 「最佳位置」第十格；点击写 matplotlib loc 名', async () => {
     const onChange = vi.fn()
     await mount(
       <LegendPositionPicker value="lower right" options={LOCS} onChange={onChange} ariaLabel="位置" />,
@@ -444,10 +444,15 @@ describe('LegendPositionPicker', () => {
       radioByLabel('左上')!.click()
     })
     expect(onChange).toHaveBeenCalledWith('upper left')
-    // matplotlib 的 `best` 是「最佳位置」（按数据避让），不是一个无上下文的「自动」
-    const all = Array.from(host.querySelectorAll('button'))
-    expect(all.find((b) => b.textContent === '自动')).toBeUndefined()
-    const best = all.find((b) => b.textContent === '最佳位置')!
+    // 2026-09-15 打磨：它是这一组的第十格，与九宫格同一副 32px 方格。
+    // **名字仍是「最佳位置」**（ADR 0034：`best` 是按数据避让，不是无上下文的
+    // 「自动」）——同组那九格连可见文字都没有，可达名是唯一那一份；格子里
+    // 那两个字只是方格塞得下的短写。两条一起断言，少一条都能被「把可达名也
+    // 改成自动」这条变异绕过去
+    const best = radioByLabel('最佳位置')!
+    expect(best.className).toContain('h-8')
+    expect(best.className).toContain('w-8')
+    expect(best.textContent).toBe('自动')
     await act(async () => {
       best.click()
     })
@@ -532,9 +537,7 @@ describe('LegendPositionPicker', () => {
         ariaLabel="位置"
       />,
     )
-    const best = Array.from(host.querySelectorAll('button')).find(
-      (b) => b.textContent === '最佳位置',
-    )!
+    const best = radioByLabel('最佳位置')!
     await act(async () => {
       best.click()
     })

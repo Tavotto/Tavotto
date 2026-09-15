@@ -75,7 +75,7 @@
     "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits the figure’s script. Review the diff, or roll it back.",
     "noCli": "No coding agent available.",
-    "noPanelHint": "Panels marked with { } come from a script. The assistant can edit it directly.",
+    "noPanelHint": "Figures marked with { } come from a script. The assistant can edit it directly.",
     "noPanelTitle": "Select an editable figure",
     "none": "—",
     "openAiSettings": "Open Coding Agent settings",

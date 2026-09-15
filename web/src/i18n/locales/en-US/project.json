@@ -36,9 +36,9 @@
   "handoff": {
     "added": "Added {{name}}",
     "located": "Jumped to {{name}}",
-    "noProject": "No project is open, so the panel can’t be located.",
+    "noProject": "No project is open, so the figure can’t be located.",
     "openFailed": "Couldn’t open the project: {{error}}",
-    "panelMissing": "Panel {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
+    "panelMissing": "Figure {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
     "projectOpened": "Opened project {{name}}",
     "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library"
   },

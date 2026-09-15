@@ -79,7 +79,7 @@
     "no_project": "No project is open yet",
     "non_finite_number": "This document has a value that can’t be saved, such as NaN or infinity. The file on disk is untouched: {{reason}}",
     "non_finite_on_disk": "The document on disk has NaN or infinity, which isn’t valid JSON and can’t be read in the browser. Tavotto left the file untouched; check which external tool wrote it.",
-    "not_parameterizable": "This panel isn’t parameterizable — no matching script.",
+    "not_parameterizable": "This figure isn’t parameterizable — no matching script.",
     "open_project_failed": "Can’t open this project: {{reason}}",
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
@@ -298,7 +298,7 @@
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
     "barWithoutErrorbar": "The bar chart has no error bars. If the bars are means of repeated measurements, the profile expects the error shown.",
-    "bitmapEmbed": "Flipped or semi-transparent panels are embedded in the PDF as bitmaps at export DPI. Vector text isn't preserved.",
+    "bitmapEmbed": "Flipped or semi-transparent figures are embedded in the PDF as bitmaps at export DPI. Vector text isn't preserved.",
     "cjkFallbackMissing": "Text with CJK characters uses {{family}} with no CJK fallback declared. It exports as boxes in the PDF.",
     "cjkFallbackUnaccepted": "Text with CJK characters is drawn by {{face}} (body font {{family}}), not among the CJK fonts the profile accepts.",
     "discouragedColormap": "The colormap {{cmap}} isn't perceptually uniform; the profile recommends {{recommended}}.",
@@ -319,20 +319,20 @@
     "legendOverData": "The legend covers data ({{count}}: {{targets}})",
     "legendOverDataRisk": "The legend may cover data — only bounding boxes intersect, the geometry could not be measured ({{count}}: {{targets}})",
     "lineWidthOffPreset": "The effective line width {{effective}} pt isn't one of the profile's steps ({{presets}} pt).",
-    "missingAsset": "A panel references an asset that isn't in the current figure library. Export will fail or come out blank.",
+    "missingAsset": "A figure references an asset that isn't in the current figure library. Export will fail or come out blank.",
     "outOfPage": "An object extends past the page. The part outside won't appear in the output.",
     "outsideMargin": "An object crosses the {{margin}} mm safe-area margin",
-    "overlap": "Panels overlap each other. Confirm this is intentional before exporting.",
+    "overlap": "Figures overlap each other. Confirm this is intentional before exporting.",
     "pageAspect": "The page aspect {{ratio}} ({{w}} × {{h}} mm) isn't one of the allowed ratios ({{allowed}}).",
     "pageWidth": "The page width {{actual}} mm isn't one of the profile's column widths ({{want}} mm).",
     "paletteLineMarkers": "All {{count}} lines have no markers, hard to tell apart in black-and-white print or for colorblind readers. Consider markers or distinct line styles.",
     "paletteSemantic": "The colormap {{cmap}} isn't one of the recommended scientific palettes (pick by sequential / diverging / categorical meaning: {{url}}).",
-    "panelTextNotVerifiable": "This vector panel has no engine manifest yet (not rendered or not from a script), so its text size and font can't be checked automatically.",
-    "rasterDpi": "The raster panel's effective resolution {{dpi}}dpi is below the profile's {{min}}dpi",
-    "rasterTextNotVerifiable": "Text in a raster panel can’t be checked automatically. Confirm the final size is above the profile’s floor.",
-    "renderError": "This panel's last render failed — fix it before exporting",
+    "panelTextNotVerifiable": "This vector figure has no engine manifest yet (not rendered or not from a script), so its text size and font can't be checked automatically.",
+    "rasterDpi": "This raster figure's effective resolution {{dpi}}dpi is below the profile's {{min}}dpi",
+    "rasterTextNotVerifiable": "Text in a raster figure can’t be checked automatically. Confirm the final size is above the profile’s floor.",
+    "renderError": "This figure's last render failed — fix it before exporting",
     "spinesNotEnclosed": "The axes are missing {{sides}}. The profile requires them enclosed.",
-    "staleRender": "The panel’s script changed but hasn’t been rebuilt. The export would use the old figure.",
+    "staleRender": "This figure’s script changed but hasn’t been rebuilt. The export would use the old one.",
     "textBelowFloor": "Canvas text at {{size}} pt is not above the absolute floor of {{floor}} pt",
     "textCjkFallbackMissing": "Canvas text in Chinese has no usable CJK font fallback",
     "textFontFamilySubstituted": "Canvas text uses {{family}}; the profile requires {{want}}",
@@ -345,7 +345,7 @@
     "textWeightPolicy": "The profile expects {{role}} to be {{want}}; currently {{got}}.",
     "tickDirection": "Tick direction is {{got}}; the profile requires {{want}}",
     "tickLabelCount": "{{axis}} has {{count}} tick labels; the profile suggests keeping it under {{max}}",
-    "unappliedOverride": "{{count}} figure edits on this panel haven’t been applied to the render, so the output won’t match the canvas."
+    "unappliedOverride": "{{count}} figure edits on this one haven’t been applied to the render, so the output won’t match the canvas."
   },
   "problems": {
     "ariaLocate": "locate this object",
@@ -455,7 +455,7 @@
       "missing-asset": "Asset file missing",
       "out-of-page": "Outside the page",
       "outside-margin": "Past the safe margin",
-      "overlap": "Panels overlap",
+      "overlap": "Figures overlap",
       "page-aspect": "Page aspect off spec",
       "page-width": "Page width off spec",
       "palette-line-markers": "Lines without markers",
@@ -498,8 +498,8 @@
     "relaunchFailed": "Restart failed. Quit and reopen the app."
   },
   "writeBackAnnotations": {
-    "flipped": "the panel is flipped, so annotation coordinates can’t be mapped",
+    "flipped": "the figure is flipped, so annotation coordinates can’t be mapped",
     "rasterOnly": "this asset is a bitmap only — no vector PDF",
-    "rotated": "the panel is rotated, so annotation coordinates can’t be mapped"
+    "rotated": "the figure is rotated, so annotation coordinates can’t be mapped"
   }
 }

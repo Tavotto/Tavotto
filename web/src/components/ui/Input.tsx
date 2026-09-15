@@ -470,7 +470,7 @@ export function ColorField({
           onChange={(e) => onChange(e.target.value)}
           onBlur={onGestureEnd}
           aria-label={t('colorField.picker', { label: ariaLabel })}
-          className="absolute inset-0 cursor-pointer opacity-0"
+          className="absolute inset-0 opacity-0"
         />
       </div>
     </div>
