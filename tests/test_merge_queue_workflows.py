@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,12 @@ assert not _RENAMED, (
 
 CI = (WF / "ci.yml").read_text(encoding="utf-8")
 CODEQL = (WF / "codeql.yml").read_text(encoding="utf-8")
+
+# 判定器与 ruleset 工具：TestHeavyLaneDependencies 要拿真实的 `decide()` 与 `GATE_CONTEXTS`
+# 去证明「删边之后 AND 还在」，不复述自己以为的规则。挂法与 tests/test_aggregate_gate.py 相同。
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+import aggregate_gate as AG  # noqa: E402
+import merge_queue_ruleset as MQ  # noqa: E402
 
 
 def _sdist_include() -> list[str]:
@@ -534,6 +541,207 @@ class TestGates:
         block = _job(CI, "ci-fast-gate")
         assert "python-lint" in _needs_of(block)
         assert "python-lint" in _required_of(block)
+
+
+# ============================================================ 重型档的 needs（CI01）
+class TestHeavyLaneDependencies:
+    """package / windows-exe-smoke / macos-app-smoke / posix-e2e 的 `needs`（CI01，2026-09-16）。
+
+    CI00 把 ci.yml 全部 23 条 needs 边逐条分了类（docs/implementation/ci-foundation/
+    evidence/dag_edge_kinds.json）：只有 frontend → plugin-candidate 一条真的消费字节；
+    backend-fast / frontend → 四个重型 job 的 8 条全是 verdict-only——下游没有一步
+    download-artifact，前端各自重建。而 29 个合并组里 28 个的关键路径是
+    backend-fast（中位 31 分钟）→ windows-exe-smoke → integration gate。
+
+    CI01 的两条决定，各由一条用例钉住：
+      1. 删 backend-fast → 重型 的四条边（合并资格模型中位 57 → 41 分钟）；
+      2. 保留 frontend → 重型 的四条边作短预筛（4 分钟、不在关键路径上，
+         前端坏时省下每个候选约 45 runner 分钟）。
+    第三条用例是「真实 artifact/data 依赖继续成立」的正面判据，第四条用真实判定器证明
+    删边没有松掉 AND。回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的不动。
+    """
+
+    #: 四个不再等 backend-fast 的重型 job（按 job **id** 点名——显示名带矩阵后缀）。
+    #: backend-platforms 也是重型档，但它本来就没有 needs，不在这一刀里。
+    HEAVY_CONSUMERS = ("package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e")
+
+    #: 只产出结论、不产出任何字节的上游——重型 job 等它们只能是 verdict-only。
+    VERDICT_ONLY_UPSTREAMS = frozenset(
+        {"backend-fast", "backend-platforms", "invariants", "ci-fast-gate", "ci-integration-gate"}
+    )
+
+    @staticmethod
+    def _job_ids() -> list[str]:
+        return re.findall(r"(?m)^  ([\w-]+):\n", CI.split("\njobs:\n", 1)[1])
+
+    @staticmethod
+    def _optional_needs(block: str) -> set[str]:
+        """`needs` 可以没有（快线 job 都没有）；有就必须是 `[a, b]` 的单行形状。"""
+        code = _code(block)
+        if not re.search(r"(?m)^    needs:", code):
+            return set()
+        return _needs_of(code)
+
+    @staticmethod
+    def _artifact_names(block: str, action: str) -> list[str]:
+        """一个 job 里所有 `actions/<action>-artifact` 步骤的 `with.name`。
+
+        只认 `with:` 块里的 `name:`——步骤自己的显示名 `- name: 上传…` 也叫 name，
+        判据要是抓到它，「上传了什么」就会被读成「这一步叫什么」。
+        """
+        names: list[str] = []
+        for step in re.split(r"(?m)^      - ", _code(block))[1:]:
+            m = re.search(rf"(?m)^\s*uses: actions/{action}-artifact@v\d+\n", step)
+            if not m:
+                continue
+            with_ = re.search(r"(?m)^        with:\n", step[m.end() :])
+            assert with_, f"{action}-artifact 步骤没有 with: 块——形状变了？\n{step}"
+            name = re.search(r"(?m)^          name: (.+)$", step[m.end() + with_.end() :])
+            assert name, f"{action}-artifact 的 with: 里读不出 name:\n{step}"
+            names.append(name.group(1).strip())
+        return names
+
+    def _needs_closure(self, job_id: str) -> set[str]:
+        """`needs` 的传递闭包（不含自己）。"""
+        seen: set[str] = set()
+        todo = [job_id]
+        while todo:
+            for n in self._optional_needs(_job(CI, todo.pop())):
+                if n not in seen:
+                    seen.add(n)
+                    todo.append(n)
+        return seen
+
+    def test_heavy_jobs_do_not_wait_for_the_backend_fast_verdict(self):
+        """四个重型 job 的 needs 里不许再有 backend-fast（也不许有任何只产结论的上游）。
+
+        这条边是 verdict-only 的证据就在同一个文件里：四个 job 没有一步
+        download-artifact（这里顺手断言，作为「删边是安全的」的前提），前端由各自的
+        `build_frontend.py` 自建。它们等 backend-fast 只是等一句「pytest 过了」，而那句话
+        由 `CI fast gate` 的闭集（`test_fast_gate_needs_matches_required_closed_set`）与
+        ruleset 的三个 context 一起保证，不需要在 DAG 里再串一遍。
+
+        回退：把四行 `needs: [frontend]` 改回 `needs: [backend-fast, frontend]`，
+        并把这条用例与下一条一起改掉——别的（判定器、Gate 闭集、timeout、concurrency、
+        if）都不用动。
+        """
+        for job_id in self.HEAVY_CONSUMERS:
+            block = _job(CI, job_id)
+            needs = self._optional_needs(block)
+            assert needs, f"{job_id} 没有 needs 了——短预筛也被删了？看下一条用例"
+            waiting_for = needs & self.VERDICT_ONLY_UPSTREAMS
+            assert not waiting_for, (
+                f"{job_id} 又在等 {sorted(waiting_for)}——它们只产结论不产字节，"
+                "等它们把关键路径拉回 backend-fast → 重型 → gate（CI00 §5.1）"
+            )
+            assert self._artifact_names(block, "download") == [], (
+                f"{job_id} 开始 download-artifact 了——它对上游的依赖不再是 verdict-only，"
+                "先按 test_heavy_consumers_that_download_an_artifact_must_need_its_producer 补数据边"
+            )
+
+    def test_heavy_jobs_keep_the_frontend_prescreen(self):
+        """四个重型 job 的 needs **恰好**是 `[frontend]`——短预筛保留，别的一条不加。
+
+        这是一个明确的成本 / 延迟决定（02 §2）：frontend 中位 4 分钟且删边后不在
+        关键路径上（关键路径变成 backend-platforms (windows) 41 分钟），留着它对资格
+        时长零成本，却能在前端坏掉时省下每个候选约 45 runner 分钟。谁想把它也删掉、
+        或把长边加回来，都得改这条用例并在 PR 里说理由。
+        """
+        for job_id in self.HEAVY_CONSUMERS:
+            assert self._optional_needs(_job(CI, job_id)) == {"frontend"}, (
+                f"{job_id} 的 needs 不再恰好是 [frontend]——短预筛的决定被改了，"
+                "先改这条用例并写明理由"
+            )
+
+    def test_heavy_consumers_that_download_an_artifact_must_need_its_producer(self):
+        """每个 download-artifact 的 name，都必须由它 needs 闭包里的某个 job 上传过。
+
+        这是「真实 artifact/data 依赖继续成立」（CIP-005）的**正面**判据：删 verdict-only
+        边的同时，数据边一条都不许掉——artifact 没出来，consumer 不能假定它存在。
+        现在全图只有 plugin-candidate ← frontend（codex-plugin-candidate）一条数据边；
+        将来谁在重型 job 里加 download-artifact，这里会要求他同时把生产者加进 needs。
+        """
+        uploads: dict[str, set[str]] = {}
+        downloads: list[tuple[str, str]] = []
+        for job_id in self._job_ids():
+            block = _job(CI, job_id)
+            for name in self._artifact_names(block, "upload"):
+                uploads.setdefault(name, set()).add(job_id)
+            for name in self._artifact_names(block, "download"):
+                downloads.append((job_id, name))
+        # 非空前提：一个 download 都解析不出时，下面的循环什么都没证明
+        assert ("plugin-candidate", "codex-plugin-candidate") in downloads, (
+            f"全图唯一的数据边（plugin-candidate ← codex-plugin-candidate）没解析出来：{downloads}"
+        )
+        assert uploads.get("codex-plugin-candidate") == {"frontend"}, uploads
+        for consumer, name in downloads:
+            producers = uploads.get(name, set())
+            assert producers, f"{consumer} download 的 `{name}` 没有任何 job 上传过"
+            closure = self._needs_closure(consumer)
+            assert producers & closure, (
+                f"{consumer} download `{name}`，但它的生产者 {sorted(producers)} 不在其 needs "
+                f"闭包 {sorted(closure)} 里——artifact 可能还没出来它就开始跑了"
+            )
+
+    def test_a_red_backend_fast_still_blocks_the_merge_even_when_every_heavy_job_is_green(self):
+        """「测试失败但构建成功」的反例（phases/CI01 第 2 条）：用真实判定器跑一遍 merge_group。
+
+        删边之后 backend-fast 红、四个重型 job 全绿是可能同时发生的（它们并行了）。
+        这时候：fast gate 按 ci.yml 里真实的 `--required` 闭集判 → failure；
+        integration gate 五个全 success → success；而 ruleset 的 required contexts 是
+        `GATE_CONTEXTS` 三个**全部**（`build_switch_to_gates` 写进 ruleset 的正是这张表，
+        GitHub 的 required_status_checks 语义是每一个 context 都要过）——一个 Gate 红，
+        候选就进不了 main。这里断言的是判定器 + ruleset 变换的实际输出，不是复述规则。
+        """
+        fast_required = sorted(_required_of(_job(CI, "ci-fast-gate")))
+        assert "backend-fast" in fast_required, "前提：backend-fast 还在 fast gate 的闭集里"
+        results = {j: "success" for j in fast_required}
+        results["backend-fast"] = "failure"
+        fast = AG.decide("fast", "merge_group", fast_required, results)
+        assert fast["status"] == "failure", fast
+        assert "backend-fast: failure" in fast["problems"], fast
+
+        heavy_required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+        assert "backend-fast" not in heavy_required, (
+            "integration gate 的闭集本来就不含 backend-fast"
+        )
+        heavy = AG.decide(
+            "integration",
+            "merge_group",
+            heavy_required,
+            {j: "success" for j in heavy_required},
+            require_heavy=True,
+        )
+        assert heavy["status"] == "success", heavy
+
+        # ruleset 侧：switch-to-gates 写进去的 required contexts 就是三个 Gate，一个不少
+        current = {
+            "name": MQ.DEFAULT_RULESET_NAME,
+            "target": "branch",
+            "rules": [
+                {"type": "merge_queue", "parameters": dict(MQ.MERGE_QUEUE_PARAMS)},
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "strict_required_status_checks_policy": False,
+                        "required_status_checks": [{"context": "anything-old"}],
+                    },
+                },
+            ],
+        }
+        rsc = [
+            r
+            for r in MQ.build_switch_to_gates(current)["rules"]
+            if r["type"] == "required_status_checks"
+        ][0]["parameters"]["required_status_checks"]
+        contexts = [c["context"] for c in rsc]
+        assert contexts == MQ.GATE_CONTEXTS
+        assert {"CI fast gate", "CI integration gate"} <= set(contexts)
+        # 每条都是无条件的 {context} 条目：没有哪一个被标成可选 / 只在某些事件下要求
+        assert all(set(c) == {"context"} for c in rsc), rsc
+        # 两个 CI Gate 的名字与 ci.yml 里的 `name:` 逐字相同——ruleset 要求的正是这两个 job
+        for gate in ("CI fast gate", "CI integration gate"):
+            assert f"name: {gate}\n" in CI
 
 
 class TestPythonLint:
