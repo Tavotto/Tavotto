@@ -147,39 +147,45 @@ export function Inspector({
             </Tab>
           ))}
         </TabList>
-        <span className="flex-1" />
-        {layout !== 'narrow' ? (
-          /* 只留图钉，不写「常驻 / 自动收起」：即便右栏最窄 320px，两个标签页 +
-             助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
-             量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
-             tooltip 与无障碍名里，那两处不占版面。 */
+        {/* 右侧图标钮簇：与下方属性头部一样收成一个 ml-auto 的簇（簇内 4px），不再用 flex-1 撑开 +
+            三段 12px 间距——320px 英文（Linux 的 DejaVu Sans）下页签行本来只剩 1px 余量，页签选中态改
+            600 并按加粗宽度预留之后（打磨批次 A）恰好撑破 4px（e2e/inspector-overflow 量到 214 > 210）。
+            贴右缘的 -mr-1.5 放在簇上而不是关闭钮上：负外边距落在簇内会让簇自己 scrollWidth 多 6px，
+            那把尺子照样红（同上面 header 注释里说的那 4px）。 */}
+        <span className="-mr-1.5 ml-auto flex shrink-0 items-center gap-1">
+          {layout !== 'narrow' ? (
+            /* 只留图钉，不写「常驻 / 自动收起」：即便右栏最窄 320px，两个标签页 +
+               助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
+               量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
+               tooltip 与无障碍名里，那两处不占版面。 */
+            <IconButton
+              label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
+              tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
+              side="bottom"
+              iconSize="sm"
+              active={pinned}
+              aria-pressed={pinned}
+              onClick={() => useUiStore.getState().setRightPinned(!pinned)}
+            >
+              {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
+              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            </IconButton>
+          ) : (
+            <Tip label={t('overlayTip')} side="bottom">
+              <span className="text-xs text-ink-3">{t('overlay')}</span>
+            </Tip>
+          )}
           <IconButton
-            label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
-            tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
+            label={t('closePanel')}
+            tip={translate('actions.close')}
             side="bottom"
             iconSize="sm"
-            active={pinned}
-            aria-pressed={pinned}
-            onClick={() => useUiStore.getState().setRightPinned(!pinned)}
+            className="text-ink-3 hover:text-ink"
+            onClick={() => useUiStore.getState().toggleRight()}
           >
-            {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
-            <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            <X size={ICON_SIZE.sm} />
           </IconButton>
-        ) : (
-          <Tip label={t('overlayTip')} side="bottom">
-            <span className="text-xs text-ink-3">{t('overlay')}</span>
-          </Tip>
-        )}
-        <IconButton
-          label={t('closePanel')}
-          tip={translate('actions.close')}
-          side="bottom"
-          iconSize="sm"
-          className="-mr-1.5 text-ink-3 hover:text-ink"
-          onClick={() => useUiStore.getState().toggleRight()}
-        >
-          <X size={ICON_SIZE.sm} />
-        </IconButton>
+        </span>
       </div>
 
       {tab === 'assistant' ? (
