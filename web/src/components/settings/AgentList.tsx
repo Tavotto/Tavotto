@@ -40,12 +40,15 @@ export function AgentList({
   /** 「默认」按钮：把这一行设为默认编码 Agent。不给就不画这颗按钮 */
   onSetDefault?: (id: string) => void
 }) {
+  /* 去外框（全面打磨 D11，用户拍板）：这是全部设置页里唯一带外框的清单，行内容
+     还因为 `px-3` 比别的行缩进 13px。行之间只留 hairline，与 `SettingSection` 里
+     相邻两行同一条竖线、同一条分隔线——「一个页面里所有东西都有框，说明设计失败」 */
   return (
-    <ul className="overflow-hidden rounded-md border border-border bg-surface">
+    <ul className="flex flex-col">
       {agents.map((agent, i) => (
         <li
           key={agent.id}
-          className={cn('relative flex min-h-12 items-center gap-3 px-3',
+          className={cn('relative flex min-h-12 items-center gap-3',
             i > 0 && 'border-t border-border')}
         >
           {/*
@@ -61,7 +64,7 @@ export function AgentList({
             data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
-            className="absolute inset-0 rounded-md outline-none hover:bg-surface-hover focus-visible:focus-ring"
+            className="absolute inset-0 rounded-sm outline-none hover:bg-surface-hover focus-visible:focus-ring"
           />
           {/* 默认助手是一组互斥的取值：行首一颗 `Radio`（2026-09-14 审计 D1，用户拍板）。
               此前是行尾一颗一会儿写「当前默认」（按下态、不可点）一会儿写「设为默认」（动作）

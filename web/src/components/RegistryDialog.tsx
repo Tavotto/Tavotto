@@ -95,8 +95,9 @@ export function RegistryDialog() {
       onOpenChange={(v) => {
         if (!v) useProjectReadinessStore.getState().closeCenter()
       }}
+      /* 标题下的常驻说明删了（全面打磨 D34）：「每张图能不能直接改，以及还差什么。」
+         是对标题的复述，而下面每一行自己就在说这件事 */
       title={rd('title')}
-      description={rd('subtitle')}
       size="lg"
       anchor="readiness"
     >
@@ -271,8 +272,11 @@ function ReadinessBody() {
           ({ key, panels }) =>
             panels.length > 0 && (
               <section key={key}>
-                <h3 className="type-section mb-0.5 tabular-nums">
-                  {rd(`group.${key}`, { n: panels.length })}
+                {/* 计数格式只有一种：名字 + meta 数字，不用「名字（N）」
+                    （批次 E～G 的规矩，全面打磨 D15） */}
+                <h3 className="type-section mb-0.5 flex items-baseline gap-1.5">
+                  {rd(`group.${key}`)}
+                  <span className="type-meta tabular-nums">{panels.length}</span>
                 </h3>
                 <ul className="flex flex-col divide-y divide-border">
                   {panels.map((p) => (
@@ -824,9 +828,9 @@ function AllScriptsSection({
   return (
     <Details className="border-t border-border pt-2">
       <Summary className="type-section h-7 gap-1 rounded-sm px-1 hover:text-ink-2">
-        {rd('allScriptsTitle', { n: scripts.length })}
+        {rd('allScriptsTitle')}
+        <span className="type-meta tabular-nums">{scripts.length}</span>
       </Summary>
-      <p className="type-caption px-1 pb-1">{rd('allScriptsHint')}</p>
       <ul className="max-h-52 overflow-y-auto">
         {scripts.map((s) => (
           <li key={s.script} className="flex flex-col gap-0.5 border-t border-border px-1 py-1.5">
@@ -844,6 +848,9 @@ function AllScriptsSection({
                   className="-my-1 text-ink-2 hover:text-ink"
                   disabled={busy !== null}
                   onClick={() => onProbe(s.script)}
+                  /* 「任选一个试运行，按它实际画出的图建立关系」从展开后常驻的两行说明
+                      搬到这颗钮的气泡里（全面打磨 D34）：它解释的是这个动作 */
+                  title={rd('allScriptsHint')}
                 >
                   {rd(busy === s.script ? 'running' : s.registered ? 'reprobe' : 'probeAndLink')}
                 </Button>

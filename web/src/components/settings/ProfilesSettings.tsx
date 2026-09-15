@@ -36,7 +36,7 @@ import { useProfileStore } from '@/store/profileStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem } from '../ui/Menu'
+import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { NumberField, TextInput } from '../ui/Input'
@@ -239,7 +239,7 @@ function KeyRules({ profile }: { profile: Record<string, unknown> }) {
         const f = SPEC_FIELDS.find((x) => x.labelKey === key)!
         return (
           <div key={key} className="flex min-w-24 flex-col">
-            <dd className="text-lg font-medium tabular-nums text-ink">
+            <dd className="type-title tabular-nums">
               {formatValue(readPath(profile, f.path), f.unit)}
             </dd>
             <dt className="type-meta">{st(`field.${f.labelKey}`)}</dt>
@@ -477,8 +477,23 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
    * 读屏与视觉都只有一个主动作（Design Constitution 第五节）：规范页里「本项目用
    * 这套规范」在选中那条还没被项目采用时是主动作；样式页 / 已采用的规范页里，
    * 只读那份的主动作是「复制一份再修改」，可编辑那份的是「保存」。
+   *
+   * **「在用」的判据是实际在用的那份，不是显式绑定**（全面打磨 D03）：文档里没指定过
+   * 任何规范时检查走内置默认，那也是「在用」——此前 `boundId === selected.id` 把这种
+   * 回退读成「没在用」，于是同一页顶部写着「当前项目使用 · 默认规范」，下面的身份行
+   * 却给「默认规范」摆着一颗「本项目用这套规范」。判据只有 `resolveDocumentSpec` 一份，
+   * 导出面板与这里量的是同一个。
    */
-  const bound = kind === 'spec' && !!selected && boundId === selected.id
+  const inUseId = resolved?.profileId ?? null
+  const bound = kind === 'spec' && !!selected && inUseId === selected.id
+  /** 「在用」是回退来的（文档里一条绑定都没有）：固化成显式绑定还是一件真事 */
+  const inUseByFallback = bound && !boundId
+  /**
+   * 文档里**显式**绑定的就是这一份。「跟随更新」只对它成立：没有绑定时用的是
+   * 内置默认那一份，没有「全局那一版变了要不要跟」这回事，而那颗开关写的是
+   * `doc.profile.follow`——文档里连 `profile` 都没有时，它会凭空造出半条绑定。
+   */
+  const boundExplicit = kind === 'spec' && !!selected && boundId === selected.id
 
   return (
     <>
@@ -534,10 +549,10 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
         {loaded && records.length === 0 ? (
           <span className="type-meta">{st('empty')}</span>
         ) : records.length === 1 ? (
-          /* 只有一份时没有可选的：写名字就够了，一格的分段选择器读作坏掉的控件 */
-          <span className="type-body min-w-0 flex-1 truncate text-right" title={profileTechnicalDetail(records[0])}>
-            {profileName(records[0])}
-          </span>
+          /* 只有一份时这一行什么值都不写（全面打磨 D39）：没有可选的，而下面的身份行
+             已经用 type-title 写着同一个名字——两行同一个名字里，标题那一行才是它的
+             名字，这一行只剩「库」这个标签与行尾的 ⋯ */
+          null
         ) : records.length <= LIBRARY_AS_SEGMENTED ? (
           /* 二到四份是一组互斥的取值：分段选择器（宪法第五节）；本项目在用的那份带勾 */
           <Segmented
@@ -550,7 +565,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               label: profileName(r),
               title: profileTechnicalDetail(r),
               icon:
-                kind === 'spec' && boundId === r.id ? (
+                kind === 'spec' && inUseId === r.id ? (
                   <CircleCheck size={ICON_SIZE.xs} aria-hidden className="text-ok" />
                 ) : undefined,
             }))}
@@ -567,7 +582,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               label: [
                 profileName(r),
                 r.built_in ? st('builtin') : null,
-                kind === 'spec' && boundId === r.id ? st('inUse') : null,
+                kind === 'spec' && inUseId === r.id ? st('inUse') : null,
               ]
                 .filter(Boolean)
                 .join(' · '),
@@ -594,6 +609,25 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           <MenuItem icon={Upload} onSelect={() => fileRef.current?.click()}>
             {st('import')}
           </MenuItem>
+          {/* 「恢复默认 / 删除」是这一份的低频动作（全面打磨 D04）：此前与「保存」并排
+              在页面底部一排左对齐的钮里，和唯一的主动作抢分量。不可恢复的原因作为项的
+              第二行常驻——禁用项收不到指针事件，气泡不能是唯一的说明 */}
+          {editable && (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                icon={RotateCcw}
+                disabled={!selected?.derived_from}
+                reason={selected?.derived_from ? undefined : st('restoreNeedsOrigin')}
+                onSelect={() => void restore()}
+              >
+                {st('restore')}
+              </MenuItem>
+              <MenuItem icon={Trash2} danger onSelect={() => void remove()}>
+                {st('delete')}
+              </MenuItem>
+            </>
+          )}
         </Menu>
         <input
           ref={fileRef}
@@ -635,45 +669,73 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 </div>
               )}
 
-              {/* 身份行：名字 + 来源 + 这一份的主动作。
-                  只读那份：「这份改不了、想改按这里」是**状态 + 动作**，不是一段散文
-                  ——只读这个事实是徽标，「复制出来的那份可以编辑」是就在旁边的按钮。 */}
-              {editable ? (
-                <SettingRow label={st('name')} controlId="profile-name">
+              {/* 身份行：名字 + 来源 + **这一份唯一的主动作**（2026-09-15 打磨批次 B，L3；
+                  全面打磨 D04）。只读那份：「这份改不了、想改按这里」是**状态 + 动作**，不是
+                  一段散文——只读这个事实是徽标，「复制出来的那份可以编辑」是就在旁边的按钮。
+
+                  D04 把两组动作都收进了这一行：此前样式页唯一的真动作「应用到当前图…」落在
+                  字段清单与「详情」**之后**的左下角（680 高的窗口里 y=987，要滚一屏才看得见），
+                  可编辑时更是两排左对齐的钮，与全页贴右的控件列正好相反。现在动作与名字同一行、
+                  贴右，与规范页的「本项目用这套规范」同位；低频的「恢复默认 / 删除」收进库行的
+                  ⋯ 菜单。 */}
+              <div
+                data-profile-identity
+                // 只读那一档的锚点照旧（用例认它，不认某一句话）
+                data-profile-readonly={editable ? undefined : ''}
+                className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2"
+              >
+                {editable ? (
                   <TextInput
                     id="profile-name"
+                    className="w-56"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     aria-label={st('name')}
                   />
-                </SettingRow>
-              ) : (
-                <div data-profile-readonly className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
-                  <span className="type-title min-w-0 truncate">{name}</span>
-                  <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
-                  {/* 这一份唯一的主动作（2026-09-15 打磨批次 B，L3）：正在用的规范不需要动作，
-                      一行 meta 说明状态；没用的才给「本项目用这套规范」；「复制一份再修改」是
-                      次级出口，ghost。此前黑钮与白钮并排，两颗都像主动作。 */}
-                  <span className="ml-auto flex items-center gap-1.5">
-                    {bound ? (
-                      <span className="type-meta flex items-center gap-1 text-ok">
-                        <CircleCheck size={ICON_SIZE.xs} aria-hidden />
-                        {st('inUse')}
-                      </span>
+                ) : (
+                  <>
+                    <span className="type-title min-w-0 truncate">{name}</span>
+                    <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
+                  </>
+                )}
+                <span className="ml-auto flex items-center gap-1.5">
+                  {kind === 'spec' &&
+                    (bound ? (
+                      <>
+                        <span className="type-meta flex items-center gap-1 text-ok">
+                          <CircleCheck size={ICON_SIZE.xs} aria-hidden />
+                          {st('inUse')}
+                        </span>
+                        {/* 在用是**回退**来的（文档里一条绑定都没有）：把这一刻固定下来仍是
+                            一件真事，但它不叫「用这套」——那句话读起来像现在没在用（D03） */}
+                        {inUseByFallback && (
+                          <Button variant="ghost" size="sm" onClick={useForProject}>
+                            {st('pinAsProject')}
+                          </Button>
+                        )}
+                      </>
                     ) : (
-                      kind === 'spec' && (
-                        <Button variant="secondary" size="sm" onClick={useForProject}>
-                          {st('useForProject')}
-                        </Button>
-                      )
-                    )}
+                      <Button variant="secondary" size="sm" onClick={useForProject}>
+                        {st('useForProject')}
+                      </Button>
+                    ))}
+                  {kind === 'style' && (
+                    <Button variant="secondary" size="sm" onClick={applyToFigure}>
+                      {st('applyToFigure')}
+                    </Button>
+                  )}
+                  {editable ? (
+                    <Button variant="primary" size="sm" disabled={!dirty} loading={busy} onClick={save}>
+                      {st('save')}
+                    </Button>
+                  ) : (
                     <Button variant="ghost" size="sm" onClick={duplicate} loading={busy}>
                       <Copy size={ICON_SIZE.sm} aria-hidden />
                       {st('duplicateToEdit')}
                     </Button>
-                  </span>
-                </div>
-              )}
+                  )}
+                </span>
+              </div>
 
               <div className="flex flex-col gap-4">
                 {grouped.map(({ group, fields: groupFields }) => (
@@ -742,7 +804,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 <DiagnosticItem name={st('detail.origin')} value={profileOriginLabel(selected)} />
               </DiagnosticDisclosure>
 
-              {bound && (
+              {boundExplicit && (
                 <SettingRow label={st('follow')} controlId="profile-follow">
                   <Toggle
                     id="profile-follow"
@@ -758,44 +820,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
               {error && !conflict && <InlineWarning tone="danger">{error.message}</InlineWarning>}
 
-              {/* 「保存」是改这份配置，「应用 / 使用」是对当前图或当前项目做一件事
-                  ——两件事分成两排，别挤在一行里（审计 T42）。只读的那份没有可
-                  保存的东西，整排编辑动作就不出现，不摆一排禁用按钮；只读规范的
-                  「本项目用这套规范」已经在身份行里。 */}
-              {(kind === 'style' || editable) && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {kind === 'spec' ? (
-                    <Button variant="secondary" size="sm" onClick={useForProject}>
-                      {st('useForProject')}
-                    </Button>
-                  ) : (
-                    <Button variant="secondary" size="sm" onClick={applyToFigure}>
-                      {st('applyToFigure')}
-                    </Button>
-                  )}
-                </div>
-              )}
-              {editable && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Button variant="primary" size="sm" disabled={!dirty} loading={busy} onClick={save}>
-                    {st('save')}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!selected.derived_from}
-                    onClick={restore}
-                    title={selected.derived_from ? undefined : st('restoreNeedsOrigin')}
-                  >
-                    <RotateCcw size={ICON_SIZE.sm} aria-hidden />
-                    {st('restore')}
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={remove}>
-                    <Trash2 size={ICON_SIZE.sm} aria-hidden />
-                    {st('delete')}
-                  </Button>
-                </div>
-              )}
             </>
           )}
       </div>

@@ -310,7 +310,7 @@ export default interface Resources {
       "saveAs": "另存为",
       "saveTitle": "另存为文档",
       "saved": "已另存为文档：{{name}}",
-      "savesInto": "保存到 {{dir}}",
+      "savesIntoLabel": "保存到",
       "saving": "正在保存…"
     },
     "mcp": {
@@ -851,6 +851,7 @@ export default interface Resources {
         "builtin": "内置",
         "user": "自定义"
       },
+      "pinAsProject": "固定为本项目规范",
       "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
       "previewTitle": "示例",
       "readOnlyBadge": "只读",
@@ -876,15 +877,15 @@ export default interface Resources {
     "readiness": {
       "addToCanvas": "添加到画布",
       "allEditable_other": "{{count}} 张图已就绪",
-      "allScriptsHint": "项目里的每个 .py 都在这里，包括从脚本看不出会画哪张图的。任选一个「试运行」，Tavotto 按它实际画出的图建立关系。",
-      "allScriptsTitle": "全部脚本（{{n}}）",
+      "allScriptsHint": "项目里的每个 .py 都在这里，包括从脚本看不出会画哪张图的。试运行一次，Tavotto 按它实际画出的图建立关系。",
+      "allScriptsTitle": "全部脚本",
       "autoLink": "自动连接",
       "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
       "emptyTitle": "项目里还没有图",
       "group": {
-        "editable": "可编辑（{{n}}）",
-        "layout_only": "仅排版（{{n}}）",
-        "pending": "需要处理（{{n}}）"
+        "editable": "可编辑",
+        "layout_only": "仅排版",
+        "pending": "需要处理"
       },
       "link": "连接",
       "linked": "已把 {{name}} 连到源脚本",
@@ -923,7 +924,6 @@ export default interface Resources {
       },
       "sourcePrefix": "记录位置：",
       "staleReport": "显示上次成功取回的状态，可能已过期。",
-      "subtitle": "每张图能不能直接改，以及还差什么。",
       "summary": {
         "editable": "可编辑",
         "layoutOnly": "仅排版",
@@ -1250,7 +1250,6 @@ export default interface Resources {
       },
       "export": {
         "defaultFormats": "默认格式",
-        "formatsDesc": "导出对话框打开时预选这些格式",
         "ppiNotForVector": "只选了矢量格式，分辨率不生效",
         "sectionChecks": "检查",
         "sectionFormats": "格式",
@@ -1271,12 +1270,12 @@ export default interface Resources {
       },
       "navLabel": "设置分区",
       "packages": {
+        "builtinCountMeta": "{{count}} 个 · 只读",
         "builtinEmpty": "没有内置包信息。",
         "builtinFromBundled": "随 {{product}} 安装包附带，只读。",
         "builtinFromManaged": "随 {{product}} 环境提供，只读。",
         "builtinPlanned": "创建环境时安装 matplotlib 及其依赖。",
         "builtinTitle": "内置包",
-        "builtinTitleCount": "内置包（{{count}} 个，只读）",
         "col": {
           "actions": "操作",
           "name": "名称",
@@ -1330,7 +1329,6 @@ export default interface Resources {
           "customIndex": "使用自定义软件源",
           "proxy": "当前走代理"
         },
-        "networkNote": "安装、升级与查找会联网访问 PyPI 或你配置的软件源。",
         "op": {
           "install": "安装",
           "uninstall": "卸载",
@@ -1346,7 +1344,7 @@ export default interface Resources {
         "search": {
           "action": "在 PyPI 查找",
           "alreadyInstalled": "已安装 {{version}}。",
-          "builtinTitleMatch": "内置包：{{total}} 个中匹配 {{count}} 个，只读",
+          "builtinCountMatch": "匹配 {{count}} / {{total}} · 只读",
           "exactOnly": "只按完整包名查找，不猜相近的名字。",
           "failed": "没有查到 {{name}}。",
           "installHere": "安装到此环境",
@@ -1394,7 +1392,6 @@ export default interface Resources {
         "effectivePath": "实际位置",
         "exportDir": "导出位置",
         "noScriptsSuffix": "（项目里的图暂不支持逐元素编辑）",
-        "onlyThisProject": "只影响这个项目",
         "registry": "管理来源…",
         "scriptCount_other": "{{count}} 个脚本",
         "scripts": "可编辑来源",
@@ -1446,8 +1443,7 @@ export default interface Resources {
       },
       "update": {
         "applyFailedRetry": "升级未完成，当前版本未变。可以再点一次「下载并升级」，或查看下方日志排查。",
-        "autoCheck": "自动检查",
-        "autoCheckAria": "每天自动检查更新",
+        "autoCheck": "每天自动检查",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
         "check": "检查更新",
@@ -1463,11 +1459,10 @@ export default interface Resources {
         "installMethod": "安装方式",
         "installedHint": "已安装。当前窗口仍是旧版本，重启后生效。",
         "lastChecked": "上次检查：{{time}}",
-        "latestUnknown": "还没有检查过，无法判断是不是最新版本。",
+        "lastCheckedNoUpdate": "{{time}} · 没有新版本",
+        "lastCheckedUnknown": "尚未检查，无法判断是不是最新",
         "manualDownload": "连不上更新服务时，也可以从 Releases 手动下载",
         "methodSource": "源码检出。升级用 git pull。",
-        "neverChecked": "尚未检查",
-        "noUpdateAtLastCheck": "上次检查没有发现新版本；此刻有没有，要再查一次才知道。",
         "relaunch": "重启并使用新版本",
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效。当前进程仍运行旧版本代码。",
@@ -1480,7 +1475,6 @@ export default interface Resources {
     },
     "style": {
       "affectDetails": "影响明细",
-      "affectNone": "此范围内没有图会被改动。",
       "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
       "annotationCount_other": "标注文字：{{count}} 条",
       "annotationGroup": "标注与页面",
@@ -1492,14 +1486,12 @@ export default interface Resources {
       "confirmBody_other": "将覆盖 {{count}} 项已有的图内修改，{{undo}} 可整体撤销。",
       "confirmTitle": "应用样式「{{name}}」？",
       "deleteBody": "删除后无法找回。已应用到文档的修改不受影响。",
-      "deleteStyleAria": "删除样式 {{name}}",
+      "deleteBuiltinReason": "内置样式删不掉",
       "deleteTitle": "删除样式「{{name}}」？",
-      "description": "把排版规格存成命名样式，批量应用到面板；只改图，不改源文件。",
       "descriptionEmpty": "把字号、线宽、刻度、配色存成命名样式，批量应用。只写图内修改，不改源文件。",
       "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取字号、线宽、刻度、配色作为起点。",
       "emptyDraft": "空样式。点「从当前面板提取」读取字号、线宽、刻度、配色，删掉不想统一的项，再保存。",
       "extract": "从当前面板提取",
-      "extractFrom": "从「{{name}}」读取当前值",
       "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
       "group": {
         "axes": "坐标轴",
@@ -1509,6 +1501,7 @@ export default interface Resources {
         "text": "文字"
       },
       "includePageSize": "包含页面尺寸",
+      "nameLabel": "名称",
       "namePlaceholder": "样式名称（如「AMFE 正文图」）",
       "nameRequired": "先给样式起个名字",
       "needPanel": "先在画布上选中一张已渲染、可编辑的图",
@@ -1962,7 +1955,6 @@ export default interface Resources {
       "useOtherHintBefore": "脚本需要内置环境里没有的包（rdkit、astropy…）时，换用你自己的环境。留空并应用即可恢复默认。Tavotto",
       "useOtherHintStrong": "不会改动你选中的环境",
       "useOtherLink": "使用其他 Python 环境…",
-      "workdirAria": "在脚本目录里运行",
       "workdirConfirmBody": "脚本在自己的目录里运行：相对路径读取的数据能直接找到；相对路径写出的文件会像在终端里一样落进项目目录，并改写同名文件。Tavotto 不会替它保存图片，并会拦下删除、改名和移动。只对这个项目生效。",
       "workdirConfirmOk": "在脚本目录里运行",
       "workdirConfirmTitle": "改为在脚本目录里运行？",

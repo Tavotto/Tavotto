@@ -85,7 +85,9 @@ export function ProjectSettings() {
   // 备份去哪
   return (
     <>
-    <SettingSection title={st('project.sectionProject')} description={st('project.onlyThisProject')}>
+    {/* 「只影响这个项目」删了（全面打磨 D37）：导航项与分区标题都已经叫「项目」，
+        这句说明只是把同一个词换个说法再写一遍 */}
+    <SettingSection title={st('project.sectionProject')}>
       <SettingRow
         label={st('project.current')}
         status={<PathValue path={project?.figures_dir} name={st('project.current')} />}
@@ -145,9 +147,15 @@ export function ProjectSettings() {
       />
     </SettingSection>
 
-    <SettingSection title={st('project.sectionWriteBack')} description={st('project.writeBackDesc')}>
-      {/* 开着时的副作用由分区说明那一句承担（覆盖什么、备份去哪），行上不再重复一句 */}
-      <SettingRow label={st('project.allowWriteBack')} controlId="setting-allow-write-back">
+    <SettingSection title={st('project.sectionWriteBack')}>
+      {/* 副作用那句话（覆盖什么、备份去哪）从分区说明降到行的 `status`（全面打磨 D37，§13
+          「开关开着时的低调提醒是 status」）：它只在写回真的开着时成立，常驻在分区标题下面
+          的话，关掉写回的人也要读一遍一件不会发生的事 */}
+      <SettingRow
+        label={st('project.allowWriteBack')}
+        status={allowWriteBack ? st('project.writeBackDesc') : undefined}
+        controlId="setting-allow-write-back"
+      >
         <Toggle
           aria-labelledby={settingRowLabelId('setting-allow-write-back')}
           id="setting-allow-write-back"

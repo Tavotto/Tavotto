@@ -11,6 +11,7 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import { askConfirm } from '@/store/uiStore'
 import { sortSessions, useNativeSessionStore } from '@/store/nativeSessionStore'
+import { InlineWarning } from './settings/SettingRow'
 import { Button } from './ui/Button'
 
 const ns = (key: string, values?: Record<string, unknown>) =>
@@ -60,12 +61,6 @@ const TONE: Record<NativeSessionState, 'busy' | 'ready' | 'done' | 'bad'> = {
   failed: 'bad',
 }
 
-const BORDER: Record<'busy' | 'ready' | 'done' | 'bad', string> = {
-  busy: 'border-border',
-  ready: 'border-border-strong',
-  done: 'border-border',
-  bad: 'border-danger/50',
-}
 
 function SessionCard({ session }: { session: NativeSessionInfo }) {
   const fmt = useFormatMessage()
@@ -73,7 +68,6 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
   const busy = !!store.busy[session.session_id]
   const error = store.errors[session.session_id] ?? null
   const conflicts = store.conflicts[session.session_id] ?? []
-  const tone = TONE[session.state]
   const terminal = isNativeTerminal(session.state)
   const atBarrier = session.state === 'barrier'
 
@@ -97,7 +91,10 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
     <section
       aria-label={ns('cardAria', { target: session.target_display })}
       data-state={session.state}
-      className={`pointer-events-auto rounded-sm border bg-surface px-2 py-1.5 shadow-pop ${BORDER[tone]}`}
+      // 浮层是**环 + 阴影**，不画 border（2026-09-15 打磨批次 A，T3；全面打磨 D31）：
+      // 此前 `shadow-pop` 之外还按状态描一圈实色边，两层描边叠在一起；状态由行首那颗
+      // 图标说，那是它本来的活
+      className="pointer-events-auto rounded-sm bg-surface px-2 py-1.5 shadow-pop"
     >
       <header className="flex items-start gap-1.5">
         <StateIcon state={session.state} />
@@ -123,9 +120,12 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           终端跑了同一个脚本）。静默抢过来的表现是他看到的图突然换成了另一次
           运行的，而界面什么都没说（ADR 0021 §9.2）。 */}
       {conflicts.length > 0 && (
-        <p className="mt-1 rounded-sm bg-warn-subtle px-1.5 py-1 text-xs leading-relaxed text-ink-2">
-          {ns('assetConflict', { stems: conflicts.join('、'), count: conflicts.length })}
-        </p>
+        /* 警示只有一副（全面打磨 D30）：`InlineWarning` 的 surface-hover 底，不是黄块 */
+        <div className="mt-1">
+          <InlineWarning>
+            {ns('assetConflict', { stems: conflicts.join('、'), count: conflicts.length })}
+          </InlineWarning>
+        </div>
       )}
 
       {error && (

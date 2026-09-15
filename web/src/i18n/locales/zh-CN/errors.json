@@ -284,7 +284,6 @@
     "useOtherHintBefore": "脚本需要内置环境里没有的包（rdkit、astropy…）时，换用你自己的环境。留空并应用即可恢复默认。Tavotto",
     "useOtherHintStrong": "不会改动你选中的环境",
     "useOtherLink": "使用其他 Python 环境…",
-    "workdirAria": "在脚本目录里运行",
     "workdirConfirmBody": "脚本在自己的目录里运行：相对路径读取的数据能直接找到；相对路径写出的文件会像在终端里一样落进项目目录，并改写同名文件。Tavotto 不会替它保存图片，并会拦下删除、改名和移动。只对这个项目生效。",
     "workdirConfirmOk": "在脚本目录里运行",
     "workdirConfirmTitle": "改为在脚本目录里运行？",

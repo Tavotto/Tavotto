@@ -22,6 +22,10 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *
  * 现在：**默认只给末级目录**（人认得出的那一级），完整路径按需展开，旁边
  * 一个复制按钮。展开是真的展开——`break-all` 全文可见，不再有第二次截断。
+ *
+ * 复制是**图标钮、且要指到这一行才浮出**（全面打磨 D09）：项目页一屏三行，
+ * 三颗 67px 宽的「⧉ 复制」并排站在三个目录名旁边，比目录名本身还显眼，而它
+ * 是这一页最低频的动作。键盘用户走到它时（`focus-within`）照样看得见。
  */
 export function PathValue({
   path,
@@ -37,7 +41,7 @@ export function PathValue({
   if (!path) return <span className="text-xs text-ink-3">—</span>
   return (
     <span className={cn('flex min-w-0 flex-col gap-0.5', className)}>
-      <span className="flex min-w-0 items-center gap-1">
+      <span className="group flex min-w-0 items-center gap-1">
         <button
           type="button"
           aria-expanded={open}
@@ -56,7 +60,12 @@ export function PathValue({
           />
           <span className="min-w-0 truncate font-mono">{dirTail(path)}</span>
         </button>
-        <CopyButton text={path} label={st('project.copyPath', { name })} />
+        <CopyButton
+          text={path}
+          label={st('project.copyPath', { name })}
+          appearance="icon"
+          className="opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100"
+        />
       </span>
       <Reveal open={open}>
         <span className="break-all pl-1 font-mono text-xs leading-snug text-ink-3">{path}</span>
