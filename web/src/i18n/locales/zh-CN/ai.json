@@ -74,7 +74,7 @@
     "effortRaw": "强度原始值：{{value}}",
     "emptyHint": "助手会改图的脚本。改完可查看差异、回滚。",
     "noCli": "没有可用的编码 Agent。",
-    "noPanelHint": "带 { } 标记的面板来自脚本，助手可直接修改。",
+    "noPanelHint": "带 { } 标记的图来自脚本，助手可直接修改。",
     "noPanelTitle": "选中一张可编辑的图",
     "none": "—",
     "openAiSettings": "打开编码 Agent 设置",

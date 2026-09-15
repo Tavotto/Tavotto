@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react'
-import { Check, ChevronDown } from '@/components/ui/icons'
+import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import {
@@ -354,29 +354,35 @@ export function LegendPositionPicker({
               <span />
             )}
             {showBest && (
-              <button
-                type="button"
-                role="radio"
-                aria-checked={bestActive}
-                data-option="best"
-                tabIndex={tabIndexOf('best')}
-                disabled={!insideEnabled}
-                onClick={() => pickInside('best')}
-                className={cn(
-                  'relative flex h-7 shrink-0 items-center justify-center rounded-sm border px-5 text-xs outline-none transition-colors',
-                  'focus-visible:focus-ring disabled:opacity-40',
-                  bestActive
-                    ? 'border-transparent bg-selected font-medium text-ink'
-                    : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
-                )}
-              >
-                <Check
-                  size={ICON_SIZE.xs}
-                  aria-hidden
-                  className={cn('absolute left-1.5', !bestActive && 'invisible')}
-                />
-                {optionLabel('loc', 'best')}
-              </button>
+              // 「最佳位置」是这一组里的**第十格**（2026-09-15 全面打磨拍板）：
+              // 与九宫格、外侧位同一副 32px 方格（`OptionGrid` 一族：未选细边、
+              // 选中 `bg-selected` 去边 + 字重），不再是一颗带勾的文字钮——
+              // 一个 radiogroup 里不该有第三种取值形态。
+              // **名字仍是「最佳位置」**（ADR 0034：matplotlib 的 `best` 是按数据
+              // 避让，不是无上下文的「自动」）：可达名与气泡都取 `optionLabel`，
+              // 格子里那两个字只是方格塞得下的短写，与九宫格同一条规矩——
+              // 那九格连可见文字都没有，全靠这一份 label。
+              <Tip label={optionLabel('loc', 'best')}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={bestActive}
+                  aria-label={optionLabel('loc', 'best')}
+                  data-option="best"
+                  tabIndex={tabIndexOf('best')}
+                  disabled={!insideEnabled}
+                  onClick={() => pickInside('best')}
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border text-xs outline-none transition-colors',
+                    'focus-visible:focus-ring disabled:opacity-40',
+                    bestActive
+                      ? 'border-transparent bg-selected font-medium text-ink'
+                      : 'border-border text-ink-2 hover:border-border-strong hover:text-ink',
+                  )}
+                >
+                  {ins('control.legendBestShort')}
+                </button>
+              </Tip>
             )}
           </div>
         )}

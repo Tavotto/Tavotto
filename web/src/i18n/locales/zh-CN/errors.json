@@ -79,7 +79,7 @@
     "no_project": "尚未打开项目",
     "non_finite_number": "文档含无法保存的数值，如 NaN 或 ∞。磁盘上的文件未改动：{{reason}}",
     "non_finite_on_disk": "磁盘上的文档含 NaN 或 ∞，不是合法 JSON，浏览器无法读取。Tavotto 未改动该文件；请检查是哪个外部工具写坏了它。",
-    "not_parameterizable": "该面板不可参数化：没有对应脚本。",
+    "not_parameterizable": "这张图不可参数化：没有对应脚本。",
     "open_project_failed": "无法打开该项目：{{reason}}",
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
@@ -298,7 +298,7 @@
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
     "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
-    "bitmapEmbed": "翻转或半透明的面板按导出 DPI 位图嵌入 PDF，矢量文字不保留。",
+    "bitmapEmbed": "翻转或半透明的图按导出 DPI 位图嵌入 PDF，矢量文字不保留。",
     "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
     "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
     "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
@@ -319,20 +319,20 @@
     "legendOverData": "图例压住了数据（{{count}} 项：{{targets}}）",
     "legendOverDataRisk": "图例可能压住数据——只有包围盒相交，量不到几何（{{count}} 项：{{targets}}）",
     "lineWidthOffPreset": "线宽的有效值 {{effective}} pt 不在规范档位 {{presets}} pt 上。",
-    "missingAsset": "面板引用的素材文件不在当前图库中，导出会失败或出空白。",
+    "missingAsset": "图引用的素材文件不在当前图库中，导出会失败或出空白。",
     "outOfPage": "对象超出页面范围，超出部分不会出现在成图里",
     "outsideMargin": "对象越过了 {{margin}} mm 安全区页边距",
-    "overlap": "面板互相重叠，确认是有意的压盖再导出",
+    "overlap": "图互相重叠，确认是有意的压盖再导出",
     "pageAspect": "页面比例 {{ratio}}（{{w}} × {{h}} mm）不在规范允许的 {{allowed}} 之内",
     "pageWidth": "页面宽 {{actual}} mm 不是规范里的单栏/双栏宽度（{{want}} mm）",
     "paletteLineMarkers": "{{count}} 条曲线都没有 marker，黑白打印或色觉障碍读者难以区分。可考虑加 marker 或用不同线型。",
     "paletteSemantic": "色谱 {{cmap}} 不在推荐色系里（按 sequential / diverging / categorical 语义选：{{url}}）。",
-    "panelTextNotVerifiable": "矢量面板还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",
-    "rasterDpi": "位图面板的等效分辨率 {{dpi}}dpi 低于规范的 {{min}}dpi",
-    "rasterTextNotVerifiable": "位图面板没有矢量文字层，字号无法核验。请确认最终字号大于规范下限。",
-    "renderError": "面板最近一次渲染失败，导出前请先修复",
+    "panelTextNotVerifiable": "这张矢量图还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",
+    "rasterDpi": "这张位图的等效分辨率 {{dpi}}dpi 低于规范的 {{min}}dpi",
+    "rasterTextNotVerifiable": "位图没有矢量文字层，字号无法核验。请确认最终字号大于规范下限。",
+    "renderError": "这张图最近一次渲染失败，导出前请先修复",
     "spinesNotEnclosed": "坐标轴缺 {{sides}} 边。规范要求封闭坐标轴。",
-    "staleRender": "面板脚本已更新，还没重建。导出的是旧图。",
+    "staleRender": "这张图的脚本已更新，还没重建。导出的是旧图。",
     "textBelowFloor": "画布文字 {{size}} pt，未高于绝对下限 {{floor}} pt。",
     "textCjkFallbackMissing": "画布中文没有可用的中文字体 fallback。",
     "textFontFamilySubstituted": "画布文字用的是{{family}}，规范要求 {{want}}",
@@ -345,7 +345,7 @@
     "textWeightPolicy": "规范建议 {{role}} 的字重为 {{want}}，当前 {{got}}。",
     "tickDirection": "刻度朝向为 {{got}}，规范要求 {{want}}",
     "tickLabelCount": "{{axis}} 有 {{count}} 个刻度标签，规范建议不超过 {{max}} 个。",
-    "unappliedOverride": "面板有 {{count}} 条图内修改还没应用到渲染，成图会与画布不一致。"
+    "unappliedOverride": "这张图有 {{count}} 条图内修改还没应用到渲染，成图会与画布不一致。"
   },
   "problems": {
     "ariaLocate": "定位到这个对象",
@@ -448,7 +448,7 @@
       "missing-asset": "素材文件缺失",
       "out-of-page": "超出页面范围",
       "outside-margin": "越过安全边距",
-      "overlap": "面板互相重叠",
+      "overlap": "图互相重叠",
       "page-aspect": "页面比例不合规范",
       "page-width": "页面宽度不合规范",
       "palette-line-markers": "曲线全都没有 marker",
@@ -491,8 +491,8 @@
     "relaunchFailed": "重启失败。请退出后重新打开。"
   },
   "writeBackAnnotations": {
-    "flipped": "面板已翻转，无法映射标注坐标",
+    "flipped": "图已翻转，无法映射标注坐标",
     "rasterOnly": "素材只有位图，没有矢量 PDF",
-    "rotated": "面板已旋转，无法映射标注坐标"
+    "rotated": "图已旋转，无法映射标注坐标"
   }
 }

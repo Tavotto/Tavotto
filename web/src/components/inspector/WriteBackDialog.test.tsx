@@ -122,7 +122,7 @@ const confirm = async (label = '写回原始文件') => {
 }
 
 describe('写回被阻断时的文案', () => {
-  it('source_changed：告诉用户去刷新素材面板，不是「重试」', async () => {
+  it('source_changed：告诉用户去重新加载图库，不是「重试」', async () => {
     stubFetch(409, {
       error: 'Fig1.pdf 已被外部修改（本工具之外）…',
       code: 'source_changed',
@@ -132,7 +132,7 @@ describe('写回被阻断时的文案', () => {
     })
     render()
     await confirm()
-    expect(text()).toContain('刷新素材面板')
+    expect(text()).toContain('重新加载图库')
     expect(text()).toContain('Fig1.pdf')
   })
 

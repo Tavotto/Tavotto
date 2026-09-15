@@ -34,6 +34,9 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
 /**
  * 常驻图标轨道：三个上下文各占一格，点击打开对应抽屉，再点一次收起。
  * 选中态用浅灰底色标记（比 hover 深一档），不用品牌蓝；状态语义靠 aria-expanded。
+ *
+ * 钮 28×28、图标仍 16（2026-09-15 全面打磨拍板）：轨钮原先是全产品唯一的 32px
+ * 控件，与顶栏 / 面板头的图标钮差一档；现在同档，选中底更贴着图标。轨宽仍 44。
  */
 export function LeftRail() {
   const { t } = useTranslation('workspace')
@@ -66,7 +69,7 @@ export function LeftRail() {
             aria-label={label}
             aria-expanded={active}
             className={cn(
-              'relative flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+              'relative flex h-7 w-7 items-center justify-center rounded-sm outline-none',
               'transition-colors focus-visible:focus-ring',
               active
                 ? 'bg-selected text-ink'
@@ -76,11 +79,13 @@ export function LeftRail() {
             <Icon size={ICON_SIZE.md} filled={active} />
             {id === 'problems' && problems > 0 && (
               /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
-                 而且用形状（实心点）+ 数字两重表达，不只靠颜色 */
+                 而且用形状（实心点）+ 数字两重表达，不只靠颜色。
+                 钮缩到 28 之后横向多探出去一点，免得压住 16px 的图标；轨两侧各
+                 留 8px，探出去的 4px 不会被裁 */
               <span
                 aria-hidden
                 className={cn(
-                  'absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center',
+                  'absolute -right-1 -top-0.5 flex h-3 min-w-3 items-center justify-center',
                   'rounded-full px-0.5 text-[9px] leading-none tabular-nums',
                   blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
                 )}
@@ -115,7 +120,7 @@ export function LeftRail() {
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
           className={cn(
-            'mt-auto flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+            'mt-auto flex h-7 w-7 items-center justify-center rounded-sm outline-none',
             'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
@@ -129,7 +134,7 @@ export function LeftRail() {
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
           className={cn(
-            'flex h-8 w-8 items-center justify-center rounded-sm outline-none',
+            'flex h-7 w-7 items-center justify-center rounded-sm outline-none',
             'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
