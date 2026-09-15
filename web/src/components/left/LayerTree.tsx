@@ -17,7 +17,7 @@ import {
   Square,
   Triangle,
   Type,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
