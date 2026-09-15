@@ -50,7 +50,6 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
-import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
@@ -194,6 +193,21 @@ export function AssistantPanel() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // 输入框浮在对话流上（玻璃，参考 Codex）：它的高度会变（起手式收起、输入框长高、报错一行），
+  // 量出来写成 --composer-h，滚动区用它做底部内边距，最后一条回答不会被压在玻璃底下
+  const stageRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = composerRef.current
+    const stage = stageRef.current
+    if (!el || !stage) return
+    const write = () => stage.style.setProperty('--composer-h', `${el.offsetHeight}px`)
+    write()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(write)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 目标不支持某个范围时只是降级显示，不去改用户存下的偏好
   const scopes: AiScope[] = [
@@ -309,8 +323,13 @@ export function AssistantPanel() {
         </Tip>
       </div>
 
-      <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} onScroll={syncStick} className="h-full overflow-y-auto px-2.5 py-2">
+      <div ref={stageRef} className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={syncStick}
+          className="h-full overflow-y-auto px-2.5 pt-2"
+          style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
+        >
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
@@ -331,7 +350,10 @@ export function AssistantPanel() {
         </div>
         {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮；到底了它自己消失 */}
         {detached && runningHere && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+          <div
+            className="pointer-events-none absolute inset-x-0 flex justify-center"
+            style={{ bottom: 'calc(var(--composer-h, 0px) + 8px)' }}
+          >
             <IconButton
               label={ai('panel.scrollToBottom')}
               iconSize="sm"
@@ -345,9 +367,9 @@ export function AssistantPanel() {
           </div>
         )}
         {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
-      </div>
 
-      <div className="shrink-0 px-3 pb-3 pt-1">
+        {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
+        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-1">
         {/* 起手式：一开始打字就收起——收起是跟着内容合上（Reveal），不是原地消失让输入框跳一下 */}
         <Reveal open={!!panel && mine.length === 0 && !prompt.trim()}>
           <div className="mb-1.5 flex flex-wrap gap-1">
@@ -374,17 +396,18 @@ export function AssistantPanel() {
             </Button>
           </div>
         )}
-        {/* 可编辑框只有一副（第五节 / `ui/fieldBox`）：此前这里是 `border-border` 12% +
-            圆角 10，其余框是 16% 的边 + 6——同一屏两种「能改」的框；现在全站都是凹面。
-            圆角留 md：它是一块多行的输入区，不是一行控件（打磨 A1）。
-            禁用也只有 opacity-40 一档（此前 60） */}
+        {/* 玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）：field 90% 的底 + 16px 背景模糊 +
+            环 4% 与两层投影（--shadow-composer），无边线；它浮在对话流上，内容从底下滚过时被糊掉——玻璃
+            只在浮着的时候成立，所以整个输入区是 absolute 的，滚动区按 --composer-h 留底边。圆角 lg：
+            它是一块浮在流上的多行输入区（Codex 多行是 3xl），比控件（6）与卡（10）都大一档。
+            聚焦仍是不透明 accent 边（3:1 由它承担）；禁用只有 opacity-40 一档 */}
         <div
           className={cn(
-            FIELD_BOX,
-            FIELD_FOCUS_WITHIN,
-            'rounded-md',
+            'rounded-lg border border-transparent bg-glass text-sm text-ink shadow-composer backdrop-blur-lg',
+            'transition-colors duration-fast focus-within:border-accent',
             (!panel || noAgent) && 'opacity-40',
           )}
+          data-ai-composer
         >
           <textarea
             ref={inputRef}
@@ -431,6 +454,7 @@ export function AssistantPanel() {
               </Button>
             </Tip>
           </div>
+        </div>
         </div>
       </div>
     </div>

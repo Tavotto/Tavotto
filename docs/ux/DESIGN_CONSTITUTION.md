@@ -28,7 +28,7 @@
 | border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
 | border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
 | border-control | `border-control` | `#8a8a82` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| field | `field` / `field-hover` | `#f1f0ec` / `#edece8` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：凹面 + 1px 内阴影 `--shadow-field`，静态无边线，聚焦浮回白底 + 不透明 accent 边（2026-09-15 学 Beautiful UI，第二十二节）。**有框 = 能改**不变，「框」是一块凹面；此前是 ink 16% 的边（批次 A T1，已作废） |
+| field | `field` / `field-hover` | `#f1f0ec` / `#edece8` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
 | accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、链接、AI、画布选择框 |
 | danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
 
@@ -81,9 +81,10 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost）。`active` 是 selected 轻 tint +
   字重。忙碌态自带。
 - **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。
-- **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：`field` 凹面 + 内阴影、静态无边线，
-  hover 底加深一档，聚焦 / 打开浮回白底 + accent 边，禁用 opacity-40（形态 2026-09-15 改成凹面，第二十二节）。
-  TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取。
+- **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：`field` 底、静态无边，hover 底加深一档，
+  聚焦 / 打开不透明 accent 边，禁用 opacity-40（形态 2026-09-15 参考 Codex 改成「只换底色」，第二十二节）。
+  TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；
+  改图助手的输入框是浮在对话流上的玻璃，另一副。
 - **TextInput**：`invalid`（红边 + aria-invalid）、`suffix`（**框内**后缀，数字自动右对齐）。
 - **TextArea**：高度跟着内容走（`scrollHeight` 自适应，`maxRows` 封顶后框内滚动；2026-09-14 二审 A1）。
   调用点不再自己算 `rows`——按硬换行数算的话，一行源码两行显示的图例名第二行会被裁掉。
@@ -610,17 +611,22 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 （报告 artifact「Numbers × Beautiful UI 调研」）：Beautiful UI 没有一个组件能原样贴进来——21 份源码全部
 命中 `foundation.test`（361 处像素圆角 / `text-[13px]` / `duration-150` / 五级投影），9 份引用站点没给的
 原语；它的质感七成来自纪律（一份清单、四级面、三级墨、一种抬升写法），这部分 Tavotto 已有且对比度更严。
-所以**不引用、逐组件学**它的层级与颜色表达。用户拍板四条：叠在 #369 栈顶；真卡加环 + 投影；可编辑框改凹框；
-主按钮保持近黑。
+所以**不引用、逐组件学**它的层级与颜色表达。用户拍板四条：叠在 #369 栈顶；真卡加环 + 投影；可编辑框改凹框
+（做完看对比后改成「只换底色」、助手输入框改玻璃，都参考 Codex，见下）；主按钮保持近黑。
 
 ### token 与原语
-- **可编辑框是凹面，不是一圈线**（`ui/fieldBox`）：静态 `field` 底（`#f1f0ec`，对白 1.13:1）+ 1px 内阴影
-  `--shadow-field`、边线透明；hover `field-hover`（`#edece8`，ink-3 落在上面仍 ≥4.5:1——`#ebeae5` 只有 4.46，
-  被 `tokenContrast.test` 拦下来过）；**聚焦才浮回白底 + 不透明 accent 边**，3:1 由聚焦态承担。「有框 = 能改」
-  不变，「框」从一圈线变成一块凹面：属性面板一列十几个框，凹面比线安静。TextInput / TextArea / NumberField /
-  Select / SearchInput / PickerTrigger / 改图助手输入框全部从这一份取；占位符一律 ink-3（此前助手输入框是 faint）。
-  取色块不是输入框，仍是 hairline。第十九节 T1 的「16% 边」由此作废。
-- **真的是一张卡的东西才有抬升**：`--shadow-card` = 1px 环 6% + 两层近投影 4%，比 `shadow-pop` 低一档（卡在面上，
+- **可编辑框只换底色**（`ui/fieldBox`）：`field #f1f0ec`（对白 1.14:1）、静态无边线、无内阴影；hover
+  `#edece8`（ink-3 落在上面 4.54:1——`#ebeae5` 只有 4.46，`tokenContrast.test` 拦下过）；**聚焦 / 打开才是
+  不透明 accent 边**，3:1 由它承担。参考的是 Codex 设置页的搜索框（底 +1 级灰、无边），用户原话「普通输入框
+  稍微换一个颜色就可以了」。同一天先做过 Beautiful UI 式的「凹面」（这个底 + 1px 内阴影 + 聚焦浮回白底），
+  看过 69 张走查对比后取消了内阴影与浮白那两层。「有框 = 能改」不变，「框」从一圈 16% 的线变成一块底。
+  取色块不是输入框，仍是 hairline；助手输入框占位符 faint → ink-3。第十九节 T1 由此作废。
+- **改图助手输入框是浮在对话流上的玻璃**（`AiPanel`，参考 Codex 的 `_ComposerLayoutBody`）：`--color-glass`
+  = field 90% 不透明 + `backdrop-blur-lg`（16px）+ `--shadow-composer`（环 4% + 0 2px 8px 4% + 0 4px 40px 8px
+  2.4%，Codex 浅色 `--elevation-composer` 的三层）、无边线、圆角 lg。整个输入区 `absolute` 在滚动区底部，
+  `ResizeObserver` 把它的高度写成 `--composer-h`，滚动区用它做底边距、「回到底部」钮站在它上面。玻璃只在
+  浮着的时候成立——排在流里的输入框糊不到任何东西。聚焦仍是不透明 accent 边。
+- **真的是一张卡的东西才有抬升**：`--shadow-card` = 1px 环 4% + 0 2px 8px 4%（Codex 浅色抬升的前两层），比 `shadow-pop` 低一档（卡在面上，
   不是浮在面上）。给谁：素材卡（`left/AssetBrowser` 的 cardClass：hover `ring-1 ring-border`、选中
   `ring-border-strong` + 名字加粗，环走 ring 不走 border，三种状态卡片尺寸不变）、改图助手的**一轮对话**
   （`SessionBlock`：提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起，卡与卡之间只靠间距；
