@@ -1,0 +1,62 @@
+# gh api repos/Tavotto/Tavotto/actions/workflows/lab-ci.yml/runs?per_page=30 → 每个 run 的 jobs；抓取 2026-09-15T22:03Z
+run_id	job	runner_name	runner_group_name	labels	started_at	conclusion
+35028176892	trust-check	GitHub Actions 1000023126	GitHub Actions	ubuntu-latest	2026-09-15T21:54:20Z	success
+35028176892	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T21:54:35Z	
+35021310135	trust-check	GitHub Actions 1000022958	GitHub Actions	ubuntu-latest	2026-09-15T20:42:53Z	success
+35021310135	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T20:43:07Z	success
+35008885342	trust-check	GitHub Actions 1000022794	GitHub Actions	ubuntu-latest	2026-09-15T18:40:39Z	success
+35008885342	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T18:40:50Z	success
+34996027385	trust-check	GitHub Actions 1000022592	GitHub Actions	ubuntu-latest	2026-09-15T16:36:27Z	success
+34996027385	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T16:36:41Z	success
+34976872983	trust-check	GitHub Actions 1000022244	GitHub Actions	ubuntu-latest	2026-09-15T13:43:41Z	success
+34976872983	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T13:43:57Z	success
+34962909874	trust-check	GitHub Actions 1000022027	GitHub Actions	ubuntu-latest	2026-09-15T11:22:15Z	success
+34962909874	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T11:22:29Z	success
+34942664094	trust-check	GitHub Actions 1000021493	GitHub Actions	ubuntu-latest	2026-09-15T07:37:41Z	success
+34942664094	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T07:38:08Z	success
+34925455803	trust-check	GitHub Actions 1000021263	GitHub Actions	ubuntu-latest	2026-09-15T03:33:45Z	success
+34925455803	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-15T03:33:56Z	success
+34903149851	trust-check	GitHub Actions 1000020960	GitHub Actions	ubuntu-latest	2026-09-14T22:15:06Z	success
+34903149851	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T22:18:15Z	success
+34899326280	trust-check	GitHub Actions 1000020949	GitHub Actions	ubuntu-latest	2026-09-14T21:32:00Z	success
+34899326280	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T21:32:14Z	success
+34879613387	trust-check	GitHub Actions 1000020852	GitHub Actions	ubuntu-latest	2026-09-14T18:14:46Z	success
+34879613387	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T18:14:59Z	success
+34868005986	trust-check	GitHub Actions 1000020711	GitHub Actions	ubuntu-latest	2026-09-14T16:20:40Z	success
+34868005986	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T16:20:59Z	success
+34854856418	trust-check	GitHub Actions 1000020627	GitHub Actions	ubuntu-latest	2026-09-14T14:19:28Z	success
+34854856418	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T14:19:41Z	failure
+34842042582	trust-check	GitHub Actions 1000020541	GitHub Actions	ubuntu-latest	2026-09-14T12:11:52Z	success
+34842042582	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T12:15:42Z	cancelled
+34836913177	trust-check	GitHub Actions 1000020451	GitHub Actions	ubuntu-latest	2026-09-14T11:12:54Z	success
+34836913177	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T11:26:12Z	success
+34830796617	trust-check	GitHub Actions 1000020304	GitHub Actions	ubuntu-latest	2026-09-14T09:59:02Z	success
+34830796617	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T10:39:22Z	success
+34830795310	trust-check	GitHub Actions 1000020303	GitHub Actions	ubuntu-latest	2026-09-14T09:59:00Z	success
+34830795310	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-14T09:59:19Z	failure
+34785414222	trust-check	GitHub Actions 1000020050	GitHub Actions	ubuntu-latest	2026-09-13T21:59:17Z	success
+34785414222	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T22:08:47Z	success
+34783210599	trust-check	GitHub Actions 1000020049	GitHub Actions	ubuntu-latest	2026-09-13T21:14:21Z	success
+34783210599	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T21:14:36Z	success
+34777504925	trust-check	GitHub Actions 1000020039	GitHub Actions	ubuntu-latest	2026-09-13T19:24:52Z	success
+34777504925	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T19:25:03Z	success
+34771127211	trust-check	GitHub Actions 1000019973	GitHub Actions	ubuntu-latest	2026-09-13T17:17:13Z	success
+34771127211	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T17:53:31Z	success
+34770752775	trust-check	GitHub Actions 1000019969	GitHub Actions	ubuntu-latest	2026-09-13T17:09:57Z	success
+34770752775	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T17:10:10Z	success
+34764932043	trust-check	GitHub Actions 1000019871	GitHub Actions	ubuntu-latest	2026-09-13T15:13:07Z	success
+34764932043	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T15:46:41Z	success
+34764430366	trust-check	GitHub Actions 1000019843	GitHub Actions	ubuntu-latest	2026-09-13T15:03:06Z	success
+34764430366	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T15:03:18Z	success
+34759326631	trust-check	GitHub Actions 1000019650	GitHub Actions	ubuntu-latest	2026-09-13T13:15:26Z	success
+34759326631	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T13:53:35Z	success
+34758420998	trust-check	GitHub Actions 1000019614	GitHub Actions	ubuntu-latest	2026-09-13T12:55:45Z	success
+34758420998	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T13:12:08Z	success
+34755813504	trust-check	GitHub Actions 1000019483	GitHub Actions	ubuntu-latest	2026-09-13T11:58:25Z	success
+34755813504	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T12:30:50Z	success
+34755414715	trust-check	GitHub Actions 1000019464	GitHub Actions	ubuntu-latest	2026-09-13T11:48:55Z	success
+34755414715	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-13T11:49:07Z	success
+34719235653	trust-check	GitHub Actions 1000019102	GitHub Actions	ubuntu-latest	2026-09-12T21:11:31Z	success
+34719235653	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-12T21:11:45Z	success
+34702147347	trust-check	GitHub Actions 1000019087	GitHub Actions	ubuntu-latest	2026-09-12T15:24:44Z	success
+34702147347	qualify / qualify	tavotto-ci-01	Default	self-hosted,linux,x64,tavotto-lab	2026-09-12T15:24:55Z	failure

@@ -1,0 +1,7 @@
+{
+  "command": "gh api repos/Tavotto/Tavotto/actions/permissions/fork-pr-contributor-approval",
+  "fetched_at": "2026-09-15T22:03Z",
+  "response": {
+    "approval_policy": "first_time_contributors"
+  }
+}

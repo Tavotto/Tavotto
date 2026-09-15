@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "kind": "static_enumeration",
+  "generated": "2026-09-16",
+  "source": "tests/test_merge_queue_workflows.py 的 _events_of / _jobs_of / _runs_on_atoms（矩阵展开、经本仓库可复用 workflow 递归）",
+  "hosted_runners": [
+    "macos-latest",
+    "ubuntu-latest",
+    "windows-latest"
+  ],
+  "untrusted_events": [
+    "merge_group",
+    "pull_request",
+    "pull_request_target"
+  ],
+  "known_events": [
+    "merge_group",
+    "pull_request",
+    "push",
+    "schedule",
+    "workflow_call",
+    "workflow_dispatch"
+  ],
+  "workflows": {
+    "_lab-qualification.yml": {
+      "events": [
+        "workflow_call"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "linux",
+        "self-hosted",
+        "tavotto-lab",
+        "x64"
+      ],
+      "jobs": {
+        "qualify": {
+          "runs_on": [
+            "linux",
+            "self-hosted",
+            "tavotto-lab",
+            "x64"
+          ]
+        }
+      }
+    },
+    "ci.yml": {
+      "events": [
+        "merge_group",
+        "pull_request",
+        "push"
+      ],
+      "listens_to_untrusted_event": true,
+      "runners_union": [
+        "macos-latest",
+        "ubuntu-latest",
+        "windows-latest"
+      ],
+      "jobs": {
+        "python-lint": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "cla-check": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "invariants": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "backend-fast": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "backend-platforms": {
+          "runs_on": [
+            "macos-latest",
+            "windows-latest"
+          ]
+        },
+        "compat-smoke": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "frontend": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "plugin-candidate": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "workerd": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "desktop-shell": {
+          "runs_on": [
+            "macos-latest",
+            "ubuntu-latest"
+          ]
+        },
+        "package": {
+          "runs_on": [
+            "macos-latest",
+            "ubuntu-latest",
+            "windows-latest"
+          ]
+        },
+        "windows-exe-smoke": {
+          "runs_on": [
+            "windows-latest"
+          ]
+        },
+        "macos-app-smoke": {
+          "runs_on": [
+            "macos-latest"
+          ]
+        },
+        "posix-e2e": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "ci-fast-gate": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "ci-integration-gate": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "main-landing-audit": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "codeql.yml": {
+      "events": [
+        "merge_group",
+        "pull_request",
+        "push",
+        "schedule"
+      ],
+      "listens_to_untrusted_event": true,
+      "runners_union": [
+        "ubuntu-latest"
+      ],
+      "jobs": {
+        "analyze": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "codeql-gate": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "desktop-tauri.yml": {
+      "events": [
+        "workflow_call",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "macos-latest",
+        "ubuntu-latest",
+        "windows-latest"
+      ],
+      "jobs": {
+        "trust": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "workerd": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "build": {
+          "runs_on": [
+            "macos-latest",
+            "windows-latest"
+          ]
+        },
+        "updater-manifest": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "lab-ci.yml": {
+      "events": [
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "linux",
+        "self-hosted",
+        "tavotto-lab",
+        "ubuntu-latest",
+        "x64"
+      ],
+      "jobs": {
+        "trust-check": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "qualify": {
+          "uses": "_lab-qualification.yml"
+        }
+      }
+    },
+    "metrics-freshness.yml": {
+      "events": [
+        "push",
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "ubuntu-latest"
+      ],
+      "jobs": {
+        "freshness": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "nightly.yml": {
+      "events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "ubuntu-latest",
+        "windows-latest"
+      ],
+      "jobs": {
+        "updater-consumer-fidelity": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "compat-version-matrix": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "windows-install": {
+          "runs_on": [
+            "windows-latest"
+          ]
+        }
+      }
+    },
+    "plugin-stable.yml": {
+      "events": [
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "ubuntu-latest"
+      ],
+      "jobs": {
+        "publish": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "pr-conflict-domains.yml": {
+      "events": [
+        "pull_request"
+      ],
+      "listens_to_untrusted_event": true,
+      "runners_union": [
+        "ubuntu-latest"
+      ],
+      "jobs": {
+        "conflict-domains": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "release.yml": {
+      "events": [
+        "push",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "linux",
+        "macos-latest",
+        "self-hosted",
+        "tavotto-lab",
+        "ubuntu-latest",
+        "windows-latest",
+        "x64"
+      ],
+      "jobs": {
+        "trust": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "build": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "desktop": {
+          "uses": "desktop-tauri.yml"
+        },
+        "lab_release_gate": {
+          "uses": "_lab-qualification.yml"
+        },
+        "validate_artifacts": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "github_release": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "n1_update_windows": {
+          "runs_on": [
+            "windows-latest"
+          ]
+        },
+        "pypi": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        },
+        "plugin_stable": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    },
+    "telemetry-metrics.yml": {
+      "events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "listens_to_untrusted_event": false,
+      "runners_union": [
+        "ubuntu-latest"
+      ],
+      "jobs": {
+        "collect": {
+          "runs_on": [
+            "ubuntu-latest"
+          ]
+        }
+      }
+    }
+  }
+}
