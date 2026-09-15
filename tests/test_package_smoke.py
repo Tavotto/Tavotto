@@ -169,6 +169,47 @@ def test_child_env_isolates_the_instance_and_pins_both_sides_of_the_encoding(mon
     assert "TAVOTTO_INSECURE_NO_AUTH" not in env, "冒烟验的是认证默认开着，开发旁路不许泄进去"
 
 
+# ---------------------------------------------------------------- 桩自己的合同
+
+
+def test_the_stub_never_resolves_a_hostname_between_bind_and_listen():
+    """桩的 `server_bind` 只能 bind，不许做父类 `HTTPServer.server_bind` 里的反向 DNS。
+
+    PR #376 macOS 首跑 10 条红的根因（诊断 run 35028309531 坐实）：`http.server.HTTPServer.server_bind`
+    在 `socket.bind` 之后、`listen` 之前调 `socket.getfqdn(host)`，GitHub 的 macOS runner 上这次反查
+    30 秒以上没有回音；而 macOS 对「已 bind 未 listen」端口的 SYN 是丢掉不是 RST，冒烟脚本看到的是
+    `connect timed out`，桩的追踪行停在「已 bind（还没 listen）」。本机 DNS 快，行为上反证不出来，
+    所以判据是静态的、两半都要：
+
+    * 正面：桩里有 `class Server` 覆写了 `server_bind`，且它调的是 `socketserver.TCPServer.server_bind`
+      （只 bind）——覆写整个删掉就回到父类那条路，光看名字不出现是恒真；
+    * 反面：桩的源码里任何地方都不许出现 `getfqdn`（AST 的属性 / 名字 + 子串，注释也不许——留一句
+      注释就等于留一条「下次顺手加回去」的路）。
+    变异：加回 `self.server_name = socket.getfqdn(host)` → 红；删掉 `server_bind` 覆写 → 红。
+    """
+    import ast
+
+    src = STUB.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    overrides = [
+        fn
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "Server"
+        for fn in node.body
+        if isinstance(fn, ast.FunctionDef) and fn.name == "server_bind"
+    ]
+    assert len(overrides) == 1, "桩里没有 class Server 覆写 server_bind——回到父类就又去反查主机名了"
+    calls = [ast.unparse(n.func) for n in ast.walk(overrides[0]) if isinstance(n, ast.Call)]
+    assert "socketserver.TCPServer.server_bind" in calls, calls
+    names = {
+        n.attr if isinstance(n, ast.Attribute) else n.id
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Attribute, ast.Name))
+    }
+    assert "getfqdn" not in names
+    assert "getfqdn" not in src, "连注释都不许提——那是下次顺手加回去的入口"
+
+
 # ---------------------------------------------------------------- 正例
 
 

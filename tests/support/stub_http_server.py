@@ -192,29 +192,29 @@ def serve(args: argparse.Namespace) -> int:
             print(line, file=sys.stderr, flush=True)
 
     class Server(ThreadingHTTPServer):
-        """与 `http.server.HTTPServer` 同一套 bind，只是把每一步的时刻打出来。
+        """只 bind + listen，**不做父类 `HTTPServer.server_bind` 里的那次反向 DNS**。
 
-        `HTTPServer.server_bind` 在 `socket.bind` **之后**、`listen` **之前**调
-        `socket.getfqdn(host)`（反向 DNS）。macOS 上实测：端口已 bind 但还没 listen 时，
-        连它的 SYN 被丢掉、`connect()` 是 **timed out** 而不是 refused——PR #376 macOS 首跑的
-        签名正是「日志空 + timed out」。这里把 getfqdn 单独计时，日志尾就能直接回答它花了多久。
+        父类在 `socket.bind` 之后、`listen` 之前按 host 反查主机名来填 `server_name`；GitHub 的
+        macOS runner 上那次反查要 30 秒以上没有回音，而 macOS 对「已 bind 未 listen」端口的 SYN
+        是丢掉不是 RST——冒烟脚本看到的就是 `connect timed out`（PR #376 macOS 首跑 10 条红，
+        诊断 run 的追踪行停在「已 bind（还没 listen）」）。桩不用 `server_name`，直接跳过；
+        `tests/test_package_smoke.py::test_the_stub_never_resolves_a_hostname_between_bind_and_listen`
+        钉住这一点。产品侧（werkzeug 继承同一个 `server_bind`）不在本计划改。
         """
 
         def server_bind(self) -> None:
             socketserver.TCPServer.server_bind(self)
-            trace(f"socket 已 bind {self.server_address[1]}（还没 listen）；getfqdn 前")
-            t = time.monotonic()
             host, port_ = self.server_address[:2]
-            self.server_name = socket.getfqdn(host)  # 与 HTTPServer.server_bind 同一句
+            self.server_name = host
             self.server_port = port_
-            trace(f"getfqdn({host!r}) -> {self.server_name!r}，耗时 {time.monotonic() - t:.2f}s")
+            trace(f"socket 已 bind {port_}（还没 listen）")
 
         def server_activate(self) -> None:
             super().server_activate()
             trace("socket 已 listen")
 
     try:
-        trace("HTTPServer 构造前（socket → bind → getfqdn → listen）")
+        trace("HTTPServer 构造前（socket → bind → listen）")
         server = Server(("127.0.0.1", port), Handler)
     except OSError as exc:
         print(f"stub: OSError: {exc}", file=sys.stderr, flush=True)

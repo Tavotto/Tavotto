@@ -1134,6 +1134,9 @@ class TestPackageSmokeIsolation:
         args = m.group(1).replace("\\\n", " ")
         assert '--python "$BIN/python"' in args, args
         assert f"--workdir {self.WORKDIR}" in args, args
+        # 就绪上限 120：真产品在 GitHub macOS runner 上 bind → listen 之间卡 getfqdn ~36 s
+        # （#376 首跑 ready_seconds 35.78 s），60 贴边——收回默认值会让 macOS 腿偶发假红
+        assert re.search(r"--timeout 120(\s|$)", args), args
         assert (ROOT / "scripts" / "ci" / "package_smoke.py").is_file()
 
     def test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep(self):

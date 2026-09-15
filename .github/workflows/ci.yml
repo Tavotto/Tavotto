@@ -963,14 +963,19 @@ jobs:
       - name: 起服务并请求首页
         shell: bash
         # step 级上限（CI03c 的理由：job 级硬杀时 step 停在 in_progress、收集步骤不跑、日志不落）。
-        # 脚本自己的上限是 3 次 × 60 秒就绪 + 每次 ≤ 16 秒终止（10 秒等退出 + 两次 3 秒核组空）≈ 3.8 分钟，
-        # 5 分钟在它之外留了余量。
+        # `--timeout 120`（就绪上限，默认 60）：真产品在 GitHub 的 macOS runner 上 bind → listen 之间
+        # 卡在 `socket.getfqdn`（werkzeug 继承 `http.server.HTTPServer.server_bind`，那里按 host 反查
+        # 主机名，runner 上 ~36 s 没有回音）——#376 首跑 macOS 腿 ready_seconds 35.78 s（Linux 0 / Windows 2），
+        # CI00 基线里旧写法这一步 macOS 48 s vs 其它 13 s。60 的余量贴边；根因在产品 / werkzeug 侧
+        # （用户机器上反向 DNS 无回音也会有同样的首开延迟），CI 这里只留余量，不改产品。
+        # 预算：一次真正的就绪超时 120 s + 换号重试每次几秒（三种租约丢失的文案都在产品 bind 之前
+        # 出现）+ 每次 ≤ 16 秒终止 ≈ 2.5 分钟，5 分钟在它之外。
         timeout-minutes: 5
         run: |
           VENV="${{ runner.temp }}/smoke-venv"
           BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"
           python scripts/ci/package_smoke.py --python "$BIN/python" \
-            --workdir "${{ runner.temp }}/smoke-run"
+            --workdir "${{ runner.temp }}/smoke-run" --timeout 120
       - name: 上传冒烟日志（失败时）
         if: failure()
         uses: actions/upload-artifact@v4

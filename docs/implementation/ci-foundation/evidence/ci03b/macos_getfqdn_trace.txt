@@ -1,0 +1,49 @@
+# macOS runner 上 bind → listen 之间的 getfqdn 停顿：两次 run 的失败摘录（job 日志原文，去掉时间戳前缀）
+
+## Run 1 · PR #376 首跑：run 35024490379，backend-platforms (macos-latest, 2) = job 104568198389，10 条红
+## （诊断补丁之前：桩没有追踪行，脚本只记最后一次轮询）
+
+### test_never_ready_times_out_with_the_server_log_tail
+E       AssertionError: · 第 1 次：租到端口 49581，起 /Library/Frameworks/Python.framework/Versions/3.13/bin/python /Users/runner/work/Tavotto/Tavotto/tests/support/stub_http_server.py --port 49581 --fail-mode never-ready
+E         ERROR: 第 1 次（端口 49581）3s 内没就绪；最后一次：http://127.0.0.1:49581/api/version 连不上：URLError: <urlopen error timed out>
+E         --- 服务日志尾（最后 40 行）/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/pytest-of-runner/pytest-0/test_never_ready_times_out_wit0/run/attempt-1/server.log ---
+E         （日志是空的）
+E         
+
+### test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout[bind-busy]（第 2 次尝试的形状）
+E       AssertionError: · 第 1 次：租到端口 49502，起 /Library/Frameworks/Python.framework/Versions/3.13/bin/python /Users/runner/work/Tavotto/Tavotto/tests/support/stub_http_server.py --port 49502 --fail-mode bind-busy --state-file /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/pytest-of-runner/pytest-0/test_a_lost_lease_is_retried_o0/state
+E         ! 第 1 次：日志里出现端口占用类文案：stub: OSError: [Errno 48] Address already in use——换端口重试
+E         · 第 2 次：租到端口 49504，起 /Library/Frameworks/Python.framework/Versions/3.13/bin/python /Users/runner/work/Tavotto/Tavotto/tests/support/stub_http_server.py --port 49504 --fail-mode bind-busy --state-file /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/pytest-of-runner/pytest-0/test_a_lost_lease_is_retried_o0/state
+E         ERROR: 第 2 次（端口 49504）30s 内没就绪；最后一次：http://127.0.0.1:49504/api/version 连不上：URLError: <urlopen error timed out>
+E         --- 服务日志尾（最后 40 行）/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/pytest-of-runner/pytest-0/test_a_lost_lease_is_retried_o0/run/attempt-2/server.log ---
+E         （日志是空的）
+
+## Run 2 · 诊断补丁（2e176774）：run 35028309531，job 104580559570，5 条红（15 s 阈值的那五条；60 s 的全绿）
+
+### test_never_ready_times_out_with_the_server_log_tail
+E       AssertionError: · 第 1 次：租到端口 49597，起 /Library/Frameworks/Python.framework/Versions/3.13/bin/python /Users/runner/work/Tavotto/Tavotto/tests/support/stub_http_server.py --port 49597 --fail-mode never-ready
+E         ERROR: 第 1 次（端口 49597）15s 内没就绪；最后一次：http://127.0.0.1:49597/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）；轮询序列：[0.03s–0.03s ×1] http://127.0.0.1:49597/api/version 连不上：refused（端口上没人 bind） → [3.38s–16.65s ×5] http://127.0.0.1:49597/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）
+E         --- 轮询序列（共 6 次）---
+E           [0.03s–0.03s ×1] http://127.0.0.1:49597/api/version 连不上：refused（端口上没人 bind）
+E           [3.38s–16.65s ×5] http://127.0.0.1:49597/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）
+E         --- 服务日志尾（最后 40 行）/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/pytest-of-runner/pytest-0/test_never_ready_times_out_wit0/run/attempt-1/server.log ---
+E         stub: +  0.00s starting pid=22673 python=/Library/Frameworks/Python.framework/Versions/3.13/bin/python argv=['--port', '49597', '--fail-mode', 'never-ready']
+E         stub: +  0.00s 参数已解析 mode=never-ready port=49597
+E         stub: +  0.00s import tavotto.engine.session_client 前
+E         stub: +  0.00s publish_secret 前
+E         stub: +  0.01s publish_secret 后
+E         stub: +  0.01s worker spawn 前
+E         stub: +  0.01s worker spawn 后 pid=22674
+E         stub: +  0.01s HTTPServer 构造前（socket → bind → getfqdn → listen）
+E         stub: +  0.01s socket 已 bind 49597（还没 listen）；getfqdn 前
+
+### test_a_public_200_from_a_stranger_is_not_our_readiness（轮询序列）
+E       AssertionError: 15s 内没就绪；最后一次：http://127.0.0.1:49604/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）；轮询序列：[0.03s–0.03s ×1] http://127.0.0.1:49604/api/version 连不上：refused（端口上没人 bind） → [3.45s–16.78s ×5] http://127.0.0.1:49604/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）
+E       assert '凭据文件' in '15s 内没就绪；最后一次：http://127.0.0.1:49604/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）；轮询序列：[0.03...bind） → [3.45s–16.78s ×5] http://127.0.0.1:49604/api/version 连不上：connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）'
+
+## 读法
+
+- 桩的追踪停在「socket 已 bind（还没 listen）；getfqdn 前」，之后 15 秒内没有下一行——卡在 HTTPServer.server_bind 的 socket.getfqdn(host)（bind 之后、listen 之前）。
+- 脚本的轮询序列：第 0.03 s 一次 refused（桩还没 bind）→ 从 3.4 s 起连续 5 次 connect timed out（每次 3 s 的 connect 超时）——macOS 上「已 bind 未 listen」的端口对 SYN 不回 RST（本机实测：bound-not-listening → TimeoutError 3.01 s；nothing bound → ConnectionRefusedError 0.00 s）。
+- 通过的用例（healthy / slow-ready / index-500 / no-version-field，--timeout 60）说明反查最终会回来，只是超过 15 s、少于 60 s。
+- 真产品同一条路：#376 首跑 package (macos-latest, 3.13) 的 ready_seconds = 35.78 s（Linux 0 / Windows 2）；CI00 基线里旧写法（sleep 8 + curl）这一步 macOS 48 s vs 其它腿 13 s。werkzeug 3.1.8 的 BaseWSGIServer 继承 http.server.HTTPServer.server_bind，没有覆写。
