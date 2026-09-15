@@ -164,7 +164,7 @@ export function OverlaySvg() {
             : { x1: 0, y1: p, x2: viewW, y2: p }
         return (
           <g key={`guide-${i}`}>
-            <line {...coords} stroke="var(--color-guide)" strokeWidth={1} />
+            <line {...coords} stroke="var(--color-sel)" strokeWidth={1} />
             {!guidesLocked && (
               <line
                 {...coords}
@@ -185,7 +185,7 @@ export function OverlaySvg() {
           y1={pendingGuide.axis === 'x' ? 0 : mmToViewY(pendingGuide.pos, t) + 0.5}
           x2={pendingGuide.axis === 'x' ? mmToViewX(pendingGuide.pos, t) + 0.5 : viewW}
           y2={pendingGuide.axis === 'x' ? viewH : mmToViewY(pendingGuide.pos, t) + 0.5}
-          stroke="var(--color-guide)"
+          stroke="var(--color-sel)"
           strokeWidth={1}
           strokeDasharray="3 3"
         />

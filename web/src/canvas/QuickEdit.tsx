@@ -27,6 +27,7 @@ import { useQuickEdit } from './quickEditStore'
 import { TextActionRow } from '@/components/inspector/TextActions'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
+import { MenuButton } from '@/components/ui/Menu'
 import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 
@@ -188,38 +189,6 @@ function Line({
   )
 }
 
-function Item({
-  children,
-  shortcut,
-  danger,
-  onClick,
-  ...rest
-}: {
-  children: ReactNode
-  shortcut?: string
-  danger?: boolean
-  onClick: () => void
-} & Record<`data-${string}`, string | undefined>) {
-  return (
-    <button
-      {...rest}
-      type="button"
-      onClick={onClick}
-      // 与 `ui/Menu` 的 `ITEM_CLASS` 逐字对齐（28 高、12 号字、gap 8、px 8、rounded-sm）：
-      // 此前是 24 高 11 号字，同一屏上菜单项两种高度。它仍是第三份**实现**——这个弹层不是
-      // Radix 菜单（里面有输入控件，role=dialog），套不进 `MenuItem`；已请 team-lead 从
-      // `ui/Menu` 导出一个非 Radix 的 `MenuButton`，落地后这段整个换掉（2026-09-15 打磨 M2）
-      className={cn(
-        'flex min-h-7 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-sm',
-        'outline-none hover:bg-surface-hover focus-visible:bg-surface-hover',
-        danger ? 'text-danger' : 'text-ink',
-      )}
-    >
-      <span className="flex-1 truncate text-left">{children}</span>
-      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
-    </button>
-  )
-}
 
 const Divider = () => <div className="my-1 h-px bg-border" />
 
@@ -297,27 +266,18 @@ function ElementQuick({
 
       {(field('visible') || own.length > 0) && <Divider />}
       {own.length > 0 && (
-        <Item onClick={resetElement} data-quick-item="reset-element">
-          <span className="flex items-center gap-1.5">
-            <RotateCcw size={ICON_SIZE.sm} />
-            {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
-          </span>
-        </Item>
+        <MenuButton icon={RotateCcw} onClick={resetElement} data-quick-item="reset-element">
+          {translate('element.resetElementCount', { ns: 'inspector', count: own.length })}
+        </MenuButton>
       )}
       {field('visible') && (
-        <Item onClick={toggleVisible}>
-          <span className="flex items-center gap-1.5">
-            {hidden ? <Eye size={ICON_SIZE.sm} /> : <EyeOff size={ICON_SIZE.sm} />}
-            {qe(hidden ? 'unhide' : 'hide')}
-          </span>
-        </Item>
+        <MenuButton icon={hidden ? Eye : EyeOff} onClick={toggleVisible}>
+          {qe(hidden ? 'unhide' : 'hide')}
+        </MenuButton>
       )}
-      <Item onClick={openInPanel}>
-        <span className="flex items-center gap-1.5">
-          <ExternalLink size={ICON_SIZE.sm} />
-          {qe('openInspector')}
-        </span>
-      </Item>
+      <MenuButton icon={ExternalLink} onClick={openInPanel}>
+        {qe('openInspector')}
+      </MenuButton>
     </>
   )
 }

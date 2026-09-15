@@ -70,10 +70,9 @@ describe('token 配对的对比度', () => {
     }
   })
 
-  it('参考线（guide）与选中蓝同值，对纸白 / 画布灰 ≥3:1（2026-09-15 打磨 · 画布 C1）', () => {
-    expect(token('guide')).toBe(token('sel'))
+  it('画布上唯一的一种彩色线（sel：选框 / 参考线 / 元素框）对纸白 / 画布灰 ≥3:1（2026-09-15 打磨 · 画布 C1 / C2）', () => {
     for (const g of ['surface', 'canvas']) {
-      expect(contrast(token('guide'), token(g)), g).toBeGreaterThanOrEqual(3)
+      expect(contrast(token('sel'), token(g)), g).toBeGreaterThanOrEqual(3)
     }
   })
 
