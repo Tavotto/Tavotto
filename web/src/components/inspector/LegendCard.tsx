@@ -10,7 +10,11 @@ import { setOverride, setOverrides, unhideElement } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { msg } from '@/i18n'
+import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
+import { listRowClass } from '../ui/listRow'
+import { GroupHead } from './GroupHead'
+import { INSPECTOR_LABEL_W } from './layout'
 import { Tip } from '../ui/Tooltip'
 import { TypographyControls } from './controls/TypographyControls'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
@@ -41,7 +45,7 @@ export function LegendCard({
   panel,
   manifest,
   legend,
-  labelWidth = 72,
+  labelWidth = INSPECTOR_LABEL_W,
 }: {
   panel: PanelObject
   manifest: Manifest
@@ -76,25 +80,22 @@ export function LegendCard({
   if (!views.length) return null
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-4">
       {hasTypography && (
-        <div>
-          <p className="mb-1 type-section">{lg('typography')}</p>
+        <div className="flex flex-col gap-1.5">
+          <GroupHead>{lg('typography')}</GroupHead>
           <TypographyControls adapter={typography} labelWidth={labelWidth} />
         </div>
       )}
-      <div>
-        <p className="mb-1 type-section">
-          {lg('entries', { count: views.length })}
-        </p>
-        <ul className="rounded-sm border border-border p-0.5" aria-label={lg('entriesAria')}>
+      <div className="flex flex-col gap-1.5">
+        {/* 名字 + meta 数字，不是「图例项（2）」（打磨 L10 / 第十九节批次 E–G） */}
+        <GroupHead meta={views.length}>{lg('entries')}</GroupHead>
+        {/* 列表不套框（第八节：少用容器）；每一行就是列表行那一副（`listRowClass`） */}
+        <ul className="-mx-1 flex flex-col" aria-label={lg('entriesAria')}>
           {views.map((v, i) => (
             <li
               key={v.element.gid}
-              className={cn(
-                'flex h-7 items-center gap-1 rounded-sm px-1 hover:bg-surface-hover',
-                v.hidden && 'text-ink-3',
-              )}
+              className={cn(listRowClass({ hidden: v.hidden }), 'px-1')}
             >
               <HandleSwatch panel={panel} entry={v} />
               <button
@@ -115,7 +116,7 @@ export function LegendCard({
                   aria-pressed={v.hidden}
                   onClick={() => toggleHidden(v)}
                 >
-                  {v.hidden ? <EyeOff size={ICON_SIZE.xs} /> : <Eye size={ICON_SIZE.xs} />}
+                  {v.hidden ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} />}
                 </Button>
               </Tip>
               <Button
@@ -124,7 +125,7 @@ export function LegendCard({
                 onClick={() => move(i, -1)}
                 aria-label={lg('moveUp', { label: v.text })}
               >
-                <MoveUp size={ICON_SIZE.xs} />
+                <MoveUp size={ICON_SIZE.sm} />
               </Button>
               <Button
                 size="icon-sm"
@@ -132,7 +133,7 @@ export function LegendCard({
                 onClick={() => move(i, 1)}
                 aria-label={lg('moveDown', { label: v.text })}
               >
-                <MoveDown size={ICON_SIZE.xs} />
+                <MoveDown size={ICON_SIZE.sm} />
               </Button>
             </li>
           ))}
@@ -142,23 +143,17 @@ export function LegendCard({
   )
 }
 
-/** 「跟随图中对象 / 自定义 / 未关联」——只说状态，不露 gid。 */
+/**
+ * 「自定义 / 未关联」——只说状态，不露 gid。
+ *
+ * **默认态（跟随图中对象）不出徽标**（打磨 L10）：图例项默认全都跟随，每一行都挂一枚
+ * 「跟随」等于没有信息量，只是把两行都加了一块灰片。形状走唯一的胶囊原语 `ui/Badge`，
+ * 不再自造 32×18 的边框片。
+ */
 export function BindingBadge({ binding }: { binding: LegendEntryView['binding'] }) {
-  const key = binding === 'follow_source' ? 'follow' : binding === 'custom' ? 'custom' : 'unbound'
-  return (
-    <span
-      className={cn(
-        'shrink-0 rounded-xs border px-1 text-xs leading-4',
-        binding === 'follow_source'
-          ? 'border-border text-ink-3'
-          : binding === 'custom'
-            ? 'border-border-strong bg-selected text-ink'
-            : 'border-dashed border-border text-ink-3',
-      )}
-    >
-      {lg(`badge.${key}`)}
-    </span>
-  )
+  if (binding === 'follow_source') return null
+  const key = binding === 'custom' ? 'custom' : 'unbound'
+  return <Badge tone={binding === 'custom' ? 'accent' : 'warn'}>{lg(`badge.${key}`)}</Badge>
 }
 
 const DASH: Record<string, string | undefined> = {

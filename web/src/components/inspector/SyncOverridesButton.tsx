@@ -84,9 +84,9 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
         align="end"
         trigger={
           <Button
-            variant="secondary"
+            variant="ghost"
             size="sm"
-            className="w-full"
+            className="text-ink-2"
             disabled={disabled}
             title={
               !panel.overrides.length

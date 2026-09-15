@@ -57,15 +57,16 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
       <div className="overflow-hidden rounded-sm border border-border bg-surface">
         <div className="flex items-center gap-2 border-b border-border px-2 py-1">
           <span className="text-xs font-medium text-ink">{translate('diff.title', { ns: 'ai' })}</span>
-          <span className="ml-auto font-mono text-xs" style={{ color: ADD }}>
+          {/* 计数是数值读数，不是代码：`type-number`（系统字体 + tabular-nums，第六节） */}
+          <span className="type-number ml-auto" style={{ color: ADD }}>
             +{added}
           </span>
-          <span className="font-mono text-xs" style={{ color: DEL }}>
+          <span className="type-number" style={{ color: DEL }}>
             −{removed}
           </span>
           <Tip label={translate('diff.zoomTip', { ns: 'ai' })}>
-            <Button size="icon-xs" className="-mr-1" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
-              <Maximize2 size={ICON_SIZE.xs} />
+            <Button size="icon-sm" className="-mr-1" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
+              <Maximize2 size={ICON_SIZE.sm} />
             </Button>
           </Tip>
         </div>

@@ -10,7 +10,7 @@ import {
   MousePointerClick,
   MoveUpRight,
   Pin,
-  Sparkles,
+  PinOff,
   Square,
   Trash2,
   Type as TypeIcon,
@@ -132,11 +132,10 @@ export function Inspector({
                 id === 'assistant' && runningAi ? `${assistantTabLabel()} · ${t('aiRunning')}` : undefined
               }
               title={id === 'assistant' && runningAi ? t('assistantRunningTip') : undefined}
-              className={id === 'assistant' ? 'inline-flex items-center gap-1 pr-1' : undefined}
+              // 页签一律纯文字（打磨 S4）：三家的页签 / 分段项都没有图标，助手的身份
+              // 由页内空态那颗图标说；右上角的运行点已经回答「有没有在跑」
+              className={id === 'assistant' ? 'inline-flex items-center pr-1' : undefined}
             >
-              {id === 'assistant' && (
-                <Sparkles size={ICON_SIZE.sm} filled={tab === 'assistant'} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
-              )}
               {tabLabel(id)}
               {id === 'assistant' && runningAi && (
                 <span
@@ -180,10 +179,18 @@ export function Inspector({
             tip={translate('actions.close')}
             side="bottom"
             iconSize="sm"
-            className="text-ink-3 hover:text-ink"
-            onClick={() => useUiStore.getState().toggleRight()}
+            aria-pressed={pinned}
+            onClick={() => useUiStore.getState().setRightPinned(!pinned)}
           >
-            <X size={ICON_SIZE.sm} />
+            {/* 状态靠**图形**说，不靠底色（打磨 S3，用户拍板）：默认就是钉住的，
+                `active` 的 ink 10% 灰块于是常驻在每一页右上角——它是整栏唯一一块
+                常亮的底。现在钉住 = Pin + ink，未钉 = PinOff + ink-3；
+                `aria-pressed` 与气泡文案不变 */}
+            {pinned ? (
+              <Pin size={ICON_SIZE.sm} className="text-ink" />
+            ) : (
+              <PinOff size={ICON_SIZE.sm} className="text-ink-3" />
+            )}
           </IconButton>
         </span>
       </div>
@@ -242,7 +249,9 @@ function WidthHandle() {
         ui.setRightWidth(ui.rightWidth + (e.key === 'ArrowLeft' ? 16 : -16))
       }}
       // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
-      className="absolute inset-y-0 left-0 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
+      // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线，
+      // 焦点仍用蓝（那是焦点环的语义）。此前是 8px × 全高的 accent/20 蓝带（打磨 S5）
+      className="absolute inset-y-0 left-0 z-20 w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:bg-accent/30"
     />
   )
 }
@@ -387,7 +396,8 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
               {roleName('figure')}
             </span>
           )}
-          <h2 className="min-w-0 truncate text-xs font-medium text-ink">
+          {/* 对象名不该比它下面的「位置与尺寸」小一号（打磨 S2）：面板标题 12/500 */}
+          <h2 className="min-w-0 truncate type-section">
             {crumbs.at(-1) ?? t('elementFallback')}
           </h2>
           <span className="ml-auto flex shrink-0 items-center">
@@ -473,7 +483,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             静态徽标（cap-shape-switch；判据在 lib/shapeSwitch，这里不判） */}
         <ObjectKindSwitch objs={objs} />
         {title != null && (
-          <h2 className="min-w-0 truncate text-xs font-medium text-ink">{title}</h2>
+          <h2 className="min-w-0 truncate type-section">{title}</h2>
         )}
         {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
         {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}

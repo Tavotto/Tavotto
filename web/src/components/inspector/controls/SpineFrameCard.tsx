@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { clearOverride, clearOverrides } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
+import { Row } from '../../ui/Field'
 import { ColorField, NumberField } from '../../ui/Input'
+import { GroupToggle } from '../GroupToggle'
+import { INSPECTOR_LABEL_W } from '../layout'
 import { useElementWriter } from '../elementWrite'
 import { propLabel } from '../roles/registry'
 import { ResetChip, labeledWithState } from './textRows'
@@ -50,7 +51,7 @@ const ctl = (key: string, values?: Record<string, unknown>) =>
 export function SpineFrameCard({
   panel,
   element,
-  labelWidth = 72,
+  labelWidth = INSPECTOR_LABEL_W,
 }: {
   panel: PanelObject
   /** 宿主子图（字段都在它身上） */
@@ -108,36 +109,20 @@ export function SpineFrameCard({
   const color = linkedState('color')
   const width = linkedState('linewidth')
   const mixedText = translate('element.mixedValues', { ns: 'inspector' })
-  const head = (key: 'color' | 'linewidth') => translate(`prop.${key}`, { ns: 'inspector' })
   const frameLabel = translate('element.groupFrame', { ns: 'inspector' })
   const linkedModified = overridden('spine_color') || overridden('spine_linewidth')
 
   return (
-    <div
-      className="grid items-center gap-x-1.5 gap-y-1.5"
-      // 边 / 颜色 / 线宽 / 还原：联动行与四边共用同一套列宽。
-      // 颜色列封顶 88px（取色块 + 6 位色号刚好够，不让十六进制输入框的固有
-      // 宽度撑开这一列）；剩余宽度全给线宽列——下限 120px，扣掉单位后缀与
-      // 内边距后数字输入区稳定 ≥ 40px。
-      style={{
-        gridTemplateColumns: `${labelWidth}px minmax(0, 88px) minmax(120px, 1fr) auto`,
-      }}
-      data-spine-frame
-    >
-      <span aria-hidden />
-      {/* 列头相对下方字段居中：列头与字段共用同一套网格列，text-center 即以该列为基准 */}
-      <span aria-hidden className="text-center text-xs text-ink-3">
-        {colorField ? head('color') : null}
-      </span>
-      <span aria-hidden className="text-center text-xs text-ink-3">
-        {widthField ? head('linewidth') : null}
-      </span>
-      <span aria-hidden />
-
+    /*
+      一张带列头的小表收成一种行语法（2026-09-15 全面打磨 L11）：
+      `边框 [■] [0.6 pt]`，逐边行同形。列头「颜色 / 线宽」删掉——色块与框内的 pt
+      已经自说明；总行的标签也不再加粗（它是行标签，不是小标题）。
+    */
+    <div className="flex flex-col gap-1.5" data-spine-frame>
       {(colorField || widthField) && (
         <FrameRow
           side="all"
-          primary
+          labelWidth={labelWidth}
           label={labeledWithState(frameLabel, linkedModified)}
           color={
             colorField && (
@@ -172,7 +157,6 @@ export function SpineFrameCard({
                 className="flex min-w-0 items-center"
               >
                 <NumberField
-                  className="w-full min-w-0"
                   dataProp="spine_linewidth"
                   ariaLabel={propLabel('spine_linewidth', element.role)}
                   value={Number(width.value ?? 0)}
@@ -214,27 +198,16 @@ export function SpineFrameCard({
       )}
 
       {sides.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setOpenPref(!open)}
-          aria-expanded={open}
+        <GroupToggle
+          open={open}
+          onToggle={() => setOpenPref(!open)}
           // 四边不一致时不许收起：收起就是把「各边不同」藏起来
           disabled={differ}
           data-spine-per-side
-          className="col-span-full mt-1 flex h-7 w-full items-center gap-1.5 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring disabled:hover:text-ink-2"
+          summary={differ ? ctl('spineSidesDiffer') : undefined}
         >
-          <ChevronRight
-            size={ICON_SIZE.xs}
-            aria-hidden
-            className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-          />
-          <span>{ctl('spinePerSide')}</span>
-          {differ && (
-            <span className="ml-auto min-w-0 shrink-0 truncate pl-2 text-xs text-ink-3">
-              {ctl('spineSidesDiffer')}
-            </span>
-          )}
-        </button>
+          {ctl('spinePerSide')}
+        </GroupToggle>
       )}
       {sides.length > 0 &&
         open &&
@@ -252,6 +225,7 @@ export function SpineFrameCard({
             reset={(p) => clearOverride(panel.id, element.gid, p)}
             gid={element.gid}
             role={element.role}
+            labelWidth={labelWidth}
           />
         ))}
     </div>
@@ -260,8 +234,11 @@ export function SpineFrameCard({
 
 /**
  * 边位示意：逐边只点亮那一条边。**四边联动那一行不画字形**——一个 1.2px 描边的
- * 空方框长得就是未勾选的复选框，首次用户会去点它（2026-09-12 critique）；那一行
- * 是组里的「全部」，文字加粗已经说了它是谁，字形位留空只为与逐边行的文字对齐。
+ * 空方框长得就是未勾选的复选框，首次用户会去点它（2026-09-12 critique）。
+ *
+ * 那一行连字形位也不占（2026-09-15 打磨 L11）：它是这一段的第一行，标签要与同页的
+ * 「长度」「宽度」排在同一条竖线上；逐边行在「分别设置各边」之下，字形位带来的 18px
+ * 缩进正好读作「这是上面那一行的细分」。
  */
 function SideGlyph({ side }: { side: Side | 'all' }) {
   const edge: Record<Side, string> = {
@@ -270,7 +247,7 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
     bottom: 'M3 15h12',
     left: 'M3 3v12',
   }
-  if (side === 'all') return <span aria-hidden className="w-3 shrink-0" />
+  if (side === 'all') return null
   return (
     <svg
       viewBox="0 0 18 18"
@@ -287,39 +264,36 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
   )
 }
 
-/** 网格里的一行：四个格子（边名 / 颜色 / 线宽 / 还原），空格子也占位以保持列对齐 */
+/** 边框的一行：标签列（边位字形 + 边名）+ 色块 + 线宽 + 还原，与全页同一条控件竖线 */
 function FrameRow({
   side,
   label,
-  primary,
+  labelWidth,
   color,
   width,
   reset,
 }: {
   side: Side | 'all'
   label: ReactNode
-  primary?: boolean
+  labelWidth: number
   color?: ReactNode
   width?: ReactNode
   reset?: ReactNode
 }) {
   return (
-    <>
-      <div
-        className={cn(
-          'flex min-w-0 items-center gap-1.5 text-xs',
-          primary ? 'font-medium text-ink' : 'text-ink-2',
-        )}
-      >
-        <SideGlyph side={side} />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/* 颜色格子：取色块 + 色号输入撑满这一列，列头才正对「色块 + 输入框」整体的中点 */}
-      <div className="min-w-0 [&>*]:w-full [&_input]:min-w-0">{color}</div>
-      {/* 线宽格子：让 NumberField 及其 input 真正撑满这一列，不受其内部默认宽度限制 */}
-      <div className="min-w-0 [&>*]:w-full [&_input]:min-w-0 [&_input]:w-full">{width}</div>
-      <div className="flex items-center gap-1">{reset}</div>
-    </>
+    <Row
+      labelWidth={labelWidth}
+      label={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SideGlyph side={side} />
+          <span className="min-w-0 truncate">{label}</span>
+        </span>
+      }
+    >
+      {color}
+      {width}
+      {reset}
+    </Row>
   )
 }
 
@@ -335,6 +309,7 @@ function SideRow({
   reset,
   gid,
   role,
+  labelWidth,
 }: {
   side: Side
   colorField?: EditableField
@@ -347,6 +322,7 @@ function SideRow({
   reset: (prop: string) => void
   gid: string
   role: string
+  labelWidth: number
 }) {
   const colorProp = perSide(side, 'color')
   const widthProp = perSide(side, 'linewidth')
@@ -355,6 +331,7 @@ function SideRow({
   return (
     <FrameRow
       side={side}
+      labelWidth={labelWidth}
       label={labeledWithState(sideName, modified)}
       color={
         colorField && (
@@ -372,7 +349,6 @@ function SideRow({
         widthField && (
           <NumberField
             // 逐边线宽的定位落点与颜色一样是 data-prop（issueFocus 认它）
-            fill
             dataProp={widthProp}
             ariaLabel={propLabel(widthProp, role)}
             value={Number(read(widthProp) ?? 0)}

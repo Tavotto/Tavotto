@@ -51,13 +51,14 @@ import {
 } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
-import { Disclosure, Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Reveal, Row, Section } from '../ui/Field'
 import { NumberField, TextInput } from '../ui/Input'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
-import { HistoryPanel } from './HistoryPanel'
+import { GroupToggle } from './GroupToggle'
+import { INSPECTOR_LABEL_W } from './layout'
+import { OriginalFileActions } from './OriginalFileActions'
 import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
-import { UpdateSourceButton } from './UpdateSourceButton'
 import { shared } from './common'
 
 /** 本文件的文案：inspector:panel.*，历史标签 inspector:history.* */
@@ -108,13 +109,15 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
   if (panel.script || !cap || cap.status === 'editable') return null
   return (
-    <div className="mx-3 mb-1.5 rounded-md border border-border bg-surface-2 p-2">
+    /* surface-2 底的一条，不画边（第八节 / 第五节：`Notice` 已删）；入口是 ghost
+       （打磨 E10——此前 border + 底 + 整行 secondary 三重强调） */
+    <div className="mx-3 mb-1.5 rounded-md bg-surface-2 px-2 py-1.5">
       <p className="text-xs font-medium text-ink">{statusLabel(cap.status)}</p>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
-        variant="secondary"
+        variant="ghost"
         size="sm"
-        className="mt-1.5"
+        className="-ml-2 mt-0.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
@@ -214,7 +217,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         />
       </GeometryGrid>
 
-      <Row className="mt-1.5" label={pn('scale')}>
+      <Row className="mt-1.5" label={pn('scale')} labelWidth={INSPECTOR_LABEL_W}>
         <NumberField
           value={scale ?? 100}
           mixed={scale === undefined}
@@ -255,7 +258,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。两颗都是次级操作：
         ghost 文字键、不撑满、同高同图标档——不是两个 CTA。
       */}
-      <Row className="mt-1.5" label={pn('restore')}>
+      <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W}>
         <Tip label={pn('aspectTip')}>
           <Button variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
             <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
@@ -301,16 +304,21 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
   ].filter(Boolean)
 
   return (
-    <Disclosure
-      title={translate('element.more', { ns: 'inspector' })}
-      open={open}
-      onToggle={() => setOpen('panel', !open)}
-      summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
-    >
-      <div className="flex flex-col gap-1.5">
+    /* 组内的「更多」是文字链接（打磨 O3 / L4）：此前对象页这一处是 `Disclosure`
+       （带 chevron），元素页同一个词是文字链接——同一个词两种字形 */
+    <Section>
+      <GroupToggle
+        open={open}
+        onToggle={() => setOpen('panel', !open)}
+        summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
+      >
+        {translate('element.more', { ns: 'inspector' })}
+      </GroupToggle>
+      <Reveal open={open}>
+      <div className="mt-1.5 flex flex-col gap-1.5">
         {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，
             步进 90、写回前吸附到这四档 */}
-        <Row label={translate('transform.rotation', { ns: 'inspector' })}>
+        <Row label={translate('transform.rotation', { ns: 'inspector' })} labelWidth={INSPECTOR_LABEL_W}>
           <NumberField
             value={rot ?? 0}
             mixed={rot === undefined}
@@ -328,7 +336,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           />
         </Row>
 
-        <Row label={pn('flip')}>
+        <Row label={pn('flip')} labelWidth={INSPECTOR_LABEL_W}>
           {/* 两颗同高同档的开关键（secondary + active），不撑满整行 */}
           <div className="flex min-w-0 gap-1">
             <Button
@@ -361,7 +369,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         </Row>
 
         {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
-        <Row label={pn('opacity')}>
+        <Row label={pn('opacity')} labelWidth={INSPECTOR_LABEL_W}>
           <NumberField
             ariaLabel={pn('opacity')}
             value={opacity ?? 100}
@@ -383,7 +391,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         )}
 
         {/* 替换素材是设置行里的一个动作，不是整行 CTA */}
-        <Row label={pn('replace')}>
+        <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
           <Tip label={pn('replaceTip')}>
             <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
               <Replace size={ICON_SIZE.sm} className="text-ink-3" />
@@ -395,7 +403,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
         )}
       </div>
-    </Disclosure>
+      </Reveal>
+    </Section>
   )
 }
 
@@ -420,7 +429,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
     <Section title={pn('image')}>
       {/* 裁剪是进出的模式，完整放入 / 填满框是两个一次性的摆法命令——不是三颗同权重的
           大钮排一行（2026-09-15 打磨批次 C，L3）：模式一行、命令一行，标签列与位置组对齐 */}
-      <Row label={pn('cropRow')}>
+      <Row label={pn('cropRow')} labelWidth={INSPECTOR_LABEL_W}>
         <Tip label={pn('cropTip')}>
           <Button
             variant="secondary"
@@ -439,7 +448,7 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
           </Button>
         </Tip>
       </Row>
-      <Row className="mt-1.5" label={pn('fitRow')}>
+      <Row className="mt-1.5" label={pn('fitRow')} labelWidth={INSPECTOR_LABEL_W}>
         <Tip label={pn('fitTip')}>
           <Button variant="secondary" size="sm" onClick={() => fitPanels(ids)}>
             <Minimize2 size={ICON_SIZE.sm} className="text-ink-3" />
@@ -512,28 +521,24 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
   if (!items.length) return null
 
   return (
-    <div className="mt-2 border-t border-border pt-2">
-      <p className="mb-1 type-section">
-        {pn('diagnostics')}
-      </p>
-      <div className="flex flex-col gap-1">
-        {items.map((q) => (
-          <Tip key={q.id} label={q.hint} side="left">
-            <div
-              className={cn(
-                'flex h-7 items-center justify-between rounded-sm px-1.5 text-xs',
-                q.bad ? 'bg-danger-subtle text-danger' : 'bg-surface-2 text-ink-2',
-              )}
-            >
-              <span>{q.label}</span>
-              <span className="tabular-nums">{q.value}</span>
-            </div>
-          </Tip>
-        ))}
-        {objs.length > 4 && (
-          <p className="text-xs text-ink-3">{pn('morePanels', { count: objs.length - 4 })}</p>
-        )}
-      </div>
+    /* 只读值不套容器（第八节）、状态区不是卡片（十三节）：普通的一行——标签列 +
+       type-number 的值，`bad` 只换字色，不铺 surface-2 / danger-subtle（打磨 O1） */
+    <div className="mt-4 flex flex-col gap-1.5">
+      <p className="-mb-0.5 flex h-4 items-center type-section">{pn('diagnostics')}</p>
+      {items.map((q) => (
+        <Tip key={q.id} label={q.hint} side="left">
+          <div>
+            <Row label={q.label} labelWidth={INSPECTOR_LABEL_W}>
+              <span className={cn('type-number', q.bad ? 'text-danger' : 'text-ink')}>
+                {q.value}
+              </span>
+            </Row>
+          </div>
+        </Tip>
+      ))}
+      {objs.length > 4 && (
+        <p className="text-xs text-ink-3">{pn('morePanels', { count: objs.length - 4 })}</p>
+      )}
     </div>
   )
 }
@@ -732,20 +737,15 @@ export function SourceSection({
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (
         <>
-          <Grid2>
-            <div className="flex min-w-0 *:w-full">
-              <UpdateSourceButton panel={panel} />
-            </div>
-            <div className="flex min-w-0 *:w-full">
-              <HistoryPanel panel={panel} />
-            </div>
-          </Grid2>
+          {/* 两页同一份动作行（打磨 O2） */}
+          <OriginalFileActions panel={panel} />
           {overrides > 0 && (
             <p className="mt-1.5 text-xs text-ink-3">
               {pn('overrideCount', { count: overrides })}
             </p>
           )}
-          <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{pn('sourceHint')}</p>
+          {/* 「写回会覆盖原件、留有备份」这句删了（打磨 L7）：写回确认框里已经讲全
+              （`UpdateSourceButton` 的 WriteBackDialog），这里是常驻说明 */}
         </>
       )}
       <PanelQuality objs={objs} />

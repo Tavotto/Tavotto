@@ -6,6 +6,7 @@ import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads, legacyHead } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
+import { INSPECTOR_LABEL_W } from './layout'
 import { ColorField, NumberField } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
@@ -100,7 +101,9 @@ function GlyphSelect<T extends string>({
   }))
   return (
     <Popover
-      width={216}
+      // 弹层宽 = 触发器宽（打磨 E11）：上下相邻的「线型」「标记」此前一个 216、
+      // 一个 228，两种宽度挨在一起；Select 的弹层一直是跟着触发器的
+      width="trigger"
       align="start"
       open={open}
       onOpenChange={setOpen}
@@ -119,6 +122,7 @@ function GlyphSelect<T extends string>({
         options={grid}
         onChange={onChange}
         onPick={() => setOpen(false)}
+        previewHasLabel
         columns={1}
         ariaLabel={ariaLabel}
       />
@@ -172,7 +176,7 @@ function DashRow({
   onChange: (v: DashStyle) => void
 }) {
   return (
-    <Row label={sk('dash')}>
+    <Row label={sk('dash')} labelWidth={INSPECTOR_LABEL_W}>
       <GlyphSelect
         value={value}
         options={DASH_VALUES}
@@ -205,7 +209,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
         />
-        <Row label={sk('end')}>
+        <Row label={sk('end')} labelWidth={INSPECTOR_LABEL_W}>
           <HeadSelect
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
             onChange={(v) =>
@@ -219,7 +223,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             ariaLabel={sk('end')}
           />
         </Row>
-        <Row label={sk('start')}>
+        <Row label={sk('start')} labelWidth={INSPECTOR_LABEL_W}>
           <HeadSelect
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
             onChange={(v) =>
@@ -234,7 +238,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           />
         </Row>
         {/* 线宽与颜色同一行：线宽占剩余宽度，颜色靠右 */}
-        <Row label={sk('lineWidth')}>
+        <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
           <div className="flex w-full items-center gap-1.5">
             <div className="min-w-0 flex-1">
               <NumberField
@@ -297,7 +301,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           不透明度跟在它下面——三处「添加式扩展」在产品里是同一个控件。
         */}
         {hasFillable && (
-          <Row label={sk('fill')}>
+          <Row label={sk('fill')} labelWidth={INSPECTOR_LABEL_W}>
             <EffectToggle
               on={!!fill}
               label={sk('fill')}
@@ -314,7 +318,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             )}
           </Row>
         )}
-        <Row label={sk('strokeColor')}>
+        <Row label={sk('strokeColor')} labelWidth={INSPECTOR_LABEL_W}>
           <ColorField
             ariaLabel={sk('strokeColor')}
             value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
@@ -322,7 +326,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           />
         </Row>
         {/* 线宽与填充不透明度同一行：两个输入框固定 40px（index.css 的 data-stroke-fields） */}
-        <Row label={sk('lineWidth')}>
+        <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
           <div data-stroke-fields className="flex w-full items-center gap-2">
             <NumberField
               value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
@@ -360,7 +364,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
         />
         {allRect && (
-          <Row label={sk('cornerRadius')}>
+          <Row label={sk('cornerRadius')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               value={shared(objs, (o) => (o as ShapeObject).cornerRadius ?? 0) ?? 0}
               step={0.5}
@@ -378,7 +382,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           </Row>
         )}
         {allPolygon && (
-          <Row label={sk('sides')}>
+          <Row label={sk('sides')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               value={shared(objs, (o) => (o as ShapeObject).sides ?? 6) ?? 6}
               step={1}

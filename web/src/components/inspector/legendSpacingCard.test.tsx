@@ -210,23 +210,26 @@ describe('图例的排版详情（审计 T17）', () => {
     }
   })
 
-  it('标签独占一列、不定宽：审计点名的「线与文字间距」完整出现在行里', async () => {
+  it('这一行与全检查器同一条控件竖线：标签列 88，「线与文字间距」完整', async () => {
     await mount()
     await click(cardToggle())
     const row = cardRow('handletextpad') as HTMLElement
     const labelSpan = row.querySelector('span') as HTMLElement
-    // 通用列表的标签列是 `style="width: 72px"`（Row 的 labelWidth）——正是
-    // 它把「线与文字间距」截成「线与文字间…」。卡里这一列不定宽
-    expect(labelSpan.style.width).toBe('')
+    // 打磨 E4 / L1：此前标签是 flex-1、112 宽的框贴右缘，是页内第三种行语法。
+    // 现在走 `Row labelWidth={INSPECTOR_LABEL_W}`——88 容得下这个六字标签
+    expect(labelSpan.style.width).toBe('88px')
     expect(labelSpan.textContent).toContain('线与文字间距')
   })
 
-  it('数值带真实单位 em，并且小节顶上说明它是相对字号', async () => {
+  it('数值带真实单位 em；「1 em = 一个图例字号」不常驻，只在框的 title 里', async () => {
     await mount()
     await click(cardToggle())
     const row = cardRow('labelspacing') as HTMLElement
     expect(row.textContent).toContain('em')
-    expect(card()?.textContent).toContain('1 em')
+    // 打磨 L8：常驻说明删掉——单位 em 已经在框里，解释进 title
+    expect(card()?.textContent).not.toContain('1 em')
+    const titles = [...row.querySelectorAll('[title]')].map((e) => e.getAttribute('title') ?? '')
+    expect(titles.some((t) => t.includes('1 em'))).toBe(true)
   })
 
   it('改过一条时自动展开：override 不因折叠而不可发现', async () => {

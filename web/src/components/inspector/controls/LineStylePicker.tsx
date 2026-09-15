@@ -93,7 +93,9 @@ export function LineStylePicker({
     // （不再被面板 overflow 裁掉）、Esc 与点外面由 Radix 处理、焦点还回触发器；
     // aria-haspopup / aria-expanded 由 Popover.Trigger 落到 PickerTrigger 上。
     <Popover
-      width={216}
+      // 弹层宽 = 触发器宽（打磨 E11）：上下相邻的「线型」「标记」此前一个 216、
+      // 一个 228，两种宽度挨在一起；Select 的弹层一直是跟着触发器的
+      width="trigger"
       align="start"
       open={open}
       onOpenChange={setOpen}
@@ -112,6 +114,7 @@ export function LineStylePicker({
         options={grid}
         onChange={onChange}
         onPick={() => setOpen(false)}
+        previewHasLabel
         columns={1}
         ariaLabel={ariaLabel}
       />
