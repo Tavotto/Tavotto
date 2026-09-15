@@ -98,8 +98,10 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Select**：全仓唯一的下拉（`nativeSelect.test` 守着）；`title` 给当前取值的解释。带样张的取值
   （线型 / 标记 / 填充纹理 / 色图 / 箭头端型）用 `Popover + PickerTrigger + OptionGrid`，触发器与
   Select 同一副框；`aria-haspopup` 字面量不在页面里出现（`foundation.test` 守着）。
-- **Checkbox**：14px 方块、xs 圆角、选中近黑 + 白勾（唯一允许加粗描边的图标）。
-- **Toggle**：唯一的滑动开关，名字必填；滑块动 `transform`（二审 E4）。复选框的勾 / 单选的点
+- **Checkbox / Radio**：16px 方块 / 圆、xs 圆角、选中近黑 + 白勾（唯一允许加粗描边的图标）；hover 只加深
+  （2026-09-15 全面打磨 B04 / A07：14 在 48px 的设置行里像角标，OpenAI 18 / Claude 16）。
+- **Toggle**：唯一的滑动开关，28×16、thumb 12 带 `shadow-thumb`（B03：两家的 thumb 都有 0 1px 2px 的投影），
+  名字必填；滑块动 `transform`（二审 E4）。复选框的勾 / 单选的点
   与框同一个 `fast` 淡入（E5）。`CopyButton` 的「复制 → 已复制」两份内容叠同一格取宽者、图标淡换（E7）。
 - **Badge**：胶囊、16px 高、五种语义色。
 - **Tabs / tabClass**：下划线标签页，选中 = **600** + ink + 2px 近黑线（2026-09-15 打磨批次 A，用户拍板「页签选中态可以 600」；
@@ -125,8 +127,8 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   元素树共用；叶子行留空的箭头列，同层的图标才对得齐。层级只靠缩进与箭头，不靠留白。
 - **SearchInput**：面板顶部的搜索框，唯一的一种——与其它可编辑框同一副框（S8 之前是安静的
   surface-2 填充框）；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
-- **Notice**：低权重说明条（Info + caption + 至多一个 ghost 小动作），surface-2 底、无边框；
-  它是脚注不是卡片。要警告语义用设置页的 `InlineWarning`。
+- **说明条**：没有独立原语（`Notice` 于 2026-09-15 删除，最后一个调用点是批次 G 删掉的安全导入说明）。要警告语义
+  用设置页的 `InlineWarning`；状态一句话是 surface-2 底的一条，不套框。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 - **「去到」的记号只有一枚**（2026-09-14 审计 A4）：尾随的 `ChevronRight`（xs），给「X 轴刻度 ›」
   「在子图页编辑刻度线与边框 ›」这种往下 / 往旁边走的入口；往上走的路是身份头的**面包屑**，
@@ -161,7 +163,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 | `type-control` | 12 · 颜色随控件 | 控件里**要读的值**（输入框 / 数字框 / 下拉 / 分段 / 样张格）。2026-09-14 审计分歧 1 拍板：值试到正文档，标签 / caption / meta 留 11，28px 不变 |
 | `type-caption` | 11 · 行距 1.5 · ink-2 | 说明文字 |
 | `type-meta` | 11 · ink-3 | 元数据、路径、计数 |
-| `type-number` | 12 / 16 · 系统字体 + tabular-nums | 数值：输入框里的值与单位、只读的尺寸 / 计数 / 缩放 / 像素读数（二审 B1，拍板「乙」：先只改数值这一档）。等宽字体只留给代码、路径、脚本名与 matplotlib 取值代号；快捷键一档另议 |
+| `type-number` | 12 / 16 · 系统字体 + tabular-nums | 数值：输入框里的值与单位、只读的尺寸 / 计数 / 缩放 / 像素读数（二审 B1，拍板「乙」）。快捷键与 `Kbd` 同样是系统字体 + tabular-nums（2026-09-15 全面打磨 B05：Claude 的 kbd 全部 `font: inherit`）。等宽字体只留给代码、路径、脚本名与 matplotlib 取值代号 |
 
 **数值与单位**只有一个写法（`i18n/format.formatQuantity`，2026-09-14 审计 S11）：字母单位（pt / mm / px /
 ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`，代码里拼字符串走 `formatQuantity`；
