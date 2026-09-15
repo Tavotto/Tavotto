@@ -575,7 +575,8 @@
       "style": "Style library",
       "spec": "Spec library"
     },
-    "keyRules": "Key requirements"
+    "keyRules": "Key requirements",
+    "more": "More"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
@@ -1106,8 +1107,9 @@
       "sectionProject": "Project",
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
-      "writeBackDesc": "\"Write back to original\" overwrites the original PDF/PNG and script in the project; the original is backed up to the backup location above first, every time.",
-      "onlyThisProject": "Only affects this project"
+      "writeBackDesc": "Writing back overwrites the original PDF / PNG and script; the original is backed up to the location above first.",
+      "onlyThisProject": "Only affects this project",
+      "change": "Change…"
     },
     "section": {
       "about": "About & privacy",

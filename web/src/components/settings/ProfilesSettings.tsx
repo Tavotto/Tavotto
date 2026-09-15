@@ -18,10 +18,9 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, Download, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
+import { CircleCheck, Copy, Download, Ellipsis, FileSliders, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
-import { listRowClass } from '../ui/listRow'
 import { msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
@@ -37,6 +36,9 @@ import { useProfileStore } from '@/store/profileStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { Menu, MenuItem } from '../ui/Menu'
+import { Segmented } from '../ui/Segmented'
+import { Select } from '../ui/Select'
 import { NumberField, TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import {
@@ -122,6 +124,9 @@ const STYLE_FIELDS: NumField[] = [
 
 /** 分组的显示顺序（表里出现的顺序不算数：加一条字段不该悄悄换掉版面）。 */
 const GROUP_ORDER = ['fonts', 'page', 'raster', 'text', 'ticks', 'lines']
+
+/** 库里不超过这个数时是分段选择器，再多换 Select（宪法第五节：互斥取值超过四五档用 Select） */
+const LIBRARY_AS_SEGMENTED = 4
 
 /** 按 `group` 归并，顺序取 `GROUP_ORDER`。 */
 function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[] {
@@ -214,7 +219,7 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <span className="min-w-0 truncate text-ink" title={label}>
         {label}
       </span>
-      <span className="tabular-nums text-ink">{value}</span>
+      <span className="justify-self-end tabular-nums text-ink">{value}</span>
     </div>
   )
 }
@@ -474,7 +479,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
    * 只读那份的主动作是「复制一份再修改」，可编辑那份的是「保存」。
    */
   const bound = kind === 'spec' && !!selected && boundId === selected.id
-  const useForProjectPrimary = kind === 'spec' && !editable && !bound
 
   return (
     <>
@@ -523,68 +527,91 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
         </section>
       )}
 
-      <div className="flex gap-6">
-        {/* 左：库。行是 listRowClass 那一种（28px、selected 轻 tint + 字重），不套外框：
-            只有一条内置样式时，一个带边框的大空盒子读作「没做完」（Session 6） */}
-        <aside className="flex w-44 shrink-0 flex-col gap-1" aria-label={st(`library.${kind}`)}>
-          <span className="type-section mb-1">{st(`library.${kind}`)}</span>
-          <ul className="flex flex-col gap-px">
-            {loaded && records.length === 0 && (
-              <li>
-                <EmptyState icon={FileSliders} title={st('empty')} />
-              </li>
-            )}
-            {records.map((r) => (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(r.id)}
-                  aria-current={selected?.id === r.id || undefined}
-                  className={cn(listRowClass({ selected: selected?.id === r.id }), 'mx-0 w-full px-2 text-left')}
-                  title={profileTechnicalDetail(r)}
-                >
-                  <span className="min-w-0 flex-1 truncate">{profileName(r)}</span>
-                  {r.built_in && <span className="type-meta shrink-0 font-normal">{st('builtin')}</span>}
-                  {kind === 'spec' && boundId === r.id && (
-                    <span className="type-meta shrink-0 font-normal">{st('inUse')}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {/* 新建是这一栏的动作；复制 / 导出 / 导入是低频的图标钮，不与主动作抢视觉 */}
-          <div className="mt-1 flex items-center gap-0.5">
-            <Button variant="secondary" size="sm" onClick={create} loading={busy} className="mr-1">
-              <Plus size={ICON_SIZE.sm} aria-hidden />
-              {st('new')}
-            </Button>
-            <IconButton label={st('duplicate')} iconSize="sm" onClick={duplicate} disabled={!selected}>
-              <Copy size={ICON_SIZE.sm} aria-hidden />
+      {/* 库收成一行（2026-09-15 打磨批次 B，L4）：两三份配置不值一整列——此前左边一列
+          176px 只有两行，右边才是编辑器。Select 是「看 / 改哪一份」，新建 / 复制 / 导入 /
+          导出收进 ⋯；本项目在用的那份在选项名后标出来。 */}
+      <SettingRow label={st(`library.${kind}`)} controlId="profile-library">
+        {loaded && records.length === 0 ? (
+          <span className="type-meta">{st('empty')}</span>
+        ) : records.length === 1 ? (
+          /* 只有一份时没有可选的：写名字就够了，一格的分段选择器读作坏掉的控件 */
+          <span className="type-body min-w-0 flex-1 truncate text-right" title={profileTechnicalDetail(records[0])}>
+            {profileName(records[0])}
+          </span>
+        ) : records.length <= LIBRARY_AS_SEGMENTED ? (
+          /* 二到四份是一组互斥的取值：分段选择器（宪法第五节）；本项目在用的那份带勾 */
+          <Segmented
+            value={selected?.id ?? null}
+            onChange={(id) => setSelectedId(id)}
+            ariaLabel={st(`library.${kind}`)}
+            className="min-w-0 flex-1"
+            items={records.map((r) => ({
+              value: r.id,
+              label: profileName(r),
+              title: profileTechnicalDetail(r),
+              icon:
+                kind === 'spec' && boundId === r.id ? (
+                  <CircleCheck size={ICON_SIZE.xs} aria-hidden className="text-ok" />
+                ) : undefined,
+            }))}
+          />
+        ) : (
+          <Select
+            value={selected?.id ?? ''}
+            onChange={(id) => setSelectedId(id)}
+            ariaLabel={st(`library.${kind}`)}
+            title={selected ? profileTechnicalDetail(selected) : undefined}
+            className="min-w-0 flex-1"
+            options={records.map((r) => ({
+              value: r.id,
+              label: [
+                profileName(r),
+                r.built_in ? st('builtin') : null,
+                kind === 'spec' && boundId === r.id ? st('inUse') : null,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            }))}
+          />
+        )}
+        <Menu
+          align="end"
+          trigger={
+            <IconButton label={st('more')} iconSize="sm">
+              <Ellipsis size={ICON_SIZE.sm} aria-hidden />
             </IconButton>
-            <IconButton label={st('export')} iconSize="sm" onClick={exportOne} disabled={!selected}>
-              <Download size={ICON_SIZE.sm} aria-hidden />
-            </IconButton>
-            <IconButton label={st('import')} iconSize="sm" onClick={() => fileRef.current?.click()}>
-              <Upload size={ICON_SIZE.sm} aria-hidden />
-            </IconButton>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              aria-hidden="true"
-              tabIndex={-1}
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                e.target.value = ''
-                if (f) void importOne(f)
-              }}
-            />
-          </div>
-        </aside>
+          }
+        >
+          <MenuItem icon={Plus} onSelect={() => void create()} disabled={!records.length}>
+            {st('new')}
+          </MenuItem>
+          <MenuItem icon={Copy} onSelect={() => void duplicate()} disabled={!selected}>
+            {st('duplicate')}
+          </MenuItem>
+          <MenuItem icon={Download} onSelect={() => void exportOne()} disabled={!selected}>
+            {st('export')}
+          </MenuItem>
+          <MenuItem icon={Upload} onSelect={() => fileRef.current?.click()}>
+            {st('import')}
+          </MenuItem>
+        </Menu>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) void importOne(f)
+          }}
+        />
+      </SettingRow>
 
-        {/* 右：编辑区（Style 与 Spec 各是各的一套字段） */}
-        <div className="flex min-w-0 flex-1 flex-col gap-5">
+      {/* 编辑区（Style 与 Spec 各是各的一套字段） */}
+      <div className="flex min-w-0 flex-col gap-5">
           {!selected ? (
             /* 一条都没有时不摆一整套禁用的输入框，只给出口（审计 T42）。
                入口是**导入**不是「新建」：新建等于从选中的那条复制一份，清单空着
@@ -624,23 +651,23 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 <div data-profile-readonly className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
                   <span className="type-title min-w-0 truncate">{name}</span>
                   <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
-                  {bound && <Badge tone="accent">{st('inUse')}</Badge>}
-                  <span className="flex items-center gap-1.5">
-                    {kind === 'spec' && (
-                      <Button
-                        variant={useForProjectPrimary ? 'primary' : 'secondary'}
-                        size="sm"
-                        onClick={useForProject}
-                      >
-                        {st('useForProject')}
-                      </Button>
+                  {/* 这一份唯一的主动作（2026-09-15 打磨批次 B，L3）：正在用的规范不需要动作，
+                      一行 meta 说明状态；没用的才给「本项目用这套规范」；「复制一份再修改」是
+                      次级出口，ghost。此前黑钮与白钮并排，两颗都像主动作。 */}
+                  <span className="ml-auto flex items-center gap-1.5">
+                    {bound ? (
+                      <span className="type-meta flex items-center gap-1 text-ok">
+                        <CircleCheck size={ICON_SIZE.xs} aria-hidden />
+                        {st('inUse')}
+                      </span>
+                    ) : (
+                      kind === 'spec' && (
+                        <Button variant="secondary" size="sm" onClick={useForProject}>
+                          {st('useForProject')}
+                        </Button>
+                      )
                     )}
-                    <Button
-                      variant={useForProjectPrimary ? 'secondary' : 'primary'}
-                      size="sm"
-                      onClick={duplicate}
-                      loading={busy}
-                    >
+                    <Button variant="ghost" size="sm" onClick={duplicate} loading={busy}>
                       <Copy size={ICON_SIZE.sm} aria-hidden />
                       {st('duplicateToEdit')}
                     </Button>
@@ -771,7 +798,6 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
             </>
           )}
-        </div>
       </div>
     </>
   )

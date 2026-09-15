@@ -501,9 +501,9 @@ describe('SettingRow 布局稳定', () => {
     expect([...widths]).toEqual([`${SETTING_CONTROL_WIDTH}px`])
   })
 
-  it('普通分区的内容有最大宽度，样式 / 规范 / 包管理铺满', async () => {
+  it('普通分区的内容有最大宽度，只有包管理铺满（样式 / 规范自 2026-09-15 打磨批次 B 起是普通分区）', async () => {
     // 期望值写死在这里，不从 `CONTENT_MODE` 读——否则改了表判据跟着变，永远绿
-    const WIDE = ['style', 'spec', 'packages']
+    const WIDE = ['packages']
     expect(Object.keys(CONTENT_MODE).sort()).toEqual([...SECTIONS].sort())
     // 「编码 Agent」页要一份能用的 caps，且挂载后会自己再探一次：回包一起摆好
     const caps = capsOf([agentCaps()])

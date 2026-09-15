@@ -8,6 +8,7 @@ import { useUiStore } from '@/store/uiStore'
 import { FolderOpen } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
+import { Reveal } from '../ui/Field'
 import { TextInput } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { PathValue } from './PathValue'
@@ -38,12 +39,12 @@ const st = (key: string, values?: Record<string, unknown>) =>
  *
  * Session 6 的形态：**值在标题列、动作在控件列**。「当前项目」「可编辑来源」的值
  * （目录名 / 脚本数）是这一行的现状，落在标题下的 `status`；「切换项目…」「管理来源…」
- * 是明确的 secondary 动作，独占控件列。两条目录行走 `control="fill"`：
+ * 是明确的 secondary 动作，独占控件列。两条目录行同一语法（2026-09-15 打磨批次 B）：
  *
  * ```text
- * 导出位置
- * [ 留空使用默认位置                          ] [📁]  恢复默认
+ * 导出位置                                     [恢复默认] [更改…]
  * 实际位置  › export  复制
+ * （点「更改…」才在这里展开输入框）
  * ```
  *
  * 写回开关**开着**时也说一句（`status`，低调的一行，不套框）：修改可直接写入原始
@@ -164,8 +165,10 @@ export function ProjectSettings() {
 }
 
 /**
- * 一个目录设置：整行宽的输入框 + 系统选择器（桌面版，图标钮）+ 恢复默认，
- * 下面一行是**这一刻真正会用的位置**。
+ * 一个目录设置（2026-09-15 打磨批次 B，行语法 L1 / L2）：值在标题列、动作在控件列——
+ * 标题下面一行是**这一刻真正会用的位置**，控件列是「更改…」；点开才在标题列下方展开
+ * 输入框（桌面版多一颗系统选择器），设过之后控件列多一颗「恢复默认」。此前两条目录
+ * 各占一个整行宽的空输入框，只为了表达「留空 = 默认」。
  *
  * 输入框留着不是为了对称：浏览器模式没有原生选择器（`pickDirectory()` 在那里
  * 返回 null），手敲路径是那条路上唯一的改法。所以「选择…」只在桌面版渲染——
@@ -188,50 +191,69 @@ function DirectoryRow({
   /** 后端解析出来的、这一刻真正在用的绝对路径 */
   effective?: string
 }) {
+  const [editing, setEditing] = useState(false)
+  const editorId = `${id}-editor`
   return (
-    <SettingRow label={label} controlId={id} control="fill">
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <TextInput
-            id={id}
-            value={value}
-            onChange={(e) => onValue(e.target.value)}
-            onBlur={() => onCommit(value)}
-            placeholder={st('project.dirPlaceholder')}
-            className="min-w-0 flex-1"
-          />
-          {isDesktop() && (
-            <IconButton
-              variant="secondary"
-              label={st('project.chooseFolder')}
-              onClick={async () => {
-                const picked = await pickDirectory(label)
-                if (picked == null) return // 取消不是错误
-                onValue(picked)
-                onCommit(picked)
-              }}
-            >
-              <FolderOpen size={ICON_SIZE.md} aria-hidden />
-            </IconButton>
-          )}
-          {value !== '' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                onValue('')
-                onCommit('')
-              }}
-            >
-              {st('project.useDefault')}
-            </Button>
-          )}
+    <SettingRow
+      label={label}
+      controlId={id}
+      status={
+        <span className="flex min-w-0 flex-col">
+          <span className="flex min-w-0 items-center gap-1.5">
+            {st('project.effectivePath')}
+            <PathValue path={effective} name={label} />
+          </span>
+          <Reveal open={editing}>
+            <span id={editorId} className="flex min-w-0 items-center gap-1.5 pb-1 pt-1.5">
+              <TextInput
+                id={id}
+                value={value}
+                autoFocus
+                onChange={(e) => onValue(e.target.value)}
+                onBlur={() => onCommit(value)}
+                placeholder={st('project.dirPlaceholder')}
+                className="min-w-0 flex-1"
+              />
+              {isDesktop() && (
+                <IconButton
+                  variant="secondary"
+                  label={st('project.chooseFolder')}
+                  onClick={async () => {
+                    const picked = await pickDirectory(label)
+                    if (picked == null) return // 取消不是错误
+                    onValue(picked)
+                    onCommit(picked)
+                  }}
+                >
+                  <FolderOpen size={ICON_SIZE.md} aria-hidden />
+                </IconButton>
+              )}
+            </span>
+          </Reveal>
         </span>
-        <span className="type-meta flex min-w-0 items-center gap-1.5">
-          {st('project.effectivePath')}
-          <PathValue path={effective} name={label} />
-        </span>
-      </span>
+      }
+    >
+      {value !== '' && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            onValue('')
+            onCommit('')
+          }}
+        >
+          {st('project.useDefault')}
+        </Button>
+      )}
+      <Button
+        variant="secondary"
+        size="sm"
+        aria-expanded={editing}
+        aria-controls={editing ? editorId : undefined}
+        onClick={() => setEditing((v) => !v)}
+      >
+        {st('project.change')}
+      </Button>
     </SettingRow>
   )
 }

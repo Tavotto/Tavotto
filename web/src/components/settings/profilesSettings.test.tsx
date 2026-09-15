@@ -133,7 +133,8 @@ describe('默认界面不暴露内部身份', () => {
     await mount()
     expect(text()).toContain('默认样式')
     expect(text()).not.toContain('builtin-default-style')
-    const row = buttons().find((b) => b.textContent?.includes('默认样式'))!
+    // 库是一行分段选择器（2026-09-15 打磨批次 B）：格子上写自然名称，技术身份在 title 里
+    const row = buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('默认样式'))!
     expect(row.getAttribute('title')).toContain('builtin-default-style')
   })
 
@@ -321,11 +322,34 @@ describe('警告与项目绑定', () => {
 })
 
 describe('无障碍', () => {
-  it('清单是按钮列表，选中项带 aria-current（键盘走得到、读屏说得出）', async () => {
+  it('库是一组带可达名的单选（四份以内分段选择器），当前那份 aria-checked（键盘走得到、读屏说得出）', async () => {
     await mount()
-    const rows = buttons().filter((b) => b.getAttribute('title'))
-    expect(rows.length).toBeGreaterThan(1)
-    expect(rows.filter((b) => b.getAttribute('aria-current') === 'true')).toHaveLength(1)
+    const group = document.body.querySelector<HTMLElement>('[role="radiogroup"][aria-label="样式库"]')!
+    expect(group).not.toBeNull()
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
+    expect(radios.length).toBeGreaterThan(1)
+    expect(radios.filter((b) => b.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    // 新建 / 复制 / 导入 / 导出收进「更多操作」菜单，库那一行只剩选择器与一颗图标钮
+    expect(buttons().some((b) => b.getAttribute('aria-label') === '更多操作')).toBe(true)
+    expect(byText('新建')).toBeUndefined()
+  })
+
+  it('超过四份时库换成 Select（分段放不下），触发器上是当前那份的名字', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style')
+            ? [BUILTIN_STYLE, ...[1, 2, 3, 4].map((n) => ({ ...USER_STYLE, id: `s${n}`, display_name: `方案 ${n}` }))]
+            : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    await mount()
+    expect(document.body.querySelector('[role="radiogroup"][aria-label="样式库"]')).toBeNull()
+    const combo = document.body.querySelector<HTMLElement>('[role="combobox"]')!
+    expect(combo.getAttribute('aria-label')).toBe('样式库')
+    expect(combo.textContent).toContain('默认样式')
   })
 
   it('每个数值输入都有可达名', async () => {

@@ -843,6 +843,7 @@ export default interface Resources {
         "spec": "规范库",
         "style": "样式库"
       },
+      "more": "更多操作",
       "name": "名称",
       "new": "新建",
       "newName": "新配置",
@@ -1385,6 +1386,7 @@ export default interface Resources {
       "project": {
         "allowWriteBack": "允许写回原始文件",
         "backupDir": "原始文件备份",
+        "change": "更改…",
         "chooseFolder": "选择…",
         "copyPath": "复制 {{name}} 的完整路径",
         "current": "当前项目",
@@ -1402,7 +1404,7 @@ export default interface Resources {
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackDesc": "「写回原始文件」会覆盖项目里的原始 PDF / PNG 与脚本；每次写回前先把原文件备份到上面的备份位置。",
+        "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本，写回前先备份到上面的位置。",
         "writeBackOffHint": "写回已关闭。源图与脚本不会被覆盖，「写回原始文件」已停用。"
       },
       "section": {

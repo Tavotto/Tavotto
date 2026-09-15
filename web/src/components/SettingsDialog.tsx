@@ -112,8 +112,9 @@ export const CONTENT_MODE: Record<SectionId, 'normal' | 'wide'> = {
   general: 'normal',
   interface: 'normal',
   project: 'normal',
-  style: 'wide',
-  spec: 'wide',
+  // 样式 / 规范：库收成一行之后不再需要左清单右编辑器的宽页（2026-09-15 打磨批次 B）
+  style: 'normal',
+  spec: 'normal',
   export: 'normal',
   ai: 'normal',
   packages: 'wide',

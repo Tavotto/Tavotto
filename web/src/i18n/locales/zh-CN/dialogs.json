@@ -571,7 +571,8 @@
       "style": "样式库",
       "spec": "规范库"
     },
-    "keyRules": "关键要求"
+    "keyRules": "关键要求",
+    "more": "更多操作"
   },
   "readiness": {
     "addToCanvas": "添加到画布",
@@ -1097,8 +1098,9 @@
       "sectionProject": "项目",
       "sectionLocations": "位置",
       "sectionWriteBack": "写回源图",
-      "writeBackDesc": "「写回原始文件」会覆盖项目里的原始 PDF / PNG 与脚本；每次写回前先把原文件备份到上面的备份位置。",
-      "onlyThisProject": "只影响这个项目"
+      "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本，写回前先备份到上面的位置。",
+      "onlyThisProject": "只影响这个项目",
+      "change": "更改…"
     },
     "section": {
       "about": "关于与隐私",
