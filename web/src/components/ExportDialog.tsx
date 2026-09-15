@@ -33,7 +33,7 @@
  * * 不拼载荷。请求的构造只有 `lib/exportRequest.buildExportRequest()` 一处。
  * * 不出现内部标识：库名、gid、对象 id、绝对路径一个都不进这个界面（§五）。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Check,
@@ -739,14 +739,25 @@ export function ExportDialog() {
         </>
       }
     >
-      <div className="flex flex-col gap-5">
-        {/* 0. 导出内容 —— 范围切换在右上，对象（缩略图 · 名字 · 最终尺寸）在下面一眼看清 */}
-        <section aria-label={ex('scopeLabel')} className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs font-medium text-ink-2">{ex('scopeLabel')}</span>
-            {/* 范围是一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3：此前是
-                两颗手拼的 radio 按钮，没有方向键、每颗一个 Tab 停靠点）。
-                `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+      <div className="flex flex-col gap-4">
+        {/* 一种行语法（2026-09-15 打磨批次 D，L1）：标签列 80px 在左、控件在右，行高 28；
+            此前「文件名 / 格式」标签在上、「范围 / 规范」标签在左、「检查」行内混排三种轮换。
+            对象头（缩略图 · 名字 · 一行 meta）在最上面，不再是一张带边框的预览卡 */}
+        {(scope === 'canvas' || figure) && (
+          <TargetHeader
+            scope={scope}
+            figure={figure}
+            spec={availability.spec}
+            doc={doc}
+            asset={figureId ? assets[figureId] : undefined}
+            previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+          />
+        )}
+
+        {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
+            `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+        <section aria-label={ex('scopeLabel')} className="flex flex-col gap-2">
+          <FormRow label={ex('scopeLabel')}>
             <Segmented<ExportScope>
               value={scope}
               onChange={changeScope}
@@ -763,226 +774,227 @@ export function ExportDialog() {
                 { value: 'canvas', label: ex('scopeCanvas') },
               ]}
             />
-          </div>
-          {/* 对象头：画布 = 真实排版缩略图 + 画布名；原图 = 那张图（还没上画布的素材也算
-              选中了——项目里只有它一张时清单不出现，这里是唯一写着对象名与尺寸的地方）。
-              原图范围下还没定是哪一张时不摆一个「没有当前图」的头——下面的清单本身就是
-              选对象的地方 */}
-          {(scope === 'canvas' || figure) && (
-            <TargetHeader
+          </FormRow>
+          <FormRow>
+            <ScopeNote
               scope={scope}
-              figure={figure}
-              spec={availability.spec}
-              doc={doc}
-              asset={figureId ? assets[figureId] : undefined}
-              previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
-              pixels={pixels}
+              available={availability.ok}
+              reason={availability.reason}
+              originalSelectable={originalSelectable}
+              ignored={availability.spec?.ignored ?? []}
+              fallback={availability.spec?.fallback ?? false}
             />
-          )}
-          <ScopeNote
-            scope={scope}
-            available={availability.ok}
-            reason={availability.reason}
-            originalSelectable={originalSelectable}
-            ignored={availability.spec?.ignored ?? []}
-            fallback={availability.spec?.fallback ?? false}
-          />
-          {/* 2b. 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
-              还没定 / 当前那张导不出时清单直接展开（上面那句「点选下面的一张」得指得到东西）；
-              已经选好且项目里不止一张时收进折叠项，不抢主界面；只有一张时不出现。
-              画布范围下一个字都不出现——那是另一个范围的事 */}
+          </FormRow>
+          {/* 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
+              还没定 / 当前那张导不出时清单直接展开；已经选好且项目里不止一张时收进折叠项；
+              只有一张时不出现。画布范围下一个字都不出现——那是另一个范围的事 */}
           {scope === 'original' &&
             figures.length > 0 &&
             (!availability.ok ? (
-              <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
+              <FormRow>
+                <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
+              </FormRow>
             ) : figures.length > 1 ? (
-              // key 跟着选中的图走：点过一张之后折叠项重新收起
-              <Details key={figureId} className="rounded-sm">
-                <Summary className="rounded-sm text-xs text-ink-2">{ex('figureListLabel')}</Summary>
-                <div className="mt-2">
-                  <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
-                </div>
-              </Details>
+              <FormRow>
+                <Details key={figureId} className="w-full rounded-sm">
+                  <Summary className="rounded-sm text-xs text-ink-2">{ex('figureListLabel')}</Summary>
+                  <div className="mt-2">
+                    <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
+                  </div>
+                </Details>
+              </FormRow>
             ) : null)}
         </section>
 
-        {/* 1. 文件名 —— 顶置标签 + 半行输入，同一行右侧是位图分辨率（仅位图格式下出现）；
-            默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
+        {/* 1. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
         <section className="flex flex-col gap-1.5">
-          <label htmlFor="export-filename" className="text-sm font-medium text-ink">
-            {ex('filenameLabel')}
-          </label>
-          <div className="flex items-center justify-between gap-4">
-            <div className="w-1/2 min-w-0">
-              <TextInput
-                id="export-filename"
-                value={filename}
-                onChange={(e) => {
-                  setFilenameTouched(true)
-                  setFilename(e.target.value)
-                }}
-                placeholder={ex('filenamePlaceholder')}
-                aria-invalid={filenameIssue ? true : undefined}
-                aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
-              />
-            </div>
-            {raster && (
-              // 分辨率带可见标签（2026-09-14 审计 B2：此前只有 aria-label，坐在「文件名」标题下
-              // 像文件名的一部分；设置 › 导出页同一控件本来就叫「分辨率」）
-              <label className="flex shrink-0 items-center gap-2 text-xs text-ink-2">
-                <span>{ex('ppiSelectLabel')}</span>
-                <Select
-                  value={String(ppi)}
-                  onChange={setPpi}
-                  options={PPI_VALUES.map((v) => ({
-                    value: v,
-                    label: translate('measure.ppi', { value: v }),
-                  }))}
-                  ariaLabel={ex('ppiSelectLabel')}
-                  className="w-28"
-                />
+          <FormRow
+            label={
+              <label htmlFor="export-filename" className="cursor-pointer">
+                {ex('filenameLabel')}
               </label>
-            )}
-          </div>
+            }
+          >
+            <TextInput
+              id="export-filename"
+              value={filename}
+              onChange={(e) => {
+                setFilenameTouched(true)
+                setFilename(e.target.value)
+              }}
+              placeholder={ex('filenamePlaceholder')}
+              aria-invalid={filenameIssue ? true : undefined}
+              aria-describedby={filenameIssue ? 'export-filename-error' : undefined}
+              className="w-full"
+            />
+          </FormRow>
           {filenameIssue && (
-            <p id="export-filename-error" className="text-xs text-danger">
-              {ex(`filenameError.${filenameIssue}`)}
-            </p>
+            <FormRow>
+              <p id="export-filename-error" className="text-xs text-danger">
+                {ex(`filenameError.${filenameIssue}`)}
+              </p>
+            </FormRow>
           )}
         </section>
 
-        {/* 2. 格式 —— 一行普通复选框，顺序与 `FORMATS` 同源（结果清单按它排） */}
-        <section className="flex flex-col gap-2">
-          <fieldset className="m-0 min-w-0 border-0 p-0">
-            <legend className="mb-2 block w-full p-0 text-sm font-medium text-ink">
-              {ex('formatLabel')}
-            </legend>
-            <div className="grid grid-cols-4 gap-x-4 gap-y-2">
-              <FormatCheck
-                checked={formats.includes('pdf')}
-                onChange={() => toggleFormat('pdf')}
-                title="PDF"
-                hint={ex('pdfHint')}
-              />
-              <FormatCheck
-                checked={formats.includes('png')}
-                onChange={() => toggleFormat('png')}
-                title="PNG"
-                hint={ex('pngHint')}
-              />
-              {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
-              <FormatCheck
-                checked={formats.includes('eps') && eps.ok}
-                onChange={() => toggleFormat('eps')}
-                title="EPS"
-                hint={eps.ok ? ex('epsHint') : ex(`epsUnavailable.${eps.reason}`)}
-                disabled={!eps.ok}
-                describedBy={formats.includes('eps') && !eps.ok ? 'export-eps-reason' : undefined}
-              />
-              <FormatCheck
-                checked={formats.includes('tiff')}
-                onChange={() => toggleFormat('tiff')}
-                title="TIFF"
-                hint={ex('tiffHint')}
-              />
-            </div>
+        {/* 2. 格式 —— 四颗复选框紧凑排一行（gap 20），不再拉满 560px；顺序与 `FORMATS` 同源 */}
+        <section className="flex flex-col gap-1.5">
+          <fieldset aria-label={ex('formatLabel')} className="m-0 min-w-0 border-0 p-0">
+            <FormRow label={ex('formatLabel')}>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                <FormatCheck
+                  checked={formats.includes('pdf')}
+                  onChange={() => toggleFormat('pdf')}
+                  title="PDF"
+                  hint={ex('pdfHint')}
+                />
+                <FormatCheck
+                  checked={formats.includes('png')}
+                  onChange={() => toggleFormat('png')}
+                  title="PNG"
+                  hint={ex('pngHint')}
+                />
+                {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+                <FormatCheck
+                  checked={formats.includes('eps') && eps.ok}
+                  onChange={() => toggleFormat('eps')}
+                  title="EPS"
+                  hint={eps.ok ? ex('epsHint') : ex(`epsUnavailable.${eps.reason}`)}
+                  disabled={!eps.ok}
+                  describedBy={formats.includes('eps') && !eps.ok ? 'export-eps-reason' : undefined}
+                />
+                <FormatCheck
+                  checked={formats.includes('tiff')}
+                  onChange={() => toggleFormat('tiff')}
+                  title="TIFF"
+                  hint={ex('tiffHint')}
+                />
+              </div>
+            </FormRow>
           </fieldset>
           {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
               不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
           {formats.includes('eps') && !eps.ok && (
-            <p id="export-eps-reason" className="type-caption">
-              {ex(`epsUnavailable.${eps.reason}`)}
-            </p>
+            <FormRow>
+              <p id="export-eps-reason" className="type-caption">
+                {ex(`epsUnavailable.${eps.reason}`)}
+              </p>
+            </FormRow>
           )}
         </section>
 
-        {/* 3. 规范 —— 标题在左（与文件名 / 格式同级），下拉与编辑入口在右；
-            只出现自然名称，id 与版本号在设置里 */}
+        {/* 3. 分辨率 —— 只在选了位图格式时出现，旁边直接给像素数（此前像素数挂在对象头里） */}
+        {raster && (
+          <FormRow label={ex('ppiLabel')}>
+            <Select
+              value={String(ppi)}
+              onChange={setPpi}
+              options={PPI_VALUES.map((v) => ({
+                value: v,
+                label: translate('measure.ppi', { value: v }),
+              }))}
+              ariaLabel={ex('ppiSelectLabel')}
+              className="w-32"
+            />
+            {pixels && (
+              <span id="export-pixel-preview" className="type-meta min-w-0 truncate tabular-nums">
+                {pixels}
+              </span>
+            )}
+          </FormRow>
+        )}
+
+        {/* 4. 规范 —— 只出现自然名称，id 与版本号在设置里 */}
         <section className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between gap-4">
-            <span className="shrink-0 text-sm font-medium text-ink">{ex('profileLabel')}</span>
-            <div className="flex min-w-0 items-center gap-3">
-              <Select
-                value={doc.profile?.id ?? profileId}
-                onChange={applyProfile}
-                options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
-                ariaLabel={ex('profileAria')}
-                className="w-48 min-w-0"
-              />
-              <button
-                type="button"
-                aria-label={ex('profileEditAria')}
-                onClick={() => {
-                  // 深链到「规范」页。**不关这个面板**：设置压在它上面（dialogStack），
-                  // 关掉设置它自己回来，用户填过的文件名 / 范围 / 格式一个不丢
-                  useUiStore.getState().setSettingsOpen(true, 'spec')
-                }}
-                className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
-              >
-                <Pencil size={ICON_SIZE.xs} className="mr-0.5 inline" aria-hidden />
-                {ex('profileEdit')}
-              </button>
-            </div>
-          </div>
+          <FormRow label={ex('profileLabel')}>
+            <Select
+              value={doc.profile?.id ?? profileId}
+              onChange={applyProfile}
+              options={catalog.map((p) => ({ value: p.id, label: p.display_name }))}
+              ariaLabel={ex('profileAria')}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={ex('profileEditAria')}
+              onClick={() => {
+                useUiStore.getState().setSettingsOpen(true, 'spec')
+              }}
+            >
+              <Pencil size={ICON_SIZE.sm} aria-hidden />
+              {ex('profileEdit')}
+            </Button>
+          </FormRow>
           {/* 规范异常提示不藏起来 */}
           {resolved.updateAvailable && (
-            <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
-              {ex('profileUpdateAvailable')}
-              <Button variant="secondary" size="sm" onClick={syncProfile}>
-                {ex('profileSync')}
-              </Button>
-            </p>
+            <FormRow>
+              <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
+                {ex('profileUpdateAvailable')}
+                <Button variant="secondary" size="sm" onClick={syncProfile}>
+                  {ex('profileSync')}
+                </Button>
+              </p>
+            </FormRow>
           )}
         </section>
 
-        {/* 4. 检查 —— 标题在上，下方是摘要行 + 阻断项清单 + 知情确认；
+        <div className="h-px bg-border" aria-hidden />
+
+        {/* 5. 检查 —— 摘要行 + 阻断项清单 + 知情确认，都在控件列；
             摘要按导出目标取范围，完整清单在左侧问题面板（§四） */}
         <section aria-label={ex('checkLabel')} className="flex flex-col gap-2">
-          <span className="text-sm font-medium text-ink">{ex('checkLabel')}</span>
-          <CheckRow
-            summary={summary}
-            scopeHint={ex(scope === 'original' && panel ? 'checkScopeFigure' : 'checkScopeCanvas')}
-            onOpenPanel={() => {
-              park()
-              openProblems()
-            }}
-          />
-
-          {/* 阻断项逐条列出，紧挨着知情确认框：点头之前先看见自己在为什么点头。
-              只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
-          {errors.length > 0 && (
-            <BlockingList
-              issues={errors}
-              onLocate={locateBlocking}
-              onMore={() => {
+          <FormRow label={ex('checkLabel')}>
+            <CheckRow
+              summary={summary}
+              scopeHint={ex(scope === 'original' && panel ? 'checkScopeFigure' : 'checkScopeCanvas')}
+              onOpenPanel={() => {
                 park()
-                openProblems({ severities: ['error'] })
+                openProblems()
               }}
             />
-          )}
+          </FormRow>
 
-          {needsConfirm && (
-            <label className="flex items-start gap-2 pt-1 text-xs leading-relaxed text-ink-2">
-              {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
-                  「页面里第一颗 checkbox」早就不是它了 */}
-              <Checkbox
-                data-export-confirm
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                className="mt-0.5"
-              />
-              {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
-                  英文的从句位置不一样，拼出来的句子读着就是机翻 */}
-              <span className="min-w-0 flex-1">
-                {errors.length > 0 && notVerifiable.length > 0
-                  ? ex('confirmBoth', { errors: errors.length, notVerifiable: notVerifiable.length })
-                  : errors.length > 0
-                    ? ex('confirmErrors', { errors: errors.length })
-                    : notVerifiable.length > 0
-                      ? ex('confirmNotVerifiable', { notVerifiable: notVerifiable.length })
-                      : ex('confirmCheckFailed')}
-              </span>
-            </label>
+          {/* 阻断项逐条列出，紧挨着知情确认框（确认框是清单的下一个兄弟）：点头之前先看见
+              自己在为什么点头。只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
+          {(errors.length > 0 || needsConfirm) && (
+            <FormRow align="start">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                {errors.length > 0 && (
+                  <BlockingList
+                    issues={errors}
+                    onLocate={locateBlocking}
+                    onMore={() => {
+                      park()
+                      openProblems({ severities: ['error'] })
+                    }}
+                  />
+                )}
+                {needsConfirm && (
+                  <label className="flex items-start gap-2 text-xs leading-relaxed text-ink-2">
+                    {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
+                        「页面里第一颗 checkbox」早就不是它了 */}
+                    <Checkbox
+                      data-export-confirm
+                      checked={confirmed}
+                      onChange={(e) => setConfirmed(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
+                        英文的从句位置不一样，拼出来的句子读着就是机翻 */}
+                    <span className="min-w-0 flex-1">
+                      {errors.length > 0 && notVerifiable.length > 0
+                        ? ex('confirmBoth', { errors: errors.length, notVerifiable: notVerifiable.length })
+                        : errors.length > 0
+                          ? ex('confirmErrors', { errors: errors.length })
+                          : notVerifiable.length > 0
+                            ? ex('confirmNotVerifiable', { notVerifiable: notVerifiable.length })
+                            : ex('confirmCheckFailed')}
+                    </span>
+                  </label>
+                )}
+              </div>
+            </FormRow>
           )}
         </section>
 
@@ -1304,7 +1316,6 @@ function TargetHeader({
   doc,
   asset,
   previewNonce,
-  pixels = null,
 }: {
   scope: ExportScope
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -1314,8 +1325,6 @@ function TargetHeader({
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined
   previewNonce: number | undefined
-  /** 位图产物的像素数（只在选了位图格式时给），跟在尺寸 / 对象数之后 */
-  pixels?: ReturnType<typeof pixelPreview> | null
 }) {
   useTranslation('dialogs')
   const original = scope === 'original'
@@ -1333,10 +1342,10 @@ function TargetHeader({
   return (
     <div
       data-export-target
-      className="flex items-center gap-4"
+      className="flex items-center gap-3"
     >
       {original ? (
-        <div className="flex h-14 w-[73px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
+        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
           {src ? (
             <img src={src} alt="" className="max-h-full max-w-full object-contain p-0.5" />
           ) : (
@@ -1346,13 +1355,13 @@ function TargetHeader({
       ) : (
         // 画布范围：与画布列表 / 版本列表同一张缩略图——按页面比例画真实内容
         // （面板挂素材预览、文字画文字），不是几个灰方块（审计 B20）
-        <CanvasThumb page={doc.page} objects={doc.objects} className="h-14 w-[73px]" />
+        <CanvasThumb page={doc.page} objects={doc.objects} className="h-10 w-[60px]" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate type-title" title={name}>
+        <p className="truncate text-base font-medium text-ink" title={name}>
           {name}
         </p>
-        <p className="mt-0.5 text-xs text-ink-2">
+        <p className="type-meta">
           {ex(original ? 'scopeOriginal' : 'scopeCanvas')}
           {' · '}
           <span className="tabular-nums">{size}</span>
@@ -1360,14 +1369,6 @@ function TargetHeader({
             <>
               {' · '}
               {ex('canvasObjects', { count: visibleObjects })}
-            </>
-          )}
-          {pixels && (
-            <>
-              {' · '}
-              <span id="export-pixel-preview" className="tabular-nums text-ink-3">
-                {pixels}
-              </span>
             </>
           )}
         </p>
@@ -1744,6 +1745,36 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
  * 大卡片。说明（矢量 / 位图 …）进 `title`；禁用的**原因**由调用方写成可见文字，
  * 这里只用 `describedBy` 把它接上——一个灰掉的复选框解释不了自己。
  */
+/**
+ * 对话框里唯一的一种行（2026-09-15 打磨批次 D）：标签列 80px 在左、控件在右、行高 28。
+ * 没有标签的行（说明、清单、确认框）第一列留空，内容与上面的控件同一条竖线。
+ */
+function FormRow({
+  label,
+  children,
+  align = 'center',
+}: {
+  label?: ReactNode
+  children: ReactNode
+  align?: 'center' | 'start'
+}) {
+  return (
+    <div
+      className={cn(
+        'grid min-h-7 grid-cols-[80px_minmax(0,1fr)] gap-x-3',
+        // 说明行（ScopeNote 那类）没话说时整行连同它占的 gap 一起消失，不留一条 28px 的空
+        'has-[>div>:only-child:empty]:hidden',
+        align === 'start' ? 'items-start' : 'items-center',
+      )}
+    >
+      <span className={cn('min-w-0 text-xs text-ink-2', align === 'start' && 'leading-7')}>{label}</span>
+      <div className={cn('flex min-w-0 gap-2', align === 'start' ? 'items-start' : 'items-center')}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function FormatCheck({
   checked,
   onChange,
