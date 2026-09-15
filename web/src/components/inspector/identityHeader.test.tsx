@@ -254,12 +254,12 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     // 是整栏唯一一块常亮的背景
     expect(pin.getAttribute('aria-pressed')).toBe('true')
     expect(pin.className).not.toContain('bg-selected')
-    expect(pin.querySelector('svg')!.getAttribute('class')).toContain('lucide-pin')
+    expect(pin.querySelector('svg')!.getAttribute('class')).toContain('icon-pin')
     await act(async () => pin.click())
     const after = pinOf()
     expect(after.getAttribute('aria-pressed')).toBe('false')
     // 取消钉住换的是**图标**（PinOff），不是底色
-    expect(after.querySelector('svg')!.getAttribute('class')).toContain('lucide-pin-off')
+    expect(after.querySelector('svg')!.getAttribute('class')).toContain('icon-pin-off')
     expect(after.className).not.toContain('bg-selected')
   })
 
