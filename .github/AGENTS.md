@@ -77,6 +77,20 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   就要回去改那张 matrix，合同测试会红。两条 Playwright 步都有 **step 级** `timeout-minutes`（30 / 20，job 级 60 / 45 不动）：job 级硬杀时 step
   停在 in_progress、`if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1 实测），step 级超时把挂起变成带日志的失败。
   设计、本机实测、负例与已知边界：`docs/implementation/ci-foundation/CI03C_PLAYWRIGHT_SHARDS.md`。
+- **`package` job 的冒烟按实例隔离（CI03b，2026-09-16）**：venv 在 `${{ runner.temp }}/smoke-venv`（两步共用
+  `$VENV`，探 `bin` / `Scripts` 那套照旧），起服务那一步是 `python scripts/ci/package_smoke.py --python "$BIN/python"
+  --workdir "${{ runner.temp }}/smoke-run"`（step 级 `timeout-minutes: 5`；失败时 `package-smoke-logs-<os>-<python>` 收走
+  workdir）。原来的 `/tmp/smoke` + `--port 5199 … &` + `sleep 8` + 两条 curl 三样都不许回来
+  （`tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation`）。脚本的判据主语：**端口**是向系统租的
+  （产品 `--port` 不接受 0，**不改**——端口冲突用例要的正是「被占用就顺延」），租约在真 bind 之前被抢时产品不会报错退出，
+  而是顺延（「端口 P 被占用，改用 Q」）或退 0（「已在 … 运行」），脚本按日志里的占用类文案认出来换号重试；**就绪**
+  = `/api/version` 200 + JSON **且**应答者持有本实例 data dir 里那枚凭据（`smoke_app.adopt_session_credentials` +
+  `/api/session/ping` 200）——只看公共端点的 200，租约丢失时那个 200 可能来自隔壁实例；**终止** = 进程不存在
+  （POSIX 整组 SIGTERM → SIGKILL → `killpg(pgid, 0)` ESRCH，组里剩人再升级；Windows `taskkill /T /F`），
+  不是「发了信号」。data / config 由脚本放在 workdir 下（每次尝试一套），yml 里**不再**另设 `TAVOTTO_*_DIR`。
+  被起的进程可换（`--launch` 模板，单测用 `tests/support/stub_http_server.py` 的十一种 `--fail-mode`）。
+  设计、本机实测（真 wheel 就绪 2.3 s vs 原来盲等 8 s）、负例与已知边界：
+  `docs/implementation/ci-foundation/CI03B_PACKAGE_SMOKE_ISOLATION.md`。
 - 每个「只在别人电脑上发生」的 bug 先变成 `tests/test_windows_regressions.py`
   的用例再谈修（cp936 编码、文件占用、盘符/反斜杠/中文路径、端口占用、
   CLI 只有 .cmd、解释器探测）。

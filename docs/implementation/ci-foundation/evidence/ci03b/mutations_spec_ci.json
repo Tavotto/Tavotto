@@ -1,0 +1,185 @@
+{
+ "label": ".github/workflows/ci.yml vs tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation",
+ "mutations": [
+  {
+   "id": "C01",
+   "file": ".github/workflows/ci.yml",
+   "why": "装 wheel 那一步的 venv 回到 /tmp/smoke",
+   "old": "          VENV=\"${{ runner.temp }}/smoke-venv\"\n          python -m venv \"$VENV\"\n",
+   "new": "          VENV=\"/tmp/smoke\"\n          python -m venv \"$VENV\"\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C02",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟那一步的 venv 回到 /tmp/smoke",
+   "old": "          VENV=\"${{ runner.temp }}/smoke-venv\"\n          BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"\n          python scripts/ci/package_smoke.py",
+   "new": "          VENV=\"/tmp/smoke\"\n          BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"\n          python scripts/ci/package_smoke.py",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C03",
+   "file": ".github/workflows/ci.yml",
+   "why": "workdir 不在 runner.temp 下",
+   "old": "            --workdir \"${{ runner.temp }}/smoke-run\"\n",
+   "new": "            --workdir \"/tmp/smoke-run\"\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C04",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤换回旧写法（固定端口 + sleep + curl）",
+   "old": "          python scripts/ci/package_smoke.py --python \"$BIN/python\" \\\n            --workdir \"${{ runner.temp }}/smoke-run\"\n",
+   "new": "          \"$BIN/python\" -m tavotto --port 5199 --no-browser &\n          sleep 8\n          curl -sf http://127.0.0.1:5199/ -o /dev/null\n          curl -sf http://127.0.0.1:5199/api/version\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C05",
+   "file": ".github/workflows/ci.yml",
+   "why": "被测解释器不是 venv 里的那个",
+   "old": "python scripts/ci/package_smoke.py --python \"$BIN/python\" \\",
+   "new": "python scripts/ci/package_smoke.py --python python \\",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C06",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤不探 Scripts（Windows 腿失守）",
+   "old": "          BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"\n          python scripts/ci/package_smoke.py",
+   "new": "          BIN=\"$VENV/bin\"\n          python scripts/ci/package_smoke.py",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C07",
+   "file": ".github/workflows/ci.yml",
+   "why": "删掉 step 级 timeout",
+   "old": "        timeout-minutes: 5\n        run: |\n          VENV=",
+   "new": "        run: |\n          VENV=",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C08",
+   "file": ".github/workflows/ci.yml",
+   "why": "job 级 timeout 60 → 90",
+   "old": "    timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列\n    runs-on: ${{ matrix.os }}\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: { python-version: \"${{ matrix.python }}\" }\n      - uses: pnpm/action-setup@v4\n        with: { version: 11 }\n      - uses: actions/setup-node@v4\n        with: { node-version: 22 }\n      - name: 构建前端进包",
+   "new": "    timeout-minutes: 90  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列\n    runs-on: ${{ matrix.os }}\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: { python-version: \"${{ matrix.python }}\" }\n      - uses: pnpm/action-setup@v4\n        with: { version: 11 }\n      - uses: actions/setup-node@v4\n        with: { node-version: 22 }\n      - name: 构建前端进包",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C09",
+   "file": ".github/workflows/ci.yml",
+   "why": "artifact 名去掉 matrix.python（两条 ubuntu 腿撞名）",
+   "old": "          name: package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}\n",
+   "new": "          name: package-smoke-logs-${{ matrix.os }}\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C10",
+   "file": ".github/workflows/ci.yml",
+   "why": "失败日志 artifact 改成 always()",
+   "old": "      - name: 上传冒烟日志（失败时）\n        if: failure()\n",
+   "new": "      - name: 上传冒烟日志（失败时）\n        if: always()\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C11",
+   "file": ".github/workflows/ci.yml",
+   "why": "artifact 路径不是 workdir",
+   "old": "          path: ${{ runner.temp }}/smoke-run/**\n",
+   "new": "          path: ${{ runner.temp }}/tavotto-data/**\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C12",
+   "file": ".github/workflows/ci.yml",
+   "why": "删掉整个上传步骤",
+   "old": "      - name: 上传冒烟日志（失败时）\n        if: failure()\n        uses: actions/upload-artifact@v4\n        with:\n          name: package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}\n          path: ${{ runner.temp }}/smoke-run/**\n          retention-days: 7\n          if-no-files-found: ignore\n",
+   "new": "",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C13",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤又设回 TAVOTTO_DATA_DIR（假隔离）",
+   "old": "        timeout-minutes: 5\n        run: |\n          VENV=",
+   "new": "        timeout-minutes: 5\n        env:\n          TAVOTTO_DATA_DIR: ${{ runner.temp }}/tavotto-data\n        run: |\n          VENV=",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C14",
+   "file": ".github/workflows/ci.yml",
+   "why": "needs 回到 [backend-fast, frontend]",
+   "old": "    needs: [frontend]\n    strategy:\n      fail-fast: false\n      matrix:\n        # 三个平台各一档 3.13",
+   "new": "    needs: [backend-fast, frontend]\n    strategy:\n      fail-fast: false\n      matrix:\n        # 三个平台各一档 3.13",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C15",
+   "file": ".github/workflows/ci.yml",
+   "why": "少一条 windows 腿",
+   "old": "          - { os: windows-latest, python: \"3.13\" }\n    timeout-minutes: 60  # 与 windows-exe-smoke",
+   "new": "    timeout-minutes: 60  # 与 windows-exe-smoke",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C16",
+   "file": ".github/workflows/ci.yml",
+   "why": "冒烟步骤末尾加一句 sleep",
+   "old": "            --workdir \"${{ runner.temp }}/smoke-run\"\n",
+   "new": "            --workdir \"${{ runner.temp }}/smoke-run\"\n          sleep 2\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C17",
+   "file": ".github/workflows/ci.yml",
+   "why": "装 wheel 那一步不再共用 $VENV（写死另一个路径）",
+   "old": "          BIN=\"$VENV/bin\"; [ -d \"$BIN\" ] || BIN=\"$VENV/Scripts\"\n          \"$BIN/python\" -m pip install --quiet dist/*.whl\n",
+   "new": "          BIN=\"${{ runner.temp }}/venv2/bin\"; [ -d \"$BIN\" ] || BIN=\"${{ runner.temp }}/venv2/Scripts\"\n          \"$BIN/python\" -m pip install --quiet dist/*.whl\n",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  },
+  {
+   "id": "C18",
+   "file": ".github/workflows/ci.yml",
+   "why": "package 从 integration gate 的 --required 闭集里拿掉",
+   "old": "            --required backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e \\",
+   "new": "            --required backend-platforms,windows-exe-smoke,macos-app-smoke,posix-e2e \\",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ]
+  }
+ ]
+}
