@@ -791,7 +791,7 @@ jobs:
     #     「pytest 过了」的结论（CI00 把 8 条 backend-fast / frontend → 重型 的边全部
     #     判成 verdict-only，docs/implementation/ci-foundation/evidence/dag_edge_kinds.json）。
     #   * 代价是整条合并资格：29 个合并组里 28 个的关键路径是
-    #     backend-fast（中位 31 分钟）→ windows-exe-smoke（24 分钟）→ integration gate，
+    #     backend-fast（三档里最慢的那一档，中位 31–35 分钟）→ windows-exe-smoke（24 分钟）→ integration gate，
     #     资格中位 57 分钟；删边后的模型中位 41 分钟（Δ −15 分钟，CI_BASELINE.md §5.1）。
     #   * **AND 一点没松**：backend-fast 仍在 `CI fast gate` 的 needs / --required 闭集里，
     #     ruleset 要三个 Gate 全绿；它红了候选照样进不了 main，只是重型 job 白跑一轮
