@@ -38,9 +38,15 @@ interface AssetBrowseState {
    * 一开始就藏起来。与筛选一样只在内存里，换项目不重置（它不属于某个项目）。
    */
   scriptsOpen: boolean
+  /**
+   * 「图」区展开着没有。它与「脚本」区是同级的两个分区，用同一副可折叠的区头
+   * （2026-09-15 左栏审计 L06：此前一个能收一个不能，两种骨架）；默认展开，图是主区域。
+   */
+  figuresOpen: boolean
   setQuery: (query: string) => void
   setFilters: (filters: AssetFilters | ((prev: AssetFilters) => AssetFilters)) => void
   setScriptsOpen: (open: boolean) => void
+  setFiguresOpen: (open: boolean) => void
   /** 换项目：搜索词与筛选都属于旧项目 */
   clear: () => void
 }
@@ -49,9 +55,11 @@ export const useAssetBrowseStore = create<AssetBrowseState>((set) => ({
   query: '',
   filters: DEFAULT_ASSET_FILTERS,
   scriptsOpen: true,
+  figuresOpen: true,
   setQuery: (query) => set({ query }),
   setFilters: (filters) =>
     set((s) => ({ filters: typeof filters === 'function' ? filters(s.filters) : filters })),
   setScriptsOpen: (scriptsOpen) => set({ scriptsOpen }),
+  setFiguresOpen: (figuresOpen) => set({ figuresOpen }),
   clear: () => set({ query: '', filters: DEFAULT_ASSET_FILTERS }),
 }))

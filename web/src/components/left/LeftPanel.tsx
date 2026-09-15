@@ -10,6 +10,7 @@ import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
 import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
+import { DrawerCount } from './DrawerCount'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
@@ -44,17 +45,21 @@ export function LeftPanel({
       className={cn(
         // overflow-hidden 是动效的一部分：停靠态动的是外层 width，内容包在下面
         // 那层定宽 div 里，所以展开收起时抽屉自己的子树一次都不重排
-        'relative shrink-0 overflow-hidden border-r border-border bg-surface',
-        overlay && 'absolute inset-y-0 z-30 shadow-pop',
+        'relative shrink-0 overflow-hidden bg-surface',
+        // 停靠时与画布之间一根 hairline；覆盖式只留浮层投影——投影自带 1px 环，
+        // 再画一条实边就是双描边（宪法第一节「浮层不再画实色 border」；左栏审计 L20）
+        overlay ? 'absolute inset-y-0 z-30 shadow-pop' : 'border-r border-border',
         motion.className,
       )}
     >
       <div className="flex h-full flex-col" style={{ width }}>
       {/* 标题行：名字 + 低权重计数 + 钉住。计数只是一个数字（type-meta），
           单位进读屏用的隐藏文本——审计 T07 / T08 要的是**可达名**里分得清对象 /
-          元素 / 修改，不是让视觉上多四个字 */}
+          元素 / 修改，不是让视觉上多四个字。
+          标题是分区标题那一档（type-section 12/500）：此前 11px，比它下面的
+          「图 3」分区标题还小一号，层级倒挂（左栏审计 L01） */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
-        <h2 className="text-xs font-medium text-ink">{t(`rail.${tab}`)}</h2>
+        <h2 className="type-section">{t(`rail.${tab}`)}</h2>
         {tab === 'layers' && objectCount > 0 && (
           <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
         )}
@@ -63,9 +68,10 @@ export function LeftPanel({
             已经把两个范围各说了一遍，轨道角标说的是整个文档；标题再来一个 13 就是
             一个概念三个数字 */}
         <span className="flex-1" />
+        {/* 面板头的图标钮走默认档（16px 图标）：`sm` 只给与 11–12px 文字并排的行内小钮
+            （宪法第四节）；此前面板头 14、画布页「+」16、版本 × 16 三处三样（左栏审计 L13） */}
         {wide && (
           <IconButton
-            iconSize="sm"
             side="bottom"
             label={pinned ? t('drawer.unpin') : t('drawer.pin')}
             tip={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')}
@@ -74,7 +80,7 @@ export function LeftPanel({
             className="-mr-1.5"
             onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
           >
-            <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.md} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
           </IconButton>
         )}
       </div>
@@ -95,21 +101,6 @@ export function LeftPanel({
   )
 }
 
-/**
- * 标题旁的计数：视觉上只有数字，完整的「N 个元素」给读屏（与 title）。
- * 两份文本同时在 DOM 里，一份 aria-hidden、一份 sr-only——数字与单位在不同语言里
- * 的顺序不一样，拆不开 i18n 串，只能整句藏起来给辅助技术。
- */
-function DrawerCount({ value, label }: { value: number; label?: string }) {
-  return (
-    <span className="type-meta tabular-nums" title={label}>
-      <span aria-hidden={label ? true : undefined}>{value}</span>
-      {label && <span className="sr-only">{label}</span>}
-    </span>
-  )
-}
-
-/** 问题计数进标题：与面板同一个范围（当前图 / 整个文档）；轨道角标仍是全文档 */
 /** 元素计数进标题：树里不再重复统计行 */
 function ElementCount() {
   const { t } = useTranslation('workspace')
@@ -160,8 +151,10 @@ function WidthHandle() {
         const ui = useUiStore.getState()
         ui.setLeftWidth(ui.leftWidth + (e.key === 'ArrowRight' ? 16 : -16))
       }}
-      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
-      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
+      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉。
+      // hover 只把边界加深一档：accent 小面积只给焦点 / 链接 / AI / 选择框，一条 8px 的
+      // 蓝带不在其中（宪法第一节；左栏审计 L38），键盘聚焦时才用 accent
+      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize outline-none hover:bg-border-strong focus-visible:bg-accent/30"
     />
   )
 }

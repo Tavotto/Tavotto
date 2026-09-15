@@ -91,6 +91,8 @@ async function seed() {
 const text = () => container.textContent ?? ''
 const buttons = () => [...container.querySelectorAll('button')]
 const byText = (s: string) => buttons().find((b) => b.textContent?.includes(s))
+/** 图标钮只有可达名，没有可见文字（逐项处理条的上 / 下，左栏审计 L26） */
+const byLabel = (s: string) => buttons().find((b) => b.getAttribute('aria-label') === s)
 const click = async (el: Element) =>
   act(async () => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -523,14 +525,19 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(rows()[1].getAttribute('aria-current')).toBeNull()
     expect(cursorBar()?.textContent).toContain('第 1 / 2 项')
     expect(cursorBar()?.textContent).toContain('X 轴刻度')
+    // 「上一项 / 下一项」是两颗同形的图标钮（左栏审计 L26）：条上只剩现状那一句，
+    // 方向名字在可达名里——此前上是图标钮、下是文字钮，一对动作看着像两件事
+    expect(cursorBar()?.textContent).not.toContain('下一项')
+    expect(byLabel('上一项')!.querySelector('svg')).not.toBeNull()
+    expect(byLabel('下一项')!.querySelector('svg')).not.toBeNull()
 
-    await click(byText('下一项')!)
+    await click(byLabel('下一项')!)
     expect(rows()[1].getAttribute('aria-current')).toBe('true')
     expect(rows()[0].getAttribute('aria-current')).toBeNull()
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xlabel'])
     expect(cursorBar()?.textContent).toContain('第 2 / 2 项')
     // 到底了：下一项不可按
-    expect(byText('下一项')!.disabled).toBe(true)
+    expect(byLabel('下一项')!.disabled).toBe(true)
   })
 
   it('当前那条修好消失之后，「下一项」指向顶上来的那条，不必重开清单', async () => {
@@ -541,7 +548,7 @@ describe('定位后清单留在原地（审计 T09）', () => {
     await act(async () => useValidationStore.setState({ issues: [second] }))
     expect(rows().length).toBe(1)
     expect(cursorBar()?.textContent).toContain('已处理，还剩 1 项')
-    await click(byText('下一项')!)
+    await click(byLabel('下一项')!)
     expect(rows()[0].getAttribute('aria-current')).toBe('true')
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xlabel'])
   })
@@ -645,7 +652,7 @@ describe('长列表：一组默认只展开前几行', () => {
     await click(rows()[PREVIEW_ROWS - 1])
     expect(rows()[PREVIEW_ROWS - 1].getAttribute('aria-current')).toBe('true')
     expect(rows().length).toBe(PREVIEW_ROWS)
-    await click(byText('下一项')!)
+    await click(byLabel('下一项')!)
     // 第 6 条成了「当前」：它必须在 DOM 里且带标记，而不是消失在折叠之后
     expect(rows().length).toBe(MANY)
     expect(rows()[PREVIEW_ROWS].getAttribute('aria-current')).toBe('true')

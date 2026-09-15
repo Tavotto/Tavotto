@@ -273,24 +273,16 @@ export function ElementTree() {
     )
   }
 
+  // 「需要渲染一次」也是一种空态：全站只有 EmptyState 一种形态（宪法第五节；左栏审计 L34）。
+  // 渲染中把动作换成一句现状
   if (!manifest) {
     return (
-      <div className="flex flex-col items-start gap-2 px-3 py-2">
-        <p className="text-xs leading-relaxed text-ink-3">
-          {et('needRender', { name: panel.name ?? panel.fileId })}
-        </p>
-        {rendering ? (
-          <p className="flex items-center gap-1.5 text-xs text-ink-2">
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-            {et('building')}
-          </p>
-        ) : (
-          <Button variant="secondary" size="sm" onClick={() => enterElementEdit(panel.id)}>
-            <EditableFigureIcon size={ICON_SIZE.sm} />
-            {et('load')}
-          </Button>
-        )}
-      </div>
+      <EmptyState
+        icon={EditableFigureIcon}
+        title={et('needRender', { name: panel.name ?? panel.fileId })}
+        hint={rendering ? et('building') : undefined}
+        action={rendering ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
+      />
     )
   }
 
@@ -376,7 +368,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center px-3 pb-1.5">
+      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36） */}
+      <div className="flex shrink-0 items-center px-3 pb-2">
         <SearchInput
           value={query}
           onValueChange={setQuery}
@@ -623,7 +616,8 @@ function ElementRow({
           <TriangleAlert size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </Tip>
       )}
-      {readonly && <span className="shrink-0 type-meta">{et('readonly')}</span>}
+      {/* 行选中时整行 500，行尾这个 meta 不跟着粗（同 L03 / L24 一族） */}
+      {readonly && <span className="shrink-0 type-meta font-normal">{et('readonly')}</span>}
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}

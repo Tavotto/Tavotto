@@ -47,10 +47,11 @@ import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
-import { Reveal, Row } from '../ui/Field'
+import { Row } from '../ui/Field'
 import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
+import { TruncateMiddle } from '../ui/TruncateMiddle'
 import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
@@ -122,6 +123,7 @@ export function AssetBrowser() {
   const filters = useAssetBrowseStore((s) => s.filters)
   const setFilters = useAssetBrowseStore((s) => s.setFilters)
   const scriptsOpen = useAssetBrowseStore((s) => s.scriptsOpen)
+  const figuresOpen = useAssetBrowseStore((s) => s.figuresOpen)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState<LibraryItem | null>(null)
   /** 后端刷新与素材重取合起来才是用户眼里的「正在刷新」 */
@@ -259,10 +261,24 @@ export function AssetBrowser() {
   const clearChip = (key: keyof Filters) =>
     setFilters((f) => ({ ...f, [key]: DEFAULT_FILTERS[key] }))
 
+  // 搜索时两个区都强制展开——匹配项可能就在收着的那个区里，收着的区域会让
+  // 「没有结果」成为一句假话
+  const searching = query.trim() !== ''
+  const figuresShown = figuresOpen || searching
+  const scriptsShown = scriptsOpen || searching
+  // 区头上的计数：未筛选时就是全部素材数；筛选中写成「3 / 7」——此前这个比值单独占
+  // 一行「文件夹信息 … 3」页脚，与「图 3」是同一个数说两遍（左栏审计 L04）
+  const total = panels.length + (runtimeAssets?.length ?? 0)
+  // 项目里一张图都没有时不写「图 0」：下面那句空态就是「项目里还没有图」，一行之隔说两遍
+  // （同 L04）。筛到 0 条是另一回事——「0 / 7」告诉你还有 7 张只是没匹配上，那是有信息的
+  const figuresCount =
+    !loaded || total === 0 ? undefined : items.length === total ? total : `${items.length} / ${total}`
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 工具栏：搜索框 + 三颗同权重的图标钮（只看可参数化 / 筛选 / 刷新）。
-          它们都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份 */}
+          它们都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
+          图标走默认的 16px——与面板头的钉、画布页的「+」同一档（左栏审计 L13） */}
       <div className="flex flex-col gap-1.5 px-3 pb-2">
         <div className="flex items-center gap-0.5">
           <SearchInput
@@ -275,7 +291,6 @@ export function AssetBrowser() {
           {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
               生效时下方出现同一个可移除的筛选标签 */}
           <IconButton
-            iconSize="sm"
             label={ab('scriptOnly')}
             active={type === 'script'}
             aria-pressed={type === 'script'}
@@ -283,16 +298,16 @@ export function AssetBrowser() {
               setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
             }
           >
-            <EditableFigureIcon size={ICON_SIZE.sm} className={type === 'script' ? undefined : 'text-ink-2'} />
+            <EditableFigureIcon size={ICON_SIZE.md} className={type === 'script' ? undefined : 'text-ink-2'} />
           </IconButton>
           <FilterButton
             filters={filters}
             folders={folders}
+            figuresDir={figuresDir}
             activeCount={chips.length}
             onChange={setFilters}
           />
           <IconButton
-            iconSize="sm"
             label={ab('refresh')}
             tip={ab('refreshTip')}
             disabled={refreshing}
@@ -312,7 +327,7 @@ export function AssetBrowser() {
           >
             {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
                 LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
-            <RefreshCw size={ICON_SIZE.sm} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
+            <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
           </IconButton>
         </div>
 
@@ -349,8 +364,19 @@ export function AssetBrowser() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* ---- 图：FileAsset + RuntimeFigureAsset ---- */}
-        <SectionHeading label={ab('sectionFigures')} count={items.length} />
-        <div ref={gridRef} className="px-3 pb-2">
+        {/* 「图」与「脚本」是同级的两个区，同一副可折叠区头（左栏审计 L06，拍板取 a）；
+            图默认展开、带计数 */}
+        <SectionToggle
+          label={ab('sectionFigures')}
+          count={figuresCount}
+          open={figuresShown}
+          onToggle={() => useAssetBrowseStore.getState().setFiguresOpen(!figuresOpen)}
+          controls="asset-figures-section"
+        />
+        {/* 网格容器常驻（收起时只是 hidden）：列数由它的实测宽度决定，ResizeObserver
+            只在挂载时接一次，卸了再挂就量不到了；display:none 报 0 宽 → 单列，再展开时
+            报回真实宽度 → 双列，同一个观察者两边都接得住 */}
+        <div id="asset-figures-section" ref={gridRef} className="px-3 pb-2" hidden={!figuresShown}>
           {error && !loaded && (
             <EmptyState
               icon={TriangleAlert}
@@ -422,15 +448,14 @@ export function AssetBrowser() {
         </div>
 
         {/* ---- 脚本：普通入口的「运行并发现图」住在这里 ---- */}
-        {/* 图是主区域，脚本是可收起的第二层（审计 B07）；搜索时强制展开——匹配项
-            可能就在脚本里，收着的区域会让「没有结果」成为一句假话 */}
+        {/* 图是主区域，脚本是可收起的第二层（审计 B07） */}
         <SectionToggle
           label={ab('sectionScripts')}
-          open={scriptsOpen || query.trim() !== ''}
+          open={scriptsShown}
           onToggle={() => useAssetBrowseStore.getState().setScriptsOpen(!scriptsOpen)}
           controls="asset-scripts-section"
         />
-        {(scriptsOpen || query.trim() !== '') && (
+        {scriptsShown && (
           <div id="asset-scripts-section">
             <ScriptLibrary query={query} />
           </div>
@@ -439,11 +464,10 @@ export function AssetBrowser() {
 
       {/* 选中卡片的两个动作（真按钮）与接入说明。**都在 listbox 之外**：option
           里不许再嵌可 Tab 的控件（axe nested-interactive，serious），而键盘 /
-          读屏用户必须到得了「编辑原图」与「添加到画布」这两个不同的动作 */}
+          读屏用户必须到得了「编辑原图」与「添加到画布」这两个不同的动作。
+          目录路径不再单独占一行页脚：它是排查用信息，住在筛选弹层的最底一行 */}
       <SelectedAssetActions item={items.find((it) => itemId(it) === activeId)} />
       <AssetCapabilityNotice panel={panels.find((p) => p.id === activeId)} />
-
-      {figuresDir && <FolderInfo dir={figuresDir} shown={items.length} total={panels.length + (runtimeAssets?.length ?? 0)} />}
 
       <Dialog
         open={!!zoomed}
@@ -474,8 +498,9 @@ export function AssetBrowser() {
           </Button>
         }
       >
+        {/* 白弹窗里不再给图套一个框：白上白无需边（宪法第八节；左栏审计 L39） */}
         {zoomed?.kind === 'file' && (
-          <div className="flex items-center justify-center rounded-sm border border-border bg-white p-2">
+          <div className="flex items-center justify-center bg-white p-2">
             <img
               src={renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
               alt={ab('zoomAlt', { name: fileName(zoomed.panel.id) })}
@@ -489,27 +514,21 @@ export function AssetBrowser() {
   )
 }
 
-/** 区标题：图 / 脚本 两个区的分隔（计数可选）。分区小标题那一档，靠左与内容对齐 */
-function SectionHeading({ label, count }: { label: string; count?: number }) {
-  return (
-    <h3 className="type-section flex items-center gap-1.5 px-3 pb-1 pt-2">
-      {label}
-      {count !== undefined && <span className="tabular-nums">{count}</span>}
-    </h3>
-  )
-}
-
 /**
- * 可收起的区标题：与 `SectionHeading` 同一档字，前面多一个折叠箭头（xs，展开转 90°，
- * 与树 / 检查器同一套记号）。整行是按钮，热区 28px。
+ * 可收起的区标题（图 / 脚本共用一副）：分区小标题那一档（type-section），前面一个折叠
+ * 箭头（xs，展开转 90°，与树 / 检查器同一套记号），后面可选一个计数——计数只是一个
+ * type-meta 数字，不跟着标题一起加粗（宪法第九节；左栏审计 L03）。整行是按钮，热区 28px。
  */
 function SectionToggle({
   label,
+  count,
   open,
   onToggle,
   controls,
 }: {
   label: string
+  /** 「3」或筛选中的「3 / 7」；还没加载出来时不显示 */
+  count?: ReactNode
   open: boolean
   onToggle: () => void
   controls: string
@@ -532,20 +551,28 @@ function SectionToggle({
           className={cn('shrink-0 transition-transform duration-fast', open && 'rotate-90')}
         />
         {label}
+        {/* `type-meta` 只管字号与颜色，字重会从按钮的 `type-section` 继承过来——
+            计数得显式回到 400，才跟脚本组的「已关联 2」是同一种「名字 + meta 数字」 */}
+        {count !== undefined && (
+          <span className="type-meta ml-0.5 font-normal tabular-nums">{count}</span>
+        )}
       </button>
     </h3>
   )
 }
 
-/** 来源 / 类型 / 排序 / 已使用收进同一个筛选 popover */
+/** 来源 / 类型 / 排序 / 已使用收进同一个筛选 popover；目录路径在最底一行 */
 function FilterButton({
   filters,
   folders,
+  figuresDir,
   activeCount,
   onChange,
 }: {
   filters: Filters
   folders: string[]
+  /** 素材目录：排查用信息，放在弹层最底一行（此前是列表下一行常驻页脚，左栏审计 L04） */
+  figuresDir: string | null
   activeCount: number
   onChange: (f: Filters) => void
 }) {
@@ -557,11 +584,10 @@ function FilterButton({
       align="end"
       trigger={
         <IconButton
-          iconSize="sm"
           active={activeCount > 0}
           label={activeCount ? ab('filterActiveAria', { count: activeCount }) : ab('filterAria')}
         >
-          <ListFilter size={ICON_SIZE.sm} className={activeCount ? undefined : 'text-ink-2'} />
+          <ListFilter size={ICON_SIZE.md} className={activeCount ? undefined : 'text-ink-2'} />
         </IconButton>
       }
     >
@@ -608,6 +634,13 @@ function FilterButton({
             {ab('resetFilters')}
           </Button>
         )}
+        {/* 路径是等宽字（宪法第六节）；按宽度从中间截，尾巴（真正区分目录的那一段）留着，
+            完整路径在 title */}
+        {figuresDir && (
+          <p className="mt-0.5 font-mono type-meta" title={figuresDir}>
+            <TruncateMiddle text={figuresDir} />
+          </p>
+        )}
       </div>
     </Popover>
   )
@@ -622,7 +655,7 @@ function GridSkeleton({ columns }: { columns: number }) {
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: 8 }, (_, i) => (
-        <li key={i} className="overflow-hidden rounded-sm border border-border bg-surface">
+        <li key={i} className="overflow-hidden rounded-md border border-border bg-surface">
           <div className="aspect-[3/2] animate-pulse bg-surface-2" />
           <div className="flex flex-col gap-1 px-1.5 py-1.5">
             <div className="h-3 animate-pulse rounded-xs bg-selected" />
@@ -744,7 +777,7 @@ function AssetCard({
             serious）——哪怕 tabIndex=-1 也算。这两个只是鼠标用户的就近入口；
             键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
-        <CardActions selected={selected}>
+        <CardActions>
           <CardAction icon={Pencil} label={ab('openFigure')} title={ab('openAria', { name })} onClick={onOpen} />
           <CardAction icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
         </CardActions>
@@ -912,7 +945,7 @@ function RuntimeAssetCard({
 
         {/* 就近入口（与文件卡同款，非嵌套控件）：有描述符 = 编辑原图 + 添加到
             画布；没有 = 只有「运行并发现图」 */}
-        <CardActions selected={selected}>
+        <CardActions>
           {asset.descriptor ? (
             <>
               <CardAction
@@ -985,11 +1018,16 @@ function RuntimeAssetCard({
   )
 }
 
-/** 卡片外壳：hairline 常态，hover 加深一档，选中是 selected 轻 tint + 名字加粗 */
+/**
+ * 卡片外壳：hairline 常态，hover 加深一档，选中 = 边加深 + 名字加粗，**不铺底**——
+ * 预览区是白底，tint 只能落在下面 39px 的文字块上，读作「页脚变灰」而不是「整张卡被选中」
+ * （2026-09-15 左栏审计 L10，拍板取 b）。圆角是卡片那一档（10）：卡比 28px 控件大一档以上
+ * （宪法第二节；L11）。
+ */
 const cardClass = (selected: boolean) =>
   cn(
-    'group relative overflow-hidden rounded-sm border outline-none transition-colors duration-fast',
-    selected ? 'border-border-strong bg-selected' : 'border-border bg-surface hover:border-border-strong',
+    'group relative overflow-hidden rounded-md border bg-surface outline-none transition-colors duration-fast',
+    selected ? 'border-border-strong' : 'border-border hover:border-border-strong',
     'focus-visible:focus-ring',
   )
 
@@ -1008,6 +1046,8 @@ type MetaPart = string | { text: string; title?: string } | null | undefined
 /**
  * 卡片文字区：第一行名字（+ 一个 16px 的标记位），第二行元数据用「·」串起来、
  * 使用次数靠右。两行都是单行截断，长文件名 / 长状态不会把卡片撑高。
+ * 名字是正文档（12），元数据 11：主文字与 meta 之间要有 2px 的台阶，不能只靠颜色分层
+ * （宪法第六节；左栏审计 L02）。
  */
 function CardMeta({
   name,
@@ -1027,7 +1067,7 @@ function CardMeta({
   const shown = parts.filter((p): p is Exclude<MetaPart, null | undefined> => p != null)
   return (
     <div className="flex flex-col px-1.5 py-1">
-      <p className="flex items-center gap-1 text-xs">
+      <p className="flex items-center gap-1 text-sm">
         <span className={cn('min-w-0 truncate', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
           {name}
         </span>
@@ -1063,8 +1103,12 @@ function CardMeta({
 /** 卡片可达名旁的键位说明（aria-keyshortcuts 的语法：空格分隔的组合键） */
 const CARD_KEYSHORTCUTS = 'Enter Shift+Enter Space'
 
-/** 卡片右下角的就近入口容器：悬停 / 聚焦 / 选中时出现 */
-function CardActions({ selected, children }: { selected: boolean; children: ReactNode }) {
+/**
+ * 卡片右下角的就近入口容器：只在悬停 / 键盘聚焦时出现。选中时不常驻——底部操作条
+ * 已经写着同一对「编辑原图 / 添加到画布」，同一对动作两处同时可见就是重复
+ * （2026-09-15 左栏审计 L08）。
+ */
+function CardActions({ children }: { children: ReactNode }) {
   return (
     <span
       data-card-actions
@@ -1072,7 +1116,6 @@ function CardActions({ selected, children }: { selected: boolean; children: Reac
         'absolute bottom-1.5 right-1.5 flex items-center gap-1',
         'opacity-0 transition-opacity duration-fast select-none',
         'group-hover:opacity-100 group-focus-visible:opacity-100',
-        selected && 'opacity-100',
       )}
     >
       {children}
@@ -1084,6 +1127,8 @@ function CardActions({ selected, children }: { selected: boolean; children: Reac
  * 一个就近入口：24px 的图标小片，名字在 title（气泡）与读屏文本里——双列时预览
  * 只有 ~80px 高，两个带文字的片会把图整个盖住。
  * 不是 <button>——option 里不许再嵌交互控件（axe nested-interactive）。
+ * 外观是分段选择器那块白色 thumb 的做法（`shadow-thumb`：6% 环 + 1px 小影），不画实边、
+ * 不用浮层的大模糊——24px 大模糊落在 88px 的预览上是双描边（左栏审计 L09）。
  */
 function CardAction({
   icon: Icon,
@@ -1105,8 +1150,8 @@ function CardAction({
       }}
       className={cn(
         'flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm',
-        'border border-border bg-surface text-ink shadow-pop',
-        'transition-colors duration-fast hover:border-border-strong hover:bg-surface-2',
+        'bg-surface text-ink shadow-thumb',
+        'transition-colors duration-fast hover:bg-surface-2',
       )}
     >
       <Icon size={ICON_SIZE.sm} />
@@ -1136,9 +1181,11 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
       role="group"
       aria-label={ab('selectedActionsAria', { name })}
       data-selected-asset-actions
-      className="flex shrink-0 items-center gap-1 border-t border-border px-3 py-1.5"
+      // 左栏页脚行只有一种语法：`border-t px-1.5 py-1` + 28px 控件，文字自己再让 6px
+      // 落到 56 那条竖线上（左栏审计 L27，此前五条页脚五套内边距）
+      className="flex shrink-0 items-center gap-1 border-t border-border px-1.5 py-1"
     >
-      <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={name}>
+      <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2" title={name}>
         {name}
       </span>
       {actionable ? (
@@ -1199,15 +1246,17 @@ function AssetCapabilityNotice({ panel }: { panel?: PanelInfo }) {
     <div
       role="status"
       data-capability-notice
-      className="shrink-0 border-t border-border bg-surface-2 px-3 py-1.5"
+      // 与其它页脚行同一副内边距（左栏审计 L27）；两行文字各让 6px 落到 56，
+      // ghost 钮自己的 8px 内边距减去 2px 也落到 56
+      className="shrink-0 border-t border-border bg-surface-2 px-1.5 py-1"
     >
-      <p className="truncate text-xs text-ink" title={panel.id}>
+      <p className="truncate px-1.5 text-xs text-ink" title={panel.id}>
         {ab('capabilityHeading', { name: fileName(panel.id), status: statusLabel(cap.status) })}
       </p>
-      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
+      <p className="mt-0.5 px-1.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
       <Button
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="-ml-0.5 mt-0.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
@@ -1222,8 +1271,9 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
   const nonce = useRuntimeAssetStore((s) => s.previewNonce[asset.id])
   return (
     <div className="flex flex-col gap-2">
+      {/* 白弹窗里不再给图套框（左栏审计 L39）；占位块只留一层浅底 */}
       {asset.cached ? (
-        <div className="flex items-center justify-center rounded-sm border border-border bg-white p-2">
+        <div className="flex items-center justify-center bg-white p-2">
           <img
             src={runtimePreviewUrl(asset.id, nonce)}
             alt={ab('zoomAlt', { name: asset.stem })}
@@ -1231,36 +1281,11 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
           />
         </div>
       ) : (
-        <p className="rounded-sm border border-border bg-surface-2 p-3 text-center text-xs text-ink-3">
+        <p className="rounded-sm bg-surface-2 p-3 text-center text-xs text-ink-3">
           {ab('runtimeNeedsRun')}
         </p>
       )}
       <p className="text-xs leading-relaxed text-ink-3">{ab('runtimeNoFile')}</p>
-    </div>
-  )
-}
-
-/** 目录路径是排查用信息，收进可折叠的一行 */
-function FolderInfo({ dir, shown, total }: { dir: string; shown: number; total: number }) {
-  useTranslation('workspace')
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="shrink-0 px-3 py-1.5">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1 rounded-sm text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
-      >
-        {ab('folderInfo')}
-        <span className="ml-auto tabular-nums">
-          {shown === total ? total : `${shown} / ${total}`}
-        </span>
-      </button>
-      <Reveal open={open}>
-        <p className="mt-1 break-all font-mono text-xs text-ink-3" title={dir}>
-          {dir}
-        </p>
-      </Reveal>
     </div>
   )
 }

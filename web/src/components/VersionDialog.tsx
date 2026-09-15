@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Bookmark, Copy, Layers2, Pencil, RotateCcw, Trash2, X,
   RotateCcwClock,
 } from '@/components/ui/icons'
+import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,
@@ -42,12 +43,12 @@ import {
   THUMB_OBJECT_LIMIT,
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
-import { Button } from './ui/Button'
+import { DrawerCount } from './left/DrawerCount'
+import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 import { Tab, TabList, TabPanel } from './ui/Tabs'
-import { Tip } from './ui/Tooltip'
 
 /**
  * 布局版本时间线 —— 右侧抽屉形态，画布保持可见，恢复前后可直接对照。
@@ -82,6 +83,9 @@ export function VersionDrawer() {
   const open = useUiStore((s) => s.versionsOpen)
   const setOpen = useUiStore((s) => s.setVersionsOpen)
   const docId = useDocumentStore((s) => s.documentId)
+  // 版本行第三行「来自画布 X」只在它能区分什么的时候才说（左栏审计 L21）
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
 
   const [versions, setVersions] = useState<LayoutVersionMeta[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -179,23 +183,25 @@ export function VersionDrawer() {
           setOpen(false)
         }
       }}
-      className="absolute inset-y-0 right-0 z-40 flex w-[400px] max-w-[92vw] flex-col border-l border-border bg-surface shadow-pop"
+      // 覆盖在画布上的浮板只留投影：`shadow-pop` 自带 1px 环，再画一条实色 border
+      // 就是双描边（宪法第一节；左栏审计 L20，左抽屉 overlay 态同改）
+      className="absolute inset-y-0 right-0 z-40 flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop"
     >
-      <div className="flex h-11 shrink-0 items-center gap-2 px-3">
-        <h2 className="text-sm font-medium text-ink">{vd('title')}</h2>
-        {versions.length > 0 && (
-          <span className="text-xs tabular-nums text-ink-3">{versions.length}</span>
-        )}
+      {/* 抽屉头与左抽屉同一副骨架：36 高、type-section 标题、DrawerCount 计数、IconButton
+          关闭钮。此前 44 高 + 手写计数 + 手写 Button，两个抽屉两套头部骨架、两种标题字号、
+          两种关闭钮写法（左栏审计 L20 / L01 / L13 / L14） */}
+      <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
+        <h2 className="type-section">{vd('title')}</h2>
+        {versions.length > 0 && <DrawerCount value={versions.length} />}
         <span className="flex-1" />
-        <Button
-          size="icon-sm"
-          className="-mr-1"
+        <IconButton
+          label={vd('close')}
+          className="-mr-1.5"
           disabled={busy}
           onClick={() => setOpen(false)}
-          aria-label={vd('close')}
         >
           <X size={ICON_SIZE.md} className="text-ink-3" />
-        </Button>
+        </IconButton>
       </div>
       <div className="flex shrink-0 gap-1.5 px-3 pb-2">
         <TextInput
@@ -248,22 +254,22 @@ export function VersionDrawer() {
                     {/* 自动检查点的名字由后端按时间生成，与这里的时间重复，
                         所以只显示**用户起的**名字（`versionDisplayName`）。 */}
                     <span className="flex items-center gap-1.5">
+                      {/* 时间与名字是这一行的主文字（12），下面两行元数据 11——
+                          此前三行同为 11，只靠颜色分层（左栏审计 L02） */}
                       <span
                         className={cn(
-                          'shrink-0 text-xs',
+                          'shrink-0 text-sm',
                           v.id === selected ? 'font-medium text-ink' : 'text-ink',
                         )}
                       >
                         {formatTime(v.ts)}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+                      <span className="min-w-0 flex-1 truncate text-sm text-ink-2">
                         {versionDisplayName(v)}
                       </span>
-                      {v.auto && (
-                        <span className="shrink-0 rounded-xs border border-border px-1 text-xs text-ink-3">
-                          {vd('autoBadge')}
-                        </span>
-                      )}
+                      {/* 「自动」是一个元数据词，不是第二种徽章：Badge 是全站唯一的胶囊
+                          文字元素，这里手写的方角实边小片就是第二副（左栏审计 L22） */}
+                      {v.auto && <span className="shrink-0 type-meta">{vd('autoBadge')}</span>}
                     </span>
                     <span className="text-xs text-ink-3">
                       {versionSummaryText(versionSummary(v, comparableEarlier(versions, i)))
@@ -271,12 +277,17 @@ export function VersionDrawer() {
                         .join(' · ')}
                     </span>
                     {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
-                        **照实说"不知道"**，不猜成当前画布。 */}
-                    <span className="truncate text-xs text-ink-faint">
-                      {v.canvasId
-                        ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                        : vd('fromUnknownCanvas')}
-                    </span>
+                        **照实说"不知道"**，不猜成当前画布——所以「不知道」那一档照常出现，
+                        被省掉的只有「每一行都是当前这张画布」这种什么都没说的情形
+                        （左栏审计 L21）。颜色也从 ink-faint 提到 type-meta：ink-faint
+                        对白只有 2.54:1，不给要读的字用（宪法第一节）。 */}
+                    {(canvases.length > 1 || v.canvasId !== activeCanvasId) && (
+                      <span className="truncate type-meta">
+                        {v.canvasId
+                          ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                          : vd('fromUnknownCanvas')}
+                      </span>
+                    )}
                   </span>
                 </button>
                 {v.id === selected && meta && (
@@ -495,28 +506,28 @@ function VersionDetail({
                 setRenaming(false)
               }
             }}
-            className="h-7 min-w-0 flex-1 rounded-sm border border-accent bg-surface px-1.5 text-xs text-ink outline-none"
+            // 行内改名框是「可编辑框」那一副（fieldBox），三处此前三种高度 / 圆角 / 边色
+            // （左栏审计 L31）
+            className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
           />
         ) : (
           <span className="min-w-0 flex-1" />
         )}
-        <Tip label={vd('rename')}>
-          <Button size="icon-sm" onClick={() => setRenaming(true)} aria-label={vd('rename')}>
-            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
-          </Button>
-        </Tip>
-        <Tip label={vd('duplicate')}>
-          <Button
-            size="icon-sm"
-            onClick={async () => {
-              await duplicateVersion(docId, meta.id)
-              await onChanged()
-            }}
-            aria-label={vd('duplicate')}
-          >
-            <Copy size={ICON_SIZE.sm} className="text-ink-3" />
-          </Button>
-        </Tip>
+        {/* 图标钮走 IconButton：名字与气泡是同一份，不再 Tip 手包一层 + aria-label
+            另写一遍（宪法第四、五节；左栏审计 L14） */}
+        <IconButton iconSize="sm" label={vd('rename')} onClick={() => setRenaming(true)}>
+          <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
+        </IconButton>
+        <IconButton
+          iconSize="sm"
+          label={vd('duplicate')}
+          onClick={async () => {
+            await duplicateVersion(docId, meta.id)
+            await onChanged()
+          }}
+        >
+          <Copy size={ICON_SIZE.sm} className="text-ink-3" />
+        </IconButton>
         {meta.auto && (
           <Button
             size="sm"
@@ -530,11 +541,9 @@ function VersionDetail({
             {vd('keep')}
           </Button>
         )}
-        <Tip label={vd('delete')}>
-          <Button size="icon-sm" onClick={remove} aria-label={vd('delete')}>
-            <Trash2 size={ICON_SIZE.sm} className="text-danger" />
-          </Button>
-        </Tip>
+        <IconButton iconSize="sm" label={vd('delete')} onClick={remove}>
+          <Trash2 size={ICON_SIZE.sm} className="text-danger" />
+        </IconButton>
       </div>
 
       {!versionDoc ? (
@@ -544,7 +553,8 @@ function VersionDetail({
           <div className="flex items-center justify-between gap-1.5">
             {/* 「该版本 / 当前」是看哪一页的预览，不是一个取值：下划线页签（`Tabs`），
                 与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
-            <div className="flex h-8 min-w-0 flex-1 items-center border-b border-border">
+            {/* 页签条 36：同一个 Tabs 原语不能左栏 32、右栏 36（左栏审计 L25） */}
+            <div className="flex h-9 min-w-0 flex-1 items-center border-b border-border">
               <TabList label={vd('viewLabel')}>
                 {(['version', 'current'] as const).map((v) => (
                   <Tab key={v} panelId={`version-view-${v}`} active={view === v} onClick={() => setView(v)}>
@@ -553,15 +563,14 @@ function VersionDetail({
                 ))}
               </TabList>
             </div>
-            <Tip label={vd('compareTip')}>
-              <Button
-                size="icon-sm"
-                onClick={() => setCompareOpen(true)}
-                aria-label={vd('compareAria')}
-              >
-                <Layers2 size={ICON_SIZE.sm} className="text-ink-2" />
-              </Button>
-            </Tip>
+            <IconButton
+              iconSize="sm"
+              label={vd('compareAria')}
+              tip={vd('compareTip')}
+              onClick={() => setCompareOpen(true)}
+            >
+              <Layers2 size={ICON_SIZE.sm} className="text-ink-2" />
+            </IconButton>
           </div>
 
           <TabPanel id={`version-view-${view}`}>
@@ -575,10 +584,14 @@ function VersionDetail({
             <p className="text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
           )}
 
-          <Button variant="primary" size="sm" className="w-full" onClick={restore}>
-            <RotateCcw size={ICON_SIZE.sm} />
-            {vd('restore')}
-          </Button>
+          {/* 这一段唯一的 primary，字号与其它 primary 同一档；右对齐落在上面动作条
+              同一条边线上——此前是产品里唯一的全宽块钮（左栏审计 L23） */}
+          <div className="flex justify-end">
+            <Button variant="primary" size="md" onClick={restore}>
+              <RotateCcw size={ICON_SIZE.sm} />
+              {vd('restore')}
+            </Button>
+          </div>
 
           {diff.length === 0 ? (
             <p className="text-xs text-ink-3">{vd('noDiff')}</p>
@@ -592,7 +605,9 @@ function VersionDetail({
                   <span
                     className={cn(
                       'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                      d.kind === 'add' && 'bg-accent',
+                      // 「新增」是语义色 ok，不是 accent——accent 只给焦点 / 链接 / AI /
+                      // 选择框（宪法第一节；左栏审计 L33）
+                      d.kind === 'add' && 'bg-ok',
                       d.kind === 'remove' && 'bg-danger',
                       d.kind !== 'add' && d.kind !== 'remove' && 'bg-ink-faint',
                     )}

@@ -399,7 +399,6 @@
     "listLabel": "Problems",
     "next": "Next",
     "none": "No problems found",
-    "noneHint": "Nothing needs attention under the current profile.",
     "noneInFilter": "No problems match this filter",
     "noneInScope": "No problems on this figure",
     "noneInScopeHint_one": "The whole document still has {{count}} problem.",
