@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "kind": "implementation_requirements_not_test_results",
+  "note": "IDs are planning items, not required job count. Machine-sensitive criteria need actual deployment evidence.",
+  "requirements": [
+    {
+      "id": "CIP-001",
+      "phase": "CI00",
+      "requirement": "实际HEAD、run/attempt、样本窗口与源码/机器未知条件被记录",
+      "status": "pass",
+      "evidence": [
+        "CI_BASELINE.md#1-事实边界",
+        "CI_BASELINE.json（source_sha / head_verified / sample_window / sample_selection.runs）",
+        "evidence/actions/ci_runs_list.json",
+        "evidence/actions/runs/",
+        "evidence/pytest/local_run.json",
+        "evidence/admin_inventory.json（机器未知项）"
+      ],
+      "note": "实际 HEAD 8b95256c；86 个 run（含 4 个 cancelled、5+2 个 failure、2 个 attempt 2）；样本窗口 2026-09-12T04:37:55Z → 2026-09-15T13:48:06Z；本机与 CI 环境差异、lab 资源未知项均已写明。2026-09-15 CI00。"
+    },
+    {
+      "id": "CIP-002",
+      "phase": "CI00",
+      "requirement": "分开DAG等待、runner等待、setup、test/build和qualification时间",
+      "status": "pass",
+      "evidence": [
+        "CI_BASELINE.md#4-时间分解",
+        "evidence/actions/timing_decomposition.json（每 job dependency_wait / dispatch_gap / runner_wait / execution 按类 / feedback / qualification）",
+        "scripts/ci/ci_baseline.py（口径实现）",
+        "tests/test_ci_baseline.py::test_dependency_wait_and_runner_wait_are_different_axes（变异 M8 打红）"
+      ],
+      "note": "样本 run 34970490865 的 windows-exe-smoke：dependency_wait 2120s / runner_wait 2s / execution test 1179（Playwright 1124）；未用 updated_at（tests::test_qualification_never_uses_updated_at）。"
+    },
+    {
+      "id": "CIP-003",
+      "phase": "CI00",
+      "requirement": "旧required领域、版本平台与新位置覆盖账完整",
+      "status": "pass",
+      "evidence": [
+        "coverage_ledger.json（28 条，policy_source_sha 8b95256c，status not_run）",
+        "CI_BASELINE.md#9-覆盖账摘要"
+      ],
+      "note": "旧 required 领域（快线 12 + CodeQL + 重型 9 + Gate 2）与合并后 / nightly / lab / release 的执行位置全部有条目；「新位置」除保持不变外一律「待 CI01/03 决定」——本条 pass 的是「账完整」，不是「已迁移」。"
+    },
+    {
+      "id": "CIP-004",
+      "phase": "CI01",
+      "requirement": "verdict-only串行边被有证据地移除或保留理由清楚",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-005",
+      "phase": "CI01",
+      "requirement": "真实artifact/data依赖继续成立",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-006",
+      "phase": "CI01",
+      "requirement": "三个stable Gate及CLA/CodeQL/可信判定来源保持",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-007",
+      "phase": "CI01",
+      "requirement": "merge_group/full-ci不能把完整合并资格deferred",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-008",
+      "phase": "CI01",
+      "requirement": "PR新push不取消其他PR/main/merge/release",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-009",
+      "phase": "CI01",
+      "requirement": "ready转换后synchronize和label/full-ci策略正确",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-010",
+      "phase": "CI01",
+      "requirement": "非PR必要pending候选不被无意去重覆盖",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-011",
+      "phase": "CI02",
+      "requirement": "producer和consumer绑定实际SHA/recipe/target/hash",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-012",
+      "phase": "CI02",
+      "requirement": "真实TypeScript引用检查仍能捕获错误",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-013",
+      "phase": "CI02",
+      "requirement": "不混同web/widget/playground/native构建目标",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-014",
+      "phase": "CI02",
+      "requirement": "下载/编译cache与成功环境/结果cache分开",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-015",
+      "phase": "CI02",
+      "requirement": "生成物不回源码索引且精确发行链不被PR污染",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-016",
+      "phase": "CI03",
+      "requirement": "pytest分片并集覆盖原适用集合，无遗漏或不明重复",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-017",
+      "phase": "CI03",
+      "requirement": "Playwright各browser/locale分片完整并消费真实产物",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-018",
+      "phase": "CI03",
+      "requirement": "端口、目录、HOME/config/cache/报告和进程owner隔离",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-019",
+      "phase": "CI03",
+      "requirement": "并发与取消不杀其他job，不沿用全局危险reaper",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-020",
+      "phase": "CI03",
+      "requirement": "嵌套并行CPU/RAM预算有真实验证",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-021",
+      "phase": "CI03",
+      "requirement": "skip/缺资源/重试不伪造必需资格",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-022",
+      "phase": "CI04",
+      "requirement": "现有lab职责和资格基线不被PR池悄然改变",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-023",
+      "phase": "CI04",
+      "requirement": "新池真实VM资源和网络已测；未知项不冒充可用",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-024",
+      "phase": "CI04",
+      "requirement": "PR无法通过修改runs-on接触可信lab/签名/真实数据",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-025",
+      "phase": "CI04",
+      "requirement": "执行VM无管理面凭据，单job身份与磁盘清洁得到验证",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-026",
+      "phase": "CI04",
+      "requirement": "多槽真并行、离线route退出和同等hosted恢复有效",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-027",
+      "phase": "CI05",
+      "requirement": "缺shard/错artifact/误取消/跨任务污染等负例会红",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-028",
+      "phase": "CI05",
+      "requirement": "前后测量不编2×/30–60%或不足样本p95",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-029",
+      "phase": "CI05",
+      "requirement": "ci_hosted_ready与runner_pool_ready独立如实报告",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CIP-030",
+      "phase": "CI05",
+      "requirement": "统一计划入口/CI交接更新且U00不重复建调度系统",
+      "status": "not_run",
+      "evidence": []
+    }
+  ]
+}

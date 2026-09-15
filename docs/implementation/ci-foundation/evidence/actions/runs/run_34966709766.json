@@ -1,0 +1,13 @@
+{
+ "id": 34966709766,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "failure",
+ "head_sha": "10134a50ea6ee477125eed1d71489f5815a74a73",
+ "head_branch": "ux/bui-hierarchy",
+ "created_at": "2026-09-15T12:03:53Z",
+ "run_started_at": "2026-09-15T12:03:53Z",
+ "updated_at": "2026-09-15T12:38:52Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34966709766"
+}

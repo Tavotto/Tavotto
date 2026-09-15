@@ -1,0 +1,13 @@
+{
+ "id": 34938204891,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "0e932c50793869e1086dd4a4f43f9e59ee9347fd",
+ "head_branch": "ux/icon-set-v2",
+ "created_at": "2026-09-15T06:43:14Z",
+ "run_started_at": "2026-09-15T06:43:14Z",
+ "updated_at": "2026-09-15T07:18:28Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34938204891"
+}

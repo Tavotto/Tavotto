@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "admin_readonly_inventory_request",
+  "status": "not_run",
+  "generated": "2026-09-15 · CI00。没有 SSH / hypervisor 访问，没有登录任何机器；下面「已记录的假设」全部来自仓库文档与脚本，「需要管理员填写」栏一律为空。",
+  "documented_assumptions": {
+    "runner_labels": {"value": "[self-hosted, linux, x64, tavotto-lab]", "source": ".github/workflows/_lab-qualification.yml L57；docs/ci/self-hosted-runner.md §7（--labels self-hosted,linux,x64,tavotto-lab）"},
+    "runner_count_assumption": {"value": "带 tavotto-lab 标签的 runner 只有一台（两条调用链天然排队）", "source": "_lab-qualification.yml L70-74"},
+    "job_concurrency_per_runner": {"value": "1（文档要求保持）", "source": "docs/ci/self-hosted-runner.md §7「并发度」"},
+    "state_root": {"value": "TAVOTTO_CI_STATE_ROOT = vars.LAB_CI_STATE_ROOT || /srv/tavotto-ci；布局 cache/ locks/ upgrade/{state,projects} baselines/{perf,visual} reports/ tmp/", "source": "_lab-qualification.yml L78；scripts/ci/_common.py LAYOUT；self-hosted-runner.md §3"},
+    "mutual_exclusion": {"value": "GitHub concurrency 组 lab-qualification-${{ github.workflow }}（每条调用链一个槽，cancel-in-progress false）+ runner 端 flock（bootstrap_lab_runner.sh 装 flock 作第二道保险）", "source": "_lab-qualification.yml L59-75；scripts/ci/bootstrap_lab_runner.sh L85/L103"},
+    "preflight_thresholds": {"value": "MIN_CPU 4 / MIN_RAM_GIB 8 / MIN_DISK_GIB 20（main 20 / nightly 40 / release 40 / weekly 60）；FD soft ≥ 4096；locale UTF-8；TZ UTC", "source": "scripts/ci/lab_preflight.py L47-52、L232-275"},
+    "documented_machine_spec": {"value": "推荐 Ubuntu 24.04 / 16 vCPU / 32 GiB / 150 GiB SSD（最低 8 / 16 / 100）；「实验室服务器上的一台独立 VM」；宿主文件系统不挂给 runner", "source": "docs/ci/self-hosted-runner.md §2"},
+    "network_restrictions": {"value": "github.com（20.205.243.166）22/443 不可达；api.github.com / codeload / objects.githubusercontent / pipelines.actions / ssh.github.com:443 通；checkout 走 SSH（Host github.com → ssh.github.com:443），insteadOf 改写；setup-python 无法现下，必须预置 tool cache（3.10 与 3.13）；runner 二进制经 api.github.com assets 端点下载", "source": "docs/ci/self-hosted-runner.md §2「本实验室的实际网络限制」、§5、§6（历史记录，非本次实测）"},
+    "runner_user_and_paths": {"value": "runner user github-runner（不进 sudo 组）；~/actions-runner；tool cache /opt/hostedtoolcache；PATH 要含 ~/.cargo/bin（.env）；LimitNOFILE=65536", "source": "docs/ci/self-hosted-runner.md §3、§4、§7；memory：lab-ci-runner-access 记的是用户名 runner 而非 github-runner——两处不一致，待管理员确认"},
+    "secrets_policy": {"value": "runner 不持有 PyPI / Apple / SignPath 凭据；lab job 只有 contents: read；不新增 secret", "source": "self-hosted-runner.md §1、§8"},
+    "trigger_policy": {"value": "绝不接受 pull_request；只 push main / schedule / workflow_dispatch（经 trust-check 解析成 origin/main 祖先或 tag 指向的精确 SHA）", "source": "lab-ci.yml L8-25、L96-170"},
+    "resource_split_inside_one_job": {"value": "OS/runner 预留 ~2 CPU + 4 GiB；普通测试 ≤ 8~10 CPU；Golden render 4~8 workers；Playwright ~2 workers；Soak 4~8 并发；Mutation ~12~14 CPU；Benchmark 独占", "source": "self-hosted-runner.md §7"}
+  },
+  "needs_admin_input": [
+    {"field": "host_or_guest", "question": "文档里的 16 vCPU / 32 GiB 是 hypervisor 宿主的总量，还是分给 lab VM 的 guest 配额？", "value": null},
+    {"field": "hypervisor", "question": "宿主是什么（Proxmox / ESXi / KVM / 其它）？谁有管理面权限？", "value": null},
+    {"field": "other_vms", "question": "同一宿主上还有哪些 VM / 常驻负载（名称、vCPU、内存、用途）？", "value": null},
+    {"field": "allocatable_vcpu", "question": "在不影响现有 lab VM 与其它负载的前提下，还能分配多少 vCPU？CPU 型号、物理核数、超分配比？", "value": null},
+    {"field": "real_ram_gib", "question": "宿主真实物理内存与当前已分配总量；新 VM 内存硬上限（不用 swap 硬撑）？", "value": null},
+    {"field": "disk", "question": "SSD 总量 / 剩余空间 / 是否共享盘 / 大致 IOPS；新 VM 每个能给多少？", "value": null},
+    {"field": "network", "question": "新 VM 的出站规则（GitHub api/pipelines/objects、PyPI、npm、crates、nodejs.org、浏览器下载）；github.com 443 是否仍不可达；是否与 lab VM 同网段；是否禁止访问其它实验室服务器与 metadata 服务？", "value": null},
+    {"field": "runner_registration_scope", "question": "现有 tavotto-lab runner 注册在仓库级还是组织级？组织是否支持 runner group？能否把新 PR 池注册到 PR 无法通过改 runs-on 触达的边界（runner group / 私有 ci-infra 仓库）？", "value": null},
+    {"field": "lab_vm_current_state", "question": "lab VM 当前 uptime、磁盘占用（/srv/tavotto-ci 各子目录）、runner 版本、最近一次 lab run 的结论（能否给一份 lab_preflight.py --json 的输出）？", "value": null},
+    {"field": "vm_lifecycle_tooling", "question": "有没有从模板克隆 / 快照回滚 / 销毁 VM 的自动化入口（CLI / API）？一次性 runner（JIT / --ephemeral）的注册凭据由谁签发？", "value": null},
+    {"field": "runner_username", "question": "runner 服务的用户名是 github-runner（文档）还是 runner（memory: lab-ci-runner-access）？", "value": null}
+  ],
+  "not_attempted": [
+    "未 SSH 到任何机器",
+    "未查询 hypervisor",
+    "未跑 lab_preflight.py（它读的是本机；本机不是 lab）",
+    "未注册 / 创建任何 runner 或 VM"
+  ]
+}

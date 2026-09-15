@@ -1,0 +1,41 @@
+SKIPPED [1] tests/bridge/test_bridge_e2e.py:175: 这台机器上唯一装了 matplotlib 的解释器同时装了 Tavotto（CI 就是这样：pip install -e . 与 matplotlib 同一个解释器）。行为性判据由 -m slow 的真 venv 用例承担。
+SKIPPED [1] tests/bridge/test_bridge_injection_models.py:220: 顶掉这台机器的 sitecustomize 之后 matplotlib 仍然 import 得到（解释器多半是 venv，科学栈由 pyvenv.cfg 带进来）——这条演示在这里没有内容
+SKIPPED [1] tests/test_ai_agents.py:761: 需要本机真的装了 codex / claude；设 TAVOTTO_REAL_CLI_SMOKE=1 开启
+SKIPPED [1] tests/test_ci_tooling.py:225: 非 Linux，无 /proc 进程扫描
+SKIPPED [1] tests/test_codex_install_cli.py:831: 要网络与真实 marketplace：设 TAVOTTO_CODEX_REAL_SMOKE=1 才跑
+SKIPPED [1] tests/test_codex_plugin.py:680: 这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来
+SKIPPED [1] tests/test_codex_plugin.py:706: 这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来
+SKIPPED [1] tests/test_codex_plugin.py:803: 这台机器上真装着 Tavotto 桌面版，「什么都没装」模拟不出来
+SKIPPED [1] tests/test_codex_plugin.py:1638: 联网冒烟需 TAVOTTO_CODEX_NET_SMOKE=1（nightly/手动）
+SKIPPED [2] tests/test_equivalence_matrix.py:949: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:968: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:993: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:1002: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:1030: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_legal_contribution_policy.py:271: 协议已脱离草案
+SKIPPED [1] tests/test_mcp_server.py:192: 画布产物未构建
+SKIPPED [1] tests/test_mcp_server.py:1215: 画布产物未构建（源码检出后跑一次 scripts/build_mcp_widget.py）
+SKIPPED [1] tests/test_mcp_server.py:1265: 画布产物未构建
+SKIPPED [1] tests/test_mcp_stdio.py:175: 画布产物未构建：本地跑一次 scripts/build_mcp_widget.py；CI 在 plugin-candidate job 上对真产物执行
+SKIPPED [1] tests/test_nsis_template.py:404: 没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）
+SKIPPED [1] tests/test_nsis_template.py:520: 没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）
+SKIPPED [1] tests/test_plugin_candidate.py:58: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_plugin_candidate.py:64: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_plugin_candidate.py:78: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_plugin_candidate.py:84: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_plugin_candidate.py:97: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_plugin_candidate.py:108: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+SKIPPED [1] tests/test_runtime_build.py:775: 本机没构建过 runtime（跑 scripts/build_worker_runtime.py）
+SKIPPED [1] tests/test_runtime_build.py:792: 本机没构建过 runtime
+SKIPPED [1] tests/test_runtime_build.py:804: 本机没构建过 runtime
+SKIPPED [1] tests/test_runtime_build.py:845: 本机没构建过 runtime
+SKIPPED [1] tests/test_tutorial.py:729: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+SKIPPED [1] tests/test_tutorial.py:745: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+SKIPPED [1] tests/test_tutorial.py:762: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+SKIPPED [1] tests/test_update_chain_gates.py:117: 探针二进制未构建（cargo build --manifest-path tools/updater-extract-probe/Cargo.toml）
+SKIPPED [1] tests/test_worker_roundtrip.py:1717: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_worker_roundtrip.py:1736: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_worker_roundtrip.py:1757: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_worker_roundtrip.py:1770: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_worker_roundtrip.py:1782: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_worker_roundtrip.py:2183: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）

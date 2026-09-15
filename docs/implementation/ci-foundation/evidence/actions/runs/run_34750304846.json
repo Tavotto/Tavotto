@@ -1,0 +1,13 @@
+{
+ "id": 34750304846,
+ "run_attempt": 2,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "661e9dd9a281dc9aed32bb44c6aa3c966b594acb",
+ "head_branch": "fix/codeql-merge-group-no-upload",
+ "created_at": "2026-09-13T09:48:23Z",
+ "run_started_at": "2026-09-13T10:34:48Z",
+ "updated_at": "2026-09-13T10:59:10Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34750304846"
+}

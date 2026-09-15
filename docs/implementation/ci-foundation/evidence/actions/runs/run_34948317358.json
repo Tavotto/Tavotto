@@ -1,0 +1,13 @@
+{
+ "id": 34948317358,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "f957e89c200b57e533427261474e49540a85f535",
+ "head_branch": "ux/polish-settings",
+ "created_at": "2026-09-15T08:41:09Z",
+ "run_started_at": "2026-09-15T08:41:09Z",
+ "updated_at": "2026-09-15T09:40:33Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34948317358"
+}

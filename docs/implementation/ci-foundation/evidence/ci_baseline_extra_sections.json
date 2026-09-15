@@ -1,0 +1,2474 @@
+{
+ "schema_version": 1,
+ "kind": "ci_baseline_ci00",
+ "source_sha": "8b95256c0d08a14bfcfc4c81358894ef01168933",
+ "head_verified": "git rev-parse HEAD 于 worktree /Volumes/Projects/tavotto-wt/ci-foundation（分支 ci/ci00-baseline）= 8b95256c0d08a14bfcfc4c81358894ef01168933 = origin/main（2026-09-15）",
+ "generated_at": "2026-09-15（UTC 15:00–16:30 之间采集与分析）",
+ "sample_window": {
+  "ci_runs_list": {
+   "query": "actions/workflows/ci.yml/runs?per_page=100&page=1..2",
+   "fetched": 200,
+   "total_count_reported": 1455,
+   "from": "2026-09-12T04:37:55Z",
+   "to": "2026-09-15T13:48:06Z",
+   "evidence": "evidence/actions/ci_runs_list.json"
+  },
+  "distribution_200": {
+   "merge_group/cancelled": 4,
+   "merge_group/success": 29,
+   "pull_request/None": 1,
+   "pull_request/cancelled": 57,
+   "pull_request/failure": 10,
+   "pull_request/success": 72,
+   "push/success": 27
+  },
+  "distribution_first_100": {
+   "merge_group/success": 8,
+   "pull_request/None": 1,
+   "pull_request/cancelled": 35,
+   "pull_request/failure": 5,
+   "pull_request/success": 43,
+   "push/success": 8
+  },
+  "run_attempt_gt_1_in_200": [
+   {
+    "run_id": 34762723238,
+    "event": "pull_request",
+    "conclusion": "success",
+    "run_attempt": 2
+   },
+   {
+    "run_id": 34750304846,
+    "event": "pull_request",
+    "conclusion": "success",
+    "run_attempt": 2
+   }
+  ],
+  "codeql_runs_list": {
+   "query": "actions/workflows/codeql.yml/runs?per_page=100&page=1",
+   "evidence": "evidence/actions/codeql_runs_list.json"
+  }
+ },
+ "sample_selection": {
+  "rule": "全部 33 个 merge_group（29 success + 4 cancelled）；第一页里全部 48 个已完成的 pull_request（43 success + 5 failure）；1 个 pull_request cancelled（34977366199，取它是为了看取消前的排队形状）；2 个 attempt>1 的 run 各取 attempt 1 与 attempt 2 的 jobs；3 个 merge_group 的 codeql.yml run。",
+  "analyzed_runs": 86,
+  "jobs_endpoint": "actions/runs/{id}/jobs?filter=all&per_page=100（--paginate）；attempt>1 另取 actions/runs/{id}/attempts/1/jobs",
+  "trimming": "进仓库的 JSON 经 scripts/ci/ci_baseline.py trim 裁剪：只保留 RUN_FIELDS / JOB_FIELDS / STEP_FIELDS（脚本里三张表），时刻与结论一个不裁；裁掉的是 URL / node_id / check_run_url 等。裁剪前后 analyze 输出逐字节相同（本地对拍）。",
+  "runs": [
+   {
+    "run_id": 34673512493,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "441be42790d6984a5a32b36d10333b256260cc6b",
+    "created_at": "2026-09-12T04:37:55Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1684,
+    "qualification_seconds": 3082,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34673512493.json"
+    ]
+   },
+   {
+    "run_id": 34677365741,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "833274c7869c79ffc348279ae7b83e4cb649aa12",
+    "created_at": "2026-09-12T06:08:43Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1719,
+    "qualification_seconds": 3127,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34677365741.json"
+    ]
+   },
+   {
+    "run_id": 34683158379,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "fe4d09e1efdd14a35480a982605efdd59661b32d",
+    "created_at": "2026-09-12T08:23:47Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1820,
+    "qualification_seconds": 3266,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34683158379.json"
+    ]
+   },
+   {
+    "run_id": 34694452139,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "9b2427b7aa481ce75a66bdd64ae86b33e8e10953",
+    "created_at": "2026-09-12T12:43:27Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1879,
+    "qualification_seconds": 3152,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34694452139.json"
+    ]
+   },
+   {
+    "run_id": 34694511379,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "2cf6a57ae637edb3b85e0650c1afb54b537e029f",
+    "created_at": "2026-09-12T12:44:48Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1900,
+    "qualification_seconds": 3294,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34694511379.json"
+    ]
+   },
+   {
+    "run_id": 34699606089,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "fffcfe8a4d7fbb0da27f948ac84a77f6bb036f9d",
+    "created_at": "2026-09-12T14:32:54Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1679,
+    "qualification_seconds": 3082,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34699606089.json"
+    ]
+   },
+   {
+    "run_id": 34748433727,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "972e2ff34fa282b22e0855be67f42b5905c42f47",
+    "created_at": "2026-09-13T08:45:05Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1520,
+    "qualification_seconds": 2714,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34748433727.json"
+    ]
+   },
+   {
+    "run_id": 34748975776,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "cancelled",
+    "head_sha": "e1691b002aceb0a18a892323f764eed6383eb91b",
+    "created_at": "2026-09-13T09:07:59Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 15,
+     "skipped": 1,
+     "never_started": 4,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1714,
+    "qualification_seconds": 1717,
+    "critical_path": [
+     "backend-platforms",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34748975776.json"
+    ]
+   },
+   {
+    "run_id": 34749514655,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "cancelled",
+    "head_sha": "4e3dc8c6b28a70e6861c658199b8b5e57070322b",
+    "created_at": "2026-09-13T09:26:43Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 15,
+     "skipped": 1,
+     "never_started": 4,
+     "carried_over": 0
+    },
+    "feedback_seconds": 603,
+    "qualification_seconds": 609,
+    "critical_path": [
+     "backend-platforms",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34749514655.json"
+    ]
+   },
+   {
+    "run_id": 34750304846,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "661e9dd9a281dc9aed32bb44c6aa3c966b594acb",
+    "created_at": "2026-09-13T09:48:23Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1342,
+    "qualification_seconds": 2593,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34750304846.attempt1.json"
+    ]
+   },
+   {
+    "run_id": 34750304846,
+    "attempt": 2,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "661e9dd9a281dc9aed32bb44c6aa3c966b594acb",
+    "created_at": "2026-09-13T09:48:23Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 2,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 19
+    },
+    "feedback_seconds": "carried_over",
+    "qualification_seconds": 1461,
+    "critical_path": [
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34750304846.json"
+    ]
+   },
+   {
+    "run_id": 34753001977,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "acc8c1fec602f1413789f4dc8a30d686191474b4",
+    "created_at": "2026-09-13T10:53:08Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1926,
+    "qualification_seconds": 3320,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34753001977.json"
+    ]
+   },
+   {
+    "run_id": 34753335840,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "2d1f9f4cebf54c95aa3f372a8d913160fdacd971",
+    "created_at": "2026-09-13T11:01:08Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2024,
+    "qualification_seconds": 3412,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34753335840.json"
+    ]
+   },
+   {
+    "run_id": 34755814111,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "49eb9efa89a287a76b1a6751bb38fa4d3e26621f",
+    "created_at": "2026-09-13T11:58:24Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1964,
+    "qualification_seconds": 3415,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34755814111.json"
+    ]
+   },
+   {
+    "run_id": 34756801012,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "70fc28af052d807e06bfff673766c09cc26d5b5e",
+    "created_at": "2026-09-13T12:20:05Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1899,
+    "qualification_seconds": 3291,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34756801012.json"
+    ]
+   },
+   {
+    "run_id": 34759564871,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "cancelled",
+    "head_sha": "a147eb161277d2170493f56590ce07901d338205",
+    "created_at": "2026-09-13T13:20:25Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2026,
+    "qualification_seconds": 3353,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34759564871.json"
+    ]
+   },
+   {
+    "run_id": 34760936811,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "6bfcd091d111f8d8dab55b168ac7c586f6325b95",
+    "created_at": "2026-09-13T13:49:58Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2110,
+    "qualification_seconds": 3554,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34760936811.json"
+    ]
+   },
+   {
+    "run_id": 34762195108,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "5cf8a526a9be692f5cc3382aa285b4795c9b04d2",
+    "created_at": "2026-09-13T14:16:42Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1474,
+    "qualification_seconds": 2760,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34762195108.json"
+    ]
+   },
+   {
+    "run_id": 34762196158,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "6d70eb7ac9b8f6a67a9ad18b95afd67946d0f210",
+    "created_at": "2026-09-13T14:16:43Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1749,
+    "qualification_seconds": 3358,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34762196158.json"
+    ]
+   },
+   {
+    "run_id": 34762723238,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "0adf1c3b584417210d1816552a3fe1102a96a68d",
+    "created_at": "2026-09-13T14:27:37Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1992,
+    "qualification_seconds": 3592,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34762723238.attempt1.json"
+    ]
+   },
+   {
+    "run_id": 34762723238,
+    "attempt": 2,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "0adf1c3b584417210d1816552a3fe1102a96a68d",
+    "created_at": "2026-09-13T14:27:37Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 2,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 19
+    },
+    "feedback_seconds": "carried_over",
+    "qualification_seconds": 1447,
+    "critical_path": [
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34762723238.json"
+    ]
+   },
+   {
+    "run_id": 34764431359,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "cancelled",
+    "head_sha": "e7fdbdd2f53e317d855b04c596b5d4182fc3fe92",
+    "created_at": "2026-09-13T15:03:05Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2097,
+    "qualification_seconds": 3538,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34764431359.json"
+    ]
+   },
+   {
+    "run_id": 34767918060,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "724d5e7edeb55479e27849a74c7827a6869e6b4a",
+    "created_at": "2026-09-13T16:13:13Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1940,
+    "qualification_seconds": 3377,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34767918060.json"
+    ]
+   },
+   {
+    "run_id": 34767918859,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "c7a105e371aaa2035cb2e7cd41c54d0a63b54046",
+    "created_at": "2026-09-13T16:13:14Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2226,
+    "qualification_seconds": 3811,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34767918859.json"
+    ]
+   },
+   {
+    "run_id": 34774436446,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "de6eeec4a3ddb3668ccba6c5a1cc465d99ae6b09",
+    "created_at": "2026-09-13T18:22:47Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2131,
+    "qualification_seconds": 3569,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34774436446.json"
+    ]
+   },
+   {
+    "run_id": 34825625242,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "6655b7c0be64725a6b85a00933c40caba1bf8642",
+    "created_at": "2026-09-14T09:00:35Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2066,
+    "qualification_seconds": 3478,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34825625242.json"
+    ]
+   },
+   {
+    "run_id": 34825627073,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "0cc40518a39351e21385b9ea3db64f75164425d8",
+    "created_at": "2026-09-14T09:00:36Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1515,
+    "qualification_seconds": 2949,
+    "critical_path": [
+     "backend-platforms",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34825627073.json"
+    ]
+   },
+   {
+    "run_id": 34831881365,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "878ed08dee03a61a9c0e0ace08eee645b7807b7d",
+    "created_at": "2026-09-14T10:11:06Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2121,
+    "qualification_seconds": 3591,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34831881365.json"
+    ]
+   },
+   {
+    "run_id": 34836909691,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "733dd33b801446ae48e29ce7f7db0a6864e776e0",
+    "created_at": "2026-09-14T11:11:09Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2174,
+    "qualification_seconds": 3578,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34836909691.json"
+    ]
+   },
+   {
+    "run_id": 34845223213,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "2c81f363e149f51a688a3e78efbbff83d85e8989",
+    "created_at": "2026-09-14T12:45:55Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2157,
+    "qualification_seconds": 3797,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34845223213.json"
+    ]
+   },
+   {
+    "run_id": 34848580513,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "c43d1dba4894b053e62fea77f8daba8f59c6fe19",
+    "created_at": "2026-09-14T13:19:56Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2101,
+    "qualification_seconds": 3545,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34848580513.json"
+    ]
+   },
+   {
+    "run_id": 34855078852,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "1be2ded84d0958f515437b50acf1836eb361824b",
+    "created_at": "2026-09-14T14:21:26Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2146,
+    "qualification_seconds": 3581,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34855078852.json"
+    ]
+   },
+   {
+    "run_id": 34861555453,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "60feb845c1b9a1e01b5eefeedbf3da23ff091484",
+    "created_at": "2026-09-14T15:20:53Z",
+    "job_count": 19,
+    "job_states": {
+     "executed": 13,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2130,
+    "qualification_seconds": 2130,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34861555453.json"
+    ]
+   },
+   {
+    "run_id": 34861685309,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "c899276f2fb4348fc7a0cd36146c32253bcc9a83",
+    "created_at": "2026-09-14T15:22:08Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1883,
+    "qualification_seconds": 3487,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34861685309.json"
+    ]
+   },
+   {
+    "run_id": 34868180246,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "53048ee6be04f31c83c79effcb69790f8f848c89",
+    "created_at": "2026-09-14T16:22:14Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2071,
+    "qualification_seconds": 3365,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34868180246.json"
+    ]
+   },
+   {
+    "run_id": 34873185647,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "95049617ed02a8f0c9b98281bea57bc0f801fffe",
+    "created_at": "2026-09-14T17:11:03Z",
+    "job_count": 22,
+    "job_states": {
+     "executed": 21,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2126,
+    "qualification_seconds": 3388,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34873185647.json"
+    ]
+   },
+   {
+    "run_id": 34874146337,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "6ba66530f50e1671de2344c56860426f401335b7",
+    "created_at": "2026-09-14T17:20:26Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2011,
+    "qualification_seconds": 3234,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34874146337.json"
+    ]
+   },
+   {
+    "run_id": 34879418458,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "8eef9918faa581982729595d7037511eb60e055c",
+    "created_at": "2026-09-14T18:12:46Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1948,
+    "qualification_seconds": 1947,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34879418458.json"
+    ]
+   },
+   {
+    "run_id": 34879839378,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "f29da5b7ef9631ba182ee952848ce1a689efadb5",
+    "created_at": "2026-09-14T18:16:55Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2150,
+    "qualification_seconds": 3673,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34879839378.json"
+    ]
+   },
+   {
+    "run_id": 34887767662,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "b454fedcd0026a19fc199f9992c748614c85cadb",
+    "created_at": "2026-09-14T19:34:58Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2034,
+    "qualification_seconds": 3373,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34887767662.json"
+    ]
+   },
+   {
+    "run_id": 34893627422,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "f88704a0be99cacbd35b292483213d17a1345ad2",
+    "created_at": "2026-09-14T20:33:19Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2090,
+    "qualification_seconds": 3491,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34893627422.json"
+    ]
+   },
+   {
+    "run_id": 34917196076,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "0d63b8d5ad398ddd2f9ccb1fc051a87e64a19ab7",
+    "created_at": "2026-09-15T01:25:27Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2076,
+    "qualification_seconds": 3534,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34917196076.json"
+    ]
+   },
+   {
+    "run_id": 34918426827,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "9af75fdf90ef6bf9947f0115882523b25176d1f5",
+    "created_at": "2026-09-15T01:43:52Z",
+    "job_count": 19,
+    "job_states": {
+     "executed": 13,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1811,
+    "qualification_seconds": 1811,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34918426827.json"
+    ]
+   },
+   {
+    "run_id": 34919515892,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "ee361b555559128336e197cb25de6b4490cd2863",
+    "created_at": "2026-09-15T02:00:43Z",
+    "job_count": 19,
+    "job_states": {
+     "executed": 13,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 1650,
+    "qualification_seconds": 1662,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34919515892.json"
+    ]
+   },
+   {
+    "run_id": 34921125846,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "234c2e622fb0283623bd535c710ea61235197d6b",
+    "created_at": "2026-09-15T02:25:35Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2710,
+    "qualification_seconds": 4064,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921125846.json"
+    ]
+   },
+   {
+    "run_id": 34921212500,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "2d15106ccb3534c6d5204c9b59dbfbb6d5a471ef",
+    "created_at": "2026-09-15T02:26:58Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2983,
+    "qualification_seconds": 2948,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921212500.json"
+    ]
+   },
+   {
+    "run_id": 34921335460,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "9bcd0d8a242a32c22ba8d8fd8985471c811b652e",
+    "created_at": "2026-09-15T02:28:52Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3737,
+    "qualification_seconds": 3735,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921335460.json"
+    ]
+   },
+   {
+    "run_id": 34921338157,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "1496f1e68d6d00ceb0a1ba7a0e489e65c2c41c1c",
+    "created_at": "2026-09-15T02:28:55Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3975,
+    "qualification_seconds": 3974,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921338157.json"
+    ]
+   },
+   {
+    "run_id": 34921340596,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "ef9e68741bf4b8c03ae153bb16e8e94d2a80f241",
+    "created_at": "2026-09-15T02:28:57Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3303,
+    "qualification_seconds": 3302,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921340596.json"
+    ]
+   },
+   {
+    "run_id": 34921344293,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "dc37bcaf97bd46f94585124c3cca1e25f4a16eeb",
+    "created_at": "2026-09-15T02:29:01Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4430,
+    "qualification_seconds": 4424,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921344293.json"
+    ]
+   },
+   {
+    "run_id": 34921345033,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "2fde97af5d5b51d0e42c3119fbb053e502bd4aaf",
+    "created_at": "2026-09-15T02:29:01Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3645,
+    "qualification_seconds": 3644,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34921345033.json"
+    ]
+   },
+   {
+    "run_id": 34925642786,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "dacdec33e5054a696aa594b1c24183bc8bc6c2f9",
+    "created_at": "2026-09-15T03:36:34Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2156,
+    "qualification_seconds": 3457,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34925642786.json"
+    ]
+   },
+   {
+    "run_id": 34926531671,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "4c926c63962c310aafed73a14d3d219e2d312e24",
+    "created_at": "2026-09-15T03:50:49Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2086,
+    "qualification_seconds": 2087,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34926531671.json"
+    ]
+   },
+   {
+    "run_id": 34926534627,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "9a4849334fc06fab84e4a37a0d0b70c5719f5cdc",
+    "created_at": "2026-09-15T03:50:52Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2119,
+    "qualification_seconds": 2116,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34926534627.json"
+    ]
+   },
+   {
+    "run_id": 34935300480,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "dabdd0118ad309db90938ef0d1b73c50232800f2",
+    "created_at": "2026-09-15T06:03:55Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2255,
+    "qualification_seconds": 2267,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34935300480.json"
+    ]
+   },
+   {
+    "run_id": 34935303158,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "ca769f4b583105b0eff584b81947e656cc8fda27",
+    "created_at": "2026-09-15T06:03:57Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2225,
+    "qualification_seconds": 2225,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34935303158.json"
+    ]
+   },
+   {
+    "run_id": 34935305077,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "c244e009a22e9e259c4fcdd3784d46ff6afa07a9",
+    "created_at": "2026-09-15T06:03:59Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2572,
+    "qualification_seconds": 2570,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34935305077.json"
+    ]
+   },
+   {
+    "run_id": 34935307844,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "d6155af803584306a8309842158488822f804957",
+    "created_at": "2026-09-15T06:04:01Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2567,
+    "qualification_seconds": 2566,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34935307844.json"
+    ]
+   },
+   {
+    "run_id": 34935312138,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "8c2652f19884c1bf256ed7afe5ac5b3600896ef0",
+    "created_at": "2026-09-15T06:04:05Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2844,
+    "qualification_seconds": 2841,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34935312138.json"
+    ]
+   },
+   {
+    "run_id": 34937670490,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "47aa457cec669515a6a583a5ba7c2b4513aaf6cf",
+    "created_at": "2026-09-15T06:36:04Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2225,
+    "qualification_seconds": 3669,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34937670490.json"
+    ]
+   },
+   {
+    "run_id": 34938204891,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "0e932c50793869e1086dd4a4f43f9e59ee9347fd",
+    "created_at": "2026-09-15T06:43:14Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2111,
+    "qualification_seconds": 2113,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34938204891.json"
+    ]
+   },
+   {
+    "run_id": 34942784584,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "23f1d2ee114ace8296011863e3782ef90903702a",
+    "created_at": "2026-09-15T07:39:05Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2660,
+    "qualification_seconds": 2663,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34942784584.json"
+    ]
+   },
+   {
+    "run_id": 34942786445,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "9abe48eccb346597882467ebf33381d162d6b36d",
+    "created_at": "2026-09-15T07:39:06Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2939,
+    "qualification_seconds": 3195,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34942786445.json"
+    ]
+   },
+   {
+    "run_id": 34942790130,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "302582c343f42a11eb3ac74538f70b14fd526555",
+    "created_at": "2026-09-15T07:39:08Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2661,
+    "qualification_seconds": 2658,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34942790130.json"
+    ]
+   },
+   {
+    "run_id": 34942792640,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "bd97ba68b6cf5f85c7297f6762aa494681ed1e1d",
+    "created_at": "2026-09-15T07:39:10Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2701,
+    "qualification_seconds": 2698,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34942792640.json"
+    ]
+   },
+   {
+    "run_id": 34948311659,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "dba866872543f0a8066bd3842d9eb90774ef6db8",
+    "created_at": "2026-09-15T08:41:05Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4517,
+    "qualification_seconds": 5925,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948311659.json"
+    ]
+   },
+   {
+    "run_id": 34948317358,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "f957e89c200b57e533427261474e49540a85f535",
+    "created_at": "2026-09-15T08:41:09Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3386,
+    "qualification_seconds": 3563,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948317358.json"
+    ]
+   },
+   {
+    "run_id": 34948318786,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "9d57d277e4bd002585107eba16964e5bfad9af7a",
+    "created_at": "2026-09-15T08:41:10Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4555,
+    "qualification_seconds": 4558,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948318786.json"
+    ]
+   },
+   {
+    "run_id": 34948322886,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "eafe24bd1a9cec3c31c3c06c8eb557f93878b92a",
+    "created_at": "2026-09-15T08:41:12Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3136,
+    "qualification_seconds": 3156,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948322886.json"
+    ]
+   },
+   {
+    "run_id": 34948327275,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "c306444a21a8de3d07999b62e5cf387133816d77",
+    "created_at": "2026-09-15T08:41:15Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4063,
+    "qualification_seconds": 4093,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948327275.json"
+    ]
+   },
+   {
+    "run_id": 34948407613,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "021a60ed34ea1487c81fc97be443d328bd22920c",
+    "created_at": "2026-09-15T08:42:09Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 13,
+     "skipped": 6,
+     "never_started": 1,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3713,
+    "qualification_seconds": 3753,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34948407613.json"
+    ]
+   },
+   {
+    "run_id": 34949311310,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "f031eca8669f92f8b2e49abb0da7ca93e8ea3ec9",
+    "created_at": "2026-09-15T08:51:56Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4823,
+    "qualification_seconds": 4822,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34949311310.json"
+    ]
+   },
+   {
+    "run_id": 34949314010,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "0e80f8e3d32692a26bca65a88ba6f499f4f51ed8",
+    "created_at": "2026-09-15T08:51:58Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3749,
+    "qualification_seconds": 3754,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34949314010.json"
+    ]
+   },
+   {
+    "run_id": 34949318428,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "8f213de8fd44f5aa8c38aac16b3ac7c6549f715e",
+    "created_at": "2026-09-15T08:52:01Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 5018,
+    "qualification_seconds": 5018,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34949318428.json"
+    ]
+   },
+   {
+    "run_id": 34949321661,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "3229f5bdabaa2f05d61b3c3f377002c4aef3318e",
+    "created_at": "2026-09-15T08:52:03Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4554,
+    "qualification_seconds": 4553,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34949321661.json"
+    ]
+   },
+   {
+    "run_id": 34949328144,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "faab7e1366a55ba480bb2c0f14a4b7cafe0a9da9",
+    "created_at": "2026-09-15T08:52:08Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 4516,
+    "qualification_seconds": 4516,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34949328144.json"
+    ]
+   },
+   {
+    "run_id": 34954093845,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "4db88f65236f04fa1461d825f2bb4650d48069a6",
+    "created_at": "2026-09-15T09:43:37Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2488,
+    "qualification_seconds": 2487,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34954093845.json"
+    ]
+   },
+   {
+    "run_id": 34957615294,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "6a1a9dea5d27b1724c4aab11e38d9fb808d2a89e",
+    "created_at": "2026-09-15T10:22:39Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2110,
+    "qualification_seconds": 3550,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34957615294.json"
+    ]
+   },
+   {
+    "run_id": 34963015460,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "57d5f45f320bcd555baee3b40a5c469e0d6bdef3",
+    "created_at": "2026-09-15T11:23:24Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 3525,
+    "qualification_seconds": 4638,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34963015460.json"
+    ]
+   },
+   {
+    "run_id": 34963018989,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "c060657f9bab2f19787ed34f43add2d3ab656d70",
+    "created_at": "2026-09-15T11:23:27Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2381,
+    "qualification_seconds": 2381,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34963018989.json"
+    ]
+   },
+   {
+    "run_id": 34963022431,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "223bf084b439ee15e4ee5dcce5ec4d6832ab1741",
+    "created_at": "2026-09-15T11:23:29Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2398,
+    "qualification_seconds": 2400,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34963022431.json"
+    ]
+   },
+   {
+    "run_id": 34963025540,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "b10489453280ee203614e8fff7df6c7a83075ef5",
+    "created_at": "2026-09-15T11:23:31Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2075,
+    "qualification_seconds": 2077,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34963025540.json"
+    ]
+   },
+   {
+    "run_id": 34963033527,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "success",
+    "head_sha": "5dc229cd86f826007b1fa2420fb1b10ae984388f",
+    "created_at": "2026-09-15T11:23:36Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 14,
+     "skipped": 6,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2551,
+    "qualification_seconds": 2547,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34963033527.json"
+    ]
+   },
+   {
+    "run_id": 34966709766,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "failure",
+    "head_sha": "10134a50ea6ee477125eed1d71489f5815a74a73",
+    "created_at": "2026-09-15T12:03:53Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 13,
+     "skipped": 7,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2094,
+    "qualification_seconds": 2099,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34966709766.json"
+    ]
+   },
+   {
+    "run_id": 34970490865,
+    "attempt": 1,
+    "event": "merge_group",
+    "conclusion": "success",
+    "head_sha": "8b95256c0d08a14bfcfc4c81358894ef01168933",
+    "created_at": "2026-09-15T12:42:59Z",
+    "job_count": 24,
+    "job_states": {
+     "executed": 23,
+     "skipped": 1,
+     "never_started": 0,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2129,
+    "qualification_seconds": 3615,
+    "critical_path": [
+     "backend-fast",
+     "windows-exe-smoke",
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34970490865.json"
+    ]
+   },
+   {
+    "run_id": 34977366199,
+    "attempt": 1,
+    "event": "pull_request",
+    "conclusion": "cancelled",
+    "head_sha": "f7d2de18945878758fb19717bdd8e1d2208487f6",
+    "created_at": "2026-09-15T13:48:06Z",
+    "job_count": 20,
+    "job_states": {
+     "executed": 7,
+     "skipped": 2,
+     "never_started": 11,
+     "carried_over": 0
+    },
+    "feedback_seconds": 2906,
+    "qualification_seconds": 2888,
+    "critical_path": [
+     "ci-integration-gate"
+    ],
+    "evidence": [
+     "evidence/actions/runs/run_34977366199.json"
+    ]
+   }
+  ]
+ },
+ "pytest": {
+  "summary": {
+   "local": {
+    "kind": "local_pytest_baseline_not_ci",
+    "host": "macOS (darwin) Mac mini，Apple Silicon；不是 CI 的 ubuntu-latest",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu_count": 12,
+    "python": "3.13.11",
+    "matplotlib": "3.11.2",
+    "numpy": "2.5.3",
+    "pytest": "9.1.1",
+    "command": ".venv/bin/python -m pytest --durations=0 -rA --junitxml=<scratch>/junit.xml -o junit_logging=no",
+    "addopts_from_pytest_ini": "-q -m \"not slow\" --strict-config",
+    "started_utc": "2026-09-15T15:13:16Z",
+    "ended_utc": "2026-09-15T15:32:30Z",
+    "pytest_summary_line": "4557 passed, 42 skipped, 2 deselected, 16 warnings in 1153.56s (0:19:13)",
+    "exit_code": 0,
+    "durations_rows": 2274,
+    "durations_sum_seconds": 1129.2,
+    "durations_by_phase": {
+     "setup": 53.5,
+     "call": 1024.8,
+     "teardown": 51.0
+    },
+    "passed": 4557,
+    "skipped": 42,
+    "deselected": 2,
+    "failed": 0,
+    "wall_seconds": 1153.56,
+    "evidence": [
+     "evidence/pytest/local_run.json",
+     "evidence/pytest/durations.json",
+     "evidence/pytest/durations_by_file.csv",
+     "evidence/pytest/slowest_30.txt",
+     "evidence/pytest/junit_testcases.csv",
+     "evidence/pytest/skips.txt"
+    ]
+   },
+   "ci_reference": {
+    "linux_3.10_backend-fast": {
+     "job_id": 104385304833,
+     "passed": 4540,
+     "skipped": 59,
+     "deselected": 2,
+     "wall_seconds": 2095.02,
+     "matplotlib": "3.10.9",
+     "evidence": "evidence/ci_logs/summary_backend-fast_linux310_job104385304833.txt"
+    },
+    "macos_3.13_backend-platforms": {
+     "job_id": 104385304860,
+     "passed": 4554,
+     "skipped": 45,
+     "deselected": 2,
+     "wall_seconds": 1472.57,
+     "matplotlib": "3.11.2",
+     "durations_50": "evidence/ci_logs/durations_backend-platforms_macos_job104385304860.txt"
+    },
+    "windows_3.13_backend-platforms": {
+     "job_id": 104385304695,
+     "passed": 4522,
+     "skipped": 77,
+     "deselected": 2,
+     "wall_seconds": 2446.41,
+     "matplotlib": "3.11.2",
+     "durations_50": "evidence/ci_logs/durations_backend-platforms_windows_job104385304695.txt",
+     "note": "前 50 条合计约 850s，占 2446s 的 ~35%；最慢单条 108.41s（test_invariants_engine::test_exact_restore_is_pixel_and_manifest_identical[InvMix]）"
+    },
+    "note": "CI 的 backend-fast 不带 --durations，只有总时长；CI 侧 skip 理由拿不到（没带 -rs）。本机 macOS arm64 与 CI ubuntu 不是同一环境：同一套件本机 19:13、CI Linux 34:55 / macOS 24:32 / Windows 40:46。"
+   },
+   "local_top_files_by_total_seconds": [
+    [
+     "tests/test_invariants_engine.py",
+     "182.18"
+    ],
+    [
+     "tests/test_equivalence_matrix.py",
+     "99.98"
+    ],
+    [
+     "tests/test_manifest_geometry.py",
+     "66.72"
+    ],
+    [
+     "tests/test_project_env.py",
+     "55.56"
+    ],
+    [
+     "tests/test_worker_roundtrip.py",
+     "52.8"
+    ],
+    [
+     "tests/test_workerd_client.py",
+     "46.74"
+    ],
+    [
+     "tests/test_plugin_publish.py",
+     "46.63"
+    ],
+    [
+     "tests/test_colorbar_orientation.py",
+     "38.36"
+    ],
+    [
+     "tests/test_dependency_repair_e2e.py",
+     "36.69"
+    ],
+    [
+     "tests/test_mcp_normalize.py",
+     "35.93"
+    ]
+   ],
+   "local_skip_categories": {
+    "缺 tavotto-workerd 产物（cargo build）": 12,
+    "缺画布 / 插件候选产物（在 plugin-candidate job 上必跑）": 10,
+    "缺内置 runtime 产物（本机没构建）": 4,
+    "缺 wheel 产物（先 python -m build）": 3,
+    "缺 tauri 渲染的 NSIS 中间脚本": 2,
+    "缺 updater 探针二进制": 1,
+    "平台（非 Linux 无 /proc）": 1,
+    "本机环境特有（装着桌面版 / 解释器带 matplotlib）": 5,
+    "需网络或真实 CLI 的 opt-in": 3,
+    "协议已脱离草案（有意）": 1
+   },
+   "skip_gap_candidates": "缺 runtime 产物（test_runtime_build 4 条）与缺 wheel 产物（test_tutorial 3 条）在 ci.yml 里没有任何一个先建产物再跑 pytest 的 job；它们在 CI 里的执行位置待确认（可能只有 lab 的 lab_acceptance.py / nightly 覆盖其中一部分）。"
+  }
+ },
+ "playwright": {
+  "summary": {
+   "list": {
+    "command": "cd web && npx playwright test --list（Playwright 1.62.1，本机，不运行）",
+    "total_line": "Total: 151 tests in 24 files",
+    "by_project": {
+     "chromium": 109,
+     "webkit": 23,
+     "chromium-en": 19
+    },
+    "files": 24,
+    "evidence": "evidence/playwright/list.txt / list_summary.json"
+   },
+   "config": {
+    "workers": 1,
+    "fullyParallel": false,
+    "retries": "process.env.CI ? 1 : 0",
+    "timeout_ms": 180000,
+    "expect_timeout_ms": 15000,
+    "projects": {
+     "chromium": "全部 spec，testIgnore error-recovery-en",
+     "webkit": "golden-paths / a11y / keyboard-golden-path / twin-axes-pick",
+     "chromium-en": "a11y / error-recovery-en / inspector-overflow（locale en-US）"
+    },
+    "server": "每个用例由 e2e/fixtures.ts 各自拉起后端（无共享 webServer）；端口与临时目录按用例分配（config 注释 L10-12、L19）",
+    "source": "web/playwright.config.ts"
+   },
+   "ci_windows_exe_smoke": {
+    "job_id": 104397475552,
+    "run_id": 34970490865,
+    "reported": "128 passed, 23 skipped (15.0m)",
+    "per_project": {
+     "chromium": {
+      "passed": 89,
+      "sum_seconds": 505.5
+     },
+     "webkit": {
+      "passed": 23,
+      "sum_seconds": 266.9
+     },
+     "chromium-en": {
+      "passed": 16,
+      "sum_seconds": 110.6
+     }
+    },
+    "top_files_seconds": {
+     "webkit/keyboard-golden-path.spec.ts": 108.7,
+     "webkit/a11y.spec.ts": 89.2,
+     "chromium-en/a11y.spec.ts": 59.2,
+     "chromium/a11y.spec.ts": 55.3,
+     "webkit/golden-paths.spec.ts": 45.0,
+     "chromium/tutorial.spec.ts": 43.7,
+     "chromium-en/error-recovery-en.spec.ts": 41.0,
+     "chromium/ux-consistency.spec.ts": 39.7
+    },
+    "step_seconds": 1124,
+    "step_minus_playwright_reported": "约 3.7 分钟 = pnpm install + playwright install --with-deps chromium webkit（同一步里）",
+    "skipped": "20 条 playground* + 3 条 error-recovery-en（2 条 POSIX 权限位用例只在 posix 腿真跑；1 条「无可用渲染环境」两腿都跳）",
+    "evidence": "evidence/ci_logs/playwright_windows-exe-smoke_job104397475552.json"
+   },
+   "ci_posix_e2e": {
+    "job_id": 104397475709,
+    "run_id": 34970490865,
+    "reported": "106 passed, 22 skipped (7.1m)",
+    "per_project": {
+     "chromium": {
+      "passed": 89,
+      "sum_seconds": 350.2
+     },
+     "chromium-en": {
+      "passed": 17,
+      "sum_seconds": 64.6
+     }
+    },
+    "top_files_seconds": {
+     "chromium/a11y.spec.ts": 40.5,
+     "chromium-en/a11y.spec.ts": 40.0,
+     "chromium/i18n.spec.ts": 31.7,
+     "chromium/tutorial.spec.ts": 26.1,
+     "chromium/ux-consistency.spec.ts": 24.6,
+     "chromium/inspector-redesign.spec.ts": 24.3,
+     "chromium/settings-shell.spec.ts": 23.7,
+     "chromium/keyboard-golden-path.spec.ts": 23.4
+    },
+    "step_seconds": 447,
+    "evidence": "evidence/ci_logs/playwright_posix-e2e_job104397475709.json",
+    "skipped": "20 条 playground* + 2 条 error-recovery-en（「无可用渲染环境」+ file_locked）"
+   },
+   "note": "每条用例时长含后端冷启动（fixtures 按用例拉起后端），所以 sum(用例) ≈ 报告总时长；分片按文件时 webkit/keyboard-golden-path（108.7s，含一条 90.0s）与 a11y（89.2s）是最重的两个文件。"
+  }
+ },
+ "serial_candidates": {
+  "note": "见 CI_BASELINE.md §7 表与 evidence/pytest/serial_candidates_grep.txt；「待确认」= 只靠静态扫描定不了",
+  "evidence": "evidence/pytest/serial_candidates_grep.txt"
+ },
+ "hypotheses": {
+  "H1": {
+   "statement": "删除非必要 DAG 边可重叠 backend 与安装验证时间，而不丢最终 AND 判定",
+   "verdict": "证据支持",
+   "evidence": [
+    "evidence/dag.json：backend-fast→{package,windows-exe-smoke,macos-app-smoke,posix-e2e} 与 frontend→同四者共 8 条边都是 verdict-only（下游无 download-artifact，自建前端/画布/产物）",
+    "evidence/actions/timing_decomposition.json：29 个 merge_group success 里 28 个关键路径 = backend-fast→windows-exe-smoke→ci-integration-gate；windows-exe-smoke 的 dependency_wait 中位 1931s",
+    "模型（同文件 model_without_backend_fast_edges）：删 4 条 backend-fast 边后 qualification 中位 3412s → 2476s（Δ 中位 −892s，范围 −1969…0）；假设 job 时长与领取时间不变",
+    "AND 保持：ci.yml L1418/L1455 fast gate 闭集含 backend-fast、frontend；L1461/L1503 integration gate 闭集；scripts/ci/merge_queue_ruleset.py GATE_CONTEXTS 三个 context；aggregate_gate.py 的输入是 toJSON(needs)（L1448/L1487），不是 API"
+   ],
+   "caveat": "模型不是测量；删边后重型 job 在 backend-fast 红时会白跑（一次约 66 Windows 分钟 + 35 macOS 分钟），是成本/延迟取舍，可用 frontend（4 分钟）或 python-lint 作短预筛。"
+  },
+  "H2": {
+   "statement": "pytest 中大量独立组可以平衡分片；无法隔离的测试保留 serial 集合",
+   "verdict": "证据支持（本机）/ CI 侧证据不足",
+   "evidence": [
+    "evidence/pytest/durations_by_file.csv：146 个文件，前 25 个文件 ≈ 900s / 1129s；最大单文件 test_invariants_engine.py 182s（16%），按文件分 2 片可平衡到 ~565s/片（本机）",
+    "evidence/pytest/serial_candidates_grep.txt：真实 socket 全部 bind 端口 0；无写回源码树；显式 os.environ 写入 6 处（多为 save/restore 形状）；chdir 5 个文件（monkeypatch）",
+    "CI 侧：只有 --durations=50 的前 50 条（Windows/macOS），没有全量分布；Linux 腿没有 durations"
+   ],
+   "caveat": "顺序依赖（靠前一个用例暖缓存/建文件才绿）静态扫不出，要用随机顺序或真分片跑一次才知道；CI03 前置。"
+  },
+  "H3": {
+   "statement": "Windows E2E 的文件级分片比继续堆 Linux runner 更贴近该样本关键路径",
+   "verdict": "证据部分支持——但顺序在 H1 之后",
+   "evidence": [
+    "关键路径 28/29 经 windows-exe-smoke（job 中位 1411s，其中 Playwright 步中位 1168s；用例本身 15.0m，3.7m 是安装）",
+    "删 backend-fast 边之后（模型）关键路径变成 backend-platforms (windows)（中位 2443s），windows-exe-smoke 退到第二（模型下它约在 frontend 后 256s 起，~1700s 完成）",
+    "Linux runner 数量对这两条 Windows 路径没有影响；PR 事件上 ubuntu-latest 的领取等待中位 331s / 最大 3050s（36 个 plain PR）才是 Linux 容量问题"
+   ],
+   "caveat": "E2E 文件级分片要先证明 fixtures 的端口/临时目录/产物路径按实例隔离（config 里 workers:1 的理由）。"
+  },
+  "H4": {
+   "statement": "自托管只有网络、工具版本、磁盘与安全条件齐备才有净收益",
+   "verdict": "证据不足（无法裁决）",
+   "evidence": [
+    "托管 runner 在 merge_group 上领取等待中位 2s（ubuntu）/ 9s（macOS）/ 3s（Windows），执行时间是瓶颈，不是领取——自托管只能靠更快的机器赢",
+    "PR 事件上 ubuntu-latest 领取等待中位 331s、p75 677s、最大 3050s（同时推 5–6 个 PR 时）：这是并发上限问题，自托管池能缓解，前提是账户并发上限确实是瓶颈（未知）",
+    "docs/ci/self-hosted-runner.md 记录 github.com 443 不可达、setup-python 要预置 tool cache——同一网络下新池的 checkout / actions 下载 / PyPI / npm / 浏览器下载链路一条没实测",
+    "evidence/admin_inventory.json：host/guest、可分配 vCPU、RAM、磁盘、网络、runner 注册位置全部待管理员填写"
+   ],
+   "caveat": "没有任何自托管 A/B 样本；不能编 2× 或 30–60%。"
+  }
+ },
+ "doc_discrepancies": [
+  {
+   "where": "ci.yml L388-390（backend-fast 注释「实测 20–25 分钟，40 给余量」）",
+   "observed": "29 个合并组里 backend-fast 中位 31 分钟（3.10）/ 29 分钟（3.13）/ 35 分钟（3.14），最大 36 分钟；40 分钟上限余量只剩 4 分钟",
+   "action": "CI00 不改；CI03 分片时一并处理"
+  },
+  {
+   "where": "ci.yml L493（frontend 注释「实测 2.2 分钟」）",
+   "observed": "中位 4.2 分钟（vitest 202s 是主体）",
+   "action": "记录"
+  },
+  {
+   "where": "ci.yml L460（compat-smoke「实测 2.4 分钟」）/ L682（workerd「0.3 分钟」）/ L732（desktop-shell「冷编译 37 秒」）",
+   "observed": "compat 2.2 分钟 ✓；workerd 23s ✓；desktop-shell 3.5–4 分钟（含 apt 与编译，非「37 秒」的本机数）",
+   "action": "记录"
+  },
+  {
+   "where": "ci.yml L422（backend-platforms Windows「29~41 分钟，套件已 4460 条」）",
+   "observed": "中位 40.7 分钟，最大 47.8；套件 4601 条（4522+77+2）",
+   "action": "记录；60 上限余量 12 分钟"
+  },
+  {
+   "where": "01_AUDIT.md「Windows job 创建于 13:18:20，开始于 13:18:22」与 historical_run_sample.json 三条 job 的数字",
+   "observed": "逐字复算一致（job 2117/253/1481s，install 16、pytest 2096、pnpm 4/202/22、Playwright 1124）",
+   "action": "无差异"
+  },
+  {
+   "where": "docs/ci/self-hosted-runner.md §3 runner 用户名 github-runner",
+   "observed": "memory lab-ci-runner-access 记的是 runner",
+   "action": "待管理员确认（admin_inventory.json）"
+  }
+ ],
+ "unknowns": [
+  "CI 侧 pytest 每条用例的 setup/call/teardown 与 skip 理由：backend-fast 没有 --durations，三条腿都没有 -rs",
+  "GitHub 账户的并发 job 上限（决定 PR 突发时的领取等待）：API 不给；从数据只能看到 5–6 个 PR 同时推时 ubuntu-latest 等待到 51 分钟",
+  "windows-exe-smoke 上 Playwright 步的两次偶发红（run 34750304846 / 34762723238 attempt 1）的根因：日志未取（attempt 1 的 job 日志在重跑后仍可取，CI03 前值得取一次）",
+  "test_runtime_build（4 条）与 test_tutorial（3 条）依赖产物的用例在 CI 里到底在哪里执行",
+  "lab VM 的真实资源与宿主拓扑（admin_inventory.json 全部待填）",
+  "删边后重型 job 与快线并发时托管 runner 的领取等待是否变长（模型假设不变）",
+  "backend-fast 三档 matplotlib 未钉版本是「测最新」的意图还是漂移（04 §5）"
+ ],
+ "priorities": {
+  "top3_from_critical_path": [
+   {
+    "rank": 1,
+    "item": "删 backend-fast→{package, windows-exe-smoke, macos-app-smoke, posix-e2e} 四条 verdict-only 边（CI01）",
+    "why": "28/29 关键路径经此；模型 Δ 中位 −892s（−15 分钟）；AND 由 fast gate 闭集 + ruleset 保证；改动只在 ci.yml 四行 needs + tests/test_merge_queue_workflows.py 的对应判据"
+   },
+   {
+    "rank": 2,
+    "item": "backend-platforms (windows) 全量 pytest 分片 / 最慢用例治理（CI03）",
+    "why": "删边后它成为关键路径（中位 40.7 分钟，上限 60）；前 50 条占 35%，其中 test_invariants_engine 的三条 InvMix 用例 232s"
+   },
+   {
+    "rank": 3,
+    "item": "backend-fast 三档 Linux 全量 pytest 分片（CI03）+ PR 突发时的领取等待（CI04 或账户并发）",
+    "why": "plain PR 的反馈中位 44.7 分钟 = backend-fast ~33 分钟 + 领取等待中位 ~10 分钟（最大 50 分钟）；后者只在同时推多个 PR 时出现"
+   }
+  ],
+  "phase_order": [
+   {
+    "phase": "CI01",
+    "first_cut": "删 backend-fast→重型 的 4 条边；frontend→重型 的 4 条边二选一：保留为短预筛（4 分钟，能挡住前端坏掉时的 Windows 白跑）或一并删；同时给 tests/test_merge_queue_workflows.py 加「重型 job 不 needs backend-fast」的判据与 fast gate 闭集不变的判据",
+    "expected": "merge_group 资格中位 ~57 → ~41 分钟（模型），需 CI05 用真实合并组对照"
+   },
+   {
+    "phase": "CI03",
+    "first_cut": "backend-fast 与 backend-platforms 按文件分 2 片（并集核验 = evidence/pytest/junit_testcases.csv 的 nodeid 集合形状）；先不动 Playwright",
+    "expected": "Windows 腿 ~41 → ~22 分钟/片（若平衡），Linux 腿 ~33 → ~17 分钟/片"
+   },
+   {
+    "phase": "CI02",
+    "first_cut": "暂不抽取前端产物跨 job 复用：build 只有 22–40s，传输校验未必划算（04 §1）；只把 build_frontend 的重复列为观察项",
+    "expected": "无"
+   },
+   {
+    "phase": "CI04",
+    "first_cut": "先拿到 admin_inventory.json 的答案；PR 池只在证明账户并发上限是瓶颈之后才有净收益",
+    "expected": "未知"
+   }
+  ]
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": 34845223213,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "failure",
+ "head_sha": "2c81f363e149f51a688a3e78efbbff83d85e8989",
+ "head_branch": "ux/apple-design-batch4",
+ "created_at": "2026-09-14T12:45:55Z",
+ "run_started_at": "2026-09-14T12:45:55Z",
+ "updated_at": "2026-09-14T13:49:13Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34845223213"
+}

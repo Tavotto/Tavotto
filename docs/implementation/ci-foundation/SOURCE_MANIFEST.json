@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "purpose": "Identify previous unified files referenced by this prerequisite; do not modify or republish their contents as parallel masters.",
+  "files": [
+    {
+      "name": "Tavotto_Unified_Implementation_Full_Prompts.md",
+      "bytes": 76027,
+      "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
+    },
+    {
+      "name": "Tavotto_Unified_Implementation_Start_Here.md",
+      "bytes": 4061,
+      "sha256": "3069c5e01fb3f169a66f4908afb2ff4060d6cad9e3d29b417b7d26188b880f0d"
+    },
+    {
+      "name": "Tavotto_Unified_Implementation_Pack.zip",
+      "bytes": 270044,
+      "sha256": "dc54b1e4a2555a71db22e7d5572339749af9dd69fbb25c37b581f827586e1b45"
+    }
+  ]
+}

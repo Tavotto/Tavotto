@@ -1,0 +1,13 @@
+{
+ "id": 34762723238,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "failure",
+ "head_sha": "0adf1c3b584417210d1816552a3fe1102a96a68d",
+ "head_branch": "fix/backend-platforms-timeout",
+ "created_at": "2026-09-13T14:27:37Z",
+ "run_started_at": "2026-09-13T14:27:37Z",
+ "updated_at": "2026-09-13T15:27:30Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34762723238"
+}

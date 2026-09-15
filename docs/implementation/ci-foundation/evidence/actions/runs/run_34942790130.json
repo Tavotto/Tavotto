@@ -1,0 +1,13 @@
+{
+ "id": 34942790130,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "302582c343f42a11eb3ac74538f70b14fd526555",
+ "head_branch": "ux/polish-export",
+ "created_at": "2026-09-15T07:39:08Z",
+ "run_started_at": "2026-09-15T07:39:08Z",
+ "updated_at": "2026-09-15T08:23:30Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34942790130"
+}

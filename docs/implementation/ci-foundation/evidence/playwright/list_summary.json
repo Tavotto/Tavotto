@@ -1,0 +1,56 @@
+{
+ "command": "cd web && npx playwright test --list（Playwright 1.62.1，本机，不运行）",
+ "total_line": "Total: 151 tests in 24 files",
+ "by_project": {
+  "chromium": 109,
+  "webkit": 23,
+  "chromium-en": 19
+ },
+ "by_project_file": {
+  "chromium/a11y.spec.ts": 10,
+  "chromium/asset-library.spec.ts": 4,
+  "chromium/coding-agents.spec.ts": 5,
+  "chromium/contrast.spec.ts": 7,
+  "chromium/cross-tab-paste.spec.ts": 1,
+  "chromium/element-path-selection.spec.ts": 3,
+  "chromium/fake-realtime.spec.ts": 1,
+  "chromium/golden-paths.spec.ts": 8,
+  "chromium/i18n.spec.ts": 12,
+  "chromium/inspector-overflow.spec.ts": 1,
+  "chromium/inspector-redesign.spec.ts": 4,
+  "chromium/keyboard-golden-path.spec.ts": 3,
+  "chromium/large-figure.spec.ts": 2,
+  "chromium/mcp-canvas.spec.ts": 4,
+  "chromium/motion.spec.ts": 4,
+  "chromium/nav-audit.spec.ts": 3,
+  "chromium/playground-landing.spec.ts": 10,
+  "chromium/playground.spec.ts": 10,
+  "chromium/quick-menu.spec.ts": 1,
+  "chromium/settings-shell.spec.ts": 6,
+  "chromium/tutorial.spec.ts": 4,
+  "chromium/twin-axes-pick.spec.ts": 2,
+  "chromium/ux-consistency.spec.ts": 4,
+  "chromium-en/a11y.spec.ts": 10,
+  "chromium-en/error-recovery-en.spec.ts": 8,
+  "chromium-en/inspector-overflow.spec.ts": 1,
+  "webkit/a11y.spec.ts": 10,
+  "webkit/golden-paths.spec.ts": 8,
+  "webkit/keyboard-golden-path.spec.ts": 3,
+  "webkit/twin-axes-pick.spec.ts": 2
+ },
+ "files": 24,
+ "config": {
+  "workers": 1,
+  "fullyParallel": false,
+  "retries": "process.env.CI ? 1 : 0",
+  "timeout_ms": 180000,
+  "expect_timeout_ms": 15000,
+  "projects": {
+   "chromium": "全部 spec，testIgnore error-recovery-en",
+   "webkit": "golden-paths / a11y / keyboard-golden-path / twin-axes-pick",
+   "chromium-en": "a11y / error-recovery-en / inspector-overflow（locale en-US）"
+  },
+  "server": "每个用例由 e2e/fixtures.ts 各自拉起后端（无共享 webServer）；端口与临时目录按用例分配（config 注释 L10-12、L19）",
+  "source": "web/playwright.config.ts"
+ }
+}
