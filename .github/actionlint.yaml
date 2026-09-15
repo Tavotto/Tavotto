@@ -1,15 +1,19 @@
 # actionlint 的自定义 runner 标签声明。
 #
 # 没有这份文件时，actionlint 会把实验室 runner 的标签报成 "label is unknown"，
-# 于是每次 lint 都带着两条已知噪声——而噪声一多，真正的告警就会被一起忽略。
+# 于是每次 lint 都带着已知噪声——而噪声一多，真正的告警就会被一起忽略。
 #
 # 这些标签对应实验室里那台长期 Linux runner（见 docs/ci/self-hosted-runner.md）。
 # 改标签时**必须同步改这里**，否则 lint 会重新开始报未知标签。
+#
+# 这份列表与仓库里实际用到的自托管标签**必须相等**——多一个也红
+# （tests/test_merge_queue_workflows.py::TestRunnerTrustZones）。所以这里
+# **不预留**未部署的池的标签：一个「预留」标签就是下一个人「顺手用一下」的入口，
+# 而未部署的池不进配置（docs/implementation/ci-foundation/03_RUNNERS_AND_TRUST.md §6）。
+# 组织升级到支持 runner group 之后用的 `runs-on: { group: …, labels: [tavotto-lab] }`
+# 里，group 是组名不是标签，也不登记在这里。
 self-hosted-runner:
   labels:
     # 实验室 qualification runner。lab-ci.yml 与 release.yml 的
     # lab_release_gate 靠它定向。
     - tavotto-lab
-    # 预留：组织升级到支持 runner group 之后，用它把可用范围
-    # 收到 Tavotto/Tavotto 与明确的 trusted workflow。
-    - tavotto-trusted
