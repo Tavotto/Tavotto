@@ -206,9 +206,15 @@
       "status": "not_run",
       "evidence": [
         "tests/conftest.py（每个进程各自 tempfile.mkdtemp 的 TAVOTTO_DATA_DIR、每个用例各自的 TAVOTTO_CONFIG_DIR；pytest basetemp 按会话编号）",
-        "evidence/ci03a/compare_sets.json + c1.time / c2.time / timing_table.json（本机两片同时跑一次：outcome 与顺序跑逐条相同；c1 +17.8s、c2 −2.6s；峰值 RSS 582.7 + 455.3 MiB）"
+        "evidence/ci03a/compare_sets.json + c1.time / c2.time / timing_table.json（本机两片同时跑一次：outcome 与顺序跑逐条相同；c1 +17.8s、c2 −2.6s；峰值 RSS 582.7 + 455.3 MiB）",
+        ".github/workflows/ci.yml package（CI03b：venv 在 ${{ runner.temp }}/smoke-venv；起服务 = scripts/ci/package_smoke.py --python \"$BIN/python\" --workdir ${{ runner.temp }}/smoke-run；step timeout-minutes 5；失败时 package-smoke-logs-<os>-<python> 收走 workdir；/tmp/smoke、5199、sleep 8 都不在了）",
+        "scripts/ci/package_smoke.py（端口向系统租 + 三种租约丢失文案换号重试；就绪 = /api/version 200 + JSON 且应答者持有本实例 data dir 里的凭据（smoke_app.adopt_session_credentials + /api/session/ping 200）；终止 = 整组 SIGTERM → SIGKILL → killpg(pgid, 0) ESRCH，组里剩人再升级；data / config 每次尝试一套在 workdir 下）",
+        "tests/test_package_smoke.py（41 条：桩的 11 种 fail-mode + SIG_IGN worker + 包装形状 + 等待中收 SIGTERM + 用法错误；变异反证 28/28 KILLED：evidence/ci03b/mutations.json）",
+        "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation（7 条；变异反证 18/18 KILLED：evidence/ci03b/mutations_ci.json）",
+        "evidence/ci03b/local_runs/（本机真 wheel：build → venv → install → 脚本 rc 0，ready_seconds 2.33 vs 原来盲等 8；租约被抢的复现 occupy_then_run.py：产品顺延「端口 P 被占用，改用 P+1」→ lease_lost 3.8 s → 换号 → rc 0；终止后 ps 无残留）",
+        "CI03B_PACKAGE_SMOKE_ISOLATION.md#1-三处隔离各自的主语 / #2 / #3 / #4"
       ],
-      "note": "本轮没有做隔离验证，只做了一次同机并发对照（c1 619.7s vs s1 601.9s、c2 538.0s vs s2 540.6s，outcome 逐条相同，没有一条因并发而红）。同机一次没撞 ≠ 隔离已验证：端口全是 bind(0)、目录各自 mkdtemp 是静态读出来的前提，HOME / 字体缓存 / MPLCONFIGDIR 两进程共享；CI 上每片独立 VM。隔离的真实验证（同机多 runner、跨 attempt）归 CI03 后续 PR。"
+      "note": "CI03a 那次只做了同机并发对照（见上一版 note：c1 619.7s vs s1 601.9s、c2 538.0s vs s2 540.6s，outcome 逐条相同）。CI03b（2026-09-16）让 `package` job 这一处的目录 / 端口 / 进程 owner 隔离**成立并有单测 + 合同**：venv 与 workdir 按 job、data / config 按尝试、端口按系统租约 + 三种竞争文案重试、就绪判据钉住应答者归属、终止判据钉住进程存在性；本机对真 wheel 与人为抢占各跑过一次。**仍是部分成立**：① windows-exe-smoke 的 dist/ 与 posix-e2e 的实例隔离没动；② HOME / 字体缓存 / MPLCONFIGDIR 仍按 04 §4 的『仅在测试合同允许处』未处理；③ 同机两个 package 实例真正同时跑没试过（本机只有单实例 + 人为抢占），Windows 腿的 taskkill / 路径形状一次都没跑。所以保持 not_run；到 CI04 多 runner 主机上跑过同机双实例、且其余撞点处理完再改。"
     },
     {
       "id": "CIP-019",
@@ -216,9 +222,11 @@
       "requirement": "并发与取消不杀其他job，不沿用全局危险reaper",
       "status": "not_run",
       "evidence": [
-        ".github/workflows/ci.yml（分片没有加任何 reaper / pkill；每片独立 VM，取消由 job 级 timeout-minutes 承担，未改）"
+        ".github/workflows/ci.yml（分片没有加任何 reaper / pkill；每片独立 VM，取消由 job 级 timeout-minutes 承担，未改）",
+        "scripts/ci/package_smoke.py（终止只对**自己起的**进程组（start_new_session=True，先核 pgid == pid）发信号，Windows 用 taskkill /T /F 只杀自己的 pid 树；没有任何 pkill / 扫共享目录；`smoke_app._leftover_workers` 按本实例 data dir 认残留）",
+        "tests/test_package_smoke.py::test_wait_group_gone_answers_by_existence_not_by_having_signalled（不是组长的 pid 不许被当成组）、::test_a_worker_that_ignores_sigterm_…（组里剩人升级 SIGKILL 后核空）、::test_termination_leaves_neither_the_server_nor_its_worker"
       ],
-      "note": "本轮未做取消实验，也没有新增任何清理动作；「取消不杀其他 job」只是 GitHub 托管 VM 的既有性质，没有本仓库的证据。"
+      "note": "CI03a 那次未做取消实验、未新增清理动作。CI03b（2026-09-16）新增的唯一清理动作是 package_smoke.py 对**自己起的**进程组的终止：作用域 = 自己 setsid 出来的那个组（先核组长，不是组长就退回只杀直接子进程，绝不 killpg 到别人的组）/ Windows 自己 pid 的进程树；没有全局 reaper、没有 pkill、没有按名字扫进程。脚本对 SIGTERM / SIGINT 装了处理器（抛 SystemExit，让 finally 里的终止跑完再退），本机用例验过：等待就绪期间收到 SIGTERM，脚本退 143 且服务与 worker 都不在了。「取消不杀其他 job」这一半仍只是托管 VM 的既有性质；runner 在 step 超时 / 取消时对步骤进程树发 SIGINT → SIGTERM → 杀树的那条链在 CI 上一次没跑过。所以保持 not_run。"
     },
     {
       "id": "CIP-020",

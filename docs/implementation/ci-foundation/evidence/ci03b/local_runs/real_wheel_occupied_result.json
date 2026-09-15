@@ -1,0 +1,83 @@
+{
+ "ok": true,
+ "workdir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied",
+ "python": null,
+ "launch": "/Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python docs/implementation/ci-foundation/evidence/ci03b/occupy_then_run.py --state-file /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/occupied.state --port {port} -- /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python -m tavotto --port {port} --no-browser",
+ "timeout": 60.0,
+ "max_attempts": 3,
+ "attempts": 2,
+ "port": 58267,
+ "ready_seconds": 0.26,
+ "version": {
+  "build": "index-CfkcuH7t",
+  "version": "0.14.0"
+ },
+ "history": [
+  {
+   "attempt": 1,
+   "port": 58253,
+   "command": [
+    "/Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python",
+    "docs/implementation/ci-foundation/evidence/ci03b/occupy_then_run.py",
+    "--state-file",
+    "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/occupied.state",
+    "--port",
+    "58253",
+    "--",
+    "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python",
+    "-m",
+    "tavotto",
+    "--port",
+    "58253",
+    "--no-browser"
+   ],
+   "log": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/attempt-1/server.log",
+   "state": "lease_lost",
+   "ok": false,
+   "reason": "日志里出现端口占用类文案：* 端口 58253 被占用，改用 58254",
+   "terminate": {
+    "how": "killpg-term",
+    "returncode": -15,
+    "group_gone": true
+   },
+   "leftover_workers": [],
+   "elapsed_seconds": 3.83
+  },
+  {
+   "attempt": 2,
+   "port": 58267,
+   "command": [
+    "/Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python",
+    "docs/implementation/ci-foundation/evidence/ci03b/occupy_then_run.py",
+    "--state-file",
+    "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/occupied.state",
+    "--port",
+    "58267",
+    "--",
+    "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-venv/bin/python",
+    "-m",
+    "tavotto",
+    "--port",
+    "58267",
+    "--no-browser"
+   ],
+   "log": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/pkg/smoke-run-occupied/attempt-2/server.log",
+   "state": "ready",
+   "ok": true,
+   "ready_seconds": 0.26,
+   "version": {
+    "build": "index-CfkcuH7t",
+    "version": "0.14.0"
+   },
+   "index_status": 200,
+   "version_status": 200,
+   "terminate": {
+    "how": "killpg-term",
+    "returncode": -15,
+    "group_gone": true
+   },
+   "leftover_workers": [],
+   "elapsed_seconds": 0.58
+  }
+ ]
+}
