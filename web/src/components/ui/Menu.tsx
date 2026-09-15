@@ -1,7 +1,7 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
@@ -299,6 +299,42 @@ export function MenuRadioItem({
 }
 
 export const MenuSeparator = () => <DM.Separator className="my-1 h-px bg-border" />
+
+/**
+ * 不在 Radix 菜单树里的「菜单项形状的按钮」：给 `role="dialog"` 的快捷编辑弹层这类
+ * 里面有输入控件、套不进 DropdownMenu 的浮层用（2026-09-15 全面打磨 M2）。外观与
+ * `MenuItem` 同一份 `ITEM_CLASS`，hover / 键盘焦点用同一档 surface-hover；语义与键盘
+ * 由调用方的容器负责（它就是一颗普通 button）。
+ */
+export function MenuButton({
+  icon: Icon,
+  shortcut,
+  danger,
+  className,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon?: ComponentType<{ size?: number; className?: string }>
+  shortcut?: string
+  danger?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      {...rest}
+      className={cn(
+        ITEM_CLASS,
+        'w-full text-left hover:bg-surface-hover focus-visible:bg-surface-hover',
+        danger ? 'text-danger' : 'text-ink',
+        className,
+      )}
+    >
+      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
+    </button>
+  )
+}
 
 /**
  * 菜单分组标题：12 / 400 / ink-3——比菜单项**淡**一档（OpenAI 14/400 secondary、Claude 12.5 muted 都
