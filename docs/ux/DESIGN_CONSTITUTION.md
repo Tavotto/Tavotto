@@ -484,3 +484,79 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   （`AssetCapabilityNotice`）保留——它只在有状态要说时出现，且是键盘用户到达「查看接入状态」的
   唯一真按钮，不是常驻说明。
 - **项目 / 文档是面包屑**：顶栏左侧「项目 / 文档」之间是一个斜杠，不是竖线分隔的两个 chip。
+
+## 二十、2026-09-15 全面打磨（原语 → 页面）
+
+用户第二个要求：「学一下 codex 和 claude 的各类组件的精致感从何而来……细到选择栏，大到页面，全面打磨」。做法：
+66 张基线截图 → 两份调研（`polish-research-2.md` 逐组件量化 OpenAI apps-sdk-ui 与 Claude 壳；`polish-research-pages.md`
+页面级，Codex 壳 CSS 从 ChatGPT.app 解出）→ 五份审计（原语 / 左栏 / 检查器 / 画布与顶栏 / 对话框与设置，约 190 条，每条带
+文件:行与量到的数）→ 六条 stacked 分支（原语 → 左栏 → 检查器 → 画布与顶栏 → 对话框与设置）。对比稿：artifact「Tavotto 全面打磨对比」。
+
+### 原语层落下的规矩
+- **同一高度只有一种字号**：28px 的按钮（sm / md 只差内边距）、菜单项、页签、Select 项、命令面板行都是 12。11 只留给标签 / caption / meta。
+- **菜单分组标题比项淡一档**（12/400/ink-3），不再是 type-section；`MenuLabel` 与 `MenuHeading` 同一样式。
+- **触发钮有打开态**：ghost / secondary 作为 Menu / Popover 触发器时 `data-[state=open]` 底色常驻（surface-active）。
+- **20px 行内小钮是 28 之外唯一的一档**（`Button size="icon-xs"` / `IconButton iconSize="xs"`）：标题行里的 ?、搜索框清除、通知 ×。
+- **Checkbox / Radio 16、Toggle 28×16 + shadow-thumb**；hover 只能加深。
+- **快捷键与 Kbd 是系统字体 + tabular-nums**；等宽字体只留代码 / 路径 / 脚本名 / 取值代号。
+- **Dialog 内边距 20、遮罩 ink 30% 不模糊、关闭钮 12 / 12**。
+- **分区头上宽下紧**（上 16 下 4）；分区级折叠头（Disclosure）是 type-section 那一档。
+- **`duration-fast / base / slow / exit` 是真工具类**（`@utility duration-*`）——此前 Tailwind 4 没有这个命名空间，四档都在跑默认值。
+- **Notice 原语删除**：说明条没有独立原语，警告用 `InlineWarning`，状态一句话是 surface-2 底的一条。
+
+### 页面层落下的规矩
+**左栏**
+- 面板标题与分区标题同一档（`type-section` 12/500）；行主文字 12、meta 11——主文字与 meta 之间必须有 2px 台阶，不能只靠颜色。
+- 计数是 `type-meta` 的数字，不跟着父元素的 500 / 600 走（`type-meta` 已显式 400）。
+- 同一件事只说一遍：素材页的「文件夹信息 N」删（N 就是「图 N」）；选中卡上的就近入口只在 hover / 聚焦出现（底部操作条已是同一对动作）；
+  版本行「来自画布 X」只在能区分什么时出现；空态说明不复述按钮或标题；卡片 title 只留路径。
+- 一件东西一个词：轨叫「素材」、区头叫「图」，搜索 / 空态 / 无匹配 / 可达名都叫「图」，不再出现「面板」。
+- 同一副骨架：「图」与「脚本」同一个可折叠区头（图默认展开、带计数）；左抽屉与版本抽屉同一副头（36、type-section、DrawerCount、IconButton）；
+  两处页签条 36；页脚行一种语法（`border-t px-1.5 py-1` + 28px 控件）；行内改名框走 fieldBox；图标钮一律 IconButton（名字与气泡同一份）。
+- 少画线：轨与抽屉之间不画线，轨底部的短线删；就近入口去实边用 shadow-thumb；卡片选中态 = border-strong + 名字 500，不铺底；卡圆角 10。
+- 左轨气泡在抽屉打开时不出现（面板头已写着名字）。
+- 保留：轨钮 32、图层行的锁 / 眼直出、底部操作条与接入状态条（第十九节）。
+
+**检查器**
+- 一个表单一种行语法：标签列宽一个出处（`INSPECTOR_LABEL_W` = 88，`inspector/layout.ts`），所有页的 Row / ArrangeGrid / CanvasPage / TextSection / TransformSection / StrokeSection 都传它。
+- 几何前缀一律坐在框里（`prefixInside`）：对象页 X / Y / W / H、整张图页图幅、子图页尺寸同一种写法。
+- 数字框只有两档宽：`compact`（4ch + 单位列，所有单列数值）与 `fill`（几何网格）；调用点不再各定一个宽。
+- 折叠开关只有两种：分区 = `Disclosure`（type-section 那一档，pb-4 与 Section 同节拍）；组内 = 28px 文字链接 11/500 ink-2 无 chevron。
+- 分区节奏一套：Section 头上 16 下 4，GroupHead 复用它。
+- 常驻说明删：对象页「写回会覆盖原始 PDF/PNG…」、图例「1 em = 一个图例字号」、次刻度旁的值文字、「修改保存在哪里？」问号入口。
+- 说一遍：画布页组头不再复述下面 W / H 的尺寸；改图助手的作用范围只在输入框那颗上说；图例项组头「图例项 N」、默认态不挂徽标。
+- 图钉：钉住 = Pin 图标 ink 无底，未钉 = PinOff ink-3；不再有常驻灰块。页签纯文字（助手页签去图标）。
+- 样张选择器弹层宽跟触发器（`Popover width="trigger"`）；预览里已印名字的单列样张不再包 Tip（`OptionGrid previewHasLabel`）。
+- 原始文件组两页同一份（写回 secondary + 历史 / 同步 ghost 一行）；居中 / 恢复这类命令是标签行 + ghost；子图页边框卡回到 Row 语法。
+- 改图助手：输入框走 fieldBox；会话块 surface-2 无边、meta 走 type-meta；回滚 danger ghost；⌘↵ 小片删；目标片是钮形。
+- 保留：字号内联标签、示意图无标签列、组内「更多」无 chevron、32px 样张格、图例「最佳位置」形态、预设卡文案（只统一高度 88）。
+
+**顶栏 · 画布 · 浮动栏 · 通知 · 命令面板**
+- 顶栏所有带字的钮同一副壳（`Button size="md"`、12、圆角 6）；项目 / 文档面包屑两颗同形；缩放值 `type-number`；chevron 一律 ink-3。
+- 顶栏不画底线，整屏只剩画布页签条那一条 hairline；页签条左缘与品牌标同为 12。
+- 画布页签走 `tabClass`（选中 600 + ink，36 高）；下划线挂在文字盒上；加粗宽度由 `useBoldWidthLock` 锁住。
+- 画布层只有一种彩色线：选框 / 参考线 / 元素框 / 端点 / 手柄 / 安全区 / 落点高亮一律 `--color-sel`；accent 只剩焦点环 / 链接 / AI。
+  「正在构建」这类状态角标是 ink 底，不是蓝。
+- 标尺刻度 11px 系统字体（等宽只给代码 / 路径）；纸面没有投影。
+- 浮动栏一副骨架：36 高、内边距 4、gap 4、12 号；分隔线不自带外边距；线型 / 图例位置的触发器走 `PickerTrigger`；键位用 `Kbd`；
+  禁用一律 40%（门禁也抓 `aria-disabled` 那条路）。
+- 菜单只有一份实现：缩放弹层是 `Menu` + `MenuRadioGroup`（当前档带勾）；标注工具是 `MenuRadioItem`（带 `shortcut`）；
+  `role="dialog"` 的快捷编辑弹层用 `MenuButton`（同一份 ITEM_CLASS）；菜单从触发钮右缘垂下；分隔线只在真分组之间。
+- 通知轨最多两条：状态来了先顶掉操作提示（提示稍后重播），「已加入」优先级最高；toast 无实边、只 shadow-pop、12 号 ink、底距 16、一种高度；
+  HUD 读数盒 `rounded-md shadow-pop` 无边。两种横幅合成一种（贴边、surface-2、border-b、min-h 32）。
+- 命令面板 520 宽、行 32 / 12、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。
+- 引导卡：标题 type-title、关闭钮 20 档、箭头无描边、按钮 md、间距只有 8 / 12。
+- 文案：「导出项目包（.tavotto）」去掉括号后缀；「可参数化脚本」改「已关联脚本」。
+
+**对话框与设置**
+- 管理页与二级页不再自带小原语：编码 Agent 详情用 `SettingSection`（带 `action` 槽）/ `DiagnosticItem` / `DiagnosticDisclosure`；
+  诊断技术详情、依赖修复卡去框，蓝色链接改钮；接口对话框、论文样式、另存为、导出共用一份 `FormRow`（`components/FormRow.tsx`）。
+- 主动作落在身份行：样式页「应用到当前图…」在身份行贴右（可编辑时是「保存」primary，恢复 / 删除收进 ⋯）；
+  规范页「本项目在用」按 `resolveDocumentSpec` 的实际在用判定，回退态只给 ghost「固定为本项目规范」；
+  编码 Agent 页首检测条与诊断页两段都收进分区标题行右侧；安装 secondary、重新诊断 ghost。
+- 设置外壳：导航组名 12/400/ink-3、项 12；英文组名 App；分区头下缘 8；说明 / 现状 / 示意图合成一段只收一次负边距。
+- 论文样式对话框：库收成右列顶部一行（与设置 › 样式页同形），编辑器铺满；名称 / 字段 / 应用范围同一副 FormRow，分段按内容定宽。
+- 常驻说明删：项目页分区说明、导出页「默认格式」说明、更新页复述、接入状态与论文样式标题下的一句、包管理输入框下两行灰字；
+  「名字（N）」三处改「名字 + meta 数字」；写回那句降为开着时的 status。
+- 少画框：Agent 列表、包管理表格（th 加底色）、科研预设卡、看大图的框、浮卡 / 抽屉的 border 全部去掉；四处手画黄块换 `InlineWarning`。
+- 图选择器改成接入状态那种行；另存为路径只写末级目录；缺失素材用 warn 不用 danger；弹窗进度条 ink。
