@@ -23,11 +23,13 @@ export function EmptyState({
 }) {
   return (
     <div className="flex h-full min-h-32 flex-1 flex-col items-center justify-center gap-1.5 px-6 py-8 text-center">
-      <Icon size={ICON_SIZE.lg} className="text-ink-faint" aria-hidden />
-      <p className="text-xs font-medium text-ink-2">{title}</p>
-      {hint && <p className="max-w-60 text-xs leading-relaxed text-ink-3">{hint}</p>}
+      {/* 层级两级：标题 12/500/ink、说明 11/ink-2（差一档字号 + 一档色，2026-09-15 审计 A05）；
+          图标是这一屏唯一的图形线索，用 ink-3 而不是装饰档的 ink-faint */}
+      <Icon size={ICON_SIZE.lg} className="text-ink-3" aria-hidden />
+      <p className="text-sm font-medium text-ink">{title}</p>
+      {hint && <p className="max-w-60 text-xs leading-relaxed text-ink-2">{hint}</p>}
       {action && (
-        <Button variant="secondary" size="sm" className="mt-1.5" onClick={action.onClick}>
+        <Button variant="secondary" className="mt-3" onClick={action.onClick}>
           {action.label}
         </Button>
       )}

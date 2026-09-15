@@ -20,10 +20,12 @@ export function Section({
   /** 标题是内容而非分组名（如图内元素名）时关掉全大写 */
   plainTitle?: boolean
 } & Omit<HTMLAttributes<HTMLElement>, 'title' | 'children' | 'className'>) {
+  // 分区头「上宽下紧」（上 16 / 下 4，Claude 分区头 padding 16 6 4）：标题贴着自己的内容，
+  // 不是均匀地悬在两组之间（2026-09-15 审计 B14）
   return (
-    <section {...rest} className={cn('px-3 pb-4 pt-3 [&+&]:pt-0', className)}>
+    <section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
       {title && (
-        <header className="mb-2 flex h-4 items-center justify-between">
+        <header className="mb-1 flex h-4 items-center justify-between">
           <h3
             className={cn(
               'min-w-0 truncate',
@@ -59,7 +61,9 @@ export function Reveal({ open, className, children }: { open: boolean; className
       data-state={state}
       data-reveal
       className={cn(
-        'grid data-[state=open]:animate-reveal-in data-[state=closed]:animate-reveal-out',
+        // 列钉成 minmax(0,1fr)：grid 的隐式列按 min-content 定宽，里面一行 truncate 的长路径会把列
+        // 撑过容器右缘（编码 Agent 详情「找过这些位置」实测）；钉住之后 truncate 才生效（2026-09-15 对话框批次）
+        'grid grid-cols-[minmax(0,1fr)] data-[state=open]:animate-reveal-in data-[state=closed]:animate-reveal-out',
         className,
       )}
       onAnimationEnd={(e) => {
@@ -87,11 +91,13 @@ export function Disclosure({
   summary?: ReactNode
 }) {
   return (
-    <section className="px-3 pb-3">
+    // pb-4：与 Section 同一个节拍（分区之间 16），画布页五组折叠行与「源文件与高级」不再各走一套 40 / 44（2026-09-15 检查器批次 L5）
+    <section className="px-3 pb-4">
       <button
         onClick={onToggle}
         aria-expanded={open}
-        className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        // 分区级折叠头 = 分区标题那一档（12/500/ink，type-section）：「浅 + 重」两头都不占（2026-09-15 审计 B06）
+        className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
       >
         <ChevronRight
           size={ICON_SIZE.xs}

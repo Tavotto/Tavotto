@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 
 /**
  * 单选：全产品只有这一种（与 `Checkbox` 同一套尺寸与状态）。原生 `<input type="radio">`
- * 去掉外观、画成 14px 的圆——选中时近黑外圈 + 白底上一枚 6px 的近黑圆点。
+ * 去掉外观、画成 16px 的圆（与 Checkbox 同档，2026-09-15 审计 B04）——选中时近黑外圈 + 白底上一枚 6px 的近黑圆点。
  *
  * 语义、键盘（方向键在同名组里走）、`name` / `checked` / `onChange` 全是原生的；
  * 可达名照原生规则来——外面包 `<label>` 或给 `aria-label`。
@@ -16,7 +16,7 @@ export const Radio = forwardRef<
   Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'size'>
 >(function Radio({ className, ...props }, ref) {
   return (
-    <span className={cn('relative inline-flex h-3.5 w-3.5 shrink-0', className)}>
+    <span className={cn('relative inline-flex h-4 w-4 shrink-0', className)}>
       <input
         ref={ref}
         type="radio"
@@ -25,7 +25,7 @@ export const Radio = forwardRef<
           'peer absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none rounded-full',
           // 未选中的圆：border-control，与 Checkbox 同一档（边界就是全部识别信息，≥3:1）
           'border border-border-control bg-surface outline-none transition-colors duration-fast',
-          'hover:border-ink/45 checked:border-ink',
+          'hover:border-ink-2 checked:border-ink',
           'focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
         )}
       />

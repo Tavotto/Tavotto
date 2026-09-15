@@ -119,7 +119,6 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
       '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
-      '/src/components/ui/Tabs.tsx': { count: 1, why: '量宽用的同一个类名：布局前临时加粗量出 min-width，邻居不挪' },
     },
   },
   {

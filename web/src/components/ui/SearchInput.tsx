@@ -2,6 +2,7 @@ import { forwardRef, type InputHTMLAttributes } from 'react'
 import { Search, X } from './icons'
 import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { Button } from './Button'
 import { ICON_SIZE } from './Icon'
 import { FIELD_BOX, FIELD_FOCUS } from './fieldBox'
 
@@ -60,17 +61,14 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
         {...props}
       />
       {value && (
-        <button
-          type="button"
+        <Button
+          size="icon-xs"
           onClick={() => onValueChange('')}
           aria-label={clearLabel ?? t('actions.clearSearch')}
-          className={cn(
-            'absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-xs',
-            'text-ink-3 outline-none transition-colors duration-fast hover:text-ink focus-visible:focus-ring',
-          )}
+          className="absolute right-1 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
         >
           <X size={ICON_SIZE.sm} />
-        </button>
+        </Button>
       )}
     </div>
   )

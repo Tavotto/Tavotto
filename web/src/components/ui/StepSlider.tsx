@@ -24,8 +24,7 @@ const DOT_HIT_PX = 14
  *
  * 形态是一条**厚胶囊**（48px 轨 + 56px 白钮），不是系统默认的细线滑杆：
  * 看得见的那整块就是命中区，48px 高的轨本身即触控目标。白钮不描边，
- * 状态对比交给填充段与浅灰轨的边界（#2868b7 / #e3e3dd ≈ 4.9:1，过非文字
- * 3:1）；键盘焦点另有 focus ring，不靠描边表达。
+ * 状态对比交给 ink 填充段与浅灰轨的边界；键盘焦点另有 focus ring，不靠描边表达。
  *
  * 看得见的每一层（轨 / 填充 / 刻度 / 白钮）都由 span 自己画，原生 `<input>`
  * 整层透明、只留交互与无障碍：原生拇指的位置由 value 直接算出、**无法 transition**，
@@ -135,8 +134,8 @@ export function StepSlider({
         />
       </span>
       {/* 离散刻度点：一档一个，显式压在胶囊的垂直中心线上（top-1/2 + -translate-y-1/2，
-          不靠 flex 的静态位置猜），表明这不是连续滑杆。走过的一段用同色系的浅蓝
-          （在主题色上 4.9:1，看得清又不抢戏），没走到的用稍深的灰；换色跟着钮一起过渡。 */}
+          不靠 flex 的静态位置猜），表明这不是连续滑杆。走过的一段不画点——ink 填充本身
+          已说明进度（selected 10% 压在 ink 上与填充几乎同色，2026-09-15 审计 B12）。 */}
       {count > 1 &&
         Array.from({ length: count }, (_, i) => (
           <span
@@ -145,7 +144,7 @@ export function StepSlider({
             className={cn(
               'pointer-events-none absolute top-1/2 h-[var(--dot)] w-[var(--dot)] -translate-x-1/2 -translate-y-1/2 rounded-full',
               'transition-[background-color,scale] duration-[var(--duration-base)] ease-[var(--ease-pop)]',
-              i <= value ? 'bg-selected' : 'bg-ink-faint',
+              i <= value ? 'bg-transparent' : 'bg-ink-faint',
             )}
             // scale 是独立属性，与 -translate-x-1/2 用的 translate 属性互不干扰，放大时
             // 圆心不会跑偏（换成 transform: scale 就会顶掉那半格居中位移）。
@@ -182,14 +181,14 @@ export function StepSlider({
         )}
       />
       {/* 看得见的拇指：56px 实心白圆钮，无描边、无蓝色轮廓，只有系统唯一允许的那层轻投影
-          （--shadow-pop）让它略微悬浮。left 走过渡，所以换档是滑过去而不是跳过去；关掉
+          （--shadow-thumb，白色 thumb 那一档，与分段 / 开关同一份；shadow-pop 是浮层专用）让它略微悬浮。left 走过渡，所以换档是滑过去而不是跳过去；关掉
           动效（prefers-reduced-motion）后位置依旧正确。焦点环从 input 接过来
           （peer-focus-visible）——原生 focus ring 会套住整条轨道，所以不用它。 */}
       <span
         aria-hidden
         className={cn(
           'pointer-events-none absolute top-1/2 h-[var(--thumb)] w-[var(--thumb)] -translate-x-1/2 -translate-y-1/2 rounded-full',
-          'bg-surface shadow-pop',
+          'bg-surface shadow-thumb',
           'transition-[left] duration-[var(--duration-base)] ease-[var(--ease-pop)]',
           // 焦点环与全站 focus-ring 同一档：不透明的 accent（透明版对底色不到 2:1）
           'peer-focus-visible:ring-2 peer-focus-visible:ring-accent',

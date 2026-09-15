@@ -18,7 +18,8 @@ export function Kbd({
     <kbd
       {...props}
       className={cn(
-        'inline-flex items-center justify-center font-mono text-xs leading-none',
+        // 系统字体 + 等宽数字，不用等宽字体：11px 的 SF Mono 比正文重一档，一句话里两种字（2026-09-15 审计 B05）
+        'inline-flex items-center justify-center text-xs leading-none tabular-nums',
         size === 'sm'
           ? 'h-4 min-w-4 rounded-xs bg-surface-2 px-1 text-ink-3'
           : 'h-[22px] min-w-[23px] rounded-xs border border-border border-b-2 border-b-border-strong bg-surface-2 px-1.5 font-medium text-ink-2',

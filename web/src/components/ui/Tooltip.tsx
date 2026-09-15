@@ -39,7 +39,7 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
         >
           <span>{label}</span>
           {shortcut && (
-            <span className="font-mono text-xs text-surface/60">{shortcut}</span>
+            <span className="text-xs tabular-nums text-surface/60">{shortcut}</span>
           )}
         </RT.Content>
       </RT.Portal>

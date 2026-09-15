@@ -9,13 +9,13 @@ import { cn } from '@/lib/utils'
 export const TAB_UNDERLINE = 'after:absolute after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
 
 /**
- * 选中 = ink 色 + 那条滑过来的下划线（形状是第二重线索，不单靠颜色）；未选中 ink-3。
- * 选中项**不再加粗**（二审 A4）：SF Pro 的 500 比 400 宽 2–3%，en-US 切页签时邻居会挪 1.5px；
- * 页签的子元素是图标 + 文字 + 计数 + 运行点的组合，没法用「隐藏的加粗影子」占位，
- * 而下划线已经把「不靠颜色」这一条守住了。
+ * 选中 = 600 + ink + 那条滑过来的下划线（形状是第二重线索，不单靠颜色）；未选中 ink-3。
+ * 600 是 2026-09-15 用户拍板（批次 A T8）；加粗带来的宽度抖动由 `Tab` 用 useLayoutEffect
+ * 量出加粗宽度写成 min-width 挡住（二审 A4 担心的正是这个）。
+ * 字号 12（type-body）：页签切换的是 12px 的内容，自己不能比内容小一号（2026-09-15 审计 A04）。
  */
 export const tabClass = (active: boolean) =>
   cn(
-    'relative h-full text-xs outline-none transition-colors focus-visible:focus-ring',
+    'relative h-full text-sm outline-none transition-colors focus-visible:focus-ring',
     active ? 'font-semibold text-ink' : 'text-ink-3 hover:text-ink-2',
   )

@@ -8,8 +8,8 @@ import { cn } from '@/lib/utils'
  * 灰框、「线型」又是白框。灰底对白面板只有 1.07:1，静态时分不出谁能改、谁只是只读值。
  * 现在：**有框 = 能改**；只读摘要继续无框。
  *
- * 边框色 `border-input`：白 3.48:1，识别控件边界的非文字对比过 3:1（WCAG 1.4.11）；
- * hover 再深一档到 ink-3，聚焦 accent。TextInput / TextArea / NumberField / Select /
+ * 边框色 `border-input`：ink 16%（批次 A T1，与 OpenAI 16% / Claude 10% 同一做法，静态 ≈1.4:1
+ * 是有意的——3:1 由聚焦环承担）；hover 25%，聚焦 accent。TextInput / TextArea / NumberField / Select /
  * SearchInput / PickerTrigger 都从这里取，不各写一遍。
  */
 export const FIELD_BOX = cn(

@@ -148,7 +148,7 @@ components:
 ## Typography
 
 **Body Font:** 系统 sans（SF Pro Text / PingFang SC / Microsoft YaHei，`--font-sans`）
-**Mono Font:** `ui-monospace`（数字框、路径、代码，`--font-mono`）
+**Mono Font:** `ui-monospace`（只给代码、路径、脚本名与取值代号，`--font-mono`；数值、快捷键、kbd 都是系统字体 + tabular-nums）
 **Document Font:** Times New Roman / Songti SC（`--font-doc`）——只给画布里的文字对象，模拟论文排版，与 UI 字体严格分离。
 
 **Character:** 一套字体、四档字号、两档字重；层级由六个**角色**决定，不由页面自己挑组合。
@@ -177,7 +177,7 @@ md 10（卡片与浮层）、lg 14（对话框、命令面板）、full（圆点
 
 全部原语在 `web/src/components/ui/`，形态与状态在 **宪法第五节**：Button 四档、IconButton、
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
-Badge、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass / TreeRow、SearchInput、Notice、Section / Disclosure。
+Badge、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass / TreeRow、SearchInput、Section / Disclosure。
 四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
 disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。
 

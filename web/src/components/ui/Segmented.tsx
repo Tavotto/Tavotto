@@ -43,11 +43,10 @@ interface SegmentedProps<T extends string> {
 const KEY_DELTA: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }
 
 /**
- * 分段选择器（segmented control）：一组**互斥的取值**排成 28px 的一行，hairline
- * 外框把它标成一个控件（与输入框、下拉同一条边），选中项 = `selected` 轻 tint +
- * 字重（与列表行、设置导航、`Button active` 同一套选中语言），未选中 ink-3、
- * hover 浮 surface-hover。整组默认撑满容器宽度，各档等分；`value` 为 null（多选
- * 取值不一）时没有一档被标成选中。
+ * 分段选择器（segmented control）：一组**互斥的取值**排成 28px 的一行，灰容器
+ * （surface-active）里一枚白色 thumb 滑到选中项下面（shadow-thumb，批次 A T6），
+ * 选中项 600 + ink、未选中 ink-3。整组默认撑满容器宽度，各档等分；`value` 为 null
+ * （多选取值不一）时没有一档被标成选中。
  *
  * 它与 `Tabs` 的分工（2026-09-13 审计 §6「控件语法」）：**页签负责切换视图，
  * 不负责属性取值**——对齐、刻度方向、纵横比、作用范围这些「值」用它；版本对比
@@ -142,8 +141,8 @@ export function Segmented<T extends string>({
             className={cn(
               // relative：压在滑动的选中底之上；每格不再自己画 bg-selected
               'relative flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
-              // 首尾两格跟着外框的圆角走，hover 的 tint 才不会在角上露出方角
-              'first:rounded-l-sm last:rounded-r-sm',
+              // 每格同形（rounded-xs，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
+              'rounded-xs',
               'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
               active
                 ? 'font-semibold text-ink'

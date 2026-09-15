@@ -16,9 +16,11 @@ type Variant = 'ghost' | 'secondary' | 'primary' | 'danger'
 /**
  * 高度只有一档 28px（h-7）——Tavotto 的控件密度是「紧凑工具」那一档，
  * 输入框 / 下拉 / 树行 / 图标钮全都是它，按钮不另起炉灶。
- * sm / md 只差字号与内边距；icon / icon-sm 是 28×28 的方钮，只差图标档。
+ * sm / md 只差内边距（字号同为 12——同一高度的控件只有一种字号，2026-09-15 审计 A02）；
+ * icon / icon-sm 是 28×28 的方钮，只差图标档；icon-xs 是 20×20 的行内小钮（标题行里的 ?、
+ * 搜索框的清除、通知的 ×），此前四处各手写一遍——它是 28 之外唯一的一档，只给行内。
  */
-type Size = 'sm' | 'md' | 'icon' | 'icon-sm'
+type Size = 'sm' | 'md' | 'icon' | 'icon-sm' | 'icon-xs'
 
 export interface ButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
@@ -34,24 +36,34 @@ export interface ButtonProps
 }
 
 const VARIANTS: Record<Variant, string> = {
-  ghost: 'text-ink hover:bg-surface-hover active:bg-surface-active',
+  // data-[state=open]：作为菜单 / 弹层触发器时（Radix Trigger asChild 把 data-state 落在这颗钮上）
+  // 浮层开着的期间底色常驻，浮层与它的按钮才看得出因果（2026-09-15 审计 B01）
+  ghost: 'text-ink hover:bg-surface-hover active:bg-surface-active data-[state=open]:bg-surface-active',
   secondary:
-    'border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-2 active:bg-surface-active',
+    'border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-hover active:bg-surface-active data-[state=open]:bg-surface-active',
   // 主动作用近黑色；蓝色只留给选择 / 焦点 / 链接
   primary: 'bg-ink text-white hover:bg-ink/90 active:bg-ink/95',
   danger: 'text-danger hover:bg-danger-subtle active:bg-danger/15',
 }
 
 const SIZES: Record<Size, string> = {
-  sm: 'h-7 px-2 gap-1 text-xs rounded-sm',
+  sm: 'h-7 px-2 gap-1 text-sm rounded-sm',
   md: 'h-7 px-2.5 gap-1.5 text-sm rounded-sm',
   icon: 'h-7 w-7 rounded-sm',
   // 图标点击区不小于 28px；两档只差图标字号
   'icon-sm': 'h-7 w-7 rounded-sm',
+  // 20px 行内小钮：圆角仍是 6（Claude 的 20px 行钮圆角 5，不降到 3）
+  'icon-xs': 'h-5 w-5 rounded-sm',
 }
 
 // 忙碌指示器跟按钮里其它图标同一档：有文字的按钮 sm，纯图标按钮 md
-const SPINNER: Record<Size, IconSizeStep> = { sm: 'sm', md: 'sm', icon: 'md', 'icon-sm': 'sm' }
+const SPINNER: Record<Size, IconSizeStep> = {
+  sm: 'sm',
+  md: 'sm',
+  icon: 'md',
+  'icon-sm': 'sm',
+  'icon-xs': 'sm',
+}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -165,8 +177,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
  */
 export interface IconButtonProps extends Omit<ButtonProps, 'size' | 'aria-label' | 'children'> {
   label: string
-  /** 图标档：默认 md（16px）；与 11–12px 文字并排的小钮用 sm（14px） */
-  iconSize?: 'md' | 'sm'
+  /** 图标档：默认 md（16px）；与 11–12px 文字并排的小钮用 sm（14px）；xs = 20×20 的行内小钮（14px 图标） */
+  iconSize?: 'md' | 'sm' | 'xs'
   /**
    * 气泡：默认显示 `label`；传 false 关掉（旁边已有可见文字时）；传字符串则气泡说
    * 另一句（只给「名字是动作、气泡讲当前状态」的开关钮，如钉住 / 宽高比锁）。
@@ -182,7 +194,12 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   ref,
 ) {
   const btn = (
-    <Button ref={ref} size={iconSize === 'md' ? 'icon' : 'icon-sm'} aria-label={label} {...props}>
+    <Button
+      ref={ref}
+      size={iconSize === 'md' ? 'icon' : iconSize === 'sm' ? 'icon-sm' : 'icon-xs'}
+      aria-label={label}
+      {...props}
+    >
       {children}
     </Button>
   )
