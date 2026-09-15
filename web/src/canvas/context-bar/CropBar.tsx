@@ -26,8 +26,7 @@ export function CropBar({ panelId }: { panelId: string }) {
     <span className="contents" data-crop-bar>
       <Tip label={pn('resetCropTip')} side="bottom">
         <Button
-          size="sm"
-          className="gap-1.5 px-2"
+          size="md"
           data-crop-action="reset"
           onClick={() => resetPanelCrop([panelId])}
         >
@@ -38,8 +37,7 @@ export function CropBar({ panelId }: { panelId: string }) {
       <Sep />
       <Tip label={pn('cropCancelTip')} side="bottom">
         <Button
-          size="sm"
-          className="gap-1.5 px-2"
+          size="md"
           data-crop-action="cancel"
           onClick={cancelCrop}
         >
@@ -51,8 +49,8 @@ export function CropBar({ panelId }: { panelId: string }) {
       <Tip label={pn('cropDoneTip')} side="bottom">
         <Button
           variant="primary"
-          size="sm"
-          className="ml-2 gap-1.5 px-2"
+          size="md"
+          className="ml-2"
           data-crop-action="done"
           onClick={finishCrop}
         >

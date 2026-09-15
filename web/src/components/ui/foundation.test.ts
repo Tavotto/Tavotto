@@ -189,6 +189,16 @@ const RULES: Rule[] = [
     spares: '<button className="disabled:cursor-not-allowed disabled:opacity-40" />',
   },
   {
+    // 上一条只抓 `disabled:` 前缀。浮动栏的「水平等距」不用原生 disabled（原生 disabled
+    // 不发 pointer 事件，tooltip 里那句「需要三个对象」会一起消失），走 aria-disabled +
+    // 手写 opacity——那条路上的 `opacity-35` 三个月没人发现（2026-09-15 打磨 F5）
+    name: '禁用态只有一档：aria-disabled 那条路的 opacity 也是 40（宪法第五节）',
+    pattern: /cursor-not-allowed (?:[a-z-]+ )*opacity-(?!40\b)\d+|opacity-(?!40\b)\d+ (?:[a-z-]+ )*cursor-not-allowed/,
+    fix: "cn(blocked && 'cursor-not-allowed opacity-40')",
+    catches: "<Button className={cn(blocked && 'cursor-not-allowed opacity-35')} />",
+    spares: "<Button className={cn(blocked && 'cursor-not-allowed opacity-40')} />",
+  },
+  {
     name: '禁用态不用 pointer-events-none（会把 title / tooltip 一起吞掉）',
     pattern: /(disabled:|disabled && ['"])pointer-events-none/,
     fix: '原生 disabled 已经挡住点击；光标用 cursor-not-allowed，原因走 title',

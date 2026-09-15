@@ -146,7 +146,8 @@ function ElementPopover({
       style={{ left: pos.x, top: pos.y }}
       className={cn(
         'fixed z-50 w-[268px] rounded-md bg-surface p-1',
-        'text-xs text-ink shadow-pop animate-pop-in',
+        // 12px：与菜单项同档（M2）。此前整块 11，而里面的数字框是 12
+        'text-sm text-ink shadow-pop animate-pop-in',
       )}
     >
       <ElementQuick target={target} close={close} />
@@ -159,9 +160,10 @@ function ElementPopover({
 /*  版式基元                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/** 组头：与 `ui/Menu` 的 `MenuLabel` / `MenuHeading` 同一个形（12 / 400 / ink-3） */
 function Head({ children }: { children: ReactNode }) {
   return (
-    <div className="mb-0.5 truncate px-1.5 py-1 text-xs text-ink-3" title={String(children)}>
+    <div className="truncate px-2 py-1 text-ink-3" title={String(children)}>
       {children}
     </div>
   )
@@ -177,8 +179,10 @@ function Line({
   children: ReactNode
 }) {
   return (
-    <div className="flex min-h-6 items-center gap-1.5 px-1.5 py-0.5" title={hint}>
-      <span className="w-11 shrink-0 truncate text-xs text-ink-2">{label}</span>
+    /* 行高 28：宪法第十四节「高度只有 28 与 24 两档，24 只给就近入口 / 筛选小片 / 角标」，
+       这里是一整块可编辑的字段，不是角标（2026-09-15 打磨 M2） */
+    <div className="flex min-h-7 items-center gap-1.5 px-2 py-0.5" title={hint}>
+      <span className="w-11 shrink-0 truncate text-ink-2">{label}</span>
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
     </div>
   )
@@ -201,14 +205,18 @@ function Item({
       {...rest}
       type="button"
       onClick={onClick}
+      // 与 `ui/Menu` 的 `ITEM_CLASS` 逐字对齐（28 高、12 号字、gap 8、px 8、rounded-sm）：
+      // 此前是 24 高 11 号字，同一屏上菜单项两种高度。它仍是第三份**实现**——这个弹层不是
+      // Radix 菜单（里面有输入控件，role=dialog），套不进 `MenuItem`；已请 team-lead 从
+      // `ui/Menu` 导出一个非 Radix 的 `MenuButton`，落地后这段整个换掉（2026-09-15 打磨 M2）
       className={cn(
-        'flex h-6 w-full cursor-default select-none items-center gap-3 rounded-sm px-2 text-xs',
+        'flex min-h-7 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-sm',
         'outline-none hover:bg-surface-hover focus-visible:bg-surface-hover',
         danger ? 'text-danger' : 'text-ink',
       )}
     >
       <span className="flex-1 truncate text-left">{children}</span>
-      {shortcut && <span className="font-mono text-xs text-ink-3">{shortcut}</span>}
+      {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </button>
   )
 }

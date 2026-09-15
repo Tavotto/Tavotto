@@ -70,6 +70,13 @@ describe('token 配对的对比度', () => {
     }
   })
 
+  it('参考线（guide）与选中蓝同值，对纸白 / 画布灰 ≥3:1（2026-09-15 打磨 · 画布 C1）', () => {
+    expect(token('guide')).toBe(token('sel'))
+    for (const g of ['surface', 'canvas']) {
+      expect(contrast(token('guide'), token(g)), g).toBeGreaterThanOrEqual(3)
+    }
+  })
+
   it('focus-ring 用的是不透明 accent，不是 color-mix 出来的透明版', () => {
     const ring = CSS.match(/@utility focus-ring \{([\s\S]*?)\}/)?.[1] ?? ''
     expect(ring).toContain('var(--color-accent)')

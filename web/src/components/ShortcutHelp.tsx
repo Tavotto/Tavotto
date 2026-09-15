@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
 import { Kbd } from './ui/Kbd'
-import { TextInput } from './ui/Input'
+import { SearchInput } from './ui/SearchInput'
 
 /**
  * 快捷键帮助（按 ? 或从 ⌘K 打开）。分组与实际实现一一对应，不列不存在的键。
@@ -131,25 +129,26 @@ export function ShortcutHelp() {
   return (
     <Dialog open={open} onOpenChange={setOpen} title={sc('title')} size="md">
       <div className="flex flex-col gap-4">
-        <div className="relative">
-          <Search size={ICON_SIZE.xs} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
-          <TextInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={sc('search')}
-            aria-label={sc('searchAria')}
-            className="h-9 w-full rounded-md bg-surface-2 pl-8 text-base"
-          />
-        </div>
+        {/* 搜索框只有一种（`SearchInput`，宪法第五节）：28 高、fieldBox 的边、16px 放大镜、
+            有内容才出清除钮。此前这里自己定了高 36 / 圆角 10 / surface-2 底 / 13 号字，
+            四处都在原语之外（2026-09-15 打磨 K4） */}
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder={sc('search')}
+          aria-label={sc('searchAria')}
+        />
         <div className="flex max-h-[22rem] min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain">
           {shown.length === 0 && (
-            <p className="flex min-h-40 items-center justify-center py-7 text-center text-base text-ink-3">
+            <p className="type-body flex min-h-40 items-center justify-center py-7 text-center text-ink-3">
               {sc('noMatch')}
             </p>
           )}
           {shown.map((g) => (
             <div key={g.id} data-shortcut-group={g.id}>
-              <h3 className="mb-2 flex items-center gap-3 text-xs font-medium text-ink-3 after:h-px after:flex-1 after:bg-border after:content-['']">
+              {/* 组头 = `type-section`（12/500/ink，宪法第六节）：此前是 11/500/ink-3 外加
+                  一根延伸到行尾的线，是这一页自造的第三种分区头（2026-09-15 打磨 K5） */}
+              <h3 className="type-section mb-2">
                 {sc(`group.${g.id}`)}
               </h3>
               <ul className="flex flex-col">
@@ -157,14 +156,14 @@ export function ShortcutHelp() {
                   <li
                     key={r.desc}
                     data-shortcut-row
-                    className="flex min-h-[38px] items-center justify-between gap-5 py-1.5"
+                    className="flex min-h-8 items-center justify-between gap-5 py-1.5"
                   >
                     {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
                     <span className="order-last shrink-0">
                       <Kbd size="md">{keyText(r)}</Kbd>
                     </span>
                     {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
-                    <span className="min-w-0 flex-1 whitespace-normal break-words text-base leading-5 text-ink-2">
+                    <span className="type-body min-w-0 flex-1 whitespace-normal break-words text-ink-2">
                       {sc(`key.${r.desc}`)}
                     </span>
                   </li>
@@ -172,10 +171,6 @@ export function ShortcutHelp() {
               </ul>
             </div>
           ))}
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t border-border pt-3 text-xs text-ink-3">
-          <Kbd>{translate('keycap.esc', { ns: 'common' })}</Kbd>
-          <span>{translate('actions.close', { ns: 'common' })}</span>
         </div>
       </div>
     </Dialog>

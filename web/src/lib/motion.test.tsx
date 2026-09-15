@@ -19,6 +19,7 @@ import {
   DURATION,
   EASE_POP,
   EASE_SPRING,
+  EASE_STANDARD,
   easeOutCubic,
   prefersReducedMotion,
   tween,
@@ -83,6 +84,10 @@ describe('关键帧的形态约束', () => {
     // `transform` 各走各的、会叠加。给关键帧补一份居中位移 = 播放期间多偏半个
     // 身位（实测 250px）。居中的浮层直接套 pop-in 就是对的。
     expect(CSS).not.toMatch(/@keyframes[\s\S]*?translate\(-50%/)
+  })
+
+  it('EASE_STANDARD 与 index.css 的 --ease-standard 逐字节相同（2026-09-15 打磨 G1）', () => {
+    expect(cssToken('ease-standard')).toBe(EASE_STANDARD)
   })
 
   it('EASE_POP 与 index.css 的 --ease-pop 逐字节相同', () => {
