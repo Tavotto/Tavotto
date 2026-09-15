@@ -1157,15 +1157,22 @@ class TestPackageSmokeIsolation:
         assert jm and int(jm.group(1)) == 60
 
     def test_failure_logs_are_uploaded_under_a_name_unique_per_leg(self):
-        """`if: failure()` 的 upload-artifact：路径 = workdir，名字带 os 与 python（四条腿互异）。"""
+        """`if: failure()` 的 upload-artifact：名字带 os 与 python（四条腿互异）；路径**只收**
+        `result.json` 与 `attempt-*/server.log`——正面形式列全，`attempt-*/data`（会话凭据
+        `port-<P>.json`，ADR 0008）与 `config` 永远不在里面。写成 `smoke-run/**` 就把凭据传出去了。
+        """
         block = _job(CI, self.JOB)
         names = TestHeavyLaneDependencies._artifact_names(block, "upload")
         assert names == ["package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}"], names
         upload = [s for s in _steps(block) if "uses: actions/upload-artifact@" in s]
         assert len(upload) == 1 and re.search(r"(?m)^        if: failure\(\)\s*$", upload[0])
-        assert re.search(
-            r"(?m)^          path: \$\{\{ runner\.temp \}\}/smoke-run/\*\*\s*$", upload[0]
-        )
+        m = re.search(r"(?ms)^          path: \|\n((?:^            \S.*\n)+)", upload[0])
+        assert m, "path 必须是块标量（`path: |` + 逐行），不是单个 glob"
+        paths = [ln.strip() for ln in m.group(1).splitlines() if ln.strip()]
+        assert paths == [
+            "${{ runner.temp }}/smoke-run/result.json",
+            "${{ runner.temp }}/smoke-run/attempt-*/server.log",
+        ], paths
         entries = _matrix_include(block)
         expanded = {
             names[0]

@@ -229,6 +229,23 @@ def test_a_slow_server_is_waited_for_by_the_predicate_not_by_a_sleep(tmp_path):
 # ---------------------------------------------------------------- 负例
 
 
+def test_the_handshake_nonce_is_redacted_from_the_log_before_it_can_be_uploaded(tmp_path):
+    """产品把桌面握手的一次性 nonce 打在启动 URL 里（`#dnonce=…`），server.log 失败时会作为
+    artifact 上传（03 §3「上传前脱敏」）。判据的主语是**落盘的 server.log**（上传的就是它）与
+    失败时打到 stderr 的日志尾——两处都不能再出现 nonce 的值，键名保留让人认得出那一行。"""
+    out, res = _run(tmp_path / "run", "--launch", _stub_launch())
+    assert out.returncode == 0, out.stderr
+    log = (tmp_path / "run" / "attempt-1" / "server.log").read_text(encoding="utf-8")
+    assert "#dnonce=<redacted>" in log, log
+    assert "STUBNONCE" not in log, log
+    # 失败路径的日志尾同样经过脱敏：never-ready 桩也打那一行
+    out, _ = _run(
+        tmp_path / "run2", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "3"
+    )
+    assert out.returncode == 1
+    assert "#dnonce=<redacted>" in out.stderr and "STUBNONCE" not in out.stderr, out.stderr
+
+
 def test_never_ready_times_out_with_the_server_log_tail(tmp_path):
     out, res = _run(
         tmp_path / "run", "--launch", _stub_launch("--fail-mode", "never-ready"), "--timeout", "3"

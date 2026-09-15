@@ -170,6 +170,9 @@ def serve(args: argparse.Namespace) -> int:
         worker.kill()
         return 1
     print(f"stub: serving on 127.0.0.1:{port}（mode={mode}）", file=sys.stderr, flush=True)
+    # 与产品同形的一行：启动 URL 尾巴带一次性 nonce（app.py `url += "#dnonce=" + nonce`）。
+    # 脚本要在上传前把值抹掉——tests/test_package_smoke.py 拿它当靶子
+    print(f"http://127.0.0.1:{port}/#dnonce=STUBNONCE{port}", flush=True)
     try:
         server.serve_forever()
     finally:
