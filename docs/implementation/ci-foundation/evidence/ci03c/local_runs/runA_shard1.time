@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "<tmp>/tavotto-e2e-large-3hcKQk/figures/issue_181_large_pcolormesh.py", line 79, in <module>
+    def build(n: int | None = None):
+TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
+      599.42 real       685.59 user        68.33 sys
+           692256768  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            25153582  page reclaims
+               89017  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+              392553  messages sent
+              222041  messages received
+                   0  signals received
+              105683  voluntary context switches
+             2720763  involuntary context switches
+         15202417476  instructions retired
+          6129579012  cycles elapsed
+           168690920  peak memory footprint
