@@ -13,6 +13,7 @@ import {
   Square,
   Trash2,
   Type as TypeIcon,
+  X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { switchKindOf } from '@/lib/shapeSwitch'
@@ -153,19 +154,19 @@ export function Inspector({
           {layout !== 'narrow' ? (
             /* 只留图钉，不写「常驻 / 自动收起」：即便右栏最窄 320px，两个标签页 +
                助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
-               量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
-               tooltip 与无障碍名里，那两处不占版面。 */
+               量横向溢出）。状态靠**图形**说，不靠底色（打磨 S3，用户拍板）：默认就是钉住的，
+               `active` 的 ink 10% 灰块会常驻在每一页右上角——整栏唯一一块常亮的底。现在
+               钉住 = 实心图钉 + ink，未钉 = 线框图钉 + ink-3（图标集的实心孪生，ADR 0052）；
+               aria-pressed 与气泡文案不变。 */
             <IconButton
               label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
               tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
               side="bottom"
               iconSize="sm"
-              active={pinned}
               aria-pressed={pinned}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
-              {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
-              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
             </IconButton>
           ) : (
             <Tip label={t('overlayTip')} side="bottom">
@@ -177,14 +178,10 @@ export function Inspector({
             tip={translate('actions.close')}
             side="bottom"
             iconSize="sm"
-            aria-pressed={pinned}
-            onClick={() => useUiStore.getState().setRightPinned(!pinned)}
+            className="text-ink-3 hover:text-ink"
+            onClick={() => useUiStore.getState().toggleRight()}
           >
-            {/* 状态靠**图形**说，不靠底色（打磨 S3，用户拍板）：默认就是钉住的，
-                `active` 的 ink 10% 灰块于是常驻在每一页右上角——它是整栏唯一一块
-                常亮的底。现在钉住 = 实心图钉 + ink，未钉 = 线框图钉 + ink-3（图标集的实心孪生，ADR 0052）；
-                `aria-pressed` 与气泡文案不变 */}
-            <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            <X size={ICON_SIZE.sm} />
           </IconButton>
         </span>
       </div>
