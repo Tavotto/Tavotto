@@ -89,10 +89,11 @@ export default interface Resources {
       "runningHere": "脚本已有任务在运行",
       "scopeAndAgent": "作用范围与执行器",
       "scopeTitle": "作用范围",
-      "script": "脚本：{{name}}",
+      "scriptLabel": "脚本",
       "scrollToBottom": "回到底部",
       "send": "发送（{{key}}）",
       "sendAria": "发送",
+      "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
       "techDetails": "技术详情"

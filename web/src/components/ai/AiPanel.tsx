@@ -6,14 +6,17 @@ import {
   ChevronRight,
   FileCodeCorner,
   RotateCcwClock,
+  Pencil,
   Pin,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
   Square,
   Trash2,
+  Wrench,
   X,
 } from '@/components/ui/icons'
+import { Badge } from '../ui/Badge'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
@@ -47,7 +50,6 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
-import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
@@ -191,6 +193,21 @@ export function AssistantPanel() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // 输入框浮在对话流上（玻璃，参考 Codex）：它的高度会变（起手式收起、输入框长高、报错一行），
+  // 量出来写成 --composer-h，滚动区用它做底部内边距，最后一条回答不会被压在玻璃底下
+  const stageRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = composerRef.current
+    const stage = stageRef.current
+    if (!el || !stage) return
+    const write = () => stage.style.setProperty('--composer-h', `${el.offsetHeight}px`)
+    write()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(write)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 目标不支持某个范围时只是降级显示，不去改用户存下的偏好
   const scopes: AiScope[] = [
@@ -306,8 +323,13 @@ export function AssistantPanel() {
         </Tip>
       </div>
 
-      <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} onScroll={syncStick} className="h-full overflow-y-auto px-2.5 py-2">
+      <div ref={stageRef} className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={syncStick}
+          className="h-full overflow-y-auto px-2.5 pt-2"
+          style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
+        >
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
@@ -328,7 +350,10 @@ export function AssistantPanel() {
         </div>
         {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮；到底了它自己消失 */}
         {detached && runningHere && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+          <div
+            className="pointer-events-none absolute inset-x-0 flex justify-center"
+            style={{ bottom: 'calc(var(--composer-h, 0px) + 8px)' }}
+          >
             <IconButton
               label={ai('panel.scrollToBottom')}
               iconSize="sm"
@@ -342,9 +367,9 @@ export function AssistantPanel() {
           </div>
         )}
         {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
-      </div>
 
-      <div className="shrink-0 px-3 pb-3 pt-1">
+        {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
+        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-1">
         {/* 起手式：一开始打字就收起——收起是跟着内容合上（Reveal），不是原地消失让输入框跳一下 */}
         <Reveal open={!!panel && mine.length === 0 && !prompt.trim()}>
           <div className="mb-1.5 flex flex-wrap gap-1">
@@ -371,17 +396,18 @@ export function AssistantPanel() {
             </Button>
           </div>
         )}
-        {/* 可编辑框只有一副（第五节 / `ui/fieldBox`）：此前这里是 `border-border` 12% +
-            圆角 10，其余框是 `border-input` 16% + 6——同一屏两种「能改」的框。
-            圆角留 md：它是一块多行的输入区，不是一行控件（打磨 A1）。
-            禁用也只有 opacity-40 一档（此前 60） */}
+        {/* 玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）：field 90% 的底 + 16px 背景模糊 +
+            环 4% 与两层投影（--shadow-composer），无边线；它浮在对话流上，内容从底下滚过时被糊掉——玻璃
+            只在浮着的时候成立，所以整个输入区是 absolute 的，滚动区按 --composer-h 留底边。圆角 lg：
+            它是一块浮在流上的多行输入区（Codex 多行是 3xl），比控件（6）与卡（10）都大一档。
+            聚焦仍是不透明 accent 边（3:1 由它承担）；禁用只有 opacity-40 一档 */}
         <div
           className={cn(
-            FIELD_BOX,
-            FIELD_FOCUS_WITHIN,
-            'rounded-md',
+            'rounded-lg border border-transparent bg-glass text-sm text-ink shadow-composer backdrop-blur-lg',
+            'transition-colors duration-fast focus-within:border-accent',
             (!panel || noAgent) && 'opacity-40',
           )}
+          data-ai-composer
         >
           <textarea
             ref={inputRef}
@@ -399,7 +425,8 @@ export function AssistantPanel() {
             }}
             className={cn(
               'block w-full resize-none bg-transparent px-2 pt-2 text-xs leading-relaxed',
-              'text-ink outline-none placeholder:text-ink-faint',
+              // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
+              'text-ink outline-none placeholder:text-ink-3',
             )}
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
@@ -427,6 +454,7 @@ export function AssistantPanel() {
               </Button>
             </Tip>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -899,19 +927,21 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
 
   return (
-    <div className="border-b border-border pb-2 last:border-b-0">
-      <p className="line-clamp-2 text-xs leading-relaxed text-ink-2">{entry.prompt}</p>
-      <p className="mt-0.5 truncate text-xs text-ink-3">
+    // 一条任务一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Task Rows，用户拍板）：
+    // 此前是 hairline 隔开的段落；状态改成徽章（语义色 + 淡底一对），失败 danger、改过 ok、其余中性
+    <div className="rounded-md bg-surface p-2 shadow-card">
+      <p className="line-clamp-2 text-xs leading-relaxed text-ink">{entry.prompt}</p>
+      <p className="type-meta mt-0.5 truncate">
         {/* 历史里的 provider 是**当时**用的那个 Agent id：显示名从当前
             capabilities 查，查不到就原样显示 id（不写死两个名字，也不留空） */}
         {entry.target || ai('scope.figure')} · {agentDisplayName(caps, entry.provider)}
         {entry.model ? ` · ${entry.model}` : ''} · {timeOf(entry.started_ms)}
       </p>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className={cn('text-xs', failed ? 'text-danger' : 'text-ink-3')}>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <Badge tone={failed ? 'danger' : entry.changed ? 'ok' : 'neutral'}>
           {statusLabel(entry.status)}
           {entry.changed ? ai('history.changedSuffix') : ''}
-        </span>
+        </Badge>
         <span className="flex-1" />
         <Tip label={ai(entry.pinned ? 'history.unpinTip' : 'history.pinTip')}>
           <Button
@@ -965,10 +995,12 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
       </button>
       {detailsOpen && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-          <p className="truncate font-mono text-xs text-ink-3">
-            {ai('panel.script', {
-              name: entry.script ? scriptName(entry.script) : ai('panel.none'),
-            })}
+          {/* 脚本名是路径 → 等宽片；句子本身不是代码 */}
+          <p className="type-meta flex min-w-0 items-center gap-1">
+            <span className="shrink-0">{ai('panel.scriptLabel')}</span>
+            <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2">
+              {entry.script ? scriptName(entry.script) : ai('panel.none')}
+            </code>
           </p>
           {entry.effort && <p className="type-meta">{ai('history.effort', { effort: entry.effort })}</p>}
           <p className="type-meta">
@@ -1022,12 +1054,18 @@ function SessionBlock({ session }: { session: AiSession }) {
   const groups = groupEntries(session.entries)
 
   return (
-    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）
-    <div className="flex animate-settle-in flex-col gap-1.5" data-ai-session={session.status}>
-      {/* 分层靠明度差、不靠框（第一节）：surface-2 底就够，边框是第二层（打磨 A2）。
+    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）。
+    // 一轮对话是一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Chat / Task Rows，用户拍板）：
+    // 提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起；卡与卡之间只靠间距。
+    // 卡里再分层用 surface-2 的凹块（提示），不再套第二张卡。
+    <div
+      className="flex animate-settle-in flex-col gap-1.5 rounded-md bg-surface p-2 shadow-card"
+      data-ai-session={session.status}
+    >
+      {/* 提示是卡里的凹块：surface-2 底、无边（Beautiful UI 的 inset 那一级）。
           meta 那行是执行器 / 目标 / 时刻，不是代码或路径——等宽字体只留给代码 */}
       <div className="rounded-sm bg-surface-2 px-2 py-1.5">
-        <p className="text-sm leading-[1.6] break-words text-ink-2">{session.prompt}</p>
+        <p className="text-sm leading-[1.6] break-words text-ink">{session.prompt}</p>
         <p className="type-meta mt-0.5 truncate">
           {sessionAgentLabel(caps, session)} · {session.target} · {timeOf(session.startedAt)}
         </p>
@@ -1093,21 +1131,61 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
       </button>
       {/* 展开是跟着内容长高（Reveal），不是一整块瞬间跳出来 */}
       <Reveal open={open}>
-        <ul className="mt-1 flex flex-col gap-1 border-l border-border pl-2">
+        <ul className="mt-1 flex flex-col gap-1 pl-1">
           {items.map((it, i) => (
-            <li
-              key={i}
-              className={cn(
-                'whitespace-pre-wrap break-words text-xs leading-relaxed',
-                it.kind === 'action' ? 'font-mono text-ink-2' : 'text-ink-3',
-              )}
-            >
-              {it.text}
-            </li>
+            <ProcessRow key={i} kind={it.kind} text={it.text} />
           ))}
         </ul>
       </Reveal>
     </div>
+  )
+}
+
+/**
+ * 过程里的一行（2026-09-15 学 Beautiful UI 的 Tool Chips）：种类图标（ink-3）· 动词 · 参数片。
+ * 后端（`engine/ai_agents.py`）给 action 文本开头放一个**标记符 + 空格**：`$` = 跑了一条命令，
+ * 其它符号（一支笔）= 改了文件 / 调了工具。这里只拆标记、不画它——图标是 Wrench / Pencil；
+ * 「一个非字母数字的符号 + 空格」统一当标记解析，不把那个字形写死在前端。拆成「动词 + 参数」后
+ * 参数放进 surface-2 底的等宽片里——路径 / 命令是代码，正文的动词不是。没有标记的 action 原样
+ * 当参数片；thinking 是一句话，ink-3、无片。
+ */
+const ACTION_MARK = /^([^\p{L}\p{N}\s])\s+(.*)$/su
+
+function ProcessRow({ kind, text }: { kind: string; text: string }) {
+  useTranslation('ai')
+  if (kind !== 'action') {
+    return (
+      <li className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-3">
+        <Sparkles size={ICON_SIZE.xs} className="mt-[3px] shrink-0" aria-hidden />
+        <span className="min-w-0 whitespace-pre-wrap break-words">{text}</span>
+      </li>
+    )
+  }
+  const m = ACTION_MARK.exec(text)
+  const shell = m?.[1] === '$'
+  const Icon = shell ? Wrench : Pencil
+  let verb = ''
+  let arg = text
+  if (m && shell) {
+    verb = ai('panel.stepRan')
+    arg = m[2]
+  } else if (m) {
+    // 「<标记> 名字 目标」：名字是动词位，目标是参数；只有名字时参数为空
+    const rest = m[2].trim()
+    const sp = rest.indexOf(' ')
+    verb = sp === -1 ? rest : rest.slice(0, sp)
+    arg = sp === -1 ? '' : rest.slice(sp + 1)
+  }
+  return (
+    <li className="flex min-w-0 items-start gap-1.5 text-xs leading-relaxed text-ink-2">
+      <Icon size={ICON_SIZE.xs} className="mt-[3px] shrink-0 text-ink-3" aria-hidden />
+      {verb && <span className="shrink-0 text-ink">{verb}</span>}
+      {arg && (
+        <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2" title={arg}>
+          {arg}
+        </code>
+      )}
+    </li>
   )
 }
 

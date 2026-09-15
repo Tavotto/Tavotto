@@ -9,7 +9,7 @@ import { FIELD_BOX, FIELD_FOCUS } from './fieldBox'
 /**
  * 抽屉 / 面板顶部的搜索框：全产品唯一的一种（素材、画布列表、图内元素树……）。
  *
- * 形态与其它可编辑框同一副（`fieldBox`：白底 + border-input，hover 加深，聚焦 accent；
+ * 形态与其它可编辑框同一副（`fieldBox`：field 底、无边，hover 加深，聚焦 accent 边；
  * 2026-09-14 审计 S8 之前是「安静的 surface-2 填充框」，与旁边的输入框长成两种）。
  * 左侧放大镜固定 16px 列，右侧清除钮只在有内容时出现。
  *

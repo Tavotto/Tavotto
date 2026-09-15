@@ -1587,8 +1587,10 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 这里只留一段速记：
 
 暖灰白 `#F2F2EF` 底 + 白色 surface；层级靠留白 / 字号 / 轻微背景差，
-边框只给真实输入框、区域边界、选择状态与浮层。**持久表面不用 shadow，
-浮层（菜单/popover/dialog/tooltip）可使用唯一轻投影 `--shadow-pop`**。
+边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
+「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
+`--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
+（宪法第二十二节，2026-09-15）。
 radius 四档：`xs` 3（≤16px 小片）、`sm` 6（控件）、`md` 8（浮层 / 卡片）、`lg` 12（对话框）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
@@ -1603,8 +1605,8 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
 在容器、关闭钮 DOM 排最后；Segmented / Tabs 一个 Tab 停靠点 + 方向键；`keyboardPrimitives.test`
 与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。
-**可编辑框只有一副**（`ui/fieldBox.ts`：白底 + `border-input`；TextInput / NumberField / Select / SearchInput /
-`inspector/controls/PickerTrigger` 共用；批次 2）；带样张的取值选择器一律 `Popover + PickerTrigger + OptionGrid`
+**可编辑框只有一副**（`ui/fieldBox.ts`：`field` 底、无边，聚焦 accent 边；TextInput / NumberField / Select /
+SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026-09-15 参考 Codex 改成只换底色）；带样张的取值选择器一律 `Popover + PickerTrigger + OptionGrid`
 （`onPick` 收弹层、方向键漫游不收）；数值与单位 `formatQuantity`；token 配对对比度由
 `src/tokenContrast.test.ts` 守着（焦点环 / 控件边界 ≥3:1，要读的字 ≥4.5:1）。文字对比：
 `ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、

@@ -28,6 +28,14 @@ interface ViewportState {
    * 时保留缩放与平移）。任何直接操纵都会退出这个模式。
    */
   fitted: boolean
+  /**
+   * 顶栏读数要显示的缩放（2026-09-15，读数改成会滚的数字之后）：补间路径（± / 预设 /
+   * 适应画布 / 定位 / 还原）一起步就是**终点值**，读数只滚一次、与画布同拍；瞬时路径
+   * （滚轮 / 捏合 / 切画布还原 / 瞬时 fit）就是当前值。不是几何权威——几何一律读 `zoom`。
+   */
+  readoutZoom: number
+  /** 最近一次缩放是不是一步到位的（补间路径）——是才让读数滚，滚轮那种连续输入即时换数 */
+  readoutRolls: boolean
 
   setViewRect: (rect: { left: number; top: number; width: number; height: number }) => void
   setSpaceDown: (v: boolean) => void
@@ -122,6 +130,7 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
   if (s.zoom === target.zoom && s.panX === target.panX && s.panY === target.panY) return
   const from = { zoom: s.zoom, panX: s.panX, panY: s.panY }
   animTarget = target
+  set({ readoutZoom: target.zoom, readoutRolls: true })
   cancelAnim = tween({
     duration: DURATION.base,
     onUpdate: (e) =>
@@ -169,6 +178,8 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   originY: 0,
   spaceDown: false,
   fitted: false,
+  readoutZoom: 1,
+  readoutRolls: false,
 
   setViewRect: ({ left, top, width, height }) => {
     const s = get()
@@ -210,6 +221,8 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
       zoom: next,
       panX: anchorX - (anchorX - panX) * k,
       panY: anchorY - (anchorY - panY) * k,
+      readoutZoom: next,
+      readoutRolls: false,
     })
   },
 
@@ -234,7 +247,8 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
       set({ fitted: true })
       return
     }
-    set({ ...fitTarget(viewW, viewH, pageW, pageH, padding), fitted: true })
+    const target = fitTarget(viewW, viewH, pageW, pageH, padding)
+    set({ ...target, fitted: true, readoutZoom: target.zoom, readoutRolls: false })
   },
 
   fitAnimated: (pageW, pageH, padding = 72) => {
@@ -276,7 +290,8 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   setView: ({ zoom, panX, panY }) => {
     stopAnim()
     leaveFitMode(set, get)
-    set({ zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
+    const next = clamp(zoom, MIN_ZOOM, MAX_ZOOM)
+    set({ zoom: next, panX, panY, readoutZoom: next, readoutRolls: false })
   },
 }))
 

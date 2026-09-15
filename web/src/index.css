@@ -2,6 +2,10 @@
    按 vite 根（web/）自动探测、连 .md 与 e2e 一起扫，散文里写全的工具类名会把规则吊在
    产物里。三条构建链（vite.config / vite.mcp.config / vite.playground.config）都进这一份
    CSS，所以声明一次三份产物都收窄；两向门禁 scripts/tailwind-scan-check.mjs 接在 pnpm build 后。 */
+/* 会滚的数字（@sfinterface/numbers，只给顶栏缩放读数一处；2026-09-15 调研后用户拍板）：先于 Tailwind
+   import，它开头声明的 `@layer arc, theme, base, components, utilities` 才把自己排在最低层，工具类盖得住它。
+   它的样式表只描述运动与几何，字体 / 字号 / 颜色全继承。 */
+@import '@sfinterface/numbers/styles.css';
 @import 'tailwindcss' source('../src');
 
 /* ---------------------------------------------------------------------------
@@ -10,8 +14,11 @@
 
    方向：Paper × Instrument。微暖纸白底、白色 surface、层级靠留白与轻微背景差；
    边框只给真实输入框、区域边界、选择状态与浮层；
-   持久表面不用 shadow；浮层只有两种投影：--shadow-pop（菜单 / popover / 气泡以外的浮条）
-   与 --shadow-dialog（对话框 / 命令面板），都是「1px 环 + 一层大模糊」，不再画实色边（2026-09-15 打磨批次 A）。
+   持久表面里只有「真的是一张卡」的东西有投影（--shadow-card，2026-09-15 学 Beautiful UI）；
+   浮层只有两种投影：--shadow-pop（菜单 / popover / 气泡以外的浮条）
+   与 --shadow-dialog（对话框 / 命令面板），都是「1px 环 + 一层大模糊」，不再画实色边（2026-09-15 打磨批次 A）；
+   改图助手的输入框是浮在对话流上的玻璃（--color-glass + blur + --shadow-composer，参考 Codex）。
+   可编辑框是比面板深一级的底（--color-field），静态无边。
 
    语义 token 与工具类名对照（工具类名沿用已有的，不为了改名动七百处调用）：
      surface-app = bg · surface-panel = surface · surface-subtle = surface-2
@@ -41,12 +48,14 @@
      几乎看不见。#8a8a82：白 3.48 / 纸 3.10 / surface-2 3.24。
      border / border-strong 继续给 hairline 分隔、hover 中的输入框与区域边界。 */
   --color-border-control: #8a8a82;
-  /* 可编辑框的边框（fieldBox，S8 甲「有框 = 能改」不变）：2026-09-15 打磨批次 A 改成 ink 16% 的
-     半透明叠加（对白 ≈1.4:1），hover 25%，聚焦才是不透明 accent 环。此前与 border-control 同值
-     3.48:1——属性面板一列十几个框每个都在「说话」；OpenAI 静态 alpha-16、Claude 10%，都不到 3:1，
-     3:1 由聚焦环承担。border-control（复选框 / 单选 / 关态开关）仍是实色 3:1，边界就是它们的全部。 */
-  --color-border-input: color-mix(in srgb, var(--color-ink) 16%, transparent);
-  --color-border-input-hover: color-mix(in srgb, var(--color-ink) 25%, transparent);
+  /* 可编辑框的**底**（fieldBox，S8 甲「有框 = 能改」不变；2026-09-15 参考 Codex 设置页的输入框，用户拍板
+     「普通输入框稍微换一个颜色就可以了」）：比面板深一级的灰（对白 1.14:1）、静态无边线、无内阴影；hover 再深
+     一档；聚焦才是不透明 accent 边——3:1 由它承担。此前（批次 A T1）是 ink 16% 的边、hover 25%；同一天先试过
+     「凹面」（这个底 + 1px 内阴影 + 聚焦浮回白底），用户看过对比后取消了内阴影那一层，只留颜色。
+     ink-3 落在 field 上 4.71:1、hover 底 4.54:1（`#ebeae5` 只有 4.46，tokenContrast.test 拦下过），
+     占位 / 单位 / 前缀都还能读。border-control（复选框 / 单选 / 关态开关）仍是实色 3:1，边界就是它们的全部。 */
+  --color-field: #f1f0ec;
+  --color-field-hover: #edece8;
 
   --color-ink: #1b1b18;
   /* 次级正文：≥5.9:1（#f2f2ef 上），可放心用于说明文字 */
@@ -102,6 +111,17 @@
   --shadow-pop: 0 0 0 1px rgba(27, 27, 24, 0.08), 0 8px 24px rgba(27, 27, 24, 0.08);
   --shadow-dialog: 0 0 0 1px rgba(27, 27, 24, 0.06), 0 24px 64px rgba(27, 27, 24, 0.1);
   --shadow-thumb: 0 0 0 1px rgba(27, 27, 24, 0.06), 0 1px 2px rgba(27, 27, 24, 0.08);
+  /* 真的是一张卡的东西才有的抬升（2026-09-15 学 Beautiful UI 的 shadow-card，数取 Codex 浅色的
+     --elevation-composer 前两层：1px 环 4% + 0 2px 8px 4%）——比 shadow-pop 低一档（卡在面上，不是浮在面上）。
+     给素材卡 / 会话卡 / 任务行 / 诊断与修复卡；分区、列表行、输入框、分段控件仍是平的。
+     hover / 选中用 ring-1 叠在它上面说话。 */
+  --shadow-card: 0 0 0 1px rgba(27, 27, 24, 0.04), 0 2px 8px rgba(27, 27, 24, 0.04);
+  /* 改图助手输入框：浮在对话流上的玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）。
+     Codex 的写法：底 = soft 灰 90% 不透明 + backdrop-filter blur(16px)、border 0、浅色投影
+     `0 0 0 1px 4%, 0 2px 8px 4%, 0 4px 40px 8px 2%`（深色是 inset 0 0 1px #fff3 的高光边）。
+     这里同一组数：底是 field 90%，内容从它底下滚过时被糊掉——玻璃只在它浮着的时候成立。 */
+  --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
+  --shadow-composer: 0 0 0 1px rgba(27, 27, 24, 0.04), 0 2px 8px rgba(27, 27, 24, 0.04), 0 4px 40px 8px rgba(27, 27, 24, 0.024);
 
   --text-xs: 11px;
   --text-xs--line-height: 15px;
@@ -195,6 +215,13 @@
   --animate-stream-in: stream-in var(--duration-slow) var(--ease-standard) both;
   --animate-settle-in: settle-in var(--duration-slow) var(--ease-spring) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
+}
+
+/* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
+   一次转动 = slow 240、离场的位 = exit 90。曲线沿用它自己的，那是数字转动的手感，不是浮层的进退场。 */
+:root {
+  --sfi-resolve: var(--duration-slow);
+  --sfi-settle: var(--duration-exit);
 }
 
 /* Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，不是
