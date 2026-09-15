@@ -6,9 +6,9 @@
  * 再量。判据的主语是「合成后的那个颜色」，不是 token 字面。
  *
  * 两条有意为之的「不达标」写在明处，别再回去「修」它们：
- *   - 可编辑框静态没有边：是一块凹面（field 对白 ≈1.13:1 + 1px 内阴影，2026-09-15 学 Beautiful UI）——
- *     OpenAI apps-sdk-ui 静态 alpha-16、Claude 产品壳 10%、Beautiful UI 的 field 96% 都不到 3:1；
- *     3:1 由聚焦态（浮回白底 + 不透明 accent 边）承担。
+ *   - 可编辑框静态没有边：是一块比面板深一级的底（field 对白 ≈1.14:1，2026-09-15 参考 Codex 设置页的输入框）——
+ *     OpenAI apps-sdk-ui 静态 alpha-16、Claude 产品壳 10%、Codex「底 +1 级灰」都不到 3:1；
+ *     3:1 由聚焦态（不透明 accent 边）承担。
  *   - selected 10% 在纸底上 ≈1.2:1——它只是「轻 tint」，选中态还要靠字重 / 对勾再说一遍（宪法第一节）。
  */
 import { readFileSync } from 'node:fs'
@@ -89,7 +89,7 @@ describe('token 配对的对比度', () => {
     }
   })
 
-  it('可编辑框是凹面：field 对白是看得见的一级台阶（≥1.1:1，有意不到 3:1，理由见文件头），hover 比静态深，聚焦边 accent 对 field / 白 ≥3:1', () => {
+  it('可编辑框的底：field 对白是看得见的一级台阶（≥1.1:1，有意不到 3:1，理由见文件头），hover 比静态深，聚焦边 accent 对 field / 白 ≥3:1', () => {
     const field = token('field')
     const hover = token('field-hover')
     expect(contrast(field, token('surface'))).toBeGreaterThanOrEqual(1.1)
@@ -99,7 +99,7 @@ describe('token 配对的对比度', () => {
     }
   })
 
-  it('凹面上要读的字（值 ink、占位 / 单位 / 前缀 ink-3）≥4.5:1；hover 底上也是', () => {
+  it('field 底上要读的字（值 ink、占位 / 单位 / 前缀 ink-3）≥4.5:1；hover 底上也是', () => {
     for (const name of ['ink', 'ink-2', 'ink-3']) {
       for (const g of ['field', 'field-hover']) {
         expect(contrast(token(name), token(g)), `${name} on ${g}`).toBeGreaterThanOrEqual(4.5)

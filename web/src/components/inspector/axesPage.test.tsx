@@ -372,7 +372,7 @@ describe('子图页的版式（2026-09-15 全面打磨）', () => {
     await mount()
     const size = host.querySelector('[data-axes-size-block]')!
     const input = size.querySelector('input')!
-    // 「框」= 凹面那一层（fieldBox 的 bg-field）；W 在框里，不再漂在框外
+    // 「框」= fieldBox 那一层（bg-field）；W 在框里，不再漂在框外
     const box = input.parentElement!
     expect(box.className).toContain('bg-field')
     const marks = [...box.querySelectorAll('span')].map((el) => el.textContent?.trim())
