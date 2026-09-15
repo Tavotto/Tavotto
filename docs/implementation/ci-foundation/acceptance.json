@@ -181,12 +181,13 @@
       "evidence": [
         "evidence/ci02/cache_inventory.json（仓库缓存 60 条原样 + 按家族 / ref 作用域汇总：全部条目属于 setup-node pnpm store（第一类）/ rust-cache（第二类）/ cpython 归档（第一类）三类；main 上 0 条来自 ci.yml）",
         ".github/workflows/ci.yml@1f7f13e8（actions/cache 只有两处：path build/runtime-cache、key cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}，恢复在 build_worker_runtime.py 之前；setup-node cache: pnpm + cache-dependency-path: web/pnpm-lock.yaml ×5；rust-cache workspaces 各自点名 ×4、无 shared-key / cache-on-failure；package 的 venv 在 runner.temp 不缓存；测试结果只走 if: failure() 的 upload-artifact）",
-        "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads / test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile / test_every_rust_cache_names_its_own_workspace_and_shares_nothing / test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it（枚举：多一条 actions/cache、path 指向 venv、key 少 arch、恢复挪到使用后、pnpm 缓存没按锁、package 开缓存、rust-cache 加 shared-key / 不点名 workspace、posix 不装浏览器——变异 M10–M18 全部打红）",
+        "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads / test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile / test_every_rust_cache_names_its_own_workspace_and_shares_nothing / test_windows_installs_browsers_without_with_deps_and_posix_keeps_it（枚举：多一条 actions/cache、path 指向 venv、key 少 arch、恢复挪到使用后、pnpm 缓存没按锁、package 开缓存、rust-cache 加 shared-key / 不点名 workspace、posix 不装浏览器、Windows 加回 --with-deps、posix 去掉 --with-deps——变异 M10–M18 / M22 / M23 全部打红）",
         "evidence/ci02/playwright_install_split.json（Windows 装浏览器那一步 245s = pnpm 1s + Media Foundation 226s + 浏览器下载 17s；决定不加浏览器缓存的数字）",
         "evidence/ci02/merge_group_cache_misses.json（合并组 run 35015416419：rust-cache / cpython / pnpm 全部 miss + save）",
-        "CI02_BUILD_REUSE.md#4-缓存四类审计d"
+        "CI02_BUILD_REUSE.md#4-缓存四类审计d",
+        "evidence/ci02/queue_ref_cache_persistence.json（已合入的 PR #361 / #362 的候选 ref 已删除，13 条缓存仍在——候选 ref 的条目没人清）"
       ],
-      "note": "四类分开这一半成立：ci.yml 里只有第一类（pnpm store / CPython 归档）与第二类（rust-cache）两种缓存，第三类只走 artifact（插件候选，消费前验），第四类（venv / site-packages / 用户配置 / 测试结果 / 活动 worker）一处都没有，合同枚举钉住。但审计发现缓存的**作用域**是坏的：push main 上没有任何产缓存的 job，合并组候选 ref 永远冷、每个候选各 save 一份，仓库缓存 10.3–10.6 GB 已超 10 GB 上限；desktop-shell 的两份 rust-cache 占 8.1 GB。这不是「类别混了」，是「命中从不发生」——记为已知边界与下一步（CI02 文档 §8 第 2 条），本轮不改 push main 的 job 集合。2026-09-16 CI02。"
+      "note": "四类分开这一半成立：ci.yml 里只有第一类（pnpm store / CPython 归档）与第二类（rust-cache）两种缓存，第三类只走 artifact（插件候选，消费前验），第四类（venv / site-packages / 用户配置 / 测试结果 / 活动 worker）一处都没有，合同枚举钉住。但审计发现缓存的**作用域**是坏的：push main 上没有任何产缓存的 job，合并组候选 ref 永远冷、每个候选各 save 一份，仓库缓存 10.3–10.6 GB 已超 10 GB 上限；desktop-shell 的两份 rust-cache 占 8.1 GB。这不是「类别混了」，是「命中从不发生」——写成可执行的设计（CI02 文档 §4.1：每类缓存在合并组上的日志行、每个候选写入 ≈ 1.8 GB、淘汰证据、候选 ref 的条目没人清；修法 (a) push main 种子 job + rust-cache 改 shared-key 对齐 / (b) restore-keys 只解决锁 hash 变了、解决不了作用域），归 CI05 由用户拍板，本轮不改 push main 的 job 集合。另：Windows 两片去掉 --with-deps 的实验（每片 −204…226s，关键路径）本轮已改、由本 PR 的 full-ci run 判。2026-09-16 CI02。"
     },
     {
       "id": "CIP-015",

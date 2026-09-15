@@ -1,8 +1,8 @@
 {
   "suite": "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches",
   "baseline_rc": 0,
-  "total": 21,
-  "killed": 21,
+  "total": 23,
+  "killed": 23,
   "method": "断言目标串出现次数 == 期望 → 写入变异 → 清 __pycache__ + PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider → pytest 退出码判 → git checkout -- 还原 → 核 md5 与变异前一致",
   "mutations": [
     {
@@ -268,7 +268,7 @@
       "expected_occurrences": 1,
       "pytest_rc": 1,
       "failed_tests": [
-        "TestBuildReuseAndCaches::test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it"
+        "TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it"
       ],
       "killed": true,
       "restored_md5_ok": true,
@@ -314,6 +314,36 @@
       "pytest_rc": 1,
       "failed_tests": [
         "TestBuildReuseAndCaches::test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M22",
+      "file": ".github/workflows/ci.yml",
+      "note": "Windows 两片把 --with-deps 加回来（实验被静默撤销）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M23",
+      "file": ".github/workflows/ci.yml",
+      "note": "posix-e2e 去掉 --with-deps（apt 真依赖没了）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it"
       ],
       "killed": true,
       "restored_md5_ok": true,

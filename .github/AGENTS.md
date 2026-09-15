@@ -98,8 +98,11 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   setup-node 的 pnpm store 按 `web/pnpm-lock.yaml`、rust-cache 各自点名 `workspaces` 且不许 `shared-key`；venv / site-packages /
   用户目录 / 测试结果 / **Playwright 浏览器目录**一律不缓存（`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches`，
   多一条 `actions/cache` 就红——先回文档改数字）。两条派工时的前提被日志推翻，改之前先读：Windows 腿「装浏览器」的 245s 里
-  **203–226s 是 `--with-deps` 装 Media Foundation**，浏览器下载只 17–27s；push main 上没有任何产缓存的 job，
-  **合并组候选 ref 上现有三类缓存 0% 命中、每个候选各存一份**（仓库缓存已超 10 GB 上限）。TypeScript 的类型检查只在
+  **203–226s 是 `--with-deps` 装 Media Foundation**，浏览器下载只 17–27s——所以 `windows-exe-smoke` 两片的
+  `pnpm exec playwright install ${{ matrix.browsers }}` **不带 `--with-deps`**（实验，由 CI02 那个 PR 的 full-ci run 判，红则一行加回；
+  `posix-e2e` 的 `--with-deps chromium` 是 apt 真依赖，保留；两条整条命令都被合同钉着）；push main 上没有任何产缓存的 job，
+  **合并组候选 ref 上现有三类缓存 0% 命中、每个候选各存 ≈ 1.8 GB**（仓库缓存已超 10 GB 上限，已合入候选的条目没人清），
+  修法两种形状在 CI02 文档 §4.1，归 CI05 拍板。TypeScript 的类型检查只在
   `frontend` 的 `pnpm build`（第一条命令 `tsc -b`）里，`web/tsconfig.json` 的 references **集合**（app / node / e2e）就是它的
   覆盖面——少一份没有红灯，只是那一类错误从此没有执行位置。数字、反证与下一步：
   `docs/implementation/ci-foundation/CI02_BUILD_REUSE.md`。
