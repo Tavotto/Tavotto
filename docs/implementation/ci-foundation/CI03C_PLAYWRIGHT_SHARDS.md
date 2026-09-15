@@ -1,5 +1,9 @@
 # CI03c · Windows Playwright 按 project 分两台机器 + Playwright 步加 step 级超时（2026-09-16）
 
+> 后记（CI02，同日）：下面写的 `playwright install --with-deps ${{ matrix.browsers }}` 在 CI02 里去掉了 `--with-deps`——那 ~3.2 分钟的
+> 「安装」有 204–226s 是 Windows Server 的 Media Foundation，浏览器下载只 17–27s；由 CI02 那个 PR 的 full-ci run 判 Chromium 要不要它。
+> 数字与拆分见 [`CI02_BUILD_REUSE.md`](CI02_BUILD_REUSE.md) §2。本文其余内容是 CI03c 当时的事实，不改。
+
 - 改动对象：`.github/workflows/ci.yml`（`windows-exe-smoke` / `posix-e2e`）、`scripts/ci/playwright_shard_check.py`（新）、
   `tests/test_playwright_shard_check.py`（新）、`tests/test_merge_queue_workflows.py`（新增 `TestPlaywrightShards` 十条 + 三个 helper）、
   `scripts/ci/ci_baseline.py` + `tests/test_ci_baseline.py`（显示名带表达式时映射回 job id）、`web/playwright.config.ts`（只改注释：webkit project
