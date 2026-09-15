@@ -1,0 +1,54 @@
+=== N1 shard2 只写 webkit（漏 chromium-en），--web 真跑
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 2 --projects=--project=webkit --others=--project=chromium --web web
+ERROR（分片）: 配置里的 project ['chromium-en'] 不在任何一片里——漏片
+{"shard": 2, "my_projects": ["webkit"], "other_projects": ["chromium"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 23, "mine_expected": 23, "problems": ["配置里的 project ['chromium-en'] 不在任何一片里——漏片"], "ok": false}
+rc=1
+=== N2 两片都含 chromium，--web 真跑
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=chromium --project=webkit --project=chromium-en --web web
+ERROR（分片）: 两片都声称要跑 project ['chromium']——同一片内容跑两遍，判定却只算一次
+{"shard": 1, "my_projects": ["chromium"], "other_projects": ["chromium", "chromium-en", "webkit"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 109, "mine_expected": 109, "problems": ["两片都声称要跑 project ['chromium']——同一片内容跑两遍，判定却只算一次"], "ok": false}
+rc=1
+=== N3 空的 --list 输出（--mine 空文件）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/empty.txt
+ERROR（输入）: 本片 --list：`--list` 输出里一条用例都没有
+rc=2
+=== N4 --mine 里塞一行格式不对的
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/bad_line.txt
+ERROR（输入）: 本片 --list：这一行认不出（不是 `[project] › file:line:col › title`）：'  [chromium] a11y.spec.ts:1:1 这一行没有分隔符'
+rc=2
+=== N5 本片参数是 chromium、清单却是 shard2 的（集合不等）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine docs/implementation/ci-foundation/evidence/ci03c/list_shard2.txt
+ERROR（分片）: 本片少了 109 条属于本片 project 的用例：[Entry(project='chromium', location='a11y.spec.ts:205:1', title='项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium', location='a11y.spec.ts:212:1', title='工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium', location='a11y.spec.ts:229:1', title='图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净')]
+ERROR（分片）: 本片多了 42 条不属于本片 project 的用例：[Entry(project='chromium-en', location='a11y.spec.ts:205:1', title='项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium-en', location='a11y.spec.ts:212:1', title='工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium-en', location='a11y.spec.ts:229:1', title='图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净')]
+{"shard": 1, "my_projects": ["chromium"], "other_projects": ["chromium-en", "webkit"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 42, "mine_expected": 109, "problems": ["本片少了 109 条属于本片 project 的用例：[Entry(project='chromium', location='a11y.spec.ts:205:1', title='项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium', location='a11y.spec.ts:212:1', title='工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium', location='a11y.spec.ts:229:1', title='图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净')]", "本片多了 42 条不属于本片 project 的用例：[Entry(project='chromium-en', location='a11y.spec.ts:205:1', title='项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium-en', location='a11y.spec.ts:212:1', title='工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标'), Entry(project='chromium-en', location='a11y.spec.ts:229:1', title='图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净')]"], "ok": false}
+rc=1
+=== N6 --mine 删一条但 Total: 行没改（解析层拒）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/drop_one_total_stale.txt
+ERROR（输入）: 本片 --list：Total: 说有 109 条，解析出 108 条——有行没认出来或多认了
+rc=2
+=== N7 --mine 删一条、Total: 也改成 108（判定层：本片少一条）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/drop_one.txt
+ERROR（分片）: 本片少了 1 条属于本片 project 的用例：[Entry(project='chromium', location='a11y.spec.ts:528:1', title='图标按钮都有可访问名（axe button-name / 顶栏抽查）')]
+{"shard": 1, "my_projects": ["chromium"], "other_projects": ["chromium-en", "webkit"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 108, "mine_expected": 109, "problems": ["本片少了 1 条属于本片 project 的用例：[Entry(project='chromium', location='a11y.spec.ts:528:1', title='图标按钮都有可访问名（axe button-name / 顶栏抽查）')]"], "ok": false}
+rc=1
+=== N8 --mine 里一条重复（Total 同步成 110）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/dup.txt
+ERROR（输入）: 本片 --list：重复条目 1 条：[Entry(project='chromium', location='a11y.spec.ts:212:1', title='工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标')]
+rc=2
+=== N9 --projects 空串（空片）
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects= --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine docs/implementation/ci-foundation/evidence/ci03c/list_shard1.txt
+ERROR（输入）: --projects：一个 --project= 都没有（空片）
+rc=2
+=== N10 --projects 混进 --grep
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --grep=a11y --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine docs/implementation/ci-foundation/evidence/ci03c/list_shard1.txt
+ERROR（输入）: --projects：`--grep=a11y` 不是 `--project=NAME` 的形状
+rc=2
+=== N11 others 里写了配置里不存在的 firefox
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --project=firefox --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine docs/implementation/ci-foundation/evidence/ci03c/list_shard1.txt
+ERROR（分片）: matrix 里的 project ['firefox'] 在全集 `--list` 里不存在（拼错了，或配置删了它）
+{"shard": 1, "my_projects": ["chromium"], "other_projects": ["chromium-en", "firefox", "webkit"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 109, "mine_expected": 109, "problems": ["matrix 里的 project ['firefox'] 在全集 `--list` 里不存在（拼错了，或配置删了它）"], "ok": false}
+rc=1
+=== N12 --mine 没有 Total: 行
+$ .venv/bin/python scripts/ci/playwright_shard_check.py --shard 1 --projects=--project=chromium --others=--project=webkit --project=chromium-en --full docs/implementation/ci-foundation/evidence/ci03c/list_all.txt --mine /private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/no_total.txt
+ERROR（输入）: 本片 --list：没有 `Total: N tests in M files` 行——输出被截断了？
+rc=2

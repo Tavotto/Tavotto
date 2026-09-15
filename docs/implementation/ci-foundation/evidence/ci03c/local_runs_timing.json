@@ -1,0 +1,58 @@
+{
+ "A_shard1_first_attempt": {
+  "command": "node node_modules/@playwright/test/cli.js test --project=chromium --reporter=list,json",
+  "result": "87 passed / 1 failed（环境：受限 PATH 下 python3 是系统 3.9，fixture 脚本的 `int | None` 语法不支持）/ 1 did not run（serial 依赖前一条）/ 20 skipped",
+  "start_end_utc": [
+   "Tue Sep 15 18:26:04 UTC 2026",
+   "Tue Sep 15 18:36:03 UTC 2026"
+  ],
+  "real_s": 599.42,
+  "user_s": 685.59,
+  "sys_s": 68.33,
+  "peak_rss_mib": 660.2,
+  "rc": 1
+ },
+ "B1_shard1_half": {
+  "command": "… test --project=chromium --shard=1/2 --reporter=list,json（本机权宜：工具单次前台上限 10 分钟，A 跑了 599s 贴着上限；CI 命令不带 --shard）",
+  "result": "56 passed",
+  "start_end_utc": [
+   "Tue Sep 15 18:37:36 UTC 2026",
+   "Tue Sep 15 18:43:31 UTC 2026"
+  ],
+  "real_s": 354.94,
+  "user_s": 377.24,
+  "sys_s": 38.89,
+  "peak_rss_mib": 415.9,
+  "rc": 0
+ },
+ "B2_shard1_half": {
+  "command": "… test --project=chromium --shard=2/2 --reporter=list,json",
+  "result": "33 passed / 20 skipped",
+  "start_end_utc": [
+   "Tue Sep 15 18:43:42 UTC 2026",
+   "Tue Sep 15 18:47:49 UTC 2026"
+  ],
+  "real_s": 246.84,
+  "user_s": 313.92,
+  "sys_s": 30.42,
+  "peak_rss_mib": 658.2,
+  "rc": 0
+ },
+ "C_shard2": {
+  "command": "… test --project=webkit --project=chromium-en --reporter=list,json",
+  "result": "40 passed / 2 skipped（webkit 23 / 0；chromium-en 17 / 2）",
+  "start_end_utc": [
+   "Tue Sep 15 18:48:01 UTC 2026",
+   "Tue Sep 15 18:53:21 UTC 2026"
+  ],
+  "real_s": 320.09,
+  "user_s": 296.25,
+  "sys_s": 27.31,
+  "peak_rss_mib": 371.7,
+  "rc": 0
+ },
+ "B_shard1_total": {
+  "real_s": 601.78,
+  "result": "89 passed / 20 skipped（B1 + B2 的集合 == list_shard1.txt，见 local_runs_summary.json）"
+ }
+}

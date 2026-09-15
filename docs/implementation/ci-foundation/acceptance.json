@@ -187,7 +187,17 @@
       "phase": "CI03",
       "requirement": "Playwright各browser/locale分片完整并消费真实产物",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        ".github/workflows/ci.yml windows-exe-smoke（CI03c：matrix include 两片 chromium / webkit+chromium-en，name 显示名 windows-exe-smoke (K)，每片完整构建 + 三断言 + 冒烟①②③ + 分片自验 + `pnpm e2e ${{ matrix.projects }}`，Playwright 步 timeout-minutes 30，artifact 按片命名）",
+        "scripts/ci/playwright_shard_check.py（每片自验：本片 --list == 全集里属于本片 project 的那些、本片 ∪ 另一片 == 全集 project 集，主语 (project, file:line:col, title) 集合；清单读不懂 rc 2、分片不完整 rc 1）",
+        "tests/test_playwright_shard_check.py（35 条；变异反证 19/19 KILLED：evidence/ci03c/mutations.json）",
+        "tests/test_merge_queue_workflows.py::TestPlaywrightShards（10 条：并集 == playwright.config.ts 的 project 集、两两不交、others == 其余片之并、浏览器 == 本片 project 要的引擎、e2e / install 从 matrix 取参、自验在 e2e 之前、必需步骤无 if:、artifact 名带片号、两条 Playwright 步的 step 级 timeout、job id / Gate 闭集不变、posix-e2e 不分片；变异反证 18/18 KILLED：evidence/ci03c/mutations_ci.json）",
+        "evidence/ci03c/list_all.txt / list_shard1.txt / list_shard2.txt + selfcheck_shard{1,2}.{txt,json}（本机 --list：151 = 109 ∪ 42；自验 rc 0 / 0；--web 产出与 npx 逐字节相同）",
+        "evidence/ci03c/local_runs_summary.json + local_runs_timing.json + local_runs/（本机 macOS `python -m tavotto` 形态真跑：片 1 chromium 89 passed / 20 skipped（B1 + B2 两次前台调用，601.8s）、片 2 webkit 23 + chromium-en 17 passed / 2 skipped（320.1s）；集合比对 B1 ∪ B2 == list_shard1、C == list_shard2、B ∪ C == list_all、B ∩ C = ∅ 四条全 true；A 那次 1 红是本机 PATH 下 python3 = 系统 3.9，文档 §6.3）",
+        "evidence/ci03c/negative_cases.txt（N1…N12：漏 project / 两片重叠 / 空清单 / 认不出的行 / 拿错片 / 删一条 / 重复 / 空片 / 混参数 / 配置里没有的 project / 没有 Total，退出码全非零）",
+        "CI03C_PLAYWRIGHT_SHARDS.md#6-本地实测 / #7-负例与变异反证"
+      ],
+      "note": "「分片完整」这一半在本机有集合级证据（--list 层 + 真跑层都逐 (project, file:line:col, title) 相等、无交集）并由合同测试 + 每片自验两层钉住；「消费真实产物」这一半**一次都没跑过**：本机是 macOS + `python -m tavotto`（与 posix-e2e 同形），Windows .exe + 内置 runtime + 两台机器各自构建的形态要等本 PR 的 full-ci run（看 windows-exe-smoke (1) / (2) 各自的 playwright-shard-check-windows-shard<K> artifact 与 e2e 结论）。要求是两半的合取，所以保持 not_run；到那次 run 有结论再改。2026-09-16 CI03c。"
     },
     {
       "id": "CIP-018",
@@ -228,9 +238,11 @@
       "evidence": [
         "evidence/ci03a/compare_sets.json（skipped 27 + 15 = 42 == full，且逐条 outcome 不变：本机没有一条因分片从 skipped 变 passed 或反过来）",
         ".github/workflows/ci.yml（pytest 命令带 -rs：skip 理由进日志，CI00 记录三条腿原先都拿不到）",
-        "tests/support/shard.py verify()（空片 → rc 4，不是绿）"
+        "tests/support/shard.py verify()（空片 → rc 4，不是绿）",
+        "scripts/ci/playwright_shard_check.py（CI03c：本片 --list 为空 / 配置里的 project 不在任何一片 → rc 非零，不是绿；evidence/ci03c/negative_cases.txt N1 / N3 / N9）",
+        "evidence/ci03c/local_runs_summary.json（本机分片跑的 skip 集合：chromium 20 条 playground*、chromium-en 2 条，与 CI00 记录的 CI 形状一致（posix 腿形状）；分片没有把任何一条从 skipped 变成 passed）"
       ],
-      "note": "本机证据只覆盖「分片不改变 skip 集合」这一维；「缺资源 / 重试不伪造资格」在 CI 侧未测（本 PR 没动任何 skip 条件，也没有 retry）。CI 上不同 os 的 skip 集合本来就不同，判「没伪造」要按同 os 比 manifest 与 junit。"
+      "note": "本机证据只覆盖「分片不改变 skip 集合」这一维；「缺资源 / 重试不伪造资格」在 CI 侧未测（本 PR 没动任何 skip 条件，也没有 retry）。CI 上不同 os 的 skip 集合本来就不同，判「没伪造」要按同 os 比 manifest 与 junit。 CI03c 补充：Playwright 分片不改任何 skip 条件、不改 retries（attempt 2 那次的 1 flaky 仍靠 retries: 1 过，coverage_ledger 的 known_limitations 继续挂着）；「缺资源」这一维只在本机自验层验过（空清单 rc 2）。"
     },
     {
       "id": "CIP-022",

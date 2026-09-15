@@ -1,0 +1,233 @@
+{
+ "tests": [
+  "tests/test_merge_queue_workflows.py",
+  "tests/test_ci_baseline.py",
+  "tests/test_e2e_leg_topology.py"
+ ],
+ "baseline_rc": 0,
+ "baseline": "93 passed in 0.20s",
+ "after_restore_rc": 0,
+ "killed": 18,
+ "total": 18,
+ "mutations": [
+  {
+   "id": "C01 片 2 的 projects 漏 chromium-en",
+   "file": ".github/workflows/ci.yml",
+   "old": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "new": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=webkit\"              , others: \"--project=chromium\" }\n",
+   "rc": 1,
+   "summary": "2 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_each_shard_installs_exactly_the_engines_its_projects_need"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C02 片 1 的 others 漏 chromium-en",
+   "file": ".github/workflows/ci.yml",
+   "old": "          - { shard: 1, browsers: \"chromium\",        projects: \"--project=chromium\",                    others: \"--project=webkit --project=chromium-en\" }\n",
+   "new": "          - { shard: 1, browsers: \"chromium\",        projects: \"--project=chromium\",                    others: \"--project=webkit\" }\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C03 两片都含 chromium",
+   "file": ".github/workflows/ci.yml",
+   "old": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "new": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=chromium --project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C04 片 2 只装 chromium（跑 webkit 却不装）",
+   "file": ".github/workflows/ci.yml",
+   "old": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "new": "          - { shard: 2, browsers: \"chromium\"       , projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_each_shard_installs_exactly_the_engines_its_projects_need"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C05 e2e 命令不带 matrix.projects（两片都跑全集）",
+   "file": ".github/workflows/ci.yml",
+   "old": "          pnpm e2e ${{ matrix.projects }}\n",
+   "new": "          pnpm e2e\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C06 删掉分片自验步骤",
+   "file": ".github/workflows/ci.yml",
+   "old": "      - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）\n        # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`\n        # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。\n        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、\n        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以\n        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。\n        …",
+   "new": "",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_self_check_runs_before_e2e_with_the_matrix_arguments"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C07 冒烟③加 if: 只在片 1 跑",
+   "file": ".github/workflows/ci.yml",
+   "old": "        run: |\n          $env:TAVOTTO_WORKER_PYTHON = (Get-Command python).Source\n",
+   "new": "        if: matrix.shard == 1\n        run: |\n          $env:TAVOTTO_WORKER_PYTHON = (Get-Command python).Source\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_required_steps_are_not_conditionally_skipped_on_any_shard"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C08 失败日志 artifact 名去掉片号",
+   "file": ".github/workflows/ci.yml",
+   "old": "          name: windows-smoke-logs-shard${{ matrix.shard }}\n",
+   "new": "          name: windows-smoke-logs\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_every_artifact_of_the_sharded_job_is_named_per_shard"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C09 Windows Playwright 步去掉 step 级 timeout",
+   "file": ".github/workflows/ci.yml",
+   "old": "        timeout-minutes: 30\n        run: |\n          $env:TAVOTTO_WORKER_PYTHON = $null\n          $env:TAVOTTO_EXE",
+   "new": "        run: |\n          $env:TAVOTTO_WORKER_PYTHON = $null\n          $env:TAVOTTO_EXE",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_playwright_step_has_a_step_level_timeout[windows-exe-smoke-30-60]"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C10 posix Playwright 步去掉 step 级 timeout",
+   "file": ".github/workflows/ci.yml",
+   "old": "        timeout-minutes: 20\n        run: |\n          pnpm install --frozen-lockfile\n",
+   "new": "        run: |\n          pnpm install --frozen-lockfile\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_playwright_step_has_a_step_level_timeout[posix-e2e-20-45]"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C11 windows-exe-smoke job 级 timeout 60 → 90",
+   "file": ".github/workflows/ci.yml",
+   "old": "    runs-on: windows-latest\n    timeout-minutes: 60\n",
+   "new": "    runs-on: windows-latest\n    timeout-minutes: 90\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_playwright_step_has_a_step_level_timeout[windows-exe-smoke-30-60]"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C12 删掉 name: windows-exe-smoke (${{ matrix.shard }})",
+   "file": ".github/workflows/ci.yml",
+   "old": "    name: windows-exe-smoke (${{ matrix.shard }})\n",
+   "new": "",
+   "rc": 1,
+   "summary": "2 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_job_id_and_the_gate_closed_set_are_unchanged",
+    "tests/test_ci_baseline.py::test_expression_display_names_map_back_to_the_job_id"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C13 shard 轴写成 1, 1",
+   "file": ".github/workflows/ci.yml",
+   "old": "          - { shard: 2, browsers: \"chromium webkit\", projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "new": "          - { shard: 1, browsers: \"chromium webkit\", projects: \"--project=webkit --project=chromium-en\", others: \"--project=chromium\" }\n",
+   "rc": 1,
+   "summary": "2 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_each_shard_installs_exactly_the_engines_its_projects_need"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C14 playwright.config.ts 多一个 firefox project",
+   "file": "web/playwright.config.ts",
+   "old": "  projects: [\n",
+   "new": "  projects: [\n    {\n      name: 'firefox',\n      use: { ...devices['Desktop Firefox'] },\n      testMatch: ['a11y.spec.ts'],\n    },\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C15 自验步骤的 --others 写死成字面量",
+   "file": ".github/workflows/ci.yml",
+   "old": "          --others=\"${{ matrix.others }}\"\n",
+   "new": "          --others=\"--project=webkit --project=chromium-en\"\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_self_check_runs_before_e2e_with_the_matrix_arguments"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C16 posix-e2e 的 project 名拼错",
+   "file": ".github/workflows/ci.yml",
+   "old": "          pnpm e2e --project=chromium --project=chromium-en\n",
+   "new": "          pnpm e2e --project=chromium --project=chromium-us\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_posix_e2e_stays_a_single_job_on_configured_projects"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C17 浏览器安装写死 chromium webkit",
+   "file": ".github/workflows/ci.yml",
+   "old": "          pnpm exec playwright install --with-deps ${{ matrix.browsers }}\n",
+   "new": "          pnpm exec playwright install --with-deps chromium webkit\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix"
+   ],
+   "verdict": "KILLED"
+  },
+  {
+   "id": "C18 posix-e2e 加 strategy 分片",
+   "file": ".github/workflows/ci.yml",
+   "old": "    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        id: py\n",
+   "new": "    strategy:\n      matrix:\n        shard: [1, 2]\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        id: py\n",
+   "rc": 1,
+   "summary": "1 failed",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_posix_e2e_stays_a_single_job_on_configured_projects"
+   ],
+   "verdict": "KILLED"
+  }
+ ]
+}
