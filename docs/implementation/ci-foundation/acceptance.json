@@ -46,50 +46,89 @@
       "id": "CIP-004",
       "phase": "CI01",
       "requirement": "verdict-only串行边被有证据地移除或保留理由清楚",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        ".github/workflows/ci.yml@7d77494c（package / windows-exe-smoke / macos-app-smoke / posix-e2e 的 needs: [frontend]；抬头与 package 段注释写明理由）",
+        "evidence/ci01/dag_diff.json（删 4 条 backend-fast→重型、frontend→重型 4 条改标 短预筛，其余逐字段无变化）",
+        "evidence/ci01/dag_edge_kinds_after.json（保留 frontend 边的理由逐条写在 note）",
+        "CI01_EVENTS_AND_DAG.md#1-dag改前--改后",
+        "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_do_not_wait_for_the_backend_fast_verdict（变异 M1/M1b/M1c/M2 打红）",
+        "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_keep_the_frontend_prescreen（变异 M1/M2/M2b 打红）"
+      ],
+      "note": "移除的 4 条边 CI00 判 verdict-only（下游无 download-artifact、前端自建）；保留 frontend 边作短预筛的理由：252s、删边后不在关键路径（backend-platforms windows 2443s）上，前端坏时省每候选约 45 runner 分钟。模型 Δ 中位 −892s 仍是模型，真实时长待 CI05。2026-09-16 CI01，commit 7d77494c。"
     },
     {
       "id": "CIP-005",
       "phase": "CI01",
       "requirement": "真实artifact/data依赖继续成立",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        ".github/workflows/ci.yml@7d77494c（plugin-candidate needs: [frontend]，download-artifact codex-plugin-candidate ← frontend upload 同名）",
+        "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_consumers_that_download_an_artifact_must_need_its_producer（正面判据：每个 download 的 name 由 needs 闭包里的 job 上传过；变异 M3/M3b/M3c/M2c 打红）",
+        "evidence/ci01/dag_after.json（frontend->plugin-candidate 仍标 artifact/data）"
+      ],
+      "note": "全图唯一的数据边保持；判据带非空前提（解析不出 plugin-candidate 那条 download 就红），将来在重型 job 里加 download-artifact 必须同时加生产者边。2026-09-16 CI01。"
     },
     {
       "id": "CIP-006",
       "phase": "CI01",
       "requirement": "三个stable Gate及CLA/CodeQL/可信判定来源保持",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "scripts/ci/aggregate_gate.py（未改动：git diff 37fb89a1..7d77494c -- scripts/ci 为空）",
+        ".github/workflows/ci.yml@7d77494c（ci-fast-gate / ci-integration-gate 的 needs 与 --required 未改动；判定器仍取默认分支 + python3 -I）",
+        "tests/test_merge_queue_workflows.py::TestGates::test_fast_gate_needs_matches_required_closed_set / test_integration_gate_needs_matches_required_closed_set / test_gates_run_the_trusted_copy_of_the_verdict / test_gates_run_on_always / test_codeql_gate_depends_on_analyze（改动后仍绿）",
+        "tests/test_cla_workflow_contract.py（全部仍绿）；tests/test_merge_queue_ruleset.py::…::test_gate_names_match_the_workflow_files / test_contexts_become_exactly_the_three_gates",
+        "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_a_red_backend_fast_still_blocks_the_merge_even_when_every_heavy_job_is_green（真实 decide() + build_switch_to_gates：backend-fast 红 → fast gate failure，重型全绿 → integration gate success，ruleset 三 context 全部 required；变异 M4/M4b/M4c/M4d 打红）"
+      ],
+      "note": "三个 Gate、CLA、CodeQL、可信判定来源一处未动；ruleset 未改。2026-09-16 CI01。"
     },
     {
       "id": "CIP-007",
       "phase": "CI01",
       "requirement": "merge_group/full-ci不能把完整合并资格deferred",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "scripts/ci/aggregate_gate.py decide()（--allow-deferred 在 merge_group / --full-ci 下 ConfigError，未改动）",
+        "tests/test_aggregate_gate.py::TestIntegrationGate::test_merge_group_may_not_defer / test_full_ci_pr_may_not_defer / test_require_heavy_rejects_skipped / test_partial_skip_is_failure_not_deferred",
+        "tests/test_merge_queue_workflows.py::TestGates::test_integration_gate_defers_only_on_plain_pull_requests / test_heavy_jobs_run_on_merge_group / test_full_ci_label_still_triggers_the_heavy_layer",
+        "CI01_EVENTS_AND_DAG.md#2-事件--层级表"
+      ],
+      "note": "现有判据在改动后仍绿；本轮未改事件条件或判定分支。2026-09-16 CI01。"
     },
     {
       "id": "CIP-008",
       "phase": "CI01",
       "requirement": "PR新push不取消其他PR/main/merge/release",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "tests/test_merge_queue_workflows.py::TestConcurrency::test_cancel_in_progress_only_for_pull_request / test_group_distinguishes_events / test_ci_and_codeql_use_distinct_namespaces（静态合同）",
+        "tests/test_release_workflow_contract.py::test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run",
+        "CI01_EVENTS_AND_DAG.md#3-取消与并发合同真值表"
+      ],
+      "note": "静态合同测试通过，实机验证待 push 后的真实 run：需要 PR A push 时 PR B / merge_group / push main 各有一个运行中的 run 作对照。"
     },
     {
       "id": "CIP-009",
       "phase": "CI01",
       "requirement": "ready转换后synchronize和label/full-ci策略正确",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "tests/test_merge_queue_workflows.py::TestGates::test_full_ci_label_still_triggers_the_heavy_layer / test_every_fast_lane_job_actually_runs_on_a_plain_pull_request（静态合同）",
+        "CI01_EVENTS_AND_DAG.md#2-事件--层级表（ready_for_review 在 types 里但无测试；任意 labeled/unlabeled 重跑快线、去掉 full-ci 会在同 SHA 上产出 deferred 的 integration gate——§4 ①③ 记录未改）"
+      ],
+      "note": "静态合同测试通过，实机验证待 push 后的真实 run：本轮未做草稿 / 非草稿分层，ready_for_review 只是多一个同 SHA 的 run；需要真实 PR 走一遍 draft → ready → labeled → unlabeled。"
     },
     {
       "id": "CIP-010",
       "phase": "CI01",
       "requirement": "非PR必要pending候选不被无意去重覆盖",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "CI01_EVENTS_AND_DAG.md#3-取消与并发合同真值表（逐事件评估：merge_group 每候选 key 不同无风险；push main 三连推中间一次的落地审计会被待定取代，§4 ② 记录未改）",
+        "_lab-qualification.yml 的 job 级槽 lab-qualification-${{ github.workflow }}（tests/test_release_workflow_contract.py 看住）"
+      ],
+      "note": "静态合同测试通过，实机验证待 push 后的真实 run：GitHub 侧的待定取代行为静态钉不住，要用连续三次 push main 观察。"
     },
     {
       "id": "CIP-011",

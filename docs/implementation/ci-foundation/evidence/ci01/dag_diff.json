@@ -1,0 +1,70 @@
+{
+  "_doc": "CI00 evidence/dag.json（ci.yml @ 8b95256c）与 CI01 evidence/ci01/dag_after.json（ci.yml @ 7d77494c）的机器比对。算法：两份 dag.json 的 edges 按 from->to 取键集做集合差与 kind 对照；jobs 逐 job 逐字段（name / needs / if / runs_on / timeout_minutes / matrix / yaml_step_count）比对，只列出不同的。空列表就是「没有别的变化」。",
+  "edges_before": 23,
+  "edges_after": 19,
+  "removed_edges": [
+    "backend-fast->macos-app-smoke",
+    "backend-fast->package",
+    "backend-fast->posix-e2e",
+    "backend-fast->windows-exe-smoke"
+  ],
+  "added_edges": [],
+  "reclassified_edges": {
+    "frontend->macos-app-smoke": {
+      "before": "verdict-only",
+      "after": "短预筛"
+    },
+    "frontend->package": {
+      "before": "verdict-only",
+      "after": "短预筛"
+    },
+    "frontend->posix-e2e": {
+      "before": "verdict-only",
+      "after": "短预筛"
+    },
+    "frontend->windows-exe-smoke": {
+      "before": "verdict-only",
+      "after": "短预筛"
+    }
+  },
+  "job_set_identical": true,
+  "job_field_diffs_other_than_needs": [],
+  "needs_diffs": {
+    "package": {
+      "before": [
+        "backend-fast",
+        "frontend"
+      ],
+      "after": [
+        "frontend"
+      ]
+    },
+    "windows-exe-smoke": {
+      "before": [
+        "backend-fast",
+        "frontend"
+      ],
+      "after": [
+        "frontend"
+      ]
+    },
+    "macos-app-smoke": {
+      "before": [
+        "backend-fast",
+        "frontend"
+      ],
+      "after": [
+        "frontend"
+      ]
+    },
+    "posix-e2e": {
+      "before": [
+        "backend-fast",
+        "frontend"
+      ],
+      "after": [
+        "frontend"
+      ]
+    }
+  }
+}
