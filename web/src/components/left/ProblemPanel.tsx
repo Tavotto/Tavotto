@@ -209,7 +209,7 @@ export function ProblemPanel() {
                 </span>
               </span>
               <Button
-                size="sm"
+                size="md"
                 variant="primary"
                 className="shrink-0"
                 onClick={() => runBatchFix(fixableHere)}
@@ -258,7 +258,9 @@ export function ProblemPanel() {
         <p className="px-3 py-6 text-center text-xs text-ink-3">{pr('running')}</p>
       ) : shown.length === 0 ? (
         all.length === 0 ? (
-          <EmptyState icon={CircleCheck} title={pr('none')} hint={pr('noneHint')} />
+          /* 说明只是标题的复述（「未发现问题」/「按当前规范检查，项目没有需要处理的
+             问题」），删掉一份（左栏审计 L35） */
+          <EmptyState icon={CircleCheck} title={pr('none')} />
         ) : issues.length === 0 ? (
           /* 范围裁掉了：整个文档里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
@@ -344,7 +346,8 @@ function ScopeBar({
 }) {
   const count = (n: number | undefined) =>
     n ? (
-      <span className="ml-1 type-meta tabular-nums" aria-hidden>
+      // 计数不是页签文字：600 只给页签选中态，数字跟着粗起来就成了第二个重点（左栏审计 L24）
+      <span className="ml-1 type-meta font-normal tabular-nums" aria-hidden>
         {n}
       </span>
     ) : null
@@ -352,7 +355,8 @@ function ScopeBar({
     <div className="shrink-0 px-3">
       {/* 「当前图 / 整个文档」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
           与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
-      <div className="flex h-8 items-center border-b border-border">
+      {/* 页签条 36：同一个 Tabs 原语在左栏 32、右栏 36 是两档头高（左栏审计 L25） */}
+      <div className="flex h-9 items-center border-b border-border">
         <TabList label={pr('scopeLabel')}>
           <Tab
             panelId="problem-scope-figure"
@@ -508,7 +512,7 @@ function GroupBlock({
           {/* 组头一行（2026-09-15 打磨批次 E）：标题在左、「N 个对象 · 等级」meta 在右；
               等级文字仍在——等级不只靠颜色（problemPanel.test 钉着） */}
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-xs font-medium leading-5 text-ink">{title}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-ink">{title}</span>
             <span className="type-meta shrink-0 leading-5 tabular-nums">
               {pr('groupObjects', { count: group.objects })}
               {' · '}
@@ -600,7 +604,7 @@ function IssueRow({
           className="min-w-0 flex-1 rounded-sm py-0.5 text-left outline-none focus-visible:focus-ring"
         >
           <span className="flex min-w-0 items-center gap-1.5 leading-4">
-            <TruncateMiddle text={subjectName(issue)} className="min-w-0 text-xs text-ink" />
+            <TruncateMiddle text={subjectName(issue)} className="min-w-0 text-sm text-ink" />
             {current && (
               <span className="type-meta shrink-0 rounded-xs bg-surface px-1 leading-4">
                 {pr('current')}
@@ -691,13 +695,17 @@ function CursorBar({
     <div
       data-problem-cursor
       aria-label={pr('cursorLabel')}
-      className="flex shrink-0 items-center gap-1 border-t border-border py-1 pl-3 pr-1.5"
+      // 左栏页脚只有一种行语法：`border-t px-1.5 py-1` + 28px 控件，文字自己再让 6px
+      // 落到 56 那条竖线上（左栏审计 L27）
+      className="flex shrink-0 items-center gap-1 border-t border-border px-1.5 py-1"
     >
-      <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+      <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2">
         {view.current
           ? `${pr('cursorAt', { pos: view.position, total: view.total })} · ${subjectName(view.current)}`
           : pr('cursorDone', { count: view.total })}
       </span>
+      {/* 「上一项 / 下一项」是一对方向相反的同一个动作，两颗同形（左栏审计 L26）：
+          此前上是图标钮、下是文字钮，一对动作看起来像两件事 */}
       <IconButton
         iconSize="sm"
         side="top"
@@ -709,16 +717,17 @@ function CursorBar({
       >
         <ChevronUp size={ICON_SIZE.sm} />
       </IconButton>
-      <Button
-        size="sm"
-        variant="secondary"
+      <IconButton
+        iconSize="sm"
+        side="top"
+        label={pr('next')}
         disabled={!view.next}
         onClick={() => {
           if (view.next) onLocate(view.next)
         }}
       >
-        {pr('next')}
-      </Button>
+        <ChevronDown size={ICON_SIZE.sm} />
+      </IconButton>
       <IconButton
         iconSize="sm"
         side="top"

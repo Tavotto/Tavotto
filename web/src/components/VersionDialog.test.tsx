@@ -215,12 +215,49 @@ describe('每行一张缩略图', () => {
   })
 
   it('画不出来的版本留同尺寸占位，不画一张比例是编的图', async () => {
-    // 页面尺寸取不出来的旧 / 坏文档：后端整条不发草图
-    await mount([meta({ id: 'v_old', sketch: undefined })])
+    // 页面尺寸取不出来的旧 / 坏文档：后端整条不发草图。
+    // 这一版来自**另一张**画布，所以「哪张画布」那一行照常出现（见下面的 L21 一组）
+    await mount([meta({ id: 'v_old', sketch: undefined, canvasId: 'c_other', canvasName: 'Fig 2' })])
     expect(thumbs()).toHaveLength(0)
     const placeholder = rows()[0].querySelector('span[aria-hidden]')
     expect(placeholder?.className).toContain('border-dashed')
     // 行本身照常可用（时间 / 摘要 / 哪张画布都还在）
+    expect(rows()[0].textContent).toContain('Fig 2')
+  })
+})
+
+/**
+ * 「来自画布 X」只在它能区分什么的时候才说（2026-09-15 左栏审计 L21）。
+ *
+ * 单画布项目里这一行在每一版上都是同一个名字——一个说了等于没说的字段占着
+ * 第三行。被省掉的**只有**「每一行都是当前这张画布」这一种情形：来自别的画布
+ * 要说，「不知道来自哪张画布」也要照实说（R-03：它不是「当前画布」的同义词）。
+ */
+describe('来自哪张画布：只在它能区分什么的时候才说', () => {
+  it('单画布项目、版本就来自当前画布：不再每行重复同一个画布名', async () => {
+    await mount([meta()])
+    expect(rows()[0].textContent).not.toContain('Fig 1')
+  })
+
+  it('版本来自另一张画布：照说', async () => {
+    await mount([meta({ canvasId: 'c_other', canvasName: 'Fig 2' })])
+    expect(rows()[0].textContent).toContain('Fig 2')
+  })
+
+  it('旧检查点不知道自己来自哪张画布：照实说，不猜成当前画布', async () => {
+    await mount([meta({ canvasId: undefined, canvasName: undefined })])
+    expect(rows()[0].textContent).toContain('画布未知')
+    expect(rows()[0].textContent).not.toContain('Fig 1')
+  })
+
+  it('项目里不止一张画布：每一版都说自己来自哪张', async () => {
+    const pd = useDocumentStore.getState()
+    await act(async () => {
+      useDocumentStore.setState({
+        canvases: [...pd.canvases, { ...pd.canvases[0], id: 'c_two', name: 'Fig 2' }],
+      })
+    })
+    await mount([meta()])
     expect(rows()[0].textContent).toContain('Fig 1')
   })
 })

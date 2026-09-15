@@ -95,35 +95,26 @@ export function ScriptLibrary({ query }: { query: string }) {
 
   return (
     <div className="flex flex-col px-2 pb-2">
-      {GROUP_ORDER.filter((g) => groups.has(g)).map((g) =>
-        g === 'infra' ? (
-          <Details key={g} className="mt-1">
-            {/* 与上面各组同一格式：名字 + meta 数字（2026-09-15 打磨批次 G，此前是「工具与配置脚本（1）」） */}
-            <Summary className="mx-1 h-6 gap-1.5 rounded-xs px-1 type-meta hover:text-ink-2">
-              {sc('groupInfraName')}
-              <span className="tabular-nums">{groups.get(g)!.length}</span>
-            </Summary>
-            <ul aria-label={sc('groupInfra', { count: groups.get(g)!.length })}>
-              {groups.get(g)!.map((entry) => (
-                <ScriptRow key={entry.script} entry={entry} stems={view.scripts[entry.script]?.stems ?? []} />
-              ))}
-            </ul>
-          </Details>
-        ) : (
+      {/* 五个组同一种组头：名字 + meta 数字（2026-09-15 打磨批次 G）。「工具与配置脚本」
+          此前是可折叠的 Details——同一列表两种组头；它已排最后、通常只有一两项，不值得一副
+          折叠骨架（左栏审计 L07）。组名 `px-1` 与卡片、搜索框落在同一条竖线上（L05） */}
+      {GROUP_ORDER.filter((g) => groups.has(g)).map((g) => {
+        const label = g === 'infra' ? sc('groupInfraName') : sc(`group_${g}`)
+        return (
           <section key={g} className="mt-1">
             {/* 分组名 + 计数是一行元数据，不是又一级标题 */}
-            <h4 className="flex h-6 items-center gap-1.5 px-2 type-meta">
-              {sc(`group_${g}`)}
+            <h4 className="flex h-6 items-center gap-1.5 px-1 type-meta">
+              {label}
               <span className="tabular-nums">{groups.get(g)!.length}</span>
             </h4>
-            <ul aria-label={sc(`group_${g}`)}>
+            <ul aria-label={label}>
               {groups.get(g)!.map((entry) => (
                 <ScriptRow key={entry.script} entry={entry} stems={view.scripts[entry.script]?.stems ?? []} />
               ))}
             </ul>
           </section>
-        ),
-      )}
+        )
+      })}
     </div>
   )
 }
@@ -161,8 +152,10 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
     <li className="flex flex-col">
       <div className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
         <StatusDot entry={entry} run={run} />
+        {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
+            与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
         <span
-          className="min-w-0 flex-1 truncate font-mono text-xs text-ink"
+          className="min-w-0 flex-1 truncate font-mono text-sm text-ink"
           title={entry.script}
         >
           {entry.script}
