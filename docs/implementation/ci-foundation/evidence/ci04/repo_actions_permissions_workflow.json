@@ -1,0 +1,8 @@
+{
+  "command": "gh api repos/Tavotto/Tavotto/actions/permissions/workflow",
+  "fetched_at": "2026-09-15T22:03Z",
+  "response": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false
+  }
+}

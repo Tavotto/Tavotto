@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "kind": "mutation_evidence",
+  "generated": "2026-09-16",
+  "target": "tests/test_merge_queue_workflows.py::TestRunnerTrustZones",
+  "guard_commit": "944f2b36",
+  "summary": {
+    "restored_pytest_rc": 0,
+    "restored_failed": [],
+    "git_status_porcelain_after": "",
+    "killed": 15,
+    "noop_green": 1,
+    "unexpected": 0,
+    "total": 16
+  },
+  "mutations": [
+    {
+      "id": "M01",
+      "file": ".github/workflows/ci.yml",
+      "note": "ci.yml 的 python-lint 派到 [self-hosted, tavotto-lab]（lead 点名的那条）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M02",
+      "file": ".github/workflows/ci.yml",
+      "note": "ci.yml 的 python-lint 派到 [self-hosted, tavotto-ci]（三台空闲 runner 的标签）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M03",
+      "file": ".github/workflows/ci.yml",
+      "note": "裸 `runs-on: self-hosted`（匹配全部四台）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M04",
+      "file": ".github/workflows/ci.yml",
+      "note": "backend-platforms 的 os 轴加 self-hosted（矩阵展开那一维）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M05",
+      "file": ".github/workflows/ci.yml",
+      "note": "package 的 include 加一条 os: self-hosted（include 形状的矩阵）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M06",
+      "file": ".github/workflows/ci.yml",
+      "note": "ci.yml 加 pull_request_target 事件",
+      "pytest_rc": 1,
+      "failed": [
+        "test_every_workflow_event_is_in_the_known_closed_set"
+      ],
+      "expected_red": [
+        "test_every_workflow_event_is_in_the_known_closed_set"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M07",
+      "file": ".github/actionlint.yaml",
+      "note": "actionlint.yaml 多登记一个未部署的 tavotto-fast（lead 点名的那条）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use"
+      ],
+      "expected_red": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "a5d581bea2b3b54fe7e49330f5d507c54029f09e12d0fdf3a4b326db364f375b"
+    },
+    {
+      "id": "M08",
+      "file": ".github/actionlint.yaml",
+      "note": "actionlint.yaml 把 tavotto-lab 换成别的名字（少登记）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use"
+      ],
+      "expected_red": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "a5d581bea2b3b54fe7e49330f5d507c54029f09e12d0fdf3a4b326db364f375b"
+    },
+    {
+      "id": "M09",
+      "file": ".github/workflows/lab-ci.yml",
+      "note": "lab-ci.yml 加 pull_request 触发（经可复用 workflow 递归到 self-hosted）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "e4142ad1b45939ceec60570c1212b7ee573007abbf9d79cc7ab6bc001b6ef8b5"
+    },
+    {
+      "id": "M11",
+      "file": ".github/workflows/_lab-qualification.yml",
+      "note": "_lab-qualification.yml 自己可被 workflow_dispatch 触发",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "e5d8be77523c5c9759025c59a8683c872d0a5550c4eaf9500fe511b9f9b38cf7"
+    },
+    {
+      "id": "M12",
+      "file": ".github/workflows/ci.yml",
+      "note": "只在注释里写 runs-on: [self-hosted, tavotto-lab]（no-op：判据不许被散文咬到，必须全绿）",
+      "pytest_rc": 0,
+      "failed": [],
+      "expected_red": [],
+      "verdict": "NOOP_GREEN",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M13",
+      "file": ".github/workflows/ci.yml",
+      "note": "映射形式 runs-on: group + labels",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M14",
+      "file": ".github/workflows/codeql.yml",
+      "note": "codeql.yml 的 analyze 派到实验室（第二个 Gate workflow）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "495d7ab57e567e9a712b00af8f588fe7daa1554edbb9e56ffc4729b77cb1f6a6"
+    },
+    {
+      "id": "M15",
+      "file": ".github/workflows/pr-conflict-domains.yml",
+      "note": "非 Gate 的 pull_request workflow 派到 tavotto-ci",
+      "pytest_rc": 1,
+      "failed": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "dd3b259edc150feca3022bc519d7c271bcd0922bb7546ef1b734fb0c57453f43"
+    },
+    {
+      "id": "M16",
+      "file": ".github/workflows/ci.yml",
+      "note": "托管但不在枚举里的名字（枚举是正面形式：新托管名也要来登记）",
+      "pytest_rc": 1,
+      "failed": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED",
+      "restored_sha256": "31fa0e8eeb229313ed63aa88e8d6dddc4bcf2fab895b37630298f2a6557d2319"
+    },
+    {
+      "id": "M10",
+      "file": ".github/workflows/zz-pr-lab.yml (临时新建，已删)",
+      "note": "新建一个 pull_request 触发、直接 uses _lab-qualification.yml 的 workflow",
+      "pytest_rc": 1,
+      "failed": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "expected_red": [
+        "test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers",
+        "test_untrusted_events_reach_only_hosted_runners"
+      ],
+      "verdict": "KILLED"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+# grep -rn runs-on .github/workflows/  （2026-09-15T22:02Z，worktree ci-foundation @ 944f2b36）
+.github/workflows/_lab-qualification.yml:57:    runs-on: [self-hosted, linux, x64, tavotto-lab]
+.github/workflows/codeql.yml:47:    runs-on: ubuntu-latest
+.github/workflows/codeql.yml:90:    runs-on: ubuntu-latest
+.github/workflows/nightly.yml:48:    runs-on: ubuntu-latest
+.github/workflows/nightly.yml:95:    runs-on: ubuntu-latest
+.github/workflows/nightly.yml:200:    runs-on: windows-latest
+.github/workflows/release.yml:92:    runs-on: ubuntu-latest
+.github/workflows/release.yml:227:    runs-on: ubuntu-latest
+.github/workflows/release.yml:418:    runs-on: ubuntu-latest
+.github/workflows/release.yml:710:    runs-on: ubuntu-latest
+.github/workflows/release.yml:817:    runs-on: windows-latest
+.github/workflows/release.yml:1124:    runs-on: ubuntu-latest
+.github/workflows/release.yml:1214:    runs-on: ubuntu-latest
+.github/workflows/desktop-tauri.yml:114:    runs-on: ubuntu-latest
+.github/workflows/desktop-tauri.yml:164:    runs-on: ubuntu-latest
+.github/workflows/desktop-tauri.yml:193:    runs-on: ${{ matrix.os }}
+.github/workflows/desktop-tauri.yml:772:    runs-on: ubuntu-latest
+.github/workflows/metrics-freshness.yml:39:    runs-on: ubuntu-latest
+.github/workflows/pr-conflict-domains.yml:29:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:115:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:242:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:349:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:418:      # os 固定 ubuntu-latest，写在 runs-on 上，不再是 matrix 的一维。
+.github/workflows/ci.yml:426:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:486:    runs-on: ${{ matrix.os }}
+.github/workflows/ci.yml:545:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:578:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:668:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:767:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:823:    runs-on: ${{ matrix.os }}
+.github/workflows/ci.yml:901:    runs-on: ${{ matrix.os }}
+.github/workflows/ci.yml:1042:    runs-on: windows-latest
+.github/workflows/ci.yml:1411:    runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
+.github/workflows/ci.yml:1568:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:1645:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:1688:    runs-on: ubuntu-latest
+.github/workflows/ci.yml:1744:    runs-on: ubuntu-latest
+.github/workflows/lab-ci.yml:30:#     runs-on:
+.github/workflows/lab-ci.yml:98:    runs-on: ubuntu-latest
+.github/workflows/plugin-stable.yml:68:    runs-on: ubuntu-latest
+.github/workflows/telemetry-metrics.yml:44:    runs-on: ubuntu-latest
