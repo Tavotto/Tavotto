@@ -89,7 +89,8 @@ export function Disclosure({
   summary?: ReactNode
 }) {
   return (
-    <section className="px-3 pb-3">
+    // pb-4：与 Section 同一个节拍（分区之间 16），画布页五组折叠行与「源文件与高级」不再各走一套 40 / 44（2026-09-15 检查器批次 L5）
+    <section className="px-3 pb-4">
       <button
         onClick={onToggle}
         aria-expanded={open}
