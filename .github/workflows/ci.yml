@@ -913,11 +913,32 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build
+      # **冒烟实例按 job 隔离**（CI03b，2026-09-16）。下面两步原先有三件事在同一台机器上跑两个
+      # `package` 实例时会互相撞——托管 VM 用完即毁所以从没暴露，进了 CI04 的多 runner 主机就会
+      # （docs/implementation/ci-foundation/04_BUILD_TEST_CACHE.md §4「真隔离条件」）：
+      #   * venv 固定在 `/tmp/smoke`：第二个实例的 `python -m venv` 会覆盖第一个正在用的——
+      #     改到 `${{ runner.temp }}/smoke-venv`（每个 job 一份，两步共用同一个变量）；
+      #   * 固定端口 5199 + `sleep 8`：第二个实例的 `resolve_port` 顺延到 5200，curl 打的却仍是
+      #     5199——验的是第一个；慢机器 8 秒没起来就假红，快机器白等 6 秒。改成
+      #     scripts/ci/package_smoke.py：向系统租端口，以「`/api/version` 200 + JSON，**且**应答者
+      #     持有本实例 data dir 里那枚凭据（ADR 0008 的 `/api/session/ping`）」为就绪判据；租约
+      #     在真 bind 之前被抢时按产品自己的文案（顺延 / 已在运行 / EADDRINUSE）认出并换号重试；
+      #   * `&` 起的服务从不终止：托管 VM 销毁时一起没了，多 runner 主机上就是泄漏进程——脚本在
+      #     finally 里对进程组 SIGTERM → 等 10 秒 → SIGKILL → wait，并核 `killpg(pgid, 0)` ESRCH。
+      # 产品的 `--port` **不改**成支持 0（系统分配）：`tests/test_windows_regressions.py::
+      # test_busy_port_falls_back_instead_of_crashing` 要的正是「被占用就顺延」；04 §4 也写明
+      # 「端口冲突专用用例保留有意冲突，不把产品行为改掉以便并行」——所以租约与 bind 之间那个窗口
+      # 由脚本处理，不由产品消灭。data / config 目录由脚本放在 `--workdir` 下（每次尝试一套），
+      # 这一步不再另设 `TAVOTTO_DATA_DIR` / `TAVOTTO_CONFIG_DIR`——设了也会被脚本覆盖，留着只会让人
+      # 以为隔离是它做的。合同：tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation；
+      # 设计、本机实测、负例：docs/implementation/ci-foundation/CI03B_PACKAGE_SMOKE_ISOLATION.md。
+      # 回退 = 恢复这两步原文（/tmp/smoke + `--port 5199 --no-browser &` + `sleep 8` + 两条 curl）。
       - name: 装进干净环境并冒烟
         shell: bash
         run: |
-          python -m venv /tmp/smoke
-          BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
+          VENV="${{ runner.temp }}/smoke-venv"
+          python -m venv "$VENV"
+          BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"
           "$BIN/python" -m pip install --quiet dist/*.whl
           "$BIN/python" -c "import tavotto; print('version', tavotto.__version__)"
           "$BIN/python" -c "
@@ -941,16 +962,23 @@ jobs:
           "
       - name: 起服务并请求首页
         shell: bash
-        env:
-          TAVOTTO_DATA_DIR: ${{ runner.temp }}/tavotto-data
-          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}/tavotto-config
+        # step 级上限（CI03c 的理由：job 级硬杀时 step 停在 in_progress、收集步骤不跑、日志不落）。
+        # 脚本自己的上限是 3 次 × 60 秒就绪 + 每次 ≤ 16 秒终止（10 秒等退出 + 两次 3 秒核组空）≈ 3.8 分钟，
+        # 5 分钟在它之外留了余量。
+        timeout-minutes: 5
         run: |
-          BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
-          "$BIN/python" -m tavotto --port 5199 --no-browser &
-          sleep 8
-          curl -sf http://127.0.0.1:5199/ -o /dev/null
-          curl -sf http://127.0.0.1:5199/api/version
-          echo
+          VENV="${{ runner.temp }}/smoke-venv"
+          BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"
+          python scripts/ci/package_smoke.py --python "$BIN/python" \
+            --workdir "${{ runner.temp }}/smoke-run"
+      - name: 上传冒烟日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}
+          path: ${{ runner.temp }}/smoke-run/**
+          retention-days: 7
+          if-no-files-found: ignore
 
   windows-exe-smoke:
     # 「只在别人电脑上发生」的问题基本都在这一段：打包后的 .exe、隔离的
