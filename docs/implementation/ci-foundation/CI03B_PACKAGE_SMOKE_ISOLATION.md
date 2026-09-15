@@ -113,6 +113,21 @@ Windows：`taskkill /T /F /PID`（`Popen.terminate()` 是 TerminateProcess，只
 `raise SystemExit(128 + signum)`，异常沿栈走到 `run_attempt` 的 finally；用例 `test_sigterm_while_waiting_still_terminates_the_server_and_its_worker`
 对着 never-ready 的桩在等待期间发 SIGTERM：脚本退 143、桩与 worker 都不在、result.json 照写（M28）。
 
+### 3.1 失败日志上传前脱敏（lead 审核补，commit df721c98 / fe5fffbf）
+
+失败时上传的 artifact 原来是 `smoke-run/**`——它会把 `attempt-*/data/session/port-<P>.json`（本实例
+的会话凭据，ADR 0008）与带 `#dnonce=<nonce>` 的 `server.log` 一起传出这台 VM。虽然那时进程已死、
+凭据无用，`03_RUNNERS_AND_TRUST.md` §3「上传失败日志前脱敏」的纪律是明确的：
+
+* artifact 路径改为**正面列全**的两条：`smoke-run/result.json` 与 `smoke-run/attempt-*/server.log`；
+  `data` / `config` 永远不在里面（合同用例 `test_failure_logs_are_uploaded_under_a_name_unique_per_leg`
+  逐行比路径清单，写回 `smoke-run/**` 就红）。
+* 脚本在每次尝试的 `finally` 里、子进程终止**之后**把 `server.log` 原地脱敏：`#dnonce=<值>` →
+  `#dnonce=<redacted>`（键名保留，读日志的人仍认得出那一行是握手 URL）；失败时打到 stderr 的日志尾
+  同样经过 `redact()`。桩服务器打一行同形的握手 URL 当靶子，
+  `test_the_handshake_nonce_is_redacted_from_the_log_before_it_can_be_uploaded` 的主语是**落盘的
+  server.log** 与 stderr 日志尾；拿掉 `redact_log_file()` 调用 → 红（rc 1）。
+
 ## 4. 本机实测（macOS，worktree，前台跑；命令与产物在 `evidence/ci03b/local_runs/`）
 
 ### 4.1 真 wheel 走一遍 `package` 的流程
