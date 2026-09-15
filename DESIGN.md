@@ -179,7 +179,7 @@ md 10（卡片与浮层）、lg 14（对话框、命令面板）、full（圆点
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
 Badge、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass / TreeRow、SearchInput、Notice、Section / Disclosure。
 四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
-disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有 lucide 一套（`docs/ux/ICONOGRAPHY.md`）。
+disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。
 
 动效：**宪法第七节**。时长只来自 token（fast 120 / base 180 / slow 240 / exit 90），
 进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
