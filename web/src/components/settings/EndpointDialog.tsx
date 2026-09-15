@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, X } from 'lucide-react'
+import { ChevronRight, X } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'

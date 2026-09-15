@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { Check, Ellipsis, Pipette, Plus, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Check, Ellipsis, Pipette, Plus, Trash2, TriangleAlert, X } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
