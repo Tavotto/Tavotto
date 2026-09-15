@@ -145,7 +145,7 @@ function ElementPopover({
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
-        'fixed z-50 w-[268px] rounded-md border border-border bg-surface p-1',
+        'fixed z-50 w-[268px] rounded-md bg-surface p-1',
         'text-xs text-ink shadow-pop animate-pop-in',
       )}
     >

@@ -96,7 +96,7 @@ export function GuidedTask({
       data-guided-task={achieved ? 'done' : `step-${step}`}
       className={cn(
         'absolute bottom-3 left-3 z-20 w-[272px] max-w-[calc(100%-1.5rem)]',
-        'rounded-md border border-border bg-surface p-3 shadow-pop',
+        'rounded-md bg-surface p-3 shadow-pop',
         'animate-rise-in',
       )}
     >

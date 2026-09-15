@@ -180,7 +180,11 @@ export function SettingRow({
         {status != null && <span className="type-meta -mt-1 break-words">{status}</span>}
         {illustration != null && <span className="mt-1.5 flex">{illustration}</span>}
       </div>
-      <div className="flex min-h-7 min-w-0 items-center gap-2">{children}</div>
+      {/* 控件贴列右缘（2026-09-15 打磨批次 A，用户拍板）：定宽列里左起对齐会把控件漂在页面中间、
+          右侧空一大片；整行宽的 fill 形态不在此列，照旧铺满 */}
+      <div className={cn('flex min-h-7 min-w-0 items-center gap-2', !fill && 'justify-end justify-self-end')}>
+        {children}
+      </div>
     </div>
   )
 }

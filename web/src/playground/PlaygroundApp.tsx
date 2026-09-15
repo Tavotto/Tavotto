@@ -874,7 +874,7 @@ function SourceDialog({
         aria-modal="true"
         aria-label={pg('sourceTitle')}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-md border border-border bg-surface shadow-pop"
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg bg-surface shadow-dialog"
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="font-mono text-xs">{filename}</span>

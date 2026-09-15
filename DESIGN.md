@@ -2,21 +2,17 @@
 name: Tavotto
 description: matplotlib 科研图的可视化编辑器——Paper × Instrument，紧凑的桌面工具
 colors:
-  bg: "#f2f2ef"
+  bg: "#f7f6f3"
   canvas: "#eaeae6"
   surface: "#ffffff"
   surface-2: "#f7f7f4"
-  border: "#e3e3dd"
-  border-strong: "#cfcfc7"
   border-control: "#8a8a82"
-  border-input: "#8a8a82"
   ink: "#1b1b18"
   ink-2: "#5c5c55"
   ink-3: "#6b6b64"
   ink-faint: "#a3a39a"
   accent: "#2868b7"
   accent-subtle: "#e9f0f9"
-  selected: "#ebebe6"
   danger: "#c4442a"
   danger-subtle: "#fdf3f1"
   warn: "#8a5a00"
@@ -27,7 +23,7 @@ colors:
 typography:
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
-    fontSize: "14px"
+    fontSize: "15px"
     fontWeight: 500
     lineHeight: "20px"
   section:
@@ -65,8 +61,8 @@ typography:
 rounded:
   xs: "3px"
   sm: "6px"
-  md: "8px"
-  lg: "12px"
+  md: "10px"
+  lg: "14px"
 spacing:
   control: "28px"
   setting-row: "48px"
@@ -120,13 +116,13 @@ components:
 
 **Creative North Star: "Paper × Instrument"**
 
-一件用于科研图制作与论文排版的精密仪器：微微的纸张感（暖灰白底 `#f2f2ef`，不黄不米）、
+一件用于科研图制作与论文排版的精密仪器：微微的纸张感（暖灰白底 `#f7f6f3`，不黄不米）、
 工程工具的精确（28px 控件、单位排成竖线的数字框、毫米制）、桌面软件的成熟。极简但不空洞，
 克制但有设计——精致来自比例、对齐、间距、字体层级、图标与状态，**不来自装饰**。
 
 **Key Characteristics:**
-- 一套字体（系统 sans）、四档字号（11 / 12 / 13 / 14）、两档字重（400 / 500）
-- 持久表面没有投影；分层靠极轻的明度差与 hairline
+- 一套字体（系统 sans）、五档字号（11 / 12 / 13 / 14 / 15）、两档字重（400 / 500；只有页签 / 分段的选中态 600）
+- 持久表面没有投影；分层靠极轻的明度差与 ink 半透明的 hairline（边框 / hover / selected 都是 ink 的 5%～18% 叠加）
 - 蓝色只做小面积：焦点环、链接、AI、画布选择框；主按钮是近黑
 - 密度是「紧凑工具」那一档：控件一律 28px
 - 动效只是点缀：opacity + ≤4px 位移 + scale 0.97~1，关掉不损失信息；回弹只有 `--ease-spring` 一条曲线（峰值 5%，只给落位收尾）
@@ -141,9 +137,9 @@ components:
 - **Tavotto Blue（品牌蓝）** (`#2868b7`)：焦点环、链接、AI 入口、画布选择框——小面积。
 
 ### Neutral
-- **Paper（纸面）** (`#f2f2ef`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 输入框 / 浮层 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Selected** (`#ebebe6`)
+- **Paper（纸面）** (`#f7f6f3`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 输入框 / 浮层 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%）
 - **Ink-2 / Ink-3 / Ink-faint** (`#5c5c55` / `#6b6b64` / `#a3a39a`)：次级、元数据、禁用。Ink-2 在所有底色上 ≥4.5:1；**Ink-3 只在白 / Surface-2 / Paper 上达标**（5.37 / 5.00 / 4.78），在 Canvas 画布灰上只有 4.45:1——画布底色上直接写字用 Ink-2（`index.css` 里 `--color-ink-3` 的注释是这条的权威）；faint 不用于要读的字
-- **Border / Border-strong** (`#e3e3dd` / `#cfcfc7`)：hairline 只给输入框、区域边界、浮层 · **Border-control / Border-input** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道，以及所有可编辑框（输入框 / 数字框 / 下拉 / 搜索框 / 样张选择器）的边界——「边界就是全部识别信息」，≥3:1；有框 = 能改
+- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界、次级按钮 · **Border-input**（ink 16%，hover 25%，聚焦 accent）：所有可编辑框的边——有框 = 能改，静态边有意不到 3:1，3:1 由聚焦环承担 · **Border-control** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道，边界就是全部识别信息，≥3:1
 
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。
@@ -159,7 +155,7 @@ components:
 
 ### Hierarchy
 六个角色 `type-title / type-section / type-body / type-control / type-caption / type-meta`，
-值与用途见 **宪法第六节**；`text-[Npx]` 不许出现，`type-section` 12px / 500 / ink，en 大写 + 0.06em 字距。
+值与用途见 **宪法第六节**；`text-[Npx]` 不许出现，`type-title` 15px / 500，`type-section` 12px / 500 / ink，不大写不加字距；600 只给页签 / 分段的选中态。
 
 ## Layout
 
@@ -169,20 +165,20 @@ components:
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影；唯一允许的投影是浮层专用的
-`--shadow-pop: 0 6px 20px rgba(27, 27, 24, 0.09)`（菜单 / popover / dialog / tooltip）。
+**The Flat-By-Default Rule.** 持久表面不用投影；浮层是「1px 半透明环 + 一层大模糊」，不画实色边：
+`--shadow-pop: 0 0 0 1px rgba(27, 27, 24, 0.08), 0 8px 24px rgba(27, 27, 24, 0.08)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes
 
-四档圆角 + full，Tailwind 自带的 xl / 2xl 已清空：xs 3（16px 高以下的小片）、sm 6（控件）、
-md 8（卡片与浮层）、lg 12（对话框、命令面板）、full（圆点、开关、徽章）。**宪法第二节**。
+四档圆角 + full，Tailwind 自带的 xl / 2xl 已清空：xs 3（16px 高以下的小片、分段 thumb）、sm 6（控件）、
+md 10（卡片与浮层）、lg 14（对话框、命令面板）、full（圆点、开关、徽章）。浮层比控件大 4～8。**宪法第二节**。
 
 ## Components
 
 全部原语在 `web/src/components/ui/`，形态与状态在 **宪法第五节**：Button 四档、IconButton、
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
-Badge、Tabs、listRowClass / TreeRow、SearchInput、Notice、Section / Disclosure。
-四态：hover（surface-hover）< active（surface-active）≈ selected（selected + 字重 / 对勾）；
+Badge、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass / TreeRow、SearchInput、Notice、Section / Disclosure。
+四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
 disabled 统一 `opacity-35~40 + cursor-not-allowed`。图标只有 lucide 一套（`docs/ux/ICONOGRAPHY.md`）。
 
 动效：**宪法第七节**。时长只来自 token（fast 120 / base 180 / slow 240 / exit 90），

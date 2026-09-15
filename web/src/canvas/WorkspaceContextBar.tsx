@@ -103,7 +103,7 @@ export function WorkspaceContextBar() {
         aria-label={t('stage.contextBarLabel')}
         data-workspace-context-bar
         data-workspace-mode={fastEdit ? 'fast_edit' : 'layout'}
-        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1.5 rounded-md border border-border bg-surface px-2 py-1.5 shadow-pop"
+        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1.5 rounded-md bg-surface px-2 py-1.5 shadow-pop"
       >
         {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
             面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗

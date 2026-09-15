@@ -1,7 +1,10 @@
-import { useRef, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useSlidingIndicator } from './slidingIndicator'
 import { tabClass } from './tabClass'
+
+/** 选中页签的字重类名；量宽时临时加上，见 `Tab` */
+const BOLD = 'font-semibold'
 
 /**
  * 下划线标签页：整行只有文字与一条 2px 的近黑下划线，没有框、没有底色。
@@ -81,9 +84,24 @@ export function Tab({
   panelId?: string
   children: ReactNode
 }) {
+  const ref = useRef<HTMLButtonElement>(null)
+  // 选中态 600 比 400 宽 2–3%（2026-09-15 打磨批次 A，用户拍板）：布局前量一次加粗后的宽度当
+  // 自己的 min-width，切换时邻居不挪（二审 A4 的关切）。不复制子元素——页签里有图标 / 计数 /
+  // 运行点，渲染两遍会让 textContent 类的判据翻倍。jsdom 里量出来是 0，等于没设。
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const had = el.classList.contains(BOLD)
+    el.style.minWidth = ''
+    if (!had) el.classList.add(BOLD)
+    const w = el.getBoundingClientRect().width
+    if (!had) el.classList.remove(BOLD)
+    if (w > 0) el.style.minWidth = `${Math.ceil(w)}px`
+  })
   return (
     <button
       {...rest}
+      ref={ref}
       type="button"
       role="tab"
       id={panelId ? `${panelId}-tab` : rest.id}

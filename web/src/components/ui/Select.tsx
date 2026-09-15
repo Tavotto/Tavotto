@@ -41,7 +41,7 @@ export function Select<T extends string>({
         className={cn(
           // `group`：箭头方向要跟着 Trigger 的 data-state 走，而 data-state 挂在
           // Trigger 自己身上，子元素上的 data-[state=open]: 是读不到的。
-          'group flex h-7 w-full items-center justify-between gap-1 px-1.5 outline-none',
+          'group flex h-7 w-full items-center justify-between gap-1 px-2 outline-none',
           // 框与输入框同一副（fieldBox，S8 甲）；打开时与聚焦同色
           FIELD_BOX,
           FIELD_OPEN,
@@ -81,7 +81,7 @@ export function Select<T extends string>({
           sideOffset={4}
           className={cn(
             'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md',
-            'border border-border bg-surface p-1 shadow-pop',
+            'bg-surface p-1 shadow-pop',
             'origin-[var(--radix-select-content-transform-origin)]',
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}

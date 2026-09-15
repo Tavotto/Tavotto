@@ -88,7 +88,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       onPointerDown={(e) => e.stopPropagation()}
       style={style}
       className={cn(
-        'pointer-events-auto w-[300px] max-w-[calc(100vw-1rem)] rounded-md border border-border bg-surface p-3 text-ink shadow-pop outline-none',
+        'pointer-events-auto w-[300px] max-w-[calc(100vw-1rem)] rounded-md bg-surface p-3 text-ink shadow-pop outline-none',
         'animate-pop-in',
         className,
       )}

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
 const CONTENT_CLASS = cn(
-  'z-50 rounded-md border border-border bg-surface p-1 shadow-pop',
+  'z-50 rounded-md bg-surface p-1 shadow-pop',
   'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
 )
 

@@ -51,9 +51,9 @@ const RULES: Rule[] = [
     spares: '<div className="rounded-lg" />',
   },
   {
-    name: '字号只有 xs(11) / sm(12) / base(13) / lg(14) 四档，没有像素字面量',
+    name: '字号只有 xs(11) / sm(12) / base(13) / lg(14) / xl(15) 五档，没有像素字面量',
     pattern: /\btext-\[\d+px\]/,
-    fix: 'text-xs / text-sm / text-base / text-lg，或六个 type-* 角色',
+    fix: 'text-xs / text-sm / text-base / text-lg / text-xl，或六个 type-* 角色',
     catches: '<p className="text-[11px]" />',
     spares: '<p className="text-xs type-meta" />',
     exempt: {
@@ -102,6 +102,18 @@ const RULES: Rule[] = [
     fix: '浮层 shadow-pop；常驻表面不用投影',
     catches: '<div className="shadow-sm" />',
     spares: '<div className="shadow-pop shadow-[inset_0_1px_0_0_var(--color-accent)]" />',
+  },
+  {
+    name: '600 字重只给页签 / 分段选择器的选中态（2026-09-15 打磨批次 A，用户拍板）',
+    pattern: /\bfont-semibold\b/,
+    fix: '正文、标题、按钮只有 400 / 500；「选中的页签 / 分段项」由 tabClass / Segmented 自己加粗',
+    catches: '<span className="font-semibold" />',
+    spares: '<span className="font-medium" />',
+    exempt: {
+      '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
+      '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
+      '/src/components/ui/Tabs.tsx': { count: 1, why: '量宽用的同一个类名：布局前临时加粗量出 min-width，邻居不挪' },
+    },
   },
   {
     name: '复选框只有 ui/Checkbox 一种',

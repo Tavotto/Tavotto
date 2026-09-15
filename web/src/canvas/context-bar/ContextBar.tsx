@@ -359,7 +359,7 @@ export function ContextBar() {
       className={cn(
         // w-max：fixed 盒子的 width:auto 会被「left 到视口右沿」的可用宽度压扁，
         // 量出来的就不是它的自然宽度；落位与宽窄档都靠这个量
-        'fixed z-40 flex w-max items-center gap-1 rounded-md border border-border bg-surface p-1',
+        'fixed z-40 flex w-max items-center gap-1 rounded-md bg-surface p-1',
         'text-xs text-ink shadow-pop',
         pos ? 'animate-pop-in' : 'invisible',
       )}

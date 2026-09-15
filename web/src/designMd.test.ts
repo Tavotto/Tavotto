@@ -256,7 +256,7 @@ const COMPONENT_CLASSES: Record<string, () => string> = {
   input: () => block1(ui('ui/fieldBox.ts'), /export const FIELD_BOX = cn\(([\s\S]*?)\)\n/) + ' ' + literal(ui('ui/Input.tsx'), /'(h-7 w-full[^']*)'/),
   badge: () => literal(ui('ui/Badge.tsx'), /'(inline-flex h-\d[^']*)'/),
   menu: () => block1(ui('ui/Menu.tsx'), /const CONTENT_CLASS = cn\(([\s\S]*?)\)\n/),
-  dialog: () => literal(ui('ui/Dialog.tsx'), /'([^']*rounded-\w+ border border-border bg-surface shadow-pop[^']*)'/),
+  dialog: () => literal(ui('ui/Dialog.tsx'), /'([^']*rounded-\w+ bg-surface shadow-dialog[^']*)'/),
 }
 
 function literal(src: string, re: RegExp): string {

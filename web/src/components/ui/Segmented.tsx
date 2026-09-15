@@ -106,7 +106,7 @@ export function Segmented<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        'relative flex h-7 w-full items-stretch rounded-sm border border-border bg-surface',
+        'relative flex h-7 w-full items-stretch rounded-sm bg-surface-active p-0.5',
         className,
       )}
       {...rest}
@@ -116,7 +116,7 @@ export function Segmented<T extends string>({
           aria-hidden
           data-segmented-thumb
           className={cn(
-            'pointer-events-none absolute inset-y-0 left-0 rounded-sm bg-selected',
+            'pointer-events-none absolute inset-y-0.5 left-0 rounded-xs bg-surface shadow-thumb',
             thumb.animate && 'transition-[transform,width] duration-base ease-pop',
           )}
           style={thumb.style}
@@ -146,11 +146,11 @@ export function Segmented<T extends string>({
               'first:rounded-l-sm last:rounded-r-sm',
               'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
               active
-                ? 'font-medium text-ink'
+                ? 'font-semibold text-ink'
                 : item.disabled
                   ? 'cursor-default text-ink-faint'
                   : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化
-                    'text-ink-3 hover:bg-surface-hover hover:text-ink',
+                    'text-ink-3 hover:text-ink',
             )}
           >
             {item.icon}

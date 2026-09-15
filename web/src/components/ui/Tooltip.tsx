@@ -28,8 +28,8 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
             // 触发器下方、盖住下一排按钮（弹层自动聚焦第一个分段项时实测撞见），
             // 不让它吃点击。Radix 的定位外壳也得一起放行：index.css 里那条
             // `[data-radix-popper-content-wrapper]:has([role='tooltip'])`
-            'pointer-events-none z-50 flex items-center gap-2 rounded-sm border border-border bg-surface',
-            'px-2 py-1 text-xs text-ink shadow-pop',
+            'pointer-events-none z-50 flex items-center gap-2 rounded-sm bg-ink',
+            'px-2 py-1 text-sm text-surface',
             'origin-[var(--radix-tooltip-content-transform-origin)]',
             'data-[state=delayed-open]:animate-pop-in',
             // instant-open = 连续划过同组按钮时的即时切换：再播一次进场会闪，只淡入
@@ -39,7 +39,7 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
         >
           <span>{label}</span>
           {shortcut && (
-            <span className="font-mono text-xs text-ink-3">{shortcut}</span>
+            <span className="font-mono text-xs text-surface/60">{shortcut}</span>
           )}
         </RT.Content>
       </RT.Portal>

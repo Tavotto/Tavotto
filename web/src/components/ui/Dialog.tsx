@@ -136,7 +136,7 @@ export function Dialog({
           className={cn(
             'fixed left-1/2 top-1/2 z-50 max-h-[86vh] max-w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2',
-            'flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-pop',
+            'flex flex-col overflow-hidden rounded-lg bg-surface shadow-dialog',
             // 容器是初始焦点的落点：对话框自己的出现就是位置线索，不再套一圈焦点环
             'outline-none',
             // 退场靠 Radix 的 Presence 保活（它会等 animationend）——**不要**改成条件

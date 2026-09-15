@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 export const FIELD_BOX = cn(
   // 框里的值是「要读的字」：12px（正文档），标签 / caption / meta 留 11px（2026-09-14 审计分歧 1，用户拍板试 12）
   'rounded-sm border border-border-input bg-surface text-sm text-ink transition-colors duration-fast',
-  'hover:border-ink-3',
+  'hover:border-border-input-hover',
 )
 /** 框本身就是 `<input>` 时的聚焦态 */
 export const FIELD_FOCUS = 'focus:border-accent'

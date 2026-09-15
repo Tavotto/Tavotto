@@ -870,7 +870,7 @@ function SpineZoneFeedback({
         role="status"
         data-spine-zone-label={hover.side}
         className={cn(
-          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm border border-border bg-surface px-1.5 py-0.5',
+          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
           'text-xs leading-4 text-ink shadow-pop',
         )}
         style={{

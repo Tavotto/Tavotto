@@ -251,7 +251,7 @@ export function CommandPalette() {
         if (e.target === e.currentTarget) setOpen(false)
       }}
     >
-      <div className="w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-surface shadow-pop animate-pop-in">
+      <div className="w-[440px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg bg-surface shadow-dialog animate-pop-in">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
           <input

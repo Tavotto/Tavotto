@@ -15,27 +15,29 @@
 
 | 语义 | 工具类 | 值 | 用途 |
 | --- | --- | --- | --- |
-| surface-app | `bg` | `#f2f2ef` | 应用底：微暖纸白，不黄、不米 |
+| surface-app | `bg` | `#f7f6f3` | 应用底：微暖纸白，不黄、不米（2026-09-15 打磨批次 A 从 #f2f2ef 提亮：白面板对它 1.06:1，不再像一张张浮起的卡） |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
 | surface-subtle | `surface-2` | `#f7f7f4` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
-| surface-hover | `surface-hover` | ink 4.5% | hover。三档里最弱 |
+| surface-hover | `surface-hover` | ink 5% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
-| surface-selected | `selected` | `#ebebe6` | 选中：只比背景稍深，配字重 / 对勾再说一遍 |
+| surface-selected | `selected` | ink 10% | 选中：hover 的两倍，白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
 | ink-2 | `ink-2` | `#5c5c55` | 次级文字、标签 |
 | ink-3 | `ink-3` | `#6b6b64` | 元数据、单位、占位。仍 ≥4.5:1 |
 | ink-disabled | `ink-faint` | `#a3a39a` | 禁用 / 装饰。不用于要读的字 |
-| border | `border` | `#e3e3dd` | hairline。只给输入框、区域边界、浮层 |
-| border-strong | `border-strong` | `#cfcfc7` | hover 中的输入框、区域边界 |
+| border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
+| border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
 | border-control | `border-control` | `#8a8a82` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| border-input | `border-input` | `#8a8a82` | 所有可编辑框的边框（`ui/fieldBox.ts`：TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器）。**有框 = 能改**，只读摘要无框；此前数字框 / 下拉是 surface-2 灰底无边，与文字框两套并存（2026-09-14 审计 S8，拍板「甲」） |
+| border-input | `border-input` | ink 16%，hover `border-input-hover` 25% | 所有可编辑框的边框（`ui/fieldBox.ts`）。**有框 = 能改**不变；2026-09-15 打磨批次 A 把静态边从 3.48:1 收到 ≈1.4:1（OpenAI alpha-16、Claude 10%），聚焦才是不透明 accent 环——3:1 由聚焦环承担 |
 | accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、链接、AI、画布选择框 |
 | danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
 规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`）；持久表面不用投影，
-浮层只用 `shadow-pop`；surface 之间靠极轻的明度差与 hairline 分层，不靠框。
+浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
+「1px 半透明环 + 一层大模糊」，浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
+明度差与半透明 hairline 分层，不靠框。
 
 ## 二、圆角
 
@@ -43,10 +45,10 @@
 
 | 档 | 值 | 给谁 |
 | --- | --- | --- |
-| `rounded-xs` | 3 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签 |
+| `rounded-xs` | 3 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段选择器的 thumb |
 | `rounded-sm` | 6 | 控件：输入框、按钮、图标钮、选项格、树行、tooltip |
-| `rounded-md` | 8 | 卡片与浮层：菜单、popover、select 弹层 |
-| `rounded-lg` | 12 | 对话框、命令面板 |
+| `rounded-md` | 10 | 卡片与浮层：菜单、popover、select 弹层（2026-09-15 从 8 抬到 10：浮层要比控件大一档以上） |
+| `rounded-lg` | 14 | 对话框、命令面板（2026-09-15 从 12 抬到 14） |
 | `rounded-full` | | 圆点、开关、徽章（`Badge` 是唯一的胶囊文字元素） |
 
 ## 三、密度
@@ -99,17 +101,19 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Toggle**：唯一的滑动开关，名字必填；滑块动 `transform`（二审 E4）。复选框的勾 / 单选的点
   与框同一个 `fast` 淡入（E5）。`CopyButton` 的「复制 → 已复制」两份内容叠同一格取宽者、图标淡换（E7）。
 - **Badge**：胶囊、16px 高、五种语义色。
-- **Tabs / tabClass**：下划线标签页，选中 = ink 色 + 2px 近黑线（二审 A4 起**不再加粗**：SF Pro 的 500 比
-  400 宽 2–3%，en-US 切页签邻居会挪 1.5px；下划线本身就是不靠颜色的第二重线索）。那条线是 tablist 上
+- **Tabs / tabClass**：下划线标签页，选中 = **600** + ink + 2px 近黑线（2026-09-15 打磨批次 A，用户拍板「页签选中态可以 600」；
+  二审 A4 的关切——加粗让邻居挪 1.5px——由 `Tab` 在布局前量一次加粗后的宽度给自己 `min-width` 解决，
+  不复制子元素，`textContent` 类判据不受影响）。那条线是 tablist 上
   **唯一的一条**，切换时滑到新页签（二审 E2）。**只负责切换视图**
   （右栏「属性 / 改图助手 / 画布」、版本抽屉「该版本 / 当前」、问题面板「当前图 / 整个文档」、
   刻度卡「X 刻度 / Y 刻度」）。**键盘**（2026-09-14 审计 S4）：只有当前页在 Tab 顺序里，
   ← → Home End 换页并当场切换；`Tab` 传 `panelId` 得到 id / `aria-controls`，内容区套
   `TabPanel`。右栏三个模式是同一个 tablist 的三个页签（ADR 0010 §3 的 2026-09-14 修订）。
 - **Segmented**：分段选择器，**一组互斥的取值**——对齐、刻度方向、纵横比、布局方向、
-  作用范围（含导出对话框的输出范围）。28px 一行、hairline 外框、选中 = `selected` 轻 tint +
-  字重、未选中 ink-3；那块 tint 是整组**唯一的一块**，换值时滑到新的一格（二审 E2；各格等分，
-  字重变化不会挪动邻居）。页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：
+  作用范围（含导出对话框的输出范围）。28px 一行、容器 `surface-active` 8% 灰、无外框、内边距 2；选中项是**白色浮起的 thumb**
+  （`shadow-thumb`：ring 6% + 0 1px 2px 8%）+ 600 + ink，未选中 ink-3、hover ink（2026-09-15 打磨批次 A：
+  此前白底外框 + `selected` 灰 tint，与列表行的选中同形；OpenAI 与 Claude 的分段控件都是灰容器 + 白 thumb）。
+  那块 thumb 是整组**唯一的一块**，换值时滑到新的一格（二审 E2；各格等分，字重变化不会挪动邻居）。页签负责切换视图，不负责属性取值（2026-09-13 审计 §6「控件语法」）：
   此前它也是下划线页签，选一个值长得像在切换页面。互斥取值超过四五档、或标签很长时用 `Select`。
   **键盘**（2026-09-14 审计 S3）：整组只占一个 Tab 停靠点（选中项），← → Home End 换值并带
   焦点，禁用项跳过；`role="radio"` 字面量只许出现在它与空间型选择器（OptionGrid 一族）里，
@@ -150,7 +154,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 
 | 角色 | 值 | 给谁 |
 | --- | --- | --- |
-| `type-title` | 14 / 20 · 500 · ink | 对话框 / 页面标题 |
+| `type-title` | 15 / 20 · 500 · ink | 对话框 / 页面标题（2026-09-15 打磨批次 A 从 14 抬到 15：与正文 12 之间要有 3px 台阶） |
 | `type-section` | 12 / 16 · 500 · ink | 分区小标题、菜单组标题。2026-09-14 审计 S9：中文没有大写、字距看不见，靠「深 + 重」与行标签（12 · 400 · ink-2）拉开；二审 B2（拍板「甲」）英文也去掉大写 + 字距，两种语言同一个骨架 |
 | `type-body` | 12 / 16 · ink | 正文 |
 | `type-control` | 12 · 颜色随控件 | 控件里**要读的值**（输入框 / 数字框 / 下拉 / 分段 / 样张格）。2026-09-14 审计分歧 1 拍板：值试到正文档，标签 / caption / meta 留 11，28px 不变 |
@@ -165,9 +169,9 @@ ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`�
 i18n 字串里写 `{{w}} × {{h}} mm`，`resources.test` 守着（此前 `{{w}}×{{h}} mm` 十处、`{{w}} × {{h}} mm` 五处、
 `{{w}}×{{h}}cm` 一处并存，`measure.mmSize` 与 `mmSizeSpaced` 两个 key 同一件事）。
 
-字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 四档；`text-[Npx]` 不许出现（营销页 /try 的
-三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；`font-semibold` 现存 9 处待
-页面级 Session 收成 `type-title`。
+字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 / xl 15 五档（xl 只给 `type-title`）；`text-[Npx]` 不许出现
+（营销页 /try 的三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；**600 只给页签 / 分段选择器
+的选中态**（`tabClass` / `Segmented`，2026-09-15 打磨批次 A，用户拍板），`foundation.test` 按文件计数守住。
 
 ## 七、动效
 
@@ -263,7 +267,8 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
 - **SettingSection**：type-section 小标题 + 可选一句 type-caption 说明 + 若干行；相邻两个
   `SettingRow` 之间一根 hairline（行与警示条 / 折叠区之间不画）。**不是卡片**。
 - **SettingRow**：`标题 [?] / 说明 / 现状 ‖ 控件` 的两列网格——标题列弹性，**控件列定宽
-  `SETTING_CONTROL_WIDTH` = 240**，开关 / 下拉 / 按钮 / 数字框都从同一条竖线起排、左起对齐。
+  `SETTING_CONTROL_WIDTH` = 240**，开关 / 下拉 / 按钮 / 数字框在列内**贴右缘对齐**（2026-09-15 打磨批次 A，
+  用户拍板：此前左起对齐在页面中间、右侧空一大片；Codex / ChatGPT / macOS 的设置行都是控件贴内容区右缘）。
   标题 type-body（12 / ink），说明 type-caption，现状 type-meta。`density="normal"` 最小 48px
   （默认）、`compact` 最小 32px（密集字段清单，不放说明）；`control="fill"` 时控件整行宽、落到
   标题下一行（路径输入框那种）。样式 / 规范页的只读摘要行（`SummaryRow`）共用同一份网格，
@@ -437,3 +442,25 @@ B02 / B09 / B25 / B31 / B45 / B52「像同一套产品」：
 - 没做的：逐字光标（ChatGPT 的圆点常被当作「卡住了」）、消息气泡从输入框飞到对话区（侧栏是顶部对齐的，
   第一条会飞过整个面板高度）、思考过程逐行浮现（过程默认折叠，展开时一次到位）。
 
+## 十九、2026-09-15 打磨批次 A：token 与原语（用户拍板）
+
+调研 OpenAI `@openai/apps-sdk-ui`（ChatGPT 组件库，25 档灰 / 18 档 alpha / 9 档控件全部一手）与
+claude.com 产品壳、anthropic.com 的 CSS token 之后（全文 `docs/ux/POLISH_2026-09-15.md`），两家的精致
+来自五个可填进 token 的数：分层靠 ink 的 4%～16% 半透明叠加而不是实色线；浮层是 1px 环 + 一层大模糊；
+UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深色；selected 是 hover 的两倍、分段控件是白色
+浮起的 thumb。本批次把这五个数落进 `index.css` 与五个原语，页面零改动即受益：
+
+| 项 | 改前 | 改后 |
+| --- | --- | --- |
+| T1 可编辑框的边 | `#8a8a82` 3.48:1 | ink 16%，hover 25%，聚焦 accent 环 |
+| T2 字阶 | title 14 | title 15（新 `--text-xl`）；控件字 12 已在 S8 后就位 |
+| T3 浮层 | 圆角 8 / 12 + 实色 border + `0 6px 20px 9%` | 圆角 10 / 14；`shadow-pop` = ring 8% + `0 8px 24px 8%`，`shadow-dialog` 更深一档；不画 border |
+| T4 交互面 | hover 4.5% / active 8% / selected `#ebebe6` | 5% / 8% / 10%，三档都是 ink 叠加 |
+| T5 底色 | `#f2f2ef`（白面板 1.12:1） | `#f7f6f3`（1.06:1） |
+| T6 分段选择器 | 白底外框、选中灰 tint | 灰容器、白 thumb + `shadow-thumb`、600 |
+| T7 Tooltip | 白底 + border + 投影 | ink 底白字，无边无影 |
+| T8 字重 | 只有 400 / 500 | 页签 / 分段选中态 600，其余不变 |
+| L2 设置行 | 控件在 240 列内左起 | 控件贴列右缘 |
+
+有意保留的「不达标」：可编辑框静态边 ≈1.4:1、selected 在纸底上 ≈1.2:1——都是两家的做法，3:1 由聚焦环、
+选中态由字重 / 对勾再说一遍。`tokenContrast.test` 把半透明面合成到每个底上量，主语是合成后的颜色。

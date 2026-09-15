@@ -17,5 +17,5 @@ export const TAB_UNDERLINE = 'after:absolute after:bottom-0 after:h-0.5 after:ro
 export const tabClass = (active: boolean) =>
   cn(
     'relative h-full text-xs outline-none transition-colors focus-visible:focus-ring',
-    active ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
+    active ? 'font-semibold text-ink' : 'text-ink-3 hover:text-ink-2',
   )
