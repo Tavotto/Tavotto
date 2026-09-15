@@ -1267,9 +1267,21 @@ jobs:
         working-directory: web
         # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：黄金路径与
         # 可访问性在它上面各跑一遍——只在跑 webkit project 的那一片上装（matrix.browsers）。
+        #
+        # **实验（CI02，2026-09-16）：不带 `--with-deps`。** 这一步原来 245s / 231s，按日志时间戳
+        # 拆开：`pnpm install` 1s（build_frontend.py 早装过）、浏览器下载 17s / 27s，其余
+        # **226s / 204s 全是 `--with-deps` 在跑 playwright-core 的 install_media_pack.ps1——
+        # Windows Server 上 `Install-WindowsFeature Server-Media-Foundation`**（webkit 不触发任何
+        # Windows 依赖安装；posix-e2e 的 `--with-deps` 是 apt 装真依赖，那边保留）。而这条腿是
+        # CI01 删边后合并资格的关键路径（frontend → 本 job → gate），每片 −200s 直接落到资格时长上。
+        # 「Chromium / WebKit 在 windows-latest 镜像上是否需要 Media Foundation」本机（macOS）证不了，
+        # **由本 PR 自己的 full-ci run 判**：128 条 e2e 会当场说明浏览器起不起得来；红了（启动失败
+        # 那一类，看 playwright-report）就把 `--with-deps` 加回来，一行回退。合同：
+        # tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it。
+        # 数字与拆分：docs/implementation/ci-foundation/CI02_BUILD_REUSE.md §2 / evidence/ci02/playwright_install_split.json。
         run: |
           pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps ${{ matrix.browsers }}
+          pnpm exec playwright install ${{ matrix.browsers }}
 
       - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
         # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`

@@ -996,8 +996,10 @@ class TestPlaywrightShards:
         code = _code(_job(CI, self.JOB))
         e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert e2e == [" ${{ matrix.projects }}"], f"windows-exe-smoke 的 pnpm e2e 行：{e2e}"
+        # `--with-deps` 不在这里钉：CI02 把它从 Windows 两片去掉了（实验，由 full-ci run 判），
+        # 带不带由 TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it 管。
         assert re.search(
-            r"(?m)^\s+pnpm exec playwright install --with-deps \$\{\{ matrix\.browsers \}\}\s*$",
+            r"(?m)^\s+pnpm exec playwright install (?:--with-deps )?\$\{\{ matrix\.browsers \}\}\s*$",
             code,
         ), "浏览器安装没有从 matrix.browsers 取"
 
@@ -1413,13 +1415,21 @@ class TestBuildReuseAndCaches:
             found.add((job_id, w["workspaces"]))
         assert found == self.RUST_CACHE, sorted(found)
 
-    def test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it(self):
-        """两条 Playwright 腿各恰好一条 `pnpm exec playwright install --with-deps …`——真跑（幂等），
-        不从缓存恢复浏览器目录（上面的枚举已保证没有那样的 actions/cache）。前提先钉住：两条腿都在。"""
-        for job_id in ("windows-exe-smoke", "posix-e2e"):
+    #: 两条 Playwright 腿各恰好一条 `playwright install`——真跑（幂等），不从缓存恢复浏览器目录
+    #: （上面的枚举已保证没有那样的 actions/cache）。**Windows 不带 `--with-deps`**（CI02 实验：
+    #: 它在 windows-latest 上只做一件事——装 Media Foundation，226s / 204s，占了这一步的 90%，且这条腿
+    #: 是合并资格的关键路径；Chromium 是否需要它由本 PR 的 full-ci run 判，红则加回）；**posix 带**
+    #: （apt 装 chromium 的真依赖与字体，23s）。主语是整条命令，不是「含不含某个 flag」。
+    PLAYWRIGHT_INSTALL = {
+        "windows-exe-smoke": "pnpm exec playwright install ${{ matrix.browsers }}",
+        "posix-e2e": "pnpm exec playwright install --with-deps chromium",
+    }
+
+    def test_windows_installs_browsers_without_with_deps_and_posix_keeps_it(self):
+        for job_id, want in self.PLAYWRIGHT_INSTALL.items():
             code = _code(_job(CI, job_id))
-            lines = re.findall(r"(?m)^\s+pnpm exec playwright install --with-deps (.+)$", code)
-            assert len(lines) == 1, (job_id, lines)
+            lines = re.findall(r"(?m)^\s+(pnpm exec playwright install\b.*)$", code)
+            assert lines == [want], (job_id, lines)
 
     # ── E：唯一数据边的身份 ──────────────────────────────────────────────────
     def test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest(self):
