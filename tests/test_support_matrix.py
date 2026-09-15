@@ -72,15 +72,16 @@ def test_python_range_matches_pyproject():
 
 
 def _backend_fast_pythons() -> list[str]:
-    """从 ci.yml 里切出 `backend-fast` 的 `strategy.matrix.include`，返回它跑的
-    Python 档（按出现顺序）。
+    """从 ci.yml 里切出 `backend-fast` 的 `strategy.matrix`，返回它跑的 Python 档
+    （按出现顺序）。
 
     **不用 PyYAML**（与 tests/test_merge_queue_workflows.py 同一条纪律：它不在
     `.venv` 里，importorskip 会让整组判据静默跳过——那正是空门禁）。改为只认
-    本仓库的缩进形状：先按两格缩进切出 job 块，再取 `include:` 下面**更深缩进**
-    的 `- { os: …, python: "…" }` 流式映射条目，注释行跳过，缩进回到 `include:`
-    那一层就停。切不出 job、找不到 include、一条都解析不出——三种都当场抛，
-    不许安静地返回空集让下面的判据恒真。
+    本仓库的缩进形状：先按两格缩进切出 job 块，再在 `matrix:` 下面**更深缩进**
+    的行里取 `python: ["3.10", …]` 那根轴（CI03a 起 matrix 是 python × shard 的轴，
+    不再是 `include` 列表），注释行跳过，缩进回到 `matrix:` 那一层就停。
+    切不出 job、找不到 matrix、轴读不出——三种都当场抛，不许安静地返回空集让
+    下面的判据恒真。
     """
     assert CI_WORKFLOW.is_file(), (
         f"读不到 {CI_WORKFLOW.relative_to(ROOT)}——这条判据的输入是仓库级 workflow"
@@ -89,11 +90,11 @@ def _backend_fast_pythons() -> list[str]:
     job = re.search(r"(?ms)^  backend-fast:\n(.*?)(?=^  [\w-]+:|\Z)", text)
     assert job, "ci.yml 里切不出 job `backend-fast`——缩进形状变了？"
     lines = job.group(0).splitlines()
-    heads = [i for i, ln in enumerate(lines) if ln.strip() == "include:"]
-    assert len(heads) == 1, f"backend-fast 里应恰有一个 `include:`，读到 {len(heads)} 个"
+    heads = [i for i, ln in enumerate(lines) if ln.strip() == "matrix:"]
+    assert len(heads) == 1, f"backend-fast 里应恰有一个 `matrix:`，读到 {len(heads)} 个"
     head = heads[0]
     depth = len(lines[head]) - len(lines[head].lstrip())
-    entries: list[tuple[str, str]] = []
+    pythons: list[str] | None = None
     for ln in lines[head + 1 :]:
         if not ln.strip():
             continue
@@ -102,13 +103,14 @@ def _backend_fast_pythons() -> list[str]:
             break
         if ln.lstrip().startswith("#"):
             continue
-        item = re.fullmatch(
-            r"\s*-\s*\{\s*os:\s*([\w-]+)\s*,\s*python:\s*\"(\d+\.\d+)\"\s*\}\s*", ln
-        )
-        assert item, f'backend-fast 的 include 里有一条不是 `{{ os: …, python: "…" }}` 形状：{ln!r}'
-        entries.append((item.group(1), item.group(2)))
-    assert entries, "backend-fast 的 include 下一条矩阵项都没解析出来——形状变了？"
-    return [py for _os, py in entries]
+        axis = re.fullmatch(r"\s*python:\s*\[([^\]]*)\]\s*", ln)
+        if axis:
+            assert pythons is None, "backend-fast 的 matrix 里有两根 python 轴"
+            pythons = [v.strip().strip("\"'") for v in axis.group(1).split(",") if v.strip()]
+    assert pythons, "backend-fast 的 matrix 下读不出 `python: [...]` 那根轴——形状变了？"
+    for py in pythons:
+        assert re.fullmatch(r"\d+\.\d+", py), f"python 轴上有一条不是 `X.Y`：{py!r}"
+    return pythons
 
 
 def test_backend_fast_runs_both_ends_of_the_tested_range():

@@ -5,8 +5,8 @@ name: CI
 # **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
 #
 #   PR（含草稿）    快速反馈：python-lint（Ruff）/ invariants /
-#                   backend-fast（Linux 3.10+3.13）/ frontend / workerd /
-#                   compat-smoke / CodeQL。
+#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 2 片）/
+#                   frontend / workerd / compat-smoke / CodeQL。
 #                   重型资格**不在 PR 上跑**——CI integration gate 显式回
 #                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
 #   full-ci PR      打上 `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套重型
@@ -29,6 +29,13 @@ name: CI
 # 的 35 分钟全量 pytest——那四条边从不消费 backend-fast 的任何字节（verdict-only），
 # 28/29 个合并组的关键路径却经过它们。删边不动 AND：backend-fast 仍在 CI fast gate
 # 的闭集里，三个 Gate 都要绿才合得进去。理由与数字写在 `package` 那一段。
+#
+# pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
+# `shard: [1, 2]` 轴，每一档的全量 pytest 拆成两个并行 job（`--shard K/2`，按文件分、
+# 不拆文件、每个进程先算全部两片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
+# 就是 rc 4；两片里任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
+# 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab / nightly / release 的
+# pytest 命令没有 `--shard`，跑的仍是全集。
 #
 # ruleset 的 required contexts = 三个稳定 Gate（CI fast gate / CI integration
 # gate / codeql.yml 的 CodeQL gate），判定逻辑只在 scripts/ci/aggregate_gate.py。
@@ -382,19 +389,41 @@ jobs:
   # Linux 3.14 那档是 requires-python `<3.15` 的兑现处（issue #33）：
   # tests/test_support_matrix.py 钉住「support-matrix 里 tested 的最高档必须在
   # 这个矩阵里有腿」——上界放开了却没有腿在跑它，就是一句空承诺。
+  #
+  # **每档再按文件分 2 片**（CI03a，2026-09-16；设计与实测见
+  # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）：
+  #   * 为什么按文件、不拆文件：29 个文件有 module 级 fixture、文件内共享 worker /
+  #     figure 状态（CI_BASELINE.md §7）；文件是 fixture 生命周期自洽的最小单位。
+  #   * 为什么 2 片：CI00 实测这条腿 35 分钟、前 25 个文件占 900/1129 秒，按文件贪心
+  #     两片理论上 ~565s/片（本机）；先 2 片对比串行，再谈更多（CI03 §7），不加 -n。
+  #   * 自验做了什么：`--shard K/2` 在**同一进程 collection 之后**做（tests/conftest.py
+  #     → tests/support/shard.py），每个进程都算出全部两片，断言 nodeid 集合的并集 ==
+  #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
+  #     静默跑空集。
+  #   * 漏片由谁兜：进程内自验是第一层；第二层是 matrix 语义——两片里任一片不
+  #     success，`needs.backend-fast.result` 就不是 success，CI fast gate 的
+  #     `--required` 闭集里 backend-fast 仍是那一个 job id，Gate 照红。**job id 不变**，
+  #     显示名变成 `backend-fast (3.10, 1)`；required context 只有三个 Gate 名字，
+  #     仓库设置不用重新登记任何检查。
+  #   * 权重表怎么更新：tests/support/shard_weights.json 只影响两片平不平衡，不影响
+  #     覆盖。每一片都把 junit + manifest 上传成 artifact（下面那一步）；把同一 os
+  #     的两片 junit 喂给 `python tests/support/shard.py --from-junit …` 就是新表。
+  #   * 回退：去掉 `shard` 轴 + 命令里去掉 `--shard …`（钩子留着无害，不带参数时不动
+  #     collection）。
   backend-fast:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     strategy:
       fail-fast: false
+      # 写成轴（GitHub 对 `include` 里的条目不做笛卡尔积，所以 shard 不能塞进 include）。
+      # os 固定 ubuntu-latest，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
-        include:
-          - { os: ubuntu-latest,  python: "3.10" }
-          - { os: ubuntu-latest,  python: "3.13" }
-          - { os: ubuntu-latest,  python: "3.14" }
+        python: ["3.10", "3.13", "3.14"]
+        shard: [1, 2]
     # 同 backend-platforms：实测 20–25 分钟，40 给余量。没有上限的 job
     # 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
+    # 分片之后单片应明显短于 40；上限刻意不动，等 CI 实测再调（CI03A 文档「已知边界」）。
     timeout-minutes: 40
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -407,12 +436,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # `--shard K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
+      # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
+      # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       - name: pytest
-        run: python -m pytest
+        run: >-
+          python -m pytest --shard ${{ matrix.shard }}/2
+          --shard-manifest "${{ runner.temp }}/shard-manifest.json"
+          --junitxml "${{ runner.temp }}/junit.xml"
+          --durations=50 -rs
+      # 分片证据：manifest（这一片分到了哪些文件、各片估计秒数）+ junit（真实秒数）。
+      # **只作证据与日后重平衡的数据，不作任何判定输入**——Gate 读的是 needs 结论。
+      - name: 分片证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-backend-fast-ubuntu-latest-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/shard-manifest.json
+            ${{ runner.temp }}/junit.xml
+          retention-days: 7
+          if-no-files-found: warn
 
   # backend 的最终平台线：macOS / Windows 各一档 3.13。只在 merge_group 的
   # 组合提交（或带 full-ci 标签的 PR）上跑——普通 PR 不再等两台最慢的
   # runner，而最终进 main 的每一棵树仍然四档全跑过。
+  #
+  # 每个 os 再按文件分 2 片（CI03a）：分片方式、自验、漏片兜底与 backend-fast 那一段
+  # 相同；这里是 merge_group 的关键路径（CI01 删边之后 Windows 腿 2443s 中位是全图
+  # 最长的一条），分片的收益首先落在这里。Windows 与 macOS 的真实平衡要等本 job 的
+  # junit artifact——权重表现在是本机 macOS 的样本。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -420,10 +473,10 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     strategy:
       fail-fast: false
+      # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
-        include:
-          - { os: macos-latest,   python: "3.13" }
-          - { os: windows-latest, python: "3.13" }
+        os: [macos-latest, windows-latest]
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
     # 实测（2026-09-12/13 的 12 个合并组，Windows）29~41 分钟，套件已 4460 条；
     # 2026-09-13 #340 的组跑到 45:00 被这条上限取消、整组按 failed_checks 踢出——
@@ -431,12 +484,13 @@ jobs:
     # 抬到与 windows-exe-smoke 同档的 60，但**必须有**上限：这个 job 没有上限时，
     # 一条挂死的用例会把整个**合并队列**堵住——2026-08-28 就发生过一次，
     # 8 小时 20 分，其间没有任何 PR 能落地。
+    # 分片之后单片应明显短于 60；上限刻意不动，等 CI 实测再调。
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13"
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
@@ -444,10 +498,27 @@ jobs:
           pip install matplotlib
       # #346：先量再分片——Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
       # 靠抬数字维持。让每个合并组自己把最慢的 50 条打进日志，分片 / session 级
-      # worker 复用的决定要从这份名单来，不从猜。只加在这个 job：backend-fast
-      # 的 Linux 腿不是问题所在。
+      # worker 复用的决定要从这份名单来，不从猜。
+      # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
+      # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
+      # `--shard K/2` 的 2 与 matrix.shard 的长度必须是同一个数（合同测试对拍）。
       - name: pytest
-        run: python -m pytest --durations=50
+        run: >-
+          python -m pytest --shard ${{ matrix.shard }}/2
+          --shard-manifest "${{ runner.temp }}/shard-manifest.json"
+          --junitxml "${{ runner.temp }}/junit.xml"
+          --durations=50 -rs
+      # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
+      - name: 分片证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-backend-platforms-${{ matrix.os }}-3.13-shard${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/shard-manifest.json
+            ${{ runner.temp }}/junit.xml
+          retention-days: 7
+          if-no-files-found: warn
 
   # ────────────────────────────────────────────────────────────────
   # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
