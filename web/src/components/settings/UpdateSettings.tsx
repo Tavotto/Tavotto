@@ -13,33 +13,46 @@ import {
   InlineWarning,
   SettingRow,
   SettingSection,
+  settingRowLabelId,
 } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 「最新」这句话的作用域（审计 T48）。
+ * 「最新」这句话的作用域（审计 T48），**时刻与结论是同一句**（全面打磨 D35）。
  *
  * 界面上绝不能出现无条件的「已是最新版本」：那是**上一次检查的回答**，不是
  * 对发布状态的实时核验。两条不能合并的事实——
  *   * 从没查过（离线启动、`TAVOTTO_NO_UPDATE_CHECK`、后端 24h 节流下缓存也空）
  *     → 「不知道是不是最新」，不是「是最新」；
- *   * 查过了没有新版 → 只能说到那一刻为止。
- * 所以这里只有两句话，且都由**真实存在的时间戳**决定走哪一句：拿不到时间戳
- * 就说不知道，不补一个「刚刚」。
+ *   * 查过了没有新版 → 只能说到那一刻为止（时刻本身就是这个边界）。
+ * 都由**真实存在的时间戳**决定走哪一句：拿不到时间戳就说不知道，不补一个「刚刚」。
+ *
+ * 此前时刻在行的 `status` 上、结论在下面另起一段 `type-caption`，同一件事说两遍，
+ * 中间还隔着错误条与「有新版本」那一段。现在它就是那一行的现状。
  */
-function LastCheckVerdict({ checkedAtMs }: { checkedAtMs: number | null | undefined }) {
+function LastCheckStatus({
+  checkedAtMs,
+  settled,
+}: {
+  checkedAtMs: number | null | undefined
+  /** 查过了、没有新版、也没有错误——只有这一种情况才轮得到「没有新版本」这句结论 */
+  settled: boolean
+}) {
+  const unknown = !checkedAtMs
   return (
-    <p
-      // 结构性标记：判据认它，不去匹配那两句话的散文。用文案当判据的话，
+    <span
+      // 结构性标记：判据认它，不去匹配那几句话的散文。用文案当判据的话，
       // 「不含另一句」在时间参数不同的时候是恒真的
-      data-update-verdict={checkedAtMs ? 'checked' : 'unknown'}
-      className="type-caption"
+      data-update-verdict={unknown ? 'unknown' : settled ? 'checked' : 'pending'}
     >
-      {/* 时刻在上面那行「上次检查」里，这里只说结论与它的边界（2026-09-13 审计 B41） */}
-      {checkedAtMs ? st('update.noUpdateAtLastCheck') : st('update.latestUnknown')}
-    </p>
+      {unknown
+        ? st('update.lastCheckedUnknown')
+        : settled
+          ? st('update.lastCheckedNoUpdate', { time: formatDateTime(checkedAtMs) })
+          : st('update.lastChecked', { time: formatDateTime(checkedAtMs) })}
+    </span>
   )
 }
 
@@ -65,10 +78,6 @@ export function UpdateSettings() {
     if (!status) void check(false)
   }, [status, check])
 
-  const checkedAt = status?.checked_at_ms
-    ? formatDateTime(status.checked_at_ms)
-    : st('update.neverChecked')
-
   // 桌面模式：Python updater 整个停用（升级归 Tauri 层）
   if (status?.desktop) return <DesktopUpdateSettings status={status} />
 
@@ -77,15 +86,26 @@ export function UpdateSettings() {
       <SettingRow label={st('update.currentVersion')}>
         <span className="font-mono text-sm text-ink">{status?.current ?? '…'}</span>
       </SettingRow>
-      <SettingRow label={st('update.autoCheck')} description={st('update.autoCheckAria')}>
+      {/* 标签自己就是那句说明（「每天自动检查」），不在下面再复述一遍（全面打磨 D35）；
+          开关的名字用渲染那行可见文字的同一份，不另写一句同义的 */}
+      <SettingRow label={st('update.autoCheck')} controlId="setting-update-auto">
         <Toggle
+          id="setting-update-auto"
+          aria-labelledby={settingRowLabelId('setting-update-auto')}
           checked={status?.auto_check ?? true}
           onChange={(v) => void setAutoCheck(v)}
-          aria-label={st('update.autoCheckAria')}
         />
       </SettingRow>
 
-      <SettingRow label={st('update.check')} status={st('update.lastChecked', { time: checkedAt })}>
+      <SettingRow
+        label={st('update.check')}
+        status={
+          <LastCheckStatus
+            checkedAtMs={status?.checked_at_ms}
+            settled={Boolean(status && !status.error && !status.update_available && !checkError)}
+          />
+        }
+      >
         <Button variant="secondary" size="sm" onClick={() => void check(true)} disabled={checking}>
           {st(checking ? 'update.checking' : 'update.checkNow')}
         </Button>
@@ -104,7 +124,7 @@ export function UpdateSettings() {
       )}
       {checkError && <InlineWarning tone="danger">{checkError}</InlineWarning>}
 
-      {status?.update_available ? (
+      {status?.update_available && (
         /* 「有新版本」是这一页此刻最重要的事，但它是一段内容不是一张卡（第八节）：
            小标题一档的「有新版本」+ 版本号 + 发行说明 + 唯一的主动作，不套框 */
         <div data-update-available className="flex flex-col gap-2 border-t border-border pt-3">
@@ -153,8 +173,6 @@ export function UpdateSettings() {
             </pre>
           )}
         </div>
-      ) : (
-        status && !status.error && <LastCheckVerdict checkedAtMs={status.checked_at_ms} />
       )}
 
       <DiagnosticDisclosure title={st('techDetails')}>
@@ -213,22 +231,19 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
 
       <SettingRow
         label={st('update.check')}
-        status={st('update.lastChecked', {
-          time: desktopCheckedAtMs
-            ? formatDateTime(desktopCheckedAtMs)
-            : st('update.neverChecked'),
-        })}
+        status={
+          <LastCheckStatus
+            checkedAtMs={desktopCheckedAtMs}
+            settled={
+              desktopChecked && !desktopUpdate && !desktopError && desktopPhase === 'idle'
+            }
+          />
+        }
       >
         <Button variant="secondary" size="sm" onClick={() => void checkDesktop()} disabled={busy}>
           {st(desktopPhase === 'checking' ? 'update.checking' : 'update.checkNow')}
         </Button>
       </SettingRow>
-
-      {/* 查过、没有新版、也没有错误——只有这一种情况才轮得到那句话，而它说到
-          的也只是那一刻。检查失败时不说（下面那条错误自己会讲），正在查时不说 */}
-      {desktopChecked && !desktopUpdate && !desktopError && desktopPhase === 'idle' && (
-        <LastCheckVerdict checkedAtMs={desktopCheckedAtMs} />
-      )}
 
       {desktopError && (
         <div className="flex flex-col gap-1">

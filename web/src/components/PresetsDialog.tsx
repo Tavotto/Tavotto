@@ -40,10 +40,13 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
                   insertPreset(id)
                   onClose()
                 }}
+                /* 格子不画框（全面打磨 D33，§8）：九张 125×87 的带框卡摆在一个 420 宽的
+                   对话框里，第一眼看到的是九个方框而不是九张示意图。交互语言与
+                   `OptionGrid` 的样张格同一套——常态无底、hover 浮 surface-hover */
                 className={cn(
-                  'flex w-full flex-col items-center gap-1 rounded-sm border border-border bg-surface px-1 pb-1.5 pt-1',
+                  'flex w-full flex-col items-center gap-1 rounded-sm px-1 pb-1.5 pt-1',
                   'text-xs text-ink outline-none transition-colors',
-                  'hover:border-border-strong hover:bg-surface-2 focus-visible:focus-ring',
+                  'hover:bg-surface-hover focus-visible:focus-ring',
                 )}
               >
                 <PresetPreview id={id} />
@@ -53,8 +56,11 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
           ))}
         </ul>
         <div>
-          <h3 className="mb-1 text-xs font-medium text-ink-2">{t('presets.symbolsHeading')}</h3>
-          <div className="grid grid-cols-8 gap-0.5">
+          {/* 小标走 type-section（全面打磨 D33）：11/500/ink-2 是自造的第七个文字角色 */}
+          <h3 className="type-section mb-1">{t('presets.symbolsHeading')}</h3>
+          {/* 格 32×32（与 `OptionGrid` 的样张格同一档）：此前是八等分的 47×32，
+              格子被拉宽而字号没跟上，「²」「³」「⁻¹」在 12px 里几乎看不见 */}
+          <div className="flex flex-wrap gap-0.5">
             {SYMBOLS.map((s) => (
               <button
                 key={s}
@@ -63,8 +69,10 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
                   onClose()
                 }}
                 aria-label={t('presets.insertSymbolAria', { symbol: s })}
-                className="flex h-8 items-center justify-center rounded-sm text-sm text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
-                style={{ fontFamily: 'var(--font-doc)' }}
+                className="flex h-8 w-8 items-center justify-center rounded-sm text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
+                /* 这里的字是**文档字形样张**，不是界面文字：字体与字号都跟着文档走
+                   （与样张格里的线型 / 标记预览同理），所以不走 UI 的五档字阶 */
+                style={{ fontFamily: 'var(--font-doc)', fontSize: 17 }}
               >
                 {s}
               </button>

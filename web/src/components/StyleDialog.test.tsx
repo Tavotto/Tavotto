@@ -135,10 +135,22 @@ describe('预选', () => {
       useUiStore.getState().setStylesOpen(true)
     })
     await act(async () => {})
-    const fresh = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.includes('新建样式'))!
+    // 「新建样式」自 2026-09-15 全面打磨 D23 起收进库行行尾的 ⋯ 菜单里（与设置 › 样式页同形）。
+    // Radix 的 DropdownMenu 开在 pointerdown 上，jsdom 里 `.click()` 打不开它
+    const more = [...document.body.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === '更多操作',
+    )!
     await act(async () => {
-      fresh.click()
+      more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+      more.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
+      more.click()
+      await new Promise((r) => setTimeout(r, 0))
     })
+    const fresh = [...document.querySelectorAll('[role=menuitem]')].find((b) =>
+      b.textContent?.includes('新建样式'),
+    ) as HTMLElement
+    await act(async () => fresh.click())
+    await act(async () => {})
     expect(nameInput()?.value).toBe('')
   })
 })
@@ -160,7 +172,11 @@ describe('作用范围与影响', () => {
     expect(entries.compareDocumentPosition(scopeArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     for (const gone of ['面板', '选区', '全文档']) expect(labels.join(' ')).not.toContain(gone)
     expect(text()).toContain('应用到当前图')
-    expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain('没有图会被改动')
+    // 空集时只说下一步（全面打磨 D27）：「此范围内没有图会被改动。」是后一句的前提，
+    // 说了等于把唯一能做的那件事推到第二句去
+    expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain(
+      '先在画布上选中一张可编辑的图',
+    )
   })
 })
 

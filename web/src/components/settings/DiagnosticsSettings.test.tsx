@@ -18,6 +18,7 @@ import { fetchDiagnosticsSummary } from '@/lib/api'
 import { t } from '@/i18n'
 import { DiagnosticsSettings } from '@/components/settings/DiagnosticsSettings'
 import { useEnvStore } from '@/store/envStore'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -69,7 +70,11 @@ async function mount(checks = CHECKS) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<DiagnosticsSettings />)
+    root.render(
+      <TooltipProvider>
+        <DiagnosticsSettings />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }

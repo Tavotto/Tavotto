@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { fetchDiagnosticsSummary } from '@/lib/api'
@@ -14,7 +14,13 @@ import { Button } from '../ui/Button'
 import { CopyButton } from './CopyButton'
 import { PathValue } from './PathValue'
 import { DiagnosticsExportButton } from './PrivacyAboutSettings'
-import { DiagnosticDisclosure, DiagnosticItem, HelpTip, SettingSection } from './SettingRow'
+import {
+  DiagnosticDisclosure,
+  DiagnosticItem,
+  HelpTip,
+  SettingRow,
+  SettingSection,
+} from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -99,22 +105,26 @@ export function DiagnosticsSettings() {
           <p className="type-meta">{st('about.detecting')}</p>
         ) : (
           <>
-            <div className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1">
-              <p className={cn('text-sm', failing.length ? 'text-ink' : 'text-ink-2')}>
-                {failing.length
+            {/* 结论一行（全面打磨 D13）：结论是标签、取自何时是现状、「重新获取」在控件列
+                贴右——此前是一句 12px 正文 + 一段 11px meta + 一颗 ghost 挤在一条左对齐的
+                横排里，是这一页唯一不走行语法的东西 */}
+            <SettingRow
+              label={
+                failing.length
                   ? st('diagnostics.summaryFailing', { count: failing.length })
-                  : st('diagnostics.summaryOk')}
-              </p>
-              {fetchedAt !== null && (
-                <span className="type-meta">
-                  {st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })}
-                </span>
-              )}
+                  : st('diagnostics.summaryOk')
+              }
+              status={
+                fetchedAt !== null
+                  ? st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
+                  : undefined
+              }
+            >
               <Button variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
                 <RefreshCw size={ICON_SIZE.sm} aria-hidden />
                 {st('diagnostics.refetch')}
               </Button>
-            </div>
+            </SettingRow>
             {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
                 取值的，铺在首屏等于同一件事说两遍。 */}
             {failing.length > 0 && (
@@ -139,22 +149,7 @@ export function DiagnosticsSettings() {
         {env && !env.ok && <EngineEnvironmentCard />}
       </SettingSection>
 
-      <SettingSection title={st('diagnostics.reportTitle')}>
-        <CopySummary
-          trailing={
-            <>
-              <DiagnosticsExportButton />
-              <HelpTip label={st('about.diagnosticsHelpAria')}>
-                <p>
-                  {st('about.diagnosticsHintBefore')}
-                  <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
-                  {st('about.diagnosticsHintAfter')}
-                </p>
-              </HelpTip>
-            </>
-          }
-        />
-      </SettingSection>
+      <DiagnosticsReportSection />
 
       {/* 技术详情：来源 / 版本 / 完整路径 / 换解释器。默认折叠 */}
       <DiagnosticDisclosure title={st('techDetails')}>
@@ -258,11 +253,18 @@ function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean
 }
 
 /**
- * 「复制诊断」：先把脱敏后的文本摆出来，用户看过再复制。
- * 文本由后端 `/api/diagnostics/summary` 给（与诊断包同一份采集、同一道脱敏），
- * 前端不再自己拼一份——拼一份就是第二个采集出处。
+ * 「诊断报告」整段：标题 + 右侧的两颗动作，预览落在段内。
+ *
+ * 「复制诊断」先把脱敏后的文本摆出来，用户看过再复制。文本由后端
+ * `/api/diagnostics/summary` 给（与诊断包同一份采集、同一道脱敏），前端不再
+ * 自己拼一份——拼一份就是第二个采集出处。
+ *
+ * 动作在**分区标题行右侧**（全面打磨 D13）：此前是标题下面一排左对齐的钮，
+ * 末尾还挂着一个不属于任何标签的 20px 问号。收进标题行之后，这一页从上到下
+ * 只有一种读法——名字在左、控件贴右。名字不重复：分区标题已经叫「诊断报告」，
+ * 不在下面再摆一行叫「诊断包」的标签。
  */
-function CopySummary({ trailing }: { trailing?: ReactNode }) {
+function DiagnosticsReportSection() {
   useTranslation('dialogs')
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
   const [text, setText] = useState('')
@@ -277,37 +279,49 @@ function CopySummary({ trailing }: { trailing?: ReactNode }) {
     }
   }
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      {/* 两颗钮分权重（2026-09-14 审计 D3）：交给支持的是「导出诊断包」（secondary），
-          「复制诊断」是轻量路径（ghost），不再并排两颗同权重的 secondary */}
-      <div className="flex flex-wrap items-center gap-2">
-        {phase !== 'ready' ? (
-          <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
-            {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
-          </Button>
-        ) : (
-          <>
-            <CopyButton text={text} label={st('diagnostics.copyReport')} variant="ghost" />
-            <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
-              {st('diagnostics.hidePreview')}
+    <SettingSection
+      title={st('diagnostics.reportTitle')}
+      action={
+        /* 两颗钮分权重（2026-09-14 审计 D3）：交给支持的是「导出诊断包」（secondary），
+           「复制诊断」是轻量路径（ghost），不再并排两颗同权重的 secondary */
+        <span className="flex items-center gap-1.5">
+          {phase !== 'ready' ? (
+            <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+              {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
             </Button>
-          </>
-        )}
-        {trailing}
-        {phase === 'error' && (
-          <span role="alert" className="text-xs text-danger">
-            {st('diagnostics.prepareFailed')}
-          </span>
-        )}
-      </div>
+          ) : (
+            <>
+              <CopyButton text={text} label={st('diagnostics.copyReport')} variant="ghost" />
+              <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
+                {st('diagnostics.hidePreview')}
+              </Button>
+            </>
+          )}
+          <DiagnosticsExportButton />
+          {/* 问号挂在**分区标题**的动作组里，不再吊在钮组末尾当一颗孤儿 */}
+          <HelpTip label={st('about.diagnosticsHelpAria')}>
+            <p>
+              {st('about.diagnosticsHintBefore')}
+              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
+              {st('about.diagnosticsHintAfter')}
+            </p>
+          </HelpTip>
+        </span>
+      }
+    >
+      {phase === 'error' && (
+        <span role="alert" className="text-xs text-danger">
+          {st('diagnostics.prepareFailed')}
+        </span>
+      )}
       {phase === 'ready' && (
         <div className="flex flex-col gap-1" data-diagnostics-preview>
           <p className="type-caption">{st('diagnostics.previewNote')}</p>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-xs leading-relaxed text-ink-3">
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs leading-relaxed text-ink-3">
             {text}
           </pre>
         </div>
       )}
-    </div>
+    </SettingSection>
   )
 }

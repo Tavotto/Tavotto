@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ShieldCheck, X } from '@/components/ui/icons'
+import { ChevronRight, X } from 'lucide-react'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { AiAgentId, AiEndpoint, AiEndpointPreset, saveAiEndpoint } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { FormRow } from '../FormRow'
 import { Button } from '../ui/Button'
+import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
@@ -14,7 +17,12 @@ import { Select } from '../ui/Select'
 const ag = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.agents.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-/** 纵向字段：标签在上、控件通栏，错误信息紧跟在控件下面 */
+/**
+ * 一行字段：**标签列在左 80px、控件在右**（全面打磨 D22，L1）——与导出对话框、
+ * 论文样式对话框同一副 `FormRow`。此前这里标签在上、控件通栏，是全站唯一一处
+ * 竖排表单，而它就开在设置窗口里。整行仍是 `<label>`：这几个控件都是 `<input>`，
+ * 点标签文字等于点输入框。
+ */
 const Field = ({
   label,
   required,
@@ -27,25 +35,32 @@ const Field = ({
   error?: string | null
   children: React.ReactNode
 }) => (
-  <label className="flex flex-col gap-1.5">
-    <span className="flex items-baseline gap-0.5 text-sm font-medium text-ink-2">
-      {label}
-      {required && (
-        <>
-          <span aria-hidden className="text-danger">
-            *
-          </span>
-          <span className="sr-only">{ag('endpoint.requiredAria')}</span>
-        </>
+  <FormRow
+    asLabel
+    align="start"
+    label={
+      <span className="flex items-baseline gap-0.5">
+        {label}
+        {required && (
+          <>
+            <span aria-hidden className="text-danger">
+              *
+            </span>
+            <span className="sr-only">{ag('endpoint.requiredAria')}</span>
+          </>
+        )}
+      </span>
+    }
+  >
+    <span className="flex min-w-0 flex-1 flex-col gap-1">
+      {children}
+      {error && (
+        <span role="alert" className="text-xs text-danger">
+          {error}
+        </span>
       )}
     </span>
-    {children}
-    {error && (
-      <span role="alert" className="text-xs text-danger">
-        {error}
-      </span>
-    )}
-  </label>
+  </FormRow>
 )
 
 /**
@@ -162,14 +177,23 @@ export function EndpointDialog({
       </Field>
       <Field label={ag('endpoint.models')}>
         {/* 一个框装下全部：条目是 chip，输入紧跟在最后一个 chip 之后，回车即添加 */}
+        {/* 框走全站唯一那一副（全面打磨 D22，§5）：此前它自己描了一圈 18% 的
+            `border-strong`，比同一屏里别的可编辑框重一档 */}
         <span
-          className="flex min-h-10 w-full flex-wrap items-center gap-1.5 rounded-md border border-border-strong bg-surface px-2 py-1.5 focus-within:focus-ring"
+          className={cn(
+            FIELD_BOX,
+            FIELD_FOCUS_WITHIN,
+            'flex min-h-10 w-full flex-wrap items-center gap-1.5 px-2 py-1.5',
+          )}
           data-model-list
         >
           {models.map((m, i) => (
+            /* chip 是状态标签的形状，不是一颗 28 高的小按钮（全面打磨 D22）：20 高、
+               无边、surface-2 底——与 `Badge` 同一种读法（这里不能直接用 `Badge`：
+               里面还挂着一颗删除钮，而 Badge 是纯文字的） */
             <span
               key={m}
-              className="flex h-7 max-w-full items-center gap-1.5 rounded-sm border border-border bg-surface-2 pl-2 pr-1 font-mono text-xs text-ink-2"
+              className="flex h-5 max-w-full items-center gap-1 rounded-sm bg-surface-2 pl-1.5 pr-0.5 font-mono text-xs text-ink-2"
             >
               {m}
               {/* 第一个是默认值——这件事以前只写在占位文案里 */}
@@ -302,15 +326,12 @@ export function EndpointDialog({
                 下面每一句都对着 `engine/ai_providers.py` 与 `engine/config.py`
                 核过（审计 T45）。特别是权限那条：`_harden()` 在 Windows 上
                 直接 return，所以那句话不能说成"已经收好了"。 */}
-            <p className="flex items-center gap-2 text-xs leading-relaxed text-ink-3">
-              <ShieldCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
-              <span>{ag('endpoint.keyNote')}</span>
-            </p>
           </div>
 
           {fromPreset ? (
             <Details className="group border-y border-border">
-              <Summary className="flex min-h-12 cursor-default items-center gap-2 text-sm font-medium text-ink-2">
+              {/* 折叠头与别处同高（全面打磨 D22，§3：一律 28），不是 48 */}
+              <Summary className="flex min-h-7 cursor-default items-center gap-2 text-sm font-medium text-ink-2">
                 <span className="min-w-0 flex-1 truncate">{ag('endpoint.presetFilled')}</span>
                 <span className="shrink-0 truncate text-xs font-normal text-ink-3">
                   {presets.find((p) => p.id === preset)?.label}
@@ -336,7 +357,10 @@ export function EndpointDialog({
               />
               {ag('endpoint.keyNoteMore')}
             </Summary>
+            {/* 密钥那一句原本常驻在密钥框下面（全面打磨 D22）：它和这里的三条是同一件事，
+                而那一句又是三条里的第一条——常驻一份、展开再读一遍 */}
             <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5">
+              <li>{ag('endpoint.keyNote')}</li>
               <li>{ag('endpoint.keyNoteWhere')}</li>
               <li>{ag('endpoint.keyNotePerms')}</li>
               <li>{ag('endpoint.keyNoteDiagnostics')}</li>

@@ -433,8 +433,10 @@ describe('该常驻的不许折叠', () => {
     expect(at(st('project.sectionProject'))).toBeLessThan(at(st('project.sectionLocations')))
     expect(at(st('project.sectionLocations'))).toBeLessThan(at(st('project.sectionWriteBack')))
     expect(at(st('project.sectionWriteBack'))).toBeLessThan(at(st('project.allowWriteBack')))
+    // 「写回会覆盖…」自全面打磨 D37 起是那一行的**现状**（只在写回开着时成立），
+    // 不再是常驻在分区标题下的说明；「只影响这个项目」整句删掉——导航项与分区标题
+    // 都已经叫「项目」
     expect(text).toContain(st('project.writeBackDesc'))
-    expect(text).toContain(st('project.onlyThisProject'))
   })
 })
 

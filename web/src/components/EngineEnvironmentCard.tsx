@@ -55,6 +55,16 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
     if (!failure) setManual('')
   }
 
+  /**
+   * 设置页里这**不是一张卡**（全面打磨 D14，§8 / §13：状态区不套框）：折叠区里
+   * 一张 632×224 的带框卡，里面还按 hairline 分成三段——框中有框。紧凑位置
+   * （图内元素面板 / 脚本区里的错误块）仍然是一张卡：它在那里是插进别的内容
+   * 之间的一段独立提示，不套框就散了。
+   */
+  const shell = compact
+    ? 'flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3'
+    : 'flex flex-col gap-2.5'
+
   const advancedBlock = (
     <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
       {advanced ? (
@@ -77,13 +87,11 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           {error && <p className="text-xs text-danger">{error}</p>}
         </>
       ) : (
-        <button
-          type="button"
-          onClick={() => setAdvanced(true)}
-          className="self-start text-xs text-accent hover:underline"
-        >
+        /* 动作是按钮，不是蓝字（全面打磨 D14，§1：accent 只给链接与焦点，不给动作）。
+           「使用其他 Python 环境…」会改本机设置，长成一条链接读起来像跳去某个页面 */
+        <Button variant="ghost" size="sm" className="self-start" onClick={() => setAdvanced(true)}>
           {en('useOtherLink')}
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -92,9 +100,9 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (env.ok) {
     const label = sourceLabel(env.source)
     return (
-      <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+      <div data-engine-env-card className={shell}>
         <div>
-          <h3 className="text-xs font-medium text-ink">{en('okTitle')}</h3>
+          <h3 className="type-section">{en('okTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {label}
           </p>
@@ -115,9 +123,9 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   // ---- 3. 内置环境缺失 / 损坏（桌面版）-----------------------------------
   if (env.runtime?.expected) {
     return (
-      <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+      <div data-engine-env-card className={shell}>
         <div>
-          <h3 className="text-xs font-medium text-ink">{en('incompleteTitle')}</h3>
+          <h3 className="type-section">{en('incompleteTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {en('incompleteBefore')}
             {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
@@ -132,9 +140,9 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
 
   // ---- 2. 缺环境（源码 / pip 安装）---------------------------------------
   return (
-    <div data-engine-env-card className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+    <div data-engine-env-card className={shell}>
       <div>
-        <h3 className="text-xs font-medium text-ink">{en('missingTitle')}</h3>
+        <h3 className="type-section">{en('missingTitle')}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
       </div>
 
@@ -209,13 +217,15 @@ function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
             : en('projectEnvWhy', { module: project.module })}
         </span>
       )}
-      <button
-        type="button"
+      {/* 同 D14：换环境是动作，给它一颗钮 */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-start"
         onClick={() => void setProjectPython(null)}
-        className="self-start text-xs text-accent hover:underline"
       >
         {en('projectEnvUseBuiltIn')}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -283,7 +293,7 @@ export function MissingDependencyCard({
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
-        <h3 className="text-xs font-medium text-ink">
+        <h3 className="type-section">
           {/* 包名是脚本里的标识符，原样显示 */}
           {en('missingModuleTitle', { module: pkg })}
         </h3>

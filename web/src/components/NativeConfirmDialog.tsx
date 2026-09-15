@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle, TriangleAlert } from '@/components/ui/icons'
+import { LoaderCircle } from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from './ui/Badge'
+import { InlineWarning } from './settings/SettingRow'
 import { Checkbox } from './ui/Checkbox'
 import { backendCodeMsg } from '@/lib/api'
 import { t as translate, type UiMessage } from '@/i18n'
@@ -167,9 +168,10 @@ export function NativeConfirmDialog() {
 
       {/* 权限说明。四句话是一条一条说的，不拼字符串——中英的从句位置不同，
           拼出来的句子读着就是机翻。 */}
-      <p className="mt-3 rounded-sm border border-warn/30 bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-ink-2">
-        {nr('permissionNotice')}
-      </p>
+      {/* 警示只有一副（全面打磨 D30）：`InlineWarning`，不是黄底加一圈黄边的块 */}
+      <div className="mt-3">
+        <InlineWarning>{nr('permissionNotice')}</InlineWarning>
+      </div>
 
       <label className="mt-2 flex items-start gap-1.5 text-xs text-ink-2">
         <Checkbox
@@ -209,14 +211,8 @@ function ErrorNote({
 }) {
   if (!error) return null
   return (
-    <p
-      role="alert"
-      className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs leading-relaxed text-danger"
-    >
-      <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0" />
-      <span className="min-w-0 flex-1">
-        {fmt(backendCodeMsg(error.code, error.params, error.message))}
-      </span>
-    </p>
+    <InlineWarning tone="danger">
+      {fmt(backendCodeMsg(error.code, error.params, error.message))}
+    </InlineWarning>
   )
 }

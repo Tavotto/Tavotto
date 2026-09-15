@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
+import { DiagnosticDisclosure, DiagnosticItem, SettingSection } from './SettingRow'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendErrorText,
@@ -27,68 +28,19 @@ import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 
 /**
- * 概览里的一行「标签 / 值」。
+ * 这一页曾经自带三套只此一页的原语（全面打磨 D05）：分区标题 11/500/ink-2、
+ * 字段行 96px 标签 + 11px 值、`<details>` 折叠头 36 高 + hairline。同一屏上于是
+ * 出现 15 / 12 / 11 三档标题，与别的设置页读不成同一个产品。现在三样都换成设置页
+ * 共用的那份——`SettingSection`（标题 type-section，动作在标题行右侧）、
+ * `DiagnosticItem`（名左 / 值右）、`DiagnosticDisclosure`（28 高 chevron 折叠头，
+ * 摘要值放在 `action` 槽里）。
  *
- * `name` 是 e2e 的稳定锚点（`data-agent-field`）：`label` 是会被文案改动
- * 重写的那句话，拿它定位等于每改一次文案就重新下一次赌注。
+ * e2e 的稳定锚点 `data-agent-field` / `data-agent-fold` 原样保留：它们指的是
+ * 「哪个字段 / 哪个折叠区」，不是「用哪个组件画的」。
  */
-const Field = ({
-  name,
-  label,
-  children,
-}: {
-  name: string
-  label: string
-  children: React.ReactNode
-}) => (
-  <div data-agent-field={name} className="flex min-h-6 items-baseline gap-3">
-    <span className="w-24 shrink-0 text-xs text-ink-3">{label}</span>
-    <span className="min-w-0 flex-1 break-all text-xs text-ink-2">{children}</span>
-  </div>
-)
-
-/** 分区：标题行左标题、右可选动作（如「添加服务」），下面是内容 */
-const Section = ({
-  title,
-  action,
-  className,
-  children,
-}: {
-  title: string
-  action?: React.ReactNode
-  className?: string
-  children: React.ReactNode
-}) => (
-  <section className={`flex flex-col gap-2 ${className ?? ''}`}>
-    <div className="flex min-h-7 items-center justify-between gap-3">
-      <h4 className="text-xs font-medium text-ink-2">{title}</h4>
-      {action}
-    </div>
-    {children}
-  </section>
-)
-
-/** `<details>` 折叠块：高级设置与诊断默认收起，一级页面不制造噪音 */
-const Fold = ({
-  name,
-  summary,
-  value,
-  children,
-}: {
-  name: string
-  summary: string
-  /** 收起时显示在右侧的摘要值（如当前来源 / 是否已设置） */
-  value?: string
-  children: React.ReactNode
-}) => (
-  <Details data-agent-fold={name} className="border-b border-border last:border-b-0">
-    <Summary className="flex min-h-9 cursor-default items-center gap-2.5 py-2 text-sm text-ink-2 hover:text-ink">
-      <span className="min-w-0 flex-1">{summary}</span>
-      {value ? <span className="max-w-[45%] truncate text-xs text-ink-3">{value}</span> : null}
-    </Summary>
-    <div className="flex flex-col gap-2 pb-3">{children}</div>
-  </Details>
-)
+/** 折叠头右侧那截摘要值（当前来源 / 有没有设过），收起时也看得见 */
+const FoldValue = ({ value }: { value?: string }) =>
+  value ? <span className="type-meta max-w-[45%] truncate">{value}</span> : null
 
 /**
  * 单个编码 Agent 的详情。
@@ -157,8 +109,10 @@ export function AgentDetailView({
     ? ag(`source.${agent.detection_source}`, { defaultValue: agent.detection_source })
     : ag('detail.none')
   /** 模型服务的一行：选中 = selected 轻 tint（第五节的三档），未选中只在 hover 时浮出 surface-hover */
+    // `group`：行尾的「编辑 · 删除」指到这一行才浮出（全面打磨 D21）——它们此前常驻，
+    // 一列服务行右边挂着一排重复的钮，比服务名本身还密
   const optionClass = (selected: boolean) =>
-    `flex min-h-7 items-center gap-3 rounded-sm px-2 py-1 ${selected ? 'bg-selected' : 'hover:bg-surface-hover'}`
+    `group flex min-h-7 items-center gap-3 rounded-sm px-2 py-1 ${selected ? 'bg-selected' : 'hover:bg-surface-hover'}`
 
   return (
     <div data-agent-detail={agent.id} className="flex flex-col gap-5">
@@ -190,15 +144,11 @@ export function AgentDetailView({
               {agentVersionLabel(agent.version) ?? agent.version ?? ag('detail.none')}
             </span>
           </div>
+          {/* 头部只留状态（全面打磨 D20）：「最近检测 …」此前在列表页首、这里、以及
+              「概览」折叠里出现三次；它是排障材料，留在概览一处就够 */}
           <div className="mt-1 flex min-h-4 flex-wrap items-center gap-2 text-xs text-ink-3">
             <span data-agent-field="state" className="inline-flex">
               <AgentStateBadge state={agent.state} />
-            </span>
-            <span aria-hidden className="text-ink-faint">·</span>
-            <span>
-              {caps.checked_at_ms
-                ? ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })
-                : ag('detail.none')}
             </span>
           </div>
         </div>
@@ -225,14 +175,14 @@ export function AgentDetailView({
 
       {/* ---------------- 一键安装（没装才给） ---------------- */}
       {!agent.installed && agent.install && (
-        <Section title={ag('detail.install')} className="border-t border-border pt-4">
+        <SettingSection title={ag('detail.install')} className="border-t border-border pt-4">
           <InstallPanel agent={agent} onRefreshed={onRefreshed} />
-        </Section>
+        </SettingSection>
       )}
 
       {/* ---------------- 模型服务 ---------------- */}
       {agent.features.third_party_endpoints && (
-        <Section
+        <SettingSection
           title={ag('detail.modelService')}
           action={
             <Button variant="ghost" size="sm" onClick={() => setEditing({})}>
@@ -308,7 +258,7 @@ export function AgentDetailView({
                       </Button>
                     </span>
                   ) : (
-                    <span className="flex shrink-0 items-center gap-0.5">
+                    <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100">
                       <Button variant="ghost" size="sm" onClick={() => setEditing({ id: e.id })}>
                         {ag('detail.edit')}
                       </Button>
@@ -321,42 +271,56 @@ export function AgentDetailView({
               )
             })}
           </fieldset>
-        </Section>
+        </SettingSection>
       )}
 
       {/* ---------------- 高级设置 ---------------- */}
-      <Section title={ag('detail.advanced')} className="border-t border-border pt-4">
-        <div className="flex flex-col">
-          <Fold name="overview" summary={ag('detail.overview')} value={sourceLabel}>
-            <Field name="executable" label={ag('detail.executable')}>
-              <span className="flex min-w-0 items-start gap-1">
-                <span className="min-w-0 flex-1 break-all font-mono" title={agent.executable_path ?? undefined}>
+      <SettingSection title={ag('detail.advanced')} className="gap-1.5 border-t border-border pt-4">
+        <DiagnosticDisclosure
+          data-agent-fold="overview"
+          title={ag('detail.overview')}
+          action={<FoldValue value={sourceLabel} />}
+        >
+          <DiagnosticItem
+            data-agent-field="executable"
+            name={ag('detail.executable')}
+            value={
+              <span className="flex min-w-0 items-start justify-end gap-1">
+                <span className="min-w-0 break-all" title={agent.executable_path ?? undefined}>
                   {agent.executable_path ?? ag('detail.none')}
                 </span>
                 {agent.executable_path && (
-                  <CopyButton text={agent.executable_path} label={ag('detail.copyPath')} />
+                  <CopyButton
+                    text={agent.executable_path}
+                    label={ag('detail.copyPath')}
+                    appearance="icon"
+                  />
                 )}
               </span>
-            </Field>
-            <Field name="source" label={ag('detail.source')}>
-              {sourceLabel}
-            </Field>
-            <Field name="checked-at" label={ag('detail.checkedAt')}>
-              {caps.checked_at_ms ? formatDateTime(caps.checked_at_ms) : ag('detail.none')}
-            </Field>
-          </Fold>
-          <Fold
-            name="custom-executable"
-            summary={ag('detail.customExecutable')}
-            value={agent.path_override ? ag('detail.currentOverride') : ag('detail.autoDetected')}
-          >
-            <CustomExecutable agent={agent} onRefreshed={onRefreshed} />
-          </Fold>
-          <Fold name="diagnostics" summary={ag('detail.diagnostics')}>
-            <Diagnostics agent={agent} />
-          </Fold>
-        </div>
-      </Section>
+            }
+          />
+          <DiagnosticItem data-agent-field="source" name={ag('detail.source')} value={sourceLabel} />
+          <DiagnosticItem
+            data-agent-field="checked-at"
+            name={ag('detail.checkedAt')}
+            value={caps.checked_at_ms ? formatDateTime(caps.checked_at_ms) : ag('detail.none')}
+          />
+        </DiagnosticDisclosure>
+        <DiagnosticDisclosure
+          data-agent-fold="custom-executable"
+          title={ag('detail.customExecutable')}
+          action={
+            <FoldValue
+              value={agent.path_override ? ag('detail.currentOverride') : ag('detail.autoDetected')}
+            />
+          }
+        >
+          <CustomExecutable agent={agent} onRefreshed={onRefreshed} />
+        </DiagnosticDisclosure>
+        <DiagnosticDisclosure data-agent-fold="diagnostics" title={ag('detail.diagnostics')}>
+          <Diagnostics agent={agent} />
+        </DiagnosticDisclosure>
+      </SettingSection>
 
       {editing && (
         <EndpointDialog
@@ -515,14 +479,18 @@ function Diagnostics({ agent }: { agent: AiAgentCaps }) {
       .join('\n')
   return (
     <div className="flex flex-col gap-1.5">
-      <Field name="readiness" label={ag('detail.readiness')}>
-        {ag(`readiness.${d.readiness}`)}
-        {d.readiness_detail ? (
-          <span className="ml-1 font-mono text-ink-3">{d.readiness_detail}</span>
-        ) : null}
-      </Field>
+      <DiagnosticItem
+        data-agent-field="readiness"
+        name={ag('detail.readiness')}
+        value={
+          <>
+            {ag(`readiness.${d.readiness}`)}
+            {d.readiness_detail ? <span className="ml-1">{d.readiness_detail}</span> : null}
+          </>
+        }
+      />
       {d.broken_path && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-ink-3">{ag('detail.brokenCandidate')}</p>
           <p className="truncate font-mono text-xs text-ink-3" title={d.broken_path}>
             {d.broken_path}
@@ -530,9 +498,9 @@ function Diagnostics({ agent }: { agent: AiAgentCaps }) {
         </div>
       )}
       {d.searched.length > 0 && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-ink-3">{ag('detail.searched')}</p>
-          <ul className="mt-0.5 flex flex-col gap-0.5">
+          <ul className="mt-0.5 flex min-w-0 flex-col gap-0.5">
             {d.searched.map((p) => (
               <li key={p} className="truncate font-mono text-xs text-ink-3" title={p}>
                 {p}
@@ -601,7 +569,11 @@ function InstallPanel({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
+        {/* 安装是这一段的动作，不是一行字（全面打磨 D19）：不传 variant 时 Button 是
+            ghost——无边无底的「安装 Codex」旁边跟着一段 mono 命令与一颗复制钮，四样
+            东西同权重，看不出哪个是该点的 */}
         <Button
+          variant="secondary"
           size="sm"
           loading={running}
           disabled={!info.available}

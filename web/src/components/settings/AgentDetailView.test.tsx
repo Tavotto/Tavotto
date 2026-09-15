@@ -36,6 +36,7 @@ import { useUiStore } from '@/store/uiStore'
 // Radix 的 Select 打开时会 scrollIntoView；jsdom 没有这个方法
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 import { agentCaps, capsOf, claudeCaps } from './testCaps'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -81,22 +82,32 @@ async function openDetail(initial: AiCapabilities = capsOf([agentCaps(), claudeC
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
   const row = byName(ag('rowAria', { name: initial.agents[0].display_name }))!
   await act(async () => row.click())
 }
 
+/**
+ * 展开一个折叠块。自 2026-09-15 全面打磨 D05 起它们是 `DiagnosticDisclosure`
+ * （与诊断 / 更新页同一份），不再是 `<details>`：**收起时内容根本不在 DOM 里**，
+ * 所以要读里面的东西必须先真的点开它。锚点仍是 `data-agent-fold`。
+ */
+const foldHead = (name: string) =>
+  document.querySelector<HTMLButtonElement>(`[data-agent-fold="${name}"] > div > button`)
+
+async function openFold(name: string) {
+  await act(async () => foldHead(name)!.click())
+}
+
 /** 打开「自定义可执行文件」折叠块 */
 async function openCustomFold() {
-  const fold = [...document.querySelectorAll('details')].find((d) =>
-    d.textContent?.includes(ag('detail.customExecutable')),
-  )!
-  await act(async () => {
-    fold.open = true
-    fold.dispatchEvent(new Event('toggle'))
-  })
+  await openFold('custom-executable')
 }
 
 beforeEach(() => {
@@ -117,10 +128,13 @@ afterEach(() => {
 describe('Agent 详情', () => {
   it('概览给出状态、版本、可执行文件、来源和最后检测', async () => {
     await openDetail()
+    // 头部常驻的只有状态与版本（全面打磨 D20：「最近检测」不再在这里重复第三遍）
     expect(text()).toContain(ag('state.ready'))
     // 概览说的是版本号，不是 `--version` 的原话（内部包名归诊断信息，审计 T44）
     expect(text()).toContain('1.2.3')
     expect(text()).not.toContain('codex-cli 1.2.3')
+    // 余下三项在「概览」折叠里，展开才读得到
+    await openFold('overview')
     expect(text()).toContain('/opt/homebrew/bin/codex')
     expect(text()).toContain(ag('source.path'))
     expect(text()).toContain(ag('detail.checkedAt'))
@@ -129,13 +143,19 @@ describe('Agent 详情', () => {
   it('诊断折叠区里有搜索路径与就绪结论，一级列表上没有', async () => {
     await openDetail()
     expect(text()).toContain(ag('detail.diagnostics'))
+    await openFold('diagnostics')
     expect(text()).toContain('/usr/local/bin')
     expect(text()).toContain(ag('readiness.ready'))
   })
 
   it('高级设置默认是折叠的', async () => {
     await openDetail()
-    for (const d of document.querySelectorAll('details')) expect(d.open).toBe(false)
+    // **直接量折叠头的 `aria-expanded`**，不拿「输入框不在」当代理：那个输入框要点过
+    // 「使用自定义可执行文件」才渲染，折叠与否它都不在——用它当判据，把折叠区强行改成
+    // 默认展开也照样绿（变异验过，就是这么漏的）。先钉住折叠头真的在，否则整段被删也绿。
+    const heads = [...document.querySelectorAll('[data-agent-fold] > div > button')]
+    expect(heads.length).toBeGreaterThan(0)
+    for (const h of heads) expect(h.getAttribute('aria-expanded')).toBe('false')
     expect(pathInput()).toBeNull()          // 没展开就没有输入框
   })
 

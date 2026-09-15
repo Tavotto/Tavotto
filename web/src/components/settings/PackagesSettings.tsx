@@ -191,8 +191,9 @@ export function PackagesSettings() {
             {specError}
           </p>
         )}
-        <p className="type-meta">{pk('networkNote')}</p>
-
+        {/* 「安装、升级与查找会联网访问 PyPI」删了（全面打磨 D16）：它是常驻说明，而且
+            出网这件事「在 PyPI 查找」这颗钮的名字已经说了，细则在技术详情里。它此前与
+            空态那句「还没有安装过包。」同字同色紧挨着，读作一段两句话 */}
         <LookupPanel locked={locked} onInstall={start} />
 
         <PackageTable
@@ -226,17 +227,29 @@ export function PackagesSettings() {
         />
       </SettingSection>
 
-      {/* ---------------- 内置包 ---------------- */}
-      {/* 内置那一份折叠为摘要（审计 T46）：条数在标题上，展开才是清单。
+      {/* ---------------- 作业进度 / 结果 ---------------- */}
+      {/* 它说的是刚点下去的那次安装 / 升级，紧跟在发起它的那一段后面（全面打磨 D17）；
+          此前夹在两个折叠区中间，把本该相邻的两条折叠头隔开了 */}
+      <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
+
+      {/* ---------------- 两条折叠：内置包 · 技术详情 ---------------- */}
+      {/* 一页下半原本是两条 28 高的折叠头，中间隔着 28px 的分区间距，读起来是两个空分区。
+          它们是同一类东西（背景材料），收进同一个无标题分区里（全面打磨 D17，L4） */}
+      <SettingSection className="gap-1.5">
+      {/* 内置那一份折叠为摘要（审计 T46）：条数在折叠头右侧的 meta 里，展开才是清单。
+          计数格式是「名字 + meta 数字」，不是「名字（N）」（批次 E～G 的规矩，D15）。
           它是"这个环境里本来就有什么"的背景，不是用户此刻要操作的东西。 */}
       <DiagnosticDisclosure
-        title={
-          term
-            ? pk('search.builtinTitleMatch', {
-                count: shownBuiltin.length,
-                total: allBuiltin.length,
-              })
-            : pk('builtinTitleCount', { count: allBuiltin.length })
+        title={pk('builtinTitle')}
+        action={
+          <span className="type-meta">
+            {term
+              ? pk('search.builtinCountMatch', {
+                  count: shownBuiltin.length,
+                  total: allBuiltin.length,
+                })
+              : pk('builtinCountMeta', { count: allBuiltin.length })}
+          </span>
         }
       >
         <p className="text-xs text-ink-3">
@@ -259,9 +272,6 @@ export function PackagesSettings() {
         />
       </DiagnosticDisclosure>
 
-      {/* ---------------- 作业进度 / 结果 ---------------- */}
-      <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
-
       {/* 「没有回滚」与快照份数是工程细节，折在下面——它们解释的是**为什么**只能
           重建，不是用户此刻要做的事。重建入口本身在页首的环境段里，就在它解释的
           那一行旁边 */}
@@ -277,6 +287,7 @@ export function PackagesSettings() {
           <p className="text-xs text-ink-3">{pk('network.customIndex')}</p>
         )}
       </DiagnosticDisclosure>
+      </SettingSection>
     </div>
   )
 }
@@ -545,12 +556,14 @@ function PackageTable({
   empty: string
 }) {
   useTranslation('dialogs')
-  if (!rows.length) return <p className="text-xs text-ink-3">{empty}</p>
+  if (!rows.length) return <p className="type-meta">{empty}</p>
+  /* 表格不套外框（全面打磨 D18，§8）：表头自己有底色就够把它与内容分开，外面再画一圈
+     圆角边等于把一张清单画成一张卡 */
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <div className="overflow-x-auto">
       <table aria-label={ariaLabel} className="w-full table-fixed border-collapse text-xs">
         <thead>
-          <tr className="text-left text-ink-3">
+          <tr className="bg-surface-2 text-left text-ink-3">
             <th scope="col" className="w-[38%] px-2 py-1 font-medium">
               {pk('col.name')}
             </th>
@@ -568,8 +581,8 @@ function PackageTable({
         <tbody>
           {rows.map((r) => (
             <tr key={r.key} className="border-t border-border align-middle">
-              <td className="min-w-0 px-2 py-1.5 text-ink">{r.name}</td>
-              <td className="px-2 py-1.5 font-mono text-ink-2">{r.version}</td>
+              <td className="min-w-0 px-2 py-1.5 text-ink-2">{r.name}</td>
+              <td className="px-2 py-1.5 font-mono text-ink-3">{r.version}</td>
               <td className="px-2 py-1.5">{r.status}</td>
               <td className="px-2 py-1.5 text-right">{r.actions}</td>
             </tr>

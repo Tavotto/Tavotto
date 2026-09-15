@@ -184,8 +184,14 @@ describe('另存 / 打开是两屏', () => {
     await open(['Fig 1', 'Fig 2'], 'save')
     const d = dialog()
     expect(d.querySelector('#layout-save-name')).not.toBeNull()
-    // 位置说的是后端给的那个目录，不是界面自己拼的
-    expect(d.textContent).toContain('/figs/a/tavottofile')
+    // 位置说的是后端给的那个目录，不是界面自己拼的。行里只写**末级目录**
+    // （全面打磨 D29：420 宽的框里绝对路径末尾必被截掉，而末尾正是能认出它的那一段），
+    // 完整路径仍在 title 里——两句都钉，只钉可见文字的话，把 title 摘掉也是绿的
+    const into = [...d.querySelectorAll('[title]')].find(
+      (el) => el.getAttribute('title') === '/figs/a/tavottofile',
+    )
+    expect(into, '完整路径不在 title 里').toBeTruthy()
+    expect(into!.textContent).toBe('tavottofile')
     expect(buttonByText('另存为')).toBeTruthy()
     // 一份都载入不了：那是另一屏的事
     expect(buttonByText('载入')).toBeUndefined()

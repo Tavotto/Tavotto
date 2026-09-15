@@ -54,28 +54,33 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
   await expect(row).toBeVisible()
   await row.click()
   await expect(dialog.locator('[data-agent-detail="codex"]')).toBeVisible()
-  // 头部常驻的是状态与版本；「来源 / 可执行文件 / 上次检测」收进了高级设置里的
-  // 「概览」折叠（Visual Consolidation）：在 DOM 里、默认不可见——两句都钉，
-  // 只写后半句的话把这一段整个删掉也是绿的。
+  // 头部常驻的**只有状态**（2026-09-15 全面打磨 D20：版本号在它旁边，「最近检测」
+  // 不再在这里重复第三遍）；「来源 / 可执行文件 / 上次检测」收进高级设置的「概览」折叠。
   await expect(dialog.locator('[data-agent-field="state"]')).toBeVisible()
-  await expect(dialog.locator('[data-agent-field="source"]')).toHaveCount(1)
-  await expect(dialog.locator('[data-agent-field="source"]')).toBeHidden()
-  // 高级设置默认折叠。**直接量 `<details>` 的 open**，不拿「输入框不在」当代理：
-  // 那个输入框要点过「使用自定义可执行文件」才渲染，折叠与否它都不在——用它当
-  // 判据，把 details 强行改成默认展开也照样绿（变异验过，就是这么漏的）。
-  await expect(dialog.locator('[data-agent-fold="custom-executable"] summary')).toBeVisible()
-  const folds = dialog.locator('details')
-  expect(await folds.count()).toBeGreaterThan(0)
-  for (const fold of await folds.all()) {
-    expect(await fold.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false)
+  // 折叠区自 D05 起是 `DiagnosticDisclosure`（与诊断 / 更新页同一份），不再是 `<details>`：
+  // **收起时内容根本不在 DOM 里**（`Reveal` 关着就不挂载）。所以「默认收起」不能只写
+  // 「里面那个东西找不到」——把整段删掉、把锚点摘掉都会让那句恒真。三句一起钉：
+  // ① 折叠头在且 `aria-expanded=false`；② 收起时内容不在；③ 展开之后内容真的出现。
+  await expect(dialog.locator('[data-agent-field="source"]')).toHaveCount(0)
+  const foldHeads = dialog.locator('[data-agent-fold] > div > button[aria-expanded]')
+  expect(await foldHeads.count()).toBeGreaterThan(0)
+  for (const head of await foldHeads.all()) {
+    await expect(head).toHaveAttribute('aria-expanded', 'false')
   }
-  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现。
-  // **先钉住它确实在 DOM 里**：`toBeHidden()` 对一个根本不存在的元素同样通过，
-  // 只写后半句的话，这颗按钮被删掉、锚点被摘掉都是绿的——那是这一轮到处在修的
-  // 同一种假绿（这条锚点没有别的正向断言替它兜底，所以得自己钉）。
-  const customExe = dialog.locator('[data-agent-custom-exe]')
-  await expect(customExe).toHaveCount(1)
-  await expect(customExe).toBeHidden()
+  const overview = dialog.locator('[data-agent-fold="overview"] > div > button')
+  await overview.click()
+  await expect(dialog.locator('[data-agent-field="source"]')).toBeVisible()
+  await overview.click()
+  await expect(dialog.locator('[data-agent-field="source"]')).toHaveCount(0)
+
+  // 「使用自定义可执行文件」同样：折叠头常驻、内容按需挂载。那个输入框要点过之后
+  // 才渲染，所以这里量的是折叠区自己的内容锚点，不拿输入框当代理。
+  const customFold = dialog.locator('[data-agent-fold="custom-executable"] > div > button')
+  await expect(customFold).toBeVisible()
+  await expect(dialog.locator('[data-agent-custom-exe]')).toHaveCount(0)
+  await customFold.click()
+  await expect(dialog.locator('[data-agent-custom-exe]')).toBeVisible()
+  await customFold.click()
 
   // 返回：列表还在
   await dialog.locator('[data-agent-back]').click()

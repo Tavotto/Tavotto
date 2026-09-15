@@ -133,8 +133,8 @@
     "saveAs": "Save as",
     "saveTitle": "Save document as",
     "saved": "Saved as document: {{name}}",
-    "savesInto": "Saves into {{dir}}",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "savesIntoLabel": "Save into"
   },
   "mcp": {
     "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that can’t be verified automatically. The confirmation goes in the proof report.",
@@ -576,21 +576,22 @@
       "spec": "Spec library"
     },
     "keyRules": "Key requirements",
-    "more": "More"
+    "more": "More",
+    "pinAsProject": "Pin as this project’s spec"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
     "allEditable_one": "{{count}} figure ready",
     "allEditable_other": "{{count}} figures ready",
     "allScriptsHint": "Every .py is here, even ones whose figures aren’t obvious. Run one, and Tavotto links it by what it actually draws.",
-    "allScriptsTitle": "All scripts ({{n}})",
+    "allScriptsTitle": "All scripts",
     "autoLink": "Connect automatically",
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
     "emptyTitle": "No figures in this project yet",
     "group": {
-      "editable": "Editable ({{n}})",
-      "layout_only": "Layout only ({{n}})",
-      "pending": "Needs attention ({{n}})"
+      "editable": "Editable",
+      "layout_only": "Layout only",
+      "pending": "Needs attention"
     },
     "link": "Connect",
     "linked": "Connected {{name}} to its source script",
@@ -631,7 +632,6 @@
     },
     "sourcePrefix": "Stored in: ",
     "staleReport": "Showing the last state we could load. It may be out of date.",
-    "subtitle": "Whether each figure can be edited directly, and what is still missing.",
     "summary": {
       "editable": "Editable",
       "layoutOnly": "Layout only",
@@ -961,7 +961,6 @@
       "defaultFormats": "Default formats",
       "ppiNotForVector": "Vector formats only — resolution has no effect",
       "sectionFormats": "Formats",
-      "formatsDesc": "Preselected when the export dialog opens",
       "sectionRaster": "Raster output",
       "sectionChecks": "Checks"
     },
@@ -979,7 +978,6 @@
       "builtinFromManaged": "Ships with the {{product}} environment; read-only.",
       "builtinPlanned": "Creating the environment installs matplotlib and its dependencies.",
       "builtinTitle": "Built-in packages",
-      "builtinTitleCount": "Bundled packages ({{count}}, read-only)",
       "col": {
         "actions": "Actions",
         "name": "Name",
@@ -1032,7 +1030,6 @@
         "customIndex": "custom package index in use",
         "proxy": "via a proxy"
       },
-      "networkNote": "Installing and upgrading download from the package index.",
       "op": {
         "install": "install",
         "uninstall": "uninstall",
@@ -1048,7 +1045,6 @@
       "search": {
         "action": "Look up on PyPI",
         "alreadyInstalled": "This environment already has {{version}}.",
-        "builtinTitleMatch": "Built-in packages: {{count}} of {{total}} match, read-only",
         "exactOnly": "Lookup is by exact package name. We don’t guess similar names.",
         "failed": "Couldn’t look up {{name}}.",
         "installHere": "Install into this project’s environment",
@@ -1063,7 +1059,8 @@
           "pypi": "Answered by the official PyPI.",
           "unknown": "Cannot tell which package index this environment uses."
         },
-        "versionAria": "Version of {{name}}"
+        "versionAria": "Version of {{name}}",
+        "builtinCountMatch": "{{count}} of {{total}} match · read-only"
       },
       "snapshotDetail": "Package operations can’t be rolled back. A pip freeze is saved before and after each change, {{count}} so far, for troubleshooting only — Rebuild doesn’t read it.",
       "specAria": "Package name or requirement",
@@ -1084,7 +1081,8 @@
       "updateAria": "Upgrade {{name}}",
       "userEmpty": "No packages installed yet.",
       "userTitle": "Installed by you",
-      "envSection": "Environment"
+      "envSection": "Environment",
+      "builtinCountMeta": "{{count}} · read-only"
     },
     "project": {
       "backupDir": "Original file backups",
@@ -1108,7 +1106,6 @@
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
       "writeBackDesc": "Writing back overwrites the original PDF / PNG and script; the original is backed up to the location above first.",
-      "onlyThisProject": "Only affects this project",
       "change": "Change…"
     },
     "section": {
@@ -1140,8 +1137,7 @@
     "title": "Settings",
     "update": {
       "applyFailedRetry": "The upgrade didn’t finish, so your current version is unchanged. You can press “Download and upgrade” again, or read the log below.",
-      "autoCheck": "Check automatically",
-      "autoCheckAria": "Check for updates daily",
+      "autoCheck": "Check daily",
       "available": "Update available",
       "channelNote": "Checks the latest stable GitHub release only. With automatic checks off, nothing goes online.",
       "check": "Check for updates",
@@ -1157,11 +1153,8 @@
       "installMethod": "Installed via",
       "installedHint": "Installed. This window still runs the old version, so restart to use the new one.",
       "lastChecked": "Last checked: {{time}}",
-      "latestUnknown": "Haven’t checked yet. Can’t tell if this is the latest version.",
       "manualDownload": "If the update service is unreachable, you can also download from Releases.",
       "methodSource": "Source checkout. Upgrade with git pull.",
-      "neverChecked": "Never checked",
-      "noUpdateAtLastCheck": "No new version was found at the last check; check again to know about now.",
       "relaunch": "Restart into the new version",
       "releaseNotes": "Release notes",
       "restartAfter": " to use it. This process is still running the old code.",
@@ -1169,7 +1162,9 @@
       "restartStrong": "Restart Tavotto",
       "signatureNote": "Update packages are officially signed, and the signature is checked before installing; if it fails, nothing is installed. Projects, canvases and settings live in your user data folder, so upgrades don’t touch them.",
       "sourceUpgrade": "For a source checkout, run",
-      "upgrading": "Upgrading…"
+      "upgrading": "Upgrading…",
+      "lastCheckedNoUpdate": "{{time}} · No new version",
+      "lastCheckedUnknown": "Never checked, so the latest version is unknown"
     },
     "tutorial": {
       "label": "Tutorial",
@@ -1182,7 +1177,7 @@
       "resetAction": "Reset"
     },
     "navGroup": {
-      "general": "General",
+      "general": "App",
       "workflow": "Workflow",
       "integrations": "Integrations",
       "system": "System"
@@ -1190,7 +1185,6 @@
   },
   "style": {
     "affectDetails": "Affected details",
-    "affectNone": "No figure in this scope would change",
     "affectSummary_one": "Affects {{count}} figure, {{patches}} changes",
     "affectSummary_other": "Affects {{count}} figures, {{patches}} changes",
     "annotationCount_one": "Annotation text: {{count}}",
@@ -1205,14 +1199,11 @@
     "confirmBody_other": "Overwrites {{count}} existing figure edits. {{undo}} undoes all of it.",
     "confirmTitle": "Apply style “{{name}}”?",
     "deleteBody": "It can’t be recovered. Edits already applied to the document are unaffected.",
-    "deleteStyleAria": "Delete style {{name}}",
     "deleteTitle": "Delete style “{{name}}”?",
-    "description": "Save typography settings as a named style and apply it to panels in bulk. Source files are never touched.",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style, then apply it in bulk. Only figure edits are written; source files stay untouched.",
     "emptyBody": "No styles saved yet. Select a rendered, editable figure to extract its font sizes, line widths, ticks and palette as a start.",
     "emptyDraft": "Empty style. Click “Extract from the current panel” to read its font sizes, line widths, ticks and palette, then delete what you don’t want to unify and save.",
     "extract": "Extract from the current panel",
-    "extractFrom": "Read the current values from “{{name}}”",
     "extractNeedPanel": "Select a rendered, editable figure to extract from",
     "group": {
       "axes": "Axes",
@@ -1278,7 +1269,9 @@
     "untitled": "Untitled",
     "untitledStyle": "Untitled style",
     "willAffect": "Will affect",
-    "withAnnotations": "Include canvas annotations and panel labels"
+    "withAnnotations": "Include canvas annotations and panel labels",
+    "nameLabel": "Name",
+    "deleteBuiltinReason": "Built-in styles can’t be deleted"
   },
   "telemetry": {
     "allow": "Share anonymous usage",

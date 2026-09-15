@@ -73,7 +73,11 @@ export function CodexIntegrationPanel() {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
+        {/* 权重不倒挂（全面打磨 D19）：安装是这一段的动作（secondary），重新诊断是
+            排障用的次级出口（ghost）。此前安装不传 variant 落成 ghost、诊断是
+            secondary——看上去该点的是诊断 */}
         <Button
+          variant="secondary"
           size="sm"
           loading={busy === 'install'}
           disabled={busy !== null}
@@ -82,7 +86,7 @@ export function CodexIntegrationPanel() {
           {busy === 'install' ? ag('codexInstall.running') : ag('codexInstall.action')}
         </Button>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
           loading={busy === 'doctor'}
           disabled={busy !== null}

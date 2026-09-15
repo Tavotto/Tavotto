@@ -13,7 +13,7 @@ import { CODEX_GUIDE_URL, PRODUCT_NAME } from '@/lib/brand'
 import { formatDateTime } from '@/i18n/format'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../ui/Button'
-import { SettingSection } from './SettingRow'
+import { SettingRow, SettingSection } from './SettingRow'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
@@ -134,46 +134,52 @@ export function CodingAgentsSection() {
   // 在组件里再写一遍同样的三元表达式，就是这次重构要消灭的那种第二权威
   const effective = effectiveAgent(preferred, caps)
 
+  /**
+   * 检测这件事收进第一个分区的标题行右侧（全面打磨 D10）。此前它是页首一条左对齐的
+   * 裸按钮条，悬在第一个分区标题上方 56px——是全部设置页里唯一不在行语法里的控件。
+   *
+   * 最近检测时间跟着「重新检测」走：它说明的是那个动作上次什么时候发生过，摆在列表
+   * 底下会被读成列表的脚注。
+   */
+  const rescanAction = (
+    <span className="flex items-center gap-2">
+      {caps && caps.checked_at_ms > 0 && (
+        <span data-agent-last-checked className="type-meta">
+          {ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })}
+        </span>
+      )}
+      <Button
+        data-agent-rescan
+        variant="secondary"
+        size="sm"
+        loading={busy}
+        onClick={() => void reload(true)}
+      >
+        <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+        {ag('rescan')}
+      </Button>
+    </span>
+  )
+
   // 分区之间的间距由外壳的内容容器统一给（`display: contents` 让两个分区直接成为
   // 它的子项）；这一页没有页标题——别的分区也没有，导航项已经是它的名字（Session 6）
   return (
     <div ref={rootRef} className="contents">
-      {/* ---------------- 检测：只有动作，没有解释（ADR 0038） ---------------- */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Button
-          data-agent-rescan
-          variant="secondary"
-          size="sm"
-          loading={busy}
-          onClick={() => void reload(true)}
-        >
-          <RefreshCw size={ICON_SIZE.sm} aria-hidden />
-          {ag('rescan')}
-        </Button>
-        {/* 最近检测时间跟着「重新检测」走：它说明的是那个动作上次什么时候
-            发生过，摆在列表底下会被读成列表的脚注 */}
-        {caps && caps.checked_at_ms > 0 && (
-          <span data-agent-last-checked className="type-meta">
-            {ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })}
-          </span>
-        )}
-      </div>
-
       {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
       <p aria-live="polite" className="sr-only">
         {announce}
       </p>
 
       {caps === null ? (
-        <SettingSection title={ag('useInProduct')}>
+        <SettingSection title={ag('useInProduct')} action={rescanAction}>
           <p className="type-meta">{ag('state.detecting')}</p>
           {/* 骨架屏：**绝不先显示红叉或「未安装」**——那两个都是没有依据的断言。
               两行是为了让首屏高度接近最终结果，减少布局跳动。 */}
-          <ul aria-hidden className="overflow-hidden rounded-md border border-border bg-surface">
+          <ul aria-hidden className="flex flex-col">
             {[0, 1].map((i) => (
               <li
                 key={i}
-                className={`flex min-h-12 items-center gap-3 px-3 ${i > 0 ? 'border-t border-border' : ''}`}
+                className={`flex min-h-12 items-center gap-3 ${i > 0 ? 'border-t border-border' : ''}`}
               >
                 <span className="h-9 w-9 shrink-0 rounded-md bg-surface-2" />
                 <span className="h-3 w-24 rounded-sm bg-surface-2" />
@@ -186,7 +192,7 @@ export function CodingAgentsSection() {
         <>
           {/* 两个小节是两件事，标题按**用户想完成什么**命名（审计 T44），都是
               type-section 那一档——与别的分区同一套层级 */}
-          <SettingSection title={ag('useInProduct')}>
+          <SettingSection title={ag('useInProduct')} action={rescanAction}>
             <section data-agent-section="in-app" className="flex flex-col gap-1.5">
               {/* 默认 Agent 不再单独一行（2026-09-11 用户反馈）：每行自带「默认」按钮。
                   首选那个暂时不可用时**按下态落在第一个可用的，但不改用户存着的首选值**
@@ -208,10 +214,12 @@ export function CodingAgentsSection() {
               「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
           <SettingSection title={ag('useFromAgents')}>
             <section data-agent-section="external" className="flex flex-col gap-1.5">
-            <div data-agent-codex-integration className="flex min-h-7 items-center gap-3">
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                {ag('codexIntegrationName', { product: PRODUCT_NAME })}
-              </span>
+            {/* 这一行走标准设置行（全面打磨 D12）：此前是 28 高的自制行，与同一页上面
+                48 高的 Agent 行、别的设置页的 48 高行各差一档 */}
+            <SettingRow
+              data-agent-codex-integration
+              label={ag('codexIntegrationName', { product: PRODUCT_NAME })}
+            >
               <a
                 href={CODEX_GUIDE_URL}
                 target="_blank"
@@ -221,7 +229,7 @@ export function CodingAgentsSection() {
                 {ag('viewGuide')}
                 <ExternalLink size={ICON_SIZE.xs} aria-hidden />
               </a>
-            </div>
+            </SettingRow>
             {/* 桌面版才有的安装入口：spawn `tavotto-cli codex install --json`。
                 浏览器模式下 CodexIntegrationPanel 自己返回 null——上面那一行
                 （名字 + 指南）在两种形态下一模一样。 */}

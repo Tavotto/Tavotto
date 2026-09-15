@@ -96,7 +96,8 @@ export function ProjectPicker() {
         {/* 固定区：品牌 + 主入口。`shrink-0` 是这一屏的要点——列表再长也挤不动它 */}
         <header className="shrink-0 pt-10">
           {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
-          <h1 className="flex items-center gap-2.5 text-lg font-medium tracking-tight text-ink">
+          {/* 标题走 type-title（15 / 500），字距 0（全面打磨 D44，§6：负字距是自造的第七种排法） */}
+          <h1 className="type-title flex items-center gap-2.5">
             <BrandMark size={24} tone="paper" />
             {PRODUCT_NAME}
           </h1>
@@ -193,7 +194,8 @@ export function ProjectPicker() {
             aria-label={t('picker.recentLabel')}
             className="flex min-h-0 flex-1 flex-col pb-6 pt-7"
           >
-            <h2 className="mb-1.5 flex shrink-0 items-baseline gap-1.5 text-xs font-medium text-ink-2">
+            {/* 分区小标走 type-section（全面打磨 D44） */}
+            <h2 className="type-section mb-1.5 flex shrink-0 items-baseline gap-1.5">
               {t('picker.recentHeading')}
               <span className="font-mono text-ink-3">
                 {t('picker.recentCount', { count: available.length + missing.length })}
@@ -589,7 +591,8 @@ export function DirBrowser({
           ))}
         </div>
 
-        <ul aria-label={t('browser.subdirsLabel')} className="h-56 overflow-y-auto rounded-sm border border-border">
+        {/* 清单不套外框（全面打磨 D44，§8）：行之间的 hairline 已经把它分开了 */}
+        <ul aria-label={t('browser.subdirsLabel')} className="h-56 overflow-y-auto">
           {state?.dirs.map((d) => (
             <li key={d.path}>
               <button
