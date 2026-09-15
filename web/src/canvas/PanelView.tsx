@@ -1047,7 +1047,8 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
               ? 'bg-ink text-white'
               : shown.tone === 'info'
                 ? 'bg-ink/70 text-white'
-                : 'bg-accent text-white',
+                // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
+                : 'bg-ink text-white',
         )}
       >
         {shown.tone === 'busy' && (

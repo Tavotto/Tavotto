@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Plus, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -10,6 +10,7 @@ import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
+import { useBoldWidthLock } from './ui/useBoldWidthLock'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -129,22 +130,9 @@ function TabItem({
     if (renaming) setDraft(name)
   }, [renaming, name])
 
-  // 选中态 600 比 400 宽 2~3%：布局前量一次加粗后的宽度写成 min-width，切页签时邻居不挪。
-  // 与 `ui/Tabs.tsx` 的 `Tab` 是同一手法——那边是 <button>，这边是可拖拽 / 可双击重命名 /
-  // 带关闭钮的 <div>，套不进同一个组件；原语层这一轮冻结，已请 team-lead 把它抽成共用 hook。
+  // 选中态 600 比 400 宽 2~3%：量一次加粗宽度写成 min-width，切页签时邻居不挪——与右栏 `Tab` 同一个钩子
   const nameRef = useRef<HTMLSpanElement>(null)
-  useLayoutEffect(() => {
-    const el = nameRef.current
-    if (!el) return
-    // 加粗走内联 `fontWeight` 而不是 `font-semibold` 类：600 这个字重只许由 `tabClass` /
-    // `Segmented` 给（foundation.test 按文件计数守着），量个宽度不该换来一条豁免
-    const prev = el.style.fontWeight
-    el.style.minWidth = ''
-    el.style.fontWeight = '600'
-    const w = el.getBoundingClientRect().width
-    el.style.fontWeight = prev
-    if (w > 0) el.style.minWidth = `${Math.ceil(w)}px`
-  })
+  useBoldWidthLock(nameRef)
 
   if (renaming) {
     return (

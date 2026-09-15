@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -481,8 +481,8 @@ function MarkTools() {
           onValueChange={(v) => setTool(tool === v ? 'select' : (v as MarkTool))}
         >
           {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
-            <MenuRadioItem key={mark} value={mark} icon={Icon}>
-              <RadioRow shortcut={key}>{t(markToolKey(mark))}</RadioRow>
+            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={key}>
+              {t(markToolKey(mark))}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
@@ -504,21 +504,6 @@ function MarkTools() {
         </Button>
       </Tip>
     </>
-  )
-}
-
-/**
- * 菜单项里「名字 + 键位」的一行。
- *
- * 只给 `MenuRadioItem` 用：`MenuItem` 自己有 `shortcut` 列，`MenuRadioItem` 还没有
- * （已向 team-lead 提原语请求，落地后这个组件连同调用点一起删，换成 `shortcut={…}`）。
- */
-function RadioRow({ children, shortcut }: { children: ReactNode; shortcut: string }) {
-  return (
-    <span className="flex items-center justify-between gap-3">
-      {children}
-      <span className="shrink-0 tabular-nums text-ink-3">{shortcut}</span>
-    </span>
   )
 }
 
@@ -558,12 +543,8 @@ function ZoomControls() {
           onValueChange={(v) => useViewportStore.getState().setZoomCentered(Number(v))}
         >
           {ZOOM_PRESETS.map((z) => (
-            <MenuRadioItem key={z} value={String(z)}>
-              {z === 1 ? (
-                <RadioRow shortcut={`${MOD}0`}>{`${z * 100}%`}</RadioRow>
-              ) : (
-                `${z * 100}%`
-              )}
+            <MenuRadioItem key={z} value={String(z)} shortcut={z === 1 ? `${MOD}0` : undefined}>
+              {`${z * 100}%`}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
