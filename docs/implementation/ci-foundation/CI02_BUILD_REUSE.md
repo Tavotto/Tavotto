@@ -4,18 +4,19 @@
   `evidence/ci02/`、`acceptance.json`（CIP-011…015）、`.github/AGENTS.md`（门禁纪律加一段）、`evidence/README.md`（登记 ci02/）。
   `coverage_ledger.json` 没动：没有任何 job 换执行位置。叠在 CI03b `1f7f13e8`（PR #376）之上；栈：#372 CI00 → #373 CI01 →
   #374 CI03a → #375 CI03c → #376 CI03b → 本 PR。
-- **改了什么（可执行的部分）**：只有合同测试。**`.github/workflows/ci.yml` 一个字节没动**，`web/tsconfig*.json` /
-  `web/package.json` / `scripts/plugin_stage.py` / 任何构建脚本都没动。
+- **改了什么（可执行的部分）**：合同测试；**ci.yml 只改一行**——`windows-exe-smoke` 两片的
+  `pnpm exec playwright install --with-deps ${{ matrix.browsers }}` 去掉 `--with-deps`（§2 的实验，由本 PR 的 full-ci run 判；`posix-e2e` 的保留）。
+  `web/tsconfig*.json` / `web/package.json` / `scripts/plugin_stage.py` / 任何构建脚本、任何 needs / if / timeout / Gate 闭集都没动。
 - **没做什么，以及为什么**（每一条都在下面用 CI 日志里的秒数说理由）：
   1. **不跨 job 抽取任何构建产物**（§1）：9 种 recipe 里 8 种「同 job 重建保留」，1 种（插件候选）本来就是唯一的数据边。
   2. **不加 Playwright 浏览器缓存**（§2）：派工时的前提是「Windows 装依赖 + 浏览器 245s」，日志拆开后浏览器下载只占 17–27s，
      **203–226s 是 `--with-deps` 在装 Windows Server 的 Media Foundation**；再叠上 §4 的发现——本仓库的缓存在合并组上 0% 命中——
      这条缓存是净负收益。
-  3. **不改 `--with-deps`、不改缓存作用域、不给 `package` 加 pnpm 缓存**：三件都是有数字的下一步（§8），但各自超出本轮授权
-     （改测试环境 / 改 push main 的 job 集合）或收益为负。
+  3. **不改缓存作用域、不给 `package` 加 pnpm 缓存**：前者写成可执行的设计（§4.1）归 CI05 拍板，后者在前者修好之前是净负。
 - **本轮没有任何真实 run**（不能 push）。CI 侧全部数字取自**已有** run 的 jobs API 与日志：PR #374 `35007730894`、PR #375 `35011613925`
   （两个都是 `full-ci` PR，attempt 1，全绿）、合并组 `35015416419`。本机数字只作数量级。
-- 回退：删掉 `TestBuildReuseAndCaches` 与三个 helper（`_jsonc` / `_with_block` / `_uses_steps`）；没有别的东西可回退。
+- 回退：ci.yml 那一行加回 `--with-deps`（并把 `TestBuildReuseAndCaches.PLAYWRIGHT_INSTALL` 的 Windows 那条改回）；删掉 `TestBuildReuseAndCaches`
+  与三个 helper（`_jsonc` / `_with_block` / `_uses_steps`）。
 
 ## 1. Recipe 表与逐行决定（A + E「不混同目标」）
 
@@ -42,7 +43,8 @@ lead 的两条预判（web build 保留、Windows .exe 保留）都成立，理�
 
 ## 2. Playwright 浏览器缓存：决定「不做」，与它的数字（B）
 
-派工的前提：`windows-exe-smoke (1)` 的「装 web 依赖与本片的浏览器」245s、`(2)` 231s、posix-e2e 每次下载。按日志行首时间戳拆开
+派工时 lead 的预判是「`windows-exe-smoke (1)` 的『装 web 依赖与本片的浏览器』245s、`(2)` 231s ≈ 浏览器下载，缓存它是一处真收益」。
+**这个预判被日志推翻**：按日志行首时间戳拆开
 （[`evidence/ci02/playwright_install_split.json`](evidence/ci02/playwright_install_split.json)，run `35011613925`）：
 
 | 腿 | 步总时长 | `pnpm install` | `--with-deps` 的系统依赖 | 浏览器下载（含解包） |
@@ -65,9 +67,27 @@ Windows 那 200 多秒是什么：已装的 `playwright-core@1.62.1` 的 `instal
   （playwright.dev/docs/ci「Caching browsers」）。浏览器目录按官方（playwright.dev/docs/browsers）是 `%USERPROFILE%\AppData\Local\ms-playwright` /
   `~/Library/Caches/ms-playwright` / `~/.cache/ms-playwright`，日志里的落点与此一致——路径是核实过的，只是没有用它的理由。
 
-**决定：不加。** 合同测试把它做成结构：`actions/cache` 的清单是枚举（只有两处 CPython 归档），谁加第三条就红，得先回到这里改数字
-（`test_actions_cache_steps_are_exactly_the_cpython_archive_downloads`，变异 M11）。两条 Playwright 腿仍各恰好一条
-`pnpm exec playwright install --with-deps …`（幂等；M18）。真正的 200 秒在 §8 第 1 条。
+**决定：不加**（lead 已拍板同意）。合同测试把它做成结构：`actions/cache` 的清单是枚举（只有两处 CPython 归档），谁加第三条就红，得先回到这里改数字
+（`test_actions_cache_steps_are_exactly_the_cpython_archive_downloads`，变异 M11）。
+
+### 2.1 真正的 200 秒：Windows 两片去掉 `--with-deps`（实验，本轮已改）
+
+- **改动**：ci.yml `windows-exe-smoke` 的安装步 `pnpm exec playwright install ${{ matrix.browsers }}`（原来带 `--with-deps`）；`posix-e2e` 的
+  `pnpm exec playwright install --with-deps chromium` **保留**（那边的 `--with-deps` 是 apt 装 chromium 的真依赖与字体，23.8s）。步骤名、matrix、
+  `pnpm install --frozen-lockfile`、分片自验、e2e 命令都没动。
+- **理由**：每片 −204…226s，而这条腿正是关键路径（run `35011613925`：frontend 175 + Windows 领取 205 + 片 1 1076 → gate 1485s）；模型上
+  资格时长 1485 → ≈ 1280s，之后关键路径回到 `backend-platforms (windows)`（1187s）。信号可靠：两片 128 条 e2e 会当场说明 Chromium / WebKit
+  起不起得来。回退一行。
+- **由本 PR 的 full-ci run 判**（本机 macOS 证不了 windows-latest 镜像有没有 Media Foundation、Chromium 要不要它；Playwright 把它放进 `--with-deps`
+  的理由正是「Chromium 在 Windows Server 上需要」）。**红了怎么判**：看 `windows-smoke-logs-shard<K>` 里的 `playwright-report` / `test-results`——
+  `browserType.launch` 失败（`Failed to launch chromium/webkit`、`STATUS_DLL_NOT_FOUND` / `0xc0000135`、`mfplat.dll`）= 需要 Media Foundation，
+  加回 `--with-deps` 并把这一节改成「实验失败，数字如下」；若红在具体用例而两片的浏览器都启动了、且同一用例在 attempt 2 或 CI00 样本里也红过，
+  那是 flaky / 别的缺陷，与本实验无关（CI03c §9 的 `retries: 1` 仍在）。绿了：**片 1 / 片 2 的这一步时长**（预期 ≈ 20s / 30s）与资格总时长写进
+  PR，作为 CI05 的对照样本。
+- **合同**：`test_windows_installs_browsers_without_with_deps_and_posix_keeps_it`——主语是**整条命令**（Windows == `pnpm exec playwright install
+  ${{ matrix.browsers }}`、posix == `pnpm exec playwright install --with-deps chromium`），不是「含不含某个 flag」；变异 M22（Windows 加回）/
+  M23（posix 去掉）/ M18（posix 不装）打红。CI03c 的 `test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix` 原来钉着
+  `--with-deps`，改成 `(?:--with-deps )?` 只管「从 matrix 取」。
 
 ## 3. TypeScript 真检查引用（C）
 
@@ -129,6 +149,49 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 | 10 GB 上限已被顶穿，淘汰按最近访问 | desktop-shell 8.1 GB | 小条目先被挤出；即便修好作用域，main 上的种子也会被 PR 的副本挤出 | 同上；副本是作用域问题的症状，不单独治 |
 | rust-cache 的 `key: ${{ matrix.os }}` 与自动键重复 | desktop-shell | 无（多一段字面量） | 记录，不改 |
 
+### 4.1 作用域：现状与可执行的修法（记录，不改；归 CI05「需要拍板的下一步」）
+
+**每类缓存在合并组上的实际状态**（run `35015416419`，候选 ref `gh-readonly-queue/main/pr-362-5b6debb9…`，
+[`merge_group_cache_misses.json`](evidence/ci02/merge_group_cache_misses.json)；每个候选写入的 MiB 取自 [`cache_inventory.json`](evidence/ci02/cache_inventory.json)
+里同一把键的条目大小）：
+
+| 缓存 | 合并组上的日志行 | 结果 | 每个候选各写入 |
+|---|---|---|---|
+| rust-cache `desktop-shell`（ubuntu / macos） | `desktop-shell (ubuntu-latest)`：`No cache found.` | miss → cold 编译（clippy 87s + test 101s，暖时 12 + 3）→ Post 步 save | **945 MiB + 597 MiB** |
+| rust-cache `workerd`（windows / macos / ubuntu） | `windows-exe-smoke`：`No cache found.` | miss → `cargo build --release` 26–35s（暖时不会短很多，crate 少）→ save | 10–17 MiB × 3 |
+| `actions/cache` cpython（windows / macos） | `Cache not found for input keys: cpython-Windows-X64-1ed851e2…` / `…macOS-ARM64-525774d4…` → `Cache saved with key: …` | miss → 重下 10 / 24 MiB 归档（脚本按 sha256 校验）→ save | 10 + 24 MiB |
+| setup-node pnpm store（linux / windows / macos） | `frontend`：只有 `Cache saved with the key: node-cache-Linux-x64-pnpm-6e5eef4c…`（没有 `Cache restored`）；windows / macos 同形 | miss → 重下 55–59 MiB store → save | 55–59 MiB × 3 |
+| **合计** | 12 个 job 里没有一行 `Cache restored` | **0% 命中** | **≈ 1.8 GB / 候选**（实测：三个候选 ref 上 14 条 1885.5 MiB） |
+
+**淘汰在发生**：两次 `gh api …/actions/cache/usage` 之间（同一小时内）从 10.6 GB / 62 条降到 10.3 GB / 60 条；上限 10 GB，淘汰按最近访问从旧到新——
+先走的是小而常用的 cpython（10–24 MiB）与 pnpm（55 MiB）条目，留下的是 945 MiB 的 desktop-shell 副本（PR ×4–5 份 + 候选 ×1 份同一把键，
+`cache_inventory.json` 的 `families`）。
+
+**候选 ref 的条目谁来清**（[`queue_ref_cache_persistence.json`](evidence/ci02/queue_ref_cache_persistence.json)）：PR #361 / #362 已于 09-15 合入，
+它们的 `gh-readonly-queue` ref 已不在远端（`git ls-remote` 只剩 pr-357 一条），但 **13 条缓存还挂在这两个已删除的 ref 上**。GitHub 文档只说
+「未访问超过 7 天自动删除」，没说随 ref 删除；候选 ref 只被自己那一次 run 访问，之后永不再读——所以答案是**没人清，7 天到期或被淘汰**。
+这也意味着：合并组每天合入几个 PR，仓库缓存就每天新增几个 1.8 GB 的死重，10 GB 上限永远被顶穿。
+
+**修法（两种形状，都动 push main 的 job 集合或缓存合同，归 CI05 由用户拍板）**：
+
+- **(a) push main 上的种子 job（推荐的形状）**：在 `push: main` 上加一个矩阵 job（ubuntu / windows / macos 各一条腿），每条腿只做
+  「restore → 让对应工具真跑一次 → save」：`setup-node cache: pnpm` + `pnpm install --frozen-lockfile`（种 pnpm store）、
+  `actions/cache` 同一把 cpython key + `build_worker_runtime.py --download-only`（**脚本今天没有这个开关**，要么加、要么整跑一遍 47–76s）、
+  rust-cache + `cargo build --release`（workerd；desktop-shell 那份还要 `cargo clippy --all-targets` 才能把 dev-deps 编进 target）。
+  **key 对齐是这条的成败**：cpython 与 pnpm 的 key 只含 os / arch / 锁 hash，种子与消费者天然同键，可直接种；**rust-cache 的自动键含 job id**
+  （实测 `v0-rust-<key>-<job>-<os>-<arch>-…`），种子 job 与消费者 job 的 id 不同就**种了也命不中**——两边都要改成同一个
+  `shared-key`（README：「用来代替自动的 job 键、在多个 job 之间稳定」），例如 `shared-key: workerd-${{ runner.os }}` /
+  `shared-key: src-tauri-${{ matrix.os }}`，并把 `desktop-shell` 现在那条冗余的 `key: ${{ matrix.os }}` 一起收掉。代价：每次 push main
+  多 3 条腿 ≈ 3–6 runner 分钟（rust 冷编译那一次贵，之后命中就只剩 restore + 空 save）；与 CI01 定的「push main 只跑 landing audit、不重复打包」
+  要重新说清——种子 job 不是门禁、不产生结论，只是暖缓存；但它是 push main 上一个会失败的 job，失败要不要红要定。预期收益：合并组上
+  desktop-shell −140s（不在关键路径）、windows-exe-smoke 的 rust −20s / cpython −几秒 / pnpm −几秒（在关键路径）、每个候选少写 1.8 GB。
+  验法：**看合并组 run 的日志有没有 `Cache restored from key`**，不能看 PR 的第二次 run（那本来就暖）。
+- **(b) 消费者加 `restore-keys` 前缀退回**：`actions/cache` 与 setup-node 都支持前缀匹配「最近创建的一条」。它解决的是**锁 hash 变了之后
+  退回上一版**（例如 `runtime-lock.json` 改了一个 wheel，退回旧归档目录里还有别的文件可用），**解决不了作用域**：restore-keys 仍只在
+  「当前 ref + main」里找，main 上没有条目它一样 miss。所以 (b) 是 (a) 的补充而不是替代；单独做 (b) 在本仓库是零收益。
+- 两条都不做时的替代：把 `desktop-shell` 的 rust-cache 去掉（它在合并组上从不命中，只在 PR 第二次 push 起作用，却占 8.1 GB 把别的挤出去）——
+  这是「少一个坏缓存」而不是「修好」，也要拍板。
+
 ## 5. 产物身份与不混同目标（E）
 
 唯一的数据边 `frontend ══▶ plugin-candidate`：
@@ -168,10 +231,10 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 | `test_actions_cache_steps_are_exactly_the_cpython_archive_downloads` | `actions/cache` 的 (job, path, key) **枚举**；key 含 os / arch / 锁；恢复在使用前；path 无第四类 | M10 去掉 arch、M11 加 Playwright 缓存、M12 path 改成 venv、M13 挪到构建之后 |
 | `test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile` | 开了 pnpm 缓存的 job 集合 == 五个且都带 `cache-dependency-path`；没开的 == {package} | M14 去掉 dependency-path、M15 package 开缓存 |
 | `test_every_rust_cache_names_its_own_workspace_and_shares_nothing` | rust-cache 的 (job, workspaces) 枚举；无 shared-key / cache-on-failure | M16 加 shared-key、M17 去掉 workspaces |
-| `test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it` | 两条 Playwright 腿各恰好一条 `playwright install --with-deps` | M18 posix 不装 |
+| `test_windows_installs_browsers_without_with_deps_and_posix_keeps_it` | 两条 Playwright 腿各恰好一条 `playwright install`，主语是整条命令：Windows 不带 `--with-deps`、posix 带 | M18 posix 不装、M22 Windows 加回 `--with-deps`、M23 posix 去掉 |
 | `test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest` | 消费者 SHA = HEAD、digest 来自清单、verify 三个参数；生产者同形 | M19 不核 digest、M20 SHA 改成 `github.sha`、M21 zip 复验不带 digest |
 
-变异反证 [`evidence/ci02/mutations_ci.json`](evidence/ci02/mutations_ci.json)：**21/21 KILLED**，每条记着目标串次数、退出码、红的是哪条用例、
+变异反证 [`evidence/ci02/mutations_ci.json`](evidence/ci02/mutations_ci.json)：**23/23 KILLED**，每条记着目标串次数、退出码、红的是哪条用例、
 还原后 md5 与变异前一致。顺序：树干净且基线绿 → 断言目标串恰好出现期望次数 → 写入 → 清 `__pycache__` + `PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider`
 → pytest 退出码判 → `git checkout --` 还原 → 核 md5；跑完 `git status` 只剩本目录的新文件。
 
@@ -179,30 +242,25 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 
 | 命令 | 退出码 |
 |---|---:|
-| `/opt/homebrew/bin/actionlint .github/workflows/ci.yml` | 0（ci.yml 未改） |
+| `/opt/homebrew/bin/actionlint .github/workflows/ci.yml` | 0（ci.yml 改了一行 + 注释） |
 | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | 0 |
 | `cd web && pnpm build`（冷：先删 `node_modules/.tmp`）| 0，**7.0s**（暖 6.6s） |
 | `.venv/bin/python -m pytest tests/test_merge_queue_workflows.py tests/test_ci_tooling.py tests/test_docs_references.py tests/test_source_hygiene.py tests/test_generated_untracked.py` | 0（138 passed, 1 skipped：test_ci_tooling 的「非 Linux 无 /proc」） |
 | `python scripts/build_mcp_widget.py --out <scratch>/canvas.html --json` / `build_browser_playground.py` / `python -m build --outdir <scratch>` / `cargo build --release`（本机，量尺寸与时长） | 0 / 0 / 0 / 0 |
 | 本机 tsc 反证 T1 / T2 / T3 / T4（§3） | 2 / 2 / 0 / 0 |
-| 变异反证 21 条（§6） | 21/21 KILLED |
-| 实机：本 PR 的 full-ci run（冷）与同 PR 第二次 run（暖）的缓存命中 | **not_run**（本轮没有新增缓存，也就没有「暖跑收益」要量；§8 的三件事各自要一次 run） |
+| 变异反证 23 条（§6） | 23/23 KILLED |
+| 实机：本 PR 的 full-ci run 上 `windows-exe-smoke (1)` / `(2)` 不带 `--with-deps` 的 e2e 结论与安装步时长 | **not_run**（不能 push；lead 盯 run 并写进 PR，§2.1 写了红了怎么判） |
 
 ## 8. 已知边界与下一步（都有数字，都没做）
 
-1. **`--with-deps` 在 Windows 上 = 每片 203–226s 的 Media Foundation 安装，在关键路径上。** 去掉它每个合并组省 ≈ 200s 资格时长
-   （1485 → ≈ 1280，之后关键路径回到 backend-platforms (windows) 1187s）+ 每片 200 runner 秒。**本轮不改**：它改的是 e2e 的运行环境，
-   Playwright 把它加进 `--with-deps` 的理由正是「Chromium 在 Windows Server 上需要它」，而本机（macOS）证不了 windows-latest 上没有它
-   Chromium / WebKit 起不起得来；`TestPlaywrightShards::test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix` 也钉着
-   `--with-deps`。做法（要一次 full-ci run 验证）：两片改成 `pnpm exec playwright install ${{ matrix.browsers }}`（不带 `--with-deps`），
-   或把 `Install-WindowsFeature` 挪到 job 开头后台跑、装浏览器前等它完成（保持环境不变，只是与 4 分钟的构建链重叠——但跨 step 的后台
-   进程与 DISM 并发锁在本机也证不了）。
-2. **缓存作用域：main 上没有 ci.yml 的任何缓存 → 合并组永远冷。** 修法是在 `push: main` 上加一个只做「restore + `pnpm install` /
-   `cargo fetch` + save」的种子 job（或让 `main-landing-audit` 顺手做），让候选能读到 main 的条目；预期 desktop-shell −140s（不在关键路径）、
-   windows-exe-smoke 的 rust −20s / cpython −几秒、10 GB 里的副本自然消失。**本轮不改**：它动的是 push main 的 job 集合（CI01 定的
-   「push main 只跑 landing audit」），要 lead 拍板；改了以后要用合并组 run 的日志（「Cache restored from key」）验，不能看 PR 的第二次 run。
+1. **Windows 两片不带 `--with-deps` 是实验，本机（macOS）证不了**：PR 的 full-ci run 是唯一样本；红了怎么判、绿了记什么在 §2.1。若实验失败，
+   备选是把 `Install-WindowsFeature` 挪到 job 开头后台跑、装浏览器前等它完成（环境不变，只与 4 分钟的构建链重叠）——跨 step 的后台进程与 DISM
+   并发锁同样只有 Windows 机器才证得了。
+2. **缓存作用域（§4.1）**：main 上没有 ci.yml 的任何缓存 → 合并组永远冷、每个候选写 1.8 GB 死重、10 GB 上限永远被顶穿。两种修法与各自代价写在
+   §4.1，归 CI05 由用户拍板；改了以后用合并组 run 的日志（`Cache restored from key`）验，不能看 PR 的第二次 run。
 3. **`package` 的 pnpm 缓存**：第 2 条修好之后再开（四条腿各 −5s 下载）；现在开是四份白传。
-4. **本轮没有真实 run**：§1 的秒数是两次已有 run 的实测，不是本 PR 的；本 PR 只加了合同测试，CI 上唯一会变的是 backend-fast 里多八条用例。
+4. **本轮没有真实 run**：§1 的秒数是两次已有 run 的实测，不是本 PR 的；本 PR 在 CI 上会变的只有两处——backend-fast 里多八条合同用例、
+   `windows-exe-smoke` 两片的安装步不带 `--with-deps`。
 5. **`dist/Tavotto` 的总大小日志没打印**：表里写的是下界（runtime 249 / 288 MiB）；要精确值得在冒烟腿加一行 `du`（不在本轮范围）。
 6. **Windows 那两条腿的 `runner_wait`（205s / 321s）是 pull_request 事件上的观察**，CI00 §4.3 说合并组上 Windows 领取中位 3s；§1 里「多串一个
    Windows job 必然为负」在合并组上的量级会小一些（一次 dispatch + 领取 ≈ 5–15s + 上传下载 1–2 分钟），结论不变。
@@ -211,4 +269,5 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 
 `ci_step_seconds.json`（两个 run 的 57 个 job 逐步秒数）· `playwright_install_split.json`（三条腿安装步的时间戳拆分）· `cache_inventory.json`
 （仓库缓存 60 条 + 按家族 / 作用域汇总）· `merge_group_cache_misses.json`（合并组 run 的命中 / 未命中行）· `recipe_table.json`（§1 表）·
-`local_builds.json`（本机五种产物的时长与尺寸）· `tsc_mutations.json`（T1–T4）· `mutations_ci.json`（M01–M21）。
+`queue_ref_cache_persistence.json`（已合入候选的 ref 没了、缓存还在）· `local_builds.json`（本机五种产物的时长与尺寸）· `tsc_mutations.json`（T1–T4）·
+`mutations_ci.json`（M01–M23）。
