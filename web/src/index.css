@@ -539,6 +539,9 @@
 @utility type-meta {
   font-size: var(--text-xs);
   line-height: var(--text-xs--line-height);
+  /* 显式 400：meta 常坐在 500 / 600 的父元素里（type-section 的区头计数、选中页签的计数、
+     选中行的行尾「基准」），字重不能从父元素继承过来——靠每处手加 font-normal 维持不住（2026-09-15 左栏批次） */
+  font-weight: 400;
   color: var(--color-ink-3);
 }
 
