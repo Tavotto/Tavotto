@@ -6,6 +6,7 @@ import { updateObjects } from '@/store/actions'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import type { CanvasObject } from '@/types/document'
 import { Disclosure, Row, Section } from '../ui/Field'
+import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
 import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
 import { shared } from './common'
@@ -104,7 +105,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
       </GeometryGrid>
       {rotatable && (
         <div className="mt-1.5">
-          <Row label={t('transform.rotation')} labelWidth={72}>
+          <Row label={t('transform.rotation')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               value={shared(objs, (o) => o.rotationDeg ?? 0) ?? 0}
               mixed={shared(objs, (o) => o.rotationDeg ?? 0) === undefined}

@@ -1,13 +1,12 @@
 import { useState } from 'react'
-import { Reveal } from '../../ui/Field'
-import { ChevronRight } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { Reveal, Row } from '../../ui/Field'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { clearOverride } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { NumberField } from '../../ui/Input'
+import { GroupToggle } from '../GroupToggle'
+import { INSPECTOR_LABEL_W } from '../layout'
 import { useElementWriter } from '../elementWrite'
 import { fieldVisible } from '../presentation/registry'
 import { propLabel } from '../roles/registry'
@@ -58,38 +57,38 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
   if (!props.length) return null
 
   return (
-    <div className="mt-1.5 border-t border-border pt-1.5" data-legend-spacing>
-      <button
-        type="button"
-        onClick={() => setOpenPref(!open)}
-        aria-expanded={open}
-        className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+    /* 组内折叠 = 文字链接，上方不画 hairline（打磨 L4：组间靠留白分层） */
+    <div data-legend-spacing>
+      <GroupToggle
+        open={open}
+        onToggle={() => setOpenPref(!open)}
+        summary={
+          modified > 0
+            ? translate('element.modifiedCount', { ns: 'inspector', count: modified })
+            : undefined
+        }
       >
-        <ChevronRight size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-        <span className="font-medium">{lg('layoutDetails')}</span>
-        {!open && modified > 0 && (
-          <span className="ml-auto shrink-0 text-xs text-ink-3">
-            {translate('element.modifiedCount', { ns: 'inspector', count: modified })}
-          </span>
-        )}
-      </button>
+        {lg('layoutDetails')}
+      </GroupToggle>
       <Reveal open={open}>
         <div className="mt-1.5 flex flex-col gap-1.5">
-          <p className="text-xs leading-snug text-ink-3">{lg('spacingUnitNote')}</p>
+          {/* 「1 em = 一个图例字号」那句删了（打磨 L8）：单位 em 已经在框里，
+              解释放 NumberField 的 title，不常驻 */}
           {shown.map((prop) => {
             const field = w.fieldOf(prop)
             if (!field) return null
             const label = propLabel(prop, element.role)
             return (
-              <div key={prop} data-prop={prop} data-gid={element.gid} className="flex min-h-6 items-center gap-2">
-                <span className="min-w-0 flex-1 text-xs text-ink-2">
-                  {labeledWithState(label, overridden(prop))}
-                </span>
-                {/* 定宽 112px、框吃满：数字右对齐、单位坐在框里靠右 */}
+              <div key={prop} data-prop={prop} data-gid={element.gid}>
+              <Row
+                label={labeledWithState(label, overridden(prop))}
+                labelWidth={INSPECTOR_LABEL_W}
+              >
+                {/* 与同页其它行同一条控件竖线、同一档框宽（打磨 E4 / L3）：
+                    此前标签 flex-1、112 宽的框贴右缘，是页内第三种行语法 */}
                 <NumberField
-                  fill
-                  className="w-[112px] shrink-0"
                   ariaLabel={label}
+                  title={lg('spacingUnitTitle')}
                   value={Number(w.read(prop) ?? 0)}
                   min={field.min}
                   max={field.max}
@@ -103,6 +102,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                 {overridden(prop) && (
                   <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, prop)} />
                 )}
+              </Row>
               </div>
             )
           })}

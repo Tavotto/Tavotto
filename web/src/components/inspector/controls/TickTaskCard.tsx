@@ -18,6 +18,7 @@ import {
 } from '@/lib/tickSides'
 import type { TickAxis } from '../tickAdapter'
 import { ResetChip, labeledWithState } from './textRows'
+import { INSPECTOR_LABEL_W } from '../layout'
 
 /**
  * 刻度任务卡：**「刻度朝哪、多长多粗、要不要次刻度」在同一处完成**。
@@ -90,7 +91,7 @@ const AXIS_TAB: Record<TickAxis, string> = { x: 'xTicks', y: 'yTicks', z: 'zTick
 
 export function TickTaskCard({
   axes,
-  labelWidth = 72,
+  labelWidth = INSPECTOR_LABEL_W,
   model = null,
   applyPlan,
   placement,
@@ -152,7 +153,8 @@ export function TickTaskCard({
       {axes.length > 1 && (
         /* 「X 刻度 / Y 刻度」是看哪一条轴的页，不是一个取值：下划线页签（`Tabs`）；
            下面的「方向」才是取值，走 `Segmented` */
-        <div className="flex h-8 items-center border-b border-border">
+        /* 与右栏自己的 tablist 同形：36 高、不画底线（打磨 E8——页内唯一一根横线） */
+        <div className="flex h-9 items-center">
           <TabList label={tk('axisSwitch')}>
             {axes.map((a) => (
               <Tab
@@ -226,7 +228,6 @@ export function TickTaskCard({
               onChange={(v) => cur.writeOnce('minor_visible', v)}
               aria-label={tk('minorAria', { axis: tk(AXIS_NAME[cur.axis]) })}
             />
-            <span className="text-xs text-ink-3">{tk(minorOn ? 'minorOn' : 'minorOff')}</span>
             {cur.isOverridden('minor_visible') && (
               <ResetChip label={tk('minor')} onReset={() => cur.reset('minor_visible')} />
             )}

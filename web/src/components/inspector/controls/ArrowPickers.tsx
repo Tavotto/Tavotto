@@ -96,7 +96,14 @@ export function ArrowStylePicker({
     }
   })
   return (
-    <OptionGrid value={value} options={grid} onChange={onChange} columns={1} ariaLabel={ariaLabel} />
+    <OptionGrid
+      value={value}
+      options={grid}
+      onChange={onChange}
+      previewHasLabel
+      columns={1}
+      ariaLabel={ariaLabel}
+    />
   )
 }
 

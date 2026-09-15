@@ -42,6 +42,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import type { CanvasObject, LayoutGroup } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { Disclosure, Row, Section } from '../ui/Field'
+import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
 import { Toggle } from '../ui/Toggle'
@@ -64,12 +65,15 @@ type AlignMode = Parameters<typeof alignSelectedTo>[0]
 /**
  * 排列面板的行网格：左列定宽短标签，右列 minmax(0,1fr) 操作区。
  * 常驻区与「更多排列」各自一张网格，但列宽一致，展开后起点不错位。
- * 标签列 3.75rem：中文四字、英文 Distribute / Match size 都放得下；
- * 280px 侧栏里右侧仍留得出六个 28px 对齐键 + 一根分隔线。
+ * 标签列与全检查器同一个数（打磨 L1：此前这里是 3.75rem = 60，同一页的
+ * 缩放 / 取景那几行是 44——一页两种控件竖线）。
  */
 function ArrangeGrid({ children }: { children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[3.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2">
+    <div
+      className="grid items-center gap-x-2 gap-y-2"
+      style={{ gridTemplateColumns: `${INSPECTOR_LABEL_W}px minmax(0,1fr)` }}
+    >
       {children}
     </div>
   )
@@ -472,7 +476,7 @@ function LayoutGroupControls() {
   // 已有布局组：这是一块有状态的设置区，横跨两列
   return (
     <div className="col-span-2 flex flex-col gap-1.5 rounded-sm border border-border p-1.5">
-      <Row label={ar('layout')}>
+      <Row label={ar('layout')} labelWidth={INSPECTOR_LABEL_W}>
         <Segmented
           className="w-full"
           value={group.kind}
@@ -484,7 +488,7 @@ function LayoutGroupControls() {
           ]}
         />
       </Row>
-      <Row label={ar('spacing')}>
+      <Row label={ar('spacing')} labelWidth={INSPECTOR_LABEL_W}>
         <NumberField
           unit="mm"
           ariaLabel={ar('spacing')}
@@ -505,7 +509,7 @@ function LayoutGroupControls() {
           />
         )}
       </Row>
-      <Row label={ar('align')}>
+      <Row label={ar('align')} labelWidth={INSPECTOR_LABEL_W}>
         <Segmented
           className="w-full"
           value={group.align}
@@ -517,7 +521,7 @@ function LayoutGroupControls() {
           ]}
         />
       </Row>
-      <Row label={ar('uniform')}>
+      <Row label={ar('uniform')} labelWidth={INSPECTOR_LABEL_W}>
         <Segmented
           className="w-full"
           value={group.uniform ?? 'none'}

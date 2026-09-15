@@ -41,8 +41,9 @@ export function HistoryPanel({ panel }: { panel: PanelObject }) {
       onOpenChange={setOpen}
       width={252}
       align="end"
+      /* 只读历史，不动磁盘：ghost（打磨 O2——同一组里只有「写回」是 secondary） */
       trigger={
-        <Button variant="secondary" size="sm" className="flex-1">
+        <Button variant="ghost" size="sm" className="text-ink-2">
           <RotateCcwClock size={ICON_SIZE.sm} />
           {vh('trigger')}
         </Button>

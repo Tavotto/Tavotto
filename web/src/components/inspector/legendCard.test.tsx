@@ -466,10 +466,11 @@ describe('选中图例', () => {
     // 数「一共几个」才量得到重复
     expect(host.querySelectorAll('[data-prop="fontsize"]').length).toBe(1)
     expect(labels().filter((p) => p === 'entry_order')).toHaveLength(0)
-    // 条目列表：三项按显示顺序，徽标各说各的
+    // 条目列表：三项按显示顺序。**默认态（跟随）不挂徽标**（打磨 L10）——
+    // 两项都是跟随时每行挂一枚「跟随」没有信息量；非默认的两种照旧说话
     const list = host.querySelector('ul[aria-label="图例项列表"]')!
     const rows = Array.from(list.querySelectorAll('li'))
-    expect(rows.map((r) => r.textContent)).toEqual(['sin跟随', 'cos自定义', 'proxy未关联'])
+    expect(rows.map((r) => r.textContent)).toEqual(['sin', 'cos自定义', 'proxy未关联'])
   })
 
   it('行里没有嵌套的可交互元素', async () => {

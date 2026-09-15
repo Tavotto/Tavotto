@@ -5,8 +5,10 @@
  * 「n 项已修改」徽标的菜单，由 `restoreMenu.test.tsx` 看护。这里剩下的：
  *   1. 折叠区里**只有**会动磁盘的那一组（「原始文件」：写回 / 历史 / 同步），
  *      没有恢复按钮——「只改文档」与「会动磁盘」的边界现在是两个位置，不是两个组头；
- *   2. 精确名词（gid）不再常驻，收在「技术详情」里；
- *   3. 「修改保存在哪里」的说明不出现 override / 撤销栈 / 引擎 / 孤儿这些实现词。
+ *   2. 精确名词（gid）不再常驻，收在「技术详情」里——它与同组其它折叠行同一副样子
+ *      （2026-09-15 打磨 L4：组内折叠只剩「28px 文字链接」一种，原生 `<details>` 是第六种）；
+ *   3. 「修改保存在哪里？」那个问号整个删掉（打磨 E9）：原理已经在写回确认框里讲全，
+ *      它此前常驻在每一个元素页的折叠区里。
  */
 import { literal } from '@/i18n'
 import { act } from 'react'
@@ -158,24 +160,25 @@ describe('源文件与高级：只剩会动磁盘的那一组', () => {
     expect(fileHead.compareDocumentPosition(writeBack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('gid 不常驻：收在「技术详情」里，默认收起', async () => {
+  it('gid 不常驻：收在「技术详情」里，默认收起，且不是原生 details', async () => {
     await mount()
-    const details = host.querySelector('details')
-    expect(details, '没有技术详情折叠').toBeTruthy()
-    expect(details!.open).toBe(false)
-    expect(details!.textContent).toContain('axes_0.title')
-    // 折叠之外没有第二处 gid
-    const outside = Array.from(host.querySelectorAll('p')).filter(
-      (p) => p.textContent?.includes('axes_0.title') && !details!.contains(p),
+    const toggle = host.querySelector<HTMLButtonElement>('[data-tech-details]')
+    expect(toggle, '没有技术详情折叠').toBeTruthy()
+    expect(toggle!.getAttribute('aria-expanded')).toBe('false')
+    // 组内折叠只有一种形态：文字链接，不是 <details>（打磨 L4）
+    expect(host.querySelector('details')).toBeNull()
+    // 收着的时候 gid 一处都没有
+    expect(host.textContent).not.toContain('axes_0.title')
+    await act(async () => toggle!.click())
+    const shown = Array.from(host.querySelectorAll('p')).filter((p) =>
+      p.textContent?.includes('axes_0.title'),
     )
-    expect(outside).toEqual([])
+    expect(shown).toHaveLength(1)
   })
 
-  it('「修改保存在哪里」的说明不用实现词', async () => {
+  it('「修改保存在哪里？」那个问号删掉了（打磨 E9）', async () => {
     await mount()
-    await act(async () => buttonByText('修改保存在哪里')!.click())
-    const text = document.body.textContent ?? ''
-    expect(text).toContain('图内修改')
-    for (const jargon of ['override', '撤销栈', '引擎', '孤儿']) expect(text).not.toContain(jargon)
+    expect(buttonByText('修改保存在哪里')).toBeUndefined()
+    expect(host.textContent).not.toContain('修改保存在哪里')
   })
 })

@@ -98,7 +98,6 @@ export function AspectControl({
       {custom && (
         <div className="animate-fade-in self-start">
           <NumberField
-            className="w-[92px]"
             dataProp="aspect"
             ariaLabel={ctl('aspectRatio')}
             value={ratio ?? DEFAULT_RATIO}

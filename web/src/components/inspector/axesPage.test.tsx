@@ -365,6 +365,79 @@ describe('几何 → 范围与变换 → 刻度与网格 → 边框，四类任�
   })
 })
 
+/* ------------------- 2026-09-15 全面打磨（L2 / L11 / E1 / E2 / E3） ------------------ */
+
+describe('子图页的版式（2026-09-15 全面打磨）', () => {
+  it('几何字段的单字母标记进框内，与画布页 / 对象页同一种写法（L2）', async () => {
+    await mount()
+    const size = host.querySelector('[data-axes-size-block]')!
+    const input = size.querySelector('input')!
+    // 「框」= 挂着 border-input 的那一层；W 在框里，不再漂在框外
+    const box = input.parentElement!
+    expect(box.className).toContain('border-border-input')
+    const marks = [...box.querySelectorAll('span')].map((el) => el.textContent?.trim())
+    expect(marks).toContain('W')
+    // 框外那一层不再放字母
+    expect(box.parentElement!.firstElementChild).toBe(box)
+  })
+
+  it('范围那一对框平分控件列，不再在格子里左靠定宽（E1）', async () => {
+    await mount()
+    const pair = host.querySelector('[data-prop="xlim"]')!
+    const boxes = [...pair.querySelectorAll('input')].map((i) => i.className)
+    expect(boxes).toHaveLength(2)
+    // `fill` 档：输入框撑满自己的格子（此前是 6ch 定宽 + 左靠）
+    for (const cls of boxes) expect(cls).toContain('w-full')
+  })
+
+  it('「居中」是标签列后的两颗 ghost 命令，不是全页最重的两颗钮（E2）', async () => {
+    await mount()
+    const size = host.querySelector('[data-axes-size-block]') as HTMLElement
+    const center = [...size.querySelectorAll('button')].filter((b) =>
+      ['水平', '垂直'].includes(b.textContent?.trim() ?? ''),
+    )
+    expect(center, '找不到居中那两颗').toHaveLength(2)
+    for (const b of center) {
+      expect(b.className).not.toContain('flex-1')
+      // ghost：没有 secondary 那副细边白底
+      expect(b.className).toContain('hover:bg-surface-hover')
+      expect(b.className).not.toContain('border border-border')
+      // 可达名仍是完整的说法（「水平居中」），可见文字只是它的前半截
+      expect(b.getAttribute('aria-label')).toContain(b.textContent!.trim())
+    }
+    // 行标签把「居中」说了一次，两颗钮不再各带一遍
+    const label = [...size.querySelectorAll('span')].find((el) => el.textContent === '居中')
+    expect(label, '居中没有自己的标签列').toBeTruthy()
+  })
+
+  it('整图尺寸并进「按比例缩放」行尾，不再单独占一行（E3）', async () => {
+    await mount()
+    const size = host.querySelector('[data-axes-size-block]')!
+    const meta = [...size.querySelectorAll('span')].find((el) =>
+      el.textContent?.startsWith('整图 '),
+    )!
+    expect(meta, '整图尺寸不见了').toBeTruthy()
+    expect(meta.className).toContain('type-meta')
+    // 与对象页「原始 80.0 × 57.6」同一个位置：缩放那一行的行尾
+    const scaleApply = size.querySelector('[data-scale-apply]')!
+    expect(meta.parentElement!.contains(scaleApply)).toBe(true)
+  })
+
+  it('边框收成一种行语法：没有列头，每一行都是标签列 + 色块 + 线宽（L11）', async () => {
+    await mount()
+    const frame = host.querySelector('[data-spine-frame]') as HTMLElement
+    // 列头「颜色 / 线宽」删掉（色块与框内的 pt 已经自说明）
+    const texts = [...frame.querySelectorAll('span')].map((el) => el.textContent?.trim())
+    expect(texts).not.toContain('颜色')
+    // 标签列与全页同宽
+    const labelCol = frame.querySelector('span[style*="width"]') as HTMLElement
+    expect(labelCol.style.width).toBe('88px')
+    // 线宽回到 compact 档：不再是撑满一列的 142px 框
+    const input = frame.querySelector('input[data-inspector-prop="spine_linewidth"]') as HTMLInputElement
+    expect(input.className).not.toContain('w-full')
+  })
+})
+
 /* -------------------------------- 边框联动 -------------------------------- */
 
 describe('边框：默认四边联动，需要差异时再展开', () => {

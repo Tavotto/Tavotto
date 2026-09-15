@@ -73,17 +73,21 @@ describe('CanvasPage', () => {
     expect(disclosure('吸附').getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('收起时也报得出当前尺寸与网格状态', () => {
+  it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
     // 「查看辅助」收着：摘要里要带网格间距，不能只说一个「网格」
     expect(disclosure('查看辅助').getAttribute('aria-expanded')).toBe('false')
     const gridSize = useUiStore.getState().gridSize
     expect(disclosure('查看辅助').textContent).toContain(`网格 ${gridSize} mm`)
-    // 页面尺寸不折叠，但标题行常驻当前尺寸
+    // 页面尺寸的组头右侧原来挂着「150.0 × 100.0 mm」——与 24px 下面的 W / H 框
+    // 是同一对数，还是两种格式（打磨 L9 删掉）。判据钉住「组头里不再有那个数」，
+    // 同时确认它并没有连着从可编辑的框里一起消失
     const page = useDocumentStore.getState().doc.page
-    const header = [...container.querySelectorAll('section')].find((s) =>
+    const section = [...container.querySelectorAll('section')].find((s) =>
       s.querySelector('h3')?.textContent?.includes('页面尺寸'),
     )!
-    expect(header.querySelector('header')!.textContent).toContain(String(page.w / 10))
+    expect(section.querySelector('header')!.textContent).toBe('页面尺寸')
+    const values = [...section.querySelectorAll('input')].map((i) => i.value)
+    expect(values).toContain(String(page.w))
   })
 
   it('开关行：标签列与数值行同宽（控件从同一条竖线起排），整行可点', () => {
@@ -93,9 +97,10 @@ describe('CanvasPage', () => {
     expect(guides).toBeDefined()
     expect(guides!.tagName).toBe('LABEL')
     const label = guides!.querySelector('span')!
-    // 列宽走类名（w-18 = 72px），与数值行 `Row` 的 labelWidth={72} 是同一个数；
+    // 列宽走类名（w-22 = 88px），与数值行 `Row` 的 labelWidth 是同一个数——
+    // 两者同出 `inspector/layout.INSPECTOR_LABEL_W`（打磨 L1）；
     // 标签仍可截断（min-w-0），窄栏里不把开关挤出行外
-    expect(label.className).toContain('w-18')
+    expect(label.className).toContain('w-22')
     expect(label.className).toContain('min-w-0')
     const before = useUiStore.getState().snapToGuides
     act(() => label.click())

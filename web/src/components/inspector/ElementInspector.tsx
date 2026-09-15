@@ -10,15 +10,13 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ChevronRight,
-  CircleQuestionMark,
   Link2,
   MoveDown,
   MoveHorizontal,
   MoveUp,
   MoveVertical,
   RotateCcw,
-} from '@/components/ui/icons'
-import { Details, Summary } from '../ui/Details'
+} from 'lucide-react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AlignMode } from '@/lib/geometry'
 import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
@@ -84,9 +82,12 @@ import {
   unsupportedOf,
 } from './roles/registry'
 import { Button } from '../ui/Button'
+import { GroupHead } from './GroupHead'
+import { GroupToggle } from './GroupToggle'
+import { INSPECTOR_LABEL_W } from './layout'
+import { OriginalFileActions } from './OriginalFileActions'
 import { Disclosure, Grid2, Reveal, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
-import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -144,7 +145,6 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
-import { HistoryPanel } from './HistoryPanel'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { ColorScaleLink } from './ColorScaleLink'
@@ -159,8 +159,6 @@ import {
   type LegendAnchor,
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
-import { UpdateSourceButton } from './UpdateSourceButton'
-import { SyncOverridesButton } from './SyncOverridesButton'
 
 /** 本文件的文案都在 inspector:element.* 下 */
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -421,7 +419,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                 /* 子图页四段：几何（子图尺寸 / 居中）→ 范围与坐标变换 → 刻度与网格 → 边框
                    （审计 T12：范围、比例、边框三类任务互不混杂；2026-09-13 审计 B53：
                    改尺寸是最常用的几何操作，放首屏，不再排在整页刻度设置之后） */
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-4">
                   {exactManifest && (
                     <AxesSizeMm
                       panel={panel}
@@ -433,11 +431,11 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                     />
                   )}
                   <AxesRangeCard panel={panel} element={element} warnings={render?.warnings ?? []} />
-                  <div>
+                  <div className="flex flex-col gap-1.5">
                     <GroupHead>{el('groupTicksGrid')}</GroupHead>
                     <TickControl panel={panel} manifest={manifest} host={sideHost} element={element} />
                   </div>
-                  <div>
+                  <div className="flex flex-col gap-1.5">
                     <GroupHead>{el('groupFrame')}</GroupHead>
                     <SpineFrameCard panel={panel} element={element} labelWidth={LABEL_W} />
                   </div>
@@ -570,7 +568,7 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
   const items = relatedGids(manifest, element)
   if (!items.length) return null
   return (
-    <div className="mb-1.5 flex flex-wrap items-center gap-1">
+    <div className="mb-1.5 -ml-1.5 flex flex-wrap items-center gap-1">
       {items.map((it) => (
         <Button
           key={it.gid}
@@ -646,13 +644,8 @@ function ErrorBlock({
  * 动态表单：无 group 的字段平铺在前，其余按 group 收进可折叠小节。
  * 分组和顺序都由 manifest 决定，前端不排字段清单。
  */
-/**
- * 标签列宽。72 时 en-US 在出厂宽度 360 就把「Stacking order / Frame opacity /
- * Major tick mode / Number format」截成省略号，要悬停才知道是什么（2026-09-12
- * critique P2）——高手最不能忍的是本来认识的词被遮住。88 容得下这四个，再长的
- * 折成两行（标签最多两行截断），不再截断成省略号。
- */
-const LABEL_W = 88
+/** 标签列宽：全检查器同一个数，出处在 `inspector/layout.ts`（打磨 L1） */
+const LABEL_W = INSPECTOR_LABEL_W
 
 /**
  * 「移除 override」在不同字段上的自然说法；没有专属说法的用通用那条。
@@ -916,9 +909,9 @@ function AbsentAppearanceNote({ element }: { element: ManifestElement }) {
         </div>
       ))}
       <Button
-        variant="secondary"
+        variant="ghost"
         size="sm"
-        className="w-full"
+        className="-ml-2"
         onClick={() => {
           setAdvancedOpen(role, true)
           // 展开是 store 里的一次状态变化，滚动要等这一帧渲染完
@@ -983,7 +976,7 @@ function FieldList({
           }
           return (
             <Fragment key={field.prop}>
-              {head && <GroupHead className="mt-1.5">{el(head)}</GroupHead>}
+              {head && <GroupHead>{el(head)}</GroupHead>}
               {block}
             </Fragment>
           )
@@ -1023,27 +1016,22 @@ function FieldList({
         </div>
       )}
       {tailPrimary.length > 0 && <div className="mt-1.5">{rows(tailPrimary)}</div>}
-      {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
+      {primaryExtra && <div className="mt-4">{primaryExtra}</div>}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
       <UnsupportedProps elements={[element]} />
       {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
       <AbsentAppearanceNote element={element} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5">
-          {/* 组内的「更多」是一条文字链接、不带 chevron（二审 C3）：chevron 行只表示「分区」
-              （源文件与高级），组的尾巴与分区不该同一个字形 */}
-          <button
-            onClick={() => setMoreOpen(role, !moreOpen)}
-            aria-expanded={moreOpen}
-            className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+          <GroupToggle
+            open={moreOpen}
+            onToggle={() => setMoreOpen(role, !moreOpen)}
+            summary={
+              modifiedInMore > 0 ? el('modifiedCount', { count: modifiedInMore }) : undefined
+            }
           >
-            <span className="font-medium">{el('more')}</span>
-            {!moreOpen && modifiedInMore > 0 && (
-              <span className="ml-auto shrink-0 text-xs text-ink-3">
-                {el('modifiedCount', { count: modifiedInMore })}
-              </span>
-            )}
-          </button>
+            {el('more')}
+          </GroupToggle>
           <Reveal open={moreOpen}>
             <div className="mt-1.5 flex flex-col gap-1.5">
               {rows(named)}
@@ -1142,18 +1130,13 @@ function TickControl({
     applyPlan,
   }
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-4">
       <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
       {axes.length > 0 && (
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
     </div>
   )
-}
-
-/** 卡内的小节标题：与「更多」里兜底分组的标题同一种样式 */
-function GroupHead({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn('mb-1 type-section', className)}>{children}</p>
 }
 
 /* ------------------------------ 子图：范围与坐标变换 ------------------------ */
@@ -1341,7 +1324,7 @@ function TickPage({
     ) : null
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5" data-tick-section="marks">
         <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
         {/* 四边刻度线 / 边框 / 网格的示意图只在子图页（2026-09-14 审计 A5，用户拍板）：同一份
@@ -1349,7 +1332,8 @@ function TickPage({
         <Button
           size="sm"
           data-tick-spines-link
-          className="w-fit text-ink-2"
+          // -ml-2 把按钮自己的内边距吃掉：文字从标签列那条竖线起，不再内缩 8px（打磨 E7）
+          className="-ml-2 w-fit text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
         >
           {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
@@ -1516,17 +1500,12 @@ function BatchSection({
             const open = openGroups[name] ?? false
             return (
               <div key={name} className="mt-1.5 border-t border-border pt-1.5">
-                <button
-                  onClick={() => setOpenGroups((s) => ({ ...s, [name]: !s[name] }))}
-                  aria-expanded={open}
-                  className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
+                <GroupToggle
+                  open={open}
+                  onToggle={() => setOpenGroups((s) => ({ ...s, [name]: !s[name] }))}
                 >
-                  <ChevronRight
-                    size={ICON_SIZE.xs}
-                    className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-                  />
                   {groupLabel(name)}
-                </button>
+                </GroupToggle>
                 <Reveal open={open}>
                   <div className="mt-1.5">{rows(list)}</div>
                 </Reveal>
@@ -2414,9 +2393,9 @@ function FieldRow({
     case 'rect': {
       const arr = Array.isArray(value) ? (value as number[]) : []
       const step = field.type === 'rect' ? 0.01 : 1
-      // 一对（图幅 W / H）的单位进框内，与画布页的 W / H 同一种写法（第五节：单位漂在框外
-      // 没有来路；2026-09-13 审计 B54 点到的正是这一对）。四格并排的 rect 放不下框内单位，
-      // 仍写在行尾
+      // 一对（图幅 W / H）的单位与单字母标记都进框内，与画布页 / 对象页的 X Y W H 同一种
+      // 写法（第五节：单位漂在框外没有来路；2026-09-15 打磨 L2：单字母前缀不再有框外形态）。
+      // 四格并排的 rect 放不下框内单位，仍写在行尾
       const pair = field.type === 'pair'
       return wrap(
         <>
@@ -2424,11 +2403,12 @@ function FieldRow({
             {arr.map((v, i) => (
               <NumberField
                 key={i}
-                // 图幅是「393.7」这种五位带小数的数：默认 4ch 只剩「393.」
-                // （2026-09-11 用户反馈）；rect 四格并排放不下，维持默认
-                className={pair ? '[&_input]:w-[calc(6ch+0.75rem)]' : undefined}
+                // 几何网格那一档：框撑满自己的格子（打磨 L3 / E1）——此前框是 6ch 定宽、
+                // 在 117px 的格里左靠，右缘与下一行的下拉对不上（「X 范围」两个框 zh-11）
+                fill
                 ariaLabel={axisAriaLabel(field, label, i)}
                 prefix={pair ? PAIR_PREFIX[PAIR_AXES[field.prop]?.[i] ?? ''] : undefined}
+                prefixInside={pair}
                 unit={pair && field.unit ? field.unit : undefined}
                 value={Number(v)}
                 step={step}
@@ -2451,38 +2431,6 @@ function FieldRow({
     default:
       return null
   }
-}
-
-/** 「修改逻辑」说明：讲清 override 与改脚本这两层的区别 */
-function HowItWorks() {
-  useTranslation('inspector')
-  return (
-    <Popover
-      width={268}
-      align="end"
-      trigger={
-        <Button
-          variant="ghost"
-          size="sm"
-          className="self-start text-ink-3"
-          aria-label={el('howItWorksAria')}
-        >
-          <CircleQuestionMark size={ICON_SIZE.sm} />
-          {el('howItWorksTrigger')}
-        </Button>
-      }
-    >
-      <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
-        {(['howOverride', 'howWriteBack', 'howAi', 'howBoth'] as const).map((key, i) => (
-          <div key={key}>
-            {i > 0 && <div className="mb-2 h-px bg-border" />}
-            <p className="font-medium text-ink">{el(`${key}Title`)}</p>
-            <p className="mt-0.5">{el(`${key}Body`)}</p>
-          </div>
-        ))}
-      </div>
-    </Popover>
-  )
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2519,7 +2467,7 @@ const ALIGN_BUTTONS: {
  * 会以为没生效（审计 T12）；一颗明确的按钮把「缩放一次」说清楚，
  * 也不用再配一句解释文字。
  */
-function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
+function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; meta?: ReactNode }) {
   const [pct, setPct] = useState(100)
   const ready = Number.isFinite(pct) && pct !== 100
   const apply = () => {
@@ -2535,10 +2483,10 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   }
 
   return (
-    <Row label={el('scaleLabel')} labelWidth={LABEL_W} className="mt-1.5">
+    <Row label={el('scaleLabel')} labelWidth={LABEL_W}>
+      {/* 单列数值一律 compact 档（4ch + 单位列，打磨 L3）：此前这里定宽 84，同页的
+          「长度」62、「边框线宽」142——一列数字框十二种宽 */}
       <NumberField
-        fill
-        className="w-[84px] shrink-0"
         ariaLabel={el('scaleLabel')}
         value={pct}
         min={10}
@@ -2551,6 +2499,9 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
       <Button size="sm" variant="secondary" disabled={!ready} onClick={apply} data-scale-apply>
         {el('scaleApply')}
       </Button>
+      {/* 整图尺寸是元数据，靠右、meta 字色——与对象页「原始 80.0 × 57.6」同一个位置
+          与格式（打磨 E3）；此前它单独占一行、左靠，是第三种行语法 */}
+      {meta}
     </Row>
   )
 }
@@ -2699,8 +2650,14 @@ function AxesSizeMm({
       { gid: element.gid, prop: 'position', value: next.map(round4) },
     ])
 
+  const figureMeta = (
+    <span className="type-meta ml-auto min-w-0 shrink truncate tabular-nums">
+      {el('figureSize', { w: figW, h: figH })}
+    </span>
+  )
+
   return (
-    <div className={cn(!first && 'mt-2 border-t border-border pt-2')} data-axes-size-block>
+    <div className={cn('flex flex-col gap-1.5', !first && 'mt-2 border-t border-border pt-2')} data-axes-size-block>
       {/* 这一块以前没有组头，一条 hairline 之下突然是 W / H（2026-09-12 critique）；
           宿主代理的场合组头另有一行（下面），带来源入口 */}
       {!proxied && <GroupHead>{el('sizeHead')}</GroupHead>}
@@ -2709,7 +2666,7 @@ function AxesSizeMm({
            三段之二）。现在由**组标题**回答作用对象（「子图尺寸 · 子图 1」）、
            来源入口回答「是哪一个」，联动的原理进那个按钮的悬停提示——提示挂在
            按钮上而不是一个 tabIndex=-1 的图标上，键盘也到得了 */
-        <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
           <p className="min-w-0 flex-1 truncate type-section">
             {el('proxiedSizeHead', { label: engineLabel(element.label) })}
@@ -2731,6 +2688,7 @@ function AxesSizeMm({
         <NumberField
           fill
           prefix="W"
+          prefixInside
           unit="mm"
           value={fracToMm(rect[2], figW)}
           step={0.5}
@@ -2741,6 +2699,7 @@ function AxesSizeMm({
         <NumberField
           fill
           prefix="H"
+          prefixInside
           unit="mm"
           value={fracToMm(rect[3], figH)}
           step={0.5}
@@ -2755,30 +2714,34 @@ function AxesSizeMm({
           }
         />
       </Grid2>
-      {group && <ScaleField panel={panel} group={group} />}
-      <div className="mt-1.5 flex gap-1.5">
+      {group && <ScaleField panel={panel} group={group} meta={figureMeta} />}
+      {/* 「居中」是两个一次性命令，不是这一页最重的两颗钮（打磨 E2）：与对象页的
+          「原始比例 / 原始尺寸」同形——标签列 + 两颗 ghost sm，第一颗 -ml-2 让图标
+          压回控件竖线上 */}
+      <Row label={el('centerRow')} labelWidth={LABEL_W}>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
-          className="flex-1"
+          className="-ml-2"
+          aria-label={el('centerH')}
           onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
         >
-          <AlignCenterVertical size={ICON_SIZE.sm} />
-          {el('centerH')}
+          <AlignCenterVertical size={ICON_SIZE.sm} className="text-ink-3" />
+          {el('centerHShort')}
         </Button>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
-          className="flex-1"
+          aria-label={el('centerV')}
           onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
         >
-          <AlignCenterHorizontal size={ICON_SIZE.sm} />
-          {el('centerV')}
+          <AlignCenterHorizontal size={ICON_SIZE.sm} className="text-ink-3" />
+          {el('centerVShort')}
         </Button>
-      </div>
-      <p className="mt-1.5 text-xs tabular-nums text-ink-3">
-        {el('figureSize', { w: figW, h: figH })}
-      </p>
+        {/* 没有成组缩放那一行（子图不可改尺寸）时，整图尺寸落在这一行的行尾——
+            位置换了，格式还是同一个：type-meta、靠右 */}
+        {!group && figureMeta}
+      </Row>
     </div>
   )
 }
@@ -2828,28 +2791,27 @@ function SourceAdvancedSection({
         )}
 
         {/* 这一组全部会覆盖用户的原件（写回）或读它的历史；组标题点名「原始文件」 */}
-        <div className={advanced.length > 0 ? 'mt-1' : undefined}>
-          <GroupHead>{el('originalFileGroup')}</GroupHead>
-        </div>
-        {panel.script && (
-          <div className="flex gap-1.5">
-            <UpdateSourceButton panel={panel} />
-            <HistoryPanel panel={panel} />
-          </div>
-        )}
-        <SyncOverridesButton panel={panel} />
-        <HowItWorks />
+        <GroupHead>{el('originalFileGroup')}</GroupHead>
+        <OriginalFileActions panel={panel} />
 
-        {gid && (
-          <Details>
-            <Summary className="cursor-default gap-0.5 text-xs text-ink-3">
-              {el('techDetails')}
-            </Summary>
-            <p className="mt-0.5 break-all font-mono text-xs leading-relaxed text-ink-3">{gid}</p>
-          </Details>
-        )}
+        {gid && <TechDetails gid={gid} />}
       </div>
     </Disclosure>
+    </div>
+  )
+}
+
+/** gid 不常驻：收在「技术详情」里，与同组其它折叠行同一副样子（打磨 L4） */
+function TechDetails({ gid }: { gid: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <GroupToggle open={open} onToggle={() => setOpen((v) => !v)} data-tech-details>
+        {el('techDetails')}
+      </GroupToggle>
+      <Reveal open={open}>
+        <p className="break-all font-mono text-xs leading-relaxed text-ink-3">{gid}</p>
+      </Reveal>
     </div>
   )
 }
@@ -2862,14 +2824,16 @@ function UnsupportedNote({ role }: { role: string }) {
   const info = unsupportedOf(role)
   if (!info) return null
   return (
-    <div className="mt-2 rounded-sm border border-border bg-surface-2 p-2">
+    /* 说明条是 surface-2 底的一条，不套框（第八节 / 第五节：`Notice` 已删，
+       状态一句话不画边）；入口降成 ghost、不撑满（打磨 E10） */
+    <div className="mt-2 rounded-sm bg-surface-2 px-2 py-1.5">
       <p className="text-xs leading-relaxed text-ink-2">
         <b className="font-medium text-ink">{info.title}</b>：{info.reason}
       </p>
       <Button
-        variant="secondary"
+        variant="ghost"
         size="sm"
-        className="mt-1.5 w-full"
+        className="-ml-2 mt-0.5"
         onClick={() => useUiStore.getState().setRightTab('assistant')}
       >
         {el('useAssistant')}
@@ -2888,13 +2852,9 @@ function HiddenElements({ panel, manifest }: { panel: PanelObject; manifest?: Ma
 
   return (
     <Section>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
-      >
-        <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+      <GroupToggle open={open} onToggle={() => setOpen((v) => !v)}>
         {el('hiddenElements', { count: hidden.length })}
-      </button>
+      </GroupToggle>
       {open && (
         <ul className="mt-1 flex flex-col gap-0.5">
           {hidden.map((item) => (

@@ -28,7 +28,7 @@ import {
   type AiHistoryEntry,
   type ManifestElement,
 } from '@/lib/api'
-import { cn, MOD, modKey } from '@/lib/utils'
+import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { engineLabel } from '@/components/inspector/roles/registry'
@@ -47,7 +47,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
-import { Kbd } from '../ui/Kbd'
+import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
@@ -371,10 +371,16 @@ export function AssistantPanel() {
             </Button>
           </div>
         )}
+        {/* 可编辑框只有一副（第五节 / `ui/fieldBox`）：此前这里是 `border-border` 12% +
+            圆角 10，其余框是 `border-input` 16% + 6——同一屏两种「能改」的框。
+            圆角留 md：它是一块多行的输入区，不是一行控件（打磨 A1）。
+            禁用也只有 opacity-40 一档（此前 60） */}
         <div
           className={cn(
-            'rounded-md border border-border bg-surface transition-colors focus-within:border-accent',
-            (!panel || noAgent) && 'opacity-60',
+            FIELD_BOX,
+            FIELD_FOCUS_WITHIN,
+            'rounded-md',
+            (!panel || noAgent) && 'opacity-40',
           )}
         >
           <textarea
@@ -404,8 +410,9 @@ export function AssistantPanel() {
               scope={scope}
               scopes={scopes}
             />
-            {/* 快捷键提示是要读的字：`Kbd`（ink-3），不用 ink-faint（2.5:1；2026-09-14 审计 E1） */}
-            <Kbd className="ml-auto">{MOD}↵</Kbd>
+            {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽
+                （打磨 A5——已表达过的不重复） */}
+            <span className="ml-auto" />
             <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
               <Button
                 variant="primary"
@@ -470,17 +477,22 @@ function TargetChip({
     <Popover
       width={288}
       align="start"
+      /*
+        它是个触发器，不是只读值：**hover 才浮底**（surface-2 常驻底是「只读值」
+        的语义，第一节；打磨 A7）。右端的作用范围也去掉了——输入框那颗
+        「作用于：X · Agent」已经把范围与执行器说全了，顶部片只回答「改哪张图 /
+        哪个元素」，它就是面包屑（打磨 L6）。
+      */
       trigger={
         <button
           aria-label={ai('panel.targetAria', { target: targetText })}
           className={cn(
-            'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm bg-surface-2 px-2 text-left',
+            'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 text-left',
             'outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring',
           )}
         >
           <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
           <span className="min-w-0 truncate text-xs text-ink">{targetText}</span>
-          <span className="ml-auto shrink-0 text-xs text-ink-3">{scopeLabel(scope)}</span>
         </button>
       }
     >
@@ -958,12 +970,8 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
               name: entry.script ? scriptName(entry.script) : ai('panel.none'),
             })}
           </p>
-          {entry.effort && (
-            <p className="font-mono text-xs text-ink-3">
-              {ai('history.effort', { effort: entry.effort })}
-            </p>
-          )}
-          <p className="font-mono text-xs text-ink-3">
+          {entry.effort && <p className="type-meta">{ai('history.effort', { effort: entry.effort })}</p>}
+          <p className="type-meta">
             {ai(entry.revert_available ? 'history.snapshotAvailable' : 'history.snapshotCleared', {
               id: entry.id,
             })}
@@ -1016,9 +1024,11 @@ function SessionBlock({ session }: { session: AiSession }) {
   return (
     // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）
     <div className="flex animate-settle-in flex-col gap-1.5" data-ai-session={session.status}>
-      <div className="rounded-sm border border-border bg-surface-2 px-2 py-1.5">
+      {/* 分层靠明度差、不靠框（第一节）：surface-2 底就够，边框是第二层（打磨 A2）。
+          meta 那行是执行器 / 目标 / 时刻，不是代码或路径——等宽字体只留给代码 */}
+      <div className="rounded-sm bg-surface-2 px-2 py-1.5">
         <p className="text-sm leading-[1.6] break-words text-ink-2">{session.prompt}</p>
-        <p className="mt-0.5 truncate font-mono text-xs text-ink-3">
+        <p className="type-meta mt-0.5 truncate">
           {sessionAgentLabel(caps, session)} · {session.target} · {timeOf(session.startedAt)}
         </p>
       </div>
@@ -1043,10 +1053,12 @@ function SessionBlock({ session }: { session: AiSession }) {
       {session.changed && session.diff && (
         <div className="flex animate-settle-in flex-col gap-1.5">
           <DiffView diff={session.diff} script={session.script} />
+          {/* destructive 只有红字 ghost（第五节）：此前是 secondary + 撑满 + 红字，
+              整个对话区最宽的一颗钮（打磨 A3） */}
           <Button
-            variant="secondary"
+            variant="danger"
             size="sm"
-            className="w-full text-danger"
+            className="self-end"
             onClick={() => void revertSession(session)}
           >
             <RotateCcw size={ICON_SIZE.sm} />

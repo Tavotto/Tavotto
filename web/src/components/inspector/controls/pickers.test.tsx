@@ -781,21 +781,47 @@ describe('OptionGrid：内部代码不进可见文案（审计 T15 / T21）', ()
    * **气泡关着的时候整条判据是恒真的**——Radix 的 Content 只在打开时才进
    * DOM，所以「页面里没有 `名字 · 代码`」在任何实现下都成立。要判它就得先
    * 把气泡打开（聚焦触发器），再看气泡里那句话。
+   *
+   * 量的是**网格形态**的选择器（填充纹理）：它的格子只有图形，气泡是唯一
+   * 说得出名字的地方。单列形态（线型 / 端型 / 箭头样式）自己印了名字，
+   * 2026-09-15 打磨 E12 起不再包 Tip——见下一条。
    */
-  it('聚焦弹出的气泡里只有名字，没有 “点线 · :” 这种拼法', async () => {
+  it('聚焦弹出的气泡里只有名字，没有 “斜线 · /” 这种拼法', async () => {
+    await mount(<HatchPicker value="/" options={['', '/', '\\\\']} onChange={() => {}} ariaLabel="填充纹理" />)
+    await openLineStyle('填充纹理')
+    const cell = radios().find((r) => r.getAttribute('data-code') === '/')!
+    const name = cell.getAttribute('aria-label')!
+    await act(async () => {
+      cell.focus()
+      cell.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+      cell.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    const tip = document.querySelector('[role="tooltip"]')
+    expect(tip, '气泡没打开，这条判据就是恒真的').toBeTruthy()
+    expect(tip!.textContent).toBe(name)
+  })
+
+  /**
+   * 打磨 E12：单列样张的行里已经印着「实线」两个字，再挂一枚写着「实线」的气泡
+   * 就是把同一句话盖在它自己上面。可达名仍在 `aria-label` 上，读屏不受影响。
+   *
+   * 判据分两半，缺一半就恒真：① 名字确实印在行里（不是把名字一起弄丢了）；
+   * ② 聚焦之后没有气泡（用与上一条**同一套**聚焦事件——换一套的话「没气泡」
+   * 可能只是因为这一套触发不了 Radix）。
+   */
+  it('单列样张自己印了名字，就不再包气泡（不把同一句话说两遍）', async () => {
     await mount(
       <LineStylePicker value="-" options={['-', '--', ':', '-.']} onChange={() => {}} ariaLabel="线型" />,
     )
     await openLineStyle()
     const dotted = radioByLabel('点线')!
+    expect(dotted.textContent).toContain('点线')
     await act(async () => {
       dotted.focus()
       dotted.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
       dotted.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
     })
-    const tip = document.querySelector('[role="tooltip"]')
-    expect(tip, '气泡没打开，这条判据就是恒真的').toBeTruthy()
-    expect(tip!.textContent).toBe('点线')
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
   })
 })
 
