@@ -8,7 +8,9 @@
   全局 true → 队列候选被新 push 取消，同样白等超时；
 * Gate 的 `needs` 与 `--required` 漂开 → 新上游 job 的失败 Gate 看不见；
 * merge_group payload 里没有 pull_request.draft / labels——不分事件就读，
-  条件会安静地算出错误分支。
+  条件会安静地算出错误分支；
+* 一个监听 pull_request / merge_group 的 workflow 把某个 job 派到 self-hosted
+  （`TestRunnerTrustZones`）→ 不可信代码跑在常驻的实验室真机上，而 Gate 全绿。
 
 与 tests/test_release_workflow_contract.py 同一条纪律：**不用 PyYAML**
 （它不在 `.venv` 里，importorskip 会让整个模块静默跳过——那正是空门禁），
@@ -1658,3 +1660,253 @@ class TestLandingAudit:
         root = WF.parents[1]
         for rel in re.findall(r"tests/[\w/]+\.py", block):
             assert (root / rel).is_file(), f"landing audit 引用的 {rel} 不存在"
+
+
+# ============================================================ runner 信任区（CI04）
+#: GitHub 托管 runner 的名字——**枚举**，不是「不含 self-hosted 就算托管」的否定式。
+#: 加一类托管 runner（比如 `ubuntu-24.04-arm`）要回到这里登记一次，顺便被问一句
+#: 「它是托管的吗」。
+_HOSTED_RUNNERS = frozenset({"ubuntu-latest", "macos-latest", "windows-latest"})
+
+#: 注册 self-hosted runner 时 GitHub 自动打上的标签（`self-hosted` + OS + 架构）。
+#: actionlint 认得它们，所以它们不用出现在 `.github/actionlint.yaml` 里；
+#: 判「自定义标签集合」时要把它们剪掉。
+_BUILTIN_SELF_HOSTED_LABELS = frozenset(
+    {"self-hosted", "linux", "windows", "macos", "x64", "arm64", "arm"}
+)
+
+#: 「PR 事件」——payload 由不可信的一方决定内容的三种触发。`merge_group` 也算：
+#: 队列候选是「最新 main + 前序 PR + 当前 PR」的组合提交，PR 里的 workflow 文件
+#: 一样会随之被执行。
+_UNTRUSTED_EVENTS = frozenset({"pull_request", "pull_request_target", "merge_group"})
+
+#: 本仓库 workflow 用到的触发事件的闭集。写成正面枚举而不是「不许出现
+#: pull_request_target」：否定式会被自己的注释咬到，而闭集在**任何**新事件进来时都红，
+#: 逼着写的人到这里登记一次——`pull_request_target` / `issue_comment` /
+#: `workflow_run` 这几种「带着更高权限跑不可信输入」的事件，就是靠这一下被拦住的。
+_KNOWN_EVENTS = frozenset(
+    {"push", "pull_request", "merge_group", "schedule", "workflow_dispatch", "workflow_call"}
+)
+
+_ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
+
+
+def _top_level_block(text: str, key: str) -> str:
+    """顶格键 `key:` 之下所有缩进行（注释已剥）；切不出来当场抛。"""
+    lines = _code(text).splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.rstrip() == f"{key}:")
+    except StopIteration:
+        raise AssertionError(f"切不出顶格的 `{key}:` 块") from None
+    body: list[str] = []
+    for ln in lines[start + 1 :]:
+        if ln.strip() and not ln.startswith(" "):
+            break
+        body.append(ln)
+    assert any(ln.strip() for ln in body), f"`{key}:` 块是空的"
+    return "\n".join(body)
+
+
+def _events_of(text: str) -> set[str]:
+    """workflow 监听的事件：`on:` 之下缩进两格的键。"""
+    events = set(re.findall(r"(?m)^  ([a-z_]+):", _top_level_block(text, "on")))
+    assert events, "`on:` 块里一个事件都读不出来——写成了流式 `on: [push]`？本仓库不用那种写法"
+    return events
+
+
+def _jobs_of(text: str) -> dict[str, str]:
+    """`jobs:` 之下缩进两格的键 → 各自的块（与 test_release_workflow_contract 的读法同形）。"""
+    parts = re.split(r"(?m)^  ([A-Za-z_][\w-]*):\s*$", _top_level_block(text, "jobs"))
+    jobs = {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+    assert jobs, "`jobs:` 块里一个 job 都没切出来——缩进形状变了？"
+    return jobs
+
+
+def _matrix_os_values(job_block: str) -> set[str]:
+    """`runs-on: ${{ matrix.os }}` 时 os 的全部取值：轴 `os: [a, b]` 或 include 条目里的 `os: x`。"""
+    values: set[str] = set()
+    for axis in re.finditer(r"(?m)^\s+os: \[([^\]]*)\]", job_block):
+        values |= {v.strip().strip("\"'") for v in axis.group(1).split(",") if v.strip()}
+    for entry in re.finditer(r"(?m)^\s+- (?:\{ *)?os: ([^,}\s]+)", job_block):
+        values.add(entry.group(1).strip("\"'"))
+    assert values, "runs-on 写的是 `${{ matrix.os }}`，job 里却读不出任何 os 取值——空档"
+    return values
+
+
+def _runs_on_atoms(job_block: str, where: str) -> set[str]:
+    """一个 job 的 `runs-on` 展开成「原子」集合。
+
+    四种写法：字面量 / `[a, b]` 列表 / `${{ matrix.os }}`（按矩阵展开）/
+    `group:` + `labels:` 映射（记成 `group:<名>` 加各标签）。别的写法一律「认不出」→ 抛，
+    不猜。
+    """
+    m = re.search(r"(?m)^    runs-on:(.*)$", job_block)
+    assert m, f"{where}: 读不出 `runs-on:`"
+    # `_code` 只剥整行注释；行尾的 `# …` 在这里剥（runs-on 的值里没有引号）。
+    value = re.sub(r"\s+#.*$", "", m.group(1)).strip()
+    if not value:
+        rest = job_block[m.end() :]
+        block = "\n".join(
+            ln for ln in rest.splitlines() if ln.startswith("      ") or not ln.strip()
+        )
+        block = re.split(r"(?m)^    \S", block, maxsplit=1)[0]
+        group = re.search(r"(?m)^\s+group: (\S+)", block)
+        labels = re.search(r"(?m)^\s+labels: \[([^\]]*)\]", block)
+        assert group or labels, f"{where}: runs-on 是映射，却既没有 group 也没有 labels"
+        atoms: set[str] = set()
+        if group:
+            atoms.add(f"group:{group.group(1)}")
+        if labels:
+            atoms |= {v.strip().strip("\"'") for v in labels.group(1).split(",") if v.strip()}
+        return atoms
+    if value == "${{ matrix.os }}":
+        return _matrix_os_values(job_block)
+    if value.startswith("[") and value.endswith("]"):
+        return {v.strip().strip("\"'") for v in value[1:-1].split(",") if v.strip()}
+    assert re.fullmatch(r"[\w.-]+", value), f"{where}: runs-on 的写法认不出：{value!r}"
+    return {value}
+
+
+def _workflow_texts() -> dict[str, str]:
+    texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(WF.glob("*.yml"))}
+    assert {"ci.yml", "codeql.yml", "_lab-qualification.yml"} <= set(texts), sorted(texts)
+    return texts
+
+
+def _local_reusable(job_block: str) -> str | None:
+    """job 级 `uses: ./.github/workflows/<file>` → 文件名；没有就是 None。"""
+    m = re.search(r"(?m)^    uses: \./\.github/workflows/([\w.-]+\.yml)$", job_block)
+    return m.group(1) if m else None
+
+
+def _runners_of_workflow(
+    name: str, texts: dict[str, str], _seen: frozenset = frozenset()
+) -> set[str]:
+    """workflow 里**每个** job 会派到的 runner 原子之并——经本仓库可复用 workflow 的 job
+    递归到被调用方（`lab-ci.yml::qualify` 自己没有 runs-on，它的 runner 在
+    `_lab-qualification.yml` 里）。"""
+    assert name not in _seen, f"可复用 workflow 互相调用成环：{name}"
+    atoms: set[str] = set()
+    for job_id, block in _jobs_of(texts[name]).items():
+        callee = _local_reusable(_code(block))
+        if callee:
+            assert callee in texts, f"{name}::{job_id} 调用了不存在的 {callee}"
+            atoms |= _runners_of_workflow(callee, texts, _seen | {name})
+        else:
+            atoms |= _runs_on_atoms(_code(block), f"{name}::{job_id}")
+    assert atoms, f"{name}: 一个 runner 都没读出来"
+    return atoms
+
+
+def _actionlint_custom_labels() -> set[str]:
+    """`.github/actionlint.yaml` → `self-hosted-runner.labels` 的集合（只认列表项，不认注释）。"""
+    block = _top_level_block(_ACTIONLINT.read_text(encoding="utf-8"), "self-hosted-runner")
+    m = re.search(r"(?m)^  labels:\s*$\n((?:^    - .*\n?)+)", block)
+    assert m, "actionlint.yaml 里切不出 self-hosted-runner.labels 的列表"
+    labels = {ln.strip()[2:].strip() for ln in m.group(1).splitlines() if ln.strip()}
+    assert labels, "actionlint.yaml 的 labels 列表是空的"
+    return labels
+
+
+class TestRunnerTrustZones:
+    """CI04（2026-09-16）：三个信任区在 workflow 文件层面的静态守卫。
+
+    主语写在前面，免得读的人以为它挡的比实际多：
+
+    * 它量的是 **main 上（本次 checkout 里）的 workflow 文件**——事件 × job × `runs-on`
+      （矩阵展开后）的集合。
+    * 它挡**不住** PR 自带的 workflow：`pull_request` 事件执行的是 PR 那一版的 yml，本模块
+      在那个 run 里根本不在 required 路径上。「同仓库分支的 PR 加一行
+      `runs-on: [self-hosted, tavotto-lab]` 会不会被派到实验室真机」这一半由 runner group
+      的 workflow 限制 / fork PR 审批策略 / 私有 infra 仓库决定（03_RUNNERS_AND_TRUST §3），
+      不是任何测试能决定的——现状与缺口写在
+      docs/implementation/ci-foundation/CI04_RUNNER_PILOT.md §2。
+    * 它把「未部署的池不进配置」变成机器判据：actionlint 的自定义标签集合 == 仓库里实际
+      用到的自托管标签集合，多一个「预留」标签也红——预留标签是下一个人「顺手用一下」
+      的入口。
+
+    四条判据一律正面形式（集合 ⊆ 枚举 / 集合 == 集合），不写「不许出现 xxx」。
+    """
+
+    @staticmethod
+    def _texts() -> dict[str, str]:
+        return _workflow_texts()
+
+    def test_untrusted_events_reach_only_hosted_runners(self):
+        """监听 pull_request / pull_request_target / merge_group 的每个 workflow，其**全部** job
+        （含矩阵展开、含经可复用 workflow 转到的）的 `runs-on` ⊆ 托管 runner 枚举。"""
+        texts = self._texts()
+        listening = {n for n, t in texts.items() if _events_of(t) & _UNTRUSTED_EVENTS}
+        assert {"ci.yml", "codeql.yml"} <= listening, (
+            f"两个 Gate workflow 居然不在监听 PR 事件的集合里：{sorted(listening)}——判据量错了对象"
+        )
+        for name in sorted(listening):
+            runners = _runners_of_workflow(name, texts)
+            stray = runners - _HOSTED_RUNNERS
+            assert not stray, (
+                f"{name} 监听 {sorted(_events_of(texts[name]) & _UNTRUSTED_EVENTS)}，"
+                f"却有 job 会派到 {sorted(stray)}——不可信代码将跑在常驻真机上"
+            )
+
+    def test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers(self):
+        """`tavotto-lab` 只出现在 `_lab-qualification.yml`（只可 `workflow_call`）；调用它的只有
+        `lab-ci.yml` 与 `release.yml`，两者的事件 ⊆ {push, schedule, workflow_dispatch}
+        （SHA 的可信判定另有 test_release_workflow_contract 看住）。"""
+        texts = self._texts()
+        users = {n for n, t in texts.items() if "tavotto-lab" in _code(t)}
+        assert users == {"_lab-qualification.yml"}, (
+            f"`tavotto-lab` 出现在了 {sorted(users)}——资格验证的定义只许有一份，标签也只许在那一份里"
+        )
+        assert _events_of(texts["_lab-qualification.yml"]) == {"workflow_call"}, (
+            "_lab-qualification.yml 只能被调用，不能自己被任何事件触发"
+        )
+        callers = {
+            n
+            for n, t in texts.items()
+            if "_lab-qualification.yml" in _code(t) and n != "_lab-qualification.yml"
+        }
+        assert callers == {"lab-ci.yml", "release.yml"}, f"调用方集合变了：{sorted(callers)}"
+        for name in sorted(callers):
+            events = _events_of(texts[name])
+            assert events <= {"push", "schedule", "workflow_dispatch"}, (
+                f"{name} 监听了 {sorted(events - {'push', 'schedule', 'workflow_dispatch'})}——"
+                "它通向实验室 runner，只许维护者才能造成的事件"
+            )
+
+    def test_every_workflow_event_is_in_the_known_closed_set(self):
+        """每个 workflow 的事件 ⊆ 闭集，且闭集里的每个事件今天都真的有人用（不是一张宽过头的表）。
+        `pull_request_target` 不在闭集里——03 §3「不因本计划改用 pull_request_target」。"""
+        texts = self._texts()
+        seen: set[str] = set()
+        for name, text in sorted(texts.items()):
+            events = _events_of(text)
+            assert events <= _KNOWN_EVENTS, (
+                f"{name} 用了闭集之外的事件 {sorted(events - _KNOWN_EVENTS)}——先到 _KNOWN_EVENTS 登记，"
+                "顺便回答「它会不会带着更高权限执行不可信输入」"
+            )
+            seen |= events
+        assert seen == _KNOWN_EVENTS, f"闭集与实际用到的不一致：多出 {sorted(_KNOWN_EVENTS - seen)}"
+
+    def test_actionlint_custom_labels_are_exactly_the_self_hosted_labels_in_use(self):
+        """`.github/actionlint.yaml` 声明的自定义标签 == 全部 workflow 的 `runs-on` 里实际出现的
+        自托管标签（剪掉托管名与注册时自动打的内建标签）。多一个「预留」也红。"""
+        texts = self._texts()
+        used: set[str] = set()
+        for name in texts:
+            for job_id, block in _jobs_of(texts[name]).items():
+                if _local_reusable(_code(block)):
+                    continue
+                used |= _runs_on_atoms(_code(block), f"{name}::{job_id}")
+        custom = {
+            a
+            for a in used - _HOSTED_RUNNERS - _BUILTIN_SELF_HOSTED_LABELS
+            if not a.startswith("group:")
+        }
+        assert "tavotto-lab" in custom, (
+            f"实验室标签不在用到的集合里：{sorted(used)}——判据量错了对象"
+        )
+        declared = _actionlint_custom_labels()
+        assert custom == declared, (
+            f"actionlint 声明 {sorted(declared)}，workflow 实际用 {sorted(custom)}——"
+            "未部署的池不进配置：先有真 runner 与真 job，再登记标签"
+        )
