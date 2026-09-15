@@ -1,0 +1,1058 @@
+{
+ "job_id": 104397475552,
+ "label": "windows-exe-smoke",
+ "tests": [
+  {
+   "n": 1,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 3.8,
+   "mark": "ok"
+  },
+  {
+   "n": 2,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 5.0,
+   "mark": "ok"
+  },
+  {
+   "n": 3,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净",
+   "seconds": 9.3,
+   "mark": "ok"
+  },
+  {
+   "n": 4,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净",
+   "seconds": 10.6,
+   "mark": "ok"
+  },
+  {
+   "n": 5,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 5.9,
+   "mark": "ok"
+  },
+  {
+   "n": 6,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 5.2,
+   "mark": "ok"
+  },
+  {
+   "n": 7,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "素材卡的状态角标不引入嵌套交互（axe nested-interactive）",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 8,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "问题面板：axe 无违规、行内的「修复」不是「定位」的子节点",
+   "seconds": 5.6,
+   "mark": "ok"
+  },
+  {
+   "n": 9,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "图标按钮都有可访问名（axe button-name / 顶栏抽查）",
+   "seconds": 3.8,
+   "mark": "ok"
+  },
+  {
+   "n": 10,
+   "project": "chromium",
+   "file": "a11y.spec.ts",
+   "name": "键盘可达性底线：Tab 能进入界面且焦点可见",
+   "seconds": 2.5,
+   "mark": "ok"
+  },
+  {
+   "n": 11,
+   "project": "chromium",
+   "file": "asset-library.spec.ts",
+   "name": "show-only 项目：素材库普通入口 → Runtime Figure → 画布 → 图内编辑 → undo/redo",
+   "seconds": 8.8,
+   "mark": "ok"
+  },
+  {
+   "n": 12,
+   "project": "chromium",
+   "file": "asset-library.spec.ts",
+   "name": "完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 PDF/PNG",
+   "seconds": 13.5,
+   "mark": "ok"
+  },
+  {
+   "n": 13,
+   "project": "chromium",
+   "file": "asset-library.spec.ts",
+   "name": "多 Figure：?pick= 打开选择器，选第二张加的就是第二张",
+   "seconds": 5.4,
+   "mark": "ok"
+  },
+  {
+   "n": 14,
+   "project": "chromium",
+   "file": "asset-library.spec.ts",
+   "name": "窄视口：脚本行的「运行并发现图」仍可见可点",
+   "seconds": 2.8,
+   "mark": "ok"
+  },
+  {
+   "n": 15,
+   "project": "chromium",
+   "file": "coding-agents.spec.ts",
+   "name": "编码 Agent：列表 → 详情 → 返回，状态与滚动都还在",
+   "seconds": 3.8,
+   "mark": "ok"
+  },
+  {
+   "n": 16,
+   "project": "chromium",
+   "file": "coding-agents.spec.ts",
+   "name": "编码 Agent：开关是独立控件，不会顺手打开详情",
+   "seconds": 3.4,
+   "mark": "ok"
+  },
+  {
+   "n": 17,
+   "project": "chromium",
+   "file": "coding-agents.spec.ts",
+   "name": "编码 Agent：重新检测有播报，且不发生布局跳动",
+   "seconds": 3.8,
+   "mark": "ok"
+  },
+  {
+   "n": 18,
+   "project": "chromium",
+   "file": "coding-agents.spec.ts",
+   "name": "编码 Agent：1024×768 窄窗口不横向溢出",
+   "seconds": 3.5,
+   "mark": "ok"
+  },
+  {
+   "n": 19,
+   "project": "chromium",
+   "file": "coding-agents.spec.ts",
+   "name": "编码 Agent：axe 无 critical/serious 违规（列表与详情各一次）",
+   "seconds": 7.0,
+   "mark": "ok"
+  },
+  {
+   "n": 20,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：aria-hidden 的纯符号记号是装饰，不量；带字母数字的照样量",
+   "seconds": 0.248,
+   "mark": "ok"
+  },
+  {
+   "n": 21,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：CSS opacity 计入有效 alpha，禁用态按 WCAG 排除",
+   "seconds": 0.238,
+   "mark": "ok"
+  },
+  {
+   "n": 22,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：背景按绘制顺序取，画在下面的兄弟层也算",
+   "seconds": 0.226,
+   "mark": "ok"
+  },
+  {
+   "n": 23,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：绘制顺序按 z-index/层叠上下文，不是 DOM 顺序",
+   "seconds": 0.215,
+   "mark": "ok"
+  },
+  {
+   "n": 24,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：没被画出来的文字不算，展开之后必须算",
+   "seconds": 0.239,
+   "mark": "ok"
+  },
+  {
+   "n": 25,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：量不出背景色时报「判不准」，不按白纸编一个数",
+   "seconds": 0.29,
+   "mark": "ok"
+  },
+  {
+   "n": 26,
+   "project": "chromium",
+   "file": "contrast.spec.ts",
+   "name": "自算对比度：等动效落定再量，不报中间帧",
+   "seconds": 1.1,
+   "mark": "ok"
+  },
+  {
+   "n": 27,
+   "project": "chromium",
+   "file": "cross-tab-paste.spec.ts",
+   "name": "同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴",
+   "seconds": 6.1,
+   "mark": "ok"
+  },
+  {
+   "n": 28,
+   "project": "chromium",
+   "file": "element-path-selection.spec.ts",
+   "name": "图内曲线：沿真实路径选中，bbox 空白角不误命中",
+   "seconds": 9.1,
+   "mark": "ok"
+  },
+  {
+   "n": 29,
+   "project": "chromium",
+   "file": "element-path-selection.spec.ts",
+   "name": "图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命中",
+   "seconds": 8.5,
+   "mark": "ok"
+  },
+  {
+   "n": 30,
+   "project": "chromium",
+   "file": "element-path-selection.spec.ts",
+   "name": "图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那条不存在的折线",
+   "seconds": 9.0,
+   "mark": "ok"
+  },
+  {
+   "n": 31,
+   "project": "chromium",
+   "file": "fake-realtime.spec.ts",
+   "name": "拖图内元素：预览跟手、拖动期间零后端、松手一次定稿",
+   "seconds": 9.8,
+   "mark": "ok"
+  },
+  {
+   "n": 32,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "首次启动：用户目录为空时进项目选择器，而不是白屏",
+   "seconds": 2.5,
+   "mark": "ok"
+  },
+  {
+   "n": 33,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "直接粘贴路径打开项目（含中文与空格）",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 34,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复",
+   "seconds": 5.4,
+   "mark": "ok"
+  },
+  {
+   "n": 35,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜",
+   "seconds": 3.7,
+   "mark": "ok"
+  },
+  {
+   "n": 36,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "没装 Python 时给出引导，而不是闪退",
+   "seconds": 5.3,
+   "mark": "ok"
+  },
+  {
+   "n": 37,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "AI CLI 不存在时，设置里说清「找过哪些位置」",
+   "seconds": 3.1,
+   "mark": "ok"
+  },
+  {
+   "n": 38,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "导出诊断包：能下载，且不含密钥与主目录",
+   "seconds": 5.8,
+   "mark": "ok"
+  },
+  {
+   "n": 39,
+   "project": "chromium",
+   "file": "golden-paths.spec.ts",
+   "name": "导出 PDF 后文件真的落盘",
+   "seconds": 3.4,
+   "mark": "ok"
+  },
+  {
+   "n": 40,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 zh-CN › 项目选择器",
+   "seconds": 2.6,
+   "mark": "ok"
+  },
+  {
+   "n": 41,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 zh-CN › 工作台 → 设置 → 导出对话框",
+   "seconds": 4.0,
+   "mark": "ok"
+  },
+  {
+   "n": 42,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 zh-CN › 基本编辑：放一个面板 + 一段文字，撤销按钮跟着有内容",
+   "seconds": 3.2,
+   "mark": "ok"
+  },
+  {
+   "n": 43,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 zh-CN › 刷新之后仍是这门语言（手动选择压过系统语言）",
+   "seconds": 3.7,
+   "mark": "ok"
+  },
+  {
+   "n": 44,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 zh-CN › 不混语言：这一屏里不出现另一门语言的标志词",
+   "seconds": 3.0,
+   "mark": "ok"
+  },
+  {
+   "n": 45,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 en-US › 项目选择器",
+   "seconds": 2.5,
+   "mark": "ok"
+  },
+  {
+   "n": 46,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 en-US › 工作台 → 设置 → 导出对话框",
+   "seconds": 4.3,
+   "mark": "ok"
+  },
+  {
+   "n": 47,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 en-US › 基本编辑：放一个面板 + 一段文字，撤销按钮跟着有内容",
+   "seconds": 3.1,
+   "mark": "ok"
+  },
+  {
+   "n": 48,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 en-US › 刷新之后仍是这门语言（手动选择压过系统语言）",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 49,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "界面语言 en-US › 不混语言：这一屏里不出现另一门语言的标志词",
+   "seconds": 3.0,
+   "mark": "ok"
+  },
+  {
+   "n": 50,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "英文界面的排版 › 1024px 下顶栏 / 右栏 / 标签条都不横向溢出",
+   "seconds": 3.4,
+   "mark": "ok"
+  },
+  {
+   "n": 51,
+   "project": "chromium",
+   "file": "i18n.spec.ts",
+   "name": "英文界面的排版 › 超长项目名不会把顶栏撑开",
+   "seconds": 3.1,
+   "mark": "ok"
+  },
+  {
+   "n": 52,
+   "project": "chromium",
+   "file": "inspector-overflow.spec.ts",
+   "name": "标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出",
+   "seconds": 8.9,
+   "mark": "ok"
+  },
+  {
+   "n": 53,
+   "project": "chromium",
+   "file": "inspector-redesign.spec.ts",
+   "name": "流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、来源计数与单项恢复",
+   "seconds": 9.7,
+   "mark": "ok"
+  },
+  {
+   "n": 54,
+   "project": "chromium",
+   "file": "inspector-redesign.spec.ts",
+   "name": "流程 B+C：曲线首屏（视觉线型选择器）与图例 3×3 位置网格",
+   "seconds": 8.4,
+   "mark": "ok"
+  },
+  {
+   "n": 55,
+   "project": "chromium",
+   "file": "inspector-redesign.spec.ts",
+   "name": "流程 C2：图例放到子图外面（外侧锚点），检查随即报「超出图幅」",
+   "seconds": 10.6,
+   "mark": "ok"
+  },
+  {
+   "n": 56,
+   "project": "chromium",
+   "file": "inspector-redesign.spec.ts",
+   "name": "1366×768：左树、画布与属性栏三者共存",
+   "seconds": 9.9,
+   "mark": "ok"
+  },
+  {
+   "n": 57,
+   "project": "chromium",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出",
+   "seconds": 27.1,
+   "mark": "ok"
+  },
+  {
+   "n": 58,
+   "project": "chromium",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "键盘错误恢复：路径打不开报错，改对路径后继续",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 59,
+   "project": "chromium",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框",
+   "seconds": 5.7,
+   "mark": "ok"
+  },
+  {
+   "n": 60,
+   "project": "chromium",
+   "file": "large-figure.spec.ts",
+   "name": "大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点，且照常可编辑",
+   "seconds": 7.5,
+   "mark": "ok"
+  },
+  {
+   "n": 61,
+   "project": "chromium",
+   "file": "large-figure.spec.ts",
+   "name": "降档之后：选中图内元素、属性面板打得开、撤销回得去",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 62,
+   "project": "chromium",
+   "file": "mcp-canvas.spec.ts",
+   "name": "画布在真 iframe 里挂起来，并把规范 / 尺寸 / 预检摆出来",
+   "seconds": 0.725,
+   "mark": "ok"
+  },
+  {
+   "n": 63,
+   "project": "chromium",
+   "file": "mcp-canvas.spec.ts",
+   "name": "用鼠标拖图内标题 → tools/call 发全量 patches → 用响应更新画布",
+   "seconds": 1.1,
+   "mark": "ok"
+  },
+  {
+   "n": 64,
+   "project": "chromium",
+   "file": "mcp-canvas.spec.ts",
+   "name": "预检与导出都走 tools/call，结果回到界面上",
+   "seconds": 0.895,
+   "mark": "ok"
+  },
+  {
+   "n": 65,
+   "project": "chromium",
+   "file": "mcp-canvas.spec.ts",
+   "name": "iframe 里不存业务数据（host 随时会重建它）",
+   "seconds": 0.667,
+   "mark": "ok"
+  },
+  {
+   "n": 66,
+   "project": "chromium",
+   "file": "motion.spec.ts",
+   "name": "弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保持居中",
+   "seconds": 5.0,
+   "mark": "ok"
+  },
+  {
+   "n": 67,
+   "project": "chromium",
+   "file": "motion.spec.ts",
+   "name": "prefers-reduced-motion：动画一帧都不播，浮层立刻消失",
+   "seconds": 4.5,
+   "mark": "ok"
+  },
+  {
+   "n": 68,
+   "project": "chromium",
+   "file": "motion.spec.ts",
+   "name": "抽屉开合：先播完再卸载、内容不挤、把手仍可拖",
+   "seconds": 5.9,
+   "mark": "ok"
+  },
+  {
+   "n": 69,
+   "project": "chromium",
+   "file": "motion.spec.ts",
+   "name": "画布标签重排：每个标签从原位滑到新位",
+   "seconds": 5.0,
+   "mark": "ok"
+  },
+  {
+   "n": 70,
+   "project": "chromium",
+   "file": "nav-audit.spec.ts",
+   "name": "T50：快捷键说明一条都没有被切掉，且搜索能收窄",
+   "seconds": 3.4,
+   "mark": "ok"
+  },
+  {
+   "n": 71,
+   "project": "chromium",
+   "file": "nav-audit.spec.ts",
+   "name": "T05：长画布名不挤走行尾的菜单按钮",
+   "seconds": 3.4,
+   "mark": "ok"
+  },
+  {
+   "n": 72,
+   "project": "chromium",
+   "file": "nav-audit.spec.ts",
+   "name": "T01：一条上下文栏、一个返回入口，回来时画布不意外移动",
+   "seconds": 10.2,
+   "mark": "ok"
+  },
+  {
+   "n": 93,
+   "project": "chromium",
+   "file": "quick-menu.spec.ts",
+   "name": "右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚本 / 多选对齐",
+   "seconds": 11.7,
+   "mark": "ok"
+  },
+  {
+   "n": 94,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：切遍每个分区，外框不跳、内容区自己滚",
+   "seconds": 7.1,
+   "mark": "ok"
+  },
+  {
+   "n": 95,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：1024×640 小窗口整个外框在视口内且不横向溢出",
+   "seconds": 3.9,
+   "mark": "ok"
+  },
+  {
+   "n": 96,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：窄窗口（<640 CSS px，等价于高缩放）导航变成顶部一条、仍可切页",
+   "seconds": 3.2,
+   "mark": "ok"
+  },
+  {
+   "n": 97,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：英文界面同样不溢出",
+   "seconds": 5.0,
+   "mark": "ok"
+  },
+  {
+   "n": 98,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：方向键在导航里走，Enter 不需要——落地即切页",
+   "seconds": 3.3,
+   "mark": "ok"
+  },
+  {
+   "n": 99,
+   "project": "chromium",
+   "file": "settings-shell.spec.ts",
+   "name": "设置：五个分区 axe 无 critical/serious",
+   "seconds": 8.3,
+   "mark": "ok"
+  },
+  {
+   "n": 100,
+   "project": "chromium",
+   "file": "tutorial.spec.ts",
+   "name": "完整走完教程：每一步都由真实动作完成",
+   "seconds": 11.6,
+   "mark": "ok"
+  },
+  {
+   "n": 101,
+   "project": "chromium",
+   "file": "tutorial.spec.ts",
+   "name": "刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单里继续；axe 无 critical/serious",
+   "seconds": 11.4,
+   "mark": "ok"
+  },
+  {
+   "n": 102,
+   "project": "chromium",
+   "file": "tutorial.spec.ts",
+   "name": "重置教程项目：画布恢复原样、onboarding 从头；最近列表里带「教程项目」标记",
+   "seconds": 11.3,
+   "mark": "ok"
+  },
+  {
+   "n": 103,
+   "project": "chromium",
+   "file": "tutorial.spec.ts",
+   "name": "切到别的项目自动暂停，切回来自动继续",
+   "seconds": 9.4,
+   "mark": "ok"
+  },
+  {
+   "n": 104,
+   "project": "chromium",
+   "file": "twin-axes-pick.spec.ts",
+   "name": "twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁",
+   "seconds": 9.1,
+   "mark": "ok"
+  },
+  {
+   "n": 105,
+   "project": "chromium",
+   "file": "twin-axes-pick.spec.ts",
+   "name": "键盘轮换：bbox 中心不在曲线身上时也走得回来",
+   "seconds": 10.1,
+   "mark": "ok"
+  },
+  {
+   "n": 106,
+   "project": "chromium",
+   "file": "ux-consistency.spec.ts",
+   "name": "流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，撤销重做全组一致",
+   "seconds": 14.9,
+   "mark": "ok"
+  },
+  {
+   "n": 107,
+   "project": "chromium",
+   "file": "ux-consistency.spec.ts",
+   "name": "流程 B：选中子图即可设四边刻度、方向与次刻度，示意图跟着真实状态变",
+   "seconds": 12.5,
+   "mark": "ok"
+  },
+  {
+   "n": 108,
+   "project": "chromium",
+   "file": "ux-consistency.spec.ts",
+   "name": "流程 C：AI 模型与推理强度——键盘可调、偏好保持、无横向溢出",
+   "seconds": 6.1,
+   "mark": "ok"
+  },
+  {
+   "n": 109,
+   "project": "chromium",
+   "file": "ux-consistency.spec.ts",
+   "name": "流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，完整路径只在诊断里",
+   "seconds": 6.2,
+   "mark": "ok"
+  },
+  {
+   "n": 110,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 4.4,
+   "mark": "ok"
+  },
+  {
+   "n": 111,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 6.5,
+   "mark": "ok"
+  },
+  {
+   "n": 112,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净",
+   "seconds": 18.8,
+   "mark": "ok"
+  },
+  {
+   "n": 113,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净",
+   "seconds": 13.5,
+   "mark": "ok"
+  },
+  {
+   "n": 114,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 12.0,
+   "mark": "ok"
+  },
+  {
+   "n": 115,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 9.2,
+   "mark": "ok"
+  },
+  {
+   "n": 116,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "素材卡的状态角标不引入嵌套交互（axe nested-interactive）",
+   "seconds": 5.4,
+   "mark": "ok"
+  },
+  {
+   "n": 117,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "问题面板：axe 无违规、行内的「修复」不是「定位」的子节点",
+   "seconds": 10.9,
+   "mark": "ok"
+  },
+  {
+   "n": 118,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "图标按钮都有可访问名（axe button-name / 顶栏抽查）",
+   "seconds": 5.3,
+   "mark": "ok"
+  },
+  {
+   "n": 119,
+   "project": "webkit",
+   "file": "a11y.spec.ts",
+   "name": "键盘可达性底线：Tab 能进入界面且焦点可见",
+   "seconds": 3.2,
+   "mark": "ok"
+  },
+  {
+   "n": 120,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "首次启动：用户目录为空时进项目选择器，而不是白屏",
+   "seconds": 3.3,
+   "mark": "ok"
+  },
+  {
+   "n": 121,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "直接粘贴路径打开项目（含中文与空格）",
+   "seconds": 4.6,
+   "mark": "ok"
+  },
+  {
+   "n": 122,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复",
+   "seconds": 8.7,
+   "mark": "ok"
+  },
+  {
+   "n": 123,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜",
+   "seconds": 5.4,
+   "mark": "ok"
+  },
+  {
+   "n": 124,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "没装 Python 时给出引导，而不是闪退",
+   "seconds": 6.3,
+   "mark": "ok"
+  },
+  {
+   "n": 125,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "AI CLI 不存在时，设置里说清「找过哪些位置」",
+   "seconds": 4.2,
+   "mark": "ok"
+  },
+  {
+   "n": 126,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "导出诊断包：能下载，且不含密钥与主目录",
+   "seconds": 7.2,
+   "mark": "ok"
+  },
+  {
+   "n": 127,
+   "project": "webkit",
+   "file": "golden-paths.spec.ts",
+   "name": "导出 PDF 后文件真的落盘",
+   "seconds": 5.3,
+   "mark": "ok"
+  },
+  {
+   "n": 128,
+   "project": "webkit",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出",
+   "seconds": 90.0,
+   "mark": "ok"
+  },
+  {
+   "n": 129,
+   "project": "webkit",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "键盘错误恢复：路径打不开报错，改对路径后继续",
+   "seconds": 5.4,
+   "mark": "ok"
+  },
+  {
+   "n": 130,
+   "project": "webkit",
+   "file": "keyboard-golden-path.spec.ts",
+   "name": "快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框",
+   "seconds": 13.3,
+   "mark": "ok"
+  },
+  {
+   "n": 131,
+   "project": "webkit",
+   "file": "twin-axes-pick.spec.ts",
+   "name": "twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁",
+   "seconds": 11.7,
+   "mark": "ok"
+  },
+  {
+   "n": 132,
+   "project": "webkit",
+   "file": "twin-axes-pick.spec.ts",
+   "name": "键盘轮换：bbox 中心不在曲线身上时也走得回来",
+   "seconds": 12.3,
+   "mark": "ok"
+  },
+  {
+   "n": 133,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 3.6,
+   "mark": "ok"
+  },
+  {
+   "n": 134,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标",
+   "seconds": 5.5,
+   "mark": "ok"
+  },
+  {
+   "n": 135,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净",
+   "seconds": 9.6,
+   "mark": "ok"
+  },
+  {
+   "n": 136,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净",
+   "seconds": 10.7,
+   "mark": "ok"
+  },
+  {
+   "n": 137,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 6.3,
+   "mark": "ok"
+  },
+  {
+   "n": 138,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复",
+   "seconds": 5.8,
+   "mark": "ok"
+  },
+  {
+   "n": 139,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "素材卡的状态角标不引入嵌套交互（axe nested-interactive）",
+   "seconds": 4.3,
+   "mark": "ok"
+  },
+  {
+   "n": 140,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "问题面板：axe 无违规、行内的「修复」不是「定位」的子节点",
+   "seconds": 6.8,
+   "mark": "ok"
+  },
+  {
+   "n": 141,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "图标按钮都有可访问名（axe button-name / 顶栏抽查）",
+   "seconds": 4.1,
+   "mark": "ok"
+  },
+  {
+   "n": 142,
+   "project": "chromium-en",
+   "file": "a11y.spec.ts",
+   "name": "键盘可达性底线：Tab 能进入界面且焦点可见",
+   "seconds": 2.5,
+   "mark": "ok"
+  },
+  {
+   "n": 144,
+   "project": "chromium-en",
+   "file": "error-recovery-en.spec.ts",
+   "name": "脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径",
+   "seconds": 8.3,
+   "mark": "ok"
+  },
+  {
+   "n": 145,
+   "project": "chromium-en",
+   "file": "error-recovery-en.spec.ts",
+   "name": "render 失败（脚本抛异常）：英文报错 + 重试按钮，画布不丢",
+   "seconds": 6.3,
+   "mark": "ok"
+  },
+  {
+   "n": 148,
+   "project": "chromium-en",
+   "file": "error-recovery-en.spec.ts",
+   "name": "AI CLI 不可用：设置里英文说明找过哪些位置",
+   "seconds": 5.3,
+   "mark": "ok"
+  },
+  {
+   "n": 149,
+   "project": "chromium-en",
+   "file": "error-recovery-en.spec.ts",
+   "name": "原图被独占占用（file_locked）：英文报错说清该关掉谁，改动不丢",
+   "seconds": 15.5,
+   "mark": "ok"
+  },
+  {
+   "n": 150,
+   "project": "chromium-en",
+   "file": "error-recovery-en.spec.ts",
+   "name": "updater 离线：检查更新失败给英文报错，界面可继续",
+   "seconds": 5.6,
+   "mark": "ok"
+  },
+  {
+   "n": 151,
+   "project": "chromium-en",
+   "file": "inspector-overflow.spec.ts",
+   "name": "标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出",
+   "seconds": 10.4,
+   "mark": "ok"
+  }
+ ],
+ "other_lines": [
+  "Running 151 tests using 1 worker",
+  "-   73 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 1920x1080：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   74 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 1440x900：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   75 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 1366x768：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   76 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 1024x768：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   77 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 768x1024：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   78 [chromium] › e2e\\playground-landing.spec.ts:88:3 › 响应式 390x844：卡片不溢出、入口可达、上传不抢主视觉",
+  "-   79 [chromium] › e2e\\playground-landing.spec.ts:134:1 › 英文 locale 无裸 key、无溢出",
+  "-   80 [chromium] › e2e\\playground-landing.spec.ts:147:1 › 拖放：卡片拖进试验台 → 高亮说出案例名 → 松开进入真实加载（只启动一次）",
+  "-   81 [chromium] › e2e\\playground-landing.spec.ts:176:1 › 拖放取消：拖出台面松开不启动，卡片回原位",
+  "-   82 [chromium] › e2e\\playground-landing.spec.ts:199:3 › prefers-reduced-motion › 功能零删减：Code Sheet 直接展开、拖放靠边框与文字表达、正常进入加载",
+  "-   83 [chromium] › e2e\\playground.spec.ts:128:1 › 黄金路径：案例库 → 查看代码 → 启动 → 真 Pyodide → 亲手改标题字号 → 完整性证明 → 撤销 → 换一个案例",
+  "-   84 [chromium] › e2e\\playground.spec.ts:238:1 › 省流量模式：一个字节的 Pyodide 都不预热",
+  "-   85 [chromium] › e2e\\playground.spec.ts:260:1 › 品牌回站：跟着界面语言走，中文访客不会被送回英文首页",
+  "-   86 [chromium] › e2e\\playground.spec.ts:275:1 › 哨兵：上传的源码内容不出现在任何网络请求里",
+  "-   87 [chromium] › e2e\\playground.spec.ts:315:1 › 完整性核对独立于用户解释器：脚本改掉自己并伪造 hashlib，界面仍报「已改动」",
+  "-   88 [chromium] › e2e\\playground.spec.ts:370:1 › Python 够不着 js：拿不到 Worker 全局，也就伪造不了完整性核对",
+  "-   89 [chromium] › e2e\\playground.spec.ts:446:1 › 没有 Web Crypto 时降级成「未核对」，而不是把整个会话弄死",
+  "-   90 [chromium] › e2e\\playground.spec.ts:484:1 › draw_event 里改写自己：load 之后 open 之前的窗口也要核到",
+  "-   91 [chromium] › e2e\\playground.spec.ts:520:1 › 不支持的依赖：在下载科学栈之前拒绝，并给桌面版出口",
+  "-   92 [chromium] › e2e\\playground.spec.ts:537:1 › 死循环：脚本阶段硬超时，Worker 被杀，错误诚实",
+  "-  143 [chromium-en] › e2e\\error-recovery-en.spec.ts:64:1 › 无可用渲染环境：英文的环境缺件卡片 + 可点的修复出口",
+  "-  146 [chromium-en] › e2e\\error-recovery-en.spec.ts:148:1 › 项目目录不可读：ProjectPicker 英文报错，改对路径可继续",
+  "-  147 [chromium-en] › e2e\\error-recovery-en.spec.ts:177:1 › 导出目录不可写：导出失败给英文报错，且不丢项目",
+  "23 skipped",
+  "128 passed (15.0m)"
+ ]
+}

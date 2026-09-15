@@ -1,0 +1,394 @@
+{
+  "jobs": {
+    "python-lint": {
+      "name": "Python quality (Ruff)",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "matrix": null,
+      "yaml_step_count": 6
+    },
+    "cla-check": {
+      "name": "Contributor licence (CLA)",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "matrix": null,
+      "yaml_step_count": 3
+    },
+    "invariants": {
+      "name": "invariants",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 20,
+      "matrix": null,
+      "yaml_step_count": 5
+    },
+    "backend-fast": {
+      "name": "backend-fast",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "${{ matrix.os }}",
+      "timeout_minutes": 40,
+      "matrix": [
+        {
+          "os": "ubuntu-latest",
+          "python": "3.10"
+        },
+        {
+          "os": "ubuntu-latest",
+          "python": "3.13"
+        },
+        {
+          "os": "ubuntu-latest",
+          "python": "3.14"
+        }
+      ],
+      "yaml_step_count": 4
+    },
+    "backend-platforms": {
+      "name": "backend-platforms",
+      "needs": [],
+      "if": "github.event_name == 'merge_group' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+      "runs_on": "${{ matrix.os }}",
+      "timeout_minutes": 60,
+      "matrix": [
+        {
+          "os": "macos-latest",
+          "python": "3.13"
+        },
+        {
+          "os": "windows-latest",
+          "python": "3.13"
+        }
+      ],
+      "yaml_step_count": 4
+    },
+    "compat-smoke": {
+      "name": "compat-smoke",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 20,
+      "matrix": null,
+      "yaml_step_count": 5
+    },
+    "frontend": {
+      "name": "frontend",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 20,
+      "matrix": null,
+      "yaml_step_count": 13
+    },
+    "plugin-candidate": {
+      "name": "plugin-candidate",
+      "needs": [
+        "frontend"
+      ],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 20,
+      "matrix": null,
+      "yaml_step_count": 10
+    },
+    "workerd": {
+      "name": "workerd",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 15,
+      "matrix": null,
+      "yaml_step_count": 6
+    },
+    "desktop-shell": {
+      "name": "desktop-shell",
+      "needs": [],
+      "if": "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+      "runs_on": "${{ matrix.os }}",
+      "timeout_minutes": 20,
+      "matrix": {
+        "os": [
+          "ubuntu-latest",
+          "macos-latest"
+        ]
+      },
+      "yaml_step_count": 8
+    },
+    "package": {
+      "name": "package",
+      "needs": [
+        "backend-fast",
+        "frontend"
+      ],
+      "if": "github.event_name == 'merge_group' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+      "runs_on": "${{ matrix.os }}",
+      "timeout_minutes": 60,
+      "matrix": [
+        {
+          "os": "ubuntu-latest",
+          "python": "3.13"
+        },
+        {
+          "os": "ubuntu-latest",
+          "python": "3.14"
+        },
+        {
+          "os": "macos-latest",
+          "python": "3.13"
+        },
+        {
+          "os": "windows-latest",
+          "python": "3.13"
+        }
+      ],
+      "yaml_step_count": 8
+    },
+    "windows-exe-smoke": {
+      "name": "windows-exe-smoke",
+      "needs": [
+        "backend-fast",
+        "frontend"
+      ],
+      "if": "github.event_name == 'merge_group' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+      "runs_on": "windows-latest",
+      "timeout_minutes": 60,
+      "matrix": null,
+      "yaml_step_count": 24
+    },
+    "macos-app-smoke": {
+      "name": "macos-app-smoke",
+      "needs": [
+        "backend-fast",
+        "frontend"
+      ],
+      "if": "github.event_name == 'merge_group' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+      "runs_on": "macos-latest",
+      "timeout_minutes": 60,
+      "matrix": null,
+      "yaml_step_count": 19
+    },
+    "posix-e2e": {
+      "name": "posix-e2e",
+      "needs": [
+        "backend-fast",
+        "frontend"
+      ],
+      "if": "github.event_name == 'merge_group' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 45,
+      "matrix": null,
+      "yaml_step_count": 9
+    },
+    "ci-fast-gate": {
+      "name": "CI fast gate",
+      "needs": [
+        "python-lint",
+        "cla-check",
+        "invariants",
+        "backend-fast",
+        "frontend",
+        "plugin-candidate",
+        "workerd",
+        "desktop-shell",
+        "compat-smoke"
+      ],
+      "if": "always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "matrix": null,
+      "yaml_step_count": 3
+    },
+    "ci-integration-gate": {
+      "name": "CI integration gate",
+      "needs": [
+        "backend-platforms",
+        "package",
+        "windows-exe-smoke",
+        "macos-app-smoke",
+        "posix-e2e"
+      ],
+      "if": "always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "matrix": null,
+      "yaml_step_count": 3
+    },
+    "main-landing-audit": {
+      "name": "main landing audit",
+      "needs": [],
+      "if": "github.event_name == 'push'",
+      "runs_on": "ubuntu-latest",
+      "timeout_minutes": 15,
+      "matrix": null,
+      "yaml_step_count": 6
+    }
+  },
+  "edges": [
+    {
+      "from": "frontend",
+      "to": "plugin-candidate",
+      "kind": "artifact/data",
+      "evidence": "ci.yml L556-563（frontend upload-artifact codex-plugin-candidate）→ L611-614（plugin-candidate download-artifact 同名）→ L620-623（解包并 verify --content-digest）",
+      "note": "真实数据边：下游脱离源码树解包 zip 验证；删边会让 download-artifact 找不到产物。"
+    },
+    {
+      "from": "backend-fast",
+      "to": "package",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L784 needs；L799-849 的步骤没有任何 download-artifact，不读 backend-fast 的任何产物；前端由自己 L806-807 `python scripts/build_frontend.py` 重建",
+      "note": "只等「pytest 过了」这个结论。最终 AND 由 CI fast gate 的 --required 闭集（L1455 含 backend-fast）与 ruleset 三个 context 保证。"
+    },
+    {
+      "from": "frontend",
+      "to": "package",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L784 needs；L806-807 自己重建前端（build_frontend.py 内部跑 pnpm install + build），不 download frontend 的任何产物",
+      "note": "frontend 中位 4.2 分钟，若要保留为「便宜预筛」可改标 短预筛；当前它没有起到预筛作用，因为同一条 needs 里还等着 35 分钟的 backend-fast。"
+    },
+    {
+      "from": "backend-fast",
+      "to": "windows-exe-smoke",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L874 needs；L878-1103 无 download-artifact；前端 L889-890、画布 L897、workerd L907、runtime L922、PyInstaller L934 全部现建",
+      "note": "样本 29 个 merge_group 里 28 个的关键路径经过这条边（backend-fast → windows-exe-smoke → integration gate）。"
+    },
+    {
+      "from": "frontend",
+      "to": "windows-exe-smoke",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L874 needs；L889-890 自己 `python scripts/build_frontend.py`；L1099 自己 `pnpm install --frozen-lockfile`",
+      "note": "同 frontend->package。"
+    },
+    {
+      "from": "backend-fast",
+      "to": "macos-app-smoke",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1190 needs；L1194-1306 无 download-artifact；前端 L1205-1206、workerd L1214、runtime L1226、PyInstaller L1237 现建",
+      "note": ""
+    },
+    {
+      "from": "frontend",
+      "to": "macos-app-smoke",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1190 needs；L1205-1206 自己重建前端",
+      "note": ""
+    },
+    {
+      "from": "backend-fast",
+      "to": "posix-e2e",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1346 needs；L1350-1388 无 download-artifact；前端 L1369-1371、画布 L1378 现建，`pnpm install` L1386",
+      "note": "这条腿 L1330-1334 自述「不打包」，与 backend-fast 之间没有任何字节关系。"
+    },
+    {
+      "from": "frontend",
+      "to": "posix-e2e",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1346 needs；L1369-1371 自己重建前端",
+      "note": ""
+    },
+    {
+      "from": "python-lint",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 needs 与 L1455 --required 同一闭集；L1448 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器的唯一输入",
+      "note": "Gate 边：按定义只消费结论，属于必须保留的 AND。"
+    },
+    {
+      "from": "cla-check",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "invariants",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "backend-fast",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留——这是删掉重型 job 对 backend-fast 的边之后，backend-fast 仍参与合并资格 AND 的地方。"
+    },
+    {
+      "from": "frontend",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "plugin-candidate",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "workerd",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "desktop-shell",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "compat-smoke",
+      "to": "ci-fast-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1418 / L1455 / L1448",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "backend-platforms",
+      "to": "ci-integration-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1461 needs 与 L1503 --required 同一闭集；L1487 toJSON(needs)",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "package",
+      "to": "ci-integration-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1461 / L1503 / L1487",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "windows-exe-smoke",
+      "to": "ci-integration-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1461 / L1503 / L1487",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "macos-app-smoke",
+      "to": "ci-integration-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1461 / L1503 / L1487",
+      "note": "Gate 边，必须保留。"
+    },
+    {
+      "from": "posix-e2e",
+      "to": "ci-integration-gate",
+      "kind": "verdict-only",
+      "evidence": "ci.yml L1461 / L1503 / L1487",
+      "note": "Gate 边，必须保留。"
+    }
+  ]
+}

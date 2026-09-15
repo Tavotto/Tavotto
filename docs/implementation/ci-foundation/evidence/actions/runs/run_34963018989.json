@@ -1,0 +1,13 @@
+{
+ "id": 34963018989,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "c060657f9bab2f19787ed34f43add2d3ab656d70",
+ "head_branch": "ux/polish-inspector",
+ "created_at": "2026-09-15T11:23:27Z",
+ "run_started_at": "2026-09-15T11:23:27Z",
+ "updated_at": "2026-09-15T12:03:09Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34963018989"
+}

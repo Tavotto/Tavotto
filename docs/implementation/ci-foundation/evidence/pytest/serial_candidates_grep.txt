@@ -1,0 +1,232 @@
+# 串行候选的静态扫描（grep，2026-09-15，HEAD 8b95256c）。只是线索，不是判定；每条的定性见 CI_BASELINE.md 的串行候选表。
+
+## 显式 os.environ 写入（不经 monkeypatch）
+tests/conftest.py:34:os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
+tests/conftest.py:47:    `os.environ[name] = …`」这条组合逃得掉自动还原——CompatBench 的驱动
+tests/conftest.py:56:            os.environ.pop(k, None)
+tests/conftest.py:58:            os.environ[k] = v
+tests/test_worker_roundtrip.py:1673:    saved = os.environ.pop("TAVOTTO_WORKERD", None)
+tests/test_worker_roundtrip.py:1680:            os.environ["TAVOTTO_WORKERD"] = saved
+tests/test_compat_runner.py:526:    assert os.environ["TAVOTTO_WORKER_PYTHON"] == real
+tests/test_ci_qualification.py:821:    os.environ["TAVOTTO_DATA_DIR"] = str(root)
+tests/test_ci_qualification.py:829:            os.environ.pop("TAVOTTO_DATA_DIR", None)
+tests/test_ci_qualification.py:831:            os.environ["TAVOTTO_DATA_DIR"] = monkey
+tests/test_equivalence_matrix.py:920:    saved = os.environ.pop("TAVOTTO_WORKERD", None)
+tests/test_equivalence_matrix.py:927:            os.environ["TAVOTTO_WORKERD"] = saved
+tests/test_issue181_large_preview.py:87:    os.environ["TAVOTTO_ISSUE181_MESH_N"] = str(TEST_N)
+tests/test_issue181_large_preview.py:98:            os.environ.pop("TAVOTTO_ISSUE181_MESH_N", None)
+tests/test_issue181_large_preview.py:100:            os.environ["TAVOTTO_ISSUE181_MESH_N"] = prev
+tests/native/test_run_cli_integration.py:58:    os.environ["TAVOTTO_TEST_MARKER"] = env_marker
+tests/native/test_run_cli_integration.py:65:        os.environ.pop("TAVOTTO_TEST_MARKER", None)
+
+## chdir
+tests/test_mcp_server.py:232:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:300:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:373:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:453:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:502:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:542:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:619:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:684:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:721:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:758:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:843:    monkeypatch.chdir(tmp_path)
+tests/test_mcp_server.py:851:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:1344:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_mcp_server.py:1389:    monkeypatch.chdir(PLUGIN / "mcp")
+tests/test_merge_queue_ruleset.py:135:    monkeypatch.chdir(tmp_path)
+tests/test_project_env.py:980:    monkeypatch.chdir(trap)
+tests/test_compat_capture_parity.py:691:        monkeypatch.chdir(sandbox)
+tests/test_compat_capture_parity.py:709:        monkeypatch.chdir(sandbox)
+tests/test_compat_capture_parity.py:722:        monkeypatch.chdir(sandbox)
+tests/test_compat_capture_parity.py:738:        monkeypatch.chdir(sandbox)
+tests/test_compat_capture_parity.py:748:        """脚本 `os.chdir()` 进子目录再写再读——读到的必须是它自己写的那份。
+tests/test_compat_capture_parity.py:757:        monkeypatch.chdir(work)
+tests/test_compat_capture_parity.py:777:        monkeypatch.chdir(work)
+tests/test_mcp_roots.py:27:    monkeypatch.chdir(plugin)
+tests/test_mcp_roots.py:115:    monkeypatch.chdir(tmp_path)
+
+## 真实 socket bind
+tests/test_windows_regressions.py:229:            s.bind(("127.0.0.1", 0))
+tests/test_desktop_sidecar.py:95:    blocker.bind(("127.0.0.1", 0))
+tests/native/test_native_api.py:568:    listener.bind(("127.0.0.1", 0))
+tests/native/test_native_relay.py:243:            probe.bind(("127.0.0.1", port))  # 端口真的还回去了才 bind 得上
+
+## module 级 fixture（scope=module）文件
+tests/test_artist_families.py
+tests/test_axes_ticks_scale.py
+tests/test_ci_baseline.py
+tests/test_cjk_figure_text.py
+tests/test_cla_workflow_contract.py
+tests/test_cmap_facts.py
+tests/test_codex_plugin.py
+tests/test_colorbar_orientation.py
+tests/test_colorbar_resize.py
+tests/test_compat_manifest.py
+tests/test_glyph_coverage_figure.py
+tests/test_invariants_engine.py
+tests/test_issue181_large_preview.py
+tests/test_legal_contribution_policy.py
+tests/test_legend_anchor.py
+tests/test_legend_binding.py
+tests/test_legend_text.py
+tests/test_manifest_clip_bbox.py
+tests/test_manifest_geometry.py
+tests/test_manifest_marker_shape.py
+tests/test_manifest_ticklabel_cost.py
+tests/test_mcp_normalize.py
+tests/test_parasite_axes.py
+tests/test_plugin_candidate.py
+tests/test_plugin_update_check.py
+tests/test_preview_budget.py
+tests/test_preview_complexity.py
+tests/test_preview_hybrid.py
+tests/test_scientific_text_matrix.py
+tests/test_tick_sides_geometry.py
+
+## 真子进程（subprocess.run/Popen）按文件计数
+tests/test_windows_regressions.py:16
+tests/test_codex_plugin.py:13
+tests/test_plugin_stage.py:6
+tests/bridge/test_bridge_injection_models.py:6
+tests/test_independent_frontend_prs.py:4
+tests/test_project_env.py:3
+tests/test_package_management.py:3
+tests/test_mcp_roundtrip.py:3
+tests/test_cjk_figure_text.py:3
+tests/support/dependency_repair.py:3
+tests/bridge/test_bridge_e2e.py:3
+tests/test_worker_roundtrip.py:2
+tests/test_tutorial.py:2
+tests/test_source_hygiene.py:2
+tests/test_runtime_build.py:2
+tests/test_release_workflow_contract.py:2
+tests/test_plugin_update_check.py:2
+tests/test_plugin_publish.py:2
+tests/test_mcp_normalize.py:2
+tests/test_install_locate.py:2
+tests/test_font_family_options.py:2
+tests/test_compat_runner.py:2
+tests/test_compat_capture_parity.py:2
+tests/test_codex_real_client.py:2
+tests/test_codex_install_cli.py:2
+tests/test_browser_session.py:2
+tests/test_blame_ignore_revs.py:2
+tests/test_artist_census_tool.py:2
+tests/support/venvfixture.py:2
+tests/support/nativekit.py:2
+tests/bridge/test_bridge_invocation.py:2
+tests/test_workerd_client.py:1
+tests/test_tracked_paths_are_windows_safe.py:1
+tests/test_thread_leak_gate.py:1
+tests/test_telemetry_proxy.py:1
+tests/test_preview_hybrid.py:1
+tests/test_preview_complexity.py:1
+tests/test_preview_budget.py:1
+tests/test_preflight.py:1
+tests/test_pr_conflict_domains.py:1
+tests/test_plugin_candidate.py:1
+tests/test_pixel_compare.py:1
+tests/test_mcp_stdio.py:1
+tests/test_mcp_diagnose.py:1
+tests/test_manifest_ticklabel_cost.py:1
+tests/test_legal_contribution_policy.py:1
+tests/test_layout_engine_pinning.py:1
+tests/test_issue181_large_preview.py:1
+tests/test_invariants_engine.py:1
+tests/test_handoff.py:1
+tests/test_glyph_plan.py:1
+tests/test_generated_untracked.py:1
+tests/test_font_provenance.py:1
+tests/test_export_request.py:1
+tests/test_equivalence_matrix.py:1
+tests/test_dependency_repair_e2e.py:1
+tests/test_colorbar_orientation.py:1
+tests/test_ci_tooling.py:1
+tests/test_ci_qualification.py:1
+tests/test_bootstrap.py:1
+tests/test_axes_ticks_scale.py:1
+tests/support/pluginkit.py:1
+tests/support/large_figures.py:1
+tests/support/bridgekit.py:1
+tests/native/test_run_invocation.py:1
+tests/native/test_run_cli_integration.py:1
+tests/bridge/test_bridge_transport.py:1
+tests/bridge/test_bridge_thread_model.py:1
+
+## 依赖真实产物（画布 / 插件候选 / runtime / wheel / workerd / NSIS / 探针）
+tests/conftest.py
+tests/support/pluginkit.py
+tests/test_ci_qualification.py
+tests/test_codex_install_cli.py
+tests/test_codex_plugin.py
+tests/test_desktop_codex_button.py
+tests/test_equivalence_matrix.py
+tests/test_generated_untracked.py
+tests/test_i18n_dead_keys.py
+tests/test_independent_frontend_prs.py
+tests/test_mcp_resolver.py
+tests/test_mcp_server.py
+tests/test_mcp_stdio.py
+tests/test_nsis_template.py
+tests/test_patchspec.py
+tests/test_plugin_candidate.py
+tests/test_plugin_publish.py
+tests/test_plugin_stage.py
+tests/test_pr_conflict_domains.py
+tests/test_runtime_build.py
+tests/test_source_hygiene.py
+tests/test_tutorial.py
+tests/test_update_chain_gates.py
+tests/test_windows_regressions.py
+tests/test_worker_roundtrip.py
+tests/test_workerd_client.py
+tests/test_workerd_packaging.py
+
+## 字体相关
+tests/acceptance/corpus/c01_lines_scatter_bars.py
+tests/acceptance/corpus/c03_text_legend_images.py
+tests/compat/cases/scientific_stack/sci_typography.py
+tests/compat/cases/script_shapes/cjk_path.py
+tests/test_browser_session.py
+tests/test_ci_qualification.py
+tests/test_cjk_figure_text.py
+tests/test_compose_text.py
+tests/test_desktop_i18n.py
+tests/test_equivalence_matrix.py
+tests/test_font_family_options.py
+tests/test_font_provenance.py
+tests/test_glyph_coverage_figure.py
+tests/test_glyph_plan.py
+tests/test_mcp_normalize.py
+tests/test_normalize.py
+tests/test_preflight.py
+tests/test_typography_families.py
+tests/test_windows_regressions.py
+tests/test_worker_roundtrip.py
+
+## git 命令
+tests/support/pluginkit.py
+tests/test_blame_ignore_revs.py
+tests/test_codex_install_cli.py
+tests/test_codex_plugin.py
+tests/test_font_provenance.py
+tests/test_generated_untracked.py
+tests/test_independent_frontend_prs.py
+tests/test_legal_contribution_policy.py
+tests/test_plugin_candidate.py
+tests/test_plugin_publish.py
+tests/test_plugin_stage.py
+tests/test_pr_conflict_domains.py
+tests/test_source_hygiene.py
+tests/test_telemetry_proxy.py
+tests/test_tracked_paths_are_windows_safe.py
+tests/test_windows_regressions.py
+
+## HOME / expanduser
+tests/test_ai_capabilities.py:137:    home = os.path.expanduser("~")
+tests/test_ai_history.py:291:    由 `Path.home()` 拼出来的路径——写死 `/Users/<某人>` 或 `/home/<某人>`
+tests/test_windows_regressions.py:1155:            f"用户目录 {os.path.expanduser('~')}/paper",
+tests/test_windows_regressions.py:1168:    assert os.path.expanduser("~") not in blob  # 个人主目录
+tests/test_telemetry.py:304:        os.path.expanduser("~"),
+tests/test_diagnostics_bundle.py:37:REAL_HOME = os.path.expanduser("~")

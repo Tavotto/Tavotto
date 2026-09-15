@@ -1,0 +1,13 @@
+{
+ "id": 34683158379,
+ "run_attempt": 1,
+ "event": "merge_group",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "fe4d09e1efdd14a35480a982605efdd59661b32d",
+ "head_branch": "gh-readonly-queue/main/pr-331-833274c7869c79ffc348279ae7b83e4cb649aa12",
+ "created_at": "2026-09-12T08:23:47Z",
+ "run_started_at": "2026-09-12T08:23:47Z",
+ "updated_at": "2026-09-12T09:18:13Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34683158379"
+}

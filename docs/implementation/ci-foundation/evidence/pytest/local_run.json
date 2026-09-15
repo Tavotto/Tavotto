@@ -1,0 +1,37 @@
+{
+ "kind": "local_pytest_baseline_not_ci",
+ "host": "macOS (darwin) Mac mini，Apple Silicon；不是 CI 的 ubuntu-latest",
+ "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+ "machine": "arm64",
+ "cpu_count": 12,
+ "python": "3.13.11",
+ "matplotlib": "3.11.2",
+ "numpy": "2.5.3",
+ "pytest": "9.1.1",
+ "venv": ".venv（python3 -m venv .venv && pip install -e '.[dev]' && pip install matplotlib，与 ci.yml backend-fast L399-403 同形；matplotlib 未钉版本）",
+ "tavotto_import_path": "/Volumes/Projects/tavotto-wt/ci-foundation/src/tavotto/__init__.py",
+ "git_head": "8b95256c0d08a14bfcfc4c81358894ef01168933",
+ "command": ".venv/bin/python -m pytest --durations=0 -rA --junitxml=<scratch>/junit.xml -o junit_logging=no",
+ "addopts_from_pytest_ini": "-q -m \"not slow\" --strict-config",
+ "started_utc": "2026-09-15T15:13:16Z",
+ "ended_utc": "2026-09-15T15:32:30Z",
+ "wall_from_time": ".venv/bin/python -m pytest --durations=0 -rA --junitxml=\"$S/junit.xml\" -o  >   834.36s user 128.83s system 83% cpu 19:14.01 total",
+ "pytest_summary_line": "4557 passed, 42 skipped, 2 deselected, 16 warnings in 1153.56s (0:19:13)",
+ "exit_code": 0,
+ "junit": {
+  "tests": "4599",
+  "skipped": "42",
+  "failures": "0",
+  "errors": "0",
+  "time": "1151.917"
+ },
+ "junit_testcases_rows": 4599,
+ "durations_rows": 2274,
+ "durations_sum_seconds": 1129.2,
+ "durations_by_phase": {
+  "setup": 53.5,
+  "call": 1024.8,
+  "teardown": 51.0
+ },
+ "tree_untouched_during_run": "是：运行期间只写 scratchpad；git status 前后一致"
+}

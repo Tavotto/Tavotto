@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "planning_example_not_deployment_config",
+  "status": "not_run",
+  "existing_trusted_lab": {
+    "keep_separate": true,
+    "physical_host_inventory": "unverified",
+    "public_pr_allowed": false
+  },
+  "example_new_pool": {
+    "cpu_budget_vcpu": 16,
+    "memory_budget_gib": 32,
+    "reserved_vcpu": 2,
+    "reserved_memory_gib": 6,
+    "slots": [
+      {
+        "role": "fast-01",
+        "vcpu": 3,
+        "memory_gib": 6,
+        "jobs_per_vm": 1
+      },
+      {
+        "role": "fast-02",
+        "vcpu": 3,
+        "memory_gib": 6,
+        "jobs_per_vm": 1
+      },
+      {
+        "role": "heavy-01",
+        "vcpu": 8,
+        "memory_gib": 14,
+        "jobs_per_vm": 1
+      }
+    ]
+  },
+  "constraints": [
+    "This is not the confirmed physical host allocation",
+    "No additional concurrent lab VM included in budget",
+    "Pilot one slot before enabling production routing",
+    "Public PR jobs require clean disposable isolated execution and external access control"
+  ]
+}

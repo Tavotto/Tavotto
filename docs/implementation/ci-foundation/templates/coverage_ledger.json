@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "kind": "unfilled_inventory_template_not_a_valid_gate_input",
+  "status": "not_run",
+  "policy_source_sha": null,
+  "entries": [],
+  "entry_fields": [
+    "old_suite_and_target",
+    "old_premerge_location",
+    "new_location",
+    "nodeid_set_or_case_contract",
+    "required_artifacts",
+    "resource_class",
+    "serial_reason_if_any",
+    "promotion_evidence",
+    "known_limitations"
+  ],
+  "note": "Production selector must reject accidentally empty active coverage; this template is not executable policy."
+}

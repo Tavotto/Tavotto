@@ -1,0 +1,15 @@
+{
+  "kind": "document_package_validation_only",
+  "date": "2026-09-15",
+  "checks": [
+    "All packaged JSON files parse",
+    "All 30 implementation criteria remain not_run with no fabricated evidence",
+    "All local Markdown links resolve inside the unpacked package",
+    "Illustrative new pool budget balances at 16 vCPU / 32 GiB including reserve",
+    "All three sampled job durations recomputed from retrieved timestamps",
+    "Phase dependency graph is acyclic; runner deployment is not a mandatory hosted-readiness dependency"
+  ],
+  "product_ci_executed": false,
+  "repository_modified": false,
+  "runners_deployed": false
+}

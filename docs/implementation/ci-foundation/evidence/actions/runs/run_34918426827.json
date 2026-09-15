@@ -1,0 +1,13 @@
+{
+ "id": 34918426827,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "9af75fdf90ef6bf9947f0115882523b25176d1f5",
+ "head_branch": "ux/polish-tokens",
+ "created_at": "2026-09-15T01:43:52Z",
+ "run_started_at": "2026-09-15T01:43:52Z",
+ "updated_at": "2026-09-15T02:14:04Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34918426827"
+}

@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "kind": "retrieved_historical_observation",
+  "retrieved_date": "2026-09-15",
+  "repository": "Tavotto/Tavotto",
+  "source_sha": "8b95256c0d08a14bfcfc4c81358894ef01168933",
+  "run_id": 34970490865,
+  "attempt": 1,
+  "event": "merge_group",
+  "conclusion": "success",
+  "reported_total_jobs": 24,
+  "sample_limitations": [
+    "One selected successful run, not a percentile sample",
+    "Only three jobs timed in this excerpt",
+    "No host telemetry",
+    "No new CI or product code executed by this document author"
+  ],
+  "jobs": [
+    {
+      "id": 104385304833,
+      "name": "backend-fast (ubuntu-latest, 3.10)",
+      "runner": "GitHub-hosted ubuntu-latest",
+      "created_at": "2026-09-15T12:43:00Z",
+      "started_at": "2026-09-15T12:43:02Z",
+      "completed_at": "2026-09-15T13:18:19Z",
+      "job_seconds": 2117,
+      "install_seconds": 16,
+      "pytest_seconds": 2096,
+      "source": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/34970490865/jobs?per_page=1&page=8"
+    },
+    {
+      "id": 104385304721,
+      "name": "frontend",
+      "runner": "GitHub-hosted ubuntu-latest",
+      "created_at": "2026-09-15T12:43:00Z",
+      "started_at": "2026-09-15T12:43:02Z",
+      "completed_at": "2026-09-15T12:47:15Z",
+      "job_seconds": 253,
+      "pnpm_install_seconds": 4,
+      "pnpm_test_seconds": 202,
+      "pnpm_build_seconds": 22,
+      "source": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/34970490865/jobs?per_page=1&page=3"
+    },
+    {
+      "id": 104397475552,
+      "name": "windows-exe-smoke",
+      "runner": "GitHub-hosted windows-latest",
+      "created_at": "2026-09-15T13:18:20Z",
+      "started_at": "2026-09-15T13:18:22Z",
+      "completed_at": "2026-09-15T13:43:03Z",
+      "job_seconds": 1481,
+      "playwright_step_seconds": 1124,
+      "source": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/34970490865/jobs?per_page=1&page=16"
+    }
+  ],
+  "interpretation": "Windows job was created after backend-fast completed; earlier elapsed time is not measured runner allocation queue time."
+}
