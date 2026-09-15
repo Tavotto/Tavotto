@@ -461,7 +461,7 @@ export function ColorField({
     <div className={cn('flex h-7 items-center', className)}>
       <div
         title={value.toUpperCase()}
-        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border-input transition-colors hover:border-border-input-hover has-[:focus-visible]:focus-ring"
+        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors hover:border-border-strong has-[:focus-visible]:focus-ring"
       >
         <div className="absolute inset-0" style={{ background: value }} />
         <input

@@ -18,13 +18,11 @@ function classify(line: string): LineKind {
   return 'ctx'
 }
 
-/** 低饱和的增删配色：能分辨即可，不跟界面抢注意力 */
-const ADD = '#4C6B55'
-const DEL = '#96594C'
-
+/** 增删只用语义色那一对（实色字 + 淡底，2026-09-15 学 Beautiful UI 的 Diff Table）：
+    此前是四个只在这里出现的自造色，与 ok / danger 徽章两套绿红并存 */
 const STYLES: Record<LineKind, string> = {
-  add: 'bg-[#EEF3EF] text-[#4C6B55]',
-  del: 'bg-[#F6EEEC] text-[#96594C]',
+  add: 'bg-ok-subtle text-ok',
+  del: 'bg-danger-subtle text-danger',
   hunk: 'text-ink-3',
   meta: 'text-ink-3',
   ctx: 'text-ink-2',
@@ -54,16 +52,14 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
 
   return (
     <>
+      {/* 住在会话卡里：卡里不再套第二张卡，hairline 框就够（Beautiful UI 的 Code Block 也是
+          头部一行 + 正文，只是它自己就是卡）。行内计数只上字色不加底——底是给整块状态的 */}
       <div className="overflow-hidden rounded-sm border border-border bg-surface">
         <div className="flex items-center gap-2 border-b border-border px-2 py-1">
           <span className="text-xs font-medium text-ink">{translate('diff.title', { ns: 'ai' })}</span>
           {/* 计数是数值读数，不是代码：`type-number`（系统字体 + tabular-nums，第六节） */}
-          <span className="type-number ml-auto" style={{ color: ADD }}>
-            +{added}
-          </span>
-          <span className="type-number" style={{ color: DEL }}>
-            −{removed}
-          </span>
+          <span className="type-number ml-auto text-ok">+{added}</span>
+          <span className="type-number text-danger">−{removed}</span>
           <Tip label={translate('diff.zoomTip', { ns: 'ai' })}>
             <Button size="icon-sm" className="-mr-1" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
               <Maximize2 size={ICON_SIZE.sm} />

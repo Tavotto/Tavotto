@@ -655,7 +655,7 @@ function GridSkeleton({ columns }: { columns: number }) {
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: 8 }, (_, i) => (
-        <li key={i} className="overflow-hidden rounded-md border border-border bg-surface">
+        <li key={i} className="overflow-hidden rounded-md bg-surface shadow-card">
           <div className="aspect-[3/2] animate-pulse bg-surface-2" />
           <div className="flex flex-col gap-1 px-1.5 py-1.5">
             <div className="h-3 animate-pulse rounded-xs bg-selected" />
@@ -1019,15 +1019,16 @@ function RuntimeAssetCard({
 }
 
 /**
- * 卡片外壳：hairline 常态，hover 加深一档，选中 = 边加深 + 名字加粗，**不铺底**——
+ * 卡片外壳：真的是一张卡，所以有抬升——`shadow-card`（1px 环 + 近投影，2026-09-15 学 Beautiful UI，
+ * 用户拍板）；hover 环加深到 border，选中 = 环再深一档（border-strong）+ 名字加粗，**不铺底**——
  * 预览区是白底，tint 只能落在下面 39px 的文字块上，读作「页脚变灰」而不是「整张卡被选中」
  * （2026-09-15 左栏审计 L10，拍板取 b）。圆角是卡片那一档（10）：卡比 28px 控件大一档以上
- * （宪法第二节；L11）。
+ * （宪法第二节；L11）。环走 ring 而不是 border：不占盒模型，三种状态下卡片尺寸不变。
  */
 const cardClass = (selected: boolean) =>
   cn(
-    'group relative overflow-hidden rounded-md border bg-surface outline-none transition-colors duration-fast',
-    selected ? 'border-border-strong' : 'border-border hover:border-border-strong',
+    'group relative overflow-hidden rounded-md bg-surface shadow-card outline-none transition-shadow duration-fast',
+    selected ? 'ring-1 ring-border-strong' : 'hover:ring-1 hover:ring-border',
     'focus-visible:focus-ring',
   )
 

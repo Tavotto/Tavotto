@@ -6,14 +6,17 @@ import {
   ChevronRight,
   FileCodeCorner,
   RotateCcwClock,
+  Pencil,
   Pin,
   RotateCcw,
   SlidersHorizontal,
   Sparkles,
   Square,
   Trash2,
+  Wrench,
   X,
 } from '@/components/ui/icons'
+import { Badge } from '../ui/Badge'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
@@ -372,7 +375,7 @@ export function AssistantPanel() {
           </div>
         )}
         {/* 可编辑框只有一副（第五节 / `ui/fieldBox`）：此前这里是 `border-border` 12% +
-            圆角 10，其余框是 `border-input` 16% + 6——同一屏两种「能改」的框。
+            圆角 10，其余框是 16% 的边 + 6——同一屏两种「能改」的框；现在全站都是凹面。
             圆角留 md：它是一块多行的输入区，不是一行控件（打磨 A1）。
             禁用也只有 opacity-40 一档（此前 60） */}
         <div
@@ -399,7 +402,8 @@ export function AssistantPanel() {
             }}
             className={cn(
               'block w-full resize-none bg-transparent px-2 pt-2 text-xs leading-relaxed',
-              'text-ink outline-none placeholder:text-ink-faint',
+              // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
+              'text-ink outline-none placeholder:text-ink-3',
             )}
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
@@ -899,19 +903,21 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
 
   return (
-    <div className="border-b border-border pb-2 last:border-b-0">
-      <p className="line-clamp-2 text-xs leading-relaxed text-ink-2">{entry.prompt}</p>
-      <p className="mt-0.5 truncate text-xs text-ink-3">
+    // 一条任务一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Task Rows，用户拍板）：
+    // 此前是 hairline 隔开的段落；状态改成徽章（语义色 + 淡底一对），失败 danger、改过 ok、其余中性
+    <div className="rounded-md bg-surface p-2 shadow-card">
+      <p className="line-clamp-2 text-xs leading-relaxed text-ink">{entry.prompt}</p>
+      <p className="type-meta mt-0.5 truncate">
         {/* 历史里的 provider 是**当时**用的那个 Agent id：显示名从当前
             capabilities 查，查不到就原样显示 id（不写死两个名字，也不留空） */}
         {entry.target || ai('scope.figure')} · {agentDisplayName(caps, entry.provider)}
         {entry.model ? ` · ${entry.model}` : ''} · {timeOf(entry.started_ms)}
       </p>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className={cn('text-xs', failed ? 'text-danger' : 'text-ink-3')}>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <Badge tone={failed ? 'danger' : entry.changed ? 'ok' : 'neutral'}>
           {statusLabel(entry.status)}
           {entry.changed ? ai('history.changedSuffix') : ''}
-        </span>
+        </Badge>
         <span className="flex-1" />
         <Tip label={ai(entry.pinned ? 'history.unpinTip' : 'history.pinTip')}>
           <Button
@@ -965,10 +971,12 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
       </button>
       {detailsOpen && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-          <p className="truncate font-mono text-xs text-ink-3">
-            {ai('panel.script', {
-              name: entry.script ? scriptName(entry.script) : ai('panel.none'),
-            })}
+          {/* 脚本名是路径 → 等宽片；句子本身不是代码 */}
+          <p className="type-meta flex min-w-0 items-center gap-1">
+            <span className="shrink-0">{ai('panel.scriptLabel')}</span>
+            <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2">
+              {entry.script ? scriptName(entry.script) : ai('panel.none')}
+            </code>
           </p>
           {entry.effort && <p className="type-meta">{ai('history.effort', { effort: entry.effort })}</p>}
           <p className="type-meta">
@@ -1022,12 +1030,18 @@ function SessionBlock({ session }: { session: AiSession }) {
   const groups = groupEntries(session.entries)
 
   return (
-    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）
-    <div className="flex animate-settle-in flex-col gap-1.5" data-ai-session={session.status}>
-      {/* 分层靠明度差、不靠框（第一节）：surface-2 底就够，边框是第二层（打磨 A2）。
+    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）。
+    // 一轮对话是一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Chat / Task Rows，用户拍板）：
+    // 提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起；卡与卡之间只靠间距。
+    // 卡里再分层用 surface-2 的凹块（提示），不再套第二张卡。
+    <div
+      className="flex animate-settle-in flex-col gap-1.5 rounded-md bg-surface p-2 shadow-card"
+      data-ai-session={session.status}
+    >
+      {/* 提示是卡里的凹块：surface-2 底、无边（Beautiful UI 的 inset 那一级）。
           meta 那行是执行器 / 目标 / 时刻，不是代码或路径——等宽字体只留给代码 */}
       <div className="rounded-sm bg-surface-2 px-2 py-1.5">
-        <p className="text-sm leading-[1.6] break-words text-ink-2">{session.prompt}</p>
+        <p className="text-sm leading-[1.6] break-words text-ink">{session.prompt}</p>
         <p className="type-meta mt-0.5 truncate">
           {sessionAgentLabel(caps, session)} · {session.target} · {timeOf(session.startedAt)}
         </p>
@@ -1093,21 +1107,61 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
       </button>
       {/* 展开是跟着内容长高（Reveal），不是一整块瞬间跳出来 */}
       <Reveal open={open}>
-        <ul className="mt-1 flex flex-col gap-1 border-l border-border pl-2">
+        <ul className="mt-1 flex flex-col gap-1 pl-1">
           {items.map((it, i) => (
-            <li
-              key={i}
-              className={cn(
-                'whitespace-pre-wrap break-words text-xs leading-relaxed',
-                it.kind === 'action' ? 'font-mono text-ink-2' : 'text-ink-3',
-              )}
-            >
-              {it.text}
-            </li>
+            <ProcessRow key={i} kind={it.kind} text={it.text} />
           ))}
         </ul>
       </Reveal>
     </div>
+  )
+}
+
+/**
+ * 过程里的一行（2026-09-15 学 Beautiful UI 的 Tool Chips）：种类图标（ink-3）· 动词 · 参数片。
+ * 后端（`engine/ai_agents.py`）给 action 文本开头放一个**标记符 + 空格**：`$` = 跑了一条命令，
+ * 其它符号（一支笔）= 改了文件 / 调了工具。这里只拆标记、不画它——图标是 Wrench / Pencil；
+ * 「一个非字母数字的符号 + 空格」统一当标记解析，不把那个字形写死在前端。拆成「动词 + 参数」后
+ * 参数放进 surface-2 底的等宽片里——路径 / 命令是代码，正文的动词不是。没有标记的 action 原样
+ * 当参数片；thinking 是一句话，ink-3、无片。
+ */
+const ACTION_MARK = /^([^\p{L}\p{N}\s])\s+(.*)$/su
+
+function ProcessRow({ kind, text }: { kind: string; text: string }) {
+  useTranslation('ai')
+  if (kind !== 'action') {
+    return (
+      <li className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-3">
+        <Sparkles size={ICON_SIZE.xs} className="mt-[3px] shrink-0" aria-hidden />
+        <span className="min-w-0 whitespace-pre-wrap break-words">{text}</span>
+      </li>
+    )
+  }
+  const m = ACTION_MARK.exec(text)
+  const shell = m?.[1] === '$'
+  const Icon = shell ? Wrench : Pencil
+  let verb = ''
+  let arg = text
+  if (m && shell) {
+    verb = ai('panel.stepRan')
+    arg = m[2]
+  } else if (m) {
+    // 「<标记> 名字 目标」：名字是动词位，目标是参数；只有名字时参数为空
+    const rest = m[2].trim()
+    const sp = rest.indexOf(' ')
+    verb = sp === -1 ? rest : rest.slice(0, sp)
+    arg = sp === -1 ? '' : rest.slice(sp + 1)
+  }
+  return (
+    <li className="flex min-w-0 items-start gap-1.5 text-xs leading-relaxed text-ink-2">
+      <Icon size={ICON_SIZE.xs} className="mt-[3px] shrink-0 text-ink-3" aria-hidden />
+      {verb && <span className="shrink-0 text-ink">{verb}</span>}
+      {arg && (
+        <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2" title={arg}>
+          {arg}
+        </code>
+      )}
+    </li>
   )
 }
 

@@ -89,10 +89,11 @@
     "runningHere": "A task for this script is already running",
     "scopeAndAgent": "Scope and agent",
     "scopeTitle": "Scope",
-    "script": "Script: {{name}}",
+    "scriptLabel": "Script",
     "scrollToBottom": "Scroll to bottom",
     "send": "Send ({{key}})",
     "sendAria": "Send",
+    "stepRan": "Ran",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
     "techDetails": "Technical details"
