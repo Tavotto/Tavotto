@@ -1,0 +1,64 @@
+{
+ "machine": "macOS 26 / Apple Silicon（Mac mini 12 核）/ Python 3.13.11 / Node 26.7.0 / pnpm 11.0.7 / rustc 1.95.0；同一台机器上另有会话并行，CPU 非独占；数字只作数量级与「同 job 重建 vs 传输」的对比，CI 时长以 ci_step_seconds.json 为准",
+ "date": "2026-09-16",
+ "tree": "ci/ci02-build-reuse @ 1f7f13e8 + 本轮改动（源码未动）",
+ "recipes": [
+  {
+   "target": "web 应用",
+   "command": "cd web && pnpm build（= tsc -b && vite build && node scripts/tailwind-scan-check.mjs）",
+   "cold_seconds": 6.97,
+   "cold_note": "先删 node_modules/.tmp（三份 .tsbuildinfo）",
+   "warm_seconds": 6.57,
+   "output": "web/dist（8 个文件，1964 KiB = 1.9 MiB；index-*.js 1,911.93 kB / gzip 596 kB）",
+   "vite_build_ms": 321,
+   "log_tail": [
+    "- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.",
+    "✓ built in 321ms",
+    "tailwind-scan-check: dist/assets/index-DCUeUK3D.css 71960 字节、1172 个规则块；正向 11/11 在、金丝雀 .tracking-widest 0 条",
+    "real 6.97",
+    "user 10.82",
+    "sys 0.83"
+   ]
+  },
+  {
+   "target": "MCP 画布 widget",
+   "command": "python scripts/build_mcp_widget.py --out <scratch>/canvas.html --json（= pnpm exec vite build --config vite.mcp.config.ts → 单文件内联）",
+   "seconds": 0.63,
+   "output": "canvas.html 1,303,584 bytes = 1273 KiB，指纹 24f78154bb52d971（与 CI Windows 日志 19:14:21 那行同尺寸同指纹）",
+   "vite_build_ms": 228,
+   "modules": 2111
+  },
+  {
+   "target": "浏览器 playground",
+   "command": "python scripts/build_browser_playground.py（= vite build --config vite.playground.config.ts + engine.zip + playground-manifest.json）",
+   "seconds": 0.69,
+   "output": "web/dist-playground 8 个文件 1607 KiB（engine.zip 227,354 bytes），指纹 d1b9f461b86f28b0",
+   "vite_build_ms": 263
+  },
+  {
+   "target": "wheel + sdist",
+   "command": "python -m build --outdir <scratch>/wheel（src/tavotto/web 已就位）",
+   "seconds": 3.94,
+   "output": "tavotto-0.14.0-py3-none-any.whl 1,677,494 bytes（1.6 MiB）；tavotto-0.14.0.tar.gz 5,686,066 bytes（5.4 MiB）"
+  },
+  {
+   "target": "workerd（Rust supervisor）",
+   "command": "cargo build --release --manifest-path workerd/Cargo.toml（target/ 不存在，冷）",
+   "seconds": 12.13,
+   "output": "workerd/target/release/tavotto-workerd 798,096 bytes（779 KiB；CI Windows 日志 780 KiB）"
+  },
+  {
+   "target": "内置渲染 runtime",
+   "command": "python scripts/build_worker_runtime.py --clean",
+   "seconds": null,
+   "note": "本机没建（下 25 MiB CPython + 装 ~300 MiB 科学栈）；CI 日志：Windows 「体积 249 MiB 冒烟 passed」（19:16:00）/ macOS 「体积 288 MiB」（du -sh 304M）",
+   "output": "runtime/（Windows 249 MiB / macOS 288 MiB）"
+  },
+  {
+   "target": "PyInstaller 桌面产物 dist/Tavotto",
+   "command": "pyinstaller packaging/tavotto.spec --noconfirm（TAVOTTO_REQUIRE_RUNTIME=1）",
+   "seconds": null,
+   "note": "本机没建；CI：Windows 26–29s、macOS 58–90s；总目录大小日志没打印，≥ runtime（249 / 288 MiB）+ workerd + 主进程 Python；macOS 产物含 318 个 Mach-O、runtime 内有符号链接（bin/python3 → python3.13）"
+  }
+ ]
+}

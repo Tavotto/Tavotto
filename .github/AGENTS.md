@@ -91,6 +91,18 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   被起的进程可换（`--launch` 模板，单测用 `tests/support/stub_http_server.py` 的十一种 `--fail-mode`）。
   设计、本机实测（真 wheel 就绪 2.3 s vs 原来盲等 8 s）、负例与已知边界：
   `docs/implementation/ci-foundation/CI03B_PACKAGE_SMOKE_ISOLATION.md`。
+- **构建产物不跨 job 抽取、缓存只有两类（CI02，2026-09-16）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /
+  wheel / workerd / 内置 runtime / PyInstaller / .app）逐行量过——0 行值得新抽取，唯一的数据边仍是 `frontend → plugin-candidate`
+  （消费者用 **checkout 的 HEAD** + **清单里的 content_digest** 核，不信 artifact 的名字）。ci.yml 里的缓存是**枚举**：
+  `actions/cache` 只有两处 CPython 归档（key 含 `runner.os` / `runner.arch` / 锁 hash，恢复在 `build_worker_runtime.py` 之前）、
+  setup-node 的 pnpm store 按 `web/pnpm-lock.yaml`、rust-cache 各自点名 `workspaces` 且不许 `shared-key`；venv / site-packages /
+  用户目录 / 测试结果 / **Playwright 浏览器目录**一律不缓存（`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches`，
+  多一条 `actions/cache` 就红——先回文档改数字）。两条派工时的前提被日志推翻，改之前先读：Windows 腿「装浏览器」的 245s 里
+  **203–226s 是 `--with-deps` 装 Media Foundation**，浏览器下载只 17–27s；push main 上没有任何产缓存的 job，
+  **合并组候选 ref 上现有三类缓存 0% 命中、每个候选各存一份**（仓库缓存已超 10 GB 上限）。TypeScript 的类型检查只在
+  `frontend` 的 `pnpm build`（第一条命令 `tsc -b`）里，`web/tsconfig.json` 的 references **集合**（app / node / e2e）就是它的
+  覆盖面——少一份没有红灯，只是那一类错误从此没有执行位置。数字、反证与下一步：
+  `docs/implementation/ci-foundation/CI02_BUILD_REUSE.md`。
 - 每个「只在别人电脑上发生」的 bug 先变成 `tests/test_windows_regressions.py`
   的用例再谈修（cp936 编码、文件占用、盘符/反斜杠/中文路径、端口占用、
   CLI 只有 .cmd、解释器探测）。

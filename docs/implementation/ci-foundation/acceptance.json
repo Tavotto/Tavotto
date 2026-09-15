@@ -134,36 +134,73 @@
       "id": "CIP-011",
       "phase": "CI02",
       "requirement": "producer和consumer绑定实际SHA/recipe/target/hash",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        ".github/workflows/ci.yml@1f7f13e8 frontend（`plugin_stage.py stage --source-sha \"$(git rev-parse HEAD)\"` → verify → archive → `verify \"$ZIP\" --source-sha \"$SHA\" --content-digest \"$(plugin_stage.py digest \"$STAGE\")\"`；upload `codex-plugin-candidate` = zip + plugin-build.json）",
+        ".github/workflows/ci.yml@1f7f13e8 plugin-candidate（`SHA=\"$(git rev-parse HEAD)\"`、`DIGEST` 从 artifact 里的 plugin-build.json 读、`plugin_stage.py unpack` → `verify \"$PLUGIN\" --source-sha \"$SHA\" --content-digest \"$DIGEST\" --serve`）",
+        "src/tavotto/engine/pluginmanifest.py::write_build_manifest / verify_dir（清单字段：source_sha / build_inputs_fingerprint / lockfile_sha256 / toolchain / files[path, mode, sha256] / content_digest；audit 段不参与身份；verify 逐文件 sha256、不多不少、digest 重算 + 期望值）",
+        "tests/test_plugin_stage.py（错 SHA：test_stage_refuses_a_source_sha_that_is_not_head + verify_dir(source_sha='f'*40)；改一字节 / 少多文件 / 改过的清单：test_one_changed_byte_changes_the_content_digest / test_verify_catches_every_kind_of_drift / test_a_tampered_manifest_is_caught_by_recomputation；dotfile 与可执行位进 zip：test_zip_is_deterministic_and_round_trips / test_zip_keeps_executable_mode_from_the_manifest）",
+        "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest（变异 M19 / M20 / M21 打红：不核 digest、SHA 改成 github.sha、zip 复验不带 digest）+ TestHeavyLaneDependencies::test_heavy_consumers_that_download_an_artifact_must_need_its_producer（uploads['codex-plugin-candidate'] == {'frontend'}）",
+        "CI02_BUILD_REUSE.md#5-产物身份与不混同目标e"
+      ],
+      "note": "主语是「本仓库的每一条数据边」——只有 frontend → plugin-candidate 一条（CI00 §5 / CI01 dag_after.json）。它绑定 SHA（消费者取本次 checkout 的 HEAD，不信 artifact）与内容 hash（清单里的 content_digest，逐文件 sha256 + 模式）；recipe / target 没有第二个值可混：artifact 名只由 frontend 上传（合同钉住）、target 是平台中性的单文件 HTML。本轮没有新增任何数据边（§1 九行 0 行值得抽取），所以「至少一个 consumer 复用正确产物」由既有的这条边兑现——它在每个 PR / 合并组上真跑（plugin-candidate 44–69s）。2026-09-16 CI02。"
     },
     {
       "id": "CIP-012",
       "phase": "CI02",
       "requirement": "真实TypeScript引用检查仍能捕获错误",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "web/package.json（`build` = `tsc -b && vite build && node scripts/tailwind-scan-check.mjs`：第一条是 tsc -b）；web/tsconfig.json（files: [] + references app / node / e2e 三份，三份 noEmit，include 并集 = src / vite.config.ts / e2e / playwright.config.ts）",
+        ".github/workflows/ci.yml@1f7f13e8 frontend（`- run: pnpm build` 恰好一条，无 if / continue-on-error，无第二条 tsc 步）",
+        "evidence/ci02/tsc_mutations.json（本机反证：T1 src 植入类型错误 → `pnpm build` rc 2；T2 e2e 植入 → rc 2；**T3 references 去掉 e2e 再植入 → rc 0**；T4 还原 → rc 0，6.6s）",
+        "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_the_web_build_script_starts_with_a_real_project_build / test_the_project_references_cover_every_typescript_root / test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net（变异 M01–M09 打红：tsc --noEmit、去掉 tsc、references 少 e2e、include 少 playwright.config.ts、noEmit: false、加 continue-on-error、删步、加回 pnpm tsc --noEmit、生成物检查挪到 build 前）",
+        "CI02_BUILD_REUSE.md#3-typescript-真检查引用c"
+      ],
+      "note": "「真错误仍能阻止资格」两半都有证据：本机 T1 / T2 用退出码证明 src 与 e2e 的类型错误各让 pnpm build 非零；执行位置是 frontend 的 pnpm build（CI fast gate 闭集），合同钉住它没有安全网。T3 是新事实：references 少一份不会有任何红灯，只是那一类错误从此没有执行位置——所以合同钉的是 references 的集合而不是「有 references」。web/tsconfig.json 不需要改（e2e 本来就在里面）。CI 上没有为此跑新 run：本 PR 只改合同测试，frontend 的 pnpm build 本身在每个 PR 上照跑。2026-09-16 CI02。"
     },
     {
       "id": "CIP-013",
       "phase": "CI02",
       "requirement": "不混同web/widget/playground/native构建目标",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "evidence/ci02/recipe_table.json（9 行：web 应用 = vite.config.ts → 多文件 dist；MCP widget = vite.mcp.config.ts → 单文件内联 + 指纹戳；playground = vite.playground.config.ts → 多文件 + engine.zip + manifest；wheel / workerd / runtime / PyInstaller / .app 各自的命令、输入、平台绑定、输出）",
+        "evidence/ci02/local_builds.json（本机各建一次：dist 1.9 MiB 8 文件 / canvas.html 1273 KiB 指纹 24f78154bb52d971 / dist-playground 1.6 MiB 指纹 d1b9f461b86f28b0 / wheel 1.6 MiB / workerd 779 KiB——三份 web 产物形态、尺寸、指纹各不相同）",
+        "scripts/build_frontend.py / scripts/build_mcp_widget.py（EXTRA_INPUTS 与 vite_build_argv）/ scripts/build_browser_playground.py（source_fingerprint 各自独立）；packaging/tavotto.spec（datas = src/tavotto/web + runtime，binaries = workerd，按平台）",
+        ".github/workflows/ci.yml@1f7f13e8（native 目标只在各自平台的 job 里建：workerd / runtime / PyInstaller 在 windows-exe-smoke ×2 与 macos-app-smoke，posix-e2e 与 package 不建 native；web 目标各 job 自建，没有一处把 widget 或 playground 当 web 应用用、也没有一处跨平台下载 native 产物）",
+        "CI02_BUILD_REUSE.md#1-recipe-表与逐行决定a--e不混同目标"
+      ],
+      "note": "纯 web 三个目标是三个 recipe（不同 config / 入口 / 输出形态），native 四个目标平台绑定且只在本平台 job 里建；本轮决定 0 行跨 job 抽取，所以「不混同」在结构上由「没有任何跨 job 传输」保证，唯一的传输（插件候选）只有一个 recipe 一个 target。2026-09-16 CI02。"
     },
     {
       "id": "CIP-014",
       "phase": "CI02",
       "requirement": "下载/编译cache与成功环境/结果cache分开",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "evidence/ci02/cache_inventory.json（仓库缓存 60 条原样 + 按家族 / ref 作用域汇总：全部条目属于 setup-node pnpm store（第一类）/ rust-cache（第二类）/ cpython 归档（第一类）三类；main 上 0 条来自 ci.yml）",
+        ".github/workflows/ci.yml@1f7f13e8（actions/cache 只有两处：path build/runtime-cache、key cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}，恢复在 build_worker_runtime.py 之前；setup-node cache: pnpm + cache-dependency-path: web/pnpm-lock.yaml ×5；rust-cache workspaces 各自点名 ×4、无 shared-key / cache-on-failure；package 的 venv 在 runner.temp 不缓存；测试结果只走 if: failure() 的 upload-artifact）",
+        "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads / test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile / test_every_rust_cache_names_its_own_workspace_and_shares_nothing / test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it（枚举：多一条 actions/cache、path 指向 venv、key 少 arch、恢复挪到使用后、pnpm 缓存没按锁、package 开缓存、rust-cache 加 shared-key / 不点名 workspace、posix 不装浏览器——变异 M10–M18 全部打红）",
+        "evidence/ci02/playwright_install_split.json（Windows 装浏览器那一步 245s = pnpm 1s + Media Foundation 226s + 浏览器下载 17s；决定不加浏览器缓存的数字）",
+        "evidence/ci02/merge_group_cache_misses.json（合并组 run 35015416419：rust-cache / cpython / pnpm 全部 miss + save）",
+        "CI02_BUILD_REUSE.md#4-缓存四类审计d"
+      ],
+      "note": "四类分开这一半成立：ci.yml 里只有第一类（pnpm store / CPython 归档）与第二类（rust-cache）两种缓存，第三类只走 artifact（插件候选，消费前验），第四类（venv / site-packages / 用户配置 / 测试结果 / 活动 worker）一处都没有，合同枚举钉住。但审计发现缓存的**作用域**是坏的：push main 上没有任何产缓存的 job，合并组候选 ref 永远冷、每个候选各 save 一份，仓库缓存 10.3–10.6 GB 已超 10 GB 上限；desktop-shell 的两份 rust-cache 占 8.1 GB。这不是「类别混了」，是「命中从不发生」——记为已知边界与下一步（CI02 文档 §8 第 2 条），本轮不改 push main 的 job 集合。2026-09-16 CI02。"
     },
     {
       "id": "CIP-015",
       "phase": "CI02",
       "requirement": "生成物不回源码索引且精确发行链不被PR污染",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        ".github/workflows/ci.yml@1f7f13e8 frontend（`pnpm build` 之后 `python3 scripts/ci/check_generated_untracked.py`：git ls-files 里没有 + git check-ignore 命中，GENERATED = canvas.html / web/dist-mcp / web/dist-playground）+ main-landing-audit（同一脚本再查一次）",
+        "tests/test_generated_untracked.py（test_a_tracked_canvas_is_reported / test_an_unignored_canvas_is_reported_even_if_untracked / test_the_real_repository_is_clean / test_the_cli_exit_code_carries_the_verdict）；tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net（检查排在 build 之后；M09）",
+        "docs/ci/plugin-stable-channel.md（ADR 0043：候选只验不回写不发布；release.yml 在固定发行 SHA 上重建，plugin_stable 只投影 Release 资产；发行分支不触发源码 CI）——本轮未动",
+        "evidence/ci02/local_builds.json（本机建了 canvas.html / dist-playground / wheel / workerd 之后 `git status` 归零：产物落在 scratchpad 或 gitignore 的位置）",
+        "CI02_BUILD_REUSE.md#5-产物身份与不混同目标e"
+      ],
+      "note": "生成物不回索引：两条判据（索引里没有 + ignore 命中）在 PR 快线与 main 落地审计各执行一次，且排在真构建之后（生成物存在时才有意义）。发行链不被 PR 污染：本轮没有新增任何从 PR artifact 到发行输入的路径（0 行抽取），plugin-stable 通道与 release.yml 一个字节没动。2026-09-16 CI02。"
     },
     {
       "id": "CIP-016",

@@ -1,0 +1,28 @@
+{
+ "run_id": 35015416419,
+ "event": "merge_group",
+ "head_branch": "gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+ "date": "2026-09-15T19:44:27Z",
+ "how": "gh run view 35015416419 --job <id> --log | grep -E 'Cache not found|Cache restored|No cache found|Cache saved'",
+ "jobs": {
+  "frontend (104537496572)": [
+   "Cache saved with the key: node-cache-Linux-x64-pnpm-6e5eef4c…（没有「Cache restored」行 = setup-node 的 pnpm 缓存 miss）"
+  ],
+  "desktop-shell (ubuntu-latest) (104537496971)": [
+   "No cache found.（rust-cache miss）"
+  ],
+  "windows-exe-smoke (104548978252)": [
+   "No cache found.（rust-cache miss）",
+   "Cache not found for input keys: cpython-Windows-X64-1ed851e2…",
+   "Cache saved with key: cpython-Windows-X64-1ed851e2…",
+   "Cache saved with the key: node-cache-Windows-x64-pnpm-2a57bf76…"
+  ],
+  "macos-app-smoke (104548978369)": [
+   "No cache found.（rust-cache miss）",
+   "Cache not found for input keys: cpython-macOS-ARM64-525774d4…",
+   "Cache saved with key: cpython-macOS-ARM64-525774d4…",
+   "Cache saved with the key: node-cache-macOS-arm64-pnpm-6e5eef4c…"
+  ]
+ },
+ "reading": "合并组候选的 ref 每个都是新的（gh-readonly-queue/main/pr-N-<sha>），能读的只有自己 ref + main（docs.github.com「Restrictions for accessing a cache」）；ci.yml 在 push main 上只跑 main-landing-audit，没有任何一个产缓存的 job → main 上没有 ci.yml 的缓存（cache_inventory.json 的 entries_on_main_by_family 全 0，main 上仅有的 3 条来自 nightly / release）→ 合并组上 rust-cache / cpython / pnpm 三类全部 miss，并各自 save 一份新条目。"
+}

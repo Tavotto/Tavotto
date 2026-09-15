@@ -1,0 +1,44 @@
+{
+ "date": "2026-09-16",
+ "tree_before": "ci/ci02-build-reuse @ 1f7f13e8（git status 干净；每次变异后 git checkout -- 还原，status 归零）",
+ "mutant_line": "export const __ci02_mutation: number = \"not a number\";",
+ "cases": [
+  {
+   "id": "T1",
+   "where": "web/src/lib/brand.ts（append）",
+   "command": "cd web && pnpm build",
+   "rc": 2,
+   "errors": [
+    "src/lib/brand.ts(31,14): error TS2322: Type 'string' is not assignable to type 'number'."
+   ],
+   "meaning": "src 里的类型错误让 pnpm build 非零（tsc -b 经 tsconfig.app.json）"
+  },
+  {
+   "id": "T2",
+   "where": "web/e2e/fixtures.ts（append）",
+   "command": "cd web && pnpm build",
+   "rc": 2,
+   "errors": [
+    "e2e/fixtures.ts(238,14): error TS2322: Type 'string' is not assignable to type 'number'."
+   ],
+   "meaning": "e2e 里的类型错误也让 pnpm build 非零（tsc -b 经 tsconfig.e2e.json——references 里有它）"
+  },
+  {
+   "id": "T3",
+   "where": "web/e2e/fixtures.ts（append）+ web/tsconfig.json 的 references 去掉 ./tsconfig.e2e.json",
+   "command": "cd web && pnpm build",
+   "rc": 0,
+   "errors": [],
+   "meaning": "**references 少了 e2e 那一份，同一个 e2e 类型错误 pnpm build 退 0**——e2e 的类型检查执行位置就是 references 的集合，所以合同测试钉的是集合"
+  },
+  {
+   "id": "T4",
+   "where": "全部还原（git checkout -- web/src/lib/brand.ts web/e2e/fixtures.ts web/tsconfig.json）",
+   "command": "cd web && pnpm build",
+   "rc": 0,
+   "seconds": 6.57,
+   "errors": [],
+   "meaning": "还原后绿"
+  }
+ ]
+}
