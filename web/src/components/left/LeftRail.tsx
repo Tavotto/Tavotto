@@ -73,7 +73,7 @@ export function LeftRail() {
                 : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
             )}
           >
-            <Icon size={ICON_SIZE.md} />
+            <Icon size={ICON_SIZE.md} filled={active} />
             {id === 'problems' && problems > 0 && (
               /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
                  而且用形状（实心点）+ 数字两重表达，不只靠颜色 */

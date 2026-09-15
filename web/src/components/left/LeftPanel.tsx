@@ -80,7 +80,7 @@ export function LeftPanel({
             className="-mr-1.5"
             onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
           >
-            <Pin size={ICON_SIZE.md} className={pinned ? 'text-ink' : 'text-ink-3'} />
+            <Pin size={ICON_SIZE.md} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
           </IconButton>
         )}
       </div>
