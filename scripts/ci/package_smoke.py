@@ -198,8 +198,65 @@ def _status(url: str, timeout: float = 5.0) -> tuple[int, bytes]:
         return int(exc.code), exc.read()
 
 
+def describe_connect_error(exc: BaseException) -> str:
+    """「连不上」分三档说清楚——它们指向三种不同的状态，混成一句就没法诊断：
+
+    * `refused`：端口上没人 bind（对端立刻 RST）；
+    * `connect timed out`：SYN 发出去没有回音。**macOS 实测**：端口已 bind 但还没 `listen` 时就是
+      这个（SYN 被丢，不是 RST）；`http.server.HTTPServer.server_bind` 恰好在 bind 与 listen 之间
+      调 `socket.getfqdn(host)`（反向 DNS）——PR #376 macOS 首跑的签名；
+    * `recv timed out`：三次握手成了、请求发了、对方不答——listen 了但没在 accept / 处理挂住。
+    urllib 把 connect 阶段的错包在 `URLError.reason` 里，recv 阶段的 `TimeoutError` 裸抛，两处都认。
+    """
+    inner = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    phase = "connect" if isinstance(exc, urllib.error.URLError) else "recv"
+    if isinstance(inner, ConnectionRefusedError):
+        return "refused（端口上没人 bind）"
+    if isinstance(inner, TimeoutError):
+        if phase == "connect":
+            return "connect timed out（SYN 无回音——macOS 上 = 已 bind 未 listen）"
+        return "recv timed out（握手成了但没应答）"
+    if isinstance(inner, OSError):
+        return f"{type(inner).__name__} errno={inner.errno}: {inner}"
+    return f"{type(inner).__name__}: {inner}"
+
+
+class ProbeLog:
+    """每一轮轮询的结果序列（去重成「同一结果连续 N 次」的段），判「一直 refused 然后 timed out」
+    还是「一开始就 timed out」全靠它——只留最后一次的话两种形状看起来一样。"""
+
+    KEEP = 12  # 记前几段；序列再长就只在最后补一段
+
+    def __init__(self) -> None:
+        self.t0 = time.monotonic()
+        self.runs: list[dict] = []  # {"outcome", "count", "first_at", "last_at"}
+        self.total = 0
+
+    def note(self, outcome: str) -> None:
+        now = round(time.monotonic() - self.t0, 2)
+        self.total += 1
+        if self.runs and self.runs[-1]["outcome"] == outcome:
+            self.runs[-1]["count"] += 1
+            self.runs[-1]["last_at"] = now
+            return
+        if len(self.runs) >= self.KEEP:
+            self.runs[-1]["truncated_after"] = True
+        self.runs.append({"outcome": outcome, "count": 1, "first_at": now, "last_at": now})
+
+    def summary(self) -> str:
+        return " → ".join(
+            f"[{r['first_at']}s–{r['last_at']}s ×{r['count']}] {r['outcome']}" for r in self.runs
+        )
+
+
 def wait_ready(
-    base: str, proc: subprocess.Popen, data_dir: Path, port: int, timeout: float, log_path: Path
+    base: str,
+    proc: subprocess.Popen,
+    data_dir: Path,
+    port: int,
+    timeout: float,
+    log_path: Path,
+    probes: ProbeLog | None = None,
 ) -> tuple[str, object]:
     """轮询到「**我们的**进程在 `port` 上应答」为止。
 
@@ -213,6 +270,7 @@ def wait_ready(
     实例——它也是 Tavotto、也答 200、也是 JSON。凭据的装载**就写在这一层**：仓库门禁
     `test_every_app_launcher_adopts_credentials` 从含 Popen 的函数出发只看一层可达。
     """
+    probes = probes if probes is not None else ProbeLog()
     t0 = time.monotonic()
     deadline = t0 + timeout
     last = "还没收到任何应答"
@@ -220,13 +278,15 @@ def wait_ready(
         rc = proc.poll()
         busy = looks_busy(read_log(log_path))
         if busy:
+            probes.note(last)
             return "lease_lost", f"日志里出现端口占用类文案：{busy}"
         if rc is not None:
+            probes.note(last)
             return "exited", f"子进程在就绪前退出，returncode={rc}"
         try:
             code, body = _status(f"{base}/api/version", timeout=3)
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            last = f"{base}/api/version 连不上：{type(exc).__name__}: {exc}"
+            last = f"{base}/api/version 连不上：{describe_connect_error(exc)}"
             code, body = None, b""
         if code is None:
             pass
@@ -251,11 +311,16 @@ def wait_ready(
                     ping = None
                     last = f"/api/session/ping 连不上：{type(exc).__name__}: {exc}"
                 if ping == 200:
+                    probes.note("ready")
                     return "ready", {"version": version, "seconds": time.monotonic() - t0}
                 if ping is not None:
                     last = f"/api/session/ping 用本实例凭据打回 {ping}——{port} 上应答的不是我们起的进程"
+        probes.note(last)
         if time.monotonic() >= deadline:
-            return "timeout", f"{timeout:.0f}s 内没就绪；最后一次：{last}"
+            return (
+                "timeout",
+                f"{timeout:.0f}s 内没就绪；最后一次：{last}；轮询序列：{probes.summary()}",
+            )
         time.sleep(POLL_S)
 
 
@@ -384,9 +449,11 @@ def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: f
             stderr=subprocess.STDOUT,
             start_new_session=(os.name != "nt"),  # POSIX：自己一个进程组，终止时整组一起
         )
+    probes = ProbeLog()
     try:
-        state, detail = wait_ready(base, proc, data_dir, port, timeout, log_path)
+        state, detail = wait_ready(base, proc, data_dir, port, timeout, log_path, probes)
         record["state"] = state
+        record["probes"] = {"total": probes.total, "runs": probes.runs}
         if state != "ready":
             record["reason"] = detail
         else:
@@ -452,6 +519,16 @@ def _report_failure(record: dict) -> None:
         f"ERROR: 第 {record['attempt']} 次（端口 {record['port']}）{record['reason']}",
         file=sys.stderr,
     )
+    probes = record.get("probes") or {}
+    if probes.get("runs"):
+        print(
+            f"--- 轮询序列（共 {probes['total']} 次）---\n"
+            + "\n".join(
+                f"  [{r['first_at']}s–{r['last_at']}s ×{r['count']}] {r['outcome']}"
+                for r in probes["runs"]
+            ),
+            file=sys.stderr,
+        )
     log = Path(record["log"])
     print(f"--- 服务日志尾（最后 {LOG_TAIL_LINES} 行）{log} ---", file=sys.stderr)
     print(log_tail(log) or "（日志是空的）", file=sys.stderr, flush=True)
