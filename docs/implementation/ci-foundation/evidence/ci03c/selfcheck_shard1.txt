@@ -1,0 +1,3 @@
+{"shard": 1, "my_projects": ["chromium"], "other_projects": ["chromium-en", "webkit"], "all_projects": ["chromium", "chromium-en", "webkit"], "full_total": 151, "per_project_total": {"chromium": 109, "chromium-en": 19, "webkit": 23}, "mine_total": 109, "mine_expected": 109, "problems": [], "ok": true}
+✓ 第 1 片 ['chromium']：109 条 == 全集 151 条里属于本片的 109 条；['chromium'] ∪ ['chromium-en', 'webkit'] == ['chromium', 'chromium-en', 'webkit']
+rc=0

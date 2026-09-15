@@ -28,6 +28,7 @@
 | `admin_inventory.json` | 管理员待填表（`not_run`）+ 文档里已记录的假设 | 只读文档；没登录任何机器 |
 | `ci01/` | **CI01 的静态证据**（改后 DAG、边分类、机器比对、analyze 解析检查），见 [`ci01/README.md`](ci01/README.md)；本目录其余文件仍是 `8b95256c` 的事实，CI01 一个字节没动 | 2026-09-16 |
 | `ci03a/` | **CI03a 的本机证据**（全量 vs 两片顺序 vs 两片并发的 junit / time / manifest、集合级比对、负例与变异反证、SIGINT 坑的双向验证），见 [`ci03a/README.md`](ci03a/README.md)；没有真实 CI run | 2026-09-16 |
+| `ci03c/` | **CI03c 的证据**（三份 `--list`、自验输出、12 条负例、两组变异反证 19/19 + 18/18、本机四次真跑的日志 / 计时 / 集合比对、PR #373 attempt 1 挂 60 分钟的 job+steps 原样与 attempt 2 的逐 project 时长），见 [`ci03c/README.md`](ci03c/README.md)；没有真实的分片 CI run | 2026-09-16 |
 
 **不进仓库的东西**（在会话 scratchpad）：未裁剪的原始 API JSON（与裁剪版对拍过：`analyze` 输出逐字节相同）、
 完整 pytest 日志（873 KB）、junit.xml（592 KB）、五个 CI job 的完整日志、变异反证脚本。

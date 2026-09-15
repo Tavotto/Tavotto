@@ -1,0 +1,182 @@
+{
+ "target": "scripts/ci/playwright_shard_check.py",
+ "test": "tests/test_playwright_shard_check.py",
+ "baseline_rc": 0,
+ "baseline": "...................................                                      [100%]\n35 passed in 0.32s",
+ "after_restore_rc": 0,
+ "killed": 19,
+ "total": 19,
+ "mutations": [
+  {
+   "id": "M01 parse_list：拿掉「一条用例都没有」",
+   "old": "    if not entries:\n        raise ListError(f\"{label}：`--list` 输出里一条用例都没有\")\n",
+   "new": "",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_rejects_malformed_lists[Listing tests:\\nTotal: 0 tests in 0 files\\n-\\u96f6\\u6761]\n1 failed, 34 passed in 0.31s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M02 parse_list：认不出的行静默跳过",
+   "old": "        if not em:\n            raise ListError(\n",
+   "new": "        if not em:\n            continue\n            raise ListError(\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_rejects_malformed_lists[Listing tests:\\n  [chromium] \\u203a a11y.spec.ts:1:1 \\u203a x\\nError: boom\\nTotal: 1 test in 1 file\\n-\\u5939\\u4e86\\u62a5\\u9519\\u884c]\n1 failed, 34 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M03 parse_list：拿掉「没有 Total: 行」",
+   "old": "    if total is None:\n        raise ListError(f\"{label}：没有 `Total: N tests in M files` 行——输出被截断了？\")\n",
+   "new": "",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_rejects_malformed_lists[Listing tests:\\n  [chromium] \\u203a a11y.spec.ts:1:1 \\u203a x\\n-\\u6ca1\\u6709 Total: \\u884c]\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M04 parse_list：拿掉「Total 与条数不符」",
+   "old": "    if total is not None and total != len(entries):\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_cli_exits_2_on_unreadable_input[Listing tests:\\n  [chromium] \\u203a a11y.spec.ts:205:1 \\u203a \\u9879\\u76ee\\u9009\\u62e9\\u5668\\uff1aaxe \\u65e0\\u8fdd\\u89c4\\n  [chromium] \\u203a i18n.spec.ts:68:5 \\u203a \\u754c\\u9762\\u8bed\\u8a00 zh-CN \\u203a \\u9879\\u76ee\\u9009\\u62e9\\u5668\\n  [chromium] \\u203a i18n.spec.ts:68:5 \\u203a \\u754c\\u9762\\u8bed\\u8a00 en-US \\u203a \\u9879\\u76ee\\u9009\\u62e9\\u5668\\nTotal: 4 tests in 2 files\\n-Total \\u4e0d\\u7b26]\n2 failed, 33 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M05 parse_list：拿掉重复条目检查",
+   "old": "    if dup:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_rejects_malformed_lists[Listing tests:\\n  [chromium] \\u203a a11y.spec.ts:1:1 \\u203a x\\n  [chromium] \\u203a a11y.spec.ts:1:1 \\u203a x\\nTotal: 2 tests in 1 file\\n-\\u91cd\\u590d\\u6761\\u76ee]\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M06 parse_list：拿掉「两行 Total」",
+   "old": "            if total is not None:\n                raise ListError",
+   "new": "            if False:\n                raise ListError",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_rejects_malformed_lists[Listing tests:\\n  [chromium] \\u203a a11y.spec.ts:1:1 \\u203a x\\nTotal: 1 test in 1 file\\nTotal: 1 test in 1 file\\n-\\u4e24\\u884c Total]\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M07 parse_projects：任何 token 都当 project 名",
+   "old": "        if not m:\n            raise ListError(f\"{label}：`{tok}` 不是 `--project=NAME` 的形状\")\n",
+   "new": "        if not m:\n            names.append(tok)\n            continue\n",
+   "rc": 1,
+   "failed": 3,
+   "tail": "3 failed | FAILED tests/test_playwright_shard_check.py::test_parse_projects_rejects_anything_that_is_not_exactly_project_flags[--project=]\n3 failed, 32 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M08 parse_projects：拿掉空片检查",
+   "old": "    if not names:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 3,
+   "tail": "3 failed | FAILED tests/test_playwright_shard_check.py::test_cli_refuses_an_empty_shard\n3 failed, 32 passed in 0.31s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M09 parse_projects：拿掉重复检查",
+   "old": "    if len(set(names)) != len(names):\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_parse_projects_rejects_anything_that_is_not_exactly_project_flags[--project=a --project=a]\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M10 verify：拿掉两片重叠",
+   "old": "    if overlap:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_cli_exits_1_when_both_shards_claim_the_same_project\n2 failed, 33 passed in 0.31s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M11 verify：拿掉漏片",
+   "old": "    if missing:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_cli_exits_1_when_a_project_is_left_out\n2 failed, 33 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M12 verify：拿掉「配置里不存在的 project」",
+   "old": "    if unknown:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_a_project_that_the_config_does_not_have_is_reported\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M13 verify：拿掉本片为空",
+   "old": "    if not got:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_an_empty_shard_list_is_reported\n1 failed, 34 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M14 verify：拿掉「本片有不在全集里的」",
+   "old": "    if outside:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_a_shard_entry_outside_the_full_list_is_reported\n1 failed, 34 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M15 verify：拿掉「本片少了」",
+   "old": "    if lacking:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 3,
+   "tail": "3 failed | FAILED tests/test_playwright_shard_check.py::test_the_verdict_is_about_sets_not_counts\n3 failed, 32 passed in 0.32s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M16 verify：拿掉「本片多了」",
+   "old": "    if extra:\n",
+   "new": "    if False:\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_the_verdict_is_about_sets_not_counts\n2 failed, 33 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M17 main：有问题也退 0",
+   "old": "        return 1\n    print(\n",
+   "new": "        return 0\n    print(\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_cli_exits_1_when_both_shards_claim_the_same_project\n2 failed, 33 passed in 0.31s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M18 main：只给 --full 时本片默认成全集",
+   "old": "            raise ListError(\"要么给 --web，要么同时给 --full 与 --mine\")\n",
+   "new": "            full_text = args.full.read_text(encoding=\"utf-8\")\n            mine_text = full_text\n",
+   "rc": 1,
+   "failed": 1,
+   "tail": "1 failed | FAILED tests/test_playwright_shard_check.py::test_cli_refuses_half_an_input\n1 failed, 34 passed in 0.33s",
+   "verdict": "KILLED"
+  },
+  {
+   "id": "M19 verify：少 / 多两条改按计数判（集合 vs 计数）",
+   "old": "    lacking = expected - got\n",
+   "new": "    lacking = set() if len(expected) == len(got) else expected - got\n",
+   "rc": 1,
+   "failed": 2,
+   "tail": "2 failed | FAILED tests/test_playwright_shard_check.py::test_the_verdict_is_about_sets_not_counts\n2 failed, 33 passed in 0.32s",
+   "verdict": "KILLED"
+  }
+ ]
+}
