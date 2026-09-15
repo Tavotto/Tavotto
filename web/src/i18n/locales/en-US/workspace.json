@@ -526,10 +526,9 @@
     "runAria": "Run {{script}} and discover figures",
     "running": "Running the script…",
     "runtimeNamesNote": "Output names appear only after it runs.",
-    "safeNoteBody": "Safe import isolates what scripts write and reads the data they need from the project folder. A script runs only after you click Run.",
-    "safeNoteDismiss": "Got it",
     "starting": "Starting the rendering environment…",
-    "viewResults": "View captured figures"
+    "viewResults": "View captured figures",
+    "groupInfraName": "Tools and config scripts"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",

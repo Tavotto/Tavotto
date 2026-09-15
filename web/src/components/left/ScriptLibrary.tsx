@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Ban, Copy, Play, Settings, Square } from 'lucide-react'
 import { listRowClass } from '@/components/ui/listRow'
-import { Notice } from '@/components/ui/Notice'
 import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -35,7 +34,6 @@ import { EmptyState } from '../ui/EmptyState'
 const sc = (key: string, values?: Record<string, unknown>) =>
   translate(`scripts.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-const SAFE_NOTE_KEY = 'tavotto.safeProbeNoticeDismissed'
 
 type Group = 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
 const GROUP_ORDER: Group[] = ['linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
@@ -97,12 +95,13 @@ export function ScriptLibrary({ query }: { query: string }) {
 
   return (
     <div className="flex flex-col px-2 pb-2">
-      <SafeModeNote />
       {GROUP_ORDER.filter((g) => groups.has(g)).map((g) =>
         g === 'infra' ? (
           <Details key={g} className="mt-1">
-            <Summary className="mx-1 h-6 rounded-xs px-1 type-meta hover:text-ink-2">
-              {sc('groupInfra', { count: groups.get(g)!.length })}
+            {/* 与上面各组同一格式：名字 + meta 数字（2026-09-15 打磨批次 G，此前是「工具与配置脚本（1）」） */}
+            <Summary className="mx-1 h-6 gap-1.5 rounded-xs px-1 type-meta hover:text-ink-2">
+              {sc('groupInfraName')}
+              <span className="tabular-nums">{groups.get(g)!.length}</span>
             </Summary>
             <ul aria-label={sc('groupInfra', { count: groups.get(g)!.length })}>
               {groups.get(g)!.map((entry) => (
@@ -133,40 +132,6 @@ export function ScriptLibrary({ query }: { query: string }) {
  * safe 模式首次使用的简洁说明（关掉之后不再出现；不解释术语，只讲两件
  * 用户关心的事：写入被隔离、只有点了才会运行）。
  */
-function SafeModeNote() {
-  useTranslation('workspace')
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return localStorage.getItem(SAFE_NOTE_KEY) === '1'
-    } catch {
-      return false
-    }
-  })
-  if (dismissed) return null
-  return (
-    <Notice
-      className="mx-1"
-      action={
-        <Button
-          size="sm"
-          className="text-ink-3"
-          onClick={() => {
-            setDismissed(true)
-            try {
-              localStorage.setItem(SAFE_NOTE_KEY, '1')
-            } catch {
-              /* 存不下就只在本次会话里生效 */
-            }
-          }}
-        >
-          {sc('safeNoteDismiss')}
-        </Button>
-      }
-    >
-      {sc('safeNoteBody')}
-    </Notice>
-  )
-}
 
 /**
  * 一行脚本（Tavotto File Row）：状态点 | 文件名 | 状态一句话 | 运行图标钮。

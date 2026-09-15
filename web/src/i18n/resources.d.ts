@@ -3993,6 +3993,7 @@ export default interface Resources {
       "diagnostics": "诊断详情",
       "dropped_other": "还有 {{count}} 张未捕获。显式 savefig 不受限。",
       "emptyTitle": "项目里没有发现 Python 脚本",
+      "groupInfraName": "工具与配置脚本",
       "groupInfra_other": "工具与配置脚本（{{count}}）",
       "group_linked": "已关联",
       "group_needsEnv": "可能需要原环境",
@@ -4013,8 +4014,6 @@ export default interface Resources {
       "runAria": "运行 {{script}} 并发现图",
       "running": "正在运行脚本…",
       "runtimeNamesNote": "输出名称只能在运行后确定",
-      "safeNoteBody": "安全导入会隔离脚本写入，并从项目目录读取所需数据。脚本只会在你点击运行后执行。",
-      "safeNoteDismiss": "知道了",
       "starting": "正在启动渲染环境…",
       "viewResults": "查看捕获结果"
     },

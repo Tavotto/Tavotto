@@ -484,7 +484,8 @@ export function WriteBackTopBarButton() {
       <Tip label={tip}>
         <Button
           data-write-back="open"
-          variant="secondary"
+          // ghost（2026-09-15 打磨批次 F）：顶栏右侧只剩一颗填色的「导出」，其余不带壳
+          variant="ghost"
           size="md"
           disabled={disabled}
           aria-label={wb('buttonLabel')}

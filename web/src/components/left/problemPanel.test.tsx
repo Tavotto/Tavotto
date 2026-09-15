@@ -471,8 +471,9 @@ describe('范围：当前图 / 整个文档（审计 T09）', () => {
     expect(checkedRadio()?.textContent).toContain('当前图')
     expect(text()).toContain('Y 轴刻度')
     expect(text()).not.toContain('X 轴刻度')
-    // 图名就在范围旁边，用户知道「当前图」指的是谁
-    expect(text()).toContain('Fig2.pdf')
+    // 图名写在「当前图」页签的 title 里（2026-09-15 打磨批次 E：不再在页签下面挂一行图名）
+    expect(text()).not.toContain('Fig2.pdf')
+    expect(checkedRadio()?.getAttribute('title')).toContain('Fig2.pdf')
   })
 
   it('没有正在编辑或选中的图：「当前图」灰掉并说明原因，实际看整个文档', async () => {

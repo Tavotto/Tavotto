@@ -501,10 +501,9 @@
     "runAria": "运行 {{script}} 并发现图",
     "running": "正在运行脚本…",
     "runtimeNamesNote": "输出名称只能在运行后确定",
-    "safeNoteBody": "安全导入会隔离脚本写入，并从项目目录读取所需数据。脚本只会在你点击运行后执行。",
-    "safeNoteDismiss": "知道了",
     "starting": "正在启动渲染环境…",
-    "viewResults": "查看捕获结果"
+    "viewResults": "查看捕获结果",
+    "groupInfraName": "工具与配置脚本"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",

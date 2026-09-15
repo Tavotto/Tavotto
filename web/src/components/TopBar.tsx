@@ -6,9 +6,7 @@ import {
   Circle,
   Download,
   Maximize2,
-  Minus,
   Ellipsis,
-  Plus,
   Redo2,
   Slash,
   Square,
@@ -96,7 +94,10 @@ export function TopBar() {
         <Brand />
         {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
         <ProjectSwitcher />
-        <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
+        {/* 项目 / 文档是一条面包屑（2026-09-15 打磨批次 F）：一个斜杠，不是竖线加两个 chip */}
+        <span aria-hidden className="type-meta shrink-0 select-none">
+          /
+        </span>
         <DocumentMenu />
         <SaveStateLabel />
         <RecoveryNotice />
@@ -508,78 +509,54 @@ function ZoomControls() {
   const zoom = useViewportStore((s) => s.zoom)
   const page = useDocumentStore((s) => s.doc.page)
   const [open, setOpen] = useState(false)
+  const item = (label: string, shortcut: string | null, onPick: () => void) => (
+    <button
+      key={label}
+      onClick={() => {
+        onPick()
+        setOpen(false)
+      }}
+      className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
+    >
+      <span>{label}</span>
+      {shortcut && <span className="font-mono text-xs text-ink-3">{shortcut}</span>}
+    </button>
+  )
 
   return (
-    <div className="flex items-center rounded-sm border border-border bg-surface">
-      <Tip label={t('topbar.zoomOut')} shortcut={`${MOD}−`}>
-        <Button
-          size="icon-sm"
-          className="rounded-r-none"
-          onClick={() => useViewportStore.getState().zoomBy(1 / 1.25)}
-          aria-label={t('topbar.zoomOut')}
-        >
-          <Minus size={ICON_SIZE.sm} />
-        </Button>
-      </Tip>
+    /* 缩放是一颗文本钮「114% ⌄」+ 一颗适应画布图标钮（2026-09-15 打磨批次 F，L3）：
+       此前是四格边框组，与旁边的边框钮、黑钮三种壳相邻。放大 / 缩小进了菜单，快捷键照旧 */
+    <div className="flex items-center gap-0.5">
       <Popover
         open={open}
         onOpenChange={setOpen}
-        width={128}
-        align="center"
+        width={144}
+        align="end"
         trigger={
-          <button
-            aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })}
-            className="h-7 w-14 border-x border-border text-sm tabular-nums text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
-          >
+          <Button size="sm" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="tabular-nums">
             {Math.round(zoom * 100)}%
-          </button>
+            <ChevronDown size={ICON_SIZE.xs} className="text-ink-faint" />
+          </Button>
         }
       >
         <div className="flex flex-col">
-          {ZOOM_PRESETS.map((z) => (
-            <button
-              key={z}
-              onClick={() => {
-                useViewportStore.getState().setZoomCentered(z)
-                setOpen(false)
-              }}
-              className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
-            >
-              <span>{z * 100}%</span>
-              {z === 1 && <span className="font-mono text-xs text-ink-3">{MOD}0</span>}
-            </button>
-          ))}
+          {item(t('topbar.zoomIn'), `${MOD}+`, () => useViewportStore.getState().zoomBy(1.25))}
+          {item(t('topbar.zoomOut'), `${MOD}−`, () => useViewportStore.getState().zoomBy(1 / 1.25))}
           <div className="my-1 h-px bg-border" />
-          <button
-            onClick={() => {
-              useViewportStore.getState().fitAnimated(page.w, page.h)
-              setOpen(false)
-            }}
-            className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
-          >
-            <span>{t('topbar.fitCanvas')}</span>
-            <span className="font-mono text-xs text-ink-3">{MOD}1</span>
-          </button>
+          {ZOOM_PRESETS.map((z) =>
+            item(`${z * 100}%`, z === 1 ? `${MOD}0` : null, () => useViewportStore.getState().setZoomCentered(z)),
+          )}
+          <div className="my-1 h-px bg-border" />
+          {item(t('topbar.fitCanvas'), `${MOD}1`, () => useViewportStore.getState().fitAnimated(page.w, page.h))}
         </div>
       </Popover>
-      <Tip label={t('topbar.zoomIn')} shortcut={`${MOD}+`}>
-        <Button
-          size="icon-sm"
-          className="rounded-none"
-          onClick={() => useViewportStore.getState().zoomBy(1.25)}
-          aria-label={t('topbar.zoomIn')}
-        >
-          <Plus size={ICON_SIZE.sm} />
-        </Button>
-      </Tip>
       <Tip label={t('topbar.fitCanvas')} shortcut={`${MOD}1`}>
         <Button
-          size="icon-sm"
-          className="rounded-l-none border-l border-border"
+          size="icon"
           onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           aria-label={t('topbar.fitCanvas')}
         >
-          <Maximize2 size={ICON_SIZE.sm} />
+          <Maximize2 size={ICON_SIZE.md} />
         </Button>
       </Tip>
     </div>

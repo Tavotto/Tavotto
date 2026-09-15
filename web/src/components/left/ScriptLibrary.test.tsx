@@ -168,15 +168,11 @@ describe('脚本区列表', () => {
     expect(text).toContain('已关联 2 张图')
   })
 
-  it('safe 模式首次说明可见、关掉后不再出现', async () => {
+  it('没有常驻的安全导入说明（2026-09-15 打磨批次 G：说明与术语提示不常驻）', async () => {
     mockRegistry.mockResolvedValue(view([entry({})]))
     await mount()
-    expect(host.textContent).toContain('安全导入会隔离脚本写入')
-    await act(async () => buttonByText('知道了').click())
     expect(host.textContent).not.toContain('安全导入会隔离脚本写入')
-    await act(async () => root.unmount())
-    await mount()
-    expect(host.textContent).not.toContain('安全导入会隔离脚本写入')
+    expect(Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '知道了')).toBeUndefined()
   })
 
   it('英文主路径不得泄漏中文', async () => {

@@ -291,7 +291,9 @@ export function ProblemPanel() {
           {[actionable, unverifiable].map((list, i) =>
             list.length === 0 ? null : (
               <li key={i === 0 ? 'actionable' : 'unverifiable'} data-problem-tier={i === 0 ? 'actionable' : 'unverifiable'}>
-                {i === 1 && (
+                {/* 小标题只在两段同时在场时才有东西可分（2026-09-15 打磨批次 E）：只有
+                    「无法核验」一段时，上面的筛选 chip 已经说了它是什么 */}
+                {i === 1 && actionable.length > 0 && (
                   <p className="type-section mb-1 mt-2 px-1">{pr('tierUnverifiable')}</p>
                 )}
                 <ul>
@@ -385,12 +387,8 @@ function ScopeBar({
           </Tab>
         </TabList>
       </div>
-      {/* 图名就在范围下面：用户得知道「当前图」指的是谁 */}
-      {scope === 'figure' && figureName && (
-        <p className="type-meta truncate pt-1.5" title={figureName}>
-          {figureName}
-        </p>
-      )}
+      {/* 「当前图」是谁：写在页签的 title 里（scopeFigureTip），不再在页签下面挂一行图名
+          （2026-09-15 打磨批次 E，L4：一条问题上面曾有六层头） */}
     </div>
   )
 }
@@ -485,13 +483,13 @@ function GroupBlock({
   const visible = folded ? group.issues.slice(0, PREVIEW_ROWS) : group.issues
   return (
     <li data-issue-group={group.ruleCode} className="mb-1">
-      <div className="sticky top-0 z-[1] flex items-start gap-1 bg-surface py-1.5">
+      <div className="sticky top-0 z-[1] flex items-center gap-1 bg-surface py-1">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
           className={cn(
-            'flex min-w-0 flex-1 items-start gap-1.5 rounded-sm px-1 py-0.5 text-left outline-none',
+            'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left outline-none',
             'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
           )}
         >
@@ -505,11 +503,13 @@ function GroupBlock({
           <Icon
             size={ICON_SIZE.sm}
             aria-hidden
-            className={cn('mt-px shrink-0', SEVERITY_INK[group.severity])}
+            className={cn('shrink-0', SEVERITY_INK[group.severity])}
           />
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-medium leading-4 text-ink">{title}</span>
-            <span className="type-meta mt-px block leading-4 tabular-nums">
+          {/* 组头一行（2026-09-15 打磨批次 E）：标题在左、「N 个对象 · 等级」meta 在右；
+              等级文字仍在——等级不只靠颜色（problemPanel.test 钉着） */}
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium leading-5 text-ink">{title}</span>
+            <span className="type-meta shrink-0 leading-5 tabular-nums">
               {pr('groupObjects', { count: group.objects })}
               {' · '}
               {severityLabel(group.severity)}
