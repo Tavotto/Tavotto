@@ -61,7 +61,9 @@ export function Reveal({ open, className, children }: { open: boolean; className
       data-state={state}
       data-reveal
       className={cn(
-        'grid data-[state=open]:animate-reveal-in data-[state=closed]:animate-reveal-out',
+        // 列钉成 minmax(0,1fr)：grid 的隐式列按 min-content 定宽，里面一行 truncate 的长路径会把列
+        // 撑过容器右缘（编码 Agent 详情「找过这些位置」实测）；钉住之后 truncate 才生效（2026-09-15 对话框批次）
+        'grid grid-cols-[minmax(0,1fr)] data-[state=open]:animate-reveal-in data-[state=closed]:animate-reveal-out',
         className,
       )}
       onAnimationEnd={(e) => {
