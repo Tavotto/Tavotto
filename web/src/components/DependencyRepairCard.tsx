@@ -77,7 +77,7 @@ export function DependencyRepairCard({
   if (plan) {
     const toProject = plan.target_kind === 'project_venv'
     return (
-      <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+      <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
         <div>
           {/* 小标题走 type-section（全面打磨 D14）：11/500/ink 是这一族自造的第七个角色 */}
           <h3 className="type-section">{en('repairConfirmTitle', { module: pkg })}</h3>
@@ -121,7 +121,7 @@ export function DependencyRepairCard({
   const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
   const rejected = offer.system_rejected ?? []
   return (
-    <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
         <h3 className="type-section">{en('repairTitle', { module: pkg })}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -336,7 +336,7 @@ function RepairProgress({
   const failed = progress.state === 'failed'
   const cancelled = progress.state === 'cancelled'
   return (
-    <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
         <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
         {failed && (

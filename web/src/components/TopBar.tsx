@@ -44,6 +44,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { Numbers } from '@sfinterface/numbers'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
@@ -508,8 +509,11 @@ function MarkTools() {
 }
 
 function ZoomControls() {
-  const { t } = useTranslation('workspace')
+  const { t, i18n } = useTranslation('workspace')
   const zoom = useViewportStore((s) => s.zoom)
+  // 读数显示的是「用户要去的那一档」（补间的终点），不是补间中的每一帧；见 viewportStore
+  const readoutZoom = useViewportStore((s) => s.readoutZoom)
+  const readoutRolls = useViewportStore((s) => s.readoutRolls)
   const page = useDocumentStore((s) => s.doc.page)
   // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
   // 有自己的取值，不能就近归到相邻那一档）
@@ -526,7 +530,20 @@ function ZoomControls() {
         align="end"
         trigger={
           <Button size="md" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="type-number">
-            {Math.round(zoom * 100)}%
+            {/* 会滚的数字（@sfinterface/numbers，2026-09-15 调研后只上这一处）：一步到位的缩放
+                （± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」；滚轮 / 捏合是
+                连续输入，读数即时换（duration 0），柱子不会永远在半路。静止时与普通文字像素一致。
+                时长接 --duration-slow（index.css 的 --sfi-resolve），分组关掉——Tavotto 的读数不分组。
+                可达名在按钮的 aria-label 上，组件自己那份读屏文本由 label 保持同一句 */}
+            <Numbers
+              value={Math.round(readoutZoom * 100)}
+              suffix="%"
+              duration={readoutRolls ? undefined : 0}
+              format={{ useGrouping: false }}
+              locale={i18n.language}
+              label={t('topbar.zoomValue', { percent: Math.round(readoutZoom * 100) })}
+              data-zoom-readout
+            />
             <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         }

@@ -6,6 +6,8 @@ colors:
   canvas: "#eaeae6"
   surface: "#ffffff"
   surface-2: "#f7f7f4"
+  field: "#f1f0ec"
+  field-hover: "#edece8"
   border-control: "#8a8a82"
   ink: "#1b1b18"
   ink-2: "#5c5c55"
@@ -89,7 +91,7 @@ components:
     rounded: "{rounded.sm}"
     size: "{spacing.control}"
   input:
-    backgroundColor: "{colors.surface}"
+    backgroundColor: "{colors.field}"
     textColor: "{colors.ink}"
     rounded: "{rounded.sm}"
     height: "{spacing.control}"
@@ -137,9 +139,9 @@ components:
 - **Tavotto Blue（品牌蓝）** (`#2868b7`)：焦点环、链接、AI 入口、画布选择框——小面积。
 
 ### Neutral
-- **Paper（纸面）** (`#f7f6f3`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 输入框 / 浮层 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%）
+- **Paper（纸面）** (`#f7f6f3`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Field（凹面）** (`#f1f0ec`，hover `#edece8`) 所有可编辑框的底 · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%）
 - **Ink-2 / Ink-3 / Ink-faint** (`#5c5c55` / `#6b6b64` / `#a3a39a`)：次级、元数据、禁用。Ink-2 在所有底色上 ≥4.5:1；**Ink-3 只在白 / Surface-2 / Paper 上达标**（5.37 / 5.00 / 4.78），在 Canvas 画布灰上只有 4.45:1——画布底色上直接写字用 Ink-2（`index.css` 里 `--color-ink-3` 的注释是这条的权威）；faint 不用于要读的字
-- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界、次级按钮 · **Border-input**（ink 16%，hover 25%，聚焦 accent）：所有可编辑框的边——有框 = 能改，静态边有意不到 3:1，3:1 由聚焦环承担 · **Border-control** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道，边界就是全部识别信息，≥3:1
+- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界、次级按钮 · **可编辑框没有边**：静态是 Field 凹面 + 1px 内阴影（`--shadow-field`），聚焦浮回白底 + 不透明 accent 边——有框 = 能改，「框」是一块凹面而不是一圈线，3:1 由聚焦态承担（2026-09-15 学 Beautiful UI，宪法第二十二节） · **Border-control** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道，边界就是全部识别信息，≥3:1
 
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。
@@ -165,7 +167,7 @@ components:
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影；浮层是「1px 半透明环 + 一层大模糊」，不画实色边：
+**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**（素材卡 / 会话卡 / 任务行 / 诊断与修复卡）：`--shadow-card`（1px 环 6% + 两层近投影 4%，比 shadow-pop 低一档；2026-09-15 学 Beautiful UI，宪法第二十二节）；分区、列表行、输入框、分段控件仍是平的。浮层是「1px 半透明环 + 一层大模糊」，不画实色边：
 `--shadow-pop: 0 0 0 1px rgba(27, 27, 24, 0.08), 0 8px 24px rgba(27, 27, 24, 0.08)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes

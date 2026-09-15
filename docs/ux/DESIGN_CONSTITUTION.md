@@ -28,13 +28,14 @@
 | border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
 | border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
 | border-control | `border-control` | `#8a8a82` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| border-input | `border-input` | ink 16%，hover `border-input-hover` 25% | 所有可编辑框的边框（`ui/fieldBox.ts`）。**有框 = 能改**不变；2026-09-15 打磨批次 A 把静态边从 3.48:1 收到 ≈1.4:1（OpenAI alpha-16、Claude 10%），聚焦才是不透明 accent 环——3:1 由聚焦环承担 |
+| field | `field` / `field-hover` | `#f1f0ec` / `#edece8` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：凹面 + 1px 内阴影 `--shadow-field`，静态无边线，聚焦浮回白底 + 不透明 accent 边（2026-09-15 学 Beautiful UI，第二十二节）。**有框 = 能改**不变，「框」是一块凹面；此前是 ink 16% 的边（批次 A T1，已作废） |
 | accent | `accent` / `accent-subtle` | `#2868b7` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、链接、AI、画布选择框 |
 | danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
-规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`）；持久表面不用投影，
+规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`）；持久表面里只有「真的是一张卡」的
+东西有投影（`shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断与修复卡，第二十二节），分区 / 列表行 / 输入框仍是平的；
 浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
 「1px 半透明环 + 一层大模糊」，浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
 明度差与半透明 hairline 分层，不靠框。
@@ -80,9 +81,9 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost）。`active` 是 selected 轻 tint +
   字重。忙碌态自带。
 - **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。
-- **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：白底 + `border-input`，hover 加深到
-  ink-3，聚焦 / 打开 accent，禁用 opacity-40。TextInput / TextArea / NumberField / Select /
-  SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；数字框不再是 surface-2 灰底。
+- **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：`field` 凹面 + 内阴影、静态无边线，
+  hover 底加深一档，聚焦 / 打开浮回白底 + accent 边，禁用 opacity-40（形态 2026-09-15 改成凹面，第二十二节）。
+  TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取。
 - **TextInput**：`invalid`（红边 + aria-invalid）、`suffix`（**框内**后缀，数字自动右对齐）。
 - **TextArea**：高度跟着内容走（`scrollHeight` 自适应，`maxRows` 封顶后框内滚动；2026-09-14 二审 A1）。
   调用点不再自己算 `rows`——按硬换行数算的话，一行源码两行显示的图例名第二行会被裁掉。
@@ -602,3 +603,47 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
    ② matplotlib 的 `pane`（三维背景面）——`prop.pane_color` / `pane_visible`；
    ③ 期刊术语 panel label = 序号标签 (a)(b)(c)（中文侧本来就不叫面板）；
    ④ 命令面板的搜索关键词与插值变量名（`{{panel}}` / `{{panels}}`），不是露出的文案。
+
+## 二十二、2026-09-15 学 Beautiful UI 的层级与颜色表达（用户拍板）
+
+调研了 numbers.sfinterface.com（一个会滚的数字组件）与 beautifului.dev（21 个 AI 界面组件）之后的结论
+（报告 artifact「Numbers × Beautiful UI 调研」）：Beautiful UI 没有一个组件能原样贴进来——21 份源码全部
+命中 `foundation.test`（361 处像素圆角 / `text-[13px]` / `duration-150` / 五级投影），9 份引用站点没给的
+原语；它的质感七成来自纪律（一份清单、四级面、三级墨、一种抬升写法），这部分 Tavotto 已有且对比度更严。
+所以**不引用、逐组件学**它的层级与颜色表达。用户拍板四条：叠在 #369 栈顶；真卡加环 + 投影；可编辑框改凹框；
+主按钮保持近黑。
+
+### token 与原语
+- **可编辑框是凹面，不是一圈线**（`ui/fieldBox`）：静态 `field` 底（`#f1f0ec`，对白 1.13:1）+ 1px 内阴影
+  `--shadow-field`、边线透明；hover `field-hover`（`#edece8`，ink-3 落在上面仍 ≥4.5:1——`#ebeae5` 只有 4.46，
+  被 `tokenContrast.test` 拦下来过）；**聚焦才浮回白底 + 不透明 accent 边**，3:1 由聚焦态承担。「有框 = 能改」
+  不变，「框」从一圈线变成一块凹面：属性面板一列十几个框，凹面比线安静。TextInput / TextArea / NumberField /
+  Select / SearchInput / PickerTrigger / 改图助手输入框全部从这一份取；占位符一律 ink-3（此前助手输入框是 faint）。
+  取色块不是输入框，仍是 hairline。第十九节 T1 的「16% 边」由此作废。
+- **真的是一张卡的东西才有抬升**：`--shadow-card` = 1px 环 6% + 两层近投影 4%，比 `shadow-pop` 低一档（卡在面上，
+  不是浮在面上）。给谁：素材卡（`left/AssetBrowser` 的 cardClass：hover `ring-1 ring-border`、选中
+  `ring-border-strong` + 名字加粗，环走 ring 不走 border，三种状态卡片尺寸不变）、改图助手的**一轮对话**
+  （`SessionBlock`：提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起，卡与卡之间只靠间距；
+  卡里的提示是 surface-2 凹块，diff 是 hairline 框——**卡里不套第二张卡**）、任务历史的每一条（`HistoryRow`，
+  此前是 hairline 隔开的段落）、诊断与依赖修复卡。分区、列表行、输入框、分段控件仍是平的。第一节
+  「持久表面不用投影」改为「持久表面里只有卡有投影」。
+- **语义色只用一对：实色字 + 淡底**。diff 视图的增删行改用 `ok / ok-subtle`、`danger / danger-subtle`
+  （此前是四个只在那里出现的自造色，与徽章的绿红两套并存）；行内计数（`+3 −1`）只上字色不加底——底是给整块
+  状态的，数字上再加底就成了第二个徽章。任务历史的状态从灰字改成 `Badge`（失败 danger、改过 ok、其余中性）。
+- **过程行 = 种类图标 · 动词 · 参数片**（学 Tool Chips）：`ProcessRow` 按后端的前缀拆——「一个非字母数字的符号 +
+  空格」是标记，`$` = 跑了命令（Wrench + 「运行」），其它符号 = 改了文件 / 调了工具（Pencil + 名字），参数放进
+  surface-2 底的等宽片里；thinking 是一句话，Sparkles + ink-3、无片。前端不写死那个字形（iconography 门禁
+  也不许字符当图标），后端换标记照样能拆。
+
+### 只上一处的会滚的数字
+`@sfinterface/numbers`（MIT、零依赖、静止时与普通文字像素一致、原生 reduced-motion）只给**顶栏缩放读数**
+（`TopBar.ZoomControls`）：一步到位的缩放（± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」。
+两条边界：读数显示的是**补间的终点值**（`viewportStore.readoutZoom`，一起步就是目标，与画布同拍，不逐帧滚）；
+滚轮 / 捏合是连续输入，`readoutRolls` 为假时 `duration={0}` 即时换数——柱子不会永远在半路。时长接 token
+（`--sfi-resolve` = slow 240、`--sfi-settle` = exit 90），`useGrouping:false`，locale 跟 i18n，版本锁死
+0.3.4（两天九版、作者自述会动）。**不上**的地方：HUD 光标 / 尺寸读数（拖动中每帧都变）、输入框、导出像素预览
+（先看一周再说）。
+
+### 看到了但不学
+会动的胶片颗粒、斜纹槽、蓝色实心主按钮、常驻表面五级投影、0.95 缩放 + 8px 位移的进场、Inter 13px、
+亮度 69.5% 的 ink-3、反色 tooltip 四件套（Tavotto 的气泡已是 ink 底白字，够了）。

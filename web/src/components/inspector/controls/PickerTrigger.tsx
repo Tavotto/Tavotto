@@ -49,7 +49,7 @@ export const PickerTrigger = forwardRef<
         FIELD_BOX,
         FIELD_OPEN,
         'focus-visible:focus-ring',
-        'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border-input',
+        'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-field',
         className,
       )}
     >

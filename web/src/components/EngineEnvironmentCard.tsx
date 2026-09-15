@@ -62,7 +62,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
    * 之间的一段独立提示，不套框就散了。
    */
   const shell = compact
-    ? 'flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3'
+    ? 'flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card'
     : 'flex flex-col gap-2.5'
 
   const advancedBlock = (
@@ -291,7 +291,7 @@ export function MissingDependencyCard({
   }
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
+    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
         <h3 className="type-section">
           {/* 包名是脚本里的标识符，原样显示 */}
