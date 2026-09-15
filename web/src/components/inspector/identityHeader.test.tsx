@@ -255,11 +255,14 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     expect(pin.getAttribute('aria-pressed')).toBe('true')
     expect(pin.className).not.toContain('bg-selected')
     expect(pin.querySelector('svg')!.getAttribute('class')).toContain('icon-pin')
+    // 钉住 = 图标集里图钉的实心孪生（ADR 0052）：钉身是一条 fill=currentColor 的实心路径
+    expect(pin.querySelector('svg path[fill="currentColor"]')).not.toBeNull()
     await act(async () => pin.click())
     const after = pinOf()
     expect(after.getAttribute('aria-pressed')).toBe('false')
-    // 取消钉住换的是**图标**（PinOff），不是底色
-    expect(after.querySelector('svg')!.getAttribute('class')).toContain('icon-pin-off')
+    // 取消钉住换的是**图形**（回到线框图钉），不是底色
+    expect(after.querySelector('svg')!.getAttribute('class')).toContain('icon-pin')
+    expect(after.querySelector('svg path[fill="currentColor"]')).toBeNull()
     expect(after.className).not.toContain('bg-selected')
   })
 
