@@ -10,11 +10,9 @@ import {
   MousePointerClick,
   MoveUpRight,
   Pin,
-  PinOff,
   Square,
   Trash2,
   Type as TypeIcon,
-  X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { switchKindOf } from '@/lib/shapeSwitch'
@@ -184,13 +182,9 @@ export function Inspector({
           >
             {/* 状态靠**图形**说，不靠底色（打磨 S3，用户拍板）：默认就是钉住的，
                 `active` 的 ink 10% 灰块于是常驻在每一页右上角——它是整栏唯一一块
-                常亮的底。现在钉住 = Pin + ink，未钉 = PinOff + ink-3；
+                常亮的底。现在钉住 = 实心图钉 + ink，未钉 = 线框图钉 + ink-3（图标集的实心孪生，ADR 0052）；
                 `aria-pressed` 与气泡文案不变 */}
-            {pinned ? (
-              <Pin size={ICON_SIZE.sm} className="text-ink" />
-            ) : (
-              <PinOff size={ICON_SIZE.sm} className="text-ink-3" />
-            )}
+            <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
           </IconButton>
         </span>
       </div>
