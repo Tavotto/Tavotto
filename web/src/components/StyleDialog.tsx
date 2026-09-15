@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
-  Paintbrush,
-} from '@/components/ui/icons'
+import { Check, Ellipsis, Pipette, Plus, Trash2, TriangleAlert, X } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -21,7 +19,7 @@ import {
   type StylePreset,
   type StyleScope,
 } from '@/lib/stylePresets'
-import { cn, modKey } from '@/lib/utils'
+import { modKey } from '@/lib/utils'
 import { applyStylePlan } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -31,9 +29,10 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './inspector/roles/registry'
+import { FormRow } from './FormRow'
 import { Button, IconButton } from './ui/Button'
-import { EmptyState } from './ui/EmptyState'
 import { Dialog } from './ui/Dialog'
+import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { ColorField, NumberField, TextInput } from './ui/Input'
 import { Segmented } from './ui/Segmented'
 import { Select } from './ui/Select'
@@ -55,6 +54,13 @@ import { Toggle } from './ui/Toggle'
 /** 本对话框的文案在 dialogs:style.* 下 */
 const sd = (key: string, values?: Record<string, unknown>) =>
   translate(`style.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/**
+ * ⋯ 的可达名**刻意读设置页那一份**（`dialogs:profiles.more`）：同一份样式库在两处
+ * 有同一颗 ⋯，名字得是同一个字——在这里另写一句同义词就是审计 T43 记的那种分叉
+ * （与 `settings/ExportSettings` 读导出对话框的 key 同一条纪律）。
+ */
+const moreLabel = () => translate('profiles.more', { ns: 'dialogs' })
 
 export function StyleDialog() {
   const { t } = useTranslation(['dialogs', 'common'])
@@ -82,6 +88,31 @@ export function StyleDialog() {
   const [withAnnotations, setWithAnnotations] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  /** 切到库里的另一份：草稿整份换掉（深拷贝，编辑不回写到清单里的那一份） */
+  const pick = (id: string) => {
+    const next = saved.find((s) => s.id === id)
+    if (next) setDraft(structuredClone(next))
+  }
+  /** 选中的这一份删得掉吗：内置只读那几份不行（`reason` 会把原因说出来） */
+  const deletable = !!draft.id && !readOnlyIds.has(draft.id)
+  const removeCurrent = async () => {
+    const id = draft.id
+    if (!id || readOnlyIds.has(id)) return
+    const name = nameOf(draft)
+    if (
+      !(await askConfirm({
+        title: msg('style.deleteTitle', { name }, 'dialogs'),
+        body: msg('style.deleteBody', undefined, 'dialogs'),
+        confirmLabel: msg('actions.delete', undefined, 'common'),
+        danger: true,
+      }))
+    ) {
+      return
+    }
+    await useProfileStore.getState().remove('style', id)
+    setDraft(EMPTY)
+  }
   /** 本对话框自己的报错优先，其次是清单那一层的（拉取失败 / 并发撞车）。 */
   const shownError = error ?? storeError?.message ?? null
 
@@ -254,7 +285,6 @@ export function StyleDialog() {
       open={open}
       onOpenChange={setOpen}
       title={sd('title')}
-      description={sd('description')}
       width={920}
       /* 固定高：字段清单在中间滚，样式库与底部的应用范围不随内容高低跳动 */
       height="640px"
@@ -273,100 +303,83 @@ export function StyleDialog() {
       }
     >
       {/*
-        两栏：左边是样式库，右边是这一份样式的内容；应用范围与影响在右栏**底部**
-        自成一段（2026-09-13 审计 B25）。此前是三栏——列表 / 字段 / 范围各占一列，
-        字段那一列被挤到字体名只剩「Times New Rom…」，每行末尾的 × 也说不清是删
-        条目还是关什么。字段清单按对象类别分组，字体那一格至少 224px。
+        一栏：样式库收成顶部一行，编辑器铺满 920（全面打磨 D23）。此前左边一列 176px
+        只放一行「默认样式」加一颗「+ 新建样式」——两三份配置不值一整列，而设置 › 样式页
+        两天前刚把同一份库收成了一行，同一份东西两种形态。这里与那边同形：一份时只写名字、
+        二到四份是分段选择器、再多换下拉，新建 / 提取 / 删除收进行尾的 ⋯。
+        应用范围与影响仍在**底部**自成一段（2026-09-13 审计 B25）。
       */}
-      <div className="flex h-full gap-4">
-        {/* 左：已存样式 */}
-        <div className="flex w-44 shrink-0 flex-col gap-1.5">
-          <h3 className="type-section">
-            {sd('savedStyles')}
-          </h3>
-          <ul className="min-h-0 flex-1 overflow-y-auto">
-            {saved.length === 0 && (
-              <li>
-                <EmptyState icon={Paintbrush} title={sd('noSavedStyles')} />
-              </li>
+      <div className="flex h-full min-w-0 flex-col gap-2">
+          <FormRow label={sd('savedStyles')}>
+            {saved.length === 0 ? (
+              <span className="type-meta min-w-0 flex-1">{sd('noSavedStyles')}</span>
+            ) : saved.length === 1 ? (
+              /* 只有一份时没有可选的：写名字就够了，一格的分段选择器读作坏掉的控件 */
+              <span className="min-w-0 flex-1 truncate text-xs text-ink">{nameOf(saved[0])}</span>
+            ) : saved.length <= LIBRARY_AS_SEGMENTED ? (
+              <Segmented<string>
+                ariaLabel={sd('savedStyles')}
+                className="min-w-0 flex-1"
+                value={draft.id ?? null}
+                onChange={(id) => pick(id)}
+                items={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
+              />
+            ) : (
+              <Select
+                ariaLabel={sd('savedStyles')}
+                className="min-w-0 flex-1"
+                value={draft.id ?? ''}
+                onChange={(id) => pick(id)}
+                options={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
+              />
             )}
-            {saved.map((s) => (
-              <li
-                key={s.id}
-                className="group flex items-center"
+            <Menu
+              align="end"
+              trigger={
+                <IconButton label={moreLabel()} iconSize="sm">
+                  <Ellipsis size={ICON_SIZE.sm} aria-hidden />
+                </IconButton>
+              }
+            >
+              <MenuItem icon={Plus} onSelect={() => setDraft(EMPTY)}>
+                {sd('newStyle')}
+              </MenuItem>
+              <MenuItem
+                icon={Pipette}
+                disabled={!primaryManifest}
+                reason={primaryManifest ? undefined : sd('extractNeedPanel')}
+                onSelect={extract}
               >
-                <button
-                  onClick={() => setDraft(structuredClone(s))}
-                  className={cn(
-                    'h-7 min-w-0 flex-1 truncate rounded-sm px-2 text-left text-xs',
-                    draft.id === s.id ? 'bg-selected font-medium text-ink' : 'text-ink hover:bg-surface-hover',
-                  )}
-                >
-                  {nameOf(s)}
-                </button>
-                <Button
-                  size="icon-sm"
-                  className={cn(
-                    'mr-0.5 opacity-0 group-hover:opacity-100',
-                    // 内置只读：删除按钮**不渲染**，而不是渲染成禁用的——
-                    // 禁用的按钮仍然邀请用户去点，然后什么都不发生
-                    s.id && readOnlyIds.has(s.id) && 'hidden',
-                  )}
-                  aria-label={sd('deleteStyleAria', { name: nameOf(s) })}
-                  onClick={async () => {
-                    if (
-                      !(await askConfirm({
-                        title: msg('style.deleteTitle', { name: s.name }, 'dialogs'),
-                        body: msg('style.deleteBody', undefined, 'dialogs'),
-                        confirmLabel: msg('actions.delete', undefined, 'common'),
-                        danger: true,
-                      }))
-                    ) {
-                      return
-                    }
-                    if (s.id) await useProfileStore.getState().remove('style', s.id)
-                    if (draft.id === s.id) setDraft(EMPTY)
-                  }}
-                >
-                  <Trash2 size={ICON_SIZE.xs} className="text-danger" />
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <Button variant="secondary" size="sm" onClick={() => setDraft(EMPTY)}>
-            <Plus size={ICON_SIZE.sm} />
-            {sd('newStyle')}
-          </Button>
-        </div>
+                {sd('extract')}
+              </MenuItem>
+              {/* 内置只读那几份删不掉：给出**不可用的原因**，不是一颗按了没反应的钮 */}
+              <MenuSeparator />
+              <MenuItem
+                icon={Trash2}
+                danger
+                disabled={!deletable}
+                reason={deletable ? undefined : sd('deleteBuiltinReason')}
+                onSelect={() => void removeCurrent()}
+              >
+                {t('common:actions.delete')}
+              </MenuItem>
+            </Menu>
+          </FormRow>
 
-        {/* 右：样式内容 + 底部的应用范围 */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <div className="flex items-center gap-1.5">
+          {/* 名称也是一行表单（全面打磨 D24）：此前是一个 513 宽、没有标签的框，
+              占位文案是它唯一的提示，旁边并排两颗带图标的 secondary，与 footer 的
+              主钮抢分量。图标去掉，留给 footer 那一颗 */}
+          <FormRow label={sd('nameLabel')}>
             <TextInput
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
               placeholder={sd('namePlaceholder')}
               className="min-w-0 flex-1"
             />
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={!primaryManifest}
-              title={
-                primaryManifest
-                  ? sd('extractFrom', { name: primaryPanel?.name ?? primaryPanel?.fileId })
-                  : sd('extractNeedPanel')
-              }
-              onClick={extract}
-            >
-              <Pipette size={ICON_SIZE.sm} />
-              {sd('extract')}
-            </Button>
             <Button variant="secondary" size="sm" loading={busy} onClick={save}>
-              <Save size={ICON_SIZE.sm} />
               {t('common:actions.save')}
             </Button>
-          </div>
+          </FormRow>
 
           {/* 字段清单：靠组头与留白分区，不套边框（宪法第八节「少用容器」） */}
           <div className="min-h-0 flex-1 overflow-y-auto" data-style-entries>
@@ -379,58 +392,56 @@ export function StyleDialog() {
                     <p className="mb-1 type-section">{styleGroupLabel(group)}</p>
                     <div className="flex flex-col gap-0.5">
                       {list.map((en, i) => (
-                        <div key={`${en.role}.${en.prop}`} className="flex h-7 items-center gap-2">
-                          {/* 角色名只在这一串的第一行写，下面同角色的行留空——
-                              「轴标题 / 轴标题 / 轴标题」逐行重复正是审计说的读不出结构 */}
-                          <span
-                            className="w-16 shrink-0 truncate text-xs text-ink-3"
-                            title={styleRoleLabel(en.role)}
-                          >
-                            {i === 0 || list[i - 1].role !== en.role ? styleRoleLabel(en.role) : ''}
-                          </span>
-                          <span
-                            className="w-20 shrink-0 truncate text-xs text-ink-2"
-                            title={propLabel(en.prop, en.role)}
-                          >
-                            {propLabel(en.prop, en.role)}
-                          </span>
-                          {/* 值一列 224px：字体名（Times New Roman）完整可读 */}
-                          <div className="w-56 shrink-0">
-                            <EntryEditor
-                              prop={en.prop}
-                              value={en.value}
-                              onChange={(v) =>
-                                setDraft((d) => ({
-                                  ...d,
-                                  element: {
-                                    ...d.element,
-                                    [en.role]: { ...d.element[en.role], [en.prop]: v },
-                                  },
-                                }))
+                        <div key={`${en.role}.${en.prop}`}>
+                          {/* 角色是**组内的小标**，不是行里的第一列（全面打磨 D25）：
+                              此前一行是「角色 64 + 属性 80 + 控件 224 + × 28」四列，
+                              两个标签两档灰、都 11px，与导出对话框的 80px 单标签列不是
+                              一副；同角色的后续行角色列还留空，右缘参差。现在行只剩
+                              「属性 ‖ 控件 ×」，走共用的 `FormRow` */}
+                          {(i === 0 || list[i - 1].role !== en.role) && (
+                            <p className="flex h-7 items-end text-xs text-ink-3">
+                              {styleRoleLabel(en.role)}
+                            </p>
+                          )}
+                          <FormRow label={propLabel(en.prop, en.role)}>
+                            {/* 值一列 224px：字体名（Times New Roman）完整可读 */}
+                            <div className="w-56 shrink-0">
+                              <EntryEditor
+                                prop={en.prop}
+                                value={en.value}
+                                onChange={(v) =>
+                                  setDraft((d) => ({
+                                    ...d,
+                                    element: {
+                                      ...d.element,
+                                      [en.role]: { ...d.element[en.role], [en.prop]: v },
+                                    },
+                                  }))
+                                }
+                              />
+                            </div>
+                            {/* × 的动作说全：从这份样式里移除这一项（样式不再管它），
+                                不是删对象、也不是关掉什么 */}
+                            <IconButton
+                              iconSize="sm"
+                              className="shrink-0 text-ink-3"
+                              label={sd('removeEntryNamed', {
+                                role: styleRoleLabel(en.role),
+                                prop: propLabel(en.prop, en.role),
+                              })}
+                              onClick={() =>
+                                setDraft((d) => {
+                                  const role = { ...d.element[en.role] }
+                                  delete role[en.prop]
+                                  const element = { ...d.element, [en.role]: role }
+                                  if (!Object.keys(role).length) delete element[en.role]
+                                  return { ...d, element }
+                                })
                               }
-                            />
-                          </div>
-                          {/* × 的动作说全：从这份样式里移除这一项（样式不再管它），
-                              不是删对象、也不是关掉什么 */}
-                          <IconButton
-                            iconSize="sm"
-                            className="shrink-0 text-ink-3"
-                            label={sd('removeEntryNamed', {
-                              role: styleRoleLabel(en.role),
-                              prop: propLabel(en.prop, en.role),
-                            })}
-                            onClick={() =>
-                              setDraft((d) => {
-                                const role = { ...d.element[en.role] }
-                                delete role[en.prop]
-                                const element = { ...d.element, [en.role]: role }
-                                if (!Object.keys(role).length) delete element[en.role]
-                                return { ...d, element }
-                              })
-                            }
-                          >
-                            <X size={ICON_SIZE.sm} />
-                          </IconButton>
+                            >
+                              <X size={ICON_SIZE.sm} />
+                            </IconButton>
+                          </FormRow>
                         </div>
                       ))}
                     </div>
@@ -508,13 +519,16 @@ export function StyleDialog() {
           </div>
 
           {/* 底部：应用范围与影响。范围是一个取值 → 分段选择器；影响先说总账，
-              逐张明细折叠 */}
+              逐张明细折叠。标签是**标签**不是分区头，分段按内容定宽（全面打磨 D26）：
+              此前它用 `type-section` 的字重、又 `flex-1` 撑到 636 宽四格各 158，
+              是导出对话框同款控件的 4.8 倍 */}
           <div className="flex flex-col gap-2 border-t border-border pt-3" data-style-scope>
-            <div className="flex items-center gap-3">
-              <span className="type-section shrink-0">{sd('applyScope')}</span>
+            <FormRow label={sd('applyScope')}>
               <Segmented<StyleScope>
                 ariaLabel={sd('applyScope')}
-                className="min-w-0 flex-1"
+                // 按内容定宽：`Segmented` 默认 `w-full`，在这一行里会撑成 780 宽四格各 195，
+                // 是导出对话框同款控件的五倍（全面打磨 D26）
+                className="w-auto"
                 value={scope}
                 onChange={setScope}
                 items={(
@@ -526,7 +540,7 @@ export function StyleDialog() {
                   ] as const
                 ).map(([value, label]) => ({ value, label, title: styleScopeLabel(value) }))}
               />
-            </div>
+            </FormRow>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
                 <Toggle
@@ -537,19 +551,16 @@ export function StyleDialog() {
                 {sd('withAnnotations')}
               </label>
               {/* 作用对象与变化数先说总账：用户要的第一个答案是「会改到几张、改多少」 */}
+              {/* 空集时只说**下一步**（全面打磨 D27）：此前是「此范围内没有图会被改动。」
+                  句号之后再接「 · 先在画布上选中一张可编辑的图」——前一句是后一句的前提，
+                  说了等于把唯一能做的事推到第二句去 */}
               <p data-style-affect-summary className="text-xs text-ink-2">
                 {plan.panels.length === 0
-                  ? sd('affectNone')
+                  ? sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')
                   : sd('affectSummary', {
                       count: plan.panels.length,
                       patches: plan.panels.reduce((t, p) => t + p.patches.length, 0),
                     })}
-                {plan.panels.length === 0 && (
-                  <span className="text-ink-3">
-                    {' · '}
-                    {sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')}
-                  </span>
-                )}
               </p>
             </div>
             {(plan.panels.length > 0 ||
@@ -619,12 +630,17 @@ export function StyleDialog() {
               </Details>
             )}
           </div>
-        </div>
       </div>
       {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
     </Dialog>
   )
 }
+
+/**
+ * 库里几份以内还用分段选择器（与设置 › 样式页同一个数，全面打磨 D23）。
+ * 再多就换下拉：五格以上的分段在 920 宽里每格只剩一个词。
+ */
+const LIBRARY_AS_SEGMENTED = 4
 
 const EMPTY: StylePreset = { name: '', element: {} }
 
@@ -660,7 +676,16 @@ function EntryEditor({
   if (typeof value === 'boolean')
     return <Toggle aria-label={propLabel(prop)} checked={value} onChange={onChange} />
   if (typeof value === 'number') {
-    return <NumberField value={value} step={prop.includes('size') ? 0.5 : 0.1} onChange={onChange} />
+    // `fill`：数字框铺满 224 的控件列，与同一列的下拉右缘对齐（全面打磨 D25）；
+    // 此前它只有 44 宽，一列控件的右缘参差不齐
+    return (
+      <NumberField
+        value={value}
+        step={prop.includes('size') ? 0.5 : 0.1}
+        fill
+        onChange={onChange}
+      />
+    )
   }
   if (typeof value === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
     return <ColorField ariaLabel={propLabel(prop)} value={value} onChange={onChange} />

@@ -24,6 +24,7 @@ import { useUiStore } from '@/store/uiStore'
 // Radix 的 Select 打开时会 scrollIntoView；jsdom 没有这个方法
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 import { agentCaps, capsOf, claudeCaps } from './testCaps'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -49,7 +50,11 @@ async function open(initial: AiCapabilities | null = capsOf([agentCaps(), claude
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }
@@ -77,6 +82,12 @@ afterEach(() => {
   useUiStore.setState({ settingsOpen: false, settingsSection: null })
 })
 
+/** 展开详情页的一个折叠块（锚点 `data-agent-fold`；收起时内容不挂载） */
+const openFold = (name: string) =>
+  document
+    .querySelector<HTMLButtonElement>(`[data-agent-fold="${name}"] > div > button`)!
+    .click()
+
 describe('编码 Agent 一级页面', () => {
   it('导航项叫「编码 Agent」，不再叫 AI', async () => {
     await open()
@@ -93,7 +104,11 @@ describe('编码 Agent 一级页面', () => {
     document.body.appendChild(host)
     root = createRoot(host)
     await act(async () => {
-      root.render(<SettingsDialog />)
+      root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
     })
     expect(text()).toContain(ag('state.detecting'))
     expect(text()).not.toContain(ag('state.not_installed'))
@@ -130,7 +145,8 @@ describe('编码 Agent 一级页面', () => {
 
   it('一级页面每行只有名称 · 状态：没有版本、没有路径、没有说明段（ADR 0038；审计 T44）', async () => {
     await open()
-    const list = document.querySelector('ul.overflow-hidden')!
+    // 清单自 2026-09-15 全面打磨 D11 起不带外框：按它所在的小节定位，不按边框的类名
+    const list = document.querySelector('[data-agent-section="in-app"] ul')!
     expect(list.textContent).toContain('Codex')
     expect(list.textContent).not.toContain('1.2.3')                // 版本号归详情
     expect(list.textContent).not.toContain('codex-cli')           // 内部包名
@@ -151,11 +167,11 @@ describe('编码 Agent 一级页面', () => {
   it('详情里路径与诊断可复制', async () => {
     await open()
     await act(async () => byName(ag('rowAria', { name: 'Codex' }))!.click())
+    // 高级设置默认折叠，而折叠着的内容**根本不在 DOM 里**（全面打磨 D05 之后是
+    // `DiagnosticDisclosure` + `Reveal`，不再是 `<details>`）：要读里面的东西得真的点开
+    await act(async () => openFold('overview'))
     expect(byName(ag('detail.copyPath'))).toBeTruthy()
-    // 高级设置默认折叠，展开诊断之后才有「复制诊断信息」
-    const details = [...document.querySelectorAll('details')] as HTMLDetailsElement[]
-    for (const d of details) d.open = true
-    await act(async () => {})
+    await act(async () => openFold('diagnostics'))
     expect(byName(ag('detail.copyDiagnostics'))).toBeTruthy()
   })
 
@@ -188,6 +204,7 @@ describe('编码 Agent 一级页面', () => {
     const row = byName(ag('rowAria', { name: 'Codex' }))!
     await act(async () => row.click())
     expect(text()).toContain(ag('detail.overview'))
+    await act(async () => openFold('overview'))
     expect(text()).toContain('/opt/homebrew/bin/codex')
     const back = byName(ag('backAria'))!
     await act(async () => back.click())
@@ -343,7 +360,7 @@ describe('三种状态明确区分（审计 T44 验收）', () => {
     const labels = ['not_installed', 'needs_auth', 'ready'].map((s) => ag(`state.${s}`))
     expect(new Set(labels).size).toBe(3)
     await open(capsOf([agentCaps({ state: 'needs_auth', usable: false }), claudeCaps({ installed: false, state: 'not_installed', usable: false, version: null, executable_path: null })]))
-    const rows = [...document.querySelectorAll('ul.overflow-hidden li')]
+    const rows = [...document.querySelectorAll('[data-agent-section="in-app"] ul li')]
     expect(rows[0].textContent).toContain(ag('state.needs_auth'))
     expect(rows[1].textContent).toContain(ag('state.not_installed'))
     // **形状也不同**：等级不只靠颜色（灰度屏与色觉障碍下同样读得出）。

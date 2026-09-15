@@ -284,7 +284,6 @@
     "useOtherHintBefore": "Switch to your own environment when a script needs packages the bundled one lacks (rdkit, astropy…). Apply with the field empty to go back to the default. Tavotto",
     "useOtherHintStrong": " never modifies the environment you choose",
     "useOtherLink": "Use a different Python environment…",
-    "workdirAria": "Run in the script’s directory",
     "workdirConfirmBody": "The script runs in its own directory: relative paths find its data, and files it writes by relative path land in the project directory exactly as in a terminal, overwriting same-name files. Tavotto still doesn’t save its figures, and blocks deleting, renaming, or moving project files. Applies to this project only.",
     "workdirConfirmOk": "Run in the script's directory",
     "workdirConfirmTitle": "Run in the script’s directory?",

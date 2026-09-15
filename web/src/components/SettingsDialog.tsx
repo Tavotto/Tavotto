@@ -182,7 +182,7 @@ export function SettingsDialog() {
       // roving tabindex：Tab 只落在当前项，方向键在项之间走
       tabIndex={section === id ? 0 : -1}
       className={cn(
-        'relative h-7 shrink-0 whitespace-nowrap rounded-sm px-2 text-left text-xs outline-none focus-visible:focus-ring',
+        'relative h-7 shrink-0 whitespace-nowrap rounded-sm px-2 text-left text-sm outline-none focus-visible:focus-ring',
         // 选中 = 轻 tint + 字重（Design Constitution 第五节），不靠大块深灰
         section === id ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-surface-hover',
       )}
@@ -216,7 +216,11 @@ export function SettingsDialog() {
         >
           {NAV_GROUPS.map((g) => (
             <div key={g.id} data-nav-group={g.id} className="flex shrink-0 gap-0.5 sm:flex-col">
-              <span className="type-section hidden px-2 pb-1 sm:block">{st(`navGroup.${g.id}`)}</span>
+              {/* 组名比项淡一档、不加重：此前组名（type-section 12/500/ink）与选中项同色同重，
+                  层级只剩 1px 字号差，读起来是两层同权的标题（全面打磨 D07，用户拍板） */}
+              <span className="hidden px-2 pb-1 text-sm text-ink-3 sm:block">
+                {st(`navGroup.${g.id}`)}
+              </span>
               {g.sections.map(navItem)}
             </div>
           ))}

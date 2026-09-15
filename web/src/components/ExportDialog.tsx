@@ -39,7 +39,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -142,6 +141,7 @@ import {
   useValidationStore,
 } from "@/store/validationStore";
 import { Button } from "./ui/Button";
+import { FormRow } from "./FormRow";
 import { Dialog } from "./ui/Dialog";
 import { TextInput } from "./ui/Input";
 import { Select } from "./ui/Select";
@@ -1008,7 +1008,7 @@ export function ExportDialog() {
                 label: translate("measure.ppi", { value: v }),
               }))}
               ariaLabel={ex("ppiSelectLabel")}
-              className="w-32"
+              className="w-56"
             />
             {pixels && (
               <span
@@ -1032,7 +1032,10 @@ export function ExportDialog() {
                 label: p.display_name,
               }))}
               ariaLabel={ex("profileAria")}
-              className="min-w-0 flex-1"
+              /* 同一张表单里的下拉只有一种宽（全面打磨 D40）：此前「分辨率」128、
+                 「规范」372，两档并排读不出它们是同一类控件。224 装得下最长的规范名，
+                 「编辑」紧跟其后 */
+              className="w-56"
             />
             <Button
               variant="ghost"
@@ -2007,42 +2010,6 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
  * 对话框里唯一的一种行（2026-09-15 打磨批次 D）：标签列 80px 在左、控件在右、行高 28。
  * 没有标签的行（说明、清单、确认框）第一列留空，内容与上面的控件同一条竖线。
  */
-function FormRow({
-  label,
-  children,
-  align = "center",
-}: {
-  label?: ReactNode;
-  children: ReactNode;
-  align?: "center" | "start";
-}) {
-  return (
-    <div
-      className={cn(
-        "grid min-h-7 grid-cols-[80px_minmax(0,1fr)] gap-x-3",
-        align === "start" ? "items-start" : "items-center",
-      )}
-    >
-      <span
-        className={cn(
-          "min-w-0 text-xs text-ink-2",
-          align === "start" && "leading-7",
-        )}
-      >
-        {label}
-      </span>
-      <div
-        className={cn(
-          "flex min-w-0 gap-2",
-          align === "start" ? "items-start" : "items-center",
-        )}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function FormatCheck({
   checked,
   onChange,

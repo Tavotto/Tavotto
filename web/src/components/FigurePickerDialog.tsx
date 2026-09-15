@@ -5,6 +5,7 @@ import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
 import { stemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
+import { cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { addPanel, addRuntimePanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -82,40 +83,43 @@ export function FigurePickerDialog() {
       {entries.length === 0 ? (
         <p className="text-xs leading-relaxed text-ink-3">{fp('empty')}</p>
       ) : (
-        <ul className="grid grid-cols-2 gap-3" aria-label={fp('listAria')}>
-          {entries.map((e) => (
+        /* 「挑一张图放上画布」全产品只有一种形态（全面打磨 D46）：缩略图 64×48 +
+           名字 + 尺寸 ‖ [添加到画布]，与项目接入状态里的那一列行同形。此前这里是
+           两列带框卡、缩略图 128 高——同一件事两种读法，而这个对话框是从接入状态
+           的同一条路径过来的 */
+        <ul className="flex flex-col" aria-label={fp('listAria')}>
+          {entries.map((e, i) => (
             <li
               key={e.kind === 'panel' ? e.info.id : e.asset.id}
-              className="flex flex-col overflow-hidden rounded-md border border-border bg-surface"
+              className={cn(
+                'flex items-center gap-3 py-2',
+                i > 0 && 'border-t border-border',
+              )}
             >
               <FigureThumb entry={e} nonce={nonce} />
-              <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={e.stem}>
+              <div className="min-w-0 flex-1">
+                <p className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate font-mono text-xs text-ink" title={e.stem}>
                     {e.stem}
                   </span>
-                  {e.kind === 'runtime' && (
-                    <Badge>{fp('runtimeBadge')}</Badge>
-                  )}
-                </div>
-                <div className="mt-auto flex flex-wrap items-center gap-2">
-                  <EntrySize entry={e} />
-                  <span className="ml-auto flex shrink-0 items-center">
-                    {e.kind === 'panel' || e.asset.descriptor ? (
-                      <Button variant="secondary" size="sm" onClick={() => pickEntry(e)}>
-                        {fp('addToCanvas')}
-                      </Button>
-                    ) : (
-                      // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
-                      // 如实指去素材库「运行并发现图」
-                      <span className="flex items-center gap-1 text-xs text-ink-3">
-                        <Play size={ICON_SIZE.xs} />
-                        {fp('needsRun')}
-                      </span>
-                    )}
-                  </span>
-                </div>
+                  {e.kind === 'runtime' && <Badge>{fp('runtimeBadge')}</Badge>}
+                </p>
+                <EntrySize entry={e} />
               </div>
+              <span className="flex shrink-0 items-center">
+                {e.kind === 'panel' || e.asset.descriptor ? (
+                  <Button variant="secondary" size="sm" onClick={() => pickEntry(e)}>
+                    {fp('addToCanvas')}
+                  </Button>
+                ) : (
+                  // 没跑出预览（cache 被清理/物化失败）：不渲染假按钮，
+                  // 如实指去素材库「运行并发现图」
+                  <span className="flex items-center gap-1 text-xs text-ink-3">
+                    <Play size={ICON_SIZE.xs} />
+                    {fp('needsRun')}
+                  </span>
+                )}
+              </span>
             </li>
           ))}
         </ul>
@@ -131,14 +135,10 @@ function FigureThumb({ entry, nonce }: { entry: Entry; nonce: Record<string, num
       : entry.asset.cached
         ? panelSrc(entry.asset.id, 'runtime', 320, nonce[entry.asset.id])
         : null
-  if (!src) return <span className="h-32 w-full shrink-0 border-b border-border bg-surface-2" />
-  return (
-    <img
-      src={src}
-      alt=""
-      className="h-32 w-full shrink-0 border-b border-border bg-white object-contain p-2"
-    />
-  )
+  // 64×48 的一小格：行里的识别记号，不是看图器（与接入状态的 `PanelThumb` 同一档）
+  const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-white'
+  if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
+  return <img src={src} alt="" className={cn(box, 'object-contain')} />
 }
 
 function EntrySize({ entry }: { entry: Entry }) {
@@ -148,7 +148,7 @@ function EntrySize({ entry }: { entry: Entry }) {
       : entry.asset.size_mm
   if (!size) return null
   return (
-    <span className="shrink-0 text-xs tabular-nums text-ink-3">
+    <span className="type-meta mt-0.5 block tabular-nums">
       {translate('measure.cmSize', { w: formatCm(size[0]), h: formatCm(size[1]) })}
     </span>
   )

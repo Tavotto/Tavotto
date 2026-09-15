@@ -75,6 +75,9 @@ export function GeneralSettings({ close }: { close: () => void }) {
         </Button>
       </SettingRow>
       <SettingRow label={st('shortcuts.label')}>
+        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法——画成键帽
+            （`Kbd`），不画成一颗带边框的钮。键帽在**钮里**（全面打磨 D08）：挂在钮后面时
+            它是这一页唯一没贴到控件列右缘的东西，读起来像一颗禁用的小钮 */}
         <Button
           variant="secondary"
           size="sm"
@@ -84,10 +87,8 @@ export function GeneralSettings({ close }: { close: () => void }) {
           }}
         >
           {st('shortcuts.open')}
+          <Kbd>?</Kbd>
         </Button>
-        {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法——
-            画成键帽（`Kbd`），不画成一颗带边框的钮：Session 6 之前它长得像帮助按钮 */}
-        <Kbd>?</Kbd>
       </SettingRow>
       <TutorialRows close={close} />
     </SettingSection>

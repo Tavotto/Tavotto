@@ -79,9 +79,8 @@ export function DependencyRepairCard({
     return (
       <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
         <div>
-          <h3 className="text-xs font-medium text-ink">
-            {en('repairConfirmTitle', { module: pkg })}
-          </h3>
+          {/* 小标题走 type-section（全面打磨 D14）：11/500/ink 是这一族自造的第七个角色 */}
+          <h3 className="type-section">{en('repairConfirmTitle', { module: pkg })}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {toProject
               ? en('repairConfirmProject', { path: plan.python || '.venv' })
@@ -124,7 +123,7 @@ export function DependencyRepairCard({
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
-        <h3 className="text-xs font-medium text-ink">{en('repairTitle', { module: pkg })}</h3>
+        <h3 className="type-section">{en('repairTitle', { module: pkg })}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">
           {offer.requirement
             ? en('repairBody')
@@ -339,9 +338,7 @@ function RepairProgress({
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
-        <h3 className="text-xs font-medium text-ink">
-          {en(key, { module: progress.distribution || module })}
-        </h3>
+        <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
         {failed && (
           <p className="mt-1 text-xs leading-relaxed text-danger">
             {repairCodeMessage(progress.code) ?? progress.error ?? ''}
@@ -416,14 +413,14 @@ export function ManagedEnvironmentRow() {
           })}
         </span>
       )}
-      {/* 重建会真动环境，不该长得像一句可点的说明文字：换成组件库的 Button
-          （默认变体、self-start 不撑满），busy 时禁用的行为与文案来源不变。
-          mt-1.5 是让它和上面两行环境说明拉开，不跟着 gap-0.5 贴成一坨。
-          再补一圈实边框（border-strong 而不是 border——这块坐在白色 surface
-          上，浅一档的边线几乎看不出来）：这一行只有它一个可点的东西，要让
-          「这是按钮」在扫一眼时就成立，而不是靠 hover 才显形。 */}
+      {/* 重建会真动环境，不该长得像一句可点的说明文字，所以它是一颗真按钮：
+          「这是按钮」要在扫一眼时就成立，而不是靠 hover 才显形。变体就用
+          `secondary`（全面打磨 D14）——此前是 ghost 外面手画一圈 border-strong，
+          那正好是 secondary 的样子，只是自己又实现了一遍，而且边比 secondary 重一档。
+          mt-1.5 是让它和上面两行环境说明拉开，不跟着 gap-0.5 贴成一坨。 */}
       <Button
-        className="mt-1.5 self-start border border-border-strong"
+        variant="secondary"
+        className="mt-1.5 self-start"
         disabled={busy}
         onClick={() => void rebuildManaged()}
       >

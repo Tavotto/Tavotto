@@ -47,7 +47,9 @@ export function ExportSettings() {
   return (
     <>
       <SettingSection title={st('export.sectionFormats')}>
-        <SettingRow label={st('export.defaultFormats')} description={st('export.formatsDesc')}>
+        {/* 「默认格式」这四个字已经说清了它管什么，下面不再复述一句「导出对话框打开时
+            预选这些格式」（全面打磨 D36） */}
+        <SettingRow label={st('export.defaultFormats')}>
           <span className="flex items-center gap-3">
             {FORMATS.map((f) => (
               <label key={f} className="flex h-7 items-center gap-1.5 text-xs text-ink">

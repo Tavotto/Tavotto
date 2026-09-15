@@ -552,7 +552,8 @@ describe('正常状态', () => {
   it('可编辑那些不再逐张重复同一句解释；分组标题已经说了几张', async () => {
     await open(reportOf(ALL_OK))
     const text = dialog().textContent ?? ''
-    expect(text).toContain('可编辑（2）')
+    // 计数是组名后面一个 meta 数字，不是「名字（N）」（全面打磨 D15）
+    expect(text).toContain('可编辑2')
     // 那句话（`readinessText.reasonText` 的 registered_source）一次都不出现
     expect(text).not.toContain('可以直接改图里的内容')
   })

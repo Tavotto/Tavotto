@@ -49,7 +49,8 @@ export function TelemetryConsentDialog() {
     >
       <div className="flex flex-col gap-2.5 text-xs leading-relaxed">
         <section>
-          <h3 className="mb-1 font-medium text-ink-2">{tt('sendsTitle')}</h3>
+          {/* 小标走 type-section（全面打磨 D45），不自造第七个文字角色 */}
+          <h3 className="type-section mb-1">{tt('sendsTitle')}</h3>
           <ul className="flex list-inside list-disc flex-col gap-0.5 text-ink-3">
             <li>{tt('sendsVersion')}</li>
             <li>{tt('sendsPlatform')}</li>
@@ -58,7 +59,7 @@ export function TelemetryConsentDialog() {
           </ul>
         </section>
         <section>
-          <h3 className="mb-1 font-medium text-ink-2">{tt('neverTitle')}</h3>
+          <h3 className="type-section mb-1">{tt('neverTitle')}</h3>
           <ul className="flex list-inside list-disc flex-col gap-0.5 text-ink-3">
             <li>{tt('neverFigures')}</li>
             <li>{tt('neverScripts')}</li>

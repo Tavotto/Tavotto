@@ -36,6 +36,7 @@ import { PackagesSettings } from '@/components/settings/PackagesSettings'
 import { currentProjectId } from '@/lib/session'
 import { usePackageStore } from '@/store/packageStore'
 import { useUiStore } from '@/store/uiStore'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -129,7 +130,11 @@ async function mount(listing: ManagedPackages = LISTING) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<PackagesSettings />)
+    root.render(
+      <TooltipProvider>
+        <PackagesSettings />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }
@@ -221,7 +226,7 @@ describe('两份清单', () => {
   it('内置只读、用户包有升级与卸载；被保护的用户包只读', async () => {
     await mount()
     expect(text()).toContain(pk('userTitle'))
-    await expand(pk('builtinTitleCount', { count: 3 }))
+    await expand(pk('builtinTitle'))
     const builtin = rows(pk('builtinTitle'))
     expect(builtin.map((r) => r.textContent)).toEqual(
       expect.arrayContaining([expect.stringContaining('matplotlib'), expect.stringContaining('numpy')]),
@@ -274,9 +279,7 @@ describe('两份清单', () => {
     const body = document.querySelector('[data-packages-page]')!.textContent ?? ''
     expect(body.indexOf(pk('envSection'))).toBeGreaterThan(-1)
     expect(body.indexOf(pk('envSection'))).toBeLessThan(body.indexOf(pk('userTitle')))
-    expect(body.indexOf(pk('userTitle'))).toBeLessThan(
-      body.indexOf(pk('builtinTitleCount', { count: 3 })),
-    )
+    expect(body.indexOf(pk('userTitle'))).toBeLessThan(body.indexOf(pk('builtinTitle')))
     // 名字里说清是**这个项目的**那一个
     const env = document.querySelector('[data-packages-env]')!
     expect(env.textContent).toContain('本项目的')

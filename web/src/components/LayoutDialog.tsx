@@ -19,6 +19,9 @@ import { openLayoutDocument } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
+import { dirTail } from '@/lib/pathDisplay'
+import { FormRow } from './FormRow'
+import { InlineWarning } from './settings/SettingRow'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -186,38 +189,43 @@ export function LayoutDialog() {
     >
       <div className="flex flex-col gap-3">
         {saving ? (
-          <div>
-            <label
-              className="mb-1.5 block type-section"
-              htmlFor="layout-save-name"
-            >
-              {t('dialogs:layout.nameLabel')}
-            </label>
-            <TextInput
-              id="layout-save-name"
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void doSave()
-              }}
-              placeholder={t('dialogs:layout.namePlaceholder')}
-              className="h-7"
-            />
-            {/* 位置：另存要回答的第二件事。后端没给就不编一个出来 */}
+          /* 标签在左、控件在右（全面打磨 D29，L1）：全站表单都是这一副，此前这里的标签
+             用的是分区标题的字重、压在输入框上方 */
+          <div className="flex flex-col gap-1.5">
+            <FormRow label={t('dialogs:layout.nameLabel')}>
+              <TextInput
+                id="layout-save-name"
+                ref={nameRef}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void doSave()
+                }}
+                placeholder={t('dialogs:layout.namePlaceholder')}
+                aria-label={t('dialogs:layout.nameLabel')}
+                className="min-w-0 flex-1"
+              />
+            </FormRow>
+            {/* 位置：另存要回答的第二件事。后端没给就不编一个出来。
+                只写**末级目录**（全面打磨 D29）：420 宽的框里一条绝对路径末尾必被截掉，
+                而末尾正是能认出「这是哪个目录」的那一段（与设置页的 `PathValue` 同一份
+                `dirTail` 判据，完整路径在 title 里） */}
             {documentDir && (
-              <p className="mt-1.5 truncate font-mono text-xs text-ink-3" title={documentDir}>
-                {t('dialogs:layout.savesInto', { dir: documentDir })}
-              </p>
+              <FormRow label={t('dialogs:layout.savesIntoLabel')}>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3" title={documentDir}>
+                  {dirTail(documentDir)}
+                </span>
+              </FormRow>
             )}
             {names.includes(name.trim()) && (
-              <p className="mt-1.5 text-xs text-ink-2">{t('dialogs:layout.nameTaken')}</p>
+              <p className="text-xs text-ink-2">{t('dialogs:layout.nameTaken')}</p>
             )}
           </div>
         ) : names.length === 0 ? (
           <p className="py-2 text-xs text-ink-3">{t('dialogs:layout.empty')}</p>
         ) : (
-          <ul ref={listRef} className="max-h-72 overflow-y-auto rounded-sm border border-border">
+          /* 清单不套外框（§8）：行之间的 hairline 已经把它分开了 */
+          <ul ref={listRef} className="max-h-72 overflow-y-auto">
             {names.map((n, i) => (
               <li key={n}>
                 <button
@@ -239,18 +247,20 @@ export function LayoutDialog() {
         )}
 
         {conflict && (
-          <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-warn-subtle p-2">
-            <p className="text-xs text-ink">
+          /* 警示只有一副（全面打磨 D30）：`InlineWarning` 的 surface-hover 底，
+             不是黄底加一圈黄边的块——四个对话框此前各画了一版 */
+          <div className="flex flex-col gap-1.5">
+            <InlineWarning>
               {t('dialogs:layout.conflict', { name: conflict.name })}
-            </p>
-            {conflict.summary && (
-              <p className="text-xs text-ink-3">
-                {t('dialogs:layout.conflictDisk', {
-                  objects: conflict.summary.objects,
-                  canvases: conflict.summary.canvases,
-                })}
-              </p>
-            )}
+              {conflict.summary && (
+                <span className="block text-ink-3">
+                  {t('dialogs:layout.conflictDisk', {
+                    objects: conflict.summary.objects,
+                    canvases: conflict.summary.canvases,
+                  })}
+                </span>
+              )}
+            </InlineWarning>
             <div>
               <Button
                 variant="danger"

@@ -39,6 +39,7 @@ import { t } from '@/i18n'
 import { PackagesSettings } from '@/components/settings/PackagesSettings'
 import { searchTerm, usePackageStore } from '@/store/packageStore'
 import { useUiStore } from '@/store/uiStore'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -130,7 +131,11 @@ async function mount(listing: ManagedPackages = LISTING) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<PackagesSettings />)
+    root.render(
+      <TooltipProvider>
+        <PackagesSettings />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }
@@ -212,8 +217,9 @@ describe('本地过滤', () => {
   it('按 PEP 503 归一匹配：Scikit_Learn 找得到 scikit-learn', async () => {
     await mount()
     await type('Scikit_Learn')
-    // 内置那份折起来时行不在 DOM 上，标题上的匹配数是它此刻唯一的出口
-    expect(textOf()).toContain(pk('search.builtinTitleMatch', { count: 1, total: 3 }))
+    // 内置那份折起来时行不在 DOM 上，折叠头右侧的匹配数是它此刻唯一的出口
+    // （计数格式自全面打磨 D15 起是「名字 + meta 数字」，不再是「名字（N）」）
+    expect(textOf()).toContain(pk('search.builtinCountMatch', { count: 1, total: 3 }))
   })
 
   it('带版本约束时按名字过滤（约束不是搜索词）', async () => {
@@ -237,12 +243,10 @@ describe('本地过滤', () => {
     expect(rowNames(pk('userTitle'))).toHaveLength(2)
   })
 
-  it('首屏只说「点了会出网」，「打字不出网」是技术详情里的一段', async () => {
+  it('「打字不出网」是技术详情里的一段，首屏一句解释都没有', async () => {
     await mount()
-    // 首屏那句是短的：这一页首屏只允许一段长文（`settingsDisclosure.test.tsx`
-    // 按 30 字数段数），而那一段已经归「装坏了可以重建」
-    // 首屏那句是页面级的一句（安装 / 升级 / 查找都会出网），不再单独一句「查找会出网」
-    expect(textOf()).toContain(pk('networkNote'))
+    // 首屏那句页面级的「安装、升级与查找会联网访问 PyPI」已经删掉（全面打磨 D16）：
+    // 出网这件事「在 PyPI 查找」这颗钮的名字就说了，细则留在技术详情里
     expect(textOf()).not.toContain(pk('search.privacyDetail'))
 
     const tech = buttons().find(

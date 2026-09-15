@@ -78,8 +78,10 @@ export function UpdateNoticeDialog() {
           aria-valuemax={100}
           className="h-1 overflow-hidden rounded-full bg-surface-2"
         >
+          {/* 与设置 › 更新页同一种颜色（全面打磨 D32）：同一个下载进度此前在弹窗里是蓝色
+              填充、在设置页里是 ink——蓝色不做任何大块背景（§1） */}
           <div
-            className={cn('h-full bg-accent', pct === null && 'w-1/3 animate-pulse')}
+            className={cn('h-full bg-ink', pct === null && 'w-1/3 animate-pulse')}
             style={pct === null ? undefined : { width: `${pct}%` }}
           />
         </div>
@@ -99,7 +101,8 @@ export function UpdateNoticeDialog() {
       <div className="flex flex-col gap-2.5">
         {notice.notes ? (
           <section>
-            <h3 className="mb-1 text-xs font-medium text-ink-2">{tt('notesTitle')}</h3>
+            {/* 小标走 type-section（全面打磨 D45）：11/500/ink-2 是六个文字角色之外自造的第七个 */}
+            <h3 className="type-section mb-1">{tt('notesTitle')}</h3>
             {/* Release 正文原样透出（后端已截到 4000 字），不在前端解析 markdown */}
             <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
               {notice.notes}

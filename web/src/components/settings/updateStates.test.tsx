@@ -116,8 +116,7 @@ describe('「最新」只说到上一次检查那一刻', () => {
     seed({ status: { current: '0.13.0', auto_check: true } as never })
     await render()
     expect(verdict()).toBe('unknown')
-    expect(text()).toContain(st('update.latestUnknown'))
-    expect(text()).toContain(st('update.lastChecked', { time: st('update.neverChecked') }))
+    expect(text()).toContain(st('update.lastCheckedUnknown'))
   })
 
   it('查过了才说「那一刻没有新版本」，并带上那一刻', async () => {
@@ -126,16 +125,17 @@ describe('「最新」只说到上一次检查那一刻', () => {
     })
     await render()
     expect(verdict()).toBe('checked')
+    // 时刻与结论是同一句（全面打磨 D35）：结论说到的也只是那一刻，时刻本身就是边界
     expect(text()).toContain(
-      st('update.noUpdateAtLastCheck'),
+      st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
     )
   })
 
   it('桌面通道同样按时间戳说话：查过之前不给结论', async () => {
     seed({ status: { current: '0.13.0', desktop: true, auto_check: true } as never })
     await render()
-    expect(text()).toContain(st('update.lastChecked', { time: st('update.neverChecked') }))
-    expect(verdict()).toBeNull()
+    expect(verdict()).toBe('unknown')
+    expect(text()).toContain(st('update.lastCheckedUnknown'))
   })
 
   it('桌面通道查过没有新版：结论带上那一刻', async () => {
@@ -145,10 +145,10 @@ describe('「最新」只说到上一次检查那一刻', () => {
       desktopCheckedAtMs: CHECKED_AT,
     })
     await render()
-    const time = formatDateTime(CHECKED_AT)
     expect(verdict()).toBe('checked')
-    expect(text()).toContain(st('update.noUpdateAtLastCheck'))
-    expect(text()).toContain(st('update.lastChecked', { time }))
+    expect(text()).toContain(
+      st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
+    )
   })
 })
 
@@ -172,7 +172,12 @@ describe('有更新', () => {
     expect(text()).toContain('0.14.0')
     expect(text()).toContain('修了三个导出缺陷')
     expect(byLabel(st('update.downloadAndUpgrade'))).toBeTruthy()
-    expect(verdict()).toBeNull()
+    // 现状行仍写着上次检查的时刻，但**不给结论**：`checked` 这一档只留给
+    // 「查过、没有新版、也没有错误」（全面打磨 D35 之后结论并进了那一行）
+    expect(verdict()).toBe('pending')
+    expect(text()).not.toContain(
+      st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
+    )
   })
 
   it('桌面通道：有更新时不出现「那一刻没有新版本」', async () => {
@@ -185,7 +190,10 @@ describe('有更新', () => {
     await render()
     expect(text()).toContain('0.14.0')
     expect(byLabel(st('update.downloadAndInstall'))).toBeTruthy()
-    expect(verdict()).toBeNull()
+    expect(verdict()).toBe('pending')
+    expect(text()).not.toContain(
+      st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
+    )
   })
 
   it('源码检出装不了：给命令而不是一个点不动的按钮', async () => {
@@ -229,7 +237,10 @@ describe('离线', () => {
     expect(text()).toContain(st('update.manualDownload'))
     expect(byLabel(st('update.checkNow'))!.disabled).toBe(false)
     // 检查失败时不许拿上一次的时间戳去说「那一刻是最新的」
-    expect(verdict()).toBeNull()
+    expect(verdict()).toBe('pending')
+    expect(text()).not.toContain(
+      st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
+    )
   })
 })
 

@@ -57,6 +57,13 @@ export interface ResolvedSpec {
   source: SpecSource
   /** 全局清单里有一份内容不同的同 id 规范（且用户没选「跟着全局走」） */
   updateAvailable: boolean
+  /**
+   * **实际在用的那份的 id**。没在文档里指定过任何规范时它是内置默认那一条的 id
+   * ——回退也是一种「在用」，界面的「本项目在用」判据认它（全面打磨 D03）。此前
+   * 界面直接拿 `binding.id` 当判据，于是回退到内置默认的那套在库里被标成「没在用」，
+   * 同一页顶部却写着「当前项目使用 · 默认规范」。
+   */
+  profileId: string | null
   /** 绑的 id 在全局清单里找不到了（被删 / 换了台电脑）。**快照仍然管用** */
   globalMissing: boolean
   /** 全局那一版的展示用版本号；找不到就是 null（"不知道"是独立一档） */
@@ -141,6 +148,7 @@ export function resolveDocumentSpec(
     return {
       profile: withJournal(snapshot, binding?.journal),
       source: 'snapshot',
+      profileId: binding?.id ?? null,
       // 全局没了就没有"新版"可言——`globalMissing` 才是那时该说的话
       updateAvailable: !!global && !sameRules(global.data, snapshot),
       globalMissing,
@@ -152,6 +160,7 @@ export function resolveDocumentSpec(
     return {
       profile: withJournal(global.data, binding?.journal),
       source: 'global',
+      profileId: global.id,
       updateAvailable: false,
       globalMissing: false,
       globalVersion,
@@ -163,6 +172,7 @@ export function resolveDocumentSpec(
     return {
       profile: withJournal(snapshot, binding?.journal),
       source: 'snapshot',
+      profileId: binding?.id ?? null,
       updateAvailable: false,
       globalMissing: true,
       globalVersion: null,
@@ -172,6 +182,7 @@ export function resolveDocumentSpec(
   return {
     profile: loadProfile(binding?.id ?? DEFAULT_PROFILE_ID, journal),
     source: 'builtin',
+    profileId: binding?.id ?? DEFAULT_PROFILE_ID,
     updateAvailable: false,
     globalMissing,
     globalVersion,

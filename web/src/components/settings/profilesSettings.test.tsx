@@ -250,6 +250,16 @@ describe('Style 与 Spec 不混改', () => {
   })
 })
 
+/**
+ * 「让本项目用选中的这一套」那颗钮。
+ *
+ * 文档里还没有显式绑定过任何规范时，检查走的就是内置默认那一份——**那也是「在用」**
+ * （全面打磨 D03，判据改成 `resolveDocumentSpec` 算出的实际在用那份）。此时选中它，
+ * 身份行给的是绿色的「本项目在用」加一颗说实话的 ghost「固定为本项目规范」：它做的事
+ * 是把这一刻的回退固定成显式绑定 + 快照，而不是「现在换成用这套」。
+ */
+const useForProject = () => byText('固定为本项目规范') ?? byText('本项目用这套规范')
+
 describe('警告与项目绑定', () => {
   it('迁移/导入没能识别的字段如实说出来（没有丢，只是没认出）', async () => {
     await mount()
@@ -266,7 +276,7 @@ describe('警告与项目绑定', () => {
     expect(document.body.querySelector('[aria-label="跟随更新"]')).toBeNull()
 
     await act(async () => {
-      byText('本项目用这套规范')!.click()
+      useForProject()!.click()
     })
     expect(useDocumentStore.getState().doc.profile!.follow).toBeUndefined()
 
@@ -290,7 +300,7 @@ describe('警告与项目绑定', () => {
     await mount()
     await switchToSpec()
     await act(async () => {
-      byText('本项目用这套规范')!.click()
+      useForProject()!.click()
     })
     await act(async () => {
       document.body.querySelector<HTMLElement>('[aria-label="跟随更新"]')!.click()
@@ -301,7 +311,7 @@ describe('警告与项目绑定', () => {
     const other = buttons().find((b) => b.textContent?.includes('自由排版'))!
     await act(async () => other.click())
     await act(async () => {
-      byText('本项目用这套规范')!.click()
+      useForProject()!.click()
     })
     const bound = useDocumentStore.getState().doc.profile!
     expect(bound.id).toBe('free-form-v1')
@@ -312,7 +322,7 @@ describe('警告与项目绑定', () => {
     await mount()
     await switchToSpec()
     await act(async () => {
-      byText('本项目用这套规范')!.click()
+      useForProject()!.click()
     })
     const bound = useDocumentStore.getState().doc.profile!
     expect(bound.id).toBe(DEFAULT_PROFILE_ID)
@@ -400,7 +410,7 @@ describe('规范页把边界与快照摊开（审计 T41）', () => {
   it('本项目实际用来检查的那份规则摊开可查，且来自绑定的解析结果', async () => {
     await mount('spec')
     await act(async () => {
-      byText('本项目用这套规范')!.click()
+      useForProject()!.click()
     })
     const head = buttons().find((b) => b.textContent?.includes('本项目实际检查的规则'))!
     expect(head.getAttribute('aria-expanded')).toBe('false') // 排障材料，默认折叠

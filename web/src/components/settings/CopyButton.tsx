@@ -3,7 +3,7 @@ import { Check, Copy } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { Button, type ButtonProps } from '../ui/Button'
+import { Button, IconButton, type ButtonProps } from '../ui/Button'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -18,12 +18,18 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * 建在 `Button` 上（Session 6）：以前是一颗自己画的 24px 钮，与旁边 28px 的
  * 控件差一档、聚焦环与忙碌态也各写一套。默认 ghost 小钮（路径 / 命令旁），
  * 作为一行里的主动作时传 `variant="secondary"`。
+ *
+ * **两种形态**（全面打磨 D09）：`text` 是带「复制」二字的钮，只给「复制诊断」
+ * 那种自己独立成立的动作；`icon` 是 28×28 的 `IconButton`，给紧跟在一段值
+ * 后面的复制——项目页三行各挂一颗 67px 宽的「⧉ 复制」时，三个目录名旁边
+ * 各站着一颗同样的钮，读起来比目录名本身还显眼。名字在可达名与气泡里。
  */
 export function CopyButton({
   text,
   label,
   className,
   variant = 'ghost',
+  appearance = 'text',
 }: {
   /** 要复制的文本；函数形式用于「点的那一刻才生成」 */
   text: string | (() => string)
@@ -31,6 +37,8 @@ export function CopyButton({
   label?: string
   className?: string
   variant?: ButtonProps['variant']
+  /** text：带「复制」二字；icon：只有图标的 28×28 小钮（值旁边的那种） */
+  appearance?: 'text' | 'icon'
 }) {
   const [done, setDone] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -47,6 +55,38 @@ export function CopyButton({
     }
   }
   const name = label ?? st('copy')
+  if (appearance === 'icon') {
+    return (
+      <IconButton
+        // 复制完气泡与可达名一起改口说「已复制」——图标钮没有地方写第二行字
+        label={done ? st('copied') : name}
+        iconSize="sm"
+        variant={variant}
+        onClick={() => void copy()}
+        className={cn(variant === 'ghost' && 'text-ink-3 hover:text-ink', className)}
+      >
+        {/* 两个图标叠在同一格淡换，与文字形态同一手法：换的时候钮不跳 */}
+        <span className="grid place-items-center">
+          <Copy
+            size={ICON_SIZE.sm}
+            aria-hidden
+            className={cn(
+              'col-start-1 row-start-1 transition-opacity duration-fast',
+              done && 'opacity-0',
+            )}
+          />
+          <Check
+            size={ICON_SIZE.sm}
+            aria-hidden
+            className={cn(
+              'col-start-1 row-start-1 transition-opacity duration-fast',
+              !done && 'opacity-0',
+            )}
+          />
+        </span>
+      </IconButton>
+    )
+  }
   return (
     <Button
       variant={variant}

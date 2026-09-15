@@ -48,12 +48,19 @@ export const settingControlStyle = {
 export function SettingSection({
   title,
   description,
+  action,
   children,
   className,
 }: {
   title?: ReactNode
   /** 分区级的一句说明（这一组设置管什么）；行级的说明写在行上 */
   description?: ReactNode
+  /**
+   * 分区标题行右侧的动作（「添加服务」「重新检测」这类**管整个分区**的那一颗）。
+   * 全面打磨 D05 / D10：此前编码 Agent 页把它们摆成页首一条左对齐的裸按钮条，
+   * 是全部设置页里唯一不在行语法里的控件。
+   */
+  action?: ReactNode
   children: ReactNode
   className?: string
 }) {
@@ -65,10 +72,21 @@ export function SettingSection({
         className,
       )}
     >
-      {(title != null || description != null) && (
-        <header className="mb-1 flex flex-col gap-0.5">
-          {title != null && <h3 className="type-section">{title}</h3>}
-          {description != null && <p className="type-caption">{description}</p>}
+      {/* 分区头「上 16 下 8」：16 由外壳的 gap-7 给，这里只管下缘（全面打磨 D42） */}
+      {(title != null || description != null || action != null) && (
+        <header
+          className={cn(
+            'mb-2 flex items-start justify-between gap-3',
+            // 有动作时标题行是一个 28px 的盒，钮与标题在一条中线上；没有动作时
+            // 保持原来的纯文字高度，别为了一个不存在的按钮把所有分区头撑高
+            action != null && 'min-h-7 items-center',
+          )}
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            {title != null && <h3 className="type-section">{title}</h3>}
+            {description != null && <p className="type-caption">{description}</p>}
+          </span>
+          {action}
         </header>
       )}
       {children}
@@ -126,6 +144,7 @@ export function SettingRow({
   controlId,
   density = 'normal',
   control = 'fixed',
+  ...rest
 }: {
   label: ReactNode
   /** 一句说明（这项设置管什么）。可选；不写就只有标题一行 */
@@ -146,13 +165,14 @@ export function SettingRow({
   density?: 'normal' | 'compact'
   /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行 */
   control?: 'fixed' | 'fill'
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   const labelText = typeof label === 'string' ? label : ''
   const LabelTag = controlId ? 'label' : 'span'
   const fill = control === 'fill'
   const compact = density === 'compact'
   return (
     <div
+      {...rest}
       data-setting-row
       data-density={density}
       style={settingControlStyle}
@@ -176,9 +196,16 @@ export function SettingRow({
             <HelpTip label={helpLabel ?? st('helpAbout', { label: labelText })}>{help}</HelpTip>
           )}
         </span>
-        {description != null && <span className="type-caption -mt-1 break-words">{description}</span>}
-        {status != null && <span className="type-meta -mt-1 break-words">{status}</span>}
-        {illustration != null && <span className="mt-1.5 flex">{illustration}</span>}
+        {/* 说明 / 现状 / 示意图是标题下的**同一段**：负边距只收一次（把整段贴住 28px 的标题盒），
+            段内各行之间是正的 gap。此前三段各自 `-mt-1`，说明一折成两行，现状那一段就被拽进
+            说明的最后一行里——关于页「匿名用量统计」的两句话曾经重叠 4px（全面打磨 D02） */}
+        {(description != null || status != null || illustration != null) && (
+          <span className="-mt-1 flex min-w-0 flex-col gap-0.5">
+            {description != null && <span className="type-caption break-words">{description}</span>}
+            {status != null && <span className="type-meta break-words">{status}</span>}
+            {illustration != null && <span className="mt-1 flex">{illustration}</span>}
+          </span>
+        )}
       </div>
       {/* 控件贴列右缘（2026-09-15 打磨批次 A，用户拍板）：定宽列里左起对齐会把控件漂在页面中间、
           右侧空一大片；整行宽的 fill 形态不在此列，照旧铺满 */}
@@ -339,16 +366,17 @@ export function DiagnosticDisclosure({
   action,
   children,
   defaultOpen = false,
+  ...rest
 }: {
   title: string
-  /** 折叠头右侧的动作（导出诊断包…），不随展开消失 */
+  /** 折叠头右侧的动作（导出诊断包…）或摘要值，不随展开消失 */
   action?: ReactNode
   children: ReactNode
   defaultOpen?: boolean
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="flex flex-col gap-1.5">
+    <div {...rest} className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -368,8 +396,13 @@ export function DiagnosticDisclosure({
         </button>
         {action}
       </div>
-      <Reveal open={open}>
-        <div className="flex flex-col gap-1 pl-2">{children}</div>
+      {/* `grid-cols-[minmax(0,1fr)]`：`Reveal` 是一个 grid，隐式列是 `auto`——而 grid 项的
+          `min-width` 默认按 min-content 算，里面有一行 `truncate`（`white-space: nowrap`）的
+          长路径时，那一列就撑到整条路径的宽度，越过内容列右缘被外层裁掉（编码 Agent 详情的
+          「找过这些位置」实测如此）。把列钉成 `minmax(0,1fr)` 之后它才会缩，`truncate` 也才生效。
+          行方向的 `grid-template-rows` 由展开动画接管，两者不冲突。 */}
+      <Reveal open={open} className="min-w-0 grid-cols-[minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-1 pl-2">{children}</div>
       </Reveal>
     </div>
   )
@@ -383,15 +416,16 @@ export function DiagnosticItem({
   name,
   value,
   ok,
+  ...rest
 }: {
   name: ReactNode
   value: ReactNode
   /** 给了才画状态点；只是信息条目就不画 */
   ok?: boolean
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   const text = typeof value === 'string' ? value : undefined
   return (
-    <div className="flex items-start gap-1.5">
+    <div {...rest} className="flex items-start gap-1.5">
       {ok !== undefined && (
         <span
           aria-hidden

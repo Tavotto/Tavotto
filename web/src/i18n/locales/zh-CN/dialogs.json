@@ -131,8 +131,8 @@
     "saveAs": "另存为",
     "saveTitle": "另存为文档",
     "saved": "已另存为文档：{{name}}",
-    "savesInto": "保存到 {{dir}}",
-    "saving": "正在保存…"
+    "saving": "正在保存…",
+    "savesIntoLabel": "保存到"
   },
   "mcp": {
     "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",
@@ -572,20 +572,21 @@
       "spec": "规范库"
     },
     "keyRules": "关键要求",
-    "more": "更多操作"
+    "more": "更多操作",
+    "pinAsProject": "固定为本项目规范"
   },
   "readiness": {
     "addToCanvas": "添加到画布",
     "allEditable_other": "{{count}} 张图已就绪",
-    "allScriptsHint": "项目里的每个 .py 都在这里，包括从脚本看不出会画哪张图的。任选一个「试运行」，Tavotto 按它实际画出的图建立关系。",
-    "allScriptsTitle": "全部脚本（{{n}}）",
+    "allScriptsHint": "项目里的每个 .py 都在这里，包括从脚本看不出会画哪张图的。试运行一次，Tavotto 按它实际画出的图建立关系。",
+    "allScriptsTitle": "全部脚本",
     "autoLink": "自动连接",
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
     "emptyTitle": "项目里还没有图",
     "group": {
-      "editable": "可编辑（{{n}}）",
-      "layout_only": "仅排版（{{n}}）",
-      "pending": "需要处理（{{n}}）"
+      "editable": "可编辑",
+      "layout_only": "仅排版",
+      "pending": "需要处理"
     },
     "link": "连接",
     "linked": "已把 {{name}} 连到源脚本",
@@ -624,7 +625,6 @@
     },
     "sourcePrefix": "记录位置：",
     "staleReport": "显示上次成功取回的状态，可能已过期。",
-    "subtitle": "每张图能不能直接改，以及还差什么。",
     "summary": {
       "editable": "可编辑",
       "layoutOnly": "仅排版",
@@ -953,7 +953,6 @@
       "defaultFormats": "默认格式",
       "ppiNotForVector": "只选了矢量格式，分辨率不生效",
       "sectionFormats": "格式",
-      "formatsDesc": "导出对话框打开时预选这些格式",
       "sectionRaster": "位图输出",
       "sectionChecks": "检查"
     },
@@ -971,7 +970,6 @@
       "builtinFromManaged": "随 {{product}} 环境提供，只读。",
       "builtinPlanned": "创建环境时安装 matplotlib 及其依赖。",
       "builtinTitle": "内置包",
-      "builtinTitleCount": "内置包（{{count}} 个，只读）",
       "col": {
         "actions": "操作",
         "name": "名称",
@@ -1024,7 +1022,6 @@
         "customIndex": "使用自定义软件源",
         "proxy": "当前走代理"
       },
-      "networkNote": "安装、升级与查找会联网访问 PyPI 或你配置的软件源。",
       "op": {
         "install": "安装",
         "uninstall": "卸载",
@@ -1040,7 +1037,6 @@
       "search": {
         "action": "在 PyPI 查找",
         "alreadyInstalled": "已安装 {{version}}。",
-        "builtinTitleMatch": "内置包：{{total}} 个中匹配 {{count}} 个，只读",
         "exactOnly": "只按完整包名查找，不猜相近的名字。",
         "failed": "没有查到 {{name}}。",
         "installHere": "安装到此环境",
@@ -1055,7 +1051,8 @@
           "pypi": "来自官方 PyPI。",
           "unknown": "无法确定软件源。"
         },
-        "versionAria": "{{name}} 的版本"
+        "versionAria": "{{name}} 的版本",
+        "builtinCountMatch": "匹配 {{count}} / {{total}} · 只读"
       },
       "snapshotDetail": "包操作无法回滚。改动前后各存一份 pip freeze 仅供排障，现有 {{count}} 份；重建不依赖它。",
       "specAria": "包名或规范",
@@ -1076,7 +1073,8 @@
       "updateAria": "升级 {{name}}",
       "userEmpty": "还没有安装过包。",
       "userTitle": "用户安装",
-      "envSection": "环境"
+      "envSection": "环境",
+      "builtinCountMeta": "{{count}} 个 · 只读"
     },
     "project": {
       "backupDir": "原始文件备份",
@@ -1099,7 +1097,6 @@
       "sectionLocations": "位置",
       "sectionWriteBack": "写回源图",
       "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本，写回前先备份到上面的位置。",
-      "onlyThisProject": "只影响这个项目",
       "change": "更改…"
     },
     "section": {
@@ -1131,8 +1128,7 @@
     "title": "设置",
     "update": {
       "applyFailedRetry": "升级未完成，当前版本未变。可以再点一次「下载并升级」，或查看下方日志排查。",
-      "autoCheck": "自动检查",
-      "autoCheckAria": "每天自动检查更新",
+      "autoCheck": "每天自动检查",
       "available": "有新版本",
       "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
       "check": "检查更新",
@@ -1148,11 +1144,8 @@
       "installMethod": "安装方式",
       "installedHint": "已安装。当前窗口仍是旧版本，重启后生效。",
       "lastChecked": "上次检查：{{time}}",
-      "latestUnknown": "还没有检查过，无法判断是不是最新版本。",
       "manualDownload": "连不上更新服务时，也可以从 Releases 手动下载",
       "methodSource": "源码检出。升级用 git pull。",
-      "neverChecked": "尚未检查",
-      "noUpdateAtLastCheck": "上次检查没有发现新版本；此刻有没有，要再查一次才知道。",
       "relaunch": "重启并使用新版本",
       "releaseNotes": "查看发行说明",
       "restartAfter": "后生效。当前进程仍运行旧版本代码。",
@@ -1160,7 +1153,9 @@
       "restartStrong": "请重启 Tavotto",
       "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。项目、画布与设置都在用户数据目录，升级不受影响。",
       "sourceUpgrade": "源码检出，请执行",
-      "upgrading": "升级中…"
+      "upgrading": "升级中…",
+      "lastCheckedNoUpdate": "{{time}} · 没有新版本",
+      "lastCheckedUnknown": "尚未检查，无法判断是不是最新"
     },
     "tutorial": {
       "label": "新手教程",
@@ -1181,7 +1176,6 @@
   },
   "style": {
     "affectDetails": "影响明细",
-    "affectNone": "此范围内没有图会被改动。",
     "affectSummary_other": "将影响 {{count}} 张图，共 {{patches}} 项修改",
     "annotationCount_other": "标注文字：{{count}} 条",
     "annotationGroup": "标注与页面",
@@ -1193,14 +1187,11 @@
     "confirmBody_other": "将覆盖 {{count}} 项已有的图内修改，{{undo}} 可整体撤销。",
     "confirmTitle": "应用样式「{{name}}」？",
     "deleteBody": "删除后无法找回。已应用到文档的修改不受影响。",
-    "deleteStyleAria": "删除样式 {{name}}",
     "deleteTitle": "删除样式「{{name}}」？",
-    "description": "把排版规格存成命名样式，批量应用到面板；只改图，不改源文件。",
     "descriptionEmpty": "把字号、线宽、刻度、配色存成命名样式，批量应用。只写图内修改，不改源文件。",
     "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取字号、线宽、刻度、配色作为起点。",
     "emptyDraft": "空样式。点「从当前面板提取」读取字号、线宽、刻度、配色，删掉不想统一的项，再保存。",
     "extract": "从当前面板提取",
-    "extractFrom": "从「{{name}}」读取当前值",
     "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
     "group": {
       "axes": "坐标轴",
@@ -1262,7 +1253,9 @@
     "untitled": "未命名",
     "untitledStyle": "未命名样式",
     "willAffect": "将影响",
-    "withAnnotations": "含画布标注与序号标签"
+    "withAnnotations": "含画布标注与序号标签",
+    "nameLabel": "名称",
+    "deleteBuiltinReason": "内置样式删不掉"
   },
   "telemetry": {
     "allow": "分享匿名用量",
