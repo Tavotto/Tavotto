@@ -18,8 +18,8 @@
   四条腿的 matrix include、`runs-on`、`ci-integration-gate` 的 `needs` / `--required` 闭集、`scripts/ci/aggregate_gate.py`、
   `构建前端进包` / `打 wheel` 两步、装 wheel 之后的四条 import / 资源断言；**`src/` 一行没动**（产品 `--port` 仍是 int、
   仍不接受 0，`resolve_port` 的顺延行为原样）；`scripts/smoke_app.py` 一行没动（只被 import）。
-- **本轮没有任何真实的 CI run**（不能 push）。本机实测是 macOS 上从本 worktree 真打的 wheel（§4）；Linux / Windows 腿
-  的 bash 路径形状与 `taskkill` 那一支要等本 PR 的 full-ci run（§8）。
+- 本机实测是 macOS 上从本 worktree 真打的 wheel（§4）。PR #376 首跑：Linux 六片、Windows 两片全绿（Windows 上 `package_smoke.py`
+  真跑通过），macOS 一片 10 条红——根因、诊断与修法见 §9。
 - 回退：恢复两步原文（`/tmp/smoke` + `--port 5199 --no-browser &` + `sleep 8` + 两条 curl + 两行 env），删掉上传步骤；
   脚本、桩与两组测试可以留着（合同测试会红，一起删）。
 
@@ -182,6 +182,7 @@ rc 0，`attempts: 2`；之后 `ps` 里没有任何 `-m tavotto` 残留。这一�
 
 桩本身像 Tavotto 的那几处：`/` 200、`/api/version` 200 JSON、bind 之前用**产品自己的** `session_client.publish_secret`
 写凭据（路径公式与文件形状不另写一份）、`/api/session/ping` 凭 `X-Tavotto-Auth` 判 200 / 401、起一个 `sleep 600` 当 worker。
+**刻意不像**的一处：桩的 `server_bind` 不做父类那次反查主机名（§9）。
 
 ## 6. 变异反证（退出码判；每条先断言目标串恰好一次 → 变异 → 清 `__pycache__` → pytest → 还原核 md5）
 
@@ -228,8 +229,57 @@ C18 从 Gate 的 `--required` 里拿掉 package（连带 `TestGates` 红）。
 `test_windows_bound_subprocesses_pin_their_decoding`（`tests/` 里每个 `subprocess.run` 钉 `encoding="utf-8"`）——全绿，
 其中启动器那条在第一版上红过一次（§3.1 末）。
 
+## 9. macOS runner 上的 getfqdn 停顿：首跑 10 条红的根因（PR #376，2026-09-16）
+
+**现象**：PR #376 首跑（run 35024490379）Linux 六片、Windows 两片全绿，只有 `backend-platforms (macos-latest, 2)` 红 10 条，
+全在 `tests/test_package_smoke.py`——共同签名是某一次尝试里桩**一行都没打**（「日志是空的」），脚本最后一次轮询是
+`URLError: <urlopen error timed out>`（**timed out，不是 refused**）。红的是 `--timeout 3` 的五条负例 + `--timeout 30` 的
+五条（bind-busy / fallback 的第 2 次尝试、两条 `run_attempt(…, 30)`）；`--timeout 60` 的正例、不构造 HTTP server 的
+（crash / bind-busy 每次 / sigterm——pid 文件在 server 之前写）全绿。
+
+**诊断补丁**（commit `2e176774`，不是修复）：桩每个阶段打带相对秒数的进度行（`starting pid= python=` → 参数 → state-file →
+`import session_client` → `publish_secret` 前后 → worker spawn 前后 → **socket 已 bind（还没 listen）→ getfqdn 计时 → 已 listen** →
+serving；连续相同的访问行折叠成一句计数，别把启动期挤出 40 行日志尾）；脚本把「连不上」分成 refused / connect timed out /
+recv timed out / 其它 errno，并记每次尝试的轮询序列（同结果连续 N 次折成一段）；单测阈值 3 → 15、30 → 60。
+
+**证据**（诊断 run 35028309531，job 104580559570；两次 run 的失败摘录原文在 `evidence/ci03b/macos_getfqdn_trace.txt`）：
+5 条 15 s 阈值的红，60 s 的全绿。失败用例的日志尾停在
+
+```
+stub: +  0.01s HTTPServer 构造前（socket → bind → getfqdn → listen）
+stub: +  0.01s socket 已 bind 49597（还没 listen）；getfqdn 前
+```
+
+之后 15 秒内没有下一行；脚本的轮询序列是 `[0.03s ×1] refused（端口上没人 bind） → [3.38s–16.65s ×5] connect timed out（SYN 无回音）`。
+
+**机制**：`http.server.HTTPServer.server_bind` 在 `socket.bind` **之后**、`listen` **之前**调 `socket.getfqdn(host)`（按 host 反查
+主机名填 `server_name`），GitHub 的 macOS runner 上这次反查 30 秒以上没有回音（< 60 s：60 s 的正例都绿）；而 macOS 对
+「已 bind 未 listen」端口的 SYN 是**丢掉**不是 RST——本机实测 `bound-not-listening → TimeoutError('timed out') 3.01 s`、
+`nothing bound → ConnectionRefusedError 0.00 s`。于是脚本每次 `connect` 都吃满 3 秒超时，日志尾没有「serving」，负例在
+桩起来之前就判了超时。三条根因假设里这一条被证实，另两条（进程没起来 / stderr 没落到脚本读的文件；macOS 26 loopback 丢 SYN）
+被 `starting` 行与「已 bind」之前的 refused 一拍证伪。
+
+**桩的修法**（本节的 commit）：`Server.server_bind` 只调 `socketserver.TCPServer.server_bind`（bind），`server_name` 直接填 host，
+**不做反查**——桩不用 `server_name`；追踪行改成「已 bind（还没 listen）→ 已 listen」。本机 DNS 快，行为上反证不出差别（由 macOS run 判），
+所以钉的是静态合同 `test_the_stub_never_resolves_a_hostname_between_bind_and_listen`：正面 = `class Server` 覆写了 `server_bind`
+且调的是 `socketserver.TCPServer.server_bind`（覆写整个删掉就回到父类那条路，光看名字不出现是恒真）；反面 = 桩源码里
+（AST 属性 / 名字 + 子串，注释也算）不出现 `getfqdn`。变异：加回 `self.server_name = socket.getfqdn(host)` → rc 1；删掉
+`server_bind` 覆写 → rc 1（本机，退出码判）。单测阈值维持 15 / 60：它们现在量的只是桩的 Python 启动，不再量 DNS。
+
+**产品侧影响（本计划不改产品）**：werkzeug 3.1.8 的 `BaseWSGIServer` 继承同一个 `server_bind`、没有覆写——真产品在 macOS runner 上
+每次起服务都多等 ~36 s：#376 首跑 `package (macos-latest, 3.13)` 的 `ready_seconds` = **35.78 s**（Linux 0 / Windows 2）；CI00 基线里
+旧写法（`sleep 8` + curl）这一步 macOS 48 s vs 其它腿 13 s——那时它没红多半是因为 curl 没带 --max-time，对着同一个卡住的端口重发 SYN 直到反查回来才
+反查回来。用户机器上反向 DNS 无回音（离线、公司 DNS 不答 PTR）也会有同样的首开延迟。**建议立 issue**（产品 / werkzeug 侧：
+`app.run` 之前 `socket.getfqdn` 的替代、或自带一个只 bind 的 server 子类），本计划只在 CI 留余量。
+
+**为什么 `--timeout 120`**：就绪上限默认 60 s，macOS 腿实测 35.78 s——余量贴边（DNS 再慢 20 秒就假红）。改成 120（step 级 5 分钟不动：
+一次真正的就绪超时 120 s + 换号重试每次几秒——三种租约丢失的文案都在产品 bind 之前出现——+ 每次 ≤ 16 s 终止 ≈ 2.5 分钟）；
+合同 `test_the_smoke_step_runs_the_isolated_script_on_the_venv_python` 钉 `--timeout 120`（变异：拿掉 → rc 1）。
+这个数字是「留余量」不是「量出来的判据」：根因修掉之后可以回到默认值。
+
 ## 8. 已知边界（如实）
 
+- **macOS runner 上真产品起服务多等 ~36 s**（§9）：根因在 werkzeug 继承的 `server_bind` 反查主机名，本计划不改产品，CI 只把就绪上限抬到 120 s。
 - **Windows 腿一次都没跑过**：`taskkill /T /F` 那一支、`tasklist` 判存在、bash 里 `VENV="D:\a\_temp/smoke-venv"` 这种混合分隔符
   路径的 `[ -d ]` / exec（原来 `/tmp/smoke` 走的是 MSYS 的路径转换），都只在 CI 验。四条 POSIX 专属用例在 Windows 上 skip。
   `smoke_app._leftover_workers` 在 Windows 上用 `wmic`，新 runner 镜像没有它时静默回空表——这是 smoke_app 既有的边界，不是本轮新增。
