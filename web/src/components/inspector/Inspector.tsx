@@ -168,7 +168,7 @@ export function Inspector({
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               {/* 小 ghost 图标钮：常驻态只是轻 tint + 描成 ink，不是头部最显眼的东西 */}
-              <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
+              <Pin size={ICON_SIZE.sm} className={pinned ? 'text-ink' : 'text-ink-3'} />
             </IconButton>
           ) : (
             <Tip label={t('overlayTip')} side="bottom">
