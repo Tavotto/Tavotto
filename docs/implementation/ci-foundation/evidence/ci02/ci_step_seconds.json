@@ -1,0 +1,2998 @@
+{
+ "source": "gh api repos/Tavotto/Tavotto/actions/runs/<id>/jobs?filter=latest（2026-09-16 取）；秒 = completed_at − started_at",
+ "runs": {
+  "35007730894": {
+   "pr": 374,
+   "phase": "CI03a（分片后、CI03c 之前）",
+   "head_sha": "e952fe14d23d6a01dfd10afb5b852ab188ef5987",
+   "event": "pull_request+full-ci",
+   "jobs": [
+    {
+     "name": "CI fast gate",
+     "job_id": 104518115541,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 8,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "CI integration gate",
+     "job_id": 104521366455,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 8,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 5,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "Contributor licence (CLA)",
+     "job_id": 104511624493,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 6,
+     "steps": [
+      {
+       "name": "取默认分支上的可信判定输入",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "收集这个 PR 的贡献者（只读元数据）",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "Python quality (Ruff)",
+     "job_id": 104511624485,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 10,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "校验 .git-blame-ignore-revs 里的每个 SHA 真的存在",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.10, 1)",
+     "job_id": 104511624666,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1045,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 23,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1013,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.10, 2)",
+     "job_id": 104511624840,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1112,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 21,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1082,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.13, 1)",
+     "job_id": 104511624624,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1003,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 17,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 977,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.13, 2)",
+     "job_id": 104511624675,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1028,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 20,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 998,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.14, 1)",
+     "job_id": 104511624846,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 784,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 10,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 22,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 746,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.14, 2)",
+     "job_id": 104511624587,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 856,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 20,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 825,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (macos-latest, 1)",
+     "job_id": 104511624693,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 850,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 16,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 798,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (macos-latest, 2)",
+     "job_id": 104511624538,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 910,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 21,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 878,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (windows-latest, 1)",
+     "job_id": 104511624676,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 1438,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 43,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1380,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (windows-latest, 2)",
+     "job_id": 104511624766,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 1269,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 46,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1208,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "compat-smoke",
+     "job_id": 104511624498,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 144,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖（科学栈按锁文件钉版本）",
+       "seconds": 31,
+       "conclusion": "success"
+      },
+      {
+       "name": "CompatBench smoke",
+       "seconds": 106,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "desktop-shell (macos-latest)",
+     "job_id": 104511624659,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 41,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 11,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo fmt --check",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 12,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "desktop-shell (ubuntu-latest)",
+     "job_id": 104511624634,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 91,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 23,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 Tauri 在 Linux 上的系统依赖",
+       "seconds": 42,
+       "conclusion": "success"
+      },
+      {
+       "name": "摆一个空的 sidecar 产物目录",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo fmt --check",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 12,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 3,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "frontend",
+     "job_id": 104511624312,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 251,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm install --frozen-lockfile",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm i18n:check",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm test",
+       "seconds": 203,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm build",
+       "seconds": 20,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 MCP 画布（真 vite，写到临时位置）",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "组装并验证完整插件候选",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/upload-artifact@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "浏览器 playground 构建",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "invariants",
+     "job_id": 104511624652,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 509,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖（科学栈按锁文件钉版本）",
+       "seconds": 20,
+       "conclusion": "success"
+      },
+      {
+       "name": "结构性不变式",
+       "seconds": 483,
+       "conclusion": "success"
+      },
+      {
+       "name": "不变式探针（人看的那份）",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "macos-app-smoke",
+     "job_id": 104513108345,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 348,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 39,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 Rust supervisor（tavotto-workerd）",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建内置渲染 runtime（python-build-standalone）",
+       "seconds": 57,
+       "conclusion": "success"
+      },
+      {
+       "name": "装打包依赖",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "PyInstaller（内置 runtime 必须进包）",
+       "seconds": 90,
+       "conclusion": "success"
+      },
+      {
+       "name": "架构核对（产物里不许混进另一个架构的 Mach-O）",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 TAVOTTO_WORKER_PYTHON）",
+       "seconds": 48,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟②：中文 + 空格路径下仍走内置 runtime",
+       "seconds": 43,
+       "conclusion": "success"
+      },
+      {
+       "name": "准备渲染环境（模拟用户自己的 Python）",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟③：用户指定的解释器仍然优先于内置",
+       "seconds": 21,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (macos-latest, 3.13)",
+     "job_id": 104513108346,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 116,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 38,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 48,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (ubuntu-latest, 3.13)",
+     "job_id": 104513108486,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 72,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 32,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 10,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (ubuntu-latest, 3.14)",
+     "job_id": 104513108408,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 71,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 29,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (windows-latest, 3.13)",
+     "job_id": 104513108381,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 102,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 37,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 17,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "plugin-candidate",
+     "job_id": 104513108404,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 44,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装引擎（server 要在 engine 模式下才声明画布资源）",
+       "seconds": 19,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm install --frozen-lockfile",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/download-artifact@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "依赖真实插件的用例（在这里必须执行，不许 skip）",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "核心验收：两个独立前端分支组合后真构建、真起 server",
+       "seconds": 5,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "posix-e2e",
+     "job_id": 104513108295,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 564,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 Tavotto 与渲染依赖",
+       "seconds": 14,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 30,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建画布产物给 e2e 用",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 黄金路径（真实界面 + python -m tavotto）",
+       "seconds": 510,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "windows-exe-smoke",
+     "job_id": 104513108282,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 1428,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 16,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 39,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建画布产物给 e2e 用",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 Rust supervisor（tavotto-workerd）",
+       "seconds": 24,
+       "conclusion": "success"
+      },
+      {
+       "name": "缓存 CPython 归档下载",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建内置渲染 runtime",
+       "seconds": 61,
+       "conclusion": "success"
+      },
+      {
+       "name": "装打包依赖",
+       "seconds": 19,
+       "conclusion": "success"
+      },
+      {
+       "name": "PyInstaller（内置 runtime 必须进包）",
+       "seconds": 26,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里真有 workerd",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里有 console 版 CLI，并且它真能当命令行用",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里真有内置 runtime",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟①：干净 Windows（无 Python / 无 TAVOTTO_WORKER_PYTHON）",
+       "seconds": 12,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟②：中文 + 空格路径下仍走内置 runtime",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "准备渲染环境（模拟用户自己的 Python）",
+       "seconds": 16,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟③：用户指定的解释器仍然优先于内置",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime）",
+       "seconds": 1137,
+       "conclusion": "success"
+      },
+      {
+       "name": "大图预览内存基准（不阻塞）",
+       "seconds": 18,
+       "conclusion": "success"
+      },
+      {
+       "name": "上传内存基准",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post 缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "workerd",
+     "job_id": 104511624730,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 54,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo fmt --check",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 21,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 13,
+       "conclusion": "success"
+      }
+     ]
+    }
+   ]
+  },
+  "35011613925": {
+   "pr": 375,
+   "phase": "CI03c（Playwright 分两片）",
+   "head_sha": "35b912a0fb0c4ef005b7107adcc62e588c7f6fe7",
+   "event": "pull_request+full-ci",
+   "jobs": [
+    {
+     "name": "CI fast gate",
+     "job_id": 104531577268,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 8,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "CI integration gate",
+     "job_id": 104532998032,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 10,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "取默认分支上的可信判定器",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "Contributor licence (CLA)",
+     "job_id": 104524763569,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 9,
+     "steps": [
+      {
+       "name": "取默认分支上的可信判定输入",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "收集这个 PR 的贡献者（只读元数据）",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "Python quality (Ruff)",
+     "job_id": 104524763384,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 12,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "校验 .git-blame-ignore-revs 里的每个 SHA 真的存在",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.10, 1)",
+     "job_id": 104524763472,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1017,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 22,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 985,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.10, 2)",
+     "job_id": 104524763550,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 902,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 28,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 866,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.13, 1)",
+     "job_id": 104524763647,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 975,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 23,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 945,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.13, 2)",
+     "job_id": 104524763628,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 983,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 18,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 959,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.14, 1)",
+     "job_id": 104524763551,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 592,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 21,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 562,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-fast (3.14, 2)",
+     "job_id": 104524763707,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 1123,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 22,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1092,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (macos-latest, 1)",
+     "job_id": 104524763407,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 847,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 823,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (macos-latest, 2)",
+     "job_id": 104524763611,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 787,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 15,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 763,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (windows-latest, 1)",
+     "job_id": 104524763688,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 823,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 36,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 776,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "backend-platforms (windows-latest, 2)",
+     "job_id": 104524763394,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 1172,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖",
+       "seconds": 41,
+       "conclusion": "success"
+      },
+      {
+       "name": "pytest",
+       "seconds": 1117,
+       "conclusion": "success"
+      },
+      {
+       "name": "分片证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "compat-smoke",
+     "job_id": 104524763418,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 146,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖（科学栈按锁文件钉版本）",
+       "seconds": 35,
+       "conclusion": "success"
+      },
+      {
+       "name": "CompatBench smoke",
+       "seconds": 104,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "desktop-shell (macos-latest)",
+     "job_id": 104524763476,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 237,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo fmt --check",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 103,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 88,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 29,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "desktop-shell (ubuntu-latest)",
+     "job_id": 104524763534,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 233,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 Tauri 在 Linux 上的系统依赖",
+       "seconds": 24,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 87,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 101,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 15,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "frontend",
+     "job_id": 104524763159,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 175,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm install --frozen-lockfile",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm lint",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm i18n:check",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm test",
+       "seconds": 137,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm build",
+       "seconds": 15,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 MCP 画布（真 vite，写到临时位置）",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/upload-artifact@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "浏览器 playground 构建",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "invariants",
+     "job_id": 104524763339,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 523,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装依赖（科学栈按锁文件钉版本）",
+       "seconds": 22,
+       "conclusion": "success"
+      },
+      {
+       "name": "结构性不变式",
+       "seconds": 494,
+       "conclusion": "success"
+      },
+      {
+       "name": "不变式探针（人看的那份）",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "macos-app-smoke",
+     "job_id": 104525777023,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 356,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 35,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 Rust supervisor（tavotto-workerd）",
+       "seconds": 12,
+       "conclusion": "success"
+      },
+      {
+       "name": "缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建内置渲染 runtime（python-build-standalone）",
+       "seconds": 47,
+       "conclusion": "success"
+      },
+      {
+       "name": "装打包依赖",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "PyInstaller（内置 runtime 必须进包）",
+       "seconds": 58,
+       "conclusion": "success"
+      },
+      {
+       "name": "架构核对（产物里不许混进另一个架构的 Mach-O）",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 TAVOTTO_WORKER_PYTHON）",
+       "seconds": 67,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟②：中文 + 空格路径下仍走内置 runtime",
+       "seconds": 45,
+       "conclusion": "success"
+      },
+      {
+       "name": "准备渲染环境（模拟用户自己的 Python）",
+       "seconds": 11,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟③：用户指定的解释器仍然优先于内置",
+       "seconds": 31,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post 缓存 CPython 归档下载",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 10,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 5,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (macos-latest, 3.13)",
+     "job_id": 104525777146,
+     "conclusion": "success",
+     "runs_on_label": [
+      "macos-latest"
+     ],
+     "job_seconds": 111,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 36,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 48,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (ubuntu-latest, 3.13)",
+     "job_id": 104525777073,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 66,
+     "steps": [
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 32,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (ubuntu-latest, 3.14)",
+     "job_id": 104525777170,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 70,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 31,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 9,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 13,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "package (windows-latest, 3.13)",
+     "job_id": 104525777205,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 128,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 10,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 40,
+       "conclusion": "success"
+      },
+      {
+       "name": "打 wheel",
+       "seconds": 26,
+       "conclusion": "success"
+      },
+      {
+       "name": "装进干净环境并冒烟",
+       "seconds": 19,
+       "conclusion": "success"
+      },
+      {
+       "name": "起服务并请求首页",
+       "seconds": 14,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Complete job",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "plugin-candidate",
+     "job_id": 104525777076,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 69,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "安装引擎（server 要在 engine 模式下才声明画布资源）",
+       "seconds": 34,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm install --frozen-lockfile",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/download-artifact@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "依赖真实插件的用例（在这里必须执行，不许 skip）",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "核心验收：两个独立前端分支组合后真构建、真起 server",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "posix-e2e",
+     "job_id": 104525777000,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 556,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 Tavotto 与渲染依赖",
+       "seconds": 18,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 26,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建画布产物给 e2e 用",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 黄金路径（真实界面 + python -m tavotto）",
+       "seconds": 491,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run pnpm/action-setup@v4",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "windows-exe-smoke (1)",
+     "job_id": 104525777098,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 1076,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 19,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 42,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建画布产物给 e2e 用",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 Rust supervisor（tavotto-workerd）",
+       "seconds": 26,
+       "conclusion": "success"
+      },
+      {
+       "name": "缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建内置渲染 runtime",
+       "seconds": 64,
+       "conclusion": "success"
+      },
+      {
+       "name": "装打包依赖",
+       "seconds": 15,
+       "conclusion": "success"
+      },
+      {
+       "name": "PyInstaller（内置 runtime 必须进包）",
+       "seconds": 28,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里有 console 版 CLI，并且它真能当命令行用",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里真有内置 runtime",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟①：干净 Windows（无 Python / 无 TAVOTTO_WORKER_PYTHON）",
+       "seconds": 11,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟②：中文 + 空格路径下仍走内置 runtime",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "准备渲染环境（模拟用户自己的 Python）",
+       "seconds": 14,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟③：用户指定的解释器仍然优先于内置",
+       "seconds": 5,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 web 依赖与本片的浏览器（chromium）",
+       "seconds": 245,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 分片自验（本片 == 全集里属于本片 project 的那些）",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime，本片 --project=chromium）",
+       "seconds": 525,
+       "conclusion": "success"
+      },
+      {
+       "name": "上传分片自验证据",
+       "seconds": 2,
+       "conclusion": "success"
+      },
+      {
+       "name": "大图预览内存基准（不阻塞）",
+       "seconds": 23,
+       "conclusion": "success"
+      },
+      {
+       "name": "上传内存基准",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post 缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "windows-exe-smoke (2)",
+     "job_id": 104525777295,
+     "conclusion": "success",
+     "runs_on_label": [
+      "windows-latest"
+     ],
+     "job_seconds": 945,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run pnpm/action-setup@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/setup-node@v4",
+       "seconds": 9,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建前端进包",
+       "seconds": 45,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建画布产物给 e2e 用",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run Swatinem/rust-cache@v2",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建 Rust supervisor（tavotto-workerd）",
+       "seconds": 35,
+       "conclusion": "success"
+      },
+      {
+       "name": "缓存 CPython 归档下载",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "构建内置渲染 runtime",
+       "seconds": 76,
+       "conclusion": "success"
+      },
+      {
+       "name": "装打包依赖",
+       "seconds": 18,
+       "conclusion": "success"
+      },
+      {
+       "name": "PyInstaller（内置 runtime 必须进包）",
+       "seconds": 29,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里有 console 版 CLI，并且它真能当命令行用",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "断言产物里真有内置 runtime",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟①：干净 Windows（无 Python / 无 TAVOTTO_WORKER_PYTHON）",
+       "seconds": 13,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟②：中文 + 空格路径下仍走内置 runtime",
+       "seconds": 10,
+       "conclusion": "success"
+      },
+      {
+       "name": "准备渲染环境（模拟用户自己的 Python）",
+       "seconds": 15,
+       "conclusion": "success"
+      },
+      {
+       "name": "冒烟③：用户指定的解释器仍然优先于内置",
+       "seconds": 6,
+       "conclusion": "success"
+      },
+      {
+       "name": "装 web 依赖与本片的浏览器（chromium webkit）",
+       "seconds": 231,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 分片自验（本片 == 全集里属于本片 project 的那些）",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime，本片 --project=webkit --project=chromium-en）",
+       "seconds": 377,
+       "conclusion": "success"
+      },
+      {
+       "name": "上传分片自验证据",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "大图预览内存基准（不阻塞）",
+       "seconds": 18,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post 缓存 CPython 归档下载",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-node@v4",
+       "seconds": 8,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/setup-python@v5",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run actions/checkout@v4",
+       "seconds": 2,
+       "conclusion": "success"
+      }
+     ]
+    },
+    {
+     "name": "workerd",
+     "job_id": 104524763705,
+     "conclusion": "success",
+     "runs_on_label": [
+      "ubuntu-latest"
+     ],
+     "job_seconds": 20,
+     "steps": [
+      {
+       "name": "Set up job",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run actions/checkout@v4",
+       "seconds": 3,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run dtolnay/rust-toolchain@stable",
+       "seconds": 1,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo clippy --all-targets -- -D warnings",
+       "seconds": 4,
+       "conclusion": "success"
+      },
+      {
+       "name": "Run cargo test",
+       "seconds": 7,
+       "conclusion": "success"
+      },
+      {
+       "name": "Post Run Swatinem/rust-cache@v2",
+       "seconds": 1,
+       "conclusion": "success"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

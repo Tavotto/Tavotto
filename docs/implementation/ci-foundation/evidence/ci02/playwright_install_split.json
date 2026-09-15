@@ -1,0 +1,75 @@
+{
+ "run_id": 35011613925,
+ "note": "时间戳来自 job 日志的行首；`with_deps_system_dependencies` = pnpm 完成 → 第一条浏览器下载之间（Windows：Install-WindowsFeature Server-Media-Foundation；Linux：apt-get 装 chromium 的系统依赖与字体）",
+ "legs": [
+  {
+   "job": "windows-exe-smoke (1)",
+   "job_id": 104525777098,
+   "log": "gh run view 35011613925 --job 104525777098 --log",
+   "step_start": "2026-09-15T19:17:27.303Z",
+   "pnpm_install_done": "2026-09-15T19:17:28.298Z",
+   "first_browser_download": "2026-09-15T19:21:14.674Z",
+   "last_browser_downloaded": "2026-09-15T19:21:31.924Z",
+   "next_step_start": "2026-09-15T19:21:32.117Z",
+   "seconds": {
+    "pnpm_install": 1.0,
+    "with_deps_system_dependencies": 226.4,
+    "browser_downloads": 17.4,
+    "step_total": 244.8
+   },
+   "system_dependency_evidence_line": "2026-09-15T19:21:14.4898832Z True    No             Success        {Media Foundation}                           ",
+   "downloads": [
+    "Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234)^[[2m from https://cdn.playwright.dev/",
+    "Downloading FFmpeg (playwright ffmpeg v1011)^[[2m from https://cdn.playwright.dev/dbazure/download/playwright/",
+    "Downloading Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234)^[[2m from https://c",
+    "Downloading Winldd (playwright winldd v1007)^[[2m from https://cdn.playwright.dev/dbazure/download/playwright/"
+   ]
+  },
+  {
+   "job": "windows-exe-smoke (2)",
+   "job_id": 104525777295,
+   "log": "gh run view 35011613925 --job 104525777295 --log",
+   "step_start": "2026-09-15T19:19:50.059Z",
+   "pnpm_install_done": "2026-09-15T19:19:51.237Z",
+   "first_browser_download": "2026-09-15T19:23:14.998Z",
+   "last_browser_downloaded": "2026-09-15T19:23:35.556Z",
+   "next_step_start": "2026-09-15T19:23:41.701Z",
+   "seconds": {
+    "pnpm_install": 1.2,
+    "with_deps_system_dependencies": 203.8,
+    "browser_downloads": 26.7,
+    "step_total": 231.6
+   },
+   "system_dependency_evidence_line": "2026-09-15T19:23:14.9024263Z True    No             Success        {Media Foundation}                           ",
+   "downloads": [
+    "Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234)^[[2m from https://cdn.playwright.dev/",
+    "Downloading FFmpeg (playwright ffmpeg v1011)^[[2m from https://cdn.playwright.dev/dbazure/download/playwright/",
+    "Downloading Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234)^[[2m from https://c",
+    "Downloading WebKit 26.5 (playwright webkit v2336)^[[2m from https://cdn.playwright.dev/dbazure/download/playwr",
+    "Downloading Winldd (playwright winldd v1007)^[[2m from https://cdn.playwright.dev/dbazure/download/playwright/"
+   ]
+  },
+  {
+   "job": "posix-e2e",
+   "job_id": 104525777000,
+   "log": "gh run view 35011613925 --job 104525777000 --log",
+   "step_start": "2026-09-15T19:11:50.347Z",
+   "pnpm_install_done": "2026-09-15T19:11:50.756Z",
+   "first_browser_download": "2026-09-15T19:12:14.566Z",
+   "last_browser_downloaded": "2026-09-15T19:12:24.040Z",
+   "next_step_start": "2026-09-15T19:12:26.282Z",
+   "seconds": {
+    "pnpm_install": 0.4,
+    "with_deps_system_dependencies": 23.8,
+    "browser_downloads": 11.7,
+    "step_total": 35.9
+   },
+   "system_dependency_evidence_line": "2026-09-15T19:11:51.6329621Z Installing dependencies...",
+   "downloads": [
+    "Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234) from https://cdn.playwright.dev/build",
+    "Downloading FFmpeg (playwright ffmpeg v1011) from https://cdn.playwright.dev/dbazure/download/playwright/build",
+    "Downloading Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234) from https://cdn.pl"
+   ]
+  }
+ ]
+}

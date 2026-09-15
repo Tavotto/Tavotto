@@ -1,0 +1,324 @@
+{
+  "suite": "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches",
+  "baseline_rc": 0,
+  "total": 21,
+  "killed": 21,
+  "method": "断言目标串出现次数 == 期望 → 写入变异 → 清 __pycache__ + PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider → pytest 退出码判 → git checkout -- 还原 → 核 md5 与变异前一致",
+  "mutations": [
+    {
+      "id": "M01",
+      "file": "web/package.json",
+      "note": "build 脚本第一条换成 tsc --noEmit（方案文件下恒绿）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_web_build_script_starts_with_a_real_project_build"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M02",
+      "file": "web/package.json",
+      "note": "build 脚本不再跑 tsc",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_web_build_script_starts_with_a_real_project_build"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M03",
+      "file": "web/tsconfig.json",
+      "note": "references 里拿掉 e2e（本机反证：e2e 类型错误 pnpm build 退 0）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_project_references_cover_every_typescript_root"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M04",
+      "file": "web/tsconfig.e2e.json",
+      "note": "e2e 的 include 少了 playwright.config.ts",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_project_references_cover_every_typescript_root"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M05",
+      "file": "web/tsconfig.app.json",
+      "note": "app 的 noEmit 关掉",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_project_references_cover_every_typescript_root"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M06",
+      "file": ".github/workflows/ci.yml",
+      "note": "frontend 的 pnpm build 加 continue-on-error",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M07",
+      "file": ".github/workflows/ci.yml",
+      "note": "frontend 删掉 pnpm build 步",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M08",
+      "file": ".github/workflows/ci.yml",
+      "note": "frontend 加回一条 tsc --noEmit 步",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M09",
+      "file": ".github/workflows/ci.yml",
+      "note": "生成物索引检查挪到 pnpm build 之前",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M10",
+      "file": ".github/workflows/ci.yml",
+      "note": "windows 的 cpython 缓存 key 去掉 runner.arch",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M11",
+      "file": ".github/workflows/ci.yml",
+      "note": "posix-e2e 加一条 Playwright 浏览器缓存（枚举外的第三条 actions/cache）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M12",
+      "file": ".github/workflows/ci.yml",
+      "note": "macos 的缓存 path 改成一个 venv",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M13",
+      "file": ".github/workflows/ci.yml",
+      "note": "macos 的缓存恢复步挪到 runtime 构建之后",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M14",
+      "file": ".github/workflows/ci.yml",
+      "note": "frontend 的 setup-node 去掉 cache-dependency-path",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M15",
+      "file": ".github/workflows/ci.yml",
+      "note": "package 的 setup-node 加 cache: pnpm（没有 dependency-path）",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M16",
+      "file": ".github/workflows/ci.yml",
+      "note": "workerd 的 rust-cache 加 shared-key",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_shares_nothing"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M17",
+      "file": ".github/workflows/ci.yml",
+      "note": "desktop-shell 的 rust-cache 不点名 workspace",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_shares_nothing"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M18",
+      "file": ".github/workflows/ci.yml",
+      "note": "posix-e2e 不再跑 playwright install",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_every_playwright_leg_runs_the_browser_install_instead_of_restoring_it"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M19",
+      "file": ".github/workflows/ci.yml",
+      "note": "消费者不核 content_digest",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M20",
+      "file": ".github/workflows/ci.yml",
+      "note": "消费者的 SHA 不取 checkout 的 HEAD",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    },
+    {
+      "id": "M21",
+      "file": ".github/workflows/ci.yml",
+      "note": "生产者的 zip 复验不带 digest",
+      "target_occurrences": 1,
+      "expected_occurrences": 1,
+      "pytest_rc": 1,
+      "failed_tests": [
+        "TestBuildReuseAndCaches::test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest"
+      ],
+      "killed": true,
+      "restored_md5_ok": true,
+      "seconds": 0.3,
+      "status": "KILLED"
+    }
+  ]
+}
