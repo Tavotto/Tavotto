@@ -10,7 +10,7 @@ import {
   Plus,
   SearchX,
   Trash2,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { listRowClass } from '@/components/ui/listRow'
