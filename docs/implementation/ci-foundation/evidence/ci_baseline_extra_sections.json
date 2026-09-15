@@ -2416,8 +2416,8 @@
    "action": "无差异"
   },
   {
-   "where": "docs/ci/self-hosted-runner.md §3 runner 用户名 github-runner",
-   "observed": "memory lab-ci-runner-access 记的是 runner",
+   "where": "docs/ci/self-hosted-runner.md §3 runner 服务的登录用户名 github-runner",
+   "observed": "另有记录称该用户名为 runner",
    "action": "待管理员确认（admin_inventory.json）"
   }
  ],

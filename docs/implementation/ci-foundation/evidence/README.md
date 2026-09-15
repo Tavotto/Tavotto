@@ -11,10 +11,10 @@
 | `actions/runs/run_<id>[.attempt1].json` | 86 个 run 的元数据（裁剪：`RUN_FIELDS`） | `gh api …/actions/runs/<id>`（attempt 1 另取 `…/attempts/1`）→ `ci_baseline.py trim` |
 | `actions/jobs/jobs_<id>[.attempt1].raw.json` | 对应的 jobs+steps（裁剪：`JOB_FIELDS` / `STEP_FIELDS`；`--paginate` 的页结构与 `total_count` 保留） | `gh api --paginate "…/actions/runs/<id>/jobs?filter=all&per_page=100"` → `trim` |
 | `actions/codeql/` | 3 个 merge_group 的 codeql.yml run 与 jobs（裁剪） | 同上 |
-| `actions/timing_decomposition.json` | 86 个 run 的四类时间分解、关键路径、runner 分钟、删边模型（`--compact`：不含 step 明细） | `ci_baseline.py analyze --compact --workflow .github/workflows/ci.yml --evidence evidence/actions --edge-kinds evidence/dag_edge_kinds.json` |
+| `actions/timing_decomposition.json` | 86 个 run 的四类时间分解、关键路径、runner 分钟、删边模型（`--compact`：不含 step 明细）。**紧凑 JSON（单行），用 `python -m json.tool` 看** | `ci_baseline.py analyze --compact --workflow .github/workflows/ci.yml --evidence docs/implementation/ci-foundation/evidence/actions --edge-kinds …/dag_edge_kinds.json`（`evidence_dir` 字段记的是这个相对路径） |
 | `dag.json` | ci.yml 的 17 个 job、23 条边（含分类与证据行） | `ci_baseline.py dag --edge-kinds evidence/dag_edge_kinds.json` |
 | `dag_edge_kinds.json` | 每条边的 kind + ci.yml 行号 | 人工读 ci.yml @ 8b95256c |
-| `ci_baseline_extra_sections.json` | `CI_BASELINE.json` 里手写段落的原件 | 手写 + 从本目录的文件算出的计数；经 `summarize --extra` 并入 |
+| `ci_baseline_extra_sections.json` | `CI_BASELINE.json` 里手写段落的原件 | 手写 + 从本目录的文件算出的计数；经 `summarize --extra` 并入。上一级的 `CI_BASELINE.json` 本身也是**紧凑 JSON（单行），用 `python -m json.tool` 看** |
 | `ci_logs/durations_backend-platforms_{windows,macos}_job<id>.txt` | CI 的 `--durations=50` 段 + 总结行 | `gh api --allow-escape-sequences …/actions/jobs/<id>/logs`，截取 |
 | `ci_logs/summary_backend-fast_linux310_job<id>.txt` | Linux 3.10 腿的 pip 安装行与 pytest 总结行 | 同上 |
 | `ci_logs/playwright_{windows-exe-smoke,posix-e2e}_job<id>.json` | `list` reporter 的逐用例时长 + 其它行（skip 列表、总结） | 同上，正则解析 |

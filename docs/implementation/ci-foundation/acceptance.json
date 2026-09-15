@@ -35,12 +35,12 @@
       "id": "CIP-003",
       "phase": "CI00",
       "requirement": "旧required领域、版本平台与新位置覆盖账完整",
-      "status": "pass",
+      "status": "not_run",
       "evidence": [
         "coverage_ledger.json（28 条，policy_source_sha 8b95256c，status not_run）",
         "CI_BASELINE.md#9-覆盖账摘要"
       ],
-      "note": "旧 required 领域（快线 12 + CodeQL + 重型 9 + Gate 2）与合并后 / nightly / lab / release 的执行位置全部有条目；「新位置」除保持不变外一律「待 CI01/03 决定」——本条 pass 的是「账完整」，不是「已迁移」。"
+      "note": "旧领域清点完整（28 条）；new_location 待 CI01/CI03 填写后再判"
     },
     {
       "id": "CIP-004",

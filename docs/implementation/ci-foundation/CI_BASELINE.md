@@ -286,7 +286,7 @@ CodeQL 1、重型 9（backend-platforms ×2、package ×4、windows-exe-smoke、
 baselines / reports / tmp）；互斥 = concurrency 组 `lab-qualification-${{ github.workflow }}` + runner 端 flock；preflight 门槛 4C / 8G / 20–60G、
 FD ≥ 4096；推荐 16 vCPU / 32 GiB / 150 GiB SSD 的独立 VM；`github.com` 443 不可达、checkout 走 `ssh.github.com:443`、tool cache 预置。
 需要管理员回答的 11 项：16/32 是 host 还是 guest、hypervisor、其它 VM、可分配 vCPU、真实 RAM、磁盘、网络、runner 注册层级 / runner group、
-lab VM 现状、VM 生命周期工具、runner 用户名（文档 `github-runner` vs memory `runner`）。
+lab VM 现状、VM 生命周期工具、runner 服务的登录用户名（文档写 `github-runner`，另有记录称为 `runner`，待管理员确认）。
 
 ## 11. H1–H4 裁决
 
@@ -303,7 +303,7 @@ lab VM 现状、VM 生命周期工具、runner 用户名（文档 `github-runner
 - ci.yml L493「frontend 实测 2.2 分钟」：中位 4.2（vitest 202s）。L732 desktop-shell「冷编译 37 秒」是本机数，CI 3.5–4 分钟。L460 compat 2.4 ✓、L682 workerd 0.3 ✓。
 - ci.yml L422「Windows 29~41 分钟，套件 4460 条」：中位 40.7、max 47.8；套件 4601 条。
 - `01_AUDIT.md` 与 `evidence/historical_run_sample.json` 的三条 job：复算逐字一致，无差异。
-- `docs/ci/self-hosted-runner.md` runner 用户名 `github-runner` vs memory 里的 `runner`：待管理员确认。
+- `docs/ci/self-hosted-runner.md` 写 runner 服务的登录用户名是 `github-runner`，另有记录称为 `runner`：待管理员确认。
 
 ## 13. 未知项
 

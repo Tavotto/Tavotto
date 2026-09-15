@@ -814,8 +814,9 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         missing = want - {r["run_id"] for r in doc["sample_runs"]}
         if missing:
             raise BaselineError(f"--include-runs 里这些 run 不在 analysis 里：{sorted(missing)}")
+    # 紧凑序列化：这是脚本产物，不是给人逐行读的（看的时候 `python -m json.tool`）
     Path(args.out).write_text(
-        json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        json.dumps(doc, ensure_ascii=False, indent=None) + "\n", encoding="utf-8"
     )
     print(f"汇总 {analysis['run_count']} 个 run → {args.out}")
     return 0
@@ -1018,8 +1019,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "dag": dag,
         "runs": runs,
     }
+    # 紧凑序列化：同 summarize，脚本产物不按行读
     Path(args.out).write_text(
-        json.dumps(report, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        json.dumps(report, ensure_ascii=False, indent=None) + "\n", encoding="utf-8"
     )
     print(f"{len(runs)} 个 run 已分解 → {args.out}")
     return 0

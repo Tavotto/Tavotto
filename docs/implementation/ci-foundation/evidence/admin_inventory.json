@@ -12,7 +12,7 @@
     "preflight_thresholds": {"value": "MIN_CPU 4 / MIN_RAM_GIB 8 / MIN_DISK_GIB 20（main 20 / nightly 40 / release 40 / weekly 60）；FD soft ≥ 4096；locale UTF-8；TZ UTC", "source": "scripts/ci/lab_preflight.py L47-52、L232-275"},
     "documented_machine_spec": {"value": "推荐 Ubuntu 24.04 / 16 vCPU / 32 GiB / 150 GiB SSD（最低 8 / 16 / 100）；「实验室服务器上的一台独立 VM」；宿主文件系统不挂给 runner", "source": "docs/ci/self-hosted-runner.md §2"},
     "network_restrictions": {"value": "github.com（20.205.243.166）22/443 不可达；api.github.com / codeload / objects.githubusercontent / pipelines.actions / ssh.github.com:443 通；checkout 走 SSH（Host github.com → ssh.github.com:443），insteadOf 改写；setup-python 无法现下，必须预置 tool cache（3.10 与 3.13）；runner 二进制经 api.github.com assets 端点下载", "source": "docs/ci/self-hosted-runner.md §2「本实验室的实际网络限制」、§5、§6（历史记录，非本次实测）"},
-    "runner_user_and_paths": {"value": "runner user github-runner（不进 sudo 组）；~/actions-runner；tool cache /opt/hostedtoolcache；PATH 要含 ~/.cargo/bin（.env）；LimitNOFILE=65536", "source": "docs/ci/self-hosted-runner.md §3、§4、§7；memory：lab-ci-runner-access 记的是用户名 runner 而非 github-runner——两处不一致，待管理员确认"},
+    "runner_user_and_paths": {"value": "runner user github-runner（不进 sudo 组）；~/actions-runner；tool cache /opt/hostedtoolcache；PATH 要含 ~/.cargo/bin（.env）；LimitNOFILE=65536", "source": "docs/ci/self-hosted-runner.md §3、§4、§7；另有记录称该用户名为 runner 而非 github-runner——两处不一致，待管理员确认"},
     "secrets_policy": {"value": "runner 不持有 PyPI / Apple / SignPath 凭据；lab job 只有 contents: read；不新增 secret", "source": "self-hosted-runner.md §1、§8"},
     "trigger_policy": {"value": "绝不接受 pull_request；只 push main / schedule / workflow_dispatch（经 trust-check 解析成 origin/main 祖先或 tag 指向的精确 SHA）", "source": "lab-ci.yml L8-25、L96-170"},
     "resource_split_inside_one_job": {"value": "OS/runner 预留 ~2 CPU + 4 GiB；普通测试 ≤ 8~10 CPU；Golden render 4~8 workers；Playwright ~2 workers；Soak 4~8 并发；Mutation ~12~14 CPU；Benchmark 独占", "source": "self-hosted-runner.md §7"}
@@ -28,7 +28,7 @@
     {"field": "runner_registration_scope", "question": "现有 tavotto-lab runner 注册在仓库级还是组织级？组织是否支持 runner group？能否把新 PR 池注册到 PR 无法通过改 runs-on 触达的边界（runner group / 私有 ci-infra 仓库）？", "value": null},
     {"field": "lab_vm_current_state", "question": "lab VM 当前 uptime、磁盘占用（/srv/tavotto-ci 各子目录）、runner 版本、最近一次 lab run 的结论（能否给一份 lab_preflight.py --json 的输出）？", "value": null},
     {"field": "vm_lifecycle_tooling", "question": "有没有从模板克隆 / 快照回滚 / 销毁 VM 的自动化入口（CLI / API）？一次性 runner（JIT / --ephemeral）的注册凭据由谁签发？", "value": null},
-    {"field": "runner_username", "question": "runner 服务的用户名是 github-runner（文档）还是 runner（memory: lab-ci-runner-access）？", "value": null}
+    {"field": "runner_username", "question": "runner 服务的登录用户名是 github-runner（文档所写）还是 runner（另有记录）？", "value": null}
   ],
   "not_attempted": [
     "未 SSH 到任何机器",

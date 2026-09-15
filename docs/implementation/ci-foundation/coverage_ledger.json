@@ -42,7 +42,7 @@
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 4, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
       "promotion_evidence": [],
-      "known_limitations": "PR commits API 封顶 250（memory：pr-commits-api-caps-at-250）",
+      "known_limitations": "PR commits API 封顶 250（超过就让 CLA 判定拒判，已知边界）",
       "status": "not_run"
     },
     {
@@ -403,7 +403,7 @@
       "nodeid_set_or_case_contract": "见 release.yml 与 docs/ci/release-qualification.md",
       "required_artifacts": ["build 的 dist（wheel/sdist/插件 zip）", "desktop 的桌面产物", "lab 的 exact-artifact 验收"],
       "resource_class": "混合（含签名凭据，只在 GitHub 托管机上）",
-      "serial_reason_if_any": "lab 槽与 lab-ci 分开排队；tag push 会死在 blocker 门禁，正式发版走 dispatch（memory：release-v0-13-0-facts）",
+      "serial_reason_if_any": "lab 槽与 lab-ci 分开排队；tag push 会死在 blocker 门禁，正式发版走 dispatch（v0.13.0 / v0.14.0 的发版记录）",
       "observed": {"evidence": "本阶段未采集 release 的 run"},
       "promotion_evidence": [],
       "known_limitations": "",
