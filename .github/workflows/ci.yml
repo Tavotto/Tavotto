@@ -436,13 +436,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
-      # `--shard K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
+      # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
+      # 里注册，而 pytest 先按「未知选项的下一个 token 是路径」预解析去找 conftest——
+      # `--shard-manifest PATH` 在 PATH **已存在**时会把 PATH 当锚点、只加载它所在目录的
+      # conftest，tests/conftest.py 没加载，选项就「unrecognized」。`=` 形式让整个 token
+      # 进 extras，不产生假路径。托管 runner 上 RUNNER_TEMP 每次都是新的，这个坑在 CI 上
+      # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
       - name: pytest
         run: >-
-          python -m pytest --shard ${{ matrix.shard }}/2
-          --shard-manifest "${{ runner.temp }}/shard-manifest.json"
+          python -m pytest --shard=${{ matrix.shard }}/2
+          --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
       # 分片证据：manifest（这一片分到了哪些文件、各片估计秒数）+ junit（真实秒数）。
@@ -501,11 +507,12 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard K/2` 的 2 与 matrix.shard 的长度必须是同一个数（合同测试对拍）。
+      # `--shard=K/2` 的 2 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
       - name: pytest
         run: >-
-          python -m pytest --shard ${{ matrix.shard }}/2
-          --shard-manifest "${{ runner.temp }}/shard-manifest.json"
+          python -m pytest --shard=${{ matrix.shard }}/2
+          --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。

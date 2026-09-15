@@ -1,0 +1,66 @@
+{
+ "full": {
+  "real_s": 1124.28,
+  "user_s": 756.72,
+  "sys_s": 97.83,
+  "max_rss_bytes": 609828864,
+  "max_rss_mib": 581.6,
+  "junit_testcase_time_sum_s": 1121.88,
+  "junit_suite_time_s": 1123.8,
+  "summary": "2 failed, 4641 passed, 42 skipped, 2 deselected, 16 warnings in 1123.96s (0:18:43)"
+ },
+ "s1": {
+  "real_s": 601.92,
+  "user_s": 397.3,
+  "sys_s": 58.44,
+  "max_rss_bytes": 610549760,
+  "max_rss_mib": 582.3,
+  "junit_testcase_time_sum_s": 600.08,
+  "junit_suite_time_s": 601.587,
+  "summary": "1 failed, 2156 passed, 27 skipped, 2503 deselected, 10 warnings in 601.64s (0:10:01)"
+ },
+ "s2": {
+  "real_s": 540.58,
+  "user_s": 370.69,
+  "sys_s": 41.78,
+  "max_rss_bytes": 461504512,
+  "max_rss_mib": 440.1,
+  "junit_testcase_time_sum_s": 536.15,
+  "junit_suite_time_s": 537.862,
+  "summary": "1 failed, 2485 passed, 15 skipped, 2186 deselected, 12 warnings in 540.34s (0:09:00)"
+ },
+ "c1": {
+  "real_s": 619.68,
+  "user_s": 412.48,
+  "sys_s": 62.86,
+  "max_rss_bytes": 610975744,
+  "max_rss_mib": 582.7,
+  "junit_testcase_time_sum_s": 617.76,
+  "junit_suite_time_s": 619.355,
+  "summary": "1 failed, 2156 passed, 27 skipped, 2503 deselected, 10 warnings in 619.41s (0:10:19)"
+ },
+ "c2": {
+  "real_s": 537.97,
+  "user_s": 374.35,
+  "sys_s": 39.65,
+  "max_rss_bytes": 477380608,
+  "max_rss_mib": 455.3,
+  "junit_testcase_time_sum_s": 536.04,
+  "junit_suite_time_s": 537.629,
+  "summary": "1 failed, 2485 passed, 15 skipped, 2186 deselected, 12 warnings in 537.69s (0:08:57)"
+ },
+ "estimated_per_shard_s": [
+  661.52,
+  661.52
+ ],
+ "host": "macOS arm64 Mac mini, 12 cores (same machine as CI00 evidence/pytest/local_run.json)",
+ "driver": "runs/driver.sh via nohup (non-interactive background): A full → B s1, s2 sequential → C c1 ∥ c2 concurrent",
+ "concurrent_vs_sequential": {
+  "c1_minus_s1_real_s": 17.76,
+  "c2_minus_s2_real_s": -2.61,
+  "wall_full_s": 1124.28,
+  "wall_sequential_s1_plus_s2_s": 1142.5,
+  "wall_concurrent_max_s": 619.68,
+  "peak_rss_concurrent_sum_mib": 1037.9
+ }
+}

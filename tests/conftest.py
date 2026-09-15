@@ -257,19 +257,23 @@ def _write_report_to_stderr(text: str) -> None:
 
 def pytest_addoption(parser):
     group = parser.getgroup("shard", "按文件分片（CI03a）")
+    # 两个选项都要写成 `--opt=值`：它们是 conftest 注册的，pytest 预解析时会把未知选项的
+    # 下一个 token 当路径去找 conftest——`--shard-manifest PATH` 在 PATH 已存在时只加载
+    # PATH 所在目录的 conftest，本文件没被加载，选项就成了 unrecognized（rc 4）。
     group.addoption(
         "--shard",
         default=None,
         metavar="K/N",
-        help="只跑第 K 片（1 ≤ K ≤ N）。按文件分组、按 tests/support/shard_weights.json 的"
-        "权重贪心平衡；每个进程都先算全部 N 片并自验并集 == 全集。不带时不分片。",
+        help="只跑第 K 片（1 ≤ K ≤ N），写成 --shard=K/N。按文件分组、按 "
+        "tests/support/shard_weights.json 的权重贪心平衡；每个进程都先算全部 N 片并自验"
+        "并集 == 全集。不带时不分片。",
     )
     group.addoption(
         "--shard-manifest",
         default=None,
         metavar="PATH",
-        help="把这一片的分配写成 JSON（只作证据与日后重平衡的数据，不作任何判定输入）。"
-        "只在带 --shard 时有意义。",
+        help="把这一片的分配写成 JSON，写成 --shard-manifest=PATH（只作证据与日后重平衡的"
+        "数据，不作任何判定输入）。只在带 --shard 时有意义。",
     )
 
 

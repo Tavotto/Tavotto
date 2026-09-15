@@ -1,0 +1,38 @@
+baseline 0 ........................................................................ [ 80%]
+..................                                                       [100%]
+
+KILLED   rc=1 C01 backend-fast: shard 轴 [1, 2] → [1, 1] | ue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]
+FAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets
+
+KILLED   rc=1 C02 backend-fast: 命令 /2 → /3（矩阵仍 2 片） | ================= short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]
+
+KILLED   rc=1 C03 backend-platforms: 删 shard 轴 | rkflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]
+FAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets
+
+KILLED   rc=1 C04 backend-platforms: shard 轴 [1, 2] → [1, 2, 3]（命令仍 /2） | rkflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]
+FAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets
+
+KILLED   rc=1 C05 backend-platforms: python-version 3.13 → 3.12（档漂了） | .py:567: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_backend_split_keeps_all_five_tiers
+
+KILLED   rc=1 C06 backend-fast: python 轴去掉 3.14 | _five_tiers
+FAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets
+FAILED tests/test_support_matrix.py::test_backend_fast_runs_both_ends_of_the_tested_range
+
+KILLED   rc=1 C07 backend-fast: artifact 名字去掉片号 | ================= short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]
+
+KILLED   rc=1 C08 backend-fast: 删 --shard-manifest | ================= short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]
+
+KILLED   rc=1 C09 nightly: 不变式那步的 pytest 加上 --shard 1/2 | :619: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_unsharded_pytest_lanes_stay_unsharded
+
+KILLED   rc=1 C10 backend-fast: runs-on 改成 ${{ matrix.os }} 而没有 os 轴（空档） | .py:179: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_merge_queue_workflows.py::TestGates::test_backend_split_keeps_all_five_tiers
+
+all killed: True

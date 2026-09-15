@@ -1,0 +1,129 @@
+[
+ {
+  "id": "C01 backend-fast: shard 轴 [1, 2] → [1, 1]",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]",
+   "test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets"
+  ],
+  "summary": "ue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]\nFAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C02 backend-fast: 命令 /2 → /3（矩阵仍 2 片）",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "summary": "================= short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C03 backend-platforms: 删 shard 轴",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]",
+   "test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets"
+  ],
+  "summary": "rkflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]\nFAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C04 backend-platforms: shard 轴 [1, 2] → [1, 2, 3]（命令仍 /2）",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]",
+   "test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets"
+  ],
+  "summary": "rkflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]\nFAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C05 backend-platforms: python-version 3.13 → 3.12（档漂了）",
+  "rc": 1,
+  "expected_red": [
+   "test_backend_split_keeps_all_five_tiers"
+  ],
+  "red": [
+   "test_backend_split_keeps_all_five_tiers"
+  ],
+  "summary": ".py:567: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_backend_split_keeps_all_five_tiers\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C06 backend-fast: python 轴去掉 3.14",
+  "rc": 1,
+  "expected_red": [
+   "test_backend_split_keeps_all_five_tiers",
+   "test_backend_fast_runs_both_ends_of_the_tested_range",
+   "test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets"
+  ],
+  "red": [
+   "test_backend_split_keeps_all_five_tiers",
+   "test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets",
+   "test_backend_fast_runs_both_ends_of_the_tested_range"
+  ],
+  "summary": "_five_tiers\nFAILED tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets\nFAILED tests/test_support_matrix.py::test_backend_fast_runs_both_ends_of_the_tested_range\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C07 backend-fast: artifact 名字去掉片号",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "summary": "================= short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C08 backend-fast: 删 --shard-manifest",
+  "rc": 1,
+  "expected_red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "red": [
+   "test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]"
+  ],
+  "summary": "================= short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C09 nightly: 不变式那步的 pytest 加上 --shard 1/2",
+  "rc": 1,
+  "expected_red": [
+   "test_unsharded_pytest_lanes_stay_unsharded"
+  ],
+  "red": [
+   "test_unsharded_pytest_lanes_stay_unsharded"
+  ],
+  "summary": ":619: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_unsharded_pytest_lanes_stay_unsharded\n",
+  "verdict": "KILLED"
+ },
+ {
+  "id": "C10 backend-fast: runs-on 改成 ${{ matrix.os }} 而没有 os 轴（空档）",
+  "rc": 1,
+  "expected_red": [
+   "test_backend_split_keeps_all_five_tiers"
+  ],
+  "red": [
+   "test_backend_split_keeps_all_five_tiers"
+  ],
+  "summary": ".py:179: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_merge_queue_workflows.py::TestGates::test_backend_split_keeps_all_five_tiers\n",
+  "verdict": "KILLED"
+ }
+]

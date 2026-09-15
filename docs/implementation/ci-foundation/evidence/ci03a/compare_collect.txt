@@ -1,0 +1,4 @@
+full=4686 s1=2184 s2=2502 union=4686 inter=0
+missing=[] extra=[]
+VERDICT: OK
+compare_collect rc=0

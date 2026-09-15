@@ -1,0 +1,19 @@
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+      601.92 real       397.30 user        58.44 sys
+           610549760  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             9884598  page reclaims
+               72205  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                 903  messages sent
+                5027  messages received
+                   0  signals received
+               58497  voluntary context switches
+              213690  involuntary context switches
+        286132382126  instructions retired
+         90550589119  cycles elapsed
+           247022336  peak memory footprint

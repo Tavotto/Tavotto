@@ -590,13 +590,21 @@ class TestGates:
         )
         assert n == 2, f"{job_id} 现在定的是 2 片；改片数要同时改这里与文档里的实测"
         code = _code(block)
-        m = re.search(r"python -m pytest --shard \$\{\{ matrix\.shard \}\}/(\d+)", code)
-        assert m, f"{job_id} 的 pytest 命令里没有 `--shard ${{{{ matrix.shard }}}}/N`"
+        # `--shard=K/N` 与 `--shard-manifest=PATH` **必须是 `=` 形式**：这两个选项在
+        # tests/conftest.py 里注册，pytest 预解析时把未知选项的下一个 token 当路径去找
+        # conftest；`--shard-manifest PATH` 在 PATH 已存在时只加载 PATH 所在目录的 conftest，
+        # tests/conftest.py 没加载，整条命令 rc 4「unrecognized arguments」。托管 runner 的
+        # RUNNER_TEMP 每次都是新的，CI 自己永远不会撞上——所以这一位只能静态钉。
+        m = re.search(r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/(\d+)", code)
+        assert m, (
+            f"{job_id} 的 pytest 命令里没有 `--shard=${{{{ matrix.shard }}}}/N`（要 `=` 形式）"
+        )
         assert int(m.group(1)) == n, (
             f"{job_id}：命令里的 N={m.group(1)} 与 matrix.shard 的片数 {n} 不是同一个数"
         )
         # 证据链：manifest + junit 上传成按片命名的 artifact（只作证据，不作判定输入）
-        assert "--shard-manifest" in code and "--junitxml" in code
+        assert "--shard-manifest=" in code and "--junitxml" in code
+        assert "--shard-manifest " not in code, f"{job_id}：--shard-manifest 要写成 `=` 形式"
         assert re.search(
             r"name: pytest-" + re.escape(job_id) + r"-.*shard\$\{\{ matrix\.shard \}\}", code
         ), f"{job_id} 的分片证据 artifact 名字里没有片号——两片会互相覆盖"
