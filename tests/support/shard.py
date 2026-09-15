@@ -274,6 +274,12 @@ def weights_from_junit(xml_paths: Iterable[Path], root: Path) -> dict[str, float
 
 def main(argv: Sequence[str] | None = None) -> int:
     """`python tests/support/shard.py --from-junit a.xml b.xml --source … --measured … > shard_weights.json`"""
+    # Windows 上 stdout 被重定向成管道 / 文件时退回系统区域编码（cp1252 / cp936），而这个
+    # 入口打的是 `ensure_ascii=False` 的中文 JSON——第一行就 UnicodeEncodeError，退出码 1。
+    # 与 tests/support/ 其它子进程入口同一写法（tests/test_windows_regressions.py 扫着）。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="从 junit.xml 重算 tests/support/shard_weights.json")
     ap.add_argument("--from-junit", nargs="+", required=True, type=Path, metavar="XML")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])

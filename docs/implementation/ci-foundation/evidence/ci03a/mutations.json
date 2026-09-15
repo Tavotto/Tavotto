@@ -1,0 +1,418 @@
+[
+ {
+  "id": "M01 parse_spec: 删 K/N 范围检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_shard_spec_is_rejected[3/2]",
+   "test_bad_shard_spec_is_rejected[0/2]",
+   "test_bad_shard_spec_is_rejected[1/0]"
+  ],
+  "red": [
+   "test_bad_shard_spec_is_rejected[3/2]",
+   "test_bad_shard_spec_is_rejected[0/2]",
+   "test_bad_shard_spec_is_rejected[1/0]",
+   "test_bad_shard_spec_is_rejected[0/0]"
+  ],
+  "summary": "_shard.py::test_bad_shard_spec_is_rejected[3/2] - Fai...\nFAILED tests/test_pytest_shard.py::test_bad_shard_spec_is_rejected[0/2] - Fai...\nFAILED tests/test_pytest_shard.py::test_bad_shard_spec_is_rejected[1/0] - Fai...\nFAILED tests/test_pytest_shard.py::test_bad_shard_spec_is_rejected[0/0] - Fai...\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if not 1 <= shard <= shards:\n        raise ShardError(f\"--shard 的 K 必须在 1..N 之内（N ≥ 1），收到 {spec!r}\")\n",
+  "new": ""
+ },
+ {
+  "id": "M01b parse_spec + plan: 两层片号范围检查一起删",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[3/2]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]"
+  ],
+  "red": [
+   "test_bad_shard_spec_is_rejected[3/2]",
+   "test_bad_shard_spec_is_rejected[0/2]",
+   "test_bad_shard_spec_is_rejected[1/0]",
+   "test_bad_shard_spec_is_rejected[0/0]",
+   "test_shard_index_out_of_range_is_rejected_by_plan",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[3/2]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]"
+  ],
+  "summary": "/0] - Fai...\nFAILED tests/test_pytest_shard.py::test_shard_index_out_of_range_is_rejected_by_plan\nFAILED tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[3/2]\nFAILED tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if not 1 <= shard <= shards:\n        raise ShardError(f\"--shard 的 K 必须在 1..N 之内（N ≥ 1），收到 {spec!r}\")\n",
+  "new": "",
+  "also_removed": "    if not 1 <= shard <= shards:\n        raise ShardError(f\"片号 {shard} 不在 1..{shards} 之内\")\n"
+ },
+ {
+  "id": "M02 parse_spec: 正则不匹配时不抛（改成返回 1/1）",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_shard_spec_is_rejected[abc]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[abc]"
+  ],
+  "red": [
+   "test_bad_shard_spec_is_rejected[abc]",
+   "test_bad_shard_spec_is_rejected[]",
+   "test_bad_shard_spec_is_rejected[1/]",
+   "test_bad_shard_spec_is_rejected[/2]",
+   "test_bad_shard_spec_is_rejected[1/2/3]",
+   "test_bad_shard_spec_is_rejected[-1/2]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[abc]"
+  ],
+  "summary": "shard_spec_is_rejected[/2] - Fail...\nFAILED tests/test_pytest_shard.py::test_bad_shard_spec_is_rejected[1/2/3] - F...\nFAILED tests/test_pytest_shard.py::test_bad_shard_spec_is_rejected[-1/2] - Fa...\nFAILED tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[abc]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if not m:\n        raise ShardError(f\"--shard 要写成 K/N（例如 1/2），收到 {spec!r}\")\n",
+  "new": "    if not m:\n        return 1, 1\n"
+ },
+ {
+  "id": "M03 assign: 删 shards<1 检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_zero_shards_is_rejected_by_assign_and_plan"
+  ],
+  "red": [
+   "test_zero_shards_is_rejected_by_assign_and_plan"
+  ],
+  "summary": "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           ValueError: min() iterable argument is empty\n\ntests/support/shard.py:130: ValueError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_zero_shards_is_rejected_by_assign_and_plan\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if shards < 1:\n        raise ShardError(f\"片数必须 ≥ 1，收到 {shards}\")\n",
+  "new": ""
+ },
+ {
+  "id": "M04 plan: 删片号范围检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_shard_index_out_of_range_is_rejected_by_plan"
+  ],
+  "red": [
+   "test_shard_index_out_of_range_is_rejected_by_plan"
+  ],
+  "summary": "Error):\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ShardError\n\ntests/test_pytest_shard.py:156: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_shard_index_out_of_range_is_rejected_by_plan\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if not 1 <= shard <= shards:\n        raise ShardError(f\"片号 {shard} 不在 1..{shards} 之内\")\n",
+  "new": ""
+ },
+ {
+  "id": "M05 verify: 删「全集有重复 nodeid」检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_duplicate_nodeids_in_the_collection_are_rejected"
+  ],
+  "red": [
+   "test_duplicate_nodeids_in_the_collection_are_rejected"
+  ],
+  "summary": "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ShardError\n\ntests/test_pytest_shard.py:179: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_duplicate_nodeids_in_the_collection_are_rejected\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if len(set(full)) != len(full):\n",
+  "new": "    if False:\n"
+ },
+ {
+  "id": "M06 verify: 删「片间交集 / 片内重复」检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_overlapping_shards_fail_the_disjointness_check"
+  ],
+  "red": [
+   "test_overlapping_shards_fail_the_disjointness_check"
+  ],
+  "summary": "       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ShardError\n\ntests/test_pytest_shard.py:231: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_overlapping_shards_fail_the_disjointness_check\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if len(set(union)) != len(union):\n",
+  "new": "    if False:\n"
+ },
+ {
+  "id": "M07 verify: 删「并集 == 全集」检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_a_plan_that_drops_a_file_fails_the_union_check",
+   "test_a_plan_with_an_extra_nodeid_fails_the_union_check"
+  ],
+  "red": [
+   "test_a_plan_that_drops_a_file_fails_the_union_check",
+   "test_a_plan_with_an_extra_nodeid_fails_the_union_check"
+  ],
+  "summary": "r\n\ntests/test_pytest_shard.py:214: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_a_plan_that_drops_a_file_fails_the_union_check\nFAILED tests/test_pytest_shard.py::test_a_plan_with_an_extra_nodeid_fails_the_union_check\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if missing or extra:\n",
+  "new": "    if False:\n"
+ },
+ {
+  "id": "M08 verify: 删「每片非空」检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_empty_collection_is_an_error_not_an_empty_green_run",
+   "test_more_shards_than_files_is_an_error",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run"
+  ],
+  "red": [
+   "test_empty_collection_is_an_error_not_an_empty_green_run",
+   "test_more_shards_than_files_is_an_error",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run"
+  ],
+  "summary": "=======================\nFAILED tests/test_pytest_shard.py::test_empty_collection_is_an_error_not_an_empty_green_run\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_an_error - ...\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "        if not ids:\n",
+  "new": "        if False:\n"
+ },
+ {
+  "id": "M09 load_weights: 坏 JSON 时静默用空表",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[bad_json]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[bad_json]"
+  ],
+  "summary": "hardError):\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ShardError\n\ntests/test_pytest_shard.py:263: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[bad_json]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    except json.JSONDecodeError as exc:\n        raise ShardError(f\"权重表 {path} 不是合法 JSON：{exc}\") from exc\n",
+  "new": "    except json.JSONDecodeError:\n        return {\"tests/test_a.py\": 1.0}\n"
+ },
+ {
+  "id": "M10 load_weights: 删负数 / NaN / 无穷检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[negative]",
+   "test_bad_weight_tables_are_rejected[nan]",
+   "test_bad_weight_tables_are_rejected[inf]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[negative]",
+   "test_bad_weight_tables_are_rejected[nan]",
+   "test_bad_weight_tables_are_rejected[inf]"
+  ],
+  "summary": "============= short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[negative]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[nan]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[inf]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "        if not math.isfinite(value) or value < 0:\n",
+  "new": "        if False:\n"
+ },
+ {
+  "id": "M11 load_weights: 删布尔 / 非数字检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[bool]",
+   "test_bad_weight_tables_are_rejected[string]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[bool]",
+   "test_bad_weight_tables_are_rejected[string]"
+  ],
+  "summary": "be real number, not str\n\ntests/support/shard.py:101: TypeError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[bool]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[string]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "        if isinstance(value, bool) or not isinstance(value, (int, float)):\n",
+  "new": "        if False:\n"
+ },
+ {
+  "id": "M12 load_weights: 删键形状检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[not_py]",
+   "test_bad_weight_tables_are_rejected[backslash]",
+   "test_bad_weight_tables_are_rejected[absolute]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[not_py]",
+   "test_bad_weight_tables_are_rejected[backslash]",
+   "test_bad_weight_tables_are_rejected[absolute]"
+  ],
+  "summary": "==== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[not_py]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[backslash]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[absolute]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "            or not key.endswith(\".py\")\n            or \"\\\\\" in key\n            or key.startswith(\"/\")\n",
+  "new": "            or False\n"
+ },
+ {
+  "id": "M13 load_weights: 删缺出处检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[no_provenance]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[no_provenance]"
+  ],
+  "summary": "rror):\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ShardError\n\ntests/test_pytest_shard.py:263: Failed\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[no_provenance]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if missing:\n        raise ShardError(f\"权重表 {path} 缺顶层键 {missing}\")\n",
+  "new": "    if False:\n        pass\n"
+ },
+ {
+  "id": "M14 load_weights: 删空表 / 非对象检查",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_bad_weight_tables_are_rejected[empty]"
+  ],
+  "red": [
+   "test_bad_weight_tables_are_rejected[empty]",
+   "test_bad_weight_tables_are_rejected[weights_not_an_object]"
+  ],
+  "summary": "ms'\n\ntests/support/shard.py:90: AttributeError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[empty]\nFAILED tests/test_pytest_shard.py::test_bad_weight_tables_are_rejected[weights_not_an_object]\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    if not isinstance(table, dict) or not table:\n",
+  "new": "    if False:\n"
+ },
+ {
+  "id": "M15 default_weight: p75 改成均值",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_default_weight_is_the_75th_percentile_nearest_rank",
+   "test_unknown_files_get_the_default_weight_not_zero"
+  ],
+  "red": [
+   "test_default_weight_is_the_75th_percentile_nearest_rank",
+   "test_unknown_files_get_the_default_weight_not_zero"
+  ],
+  "summary": "/test_pytest_shard.py:121: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_default_weight_is_the_75th_percentile_nearest_rank\nFAILED tests/test_pytest_shard.py::test_unknown_files_get_the_default_weight_not_zero\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    return values[math.ceil(0.75 * len(values)) - 1]\n",
+  "new": "    return sum(values) / len(values)\n"
+ },
+ {
+  "id": "M16 default_weight: 未知文件按 0 估",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_unknown_files_get_the_default_weight_not_zero"
+  ],
+  "red": [
+   "test_default_weight_is_the_75th_percentile_nearest_rank",
+   "test_unknown_files_get_the_default_weight_not_zero",
+   "test_the_real_weight_table_loads_and_says_where_it_came_from"
+  ],
+  "summary": "==========================\nFAILED tests/test_pytest_shard.py::test_default_weight_is_the_75th_percentile_nearest_rank\nFAILED tests/test_pytest_shard.py::test_unknown_files_get_the_default_weight_not_zero\nFAILED tests/test_pytest_shard.py::test_the_real_weight_table_loads_and_says_where_it_came_from\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    return values[math.ceil(0.75 * len(values)) - 1]\n",
+  "new": "    return 0.0\n"
+ },
+ {
+  "id": "M17 weights_from_junit: classname 对不回文件时跳过",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_weights_from_junit_refuses_a_classname_that_maps_to_no_file"
+  ],
+  "red": [
+   "test_weights_from_junit_refuses_a_classname_that_maps_to_no_file"
+  ],
+  "summary": "pected regex: '对不回'\nE         Actual message: 'junit 里一条 testcase 都没有'\n\ntests/test_pytest_shard.py:316: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_weights_from_junit_refuses_a_classname_that_maps_to_no_file\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "            if file is None:\n                raise ShardError(f\"{xml_path}：classname {classname!r} 对不回 {root} 下的任何 .py\")\n",
+  "new": "            if file is None:\n                continue\n"
+ },
+ {
+  "id": "M18 conftest: --shard-manifest 无 --shard 时静默",
+  "file": "conftest.py",
+  "rc": 1,
+  "expected_red": [
+   "test_a_manifest_without_a_shard_is_a_usage_error"
+  ],
+  "red": [
+   "test_a_manifest_without_a_shard_is_a_usage_error"
+  ],
+  "summary": " <enum 'ExitCode'>.USAGE_ERROR\nE        +    where <enum 'ExitCode'> = pytest.ExitCode\n\ntests/test_pytest_shard.py:359: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_pytest_shard.py::test_a_manifest_without_a_shard_is_a_usage_error\n",
+  "verdict": "KILLED",
+  "target_file": "tests/conftest.py",
+  "old": "            raise pytest.UsageError(\"--shard-manifest 只在带 --shard 时有意义\")\n",
+  "new": "            return\n"
+ },
+ {
+  "id": "M19 conftest: ShardError 时静默跑全集（不抛 UsageError）",
+  "file": "conftest.py",
+  "rc": 1,
+  "expected_red": [
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[3/2]",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run"
+  ],
+  "red": [
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[3/2]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]",
+   "test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[abc]",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run"
+  ],
+  "summary": "D tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]\nFAILED tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[abc]\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run\n",
+  "verdict": "KILLED",
+  "target_file": "tests/conftest.py",
+  "old": "        raise pytest.UsageError(f\"--shard {spec}：{exc}\") from exc\n",
+  "new": "        return\n"
+ },
+ {
+  "id": "M20 assign: 丢掉排序里最轻的那个文件（漏片）",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_union_equals_full_set_and_shards_are_disjoint",
+   "test_two_shards_partition_the_collection_and_write_manifests"
+  ],
+  "red": [
+   "test_assignment_is_deterministic_and_greedy_by_weight",
+   "test_ties_go_to_the_lower_shard_then_by_path",
+   "test_a_file_is_never_split_across_shards",
+   "test_nodeids_inside_a_shard_keep_collection_order",
+   "test_union_equals_full_set_and_shards_are_disjoint",
+   "test_unknown_files_get_the_default_weight_not_zero",
+   "test_more_shards_than_files_is_an_error",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run",
+   "test_two_shards_partition_the_collection_and_write_manifests"
+  ],
+  "summary": "ult_weight_not_zero\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_an_error - ...\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run\nFAILED tests/test_pytest_shard.py::test_two_shards_partition_the_collection_and_write_manifests\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    ordered = sorted(set(files), key=lambda f: (-weights.get(f, default), f))\n",
+  "new": "    ordered = sorted(set(files), key=lambda f: (-weights.get(f, default), f))[:-1]\n"
+ },
+ {
+  "id": "M21 plan: 每片都拿到全部文件（重叠）",
+  "file": "shard.py",
+  "rc": 1,
+  "expected_red": [
+   "test_union_equals_full_set_and_shards_are_disjoint",
+   "test_a_file_is_never_split_across_shards"
+  ],
+  "red": [
+   "test_assignment_is_deterministic_and_greedy_by_weight",
+   "test_assignment_does_not_depend_on_collection_order",
+   "test_ties_go_to_the_lower_shard_then_by_path",
+   "test_a_file_is_never_split_across_shards",
+   "test_union_equals_full_set_and_shards_are_disjoint",
+   "test_more_shards_than_files_is_an_error",
+   "test_a_plan_that_drops_a_file_fails_the_union_check",
+   "test_a_plan_with_an_extra_nodeid_fails_the_union_check",
+   "test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run",
+   "test_two_shards_partition_the_collection_and_write_manifests"
+  ],
+  "summary": "nion_check\nFAILED tests/test_pytest_shard.py::test_a_plan_with_an_extra_nodeid_fails_the_union_check\nFAILED tests/test_pytest_shard.py::test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run\nFAILED tests/test_pytest_shard.py::test_two_shards_partition_the_collection_and_write_manifests\n",
+  "verdict": "KILLED",
+  "target_file": "tests/support/shard.py",
+  "old": "    buckets, loads = assign(nodeids_by_file.keys(), weights, shards, default)\n",
+  "new": "    buckets, loads = assign(nodeids_by_file.keys(), weights, shards, default)\n    buckets = [list(nodeids_by_file.keys()) for _ in buckets]\n"
+ }
+]

@@ -1,0 +1,13 @@
+# 负例 D⑤：装钩子前后 --collect-only 输出（去掉摘要行的墙钟后缀 ' in N.NNs'）的 md5；两者 cmp 退出码 0
+MD5 (collect_before_hook.notime.txt) = 312fb9278cfc3deefca8f5a178ac5dee
+MD5 (collect_after_hook.notime.txt) = 312fb9278cfc3deefca8f5a178ac5dee
+cmp rc=0 (byte-identical)
+stderr:
+MD5 (collect_before_hook.stderr) = ec4955a8ad5afb407627305f559e5583
+MD5 (collect_after_hook.stderr) = ec4955a8ad5afb407627305f559e5583
+cmp rc=0 (byte-identical)
+diff of the raw outputs (only the wall-clock suffix):
+4645c4645
+< 4626/4628 tests collected (2 deselected) in 2.96s
+---
+> 4626/4628 tests collected (2 deselected) in 3.22s

@@ -343,19 +343,19 @@ def _pytest(*args: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.parametrize("spec", ["3/2", "0/2", "abc"])
 def test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run(spec):
-    out = _pytest("--shard", spec, "--collect-only", *_TWO_FILES)
+    out = _pytest(f"--shard={spec}", "--collect-only", *_TWO_FILES)
     assert out.returncode == pytest.ExitCode.USAGE_ERROR, out.stdout + out.stderr
     assert f"--shard {spec}" in out.stderr
 
 
 def test_more_shards_than_files_is_a_usage_error_not_an_empty_green_run():
-    out = _pytest("--shard", "1/3", "--collect-only", *_TWO_FILES)
+    out = _pytest("--shard=1/3", "--collect-only", *_TWO_FILES)
     assert out.returncode == pytest.ExitCode.USAGE_ERROR, out.stdout + out.stderr
     assert "片为空" in out.stderr
 
 
 def test_a_manifest_without_a_shard_is_a_usage_error(tmp_path):
-    out = _pytest("--shard-manifest", str(tmp_path / "m.json"), "--collect-only", *_TWO_FILES)
+    out = _pytest(f"--shard-manifest={tmp_path / 'm.json'}", "--collect-only", *_TWO_FILES)
     assert out.returncode == pytest.ExitCode.USAGE_ERROR, out.stdout + out.stderr
     assert not (tmp_path / "m.json").exists()
 
@@ -368,10 +368,8 @@ def test_two_shards_partition_the_collection_and_write_manifests(tmp_path):
     parts: list[set[str]] = []
     for k in (1, 2):
         out = _pytest(
-            "--shard",
-            f"{k}/2",
-            "--shard-manifest",
-            str(tmp_path / f"m{k}.json"),
+            f"--shard={k}/2",
+            f"--shard-manifest={tmp_path / f'm{k}.json'}",
             "--collect-only",
             *_TWO_FILES,
         )
@@ -387,3 +385,24 @@ def test_two_shards_partition_the_collection_and_write_manifests(tmp_path):
     assert parts[0] | parts[1] == full_ids
     assert not (parts[0] & parts[1])
     assert parts[0] and parts[1]
+
+
+def test_the_manifest_path_may_already_exist_when_written_with_equals(tmp_path):
+    """`--shard-manifest=PATH`（`=` 形式）在 PATH **已存在**、且命令行**没有测试路径**时照样工作。
+
+    这是 CI 命令的精确形状（`python -m pytest --shard=K/2 --shard-manifest=… ` 不带路径）。
+    空格形式 `--shard-manifest PATH` 在这个形状下会被 pytest 的预解析当成「路径 PATH」去找
+    conftest：PATH 存在 → 只加载它所在目录的 conftest → tests/conftest.py 没加载 →
+    `unrecognized arguments`，rc 4。托管 runner 的 RUNNER_TEMP 每次是新的，CI 永远撞不上；
+    本机第二次跑同一路径就撞——所以这里两种形式各跑一次，钉住 `=` 形式是活的、空格形式是坑。
+    `-o testpaths=…` 只是把 collection 收窄到一个文件，不改变「命令行没有路径」这个前提。
+    """
+    manifest = tmp_path / "m.json"
+    manifest.write_text("{}", encoding="utf-8")  # 已存在
+    narrow = ("-o", f"testpaths={_TWO_FILES[0]}", "--collect-only")
+    ok = _pytest("--shard=1/1", f"--shard-manifest={manifest}", *narrow)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert json.loads(manifest.read_text(encoding="utf-8"))["shards"] == 1  # 被覆盖成真 manifest
+    trap = _pytest("--shard", "1/1", "--shard-manifest", str(manifest), *narrow)
+    assert trap.returncode == pytest.ExitCode.USAGE_ERROR, trap.stdout + trap.stderr
+    assert "unrecognized arguments" in trap.stderr
