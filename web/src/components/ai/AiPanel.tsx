@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/icons'
 import { Badge } from '../ui/Badge'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { SwapText } from '@/components/ui/SwapText'
 import {
   agentById,
   agentDisplayName,
@@ -1082,8 +1083,14 @@ function SessionBlock({ session }: { session: AiSession }) {
       {/* 状态行是唯一的「还活着」信号：进行中一道亮带扫过文字，完成即停——不另摆
           loader / 骨架（三样东西同时在动是在互相抢注意力）。中止在输入框旁那颗按钮上
           （发送 ↔ 中止同一位置），这里不再复制一颗。 */}
-      <p className={cn('text-xs', running ? 'text-shimmer' : toneOf(session))} data-ai-status={session.status}>
-        {statusText(session)}
+      {/* 换字原位换（宪法第二十三节）：running → done 那一下不硬切。`text-shimmer` 落在会动的那句字上；
+          外层 ink-3 是退场那句幽灵的颜色。`data-ai-status` 跟着字走——用例与诊断认它 */}
+      <p className="text-xs text-ink-3">
+        <SwapText
+          text={statusText(session)}
+          textClassName={running ? 'text-shimmer' : toneOf(session)}
+          data-ai-status={session.status}
+        />
       </p>
 
       {session.error && <p className="text-xs text-danger">{session.error}</p>}

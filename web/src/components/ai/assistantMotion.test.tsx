@@ -143,6 +143,8 @@ describe('进行中的信号', () => {
     expect(statusLine().dataset.aiStatus).toBe('done')
     expect(statusLine().classList.contains('text-shimmer')).toBe(false)
     expect(statusLine().textContent).toBe(ai('session.doneNoChange'))
+    // running → done 那一下原位换（宪法第二十三节）：旧句留在 data-ghost 里退场，DOM 文本已是新句
+    expect(statusLine().closest<HTMLElement>('.swap-text')!.dataset.ghost).toBe(ai('session.running'))
     // 整个面板里没有 aria-busy 之外的忙碌指示（旧版在这里摆过 loader + 骨架）
     expect(host.querySelectorAll('.animate-spin')).toHaveLength(0)
   })

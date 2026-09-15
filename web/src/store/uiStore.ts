@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { pushRecent } from '@/lib/commandRanking'
 import type { UiMessage } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
+import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemScope } from '@/lib/problemList'
 
@@ -371,7 +372,15 @@ function persist(state: UiState) {
   }
 }
 
-let statusTimer: number | undefined
+/** 普通状态自己走的时长；错误保留到用户关闭 */
+export const STATUS_AUTO_DISMISS_MS = 4500
+
+/**
+ * 状态的自动收起计时器：指针停在 toast 上、焦点在它的按钮上、页面不可见时都不走表
+ * （`lib/dismissTimer`）。通知轨的 `Toast` 拿着它报 hold / release；此前是一只裸 setTimeout，
+ * 用户正伸手去点它、或切去别的 app 再回来，它已经不在了。
+ */
+export const statusDismissTimer = createDismissTimer()
 
 /** 非宽屏两侧互斥：打开一侧就得收起另一侧，避免把画布挤没 */
 const exclusive = (s: UiState) => s.layout !== 'wide'
@@ -537,10 +546,12 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setStatus: (status, statusTone = 'info') => {
     set({ status, statusTone })
-    window.clearTimeout(statusTimer)
+    statusDismissTimer.cancel()
     // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
     if (status && statusTone !== 'error') {
-      statusTimer = window.setTimeout(() => set({ status: null, statusTone: 'info' }), 4500)
+      statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
+        set({ status: null, statusTone: 'info' }),
+      )
     }
   },
 
