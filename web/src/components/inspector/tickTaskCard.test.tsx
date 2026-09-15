@@ -318,6 +318,21 @@ describe('选中子图即可配置刻度', () => {
     // 引擎没有 major_visible，界面也不该冒出一个
     expect(livePanel().overrides.some((o) => o.prop === 'major_visible')).toBe(false)
   })
+
+  /**
+   * 2026-09-15 全面打磨 E6（T13 定过同一件事）：开关旁常驻的「只要主刻度 /
+   * 主刻度 + 次刻度」删掉——行标签写着「次刻度」、开关自己就是开与关，那句话
+   * 把同一件事说第三遍。判据两半：① 两种措辞都不在页面上；② 开关还在（只删
+   * 说明，不删控件）。
+   */
+  it('次刻度开关旁不再常驻一句「开着 / 关着」的说明（E6）', async () => {
+    await mount('axes_0')
+    const row = host.querySelector('[data-prop="minor_visible"]')!
+    expect(row.querySelector('[role="switch"]'), '开关不该跟着说明一起消失').toBeTruthy()
+    for (const word of ['只要主刻度', '主刻度 + 次刻度']) {
+      expect(host.textContent ?? '').not.toContain(word)
+    }
+  })
 })
 
 /* ------------------------------ 示意图读真实状态 -------------------------- */

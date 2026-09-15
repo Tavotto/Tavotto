@@ -100,3 +100,60 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
     expect(section('位置与尺寸').querySelector('[role="toolbar"]')).toBeNull()
   })
 })
+
+/* ---------------------- 2026-09-15 全面打磨（L1 / L7 / O1 / O3） ---------------------- */
+
+const toggleByText = (text: string) =>
+  all('button[aria-expanded]').find((b) => b.textContent?.trim().startsWith(text)) as
+    | HTMLButtonElement
+    | undefined
+
+describe('对象页的版式（2026-09-15 全面打磨）', () => {
+  it('一个表单一种行语法：这一页所有标签列同宽（L1）', () => {
+    // 此前一页两种：缩放 / 取景那几行 44，对齐 / 层级 60——控件起点差 16px
+    const widths = new Set(
+      all('span[style*="width"]')
+        .map((el) => (el as HTMLElement).style.width)
+        .filter(Boolean),
+    )
+    expect(widths).toEqual(new Set(['88px']))
+  })
+
+  it('组内的「更多」是文字链接，不带 chevron（O3 / L4）', () => {
+    const more = toggleByText('更多')!
+    expect(more, '找不到「更多」').toBeTruthy()
+    expect(more.querySelector('svg'), '组的尾巴不该用分区的字形').toBeNull()
+    // 分区级的折叠（源文件与高级）仍然带 chevron：两种角色靠字形分开
+    expect(toggleByText('源文件与高级')!.querySelector('svg')).toBeTruthy()
+  })
+
+  it('源文件与高级：写回的那句常驻说明删了，动作收成一行三颗（L7 / O2）', async () => {
+    const fold = toggleByText('源文件与高级')!
+    await act(async () => fold.click())
+    // L7：确认框里已经把「会覆盖原件、留有备份」讲全，这里不再常驻一遍
+    expect(host.textContent ?? '').not.toContain('写回会覆盖原始')
+    const names = all('button').map((b) => b.textContent?.trim() ?? '')
+    for (const want of ['写回原始文件', '历史', '同步修改到']) {
+      expect(names.some((n) => n.startsWith(want)), `少了「${want}」`).toBe(true)
+    }
+    // 三颗在同一行（同一个父元素），不是三种宽度叠三行
+    const row = all('button')
+      .filter((b) => b.textContent?.trim().startsWith('写回原始文件'))
+      .map((b) => b.parentElement)[0]!
+    expect(row.querySelectorAll('button')).toHaveLength(3)
+  })
+
+  it('诊断是只读的一行，不是 surface-2 / danger 填充的小卡（O1）', async () => {
+    const fold = toggleByText('源文件与高级')!
+    await act(async () => fold.click())
+    const value = all('span').find((el) => /pt$|dpi$/.test(el.textContent?.trim() ?? ''))!
+    expect(value, '找不到诊断读数').toBeTruthy()
+    expect(value.className).toContain('type-number')
+    // 只读值不套容器：这一行上没有填充底
+    let node: Element | null = value
+    for (let i = 0; i < 3 && node; i++) {
+      expect(node.className).not.toMatch(/bg-surface-2|bg-danger-subtle/)
+      node = node.parentElement
+    }
+  })
+})

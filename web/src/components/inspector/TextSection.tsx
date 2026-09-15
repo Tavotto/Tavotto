@@ -22,6 +22,8 @@ import { panelFullSize, type PanelObject, type TextObject } from '@/types/docume
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
 import { Reveal, Row, Section } from '../ui/Field'
+import { INSPECTOR_LABEL_W } from './layout'
+import { GroupToggle } from './GroupToggle'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
@@ -202,7 +204,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         */}
         <TypographyControls
           adapter={typography}
-          labelWidth={72}
+          labelWidth={INSPECTOR_LABEL_W}
           sizeRowExtra={
             <>
               <Button
@@ -232,21 +234,16 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
 
       {/* 与图内元素同一个「更多」模型：按角色记忆，折叠给现状摘要 */}
       <div className="mt-1.5">
-        <button
-          onClick={() => setMoreOpen('text-object', !moreOpen)}
-          aria-expanded={moreOpen}
-          className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        <GroupToggle
+          open={moreOpen}
+          onToggle={() => setMoreOpen('text-object', !moreOpen)}
+          summary={moreSummary || undefined}
         >
-          <span className="font-medium">{translate('element.more', { ns: 'inspector' })}</span>
-          {!moreOpen && moreSummary && (
-            <span className="ml-auto min-w-0 truncate text-right text-xs text-ink-3">
-              {moreSummary}
-            </span>
-          )}
-        </button>
+          {translate('element.more', { ns: 'inspector' })}
+        </GroupToggle>
         <Reveal open={moreOpen}>
           <div className="mt-1.5 flex flex-col gap-1.5">
-            <Row label={tx('case')} labelWidth={72}>
+            <Row label={tx('case')} labelWidth={INSPECTOR_LABEL_W}>
               <Menu
                 width={200}
                 trigger={
@@ -272,7 +269,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 ))}
               </Menu>
             </Row>
-            <Row label={tx('lineHeight')} labelWidth={72}>
+            <Row label={tx('lineHeight')} labelWidth={INSPECTOR_LABEL_W}>
               <NumberField
                 value={shared(objs, (o) => (o as TextObject).lineHeight ?? 1.25) ?? 1.25}
                 step={0.05}
@@ -293,7 +290,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               两处的交互要一致）。关掉走开关而不是另一颗「无」按钮——图内那侧
               早就是开关，两边各一套的话用户得学两遍。
             */}
-            <Row label={tx('background')} labelWidth={72}>
+            <Row label={tx('background')} labelWidth={INSPECTOR_LABEL_W}>
               <EffectToggle
                 on={!!bg}
                 label={tx('background')}
@@ -314,7 +311,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
                 />
               )}
             </Row>
-            <Row label={tx('border')} labelWidth={72}>
+            <Row label={tx('border')} labelWidth={INSPECTOR_LABEL_W}>
               <EffectToggle
                 on={!!borderColor}
                 label={tx('border')}
@@ -341,7 +338,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               )}
             </Row>
             {(bg || borderColor) && (
-              <Row label={tx('padding')} labelWidth={72}>
+              <Row label={tx('padding')} labelWidth={INSPECTOR_LABEL_W}>
                 <NumberField
                   value={shared(objs, (o) => (o as TextObject).padding ?? 0) ?? 0}
                   step={0.5}
@@ -459,7 +456,7 @@ function ScientificText({
     <>
       {showPicker && (
         <div data-prop={adapter.pathOf('interpretation') ?? undefined}>
-          <Row label={tx('interpretation')}>
+          <Row label={tx('interpretation')} labelWidth={INSPECTOR_LABEL_W}>
             <Segmented
               value={value.kind === 'mixed' ? null : current}
               onChange={(v) => adapter.writeOnce('interpretation', v)}

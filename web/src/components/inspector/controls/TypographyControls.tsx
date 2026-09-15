@@ -12,6 +12,7 @@ import {
 } from '@/lib/typography'
 import type { TypographyAdapter } from '../typographyAdapter'
 import { optionLabel } from '../roles/registry'
+import { INSPECTOR_LABEL_W } from '../layout'
 import {
   AlignmentRow,
   FontFamilyRow,
@@ -41,7 +42,7 @@ const tb = (key: string, values?: Record<string, unknown>) =>
 export function TypographyControls({
   adapter,
   className,
-  labelWidth = 48,
+  labelWidth = INSPECTOR_LABEL_W,
   sizeRowExtra,
 }: {
   adapter: TypographyAdapter

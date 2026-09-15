@@ -218,6 +218,63 @@ describe('标题说得出「我在改的是什么」（T01）', () => {
   })
 })
 
+describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
+  /**
+   * 对象页与图内元素页是**两个**身份头（`Inspector.tsx` 里各写一份）：只量一个的话，
+   * 另一个退回 11px 时判据照样绿。两个都要点名。
+   */
+  it('身份头的标题与分区标题同一档：不比它下面的组标题小一号（S2 · 对象页）', async () => {
+    await seed([panel], ['p1'])
+    await mount()
+    const h2 = document.querySelector('h2')!
+    // `type-section` = 12/500/ink，与「位置与尺寸」那一档同一个角色；
+    // 此前它是 text-xs（11）+ font-medium，对象名比它下面的分区标题还小
+    expect(h2.className).toContain('type-section')
+    expect(h2.className).not.toContain('text-xs')
+  })
+
+  it('身份头的标题与分区标题同一档（S2 · 图内元素页）', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title'] })
+    await mount()
+    const h2 = document.querySelector('h2')!
+    expect(h2.textContent).toBeTruthy()
+    expect(h2.className).toContain('type-section')
+    expect(h2.className).not.toContain('text-xs')
+  })
+
+  it('图钉：状态靠图形说，不靠常驻的灰块（S3）', async () => {
+    await seed([panel], ['p1'])
+    await mount()
+    const pinOf = () => document.querySelector<HTMLButtonElement>('button[aria-pressed]')!
+    const pin = pinOf()
+    // 默认就是钉住的：此前 `active` 让它常驻一块 ink 10% 的底，
+    // 是整栏唯一一块常亮的背景
+    expect(pin.getAttribute('aria-pressed')).toBe('true')
+    expect(pin.className).not.toContain('bg-selected')
+    expect(pin.querySelector('svg')!.getAttribute('class')).toContain('icon-pin')
+    // 钉住 = 图标集里图钉的实心孪生（ADR 0052）：钉身是一条 fill=currentColor 的实心路径
+    expect(pin.querySelector('svg path[fill="currentColor"]')).not.toBeNull()
+    await act(async () => pin.click())
+    const after = pinOf()
+    expect(after.getAttribute('aria-pressed')).toBe('false')
+    // 取消钉住换的是**图形**（回到线框图钉），不是底色
+    expect(after.querySelector('svg')!.getAttribute('class')).toContain('icon-pin')
+    expect(after.querySelector('svg path[fill="currentColor"]')).toBeNull()
+    expect(after.className).not.toContain('bg-selected')
+  })
+
+  it('页签一律纯文字：改图助手那一枚不再带 Sparkles（S4）', async () => {
+    await seed([panel], ['p1'])
+    await mount()
+    const tabs = [...document.querySelectorAll('[data-inspector-tab]')]
+    expect(tabs.length).toBeGreaterThan(1)
+    for (const tab of tabs) expect(tab.querySelector('svg')).toBeNull()
+  })
+})
+
 describe('图内元素的头部图标按角色（2026-09-12 critique P3）', () => {
   it('选中标题时是文字图标，不是面板那个图片图标；整张图是 Fullscreen（外框含内容区）', async () => {
     await seed([panel], ['p1'])

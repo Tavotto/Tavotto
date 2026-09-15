@@ -13,6 +13,7 @@ import { Disclosure, Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
+import { INSPECTOR_LABEL_COL, INSPECTOR_LABEL_W } from './layout'
 import { MmField } from './MmField'
 
 /**
@@ -28,12 +29,12 @@ const PRESETS = [
 
 /**
  * 本页所有设置行共用的标签列宽：数值行走 `Row`（内联宽度），开关行走 `ToggleRow`
- * （同宽的类名 `w-18` = 72px）。默认的 44px 装不下「网格间距」「页边距」这类
- * 四字标签，320px 属性栏下会折成两行（审计 T31）。两种行的控件从同一条竖线起排
- * ——折叠区里「透明背景 / 背景色」上下两行的控件才对得齐（Session 2）。
+ * （同宽的类名）。两种行的控件从同一条竖线起排——折叠区里「透明背景 / 背景色」
+ * 上下两行的控件才对得齐（Session 2）。数是全检查器那一个（打磨 L1：此前本页 72、
+ * 对象页 44 / 60、元素页 88 四种并存）。
  */
-const LABEL_W = 72
-const LABEL_COL = 'w-18'
+const LABEL_W = INSPECTOR_LABEL_W
+const LABEL_COL = INSPECTOR_LABEL_COL
 
 /** 本页文案 inspector:canvas.*，历史标签 inspector:history.* */
 const cv = (key: string, values?: Record<string, unknown>) =>
@@ -45,7 +46,7 @@ const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspe
  * 这件事在图形上是真的。各自撑满格子的话四个方块一样大，形状还在、
  * 比例没了，用户照样得读文字——那就白画了。
  */
-const PREVIEW_BOX = 40
+const PREVIEW_BOX = 36
 const PREVIEW_SCALE = PREVIEW_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w, p.h)))
 
 /**
@@ -77,15 +78,10 @@ export function CanvasPage() {
 
   return (
     <>
-      <Section
-        title={cv('pageSize')}
-        action={
-          <span className="shrink-0 text-xs tabular-nums text-ink-3">
-            {/* 与下面的 W / H 输入框同一个单位：摘要说 cm、框里写 mm 是两套尺子 */}
-            {translate('measure.mmSize', { w: formatMm(page.w), h: formatMm(page.h) })}
-          </span>
-        }
-      >
+      {/* 组头右侧原来挂着「150.0 × 100.0 mm」——它和 24px 下面的 `W [150 mm] H [100 mm]`
+          是同一对数，还是两种格式（150.0 vs 150）。已表达过的不重复（打磨 L9）：
+          尺寸留在可编辑的那两个框里，预设卡的 aria 名里也有 */}
+      <Section title={cv('pageSize')}>
         <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label={cv('presetGroup')}>
           {PRESETS.map((p) => {
             const on = active?.id === p.id
@@ -98,7 +94,9 @@ export function CanvasPage() {
                   aria-checked={on}
                   aria-label={cv('presetAria', { label, w: p.w, h: p.h })}
                   className={cn(
-                    'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors duration-fast focus-visible:focus-ring',
+                    // 定高 88：en-US 的「Single column / Double column」折两行、zh 只有一行，
+                    // 四张卡因语言不同高（81×73 vs 81×88）。什么语言都是同一个骨架（打磨 C1）
+                    'flex h-22 flex-col items-center justify-center gap-1 rounded-sm border px-1 py-1.5 outline-none transition-colors duration-fast focus-visible:focus-ring',
                     // 选中：轻 tint + 稍强的边 + 稍强的预览线 + 字重，不用大灰块
                     on
                       ? 'border-border-strong bg-selected text-ink'
@@ -123,7 +121,9 @@ export function CanvasPage() {
                       }}
                     />
                   </span>
-                  <span className={cn('text-xs', on && 'font-medium')}>{label}</span>
+                  <span className={cn('line-clamp-2 text-center leading-tight text-xs', on && 'font-medium')}>
+                    {label}
+                  </span>
                 </button>
               </Tip>
             )

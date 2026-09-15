@@ -206,9 +206,9 @@ export function FontSizeRow({
   const label = tc('size')
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
+      {/* 单列数值走 compact 档（4ch + 单位列，打磨 L3）：此前字号定宽 76、同页的
+          旋转 59.5、图例标题字号 62——一列数字框十二种宽 */}
       <NumberField
-        fill
-        className="w-[76px] shrink-0"
         dataProp="fontsize"
         ariaLabel={label}
         value={value}

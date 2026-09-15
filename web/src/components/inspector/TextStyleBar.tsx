@@ -3,6 +3,7 @@ import type { ManifestElement } from '@/lib/api'
 import { propertyPathOf } from '@/lib/typography'
 import type { PanelObject } from '@/types/document'
 import { TypographyControls } from './controls/TypographyControls'
+import { INSPECTOR_LABEL_W } from './layout'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography } from './typographyAdapter'
 
 /**
@@ -43,7 +44,7 @@ export function TextStyleBar({
   panel,
   element,
   className,
-  labelWidth = 72,
+  labelWidth = INSPECTOR_LABEL_W,
 }: {
   panel: PanelObject
   element: ManifestElement

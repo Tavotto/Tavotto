@@ -138,4 +138,40 @@ describe('发送前的作用范围摘要', () => {
     // 交给谁执行也写在同一行上
     expect(btn!.textContent).toContain('Codex')
   })
+
+  /**
+   * 2026-09-15 全面打磨 L6：作用范围此前说两遍——顶部的目标片右端一个
+   * 「整张图」，输入框那颗按钮上又一个「作用于：整张图 · Codex」，两颗还
+   * 打开同一个弹层。范围只在输入框那一处说；顶部片只回答「改哪张图」。
+   *
+   * 判据数的是**出现次数**，不是「有没有」：留一处的实现与留两处的实现，
+   * 后者同样能通过「包含范围名」那种写法。
+   */
+  it('作用范围只说一次：顶部的目标片不再复述它（L6）', async () => {
+    await mount({ withPanel: true })
+    const scope = ai('scope.figure')
+    const withScope = buttons().filter((b) => b.textContent?.includes(scope))
+    expect(withScope).toHaveLength(1)
+    expect(withScope[0].getAttribute('aria-label')).toBe(ai('panel.scopeAndAgent'))
+    // 目标片还在，只是不再挂范围：它就是面包屑
+    const prefix = ai('panel.targetAria', { target: '§' }).split('§')[0]
+    const target = buttons().find((b) => b.getAttribute('aria-label')?.startsWith(prefix))
+    expect(target, '目标片不见了').toBeTruthy()
+    expect(target!.textContent).not.toContain(scope)
+  })
+
+  /**
+   * 打磨 A5：发送钮左边那枚常驻的 `⌘↵` 删了——同一句话已经在发送钮的气泡里。
+   * 判据同时确认快捷键本身没丢（还在气泡 / 可达名里），否则「删干净了」和
+   * 「把功能一起删了」长得一样。
+   */
+  it('输入框上不再常驻一枚快捷键键帽，快捷键仍在发送钮的提示里（A5）', async () => {
+    await mount({ withPanel: true })
+    expect(host.querySelector('kbd')).toBeNull()
+    expect(host.textContent ?? '').not.toContain('↵')
+    // 发送钮本身没动：快捷键说在它的气泡与可达名里（`panel.send` / `panel.sendAria`）
+    const send = host.querySelector('[data-ai-send="send"]') as HTMLElement
+    expect(send, '找不到发送钮').toBeTruthy()
+    expect(send.getAttribute('aria-label')).toBe(ai('panel.sendAria'))
+  })
 })

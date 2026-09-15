@@ -284,7 +284,9 @@ export function MarkerPicker({
 
   return (
     <Popover
-      width={216}
+      // 弹层宽 = 触发器宽（打磨 E11）：上下相邻的「线型」「标记」此前一个 216、
+      // 一个 228，两种宽度挨在一起；Select 的弹层一直是跟着触发器的
+      width="trigger"
       align="start"
       open={open}
       onOpenChange={setOpen}

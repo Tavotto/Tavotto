@@ -11,6 +11,7 @@ import {
   type TickDirection,
 } from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
+import { INSPECTOR_LABEL_W } from '../layout'
 import { Toggle } from '../../ui/Toggle'
 import { Tip } from '../../ui/Tooltip'
 
@@ -394,7 +395,7 @@ function ZoneSwitch({
 
 export function TickAndSpineDiagram({
   adapter,
-  labelWidth = 88,
+  labelWidth = INSPECTOR_LABEL_W,
 }: {
   adapter: TickSpineAdapter
   /** 网格行标签列的宽度：与同页其它 `Row` 的 `LABEL_W` 同一条竖线 */

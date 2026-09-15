@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { Fragment, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { Check } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
@@ -36,6 +36,7 @@ export function OptionGrid<T extends string>({
   columns = 5,
   ariaLabel,
   cellClassName,
+  previewHasLabel = false,
 }: {
   value: T | null
   options: GridOption<T>[]
@@ -49,6 +50,12 @@ export function OptionGrid<T extends string>({
   columns?: number
   ariaLabel: string
   cellClassName?: string
+  /**
+   * 预览里已经印了名字（单列的线型 / 端型 / 箭头样式那种「样张 + 文字」的行）。
+   * 此时**不包 Tip**：气泡会盖在同一行的同一句话上，把「实线」念第二遍（打磨 E12）。
+   * 可达名仍由每个格子的 `aria-label` 提供，读屏不受影响。
+   */
+  previewHasLabel?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -87,39 +94,44 @@ export function OptionGrid<T extends string>({
     >
       {options.map((opt) => {
         const active = opt.value === value
-        return (
+        const cell = (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-label={opt.label}
+            data-value={opt.value}
+            data-code={opt.code}
+            // radiogroup 的漫游焦点：选中项可 Tab 进入，其余用方向键到达
+            tabIndex={active || (value == null && opt === options[0]) ? 0 : -1}
+            onClick={() => {
+              onChange(opt.value)
+              onPick?.(opt.value)
+            }}
+            className={cn(
+              'relative flex h-8 items-center justify-center rounded-sm border outline-none transition-colors',
+              'focus-visible:focus-ring',
+              active
+                ? 'border-transparent bg-selected text-ink'
+                : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
+              cellClassName,
+            )}
+          >
+            {active && (
+              <Check
+                size={ICON_SIZE.xs}
+                aria-hidden
+                className="absolute left-0.5 top-0.5 text-ink"
+              />
+            )}
+            {opt.preview ?? <span className="truncate px-1 text-sm">{opt.label}</span>}
+          </button>
+        )
+        return previewHasLabel ? (
+          <Fragment key={opt.value}>{cell}</Fragment>
+        ) : (
           <Tip key={opt.value} label={tipLabelOf(opt)}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={active}
-              aria-label={opt.label}
-              data-value={opt.value}
-              data-code={opt.code}
-              // radiogroup 的漫游焦点：选中项可 Tab 进入，其余用方向键到达
-              tabIndex={active || (value == null && opt === options[0]) ? 0 : -1}
-              onClick={() => {
-                onChange(opt.value)
-                onPick?.(opt.value)
-              }}
-              className={cn(
-                'relative flex h-8 items-center justify-center rounded-sm border outline-none transition-colors',
-                'focus-visible:focus-ring',
-                active
-                  ? 'border-transparent bg-selected text-ink'
-                  : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
-                cellClassName,
-              )}
-            >
-              {active && (
-                <Check
-                  size={ICON_SIZE.xs}
-                  aria-hidden
-                  className="absolute left-0.5 top-0.5 text-ink"
-                />
-              )}
-              {opt.preview ?? <span className="truncate px-1 text-sm">{opt.label}</span>}
-            </button>
+            {cell}
           </Tip>
         )
       })}
