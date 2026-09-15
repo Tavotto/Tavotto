@@ -467,7 +467,7 @@ function MarkTools() {
         align="center"
         trigger={
           <Button size="md" active={markActive} aria-label={t('workspace:topbar.annotate')}>
-            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} /> : <Shapes size={ICON_SIZE.md} />}
+            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
             {t('workspace:topbar.annotate')}
             <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
