@@ -94,8 +94,9 @@ export function CanvasPage() {
                   aria-checked={on}
                   aria-label={cv('presetAria', { label, w: p.w, h: p.h })}
                   className={cn(
-                    // 定高 88：en-US 的「Single column / Double column」折两行、zh 只有一行，
-                    // 四张卡因语言不同高（81×73 vs 81×88）。什么语言都是同一个骨架（打磨 C1）
+                    // 定高 88：什么语言都是同一个骨架（打磨 C1）。英文名同期改短
+                    // （Single / Double，2026-09-15 拍板）——「column」由分区标题
+                    // Page size 与缩略图的比例说，四张卡这才真的一行一张
                     'flex h-22 flex-col items-center justify-center gap-1 rounded-sm border px-1 py-1.5 outline-none transition-colors duration-fast focus-visible:focus-ring',
                     // 选中：轻 tint + 稍强的边 + 稍强的预览线 + 字重，不用大灰块
                     on

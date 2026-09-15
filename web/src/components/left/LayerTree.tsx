@@ -4,8 +4,11 @@ import { t as translate } from '@/i18n'
 import {
   ArrowUpRight,
   Braces,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Diamond,
+  Ellipsis,
   Eye,
   EyeOff,
   Hexagon,
@@ -33,6 +36,7 @@ import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
 import { IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 
 const ICONS = {
   panel: Image,
@@ -97,6 +101,12 @@ export function LayerTree() {
     }
   }
 
+  // 「上移 / 下移一层」的可换位落点：可见的对象行之间。⋯ 菜单与 Alt+方向键
+  // 共用这一份顺序，两处不各数一遍
+  const flatIds = rows
+    .filter((r): r is Extract<TreeRow, { kind: 'object' }> => r.kind === 'object')
+    .map((r) => r.obj.id)
+
   // 键盘漫游走可见行（对象行 + 组标题行共用 data-layer 定位）
   const keyOf = (r: TreeRow) => (r.kind === 'object' ? r.obj.id : `g:${r.gid}`)
   const focusRow = (key: string) =>
@@ -110,11 +120,10 @@ export function LayerTree() {
 
   // Alt+方向键调整 z 序；行的 DOM 会重建，等提交后把焦点接回来
   const reorder = (id: string, delta: -1 | 1) => {
-    const flat = rows.filter((r): r is Extract<TreeRow, { kind: 'object' }> => r.kind === 'object')
-    const i = flat.findIndex((r) => r.obj.id === id)
-    const target = flat[i + delta]
+    const i = flatIds.indexOf(id)
+    const target = i < 0 ? undefined : flatIds[i + delta]
     if (!target) return
-    reorderObject(id, target.obj.id, delta < 0 ? 'above' : 'below')
+    reorderObject(id, target, delta < 0 ? 'above' : 'below')
     // 等 React 提交后接回焦点；不用 rAF——后台/隐藏标签页里 rAF 可能永不触发
     setTimeout(() => focusRow(id), 0)
   }
@@ -154,6 +163,7 @@ export function LayerTree() {
         const o = r.obj
         const selected = selectedIds.includes(o.id)
         const hint = dropHint?.id === o.id ? dropHint.pos : null
+        const zi = flatIds.indexOf(o.id)
         return (
           <LayerRow
             key={o.id}
@@ -163,6 +173,8 @@ export function LayerTree() {
             primary={selectedIds.at(-1) === o.id && selectedIds.length > 1}
             tabbable={focusKey === o.id}
             dropHint={hint}
+            canMoveUp={zi > 0}
+            canMoveDown={zi >= 0 && zi < flatIds.length - 1}
             onDropHint={setDropHint}
             onMoveFocus={(d) => moveFocus(o.id, d)}
             onReorder={(d) => reorder(o.id, d)}
@@ -257,6 +269,9 @@ interface RowProps {
   primary: boolean
   tabbable: boolean
   dropHint: 'above' | 'below' | null
+  /** 这一行上下还有没有可换位的对象——决定 ⋯ 里那两项禁不禁用 */
+  canMoveUp: boolean
+  canMoveDown: boolean
   onDropHint: (h: { id: string; pos: 'above' | 'below' } | null) => void
   onMoveFocus: (delta: number) => void
   onReorder: (delta: -1 | 1) => void
@@ -269,6 +284,8 @@ function LayerRow({
   primary,
   tabbable,
   dropHint,
+  canMoveUp,
+  canMoveDown,
   onDropHint,
   onMoveFocus,
   onReorder,
@@ -393,31 +410,55 @@ function LayerRow({
         <span className="shrink-0 type-meta font-normal">{lt('primary')}</span>
       )}
 
-      {/* 锁定 / 隐藏：hover 或键盘落到行里才出现；已锁 / 已隐藏的常驻，状态得看得见 */}
-      <div
+      {/* 锁定 / 隐藏状态常驻，动作收进 ⋯——与图内元素行同一副行尾（2026-09-15 全面打磨拍板）。
+          此前这里是两颗常驻的 28px 钮：省一次点击，代价是每一行都挂着两颗钮，
+          两棵并列的树对同一对操作长出两种形态。状态图标是 xs / ink-3，与元素行同源 */}
+      {obj.locked && (
+        <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('lockedState')} />
+      )}
+      {obj.hidden && (
+        <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
+      )}
+
+      {/* 低频操作收进 ⋯，hover / 键盘落到行里才出现（键盘可达靠 focus-within） */}
+      <span
         className={cn(
-          'ml-auto flex shrink-0 items-center transition-opacity duration-fast',
+          'ml-auto shrink-0 transition-opacity duration-fast',
           !editing && 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
-          obj.locked || obj.hidden ? 'opacity-100' : '',
         )}
       >
-        <IconButton
-          iconSize="sm"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => toggleLocked(obj.id)}
-          label={lt(obj.locked ? 'unlock' : 'lock')}
+        <Menu
+          width={168}
+          align="end"
+          trigger={
+            <IconButton
+              iconSize="sm"
+              tabIndex={-1}
+              onPointerDown={(e) => e.stopPropagation()}
+              label={lt('rowActions', { label: objectLabel(obj) })}
+            >
+              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
+            </IconButton>
+          }
         >
-          {obj.locked ? <Lock size={ICON_SIZE.sm} filled /> : <LockOpen size={ICON_SIZE.sm} className="text-ink-3" />}
-        </IconButton>
-        <IconButton
-          iconSize="sm"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => toggleHidden(obj.id)}
-          label={lt(obj.hidden ? 'show' : 'hide')}
-        >
-          {obj.hidden ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} className="text-ink-3" />}
-        </IconButton>
-      </div>
+          <MenuItem icon={obj.locked ? LockOpen : Lock} onSelect={() => toggleLocked(obj.id)}>
+            {lt(obj.locked ? 'unlock' : 'lock')}
+          </MenuItem>
+          <MenuItem icon={obj.hidden ? Eye : EyeOff} onSelect={() => toggleHidden(obj.id)}>
+            {lt(obj.hidden ? 'show' : 'hide')}
+          </MenuItem>
+          <MenuSeparator />
+          {/* 层级动作作用在**这一行**上，不看选区——菜单是从这一行打开的。
+              走的是行自己那条 `onReorder`（与 Alt+方向键同一份实现），
+              到顶 / 到底时那一项禁用，而不是点了什么都不发生 */}
+          <MenuItem icon={ChevronUp} disabled={!canMoveUp} onSelect={() => onReorder(-1)}>
+            {lt('moveUp')}
+          </MenuItem>
+          <MenuItem icon={ChevronDown} disabled={!canMoveDown} onSelect={() => onReorder(1)}>
+            {lt('moveDown')}
+          </MenuItem>
+        </Menu>
+      </span>
     </li>
   )
 }

@@ -23,7 +23,7 @@
     "copyPaste": "Copy / paste objects across documents",
     "delete": "Delete objects; in figure editing, hides the element instead — restorable.",
     "duplicate": "Duplicate the selection in place",
-    "enter": "Edit the selection: text enters editing, parameterizable panels enter figure editing",
+    "enter": "Edit the selection: text enters editing, parameterizable figures enter figure editing",
     "escape": "Step out one level: text editing → figure element → editing mode → clear selection",
     "export": "Export",
     "freeResize": "Non-proportional resize",

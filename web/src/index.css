@@ -410,6 +410,16 @@
     color: inherit;
   }
 
+  /* 按钮 / 复选 / 单选 / 折叠头一律箭头光标，手形只给链接（2026-09-15 拍板）。
+     原语里的 cursor-pointer 已删；这一条兜住 UA 默认值——summary 与这三种
+     input 的 UA 样式根本不写 cursor，不兜的话落回 auto。 */
+  summary,
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='color'] {
+    cursor: default;
+  }
+
   input[type='number']::-webkit-outer-spin-button,
   input[type='number']::-webkit-inner-spin-button {
     appearance: none;

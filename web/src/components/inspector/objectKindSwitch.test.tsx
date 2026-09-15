@@ -180,10 +180,11 @@ describe('徽标：能切换的是按钮，不能切换的还是那颗静态徽�
     expect(badge()!.textContent).toBe('文字')
   })
 
-  it('面板：同样是静态徽标', async () => {
+  it('图：同样是静态徽标', async () => {
     await mount([panelOf()])
     expect(badge()!.tagName).toBe('SPAN')
-    expect(badge()!.textContent).toBe('面板')
+    // 画布对象那个 panel 在界面上叫「图」（2026-09-15 全站统一）
+    expect(badge()!.textContent).toBe('图')
   })
 
   it('多选跨族（矩形 + 箭头）：徽标整个不出现（没有一个类型可说）', async () => {

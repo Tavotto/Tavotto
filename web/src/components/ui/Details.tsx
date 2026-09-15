@@ -24,7 +24,7 @@ export function Summary({
     <summary
       {...props}
       className={cn(
-        'flex cursor-pointer select-none list-none items-center gap-1 outline-none focus-visible:focus-ring',
+        'flex select-none list-none items-center gap-1 outline-none focus-visible:focus-ring',
         '[&::-webkit-details-marker]:hidden',
         className,
       )}

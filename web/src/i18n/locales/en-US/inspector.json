@@ -29,7 +29,7 @@
     "alignToolbar": "Align",
     "columns": "Cols",
     "copyStyle": "Copy style",
-    "copyStyleTip": "Copy the last-selected object’s style: crop, rotation, and opacity for panels; size, weight, colour, and alignment for text.",
+    "copyStyleTip": "Copy the last-selected object’s style: crop, rotation, and opacity for figures; size, weight, colour, and alignment for text.",
     "createLayoutTip": "Turn the selection into a {{kind}} layout: fixed spacing, re-flow after an asset swap. Undoable.",
     "dissolve": "Dissolve layout",
     "dissolveTitle": "Remove the layout constraints and grouping. Objects stay put.",
@@ -106,7 +106,7 @@
     "presets": {
       "double": {
         "hint": "150 mm — full width",
-        "label": "Double column"
+        "label": "Double"
       },
       "full": {
         "hint": "180×240 mm — full-page text block",
@@ -114,7 +114,7 @@
       },
       "single": {
         "hint": "85 mm — single-column width in most journals",
-        "label": "Single column"
+        "label": "Single"
       },
       "square": {
         "hint": "100×100 mm",
@@ -195,7 +195,8 @@
       "bottomCenter": "Below, centered",
       "leftCenter": "Left, middle"
     },
-    "tickSpineDiagramHint": "Click a side to toggle its tick marks and spine"
+    "tickSpineDiagramHint": "Click a side to toggle its tick marks and spine",
+    "legendBestShort": "Auto"
   },
   "element": {
     "absentAppearance": "Visible in the figure, but this version can't edit it here — it comes from the script.",
@@ -203,7 +204,7 @@
     "alignBaseline": "Reference",
     "alignBaselineSize": "Size reference",
     "alignHdist": "Distribute horizontally (needs 3+)",
-    "alignHint": "For axes this changes their share of the figure; for text and legends it moves the anchor. Neither affects the panel size on the canvas.",
+    "alignHint": "For axes this changes their share of the figure; for text and legends it moves the anchor. Neither affects the figure’s size on the canvas.",
     "alignHintAnnotations": "Canvas annotations line up on the same baseline; their position changes on the canvas object.",
     "alignHintGroup": "Dragging the group's bounding-box handles on the canvas scales it too.",
     "alignInvalid": "An element in the selection has invalid geometry. Alignment cancelled.",
@@ -336,7 +337,7 @@
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
   "elementsSelected_other": "{{count}} elements selected",
-  "emptyHint": "Click a panel, text or annotation on the canvas to start editing.",
+  "emptyHint": "Click a figure, text or annotation on the canvas to start editing.",
   "emptyTitle": "Nothing selected",
   "engineLabel": {
     "annotationArrow": "Annotation arrow",
@@ -602,7 +603,7 @@
     "setPageH": "Change canvas height",
     "setPageMargin": "Change page margin",
     "setPageW": "Change canvas width",
-    "setPanelScale": "Change panel scale",
+    "setPanelScale": "Change figure scale",
     "setSides": "Change side count",
     "setStrokeColor": "Change stroke colour",
     "setStrokeWidth": "Change line width",
@@ -630,9 +631,9 @@
     "aspectLocked": "Aspect ratio locked — changing one side changes the other",
     "aspectTip": "Keep the width and fix the height to the original ratio",
     "aspectUnlocked": "Aspect ratio unlocked — W and H are independent",
-    "bitmapBoth": "Flipping and opacity both embed this panel as a bitmap. Vector text is no longer selectable in the exported PDF.",
-    "bitmapFlip": "Flipped panels embed as a bitmap at export DPI in the PDF. Vector text is no longer selectable.",
-    "bitmapOpacity": "Below 100% opacity, this panel embeds as a high-resolution bitmap. Vector text is no longer selectable in the PDF.",
+    "bitmapBoth": "Flipping and opacity both embed this figure as a bitmap. Vector text is no longer selectable in the exported PDF.",
+    "bitmapFlip": "Flipped figures embed as a bitmap at export DPI in the PDF. Vector text is no longer selectable.",
+    "bitmapOpacity": "Below 100% opacity, this figure embeds as a high-resolution bitmap. Vector text is no longer selectable in the PDF.",
     "building": "Building…",
     "coldBuilding": "Cold start in progress; this can take a few minutes…",
     "crop": "Crop",
@@ -661,8 +662,8 @@
     "image": "Image",
     "loading": "Loading…",
     "lockAspect": "Lock aspect ratio",
-    "morePanels_one": "{{count}} more panel not shown",
-    "morePanels_other": "{{count}} more panels not shown",
+    "morePanels_one": "{{count}} more figure not shown",
+    "morePanels_other": "{{count}} more figures not shown",
     "native": "Original {{size}}",
     "nativeMixed": "Multiple original sizes",
     "nativeSize": "Original size",
@@ -671,7 +672,7 @@
     "nativeTipMulti": "The asset's own size; scale % is always relative to it",
     "noAssetMatch": "No matching asset",
     "opacity": "Opacity",
-    "overrideCount_one": "This panel has {{count}} figure edit",
+    "overrideCount_one": "This figure has {{count}} edit",
     "overrideCount_other": "{{count}} figure edits",
     "ptHint": "{{base}} pt in the original × {{scale}}% scale",
     "ptHintBad": "{{base}} pt in the original × {{scale}}% scale — below 6 pt is unreadable in print",
@@ -911,7 +912,7 @@
     "strokeColor": "Stroke"
   },
   "summaryMarks": "{{count}} annotations",
-  "summaryPanels": "{{count}} panels",
+  "summaryPanels": "{{count}} figures",
   "summaryTexts": "{{count}} texts",
   "sync": {
     "clampedNote_one": " ({{count}} position refitted to the target layout; may need a tweak)",
@@ -923,8 +924,8 @@
     "itemsSuffix": "items",
     "kinGroup": "Same figure family",
     "mappedCount": "Mappable:",
-    "mergeToCanvas": "Merge into the panel on the canvas",
-    "noOverrides": "This panel has no figure edits yet",
+    "mergeToCanvas": "Merge into the figure on the canvas",
+    "noOverrides": "This figure has no edits yet",
     "notOnCanvas": "The target figure isn’t on the canvas, so it can only be written back to its original file, merged with its baseline and backed up. To preview, drop it onto the canvas and sync again.",
     "nothingToSync": "Nothing to sync; you can cancel.",
     "onlyOne": "This script only produces one figure",
@@ -1116,7 +1117,7 @@
   },
   "writeBack": {
     "annotationsBlocked": "Canvas annotations can’t come along: {{reason}}.",
-    "annotationsTitle": "Canvas arrows, text and shapes on the panel are drawn as vectors into the original PDF at their current positions, and the PNG is re-rendered to match. They’re removed from the canvas after write-back (undoable).",
+    "annotationsTitle": "Canvas arrows, text and shapes on the figure are drawn as vectors into the original PDF at their current positions, and the PNG is re-rendered to match. They’re removed from the canvas after write-back (undoable).",
     "backupDone": "The originals were backed up to {{dir}} — expand for how to restore",
     "backupSummary": "Backed up to {{dir}} before overwriting — expand for how to restore",
     "buttonLabel": "Write back to the original file",
@@ -1132,9 +1133,9 @@
     "moreDiffs_other": "{{count}} more…",
     "noOverridesTitle": "No figure edits to write back yet",
     "readOnlyTitle": "“Allow writing back to original files” is off for this project. Turn it on in project settings.",
-    "restoreBody": "Restore: in the panel’s “History”, return to any version, or copy files back from the backup folder. The script that generates the figure never changes.",
+    "restoreBody": "Restore: in the figure’s “History”, return to any version, or copy files back from the backup folder. The script that generates it never changes.",
     "rewriting": "Re-rendering…",
-    "scriptChanged": "{{script}} changed during this session, so you’re still seeing the old code. Re-render the panel, check the result, then write back.",
+    "scriptChanged": "{{script}} changed during this session, so you’re still seeing the old code. Re-render the figure, check the result, then write back.",
     "sizeMismatch": "Page size doesn’t match the replay. The file was replaced, but the original is in the backup folder — restore it if needed, and report this to the developers.",
     "sourceChanged": "{{file}} changed outside this tool. Reload the figure library, then write back.",
     "statusPlain": "Written back to the original files: {{files}} (backup in {{dir}})",
@@ -1146,8 +1147,8 @@
     "summaryOne_other": "Writing {{count}} figure edits back into the original files of “{{stem}}”",
     "targetsLabel": "These files in the figures folder will be overwritten",
     "title": "Write back to the original file",
-    "topBarMany_one": "Write back to the original files: {{count}} panel",
-    "topBarMany_other": "Write back to the original files: {{count}} panels",
+    "topBarMany_one": "Write back to the original files: {{count}} figure",
+    "topBarMany_other": "Write back to the original files: {{count}} figures",
     "topBarOne": "Write back to the original file: {{stem}}",
     "topBarReadOnly": "“Allow writing back to original files” is off for this project. Turn it on in project settings.",
     "topBarShort": "Write back",

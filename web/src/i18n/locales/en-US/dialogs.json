@@ -118,7 +118,7 @@
     "title": "Export",
     "transparent": "Transparent background (PNG / TIFF only)",
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
-    "warningsIntro": "These edits couldn’t be applied to the re-rendered panels, so the output may differ from the canvas:"
+    "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:"
   },
   "layout": {
     "conflict": "A document named “{{name}}” already exists on disk, and this window didn’t write it.",
@@ -145,7 +145,7 @@
     "exported": "Exported {{files}}",
     "issuesTitle": "Publication preflight",
     "issuesTitleStale": "Publication preflight (verdict from the previous version)",
-    "panelGone": "The panel is gone. Ask Codex to open the figure again.",
+    "panelGone": "The figure is gone. Ask Codex to open it again.",
     "pending": "Edits pending",
     "pillClean": "Preflight passed",
     "pillCounts": "{{errors}} blocking · {{warnings}} warnings · {{notVerifiable}} to verify",
@@ -199,7 +199,7 @@
       },
       "edit-elements": {
         "keywords": "edit element figure inner",
-        "label": "Edit figure elements of the selected panel"
+        "label": "Edit the elements inside the selected figure"
       },
       "export": {
         "keywords": "export pdf png save out",
@@ -386,7 +386,7 @@
     "noFigureTitle": "The script finished without creating a Matplotlib figure.",
     "overrides_one": "{{count}} override",
     "overrides_other": "{{count}} overrides",
-    "panelGone": "The panel is gone. Load the script again.",
+    "panelGone": "The figure is gone. Load the script again.",
     "pendingEdits": "Edits pending",
     "phaseEngine": "Loading Tavotto engine",
     "phaseFigures": "Reading figure objects",
@@ -644,7 +644,7 @@
   },
   "registry": {
     "addToCanvas": "Add {{stem}} to the canvas",
-    "addedToCanvas": "Added {{stem}} to the canvas as a runtime panel",
+    "addedToCanvas": "Added {{stem}} to the canvas as a runtime figure",
     "probeTraceback": "Diagnostics",
     "reason_dynamic_stems": "runtime file names",
     "reason_infrastructure": "tooling/test script",
@@ -660,12 +660,12 @@
     "confirmDoc": "Relink the selected assets",
     "confirmPaste": "Paste with these choices",
     "keepMissing": "Leave missing",
-    "refCount_one": " — referenced by {{count}} panel",
-    "refCount_other": " (referenced by {{count}} panels)",
+    "refCount_one": " — referenced by {{count}} figure",
+    "refCount_other": " (referenced by {{count}} figures)",
     "selectAria": "Choose a replacement asset for {{name}}",
-    "skipPanel": "Skip this panel",
-    "titleDoc": "Panels in this document are missing assets",
-    "titlePaste": "The pasted panels are missing assets"
+    "skipPanel": "Skip this figure",
+    "titleDoc": "Figures in this document are missing assets",
+    "titlePaste": "The pasted figures are missing assets"
   },
   "settings": {
     "about": {
@@ -714,7 +714,7 @@
           "canvas_created": "A new canvas: blank, from the project, or a copy.",
           "context_bar_multi_used": "The multi-selection bar: which button, and the size bucket of the selection.",
           "document_saved": "A save to disk: manual or auto, and whether it ended ok, in conflict, or failed.",
-          "export_completed": "A successful export: the format, whether it included a report, and how many panels.",
+          "export_completed": "A successful export: the format, whether it included a report, and how many figures.",
           "figure_edit_completed": "One completed edit: the kind of change and how many.",
           "figure_opened": "Entering in-figure editing: PDF or raster image, and whether it’s editable.",
           "package_action": "A package job: install, update or remove, and how it ended. Never the package name.",
@@ -1202,8 +1202,8 @@
     "deleteTitle": "Delete style “{{name}}”?",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style, then apply it in bulk. Only figure edits are written; source files stay untouched.",
     "emptyBody": "No styles saved yet. Select a rendered, editable figure to extract its font sizes, line widths, ticks and palette as a start.",
-    "emptyDraft": "Empty style. Click “Extract from the current panel” to read its font sizes, line widths, ticks and palette, then delete what you don’t want to unify and save.",
-    "extract": "Extract from the current panel",
+    "emptyDraft": "Empty style. Click “Extract from the current figure” to read its font sizes, line widths, ticks and palette, then delete what you don’t want to unify and save.",
+    "extract": "Extract from the current figure",
     "extractNeedPanel": "Select a rendered, editable figure to extract from",
     "group": {
       "axes": "Axes",

@@ -116,7 +116,7 @@
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
-    "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
+    "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致："
   },
   "layout": {
     "conflict": "磁盘上已有一份名为「{{name}}」的文档，不是本窗口写的。",
@@ -143,7 +143,7 @@
     "exported": "已导出 {{files}}",
     "issuesTitle": "出版规范预检",
     "issuesTitleStale": "出版规范预检（结论属于上一版）",
-    "panelGone": "面板不见了。请让 Codex 重新打开。",
+    "panelGone": "图不见了。请让 Codex 重新打开。",
     "pending": "有改动待应用",
     "pillClean": "预检通过",
     "pillCounts": "{{errors}} 阻断 · {{warnings}} 警告 · {{notVerifiable}} 待核验",
@@ -196,7 +196,7 @@
       },
       "edit-elements": {
         "keywords": "edit element tnys tuneiyuansu",
-        "label": "编辑选中面板的图内元素"
+        "label": "编辑所选图的图内元素"
       },
       "export": {
         "keywords": "export pdf png dc daochu",
@@ -382,7 +382,7 @@
     "noFigureBody": "没有调用 savefig()，pyplot 里也没有留下 figure。下面的脚本输出可能说明了原因。",
     "noFigureTitle": "脚本跑完了，但没有产生 Matplotlib figure。",
     "overrides_other": "{{count}} 条修改",
-    "panelGone": "面板不见了。重新加载脚本。",
+    "panelGone": "图不见了。重新加载脚本。",
     "pendingEdits": "有改动待应用",
     "phaseEngine": "加载 Tavotto 引擎",
     "phaseFigures": "读取 figure 对象",
@@ -637,7 +637,7 @@
   },
   "registry": {
     "addToCanvas": "把 {{stem}} 添加到画布",
-    "addedToCanvas": "已把 {{stem}} 作为运行时面板添加到画布",
+    "addedToCanvas": "已把 {{stem}} 作为运行时图添加到画布",
     "probeTraceback": "诊断详情",
     "reason_dynamic_stems": "文件名来自运行期",
     "reason_infrastructure": "工具/测试脚本",
@@ -653,11 +653,11 @@
     "confirmDoc": "重新链接所选素材",
     "confirmPaste": "按上述选择粘贴",
     "keepMissing": "保持缺失",
-    "refCount_other": "（{{count}} 个面板引用）",
+    "refCount_other": "（{{count}} 张图引用）",
     "selectAria": "为 {{name}} 选择替代素材",
-    "skipPanel": "跳过该面板",
-    "titleDoc": "文档里的面板缺少素材",
-    "titlePaste": "粘贴的面板缺少素材"
+    "skipPanel": "跳过这张图",
+    "titleDoc": "文档里的图缺少素材",
+    "titlePaste": "粘贴的图缺少素材"
   },
   "settings": {
     "about": {
@@ -1190,8 +1190,8 @@
     "deleteTitle": "删除样式「{{name}}」？",
     "descriptionEmpty": "把字号、线宽、刻度、配色存成命名样式，批量应用。只写图内修改，不改源文件。",
     "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取字号、线宽、刻度、配色作为起点。",
-    "emptyDraft": "空样式。点「从当前面板提取」读取字号、线宽、刻度、配色，删掉不想统一的项，再保存。",
-    "extract": "从当前面板提取",
+    "emptyDraft": "空样式。点「从当前图提取」读取字号、线宽、刻度、配色，删掉不想统一的项，再保存。",
+    "extract": "从当前图提取",
     "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
     "group": {
       "axes": "坐标轴",
