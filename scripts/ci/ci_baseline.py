@@ -274,19 +274,30 @@ def _parse_steps(block: list[str], start: int) -> list[dict]:
     return steps
 
 
+_EXPR = re.compile(r"\$\{\{.*?\}\}")
+
+
 def display_to_job_id(name: str, workflow_jobs: dict[str, dict]) -> str:
     """把 API 的 job 显示名映射回 workflow 的 job id。
 
     matrix job 显示成 `backend-fast (ubuntu-latest, 3.10)`；整格被 skip 时 matrix
-    没展开，显示名就是裸 id `package`；自定义 `name:` 的显示名逐字相同。对不上一律抛
-    ——猜一个 id 会把时间算到别的 job 头上。
+    没展开，显示名就是裸 id `package`；自定义 `name:` 的显示名逐字相同。`name:` 里带
+    表达式的（CI03c 起 `windows-exe-smoke (${{ matrix.shard }})`，为的是 include 形状的
+    matrix 不把四个字段全排进显示名）按模式配：表达式处配任意串（整格 skip 时表达式
+    展开成空，显示成 `windows-exe-smoke ()`），其余逐字。对不上一律抛——猜一个 id 会把
+    时间算到别的 job 头上。
     """
     exact = {info["name"]: jid for jid, info in workflow_jobs.items()}
     if name in exact:
         return exact[name]
     for jid, info in workflow_jobs.items():
-        if name.startswith(info["name"] + " ("):
+        if name.startswith(info["name"] + " (") or name == jid:
             return jid
+        if "${{" in info["name"]:
+            # 表达式处配一个 matrix 值：不含括号（值里真有括号时这里会抛，不会错配到别人）
+            pattern = "[^()]*".join(re.escape(part) for part in _EXPR.split(info["name"]))
+            if re.fullmatch(pattern, name):
+                return jid
     raise BaselineError(f"job 显示名 {name!r} 对不上 workflow 里的任何 job")
 
 

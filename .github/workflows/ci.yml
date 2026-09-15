@@ -977,6 +977,35 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
+    # **Playwright 按 project 分到两台机器**（CI03c，2026-09-16）。这条腿是 CI01 删边之后
+    # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
+    # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
+    # Playwright 自带的 `--shard` 按 group 顺序等分、不看时长，跨 project 平衡要自写分区器；
+    # 按 project 切，完整性判据最简单——**三个 project 各恰好出现在一片里**，三层看住：
+    #   ① 合同测试（tests/test_merge_queue_workflows.py::TestPlaywrightShards）读
+    #      web/playwright.config.ts 的 project 名集合与下面 include 的 `--project=` 集合比：
+    #      并集 == 配置、两两不交、无空片、`others` == 其余片之并；
+    #   ② 每片跑 e2e 之前先「分片自验」（scripts/ci/playwright_shard_check.py）：对着
+    #      Playwright 自己的 `--list` 再比一次集合（本片 == 全集里属于本片 project 的那些、
+    #      本片 ∪ 另一片 == 全集的 project 集），不成立就红在 e2e 之前；
+    #   ③ matrix 语义：任一片不 success，`needs.windows-exe-smoke.result` 就不是 success，
+    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)`（下面 `name:`），
+    #      required contexts 仍只有三个 Gate，仓库设置不用重登记。
+    # 两片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
+    # **都跑**三条断言与冒烟①②③（合计约 1 分钟）——不用 `if:` 把它们收窄到一片上：
+    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是两片各自独立成立。
+    # 浏览器按片装：片 1 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
+    # 值里不能有逗号（scripts/ci/ci_baseline.py 的 matrix 解析按逗号切）；`projects` /
+    # `others` 是 `--project=` 参数的字面形状，直接进 `pnpm e2e` 与自验脚本的命令行。
+    # 回退：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
+    # 片号；自验步骤与 step 级 timeout 留着也无害。
+    name: windows-exe-smoke (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
+          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -1196,16 +1225,54 @@ jobs:
           python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
             --expect-source env_override
 
-      - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime）
+      - name: 装 web 依赖与本片的浏览器（${{ matrix.browsers }}）
         working-directory: web
+        # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：黄金路径与
+        # 可访问性在它上面各跑一遍——只在跑 webkit project 的那一片上装（matrix.browsers）。
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps ${{ matrix.browsers }}
+
+      - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
+        # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`
+        # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。
+        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、
+        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以
+        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。
+        # 两份清单 + check.json 写进 RUNNER_TEMP，下面上传作证据——只作证据，不作判定输入。
+        run: >-
+          python scripts/ci/playwright_shard_check.py
+          --shard ${{ matrix.shard }}
+          --projects="${{ matrix.projects }}"
+          --others="${{ matrix.others }}"
+          --web web
+          --out "${{ runner.temp }}/playwright-shard"
+
+      - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime，本片 ${{ matrix.projects }}）
+        working-directory: web
+        # **step 级上限 30 分钟**（job 级 60 不动）。CI00 实测这一步 18.7 分钟（三个 project
+        # 全跑）；分片后片 1 ≈ 8.4 分钟、片 2 ≈ 6.3 分钟，30 是两倍余量。为什么要有 step 级：
+        # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
+        # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
+        # 「失败时收集日志」与全部 Post 步骤都是 pending 没跑，日志 blob 404、artifact 一个
+        # 都没有（docs/implementation/ci-foundation/evidence/ci03c/ci_pr373_attempt1_hang.json）。
+        # step 级超时让挂起变成**带日志的失败**：这一步 failure，后面 `if: failure()` 的收集
+        # 步骤才会跑，playwright-report / test-results 才传得上来。
+        timeout-minutes: 30
         run: |
           $env:TAVOTTO_WORKER_PYTHON = $null
           $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
-          pnpm install --frozen-lockfile
-          # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：
-          # 黄金路径与可访问性在它上面各跑一遍
-          pnpm exec playwright install --with-deps chromium webkit
-          pnpm e2e
+          pnpm e2e ${{ matrix.projects }}
+
+      - name: 上传分片自验证据
+        # 两份 `--list` 清单 + check.json：日后重平衡与复核用，不是判定输入
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-shard-check-windows-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/playwright-shard/**
+          if-no-files-found: warn
+          retention-days: 7
 
       # 大图预览的 Windows 内存基准（issue #181 / ADR 0022 / Session 05 §5-§7）。
       #
@@ -1247,7 +1314,9 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: bench-large-preview-windows
+          # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
+          # 不阻塞；仓库里没有它的消费者，grep 过）。
+          name: bench-large-preview-windows-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/bench-large-preview-windows.json
           if-no-files-found: warn
           retention-days: 30
@@ -1256,7 +1325,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-smoke-logs
+          name: windows-smoke-logs-shard${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/**/app.log
             ${{ runner.temp }}/**/worker.log
@@ -1489,6 +1558,11 @@ jobs:
         env:
           # 不设 TAVOTTO_EXE：这条腿刻意跑源码形态（见上）。
           TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+        # **step 级上限 20 分钟**（job 级 45 不动）：CI00 实测这一步 7.4 分钟。理由与
+        # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
+        # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
+        # step 级超时把挂起变成带日志的失败。这条腿不分片：7 分钟，不在关键路径上。
+        timeout-minutes: 20
         run: |
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium

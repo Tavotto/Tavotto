@@ -46,7 +46,11 @@ export default defineConfig({
       // twin-axes-pick 进这条腿的理由与上面同源：⌥ 点击轮换（issue #216）唯一
       // 没被量到的维度就是「另一个引擎里 altKey 到不到得了命中层」，那只有
       // 换引擎跑才回答得了。这一腿在 merge_group / full-ci 上真会执行
-      // （ci.yml 的 windows-exe-smoke 里 `playwright install chromium webkit` + `pnpm e2e`）。
+      // （ci.yml 的 windows-exe-smoke 第 2 片：`playwright install chromium webkit` +
+      // `pnpm e2e --project=webkit --project=chromium-en`；第 1 片只跑 chromium。CI03c 起
+      // 按 project 分两台机器，project 集合与 ci.yml 的 matrix 由
+      // tests/test_merge_queue_workflows.py::TestPlaywrightShards 对拍，加 / 删 / 改名
+      // 一个 project 就要回去改那张 matrix）。
       testMatch: [
         'golden-paths.spec.ts',
         'a11y.spec.ts',

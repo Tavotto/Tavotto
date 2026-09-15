@@ -843,6 +843,243 @@ class TestHeavyLaneDependencies:
             assert f"name: {gate}\n" in CI
 
 
+# ============================================================ Playwright 按 project 分片（CI03c）
+def _matrix_include(job_block: str) -> list[dict[str, str]]:
+    """读 `strategy.matrix.include` 的条目（本仓库只写 `- { k: v, … }` 单行流式）；切不出来当场抛。
+
+    值里不能有逗号——`scripts/ci/ci_baseline.py::_parse_matrix` 也按逗号切，两边同一个前提。
+    """
+    code = _code(job_block)
+    m = re.search(r"(?m)^        include:\n((?:          - \{.*\}\n)+)", code)
+    assert m, "job 里切不出 strategy.matrix.include 的 `- { … }` 行（形状变了？）"
+    entries: list[dict[str, str]] = []
+    for line in m.group(1).splitlines():
+        body = re.fullmatch(r"\s+- \{(.*)\}", line)
+        assert body, line
+        entry: dict[str, str] = {}
+        for part in body.group(1).split(","):
+            k, sep, v = part.partition(":")
+            assert sep, f"include 条目里这一段不是 `k: v`：{part!r}"
+            entry[k.strip()] = v.strip().strip("\"'")
+        entries.append(entry)
+    assert entries, "include 是空的"
+    return entries
+
+
+def _steps(job_block: str) -> list[str]:
+    """一个 job 的 `steps:` 逐条切开（去掉注释行之后）；每条以 `- ` 起头那一行的正文开始。"""
+    code = _code(job_block)
+    m = re.search(r"(?m)^    steps:\n", code)
+    assert m, "job 里没有 steps:"
+    parts = re.split(r"(?m)^      - ", code[m.end() :])[1:]
+    assert parts, "steps: 下一条都切不出来"
+    return parts
+
+
+def _step_name(step: str) -> str:
+    m = re.search(r"(?m)^\s*name: (.+)$", step)
+    return m.group(1).strip() if m else ""
+
+
+#: `devices['Desktop X']` → `playwright install` 里的引擎名。枚举不是白名单：配置里换了设备
+#: 家族就得回到这里，顺便被问一句「那一片要装哪个浏览器」。
+_DEVICE_ENGINE = {
+    "Chrome": "chromium",
+    "Edge": "chromium",
+    "Safari": "webkit",
+    "Firefox": "firefox",
+}
+
+
+def _playwright_projects() -> dict[str, str]:
+    """`web/playwright.config.ts` 的 `projects[].name` → 引擎。只看代码行，不看注释。
+
+    不引 TS 解析器：本仓库的 projects 块形状固定（`{ name: '…', use: { ...devices['Desktop …'] … } }`），
+    切不出来当场抛，别静默回空集——空集会让「并集 == 配置」恒真。
+    """
+    text = (ROOT / "web" / "playwright.config.ts").read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("//"))
+    body = re.search(r"(?ms)^  projects: \[\n(.*?)^  \],", code)
+    assert body, "playwright.config.ts 里切不出 projects: [ … ]"
+    projects: dict[str, str] = {}
+    for block in re.split(r"(?m)^    \{\n", body.group(1))[1:]:
+        name = re.search(r"name: '([^']+)'", block)
+        device = re.search(r"devices\['Desktop (\w+)'\]", block)
+        assert name and device, f"project 块里读不出 name / devices：{block!r}"
+        assert name.group(1) not in projects, f"project 名重复：{name.group(1)}"
+        assert device.group(1) in _DEVICE_ENGINE, f"没登记的设备家族：{device.group(1)}"
+        projects[name.group(1)] = _DEVICE_ENGINE[device.group(1)]
+    assert len(projects) >= 2 and "webkit" in projects.values(), (
+        f"配置里的 project 集是 {projects}——分片的问题不再成立，先重估本组判据"
+    )
+    return projects
+
+
+def _project_flags(arg: str, label: str) -> set[str]:
+    """`"--project=a --project=b"` → `{a, b}`：每个 token 都必须是这个形状，空串是空片。
+
+    与 scripts/ci/playwright_shard_check.py 的 `parse_projects` **刻意不同源**（对拍要两侧独立）。
+    """
+    names = []
+    for tok in arg.split():
+        m = re.fullmatch(r"--project=(\S+)", tok)
+        assert m, f"{label}：`{tok}` 不是 `--project=NAME`"
+        names.append(m.group(1))
+    assert names, f"{label}：空片（一个 --project= 都没有）"
+    assert len(set(names)) == len(names), f"{label}：project 重复 {names}"
+    return set(names)
+
+
+class TestPlaywrightShards:
+    """`windows-exe-smoke` 的 Playwright 按 project 分两片（CI03c，2026-09-16）。
+
+    分片漏掉一个 project 的两个方向都**不会有任何用例红**：漏片时两片各自全绿，重叠时只是慢。
+    漏片兜底三层里这里是第一层（源码层）：matrix include 的 `--project=` 集合与
+    `web/playwright.config.ts` 的 project 集合比——并集相等、两两不交、无空片、`others` 是
+    其余片之并、浏览器按片装的正是本片 project 要的引擎。第二层是每片 e2e 之前的自验
+    （scripts/ci/playwright_shard_check.py，对着真 `--list`），第三层是 matrix 语义 + Gate 闭集。
+    另外钉住：artifact 名按片唯一（upload-artifact v4 同名会失败）、必需步骤没有 `if:`、
+    两条 Playwright 步都有 step 级 timeout（job 级硬杀时 step 停在 in_progress、收集步骤
+    不跑、日志与 artifact 都没有——PR #373 attempt 1）。
+    设计、本机实测、负例：docs/implementation/ci-foundation/CI03C_PLAYWRIGHT_SHARDS.md。
+    回退 = 删 strategy 与 name、`pnpm e2e` 去掉 `${{ matrix.projects }}`、artifact 名去掉片号。
+    """
+
+    JOB = "windows-exe-smoke"
+
+    def _entries(self) -> list[dict[str, str]]:
+        entries = _matrix_include(_job(CI, self.JOB))
+        assert [e.get("shard") for e in entries] == [str(i) for i in range(1, len(entries) + 1)], (
+            f"{self.JOB} 的 include 条目的 shard 必须恰好是 1..N：{entries}"
+        )
+        assert len(entries) == 2, "现在定的是 2 片；改片数要同时改这里与文档里的实测"
+        for e in entries:
+            assert set(e) == {"shard", "browsers", "projects", "others"}, (
+                f"include 条目的字段变了：{sorted(e)}——四个字段各有消费者（自验脚本 / e2e 命令 / 装浏览器）"
+            )
+        return entries
+
+    def test_the_shards_partition_exactly_the_configured_projects(self):
+        """并集 == 配置的 project 集、两两不交、无空片；`others` == 其余片之并。"""
+        entries = self._entries()
+        configured = set(_playwright_projects())
+        sets = [_project_flags(e["projects"], f"片 {e['shard']} projects") for e in entries]
+        for i, a in enumerate(sets):
+            for b in sets[i + 1 :]:
+                assert not (a & b), f"两片都要跑 {sorted(a & b)}——同一片内容跑两遍、判定却只算一次"
+        union = set().union(*sets)
+        assert union == configured, (
+            f"两片的 project 并集 {sorted(union)} ≠ 配置里的 {sorted(configured)}："
+            f"漏 {sorted(configured - union)} / 多 {sorted(union - configured)}"
+        )
+        for i, e in enumerate(entries):
+            others = _project_flags(e["others"], f"片 {e['shard']} others")
+            rest = set().union(*(s for j, s in enumerate(sets) if j != i))
+            assert others == rest, (
+                f"片 {e['shard']} 的 others {sorted(others)} 不是其余片之并 {sorted(rest)}——"
+                "自验脚本会拿它去算「本片 ∪ 另一片 == 全集」"
+            )
+
+    def test_each_shard_installs_exactly_the_engines_its_projects_need(self):
+        """片 1 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
+        engine_of = _playwright_projects()
+        for e in self._entries():
+            need = {engine_of[p] for p in _project_flags(e["projects"], "projects")}
+            installed = set(e["browsers"].split())
+            assert installed == need, (
+                f"片 {e['shard']} 装的是 {sorted(installed)}，它的 project 要的是 {sorted(need)}"
+            )
+
+    def test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix(self):
+        """`pnpm e2e` 与 `playwright install` 都从 matrix 取参数——别处不再写死 project 名。"""
+        code = _code(_job(CI, self.JOB))
+        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
+        assert e2e == [" ${{ matrix.projects }}"], f"windows-exe-smoke 的 pnpm e2e 行：{e2e}"
+        assert re.search(
+            r"(?m)^\s+pnpm exec playwright install --with-deps \$\{\{ matrix\.browsers \}\}\s*$",
+            code,
+        ), "浏览器安装没有从 matrix.browsers 取"
+
+    def test_the_self_check_runs_before_e2e_with_the_matrix_arguments(self):
+        """自验步骤在 e2e 步之前、拿的是 matrix 的三个字段、且不带 `if:`。"""
+        steps = _steps(_job(CI, self.JOB))
+        names = [_step_name(s) for s in steps]
+        check = [i for i, s in enumerate(steps) if "scripts/ci/playwright_shard_check.py" in s]
+        e2e = [i for i, s in enumerate(steps) if re.search(r"(?m)^\s+pnpm e2e\b", s)]
+        assert len(check) == 1 and len(e2e) == 1, (names, check, e2e)
+        assert check[0] < e2e[0], "分片自验必须在 e2e 之前——它要让 job 红在跑 e2e 之前"
+        step = steps[check[0]]
+        for needle in (
+            "--shard ${{ matrix.shard }}",
+            '--projects="${{ matrix.projects }}"',
+            '--others="${{ matrix.others }}"',
+            "--web web",
+        ):
+            assert needle in step, f"自验步骤里没有 {needle}：\n{step}"
+        assert not re.search(r"(?m)^\s+if:", step), "自验步骤不许带 if:"
+
+    def test_required_steps_are_not_conditionally_skipped_on_any_shard(self):
+        """两片各自完整地构建产物并都跑三条断言与冒烟①②③——带 `if:` 的只能是 artifact 上传。
+
+        前提先钉住（否则「没有 if」恒真）：三条断言、三条冒烟、PyInstaller 都在。
+        """
+        steps = _steps(_job(CI, self.JOB))
+        names = [_step_name(s) for s in steps]
+        for prefix, n in (("断言", 3), ("冒烟", 3), ("PyInstaller", 1)):
+            assert sum(nm.startswith(prefix) for nm in names) == n, (prefix, names)
+        conditional = [_step_name(s) for s in steps if re.search(r"(?m)^        if:", s)]
+        uploads = [_step_name(s) for s in steps if "uses: actions/upload-artifact@" in s]
+        assert conditional and set(conditional) <= set(uploads), (
+            f"这些步骤带了 if:（只有 artifact 上传可以）：{sorted(set(conditional) - set(uploads))}"
+        )
+
+    def test_every_artifact_of_the_sharded_job_is_named_per_shard(self):
+        """upload-artifact v4 同名会失败：同一 job id 下的 artifact 名在矩阵展开后不能相同。"""
+        names = TestHeavyLaneDependencies._artifact_names(_job(CI, self.JOB), "upload")
+        assert len(names) >= 3, f"前提：这条腿至少三个 upload-artifact：{names}"
+        for n in names:
+            assert "${{ matrix.shard }}" in n, f"artifact `{n}` 的名字里没有片号——两片会撞名"
+        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2")}
+        assert len(expanded) == 2 * len(names)
+
+    @pytest.mark.parametrize(
+        "job_id, step_minutes, job_minutes",
+        [("windows-exe-smoke", 30, 60), ("posix-e2e", 20, 45)],
+    )
+    def test_the_playwright_step_has_a_step_level_timeout(self, job_id, step_minutes, job_minutes):
+        """主语是 **step** 的 `timeout-minutes`（缩进 8），不是 job 的（缩进 4）——job 级的不动。"""
+        block = _job(CI, job_id)
+        pw = [s for s in _steps(block) if _step_name(s).startswith("Playwright 黄金路径")]
+        assert len(pw) == 1, [_step_name(s) for s in _steps(block)]
+        m = re.search(r"(?m)^        timeout-minutes: (\d+)\s*$", pw[0])
+        assert m, f"{job_id} 的 Playwright 步没有 step 级 timeout-minutes"
+        assert int(m.group(1)) == step_minutes, (job_id, m.group(1))
+        jm = re.search(r"(?m)^    timeout-minutes: (\d+)", _code(block))
+        assert jm and int(jm.group(1)) == job_minutes, f"{job_id} 的 job 级 timeout 变了"
+
+    def test_the_job_id_and_the_gate_closed_set_are_unchanged(self):
+        """job id 仍是 `windows-exe-smoke`（Gate 的 needs / --required 读的是 id）；显示名由
+        `name: windows-exe-smoke (${{ matrix.shard }})` 给出——不写 name 时 include 形状的
+        matrix 会把四个字段全排进显示名；scripts/ci/ci_baseline.py 按这个形状映射回 id。"""
+        block = _job(CI, self.JOB)
+        assert re.search(
+            r"(?m)^    name: windows-exe-smoke \(\$\{\{ matrix\.shard \}\}\)\s*$", block
+        )
+        assert re.search(r"(?m)^    runs-on: windows-latest\s*$", _code(block))
+        gate = _job(CI, "ci-integration-gate")
+        assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
+
+    def test_posix_e2e_stays_a_single_job_on_configured_projects(self):
+        """posix-e2e 不分片（7 分钟，不在关键路径上）；它写死的 project 名必须仍在配置里。"""
+        block = _job(CI, "posix-e2e")
+        assert not re.search(r"(?m)^    strategy:", _code(block)), (
+            "posix-e2e 分片了——先改文档里的决定"
+        )
+        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", _code(block))
+        assert len(e2e) == 1, e2e
+        assert _project_flags(e2e[0], "posix-e2e") <= set(_playwright_projects())
+
+
 class TestPythonLint:
     """Ruff 那一格的形状。它的价值全在「便宜且真的跑」，两头都要钉住。"""
 
