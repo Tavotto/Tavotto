@@ -1,5 +1,5 @@
 import { Fragment, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { Check } from 'lucide-react'
+import { Check } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from '../../ui/Tooltip'

@@ -16,7 +16,7 @@ import {
   MoveUp,
   MoveVertical,
   RotateCcw,
-} from 'lucide-react'
+} from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AlignMode } from '@/lib/geometry'
 import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
