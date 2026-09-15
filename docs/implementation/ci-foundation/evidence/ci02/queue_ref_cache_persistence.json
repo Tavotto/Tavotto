@@ -1,0 +1,99 @@
+{
+ "taken_at": "2026-09-16",
+ "question": "合并组候选 ref（gh-readonly-queue/main/pr-N-<sha>）在候选合入或出队后由 GitHub 删除；它们的缓存条目谁来清？",
+ "commands": [
+  "gh pr view 361/362 --json state,mergedAt",
+  "git ls-remote origin 'refs/heads/gh-readonly-queue/*'",
+  "gh cache list --limit 200 --json key,ref,sizeInBytes,createdAt,lastAccessedAt"
+ ],
+ "facts": {
+  "pr_361": "MERGED 2026-09-15T18:39:59Z",
+  "pr_362": "MERGED 2026-09-15T20:42:48Z",
+  "queue_refs_still_on_remote": [
+   "refs/heads/gh-readonly-queue/main/pr-357-bf98fc6ea066d3d8458bb9ad64fb307f87c13a84"
+  ],
+  "cache_entries_on_queue_refs": 14,
+  "MiB_on_queue_refs": 1885.5,
+  "entries_whose_ref_is_gone": [
+   {
+    "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097",
+    "ref": "pr-362-5b6de",
+    "MiB": 57.3,
+    "last_accessed_at": "2026-09-15T20:42:12.283137Z"
+   },
+   {
+    "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+    "ref": "pr-362-5b6de",
+    "MiB": 10.7,
+    "last_accessed_at": "2026-09-15T20:42:08.024142Z"
+   },
+   {
+    "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7",
+    "ref": "pr-362-5b6de",
+    "MiB": 10.5,
+    "last_accessed_at": "2026-09-15T20:42:05.262839Z"
+   },
+   {
+    "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb",
+    "ref": "pr-362-5b6de",
+    "MiB": 55.0,
+    "last_accessed_at": "2026-09-15T20:22:47.289229Z"
+   },
+   {
+    "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+    "ref": "pr-362-5b6de",
+    "MiB": 11.8,
+    "last_accessed_at": "2026-09-15T20:22:42.328734Z"
+   },
+   {
+    "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e",
+    "ref": "pr-362-5b6de",
+    "MiB": 24.1,
+    "last_accessed_at": "2026-09-15T20:22:39.096089Z"
+   },
+   {
+    "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88",
+    "ref": "pr-362-5b6de",
+    "MiB": 59.5,
+    "last_accessed_at": "2026-09-15T20:18:56.503439Z"
+   },
+   {
+    "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-604",
+    "ref": "pr-362-5b6de",
+    "MiB": 597.9,
+    "last_accessed_at": "2026-09-15T19:48:48.113478Z"
+   },
+   {
+    "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d",
+    "ref": "pr-362-5b6de",
+    "MiB": 945.9,
+    "last_accessed_at": "2026-09-15T19:48:42.043181Z"
+   },
+   {
+    "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+    "ref": "pr-362-5b6de",
+    "MiB": 17.2,
+    "last_accessed_at": "2026-09-15T19:44:47.844916Z"
+   },
+   {
+    "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097",
+    "ref": "pr-361-ad8c4",
+    "MiB": 57.3,
+    "last_accessed_at": "2026-09-15T18:39:22.331707Z"
+   },
+   {
+    "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+    "ref": "pr-361-ad8c4",
+    "MiB": 10.6,
+    "last_accessed_at": "2026-09-15T18:39:17.558894Z"
+   },
+   {
+    "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7",
+    "ref": "pr-361-ad8c4",
+    "MiB": 10.5,
+    "last_accessed_at": "2026-09-15T18:39:14.940279Z"
+   }
+  ]
+ },
+ "answer": "没人清：pr-361 / pr-362 的候选 ref 已不在远端，它们的缓存条目还在（下面逐条），只会被「7 天未访问自动删除」（docs.github.com：GitHub will remove any cache entries that have not been accessed in over 7 days）或 10 GB 上限的按最近访问淘汰带走。而合并组候选 ref 只被自己那一次 run 访问过，之后永远不会再被访问——它们是纯粹的死重，直到 7 天到期。"
+}

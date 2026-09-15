@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -995,8 +996,10 @@ class TestPlaywrightShards:
         code = _code(_job(CI, self.JOB))
         e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert e2e == [" ${{ matrix.projects }}"], f"windows-exe-smoke 的 pnpm e2e 行：{e2e}"
+        # `--with-deps` 不在这里钉：CI02 把它从 Windows 两片去掉了（实验，由 full-ci run 判），
+        # 带不带由 TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it 管。
         assert re.search(
-            r"(?m)^\s+pnpm exec playwright install --with-deps \$\{\{ matrix\.browsers \}\}\s*$",
+            r"(?m)^\s+pnpm exec playwright install (?:--with-deps )?\$\{\{ matrix\.browsers \}\}\s*$",
             code,
         ), "浏览器安装没有从 matrix.browsers 取"
 
@@ -1219,6 +1222,238 @@ class TestPackageSmokeIsolation:
         }, legs
         gate = _job(CI, "ci-integration-gate")
         assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
+
+
+# ============================================================ 产物复用与缓存（CI02）
+def _jsonc(path: Path) -> dict:
+    """读 tsconfig 那种带 `/* … */` / `// …` 注释的 JSON；本仓库的几份里没有带注释符号的字符串。"""
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+    raw = re.sub(r"(?m)^\s*//.*$", "", raw)
+    return json.loads(raw)
+
+
+def _with_block(step: str) -> dict[str, str]:
+    """一个 `uses:` 步骤的 `with:` 块 → {键: 值}（单行 `k: v`，或 `with: { k: v, … }` 流式）。"""
+    flow = re.search(r"(?m)^\s*with: \{(.*)\}\s*$", step)
+    if flow:
+        out: dict[str, str] = {}
+        for part in flow.group(1).split(","):
+            k, sep, v = part.partition(":")
+            assert sep, f"with 流式块里这一段不是 `k: v`：{part!r}"
+            out[k.strip()] = v.strip().strip("\"'")
+        return out
+    m = re.search(r"(?m)^\s*with:\n((?:^          \S.*\n?)+)", step)
+    if not m:
+        return {}
+    out = {}
+    for ln in m.group(1).splitlines():
+        k, sep, v = ln.strip().partition(":")
+        if sep and not k.startswith("#"):
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _uses_steps(action_prefix: str) -> list[tuple[str, str]]:
+    """全部 job 里 `uses: <action_prefix>@…` 的步骤：[(job id, 步骤正文)]。"""
+    found: list[tuple[str, str]] = []
+    for job_id in TestHeavyLaneDependencies._job_ids():
+        for step in _steps(_job(CI, job_id)):
+            if re.search(rf"(?m)^\s*uses: {re.escape(action_prefix)}@", step):
+                found.append((job_id, step))
+    return found
+
+
+class TestBuildReuseAndCaches:
+    """CI02（2026-09-16）：产物复用与工具准备的**决定**，以及缓存的形状。
+
+    决定本身（web 应用 / MCP 画布 / playground / wheel / workerd / runtime / PyInstaller 全部
+    **同 job 重建、不跨 job 抽取**；Playwright 浏览器**不缓存**）与它的数字在
+    docs/implementation/ci-foundation/CI02_BUILD_REUSE.md。这里钉的是决定落地后的形状，
+    改动任一条都得先回到那份文档改数字：
+      * TypeScript 的类型检查只有一个执行位置——`pnpm build` 的第一条命令 `tsc -b`，而
+        `tsc -b` 检查的是 `web/tsconfig.json` 的 references **集合**（e2e 在里面；本机反证：
+        把它从 references 里拿掉，e2e 里的类型错误 `pnpm build` 退 0）；
+      * `actions/cache` 的清单是**枚举**（只有两处 CPython 归档），key 含 os / arch / 锁 hash；
+        setup-node 的 pnpm 缓存按锁文件；rust-cache 各自点名 workspace、不共享可写 target；
+        没有任何缓存 path 指向 venv / site-packages / 用户目录 / 测试结果 / 浏览器目录；
+      * 唯一的数据边 frontend → plugin-candidate：消费者用 **HEAD 的 SHA** 与**清单里的
+        content_digest** 两把尺子核候选（脚本侧的负例在 tests/test_plugin_stage.py）。
+    """
+
+    WEB = ROOT / "web"
+
+    # ── C：TypeScript 真检查引用 ─────────────────────────────────────────────
+    def test_the_web_build_script_starts_with_a_real_project_build(self):
+        """主语是 `build` 脚本的**第一条**命令：`tsc -b`，不是 `tsc --noEmit`（方案文件下恒绿）、
+        不是直接 `vite build`（vite 不做类型检查）。后面接的是产物构建与扫描面门禁。"""
+        pkg = json.loads((self.WEB / "package.json").read_text(encoding="utf-8"))
+        parts = [p.strip() for p in pkg["scripts"]["build"].split("&&")]
+        assert parts[0] == "tsc -b", f"web 的 build 脚本第一条命令是 {parts[0]!r}，不是 `tsc -b`"
+        assert "vite build" in parts, parts
+
+    def test_the_project_references_cover_every_typescript_root(self):
+        """`tsc -b` 检查的是 references 的**集合**：app / node / e2e 三份都在，方案文件自己不编任何
+        东西（`files: []`），三份的 include 合起来恰好是仓库里的四个 TS 根。少一份引用不会有任何
+        红灯——那一份里的类型错误只是不再有执行位置（本机反证 CI02 文档 §3）。"""
+        root = _jsonc(self.WEB / "tsconfig.json")
+        assert root.get("files") == [], (
+            "根 tsconfig 必须是 `files: []` 的方案文件（否则 -b 的语义就变了）"
+        )
+        refs = {r["path"] for r in root["references"]}
+        assert refs == {"./tsconfig.app.json", "./tsconfig.node.json", "./tsconfig.e2e.json"}, refs
+        roots: set[str] = set()
+        for ref in sorted(refs):
+            cfg = _jsonc(self.WEB / ref)
+            assert cfg["compilerOptions"].get("noEmit") is True, (
+                f"{ref} 不是 noEmit——-b 会往树里写 .js"
+            )
+            include = cfg.get("include")
+            assert include, f"{ref} 没有 include"
+            roots |= set(include)
+        assert roots == {"src", "vite.config.ts", "e2e", "playwright.config.ts"}, (
+            f"三份 tsconfig 的 include 并集是 {sorted(roots)}——新增 / 挪走 TS 根要回来改这张枚举"
+        )
+        for r in roots:
+            assert (self.WEB / r).exists(), f"include 里的 {r} 在 web/ 下不存在"
+
+    def test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net(self):
+        """frontend job 的类型检查就是 `- run: pnpm build` 那一步：恰好一条、不带 if / continue-on-error，
+        没有第二条 tsc 步骤（曾经的 `pnpm tsc --noEmit` 恒绿），生成物索引检查排在它之后。"""
+        steps = _steps(_job(CI, "frontend"))
+        build = [i for i, s in enumerate(steps) if re.search(r"(?m)^\s*run: pnpm build\s*$", s)]
+        assert len(build) == 1, [_step_name(s) or s.splitlines()[0] for s in steps]
+        step = steps[build[0]]
+        assert not re.search(r"(?m)^\s*(if|continue-on-error):", step), step
+        assert not [s for s in steps if re.search(r"\btsc\b", s)], (
+            "frontend 里出现了 pnpm build 之外的 tsc 步骤"
+        )
+        gen = [i for i, s in enumerate(steps) if "scripts/ci/check_generated_untracked.py" in s]
+        assert len(gen) == 1 and gen[0] > build[0], "生成物不进索引的检查要排在 pnpm build 之后"
+
+    # ── D：缓存四类 ─────────────────────────────────────────────────────────
+    #: `actions/cache` 的完整清单（job, path, key）——枚举不是白名单：多一条就红，作者得先回
+    #: CI02 文档把新缓存归到 04 §5 的四类里、写上 key 的维度与命中作用域，再来改这里。
+    CPYTHON_KEY = "cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}"
+    ACTIONS_CACHE = {
+        ("windows-exe-smoke", "build/runtime-cache", CPYTHON_KEY),
+        ("macos-app-smoke", "build/runtime-cache", CPYTHON_KEY),
+    }
+
+    def test_actions_cache_steps_are_exactly_the_cpython_archive_downloads(self):
+        """第一类（下载 bytes）只有两处：path 是脚本的下载缓存目录，key 含 runner.os / runner.arch /
+        锁文件 hash，恢复步在「构建内置渲染 runtime」之前。path 里不许出现 venv / site-packages /
+        用户目录 / 测试结果 / 浏览器目录（第四类不能当缓存；浏览器不缓存是 CI02 的决定）。"""
+        found = set()
+        for job_id, step in _uses_steps("actions/cache"):
+            w = _with_block(step)
+            assert set(w) >= {"path", "key"}, (job_id, w)
+            found.add((job_id, w["path"], w["key"]))
+            steps = _steps(_job(CI, job_id))
+            me = next(i for i, s in enumerate(steps) if s == step)
+            use = [i for i, s in enumerate(steps) if "scripts/build_worker_runtime.py" in s]
+            assert len(use) == 1 and me < use[0], f"{job_id}：缓存恢复步不在 runtime 构建之前"
+        assert found == self.ACTIONS_CACHE, f"actions/cache 的清单变了：{sorted(found)}"
+        for _job_id, path, key in found:
+            for dim in (
+                "${{ runner.os }}",
+                "${{ runner.arch }}",
+                "hashFiles('packaging/runtime-lock.json')",
+            ):
+                assert dim in key, (key, dim)
+            for bad in (
+                "venv",
+                "site-packages",
+                ".tavotto",
+                "test-results",
+                "playwright-report",
+                "ms-playwright",
+            ):
+                assert bad not in path, (path, bad)
+
+    #: setup-node 的 pnpm 缓存：开了的 job 必须按 web/pnpm-lock.yaml 取 key；`package` 四条腿没开
+    #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4）。
+    PNPM_CACHED = {
+        "frontend",
+        "plugin-candidate",
+        "windows-exe-smoke",
+        "macos-app-smoke",
+        "posix-e2e",
+    }
+    PNPM_UNCACHED = {"package"}
+
+    def test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile(self):
+        cached, uncached = set(), set()
+        for job_id, step in _uses_steps("actions/setup-node"):
+            w = _with_block(step)
+            assert w.get("node-version") == "22", (job_id, w)
+            if w.get("cache") == "pnpm":
+                assert w.get("cache-dependency-path") == "web/pnpm-lock.yaml", (job_id, w)
+                cached.add(job_id)
+            else:
+                assert "cache" not in w, (job_id, w)
+                uncached.add(job_id)
+        assert cached == self.PNPM_CACHED, cached
+        assert uncached == self.PNPM_UNCACHED, uncached
+
+    #: rust-cache（第二类，编译缓存）：每处点名自己的 workspace；没有 shared-key（无关 job 共享可写
+    #: target 是 04 §5 明令避免的），没有 cache-on-failure。key 里的 os / arch / rustc / Cargo.lock
+    #: 由 action 自己并入（实测键形如 v0-rust-<key>-<job>-Linux-x64-<env>-<lock>，CI02 文档 §4）。
+    RUST_CACHE = {
+        ("workerd", "workerd"),
+        ("desktop-shell", "src-tauri"),
+        ("windows-exe-smoke", "workerd"),
+        ("macos-app-smoke", "workerd"),
+    }
+
+    def test_every_rust_cache_names_its_own_workspace_and_shares_nothing(self):
+        found = set()
+        for job_id, step in _uses_steps("Swatinem/rust-cache"):
+            w = _with_block(step)
+            assert "workspaces" in w, (job_id, w)
+            assert "shared-key" not in w and "cache-on-failure" not in w, (job_id, w)
+            found.add((job_id, w["workspaces"]))
+        assert found == self.RUST_CACHE, sorted(found)
+
+    #: 两条 Playwright 腿各恰好一条 `playwright install`——真跑（幂等），不从缓存恢复浏览器目录
+    #: （上面的枚举已保证没有那样的 actions/cache）。**Windows 不带 `--with-deps`**（CI02 实验：
+    #: 它在 windows-latest 上只做一件事——装 Media Foundation，226s / 204s，占了这一步的 90%，且这条腿
+    #: 是合并资格的关键路径；Chromium 是否需要它由本 PR 的 full-ci run 判，红则加回）；**posix 带**
+    #: （apt 装 chromium 的真依赖与字体，23s）。主语是整条命令，不是「含不含某个 flag」。
+    PLAYWRIGHT_INSTALL = {
+        "windows-exe-smoke": "pnpm exec playwright install ${{ matrix.browsers }}",
+        "posix-e2e": "pnpm exec playwright install --with-deps chromium",
+    }
+
+    def test_windows_installs_browsers_without_with_deps_and_posix_keeps_it(self):
+        for job_id, want in self.PLAYWRIGHT_INSTALL.items():
+            code = _code(_job(CI, job_id))
+            lines = re.findall(r"(?m)^\s+(pnpm exec playwright install\b.*)$", code)
+            assert lines == [want], (job_id, lines)
+
+    # ── E：唯一数据边的身份 ──────────────────────────────────────────────────
+    def test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest(self):
+        """消费者不信任 artifact 的名字：SHA 取**本次 checkout 的 HEAD**、digest 取**artifact 里的清单**，
+        两把尺子一起交给 `plugin_stage.py verify`（外加 `--serve` 真起 server 读画布）。生产者那侧同形：
+        stage 的 `--source-sha` 也是 HEAD（脚本自己会与 HEAD 对拍），zip 再按 `digest` 重算验一次。"""
+        consumer = [
+            s for s in _steps(_job(CI, "plugin-candidate")) if "plugin_stage.py unpack" in s
+        ]
+        assert len(consumer) == 1, "plugin-candidate 里切不出解包步骤"
+        run = consumer[0]
+        assert 'SHA="$(git rev-parse HEAD)"' in run, run
+        assert '[\'content_digest\'])" "$C/plugin-build.json")"' in run, run
+        verify = re.search(
+            r"(?m)^\s+python3 scripts/plugin_stage\.py verify \"\$PLUGIN\" (.+)$", run
+        )
+        assert verify, run
+        for needle in ('--source-sha "$SHA"', '--content-digest "$DIGEST"', "--serve"):
+            assert needle in verify.group(1), (needle, verify.group(1))
+        producer = [s for s in _steps(_job(CI, "frontend")) if "plugin_stage.py stage" in s]
+        assert len(producer) == 1
+        prun = producer[0]
+        assert 'SHA="$(git rev-parse HEAD)"' in prun and '--source-sha "$SHA"' in prun, prun
+        assert '--content-digest "$(python3 scripts/plugin_stage.py digest "$STAGE")"' in prun, prun
 
 
 class TestPythonLint:

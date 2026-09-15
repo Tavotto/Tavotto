@@ -1,0 +1,221 @@
+{
+ "run_reference": "run 35011613925（PR #375，CI03c 之后的 DAG）",
+ "seconds_source": "evidence/ci02/ci_step_seconds.json（同 run 的 step 秒数；本机时长与尺寸在 local_builds.json）",
+ "critical_path": {
+  "35007730894": "frontend(254s created) → windows-exe-smoke 254→1684 → gate 1695",
+  "35011613925": "frontend 191 → windows-exe-smoke (1) created 191 / started 396（Windows runner 等待 205s）→ 1472 → gate 1485；(2) started 512（等待 321s）→ 1457"
+ },
+ "summary": {
+  "rows": 9,
+  "keep_in_job": 8,
+  "extract": 0,
+  "already_extracted": 1,
+  "note": "9 行里 8 行「同 job 重建保留」（4 行平台绑定、4 行平台中性但传输 + 核验 ≥ 构建或收益 < 30s），1 行本来就是数据边（插件候选）。0 行值得新抽取。"
+ },
+ "rows": [
+  {
+   "target": "web 应用（web/dist → src/tavotto/web）",
+   "command": "frontend：`pnpm build`（= tsc -b && vite build && tailwind-scan-check）；其余：`python scripts/build_frontend.py`（= pnpm install --frozen-lockfile + pnpm i18n:check + pnpm build + 原子拷进 src/tavotto/web）",
+   "inputs": [
+    "web/src/**",
+    "web/pnpm-lock.yaml",
+    "web/tsconfig{,.app,.node,.e2e}.json",
+    "web/vite.config.ts",
+    "src/tavotto/profiles/publication.json",
+    "src/tavotto/pdfbackend/canvas_coverage.json",
+    "packaging/playground-runtime.json（路径别名）",
+    "Node 22 / pnpm 11"
+   ],
+   "platform_bound": false,
+   "output": "web/dist 8 个文件 1.9 MiB（本机）",
+   "builds_per_merge_group": 9,
+   "where": {
+    "frontend": 15,
+    "package (ubuntu 3.13)": 32,
+    "package (ubuntu 3.14)": 31,
+    "package (macos)": 36,
+    "package (windows)": 40,
+    "windows-exe-smoke (1)": 42,
+    "windows-exe-smoke (2)": 45,
+    "macos-app-smoke": 35,
+    "posix-e2e": 26
+   },
+   "runner_seconds_total": 302,
+   "on_critical_path": "是：windows-exe-smoke (1) 的 42s（关键路径 = frontend → windows-exe-smoke → gate，两次 run 都是）",
+   "decision": "同 job 重建保留",
+   "reason": "传输 1.9 MiB 秒级，但消费者仍要 pnpm install（widget 构建与 Playwright 都要 node_modules），抽取只省 i18n:check + pnpm build ≈ 20–25s/腿；关键路径上净省 ≈ 25s / 1485s；换来一套新的产物身份（清单 / hash / 消费前核验）与「wheel 里的前端由本平台的 build_frontend.py 造出」这条平台覆盖的丢失（#322 的 .cmd shim 缺陷正是被 Windows 腿的这一步抓到的）。CI00 §14 第 3 条同此。"
+  },
+  {
+   "target": "MCP 画布 widget（canvas.html）",
+   "command": "`python scripts/build_mcp_widget.py [--out …]`（= pnpm exec vite build --config vite.mcp.config.ts → 单文件内联 + 指纹戳）",
+   "inputs": [
+    "web/src/**（不含测试）",
+    "web/mcp.html",
+    "web/vite.mcp.config.ts",
+    "web/package.json / pnpm-lock.yaml / pnpm-workspace.yaml",
+    "tsconfig 三份",
+    "scripts/build_mcp_widget.py",
+    "publication.json",
+    "canvas_coverage.json"
+   ],
+   "platform_bound": false,
+   "output": "canvas.html 1273 KiB（指纹 24f78154bb52d971，本机与 CI Windows 日志同值）",
+   "builds_per_merge_group": 4,
+   "where": {
+    "frontend": "3（写到 RUNNER_TEMP/plugin，进插件候选）",
+    "windows-exe-smoke (1)": 3,
+    "windows-exe-smoke (2)": 3,
+    "posix-e2e": "<3（未单列）"
+   },
+   "runner_seconds_total": "≈ 12",
+   "on_critical_path": "是：windows-exe-smoke 的 3s",
+   "decision": "同 job 重建保留（frontend → plugin-candidate 那条边已是抽取：候选 zip 经 plugin_stage 清单 + digest 传输）",
+   "reason": "3s；e2e 腿要的是默认位置 codex-plugin/mcp/widget/canvas.html（mcp-canvas.spec 从那里读），下载 + 核验不比 3s 快。与 web 应用是**不同 recipe**：不同 vite config / 入口 / 输出形态（单文件内联 vs 多文件 dist）。"
+  },
+  {
+   "target": "完整插件候选（codex-plugin-candidate.zip + plugin-build.json）",
+   "command": "frontend：`plugin_stage.py stage --widget … --source-sha $(git rev-parse HEAD)` → verify → archive → verify（--content-digest）；plugin-candidate：download → unpack → `verify --source-sha HEAD --content-digest <清单里的> --serve`",
+   "inputs": [
+    "git ls-files -s -- codex-plugin（索引里的模式）",
+    "canvas.html（上一行）",
+    "LICENSE",
+    "web/pnpm-lock.yaml（sha256 进清单）",
+    "toolchain 版本"
+   ],
+   "platform_bound": false,
+   "output": "zip（确定性；含 dotfiles .codex-plugin/plugin.json / .mcp.json）+ plugin-build.json",
+   "builds_per_merge_group": 1,
+   "where": {
+    "frontend": "stage+verify+archive+verify（未单列，<5s）",
+    "plugin-candidate": "download 2 / unpack+verify+serve ~5"
+   },
+   "runner_seconds_total": "≈ 10",
+   "on_critical_path": "否（plugin-candidate 44–69s，在 fast gate 闭集里，fast gate 不是关键路径）",
+   "decision": "已是全图唯一数据边，保持",
+   "reason": "这是 04 §1 要求的形状的现成实现：source_sha + build_inputs_fingerprint + lockfile_sha256 + toolchain + files[path,mode,sha256] + content_digest；消费者用 HEAD 的 SHA 与清单里的 digest 核。"
+  },
+  {
+   "target": "浏览器 playground（web/dist-playground）",
+   "command": "`python scripts/build_browser_playground.py`（= vite build --config vite.playground.config.ts + 确定性 engine.zip + playground-manifest.json 指纹）",
+   "inputs": [
+    "web/src/**",
+    "web/playground.html",
+    "web/vite.playground.config.ts",
+    "engine 四模块（manifest/overrides/pathgeom/patchspec）",
+    "packaging/playground-runtime.json",
+    "publication.json"
+   ],
+   "platform_bound": false,
+   "output": "8 个文件 1.6 MiB（含 engine.zip 227 KB），指纹 d1b9f461b86f28b0",
+   "builds_per_merge_group": 1,
+   "where": {
+    "frontend": "<3（未单列）"
+   },
+   "runner_seconds_total": "<3",
+   "on_critical_path": "否",
+   "decision": "同 job 重建保留（只在 frontend 建一次，没有消费者——产物由网站仓库提交）",
+   "reason": "与 web 应用 / widget 是**第三个 recipe**：不同 config、不同入口、多出 engine.zip；三者互不能替代（CIP-013）。"
+  },
+  {
+   "target": "wheel（tavotto-*.whl）",
+   "command": "package ×4：`python -m build`（先 build_frontend.py）",
+   "inputs": [
+    "src/tavotto/**（含刚拷进去的 web/）",
+    "pyproject.toml",
+    "hatch 配置"
+   ],
+   "platform_bound": false,
+   "output": "py3-none-any wheel 1.6 MiB + sdist 5.4 MiB",
+   "builds_per_merge_group": 4,
+   "where": {
+    "package (ubuntu 3.13)": 7,
+    "package (ubuntu 3.14)": 9,
+    "package (macos)": 7,
+    "package (windows)": 26
+   },
+   "runner_seconds_total": 49,
+   "on_critical_path": "否（package 腿 66–128s，远离关键路径）",
+   "decision": "同 job 重建保留",
+   "reason": "平台中性、可以只建一次，但 49 runner 秒不值一条新数据边；每条腿「在本平台造出来再装进干净 venv」本身就是被验的东西（Windows 26s 里一半是 pip；#322 那类只在 Windows 上发作的构建脚本缺陷靠它抓）。"
+  },
+  {
+   "target": "workerd（tavotto-workerd 可执行）",
+   "command": "`cargo build --release --manifest-path workerd/Cargo.toml`（workerd job 只 fmt/clippy/test，不建 release）",
+   "inputs": [
+    "workerd/src/**",
+    "workerd/Cargo.lock",
+    "rustc stable（1.95）",
+    "目标三元组"
+   ],
+   "platform_bound": true,
+   "output": "779 KiB（Linux/macOS）/ 780 KiB（Windows .exe）",
+   "builds_per_merge_group": 3,
+   "where": {
+    "windows-exe-smoke (1)": 26,
+    "windows-exe-smoke (2)": 35,
+    "macos-app-smoke": 12
+   },
+   "runner_seconds_total": 73,
+   "on_critical_path": "是：windows-exe-smoke 的 26–35s",
+   "decision": "同 job 重建保留（平台绑定）",
+   "reason": "三个目标三元组各一份，跨平台不可复用；两片 Windows 之间理论上可共享一份 .exe，但那要再串一个 Windows producer job（本 run 的 Windows runner 领取等待 205s / 321s，比 35s 的编译贵得多）。"
+  },
+  {
+   "target": "内置渲染 runtime（runtime/）",
+   "command": "`python scripts/build_worker_runtime.py --clean`（下 CPython 归档 → 按 packaging/runtime-lock.json 装锁定 wheel → 逐个 import + 画一张图冒烟）",
+   "inputs": [
+    "packaging/runtime-lock.json（sha256 钉 CPython + wheel 版本 + pip.platforms）",
+    "runner 平台/架构"
+   ],
+   "platform_bound": true,
+   "output": "Windows 249 MiB / macOS 288 MiB（du 304M）",
+   "builds_per_merge_group": 3,
+   "where": {
+    "windows-exe-smoke (1)": 64,
+    "windows-exe-smoke (2)": 76,
+    "macos-app-smoke": 47
+   },
+   "runner_seconds_total": 187,
+   "on_critical_path": "是：windows-exe-smoke 的 64–76s",
+   "decision": "同 job 重建保留（平台绑定；CPython 归档的下载已缓存——第一类）",
+   "reason": "249 MiB 经 artifact 传输（压缩上传 + 下载 + 解包）估 1–2 分钟，≥ 64–76s 的构建；macOS 那份含符号链接与可执行位，upload-artifact 不保留（.app 会坏）；两片 Windows 共享同样要多串一个 Windows job（见上一行）。wheel 刻意每次从 PyPI 真装（ci.yml 注释：发现 yank）。"
+  },
+  {
+   "target": "PyInstaller 桌面产物（dist/Tavotto）",
+   "command": "`pyinstaller packaging/tavotto.spec --noconfirm`（TAVOTTO_REQUIRE_RUNTIME=1；datas = src/tavotto/web + runtime，binaries = workerd）",
+   "inputs": [
+    "上面三行的产物",
+    "主进程依赖 flask / pymupdf",
+    "PyInstaller 版本"
+   ],
+   "platform_bound": true,
+   "output": "≥ runtime 大小（249 / 288 MiB）+ 主进程；日志没打印总量",
+   "builds_per_merge_group": 3,
+   "where": {
+    "windows-exe-smoke (1)": 28,
+    "windows-exe-smoke (2)": 29,
+    "macos-app-smoke": 58
+   },
+   "runner_seconds_total": 115,
+   "on_critical_path": "是：windows-exe-smoke 的 28–29s",
+   "decision": "同 job 重建保留（平台绑定）",
+   "reason": "两片 Windows 之间共享 dist/Tavotto（≥ 249 MiB）：producer 串在前 + 上传 1–2 分钟 + 两片各下载 + Windows 领取等待再付一次，链路只会变长；省下的只是片 2 的 ~205s 构建段（runner 分钟），而 CI03c §9 已把「两片各建一次」记为已知代价。"
+  },
+  {
+   "target": "macOS .app（Tauri 壳）",
+   "command": "desktop-tauri.yml（tag / dispatch），ci.yml 不建",
+   "inputs": [
+    "dist/Tavotto",
+    "src-tauri"
+   ],
+   "platform_bound": true,
+   "output": "—",
+   "builds_per_merge_group": 0,
+   "where": {},
+   "runner_seconds_total": 0,
+   "on_critical_path": "否（不在 ci.yml）",
+   "decision": "不在本轮范围",
+   "reason": "desktop-shell 只做 fmt / clippy / test，bundle.resources 指向空的 dist/Tavotto。"
+  }
+ ]
+}

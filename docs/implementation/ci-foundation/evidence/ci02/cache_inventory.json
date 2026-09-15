@@ -1,0 +1,579 @@
+{
+ "taken_at": "2026-09-16",
+ "command": [
+  "gh api repos/Tavotto/Tavotto/actions/cache/usage",
+  "gh cache list --limit 200 --json key,sizeInBytes,createdAt,lastAccessedAt,ref"
+ ],
+ "usage": {
+  "full_name": "Tavotto/Tavotto",
+  "active_caches_size_in_bytes": 10335706086,
+  "active_caches_count": 60
+ },
+ "limit_note": "GitHub 默认每仓库 10 GB，超过按最近访问时间从旧到新淘汰（docs.github.com/actions/reference/dependency-caching-reference）",
+ "bytes_by_ref_scope": {
+  "pull_request": 8320589870,
+  "main": 138241952,
+  "merge_group": 1959031872
+ },
+ "entries_on_main_by_family": {
+  "setup-node pnpm Windows-x64": 0,
+  "rust-cache windows-exe-smoke": 0,
+  "actions/cache cpython Windows-X64": 0,
+  "setup-node pnpm macOS-arm64": 0,
+  "rust-cache macos-app-smoke": 0,
+  "actions/cache cpython macOS-ARM64": 0,
+  "setup-node pnpm Linux-x64": 0,
+  "rust-cache ubuntu-latest-desktop-shell": 0,
+  "rust-cache macos-latest-desktop-shell": 0,
+  "rust-cache workerd": 0,
+  "rust-cache windows-install": 1,
+  "actions/cache cpython embed-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65": 1,
+  "rust-cache updater-consumer-fidelity": 1
+ },
+ "families": {
+  "rust-cache ubuntu-latest-desktop-shell": {
+   "entries": 5,
+   "MiB": 4729.5,
+   "refs": {
+    "pull_request": 4,
+    "merge_group": 1
+   }
+  },
+  "rust-cache macos-latest-desktop-shell": {
+   "entries": 6,
+   "MiB": 3587.7,
+   "refs": {
+    "pull_request": 5,
+    "merge_group": 1
+   }
+  },
+  "setup-node pnpm Linux-x64": {
+   "entries": 6,
+   "MiB": 353.3,
+   "refs": {
+    "pull_request": 5,
+    "merge_group": 1
+   }
+  },
+  "setup-node pnpm Windows-x64": {
+   "entries": 6,
+   "MiB": 343.7,
+   "refs": {
+    "pull_request": 4,
+    "merge_group": 2
+   }
+  },
+  "setup-node pnpm macOS-arm64": {
+   "entries": 6,
+   "MiB": 326.5,
+   "refs": {
+    "pull_request": 5,
+    "merge_group": 1
+   }
+  },
+  "actions/cache cpython macOS-ARM64": {
+   "entries": 6,
+   "MiB": 144.7,
+   "refs": {
+    "pull_request": 5,
+    "merge_group": 1
+   }
+  },
+  "rust-cache workerd": {
+   "entries": 7,
+   "MiB": 120.4,
+   "refs": {
+    "pull_request": 6,
+    "merge_group": 1
+   }
+  },
+  "rust-cache windows-install": {
+   "entries": 1,
+   "MiB": 116.7,
+   "refs": {
+    "main": 1
+   }
+  },
+  "rust-cache macos-app-smoke": {
+   "entries": 6,
+   "MiB": 70.7,
+   "refs": {
+    "pull_request": 5,
+    "merge_group": 1
+   }
+  },
+  "rust-cache windows-exe-smoke": {
+   "entries": 6,
+   "MiB": 64.0,
+   "refs": {
+    "pull_request": 4,
+    "merge_group": 2
+   }
+  },
+  "actions/cache cpython Windows-X64": {
+   "entries": 6,
+   "MiB": 63.0,
+   "refs": {
+    "pull_request": 4,
+    "merge_group": 2
+   }
+  },
+  "actions/cache cpython embed-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65": {
+   "entries": 1,
+   "MiB": 10.5,
+   "refs": {
+    "main": 1
+   }
+  },
+  "rust-cache updater-consumer-fidelity": {
+   "entries": 1,
+   "MiB": 4.6,
+   "refs": {
+    "main": 1
+   }
+  }
+ },
+ "entries": [
+  {
+   "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d0c4",
+   "MiB": 945.9,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T20:48:42.166838Z",
+   "last_accessed_at": "2026-09-15T20:48:42.166838Z"
+  },
+  {
+   "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d0c4",
+   "MiB": 945.9,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T19:48:42.043181Z",
+   "last_accessed_at": "2026-09-15T19:48:42.043181Z"
+  },
+  {
+   "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d0c4",
+   "MiB": 945.9,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:10:38.88321Z",
+   "last_accessed_at": "2026-09-15T19:10:38.88321Z"
+  },
+  {
+   "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d0c4",
+   "MiB": 945.9,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:19:06.816951Z",
+   "last_accessed_at": "2026-09-15T21:19:06.816951Z"
+  },
+  {
+   "key": "v0-rust-ubuntu-latest-desktop-shell-Linux-x64-6ff13d87-6045d0c4",
+   "MiB": 945.9,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T18:48:25.428799Z",
+   "last_accessed_at": "2026-09-15T18:48:25.428799Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 598.0,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T18:47:51.77555Z",
+   "last_accessed_at": "2026-09-15T18:47:51.77555Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 598.0,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:10:42.309708Z",
+   "last_accessed_at": "2026-09-15T19:10:42.309708Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 597.9,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:02:01.002329Z",
+   "last_accessed_at": "2026-09-15T18:29:04.784817Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 597.9,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:18:30.513378Z",
+   "last_accessed_at": "2026-09-15T21:18:30.513378Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 597.9,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T20:50:00.429815Z",
+   "last_accessed_at": "2026-09-15T20:50:00.429815Z"
+  },
+  {
+   "key": "v0-rust-macos-latest-desktop-shell-Darwin-arm64-2eab217e-6045d0c4",
+   "MiB": 597.9,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T19:48:48.113478Z",
+   "last_accessed_at": "2026-09-15T19:48:48.113478Z"
+  },
+  {
+   "key": "v0-rust-windows-install-Windows_NT-x64-2113753f-a393639c",
+   "MiB": 116.7,
+   "ref": "refs/heads/main",
+   "created_at": "2026-09-15T21:04:25.573936Z",
+   "last_accessed_at": "2026-09-15T21:04:25.573936Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 59.5,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T18:48:46.320063Z",
+   "last_accessed_at": "2026-09-15T19:19:35.152402Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 59.5,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:18:25.633859Z",
+   "last_accessed_at": "2026-09-15T21:21:32.462535Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 59.5,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:09:35.286109Z",
+   "last_accessed_at": "2026-09-15T19:12:42.6864Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 59.5,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T19:47:24.74599Z",
+   "last_accessed_at": "2026-09-15T20:18:56.503439Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 59.5,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:00:10.679682Z",
+   "last_accessed_at": "2026-09-15T18:33:30.592841Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:30:39.576471Z",
+   "last_accessed_at": "2026-09-15T19:30:39.576471Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:42:12.283137Z",
+   "last_accessed_at": "2026-09-15T20:42:12.283137Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:43:26.388747Z",
+   "last_accessed_at": "2026-09-15T19:43:26.388747Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-361-ad8c40d20970eacad5dbae3306823aa852f40b9f",
+   "created_at": "2026-09-15T18:39:22.331707Z",
+   "last_accessed_at": "2026-09-15T18:39:22.331707Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:32:59.523987Z",
+   "last_accessed_at": "2026-09-15T21:32:59.523987Z"
+  },
+  {
+   "key": "node-cache-Windows-x64-pnpm-2a57bf765c50eddb838a4a16f1262097e2b58e1cb19316b47cfd942d18c48d87",
+   "MiB": 57.3,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:25:35.759188Z",
+   "last_accessed_at": "2026-09-15T18:33:28.830738Z"
+  },
+  {
+   "key": "node-cache-Linux-x64-pnpm-8635dd2de4823b33ca59cb71e54a3a3bae64677c2fc5baa30ba14cfc07b061ca",
+   "MiB": 56.0,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T20:49:17.116715Z",
+   "last_accessed_at": "2026-09-15T21:22:02.1017Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 55.0,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:10:13.55523Z",
+   "last_accessed_at": "2026-09-15T18:33:19.746462Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 55.0,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:24:39.965682Z",
+   "last_accessed_at": "2026-09-15T19:24:39.965682Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 55.0,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:15:31.424385Z",
+   "last_accessed_at": "2026-09-15T19:15:31.424385Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 55.0,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:23:54.602799Z",
+   "last_accessed_at": "2026-09-15T21:23:54.602799Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-6e5eef4c49d566ae7f8175be7f6831fb88119881cabd78cd12d3ed88fd5ec99d",
+   "MiB": 55.0,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:22:47.289229Z",
+   "last_accessed_at": "2026-09-15T20:22:47.289229Z"
+  },
+  {
+   "key": "node-cache-macOS-arm64-pnpm-8635dd2de4823b33ca59cb71e54a3a3bae64677c2fc5baa30ba14cfc07b061ca",
+   "MiB": 51.5,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T21:27:57.695183Z",
+   "last_accessed_at": "2026-09-15T21:27:57.695183Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:24:27.435496Z",
+   "last_accessed_at": "2026-09-15T19:24:27.435496Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:23:39.150948Z",
+   "last_accessed_at": "2026-09-15T21:23:39.150948Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T21:27:48.815596Z",
+   "last_accessed_at": "2026-09-15T21:27:48.815596Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:15:16.484456Z",
+   "last_accessed_at": "2026-09-15T19:15:16.484456Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:10:01.023619Z",
+   "last_accessed_at": "2026-09-15T18:34:18.047028Z"
+  },
+  {
+   "key": "cpython-macOS-ARM64-525774d4073329e00e7bfd8627973fd86b85616e755f713900d5f063c61fde10",
+   "MiB": 24.1,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:22:39.096089Z",
+   "last_accessed_at": "2026-09-15T20:22:39.096089Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:15:30.716822Z",
+   "last_accessed_at": "2026-09-15T21:15:30.716822Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T14:14:46.365353Z",
+   "last_accessed_at": "2026-09-15T18:43:39.725257Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:09:26.505353Z",
+   "last_accessed_at": "2026-09-15T19:09:26.505353Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T17:58:27.83542Z",
+   "last_accessed_at": "2026-09-15T18:29:05.137508Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T19:44:47.844916Z",
+   "last_accessed_at": "2026-09-15T19:44:47.844916Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/370/merge",
+   "created_at": "2026-09-15T18:42:45.501613Z",
+   "last_accessed_at": "2026-09-15T18:42:45.501613Z"
+  },
+  {
+   "key": "v0-rust-workerd-Linux-x64-6ff13d87-439a7567",
+   "MiB": 17.2,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T20:43:48.206346Z",
+   "last_accessed_at": "2026-09-15T20:45:32.134441Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/pull/357/merge",
+   "created_at": "2026-09-15T21:27:53.211781Z",
+   "last_accessed_at": "2026-09-15T21:27:53.211781Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:24:32.397786Z",
+   "last_accessed_at": "2026-09-15T19:24:32.397786Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:15:21.756381Z",
+   "last_accessed_at": "2026-09-15T19:15:21.756381Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:10:05.828877Z",
+   "last_accessed_at": "2026-09-15T18:34:04.413883Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:23:44.081745Z",
+   "last_accessed_at": "2026-09-15T21:23:44.081745Z"
+  },
+  {
+   "key": "v0-rust-macos-app-smoke-Darwin-arm64-2eab217e-439a7567",
+   "MiB": 11.8,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:22:42.328734Z",
+   "last_accessed_at": "2026-09-15T20:22:42.328734Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.8,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:30:31.529612Z",
+   "last_accessed_at": "2026-09-15T19:30:31.529612Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.7,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:42:08.024142Z",
+   "last_accessed_at": "2026-09-15T20:42:08.024142Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.6,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-361-ad8c40d20970eacad5dbae3306823aa852f40b9f",
+   "created_at": "2026-09-15T18:39:17.558894Z",
+   "last_accessed_at": "2026-09-15T18:39:17.558894Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.6,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:25:30.645397Z",
+   "last_accessed_at": "2026-09-15T18:34:26.835454Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.6,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:43:21.671404Z",
+   "last_accessed_at": "2026-09-15T19:43:21.671404Z"
+  },
+  {
+   "key": "v0-rust-windows-exe-smoke-Windows_NT-x64-2113753f-439a7567",
+   "MiB": 10.6,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:32:54.037555Z",
+   "last_accessed_at": "2026-09-15T21:32:54.037555Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/pull/362/merge",
+   "created_at": "2026-09-15T19:43:18.914288Z",
+   "last_accessed_at": "2026-09-15T19:43:18.914288Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/pull/376/merge",
+   "created_at": "2026-09-15T21:32:51.178281Z",
+   "last_accessed_at": "2026-09-15T21:32:51.178281Z"
+  },
+  {
+   "key": "cpython-embed-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/heads/main",
+   "created_at": "2026-09-15T21:03:18.562975Z",
+   "last_accessed_at": "2026-09-15T21:03:18.562975Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-362-5b6debb90165239d2e5091d1dae84fca4605b52f",
+   "created_at": "2026-09-15T20:42:05.262839Z",
+   "last_accessed_at": "2026-09-15T20:42:05.262839Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/pull/374/merge",
+   "created_at": "2026-09-15T18:25:27.00352Z",
+   "last_accessed_at": "2026-09-15T18:34:53.476233Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/pull/375/merge",
+   "created_at": "2026-09-15T19:30:28.865979Z",
+   "last_accessed_at": "2026-09-15T19:30:28.865979Z"
+  },
+  {
+   "key": "cpython-Windows-X64-1ed851e20eaabe3133fc27681bd38fe30268f9c7251d3ec14b4432b5b3334e65",
+   "MiB": 10.5,
+   "ref": "refs/heads/gh-readonly-queue/main/pr-361-ad8c40d20970eacad5dbae3306823aa852f40b9f",
+   "created_at": "2026-09-15T18:39:14.940279Z",
+   "last_accessed_at": "2026-09-15T18:39:14.940279Z"
+  },
+  {
+   "key": "v0-rust-updater-consumer-fidelity-Linux-x64-6ff13d87-1de87b53",
+   "MiB": 4.6,
+   "ref": "refs/heads/main",
+   "created_at": "2026-09-15T20:59:50.97534Z",
+   "last_accessed_at": "2026-09-15T20:59:50.97534Z"
+  }
+ ]
+}
