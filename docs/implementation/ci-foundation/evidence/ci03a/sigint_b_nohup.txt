@@ -1,0 +1,72 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_ctrl_c_reaches_the_script_and_leaves_no_orphan ______________
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-240/test_ctrl_c_reaches_the_script0')
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组信号语义")
+    def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
+        """终端里的 Ctrl+C **送给整个前台进程组**，CLI 不吞、不抢在孩子前面退出。
+    
+        抢先退出的表现是：终端回到提示符了，而用户的 Python 还在后台跑——
+        他不会知道，也没有地方去关它。
+        """
+        nativekit.write(tmp_path / "figure.py", LONG_SCRIPT)
+        before = nativekit.pending_ids()
+        proc = subprocess.Popen(  # noqa: S603
+            nativekit.cli_argv("run", "--x-no-desktop", "--", nativekit.USER_PYTHON, "figure.py"),
+            cwd=str(tmp_path),
+            env=nativekit.cli_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,  # 自己一个进程组 = 模拟"前台作业"
+        )
+        session = None
+        try:
+            native_id = nativekit.wait_for_pending(before)
+            session = nativekit.attach_as_desktop(native_id)
+            nativekit.wait_state(session, [nativesession.WAITING_FOR_FIGURE])
+            child_pid = session.process_pid
+            assert child_pid, "没拿到用户 Python 的 pid"
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline and not (tmp_path / "READY").exists():
+                time.sleep(0.05)
+            assert (tmp_path / "READY").exists(), "脚本没跑到 sleep 那一步"
+            os.killpg(os.getpgid(proc.pid), signal.SIGINT)  # ← 用户按了 Ctrl+C
+>           out, err = proc.communicate(timeout=90)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/native/test_run_cli_integration.py:429: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py:1222: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py:2155: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: -9 args: ['/Volumes/Projects/tavotto-wt/ci-foundation/.v...>
+endtime = 131059.292841916, orig_timeout = 90, stdout_seq = [b'READY\n']
+stderr_seq = [b'[Tavotto Run \xc2\xb7 Beta]\nPython: /Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python\nWorking directory...est-of-jiaqi/pytest-240/test_ctrl_c_reaches_the_script0\nTarget: figure.py\nWaiting for Tavotto desktop\xe2\x80\xa6\n']
+skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() > endtime:
+>           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python', '-m', 'tavotto', 'run', '--x-no-desktop', '--', '/Volumes/Projects/tavotto-wt/ci-foundation/.venv/bin/python', 'figure.py']' timed out after 90 seconds
+
+/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py:1269: TimeoutExpired
+=========================== short test summary info ============================
+FAILED tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan
+rc=1
+DONE

@@ -1,0 +1,104 @@
+{
+ "sizes": {
+  "full": 4685,
+  "s1": 2184,
+  "s2": 2501,
+  "c1": 2184,
+  "c2": 2501,
+  "s1|s2": 4685,
+  "s1&s2": 0
+ },
+ "outcomes": {
+  "full": {
+   "passed": 4641,
+   "skipped": 42,
+   "failed": 2
+  },
+  "s1": {
+   "passed": 2156,
+   "skipped": 27,
+   "failed": 1
+  },
+  "s2": {
+   "passed": 2485,
+   "skipped": 15,
+   "failed": 1
+  },
+  "c1": {
+   "passed": 2156,
+   "skipped": 27,
+   "failed": 1
+  },
+  "c2": {
+   "passed": 2485,
+   "skipped": 15,
+   "failed": 1
+  }
+ },
+ "red": {
+  "full": [
+   "tests.native.test_run_cli_integration::test_ctrl_c_reaches_the_script_and_leaves_no_orphan",
+   "tests.test_windows_regressions::test_support_probes_reconfigure_stdout_to_utf8"
+  ],
+  "s1": [
+   "tests.native.test_run_cli_integration::test_ctrl_c_reaches_the_script_and_leaves_no_orphan"
+  ],
+  "s2": [
+   "tests.test_windows_regressions::test_support_probes_reconfigure_stdout_to_utf8"
+  ],
+  "c1": [
+   "tests.native.test_run_cli_integration::test_ctrl_c_reaches_the_script_and_leaves_no_orphan"
+  ],
+  "c2": [
+   "tests.test_windows_regressions::test_support_probes_reconfigure_stdout_to_utf8"
+  ]
+ },
+ "missing_from_shards": [],
+ "extra_in_shards": [],
+ "files": {
+  "m1_selected": 89,
+  "s1_junit": 89,
+  "m2_selected": 91,
+  "s2_junit": 91,
+  "m1_minus_s1": [],
+  "s1_minus_m1": [],
+  "m2_minus_s2": [],
+  "s2_minus_m2": []
+ },
+ "manifest": {
+  "git_head": "064bc541b5f135669233378e103e13ef1bd74934",
+  "nodeids_total": 4685,
+  "files_total": 180,
+  "per_shard_estimated_seconds": [
+   661.52,
+   661.52
+  ],
+  "per_shard_files": [
+   89,
+   91
+  ],
+  "per_shard_nodeids": [
+   2184,
+   2501
+  ],
+  "default_weight": 5.7,
+  "unknown_files": 34
+ },
+ "checks": {
+  "s1_union_s2_equals_full": true,
+  "s1_disjoint_s2": true,
+  "both_shards_nonempty": true,
+  "c1_equals_s1_as_sets": true,
+  "c2_equals_s2_as_sets": true,
+  "outcome_counts_add_up": true,
+  "concurrent_outcomes_identical_to_sequential": true,
+  "m1_selected_files_equal_s1_junit_files": true,
+  "m2_selected_files_equal_s2_junit_files": true,
+  "m1_nodeids_selected_equals_s1_testcases": true,
+  "m2_nodeids_selected_equals_s2_testcases": true,
+  "manifests_nodeids_total_equals_full_testcases": true,
+  "concurrent_manifests_identical_to_sequential": true,
+  "same_git_head_everywhere": true
+ },
+ "verdict": "OK"
+}

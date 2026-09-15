@@ -169,8 +169,18 @@
       "id": "CIP-016",
       "phase": "CI03",
       "requirement": "pytest分片并集覆盖原适用集合，无遗漏或不明重复",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "tests/support/shard.py@064bc541（assign / plan / verify：nodeid 集合的并集 == 全集、两两不交、每片非空、无重复 → ShardError）",
+        "tests/conftest.py@064bc541（--shard K/N 在同一进程 collection 之后做，ShardError → pytest.UsageError rc 4；不带 --shard 时 no-op）",
+        "tests/test_pytest_shard.py（56 条；变异反证 22/22 KILLED：evidence/ci03a/mutations.json）",
+        "tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command / test_backend_split_keeps_all_five_tiers / test_unsharded_pytest_lanes_stay_unsharded（变异反证 10/10 KILLED：evidence/ci03a/mutations_ci.json）",
+        "evidence/ci03a/collect_full.txt / collect_shard1.txt / collect_shard2.txt + compare_collect.txt（collection 层：4686 = 2184 ∪ 2502，交集 0）",
+        "evidence/ci03a/compare_sets.json（junit 层，主语 (classname, name) 集合：s1 ∪ s2 == full、s1 ∩ s2 = ∅、c1 == s1、c2 == s2、计数逐片相加、并发 outcome 逐条等于顺序、manifest selected_files == junit 文件集合；14 条 check 全 true；full 4641 passed / 42 skipped / 2 failed = s1 2156/27/1 + s2 2485/15/1，两条红见文档 §3.3）",
+        "evidence/ci03a/negative_cli_cases.txt / negative_d1_union_check.txt（D①…D⑨ 的退出码；D⑨ = --shard-manifest 必须 = 形式，tests/test_pytest_shard.py::test_the_manifest_path_may_already_exist_when_written_with_equals）",
+        "CI03A_PYTEST_SHARDS.md#3-本地实测 / #4-负例与退出码；本机三组跑各有两条红：一条本轮真缺陷（shard.py 入口没钉 UTF-8 stdout，已修）、一条后台驱动让信号用例假红（§3.4，前台 rc 0）——都不是分片造成的，三组里落在同一 nodeid"
+      ],
+      "note": "本机 macOS 证据：collection 层与 junit 层的并集都逐 nodeid 相等、无交集、无 outcome 变化；漏一个文件的真实变异 rc 4，拿掉并集检查后同一变异静默漏 46 条（证明检查是载荷）。CI 侧待 PR run：Linux 3 档 × 2 片与 full-ci 下 macOS / Windows × 2 片的 manifest + junit artifact 要再比一次并集（不同 os 的 skip 集合不同，全集要按同 os 比）。2026-09-16 CI03a，commit 064bc541。"
     },
     {
       "id": "CIP-017",
@@ -184,28 +194,43 @@
       "phase": "CI03",
       "requirement": "端口、目录、HOME/config/cache/报告和进程owner隔离",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "tests/conftest.py（每个进程各自 tempfile.mkdtemp 的 TAVOTTO_DATA_DIR、每个用例各自的 TAVOTTO_CONFIG_DIR；pytest basetemp 按会话编号）",
+        "evidence/ci03a/compare_sets.json + c1.time / c2.time / timing_table.json（本机两片同时跑一次：outcome 与顺序跑逐条相同；c1 +17.8s、c2 −2.6s；峰值 RSS 582.7 + 455.3 MiB）"
+      ],
+      "note": "本轮没有做隔离验证，只做了一次同机并发对照（c1 619.7s vs s1 601.9s、c2 538.0s vs s2 540.6s，outcome 逐条相同，没有一条因并发而红）。同机一次没撞 ≠ 隔离已验证：端口全是 bind(0)、目录各自 mkdtemp 是静态读出来的前提，HOME / 字体缓存 / MPLCONFIGDIR 两进程共享；CI 上每片独立 VM。隔离的真实验证（同机多 runner、跨 attempt）归 CI03 后续 PR。"
     },
     {
       "id": "CIP-019",
       "phase": "CI03",
       "requirement": "并发与取消不杀其他job，不沿用全局危险reaper",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        ".github/workflows/ci.yml（分片没有加任何 reaper / pkill；每片独立 VM，取消由 job 级 timeout-minutes 承担，未改）"
+      ],
+      "note": "本轮未做取消实验，也没有新增任何清理动作；「取消不杀其他 job」只是 GitHub 托管 VM 的既有性质，没有本仓库的证据。"
     },
     {
       "id": "CIP-020",
       "phase": "CI03",
       "requirement": "嵌套并行CPU/RAM预算有真实验证",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "evidence/ci03a/full.time / s1.time / s2.time / c1.time / c2.time（/usr/bin/time -l：本机顺序与并发各自的峰值 RSS 与墙钟）"
+      ],
+      "note": "只有本机数字（12 核 Mac mini），没有 CI VM 的；本 PR 没有在同一 VM 内增加并行（每片一台机、无 -n），「嵌套并行预算」在这个形状下没有主语。真实预算验证要等同机多进程或 xdist 那一步。"
     },
     {
       "id": "CIP-021",
       "phase": "CI03",
       "requirement": "skip/缺资源/重试不伪造必需资格",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "evidence/ci03a/compare_sets.json（skipped 27 + 15 = 42 == full，且逐条 outcome 不变：本机没有一条因分片从 skipped 变 passed 或反过来）",
+        ".github/workflows/ci.yml（pytest 命令带 -rs：skip 理由进日志，CI00 记录三条腿原先都拿不到）",
+        "tests/support/shard.py verify()（空片 → rc 4，不是绿）"
+      ],
+      "note": "本机证据只覆盖「分片不改变 skip 集合」这一维；「缺资源 / 重试不伪造资格」在 CI 侧未测（本 PR 没动任何 skip 条件，也没有 retry）。CI 上不同 os 的 skip 集合本来就不同，判「没伪造」要按同 os 比 manifest 与 junit。"
     },
     {
       "id": "CIP-022",

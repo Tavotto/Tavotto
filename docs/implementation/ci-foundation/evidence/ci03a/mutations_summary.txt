@@ -1,0 +1,24 @@
+baseline rc=0 .......................................................                  [100%]
+KILLED   rc=1 M01 parse_spec: 删 K/N 范围检查 | red=4 _shard.py::test_bad_shard_spec_is_rejected[3/2] - Fai...
+KILLED   rc=1 M01b parse_spec + plan: 两层片号范围检查一起删 | red=7 /0] - Fai...
+KILLED   rc=1 M02 parse_spec: 正则不匹配时不抛（改成返回 1/1） | red=7 shard_spec_is_rejected[/2] - Fail...
+KILLED   rc=1 M03 assign: 删 shards<1 检查 | red=1 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KILLED   rc=1 M04 plan: 删片号范围检查 | red=1 Error):
+KILLED   rc=1 M05 verify: 删「全集有重复 nodeid」检查 | red=1 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KILLED   rc=1 M06 verify: 删「片间交集 / 片内重复」检查 | red=1        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KILLED   rc=1 M07 verify: 删「并集 == 全集」检查 | red=2 r
+KILLED   rc=1 M08 verify: 删「每片非空」检查 | red=3 =======================
+KILLED   rc=1 M09 load_weights: 坏 JSON 时静默用空表 | red=1 hardError):
+KILLED   rc=1 M10 load_weights: 删负数 / NaN / 无穷检查 | red=3 ============= short test summary info ============================
+KILLED   rc=1 M11 load_weights: 删布尔 / 非数字检查 | red=2 be real number, not str
+KILLED   rc=1 M12 load_weights: 删键形状检查 | red=3 ==== short test summary info ============================
+KILLED   rc=1 M13 load_weights: 删缺出处检查 | red=1 rror):
+KILLED   rc=1 M14 load_weights: 删空表 / 非对象检查 | red=2 ms'
+KILLED   rc=1 M15 default_weight: p75 改成均值 | red=2 /test_pytest_shard.py:121: AssertionError
+KILLED   rc=1 M16 default_weight: 未知文件按 0 估 | red=3 ==========================
+KILLED   rc=1 M17 weights_from_junit: classname 对不回文件时跳过 | red=1 pected regex: '对不回'
+KILLED   rc=1 M18 conftest: --shard-manifest 无 --shard 时静默 | red=1  <enum 'ExitCode'>.USAGE_ERROR
+KILLED   rc=1 M19 conftest: ShardError 时静默跑全集（不抛 UsageError） | red=4 D tests/test_pytest_shard.py::test_a_bad_shard_spec_is_a_usage_error_not_a_silent_full_run[0/2]
+KILLED   rc=1 M20 assign: 丢掉排序里最轻的那个文件（漏片） | red=9 ult_weight_not_zero
+KILLED   rc=1 M21 plan: 每片都拿到全部文件（重叠） | red=10 nion_check
+all killed: True

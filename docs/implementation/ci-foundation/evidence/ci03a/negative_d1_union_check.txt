@@ -1,0 +1,14 @@
+== D①a: assign() 丢掉排序里最后一个文件（并集检查还在）
+1
+128:    ordered = sorted(set(files), key=lambda f: (-weights.get(f, default), f))[:-1]
+4685/4687 tests collected (2 deselected) in 3.37s
+rc=4
+== D①b: 再把「并集 == 全集」检查拿掉
+1
+217:    if False:
+shard 1/2: 89 个文件 / 2184 条（全集 179 个文件 / 4639 条；各片估计 662s, 662s；34 个文件不在权重表里、按 5.7s 估）
+2184/4687 tests collected (2503 deselected) in 3.21s
+rc=0
+shard 2/2: 90 个文件 / 2455 条（全集 179 个文件 / 4639 条；各片估计 662s, 662s；34 个文件不在权重表里、按 5.7s 估）
+2455/4687 tests collected (2232 deselected) in 4.78s
+rc=0

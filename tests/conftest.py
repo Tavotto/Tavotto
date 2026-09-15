@@ -5,6 +5,7 @@
 """
 
 import os
+import pathlib
 import sys
 import tempfile
 import threading
@@ -12,6 +13,8 @@ import time
 import traceback
 
 import pytest
+
+from support import shard as _shard
 
 # 模块级设置：app / engine 的路径常量在 import 时求值，必须先于用例模块被
 # import 就位，否则测试会写到真实的用户数据目录。单个用例仍各自 monkeypatch
@@ -234,3 +237,152 @@ def _write_report_to_stderr(text: str) -> None:
     sys.stderr.flush()
     buf.write(text.encode("utf-8", "replace"))
     buf.flush()
+
+
+# ---------------------------------------------------------------------------
+# 按文件分片（CI03a）：`--shard K/N` 与 `--shard-manifest PATH`
+# ---------------------------------------------------------------------------
+# 分片在**同一进程 collection 之后**做（不是按目录切命令行）：每个 shard 进程都看见
+# 完整的 collection（`-m "not slow"` 等 pytest 自己的反选已经生效——mark 插件的
+# modifyitems 是 tryfirst，本钩子是 trylast），算出**全部 N 片**、自验并集 == 全集
+# 之后，才把不属于自己的那些 deselect 掉。于是「漏片」在每个 shard 进程里都会当场
+# rc 4，而不是等 CI 上两片都绿了才有人发现少了一个文件。
+#
+# **不带 `--shard` 时两个钩子完全不动 collection**：lab（`_lab-qualification.yml`）、
+# nightly、release 的 pytest 命令一个字不改，它们跑的仍是全集——
+# tests/test_merge_queue_workflows.py 钉住那几条命令里没有 `--shard`。
+#
+# 分配算法、权重表与自验的判据都在 tests/support/shard.py（纯函数，有单测）。
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("shard", "按文件分片（CI03a）")
+    # 两个选项都要写成 `--opt=值`：它们是 conftest 注册的，pytest 预解析时会把未知选项的
+    # 下一个 token 当路径去找 conftest——`--shard-manifest PATH` 在 PATH 已存在时只加载
+    # PATH 所在目录的 conftest，本文件没被加载，选项就成了 unrecognized（rc 4）。
+    group.addoption(
+        "--shard",
+        default=None,
+        metavar="K/N",
+        help="只跑第 K 片（1 ≤ K ≤ N），写成 --shard=K/N。按文件分组、按 "
+        "tests/support/shard_weights.json 的权重贪心平衡；每个进程都先算全部 N 片并自验"
+        "并集 == 全集。不带时不分片。",
+    )
+    group.addoption(
+        "--shard-manifest",
+        default=None,
+        metavar="PATH",
+        help="把这一片的分配写成 JSON，写成 --shard-manifest=PATH（只作证据与日后重平衡的"
+        "数据，不作任何判定输入）。只在带 --shard 时有意义。",
+    )
+
+
+def _shard_file_of(item, rootpath) -> str:
+    """item → 相对仓库根的 POSIX 路径（`tests/x.py`），与权重表的键同一形状。"""
+    path = getattr(item, "path", None)
+    if path is None:
+        raise _shard.ShardError(f"{item.nodeid} 没有 path，分不了片")
+    try:
+        return path.relative_to(rootpath).as_posix()
+    except ValueError as exc:
+        raise _shard.ShardError(f"{path} 不在 rootdir {rootpath} 之下") from exc
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(session, config, items):
+    spec = config.getoption("--shard")
+    manifest_path = config.getoption("--shard-manifest")
+    if spec is None:
+        if manifest_path is not None:
+            # 要证据却没分片：这是半套配置，不是「顺手写份空的」——静默写一份
+            # 「全集 = 第 1/1 片」的 manifest 会让人拿它当分片证据用
+            raise pytest.UsageError("--shard-manifest 只在带 --shard 时有意义")
+        return
+    try:
+        shard, shards = _shard.parse_spec(spec)
+        weights = _shard.load_weights()
+        by_file: dict[str, list[str]] = {}
+        for item in items:
+            by_file.setdefault(_shard_file_of(item, config.rootpath), []).append(item.nodeid)
+        plan = _shard.plan(by_file, weights, shard, shards)
+        _shard.verify(plan, [item.nodeid for item in items])
+    except _shard.ShardError as exc:
+        raise pytest.UsageError(f"--shard {spec}：{exc}") from exc
+    if manifest_path is not None:
+        _write_shard_manifest(manifest_path, plan, config)
+    config.stash[_SHARD_PLAN_KEY] = plan
+    keep = set(plan.selected_nodeids)
+    selected = [item for item in items if item.nodeid in keep]
+    deselected = [item for item in items if item.nodeid not in keep]
+    # 走 pytest 自己的 deselect 通道：摘要里会如实出现「N deselected」，
+    # `--collect-only` 也只列这一片
+    config.hook.pytest_deselected(items=deselected)
+    items[:] = selected
+
+
+_SHARD_PLAN_KEY = pytest.StashKey["_shard.Plan"]()
+
+
+def pytest_report_collectionfinish(config, start_path, items):
+    plan = config.stash.get(_SHARD_PLAN_KEY, None)
+    if plan is None:
+        return None
+    # 这一行故意只用 ASCII：Windows runner 上捕获的 stdout 是 cp1252，pytest 遇到
+    # 编不出的字符会整行转成 \uXXXX 转义（不崩，但没人读得懂）。manifest 才是证据，
+    # 这行只是让日志里一眼看得到「这片跑了多少」。
+    est = ", ".join(f"{s:.0f}s" for s in plan.estimated_seconds)
+    return [
+        f"shard {plan.shard}/{plan.shards}: files {len(plan.selected_files)}/"
+        f"{sum(len(f) for f in plan.files)}, nodeids {len(plan.selected_nodeids)}/"
+        f"{sum(len(n) for n in plan.nodeids)}, estimated per shard [{est}], "
+        f"files without a weight {len(plan.unknown_files)} (default {plan.default_weight:g}s)"
+    ]
+
+
+def _git_head(rootpath) -> str:
+    """manifest 里的 git_head：先问 git，再退回 GITHUB_SHA，都没有就 unknown。"""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(rootpath),
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.environ.get("GITHUB_SHA") or "unknown"
+
+
+def _write_shard_manifest(path: str, plan, config) -> None:
+    """一片的分配写成 JSON。只是证据：任何判定都不读它。"""
+    import json
+    import platform
+
+    doc = {
+        "git_head": _git_head(config.rootpath),
+        "shard": plan.shard,
+        "shards": plan.shards,
+        "files_total": sum(len(f) for f in plan.files),
+        "files_selected": len(plan.selected_files),
+        "nodeids_total": sum(len(n) for n in plan.nodeids),
+        "nodeids_selected": len(plan.selected_nodeids),
+        "weights_source": _shard.WEIGHTS_PATH.relative_to(config.rootpath).as_posix(),
+        "default_weight": plan.default_weight,
+        "unknown_files": list(plan.unknown_files),
+        "per_shard_estimated_seconds": [round(s, 2) for s in plan.estimated_seconds],
+        "per_shard_files": [len(f) for f in plan.files],
+        "per_shard_nodeids": [len(n) for n in plan.nodeids],
+        "selected_files": list(plan.selected_files),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+    }
+    target = pathlib.Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

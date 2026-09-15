@@ -146,6 +146,47 @@ def _if_of(job_block: str) -> str:
     return m.group(1).strip()
 
 
+def _matrix_axes(job_block: str) -> dict[str, list[str]]:
+    """读 `strategy.matrix` 的**轴**（`key: [a, b]`）；切不出来或写法认不出当场抛。
+
+    backend-fast / backend-platforms 自 CI03a 起用轴而不是 `include`（GitHub 对
+    `include` 条目不做笛卡尔积，shard 只能是轴）。`include` 形状在这里就是「认不出」。
+    """
+    code = _code(job_block)
+    m = re.search(r"(?m)^      matrix:\n((?:        \S.*\n)+)", code)
+    assert m, "job 里切不出 strategy.matrix 的轴块（是不是还写成 include 了？）"
+    axes: dict[str, list[str]] = {}
+    for line in m.group(1).splitlines():
+        am = re.fullmatch(r"\s+([a-z_-]+): \[([^\]]*)\]", line)
+        assert am, f"matrix 轴的写法认不出：{line!r}"
+        axes[am.group(1)] = [v.strip().strip("\"'") for v in am.group(2).split(",")]
+    assert axes, "matrix 块是空的"
+    return axes
+
+
+def _tiers_of(job_block: str) -> set[tuple[str, str]]:
+    """一个 backend job 实际跑的 (os, python) 档：轴上有就取轴，没有就取写死的那个值。
+
+    os 不在轴上时 `runs-on` 必须是字面量（`${{ matrix.os }}` 却没有 os 轴 = 空档）；
+    python 不在轴上时 `python-version` 必须是字面量，同理。
+    """
+    axes = _matrix_axes(job_block)
+    code = _code(job_block)
+    if "os" in axes:
+        oses = axes["os"]
+    else:
+        m = re.search(r"(?m)^    runs-on: ([\w-]+)$", code)
+        assert m, "os 不在 matrix 轴上，runs-on 又不是字面量"
+        oses = [m.group(1)]
+    if "python" in axes:
+        pys = axes["python"]
+    else:
+        m = re.search(r'python-version: "([\d.]+)"', code)
+        assert m, "python 不在 matrix 轴上，python-version 又不是字面量"
+        pys = [m.group(1)]
+    return {(o, py) for o in oses for py in pys}
+
+
 #: fast 档 job 的**唯一**合法条件。写死在这里是有意的：它与重型档的
 #: `if: >-`（merge_group 或 full-ci 标签）是两种东西，而两者在 Gate 的
 #: needs 里长得一模一样。
@@ -514,10 +555,15 @@ class TestGates:
         Linux 3.10 / Linux 3.13 / Linux 3.14 / macOS 3.13 / Windows 3.13。
         merge_group 上五档全跑（fast 与 platforms 都在），一档都不许少。
         Linux 3.14 是 issue #33 放开上界时加的——上界那档在不在矩阵里，
-        由 tests/test_support_matrix.py 对着 support-matrix 的 tested 再钉一次。"""
+        由 tests/test_support_matrix.py 对着 support-matrix 的 tested 再钉一次。
+
+        CI03a 起 matrix 是轴（python × shard / os × shard），os 或 python 不在轴上时
+        取 runs-on / python-version 的字面量——`_tiers_of` 两种形状都读，读不出当场抛。
+        分片轴不改变档：每档只是拆成两片跑，五档仍逐档存在。
+        """
         fast = _job(CI, "backend-fast")
         platforms = _job(CI, "backend-platforms")
-        tiers = set(re.findall(r"\{ os: ([\w-]+),\s*python: \"([\d.]+)\" \}", fast + platforms))
+        tiers = _tiers_of(fast) | _tiers_of(platforms)
         assert tiers == {
             ("ubuntu-latest", "3.10"),
             ("ubuntu-latest", "3.13"),
@@ -526,6 +572,59 @@ class TestGates:
             ("windows-latest", "3.13"),
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
+
+    @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
+    def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
+        """`--shard K/N` 的 N 与 matrix.shard 的片数必须是**同一个数**，且轴恰好是 1..N。
+
+        每个 shard 进程只能自验「我算出的 N 片并集 == 全集」，它看不见别的 job 有没有
+        跑：轴写成 `[1, 1]`、或轴是 `[1, 2]` 而命令写 `/3`，每个进程都绿，第 2 / 第 3 片
+        却没人跑。这一位只有静态合同钉得住（CI03A_PYTEST_SHARDS.md「漏片兜底链」第二层）。
+        """
+        block = _job(CI, job_id)
+        axes = _matrix_axes(block)
+        assert "shard" in axes, f"{job_id} 的 matrix 没有 shard 轴"
+        n = len(axes["shard"])
+        assert axes["shard"] == [str(i) for i in range(1, n + 1)], (
+            f"{job_id} 的 shard 轴必须恰好是 1..N，收到 {axes['shard']}"
+        )
+        assert n == 2, f"{job_id} 现在定的是 2 片；改片数要同时改这里与文档里的实测"
+        code = _code(block)
+        # `--shard=K/N` 与 `--shard-manifest=PATH` **必须是 `=` 形式**：这两个选项在
+        # tests/conftest.py 里注册，pytest 预解析时把未知选项的下一个 token 当路径去找
+        # conftest；`--shard-manifest PATH` 在 PATH 已存在时只加载 PATH 所在目录的 conftest，
+        # tests/conftest.py 没加载，整条命令 rc 4「unrecognized arguments」。托管 runner 的
+        # RUNNER_TEMP 每次都是新的，CI 自己永远不会撞上——所以这一位只能静态钉。
+        m = re.search(r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/(\d+)", code)
+        assert m, (
+            f"{job_id} 的 pytest 命令里没有 `--shard=${{{{ matrix.shard }}}}/N`（要 `=` 形式）"
+        )
+        assert int(m.group(1)) == n, (
+            f"{job_id}：命令里的 N={m.group(1)} 与 matrix.shard 的片数 {n} 不是同一个数"
+        )
+        # 证据链：manifest + junit 上传成按片命名的 artifact（只作证据，不作判定输入）
+        assert "--shard-manifest=" in code and "--junitxml" in code
+        assert "--shard-manifest " not in code, f"{job_id}：--shard-manifest 要写成 `=` 形式"
+        assert re.search(
+            r"name: pytest-" + re.escape(job_id) + r"-.*shard\$\{\{ matrix\.shard \}\}", code
+        ), f"{job_id} 的分片证据 artifact 名字里没有片号——两片会互相覆盖"
+
+    def test_unsharded_pytest_lanes_stay_unsharded(self):
+        """lab（含 release 的资格，同一份 `_lab-qualification.yml`）、nightly、desktop-tauri
+        的 pytest 命令**不带** `--shard`：不带时钩子是 no-op，它们跑的仍是全集。
+
+        前提先钉住（否则「不含」是恒真）：每个文件至少有一条 `-m pytest` 的可执行行，
+        release.yml 的资格确实经由 `_lab-qualification.yml`。
+        """
+        release = _code((WF / "release.yml").read_text(encoding="utf-8"))
+        assert "uses: ./.github/workflows/_lab-qualification.yml" in release, (
+            "release 的资格不再走 _lab-qualification.yml——本判据对 release 的覆盖失效"
+        )
+        for name in ("_lab-qualification.yml", "nightly.yml", "desktop-tauri.yml"):
+            code = _code((WF / name).read_text(encoding="utf-8"))
+            lines = [ln for ln in code.splitlines() if "-m pytest" in ln]
+            assert lines, f"{name} 里一条 pytest 命令都没有——判据没有主语"
+            assert not [ln for ln in lines if "--shard" in ln], f"{name} 的 pytest 命令带了 --shard"
 
     def test_integration_gate_includes_backend_platforms(self):
         assert "backend-platforms" in _needs_of(_job(CI, "ci-integration-gate"))

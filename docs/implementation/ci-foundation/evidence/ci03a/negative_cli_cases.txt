@@ -1,0 +1,21 @@
+== ② --shard 3/2
+ERROR: --shard 3/2：--shard 的 K 必须在 1..N 之内，收到 '3/2'
+2 deselected, 6 warnings in 2.90s
+rc=4
+== ③ --shard 1/999
+ERROR: --shard 1/999：第 180/999 片为空（全集 179 个文件、4626 条 nodeid）——一片空转的 job 会绿着什么都不验
+2 deselected, 6 warnings in 2.94s
+rc=4
+== ④ bad JSON
+ERROR: --shard 1/2：权重表 /Volumes/Projects/tavotto-wt/ci-foundation/tests/support/shard_weights.json 不是合法 JSON：Expecting property name enclosed in double quotes: line 1 column 46 (char 45)
+2 deselected, 6 warnings in 2.88s
+rc=4
+== ⑥ --shard-manifest without --shard
+ERROR: --shard-manifest 只在带 --shard 时有意义
+rc=4
+== ⑦ --shard 0/2
+ERROR: --shard 0/2：--shard 的 K 必须在 1..N 之内，收到 '0/2'
+rc=4
+== ⑧ --shard abc
+ERROR: --shard abc：--shard 要写成 K/N（例如 1/2），收到 'abc'
+rc=4
