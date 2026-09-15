@@ -7,7 +7,8 @@ interface PopoverProps {
   children: ReactNode
   align?: 'start' | 'center' | 'end'
   side?: 'top' | 'bottom' | 'left' | 'right'
-  width?: number
+  /** 像素宽，或 'trigger' = 与触发器同宽（Radix 落在 Content 上的 --radix-popover-trigger-width；样张选择器用它，弹层宽跟着触发器走） */
+  width?: number | 'trigger'
   open?: boolean
   onOpenChange?: (v: boolean) => void
   /**
@@ -39,7 +40,7 @@ export function Popover({
           align={align}
           side={side}
           sideOffset={6}
-          style={{ width }}
+          style={{ width: width === 'trigger' ? 'var(--radix-popover-trigger-width)' : width }}
           aria-label={ariaLabel}
           onOpenAutoFocus={keepFocus ? (e) => e.preventDefault() : undefined}
           onKeyDown={(e) => e.stopPropagation()}
