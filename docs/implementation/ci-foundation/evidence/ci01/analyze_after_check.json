@@ -1,0 +1,16 @@
+{
+  "_doc": "`ci_baseline.py analyze` 对 CI01 改后的 ci.yml 是否还解析得过、模型是否与实际 DAG 一致的检查记录。**这里没有任何可当作测量的数字。**",
+  "command": "python scripts/ci/ci_baseline.py analyze --compact --workflow .github/workflows/ci.yml --evidence docs/implementation/ci-foundation/evidence/actions --edge-kinds docs/implementation/ci-foundation/evidence/ci01/dag_edge_kinds_after.json --out <scratchpad>/analyze_after.json",
+  "workflow_sha": "7d77494c",
+  "exit_code": 0,
+  "run_count": 86,
+  "dag_edges": 19,
+  "output_kept_in_repo": false,
+  "why_the_output_is_not_evidence": "evidence/actions 里的 86 个 run 全部在 8b95256c 的 ci.yml（带 backend-fast → 重型 四条边）下执行。analyze 按 --workflow 给的 DAG 算 dependency_wait / dispatch_gap / 关键路径：用改后的 DAG 去分解这些旧 run，windows-exe-smoke 的 dependency_wait 会从 2120s 变成 frontend 完成的 ~256s，差额全部流进 dispatch_gap（job 建立时刻没变），关键路径被记成 frontend → windows-exe-smoke → gate；model_without_backend_fast_edges 里要删的四条边在新 DAG 里已经不存在，于是 modelled_seconds == observed_seconds（43 个有模型的 attempt-1 run 里 42 个如此）。这些都是归因错误，不是改后 CI 的表现。改后 CI 的真实时长只能由真实 run 给出（CIP-008…010 与 CI05 对照），在此之前唯一有效的模型仍是 CI00 在旧 DAG 上算的 timing_decomposition.json → model_without_backend_fast_edges（CI_BASELINE.md §5.1：中位 3412s → 2476s）。",
+  "what_it_does_prove": [
+    "改后的 ci.yml 仍被 extract_workflow_jobs 解析：17 个 job、19 条边，全部 API job 显示名都映射回 job id（否则 analyze 会抛 BaselineError）",
+    "model_without_edges 里写死的四条边在新 DAG 上恰好都不存在（removed_edges 仍列出四条，但对 needs 过滤已无作用）——即「模型 = 实际 DAG」",
+    "dag_edge_kinds_after.json 覆盖了新 DAG 的每一条边（缺一条 build_dag 就抛）"
+  ],
+  "known_tool_limitation_recorded_not_fixed": "ci_baseline.py 不校验 --workflow 是不是这些 run 真正执行时的那份（它只校验 job 名对得上）。分解历史 run 时调用者要自己传对应 SHA 的 ci.yml；tests/test_ci_baseline.py 已改为读 tests/fixtures/ci_baseline/ci_8b95256c.yml 快照。CI05 做前后对照时应按 run 记录 workflow 文件的 SHA。"
+}

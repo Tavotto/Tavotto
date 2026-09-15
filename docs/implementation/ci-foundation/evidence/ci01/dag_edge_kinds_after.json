@@ -1,0 +1,98 @@
+{
+  "_doc": "CI01 改后 ci.yml（commit 7d77494c，叠在 CI00 基线 37fb89a1 / 源码 8b95256c 之上）每条 needs 边的分类。与 CI00 的 evidence/dag_edge_kinds.json 同一套 kind（artifact/data / 短预筛 / verdict-only），那份是 8b95256c 的事实、不改；这份是改后的：23 条 → 19 条，删掉的 4 条是 backend-fast → {package, windows-exe-smoke, macos-app-smoke, posix-e2e}（CI00 全判 verdict-only），frontend → 同四个 的 4 条改标 短预筛（保留的理由写在各条 note 里）。行号指向 7d77494c 的 ci.yml。",
+  "frontend->plugin-candidate": {
+    "kind": "artifact/data",
+    "evidence": "ci.yml L562-569（frontend upload-artifact codex-plugin-candidate）→ L617-620（plugin-candidate download-artifact 同名）→ L626-629（解包并 verify --content-digest）；needs L589",
+    "note": "真实数据边：下游脱离源码树解包 zip 验证；删边会让 download-artifact 找不到产物。"
+  },
+  "frontend->package": {
+    "kind": "短预筛",
+    "evidence": "ci.yml L810 needs: [frontend]；L833 自己 `python scripts/build_frontend.py` 重建前端，无 download-artifact",
+    "note": "保留作短预筛（02 §2 允许的「短质量预筛」）：frontend 中位 252s；删掉 backend-fast 边后关键路径是 backend-platforms (windows)（中位 2443s），而 frontend 252 + 本 job 的时长不在关键路径上——保留它对合并资格时长零成本，却能在前端坏掉（pnpm install / lint / i18n / vitest / build / 插件候选组装）时省掉每个候选约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4；CI_BASELINE.md §4.2）。仍然不消费任何字节。"
+  },
+  "frontend->windows-exe-smoke": {
+    "kind": "短预筛",
+    "evidence": "ci.yml L901 needs: [frontend]；L917 自建前端、L924 画布、L934 workerd、L949 runtime、L961 PyInstaller 全部现建，无 download-artifact",
+    "note": "保留作短预筛（02 §2 允许的「短质量预筛」）：frontend 中位 252s；删掉 backend-fast 边后关键路径是 backend-platforms (windows)（中位 2443s），而 frontend 252 + 本 job 的时长不在关键路径上——保留它对合并资格时长零成本，却能在前端坏掉（pnpm install / lint / i18n / vitest / build / 插件候选组装）时省掉每个候选约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4；CI_BASELINE.md §4.2）。仍然不消费任何字节。 删边前这条边上还串着 backend-fast，预筛作用从未真正起过（等的是 35 分钟那个）。"
+  },
+  "frontend->macos-app-smoke": {
+    "kind": "短预筛",
+    "evidence": "ci.yml L1218 needs: [frontend]；L1234 自建前端、L1242 / L1254 / L1265 现建，无 download-artifact",
+    "note": "保留作短预筛（02 §2 允许的「短质量预筛」）：frontend 中位 252s；删掉 backend-fast 边后关键路径是 backend-platforms (windows)（中位 2443s），而 frontend 252 + 本 job 的时长不在关键路径上——保留它对合并资格时长零成本，却能在前端坏掉（pnpm install / lint / i18n / vitest / build / 插件候选组装）时省掉每个候选约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4；CI_BASELINE.md §4.2）。仍然不消费任何字节。"
+  },
+  "frontend->posix-e2e": {
+    "kind": "短预筛",
+    "evidence": "ci.yml L1375 needs: [frontend]；L1400 自建前端、L1407 画布，L1415 `pnpm install`；L1358 自述「不打包」",
+    "note": "保留作短预筛（02 §2 允许的「短质量预筛」）：frontend 中位 252s；删掉 backend-fast 边后关键路径是 backend-platforms (windows)（中位 2443s），而 frontend 252 + 本 job 的时长不在关键路径上——保留它对合并资格时长零成本，却能在前端坏掉（pnpm install / lint / i18n / vitest / build / 插件候选组装）时省掉每个候选约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4；CI_BASELINE.md §4.2）。仍然不消费任何字节。"
+  },
+  "python-lint->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边：按定义只消费结论，属于必须保留的 AND。"
+  },
+  "cla-check->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "invariants->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "backend-fast->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留——CI01 删掉重型 job 对 backend-fast 的四条边之后，这里是 backend-fast 仍参与合并资格 AND 的唯一位置；tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_a_red_backend_fast_still_blocks_the_merge_even_when_every_heavy_job_is_green 用真实判定器证明它。"
+  },
+  "frontend->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "plugin-candidate->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "workerd->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "desktop-shell->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "compat-smoke->ci-fast-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1447 needs 与 L1484 --required 同一闭集；L1477 `NEEDS_JSON: ${{ toJSON(needs) }}` 是判定器唯一输入",
+    "note": "Gate 边，必须保留。"
+  },
+  "backend-platforms->ci-integration-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1490 needs 与 L1532 --required 同一闭集；L1516 toJSON(needs)",
+    "note": "Gate 边，必须保留。"
+  },
+  "package->ci-integration-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1490 needs 与 L1532 --required 同一闭集；L1516 toJSON(needs)",
+    "note": "Gate 边，必须保留。"
+  },
+  "windows-exe-smoke->ci-integration-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1490 needs 与 L1532 --required 同一闭集；L1516 toJSON(needs)",
+    "note": "Gate 边，必须保留。"
+  },
+  "macos-app-smoke->ci-integration-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1490 needs 与 L1532 --required 同一闭集；L1516 toJSON(needs)",
+    "note": "Gate 边，必须保留。"
+  },
+  "posix-e2e->ci-integration-gate": {
+    "kind": "verdict-only",
+    "evidence": "ci.yml L1490 needs 与 L1532 --required 同一闭集；L1516 toJSON(needs)",
+    "note": "Gate 边，必须保留。"
+  }
+}
