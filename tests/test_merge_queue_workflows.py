@@ -1080,6 +1080,137 @@ class TestPlaywrightShards:
         assert _project_flags(e2e[0], "posix-e2e") <= set(_playwright_projects())
 
 
+# ============================================================ package 冒烟的实例隔离（CI03b）
+class TestPackageSmokeIsolation:
+    """`package` job 的冒烟按实例隔离（CI03b，2026-09-16）。
+
+    原来那两步有三件事在同一台机器上跑两个实例时会互相撞、而托管 VM 用完即毁所以从没暴露：
+    venv 固定在 `/tmp/smoke`、固定端口 5199 + `sleep 8`、`&` 起的服务从不终止（04 §4）。
+    这里钉的是 ci.yml 那一侧的合同，**正面形式优先**（根 AGENTS.md：否定断言会被解释它的那句
+    话咬到，所以判据只看 `_code()` 剥掉注释之后的 run 脚本）：venv 与 workdir 都在
+    `${{ runner.temp }}` 下、冒烟步骤调的是 `scripts/ci/package_smoke.py` 且带 `--python "$BIN/python"`
+    与 `--workdir`、step 级 timeout、失败日志 artifact 名按矩阵唯一、data / config 不再由 yml 另设
+    （脚本放在 workdir 下——`tests/test_package_smoke.py` 证明子进程真的拿到那个目录）、job id /
+    needs / if / 四条腿 / Gate 闭集不变。脚本自己的判据（租约 + 竞争、就绪 = 我们的进程在应答、
+    终止 = 进程不存在）归 `tests/test_package_smoke.py`。
+    设计、本机实测、负例：docs/implementation/ci-foundation/CI03B_PACKAGE_SMOKE_ISOLATION.md。
+    回退 = 恢复两步原文。
+    """
+
+    JOB = "package"
+    VENV = '"${{ runner.temp }}/smoke-venv"'
+    WORKDIR = '"${{ runner.temp }}/smoke-run"'
+
+    def _steps(self) -> tuple[list[str], str, str]:
+        """(全部步骤, 装 wheel 那一步, 起服务那一步)——两步都切得出来，切不出当场抛。"""
+        steps = _steps(_job(CI, self.JOB))
+        install = [s for s in steps if _step_name(s) == "装进干净环境并冒烟"]
+        smoke = [s for s in steps if _step_name(s) == "起服务并请求首页"]
+        assert len(install) == 1 and len(smoke) == 1, [_step_name(s) for s in steps]
+        return steps, install[0], smoke[0]
+
+    @staticmethod
+    def _run_script(step: str) -> str:
+        m = re.search(r"(?m)^        run: \|\n((?:          .*\n?)+)", step)
+        assert m, f"步骤里切不出 run: | 块：\n{step}"
+        return m.group(1)
+
+    def test_the_venv_lives_under_runner_temp_and_both_steps_share_it(self):
+        """venv 路径按 job 隔离，两步用同一个变量拼 `$BIN`（探 bin / Scripts 那套照旧）。"""
+        _, install, smoke = self._steps()
+        for step in (install, smoke):
+            run = self._run_script(step)
+            assert f"VENV={self.VENV}" in run, run
+            assert 'BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"' in run, run
+        assert 'python -m venv "$VENV"' in self._run_script(install)
+        assert '"$BIN/python" -m pip install --quiet dist/*.whl' in self._run_script(install)
+
+    def test_the_smoke_step_runs_the_isolated_script_on_the_venv_python(self):
+        """冒烟步骤：setup-python 的 `python` 跑脚本，被测解释器是 `$BIN/python`，workdir 在 runner.temp 下。"""
+        _, _, smoke = self._steps()
+        run = self._run_script(smoke)
+        m = re.search(r"(?s)python scripts/ci/package_smoke\.py (.+?)$", run.strip())
+        assert m, f"冒烟步骤没有调用 scripts/ci/package_smoke.py：\n{run}"
+        args = m.group(1).replace("\\\n", " ")
+        assert '--python "$BIN/python"' in args, args
+        assert f"--workdir {self.WORKDIR}" in args, args
+        assert (ROOT / "scripts" / "ci" / "package_smoke.py").is_file()
+
+    def test_no_run_script_of_the_job_uses_a_shared_path_a_fixed_port_or_a_sleep(self):
+        """否定形式作兜底——只看 run 脚本的代码行（注释已剥掉），三样都不许回来。"""
+        steps, _, _ = self._steps()
+        runs = "\n".join(
+            self._run_script(s) for s in steps if re.search(r"(?m)^        run: \|", s)
+        )
+        assert "python -m venv" in runs, "前提：装 wheel 那一步还在"
+        for needle in ("/tmp/", "5199", "sleep"):
+            assert not re.search(rf"(?m)^\s*[^#]*{re.escape(needle)}", runs), (
+                f"package 的 run 脚本里又出现了 `{needle}`——固定路径 / 固定端口 / 盲等三样都不许回来"
+            )
+
+    def test_the_smoke_step_has_a_step_level_timeout_and_the_job_level_is_unchanged(self):
+        """主语是 **step** 的 `timeout-minutes`（缩进 8）；job 级 60 不动。"""
+        _, _, smoke = self._steps()
+        m = re.search(r"(?m)^        timeout-minutes: (\d+)\s*$", smoke)
+        assert m and int(m.group(1)) == 5, smoke
+        jm = re.search(r"(?m)^    timeout-minutes: (\d+)", _code(_job(CI, self.JOB)))
+        assert jm and int(jm.group(1)) == 60
+
+    def test_failure_logs_are_uploaded_under_a_name_unique_per_leg(self):
+        """`if: failure()` 的 upload-artifact：路径 = workdir，名字带 os 与 python（四条腿互异）。"""
+        block = _job(CI, self.JOB)
+        names = TestHeavyLaneDependencies._artifact_names(block, "upload")
+        assert names == ["package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}"], names
+        upload = [s for s in _steps(block) if "uses: actions/upload-artifact@" in s]
+        assert len(upload) == 1 and re.search(r"(?m)^        if: failure\(\)\s*$", upload[0])
+        assert re.search(
+            r"(?m)^          path: \$\{\{ runner\.temp \}\}/smoke-run/\*\*\s*$", upload[0]
+        )
+        entries = _matrix_include(block)
+        expanded = {
+            names[0]
+            .replace("${{ matrix.os }}", e["os"])
+            .replace("${{ matrix.python }}", e["python"])
+            for e in entries
+        }
+        assert len(expanded) == len(entries) == 4, expanded
+
+    def test_isolation_dirs_are_owned_by_the_script_not_by_the_yml(self):
+        """yml 不再另设 TAVOTTO_DATA_DIR / TAVOTTO_CONFIG_DIR（脚本会覆盖，留着是假隔离）；
+        脚本把它们放在 workdir 下——`package_smoke.child_env` 直接问。"""
+        block = _code(_job(CI, self.JOB))
+        assert "TAVOTTO_DATA_DIR" not in block and "TAVOTTO_CONFIG_DIR" not in block, (
+            "package job 的 yml 又设了 TAVOTTO_*_DIR——脚本会覆盖它，隔离不是它做的"
+        )
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "_package_smoke_probe", ROOT / "scripts" / "ci" / "package_smoke.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        env = mod.child_env(Path("/w/attempt-1/data"), Path("/w/attempt-1/config"))
+        assert env["TAVOTTO_DATA_DIR"] == str(Path("/w/attempt-1/data"))
+        assert env["TAVOTTO_CONFIG_DIR"] == str(Path("/w/attempt-1/config"))
+
+    def test_the_job_shape_and_the_gate_closed_set_are_unchanged(self):
+        """job id、needs、if、四条腿、runs-on 与 Gate 闭集一个都没动。"""
+        block = _job(CI, self.JOB)
+        assert _needs_of(block) == {"frontend"}
+        code = _code(block)
+        assert "github.event_name == 'merge_group'" in code and "'full-ci'" in code
+        assert re.search(r"(?m)^    runs-on: \$\{\{ matrix\.os \}\}\s*$", code)
+        legs = {(e["os"], e["python"]) for e in _matrix_include(block)}
+        assert legs == {
+            ("ubuntu-latest", "3.13"),
+            ("ubuntu-latest", "3.14"),
+            ("macos-latest", "3.13"),
+            ("windows-latest", "3.13"),
+        }, legs
+        gate = _job(CI, "ci-integration-gate")
+        assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
+
+
 class TestPythonLint:
     """Ruff 那一格的形状。它的价值全在「便宜且真的跑」，两头都要钉住。"""
 
