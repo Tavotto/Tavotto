@@ -11,7 +11,8 @@ name: CI
 #                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
 #   full-ci PR      打上 `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套重型
 #                   资格（backend-platforms / package ×3 / 两个真产物冒烟），
-#                   此时 integration gate 真实聚合、不许 deferred。
+#                   此时 integration gate 真实聚合、不许 deferred。cache-seed
+#                   也在这里跑一遍作首验（非门禁；PR 作用域的缓存 main 读不到）。
 #   merge_group     完整合并资格的**唯一常规执行点**。Merge Queue 为
 #                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
 #                   全部快线 + 全部重型资格在它上面真实跑一遍，
@@ -1898,10 +1899,20 @@ jobs:
   # （apt 40s + clippy 87s + test 101s 冷，暖时 12 + 3）；macos·desktop-shell ≈ 4 / 1.5 min；
   # macos·workerd-release ≈ 3 / 2 min；windows·workerd-release ≈ 3 / 2 min（runtime 那 1 分钟暖也省不掉）。
   # 回退：删掉这个 job，四处消费者的 `shared-key` 留着无害（只是回到自动键之外的另一个稳定键）。
+  #
+  # 事件：push main 是**种子**；带 `full-ci` 标签的 PR 上跑的是**首验**，不是种子——PR 作用域
+  # 的缓存 main 读不到（写了也无害，7 天淘汰），但五条腿的每一步（apt 包名、Tauri 依赖、
+  # Windows 上的 runtime 构建、shared-key 的 save）都在 PR 自己的 run 上先跑过一遍，而不是
+  # 第一次执行就落在合进 main 那一刻、只能在 main 上红（「从没跑过的门禁不会保持正确」，
+  # 种子也一样）。显式按事件分支，不写 `!= 'merge_group'` 那种过宽的否定条件；merge_group
+  # 上不跑——候选 ref 上的种子谁也读不到，那正是它要解决的问题。
   # ────────────────────────────────────────────────────────────────
   cache-seed:
     name: cache seed (${{ matrix.os }}, ${{ matrix.rust }})
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     strategy:
       # 一条腿红不许掐掉别的腿：每条腿种的是不同的缓存，互不替代。
       fail-fast: false

@@ -1,9 +1,9 @@
 {
  "kind": "cache_seed_mutations",
  "date": "2026-09-16",
- "tree": "worktree ci-followup-cache，分支 ci/cache-seed-on-main，基线提交 e82a8fe4（ci.yml + 合同测试）",
+ "tree": "worktree ci-followup-cache，分支 ci/cache-seed-on-main，基线提交 e82a8fe4（ci.yml + 合同测试）；S25–S29 在 rebase 到 0f71b5d5 之后、条件改成 push || (pull_request && full-ci) 的提交上跑",
  "how": "每条：树干净且基线绿 → 断言目标串恰好出现 1 次 → 写入 → 清 __pycache__ + PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider → pytest tests/test_merge_queue_workflows.py 退出码判 → git checkout -- 还原 → 核 md5 与变异前一致；跑完 git status 干净",
- "verdict": "24/24 KILLED",
+ "verdict": "29/29 KILLED",
  "mutations": [
   {
    "id": "S01 种子的 if 改成 pull_request",
@@ -212,6 +212,51 @@
     "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key",
     "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses",
     "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S25 种子条件退回只有 push",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S26 种子条件掉了 push（只剩 full-ci PR）",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S27 种子条件加上 merge_group",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S28 种子条件写成过宽的否定式",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S29 种子条件掉了 full-ci 标签（每个 PR 都跑）",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input"
    ]
   }
  ]

@@ -62,6 +62,6 @@ CI01–04 是可并行工作流，不要求串行完成。`ci_hosted_ready` 达�
 - `runner_pool_ready`: **not_run**——没有 VM / runner / 部署权限。
 
 **七条拍板（2026-09-16，用户已逐条拍板，详见 `CI_HANDOFF.md` §13）**：① 合并顺序 #372 → #378 → 本 PR——已授权，执行中；② lab 暴露——迁到私有 ci-infra 仓库（`ADMIN_HANDOFF_RUNNER_POOL.md` F 组，待管理员）；
-③ 缓存种子 job——做，栈合入后开 PR；④ 产品侧 getfqdn——现在修产品，单开分支；⑤ CI01 事件表七条——修 ①③⑥、接受 ②④⑤⑦；⑥ 账户并发上限——已查明 free 计划 20 个并发 job / macOS 5，改推送习惯（`docs/ci/parallel-prs.md`）；⑦ 闲置 runner `tavotto-ci-01-2/-3/-4`——注销，不建池。
+③ 缓存种子 job——做，**PR 已开**（分支 `ci/cache-seed-on-main`，CI02 §4.1「已实施」）；④ 产品侧 getfqdn——现在修产品，单开分支；⑤ CI01 事件表七条——修 ①③⑥、接受 ②④⑤⑦；⑥ 账户并发上限——已查明 free 计划 20 个并发 job / macOS 5，改推送习惯（`docs/ci/parallel-prs.md`）；⑦ 闲置 runner `tavotto-ci-01-2/-3/-4`——注销，不建池。
 
 四种状态：**源测试通过**（各阶段验证表全 0）/ **服务器部署**（无）/ **代码合并**（无）/ **产品发布**（无）。

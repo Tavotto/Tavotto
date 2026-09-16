@@ -117,7 +117,9 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   windows·`workerd-release`——各做「restore → 让消费者的准备步骤**真跑一次** → save」：pnpm store 每个 os 一次（`pnpm install
   --frozen-lockfile`）、CPython 归档挂在 `workerd-release` 两条腿（`build_worker_runtime.py --clean` 整跑，脚本没有「只下载」开关且
   产品脚本不动）、rust-cache 跑消费者那一组 cargo 命令（dev = `clippy --all-targets` + `test`；release = `build --release`）。
-  **它不是门禁**：不在任何 Gate 的 needs / --required 里，红了不影响合并，也不加 `continue-on-error`（红着可见）。
+  **它不是门禁**：不在任何 Gate 的 needs / --required 里，红了不影响合并，也不加 `continue-on-error`（红着可见）。事件条件
+  `push || (pull_request && full-ci)`：push main 是种子；带 `full-ci` 的 PR 上跑的是**首验**（PR 作用域的缓存 main 读不到），让五条腿
+  的每一步先在 PR 自己的 run 上执行过，而不是第一次执行就落在合入 main 那一刻；merge_group 上不跑。
   **key 对齐是成败所在**：pnpm / CPython 的 key 只含 os / arch / 锁 hash，种子与消费者写逐字相同的 with 块即可；rust-cache 的
   自动键含 **job id**，所以四处消费者都加了 `shared-key`（代替 job id 那一段；os / arch / rustc / `CARGO*` `RUST*` 环境变量 /
   Cargo.toml + Cargo.lock 仍由 action 并入），同一把键只对应**一种** cargo profile（dev 与 release 的 target/ 不是一份，

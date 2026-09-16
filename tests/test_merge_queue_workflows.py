@@ -1976,14 +1976,14 @@ class TestLandingAudit:
         """push main 上恰好两个 job：落地审计 + cache-seed；落地审计只在 push 上跑、且真的轻
         ——不装科学栈、不打包、不跑冒烟。判据的主语是「条件里含 `== 'push'` 的 job 集合」，
         对每个 job 都读（单行 if 与折叠 `if: >-` 都认），不是只看那两个自己。"""
-        on_push = {
-            job_id
-            for job_id in TestHeavyLaneDependencies._job_ids()
-            if "== 'push'" in _condition_of(_job(CI, job_id))
-        }
+        on_push = set()
+        for job_id in TestHeavyLaneDependencies._job_ids():
+            cond = _condition_of(_job(CI, job_id))
+            if cond is None or "== 'push'" in cond or "!= 'pull_request'" in cond:
+                on_push.add(job_id)
         assert on_push == self.PUSH_MAIN_JOBS, sorted(on_push)
-        for job_id in sorted(self.PUSH_MAIN_JOBS):
-            assert _if_of(_job(CI, job_id)) == "github.event_name == 'push'", job_id
+        assert _if_of(_job(CI, "main-landing-audit")) == "github.event_name == 'push'"
+        assert _condition_of(_job(CI, "cache-seed")) == TestCacheSeed.CONDITION
         block = _code(_job(CI, "main-landing-audit"))
         # ADR 0043：画布不再入库，指纹对比退休；换成「发行生成物不许进索引」
         assert "build_mcp_widget.py --check" not in block, "画布不入库了，这条 --check 会恒红"
@@ -2046,6 +2046,14 @@ class TestCacheSeed:
     """
 
     SEED = "cache-seed"
+    #: 种子的事件条件——**恰好**这一句：push main 是种子；带 `full-ci` 的 PR 上是首验（PR 作用域
+    #: 的缓存 main 读不到，但五条腿的每一步先在 PR 自己的 run 上跑过，第一次执行不落在合入那一刻）。
+    #: 不含 merge_group（候选 ref 上的种子谁也读不到）；不是 FAST_LANE_CONDITION，也不是重型档的
+    #: 条件——它既不是快线也不是重型，那两组枚举都不该把它数进去。
+    CONDITION = (
+        "github.event_name == 'push' || (github.event_name == 'pull_request' "
+        "&& contains(github.event.pull_request.labels.*.name, 'full-ci'))"
+    )
     #: 每把 shared-key 对应**一种** profile：dev = workerd / desktop-shell 两个 job 的 clippy + test，
     #: release = 两条冒烟腿的 build --release。同键不同 profile 的 target/ 会互相覆盖。
     PROFILES = {"workerd": "dev", "desktop-shell": "dev", "workerd-release": "release"}
@@ -2071,14 +2079,20 @@ class TestCacheSeed:
         assert len(found) >= 4, found
         return found
 
-    def test_the_seed_runs_only_on_push_and_is_not_a_gate_input(self):
-        """与 landing audit 同事件；不在两个 Gate 的 needs / --required 闭集里（不是门禁）；
+    def test_the_seed_runs_on_push_and_full_ci_prs_only_and_is_not_a_gate_input(self):
+        """条件恰好是 push ∪ (pull_request ∧ full-ci)（字符串相等，折叠块并成一行比）；不在两个
+        Gate 的 needs / --required 闭集里（不是门禁）；不在快线枚举也不在重型枚举里（`HEAVY` /
+        `HEAVY_CONSUMERS` / fast gate needs 三处都读不到它，那两组按枚举跑的用例不会误判它）；
         没有 needs（不等任何 job）；没有 continue-on-error（红了就红着可见）；有超时。"""
         block = _code(_job(CI, self.SEED))
-        assert _if_of(block) == "github.event_name == 'push'"
+        assert _condition_of(block) == self.CONDITION, _condition_of(block)
+        assert "!= '" not in self.CONDITION and "merge_group" not in self.CONDITION
         for gate in ("ci-fast-gate", "ci-integration-gate"):
             g = _job(CI, gate)
             assert self.SEED not in _needs_of(g) | _required_of(g), f"{gate} 把种子当成了输入"
+        assert self.SEED not in TestGates.HEAVY and self.SEED not in _needs_of(
+            _job(CI, "ci-fast-gate")
+        )
         assert not re.search(r"(?m)^    needs:", block), "种子不该等任何 job"
         assert "continue-on-error" not in block, "种子红了要看得见，不许 continue-on-error"
         assert re.search(r"(?m)^    timeout-minutes: \d+$", block), "种子没有超时上限"

@@ -200,14 +200,16 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 | `shared-key` 的取值 | `workerd-${{ runner.os }}` / `src-tauri-${{ matrix.os }}` | `workerd` / `desktop-shell` / `workerd-release`（**不含 os**） | os / arch 本来就在自动键里（`config.ts`：`key += -${runnerOS}-${runnerArch}`），写进 shared-key 是重复；名字改成 **(workspace, profile)**：dev 与 release 的 target/ 不是一份，`windows-exe-smoke` / `macos-app-smoke` 的 `cargo build --release` 与 `workerd` job 的 clippy + test 不能同键 |
 | `build_worker_runtime.py --download-only` | 要么加开关、要么整跑 | **整跑**（`--clean`，47–76s） | 产品脚本不动（lead 纪律） |
 
+事件条件是 `push || (pull_request && full-ci)`：push main 上是**种子**；本 PR 自己带 `full-ci`，五条腿先在 PR 的 run 上跑一遍作**首验**（PR 作用域的缓存 main 读不到、
+7 天淘汰，写了无害）——第一次执行不落在合进 main 那一刻；merge_group 上不跑（候选 ref 上的种子谁也读不到）。
 消费者侧只加 `shared-key`（四处），`desktop-shell` 那条冗余的 `key: ${{ matrix.os }}` 一并收掉，**命令一条没动**。种子腿跑的就是消费者那一组命令
 （dev：`cargo clippy --all-targets -- -D warnings` + `cargo test`；release：`cargo build --release`）；pnpm store 每个 os 一次（`pnpm install --frozen-lockfile`）；
 CPython 归档挂在两条 `workerd-release` 腿（`actions/cache` 的 `path` / `key` 与消费者**逐字相同**）。种子**不是门禁**：不在任何 Gate 的 needs / --required 里，
 不加 `continue-on-error`。`.github/AGENTS.md` 的「push main = 轻量落地审计」改成「落地审计 + 缓存种子（非门禁）」。
 
-合同：`tests/test_merge_queue_workflows.py::TestCacheSeed` 六条（非门禁 / (shared-key, workspace, os) 集合相等 / 同键同 profile 同命令 / cpython `path`·`key` 字符串相等 + os 集合 /
+合同：`tests/test_merge_queue_workflows.py::TestCacheSeed` 六条（条件恰好是 push ∪ (pull_request ∧ full-ci) 且非门禁 / (shared-key, workspace, os) 集合相等 / 同键同 profile 同命令 / cpython `path`·`key` 字符串相等 + os 集合 /
 pnpm os 集合 / Linux apt 步同形）+ `TestLandingAudit`（条件含 push 的 job 集合 == {landing audit, cache-seed}，没有 `if` 的 job 也算在 push 上）+ 本节 §6 三张枚举各加一条、
-rust-cache 从「不许 shared-key」翻成「必须 shared-key」。变异反证 [`evidence/ci02/cache_seed_mutations.json`](evidence/ci02/cache_seed_mutations.json)：**24/24 KILLED**。
+rust-cache 从「不许 shared-key」翻成「必须 shared-key」。变异反证 [`evidence/ci02/cache_seed_mutations.json`](evidence/ci02/cache_seed_mutations.json)：**29/29 KILLED**（S25–S29 是事件条件那一组：退回只有 push / 掉 push / 加 merge_group / 否定式 / 掉 full-ci 标签）。
 
 **验法（合入后）**：第一次 push main 的 `cache seed (…)` 五条腿跑完才有种子，**之前入队的候选仍冷**（它们的 run 早已开始）。看**下一个** merge_group run 的四个 job 日志：
 
