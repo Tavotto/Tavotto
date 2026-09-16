@@ -2256,6 +2256,18 @@ _KNOWN_EVENTS = frozenset(
 
 _ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
 
+#: 派发到私有仓库 ci-infra 的命令开头（F 组，2026-09-16）——与
+#: tests/test_release_workflow_contract.py 的 `_DISPATCH_CMD` 同一串；那边钉「谁派发、
+#: SHA 从哪来」，这边只钉「派发方的事件也在可信集合里」。
+_DISPATCH_CMD = "gh workflow run lab-qualification.yml -R Tavotto/ci-infra"
+
+#: 并行期（F-3 已合、PR B 未合）公开仓库里仍直接 `uses` reusable 的 workflow。
+#: PR B 把 `release.yml::lab_release_gate` 改成派发 + 回调之后改成 `frozenset()`，
+#: 同时把 `release.yml` 加进 `_DISPATCHING_WORKFLOWS`——F-8 注销公开仓库 runner 的前提
+#: 就是这两个集合一个变空、一个变全（ADMIN_HANDOFF_RUNNER_POOL.md F.3 / F.4）。
+_REUSABLE_CALLING_WORKFLOWS = frozenset({"release.yml"})
+_DISPATCHING_WORKFLOWS = frozenset({"lab-ci.yml"})
+
 
 def _top_level_block(text: str, key: str) -> str:
     """顶格键 `key:` 之下所有缩进行（注释已剥）；切不出来当场抛。"""
@@ -2415,9 +2427,20 @@ class TestRunnerTrustZones:
             )
 
     def test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers(self):
-        """`tavotto-lab` 只出现在 `_lab-qualification.yml`（只可 `workflow_call`）；调用它的只有
-        `lab-ci.yml` 与 `release.yml`，两者的事件 ⊆ {push, schedule, workflow_dispatch}
-        （SHA 的可信判定另有 test_release_workflow_contract 看住）。"""
+        """`tavotto-lab` 只出现在 `_lab-qualification.yml`（只可 `workflow_call`）。
+
+        通向它的公开仓库 workflow 分两类，各是一个**集合相等**的判据：
+
+        * 直接 `uses` 它的 == `_REUSABLE_CALLING_WORKFLOWS`——并行期只有 `release.yml`
+          （F 组：实验室 runner 已迁到私有仓库 ci-infra，公开仓库里的 `uses` 只会永远排队；
+          PR B 之后这个集合是空集，F-8 才能注销公开仓库上的 runner）；
+        * 用 `gh workflow run … -R Tavotto/ci-infra` **派发**的 == `_DISPATCHING_WORKFLOWS`
+          ——`lab-ci.yml`；PR B 之后加 `release.yml`。
+
+        两类的事件都 ⊆ {push, schedule, workflow_dispatch}：派发方决定了实验室 runner
+        会 checkout 哪个 SHA，与直接调用方同一信任等级（SHA 本身的可信判定另有
+        test_release_workflow_contract 看住）。
+        """
         texts = self._texts()
         users = {n for n, t in texts.items() if "tavotto-lab" in _code(t)}
         assert users == {"_lab-qualification.yml"}, (
@@ -2431,8 +2454,15 @@ class TestRunnerTrustZones:
             for n, t in texts.items()
             if "_lab-qualification.yml" in _code(t) and n != "_lab-qualification.yml"
         }
-        assert callers == {"lab-ci.yml", "release.yml"}, f"调用方集合变了：{sorted(callers)}"
-        for name in sorted(callers):
+        assert callers == _REUSABLE_CALLING_WORKFLOWS, (
+            f"直接 uses reusable 的 workflow 集合变了：{sorted(callers)}"
+            f"（期望 {sorted(_REUSABLE_CALLING_WORKFLOWS)}；PR B 之后期望空集）"
+        )
+        dispatchers = {n for n, t in texts.items() if _DISPATCH_CMD in _code(t)}
+        assert dispatchers == _DISPATCHING_WORKFLOWS, (
+            f"派发 ci-infra 的 workflow 集合变了：{sorted(dispatchers)}（期望 {sorted(_DISPATCHING_WORKFLOWS)}）"
+        )
+        for name in sorted(callers | dispatchers):
             events = _events_of(texts[name])
             assert events <= {"push", "schedule", "workflow_dispatch"}, (
                 f"{name} 监听了 {sorted(events - {'push', 'schedule', 'workflow_dispatch'})}——"

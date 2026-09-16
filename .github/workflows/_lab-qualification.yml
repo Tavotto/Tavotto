@@ -20,6 +20,25 @@ name: Lab Qualification (reusable)
 # 这个 workflow 跑在 self-hosted 的实验室 runner 上，且**不需要任何写权限**：
 # 长期 runner 拿不到 id-token / contents:write，也就拿不到 PyPI 与 Release
 # 的任何签发能力。
+#
+# ─────────────────── 调用方可以是私有仓库 ci-infra（F 组，2026-09-16）───────────────────
+# 实验室 runner 迁到私有仓库 `Tavotto/ci-infra` 之后（docs/implementation/ci-foundation/
+# ADMIN_HANDOFF_RUNNER_POOL.md F 组），调用方变成那边的 `lab-qualification.yml`：
+# `uses: Tavotto/Tavotto/.github/workflows/_lab-qualification.yml@main`。**本文件仍是资格
+# 验证的唯一定义**——被跨仓库调用时它的 job 在调用方上下文里跑，所以两处「默认取调用方
+# 仓库」的地方必须显式钉回 Tavotto/Tavotto，否则 checkout 会去拉 ci-infra、
+# download-artifact 会去 ci-infra 的 run 里找 `dist`：
+#   * `actions/checkout` 显式 `repository: Tavotto/Tavotto`（`ref` 仍是 `inputs.sha`）；
+#   * 发行档 `download-artifact` 显式 `repository` / `run-id` / `github-token`——
+#     `run-id` 取 `inputs.source_run_id`（公开仓库那次 release run 的 id），
+#     `github-token` 取调用方经 `secrets:` 传进来的 `TAVOTTO_PUBLIC_TOKEN`。
+# 同仓库调用（release.yml 的 `lab_release_gate`，并行期）时 `source_run_id` 为空、secret
+# 不存在：`run-id` 落回 `github.run_id`，`github-token` 是空串——download-artifact 只在
+# token **非空**时才切到跨仓库的 REST 路径（源码 `if (inputs.token)`），空串走的仍是今天
+# 那条同 run 内部路径，行为逐字不变。**这里刻意不写 `|| github.token`**：非空 token 会把
+# 同仓库调用也切到 REST 路径，而本文件的 GITHUB_TOKEN 只有 `contents: read`、没有
+# `actions: read`，发行档会在下一次发版时 403。
+# 并发槽名含 `inputs.mode`：ci-infra 一个 workflow 服务四档，release 与 nightly 不能共槽。
 
 on:
   workflow_call:
@@ -45,6 +64,19 @@ on:
         required: false
         default: false
         type: boolean
+      source_run_id:
+        description: >-
+          发行档取 `dist` 的那次公开仓库 run 的 id（跨仓库调用时必填；
+          同仓库调用留空，落回本 run）。
+        required: false
+        default: ""
+        type: string
+    secrets:
+      TAVOTTO_PUBLIC_TOKEN:
+        description: >-
+          跨仓库取 `dist` artifact 用的 token（ci-infra 的 secret，经调用方传入；
+          同仓库调用不需要，留空即走本 run 的内部路径）。
+        required: false
 
 permissions:
   contents: read
@@ -71,7 +103,12 @@ jobs:
       # 两条链天然排队；runner 端另有 flock 作第二道保险
       # （见 scripts/ci/bootstrap_lab_runner.sh）。槽在这里只负责
       # **同一条链内部去重**——同一条链上新的一次本来就该取代旧的待定。
-      group: lab-qualification-${{ github.workflow }}
+      #
+      # 槽名还带 `inputs.mode`（F 组）：ci-infra 那边**一个** workflow 服务
+      # main / nightly / weekly / release 四档，`github.workflow` 对它们是同一个
+      # 名字——不带档位的话 release 与 nightly 就共槽了，正是上面那种「日常
+      # run 把待定的发布门禁挤掉」。同一档位内部仍是去重。
+      group: lab-qualification-${{ github.workflow }}-${{ inputs.mode }}
       cancel-in-progress: false
     env:
       LAB_MODE: ${{ inputs.mode }}
@@ -87,6 +124,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # 显式钉公开仓库：被 ci-infra 跨仓库调用时默认 repository 是调用方。
+          repository: Tavotto/Tavotto
           # 只认 trust-check 验过的那个 SHA。**不要**改回分支名。
           ref: ${{ inputs.sha }}
           clean: true
@@ -176,7 +215,14 @@ jobs:
       - name: 取回候选产物（发行档）
         if: inputs.use_prebuilt_dist
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { name: dist, path: dist }
+        with:
+          name: dist
+          path: dist
+          # 三个字段只在 github-token **非空**时被读（跨仓库调用）；同仓库调用时
+          # secret 不存在、token 是空串，走的仍是本 run 的内部路径——见抬头注释。
+          repository: Tavotto/Tavotto
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
 
       - name: 认领候选 wheel（发行档）
         if: inputs.use_prebuilt_dist

@@ -198,8 +198,13 @@ class _Workflow:
         ——而上面那条解析器自检当场把它逮住了。这就是自检存在的理由：
         一个安静地什么都没找到的判据，会让整个模块变成假绿。
         """
+        return [r for job in self.jobs for r in self.job_runs(job)]
+
+    def job_runs(self, job: str) -> list[str]:
+        """**一个 job** 的全部 `run:` 正文——「哪个 job 在派发」这种判据要按 job 问，
+        整文件的 `runs()` 会把别的 job 的命令也算进来。"""
         out = []
-        for _, step in self.all_steps():
+        for step in self.steps(job):
             for m in re.finditer(r"^([ \t]*)run:[ \t]*(\||>|>-|\|-)?[ \t]*(\S.*)?$", step, re.M):
                 indent = len(m.group(1))
                 if m.group(3) and not m.group(2):
@@ -574,6 +579,81 @@ def test_a_repo_variable_cannot_weaken_the_release_gate():
     )
 
 
+#: 派发到私有仓库 ci-infra 的那条命令的开头——**派发方**的判据主语（F 组，2026-09-16）。
+#: 命令、目标仓库、workflow 文件名三段一起钉：任何一段变了都不再算「派发方」，
+#: 下面的集合当场缩水变红，而不是安静地把一个改了名的 job 放过去。
+_DISPATCH_CMD = "gh workflow run lab-qualification.yml -R Tavotto/ci-infra"
+#: 公开仓库里直接 `uses` reusable 的写法——**调用方**的判据主语。
+_REUSABLE_USES = "uses: ./.github/workflows/_lab-qualification.yml"
+#: 被验的代码永远来自这个仓库——reusable 被 ci-infra 跨仓库调用时默认 repository 是调用方。
+_PUBLIC_REPO = "Tavotto/Tavotto"
+#: 并行期（F-3 已合、F-6 PR B 未合）公开仓库里还在 `uses` reusable 的 (workflow, job)。
+#: PR B 把 `release.yml::lab_release_gate` 改成派发 + 回调之后这里改成空集，
+#: `_DISPATCHERS` 加上 `("release.yml", "dispatch_lab")`——两张表一起改，别只改一张。
+_REUSABLE_CALLERS = {("release.yml", "lab_release_gate")}
+_DISPATCHERS = {("lab-ci.yml", "dispatch")}
+
+
+def _callers() -> dict[tuple[str, str], _Workflow]:
+    """公开仓库里 `uses` reusable 的 (workflow, job)。`uses:` 是 job 级键，注释已剥。"""
+    out: dict[tuple[str, str], _Workflow] = {}
+    for p in sorted(WF.glob("*.yml")):
+        if p.name == REUSABLE.name:
+            continue
+        wf = _wf(p)
+        for job, body in wf.jobs.items():
+            if re.search(rf"(?m)^\s+{re.escape(_REUSABLE_USES)}\s*$", body):
+                out[(p.name, job)] = wf
+    return out
+
+
+def _dispatchers() -> dict[tuple[str, str], _Workflow]:
+    """公开仓库里派发 ci-infra 的 (workflow, job)：**那个 job 的** `run:` 正文里有 `_DISPATCH_CMD`。"""
+    out: dict[tuple[str, str], _Workflow] = {}
+    for p in sorted(WF.glob("*.yml")):
+        wf = _wf(p)
+        for job in wf.jobs:
+            if any(_DISPATCH_CMD in run for run in wf.job_runs(job)):
+                out[(p.name, job)] = wf
+    return out
+
+
+_NEEDS_SHA = re.compile(r"\$\{\{\s*needs\.([\w-]+)\.outputs\.sha\s*\}\}")
+
+
+def _sha_source_job(wf: _Workflow, job: str) -> str:
+    """调用方 / 派发方的 SHA 来自哪个 job：
+
+    * 调用方：`with:` 里 `sha: ${{ needs.X.outputs.sha }}`；
+    * 派发方：命令里 `-f sha=<值>`，值要么直接是那个表达式，要么是 `"$VAR"`，而 VAR
+      在**同一个 job** 的 `env:` 里等于那个表达式（多一层间接就抛——别让判据去猜）。
+    """
+    body = wf.jobs[job]
+    direct = re.search(r"(?m)^\s*sha:\s*(\$\{\{.*?\}\})\s*$", body)
+    if direct:
+        m = _NEEDS_SHA.fullmatch(direct.group(1).strip())
+        assert m, f"{wf.path.name}::{job} 的 sha 不是 needs.<job>.outputs.sha：{direct.group(1)!r}"
+        return m.group(1)
+    runs = "\n".join(wf.job_runs(job))
+    arg = re.search(r"-f\s+sha=(\S+)", runs)
+    assert arg, (
+        f"{wf.path.name}::{job} 既没有 `sha:`，命令里也没有 `-f sha=`——它把什么交给了实验室？"
+    )
+    value = arg.group(1).strip("\"'")
+    m = _NEEDS_SHA.fullmatch(value)
+    if m:
+        return m.group(1)
+    var = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", value)
+    assert var, f"{wf.path.name}::{job} 的 -f sha= 既不是 needs 表达式也不是一个环境变量：{value!r}"
+    env = re.search(rf"(?m)^\s+{re.escape(var.group(1))}:\s*(\$\{{\{{.*?\}}\}})\s*$", body)
+    assert env, f"{wf.path.name}::{job} 的 -f sha=${var.group(1)}，而 job 的 env 里没有这个变量"
+    m = _NEEDS_SHA.fullmatch(env.group(1).strip())
+    assert m, (
+        f"{wf.path.name}::{job} 的 {var.group(1)} 不是 needs.<job>.outputs.sha：{env.group(1)!r}"
+    )
+    return m.group(1)
+
+
 def test_every_caller_gates_the_sha_through_a_trust_job():
     """**可复用资格 workflow 的安全性由调用方兜底——那就必须有东西看着调用方。**
 
@@ -582,33 +662,25 @@ def test_every_caller_gates_the_sha_through_a_trust_job():
     「cache poisoning via execution of untrusted code」正是这么读的，
     而它读得没错：**保证不在这个文件里**。
 
-    保证在调用方：两个 caller 都先跑一个 trust job，拒绝既不是 `origin/main`
-    祖先、又没有 tag 指向的 commit。问题是从前没有任何东西要求**下一个**
-    caller 也这么做——加一个直接传 `inputs.ref` 的调用方，长期 runner 就
-    开始执行未经 review 的代码，而且没有一条用例会红。
+    保证在调用方：先跑一个 trust job，拒绝既不是 `origin/main` 祖先、又没有
+    tag 指向的 commit。问题是从前没有任何东西要求**下一个** caller 也这么做
+    ——加一个直接传 `inputs.ref` 的调用方，长期 runner 就开始执行未经 review
+    的代码，而且没有一条用例会红。
 
-    这条用例把那份口头约定变成结构约束：**每个** caller 的 `sha:` 必须来自
-    某个 job 的输出，且那个 job 里真的有 ancestry 判断。
+    主语（F 组起）是**调用方 ∪ 派发方**：直接 `uses` reusable 的 job，和用
+    `gh workflow run … -R Tavotto/ci-infra` 把 SHA 交给私有仓库的 job——后者
+    同样决定了实验室 runner 会 checkout 哪个 commit。每一个的 sha 都必须来自
+    某个 job 的输出，且那个 job 里真的有 ancestry 判断。ci-infra 自己那侧的
+    trust-check 归 ci-infra 的合同测试（ADMIN_HANDOFF F.3）。
     """
-    callers = [
-        p
-        for p in WF.glob("*.yml")
-        if "_lab-qualification.yml" in p.read_text(encoding="utf-8")
-        and p.name != "_lab-qualification.yml"
-    ]
-    assert callers, "没找到任何调用方——这条用例本身失效了"
-    for path in callers:
-        wf = _wf(path)
-        job = next((n for n, b in wf.jobs.items() if "_lab-qualification.yml" in b), None)
-        assert job, f"{path.name}: 找不到调用 job"
-        m = re.search(r"^\s*sha:\s*\$\{\{\s*needs\.([\w-]+)\.outputs\.sha", wf.jobs[job], re.M)
-        assert m, (
-            f"{path.name}::{job} 的 sha 不是来自某个 job 的输出——"
-            "常驻 runner 会执行一个没人验过的 commit"
-        )
-        trust = wf.jobs.get(m.group(1))
+    parties = {**_callers(), **_dispatchers()}
+    assert parties, "既没有调用方也没有派发方——这条用例本身失效了"
+    for (name, job), wf in sorted(parties.items()):
+        src = _sha_source_job(wf, job)
+        trust = wf.jobs.get(src)
         assert trust and "--is-ancestor" in trust, (
-            f"{path.name}: sha 来自 {m.group(1)}，但那个 job 里没有 ancestry 判断"
+            f"{name}::{job} 的 sha 来自 {src}，但那个 job 里没有 ancestry 判断——"
+            "常驻 runner 会执行一个没人验过的 commit"
         )
 
 
@@ -621,20 +693,27 @@ def test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run():
     后面，这时一次 push to main 或定时任务进来，**日常 run 把待定的发布
     门禁挤掉，发版当场中止**，而且看起来像「被取消了」，没有原因。
 
+    槽名要区分两维（F 组起）：`github.workflow`——同仓库两条调用链各排各的；
+    `inputs.mode`——ci-infra 那边**一个** workflow 服务四档，`github.workflow`
+    对它们是同一个名字，不带档位 release 与 nightly 就共槽了。
+
     另一侧同样要守：`lab-ci.yml` 顶层**不许**再声明同名的固定组。
     workflow 级与它自己调用的 job 级申请同一个槽 = run 在等自己，
     表现是 8 秒失败、runner_name 为 null、零步骤、日志空白（#66 撞过）。
 
     机器独占不由这个槽负责：带 `tavotto-lab` 标签的 runner 只有一台，
-    runner 端另有 flock。槽只负责同一条链内部去重。
+    runner 端另有 flock。槽只负责同一条链、同一档位内部去重。
     """
-    qual = REUSABLE.read_text(encoding="utf-8")
-    m = re.search(r"^\s*group:\s*(.+)$", qual, re.M)
-    assert m, "可复用资格定义里读不出 concurrency group"
-    group = m.group(1).strip()
+    qual = _strip_comments(REUSABLE.read_text(encoding="utf-8"))
+    groups = re.findall(r"^\s*group:\s*(.+)$", qual, re.M)
+    assert len(groups) == 1, f"可复用资格定义里 concurrency group 应恰好一处，读到 {groups}"
+    group = groups[0].strip()
     assert "github.workflow" in group, (
         f"槽名 {group!r} 不区分调用方——发布门禁会和日常 lab run 抢同一个槽，"
         "排队中的那个会被后来的挤掉"
+    )
+    assert "inputs.mode" in group, (
+        f"槽名 {group!r} 不区分档位——ci-infra 一个 workflow 服务四档，release 会和 nightly 共槽"
     )
 
     # 调用方顶层不许再有固定的同名组（那会让 run 等自己）
@@ -649,17 +728,33 @@ def test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run():
 
 
 def test_qualification_is_defined_exactly_once():
-    """`lab-ci.yml` 与 `release.yml` 调的是**同一个**可复用 workflow。
+    """资格验证的步骤只有 `_lab-qualification.yml` 一份；谁执行它按两张表点名。
 
     从前两边各有一份手抄的 shell。#61 修一个 bug 必须同时改两处，
     而两处的差别实测只有「`$LAB_MODE` vs 字面量 release」和一处换行
     ——它们本来就是同一段逻辑，只是被抄了两遍。
+
+    F 组（2026-09-16）起实验室 runner 在私有仓库 ci-infra 上，公开仓库里：
+
+    * **调用方集合**（直接 `uses` reusable）== `_REUSABLE_CALLERS`——并行期只剩
+      `release.yml::lab_release_gate`；PR B 之后是空集；
+    * **派发方集合**（`gh workflow run lab-qualification.yml -R Tavotto/ci-infra`）
+      == `_DISPATCHERS`——`lab-ci.yml::dispatch`；PR B 加 `release.yml::dispatch_lab`。
+
+    判的是**集合相等**，不是「有没有」：多一个 `uses`（有人把派发改回直接调用，
+    runner 不在公开仓库上会永远排队）或少一个派发（lab 没人跑）都红。
     """
     assert REUSABLE.is_file()
-    for caller, job in ((LAB, "qualify"), (RELEASE, "lab_release_gate")):
-        body = _wf(caller).jobs[job]
-        assert "_lab-qualification.yml" in body, f"{caller.name}::{job} 没有走那份唯一定义"
-        assert not re.search(r"^\s+steps:", body, re.M), f"{caller.name}::{job} 还带着自己的步骤"
+    callers = _callers()
+    dispatchers = _dispatchers()
+    assert set(callers) == _REUSABLE_CALLERS, (
+        f"公开仓库里 uses reusable 的 job 集合变了：{sorted(callers)}（期望 {sorted(_REUSABLE_CALLERS)}）"
+    )
+    assert set(dispatchers) == _DISPATCHERS, (
+        f"派发 ci-infra 的 job 集合变了：{sorted(dispatchers)}（期望 {sorted(_DISPATCHERS)}）"
+    )
+    for (name, job), wf in callers.items():
+        assert not re.search(r"^\s+steps:", wf.jobs[job], re.M), f"{name}::{job} 还带着自己的步骤"
 
     # 那段逻辑不许在别处再出现一次
     for p in (LAB, RELEASE):
@@ -668,22 +763,111 @@ def test_qualification_is_defined_exactly_once():
         assert "summarize.py" not in text, f"{p.name}: 又抄了一份汇总"
 
 
-def test_the_reusable_workflow_needs_no_write_permission():
-    """长期 runner 拿不到任何签发能力。"""
-    text = _strip_comments(REUSABLE.read_text(encoding="utf-8"))
-    head = text.split("\njobs:")[0]
-    assert re.search(r"^permissions:\s*\n\s+contents:\s*read\s*$", head, re.M)
-    assert not re.search(r":\s*write\s*$", text, re.M), "实验室 job 不该有写权限"
+def _reusable_step(needle: str) -> str:
+    steps = [s for s in _wf(REUSABLE).steps("qualify") if needle in s]
+    assert len(steps) == 1, f"reusable 里含 {needle!r} 的步骤应恰好一步，实际 {len(steps)}"
+    return steps[0]
+
+
+def test_the_reusable_pins_the_public_repository_for_cross_repository_callers():
+    """**被 ci-infra 跨仓库调用时，checkout 与 download-artifact 都要显式钉回 Tavotto/Tavotto。**
+
+    reusable 的 job 在**调用方**上下文里跑：`actions/checkout` 与 `download-artifact`
+    的 `repository` 默认都是 `github.repository`——ci-infra 调它时那是 ci-infra，
+    checkout 会去拉一个没有产品代码的仓库、发行档会去 ci-infra 的 run 里找 `dist`。
+
+    判据是三个 `with:` 字段的**字符串相等**（ADMIN_HANDOFF F.3），不是「含不含某个词」：
+
+    * `run-id: ${{ inputs.source_run_id || github.run_id }}`——跨仓库时取公开仓库那次
+      release run，同仓库时落回本 run；
+    * `github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}`——**刻意没有 `|| github.token`**。
+      download-artifact@v4 只在 token **非空**时切到跨仓库的 REST 路径（源码
+      `if (inputs.token)`），空串走今天那条同 run 内部路径；而本文件的 GITHUB_TOKEN 只有
+      `contents: read`、没有 `actions: read`——兜到它头上，同仓库调用的发行档会在下一次
+      发版时 403，且只在那时发作。
+    """
+    co = _reusable_step("actions/checkout@")
+    w = _Workflow.with_scalars(co)
+    assert w.get("repository") == _PUBLIC_REPO, f"checkout 没钉公开仓库：{w}"
+    assert w.get("ref") == "${{ inputs.sha }}", f"checkout 的 ref 不再是 inputs.sha：{w}"
+
+    dl = _reusable_step("actions/download-artifact@")
+    w = _Workflow.with_scalars(dl)
+    assert w.get("name") == "dist", f"发行档取的不是 dist：{w}"
+    assert w.get("repository") == _PUBLIC_REPO, f"download-artifact 没钉公开仓库：{w}"
+    assert w.get("run-id") == "${{ inputs.source_run_id || github.run_id }}", (
+        f"run-id 的表达式变了：{w.get('run-id')!r}"
+    )
+    assert w.get("github-token") == "${{ secrets.TAVOTTO_PUBLIC_TOKEN }}", (
+        f"github-token 的表达式变了：{w.get('github-token')!r}——"
+        "非空 token 会把同仓库调用也切到需要 actions: read 的 REST 路径"
+    )
+
+
+def test_the_reusable_declares_the_cross_repository_input_and_secret_as_optional():
+    """`source_run_id` 与 `TAVOTTO_PUBLIC_TOKEN` 都是 **required: false**：同仓库调用
+    （release.yml 并行期）一个都不传，行为逐字不变；ci-infra 调用时经 `secrets:` 传入。
+    actionlint 会把 reusable 里用到而没声明的 `secrets.X` 报红，这里钉的是**可选**这一位。"""
+    head = _strip_comments(REUSABLE.read_text(encoding="utf-8")).split("\njobs:")[0]
+    inp = re.search(r"(?ms)^      source_run_id:\s*\n(.*?)(?=^      \w|^    \w|\Z)", head)
+    assert inp, "workflow_call 没有 source_run_id 输入"
+    assert re.search(r"^\s+type:\s*string\s*$", inp.group(1), re.M), inp.group(1)
+    assert re.search(r'^\s+default:\s*""\s*$', inp.group(1), re.M), inp.group(1)
+    assert re.search(r"^\s+required:\s*false\s*$", inp.group(1), re.M), inp.group(1)
+
+    sec = re.search(
+        r"(?ms)^    secrets:\s*\n      TAVOTTO_PUBLIC_TOKEN:\s*\n(.*?)(?=^    \w|^\S|\Z)", head
+    )
+    assert sec, "workflow_call 没有声明 secrets.TAVOTTO_PUBLIC_TOKEN"
+    assert re.search(r"^\s+required:\s*false\s*$", sec.group(1), re.M), (
+        "TAVOTTO_PUBLIC_TOKEN 不是可选的——同仓库调用会因缺 secret 而失败"
+    )
+
+
+def test_the_lab_dispatch_uses_the_ci_infra_pat_and_reds_when_it_is_missing():
+    """`lab-ci.yml::dispatch`：托管机、PAT 来自 `secrets.TAVOTTO_CI_INFRA_TOKEN`、secret 为空
+    **必须红**，且没有任何让它不跑的条件。
+
+    「secret 为空就跳过」是本仓库明令禁止的空门禁形状：读的人会以为 lab 在跑，而它
+    根本没被派出去。判据写成正面形式——命令正文里在 `gh workflow run` **之前**必须有
+    一段 `if [ -z "$GH_TOKEN" ]` → `::error::…TAVOTTO_CI_INFRA_TOKEN…` → `exit 1`。
+    """
+    wf = _wf(LAB)
+    body = wf.jobs["dispatch"]
+    header = body.split("steps:")[0]
+    assert re.search(r"^\s+runs-on:\s*ubuntu-latest\s*$", header, re.M), "派发要在托管机上"
+    assert re.search(r"^\s+needs:\s*trust-check\s*$", header, re.M), "派发必须排在 trust-check 之后"
+    assert not re.search(r"^\s+if:", header, re.M), "派发 job 不许带条件——lab 没人跑必须红在这里"
+    assert "continue-on-error" not in body, "派发失败不许被 continue-on-error 吞掉"
+    assert re.search(
+        r"^\s+GH_TOKEN:\s*\$\{\{\s*secrets\.TAVOTTO_CI_INFRA_TOKEN\s*\}\}\s*$", header, re.M
+    ), "GH_TOKEN 不是来自 secrets.TAVOTTO_CI_INFRA_TOKEN——派发用的是 PAT，不是 GITHUB_TOKEN"
+
+    runs = "\n".join(wf.job_runs("dispatch"))
+    guard = re.search(
+        r'if \[ -z "\$\{?GH_TOKEN[^\]]*\]; then\n(?P<block>(?:.*\n)*?)\s*fi\b',
+        runs,
+    )
+    assert guard, '派发命令之前没有 `if [ -z "$GH_TOKEN" ]` 这道守卫'
+    block = guard.group("block")
+    assert re.search(r"::error::.*TAVOTTO_CI_INFRA_TOKEN", block), "守卫没有点名是哪个 secret 为空"
+    assert re.search(r"^\s*exit 1\s*$", block, re.M), "守卫没有 exit 1——只打印不退出等于跳过"
+    assert guard.end() < runs.index(_DISPATCH_CMD), "守卫写在派发命令之后——那时匿名请求已经发出去了"
+
+    cmd_line = runs[runs.index(_DISPATCH_CMD) :]
+    assert re.search(r"\s-r\s+main\b", cmd_line), "派发没有钉 ci-infra 的 ref=main"
+    for field in ("mode", "sha", "baseline_tag"):
+        assert re.search(rf"-f\s+{field}=", cmd_line), f"派发命令少了 -f {field}="
 
 
 def test_release_mode_verifies_the_exact_artifact():
-    """发行档验的必须是 build 产出的**那一份** wheel。"""
+    """发行档验的必须是 build 产出的**那一份** wheel；lab 档没有候选包，必须自己造。"""
     rel = _wf(RELEASE).jobs["lab_release_gate"]
     assert re.search(r"use_prebuilt_dist:\s*true", rel)
     assert re.search(r"mode:\s*release", rel)
-    lab = _wf(LAB).jobs["qualify"]
-    assert re.search(r"use_prebuilt_dist:\s*false", lab), (
-        "lab 档没有候选包，必须自己造一个——那问的是另一个问题"
+    lab = "\n".join(_wf(LAB).job_runs("dispatch"))
+    assert re.search(r"-f\s+use_prebuilt_dist=false\b", lab), (
+        "lab 档没有候选包，必须让 ci-infra 自己造一个——那问的是另一个问题"
     )
 
 
