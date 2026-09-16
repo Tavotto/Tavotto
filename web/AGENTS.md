@@ -889,7 +889,8 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 * **命令面板的 id 是稳定标识**（e2e 与资源都认它）：`refresh-project / readiness / tutorial-start /
   tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
-  两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。
+  两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。**高亮行按身份记不按位置记**
+  （光标 `{ id, query }`，查询一变回首行；查询按词切、每个词都要命中、顺序不限）——宪法第二十四节。
 * **UI 文案用「可编辑的图 / 仅排版」**，不把 parameterizable 翻成「可参数化」；「已登记的源脚本」
   这个说法**留在注册表对话框自己身上**——2026-09-06 审计 T40 之后，设置页那个入口改成结果式的
   「可编辑来源：n 个脚本」+「管理来源…」：登记规则是对话框自己的事，入口只报结果。

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowDown,
@@ -194,20 +194,45 @@ export function AssistantPanel() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // 贴底跟随（ChatGPT / Claude 的约定）：只在用户本来就看着底部时才跟着新内容滚（判据在下面的
+  // syncStick）。pin 是唯一的「滚到底」出口——**盯的是内容尺寸，不只是 store**（2026-09-16，学 beUI
+  // MessageScroller）：底边会长的来源有三个——新 delta（store）、过程 Reveal 展开（内容长高 180 ms）、
+  // 玻璃输入框长高（写 --composer-h → 底边距长）。此前只在 store 变化时重滚，后两个来源发生时
+  // scrollHeight 长了而 scrollTop 没动：上一条回答的末几行滑到玻璃底下，而 syncStick 只在 scroll
+  // 事件里算，「回到底部」那颗钮也不出现。
+  const stick = useRef(true)
+  const pin = () => {
+    const el = scrollRef.current
+    if (el && stick.current) el.scrollTop = el.scrollHeight
+  }
+  // 对话流的内容容器：尺寸一变就 pin（jsdom 没有 ResizeObserver，那里只剩 store 那条路）
+  const contentRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(pin)
+    ro.observe(node)
+    return () => ro.disconnect()
+    // pin 只读 ref，身份无所谓
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // 输入框浮在对话流上（玻璃，参考 Codex）：它的高度会变（起手式收起、输入框长高、报错一行），
-  // 量出来写成 --composer-h，滚动区用它做底部内边距，最后一条回答不会被压在玻璃底下
+  // 量出来写成 --composer-h，滚动区用它做底部内边距，最后一条回答不会被压在玻璃底下——
+  // 底边距长了要紧跟着 pin，不然贴着底的末几行正好被长高的那截玻璃盖住
   const stageRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const el = composerRef.current
     const stage = stageRef.current
     if (!el || !stage) return
-    const write = () => stage.style.setProperty('--composer-h', `${el.offsetHeight}px`)
+    const write = () => {
+      stage.style.setProperty('--composer-h', `${el.offsetHeight}px`)
+      pin()
+    }
     write()
     if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(write)
     ro.observe(el)
     return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 目标不支持某个范围时只是降级显示，不去改用户存下的偏好
@@ -225,10 +250,8 @@ export function AssistantPanel() {
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
 
-  // 贴底跟随（ChatGPT / Claude 的约定）：只在用户本来就看着底部时才跟着新内容滚。
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
-  const stick = useRef(true)
   const [detached, setDetached] = useState(false)
   const syncStick = () => {
     const el = scrollRef.current
@@ -248,8 +271,8 @@ export function AssistantPanel() {
     setDetached(false)
   }, [panel?.id])
   useEffect(() => {
-    const el = scrollRef.current
-    if (el && stick.current) el.scrollTop = el.scrollHeight
+    pin()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, panel?.id])
 
   // 输入框高度跟着内容走（宪法第五节：调用点不自己算 rows）；jsdom 量不到行高时什么都不动
@@ -339,7 +362,7 @@ export function AssistantPanel() {
                审计 T37 曾把它压到输入框上方，底部叠成四层而中间全空）。起手式仍留在输入框旁：
                它们是输入的快捷方式，跟着输入框走。会话一来，空态让位给它 */
             mine.length > 0 ? (
-              <div className="flex flex-col gap-3">
+              <div ref={contentRef} className="flex flex-col gap-3">
                 {mine.map((s) => (
                   <SessionBlock key={s.id} session={s} />
                 ))}

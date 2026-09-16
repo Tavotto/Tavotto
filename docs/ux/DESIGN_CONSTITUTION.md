@@ -686,3 +686,35 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   `components/notificationRail.test`（指针 / 焦点 / 卸载放开 / 换字）、`ui/SwapText.test`、
   `ai/assistantMotion.test` 的 running → done 一条。
 
+
+## 二十四、2026-09-16 从 beUI 学来的两条手法（用户拍板）
+
+调研了 beui.dev（starc007/ui-components，MIT，85 个组件：motion 原语 / blocks / agents / charts，
+motion + Tailwind 4，shadcn registry）之后的结论（报告 artifact「beUI 调研」）：整库不引——84/85 依赖
+`motion`（Tavotto 的 JS 动画只有 `lib/motion.tween` 一个出口，再装一套等于第二个动效引擎、第二份
+reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 83 份、blur 进出场 51 份、scale 越出
+0.97～1 的 46 份，都在第七节的三条形态之外。它比 Beautiful UI / Spectrum 强的是 84/85 有 reduced-motion
+分支、原语式拆分、helper 里有真工程——能学的正是那些 helper，**都是修缺陷，不是加动效，不加依赖**：
+
+- **命令面板的高亮行按身份记，不按位置记**（`components/CommandPalette`，学 `useRowCursor`）：光标记
+  `{ id, query }`——命令 id 加上放置它时的查询；查询一变光标自动失效、回到首行，行还在就跟着行走，
+  解析在 render 里做。此前 `active` 是下标、查询变了只在被动 effect 里钳位不复位：↓↓ 停在第 3 行再多打
+  一个字，列表换成另一组命令，高亮仍停在「第 3 行」指着一条用户没瞄准过的命令，回车就执行；钳位又落在
+  提交之后，列表刚缩短那一帧 `aria-selected` 指向已不在的行。是「判据的主语」那一族：位置不是句柄。
+  顺手：查询按空白切词、**每个词都要在 label 或 keywords 里命中、顺序不限**（「pdf 导出」也能中
+  「导出 PDF」），排序仍归 `commandRanking`；没搬 beUI 的打分器——它会与固定分区打架。
+- **贴底跟随盯的是内容尺寸，不只是 store**（`ai/AiPanel`，学 `MessageScroller` 的 ResizeObserver）：
+  底边会长的来源有三个——新 delta（store）、过程 Reveal 展开（内容长高 180 ms）、玻璃输入框长高
+  （写 `--composer-h` → 底边距长）。此前只在 store 变化时重滚，后两个来源发生时 `scrollHeight` 长了而
+  `scrollTop` 没动：上一条回答的末几行滑到玻璃底下，而 `syncStick` 只在 scroll 事件里算，「回到底部」
+  那颗钮也不出现。现在 `pin()` 是唯一的「滚到底」出口，两只 ResizeObserver（内容容器、输入框）与 store
+  effect 都调它；仍只在 `stick` 时滚。不需要 beUI 的 programmatic 守卫——Tavotto 是即时 `scrollTop`
+  赋值，没有 smooth 竞态。
+- **看到了但不学**：spring + blur 的进出场、gooey popover、clip-morph 菜单、morphing modal / tabs /
+  search、到处玻璃（第二十二节只给浮在流上的 composer）、diff 完成即自动收起（改动直接落盘，diff 是
+  唯一证据）、消息导航 rail、Loader 十七种（第十八节：进行中只有一个信号）、shiki 高亮、toast 堆叠
+  （第二十三节刚把单轨做对）、Approval Card（协议没有这一环）。
+- 看护：`components/CommandPalette.test`「高亮行按身份记」四条（换查询回首行 / ↓↓ 后再打字回车不执行
+  第 3 行 / 方向键仍按行走 / 多词任意顺序）；`ai/assistantMotion.test`「底边不经过 store 也长」三条
+  （输入框长高跟到底 / 内容长高跟到底 / 翻上去了都不拽），jsdom 用假 ResizeObserver 记「谁在观察谁」，
+  `fakeGeometry.grow` 让 scrollHeight 长而 scrollTop 原地——那正是缺陷的几何。

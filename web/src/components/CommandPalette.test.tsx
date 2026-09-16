@@ -146,6 +146,78 @@ describe('命令集', () => {
  * 排序判据本身在 `lib/commandRanking.test.ts` 逐条反证过；这里量的是
  * 「面板真的按它渲染」以及「跑过的命令进了最近使用、且存在本机」。
  */
+/**
+ * 高亮行是身份不是位置（2026-09-16，学 beUI `useRowCursor`）。此前 `active` 是下标、
+ * 查询变了只钳位不复位：↓↓ 停在第 3 行再打字，列表换成另一组，高亮仍停在「第 3 行」，
+ * 回车执行的是一条用户没瞄准过的命令。
+ */
+describe('高亮行按身份记，不按位置记', () => {
+  beforeEach(() => {
+    localStorage.removeItem('tavotto.ui')
+    useUiStore.setState({ recentCommands: [] })
+  })
+  const input = () => document.querySelector('input') as HTMLInputElement
+  const type = (text: string) =>
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input(), text)
+      input().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  const key = (k: string) =>
+    act(() => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    })
+  const highlighted = () =>
+    (document.querySelector('[role=option][aria-selected=true]') as HTMLElement | null)?.dataset.cmdId
+  const cmdIds = () =>
+    Array.from(document.querySelectorAll('[data-cmd-id]')).map((el) => (el as HTMLElement).dataset.cmdId)
+
+  it('查询一变，高亮回到新列表的首行，不停在旧下标上', () => {
+    mount()
+    key('ArrowDown')
+    key('ArrowDown')
+    expect(highlighted()).toBe(cmdIds()[2])
+    type('显示')
+    expect(cmdIds().length).toBeGreaterThanOrEqual(3)
+    expect(highlighted()).toBe(cmdIds()[0])
+  })
+
+  it('↓↓ 后再打字，回车执行的是新列表的首行，不是「第 3 行」那条没瞄准过的命令', () => {
+    mount()
+    key('ArrowDown')
+    key('ArrowDown')
+    // 「显示」中三条：网格 / 标尺 / 接入状态——下标版会执行第 3 条
+    type('显示')
+    const ids = cmdIds()
+    expect(ids.length).toBeGreaterThanOrEqual(3)
+    expect(ids[2]).not.toBe(ids[0])
+    key('Enter')
+    expect(useUiStore.getState().recentCommands[0]).toBe(ids[0])
+    expect(useUiStore.getState().recentCommands[0]).not.toBe(ids[2])
+  })
+
+  it('同一个查询里方向键仍按行走，越过末行不动', () => {
+    mount()
+    type('显示')
+    const ids = cmdIds()
+    for (let i = 0; i < ids.length + 2; i++) key('ArrowDown')
+    expect(highlighted()).toBe(ids.at(-1))
+    key('ArrowUp')
+    expect(highlighted()).toBe(ids.at(-2))
+  })
+
+  it('查询按词切、顺序不限：「pdf 导出」也能中「导出 PDF」', () => {
+    mount()
+    type('pdf 导出')
+    expect(labels()).toEqual(['导出 PDF / PNG…'])
+    type('导出 png')
+    expect(labels()).toEqual(['导出 PDF / PNG…'])
+    // 两个词各自都在、但不在同一条命令上：不命中
+    type('导出 网格')
+    expect(labels()).toEqual([])
+  })
+})
+
 describe('外壳（2026-09-15 打磨 K1 / K3）', () => {
   it('输入行右端不再常驻「Esc」：已表达过的不重复', () => {
     mount()

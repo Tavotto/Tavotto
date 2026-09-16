@@ -180,14 +180,19 @@ export function CommandPalette() {
   const onboardingStatus = useOnboardingStore((s) => s.status)
   const projectPhase = useProjectStore((s) => s.phase)
   const [query, setQuery] = useState('')
-  const [active, setActive] = useState(0)
+  // 高亮行记的是**命令 id + 放置它时的查询**，不是下标（2026-09-16，学 beUI `useRowCursor`）。
+  // 下标版的失败形状：↓↓ 停在第 3 行再多打一个字，列表换成另一组命令，高亮仍停在
+  // 「第 3 行」——此时它指着一条用户没瞄准过的命令，回车就执行；钳位又落在提交之后的
+  // 被动 effect 里，列表刚缩短那一帧 aria-selected 指向已不在的行。
+  // 现在：查询一变光标自动失效、回到首行；行还在就跟着行走（重排也跟）；解析在 render 里做。
+  const [cursor, setCursor] = useState<{ id: string; query: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
     if (!open) return
     setQuery('')
-    setActive(0)
+    setCursor(null)
     const id = requestAnimationFrame(() => inputRef.current?.focus())
     // 兜底：焦点不在输入框（点了列表 / 空白）时 Esc 也要能关
     const onEsc = (e: KeyboardEvent) => {
@@ -206,8 +211,11 @@ export function CommandPalette() {
   // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
   // 中文界面下输拼音首字母也能中。顺序（选区 / 最近 / 常用 / 其他）由
   // `lib/commandRanking` 一处决定，有没有查询都一样；段标题只在空查询时显示
+  // 查询按空白切成词，**每个词都要在 label 或 keywords 里命中，顺序不限**：「pdf 导出」
+  // 也能中「导出 PDF」（此前整串 includes，词序反了就找不到）。顺序仍归 rankCommands。
+  const q = query.trim().toLowerCase()
   const sections = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const words = q.split(/\s+/).filter(Boolean)
     const pool = COMMANDS.filter((c) => (!c.needsSelection || hasSelection) && (c.available?.() ?? true)).map(
       (c) => ({
         ...c,
@@ -215,19 +223,30 @@ export function CommandPalette() {
         keywords: commandKeywords(t, c.id),
       }),
     )
-    const hit = q
-      ? pool.filter((c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q))
+    const hit = words.length
+      ? pool.filter((c) => {
+          const hay = `${c.label} ${c.keywords}`.toLowerCase()
+          return words.every((w) => hay.includes(w))
+        })
       : pool
     return rankCommands(hit, { hasSelection, recent })
     // `onboardingStatus` / `projectPhase` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, hasSelection, recent, t, onboardingStatus, projectPhase])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
-  const showHeaders = !query.trim()
+  const showHeaders = !q
 
-  useEffect(() => {
-    setActive((a) => Math.min(a, Math.max(0, matches.length - 1)))
-  }, [matches.length])
+  // 光标 → 行号，在 render 里解析：查询变了或那一行已不在列表里，都回到首行
+  const active = (() => {
+    if (!cursor || cursor.query !== q) return 0
+    const i = matches.findIndex((c) => c.id === cursor.id)
+    return i < 0 ? 0 : i
+  })()
+  const moveTo = (i: number) => {
+    const c = matches[i]
+    if (!c || (cursor?.id === c.id && cursor.query === q)) return
+    setCursor({ id: c.id, query: q })
+  }
 
   useEffect(() => {
     listRef.current
@@ -266,10 +285,10 @@ export function CommandPalette() {
               if (e.key === 'Escape') setOpen(false)
               else if (e.key === 'ArrowDown') {
                 e.preventDefault()
-                setActive((a) => Math.min(a + 1, matches.length - 1))
+                moveTo(Math.min(active + 1, matches.length - 1))
               } else if (e.key === 'ArrowUp') {
                 e.preventDefault()
-                setActive((a) => Math.max(a - 1, 0))
+                moveTo(Math.max(active - 1, 0))
               } else if (e.key === 'Enter' && matches[active]) {
                 e.preventDefault()
                 runCommand(matches[active])
@@ -315,7 +334,7 @@ export function CommandPalette() {
                     className="px-1"
                   >
                     <button
-                      onPointerMove={() => setActive(i)}
+                      onPointerMove={() => moveTo(i)}
                       onClick={() => runCommand(c)}
                       // 选中行用 `selected`（ink 10%）：`surface-2` 对白底只有 1.05:1，
                       // 「现在会执行哪一条」几乎看不出来。行 32 / 12 号与菜单项同档（打磨 K1）

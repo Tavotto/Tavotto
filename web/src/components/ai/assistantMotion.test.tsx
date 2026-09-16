@@ -98,19 +98,55 @@ const scrollPill = () =>
     (b) => b.getAttribute('aria-label') === ai('panel.scrollToBottom'),
   )
 
-/** jsdom 没有布局：把滚动几何装上去，scrollTop 才有「在不在底部」可言 */
+/**
+ * jsdom 没有布局：把滚动几何装上去，scrollTop 才有「在不在底部」可言。
+ * 返回的 grow 让 scrollHeight 长（内容长高 / 底边距长高都是它），scrollTop 原地不动——
+ * 这正是真浏览器的行为，也是「末几行滑到玻璃底下」那个缺陷的几何。
+ */
 function fakeGeometry(el: HTMLElement, { scrollHeight, clientHeight }: { scrollHeight: number; clientHeight: number }) {
-  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+  let height = scrollHeight
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height })
   Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => clientHeight })
   let top = 0
   Object.defineProperty(el, 'scrollTop', {
     configurable: true,
     get: () => top,
     set: (v: number) => {
-      top = Math.max(0, Math.min(v, scrollHeight - clientHeight))
+      top = Math.max(0, Math.min(v, height - clientHeight))
     },
   })
+  return { grow: (by: number) => void (height += by) }
 }
+
+/**
+ * jsdom 也没有 ResizeObserver：装一只假的，记下谁在观察谁，用例自己决定何时「尺寸变了」。
+ * 面板里有两只：一只看玻璃输入框（写 --composer-h），一只看对话流的内容容器。
+ */
+type ResizeCb = () => void
+const observers: { cb: ResizeCb; targets: Element[] }[] = []
+class FakeResizeObserver {
+  private entry: { cb: ResizeCb; targets: Element[] }
+  constructor(cb: ResizeCb) {
+    this.entry = { cb, targets: [] }
+    observers.push(this.entry)
+  }
+  observe(el: Element) {
+    this.entry.targets.push(el)
+  }
+  disconnect() {
+    this.entry.targets.length = 0
+  }
+}
+/** 让「正在观察 el」的那只观察者报一次尺寸变化；没人观察它就是用例摆错了对象 */
+async function resized(el: Element) {
+  const hits = observers.filter((o) => o.targets.includes(el))
+  expect(hits.length, '没有观察者盯着这个元素').toBeGreaterThan(0)
+  await act(async () => {
+    for (const o of hits) o.cb()
+  })
+}
+const composerEl = () => host.querySelector<HTMLElement>('.absolute.inset-x-0.bottom-0')!
+const contentEl = () => host.querySelector<HTMLElement>('.flex.flex-col.gap-3')!
 
 beforeEach(() => {
   localStorage.clear()
@@ -207,6 +243,53 @@ describe('贴底跟随', () => {
     await act(async () => scrollPill()!.click())
     expect(el.scrollTop).toBe(700)
     expect(scrollPill()).toBeUndefined()
+  })
+
+  describe('底边不经过 store 也长（2026-09-16，学 beUI MessageScroller：盯内容尺寸）', () => {
+    beforeEach(() => {
+      observers.length = 0
+      vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    })
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('贴着底时玻璃输入框长高，视口跟到新的底：末几行不被长高的那截玻璃盖住', async () => {
+      await mount([session({ status: 'done', entries: [{ kind: 'message', text: 'answer' }] })])
+      const el = scroller()
+      const geo = fakeGeometry(el, { scrollHeight: 1000, clientHeight: 300 })
+      el.scrollTop = 700
+      await act(async () => el.dispatchEvent(new Event('scroll')))
+      // 输入框撑到四行：底边距长 80，scrollHeight 跟着长，scrollTop 原地
+      geo.grow(80)
+      expect(el.scrollTop).toBe(700)
+      await resized(composerEl())
+      expect(el.scrollTop).toBe(780)
+    })
+
+    it('贴着底时对话流自己长高（过程展开 / 排版重排），视口同样跟到底', async () => {
+      await mount([session({ status: 'done', entries: [{ kind: 'message', text: 'answer' }] })])
+      const el = scroller()
+      const geo = fakeGeometry(el, { scrollHeight: 1000, clientHeight: 300 })
+      el.scrollTop = 700
+      await act(async () => el.dispatchEvent(new Event('scroll')))
+      geo.grow(120)
+      await resized(contentEl())
+      expect(el.scrollTop).toBe(820)
+    })
+
+    it('翻上去看旧回答时，输入框或内容长高都不拽视口', async () => {
+      await mount([session({ status: 'done', entries: [{ kind: 'message', text: 'answer' }] })])
+      const el = scroller()
+      const geo = fakeGeometry(el, { scrollHeight: 1000, clientHeight: 300 })
+      el.scrollTop = 100
+      await act(async () => el.dispatchEvent(new Event('scroll')))
+      geo.grow(80)
+      await resized(composerEl())
+      geo.grow(120)
+      await resized(contentEl())
+      expect(el.scrollTop).toBe(100)
+    })
   })
 
   it('跑完了就不摆「回到底部」：那颗钮只为「新内容还在来」服务', async () => {
