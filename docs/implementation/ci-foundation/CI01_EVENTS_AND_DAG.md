@@ -76,9 +76,10 @@ backend-platforms ×2 2443s ─────────────────�
 | 事件（触发字段） | ci.yml 跑什么 | `CI fast gate` | `CI integration gate` | codeql.yml | 02 §1 对应层 | 看住它的测试 |
 |---|---|---|---|---|---|---|
 | `pull_request: opened / synchronize / reopened`（含草稿） | 快线 9 个：python-lint / cla-check / invariants / backend-fast ×3 / frontend → plugin-candidate / workerd / desktop-shell ×2 / compat-smoke；重型 5 个整体 skipped | `--mode fast`，9 个全 success 才绿 | `--allow-deferred`：5 个全 skipped → deferred（绿，summary/JSON 写明推迟到 merge_group）；任一跑过就按真实结果判 | `pull_request`（默认 types）→ analyze ×4 → CodeQL gate | T1（今天 = 全部快线，≈35 分钟，无草稿区分） | `TestGates::test_fast_jobs_cover_pr_and_merge_group_but_not_push`、`test_every_fast_lane_job_actually_runs_on_a_plain_pull_request`、`test_heavy_jobs_do_not_run_on_plain_prs_or_push`、`test_integration_gate_defers_only_on_plain_pull_requests`；`test_aggregate_gate.py::TestIntegrationGate::test_plain_pr_all_skipped_is_deferred` / `test_partial_skip_is_failure_not_deferred`；`test_cla_workflow_contract.py::TestClaWorkflowContract::test_runs_on_pull_request` |
-| `pull_request: ready_for_review` | 与上一行相同（新 run，同一 head SHA） | 同上 | 同上（仍 deferred——没有标签） | **不触发**（codeql 未列 types）；该 SHA 上已有的 CodeQL 结论继续有效 | T2 的接入点（本轮未接） | `types:` 里含 `ready_for_review`：**无测试**（`test_full_ci_label_still_triggers_the_heavy_layer` 只钉 `labeled`） |
-| `pull_request: labeled`（加 `full-ci`） | 快线 9 个 + 重型 5 个，在 PR 自己的 head SHA 上 | 同上 | `--require-heavy --full-ci`：5 个全 success 才绿，skipped 即失败，deferred 是配置错误 | 不触发 | T3a 提前到 PR | `test_full_ci_label_still_triggers_the_heavy_layer`、`test_heavy_jobs_run_on_merge_group`（同一折叠条件）、`test_integration_gate_defers_only_on_plain_pull_requests`；`test_aggregate_gate.py::TestIntegrationGate::test_full_ci_pr_may_not_defer` |
-| `pull_request: labeled / unlabeled`（**任意**别的标签） | 快线 9 个重跑一遍（同 SHA） | 同上 | deferred（若 `full-ci` 仍在则同上一行） | 不触发 | — | **无测试**；见 §4 现存问题 ① |
+| `pull_request: ready_for_review` | 与上一行相同（新 run，同一 head SHA） | 同上 | 同上（仍 deferred——没有标签） | **不触发**（codeql 未列 types）；该 SHA 上已有的 CodeQL 结论继续有效 | T2 的接入点（本轮未接） | `TestPullRequestEventTypes::test_pull_request_types_are_exactly_the_six_we_rely_on`（六个 type 的闭集，集合相等）+ `test_the_event_table_for_pull_request_and_label_events`（这一行算出：快线跑、重型不跑、Gate deferred）——§4 ③ 已修 |
+| `pull_request: labeled`（加 `full-ci`） | 快线 9 个 + 重型 5 个，在 PR 自己的 head SHA 上 | 同上 | `--require-heavy --full-ci`：5 个全 success 才绿，skipped 即失败，deferred 是配置错误 | 不触发 | T3a 提前到 PR | `test_full_ci_label_still_triggers_the_heavy_layer`、`test_heavy_jobs_run_on_merge_group`（同一折叠条件）、`test_integration_gate_defers_only_on_plain_pull_requests`；`test_aggregate_gate.py::TestIntegrationGate::test_full_ci_pr_may_not_defer`；`TestPullRequestEventTypes::test_the_event_table_for_pull_request_and_label_events`（真值表：这一行算出重型跑、Gate 按 full-ci 判） |
+| `pull_request: labeled / unlabeled`（**任意**别的标签） | 快线 9 个重跑一遍（同 SHA），并取消同 PR 运行中的 run | 同上 | deferred（若 `full-ci` 仍在则同上一行） | 不触发 | —（**接受**，§4 ①：GitHub 不支持按标签名过滤事件，三种修法的代价都不可接受） | `TestPullRequestEventTypes::test_the_event_table_for_pull_request_and_label_events`（`labeled docs` / `unlabeled docs` 四行）、`test_label_events_share_the_pull_request_concurrency_slot`（与同 PR 的 synchronize 同组、cancel true） |
+| `pull_request: unlabeled`（**摘掉** `full-ci`） | 快线 9 个重跑；重型 5 个 skipped（payload 的 `labels` 已不含 full-ci） | 同上 | **`--require-heavy --full-ci`**（`GATE_FULL_CI` 在 `action == 'unlabeled' && label.name == 'full-ci'` 时仍为 true）→ 5 个 skipped → **failure**：把「此前那套重型结论不再适用于本 SHA」红出来，而不是用 deferred（绿）盖掉它。代价：要再 push 一次或重新打标签才能进队列 | 不触发 | 策略变化到同一 SHA 正确失效（02 §4） | `TestPullRequestEventTypes::test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr`、`test_the_event_table_for_pull_request_and_label_events`（`unlabeled full-ci` 行）；`TestEventFieldAccess::test_no_bare_head_ref_or_label_event_usage`（`github.event.action` / `github.event.label` 只许出现在 `GATE_FULL_CI` 且先按事件分支）——§4 ① 已修 |
 | `merge_group: checks_requested` | 快线 9 个 + 重型 5 个，在队列的组合提交上 | `--mode fast`，同上 | `--require-heavy`：deferred 是配置错误（`aggregate_gate` 直接拒绝） | `merge_group: checks_requested` → analyze ×4（SARIF 不上传）→ CodeQL gate | T3a 完整合并资格（唯一常规执行点） | `TestMergeGroupTrigger::test_ci_listens_to_merge_group_checks_requested` / `test_codeql_listens_to_merge_group_checks_requested`、`TestGates::test_heavy_jobs_run_on_merge_group`、`test_codeql_skips_the_sarif_upload_only_on_merge_group`；`test_aggregate_gate.py::TestIntegrationGate::test_merge_group_may_not_defer` / `test_require_heavy_rejects_skipped`；`test_cla_workflow_contract.py::…::test_runs_on_merge_group_too`；`TestHeavyLaneDependencies::test_a_red_backend_fast_still_blocks_the_merge_even_when_every_heavy_job_is_green` |
 | `push: main` | 只有 `main-landing-audit`（结构契约 pytest + 生成物不进索引 + 落地信息）；快线与重型都不跑，两个 Gate 也不跑 | 不跑 | 不跑 | `push: main` → analyze ×4（上传 SARIF）→ CodeQL gate | 轻量落地审计 | `TestLandingAudit::test_main_push_runs_only_the_landing_audit` / `test_landing_audit_structural_tests_exist`、`test_fast_jobs_cover_pr_and_merge_group_but_not_push`、`test_heavy_jobs_do_not_run_on_plain_prs_or_push` |
 | `schedule` | ci.yml **不监听**；codeql.yml 每周一 04:23 UTC；nightly.yml 每日 18:00 UTC；lab-ci.yml 每日 19:00 + 每周日 20:00；telemetry-metrics / metrics-freshness 各自 | — | — | 周扫描 → CodeQL gate（不是 required 场景） | T3b 深度观察 | `TestMergeGroupTrigger::test_non_required_workflows_do_not_join_the_queue`（nightly / lab / release 不进队列）；codeql 的 schedule 本身：**无测试** |
@@ -89,8 +90,11 @@ needs 指向的 job 都存在——`TestGates::test_gates_run_on_always` / `test
 `test_fast_gate_needs_matches_required_closed_set` / `test_integration_gate_needs_matches_required_closed_set` /
 `test_every_gate_needs_is_a_real_job`；ruleset 三个 context 的名字与 workflow 逐字相同——
 `test_merge_queue_ruleset.py::…::test_gate_names_match_the_workflow_files` / `test_contexts_become_exactly_the_three_gates`。
-merge_group payload 里没有 `pull_request.draft / labels`，任何读 PR 字段的表达式都先按事件分支——
+merge_group payload 里没有 `pull_request.draft / labels`（也没有 `action` / `label`），任何读 PR 字段的表达式都先按事件分支——
 `TestEventFieldAccess::test_pull_request_fields_are_guarded_by_event_checks` / `test_no_bare_head_ref_or_label_event_usage`。
+上面表里凡引用 `TestPullRequestEventTypes` 的格，判的不是子串而是**算出来的结论**：ci.yml 里真实的 `if:` / `GATE_FULL_CI` / `concurrency`
+对着合成的 `github` 上下文求值（`tests/support/gh_expr.py`，一个只认 ci.yml 用到的那点语法、认不出就抛的求值器，自身由 `tests/test_gh_expr.py` 看住），
+再把算出的档位交给真实的 `aggregate_gate.decide()`。
 
 ## 3. 取消与并发合同：真值表
 
@@ -110,7 +114,7 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 |---|---|---|---|---|---|
 | PR A 新 push（`synchronize`） | `ci-CI-pull_request-<A>` | true | A 上旧 SHA 的运行中 run 被取消；旧 SHA 全绿也没有 merge value | 是 | `TestConcurrency::test_cancel_in_progress_only_for_pull_request`、`test_group_distinguishes_events` |
 | PR A 新 push 时 PR B 在跑 | B 在 `ci-CI-pull_request-<B>` | — | B 不受影响：组名带 PR 号 | 是 | `test_group_distinguishes_events`（组名含 `pull_request.number` 那一段由 `\|\|` 链保证） |
-| PR A 加 / 减任意标签（`labeled` / `unlabeled`） | `ci-CI-pull_request-<A>` | true | 同 SHA 新 run 取消同 PR 的运行中 run（若还在跑） | 对 `full-ci` 是；对无关标签见 §4 ① | **无测试**（组名对所有 `pull_request` 子类型同形） |
+| PR A 加 / 减任意标签（`labeled` / `unlabeled`） | `ci-CI-pull_request-<A>` | true | 同 SHA 新 run 取消同 PR 的运行中 run（若还在跑） | 对 `full-ci` 是；对无关标签是**接受的代价**（§4 ①） | `TestPullRequestEventTypes::test_label_events_share_the_pull_request_concurrency_slot`（`synchronize` / `labeled docs` / `unlabeled full-ci` 三种上下文渲染出同一个组名、cancel 都是 true） |
 | merge_group 候选 X 与 Y 同时构建（`max_entries_to_build: 2`） | `ci-CI-merge_group-<head_sha_X>` / `…-<head_sha_Y>` | false | 各自一组，互不排队、互不取消 | 是 | `test_group_distinguishes_events`（`merge_group.head_sha` 必须在组名里）、`test_cancel_in_progress_only_for_pull_request` |
 | 同一候选被队列重新 `checks_requested`（同 head_sha） | 同一组 | false | 第二个排待定；若出现第三个，取代第二个 | 可接受（同一 SHA 的重复验证互相取代不丢资格） | 无测试；实机才知道队列会不会这样做 |
 | push main 连着两次（队列连续合两个 PR） | `ci-CI-push-refs/heads/main` | false | 第二次排待定，两次都会跑 | 是 | `test_cancel_in_progress_only_for_pull_request`（push 不取消） |
@@ -129,7 +133,7 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 `release` / `plugin-stable` / lab → 手动低频，文档已写明取代规则；`workflow_call` → key 取调用方，不互相误取消。
 02 §4 提到的 `queue: max` 多 pending 策略本轮**不引入**（先确认工具链支持再说，[W01]）。
 
-## 4. 现存问题（只记录，不改；2026-09-16 用户逐条拍板：修 ①③⑥、接受 ②④⑤⑦）
+## 4. 现存问题（2026-09-16 用户逐条拍板：修 ①③⑥、接受 ②④⑤⑦；①③⑥ 已由后续 PR `ci/event-table-fixes` 修，见 §7）
 
 1. **任意 `labeled` / `unlabeled` 都重跑整条快线并取消同 PR 运行中的 run**。`types:` 里的 `labeled, unlabeled` 是为 `full-ci`
    加的，但表达式不区分标签名——加一个 `docs` 标签也会让 35 分钟的 backend-fast 从头来过。另外**去掉 `full-ci` 标签会在同一
@@ -137,6 +141,36 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
    所以不是合并资格的洞，但「策略变化到同一 SHA 要正确失效」（02 §4）在 PR 层面并不成立。02 §4 要求先清点所有 label consumer
    再减少无关重跑——本轮不动。
    **拍板：修（后续 PR）**——`labeled` / `unlabeled` 只在标签名是 `full-ci` 时进快线（其余标签事件按 02 §4 先清点 consumer 再过滤），并让去掉 `full-ci` 不产出同 SHA 的 deferred Gate。
+   **状态：一半已修、一半接受（PR `ci/event-table-fixes`，§7）。**
+   * **label consumer 清点**（02 §4 的前置；grep 全部 `.github/workflows/*.yml` + `.github/*.json|yaml` + `scripts/ci/*.py` + `docs/ci/*.md` 里的 `label`）：
+     ci.yml `on.pull_request.types` 的 `labeled, unlabeled`（触发）；ci.yml 五个重型 job 的 `if:` 里 `contains(github.event.pull_request.labels.*.name, 'full-ci')`
+     （backend-platforms / package / windows-exe-smoke / macos-app-smoke / posix-e2e）；ci.yml `ci-integration-gate` 的 `GATE_FULL_CI`。**只有这七处**。
+     不是 consumer 的：codeql.yml（`pull_request` 没写 `types`，标签事件不触发它）；pr-conflict-domains.yml（`types: [opened, synchronize, reopened]`）；
+     release.yml L123 读的是 **issue** 标签 `release:blocker`（`gh api …/issues?labels=`，与 PR 标签事件无关）；lab-ci.yml L32 的 `labels:` 是 runner 标签；
+     `scripts/ci/ci_baseline.py` L729 按「重型跑了没有」给 run 分类，是读者不是消费者；`docs/ci/merge-queue-rollout.md` L38 只是提到 `full-ci`。
+   * **「无关标签重跑整条快线」这一半：接受。** 依据：GitHub 的 `on.pull_request` 只有 `types` / `branches` / `paths` 三种过滤，**没有按标签名过滤**
+     （docs.github.com「Events that trigger workflows → pull_request」，2026-09-16 复核）；`concurrency` 也没有能按 payload 字段挡掉整个 run 的语义。
+     于是「只在 full-ci 时跑」只剩三种形状，代价各自不可接受：
+     - **(a) 前置 `event-filter` job**（1 秒，`outputs.run`；所有快线 job `needs: [event-filter]` + `if: needs.event-filter.outputs.run == 'true' && …`）：
+       无关标签的 run 里九个快线 job 全 skipped，而 `CI fast gate` 的 `needs` 闭集对 skipped 严格（`aggregate_gate --mode fast` 把 skipped 当失败）→
+       同 SHA 上盖出一个**红**的 fast gate；而且给九个 job 各加一条 needs 边，正是 CI01 刚删掉的那种 verdict-only 边（§1）。
+     - **(b) 快线 job 的 `if:` 加短路**（`github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'full-ci'`）：
+       结果同 (a)——九个 skipped → fast gate 红，还要把 `github.event.action` / `github.event.label` 撒进九个 job 的条件里（今天它们只许出现在一处，见下）。
+     - **(c) 从 `types` 里去掉 `labeled, unlabeled`，改由独立小 workflow `full-ci-label.yml` 在 `labeled(full-ci)` 时 `workflow_dispatch` 一次 ci.yml**：
+       dispatch 出来的 run 没有 `pull_request` 上下文——五个重型 job 的 `if:` 与 Gate 的事件判据全部失效，等于重写事件表；`full-ci` 也从「打个标签」变成
+       「打标签 + 等另一个 workflow 转发」两跳。
+     真实代价的量级：一次无关标签事件 = 一个快线 run（≈ 19 分钟 wall、≈ 60 ubuntu 分钟 + macOS 4 分钟）+ 取消同 PR 运行中的那个（若有）。本仓库日常不用
+     `docs` 这类标签驱动流程（`full-ci` 是唯一的流程标签），所以它是低频成本，比 (a)(b)(c) 任一种都便宜。合同：`TestPullRequestEventTypes::test_the_event_table_for_pull_request_and_label_events`
+     的 `labeled docs` / `unlabeled docs` 四行 + `test_label_events_share_the_pull_request_concurrency_slot`——哪天换成 (a)(b)(c) 之一，先回这里把代价重算。
+   * **「摘掉 `full-ci` 产出 deferred 绿 Gate」这一半：已修。** `ci-integration-gate` 的 `GATE_FULL_CI` 改为
+     `github.event_name == 'pull_request' && (contains(labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci'))`：
+     `unlabeled` 的 payload 里 `pull_request.labels` 已不含 full-ci（五个重型 job 因此 skipped），但 `label.name` 是刚摘掉的那个
+     （github/docs `src/webhooks/data/fpt/pull_request.json`：`labeled` / `unlabeled` 两种 action 各有一个 `label` object），于是那个 run 仍走
+     `--require-heavy --full-ci` → 五个 skipped → `failure`（`upstream_not_success`）。**刻意接受的代价**：摘掉标签之后，该 head SHA 上最新的
+     integration gate 是红的，要再 push 一次（synchronize → deferred）或重新打标签才能进队列；merge_group 上无论如何还会真跑一遍。备选「摘标签时让重型
+     再跑一遍」（把 unlabeled(full-ci) 也并进五个重型 job 的 `if:`）没有采用：摘标签的语义是「别再在我的 PR 上跑重型」，再跑一次 29 个 job 正好相反。
+     `github.event.action` / `github.event.label` 在 ci.yml 里**只许出现在这一处**且先按事件分支（`TestEventFieldAccess::test_no_bare_head_ref_or_label_event_usage`
+     改成枚举：那一行 + 守卫），merge_group 下它们是 null，`null == 'unlabeled'` 是 false（`tests/test_gh_expr.py` 钉住这条语义）。
 2. **push main 三连推时中间一次的 `main-landing-audit` 与 codeql push run 会被待定替换**。它们不是 required context、不是合并资格
    （树在 merge_group 上验过），丢的是那个 commit 的落地记录与 SARIF 账本；下一个 commit 的 run 覆盖了同一棵树的后继。
    若要保留每一次：把 push 的组名换成 `github.sha`（每个 commit 一组，互不排队），代价是并发 runner。本轮不改，留给 CI05 一并评估。
@@ -144,6 +178,10 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 3. **`ready_for_review` 在 `types:` 里没有测试看住**；今天草稿与非草稿跑同一套，删了它只会少一个多余的 run。哪天做 T1/T2 分层
    （02 §3），它就成了「作者点 Ready 之后重活永远不跑」的那个洞——分层之前必须先给它加判据。
    **拍板：修（后续 PR）**——给 `types:` 里的 `ready_for_review` 加合同用例（与 ① 同一个 PR：两者都是 `types:` 的判据）。
+   **状态：已修（PR `ci/event-table-fixes`，§7）。** `TestPullRequestEventTypes::test_pull_request_types_are_exactly_the_six_we_rely_on`：`on.pull_request.types`
+   的**集合** == `{opened, synchronize, reopened, ready_for_review, labeled, unlabeled}`，少一个多一个都红、重复也红；每个 type 为什么在写在用例的 `EXPECTED_TYPES`
+   与 ci.yml `types:` 旁的注释里（顺带把那段陈旧的「重活按草稿与否分层」注释改掉——那套信号早被 merge_group 取代，`test_heavy_jobs_do_not_run_on_plain_prs_or_push`
+   还专门断言条件里没有 `draft`）。
 4. **codeql.yml 的 `pull_request` 没写 `types`**：`ready_for_review` / `labeled` 不产生新的 CodeQL run。对同一 head SHA 无影响
    （check run 按 SHA 存在），记录以免将来有人以为 CodeQL 也会「按标签重跑」。
    **拍板：已接受**——CodeQL 结论按 SHA 存在，标签 / Ready 不改变代码，重跑只是浪费。
@@ -156,6 +194,21 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 6. **ci.yml 抬头 L8「backend-fast（Linux 3.10+3.13）」已陈旧**（矩阵是 3.10 / 3.13 / 3.14）；CI00 §12 还列了
    backend-fast「实测 20–25 分钟」（实测中位 29–35、上限 40 余量 4 分钟）等几处。与本刀无关，不动；40 分钟上限的余量归 CI03 分片解决。
    **拍板：修（后续 PR）**——抬头与各 job 段的时长注释按 CI05 的实测改（分片后 backend-fast 每片 ~1000–1170s，40 分钟上限余量充足）。
+   **状态：已修（PR `ci/event-table-fixes`，§7）。** 只改注释，`run:` / `if:` / `needs:` / `timeout-minutes` 一个都没动。抬头 L8 已由 CI03a 改成
+   「3.10 / 3.13 / 3.14，每档按文件分 2 片」，本 PR 只把 L28 的「35 分钟」标成分片前。逐处及来源：
+
+   | ci.yml 位置 | 原注释 | 改成 | 来源 |
+   |---|---|---|---|
+   | `backend-fast` 的 `timeout-minutes: 40` 上方 | 「实测 20–25 分钟，40 给余量」 | 分片后每片 10–20 分钟（18 片 610–1201s）；分片前整档中位 29–35、max 36 | 合入后三个真实合并组 35061049078 / 35069266028 / 35073686963 的 `…/jobs`（本 PR 当场 `gh api` 取的）；`CI_BASELINE.md` §12 |
+   | `backend-platforms` 的 `timeout-minutes: 60` 上方 | 「Windows 29~41 分钟，套件已 4460 条」 | Windows 每片 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条；#340 那段留作历史 | 同上三个合并组；4686 = CI05 §9 对五条腿 junit 并集的核验（`evidence/ci05/shards/nodeid_union.txt`） |
+   | `backend-platforms` 的 `--durations=50` 注释 | 「Windows 腿比 macOS 慢一倍（40 vs 22 分钟）」 | 加「分片前」 | — |
+   | `frontend` 的 `timeout-minutes: 20` | 「实测 2.2 分钟」 | 中位 4.2 分钟；合入后三个合并组 166–276s | `CI_BASELINE.md` §12（29 个合并组）；同上三个合并组 |
+   | `desktop-shell` 的 `timeout-minutes: 20` | 「本机（macOS）实测冷编译 37 秒」 | 保留本机数，加 CI 上冷 2.3–4.7 分钟（141–280s）、PR 第二次 run 命中 rust-cache 时 41s | 同上三个合并组；`CI05_COMPARISON.md` §4.6 |
+   | `package` 段 CI01 理由的末尾 | （只有删边前的模型数「41 分钟」） | 加一条「合入后实测：资格中位 56.9 → 26.4 分钟，关键路径已是 backend-platforms (windows) 分片」；模型数标为不再引用 | `CI_HANDOFF.md` §12.1（七个真实合并组） |
+   | `windows-exe-smoke` 的 job 级 `timeout-minutes: 60` 上方 | （无） | 分片 + 去 `--with-deps` 后整个 job 11–14 分钟（663–824s）；分片前中位 23.5 分钟 | 合并组 35069266028 / 35073686963；CI00 |
+   | `windows-exe-smoke` Playwright 步的 step 级 timeout 注释 | 「分片后片 1 ≈ 8.4 分钟、片 2 ≈ 6.3 分钟」（模型） | 实测片 1 8.2–9.1 分钟（493–545s）、片 2 6.0–6.3 分钟（359–377s） | `CI05_COMPARISON.md` §4.4（run 35011613925 / 35031461863 / 35031790918） |
+   | `macos-app-smoke` 段 | 「要跑十来分钟」 | 4–6 分钟（231–339s；CI00 中位 325s） | 同上三个合并组；`CI_BASELINE.md` §4 |
+   | 抬头 L28 | 「不再等 backend-fast 的 35 分钟全量 pytest」 | 加「分片前」，并指向 `package` 段的合入后实测 | — |
 7. **草稿 PR 与非草稿跑同一套 35 分钟快线**——不是缺陷，是本轮明确不做 T1/T2 的决定（02 §3 的「先取得 DAG / 分片收益，Ready 分层可后置」）。
    **拍板：已接受**——分片后快线已到 19 分钟，T1/T2 分层的收益变小；③ 修好之后再议。
 

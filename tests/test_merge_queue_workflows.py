@@ -73,6 +73,10 @@ sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 import aggregate_gate as AG  # noqa: E402
 import merge_queue_ruleset as MQ  # noqa: E402
 
+# GitHub 表达式的极小求值器（tests/support/gh_expr.py）：TestPullRequestEventTypes 用它把
+# ci.yml 里真实的 if / GATE_FULL_CI / concurrency 对着合成的事件上下文算成真值表。
+from support import gh_expr as G  # noqa: E402
+
 
 def _sdist_include() -> list[str]:
     """读 pyproject 的 sdist include 列表；**只认列表项，不认注释里的散文**。"""
@@ -284,15 +288,262 @@ class TestEventFieldAccess:
                 assert guarded, f"{name} 里这段表达式未按事件分支就读 PR 字段：\n{expr}"
 
     def test_no_bare_head_ref_or_label_event_usage(self):
+        """`github.head_ref` / `github.base_ref` 一处都不许有（merge_group 下没有它们）。
+
+        `github.event.label` / `github.event.action` 也是只在 `pull_request` 事件里才有的
+        字段——merge_group 下读到的是 null，`== 'unlabeled'` 安静地算成 false。它们**只许**
+        出现在一处：`ci-integration-gate` 的 `GATE_FULL_CI`（CI01 §4 ①，摘掉 full-ci 的那个
+        run 要按 full-ci 判），而且那段表达式必须先按 `github.event_name == 'pull_request'`
+        分支。这是枚举不是白名单：再多一处用它们，就回到这里说清楚为什么。
+        """
         for name, text in (("ci.yml", CI), ("codeql.yml", CODEQL)):
             code = _code(text)
-            for bad in (
-                "github.head_ref",
-                "github.base_ref",
-                "github.event.label",
-                "github.event.action",
-            ):
+            for bad in ("github.head_ref", "github.base_ref"):
                 assert bad not in code, f"{name} 用了 {bad}——merge_group 下没有它"
+
+        codeql_code = _code(CODEQL)
+        for field in ("github.event.label", "github.event.action"):
+            assert field not in codeql_code, f"codeql.yml 用了 {field}——merge_group 下没有它"
+
+        ci_code = _code(CI)
+        gate_env = _gate_full_ci_expression()
+        allowed_lines = {ln for ln in ci_code.splitlines() if "GATE_FULL_CI:" in ln}
+        assert len(allowed_lines) == 1, allowed_lines
+        for field in ("github.event.label", "github.event.action"):
+            where = [ln for ln in ci_code.splitlines() if field in ln]
+            assert where == list(allowed_lines), (
+                f"ci.yml 里 {field} 只许出现在 ci-integration-gate 的 GATE_FULL_CI 那一行：\n"
+                + "\n".join(where)
+            )
+            assert field in gate_env, (
+                f"GATE_FULL_CI 里读不到 {field}——摘掉 full-ci 的 run 又会判成 deferred"
+            )
+        assert gate_env.lstrip("${ ").startswith("github.event_name == 'pull_request' &&"), (
+            f"GATE_FULL_CI 没有先按事件分支：{gate_env}"
+        )
+
+
+def _gate_full_ci_expression() -> str:
+    """`ci-integration-gate` 里 `GATE_FULL_CI:` 的整段 `${{ … }}`（单行；读不出当场抛）。"""
+    block = _code(_job(CI, "ci-integration-gate"))
+    m = re.search(r"(?m)^          GATE_FULL_CI: (.+)$", block)
+    assert m, "ci-integration-gate 里读不出 GATE_FULL_CI 那一行"
+    return m.group(1).strip()
+
+
+def _folded_if(job_id: str) -> str:
+    """重型档的 `if: >-` 折叠块正文（行模式 ` {6,}\\S.*`，理由见 TestGates._heavy_cond）。"""
+    block = _code(_job(CI, job_id))
+    m = re.search(r"(?m)^    if: >-\n((?: {6,}\S.*\n)+)", block)
+    assert m, f"{job_id} 的 if 条件解析不出来"
+    return m.group(1)
+
+
+def _pull_request_types() -> list[str]:
+    """`on.pull_request.types` 的原始列表（保留顺序与重复——集合化交给判据自己做）。"""
+    m = re.search(r"(?m)^  pull_request:\n(?:\s*#.*\n)*    types: \[([^\]]*)\]", CI)
+    assert m, "ci.yml 的 on.pull_request 里读不出 types: [...]"
+    return [t.strip() for t in m.group(1).split(",") if t.strip()]
+
+
+# ============================================================ PR 事件类型与标签事件（CI01 §4 ① ③）
+class TestPullRequestEventTypes:
+    """`on.pull_request.types` 与「标签事件 → 哪条线跑 / Gate 用哪一档」的真值表。
+
+    这里不用子串判「表达式里写了什么」，而是把 ci.yml 里真实的 `if:` / `GATE_FULL_CI` /
+    `concurrency` 对着合成的 `github` 上下文**算一遍**（tests/support/gh_expr.py），再把
+    算出来的档位交给真实的 `aggregate_gate.decide()`——判的是事件表的**结论**，不是措辞。
+    """
+
+    #: 六个 type 的闭集，与 ci.yml 里 `types:` 旁边那段注释逐条对应（每个为什么在）。
+    #: 少一个 = 那类事件从此没有 run；多一个 = 又多一种会重跑整条快线并取消同 PR 运行中
+    #: run 的事件（`edited` / `assigned` / `review_requested` 都会这样）。
+    EXPECTED_TYPES = frozenset(
+        {
+            "opened",  # PR 出现
+            "synchronize",  # 每次 push——资格的主入口
+            "reopened",  # 关了再开，head SHA 上可能已没有结论
+            "ready_for_review",  # 将来 T1/T2 分层的接入点；今天只是多一个 run（02 §3）
+            "labeled",  # `full-ci` 的入口
+            "unlabeled",  # 摘掉 `full-ci` 要让同 SHA 上的重型结论正确失效（§4 ①）
+        }
+    )
+
+    HEAVY = ("backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e")
+    FAST = ("python-lint", "invariants", "backend-fast", "frontend", "workerd", "compat-smoke")
+
+    def test_pull_request_types_are_exactly_the_six_we_rely_on(self):
+        """集合相等，正面列全：少一个多一个都红。
+
+        `ready_for_review` 是这里最容易被「反正草稿也跑同一套」的理由删掉的一个——
+        删掉之后今天没有任何行为变化，等到做 T1/T2 分层那天才是「作者点 Ready 之后
+        重活永远不跑」的洞，而那天没有别的测试会红（CI01 §4 ③）。
+        """
+        raw = _pull_request_types()
+        assert len(raw) == len(set(raw)), f"types 里有重复：{raw}"
+        assert set(raw) == self.EXPECTED_TYPES, (
+            f"on.pull_request.types 不是预期的闭集：\n  多了 {sorted(set(raw) - self.EXPECTED_TYPES)}"
+            f"\n  少了 {sorted(self.EXPECTED_TYPES - set(raw))}"
+        )
+
+    # ---- 合成的 github 上下文 ----
+    @staticmethod
+    def _pr(action: str, labels_after: tuple[str, ...], label: str | None = None) -> dict:
+        """`pull_request` 事件：`labels` 是**事件发生之后**的状态（unlabeled 时已不含被摘的那个）；
+        `label` 只在 labeled / unlabeled 的 payload 里有（github/docs 的 webhook 数据
+        `src/webhooks/data/fpt/pull_request.json`：两种 action 各有 `label` object）。"""
+        event: dict = {
+            "action": action,
+            "pull_request": {"number": 381, "labels": [{"name": n} for n in labels_after]},
+        }
+        if label is not None:
+            event["label"] = {"name": label}
+        return {
+            "event_name": "pull_request",
+            "workflow": "CI",
+            "ref": "refs/pull/381/merge",
+            "event": event,
+        }
+
+    @staticmethod
+    def _merge_group() -> dict:
+        # merge_group payload 里没有 pull_request / label / action——读它们得到 null
+        return {
+            "event_name": "merge_group",
+            "workflow": "CI",
+            "ref": "refs/heads/gh-readonly-queue/main/pr-381-abc",
+            "event": {"merge_group": {"head_sha": "abc123"}},
+        }
+
+    @staticmethod
+    def _push_main() -> dict:
+        return {"event_name": "push", "workflow": "CI", "ref": "refs/heads/main", "event": {}}
+
+    # ---- 把 ci.yml 里真实的表达式算出来 ----
+    def _fast_runs(self, github: dict) -> bool:
+        conds = {_if_of(_code(_job(CI, j))) for j in self.FAST}
+        assert conds == {FAST_LANE_CONDITION}, conds
+        return G.truthy(G.evaluate(FAST_LANE_CONDITION, github))
+
+    def _heavy_runs(self, github: dict) -> bool:
+        verdicts = {j: G.truthy(G.evaluate(_folded_if(j), github)) for j in self.HEAVY}
+        assert len(set(verdicts.values())) == 1, f"五个重型 job 的条件算出了不同结果：{verdicts}"
+        return next(iter(verdicts.values()))
+
+    def _gate_verdict(self, github: dict, heavy_results: dict[str, str]) -> dict:
+        """复刻 ci-integration-gate 那段 Bash 的三分支（它的文本由
+        TestGates::test_integration_gate_defers_only_on_plain_pull_requests 钉住），
+        然后交给真实判定器。"""
+        gate_full_ci = G.render(_gate_full_ci_expression(), github)
+        assert gate_full_ci in ("true", "false"), gate_full_ci
+        event = github["event_name"]
+        if event != "pull_request":
+            flags = dict(require_heavy=True)
+        elif gate_full_ci == "true":
+            flags = dict(require_heavy=True, full_ci=True)
+        else:
+            flags = dict(allow_deferred=True)
+        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+        return AG.decide("integration", event, required, heavy_results, **flags)
+
+    def _heavy_results(self, ran: bool, *, real: str = "success") -> dict[str, str]:
+        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+        return {j: (real if ran else "skipped") for j in required}
+
+    def test_the_event_table_for_pull_request_and_label_events(self):
+        """CI01 §2 事件表的 PR 行 + §4 ① 的两半，按「快线跑不跑 / 重型跑不跑 / Gate 结论」逐行算。
+
+        每行：(场景, 上下文, 快线, 重型, Gate 在重型真跑 success 时的结论, Gate 在重型 skipped 时的结论)。
+        `—` 表示那一格不会发生（重型不跑就没有 success 可谈；重型跑了就不会全 skipped）。
+        """
+        P = self._pr  # (action, 事件之后的 labels, payload 里的 label)
+        rows = [
+            # 场景（+full-ci = 事件之后标签里仍有 full-ci）, 上下文, 快线, 重型, Gate
+            ("opened，无标签", P("opened", ()), True, False, "deferred"),
+            ("synchronize，只有 docs", P("synchronize", ("docs",)), True, False, "deferred"),
+            ("ready_for_review，无标签", P("ready_for_review", ()), True, False, "deferred"),
+            ("labeled full-ci", P("labeled", ("full-ci",), "full-ci"), True, True, "success"),
+            ("synchronize，带 full-ci", P("synchronize", ("full-ci",)), True, True, "success"),
+            # §4 ① 接受的那一半：无关标签照样触发一个 run（快线全跑），Gate 结论不变
+            ("labeled docs，无 full-ci", P("labeled", ("docs",), "docs"), True, False, "deferred"),
+            (
+                "labeled docs +full-ci",
+                P("labeled", ("full-ci", "docs"), "docs"),
+                True,
+                True,
+                "success",
+            ),
+            (
+                "unlabeled docs +full-ci",
+                P("unlabeled", ("full-ci",), "docs"),
+                True,
+                True,
+                "success",
+            ),
+            ("unlabeled docs，无 full-ci", P("unlabeled", (), "docs"), True, False, "deferred"),
+            # §4 ① 修的那一半：摘掉 full-ci 的 run 里重型不跑，但 Gate **按 full-ci 判** → 红
+            ("unlabeled full-ci", P("unlabeled", (), "full-ci"), True, False, "failure"),
+            ("merge_group", self._merge_group(), True, True, "success"),
+        ]
+        for name, github, fast, heavy, verdict in rows:
+            assert self._fast_runs(github) is fast, f"[{name}] 快线跑不跑算错"
+            assert self._heavy_runs(github) is heavy, f"[{name}] 重型跑不跑算错"
+            got = self._gate_verdict(github, self._heavy_results(heavy))
+            assert got["status"] == verdict, f"[{name}] Gate 结论应为 {verdict}：{got}"
+
+        # push main：快线与重型都不跑，两个 Gate 的 if 也把它挡在外面
+        push = self._push_main()
+        assert self._fast_runs(push) is False and self._heavy_runs(push) is False
+        for gate in ("ci-fast-gate", "ci-integration-gate"):
+            cond = _if_of(_code(_job(CI, gate))).replace("always()", "true")
+            assert G.truthy(G.evaluate(cond, push)) is False, f"{gate} 在 push main 上不该跑"
+
+    def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self):
+        """§4 ① 的核心：`unlabeled(full-ci)` 那个 run 同一 head SHA 上不许产出 deferred（绿）的
+        integration gate 去盖掉此前那个真实结论。
+
+        payload 里 `pull_request.labels` 已不含 full-ci → 五个重型 job skipped；Gate 若按普通 PR
+        走 --allow-deferred 就是 deferred。修法是让 GATE_FULL_CI 在 `action == 'unlabeled'
+        && label.name == 'full-ci'` 时仍为 true → --require-heavy --full-ci → 全 skipped 判
+        failure（reason upstream_not_success），把「重型结论不再适用于本 SHA」红出来。
+        代价（刻意接受）：摘标签后要再 push 一次或重新打标签才能进队列。
+        """
+        github = self._pr("unlabeled", (), "full-ci")
+        assert self._heavy_runs(github) is False, "前提：摘标签的 run 里重型 job 不跑"
+        assert G.render(_gate_full_ci_expression(), github) == "true"
+        skipped = self._heavy_results(ran=False)
+        got = self._gate_verdict(github, skipped)
+        assert got["status"] == "failure", got
+        assert got["reason"] == "upstream_not_success", got
+        assert all(p.endswith(": skipped") for p in got["problems"]), got
+        # 对照：同一份 needs 按普通 PR 判就是 deferred——这正是修之前发生的事
+        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+        before = AG.decide("integration", "pull_request", required, skipped, allow_deferred=True)
+        assert before["status"] == "deferred", before
+
+    def test_label_events_share_the_pull_request_concurrency_slot(self):
+        """§4 ① 接受的那一半，写成合同：任意标签事件与同 PR 的 synchronize 同一个组、
+        cancel-in-progress 为 true——加一个 docs 标签会取消同 PR 运行中的 run。
+        这是「GitHub 不支持按标签名过滤事件」之下三种修法都不可接受时的既定代价，
+        哪天改了它（比如换 (a)(b)(c) 之一），先回 CI01 §4 ① 把代价重新算一遍。"""
+        m = re.search(
+            r"(?m)^concurrency:\n(?:\s*#.*\n)*\s+group: (.+)\n(?:\s*#.*\n)*\s+cancel-in-progress: (.+)$",
+            CI,
+        )
+        assert m, "ci.yml 顶层 concurrency 解析不出来"
+        group, cancel = m.group(1), m.group(2)
+        sync = self._pr("synchronize", ("docs",))
+        docs = self._pr("labeled", ("docs",), "docs")
+        unlabeled_full_ci = self._pr("unlabeled", (), "full-ci")
+        assert G.render(group, sync) == G.render(group, docs) == G.render(group, unlabeled_full_ci)
+        assert G.render(group, sync) == "ci-CI-pull_request-381"
+        for github in (sync, docs, unlabeled_full_ci):
+            assert G.render(cancel, github) == "true"
+        # merge_group / push 各自一组、不取消
+        assert G.render(group, self._merge_group()) == "ci-CI-merge_group-abc123"
+        assert G.render(cancel, self._merge_group()) == "false"
+        assert G.render(group, self._push_main()) == "ci-CI-push-refs/heads/main"
+        assert G.render(cancel, self._push_main()) == "false"
 
 
 # ============================================================ Gate 结构

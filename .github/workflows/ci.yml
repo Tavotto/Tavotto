@@ -26,9 +26,10 @@ name: CI
 #
 # 重型档的 DAG（CI01，2026-09-16）：package / windows-exe-smoke / macos-app-smoke /
 # posix-e2e 四个 job **只 needs frontend**（几分钟的短预筛），**不再等 backend-fast**
-# 的 35 分钟全量 pytest——那四条边从不消费 backend-fast 的任何字节（verdict-only），
+# 的全量 pytest（分片前 35 分钟）——那四条边从不消费 backend-fast 的任何字节（verdict-only），
 # 28/29 个合并组的关键路径却经过它们。删边不动 AND：backend-fast 仍在 CI fast gate
-# 的闭集里，三个 Gate 都要绿才合得进去。理由与数字写在 `package` 那一段。
+# 的闭集里，三个 Gate 都要绿才合得进去。理由与数字写在 `package` 那一段；合入后七个
+# 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
 # `shard: [1, 2]` 轴，每一档的全量 pytest 拆成两个并行 job（`--shard K/2`，按文件分、
@@ -47,9 +48,21 @@ on:
   push:
     branches: [main]
   pull_request:
-    # `ready_for_review` 不是默认事件类型（默认只有 opened/synchronize/reopened）。
-    # 下面那几档重活按「草稿与否」分层，少了这条，作者点「Ready for review」时
-    # 不会有新的 workflow run，重活永远不跑——一个分层方案最容易踩空的地方。
+    # 六个 type 是一个**闭集**（tests/test_merge_queue_workflows.py::TestPullRequestEventTypes
+    # 按集合相等钉住，少一个多一个都红），每一个为什么在：
+    #   * opened / synchronize / reopened——默认三个，PR 出现与每次 push 的资格入口；
+    #   * ready_for_review——**不是**默认类型。今天草稿与非草稿跑同一套快线，它只是多一个
+    #     run（同一 head SHA）；留着它是将来 T1 / T2 分层（docs/implementation/ci-foundation/
+    #     02_EVENTS_DAG_GATES.md §3）的接入点——删了它，分层那天就是「作者点 Ready 之后
+    #     重活永远不跑」的洞，而且那天没有任何测试会红；
+    #   * labeled / unlabeled——`full-ci` 标签的入口（打上就在 PR 自己的 SHA 上跑全套重型）。
+    #     GitHub 不支持按标签名过滤事件（`on.pull_request` 只有 types / branches / paths），
+    #     所以**任何**标签的增删都会触发一个新 run 并取消同 PR 运行中的那个——这一半**接受**：
+    #     三种「只在 full-ci 时跑」的修法各有不可接受的代价（前置 filter job 会让 Gate 的
+    #     needs 里出现 skipped 的必需 job；给每个快线 job 的 if 加短路会让 fast gate 在
+    #     无关标签的 run 上判红；改成独立 workflow + dispatch 会丢掉 pull_request 上下文），
+    #     清点与理由在 docs/implementation/ci-foundation/CI01_EVENTS_AND_DAG.md §4 ①。
+    #     摘掉 `full-ci` 的那个 run 由 ci-integration-gate 按 full-ci 判（见那一段）。
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   # Merge Queue 的资格验证事件。payload 里**没有** pull_request.draft / labels
   # 这些字段——下面任何引用 `github.event.pull_request.*` 的表达式都必须先按
@@ -419,9 +432,10 @@ jobs:
       matrix:
         python: ["3.10", "3.13", "3.14"]
         shard: [1, 2]
-    # 同 backend-platforms：实测 20–25 分钟，40 给余量。没有上限的 job
+    # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
+    # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36，对着 40 只剩
+    # 4 分钟余量（CI_BASELINE.md §12）——现在余量充足，上限不动。没有上限的 job
     # 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
-    # 分片之后单片应明显短于 40；上限刻意不动，等 CI 实测再调（CI03A 文档「已知边界」）。
     timeout-minutes: 40
     runs-on: ubuntu-latest
     steps:
@@ -484,13 +498,14 @@ jobs:
         os: [macos-latest, windows-latest]
         shard: [1, 2]
     runs-on: ${{ matrix.os }}
-    # 实测（2026-09-12/13 的 12 个合并组，Windows）29~41 分钟，套件已 4460 条；
-    # 2026-09-13 #340 的组跑到 45:00 被这条上限取消、整组按 failed_checks 踢出——
-    # 上一轮定 45 时实测还是 27:57 / 2994 条，套件长了一半上限没动，余量归零。
-    # 抬到与 windows-exe-smoke 同档的 60，但**必须有**上限：这个 job 没有上限时，
-    # 一条挂死的用例会把整个**合并队列**堵住——2026-08-28 就发生过一次，
-    # 8 小时 20 分，其间没有任何 PR 能落地。
-    # 分片之后单片应明显短于 60；上限刻意不动，等 CI 实测再调。
+    # 分片后每片实测：Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），
+    # 套件 4686 条（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963；条数是
+    # CI05 对五条腿 junit 并集的核验，docs/implementation/ci-foundation/evidence/ci05/shards/）。
+    # 分片前 Windows 整档中位 40.7、max 47.8 分钟（CI_BASELINE.md §12）。历史：2026-09-13
+    # #340 的组跑到 45:00 被当时的上限取消、整组按 failed_checks 踢出——上一轮定 45 时实测
+    # 还是 27:57 / 2994 条，套件长了一半上限没动，余量归零，于是抬到与 windows-exe-smoke
+    # 同档的 60。**必须有**上限：这个 job 没有上限时，一条挂死的用例会把整个**合并队列**
+    # 堵住——2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -502,7 +517,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
-      # #346：先量再分片——Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
+      # #346：先量再分片——分片前 Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
       # 靠抬数字维持。让每个合并组自己把最慢的 50 条打进日志，分片 / session 级
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
@@ -574,7 +589,9 @@ jobs:
 
   frontend:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    timeout-minutes: 20  # 实测 2.2 分钟；没有上限的 job 会堵死合并队列
+    # 实测中位 4.2 分钟（CI00 的 29 个合并组，CI_BASELINE.md §12；合入后三个合并组
+    # 166–276s）；没有上限的 job 会堵死合并队列
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -813,7 +830,9 @@ jobs:
   # 真正需要第二条腿的是 clippy 与 cargo test。
   desktop-shell:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    timeout-minutes: 20  # 本机（macOS）实测冷编译 37 秒；上限是防挂死、不是性能预算
+    # 本机（macOS）冷编译 37 秒；CI 上 2.3–4.7 分钟（合并组永远冷：三个合并组 141–280s），
+    # 同一 PR 第二次 run 命中 rust-cache 时 41s（CI05_COMPARISON.md §4.6）。上限是防挂死、不是性能预算
+    timeout-minutes: 20
     strategy:
       # fail-fast: false —— 一条腿红不许掐掉另一条：两支的 lint 是两个结论，
       # 掐掉就又回到「那一支没有执行位置」。
@@ -879,6 +898,11 @@ jobs:
     #     ~28 分钟不在关键路径上——留着它对资格时长零成本，却能在前端坏掉
     #     （pnpm install / lint / i18n / vitest / build / 插件候选组装）时省下每个候选
     #     约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4）。
+    #   * **合入后实测**（2026-09-16，CI_HANDOFF.md §12.1，七个真实合并组）：资格中位
+    #     56.9 → 26.4 分钟（全部改动生效后的四个组 25.8 / 31.2 / 25.9 / 26.8）；关键路径
+    #     已是 backend-platforms (windows) 的 pytest 分片（1369–1533s），windows-exe-smoke
+    #     两片 663–1009s 不再在关键路径上。上面那个「模型中位 41 分钟」是删边单独的模型数，
+    #     只作当时决策的记录，不再引用。
     #   tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 钉住这两条决定；
     #   回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的什么都不用动。
     if: >-
@@ -1045,6 +1069,8 @@ jobs:
           - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
           - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
     runs-on: windows-latest
+    # 分片 + 去 --with-deps 后整个 job 实测 11–14 分钟（663–824s，合并组 35069266028 /
+    # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。60 是防挂死，不是性能预算。
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -1301,7 +1327,9 @@ jobs:
       - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime，本片 ${{ matrix.projects }}）
         working-directory: web
         # **step 级上限 30 分钟**（job 级 60 不动）。CI00 实测这一步 18.7 分钟（三个 project
-        # 全跑）；分片后片 1 ≈ 8.4 分钟、片 2 ≈ 6.3 分钟，30 是两倍余量。为什么要有 step 级：
+        # 全跑）；分片后实测片 1 8.2–9.1 分钟（493–545s）、片 2 6.0–6.3 分钟（359–377s；
+        # run 35011613925 / 35031461863 / 35031790918，CI05_COMPARISON.md §4.4），30 是三倍余量。
+        # 为什么要有 step 级：
         # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
         # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
         # 「失败时收集日志」与全部 Post 步骤都是 pending 没跑，日志 blob 404、artifact 一个
@@ -1396,8 +1424,8 @@ jobs:
     # matplotlib 的运行器会让「runtime 根本没打进去」全程绿灯，而那正是
     # 用户装完打不开图的原因。
     #
-    # 这一档在托管运行器上要跑十来分钟（下 25 MiB CPython + 装 300 MiB 科学栈
-    # + PyInstaller）。值得：在这之前 macOS 这条腿的渲染是靠 CI 现建的
+    # 这一档在托管运行器上要跑 4–6 分钟（合并组 231–339s，CI00 中位 325s；下 25 MiB
+    # CPython + 装 300 MiB 科学栈 + PyInstaller）。值得：在这之前 macOS 这条腿的渲染是靠 CI 现建的
     # worker-env 撑着的，等于什么都没验。
     #
     # e2e 不在这里跑（Windows 那条已经覆盖真实界面），避免把 PR 门禁再拉长一倍。
@@ -1714,10 +1742,22 @@ jobs:
         # 与 JSON 明确写出「完整资格推迟到 merge_group」）；merge_group /
         # push / full-ci PR 一律 --require-heavy，skipped 就是失败。
         # full-ci 标签只在 pull_request 事件里存在，表达式先按事件分支。
+        #
+        # **摘掉 `full-ci` 的那个 run 也按 full-ci 判**（CI01 §4 ①，2026-09-16）：
+        # `unlabeled` 事件的 payload 里 `pull_request.labels` 已经不含 full-ci，五个重型
+        # job 按它判成 skipped；若 Gate 此时按普通 PR 走 --allow-deferred，同一 head SHA
+        # 上就会多出一个 deferred（绿）的「CI integration gate」，**盖掉此前那个真实失败**
+        # （check run 按名字取最新）。所以 `github.event.action == 'unlabeled'` 且
+        # `github.event.label.name == 'full-ci'` 时 GATE_FULL_CI 仍为 true → --require-heavy
+        # --full-ci → 重型全 skipped → Gate 红：把「你刚才那套重型结论不再适用于本 SHA」
+        # 红出来，而不是绿。代价：摘标签之后要再 push 一次（或重新打标签）才能进队列——
+        # 这是刻意的，merge_group 上无论如何还会真跑一遍。
+        # `github.event.action` / `github.event.label` 只在这一处出现，且先按事件分支
+        # （merge_group payload 里没有它们；tests/test_merge_queue_workflows.py 钉住）。
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GATE_EVENT: ${{ github.event_name }}
-          GATE_FULL_CI: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
         run: |
           set -euo pipefail
           FLAGS="--allow-deferred"
