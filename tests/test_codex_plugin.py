@@ -1107,6 +1107,10 @@ def test_release_workflow_publishes_the_plugin_channel():
     **刻意不在 desktop-tauri.yml 的 updater-manifest 里**：那个 job 依赖桌面
     产物与 minisign 私钥，没配私钥时整个跳过——插件的更新通道会跟着悄悄停，
     而且全绿。
+
+    发布链切两段（F.2，2026-09-16）之后主语分在两份 workflow 里：造清单与 zip 的
+    `build` 在第一段 `release.yml`；`validate_artifacts` / `github_release` 在第二段
+    `release-publish.yml`——那边没有 Node，只消费 dist/ 里那份，不许再从源码打包。
     """
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest.py" in release
@@ -1116,10 +1120,13 @@ def test_release_workflow_publishes_the_plugin_channel():
     assert "--plugin-dir" in release, "release 必须从 plugin_stage 组装的 staging 打包"
     build_job = release.split("\n  build:\n", 1)[1].split("\n  desktop:\n", 1)[0]
     assert "make_plugin_manifest.py" in build_job, "插件清单与 zip 该在 build job 里造"
-    validate_job = release.split("\n  validate_artifacts:\n", 1)[1].split(
+    publish = (ROOT / ".github" / "workflows" / "release-publish.yml").read_text(encoding="utf-8")
+    validate_job = publish.split("\n  validate_artifacts:\n", 1)[1].split(
         "\n  github_release:\n", 1
     )[0]
     assert "make_plugin_manifest.py" not in validate_job, "validate 没有 Node，不许在那儿从源码打包"
+    assert "make_plugin_manifest" not in publish, "第二段没有 Node，整份都不许从源码打包插件"
+    assert "codex-plugin.json" in publish, "第二段没有把插件清单挂到 Release 上——更新通道会停"
     desktop = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest" not in desktop
 

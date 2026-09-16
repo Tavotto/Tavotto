@@ -1186,7 +1186,9 @@ def test_every_report_writer_stamps_its_identity():
         for rep in wanted:
             if f'"{rep}"' in src:
                 producers[rep] = path.name
-    wf = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    #   跑这些脚本的 workflow 是 `_lab-qualification.yml`（资格验证的唯一定义）；
+    #   从前写的是 release.yml，那时它还自带一份手抄的资格步骤，早已不是了
+    wf = (WORKFLOWS / "_lab-qualification.yml").read_text(encoding="utf-8")
     for step in re.split(r"\n(?=      - name:)", wf):
         m = re.search(r"scripts/ci/(\w+)\.py", step)
         if not m:
@@ -1571,17 +1573,26 @@ def test_ack_parsing_tolerates_human_input():
         RB.parse_ack("35,abc")
 
 
-def test_release_yml_wires_the_blocker_gate():
-    """脚本写好了却没接上去，等于没写（gate-never-executed-rots）。"""
-    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+@pytest.mark.parametrize(
+    ("workflow", "job", "next_job"),
+    [("release.yml", "trust", "build"), ("release-publish.yml", "trust2", "validate_artifacts")],
+    ids=["first-segment", "second-segment"],
+)
+def test_release_yml_wires_the_blocker_gate(workflow, job, next_job):
+    """脚本写好了却没接上去，等于没写（gate-never-executed-rots）。
+
+    两段各接一次（F.2）：第一段 `trust` 消费 dispatch 输入里的签字；第二段 `trust2`
+    拿第一段传回的 `ack_open_blockers` 对**此刻** open 的清单再核一次。
+    """
+    src = (WORKFLOWS / workflow).read_text(encoding="utf-8")
     assert "ack_open_blockers:" in src.split("\njobs:")[0], (
         "workflow_dispatch 少了 ack_open_blockers 输入"
     )
-    trust = src.split("\n  trust:", 1)[1].split("\n  build:", 1)[0]
-    assert "release_blockers.py" in trust, "trust 里没有 blocker 门禁那一步"
+    trust = src.split(f"\n  {job}:", 1)[1].split(f"\n  {next_job}:", 1)[0]
+    assert "release_blockers.py" in trust, f"{job} 里没有 blocker 门禁那一步"
     assert "labels=release:blocker" in trust, "查询的不是 release:blocker 这个 label"
     assert "state=open" in trust
-    assert "issues: read" in trust, "trust 没有 issues: read——gh api 查不了 label"
+    assert "issues: read" in trust, f"{job} 没有 issues: read——gh api 查不了 label"
     # 门禁必须在 dispatch 与 tag push 两条路上都跑：不许挂 if 只在一条路执行
     step = trust.split("Release-blocker", 1)[1].split("- id: resolve", 1)[0]
     assert "\n        if:" not in step, (

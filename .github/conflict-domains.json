@@ -57,6 +57,7 @@
     "release-control-plane": {
       "files": [
         ".github/workflows/release.yml",
+        ".github/workflows/release-publish.yml",
         "docs/RELEASING.md",
         "docs/release-notes/**"
       ],

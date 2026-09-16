@@ -234,9 +234,11 @@ def test_release_section_refuses_unknown_status_and_missing_english():
 
 
 def test_release_workflow_appends_the_generated_section():
-    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    """拼 release body 的那一步在发布链**第二段** `release-publish.yml`（`validate_artifacts`，
+    F.2 之前在 release.yml）。"""
+    workflow = (ROOT / ".github" / "workflows" / "release-publish.yml").read_text(encoding="utf-8")
     assert "make_release_support_section.py" in workflow, (
-        "release.yml 不再追加生成的支持段——发布页的平台清单会退回手写漂移"
+        "release-publish.yml 不再追加生成的支持段——发布页的平台清单会退回手写漂移"
     )
 
 

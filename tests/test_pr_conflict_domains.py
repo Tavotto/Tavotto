@@ -200,8 +200,10 @@ class TestGlob:
 
     def test_a_file_can_belong_to_multiple_domains(self):
         d = _domains()
-        hits = CD.classify([".github/workflows/release.yml"], d)
-        assert "ci-control-plane" in hits and "release-control-plane" in hits
+        # 发布链的两段（F.2）都在 release-control-plane 里，也都在 ci-control-plane 的 workflows/** 里
+        for name in ("release.yml", "release-publish.yml"):
+            hits = CD.classify([f".github/workflows/{name}"], d)
+            assert "ci-control-plane" in hits and "release-control-plane" in hits, (name, hits)
 
 
 # ============================================================ 重叠判定

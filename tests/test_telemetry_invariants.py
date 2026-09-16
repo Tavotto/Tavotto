@@ -272,7 +272,10 @@ def test_pytest_runs_with_telemetry_hard_disabled():
     assert os.environ.get("TAVOTTO_NO_TELEMETRY") == "1"
 
 
-@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml", "desktop-tauri.yml", "release.yml"])
+@pytest.mark.parametrize(
+    "workflow",
+    ["ci.yml", "nightly.yml", "desktop-tauri.yml", "release.yml", "release-publish.yml"],
+)
 def test_every_workflow_hard_disables_telemetry(workflow):
     """每条会真的把 Tavotto 跑起来的流水线都要在**工作流级**关掉遥测。
 
