@@ -1,10 +1,10 @@
 """桌面 sidecar 模式：Tauri 壳的受控后端（`tavotto --desktop-sidecar`）。
 
-与浏览器模式（`app.run` + `webbrowser.open`）的差异全部收在这个模块里：
+与浏览器模式（`localserver.serve_browser` + `webbrowser.open`）的差异全部收在这个模块里：
 
 - 只绑 127.0.0.1、端口 0（操作系统分配——先绑定后读端口，没有「先查再绑」竞态）。
-- 用 werkzeug 的 `make_server`（Flask 自带依赖，PyInstaller 反正要打它）：
-  拿得到真实端口，支持从别的线程优雅 `shutdown()`。
+- 用 werkzeug 的线程 server（经 `localserver.LocalWSGIServer`：bind 与 listen
+  之间不反查主机名）：拿得到真实端口，支持从别的线程优雅 `shutdown()`。
 - 一次性启动 nonce → 短生命周期 HttpOnly 会话 cookie 的桌面认证：
   nonce 优先经 **stdin 首行** 传入（环境变量对同用户进程可见——macOS 上
   `ps eww` 就能看到别的进程的 env，管道不行），`TAVOTTO_DESKTOP_NONCE`
@@ -39,9 +39,7 @@ import threading
 import time
 from pathlib import Path
 
-from werkzeug.serving import make_server
-
-from . import security
+from . import localserver, security
 from .engine import ai_bridge as engine_ai, pool as engine_pool, project_watch as engine_watch
 
 LOG = logging.getLogger("tavotto.desktop")
@@ -169,9 +167,10 @@ class SidecarServer:
     def __init__(self, flask_app, state: DesktopState, handshake: Path | None = None) -> None:
         self._app = flask_app
         self._handshake = handshake
-        # threaded=True：SSE 长连接 + 渲染请求并存；werkzeug 的线程 server
-        # daemon_threads=True，shutdown 后残余长连接不阻塞进程退出
-        self._srv = make_server("127.0.0.1", 0, flask_app, threaded=True)
+        # 线程 server（SSE 长连接 + 渲染请求并存；daemon_threads=True，shutdown
+        # 后残余长连接不阻塞进程退出），且 bind → listen 之间不反查主机名——
+        # 否则反向 DNS 无回音的机器上握手文件要等 30–60 s 才写得出来（localserver.py）
+        self._srv = localserver.LocalWSGIServer("127.0.0.1", 0, flask_app)
         state.port = self._srv.server_port
         flask_app.config["TAVOTTO_DESKTOP_MODE"] = True
         flask_app.config[security.STATE_KEY] = state

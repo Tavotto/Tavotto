@@ -69,7 +69,7 @@ def test_import_time_makes_no_network_request(monkeypatch):
 def test_app_still_starts_when_telemetry_explodes(monkeypatch, telemetry_sent):
     """把埋点整条路径炸掉，`note_app_started` 也必须安静地过去。
 
-    它跑在 `app.main()` 里、`app.run()` 之前——抛出来就是「启动即崩」。
+    它跑在 `app.main()` 里、`localserver.serve_browser()` 之前——抛出来就是「启动即崩」。
     """
 
     def boom(*_a, **_kw):

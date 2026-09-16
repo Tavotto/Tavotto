@@ -136,6 +136,7 @@ app.json = _StrictJSONProvider(app)
 # 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
 from . import (  # noqa: E402 —— 必须在 app 实例创建之后
     desktop as desktop_mode,
+    localserver,
     security,  # 需要 app 实例存在后立即挂钩
 )
 
@@ -6593,8 +6594,12 @@ def main():
     # 同上：真的要开始服务了才算一次会话。**上面「已有实例在跑，把浏览器
     # 指过去就完事」那条分支刻意不记**——那个进程没有提供任何服务。
     engine_telemetry.note_app_started("browser")
+    # 不用 `app.run`：werkzeug 的 server 在 bind 与 listen 之间反查主机名，
+    # 反向 DNS 无回音的机器上首开卡 30–60 s，此间端口已 bind 未 listen（macOS
+    # 上连接是 timed out 而不是 refused），就绪探测全部干等。缺陷、证据与逐项
+    # 对照见 localserver.py。
     try:
-        app.run(host="127.0.0.1", port=port, threaded=True)
+        localserver.serve_browser(app, "127.0.0.1", port)
     finally:
         if not insecure:
             engine_session_client.remove_secret(port)
