@@ -201,6 +201,32 @@ def test_every_named_step_in_the_live_workflow_has_an_execution_category(live_wo
     assert CB.classify_step("某个没登记过的步骤") == "other"
 
 
+#: `cache-seed`（push main 的缓存种子）三个步骤名 → 类别。它们是「让消费者的准备步骤真跑一次」，
+#: 账记在消费者同一类下：pnpm install → install；cargo 编译 / runtime 构建 → build（它们的产出是
+#: target/ 与 build/runtime-cache，不是结论）。**枚举**：种子加一步就要回到这里登记一次。
+_CACHE_SEED_STEPS = {
+    "种 pnpm store（pnpm install 真跑一次）": "install",
+    "让消费者那组 cargo 命令真跑一次（种 target/）": "build",
+    "种 CPython 归档（构建内置渲染 runtime 真跑一次）": "build",
+}
+
+
+def test_cache_seed_steps_are_booked_under_install_and_build(live_workflow):
+    """主语是 HEAD 的 ci.yml 里 `cache-seed` **带名字的每一步**：与上面的枚举键集合相等（少一步 =
+    种子形状变了、多一步 = 没登记），且各自分到枚举说的那一类——不是「不是 other 就行」：分错类
+    （比如 cargo 那一步落进 test）时 build 的账少一段、test 多一段，同样没有红灯。"""
+    named = {s["name"] for s in live_workflow["cache-seed"]["steps"] if s.get("name")}
+    assert set(_CACHE_SEED_STEPS) <= named, sorted(set(_CACHE_SEED_STEPS) - named)
+    # 其余带名字的步骤（缓存 CPython / 装 Tauri / 摆 sidecar）与消费者同名，走消费者那几条规则
+    for extra in sorted(named - set(_CACHE_SEED_STEPS)):
+        assert CB.classify_step(extra) in {"setup", "install", "build"}, (
+            extra,
+            CB.classify_step(extra),
+        )
+    for name, cat in _CACHE_SEED_STEPS.items():
+        assert CB.classify_step(name) == cat, (name, CB.classify_step(name))
+
+
 def test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under():
     """快照必须是 8b95256c 那份、且带着 backend-fast → 重型 的边。
 

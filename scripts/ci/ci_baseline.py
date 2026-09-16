@@ -324,14 +324,15 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "install",
         re.compile(
-            r"^Run pnpm install|^安装|^装 |^装打包依赖|^装进干净环境|^准备渲染环境|^装 Tauri"
+            r"^Run pnpm install|^安装|^装 |^装打包依赖|^装进干净环境|^准备渲染环境|^装 Tauri|"
+            r"^种 pnpm store"
         ),
     ),
     (
         "build",
         re.compile(
             r"^Run pnpm build|^构建|^打 wheel|^PyInstaller|^组装并验证|^浏览器 playground 构建|"
-            r"^摆一个空的 sidecar"
+            r"^摆一个空的 sidecar|^让消费者那组 cargo 命令|^种 CPython 归档"
         ),
     ),
     (
