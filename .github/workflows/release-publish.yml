@@ -35,6 +35,7 @@ name: Release (publish)
 #   · publish  **按同一规则重算**：有 tag 指向该 SHA 且 tag 名与源码版本一致 → true。
 #              载荷里的 `publish=false` 只能把 true 压成 false（演练），**不能反过来**
 #              ——没有 tag 而载荷说 true，本段仍是演练；
+#   · pypi_target  只收窄：不在 {none, testpypi, pypi} 里 → 红；publish 不是 true → none；
 #   · lab      读**一次**该 SHA 的 commit status（一次 API 调用，不轮询），要求
 #              `lab/release` 的 state == success，且 target_url 指向载荷里 `lab_run_id`
 #              那个 ci-infra run。手工派发本段而 lab 没绿，就停在这里。
@@ -42,9 +43,10 @@ name: Release (publish)
 # **哪些一字不动**：validate_artifacts 起的全部步骤从 release.yml 逐字搬来，只把
 # `needs.trust.*` 改成 `needs.trust2.*`、给 validate_artifacts 的 download-artifact 加
 # `run-id`（第一段的 run）；`publish=false` 演练语义、`plugin_stable` 通道、Release 与
-# PyPI 的 publish 门都照旧。第一段的 `pypi` 输入（none / testpypi / pypi）没有随载荷传
-# 过来：本段 publish=true 只可能来自 tag，PyPI 按仓库变量 PYPI_PUBLISH_ENABLED 开闸
-# （从前 tag 触发那条路本来就只看它），TestPyPI 通道在切两段之后不存在。
+# PyPI 的 publish 门都照旧。第一段的 `pypi` 输入（none / testpypi / pypi）与 tag 触发时的
+# `vars.PYPI_PUBLISH_ENABLED` 由第一段 `trust` 折成一个值 `pypi_target` 随载荷传过来
+# ——本段**不再读**那个仓库变量；`trust2` 对 pypi_target **只收窄**（必须 ∈ {none,
+# testpypi, pypi}，publish 不是 true 时强制 none），与 publish 的「只能压 false」同一条纪律。
 #
 # **失败形状**：lab 红 → ci-infra 的 `report` 打 `lab/release` = failure、**不派发**本段。
 # 第一段的 run 已经 success 结束，「没有发布」靠的是本段从未开始——读结论的人看两处：
@@ -76,6 +78,13 @@ on:
         description: "第一段的 release:blocker 签字，原样传回。trust2 对着此刻 open 的清单再核一次"
         required: false
         default: ""
+        type: string
+      pypi_target:
+        description: >-
+          第一段 trust 折算出的 PyPI 目标（none / testpypi / pypi：tag 触发看 PYPI_PUBLISH_ENABLED，
+          dispatch 看 inputs.pypi）。trust2 只收窄：publish 不是 true 时强制 none。
+        required: false
+        default: "none"
         type: string
 
 # 默认只读。真正要写的 job（github_release 建 Release、pypi 走 OIDC、plugin_stable 推
@@ -109,6 +118,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       publish: ${{ steps.resolve.outputs.publish }}
+      pypi_target: ${{ steps.resolve.outputs.pypi_target }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -164,6 +174,7 @@ jobs:
         env:
           IN_SHA: ${{ inputs.sha }}
           PUBLISH_IN: ${{ inputs.publish }}
+          PYPI_TARGET_IN: ${{ inputs.pypi_target }}
         # 下面这段与 release.yml `trust` 的 resolve 同源（2026-09-16 照抄）：只有两处
         # 不同——本段没有 push 事件，SHA 直接取载荷（上一步已验形状），REL_TAG 一律
         # 从源码版本推；publish 不再由事件决定，而是按 tag 规则重算，见最后一段。
@@ -222,13 +233,28 @@ jobs:
             PUBLISH=false
           fi
 
+          # **pypi_target 只收窄。** 第一段 trust 已把「tag 触发看 PYPI_PUBLISH_ENABLED /
+          # dispatch 看 inputs.pypi」折成这个值；本段不再读那个仓库变量，也不许把它
+          # 放宽：不在闭集里 → 红；publish 不是 true → 强制 none（演练不碰 PyPI，
+          # 与 publish 只能被压成 false 是同一条纪律）。
+          case "$PYPI_TARGET_IN" in
+            none|testpypi|pypi) ;;
+            *) echo "::error::pypi_target 只认 none / testpypi / pypi，载荷给的是：$PYPI_TARGET_IN"; exit 1 ;;
+          esac
+          if [ "$PUBLISH" = "true" ]; then
+            PYPI_TARGET="$PYPI_TARGET_IN"
+          else
+            PYPI_TARGET=none
+          fi
+
           {
             echo "sha=$SHA"
             echo "version=$VER"
             echo "tag=$REL_TAG"
             echo "publish=$PUBLISH"
+            echo "pypi_target=$PYPI_TARGET"
           } >> "$GITHUB_OUTPUT"
-          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH（载荷 publish=$PUBLISH_IN，tag 指向该 SHA=$TAG_PUBLISH）"
+          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH（载荷 publish=$PUBLISH_IN，tag 指向该 SHA=$TAG_PUBLISH）· pypi_target=$PYPI_TARGET（载荷 $PYPI_TARGET_IN）"
 
       # ── lab 结论：读一次，不等 ──
       # 第一段禁止等 lab（排队时间没有上界），所以 lab 的结论以 commit status 的形式
@@ -275,6 +301,8 @@ jobs:
           REL_TAG: ${{ steps.resolve.outputs.tag }}
           PUBLISH: ${{ steps.resolve.outputs.publish }}
           PUBLISH_IN: ${{ inputs.publish }}
+          PYPI_TARGET: ${{ steps.resolve.outputs.pypi_target }}
+          PYPI_TARGET_IN: ${{ inputs.pypi_target }}
           LAB_URL: ${{ steps.lab.outputs.lab_run_url }}
           SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ inputs.source_run_id }}
         run: |
@@ -289,6 +317,7 @@ jobs:
             echo "| 版本 | \`$VER\` |"
             echo "| tag | \`$REL_TAG\` |"
             echo "| **publish** | **$PUBLISH**（载荷 \`$PUBLISH_IN\`；按 tag 规则重算） |"
+            echo "| pypi_target | \`$PYPI_TARGET\`（载荷 \`$PYPI_TARGET_IN\`；只收窄） |"
             echo "| 第一段 run（产物来源） | $SOURCE_RUN_URL |"
             echo "| lab/release | $LAB_URL |"
             if [ "$PUBLISH" != "true" ]; then
@@ -1020,20 +1049,21 @@ jobs:
     #
     # PyPI 侧的 trusted publisher 配好之前，tag 触发的自动发布只会红一次
     # 给人添堵——用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸
-    # （Settings → Variables）。
+    # （Settings → Variables）。手动触发时按 inputs.pypi 走，none 则跳过。
     #
-    # **第二段只剩 tag 那条规则。** 第一段里 `pypi` 那个 dispatch 输入
-    # （none / testpypi / pypi）没有随载荷传到这里，而 trust2 算出的
-    # publish=true 只可能来自「有 tag 指向该 SHA」——正是从前 tag 触发那条路，
-    # 它从来只看 PYPI_PUBLISH_ENABLED。TestPyPI 通道因此在切两段之后不存在。
-    if: needs.trust2.outputs.publish == 'true' && vars.PYPI_PUBLISH_ENABLED == 'true'
+    # 这两支在切两段之后由第一段 `trust` 折成一个值 `pypi_target`（tag 触发 →
+    # PYPI_PUBLISH_ENABLED ? pypi : none；dispatch → inputs.pypi），随载荷经 ci-infra
+    # 传到这里，`trust2` 只收窄（publish 不是 true → none）。**本段不再读那个仓库
+    # 变量**——它已在第一段折进 pypi_target；这里再读一次就是第二份权威，两处哪天
+    # 不一致没人会发现。
+    if: needs.trust2.outputs.publish == 'true' && needs.trust2.outputs.pypi_target != 'none'
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
     # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
     environment:
-      name: pypi
-      url: https://pypi.org/p/tavotto
+      name: ${{ needs.trust2.outputs.pypi_target == 'testpypi' && 'testpypi' || 'pypi' }}
+      url: ${{ needs.trust2.outputs.pypi_target == 'testpypi' && 'https://test.pypi.org/p/tavotto' || 'https://pypi.org/p/tavotto' }}
     permissions:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
@@ -1074,7 +1104,16 @@ jobs:
           n=$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')
           [ "$n" = "2" ] || { echo "::error::dist/ 里有 $n 个文件，PyPI 只该收 2 个"; exit 1; }
 
+      - name: 发布到 TestPyPI
+        if: needs.trust2.outputs.pypi_target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+          skip-existing: true      # 演练可以重跑，同名文件跳过而不是整个失败
+
       - name: 发布到 PyPI
+        if: needs.trust2.outputs.pypi_target != 'testpypi'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           print-hash: true

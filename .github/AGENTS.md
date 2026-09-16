@@ -244,11 +244,11 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   `dispatch_lab`（hosted，`needs: [build, desktop, trust]`，形状与 `lab-ci.yml::dispatch` 同：
   `TAVOTTO_CI_INFRA_TOKEN` 为空 `::error::` + exit 1；`-f mode=release -f sha=<trust 的 SHA>
   -f use_prebuilt_dist=true -f source_run_id=<本 run> -f publish=<trust 算出的>
-  -f ack_open_blockers=<原样>`），**到此结束、不等结果**——第一段 run 的 success 只表示
+  -f ack_open_blockers=<原样> -f pypi_target=<trust 折算的>`），**到此结束、不等结果**——第一段 run 的 success 只表示
   「产物造出来了、lab 派出去了」。ci-infra 的 `report` 给 SHA 打 commit status `lab/release`，
   **release 且绿**时再 `gh workflow run release-publish.yml -R Tavotto/Tavotto`。
   **第二段 `release-publish.yml`**（只有 `workflow_dispatch`，inputs `sha` / `source_run_id` /
-  `lab_run_id` / `publish` / `ack_open_blockers` 全 string）：`trust2` **不信任载荷**——重跑
+  `lab_run_id` / `publish` / `ack_open_blockers` / `pypi_target` 全 string）：`trust2` **不信任载荷**——重跑
   `trust` 同一段 ancestry + tag 判断（照抄）、对**此刻** open 的 release:blocker 用第一段的
   ack 再跑一次 `release_blockers.py`（第二段不新增签字入口）、publish **按同一规则重算**（有
   `v<源码版本>` tag 指向该 SHA → true；载荷的 publish 只能把 true 压成 false）、读**一次**
@@ -258,10 +258,11 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   `github_release` / `n1_update_windows` / `pypi` / `plugin_stable`——从 release.yml **逐字搬来**，
   只把 `needs.trust.*` 改成 `needs.trust2.*`。**失败形状**：lab 红 → `lab/release` = failure、
   第二段从未开始；读结论看两处（status + 第二段有没有该 SHA 的 run），
-  `docs/ci/release-qualification.md`「发行链上的 gate」。**边界**：第一段的 `pypi` 输入没有
-  随载荷传到第二段，`pypi` job 的门是 `publish && vars.PYPI_PUBLISH_ENABLED`，TestPyPI 通道
-  在两段链里不存在。合同：`tests/test_release_workflow_contract.py`（`_REUSABLE_CALLERS` 空集、
-  `_DISPATCHERS` 两个、发布判据主语扩到第二段、六条两段链专属用例，变异 49/49 打红）、
+  `docs/ci/release-qualification.md`「发行链上的 gate」。**pypi_target**：从前 `pypi` job 那条 `if`
+  的两支（tag 触发看 `vars.PYPI_PUBLISH_ENABLED` / dispatch 看 `inputs.pypi`）到不了第二段，由
+  第一段 `trust` 折成一个值随两跳载荷传过去（ci-infra 接口 +1），`trust2` 只收窄（闭集、publish
+  不是 true → none），第二段不再读那个仓库变量。合同：`tests/test_release_workflow_contract.py`（`_REUSABLE_CALLERS` 空集、
+  `_DISPATCHERS` 两个、发布判据主语扩到第二段、七条两段链专属用例，变异 49 + 15 条打红）、
   `test_merge_queue_workflows.py::TestRunnerTrustZones`（`uses` reusable 的 workflow 集合 == ∅、
   派发的 == {lab-ci, release}）、`test_update_chain_gates.py`（pattern 点名的 universe 学会跨 run）。
 - **`desktop-shell`（2026-09-04，issue #275）**：`src-tauri` 的

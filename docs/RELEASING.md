@@ -18,11 +18,11 @@
 
 | job | 做什么 |
 |---|---|
-| `trust2` | 重跑 `trust` 同一段 ancestry + tag 判断；对**此刻** open 的 release:blocker 用第一段的 ack 再核一次；publish **按同一规则重算**（有 `v<版本>` tag 指向该 SHA → true，载荷只能压成 false）；读**一次** `lab/release` status（success 且 target_url 指向 `lab_run_id` 那个 run） |
+| `trust2` | 重跑 `trust` 同一段 ancestry + tag 判断；对**此刻** open 的 release:blocker 用第一段的 ack 再核一次；publish **按同一规则重算**（有 `v<版本>` tag 指向该 SHA → true，载荷只能压成 false）；`pypi_target` 只收窄（∉ {none, testpypi, pypi} → 红，publish 不是 true → none）；读**一次** `lab/release` status（success 且 target_url 指向 `lab_run_id` 那个 run） |
 | `validate_artifacts` | 按 `source_run_id` 从第一段 run 取全部产物，合并三条腿的清单并**逐条核对 sha256 与 source_sha** → provenance → SBOM → SHA256SUMS → Codex 插件清单 → release notes。**演练也跑这一整段** |
 | `github_release` | 建 GitHub Release，**一次挂全部**（只在 `publish=true`） |
 | `n1_update_windows` | 发布后装 N-1 官方安装包、驱动真实应用内更新（只在 `publish=true`） |
-| `pypi` | 发到 PyPI（只在 `publish=true` 且仓库变量 `PYPI_PUBLISH_ENABLED=true`；TestPyPI 通道在两段链里不存在，见下） |
+| `pypi` | 发到 PyPI / TestPyPI（只在 `publish=true` 且 `pypi_target != none`；`pypi_target` 由第一段 `trust` 折算：tag 触发看 `PYPI_PUBLISH_ENABLED`、dispatch 看 `pypi` 输入，`trust2` 只收窄） |
 | `plugin_stable` | 把同一份插件 zip 投影到发行分支 `plugin-stable`（演练对临时 bare 仓库跑发布器） |
 
 ```
@@ -163,9 +163,9 @@ Trusted Publishing 用 OIDC 换短时凭据，仓库里不存任何 API token。
 在 <https://test.pypi.org/manage/account/publishing/> 重复一遍，
 **Environment name 填 `testpypi`**。两边是完全独立的账号与配置。
 
-> **两段链里 TestPyPI 目前不可达**：第一段的 `pypi` 输入（none / testpypi / pypi）没有
-> 随载荷传到第二段，第二段 publish=true 只可能来自 tag，PyPI 按 `PYPI_PUBLISH_ENABLED`
-> 开闸。要恢复得把 `pypi` 加进两跳载荷（ci-infra 接口 +1，待拍板）。这一节先留着。
+> 两段链里 TestPyPI 的走法：`workflow_dispatch(ref=<已有 tag 的 SHA>, publish=true, pypi=testpypi)`
+> → 第一段 `trust` 折成 `pypi_target=testpypi` 随载荷经 ci-infra 传到第二段 → `trust2`
+> 算出 publish=true（tag 指向该 SHA）、`pypi_target` 原样保留 → `pypi` job 走 TestPyPI 那一步。
 
 ### 3. 开闸
 
@@ -190,7 +190,7 @@ Actions → **Release** → Run workflow，`ref` 填精确 SHA、`publish` 不�
 publish=false，`validate_artifacts` 全部产物真实存在并校验，最后不发布。判据是三个
 run 都有结论（`docs/ci/release-qualification.md`「发行链上的 gate」的三步）。
 
-TestPyPI 的装机验证（两段链里目前不可达，见上一节）：
+发到 TestPyPI 之后的装机验证：
 
 ```sh
 pip install --index-url https://test.pypi.org/simple/ \

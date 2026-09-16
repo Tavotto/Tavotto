@@ -984,7 +984,16 @@ def test_release_mode_verifies_the_exact_artifact():
 # 信任、publish 只能被压成 false、产物只从第一段那次 run 取、lab 结论读一次不等。
 
 #: 第二段的 workflow_dispatch inputs——与 ci-infra `report` 的派发命令共用的接口，**一个字不能偏**。
-_PUBLISH_INPUTS = ("sha", "source_run_id", "lab_run_id", "publish", "ack_open_blockers")
+_PUBLISH_INPUTS = (
+    "sha",
+    "source_run_id",
+    "lab_run_id",
+    "publish",
+    "ack_open_blockers",
+    "pypi_target",
+)
+#: PyPI 目标的闭集：第一段 trust 折算、两跳原样转发、trust2 只收窄。
+_PYPI_TARGETS = ("none", "testpypi", "pypi")
 
 
 def _dispatch_inputs(path: Path) -> dict[str, dict[str, str]]:
@@ -1018,9 +1027,9 @@ def _shell_block(shell: str, opener: str) -> str:
 
 
 def test_the_second_segment_is_dispatch_only_with_the_pinned_inputs():
-    """`release-publish.yml`：名字 `Release (publish)`；五个 string 输入，名字与顺序钉死。
+    """`release-publish.yml`：名字 `Release (publish)`；六个 string 输入，名字与顺序钉死。
 
-    ci-infra 的 `report` 按这五个名字 `-f name=` 派发过来——少一个、改一个名字，派发当场 422，
+    ci-infra 的 `report` 按这六个名字 `-f name=` 派发过来——少一个、改一个名字，派发当场 422，
     而那发生在 lab 已经绿了之后，是整条链上最贵的失败位置。
     """
     raw = PUBLISH.read_text(encoding="utf-8")
@@ -1038,12 +1047,16 @@ def test_the_second_segment_is_dispatch_only_with_the_pinned_inputs():
     assert got["publish"].get("default") == '"false"', (
         f'publish 的默认值不是 "false"：{got["publish"]}'
     )
+    assert got["pypi_target"].get("default") == '"none"', (
+        f'pypi_target 的默认值不是 "none"：{got["pypi_target"]}——缺省必须是「不碰 PyPI」'
+    )
 
 
 def test_the_first_segment_ends_by_dispatching_the_lab_with_publish_and_ack_forwarded():
-    """`release.yml::dispatch_lab`：`needs` 含 build / desktop / trust；命令里七个 `-f` 齐全；
-    `publish` 来自 trust 的输出、`ack_open_blockers` 原样来自输入——第二段 trust2 要拿它们
-    重算 / 再核。第一段**不等结果**：job 里没有任何 `gh run watch` / `gh run view`。
+    """`release.yml::dispatch_lab`：`needs` 含 build / desktop / trust；命令里八个 `-f` 齐全；
+    `publish` / `pypi_target` 来自 trust 的输出、`ack_open_blockers` 原样来自输入——第二段
+    trust2 要拿它们重算 / 收窄 / 再核。第一段**不等结果**：job 里没有任何 `gh run watch` /
+    `gh run view`。
     """
     wf = _wf(RELEASE)
     header = wf.jobs["dispatch_lab"].split("steps:")[0]
@@ -1054,6 +1067,7 @@ def test_the_first_segment_ends_by_dispatching_the_lab_with_publish_and_ack_forw
     )
     env = dict(re.findall(r"(?m)^\s+([A-Z_]+):\s*(\$\{\{.*?\}\})\s*$", header))
     assert env.get("LAB_PUBLISH") == "${{ needs.trust.outputs.publish }}", env
+    assert env.get("LAB_PYPI_TARGET") == "${{ needs.trust.outputs.pypi_target }}", env
     assert env.get("LAB_ACK") == "${{ inputs.ack_open_blockers }}", env
     runs = "\n".join(wf.job_runs("dispatch_lab"))
     cmd = runs[runs.index(_DISPATCH_CMD) :].split("\n\n")[0]
@@ -1065,11 +1079,122 @@ def test_the_first_segment_ends_by_dispatching_the_lab_with_publish_and_ack_forw
         ("source_run_id", '"$GITHUB_RUN_ID"'),
         ("publish", '"$LAB_PUBLISH"'),
         ("ack_open_blockers", '"$LAB_ACK"'),
+        ("pypi_target", '"$LAB_PYPI_TARGET"'),
     ):
         m = re.search(rf"-f\s+{field}=(\S+)", cmd)
         assert m, f"派发命令少了 -f {field}="
         assert m.group(1) == value, f"-f {field}= 的值是 {m.group(1)!r}，期望 {value!r}"
+    assert len(re.findall(r"-f\s+[a-z_]+=", cmd)) == 8, f"派发命令的 -f 不是 8 个：{cmd}"
     assert "gh run watch" not in runs and "gh run view" not in runs, "第一段不许等 lab 的结果"
+
+
+def test_trust_folds_the_pypi_gate_into_pypi_target_and_trust2_can_only_narrow_it():
+    """**`pypi` 的两支判断折成 `pypi_target`，第二段只能收窄。**
+
+    从前 pypi job 的 `if` 是「tag 触发看 `vars.PYPI_PUBLISH_ENABLED` / dispatch 看
+    `inputs.pypi`」；切两段后事件与 inputs.pypi 都到不了第二段，所以第一段 `trust`
+    把它折成一个值随载荷传过去。判据：
+
+    * `trust`：push 支 `PYPI_TARGET` 由 `$PYPI_PUBLISH_ENABLED`（env ← `vars.PYPI_PUBLISH_ENABLED`）
+      决定 pypi / none；dispatch 支 `PYPI_TARGET` 取 `$PYPI_IN`（env ← `inputs.pypi`）；闭集
+      校验；进 `GITHUB_OUTPUT`。
+    * `trust2`：对 `PYPI_TARGET` 的赋值恰好两处——`PYPI_TARGET="$PYPI_TARGET_IN"` 只在
+      `if [ "$PUBLISH" = "true" ]` 块里，`PYPI_TARGET=none` 在 else；闭集 `case` 在两处赋值
+      之前且 `*)` 支 exit 1；`PYPI_TARGET_IN` 只在那一处被读（echo 除外）。
+    * `pypi` job：`if` 同时看 `trust2.outputs.publish == 'true'` 与 `pypi_target != 'none'`；
+      environment 的 name / url 按 `pypi_target == 'testpypi'` 选；TestPyPI / PyPI 两步的 `if`
+      分别是 `== 'testpypi'` / `!= 'testpypi'`；第二段**不读** `vars.PYPI_PUBLISH_ENABLED`
+      （它已在第一段折进 pypi_target，再读一次就是第二份权威）；除 trust2 外没有 job 读
+      `inputs.pypi*`。
+    """
+    trust = "\n".join(_wf(RELEASE).job_runs("trust"))
+    env = dict(re.findall(r"(?m)^\s+([A-Z_]+):\s*(\$\{\{.*?\}\})\s*$", _wf(RELEASE).jobs["trust"]))
+    assert env.get("PYPI_IN") == "${{ inputs.pypi }}", env
+    assert env.get("PYPI_PUBLISH_ENABLED") == "${{ vars.PYPI_PUBLISH_ENABLED }}", env
+    assert re.search(
+        r'if \[ "\$PYPI_PUBLISH_ENABLED" = "true" \]; then PYPI_TARGET=pypi; else PYPI_TARGET=none; fi',
+        trust,
+    ), "trust 的 push 支没有把 PYPI_PUBLISH_ENABLED 折成 pypi / none"
+    assert re.search(r'(?m)^\s*PYPI_TARGET="\$\{PYPI_IN:-none\}"\s*$', trust), (
+        "trust 的 dispatch 支没有取 inputs.pypi"
+    )
+    assert re.search(r"(?m)^\s*none\|testpypi\|pypi\) ;;\s*$", trust), (
+        "trust 没有闭集校验 pypi_target"
+    )
+    assert re.search(r'(?m)^\s*echo "pypi_target=\$PYPI_TARGET"\s*$', trust), (
+        "trust 没有输出 pypi_target"
+    )
+    assert re.search(
+        r"(?m)^\s+pypi_target:\s*\$\{\{\s*steps\.resolve\.outputs\.pypi_target\s*\}\}\s*$",
+        _wf(RELEASE).jobs["trust"],
+    ), "trust 的 outputs 里没有 pypi_target"
+
+    pub = _wf(PUBLISH)
+    shell = "\n".join(pub.job_runs("trust2"))
+    assigns = re.findall(r"(?m)^\s*PYPI_TARGET=(\S+)\s*$", shell)
+    assert sorted(assigns) == ['"$PYPI_TARGET_IN"', "none"], (
+        f"trust2 对 PYPI_TARGET 的赋值是 {assigns}"
+    )
+    narrow = _shell_block(shell, 'if [ "$PUBLISH" = "true" ]; then')
+    assert re.search(
+        r'(?m)^\s*PYPI_TARGET="\$PYPI_TARGET_IN"\s*$', narrow.split("\n          else")[0]
+    ), "PYPI_TARGET 取载荷值不在 publish == true 的 then 支里"
+    assert re.search(r"(?m)^\s*PYPI_TARGET=none\s*$", narrow.split("\n          else")[1]), (
+        "publish 不是 true 时没有强制 none"
+    )
+    case = re.search(
+        r'case "\$PYPI_TARGET_IN" in\n\s*none\|testpypi\|pypi\) ;;\n\s*\*\)(?P<rest>.*?);;',
+        shell,
+        re.S,
+    )
+    assert case and re.search(r"exit 1", case.group("rest")), (
+        "trust2 没有对 pypi_target 做闭集校验 + exit 1"
+    )
+    assert shell.index('case "$PYPI_TARGET_IN" in') < shell.index(
+        'PYPI_TARGET="$PYPI_TARGET_IN"'
+    ), "闭集校验写在赋值之后"
+    reads = [ln for ln in shell.splitlines() if "$PYPI_TARGET_IN" in ln and "echo" not in ln]
+    assert len(reads) == 2 and all(
+        "case" in ln or 'PYPI_TARGET="$PYPI_TARGET_IN"' in ln for ln in reads
+    ), f"PYPI_TARGET_IN 在这些地方被读：{reads}"
+    assert re.search(
+        r"(?m)^\s+pypi_target:\s*\$\{\{\s*steps\.resolve\.outputs\.pypi_target\s*\}\}\s*$",
+        pub.jobs["trust2"],
+    ), "trust2 的 outputs 里没有 pypi_target"
+
+    head = pub.jobs["pypi"].split("steps:")[0]
+    cond = re.search(r"(?m)^\s+if:\s*(.+)$", head)
+    assert cond and "needs.trust2.outputs.publish == 'true'" in cond.group(1), head
+    assert "needs.trust2.outputs.pypi_target != 'none'" in cond.group(1), (
+        f"pypi 的门不看 pypi_target：{cond.group(1)}"
+    )
+    assert (
+        _Workflow.field(head, "name")
+        == "${{ needs.trust2.outputs.pypi_target == 'testpypi' && 'testpypi' || 'pypi' }}"
+    ), "environment.name 不按 pypi_target 选"
+    assert (
+        "needs.trust2.outputs.pypi_target == 'testpypi' && 'https://test.pypi.org/p/tavotto'"
+        in head
+    ), "environment.url 不按 pypi_target 选"
+    steps = {
+        (_Workflow.field(st, "name") or ""): st for st in pub.steps("pypi") if "pypi-publish" in st
+    }
+    assert set(steps) == {"发布到 TestPyPI", "发布到 PyPI"}, sorted(steps)
+    assert (
+        _Workflow.field(steps["发布到 TestPyPI"], "if")
+        == "needs.trust2.outputs.pypi_target == 'testpypi'"
+    )
+    assert (
+        _Workflow.field(steps["发布到 PyPI"], "if")
+        == "needs.trust2.outputs.pypi_target != 'testpypi'"
+    )
+    assert "repository-url: https://test.pypi.org/legacy/" in steps["发布到 TestPyPI"]
+    assert "vars.PYPI_PUBLISH_ENABLED" not in pub.text, (
+        "第二段又读了 vars.PYPI_PUBLISH_ENABLED——第二份权威"
+    )
+    for name, body in pub.jobs.items():
+        if name != "trust2":
+            assert "inputs.pypi" not in body, f"release-publish.yml::{name} 直接读了 inputs.pypi*"
 
 
 def test_trust2_reverifies_ancestry_tag_and_blockers_with_the_first_segments_ack():

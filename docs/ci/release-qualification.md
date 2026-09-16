@@ -330,6 +330,7 @@ release.yml（第一段：tag push / workflow_dispatch）
             gh workflow run lab-qualification.yml -R Tavotto/ci-infra -r main
               -f mode=release -f sha=<trust 的 SHA> -f use_prebuilt_dist=true
               -f source_run_id=<本 run> -f publish=<trust 算出的> -f ack_open_blockers=<原样>
+              -f pypi_target=<trust 折算的 none / testpypi / pypi>
     ── 第一段到此结束，**不等结果**。run 的 success 只表示「产物造出来了、lab 派出去了」。
 
 ci-infra lab-qualification.yml
@@ -342,18 +343,19 @@ ci-infra lab-qualification.yml
       └── 性能回归（不写基线）
     report（GitHub 托管）——给 SHA 打 commit status `lab/release`；
       **release 且绿** → gh workflow run release-publish.yml -R Tavotto/Tavotto -r main
-                          -f sha -f source_run_id -f lab_run_id=<本 run> -f publish -f ack_open_blockers
+                          -f sha -f source_run_id -f lab_run_id=<本 run> -f publish -f ack_open_blockers -f pypi_target
       **红** → 只打 failure，**不派发**
 
 release-publish.yml（第二段：只有 workflow_dispatch）
     trust2（GitHub 托管）——**不信任载荷**：重跑 ancestry + tag 判断（照抄 trust）；对**此刻** open 的
       release:blocker 用第一段的 ack 再跑一次 release_blockers.py（lab 期间新开的 blocker 停在这里，
       第二段不新增签字入口）；publish **按同一规则重算**（有 `v<源码版本>` tag 指向该 SHA → true，
-      载荷的 publish 只能把 true 压成 false）；读**一次** `lab/release` status（state == success 且
+      载荷的 publish 只能把 true 压成 false）；pypi_target **只收窄**（∉ {none, testpypi, pypi} → 红，
+      publish 不是 true → none）；读**一次** `lab/release` status（state == success 且
       target_url 指向 lab_run_id 那个 ci-infra run）
       ├── validate_artifacts（按 source_run_id 从第一段 run 取全部产物；演练也跑）
       ├── github_release / n1_update_windows（publish=true）
-      ├── pypi（publish=true 且仓库变量 PYPI_PUBLISH_ENABLED=true）
+      ├── pypi（publish=true 且 pypi_target != none；testpypi / pypi 按它选）
       └── plugin_stable（演练对临时 bare 仓库跑发布器；真推只在 publish=true）
 ```
 
@@ -372,10 +374,10 @@ release-publish.yml（第二段：只有 workflow_dispatch）
 那正是期望行为。手工派发第二段而 lab 没绿，停在 trust2（status 不是 success）。
 
 lab 侧只有 `contents: read`；签发能力（Release 写权限、PyPI OIDC、`environment`
-保护）全在第二段的对应 job 上，一个字未动。**第一段的 `pypi` 输入
-（none / testpypi / pypi）没有随载荷传到第二段**：第二段 publish=true 只可能来自
-tag，PyPI 按仓库变量 `PYPI_PUBLISH_ENABLED` 开闸（tag 那条路本来就只看它），
-TestPyPI 通道在两段链里不存在。
+保护）全在第二段的对应 job 上，一个字未动。从前 `pypi` job 那条 `if` 的两支
+（tag 触发看 `vars.PYPI_PUBLISH_ENABLED` / dispatch 看 `inputs.pypi`）由第一段 `trust`
+折成一个值 `pypi_target` 随载荷传过去——第二段**不再读**那个仓库变量（再读一次就是
+第二份权威），`trust2` 只能把它收窄成 none。
 
 ### Release-blocker 显式签字（trust 阶段，第二段 trust2 再核一次）
 

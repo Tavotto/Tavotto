@@ -11,7 +11,8 @@ name: Release
 #   release.yml（本文件，第一段）           ci-infra lab-qualification.yml       release-publish.yml（第二段，只 workflow_dispatch）
 #   trust（ancestry + tag + blocker 签字）    trust-check（同一段 ancestry 判断）   trust2（同一段 ancestry + tag 判断
 #     → build / desktop（产物 upload）─派发▶ qualify（reusable，按 run-id 取 dist）      + 再核一次 open blocker 与传回的 ack
-#     → dispatch_lab（gh workflow run …）     report（status lab/release）─派发▶      + 读一次 lab/release status）
+#     → dispatch_lab（gh workflow run …）     report（status lab/release）─派发▶      + 读一次 lab/release status
+#                                                                                 + pypi_target 只收窄）
 #                                                                               → validate_artifacts（按 source_run_id 取本 run 的产物）
 #                                                                               → github_release / n1_update_windows / pypi / plugin_stable
 #
@@ -60,9 +61,9 @@ on:
         required: false
         default: false
         type: boolean
-      # 切两段（F.2）之后这个输入**没有消费者**：第二段 publish=true 只可能来自 tag，
-      # PyPI 按仓库变量 PYPI_PUBLISH_ENABLED 开闸（tag 那条路本来就只看它）；TestPyPI
-      # 通道在两段链里不存在。留着它是为了不改 on: 的形状；要恢复得把它加进两跳载荷。
+      # 消费者是 trust：它把「tag 触发看 PYPI_PUBLISH_ENABLED / dispatch 看这个输入」
+      # 折成一个值 pypi_target（none / testpypi / pypi），随载荷经 ci-infra 传到第二段，
+      # 第二段的 pypi job 按它选 PyPI / TestPyPI；trust2 只能把它收窄成 none。
       pypi:
         description: "publish 打勾时发到哪里"
         required: true
@@ -112,6 +113,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       publish: ${{ steps.resolve.outputs.publish }}
+      pypi_target: ${{ steps.resolve.outputs.pypi_target }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -144,9 +146,15 @@ jobs:
           TAG: ${{ github.ref_name }}
           REF_IN: ${{ inputs.ref }}
           PUBLISH_IN: ${{ inputs.publish }}
+          PYPI_IN: ${{ inputs.pypi }}
+          PYPI_PUBLISH_ENABLED: ${{ vars.PYPI_PUBLISH_ENABLED }}
         run: |
           set -euo pipefail
 
+          # pypi_target（none / testpypi / pypi）：从前是第二段 pypi job 那条 `if` 的两支
+          # ——tag 触发看仓库变量 PYPI_PUBLISH_ENABLED，dispatch 看 inputs.pypi。切两段后
+          # 事件与 inputs.pypi 都到不了第二段，所以在这里折成一个值随载荷传过去；
+          # 第二段 trust2 只能把它收窄成 none（publish 不是 true 时），不能放宽。
           if [ "$EVENT" = "push" ]; then
             # tag 触发：tag → 精确 SHA。**永远 publish**。
             if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
@@ -155,6 +163,7 @@ jobs:
             fi
             REL_TAG="$TAG"
             PUBLISH=true
+            if [ "$PYPI_PUBLISH_ENABLED" = "true" ]; then PYPI_TARGET=pypi; else PYPI_TARGET=none; fi
           else
             # 手动触发：可以是精确 SHA、tag 名或分支名。
             if ! SHA="$(git rev-parse --verify "${REF_IN}^{commit}" 2>/dev/null)"; then
@@ -163,7 +172,12 @@ jobs:
             fi
             REL_TAG=""
             PUBLISH="${PUBLISH_IN:-false}"
+            PYPI_TARGET="${PYPI_IN:-none}"
           fi
+          case "$PYPI_TARGET" in
+            none|testpypi|pypi) ;;
+            *) echo "::error::pypi_target 只认 none / testpypi / pypi，算出来的是：$PYPI_TARGET"; exit 1 ;;
+          esac
 
           # **可达性对两条路都要验。** 这条门禁站在 PyPI OIDC 与 Release 写
           # 权限前面：一个指向未经评审 commit 的 ref 绝不能进入任何
@@ -213,9 +227,10 @@ jobs:
             echo "version=$VER"
             echo "tag=$REL_TAG"
             echo "publish=$PUBLISH"
+            echo "pypi_target=$PYPI_TARGET"
           } >> "$GITHUB_OUTPUT"
 
-          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH"
+          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH · pypi_target=$PYPI_TARGET"
           {
             echo "### 发布编排"
             echo ""
@@ -226,6 +241,7 @@ jobs:
             echo "| 版本 | \`$VER\` |"
             echo "| tag | \`$REL_TAG\` |"
             echo "| **publish** | **$PUBLISH** |"
+            echo "| pypi_target | \`$PYPI_TARGET\` |"
             if [ "$PUBLISH" != "true" ]; then
               echo ""
               echo "> **演练（publish=false）**：产物照造、门禁照跑，"
@@ -424,6 +440,7 @@ jobs:
       # （tests/test_release_workflow_contract.py::test_every_caller_gates_the_sha_through_a_trust_job）。
       LAB_SHA: ${{ needs.trust.outputs.sha }}
       LAB_PUBLISH: ${{ needs.trust.outputs.publish }}
+      LAB_PYPI_TARGET: ${{ needs.trust.outputs.pypi_target }}
       # blocker 签字**原样**转发：第二段 trust2 拿它对着当时 open 的清单再核一次。
       # tag 触发时 inputs 上下文为空，这里就是空串——与 trust 消费到的一致。
       LAB_ACK: ${{ inputs.ack_open_blockers }}
@@ -442,6 +459,7 @@ jobs:
           fi
           [ -n "$LAB_SHA" ] || { echo "::error::trust 没有给出 SHA"; exit 1; }
           case "$LAB_PUBLISH" in true|false) ;; *) echo "::error::trust 给出的 publish 不是 true/false：$LAB_PUBLISH"; exit 1 ;; esac
+          case "$LAB_PYPI_TARGET" in none|testpypi|pypi) ;; *) echo "::error::trust 给出的 pypi_target 不合法：$LAB_PYPI_TARGET"; exit 1 ;; esac
           gh workflow run lab-qualification.yml -R Tavotto/ci-infra -r main \
             -f mode=release \
             -f sha="$LAB_SHA" \
@@ -449,8 +467,9 @@ jobs:
             -f use_prebuilt_dist=true \
             -f source_run_id="$GITHUB_RUN_ID" \
             -f publish="$LAB_PUBLISH" \
-            -f ack_open_blockers="$LAB_ACK"
-          echo "已派发：mode=release sha=$LAB_SHA source_run_id=$GITHUB_RUN_ID publish=$LAB_PUBLISH ack=${LAB_ACK:-<空>}"
+            -f ack_open_blockers="$LAB_ACK" \
+            -f pypi_target="$LAB_PYPI_TARGET"
+          echo "已派发：mode=release sha=$LAB_SHA source_run_id=$GITHUB_RUN_ID publish=$LAB_PUBLISH pypi_target=$LAB_PYPI_TARGET ack=${LAB_ACK:-<空>}"
 
       - name: 第一段结束：结论去哪看
         # 只是给读 summary 的人一个入口，**不是判据**：`gh workflow run` 不返回
@@ -476,6 +495,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Commit | \`$LAB_SHA\` |"
             echo "| publish（随载荷传给第二段，那边按同一规则重算） | \`$LAB_PUBLISH\` |"
+            echo "| pypi_target（trust 折算，第二段只能收窄成 none） | \`$LAB_PYPI_TARGET\` |"
             echo "| ack_open_blockers（原样转发） | \`${LAB_ACK:-（空）}\` |"
             echo "| 本 run（第二段按这个 id 取产物） | $RUN_URL |"
             if [ -n "$LATEST" ]; then
