@@ -20,8 +20,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -430,31 +432,76 @@ class TestPullRequestEventTypes:
         assert len(set(verdicts.values())) == 1, f"五个重型 job 的条件算出了不同结果：{verdicts}"
         return next(iter(verdicts.values()))
 
-    def _gate_verdict(self, github: dict, heavy_results: dict[str, str]) -> dict:
-        """复刻 ci-integration-gate 那段 Bash 的三分支（它的文本由
-        TestGates::test_integration_gate_defers_only_on_plain_pull_requests 钉住），
-        然后交给真实判定器。"""
-        gate_full_ci = G.render(_gate_full_ci_expression(), github)
-        assert gate_full_ci in ("true", "false"), gate_full_ci
-        event = github["event_name"]
-        if event != "pull_request":
-            flags = dict(require_heavy=True)
-        elif gate_full_ci == "true":
-            flags = dict(require_heavy=True, full_ci=True)
-        else:
-            flags = dict(allow_deferred=True)
-        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
-        return AG.decide("integration", event, required, heavy_results, **flags)
+    @staticmethod
+    def _gate_step_script() -> str:
+        """`ci-integration-gate` 里「聚合判定」那一步的 `run: |` 原文——要执行的就是它，不复刻。"""
+        block = _code(_job(CI, "ci-integration-gate"))
+        m = re.search(
+            r"(?ms)^      - name: 聚合判定\n.*?^        run: \|\n((?:          .*\n)+)", block
+        )
+        assert m, "ci-integration-gate 里读不出「聚合判定」的 run: | 块"
+        return "\n".join(ln[10:] for ln in m.group(1).splitlines()) + "\n"
+
+    def _gate_verdict(self, github: dict, heavy_results: dict[str, str], tmp_path: Path) -> dict:
+        """把 ci-integration-gate 那一步**原样**跑一遍：env 由 ci.yml 里真实的表达式渲染，
+        `run:` 是那一步的 Bash 原文，判定器是 `scripts/ci/aggregate_gate.py` 的副本（放在
+        `$RUNNER_TEMP/trusted-gate/`，与那一步「取默认分支上的可信判定器」落的位置相同）。
+        返回判定器 stdout 那一行机器可读 JSON，并核对退出码与结论一致。
+
+        那一步在 ci.yml 里 `runs-on: ubuntu-latest`，Bash 是它唯一的执行环境；本机没有 bash
+        的平台（Windows 腿）如实 skip，而不是换一套复刻的 Python 分支去「代跑」。
+        """
+        import shutil
+        import subprocess
+
+        assert re.search(
+            r"(?m)^    runs-on: ubuntu-latest$", _code(_job(CI, "ci-integration-gate"))
+        )
+        bash = shutil.which("bash")
+        if bash is None or sys.platform == "win32":
+            pytest.skip("Gate 那一步只在 ubuntu-latest 的 bash 里执行；本机没有可用的 bash")
+
+        work = Path(tempfile.mkdtemp(dir=tmp_path))  # 同一个用例里会跑多行，各自一套目录
+        runner_temp = work / "runner-temp"
+        (runner_temp / "trusted-gate").mkdir(parents=True)
+        shutil.copy(ROOT / "scripts" / "ci" / "aggregate_gate.py", runner_temp / "trusted-gate")
+        shim = work / "bin"
+        shim.mkdir()
+        (shim / "python3").symlink_to(sys.executable)
+        env = {
+            "PATH": f"{shim}:{os.environ.get('PATH', '')}",
+            "RUNNER_TEMP": str(runner_temp),
+            "NEEDS_JSON": json.dumps({j: {"result": r} for j, r in heavy_results.items()}),
+            "GATE_EVENT": G.render("${{ github.event_name }}", github),
+            "GATE_FULL_CI": G.render(_gate_full_ci_expression(), github),
+        }
+        proc = subprocess.run(
+            [bash, "-c", self._gate_step_script()],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=work,
+        )
+        lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
+        assert len(lines) == 1, (
+            f"判定器没有恒输出一行 JSON：\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        verdict = json.loads(lines[0])
+        expected_rc = 0 if verdict["status"] in ("success", "deferred") else 1
+        assert proc.returncode == expected_rc, (proc.returncode, verdict, proc.stderr)
+        return verdict
 
     def _heavy_results(self, ran: bool, *, real: str = "success") -> dict[str, str]:
         required = sorted(_required_of(_job(CI, "ci-integration-gate")))
         return {j: (real if ran else "skipped") for j in required}
 
-    def test_the_event_table_for_pull_request_and_label_events(self):
+    def test_the_event_table_for_pull_request_and_label_events(self, tmp_path):
         """CI01 §2 事件表的 PR 行 + §4 ① 的两半，按「快线跑不跑 / 重型跑不跑 / Gate 结论」逐行算。
 
-        每行：(场景, 上下文, 快线, 重型, Gate 在重型真跑 success 时的结论, Gate 在重型 skipped 时的结论)。
-        `—` 表示那一格不会发生（重型不跑就没有 success 可谈；重型跑了就不会全 skipped）。
+        每行：(场景, 合成的 github 上下文, 快线跑不跑, 重型跑不跑, Gate 结论)。Gate 那一格喂的 needs
+        是「重型跑了就全 success、没跑就全 skipped」——重型真跑时会红的情形归 test_aggregate_gate.py，
+        这里问的只是**事件 → 档位**。
         """
         P = self._pr  # (action, 事件之后的 labels, payload 里的 label)
         rows = [
@@ -488,7 +535,7 @@ class TestPullRequestEventTypes:
         for name, github, fast, heavy, verdict in rows:
             assert self._fast_runs(github) is fast, f"[{name}] 快线跑不跑算错"
             assert self._heavy_runs(github) is heavy, f"[{name}] 重型跑不跑算错"
-            got = self._gate_verdict(github, self._heavy_results(heavy))
+            got = self._gate_verdict(github, self._heavy_results(heavy), tmp_path)
             assert got["status"] == verdict, f"[{name}] Gate 结论应为 {verdict}：{got}"
 
         # push main：快线与重型都不跑，两个 Gate 的 if 也把它挡在外面
@@ -498,7 +545,7 @@ class TestPullRequestEventTypes:
             cond = _if_of(_code(_job(CI, gate))).replace("always()", "true")
             assert G.truthy(G.evaluate(cond, push)) is False, f"{gate} 在 push main 上不该跑"
 
-    def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self):
+    def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self, tmp_path):
         """§4 ① 的核心：`unlabeled(full-ci)` 那个 run 同一 head SHA 上不许产出 deferred（绿）的
         integration gate 去盖掉此前那个真实结论。
 
@@ -512,7 +559,7 @@ class TestPullRequestEventTypes:
         assert self._heavy_runs(github) is False, "前提：摘标签的 run 里重型 job 不跑"
         assert G.render(_gate_full_ci_expression(), github) == "true"
         skipped = self._heavy_results(ran=False)
-        got = self._gate_verdict(github, skipped)
+        got = self._gate_verdict(github, skipped, tmp_path)
         assert got["status"] == "failure", got
         assert got["reason"] == "upstream_not_success", got
         assert all(p.endswith(": skipped") for p in got["problems"]), got
