@@ -91,7 +91,7 @@
 
 - 信任区 A（hosted）：ci.yml / codeql.yml / pr-conflict-domains.yml 的全部 job ⊆ {ubuntu-latest, macos-latest, windows-latest}（`TestRunnerTrustZones` ①）。信任区 B（可销毁 PR 池）：**不存在**。信任区 C（lab）：`tavotto-lab` 只在 `_lab-qualification.yml`，调用方只有 `lab-ci.yml` / `release.yml`，事件 ⊆ {push, schedule, workflow_dispatch}（②）。
 - 实际资源（只读，2026-09-15 22:03Z，`evidence/ci04/`）：仓库级 self-hosted runner 4 台在线（`tavotto-ci-01` 带 `tavotto-lab`，busy；`-01-2/-3/-4` 只带 `tavotto-ci`，**idle 且没有任何 workflow 用它们**），runner 2.336.0（当前发行 2.337.0），`runner_group=Default`；org free 计划；fork PR 审批 `first_time_contributors`；org 级 runner group / 策略 **403 读不到**。
-- 容量：托管账户并发上限 API 不给；多 PR 同时进队时 ubuntu 领取等待 105–1380s（本轮 §5），是 after 状态下的第一瓶颈。lab 网络 / hypervisor / VM 模板：一条没测（`evidence/admin_inventory.json` 18 项待管理员）。
+- 容量：托管账户并发上限已查明——free 计划 **20 个并发 job（macOS 5）**（`evidence/ci04/org_plan.json` + GitHub 文档「Usage limits」；API / 账单页不显示）；一个 full-ci run 29 个 job 自己就超，多 PR 同时进队时 ubuntu 领取等待 105–1380s（本轮 §5），是 after 状态下的第一瓶颈；处置是改推送习惯（§13 ⑥）。lab 网络 / hypervisor / VM 模板：一条没测（`evidence/admin_inventory.json` 18 项待管理员）。
 - **未部署项**：新池的 VM / JIT 注册 / runner group 限制 / 路由开关（ADMIN_HANDOFF B / C / D）全部 `not_run`；PR 触到可信 lab 的动态半边（同仓库分支 PR 加一行 `runs-on`）读不到、没实测（CIP-024 not_run）。
 
 ## 9. 真实性能样本及局限（实际计时样本、冷暖、版本与资源）
@@ -151,17 +151,17 @@ python docs/implementation/ci-foundation/evidence/ci05/shards/check_ci_shards.py
 判据：`qualification_seconds` 与 §9 的 1485–1695s 同一量级（合并组上 runner_wait 中位 2–9s，应接近 q₀）；`check_ci_shards.py` 退出码 0；
 四个 job 日志里各自的缓存行仍是 miss（作用域没修之前应如此——修好后应看到 `Cache restored from key`）。任一条不成立，回到 §0 把 `ci_hosted_ready` 改成 `fail` 并写原因。
 
-## 13. 需要管理员 / 用户拍板的最小下一步
+## 13. 需要管理员 / 用户拍板的最小下一步——**2026-09-16 用户已逐条拍板**
 
-| # | 事项 | 作用对象 | 谁 | 参考 |
+| # | 事项 | 拍板结果 | 状态 | 落点 |
 |---|---|---|---|---|
-| ① | **合并顺序**：#372 → #373 → #374 → #375 → #376 → #377 → #378 → 本 PR，stacked——每合一个就把下一个的 base 改成 `main`（GitHub 会自动 retarget 已合并 base 的 PR，但要核 `baseRefName`）；每个进合并队列前先 rebase 看 merge_group 结果；**#373 之前**不要合 #374（分片建立在删边之上的关键路径分析）；合完做 §12 的复核 | 仓库 | 用户 | `docs/ci/parallel-prs.md`、[`README.md`](README.md) 实施状态 |
-| ② | **lab 暴露**：同仓库分支 PR 加一行 `runs-on: [self-hosted, tavotto-lab]` 今天很可能会派到 `tavotto-ci-01`——回答 ADMIN_HANDOFF A-1 / A-3，做 B-6（runner group「Selected workflows」）或改成私有 infra 仓库持有 runner | org 设置 / runner 注册 | 管理员 | [`CI04_RUNNER_PILOT.md`](CI04_RUNNER_PILOT.md) §2.2–2.3 |
-| ③ | **缓存种子 job**（CI02 §4.1 (a)）：push main 上加三条腿只做 restore → 真跑一次 → save，rust-cache 两边改成同一个 `shared-key`；要定「种子 job 失败红不红」与它和 CI01「push main 只跑 landing audit」的关系；验法看合并组日志的 `Cache restored from key` | `.github/workflows/ci.yml` push main 段 | 用户 | [`CI02_BUILD_REUSE.md`](CI02_BUILD_REUSE.md) §4.1 |
-| ④ | **产品侧 getfqdn**：werkzeug 继承的 `server_bind` 在反向 DNS 无回音的机器上让首开多等 ~36s（macOS runner 实测 35.78s；用户离线 / 公司 DNS 同形）——建议立 issue，产品侧只 bind 的 server 子类或 `app.run` 之前的替代；CI 只留了 `--timeout 120` 余量 | `src/tavotto/` | 用户（产品） | [`CI03B_PACKAGE_SMOKE_ISOLATION.md`](CI03B_PACKAGE_SMOKE_ISOLATION.md) §9 |
-| ⑤ | **CI01 事件表的七条现存问题**：任意 `labeled` / `unlabeled` 重跑整条快线并取消同 PR 运行中的 run、去掉 `full-ci` 会产出同 SHA 的 deferred Gate；push main 三连推中间一次的 landing audit / SARIF 被待定取代；`ready_for_review` 无测试；codeql 的 `pull_request` 无 `types`；`analyze` 不校验 workflow 版本；ci.yml 抬头陈旧；草稿与非草稿同一套——每条要么改要么明确接受 | `.github/workflows/ci.yml` / `codeql.yml` | 用户 | [`CI01_EVENTS_AND_DAG.md`](CI01_EVENTS_AND_DAG.md) §4 |
-| ⑥ | **账户并发上限**：API 不给；三 PR 同时进队时快线反馈从 19 → 41 min（§5）。问 billing 页拿数；决定 stacked PR 用合并队列串行推还是加容量（加 Linux 池只是候选之一，CI04 §4） | 账户 / 习惯 | 用户 | [`CI05_COMPARISON.md`](CI05_COMPARISON.md) §5–§7 |
-| ⑦ | **注销闲置 runner**：`tavotto-ci-01-2/-3/-4` 在线、idle、没有任何 workflow 用它们；若在可信主机上就是三个只等一行 `runs-on` 的入口——注销或写明用途（ADMIN_HANDOFF A-2） | runner 注册 | 管理员 | [`CI04_RUNNER_PILOT.md`](CI04_RUNNER_PILOT.md) §1.1 |
+| ① | **合并顺序**：#372 → #373 → #374 → #375 → #376 → #377 → #378 → 本 PR（stacked，进合并队列，每合一个把下一个的 base 改成 `main` 并核 `baseRefName`）；**#373 之前不合 #374**；合完做 §12 的复核 | **已授权**：lead 按此顺序经合并队列逐个合入 | **执行中** | [`README.md`](README.md) 实施状态；`docs/ci/parallel-prs.md` |
+| ② | **lab 暴露**：同仓库分支 PR 加一行 `runs-on: [self-hosted, tavotto-lab]` 今天很可能会派到 `tavotto-ci-01`（CI04 §2.2） | **把 lab runner 迁到私有 ci-infra 仓库**（`docs/ci/self-hosted-runner.md` §1 的「备用形态」）；不走 runner group | 待管理员 + 两个后续 PR | [`ADMIN_HANDOFF_RUNNER_POOL.md`](ADMIN_HANDOFF_RUNNER_POOL.md) **F 组**（操作表 F-1…F-12、发布链切两段的设计 F.2、要改主语的合同测试 F.3、切换顺序与回退 F.4）；CI04 §2.3 那一行已标 |
+| ③ | **缓存种子 job**（CI02 §4.1 (a)：push main 上三条腿 restore → 真跑一次 → save，rust-cache 两边同一个 `shared-key`；验法看合并组日志的 `Cache restored from key`） | **做** | **已拍板，待栈合入后开 PR** | [`CI02_BUILD_REUSE.md`](CI02_BUILD_REUSE.md) §4.1 (a) 已标 |
+| ④ | **产品侧 getfqdn**：werkzeug 继承的 `server_bind` 反查主机名让首开在反向 DNS 无回音的机器上多等 ~36s | **现在就修产品，单开分支，不进 CI 栈** | **已拍板，修复 PR 另开** | [`CI03B_PACKAGE_SMOKE_ISOLATION.md`](CI03B_PACKAGE_SMOKE_ISOLATION.md) §9 已加一句；修好后 `--timeout 120` 回默认值 |
+| ⑤ | **CI01 事件表的七条现存问题**（[`CI01_EVENTS_AND_DAG.md`](CI01_EVENTS_AND_DAG.md) §4） | **修 ①③⑥，接受 ②④⑤⑦**：① 任意 `labeled` / `unlabeled` 重跑快线、去掉 `full-ci` 产出 deferred Gate → 修；③ `ready_for_review` 无测试 → 修（与 ① 同一个 PR）；⑥ ci.yml 抬头与时长注释陈旧 → 修；② push main 三连推中间一次的 landing audit / SARIF 被替换 → 接受（不是资格，并发只有 20）；④ codeql 无 `types` → 接受（结论按 SHA）；⑤ `analyze` 不校验 workflow 版本 → 接受（流程已按 run 记快照）；⑦ 草稿与非草稿同一套 → 接受（快线已 19 min） | 修的三条：后续 PR | CI01 §4 每条后面已写「拍板：修 / 已接受（理由）」 |
+| ⑥ | **账户并发上限** | **已查明：org `Tavotto` 是 free 计划 → 托管 runner 总 20 个并发 job、macOS 最多 5**（`gh api orgs/Tavotto --jq .plan.name` = free；GitHub 文档「Usage limits」表；账单页与 API 都不显示这个数）。处置 = **改习惯 + 记录**：stacked PR 一次只让一个在跑（直接进合并队列串行）、`full-ci` 只给真要探平台腿的 PR；一个 full-ci run 自己就 29 个 job > 20 | **已拍板，已记录** | [`CI05_COMPARISON.md`](CI05_COMPARISON.md) §5（争抢样本按已知数重述）；`evidence/admin_inventory.json`（新 observed 项）；`docs/ci/parallel-prs.md`「并发上限与推送节奏」 |
+| ⑦ | **闲置 runner** `tavotto-ci-01-2/-3/-4`（在线、idle、没有任何 workflow 用） | **注销，不建池**（ADMIN_HANDOFF B / C / D 组留档不执行） | 待管理员执行 | [`ADMIN_HANDOFF_RUNNER_POOL.md`](ADMIN_HANDOFF_RUNNER_POOL.md) A-2 已改成操作项（`svc.sh stop && svc.sh uninstall && config.sh remove` ×3；验收 `actions/runners` 只剩 -01）；`runner_pool_ready` 仍 `not_run`，按拍板本轮不会变 pass；CI04 §4 结尾已记 |
 
 不在清单里但已记录、不需要拍板的下一刀（都在 hosted 上）：Windows junit 重算权重表（CI03A §6）、backend-fast 3 片或 Linux 重平衡、`package` 开 pnpm 缓存（③ 之后）。
 

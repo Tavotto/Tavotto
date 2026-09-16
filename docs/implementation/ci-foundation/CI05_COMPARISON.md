@@ -177,7 +177,7 @@ package 各腿、workerd、Ruff、CLA：job_seconds 都在 before 的 min–max 
 
 | run | 谁在等 | runner_wait | 与谁同时 |
 |---|---|---:|---|
-| 35011613925（#375） | backend-platforms (windows, 1) 131 · windows-exe-smoke (1)/(2) 205 / 321 · package (windows) 372 · package (ubuntu 3.14) 348 · CLA 120 · workerd 149 · backend-fast (3.14, 1) 171 | 65–372 | 本 run 自己：Windows 同时要 5 台（pytest ×2 + Playwright ×2 + package）；ubuntu 同时要 13 台 |
+| 35011613925（#375） | backend-platforms (windows, 1) 131 · windows-exe-smoke (1)/(2) 205 / 321 · package (windows) 372 · package (ubuntu 3.14) 348 · CLA 120 · workerd 149 · backend-fast (3.14, 1) 171 | 65–372 | **本 run 自己就超上限**：一个 full-ci run 29 个 job > 账户 20 个并发（下文），先起跑的占满 20 个槽，其余（含 5 台 Windows 里排后面的）等前面的 job 结束 |
 | 35031461863（#376） | CI fast gate 176 · CI integration gate **447** · plugin-candidate 394 · package (ubuntu 3.13) 339 · 其余重型 69–223 | 69–447 | 22:36 起 #377（29 job）+ #378（17 job）同时进队 |
 | 35031790918（#377） | Ruff **1380** · backend-fast (3.10,1) 1301 · (3.13,2) 1270 · desktop-shell (ubuntu) 1000 · workerd 917 · compat 756 · frontend 654 · windows-exe-smoke (2) 503 | 105–1380 | 与 #376（已在跑）+ #378（同时进队）三个 run 共 75 个 job |
 | 35031800904（#378，无 full-ci） | CI integration gate 1129（deferred 的那个）· 快线各 job | — | 同上 |
@@ -186,6 +186,12 @@ package 各腿、workerd、Ruff、CLA：job_seconds 都在 before 的 min–max 
 **扣除等待后的口径**（§2 的 q₀）：#375 1275、#376 1412、#377 1498——三个数落在 21–25 min。**这是「如果 runner 秒领」的口径，不是测量**；
 merge_group 上 runner_wait 中位 2–9s（CI00 §4.2），所以合并组上的实测大概率落在这个口径附近，但本轮没有一个合并组样本能证明。
 
+**上限是已知数，不再是未知项（2026-09-16 查清）**：org `Tavotto` 是 **free** 计划（`gh api orgs/Tavotto --jq .plan.name` = `free`，`evidence/ci04/org_plan.json`），GitHub 文档「Usage limits」表里 free 的托管 runner 并发是 **总 20 个 job，其中 macOS 最多 5 个**（API 与账单页都不显示这个数，只在文档表里）。
+用它重读上表：一个 `full-ci` run 就是 29 个 job（快线 15：分片后 backend-fast 占 6 + Gate 2 + 重型 12），**单独一个 run 也超 20**——#375 里 Windows 与 package 的领取等待不是「Windows 并发上限」，是全局 20 个槽被先起跑的 job 占满；
+22:32–23:20 三个 run 共 75 个 job 排 20 个槽，Ruff 等 1380s 就是排队深度的直接表现；plain PR 17 个 job（分片前 15；Gate 也是占槽的 job，只是几秒就完），两个同时推就 34 > 20——CI00 §4.3 记的「六次几秒内推 5–6 个 stacked PR 都排队」同一成因。
+合并组被队列串行化（一次一个候选 24–29 个 job）所以几乎不排队，这与 CI00 §4.2 的中位 2–9s 一致。
+**拍板处置（用户）：改习惯 + 记录，不加容量**——stacked PR 一次只让一个在跑（直接进合并队列串行）、`full-ci` 只给真要探平台腿的 PR；写进 `docs/ci/parallel-prs.md`「并发上限与推送节奏」。
+
 ## 6. 三种演练（真实材料，不是合成）
 
 1. **同 PR 连续事件**：每个 PR 的 `opened` run 都被几秒后的 `labeled`（加 `full-ci`）run 取消——#372：34993254893（16:10:04 created，16:11:58 cancelled）
@@ -193,17 +199,16 @@ merge_group 上 runner_wait 中位 2–9s（CI00 §4.2），所以合并组上�
    35031461863（22:32:21 → 23:03:35 success）横跨了 #377 / #378 的 opened → cancelled → labeled 三个事件，一个 job 都没被取消。
    这与 CI01 §3 真值表的前两行一致（组名带 PR 号）。**没做的**：PR run 与 merge_group / push main 之间的互不取消，本轮没有「同一时刻两者都在跑」的样本
    （CIP-008 保持 not_run）；`ready_for_review` / 去掉标签 的行为（CIP-009）没有样本。
-2. **多 PR 并行**：22:32–23:20 三个 run 同时跑（#376 / #377 / #378，75 个 job）→ 争抢数字见 §5。**新的瓶颈就是账户并发上限**（API 不给数，
-   CI00 §4.3 / CI04 §4 已记）：三个 PR 同时进队时快线反馈从 19 min 退到 41 min（#377 fb 2467s），而 job 自身时长没变。
+2. **多 PR 并行**：22:32–23:20 三个 run 同时跑（#376 / #377 / #378，75 个 job）→ 争抢数字见 §5。**新的瓶颈就是账户并发上限**（free 计划 20 个并发 job / macOS 5，§5）：三个 PR 同时进队时快线反馈从 19 min 退到 41 min（#377 fb 2467s），而 job 自身时长没变。
 3. **合并组与 lab nightly 同时**：35027644355（merge_group，21:48:17 → 22:45:54，success）与 35028176892（Lab Qualification，schedule，
    21:54:17 → 22:48:55，success；`qualify` 跑在 `tavotto-ci-01` 21:54:35 → 22:48:54）同时在跑，互不影响——合并组的 job 全在托管 runner 上，
    lab 只占 -01。合并组那次 gate 等了 135s 的 runner，时间点是 22:45，对应 #376 的 run 在 22:32 进队，不是 lab。
 
 ## 7. 剩余瓶颈（按贡献排）
 
-1. **账户并发上限 / 托管 runner 领取等待**（§5、§6.2）：多 PR 同时进队时是第一瓶颈，job 自身已经不是。停 stacked PR 的「同时推」习惯、或量到上限再决定扩容量（CI04 §4 第 3 步）。
+1. **账户并发上限 20（macOS 5）/ 托管 runner 领取等待**（§5、§6.2）：多 PR 同时进队时是第一瓶颈，job 自身已经不是；一个 full-ci run 自己就 29 个 job。已拍板：改推送习惯，不加容量（`docs/ci/parallel-prs.md`）。
 2. **`backend-platforms (windows)` 的两片 1002–1438s**：资格关键路径的候选；两片不平衡（最多差 399s），按 Windows 的 junit 重算权重表可以把最慢片压到 ~1200s（CI03A §6）；再往下要么 3 片、要么处理 CI00 §6 列的 Windows 特慢用例（三条 `InvMix` 合计 232s）。
-3. **Windows 并发**：一个 full-ci run 自己同时要 5 台 Windows（#375 上 Windows 领取 131–372s）。合并组被队列串行化时问题小（CI00 §4.2 Windows 领取中位 3s），PR 上会撞。
+3. **单 run 超 20 个槽**：一个 full-ci run 29 个 job，先起跑的 20 个占满槽，排在后面的（#375 上恰好是 Windows 与 package）等 131–372s——不是 Windows 单独的上限。合并组一次一个候选、几乎不排队（CI00 §4.2 Windows 领取中位 3s），PR 上的 full-ci 会撞。
 4. **缓存作用域**（CI02 §4.1）：合并组上三类缓存 0% 命中、每候选写 1.8 GB；desktop-shell 冷 233 vs 暖 41s、workerd 冷 54 vs 20s 都在 after 样本里看得见（#374 vs #375）。修法 (a) 归用户拍板。
 5. **backend-fast 最慢片 ~1100s 决定反馈**：3 片或按 Linux junit 重平衡是下一刀；不在本轮。
 

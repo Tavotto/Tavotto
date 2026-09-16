@@ -129,28 +129,35 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 `release` / `plugin-stable` / lab → 手动低频，文档已写明取代规则；`workflow_call` → key 取调用方，不互相误取消。
 02 §4 提到的 `queue: max` 多 pending 策略本轮**不引入**（先确认工具链支持再说，[W01]）。
 
-## 4. 现存问题（只记录，不改）
+## 4. 现存问题（只记录，不改；2026-09-16 用户逐条拍板：修 ①③⑥、接受 ②④⑤⑦）
 
 1. **任意 `labeled` / `unlabeled` 都重跑整条快线并取消同 PR 运行中的 run**。`types:` 里的 `labeled, unlabeled` 是为 `full-ci`
    加的，但表达式不区分标签名——加一个 `docs` 标签也会让 35 分钟的 backend-fast 从头来过。另外**去掉 `full-ci` 标签会在同一
    SHA 上产出一个新的、deferred（绿）的 `CI integration gate`**，覆盖此前那个真实失败的结论；候选进队列后 merge_group 仍会真跑一遍，
    所以不是合并资格的洞，但「策略变化到同一 SHA 要正确失效」（02 §4）在 PR 层面并不成立。02 §4 要求先清点所有 label consumer
    再减少无关重跑——本轮不动。
+   **拍板：修（后续 PR）**——`labeled` / `unlabeled` 只在标签名是 `full-ci` 时进快线（其余标签事件按 02 §4 先清点 consumer 再过滤），并让去掉 `full-ci` 不产出同 SHA 的 deferred Gate。
 2. **push main 三连推时中间一次的 `main-landing-audit` 与 codeql push run 会被待定替换**。它们不是 required context、不是合并资格
    （树在 merge_group 上验过），丢的是那个 commit 的落地记录与 SARIF 账本；下一个 commit 的 run 覆盖了同一棵树的后继。
    若要保留每一次：把 push 的组名换成 `github.sha`（每个 commit 一组，互不排队），代价是并发 runner。本轮不改，留给 CI05 一并评估。
+   **拍板：已接受**——不是合并资格，丢的只是中间 commit 的落地记录 / SARIF 账本，下一个 commit 覆盖同一棵树的后继；账户并发只有 20（CI05 §5），不值得为它多占 runner。
 3. **`ready_for_review` 在 `types:` 里没有测试看住**；今天草稿与非草稿跑同一套，删了它只会少一个多余的 run。哪天做 T1/T2 分层
    （02 §3），它就成了「作者点 Ready 之后重活永远不跑」的那个洞——分层之前必须先给它加判据。
+   **拍板：修（后续 PR）**——给 `types:` 里的 `ready_for_review` 加合同用例（与 ① 同一个 PR：两者都是 `types:` 的判据）。
 4. **codeql.yml 的 `pull_request` 没写 `types`**：`ready_for_review` / `labeled` 不产生新的 CodeQL run。对同一 head SHA 无影响
    （check run 按 SHA 存在），记录以免将来有人以为 CodeQL 也会「按标签重跑」。
+   **拍板：已接受**——CodeQL 结论按 SHA 存在，标签 / Ready 不改变代码，重跑只是浪费。
 5. **`ci_baseline.py analyze` 不校验 `--workflow` 是不是那些 run 真正执行时的那份**：用改后的 ci.yml 分解 CI00 的 86 个旧 run，
    windows-exe-smoke 的 `dependency_wait` 从 2120s 变成 ~256s、差额进 `dispatch_gap`、关键路径被记成 frontend → windows-exe-smoke
    （[`evidence/ci01/analyze_after_check.json`](evidence/ci01/analyze_after_check.json)）。`tests/test_ci_baseline.py` 的四条计时
    用例原先读 HEAD 的 ci.yml，本轮改读 `tests/fixtures/ci_baseline/ci_8b95256c.yml` 快照（并加 `test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under`
    钉住前提）。CI05 做前后对照时按 run 记 workflow 的 SHA。
+   **拍板：已接受**——CI05 已按 run 用它执行时那份 ci.yml 快照分解（`evidence/ci05/workflows/`），流程上守住；`analyze` 不加校验（它没有可靠的信号知道 run 用的是哪份 yml）。
 6. **ci.yml 抬头 L8「backend-fast（Linux 3.10+3.13）」已陈旧**（矩阵是 3.10 / 3.13 / 3.14）；CI00 §12 还列了
    backend-fast「实测 20–25 分钟」（实测中位 29–35、上限 40 余量 4 分钟）等几处。与本刀无关，不动；40 分钟上限的余量归 CI03 分片解决。
+   **拍板：修（后续 PR）**——抬头与各 job 段的时长注释按 CI05 的实测改（分片后 backend-fast 每片 ~1000–1170s，40 分钟上限余量充足）。
 7. **草稿 PR 与非草稿跑同一套 35 分钟快线**——不是缺陷，是本轮明确不做 T1/T2 的决定（02 §3 的「先取得 DAG / 分片收益，Ready 分层可后置」）。
+   **拍板：已接受**——分片后快线已到 19 分钟，T1/T2 分层的收益变小；③ 修好之后再议。
 
 ## 5. 本轮的合同测试与变异反证
 

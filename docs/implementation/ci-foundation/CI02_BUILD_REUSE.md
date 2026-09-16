@@ -174,7 +174,7 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 
 **修法（两种形状，都动 push main 的 job 集合或缓存合同，归 CI05 由用户拍板）**：
 
-- **(a) push main 上的种子 job（推荐的形状）**：在 `push: main` 上加一个矩阵 job（ubuntu / windows / macos 各一条腿），每条腿只做
+- **(a) push main 上的种子 job（推荐的形状）——已拍板（2026-09-16）：做，栈合完后作为后续小 PR**：在 `push: main` 上加一个矩阵 job（ubuntu / windows / macos 各一条腿），每条腿只做
   「restore → 让对应工具真跑一次 → save」：`setup-node cache: pnpm` + `pnpm install --frozen-lockfile`（种 pnpm store）、
   `actions/cache` 同一把 cpython key + `build_worker_runtime.py --download-only`（**脚本今天没有这个开关**，要么加、要么整跑一遍 47–76s）、
   rust-cache + `cargo build --release`（workerd；desktop-shell 那份还要 `cargo clippy --all-targets` 才能把 dev-deps 编进 target）。
@@ -257,7 +257,7 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
    备选是把 `Install-WindowsFeature` 挪到 job 开头后台跑、装浏览器前等它完成（环境不变，只与 4 分钟的构建链重叠）——跨 step 的后台进程与 DISM
    并发锁同样只有 Windows 机器才证得了。
 2. **缓存作用域（§4.1）**：main 上没有 ci.yml 的任何缓存 → 合并组永远冷、每个候选写 1.8 GB 死重、10 GB 上限永远被顶穿。两种修法与各自代价写在
-   §4.1，归 CI05 由用户拍板；改了以后用合并组 run 的日志（`Cache restored from key`）验，不能看 PR 的第二次 run。
+   §4.1，**用户已拍板做 (a)，栈合入后另开小 PR**；改了以后用合并组 run 的日志（`Cache restored from key`）验，不能看 PR 的第二次 run。
 3. **`package` 的 pnpm 缓存**：第 2 条修好之后再开（四条腿各 −5s 下载）；现在开是四份白传。
 4. **本轮没有真实 run**：§1 的秒数是两次已有 run 的实测，不是本 PR 的；本 PR 在 CI 上会变的只有两处——backend-fast 里多八条合同用例、
    `windows-exe-smoke` 两片的安装步不带 `--with-deps`。

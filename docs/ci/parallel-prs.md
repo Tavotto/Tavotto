@@ -125,3 +125,30 @@ git log --format='%an <%ae> %ad' --date=iso origin/main..HEAD   # author 与日�
 | 不相关、同一生成物 | Train，一个集成 PR 进队列 |
 | 同一 serialize 域 | 排队：一个合完，下一个 rebase 再开 |
 | 同一 coordinate 域 | 各自挑一个没人占的名字/编号；已撞就后开的那个改 |
+
+## 并发上限与推送节奏（2026-09-16 拍板）
+
+org `Tavotto` 是 GitHub **free** 计划（`gh api orgs/Tavotto --jq .plan.name`），托管
+runner 的并发上限按 GitHub 文档「Usage limits」是 **总 20 个 job，其中 macOS 最多 5**——
+账单页与 API 都不显示这个数，只在文档表里。它决定了下面两条规矩，也解释了为什么
+job 自己变快之后 PR 反馈还会退回 40 分钟：
+
+- 一个 plain PR 的快线是 **17 个 job**（分片后 backend-fast 占 6，两个 Gate 也是占槽的
+  job）；一个 `full-ci` run 是 **29 个**（快线 15 + Gate 2 + 重型 12）——**单独一个
+  full-ci run 自己就超 20**，排在后面的 job（2026-09-15 的样本里恰好是 Windows 与
+  package）要等前面的结束才领得到 runner。
+- 2026-09-15 22:32–23:20 三个 stacked PR 同时进队（75 个 job 排 20 个槽）：Ruff 等
+  runner 1380s、frontend 654s，快线反馈从 19 分钟退到 41 分钟，而每个 job 自身时长没变
+  （`docs/implementation/ci-foundation/CI05_COMPARISON.md` §5）。CI00 记的「几秒内推
+  5–6 个 stacked PR 都排队」同一成因。
+
+因此：
+
+1. **stacked PR 一次只让一个在跑**：从底向上直接进合并队列串行；上面的 PR 不要在下面
+   那个还在跑时再推（`synchronize` 会再起一个 17 个 job 的 run）。合并队列一次只验一个
+   候选（24–29 个 job），几乎不排队——那是它领取等待中位 2–9s 的原因。
+2. **`full-ci` 标签只给真要探平台腿的 PR**（改了 Windows / macOS 才跑到的路径、改了
+   `windows-exe-smoke` / `package` / `posix-e2e` 自己）。它把一个 run 从 17 个 job 变成
+   29 个，而合并组反正会把重型腿再跑一遍。
+3. 决定是**改习惯、不加容量**：加 Linux 自托管池对 20 这个上限是 1–3%，且解不了
+   Windows / macOS 腿（`CI04_RUNNER_PILOT.md` §4）。

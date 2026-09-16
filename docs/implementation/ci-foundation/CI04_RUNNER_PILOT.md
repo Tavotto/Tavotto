@@ -111,7 +111,7 @@ SHA 另经 trust job 验 `origin/main` 祖先（`test_release_workflow_contract.
 | 合同测试 `TestRunnerTrustZones` | 本轮新增（§2.4） | 挡合并，**不挡执行** | 同左 |
 | fork PR 审批 `first_time_contributors` | 仓库级读到（§1 表 7）；org 级 403 | **不适用** | 只挡首次贡献者；回头客自动跑 |
 | runner group「Selected workflows」 | 403 读不到；free 计划按文档只有 Default 组、限制只见于 Enterprise Cloud 文档 | **很可能不存在** | 同左 |
-| 私有 ci-infra 仓库持有 runner | 未做（文档里的备用形态） | 挡得住（公开仓库的 PR 够不到私有仓库的 runner） | 挡得住 |
+| 私有 ci-infra 仓库持有 runner | **已拍板（2026-09-16）**：lab runner 迁到私有仓库，操作表 [`ADMIN_HANDOFF_RUNNER_POOL.md`](ADMIN_HANDOFF_RUNNER_POOL.md) F 组；本轮未执行 | 挡得住（公开仓库的 PR 够不到私有仓库的 runner） | 挡得住 |
 | `default_workflow_permissions=read` | 读到（§1 表 6） | 只限 token，不限机器 | 同左 |
 
 结论：**今天挡「PR 触到可信 lab」的只有一条线——没人这么写**。这是 CIP-024 只能 `not_run` 的原因（§5）。交接文档 A 组的前三个问题
@@ -180,6 +180,10 @@ CI01–CI03 之后（数字来源标在括号里）：
    （固定公开合成 benchmark，交接文档 B-8）。
 
 CI00 §11 H4 的裁决「自托管只有条件齐备才有净收益——证据不足」本轮**没有被推翻**，只是把「条件」写具体了。
+
+**拍板结果（2026-09-16，用户，[`CI_HANDOFF.md`](CI_HANDOFF.md) §13）**：**不建 PR 池**（ADMIN_HANDOFF B / C / D 组留档不执行）；
+**注销闲置的 `tavotto-ci-01-2/-3/-4`**（A-2 改成操作项）；**lab runner 迁到私有 ci-infra 仓库**（F 组）；账户并发上限查明是
+free 计划的 **20 个并发 job（macOS 5）**，处置是改推送习惯而不是加容量（CI05 §5）。`runner_pool_ready` 保持 `not_run`，且按拍板本轮不会变 pass。
 
 ## 5. `runner_pool_ready: not_run`，以及每个验收项为什么是现在这个状态
 

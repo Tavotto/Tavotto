@@ -271,6 +271,7 @@ stub: +  0.01s socket 已 bind 49597（还没 listen）；getfqdn 前
 旧写法（`sleep 8` + curl）这一步 macOS 48 s vs 其它腿 13 s——那时它没红多半是因为 curl 没带 --max-time，对着同一个卡住的端口重发 SYN 直到反查回来才
 反查回来。用户机器上反向 DNS 无回音（离线、公司 DNS 不答 PTR）也会有同样的首开延迟。**建议立 issue**（产品 / werkzeug 侧：
 `app.run` 之前 `socket.getfqdn` 的替代、或自带一个只 bind 的 server 子类），本计划只在 CI 留余量。
+**拍板（2026-09-16，用户）：现在就修产品，单开分支，不进 CI 栈**——修复 PR 另开；修好之后 `--timeout 120` 可以回到默认值（合同 `test_the_smoke_step_runs_the_isolated_script_on_the_venv_python` 跟着改）。
 
 **为什么 `--timeout 120`**：就绪上限默认 60 s，macOS 腿实测 35.78 s——余量贴边（DNS 再慢 20 秒就假红）。改成 120（step 级 5 分钟不动：
 一次真正的就绪超时 120 s + 换号重试每次几秒——三种租约丢失的文案都在产品 bind 之前出现——+ 每次 ≤ 16 s 终止 ≈ 2.5 分钟）；
