@@ -314,7 +314,10 @@ def test_upgrade_acceptance_help_names_the_source_repository_under_ci_infra():
 
 def _git_head() -> str:
     return subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=20
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        encoding="utf-8",
+        timeout=20,
     ).stdout.strip()
 
 
