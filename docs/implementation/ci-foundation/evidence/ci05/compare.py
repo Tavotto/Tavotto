@@ -372,7 +372,7 @@ def main() -> int:
         "after": after_runs,
     }
     (HERE / "comparison.json").write_text(
-        json.dumps(out, ensure_ascii=False, indent=1) + "\n", "utf-8"
+        json.dumps(out, ensure_ascii=False, indent=None) + "\n", "utf-8"
     )
     print(
         f"before n={before_summary['n']} feedback={before_summary['feedback_median']} qualification={before_summary['qualification_median']}"
