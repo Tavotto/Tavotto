@@ -20,6 +20,9 @@ name: CI
 #                   一致性 + 落地信息。**不重复打包、不重复真产物冒烟**——
 #                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
 #                   执行，无 bypass actor，没有第二条进 main 的路）。
+#                   外加缓存种子（cache-seed，**非门禁**）：在 main 上把 pnpm store /
+#                   CPython 归档 / rust-cache 各种一份，合并组候选与 PR 首跑才有
+#                   缓存可命中（缓存作用域只有「当前 ref + 默认分支」，见该 job 注释）。
 #   nightly / lab   深度持续验证（nightly.yml + lab-ci.yml）：全量 CompatBench
 #                   × 多运行时、视觉回归、真实安装链路、soak 与 mutation。
 #   release         发布产物资格（release.yml），一条没动。
@@ -357,7 +360,8 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   invariants:
     # 快线只在 PR 与 merge_group 上跑：push main 的树就是 merge_group 上
-    # 刚验过的那棵，main 侧只留 main-landing-audit（见文件抬头的分工表）。
+    # 刚验过的那棵，main 侧只留 main-landing-audit 与非门禁的 cache-seed
+    # （见文件抬头的分工表）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -793,6 +797,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workerd
+          # 与 push main 上 cache-seed 的 (ubuntu, workerd) 腿同键（它跑的正是下面
+          # 这两条编译命令）。rust-cache 的自动键含 job id，不写 shared-key 种子就命不中。
+          shared-key: workerd
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
@@ -848,7 +855,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.os }}  # 两个平台的 target/ 不通用，缓存键必须分开
+          # 两个平台的 target/ 不通用——但 os / arch 本来就在 rust-cache 的自动键里
+          # （实测 v0-rust-<key>-<job>-Linux-x64-…），原先那条 `key: ${{ matrix.os }}`
+          # 是冗余的字面量（CI02 §4）。改成与 cache-seed 的两条 desktop-shell 腿同键。
+          shared-key: desktop-shell
       - name: 装 Tauri 在 Linux 上的系统依赖
         # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
         if: runner.os == 'Linux'
@@ -1101,6 +1111,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workerd
+          # release profile 的 target/ 与 workerd job 的 dev profile 不是同一份，所以
+          # 不是 `workerd` 而是 `workerd-release`；与 cache-seed 的 (windows / macos,
+          # workerd-release) 腿同键，那两条腿跑的就是下面这一条 cargo build --release。
+          shared-key: workerd-release
       - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
@@ -1463,6 +1477,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workerd
+          # release profile 的 target/ 与 workerd job 的 dev profile 不是同一份，所以
+          # 不是 `workerd` 而是 `workerd-release`；与 cache-seed 的 (windows / macos,
+          # workerd-release) 腿同键，那两条腿跑的就是下面这一条 cargo build --release。
+          shared-key: workerd-release
       - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
@@ -1775,7 +1793,8 @@ jobs:
             --needs-json "$NEEDS_JSON"
 
   # ────────────────────────────────────────────────────────────────
-  # main 落地审计——push main 上跑的唯一一个 job。
+  # main 落地审计——push main 上两个 job 里产出结论的那一个（另一个是下面的
+  # cache-seed，只暖缓存、不产生结论）。
   #
   # 它**不是**合并资格的复跑：合进来的树就是 merge_group 上刚验过的那棵
   # （Merge Queue 强制、无 bypass actor，没有第二条进 main 的路），在 main 上
@@ -1834,3 +1853,138 @@ jobs:
             tests/test_merge_queue_ruleset.py \
             tests/test_pr_conflict_domains.py \
             tests/test_release_workflow_contract.py
+
+  # ────────────────────────────────────────────────────────────────
+  # 缓存种子（CI02 §4.1 (a)，2026-09-16 用户拍板）。**不是门禁**：不在任何 Gate 的
+  # needs / --required 里，红了不影响合并；也不加 continue-on-error——红了就让它
+  # 红着可见，ruleset 不要求它。它只暖缓存、不产生任何结论。
+  #
+  # 为什么要有它：GitHub 缓存的作用域是「当前 ref + 默认分支」。合并组候选的 ref
+  # （gh-readonly-queue/main/pr-N-<sha>）每个都是新的，PR 的第一次 run 也是新 ref，
+  # 而 push main 上之前没有任何一个产缓存的 job——于是合并资格这条唯一的常规执行点上
+  # 三类缓存 0% 命中（合并组 run 35015416419 的 12 个 job 里没有一行 Cache restored），
+  # 每个候选各 save ≈ 1.8 GB 死重（已合入候选的 ref 没了，条目还挂着，没人清），仓库
+  # 10 GB 配额被顶穿后按最近访问淘汰，先走的是小而常用的 cpython / pnpm 条目。
+  # 种子在 main 上「restore → 让消费者的准备步骤真跑一次 → save」，之后合并组与 PR 首跑
+  # 都命中 main 上这一份；exact 命中时消费者的 Post 步不再 save（rust-cache 打
+  # 「Cache up-to-date.」、actions/cache / setup-node 打「Cache hit occurred …, not saving」），
+  # 每候选 1.8 GB 的写入随之消失。第一次 push main 之后才有种子——那之前入队的候选仍冷。
+  #
+  # key 对齐是成败所在：
+  #   * pnpm store（setup-node）与 CPython 归档（actions/cache）的 key 只含 os / arch / 锁 hash，
+  #     种子与消费者写**逐字相同**的 with 块就天然同键（合同：TestCacheSeed 钉字符串相等）。
+  #   * rust-cache 的自动键含 **job id**（v0-rust-<key>-<job>-<os>-<arch>-<env>-<lock>），种子
+  #     与消费者 id 不同就种了也命不中——所以两边都写同一个 `shared-key`（代替 job id 那一段；
+  #     os / arch / rustc 版本 / CARGO* RUST* 环境变量 / Cargo.toml + Cargo.lock 仍由 action
+  #     并入键，种子腿要与消费者同一个 dtolnay/rust-toolchain@stable、不另设那些变量）。
+  #     同一个 shared-key 的 target/ 是共写的：种子腿必须跑消费者那一条 cargo 命令（同 profile、
+  #     同 --all-targets），否则 save 出来的 target 缺消费者要的那一半，命中了也要重编。
+  #
+  # shared-key        → 消费者 job（os）                                     → 种子腿跑什么
+  #   workerd         → workerd（ubuntu）                                    → cargo clippy --all-targets -- -D warnings；cargo test（dev）
+  #   desktop-shell   → desktop-shell（ubuntu / macos）                      → 同上两条，在 src-tauri（Linux 先装 Tauri 系统依赖）
+  #   workerd-release → windows-exe-smoke ×2（windows）/ macos-app-smoke（macos）→ cargo build --release
+  #
+  # 一条腿 = 一个 (os, shared-key)，而不是一个 os 一条腿：rust-cache 的 Post 步会把整台机器
+  # 共用的 ~/.cargo/registry 修剪到**自己那个 workspace** 的依赖集再 save；同一个 job 里放两个
+  # 实例时两个 Post 步（后进先出）互相修剪，先声明的那个存下的缓存里没有自己的 .crate 文件，
+  # 消费者每次都要重下。分开腿之后，每一份种子与消费者自己会 save 的那份同形。
+  # pnpm store 每个 os 种一次（挂在该 os 里最短的那条腿上）；CPython 归档只有 windows / macos
+  # 有消费者，挂在 workerd-release 那两条腿上——它们的准备步骤与两条冒烟腿完全同形。
+  # `build_worker_runtime.py` 没有「只下载」开关，产品脚本不动，所以整跑一次（47–76s；wheel
+  # 每次真装，那是消费者刻意的选择）。
+  #
+  # 预计时长（冷 / 暖）：ubuntu·workerd ≈ 2 / 1 min；ubuntu·desktop-shell ≈ 5 / 2 min
+  # （apt 40s + clippy 87s + test 101s 冷，暖时 12 + 3）；macos·desktop-shell ≈ 4 / 1.5 min；
+  # macos·workerd-release ≈ 3 / 2 min；windows·workerd-release ≈ 3 / 2 min（runtime 那 1 分钟暖也省不掉）。
+  # 回退：删掉这个 job，四处消费者的 `shared-key` 留着无害（只是回到自动键之外的另一个稳定键）。
+  # ────────────────────────────────────────────────────────────────
+  cache-seed:
+    name: cache seed (${{ matrix.os }}, ${{ matrix.rust }})
+    if: github.event_name == 'push'
+    strategy:
+      # 一条腿红不许掐掉别的腿：每条腿种的是不同的缓存，互不替代。
+      fail-fast: false
+      matrix:
+        # 每条 = 一个 (os, shared-key)。`rust` 是 shared-key 的值、`workspace` 与消费者的
+        # rust-cache 输入逐字相同、`profile` 决定跑消费者的哪一组 cargo 命令；`pnpm` / `cpython`
+        # 标出这条腿还顺带种哪一类（合同测试按这些字段与消费者的 os 集合对拍）。值里不能有逗号。
+        include:
+          - { os: ubuntu-latest,  rust: workerd,         workspace: workerd,   profile: dev,     pnpm: true,  cpython: false }
+          - { os: ubuntu-latest,  rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
+          - { os: macos-latest,   rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
+          - { os: macos-latest,   rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
+          - { os: windows-latest, rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── pnpm store（第一类：下载 bytes）。与 frontend / plugin-candidate / posix-e2e /
+      #    windows-exe-smoke / macos-app-smoke 的 setup-node 同形：key 由 action 按
+      #    os / arch / web/pnpm-lock.yaml 的 hash 生成。install 真跑一次 store 里才有东西可存。
+      - uses: pnpm/action-setup@v4
+        if: matrix.pnpm == true
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        if: matrix.pnpm == true
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 种 pnpm store（pnpm install 真跑一次）
+        if: matrix.pnpm == true
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # ── rust-cache（第二类：编译缓存）。shared-key / workspaces 与消费者逐字相同（上表）。
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }}
+          shared-key: ${{ matrix.rust }}
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        # 与 desktop-shell 那一步逐字相同；macOS 腿不需要（WKWebView 由系统提供）。
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: 摆一个空的 sidecar 产物目录
+        # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，tauri-build 校验它
+        # 存在才肯生成命令清单（与 desktop-shell 那一步同形；空目录就够）。
+        if: matrix.workspace == 'src-tauri'
+        shell: bash
+        run: mkdir -p dist/Tavotto
+      - name: 让消费者那组 cargo 命令真跑一次（种 target/）
+        # dev = workerd / desktop-shell 两个 job 的两条编译命令（fmt 不编译，不用跑）；
+        # release = 两条冒烟腿的那一条（它们从仓库根带 --manifest-path，这里在 workspace 里跑，
+        # 同一个 target/）。profile 与消费者不一致是缓存白种的最常见成因，合同测试对拍。
+        working-directory: ${{ matrix.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.profile }}" in
+            dev)     cargo clippy --all-targets -- -D warnings && cargo test ;;
+            release) cargo build --release ;;
+            *)       echo "::error::未知 profile：${{ matrix.profile }}"; exit 1 ;;
+          esac
+
+      # ── CPython 归档（第一类）。path / key 与 windows-exe-smoke / macos-app-smoke 逐字相同
+      #    （合同钉字符串相等）；恢复步在构建 runtime 之前，与消费者同序。
+      - uses: actions/setup-python@v5
+        if: matrix.cpython == true
+        with: { python-version: "3.13" }
+      - name: 缓存 CPython 归档下载
+        if: matrix.cpython == true
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
+      - name: 种 CPython 归档（构建内置渲染 runtime 真跑一次）
+        if: matrix.cpython == true
+        run: python scripts/build_worker_runtime.py --clean

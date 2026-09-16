@@ -155,6 +155,17 @@ def _if_of(job_block: str) -> str:
     return m.group(1).strip()
 
 
+def _condition_of(job_block: str) -> str | None:
+    """job 级条件的全文：单行 `if:` 原样，折叠 `if: >-` 把各行并成一行；没有 `if:` 回 None
+    （没有条件 = 每个事件都跑，调用方要把它当成「也在 push 上跑」，不能当成空串放过）。"""
+    code = _code(job_block)
+    folded = re.search(r"(?m)^    if: >-\n((?: {6,}\S.*\n)+)", code)
+    if folded:
+        return " ".join(ln.strip() for ln in folded.group(1).splitlines())
+    single = re.search(r"(?m)^    if: (.+)$", code)
+    return single.group(1).strip() if single else None
+
+
 def _matrix_axes(job_block: str) -> dict[str, list[str]]:
     """读 `strategy.matrix` 的**轴**（`key: [a, b]`）；切不出来或写法认不出当场抛。
 
@@ -833,7 +844,8 @@ class TestGates:
 
     def test_fast_jobs_cover_pr_and_merge_group_but_not_push(self):
         """快线在 PR 与 merge_group 上都要跑（PR 先绿才能进队列，组合提交
-        还要再验一遍）；push main 只留 landing audit。"""
+        还要再验一遍）；push main 只有 landing audit 与非门禁的 cache-seed
+        （`TestLandingAudit` 钉那个集合）。"""
         for job_id in (
             "python-lint",
             "invariants",
@@ -1574,8 +1586,11 @@ class TestBuildReuseAndCaches:
       * TypeScript 的类型检查只有一个执行位置——`pnpm build` 的第一条命令 `tsc -b`，而
         `tsc -b` 检查的是 `web/tsconfig.json` 的 references **集合**（e2e 在里面；本机反证：
         把它从 references 里拿掉，e2e 里的类型错误 `pnpm build` 退 0）；
-      * `actions/cache` 的清单是**枚举**（只有两处 CPython 归档），key 含 os / arch / 锁 hash；
-        setup-node 的 pnpm 缓存按锁文件；rust-cache 各自点名 workspace、不共享可写 target；
+      * `actions/cache` 的清单是**枚举**（三个 step，全是 CPython 归档：两处消费者 + push main 上
+        cache-seed 的种子步，后者展开成 windows / macos 两条腿），key 含 os / arch / 锁 hash；
+        setup-node 的 pnpm 缓存按锁文件；rust-cache 各自点名 workspace，并带一个
+        **(workspace, profile) 命名的 `shared-key`**——同键的只有「种子腿」与「跑同一组 cargo 命令
+        的消费者」，无关 job 之间仍不共享可写 target（种子与消费者的对拍在 `TestCacheSeed`）；
         没有任何缓存 path 指向 venv / site-packages / 用户目录 / 测试结果 / 浏览器目录；
       * 唯一的数据边 frontend → plugin-candidate：消费者用 **HEAD 的 SHA** 与**清单里的
         content_digest** 两把尺子核候选（脚本侧的负例在 tests/test_plugin_stage.py）。
@@ -1634,10 +1649,14 @@ class TestBuildReuseAndCaches:
     # ── D：缓存四类 ─────────────────────────────────────────────────────────
     #: `actions/cache` 的完整清单（job, path, key）——枚举不是白名单：多一条就红，作者得先回
     #: CI02 文档把新缓存归到 04 §5 的四类里、写上 key 的维度与命中作用域，再来改这里。
+    #: 三个 step 都是同一把 CPython key：两处消费者，加 push main 上 cache-seed 的种子步
+    #: （CI02 §4.1 (a)，2026-09-16；它在 matrix 里展开成 windows / macos 两条腿——与消费者的
+    #: os 集合逐个对拍在 `TestCacheSeed`）。
     CPYTHON_KEY = "cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}"
     ACTIONS_CACHE = {
         ("windows-exe-smoke", "build/runtime-cache", CPYTHON_KEY),
         ("macos-app-smoke", "build/runtime-cache", CPYTHON_KEY),
+        ("cache-seed", "build/runtime-cache", CPYTHON_KEY),
     }
 
     def test_actions_cache_steps_are_exactly_the_cpython_archive_downloads(self):
@@ -1672,13 +1691,16 @@ class TestBuildReuseAndCaches:
                 assert bad not in path, (path, bad)
 
     #: setup-node 的 pnpm 缓存：开了的 job 必须按 web/pnpm-lock.yaml 取 key；`package` 四条腿没开
-    #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4）。
+    #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4；
+    #: 种子落地后可回来开，那是另一个 PR）。`cache-seed` 是 push main 上的种子（每个 os 一条腿
+    #: 真跑一次 `pnpm install`），消费者与种子的 os 集合对拍在 `TestCacheSeed`。
     PNPM_CACHED = {
         "frontend",
         "plugin-candidate",
         "windows-exe-smoke",
         "macos-app-smoke",
         "posix-e2e",
+        "cache-seed",
     }
     PNPM_UNCACHED = {"package"}
 
@@ -1696,23 +1718,29 @@ class TestBuildReuseAndCaches:
         assert cached == self.PNPM_CACHED, cached
         assert uncached == self.PNPM_UNCACHED, uncached
 
-    #: rust-cache（第二类，编译缓存）：每处点名自己的 workspace；没有 shared-key（无关 job 共享可写
-    #: target 是 04 §5 明令避免的），没有 cache-on-failure。key 里的 os / arch / rustc / Cargo.lock
-    #: 由 action 自己并入（实测键形如 v0-rust-<key>-<job>-Linux-x64-<env>-<lock>，CI02 文档 §4）。
+    #: rust-cache（第二类，编译缓存）：每处点名自己的 workspace，并带 `shared-key`（CI02 §4.1 (a)，
+    #: 2026-09-16）。**为什么从「不许 shared-key」翻成「必须 shared-key」**：action 的自动键含 job id
+    #: （实测 v0-rust-<key>-<job>-Linux-x64-<env>-<lock>），push main 上的种子 job 与消费者 id 不同，
+    #: 种了也命不中；shared-key 代替的正是 job id 那一段，os / arch / rustc / CARGO*·RUST* 环境变量 /
+    #: Cargo.toml + Cargo.lock 仍由 action 并入。04 §5「无关 job 不共享可写 target」仍成立——键名是
+    #: (workspace, profile)：dev 与 release 的 target/ 不是一份，所以 `workerd` ≠ `workerd-release`；
+    #: 同键的只有种子腿与跑同一组 cargo 命令的消费者（对拍在 `TestCacheSeed`）。没有 cache-on-failure，
+    #: 也没有额外的 `key`（desktop-shell 原先那条 `key: ${{ matrix.os }}` 与自动键里的 os 重复）。
     RUST_CACHE = {
-        ("workerd", "workerd"),
-        ("desktop-shell", "src-tauri"),
-        ("windows-exe-smoke", "workerd"),
-        ("macos-app-smoke", "workerd"),
+        ("workerd", "workerd", "workerd"),
+        ("desktop-shell", "src-tauri", "desktop-shell"),
+        ("windows-exe-smoke", "workerd", "workerd-release"),
+        ("macos-app-smoke", "workerd", "workerd-release"),
+        ("cache-seed", "${{ matrix.workspace }}", "${{ matrix.rust }}"),
     }
 
-    def test_every_rust_cache_names_its_own_workspace_and_shares_nothing(self):
+    def test_every_rust_cache_names_its_own_workspace_and_a_shared_key(self):
         found = set()
         for job_id, step in _uses_steps("Swatinem/rust-cache"):
             w = _with_block(step)
-            assert "workspaces" in w, (job_id, w)
-            assert "shared-key" not in w and "cache-on-failure" not in w, (job_id, w)
-            found.add((job_id, w["workspaces"]))
+            assert {"workspaces", "shared-key"} <= set(w), (job_id, w)
+            assert "cache-on-failure" not in w and "key" not in w, (job_id, w)
+            found.add((job_id, w["workspaces"], w["shared-key"]))
         assert found == self.RUST_CACHE, sorted(found)
 
     #: 两条 Playwright 腿各恰好一条 `playwright install`——真跑（幂等），不从缓存恢复浏览器目录
@@ -1939,11 +1967,24 @@ class TestPythonLint:
 
 
 class TestLandingAudit:
-    def test_main_push_runs_only_the_landing_audit(self):
-        """push main 的落地审计存在、只在 push 上跑、且真的轻——不装科学栈、
-        不打包、不跑冒烟。"""
+    #: push main 上跑的 job 集合——**枚举**：落地审计（产出结论）+ 缓存种子（非门禁，只暖缓存，
+    #: CI02 §4.1 (a)）。多一个 job 出现在 push 上就红：push main 不重复打包、不重复冒烟是 CI01
+    #: 定下的合同，种子是它唯一的例外，而且它不产生任何结论（`TestCacheSeed`）。
+    PUSH_MAIN_JOBS = {"main-landing-audit", "cache-seed"}
+
+    def test_main_push_runs_only_the_landing_audit_and_the_cache_seed(self):
+        """push main 上恰好两个 job：落地审计 + cache-seed；落地审计只在 push 上跑、且真的轻
+        ——不装科学栈、不打包、不跑冒烟。判据的主语是「条件里含 `== 'push'` 的 job 集合」，
+        对每个 job 都读（单行 if 与折叠 `if: >-` 都认），不是只看那两个自己。"""
+        on_push = {
+            job_id
+            for job_id in TestHeavyLaneDependencies._job_ids()
+            if "== 'push'" in _condition_of(_job(CI, job_id))
+        }
+        assert on_push == self.PUSH_MAIN_JOBS, sorted(on_push)
+        for job_id in sorted(self.PUSH_MAIN_JOBS):
+            assert _if_of(_job(CI, job_id)) == "github.event_name == 'push'", job_id
         block = _code(_job(CI, "main-landing-audit"))
-        assert re.search(r"(?m)^\s+if: github\.event_name == 'push'$", block)
         # ADR 0043：画布不再入库，指纹对比退休；换成「发行生成物不许进索引」
         assert "build_mcp_widget.py --check" not in block, "画布不入库了，这条 --check 会恒红"
         assert "check_generated_untracked.py" in block, "「发行生成物不许进索引」那一步掉了"
@@ -1958,6 +1999,219 @@ class TestLandingAudit:
         root = WF.parents[1]
         for rel in re.findall(r"tests/[\w/]+\.py", block):
             assert (root / rel).is_file(), f"landing audit 引用的 {rel} 不存在"
+
+
+# ============================================================ 缓存种子（CI02 §4.1 (a)）
+#: 消费者 job 的 `runs-on` 里的 `runner.os` 值 → matrix 里的 runner 标签。种子 job 里 Linux 专属
+#: 的步骤（装 Tauri 系统依赖）用 `runner.os == 'Linux'` 判，而 matrix 用的是标签；两套名字的对应
+#: 关系是**枚举**，加一类 runner 要回到这里登记。
+_RUNNER_OS_LABEL = {"Linux": "ubuntu-latest", "macOS": "macos-latest", "Windows": "windows-latest"}
+
+
+def _job_oses(job_id: str) -> set[str]:
+    """一个 job 会跑在哪些托管 runner 上（矩阵展开）——消费者那一侧的 os 集合。"""
+    oses = _runs_on_atoms(_code(_job(CI, job_id)), job_id)
+    assert oses <= _HOSTED_RUNNERS, (job_id, oses)
+    return oses
+
+
+def _cargo_commands(job_block: str) -> set[str]:
+    """一个 job 的 `run:` 行里所有会写 target/ 的 cargo 命令（build / clippy / test / check），
+    去掉 `--manifest-path <ws>/Cargo.toml`（冒烟腿从仓库根带它进 workspace，种子腿在
+    workspace 里跑，target/ 是同一份）；`cargo fmt` 不编译，不算。"""
+    cmds: set[str] = set()
+    for line in _code(job_block).splitlines():
+        for m in re.finditer(r"\bcargo (?:build|clippy|test|check)\b[^;&|]*", line):
+            cmd = re.sub(r"\s+--manifest-path \S+/Cargo\.toml", "", m.group(0)).strip()
+            cmds.add(cmd)
+    return cmds
+
+
+class TestCacheSeed:
+    """push main 上的缓存种子（CI02 §4.1 (a)，2026-09-16 用户拍板；ci.yml `cache-seed`）。
+
+    GitHub 缓存的作用域是「当前 ref + 默认分支」：合并组候选 ref 与 PR 首跑都读不到别人的缓存，
+    而 push main 上原先没有任何产缓存的 job → 合并资格这条唯一的常规执行点上三类缓存 0% 命中、
+    每个候选各 save ≈ 1.8 GB（CI02 §4.1 的数字）。种子在 main 上把三类缓存各种一份。
+
+    这里钉的是**种子与消费者同键、同 os、同一组命令**——键对不上就是「种了也命不中」，而那不会
+    有任何红灯，只是合并组日志里永远没有 `Restored from cache key`。主语逐条写明：
+      * rust-cache：`shared-key` 的**值** × os 的集合，消费者侧 == 种子侧（集合相等）；同一把键的
+        消费者 cargo 命令 ⊆ 种子腿那个 profile 的命令（种子跑的就是消费者那条）；
+      * CPython 归档：`actions/cache` 的 `path` / `key` **字符串相等**，且种子腿的 os 集合 == 消费者的；
+      * pnpm store：开了 `cache: pnpm` 的消费者的 os 集合 == 种子里 `pnpm: true` 的腿的 os 集合；
+      * 种子只在 push 上跑、不出现在任何 Gate 的 needs / --required 里、不加 continue-on-error。
+    步骤级 `if:` 一律读出来与 matrix 字段比死——按 matrix 字段算出来的 os 集合，只有在步骤真按
+    那个字段开关时才是真的。
+    """
+
+    SEED = "cache-seed"
+    #: 每把 shared-key 对应**一种** profile：dev = workerd / desktop-shell 两个 job 的 clippy + test，
+    #: release = 两条冒烟腿的 build --release。同键不同 profile 的 target/ 会互相覆盖。
+    PROFILES = {"workerd": "dev", "desktop-shell": "dev", "workerd-release": "release"}
+
+    @classmethod
+    def _legs(cls) -> list[dict[str, str]]:
+        legs = _matrix_include(_job(CI, cls.SEED))
+        for leg in legs:
+            assert set(leg) == {"os", "rust", "workspace", "profile", "pnpm", "cpython"}, leg
+            assert leg["os"] in _HOSTED_RUNNERS, leg
+            assert leg["pnpm"] in {"true", "false"} and leg["cpython"] in {"true", "false"}, leg
+            assert cls.PROFILES.get(leg["rust"]) == leg["profile"], (
+                f"种子腿 {leg} 的 profile 与 PROFILES 枚举不一致——同一把 shared-key 只能对应一种"
+            )
+        assert len({(leg["os"], leg["rust"]) for leg in legs}) == len(legs), "有两条腿种同一把键"
+        return legs
+
+    @classmethod
+    def _consumer_rust_caches(cls) -> list[tuple[str, dict[str, str]]]:
+        found = [
+            (j, _with_block(st)) for j, st in _uses_steps("Swatinem/rust-cache") if j != cls.SEED
+        ]
+        assert len(found) >= 4, found
+        return found
+
+    def test_the_seed_runs_only_on_push_and_is_not_a_gate_input(self):
+        """与 landing audit 同事件；不在两个 Gate 的 needs / --required 闭集里（不是门禁）；
+        没有 needs（不等任何 job）；没有 continue-on-error（红了就红着可见）；有超时。"""
+        block = _code(_job(CI, self.SEED))
+        assert _if_of(block) == "github.event_name == 'push'"
+        for gate in ("ci-fast-gate", "ci-integration-gate"):
+            g = _job(CI, gate)
+            assert self.SEED not in _needs_of(g) | _required_of(g), f"{gate} 把种子当成了输入"
+        assert not re.search(r"(?m)^    needs:", block), "种子不该等任何 job"
+        assert "continue-on-error" not in block, "种子红了要看得见，不许 continue-on-error"
+        assert re.search(r"(?m)^    timeout-minutes: \d+$", block), "种子没有超时上限"
+        assert re.search(r"(?m)^      fail-fast: false$", block), "一条腿红不许掐掉别的腿"
+        assert self.SEED not in TestHeavyLaneDependencies.HEAVY_CONSUMERS
+        assert list(MQ.GATE_CONTEXTS) == ["CI fast gate", "CI integration gate", "CodeQL gate"], (
+            "required contexts 变了——种子不该成为其中之一"
+        )
+
+    def test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses(self):
+        """主语：(shared-key 的值, workspace, os) 三元组的集合，消费者侧 == 种子侧。
+        种子的 rust-cache 步骤必须把 matrix 字段原样交给 action（否则 matrix 只是装饰）。"""
+        consumers: set[tuple[str, str, str]] = set()
+        for job_id, w in self._consumer_rust_caches():
+            for os_ in _job_oses(job_id):
+                consumers.add((w["shared-key"], w["workspaces"], os_))
+        seeds = {(leg["rust"], leg["workspace"], leg["os"]) for leg in self._legs()}
+        assert consumers == seeds, (
+            f"消费者 − 种子 = {sorted(consumers - seeds)}；种子 − 消费者 = {sorted(seeds - consumers)}"
+        )
+        seed_steps = [
+            w
+            for j, st in _uses_steps("Swatinem/rust-cache")
+            if j == self.SEED
+            for w in [_with_block(st)]
+        ]
+        assert seed_steps == [
+            {"workspaces": "${{ matrix.workspace }}", "shared-key": "${{ matrix.rust }}"}
+        ], seed_steps
+
+    def test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key(self):
+        """同一把 shared-key 的 target/ 是共写的：消费者的每条编译命令都必须出现在种子腿对应
+        profile 的分支里（同 profile、同 `--all-targets`），而消费者用不用 `--release` 必须与
+        PROFILES 说的一致——profile 对不上是「命中了也要重编」的头号成因。"""
+        seed = _code(_job(CI, self.SEED))
+        branches = dict(re.findall(r"(?m)^\s+(dev|release)\)\s+(.+?)\s+;;$", seed))
+        assert set(branches) == {"dev", "release"}, branches
+        seed_cmds = {prof: _cargo_commands(cmd) for prof, cmd in branches.items()}
+        assert seed_cmds["dev"] == {"cargo clippy --all-targets -- -D warnings", "cargo test"}, (
+            seed_cmds
+        )
+        assert seed_cmds["release"] == {"cargo build --release"}, seed_cmds
+        for job_id, w in self._consumer_rust_caches():
+            cmds = _cargo_commands(_job(CI, job_id))
+            assert cmds, f"{job_id} 用了 rust-cache 却没有一条 cargo 编译命令"
+            profile = "release" if any("--release" in c for c in cmds) else "dev"
+            assert self.PROFILES[w["shared-key"]] == profile, (job_id, w["shared-key"], cmds)
+            assert cmds <= seed_cmds[profile], (
+                f"{job_id} 的 {sorted(cmds - seed_cmds[profile])} 不在种子 {profile} 分支里——种子存的 target/ 缺它要的那一半"
+            )
+        assert "${{ matrix.profile }}" in seed, "case 没有按 matrix.profile 分支"
+        assert re.search(r"(?m)^\s+working-directory: \$\{\{ matrix\.workspace \}\}$", seed), (
+            "cargo 那一步不在 matrix.workspace 里跑——target/ 会落到别处"
+        )
+
+    def test_the_cpython_seed_uses_the_consumers_exact_path_and_key_on_exactly_their_oses(self):
+        """`actions/cache` 的 path / key 逐字相同（主语是字符串相等，不是「都含 runner.os」）；
+        `cpython: true` 的腿的 os 集合 == 两条冒烟腿的 os 集合；三步都由同一个字段开关。"""
+        seed_steps = _steps(_job(CI, self.SEED))
+        cache = [st for st in seed_steps if re.search(r"(?m)^\s*uses: actions/cache@", st)]
+        assert len(cache) == 1, "种子里应恰好一步 actions/cache"
+        want = {("build/runtime-cache", TestBuildReuseAndCaches.CPYTHON_KEY)}
+        consumers = {
+            (w["path"], w["key"])
+            for j, st in _uses_steps("actions/cache")
+            if j != self.SEED
+            for w in [_with_block(st)]
+        }
+        assert consumers == want, consumers
+        w = _with_block(cache[0])
+        assert (w["path"], w["key"]) in want, w
+        gated = [st for st in seed_steps if re.search(r"(?m)^\s*if: matrix\.cpython == true$", st)]
+        assert len(gated) == 3 and cache[0] in gated, [
+            _step_name(s) or s.splitlines()[0] for s in gated
+        ]
+        assert any("scripts/build_worker_runtime.py --clean" in st for st in gated), (
+            "种子没有真跑一次 runtime 构建"
+        )
+        assert any("actions/setup-python@" in st for st in gated), (
+            "runtime 构建要用与消费者同版的 setup-python"
+        )
+        consumer_oses = set().union(
+            *(_job_oses(j) for j, _ in _uses_steps("actions/cache") if j != self.SEED)
+        )
+        seed_oses = {leg["os"] for leg in self._legs() if leg["cpython"] == "true"}
+        assert consumer_oses == seed_oses == {"windows-latest", "macos-latest"}, (
+            consumer_oses,
+            seed_oses,
+        )
+
+    def test_the_pnpm_seed_covers_exactly_the_oses_that_have_a_pnpm_consumer(self):
+        """开了 `cache: pnpm` 的消费者跑在哪些 os 上，种子就在哪些 os 上真跑一次 `pnpm install`
+        （setup-node 的 key 只含 os / arch / 锁 hash，同 os 即同键）；三步同一个字段开关。"""
+        consumer_oses: set[str] = set()
+        for job_id in TestBuildReuseAndCaches.PNPM_CACHED - {self.SEED}:
+            consumer_oses |= _job_oses(job_id)
+        seed_oses = {leg["os"] for leg in self._legs() if leg["pnpm"] == "true"}
+        assert consumer_oses == seed_oses == _HOSTED_RUNNERS, (consumer_oses, seed_oses)
+        seed_steps = _steps(_job(CI, self.SEED))
+        gated = [st for st in seed_steps if re.search(r"(?m)^\s*if: matrix\.pnpm == true$", st)]
+        assert len(gated) == 3, [_step_name(s) or s.splitlines()[0] for s in gated]
+        assert any("pnpm/action-setup@" in st for st in gated)
+        node = [st for st in gated if "actions/setup-node@" in st]
+        assert len(node) == 1 and _with_block(node[0]).get("cache") == "pnpm", node
+        install = [
+            st for st in gated if re.search(r"(?m)^\s*run: pnpm install --frozen-lockfile$", st)
+        ]
+        assert len(install) == 1 and "working-directory: web" in install[0], install
+        assert seed_steps.index(node[0]) < seed_steps.index(install[0]), (
+            "setup-node 要在 pnpm install 之前"
+        )
+
+    def test_the_linux_only_tauri_prerequisite_is_gated_like_the_consumer(self):
+        """desktop-shell 的 Linux 腿要先 apt 装 WebKit/GTK 才编得过；种子的对应步骤条件是
+        「src-tauri 且 Linux」，包名与消费者那一步逐字相同（枯了两处的其中一处就是白种）。"""
+        seed = _steps(_job(CI, self.SEED))
+        apt = [st for st in seed if "apt-get install" in st]
+        assert len(apt) == 1, "种子里应恰好一步 apt"
+        assert re.search(
+            r"(?m)^\s*if: matrix\.workspace == 'src-tauri' && runner\.os == 'Linux'$", apt[0]
+        ), apt[0]
+        assert "Linux" in _RUNNER_OS_LABEL and _RUNNER_OS_LABEL["Linux"] in {
+            leg["os"] for leg in self._legs() if leg["workspace"] == "src-tauri"
+        }, "没有一条 src-tauri 的 Linux 种子腿，这一步永远不执行"
+        consumer = [st for st in _steps(_job(CI, "desktop-shell")) if "apt-get install" in st]
+        assert len(consumer) == 1
+
+        def pkgs(step: str) -> list[str]:
+            m = re.search(r"apt-get install[^\n]*\\\n((?:.*\\\n)*.*)$", step, re.M)
+            assert m, step
+            return sorted(re.sub(r"\\\n", " ", m.group(1)).split())
+
+        assert pkgs(apt[0]) == pkgs(consumer[0]), (pkgs(apt[0]), pkgs(consumer[0]))
 
 
 # ============================================================ runner 信任区（CI04）
