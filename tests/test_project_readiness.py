@@ -845,9 +845,15 @@ class TestCache:
         assert _status(before, "FigB.pdf") == ("layout_only", "no_source_candidate")
 
         path = figs / "fig_a.py"
-        old_size = path.stat().st_size
+        st = path.stat()
         _script(figs, "fig_a.py", "FigB")
-        assert path.stat().st_size == old_size, "这条用例要的是同尺寸改写"
+        assert path.stat().st_size == st.st_size, "这条用例要的是同尺寸改写"
+        # 前提要自己摆稳：用例证的是「mtime 变了就失效」，不是「时钟跑得够快」。
+        # 两次写入在 Windows 上会落进同一个 mtime_ns 刻度（NTFS 时间戳更新有缓存），
+        # 签名逐字节相同、缓存命中旧内容——那是签名的已知盲区（readiness.py 的
+        # docstring 写明了），不是这条用例要量的东西（issue #385，#384 的合并组红一次）。
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        assert path.stat().st_mtime_ns != st.st_mtime_ns, "mtime 没前进，这条用例什么都没量到"
 
         after = engine_readiness.compute(ctx)
         assert _status(after, "FigA.pdf") == ("layout_only", "no_source_candidate")
