@@ -1035,6 +1035,13 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。
   * 后台作业必须 `app.bound_project(ctx)`：`_request_ctx()` 的兜底是默认项目，
     多项目并存时不绑定 = 成功地导出了另一个图库的同名图。
+  * **作业的终局字段先于终局 `status` 可见**（issue #381，2026-09-16）：
+    `/api/export/state` 在另一线程读 `to_payload()`，看到的是一份快照；写者的
+    顺序固定为 `finished_at` / `phase` / `error_*` → `status` → `_emit()`，三条
+    终局路径（`run()` 的 finally、`_fail()`、conflict 分支）一个不例外。反过来写
+    的话读者会拿到 `done` + `elapsed_ms: None`——Windows 上删临时目录慢到 20ms
+    的轮询都踩得中。判据的主语是**读者看到的快照**，不是写者的顺序；看护用例
+    `test_a_terminal_status_is_never_visible_before_its_timing` 把窗口撑开量它。
   * **旧契约一个字节不变**：没有 `filename` 的请求（`stem`/`dpi`，或
     `items[]`+`texts[]`）抬成同一个作业，文件名照旧带时间戳，回执照旧有
     `files[]`/`export_dir`/`warnings`，报告照旧叫 `_proof.json`。

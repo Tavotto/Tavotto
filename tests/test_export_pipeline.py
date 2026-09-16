@@ -346,6 +346,90 @@ def test_async_job_reaches_a_terminal_state(env):
     assert body["timing"]["elapsed_ms"] is not None
 
 
+_TERMINAL = ("done", "partial", "failed", "cancelled", "conflict")
+
+
+@pytest.mark.parametrize("path", ["done", "failed", "conflict"])
+def test_a_terminal_status_is_never_visible_before_its_timing(env, monkeypatch, path):
+    """读者看到的**每一个**快照都要自洽：`status` 一旦是终局值，`timing.finished_at`
+    与 `elapsed_ms` 就得在（issue #381）。
+
+    判据的主语是**另一线程读到的快照**，不是写者的顺序。写者原来先写终局
+    `status`、再删临时目录 / 释放预留、最后才写 `finished_at`——Windows 上删目录慢，
+    这个窗口大到 20ms 的轮询能踩中（PR #380 合并组 run 35084221306 红过一次）。
+
+    窗口怎么撑开：`finished_at = time.time()` 是三条路径共有的那一步，把时钟换成
+    慢的，线程就停在「写 `finished_at` 之前」——status 若排在它前面，读者一定
+    撞见。成功路径另把 `_drop_tmp` 换成慢函数：那是 Windows 上真实发作的机制
+    （status 原来在 `try` 末尾写，删临时目录夹在它与 `finished_at` 之间）。
+    `_fail()` 走一条真实的请求错误：旧契约 115 字的 stem 接上时间戳后超过
+    `FILENAME_MAX`，`_plan_and_claim()` 抛 `bad_filename`。
+    """
+    client, _ = env
+    calls = {"n": 0}
+    real_clock = exportjob.time
+
+    class SlowClock:
+        strftime = staticmethod(real_clock.strftime)
+
+        @staticmethod
+        def time():
+            calls["n"] += 1
+            time.sleep(0.3)
+            return real_clock.time()
+
+    monkeypatch.setattr(exportjob, "time", SlowClock)
+    if path == "done":
+        real_drop = exportjob._drop_tmp
+
+        def slow_drop(job):
+            calls["n"] += 1
+            time.sleep(0.3)
+            real_drop(job)
+
+        monkeypatch.setattr(exportjob, "_drop_tmp", slow_drop)
+        spec = _canvas()
+    elif path == "failed":
+        spec = {
+            "page_w_mm": 100,
+            "page_h_mm": 50,
+            "formats": ["pdf"],
+            "stem": "a" * 115,
+            "objects": [],
+        }
+    else:
+        _, first = _post(client, _canvas())
+        assert first["status"] == "done"
+        spec = _canvas()
+
+    status, started = _post(client, spec, path="/api/export/start")
+    assert status == 200, started
+    # `/start` 的回执本身也是另一线程读到的一份快照
+    seen = [started]
+    for _ in range(2000):
+        body = client.get(f"/api/export/state?job_id={started['job_id']}").get_json()
+        seen.append(body)
+        if body["status"] in _TERMINAL:
+            break
+        time.sleep(0.005)
+
+    # 先钉住确实走的是那条路，再看不变式——否则一条走错路的用例照样绿
+    assert seen[-1]["status"] == path, seen[-1]
+    if path == "failed":
+        assert seen[-1]["error"]["code"] == "bad_filename", seen[-1]
+    if path == "conflict":
+        assert seen[-1]["conflicts"] == ["Fig 1.pdf"], seen[-1]
+    assert calls["n"] >= 1, "窗口没被撑开，这条用例什么都没量到"
+
+    torn = [
+        (s["status"], s["timing"])
+        for s in seen
+        if s["status"] in _TERMINAL
+        and (s["timing"]["finished_at"] is None or s["timing"]["elapsed_ms"] is None)
+    ]
+    assert not torn, f"终局 status 先于 finished_at 可见（{len(seen)} 份快照）：{torn}"
+
+
 # -------------------------------- 样式检查报告 --------------------------------
 def test_a_failed_check_is_recorded_in_the_report(env):
     """「检查没跑成、用户确认了继续」在报告里必须与「干干净净跑过一遍」分得开。

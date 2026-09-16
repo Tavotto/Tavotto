@@ -558,9 +558,9 @@ def run(
         return _fail(job, exc.code, exc.params, publish, recoverable=True)
     if conflicts:
         job.conflicts = conflicts
-        job.status = STATUS_CONFLICT
         job.finished_at = time.time()
-        job.phase = "conflict"
+        job.phase = STATUS_CONFLICT
+        job.status = STATUS_CONFLICT  # 终局 status 最后写（理由见下面 finally 前的注释）
         _emit(job, publish)
         return job.to_payload()
 
@@ -577,6 +577,15 @@ def run(
         _release(reserved, job.id)
         return _fail(job, "tmp_dir_failed", {"error": str(exc)}, publish, recoverable=True)
 
+    # 终局 status **先算进局部变量、最后才写到作业上**。`/api/export/state` 在另一
+    # 线程里读 `to_payload()`，它看到的是一份快照：`status` 已经是 `done` 而
+    # `finished_at` 还是 0，`elapsed_ms` 就是 None——原来 status 在 `try` 末尾写、
+    # `finished_at` 在 `finally` 里删完临时目录、放掉预留之后才写，Windows 上删
+    # 目录慢到 20ms 的轮询都踩得中（issue #381）。判据的主语是**读者看到的快照**，
+    # 不是写者的顺序：终局字段（`finished_at` / `phase` / `error_*`）必须在终局
+    # `status` 之前可见。`to_payload()` 的三元本来就对，只要写者顺序对读者就一致。
+    # 初值是此刻的 `running`：只有 BaseException 逃出 try 时才会原样写回，与改动前一样。
+    terminal = job.status
     try:
         job.phase = "rendering"
         _emit(job, publish)
@@ -660,32 +669,34 @@ def run(
 
         ok = [o for o in outputs if o.status == STATUS_DONE]
         if not ok:
-            job.status = STATUS_FAILED
+            terminal = STATUS_FAILED
             job.error_code = outputs[0].error_code if outputs else "no_output"
             job.error_params = outputs[0].error_params if outputs else {}
         elif len(ok) < len(outputs) or (
             job.report is not None and job.report.status != STATUS_DONE
         ):
-            job.status = STATUS_PARTIAL
+            terminal = STATUS_PARTIAL
         else:
-            job.status = STATUS_DONE
+            terminal = STATUS_DONE
     except Cancelled:
-        job.status = STATUS_CANCELLED
+        terminal = STATUS_CANCELLED
         job.outputs = []
         job.report = None
     except ExportRequestError as exc:
-        job.status = STATUS_FAILED
+        terminal = STATUS_FAILED
         job.error_code = exc.code
         job.error_params = exc.params
     except Exception as exc:  # noqa: BLE001 —— 作业失败不能把 HTTP 线程带走
-        job.status = STATUS_FAILED
+        terminal = STATUS_FAILED
         job.error_code = "export_failed"
         job.error_params = {"error": str(exc)[:400]}
     finally:
         _drop_tmp(job)
         _release(reserved, job.id)
+        # 顺序是判据的一部分：`finished_at` → `phase` → `status`，最后才广播
         job.finished_at = time.time()
-        job.phase = job.status
+        job.phase = terminal
+        job.status = terminal
         _emit(job, publish)
     return job.to_payload()
 
@@ -743,12 +754,13 @@ def _fail(
     *,
     recoverable: bool,
 ) -> dict:
-    job.status = STATUS_FAILED
+    # 同 run() 的 finally：错误与时间先落、终局 status 最后写，读者看不到半份
     job.error_code = code
     job.error_params = params
     job.error_recoverable = recoverable
     job.finished_at = time.time()
     job.phase = STATUS_FAILED
+    job.status = STATUS_FAILED
     _emit(job, publish)
     return job.to_payload()
 
