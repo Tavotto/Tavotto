@@ -164,8 +164,8 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   显式 `exit 0` 在追加的那一行**之前**退出；失败路径全是 `throw`（Stop → 1），
   走不到它，所以不掩盖任何真失败。`ErrorRecord` 转换与
   `$PSNativeCommandUseErrorActionPreference` 都与此无关（2026-08-29 两轮实测证伪）。
-  现有两处：ci.yml `windows-exe-smoke` 的「console 版 CLI」步骤、release.yml 的
-  更新链验证步骤。
+  现有两处：ci.yml `windows-exe-smoke` 的「console 版 CLI」步骤、release-publish.yml
+  （`n1_update_windows`，F.2 之前在 release.yml）的更新链验证步骤。
 
 ## 验证链（按层）
 
@@ -237,6 +237,33 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 ## 发布链
 
+- **两段链（F.2，2026-09-16 起）**：实验室 runner 注册在私有仓库 `Tavotto/ci-infra`，
+  公开仓库不能等私有仓库（本仓库禁止轮询：lab 的排队时间没有上界），所以发布链在 lab
+  门禁处切成两段。**第一段 `release.yml`**（tag push / workflow_dispatch）：`trust`（精确
+  SHA / origin/main 祖先或 tag / release:blocker 签字，一字未动）→ `build` / `desktop` →
+  `dispatch_lab`（hosted，`needs: [build, desktop, trust]`，形状与 `lab-ci.yml::dispatch` 同：
+  `TAVOTTO_CI_INFRA_TOKEN` 为空 `::error::` + exit 1；`-f mode=release -f sha=<trust 的 SHA>
+  -f use_prebuilt_dist=true -f source_run_id=<本 run> -f publish=<trust 算出的>
+  -f ack_open_blockers=<原样>`），**到此结束、不等结果**——第一段 run 的 success 只表示
+  「产物造出来了、lab 派出去了」。ci-infra 的 `report` 给 SHA 打 commit status `lab/release`，
+  **release 且绿**时再 `gh workflow run release-publish.yml -R Tavotto/Tavotto`。
+  **第二段 `release-publish.yml`**（只有 `workflow_dispatch`，inputs `sha` / `source_run_id` /
+  `lab_run_id` / `publish` / `ack_open_blockers` 全 string）：`trust2` **不信任载荷**——重跑
+  `trust` 同一段 ancestry + tag 判断（照抄）、对**此刻** open 的 release:blocker 用第一段的
+  ack 再跑一次 `release_blockers.py`（第二段不新增签字入口）、publish **按同一规则重算**（有
+  `v<源码版本>` tag 指向该 SHA → true；载荷的 publish 只能把 true 压成 false）、读**一次**
+  `lab/release` status（`gh api …/commits/<sha>/status`，要求 state == success 且 target_url
+  指向 `lab_run_id` 那个 ci-infra run）；然后 `validate_artifacts`（download-artifact 带
+  `run-id: inputs.source_run_id` 从第一段 run 取全部产物，job 加 `actions: read`）→
+  `github_release` / `n1_update_windows` / `pypi` / `plugin_stable`——从 release.yml **逐字搬来**，
+  只把 `needs.trust.*` 改成 `needs.trust2.*`。**失败形状**：lab 红 → `lab/release` = failure、
+  第二段从未开始；读结论看两处（status + 第二段有没有该 SHA 的 run），
+  `docs/ci/release-qualification.md`「发行链上的 gate」。**边界**：第一段的 `pypi` 输入没有
+  随载荷传到第二段，`pypi` job 的门是 `publish && vars.PYPI_PUBLISH_ENABLED`，TestPyPI 通道
+  在两段链里不存在。合同：`tests/test_release_workflow_contract.py`（`_REUSABLE_CALLERS` 空集、
+  `_DISPATCHERS` 两个、发布判据主语扩到第二段、六条两段链专属用例，变异 49/49 打红）、
+  `test_merge_queue_workflows.py::TestRunnerTrustZones`（`uses` reusable 的 workflow 集合 == ∅、
+  派发的 == {lab-ci, release}）、`test_update_chain_gates.py`（pattern 点名的 universe 学会跨 run）。
 - **`desktop-shell`（2026-09-04，issue #275）**：`src-tauri` 的
   `cargo fmt --check` / `clippy -D warnings` / `cargo test`，与 `workerd` 同一条
   纪律（都不做 paths 过滤）。它原先只在 `desktop-tauri.yml` 里跑，而那个工作流
@@ -270,13 +297,14 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   `tests/test_plugin_candidate.py`（有产物时**不许 skip**）。两者都在 `CI fast gate` 的闭集里。
   候选只作验证，**不向源码分支回写、不发布**。release.yml 的 `build` job 在固定发行 SHA 上
   同样造一次（`--serve` 用发出去的 wheel），三样进 `dist/`（zip / `codex-plugin.json` /
-  `codex-plugin-build.json`）与产物清单；`validate_artifacts` 成对验证；`plugin_stable` job 在
-  Release 与 PyPI 之后把**同一份** zip 投影到发行分支 `plugin-stable`（publish=false 时对临时
-  bare 仓库演练全部发布行为 + 对真实远端只读 plan）。手动入口 `plugin-stable.yml`
+  `codex-plugin-build.json`）与产物清单；`release-publish.yml` 的 `validate_artifacts` 成对验证；
+  `plugin_stable` job（同在第二段）在 Release 与 PyPI 之后把**同一份** zip 投影到发行分支
+  `plugin-stable`（publish=false 时对临时 bare 仓库演练全部发布行为 + 对真实远端只读 plan）。
+  手动入口 `plugin-stable.yml`
   （bootstrap / promote / rollback，从 Release 资产取内容）。手册：`docs/ci/plugin-stable-channel.md`。
   **发行分支不触发任何源码 CI**——没有 workflow 监听它，GITHUB_TOKEN 的推送也不触发。
 - release.yml 的插件版本清单（`codex-plugin.json`）由 `build` job 生成（不再在没有 Node 的
-  `validate_artifacts` 里从源码目录打包），**不能挪进 desktop-tauri.yml 的 updater-manifest**
+  `validate_artifacts`——现在在第二段——里从源码目录打包），**不能挪进 desktop-tauri.yml 的 updater-manifest**
   （那个 job 没配 minisign 私钥就整个跳过，插件更新通道会悄悄停而且全绿）。
 - 桌面更新清单 `latest.json` 由 `scripts/make_updater_manifest.py` 在两条
   matrix 腿都跑完后合成；macOS 更新包必须在签名/公证之后重做

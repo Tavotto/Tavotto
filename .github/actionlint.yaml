@@ -14,6 +14,7 @@
 # 里，group 是组名不是标签，也不登记在这里。
 self-hosted-runner:
   labels:
-    # 实验室 qualification runner。lab-ci.yml 与 release.yml 的
-    # lab_release_gate 靠它定向。
+    # 实验室 qualification runner。只有 _lab-qualification.yml 的 `runs-on` 用它
+    # （被 ci-infra 跨仓库调用时才解析）；lab-ci.yml / release.yml 都改成派发，
+    # 公开仓库里不再有直接 `uses` 它的 job（F 组）。
     - tavotto-lab

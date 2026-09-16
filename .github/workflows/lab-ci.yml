@@ -21,8 +21,8 @@ name: Lab Qualification
 #     workflow_dispatch —— 见下面的 trust-check：任意 ref **必须**先在
 #                          GitHub 托管机上验明正身并解析成精确 SHA
 #
-# release.yml 的 lab_release_gate 复用同一套步骤定义（见该文件），发行链因此
-# 不需要在这里重复一遍。
+# release.yml 的发行档走同一套步骤定义（由 `dispatch_lab` 派发 ci-infra，
+# mode=release），发行链因此不需要在这里重复一遍。
 #
 # ─────────────────────────── runner 标签与分组 ───────────────────────────
 # **2026-09-16 起，docs/ci/self-hosted-runner.md §1 的「更安全的备用形态」成为
@@ -37,7 +37,9 @@ name: Lab Qualification
 # 派发用的是公开仓库 secret `TAVOTTO_CI_INFRA_TOKEN`（fine-grained PAT，只对
 # ci-infra 的 `actions: write`），不是 GITHUB_TOKEN；secret 为空时**必须红**——
 # 「lab 没人跑」不许静默。
-# 并行期（PR B 之前）release.yml 的 `lab_release_gate` 仍直接 `uses` reusable。
+# release.yml 同样改成派发（`dispatch_lab`，PR B / F.2），公开仓库里不再有直接
+# `uses` reusable 的 job；发布链因此切成两段，第二段 `release-publish.yml` 由 ci-infra
+# 在 lab 绿后派发。
 
 on:
   push:
@@ -183,7 +185,7 @@ jobs:
   # 也没有任何「secret 缺失就跳过」的路径——那是本仓库明令禁止的空门禁形状：
   # 读的人会以为 lab 在跑，而它根本没被派出去。
   #
-  # 从前这里直接 `uses` reusable；再往前与 release.yml 的 `lab_release_gate`
+  # 从前这里直接 `uses` reusable；再往前与 release.yml 当时的 `lab_release_gate`
   # 是两份手抄的 shell（#61 修一个 bug 要同时改两处）。定义只有一份这条
   # 纪律没变，变的只是「谁的 runner 执行它」。
   dispatch:

@@ -17,9 +17,10 @@
 一份。**2026-09-16 起（F 组）实验室 runner 注册在私有仓库 `Tavotto/ci-infra` 上**：
 `lab-ci.yml` 的 `trust-check` 验完 SHA 后由托管机 `dispatch` 到 ci-infra 的
 `lab-qualification.yml`，那边再 `uses` 这份 reusable；结论以 commit status
-`lab/<mode>` 回到被验的那个 SHA 上，`lab-ci.yml` 自己**不等结果**。并行期
-`release.yml` 的 `lab_release_gate` 仍直接 `uses` reusable（发布链切两段是 PR B，
-见 `ADMIN_HANDOFF_RUNNER_POOL.md` F.2）。机器的准备与两枚 secret 见
+`lab/<mode>` 回到被验的那个 SHA 上，`lab-ci.yml` 自己**不等结果**。发布链同样
+不等：它在 lab 门禁处**切成两段**（PR B，`ADMIN_HANDOFF_RUNNER_POOL.md` F.2）——
+`release.yml` 到派发 lab 为止，`release-publish.yml` 由 ci-infra 在 lab 绿后派发，
+先重验再发布，见下面「发行链上的 gate」。机器的准备与两枚 secret 见
 [`self-hosted-runner.md`](self-hosted-runner.md)。
 
 ---
@@ -75,7 +76,7 @@
 |---|---|---|---|
 | `main` | push 到 main | 常规套件 + slow + 小 golden + 100 轮 soak + 基础泄漏 + **CompatBench（must+expected，无保真度）** | ≤ 15~20 min |
 | `nightly` | 每日 19:00 UTC | 上面全部 + 前端/Rust + 完整 golden + 视觉回归 + 500 轮 soak + benchmark + **CompatBench 全量（保真度 + 浏览器对拍）** | ≤ 30~45 min |
-| `release` | 打 tag（`release.yml`） | 候选包验收 + slow + 升级 + 完整 golden + 800 轮 soak + 性能（不写基线） + **CompatBench `--gate release`** | — |
+| `release` | 打 tag / 演练 dispatch（`release.yml::dispatch_lab` 派发） | 候选包验收（取第一段 run 的 `dist`） + slow + 升级 + 完整 golden + 800 轮 soak + 性能（不写基线） + **CompatBench `--gate release`** | — |
 | `weekly` | 周日 20:00 UTC | 上面全部 + mutation | — |
 
 PR / 常规 CI（`ci.yml`）另跑 **CompatBench 的 smoke 子集**（`--gate pr`，
@@ -315,40 +316,68 @@ PASS/FAIL。
 
 ---
 
-## 发行链上的 gate
+## 发行链上的 gate（两段，2026-09-16 起）
+
+公开仓库不能等私有仓库（lab 的排队时间没有上界，本仓库禁止轮询），所以发布链
+在 lab 门禁处切成两段，中间由 ci-infra 接力：
 
 ```
-push v*
-    │
-    ▼
-build（GitHub 托管）——造 wheel + sdist，上传 artifact "dist"
-    │
-    ▼
-lab_gate_trust（GitHub 托管）——tag → 精确 SHA，验明正身
-    │
-    ▼
-lab_release_gate（self-hosted）
-    ├── 候选包验收（**下载 build 的同一份 dist**）
-    ├── slow 用例
-    ├── 升级 N-1 → 候选
-    ├── 完整 golden + 视觉回归
-    ├── **CompatBench 全量（--gate release：任何 product_bug 都红）**
-    ├── 800 轮 soak + 泄漏检测
-    └── 性能回归（不写基线）
-    │
-    ▼
-  PASS
-    ├── github_release   (needs: build, lab_release_gate)
-    └── pypi             (needs: build, lab_release_gate)
+release.yml（第一段：tag push / workflow_dispatch）
+    trust（GitHub 托管）——ref → 精确 SHA、可达 origin/main、tag 与源码版本一致、release:blocker 签字
+      ├── build（造 wheel + sdist + Codex 插件，上传 artifact "dist"）
+      ├── desktop（workflow_call desktop-tauri.yml：NSIS / dmg / latest.json）
+      └── dispatch_lab（GitHub 托管，needs build + desktop + trust）
+            gh workflow run lab-qualification.yml -R Tavotto/ci-infra -r main
+              -f mode=release -f sha=<trust 的 SHA> -f use_prebuilt_dist=true
+              -f source_run_id=<本 run> -f publish=<trust 算出的> -f ack_open_blockers=<原样>
+    ── 第一段到此结束，**不等结果**。run 的 success 只表示「产物造出来了、lab 派出去了」。
+
+ci-infra lab-qualification.yml
+    trust-check（同一段 ancestry 判断，重新验）
+    qualify（self-hosted：uses 本仓库的 _lab-qualification.yml@main，按 source_run_id 取第一段的 dist）
+      ├── 候选包验收（**下载第一段 build 的同一份 dist**）
+      ├── slow 用例 / 升级 N-1 → 候选 / 完整 golden + 视觉回归
+      ├── **CompatBench 全量（--gate release：任何 product_bug 都红）**
+      ├── 800 轮 soak + 泄漏检测
+      └── 性能回归（不写基线）
+    report（GitHub 托管）——给 SHA 打 commit status `lab/release`；
+      **release 且绿** → gh workflow run release-publish.yml -R Tavotto/Tavotto -r main
+                          -f sha -f source_run_id -f lab_run_id=<本 run> -f publish -f ack_open_blockers
+      **红** → 只打 failure，**不派发**
+
+release-publish.yml（第二段：只有 workflow_dispatch）
+    trust2（GitHub 托管）——**不信任载荷**：重跑 ancestry + tag 判断（照抄 trust）；对**此刻** open 的
+      release:blocker 用第一段的 ack 再跑一次 release_blockers.py（lab 期间新开的 blocker 停在这里，
+      第二段不新增签字入口）；publish **按同一规则重算**（有 `v<源码版本>` tag 指向该 SHA → true，
+      载荷的 publish 只能把 true 压成 false）；读**一次** `lab/release` status（state == success 且
+      target_url 指向 lab_run_id 那个 ci-infra run）
+      ├── validate_artifacts（按 source_run_id 从第一段 run 取全部产物；演练也跑）
+      ├── github_release / n1_update_windows（publish=true）
+      ├── pypi（publish=true 且仓库变量 PYPI_PUBLISH_ENABLED=true）
+      └── plugin_stable（演练对临时 bare 仓库跑发布器；真推只在 publish=true）
 ```
+
+**失败形状变了，读结论的人要看两处。** 从前「一个 run 红」= 没发；现在 lab 红时
+第一段的 run 早已 success 结束，`lab/release` status 是 failure，而第二段**从未开始**
+——「没有发布」靠的是第二段不存在。判一次发版的结论：
+
+1. 第一段 run（`release.yml`）success，summary「第一段结束」里有本 run 的 id；
+2. 该 SHA 的 commit status `lab/release`（`gh api repos/Tavotto/Tavotto/commits/<sha>/status
+   --jq '.statuses[] | select(.context == "lab/release")'`）：success 才会有第 3 步；
+3. `release-publish.yml` 有该 SHA 的 run 且 success；publish=false 时 summary 有
+   「演练（publish=false）到此为止」，publish=true 时有 Release / PyPI / plugin-stable 的结论。
 
 **不给 fallback。**「runner 离线 → 跳过 gate → 照发」等于这条门禁在最需要它
-的时候自动消失。runner 不可用时那个 job 会排队或失败，那正是期望行为。
+的时候自动消失。runner 不可用时 ci-infra 的 run 会排队或失败，第二段不会被派发，
+那正是期望行为。手工派发第二段而 lab 没绿，停在 trust2（status 不是 success）。
 
-gate 只有 `contents: read`。PyPI 的 OIDC 发布模型与 `environment` 保护一个字
-未动。
+lab 侧只有 `contents: read`；签发能力（Release 写权限、PyPI OIDC、`environment`
+保护）全在第二段的对应 job 上，一个字未动。**第一段的 `pypi` 输入
+（none / testpypi / pypi）没有随载荷传到第二段**：第二段 publish=true 只可能来自
+tag，PyPI 按仓库变量 `PYPI_PUBLISH_ENABLED` 开闸（tag 那条路本来就只看它），
+TestPyPI 通道在两段链里不存在。
 
-### Release-blocker 显式签字（trust 阶段）
+### Release-blocker 显式签字（trust 阶段，第二段 trust2 再核一次）
 
 发布编排在 trust 里查 open 且带 `release:blocker` label 的 issue
 （`scripts/ci/release_blockers.py`）。清单非空时必须在 `workflow_dispatch`
@@ -357,6 +386,11 @@ gate 只有 `contents: read`。PyPI 的 OIDC 发布模型与 `environment` 保�
 提示改用 dispatch 签字后发布。不是禁止发（0.x 需要灵活），是把「明知有洞
 还发」从默认无声变成显式决定——issue #35 带着未验证的 N-1 更新连发四个
 版本，就是没有这道门的代价。
+
+切两段之后 ack 随载荷经 ci-infra 原样传回第二段，`trust2` 对着**此刻** open 的
+清单再跑一次同一个脚本：lab 跑的那一两个小时里新开的 blocker 会让第二段停在
+trust2，而不是无声发出去。第二段**不新增签字入口**——要签新 blocker，从第一段
+用 `workflow_dispatch(ref=<同一 SHA>, ack_open_blockers=…)` 重来。
 
 ---
 
@@ -370,7 +404,7 @@ gate 只有 `contents: read`。PyPI 的 OIDC 发布模型与 `environment` 保�
 - **nightly 的 `updater-consumer-fidelity`**：对**线上已发布**的
   latest.json 与全部平台更新包做验签 + 插件同形态解包
   （`tools/updater-extract-probe`，zip crate `default-features = false`）。
-- **release.yml 的 `n1_update_windows`**（发布后自动跑）：Windows runner 装
+- **release-publish.yml 的 `n1_update_windows`**（发布后自动跑；F.2 之前在 release.yml）：Windows runner 装
   N-1 官方安装包，用 `TAVOTTO_E2E_RUN_UPDATE=1`（壳的仅测试触发口，默认
   关死）驱动真实应用内更新，断言注册表 DisplayVersion 与重启后新进程的
   ProductVersion 都换成了新版本，再对更新后的 sidecar 跑

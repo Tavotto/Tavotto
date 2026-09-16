@@ -1,7 +1,8 @@
 name: Lab Qualification (reusable)
 
 # **发行资格验证的唯一定义。** `lab-ci.yml`（push/schedule）与 `release.yml`
-# （发布链）都调这一个文件，`mode` 只决定阈值、基线和跑哪几档，**不复制步骤**。
+# （发布链第一段）都经 ci-infra 调到这一个文件，`mode` 只决定阈值、基线和跑哪几档，
+# **不复制步骤**。
 #
 # 为什么非收敛不可：从前这套步骤在两个文件里各有一份手抄。#61 修一个 bug
 # （汇总步骤在有失败要汇总时自己挂掉）必须**同时改两处**，而那两处的差别
@@ -32,12 +33,13 @@ name: Lab Qualification (reusable)
 #   * 发行档 `download-artifact` 显式 `repository` / `run-id` / `github-token`——
 #     `run-id` 取 `inputs.source_run_id`（公开仓库那次 release run 的 id），
 #     `github-token` 取调用方经 `secrets:` 传进来的 `TAVOTTO_PUBLIC_TOKEN`。
-# 同仓库调用（release.yml 的 `lab_release_gate`，并行期）时 `source_run_id` 为空、secret
-# 不存在：`run-id` 落回 `github.run_id`，`github-token` 是空串——download-artifact 只在
-# token **非空**时才切到跨仓库的 REST 路径（源码 `if (inputs.token)`），空串走的仍是今天
-# 那条同 run 内部路径，行为逐字不变。**这里刻意不写 `|| github.token`**：非空 token 会把
+# 同仓库调用（PR B 之前 release.yml 的 `lab_release_gate`；PR B 之后公开仓库里已没有
+# 调用方，这条回退只为「把本文件搬回同仓库直接调用」时仍成立）时 `source_run_id` 为空、
+# secret 不存在：`run-id` 落回 `github.run_id`，`github-token` 是空串——download-artifact 只在
+# token **非空**时才切到跨仓库的 REST 路径（源码 `if (inputs.token)`），空串走的仍是同 run
+# 内部路径，行为逐字不变。**这里刻意不写 `|| github.token`**：非空 token 会把
 # 同仓库调用也切到 REST 路径，而本文件的 GITHUB_TOKEN 只有 `contents: read`、没有
-# `actions: read`，发行档会在下一次发版时 403。
+# `actions: read`，发行档会 403。
 # 并发槽名含 `inputs.mode`：ci-infra 一个 workflow 服务四档，release 与 nightly 不能共槽。
 
 on:

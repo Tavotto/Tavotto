@@ -64,10 +64,10 @@ GitHub 托管机上的 trust-check
 - 实验室共享盘凭据
 - 任何与 CI 无关的 secret
 
-对应地，workflow 侧也做了限制：`lab-ci.yml` 与 `release.yml` 的
-`lab_release_gate` 都只有 `contents: read`。它们只是测试，不建 Release、
-不发 PyPI、不推代码。发行签名那些能力**留在 GitHub 托管机上**。跨仓库派发
-与回写用的是两枚范围极窄的 fine-grained PAT（见下一节的表），不是 GITHUB_TOKEN。
+对应地，workflow 侧也做了限制：`lab-ci.yml::dispatch`、`release.yml::dispatch_lab`
+与 reusable 都只有 `contents: read`。lab 只是测试，不建 Release、不发 PyPI、不推
+代码。发行签名那些能力**留在 GitHub 托管机上**（发布链第二段 `release-publish.yml`）。
+跨仓库派发与回写用的是两枚范围极窄的 fine-grained PAT（见下一节的表），不是 GITHUB_TOKEN。
 
 ### 更安全的备用形态——**2026-09-16 起成为现行形态（F 组）**
 
@@ -94,7 +94,7 @@ private Tavotto/ci-infra 仓库
 |---|---|
 | `lab-ci.yml` | `trust-check` 不动；原来 `uses` reusable 的 `qualify` 改成托管机上的 `dispatch`：`gh workflow run lab-qualification.yml -R Tavotto/ci-infra -r main -f mode/sha/baseline_tag`（三个值全部来自 `trust-check` 的输出）。它**不等结果**；secret 为空时 `::error::` 并退 1——「lab 没人跑」必须红在这里，不许静默跳过 |
 | `_lab-qualification.yml` | `checkout` 显式 `repository: Tavotto/Tavotto`；发行档 `download-artifact` 显式 `repository` / `run-id: inputs.source_run_id \|\| github.run_id` / `github-token: secrets.TAVOTTO_PUBLIC_TOKEN`（**不**兜 `github.token`：token 非空就切到需要 `actions: read` 的 REST 路径，而本文件只有 `contents: read`）；并发槽名加 `inputs.mode` |
-| `release.yml` | **并行期不动**：`lab_release_gate` 仍直接 `uses` reusable，等 PR B 把发布链切成两段（F.2） |
+| `release.yml` / `release-publish.yml` | **PR B（F.2）**：`lab_release_gate` → `dispatch_lab`（托管机，与 `lab-ci.yml::dispatch` 同形状，多传 `use_prebuilt_dist=true` / `source_run_id=<本 run>` / `publish` / `ack_open_blockers`），第一段到此为止；`validate_artifacts` 与发布 job 搬进新的 `release-publish.yml`（只 `workflow_dispatch`，由 ci-infra 的 `report` 在 lab 绿后派发），`trust2` 重验 SHA / tag / blocker、重算 publish、读一次 `lab/release` status。公开仓库里不再有任何 `uses` reusable 的 job——F-8 注销公开仓库 runner 的前提 |
 
 两枚 secret（**值只进仓库 secret，不进任何文件**；名字由两边的 workflow 共同钉死，改名要两边一起改）：
 

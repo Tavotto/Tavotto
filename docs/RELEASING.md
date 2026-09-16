@@ -1,29 +1,48 @@
 # 发版
 
-**一条流水线 `release.yml` 是唯一入口**，推 `v*` tag 或手动 dispatch 触发，
-七个 job：
+**`release.yml` 是唯一入口**，推 `v*` tag 或手动 dispatch 触发。2026-09-16 起
+（实验室 runner 迁到私有仓库 ci-infra，公开仓库不能等它）发布链在 lab 门禁处
+**切成两段**，中间由 ci-infra 接力：
+
+**第一段 `release.yml`**（到派发 lab 为止，**不等结果**）：
 
 | job | 做什么 |
 |---|---|
-| `trust` | ref → 精确 SHA，验证它**可达于 origin/main**（发布只接受已合并进受保护 main 的提交），从源码读出版本号并与 tag 核对；之后所有 job 只认它输出的 SHA |
-| `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 → **产出这条腿的产物清单** |
+| `trust` | ref → 精确 SHA，验证它**可达于 origin/main**（发布只接受已合并进受保护 main 的提交），从源码读出版本号并与 tag 核对，release:blocker 签字；之后所有 job 只认它输出的 SHA |
+| `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 → Codex 插件 → **产出这条腿的产物清单** |
 | `desktop` | `workflow_call` 调 `desktop-tauri.yml`：Windows NSIS + macOS 签名公证 dmg，各自**产出自己那条腿的产物清单** |
-| `lab_release_gate` | `workflow_call` 调 `_lab-qualification.yml`（`mode: release`）：实验室 runner 上的 exact-artifact 发行资格验证——**这一关不过，什么都不发** |
-| `validate_artifacts` | 合并三条腿的清单并**逐条核对 sha256 与 source_sha** → provenance → SBOM → SHA256SUMS → Codex 插件清单 → release notes。**演练也跑这一整段** |
+| `dispatch_lab` | `gh workflow run lab-qualification.yml -R Tavotto/ci-infra`（`mode=release`、`use_prebuilt_dist=true`、`source_run_id=<本 run>`、`publish`、`ack_open_blockers`）：实验室 runner 上的 exact-artifact 发行资格验证由 ci-infra 执行，结论以 commit status `lab/release` 回到 SHA 上——**这一关不过，第二段不会开始** |
+
+**第二段 `release-publish.yml`**（只有 `workflow_dispatch`，ci-infra 在 lab 绿后派发；
+`trust2` **不信任载荷**，重验全部判断）：
+
+| job | 做什么 |
+|---|---|
+| `trust2` | 重跑 `trust` 同一段 ancestry + tag 判断；对**此刻** open 的 release:blocker 用第一段的 ack 再核一次；publish **按同一规则重算**（有 `v<版本>` tag 指向该 SHA → true，载荷只能压成 false）；读**一次** `lab/release` status（success 且 target_url 指向 `lab_run_id` 那个 run） |
+| `validate_artifacts` | 按 `source_run_id` 从第一段 run 取全部产物，合并三条腿的清单并**逐条核对 sha256 与 source_sha** → provenance → SBOM → SHA256SUMS → Codex 插件清单 → release notes。**演练也跑这一整段** |
 | `github_release` | 建 GitHub Release，**一次挂全部**（只在 `publish=true`） |
-| `pypi` | 发到 PyPI（只在 `publish=true`，且需开闸，见下） |
+| `n1_update_windows` | 发布后装 N-1 官方安装包、驱动真实应用内更新（只在 `publish=true`） |
+| `pypi` | 发到 PyPI（只在 `publish=true` 且仓库变量 `PYPI_PUBLISH_ENABLED=true`；TestPyPI 通道在两段链里不存在，见下） |
+| `plugin_stable` | 把同一份插件 zip 投影到发行分支 `plugin-stable`（演练对临时 bare 仓库跑发布器） |
 
 ```
-tag push / workflow_dispatch
-        │
-      trust ──┬──► build ────────────────┐
-              ├──► desktop（workflow_call）┤
-              └──► lab_release_gate ──────┴──► validate_artifacts
-                   （workflow_call）                  │
-                                          publish=true 才继续
-                                                 ├─ github_release
-                                                 └─ pypi
+tag push / workflow_dispatch          Tavotto/ci-infra                    release-publish.yml
+        │                             lab-qualification.yml               （只 workflow_dispatch）
+      trust ──┬──► build ───────┐        trust-check                          trust2（重验 SHA / tag /
+              ├──► desktop ──────┼──►  dispatch_lab ──派发──► qualify（lab）   blocker、重算 publish、
+              │  （workflow_call）│                            report ──┬── status lab/release   读一次 lab/release）
+              └──────────────────┘                                     └── release 且绿：派发 ──►   │
+                                                                                                validate_artifacts
+                                                                                                    │ publish=true 才继续
+                                                                                                    ├─ github_release → n1_update_windows
+                                                                                                    ├─ pypi
+                                                                                                    └─ plugin_stable
 ```
+
+**读结论要看三处**：第一段 run success（只表示产物造出来了、lab 派出去了）→ 该 SHA 的
+commit status `lab/release` → `release-publish.yml` 有该 SHA 的 run 且 success。lab 红时第一段
+早已 success 结束、第二段从未开始——「没有发布」靠的是第二段不存在。细节见
+`docs/ci/release-qualification.md`「发行链上的 gate」。
 
 ## `publish=false`：正式 tag 不该承担「第一次测这条链」
 
@@ -40,9 +59,11 @@ gh workflow run release.yml --ref main -f ref=<那个 SHA>
 git tag -a v1.0.0 <那个 SHA> -m "v1.0.0" && git push origin v1.0.0
 ```
 
-演练会在指定 SHA 上走完整条链——wheel/sdist、Windows 与 macOS 最终产物
+演练会在指定 SHA 上走完两段链——wheel/sdist、Windows 与 macOS 最终产物
 （含签名与公证）、发行资格验证、SBOM、checksum、provenance、updater 清单、
-产物清单校验——**唯独不建 Release、不发 PyPI、不打 tag**。
+产物清单校验——**唯独不建 Release、不发 PyPI、不打 tag**。`publish=false` 随载荷
+经 ci-infra 传回第二段，`trust2` 按 tag 规则重算后仍是 false（没有 tag 指向该 SHA），
+第二段的 summary 有「演练（publish=false）到此为止」。
 
 **为什么非要有这一档**：v0.9.0 与 v0.9.1 两个正式 tag 都是在发布链上第一次
 被执行时炸掉的（一个是 SBOM 把 glob 当文件名，一个是汇总步骤自己挂掉），
@@ -128,13 +149,23 @@ Trusted Publishing 用 OIDC 换短时凭据，仓库里不存任何 API token。
 | PyPI Project Name | `tavotto` |
 | Owner | `Tavotto` |
 | Repository name | `tavotto` |
-| Workflow name | `release.yml` |
+| Workflow name | **`release-publish.yml`**（2026-09-16 起；F.2 之前是 `release.yml`） |
 | Environment name | `pypi` |
 
-### 2. TestPyPI（演练用，强烈建议先做）
+> **切两段之后 trusted publisher 必须改指 `release-publish.yml`。** OIDC token 的
+> `workflow_ref` 是实际跑 `pypa/gh-action-pypi-publish` 的那份 workflow，现在是第二段；
+> 还登记着 `release.yml` 的话，第一次 publish=true 会在 PyPI 那一步被拒——而那时
+> GitHub Release 已经建好。演练（publish=false）测不到这一步，改配置要在 F-7 之后、
+> 第一次正式发版之前手动做。
+
+### 2. TestPyPI
 
 在 <https://test.pypi.org/manage/account/publishing/> 重复一遍，
 **Environment name 填 `testpypi`**。两边是完全独立的账号与配置。
+
+> **两段链里 TestPyPI 目前不可达**：第一段的 `pypi` 输入（none / testpypi / pypi）没有
+> 随载荷传到第二段，第二段 publish=true 只可能来自 tag，PyPI 按 `PYPI_PUBLISH_ENABLED`
+> 开闸。要恢复得把 `pypi` 加进两跳载荷（ci-infra 接口 +1，待拍板）。这一节先留着。
 
 ### 3. 开闸
 
@@ -154,8 +185,12 @@ Settings → Environments → `pypi` → 勾 **Required reviewers** 填自己。
 
 ## 演练
 
-Actions → **Release** → Run workflow，填 tag（如 `v0.1.1`）、pypi 选 `testpypi`。
-成功后验证能装：
+Actions → **Release** → Run workflow，`ref` 填精确 SHA、`publish` 不勾（默认）。
+两段都会跑：第一段造产物 + 派 lab；lab 绿后 ci-infra 派第二段，`trust2` 重算出
+publish=false，`validate_artifacts` 全部产物真实存在并校验，最后不发布。判据是三个
+run 都有结论（`docs/ci/release-qualification.md`「发行链上的 gate」的三步）。
+
+TestPyPI 的装机验证（两段链里目前不可达，见上一节）：
 
 ```sh
 pip install --index-url https://test.pypi.org/simple/ \
@@ -218,10 +253,10 @@ pip install --index-url https://test.pypi.org/simple/ \
 
 tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
-**发之前确认 CI 是绿的**——`release.yml` 的 `lab_release_gate` 会对候选 wheel
+**发之前确认 CI 是绿的**——`release.yml` 的 `dispatch_lab` 派出去的发行档会对候选 wheel
 重跑全量 + slow 用例、升级验收与视觉回归（exact artifact），但那是**发行资格
 验证**，不是替代日常 CI：tag 只应打在 CI 已经全绿、且已合并进 main 的提交上
-（`trust` job 会硬校验 main 可达性，够不着直接拒）。
+（`trust` job 会硬校验 main 可达性，够不着直接拒；第二段的 `trust2` 再验一次）。
 
 ## 网站 `/try`：同步与复核必须指名读的是哪棵树
 
