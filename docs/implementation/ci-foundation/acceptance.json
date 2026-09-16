@@ -35,12 +35,14 @@
       "id": "CIP-003",
       "phase": "CI00",
       "requirement": "旧required领域、版本平台与新位置覆盖账完整",
-      "status": "not_run",
+      "status": "pass",
       "evidence": [
         "coverage_ledger.json（28 条，policy_source_sha 8b95256c，status not_run）",
-        "CI_BASELINE.md#9-覆盖账摘要"
+        "CI_BASELINE.md#9-覆盖账摘要",
+        "coverage_ledger.json（CI05：28 条 new_location 全部填写；24 条 status pass 各引 after run 的 job 显示名 + 结论；4 条 push main / nightly / lab / release 本轮未动保持 not_run 并写 ci05_note；policy_source_sha a174eb61）",
+        "CI_HANDOFF.md#4-覆盖迁移旧集合--新执行位置"
       ],
-      "note": "旧领域清点完整（28 条）；new_location 待 CI01/CI03 填写后再判"
+      "note": "旧领域清点完整（28 条）；new_location 待 CI01/CI03 填写后再判。2026-09-16 CI05：new_location 逐条填完，24/28 在 after run 上以新形状执行并 success（PR full-ci，不是 merge_group——合入后复核）；没有 required 领域搬到合并后。"
     },
     {
       "id": "CIP-004",
@@ -106,7 +108,7 @@
         "tests/test_release_workflow_contract.py::test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run",
         "CI01_EVENTS_AND_DAG.md#3-取消与并发合同真值表"
       ],
-      "note": "静态合同测试通过，实机验证待 push 后的真实 run：需要 PR A push 时 PR B / merge_group / push main 各有一个运行中的 run 作对照。"
+      "note": "静态合同测试通过，实机验证待 push 后的真实 run：需要 PR A push 时 PR B / merge_group / push main 各有一个运行中的 run 作对照。 2026-09-16 CI05：有了一半样本——同 PR 的 opened run 被 labeled run 取消（34993254893 → 34993304390、35031788042 → 35031790918），别的 PR 的 run（35031461863）横跨这些事件没被取消；PR push 与 merge_group / push main / release 同时刻的样本仍没有，保持 not_run。"
     },
     {
       "id": "CIP-009",
@@ -216,15 +218,16 @@
         "evidence/ci03a/collect_full.txt / collect_shard1.txt / collect_shard2.txt + compare_collect.txt（collection 层：4686 = 2184 ∪ 2502，交集 0）",
         "evidence/ci03a/compare_sets.json（junit 层，主语 (classname, name) 集合：s1 ∪ s2 == full、s1 ∩ s2 = ∅、c1 == s1、c2 == s2、计数逐片相加、并发 outcome 逐条等于顺序、manifest selected_files == junit 文件集合；14 条 check 全 true；full 4641 passed / 42 skipped / 2 failed = s1 2156/27/1 + s2 2485/15/1，两条红见文档 §3.3）",
         "evidence/ci03a/negative_cli_cases.txt / negative_d1_union_check.txt（D①…D⑨ 的退出码；D⑨ = --shard-manifest 必须 = 形式，tests/test_pytest_shard.py::test_the_manifest_path_may_already_exist_when_written_with_equals）",
-        "CI03A_PYTEST_SHARDS.md#3-本地实测 / #4-负例与退出码；本机三组跑各有两条红：一条本轮真缺陷（shard.py 入口没钉 UTF-8 stdout，已修）、一条后台驱动让信号用例假红（§3.4，前台 rc 0）——都不是分片造成的，三组里落在同一 nodeid"
+        "CI03A_PYTEST_SHARDS.md#3-本地实测 / #4-负例与退出码；本机三组跑各有两条红：一条本轮真缺陷（shard.py 入口没钉 UTF-8 stdout，已修）、一条后台驱动让信号用例假红（§3.4，前台 rc 0）——都不是分片造成的，三组里落在同一 nodeid",
+        "evidence/ci05/shards/ci_shard_check.json（CI05：run 35007730894 五条腿 × 两片的 junit (classname, name) 集合两片不交、并集 == 4686 == manifest nodeids_total、每片文件集合 == selected_files；五条腿并集按分隔符归一后逐条相同，并与本机 collect_full.txt 逐条相同）"
       ],
-      "note": "本机 macOS 证据：collection 层与 junit 层的并集都逐 nodeid 相等、无交集、无 outcome 变化；漏一个文件的真实变异 rc 4，拿掉并集检查后同一变异静默漏 46 条（证明检查是载荷）。CI 侧待 PR run：Linux 3 档 × 2 片与 full-ci 下 macOS / Windows × 2 片的 manifest + junit artifact 要再比一次并集（不同 os 的 skip 集合不同，全集要按同 os 比）。2026-09-16 CI03a，commit 064bc541。"
+      "note": "本机 macOS 证据：collection 层与 junit 层的并集都逐 nodeid 相等、无交集、无 outcome 变化；漏一个文件的真实变异 rc 4，拿掉并集检查后同一变异静默漏 46 条（证明检查是载荷）。CI 侧待 PR run：Linux 3 档 × 2 片与 full-ci 下 macOS / Windows × 2 片的 manifest + junit artifact 要再比一次并集（不同 os 的 skip 集合不同，全集要按同 os 比）。2026-09-16 CI03a，commit 064bc541。 2026-09-16 CI05：CI 侧那一半也有了（同 os 比：Linux 3 档 / macOS / Windows 各自两片，skip 数按 os 不同但并集相同）。"
     },
     {
       "id": "CIP-017",
       "phase": "CI03",
       "requirement": "Playwright各browser/locale分片完整并消费真实产物",
-      "status": "not_run",
+      "status": "pass",
       "evidence": [
         ".github/workflows/ci.yml windows-exe-smoke（CI03c：matrix include 两片 chromium / webkit+chromium-en，name 显示名 windows-exe-smoke (K)，每片完整构建 + 三断言 + 冒烟①②③ + 分片自验 + `pnpm e2e ${{ matrix.projects }}`，Playwright 步 timeout-minutes 30，artifact 按片命名）",
         "scripts/ci/playwright_shard_check.py（每片自验：本片 --list == 全集里属于本片 project 的那些、本片 ∪ 另一片 == 全集 project 集，主语 (project, file:line:col, title) 集合；清单读不懂 rc 2、分片不完整 rc 1）",
@@ -233,9 +236,12 @@
         "evidence/ci03c/list_all.txt / list_shard1.txt / list_shard2.txt + selfcheck_shard{1,2}.{txt,json}（本机 --list：151 = 109 ∪ 42；自验 rc 0 / 0；--web 产出与 npx 逐字节相同）",
         "evidence/ci03c/local_runs_summary.json + local_runs_timing.json + local_runs/（本机 macOS `python -m tavotto` 形态真跑：片 1 chromium 89 passed / 20 skipped（B1 + B2 两次前台调用，601.8s）、片 2 webkit 23 + chromium-en 17 passed / 2 skipped（320.1s）；集合比对 B1 ∪ B2 == list_shard1、C == list_shard2、B ∪ C == list_all、B ∩ C = ∅ 四条全 true；A 那次 1 红是本机 PATH 下 python3 = 系统 3.9，文档 §6.3）",
         "evidence/ci03c/negative_cases.txt（N1…N12：漏 project / 两片重叠 / 空清单 / 认不出的行 / 拿错片 / 删一条 / 重复 / 空片 / 混参数 / 配置里没有的 project / 没有 Total，退出码全非零）",
-        "CI03C_PLAYWRIGHT_SHARDS.md#6-本地实测 / #7-负例与变异反证"
+        "CI03C_PLAYWRIGHT_SHARDS.md#6-本地实测 / #7-负例与变异反证",
+        "evidence/ci05/shards/ci_shard_check.json（run 35011613925 与 35031790918 的 playwright-shard-check-windows-shard1/2：两片 --list 不交、并集 == 全集 151、两台机器的 list_all 逐字节相同、check.json ok 两片 true；独立解析器）",
+        "evidence/ci05/timing/timing_ci_35b912a0.json / timing_ci_bb27bdaf.json（windows-exe-smoke (1) / (2) 各自 PyInstaller → 三条断言 → 冒烟①②③ → 自验 → e2e 全 success：1076 / 945s 与 796 / 670s）",
+        "CI05_COMPARISON.md#9-ci-侧分片完整性cip-016--cip-017-的-ci-半边"
       ],
-      "note": "「分片完整」这一半在本机有集合级证据（--list 层 + 真跑层都逐 (project, file:line:col, title) 相等、无交集）并由合同测试 + 每片自验两层钉住；「消费真实产物」这一半**一次都没跑过**：本机是 macOS + `python -m tavotto`（与 posix-e2e 同形），Windows .exe + 内置 runtime + 两台机器各自构建的形态要等本 PR 的 full-ci run（看 windows-exe-smoke (1) / (2) 各自的 playwright-shard-check-windows-shard<K> artifact 与 e2e 结论）。要求是两半的合取，所以保持 not_run；到那次 run 有结论再改。2026-09-16 CI03c。"
+      "note": "「分片完整」这一半在本机有集合级证据（--list 层 + 真跑层都逐 (project, file:line:col, title) 相等、无交集）并由合同测试 + 每片自验两层钉住；「消费真实产物」这一半**一次都没跑过**：本机是 macOS + `python -m tavotto`（与 posix-e2e 同形），Windows .exe + 内置 runtime + 两台机器各自构建的形态要等本 PR 的 full-ci run（看 windows-exe-smoke (1) / (2) 各自的 playwright-shard-check-windows-shard<K> artifact 与 e2e 结论）。要求是两半的合取，所以保持 not_run；到那次 run 有结论再改。2026-09-16 CI03c。 2026-09-16 CI05：「消费真实产物」半边在 CI 上成立——两个 run 的两片各自完整构建 .exe + 内置 runtime 并跑完本片 project（chromium 89 条 / webkit 23 + chromium-en 16 条）全绿；「分片完整」半边的 CI 侧集合证据也有了。两半合取成立，改 pass。locale 那一维 = chromium-en project，在片 2。"
     },
     {
       "id": "CIP-018",
@@ -288,7 +294,7 @@
         "scripts/ci/playwright_shard_check.py（CI03c：本片 --list 为空 / 配置里的 project 不在任何一片 → rc 非零，不是绿；evidence/ci03c/negative_cases.txt N1 / N3 / N9）",
         "evidence/ci03c/local_runs_summary.json（本机分片跑的 skip 集合：chromium 20 条 playground*、chromium-en 2 条，与 CI00 记录的 CI 形状一致（posix 腿形状）；分片没有把任何一条从 skipped 变成 passed）"
       ],
-      "note": "本机证据只覆盖「分片不改变 skip 集合」这一维；「缺资源 / 重试不伪造资格」在 CI 侧未测（本 PR 没动任何 skip 条件，也没有 retry）。CI 上不同 os 的 skip 集合本来就不同，判「没伪造」要按同 os 比 manifest 与 junit。 CI03c 补充：Playwright 分片不改任何 skip 条件、不改 retries（attempt 2 那次的 1 flaky 仍靠 retries: 1 过，coverage_ledger 的 known_limitations 继续挂着）；「缺资源」这一维只在本机自验层验过（空清单 rc 2）。"
+      "note": "本机证据只覆盖「分片不改变 skip 集合」这一维；「缺资源 / 重试不伪造资格」在 CI 侧未测（本 PR 没动任何 skip 条件，也没有 retry）。CI 上不同 os 的 skip 集合本来就不同，判「没伪造」要按同 os 比 manifest 与 junit。 CI03c 补充：Playwright 分片不改任何 skip 条件、不改 retries（attempt 2 那次的 1 flaky 仍靠 retries: 1 过，coverage_ledger 的 known_limitations 继续挂着）；「缺资源」这一维只在本机自验层验过（空清单 rc 2）。 2026-09-16 CI05：CI 侧看到分片后各腿的 skip 数（Linux 35+24 / 32+23、macOS 28+17、Windows 51+26）与 CI00 记录的形状一致、failure 0；「缺资源 / 重试不伪造」仍没有 CI 演练（没有删产物看红、没有 retry 样本），保持 not_run。"
     },
     {
       "id": "CIP-022",
@@ -357,29 +363,55 @@
       "id": "CIP-027",
       "phase": "CI05",
       "requirement": "缺shard/错artifact/误取消/跨任务污染等负例会红",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "CI05_COMPARISON.md#10-负例清单05-3-的九条每条怎么证明会红（九条逐条：CI 真红 / 本机反证 / not_run 与要开什么坏 PR 才能证）",
+        "evidence/ci05/actions/runs/run_35004450721.json + jobs_35004450721.raw.json（#374 首跑：backend-platforms (windows-latest, 2) failure → CI integration gate failure——缺片 / 分片红 → Gate 红的实机记录）",
+        "evidence/ci05/actions/runs/run_35024490379.json / run_35028309531.json（#376 两次：backend-platforms (macos-latest, 2) failure → Gate failure）",
+        "evidence/ci05/actions/runs/run_34994534095.attempt1.json（#373 attempt 1：windows-exe-smoke 挂 60 min 被 job 级 timeout cancelled → Gate failure）",
+        "evidence/ci05/shards/negative_cases.txt（CI 侧分片检查器的 9 条负例：删一条 / 报告充数 / 重叠 / manifest 总数改小 / 重复 / Playwright 少一条 / ok=false / 清单抄另一片 / 认不出的行，rc 1 或 2）",
+        "evidence/ci02/tsc_mutations.json（TypeScript 真错误：T1 / T2 rc 2；T3 references 少 e2e → rc 0，所以合同钉 references 集合）",
+        "tests/test_plugin_stage.py（坏 artifact：错 SHA / 改一字节 / 少多文件 / 改过的清单各红）；evidence/ci03b/mutations.json（端口 / 目录 / 进程组的负例）；evidence/ci04/mutations.json（PR 事件派到 lab 标签 → 红）",
+        "CI05_COMPARISON.md#6-三种演练真实材料不是合成（同 PR opened run 被 labeled run 取消、别的 PR 不受影响：34993254893 → 34993304390、35031788042 → 35031790918）"
+      ],
+      "note": "「会红」的证据分三类并逐条标明：CI 上真红过的三种（分片红 / 硬杀 / 误配 Gate 判失败）引 run + job；只在本机反证过的（坏 artifact / tsc / 端口目录 / lab 标签）引各阶段的变异清单；两边都没有的（CI 上把 matrix 轴写成 [1, 1]、CI 上推坏 artifact、推带类型错误的 PR、PR push 与 merge_group 同时刻）写 not_run 与要开什么样的一次性坏 PR 才能证——本轮不开。没有一条写成「加了反例」。2026-09-16 CI05。"
     },
     {
       "id": "CIP-028",
       "phase": "CI05",
       "requirement": "前后测量不编2×/30–60%或不足样本p95",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "CI05_COMPARISON.md#2-两个总时长before-中位-vs-after-各样本（before 29 个 merge_group 中位 1964 / 3412；after 每 run 单值；q₀ 标明是口径不是测量）",
+        "CI05_COMPARISON.md#5-争抢-runner-的样本单列不进可比列",
+        "evidence/ci05/comparison.json（rules.no_percentiles / rules.contended / rules.qualification_model_zero_runner_wait）",
+        "evidence/ci05/compare.py（只算 median / min / max，没有分位数函数）",
+        "evidence/ci05/timing/（每个 after run 用它执行时那份 ci.yml 分解；快照在 evidence/ci05/workflows/）"
+      ],
+      "note": "没有 2× / 30–60% 这类承诺：无争抢样本 #374 资格 −50%、反馈 −43%（n = 1）；#375 24.8 min 且关键路径带 205s 等待；含全部改动的两个样本在争抢窗口里只给扣除 runner_wait 的口径（1412 / 1498s）并写明它不是测量；每档 n = 1–2，不算 p95；托管 ubuntu 自身 ±30% 漂移写在明处。2026-09-16 CI05。"
     },
     {
       "id": "CIP-029",
       "phase": "CI05",
       "requirement": "ci_hosted_ready与runner_pool_ready独立如实报告",
-      "status": "not_run",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "CI_HANDOFF.md#0-两个状态独立判（ci_hosted_ready: pass，主语 = hosted 上的 PR full-ci 验证，合入后复核命令在 §12；runner_pool_ready: not_run）",
+        "README.md#实施状态2026-09-16",
+        "CI04_RUNNER_PILOT.md#5-runner_pool_ready-not_run以及每个验收项为什么是现在这个状态"
+      ],
+      "note": "两个状态分开判、各有理由：hosted 那边按 05 §1 的五条逐条对（DAG / 分片隔离 / Gate 与事件 / 覆盖不缩小 / 真实样本），并写明 pass 的主语是 PR 上的 hosted 验证、七个 PR 未合入；pool 那边没有 VM 就是 not_run，不借源码脚本声称服务器就绪。四种状态（源测试通过 / 服务器部署 / 代码合并 / 产品发布）分开写。2026-09-16 CI05。"
     },
     {
       "id": "CIP-030",
       "phase": "CI05",
       "requirement": "统一计划入口/CI交接更新且U00不重复建调度系统",
       "status": "not_run",
-      "evidence": []
+      "evidence": [
+        "CI_HANDOFF.md（按 templates/CI_HANDOFF.md 与 06 的必填逐项填；§14 写了 U00 应沿用的接口与需重新调查的产品问题；§15 是要贴进统一计划 README 的那段文字）",
+        "README.md#实施状态2026-09-16"
+      ],
+      "note": "CI 交接这一半完成（CI_HANDOFF.md）；「统一计划入口更新」这一半 not_run：docs/implementation/tavotto-foundation/ 今天不在仓库里，06 第 1 条要加进它 README 的那段文字原样放在 CI_HANDOFF.md §15，入库时粘贴。「U00 不重复建调度系统」是对 U00 的约束，本轮只能把接口写清（§14），不能替它验。2026-09-16 CI05。"
     }
   ]
 }

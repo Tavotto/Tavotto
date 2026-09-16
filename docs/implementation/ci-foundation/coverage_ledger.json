@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "kind": "coverage_ledger_initial_inventory_not_a_valid_gate_input",
-  "status": "not_run",
-  "policy_source_sha": "8b95256c0d08a14bfcfc4c81358894ef01168933",
-  "generated": "2026-09-15 · CI00 基线（人工按 ci.yml / codeql.yml / nightly.yml / lab-ci.yml / _lab-qualification.yml / release.yml 逐 job 抄录；时长取 evidence/actions/timing_decomposition.json 的 merge_group/success 中位数，单位秒）",
+  "kind": "coverage_ledger_with_ci05_promotion_not_a_valid_gate_input",
+  "status": "partially_promoted",
+  "policy_source_sha": "a174eb6142f75bc40c94dfa5804f4b247a7ec45a",
+  "generated": "2026-09-15 · CI00 基线（人工按 ci.yml / codeql.yml / nightly.yml / lab-ci.yml / _lab-qualification.yml / release.yml 逐 job 抄录；时长取 evidence/actions/timing_decomposition.json 的 merge_group/success 中位数，单位秒）。2026-09-16 CI05：按 after run 逐条核对旧位置 → 新位置，status 改 pass 的条件 = 在至少一个 after run（PR full-ci，ci.yml 为那个分支的）里以新形状执行并 success，每条引 run id + job 显示名；没有执行位置的（push main / nightly / lab / release）保持 not_run 并写明本轮未动。policy_source_sha 改成 a174eb61（本 PR 叠在其上的 CI04 tip；它的 ci.yml 与 run 35031790918 所用的 bb27bdaf 那份逐字节相同——blob 2a58e856）",
   "entry_fields": [
     "old_suite_and_target",
     "old_premerge_location",
@@ -15,7 +15,7 @@
     "promotion_evidence",
     "known_limitations"
   ],
-  "note": "每条 entry 是**当前**合并前必需领域（经三个 required context 之一），或合并后 / 发行链的执行位置。new_location 本阶段只填「待 CI01/03 决定」或明确建议；status 保持 not_run 直到该条在新位置真实产出过结论。生产选择器必须拒绝意外为空的 active coverage；本文件不是可执行策略。",
+  "note": "每条 entry 是**当前**合并前必需领域（经三个 required context 之一），或合并后 / 发行链的执行位置。new_location 本阶段只填「待 CI01/03 决定」或明确建议；status 保持 not_run 直到该条在新位置真实产出过结论。生产选择器必须拒绝意外为空的 active coverage；本文件不是可执行策略。 CI05 后：24 条 pass 都是 PR full-ci run 上的执行记录，不是 merge_group 的——七个 PR 合入 main 后要用第一个 merge_group run 复核（CI_HANDOFF.md §复核命令）。",
   "entries": [
     {
       "id": "fast.python-lint",
@@ -27,9 +27,12 @@
       "resource_class": "cheap-linux",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 12, "n": 29, "evidence": "evidence/actions/timing_decomposition.json（merge_group/success 的 'Python quality (Ruff)'）"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「Python quality (Ruff)」executed / success，job_seconds 13s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「Python quality (Ruff)」executed / success，job_seconds 10s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "只回答语法/名字层面，不替代任何语义门禁（.github/AGENTS.md）",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.cla-check",
@@ -41,79 +44,106 @@
       "resource_class": "cheap-linux",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 4, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「Contributor licence (CLA)」executed / success，job_seconds 4s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「Contributor licence (CLA)」executed / success，job_seconds 7s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "PR commits API 封顶 250（超过就让 CLA 判定拒判，已知边界）",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.invariants",
       "old_suite_and_target": "结构性不变式子集：tests/test_invariants_engine.py + test_docs_references + test_artist_families + test_artist_census_tool + test_patchspec + test_preflight；ubuntu-latest / 3.13；科学栈按 packaging/runtime-lock.json 钉版本（scripts/ci/runtime_pins.py）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "invariants", "events": ["pull_request", "merge_group"], "gate": "CI fast gate", "runs_on": "ubuntu-latest", "timeout_minutes": 20, "ci_yml_lines": "L332-366"},
-      "new_location": "待 CI03 决定（它是 backend-fast 的子集，钉了版本；分片时要保留「钉版本」这一维，不能被未钉版本的 backend-fast 分片替代）",
+      "new_location": "保持不变（CI03a 没有动它：仍是钉版本的全量子集、不分片；它与 backend-fast 分片后仍是两个独立 job）。CI05：在 after run 里以原形状执行并 success",
       "nodeid_set_or_case_contract": "六个文件的全部用例（-m 'not slow' 默认档）；本机 test_invariants_engine.py 58 条 call 182s（evidence/pytest/durations_by_file.csv）",
       "required_artifacts": [],
       "resource_class": "linux-scientific（起 worker 子进程渲染）",
       "serial_reason_if_any": "test_invariants_engine.py 的 module 级 fixture（L222-254、L1338）在文件内共享；跨文件无共享",
       "observed": {"job_seconds_median": 501, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「invariants」executed / success，job_seconds 469s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「invariants」executed / success，job_seconds 531s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "与 backend-fast 重复执行同一批用例（有意：提前 2-3 分钟回来）",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.backend-fast.py310",
       "old_suite_and_target": "python -m pytest（默认档 -m 'not slow'，全量）；ubuntu-latest / Python 3.10；matplotlib **未钉版本**（pip install matplotlib → 该腿实测 3.10.9，见 evidence/ci_logs/summary_backend-fast_linux310_job104385304833.txt）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "backend-fast", "matrix": {"os": "ubuntu-latest", "python": "3.10"}, "events": ["pull_request", "merge_group"], "gate": "CI fast gate", "runs_on": "ubuntu-latest", "timeout_minutes": 40, "ci_yml_lines": "L379-405"},
-      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧待 PR run 的 manifest + junit artifact；权重表是本机 macOS 样本，这一档的平衡未测",
+      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧证据 = run 35007730894 的 manifest + junit artifact（evidence/ci05/shards/）；权重表是本机 macOS 样本，这一档的平衡未测",
       "nodeid_set_or_case_contract": "CI 实测 4540 passed / 59 skipped / 2 deselected（Linux 3.10）；本机 4557 passed / 42 skipped / 2 deselected；CI 侧 skip 理由拿不到（没带 -rs）",
       "required_artifacts": [],
       "resource_class": "linux-scientific（4 vCPU 托管；起 worker 子进程）",
       "serial_reason_if_any": "见 CI_BASELINE.md 串行候选表；无固定端口，无写回源码树",
       "observed": {"job_seconds_median": 1865, "test_step_seconds_sample": 2096, "n": 29, "evidence": "evidence/actions/timing_decomposition.json；样本 run 34970490865 的 step 明细见 evidence/actions/jobs/jobs_34970490865.raw.json"},
-      "promotion_evidence": ["evidence/ci03a/compare_sets.json（本机 macOS：full == s1 ∪ s2，outcome 逐条不变；不是 CI 的真实 run）"],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.10, 1)」executed / success，job_seconds 1007s（evidence/ci05/timing/）",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.10, 2)」executed / success，job_seconds 839s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.10, 1)」executed / success，job_seconds 1045s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.10, 2)」executed / success，job_seconds 1112s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35007730894 的 pytest-backend-fast-ubuntu-latest-3.10-shard1/2 artifact：junit (classname, name) 集合两片不交、并集 == manifest nodeids_total 4686、每片 junit 文件集合 == manifest selected_files；与本机 CI03a collect_full.txt 的 4686 条 nodeid 逐条相同）"
+      ],
       "known_limitations": "「未钉版本」是 tested-latest 的意图还是漂移，04 §5 要求查明——本阶段只记录事实：3.10 腿装到 3.10.9、3.13/3.14 腿装到 3.11.2",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.backend-fast.py313",
       "old_suite_and_target": "同上；ubuntu-latest / Python 3.13；matplotlib 未钉（实测 3.11.2）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "backend-fast", "matrix": {"os": "ubuntu-latest", "python": "3.13"}, "events": ["pull_request", "merge_group"], "gate": "CI fast gate", "runs_on": "ubuntu-latest", "timeout_minutes": 40, "ci_yml_lines": "L379-405"},
-      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧待 PR run 的 manifest + junit artifact；权重表是本机 macOS 样本，这一档的平衡未测",
+      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧证据 = run 35007730894 的 manifest + junit artifact（evidence/ci05/shards/）；权重表是本机 macOS 样本，这一档的平衡未测",
       "nodeid_set_or_case_contract": "默认档全量",
       "required_artifacts": [],
       "resource_class": "linux-scientific",
       "serial_reason_if_any": "同 py310",
       "observed": {"job_seconds_median": 1745, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": ["evidence/ci03a/compare_sets.json（本机 macOS：full == s1 ∪ s2，outcome 逐条不变；不是 CI 的真实 run）"],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.13, 1)」executed / success，job_seconds 947s（evidence/ci05/timing/）",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.13, 2)」executed / success，job_seconds 1054s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.13, 1)」executed / success，job_seconds 1003s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.13, 2)」executed / success，job_seconds 1028s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35007730894 的 pytest-backend-fast-ubuntu-latest-3.13-shard1/2 artifact：junit (classname, name) 集合两片不交、并集 == manifest nodeids_total 4686、每片 junit 文件集合 == manifest selected_files；与本机 CI03a collect_full.txt 的 4686 条 nodeid 逐条相同）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.backend-fast.py314",
       "old_suite_and_target": "同上；ubuntu-latest / Python 3.14（issue #33 的兑现处，2026-09-14 起）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "backend-fast", "matrix": {"os": "ubuntu-latest", "python": "3.14"}, "events": ["pull_request", "merge_group"], "gate": "CI fast gate", "runs_on": "ubuntu-latest", "timeout_minutes": 40, "ci_yml_lines": "L379-405"},
-      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧待 PR run 的 manifest + junit artifact；权重表是本机 macOS 样本，这一档的平衡未测",
+      "new_location": "同 job（backend-fast），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧证据 = run 35007730894 的 manifest + junit artifact（evidence/ci05/shards/）；权重表是本机 macOS 样本，这一档的平衡未测",
       "nodeid_set_or_case_contract": "默认档全量",
       "required_artifacts": [],
       "resource_class": "linux-scientific",
       "serial_reason_if_any": "同 py310",
       "observed": {"job_seconds_median": 2090, "n": 9, "evidence": "evidence/actions/timing_decomposition.json（只有 2026-09-14 12:10 之后的 9 个合并组有这条腿）"},
-      "promotion_evidence": ["evidence/ci03a/compare_sets.json（本机 macOS：full == s1 ∪ s2，outcome 逐条不变；不是 CI 的真实 run）"],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.14, 1)」executed / success，job_seconds 933s（evidence/ci05/timing/）",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-fast (3.14, 2)」executed / success，job_seconds 1125s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.14, 1)」executed / success，job_seconds 784s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-fast (3.14, 2)」executed / success，job_seconds 856s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35007730894 的 pytest-backend-fast-ubuntu-latest-3.14-shard1/2 artifact：junit (classname, name) 集合两片不交、并集 == manifest nodeids_total 4686、每片 junit 文件集合 == manifest selected_files；与本机 CI03a collect_full.txt 的 4686 条 nodeid 逐条相同）"
+      ],
       "known_limitations": "样本只有 9 个",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.frontend",
       "old_suite_and_target": "pnpm lint（oxlint）+ i18n:check + pnpm test（vitest）+ pnpm build（tsc -b + vite + tailwind-scan-check）+ check_generated_untracked + MCP 画布真构建 + plugin_stage stage/verify/archive/verify + 浏览器 playground 构建；ubuntu-latest / Node 22 / pnpm 11",
       "old_premerge_location": {"workflow": "ci.yml", "job": "frontend", "events": ["pull_request", "merge_group"], "gate": "CI fast gate", "runs_on": "ubuntu-latest", "timeout_minutes": 20, "ci_yml_lines": "L491-570"},
-      "new_location": "待 CI01/02 决定：它是 codex-plugin-candidate 的唯一生产者（保留）；作为 package/*-smoke/posix-e2e 的 needs 只是 verdict-only（见 evidence/dag.json）",
+      "new_location": "保持不变：仍是 codex-plugin-candidate 的唯一生产者（artifact/data 边）；对 package / *-smoke / posix-e2e 的边在 CI01 后是「短预筛」（重型 job 只 needs frontend，不再 needs backend-fast）；CI02 决定不跨 job 抽取它的构建产物。CI05：在 after run 里以此形状执行并 success",
       "nodeid_set_or_case_contract": "vitest 全量（pnpm test 202s）+ 构建成功 + 产物验证成功",
       "required_artifacts": ["产出 codex-plugin-candidate（zip + plugin-build.json）"],
       "resource_class": "linux-node",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 252, "steps_sample": {"pnpm install": 4, "pnpm test": 202, "pnpm build": 22}, "n": 29, "evidence": "evidence/actions/timing_decomposition.json；步骤见 evidence/actions/jobs/jobs_34970490865.raw.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「frontend」executed / success，job_seconds 250s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「frontend」executed / success，job_seconds 248s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "真类型检查在 pnpm build 的 tsc -b 里（L515-518），任何复用构建的方案不能换成 tsc --noEmit",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.plugin-candidate",
@@ -125,9 +155,12 @@
       "resource_class": "linux-scientific+node",
       "serial_reason_if_any": "依赖真实产物（TAVOTTO_MCP_WIDGET / TAVOTTO_PLUGIN_CANDIDATE），别处一律 skip",
       "observed": {"job_seconds_median": 46, "dependency_wait_sample": 256, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「plugin-candidate」executed / success，job_seconds 56s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「plugin-candidate」executed / success，job_seconds 50s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.workerd",
@@ -139,9 +172,12 @@
       "resource_class": "linux-rust（rust-cache）",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 23, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「workerd」executed / success，job_seconds 28s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「workerd」executed / success，job_seconds 25s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.desktop-shell.ubuntu",
@@ -153,9 +189,12 @@
       "resource_class": "linux-rust",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 238, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「desktop-shell (ubuntu-latest)」executed / success，job_seconds 184s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「desktop-shell (ubuntu-latest)」executed / success，job_seconds 77s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.desktop-shell.macos",
@@ -167,9 +206,12 @@
       "resource_class": "macos-rust（托管 macOS 并发上限另计）",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 212, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「desktop-shell (macos-latest)」executed / success，job_seconds 167s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「desktop-shell (macos-latest)」executed / success，job_seconds 39s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "fast.compat-smoke",
@@ -181,9 +223,12 @@
       "resource_class": "linux-scientific",
       "serial_reason_if_any": "compat 驱动直接写 os.environ['TAVOTTO_WORKER_PYTHON']（conftest L41-60 兜底）",
       "observed": {"job_seconds_median": 132, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「compat-smoke」executed / success，job_seconds 136s（evidence/ci05/timing/）",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「compat-smoke」executed / success，job_seconds 136s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "全量 150 case × 多运行时在 lab（nightly）",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "codeql.analyze+gate",
@@ -195,135 +240,171 @@
       "resource_class": "linux-codeql",
       "serial_reason_if_any": null,
       "observed": {"gate_done_seconds_from_run_created": [432, 399, 554], "rust_job_seconds": [419, 385, 400], "evidence": "evidence/actions/codeql/（3 个 merge_group run：34970490857 / 34957615370 / 34937670499）"},
-      "promotion_evidence": [],
+      "promotion_evidence": ["codeql.yml run 35031788040（PR #377 head bb27bdaf，pull_request）success；35031461909（#376 head 162f54c6）success；35011613302（#375）success；35007730556（#374）success（gh api …/workflows/codeql.yml/runs?head_sha=…，2026-09-16）。codeql.yml 本轮一个字节没动"],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.backend-platforms.macos",
       "old_suite_and_target": "python -m pytest --durations=50（默认档全量）；macos-latest / 3.13；matplotlib 未钉（实测 3.11.2）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "backend-platforms", "matrix": {"os": "macos-latest", "python": "3.13"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "macos-latest", "timeout_minutes": 60, "ci_yml_lines": "L410-444"},
-      "new_location": "同 job（backend-platforms），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧待 PR run 的 manifest + junit artifact；权重表与本机同源（macOS）",
+      "new_location": "同 job（backend-platforms），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧证据 = run 35007730894 的 manifest + junit artifact（evidence/ci05/shards/）；权重表与本机同源（macOS）",
       "nodeid_set_or_case_contract": "CI 实测 4554 passed / 45 skipped（evidence/ci_logs/durations_backend-platforms_macos_job104385304860.txt）",
       "required_artifacts": [],
       "resource_class": "macos-scientific",
       "serial_reason_if_any": "同 backend-fast",
       "observed": {"job_seconds_median": 1485, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": ["evidence/ci03a/compare_sets.json（本机 macOS：full == s1 ∪ s2，outcome 逐条不变；不是 CI 的真实 run）"],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-platforms (macos-latest, 1)」executed / success，job_seconds 882s（evidence/ci05/timing/）",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-platforms (macos-latest, 2)」executed / success，job_seconds 741s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-platforms (macos-latest, 1)」executed / success，job_seconds 850s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-platforms (macos-latest, 2)」executed / success，job_seconds 910s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35007730894 的 pytest-backend-platforms-macos-latest-3.13-shard1/2 artifact：同上四条集合判据全 true）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.backend-platforms.windows",
       "old_suite_and_target": "同上；windows-latest / 3.13；matplotlib 未钉（实测 3.11.2）",
       "old_premerge_location": {"workflow": "ci.yml", "job": "backend-platforms", "matrix": {"os": "windows-latest", "python": "3.13"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "windows-latest", "timeout_minutes": 60, "ci_yml_lines": "L410-444"},
-      "new_location": "同 job（backend-platforms），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧待 PR run 的 manifest + junit artifact；权重表是本机 macOS 样本，这一档的平衡未测",
+      "new_location": "同 job（backend-platforms），matrix 加 shard 轴 2 片（`--shard=K/2`，按文件分、不拆文件、每个进程自验并集 == 全集，rc 4）；事件 / Gate / timeout 不变；CI03a commit 064bc541。本机并集证据 evidence/ci03a/，CI 侧证据 = run 35007730894 的 manifest + junit artifact（evidence/ci05/shards/）；权重表是本机 macOS 样本，这一档的平衡未测",
       "nodeid_set_or_case_contract": "CI 实测 4522 passed / 77 skipped，最慢 50 条见 evidence/ci_logs/durations_backend-platforms_windows_job104385304695.txt（前 50 条合计约 850s，占 2446s 的 ~35%）",
       "required_artifacts": [],
       "resource_class": "windows-scientific",
       "serial_reason_if_any": "同 backend-fast；tests/test_windows_regressions.py 有 16 处真子进程",
       "observed": {"job_seconds_median": 2443, "min": 1791, "max": 2868, "n": 29, "evidence": "evidence/actions/timing_decomposition.json；2026-09-13 两次 45:00 超时取消见 run 34759564871 / 34764431359"},
-      "promotion_evidence": ["evidence/ci03a/compare_sets.json（本机 macOS：full == s1 ∪ s2，outcome 逐条不变；不是 CI 的真实 run）"],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-platforms (windows-latest, 1)」executed / success，job_seconds 1223s（evidence/ci05/timing/）",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「backend-platforms (windows-latest, 2)」executed / success，job_seconds 1357s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-platforms (windows-latest, 1)」executed / success，job_seconds 1438s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「backend-platforms (windows-latest, 2)」executed / success，job_seconds 1269s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35007730894 的 pytest-backend-platforms-windows-latest-3.13-shard1/2 artifact：同上四条集合判据全 true）"
+      ],
       "known_limitations": "上限 60 分钟；实测最大 47.8 分钟，余量 12 分钟",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.package.ubuntu-3.13",
       "old_suite_and_target": "build_frontend + python -m build + 干净 venv 装 wheel + 四条 import/资源断言 + 起服务 sleep 8 后 curl / 与 /api/version；ubuntu-latest / 3.13",
       "old_premerge_location": {"workflow": "ci.yml", "job": "package", "matrix": {"os": "ubuntu-latest", "python": "3.13"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "ubuntu-latest", "timeout_minutes": 60, "ci_yml_lines": "L771-849"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。CI05：在 run 35031461863 / 35031790918 上以此形状执行并 success（macOS 腿的就绪 36s，在 --timeout 120 之内）",
       "nodeid_set_or_case_contract": "wheel 装得进干净环境并起得来（无 pytest）",
       "required_artifacts": [],
       "resource_class": "linux-node",
       "serial_reason_if_any": "（CI03b 之前）固定端口 5199 + /tmp/smoke + sleep 8（L815-847）——CI03b 已改为按实例隔离 + 健康检查（04 §4）；本机验过真 wheel 与租约被抢的复现，同机双实例的真实并发归 CI04",
       "observed": {"job_seconds_median": 68, "n": 9, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「package (ubuntu-latest, 3.13)」executed / success，job_seconds 55s（evidence/ci05/timing/）；「起服务并请求首页」（package_smoke.py，--timeout 120）1s",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「package (ubuntu-latest, 3.13)」executed / success，job_seconds 52s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.package.ubuntu-3.14",
       "old_suite_and_target": "同上；ubuntu-latest / 3.14",
       "old_premerge_location": {"workflow": "ci.yml", "job": "package", "matrix": {"os": "ubuntu-latest", "python": "3.14"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "ubuntu-latest", "timeout_minutes": 60, "ci_yml_lines": "L771-849"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。CI05：在 run 35031461863 / 35031790918 上以此形状执行并 success（macOS 腿的就绪 36s，在 --timeout 120 之内）",
       "nodeid_set_or_case_contract": "同上",
       "required_artifacts": [],
       "resource_class": "linux-node",
       "serial_reason_if_any": "同上",
       "observed": {"job_seconds_median": 67, "n": 9, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「package (ubuntu-latest, 3.14)」executed / success，job_seconds 56s（evidence/ci05/timing/）；「起服务并请求首页」（package_smoke.py，--timeout 120）0s",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「package (ubuntu-latest, 3.14)」executed / success，job_seconds 55s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.package.macos-3.13",
       "old_suite_and_target": "同上；macos-latest / 3.13",
       "old_premerge_location": {"workflow": "ci.yml", "job": "package", "matrix": {"os": "macos-latest", "python": "3.13"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "macos-latest", "timeout_minutes": 60, "ci_yml_lines": "L771-849"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。CI05：在 run 35031461863 / 35031790918 上以此形状执行并 success（macOS 腿的就绪 36s，在 --timeout 120 之内）",
       "nodeid_set_or_case_contract": "同上",
       "required_artifacts": [],
       "resource_class": "macos-node",
       "serial_reason_if_any": "同上",
       "observed": {"job_seconds_median": 102, "n": 9, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「package (macos-latest, 3.13)」executed / success，job_seconds 87s（evidence/ci05/timing/）；「起服务并请求首页」（package_smoke.py，--timeout 120）36s",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「package (macos-latest, 3.13)」executed / success，job_seconds 80s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.package.windows-3.13",
       "old_suite_and_target": "同上；windows-latest / 3.13",
       "old_premerge_location": {"workflow": "ci.yml", "job": "package", "matrix": {"os": "windows-latest", "python": "3.13"}, "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "windows-latest", "timeout_minutes": 60, "ci_yml_lines": "L771-849"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI03b（2026-09-16）：冒烟那两步按实例隔离——venv 在 ${{ runner.temp }}/smoke-venv，起服务改为 scripts/ci/package_smoke.py（向系统租端口 + 就绪判据 = /api/version 200 且应答者持有本实例凭据 + 终止到进程不存在），step 级 timeout-minutes 5，失败时上传 package-smoke-logs-<os>-<python>；/tmp/smoke、5199、sleep 8 三样都不在了（合同 TestPackageSmokeIsolation）。CI05：在 run 35031461863 / 35031790918 上以此形状执行并 success（macOS 腿的就绪 36s，在 --timeout 120 之内）",
       "nodeid_set_or_case_contract": "同上",
       "required_artifacts": [],
       "resource_class": "windows-node",
       "serial_reason_if_any": "同上",
       "observed": {"job_seconds_median": 116, "n": 9, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「package (windows-latest, 3.13)」executed / success，job_seconds 83s（evidence/ci05/timing/）；「起服务并请求首页」（package_smoke.py，--timeout 120）1s",
+        "run 35031461863（PR #376，pull_request，head 162f54c6，ci.yml 快照 ci_162f54c6.yml）job 「package (windows-latest, 3.13)」executed / success，job_seconds 101s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.windows-exe-smoke",
       "old_suite_and_target": "真产物链：build_frontend + build_mcp_widget + cargo build workerd + build_worker_runtime + PyInstaller + 三条断言（workerd / console CLI / runtime）+ smoke_app ①②③（--expect-source bundled / env_override，--expect-control-plane workerd）+ Playwright 全部三个 project（chromium / webkit / chromium-en，pnpm e2e）+ 大图内存基准（不阻塞）；windows-latest / 3.13",
       "old_premerge_location": {"workflow": "ci.yml", "job": "windows-exe-smoke", "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "windows-latest", "timeout_minutes": 60, "ci_yml_lines": "L851-1163"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；CI03c：Playwright 按 project 分两片到两台 windows-latest（matrix include：片 1 chromium、片 2 webkit + chromium-en；显示名 windows-exe-smoke (1) / (2)，job id 不变），每片各自完整构建 + 三条断言 + 冒烟①②③ + 分片自验（scripts/ci/playwright_shard_check.py，e2e 之前）+ 本片 project 的 pnpm e2e；Playwright 步 step 级 timeout 30（job 级 60 不动）；artifact 按片命名。事件 / Gate 不变。真实 run 才能 promote（分片形态一次都没在 CI 上跑过）",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；CI03c：Playwright 按 project 分两片到两台 windows-latest（matrix include：片 1 chromium、片 2 webkit + chromium-en；显示名 windows-exe-smoke (1) / (2)，job id 不变），每片各自完整构建 + 三条断言 + 冒烟①②③ + 分片自验（scripts/ci/playwright_shard_check.py，e2e 之前）+ 本片 project 的 pnpm e2e；Playwright 步 step 级 timeout 30（job 级 60 不动）；artifact 按片命名。事件 / Gate 不变。CI02：两片的 playwright install 不带 --with-deps（posix-e2e 保留）。CI05：分片形态在 run 35011613925 / 35024490379 / 35028309531 / 35031461863 / 35031790918 上各跑过一次（两片都 success），最后一个 run 是不带 --with-deps 的形态",
       "nodeid_set_or_case_contract": "Playwright 151 条（128 passed + 23 skipped：20 条 playground* 在 CI 跳过、3 条 error-recovery-en 在 win32 跳过），evidence/ci_logs/playwright_windows-exe-smoke_job104397475552.json；三条 smoke_app",
       "required_artifacts": ["自建：dist/Tavotto/Tavotto.exe（内置 runtime + workerd）"],
       "resource_class": "windows-full（Node + Rust + PyInstaller + 浏览器）",
       "serial_reason_if_any": "Playwright workers:1 / fullyParallel:false（每个用例各起一次后端）；产物路径 dist/ 固定",
       "observed": {"job_seconds_median": 1411, "steps_sample": {"构建合计(build)": 205, "Playwright 步": 1124, "其中 Playwright 报告 15.0m 用例 + ~3.7m pnpm/浏览器安装": null}, "n": 29, "evidence": "evidence/actions/timing_decomposition.json；step 明细 evidence/actions/jobs/jobs_34970490865.raw.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「windows-exe-smoke (1)」executed / success，job_seconds 796s（evidence/ci05/timing/）；「装 web 依赖与本片的浏览器（chromium）」17s（不带 --with-deps）、分片自验 4s、Playwright 黄金路径 493s",
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「windows-exe-smoke (2)」executed / success，job_seconds 670s（evidence/ci05/timing/）；安装 24s、自验 4s、Playwright 359s",
+        "run 35011613925（PR #375，pull_request，head 35b912a0，ci.yml 快照 ci_35b912a0.yml）job 「windows-exe-smoke (1)」executed / success，job_seconds 1076s（evidence/ci05/timing/）（CI03c 首个 CI run，仍带 --with-deps：安装 245s）",
+        "run 35011613925（PR #375，pull_request，head 35b912a0，ci.yml 快照 ci_35b912a0.yml）job 「windows-exe-smoke (2)」executed / success，job_seconds 945s（evidence/ci05/timing/）",
+        "evidence/ci05/shards/ci_shard_check.json（run 35011613925 与 35031790918 的 playwright-shard-check-windows-shard1/2 artifact：两片 --list 不交、并集 == 全集 151 条（chromium 109 / webkit 23 / chromium-en 19）、两台机器的 list_all 逐字节相同、check.json ok 两片都 true）"
+      ],
       "known_limitations": "两次 full-ci PR 上 Playwright 步失败、重跑即过（run 34750304846 / 34762723238 attempt 1→2）：这条腿有可解释性未明的偶发红",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.macos-app-smoke",
       "old_suite_and_target": "真产物链（同 Windows，无 e2e）：build_frontend + cargo build workerd + build_worker_runtime + PyInstaller + 断言 + 架构核对 + smoke_app ①②③；macos-latest（Apple Silicon）/ 3.13",
       "old_premerge_location": {"workflow": "ci.yml", "job": "macos-app-smoke", "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "macos-latest", "timeout_minutes": 60, "ci_yml_lines": "L1165-1319"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI05：在 after run 里以此形状执行并 success（dependency_wait 从 before 中位 1931s 降到 191–254s）",
       "nodeid_set_or_case_contract": "三条 smoke_app + 架构核对",
       "required_artifacts": ["自建：dist/Tavotto/Tavotto"],
       "resource_class": "macos-full",
       "serial_reason_if_any": "产物路径 dist/ 固定",
       "observed": {"job_seconds_median": 325, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「macos-app-smoke」executed / success，job_seconds 386s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「macos-app-smoke」executed / success，job_seconds 348s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "只有 Apple Silicon 一档（support-matrix：Intel unsupported）",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "heavy.posix-e2e",
       "old_suite_and_target": "Playwright chromium + chromium-en，跑源码形态（python -m tavotto，不打包）；ubuntu-latest / 3.13 / Node 22",
       "old_premerge_location": {"workflow": "ci.yml", "job": "posix-e2e", "events": ["merge_group", "pull_request+full-ci"], "gate": "CI integration gate", "runs_on": "ubuntu-latest", "timeout_minutes": 45, "ci_yml_lines": "L1321-1399"},
-      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。真实 run 才能 promote",
+      "new_location": "位置不变；needs 由 [backend-fast, frontend] 改为 [frontend]（CI01，commit 7d77494c）；事件 / Gate / timeout 不变。CI05：在 after run 里以此形状执行并 success（dependency_wait 从 before 中位 1931s 降到 191–254s）",
       "nodeid_set_or_case_contract": "128 条（106 passed + 22 skipped），evidence/ci_logs/playwright_posix-e2e_job104397475709.json；其中 error-recovery-en 的 POSIX 权限位两条只在这条腿真跑",
       "required_artifacts": ["自建：src/tavotto/web/ + codex-plugin/mcp/widget/canvas.html"],
       "resource_class": "linux-node+scientific+浏览器",
       "serial_reason_if_any": "Playwright workers:1",
       "observed": {"job_seconds_median": 541, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「posix-e2e」executed / success，job_seconds 501s（evidence/ci05/timing/）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「posix-e2e」executed / success，job_seconds 564s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "gate.ci-fast-gate",
@@ -335,9 +416,12 @@
       "resource_class": "cheap-linux",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 7, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「CI fast gate」executed / success，job_seconds 9s（evidence/ci05/timing/）（--mode fast，9 个 needs 全 success）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「CI fast gate」executed / success，job_seconds 8s（evidence/ci05/timing/）"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "gate.ci-integration-gate",
@@ -349,9 +433,13 @@
       "resource_class": "cheap-linux",
       "serial_reason_if_any": null,
       "observed": {"job_seconds_median": 7, "n": 29, "evidence": "evidence/actions/timing_decomposition.json"},
-      "promotion_evidence": [],
+      "promotion_evidence": [
+        "run 35031790918（PR #377，pull_request，head bb27bdaf，ci.yml 快照 ci_bb27bdaf.yml）job 「CI integration gate」executed / success，job_seconds 9s（evidence/ci05/timing/）（full-ci：--require-heavy --full-ci，5 个重型 job 全 success，不是 deferred）",
+        "run 35007730894（PR #374，pull_request，head e952fe14，ci.yml 快照 ci_d9e8dd72.yml）job 「CI integration gate」executed / success，job_seconds 8s（evidence/ci05/timing/）",
+        "负面：run 35004450721（#374 首跑，backend-platforms (windows-latest, 2) failure）与 35024490379（#376 首跑，backend-platforms (macos-latest, 2) failure）的「CI integration gate」conclusion failure；run 34994534095 attempt 1（windows-exe-smoke 被 job 级超时 cancelled）的 Gate failure——分片红 / 硬杀 → Gate 红，在 CI 上真红过"
+      ],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "id": "post.main-landing-audit",
@@ -365,7 +453,8 @@
       "observed": {"evidence": "evidence/actions/ci_runs_list.json 里 27 个 push 事件 run（全部 success）；本阶段未取其 jobs"},
       "promotion_evidence": [],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "not_run",
+      "ci05_note": "本轮未动（job 未改）；七个 PR 都没合入 main，新树上没有任何 push main 的 run——不能借 8b95256c 之后别人 PR 落地的 run 当作本栈的证据。合入后第一次 push main 的 run 即证据"
     },
     {
       "id": "post.nightly",
@@ -379,7 +468,8 @@
       "observed": {"evidence": "本阶段未采集 nightly 的 run（不在 CI00 范围）"},
       "promotion_evidence": [],
       "known_limitations": "对 v0.10.0 及更早线上版本 updater-consumer-fidelity 预期红（nightly.yml L38-43）",
-      "status": "not_run"
+      "status": "not_run",
+      "ci05_note": "本轮未动：nightly.yml 一个字节没改，pytest 命令没有 --shard（tests/test_merge_queue_workflows.py::TestGates::test_unsharded_pytest_lanes_stay_unsharded 钉住）；本轮没有采集 nightly run"
     },
     {
       "id": "post.lab-qualification",
@@ -393,7 +483,8 @@
       "observed": {"evidence": "本阶段未采集 lab 的 run；未 SSH；见 CI_BASELINE.md §9 管理员待填表"},
       "promotion_evidence": [],
       "known_limitations": "LAB_PERF_GATE / LAB_MUTATION_GATE 默认不阻断；LAB_VISUAL_GATE 对 release 档无效",
-      "status": "not_run"
+      "status": "not_run",
+      "ci05_note": "本轮未动：_lab-qualification.yml / lab-ci.yml 与三份 lab 脚本对 8b95256c 的 diff 为空（CI04 §7）；2026-09-15 21:54 的 Lab Qualification run 35028176892（schedule）与合并组 35027644355 同时在跑、互不影响（core 都 success；lab 在 tavotto-ci-01）——这是 before 形状的观察，不是本栈的资格"
     },
     {
       "id": "post.release",
@@ -407,7 +498,8 @@
       "observed": {"evidence": "本阶段未采集 release 的 run"},
       "promotion_evidence": [],
       "known_limitations": "",
-      "status": "not_run"
+      "status": "not_run",
+      "ci05_note": "本轮未动：release.yml 一个字节没改；没有发行 run"
     }
   ]
 }

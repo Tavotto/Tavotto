@@ -1,7 +1,7 @@
 # evidence/ci05/ · CI05 前后对照、CI 侧分片完整性、回退演练的证据
 
 全部产出于 2026-09-16，worktree `ci-foundation`，分支 `ci/ci05-rollout-handoff`（叠在 CI04 `a174eb61` 之上）。
-解读在 [`../../CI05_COMPARISON.md`](../../CI05_COMPARISON.md)；交接在 `../../CI_HANDOFF.md`。
+解读在 [`../../CI05_COMPARISON.md`](../../CI05_COMPARISON.md)；交接在 [`../../CI_HANDOFF.md`](../../CI_HANDOFF.md)。
 本目录没有任何本机跑出来的时长——**所有时长都是 GitHub Actions 的 run / jobs API 原样**（裁剪字段，不裁时刻）。
 
 | 路径 | 内容 | 产出方式 |
