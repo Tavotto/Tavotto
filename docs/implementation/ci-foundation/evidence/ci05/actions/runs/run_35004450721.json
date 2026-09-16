@@ -1,0 +1,13 @@
+{
+ "id": 35004450721,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "failure",
+ "head_sha": "d9e8dd7251e22b3c203f33b049dc6168380a73e6",
+ "head_branch": "ci/ci03-pytest-shards",
+ "created_at": "2026-09-15T17:57:20Z",
+ "run_started_at": "2026-09-15T17:57:20Z",
+ "updated_at": "2026-09-15T18:25:50Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/35004450721"
+}

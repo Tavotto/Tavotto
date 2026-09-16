@@ -1,0 +1,20 @@
+N0 原样（对照）
+    rc=0 failed_checks=[] stderr=
+N1 shard1 的 junit 删掉一条 testcase
+    rc=1 failed_checks=['backend-fast-ubuntu-latest-3.13:selected_files_union_is_the_full_file_set', 'backend-fast-ubuntu-latest-3.13:junit_union_equals_nodeids_total', 'backend-fast-ubuntu-latest-3.13:junit_count_equals_nodeids_selected_per_shard', 'cross-leg-union'] stderr=
+N2 shard2 的 junit 是 shard1 的副本（一份报告充数）
+    rc=1 failed_checks=['backend-fast-ubuntu-latest-3.13:selected_files_union_is_the_full_file_set', 'backend-fast-ubuntu-latest-3.13:junit_testcases_are_disjoint', 'backend-fast-ubuntu-latest-3.13:junit_union_equals_nodeids_total', 'backend-fast-ubuntu-latest-3.13:junit_count_equals_nodeids_selected_per_shard', 'backend-fast-ubuntu-latest-3.13:junit_files_equal_selected_files_per_shard', 'cross-leg-union'] stderr=
+N3 shard1 的一条 testcase 也出现在 shard2（重叠）
+    rc=1 failed_checks=['backend-fast-ubuntu-latest-3.13:selected_files_union_is_the_full_file_set', 'backend-fast-ubuntu-latest-3.13:junit_testcases_are_disjoint', 'backend-fast-ubuntu-latest-3.13:junit_count_equals_nodeids_selected_per_shard', 'backend-fast-ubuntu-latest-3.13:junit_files_equal_selected_files_per_shard'] stderr=
+N4 shard1 manifest 的 nodeids_total −1
+    rc=1 failed_checks=['backend-fast-ubuntu-latest-3.13:manifests_agree_on_the_full_set', 'backend-fast-ubuntu-latest-3.13:junit_union_equals_nodeids_total'] stderr=
+N5 shard2 的 junit 里同一条 testcase 出现两次
+    rc=2 failed_checks=[] stderr=::error::/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/ci05/neg/py/pytest-backend-fast-ubuntu-latest-3.13-sh
+N6 Playwright 片 1 清单少一条（Total 同步改小）
+    rc=1 failed_checks=['pw:shards_union_is_the_full_set', 'pw:self_check_counts_match_independent_parse'] stderr=
+N7 Playwright 片 2 的 check.json ok=false
+    rc=1 failed_checks=['pw:each_shard_self_check_said_ok'] stderr=
+N8 Playwright 片 2 的清单是片 1 的副本（两片都声称跑 chromium）
+    rc=1 failed_checks=['pw:shards_are_disjoint', 'pw:shards_union_is_the_full_set', 'pw:project_sets_partition_the_config', 'pw:self_check_counts_match_independent_parse'] stderr=
+N9 Playwright 全集清单里有一行认不出
+    rc=2 failed_checks=[] stderr=::error::/private/tmp/claude-501/-Volumes-Projects-Tavotto/5c9342cf-07b8-423a-b77b-e0640fab1cf4/scratchpad/ci05/neg/pw/playwright-shard-check-windows-shard1/lis

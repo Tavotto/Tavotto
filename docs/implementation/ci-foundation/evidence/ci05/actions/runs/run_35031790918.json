@@ -1,0 +1,13 @@
+{
+ "id": 35031790918,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "bb27bdaf7e5e94a9a1e5f34369b68a69b3e8f259",
+ "head_branch": "ci/ci02-build-reuse",
+ "created_at": "2026-09-15T22:36:16Z",
+ "run_started_at": "2026-09-15T22:36:16Z",
+ "updated_at": "2026-09-15T23:17:24Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/35031790918"
+}

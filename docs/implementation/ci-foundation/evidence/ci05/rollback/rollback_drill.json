@@ -1,0 +1,82 @@
+{
+ "kind": "ci05_rollback_drill_local",
+ "base": "a174eb61",
+ "tests": [
+  "tests/test_merge_queue_workflows.py",
+  "tests/test_ci_baseline.py",
+  "tests/test_support_matrix.py",
+  "tests/test_e2e_leg_topology.py",
+  "tests/test_pytest_shard.py",
+  "tests/test_playwright_shard_check.py"
+ ],
+ "results": [
+  {
+   "drill": "R0 对照（未改）",
+   "what": "同一组测试在未改的 a174eb61 上",
+   "actionlint_rc": 0,
+   "pytest_rc": 0,
+   "pytest_summary": "217 passed in 2.29s",
+   "failed_tests": []
+  },
+  {
+   "drill": "R1 CI03a",
+   "what": "去掉两个 job 的 shard 轴；pytest 命令去掉 --shard=…/--shard-manifest=…；分片证据 artifact 名去掉片号（钩子留着）",
+   "diffstat": " 1 file changed, 4 insertions(+), 8 deletions(-)",
+   "actionlint_rc": 0,
+   "actionlint_out": "",
+   "pytest_rc": 1,
+   "pytest_summary": "3 failed, 214 passed in 2.37s",
+   "failed_tests": [
+    "tests/test_ci_baseline.py::test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets",
+    "tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-fast]",
+    "tests/test_merge_queue_workflows.py::TestGates::test_pytest_shards_agree_between_the_matrix_and_the_command[backend-platforms]"
+   ]
+  },
+  {
+   "drill": "R2 CI03c",
+   "what": "删掉 name: 与 strategy; pnpm e2e 去掉 matrix.projects; 浏览器安装写回 chromium webkit; artifact 名去掉片号; 删掉自验步骤与其 artifact（step 级 timeout 留着）",
+   "diffstat": " 1 file changed, 7 insertions(+), 38 deletions(-)",
+   "actionlint_rc": 0,
+   "actionlint_out": "",
+   "pytest_rc": 1,
+   "pytest_summary": "8 failed, 209 passed in 2.40s",
+   "failed_tests": [
+    "tests/test_ci_baseline.py::test_expression_display_names_map_back_to_the_job_id",
+    "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_each_shard_installs_exactly_the_engines_its_projects_need",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_every_artifact_of_the_sharded_job_is_named_per_shard",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_e2e_command_and_the_install_take_their_arguments_from_the_matrix",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_job_id_and_the_gate_closed_set_are_unchanged",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_self_check_runs_before_e2e_with_the_matrix_arguments",
+    "tests/test_merge_queue_workflows.py::TestPlaywrightShards::test_the_shards_partition_exactly_the_configured_projects"
+   ]
+  },
+  {
+   "drill": "R3 CI01",
+   "what": "四个重型 job 的 needs 加回 backend-fast（plugin-candidate 不动）",
+   "diffstat": " 1 file changed, 4 insertions(+), 4 deletions(-)",
+   "actionlint_rc": 0,
+   "actionlint_out": "",
+   "pytest_rc": 1,
+   "pytest_summary": "4 failed, 213 passed in 2.34s",
+   "failed_tests": [
+    "tests/test_ci_baseline.py::test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under",
+    "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_do_not_wait_for_the_backend_fast_verdict",
+    "tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies::test_heavy_jobs_keep_the_frontend_prescreen",
+    "tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation::test_the_job_shape_and_the_gate_closed_set_are_unchanged"
+   ]
+  },
+  {
+   "drill": "R4 CI02",
+   "what": "windows-exe-smoke 的 playwright install 加回 --with-deps",
+   "diffstat": " 1 file changed, 1 insertion(+), 1 deletion(-)",
+   "actionlint_rc": 0,
+   "actionlint_out": "",
+   "pytest_rc": 1,
+   "pytest_summary": "1 failed, 216 passed in 2.40s",
+   "failed_tests": [
+    "tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches::test_windows_installs_browsers_without_with_deps_and_posix_keeps_it"
+   ]
+  }
+ ]
+}

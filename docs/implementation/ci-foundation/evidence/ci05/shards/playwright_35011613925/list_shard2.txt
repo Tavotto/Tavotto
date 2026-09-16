@@ -1,0 +1,44 @@
+Listing tests:
+  [webkit] › a11y.spec.ts:205:1 › 项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标
+  [webkit] › a11y.spec.ts:212:1 › 工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标
+  [webkit] › a11y.spec.ts:229:1 › 图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
+  [webkit] › a11y.spec.ts:288:1 › 图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净
+  [webkit] › a11y.spec.ts:362:1 › 导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复
+  [webkit] › a11y.spec.ts:408:1 › 项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复
+  [webkit] › a11y.spec.ts:467:1 › 素材卡的状态角标不引入嵌套交互（axe nested-interactive）
+  [webkit] › a11y.spec.ts:494:1 › 问题面板：axe 无违规、行内的「修复」不是「定位」的子节点
+  [webkit] › a11y.spec.ts:528:1 › 图标按钮都有可访问名（axe button-name / 顶栏抽查）
+  [webkit] › a11y.spec.ts:541:1 › 键盘可达性底线：Tab 能进入界面且焦点可见
+  [webkit] › golden-paths.spec.ts:30:1 › 首次启动：用户目录为空时进项目选择器，而不是白屏
+  [webkit] › golden-paths.spec.ts:42:1 › 直接粘贴路径打开项目（含中文与空格）
+  [webkit] › golden-paths.spec.ts:61:1 › 打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复
+  [webkit] › golden-paths.spec.ts:95:1 › 还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜
+  [webkit] › golden-paths.spec.ts:124:1 › 没装 Python 时给出引导，而不是闪退
+  [webkit] › golden-paths.spec.ts:145:1 › AI CLI 不存在时，设置里说清「找过哪些位置」
+  [webkit] › golden-paths.spec.ts:176:1 › 导出诊断包：能下载，且不含密钥与主目录
+  [webkit] › golden-paths.spec.ts:188:1 › 导出 PDF 后文件真的落盘
+  [webkit] › keyboard-golden-path.spec.ts:193:1 › 纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出
+  [webkit] › keyboard-golden-path.spec.ts:364:1 › 键盘错误恢复：路径打不开报错，改对路径后继续
+  [webkit] › keyboard-golden-path.spec.ts:388:1 › 快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框
+  [webkit] › twin-axes-pick.spec.ts:74:1 › twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁
+  [webkit] › twin-axes-pick.spec.ts:163:1 › 键盘轮换：bbox 中心不在曲线身上时也走得回来
+  [chromium-en] › a11y.spec.ts:205:1 › 项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标
+  [chromium-en] › a11y.spec.ts:212:1 › 工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标
+  [chromium-en] › a11y.spec.ts:229:1 › 图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
+  [chromium-en] › a11y.spec.ts:288:1 › 图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净
+  [chromium-en] › a11y.spec.ts:362:1 › 导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复
+  [chromium-en] › a11y.spec.ts:408:1 › 项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复
+  [chromium-en] › a11y.spec.ts:467:1 › 素材卡的状态角标不引入嵌套交互（axe nested-interactive）
+  [chromium-en] › a11y.spec.ts:494:1 › 问题面板：axe 无违规、行内的「修复」不是「定位」的子节点
+  [chromium-en] › a11y.spec.ts:528:1 › 图标按钮都有可访问名（axe button-name / 顶栏抽查）
+  [chromium-en] › a11y.spec.ts:541:1 › 键盘可达性底线：Tab 能进入界面且焦点可见
+  [chromium-en] › error-recovery-en.spec.ts:64:1 › 无可用渲染环境：英文的环境缺件卡片 + 可点的修复出口
+  [chromium-en] › error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径
+  [chromium-en] › error-recovery-en.spec.ts:126:1 › render 失败（脚本抛异常）：英文报错 + 重试按钮，画布不丢
+  [chromium-en] › error-recovery-en.spec.ts:148:1 › 项目目录不可读：ProjectPicker 英文报错，改对路径可继续
+  [chromium-en] › error-recovery-en.spec.ts:177:1 › 导出目录不可写：导出失败给英文报错，且不丢项目
+  [chromium-en] › error-recovery-en.spec.ts:229:1 › AI CLI 不可用：设置里英文说明找过哪些位置
+  [chromium-en] › error-recovery-en.spec.ts:275:1 › 原图被独占占用（file_locked）：英文报错说清该关掉谁，改动不丢
+  [chromium-en] › error-recovery-en.spec.ts:346:1 › updater 离线：检查更新失败给英文报错，界面可继续
+  [chromium-en] › inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出
+Total: 42 tests in 6 files

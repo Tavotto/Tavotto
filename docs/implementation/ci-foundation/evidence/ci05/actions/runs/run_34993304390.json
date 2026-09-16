@@ -1,0 +1,13 @@
+{
+ "id": 34993304390,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "37fb89a1ca4464a9f4b1b8156d8d00992433fb9a",
+ "head_branch": "ci/ci00-baseline",
+ "created_at": "2026-09-15T16:10:31Z",
+ "run_started_at": "2026-09-15T16:10:31Z",
+ "updated_at": "2026-09-15T16:59:49Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/34993304390"
+}

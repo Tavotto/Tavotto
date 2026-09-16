@@ -1,0 +1,349 @@
+{
+ "kind": "ci05_ci_side_shard_completeness",
+ "pytest": {
+  "run_id": 35007730894,
+  "legs": [
+   {
+    "leg": "pytest-backend-fast-ubuntu-latest-3.10",
+    "git_head": "fd2b2164da78387d2a25a43460025ee519a532c4",
+    "platform": [
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+    ],
+    "python": [
+     "3.10.21",
+     "3.10.21"
+    ],
+    "nodeids_total": 4686,
+    "files_total": 180,
+    "nodeids_selected": [
+     2184,
+     2502
+    ],
+    "files_selected": [
+     89,
+     91
+    ],
+    "junit_testcases": [
+     2184,
+     2502
+    ],
+    "junit_union": 4686,
+    "junit_intersection": 0,
+    "outcomes": {
+     "shard1": {
+      "passed": 2149,
+      "skipped": 35,
+      "failure": 0,
+      "error": 0
+     },
+     "shard2": {
+      "passed": 2478,
+      "skipped": 24,
+      "failure": 0,
+      "error": 0
+     }
+    },
+    "checks": {
+     "manifests_agree_on_the_full_set": true,
+     "selected_files_are_disjoint": true,
+     "selected_files_union_is_the_full_file_set": true,
+     "junit_testcases_are_disjoint": true,
+     "junit_union_equals_nodeids_total": true,
+     "junit_count_equals_nodeids_selected_per_shard": true,
+     "junit_files_equal_selected_files_per_shard": true
+    },
+    "ok": true
+   },
+   {
+    "leg": "pytest-backend-fast-ubuntu-latest-3.13",
+    "git_head": "fd2b2164da78387d2a25a43460025ee519a532c4",
+    "platform": [
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+    ],
+    "python": [
+     "3.13.15",
+     "3.13.15"
+    ],
+    "nodeids_total": 4686,
+    "files_total": 180,
+    "nodeids_selected": [
+     2184,
+     2502
+    ],
+    "files_selected": [
+     89,
+     91
+    ],
+    "junit_testcases": [
+     2184,
+     2502
+    ],
+    "junit_union": 4686,
+    "junit_intersection": 0,
+    "outcomes": {
+     "shard1": {
+      "passed": 2152,
+      "skipped": 32,
+      "failure": 0,
+      "error": 0
+     },
+     "shard2": {
+      "passed": 2479,
+      "skipped": 23,
+      "failure": 0,
+      "error": 0
+     }
+    },
+    "checks": {
+     "manifests_agree_on_the_full_set": true,
+     "selected_files_are_disjoint": true,
+     "selected_files_union_is_the_full_file_set": true,
+     "junit_testcases_are_disjoint": true,
+     "junit_union_equals_nodeids_total": true,
+     "junit_count_equals_nodeids_selected_per_shard": true,
+     "junit_files_equal_selected_files_per_shard": true
+    },
+    "ok": true
+   },
+   {
+    "leg": "pytest-backend-fast-ubuntu-latest-3.14",
+    "git_head": "fd2b2164da78387d2a25a43460025ee519a532c4",
+    "platform": [
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+     "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+    ],
+    "python": [
+     "3.14.7",
+     "3.14.7"
+    ],
+    "nodeids_total": 4686,
+    "files_total": 180,
+    "nodeids_selected": [
+     2184,
+     2502
+    ],
+    "files_selected": [
+     89,
+     91
+    ],
+    "junit_testcases": [
+     2184,
+     2502
+    ],
+    "junit_union": 4686,
+    "junit_intersection": 0,
+    "outcomes": {
+     "shard1": {
+      "passed": 2152,
+      "skipped": 32,
+      "failure": 0,
+      "error": 0
+     },
+     "shard2": {
+      "passed": 2479,
+      "skipped": 23,
+      "failure": 0,
+      "error": 0
+     }
+    },
+    "checks": {
+     "manifests_agree_on_the_full_set": true,
+     "selected_files_are_disjoint": true,
+     "selected_files_union_is_the_full_file_set": true,
+     "junit_testcases_are_disjoint": true,
+     "junit_union_equals_nodeids_total": true,
+     "junit_count_equals_nodeids_selected_per_shard": true,
+     "junit_files_equal_selected_files_per_shard": true
+    },
+    "ok": true
+   },
+   {
+    "leg": "pytest-backend-platforms-macos-latest-3.13",
+    "git_head": "fd2b2164da78387d2a25a43460025ee519a532c4",
+    "platform": [
+     "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+     "macOS-26.6.2-arm64-arm-64bit-Mach-O"
+    ],
+    "python": [
+     "3.13.15",
+     "3.13.15"
+    ],
+    "nodeids_total": 4686,
+    "files_total": 180,
+    "nodeids_selected": [
+     2184,
+     2502
+    ],
+    "files_selected": [
+     89,
+     91
+    ],
+    "junit_testcases": [
+     2184,
+     2502
+    ],
+    "junit_union": 4686,
+    "junit_intersection": 0,
+    "outcomes": {
+     "shard1": {
+      "passed": 2156,
+      "skipped": 28,
+      "failure": 0,
+      "error": 0
+     },
+     "shard2": {
+      "passed": 2485,
+      "skipped": 17,
+      "failure": 0,
+      "error": 0
+     }
+    },
+    "checks": {
+     "manifests_agree_on_the_full_set": true,
+     "selected_files_are_disjoint": true,
+     "selected_files_union_is_the_full_file_set": true,
+     "junit_testcases_are_disjoint": true,
+     "junit_union_equals_nodeids_total": true,
+     "junit_count_equals_nodeids_selected_per_shard": true,
+     "junit_files_equal_selected_files_per_shard": true
+    },
+    "ok": true
+   },
+   {
+    "leg": "pytest-backend-platforms-windows-latest-3.13",
+    "git_head": "fd2b2164da78387d2a25a43460025ee519a532c4",
+    "platform": [
+     "Windows-2025Server-10.0.26100-SP0",
+     "Windows-2025Server-10.0.26100-SP0"
+    ],
+    "python": [
+     "3.13.15",
+     "3.13.15"
+    ],
+    "nodeids_total": 4686,
+    "files_total": 180,
+    "nodeids_selected": [
+     2184,
+     2502
+    ],
+    "files_selected": [
+     89,
+     91
+    ],
+    "junit_testcases": [
+     2184,
+     2502
+    ],
+    "junit_union": 4686,
+    "junit_intersection": 0,
+    "outcomes": {
+     "shard1": {
+      "passed": 2133,
+      "skipped": 51,
+      "failure": 0,
+      "error": 0
+     },
+     "shard2": {
+      "passed": 2476,
+      "skipped": 26,
+      "failure": 0,
+      "error": 0
+     }
+    },
+    "checks": {
+     "manifests_agree_on_the_full_set": true,
+     "selected_files_are_disjoint": true,
+     "selected_files_union_is_the_full_file_set": true,
+     "junit_testcases_are_disjoint": true,
+     "junit_union_equals_nodeids_total": true,
+     "junit_count_equals_nodeids_selected_per_shard": true,
+     "junit_files_equal_selected_files_per_shard": true
+    },
+    "ok": true
+   }
+  ],
+  "nodeid_union_size": 4686,
+  "reference_leg": "pytest-backend-fast-ubuntu-latest-3.10",
+  "raw_union_differences_vs_reference": {
+   "pytest-backend-platforms-windows-latest-3.13": {
+    "only_here": [
+     "tests.test_bundled_runtime::test_both_runtime_layouts_are_recognised[posix-bin\\\\python3]",
+     "tests.test_dependency_repair::test_a_relative_interpreter_path_cannot_escape_the_project[..\\\\..\\\\..\\\\somewhere\\\\python]"
+    ],
+    "missing": [
+     "tests.test_bundled_runtime::test_both_runtime_layouts_are_recognised[posix-bin/python3]",
+     "tests.test_dependency_repair::test_a_relative_interpreter_path_cannot_escape_the_project[../../../somewhere/python]"
+    ]
+   }
+  },
+  "nodeid_union_identical_across_all_legs_after_path_separator_normalisation": true,
+  "ok": true
+ },
+ "playwright": [
+  {
+   "full_total": 151,
+   "per_project": {
+    "chromium": 109,
+    "chromium-en": 19,
+    "webkit": 23
+   },
+   "shard1": {
+    "projects": [
+     "chromium"
+    ],
+    "count": 109
+   },
+   "shard2": {
+    "projects": [
+     "chromium-en",
+     "webkit"
+    ],
+    "count": 42
+   },
+   "checks": {
+    "both_machines_listed_the_same_full_set": true,
+    "shards_are_disjoint": true,
+    "shards_union_is_the_full_set": true,
+    "project_sets_partition_the_config": true,
+    "each_shard_self_check_said_ok": true,
+    "self_check_counts_match_independent_parse": true
+   },
+   "ok": true,
+   "run_id": 35011613925
+  },
+  {
+   "full_total": 151,
+   "per_project": {
+    "chromium": 109,
+    "chromium-en": 19,
+    "webkit": 23
+   },
+   "shard1": {
+    "projects": [
+     "chromium"
+    ],
+    "count": 109
+   },
+   "shard2": {
+    "projects": [
+     "chromium-en",
+     "webkit"
+    ],
+    "count": 42
+   },
+   "checks": {
+    "both_machines_listed_the_same_full_set": true,
+    "shards_are_disjoint": true,
+    "shards_union_is_the_full_set": true,
+    "project_sets_partition_the_config": true,
+    "each_shard_self_check_said_ok": true,
+    "self_check_counts_match_independent_parse": true
+   },
+   "ok": true,
+   "run_id": 35031790918
+  }
+ ],
+ "ok": true
+}

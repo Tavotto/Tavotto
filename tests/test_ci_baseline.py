@@ -184,6 +184,23 @@ def test_expression_display_names_map_back_to_the_job_id(live_workflow):
         CB.display_to_job_id("windows-exe-smoke (1) (2)", live_workflow)
 
 
+def test_every_named_step_in_the_live_workflow_has_an_execution_category(live_workflow):
+    """`execution` 是按 step 名字分类相加的；一个新步骤名对不上任何规则就落进 `other`，
+    那一段秒数从 test / build / install / artifact 的账上消失、却不报错。CI03a 的
+    「分片证据」（upload-artifact）在 CI05 分解 after run 时就是这样静默漏到 `other` 里的。
+    主语是 HEAD 的 ci.yml 里**每一个带 `name:` 的步骤**：全部要落进一个真实类别。
+    没有 `name:` 的步骤 API 显示成 `Run <uses>` / `Run <run 首行>`，按同一张表判。"""
+    unclassified = []
+    for jid, info in live_workflow.items():
+        for step in info["steps"]:
+            shown = step.get("name") or "Run " + (step.get("uses") or step.get("run") or "")
+            if CB.classify_step(shown) == "other":
+                unclassified.append((jid, shown))
+    assert unclassified == [], unclassified
+    # 表本身没有被放宽成「什么都算 artifact」：一个陌生名字仍是 other
+    assert CB.classify_step("某个没登记过的步骤") == "other"
+
+
 def test_the_snapshot_is_the_workflow_the_fixture_runs_executed_under():
     """快照必须是 8b95256c 那份、且带着 backend-fast → 重型 的边。
 

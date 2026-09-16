@@ -317,7 +317,8 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "artifact",
         re.compile(
-            r"^Run actions/(upload|download)-artifact@|^上传|^失败时收集|^失败诊断|^取回候选"
+            r"^Run actions/(upload|download)-artifact@|^上传|^失败时收集|^失败诊断|^取回候选|"
+            r"^分片证据"
         ),
     ),
     (

@@ -1,0 +1,1746 @@
+name: CI
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 验证按**发生时机**分工（2026-08-25，Merge Queue 定版）。
+# **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
+#
+#   PR（含草稿）    快速反馈：python-lint（Ruff）/ invariants /
+#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 2 片）/
+#                   frontend / workerd / compat-smoke / CodeQL。
+#                   重型资格**不在 PR 上跑**——CI integration gate 显式回
+#                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
+#   full-ci PR      打上 `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套重型
+#                   资格（backend-platforms / package ×3 / 两个真产物冒烟），
+#                   此时 integration gate 真实聚合、不许 deferred。
+#   merge_group     完整合并资格的**唯一常规执行点**。Merge Queue 为
+#                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
+#                   全部快线 + 全部重型资格在它上面真实跑一遍，
+#                   三个 Gate 全绿才允许合入 main。
+#   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
+#                   一致性 + 落地信息。**不重复打包、不重复真产物冒烟**——
+#                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
+#                   执行，无 bypass actor，没有第二条进 main 的路）。
+#   nightly / lab   深度持续验证（nightly.yml + lab-ci.yml）：全量 CompatBench
+#                   × 多运行时、视觉回归、真实安装链路、soak 与 mutation。
+#   release         发布产物资格（release.yml），一条没动。
+#
+# 重型档的 DAG（CI01，2026-09-16）：package / windows-exe-smoke / macos-app-smoke /
+# posix-e2e 四个 job **只 needs frontend**（几分钟的短预筛），**不再等 backend-fast**
+# 的 35 分钟全量 pytest——那四条边从不消费 backend-fast 的任何字节（verdict-only），
+# 28/29 个合并组的关键路径却经过它们。删边不动 AND：backend-fast 仍在 CI fast gate
+# 的闭集里，三个 Gate 都要绿才合得进去。理由与数字写在 `package` 那一段。
+#
+# pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
+# `shard: [1, 2]` 轴，每一档的全量 pytest 拆成两个并行 job（`--shard K/2`，按文件分、
+# 不拆文件、每个进程先算全部两片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
+# 就是 rc 4；两片里任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
+# 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab / nightly / release 的
+# pytest 命令没有 `--shard`，跑的仍是全集。
+#
+# ruleset 的 required contexts = 三个稳定 Gate（CI fast gate / CI integration
+# gate / codeql.yml 的 CodeQL gate），判定逻辑只在 scripts/ci/aggregate_gate.py。
+# 迁移顺序与前置条件见 docs/ci/merge-queue-rollout.md——本文件的重型 job 收敛
+# 到 merge_group / full-ci，**只有在 ruleset 已经 switch-to-gates 之后才成立**。
+# ═══════════════════════════════════════════════════════════════════════════
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # `ready_for_review` 不是默认事件类型（默认只有 opened/synchronize/reopened）。
+    # 下面那几档重活按「草稿与否」分层，少了这条，作者点「Ready for review」时
+    # 不会有新的 workflow run，重活永远不跑——一个分层方案最容易踩空的地方。
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  # Merge Queue 的资格验证事件。payload 里**没有** pull_request.draft / labels
+  # 这些字段——下面任何引用 `github.event.pull_request.*` 的表达式都必须先按
+  # `github.event_name` 分支（tests/test_merge_queue_workflows.py 看护）。
+  merge_group:
+    types: [checks_requested]
+
+# 同一个 PR 上新 push 之后，旧 SHA 的 run 立刻取消：它就算全绿也已经没有 merge
+# value，占着的却是所有人共用的运行器额度。
+#
+# **cancel-in-progress 只对 PR 开**：push 到 main 的每一次 run 都是那个 commit
+# 的唯一验证记录，连着合两个 PR 时把前一个取消掉，main 上就留了一段没验过的
+# 历史；merge_group run 是队列候选的资格验证，被取消 = 候选白等 90 分钟超时。
+# tag / release 工作流不在这个文件里，天然不受影响。
+#
+# group 里带 `github.workflow`（codeql.yml 各有各的槽）+ `github.event_name`
+# （PR / merge_group / push 三种 run 绝不同组，谁也取消不了谁）。merge_group
+# 的临时分支 SHA 与 PR head SHA 不同，绝不能把二者视作同一个执行。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 这个工作流从头到尾只读代码、跑测试、造临时产物，一个字节都不往仓库写。
+# 不显式收紧的话 GITHUB_TOKEN 会拿到仓库默认的那套权限（含 contents: write），
+# 于是任何一个被拉进来的 action 或被改坏的测试脚本都能推 commit、改 Release。
+# 顶层一句管住全部 job；将来真需要写权限的 job 自己在 job 级声明，加得显眼。
+permissions:
+  contents: read
+
+# CI 里跑起来的每一个 Tavotto 进程都**硬关**匿名用量统计。
+# 单靠「配置目录是新的、同意态是 unset」不够：那是默认值，而默认值会变、
+# 会被某个用例改掉、会被缓存的用户目录带进来。CI 绝不能产生真实的产品事件——
+# 一台每天跑几十次的机器足以让「有多少人在用」这个数字彻底失真。
+# 与 TAVOTTO_NO_UPDATE_CHECK 是两个独立开关，别指望其中一个代管另一个。
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 快线里最便宜的一格：Ruff。**十几秒回来**，只装一个 wheel，不碰科学栈、
+  # 不建前端、不编 Rust。
+  #
+  # 它挡的是「一个拼错的名字 / 一个删了引用却忘了删的 import，让人等十分钟的
+  # 矩阵跑完才知道」那类循环——F821、F401、F841 这些在编辑器里一秒可判的东西，
+  # 不该消耗一整轮 CI。放在快线最前面，红了立刻能看见。
+  #
+  # **它不是别的门禁的替代品**：不变式、等价性矩阵、CompatBench 问的都是
+  # 语义问题，Ruff 一条都答不了。这一格只回答「这份 Python 在语法与名字层面
+  # 立得住吗」。
+  #
+  # 不做 paths 过滤，理由与 invariants / workerd 那两格相同：判断「哪些文件
+  # 会影响 Python 静态检查」本身就是会漏配的判断，而这一格便宜到不值得为它
+  # 冒「静默不跑」的风险。
+  # ────────────────────────────────────────────────────────────────
+  python-lint:
+    # job id 保持 `python-lint` 不变——Gate 的 needs / --required 闭集认的是它，
+    # 改 id 等于同时动三处。显示名跟着职责走：这一格现在同时管 lint 与格式。
+    name: Python quality (Ruff)
+    # 与其它快线一致：PR 与 merge_group 都跑（PR 先绿才能进队列，队列的组合
+    # 提交还要再验一遍——组合出来的树没有任何单个 PR 检查过）。push main 不跑，
+    # 那棵树就是 merge_group 上刚验过的。
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 版本**从 pyproject 的 dev extra 里读**，不在这里抄一份字面量。
+      # 本地与 CI 跑的 ruff 版本一旦漂开，「本地绿、CI 红」就会变成常态，
+      # 而那是让人不再信任 lint 门禁最快的方式。恰好一条约束，多了少了都当场抛
+      # ——安静地取到 None 再 `pip install ` 会装上最新版，正好是要防的事。
+      #
+      # 刻意**不装本项目**（`pip install -e .` 会拖进 flask + pymupdf）：
+      # ruff 是纯静态分析，一个 import 都不需要执行。
+      - name: 安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）
+        run: |
+          set -euo pipefail
+          SPEC=$(python -c "
+          import pathlib, tomllib
+          d = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+          got = [s for s in d['project']['optional-dependencies']['dev']
+                 if s.replace('_', '-').lower().startswith('ruff')]
+          if len(got) != 1:
+              raise SystemExit(f'dev extra 里应当恰好有一条 ruff 约束，实际：{got}')
+          print(got[0])
+          ")
+          echo "ruff spec（来自 pyproject）：$SPEC"
+          python -m pip install "$SPEC"
+          ruff --version
+      # `--output-format github` 让每条诊断变成 PR「Files changed」里那一行上的
+      # 行内批注——从红灯到定位是一次点击，而不是翻日志找行号。
+      # 规则集与豁免全在 pyproject 的 [tool.ruff]，这里**不加任何 --select /
+      # --ignore**：命令行上再写一份，本地跑的就不是 CI 跑的那一套了。
+      - name: Ruff check
+        run: ruff check --output-format github .
+      # **同一个 job、同一份 ruff、同一次 runner setup**——不新开 GitHub job，
+      # 也就不会多出第四个 required context，Gate 结构一个字不动。
+      #
+      # 分成两步而不是 `ruff check . && ruff format --check .`：合成一条时先失败
+      # 的那个会掩盖后一个，开发者修完格式重新 push 才发现还有 lint 错，一次
+      # CI 往返只换回一半信息。`if: always()` 让两条都出结论。
+      #
+      # **只 --check，不写回**：门禁替你把红的改绿了，就不再是门禁。
+      - name: Ruff format --check
+        if: always()
+        run: ruff format --check .
+
+      # `.git-blame-ignore-revs` 里写错的 SHA **不会喊疼**：git 对一个不存在的
+      # 全长 SHA 静默放过（exit 0，什么都不跳过）。pytest 里那条存在性判据在 CI
+      # 的浅克隆上只能 skip——`actions/checkout` 默认 `fetch-depth: 1`，历史对象
+      # 根本没下载——也就是说**它在 CI 里从没执行过**，一个不存在的 40 位 SHA
+      # 能通过全部门禁，正是它声称要防的那种静默失效。（Codex 在 #176 上指出的
+      # 就是这个洞：判据把自己的盲点写在了明处，但写在明处不等于补上了。）
+      #
+      # 这一步用**定向 fetch** 补上，不必把整个 checkout 换成 fetch-depth: 0：
+      # GitHub 允许按 SHA fetch，实测存在返回 0、不存在返回 128。代价约一秒。
+      - name: 校验 .git-blame-ignore-revs 里的每个 SHA 真的存在
+        if: always()
+        run: |
+          set -euo pipefail
+          n=0
+          while read -r sha; do
+            n=$((n + 1))
+            git fetch --quiet --depth=1 origin "$sha" || {
+              echo "::error::.git-blame-ignore-revs 里的 $sha 在本仓库不存在（合并队列强制 SQUASH，多半是忘了换成 squash 之后的 SHA）"
+              exit 1
+            }
+            git cat-file -e "${sha}^{commit}" || {
+              echo "::error::$sha 存在但不是一个 commit"
+              exit 1
+            }
+            echo "  ok $sha"
+          done < <(grep -vE '^[[:space:]]*(#|$)' .git-blame-ignore-revs)
+          # 一条都没解析出来时必须红：否则文件被清空 / 格式变了，这一步会变成
+          # 一个永远绿的空循环——正是本仓库反复吃过亏的那种空门禁。
+          if [ "$n" -eq 0 ]; then
+            echo "::error::.git-blame-ignore-revs 里一条 SHA 都没解析出来——文件空了还是格式变了？"
+            exit 1
+          fi
+          echo "校验通过：$n 条"
+
+  # ────────────────────────────────────────────────────────────────
+  # CLA 资格：这个 PR 里出现的每一个人，是不是都已经签过、或被显式豁免。
+  # 判定逻辑在 scripts/ci/cla_gate.py，政策与豁免在 .github/cla-policy.json。
+  #
+  # **签署事实的唯一权威是签名服务商（provider），仓库不保存 signer 名单。**
+  # 早期版本曾带一份手工维护的 docs/legal/cla-signatures.json，那会和服务商的
+  # 数据库变成两个法律权威，分叉之后没有机制说得清哪份算数，已经删掉。
+  # provider 尚未配置时，判定器对任何非豁免的人类贡献者一律阻断并给出指引
+  # ——**绝不因为「服务还没接上」就把外部贡献者当成签过**。
+  #
+  # 三条形状上的要求，坏掉都不会有别的测试红，所以
+  # tests/test_legal_contribution_policy.py 逐条钉住：
+  #
+  # 1. **merge_group 上必须跑并且成功，不能 skipped。** fast gate
+  #    （aggregate_gate.py --mode fast）把 skipped 一律当失败，这一格在队列
+  #    候选上被跳过 = 整个 `CI fast gate` 永远红，谁也合不进去。脚本在
+  #    merge_group 上判 not_applicable 并退出 0——资格在 PR 阶段已经验过。
+  # 2. **不 checkout PR 的代码，一行都不执行。** 这个 job 读的是权利判定的
+  #    输入，被 PR 改写的树不能参与判定自己。判定器、政策、签署记录、协议正文
+  #    **全部取自默认分支**（与两个 Gate 取 aggregate_gate.py 同一条纪律），
+  #    PR 侧只经 GitHub API 读元数据。因此这里**没有 actions/checkout**。
+  # 3. **权限最小。** contents: read 读默认分支的文件，pull-requests: read 读
+  #    PR 的 commit 列表。不写 comment、不写 status——签署 UX 归签名服务商，
+  #    这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
+  #    `checks: read`（读它那条 check 的结论），届时同步改 tests 里的权限断言。
+  #
+  # 用 pull_request 而**不是** pull_request_target：后者会让这个 job 拿到写
+  # 权限与 secret，然后所有防护都变成「别执行 PR 的代码」这一条人为纪律。
+  # 这里根本不需要那些权限，于是也就没有那类风险面。
+  #
+  # ⚠ **判定器的接口变更必须先落 main，才能在这里使用。**
+  # workflow 取自本次 revision（新），判定器取自默认分支（旧）——这是上面
+  # 第 2 条那个安全性质的必然代价：PR 不能改写审判自己的尺子，也就意味着
+  # PR 里的判定器改动在 CI 里**不参与执行**。给判定器加新参数、改参数名、
+  # 或依赖它的新行为，都会在同一个 PR 里失败（`unrecognized arguments`）。
+  # workflow 与判定器**不能在同一个 PR 里同步演进**。
+  #
+  # 2026-08-28 这条约束现形了三次：判据与政策必须先在 main（拆成两个 PR
+  # 才解开）、这一格的红一直持续到内容层落地、以及给判定器加
+  # `--expected-commits` 时。所以能在 workflow 里做的断言就别推给判定器
+  # ——上面那段提交数核对正是因此写在 bash 里。
+  # ────────────────────────────────────────────────────────────────
+  cla-check:
+    name: Contributor licence (CLA)
+    # 与其它快线一致；**merge_group 必须在内**（见上面第 1 条）。
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # 判定的全部输入取自默认分支——**不 checkout 本次 revision**。
+      # 与两个 Gate 取判定器同一个理由：被审的树不能参与判定自己。
+      - name: 取默认分支上的可信判定输入
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-cla"
+          mkdir -p "$TRUSTED/scripts/ci" "$TRUSTED/.github" "$TRUSTED/docs/legal"
+          fetch() {   # $1 = 仓库内路径
+            gh api "repos/$REPO/contents/$1?ref=$REF" --jq .content \
+              | base64 -d > "$TRUSTED/$1"
+            [ -s "$TRUSTED/$1" ] || { echo "::error::默认分支上取不到 $1"; exit 1; }
+          }
+          fetch scripts/ci/cla_gate.py
+          fetch .github/cla-policy.json
+          fetch docs/legal/CLA_INDIVIDUAL.md
+          fetch docs/legal/CLA_CORPORATE.md
+          echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
+
+      # PR 侧只读元数据：作者 + 每个 commit 的 author + Co-authored-by。
+      # 只看 PR 发起人是不够的——commit 作者和 co-author 同样在投稿。
+      # `--paginate` 的**输出形状随 gh 版本而变**：gh 2.97 对 REST 数组端点会把
+      # 各页合并成一个数组，而 `gh api --help` 写的是「Each page is a separate
+      # JSON array or object」。判定器三种形状都吃（见 load_commits），所以这里
+      # 不去赌 runner 装的是哪个版本。
+      #
+      # **`--slurp` 是错的解法**：它把每页包成一层，产出数组的数组——判定器
+      # 反而要额外兼容。这里刻意不用。
+      #
+      # 真正要防的不是形状，是**只拿到第一页却当成全部**：一个 41 提交的 PR
+      # 会只判前 30 个贡献者，**报绿而实际漏判**。`test -s` 拦不住（文件非空）。
+      # 所以把 PR 自己声明的提交数一并传下去，由判定器核对——少一条就红。
+      - name: 收集这个 PR 的贡献者（只读元数据）
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+            > "$RUNNER_TEMP/pr-commits.json"
+          test -s "$RUNNER_TEMP/pr-commits.json"
+
+          # **核数量，不信分页。** `test -s` 只证明文件非空，挡不住「只拿到
+          # 第一页」——那会让判定器按不完整的贡献者名单判绿。
+          #
+          # 计数用 `--jq` **流式**输出：它按页应用过滤器、每条一行，因此与
+          # 「gh 有没有把各页合并成一个数组」无关（实测 per_page=5/10/100，
+          # 也就是 9/5/1 页，都数出 41）。对照组取 PR 自己的 `commits` 字段。
+          #
+          # **不要用 `--slurp`**：它把每页包成一层，`length` 数出来的是**页数**
+          # 而不是提交数（实测 5 页 → 5）。
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq '.commits')
+          got=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].sha' | wc -l | tr -d ' ')
+          if [ "$got" != "$want" ]; then
+            echo "::error::取到 $got 个提交，但这个 PR 声明有 $want 个——分页没取全。"\
+                 "绝不按不完整的贡献者名单判定：漏掉的人不会被检查，而门禁会报绿。"
+            exit 1
+          fi
+          echo "提交数核对通过：$got / $want"
+
+      # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
+      # 与两个 Gate 同一双保险。
+      - name: 判定
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          # provider.configured=true 之后这里还要多传 --provider-checks-json，
+          # 并给 job 加 `checks: read`——步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。
+          ARGS=(--event "${{ github.event_name }}"
+                --policy "$TRUSTED/.github/cla-policy.json"
+                --repo-root "$TRUSTED")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--pr-author "$PR_AUTHOR"
+                   --commits-json "$RUNNER_TEMP/pr-commits.json")
+          fi
+          python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
+
+  # ────────────────────────────────────────────────────────────────
+  # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
+  # + 与它同一族的 artist family / patchspec / preflight 契约）。
+  #
+  # 它跑的是 backend 的**子集**，所以不是新增门禁，是把最会红的那几条提前
+  # 到两三分钟内回来——等 backend 矩阵跑完再发现「撤销回不到原样」太晚了。
+  # 真正的 pass/fail 仍由 backend-fast / backend-platforms 负责，这一格红了
+  # 它们必然也红。它经 `CI fast gate` 参与合并资格（ruleset 只认三个 Gate；
+  # 改名或从 Gate 的 needs 里摘掉之前，先看 aggregate_gate 的闭集规则）。
+  #
+  # 不做 paths 过滤：不变式验的是引擎语义与它的对外契约，而「哪些文件会影响
+  # 引擎语义」本身就是一个会漏配的判断——漏一条换来的是「改了契约却没人跑
+  # 不变式」，静默不跑的门禁与空转的门禁一样坏。
+  # ────────────────────────────────────────────────────────────────
+  invariants:
+    # 快线只在 PR 与 merge_group 上跑：push main 的树就是 merge_group 上
+    # 刚验过的那棵，main 侧只留 main-landing-audit（见文件抬头的分工表）。
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 科学栈按锁文件钉版本：不变式里有几条是**按实测写死的例外**
+      # （`honours_stroke_style` 的网格表），版本一换实测结论可能就变了，
+      # 而那正是我们想被告知的事——用的必须是用户拿到的那一套。
+      - name: 安装依赖（科学栈按锁文件钉版本）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py)
+          python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      - name: 结构性不变式
+        run: |
+          python -m pytest -q \
+            tests/test_invariants_engine.py \
+            tests/test_docs_references.py \
+            tests/test_artist_families.py \
+            tests/test_artist_census_tool.py \
+            tests/test_patchspec.py \
+            tests/test_preflight.py
+      # 探针自己也要能单独跑起来——它是排兼容缺口时第一个被拿起来的东西
+      - name: 不变式探针（人看的那份）
+        if: always()
+        run: python tests/support/engine_invariant_probe.py --pretty
+
+  # 跨平台是产品承诺，就得跨平台跑——但**在哪个提交上跑**分了工：
+  # backend-fast 守 Python 下界、主开发版本与上界，每个 PR push 都回来；
+  # backend-platforms 守 mac / Windows 的平台相关代码（数据目录、worker
+  # 解释器探测、路径分隔符），在 merge_group 的最终组合提交（或 full-ci PR）
+  # 上跑。两个 job 合起来是五档：
+  # Linux 3.10 / Linux 3.13 / Linux 3.14 / macOS 3.13 / Windows 3.13，一档没少
+  # （tests/test_merge_queue_workflows.py 对拍这五档）。
+  #
+  # Linux 3.14 那档是 requires-python `<3.15` 的兑现处（issue #33）：
+  # tests/test_support_matrix.py 钉住「support-matrix 里 tested 的最高档必须在
+  # 这个矩阵里有腿」——上界放开了却没有腿在跑它，就是一句空承诺。
+  #
+  # **每档再按文件分 2 片**（CI03a，2026-09-16；设计与实测见
+  # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）：
+  #   * 为什么按文件、不拆文件：29 个文件有 module 级 fixture、文件内共享 worker /
+  #     figure 状态（CI_BASELINE.md §7）；文件是 fixture 生命周期自洽的最小单位。
+  #   * 为什么 2 片：CI00 实测这条腿 35 分钟、前 25 个文件占 900/1129 秒，按文件贪心
+  #     两片理论上 ~565s/片（本机）；先 2 片对比串行，再谈更多（CI03 §7），不加 -n。
+  #   * 自验做了什么：`--shard K/2` 在**同一进程 collection 之后**做（tests/conftest.py
+  #     → tests/support/shard.py），每个进程都算出全部两片，断言 nodeid 集合的并集 ==
+  #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
+  #     静默跑空集。
+  #   * 漏片由谁兜：进程内自验是第一层；第二层是 matrix 语义——两片里任一片不
+  #     success，`needs.backend-fast.result` 就不是 success，CI fast gate 的
+  #     `--required` 闭集里 backend-fast 仍是那一个 job id，Gate 照红。**job id 不变**，
+  #     显示名变成 `backend-fast (3.10, 1)`；required context 只有三个 Gate 名字，
+  #     仓库设置不用重新登记任何检查。
+  #   * 权重表怎么更新：tests/support/shard_weights.json 只影响两片平不平衡，不影响
+  #     覆盖。每一片都把 junit + manifest 上传成 artifact（下面那一步）；把同一 os
+  #     的两片 junit 喂给 `python tests/support/shard.py --from-junit …` 就是新表。
+  #   * 回退：去掉 `shard` 轴 + 命令里去掉 `--shard …`（钩子留着无害，不带参数时不动
+  #     collection）。
+  backend-fast:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    strategy:
+      fail-fast: false
+      # 写成轴（GitHub 对 `include` 里的条目不做笛卡尔积，所以 shard 不能塞进 include）。
+      # os 固定 ubuntu-latest，写在 runs-on 上，不再是 matrix 的一维。
+      matrix:
+        python: ["3.10", "3.13", "3.14"]
+        shard: [1, 2]
+    # 同 backend-platforms：实测 20–25 分钟，40 给余量。没有上限的 job
+    # 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
+    # 分片之后单片应明显短于 40；上限刻意不动，等 CI 实测再调（CI03A 文档「已知边界」）。
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # matplotlib 单独装：pyproject 的主依赖刻意不含科学栈（Flask 父进程的
+      # 依赖边界），CI 里装上让 worker round-trip 用例真正执行而非跳过
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install matplotlib
+      # `--shard=K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
+      # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
+      # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
+      # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
+      # 里注册，而 pytest 先按「未知选项的下一个 token 是路径」预解析去找 conftest——
+      # `--shard-manifest PATH` 在 PATH **已存在**时会把 PATH 当锚点、只加载它所在目录的
+      # conftest，tests/conftest.py 没加载，选项就「unrecognized」。`=` 形式让整个 token
+      # 进 extras，不产生假路径。托管 runner 上 RUNNER_TEMP 每次都是新的，这个坑在 CI 上
+      # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
+      - name: pytest
+        run: >-
+          python -m pytest --shard=${{ matrix.shard }}/2
+          --shard-manifest="${{ runner.temp }}/shard-manifest.json"
+          --junitxml "${{ runner.temp }}/junit.xml"
+          --durations=50 -rs
+      # 分片证据：manifest（这一片分到了哪些文件、各片估计秒数）+ junit（真实秒数）。
+      # **只作证据与日后重平衡的数据，不作任何判定输入**——Gate 读的是 needs 结论。
+      - name: 分片证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-backend-fast-ubuntu-latest-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/shard-manifest.json
+            ${{ runner.temp }}/junit.xml
+          retention-days: 7
+          if-no-files-found: warn
+
+  # backend 的最终平台线：macOS / Windows 各一档 3.13。只在 merge_group 的
+  # 组合提交（或带 full-ci 标签的 PR）上跑——普通 PR 不再等两台最慢的
+  # runner，而最终进 main 的每一棵树仍然四档全跑过。
+  #
+  # 每个 os 再按文件分 2 片（CI03a）：分片方式、自验、漏片兜底与 backend-fast 那一段
+  # 相同；这里是 merge_group 的关键路径（CI01 删边之后 Windows 腿 2443s 中位是全图
+  # 最长的一条），分片的收益首先落在这里。Windows 与 macOS 的真实平衡要等本 job 的
+  # junit artifact——权重表现在是本机 macOS 的样本。
+  backend-platforms:
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    strategy:
+      fail-fast: false
+      # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
+      matrix:
+        os: [macos-latest, windows-latest]
+        shard: [1, 2]
+    runs-on: ${{ matrix.os }}
+    # 实测（2026-09-12/13 的 12 个合并组，Windows）29~41 分钟，套件已 4460 条；
+    # 2026-09-13 #340 的组跑到 45:00 被这条上限取消、整组按 failed_checks 踢出——
+    # 上一轮定 45 时实测还是 27:57 / 2994 条，套件长了一半上限没动，余量归零。
+    # 抬到与 windows-exe-smoke 同档的 60，但**必须有**上限：这个 job 没有上限时，
+    # 一条挂死的用例会把整个**合并队列**堵住——2026-08-28 就发生过一次，
+    # 8 小时 20 分，其间没有任何 PR 能落地。
+    # 分片之后单片应明显短于 60；上限刻意不动，等 CI 实测再调。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install matplotlib
+      # #346：先量再分片——Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
+      # 靠抬数字维持。让每个合并组自己把最慢的 50 条打进日志，分片 / session 级
+      # worker 复用的决定要从这份名单来，不从猜。
+      # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
+      # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
+      # `--shard=K/2` 的 2 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
+      - name: pytest
+        run: >-
+          python -m pytest --shard=${{ matrix.shard }}/2
+          --shard-manifest="${{ runner.temp }}/shard-manifest.json"
+          --junitxml "${{ runner.temp }}/junit.xml"
+          --durations=50 -rs
+      # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
+      - name: 分片证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-backend-platforms-${{ matrix.os }}-3.13-shard${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/shard-manifest.json
+            ${{ runner.temp }}/junit.xml
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ────────────────────────────────────────────────────────────────
+  # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
+  #
+  # 它与 backend 的 pytest 问的不是同一件事：pytest 验的是「我们写过的行为
+  # 还对不对」，这里验的是「外部 matplotlib 世界的常见写法我们还接不接得住」
+  # ——`plt.show()` 无 savefig、相对路径读盘、顶层直写、中文路径、pandas
+  # 出图这些，没有一条是我们自己的代码，却全是用户真会写的。
+  #
+  # PR 上**只跑 smoke 子集、不跑保真度**：目标 2~4 分钟。全量 150 case ×
+  # 多运行时是 nightly 的活（lab-ci.yml），塞进每个 PR 只会让人开始跳过它。
+  # 单跑一台 Linux：兼容性是引擎语义，没有平台分支；跨平台由 backend 矩阵盖。
+  # ────────────────────────────────────────────────────────────────
+  compat-smoke:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 实测 2.4 分钟；没有上限的 job 会堵死合并队列
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 科学栈版本取自 packaging/runtime-lock.json，不用 `pip install matplotlib`：
+      # 零 patch 保真度与 manifest 结构都对 matplotlib 版本敏感，用锁文件才能
+      # 保证「CI 上验的」与「用户拿到的内置 runtime」是同一套。
+      - name: 安装依赖（科学栈按锁文件钉版本）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+          python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      - name: CompatBench smoke
+        run: |
+          python scripts/ci/compat_matrix.py --smoke --no-fidelity \
+            --gate pr --out "$RUNNER_TEMP/compat"
+      - name: 失败诊断
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/compat/**
+          retention-days: 7
+          if-no-files-found: warn
+
+  frontend:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 实测 2.2 分钟；没有上限的 job 会堵死合并队列
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      # 翻译检查（key 对齐 / 空翻译 / 插值与复数形态 / 硬编码文案 / 生成的类型
+      # 是否过期）。缺翻译在这里必须**失败**，不是打条 warning 就放行——
+      # 界面上一串 `project.actions.create` 是发出去才被用户发现的那类问题。
+      - run: pnpm i18n:check
+      - run: pnpm test
+      # 真类型检查在 `pnpm build` 的 `tsc -b` 里。这里曾经是 `pnpm tsc --noEmit`：
+      # 根 tsconfig 是 `files: []` + references 的方案文件，--noEmit 不走项目引用、
+      # 什么都不编，恒绿——一个报平安的空门禁比没有门禁更坏。
+      - run: pnpm build
+      # 画布产物不入库（ADR 0043）：一个功能提交把它加回索引，用户拿不到更新的画布
+      # （安装入口读的是发行分支），只会把合并队列拖回「同一份 HTML 必撞」。在 PR 上就拦，
+      # main 落地审计再查一次。判据问的是索引（git ls-files），不是 .gitignore 写了什么。
+      - name: 发行生成物不许进索引
+        working-directory: .
+        run: python3 scripts/ci/check_generated_untracked.py
+      # ── 完整插件候选（ADR 0043）─────────────────────────────────────────
+      # 从**本次实际 checkout**（PR = 合并提交；merge_group = 队列组合提交）真构建
+      # 画布，按 git 清单 + 显式构建物组装完整插件、逐条验证、打成确定性 zip 上传。
+      # 候选**只作验证**，不向任何源码分支回写、不发布到稳定通道；发布只走
+      # release.yml 在固定发行 SHA 上重新构建的那一份。
+      # `--source-sha` 取 `git rev-parse HEAD`：清单里记的必须是真造它的那个 commit，
+      # 组装脚本自己会与 HEAD 对拍，传错就红。
+      - name: 构建 MCP 画布（真 vite，写到临时位置）
+        working-directory: .
+        run: python3 scripts/build_mcp_widget.py --out "$RUNNER_TEMP/plugin/canvas.html" --json
+      - name: 组装并验证完整插件候选
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          STAGE="$RUNNER_TEMP/plugin/stage"
+          ZIP="$RUNNER_TEMP/plugin/codex-plugin-candidate.zip"
+          python3 scripts/plugin_stage.py stage --widget "$RUNNER_TEMP/plugin/canvas.html" \
+            --out "$STAGE" --source-sha "$SHA" \
+            --audit "event=$EVENT" --audit "run_id=$RUN_ID" --audit "kind=candidate"
+          python3 scripts/plugin_stage.py verify "$STAGE" --source-sha "$SHA"
+          python3 scripts/plugin_stage.py archive --stage "$STAGE" --out "$ZIP"
+          # 归档再验一次：dotfiles / 模式 / 字节都要在 zip 里活着走一遍
+          python3 scripts/plugin_stage.py verify "$ZIP" --source-sha "$SHA" \
+            --content-digest "$(python3 scripts/plugin_stage.py digest "$STAGE")" --json
+          cp "$STAGE/plugin-build.json" "$RUNNER_TEMP/plugin/plugin-build.json"
+      # 只传**一个已验证的归档** + 它的清单，不传目录：目录经 artifact 传输会丢
+      # dotfiles 与模式（.codex-plugin/plugin.json、.mcp.json 正是 dotfiles）。
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-plugin-candidate
+          path: |
+            ${{ runner.temp }}/plugin/codex-plugin-candidate.zip
+            ${{ runner.temp }}/plugin/plugin-build.json
+          if-no-files-found: error
+          retention-days: 7
+      # 浏览器 playground（网站 /try，ADR 0007）：产物由本仓库构建、由网站仓库
+      # 提交。这里真跑一遍构建（vite + engine.zip + 指纹 manifest），保证构建
+      # 脚本随前端一起是活的；「网站上那份是不是过期」的门禁在网站仓库——
+      # `pnpm check-playground` 调本仓库的 --fingerprint 重算比对。
+      - name: 浏览器 playground 构建
+        working-directory: .
+        run: python3 scripts/build_browser_playground.py
+
+  # ────────────────────────────────────────────────────────────────
+  # 完整插件候选的消费方（ADR 0043）：在**没有 Node、没有源码构建能力**的 job 上，
+  # 把 frontend 刚上传的归档解包，当成用户会装到的那份插件来验——
+  #   · 解包后不依赖源码树：清单逐文件 sha256 / 模式 / 不多不少；
+  #   · 真起 MCP server 走 stdio 读画布资源，与磁盘上那份逐字相同；
+  #   · 依赖真实插件的 pytest 用例在这里执行并**记录执行数量**（快线里其它 job 上
+  #     它们各自 skip——干净 checkout 没有画布，那里不许放宽断言冒充通过）。
+  # 它经 `CI fast gate` 参与合并资格（needs 与 --required 闭集都有它）：红了 Gate 就红。
+  # ────────────────────────────────────────────────────────────────
+  plugin-candidate:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    needs: [frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 全历史：候选用例要把本次 checkout 推成一个临时 bare 仓库的 main（发行分支投影 +
+      # 稀疏克隆回读那一条），浅克隆推不出去（"shallow update not allowed"，2026-09-05 首跑实测）。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装引擎（server 要在 engine 模式下才声明画布资源）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install matplotlib
+      # 核心验收要真跑一次 vite（见下面最后一步），所以这个 job 也装 Node
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-plugin-candidate
+          path: ${{ runner.temp }}/candidate
+      - name: 解包并验证候选（脱离源码树；真起 server 读资源）
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          C="$RUNNER_TEMP/candidate"
+          test -f "$C/codex-plugin-candidate.zip" && test -f "$C/plugin-build.json"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$C/plugin-build.json")"
+          PLUGIN="$(python3 scripts/plugin_stage.py unpack "$C/codex-plugin-candidate.zip" --out "$C/unpacked")"
+          python3 scripts/plugin_stage.py verify "$PLUGIN" --source-sha "$SHA" --content-digest "$DIGEST" --serve "$(command -v python)"
+          echo "TAVOTTO_PLUGIN_CANDIDATE=$PLUGIN" >> "$GITHUB_ENV"
+      - name: 依赖真实插件的用例（在这里必须执行，不许 skip）
+        env:
+          # 源码树里的 server / widget 模块加载**候选**那份画布：test_mcp_stdio /
+          # test_mcp_server 里真验产品画布的用例（干净 checkout 上 skip）在这里必须跑。
+          TAVOTTO_MCP_WIDGET: ${{ env.TAVOTTO_PLUGIN_CANDIDATE }}/mcp/widget/canvas.html
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA tests/test_plugin_candidate.py 2>&1 | tee "$RUNNER_TEMP/candidate-pytest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED" "$RUNNER_TEMP/candidate-pytest.log"; then
+            echo "::error::候选验证用例里有 skip——有真实产物时它们必须执行"
+            exit 1
+          fi
+          python -m pytest -q -rs tests/test_mcp_stdio.py tests/test_mcp_server.py -k "widget or canvas" \
+            2>&1 | tee "$RUNNER_TEMP/widget-pytest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED.*(画布|widget|canvas)" "$RUNNER_TEMP/widget-pytest.log"; then
+            echo "::error::画布用例在有真产物的 job 上 skip 了——它们在这里必须执行"
+            exit 1
+          fi
+          {
+            echo "### 完整插件候选"
+            echo ""
+            echo "- 插件目录：\`$TAVOTTO_PLUGIN_CANDIDATE\`"
+            echo "- pytest（候选）：$(tail -1 "$RUNNER_TEMP/candidate-pytest.log")"
+            echo "- pytest（画布用例）：$(tail -1 "$RUNNER_TEMP/widget-pytest.log")"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # ── 核心验收（ADR 0043）：两个互不相关的前端分支从同一基线各改一处生产前端位置，
+      # 先合 A、再不改写 B 地合 B，从组合后的树真构建画布、组装插件、真起 server——
+      # 两个改动都必须出现在产物里。这条证明的是生成物冲突的根因已消除；真实 Merge
+      # Queue 的双候选另需两条真实 PR（docs/ci/plugin-stable-channel.md 第 6 节）。
+      - name: 核心验收：两个独立前端分支组合后真构建、真起 server
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rs tests/test_independent_frontend_prs.py 2>&1 | tee "$RUNNER_TEMP/acceptance.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -qE "^SKIPPED" "$RUNNER_TEMP/acceptance.log"; then
+            echo "::error::核心验收在有 Node 的 job 上 skip 了——它在这里必须执行"
+            exit 1
+          fi
+          echo "- 核心验收：$(tail -1 "$RUNNER_TEMP/acceptance.log")" >> "$GITHUB_STEP_SUMMARY"
+
+  # Rust supervisor 的静态门禁。desktop-tauri.yml 里也有一份，但那个工作流只在
+  # 打 tag / workflow_dispatch 时跑——改了 workerd 的 PR 因此一路全绿，要等到
+  # 发版那天才知道 clippy 挑了刺或 golden vectors 对不上。而
+  # workerd/src/patchspec.rs 必须**逐字节**复现 engine/patchspec.py，硬验收
+  # （tests/golden/patch_vectors.json）正是跑在 cargo test 里的：跨侧漂移是这个
+  # 仓库最贵的一类缺陷，它的门禁不能只挂在发行链上。
+  #
+  # **刻意不做 paths 过滤**。它与 backend / *-smoke 那几档并行，本机整套
+  # fmt+clippy+test 12 秒，CI 上加缓存命中的编译也远不到 PR 的瓶颈；而漏配一条
+  # 路径（忘了 patchspec.py、忘了 golden vectors）换来的是「改了跨侧契约却没人
+  # 跑 Rust」——静默不跑的门禁与空转的门禁一样坏，省这一两分钟不值。
+  #
+  # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
+  workerd:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 15  # 实测 0.3 分钟；没有上限的 job 会堵死合并队列
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workerd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
+      # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
+      - run: cargo test
+
+  # 桌面壳（Tauri）的静态门禁 + 单测。**与 workerd 同一条纪律**，理由也一样：
+  # 这些用例原先只跑在 desktop-tauri.yml 里，而那个工作流只在打 tag /
+  # workflow_dispatch 时跑，`cargo test` 还进一步收在 build 矩阵的 macOS 那条腿上
+  # ——于是改了 src-tauri 的 PR 一路全绿，Rust 侧的判据合并前一次都不执行
+  # （issue #275）。`main.rs` 里现在有 20 条 #[test]：交接契约 argv 解析、
+  # 「build_menu 不许碰 PathResolver」（那条曾让 Windows 桌面版每次启动当场死掉）、
+  # 壳内 i18n 文案表、以及关窗询问闸的状态机与「拦了就一定起看门狗」。
+  # **最后那条守的是「关不掉的窗口」**——它只可能写成行为判据（源码里搜
+  # token 的写法放行 `if false { … }`），而行为判据只有跑起来才算数。
+  #
+  # **刻意不做 paths 过滤**（同 workerd）：漏配一条路径换来的是「改了壳却没人跑
+  # Rust」，而静默不跑的门禁与空转的门禁一样坏。
+  #
+  # 只做「编译得过 + 判据跑得出结论」：贵的那部分（真打包、签名、NSIS/dmg）
+  # 仍在 desktop-tauri.yml。
+  #
+  # **两条腿，因为 clippy 只看得见参与编译的那一支**（issue #282）。`main.rs`
+  # 里的应用菜单有 `#[cfg(target_os = "macos")]` 分支，在 Linux 上根本不进
+  # 编译单元——只跑 Linux 腿的话，那一支的 lint 在**任何**工作流里都没有执行
+  # 位置：desktop-tauri.yml 的 macOS 腿只跑 `cargo test`，不 deny warnings，
+  # 编译错误抓得到、lint 抓不到。这正是 #275 那条大缺口的形状（「在某处登记了」
+  # ≠「在某处执行了」），所以不留成已知边界，直接给它一个 PR 档的执行位置。
+  # 本机（macOS 26）实测：把一条 `format!("{}", "x")` 塞进
+  # `#[cfg(target_os = "macos")]` 块里，clippy 退 101；塞进
+  # `#[cfg(not(target_os = "macos"))]` 块里，同一条命令退 0——尺子是活的，
+  # 瞎的只是被 cfg 关掉的那一侧。
+  #
+  # `cargo fmt` 不吃 cfg（rustfmt 解析整个文件），所以它本来就两支都看得见；
+  # 真正需要第二条腿的是 clippy 与 cargo test。
+  desktop-shell:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 本机（macOS）实测冷编译 37 秒；上限是防挂死、不是性能预算
+    strategy:
+      # fail-fast: false —— 一条腿红不许掐掉另一条：两支的 lint 是两个结论，
+      # 掐掉就又回到「那一支没有执行位置」。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.os }}  # 两个平台的 target/ 不通用，缓存键必须分开
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: 摆一个空的 sidecar 产物目录
+        # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，
+        # tauri-build 校验它存在才肯生成命令清单。**空目录就够**——这一格不打包，
+        # 也正因如此它不必挂在「构建完 PyInstaller sidecar 之后」，代价从
+        # 「等一次完整打包」降到几十秒。
+        run: mkdir -p dist/Tavotto
+      - working-directory: src-tauri
+        run: cargo fmt --check
+      - working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - working-directory: src-tauri
+        run: cargo test
+
+  package:
+    # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯
+    # 「本地能跑但打包后 404」这类只在发布时才暴露的问题。
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
+    # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
+    #
+    # **needs 只有 frontend，没有 backend-fast**（CI01，2026-09-16；四个重型 job 同此，
+    # 另外三个不再重复这段）：
+    #   * 这里与三条冒烟腿都**不消费** backend-fast 的任何产物——没有一步
+    #     download-artifact，前端由下面的 `build_frontend.py` 自建。等它只是等一个
+    #     「pytest 过了」的结论（CI00 把 8 条 backend-fast / frontend → 重型 的边全部
+    #     判成 verdict-only，docs/implementation/ci-foundation/evidence/dag_edge_kinds.json）。
+    #   * 代价是整条合并资格：29 个合并组里 28 个的关键路径是
+    #     backend-fast（三档里最慢的那一档，中位 31–35 分钟）→ windows-exe-smoke（24 分钟）→ integration gate，
+    #     资格中位 57 分钟；删边后的模型中位 41 分钟（Δ −15 分钟，CI_BASELINE.md §5.1）。
+    #   * **AND 一点没松**：backend-fast 仍在 `CI fast gate` 的 needs / --required 闭集里，
+    #     ruleset 要三个 Gate 全绿；它红了候选照样进不了 main，只是重型 job 白跑一轮
+    #     （约 66 Windows 分钟 + 35 macOS 分钟）。判定器与两个 Gate 的闭集一行没动。
+    #   * **保留 frontend 这条边作短预筛**：frontend 中位 4 分钟，而删边后关键路径变成
+    #     backend-platforms (windows)（中位 41 分钟），frontend + 最长的重型 job 合计
+    #     ~28 分钟不在关键路径上——留着它对资格时长零成本，却能在前端坏掉
+    #     （pnpm install / lint / i18n / vitest / build / 插件候选组装）时省下每个候选
+    #     约 45 runner 分钟的白跑（Windows 25 + macOS 5 + posix 9 + package ×4）。
+    #   tests/test_merge_queue_workflows.py::TestHeavyLaneDependencies 钉住这两条决定；
+    #   回退 = 把四行 needs 改回 `[backend-fast, frontend]`，别的什么都不用动。
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        # 三个平台各一档 3.13（发行 runtime 的版本），外加一档 Linux 3.14：
+        # requires-python 放到 `<3.15` 之后，wheel 在 3.14 上「装得进干净
+        # 环境并起得来」也得有人真跑（issue #33 的完成定义之一）。
+        include:
+          - { os: ubuntu-latest,  python: "3.13" }
+          - { os: ubuntu-latest,  python: "3.14" }
+          - { os: macos-latest,   python: "3.13" }
+          - { os: windows-latest, python: "3.13" }
+    timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+      - name: 打 wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: 装进干净环境并冒烟
+        shell: bash
+        run: |
+          python -m venv /tmp/smoke
+          BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
+          "$BIN/python" -m pip install --quiet dist/*.whl
+          "$BIN/python" -c "import tavotto; print('version', tavotto.__version__)"
+          "$BIN/python" -c "
+          from pathlib import Path
+          import tavotto
+          web = Path(tavotto.__file__).parent / 'web' / 'index.html'
+          assert web.is_file(), 'wheel 里没有前端构建产物'
+          print('frontend ok')
+          "
+          "$BIN/python" -c "
+          from tavotto.engine import pool
+          assert pool.WORKER_PY.is_file(), 'wheel 里没有 worker.py'
+          print('worker ok')
+          "
+          "$BIN/python" -c "
+          from tavotto.engine import tutorial
+          problems = tutorial.validate_tutorial_resources()
+          assert not problems, 'wheel 里的教程资源不完整: ' + '; '.join(problems)
+          assert 'site-packages' in str(tutorial.resource_root()), tutorial.resource_root()
+          print('tutorial ok', tutorial.resource_root())
+          "
+      - name: 起服务并请求首页
+        shell: bash
+        env:
+          TAVOTTO_DATA_DIR: ${{ runner.temp }}/tavotto-data
+          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}/tavotto-config
+        run: |
+          BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
+          "$BIN/python" -m tavotto --port 5199 --no-browser &
+          sleep 8
+          curl -sf http://127.0.0.1:5199/ -o /dev/null
+          curl -sf http://127.0.0.1:5199/api/version
+          echo
+
+  windows-exe-smoke:
+    # 「只在别人电脑上发生」的问题基本都在这一段：打包后的 .exe、隔离的
+    # 用户目录、真实的渲染与导出。GitHub 提供 windows-latest 托管运行器，
+    # 所以日常拦截不需要自己常备一台 Windows。
+    #
+    # **本作业是内置渲染 runtime 的唯一真验证点**：Windows 桌面版承诺
+    # 「没装过 Python 的电脑装完就能渲染、首次不联网」，而这条承诺只有把
+    # runtime 真构建出来、真打进 .exe、再在**不给 TAVOTTO_WORKER_PYTHON** 的
+    # 情况下真跑一次渲染与导出，才算验过。所以它进 PR/main 门禁，
+    # 不是只挂在手动的 Release 工作流上。
+    #
+    # 走的是 scripts/smoke_app.py（与 nightly 共用同一条路径），失败时把
+    # app.log / worker.log / runtime 清单一起传上来。
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
+    # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
+    needs: [frontend]
+    # **Playwright 按 project 分到两台机器**（CI03c，2026-09-16）。这条腿是 CI01 删边之后
+    # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
+    # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
+    # Playwright 自带的 `--shard` 按 group 顺序等分、不看时长，跨 project 平衡要自写分区器；
+    # 按 project 切，完整性判据最简单——**三个 project 各恰好出现在一片里**，三层看住：
+    #   ① 合同测试（tests/test_merge_queue_workflows.py::TestPlaywrightShards）读
+    #      web/playwright.config.ts 的 project 名集合与下面 include 的 `--project=` 集合比：
+    #      并集 == 配置、两两不交、无空片、`others` == 其余片之并；
+    #   ② 每片跑 e2e 之前先「分片自验」（scripts/ci/playwright_shard_check.py）：对着
+    #      Playwright 自己的 `--list` 再比一次集合（本片 == 全集里属于本片 project 的那些、
+    #      本片 ∪ 另一片 == 全集的 project 集），不成立就红在 e2e 之前；
+    #   ③ matrix 语义：任一片不 success，`needs.windows-exe-smoke.result` 就不是 success，
+    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)`（下面 `name:`），
+    #      required contexts 仍只有三个 Gate，仓库设置不用重登记。
+    # 两片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
+    # **都跑**三条断言与冒烟①②③（合计约 1 分钟）——不用 `if:` 把它们收窄到一片上：
+    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是两片各自独立成立。
+    # 浏览器按片装：片 1 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
+    # 值里不能有逗号（scripts/ci/ci_baseline.py 的 matrix 解析按逗号切）；`projects` /
+    # `others` 是 `--project=` 参数的字面形状，直接进 `pnpm e2e` 与自验脚本的命令行。
+    # 回退：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
+    # 片号；自验步骤与 step 级 timeout 留着也无害。
+    name: windows-exe-smoke (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
+          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - name: 构建画布产物给 e2e 用
+        # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
+        # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
+        # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
+        # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        run: python scripts/build_mcp_widget.py
+
+      # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
+      # 失败。**不设 TAVOTTO_WORKERD**——下面的冒烟要验的正是「产物自带的那份
+      # 被自动找到并真的用上了」。
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - name: 构建 Rust supervisor（tavotto-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
+      - name: 缓存 CPython 归档下载
+        # 只缓存那个官方 zip（按锁文件内容做 key）。wheel 不缓存：
+        # 每次真从 PyPI 装一遍，才能发现「锁文件里的版本被 yank 了」这类问题。
+        # key 带上 runner 的平台/架构：不同目标下的是不同的归档，共用一个 key
+        # 会让 macOS 那条腿命中 Windows 的缓存（然后 sha256 对不上、白下一次）。
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime
+        # 脚本自己会做 SHA-256 校验、版本核对，并**逐个 import + 画一张真图**；
+        # 任何一步不过就直接失败在这里，而不是留到用户机器上。
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 装打包依赖
+        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去——科学栈只存在于
+        # 内置 runtime 里，这条边界一破，包大小和依赖关系立刻失控。
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: PyInstaller（内置 runtime 必须进包）
+        env:
+          TAVOTTO_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      - name: 断言产物里真有 workerd
+        run: |
+          $bin = "dist\Tavotto\_internal\tavotto-workerd.exe"
+          if (-not (Test-Path $bin)) {
+            throw "产物里没有 $bin——渲染会静默回退到 Python 池（功能全在、只是慢）"
+          }
+          "{0:N0} KiB" -f ((Get-Item $bin).Length / 1KB)
+
+      # 只装桌面版的用户全靠这一个可执行文件被外部程序（Codex 插件）发现。
+      # **在真 Windows 产物上验**：GUI 与 console 是两个子系统，源码级测试
+      # 只能证明 spec 里写了，证明不了打出来的东西真能当命令行用。
+      - name: 断言产物里有 console 版 CLI，并且它真能当命令行用
+        run: |
+          $cli = "dist\Tavotto\tavotto-cli.exe"
+          if (-not (Test-Path $cli)) {
+            throw "产物里没有 $cli——只装桌面版的用户那里 Codex 插件会报「没找到 Tavotto」"
+          }
+          # GUI 版 Tavotto.exe 拿不到 stdout（输出会被改道进 app.log），
+          # console 版必须**真的**把那行 JSON 交到管道里来。
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\cli-cfg"
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\cli-data"
+          $out = & $cli doctor --json
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli doctor 失败（$LASTEXITCODE）: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $j.ok) { throw "doctor 报了问题: $out" }
+          if (-not $j.frozen) { throw "doctor 没认出自己是冻结产物: $out" }
+          if (-not $j.cli) { throw "doctor 定位不到自己的 CLI: $out" }
+          Write-Host "tavotto-cli: $($j.cli)（协议 v$($j.protocol)）"
+
+          # 交接协议在真产物上跑一遍：登记 + 不唤起界面，路径带中文和空格
+          $proj = "$env:RUNNER_TEMP\我的 图库"
+          New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          Copy-Item examples\runtime_check\*.py $proj -Force
+          $script = @(Get-ChildItem $proj -Filter *.py)[0].FullName
+          $out = & $cli open "$script" --json --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli open 失败（$LASTEXITCODE）: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $j.ok) { throw "open 回了 ok=false: $out" }
+          if ($j.launch) { throw "--no-launch 却起了界面: $out" }
+          if (-not (Test-Path "$proj\tavotto_registry.json")) { throw "没生成 tavotto_registry.json" }
+          # `tavotto run` 的打包闭包复核（ADR 0021）。runcli / runspec /
+          # runcodes 靠 PyInstaller 的字节码分析被收进去，spec 里没有它们的
+          # 名字——漏收的表现不是构建失败，是用户机器上的 ModuleNotFoundError。
+          # 两条都**不起任何子进程**：--help 退 0；故意的用法错误退 2，后者
+          # 顺带证明 runcodes 的退出码闭集也真的进了包（--help 碰不到它）。
+          #
+          # --help 的**流向**也在这里判一半（issue #198 就是从这一步的日志看
+          # 出来的：`> $null` 之后用法文本还在，说明它写的是 stderr）。所以
+          # 这里不再 `> $null` 丢掉，而是**重定向到文件再断言它非空**——这正是
+          # 用户 `tavotto run --help > help.txt` 会得到的东西，而冻结产物上流的
+          # 接管方式与源码树不同（PyInstaller 的 console 壳 + Windows 控制台），
+          # 源码树的用例看不见这一层。
+          #
+          # 另一半（stderr 必须为空）**刻意留在 pytest** 里
+          # （test_help_goes_to_stdout_and_shows_the_delimiter）：这一步下面那段
+          # 注释记着，原生命令的 stderr 在 pwsh 里怎么被接管一直没查清，为它
+          # 引一条 `2>` 进来只会换一种假红。
+          $helpOut = "$env:RUNNER_TEMP\run-help.out"
+          & $cli run --help > $helpOut
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli run --help 失败（$LASTEXITCODE）——runcli 多半没进包" }
+          if ([string]::IsNullOrWhiteSpace((Get-Content $helpOut -Raw))) { throw "run --help 的用法文本没进 stdout：管到 less 或重定向到文件时用户拿到的是空的（issue #198）" }
+          # 下面这条**期望非零退出**，是本 workflow 里第一条这样的判据——而
+          # "这一步算成功吗"在 pwsh 里默认是**推断**出来的，不是我们说的。
+          #
+          # 2026-08-29 实测两轮：断言全过、`✓` 都打印了，步骤仍然退 1。第二轮
+          # 已经去掉 `2>&1`、也把 `$ErrorActionPreference` 放成了 `Continue`，
+          # **日志里一行 PowerShell 异常文本都没有**，它还是退 1。那两条猜测
+          # （ErrorRecord 转换 / `$PSNativeCommandUseErrorActionPreference`）
+          # 与此无关。机制是两层，2026-09-14 查清（issue #197）：
+          #
+          #   ① runner 会**改写**每个 pwsh / powershell 步骤的脚本：前置
+          #      `$ErrorActionPreference = 'stop'`，**后置**
+          #      `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`
+          #      （actions/runner `src/Runner.Worker/Handlers/ScriptHandlerHelpers.cs`
+          #      的 `FixUpScriptContents`）。所以「脚本最后一行打印了 ✓」之后还有
+          #      runner 追加的那一行在跑，它执行的是 `exit 2`——`$LASTEXITCODE`
+          #      此刻正是上一条原生命令留下的、我们**故意**要的那个 2。
+          #   ② 步骤是 `pwsh -command ". '{0}'"` 起的（同一文件里的
+          #      `_defaultArguments`），而 `-Command` 会把非 0/1 的退出码折成 1：
+          #      about_pwsh 的「-Command | -c」一节原文——"If the last command is an
+          #      external program or a PowerShell script that explicitly sets an exit
+          #      code other than 0 or 1, that exit code is converted to 1 for process
+          #      exit code."——所以看见的是 1 而不是 2。
+          #
+          #   这一步的契约是「**所有断言都过 = 成功**」，而它此前把这个结论
+          #   托付给了 `$LASTEXITCODE` 的隐式传播——那个值来自一条**与结论无关**
+          #   的命令。
+          #
+          # 所以显式 `exit 0`：它在 runner 追加的那一行**之前**退出，把结论送进
+          # 控制流。失败路径全是 `throw`（Stop → 退 1），走不到这一行，所以它不
+          # 掩盖任何真失败。规则登记在 `.github/AGENTS.md`（「pwsh 步骤的退出码」）。
+          #
+          # 三条附带的事实，留给下一个想"顺手整理"这段的人：
+          #  * `2>&1 > $null` 连吞输出都没做到——`2>&1` 绑的是**当时的** stdout，
+          #    `> $null` 是之后才改的（与 bash 的 `2>&1 > file` 同一个形状）；
+          #  * `run --help` 的用法文本**现在写 stdout**（issue #198 之前写的是
+          #    stderr，所以那时 `> $null` 挡不住它——上面那条断言就是钉这个的）；
+          #  * stderr 不重定向是刻意的：那几行进日志无害，反而是"码表真的进了
+          #    包"的证据。
+          $prev = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & $cli run python x.py
+          $rc = $LASTEXITCODE
+          $ErrorActionPreference = $prev
+          if ($rc -ne 2) { throw "tavotto-cli run 的用法错误退出码是 $rc，应为 2" }
+          Write-Host "✓ 真产物上的 doctor / open --json --no-launch / run 闭包都通了"
+          exit 0
+
+      - name: 断言产物里真有内置 runtime
+        run: |
+          $rt = "dist\Tavotto\_internal\runtime"
+          if (-not (Test-Path "$rt\python.exe")) { throw "产物里没有 $rt\python.exe" }
+          if (-not (Test-Path "$rt\runtime-manifest.json")) { throw "产物里没有 runtime 清单" }
+          $m = Get-Content "$rt\runtime-manifest.json" -Raw | ConvertFrom-Json
+          if ($m.build.smoke -ne "passed") { throw "runtime 未通过 import 冒烟: $($m.build.smoke)" }
+          Write-Host "内置 runtime: Python $($m.python.version)，$($m.packages.PSObject.Properties.Count) 个锁定包"
+          "{0:N0} MiB" -f ((Get-ChildItem $rt -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: 冒烟①：干净 Windows（无 Python / 无 TAVOTTO_WORKER_PYTHON）
+        # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
+        # runtime：少了它，一台碰巧装着 matplotlib 的 CI 机器会让「runtime 根本
+        # 没打进去」全程绿灯。smoke_app.py 还会主动把 TAVOTTO_WORKER_PYTHON 摘掉。
+        # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
+        # 所以这一步同时也证明了「机器上没有科学栈也能渲染」。
+        # --expect-control-plane workerd 是同一条思路的另一面：产物自带的
+        # Rust supervisor 被自动找到、并且这次渲染真的跑在它上面
+        # （回退到 Python 池是静默降级，不断言就永远发现不了）。
+        run: |
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
+            --figures examples/runtime_check `
+            --expect-source bundled --expect-runtime `
+            --expect-control-plane workerd `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib `
+            --tutorial
+
+      - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
+        # 用户名带中文、项目路径带空格是国内最常见的组合，也是历来最容易
+        # 出问题的一档（编码、引号、路径分隔符）
+        run: |
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          $dst = "$env:RUNNER_TEMP\我的 论文 图\figures"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item examples\runtime_check\* $dst -Recurse -Force
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
+            --figures "$dst" --expect-source bundled
+
+      - name: 准备渲染环境（模拟用户自己的 Python）
+        run: python -m pip install matplotlib
+
+      - name: 冒烟③：用户指定的解释器仍然优先于内置
+        # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
+        # 只有他自己那套环境才行。expect-source=env_override 就是这条的看护。
+        run: |
+          $env:TAVOTTO_WORKER_PYTHON = (Get-Command python).Source
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
+            --expect-source env_override
+
+      - name: 装 web 依赖与本片的浏览器（${{ matrix.browsers }}）
+        working-directory: web
+        # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：黄金路径与
+        # 可访问性在它上面各跑一遍——只在跑 webkit project 的那一片上装（matrix.browsers）。
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps ${{ matrix.browsers }}
+
+      - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
+        # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`
+        # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。
+        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、
+        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以
+        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。
+        # 两份清单 + check.json 写进 RUNNER_TEMP，下面上传作证据——只作证据，不作判定输入。
+        run: >-
+          python scripts/ci/playwright_shard_check.py
+          --shard ${{ matrix.shard }}
+          --projects="${{ matrix.projects }}"
+          --others="${{ matrix.others }}"
+          --web web
+          --out "${{ runner.temp }}/playwright-shard"
+
+      - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime，本片 ${{ matrix.projects }}）
+        working-directory: web
+        # **step 级上限 30 分钟**（job 级 60 不动）。CI00 实测这一步 18.7 分钟（三个 project
+        # 全跑）；分片后片 1 ≈ 8.4 分钟、片 2 ≈ 6.3 分钟，30 是两倍余量。为什么要有 step 级：
+        # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
+        # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
+        # 「失败时收集日志」与全部 Post 步骤都是 pending 没跑，日志 blob 404、artifact 一个
+        # 都没有（docs/implementation/ci-foundation/evidence/ci03c/ci_pr373_attempt1_hang.json）。
+        # step 级超时让挂起变成**带日志的失败**：这一步 failure，后面 `if: failure()` 的收集
+        # 步骤才会跑，playwright-report / test-results 才传得上来。
+        timeout-minutes: 30
+        run: |
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
+          pnpm e2e ${{ matrix.projects }}
+
+      - name: 上传分片自验证据
+        # 两份 `--list` 清单 + check.json：日后重平衡与复核用，不是判定输入
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-shard-check-windows-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/playwright-shard/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      # 大图预览的 Windows 内存基准（issue #181 / ADR 0022 / Session 05 §5-§7）。
+      #
+      # **刻意不是门禁**：绝对内存在托管 runner 上会飘，按字节做一条闸只会得到
+      # 一个随机红的检查——而随机红的检查最后一定会被人忽略掉，比没有检查更坏
+      # （Session 05 §6）。结构性那条闸在上一步的 `pnpm e2e`
+      # （`web/e2e/large-figure.spec.ts` 断言 DOM 节点数与 `<path>` 数），
+      # 它是真门禁；这一步只出数据。
+      #
+      # `continue-on-error` + 脚本自身恒退 0：采样拿不到计数器时报
+      # `available:false` 而不是让这个 job 红——一个量不到内存的基准是坏基准，
+      # 一个因此把发布挡住的基准是 bug。
+      # 走的是**跨平台那两条命令**，不是一份 Windows 专用脚本。
+      #
+      # 上一版是 `scripts/bench_large_preview_windows.ps1`：它起
+      # `Tavotto.exe --no-browser`（打包的 Python sidecar）再 POST
+      # `/api/engine/render`。那条路上**进程树里根本不会出现 WebView2**，
+      # `Measure-Renderer` 只可能报 `no_webview2_descendant`——一个结构上就
+      # 量不到自己主语的基准。另外它既没走会话鉴权（`/api/panels` 回 401），
+      # 也没把 fixture 的产物现跑出来（素材列表是空的）。三条一起，等于
+      # `continue-on-error` 底下常年安静地什么都不产出。
+      #
+      # 现在直接量该量的那一步：**产物挂进真浏览器**。第一条命令走真链路出
+      # 预览 SVG（上一步已经 `pip install matplotlib`），第二条把它挂进
+      # **Windows 自带的 Edge**——与 WebView2 同一个 Chromium 引擎、同一个
+      # 平台。它仍不是 WebView2 本身，产物里 `browserChannel` 如实写着。
+      - name: 大图预览内存基准（不阻塞）
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          $svg = "$env:RUNNER_TEMP\issue181-preview.svg"
+          python tests/support/large_preview_svg.py $svg --shape mesh --n 470
+          node tests/support/browser_dom_probe.mjs $svg --cycles 5 --browser msedge `
+            > "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+          Get-Content "$env:RUNNER_TEMP\bench-large-preview-windows.json"
+
+      - name: 上传内存基准
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
+          # 不阻塞；仓库里没有它的消费者，grep 过）。
+          name: bench-large-preview-windows-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/bench-large-preview-windows.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 失败时收集日志与操作轨迹
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-logs-shard${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/**/app.log
+            ${{ runner.temp }}/**/worker.log
+            dist/Tavotto/_internal/runtime/runtime-manifest.json
+            build/**/warn-*.txt
+            web/playwright-report/**
+            web/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos-app-smoke:
+    # windows-exe-smoke 的 macOS 对应物（2026-08-18 起）。
+    #
+    # macOS 桌面版从这一版开始也自带内置渲染 runtime，于是同一条承诺
+    # 「没装过 Python / Homebrew / Conda 的 Mac 装完就能渲染、首次不联网」
+    # 也需要一个真验证点。**它必须真构建 runtime、真打进产物、再在不给
+    # TAVOTTO_WORKER_PYTHON 的情况下真跑一次渲染与导出**——否则一台碰巧装着
+    # matplotlib 的运行器会让「runtime 根本没打进去」全程绿灯，而那正是
+    # 用户装完打不开图的原因。
+    #
+    # 这一档在托管运行器上要跑十来分钟（下 25 MiB CPython + 装 300 MiB 科学栈
+    # + PyInstaller）。值得：在这之前 macOS 这条腿的渲染是靠 CI 现建的
+    # worker-env 撑着的，等于什么都没验。
+    #
+    # e2e 不在这里跑（Windows 那条已经覆盖真实界面），避免把 PR 门禁再拉长一倍。
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
+    # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
+    needs: [frontend]
+    runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      # **不设 TAVOTTO_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - name: 构建 Rust supervisor（tavotto-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
+      - name: 缓存 CPython 归档下载
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime（python-build-standalone）
+        # 目标按本机平台/架构自动挑。脚本自己做 SHA-256 校验（期望值取自 pbs
+        # 上游发布的 SHA256SUMS）、按 .dist-info 核对版本，并用刚装好的解释器
+        # **逐个 import + 画一张真图**；任何一步不过就直接失败在这里。
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 装打包依赖
+        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: PyInstaller（内置 runtime 必须进包）
+        env:
+          TAVOTTO_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      - name: 断言产物里真有 workerd 与内置 runtime
+        run: |
+          set -euo pipefail
+          BIN=dist/Tavotto/_internal/tavotto-workerd
+          test -x "$BIN" || { echo "::error::产物里没有 $BIN——渲染会静默回退到 Python 池"; exit 1; }
+
+          RT=dist/Tavotto/_internal/runtime
+          test -f "$RT/runtime-manifest.json" || { echo "::error::产物里没有 runtime 清单"; exit 1; }
+          # 解释器的落点**从清单里读**，不写死 bin/python3——构建时会把
+          # python / python3 两个别名剪掉（Tauri 拍平符号链接 = 白搭 34 MiB），
+          # 实体是版本化的 bin/python3.13，而那个名字会随 CPython 升版而变。
+          python - "$RT" <<'PY'
+          import json, os, sys
+          rt = sys.argv[1]
+          m = json.load(open(os.path.join(rt, "runtime-manifest.json"), encoding="utf-8"))
+          if m["build"]["smoke"] != "passed":
+              raise SystemExit(f"::error::runtime 未通过 import 冒烟: {m['build']['smoke']}")
+          py = os.path.join(rt, m["build"]["interpreter"])
+          if not os.access(py, os.X_OK):
+              raise SystemExit(f"::error::产物里没有可执行的解释器: {py}")
+          print(f"内置 runtime: {m['platform']['os']}/{m['platform']['arch']} "
+                f"Python {m['python']['version']}，{len(m['packages'])} 个锁定包，"
+                f"解释器 {m['build']['interpreter']}")
+          PY
+          du -sh "$RT"
+
+      - name: 架构核对（产物里不许混进另一个架构的 Mach-O）
+        # 一个 x86_64 的 .so 混进 arm64 的包里，签名/公证都可能过，
+        # 症状要等到用户 import 那个包时才出现
+        run: |
+          python scripts/codesign_macos.py scan --app dist/Tavotto --quiet \
+            --expect-arch "$(python -c 'import platform;print(platform.machine())')"
+
+      - name: 冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 TAVOTTO_WORKER_PYTHON）
+        # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
+        # runtime；--expect-runtime 再断言「本该带 runtime 且带的这份完整」。
+        # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
+        # 所以这一步同时证明了「机器上没有科学栈也能渲染」。
+        # smoke_app.py 会主动把 TAVOTTO_WORKER_PYTHON / Conda / PYTHONHOME 摘掉。
+        run: |
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
+            --figures examples/runtime_check \
+            --expect-source bundled --expect-runtime \
+            --expect-control-plane workerd \
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib \
+            --tutorial
+
+      - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
+        # 项目路径与**用户数据目录**都放到中文+空格路径下——两者的失败方式不同
+        run: |
+          set -euo pipefail
+          DST="$RUNNER_TEMP/我的 论文 图/figures"
+          mkdir -p "$DST"
+          cp -R examples/runtime_check/. "$DST/"
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
+            --figures "$DST" --workdir "$RUNNER_TEMP/我的 数据 目录" \
+            --expect-source bundled --expect-runtime
+
+      - name: 准备渲染环境（模拟用户自己的 Python）
+        run: python -m pip install matplotlib
+
+      - name: 冒烟③：用户指定的解释器仍然优先于内置
+        # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
+        # 只有他自己那套环境才行
+        run: |
+          TAVOTTO_WORKER_PYTHON="$(command -v python)" \
+            python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
+              --expect-source env_override
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-logs
+          path: |
+            ${{ runner.temp }}/**/app.log
+            ${{ runner.temp }}/**/worker.log
+            dist/Tavotto/_internal/runtime/runtime-manifest.json
+            build/**/warn-*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  posix-e2e:
+    # **POSIX 那条 e2e 腿**（issue #30 / STATUS 的 R-16）。
+    #
+    # 在这之前，全仓唯一执行 `pnpm e2e` 的地方是 windows-exe-smoke，于是
+    # `web/e2e/error-recovery-en.spec.ts` 里两条 `test.skip(win32)`
+    # （项目目录不可读 / 导出目录不可写，靠的是 POSIX 权限位）在唯一存在的
+    # 那条腿上**恒跳过**——收得到不等于跑得过，它们只在作者本机绿过，
+    # CI 里一次都没有进过断言。空转的门禁比没有门禁更坏。
+    #
+    # 这条腿**不打包**：不设 `TAVOTTO_EXE`，fixtures 回退到 `python -m tavotto`
+    # （web/e2e/fixtures.ts 的 launchCommand）。产物形态的验证归 Windows 那条，
+    # 这里要回答的是另一个问题——**同一套界面在 POSIX 的权限 / 路径语义下
+    # 还成不成立**。所以也不需要内置 runtime / PyInstaller / Rust supervisor，
+    # 十来分钟的构建全部省掉。
+    #
+    # 只跑 chromium 与 chromium-en 两个 project：webkit 那档验的是 macOS 桌面壳
+    # 的引擎，已经在 windows-exe-smoke 上跑过，在 Linux 上再跑一遍只是把腿拉长。
+    #
+    # 合并资格档：与另外两条重腿同档，只在 merge_group 的组合提交（或带
+    # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
+    # `!= 'pull_request'` 那种过宽的否定条件。
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
+    needs: [frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 装 Tavotto 与渲染依赖
+        # matplotlib 不是运行期依赖（用户自己的解释器才是渲染环境），
+        # 这条腿要真渲染出图，所以显式装一份。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . matplotlib
+
+      - name: 构建前端进包
+        # 包内 `src/tavotto/web/` 优先于 `web/dist`——不跑这一步测的是旧界面。
+        run: python scripts/build_frontend.py
+
+      - name: 构建画布产物给 e2e 用
+        # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
+        # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
+        # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
+        # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        run: python scripts/build_mcp_widget.py
+
+      - name: Playwright 黄金路径（真实界面 + python -m tavotto）
+        working-directory: web
+        env:
+          # 不设 TAVOTTO_EXE：这条腿刻意跑源码形态（见上）。
+          TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+        # **step 级上限 20 分钟**（job 级 45 不动）：CI00 实测这一步 7.4 分钟。理由与
+        # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
+        # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
+        # step 级超时把挂起变成带日志的失败。这条腿不分片：7 分钟，不在关键路径上。
+        timeout-minutes: 20
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm e2e --project=chromium --project=chromium-en
+
+      - name: 失败时收集 trace 与操作轨迹
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posix-e2e-report
+          path: |
+            web/playwright-report/**
+            web/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────
+  # 稳定 Gate（Merge Queue 迁移的落点，判定逻辑在 scripts/ci/aggregate_gate.py）
+  #
+  # ruleset 最终只依赖这两个名字 + codeql.yml 的「CodeQL gate」。要点：
+  #   * `name:` 显式固定——check run 的名字就是 required context，改名 =
+  #     把仓库锁死在一个永远不会出现的 context 上；
+  #   * `if: always()`——上游失败时 Gate 必须**跑起来并且红**，绝不靠
+  #     「上游 skipped 所以 required check 碰巧没结论」这种随 GitHub 行为
+  #     变化的缝隙；
+  #   * `needs` 与 `--required` 是同一个闭集，两处必须同步改（脚本对缺失 /
+  #     多余的 job 都判失败，tests/test_merge_queue_workflows.py 再对拍一道）。
+  # ────────────────────────────────────────────────────────────────
+  ci-fast-gate:
+    name: CI fast gate
+    # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
+    # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # **判定器必须来自默认分支，不是本次 checkout**（#119 评审 P1）：
+      # switch-to-gates 之后 Gate 是唯一的 required check，而 checkout 的是
+      # PR / 队列候选的 revision——从它执行判定逻辑，恶意改动（比如塞一个
+      # scripts/ci/json.py 让 `import json` 时 SystemExit(0)）能把全红的
+      # needs 判成绿。默认分支上还没有这份脚本时（bootstrap 空窗，只存在于
+      # 引入它的 PR 合并之前）退回本地副本并 notice。边界如实写明：needs
+      # 的**输入**仍由本 revision 的 job 产出，工作流文件本身也可被 PR 改写
+      # ——那一层靠人审 + thread resolution 挡，与旧 required contexts 相同；
+      # 这里关掉的是「不碰 workflow、只藏一个影子模块」的静默向量。
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
+      - name: 聚合判定
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
+        # 双保险挡住 stdlib 遮蔽注入
+        run: |
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
+            --mode fast \
+            --event "${{ github.event_name }}" \
+            --required python-lint,cla-check,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --needs-json "$NEEDS_JSON"
+
+  ci-integration-gate:
+    name: CI integration gate
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
+      - name: 聚合判定
+        # 普通 PR 允许 deferred（重型 job 整体 skipped → Gate 绿，但 summary
+        # 与 JSON 明确写出「完整资格推迟到 merge_group」）；merge_group /
+        # push / full-ci PR 一律 --require-heavy，skipped 就是失败。
+        # full-ci 标签只在 pull_request 事件里存在，表达式先按事件分支。
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          GATE_EVENT: ${{ github.event_name }}
+          GATE_FULL_CI: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: |
+          set -euo pipefail
+          FLAGS="--allow-deferred"
+          if [ "$GATE_EVENT" != "pull_request" ]; then
+            FLAGS="--require-heavy"
+          elif [ "$GATE_FULL_CI" = "true" ]; then
+            FLAGS="--require-heavy --full-ci"
+          fi
+          # shellcheck disable=SC2086
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
+            --mode integration \
+            --event "$GATE_EVENT" \
+            $FLAGS \
+            --required backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e \
+            --needs-json "$NEEDS_JSON"
+
+  # ────────────────────────────────────────────────────────────────
+  # main 落地审计——push main 上跑的唯一一个 job。
+  #
+  # 它**不是**合并资格的复跑：合进来的树就是 merge_group 上刚验过的那棵
+  # （Merge Queue 强制、无 bypass actor，没有第二条进 main 的路），在 main 上
+  # 重造三个 wheel、重打两个桌面产物只是把同一批产物再造一遍。这里只审
+  # 「落地这件事本身」：落了哪个 SHA / 哪棵树、结构契约还成立、受管生成物
+  # 没有漂——几分钟内回来。深度验证归 nightly / lab（当晚就会跑到这个 SHA）。
+  # ────────────────────────────────────────────────────────────────
+  main-landing-audit:
+    name: main landing audit
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 落地信息（写进 summary，作为这个 commit 的审计记录）
+        run: |
+          set -euo pipefail
+          {
+            echo "## main landing audit"
+            echo
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| commit | \`$(git rev-parse HEAD)\` |"
+            echo "| tree | \`$(git rev-parse 'HEAD^{tree}')\` |"
+            echo "| parents | \`$(git rev-list --parents -n 1 HEAD | cut -d' ' -f2-)\` |"
+            echo "| subject | $(git log -1 --pretty=%s | head -c 200) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: workflow YAML 可解析
+        run: |
+          python -m pip install --quiet pyyaml
+          python - <<'PY'
+          import pathlib, sys, yaml
+          bad = []
+          for p in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+              try:
+                  yaml.safe_load(p.read_text(encoding="utf-8"))
+              except yaml.YAMLError as exc:
+                  bad.append(f"{p.name}: {exc}")
+          if bad:
+              sys.exit("\n".join(bad))
+          print("workflow YAML 全部可解析")
+          PY
+      - name: 发行生成物不许进索引（ADR 0043）
+        run: python3 scripts/ci/check_generated_untracked.py
+      - name: CI 结构契约（不依赖科学栈的那部分）
+        # 这些测试只读文件与脚本、纯标准库：Gate 闭集、merge_group 触发、
+        # 并发不取消队列、发布编排契约、Ruleset 迁移工具、冲突域检查。
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q \
+            tests/test_merge_queue_workflows.py \
+            tests/test_aggregate_gate.py \
+            tests/test_merge_queue_ruleset.py \
+            tests/test_pr_conflict_domains.py \
+            tests/test_release_workflow_contract.py

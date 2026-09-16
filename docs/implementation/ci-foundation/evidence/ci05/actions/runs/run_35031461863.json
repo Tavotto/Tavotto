@@ -1,0 +1,13 @@
+{
+ "id": 35031461863,
+ "run_attempt": 1,
+ "event": "pull_request",
+ "status": "completed",
+ "conclusion": "success",
+ "head_sha": "162f54c6f62de894008eca65abd0a936309dc1a6",
+ "head_branch": "ci/ci03b-package-smoke-isolation",
+ "created_at": "2026-09-15T22:32:21Z",
+ "run_started_at": "2026-09-15T22:32:21Z",
+ "updated_at": "2026-09-15T23:03:35Z",
+ "html_url": "https://github.com/Tavotto/Tavotto/actions/runs/35031461863"
+}

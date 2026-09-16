@@ -32,6 +32,7 @@
 | `ci03c/` | **CI03c 的证据**（三份 `--list`、自验输出、12 条负例、两组变异反证 19/19 + 18/18、本机四次真跑的日志 / 计时 / 集合比对、PR #373 attempt 1 挂 60 分钟的 job+steps 原样与 attempt 2 的逐 project 时长），见 [`ci03c/README.md`](ci03c/README.md)；没有真实的分片 CI run | 2026-09-16 |
 | `ci02/` | **CI02 的证据**（两个已有 run 的逐步秒数、Playwright 安装步的三段拆分、仓库缓存 60 条清单与按作用域汇总、合并组 run 的缓存全 miss、recipe 表、本机五种产物的时长 / 尺寸、tsc 反证 T1–T4、已合入候选 ref 的缓存仍在、变异反证 23/23），见 [`ci02/README.md`](ci02/README.md)；没有新的 CI run（Windows 去 `--with-deps` 的实验由本 PR 的 full-ci run 判） | 2026-09-16 |
 | `ci04/` | **CI04 的只读证据**（4 台仓库级 runner 的清单、30 个 lab run 的 runner 归属、`runs-on` 全表与事件 × runner 枚举、仓库 / org 的 Actions 设置、org 级端点 403 原文、变异反证 15/15 + 1 no-op、计划版预算），见 [`ci04/README.md`](ci04/README.md)；没有 SSH、没有改任何设置、没有新 runner | 2026-09-16 |
+| `ci05/` | **CI05 的对照与演练证据**（10 个 after run + 6 个同日合并组对照的 run / jobs 原样、六份 ci.yml 快照、按快照分组的七份 analyze 输出、前后并排表、CI 侧分片完整性（run 35007730894 的 10 份 manifest + junit 集合比对、两个 run 的 Playwright 自验 artifact）、9 条负例、四条本机回退演练），见 [`ci05/README.md`](ci05/README.md)；没有本机时长、没有 push、没有合入 | 2026-09-16 |
 
 **不进仓库的东西**（在会话 scratchpad）：未裁剪的原始 API JSON（与裁剪版对拍过：`analyze` 输出逐字节相同）、
 完整 pytest 日志（873 KB）、junit.xml（592 KB）、五个 CI job 的完整日志、变异反证脚本。
