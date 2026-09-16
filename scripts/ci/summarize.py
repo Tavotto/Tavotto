@@ -202,7 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     head = [
         "## Tavotto Lab Qualification",
         "",
-        f"**Commit** `{meta['sha'][:12] or '?'}` · **档位** `{meta['mode'] or '?'}` · "
+        # 带上仓库名：这段 summary 会出现在 ci-infra 的 run 里，读的人要知道
+        # 这个 SHA 属于 Tavotto/Tavotto（run_metadata 保证它是被验的代码，不是 ci-infra 的提交）。
+        f"**Commit** `{meta.get('repository') or '?'}@{meta['sha'][:12] or '?'}` · "
+        f"**档位** `{meta['mode'] or '?'}` · "
         f"**版本** {meta['tavotto_version'] or '?'}",
         f"<sub>{meta['os']} · {meta['cpu_count']} 核 · {meta['ram_gib']} GiB · "
         f"Python {meta['python']} · {meta['timestamp']}</sub>",

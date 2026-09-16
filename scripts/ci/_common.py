@@ -66,6 +66,42 @@ LAYOUT = (
 
 DEFAULT_STATE_ROOT = "/srv/tavotto-ci"
 
+#: 被验的代码永远来自这个仓库。
+DEFAULT_SOURCE_REPOSITORY = "Tavotto/Tavotto"
+
+
+def source_repository() -> str:
+    """「我在验的是哪个仓库」的**唯一出口**——顺序：显式源仓库 > 运行仓库 > 默认。
+
+    `_lab-qualification.yml` 是可复用 workflow，2026-09-16 起由私有仓库 `Tavotto/ci-infra`
+    跨仓库调用（docs/implementation/ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md F 组）。
+    reusable 的 job 在**调用方**上下文里跑：那时 `GITHUB_REPOSITORY` 是 `Tavotto/ci-infra`，
+    而 checkout 出来、正在被验的代码是 `Tavotto/Tavotto@inputs.sha`。第一次真实派发
+    （ci-infra run 35112349056）就红在这里：一条用例按 `GITHUB_REPOSITORY` 判「我是不是
+    本仓库」，在 ci-infra 里被当成 fork 走了另一条分支；`upgrade_acceptance.py` 的 N-1
+    发行档也会去 `Tavotto/ci-infra` 找。`GITHUB_*` 是 Actions 的保留前缀、job env 覆盖
+    不了，所以 reusable 另设 `TAVOTTO_SOURCE_REPOSITORY`；scripts/ci 下读仓库名的地方
+    **一律走这里**，不许再各自 `os.environ.get("GITHUB_REPOSITORY")`
+    （合同：tests/test_lab_source_repository.py）。
+    """
+    return (
+        os.environ.get("TAVOTTO_SOURCE_REPOSITORY")
+        or os.environ.get("GITHUB_REPOSITORY")
+        or DEFAULT_SOURCE_REPOSITORY
+    )
+
+
+def running_in_source_repository() -> bool:
+    """`GITHUB_SHA` / `GITHUB_REF` 说的是**运行** workflow 的那个仓库。
+
+    只有运行仓库就是源仓库时，它们才描述被验的代码；跨仓库调用时 `GITHUB_SHA`
+    是 ci-infra 自己的提交——写进报告、印进 job summary 的「Commit」就会是一个
+    在 Tavotto/Tavotto 里不存在的 SHA。本地手工跑两边都是空串，视为同一仓库。
+    """
+    return os.environ.get("GITHUB_REPOSITORY", "") == (
+        os.environ.get("TAVOTTO_SOURCE_REPOSITORY") or os.environ.get("GITHUB_REPOSITORY", "")
+    )
+
 
 class CiError(RuntimeError):
     """带稳定 code 的 CI 失败。
@@ -283,10 +319,20 @@ def _mem_total_gib() -> float:
 
 
 def run_metadata(mode: str = "") -> dict:
-    """一份报告要能在几个月后还说明问题，靠的就是这些字段。"""
+    """一份报告要能在几个月后还说明问题，靠的就是这些字段。
+
+    `repository` / `sha` / `ref` 说的是**被验的代码**（源仓库），不是运行 workflow 的
+    仓库：跨仓库调用时 `GITHUB_SHA` / `GITHUB_REF` 是 ci-infra 的，只有 checkout 出来的
+    HEAD 才是 `inputs.sha`；那时 ref 无从得知，宁可留空也不写一个别的仓库的分支名。
+    `run_id` / `run_attempt` 仍取运行仓库的——它们标识的是「本次 run」本身，报告
+    也正是在这个 run 里写的（summarize.py 靠它们区分本轮与上一轮的报告）。
+    """
+    same_repo = running_in_source_repository()
     return {
-        "sha": os.environ.get("GITHUB_SHA", _cmd(["git", "rev-parse", "HEAD"])),
-        "ref": os.environ.get("GITHUB_REF", ""),
+        "repository": source_repository(),
+        "sha": (os.environ.get("GITHUB_SHA", "") if same_repo else "")
+        or _cmd(["git", "rev-parse", "HEAD"]),
+        "ref": os.environ.get("GITHUB_REF", "") if same_repo else "",
         "run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
         "mode": mode or os.environ.get("LAB_MODE", ""),

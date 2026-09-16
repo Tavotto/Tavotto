@@ -330,9 +330,16 @@ sudo chown -R github-runner:github-runner /opt/hostedtoolcache
 
 ## 7. 注册 runner
 
+**注册到私有仓库 `Tavotto/ci-infra`，不是公开仓库**（F 组，2026-09-16 起）：公开仓库里
+不再有任何 runner，PR 写什么 `runs-on` 都只会永远排队。资格验证的步骤定义仍在公开
+仓库的 `_lab-qualification.yml`，由 ci-infra 的 `lab-qualification.yml` 跨仓库 `uses`；
+被验的代码由 reusable 自己 checkout `Tavotto/Tavotto@<sha>`，所以第 5 节的 Deploy key
+仍是公开仓库的。并行期（F-4 → F-8）机器上有两个实例：公开仓库的 `~/actions-runner`
+与 ci-infra 的 `~/actions-runner-infra`，各只接自己仓库的 job；下面按 ci-infra 那个写。
+
 ```bash
 sudo -u github-runner -i
-mkdir -p ~/actions-runner && cd ~/actions-runner
+mkdir -p ~/actions-runner-infra && cd ~/actions-runner-infra
 
 # 版本号见 https://api.github.com/repos/actions/runner/releases/latest
 ASSET_ID=$(curl -s https://api.github.com/repos/actions/runner/releases/latest \
@@ -343,18 +350,19 @@ tar xzf runner.tar.gz && rm runner.tar.gz
 sudo ./bin/installdependencies.sh
 
 ./config.sh \
-  --url https://github.com/Tavotto/Tavotto \
+  --url https://github.com/Tavotto/ci-infra \
   --token <REGISTRATION_TOKEN> \
   --name tavotto-lab-01 \
   --labels self-hosted,linux,x64,tavotto-lab \
   --work _work --unattended --replace
 ```
 
-`<REGISTRATION_TOKEN>` 在 Settings → Actions → Runners → New self-hosted runner
-现取，有效期 1 小时。**不要把它写进任何文件、脚本或本文档。**
+`<REGISTRATION_TOKEN>` 在 **ci-infra 的** Settings → Actions → Runners → New self-hosted
+runner 现取，有效期 1 小时。**不要把它写进任何文件、脚本或本文档。**
 
-标签必须包含 `tavotto-lab`——`lab-ci.yml` 与 `release.yml` 靠它定向。
-改标签时**同步改 `.github/actionlint.yaml`**，否则 lint 会开始报未知标签。
+标签必须包含 `tavotto-lab`——`_lab-qualification.yml` 的 `runs-on` 靠它定向（它被
+ci-infra 调用时才解析）。改标签时**同步改 `.github/actionlint.yaml`**，否则 lint 会
+开始报未知标签。
 
 ### 装成服务
 
@@ -460,12 +468,23 @@ sudo ./svc.sh start
 
 ### 停用 / 移除
 
+**先认清要移除的是哪个实例。** 并行期同一台机器上有两个，名字都叫 `tavotto-lab-01`，
+区别只在归属仓库——服务名与实例目录一一对应：
+
+| 归属 | 实例目录 | systemd 服务名 | 移除 token 从哪取 |
+|---|---|---|---|
+| 公开仓库 `Tavotto/Tavotto`（F-8 注销的那个） | `~/actions-runner` | `actions.runner.Tavotto-Tavotto.tavotto-lab-01.service` | 公开仓库的 Settings → Actions → Runners |
+| 私有仓库 `Tavotto/ci-infra`（现行） | `~/actions-runner-infra` | `actions.runner.Tavotto-ci-infra.tavotto-lab-01.service` | ci-infra 的 Settings → Actions → Runners |
+
 ```bash
+cd <那个实例的目录>
 sudo ./svc.sh stop && sudo ./svc.sh uninstall
 ./config.sh remove --token <REMOVAL_TOKEN>
 ```
 
-移除之后记得在仓库 Settings 里确认 runner 已消失，并删掉那把 Deploy key。
+移除之后记得在**对应仓库**的 Settings 里确认 runner 已消失（`gh api repos/<owner>/<repo>/actions/runners --jq .total_count`）。
+Deploy key 只在**两个实例都不再需要 clone 公开仓库**时才删——它是公开仓库那把，
+ci-infra 的实例 checkout `Tavotto/Tavotto` 也靠它（第 5 节）。
 
 ---
 

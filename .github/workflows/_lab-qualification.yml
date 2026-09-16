@@ -26,13 +26,16 @@ name: Lab Qualification (reusable)
 # 实验室 runner 迁到私有仓库 `Tavotto/ci-infra` 之后（docs/implementation/ci-foundation/
 # ADMIN_HANDOFF_RUNNER_POOL.md F 组），调用方变成那边的 `lab-qualification.yml`：
 # `uses: Tavotto/Tavotto/.github/workflows/_lab-qualification.yml@main`。**本文件仍是资格
-# 验证的唯一定义**——被跨仓库调用时它的 job 在调用方上下文里跑，所以两处「默认取调用方
+# 验证的唯一定义**——被跨仓库调用时它的 job 在调用方上下文里跑，所以三处「默认取调用方
 # 仓库」的地方必须显式钉回 Tavotto/Tavotto，否则 checkout 会去拉 ci-infra、
-# download-artifact 会去 ci-infra 的 run 里找 `dist`：
+# download-artifact 会去 ci-infra 的 run 里找 `dist`、脚本会以为自己在 ci-infra 里：
 #   * `actions/checkout` 显式 `repository: Tavotto/Tavotto`（`ref` 仍是 `inputs.sha`）；
 #   * 发行档 `download-artifact` 显式 `repository` / `run-id` / `github-token`——
 #     `run-id` 取 `inputs.source_run_id`（公开仓库那次 release run 的 id），
-#     `github-token` 取调用方经 `secrets:` 传进来的 `TAVOTTO_PUBLIC_TOKEN`。
+#     `github-token` 取调用方经 `secrets:` 传进来的 `TAVOTTO_PUBLIC_TOKEN`；
+#   * job env `TAVOTTO_SOURCE_REPOSITORY: Tavotto/Tavotto`——脚本里读仓库名的唯一出口
+#     `scripts/ci/_common.source_repository` 优先取它（`GITHUB_REPOSITORY` 在这里是 ci-infra，
+#     且 `GITHUB_*` 前缀覆盖不了）。第一次真实派发就红在没钉这一处（见 job env 的注释）。
 # 同仓库调用（PR B 之前 release.yml 的 `lab_release_gate`；PR B 之后公开仓库里已没有
 # 调用方，这条回退只为「把本文件搬回同仓库直接调用」时仍成立）时 `source_run_id` 为空、
 # secret 不存在：`run-id` 落回 `github.run_id`，`github-token` 是空串——download-artifact 只在
@@ -114,6 +117,14 @@ jobs:
       cancel-in-progress: false
     env:
       LAB_MODE: ${{ inputs.mode }}
+      # **被验的代码来自哪个仓库**——脚本里一切「我在哪个仓库」的判断都读它
+      # （`scripts/ci/_common.source_repository`，顺序：显式源仓库 > 运行仓库 > 默认）。
+      # 被 ci-infra 跨仓库调用时 `GITHUB_REPOSITORY` / `GITHUB_SHA` / `GITHUB_REF` 说的是
+      # ci-infra；第一次真实派发（ci-infra run 35112349056）就红在一条按 `GITHUB_REPOSITORY`
+      # 判「我是不是本仓库」的用例上，而 N-1 发行档也会去 ci-infra 找。`GITHUB_*` 是
+      # 保留前缀、这里覆盖不了，所以另起一个名字。同仓库调用时它与 `GITHUB_REPOSITORY`
+      # 相等，行为不变。
+      TAVOTTO_SOURCE_REPOSITORY: Tavotto/Tavotto
       TAVOTTO_CI_STATE_ROOT: ${{ vars.LAB_CI_STATE_ROOT || '/srv/tavotto-ci' }}
       LAB_PERF_GATE: ${{ vars.LAB_PERF_GATE || 'false' }}
       LAB_VISUAL_GATE: ${{ vars.LAB_VISUAL_GATE || 'true' }}

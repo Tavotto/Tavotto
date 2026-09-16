@@ -57,6 +57,7 @@ from _common import (  # noqa: E402
     ensure_layout,
     materialize_corpus,
     run_metadata,
+    source_repository,
     summary,
     summary_table,
     write_report,
@@ -65,7 +66,12 @@ from _common import (  # noqa: E402
 REPO = _HERE.parents[1]
 CORPUS = REPO / "tests" / "acceptance" / "corpus"
 API = "https://api.github.com"
-REPO_SLUG = os.environ.get("GITHUB_REPOSITORY", "Tavotto/Tavotto")
+# N-1 发行档从**源仓库**的 release 列表里挑。这里不能直接读 `GITHUB_REPOSITORY`：
+# 本脚本由 `_lab-qualification.yml` 调用，而那个 reusable 可能在私有仓库 `Tavotto/ci-infra`
+# 的上下文里跑（F 组）——那时 `GITHUB_REPOSITORY` 是 ci-infra，会去一个没有任何 release
+# 的仓库找 N-1，红成 `no_baseline_release`。顺序（显式源仓库 > 运行仓库 > 默认）
+# 与理由都在 `_common.source_repository`。
+REPO_SLUG = source_repository()
 # 项目目录名刻意同时带中文与空格：两者在 Windows / macOS 上分别踩过坑，
 # 放在主路径上比单开一个 case 更能保证它们一直被覆盖。
 PROJECT_DIRNAME = "升级 测试 项目"
@@ -703,7 +709,13 @@ def verify_with_new(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="N-1 → N 升级验收")
     ap.add_argument("--candidate", required=True, help="候选 wheel（build job 的产物）")
-    ap.add_argument("--baseline-tag", default=None, help="显式指定 N-1 的 tag")
+    ap.add_argument(
+        "--baseline-tag",
+        default=None,
+        # help 里把解析出的源仓库印出来：`--help` 就能看见这次会去哪个仓库找 N-1
+        # （跨仓库调用时该是 Tavotto/Tavotto，不是运行 workflow 的那个仓库）。
+        help=f"显式指定 N-1 的 tag（留空从 {REPO_SLUG} 的正式 release 里挑最近的一个）",
+    )
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args(argv)
 

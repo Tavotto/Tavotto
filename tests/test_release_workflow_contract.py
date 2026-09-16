@@ -890,6 +890,49 @@ def test_the_reusable_pins_the_public_repository_for_cross_repository_callers():
     )
 
 
+def _job_env(wf: _Workflow, job: str) -> dict[str, str]:
+    """一个 job 的 `env:` 块（缩进 4 的键、缩进 6 的标量；注释已剥）。
+
+    自检形状：`env:` 找不到就**抛**，而不是回一个空 dict——空 dict 会让下面
+    「某个键等于某个值」的断言变成一个安静的 KeyError 之外什么都没说的假红/假绿。
+    """
+    body = wf.jobs[job]
+    m = re.search(r"^    env:\s*$", body, re.M)
+    assert m, f"{wf.path.name}::{job} 没有 job 级 env: 块——缩进形状变了？"
+    out: dict[str, str] = {}
+    for line in body[m.end() :].splitlines():
+        if not line.strip():
+            continue
+        if len(line) - len(line.lstrip()) <= 4:
+            break
+        kv = re.match(r"^      ([A-Za-z_][A-Za-z0-9_]*):[ \t]+(\S.*?)\s*$", line)
+        if kv:
+            out[kv.group(1)] = kv.group(2)
+    assert out, f"{wf.path.name}::{job} 的 env: 块一个键都没解析出来"
+    return out
+
+
+def test_the_reusable_names_the_source_repository_for_its_scripts():
+    """**第三处要钉的地方：脚本眼里的「我在哪个仓库」。**
+
+    checkout 与 download-artifact 钉了（上一条），脚本还没有：它们读的是
+    `GITHUB_REPOSITORY` / `GITHUB_SHA` / `GITHUB_REF`，而这些在 ci-infra 的上下文里
+    说的是 ci-infra。PR A 合入后第一次真实派发（ci-infra run 35112349056）红在
+    `tests/test_distribution_metrics.py::test_missing_token_fails_loudly…`——采集器
+    看到 `GITHUB_REPOSITORY=Tavotto/ci-infra`，按「fork 没配 secret」退了 0；同族的
+    `upgrade_acceptance.REPO_SLUG` 会去 ci-infra 找 N-1 发行档。
+
+    `GITHUB_*` 是保留前缀，job env 覆盖不了，所以 reusable 另设
+    `TAVOTTO_SOURCE_REPOSITORY`，`scripts/ci/_common.source_repository` 优先读它。
+    判据是 job env 里那个键的**字符串相等**（不是表达式——它就该是个字面量，
+    被验的代码永远来自公开仓库）；脚本那一侧的合同在 tests/test_lab_source_repository.py。
+    """
+    env = _job_env(_wf(REUSABLE), "qualify")
+    assert env.get("TAVOTTO_SOURCE_REPOSITORY") == _PUBLIC_REPO, (
+        f"reusable 的 qualify job env 没钉 TAVOTTO_SOURCE_REPOSITORY={_PUBLIC_REPO}：{env}"
+    )
+
+
 def test_the_reusable_declares_the_cross_repository_input_and_secret_as_optional():
     """`source_run_id` 与 `TAVOTTO_PUBLIC_TOKEN` 都是 **required: false**：同仓库调用
     （release.yml 并行期）一个都不传，行为逐字不变；ci-infra 调用时经 `secrets:` 传入。

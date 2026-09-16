@@ -451,6 +451,7 @@ def test_dry_run_transmits_nothing(capsys, monkeypatch):
         raise AssertionError("--dry-run 不许上报")
 
     monkeypatch.setattr(collector, "transmit", explode)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Tavotto/Tavotto")  # 主语：本仓库（见下一条）
     rc = collector.main(
         [
             "--dry-run",
@@ -468,8 +469,18 @@ def test_dry_run_transmits_nothing(capsys, monkeypatch):
 
 
 def test_missing_token_fails_loudly_instead_of_silently_skipping(monkeypatch, capsys):
-    """采集器和桌面遥测相反：丢数据必须有人看见。"""
+    """采集器和桌面遥测相反：丢数据必须有人看见。
+
+    **主语是「本仓库没 token」**，所以 `GITHUB_REPOSITORY` 要显式钉成 `Tavotto/Tavotto`：
+    采集器按它判自己是不是本仓库，fork 里没 token 是预期内的、退 0。第一版没钉，
+    dev 机上（没设）与公开仓库 runner 上（`Tavotto/Tavotto`）都碰巧走到退 2；
+    2026-09-16 第一次在私有仓库 ci-infra 的上下文里跑 reusable，环境里是
+    `GITHUB_REPOSITORY=Tavotto/ci-infra`，被当成 fork 退了 0，`assert 0 == 2`
+    ——用例红的是自己的假设，不是采集器。同文件里每个调 `collector.main` 的用例
+    都要钉这一维（合同：tests/test_lab_source_repository.py）。
+    """
     monkeypatch.delenv("TAVOTTO_METRICS_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Tavotto/Tavotto")
     rc = collector.main(
         [
             "--date",
@@ -486,6 +497,7 @@ def test_missing_token_fails_loudly_instead_of_silently_skipping(monkeypatch, ca
 
 def test_upstream_failure_is_a_nonzero_exit(monkeypatch, capsys):
     monkeypatch.setenv("TAVOTTO_METRICS_TOKEN", "t0ken-abcdef")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Tavotto/Tavotto")
     monkeypatch.setattr(
         collector,
         "transmit",
@@ -690,6 +702,7 @@ def test_control_characters_cannot_forge_a_log_line(monkeypatch, capsys):
     """
     forged = json.dumps({"code": "a\n::error::这条是伪造的", "error": "b\r\nx"}).encode("utf-8")
     monkeypatch.setenv("TAVOTTO_METRICS_TOKEN", TOKEN)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Tavotto/Tavotto")
     monkeypatch.setattr(collector.urllib.request, "urlopen", _http_error(400, forged))
     rc = collector.main(
         [
