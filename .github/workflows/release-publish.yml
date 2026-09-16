@@ -1,0 +1,1255 @@
+name: Release (publish)
+
+# **发布链的第二段。** 第一段是 `release.yml`（tag push / workflow_dispatch）：
+# trust → build / desktop → dispatch_lab，到派发 ci-infra 就结束，**不等** lab 结论
+# ——公开仓库禁止轮询（lab 的排队时间没有上界，
+# tests/test_release_workflow_contract.py 的两条 `test_no_*poll*`）。lab 绿了之后，
+# 由 ci-infra 的 `report` job 用 `gh workflow run release-publish.yml -R Tavotto/Tavotto
+# -r main -f …` 把本段派发起来（docs/implementation/ci-foundation/
+# ADMIN_HANDOFF_RUNNER_POOL.md F.2）。
+#
+#   release.yml（第一段）                ci-infra lab-qualification.yml       本文件（第二段，只 workflow_dispatch）
+#   trust（ancestry + tag + blocker 签字） trust-check（同一段 ancestry 判断）   trust2（同一段 ancestry + tag 判断
+#     → build / desktop（产物 upload）─派发▶ qualify（reusable，按 run-id 取 dist）      + 再核一次 open blocker 与传回的 ack
+#     → dispatch_lab                        report（status lab/release）─派发▶      + 读一次 lab/release status）
+#                                                                               → validate_artifacts（按 source_run_id
+#                                                                                 取第一段的产物，同仓库）
+#                                                                               → github_release / n1_update_windows
+#                                                                                 / pypi / plugin_stable（publish 门）
+#
+# **本文件只有 `workflow_dispatch`**：`v*` tag 的入口仍只有 release.yml
+# （`test_the_tag_has_exactly_one_entry_point`）。
+#
+# ────────────────────────────── 信任模型 ──────────────────────────────
+# **不信任「谁触发」。** 能派发本 workflow 的只有持 `TAVOTTO_PUBLIC_TOKEN`
+# （ci-infra 的 secret，fine-grained PAT，对本仓库 actions: write + statuses: write）
+# 的 ci-infra `report` job，和有 Actions 写权限的维护者。但下面每一条判断都由
+# `trust2` **重验**，载荷里的值一律只当输入、不当结论：
+#   · sha      完整 40 位；存在；可达 origin/main——与第一段 `trust` 同一段 shell
+#              （照抄，不引用：判断必须在本段自己手里）；
+#   · tag      已存在的 `v<源码版本>` 必须指向同一个 SHA（照抄）；
+#   · blocker  对着**此刻** open 的 release:blocker 重跑 scripts/ci/release_blockers.py，
+#              输入是第一段传下来的 ack。lab 跑的那一两个小时里新开的 blocker 会让
+#              本段停在 trust2，而不是无声发出去。**本段不新增签字入口**——要签新
+#              blocker，从第一段重来；
+#   · publish  **按同一规则重算**：有 tag 指向该 SHA 且 tag 名与源码版本一致 → true。
+#              载荷里的 `publish=false` 只能把 true 压成 false（演练），**不能反过来**
+#              ——没有 tag 而载荷说 true，本段仍是演练；
+#   · lab      读**一次**该 SHA 的 commit status（一次 API 调用，不轮询），要求
+#              `lab/release` 的 state == success，且 target_url 指向载荷里 `lab_run_id`
+#              那个 ci-infra run。手工派发本段而 lab 没绿，就停在这里。
+#
+# **哪些一字不动**：validate_artifacts 起的全部步骤从 release.yml 逐字搬来，只把
+# `needs.trust.*` 改成 `needs.trust2.*`、给 validate_artifacts 的 download-artifact 加
+# `run-id`（第一段的 run）；`publish=false` 演练语义、`plugin_stable` 通道、Release 与
+# PyPI 的 publish 门都照旧。第一段的 `pypi` 输入（none / testpypi / pypi）没有随载荷传
+# 过来：本段 publish=true 只可能来自 tag，PyPI 按仓库变量 PYPI_PUBLISH_ENABLED 开闸
+# （从前 tag 触发那条路本来就只看它），TestPyPI 通道在切两段之后不存在。
+#
+# **失败形状**：lab 红 → ci-infra 的 `report` 打 `lab/release` = failure、**不派发**本段。
+# 第一段的 run 已经 success 结束，「没有发布」靠的是本段从未开始——读结论的人看两处：
+# 该 SHA 的 commit status `lab/release`，和本 workflow 有没有那个 SHA 的 run
+# （docs/ci/release-qualification.md「发行链上的 gate」）。
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "第一段 trust 解析出的精确 SHA（完整 40 位）。trust2 会重验，不信任载荷"
+        required: true
+        type: string
+      source_run_id:
+        description: "第一段（release.yml）那次 run 的 id——产物从它的 artifact 里取"
+        required: true
+        type: string
+      lab_run_id:
+        description: "ci-infra lab-qualification.yml 那次 run 的 id——lab/release 的 target_url 必须指向它"
+        required: true
+        type: string
+      publish:
+        description: >-
+          第一段解析出的 publish（"true" / "false"）。只能把 trust2 重算出的 true 压成
+          false（演练），不能反过来。
+        required: false
+        default: "false"
+        type: string
+      ack_open_blockers:
+        description: "第一段的 release:blocker 签字，原样传回。trust2 对着此刻 open 的清单再核一次"
+        required: false
+        default: ""
+        type: string
+
+# 默认只读。真正要写的 job（github_release 建 Release、pypi 走 OIDC、plugin_stable 推
+# 发行分支）各自在 job 级声明了自己那份权限——与 release.yml 同一条纪律。
+permissions:
+  contents: read
+
+# CI 里跑起来的每一个 Tavotto 进程都**硬关**匿名用量统计（理由见 release.yml 抬头）。
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 信任链的第二环（GitHub 托管机）。第一段 `trust` 做过的判断这里**全部重做**：
+  # 载荷来自另一个仓库的 workflow，中间隔着一两个小时的 lab run——SHA 可能
+  # 被 force-push 出 main（不会：main 受保护，但判据不靠这个前提）、tag 可能
+  # 被打到别处、新的 release:blocker 可能已经开出来。其余 job 只认这里输出的
+  # SHA / publish，不读任何 `inputs.*`。
+  # ────────────────────────────────────────────────────────────────
+  trust2:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
+    runs-on: ubuntu-latest
+    # 顶层是 contents: read；issues: read 给 release-blocker 门禁查 label，
+    # statuses: read 给读 `lab/release`。job 级 permissions 会整个替换默认，contents 要重申。
+    permissions:
+      contents: read
+      issues: read
+      statuses: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      # ── 载荷形状：先于一切判断 ──
+      # 三个 id 都是 ci-infra 原样转发的字符串。形状不对说明派发方那边出了问题，
+      # 不该在这里被「好心」解析掉（与 ci-infra trust-check 对 sha 的态度一致）。
+      - name: 载荷形状（完整 40 位 SHA、两个纯数字 run id）
+        env:
+          IN_SHA: ${{ inputs.sha }}
+          IN_SOURCE_RUN: ${{ inputs.source_run_id }}
+          IN_LAB_RUN: ${{ inputs.lab_run_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$IN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha 必须是完整 40 位小写十六进制 SHA，收到的是：$IN_SHA"
+            exit 1
+          fi
+          if ! [[ "$IN_SOURCE_RUN" =~ ^[0-9]+$ ]]; then
+            echo "::error::source_run_id 必须是第一段 run 的数字 id，收到的是：$IN_SOURCE_RUN"
+            exit 1
+          fi
+          if ! [[ "$IN_LAB_RUN" =~ ^[0-9]+$ ]]; then
+            echo "::error::lab_run_id 必须是 ci-infra run 的数字 id，收到的是：$IN_LAB_RUN"
+            exit 1
+          fi
+
+      # ── Release-blocker 门禁：**再核一次** ──
+      # 第一段 `trust` 已经对着当时 open 的清单消费过一次 ack（release.yml 里那一步，
+      # 与这里是同一段 shell）。这里对着**此刻** open 的清单再跑一遍同一个脚本，
+      # 输入仍是第一段传下来的那份 ack：lab 跑的那一两个小时里新开的 blocker 在这里
+      # 停下，而不是无声发出去。本段**不新增签字入口**——ack 只能来自第一段。
+      - name: Release-blocker 门禁（对此刻 open 的清单再核一次第一段的签字）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACK: ${{ inputs.ack_open_blockers }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/issues?labels=release:blocker&state=open&per_page=100" \
+            > "$RUNNER_TEMP/open-blockers.json"
+          python3 scripts/ci/release_blockers.py \
+            --issues-json "$RUNNER_TEMP/open-blockers.json" \
+            --ack "${ACK:-}" --event "$EVENT" || {
+            echo "::error::第二段不新增签字入口：上面的 blocker 清单与第一段传来的 ack 对不上，"
+            echo "::error::多半是 lab 期间新开了 release:blocker。要发就从第一段重来——"
+            echo "::error::release.yml 的 workflow_dispatch(ref=<同一 SHA>, ack_open_blockers=<逐条编号>)。"
+            exit 1
+          }
+
+      - id: resolve
+        env:
+          IN_SHA: ${{ inputs.sha }}
+          PUBLISH_IN: ${{ inputs.publish }}
+        # 下面这段与 release.yml `trust` 的 resolve 同源（2026-09-16 照抄）：只有两处
+        # 不同——本段没有 push 事件，SHA 直接取载荷（上一步已验形状），REL_TAG 一律
+        # 从源码版本推；publish 不再由事件决定，而是按 tag 规则重算，见最后一段。
+        run: |
+          set -euo pipefail
+
+          if ! SHA="$(git rev-parse --verify "${IN_SHA}^{commit}" 2>/dev/null)"; then
+            echo "::error::解析不出 commit：$IN_SHA"
+            exit 1
+          fi
+
+          # **可达性重验。** 这条门禁站在 PyPI OIDC 与 Release 写权限前面：
+          # 一个指向未经评审 commit 的 ref 绝不能进入任何 secret-bearing 路径
+          # （审计 P1-04）。第一段验过不算数——本段的判断在本段自己手里。
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$SHA 不可达于 origin/main——发布链只接受已经合并进受保护 main 的提交"
+            exit 1
+          fi
+
+          # **版本号从源码读，不从 tag 名推。** tag 名是人手打的，
+          # 源码里那个才是 wheel 真正会带的版本。
+          VER="$(git show "$SHA:src/tavotto/__init__.py" \
+                 | sed -n 's/^__version__ = "\(.*\)"$/\1/p')"
+          if [ -z "$VER" ]; then
+            echo "::error::读不出 $SHA 上的 __version__"
+            exit 1
+          fi
+          REL_TAG="v$VER"
+
+          # **tag 已经存在时，它必须指向同一个 commit。**
+          # `action-gh-release` 的 `target_commitish` 只在 tag **不存在**时起作用；
+          # tag 已存在的话它直接复用现有那个，而现有 tag 完全可能指向别处——
+          # 那时 Release 挂的 tag 与产物来自两个 commit，而没有任何一步会报错。
+          # 仓库里此刻就躺着 v0.9.0 与 v0.9.1 两个指向旧 commit、且因为 immutable
+          # ruleset 改不动也删不掉的 tag。
+          TAG_PUBLISH=false
+          if EXISTING="$(git rev-parse --verify "refs/tags/${REL_TAG}^{commit}" 2>/dev/null)"; then
+            if [ "$EXISTING" != "$SHA" ]; then
+              echo "::error::tag $REL_TAG 已经存在，且指向 $EXISTING —— 而本次要发布的是 $SHA。"
+              echo "::error::tag ruleset 是 immutable，它移不动。要发这个 SHA 请换一个版本号。"
+              exit 1
+            fi
+            echo "· tag $REL_TAG 已存在且指向同一个 commit，复用它"
+            TAG_PUBLISH=true
+          fi
+
+          # **publish 按同一规则重算，载荷只能压成 false。**
+          # 第一段的规则：tag 触发 → publish=true；dispatch → 取输入。到了本段，
+          # 「tag 触发」这个事实只剩一条证据——有一个名为 v<源码版本> 的 tag 指向该
+          # SHA（上面刚验过它没指到别处）。所以 TAG_PUBLISH 是 true 的**唯一来源**，
+          # 载荷里的 publish 只做与：它说 false 就是演练；它说 true 而没有 tag，
+          # 仍是演练。任何一条路都到不了「载荷说 true 于是发布」。
+          if [ "$TAG_PUBLISH" = "true" ] && [ "$PUBLISH_IN" = "true" ]; then
+            PUBLISH=true
+          else
+            PUBLISH=false
+          fi
+
+          {
+            echo "sha=$SHA"
+            echo "version=$VER"
+            echo "tag=$REL_TAG"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH（载荷 publish=$PUBLISH_IN，tag 指向该 SHA=$TAG_PUBLISH）"
+
+      # ── lab 结论：读一次，不等 ──
+      # 第一段禁止等 lab（排队时间没有上界），所以 lab 的结论以 commit status 的形式
+      # 落在 SHA 上，由 ci-infra 的 `report` 写、本段来读。**一次 API 调用**：status
+      # 不在或不是 success 就红——「lab 还没跑完」与「lab 红了」在这里同一个下场，
+      # 都不发；lab 绿了 ci-infra 会再派发一次本段。target_url 必须指向载荷里那个
+      # lab run：同一个 SHA 上后来又跑了一次 lab（红）时，最新的 status 会盖掉旧的，
+      # 拿着旧 run id 的载荷不许再放行。
+      - name: 读一次 lab/release commit status（不轮询）
+        id: lab
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          LAB_RUN_ID: ${{ inputs.lab_run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/status" > "$RUNNER_TEMP/lab-status.json"
+          LAB_STATE="$(jq -r '[.statuses[] | select(.context == "lab/release")][0].state // empty' "$RUNNER_TEMP/lab-status.json")"
+          LAB_URL="$(jq -r '[.statuses[] | select(.context == "lab/release")][0].target_url // empty' "$RUNNER_TEMP/lab-status.json")"
+          if [ -z "$LAB_STATE" ]; then
+            echo "::error::$SHA 上没有 lab/release 这条 commit status——lab 还没跑完，或从没被派发。"
+            echo "::error::本段不等待：lab 绿了由 ci-infra 再派发一次。"
+            exit 1
+          fi
+          if [ "$LAB_STATE" != "success" ]; then
+            echo "::error::lab/release = $LAB_STATE（$LAB_URL）——发行资格没过，不发。"
+            exit 1
+          fi
+          EXPECTED_URL="${GITHUB_SERVER_URL}/Tavotto/ci-infra/actions/runs/${LAB_RUN_ID}"
+          case "$LAB_URL" in
+            "$EXPECTED_URL"|"$EXPECTED_URL"/*) ;;
+            *)
+              echo "::error::lab/release 的 target_url 是 $LAB_URL，不是载荷 lab_run_id=$LAB_RUN_ID 那个 run（期望 $EXPECTED_URL）。"
+              echo "::error::要么载荷说的不是打这条 status 的那次 lab run，要么这条 status 已被更新的一次 lab run 覆盖。"
+              exit 1 ;;
+          esac
+          echo "lab_run_url=$LAB_URL" >> "$GITHUB_OUTPUT"
+          echo "✅ lab/release = success（$LAB_URL）"
+
+      - name: 第二段的编排摘要
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          VER: ${{ steps.resolve.outputs.version }}
+          REL_TAG: ${{ steps.resolve.outputs.tag }}
+          PUBLISH: ${{ steps.resolve.outputs.publish }}
+          PUBLISH_IN: ${{ inputs.publish }}
+          LAB_URL: ${{ steps.lab.outputs.lab_run_url }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### 发布编排 · 第二段"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 触发 | \`workflow_dispatch\`（ci-infra 在 lab/release 绿后派发） |"
+            echo "| SHA | \`$SHA\` |"
+            echo "| 版本 | \`$VER\` |"
+            echo "| tag | \`$REL_TAG\` |"
+            echo "| **publish** | **$PUBLISH**（载荷 \`$PUBLISH_IN\`；按 tag 规则重算） |"
+            echo "| 第一段 run（产物来源） | $SOURCE_RUN_URL |"
+            echo "| lab/release | $LAB_URL |"
+            if [ "$PUBLISH" != "true" ]; then
+              echo ""
+              echo "> **演练（publish=false）**：产物照取、门禁照跑，"
+              echo "> 但**不建 Release、不发 PyPI**。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ────────────────────────────────────────────────────────────────
+  # 产物汇总与校验。**演练也跑这一整段** —— 这是 publish=false 有意义的
+  # 关键：SBOM、checksum、provenance、updater 清单、插件清单全都真的产出、
+  # 真的校验，只是最后不发布。从前这些步骤全在建 Release 那个 job 里，
+  # 而那个 job 自 v0.8.0 起**一次都没成功执行过**，于是 #63 那个 bug
+  # （SBOM 拿到一串 glob）在仓库里躺了好几周，没有任何信号。
+  # ────────────────────────────────────────────────────────────────
+  validate_artifacts:
+    needs: trust2
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
+    runs-on: ubuntu-latest
+    outputs:
+      # has_notes = 有没有手写正文；release body（支持段 + 签名披露）两种情况都有
+      has_notes: ${{ steps.notes.outputs.has_notes }}
+    permissions:
+      contents: read
+      actions: read            # 跨 run 取第一段的 artifact（download-artifact 的 run-id 路径）
+      id-token: write          # provenance 签发
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust2.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: desktop
+          pattern: desktop-tauri-*
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      # **pattern 下载之后紧跟按名字点名**（issue #327）：download-artifact 排了两个、
+      # 只落了一个也报 success（v0.14.0 演练实测），不点名的话症状要到合并清单那步
+      # 才以「缺平台」的面目出现——报文离病因一整个 job。期望名单 = 这次 run 里
+      # 真会上传的那几个：desktop-tauri.yml 的 build 矩阵每条腿一个 `desktop-tauri-<artifact>`，
+      # `tests/test_update_chain_gates.py` 看着名单与矩阵严格同源。
+      - name: 点名下载到的桌面产物（download-artifact 少下一个也报 success）
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in desktop-tauri-dmg desktop-tauri-nsis; do
+            if ! test -n "$(ls -A "desktop/$name" 2>/dev/null)"; then
+              echo "::error::artifact $name 没下到（download-artifact 报了 success）"
+              missing=1
+            fi
+          done
+          ls -laR desktop || true
+          exit "$missing"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: manifests
+          pattern: artifact-manifest-*
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      # 同上。三份清单：本文件 build job 的 artifact-manifest-python，
+      # 加桌面矩阵每条腿的 artifact-manifest-<artifact>。
+      - name: 点名下载到的产物清单（download-artifact 少下一个也报 success）
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in artifact-manifest-python artifact-manifest-dmg artifact-manifest-nsis; do
+            if ! test -n "$(ls -A "manifests/$name" 2>/dev/null)"; then
+              echo "::error::artifact $name 没下到（download-artifact 报了 success）"
+              missing=1
+            fi
+          done
+          ls -laR manifests || true
+          exit "$missing"
+      # **不再 continue-on-error。** 桌面链现在恒以 release_build=true 运行，
+      # `updater-manifest` job 因此总会产出 latest.json（产不出来它自己就红了，
+      # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
+      # 或改名故障变成「发了一个没有 latest.json 的 Release」——而那意味着
+      # 桌面用户永远查不到新版本，且整条链全绿。v0.7.0 就是这么发出去的。
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: updater-manifest
+          path: out
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: 把桌面产物摊平到 dist/
+        # 各条腿的清单记的路径相对各自的 out/；合并之后要能在同一个目录里
+        # 逐个核对哈希，所以先摊平，再把清单里的路径也改成同一套。
+        shell: bash
+        run: |
+          set -euo pipefail
+          find desktop -mindepth 2 -type f -print0 | xargs -0 -I{} mv -n {} dist/
+          ls -la dist/
+
+      - name: 合并并校验产物清单
+        # **这一步是「同一个 SHA」真正被证明的地方。**
+        # 「同一个 tag」证明不了它——tag 是可移动的引用，两条腿各自 checkout
+        # 时它可能已经指向别处，而没有任何一步会报错。
+        env:
+          VER: ${{ needs.trust2.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/normalise_manifest_paths.py manifests --into dist
+          python3 scripts/ci/artifact_manifest.py merge \
+            manifests/*/artifact-manifest-*.json --out artifact-manifest.json
+          python3 scripts/ci/artifact_manifest.py verify artifact-manifest.json \
+            --require wheel,sdist,windows-installer,macos-installer,codex-plugin,codex-plugin-manifest,codex-plugin-build \
+            --version "$VER" --source-sha "$SOURCE_SHA"
+
+      - name: 完整插件：成对验证（zip 内容 + 版本清单 + 随包清单互相对得上）
+        # 「缺 canvas 不准发」在 build job 里已经拦过一次（组装时点名 REQUIRED）；
+        # 这里在**搬运之后**再验一次整份内容，并核对三份文件说的是同一个插件：
+        # zip 里的 plugin-build.json 的 source_sha == trust 的 SHA、版本 == VER、
+        # codex-plugin.json 的 latest_version / download_url 指向的正是这个 zip。
+        # 只查文件名存在不算验证。
+        env:
+          VER: ${{ needs.trust2.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ZIP="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin)"
+          META="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin-manifest)"
+          BUILD="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role codex-plugin-build)"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$BUILD")"
+          python3 scripts/plugin_stage.py verify "$ZIP" \
+            --source-sha "$SOURCE_SHA" --version "$VER" --content-digest "$DIGEST" --json
+          python3 - "$META" "$ZIP" "$VER" <<'PY'
+          import json, os, sys
+          meta, zip_path, ver = json.load(open(sys.argv[1], encoding="utf-8")), sys.argv[2], sys.argv[3]
+          assert meta["latest_version"] == ver, (meta["latest_version"], ver)
+          assert meta["download_url"].rsplit("/", 1)[-1] == os.path.basename(zip_path), (meta["download_url"], zip_path)
+          print("插件版本清单与 zip 成对：", meta["latest_version"], os.path.basename(zip_path))
+          PY
+
+      - name: 从清单里取出具体路径（单值输入只能收这个）
+        id: paths
+        run: |
+          set -euo pipefail
+          # **`out/` 要在这里就建好。** 2026-08-22 实测（run 32578844828，
+          # `github_release` 这个 job **有史以来第一次真正执行**）：#63 的修复
+          # 生效了，syft 拿到具体路径并成功扫完——然后 sbom-action 写输出时
+          # 报 `ENOENT: no such file or directory, open 'out/…'`，因为
+          # `mkdir -p out` 在**下一步**（SHA-256 那步）才做。
+          #
+          # 这正是这条链的固有形状：每一步都是第一次执行，于是一步一步地
+          # 依次失败。`publish=false` 演练就是为了让这种失败发生在演练里，
+          # 而不是发生在一个改不动也删不掉的正式 tag 上。
+          #
+          # **不靠上面那个 download-artifact 顺带建出 out/**：它带着
+          # `continue-on-error`（没配 minisign 私钥时那个 artifact 不存在），
+          # 于是 out/ 存不存在取决于有没有配签名密钥——一个下游步骤的成败
+          # 取决于一件与它完全无关的事，那种耦合迟早出事。
+          mkdir -p out
+          W="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role wheel)"
+          echo "wheel=$W" >> "$GITHUB_OUTPUT"
+          echo "SBOM 输入: $W"
+
+      - name: 构建产物 provenance
+        # 用户可用 `gh attestation verify <文件> -R Tavotto/Tavotto` 验证
+        # 「这份产物出自本仓库这次受信 SHA 的构建」（审计 P1-04 / Gate B）。
+        # subject-path **明确支持多值 glob**，与只收单个路径的 syft 不同。
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.exe
+            dist/*.dmg
+            dist/codex-plugin-*.zip
+
+      - name: 生成 SBOM（SPDX）
+        # syft 的 `file:` 收的是**一个具体路径**，不是 glob——`dist/*.whl`
+        # 会被原样当成文件名，报 `no source providers were able to resolve
+        # the input`（#63）。现在这个路径由产物清单解出来，**结构上不可能是
+        # glob**：`artifact_manifest.build` 直接拒绝含通配符的条目。
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          file: ${{ steps.paths.outputs.wheel }}
+          format: spdx-json
+          output-file: out/tavotto-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SHA-256 校验清单
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # 清单自己也进 checksum：它是下游七个消费者的输入，
+          # 被换掉的话所有人一起读到错的东西。
+          cp artifact-manifest.json dist/
+          (cd dist && shasum -a 256 -- *) > out/SHA256SUMS.txt
+          cat out/SHA256SUMS.txt
+
+      # Codex 插件清单与安装包**不在这里生成**（ADR 0043）：它们由 build job 从固定发行
+      # SHA 真构建、真验证后放进 dist/（这个 job 没有 Node，从源码目录打包答不了
+      # 「画布是不是本次源码构建的」）。上面那步已经把 dist/ 里那份 zip 与两份清单
+      # 成对验过。更新通道仍然是 Release 上的 codex-plugin.json——**文件名不能改**
+      # （update_check.DEFAULT_URL），随 dist/* 一起挂上去。
+
+      - name: 拼 release body（手写正文可缺，支持段与签名披露不可缺）
+        id: notes
+        env:
+          TAG: ${{ needs.trust2.outputs.tag }}
+          SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
+        run: |
+          set -euo pipefail
+          # 手写正文（docs/release-notes/<tag>.md）有就用、没有就让 GitHub 把
+          # 自动生成的提交清单**接在 body 之后**（softprops 对 body +
+          # generate_release_notes 的语义是把 body 前置）。但下面两段在
+          # **两个分支里都必须出现**——只挂在手写分支上的话，没写 notes 的
+          # 版本会顺便丢掉必须的披露（Codex 评审在 #107 上指出）：
+          #  · 「下载与支持平台」段：从唯一权威 docs/support-matrix.json 生成
+          #    （issue #34），每版手写的平台清单必然与矩阵漂移；
+          #  · Code signing policy 段：SignPath Foundation 的条件要求这个词组
+          #    出现在下载/发布页；措辞按 SIGNPATH_ENABLED 分岔——把未签名的
+          #    包描述成已签名，正是 policy 里明令禁止的那件事。
+          # 待发条目（docs/release-notes/UNRELEASED.md）必须先并进这一版的
+          # 正文。行为变更与存量数据的迁移提示写在 PR 正文的「遗留」段里，
+          # 发版那天没人会回头翻——issue #244 就是这么漏掉的：用户升级后
+          # 一个字也看不到，而整条发布链全绿。这一步放在读手写正文**之前**，
+          # 没并入就不给发。
+          python scripts/check_pending_release_notes.py --tag "$TAG"
+          F="docs/release-notes/${TAG}.md"
+          B="out/release-body.md"
+          mkdir -p out
+          if [ -f "$F" ]; then
+            cp "$F" "$B"
+            printf '\n\n---\n\n' >> "$B"
+            echo "has_notes=1" >> "$GITHUB_OUTPUT"
+          else
+            : > "$B"
+            echo "::warning::没有 $F，正文用自动生成的提交清单"
+            echo "has_notes=0" >> "$GITHUB_OUTPUT"
+          fi
+          python scripts/make_release_support_section.py >> "$B"
+          {
+            printf '\n### Code signing policy\n\n'
+            if [ "$SIGNPATH_ENABLED" = "true" ]; then
+              printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
+            else
+              printf '**The Windows installer in this release is not code signed**, so Windows will show a SmartScreen warning on first run. Verify it against this workflow run if you want to check what you downloaded.\n\n'
+            fi
+            printf 'See the full [code signing policy](https://github.com/%s/blob/%s/docs/code-signing-policy.md) and [privacy policy](https://github.com/%s/blob/%s/docs/privacy.md).\n' \
+                   "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY" "$TAG"
+          } >> "$B"
+
+      - name: 汇总这次的产物
+        if: always()
+        env:
+          PUBLISH: ${{ needs.trust2.outputs.publish }}
+          SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ -f artifact-manifest.json ]; then
+            python3 -c "
+          import json
+          m = json.load(open('artifact-manifest.json'))
+          print(f\"### 本次产物 · {m['version']} · \`{m['source_sha'][:12]}\`\")
+          print()
+          print('| role | 文件 | 平台 | sha256 |')
+          print('|---|---|---|---|')
+          for a in m['artifacts']:
+              print(f\"| \`{a['role']}\` | \`{a['path'].split('/')[-1]}\` | {a['platform']} | \`{a['sha256'][:16]}…\` |\")
+          " >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### 本次产物" >> "$GITHUB_STEP_SUMMARY"
+            echo "（产物清单没造出来——上游步骤失败了）" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$PUBLISH" != "true" ]; then
+            {
+              echo ""
+              echo "> **演练（publish=false）到此为止**：以上产物全部真实存在并已校验，"
+              echo "> 但**不会**建 Release、不会发 PyPI。"
+              echo "> 要发布：在同一个 SHA \`$SHA\` 上打 tag。"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 项目许可证进发行资产（issue #182）
+        # Release 页面上要能直接拿到 AGPL 全文，不必翻源码归档。它**不进产物清单**：
+        # 清单记的是构建腿造出来的东西（role / sha256 / source_sha），而 LICENSE 是
+        # trust 验过的那个 SHA 上的源码文件，本 job 的 checkout 就是它——从这里拷
+        # 进 out/，与 SHA256SUMS / latest.json 同路进 release-assets，再由
+        # github_release 一次挂全部。演练也走这一步：文件改名或内容换了当场红。
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          grep -q "GNU AFFERO" LICENSE || {
+            echo "::error::仓库根的 LICENSE 不是 AGPL 全文（缺 GNU AFFERO）"
+            exit 1
+          }
+          cp LICENSE out/LICENSE
+
+      - name: 上传全部发行资产
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          path: |
+            dist/*
+            out/*
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────
+  # 建 Release。**只在 publish=true 时执行**，而且**一次挂全部**——
+  # 从前 wheel/SBOM 由这里挂、桌面产物由 desktop-tauri.yml 自己挂、
+  # latest.json 由第三个 job 挂，三方各写一次同一个 Release，还要互相等。
+  # ────────────────────────────────────────────────────────────────
+  github_release:
+    needs: [trust2, validate_artifacts]
+    if: needs.trust2.outputs.publish == 'true'
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust2.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: release-assets, path: assets }
+
+      - name: 校验要挂上去的就是验过的那一份
+        # 下载再上传是一次真实的搬运，中间任何一环出错都可能改内容。
+        # 校验一次几乎不要钱，而「Release 上挂的与发行资格验证过的不是同一个
+        # 东西」是这条链上最不能接受的失败。
+        env:
+          VER: ${{ needs.trust2.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/artifact_manifest.py verify \
+            assets/dist/artifact-manifest.json \
+            --base assets \
+            --require wheel,sdist,windows-installer,macos-installer \
+            --version "$VER" --source-sha "$SOURCE_SHA"
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ needs.trust2.outputs.tag }}
+          # **tag 不存在时，action 会替我们建一个 —— 必须钉在受信 SHA 上。**
+          # 不给 target_commitish 的话它用 `GITHUB_SHA`，也就是 dispatch 时
+          # 的 ref（例如 `main` 的当前 HEAD），而不是 trust 解析并验证过的
+          # 那个 SHA。两者在「dispatch 之后、publish 之前 main 又前进了」时
+          # 就是两个 commit —— 而这发生在整条链**最不可逆的那一步**：
+          # tag ruleset 是 immutable，建错了改不动也删不掉。
+          target_commitish: ${{ needs.trust2.outputs.sha }}
+          draft: false
+          # body 永远存在（支持矩阵段 + 签名披露在两个分支都生成）；
+          # 没有手写正文时让 GitHub 把自动提交清单接在 body 之后
+          body_path: assets/out/release-body.md
+          generate_release_notes: ${{ needs.validate_artifacts.outputs.has_notes != '1' }}
+          # codex-plugin.json 的**文件名不能改**：插件拉的是
+          # releases/latest/download/codex-plugin.json（见 update_check.DEFAULT_URL）
+          # `files` 明确支持多行 glob——与只收单个路径的 syft 不同。
+          # codex-plugin.json 与 codex-plugin-<版本>.zip 在 assets/dist/ 里（build job
+          # 造的、validate 成对验过的那一份），随 `assets/dist/*` 一起挂上。
+          files: |
+            assets/dist/*
+            assets/out/SHA256SUMS.txt
+            assets/out/tavotto-sbom.spdx.json
+            assets/out/latest.json
+            assets/out/LICENSE
+
+      # 官网的下载按钮直连安装包：版本、大小、校验和都在构建时从这次 Release 的
+      # artifact-manifest.json 里读出来（Tavotto_website 的 scripts/sync-release.mjs）。
+      # 所以 Release 发出去之后要让站点重建一次，否则按钮还指着上一版。
+      #
+      # 用 Deploy Hook 而不是 PAT 或 Vercel CLI：它只是一个 URL，含义是「用 main
+      # 重建这个项目」，拿到它也做不了别的；不需要 token 轮换，也不需要在官网仓库
+      # 里再放一个接收用的 workflow。另外两种方案还都得先在官网仓库里造出一个
+      # commit，而一次产品发布并不会改官网的任何一行。
+      #
+      # 这一步永远不让发布失败。Release 已经在上一步发出去了，站点晚几分钟更新是
+      # 可以补的（在 Vercel 上 Redeploy 一次），而在这里失败会把一次成功的发布标
+      # 成红的——那是会教人忽略这条工作流状态的失败。
+      - name: 通知官网重新构建
+        if: success()
+        continue-on-error: true
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "::warning::没有配置 VERCEL_DEPLOY_HOOK，官网不会自动重建。"
+            echo "配好之前，发完 Release 请手动在 Vercel 上 Redeploy 一次 tavotto-website。"
+            exit 0
+          fi
+          code=$(curl -sS -X POST -o /dev/null -w '%{http_code}' --max-time 30 "$HOOK" || echo 000)
+          if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+            echo "已通知官网重建（HTTP $code）"
+          else
+            echo "::warning::官网重建没触发成功（HTTP $code）。请手动 Redeploy tavotto-website。"
+          fi
+
+  # ────────────────────────────────────────────────────────────────
+  # 真实 N-1 应用内更新验证（Windows）—— issue #35 的退出条件。
+  #
+  # 只能在**发布之后**测真链路：已发布应用的 endpoint 烤死指向
+  # releases/latest，github_release 跑完的这一刻 latest.json 已指向本次
+  # 版本——现在装一个 N-1 官方安装包，它查到的就是我们刚发的这一版。
+  # 「发布前测不了 N-1 真链路」是结构性的，不是偷懒：发布前 latest 还指着
+  # 上一版，任何「本地喂清单」的彩排测的都是 N→N 机制而非真实 N-1 二进制。
+  #
+  # 驱动方式：`TAVOTTO_E2E_RUN_UPDATE=1`（src-tauri/src/main.rs 的仅测试
+  # 触发口，默认关死）让 N-1 的壳启动即执行 check → download → install，
+  # 走的就是用户按按钮那条链路。**N-1 二进制没有这个触发口时**（0.10.0 及
+  # 更早）自动化驱动不了 UI——那一轮按 docs/ci/release-qualification.md 的
+  # 手动 checklist 执行并把证据记进 issue #35；有没有触发口按**装出来的
+  # 二进制里有没有这个字面量**探测，不写死版本号（下一版号码此刻没人知道）。
+  #
+  # 失败不回滚 Release（发都发了、tag 也 immutable），但必须**红**：
+  # 它意味着刚发出去的更新链对存量用户不工作，是下一步动作前的 P0 信号。
+  # ────────────────────────────────────────────────────────────────
+  n1_update_windows:
+    needs: [trust2, github_release]
+    if: needs.trust2.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      NEW_VERSION: ${{ needs.trust2.outputs.version }}
+      NEW_TAG: ${{ needs.trust2.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust2.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+
+      - name: 找上一个正式版本（N-1）并下载官方安装包
+        id: prev
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rels = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=30" | ConvertFrom-Json
+          $prev = $rels |
+            Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
+            Where-Object { [version]($_.tag_name.TrimStart('v')) -lt [version]$env:NEW_VERSION } |
+            Sort-Object { [version]($_.tag_name.TrimStart('v')) } -Descending |
+            Select-Object -First 1
+          if (-not $prev) { throw "找不到比 $env:NEW_VERSION 更早的正式 Release（首个版本没有 N-1，可手动跳过）" }
+          $pv = $prev.tag_name.TrimStart('v')
+          Write-Host "N-1 = $($prev.tag_name)"
+          $asset = $prev.assets | Where-Object { $_.name -eq "Tavotto-$pv-Windows-Setup.exe" }
+          if (-not $asset) { throw "N-1 Release 上没有 Tavotto-$pv-Windows-Setup.exe（资产：$($prev.assets.name -join ', ')）" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\n1-setup.exe"
+          "prev_version=$pv" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: 静默安装 N-1 并探测 headless 触发口
+        id: probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -Wait "$env:RUNNER_TEMP\n1-setup.exe" -ArgumentList "/S"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (-not (Test-Path $key)) { throw "N-1 安装后没有卸载注册表项" }
+          $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+          $shell = Join-Path $inst "Tavotto.exe"
+          if (-not (Test-Path $shell)) { throw "N-1 装完找不到壳: $shell" }
+          $dv = (Get-ItemProperty $key).DisplayVersion
+          Write-Host "已安装 N-1：$dv → $inst"
+          "install_dir=$inst" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          # 能力探测：触发口是环境变量名的字面量，编进了壳二进制。
+          # 按二进制内容判而不是版本号——「哪一版加的」在加它的那次发布之前
+          # 没人知道号码，写死一个版本常量迟早说谎。
+          $bytes = [System.IO.File]::ReadAllBytes($shell)
+          $hay = [System.Text.Encoding]::ASCII.GetString($bytes)
+          $supported = $hay.Contains("TAVOTTO_E2E_RUN_UPDATE")
+          "supported=$($supported.ToString().ToLower())" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          if (-not $supported) {
+            Write-Host "N-1（$dv）没有 headless 触发口——本次转手动验证"
+          }
+
+      - name: N-1 无触发口：转手动验证（不算通过，也不红）
+        if: steps.probe.outputs.supported == 'false'
+        shell: pwsh
+        # 不红的理由要写在明处：0.10.0 及更早的二进制没有任何测试钩子，
+        # WebView2 的 UI 自动化不在首轮范围。这不是「验过了」——手动 checklist
+        # 在 docs/ci/release-qualification.md，证据必须记进 issue #35，
+        # 「已写进文档」不等于关闭（p2-needs-an-exit）。
+        run: |
+          Write-Host "::warning::N-1（${{ steps.prev.outputs.prev_version }}）无 headless 触发口，本次 N-1 更新验证需按 docs/ci/release-qualification.md 的手动 checklist 执行，证据记入 issue #35"
+          @(
+            '### ⚠️ N-1 应用内更新：本次需手动验证'
+            ''
+            'N-1（${{ steps.prev.outputs.prev_version }}）的二进制没有 TAVOTTO_E2E_RUN_UPDATE 触发口，自动化驱动不了它的更新 UI。'
+            '按 docs/ci/release-qualification.md 的「真实 N-1 应用内更新」checklist 手动执行一遍，证据（版本断言 + 日志/录屏）记入 issue #35。'
+            '从下一个版本起（N-1 已带触发口）本 job 全自动。'
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 驱动真实应用内更新并断言换到了新版本
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst  = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $key   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          $env:TAVOTTO_E2E_RUN_UPDATE = "1"
+          # 隔离数据/配置目录：别把 runner 的用户目录当垃圾场。
+          # （job 级 env 用不了 runner 上下文，所以放在这里。）
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\n1-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\n1-config"
+          # 壳是 windows 子系统进程，stderr 没句柄时诊断会整个消失（nightly
+          # 的教训）——接到文件里
+          $out = Join-Path $env:RUNNER_TEMP "n1-shell-out.log"
+          $err = Join-Path $env:RUNNER_TEMP "n1-shell-err.log"
+          $p = Start-Process -FilePath $shell -PassThru `
+               -RedirectStandardOutput $out -RedirectStandardError $err
+          Write-Host "N-1 壳已启动（pid $($p.Id)），等待应用内更新……"
+
+          # 判据一：注册表 DisplayVersion 变成新版本（NSIS /UPDATE 装完才写）。
+          # 上限 20 分钟：下载 ~100MB + passive 安装。
+          $updated = $false
+          foreach ($i in 1..1200) {
+            Start-Sleep 1
+            $dv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).DisplayVersion
+            if ($dv -eq $env:NEW_VERSION) { $updated = $true; break }
+          }
+          if (-not $updated) {
+            foreach ($f in @($out, $err)) {
+              if (Test-Path $f) { Write-Host "---- $f ----"; Get-Content $f -Tail 80 }
+            }
+            Get-Process Tavotto -ErrorAction SilentlyContinue |
+              ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            throw "20 分钟内 DisplayVersion 没变成 $env:NEW_VERSION（仍是 $dv）——应用内更新没走完"
+          }
+          Write-Host "✓ DisplayVersion → $env:NEW_VERSION"
+
+          # 判据二：**等新进程出现，不等旧进程优雅退出**——更新装完 NSIS 以
+          # /R 重启应用，旧进程 std::process::exit(0) 不走 RunEvent::Exit。
+          #
+          # 「新进程」的主语必须钉到**壳的映像路径**，不能钉到进程名。安装目录
+          # 里有两个都叫 Tavotto.exe 的二进制——壳在安装根，sidecar 在
+          # $inst\sidecar\Tavotto\Tavotto.exe（下一步的冒烟正是这么找它的）
+          # ——而 `Get-Process Tavotto` 按**进程名**匹配，两个都收。sidecar 是
+          # PyInstaller 产物，**根本没有版本资源**（对 0.12.0 安装包实测：壳
+          # ProductVersion=0.12.0，sidecar 连 StringFileInfo 都没有），一旦选中
+          # 它，ProductVersion 必然是空的，而且**等多久都不会变**——那不是时序
+          # 问题，加再多重试也救不回来。v0.12.0 run 33027201414 的
+          # 「✓ 新进程 pid 1284，ProductVersion=」就是这个形状：它在
+          # DisplayVersion 确认后第一轮轮询（1 秒）就命中了。
+          # 两侧路径**规范化后再比**，不比逐字。这三样任一对不上，首测就红在
+          # 正式发布中途，代价最高：
+          #  · `InstallLocation` 带不带尾部反斜杠，注册表里两种写法都有；
+          #  · Windows 路径大小写不敏感，CIM 与注册表未必给同一种拼法；
+          #  · 8.3 短名（`C:\Users\RUNNER~1\…`）与长名指向同一个文件。
+          # 判据两个方向都要成立：同一个文件的畸形写法必须匹配上，**不同的
+          # 文件必须匹配不上**——只钉一条边是这个仓库反复出现的形状。
+          function Resolve-TavottoPath([string]$Path) {
+            if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+            $q = $Path.Trim().Trim('"')
+            # GetFullPath 归并重复分隔符、解 `..`、统一分隔符
+            try { $q = [System.IO.Path]::GetFullPath($q) } catch { }
+            # 8.3 短名展开。**只有 Windows 有**，失败就退回上一步的结果——
+            # 这一段本机（macOS）验不了，见 PR 正文的「仍未执行」一节。
+            try {
+              if (-not ([System.Management.Automation.PSTypeName]'TavottoLongPath').Type) {
+                # 别用 @'…'@ here-string：它的定界符必须顶格，而顶格会终结
+                # YAML 的块标量，整个 workflow 直接解析失败。
+                $sig = '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]' +
+                       ' public static extern uint GetLongPathName(string s,' +
+                       ' System.Text.StringBuilder b, uint n);'
+                Add-Type -Name TavottoLongPath -Namespace '' -MemberDefinition $sig
+              }
+              $sb = New-Object System.Text.StringBuilder 32767
+              if ([TavottoLongPath]::GetLongPathName($q, $sb, 32767) -gt 0 -and $sb.Length -gt 0) {
+                $q = $sb.ToString()
+              }
+            } catch { }
+            return $q.TrimEnd([System.IO.Path]::DirectorySeparatorChar,
+                              [System.IO.Path]::AltDirectorySeparatorChar)
+          }
+          $shellCanon = Resolve-TavottoPath $shell
+          Write-Host "壳的规范化映像路径：$shellCanon"
+
+          $fresh = $null
+          $procPath = ""
+          $seen = @{}
+          foreach ($i in 1..120) {
+            Start-Sleep 1
+            foreach ($c in @(Get-Process Tavotto -ErrorAction SilentlyContinue)) {
+              if ($c.Id -eq $p.Id) { continue }
+              # 映像路径走 CIM（Win32_Process.ExecutablePath），不走 .NET 的
+              # MainModule：新进程刚起时模块表可能还没填好，读回空串。
+              $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.Id)" `
+                    -ErrorAction SilentlyContinue
+              $exe = if ($ci) { "$($ci.ExecutablePath)" } else { "" }
+              if ([string]::IsNullOrWhiteSpace($exe)) { continue }
+              $seen[$c.Id] = $exe
+              if ([string]::Equals((Resolve-TavottoPath $exe), $shellCanon,
+                                   [System.StringComparison]::OrdinalIgnoreCase)) {
+                $fresh = $c; $procPath = $exe; break
+              }
+            }
+            if ($fresh) { break }
+          }
+          if (-not $fresh) {
+            $other = ($seen.GetEnumerator() |
+                      ForEach-Object { "pid $($_.Key) → $($_.Value)" }) -join "; "
+            if (-not $other) { $other = "（一个都没有）" }
+            throw ("2 分钟内没有出现映像为 $shell 的新进程（/R 重启失败？）。" +
+                   "期间看到的其它 Tavotto 进程：$other")
+          }
+
+          # 判据三：**跑起来的那个壳**是新版本。
+          # 不变式的主语是「重启后新进程的 ProductVersion」
+          # （docs/ci/release-qualification.md「n1_update_windows」一节）。只验
+          # 安装目录里的文件不够：「装对了但 /R 起错了二进制」恰好从中间漏过去。
+          # 「在安装目录下」也不够——sidecar 就在安装目录下，那条检查放它过去。
+          # 判据二已经把主语钉到 $shell 的映像路径上，这里只剩版本资源。
+          #
+          # 版本资源从**那个映像路径**读，不从进程句柄读，并且轮询 15s：
+          # 安装器此刻可能仍在替换 exe，磁盘上那份同样会读到中间态。诊断里
+          # 写了轮询窗口，代码里就必须真有——错误信息本身也是断言。
+          $vi = $null
+          $procPv = ""
+          foreach ($i in 1..15) {
+            $vi = (Get-Item $procPath -ErrorAction SilentlyContinue).VersionInfo
+            if ($vi) { $procPv = "$($vi.ProductVersion)".Trim() }
+            if (-not [string]::IsNullOrWhiteSpace($procPv)) { break }
+            Start-Sleep 1
+          }
+          # 句柄那份只当诊断：读不到不构成失败，但读到什么必须留在日志里
+          # ——「ProductVersion 为何为空」要靠它定性（#147 关闭条件 3）。
+          $handlePv = "<未读取>"
+          try { $handlePv = "$($fresh.MainModule.FileVersionInfo.ProductVersion)" }
+          catch { $handlePv = "<读取失败：$($_.Exception.GetType().Name)>" }
+
+          Write-Host "✓ 新进程 pid $($fresh.Id)"
+          Write-Host "  映像路径：$procPath"
+          Write-Host "    ProductVersion='$procPv'  FileVersion='$(if ($vi) { $vi.FileVersion })'"
+          Write-Host "  进程句柄 MainModule → ProductVersion='$handlePv'（仅诊断）"
+          if ($seen.Count -gt 1) {
+            Write-Host "  同名的其它 Tavotto 进程（按映像路径已排除）："
+            $seen.GetEnumerator() | Where-Object { $_.Key -ne $fresh.Id } |
+              ForEach-Object { Write-Host "    pid $($_.Key) → $($_.Value)" }
+          }
+          if ([string]::IsNullOrWhiteSpace($procPv)) {
+            throw ("读不到新进程映像的 ProductVersion（$procPath，已轮询 15s）。" +
+                   "pid $($fresh.Id)，句柄读值='$handlePv'——更新链可能是成功的，" +
+                   "先看上面的诊断再判。")
+          }
+          if (-not $procPv.StartsWith($env:NEW_VERSION)) {
+            throw "重启后跑的不是新版本：ProductVersion=$procPv，期望 $env:NEW_VERSION"
+          }
+          # 收掉窗口进程，下一步对 sidecar 冒烟
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          Start-Sleep 3
+          # 这一步的契约是「三条判据都过 = 成功」，别把它托付给 $LASTEXITCODE
+          # 的隐式传播——那个值来自与结论无关的命令。runner 会在每个 pwsh 步骤
+          # 末尾追加 `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`
+          # （actions/runner `ScriptHandlerHelpers.cs` 的 `FixUpScriptContents`），
+          # `-Command` 再把非 0/1 折成 1（about_pwsh「-Command | -c」一节）——
+          # issue #197 的「脚本跑到最后一行仍退 1」就是这两层。显式 `exit 0` 在追加
+          # 的那一行之前退出；所有失败路径都是 throw，走不到这里，所以不掩盖任何
+          # 真失败。规则见 `.github/AGENTS.md`「pwsh 步骤的退出码」。
+          exit 0
+
+      - name: 更新后的产物冒烟（复用 smoke_app 的既有断言）
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $side = Get-ChildItem $inst -Recurse -Filter Tavotto.exe |
+                  Where-Object { $_.FullName -ne $shell } | Select-Object -First 1
+          if (-not $side) { throw "更新后的安装目录里没有 sidecar" }
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts\smoke_app.py --exe "$($side.FullName)" `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-runtime --expect-control-plane workerd
+          if ($LASTEXITCODE -ne 0) { throw "更新后的 sidecar 冒烟失败（退出码 $LASTEXITCODE）" }
+          @(
+            "### ✅ 真实 N-1 应用内更新通过（Windows）"
+            ""
+            "${{ steps.prev.outputs.prev_version }} → $env:NEW_VERSION：官方安装包安装 → 应用内更新器下载/验签/解包/安装 → 重启为新版本 → 冒烟渲染通过。"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 清理（卸载）
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (Test-Path $key) {
+            $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+            $un = Join-Path $inst "uninstall.exe"
+            if (Test-Path $un) { Start-Process -Wait $un -ArgumentList "/S" }
+          }
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: n1-update-windows-logs
+          path: |
+            ${{ runner.temp }}/n1-shell-*.log
+            ${{ runner.temp }}/n1-data/**/app.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  pypi:
+    # 同上：lab gate 不过就不发 PyPI。PyPI 上的同名文件永远不能重传，
+    # 所以这里比 Release 更没有「先发了再说」的余地。
+    needs: [trust2, validate_artifacts]
+    # **publish=false 时一律不发。** 这是演练与发布之间唯一的开关，
+    # 而 PyPI 比 Release 更没有「先发了再说」的余地：同名文件永远不能重传。
+    #
+    # PyPI 侧的 trusted publisher 配好之前，tag 触发的自动发布只会红一次
+    # 给人添堵——用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸
+    # （Settings → Variables）。
+    #
+    # **第二段只剩 tag 那条规则。** 第一段里 `pypi` 那个 dispatch 输入
+    # （none / testpypi / pypi）没有随载荷传到这里，而 trust2 算出的
+    # publish=true 只可能来自「有 tag 指向该 SHA」——正是从前 tag 触发那条路，
+    # 它从来只看 PYPI_PUBLISH_ENABLED。TestPyPI 通道因此在切两段之后不存在。
+    if: needs.trust2.outputs.publish == 'true' && vars.PYPI_PUBLISH_ENABLED == 'true'
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
+    runs-on: ubuntu-latest
+    # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
+    # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tavotto
+    permissions:
+      id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
+    steps:
+      # 要跑 `artifact_manifest.py`，所以这个 job 也得有仓库
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust2.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: release-assets, path: assets }
+
+      - name: 只把 wheel 与 sdist 交给 PyPI
+        # `release-assets` 里还有安装包、SBOM、清单——PyPI 只收 wheel/sdist，
+        # 多喂一个它会整批拒收，而那时**前面的文件可能已经传上去了**
+        # （同名文件永远不能重传，等于这个版本号作废）。
+        #
+        # **路径从清单取，不 glob。** 上一版写的是
+        # `cp assets/dist/*.whl assets/dist/*.tar.gz dist/`——而摊平之后
+        # `dist/` 里的 `*.tar.gz` **同时匹配 Python sdist 与 macOS 的
+        # `Tavotto.app.tar.gz`**（那是桌面更新包）。于是这一步会把一个
+        # 桌面更新包交给 PyPI。
+        #
+        # 这正是「七个下游步骤各自猜文件名」（#63）的复发，而且发生在
+        # **刚刚引入产物清单的这条 PR 里** —— 清单就是为了让这种猜测不可能。
+        # （Codex 在第二轮上指出。）
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          M=assets/dist/artifact-manifest.json
+          for role in wheel sdist; do
+            src="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role "$role")"
+            echo "PyPI ← $role: $src"
+            cp "$src" dist/
+          done
+          ls -la dist/
+          # 二次确认：交给 PyPI 的必须**恰好两个**文件
+          n=$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')
+          [ "$n" = "2" ] || { echo "::error::dist/ 里有 $n 个文件，PyPI 只该收 2 个"; exit 1; }
+
+      - name: 发布到 PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          print-hash: true
+
+  # ────────────────────────────────────────────────────────────────
+  # 发行分支 `plugin-stable` 推进（ADR 0043）。
+  #
+  # marketplace 的安装入口读的是这条分支：用户装到的插件 = 这里投影的那份。
+  # 它消费 validate_artifacts 验过的**同一份** zip（不重跑 vite、不重新 checkout 浮动
+  # main 拼装、不借工作目录里的 dist）。
+  #
+  #   publish=true   Release 建好、PyPI 发完之后才推进（引擎必须先经用户正常渠道拿得到，
+  #                  发布器自己还会对 GitHub Release / PyPI 各问一次）。GitHub Release、
+  #                  PyPI、Git 分支不是一个原子事务：这一步失败时 Release 已经公开、
+  #                  marketplace 通道**尚未推进**，旧稳定插件原样保留——用同一份产物
+  #                  重跑本 job 或 plugin-stable.yml 即可幂等重试，绝不删公开版本伪装回滚。
+  #   publish=false  演练：对一个临时 bare 仓库真实跑 bootstrap → 幂等 no-op → 同版本
+  #                  不同内容拒绝 → 回退，再对真实远端只读 `plan`。真实 refs 一个不动。
+  #
+  # 权限：只有这个 job 有 contents: write（顶层是 read）；发布器不执行插件包里的任何
+  # 代码，只搬字节。它也不靠 bot push 触发别的 workflow——没有 workflow 监听这条分支。
+  # ────────────────────────────────────────────────────────────────
+  plugin_stable:
+    needs: [trust2, validate_artifacts, github_release, pypi]
+    # validate 必须绿；正式发布还要等 Release 与 PyPI 都出结论（pypi 允许 skipped：
+    # 仓库变量未开闸时它不跑，发布器会自己核 PyPI 上有没有这个版本）。
+    if: >-
+      always() && needs.trust2.result == 'success' && needs.validate_artifacts.result == 'success'
+      && (
+        needs.trust2.outputs.publish != 'true'
+        || (needs.github_release.result == 'success'
+            && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped'))
+      )
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust2.outputs.sha }}
+          # 与 plugin-stable.yml 同理：凭据只留 job 自己配的全局那一份，否则发布器在
+          # checkout 目录里 ls-remote 会带两份 Authorization，GitHub 400
+          persist-credentials: false
+          # 下面那步演练要把 HEAD 推进一个临时 bare 仓库当假 main。**浅克隆推不
+          # 出去**：`git push` 会被收端拒成 `shallow update not allowed`，
+          # 而演练是 `publish != 'true'` 才跑的，正式发布那条路上没有这行 push，
+          # 所以这个洞只在演练里发作——正好把「唯一能在真推之前验发布器语义的
+          # 那一关」整个废掉。v0.14.0 演练第一次执行它就撞上了。
+          #
+          # 发布器本身不需要历史（plugin-stable.yml 就是浅克隆跑成的 bootstrap），
+          # 需要历史的只有这行脚手架。
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: release-assets, path: assets }
+
+      - name: 取出 validate 验过的那份插件并再验一次
+        env:
+          VER: ${{ needs.trust2.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          M=assets/dist/artifact-manifest.json
+          python3 scripts/ci/artifact_manifest.py verify "$M" --base assets \
+            --require codex-plugin,codex-plugin-build --version "$VER" --source-sha "$SOURCE_SHA"
+          ZIP="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role codex-plugin)"
+          BUILD="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role codex-plugin-build)"
+          DIGEST="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['content_digest'])" "$BUILD")"
+          STAGE="$(python3 scripts/plugin_stage.py unpack "$ZIP" --out "$RUNNER_TEMP/stable")"
+          python3 scripts/plugin_stage.py verify "$STAGE" \
+            --source-sha "$SOURCE_SHA" --version "$VER" --content-digest "$DIGEST"
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: 演练（publish=false）：临时 bare 仓库上真实跑完发布器的全部行为
+        if: needs.trust2.outputs.publish != 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+          VER: ${{ needs.trust2.outputs.version }}
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/drill-remote.git"
+          git init --quiet --bare "$R"
+          git push --quiet "$R" "HEAD:refs/heads/main"
+          P="python3 scripts/plugin_publish.py"
+          # bootstrap：分支不存在 → 创建
+          $P bootstrap --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --engine-check none --reason "release dry-run" --audit "run_id=${{ github.run_id }}" --yes
+          TIP="$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)"
+          # 幂等：同内容再来一次 = no-op，tip 不动
+          $P promote --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --expected-remote-sha "$TIP" --engine-check none --reason "release dry-run" --yes
+          [ "$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)" = "$TIP" ]
+          # 防旧覆盖新：期望值错 → 拒绝（退出 3），tip 不动
+          set +e; $P promote --remote "$R" --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --expected-remote-sha 0000000000000000000000000000000000000000 \
+            --engine-check none --reason "release dry-run" --yes; rc=$?; set -e
+          [ "$rc" -eq 3 ] || { echo "::error::期望值不符时应退 3，实际 $rc"; exit 1; }
+          [ "$(git ls-remote --refs "$R" refs/heads/plugin-stable | cut -f1)" = "$TIP" ]
+          # 回退：显式授权，快进一个新提交，树 == 旧快照
+          $P rollback --remote "$R" --to "$TIP" --expected-remote-sha "$TIP" \
+            --authorized-by "release dry-run" --reason "drill" --yes
+          [ "$(git --git-dir="$R" rev-list --count plugin-stable)" = "2" ]
+          echo "临时远端演练通过：bootstrap / no-op / 拒绝 / rollback"
+
+      - name: 对真实发行分支只读 plan（publish=false）
+        if: needs.trust2.outputs.publish != 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # 没有 --yes：一个写请求都不发。分支还不存在时 plan 显示 bootstrap，存在时显示
+          # promote / no-op / 拒绝——正式发布日会撞的墙这里先撞一遍。
+          python3 scripts/plugin_publish.py plan --staging "$STAGE" --source-sha "$SOURCE_SHA" \
+            --engine-check none --reason "dry-run plan" --receipt-out "$RUNNER_TEMP/plan.json" || true
+          if [ -f "$RUNNER_TEMP/plan.json" ]; then
+            python3 - "$RUNNER_TEMP/plan.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          p = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("### plugin-stable · plan（只读）\n")
+          for k in ("action", "reason", "remote_tip", "remote_version", "new_version"):
+              print(f"- {k}: `{p.get(k)}`")
+          PY
+          fi
+
+      - name: 给发布器的 git 配本仓库的推送凭据（只在真推时）
+        # 发布器在自己的临时仓库里 push，看不见 actions/checkout 写进 checkout 本地
+        # config 的凭据——首次真跑（run 33979476158）就死在 `could not read Username`，
+        # 读回正确报了 not_landed（退出码 4）。形态与 actions/checkout 一致：只对
+        # github.com 生效的 extraheader，不进任何 URL、不进收据。演练不需要它。
+        if: needs.trust2.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git config --global "http.https://github.com/.extraheader" "AUTHORIZATION: basic $AUTH"
+
+      - name: 推进 plugin-stable（publish=true）
+        if: needs.trust2.outputs.publish == 'true'
+        env:
+          SOURCE_SHA: ${{ needs.trust2.outputs.sha }}
+          TAG: ${{ needs.trust2.outputs.tag }}
+        run: |
+          set -euo pipefail
+          P="python3 scripts/plugin_publish.py"
+          TIP="$(git ls-remote --refs origin refs/heads/plugin-stable | cut -f1 || true)"
+          if [ -z "$TIP" ]; then
+            echo "::error::plugin-stable 还不存在——先按 docs/ci/plugin-stable-channel.md 用已发布的版本 bootstrap（plugin-stable.yml），本 job 不替人做首次创建"
+            exit 1
+          fi
+          $P promote --staging "$STAGE" --source-sha "$SOURCE_SHA" --release-tag "$TAG" \
+            --expected-remote-sha "$TIP" --engine-check github-release,pypi \
+            --audit "run_id=${{ github.run_id }}" --audit "workflow=release" \
+            --receipt-out "$RUNNER_TEMP/receipt.json" --yes
+          python3 - "$RUNNER_TEMP/receipt.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          p = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("### plugin-stable\n")
+          print(f"- {p.get('action')}: {p.get('reason')}  → `{p.get('commit')}`")
+          PY
+
+      - name: 撤掉推送凭据
+        if: always()
+        run: git config --global --unset-all "http.https://github.com/.extraheader" || true
+
+      - name: 留下收据
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: plugin-stable-receipt
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/plan.json
+          if-no-files-found: ignore

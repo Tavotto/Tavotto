@@ -33,6 +33,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / ".github" / "workflows"
 SCRIPTS = ROOT / "scripts"
 RELEASE = WF / "release.yml"
+#: 发布链的第二段（F.2，2026-09-16）：只有 workflow_dispatch，由 ci-infra 在 lab 绿后派发；
+#: trust2 重验 → validate_artifacts → 发布 job。发布相关判据的主语从 RELEASE 扩到它。
+PUBLISH = WF / "release-publish.yml"
 DESKTOP = WF / "desktop-tauri.yml"
 LAB = WF / "lab-ci.yml"
 REUSABLE = WF / "_lab-qualification.yml"
@@ -42,6 +45,7 @@ PLUGIN_STABLE = WF / "plugin-stable.yml"
 _NEEDED = {
     WF: (
         "release.yml",
+        "release-publish.yml",
         "desktop-tauri.yml",
         "lab-ci.yml",
         "_lab-qualification.yml",
@@ -272,17 +276,25 @@ def test_the_parser_itself_still_sees_what_it_should():
     这正是本仓库反复强调的空门禁形状。
     """
     rel = _wf(RELEASE)
-    assert set(rel.jobs) >= {
-        "trust",
-        "build",
-        "desktop",
-        "lab_release_gate",
+    assert set(rel.jobs) == {"trust", "build", "desktop", "dispatch_lab"}, (
+        f"release.yml 解析出的 job：{sorted(rel.jobs)}——第一段到 dispatch_lab 为止（F.2）"
+    )
+    assert "artifact_manifest.py build" in rel.run_text()
+
+    pub = _wf(PUBLISH)
+    assert set(pub.jobs) == {
+        "trust2",
         "validate_artifacts",
         "github_release",
+        "n1_update_windows",
         "pypi",
-    }, f"release.yml 解析出的 job：{sorted(rel.jobs)}"
-    assert len(rel.steps("validate_artifacts")) >= 10
-    assert "artifact_manifest.py" in rel.run_text()
+        "plugin_stable",
+    }, f"release-publish.yml 解析出的 job：{sorted(pub.jobs)}"
+    assert len(pub.steps("validate_artifacts")) >= 10
+    assert len(pub.steps("trust2")) >= 5, (
+        "trust2 应是 checkout + 形状 + blocker + resolve + lab status + 摘要"
+    )
+    assert "artifact_manifest.py" in pub.run_text()
 
     reusable = _wf(REUSABLE)
     assert len(reusable.steps("qualify")) >= 15, "可复用资格验证的步骤太少了"
@@ -315,7 +327,9 @@ def test_no_workflow_polls_for_a_github_release():
 
 
 def test_no_sleep_polling_loops_anywhere_in_the_release_chain():
-    for p in (RELEASE, DESKTOP, LAB, REUSABLE):
+    """两段链 + 桌面链 + lab 两份，一个 `sleep N` / `seq 1 NN` 都不许有。第二段读 lab 结论
+    只许一次 API 调用（`test_trust2_reads_the_lab_status_exactly_once_and_never_waits`）。"""
+    for p in (RELEASE, PUBLISH, DESKTOP, LAB, REUSABLE):
         text = _wf(p).run_text()
         assert not re.search(r"seq\s+1\s+\d{2,}", text), f"{p.name}: 还有轮询循环"
         assert not re.search(r"\bsleep\s+\d+\b", text), f"{p.name}: 还有 sleep 轮询"
@@ -334,6 +348,14 @@ def test_the_tag_has_exactly_one_entry_point():
         if re.search(r"^\s*push:\s*\n\s*tags:\s*\[?\s*[\"']?v\*", head, re.M):
             entries.append(p.name)
     assert entries == ["release.yml"], f"tag 的入口应当只有 release.yml，实际 {entries}"
+    # 第二段不是入口：没有 push、没有 schedule、没有 workflow_call——只能被派发
+    head = _strip_comments(PUBLISH.read_text(encoding="utf-8")).split("\njobs:")[0]
+    on = re.search(r"(?ms)^on:\s*\n(.*?)(?=^\S)", head)
+    assert on, "release-publish.yml 切不出 on: 块"
+    events = re.findall(r"(?m)^  ([a-z_]+):", on.group(1))
+    assert events == ["workflow_dispatch"], (
+        f"release-publish.yml 的事件是 {events}——第二段只许被派发，多一个入口就多一份漂开的信任判断"
+    )
 
 
 def test_desktop_is_reachable_only_through_release():
@@ -375,15 +397,57 @@ def test_release_supports_a_publish_false_dry_run():
     )
 
 
-def test_every_publishing_job_is_gated_on_publish():
-    """建 Release 与发 PyPI **都**必须挂在 trust 的 publish 输出上。
+#: 「发布」在 workflow 里长这三样：挂 Release 的 action、PyPI 的 OIDC 发布 action、
+#: 真推发行分支的发布器。第一段一样都不许有——它到派发 lab 就结束（F.2）。
+_PUBLISHING_MARKERS = ("action-gh-release", "gh-action-pypi-publish", "plugin_publish.py")
 
-    漏掉任何一个，演练就会真的发布出去。
+
+def test_every_publishing_job_is_gated_on_publish():
+    """发布 job 全在第二段，且**都**挂在 `trust2` 重算出的 publish 上。
+
+    漏掉任何一个，演练就会真的发布出去。主语（F.2 起）是 `release-publish.yml`：
+    `publish` 由 `trust2` 按同一规则重算，不是载荷里那个字符串——所以这里钉的是
+    `needs.trust2.outputs.publish`，任何 job 都不许直接读 `inputs.publish` 当门。
+    """
+    pub = _wf(PUBLISH)
+    for name in ("github_release", "pypi", "n1_update_windows"):
+        body = pub.jobs[name].split("steps:")[0]
+        assert "needs.trust2.outputs.publish == 'true'" in body, (
+            f"{name} 没有挂在 trust2 的 publish 上"
+        )
+    stable = pub.jobs["plugin_stable"].split("steps:")[0]
+    assert "needs.trust2.outputs.publish != 'true'" in stable, (
+        "plugin_stable 的演练 / 真推分岔不再看 trust2 的 publish"
+    )
+    for name, body in pub.jobs.items():
+        if name == "trust2":
+            continue
+        assert "inputs.publish" not in body, (
+            f"{name} 直接读了 inputs.publish——载荷里的值只能进 trust2 重算"
+        )
+
+
+def test_the_first_segment_has_no_publishing_job():
+    """**第一段到 dispatch_lab 为止。** 发布 job 一个都不在 release.yml 里，
+    「lab 没绿就不发」靠的是第二段从未开始，而不是某个 `if:`。
+
+    正面形式：job 集合 == 四个；三种发布标记都不出现；没有任何 job 要
+    `contents: write`（第一段只造产物、只派发）。
     """
     rel = _wf(RELEASE)
-    for name in ("github_release", "pypi"):
-        body = rel.jobs[name].split("steps:")[0]
-        assert "needs.trust.outputs.publish == 'true'" in body, f"{name} 没有挂在 publish 上"
+    assert set(rel.jobs) == {"trust", "build", "desktop", "dispatch_lab"}, sorted(rel.jobs)
+    for marker in _PUBLISHING_MARKERS:
+        assert marker not in rel.text, (
+            f"release.yml 里出现了 {marker}——发布 job 应全在 release-publish.yml"
+        )
+    for name, body in rel.jobs.items():
+        assert not re.search(r"^\s+contents:\s*write", body, re.M), (
+            f"release.yml::{name} 要了 contents: write"
+        )
+    # 发布标记在第二段真的都在（否则上面那条是在一个空集合上恒真）
+    pub = _wf(PUBLISH)
+    for marker in _PUBLISHING_MARKERS:
+        assert marker in pub.text, f"release-publish.yml 里没有 {marker}——发布 job 搬丢了"
 
 
 def test_the_dry_run_still_exercises_every_verification_step():
@@ -392,16 +456,20 @@ def test_the_dry_run_still_exercises_every_verification_step():
     只在「建 Release」那个 job 里做这些，等于**它们只在真发布时才执行**
     ——而那个 job 自 v0.8.0 起一次都没成功跑到过，#63 因此躺了好几周。
     """
-    rel = _wf(RELEASE)
-    head = rel.jobs["validate_artifacts"].split("steps:")[0]
+    pub = _wf(PUBLISH)
+    head = pub.jobs["validate_artifacts"].split("steps:")[0]
     assert not re.search(r"^\s+if:", head, re.M), "产物校验不许被 publish 门控——演练正是要跑它"
-    blob = "\n".join(rel.steps("validate_artifacts"))
+    blob = "\n".join(pub.steps("validate_artifacts"))
     for needle in ("sbom-action", "SHA-256", "attest-build-provenance", "合并并校验产物清单"):
         assert needle in blob, f"演练里少了：{needle}"
 
 
 def test_release_only_uses_the_sha_that_trust_resolved():
-    """所有 job 只认 trust 输出的 SHA，不各自再解析一次 ref。"""
+    """所有 job 只认 trust / trust2 输出的 SHA，不各自再解析一次 ref。
+
+    第二段多一条：除 `trust2` 外没有任何 job 读 `inputs.sha`（载荷是输入不是结论），
+    每个 checkout 的 `ref:` 都是 `needs.trust2.outputs.sha`。
+    """
     rel = _wf(RELEASE)
     for name, body in rel.jobs.items():
         if name == "trust":
@@ -409,6 +477,23 @@ def test_release_only_uses_the_sha_that_trust_resolved():
         assert "github.ref_name" not in body, (
             f"{name} 还在用 github.ref_name——发布链只认 trust 验过的 SHA"
         )
+    pub = _wf(PUBLISH)
+    checkouts = 0
+    for name, body in pub.jobs.items():
+        if name == "trust2":
+            continue
+        for needle in ("github.ref_name", "inputs.sha", "github.sha"):
+            assert needle not in body, (
+                f"release-publish.yml::{name} 用了 {needle}——第二段只认 trust2 输出的 SHA"
+            )
+        for step in pub.steps(name):
+            if "actions/checkout@" not in step:
+                continue
+            checkouts += 1
+            assert _Workflow.with_scalars(step).get("ref") == "${{ needs.trust2.outputs.sha }}", (
+                f"release-publish.yml::{name} 的 checkout 不是 trust2 的 SHA"
+            )
+    assert checkouts >= 4, f"第二段只找到 {checkouts} 个 checkout——选择器缩水了"
 
 
 # ── 产物清单：下游不再猜文件名 ────────────────────────────────────────────
@@ -497,8 +582,8 @@ def test_the_merged_manifest_is_verified_against_the_trusted_sha():
     ——build 那步和 github_release 那步也各有一个，全文搜索被它们满足了。
     判据的主语又错了一次：该问「合并完那一步核不核对」。
     """
-    rel = _wf(RELEASE)
-    steps = [s for s in rel.steps("validate_artifacts") if "合并并校验产物清单" in s]
+    pub = _wf(PUBLISH)
+    steps = [s for s in pub.steps("validate_artifacts") if "合并并校验产物清单" in s]
     assert len(steps) == 1, "找不到「合并并校验产物清单」这一步"
     step = steps[0]
     assert "artifact_manifest.py merge" in step
@@ -513,14 +598,14 @@ def test_the_merged_manifest_is_verified_against_the_trusted_sha():
 
 
 def test_the_release_attaches_everything_in_one_go():
-    rel = _wf(RELEASE)
-    attach = [s for s in rel.steps("github_release") if "action-gh-release" in s]
+    pub = _wf(PUBLISH)
+    attach = [s for s in pub.steps("github_release") if "action-gh-release" in s]
     assert len(attach) == 1, "挂 Release 只该有一步"
     for needle in ("assets/dist/*", "SHA256SUMS.txt", "tavotto-sbom.spdx.json", "latest.json"):
         assert needle in attach[0], f"一次性挂载里少了 {needle}"
     # Codex 插件（zip + codex-plugin.json + 随包清单）在 dist/ 里随 `assets/dist/*` 挂上
     # （ADR 0043：由 build job 造、validate 成对验过），所以它们必须是 validate 的必需 role
-    validate = "\n".join(rel.steps("validate_artifacts"))
+    validate = "\n".join(pub.steps("validate_artifacts"))
     for role in ("codex-plugin", "codex-plugin-manifest", "codex-plugin-build"):
         assert role in validate, f"validate_artifacts 的 --require 里少了 {role}"
 
@@ -534,11 +619,11 @@ def test_the_release_carries_the_project_licence():
     随 release-assets 搬到 github_release，再一次挂全部。判据钉两头：
     拷进 out/ 那一步在、挂载清单里有那一行；少任一头都是「登记了却没挂上」。
     """
-    rel = _wf(RELEASE)
-    staged = [s for s in rel.steps("validate_artifacts") if "cp LICENSE out/LICENSE" in s]
+    pub = _wf(PUBLISH)
+    staged = [s for s in pub.steps("validate_artifacts") if "cp LICENSE out/LICENSE" in s]
     assert len(staged) == 1, "validate_artifacts 里没有把 LICENSE 拷进 out/ 的那一步"
     assert "GNU AFFERO" in staged[0], "拷之前不再核对它是 AGPL 全文——空文件或改错源也会照挂"
-    attach = [s for s in rel.steps("github_release") if "action-gh-release" in s]
+    attach = [s for s in pub.steps("github_release") if "action-gh-release" in s]
     assert len(attach) == 1, "挂 Release 只该有一步"
     assert re.search(r"^\s+assets/out/LICENSE\s*$", attach[0], re.M), (
         "github_release 的 files 清单里没有 assets/out/LICENSE——Release 页面上拿不到许可证全文"
@@ -547,8 +632,8 @@ def test_the_release_carries_the_project_licence():
 
 def test_the_published_artifacts_are_re_verified_before_attaching():
     """下载 artifact 再上传是一次真实的搬运，中间任何一环都可能改内容。"""
-    rel = _wf(RELEASE)
-    blob = "\n".join(rel.steps("github_release"))
+    pub = _wf(PUBLISH)
+    blob = "\n".join(pub.steps("github_release"))
     assert "artifact_manifest.py verify" in blob, (
         "挂上去之前没有重新校验——「Release 上挂的与发行资格验证过的不是"
         "同一个东西」是这条链上最不能接受的失败"
@@ -587,11 +672,12 @@ _DISPATCH_CMD = "gh workflow run lab-qualification.yml -R Tavotto/ci-infra"
 _REUSABLE_USES = "uses: ./.github/workflows/_lab-qualification.yml"
 #: 被验的代码永远来自这个仓库——reusable 被 ci-infra 跨仓库调用时默认 repository 是调用方。
 _PUBLIC_REPO = "Tavotto/Tavotto"
-#: 并行期（F-3 已合、F-6 PR B 未合）公开仓库里还在 `uses` reusable 的 (workflow, job)。
-#: PR B 把 `release.yml::lab_release_gate` 改成派发 + 回调之后这里改成空集，
-#: `_DISPATCHERS` 加上 `("release.yml", "dispatch_lab")`——两张表一起改，别只改一张。
-_REUSABLE_CALLERS = {("release.yml", "lab_release_gate")}
-_DISPATCHERS = {("lab-ci.yml", "dispatch")}
+#: PR B（F-6，2026-09-16）之后公开仓库里**没有**直接 `uses` reusable 的 job：`release.yml`
+#: 的 `lab_release_gate` 改成了派发 + 回调（`dispatch_lab` → ci-infra → `release-publish.yml`）。
+#: 这是 F-8 注销公开仓库 runner 的前提：谁再把派发改回 `uses`，runner 不在这里，它会永远排队。
+#: 两张表一起改，别只改一张。
+_REUSABLE_CALLERS: set[tuple[str, str]] = set()
+_DISPATCHERS = {("lab-ci.yml", "dispatch"), ("release.yml", "dispatch_lab")}
 
 
 def _callers() -> dict[tuple[str, str], _Workflow]:
@@ -716,8 +802,8 @@ def test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run():
         f"槽名 {group!r} 不区分档位——ci-infra 一个 workflow 服务四档，release 会和 nightly 共槽"
     )
 
-    # 调用方顶层不许再有固定的同名组（那会让 run 等自己）
-    for path in (LAB, RELEASE):
+    # 调用方 / 派发方顶层不许再有固定的同名组（那会让 run 等自己）
+    for path in (LAB, RELEASE, PUBLISH):
         text = path.read_text(encoding="utf-8")
         top = re.search(r"^concurrency:\s*\n(?:\s+#.*\n)*\s+group:\s*(.+)$", text, re.M)
         if top:
@@ -736,10 +822,10 @@ def test_qualification_is_defined_exactly_once():
 
     F 组（2026-09-16）起实验室 runner 在私有仓库 ci-infra 上，公开仓库里：
 
-    * **调用方集合**（直接 `uses` reusable）== `_REUSABLE_CALLERS`——并行期只剩
-      `release.yml::lab_release_gate`；PR B 之后是空集；
+    * **调用方集合**（直接 `uses` reusable）== `_REUSABLE_CALLERS`——PR B 之后是**空集**
+      （并行期曾只剩 `release.yml::lab_release_gate`）；
     * **派发方集合**（`gh workflow run lab-qualification.yml -R Tavotto/ci-infra`）
-      == `_DISPATCHERS`——`lab-ci.yml::dispatch`；PR B 加 `release.yml::dispatch_lab`。
+      == `_DISPATCHERS`——`lab-ci.yml::dispatch` 与 `release.yml::dispatch_lab`。
 
     判的是**集合相等**，不是「有没有」：多一个 `uses`（有人把派发改回直接调用，
     runner 不在公开仓库上会永远排队）或少一个派发（lab 没人跑）都红。
@@ -757,7 +843,7 @@ def test_qualification_is_defined_exactly_once():
         assert not re.search(r"^\s+steps:", wf.jobs[job], re.M), f"{name}::{job} 还带着自己的步骤"
 
     # 那段逻辑不许在别处再出现一次
-    for p in (LAB, RELEASE):
+    for p in (LAB, RELEASE, PUBLISH):
         text = _wf(p).run_text()
         assert "lab_preflight.py" not in text, f"{p.name}: 又抄了一份体检"
         assert "summarize.py" not in text, f"{p.name}: 又抄了一份汇总"
@@ -824,26 +910,34 @@ def test_the_reusable_declares_the_cross_repository_input_and_secret_as_optional
     )
 
 
-def test_the_lab_dispatch_uses_the_ci_infra_pat_and_reds_when_it_is_missing():
-    """`lab-ci.yml::dispatch`：托管机、PAT 来自 `secrets.TAVOTTO_CI_INFRA_TOKEN`、secret 为空
-    **必须红**，且没有任何让它不跑的条件。
+@pytest.mark.parametrize(
+    ("path", "job", "trust_job"),
+    [(LAB, "dispatch", "trust-check"), (RELEASE, "dispatch_lab", "trust")],
+    ids=["lab-ci", "release"],
+)
+def test_the_lab_dispatch_uses_the_ci_infra_pat_and_reds_when_it_is_missing(path, job, trust_job):
+    """两个派发方（`lab-ci.yml::dispatch` / `release.yml::dispatch_lab`）：托管机、PAT 来自
+    `secrets.TAVOTTO_CI_INFRA_TOKEN`、secret 为空**必须红**，且没有任何让它不跑的条件。
 
     「secret 为空就跳过」是本仓库明令禁止的空门禁形状：读的人会以为 lab 在跑，而它
     根本没被派出去。判据写成正面形式——命令正文里在 `gh workflow run` **之前**必须有
     一段 `if [ -z "$GH_TOKEN" ]` → `::error::…TAVOTTO_CI_INFRA_TOKEN…` → `exit 1`。
     """
-    wf = _wf(LAB)
-    body = wf.jobs["dispatch"]
+    wf = _wf(path)
+    body = wf.jobs[job]
     header = body.split("steps:")[0]
     assert re.search(r"^\s+runs-on:\s*ubuntu-latest\s*$", header, re.M), "派发要在托管机上"
-    assert re.search(r"^\s+needs:\s*trust-check\s*$", header, re.M), "派发必须排在 trust-check 之后"
+    needs = re.search(r"^\s+needs:\s*(.+?)\s*$", header, re.M)
+    assert needs and trust_job in re.findall(r"[\w-]+", needs.group(1)), (
+        f"{path.name}::{job} 的 needs 里没有 {trust_job}——派发必须排在信任判断之后"
+    )
     assert not re.search(r"^\s+if:", header, re.M), "派发 job 不许带条件——lab 没人跑必须红在这里"
     assert "continue-on-error" not in body, "派发失败不许被 continue-on-error 吞掉"
     assert re.search(
         r"^\s+GH_TOKEN:\s*\$\{\{\s*secrets\.TAVOTTO_CI_INFRA_TOKEN\s*\}\}\s*$", header, re.M
     ), "GH_TOKEN 不是来自 secrets.TAVOTTO_CI_INFRA_TOKEN——派发用的是 PAT，不是 GITHUB_TOKEN"
 
-    runs = "\n".join(wf.job_runs("dispatch"))
+    runs = "\n".join(wf.job_runs(job))
     guard = re.search(
         r'if \[ -z "\$\{?GH_TOKEN[^\]]*\]; then\n(?P<block>(?:.*\n)*?)\s*fi\b',
         runs,
@@ -856,19 +950,281 @@ def test_the_lab_dispatch_uses_the_ci_infra_pat_and_reds_when_it_is_missing():
 
     cmd_line = runs[runs.index(_DISPATCH_CMD) :]
     assert re.search(r"\s-r\s+main\b", cmd_line), "派发没有钉 ci-infra 的 ref=main"
-    for field in ("mode", "sha", "baseline_tag"):
+    for field in ("mode", "sha", "baseline_tag", "use_prebuilt_dist"):
         assert re.search(rf"-f\s+{field}=", cmd_line), f"派发命令少了 -f {field}="
 
 
 def test_release_mode_verifies_the_exact_artifact():
-    """发行档验的必须是 build 产出的**那一份** wheel；lab 档没有候选包，必须自己造。"""
-    rel = _wf(RELEASE).jobs["lab_release_gate"]
-    assert re.search(r"use_prebuilt_dist:\s*true", rel)
-    assert re.search(r"mode:\s*release", rel)
+    """发行档验的必须是 build 产出的**那一份** wheel；lab 档没有候选包，必须自己造。
+
+    F.2 起发行档由 `release.yml::dispatch_lab` 派发：命令里 `-f mode=release`、
+    `-f use_prebuilt_dist=true`、`-f source_run_id=` 是**本 run** 的 id（ci-infra 那边的
+    reusable 按它跨仓库取 `dist`）——三样缺一，lab 验的就不是将要发出去的那一份。
+    """
+    rel = "\n".join(_wf(RELEASE).job_runs("dispatch_lab"))
+    assert re.search(r"-f\s+mode=release\b", rel), "release.yml 没有按 release 档派发"
+    assert re.search(r"-f\s+use_prebuilt_dist=true\b", rel), "发行档必须验 build 产出的那一份 dist"
+    src = re.search(r"-f\s+source_run_id=(\S+)", rel)
+    assert src, "派发命令少了 -f source_run_id="
+    assert src.group(1).strip("\"'") in (
+        "$GITHUB_RUN_ID",
+        "${GITHUB_RUN_ID}",
+        "${{ github.run_id }}",
+    ), f"source_run_id 不是本 run 的 id：{src.group(1)!r}——ci-infra 会到别的 run 里找 dist"
     lab = "\n".join(_wf(LAB).job_runs("dispatch"))
     assert re.search(r"-f\s+use_prebuilt_dist=false\b", lab), (
         "lab 档没有候选包，必须让 ci-infra 自己造一个——那问的是另一个问题"
     )
+
+
+# ── 发布链切两段（F.2，2026-09-16）────────────────────────────────────────
+#
+# 第一段 release.yml 到 dispatch_lab 为止；第二段 release-publish.yml 由 ci-infra 在 lab 绿后
+# 派发，先 trust2 重验再发布。下面这组钉的是「切开之后哪些保证一条都没少」：载荷不被
+# 信任、publish 只能被压成 false、产物只从第一段那次 run 取、lab 结论读一次不等。
+
+#: 第二段的 workflow_dispatch inputs——与 ci-infra `report` 的派发命令共用的接口，**一个字不能偏**。
+_PUBLISH_INPUTS = ("sha", "source_run_id", "lab_run_id", "publish", "ack_open_blockers")
+
+
+def _dispatch_inputs(path: Path) -> dict[str, dict[str, str]]:
+    """`on.workflow_dispatch.inputs` → {名字: {键: 值}}（注释已剥，单行标量）。"""
+    head = _strip_comments(path.read_text(encoding="utf-8")).split("\njobs:")[0]
+    m = re.search(r"(?ms)^    inputs:\s*\n(.*?)(?=^\S|^  [a-z_]+:)", head)
+    assert m, f"{path.name}: 读不到 workflow_dispatch.inputs 块"
+    out: dict[str, dict[str, str]] = {}
+    parts = re.split(r"(?m)^      ([A-Za-z_]+):\s*$", m.group(1))
+    for i in range(1, len(parts), 2):
+        out[parts[i]] = dict(re.findall(r"(?m)^\s+([\w-]+):[ \t]+(\S.*?)\s*$", parts[i + 1]))
+    assert out, f"{path.name}: inputs 块里一个输入都没切出来"
+    return out
+
+
+def _shell_block(shell: str, opener: str) -> str:
+    """shell 里以 `opener` 那一行开头、到**同一缩进**的 `fi` 为止的块（不含首尾两行）。
+
+    嵌套的 `if … fi` 用非贪婪正则切会停在内层的 `fi` 上——第一版就这么切错的，
+    于是外层分支尾部的赋值被判成「不在分支里」。按缩进切没有这个问题。
+    """
+    lines = shell.splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.strip() == opener]
+    assert len(starts) == 1, f"开头行 {opener!r} 应恰好一处，实际 {len(starts)}"
+    i = starts[0]
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    for j in range(i + 1, len(lines)):
+        if lines[j].strip() == "fi" and len(lines[j]) - len(lines[j].lstrip()) == indent:
+            return "\n".join(lines[i + 1 : j])
+    raise AssertionError(f"{opener!r} 之后找不到同缩进的 fi")
+
+
+def test_the_second_segment_is_dispatch_only_with_the_pinned_inputs():
+    """`release-publish.yml`：名字 `Release (publish)`；五个 string 输入，名字与顺序钉死。
+
+    ci-infra 的 `report` 按这五个名字 `-f name=` 派发过来——少一个、改一个名字，派发当场 422，
+    而那发生在 lab 已经绿了之后，是整条链上最贵的失败位置。
+    """
+    raw = PUBLISH.read_text(encoding="utf-8")
+    assert re.search(r"(?m)^name: Release \(publish\)\s*$", raw), "第二段的 name 变了"
+    got = _dispatch_inputs(PUBLISH)
+    assert tuple(got) == _PUBLISH_INPUTS, (
+        f"第二段的输入是 {tuple(got)}，接口钉的是 {_PUBLISH_INPUTS}"
+    )
+    for name, fields in got.items():
+        assert fields.get("type") == "string", (
+            f"{name}.type = {fields.get('type')!r}——载荷经两跳 -f 传，全是字符串"
+        )
+    for name in ("sha", "source_run_id", "lab_run_id"):
+        assert got[name].get("required") == "true", f"{name} 不是必填——缺了它 trust2 没有主语"
+    assert got["publish"].get("default") == '"false"', (
+        f'publish 的默认值不是 "false"：{got["publish"]}'
+    )
+
+
+def test_the_first_segment_ends_by_dispatching_the_lab_with_publish_and_ack_forwarded():
+    """`release.yml::dispatch_lab`：`needs` 含 build / desktop / trust；命令里七个 `-f` 齐全；
+    `publish` 来自 trust 的输出、`ack_open_blockers` 原样来自输入——第二段 trust2 要拿它们
+    重算 / 再核。第一段**不等结果**：job 里没有任何 `gh run watch` / `gh run view`。
+    """
+    wf = _wf(RELEASE)
+    header = wf.jobs["dispatch_lab"].split("steps:")[0]
+    needs = re.search(r"^\s+needs:\s*\[(.+?)\]\s*$", header, re.M)
+    assert needs, "dispatch_lab 的 needs 不是列表写法"
+    assert set(re.findall(r"[\w-]+", needs.group(1))) == {"build", "desktop", "trust"}, needs.group(
+        1
+    )
+    env = dict(re.findall(r"(?m)^\s+([A-Z_]+):\s*(\$\{\{.*?\}\})\s*$", header))
+    assert env.get("LAB_PUBLISH") == "${{ needs.trust.outputs.publish }}", env
+    assert env.get("LAB_ACK") == "${{ inputs.ack_open_blockers }}", env
+    runs = "\n".join(wf.job_runs("dispatch_lab"))
+    cmd = runs[runs.index(_DISPATCH_CMD) :].split("\n\n")[0]
+    for field, value in (
+        ("mode", "release"),
+        ("sha", '"$LAB_SHA"'),
+        ("baseline_tag", '""'),
+        ("use_prebuilt_dist", "true"),
+        ("source_run_id", '"$GITHUB_RUN_ID"'),
+        ("publish", '"$LAB_PUBLISH"'),
+        ("ack_open_blockers", '"$LAB_ACK"'),
+    ):
+        m = re.search(rf"-f\s+{field}=(\S+)", cmd)
+        assert m, f"派发命令少了 -f {field}="
+        assert m.group(1) == value, f"-f {field}= 的值是 {m.group(1)!r}，期望 {value!r}"
+    assert "gh run watch" not in runs and "gh run view" not in runs, "第一段不许等 lab 的结果"
+
+
+def test_trust2_reverifies_ancestry_tag_and_blockers_with_the_first_segments_ack():
+    """`trust2` 三段判断齐全：ancestry（`--is-ancestor`）、tag（已存在必须指向同一 SHA）、
+    blocker（对**此刻** open 的清单重跑 `release_blockers.py`，输入是第一段的 ack）。
+
+    判据落在**那个 job 自己的 run: 正文**里，不是「文件里有没有这个词」——release.yml 的
+    trust 里同样三段都有，整文件搜索会被它满足。blocker 那步的 `ACK` 必须来自
+    `inputs.ack_open_blockers`：第二段不新增签字入口，它只认第一段传下来的那份。
+    """
+    wf = _wf(PUBLISH)
+    shell = "\n".join(wf.job_runs("trust2"))
+    assert "git merge-base --is-ancestor" in shell, "trust2 少了 origin/main 祖先判断"
+    assert "refs/tags/${REL_TAG}^{commit}" in shell and 'EXISTING" != "$SHA' in shell, (
+        "trust2 少了 tag 指向判断"
+    )
+    assert "scripts/ci/release_blockers.py" in shell, "trust2 没有再核 release:blocker"
+    blocker = [st for st in wf.steps("trust2") if "release_blockers.py" in st]
+    assert len(blocker) == 1, "trust2 里跑 release_blockers.py 的步骤应恰好一步"
+    # 三段判断没有一段可以被条件关掉：trust2 的步骤一律不带 if / continue-on-error
+    # （变异「blocker 那步加 if: false」曾存活——步骤还在、判据还在、就是不执行）
+    for st in wf.steps("trust2"):
+        name = _Workflow.field(st, "name") or st.strip().splitlines()[0]
+        assert _Workflow.field(st, "if") is None, (
+            f"trust2 步骤「{name}」带了 if:——判断不许被条件关掉"
+        )
+        assert "continue-on-error" not in st, f"trust2 步骤「{name}」带了 continue-on-error"
+    env = dict(re.findall(r"(?m)^\s+([A-Z_]+):\s*(\$\{\{.*?\}\})\s*$", blocker[0]))
+    assert env.get("ACK") == "${{ inputs.ack_open_blockers }}", (
+        f"blocker 门禁的 ACK 不是第一段传来的那份：{env}"
+    )
+    assert re.search(r"labels=release:blocker&state=open", blocker[0]), (
+        "查的不是此刻 open 的 release:blocker"
+    )
+    assert re.search(r'--ack\s+"\$\{ACK:-\}"', blocker[0]), "release_blockers.py 没拿到 ACK"
+    # 三道门各自都要 exit 1——「判了却不挡」。按缩进切块，不用非贪婪正则
+    # （嵌套 if 会让它停在内层 fi 或跳到下一处 exit 1 上）
+    for opener in (
+        'if ! git merge-base --is-ancestor "$SHA" origin/main; then',
+        'if [ "$EXISTING" != "$SHA" ]; then',
+    ):
+        block = _shell_block(shell, opener)
+        assert re.search(r"^\s*exit 1\s*$", block, re.M), f"这道门里没有 exit 1：{opener}"
+    # checkout 要完整历史，否则 --is-ancestor 判不了
+    co = [st for st in wf.steps("trust2") if "actions/checkout@" in st]
+    assert len(co) == 1 and _Workflow.with_scalars(co[0]).get("fetch-depth") == "0", (
+        "trust2 的 checkout 不是 fetch-depth: 0"
+    )
+
+
+def test_trust2_recomputes_publish_and_the_payload_can_only_press_it_to_false():
+    """**publish 由 trust2 按 tag 规则重算，载荷只能把 true 压成 false。**
+
+    正面钉法：trust2 的 shell 里对 `PUBLISH` 的赋值只有两处——`PUBLISH=true` 恰好一次，且
+    它所在的 `if` 条件同时要求 `TAG_PUBLISH` 与 `PUBLISH_IN` 都是 true；`TAG_PUBLISH=true`
+    恰好一次，且在「已存在的 tag 指向同一 SHA」那个分支里。任何 `PUBLISH="$PUBLISH_IN"`
+    这种直连都会让赋值集合多出一个非 true/false 的值，当场红。
+    """
+    shell = "\n".join(_wf(PUBLISH).job_runs("trust2"))
+    assigns = re.findall(r"(?m)^\s*PUBLISH=(\S+)\s*$", shell)
+    assert sorted(assigns) == ["false", "true"], (
+        f"trust2 对 PUBLISH 的赋值是 {assigns}——只许 true 一次、false 一次"
+    )
+    gate = re.search(
+        r'if \[ "\$TAG_PUBLISH" = "true" \] && \[ "\$PUBLISH_IN" = "true" \]; then\n\s*PUBLISH=true\n\s*else\n\s*PUBLISH=false\n\s*fi',
+        shell,
+    )
+    assert gate, "PUBLISH=true 不在「TAG_PUBLISH 与 PUBLISH_IN 同时为 true」那个分支里"
+    tag_assigns = re.findall(r"(?m)^\s*TAG_PUBLISH=(\S+)\s*$", shell)
+    assert sorted(tag_assigns) == ["false", "true"], f"TAG_PUBLISH 的赋值是 {tag_assigns}"
+    branch = _shell_block(
+        shell,
+        'if EXISTING="$(git rev-parse --verify "refs/tags/${REL_TAG}^{commit}" 2>/dev/null)"; then',
+    )
+    assert re.search(r"(?m)^\s*TAG_PUBLISH=true\s*$", branch), (
+        "TAG_PUBLISH=true 不在 tag 已存在的分支里"
+    )
+    assert 'EXISTING" != "$SHA' in branch, "tag 已存在的分支里没有「必须指向同一 SHA」"
+    assert not re.search(r"(?m)^\s*TAG_PUBLISH=true\s*$", shell.replace(branch, "")), (
+        "TAG_PUBLISH=true 在 tag 已存在的分支之外还有一处"
+    )
+    # PUBLISH_IN 只在那个 && 条件里被读——不许在别处成为 true 的来源
+    reads = [ln for ln in shell.splitlines() if "$PUBLISH_IN" in ln and "echo" not in ln]
+    assert len(reads) == 1 and "TAG_PUBLISH" in reads[0], f"PUBLISH_IN 在这些地方被读：{reads}"
+
+
+def test_trust2_reads_the_lab_status_exactly_once_and_never_waits():
+    """lab 结论**读一次**：trust2 里对 `commits/<sha>/status` 的 `gh api` 恰好一处、不在循环里；
+    判 `lab/release` 的 `state == success`，且 `target_url` 与载荷 `lab_run_id` 对得上。
+    第二段没有任何 `gh run watch` / `gh run view`。
+    """
+    wf = _wf(PUBLISH)
+    shell = "\n".join(wf.job_runs("trust2"))
+    calls = re.findall(r'gh api "repos/\$\{GITHUB_REPOSITORY\}/commits/\$\{SHA\}/status"', shell)
+    assert len(calls) == 1, f"读 commit status 的调用应恰好一次，实际 {len(calls)}"
+    step = [st for st in wf.steps("trust2") if "commits/${SHA}/status" in st]
+    assert len(step) == 1
+    body = step[0]
+    assert not re.search(r"^\s*(for|while|until)\b", body, re.M), (
+        "读 status 的步骤里有循环——那是轮询"
+    )
+    assert 'select(.context == "lab/release")' in body, "没按 lab/release 这个 context 取"
+    shell_step = "\n".join(wf.job_runs("trust2"))
+    for opener, why in (
+        ('if [ -z "$LAB_STATE" ]; then', "status 不存在（lab 没跑完 / 没派发）"),
+        ('if [ "$LAB_STATE" != "success" ]; then', "state != success"),
+    ):
+        block = _shell_block(shell_step, opener)
+        assert re.search(r"^\s*exit 1\s*$", block, re.M), f"{why} 那一支里没有 exit 1——判了却不挡"
+    env = dict(re.findall(r"(?m)^\s+([A-Z_]+):\s*(\$\{\{.*?\}\})\s*$", body))
+    assert env.get("LAB_RUN_ID") == "${{ inputs.lab_run_id }}", env
+    assert env.get("SHA") == "${{ steps.resolve.outputs.sha }}", (
+        f"读 status 的主语不是 trust2 解析出的 SHA：{env}"
+    )
+    assert "/Tavotto/ci-infra/actions/runs/${LAB_RUN_ID}" in body, (
+        "没把 target_url 与 lab_run_id 那个 ci-infra run 对上"
+    )
+    case = re.search(
+        r'case "\$LAB_URL" in\n\s*"\$EXPECTED_URL"\|"\$EXPECTED_URL"/\*\) ;;\n\s*\*\)\n(?P<rest>.*?);;',
+        body,
+        re.S,
+    )
+    assert case, "target_url 的 case 只许两支：期望值（含子路径）放行、其余进 *)"
+    assert re.search(r"^\s*exit 1\s*$", case.group("rest"), re.M), "target_url 对不上时没有 exit 1"
+    whole = wf.run_text()
+    assert "gh run watch" not in whole and "gh run view" not in whole, "第二段不许等任何 run"
+
+
+def test_validate_artifacts_downloads_the_first_segments_artifacts_by_source_run_id():
+    """第二段的 `validate_artifacts` 从**第一段那次 run** 取全部产物：每个 download-artifact 都带
+    `run-id: ${{ inputs.source_run_id }}` + `github-token: ${{ github.token }}`，job 有 `actions: read`。
+    后面三个发布 job 取的是本 run 自己上传的 `release-assets`——**不带** run-id（带了就是去第一段
+    找一个不存在的 artifact）。
+    """
+    wf = _wf(PUBLISH)
+    dl = [st for st in wf.steps("validate_artifacts") if "actions/download-artifact@" in st]
+    assert len(dl) == 4, (
+        f"validate_artifacts 应有 4 个 download-artifact（dist / desktop / manifests / updater），实际 {len(dl)}"
+    )
+    for st in dl:
+        w = _Workflow.with_scalars(st)
+        assert w.get("run-id") == "${{ inputs.source_run_id }}", f"没从第一段的 run 取：{w}"
+        assert w.get("github-token") == "${{ github.token }}", f"跨 run 取 artifact 要 token：{w}"
+    header = wf.jobs["validate_artifacts"].split("steps:")[0]
+    assert re.search(r"^\s+actions:\s*read\s*$", header, re.M), (
+        "validate_artifacts 没有 actions: read——跨 run 的 REST 路径会 403"
+    )
+    for job in ("github_release", "pypi", "plugin_stable"):
+        own = [st for st in wf.steps(job) if "actions/download-artifact@" in st]
+        assert own, f"{job} 没有 download-artifact"
+        for st in own:
+            w = _Workflow.with_scalars(st)
+            assert w.get("name") == "release-assets" and "run-id" not in w, (
+                f"{job} 取的不是本 run 的 release-assets：{w}"
+            )
 
 
 def test_release_mode_never_overwrites_the_performance_baseline():
@@ -916,11 +1272,11 @@ def test_a_manually_created_tag_is_pinned_to_the_trusted_sha():
     而它发生在整条链**最不可逆的那一步**：tag ruleset 是 immutable，
     建错了改不动也删不掉（仓库里已经躺着两个这样的 tag）。
     """
-    rel = _wf(RELEASE)
-    steps = [s for s in rel.steps("github_release") if "action-gh-release" in s]
+    pub = _wf(PUBLISH)
+    steps = [s for s in pub.steps("github_release") if "action-gh-release" in s]
     assert len(steps) == 1
     w = _Workflow.with_scalars(steps[0])
-    assert w.get("target_commitish") == "${{ needs.trust.outputs.sha }}", (
+    assert w.get("target_commitish") == "${{ needs.trust2.outputs.sha }}", (
         f"建 Release 没有把 tag 钉在受信 SHA 上：target_commitish={w.get('target_commitish')!r}"
     )
 
@@ -955,8 +1311,8 @@ def test_the_dry_run_still_exercises_signing_and_the_updater_manifest():
 
 def test_a_missing_updater_manifest_can_never_pass_silently():
     """少了 latest.json，桌面用户永远查不到新版本，而整条链全绿。"""
-    rel = _wf(RELEASE)
-    for step in rel.steps("validate_artifacts"):
+    pub = _wf(PUBLISH)
+    for step in pub.steps("validate_artifacts"):
         if "updater-manifest" not in step:
             continue
         assert "continue-on-error" not in step, (
@@ -990,8 +1346,8 @@ def test_pypi_gets_exactly_the_two_files_the_manifest_names():
     这是「七个下游步骤各自猜文件名」（#63）的复发，而且发生在**刚刚引入
     产物清单的这条 PR 里** —— 清单存在的意义就是让这种猜测不可能。
     """
-    rel = _wf(RELEASE)
-    steps = [s for s in rel.steps("pypi") if "PyPI" in (_Workflow.field(s, "name") or "")]
+    pub = _wf(PUBLISH)
+    steps = [s for s in pub.steps("pypi") if "PyPI" in (_Workflow.field(s, "name") or "")]
     assert steps, "找不到把产物交给 PyPI 的那一步"
     body = "\n".join(steps)
     assert "artifact_manifest.py path" in body, "PyPI 的输入不是从清单解出来的"
@@ -1007,8 +1363,8 @@ def test_the_pypi_job_can_actually_run_the_manifest_script():
     只改「从清单取路径」而忘了 checkout，症状是 `No such file or directory`
     —— 发生在整条链的最后一步，且此时 GitHub Release 已经建好了。
     """
-    rel = _wf(RELEASE)
-    assert any("actions/checkout" in s for s in rel.steps("pypi")), (
+    pub = _wf(PUBLISH)
+    assert any("actions/checkout" in s for s in pub.steps("pypi")), (
         "pypi job 没有 checkout，却要跑 scripts/ci/artifact_manifest.py"
     )
 
@@ -1023,9 +1379,10 @@ def test_an_existing_tag_pointing_elsewhere_is_refused():
     这不是假想：仓库里此刻就躺着 v0.9.0 与 v0.9.1 两个指向旧 commit、
     且因为 immutable ruleset 改不动也删不掉的 tag。
     """
-    trust = _wf(RELEASE).jobs["trust"]
-    assert "refs/tags/${REL_TAG}" in trust, "trust 没有检查 tag 是否已存在"
-    assert 'EXISTING" != "$SHA' in trust, "存在的 tag 没有与本次 SHA 比对"
+    for path, job in ((RELEASE, "trust"), (PUBLISH, "trust2")):
+        trust = _wf(path).jobs[job]
+        assert "refs/tags/${REL_TAG}" in trust, f"{path.name}::{job} 没有检查 tag 是否已存在"
+        assert 'EXISTING" != "$SHA' in trust, f"{path.name}::{job} 存在的 tag 没有与本次 SHA 比对"
 
 
 def test_pending_release_notes_cannot_slip_past_a_tag():
@@ -1040,7 +1397,7 @@ def test_pending_release_notes_cannot_slip_past_a_tag():
     """
     step = [
         s
-        for s in _wf(RELEASE).steps("validate_artifacts")
+        for s in _wf(PUBLISH).steps("validate_artifacts")
         if 'F="docs/release-notes/${TAG}.md"' in s
     ]
     assert step, "找不到拼 release body 的那一步"
@@ -1202,7 +1559,7 @@ def test_the_plugin_publisher_has_push_credentials_before_it_pushes():
     extraheader 配进全局 git config（与 actions/checkout 同一形态）。
     """
     found = 0
-    for wf in (_wf(RELEASE), _wf(PLUGIN_STABLE)):
+    for wf in (_wf(PUBLISH), _wf(PLUGIN_STABLE)):
         pushes = _real_publisher_pushes(wf)
         for job, i in pushes:
             found += 1
@@ -1211,7 +1568,7 @@ def test_the_plugin_publisher_has_push_credentials_before_it_pushes():
                 r'git config --global "?http\.https://github\.com/\.extraheader"?\s+"AUTHORIZATION: basic',
                 earlier,
             ), f"{wf.path.name}/{job}: 真推发布器的步骤前没有配推送凭据"
-    # release.yml 的 promote + plugin-stable.yml 的手动发布器；数目变了说明选择器或
+    # release-publish.yml 的 promote + plugin-stable.yml 的手动发布器；数目变了说明选择器或
     # workflow 形状变了，两种都要人看一眼，而不是让判据静默缩到零
     assert found == 2, f"真推发布器步骤数 {found} != 2"
 
@@ -1226,7 +1583,7 @@ def test_a_job_that_configures_global_credentials_keeps_no_local_copy():
     actions/checkout 必须 `persist-credentials: false`——凭据只留一份。
     """
     seen = 0
-    for wf in (_wf(RELEASE), _wf(PLUGIN_STABLE)):
+    for wf in (_wf(PUBLISH), _wf(PLUGIN_STABLE)):
         for job in wf.jobs:
             steps = wf.steps(job)
             if not any(re.search(r"git config --global .*extraheader", s) for s in steps):

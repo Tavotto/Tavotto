@@ -8,8 +8,9 @@
 
 * nightly 的 `updater-consumer-fidelity`：对线上已发布产物做验签 + 插件
   同形态解包（`tools/updater-extract-probe`）；
-* release.yml 的 `n1_update_windows`：发布后在 Windows runner 上装 N-1
-  官方安装包、驱动真实应用内更新（壳的 `TAVOTTO_E2E_RUN_UPDATE` 触发口）。
+* release-publish.yml（发布链第二段，F.2 起；从前在 release.yml）的
+  `n1_update_windows`：发布后在 Windows runner 上装 N-1 官方安装包、驱动真实
+  应用内更新（壳的 `TAVOTTO_E2E_RUN_UPDATE` 触发口）。
 
 第三层（2026-09-14，issue #327）：`actions/download-artifact` 的 `pattern:`
 下载排了两个只落了一个也报 success（v0.14.0 演练实测），下游要到合成
@@ -250,23 +251,28 @@ def test_shell_e2e_update_trigger_is_default_off():
     )
 
 
+#: 发布链的第二段（F.2，2026-09-16）：发布 job（含 n1_update_windows）全在这里，
+#: 第一段 release.yml 到派发 lab 为止。
+RELEASE_PUBLISH = WORKFLOWS / "release-publish.yml"
+
+
 def _n1_job() -> str:
-    """release.yml 里 `n1_update_windows` 那个 job 的正文。"""
-    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    """release-publish.yml 里 `n1_update_windows` 那个 job 的正文。"""
+    src = RELEASE_PUBLISH.read_text(encoding="utf-8")
     return src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
 
 
 def test_release_runs_the_n1_update_verification():
     """发布编排里真的有 N-1 更新验证 job，且形状对。"""
-    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-    assert "n1_update_windows:" in src, "release.yml 里没有 N-1 更新验证 job"
+    src = RELEASE_PUBLISH.read_text(encoding="utf-8")
+    assert "n1_update_windows:" in src, "release-publish.yml 里没有 N-1 更新验证 job"
     job = src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
     # 只能在 Release 建出来之后测：endpoint 烤死指向 releases/latest
     assert "github_release" in job.split("steps:", 1)[0], (
         "N-1 验证必须 needs github_release——发布前 latest 还指着上一版"
     )
-    assert "needs.trust.outputs.publish == 'true'" in job, (
-        "演练（publish=false）没有建 Release，N-1 验证无从谈起"
+    assert "needs.trust2.outputs.publish == 'true'" in job, (
+        "演练（publish=false）没有建 Release，N-1 验证无从谈起——门要挂在 trust2 重算的 publish 上"
     )
     assert "TAVOTTO_E2E_RUN_UPDATE" in job, "不再用壳的 headless 触发口驱动了"
     # 冒烟复用既有断言，不另写一套
@@ -385,7 +391,7 @@ def test_release_notes_do_not_leak_powershell_backticks():
     `` \\`T `` 会把后面的字符转义（`` `t `` 是 tab），summary 悄悄变成乱码
     而 job 照样绿。写这条是因为第一版真的写出来过。
     """
-    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    src = RELEASE_PUBLISH.read_text(encoding="utf-8")
     job = src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
     assert "\\`" not in job, "pwsh 字符串里混进了 \\`（backtick 是 pwsh 的转义字符）"
 
@@ -569,11 +575,36 @@ def _wf_callees(path: Path) -> list[Path]:
     return out
 
 
-def _artifact_universe(path: Path) -> list[tuple[str, bool, str]]:
+#: 跨 run 取产物的 workflow → 产物所在的那份 workflow（F.2，2026-09-16）：发布链第二段的
+#: `validate_artifacts` 用 `run-id: ${{ inputs.source_run_id }}` 从第一段那次 run 取全部产物，
+#: 所以它的 pattern 下载要对着 **release.yml 的一次 run** 点名，不是对着自己的。
+_SOURCE_RUN_INPUT = "${{ inputs.source_run_id }}"
+_SOURCE_RUN_OF = {"release-publish.yml": "release.yml"}
+
+
+def _artifact_universe(path: Path, step: str | None = None) -> list[tuple[str, bool, str]]:
     """这份 workflow 的一次 run 里**会出现**的 artifact：自己上传的 + 它调起的
     可复用 workflow 上传的。刻意不算调用方的：desktop-tauri.yml 单独 dispatch
     时调用方不存在，点名名单若含调用方的东西，独立构建会当场红。
+
+    带 `step` 时按那一步的 `run-id:` 判来源：写着 `inputs.source_run_id` 的下载来自
+    `_SOURCE_RUN_OF[path]` 那份 workflow 的一次 run；没写的来自本 run。两张表对不上
+    （写了 run-id 却没登记来源，或登记了来源却没写 run-id）当场抛。
     """
+    if step is not None:
+        run_id = _wf_with(step).get("run-id")
+        src = _SOURCE_RUN_OF.get(path.name)
+        if run_id is not None:
+            assert run_id == _SOURCE_RUN_INPUT, (
+                f"{path.name}: run-id 只许是 {_SOURCE_RUN_INPUT}，实际 {run_id!r}"
+            )
+            assert src, (
+                f"{path.name} 跨 run 取产物，却没在 _SOURCE_RUN_OF 里登记它取的是哪份 workflow 的 run"
+            )
+            return _artifact_universe(WORKFLOWS / src)
+        assert not (src and _wf_with(step).get("pattern")), (
+            f"{path.name} 登记为跨 run 取产物，这一步的 pattern 下载却没有 run-id——它会到自己的 run 里找"
+        )
     universe = list(_wf_uploads(path))
     for callee in _wf_callees(path):
         assert callee.is_file(), f"{path.name} 调的 {callee.name} 不存在"
@@ -615,13 +646,29 @@ def test_the_workflow_reader_still_sees_the_release_chain():
     names = [n for n, _, _ in _wf_uploads(WORKFLOWS / "desktop-tauri.yml")]
     assert "desktop-tauri-dmg" in names and "artifact-manifest-nsis" in names, names
     rel = WORKFLOWS / "release.yml"
-    assert [c.name for c in _wf_callees(rel)] == ["desktop-tauri.yml", "_lab-qualification.yml"]
+    # F.2 起 release.yml 只调桌面链；lab 经 dispatch_lab 派发到 ci-infra，不再是 callee
+    assert [c.name for c in _wf_callees(rel)] == ["desktop-tauri.yml"]
+    assert _wf_callees(RELEASE_PUBLISH) == [], (
+        "第二段不该调任何可复用 workflow——产物全从第一段那次 run 取"
+    )
     assert "artifact-manifest-python" in [n for n, _, _ in _wf_uploads(rel)]
+    assert "release-assets" in [n for n, _, _ in _wf_uploads(RELEASE_PUBLISH)]
     sites = {(p.name, job) for p, job, _, _, _ in _pattern_downloads()}
     assert {
         ("desktop-tauri.yml", "updater-manifest"),
-        ("release.yml", "validate_artifacts"),
+        ("release-publish.yml", "validate_artifacts"),
     } <= sites, sites
+    assert ("release.yml", "validate_artifacts") not in sites, "validate_artifacts 应已搬到第二段"
+    # 跨 run 的 universe 真的映射到了第一段（否则下面那条会在空集合上报「pattern 匹配不上」）
+    step = next(
+        st
+        for st in _wf_steps(_wf_jobs(RELEASE_PUBLISH)["validate_artifacts"])
+        if "pattern: desktop-tauri-*" in st
+    )
+    assert {n for n, _, _ in _artifact_universe(RELEASE_PUBLISH, step)} >= {
+        "desktop-tauri-dmg",
+        "artifact-manifest-python",
+    }
 
 
 def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uploads():
@@ -639,7 +686,7 @@ def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uplo
     """
     for path, job, idx, steps, pattern in _pattern_downloads():
         where = f"{path.name}::{job}"
-        universe = _artifact_universe(path)
+        universe = _artifact_universe(path, steps[idx])
         expected = [(n, cond, src) for n, cond, src in universe if fnmatchcase(n, pattern)]
         assert expected, (
             f"{where}: pattern {pattern!r} 在这次 run 里一个 artifact 都匹配不上——过期的 pattern"

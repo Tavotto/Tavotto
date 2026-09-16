@@ -236,6 +236,7 @@ class TestMergeGroupTrigger:
         for name in (
             "nightly.yml",
             "release.yml",
+            "release-publish.yml",
             "lab-ci.yml",
             "desktop-tauri.yml",
             "telemetry-metrics.yml",
@@ -927,11 +928,12 @@ class TestGates:
         的 pytest 命令**不带** `--shard`：不带时钩子是 no-op，它们跑的仍是全集。
 
         前提先钉住（否则「不含」是恒真）：每个文件至少有一条 `-m pytest` 的可执行行，
-        release.yml 的资格确实经由 `_lab-qualification.yml`。
+        release.yml 的资格确实按 `mode=release` 派发到 ci-infra（那边 `uses` 的仍是
+        `_lab-qualification.yml`，F.2 起公开仓库里不再直接 `uses` 它）。
         """
         release = _code((WF / "release.yml").read_text(encoding="utf-8"))
-        assert "uses: ./.github/workflows/_lab-qualification.yml" in release, (
-            "release 的资格不再走 _lab-qualification.yml——本判据对 release 的覆盖失效"
+        assert _DISPATCH_CMD in release and "-f mode=release" in release, (
+            "release 的资格不再按 release 档派发 ci-infra——本判据对 release 的覆盖失效"
         )
         for name in ("_lab-qualification.yml", "nightly.yml", "desktop-tauri.yml"):
             code = _code((WF / name).read_text(encoding="utf-8"))
@@ -2261,12 +2263,13 @@ _ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
 #: SHA 从哪来」，这边只钉「派发方的事件也在可信集合里」。
 _DISPATCH_CMD = "gh workflow run lab-qualification.yml -R Tavotto/ci-infra"
 
-#: 并行期（F-3 已合、PR B 未合）公开仓库里仍直接 `uses` reusable 的 workflow。
-#: PR B 把 `release.yml::lab_release_gate` 改成派发 + 回调之后改成 `frozenset()`，
-#: 同时把 `release.yml` 加进 `_DISPATCHING_WORKFLOWS`——F-8 注销公开仓库 runner 的前提
-#: 就是这两个集合一个变空、一个变全（ADMIN_HANDOFF_RUNNER_POOL.md F.3 / F.4）。
-_REUSABLE_CALLING_WORKFLOWS = frozenset({"release.yml"})
-_DISPATCHING_WORKFLOWS = frozenset({"lab-ci.yml"})
+#: PR B（F-6，2026-09-16）之后公开仓库里**没有**直接 `uses` reusable 的 workflow：
+#: `release.yml::lab_release_gate` 改成了派发 + 回调（`dispatch_lab` → ci-infra →
+#: `release-publish.yml`）。两个集合一个空、一个全，是 F-8 注销公开仓库 runner 的前提
+#: （ADMIN_HANDOFF_RUNNER_POOL.md F.3 / F.4）；谁再把派发改回 `uses`，runner 不在这里，
+#: 那个 job 会永远排队。
+_REUSABLE_CALLING_WORKFLOWS: frozenset[str] = frozenset()
+_DISPATCHING_WORKFLOWS = frozenset({"lab-ci.yml", "release.yml"})
 
 
 def _top_level_block(text: str, key: str) -> str:
@@ -2431,11 +2434,11 @@ class TestRunnerTrustZones:
 
         通向它的公开仓库 workflow 分两类，各是一个**集合相等**的判据：
 
-        * 直接 `uses` 它的 == `_REUSABLE_CALLING_WORKFLOWS`——并行期只有 `release.yml`
+        * 直接 `uses` 它的 == `_REUSABLE_CALLING_WORKFLOWS`——PR B 之后是**空集**
           （F 组：实验室 runner 已迁到私有仓库 ci-infra，公开仓库里的 `uses` 只会永远排队；
-          PR B 之后这个集合是空集，F-8 才能注销公开仓库上的 runner）；
+          集合为空是 F-8 注销公开仓库上 runner 的前提）；
         * 用 `gh workflow run … -R Tavotto/ci-infra` **派发**的 == `_DISPATCHING_WORKFLOWS`
-          ——`lab-ci.yml`；PR B 之后加 `release.yml`。
+          ——`lab-ci.yml` 与 `release.yml`。
 
         两类的事件都 ⊆ {push, schedule, workflow_dispatch}：派发方决定了实验室 runner
         会 checkout 哪个 SHA，与直接调用方同一信任等级（SHA 本身的可信判定另有
@@ -2456,7 +2459,7 @@ class TestRunnerTrustZones:
         }
         assert callers == _REUSABLE_CALLING_WORKFLOWS, (
             f"直接 uses reusable 的 workflow 集合变了：{sorted(callers)}"
-            f"（期望 {sorted(_REUSABLE_CALLING_WORKFLOWS)}；PR B 之后期望空集）"
+            f"（期望 {sorted(_REUSABLE_CALLING_WORKFLOWS)}——PR B 之后是空集，改回 uses 会永远排队）"
         )
         dispatchers = {n for n, t in texts.items() if _DISPATCH_CMD in _code(t)}
         assert dispatchers == _DISPATCHING_WORKFLOWS, (

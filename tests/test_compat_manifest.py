@@ -528,8 +528,10 @@ class TestCiWiring:
         rel = self._wf("release.yml")
         import re
 
-        gate = rel.split("lab_release_gate:", 1)[1].split("\n  validate_artifacts:", 1)[0]
-        assert re.search(r"mode:\s*release", gate), "release.yml 没有按 release 档调用资格验证"
+        # F.2 起 release.yml 不再 `uses` reusable，而是 `dispatch_lab` 派发 ci-infra；
+        # 档位在派发命令的 `-f mode=` 里
+        gate = rel.split("\n  dispatch_lab:", 1)[1]
+        assert re.search(r"-f\s+mode=release\b", gate), "release.yml 没有按 release 档派发资格验证"
 
     def test_nightly_runs_the_version_matrix(self):
         wf = self._wf("nightly.yml")
