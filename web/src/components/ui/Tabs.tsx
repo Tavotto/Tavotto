@@ -52,7 +52,9 @@ export function TabList({
       role="tablist"
       aria-label={label}
       onKeyDown={handleKeyDown}
-      className={cn('relative flex h-full items-center gap-4', className)}
+      // 页签间 12：右栏最窄 320px 英文（Linux 的 DejaVu Sans）下三个页签按加粗宽度预留是 71 + 85 + 49 = 205，
+      // tablist 只有 230 可用——两段 12 刚好 229；原语打磨那轮改成 16（两家参照都没量到这一格）多出的 8px 恰好撑破 7px
+      className={cn('relative flex h-full items-center gap-3', className)}
     >
       {children}
       {indicator.style && (

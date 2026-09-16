@@ -1345,11 +1345,14 @@ function TickPage({
       <div className="flex flex-col gap-1.5" data-tick-section="marks">
         <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
         {/* 四边刻度线 / 边框 / 网格的示意图只在子图页（2026-09-14 审计 A5，用户拍板）：同一份
-            状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路 */}
+            状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路。
+            -ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：钮内文字与上面的分区头
+            对齐，不比它缩进 8px；顺带把这颗 shrink-0 的钮收回 296 的栏内——按钮字 12 之后
+            英文整句在 320px 的 DejaVu Sans 下是 297.88，超 1.88px（e2e/inspector-overflow 刻度屏） */}
         <Button
           size="sm"
           data-tick-spines-link
-          className="w-fit text-ink-2"
+          className="-ml-2 w-fit text-ink-2"
           onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
         >
           {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
