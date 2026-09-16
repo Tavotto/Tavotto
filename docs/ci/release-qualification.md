@@ -13,8 +13,13 @@
 - 比上个版本慢了吗？
 - 装出来的**这一份** wheel 真的能用吗？
 
-实现全在 `scripts/ci/`，由 `.github/workflows/lab-ci.yml` 与 `release.yml` 的
-`lab_release_gate` 驱动。机器的准备见
+实现全在 `scripts/ci/`，步骤定义只有 `.github/workflows/_lab-qualification.yml`
+一份。**2026-09-16 起（F 组）实验室 runner 注册在私有仓库 `Tavotto/ci-infra` 上**：
+`lab-ci.yml` 的 `trust-check` 验完 SHA 后由托管机 `dispatch` 到 ci-infra 的
+`lab-qualification.yml`，那边再 `uses` 这份 reusable；结论以 commit status
+`lab/<mode>` 回到被验的那个 SHA 上，`lab-ci.yml` 自己**不等结果**。并行期
+`release.yml` 的 `lab_release_gate` 仍直接 `uses` reusable（发布链切两段是 PR B，
+见 `ADMIN_HANDOFF_RUNNER_POOL.md` F.2）。机器的准备与两枚 secret 见
 [`self-hosted-runner.md`](self-hosted-runner.md)。
 
 ---

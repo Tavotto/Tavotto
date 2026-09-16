@@ -66,31 +66,46 @@ GitHub 托管机上的 trust-check
 
 对应地，workflow 侧也做了限制：`lab-ci.yml` 与 `release.yml` 的
 `lab_release_gate` 都只有 `contents: read`。它们只是测试，不建 Release、
-不发 PyPI、不推代码。发行签名那些能力**留在 GitHub 托管机上**。
+不发 PyPI、不推代码。发行签名那些能力**留在 GitHub 托管机上**。跨仓库派发
+与回写用的是两枚范围极窄的 fine-grained PAT（见下一节的表），不是 GITHUB_TOKEN。
 
-### 更安全的备用形态
+### 更安全的备用形态——**2026-09-16 起成为现行形态（F 组）**
 
-仓库级 runner 没有 runner group 概念。若组织升级到支持 runner group，
-**强烈建议**改成：
-
-```yaml
-runs-on:
-  group: tavotto-trusted
-  labels: [tavotto-lab]
-```
-
-并把该 group 限制到 `Tavotto/Tavotto` 以及明确的 trusted workflow。
-
-如果连这一步都无法可靠限制 public repo 对 runner 的访问，更安全的形态是：
+仓库级 runner 没有 runner group 概念，组织是 free 计划、也没有 runner group 可用
+（CI04 §2 的清点），所以「限制 group 到 trusted workflow」那条路走不通。用户
+2026-09-16 拍板采用下面这个形态，操作表与两个后续 PR 见
+[`ADMIN_HANDOFF_RUNNER_POOL.md` F 组](../implementation/ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md)：
 
 ```
 private Tavotto/ci-infra 仓库
-        └── 持有 self-hosted runner
-                └── 只 checkout 已验证的 Tavotto main/tag SHA
+        └── 持有 self-hosted runner（同一台 VM、标签不变）
+                └── lab-qualification.yml（workflow_dispatch）
+                        ├── trust-check（hosted）：同一段 ancestry 判断，照抄不引用
+                        ├── qualify：uses Tavotto/Tavotto/.github/workflows/_lab-qualification.yml@main
+                        │           只 checkout 已验证的 Tavotto main/tag SHA
+                        └── report（hosted）：给那个 SHA 打 commit status `lab/<mode>`
 ```
 
-即：runner 注册在一个私有仓库上（公开仓库的 PR 天然够不到它），由该仓库的
-workflow 主动去拉取并验证 Tavotto 的可信 commit。代价是多一个仓库要维护。
+即：runner 注册在一个私有仓库上（公开仓库的 PR 天然够不到它——PR 里写什么
+`runs-on` 都只会永远排队），**资格验证的步骤定义仍只有公开仓库那一份**
+（`_lab-qualification.yml`），只是执行它的 runner 换了归属。公开仓库这一侧：
+
+| 文件 | 迁移后 |
+|---|---|
+| `lab-ci.yml` | `trust-check` 不动；原来 `uses` reusable 的 `qualify` 改成托管机上的 `dispatch`：`gh workflow run lab-qualification.yml -R Tavotto/ci-infra -r main -f mode/sha/baseline_tag`（三个值全部来自 `trust-check` 的输出）。它**不等结果**；secret 为空时 `::error::` 并退 1——「lab 没人跑」必须红在这里，不许静默跳过 |
+| `_lab-qualification.yml` | `checkout` 显式 `repository: Tavotto/Tavotto`；发行档 `download-artifact` 显式 `repository` / `run-id: inputs.source_run_id \|\| github.run_id` / `github-token: secrets.TAVOTTO_PUBLIC_TOKEN`（**不**兜 `github.token`：token 非空就切到需要 `actions: read` 的 REST 路径，而本文件只有 `contents: read`）；并发槽名加 `inputs.mode` |
+| `release.yml` | **并行期不动**：`lab_release_gate` 仍直接 `uses` reusable，等 PR B 把发布链切成两段（F.2） |
+
+两枚 secret（**值只进仓库 secret，不进任何文件**；名字由两边的 workflow 共同钉死，改名要两边一起改）：
+
+| secret | 放在哪 | 是什么 | 权限（fine-grained PAT） |
+|---|---|---|---|
+| `TAVOTTO_CI_INFRA_TOKEN` | 公开仓库 `Tavotto/Tavotto` | `lab-ci.yml::dispatch` 用来派发 | 只对 `Tavotto/ci-infra`：Actions **write** |
+| `TAVOTTO_PUBLIC_TOKEN` | 私有仓库 `Tavotto/ci-infra` | reusable 跨仓库取 `dist`（经 `workflow_call` 的 `secrets:` 传入）；`report` job 回写 status | 只对 `Tavotto/Tavotto`：Actions **read/write**、Commit statuses **write** |
+
+它们都不是 GITHUB_TOKEN：公开仓库 `lab-ci.yml` 与 reusable 的 GITHUB_TOKEN 仍只有
+`contents: read`。代价是多一个仓库要维护，以及 lab 的结论从「一个 run 红」变成
+「`lab/<mode>` status 红」——读结论的人要知道去哪看。
 
 **不要为了方便在代码里降低这条边界。**
 
