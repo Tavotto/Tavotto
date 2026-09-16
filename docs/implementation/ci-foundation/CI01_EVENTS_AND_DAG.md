@@ -222,6 +222,8 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 `test_fast_gate_needs_matches_required_closed_set`、`test_heavy_jobs_run_on_merge_group`、`test_heavy_jobs_do_not_run_on_plain_prs_or_push`、
 `test_gates_run_the_trusted_copy_of_the_verdict`、`test_codeql_gate_depends_on_analyze`、`test_cla_workflow_contract.py` 全部。
 
+后续 PR `ci/event-table-fixes`（§4 ①③⑥）新增的合同与变异见 §7。
+
 ## 6. 验证命令与退出码（2026-09-16，worktree，commit `7d77494c` 之后）
 
 | 命令 | 退出码 |
@@ -232,3 +234,52 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
 | `python scripts/ci/ci_baseline.py dag --workflow .github/workflows/ci.yml --edge-kinds …/evidence/ci01/dag_edge_kinds_after.json --out …/evidence/ci01/dag_after.json`（17 job / 19 边） | 0 |
 | `python scripts/ci/ci_baseline.py analyze --compact --workflow .github/workflows/ci.yml --evidence …/evidence/actions --edge-kinds …/evidence/ci01/dag_edge_kinds_after.json --out <scratchpad>`（解析通过；输出不是证据，见 §4 ⑤） | 0 |
 | 实机：一个正常候选 + 一个故意失败候选的 DAG 时间与 Gate（phases/CI01 第 7 条） | **not_run**（不能 push） |
+
+## 7. 后续 PR `ci/event-table-fixes`：§4 ①③⑥ 的实施、合同与反证（2026-09-16）
+
+- 分支自 `f717c103` 建，#379 合入后 rebase 到 `0f71b5d5`（CI01 §4 四个 hunk 冲突：main 上是 #379 的「拍板」行，本分支是含拍板行的超集，取本分支）。
+- **ci.yml 改了什么**：`ci-integration-gate` 的 `GATE_FULL_CI` 一处表达式（§4 ①）；`on.pull_request.types` 旁的注释重写（每个 type 为什么在、无关标签重跑接受的理由）；
+  §4 ⑥ 表里十处注释。**没改什么**：任何 `run:` / `if:` / `needs:` / `timeout-minutes` / `types:` 的值 / `concurrency` / 两个 Gate 的闭集 / `aggregate_gate.py`。
+  `python scripts/ci/ci_baseline.py dag` 仍是 17 个 job / 19 条边。
+- **合同测试**（`tests/test_merge_queue_workflows.py`）：
+  * `TestPullRequestEventTypes::test_pull_request_types_are_exactly_the_six_we_rely_on`（③）：`types` 的集合 == 六个，重复也红。
+  * `::test_the_event_table_for_pull_request_and_label_events`（①，真值表）：11 行（opened / synchronize / ready_for_review / labeled full-ci / synchronize 带 full-ci /
+    labeled docs ×2 / unlabeled docs ×2 / **unlabeled full-ci** / merge_group）+ push main，每行把 ci.yml 里真实的快线 `if:`、五个重型 `if: >-`、`GATE_FULL_CI`
+    对着合成的 `github` 上下文求值（`tests/support/gh_expr.py`），再**原样执行** `ci-integration-gate`「聚合判定」那一步的 Bash（env 由渲染结果给、
+    判定器副本放 `$RUNNER_TEMP/trusted-gate/`、`python3` 是 shim 到当前解释器），读它 stdout 那一行 JSON 并核退出码。没有 bash 的平台（Windows 腿）如实 skip——
+    那一步在 ci.yml 里 `runs-on: ubuntu-latest`，用例先断言这一前提再 skip。
+  * `::test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr`（①）：`unlabeled(full-ci)` → 重型不跑、`GATE_FULL_CI == "true"`、Gate `failure` /
+    `upstream_not_success` / 五个 `: skipped`；对照：同一份 needs 按普通 PR 判是 `deferred`（修之前发生的事）。
+  * `::test_label_events_share_the_pull_request_concurrency_slot`（① 接受的那一半）：`synchronize` / `labeled docs` / `unlabeled full-ci` 渲染出同一个组名
+    `ci-CI-pull_request-<n>`、`cancel-in-progress` 都是 `true`；merge_group / push 各自一组且不取消。
+  * `TestEventFieldAccess::test_no_bare_head_ref_or_label_event_usage` 改成枚举：`github.event.action` / `github.event.label` 在 ci.yml 里只许出现在 `GATE_FULL_CI`
+    那一行，且那段表达式以 `github.event_name == 'pull_request' &&` 开头；codeql.yml 里一处不许有。
+  * 求值器自身：`tests/test_gh_expr.py` 20 条（null 路径、跨类型 `==`、`contains` 数组 / 字符串 / null、`&&` `||` 返回操作数、认不出的语法必须抛、多段插值 `render`）。
+- **变异反证**（脚本在会话 scratchpad，不进仓库；每条：断言目标串出现次数 → 变异 → 断言落地 → `pytest -x -k …` 退出码 → 还原并核 md5；11 条全部按预期）：
+
+  | # | 变异 | 预期 rc | 实际 rc | 第一条红的用例 |
+  |---|---|---:|---:|---|
+  | M1 | ③ 从 `types` 删掉 `ready_for_review` | 1 | 1 | `test_pull_request_types_are_exactly_the_six_we_rely_on` |
+  | M2 | ③ 往 `types` 加 `edited` | 1 | 1 | 同上 |
+  | M3 | ① `GATE_FULL_CI` 退回修之前的表达式 | 1 | 1 | `test_no_bare_head_ref_or_label_event_usage`；只跑真值表时 `test_the_event_table_…` 与 `test_removing_the_full_ci_label_…` 也红 |
+  | M4 | ① `'unlabeled'` 写成 `'labeled'` | 1 | 1 | `test_the_event_table_for_pull_request_and_label_events`（unlabeled full-ci 行 → deferred） |
+  | M5 | ① 去掉 `GATE_FULL_CI` 的事件守卫 | 1 | 1 | `test_no_bare_head_ref_or_label_event_usage`。**真值表看不见这一条**（merge_group 下 `contains(null…)` 与 `null == 'unlabeled'` 都是 false，结果恰好不变）——守卫是纵深防御，由枚举用例钉 |
+  | M6 | ① 在 `workerd` 的 `env:` 里再用一次 `github.event.action` | 1 | 1 | `test_no_bare_head_ref_or_label_event_usage` |
+  | M7 | ① 把 `unlabeled(full-ci)` 并进五个重型 job 的 `if:`（备选修法，未采用） | 1 | 1 | `test_the_event_table_…`（unlabeled full-ci 行重型跑了） |
+  | M8 | ① Gate 步 Bash：`elif [ "$GATE_FULL_CI" = "yes" ]` | 1 | 1 | `test_the_event_table_…`（labeled full-ci 行 → deferred；这条是「原样执行 Bash」才抓得到的） |
+  | M9 | ① Gate 步 Bash：full-ci 分支丢掉 `--full-ci` | **0** | 0 | 真值表对它不敏感（`--full-ci` 只影响与 `--allow-deferred` 互斥的配置校验）；由 `TestGates::test_integration_gate_defers_only_on_plain_pull_requests` 抓（单跑它：rc 1） |
+  | M10 | ① Gate 步 Bash：full-ci 分支改成 `--allow-deferred --full-ci` | 1 | 1 | `test_the_event_table_…`（判定器 ConfigError → rc 2 ≠ 结论应有的 rc） |
+  | M11 | ① 事件守卫写成 `merge_group` | 1 | 1 | `test_no_bare_head_ref_or_label_event_usage`；只跑真值表时两条 ① 用例也红 |
+
+- **本轮没有任何真实 run**（不能 push）。`unlabeled(full-ci)` 在 GitHub 上真跑出一个红 Gate 的实机证据归本 PR 的 review：打上 `full-ci` 等一轮，再摘掉，看同 SHA 上最新的
+  「CI integration gate」是不是 failure、summary 里五个 job 是不是 skipped。
+- **验证命令与退出码**（2026-09-16，worktree `ci-followup-events`，用 `ci-foundation` 的 `.venv` + `PYTHONPATH=<worktree>/src`）：
+
+  | 命令 | 退出码 |
+  |---|---:|
+  | `/opt/homebrew/bin/actionlint .github/workflows/ci.yml` | 0 |
+  | `ruff check . && ruff format --check .` | 0 |
+  | `python -m pytest tests/test_merge_queue_workflows.py tests/test_aggregate_gate.py tests/test_docs_references.py`（本 PR 之前 116 passed） | 0 |
+  | `python -m pytest tests/test_gh_expr.py tests/test_ci_baseline.py tests/test_source_hygiene.py tests/test_merge_queue_ruleset.py tests/test_cla_workflow_contract.py` | 0 |
+  | `python scripts/ci/ci_baseline.py dag --workflow .github/workflows/ci.yml --edge-kinds …/evidence/ci01/dag_edge_kinds_after.json --out <scratchpad>`（17 job / 19 边，未变） | 0 |
+  | 变异脚本（11 条） | 0（全部按预期） |
