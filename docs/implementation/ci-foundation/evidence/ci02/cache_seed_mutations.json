@@ -1,0 +1,218 @@
+{
+ "kind": "cache_seed_mutations",
+ "date": "2026-09-16",
+ "tree": "worktree ci-followup-cache，分支 ci/cache-seed-on-main，基线提交 e82a8fe4（ci.yml + 合同测试）",
+ "how": "每条：树干净且基线绿 → 断言目标串恰好出现 1 次 → 写入 → 清 __pycache__ + PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider → pytest tests/test_merge_queue_workflows.py 退出码判 → git checkout -- 还原 → 核 md5 与变异前一致；跑完 git status 干净",
+ "verdict": "24/24 KILLED",
+ "mutations": [
+  {
+   "id": "S01 种子的 if 改成 pull_request",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed",
+    "TestCacheSeed::test_the_seed_runs_only_on_push_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S02 把 cache-seed 塞进 fast gate 的 needs",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestGates::test_fast_gate_needs_matches_required_closed_set",
+    "TestGates::test_every_fast_lane_job_actually_runs_on_a_plain_pull_request",
+    "TestCacheSeed::test_the_seed_runs_only_on_push_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S03 消费者 workerd 的 shared-key 改名",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key",
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses",
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S04 种子 (ubuntu, workerd) 腿的 os 改成 macos",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses",
+    "TestCacheSeed::test_the_pnpm_seed_covers_exactly_the_oses_that_have_a_pnpm_consumer"
+   ]
+  },
+  {
+   "id": "S05 消费者 desktop-shell 少一条 macOS 腿",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestGates::test_desktop_shell_lints_both_sides_of_the_macos_cfg",
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses"
+   ]
+  },
+  {
+   "id": "S06 种子 release 分支去掉 --release",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S07 种子 dev 分支去掉 --all-targets",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S08 消费者 windows-exe-smoke 用 dev 的键 workerd",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key",
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses",
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S09 种子 cpython key 掉 arch",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_actions_cache_steps_are_exactly_the_cpython_archive_downloads",
+    "TestCacheSeed::test_the_cpython_seed_uses_the_consumers_exact_path_and_key_on_exactly_their_oses"
+   ]
+  },
+  {
+   "id": "S10 windows 腿不种 cpython",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_cpython_seed_uses_the_consumers_exact_path_and_key_on_exactly_their_oses"
+   ]
+  },
+  {
+   "id": "S11 cache 步的开关字段反过来",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_cpython_seed_uses_the_consumers_exact_path_and_key_on_exactly_their_oses"
+   ]
+  },
+  {
+   "id": "S12 ubuntu 不种 pnpm",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_pnpm_seed_covers_exactly_the_oses_that_have_a_pnpm_consumer"
+   ]
+  },
+  {
+   "id": "S13 种子 pnpm install 不带 --frozen-lockfile",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_pnpm_seed_covers_exactly_the_oses_that_have_a_pnpm_consumer"
+   ]
+  },
+  {
+   "id": "S14 种子 apt 少一个包",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_linux_only_tauri_prerequisite_is_gated_like_the_consumer"
+   ]
+  },
+  {
+   "id": "S15 种子 apt 的条件掉了 src-tauri",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_linux_only_tauri_prerequisite_is_gated_like_the_consumer"
+   ]
+  },
+  {
+   "id": "S16 种子加 continue-on-error",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_seed_runs_only_on_push_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S17 另一个 job 也在 push 上跑（compat-smoke）",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestGates::test_every_fast_lane_job_actually_runs_on_a_plain_pull_request",
+    "TestGates::test_fast_jobs_cover_pr_and_merge_group_but_not_push",
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed"
+   ]
+  },
+  {
+   "id": "S18 一个 job 没有 if（compat-smoke，等于每个事件都跑）",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestGates::test_every_fast_lane_job_actually_runs_on_a_plain_pull_request",
+    "TestGates::test_fast_jobs_cover_pr_and_merge_group_but_not_push",
+    "TestLandingAudit::test_main_push_runs_only_the_landing_audit_and_the_cache_seed"
+   ]
+  },
+  {
+   "id": "S19 种子 rust-cache 不用 matrix.rust",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key",
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses"
+   ]
+  },
+  {
+   "id": "S20 desktop-shell 加回冗余 key",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key"
+   ]
+  },
+  {
+   "id": "S21 种子 cargo 不在 matrix.workspace 里跑",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  },
+  {
+   "id": "S22 种子去掉 fail-fast: false",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestCacheSeed::test_the_seed_runs_only_on_push_and_is_not_a_gate_input"
+   ]
+  },
+  {
+   "id": "S23 种子 setup-node 不按锁文件取 key",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile"
+   ]
+  },
+  {
+   "id": "S24 消费者 macos-app-smoke 的 rust-cache 丢掉 shared-key",
+   "verdict": "KILLED",
+   "pytest_rc": 1,
+   "red": [
+    "TestBuildReuseAndCaches::test_every_rust_cache_names_its_own_workspace_and_a_shared_key",
+    "TestCacheSeed::test_every_rust_shared_key_is_seeded_on_main_for_exactly_the_consumers_oses",
+    "TestCacheSeed::test_each_seed_leg_runs_the_cargo_commands_of_the_consumers_sharing_its_key"
+   ]
+  }
+ ]
+}

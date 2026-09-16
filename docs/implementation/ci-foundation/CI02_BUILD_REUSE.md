@@ -149,7 +149,7 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 | 10 GB 上限已被顶穿，淘汰按最近访问 | desktop-shell 8.1 GB | 小条目先被挤出；即便修好作用域，main 上的种子也会被 PR 的副本挤出 | 同上；副本是作用域问题的症状，不单独治 |
 | rust-cache 的 `key: ${{ matrix.os }}` 与自动键重复 | desktop-shell | 无（多一段字面量） | 记录，不改 |
 
-### 4.1 作用域：现状与可执行的修法（记录，不改；归 CI05「需要拍板的下一步」）
+### 4.1 作用域：现状与可执行的修法（CI02 当轮只记录；2026-09-16 用户拍板走 (a)，已在后续 PR 实施——见本节末尾）
 
 **每类缓存在合并组上的实际状态**（run `35015416419`，候选 ref `gh-readonly-queue/main/pr-362-5b6debb9…`，
 [`merge_group_cache_misses.json`](evidence/ci02/merge_group_cache_misses.json)；每个候选写入的 MiB 取自 [`cache_inventory.json`](evidence/ci02/cache_inventory.json)
@@ -192,6 +192,39 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 - 两条都不做时的替代：把 `desktop-shell` 的 rust-cache 去掉（它在合并组上从不命中，只在 PR 第二次 push 起作用，却占 8.1 GB 把别的挤出去）——
   这是「少一个坏缓存」而不是「修好」，也要拍板。
 
+**已实施（后续 PR，分支 `ci/cache-seed-on-main`，2026-09-16；拍板记录在 CI_HANDOFF §13 ③）**——做的是 (a)，与上面写法的三处出入都有理由：
+
+| 项 | 上面的设计 | 落地的形状 | 为什么 |
+|---|---|---|---|
+| 腿的划分 | 一个 os 一条腿（3 条） | **一个 (os, shared-key) 一条腿（5 条）**：ubuntu·`workerd`、ubuntu·`desktop-shell`、macos·`desktop-shell`、macos·`workerd-release`、windows·`workerd-release` | rust-cache 的 Post 步会把整机共用的 `~/.cargo/registry` 修剪到**自己 workspace** 的依赖集再 save（`save.ts` → `cleanRegistry(allPackages)`）；同一个 job 里放两个实例时两个 Post 步后进先出、互相修剪，先声明的那份缓存里没有自己的 `.crate`，消费者每次都要重下。分腿后每份种子与消费者自己会 save 的那份同形。macOS 从 1 条腿变 2 条（并发上限 5 之内，总 runner 分钟不变，峰值 +1） |
+| `shared-key` 的取值 | `workerd-${{ runner.os }}` / `src-tauri-${{ matrix.os }}` | `workerd` / `desktop-shell` / `workerd-release`（**不含 os**） | os / arch 本来就在自动键里（`config.ts`：`key += -${runnerOS}-${runnerArch}`），写进 shared-key 是重复；名字改成 **(workspace, profile)**：dev 与 release 的 target/ 不是一份，`windows-exe-smoke` / `macos-app-smoke` 的 `cargo build --release` 与 `workerd` job 的 clippy + test 不能同键 |
+| `build_worker_runtime.py --download-only` | 要么加开关、要么整跑 | **整跑**（`--clean`，47–76s） | 产品脚本不动（lead 纪律） |
+
+消费者侧只加 `shared-key`（四处），`desktop-shell` 那条冗余的 `key: ${{ matrix.os }}` 一并收掉，**命令一条没动**。种子腿跑的就是消费者那一组命令
+（dev：`cargo clippy --all-targets -- -D warnings` + `cargo test`；release：`cargo build --release`）；pnpm store 每个 os 一次（`pnpm install --frozen-lockfile`）；
+CPython 归档挂在两条 `workerd-release` 腿（`actions/cache` 的 `path` / `key` 与消费者**逐字相同**）。种子**不是门禁**：不在任何 Gate 的 needs / --required 里，
+不加 `continue-on-error`。`.github/AGENTS.md` 的「push main = 轻量落地审计」改成「落地审计 + 缓存种子（非门禁）」。
+
+合同：`tests/test_merge_queue_workflows.py::TestCacheSeed` 六条（非门禁 / (shared-key, workspace, os) 集合相等 / 同键同 profile 同命令 / cpython `path`·`key` 字符串相等 + os 集合 /
+pnpm os 集合 / Linux apt 步同形）+ `TestLandingAudit`（条件含 push 的 job 集合 == {landing audit, cache-seed}，没有 `if` 的 job 也算在 push 上）+ 本节 §6 三张枚举各加一条、
+rust-cache 从「不许 shared-key」翻成「必须 shared-key」。变异反证 [`evidence/ci02/cache_seed_mutations.json`](evidence/ci02/cache_seed_mutations.json)：**24/24 KILLED**。
+
+**验法（合入后）**：第一次 push main 的 `cache seed (…)` 五条腿跑完才有种子，**之前入队的候选仍冷**（它们的 run 早已开始）。看**下一个** merge_group run 的四个 job 日志：
+
+| job | 期望的日志行（原文出自各 action 源码） | 今天（合并组 `35015416419`） |
+|---|---|---|
+| `workerd`、`desktop-shell (ubuntu-latest)` / `(macos-latest)`、`windows-exe-smoke (1)` / `(2)`、`macos-app-smoke` | rust-cache：`Restored from cache key "v0-rust-<shared-key>-…" full match: true.`；Post 步 `Cache up-to-date.` | `No cache found.` |
+| `windows-exe-smoke` ×2、`macos-app-smoke` | actions/cache：`Cache restored from key: cpython-<OS>-<ARCH>-<hash>`；Post 步 `Cache hit occurred on the primary key …, not saving cache.` | `Cache not found for input keys: …` |
+| `frontend`、`plugin-candidate`、`posix-e2e`、`windows-exe-smoke` ×2、`macos-app-smoke` | setup-node：`Cache restored from key: node-cache-<OS>-<arch>-pnpm-<hash>`；Post 步 `Cache hit occurred on the primary key …, not saving cache.` | 只有 `Cache saved with the key: …` |
+
+`gh run view <run> --job <id> --log | grep -E 'Restored from cache key|Cache restored from key|No cache found|Cache not found|Cache up-to-date|Cache hit occurred|Cache saved'`。
+同时 `gh api repos/Tavotto/Tavotto/actions/cache/usage` 应停止每候选 +1.8 GB 的增长（已挂在死 ref 上的条目要等 7 天自然过期）。**不能看 PR 的第二次 run**——那本来就暖。
+`full match: false` 也是一种结果：Cargo.lock / 工具链在 push main 之后变了，restore-keys 退回了旧条目，消费者会 save 一份新的（在自己 ref 上），下一次 push main 再重种。
+
+已知边界：① rustc stable 若在 push main 与 merge_group 之间发新版，rust-cache 键的 env hash 变了 → 那一轮 miss，下一次 push main 重种；② 三连推 main 时中间一次的
+种子会被待定取代（与 landing audit 同形，CI01 §4 ②），只影响那一次；③ 每次 push main 多 5 条腿（暖时各 1–2 分钟；windows / macos 那两条里 runtime 构建的
+一分钟暖也省不掉）；④ 已合入候选留在死 ref 上的条目不会因此消失，7 天过期。
+
 ## 5. 产物身份与不混同目标（E）
 
 唯一的数据边 `frontend ══▶ plugin-candidate`：
@@ -228,9 +261,9 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
 | `test_the_web_build_script_starts_with_a_real_project_build` | `build` 脚本的**第一条**命令 | M01 `tsc --noEmit`、M02 去掉 tsc |
 | `test_the_project_references_cover_every_typescript_root` | references 的**集合** + 三份 `noEmit` + include 并集 | M03 去掉 e2e 引用、M04 e2e 少 `playwright.config.ts`、M05 `noEmit: false` |
 | `test_the_frontend_job_type_checks_through_pnpm_build_without_a_safety_net` | `frontend` 的 `- run: pnpm build`：恰好一条、无 if / continue-on-error、无第二条 tsc、生成物检查在其后 | M06 加 continue-on-error、M07 删步、M08 加 `pnpm tsc --noEmit`、M09 顺序对调 |
-| `test_actions_cache_steps_are_exactly_the_cpython_archive_downloads` | `actions/cache` 的 (job, path, key) **枚举**；key 含 os / arch / 锁；恢复在使用前；path 无第四类 | M10 去掉 arch、M11 加 Playwright 缓存、M12 path 改成 venv、M13 挪到构建之后 |
+| `test_actions_cache_steps_are_exactly_the_cpython_archive_downloads` | `actions/cache` 的 (job, path, key) **枚举**（后续 PR 加了 `cache-seed` 一条，见 §4.1「已实施」）；key 含 os / arch / 锁；恢复在使用前；path 无第四类 | M10 去掉 arch、M11 加 Playwright 缓存、M12 path 改成 venv、M13 挪到构建之后 |
 | `test_every_setup_node_pnpm_cache_is_keyed_by_the_lockfile` | 开了 pnpm 缓存的 job 集合 == 五个且都带 `cache-dependency-path`；没开的 == {package} | M14 去掉 dependency-path、M15 package 开缓存 |
-| `test_every_rust_cache_names_its_own_workspace_and_shares_nothing` | rust-cache 的 (job, workspaces) 枚举；无 shared-key / cache-on-failure | M16 加 shared-key、M17 去掉 workspaces |
+| `test_every_rust_cache_names_its_own_workspace_and_shares_nothing`（CI02 当轮；后续 PR 改成 `…_and_a_shared_key`：枚举变成 (job, workspaces, shared-key)，「不许 shared-key」翻成「必须」，见 §4.1「已实施」） | rust-cache 的 (job, workspaces) 枚举；无 shared-key / cache-on-failure | M16 加 shared-key、M17 去掉 workspaces（M16 在后续 PR 之后不再是变异——那正是要的形状） |
 | `test_windows_installs_browsers_without_with_deps_and_posix_keeps_it` | 两条 Playwright 腿各恰好一条 `playwright install`，主语是整条命令：Windows 不带 `--with-deps`、posix 带 | M18 posix 不装、M22 Windows 加回 `--with-deps`、M23 posix 去掉 |
 | `test_the_plugin_candidate_consumer_verifies_head_sha_and_manifest_digest` | 消费者 SHA = HEAD、digest 来自清单、verify 三个参数；生产者同形 | M19 不核 digest、M20 SHA 改成 `github.sha`、M21 zip 复验不带 digest |
 
@@ -257,8 +290,10 @@ rust-cache「No cache found.」×2、cpython「Cache not found for input keys」
    备选是把 `Install-WindowsFeature` 挪到 job 开头后台跑、装浏览器前等它完成（环境不变，只与 4 分钟的构建链重叠）——跨 step 的后台进程与 DISM
    并发锁同样只有 Windows 机器才证得了。
 2. **缓存作用域（§4.1）**：main 上没有 ci.yml 的任何缓存 → 合并组永远冷、每个候选写 1.8 GB 死重、10 GB 上限永远被顶穿。两种修法与各自代价写在
-   §4.1，**用户已拍板做 (a)，栈合入后另开小 PR**；改了以后用合并组 run 的日志（`Cache restored from key`）验，不能看 PR 的第二次 run。
-3. **`package` 的 pnpm 缓存**：第 2 条修好之后再开（四条腿各 −5s 下载）；现在开是四份白传。
+   §4.1，2026-09-16 用户拍板走 (a)，**已在后续 PR（分支 `ci/cache-seed-on-main`）实施**，验法与已知边界在 §4.1「已实施」；实机的第一份证据要等它合入后
+   的下一个合并组 run。
+3. **`package` 的 pnpm 缓存**：第 2 条合入并在合并组日志里看到 `Cache restored` 之后再开（四条腿各 −5s 下载，并把 `PNPM_UNCACHED` 那条枚举改掉）；
+   现在开仍是四份白传。
 4. **本轮没有真实 run**：§1 的秒数是两次已有 run 的实测，不是本 PR 的；本 PR 在 CI 上会变的只有两处——backend-fast 里多八条合同用例、
    `windows-exe-smoke` 两片的安装步不带 `--with-deps`。
 5. **`dist/Tavotto` 的总大小日志没打印**：表里写的是下界（runtime 249 / 288 MiB）；要精确值得在冒烟腿加一行 `du`（不在本轮范围）。
