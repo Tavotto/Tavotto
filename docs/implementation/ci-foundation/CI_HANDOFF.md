@@ -14,7 +14,7 @@
   - 真实前后样本：有，且样本不足处写明（每档 n = 1–2、争抢样本单列、不算 p95；§2）。
 
   **pass 的主语是「hosted 上的验证」**：全部证据来自七个 PR 的 `full-ci` run（`pull_request` 事件）。它们与 merge_group 同一套 job，差别是缓存作用域与争抢。
-  **七个 PR 一个都没合入 main**——合入后用第一个 merge_group run 复核（§12 的命令），复核不过就把这一行改回 `fail`。
+  **2026-09-16 七个 PR（#372–#378）已依次合入 main，§12.1 用七个真实合并组复核：资格 56.9 → 26.4 min（中位，n=4），分片并集与关键路径判据全部成立。**
 - **`runner_pool_ready`: not_run**——没有 VM、没有 runner、没有部署权限；CI04 只交付了只读清点 + 静态守卫 + 管理员操作表
   （[`CI04_RUNNER_PILOT.md`](CI04_RUNNER_PILOT.md) §5、[`ADMIN_HANDOFF_RUNNER_POOL.md`](ADMIN_HANDOFF_RUNNER_POOL.md)）。它不是 U00 的前置（06 末段）。
 
@@ -131,7 +131,7 @@
 
 证据根：[`evidence/README.md`](evidence/README.md)（每个子目录一行）；本轮：[`evidence/ci05/README.md`](evidence/ci05/README.md)。
 
-## 12. 合入后的复核（谁来做：用户 / 合并者；本轮 not_run）
+## 12. 合入后的复核——**2026-09-16 已执行**（lead 在合并过程中按下面的命令逐个合并组复核）
 
 七个 PR 合入 main 之后，用**第一个** merge_group success run（不是 PR 的第二次 run——那本来就暖）：
 
@@ -150,6 +150,25 @@ python docs/implementation/ci-foundation/evidence/ci05/shards/check_ci_shards.py
 
 判据：`qualification_seconds` 与 §9 的 1485–1695s 同一量级（合并组上 runner_wait 中位 2–9s，应接近 q₀）；`check_ci_shards.py` 退出码 0；
 四个 job 日志里各自的缓存行仍是 miss（作用域没修之前应如此——修好后应看到 `Cache restored from key`）。任一条不成立，回到 §0 把 `ci_hosted_ready` 改成 `fail` 并写原因。
+
+### 12.1 复核结果（七个真实 merge_group run，每个 PR 合入 main 的那一组；`gh api …/runs/<id>/jobs`）
+
+| 合入 | run | 组里生效的改动 | fast gate | **合并资格** | 最后完成的 job |
+|---|---|---|---:|---:|---|
+| #372 `20312b31` | 35045653480 | 无（老 DAG；= 基线对照） | 33.1 min | **56.9 min** | windows-exe-smoke 1426s |
+| #373 `512eaf7f` | 35051700330 | + CI01 删边 | 32.2 | **44.3** | backend-platforms (windows) 整档 2644s（与 #364 的组并行争抢） |
+| #374 `31346d12` | 35057474442 | + CI03a pytest 分片 | 19.1 | **28.3** | windows-exe-smoke 1419s |
+| #375 `7e20e337` | 35061049078 | + CI03c Playwright 分片 | 25.3 | **25.8** | windows-exe-smoke (1) 1009s |
+| #376 `bfaf3c6b` | 35065044794 | + CI03b package 隔离 | 29.1 | **31.2** | backend-platforms (windows, 1) 1430s（争抢） |
+| #377 `e6b46c5b` | 35069266028 | + CI02 去 --with-deps | 19.0 | **25.9** | backend-platforms (windows, 1) 1533s |
+| #378 `f717c103` | 35073686963 | + CI04（无 yml 行为改动） | 23.8 | **26.8** | backend-platforms (windows, 1) 1369s |
+
+* #372 那一组就是 CI00 基线本身：56.9 min，与 29 个合并组的中位 3412s 一字不差——对照有效。
+* 全部改动生效后（#375 起）的四个合并组：25.8 / 31.2 / 25.9 / 26.8 min；**中位 26.4 min**（n=4，不算 p95）。关键路径已是 `backend-platforms (windows)` 的 pytest 分片（1369–1533s）；`windows-exe-smoke` 两片 663–1009s 不再是关键路径。#376 的 31.2 是与另一个组并行时的争抢样本。
+* §12 命令对 run 35069266028 实跑：`fetch-jobs` / `trim` / `analyze` 各 rc 0；`feedback_seconds` 1139、`qualification_seconds` 1551（在 §9 的 1485–1695s 区间内）、关键路径 `backend-platforms (windows-latest, 1) → CI integration gate`；`gh run download -p 'pytest-*'` 10 个 artifact，`check_ci_shards.py` `{"ok": true}` rc 0；`desktop-shell (ubuntu-latest)` 日志里缓存仍是 `No cache found`（作用域未修，符合预期——拍板 ③ 的种子 job 落地后应变 `Cache restored from key`）。
+* `package (macos-latest)` 在 #376 的组里 `ready_seconds` 35.69s——getfqdn 停顿在合并组上再次坐实，产品修复见 PR #380。
+
+**结论：`ci_hosted_ready` 维持 `pass`，主语从「PR full-ci 上的 hosted 验证」升级为「main 上真实 merge_group 的验证」。**
 
 ## 13. 需要管理员 / 用户拍板的最小下一步——**2026-09-16 用户已逐条拍板**
 
